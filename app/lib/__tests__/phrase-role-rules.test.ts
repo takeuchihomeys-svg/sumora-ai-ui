@@ -72,4 +72,15 @@ t("手本の書き手（記録）: 既定 off・前後5分の sure の手打ち�
   assert.equal(writerBoostOf("employee", "", {}), -0.12);
   assert.equal(writerBoostOf("takeuchi", "", { EXAMPLE_WRITER_BOOST: "off" }), 0);
 });
+import { askTopicsOf, answerMatchOf, answerSentencesOf, ruleRoleWithAsk } from "../phrase-role-rules";
+t("答えの突き合わせ（問いの話題・最初の言い切り・出所）", () => {
+  assert.deepEqual(askTopicsOf("初期費用いくらですか？\nよろしくお願いします"), ["初期費用"]);
+  assert.deepEqual(askTopicsOf("よろしくお願いします"), []);
+  assert.deepEqual(answerMatchOf("こちら床の色グレーとなります！！", "床の色白ですか？"), { topic: "設備", source: "material" });
+  assert.equal(answerMatchOf("確認させて頂きます", "床の色白ですか？"), null);
+  const a = answerSentencesOf(["かしこまりました！！", "お申込は9月末頃を目安にお申込頂く形となります！！", "何卒よろしくお願い致します！！"], "10月末入居希望だといつ頃申し込めばいいでしょうか？");
+  assert.deepEqual([...a.keys()], [1]); assert.equal(a.get(1)!.source, "company_fact");
+  assert.equal(answerSentencesOf(["こちら床の色グレーとなります！！"], "ありがとうございます").size, 0, "問いが無ければ答えにしない");
+  assert.equal(ruleRoleWithAsk("かしこまりました！！", "いつですか？"), "uke");
+});
 console.log(`ALL PASS (${n})`);

@@ -87,3 +87,62 @@ export function selfNameOf(text: string): string | null {
   const m = String(text ?? "").match(/担当させて頂きます\s*([^\s、。！!]{1,6})と申します|(?:株式会社|弊社)の?([^\s、。！!]{1,6})(?:です|と申します)/);
   return m ? (m[1] ?? m[2] ?? null) : null;
 }
+
+// ─── 答え（answer）を直前のお客様の問いと突き合わせて読む（2026-11-15 作業員I・統括役の頼み②） ─────────────
+//   answer は語だけでは決まらない（roles-r1 で精度 0.52）。お客様の問いの文（？・か・教えて・知りたい 等）から話題の語を拾い、
+//   こちらの文が同じ話題の語を持ち、言い切りの形（となります・可能です・です 等）で終わる時だけ answer とする。出所は語で3つに分ける。
+//   精度は build-phrase-catalog-v2 が roles-r1 で測り、0.6 未満なら役目不明のまま（ANSWER_MATCH_MIN）
+export const ASK_TOPICS: ReadonlyArray<[string, RegExp]> = [
+  ["初期費用", /初期費用|見積|費用|お金|いくら|金額|総額|割引|スモ割/], ["家賃", /家賃|管理費|賃料|月額|共益費/], ["入居", /入居|引っ越し|引越し|いつから|即入/],
+  ["内覧", /内覧|内見|見学|見に行|案内/], ["空き", /空き|空いて|募集|まだあ|埋ま|何部屋|他の部屋|号室/], ["審査", /審査|保証会社|保証人|ブラック|夜職|収入|勤務|無職|滞納/],
+  ["ペット", /ペット|犬|猫/], ["駐車場", /駐車場|駐輪|バイク|車/], ["設備", /設備|キッチン|コンロ|洗面|バス|トイレ|浴室|エアコン|ネット|wifi|Wi-?Fi|収納|クローゼット|フローリング|白基調|床|色/i],
+  ["広さ", /広さ|帖|畳|㎡|平米|間取り|LDK|DK|1K/i], ["場所", /駅|徒歩|場所|エリア|住所|周り|治安/], ["手続き", /手続き|申込|契約|書類|キャンセル|流れ|期間/],
+  ["築", /築|新築|築年/], ["フリーレント", /フリーレント/],
+];
+const ASK_RE = /[？?]|(?:です|ます|でしょう|ある|いける|でき)か|教えて|知りたい|どれくらい|どのくらい|いつ|何(?:階|部屋|日|時)|可能|大丈夫/;
+/** お客様の文の中の問いの話題（問いの形の文だけ） */
+export function askTopicsOf(customerText: string | null | undefined): string[] {
+  const out = new Set<string>();
+  for (const s of String(customerText ?? "").split(/[\n。！!]+/)) { if (!ASK_RE.test(s)) continue; for (const [k, re] of ASK_TOPICS) if (re.test(s)) out.add(k); }
+  return [...out];
+}
+export type AnswerSource = "company_fact" | "material" | "needs_check";
+const ANSWER_END = /(?:となります|となっております|可能です|可能となります|御座います|ございます|大丈夫です|出来ます|おります|です|ません)$/;
+/** 文がお客様の問いへの答えか（話題・出所）。違えば null */
+export function answerMatchOf(sentence: string, customerText: string | null | undefined): { topic: string; source: AnswerSource } | null {
+  const topics = askTopicsOf(customerText);
+  if (!topics.length) return null;
+  const t = N(sentence).replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "").replace(/[!！?？。、,\s]+$/g, "").trim();
+  if (!ANSWER_END.test(t)) return null;
+  const topic = topics.find((k) => ASK_TOPICS.find(([kk]) => kk === k)![1].test(t));
+  if (!topic) return null;
+  const source: AnswerSource = /確認|管理会社|オーナー|次第/.test(t) ? "needs_check" : /審査|保証会社|手数料|キャンセル|弊社|申込|契約|手続き|期間|クレジット/.test(t) ? "company_fact" : "material";
+  return { topic, source };
+}
+export const ANSWER_MATCH_MIN = 0.6;
+/** 役目（お客様の文があれば答えの突き合わせを足す）: 語の決まりで answer 以外が決まればそれ・決まらない／answer の時は突き合わせで answer か不明 */
+export function ruleRoleWithAsk(sentence: string, customerText: string | null | undefined): SentenceRole | null {
+  const r = ruleRoleOf(sentence);
+  if (r && r !== "answer") return r;
+  return answerMatchOf(sentence, customerText) ? "answer" : null;
+}
+const ASKED_RE = /[？?]|(?:です|ます|でしょう|ある|いける|でき)か|教えて|知りたい|どれくらい|どのくらい/;
+const STATEMENT_END = /(?:となります|となっております|可能です|御座います|ございます|大丈夫です|出来ます|おります|です|ません)[\p{Extended_Pictographic}️]*[!！。]*$/u;
+/** 1通の答えの突き合わせ（11/15 roles-r1 で: 話題の語だけ 15文・精度 0.60／問いのある番の最初の言い切りの文 33文・0.67／両方 35文・0.63）。
+ *  答えと読んだ文の番号→{話題（拾えた時）・出所} */
+export function answerSentencesOf(sentences: ReadonlyArray<string>, customerText: string | null | undefined): Map<number, { topic: string | null; source: AnswerSource }> {
+  const out = new Map<number, { topic: string | null; source: AnswerSource }>();
+  const asked = ASKED_RE.test(String(customerText ?? ""));
+  let firstDone = false;
+  sentences.forEach((s, i) => {
+    const base = ruleRoleOf(s);
+    if (base && base !== "answer") return;
+    const m = answerMatchOf(s, customerText);
+    const first = asked && !firstDone && STATEMENT_END.test(s.trim());
+    if (first) firstDone = true;
+    if (!m && !first) return;
+    const t = N(s);
+    out.set(i, m ?? { topic: null, source: /確認|管理会社|オーナー|次第/.test(t) ? "needs_check" : /審査|保証会社|手数料|キャンセル|弊社|申込|契約|手続き|期間|クレジット/.test(t) ? "company_fact" : "material" });
+  });
+  return out;
+}

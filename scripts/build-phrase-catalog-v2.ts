@@ -12,7 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { splitSentences, type SentenceRole } from "../app/lib/takeuchi-anatomy-roles";
-import { ruleRoleOf, mainRoleOf, openerOf, keigoOf, strengthOf, formOf, selfNameOf } from "../app/lib/phrase-role-rules";
+import { ruleRoleOf, answerSentencesOf, ANSWER_MATCH_MIN, mainRoleOf, openerOf, keigoOf, strengthOf, formOf, selfNameOf } from "../app/lib/phrase-role-rules";
 import { trustOfText, endingOf, trustSubsOfText } from "../app/lib/compose-phrase-catalog";
 import { resolveReplyScene } from "../app/lib/reply-scene";
 import { isGroupConversationName } from "../app/lib/line-target";
@@ -36,9 +36,11 @@ async function pageAll<T>(q: (from: number, to: number) => PromiseLike<{ data: T
 // ─── 役目の精度（roles-r1 の3回読みの多数に当てる） ───
 function measurePrecision(): Record<string, { n: number; precision: number }> {
   if (!existsSync(R1)) return {};
-  const r = JSON.parse(readFileSync(R1, "utf8")) as Array<{ sentences: string[]; roles: Array<{ i: number; role: string | null }> }>;
+  const r = JSON.parse(readFileSync(R1, "utf8")) as Array<{ customer?: string | null; sentences: string[]; roles: Array<{ i: number; role: string | null }> }>;
   const c = new Map<string, { n: number; hit: number }>();
-  for (const x of r) for (const y of x.roles) { if (!y.role) continue; const g = ruleRoleOf(x.sentences[y.i - 1] ?? ""); if (!g) continue; const t = c.get(g) ?? { n: 0, hit: 0 }; t.n++; if (g === y.role) t.hit++; c.set(g, t); }
+  for (const x of r) for (const y of x.roles) { if (!y.role) continue; const g = ruleRoleOf(x.sentences[y.i - 1] ?? ""); if (!g || g === "answer") continue; const t = c.get(g) ?? { n: 0, hit: 0 }; t.n++; if (g === y.role) t.hit++; c.set(g, t); }
+  // answer は語だけでなく直前のお客様の問いと突き合わせて読む（answerSentencesOf）。精度が ANSWER_MATCH_MIN 未満なら役目不明のまま
+  { const t = { n: 0, hit: 0 }; for (const x of r) { const a = answerSentencesOf(x.sentences, x.customer ?? null); for (const i of a.keys()) { const y = x.roles.find((z) => z.i === i + 1); if (!y?.role) continue; t.n++; if (y.role === "answer") t.hit++; } } c.set("answer", t); }
   return Object.fromEntries([...c.entries()].map(([k, t]) => [k, { n: t.n, precision: Math.round((t.hit / t.n) * 100) / 100 }]));
 }
 
@@ -46,7 +48,7 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const since = new Date(Date.now() - DAYS * 86400_000).toISOString();
   const prec = measurePrecision();
-  const trusted = new Set(Object.entries(prec).filter(([, p]) => p.n >= 5 && p.precision >= 0.6).map(([k]) => k));
+  const trusted = new Set(Object.entries(prec).filter(([, p]) => p.n >= 5 && p.precision >= (p === prec.answer ? ANSWER_MATCH_MIN : 0.6)).map(([k]) => k));
   // 1) 竹内さんの送信のある会話
   const tk = await pageAll<Msg>((f, t) => sb.from("messages").select("id, conversation_id, sender, text, created_at, is_aix_generated, staff_writer, staff_writer_confidence").eq("staff_writer", "takeuchi").eq("staff_writer_confidence", "sure").gte("created_at", since).order("created_at").range(f, t));
   const convIds = [...new Set(tk.map((m) => m.conversation_id))];
@@ -63,7 +65,7 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
   for (const id of okConv) recs.set(id, await loadTurnApplicationRecords(sb as never, id));
 
   // 3) 返信（手打ちのまとまり）と AIX の通を集める
-  type Reply = { scene: string; sentences: string[]; text: string; afterAix: boolean };
+  type Reply = { scene: string; sentences: string[]; text: string; afterAix: boolean; customer: string };
   const replies: Reply[] = [];
   const aixMsgs: Array<{ scene: string; text: string }> = [];
   const cnt = { msgs: 0, gated: 0, otherName: 0, aix: 0, replies: 0, afterAix: 0, noText: 0 };
@@ -85,7 +87,7 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
       if (skip) cnt.otherName++;
       if (cur && at - cur.lastAt <= 3 * 60_000) { cur.sentences.push(...splitSentences(m.text)); cur.text += `\n${m.text}`; cur.lastAt = at; cur.skip = cur.skip || skip; continue; }
       flush();
-      cur = { scene: resolveReplyScene({ customerText: lastCustomer }).scene, sentences: splitSentences(m.text), text: m.text, afterAix: lastAixAt > 0 && at - lastAixAt <= 10 * 60_000, lastAt: at, skip };
+      cur = { scene: resolveReplyScene({ customerText: lastCustomer }).scene, customer: lastCustomer, sentences: splitSentences(m.text), text: m.text, afterAix: lastAixAt > 0 && at - lastAixAt <= 10 * 60_000, lastAt: at, skip };
     }
     flush();
   }
@@ -93,6 +95,8 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
   // 4) 数える
   type Tab = Map<string, { n: number; m: Map<string, number> }>;
   const bump = (tab: Tab, k: string, vals: string[]) => { const t = tab.get(k) ?? { n: 0, m: new Map<string, number>() }; t.n++; for (const v of vals) t.m.set(v, (t.m.get(v) ?? 0) + 1); tab.set(k, t); };
+  const answerTab: Tab = new Map();
+  const emojiOther = new Map<string, Map<string, number>>();
   const trust: Tab = new Map(), trustSub: Tab = new Map(), ends: Tab = new Map(), openers: Tab = new Map(), keigo: Tab = new Map(), sceneRole: Tab = new Map(), subTab: Tab = new Map();
   const lens = new Map<string, number[]>(), emos = new Map<string, { counts: number[]; kinds: Map<string, number> }>();
   const strength = new Map<string, { bangPerSentence: number[]; emojiOk: number[]; emojiOther: number }>();
@@ -101,13 +105,16 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
   const V2_OF: Record<string, string> = { greet: "head", uke: "head", answer: "press", promise: "press", trust: "trust", barrier: "trust", worry: "latent", viewing: "bridge", apply: "bridge", estimate: "bridge", ask_send: "bridge", keep: "close", close: "close" };
   let sentencesAll = 0, unknownAll = 0;
   for (const r of replies) {
-    const roles = r.sentences.map((s) => { const g = ruleRoleOf(s); return g && trusted.has(g) ? g : null; });
+    const ans = trusted.has("answer") ? answerSentencesOf(r.sentences, r.customer) : new Map<number, { topic: string | null; source: string }>();
+    const roles = r.sentences.map((s, i) => { if (ans.has(i)) return "answer" as SentenceRole; const g = ruleRoleOf(s); return g && g !== "answer" && trusted.has(g) ? g : null; });
+    if (r.afterAix === false) for (const a of ans.values()) for (const k of [r.scene, "*"]) bump(answerTab, k, [`topic.${a.topic ?? "不明"}`, `source.${a.source}`]);
     sentencesAll += roles.length; unknownAll += roles.filter((x) => !x).length;
     const main = mainRoleOf(roles);
     const grp = r.afterAix ? "after_aix" : "reply";
     const keys = (k: string) => [`${r.scene}|${k}`, `*|${k}`];
     // 1版と同じ形の表（書き手に渡す所）は返信（AIX の後の2通目でない）だけで数える。AIX の後の2通目は after_aix の段（頭・敬語・強さ・形・場面×役目）で別に
-    if (main && grp === "reply") {
+    // 主の役目が answer の返信は1版と同じ形の表に入れない（answer の行は1版のまま＝11/15 の物差しで 2版の answer の行に替えると設計図の行 v2 の信頼が 20/44→10/44 に下がった）
+    if (main && main !== "answer" && grp === "reply") {
       for (const k of keys(main)) { const a = lens.get(k) ?? []; a.push(r.sentences.length); lens.set(k, a); }
       for (const k of keys(main)) { bump(trust, k, trustOfText(r.text)); bump(trustSub, k, trustSubsOfText(r.text)); }
       const rs = new Set(roles.filter(Boolean) as SentenceRole[]); const last = r.sentences[r.sentences.length - 1] ?? ""; const subs: string[] = [];
@@ -127,6 +134,8 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
       for (const k of [`${grp}|${role}`, `${grp}|*`]) bump(keigo, k, keigoOf(s));
     });
     const st = strengthOf(r.text), fm = formOf(r.text);
+    // 許されない絵文字（😊😌🌟✨ 以外）の種類×場面（竹内さんに確かめる材料・決まりは変えない）
+    for (const e of r.text.match(/\p{Extended_Pictographic}/gu) ?? []) if (!["😊", "😌", "🌟", "✨"].includes(e)) for (const k of [`${grp}|${r.scene}`, `${grp}|*`]) { const m = emojiOther.get(k) ?? new Map<string, number>(); m.set(e, (m.get(e) ?? 0) + 1); emojiOther.set(k, m); }
     for (const k of [`${grp}|${r.scene}`, `${grp}|*`]) {
       const a = strength.get(k) ?? { bangPerSentence: [], emojiOk: [], emojiOther: 0 }; a.bangPerSentence.push(Math.round((st.bangPairs / Math.max(1, r.sentences.length)) * 100) / 100); a.emojiOk.push(Object.values(st.emojiOk).reduce((x, y) => x + y, 0)); a.emojiOther += st.emojiOther; strength.set(k, a);
       const f = form.get(k) ?? { lines: [], blank: 0, brackets: 0, bullets: 0, n: 0 }; f.n++; f.lines.push(fm.lines); if (fm.blankLines) f.blank++; if (fm.brackets) f.brackets++; if (fm.bullets) f.bullets++; form.set(k, f);
@@ -156,6 +165,7 @@ function measurePrecision(): Record<string, { n: number; precision: number }> {
   const strengthOut = Object.fromEntries([...strength.keys()].sort().map((k) => { const a = strength.get(k)!; return [k, { n: a.bangPerSentence.length, bangPerSentenceMedian: q(a.bangPerSentence, 0.5), emojiOkMedian: q(a.emojiOk, 0.5), emojiOkP75: q(a.emojiOk, 0.75), emojiOther: a.emojiOther, ...few(a.bangPerSentence.length) }]; }));
   const formOut = Object.fromEntries([...form.keys()].sort().map((k) => { const f = form.get(k)!; return [k, { n: f.n, linesMedian: q(f.lines, 0.5), linesP75: q(f.lines, 0.75), blankLines: r2(f.blank / f.n), brackets: r2(f.brackets / f.n), bullets: r2(f.bullets / f.n), ...few(f.n) }]; }));
   const aixOut = Object.fromEntries([...aixTab.keys()].sort().map((k) => { const t = aixTab.get(k)!; return [k, { n: t.n, linesMedian: q(t.lines, 0.5), bangMedian: q(t.bang, 0.5), emojiOkMedian: q(t.emojiOk, 0.5), brackets: r2(t.brackets / t.n), keigo: sharesOf(t.keigo, t.n, 7), ...few(t.n) }]; }));
+  const answerOut = tabOut(answerTab, 16, 2);
   const meta = { built: new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10), days: DAYS, few: FEW, conversations: okConv.length, ...cnt, sentences: sentencesAll, unknownSentences: unknownAll, rolePrecision: prec, trustedRoles: [...trusted].sort() };
   const J = JSON.stringify;
   const body = `// app/lib/compose-phrase-catalog-data-v2.ts — scripts/build-phrase-catalog-v2.ts が作る（手で直さない）。竹内さん本人の LINE の送信（staff_writer=takeuchi・sure・直近 ${DAYS}日）から・札と骨と割合だけ（本文・名前なし）
@@ -180,6 +190,10 @@ export const PHRASE_SCENE_ROLE_TABLE: Record<string, { n: number; shares: Array<
 export const PHRASE_STRENGTH_TABLE: Record<string, { n: number; bangPerSentenceMedian: number; emojiOkMedian: number; emojiOkP75: number; emojiOther: number; few?: boolean }> = ${J(strengthOut)};
 /** 長さと形（行数・空行・【】・箇条書きの割合） */
 export const PHRASE_FORM_TABLE: Record<string, { n: number; linesMedian: number; linesP75: number; blankLines: number; brackets: number; bullets: number; few?: boolean }> = ${J(formOut)};
+/** 答え（お客様の問いと突き合わせた文）: 話題（topic.*）と出所（source.company_fact／material／needs_check）の割合 */
+export const PHRASE_ANSWER_TABLE: Record<string, { n: number; shares: Array<[string, number]>; few?: boolean }> = ${J(answerOut)};
+/** 許されない絵文字（😊😌🌟✨ 以外）の種類×場面の回数（返信と AIX の後の2通目。竹内さんに確かめる材料） */
+export const PHRASE_EMOJI_OTHER_TABLE: Record<string, Array<[string, number]>> = ${J(Object.fromEntries([...emojiOther.keys()].sort().map((k) => [k, [...emojiOther.get(k)!.entries()].sort((a, b) => b[1] - a[1])])))};
 /** AIX の定型の通（返信の言い回しと分けて数える） */
 export const PHRASE_AIX_TEMPLATE_TABLE: Record<string, { n: number; linesMedian: number; bangMedian: number; emojiOkMedian: number; brackets: number; keigo: Array<[string, number]>; few?: boolean }> = ${J(aixOut)};
 `;
