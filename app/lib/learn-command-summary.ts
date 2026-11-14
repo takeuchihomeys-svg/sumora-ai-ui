@@ -30,6 +30,17 @@ export type CommandSummary = {
   failed: number;
   pending: number;
   running: number;
+  /**
+   * 2026-11-14 竹内さん「弱い部分はあるか。統括の部分ちゃんと機能しているのか」:
+   *   ⚠ 統括が**矛盾した事を言っていた**（実測）:
+   *     「拾われないまま 60件」と「モードが無かった 121件」が混ざり、どちらが今の詰まりか分からない。
+   *   原因は**期間の混在**（pending は「今」・失敗は「7日」）。
+   *   → **今詰まっている（pending/running）の期間**と**過去の失敗の期間**を**別々に持つ**。
+   */
+  /** 今詰まっている分を数えた期間（時間） */
+  now_window_hours?: number;
+  /** 失敗を数えた期間（日） */
+  fail_window_days?: number;
   /** 失敗の理由（多い順・最大5件） */
   errors: Array<{ error: string; n: number }>;
   /** 一番の問題を人が読める1文に */
@@ -63,8 +74,19 @@ export function summarizeCommands(
   const now = typeof opt.now === "number" ? opt.now : Date.now();
   const since = now - (typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000);
   const stale = typeof opt.staleMs === "number" ? opt.staleMs : 30 * 60_000;
+  /**
+   * 2026-11-14 竹内さん「弱い部分はあるか。統括の部分ちゃんと機能しているのか」:
+   *   ⚠ 統括が**矛盾した事を言っていた**（実測）:
+   *     「拾われないまま 60件」と「モードが無かった 121件」が混ざり、**今の詰まり**が分からない。
+   *   原因は**期間の混在**（pending は「今」・失敗は「7日」）。
+   *   → **今の詰まりは「24時間」**、**過去の失敗は渡された期間（7日）**で数える。
+   *     ⚠ 失敗はたまにしか起きないので短い窓では見えない → 7日で見る。
+   *     ⚠ 「今詰まっている」は**長期間で見ると過去の物まで混ざる** → 24時間で見る。
+   */
+  const NOW_WINDOW_MS = 24 * 3600_000;
+  const nowSince = now - NOW_WINDOW_MS;
 
-  let done = 0, failed = 0, pending = 0, running = 0, staleN = 0;
+  let done = 0, failed = 0, pending = 0, running = 0, staleN = 0, staleOld = 0;
   const errN: Record<string, number> = {};
 
   const inWindow = list.filter((r) => {
@@ -75,18 +97,21 @@ export function summarizeCommands(
 
   for (const r of inWindow) {
     const s = String(r.status ?? "").toLowerCase();
+    const t = r.created_at ? Date.parse(String(r.created_at)) : NaN;
+    const isRecent = !Number.isFinite(t) || t >= nowSince;
     if (s === "done" || s === "completed" || s === "finished" || s === "success") done++;
     else if (s === "error" || s === "failed") failed++;
     else if (s === "running") {
       running++;
-      // 実行中のまま古い＝詰まっている（列名は `picked_up_at`）
-      const t = r.picked_up_at || r.created_at;
-      const tt = t ? Date.parse(String(t)) : NaN;
-      if (Number.isFinite(tt) && now - tt > stale) staleN++;
+      const tt2 = r.picked_up_at ? Date.parse(String(r.picked_up_at)) : t;
+      if (Number.isFinite(tt2) && now - tt2 > stale) {
+        if (isRecent) staleN++; else staleOld++;
+      }
     } else if (s === "pending" || s === "queued" || s === "") {
       pending++;
-      const t = r.created_at ? Date.parse(String(r.created_at)) : NaN;
-      if (Number.isFinite(t) && now - t > stale) staleN++;
+      if (Number.isFinite(t) && now - t > stale) {
+        if (isRecent) staleN++; else staleOld++;
+      }
     }
     const er = String(r.error_message ?? "").trim();
     if (er) {
@@ -116,19 +141,21 @@ export function summarizeCommands(
   const absentTotal = aixAbsent + brainAbsent;
   /**
    * 2026-11-14 竹内さん「ここも調べる」:
-   *   ⚠ 優先順位を間違えない。**いま詰まっている（pending が古い）**方が、
+   *   ⚠ 優先順位を間違えない。**いま詰まっている（24時間で pending が古い）**方が、
    *     過去の失敗（モードが無かった）より**現場に効く**。
-   *   → ① 拾われないまま → ② モードが無かった失敗 → ③ 失敗 → ④ 待ちが多い、の順。
+   *   → ① 拾われないまま（24時間）→ ② モードが無かった失敗 → ③ 失敗 → ④ 待ちが多い、の順。
+   *   ⚠ 期間を**言葉に書く**（「24時間」「7日」）。混ざると矛盾に見える。
    */
+  const days = Math.max(1, Math.round((typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000) / 86400_000));
   if (staleN > 0) {
-    top_problem = `拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）。拡張が指示を取りに来ていません`;
+    top_problem = `この24時間で、拾われないまま ${staleN}件の指示が残っています（30分以上 pending/running のまま）。拡張が指示を取りに来ていません`;
   } else if (absentTotal > 0 && absentTotal >= Math.max(1, failed * 0.5)) {
-    top_problem = `指示の失敗のうち ${absentTotal}件は「自動/AIXモードのPCが3時間なかった」ためです（指示の処理ではなく、拡張が自動/AIXモードになっていない時間が長い）`;
+    top_problem = `この${days}日の指示の失敗のうち ${absentTotal}件は「自動/AIXモードのPCが3時間なかった」ためです（指示の処理ではなく、拡張が自動/AIXモードになっていない時間が長い）`;
   } else if (failed > 0) {
-    top_problem = `${total}件の指示のうち ${failed}件が失敗しています${errors[0] ? `（一番多い理由: ${errors[0].error}）` : ""}`;
+    top_problem = `この${days}日の指示 ${total}件のうち ${failed}件が失敗しています${errors[0] ? `（一番多い理由: ${errors[0].error}）` : ""}`;
   } else if (pending > 2) {
     top_problem = `まだ拾われていない指示が ${pending}件たまっています`;
   }
 
-  return { total, done, failed, pending, running, errors, top_problem, mode_absent: modeAbsent };
+  return { total, done, failed, pending, running, errors, top_problem, mode_absent: modeAbsent, now_window_hours: 24, fail_window_days: days };
 }
