@@ -49,9 +49,23 @@ export type SupervisorInput = {
   } | null;
   /** サイト（この判断がどのサイトの物か・all なら全体） */
   site?: string;
+  /**
+   * 2026-11-14 竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」:
+   *   「押したら何が開くか」のうち**推測**で埋めた数（実測ではない）。
+   *   ⚠ 推測を実測と同じ重さで点数に入れると、学べていないのに高得点になる。
+   */
+  guessed_opens?: number;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
+
+/** 結論の日本語（1か所だけで持つ） */
+const HEAD: Record<SupervisorVerdict, string> = {
+  ready: "学べています（自動検索に渡してよい）",
+  almost: "もう少しで使えます（一部は自動に渡しています）",
+  not_yet: "まだ学べていません（自動に渡すと危ない）",
+  unsafe: "危ない（自動に渡さない方がよい）",
+};
 
 export type SupervisorAdvice = {
   /** ① 結論（1つ） */
@@ -73,6 +87,25 @@ export type SupervisorAdvice = {
   block: string | null;
   /** ⑤ 人が読む行（画面・報告用） */
   lines: string[];
+  /**
+   * 2026-11-14 竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」:
+   *   **打ち合わせで統括自身が話す内容**（議題・根拠・竹内さんへの質問）。
+   *   ⚠ ただの数字の列ではなく「**何を決めたいか**」を出す。
+   *   ・today     … 今日の結論（1〜3行）
+   *   ・agenda    … 議題（決めたい事・相談したい事）優先順位つき
+   *   ・questions … 竹内さんに聞く事（統括だけでは決められない）
+   *   ・evidence  … 根拠（数字・実測。推測は「推測」と明記）
+   */
+  meeting: {
+    /** 今日の結論（そのまま読み上げられる形） */
+    today: string[];
+    /** 議題（優先順位つき） */
+    agenda: Array<{ priority: number; topic: string; why: string; decide: string }>;
+    /** 竹内さんに聞く事（判断を委ねる） */
+    questions: Array<{ q: string; options?: string[]; why: string }>;
+    /** 根拠（数字。推測は guessed:true） */
+    evidence: Array<{ label: string; value: string; guessed?: boolean }>;
+  };
 };
 
 /** 弱い所の種類ごとに「どう直すか」 */
@@ -223,13 +256,6 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   else if (coverage >= 40) verdict = "almost";
   else verdict = "not_yet";
 
-  const HEAD: Record<SupervisorVerdict, string> = {
-    ready: "学べています（自動検索に渡してよい）",
-    almost: "もう少しで使えます（一部は自動に渡しています）",
-    not_yet: "まだ学べていません（自動に渡すと危ない）",
-    unsafe: "危ない（自動に渡さない方がよい）",
-  };
-
   // ── ③ 前回との比較 ──
   const prev = inp.prev && typeof inp.prev === "object" ? inp.prev : null;
   const delta = prev
@@ -272,7 +298,152 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     score: { coverage, weak: weakN, delta },
     block,
     lines,
+    meeting: buildMeeting({
+      site, verdict, coverage, rows, next, points, opens, screens, sequence,
+      withOps, weakN, block, actions, delta,
+      /** 推測で埋めた開き方の数（実測ではない物） */
+      guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
+      siteCounts: inp.site_counts || {},
+      modeCounts: inp.mode_counts || {},
+    }),
   };
+}
+
+/**
+ * 2026-11-14 竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」:
+ *   **統括が打ち合わせで話す内容**を作る（純関数）。
+ *   ⚠ 「数字を並べる」のではなく、**決めたい事・聞きたい事**を出す。
+ */
+function buildMeeting(m: {
+  site: string; verdict: SupervisorVerdict; coverage: number;
+  rows: number; next: number; points: number; opens: number; screens: number; sequence: number;
+  withOps: number; weakN: number; block: string | null;
+  actions: SupervisorAdvice["actions"];
+  delta: SupervisorAdvice["score"]["delta"];
+  guessedOpens: number;
+  siteCounts: Record<string, number>;
+  modeCounts: Record<string, number>;
+}): SupervisorAdvice["meeting"] {
+  const who = m.site === "all" ? "全体" : m.site;
+  const today: string[] = [];
+  const agenda: SupervisorAdvice["meeting"]["agenda"] = [];
+  const questions: SupervisorAdvice["meeting"]["questions"] = [];
+  const evidence: SupervisorAdvice["meeting"]["evidence"] = [];
+
+  // ── 根拠（数字）──
+  evidence.push({ label: "結論", value: `${HEAD[m.verdict]}（材料 ${m.coverage}/100・弱い所 ${m.weakN}件）` });
+  evidence.push({ label: "記録", value: `${m.rows}件（うち操作が付いている ${m.withOps}件）` });
+  evidence.push({ label: "押す順番", value: `${m.next}通り` });
+  evidence.push({ label: "押す場所", value: `${m.points}個` });
+  if (m.opens > 0) {
+    evidence.push({
+      label: "押したら何が開くか",
+      value: `${m.opens}個（うち推測 ${m.guessedOpens}個・実測 ${Math.max(0, m.opens - m.guessedOpens)}個）`,
+      guessed: m.guessedOpens >= m.opens,
+    });
+  }
+  evidence.push({ label: "画面ごとの手順", value: `${m.screens}種類` });
+  evidence.push({ label: "一連の動き", value: `${m.sequence}手` });
+  const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
+  if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });
+  const mc = Object.entries(m.modeCounts);
+  if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });
+
+  // ── 今日の結論（読み上げられる形）──
+  today.push(`【${who}】${HEAD[m.verdict]}`);
+  today.push(`材料 ${m.coverage}点／弱い所 ${m.weakN}件／記録 ${m.rows}件（操作が付いているのは ${m.withOps}件）`);
+  if (m.delta) {
+    const d = m.delta;
+    const parts: string[] = [];
+    if (d.rows) parts.push(`記録${d.rows > 0 ? "+" : ""}${d.rows}`);
+    if (d.next) parts.push(`順番${d.next > 0 ? "+" : ""}${d.next}`);
+    if (d.points) parts.push(`場所${d.points > 0 ? "+" : ""}${d.points}`);
+    if (d.weak) parts.push(`弱い所${d.weak > 0 ? "+" : ""}${d.weak}`);
+    if (parts.length) today.push(`前回から: ${parts.join("・")}`);
+  }
+
+  // ── 議題（決めたい事）──
+  /**
+   * ⚠ 一番大事な議題は「**材料が足りない**」事。数字が良くても中身が薄い事がある。
+   */
+  if (m.rows > 0 && m.withOps / m.rows < 0.3) {
+    agenda.push({
+      priority: 0,
+      topic: "写真は撮れているのに、操作が付いていない",
+      why: `記録 ${m.rows}件のうち、操作の並びが付いているのは ${m.withOps}件（${Math.round((m.withOps / m.rows) * 100)}%）`,
+      decide: "操作を付ける仕組みを直す（録画の経路）／このままでよいか",
+    });
+  }
+  if (m.opens > 0 && m.guessedOpens >= m.opens) {
+    agenda.push({
+      priority: 1,
+      topic: "「押したら何が開くか」が全部推測",
+      why: `実測が0で、名前から推測した ${m.guessedOpens}個だけ`,
+      decide: "推測を点数に入れるか／実測が入るまで点を下げるか",
+    });
+  }
+  if (m.block) {
+    agenda.push({ priority: 0, topic: "自動に渡すと危ない状態", why: m.block, decide: "自動を止めるか、警告だけで続けるか" });
+  }
+  const siteKeys = Object.keys(m.siteCounts).filter((k) => k && k !== "(空)");
+  if (siteKeys.length === 1 && m.site === "all") {
+    agenda.push({
+      priority: 2,
+      topic: `片方のサイト（${siteKeys[0]}）しか記録が無い`,
+      why: `${siteKeys[0]} だけ。もう片方は運用されていない`,
+      decide: "もう片方も運用するか／片方だけでよいか",
+    });
+  }
+  if (m.coverage >= 65 && m.weakN > 5) {
+    agenda.push({
+      priority: 3,
+      topic: "点数は高いのに弱い所が多い",
+      why: `材料 ${m.coverage}点なのに弱い所 ${m.weakN}件`,
+      decide: "点数の配点を見直すか／弱い所を先に潰すか",
+    });
+  }
+  for (const a of m.actions.slice(0, 3)) {
+    if (agenda.length >= 5) break;
+    agenda.push({
+      priority: 4,
+      topic: a.what + (a.name ? `（${a.name}）` : ""),
+      why: a.why || "",
+      decide: a.how,
+    });
+  }
+
+  // ── 竹内さんに聞く事 ──
+  if (m.rows > 0 && m.withOps / m.rows < 0.3) {
+    questions.push({
+      q: "写真は99%撮れているのに、そこから学べているのは12%だけです。この差をどう扱いますか？",
+      options: ["まず録画の経路を直す（推奨）", "写真から読む仕組みを先に作る", "今のままでよい"],
+      why: "材料が無いまま点数だけ上がると、『学べている』と誤解する",
+    });
+  }
+  if (m.opens > 0 && m.guessedOpens >= m.opens) {
+    questions.push({
+      q: "「押したら何が開くか」が全部推測です。点数に入れてよいですか？",
+      options: ["実測だけを点にする（推奨）", "推測も半分の点にする", "推測でも今のままでよい"],
+      why: "推測を実測と同じ重さにすると、実際には学べていないのに高得点になる",
+    });
+  }
+  if (siteKeys.length === 1 && m.site === "all") {
+    questions.push({
+      q: `${siteKeys[0]} だけで、もう片方のサイトの記録がありません。どうしますか？`,
+      options: ["もう片方も運用する", "片方だけを対象にする（推奨）", "様子を見る"],
+      why: "サイトごとに手順が違うので、片方の学びをもう片方で使うと誤適用になる",
+    });
+  }
+  if (!questions.length && m.actions.length) {
+    questions.push({
+      q: "次に直すのは「" + m.actions[0].what + "」でよいですか？",
+      options: ["それで進める（推奨）", "別の物を先に"],
+      why: m.actions[0].why || "",
+    });
+  }
+
+  agenda.sort((a, b) => a.priority - b.priority);
+  return { today, agenda: agenda.slice(0, 6), questions: questions.slice(0, 4), evidence };
 }
 
 function num(v: unknown): number {

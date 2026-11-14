@@ -3840,6 +3840,53 @@ CREATE INDEX IF NOT EXISTS idx_human_learn_profile_scope ON human_learn_profile(
 -- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
 ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
+
+-- ── 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」──
+-- learn_supervisor_log: **統括の判断を1回ごとに1行**残す。
+--   なぜ要るか: 判断は今まで human_learn_profile.bundle（JSONB）の中にしかなく、
+--     **前回と比べる・推移を見る・打ち合わせで使う**ができなかった。
+--   入れる物: 結論・材料の揃い・弱い所の数・材料の数・推測の数・次にやる事・打ち合わせの内容。
+--   ⚠ 数と判断だけ（入力した中身・お客様の名前・電話・住所は入れない）。
+CREATE TABLE IF NOT EXISTS learn_supervisor_log (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- どの範囲の判断か（all / realpro / itandi）
+  scope TEXT NOT NULL DEFAULT 'all',
+  -- 結論（ready / almost / not_yet / unsafe）
+  verdict TEXT NOT NULL,
+  -- 人が読む1行の結論
+  headline TEXT,
+  -- 材料の揃い（0〜100）
+  coverage INTEGER NOT NULL DEFAULT 0,
+  -- 弱い所の数
+  weak_n INTEGER NOT NULL DEFAULT 0,
+  -- 材料の数（押す順番・押す場所・開き方・画面・一連・操作つき記録）
+  next_n INTEGER NOT NULL DEFAULT 0,
+  points_n INTEGER NOT NULL DEFAULT 0,
+  opens_n INTEGER NOT NULL DEFAULT 0,
+  screens_n INTEGER NOT NULL DEFAULT 0,
+  sequence_n INTEGER NOT NULL DEFAULT 0,
+  with_ops INTEGER NOT NULL DEFAULT 0,
+  -- 「押したら何が開くか」のうち推測で埋めた数（実測ではない）
+  guessed_opens INTEGER NOT NULL DEFAULT 0,
+  -- 元にした記録の数
+  rows INTEGER NOT NULL DEFAULT 0,
+  -- 前回からの増減（{rows,next,points,opens,weak}）
+  delta JSONB,
+  -- 次にやる事（[{priority,what,why,how,name}]）
+  actions JSONB,
+  -- 打ち合わせで話す内容（{today,agenda,questions,evidence}）
+  meeting JSONB,
+  -- 止める理由（危ない時だけ）
+  block TEXT,
+  -- 元にした束の版（同じ判断を二重に残さないための印）
+  bundle_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_learn_supervisor_scope ON learn_supervisor_log(scope, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learn_supervisor_created ON learn_supervisor_log(created_at DESC);
+-- 2026-10-21 の決まり: サーバーだけの表は RLS を入れたまま（DISABLE しない）
+ALTER TABLE learn_supervisor_log ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE learn_supervisor_log IS '学習の統括の判断（結論・材料の揃い・弱い所・次にやる事・打ち合わせの内容）を1回ごとに1行。数と判断だけ。2026-11-14 竹内さん承認';
 -- 画面の写真の置き場（2026-11-11 竹内さん「画面画像みればわかるのでは」）。
 --   写真の中身は表に入れない（1行が数百KBになり集計が重くなる）→ Storage に置き、表には名前だけ。
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
