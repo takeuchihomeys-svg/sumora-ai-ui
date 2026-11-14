@@ -522,6 +522,7 @@ export function buildHumanLearnBundle(
   rows: ReadonlyArray<MotionRow>,
   nowMs: number = Date.now(),
   audits: import("./learn-audit-summary").AuditSummary | null = null,
+  commands: import("./learn-command-summary").CommandSummary | null = null,
 ): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
   // ① 押す順番（写真ごとの並びから）
@@ -954,6 +955,21 @@ export function buildHumanLearnBundle(
         causes: audits.causes,
         bad: audits.bad,
         top_problem: audits.top_problem,
+      }
+      : null,
+    /**
+     * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+     *   **現場への指示の詰まり**も統括に渡す（検索が動いていても指示が届かなければ現場は止まる）。
+     */
+    commands: commands
+      ? {
+        total: commands.total,
+        done: commands.done,
+        failed: commands.failed,
+        pending: commands.pending,
+        running: commands.running,
+        errors: commands.errors,
+        top_problem: commands.top_problem,
       }
       : null,
   } as SupervisorInput);

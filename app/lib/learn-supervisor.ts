@@ -74,6 +74,28 @@ export type SupervisorInput = {
     top_problem?: string | null;
     advice?: string | null;
   } | null;
+  /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+   *   **指示（自動便・一括検索）が詰まっていないか**（`automation_commands` の集計）。
+   *   ⚠ これを入れないと、統括は「検索は止まっていない」と言いながら
+   *     **指示が溜まったまま／失敗したまま**という現場の詰まりを見落とす。
+   */
+  commands?: {
+    /** 期間内の指示の数 */
+    total: number;
+    /** 終わった数 */
+    done: number;
+    /** 失敗した数 */
+    failed: number;
+    /** まだ拾われていない（pending） */
+    pending: number;
+    /** 実行中（running） */
+    running: number;
+    /** 失敗の理由（多い順） */
+    errors?: Array<{ error: string; n: number }>;
+    /** 一番の問題を1文で */
+    top_problem?: string | null;
+  } | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -301,6 +323,14 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    *   ⚠ `unsafe` は上限で緩めない（危ない物は危ないまま）。
    */
   const opsRatio = rows > 0 ? withOps / rows : 0;
+  /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+   *   **指示が詰まっていないか**も判断材料にする（`automation_commands`）。
+   *   ⚠ 検索は動いていても、**指示が拾われないまま／失敗したまま**なら現場は詰まっている。
+   */
+  const cm = inp.commands && typeof inp.commands === "object" ? inp.commands : null;
+  const cmdTotal = num(cm?.total);
+  const cmdStale = cm?.top_problem ? String(cm.top_problem) : null;
   const capByRatio: SupervisorVerdict | null =
     rows > 0 && withOps === 0 ? "not_yet"
       : rows > 0 && opsRatio < 0.3 ? "almost"
@@ -404,6 +434,8 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
       /** 2026-11-14: 実際の検索の結果も議題に使う */
       audits: au,
+      /** 2026-11-14: 現場への指示の詰まりも議題に使う */
+      commands: cm,
     }),
   };
 }
@@ -502,6 +534,8 @@ function buildMeeting(m: {
   modeCounts: Record<string, number>;
   /** 2026-11-14: 実際の検索の結果も議題に使う */
   audits?: SupervisorInput["audits"];
+  /** 2026-11-14: 現場への指示の詰まりも議題に使う */
+  commands?: SupervisorInput["commands"];
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
 }): SupervisorAdvice["meeting"] {
@@ -542,6 +576,16 @@ function buildMeeting(m: {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
     }
   }
+  /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+   *   **指示（自動便・一括検索）の詰まり**も根拠に出す。
+   */
+  if (m.commands && num(m.commands.total) > 0) {
+    evidence.push({
+      label: "現場への指示",
+      value: `${m.commands.total}件（完了${m.commands.done}・失敗${m.commands.failed}・待ち${m.commands.pending}・実行中${m.commands.running}）`,
+    });
+  }
   const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
   if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });
   const mc = Object.entries(m.modeCounts);
@@ -562,12 +606,28 @@ function buildMeeting(m: {
 
   // ── 議題（決めたい事）──
   /**
+   * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
+   *   **指示が詰まっている**のも議題（検索が動いていても現場は止まる）。
+   */
+  if (m.commands && num(m.commands.total) > 0 && m.commands.top_problem) {
+    agenda.push({
+      priority: 0,
+      topic: "現場への指示が詰まっている",
+      why: String(m.commands.top_problem),
+      decide: "指示が拾われるようにする／失敗の理由を直す",
+    });
+    questions.push({
+      q: `現場への指示: ${m.commands.top_problem} どれから直しますか？`,
+      options: ["拾われていない指示から（推奨）", "失敗の理由から", "今のままでよい"],
+      why: "検索が動いていても、指示が届かなければ物件が出ない",
+    });
+  }
+  /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **一番大事な議題は「実際の検索が止まっている」**（人の動きを学べていても意味がない）。
    *   ⚠ 実測: 60回中56回が途中で止まっていた。
    */
-  if (m.audits && num(m.audits.runs) > 0 && num(m.audits.finish_rate) < 90) {
-    const top = Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length ? m.audits.stalled_at[0] : null;
+  if (m.audits && num(m.audits.runs) > 0 && num(m.audits.finish_rate) < 90) {    const top = Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length ? m.audits.stalled_at[0] : null;
     agenda.push({
       priority: 0,
       topic: "実際の検索が途中で止まっている",
