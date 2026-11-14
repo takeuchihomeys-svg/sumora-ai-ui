@@ -49,6 +49,8 @@ export type AuditSummary = {
   bad: number;
   /** いま一番多い「止まり方」を人が読める1文に */
   top_problem: string | null;
+  /** その時に**どこを疑うか**（`top_problem` に対する次の一手） */
+  advice?: string | null;
 };
 
 /** 段の名前を人が読める日本語に（`search_audits.steps` の k） */
@@ -164,8 +166,10 @@ export function summarizeAudits(
 
     /**
      * 止まった場所: `steps` の**最後の段**（`page:` を除く）。
-     *   ⚠ `steps` が空（`started` のまま）の回は「条件を入れ始めた所で止まった」ではなく
-     *     **段が1つも残っていない**＝記録が届いていない可能性。`(段なし)` として数える。
+     *   ⚠ `steps` が空（`started` のまま）の回は、**`finished` が来なかった**回
+     *     （PCを閉じた・タブを閉じた・20分たった）。`steps` は `finished` の時だけ送られるので、
+     *     **何も動かなかったのではなく「動いた記録が届かなかった」**。
+     *   → 「(段が残っていない)」ではなく **「終わりの合図が来なかった」** と言う（正しく伝える）。
      */
     const steps = Array.isArray(r.steps) ? (r.steps as Array<Record<string, unknown>>) : [];
     if (s !== "finished") {
@@ -178,7 +182,7 @@ export function summarizeAudits(
         last = k;
         break;
       }
-      const label = last ? stageLabel(last) : "(段が残っていない)";
+      const label = last ? stageLabel(last) : "終わりの合図が来なかった（steps が届いていない）";
       stageN[label] = (stageN[label] ?? 0) + 1;
     }
   }
@@ -195,17 +199,25 @@ export function summarizeAudits(
   /**
    * 一番の問題を1文で。
    *   ⚠ 「完走率」だけでなく**どこで止まるか**を言う（直す所が分かるように）。
+   *   ⚠ 「終わりの合図が来なかった」が一番多い時は、**直す所が違う**（検索の手順ではなく記録の経路）。
+   *     その時は「なぜ合図が来ないか」を言う（PCを閉じた・タブを閉じた・20分たった）。
    */
   let top_problem: string | null = null;
+  let advice: string | null = null;
   if (runs > 0 && finish_rate < 90) {
     const topStage = stalled_at[0];
-    top_problem = topStage
-      ? `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）。一番多いのは「${topStage.stage}」で止まる（${topStage.n}回）`
-      : `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）`;
+    if (topStage && topStage.stage.startsWith("終わりの合図が来なかった")) {
+      top_problem = `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）。うち ${topStage.n}回は「終わりの合図が来なかった」回です`;
+      advice = "検索の手順ではなく**記録の経路**を疑う（PC・タブを閉じた／20分たって見回りに拾われた／finished が届いていない）";
+    } else {
+      top_problem = topStage
+        ? `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）。一番多いのは「${topStage.stage}」で止まる（${topStage.n}回）`
+        : `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）`;
+    }
   }
 
   return {
     runs, finished, abandoned, started, finish_rate,
-    stalled_at, causes, errors, bad, top_problem,
+    stalled_at, causes, errors, bad, top_problem, advice,
   };
 }

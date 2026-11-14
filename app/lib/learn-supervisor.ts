@@ -72,6 +72,7 @@ export type SupervisorInput = {
     causes?: Array<{ cause: string; n: number }>;
     bad?: number;
     top_problem?: string | null;
+    advice?: string | null;
   } | null;
 };
 
@@ -566,6 +567,7 @@ function buildMeeting(m: {
       topic: "実際の検索が途中で止まっている",
       why: `${m.audits.runs}回中 完走は ${m.audits.finished}回だけ（完走率 ${m.audits.finish_rate}%）${top ? `。一番多いのは「${top.stage}」で止まる（${top.n}回）` : ""}`,
       decide: top ? `「${top.stage}」を直す／このままでよいか` : "止まる原因を調べる",
+      ...(m.audits.advice ? { why: `${m.audits.runs}回中 完走は ${m.audits.finished}回だけ（完走率 ${m.audits.finish_rate}%）。${top ? `一番多いのは「${top.stage}」（${top.n}回）。` : ""}${m.audits.advice}` } : {}),
     });
     questions.push({
       q: `実際の検索が ${m.audits.runs}回中 ${m.audits.finished}回しか完走していません（完走率 ${m.audits.finish_rate}%）。どれから直しますか？`,
