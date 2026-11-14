@@ -118,7 +118,17 @@ console.log("\n■ bulk-dl・itandi-bulk-dl の配線（静的に確かめる）
   ok("background: 線は計画の last_by_site から・広げての回と一時調整の回は置かない", /\(!batchIsWide && !searchOverride && self\.AxlxUpdateOrderStop && cmdPayload && cmdPayload\.update_days_plan/.test(bg) && /lastSearchFor\(cmdPayload\.update_days_plan\.by_customer\[String\(effectiveCustomer\.id\)\], batchSite\)/.test(bg));
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("manifest: bulk-dl・itandi-bulk-dl の前に update-order-stop.js", cs.some((c) => /update-order-stop\.js,bulk-dl\.js$/.test(c)) && cs.some((c) => /update-order-stop\.js,itandi-bulk-dl\.js$/.test(c)));
+  /**
+   * 2026-11-14: `room-dedupe.js` を間に足したので「直後」を要求する書き方は落ちる。
+   *   → **前に在るか**だけを見る（並び順の本質）。
+   */
+  const _b4 = (list, a, b) => {
+    const i = list.indexOf(a), j = list.indexOf(b);
+    return i >= 0 && j >= 0 && i < j;
+  };
+  ok("manifest: bulk-dl・itandi-bulk-dl の前に update-order-stop.js",
+    cs.some((c) => _b4(c, "update-order-stop.js", "bulk-dl.js")) && cs.some((c) => _b4(c, "update-order-stop.js", "itandi-bulk-dl.js")) &&
+    cs.some((c) => _b4(c, "room-dedupe.js", "bulk-dl.js")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -151,8 +151,19 @@ ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_au
   const mf = JSON.parse(read("manifest.json"));
   ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
-  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
+  /**
+   * 2026-11-14: ⚠ 正確な文字列で比べていたので、**関係ないファイルを1つ足すだけで落ちる**
+   *   （`room-dedupe.js` を足した時に3本落ちた）。
+   *   → **並び順**だけを見る（`bulk-dl.js` より前に auto-run.js / sent-skip.js があるか）。
+   */
+  const _before = (list, a, b) => {
+    const i = list.indexOf(a), j = list.indexOf(b);
+    return i >= 0 && j >= 0 && i < j;
+  };
+  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）",
+    cs.some((s) => _before(s, "auto-run.js", "bulk-dl.js") && _before(s, "sent-skip.js", "bulk-dl.js")));
+  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）",
+    cs.some((s) => _before(s, "auto-run.js", "itandi-bulk-dl.js") && _before(s, "sent-skip.js", "itandi-bulk-dl.js") && _before(s, "itandi-guard.js", "itandi-bulk-dl.js")));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

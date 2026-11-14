@@ -417,16 +417,49 @@ if (chrome.storage && chrome.storage.session && chrome.storage.session.setAccess
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
-  chrome.tabs.get(tabId, (tab) => {
+    chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.url) return;
     configureSidePanelForTab(tabId, tab.url);
+    _learnSwitchSite(tab.url);
   });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const url = changeInfo.url || (changeInfo.status === "complete" ? tab.url : null);
-  if (url) configureSidePanelForTab(tabId, url);
+  if (url) {
+    configureSidePanelForTab(tabId, url);
+    if (changeInfo.url) _learnSwitchSite(url);
+  }
 });
+
+/**
+ * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
+ *   改善していくためにも必要」:
+ *
+ *   **タブを切り替えてサイトが変わったら、そのサイトの学びに入れ替える**。
+ *   ⚠ 旧は全体（全部混ぜた束）を1回読むだけだったので、リアプロで学んだ順番が itandi でも使われていた。
+ *   → サイトが変わった時だけ取り直す（同じサイトなら何もしない＝通信しない）。
+ */
+var _learnSiteNow = null;
+async function _learnSwitchSite(url) {
+  try {
+    var u = String(url || "");
+    var s = /itandibb\.com/.test(u) ? "itandi" : (/realnetpro\.com/.test(u) ? "realpro" : null);
+    if (!s) return { ok: true, skipped: "not-target" };
+    if (s === _learnSiteNow) return { ok: true, skipped: "same-site" };
+    _learnSiteNow = s;
+    /**
+     * `axlx_learn_at` を 0 にして「取り直す」状態にする（5分の待ちを飛ばす）。
+     * ⚠ 版が同じでも、**サイトが違えば入れ替える必要がある**（別の束だから）。
+     */
+    await chrome.storage.local.set({ axlx_learn_at: 0 });
+    var r = await _refreshLearnedBundle(true);
+    console.log("[learn] " + s + " の学びに入れ替えました:", JSON.stringify(r));
+    return r;
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
 
 // ── ヘルパー: リアプロの資料（印刷用PDF）を、そのリアプロのタブの中で取る ─────────────
 // 2026-10-01 竹内「なんで今両方からログインされている形になっているのか」「それで改善行う」:
@@ -2274,9 +2307,50 @@ async function _refreshLearnedBundle(force) {
       } catch (_) { /* 版が読めなければ取りに行く（安全側） */ }
     }
     // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
-    var res = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return { ok: false, error: "http_" + res.status };
-    var json = await res.json();
+    /**
+     * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
+     *   改善していくためにも必要」:
+     *
+     *   ⚠ 旧は `?scope=` を付けずに読んでいたので、**リアプロと itandi の学びが1つに混ざった束**を
+     *     両方のサイトで使っていた。サイトごとに手順も欄の名前も違うので、
+     *     混ぜると「itandi で学んだ順番をリアプロで使う」ような**誤適用**が起きる。
+     *
+     *   → **サイトごとに別々に取る**（`?scope=realpro` / `?scope=itandi`）。
+     *     ・`axlx_learn_by_site` … `{ realpro: {next, points, ...}, itandi: {...} }`（サイト別の正本）
+     *     ・今までのキー（`axlx_learn_next` など）は**今いるサイトの物**を入れる
+     *       （page-script は今まで通り読める＝変更が要らない）
+     */
+    var SITES = ["realpro", "itandi"];
+    var perSite = {};
+    for (var si = 0; si < SITES.length; si++) {
+      var sc = SITES[si];
+      try {
+        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        if (!sres.ok) continue;
+        var sjson = await sres.json();
+        if (sjson && sjson.bundle && typeof sjson.bundle === "object") perSite[sc] = sjson.bundle;
+      } catch (_) { /* 片方が取れなくても、もう片方は使う */ }
+    }
+    // 今いるタブのサイト（分からなければ realpro）
+    var curSite = "realpro";
+    try {
+      var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
+      if (/itandibb\.com/.test(uNow)) curSite = "itandi";
+      else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
+    } catch (_) {}
+    /**
+     * 今のサイトの束を選ぶ。無ければ realpro → 最後に全体（scope=all）へ落とす
+     *   （新しいサイトでまだ学びが無い時に「何も無い」で止まらないように）。
+     */
+    var res = null;
+    if (perSite[curSite]) { res = { ok: true, json: { bundle: perSite[curSite] } }; }
+    if (!res) {
+      var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+      if (!allRes.ok) return { ok: false, error: "http_" + allRes.status };
+      res = { ok: true, raw: await allRes.json() };
+    }
+    var json = res.json || res.raw || {};
     var bundle = json && json.bundle;
     if (!bundle || typeof bundle !== "object") {
       // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
@@ -2327,6 +2401,39 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_weak: weak,
       axlx_learn_site_flow: siteFlow,
       axlx_learn_screen_flow: screenFlow,
+      /**
+       * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習」:
+       *   **サイト別の正本**（リアプロ用と itandi 用を別々に持つ）。
+       *   ⚠ 上のキー（`axlx_learn_next` など）は**今いるサイトの物**なので、
+       *     タブを切り替えた時に取り直せば、そのサイトの学びに切り替わる。
+       */
+      axlx_learn_by_site: perSite,
+      /**
+       * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+       *   統括の**判断**（結論・次にやる事・数字）も置く。
+       *   ⚠ これが無いと「今の学びを自動検索に渡してよいか」が現場で分からない。
+       */
+      axlx_learn_supervisor: (bundle.supervisor && typeof bundle.supervisor === "object") ? bundle.supervisor : null,
+      axlx_learn_supervisor_by_site: (bundle.supervisor_by_site && typeof bundle.supervisor_by_site === "object") ? bundle.supervisor_by_site : null,
+      /** 今どのサイトの学びを上のキーに入れたか（点検用） */
+      axlx_learn_for_site: curSite,
+      /** サイト別に何が学べているか（1行ずつ） */
+      axlx_learn_site_summary: (function () {
+        var o = {};
+        for (var k in perSite) {
+          if (!Object.prototype.hasOwnProperty.call(perSite, k)) continue;
+          var b = perSite[k] || {};
+          o[k] = {
+            rows: (b.source && b.source.rows) || 0,
+            next: Object.keys(b.next || {}).length,
+            points: Object.keys(b.points || {}).length,
+            opens: Object.keys(b.opens || {}).length,
+            screens: Object.keys(b.screen_flow || {}).length,
+            mode: (b.mode_counts || null),
+          };
+        }
+        return o;
+      })(),
       axlx_learn_opens: opens,
       axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
       axlx_learn_seq: seqFlow,
@@ -2340,7 +2447,22 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
     console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手・展開先 " + Object.keys(opens).length + "個"
-      + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : ""));
+      + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : "")
+      + "・サイト " + Object.keys(perSite).join("/"));
+    /**
+     * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+     *   統括の判断を1行で出す（現場で「今の学びを使ってよいか」が分かる）。
+     */
+    try {
+      var sup = bundle.supervisor;
+      if (sup && sup.headline) {
+        console.log("[learn] 統括: " + sup.headline + (sup.score ? "（材料 " + sup.score.coverage + "/100・弱い所 " + sup.score.weak + "件）" : ""));
+        if (sup.block) console.warn("[learn] 統括の警告: " + sup.block);
+        if (Array.isArray(sup.actions) && sup.actions.length) {
+          console.log("[learn] 次にやる事: " + sup.actions.slice(0, 3).map(function (a) { return a.what; }).join(" / "));
+        }
+      }
+    } catch (_) {}
     return {
       ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length,
       opens: Object.keys(opens).length,

@@ -120,9 +120,63 @@
     return { skipped: skipped };
   }
 
+  /**
+   * 2026-11-14 竹内さん「同じ建物の場合平米数が同じなら一番低い家賃の物件1件だけにする。
+   *   同じマンションでも同じ間取りで大量に募集されている場合。
+   *   ここもともとは設定していたのに今すべてダウンロードしているので改善する」
+   *
+   *   1つの建物で「1LDK 29.28㎡」が10〜20部屋いっしょに募集される事がある（階と号室だけ違う）。
+   *   全部の資料を取ると **PDF が10倍**になり、お客様に見せても同じ部屋が並ぶだけ。
+   *   → **同じ建物・同じ間取り・同じ平米数**なら、**いちばん安い1件だけ**を選ぶ。
+   *
+   *   ⚠ 守る事:
+   *     ・間取りが違う／平米が違うなら**別の部屋**として残す
+   *     ・建物名・間取り・平米・家賃が**読めない時は絞らない**（迷ったら残す＝資料を落とさない）
+   *     ・スタッフモードでは**絞らない**（人が選んだ物を勝手に外さない）
+   *   判定は `chrome-extension/room-dedupe.js`（純関数・試験あり）。
+   */
+  function _applyCheapestPerLayout(state) {
+    if (!state) return { dropped: 0 };
+    if (_staffModeOn) return { dropped: 0 };
+    var RD = (typeof self !== "undefined" ? self : window).AxlxRoomDedupe;
+    if (!RD || !RD.cheapestPerBuildingLayoutSize) return { dropped: 0 };
+    /**
+     * チェックされている行だけを対象にする（送付済みで外した物は既に checked=false）。
+     */
+    var items = [], refs = [];
+    tracked.forEach(function (t) {
+      if (!t.cb.checked) return;
+      var card;
+      try { card = extractCard(t.btn); } catch (_) { return; }
+      items.push({ name: card.name, cells: card.cells || [], texts: card.texts || [] });
+      refs.push(t);
+    });
+    if (items.length < 2) return { dropped: 0 };
+    var res = RD.cheapestPerBuildingLayoutSize(items);
+    var dropped = 0, names = [];
+    for (var i = 0; i < res.drop.length; i++) {
+      var t = refs[res.drop[i]];
+      if (!t || !t.cb || !t.cb.checked) continue;
+      t.cb.checked = false;
+      t.__axSkip = true;
+      t.__axCheapestSkip = true;
+      dropped++;
+      if (names.length < 4) {
+        var f = RD.factsOf(items[res.drop[i]]);
+        names.push(f.name + " " + (f.room || "") + "（" + (f.layout || "?") + " " + (f.area != null ? f.area + "㎡" : "?") + "）");
+      }
+    }
+    if (dropped) {
+      state.cheapestSkipped = (state.cheapestSkipped || 0) + dropped;
+      state.cheapestGroups = (state.cheapestGroups || 0) + res.groups.filter(function (g) { return g.dropped.length; }).length;
+      console.log("[AXLX bulk-dl] 同じ建物・同じ間取り・同じ平米は最安1件だけ選ぶ: " + dropped + "件を外しました: " + names.join("・"));
+      updateBar();
+    }
+    return { dropped: dropped };
+  }
+
   /** 一覧の1行（送る直前に選んだ1件）を pickedRooms に足す（2026-11-10・1件ずつ選ぶ形） */
-  function _rememberPickedOne(state, item) {
-    var SK = _SK();
+  function _rememberPickedOne(state, item) {    var SK = _SK();
     if (!state || !item || !item.btn) return;
     var list = state.pickedRooms || (state.pickedRooms = []);
     if (list.length >= 150) return;
@@ -3064,6 +3118,22 @@
       });
       if (sent) console.log("[AXLX bulk-dl] 送付済みの部屋 " + sent + "件は送らない（資料を取りに行かない）");
       if (old) console.log("[AXLX bulk-dl] 前回の検索より古い行 " + old + "件は送らない");
+      /**
+       * 2026-11-14 竹内さん「同じ建物の場合平米数が同じなら一番低い家賃の物件1件だけにする。
+       *   同じマンションでも同じ間取りで大量に募集されている場合。ここもともとは設定していたのに
+       *   今すべてダウンロードしているので改善する」
+       *
+       *   → この一覧の中から **同じ建物・同じ間取り・同じ平米数** の組を作り、**最安1件だけ**残す。
+       *     ⚠ 送付済み・古い行を外した**後**に行う（残った物だけで比べる）。
+       *     ⚠ スタッフモード・読めない項目は絞らない（`_applyCheapestPerLayout` の中で判断）。
+       */
+      try {
+        var _cheap = _applyCheapestPerLayout(state);
+        if (_cheap && _cheap.dropped) {
+          allowed = allowed.filter(function (t) { return !(t && t.__axCheapestSkip); });
+          _tmark("cheapest_skip", _cheap.dropped + "件を最安1件に絞った");
+        }
+      } catch (e) { console.warn("[AXLX bulk-dl] 最安1件の絞り込みで失敗（絞らずに続けます）:", (e && e.message) || e); }
       if (!_skCounted) _skCounted = true;
       state.pageSkipped = sent;
       if (!allowed.length) {

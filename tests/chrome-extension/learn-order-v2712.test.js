@@ -101,7 +101,11 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
     const ms = Number(m[1]) * (m[2] ? Number(m[2]) : 1) * (m[3] ? Number(m[3]) : 1) * 1000;
     return ms <= 30 * 60 * 1000;   // 30分以内ならOK（今は5分）
   })());
-  ok("  取れなくても止まらない（あれば使う）", /return \{ ok: false, error: "http_" \+ res\.status \}/.test(bg));
+  /**
+   * 2026-11-14: サイト別に束を取るように変えた（`?scope=realpro` / `?scope=itandi`）ので、
+   *   「取れなくても止まらない」の形が変わった（サイト別→だめなら全体へ落とす）。
+   */
+  ok("  取れなくても止まらない（あれば使う）", /error: "http_" \+ (allRes|sres)\.status/.test(bg));
   ok("learn-order.js を manifest に足した", mf.web_accessible_resources[0].resources.includes("learn-order.js"));
 }
 

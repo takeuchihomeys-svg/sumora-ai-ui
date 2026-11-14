@@ -101,6 +101,9 @@ console.log("\n=== ③ 直した印（目印）が Chrome 側に入っている�
       ["学びの取り込みを5分ごとに（v2.7.34）", /_LEARN_CHECK_MS = 5 \* 60 \* 1000/.test(bg)],
       // 2026-11-14 竹内さん「データベースの写真から学習する」
       ["写真の行からも学ぶ（shot_ops が空でも）（v2.7.35）", read(path.join(CHROME, "human-learn-record.js")).includes("_recentOpsWithDiag")],
+      // 2026-11-14 竹内さん「学習の統括の部分判断できるように」「リアプロ itandi それぞれ区別して学習」
+      ['同じ建物・同じ間取り・同じ平米は最安1件（v2.7.36）', read(path.join(CHROME, 'room-dedupe.js')).includes('cheapestPerBuildingLayoutSize')],
+      ['統括の判断を持つ（v2.7.36）', bg.includes('_learnSiteNow') && bg.includes('axlx_learn_supervisor')],
     ];
     for (const [name, ok] of marks) t(name, ok);
   }

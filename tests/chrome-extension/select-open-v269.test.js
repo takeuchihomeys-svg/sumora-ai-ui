@@ -19,7 +19,14 @@ ok("chooseSelectLikeHuman がある", /function chooseSelectLikeHuman\(el, val, 
 ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, function \(\) \{ return chooseSelectLikeHuman\(el, val, \{ forceOpen: true, aim: _aim \}\); \}/.test(ps));
 // 2026-11-11 竹内さん「徒歩の部分もまずおして展開された中の徒歩をおすながれ。時間差も人間が押すように」
 ok("徒歩（移動手段）は待ちを長くする", /_isTransport \? 1400 : 900/.test(ps) && /_isTransport \? 2600 : 1600/.test(ps));
-ok("値で見つからなければ文字（徒歩）でも探す", /_ot === _wantText \|\| \(_wantText\.length >= 1 && _ot\.indexOf\(_wantText\) === 0\)/.test(ps));
+  /**
+   * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+   *   文字での照合を **完全一致 → 先頭一致 → 含む** の3段にし、
+   *   どれも無ければ `want = -1`（＝先頭を選ばない）に変えた。テストもその形に合わせる。
+   */
+  ok("値で見つからなければ文字（徒歩）でも探す",
+    /_ot === _wantText/.test(ps) && /_ot2\.indexOf\(_wantText\) === 0/.test(ps) && /_ot3\.indexOf\(_wantText\) >= 0/.test(ps));
+  ok("  ⚠ 見つからない時に先頭（未選択）を選ばない", /if \(want < 0\) \{[\s\S]{0,300}return Promise\.resolve\(false\)/.test(ps));
 
 console.log("\n■ ② 開く→見る→移る→確定→閉じを見届ける");
 ok("欄を押して開く（mousedown/mouseup/click）", /fire\("mousedown", \{ buttons: 1 \}\);\s*fire\("mouseup"\);\s*fire\("click"\);/.test(ps));

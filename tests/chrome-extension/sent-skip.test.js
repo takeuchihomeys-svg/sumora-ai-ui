@@ -123,7 +123,16 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
   ok("itandi-bulk-dl: スタッフモードは飛ばさない", /SK && !_staffModeOn \? SK\.indexFor\(/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,update-order-stop.js,bulk-dl.js") && cs.includes("bar-dock.js,send-pairing.js,auto-run.js,autorun-note.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
+  /**
+   * 2026-11-14: 正確な文字列で比べると**関係ないファイルを足すだけで落ちる**（`room-dedupe.js` で落ちた）。
+   *   → 並び順だけを見る。
+   */
+  const _beforeSS = (list, a, b) => {
+    const i = list.indexOf(a), j = list.indexOf(b);
+    return i >= 0 && j >= 0 && i < j;
+  };
+  ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js",
+    cs.some((s) => _beforeSS(s, "sent-skip.js", "bulk-dl.js")) && cs.some((s) => _beforeSS(s, "sent-skip.js", "itandi-bulk-dl.js")));
   ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   const sa = read("search-audit.js");
   ok("search-audit: 日時の欄は伏せない（v2.5.40 までは「＊＊＊T…」になっていた）", /DATE_FIELDS\[k\] && ISO_RE\.test\(v\.trim\(\)\)/.test(sa));

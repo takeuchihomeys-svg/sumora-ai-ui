@@ -1064,6 +1064,12 @@
   function serverLearnLines(srv) {
     var out = [];
     var s = srv || {};
+    /** 数字の増減を「+3 / -2 / ±0」にする（統括の表示用） */
+    function sgn(v) {
+      var n = Number(v);
+      if (!isFinite(n) || n === 0) return "±0";
+      return n > 0 ? "+" + n : String(n);
+    }
     var nx = (s.next && typeof s.next === "object") ? s.next : {};
     var names = Object.keys(nx);
     if (names.length) {
@@ -1085,6 +1091,28 @@
     }
 
     var sf = (s.site_flow && typeof s.site_flow === "object") ? s.site_flow : {};
+    /**
+     * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+     *   **統括の判断**（結論・次にやる事・数字）をいちばん上に出す。
+     *   ⚠ これが無いと、弱い所の一覧だけが並んで「で、使えるの？」が分からない。
+     */
+    var sup = (s.supervisor && typeof s.supervisor === "object") ? s.supervisor : null;
+    if (sup && sup.headline) {
+      out.push("▼ 統括の判断: " + String(sup.headline));
+      if (sup.score) {
+        out.push("  材料の揃い: " + String(sup.score.coverage) + "/100・弱い所 " + String(sup.score.weak) + "件"
+          + (sup.score.delta ? "・前回から 記録" + sgn(sup.score.delta.rows) + " 順番" + sgn(sup.score.delta.next) + " 場所" + sgn(sup.score.delta.points) + " 弱い所" + sgn(sup.score.delta.weak) : ""));
+      }
+      if (sup.block) out.push("  ⚠ " + String(sup.block));
+      if (Array.isArray(sup.actions) && sup.actions.length) {
+        out.push("  次にやる事:");
+        for (var ai2 = 0; ai2 < Math.min(5, sup.actions.length); ai2++) {
+          var a2 = sup.actions[ai2] || {};
+          out.push("    ・" + String(a2.what || "") + (a2.name ? "（" + String(a2.name) + "）" : ""));
+        }
+      }
+      out.push("");
+    }
     /**
      * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
      *   `opens`（押したら何が開くか）を**画面に出していなかった**（学んでいるのに人が見えない）。

@@ -27,6 +27,7 @@
 //   /api/cron/human-learn-brain が毎晩まとめる（Vercel Cron）
 
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
+import { superviseLearn, type SupervisorAdvice } from "./learn-supervisor";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -133,6 +134,14 @@ export type HumanLearnBundle = {
   opens?: Record<string, { opens: string; n: number; stage?: string; guessed?: boolean }>;
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
+  /**
+   * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+   *   **統括の判断**（1つの結論・次にやる事・数字の良し悪し）。
+   *   ⚠ `learn_plan` は「弱い所の一覧」で判断ではなかった。ここが**判断**。
+   */
+  supervisor?: SupervisorAdvice;
+  /** サイト別の判断（リアプロ／itandi） */
+  supervisor_by_site?: Record<string, SupervisorAdvice>;
   /**
    * 2026-11-14 竹内さん「いま通常と自動のところで自動で強化必要な部分強化するのと、
    *   できていない部分もちゃんとデータベースに理解させて強化していく形とする」:
@@ -882,6 +891,123 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     ])),
     garbage, mode_counts);
 
+  /**
+   * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
+   *   `learn_plan` は「弱い所の一覧」で、**判断**をしていなかった（どれから直すか・今使えるか）。
+   *   → 統括（`learn-supervisor.ts`）に**1つの結論**と**次にやる事**を決めさせる。
+   *   ⚠ サイト別にも判断する（リアプロと itandi は性質が違う）。
+   */
+  const supervisor: SupervisorAdvice = superviseLearn({
+    rows: list.length,
+    next: Object.keys(next).length,
+    points: Object.keys(points).length,
+    opens: Object.keys(opens).length,
+    screens: Object.keys(shotLearn.screens).length,
+    sequence: (sequenceFlow && sequenceFlow.sequence ? sequenceFlow.sequence.length : 0),
+    gap_ms: median(gapSamples),
+    weak,
+    mode_counts,
+    site_counts: (() => {
+      const sc: Record<string, number> = {};
+      for (const r of list) {
+        const s = String(r.site ?? "").trim() || "(空)";
+        sc[s] = (sc[s] ?? 0) + 1;
+      }
+      return sc;
+    })(),
+    with_ops: list.filter((r) => {
+      const x = r as unknown as Record<string, unknown>;
+      return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
+    }).length,
+    prev: null,
+    site: "all",
+  });
+
+  /**
+   * サイト別の統括の判断（リアプロ／itandi）。
+   *   ⚠ 記録が無いサイトは作らない（「0件」を並べても判断にならない）。
+   */
+  const supervisor_by_site: Record<string, SupervisorAdvice> = {};
+  for (const siteName of ["realpro", "itandi"]) {
+    const sub = list.filter((r) => String(r.site ?? "").trim() === siteName);
+    if (!sub.length) continue;
+    const subNext = by_mode[siteName] ? null : null;   // （モード別とは別軸・下で計算）
+    void subNext;
+    const sPoints = learnPoints(sub);
+    const sOpens = learnOpens(sub);
+    /** 写真として学べる行（操作の並び・押した欄・順番がある物）だけを、型の合う形にそろえる */
+    const sShotRows: Array<{ url?: unknown; shot_ops?: unknown; shot_learn?: unknown; point_fields?: unknown; field_order?: unknown }> = [];
+    for (const r of sub) {
+      const x = r as unknown as Record<string, unknown>;
+      const hasMat = (Array.isArray(x.shot_ops) && x.shot_ops.length > 0)
+        || (Array.isArray(x.field_order) && x.field_order.length > 0)
+        || (x.point_fields && typeof x.point_fields === "object");
+      if (!hasMat) continue;
+      sShotRows.push({ url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, point_fields: x.point_fields, field_order: x.field_order });
+    }
+    const sShots = learnFromShots(sShotRows);
+    /** 一連の動きの数（`sequencesOf` は1行ずつ受け取る） */
+    let sSeqN = 0;
+    for (const r of sub) {
+      try { sSeqN += sequencesOf(r).length; } catch (_) {}
+    }
+    const sSeq = { length: sSeqN } as { length: number };
+    const sGaps: number[] = [];
+    for (const r of sub) {
+      const g = num(r.gap_ms);
+      if (g != null && g > 0) sGaps.push(g);
+    }
+    /**
+     * ⚠ `findWeakPoints` は「写真から読んだ欄の一覧（ShotField[]）」を受け取る。
+     *   `sShots.screens` は**画面ごとのまとめ**なのでそのまま渡せない。
+     *   → サイト別では写真の欄を平坦にして渡す（読めていなければ空＝弱い所は出ない）。
+     */
+    const sShotFields: Array<{ name: string; kind: string }> = [];
+    for (const sc of Object.values(sShots.screens)) {
+      for (const f of (sc.fields || [])) sShotFields.push({ name: f.name, kind: f.kind });
+    }
+    const sWeak = findWeakPoints(sPoints, sShotFields, []);
+    const sModeCounts: Record<string, number> = {};
+    for (const r of sub) {
+      const m = String(r.mode ?? "").trim();
+      if (m) sModeCounts[m] = (sModeCounts[m] ?? 0) + 1;
+    }
+    supervisor_by_site[siteName] = superviseLearn({
+      rows: sub.length,
+      next: Object.keys(learnNextPress(
+        (() => {
+          const seen2 = new Set<string>();
+          const out2: Array<Array<{ f: string }>> = [];
+          for (const r of sub) {
+            const day = String(r.created_at ?? "").slice(0, 10);
+            for (const sq of sequencesOf(r)) {
+              if (looksLikeToggleLoop(sq)) continue;
+              const key = day + "|" + sq.map((x) => String(x.f ?? "")).join(">");
+              if (seen2.has(key)) continue;
+              seen2.add(key);
+              out2.push(sq);
+            }
+          }
+          return out2;
+        })(),
+        { min: 2 },
+      )).length,
+      points: Object.keys(sPoints).length,
+      opens: Object.keys(sOpens).length,
+      screens: Object.keys(sShots.screens).length,
+      sequence: sSeq.length,
+      gap_ms: median(sGaps),
+      weak: sWeak,
+      mode_counts: sModeCounts,
+      site_counts: { [siteName]: sub.length },
+      with_ops: sub.filter((r) => {
+        const x = r as unknown as Record<string, unknown>;
+        return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
+      }).length,
+      prev: null,
+      site: siteName,
+    });
+  }
   const bundle: HumanLearnBundle = {
     v: 1,
     generated_at: new Date(nowMs).toISOString(),
@@ -906,6 +1032,8 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
      */
     opens: withGuessedOpens(opens, [...Object.keys(points), ...Object.keys(next)]),
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
+    supervisor,
+    ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
     ...(learnPlan.items.length || learnPlan.filled || (learnPlan.cleanup && learnPlan.cleanup.length) || (learnPlan.mode_plan && learnPlan.mode_plan.length) ? { learn_plan: learnPlan } : {}),
@@ -919,6 +1047,7 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     ...(sequenceFlow && sequenceFlow.sequence.length ? { sequence_flow: sequenceFlow } : {}),
     lines: [],
   };
+
   bundle.lines = describeBundle(bundle);
   return bundle;
 }

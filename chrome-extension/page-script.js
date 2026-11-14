@@ -113,10 +113,34 @@
     if (!el || val == null) return Promise.resolve(false);
     return _ensureFieldVisible(el, name, 2500).then(function () {
       try {
-        el.value = String(val);
+        /**
+         * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+         *   ⚠ 旧は `el.value = String(val)` の**代入だけ**だった。リアプロの「徒歩」の値が `"1"` でない、
+         *     または `"徒歩"` を渡された場合、`value` に入れると**一致する選択肢が無い＝未選択に戻る**。
+         *   → **値でも文字でも探して、見つかった選択肢の位置で選ぶ**（`selectedIndex`）。
+         *     見つからなければ**何もしない**（未選択で上書きしない）。
+         */
+        var _want = String(val);
+        var _idx = -1;
+        try {
+          for (var _q = 0; _q < el.options.length; _q++) {
+            if (String(el.options[_q].value) === _want) { _idx = _q; break; }
+          }
+          if (_idx < 0) {
+            var _wt = _want.replace(/\s+/g, "");
+            for (var _q2 = 0; _q2 < el.options.length; _q2++) {
+              var _txt = String(el.options[_q2].textContent || "").replace(/\s+/g, "");
+              if (_txt === _wt || (_wt.length >= 1 && _txt.indexOf(_wt) === 0) || (_wt.length >= 2 && _txt.indexOf(_wt) >= 0)) { _idx = _q2; break; }
+            }
+          }
+        } catch (_) { _idx = -1; }
+        if (_idx < 0) return false;
+        el.selectedIndex = _idx;
+        if (!el.value || el.selectedIndex < 0) el.selectedIndex = _idx;
         el.dispatchEvent(new Event("change", {bubbles:true}));
+        return true;
       } catch (_) {}
-      return true;
+      return false;
     });
   }
   /**
@@ -268,14 +292,44 @@
             if (String(el.options[_i].value) === target) { want = _i; break; }
           }
           if (want < 0) {
+            /**
+             * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+             *   文字で探す時、旧は `indexOf(_wantText) === 0`（**先頭一致**）だけだった。
+             *   → 「徒歩」は当たるが、`"1"` のような値は文字として無いので当たらず、
+             *     最後の **`want = 0`（先頭＝未選択）** に落ちて**何も選ばれない**。
+             *   → ① 完全一致 → ② 先頭一致 → ③ **含む**（「徒歩」を含む選択肢）まで見る。
+             *     どれも無ければ **`want = -1` のまま**（呼ぶ側が「見つからない」と判断できる）。
+             */
             var _wantText = String(target).replace(/\s+/g, "");
             for (var _j = 0; _j < el.options.length; _j++) {
               var _ot = String(el.options[_j].textContent || "").replace(/\s+/g, "");
-              if (_ot === _wantText || (_wantText.length >= 1 && _ot.indexOf(_wantText) === 0)) { want = _j; break; }
+              if (_ot === _wantText) { want = _j; break; }
+            }
+            if (want < 0) {
+              for (var _j2 = 0; _j2 < el.options.length; _j2++) {
+                var _ot2 = String(el.options[_j2].textContent || "").replace(/\s+/g, "");
+                if (_wantText.length >= 1 && _ot2.indexOf(_wantText) === 0) { want = _j2; break; }
+              }
+            }
+            if (want < 0) {
+              for (var _j3 = 0; _j3 < el.options.length; _j3++) {
+                var _ot3 = String(el.options[_j3].textContent || "").replace(/\s+/g, "");
+                if (_wantText.length >= 2 && _ot3.indexOf(_wantText) >= 0) { want = _j3; break; }
+              }
             }
           }
-          if (want < 0) want = 0;
-        } catch (_) { want = 0; }
+        } catch (_) { want = -1; }
+        /**
+         * ⚠ 目当てが見つからない時は **先頭（未選択）を選ばない**。
+         *   旧は `want = 0` にしていたので「選んだつもりで未選択」になっていた（＝徒歩が入らない原因）。
+         *   → 何もせず false を返す（点検に残す）。
+         */
+        if (want < 0) {
+          try {
+            if (window._axlxAuditStep) window._axlxAuditStep('sel_not_found', (el.getAttribute && el.getAttribute("name") || "?") + ' に "' + target + '" が無い（選択肢 ' + (el.options ? el.options.length : 0) + '個）');
+          } catch (_) {}
+          return Promise.resolve(false);
+        }
         if (_isNativeSelect) {
           /**
            * 2026-11-11 竹内さん「賃料のところプルダウンなのに直接入力になってしまっている」:
@@ -294,8 +348,30 @@
           var _pick = function () {
             // ⑥ 値を入れて change（サイトが反応するのはここ）
             try {
+              /**
+               * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+               *   ⚠ 旧は `el.selectedIndex = want;` の**直後に `el.value = target;`** を書いていた。
+               *     `target` は決め打ちの `"1"` なので、リアプロの「徒歩」の値が `"1"` でないと
+               *     この代入で**無効な値になり、選択が先頭（未選択）へ戻る**＝**徒歩が入らない**。
+               *     （実測: 自動モードで `transportation_id` が **0件**・通常モードは3件押されていた）
+               *   → **`selectedIndex` で選んだ物が正しければ、その値を使う**（決め打ちで上書きしない）。
+               *     目当てが `want`（値一致→文字一致で見つけた位置）なので、そこが正解。
+               */
+              var _pickVal = (want >= 0 && el.options && el.options[want]) ? String(el.options[want].value) : target;
               el.selectedIndex = want;
-              el.value = target;
+              // 決め打ちの値が**実在する選択肢**の時だけ、その値で確定する（無ければ selectedIndex のまま）
+              try {
+                var _exists = false;
+                for (var _k = 0; _k < el.options.length; _k++) {
+                  if (String(el.options[_k].value) === target) { _exists = true; break; }
+                }
+                if (_exists) el.value = target; else el.value = _pickVal;
+              } catch (_) { try { el.value = _pickVal; } catch (__) {} }
+              if (_audit) _auditStepP('sel_pick', (el.getAttribute("name") || "?") + ' → 値"' + String(el.value) + '"（' + want + '番目）');
+              if (!el.value || el.selectedIndex < 0) {
+                // それでも入らなければ、選んだ位置をそのまま使う（最後の砦）
+                try { el.selectedIndex = want; } catch (__) {}
+              }
               el.dispatchEvent(new Event("input", { bubbles: true }));
             } catch (_) {}
             setTimeout(function () {
@@ -352,8 +428,21 @@
           function stepMove() {
             // ④ 目当ての値を**そのまま**選ぶ（途中の値は選ばない）
             try {
+              /**
+               * 2026-11-14: ここも同じ穴だった（`el.value = target` の決め打ちで
+               *   実在しない値だと選択が先頭へ戻る）。**選んだ位置の値**を使う。
+               */
+              var _pickVal2 = (want >= 0 && el.options && el.options[want]) ? String(el.options[want].value) : target;
               el.selectedIndex = want;
-              el.value = target;
+              try {
+                var _ex2 = false;
+                for (var _k2 = 0; _k2 < el.options.length; _k2++) {
+                  if (String(el.options[_k2].value) === target) { _ex2 = true; break; }
+                }
+                el.value = _ex2 ? target : _pickVal2;
+              } catch (_) { try { el.value = _pickVal2; } catch (__) {} }
+              if (!el.value || el.selectedIndex < 0) { try { el.selectedIndex = want; } catch (__) {} }
+              if (_audit) _auditStepP('sel_pick', (el.getAttribute("name") || "?") + ' → 値"' + String(el.value) + '"（' + want + '番目）');
               el.dispatchEvent(new Event("input", { bubbles: true }));
             } catch (_) {}
               // ⑤ 一覧を閉じる（人が選び終えて画面から離れる）。閉じないと開いたままで終わる
@@ -970,6 +1059,32 @@
     var el = document.querySelector('input[name="' + name + '"]');
     if (!el) { enqueueHumanAction(function () { setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val); return; }
     _enqueueWithEl(el, function () { return typeTextLikeHuman(el, val); }, 700, 1200, 'txt:' + name + '=' + val);
+  }
+  /**
+   * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+   *   **値ではなく「文字」で選ぶ**プルダウン。値がサイト側で変わっても（"1" でなくても）選べる。
+   *   `chooseSelectLikeHuman` は「値一致 → 文字一致」の順で探すので、値を `"徒歩"` として渡せば
+   *   文字一致の所で当たる。⚠ 見つからなければ**先頭（未選択）にしない**で、そのまま返す。
+   */
+  function queueSelValText(name, text) {
+    var el = document.querySelector('select[name="' + name + '"]');
+    if (!el) { enqueueHumanAction(function () { setSelVal(name, text); }, 80, 200, 'sel:' + name + '=' + text); return; }
+    var _aim2 = _aimOf(name);
+    var _wk2 = _weakOf(name);
+    try {
+      if (_wk2) _auditStepP('learn_weak', name + '=' + _wk2.kind);
+      /**
+       * いま選ばれている物が既に「徒歩」なら、押し直さない（トグルで壊さない）。
+       *   ⚠ ただし「押した形」は見せたいので、点検には残す。
+       */
+      var _cur = "";
+      try { _cur = String(el.options[el.selectedIndex] && el.options[el.selectedIndex].textContent || "").replace(/\s+/g, ""); } catch (_) {}
+      if (_cur.indexOf(String(text)) >= 0) {
+        _auditStepP('sel_already', name + ' は既に「' + _cur + '」');
+      }
+    } catch (_) {}
+    _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, text, { forceOpen: true, aim: _aim2 }); },
+      1400, 2600, 'sel:' + name + '=' + text);
   }
 
   /**
@@ -2380,6 +2495,26 @@
         if (wk && !same(wk.value, _axExpect.walk)) {
           out.errors.push('駅からの徒歩が画面と違う（入れるはず ' + _axExpect.walk + '／画面 ' + wk.value + '）');
         }
+        /**
+         * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+         *   ⚠ 旧は分数（required_time）だけを見ていて、**移動手段（transportation_id）が「徒歩」か**を
+         *     確かめていなかった。だから「徒歩10分」ではなく「車10分」「バス10分」でも通っていた。
+         *   → **選ばれている移動手段の文字が「徒歩」か**を確かめる（違えば入れ直しの対象）。
+         */
+        try {
+          var trSel = document.querySelector('select[name="transportation_id"]');
+          if (trSel && trSel.options && trSel.selectedIndex >= 0) {
+            var trTxt = String(trSel.options[trSel.selectedIndex].textContent || "").replace(/\s+/g, "");
+            // 「指定なし」「こだわらない」等は未選択とみなす（選ばれていない）
+            if (!trTxt || /指定なし|こだわらない|選択して|unselected/i.test(trTxt)) {
+              out.errors.push('移動手段が未選択（「徒歩」にするはず／画面「' + trTxt + '」）');
+              out.missingTransport = true;
+            } else if (trTxt.indexOf("徒歩") < 0) {
+              out.errors.push('移動手段が「徒歩」でない（画面「' + trTxt + '」）');
+              out.missingTransport = true;
+            }
+          }
+        } catch (_) {}
       }
       // ⑤ 間取り（0個なら入れ直す対象）
       if (_axExpect.layoutVals && _axExpect.layoutVals.length) {
@@ -2523,6 +2658,24 @@
           if (_axExpect.updateDays != null) setSelVal("update_date", _axExpect.updateDays);
           if (_axExpect.age != null) setSelVal("structured_date", _axExpect.age);
           if (_axExpect.walk != null) {
+            /**
+             * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+             *   ⚠ 旧は**分数（required_time）だけ**を入れ直していた。
+             *     移動手段（transportation_id）が「徒歩」でなくても直さなかった。
+             *   → 移動手段が「徒歩」でなければ**そこも入れ直す**。
+             */
+            try {
+              if (_gate.missingTransport) {
+                var _tr = document.querySelector('select[name="transportation_id"]');
+                if (_tr) {
+                  var _ti = -1;
+                  for (var _tq = 0; _tq < _tr.options.length; _tq++) {
+                    if (String(_tr.options[_tq].textContent || "").replace(/\s+/g, "").indexOf("徒歩") >= 0) { _ti = _tq; break; }
+                  }
+                  if (_ti >= 0) { _tr.selectedIndex = _ti; _tr.dispatchEvent(new Event("change", { bubbles: true })); }
+                }
+              }
+            } catch (_) {}
             var _wk = document.querySelector('input[name="required_time"]');
             if (_wk && String(_wk.value) !== String(_axExpect.walk)) typeTextLikeHuman(_wk, _axExpect.walk);
           }
@@ -3786,7 +3939,17 @@
      */
     // 徒歩（移動手段 → 分数）: 人が押す順（移動手段が先）は今まで通り守る
     if (cond.walk_minutes) {
-      _basicQueue.push({ name: "transportation_id", run: function () { queueSelVal("transportation_id", "1"); } });
+      /**
+       * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
+       *   ⚠ 旧は `queueSelVal("transportation_id", "1")` と**値"1"を決め打ち**していた。
+       *     リアプロの「徒歩」の値が `"1"` でない場合:
+       *       ・`chooseSelectLikeHuman` の**値一致で見つからず**、文字一致の所で `"1"` を文字として探す
+       *       ・それも無いので `want = 0`（＝**先頭＝未選択**）になり、**徒歩が入らない**
+       *     実測: 自動モードで `transportation_id` が **0件**（通常モードは人が3件押している）。
+       *   → **値ではなく「徒歩」という文字で選ぶ**（`queueSelVal` に文字指定を渡せるようにする）。
+       *     駅からの移動手段は「徒歩」が既定なので、文字で探すのが一番確実。
+       */
+      _basicQueue.push({ name: "transportation_id", run: function () { queueSelValText("transportation_id", "徒歩"); } });
       _basicQueue.push({
         name: "required_time",
         run: function () {
