@@ -109,7 +109,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "empty" }, { headers: CORS });
   }
 
-  const mode = body.mode === "staff" ? "staff" : (body.mode === "normal" ? "normal" : null);
+  /**
+   * 2026-11-14 竹内さん「録画ごとというのと通常モードか自動モードどちらでの保存かの保管もわかるようにする」:
+   *   ⚠ 旧は **`staff` と `normal` しか通さず**、それ以外は `null` にしていた。
+   *     そのため **自動モード（aix / ai / brain_*）の記録が「モード不明」** になっていた
+   *     （実測: 記録の mode が `(空)` の物が 718/1000）。
+   *   → **モードの名前をそのまま受ける**（`mode-core` の値をそのまま・記号だけ落とす）。
+   *     ⚠ 長さは20字まで・英小文字と数字と `_` だけ（DBとフォルダ名を汚さない）。
+   *     ⚠ 分からない時は null（勝手に `normal` と決めない）。
+   */
+  const modeRaw = typeof body.mode === "string" ? body.mode.trim().toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20) : "";
+  const mode = modeRaw || null;
   const row: Record<string, unknown> = {
     install_id: typeof body.install_id === "string" ? body.install_id.slice(0, 64) : null,
     device_label: typeof body.device_label === "string" ? body.device_label.slice(0, 40) : null,
@@ -273,7 +283,48 @@ export async function POST(req: NextRequest) {
       }
       shotBytes = buf;
       {
-        const key = `${new Date().toISOString().slice(0, 10)}/${row.install_id || "unknown"}-${Date.now()}.jpg`;
+        /**
+         * 2026-11-14 竹内さん
+         *   「写真は１つ録画ごとに保管しておく」
+         *   「録画ごとというのと通常モードか自動モードどちらでの保存かの保管もわかるようにする」
+         *
+         *   ⚠ 旧は `日付/端末-時刻.jpg` で、**どの録画（1回の検索）の・どのモードの**写真か分からなかった。
+         *   → **録画ごと × モードごと**にフォルダを分けて保管する。
+         *     例:
+         *       `2026-11-14/normal/run_<run_idの先頭16>/<端末>-<時刻>.jpg`
+         *       `2026-11-14/aix/run_<run_id>/<端末>-<時刻>.jpg`
+         *   ⚠ モードは `normal` / `staff` / `aix` / `ai` / `brain_*` など（`mode-core` の値）。
+         *     分からない時は `unknown`。
+         *   ⚠ 読む時は今まで通り（`shot_key` を持っているので変わらない・`?shots=1` も同じ）。
+         *   ⚠ 古い写真（`日付/端末-時刻.jpg`）はそのまま残る（消さない・読める）。
+         */
+        const runId = (() => {
+          try {
+            /**
+             * ⚠ 拡張は `run_id` を**`shot_meta` の中**に入れて送ってくる（background.js の _sendShotNow）。
+             *   トップレベルにも無いか確かめてから、shot_meta を見る（両方に耐える）。
+             */
+            const top = (body as Record<string, unknown>).run_id;
+            if (typeof top === "string" && top.trim()) return top.trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 16);
+            const meta = (body as Record<string, unknown>).shot_meta;
+            const v = meta && typeof meta === "object" ? (meta as Record<string, unknown>).run_id : null;
+            return typeof v === "string" && v.trim() ? v.trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 16) : "";
+          } catch { return ""; }
+        })();
+        /** どのモードで撮れた写真か（normal / staff / aix / ai / brain_normal …）。分からなければ unknown */
+        const modeFolder = (() => {
+          try {
+            const m = String(row.mode ?? "").trim().toLowerCase();
+            if (!m) return "unknown";
+            // フォルダ名に使える形だけ（`brain_normal` → `brain_normal`）
+            return m.replace(/[^a-z0-9_]/g, "").slice(0, 20) || "unknown";
+          } catch { return "unknown"; }
+        })();
+        const day = new Date().toISOString().slice(0, 10);
+        const base = `${day}/${modeFolder}`;
+        const key = runId
+          ? `${base}/run_${runId}/${row.install_id || "unknown"}-${Date.now()}.jpg`
+          : `${base}/${row.install_id || "unknown"}-${Date.now()}.jpg`;
         const up = await supabase.storage.from(BUCKET).upload(key, buf, { contentType: "image/jpeg", upsert: true });
         if (!up.error) {
           row.shot_taken = true;
