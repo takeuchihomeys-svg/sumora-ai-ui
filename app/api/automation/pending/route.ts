@@ -1,8 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
-  pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady, notForThisInstall,
+  AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, AUTO_DAY_EXPIRE_MESSAGE, pendingSourceOrFilter,
+  pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady, notForThisInstall, jstDateOf,
 } from "@/app/lib/automation-sources";
 import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
 import { extVersionGate, cancelPendingWhilePaused } from "@/app/lib/automation-pause-gate";
@@ -124,6 +124,41 @@ export async function GET(req: NextRequest) {
   };
   await closeExpired(AIX_ONLY_SOURCES, AIX_EXPIRE_MESSAGE);
   await closeExpired(BRAIN_ONLY_SOURCES, BRAIN_EXPIRE_MESSAGE);
+  /**
+   * 2026-11-14 竹内さん「自動の部分は日を超えたら前日のはしなくて大丈夫になっているかな。
+   *   日ごとにやるから前日にできていなくても持ち越さない」:
+   *   前の日の自動便は**渡さないだけ**でなく、**その場で閉じる**（pending のまま溜めない）。
+   *   実測: 11/14 朝の便が60件 pending のまま（通常モードの PC が拾わない）→ 翌日も残ると
+   *   「拾われないまま60件」と数え続け、統括が今の詰まりを誤解する。
+   *   ⚠ 今日の日付（JST）でない auto_schedule だけ。AIX・web_brain は今まで通り（3時間で閉じる）。
+   */
+  {
+    const todayJst = jstDateOf(nowMs);
+    const { data: oldAuto, error: oaErr } = await supabase
+      .from("automation_commands")
+      .select("id, payload")
+      .eq("status", "pending")
+      .eq("payload->>source", "auto_schedule")
+      .neq("payload->>jst_date", todayJst)
+      .limit(300);
+    if (oaErr) console.warn("[automation/pending] previous-day select error:", oaErr.message);
+    const oldIds = (oldAuto ?? [])
+      .filter((r) => {
+        const p = (r as { payload?: Record<string, unknown> | null }).payload ?? {};
+        const jd = typeof p.jst_date === "string" ? p.jst_date : "";
+        return !!jd && jd !== todayJst;
+      })
+      .map((r) => (r as { id: string }).id);
+    if (oldIds.length) {
+      const { error: ocErr } = await supabase
+        .from("automation_commands")
+        .update({ status: "cancelled", error_message: AUTO_DAY_EXPIRE_MESSAGE, completed_at: nowIso })
+        .eq("status", "pending")
+        .in("id", oldIds);
+      if (ocErr) console.warn("[automation/pending] previous-day close error:", ocErr.message);
+      else console.log(JSON.stringify({ tag: "automation-pending:previous-day-closed", n: oldIds.length, today: todayJst }));
+    }
+  }
 
   let pendingQuery = supabase
     .from("automation_commands")

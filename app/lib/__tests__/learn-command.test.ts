@@ -79,7 +79,30 @@ console.log("\n■ ④ 統括が議題の先頭に出す");
   ok("  根拠に現場への指示を出す", r.meeting.evidence.some((e) => e.label.includes("現場への指示")), r.meeting.evidence.map((e) => e.label));
 }
 
-console.log("\n■ ⑤ 壊れない");
+console.log("\n■ ⑤ 前の日の自動便は持ち越さない（2026-11-14 竹内さん）");
+{
+  const rows = [
+    { created_at: at(5), status: "done" },
+    { created_at: at(30), status: "cancelled", error_message: "前の日の自動便なので実行しません（日ごとに回すため翌日へ持ち越さない）" },
+    { created_at: at(31), status: "cancelled", error_message: "前の日の自動便なので実行しません（日ごとに回すため翌日へ持ち越さない）" },
+  ];
+  const s = summarizeCommands(rows as never, { sinceMs: 24 * 3600_000, now: NOW });
+  ok("持ち越さず閉じた数を数える", s.previous_day_closed === 2, s.previous_day_closed);
+  ok("  ⚠ 失敗として数えない（決まり通り）", !(s.errors || []).some((e) => e.error.includes("前の日の自動便")), s.errors);
+  ok("  人が読める言葉に出す", !!s.top_problem && s.top_problem.includes("持ち越さず"), s.top_problem);
+  ok("  「拾われないまま」と混ぜない", !(s.top_problem || "").includes("拾われないまま"), s.top_problem);
+}
+
+console.log("\n■ ⑥ 前の日の自動便だけの時も黙らない");
+{
+  const s = summarizeCommands(
+    [{ created_at: at(40), status: "cancelled", error_message: "前の日の自動便なので実行しません（日ごとに回すため翌日へ持ち越さない）" }] as never,
+    { sinceMs: 24 * 3600_000, now: NOW },
+  );
+  ok("問題として言葉が出る", !!s.top_problem && s.top_problem.includes("前の日の自動便"), s.top_problem);
+}
+
+console.log("\n■ ⑦ 壊れない");
 {
   ok("空", summarizeCommands([], { now: NOW }).total === 0);
   ok("null", summarizeCommands(null as never, { now: NOW }).total === 0);

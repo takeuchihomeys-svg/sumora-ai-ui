@@ -14,6 +14,34 @@ export const BRAIN_ONLY_SOURCES = ["web_brain"] as const;
 export const WAIT_FOR_PICKER_MS = 3 * 60 * 60 * 1000;
 export const AIX_EXPIRE_MESSAGE = "AIXモードのPCが3時間なかったため未実行で終了";
 export const BRAIN_EXPIRE_MESSAGE = "ブレインモードのPCが3時間なかったため未実行で終了";
+/**
+ * 2026-11-14 竹内さん「自動の部分は日を超えたら前日のはしなくて大丈夫になっているかな。
+ *   日ごとにやるから前日にできていなくても持ち越さない」:
+ *   ⚠ 旧は3時間（拾い手が動いている間は最大12時間）待っていたので、**日をまたいで翌日に実行**されていた。
+ *     実測: 825件のうち **12件が便の日と実行日が違う**（9/30 の午後の便が 10/01 の 0〜2時に 8〜9時間遅れで実行）。
+ *   → 自動便（auto_schedule）は **payload.jst_date が今日（JST）でなければ渡さない・すぐ閉じる**。
+ *     前日に届かなかった分は捨てる（今日の便は今日ふたたび積まれるので、持ち越さなくてよい）。
+ */
+export const AUTO_DAY_EXPIRE_MESSAGE = "前の日の自動便なので実行しません（日ごとに回すため翌日へ持ち越さない）";
+
+/** JST の日付（YYYY-MM-DD）。auto-search-schedule.jstDateStr と同じ形 */
+export function jstDateOf(ms: number): string {
+  return new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 「前の日の自動便」か（source=auto_schedule で payload.jst_date が今日でない）。
+ *   jst_date が無い古い命令は今まで通り（誤って捨てない・fail-open）。
+ */
+export function isPreviousDayAuto(row: { payload?: unknown }, nowMs: number): boolean {
+  const p = row?.payload;
+  if (!p || typeof p !== "object") return false;
+  const o = p as Record<string, unknown>;
+  if (o.source !== "auto_schedule") return false;
+  const jd = typeof o.jst_date === "string" ? o.jst_date : "";
+  if (!jd) return false;
+  return jd !== jstDateOf(nowMs);
+}
 
 /**
  * 2026-09-30 v2.5.44 自動便（auto_schedule）のピンポイントから続いた広げて（chain・source は web_brain のまま）の印 payload.chain_picker。
@@ -75,7 +103,7 @@ export function isClaimableNow(payload: unknown, nowMs: number): boolean {
  */
 export const AIX_PRIORITY_SOURCE = "aix";
 export function pickClaimable<T extends { payload?: unknown }>(commands: ReadonlyArray<T>, nowMs: number): T | null {
-  const ok = commands.filter((c) => isClaimableNow(c.payload, nowMs));
+  const ok = commands.filter((c) => isClaimableNow(c.payload, nowMs) && !isPreviousDayAuto(c, nowMs));
   const srcOf = (c: T) => (c.payload && typeof c.payload === "object" ? (c.payload as Record<string, unknown>).source : null);
   // 1. AIX の指示を先に（AIX を出した順＝古い順）
   const aix = ok.find((c) => srcOf(c) === AIX_PRIORITY_SOURCE);
