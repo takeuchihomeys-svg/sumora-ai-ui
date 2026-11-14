@@ -2547,6 +2547,33 @@ async function analyzeConversationCore(
   }
   let sentPropsText = buildSentPropsText(sentProps);
   if (refMode === "on" && refResolveRec) { const line = refResolveLine(refResolveRec); if (line) sentPropsText += `\n${line}`; }
+  // 2026-11-15 作業員H（竹内さん「お客さんが送ってきたのが物件や見積書と分かれば…」「相手が送ったのとこっちが送っているのの関連性も」）:
+  //   今の連投のお客様の画像を、種類・物件（確かさ）・こちらが送った物件との関連（何回目の送信の何件目）・見積書の内訳（名前を伏せた数字だけ）・
+  //   前後のお客様の一言の向きに結び付けて、決まりの材料（KB の id）と一緒に1ブロック足す（customer-image-link.ts・CUSTOMER_IMAGE_LINK=on の時だけ・既定 off）。
+  //   物件が確かに引けない画像は ref_resolve の人に回す段（ref_needs_name）にもつなぐ
+  let customerImageLinks: import("@/app/lib/customer-image-link").ImageLink[] | null = null;
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { customerImageLinkOn, linkTurnImages, buildImageLinkBlock, reactedSentProperties } = await import("@/app/lib/customer-image-link");
+      if (customerImageLinkOn()) {
+        const turn: typeof typedMessages = [];
+        for (const mm of typedMessages) { if (mm.sender !== "customer") break; turn.push(mm); }
+        const bundled = sentProps.filter((sp) => !sp.shared_only).map((sp) => ({ ...sp }));
+        attachBundles(bundled);
+        const sentForLink = bundled.map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sentAt: sp.sent_at, rent: sp.rent, bundleNo: sp.bundle_no ?? null, bundlePos: sp.bundle_pos ?? null }));
+        // ⑤ こちらが送った物件の側: お客様の今の一言に名前が出た送った物件（どれに反応したか）
+        const reacted = reactedSentProperties(turn.filter((mm) => !/^\s*\[画像\]/.test(mm.text ?? "")).map((mm) => mm.text ?? "").join(" "), sentForLink);
+        if (reacted.length) sentPropsText += `\n【お客様の今の一言が反応したこちらの送った物件】${reacted.slice(0, 3).map((s) => `${s.name}${s.room ? ` ${s.room}` : ""}${s.bundleNo ? `（${s.bundleNo}回目の送信の${s.bundlePos ?? "?"}件目）` : ""}`).join("・")}`;
+        if (turn.some((mm) => /^\s*\[画像\]/.test(mm.text ?? ""))) {
+          customerImageLinks = linkTurnImages([...turn].reverse().map((mm) => ({ text: mm.text, image_type: mm.image_type ?? null, created_at: mm.created_at })), sentForLink);
+          const block = buildImageLinkBlock(customerImageLinks);
+          if (block) sentPropsText += `\n\n${block}`;
+          if (refResolveRec && customerImageLinks.some((l) => l.needsStaff && l.kind.startsWith("property")) && !refResolveRec.handoff.includes("ref_needs_name" as RefHandoffReason)) refResolveRec.handoff.push("ref_needs_name" as RefHandoffReason);
+          console.log(JSON.stringify({ tag: "brain:customer-image-link", conversationId, images: customerImageLinks.length, kinds: customerImageLinks.map((l) => `${l.kind}/${l.relation}/${l.property?.certainty ?? "-"}`) }));
+        }
+      }
+    } catch (e) { console.warn(JSON.stringify({ tag: "brain:customer-image-link-failed", conversationId, error: String(e).slice(0, 160) })); }
+  }
 
   // 申込経験者: ベンチマーク物件の注入
   // applicant_rank が入っている物件 = 顧客が実際に申込んだ（番手がついた）物件。
