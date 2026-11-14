@@ -9572,3 +9572,9 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 出口: `ALT_IMAGE_DOC_GATE`（既定 on・alt-pii-gate）画像の書き起こしに契約書の中身・マイページの氏名があれば DeepSeek に出さない（宛名は止めず伏せる側＝全期間の宛名の形 14行のうち4行は人の名前でなかった）
 - DB: 竹内さんの OK（11/15「おすすめで」）で 12行を種類だけの見出しに書き換え（記録 scripts/data/image-doc-rewrite-20261115.json・id と前の見出しだけ）。写しは要約・台帳に金額・会社名だけ（人の名前なし）。別の出所の写し: reply_engagement_signals 2726856e（記入済み申込フォームの写し）は触っていない
 - 監査: scripts/audit-contract-doc-images.ts・scripts/audit-image-doc-redact.ts・scripts/audit-customer-images.ts --label。テスト app/lib/__tests__/image-doc-guard-1115.test.ts
+
+## 2026-11-15 作業員H: お客様の画像の結び付け→ブレインの材料（CUSTOMER_IMAGE_LINK・既定 off）
+- app/lib/customer-image-link.ts（純関数）: 画像ごとに 種類（物件の画面／資料／SNS／写真・見積書の弊社／他社・書類・物件以外）・どの部分か（外観・室内・間取り図・募集の画面・費用）・物件（名前・号室・家賃・管理費・間取り・㎡・駅徒歩・築年・確かさ high/mid/low）・こちらが送った物件との照合（同じ部屋／同じ建物・何回目の送信の何件目・家賃だけの照合はしない）・関連の型（送った物件への反応／送った物件の他社の画面／似た別の物件（好みの手本）／新しい持ち込み）・募集状況が手元にあるか・見積書の内訳（宛名を伏せて数字だけ・弊社＝蓮産業の読み違いも）・前後20分の一言の向き（空き・費用・内覧・好み・比べ）・連投の中の順・決まりの材料（KB id）・人に回すか
+- brain-core: 送った物件の一覧の後に【お客様が送った画像の結び付け】を足す・お客様の一言に名前が出た送った物件（⑤）・物件が引けない画像は ref_resolve の handoff に ref_needs_name
+- 45日の実送信（scripts/audit-customer-images.ts --link・275枚）: 持ち込み（新しい物件）は竹内さんほぼ全部「約束の返信」（acda2b5c）／送った物件の資料の送り返しは約束なしで AIX 直接（内覧→内覧調整・費用→見積書送る）／他社の見積書は約束の返信（87ff68e1）／送った物件の他社の画面・好みの手本・弊社の見積書の送り返しは数が少なく決まっていない
+- テスト app/lib/__tests__/customer-image-link.test.ts（25 pass）・試験 h1115-imglink-on（画像の番 15問）
