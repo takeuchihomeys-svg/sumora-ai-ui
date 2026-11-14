@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-14（続き17）「一連の動きの学習・反映」で抜けていた**5つ**を埋めた（v2.7.26）
+
+竹内さん「ほかにも抜けていて強化する部分あれば強化する。一連の動くの学習や強化、反映の為に抜けている部分がある可能性もある」
+
+### 実測で見つけた抜け
+| # | 抜け | 実測 |
+|---|---|---|
+| ① | サーバーが作った `by_mode`・`mode_plan`・`sequence_flow`・`learn_plan` を**拡張が1つも読んでいない** | **0箇所** |
+| ② | `point_fields` に**押した順番が無い**（時刻も順番も無い） | 通常モード（写真なし）で順番を学べない |
+| ③ | `field_order`（押した順番）と `fields` を**読む列に入れていない** | サーバーが使えない |
+| ④ | `sequencesOf` が `shot_ops` **しか見ていない** | 写真が少ない通常モードで順番0 |
+| ⑤ | 一連の動きの型（鎖）を**並べ替えに使っていない** | 計算しても反映されない |
+
+### 直し
+1. **background**: `axlx_learn_seq` / `_by_mode` / `_plan` / `_next_mode` を storage に置く。**今のモードを読み**、そのモードで学べている押す順番を選ぶ（`_modeLabelNow`）
+2. **page-script**: 鎖とモード別を読む（`__axlxLearnSeq` / `__axlxLearnNextMode`）
+3. **human-learn.js**: `recordPoint` に通し番号 `n`、集計に **`order`（初めて押した順）** を持たせ `points.order` として返す。記録が `add.order` / `add.fields` を送る → **`field_order` 列**へ
+4. **profile の SELECT** に `field_order`・`fields` を追加
+5. **sequencesOf**: `shot_ops` を優先し、無ければ **`field_order` から並びを作る**（時刻は null）
+6. **learn-order.js**: `beforePairsFromSequence` / `mergeWithSequence` を追加（鎖から「集合の中だけ」の前後関係を作る・`next` を優先）
+7. **page-script**: **モード別 → 鎖 → site_flow** の順に重ねる。`flow_order_gap`（ズレの記録）も維持
+
+### 版 2.7.26
+試験: `learn-wiring-complete` **31件**・拡張 **111本すべて合格**・`tsc` 0
+点検の道具: `npx tsx scripts/audit-vs-human.ts`（通常と自動を項目ごとに比べる）
+
+---
+
 ## 2026-11-14（続き16）**地域で止まる → 検索まで行かない**の原因を6つ特定して直した（v2.7.24）
 
 竹内さん「今回も地域の部分押さなかった」「地域の部分はいる前から地域だけ選択されていた」
