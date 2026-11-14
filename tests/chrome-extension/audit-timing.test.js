@@ -18,7 +18,13 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
   // v2.5.48: 芯は _openAndClickAutofill（background の切替と同じ1本）。_runPendingPopupCmd はそれを呼ぶだけ
   const core = grab(popup, "async function _openAndClickAutofill(");
   const fn = core + "\n" + grab(popup, "function _runPendingPopupCmd(");
-  ok("共通の関数 _runPendingPopupCmd がある（芯は _openAndClickAutofill）", core.length > 0 && /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,600}?return _openAndClickAutofill\(cmd, \{ via: "pendingPopupCmd\/" \+ via, suppressRestore: true[^}]*requireVisible: true, lockAreaMode: true \}\);/.test(popup));
+  ok("共通の関数 _runPendingPopupCmd がある（芯は _openAndClickAutofill）", core.length > 0 && /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,900}?return _openAndClickAutofill\(cmd, \{[\s\S]{0,200}?suppressRestore: true[\s\S]{0,200}?requireVisible: true, lockAreaMode: true \}\);/.test(popup));
+  /**
+   * 2026-11-14: ⚠ 旧は `{ via: ..., suppressRestore: true, ... }` の**並び順まで固定**していた。
+   *   実装はその間に `noOverride: true, allowBoth: true` が増えて（モードの関所を二重にした時）通り順が変わった。
+   *   並び順は「意味」ではないので、**同じ関数の中で3つの印が付いているか**だけを見る
+   *   （増えても壊れない・抜けたら落ちる）。
+   */
   // 2026-11-11 竹内さん「普通モードにしているとき自動検索されないようにする」: モードの関所が先にある
   ok("通常・スタッフモードでは自動の検索をしない関所がある（_isAutoModeAllowed）", /function _runPendingPopupCmd\(cmd, via\) \{[\s\S]{0,300}?if \(!_isAutoModeAllowed\(\)\)/.test(popup) && /function _isAutoModeAllowed\(\)/.test(popup));
   ok("開いた時（loadCustomers の後）と開いている時（storage.onChanged）の両方がこの関数を呼ぶ",
