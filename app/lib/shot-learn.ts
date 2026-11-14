@@ -50,6 +50,28 @@ const KINDS = ["select", "text", "checkbox", "radio", "button", "link"];
 const norm = (s: unknown) => String(s == null ? "" : s).replace(/[\s\u3000]+/g, "").trim().slice(0, 30);
 
 /**
+ * 押す対象ではない「入れ物」の名前（学習に使わない）。
+ *
+ * 2026-11-14 竹内さん「ゴミデータが入らないようになっているか」:
+ *   実測で学んだ欄に `div`/`img`/`td`/`svg`/`#axlx-bar` が **13件**、
+ *   押す順番に `div`・`img` が **2件** 混ざっていた。
+ *   これは「クリックが伝わっただけ」の入れ物で、人が押した操作ではない。
+ *   入れると「div の次は img」のような**意味の無い順番**を学んでしまう。
+ */
+const NON_TARGET_NAMES = /^(div|span|svg|td|tr|th|table|tbody|img|image|a|li|p|ul|i|b|strong|section|header|footer|main|nav|form|body|html|#axlx-[\w-]+|axlx-[\w-]+)$/i;
+
+/** 学習に使ってよい名前か（入れ物・拡張自身の部品は除く） */
+export function isLearnableName(name: unknown): boolean {
+  const n = String(name ?? "").trim();
+  if (!n) return false;
+  if (n.length <= 1) return false;
+  if (NON_TARGET_NAMES.test(n)) return false;
+  // 「div.building_tr」「td.st_td」のような入れ物の class 付きも除く（行・セル・画像）
+  if (/^(div|span|svg|td|tr|th|table|img|a|li|p)\./i.test(n) && !/btn|button|search|go_search|next|confirm/i.test(n)) return false;
+  return true;
+}
+
+/**
  * 欄の**名前から種類を推す**（純関数）。
  *
  * 2026-11-13 竹内さん「今弱い部分学習する。今のデータから学習する」:
@@ -361,8 +383,14 @@ export function learnSequenceFromShots(
   samples: number;
 } {
   const min = opt.min ?? 2;
+  /**
+   * 2026-11-14 竹内さん「ゴミデータが入らないようになっているか」:
+   *   押す対象でない入れ物（`div`・`img`・`td` など）は**鎖に入れない**。
+   *   ⚠ 判定は `isLearnableName`（1か所だけ・二重に持たない）。
+   */
+  const okName = (n: string) => isLearnableName(n);
   const seqs = (Array.isArray(sequences) ? sequences : [])
-    .map((s) => (Array.isArray(s) ? s.map((x) => String(x?.f ?? "").trim()).filter(Boolean) : []))
+    .map((s) => (Array.isArray(s) ? s.map((x) => String(x?.f ?? "").trim()).filter((f) => !!f && okName(f)) : []))
     .filter((s) => s.length >= 2);
   if (!seqs.length) return { sequence: [], groups: [], edges: [], samples: 0 };
 
@@ -448,6 +476,12 @@ export function planLearnFromWeak(
    *   「**自動（aix）は学びが少ない**」「**通常は学べている**」を統括が判断できる。
    */
   modes: Record<string, { rows: number; next: number; steps: number; gaps: { median_ms: number | null; samples: number } }> = {},
+  /**
+   * 2026-11-14 竹内さん「学習は統括の部分が管轄して整理もできているのか」:
+   *   **ゴミの点検結果**を渡すと、統括が「捨てる・直す」を判断する。
+   *   ・`garbage` … 検出したゴミの種類と件数（交互クリック・入れ物・水増し など）
+   */
+  garbage: Array<{ kind: string; n: number }> = [],
 ): {
   items: Array<{ priority: number; kind: string; name: string; action: string; why: string }>;
   counts: Record<string, number>;
@@ -455,6 +489,8 @@ export function planLearnFromWeak(
   summary: string;
   /** モードごとの判断（足りない物・次にやる事） */
   mode_plan: Array<{ mode: string; rows: number; verdict: string; action: string }>;
+  /** 整理（ゴミの扱い）＝統括の判断 */
+  cleanup: Array<{ kind: string; n: number; verdict: string; action: string }>;
 } {
   const PRI: Record<string, number> = {
     photo_vs_record: 1,
@@ -536,12 +572,36 @@ export function planLearnFromWeak(
       modePlan.push({ mode: m, rows: 0, verdict: `${MODE_JA[m] || m}: 記録が0件`, action: `「${MODE_JA[m] || m}」で検索して録画する` });
     }
   }
+  /**
+   * 2026-11-14 竹内さん「学習は統括の部分が管轄して整理もできているのか」:
+   *   **ゴミをどう扱うか**を統括が決める。
+   *   ・交互クリック（拡張のトグル跡）… 学習から**除く**（もう除いている・記録は残す）
+   *   ・押す対象でない入れ物（div/img/td）… 学習から**除く**（v2.7.28 で除外を追加）
+   *   ・同じ日の同じ並び（水増し）… **1回に畳む**（もう畳んでいる）
+   *   ・種類が分からない … 名前から推す（推せなければ写真）
+   */
+  const CLEAN_ACT: Record<string, { verdict: string; action: string }> = {
+    "交互クリック（トグル跡）": { verdict: "学習から除いています（記録は残す）", action: "拡張が同じチェックを2回押していないか確かめる（区のトグル）" },
+    "押す対象でない入れ物": { verdict: "学習から除きました（v2.7.28）", action: "なし（除外の規則を入れた）" },
+    "同じ日の同じ並び（水増し）": { verdict: "1回に畳んでいます", action: "なし（畳む規則は入っている）" },
+    "同じ欄の4連打": { verdict: "学習から除いています", action: "同じ欄を4回押していないか確かめる" },
+    "名前が1文字以下": { verdict: "学習から除いています", action: "名前が取れていない欄がある（記録側の改善）" },
+  };
+  const cleanup: Array<{ kind: string; n: number; verdict: string; action: string }> = [];
+  for (const g of Array.isArray(garbage) ? garbage : []) {
+    if (!g || !g.kind || !(Number(g.n) > 0)) continue;
+    const c = CLEAN_ACT[g.kind] ?? { verdict: "要確認", action: "何のゴミか確かめる" };
+    cleanup.push({ kind: g.kind, n: Number(g.n), verdict: c.verdict, action: c.action });
+  }
+  cleanup.sort((a, b) => b.n - a.n);
+
   return {
     items: items.slice(0, 40),
     counts,
     filled: guessed.length,
-    summary: parts.join("／"),
+    summary: parts.join("／") + (cleanup.length ? "／整理: " + cleanup.map((c) => `${c.kind} ${c.n}件`).join("・") : ""),
     mode_plan: modePlan,
+    cleanup,
   };
 }
 
