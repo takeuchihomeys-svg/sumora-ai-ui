@@ -74,33 +74,25 @@ export async function saveImprovement(x: Improvement): Promise<{ ok: boolean; sk
 export async function improvementSummary(days = 1): Promise<{
   total: number;
   byArea: Array<{ area: string; n: number }>;
-  /**
-   * ⚠ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」:
-   *   旧は `at, area, title, effect` だけだったので、統括は「**何を・なぜ・どう直したか**」を知れなかった。
-   *   → `why`（なぜ）と `how`（どう直したか）も返す（次の判断に活かせるように）。
-   */
-  recent: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  recent: Array<{ at: string; area: string; title: string; effect: string }>;
   error?: string;
 }> {
   try {
     const since = new Date(Date.now() - Math.max(1, days) * 86400_000).toISOString();
     const { data, error } = await supabase
       .from("learn_improvements")
-      .select("at, area, title, why, how, effect")
+      .select("at, area, title, effect")
       .gte("at", since)
       .order("at", { ascending: false })
       .limit(200);
     if (error) return { total: 0, byArea: [], recent: [], error: String(error.message).slice(0, 200) };
-    const rows = (data ?? []) as Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+    const rows = (data ?? []) as Array<{ at: string; area: string; title: string; effect: string }>;
     const m = new Map<string, number>();
     for (const r of rows) m.set(r.area, (m.get(r.area) ?? 0) + 1);
     return {
       total: rows.length,
       byArea: [...m.entries()].map(([area, n]) => ({ area, n })).sort((a, b) => b.n - a.n),
-      recent: rows.slice(0, 12).map((r) => ({
-        at: r.at, area: r.area, title: r.title,
-        why: String(r.why ?? ""), how: String(r.how ?? ""), effect: String(r.effect ?? ""),
-      })),
+      recent: rows.slice(0, 12),
     };
   } catch (e) {
     return { total: 0, byArea: [], recent: [], error: String((e && (e as Error).message) || e).slice(0, 200) };

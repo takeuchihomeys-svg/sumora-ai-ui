@@ -140,37 +140,11 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
    *   **今日なにを強化したか**を統括に渡す（根拠に出す・点は上げない）。
    */
-  let improvements: {
-    total: number;
-    by_area: Array<{ area: string; n: number }>;
-    /**
-     * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」
-     *   「強化必要な部分もちゃんと統括理解してそこの部分を細かく録画画面から読み取って改善されるようにする」
-     *
-     *   ⚠ 旧は**件数だけ**渡していた（`total` と `by_area`）ので、
-     *     統括は「5件強化した」とは言えても**何を直したか**を知らず、次の判断に活かせなかった。
-     *   → **直した中身（題・なぜ・どう・効果）も渡す**（`recent`）。
-     *     ⚠ 長くしない（最大8件・各120字まで）。統括の材料が膨らむと肝心の弱い所が埋もれる。
-     */
-    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
-  } | null = null;
+  let improvements: { total: number; by_area: Array<{ area: string; n: number }> } | null = null;
   try {
     const { improvementSummary } = await import("@/app/lib/learn-improvements");
     const imp = await improvementSummary(1);
-    if (!imp.error) {
-      improvements = {
-        total: imp.total,
-        by_area: imp.byArea,
-        recent: (imp.recent ?? []).slice(0, 8).map((r) => ({
-          at: String(r.at ?? "").slice(0, 19),
-          area: String(r.area ?? "").slice(0, 20),
-          title: String(r.title ?? "").slice(0, 120),
-          why: String((r as { why?: unknown }).why ?? "").slice(0, 120),
-          how: String((r as { how?: unknown }).how ?? "").slice(0, 120),
-          effect: String(r.effect ?? "").slice(0, 120),
-        })),
-      };
-    }
+    if (!imp.error) improvements = { total: imp.total, by_area: imp.byArea };
   } catch (e) {
     console.warn("[human-learn-profile] 今日の強化を読めません:", e instanceof Error ? e.message : String(e));
   }
