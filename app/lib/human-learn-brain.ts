@@ -510,7 +510,19 @@ export function learnMotion(rows: ReadonlyArray<MotionRow>): MotionStat {  const
  * @param rows 元にした記録（新しい順でなくてよい）
  * @param nowMs 生成時刻（テストで固定できるように）
  */
-export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: number = Date.now()): HumanLearnBundle {
+/**
+ * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」
+ *   「これで統括に確認したらすべて把握している状態にする。弱い部分も統括はすべて把握する」:
+ *   **実際の検索の結果（`search_audits`）も渡せるようにする**。
+ *   ⚠ これが無いと、統括は人の動きだけを見て「渡してよい」と言ってしまう
+ *     （実測: 60回中56回が途中で止まっていたのに `ready` を出していた）。
+ * @param audits 直近の検索の集計（`summarizeAudits`）。省略可（テスト・古い呼び出しを壊さない）。
+ */
+export function buildHumanLearnBundle(
+  rows: ReadonlyArray<MotionRow>,
+  nowMs: number = Date.now(),
+  audits: import("./learn-audit-summary").AuditSummary | null = null,
+): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
   // ① 押す順番（写真ごとの並びから）
   /**
@@ -928,6 +940,22 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
       const x = r as unknown as Record<string, unknown>;
       return x.shot_taken === true || (typeof x.shot_key === "string" && x.shot_key.length > 0);
     }).length,
+    /**
+     * 2026-11-14 竹内さん「これで統括に確認したらすべて把握している状態にする」:
+     *   **実際の検索の結果**（完走率・どこで止まるか・なぜ失敗したか）を統括に渡す。
+     */
+    audits: audits
+      ? {
+        runs: audits.runs,
+        finished: audits.finished,
+        abandoned: audits.abandoned,
+        finish_rate: audits.finish_rate,
+        stalled_at: audits.stalled_at,
+        causes: audits.causes,
+        bad: audits.bad,
+        top_problem: audits.top_problem,
+      }
+      : null,
   } as SupervisorInput);
 
   /**

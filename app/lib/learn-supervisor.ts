@@ -55,8 +55,24 @@ export type SupervisorInput = {
    *   ⚠ 推測を実測と同じ重さで点数に入れると、学べていないのに高得点になる。
    */
   guessed_opens?: number;
-  /** 写真がある記録の数（写真の割合を実データから出す） */
+  /** 2026-11-14: 写真がある記録の数（写真の割合を実データから出す） */
   shot_rows?: number;
+  /**
+   * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
+   *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
+   *   （実測: 60回中56回が途中で止まっていたのに「渡してよい」と言っていた）。
+   */
+  audits?: {
+    runs: number;
+    finished: number;
+    abandoned: number;
+    finish_rate: number;
+    /** 止まった場所（日本語・多い順） */
+    stalled_at?: Array<{ stage: string; n: number }>;
+    causes?: Array<{ cause: string; n: number }>;
+    bad?: number;
+    top_problem?: string | null;
+  } | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -283,6 +299,22 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       : rows > 0 && opsRatio < 0.3 ? "almost"
         : null;
 
+  /**
+   * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
+   *   **実際の検索の完走率**でも上限をかける（人の動きを学べていても、実際の検索が止まるなら渡せない）。
+   *   ⚠ 実測: 60回中56回が途中で止まっていた（完走率 7%）。
+   *     これを知らないまま `ready` を出していたのが一番の問題だった。
+   */
+  const au = inp.audits && typeof inp.audits === "object" ? inp.audits : null;
+  const auditRuns = num(au?.runs);
+  const auditRate = auditRuns > 0 ? num(au?.finish_rate) : null;
+  const capByAudit: SupervisorVerdict | null =
+    auditRuns === 0 ? null
+      : auditRate == null ? null
+        : auditRate < 50 ? "not_yet"     // 半分も完走しない＝自動に渡せない
+          : auditRate < 90 ? "almost"     // たまに止まる＝まだ「渡してよい」とは言えない
+            : null;
+
   let verdict: SupervisorVerdict;
   if (withOps === 0 && rows > 0) verdict = "not_yet";   // 材料ゼロは「これから」段階（危ないの一歩手前）
   else if (block) verdict = "unsafe";
@@ -294,10 +326,19 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
     if (rank[verdict] > rank[capByRatio]) verdict = capByRatio;
   }
+  if (capByAudit && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByAudit]) verdict = capByAudit;
+  }
   /** 上限が効いたか（点検・会話で「なぜ ready でないか」を言えるように） */
-  const cappedBy: string | null = capByRatio && verdict === capByRatio
-    ? `材料つき記録が ${Math.round(opsRatio * 100)}%（${withOps}/${rows}）なので「渡してよい」にはしない`
-    : null;
+  const cappedParts: string[] = [];
+  if (capByRatio && rank2(verdict) <= rank2(capByRatio)) {
+    cappedParts.push(`材料つき記録が ${Math.round(opsRatio * 100)}%（${withOps}/${rows}）なので「渡してよい」にはしない`);
+  }
+  if (capByAudit && rank2(verdict) <= rank2(capByAudit)) {
+    cappedParts.push(`実際の検索の完走率が ${auditRate}%（${num(au?.finished)}/${auditRuns}回）なので「渡してよい」にはしない`);
+  }
+  const cappedBy: string | null = cappedParts.length ? cappedParts.join(" ／ ") : null;
 
   // ── ③ 前回との比較 ──
   const prev = inp.prev && typeof inp.prev === "object" ? inp.prev : null;
@@ -344,6 +385,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     self_check: selfCheck({
       verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
+      audits: au ? { runs: num(au.runs), finished: num(au.finished), finish_rate: num(au.finish_rate), stalled_at: au.stalled_at } : null,
     }),
     meeting: buildMeeting({
       site, verdict, coverage, rows, next, points, opens, screens, sequence,
@@ -353,8 +395,15 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       siteCounts: inp.site_counts || {},
       modeCounts: inp.mode_counts || {},
       shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
+      /** 2026-11-14: 実際の検索の結果も議題に使う */
+      audits: au,
     }),
   };
+}
+
+/** 結論の強さの順（上限をかける時に使う） */
+function rank2(v: SupervisorVerdict): number {
+  return v === "unsafe" ? 3 : v === "ready" ? 2 : v === "almost" ? 1 : 0;
 }
 
 /**
@@ -384,6 +433,8 @@ function selfCheck(m: {
   block: string | null;
   guessedOpens: number;
   opens: number;
+  /** 2026-11-14: 実際の検索の結果（完走率が低いのに「渡してよい」を防ぐ） */
+  audits?: { runs: number; finished: number; finish_rate: number; stalled_at?: Array<{ stage: string; n: number }> } | null;
 }): { ok: boolean; issues: string[]; capped_by: string | null } {
   const issues: string[] = [];
   const pct = Math.round((m.opsRatio || 0) * 100);
@@ -404,6 +455,21 @@ function selfCheck(m: {
   }
   if (m.verdict === "unsafe" && !m.block) {
     issues.push("「危ない」と言っていますが、理由（block）がありません");
+  }
+  /**
+   * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
+   *   **実際の検索の完走率**が低いのに「渡してよい」と言っていたら矛盾。
+   *   ⚠ これが今まで見えていなかった一番の問題（実測: 完走率7%で `ready` を出していた）。
+   */
+  const ar = m.audits && num(m.audits.runs) > 0 ? num(m.audits.finish_rate) : null;
+  if (ar != null && ar < 90) {
+    const top = Array.isArray(m.audits?.stalled_at) && m.audits!.stalled_at!.length ? m.audits!.stalled_at![0] : null;
+    if (m.verdict === "ready") {
+      issues.push(`「渡してよい」と言っていますが、実際の検索は ${m.audits!.finished}/${m.audits!.runs}回しか完走していません（完走率 ${ar}%）`);
+    }
+    if (ar < 50) {
+      issues.push(`実際の検索が半分も完走していません（${ar}%）${top ? `。一番止まるのは「${top.stage}」（${top.n}回）` : ""}`);
+    }
   }
 
   return {
@@ -427,9 +493,15 @@ function buildMeeting(m: {
   guessedOpens: number;
   siteCounts: Record<string, number>;
   modeCounts: Record<string, number>;
+  /** 2026-11-14: 実際の検索の結果も議題に使う */
+  audits?: SupervisorInput["audits"];
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
 }): SupervisorAdvice["meeting"] {
+  const num = (v: unknown): number => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
   const who = m.site === "all" ? "全体" : m.site;
   const today: string[] = [];
   const agenda: SupervisorAdvice["meeting"]["agenda"] = [];
@@ -450,6 +522,19 @@ function buildMeeting(m: {
   }
   evidence.push({ label: "画面ごとの手順", value: `${m.screens}種類` });
   evidence.push({ label: "一連の動き", value: `${m.sequence}手` });
+  /**
+   * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
+   *   **実際の検索の結果**を根拠に出す（これが無いと現場の現実を無視した判断になる）。
+   */
+  if (m.audits && num(m.audits.runs) > 0) {
+    evidence.push({
+      label: "実際の検索",
+      value: `${m.audits.runs}回中 完走${m.audits.finished}回（完走率 ${m.audits.finish_rate}%）・途中で止まった ${m.audits.abandoned}回`,
+    });
+    if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
+      evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
+    }
+  }
   const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
   if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });
   const mc = Object.entries(m.modeCounts);
@@ -469,6 +554,26 @@ function buildMeeting(m: {
   }
 
   // ── 議題（決めたい事）──
+  /**
+   * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
+   *   **一番大事な議題は「実際の検索が止まっている」**（人の動きを学べていても意味がない）。
+   *   ⚠ 実測: 60回中56回が途中で止まっていた。
+   */
+  if (m.audits && num(m.audits.runs) > 0 && num(m.audits.finish_rate) < 90) {
+    const top = Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length ? m.audits.stalled_at[0] : null;
+    agenda.push({
+      priority: 0,
+      topic: "実際の検索が途中で止まっている",
+      why: `${m.audits.runs}回中 完走は ${m.audits.finished}回だけ（完走率 ${m.audits.finish_rate}%）${top ? `。一番多いのは「${top.stage}」で止まる（${top.n}回）` : ""}`,
+      decide: top ? `「${top.stage}」を直す／このままでよいか` : "止まる原因を調べる",
+    });
+    questions.push({
+      q: `実際の検索が ${m.audits.runs}回中 ${m.audits.finished}回しか完走していません（完走率 ${m.audits.finish_rate}%）。どれから直しますか？`,
+      options: top ? [`「${top.stage}」から直す（推奨）`, "別の所から直す", "今のままでよい"] : ["止まる原因を調べる（推奨）", "今のままでよい"],
+      why: "人の動きを学べていても、実際の検索が止まるなら自動には渡せない",
+    });
+  }
+
   /**
    * ⚠ 一番大事な議題は「**材料が足りない**」事。数字が良くても中身が薄い事がある。
    */

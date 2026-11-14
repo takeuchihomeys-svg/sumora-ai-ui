@@ -97,7 +97,31 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   if (!rows.length) { try { note?.("no_rows"); } catch (_) {} return null; }
   if (droppedCols.length) { try { note?.("dropped_cols: " + Array.from(new Set(droppedCols)).join(",")); } catch (_) {} }
   const { buildHumanLearnBundle, compactBundle } = await import("@/app/lib/human-learn-brain");
-  const bundle = compactBundle(buildHumanLearnBundle(rows as never));
+  /**
+   * 2026-11-14 竹内さん「これで統括に確認したらすべて把握している状態にする。弱い部分も統括はすべて把握する」:
+   *   **実際の検索の結果（`search_audits`）**を取って統括に渡す。
+   *   ⚠ 旧は人の動きの記録だけを見ていたので、**93%が途中で止まっている**のに
+   *     「渡してよい」と判断していた。現場の現実を入れないと統括にならない。
+   *   ⚠ 取れなくても学習の束は作る（`audits=null`）。
+   */
+  let auditsSummary: import("@/app/lib/learn-audit-summary").AuditSummary | null = null;
+  try {
+    const { summarizeAudits } = await import("@/app/lib/learn-audit-summary");
+    const since24 = new Date(Date.now() - 24 * 3600_000).toISOString();
+    let aq = supabase
+      .from("search_audits")
+      .select("created_at, status, site, mode, area_mode, cause_key, error, severity, steps, result, ext_version")
+      .gte("created_at", since24)
+      .order("created_at", { ascending: false })
+      .limit(300);
+    if (scope && scope !== "all") aq = aq.eq("site", scope);
+    const ar = await aq;
+    if (!ar.error) auditsSummary = summarizeAudits((ar.data ?? []) as never, { sinceMs: 24 * 3600_000 });
+    else console.warn("[human-learn-profile] search_audits を読めません:", ar.error.message);
+  } catch (e) {
+    console.warn("[human-learn-profile] 検索の結果を取れません:", e instanceof Error ? e.message : String(e));
+  }
+  const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
    * 2026-11-13 竹内さん「なんで連携できていないのか」:
