@@ -1459,9 +1459,26 @@
         var cand2 = norm(candidates[cj]);
         // 包含（短すぎる候補は除外）
         if (cand2.length < 5) continue;
+        /**
+         * 2026-11-14 竹内さん「まだ所在地絞り込み押すことできていない」:
+         *   ⚠ 旧は**最初に見つかった要素**を採っていた。`textContent` は子の文字も全部つなぐので、
+         *     左の帯の**親の div** が「所在地絞り込み＋沿線・駅絞り込み＋…」と一致し、
+         *     押しても**何も起きない親**を押していた（＝開かない）。
+         *   → 「一致する中で**一番内側（子に同じ一致が無い）**」を採る。
+         *     内側が無ければ今まで通り。
+         */
+        var found = [];
         for (var j = 0; j < els.length; j++) {
           if (!isVisible(els[j])) continue;
-          if (norm(els[j].textContent).indexOf(cand2) >= 0) { hit = els[j]; break; }
+          if (norm(els[j].textContent).indexOf(cand2) >= 0) found.push(els[j]);
+        }
+        if (found.length) {
+          // 子孫に同じ候補を含む物があれば、親は捨てる（一番内側を採る）
+          var inner = found.filter(function (e) {
+            return !found.some(function (o) { return o !== e && e.contains(o); });
+          });
+          hit = (inner.length ? inner[0] : found[0]);
+          break;
         }
       }
     }
@@ -3940,10 +3957,102 @@
           } catch (_) {}
         })();
         waitForClick(
-          function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
+          /**
+           * 2026-11-14 竹内さん「まだ所在地絞り込み押すことできていない。原因見つけて改善する」:
+           *   ⚠ 旧は `clickByText(['所在地絞り込み＋', ...])` だけで探していた。
+           *     だが `clickByText` は **`textContent`（子の文字も全部つなぐ）** で照合するので、
+           *     リアプロの左の帯のように
+           *       `<div class="click_menu">所在地絞り込み<span>＋</span></div>`
+           *     の**入れ子**になっていると、親の div の文字が
+           *     「所在地絞り込み＋沿線・駅絞り込み＋…」のように長くなり、**完全一致しない**。
+           *     部分一致は「短すぎる候補は除く」規則（5文字未満）で落ちる事もある。
+           *   ⚠ 駅（沿線・駅絞り込み）は**先にクラス名で堅く探す**ように直してあった（動いていた）。
+           *     地域だけ文字頼みで残っていた＝**ここが押せない原因**。
+           *   → 駅と同じ順で探す：① **クラス名**（click_menu / one_slide_search_box）
+           *     ② **場所の帯の中**（.left_area / #left / .one_slide_search_box / 画面の左半分）
+           *     ③ 文字（今まで通り）
+           */
+          function() {
+            try {
+              // ① クラス名で堅く探す（駅と同じ）
+              var clsTargets = ['click_menu', 'one_slide_search_box'];
+              for (var ci = 0; ci < clsTargets.length; ci++) {
+                var divs = Array.prototype.slice.call(document.querySelectorAll('div.' + clsTargets[ci]));
+                for (var i = 0; i < divs.length; i++) {
+                  if (!isVisible(divs[i])) continue;
+                  var t = divs[i].textContent.replace(/\s+/g, '');
+                  if (t.includes('所在地絞り込み')) {
+                    if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_class', clsTargets[ci]); }
+                    divs[i].click();
+                    return true;
+                  }
+                }
+              }
+              // ② 場所の帯の中を文字で探す（親の入れ子に強い）
+              var areas = Array.prototype.slice.call(document.querySelectorAll('.left_area, #left, .one_slide_search_box, .search_box, #search_area, .side'));
+              for (var ai = 0; ai < areas.length; ai++) {
+                if (!isVisible(areas[ai])) continue;
+                var cands = Array.prototype.slice.call(areas[ai].querySelectorAll('div,span,a,button,td,p'));
+                for (var k = 0; k < cands.length; k++) {
+                  if (!isVisible(cands[k])) continue;
+                  var tt = cands[k].textContent.replace(/\s+/g, '');
+                  // 「所在地絞り込み＋」を含み、**他の絞り込みを含まない**（一番内側を採る）
+                  if (tt.includes('所在地絞り込み') && !/沿線・駅絞り込み|管理会社絞り込み/.test(tt)) {
+                    if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_area', tt.slice(0, 20)); }
+                    simulateClick(cands[k]);
+                    return true;
+                  }
+                }
+              }
+            } catch (_) {}
+            // ③ 文字（今まで通り・最後の受け皿）
+            return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+          },
           function() {
             console.log('[AX] STEP1完了: 所在地絞り込みクリック済');
             _auditStepP('modal', 'area');
+            /**
+             * 2026-11-14 竹内さん「まだ所在地絞り込み押すことできていない。原因見つけて改善する」:
+             *   ⚠ 押した「つもり」で次へ進むと、モーダルが開いていないのに STEP2 以降が
+             *     全部タイムアウトして**地域が入らない**（＝実測で起きていた）。
+             *   → **本当に開いたかを確かめる**（区・町字・都道府県のどれかが出ているか）。
+             *     出ていなければ**別の手で押し直す**（クラス名 → 親をたどる → 座標でクリック）。
+             */
+            (function _ensureAreaOpened(tries) {
+              var n = tries || 0;
+              var opened = function () {
+                try {
+                  return !!(document.querySelector('label.one_city, label.one_town, input[name="city_code[]"], input[name="pref_code"]'));
+                } catch (_) { return false; }
+              };
+              if (opened()) {
+                if (n) console.log('[AX] 所在地絞り込みが開きました（押し直し' + n + '回）');
+                if (_audit && n) _auditStepP('area_open_retry', n + '回で開いた');
+                return;
+              }
+              if (n >= 3) {
+                console.warn('[AX] 所在地絞り込みが開きません（3回試しました）');
+                if (_audit) _auditStepP('area_open_fail', '3回試しても開かない');
+                return;
+              }
+              // 押し直す: ① 場所の帯の中で「所在地絞り込み」を含む一番内側
+              try {
+                var all = Array.prototype.slice.call(document.querySelectorAll('div,span,a,button,td,p'));
+                var cand = all.filter(function (e) {
+                  if (!isVisible(e)) return false;
+                  var t = e.textContent.replace(/\s+/g, '');
+                  if (!t.includes('所在地絞り込み')) return false;
+                  if (/沿線・駅絞り込み|管理会社絞り込み/.test(t)) return false;
+                  // 子に同じ物があれば親（内側だけ残す）
+                  return !all.some(function (o) { return o !== e && e.contains(o) && o.textContent.replace(/\s+/g, '').includes('所在地絞り込み'); });
+                });
+                if (cand.length) {
+                  console.log('[AX] 所在地絞り込みを押し直します（' + (n + 1) + '回目）');
+                  simulateClick(cand[0]);
+                }
+              } catch (_) {}
+              setTimeout(function () { _ensureAreaOpened(n + 1); }, 900 + Math.floor(Math.random() * 400));
+            })(0);
             /**
              * 2026-11-14 竹内さん「地域の部分はいる前から地域だけ選択されていた」:
              *   ⚠ 前の検索で選んだ区・町字が**モーダルに残ったまま**開く事がある
