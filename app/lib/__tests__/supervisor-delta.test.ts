@@ -39,7 +39,7 @@ console.log("■ ① prev を渡している（旧は常に null）");
    */
   ok("  サイト別は比べないまま（別物を混ぜない）", /サイト別は「比べない」まま/.test(brain) || /prev: null,\s*\n\s*site: siteName/.test(brain));
   ok("API が learn_supervisor_log から前回を読む", /from\("learn_supervisor_log"\)/.test(api) && /prevAdvice/.test(api));
-  ok("  比べる数は 記録・順番・場所・開き方・弱い所", /next_n.*points_n.*opens_n.*weak_n/s.test(api) || /next_n, points_n, opens_n, weak_n/.test(api));
+  ok("  比べる数は 記録・順番・場所・開き方・弱い所", /next_n, points_n, opens_n, weak_n/.test(api) && /rows: Number\(p\.rows\)/.test(api));
 }
 
 console.log("\n■ ② 前回と比べて「前回から」を出す");
@@ -58,6 +58,7 @@ console.log("\n■ ② 前回と比べて「前回から」を出す");
   ok("  順番 +20", r.score.delta?.next === 20, r.score.delta);
   ok("  場所 +40", r.score.delta?.points === 40, r.score.delta);
   ok("  開き方 +10", r.score.delta?.opens === 10, r.score.delta);
+  ok("  ⚠ 開き方も「前回から」の行に入る", !!(r.meeting.today || []).find((t) => t.includes("開き方")), r.meeting.today);
   ok("  弱い所 -10（良くなった）", r.score.delta?.weak === -10, r.score.delta);
   const line = (r.meeting.today || []).find((t) => t.includes("前回から"));
   ok("  今日の結論に「前回から」が出る", !!line, r.meeting.today);

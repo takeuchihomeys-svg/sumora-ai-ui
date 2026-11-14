@@ -829,6 +829,13 @@ function buildMeeting(m: {
     if (d.rows) parts.push(`記録${d.rows > 0 ? "+" : ""}${d.rows}`);
     if (d.next) parts.push(`順番${d.next > 0 ? "+" : ""}${d.next}`);
     if (d.points) parts.push(`場所${d.points > 0 ? "+" : ""}${d.points}`);
+    /**
+     * 2026-11-14 竹内さん「ちゃんと判断できるようになっているか」:
+     *   ⚠ `opens`（押したら何が開くか）が `parts` に入っていなかったので、
+     *     `delta` が `opens` だけ動いた時に**「前回から」が出なかった**（実測: opens -13 なのに黙っていた）。
+     *   → 5つ全部を出す（記録・順番・場所・開き方・弱い所）。
+     */
+    if (d.opens) parts.push(`開き方${d.opens > 0 ? "+" : ""}${d.opens}`);
     if (d.weak) parts.push(`弱い所${d.weak > 0 ? "+" : ""}${d.weak}`);
     if (parts.length) today.push(`前回から: ${parts.join("・")}`);
   }
