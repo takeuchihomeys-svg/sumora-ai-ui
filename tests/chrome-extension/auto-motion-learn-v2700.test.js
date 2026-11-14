@@ -37,7 +37,7 @@ console.log("■ ① 自動モードの動きを覚える（人の実測と分�
 
 console.log("\n■ ② 写真をもっと小さく");
 {
-  ok("長辺 480px・JPEG 20%（2026-11-12 もっと小さく）", /_shrinkShot\(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q\)/.test(bg) && /SHOT_SEND_Q = 0\.20/.test(bg));
+  ok("小さい時は 480px・JPEG 20%（2026-11-12 もっと小さく）", /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(bg) && /SHOT_SEND_SIDE = 480/.test(bg) && /SHOT_SEND_Q = 0\.20/.test(bg));
   ok("縮めた物を送る", /data_url: shotForUpload/.test(bg));
   ok("元と送る物の大きさをログに出す", /撮りました: 元 /.test(bg));
 }

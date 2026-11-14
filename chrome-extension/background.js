@@ -1895,6 +1895,45 @@ var _shotSeq = 0;
  */
 var SHOT_SEND_SIDE = 480;
 var SHOT_SEND_Q = 0.20;
+/**
+ * 2026-11-14 竹内さん「３にする」（小窓が開いた時だけ大きく撮る）
+ *
+ *   ⚠ 実測: 480x244 では **欄の文字が読めない**（Vision が `fields: []` を返す）。
+ *     写真から欄の種類（プルダウン／入力）を学ぶには、文字が読める大きさが要る。
+ *   ⚠ 全部大きく撮ると容量が約6倍（7,968枚で約500MB）。
+ *   → **小窓（プルダウン・地域選択）が開いている時だけ**大きく撮る。
+ *     学びたい瞬間はそこだから、費用と容量を抑えつつ一番効く所を残せる。
+ *
+ *   大きい時の設定: 長辺 **1280px・JPEG 45%**（1枚 100〜250KB 目安）。
+ *     ⚠ 小さく撮る時の 480px は変えない（今までの写真と同じ）。
+ */
+var SHOT_BIG_SIDE = 1280;
+var SHOT_BIG_Q = 0.45;
+
+/**
+ * この写真を**大きく撮るべきか**（純関数に近い・DOMは触らない）。
+ *
+ * 拡張の `content.js` が「小窓が開いた」を `msg.opened` に載せてくる。
+ *   opened … "modal" | "options" | "form" | "result" | "none"
+ * それに加えて、押した所（msg.what）が「プルダウン・小窓の中」なら大きく撮る。
+ *
+ * ⚠ 迷ったら**小さく撮る**（容量を守る）。大きく撮る条件を広げすぎない。
+ */
+function _shouldShotBig(msg) {
+  try {
+    if (!msg) return false;
+    // ① 小窓・選択肢が開いた直後
+    const opened = String(msg.opened || "").toLowerCase();
+    if (opened === "modal" || opened === "options") return true;
+    // ② 押した欄がプルダウン・小窓の中（名前で判断）
+    const what = String(msg.what || "");
+    if (/select|transportation|rental_cost|square_meter|structured_date|update_date|room_layout|city_code|town_code|station|路線|駅|区/.test(what)) return true;
+    // ③ 拡張が「この写真は大きく」と言ってきた（将来の余地・サイト側の判断）
+    if (msg.big === true) return true;
+    return false;
+  } catch (_) { return false; }
+}
+
 var SHOT_LOCAL_SIDE = 320;   // Chrome の中に残す時の長辺（上げられなかった時だけ）
 var SHOT_LOCAL_Q = 0.15;
 /**
@@ -2205,19 +2244,20 @@ async function _takeShot(msg, done) {
        */
       let shotForUpload = dataUrl;
       let shotW = 0, shotH = 0;
+      /**
+       * 2026-11-14 竹内さん「３にする」: **小窓が開いた時だけ大きく撮る**。
+       *   ⚠ 480px では欄の文字が読めず、Vision が `fields: []` を返す（実測）。
+       *   → 大きく撮る条件は `_shouldShotBig(msg)` の1か所（迷ったら小さいまま）。
+       */
+      const _big = _shouldShotBig(msg);
       try {
-        /**
-         * 2026-11-12 竹内さん「もっと画像の容量おとしてもよい」:
-         *   800px・32%（40〜90KB）→ **640px・25%（25〜50KB）**。
-         *   物件名・賃料・押したボタンの位置は読める範囲で、枚数が多くても容量が増えにくい。
-         */
-        const shrunk = await _shrinkShot(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q);
+        const shrunk = await _shrinkShot(dataUrl, _big ? SHOT_BIG_SIDE : SHOT_SEND_SIDE, _big ? SHOT_BIG_Q : SHOT_SEND_Q);
         if (shrunk && shrunk.dataUrl) { shotForUpload = shrunk.dataUrl; shotW = shrunk.w; shotH = shrunk.h; }
       } catch (e) {
         console.warn("[human-shot] 縮められませんでした（元の大きさで送ります）:", (e && e.message) || e);
       }
       const shotBytes = Math.round(String(shotForUpload).length * 3 / 4);
-      console.log("[human-shot] 撮りました: 元 " + Math.round(dataUrl.length * 3 / 4 / 1024) + "KB → 送る物 " + Math.round(shotBytes / 1024) + "KB（" + shotW + "x" + shotH + "）");
+      console.log("[human-shot] 撮りました: 元 " + Math.round(dataUrl.length * 3 / 4 / 1024) + "KB → 送る物 " + Math.round(shotBytes / 1024) + "KB（" + shotW + "x" + shotH + "）" + (_big ? "・大きく撮る（小窓/プルダウン）" : ""));
 
       // 名前を「まとまり＋連番」にする（並べ替えると操作の流れになる）
       const key = "shot_" + _shotRun + "_" + String(_shotSeq).padStart(4, "0");
@@ -2234,6 +2274,12 @@ async function _takeShot(msg, done) {
          *   どのタブを撮ったか。写真と一緒に**その場の動きの癖**を送るために使う。
          */
         tab_id: typeof tab.id === "number" ? tab.id : null,
+        /**
+         * 2026-11-14 竹内さん「３にする」:
+         *   この写真を**大きく撮ったか**を残す（後から「大きく撮れているか」を確かめられる）。
+         */
+        big: !!_big,
+        opened: String(msg.opened || "").slice(0, 12) || null,
       };
       /**
        * 2026-11-12 竹内さん「いまちゃんとろくがされてたかな？」→ **保存0枚・失敗6回・ResourceExceeded**。

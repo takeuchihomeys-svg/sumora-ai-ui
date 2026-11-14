@@ -26,7 +26,7 @@ console.log("■ ① 送る前に縮める");
 {
   ok("縮める関数がある（_shrinkShot）", /async function _shrinkShot\(dataUrl, maxSide, quality\)/.test(bg));
   ok("OffscreenCanvas を使う（service worker に DOM は無い）", /OffscreenCanvas/.test(bg) && /createImageBitmap/.test(bg));
-  ok("長辺 480px に縮める（2026-11-12 もっと小さく）", /_shrinkShot\(dataUrl, SHOT_SEND_SIDE, SHOT_SEND_Q\)/.test(bg) && /SHOT_SEND_SIDE = 480/.test(bg));
+  ok("小さい時は長辺 480px（小窓の時だけ 1280px）", /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(bg) && /SHOT_SEND_SIDE = 480/.test(bg));
   ok("JPEG 32% で保存", /quality: quality \|\| 0\.45/.test(bg) || /0\.32/.test(bg));
   ok("使えない環境では null（＝元の大きさで送る・止まらない）", /if \(typeof OffscreenCanvas === "undefined"/.test(bg));
   ok("送るのは縮めた物（shotForUpload）", /data_url: shotForUpload/.test(bg));

@@ -557,6 +557,59 @@
           });
         } catch (_) {}
       };
+      /**
+       * 2026-11-14 竹内さん「３にする」（小窓が開いた時だけ大きく撮る）:
+       *   **押した直後に何が開いているか**を見た目だけで判定する。
+       *
+       *   "options" … プルダウンの中身（select を開いた・option が並んでいる）
+       *   "modal"   … 小窓（地域・沿線の選択など。`.this_window` / `[role=dialog]` / `.modal`）
+       *   "form"    … 条件の入力欄（検索の欄がある）
+       *   "result"  … 検索結果の一覧
+       *   "none"    … どれでもない
+       *
+       *   ⚠ 見るのは**要素があるか・見えているか**だけ。文字・入力値は読まない。
+       *   ⚠ 判定できなければ "none"（＝小さく撮る＝容量を守る）。
+       */
+      var _openedKind = function () {
+        try {
+          var d = document;
+          if (!d || !d.querySelector) return "none";
+          var visible = function (el) {
+            try { return !!el && el.offsetParent !== null; } catch (_) { return false; }
+          };
+          // ① プルダウンの選択肢が開いている（select の size が2以上／option が複数見えている）
+          try {
+            var sels = d.querySelectorAll("select");
+            for (var i = 0; i < sels.length; i++) {
+              var s = sels[i];
+              if (!visible(s)) continue;
+              // 開いている select は size が 1 より大きくなる（OS が描く一覧は DOM に出ないが、
+              // サイト独自の一覧は div/ul で出るので ② で拾う）
+              if (Number(s.size) > 1) return "options";
+            }
+          } catch (_) {}
+          // ② サイト独自の一覧（ul/div の選択肢がいくつも見えている）
+          try {
+            var lists = d.querySelectorAll("ul.selectBox, .select_box, .dropdown, .options, [class*='selectList'], [class*='optionList']");
+            for (var j = 0; j < lists.length; j++) {
+              if (!visible(lists[j])) continue;
+              var n = lists[j].querySelectorAll("li, div[data-value], a").length;
+              if (n >= 3) return "options";
+            }
+          } catch (_) {}
+          // ③ 小窓
+          try {
+            var modal = d.querySelector(".this_window, [role='dialog'], .modal, #modal, .modal_wrap");
+            if (visible(modal)) return "modal";
+          } catch (_) {}
+          // ④ 検索結果 / 条件の欄
+          try {
+            if (d.querySelector(".building_tr, .building_list, [class*='building_tr']")) return "result";
+            if (d.querySelector("select[name='rental_cost2'], input[name='city_code[]'], div.go_search")) return "form";
+          } catch (_) {}
+          return "none";
+        } catch (_) { return "none"; }
+      };
       // 2026-11-11 竹内さん「写真ちゃんと送られたかな？」:
       //   旧は `if (!watching)` で弾いていた（＝自動・AIX では撮らない）。写真はモードに関係なく撮る。
       if (!_shooting && !watching) { diag(false, "not_shooting"); return; }
@@ -581,6 +634,15 @@
         what: el ? (L.fieldName ? L.fieldName(el) : null) : null,
         x: pt && typeof pt.x === "number" ? pt.x : null,
         y: pt && typeof pt.y === "number" ? pt.y : null,
+        /**
+         * 2026-11-14 竹内さん「３にする」（小窓が開いた時だけ大きく撮る）:
+         *   ⚠ background は「大きく撮るか」を判断する材料を持っていない（DOM が無い）。
+         *     判断できるのは**このページ側**だけ。
+         *   → **押した直後に小窓（プルダウン・ダイアログ）が開いているか**を調べて一緒に送る。
+         *     background は `opened` が modal/options の時だけ大きく撮る（1280px）。
+         *   ⚠ 見るのは**見た目だけ**（中身の文字は読まない・入力値も触らない）。
+         */
+        opened: _openedKind(),
         /**
          * 2026-11-13 竹内さん「写真から学習する。押す場所や押す順番などもりかいできるから」
          *   「おしかたのボタンの仕様の理解の為にも」:

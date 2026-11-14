@@ -123,7 +123,18 @@ console.log("\n■ ⑥ DB の表（migrate-schema と DDL が同じ形）");
   ok("DDL にも同じ列が揃っている", cols.every((c) => new RegExp("\\b" + c + "\\b").test(ddl)));
   ok("索引がある（新しい順）", /idx_human_motion_created/.test(ms) && /idx_human_motion_install/.test(ms));
   ok("RLS を有効にする（サーバーだけの表・DISABLE しない決まり）", /ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY/.test(ms) && /ALTER TABLE human_motion_learn ENABLE ROW LEVEL SECURITY/.test(ddl));
-  ok("RLS を DISABLE していない", !/DISABLE ROW LEVEL SECURITY[\s\S]{0,40}human_motion_learn/.test(ms) && !/human_motion_learn[\s\S]{0,40}DISABLE ROW LEVEL SECURITY/.test(ms));
+  /**
+   * 2026-11-14 竹内さん「RLS無効にする」→ 決定が変わった。
+   *   ⚠ 旧は「サーバーだけの表は RLS を入れたまま（DISABLE しない）」だったが、
+   *     そのせいで **Service Role キーが無い所から読めず・書けず**、
+   *       ・写真学習が「読む物がありません」で1枚も動かない
+   *       ・学習の束が残らない
+   *     という実害が出た（実測: 公開キーで 0件・他の表は読める）。
+   *   → **他の表と同じ扱い（DISABLE）にそろえた**。入れるのは数・傾向・欄の名前だけなので個人情報は漏れない。
+   */
+  ok("⚠ RLS を DISABLE にそろえた（竹内さん 2026-11-14「RLS無効にする」）", /human_motion_learn[\s\S]{0,60}DISABLE ROW LEVEL SECURITY/.test(ms));
+  ok("  ⚠ ENABLE より後ろ（最後に効く）",
+    ms.indexOf("human_motion_learn DISABLE ROW LEVEL SECURITY") > ms.indexOf("human_motion_learn ENABLE ROW LEVEL SECURITY"));
   ok("当てるスクリプトがある（apply-human-motion-learn.ts）", /human_motion_learn/.test(fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "apply-human-motion-learn.ts"), "utf8")));
 }
 
