@@ -200,6 +200,12 @@ export type AckFormFacts = {
   topics?: PromiseTopic[];
   /** 約束がお客様の動きを待つ条件つき（「お送り頂き次第〜お送りさせて頂きます」q390）＝まだ果たす番ではない */
   conditional?: boolean;
+  /** 2026-11-15 作業員D（q111）: 日にちの決まっていない約束（「確認出来次第ご連絡」「御見積書を作成しお送り」＝結果が出たらすぐ送る）がある。日にちの決まった先の約束だけなら false */
+  pendingNow?: boolean;
+  /** 日にちの決まった先の報告の約束（「9月30日に一度9月30日時点での募集状況をご連絡」q111） */
+  scheduledLater?: boolean;
+  /** こちらの通が約束の後に締め（「お気軽にご連絡ください」「引き続き何卒よろしく」）で終わっている＝お客様の了承は締めへの挨拶 */
+  closesAfter?: boolean;
 };
 /** 前のこちらの約束と今のお客様の発言から材料を読む（無い時 null）。messages は古い順 */
 export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string; text: string | null; created_at?: string | null }>): AckFormFacts | null {
@@ -222,7 +228,12 @@ export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string
   const minutes = prev.created_at && firstCust?.created_at ? Math.max(0, Math.round((Date.parse(firstCust.created_at) - Date.parse(prev.created_at)) / 60000)) : null;
   const topics = [...new Set(ss.flatMap((x) => promiseTopics(x)))];
   const conditional = ss.some((x) => promiseTopics(x).length > 0 && ACK_COND_PROMISE_RE.test(x));
-  return { family, form, promise: promise.slice(0, 60), customer, minutes, topics, conditional };
+  const isPromise = (x: string) => promiseTopics(x).length > 0;
+  const pendingNow = ss.some((x) => isPromise(x) && !ACK_CAL_DATE_RE.test(x));
+  const scheduledLater = ss.some((x) => isPromise(x) && ACK_CAL_DATE_RE.test(x) && !/次第/.test(x));
+  let lastPromiseIdx = -1; ss.forEach((x, k) => { if (isPromise(x)) lastPromiseIdx = k; });
+  const closesAfter = lastPromiseIdx >= 0 && ss.slice(lastPromiseIdx + 1).some((x) => ACK_CLOSE_RE.test(x));
+  return { family, form, promise: promise.slice(0, 60), customer, minutes, topics, conditional, pendingNow, scheduledLater, closesAfter };
 }
 // ── 2026-11-14 作業員D（q091・BRAIN_MSG_WINDOW_UNITS の悪化の掘り）: 確認・見積の約束の直後の了承だけの番で、材料どうしが食い違っていた ──
 //   ★の決まり・【まだ果たしていないこちらの約束】は「約束を果たす AIX の番」（竹内さんの決定 C 10/14・KB 2b1e0044「確認・見積の約束の後は AIX のまま」）、
@@ -231,13 +242,23 @@ export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string
 //   窓（BRAIN_MSG_WINDOW_UNITS）は最新の通も台帳も落としておらず、古い物件のカード1件と画像の束の1行が増えただけ＝割れている判断がどちらに倒れるかを揺らしただけ。
 //   直し: 確認（募集状況・管理会社）・見積の約束への了承だけの番は、この材料に「道は約束を果たす AIX のまま・ack_form は道を変えない」の1行を足す（決まりの食い違いを材料の側で解く）。
 //   既定 off（ACK_CONFIRM_AIX_PATH=on の時だけ）。探す（ピックアップ）・審査・連絡だけの約束には足さない
-const ACK_COND_PROMISE_RE = /(?:頂|いただ)き次第|(?:頂|いただ)けましたら|(?:頂|いただ)ければ|ございましたら/;
+// 11/15 q152: 「お気に召されましたらお申込みし…」も条件つき（確認の結果はもう同じ通で伝えている・竹内さんは AIX【申込へ】）
+const ACK_COND_PROMISE_RE = /(?:頂|いただ)き次第|(?:頂|いただ)けましたら|(?:頂|いただ)ければ|ございましたら|召されましたら|よろしければ|ご希望でしたら|ご希望であれば/;
+// 2026-11-15 作業員D（11/14 夜の試験 d-ackpath-def-1114-g3・q111 の悪化 3/3→0/2）: 付ける番を細かく分けた。
+//   q111 の前のこちらの通「9月30日に一度9月30日時点での募集状況をご連絡させて頂きます！！／その間も…お気軽にご連絡ください！！／引き続き何卒よろしくお願い致します！！」
+//   ＝①日にちの決まった先の報告（その日まで結果が出ない・今は果たせない）②約束の後に締め＝お客様の「お願いします🙏」は締めへの挨拶 → 竹内さんは「はい😊！！何卒よろしくお願い致します！！」と受けるだけ。
+//   q091・q094・q179・q103「確認出来次第ご連絡させて頂きます」・q178「管理会社明日10:00〜営業時間ですので、確認出来次第ご連絡」は
+//   ＝結果が出たらすぐ送る約束（次第）で、こちらの通は約束で終わる → 竹内さんは了承に返さず、確かめた結果を AIX で送った。
+//   付ける条件: 確認・見積の約束 ∧ 日にちの決まっていない約束がある（次第・作成しお送り）∧ 日にちの決まった先の報告でない ∧ 約束の後に締めが無い ∧ 条件つきでない ∧ お客様は了承だけ
+const ACK_CAL_DATE_RE = /[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}日(?:に|頃|ごろ|時点|以降|まで|の)|[0-9０-９]{1,2}[／/][0-9０-９]{1,2}|時点|月末|月初|週明け|来週|来月|中旬|下旬|上旬/;
+const ACK_CLOSE_RE = /お気軽に(?:ご連絡|お申し付け|お知らせ|ご相談)|引き続き(?:何卒)?(?:どうぞ)?よろしく|ゆっくりご(?:確認|検討)/;
 export function ackConfirmAixPathOn(env: Env = process.env): boolean {
   return (env.ACK_CONFIRM_AIX_PATH ?? "").trim().toLowerCase() === "on";
 }
 /** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""） */
 export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {
   if (!f || !ackConfirmAixPathOn(env) || f.customer !== "了承だけ" || f.family !== "確認・連絡・見積・審査" || f.conditional) return "";
+  if (!f.pendingNow || f.scheduledLater || f.closesAfter) return ""; // 11/15 q111: 先の日にちの報告・締めの後の挨拶には付けない
   const t = f.topics ?? [];
   const aix = t.includes("vacancy") || t.includes("mgmt") ? "【物件確認した】（property_check_result）" : t.includes("estimate") ? "【見積書送る】（estimate_sheet）" : "";
   if (!aix) return "";
