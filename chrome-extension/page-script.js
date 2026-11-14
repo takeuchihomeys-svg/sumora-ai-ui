@@ -3384,9 +3384,31 @@
     } catch (_) {}
     // 重複実行防止: popupパス(underbar→postMessage)とbackgroundパス(content.js→postMessage)が
     // 同時に aixlinx-fill を送ると fillRealpro が2回呼ばれてDOMレースが起きる
+    /**
+     * 2026-11-14: **重複の判定より先に点検を作る**。
+     *   ⚠ 旧は `_auditReset` が下（3541行）にあり、重複で return すると点検が作られなかった
+     *     ＝ 2回目の return の後に1回目が終わっても、点検が無いまま `finished` が送られていた。
+     *   → ここで先に作る（`cond._audit_run_id` が無ければその場の番号）。
+     */
+    try { _auditReset(cond && cond._audit_run_id); } catch (_) {}
     if (window._axFillRunning) {
       console.warn('[AX] fillRealpro 重複呼び出しを無視 (既に実行中)');
-      notifyDone('duplicate-call-ignored');
+      /**
+       * 2026-11-14 竹内さん「自動モードでの検索はちゃんと改善されているのか」→ **されていなかった**。
+       *
+       *   ⚠ 実測: `search_audits` の 175回中 **147回（84%）が `steps:0`**（自動モードが113回）。
+       *     `started` は作られるが、段が1つも残らずに `abandoned` になっていた。
+       *   原因は**ここ**だった: 2回目の呼び出しが重複として return する時、
+       *     `notifyDone('duplicate-call-ignored')` を呼んでいた。これが
+       *     **`finished` を「段なし」で送ってしまい**、しかも `_doneNotified = true` にするので
+       *     **1回目の本物の検索が終わっても段が記録されない**（＝点検が空になる）。
+       *
+       *   → **重複した時は「何も送らない」**（`notifyDone` を呼ばない）。
+       *     本物の1回目が `finished` を送るので、段も結果も正しく残る。
+       *     ⚠ `duplicate-call-ignored` は点検に残したいので、**段だけ足す**
+       *       （`notifyDone` を呼ばずに、いまの点検に1行足す）。
+       */
+      try { if (_audit && _audit.steps) { _audit.steps.push({ at: Date.now(), k: "duplicate_ignored", d: null }); if (_audit.steps.length > 60) _audit.steps.shift(); } } catch (_) {}
       return;
     }
     window._axFillRunning = true;
