@@ -394,8 +394,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, days, rows, dropped_cols: sel.dropped, cols: sel.cols }, { headers: CORS });
   }
 
-  if (sp.get("summary") === "1") {
-    // 集計: 期間内の全行から、回数で重み付けした平均と中央値を出す
+  /**
+   * 2026-11-14 竹内さん「今新しく通常で一連の流れをおこなった。データベースからできていない部分学習するようにする」:
+   *   ⚠ `?shots=1` は **写真が撮れた行だけ**返す（`shot_taken=true`）。
+   *     写真が撮れていない回は**一覧に出てこない**ので、「記録が0件」に見えてしまっていた。
+   *   → `?recent=1` は**写真の有無に関係なく**新しい順に返す（点検用・読み取りだけ）。
+   */
+  if (sp.get("recent") === "1") {
+    const BASE = [
+      "id", "created_at", "install_id", "site", "mode", "ext_version",
+      "ops", "points_n", "point_fields", "field_order", "shot_taken", "shot_key",
+      "shot_ops", "shot_learn", "opens", "open_kinds", "gap_ms", "moves_n",
+    ];
+    const fetchRecent = (cols: string) => supabase.from("human_motion_learn")
+      .select(cols).gte("created_at", from)
+      .order("created_at", { ascending: false }).limit(limit);
+    const sel = await selectDroppingMissing(BASE, fetchRecent, {
+      onDrop: (c, e) => console.warn("[human-motion] 列が無いので外します:", c, e?.message ?? ""),
+    });
+    if (sel.error) return NextResponse.json({ ok: false, error: sel.error.message, dropped_cols: sel.dropped }, { status: 500, headers: CORS });
+    return NextResponse.json({ ok: true, days, rows: sel.data ?? [], dropped_cols: sel.dropped, cols: sel.cols }, { headers: CORS });
+  }
+
+  if (sp.get("summary") === "1") {    // 集計: 期間内の全行から、回数で重み付けした平均と中央値を出す
     const rows: Record<string, unknown>[] = [];
     for (let i = 0; i < 20_000; i += 1000) {
       const r = await supabase.from("human_motion_learn")

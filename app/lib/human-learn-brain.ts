@@ -712,12 +712,30 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
    */
   const shotRows = list.filter((r) => {
     const x = r as unknown as Record<string, unknown>;
-    return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object") || typeof x.url === "string";
+    /**
+     * 2026-11-14 竹内さん「データベースの写真から学習する」:
+     *   ⚠ 旧は `shot_ops` か `shot_learn` か `url` が要った。実測では**写真200枚すべて `shot_ops` 空**・
+     *     `shot_learn` も空なので、**写真から何も学べていなかった**。
+     *   → `field_order`（押した順番）や `point_fields`（押した欄）があれば対象にする。
+     *     写真の行は必ず `shot_taken` が true なので、`shot_key` があれば写真つきとして扱う。
+     */
+    return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object") || typeof x.url === "string"
+      || (Array.isArray(x.field_order) && x.field_order.length > 0)
+      || (x.point_fields && typeof x.point_fields === "object")
+      || (x.shot_taken === true && typeof x.shot_key === "string" && x.shot_key.length > 0);
   });
   const shotLearn = shotRows.length
     ? learnFromShots(shotRows.map((r) => {
       const x = r as unknown as Record<string, unknown>;
-      return { url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, created_at: x.created_at };
+      /**
+       * 2026-11-14 竹内さん「データベースの写真から学習する」:
+       *   ⚠ `shot_ops` が空の行ばかり（実測 200/200）なので、**押した順番と欄**も渡す。
+       *     → 写真の行からでも「どの画面で何を触るか」を学べる。
+       */
+      return {
+        url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, created_at: x.created_at,
+        point_fields: x.point_fields, field_order: x.field_order,
+      };
     }))
     : { screens: {}, total: 0, withOps: 0 };
 
@@ -775,12 +793,21 @@ export function buildHumanLearnBundle(rows: ReadonlyArray<MotionRow>, nowMs: num
     const subFlow = (() => {
       const shotRowsSub = sub.filter((r) => {
         const x = r as unknown as Record<string, unknown>;
-        return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object");
+        /**
+         * 2026-11-14: `shot_ops` が空でも `field_order` / `point_fields` があれば学べる
+         *   （実測で写真200枚すべて shot_ops が空だった）。
+         */
+        return Array.isArray(x.shot_ops) || (x.shot_learn && typeof x.shot_learn === "object")
+          || (Array.isArray(x.field_order) && x.field_order.length > 0)
+          || (x.point_fields && typeof x.point_fields === "object");
       });
       if (!shotRowsSub.length) return {};
       const lf = learnFromShots(shotRowsSub.map((r) => {
         const x = r as unknown as Record<string, unknown>;
-        return { url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn };
+        return {
+          url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn,
+          point_fields: x.point_fields, field_order: x.field_order,
+        };
       }));
       const out: Record<string, { n: number; steps: Array<{ from: string; to: string; n: number }> }> = {};
       for (const [sc, v] of Object.entries(lf.screens)) out[sc] = { n: v.n, steps: v.steps.slice(0, 12) };
