@@ -185,7 +185,7 @@ export function reapplyBadgeText(i: Pick<ReapplyInfo, "pattern">): string {
 /**
  * ブレインの材料（毎回変わる並びに足す1ブロック）。申込中の個人情報・審査の事情の中身は書かない（パターンの名前と次の一手だけ）。
  */
-export function buildReapplyBrainNote(i: ReapplyInfo, nowMs: number = Date.now()): string {
+export function buildReapplyBrainNote(i: ReapplyInfo, nowMs: number = Date.now(), opts: { formOnHand?: boolean; env?: Record<string, string | undefined> } = {}): string {
   const back = ms(i.returnedAt);
   const days = back === null ? null : Math.max(0, Math.floor((nowMs - back) / 86_400_000));
   return [
@@ -193,5 +193,26 @@ export function buildReapplyBrainNote(i: ReapplyInfo, nowMs: number = Date.now()
     `・戻った理由: ${RETURN_PATTERN_LABEL[i.pattern]}${i.source === "staff" ? "（スタッフが選んだ）" : i.source === "auto" ? "（会話の記録から）" : "（会話から読めない・推測で書かない）"}${days !== null ? `・戻って${days}日` : ""}`,
     `・次の一手: ${RETURN_PATTERN_NEXT_MOVE[i.pattern]}`,
     "・前回の申込の中身（氏名・生年月日・勤務先・年収・書類・審査の事情）には触れない。申込の手順は一度通っているので短く案内してよい",
+    ...(opts.formOnHand && reapplyFormOnHandLineOn(opts.env) ? [REAPPLY_FORM_ON_HAND_LINE] : []),
   ].join("\n");
+}
+
+/**
+ * 2026-11-15 作業員H（統括役の頼み・本番の物差しの AIX:application_push 3番中2番外れの調べ）:
+ *   申込歴ありで、お客様の記入済みの申込フォームと本人確認書類がもう手元にある会話は、別の物件への申込の意思に AIX【申込へ】（フォーマットを送る）を送り直さない。
+ *   本番の実物: 615499ba 11/14「どちらか審査通る方でお願いできますか？できればフェニックスの方がいいです」（前回の申込でフォームと本人確認書類を受け取り済み）
+ *     → 竹内さんは返信「かしこまりました！！フェニックス堺東1001号室お申込し、お部屋抑えさせて頂きます！！…お申込させて頂き審査行わせて頂きます！！」（AIX なし）・ブレインは application_push。
+ *   比べ: 3db9db75 11/06「ここで審査通してください！」（申込へ を前に押したが記入済みのフォームは未提出）→ 竹内さんは AIX【申込へ】を押した＝フォームが手元に無ければ今まで通り。
+ *   返信の決まり（line-reply-prompts「申込経験者には『お申込みしてお部屋押さえさせて頂きます！！』と一言だけ添える形で十分」）と同じ向き。
+ *   ※ 竹内さんの決定としては未確認（設計知見に無い・問いの案に出した）。既定 off（REAPPLY_FORM_ON_HAND_LINE=on で入る）。決めるのはブレイン（材料の1行だけ）
+ */
+export function reapplyFormOnHandLineOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.REAPPLY_FORM_ON_HAND_LINE ?? "").trim().toLowerCase() === "on";
+}
+export const REAPPLY_FORM_ON_HAND_LINE = "・前回の申込で記入済みの申込フォームと本人確認書類はもう受け取っている。別の物件に申込みたいという番は、AIX【申込へ】でフォーマットを送り直さず、"
+  + "返信で「かしこまりました！！〇〇号室お申込し、お部屋抑えさせて頂きます！！」と受ける（竹内さん 11/14 の実送信の形・保証会社の種類など審査の見込みが言えれば添える）。"
+  + "入居日・同居人など前回から変わる所があればその確認だけ聞く。フォームがまだ届いていない会話ではこの行は出ない";
+/** 手元に前回の申込の記入済みフォームと本人確認書類があるか */
+export function formOnHand(f: Pick<PostApplyFacts, "applicationFormAt" | "idDocumentAt">): boolean {
+  return !!f.applicationFormAt && !!f.idDocumentAt;
 }
