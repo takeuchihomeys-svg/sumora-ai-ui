@@ -47,9 +47,39 @@ export function screeningConsultTurn(text: string | null | undefined): boolean {
   return t.split(/[。！？!?]/).some((x) => /審査/.test(x) && /相談/.test(x) && !/相談(?:し|でき)やす|物件|紹介|ピックアップ/.test(x));
 }
 
+// 2026-11-15 作業員H（弱い所 aix:screening-consult-phone-call・統括役の頼み）: 竹内さんが審査の相談で AIX【電話をかける】を選んだ本番の番の型。
+//   上の網（「審査」と「相談」が同じ文）に掛からない言い方で、竹内さんが電話にしていた（本番 90日の「審査」を含むお客様の通 62 を読んだ）:
+//     fff5b6a3 11/08「彼氏との同棲で家探してて、ここ住みたかったんですけど、彼氏名義で審査落ちててここって厳しいですよね？？」→ 竹内さん AIX【電話】（ブレインは物件確認の2段）
+//     732692f2 09/28「ここの物件、日本セーフティと全保連だと思うのですが。日本セーフティが通らなさそうみたいで。審査面が心配なんですよ。」→ 竹内さん AIX【電話】
+//   型＝「この物件（ここ・この物件・〇〇号室）」で、お客様自身の審査の傷（落ちた・通らなさそう・否決・ブラック・滞納）を言い、通るか（厳しい・大丈夫・心配）を聞く。
+//   掛けない（竹内さん・スタッフが電話にしていない本番の言い方）: 「ここって私、審査的には通りそうですかね」（傷を言っていない＝AIX【保証会社について】a0c5ecf0）・
+//     「ここの物件が審査厳しいって聞いたんですけど」（物件の噂）・「こっちの審査落ちたら」（先の話）・「前の物件が審査落ちした為新たに物件を紹介」（探す依頼）・
+//     「1番手の保証会社のところは審査通りませんでした」（物件の指し方が無い・q117）・初回の条件の紙。
+//   網は候補だけ（決めるのはブレイン）。既定 off（SCREENING_RISK_HERE_PHONE=on で入る）。根の決まりは 10/28 竹内さんの決定 701e2665（お客様から審査の相談→段階を問わず電話）
+export function screeningRiskHerePhoneEnabled(env: Env = envOf()): boolean {
+  return (env.SCREENING_RISK_HERE_PHONE ?? "").trim().toLowerCase() === "on";
+}
+const HERE_PROPERTY_RE = /ここ|この(?:物件|お?部屋|マンション)|こちらの(?:物件|お?部屋)|\d{3,4}号室/;
+const OWN_SCREENING_SCAR_RE = /審査(?:に|が|で|は)?落ち(?:て|た|まし|ちゃ)|落ちて(?:て|る|い)|通らな(?:さそう|かった)|通りませんでした|否決|ブラック|ブラリス|滞納/;
+const ASK_PASS_RE = /厳し|通る|通り|大丈夫|無理|難し|心配|不安|いけ/;
+/** 今の番のお客様の発言が「この物件で、自分の審査の傷を言って通るか聞く」相談か（網・狭く） */
+export function screeningRiskHereTurn(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!/審査/.test(t) || CONDITION_SHEET_RE.test(t)) return false;
+  if (/落ちたら|通らなかったら|否決になったら/.test(t) && !/落ちて(?:て|る)|落ちた(?:ので|から|んで|けど)/.test(t)) return false;
+  return HERE_PROPERTY_RE.test(t) && OWN_SCREENING_SCAR_RE.test(t) && ASK_PASS_RE.test(t);
+}
+
 /** LLM の前の今の番の材料の行（網に掛かった番だけ・スイッチ off なら空） */
 export function screeningPhoneTurnLine(text: string | null | undefined, env: Env = envOf()): string {
   const consultOn = screeningConsultPhoneEnabled(env);
+  if (screeningRiskHerePhoneEnabled(env) && !screeningConsultTurn(text) && !(screeningPhoneLineEnabled(env) && nameLendingTurn(text)) && screeningRiskHereTurn(text)) {
+    return "【今の番（材料・竹内さんの決定 10/28 の型）】お客様の今の発言は、この物件について、お客様自身の審査の傷（審査に落ちた・通らなさそう・ブラック・滞納 等）を言って、通るかを聞く審査の相談。"
+      + "竹内さんは、お客様から審査の相談があった時は段階を問わず文で答えず、電話で状況と進め方を打ち合わせる＝AIX【電話をかける】（phone_call）を送る番"
+      + "（本番: 竹内さん 11/08「彼氏名義で審査落ちててここって厳しいですよね」・09/28「日本セーフティが通らなさそう…審査面が心配」→ どちらも AIX【電話】）。"
+      + "返信で『審査に通りやすい保証会社中心に』『審査面は全力でサポート』と済ませない・保証会社の確認（物件確認）の約束にしない。同じ発言の空きの確認は電話の中で一緒に話す。"
+      + "傷を言わずに『ここって審査通りそうですか』と聞くだけなら保証会社の説明（AIX【保証会社について】）の番＝本当に傷を言った相談かはあなたが会話から決める。";
+  }
   if (consultOn && screeningConsultTurn(text) && !(screeningPhoneLineEnabled(env) && nameLendingTurn(text))) {
     return "【今の番（材料・竹内さんの決定 10/28）】お客様の今の発言は審査についての相談（職業の事情・職場の案内・在籍確認 等）。"
       + "竹内さんは、お客様から審査の相談があった時は段階を問わず文で答えず、電話で状況と進め方を打ち合わせる＝AIX【電話をかける】（phone_call）を送る番"

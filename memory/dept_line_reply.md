@@ -9555,3 +9555,12 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 内覧の件数と時間: 会社の事実 viewing_duration はあるのに「30分でしたら1件ぐらいしか回れない」を網が拾わない → `COMPANY_FACT_VIEWING_COUNT=on`（company-facts.viewingCountInTimeAsked・180日の候補11通で当てるのは元の1通だけ）
 - テスト: app/lib/__tests__/recv-material-1114.test.ts
 - 11/14 続き（統括役の決め）: `ESTIMATE_CARD_FILL`・`COMPANY_FACT_VIEWING_COUNT` を既定 on（=off で戻る）。過去分は 07:36 に 91行を書いた（check_names 89・aix_text_room 2）。`BRAIN_UNKNOWNS_POST_APPLY_GATE` を既定 on（申込以降の自己申告は数えない・審査落ちの切り替えは rejectionSwitchKeep で数える・11/13 は 81→74）。`MATERIAL_FETCH_ESTIMATE_RECORDS=on`（既定 off）で足りない事実の段の見積の取り先を estimate_records の金額のある行に
+
+## 2026-11-15 作業員H: 本番の物差しの弱い場面（AIX:application_push 1/3・AIX:condition_hearing 0/2）と弱い所 aix:screening-consult-phone-call
+- 調べ: `scripts/audit-scene-push-hearing-phone.ts --days=14`（見張りの番を両側から・伏せ字）・`scripts/audit-screening-risk-here.ts --days=120`（網の全件監査）。読むだけ・LLM なし
+- condition_hearing 0/2（12240・12306）は物差しの数えの外れ: 場面ごとの比べ（sceneDrift）が最初の一手だけを見ていて、竹内さんの「挨拶の返信→同じ分に AIX【条件ヒアリング】」を外れに数えていた（2枠の方は組の窓で当たり）→ `YARDSTICK_DRIFT_COMBO=on`（既定 off・数えだけ）。11/14 01:10 の窓で 0/2→2/2・合計 30/39→32/39・他の場面は変化0
+- application_push の外れ2番はどちらも申込歴ありの会話:
+  - 14618（615499ba「どちらか審査通る方でお願いできますか？できればフェニックスの方が」）: フォームと本人確認書類は前回の申込で受け取り済み → 竹内さんは返信で受けた（AIX なし）。比べ 3db9db75（フォーム未提出）は AIX【申込へ】→ `REAPPLY_FORM_ON_HAND_LINE=on`（既定 off・申込歴ありの材料に1行）。竹内さんの決定としては未確認（問いの案）
+  - 13916（fecda03f「交渉できるのであれば不動産変えようかな」）: 条件付きの申込の意思＝交渉の結果（スタッフだけが知る）がまだ無い → 竹内さんは交渉の約束の返信。120日で同じ型は1通だけ＝網は作らず、場面の下の種類として記録
+- 審査の相談→AIX【電話】: 竹内さんの電話の番（12348・732692f2 09/28）は「この物件で自分の審査の傷を言って通るか聞く」型で、10/28 の網（審査＋相談）に掛かっていなかった → `SCREENING_RISK_HERE_PHONE=on`（既定 off・材料の行・app/lib/screening-phone-material.ts）。120日の「審査」の通 251 で掛かるのは2通＝どちらも竹内さんが AIX【電話】（誤り0）。持ち込みの網を外す `BROUGHT_SCREENING_NO_PROMISE`（作業員7b）と組で効く
+- テスト: app/lib/__tests__/scene-push-hearing-phone-1115.test.ts

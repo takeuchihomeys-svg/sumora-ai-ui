@@ -150,6 +150,21 @@ export function staffFrames(turnAtMs: number, moves: ReadonlyArray<StaffMoveLite
   if (comboMs != null) { const a = ms.find((m) => m.family !== "返信"); if (a && a.at - ms[0].at <= comboMs) return { now: a.family, later: null, combo: true }; }
   return { now, later: ms.find((m) => m.family !== "返信")?.family ?? null };
 }
+/**
+ * 2026-11-15 作業員H（統括役の頼み・物差しの AIX:condition_hearing 2番中2番外れの調べ）: 場面ごとの比べ（sceneDrift＝countByScene）の方は
+ *   スタッフの系統を「最初の一手」だけで読んでいて、組の窓（返信→2分以内の AIX）が入っていなかった。
+ *   見張り 12240・12306（竹内さん・初回の挨拶の返信→同じ分に AIX【条件ヒアリング】・ブレインも返信→条件ヒアリング）が外れに数えられていた＝物差しの数えの外れ（ブレインの外れではない）。
+ *   YARDSTICK_DRIFT_COMBO=on の時だけ、場面ごとの比べにも組の窓を入れる（既定 off・数えだけ・本番の動きは変わらない）。
+ */
+export function yardstickDriftComboOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.YARDSTICK_DRIFT_COMBO ?? "").trim().toLowerCase() === "on";
+}
+/** 場面ごとの比べのスタッフの系統: 最初の一手が返信で、その返信から comboMs 以内に AIX があればその AIX の系統（無ければ最初の一手のまま） */
+export function driftStaffFamily(firstFamily: string, turnAtMs: number, moves: ReadonlyArray<StaffMoveLite>, comboMs = 120_000): string {
+  if (firstFamily !== "返信") return firstFamily;
+  const s = staffFrames(turnAtMs, moves, { comboMs });
+  return s.combo && s.now ? s.now : firstFamily;
+}
 export type TwoFrameJudge = { now: "hit" | "miss"; later: "hit" | "miss" | "brain_only" | "staff_only" | "na" };
 /** 2枠の判定。後の通は、両方に後の AIX がある時だけ当たり外れ・片方だけは brain_only（約束したが果たしていない）/ staff_only（スタッフだけ後で送った） */
 export function judgeTwoFrames(b: BrainFrames, s: { now: string | null; later: string | null }): TwoFrameJudge {

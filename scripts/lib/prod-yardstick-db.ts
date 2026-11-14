@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../../app/lib/test-conversations";
 import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../../app/lib/staff-first-move";
 import { yardstickAixLogFillOn, fillStaffAix, mergeFillFrames, applyStaffAixState, type AixLogLite } from "./prod-yardstick";
+import { yardstickDriftComboOn, driftStaffFamily } from "./prod-yardstick";
 import { countByScene, sceneDrift, beyondCandidates, yardstickTwoFramesOn, brainFrames, staffFrames, judgeTwoFrames, countTwoFrames, type YardTurn, type SceneDrift, type TwoFrameCount } from "./prod-yardstick";
 
 /** AIX の系統（audit-prod-as-exam と同じ見方） */
@@ -106,7 +107,14 @@ export async function runYardstick(sb: SupabaseClient, opts: { days: number; now
     const fm = staffFirstMove(Date.parse(w.customer_turn_at), msgs.get(w.conversation_id) ?? [], aixLogsFromWatch(w.staff_aix));
     const ex = staffMoveExclusion(Date.parse(w.customer_turn_at), fm, { ackOnly: ackSceneOf(w.scene_key) });
     if (ex) { if (w.customer_turn_at >= cut) excluded[ex]++; return []; }
-    return [{ scene: w.scene_key, brain: aixFamily(w.brain_action), staff: aixFamily(fm?.kind === "aix" ? fm.aix : null), writer: fm?.writer ?? "unknown", at: w.customer_turn_at, principleOk: null }];
+    let staff = aixFamily(fm?.kind === "aix" ? fm.aix : null);
+    // 2026-11-15 作業員H: 場面ごとの比べにも組の窓（返信→2分以内の AIX）を入れる（YARDSTICK_DRIFT_COMBO=on の時だけ・既定 off・数えだけ）
+    if (fm && yardstickDriftComboOn()) {
+      const tAt = Date.parse(w.customer_turn_at), wl = aixLogsFromWatch(w.staff_aix);
+      const moves = (msgs.get(w.conversation_id) ?? []).filter((m) => m.at >= tAt).map((m) => ({ at: m.at, family: m.isAix ? aixFamily(wl.filter((a) => Math.abs(a.at - m.at) <= 10 * 60_000).sort((a, b) => Math.abs(a.at - m.at) - Math.abs(b.at - m.at))[0]?.aixType ?? "aix_unknown") : "返信" }));
+      staff = driftStaffFamily(staff, tAt, moves);
+    }
+    return [{ scene: w.scene_key, brain: aixFamily(w.brain_action), staff, writer: fm?.writer ?? "unknown", at: w.customer_turn_at, principleOk: null }];
   };
   const before = turns.filter((w) => w.customer_turn_at < cut).flatMap(toYard), after = turns.filter((w) => w.customer_turn_at >= cut).flatMap(toYard);
   const drift = sceneDrift(countByScene(before), countByScene(after));
