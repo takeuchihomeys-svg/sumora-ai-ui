@@ -551,9 +551,15 @@ export function buildHumanLearnBundle(
     scene_missing?: number;
     scene_missing_names?: string;
     stopped_scene?: string | null;
-    /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績 */
-    improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績 */
+  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
   } | null = null,
+  /**
+   * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」:
+   *   **前回の判断**（`learn_supervisor_log` の最新）を渡す。
+   *   ⚠ 呼ぶ側（API）が渡せなかった時は null（比べない・今まで通り）。
+   */
+  prevAdvice: import("./learn-supervisor").SupervisorInput["prev"] = null,
 ): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
   // ① 押す順番（写真ごとの並びから）
@@ -1030,7 +1036,14 @@ export function buildHumanLearnBundle(
       const x = r as unknown as Record<string, unknown>;
       return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
     }).length,
-    prev: null,
+    /**
+     * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」
+     *   → ⚠ **統括は「前回と比べる」仕組みを持っているのに、常に `prev: null` で渡していた**。
+     *     だから「良くなったか悪くなったか」を一度も言えていなかった
+     *     （`learn_supervisor_log` に128件の履歴があるのに使っていない）。
+     *   → 呼ぶ側（API）が**前回の判断**を渡す。ここでは受け取った物をそのまま通す。
+     */
+    prev: prevAdvice,
     site: "all",
     /** 2026-11-14: 「押したら何が開くか」のうち**推測**で埋めた数（実測ではない） */
     guessed_opens: Object.values(opens).filter((v) => v && (v as { guessed?: boolean }).guessed).length,
@@ -1197,6 +1210,11 @@ export function buildHumanLearnBundle(
         }
         return n;
       })(),
+      /**
+       * 2026-11-14: サイト別も**前回と比べる**（`prevAdvice` は all 用なので、
+       *   サイト別は「比べない」まま＝今まで通り。将来サイト別の履歴を読めば繋げる）。
+       *   ⚠ ここを all の prev で代用すると**別物を比べる**ので間違う（混ぜない）。
+       */
       prev: null,
       site: siteName,
     });
