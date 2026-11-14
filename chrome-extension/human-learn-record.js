@@ -159,6 +159,14 @@
       var det = rec.detail();
       var motion = L.summarizeMotion(det);
       add.moves = motion.moves; add.points = motion.points; add.scrolls = motion.scrolls;
+      /**
+       * 2026-11-14 竹内さん「実際の通常モードでの検索のデータと比べてのギャップを強化」:
+       *   ⚠ `point_fields` の**押した順番**（`points.order`）を送っていなかったので、
+       *     写真が無い記録（＝通常モードの大半）では**順番を学べなかった**（実測 normal 34件で順番0）。
+       *   → `field_order`（サーバーの列）に届くように、`order` と `fields` も渡す。
+       */
+      try { add.order = (motion.points && motion.points.order) || []; } catch (_) { add.order = []; }
+      try { add.fields = Object.keys((motion.points && motion.points.fields) || {}).slice(0, 40); } catch (_) { add.fields = []; }
     } catch (_) {}
   /**
    * 2026-11-11 竹内さん「画面の動き方もちゃんと把握できているのかな録画のような形で」→「操作のたびに1枚」

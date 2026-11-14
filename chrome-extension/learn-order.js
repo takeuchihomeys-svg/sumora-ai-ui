@@ -211,6 +211,54 @@
     return out;
   }
 
+  /**
+   * 2026-11-14 竹内さん「一連の動きの学習や強化、反映の為に抜けている部分がある可能性」:
+   *   サーバーが作った**一連の動きの型**（`sequence_flow.sequence`＝押す順番の鎖）を、
+   *   「A は B より前」の組に開く。
+   *
+   *   なぜ要るか:
+   *     `next`（A の次は B）は**隣り合う2つ**しか見ないので、集合に1つも入っていないと使えない。
+   *     鎖なら「確定してリストへ → 徒歩 → 賃料上限 → … 」の**離れた2つ**でも前後が分かる。
+   *
+   *   ⚠ 鎖の中で**集合に居る物どうし**の組だけ作る（外の物は無視）。
+   *   ⚠ 近すぎる組（隣）は `next` が持っているので、**2つ以上離れた組だけ**作る（重複を避ける）。
+   *
+   * @param {string[]} sequence 鎖（押す順番）
+   * @param {string[]} names 集合（今回押す物）
+   * @returns {Object<string,{next:string,n:number,total:number}>}
+   */
+  function beforePairsFromSequence(sequence, names) {
+    var seq = Array.isArray(sequence) ? sequence.map(String) : [];
+    var set = {};
+    (Array.isArray(names) ? names : []).forEach(function (n) { if (n) set[String(n)] = true; });
+    var idx = [];
+    for (var i = 0; i < seq.length; i++) if (set[seq[i]]) idx.push(i);
+    var out = {};
+    // 集合内の物を、鎖の順に並べた「前後」の組（2つ以上離れた物だけ）
+    for (var a = 0; a < idx.length; a++) {
+      for (var b = a + 1; b < idx.length; b++) {
+        var from = seq[idx[a]], to = seq[idx[b]];
+        if (from === to) continue;
+        if (!out[from]) out[from] = { next: to, n: 2, total: 2 };
+        break;   // 一番近い「後ろ」だけ採る（鎖の順を守る）
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 2026-11-14: `next`（直後の組）と `sequence_flow`（鎖）を**1つに合わせる**。
+   *   ⚠ `next` を優先（時刻・回数が付いているので正確）。無い所だけ鎖で補う。
+   */
+  function mergeWithSequence(next, sequence, names) {
+    var base = (next && typeof next === "object") ? next : {};
+    var add = beforePairsFromSequence(sequence, names);
+    var out = {};
+    Object.keys(add).forEach(function (k) { out[k] = add[k]; });
+    Object.keys(base).forEach(function (k) { out[k] = base[k]; });   // next を優先
+    return out;
+  }
+
   function orderByLearned(items, nameOf, next, opt) {
     var list = Array.isArray(items) ? items.slice() : [];
     var o = opt || {};
@@ -339,5 +387,6 @@
     orderByLearned: orderByLearned, nextAfter: nextAfter, countEdges: countEdges,
     beforePairsFromFlow: beforePairsFromFlow, chainOrderWithin: chainOrderWithin, mergeLearnedOrder: mergeLearnedOrder,
     flowMismatches: flowMismatches,
+    beforePairsFromSequence: beforePairsFromSequence, mergeWithSequence: mergeWithSequence,
   };
 });

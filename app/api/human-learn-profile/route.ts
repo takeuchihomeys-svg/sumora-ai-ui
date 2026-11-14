@@ -32,6 +32,13 @@ const SELECT = [
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
   "scrolls_n", "scroll_dy", "shot_ops", "shot_learn",
+  /**
+   * 2026-11-14 竹内さん「一連の動きの学習や強化、反映の為に抜けている部分がある可能性」:
+   *   ⚠ `field_order`（押した順番）と `fields`（押した欄の名前）を**読んでいなかった**ので、
+   *     写真が少ない通常モードでは順番を学べなかった（実測 normal 34件で順番0）。
+   *   → 読む列に足す（無いDBでは selectDroppingMissing が外して読み直す）。
+   */
+  "field_order", "fields",
 ].join(", ");
 
 /**

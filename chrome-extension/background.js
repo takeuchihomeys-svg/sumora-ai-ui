@@ -2263,6 +2263,22 @@ async function _refreshLearnedBundle(force) {
      *   ⚠ 旧は計算して返しているのに、拡張が受け取っていなかった（＝現場に届かない）。
      */
     var screenFlow = (bundle.screen_flow && typeof bundle.screen_flow === "object") ? bundle.screen_flow : {};
+    /**
+     * 2026-11-14 竹内さん「一連の動きの学習や強化、反映の為に抜けている部分がある可能性もある」:
+     *   ⚠ **サーバーで計算したのに拡張が1つも読んでいなかった物**（実測 0箇所）:
+     *     `by_mode`（モード別の学び）・`mode_plan`（統括の判断）・
+     *     `sequence_flow`（一連の動きの型）・`learn_plan`（次にやる事）。
+     *   → 現場（自動モード）で使えるように storage へ置く。
+     *     ・`axlx_learn_seq` … 一連の動きの型（押す順番の鎖）
+     *     ・`axlx_learn_by_mode` … モード別の押す順番
+     *     ・`axlx_learn_plan` … 統括の判断（何が足りないか）
+     */
+    var seqFlow = (bundle.sequence_flow && typeof bundle.sequence_flow === "object") ? bundle.sequence_flow : {};
+    var byMode = (bundle.by_mode && typeof bundle.by_mode === "object") ? bundle.by_mode : {};
+    var plan = (bundle.learn_plan && typeof bundle.learn_plan === "object") ? bundle.learn_plan : {};
+    /** 今のモードの押す順番（あれば mode 別、無ければ全体） */
+    var myMode = await _modeLabelNow();
+    var modeNext = (myMode && byMode[myMode] && byMode[myMode].next) ? byMode[myMode].next : null;
     await chrome.storage.local.set({
       axlx_learn_next: next,
       axlx_learn_points: points,
@@ -2272,11 +2288,21 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_site_flow: siteFlow,
       axlx_learn_screen_flow: screenFlow,
       axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
+      axlx_learn_seq: seqFlow,
+      axlx_learn_by_mode: byMode,
+      axlx_learn_plan: plan,
+      /** モード別の押す順番（そのモードで学べている時だけ） */
+      ...(modeNext ? { axlx_learn_next_mode: modeNext, axlx_learn_next_mode_name: myMode } : {}),
       axlx_learn_at: Date.now(),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
     });
-    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類");
-    return { ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length, screens: Object.keys(screenFlow).length };
+    console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手"
+      + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : ""));
+    return {
+      ok: true, next: Object.keys(next).length, points: Object.keys(points).length, weak: weak.length,
+      screens: Object.keys(screenFlow).length, seq: ((seqFlow.sequence || []).length),
+      mode: myMode, mode_next: modeNext ? Object.keys(modeNext).length : 0,
+    };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }

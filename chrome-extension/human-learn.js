@@ -258,19 +258,27 @@
         var fx = (e.clientX - r.left) / r.width;
         var fy = (e.clientY - r.top) / r.height;
         if (!(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return; // 枠の外（別の要素の上）は捨てる
-        points.push({
-          f: fieldName(el),
-          x: Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100,
-          y: Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100,
-          w: Math.round(r.width), h: Math.round(r.height),
-          s: stageOf(),   // 2026-11-11: どの段階で押したか（form/modal/result）
-          /**
-           * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」:
-           *   要素の種類（select/checkbox/text/button/link）も残す。
-           *   ⚠ `w` は**幅**で使っているので、種類は `wk` にする（取り違えない）。
-           */
-          wk: kindOfEl(el),
-        });
+  points.push({
+        f: fieldName(el),
+        x: Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100,
+        y: Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100,
+        w: Math.round(r.width), h: Math.round(r.height),
+        s: stageOf(),   // 2026-11-11: どの段階で押したか（form/modal/result）
+        /**
+         * 2026-11-14 竹内さん「実際の通常モードでの検索のデータと比べてのギャップを強化」:
+         *   ⚠ `point_fields` には**時刻も順番も無かった**ので、写真（`shot_ops`）が無い記録
+         *     （＝通常モードのほとんど）では**押す順番を学べなかった**
+         *     （実測: normal 34件あるのに「順番0・画面0」）。
+         *   → **この記録の中での通し番号（n）**を残す。同じ記録の中の順番が分かる。
+         */
+        n: points.length + 1,
+        /**
+         * 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」:
+         *   要素の種類（select/checkbox/text/button/link）も残す。
+         *   ⚠ `w` は**幅**で使っているので、種類は `wk` にする（取り違えない）。
+         */
+        wk: kindOfEl(el),
+      });
         if (points.length > MAX_POINTS) points.shift();
       } catch (_) {}
     }
@@ -540,10 +548,17 @@
 
     // ── ボタンのどこを押したか ──
     var xs = [], ys = [], byField = {};
+    /**
+     * 2026-11-14 竹内さん「実際の通常モードでの検索のデータと比べてのギャップを強化」:
+     *   **押した順番**（この記録の中での並び）を残す。写真が無い記録でも順番を学べるようにする。
+     *   `order` は重複を畳んだ「初めて押した順」（同じ欄の2回目は入れない）。
+     */
+    var order = [];
     pt.forEach(function (p) {
       if (!p || typeof p.x !== "number" || typeof p.y !== "number") return;
       xs.push(p.x); ys.push(p.y);
       var f = p.f || "?";
+      if (order.indexOf(f) < 0) order.push(f);
       if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {}, w: {} };
       byField[f].n++;
       // 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」: 要素の種類も数える
@@ -571,6 +586,11 @@
       x: medianF(xs),                      // ふだんは横のどこを押すか（0＝左端・0.5＝真ん中）
       y: medianF(ys),                      // 縦のどこか（0＝上端・0.5＝真ん中）
       fields: fieldSpread,                 // 欄ごとの癖
+      /**
+       * 2026-11-14: **押した順番**（初めて押した順・重複なし）。
+       *   写真（shot_ops）が無い記録でも「順番」を学べるようにする。
+       */
+      order: order.slice(0, 40),
     };
 
     // ── 画面の動かし方 ──

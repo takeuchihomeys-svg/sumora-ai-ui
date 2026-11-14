@@ -819,15 +819,32 @@
        *   ⚠ 足すのは「どちらが先か」だけ。**項目の増減は絶対にしない**（検索漏れを出さない）。
        */
       var flow = window.__axlxLearnSiteFlow || null;
-      if (!next && !flow) return items;
-      if (next && flow && LO.mergeLearnedOrder) {
-        try {
-          var names = items.map(function (it) { return it && it.name ? it.name : null; }).filter(Boolean);
+      /**
+       * 2026-11-14 竹内さん「一連の動きの学習や強化、反映の為に抜けている部分」:
+       *   ⚠ `axlx_learn_seq`（一連の動きの型）と `axlx_learn_next_mode`（モード別の押す順番）を
+       *     **受け取っているのに使っていなかった**（実測 0箇所）。
+       *   → 鎖（sequence）から「A は B より前」を作って足す（`next` を優先）。
+       *     このモードで学べている順番があれば、それも重ねる（一番その場に合う）。
+       */
+      var seq = window.__axlxLearnSeq || null;
+      var modeNext = window.__axlxLearnNextMode || null;
+      if (!next && !flow && !seq && !modeNext) return items;
+      try {
+        var names = items.map(function (it) { return it && it.name ? it.name : null; }).filter(Boolean);
+        // ① モード別の押す順番を先に重ねる（その場に一番合う）
+        if (modeNext && typeof modeNext === "object") {
+          next = Object.assign({}, modeNext, next || {});
+        }
+        // ② 鎖から前後関係を作って補う（next が無い所だけ）
+        if (seq && seq.sequence && LO.mergeWithSequence) {
+          next = LO.mergeWithSequence(next, seq.sequence, names);
+        }
+        // ③ サイトの手順（site_flow）も補う
+        if (next && flow && LO.mergeLearnedOrder) {
           next = LO.mergeLearnedOrder(next, flow, { names: names });
           /**
            * 2026-11-13 竹内さん「site_flow を実際に使う」:
-           *   人の手順（`site_flow`）と**自動の順が違う所**を点検に残す。
-           *   ⚠ 動きは変えない（順番を崩すと検索が漏れる）。記録して後で判断できるようにする。
+           *   人の手順（`site_flow`）と**自動の順が違う所**を点検に残す（動きは変えない）。
            */
           if (LO.flowMismatches) {
             var mis = LO.flowMismatches(names, flow, { min: 2 });
@@ -836,8 +853,8 @@
                 mis.slice(0, 4).map(function (m) { return m.earlier + ' は ' + m.later + ' より先（' + m.n + '回）'; }).join(' / '));
             }
           }
-        } catch (_) { /* 失敗したら next だけ使う */ }
-      }
+        }
+      } catch (_) { /* 失敗したら next だけ使う */ }
       if (!next) return items;
       var r = LO.orderByLearned(items, function (it) { return it && it.name ? it.name : null; }, next, { min: 2 });
       if (r && r.changed) {
@@ -868,14 +885,23 @@
        *   サイトごとの手順（`axlx_learn_site_flow`）も一緒に読む。
        *   押す順番の材料が `next` だけだと3通りしか無いので、鎖から前後関係を補う。
        */
-      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow"], function (r) {
+      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode"], function (r) {
         try {
           var nx = (r && r.axlx_learn_next) || null;
           window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
           var sf = (r && r.axlx_learn_site_flow) || null;
           window.__axlxLearnSiteFlow = (sf && typeof sf === "object") ? sf : null;
+          /**
+           * 2026-11-14 竹内さん「一連の動きの学習や反映の為に抜けている部分」:
+           *   一連の動きの型（鎖）と、モード別の押す順番も読む。
+           */
+          var sq = (r && r.axlx_learn_seq) || null;
+          window.__axlxLearnSeq = (sq && typeof sq === "object") ? sq : null;
+          var mn = (r && r.axlx_learn_next_mode) || null;
+          window.__axlxLearnNextMode = (mn && typeof mn === "object") ? mn : null;
           var n = nx ? Object.keys(nx).length : 0;
-          if (n) console.log("[AX] 学んだ押す順番を読みました: " + n + "通り");
+          var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
+          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : ""));
         } catch (_) {}
       });
     } catch (_) {}
