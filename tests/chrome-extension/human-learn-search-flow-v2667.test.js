@@ -56,9 +56,13 @@ console.log("■ ① 検索の一連の操作が学習に乗るか（実際に�
       fire(e.ls.doc.mousemove, { isTrusted: true, clientX: x, clientY: y, buttons: 0 });
       t += 45;
     }
-    t += 400; // 止まる → 1回の移動として締まる
+    /**
+     * ⚠ 2026-11-14: 締まるまでの間を **350ms → 650ms** に伸ばした（細切れを直す・v2.7.66）。
+     *   実測で 1回の移動が 376ms・80px しかなく、人の1ストロークになっていなかった。
+     *   → このテストの「止まる」も 650ms より長くしないと**締まらない**（旧は 400ms で足りていた）。
+     */
+    t += 700; // 止まる → 1回の移動として締まる（650ms より長く）
   }
-
   // ── 2) 更新日をプルダウンで選ぶ（開く→選ぶ） ──
   const upd = el("update_date", 760, 180, 120, 28, "SELECT");
   fire(e.ls.doc.click, { isTrusted: true, target: upd, clientX: 800, clientY: 195 });

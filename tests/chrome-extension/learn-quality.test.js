@@ -32,7 +32,15 @@ console.log("■ ① 同じチェックを1回に畳む（交互クリックの�
   t("チェック系（name に []）だけ", /indexOf\("\[\]"\) < 0/.test(r));
   t("近い時（400ms以内）だけ畳む", /gap2 <= 400/.test(r));
   t("同じ親の中かを確かめる", /closest\("label"\) === lab/.test(r));
-  t("DOM 要素を送らない（人か機械かの印だけ足す）", /return \{ t: o\.t, k: o\.k, f: o\.f, w: o\.w, g: o\.g, by: o\.by \|\| null \}/.test(r));
+  /**
+   * ⚠ 2026-11-14: `opened`（押したら何が開いたか）を足した（v2.7.67）。
+   *   賃料プルダウンの「しくみ」をDBから学ぶため。
+   *   ⚠ 中身の文字は入れない（種類だけ）＝このテストの意図（DOM要素・入力値を送らない）は守る。
+   */
+  t("DOM 要素を送らない（人か機械かの印だけ足す）",
+    /return \{ t: o\.t, k: o\.k, f: o\.f, w: o\.w, g: o\.g, by: o\.by \|\| null, opened: o\.opened \|\| null \}/.test(r));
+  t("  ⚠ DOM 要素（el）を送っていない", !/return \{[^}]*\bel:/.test(r));
+  t("  ⚠ 入力した中身（value/text）を送っていない", !/return \{[^}]*\b(value|text):/.test(r));
 }
 
 console.log("■ ② 区を押し直して外さない（トグル）");

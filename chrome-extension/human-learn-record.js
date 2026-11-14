@@ -631,6 +631,11 @@
         } catch (_) {}
         _pushOp(e.type || "click", e.target, _by);
         /**
+         * ⚠ 2026-11-14: **押す前に画面の数を控える**（`noteOpened` はこの控えが無いと何もしない）。
+         *   呼んでいなかったので、`opens`（何が開いたか）が**1件も残らなかった**。
+         */
+        try { if (rec && rec.noteBeforeClick) rec.noteBeforeClick(e.target); } catch (_) {}
+        /**
          * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
          *   → **自動モード（拡張が押す）では押した欄が1つも記録されていなかった**（実測で発覚）。
          *
@@ -646,6 +651,33 @@
           if ((e.type === "click" || e.type === "change") && e.target) {
             _pushPoint(e.target, _by, e);
           }
+        } catch (_) {}
+        /**
+         * 2026-11-14 竹内さん「賃料の部分のプルダウンのしくみ…理解できるのかな」
+         *   → 実測: 賃料の操作 401件すべて `w:"select"` なのに、**「何が開いたか」が 0件**だった。
+         *     集計（`opens`）には入るが、**`shot_ops` には載せていなかった**。
+         *   → 押した**後に**開いた物を見て、その操作の記録に `opened` を書く。
+         *     ⚠ 見るのは**種類だけ**（options/modal/result/form/none）。中身の文字は見ない。
+         *     ⚠ `options` が出るのは**プルダウンが開いた時**＝賃料のしくみを学ぶ材料そのもの。
+         */
+        try {
+          var _openedFor = e.target;
+          var _ringAt = _opsRing.length - 1;
+          setTimeout(function () {
+            try {
+              if (!rec || !rec.noteOpened) return;
+              // 画面の数を押す前後で比べる（rec 側が控えを持っている）
+              rec.noteOpened(_openedFor);
+              var o = _opsRing[_ringAt];
+              if (o && o.opened == null) {
+                // 集計の最後の1件（今回の操作）から種類を取る
+                var det = rec.detail ? rec.detail() : null;
+                var ops2 = (det && det.opens) || [];
+                var last = ops2[ops2.length - 1];
+                if (last && last.o) o.opened = String(last.o).slice(0, 12);
+              }
+            } catch (_) {}
+          }, 560 + Math.floor(Math.random() * 240));
         } catch (_) {}
       } catch (_) {}
     };
@@ -779,7 +811,16 @@
          *   → `by` も送る（"human" / "auto"）。サーバーと学習が**人の動きだけ**を手本にできる。
          *   ⚠ 拡張が押した物は `isTrusted=false` なので、記録する時に判定して入れる。
          */
-        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g, by: o.by || null };
+        /**
+         * 2026-11-14 竹内さん「賃料の部分のプルダウンのしくみとカーソルと動かし方と動きも理解できるのかな」
+         *   → **実測で判明**: 賃料の欄の操作は 401件すべて `w:"select"`（プルダウンだと分かっている）のに、
+         *     **「押したら何が開いたか」が 0件**だった。
+         *   ⚠ `opens`（展開先）は集計（`axlx_human_learn`）には入るが、
+         *     **写真と一緒に送る `shot_ops` には載せていなかった**ので、DBからは学べなかった。
+         *   → 押した直後に分かった「何が開いたか」（`o`）を `opened` として載せる。
+         *     ⚠ 入るのは**種類だけ**（modal / options / result / form / modal_close / none）。中身の文字は入れない。
+         */
+        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g, by: o.by || null, opened: o.opened || null };
       });
     } catch (_) { return null; }
   }
