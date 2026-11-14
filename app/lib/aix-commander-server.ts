@@ -14,6 +14,8 @@ import { readAltConfig, shouldRouteAlt } from "./llm-alt-provider";
  *   ブレインも Claude で deepseek-scope の箱も無いので、出口（llm-alt-provider.cutoffGateDecision）が claude:no_mark で **毎回 Claude（AIX_DESK_MODEL・既定 Haiku 4.5）に送る**
  *   （11/08〜11/10 本番 132回すべて Haiku・DeepSeek は試験の YUMA 系だけ）。「Claude に行かない」は試験の時だけの事実。
  *   直すには入口で線を引いた印を渡す（材料を線で切ってから）。印を付けるだけの直しは個人情報の線を破るのでしない
+ * 2026-11-15 統括役の決め（brain_weaknesses 526）: **本番の AIX の統括・相談は Claude のまま（質を優先）**。DeepSeek に回す直しはしない。
+ *   名札が別クラウドの設定に入っている本番では、この関数は true でも呼び出しは出口で Claude に行く。false の時（名札が無い）は呼ばない。
  */
 export function deskCallGoesAlt(action: string, env: Record<string, string | undefined> = process.env): boolean { return shouldRouteAlt(readAltConfig(env), action); }
 import { AIX_COMMANDER_SYSTEM, commanderCandidates, commanderUserText, deskKeyOf, parseCommanderAnswer } from "./aix-commander";
@@ -94,7 +96,7 @@ export async function runAixCommander(client: Anthropic, o: {
   const { deskCardsAsHits } = await import("./aix-commander");
   const hits = deskCardsAsHits(cands, cards, ownersCache, o.scene ?? null);
   if (cands.length < 2) return { ...base, brainKey, cands, hits, skip: "比べる候補が1つ以下", ms: Date.now() - t0 };
-  if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, hits, skip: "DeepSeek に回らない（Claude には送らない）", ms: Date.now() - t0 };
+  if (!deskCallGoesAlt(AIX_DESK_ACTION)) return { ...base, brainKey, cands, hits, skip: "名札が別クラウドの設定に無い（呼ばない）", ms: Date.now() - t0 };
   const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })), ledgerBlock: o.ledgerBlock });
   const res = await client.messages.create({
     model: MODEL,
@@ -119,7 +121,7 @@ export async function runAixConsult(client: Anthropic, o: { conversationId: stri
   const { consultCandidates, AIX_CONSULT_SYSTEM, parseConsultAnswer } = await import("./aix-commander");
   const cands = consultCandidates(o.sceneButtons, [...cards.keys()]);
   if (!cands.length) return { ran: false, skip: "場面の候補が無い", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
-  if (!deskCallGoesAlt("aix_desk_consult")) return { ran: false, skip: "DeepSeek に回らない（Claude には送らない）", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
+  if (!deskCallGoesAlt("aix_desk_consult")) return { ran: false, skip: "名札が別クラウドの設定に無い（呼ばない）", cands, answer: "keep", key: null, why: "", ms: Date.now() - t0 };
   const user = commanderUserText({ situationLine: o.situationLine, conversation: o.conversation, cards: cands.map((k) => ({ key: k, text: cards.get(k) ?? "" })), ledgerBlock: o.ledgerBlock }).replace("/ reply / promise", "/ promise / keep");
   const res = await client.messages.create({
     model: MODEL, max_tokens: 300, temperature: 0,
