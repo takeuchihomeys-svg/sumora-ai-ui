@@ -379,6 +379,48 @@ export async function GET(req: NextRequest) {
     statsLines.push(`📋 AIXテンプレート候補: ${pendingCandidates}件未レビュー${mark}`);
   }
 
+  /**
+   * 2026-11-14 竹内さん「ちゃんとデータベースとの連携ができているのか。この点も強化するのと補強する。そして強化する」:
+   *   **物件検索の学習とDBの連携**を毎朝1行で見張る。
+   *   見る所: 記録→学習→拡張が読む値 までが通っているか。
+   *   ⚠ ここが止まると自動検索が学べない（実際に何日も気づけなかった）。
+   */
+  try {
+    const { data: profRow } = await supabase
+      .from("human_learn_profile")
+      .select("created_at, source_rows, bundle")
+      .eq("scope", "all")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const bundle = (profRow?.bundle ?? null) as {
+      next?: Record<string, unknown>;
+      sequence_flow?: { sequence?: unknown[] };
+      by_mode?: Record<string, unknown>;
+      mode_counts?: Record<string, number>;
+      learn_plan?: { summary?: string };
+      lines?: string[];
+    } | null;
+    if (!bundle) {
+      statsLines.push("🧠 物件検索の学習: ⚠️ まだ束がありません（/api/human-learn-profile が動いていない可能性）");
+    } else {
+      const nx = Object.keys(bundle.next ?? {}).length;
+      const seq = (bundle.sequence_flow?.sequence ?? []).length;
+      const byMode = Object.keys(bundle.by_mode ?? {}).length;
+      const modes = bundle.mode_counts ?? {};
+      // 直近4日を「新しい録画が届いているか」の目安にする
+      const fresh = profRow?.created_at ? new Date(String(profRow.created_at)).getTime() > Date.now() - 4 * 86400_000 : false;
+      const mark = nx === 0 ? " ⚠️ 押す順番が0（学習が止まっています）" : (!fresh ? " ⚠️ 束が古い（録画・記録が届いていない）" : "");
+      statsLines.push(
+        `🧠 物件検索の学習: 押す順番${nx}通り・一連${seq}手・モード別${byMode}種`
+        + `（記録${profRow?.source_rows ?? 0}件 / 通常${modes.normal ?? 0}・自動${modes.aix ?? 0}）${mark}`,
+      );
+      if (bundle.learn_plan?.summary) statsLines.push(`   統括: ${bundle.learn_plan.summary.slice(0, 160)}`);
+    }
+  } catch (e) {
+    statsLines.push(`🧠 物件検索の学習: ⚠️ 確認できません（${e instanceof Error ? e.message.slice(0, 80) : "?"}）`);
+  }
+
   // 🤖 自動返信化候補（auto_reply_readiness で ready: true の aix_type がある場合のみ表示。0件ならセクション省略）
   try {
     const readiness = readinessRow?.content

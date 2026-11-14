@@ -31,7 +31,7 @@ const NEED: Need[] = [
   },
   {
     table: "exam_runs",
-    cols: ["id", "created_at", "run_id", "kind", "model", "passed", "total", "cost_usd", "detail"],
+    cols: ["id", "created_at", "label", "ran_at", "plan_label", "candidates", "compare", "next_actions", "triage", "llm", "llm_calls", "cost_usd", "summary"],
   },
 ];
 
