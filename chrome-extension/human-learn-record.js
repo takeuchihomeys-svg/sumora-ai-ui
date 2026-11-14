@@ -260,6 +260,35 @@
       try { add.order = (motion.points && motion.points.order) || []; } catch (_) { add.order = []; }
       try { add.fields = Object.keys((motion.points && motion.points.fields) || {}).slice(0, 40); } catch (_) { add.fields = []; }
       /**
+       * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
+       *   → ⚠ **自動モード（拡張が押す）では順番が空のまま**だった。
+       *     `motion.points` は `isTrusted` の物だけなので、拡張の押下は入らない。
+       *   → この受け口で貯めた `_livePoints`（人も拡張も）から**順番と欄**を作って足す。
+       *     ⚠ 人の手本が既にある時は**そちらを優先**（人の押し方の方が正確）。
+       */
+      try {
+        var _live = _livePoints || {};
+        var _liveNames = Object.keys(_live).filter(function (k) { return k !== "__last" && _live[k] && _live[k].n; });
+        if (!add.order || !add.order.length) {
+          // `__last` に積んだ順番は残していないので、時刻ではなく**n（回数）の多い順**ではなく
+          // **押された順**が要る → `_orderLive` を使う
+          add.order = _orderLive.slice(0, 40);
+        }
+        if (!add.fields || !add.fields.length) add.fields = _liveNames.slice(0, 40);
+        /**
+         * 欄ごとの押した位置も `_livePoints` から作る（自動モードでも位置が残る）。
+         *   ⚠ 人の記録が既にある時は上書きしない。
+         */
+        if (!add.points || !add.points.fields || !Object.keys(add.points.fields).length) {
+          var pf = {};
+          _liveNames.slice(0, 40).forEach(function (k) {
+            var v = _live[k];
+            pf[k] = { n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: v.by || null };
+          });
+          add.points = { n: _liveNames.length, x: null, y: null, fields: pf, order: _orderLive.slice(0, 40) };
+        }
+      } catch (_) {}
+      /**
        * 2026-11-14 竹内さん「ボタンなのかプルダウンなのか、どこで展開されるのかも意識して学習して改善する」:
        *   押したら何が開いたか（modal / options / form / result / none）を送る。
        *   ⚠ 中身は送らない（開いた物の種類と数だけ）。
@@ -432,11 +461,95 @@
          */
         var _by = (e.isTrusted === true) ? "human" : "auto";
         _pushOp(e.type || "click", e.target, _by);
+        /**
+         * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
+         *   → **自動モード（拡張が押す）では押した欄が1つも記録されていなかった**（実測で発覚）。
+         *
+         *   ⚠ 理由: 押した欄の名前・順番を作る `recordPoint` は `guarded`（**`isTrusted` だけ**）の中にあり、
+         *     拡張の `el.click()` は**通らない**。だから `point_fields` / `field_order` が空で、
+         *     自動モードでは「どの欄を・どの順で押したか」を学べなかった。
+         *
+         *   → **この受け口（click/change を両方拾う）でも、押した欄を積む**。
+         *     ⚠ 人の手本とは混ぜない: `by` を付けて分ける（学習は `human` を優先する）。
+         *     ⚠ 拡張の合成クリックは座標が 0,0 なので、位置は**要素の真ん中**として記録する（`syn:true`）。
+         */
+        try {
+          if ((e.type === "click" || e.type === "change") && e.target) {
+            _pushPoint(e.target, _by, e);
+          }
+        } catch (_) {}
       } catch (_) {}
     };
     document.addEventListener("click", _cap, true);
     document.addEventListener("change", _cap, true);
   } catch (_) {}
+  /**
+   * 押した欄を `axlx_human_points` に積む（2026-11-14・自動モードでも順番を学ぶため）。
+   *
+   *   ⚠ 入れるのは**欄の名前・位置（割合）・種類・時刻**だけ（入力した中身は入れない）。
+   *   ⚠ `syn:true` … 拡張の合成クリック（座標0,0）なので位置は**推測（真ん中）**。
+   *   ⚠ 同じ欄が続けて来たら1つに畳む（click と change が両方来るため）。
+   */
+  function _pushPoint(el, by, ev) {
+    try {
+      if (!el || !L || !L.fieldName) return;
+      var name = L.fieldName(el);
+      if (!name) return;                      // 名前が取れない（img/body 等）は積まない
+      var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!r || !(r.width > 0 && r.height > 0)) return;
+      var syn = (by === "auto");
+      var fx = syn ? 0.5 : ((Number(ev.clientX) - r.left) / r.width);
+      var fy = syn ? 0.5 : ((Number(ev.clientY) - r.top) / r.height);
+      if (!syn && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
+      var cur = _livePoints || {};
+      var t = Date.now();
+      /**
+       * 同じ欄の click → change は1回に畳む（120〜400ms 以内）。
+       *   ⚠ 畳まないと「city_code[] → city_code[]」のように同じ欄が並び、順番が濁る。
+       */
+      if (cur.__last && cur.__last.f === name && t - Number(cur.__last.t || 0) < 400) {
+        cur.__last.n = (Number(cur.__last.n) || 1) + 1;
+        cur.__last.t = t;
+        _savePoints(cur);
+        return;
+      }
+      // 押された順に足す（同じ欄が離れて2回目なら**残す**＝押し直しとして学ぶ）
+      if (_orderLive.length < 60) _orderLive.push(name);
+      var prev = cur[name] || { n: 0, x: 0, y: 0, xs: [], ys: [] };
+      var n = (Number(prev.n) || 0) + 1;
+      var xs = (Array.isArray(prev.xs) ? prev.xs : []).concat([Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100]).slice(-20);
+      var ys = (Array.isArray(prev.ys) ? prev.ys : []).concat([Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100]).slice(-20);
+      var med = function (a) { if (!a.length) return 0; var s = a.slice().sort(function (p, q) { return p - q; }); var m = Math.floor(s.length / 2); return s[m]; };
+      cur[name] = {
+        n: n, x: med(xs), y: med(ys), xs: xs, ys: ys,
+        wk: (L.kindOfEl ? L.kindOfEl(el) : null) || prev.wk || null,
+        by: by || prev.by || null,
+      };
+      cur.__last = { f: name, t: t, n: 1 };
+      _savePoints(cur);
+    } catch (_) {}
+  }
+  var _livePoints = null;
+  var _livePointsAt = 0;
+  /**
+   * 2026-11-14: **押された順**（人も拡張も・重複は畳む）。
+   *   ⚠ `_livePoints` は「欄ごとの回数」しか持たないので、**順番**はここで別に持つ。
+   *     これが `field_order` になり、「賃料 → 徒歩 → 更新日」の流れを学べる。
+   */
+  var _orderLive = [];
+  function _savePoints(cur) {
+    try {
+      if (!cur) return;
+      var o = {}; o[POINTS_KEY2] = cur;
+      chrome.storage.local.set(o);
+      _livePointsAt = Date.now();
+    } catch (_) {}
+  }
+  try {
+    chrome.storage.local.get([POINTS_KEY2], function (r) {
+      try { _livePoints = (r && r[POINTS_KEY2]) || {}; } catch (_) { _livePoints = {}; }
+    });
+  } catch (_) { _livePoints = {}; }
   /**
    * 2026-11-14 竹内さん「ほかちゃんと録画したの学習できてるかな」:
    *   ⚠ 実測: 版 2.7.22 の写真 **234枚すべて `shot_ops` が空**だった（旧版 2.7.21 は 79枚ついていた）。
