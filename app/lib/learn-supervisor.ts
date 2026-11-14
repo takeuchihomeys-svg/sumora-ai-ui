@@ -233,7 +233,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       priority: 1,
       what: "操作が付く記録が少なすぎる",
       why: `${rows}件中 ${withOps}件だけ（1割未満）`,
-      how: "写真と操作を結ぶ道（タブの取り違え・輪の長さ）を点検する",
+      /**
+       * 2026-11-14: ⚠ 旧は「写真と操作を結ぶ道を点検する」とだけ書いていたので、
+       *   `shot_learn` を埋め直す（`/api/learn-fill-shot`）を実行しても**直らなかった**。
+       *   `shot_learn` は写真から読んだ種類、`shot_ops` は**録画の時に拡張が送る操作の並び**で**別物**。
+       *   → **何が足りないか**を名指しし、**どこを見るか**を具体的に書く。
+       */
+      how: "`shot_ops`（録画の時の操作の並び）が届いていない。`axlx_rec_ops` の `why`（ring_empty / no_answer）を見て、拡張側の記録の経路を直す。※ `shot_learn` を埋めても増えない（別物）",
     });
   }
   const mc = inp.mode_counts || {};
