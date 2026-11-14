@@ -64,9 +64,9 @@ console.log("\n■ ④ 隠す側（content script）が拡張の要素だけを�
   ok("  隠すのは visibility:hidden（display:none ではない）", /visibility = "hidden"/.test(recCode));
   ok("  ⚠ display:none を使っていない（レイアウトが動くと絵がずれる）", !/style\.display = "none"/.test(recCode));
   // セレクタが拡張の物だけであること
-  const sel = (recCode.match(/var sel = ([^;]+);/) || [])[1] || "";
+  const sel = (recCode.match(/var SHOT_HIDE_SEL = ([\s\S]{0,300}?);/) || [])[1] || "";
   ok("  セレクタに拡張の印が入っている", /axlx|aixlinx/.test(sel), sel.slice(0, 120));
-  ok("  ⚠ サイトの要素（body/html/*）を隠していない", !/sel\s*=\s*"[^"]*(^|[\s,])body/.test(sel));
+  ok("  ⚠ サイトの要素（body/html/*）を隠していない", !/[,\s"'](body|html|div|\*)[,\s"']/.test(sel), sel.slice(0, 120));
 }
 
 console.log("\n■ ⑤ 戻す時に元の値を戻す（隠したまま消さない）");
@@ -84,6 +84,31 @@ console.log("\n■ ⑥ 撮る直前と直後で小窓が消えて戻る（順番
   ok("  hide:false で戻す", /msg\.hide === false[\s\S]{0,120}_showAfterShot\(\)/.test(recCode));
   ok("  それ以外は隠す", /else \{ _hideForShot\(\)/.test(recCode));
   void iHide;
+}
+
+console.log("\n■ ⑥b 実際に画面を覆っていたIDを隠せる（実測で確認した名前）");
+{
+  /**
+   * ⚠ 実測: 写真の中央を覆っていたのは `aixlinx-float-wrap`。
+   *   旧のセレクタ `#axlx-bar, ...` は**列挙**だったので、これを落としていた。
+   *   さらに `[class^='axlx-']` は**先頭一致のみ**（`foo axlx-bar` を拾えない）。
+   */
+  const selLine = (recCode.match(/var SHOT_HIDE_SEL = ([\s\S]{0,300}?);/) || [])[1] || "";
+  ok("  ⚠ aixlinx-float-wrap を拾う（旧は落としていた）", /\[id\^='aixlinx-'\]/.test(selLine), selLine.slice(0, 160));
+  ok("  a x l x を含む id を拾う", /\[id\*='axlx-'\]/.test(selLine));
+  ok("  クラスも部分一致で拾う", /\[class\*='axlx-'\]/.test(selLine));
+  ok("  data-axlx も拾う", /\[data-axlx\]/.test(selLine));
+
+  // 面積の小さい物は残す（学習中の印など）
+  ok("  面積が小さい物は隠さない（人が不安にならない）", /area \/ full < 0\.02/.test(recCode));
+}
+
+console.log("\n■ ⑥c 隠した直後に撮らない（描画待ち）");
+{
+  ok("  ⚠ 隠した時だけ待つ", /hide !== false\) await new Promise\(function \(r\) \{ setTimeout\(r, 32\)/.test(bgCode));
+  const seg = bgCode.slice(bgCode.indexOf("async function _setShotHidden"), bgCode.indexOf("async function _setShotHidden") + 1200);
+  ok("  ⚠ 待ちは 100ms 未満（撮影の間隔 700ms を食い込まない）", /setTimeout\(r, 32\)/.test(seg));
+  ok("  戻す時は待たない", !/hide === false\) await new Promise/.test(seg));
 }
 
 console.log("\n■ ⑦ プロンプトも「小窓を読まない」と言っている（二重の守り）");

@@ -2086,6 +2086,13 @@ async function _setShotHidden(tabId, hide) {
   if (typeof tabId !== "number") return false;
   try {
     await chrome.tabs.sendMessage(tabId, { type: "axlx-shot-hide", hide: hide !== false });
+    /**
+     * ⚠ 2026-11-14 実測: 隠した**直後**に撮ると、まだ描画が終わっておらず
+     *   **小窓が写った古い絵**が撮れる事がある（`visibility` の反映は次の描画フレーム）。
+     *   → 隠した時だけ**2フレーム分（約32ms）待つ**。戻す時は待たない（人を待たせない）。
+     *   ⚠ 待ちすぎると `captureVisibleTab` の間隔（700ms）に食い込むので 32ms に留める。
+     */
+    if (hide !== false) await new Promise(function (r) { setTimeout(r, 32); });
     return true;
   } catch (_) {
     /**

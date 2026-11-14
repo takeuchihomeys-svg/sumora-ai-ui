@@ -819,16 +819,44 @@
    *     ⚠ `display:none` ではなく `visibility:hidden` にする（レイアウトが動くと撮る絵がずれる）。
    */
   var _shotHidden = [];
+  /**
+   * 隠す相手（拡張が画面に出す物）。
+   *   ⚠ 2026-11-14 実測: 実際に画面を覆っていたのは
+   *     `aixlinx-float-wrap`（本体の大きな窓）・`axlx-guide-panel`（案内）・
+   *     `axlx-bar` / `axlx-itandi-bar`（右の操作パネル）・`axlx-learn-badge`（学習中の印）。
+   *     `[id^='axlx-']` だけだと `aixlinx-` を落とす・`[class^='axlx-']` は**先頭一致のみ**。
+   *   → **部分一致（`*=`）**で拾う（どこかに印があれば隠す）。
+   */
+  var SHOT_HIDE_SEL = "[id^='axlx-'], [id^='aixlinx-'], [id*='axlx-'], [id*='aixlinx-'], "
+    + "[class^='axlx-'], [class*='axlx-'], [class*='aixlinx-'], [data-axlx]";
   function _hideForShot() {
     try {
       if (_shotHidden.length) return;
-      var sel = "#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, "
-        + "[data-axlx], [id^='axlx-'], [id^='aixlinx-'], [class^='axlx-']";
-      var els = document.querySelectorAll(sel);
+      var els = null;
+      try { els = document.querySelectorAll(SHOT_HIDE_SEL); } catch (_) { els = null; }
+      if (!els || !els.length) {
+        // 属性セレクタが通らない環境の保険（ID を1つずつ見る）
+        els = [];
+        var all = document.body ? document.body.querySelectorAll("[id]") : [];
+        for (var k = 0; k < all.length; k++) {
+          var idv = String(all[k].id || "");
+          if (idv.indexOf("axlx") === 0 || idv.indexOf("aixlinx") === 0) els.push(all[k]);
+        }
+      }
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
         if (!el || !el.style) continue;
-        // 既に隠している物は触らない（元の値を覚えておく）
+        /**
+         * ⚠ **画面を覆っている大きな物だけ**隠す（小さな印は残しても邪魔にならない）。
+         *   隠しすぎると、人が「あれ？消えた」と不安になる。
+         *   → 面積が画面の 2% 以上の物だけ（`axlx-learn-badge` は小さいので残る）。
+         */
+        try {
+          var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+          var area = r ? Math.max(0, r.width) * Math.max(0, r.height) : 0;
+          var full = Math.max(1, (window.innerWidth || 1) * (window.innerHeight || 1));
+          if (area / full < 0.02) continue;
+        } catch (_) {}
         _shotHidden.push({ el: el, v: el.style.visibility });
         el.style.visibility = "hidden";
       }
