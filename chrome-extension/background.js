@@ -2504,14 +2504,26 @@ async function _refreshLearnedBundle(force) {
     if (!force && last && Date.now() - last < _LEARN_CHECK_MS) return { ok: true, skipped: "fresh" };
     if (!force && last) {
       try {
-        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(8000) });
+        /**
+         * ⚠ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが止まっていた）**:
+         *   版を見る `?touch=0` のタイムアウトが **8秒**だったが、
+         *   束が古い時はサーバーが**その場で作り直す**ので **14.6秒かかる**（実測）。
+         *   → 8秒で切れて `catch` に入り「取りに行く」流れになるが、
+         *     その直後の取得（15秒）も**足りずに失敗**し、結果として**新しい学びが届かなかった**。
+         *   → 版確認を **25秒**、取得を **40秒** に延ばす（実測 14.6秒＋余裕）。
+         *     ⚠ 5分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
+         */
+        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(25000) });
         if (head.ok) {
           var hj = await head.json();
           var hv = String((hj && hj.generated_at) || "");
           if (hv && hv === lastVer) return { ok: true, skipped: "same_version" };
           console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
         }
-      } catch (_) { /* 版が読めなければ取りに行く（安全側） */ }
+      } catch (e) {
+        // ⚠ 版が読めなくても取りに行く（安全側）。理由を残す（次に同じ事が起きたら分かる）
+        try { console.log("[learn] 版を確かめられません（取りに行きます）:", (e && e.message) || e); } catch (_) {}
+      }
     }
     // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
     /**
@@ -2532,7 +2544,7 @@ async function _refreshLearnedBundle(force) {
     for (var si = 0; si < SITES.length; si++) {
       var sc = SITES[si];
       try {
-        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (!sres.ok) continue;
         var sjson = await sres.json();
         if (sjson && sjson.bundle && typeof sjson.bundle === "object") perSite[sc] = sjson.bundle;
@@ -2553,7 +2565,7 @@ async function _refreshLearnedBundle(force) {
     var res = null;
     if (perSite[curSite]) { res = { ok: true, json: { bundle: perSite[curSite] } }; }
     if (!res) {
-      var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+      var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(40000) });
       if (!allRes.ok) return { ok: false, error: "http_" + allRes.status };
       res = { ok: true, raw: await allRes.json() };
     }
