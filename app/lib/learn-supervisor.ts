@@ -617,6 +617,17 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     }
     return Object.keys(out).length ? out : null;
   })(),
+  /**
+   * ★ 2026-11-15: **自動モードが人間のように動けているか**を統括に届ける
+   *   （実測: 自動はカーソル35%・押さずに値が変わる4件。通常は96%で問題なし）。
+   */
+  humanLike: (() => {
+    const h = (input as unknown as Record<string, unknown>).human_like;
+    if (!h || typeof h !== "object") return null;
+    const o = h as Record<string, unknown>;
+    const r = { ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged), changedWithoutClick: num(o.changedWithoutClick), withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows) };
+    return r.ops > 0 ? r : null;
+  })(),
       /**
        * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
        *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
@@ -737,6 +748,26 @@ function buildMeeting(m: {
   toggles?: { off: number; on: number; unknown: number } | null;
   /** 2026-11-15: 写真から読んだ欄の種類の内訳（統括が「プルダウンが何個」と言える） */
   photoKinds?: Record<string, number> | null;
+  /** 2026-11-15: 自動モードが人間のように動けているかの点検結果 */
+  humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「自動で直接入力されている部分ないかちゃんと人間のように
+   *   入力やクリックカーソルの移動おこなっているか その部分も強化するようにする
+   *   弱い部分は補強していく土台をつくって」→「この問題なども把握して補強していくようにする」
+   *
+   *   **自動モードが人間のように動けているか**の点検結果（`human-like-audit.ts`）。
+   *   ⚠ 実測: 自動モードはカーソル35%・押した位置35%・押さずに値が変わる4件で、
+   *     通常モード（96%・問題なし）と**はっきり差**があった。
+   */
+  human_like?: {
+    ops: number;
+    typedOnChoose: number;
+    clickedThenChanged: number;
+    changedWithoutClick: number;
+    withCursor: number;
+    withPoint: number;
+    rows: number;
+  } | null;
   /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
   sameRuns?: { n: number; max_same: number } | null;
   shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
@@ -893,6 +924,23 @@ function buildMeeting(m: {
       .map(([k, n]) => `${KJ[k] ?? k} ${n}`)
       .join("・");
     evidence.push({ label: "写真から読んだ欄の種類", value: txt });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「この問題なども把握して補強していくようにする」:
+   *   **自動モードが人間のように動けているか**を根拠に出す。
+   *   ⚠ 実測: 自動はカーソル35%・押した位置35%・押さずに値が変わる4件。通常は96%で問題なし。
+   *     この差を統括が言えれば「自動モードのどこを直すか」を自分で決められる。
+   */
+  if (m.humanLike && m.humanLike.ops > 0) {
+    const h = m.humanLike;
+    const p = (n: number) => (h.rows > 0 ? Math.round((n / h.rows) * 100) : 0);
+    const parts: string[] = [];
+    parts.push(`操作 ${h.ops}件`);
+    if (h.typedOnChoose > 0) parts.push(`⚠ 選ぶ欄に打ち込み ${h.typedOnChoose}件`);
+    if (h.changedWithoutClick > 0) parts.push(`⚠ 押さずに値が変わった ${h.changedWithoutClick}件`);
+    else parts.push(`押してから変えた ${h.clickedThenChanged}件`);
+    parts.push(`カーソル ${p(h.withCursor)}%・押した位置 ${p(h.withPoint)}%`);
+    evidence.push({ label: "自動モードの人間らしさ", value: parts.join("／"), guessed: h.typedOnChoose > 0 || h.changedWithoutClick > 0 });
   }
   const mc = Object.entries(m.modeCounts);
   if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });
@@ -1111,6 +1159,30 @@ function buildMeeting(m: {
       why: `押した操作のうち **${m.toggles.off}件が「前に残っていたのを外した」**（選んだのは ${m.toggles.on}件）`,
       decide: "リセットを確実にする（今は人が1つずつ外している）／このままでよいか",
     });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「この問題なども把握して補強していくようにする」:
+   *   **自動モードが人間のように動けない**時は議題にする。
+   *   ⚠ 実測: 自動はカーソル35%・押さずに値が変わる4件で、通常モード（96%・問題なし）と差があった。
+   *     「自動モードは人の真似ができていない」と統括が自分から言えるようにする。
+   */
+  if (m.humanLike && m.humanLike.ops > 0) {
+    const h = m.humanLike;
+    const cursorPct = h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : 0;
+    const pointPct = h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : 0;
+    if (h.changedWithoutClick > 0 || h.typedOnChoose > 0 || cursorPct < 50 || pointPct < 50) {
+      const why: string[] = [];
+      if (h.changedWithoutClick > 0) why.push(`押さずに値が変わった ${h.changedWithoutClick}件`);
+      if (h.typedOnChoose > 0) why.push(`選ぶ欄に打ち込んだ ${h.typedOnChoose}件`);
+      if (cursorPct < 50) why.push(`カーソルの記録が ${cursorPct}% だけ`);
+      if (pointPct < 50) why.push(`押した位置の記録が ${pointPct}% だけ`);
+      agenda.push({
+        priority: 1,
+        topic: "自動モードが人間のように動けていない",
+        why: why.join("／"),
+        decide: "カーソルを動かしてから押す・値を入れる前に欄を開く（人がやる順番にする）",
+      });
+    }
   }
   const siteKeys = Object.keys(m.siteCounts).filter((k) => k && k !== "(空)");
   if (siteKeys.length === 1 && m.site === "all") {

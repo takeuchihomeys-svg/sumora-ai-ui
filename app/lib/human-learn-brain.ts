@@ -29,6 +29,7 @@
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 import { findWeakSteps } from "./learn-flow-steps";
+import { auditHumanLike } from "./human-like-audit";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -1144,6 +1145,23 @@ export function buildHumanLearnBundle(
           }
         }
         return Object.keys(acc).length ? acc : null;
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「この問題なども把握して補強していくようにする」:
+     *   **自動モードが人間のように動けているか**を点検して渡す。
+     *   ⚠ 実測: 自動はカーソル35%・押した位置35%・押さずに値が変わる4件。
+     *     通常モードは96%で問題なし → **自動モードだけの弱点**。
+     */
+    human_like: (() => {
+      try {
+        const r = auditHumanLike(list as never);
+        if (!r.ops) return null;
+        return {
+          ops: r.ops, typedOnChoose: r.typedOnChoose.length,
+          clickedThenChanged: r.clickedThenChanged.length, changedWithoutClick: r.changedWithoutClick.length,
+          withCursor: r.withCursor, withPoint: r.withPoint, rows: r.rows,
+        };
       } catch (_) { return null; }
     })(),
     /**
