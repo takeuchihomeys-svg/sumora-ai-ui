@@ -108,6 +108,23 @@ async function upsertFacts(rows: FactRow[]): Promise<void> {
     { onConflict: "conversation_id,sent_at,origin,kind", ignoreDuplicates: true },
   );
   if (error) console.warn("[sent-facts] upsert failed:", error.message);
+  // 2026-11-15 作業員L（PROMISE_CLOSE_LINK・既定 off）: 果たした行を書いたら、同じ会話の開いている約束の行の detail.closed_by に結ぶ（status は変えない）
+  try {
+    const pcl = await import("./promise-close-link");
+    if (!pcl.promiseCloseLinkOn()) return;
+    const done = rows.filter((r) => r.status === "done" && pcl.PROMISE_OF_DONE[r.kind]);
+    for (const conv of [...new Set(done.map((r) => r.conversation_id))]) {
+      const { data: open } = await supabase.from("sent_facts").select("id, kind, status, sent_at, aix_type, line_message_id, detail").eq("conversation_id", conv)
+        .in("kind", Object.values(pcl.PROMISE_OF_DONE)).eq("status", "promised").order("sent_at", { ascending: true }).limit(60);
+      const links = pcl.linkPromiseClosures((open ?? []) as never, done.filter((r) => r.conversation_id === conv) as never);
+      for (const l of links) {
+        const row = (open ?? []).find((x) => String((x as { id: unknown }).id) === String(l.promiseId)) as { detail?: Record<string, unknown> | null } | undefined;
+        const { error: e2 } = await supabase.from("sent_facts").update({ detail: { ...(row?.detail ?? {}), closed_by: l.closedBy } }).eq("id", l.promiseId);
+        if (e2) console.warn("[sent-facts] promise-close-link:", e2.message);
+      }
+      if (links.length) console.log(JSON.stringify({ tag: "sent-facts:promise-close-link", conversationId: conv, linked: links.length, how: links.map((l) => l.closedBy.how) }));
+    }
+  } catch (e) { console.warn("[sent-facts] promise-close-link skipped:", e instanceof Error ? e.message : String(e)); }
 }
 
 /** 手打ちの送信を1回分類して記録する（send-line-message・送信成功後）。待ち合わせの案内なら内覧の記録も書く */

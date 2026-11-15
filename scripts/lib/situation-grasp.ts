@@ -14,7 +14,7 @@ export const GRASP_FIELDS = [
 ] as const;
 export type GraspField = typeof GRASP_FIELDS[number];
 export const FIELD_LABEL: Record<GraspField, string> = {
-  sent_props: "送った物件（件数・この会話）", sent_outside: "会話の外で送った物件（グループ経由）",
+  sent_props: "送った物件（件数・この会話）", sent_outside: "グループに共有のみの物件（line_group・お客様には未送付）",
   promise_in_ledger: "こちらの約束の文が行動台帳（sent_facts）に入っていたか", sent_props_dated: "送った物件に日付が付いていたか", estimate: "送った見積", check_result: "確かめた結果（物件確認した）",
   open_promise: "開いている約束", promise_kind: "約束の種類（確認・見積・ピックアップ）", promise_due: "約束の期日・経った時間", double_promise: "同じ約束を2日以内に重ねた",
   cond_rent: "最新の条件: 家賃の上限", cond_area: "最新の条件: エリア", cond_layout: "最新の条件: 間取り", last_our: "直前のこちらの通", customer_sent: "お客様が送ってきた物件・画像",
@@ -79,8 +79,10 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const sentHead = [...b.keys()].find((k) => k.startsWith("すでに送付済みの物件"));
   const sentBlockFull = user.match(/【すでに送付済みの物件（(\d+)件）】/);
   const pSent = sentBlockFull ? Number(sentBlockFull[1]) : null;
-  f.sent_outside = dbOutside ? (pSent != null && pSent >= dbSent + dbOutside * 0.5 ? "held" : "link") : "none";
-  if (dbOutside) detail.sent_outside = `会話の外の送付 ${dbOutside}行（グループ経由）・持っていた ${pSent ?? "塊なし"}`;
+  // グループに共有のみ（line_group）の行は【すでに送付済みの物件】の下の「▼グループに共有のみ」に出る（取得の上限 20件）。行の数で比べる
+  const pShared = (user.match(/グループに共有のみ・お客様には未送付/g) ?? []).length;
+  f.sent_outside = dbOutside ? (pShared >= Math.min(dbOutside, 20) * 0.8 ? "held" : pShared > 0 ? "conflict" : "link") : "none";
+  if (dbOutside) detail.sent_outside = `グループに共有のみ ${dbOutside}行・材料に出た ${pShared}行`;
   f.sent_props = dbSent === 0 ? (pSent ? "conflict" : "none") : pSent == null ? "link" : pSent === 0 ? "link" : Math.abs(pSent - dbSent) <= Math.max(1, dbSent * 0.2) ? "held" : "conflict";
   if (f.sent_props === "conflict" || f.sent_props === "link") detail.sent_props = `DB ${dbSent}件・持っていた ${pSent ?? "塊なし"}`;
   // 日付が付いていたか（送付の塊の行に <md> があるか）
