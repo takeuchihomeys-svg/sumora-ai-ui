@@ -4657,7 +4657,18 @@
           if (isY && _pressBusy > 0) return false;
           if (nextBtnAttempts % 2 === 0 && isY) {
             _nextPressedAt = Date.now();
-            simulateClick(btnEl);
+            /**
+             * ★ 2026-11-15 竹内さん「ちゃんと人間の動きでできるようにする」
+             *   ⚠ 旧は `simulateClick(btnEl)` を**直に呼んでいた**ので、カーソルは別の所に居たまま
+             *     ボタンだけ押されていた（人が見ると「勝手に押された」）。
+             *   → `_humanPointerClick` で**カーソルをその要素まで動かしてから**押す。
+             *     ⚠ 失敗しても必ず押す（止まらない）。`simulateClick` はその中で使う。
+             */
+            try {
+              _humanPointerClick(btnEl, function () { try { simulateClick(btnEl); } catch (_) {} });
+            } catch (_) {
+              try { simulateClick(btnEl); } catch (_) {}
+            }
             if (_audit) _auditStepP('ward_next_press', 'next_step_button2');
             console.log('[AX] clickNextStepBtn: Y確認→カーソル移動してクリック (試行=' + nextBtnAttempts + ')');
           } else if (!isY) {
@@ -4690,8 +4701,18 @@
             console.log('[AX] ensureWardButtonY: checked→deselect 300ms待機');
           }
           setTimeout(function() {
-            simulateClick(wTarget);
-            console.log('[AX] ensureWardButtonY: simulateClick→select 400ms待機');
+            /**
+             * ★ 2026-11-15 竹内さん「ちゃんと人間の動きでできるようにする」
+             *   ⚠ 旧は `simulateClick(wTarget)` を直に呼んでいた（カーソルは動かない）。
+             *   → カーソルを動かしてから押す（失敗しても必ず押す）。
+             *     ⚠ 押した直後の 400ms 待機は**そのまま**（Y確認の間）。
+             */
+            try {
+              _humanPointerClick(wTarget, function () { try { simulateClick(wTarget); } catch (_) {} });
+            } catch (_) {
+              try { simulateClick(wTarget); } catch (_) {}
+            }
+            console.log('[AX] ensureWardButtonY: カーソル移動→クリック→select 400ms待機');
             setTimeout(function() {
               if (isWardButtonY()) {
                 console.log('[AX] ensureWardButtonY: Y確認 → callback');
@@ -4980,7 +5001,13 @@
                   chk.stale.forEach(function (code) {
                     var inp = document.querySelector('label input[name="city_code[]"][value="' + String(code) + '"]');
                     var lbl = inp && inp.closest ? inp.closest('label') : null;
-                    if (lbl) simulateClick(lbl);
+                    /**
+                     * ★ 2026-11-15 竹内さん「ちゃんと人間の動きでできるようにする」
+                     *   ⚠ 旧は `simulateClick(lbl)` を直に呼んでいた（カーソルは動かない）。
+                     *   → キューに積んで**1つずつ カーソルを動かして**外す
+                     *     （人が区を外す速さ・`clickWardPrecise` と同じ 620〜1400ms）。
+                     */
+                    if (lbl) enqueueHumanClick(inp || lbl, function (el) { try { simulateClick(el); } catch (_) {} }, 620, 1400);
                   });
                 } catch (_) {}
                 try { if (chk.missing.length) clickWardPrecise([wardFull, wardShort]); } catch (_) {}
