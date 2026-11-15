@@ -101,6 +101,20 @@ const norm = (s: unknown) => String(s == null ? "" : s).replace(/[\s\u3000]+/g, 
  */
 const NON_TARGET_NAMES = /^(div|span|svg|td|tr|th|table|tbody|img|image|a|li|p|ul|i|b|strong|section|header|footer|main|nav|form|body|html|#axlx-[\w-]+|axlx-[\w-]+)$/i;
 
+/**
+ * ★ 2026-11-15 竹内さん「人が押す欄を自動モードが押していない」→ 統括が指摘:
+ *
+ *   ⚠ **`div.building_tr`（物件の行）は「入れ物」ではなく押す対象**だった。
+ *     人が **160回**押している（実測）のに、`NON_TARGET_NAMES` の `div` に当たって除外されていた。
+ *     → 物件の行を押す操作（部屋を選ぶ・詳細を開く）が**手本から抜けていた**。
+ *
+ *   ⚠ ただし `div`（ただの `div`）・`img`・`span` は**やっぱり入れ物**（過去に学んで失敗した実測がある）。
+ *     → **クラス名が付いた意味のある物だけ**通す（`div.building_tr` のような形）。
+ *     `img` は 507回押されているが、これは**物件の写真を押している**＝行を押すのと同じ意味なので、
+ *     行（`div.building_tr`）を学べば足りる（`img` を別に学ぶと「img の次は img」になる）。
+ */
+const MEANINGFUL_CLASS_NAMES = /^[a-z]+\.(building_tr|building_list|property_list|room_|rl_|st_td)[\w-]*$/i;
+
 /** 学習に使ってよい名前か（入れ物・拡張自身の部品は除く） */
 export function isLearnableName(name: unknown): boolean {
   const n = String(name ?? "").trim();
@@ -119,6 +133,12 @@ export function isLearnableName(name: unknown): boolean {
    */
   const ONE_CHAR_OK = /^[分円階歳畳帖件人駅室棟戸台個日月年]$/;
   if (n.length <= 1 && !ONE_CHAR_OK.test(n)) return false;
+  /**
+   * ⚠ 2026-11-15: **クラス名が付いた意味のある物は通す**（`div.building_tr`＝物件の行）。
+   *   人が160回押しているのに `div` として除外されていた（実測）。
+   *   純粋な `div`・`img`・`span` は今まで通り除外する（入れ物）。
+   */
+  if (MEANINGFUL_CLASS_NAMES.test(n)) return true;
   if (NON_TARGET_NAMES.test(n)) return false;
   /**
    * 2026-11-14 竹内さん「データベースの写真から学習する」:
