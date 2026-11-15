@@ -41,6 +41,8 @@ export type AppealRecord = {
   strength: NextStrength;
   aim: NextDest;
   feeling: { main: string; sub: string | null; strength: number } | null;
+  /** なぜこのお客様に: 潜在の下の種類（brain meta の latent_five_sub か latent_subkind_record・LATENT_SUBKINDS の記録）。無ければ null */
+  latent: { id: string; top: string } | null;
 };
 
 export type AppealRecordMode = "off" | "shadow";
@@ -88,7 +90,7 @@ export function appealAimOf(text: string): NextDest {
   return "none";
 }
 
-export function appealRecordFromText(text: string, o: { surface: AppealSurface; writer: AppealWriter; wants?: ReadonlyArray<WantLite> | null; propertyKey?: string | null }): AppealRecord {
+export function appealRecordFromText(text: string, o: { surface: AppealSurface; writer: AppealWriter; wants?: ReadonlyArray<WantLite> | null; propertyKey?: string | null; latent?: { id?: string | null; top?: string | null } | null }): AppealRecord {
   const t = nf(text);
   const points = appealPointsOf(t);
   const wants = (o.wants ?? []).filter((w) => w && w.key);
@@ -108,6 +110,7 @@ export function appealRecordFromText(text: string, o: { surface: AppealSurface; 
     strength: appealStrengthOf(t),
     aim: appealAimOf(t),
     feeling: null,
+    latent: o.latent?.id ? { id: String(o.latent.id), top: String(o.latent.top ?? "") } : null,
   };
 }
 

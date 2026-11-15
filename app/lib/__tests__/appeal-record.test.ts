@@ -13,6 +13,7 @@ t("束の中から1件", r.relevance.oneOfMany);
 t("強さ: 案内する（ご都合よろしいお日にち）", r.strength === "invite");
 t("狙う返事: 内覧", r.aim === "viewing");
 t("外れを先に: 無し", !r.fit.gapFirst);
+t("潜在の下の種類: 渡せば写す・無ければ null", r.latent === null && appealRecordFromText(tk, { surface: "reply", writer: "ai", latent: { id: "cost_total", top: "費用" } }).latent?.id === "cost_total");
 
 const gap = "最寄り駅〇〇駅となりますがこちらのお部屋如何でしょうか！！\n\n新築で設備も充実しております！！";
 t("外れを先に（となりますが）", appealRecordFromText(gap, { surface: "aix_second", writer: "takeuchi" }).fit.gapFirst);
