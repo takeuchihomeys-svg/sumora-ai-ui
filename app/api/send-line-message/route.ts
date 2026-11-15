@@ -323,6 +323,13 @@ export async function POST(req: NextRequest) {
   // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 手打ちの送信は送った時に1回だけ分類して記録する（sent_facts）。
   //   行動台帳はこの記録を本文の読み直しより優先し、メッセージの取得範囲より古い送信も忘れない。待ち合わせの案内なら内覧の記録も書く
   const sentAtIsoForFacts = new Date().toISOString();
+  // 2026-11-15 作業員M（継ぎ目②・ASK_PROGRESS=on の時だけ・既定 off）: 手打ちの返信を送った事を要件の帳面に当てて conversations.ask_progress に書く（AIX は log-aix-usage が書く）
+  if (message && conversation_id && origin !== "aix" && !skipLinePush && sentMessageIds.length) {
+    after(async () => {
+      const { recordAskProgress } = await import("@/app/lib/ask-progress-server");
+      await recordAskProgress(supabase, conversation_id, { kind: "reply" });
+    });
+  }
   if (message && conversation_id && origin !== "aix") {
     after(async () => {
       try {

@@ -178,7 +178,63 @@ type PlanInput = {
   /** 訴求できる場面か（送れる物がある・送った物件が刺さっている）。統括・ブレインが決めて渡す（ここでは決めない） */
   canAppeal?: boolean;
 };
+/**
+ * 2026-11-15 作業員M（統括役の決定 ①-(a)(b)・要件の帳面 app/lib/ask-ledger.ts で見つけた一番大きな切れ目）:
+ *   要件の AIX が2種類ある番（物件確認した＋見積書・見積書＋待ち合わせ 等）に、組み立ては AIX の席を1つしか持たず、2つ目の AIX の要件が取りこぼされていた
+ *   （試験の答案 main-692fecc 352 のうち 18・本番30日の全スタッフの AIX の番 323 のうち2種類以上 77＝物件の束を除くと約34・その番でブレインの要件に AIX が2つ以上は 0）。
+ *   (a) AIX の要件の種類ごとに AIX の席を作り（AIX→AIX）、(b) 席の AIX は要件の AIX から作る（最終の AIX は要件に AIX が無い時だけ）。
+ *   順: 物件確認した（確認の結果）を先に、残りは要件の順（feedback_promise_order_split「物件の募集確認→結果 AIX→…」・send-combo-table の aix_then_aix の行）。
+ *   物件オススメ＋ピックアップは1つの束（オススメ1＋9 の型）。2つ目からの AIX にテンプレートの席は足さない（余計な通を作らない）。
+ *   既定 off（TWO_MESSAGE_AIX_AIX=on の時だけ）。off は今と同じ。
+ */
+export function twoMessageAixAixOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_AIX_AIX ?? "").trim().toLowerCase() === "on";
+}
+/** 物件オススメ＋ピックアップは1つの束（要件の帳面 ask-ledger も同じ見方） */
+export const aixFamilyKey = (k: string): string => (/^(?:property_send|property_recommendation)$/.test(k) ? "property_bundle" : k);
+/** 要件の AIX の種類（束は1つ・物件確認した を先・残りは要件の順）。種類の代表は最初に出た鍵 */
+export function aixKindsOfAsks(asks: ReadonlyArray<PlanAsk>): string[] {
+  const seen = new Map<string, string>();
+  for (const a of asks) {
+    if (a.route !== "aix") continue;
+    const k = baseKey(a.aix);
+    if (!k) continue;
+    const f = aixFamilyKey(k);
+    if (!seen.has(f)) seen.set(f, k);
+  }
+  const ks = [...seen.values()];
+  const i = ks.indexOf("property_check_result");
+  if (i > 0) { ks.splice(i, 1); ks.unshift("property_check_result"); }
+  return ks;
+}
 export function planMessages(i: PlanInput): TwoMessagePlan {
+  const kinds = twoMessageAixAixOn() ? aixKindsOfAsks((i.asks ?? []).filter((a) => a && typeof a.quote === "string")) : [];
+  if (kinds.length >= 2) return planAixAix(i, kinds);
+  return planMessagesOne(i);
+}
+/** AIX が2種類以上の番: 1つ目の AIX で今の組み立てを作り、その AIX（とテンプレート）の後に残りの AIX の席を足す */
+function planAixAix(i: PlanInput, kinds: string[]): TwoMessagePlan {
+  const asks = (i.asks ?? []).filter((a) => a && typeof a.quote === "string");
+  const famOf = (a: PlanAsk) => { const k = baseKey(a.aix); return k ? aixFamilyKey(k) : null; };
+  const first = aixFamilyKey(kinds[0]);
+  // 1つ目の AIX の要件を先頭に（planCore は最初の AIX の要件の鍵で席を作る）・他の種類の AIX の要件は外す
+  const firstAsks = asks.filter((a) => a.route === "aix" && famOf(a) === first);
+  const rest = asks.filter((a) => !(a.route === "aix" && famOf(a) !== null));
+  const base = planMessagesOne({ ...i, asks: [...firstAsks, ...rest], finalAix: kinds[0] });
+  const msgs = base.messages.map((m) => ({ ...m, answers: [...m.answers], duties: [...m.duties] }));
+  let at = -1;
+  msgs.forEach((m, k) => { if (m.slot !== "reply") at = k; });
+  const extra: PlannedMessage[] = kinds.slice(1).map((k) => {
+    const ans = asks.filter((a) => a.route === "aix" && famOf(a) === aixFamilyKey(k)).map((a) => a.quote.slice(0, 40));
+    return { no: 0, slot: "aix" as const, aix: k, answers: ans, role: "次の AIX（約束した順に果たす）", duties: (TEXT_AIX.has(k) ? ["answer", "trust"] : ["answer"]) as Duty[] };
+  });
+  msgs.splice(at + 1, 0, ...extra);
+  msgs.forEach((m, k) => { m.no = k + 1; });
+  const shape = shapeOf(msgs);
+  const why = `AIX が${kinds.length}種類＝AIX→AIX（確認の結果を先に・約束した順に1つずつ）`;
+  return { order: msgs.length >= 3 ? "three" : "aix_first", count: msgs.length, messages: msgs, shape, shapeWhy: SHAPE_WHY[shape] ?? "AIX を種類ごとに分けて順に送る（1通に詰めない）", why: `${shape}: ${why}（${base.why}）` };
+}
+function planMessagesOne(i: PlanInput): TwoMessagePlan {
   const p = withShape(planCore(i));
   // 訴求できる場面なのに訴求の通（テンプレート）が無い＝最後の通に訴求の一文を担わせる（通は増やさない＝余計な2通目を作らない）
   if (i.canAppeal && !p.messages.some((m) => m.duties.includes("appeal")) && p.messages.length) {

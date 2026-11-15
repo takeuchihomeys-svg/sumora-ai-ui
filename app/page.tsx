@@ -12657,7 +12657,7 @@ export default function Home() {
                   method: "POST",
                   headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
                   // 2026-11-15 作業員H（案A・907c74b4）: AIX で選んだ確認の型も渡す（結果を付けるかはサーバーの TASK_RESULT_FROM_AIX・見た目は変わらない）
-                  body: JSON.stringify({ id: _t.id, source: "aix", aix_type: aixModalType, check_pattern: meta?.checkPattern ?? null, prop_statuses: meta?.propStatuses ?? null, property_names: meta?.propertyNames ?? null }),
+                  body: JSON.stringify({ id: _t.id, source: "aix", aix_type: aixModalType, check_pattern: meta?.checkPattern ?? null, prop_statuses: meta?.propStatuses ?? null, property_names: meta?.propertyNames ?? null, text: lastAixLogTextRef.current ?? null }),
                 }).catch(() => {});
               }
               if (_tasks.length > 0) {

@@ -17,12 +17,12 @@
 //       前の流れ（物件を送った後のお礼・募集終了や申込が入っていた報告の了承）で決まっていた → 統括の重点と前の流れで決める（統括役 11/05 案A）。
 //   同じ日の全力サポートは1回まで（KB P2 1d07b3df）。
 //
-// スイッチ: COMPOSE_CONDUCTOR=on（既定 off＝今と1文字も変わらない）。
+// スイッチ: COMPOSE_CONDUCTOR（2026-11-15 既定 on・=off で戻す。作業員K の試験 k1115-cc-p1〜p4: COMPOSE_PLAN_FALLBACK と組みで 8問・確かな悪化0）。
 // テスト: npx tsx app/lib/__tests__/reply-compose-conductor.test.ts
 import { planFromMeta, planMessages, type TwoMessagePlan, type PlannedMessage, type Duty, type PlanAsk } from "./two-message-plan";
-/** 2026-11-12 作業員7: meta に組み立てが無い時に文の統括の側で作る（既定 off・COMPOSE_PLAN_FALLBACK=on） */
+/** 2026-11-12 作業員7: meta に組み立てが無い時に文の統括の側で作る（2026-11-15 既定 on・=off で戻す・k1115-cc 8問 悪化0） */
 export function composePlanFallbackOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COMPOSE_PLAN_FALLBACK ?? "").trim().toLowerCase() === "on";
+  return (env.COMPOSE_PLAN_FALLBACK ?? "").trim().toLowerCase() !== "off";
 }
 import { relationKeep } from "./conductor-focus";
 
@@ -30,7 +30,7 @@ type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
 export function composeConductorOn(env: Env = envOf()): boolean {
-  return (env.COMPOSE_CONDUCTOR ?? "").trim().toLowerCase() === "on";
+  return (env.COMPOSE_CONDUCTOR ?? "").trim().toLowerCase() !== "off";
 }
 
 // ── ① 読む ─────────────────────────────────────────────────────────────

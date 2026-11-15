@@ -584,6 +584,10 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員22: 統括の指示書の入力と指示書（CONDUCTOR_BRIEF=shadow の時だけ・記録だけ） */
   conductor_brief_inputs?: import("@/app/lib/conductor-brief").BriefInputs;
   conductor_brief?: import("@/app/lib/conductor-brief").ConductorBrief;
+  /** 2026-11-15 作業員I（統括の土台③）: 気持ち・状況の表の入力（見積の数・内覧の段階）と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ） */
+  feeling_situation_inputs?: import("@/app/lib/feeling-conductor-table").FeelingSituationInput;
+  feeling_conductor?: import("@/app/lib/feeling-conductor-table").FeelingDecision;
+  feeling_aix_order?: import("@/app/lib/feeling-aix-tool").AixToolOrder[];
   /** 2026-11-12 作業員22: 判断の根拠のメモの次の行き先・答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT・文の統括へ plan） */
   judge_next?: import("@/app/lib/brain-judge-basis").JudgeNext;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
@@ -1701,6 +1705,19 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-15 作業員I（統括の土台③・設計図 feeling_conductor_linkage_1115 の段4・追記）: 気持ち・状況から統括の5つの判断を表で決める。
+  //   FEELING_CONDUCTOR_TABLE=shadow は meta.feeling_conductor に記録だけ／on は重点（conductor_focus）も表の重点にする。優先度の表・指示書の強さ・次の一手は各部品が on の時に読む（既定 off＝何もしない）
+  try {
+    const ft = await import("@/app/lib/feeling-conductor-table");
+    if (ft.feelingTableMode() !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      mm.feeling_conductor = ft.decideFromFeeling(mm, (mm.feeling_situation_inputs ?? {}) as import("@/app/lib/feeling-conductor-table").FeelingSituationInput);
+      ft.applyFeelingFocus(mm);
+      // 2026-11-15 作業員I（竹内さん「AIX ツールや LINE 統括の部分との連携もしっかり精密に」）: 次に送る物 → AIX ツール（物件出し）への指示（記録・決まっていない物は案）
+      const { aixToolOrders } = await import("@/app/lib/feeling-aix-tool");
+      mm.feeling_aix_order = aixToolOrders(mm);
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:feeling-table-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB d030d496・fd1c7c62）: 判断の順番の型（check-order.pickCheckOrder）を meta から選んで記録だけ。CHECK_ORDER_TABLE=shadow|on の時だけ
   //   meta.check_order_type（型の id）・meta.check_order（候補・手がかり）を足す（既定 off＝何も足さない）。返信か AIX かは読まない・変えない。配分より先に置く（配分が型の id を読む）
   try {
@@ -1727,6 +1744,23 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (rec) mm.send_combo = { combo: rec.pick.combo, order: rec.pick.order, gap: rec.pick.gap, row: rec.pick.row, digest: rec.digest, cues };
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:send-combo-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-15 作業員M（竹内さん「どの部分を返信で答え、どの部分を AIX で送るかを把握する・細分化」・P0 ca55d42b）: 要件の帳面（app/lib/ask-ledger.ts）。
+  //   turn_contract.asks の要件1つずつに id と「何通目で答えるか」を付け、取りこぼし・重ね・取り違えを確かめる。ASK_LEDGER=shadow は meta.ask_ledger に記録だけ／
+  //   on は記録＋meta.turn_contract.asks に id・msg を書き足す（既定 off＝何も足さない）。道と組み立ては決め直さない（組み立ては planFromMeta か aix-template-generate と同じ planMessages）
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    const mode = al.askLedgerMode();
+    if (mode !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      const led = al.askLedgerFromMeta(mm);
+      if (led) {
+        mm.ask_ledger = led;
+        const tc = mm.turn_contract as { asks?: unknown } | null | undefined;
+        if (mode === "on" && tc && Array.isArray(tc.asks)) tc.asks = al.annotateAsks(tc.asks as Array<Record<string, unknown>>, led);
+        if (!led.check.ok) console.log(JSON.stringify({ tag: "brain:ask-ledger", digest: led.digest, issues: led.check.issues.map((x) => x.code) }));
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-ledger-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {
@@ -2886,7 +2920,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const brainLedgerInput: LedgerInput = {
     recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, prop_statuses: l.prop_statuses ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
-    lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
+    // 2026-11-15 作業員H（TASK_RESULT_FROM_AIX の届き先の確かめ）: 読みは result を取っているのに、ここで落としていた＝行動台帳の「確認の結果を伝えた（confirmation_reported）」が
+    //   ブレインの台帳には一度も立たなかった（customer-state の台帳は result を渡している）。TASK_RESULT_TO_LEDGER=on の時だけ渡す（既定 off・台帳が変わる＝試験で確かめてから）
+    lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null; result?: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at, ...((process.env.TASK_RESULT_TO_LEDGER ?? "").trim().toLowerCase() === "on" ? { result: t.result ?? null } : {}) })),
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
     recordedFacts,
   };
@@ -3670,13 +3706,15 @@ ${sh}`;
     try {
       const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
       const { nearOpinionDigest } = await import("@/app/lib/conductor-near-opinion");
+      // 11/15 作業員H: 時間切れの時にどの段まで進んだかをログに（nop9o-1 の原因の切り分け・NEAR_OPINION_PARALLEL）
+      const nearTrace = { stage: "start", ms: {} as Record<string, number> };
       const r = await Promise.race([
-        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }),
+        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }, nearTrace),
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
       nearOpinionNote = r === null ? "timeout" : `${nearOpinionDigest(r.op)}|${r.inBand}`;
-      console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
+      console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null, stage: r === null ? nearTrace.stage : undefined, stageMs: r === null ? nearTrace.ms : undefined }));
     } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-11-13 作業員5（統括役・主と従と鮮度・S1・S10）: 前回の全体分析（closing_strategy）が、お客様が外した物件・結果を送って済んだ確認・別の物件へ移った前の物件を
@@ -6844,6 +6882,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
       // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）
       conductor_brief_inputs: briefOnNow ? briefInputs : undefined,
+      // 2026-11-15 作業員I: 気持ち・状況の表の入力（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ・読み物は既に手元の aixLogs と行動台帳だけ＝DB を読み足さない）
+      feeling_situation_inputs: (process.env.FEELING_CONDUCTOR_TABLE ?? "").trim().toLowerCase() === "on" || (process.env.FEELING_CONDUCTOR_TABLE ?? "").trim().toLowerCase() === "shadow" ? {
+        estimatesSent: aixLogs.filter((l) => l.aix_type === "estimate_sheet" && l.sent_at).length,
+        viewing: brainLedger.facts.viewingDone ? "done" as const : brainLedger.facts.viewingAppointment ? (aixLogs.some((l) => l.aix_type === "meeting_place" && l.sent_at && (!brainLedger.facts.viewingAppointment?.sentAt || l.sent_at >= brainLedger.facts.viewingAppointment.sentAt)) ? "place_sent" as const : "scheduled" as const) : "none" as const,
+      } : undefined,
       check_order_scene: checkOrderMode() !== "off" ? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene : undefined,
       aix_now: BRAIN_NOW_LATER_ON ? aixNowOf(nowLaterParsed, finalAix) : undefined,
       customer_concern: customerConcern,

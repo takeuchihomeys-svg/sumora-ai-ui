@@ -39,6 +39,7 @@ import { buildNextMoveDetail, type Offer, type PlantFact, type When } from "./ne
 import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } from "./conductor-doubt";
 import type { InfoCell } from "./info-fill-map";
 import type { OpenItem } from "./exchange-ledger";
+import { feelingNextStrength, feelingBriefSection } from "./feeling-conductor-table";
 
 type Env = Record<string, string | undefined>;
 export type BriefMode = "off" | "shadow";
@@ -60,7 +61,8 @@ type Missing<T> = T | typeof BRIEF_NONE;
 /** 答えに使う事実（出所は answer-source の7つ・確かさは compose-decided の3つ） */
 export type BriefFact = { quote: string; value: string; from: string; source?: AnswerSourceKind; who?: StaffWho; certainty?: Certainty };
 export type ConductorBrief = {
-  main: Missing<{ from: "turn_contract"; items: Array<{ kind: string; quote: string; topic: string | null }> }>;
+  /** 2026-11-15 作業員I（作業員J の見つけ）: 依頼ごとの「何についての話か（asks.about）」「どの物件か（asks.property）」と、話の中心の物件（meta.current_property）を足した */
+  main: Missing<{ from: "turn_contract"; items: Array<{ kind: string; quote: string; topic: string | null; about?: string | null; property?: string | null }>; property?: string | null }>;
   facts: Missing<BriefFact[]>;
   /** 依頼ごとの 今言える部分／確認が要る部分（compose-decided.askPartsOf） */
   split?: Missing<Array<{ quote: string; source: AnswerSourceKind; who?: StaffWho; now: string | null; check: string | null; certainty: Certainty }>>;
@@ -76,8 +78,10 @@ export type ConductorBrief = {
   combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan"; priority?: string | null }>;
   /** 次の一手の番ごとの中身（何を・いつ・どの形で・next-move-concrete・NEXT_MOVE_CONCRETE=on の時だけ） */
   next_concrete?: Missing<ConcreteNext>;
-  next: Missing<{ dest: string; strength: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
+  next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
+  /** 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ） */
+  feeling?: ReturnType<typeof feelingBriefSection>;
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
   decided: DecidedItem[];
   doubts: BriefDoubt[];
@@ -102,7 +106,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
 
   // ① 主の要件
   const main: ConductorBrief["main"] = asks.length
-    ? { from: "turn_contract", items: asks.slice(0, 4).map((a) => ({ kind: str(a.kind, 12) ?? "?", quote: str(a.quote, 40) ?? "", topic: str(a.topic, 20) })) }
+    ? { from: "turn_contract", items: asks.slice(0, 4).map((a) => ({ kind: str(a.kind, 12) ?? "?", quote: str(a.quote, 40) ?? "", topic: str(a.topic, 20), ...(str(a.about, 20) ? { about: str(a.about, 20) } : {}), ...(str(a.property, 40) ? { property: str(a.property, 40) } : {}) })), ...(str(m.current_property, 40) ? { property: str(m.current_property, 40) } : {}) }
     : BRIEF_NONE;
   notYet.push("customer_part");
   if (main === BRIEF_NONE) notYet.push("main");
@@ -176,7 +180,9 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const anxT = String(obj(obj(m.customer_mindset)?.anxiety)?.target ?? "");
   const worry = anxT === "先に取られる" ? "taken" : anxT === "審査" ? "screening" : anxT === "費用" ? "cost" : null;
   const detail = nm ? buildNextMoveDetail({ dest: nm.dest, situation: { checkType: typeId, worry, property: "unknown" }, combo: (combo?.combo ?? null) as SendCombo | null }) : null;
-  const next: ConductorBrief["next"] = nm ? { dest: nm.dest, strength: nm.strength, timing: nm.timing, offer: detail?.offer ?? null, plants: detail?.plants.map((p) => p.fact) ?? [], when: detail?.when ?? null, form: detail?.form ?? null, from: detail ? "next_move_detail" : "type_table" } : BRIEF_NONE;
+  // 2026-11-15 作業員I（統括の土台③）: FEELING_CONDUCTOR_TABLE=on の時は一手の強さを気持ち・状況の表で決める（表に強さの行が無い番は型の表のまま）
+  const fStr = feelingNextStrength(m);
+  const next: ConductorBrief["next"] = nm ? { dest: nm.dest, strength: fStr?.strength ?? nm.strength, ...(fStr ? { strength_from: `feeling:${fStr.from}` } : {}), timing: nm.timing, offer: detail?.offer ?? null, plants: detail?.plants.map((p) => p.fact) ?? [], when: detail?.when ?? null, form: detail?.form ?? null, from: detail ? "next_move_detail" : "type_table" } : BRIEF_NONE;
   if (next === BRIEF_NONE) notYet.push("next");
   // ⑧' 次の一手を番の材料から具体に（後に回した依頼・開いている約束・送れる候補・お客様の言った時期・管理会社の営業時間）
   let next_concrete: ConductorBrief["next_concrete"];
@@ -202,7 +208,9 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const sure = briefSure(m, { doubts, info, typeId });
   // ⑫ 決めた事の台帳（作業員24 の根A）
   const decided = buildDecidedLedger(m, { openPromises: (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").map((o) => o.what) });
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), aim, decided, doubts, sure, notYet };
+  // ⑬ 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ・書き手への1行に出す）
+  const feeling = feelingBriefSection(m);
+  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), aim, ...(feeling ? { feeling } : {}), decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
@@ -219,6 +227,8 @@ export const BRIEF_SECTION_SUBS: Readonly<Record<string, readonly string[]>> = {
   next: ["aim.mid", "aim.plant"],
   next_concrete: ["aim.mid", "aim.plant", "priority.defer"],
   aim: ["aim.turn", "aim.mid"],
+  // 2026-11-15 作業員I: 気持ち・状況の表の判断 → 重点（頭・つなぎ）・強さ（締め・つなぎ）・組（AIX）・次に送る物（つなぎ・AIX 2通目）。役目は feeling-conductor-table.FEELING_TO_ROLES と同じ欄
+  feeling: ["focus.kind", "hook.degree", "priority.combo", "aim.mid"],
 };
 /** 役目 → 渡す指示書の欄の名前（下の欄の役目の和）。alloc・doubts・sure・decided は統括の中だけ（書き手へは渡さない） */
 export function briefSectionsForRole(role: SubRole): string[] {

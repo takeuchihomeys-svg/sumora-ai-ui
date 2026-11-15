@@ -23,7 +23,8 @@ import type { SentencePlan, PlanRow } from "./compose-sentence-plan";
 
 type Env = Record<string, string | undefined>;
 export function composeVocabUnifiedOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COMPOSE_VOCAB_UNIFIED ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 既定 on（作業員K の試験 k1115-vocab-p1〜p4: 8問＋守り・確かな悪化0）。=off で戻す
+  return (env.COMPOSE_VOCAB_UNIFIED ?? "").trim().toLowerCase() !== "off";
 }
 
 /** ① 段 → 役目（誘いは何への誘いかで分かれる・約束は管理会社への確かめ promise と探す約束 keep の両方） */

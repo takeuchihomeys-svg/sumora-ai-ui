@@ -4869,6 +4869,11 @@ INSERT INTO hanbancyo_settings (key, value) VALUES ('takeuchi_line_user_id', 'U3
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown TEXT;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown_at TIMESTAMPTZ;
 
+-- 2026-11-15 作業員M（統括役の決定・継ぎ目②「送り済み・残りの書き戻し」）: 要件の帳面（last_brain_meta.ask_ledger）に対して、この番で実際に送った通と
+--   答えた／約束した／残りの要件の id・次の通（app/lib/ask-ledger.ts の progressAfterSends）。書くのは返信と AIX の送信の後だけ（ASK_PROGRESS=on・既定 off）。
+--   last_brain_meta の中に置かない（log-aix-usage とブレインがそれぞれ丸ごと書き直す＝上書きしあう）。null 可・既定なし。戻す: ALTER TABLE conversations DROP COLUMN IF EXISTS ask_progress;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ask_progress JSONB;
+
 -- 2026-10-08 結果の台帳（計画 memory/plan_outcome_ledger.md・決まり app/lib/deal-outcome.ts・書くのは deal-outcome-server.ts／cron/outcome-ledger）
 --   deal_outcomes: 会話×案件（審査落ち・取り消しで切り替えたら次の案件）ごとに1行。結果（won/lost/switched/in_progress）と確かさ（confirmed/estimated）・各段階の時刻・決まった（落ちた）物件。
 --     推定の成約（auto-seiyaku）・推定の失注（申込前30日返事なし）は result_certainty=estimated。学習と実績の数字は confirmed だけ（竹内さんの決定 10/08）。
@@ -5738,6 +5743,29 @@ SELECT
   c                          AS raw
 FROM property_candidate_pools p
 CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.candidates) = 'array' THEN p.candidates ELSE '[]'::jsonb END) c;
+
+-- ── rag_call_logs: RAG（match_* の RPC）ごとの見張り（2026-11-15 作業員H・竹内さん「精度の高い RAG か・統括ちゃんとできているか」）──
+-- 出口（instrumentation.ts → app/lib/rag-watch-server.ts が globalThis.fetch を包む・RAG_WATCH=on の時だけ）で1回ずつ1行。
+-- 問いの文・手本の中身は残さない（数と RPC の名前と引数の名前だけ）。毎朝 app/api/cron/rag-watch-daily が0件・失敗・遅いが続く RAG を拾う。
+CREATE TABLE IF NOT EXISTS rag_call_logs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  rpc TEXT NOT NULL,
+  route TEXT,
+  status INT,
+  ok BOOLEAN,
+  rows INT,
+  top_sim REAL,
+  ms INT,
+  match_count INT,
+  arg_keys TEXT[],
+  error TEXT,
+  env TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rag_call_logs_created ON rag_call_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_call_logs_rpc ON rag_call_logs(rpc, created_at DESC);
+ALTER TABLE rag_call_logs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON rag_call_logs FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

@@ -154,19 +154,7 @@
     },
     {
       "path": "/api/analyze-diffs?limit=8",
-      "schedule": "23 2 * * *"
-    },
-    {
-      "path": "/api/analyze-diffs?limit=8",
-      "schedule": "23 6 * * *"
-    },
-    {
-      "path": "/api/analyze-diffs?limit=8",
-      "schedule": "23 10 * * *"
-    },
-    {
-      "path": "/api/analyze-diffs?limit=8",
-      "schedule": "23 14 * * *"
+      "schedule": "23 2,6,10,14 * * *"
     },
     {
       "path": "/api/learn-trigger-rules",
@@ -250,11 +238,7 @@
     },
     {
       "path": "/api/cron/eval-winning-pattern",
-      "schedule": "0 0 * * 1"
-    },
-    {
-      "path": "/api/cron/eval-winning-pattern",
-      "schedule": "0 0 * * 4"
+      "schedule": "0 0 * * 1,4"
     },
     {
       "path": "/api/cron/analyze-closed-conversations",
@@ -403,6 +387,10 @@
     {
       "path": "/api/cron/compose-prod-daily",
       "schedule": "20 20 * * *"
+    },
+    {
+      "path": "/api/cron/rag-watch-daily",
+      "schedule": "25 20 * * *"
     }
   ]
 }

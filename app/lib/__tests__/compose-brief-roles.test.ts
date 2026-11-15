@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../compose-sentence-plan";
 import { asksFactsOf } from "../compose-asks-facts";
 import { buildPlanRowsV2 } from "../compose-plan-rows-v2";
+import { buildConductorBrief, briefSectionsForRole } from "../conductor-brief";
+import { SENTENCE_ROLES_FOR_SUB } from "../decided-subfields";
 import { composeBriefRolesOn, briefRolesNote, briefLineForRole, nextStepOf } from "../compose-brief-roles";
 
 let n = 0;
@@ -71,5 +73,28 @@ t("on: 指示書が無い・次の一手が未なら何も足さない（作ら�
 t("配線: route の書き手への注記に briefRolesNote が入る", () => {
   const route = readFileSync(join(__dirname, "..", "..", "api", "generate-reply", "route.ts"), "utf8");
   assert.match(route, /rowsV2 \? briefRolesNote\(rowsV2\.rows, brainMeta\) : ""/);
+});
+// 2026-11-15 作業員I（作業員J の見つけ）: 主の要件に「何についての話か（about）」「どの物件か（property）」と話の中心の物件が出る
+t("指示書の主の要件: about・property・current_property を持つ", () => {
+  const b = buildConductorBrief({ ...base, current_property: "Zeus難波CUBE 1103号室", turn_contract: { asks: [{ quote: "初期費用いくらですか", kind: "question", route: "aix", about: "property_cost", property: "Zeus難波CUBE 1103号室" }, { quote: "ペット可じゃなくてもいい", kind: "statement", route: "reply", about: "search_condition", property: null }] } });
+  const m = b.main as { items: Array<{ about?: string | null; property?: string | null }>; property?: string | null };
+  assert.equal(m.property, "Zeus難波CUBE 1103号室");
+  assert.equal(m.items[0].about, "property_cost");
+  assert.equal(m.items[0].property, "Zeus難波CUBE 1103号室");
+  assert.equal(m.items[1].about, "search_condition");
+  assert.equal(m.items[1].property, undefined);
+});
+t("書き手への1行: 主の要件に about と話の中心の物件が出る（中心と同じ物件は繰り返さない）", () => {
+  const role = SENTENCE_ROLES_FOR_SUB.find((r) => briefSectionsForRole(r as never).includes("main"));
+  assert.ok(role, "main を受け取る役目がある");
+  const meta = { ...base, conductor_brief: buildConductorBrief({ ...base, current_property: "Zeus難波CUBE 1103号室", turn_contract: { asks: [{ quote: "初期費用いくらですか", kind: "question", route: "aix", about: "property_cost", property: "Zeus難波CUBE 1103号室" }, { quote: "ここ洗面台一緒ですか", kind: "question", route: "reply", about: "property_equipment", property: "エステムコート難波" }] } }) };
+  const line = briefLineForRole(meta, role as never) ?? "";
+  assert.match(line, /主の要件: 初期費用いくらですか（property_cost）・ここ洗面台一緒ですか（property_equipment・エステムコート難波）／話の中心の物件: Zeus難波CUBE 1103号室/);
+});
+t("書き手への1行: about も物件も無い時は前のまま", () => {
+  const role = SENTENCE_ROLES_FOR_SUB.find((r) => briefSectionsForRole(r as never).includes("main"));
+  const line = briefLineForRole({ ...base, conductor_brief: buildConductorBrief(base) }, role as never) ?? "";
+  assert.match(line, /主の要件: 内覧できますか(／|$)/);
+  assert.ok(!line.includes("話の中心の物件"));
 });
 console.log(`compose-brief-roles: ${n} pass`);
