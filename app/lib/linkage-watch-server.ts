@@ -1,6 +1,6 @@
 // app/lib/linkage-watch-server.ts — 連携の地図の見張り（読むだけ・LLM なし・費用0）。cron（app/api/cron/linkage-watch）と手元の台本（scripts/linkage-watch.ts）が使う
 //
-// 2026-11-15 作業員L（KB P0 3041baaa）。地図（linkage-map.ts）の行ごとに
+// 2026-11-15 作業員L（KB P0 3041baaa）。呼ぶ所: 作業員H の朝の1本の cron から runLinkageWatchAndLog（cron は足さない・上限100本）と手元の scripts/linkage-watch.ts。地図の行ごとに
 //   (a) 作る側のスイッチが本番で on か（brain_switch_versions の最新の行・無い名前はコードの既定 linkage-switch-defaults）
 //   (b) 読む側の親のスイッチが on か
 //   (c) 本番の直近の判断の記録（conversations.suggested_aix_meta・表の直近の行）で、その欄が空でない割合
@@ -80,4 +80,23 @@ export function compactResult(rep: Awaited<ReturnType<typeof runLinkageWatch>>) 
     off: rep.results.filter((r) => r.status === "parent_off").map((r) => ({ id: r.id, sw: r.offSwitches })),
     notes: rep.notes.slice(0, 20),
   };
+}
+
+/**
+ * 2026-11-15 作業員L（統括役: Vercel の cron が上限 100本）: 新しい cron は足さない。作業員H がまとめる「朝の1本の cron から順に呼ぶ」形に乗せるための入口。
+ *   呼ぶ側は sb（サーバーの鍵）を渡すだけ。cron_run_logs に cron_name=linkage-watch の1行を書き、要約の1行を返す。止める LINKAGE_WATCH=off。
+ */
+export async function runLinkageWatchAndLog(sb: SupabaseClient, env: Record<string, string | undefined> = process.env): Promise<{ ok: boolean; summary: string | null; error?: string }> {
+  if ((env.LINKAGE_WATCH ?? "").trim().toLowerCase() === "off") return { ok: true, summary: null };
+  const started = new Date().toISOString();
+  try {
+    const rep = await runLinkageWatch(sb);
+    const result = compactResult(rep);
+    await sb.from("cron_run_logs").insert({ cron_name: LINKAGE_CRON_NAME, started_at: started, finished_at: new Date().toISOString(), ok: true, result_json: result });
+    return { ok: true, summary: rep.summary };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await sb.from("cron_run_logs").insert({ cron_name: LINKAGE_CRON_NAME, started_at: started, finished_at: new Date().toISOString(), ok: false, error_message: msg.slice(0, 500) });
+    return { ok: false, summary: null, error: msg };
+  }
 }

@@ -1,4 +1,4 @@
-// scripts/linkage-watch.ts — 連携の地図の見張りを手元で（読むだけ・LLM なし・費用0）。cron（/api/cron/linkage-watch）と同じ関数
+// scripts/linkage-watch.ts — 連携の地図の見張りを手元で（読むだけ・LLM なし・費用0）。作業員H の朝の1本の cron から呼ぶ runLinkageWatchAndLog と同じ関数
 //
 // 2026-11-15 作業員L。人が読む md（切れている行を一番上に・段ごと）と1行の要約を出す。
 // 実行: npx tsx --env-file=.env.local scripts/linkage-watch.ts [--md=<出力の md>] [--write]（--write で cron_run_logs に1行）
