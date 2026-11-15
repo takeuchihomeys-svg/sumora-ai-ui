@@ -17,6 +17,16 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
 
 export const dynamic = "force-dynamic";
+/**
+ * ★ 2026-11-15 竹内さん「vercelで動かす形の方が良いのかな？」
+ *
+ *   ⚠ `maxDuration` が**未設定**だったので Vercel の既定（10秒）で切られていた。
+ *     統括に DeepSeek V4 Pro で考えさせると **実測 29.6秒**かかるので、このままだと**必ず途中で切れる**。
+ *   → 既存の他の LLM API と同じ **60秒**にする。
+ *   ⚠ 束の集計（実測 16秒）＋ LLM の思考（29.6秒）＝**最大 46秒**。60秒に収まる。
+ *   ⚠ それでも足りない時は「LLM の判断を諦めて決定論を使う」ので**止まらない**（`thinkAsSupervisor` が null を返す）。
+ */
+export const maxDuration = 60;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
