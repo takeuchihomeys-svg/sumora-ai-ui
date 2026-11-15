@@ -11,7 +11,8 @@
 // AIX 1通目・2通目への受け渡しは DECIDED_TO_AIX（既定 off・conductor-decided.decidedNote を使う）。
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
-export const composeDecidedOn = (env: Env = envOf()): boolean => (env.COMPOSE_DECIDED ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-dec1〜3（下書きまで・6問×2回）確かな悪化0
+export const composeDecidedOn = (env: Env = envOf()): boolean => (env.COMPOSE_DECIDED ?? "on").trim().toLowerCase() !== "off";
 export const decidedToAixOn = (env: Env = envOf()): boolean => (env.DECIDED_TO_AIX ?? "").trim().toLowerCase() === "on";
 
 /** 潜在の下の種類（compose-sentence-plan の LATENT_KINDS）→ 作業員5 の重点の下の種類（meta.conductor_focus.focus_sub・ease の下）。無い物は null */

@@ -77,7 +77,7 @@ for (const t of [
 }
 
 // ─── ③ 資料にある保証会社（b50fd451 11/13 14:11 のスタッフの文・売上サポの資料の文字層の実物） ───
-ok("既定 off", guarantorDocsOn({}) === false && guarantorDocsOn({ BRAIN_GUARANTOR_DOCS: "on" }) === true);
+ok("既定 on（11/15）・=off で止まる", guarantorDocsOn({}) === true && guarantorDocsOn({ BRAIN_GUARANTOR_DOCS: "off" }) === false);
 ok("審査落ち→独立系で探す番は保証会社の話", guarantorDocsAsked(["まりあさん お世話になっております！！  これまでのお部屋大手の管理会社、審査厳しめの保証会社のお部屋のお申し込みで審査が否決となっております。  審査が比較的通過しやすい独立系の保証会社にてまりあさんにお勧めできるお部屋ピックアップさせていただきます！！"]));
 ok("費用だけの番は読まない", !guarantorDocsAsked(["初期費用はどうなりますか？", "内見お願いしたいです"]));
 {

@@ -14,7 +14,8 @@
 //   判断はブレイン（返信か AIX か・どの AIX か）。この行は事実を並べるだけ。既定 off（BRAIN_STAFF_HAND=on）。
 type Env = Record<string, string | undefined>;
 export function staffHandMaterialOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_STAFF_HAND ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-hand1〜4・jc-h178-hand（狙い q421,q334,q409,q411,q372・守り q202,q076,q178,q179 等）確かな悪化0・q179 良くなった
+  return (env.BRAIN_STAFF_HAND ?? "on").trim().toLowerCase() !== "off";
 }
 
 const TASK_JA: Record<string, string> = { property_check: "物件確認（募集状況）", estimate_sheet: "見積書", property_send: "物件の送付" };

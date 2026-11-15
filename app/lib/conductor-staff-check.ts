@@ -16,7 +16,9 @@
 
 export type StaffCheckMode = "off" | "shadow" | "on";
 export function staffCheckMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): StaffCheckMode {
-  const v = (env.CONDUCTOR_STAFF_CHECK ?? "").trim().toLowerCase();
+  // 2026-11-15 作業員J: 既定 shadow（記録と画面の注記・影の関所の線だけ＝下書きは変わらない・=off で戻す）。on（書き手に1行）は既定にしない。
+  //   試験 j1115b-ref1〜3（REF_RESOLVE=on と一緒・ブレインまで）で shadow の分の道の変化は無い（shadow はブレインの後ろでしか読まない）
+  const v = (env.CONDUCTOR_STAFF_CHECK ?? "shadow").trim().toLowerCase();
   return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
 }
 

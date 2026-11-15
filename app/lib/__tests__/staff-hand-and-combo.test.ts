@@ -11,7 +11,7 @@ const t = (n: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${n
 const none = { pickup: false, estimate: false, confirm: false };
 
 // ① 土台
-t("① 既定 off", !staffHandMaterialOn({}) && staffHandMaterialOn({ BRAIN_STAFF_HAND: "on" }));
+t("① 既定 on（11/15）・=off で止まる", staffHandMaterialOn({}) && !staffHandMaterialOn({ BRAIN_STAFF_HAND: "off" }));
 // 2d7548d5（11/09「はい！お願いいたします」→ 竹内さんは約束した4物件のリンクの AIX）: 送れる候補（pending）があった
 const l1 = staffHandLine({ pickupReady: true, openTaskTypes: [], openPromises: { ...none, pickup: true } });
 t("① 2d7548d5 送れる候補と約束を並べる", /送れる新しい候補あり/.test(l1) && /まだ果たしていない約束: ピックアップ/.test(l1) && /AIX で送る/.test(l1));

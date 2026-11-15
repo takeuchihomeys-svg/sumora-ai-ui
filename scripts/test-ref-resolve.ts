@@ -3,14 +3,14 @@
 // 実例3番（名前と物件名は伏せた）: 12105（送ってきてくれたやつで初期費用5万以内はあれだけ？）・12555（URL の号室が引けない）・10911（画像の物件名が空・読み取り「難皮」）
 import assert from "node:assert/strict";
 import { refHandoffReasons } from "../app/lib/ref-resolve";
-import { resolveRefs, refCountOf, refResolveLine, refResolveDigest, portalIdOf, nameSimilarity, refResolveOn, type RefSent } from "../app/lib/ref-resolve";
+import { resolveRefs, refCountOf, refResolveLine, refResolveDigest, portalIdOf, nameSimilarity, refResolveOn, refResolveModeOf, type RefSent } from "../app/lib/ref-resolve";
 import { broughtFromShares, broughtFromThreads, mergeBrought } from "../app/lib/ref-brought";
 import { attachBundles, estimatesFromRecords, attachEstimates, buildSentProps, buildSentPropsText } from "../app/lib/sent-props-text";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 
-t("既定 off", () => { assert.equal(refResolveOn({}), false); assert.equal(refResolveOn({ REF_RESOLVE: "shadow" }), true); });
+t("既定 on（11/15）・=off で止まる・shadow は記録だけ", () => { assert.equal(refResolveOn({}), true); assert.equal(refResolveModeOf({}), "on"); assert.equal(refResolveOn({ REF_RESOLVE: "off" }), false); assert.equal(refResolveOn({ REF_RESOLVE: "shadow" }), true); assert.equal(refResolveModeOf({ REF_RESOLVE: "shadow" }), "shadow"); });
 
 t("送った物件の一覧: 束の番号（何回目・何件目）・送ったのはこちら・見積の初期費用と見積の号室（estimate_records から）", () => {
   const props = buildSentProps({ customerRows: [

@@ -16,7 +16,7 @@ const room = (o: Partial<RoomState> & { name: string; events: RoomState["events"
   sentByUs: true, firstAt: o.events[0]?.at ?? "", lastAt: o.events.at(-1)?.at ?? "", maybeSameAs: [], ...o,
 });
 
-it("既定 off", () => { eq(nowFulfillableEnabled({}), false); eq(nowFulfillableEnabled({ SITUATION_NOW_FULFILLABLE: "on" }), true); });
+it("既定 on（11/15）・=off で止まる", () => { eq(nowFulfillableEnabled({}), true); eq(nowFulfillableEnabled({ SITUATION_NOW_FULFILLABLE: "off" }), false); });
 it("送った物件（2日前）＝確認済み・見積を作れる／持ち込み＝確認が要る／見積済み", () => {
   const t = nowFulfillableLine({ nowMs: NOW, pickupReady: false, rooms: [
     room({ name: "Tio Verde 302", events: [{ kind: "sent", at: "2026-10-27T03:00:00Z", source: "x" }] }),

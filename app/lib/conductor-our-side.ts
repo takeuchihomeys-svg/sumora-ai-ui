@@ -11,7 +11,8 @@
 
 import { promiseReadUnifiedOn, lastOpenPromise, PROMISE_READ_KIND_JA } from "./promise-read";
 type Env = Record<string, string | undefined>;
-export const conductorOurSideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0
+export const conductorOurSideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_OUR_SIDE ?? "on").trim().toLowerCase() !== "off";
 // 2026-11-11 統括役（入口では読みが変わらなかった・弱い19番 7→8）: 同じ塊をブレイン本体の材料と AIX の統括（種類を決める所）に渡す
 // 2026-11-12 統括役の決め（8問×2で合格 4→5・確かな悪化0・守り同じ）: 既定 on。止める =off
 // 2026-11-12 朝 統括役: 既定 off に戻す。on の後に q057（退去予定の部屋の「内見はできない感じ？」）が 0/4（本質が内覧調整の AIX に寄る 4/4）・off で 1/3（寄り 0/3）。入れる =on
