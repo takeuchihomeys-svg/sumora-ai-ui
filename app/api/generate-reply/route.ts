@@ -380,6 +380,7 @@ import { phraseCatalogNote, formSlotsNote } from "@/app/lib/compose-phrase-catal
 import { composePlanRowsV2On, buildPlanRowsV2, planRowsV2Note, planRowsV2Digest } from "@/app/lib/compose-plan-rows-v2";
 // 2026-11-13 作業員10（COMPOSE_BRIEF_ROLES・既定 off）: 統括の指示書の役目ごとの欄（briefForRole）を書き手への注記に
 import { briefRolesNote } from "@/app/lib/compose-brief-roles";
+import { briefUptakeMode, briefUptake, uptakeDigest, uptakeNote } from "@/app/lib/compose-brief-uptake";
 import { dateWordsOf } from "@/app/lib/compose-brief";
 import { composeAsksFactsOn, asksFactsOf, recordFactsOf, composeFactsNote, type EstimateRec } from "@/app/lib/compose-asks-facts";
 import { composeBriefMode, buildComposeBrief, draftDoubts as composeDraftDoubts, composeSure, linkReport as composeLinkReport, composeBriefDigest } from "@/app/lib/compose-brief";
@@ -7842,6 +7843,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     const sure = composeSure(b, { orderType: composeSentencePlan.briefOrderType, appealAsked: composeSentencePlan.briefAppeal, conductorSure: cbSure?.sure?.level ?? null, doubts });
                     const link = composeLinkReport(b, composeSentencePlan.note ?? "");
                     return { compose_brief: composeBriefDigest(b, { doubts, sure, link }) };
+                  } catch { return {}; } })() : {}),
+                  // 2026-11-15 作業員I（竹内さん「文生成する部分も…統括も強化とともにちゃんと強化されていくように」）: 統括の指示書の欄ごとに、渡した物を下書きが入れたか（COMPOSE_BRIEF_UPTAKE=shadow|note・既定 off・記録だけ）
+                  ...(briefUptakeMode() !== "off" && (brainMeta as Record<string, unknown> | null)?.conductor_brief ? (() => { try {
+                    const items = briefUptake((brainMeta as Record<string, unknown>).conductor_brief as never, finalDraftText ?? "");
+                    const dg = uptakeDigest(items); const nt = briefUptakeMode() === "note" ? uptakeNote(items) : null;
+                    return { ...(dg ? { brief_uptake: dg } : {}), ...(nt ? { brief_uptake_note: nt } : {}) };
                   } catch { return {}; } })() : {}),
                   ...(composeConductor ? (() => {
                     const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
