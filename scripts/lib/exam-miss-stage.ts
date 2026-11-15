@@ -225,7 +225,7 @@ export function weaknessKeyOf(stage: MissStage, markers: string[], ess?: { essen
  *   同じ key は upsertWeaknessHits が既存の行にまとめる（key は一意。直した行に再び当たった時は既存の表示どおり「直したのに再び」に出る）。
  *   段が決められない（none）・依頼の答え方だけ（asks）は入れない。6つ目以降の key は捨てる（外れの多い順に5つ）
  */
-export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id: string; n: number; stage: MissStage; markers: string[]; line: string; reps?: number[]; essence?: string | null }>, opts: { max?: number; owner?: (markers: string[]) => LinkRow | null; acceptOf?: (id: string) => string | null } = {}): WeaknessHit[] {
+export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id: string; n: number; stage: MissStage; markers: string[]; line: string; reps?: number[]; essence?: string | null }>, opts: { max?: number; /** 2026-11-15 作業員I: 外れの番ごとの材料の欄の穴の札（exam-material-gaps）。evidence.material_gaps に問題の id ごとに残す */ gapsOf?: (id: string) => string[]; owner?: (markers: string[]) => LinkRow | null; acceptOf?: (id: string) => string | null } = {}): WeaknessHit[] {
   const max = opts.max ?? 5, own = opts.owner ?? ((mk: string[]) => ownerOf(mk));
   const byKey = new Map<string, WeaknessHit>();
   const sorted = [...misses].sort((a, b) => b.n - a.n);
@@ -236,15 +236,17 @@ export function weaknessHitsFromMisses(label: string, misses: ReadonlyArray<{ id
     const o = own(m.markers);
     const reps = (m.reps?.length ? m.reps : [0]).map((r) => `${label} ${m.id}#${r}`);
     const owners = o ? [`${o.id}（${o.owner}）`] : [];
+    const gaps = opts.gapsOf?.(m.id) ?? [];
     const cur = byKey.get(key);
     if (cur) {
+      if (gaps.length) cur.evidence = { ...cur.evidence, material_gaps: { ...((cur.evidence.material_gaps as Record<string, string[]> | undefined) ?? {}), [m.id]: gaps } };
       cur.n = (cur.n ?? 0) + m.n;
       cur.evidence = { ...cur.evidence, exam_qids: [...new Set([...(cur.evidence.exam_qids ?? []), m.id])], exam_reps: [...(cur.evidence.exam_reps ?? []), ...reps], owners: [...new Set([...(cur.evidence.owners ?? []), ...owners])] };
       continue;
     }
     if (byKey.size >= max) continue;
     const d = weaknessDraft(m, o, ess);
-    byKey.set(key, { key, title: d.title, area: d.area, symptom: d.root_cause.slice(0, 500), n: m.n, evidence: { exam_qids: [m.id], exam_labels: [label], exam_reps: reps, owners } });
+    byKey.set(key, { key, title: d.title, area: d.area, symptom: d.root_cause.slice(0, 500), n: m.n, evidence: { exam_qids: [m.id], exam_labels: [label], exam_reps: reps, owners, ...(gaps.length ? { material_gaps: { [m.id]: gaps } } : {}) } });
   }
   return [...byKey.values()];
 }
