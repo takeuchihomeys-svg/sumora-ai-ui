@@ -7,7 +7,7 @@
 //     呼ばれた・0件・失敗・一番近い手本の近さ・かかった時間・どの入口（route）からを rag_call_logs に1行残す。
 //   毎朝の拾い上げ（app/api/cron/rag-watch-daily）が「0件・失敗が続く RAG」を出す（ragWatchFindings）。
 //   本文（問いの文・手本の中身）は残さない＝個人情報を書かない。残すのは数と RPC の名前と引数の名前だけ。
-//   切替: RAG_WATCH=on の時だけ包む（既定 off）。記録の失敗で本来の応答は止めない。
+//   切替: 11/15 から既定 on（RAG_WATCH=off で包まない）。記録の失敗で本来の応答は止めない。
 // テスト: app/lib/__tests__/rag-watch.test.ts
 
 export type RagCallRow = {
@@ -26,7 +26,7 @@ export type RagCallRow = {
 
 type Env = Record<string, string | undefined>;
 export function ragWatchOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.RAG_WATCH ?? "").trim().toLowerCase() === "on";
+  return (env.RAG_WATCH ?? "").trim().toLowerCase() !== "off"; // 11/15 統括役の決め: 表を当てて1行書けるのを確かめた（rag_call_logs_20261115）・既定 on（止める RAG_WATCH=off）
 }
 
 /** PostgREST の RPC の URL から名前（match_ で始まる物だけ） */

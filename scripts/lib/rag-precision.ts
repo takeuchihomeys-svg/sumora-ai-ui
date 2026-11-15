@@ -65,7 +65,8 @@ export function tallyRag(scores: ReadonlyArray<RagScore>): RagTally[] {
     if (!t) { t = { rag, scene, n: 0, empty: 0, route1: [0, 0], routeMaj: [0, 0], skel: [0, 0], simSum: 0, simN: 0 }; m.set(k, t); }
     return t;
   };
-  for (const s of scores) for (const t of [get(s.rag, s.scene), get(s.rag, "全体")]) {
+  // 「重点:」の行は同じ番の写し（重点ごとの切り口）＝全体には足さない
+  for (const s of scores) for (const t of s.scene.startsWith("重点:") ? [get(s.rag, s.scene)] : [get(s.rag, s.scene), get(s.rag, "全体")]) {
     t.n++;
     if (!s.got) t.empty++;
     if (s.top1Route !== null) { t.route1[1]++; if (s.top1Route) t.route1[0]++; }
@@ -80,4 +81,36 @@ const pct = ([a, b]: [number, number]) => (b ? `${Math.round((a / b) * 100)}%（
 export function formatTally(ts: ReadonlyArray<RagTally>, minN = 3): string[] {
   return ts.filter((t) => t.scene === "全体" || t.n >= minN).map((t) =>
     `${t.rag}\t${t.scene}\tn=${t.n}\t空 ${t.empty}\t道(1件目) ${pct(t.route1)}\t道(上位5の多数) ${pct(t.routeMaj)}\t骨 ${pct(t.skel)}\t近さ ${t.simN ? (t.simSum / t.simN).toFixed(3) : "-"}`);
+}
+
+// ── 連携①（DDL なし）: ブレインの読みで並べ替えたら上がるか（統括役の頼み 3・11/15）──────────────
+//   その番のブレインの読み（brain_decision_logs.digest）と、手本の番のブレインの読み（手本の会話でその手本より前の一番近い判断）を突き合わせて加点する。
+//   読み: 道（tc の r/p/a の多い方）・依頼の中身（ta の about の頭）・意図（intent＝AIX-META）・気持ちの状態（emoF）・重点（fc の頭）
+export type Reading = { route: string | null; about: string[]; intent: string | null; emo: string | null; focus: string | null };
+export function readingOf(digest: Record<string, unknown> | null | undefined): Reading | null {
+  if (!digest || typeof digest !== "object") return null;
+  const d = digest as Record<string, unknown>;
+  let route: string | null = null;
+  const tc = typeof d.tc === "string" ? d.tc.match(/r(\d+)p(\d+)a(\d+)/) : null;
+  if (tc) {
+    const [r, p, a] = [Number(tc[1]), Number(tc[2]), Number(tc[3])];
+    const max = Math.max(r, p, a);
+    route = max === 0 ? null : a === max ? "aix" : p === max ? "promise" : "reply";
+  }
+  let about: string[] = [];
+  try { const ta = typeof d.ta === "string" ? JSON.parse(d.ta) : d.ta; if (Array.isArray(ta)) about = [...new Set(ta.map((x) => String(x).split(":")[0]).filter(Boolean))]; } catch { about = []; }
+  const fc = typeof d.fc === "string" ? d.fc.split(/[|:]/)[0] || null : null;
+  return { route, about, intent: typeof d.intent === "string" ? d.intent : null, emo: typeof d.emoF === "string" ? d.emoF : null, focus: fc };
+}
+export const READING_KEYS = ["route", "about", "intent", "emo", "focus"] as const;
+export type ReadingKey = typeof READING_KEYS[number];
+export function readingMatch(a: Reading | null, b: Reading | null, k: ReadingKey): boolean {
+  if (!a || !b) return false;
+  if (k === "about") return a.about.some((x) => b.about.includes(x));
+  return !!a[k] && a[k] === b[k];
+}
+/** 加点して並べ直す（w は近さに足す点・読めない手本は足さない） */
+export function rerankByReading<T extends Neighbor & { reading?: Reading | null }>(ns: ReadonlyArray<T>, held: Reading | null, keys: ReadonlyArray<ReadingKey>, w = 0.05): T[] {
+  const score = (n: T) => n.sim + keys.reduce((s, k) => s + (readingMatch(held, n.reading ?? null, k) ? w : 0), 0);
+  return [...ns].sort((x, y) => score(y) - score(x)).map((n) => ({ ...n, sim: score(n) }));
 }
