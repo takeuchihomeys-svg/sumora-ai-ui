@@ -423,6 +423,64 @@ export async function GET(req: NextRequest) {
   const touch = req.nextUrl.searchParams.get("touch") !== "0";
 
   /**
+   * ★ 2026-11-15 竹内さん「束の更新は1日1回だけ。すぐ反映したいなら手で実行が必要」:
+   *
+   *   ⚠ 旧は**毎晩22:20のcronだけ**が束を作り直していた。朝に録画しても夜まで反映されなかった。
+   *   → **`?refresh=1` で、いつでもその場で作り直せる**ようにする（更新は常に許可）。
+   *     ⚠ 作り直しは重い（6,000件を読む）ので、**同時に1本**に絞る（連打でDBを止めない）。
+   *     ⚠ 失敗しても今までの束は残す（消さない）。
+   */
+  if (req.nextUrl.searchParams.get("refresh") === "1") {
+    const g = globalThis as unknown as { __axlxBundleRefreshAt?: number; __axlxBundleRefreshing?: boolean };
+    const last = Number(g.__axlxBundleRefreshAt) || 0;
+    // ⚠ 20秒に1回まで（録画が続いている時に何度も呼ばれてもDBを止めない）
+    if (Date.now() - last < 20_000) {
+      return NextResponse.json({ ok: true, skipped: "too_soon", wait_ms: 20_000 - (Date.now() - last) }, { headers: CORS });
+    }
+    if (g.__axlxBundleRefreshing) {
+      return NextResponse.json({ ok: true, skipped: "already_running" }, { headers: CORS });
+    }
+    g.__axlxBundleRefreshing = true;
+    try {
+      const mod = await import("@/app/lib/human-learn-brain");
+      const buildHumanLearnBundle = mod.buildHumanLearnBundle;
+      const compactBundle = mod.compactBundle;
+      type MotionRowLocal = Parameters<typeof buildHumanLearnBundle>[0][number];
+      const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const rows: MotionRowLocal[] = [];
+      for (let i = 0; i < 10_000; i += 1000) {
+        const r = await supabase.from("human_motion_learn").select("*")
+          .gte("created_at", since).order("created_at", { ascending: false }).range(i, i + 999);
+        if (r.error) throw new Error(String(r.error.message).slice(0, 160));
+        rows.push(...((r.data ?? []) as MotionRowLocal[]));
+        if ((r.data ?? []).length < 1000) break;
+      }
+      const now = new Date().toISOString();
+      const bundle = compactBundle(buildHumanLearnBundle(rows, Date.now()));
+      const ins = await supabase.from("human_learn_profile").insert({
+        scope: "all", source_rows: rows.length, bundle, generated_at: now,
+      });
+      if (ins.error) throw new Error(String(ins.error.message).slice(0, 160));
+      g.__axlxBundleRefreshAt = Date.now();
+      // 古い束を整理（20件より前を消す・今までの束は残す）
+      try {
+        const old = await supabase.from("human_learn_profile").select("id")
+          .eq("scope", "all").order("created_at", { ascending: false }).limit(50);
+        const ids = ((old.data ?? []) as Array<{ id: unknown }>).slice(20).map((x) => x.id);
+        if (ids.length) await supabase.from("human_learn_profile").delete().in("id", ids);
+      } catch (_) {}
+      return NextResponse.json({
+        ok: true, refreshed: true, rows: rows.length,
+        shots: (bundle as unknown as Record<string, unknown>).shots ?? null,
+      }, { headers: CORS });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) }, { status: 500, headers: CORS });
+    } finally {
+      g.__axlxBundleRefreshing = false;
+    }
+  }
+
+  /**
    * 2026-11-13 竹内さん「データベースを学習面でも強化していくようにする形とする」:
    *   **学習の履歴**を見られるようにする（いつ・何件から・何を学んだか）。
    *   → 「学習が進んでいるか」「弱い所が減っているか」を**推移で**確かめられる。
