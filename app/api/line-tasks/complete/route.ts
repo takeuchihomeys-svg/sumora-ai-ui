@@ -38,14 +38,14 @@ export async function POST(req: NextRequest) {
     result?: "available" | "taken" | "second_position" | "move_out_planned";
     result_note?: string;
     // 2026-11-15 作業員H（案A・907c74b4）: AIX 送信の後の完了で画面が一緒に送る、AIX で選んだ確認の型（物件確認した の check_pattern・物件ごとの prop_statuses）
-    aix_type?: string | null; check_pattern?: string | null; prop_statuses?: string[] | null; property_names?: string[] | null;
+    aix_type?: string | null; check_pattern?: string | null; prop_statuses?: string[] | null; property_names?: string[] | null; text?: string | null;
   };
   const { id, source } = body;
   let { result, result_note } = body;
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
-  // 結果が無い AIX 送信の完了は、選んだ確認の型から結果を付ける（task-result-from-aix・既定 off: TASK_RESULT_FROM_AIX=on）
+  // 結果が無い AIX 送信の完了は、選んだ確認の型から結果を付ける（task-result-from-aix・11/15 から既定 on・止める TASK_RESULT_FROM_AIX=off・送った AIX の文と食い違えば付けない）
   if (!result && source === "aix" && taskResultFromAixOn()) {
-    const r = taskResultFromAix({ aixType: body.aix_type, checkPattern: body.check_pattern, propStatuses: body.prop_statuses, propertyNames: body.property_names });
+    const r = taskResultFromAix({ aixType: body.aix_type, checkPattern: body.check_pattern, propStatuses: body.prop_statuses, propertyNames: body.property_names, text: typeof body.text === "string" ? body.text : null });
     if (r) { result = r.result; result_note = result_note ?? r.note ?? undefined; console.log(JSON.stringify({ tag: "line-tasks:result-from-aix", id, result: r.result })); }
   }
 

@@ -5,7 +5,8 @@
 //   画面（app/page.tsx）の AIX 送信の後の完了は id と source しか送っていなかった＝ line_tasks.result は 30日で 0/247（作業員E の調べ）。
 //   その結果、ブレインの【空室確認の回答結果（確定事実）】の段（brain-core・buildCheckResultsText）は一度も出ていなかった。
 //   画面は AIX で選んだ確認の型（check_pattern）と物件ごとの結果（prop_statuses）を一緒に送るだけ（見た目は変えない）。
-//   決めるのはサーバー（line-tasks/complete）で、既定 off（TASK_RESULT_FROM_AIX=on）。
+//   決めるのはサーバー（line-tasks/complete）。11/15 から既定 on（止める TASK_RESULT_FROM_AIX=off）＝全件監査（scripts/audit-task-result-from-aix.ts・60日）で
+//   付けた 52件のうち送った AIX の文と食い違い 0（読めない・2つ読めた 5件は目で読んで正しい形）・送った文と違えば付けない形にしてから。
 // 型の対応（aix_usage_logs の 60日の実物の値: available・unavailable・alternative・vacating・interior_photo・mgmt_*）:
 //   募集中（available）→ available／募集終了・満室（unavailable）→ taken／退去予定（vacating）→ move_out_planned／
 //   2番手（second・second_position）→ second_position／聞かれた部屋は無いが同じ建物の別の部屋が募集中（alternative）→ taken（メモ「同じ建物の別の部屋が募集中」）
@@ -14,7 +15,7 @@
 export type TaskResult = "available" | "taken" | "second_position" | "move_out_planned";
 type Env = Record<string, string | undefined>;
 export function taskResultFromAixOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TASK_RESULT_FROM_AIX ?? "").trim().toLowerCase() === "on";
+  return (env.TASK_RESULT_FROM_AIX ?? "").trim().toLowerCase() !== "off"; // 11/15 統括役の頼み: 監査で食い違い 0 → 既定 on（止める =off）
 }
 const STATUS_TO_RESULT: Record<string, TaskResult> = {
   available: "available", unavailable: "taken", ended: "taken", taken: "taken", alternative: "taken",
@@ -22,7 +23,7 @@ const STATUS_TO_RESULT: Record<string, TaskResult> = {
 };
 const NOTE: Partial<Record<string, string>> = { alternative: "聞かれた部屋は満室・同じ建物の別の部屋が募集中", vacating: "退去予定（募集前）", unavailable: "募集終了" };
 
-export function taskResultFromAix(i: { aixType: string | null | undefined; checkPattern: string | null | undefined; propStatuses?: ReadonlyArray<string | null | undefined> | null; propertyNames?: ReadonlyArray<string | null | undefined> | null }): { result: TaskResult; note: string | null } | null {
+export function taskResultFromAix(i: { aixType: string | null | undefined; checkPattern: string | null | undefined; text?: string | null; propStatuses?: ReadonlyArray<string | null | undefined> | null; propertyNames?: ReadonlyArray<string | null | undefined> | null }): { result: TaskResult; note: string | null } | null {
   if (String(i.aixType ?? "") !== "property_check_result") return null;
   const statuses = (i.propStatuses ?? []).map((s) => String(s ?? "").trim()).filter(Boolean);
   const cp = String(i.checkPattern ?? "").trim();
@@ -31,9 +32,28 @@ export function taskResultFromAix(i: { aixType: string | null | undefined; check
   const mapped = keys.map((k) => STATUS_TO_RESULT[k] ?? null);
   if (mapped.some((m) => m === null)) return null; // 室内写真・管理会社の条件など＝空室確認の答えではない
   if (new Set(mapped).size !== 1) return null;      // 物件ごとに割れた＝取り違えないため付けない
+  // 2026-11-15 作業員H（on の前の全件監査・60日 68件で食い違い 1件）: 選んだ型が「募集終了（unavailable）」なのに、送った AIX の文は「1番手のお申し込みが入っており…2番手以降でのお申込み受付」
+  //   ＝型の選び方と文がずれる事がある。送った文（text）が渡された時は、文の言葉から読める結果と違えば付けない（誤り0を優先・付けない方に倒す）。
+  //   同じ建物の別の部屋が募集中（alternative）は文に「募集中」が出るのが正しい形なので比べない
+  if (i.text != null && !keys.includes("alternative")) {
+    const tr = resultOfAixText(i.text);
+    if (tr !== null && tr !== mapped[0]) return null;
+  }
   const names = (i.propertyNames ?? []).map((n) => String(n ?? "").trim()).filter(Boolean);
   const noteParts = [names.length ? names.slice(0, 3).join("・") : null, NOTE[keys[0]] ?? null].filter(Boolean);
   return { result: mapped[0] as TaskResult, note: noteParts.length ? noteParts.join("：").slice(0, 200) : null };
+}
+
+/** 送った AIX の文の言葉から読める結果（読めない＝null・2つ以上＝"mixed"）。監査（scripts/audit-task-result-from-aix.ts）と同じ関数 */
+export function resultOfAixText(t: string): TaskResult | "mixed" | null {
+  const s = String(t ?? "").normalize("NFKC");
+  const hits = new Set<TaskResult>();
+  if (/2番手|二番手|先行(の)?(お)?申込|1番手(の)?(お)?申(し)?込/.test(s)) hits.add("second_position");
+  if (/退去予定/.test(s)) hits.add("move_out_planned");
+  if (/募集(が)?終了|満室|埋まって|成約済|募集に出て(い|お)(ない|らず|りません)/.test(s)) hits.add("taken");
+  if (/募集中|空いて(おり|い)|空室(で|となって)|ご紹介(可能|出来)/.test(s)) hits.add("available");
+  if (!hits.size) return null;
+  return hits.size === 1 ? [...hits][0] : "mixed";
 }
 
 /** ブレインの【空室確認の回答結果（確定事実）】の段（brain-core から移した・文字は変えていない） */
