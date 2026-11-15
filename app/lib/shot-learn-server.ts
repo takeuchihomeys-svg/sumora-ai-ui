@@ -306,10 +306,10 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
  *   ⚠ `dry_run` の時は**読むだけで書かない**（費用を確かめる時）。
  */
 export async function learnFromWeakShots(
-  opt: { site?: string | null; days?: number; limit?: number; dryRun?: boolean } = {},
-): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string }> {
+  opt: { site?: string | null; days?: number; limit?: number; dryRun?: boolean; noRefresh?: boolean; concurrency?: number; onProgress?: (done: number, total: number, last: string) => void } = {},
+): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean }> {
   const max = Math.max(1, Math.min(shotLearnMax(), opt.limit ?? shotLearnMax()));
-  const out = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] as string[], recipe: undefined as string | undefined };
+  const out: { tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean } = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] };
   const targets = (await findShotsToLearn({ site: opt.site, days: opt.days, limit: max })).slice(0, max);
   /**
    * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:
@@ -355,6 +355,37 @@ export async function learnFromWeakShots(
         ? `${r.summary.ok}/${r.summary.tried}枚・欄${r.summary.fields}個・1枚${r.summary.fieldsPerOk}個${r.summary.topWhy ? `（読めない理由 ${r.summary.topWhy}）` : ""}`
         : undefined;
     } catch (_) { /* 記録できなくても学習は終わっている */ }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「反映させる」→ **実測で見つけた問題**:
+   *
+   *   ⚠ 学習したのに**束を作り直さないと統括・拡張に届かない**。
+   *     実測: 写真から4,836個の欄を学んだのに、古い束（11:03:07）には入っていなかった。
+   *     手で `--apply` を実行して初めて届いた。
+   *
+   *   → **学習の後に自動で束を作り直す**（`--no-refresh` で止められる）。
+   *     ⚠ 失敗しても学習は終わっている（束は次のcronでも作られる）。
+   */
+  if (!opt.dryRun && out.saved > 0 && !opt.noRefresh) {
+    try {
+      const { buildHumanLearnBundle, compactBundle } = await import("./human-learn-brain");
+      const since2 = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const all: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < 10_000; i += 1000) {
+        const r = await supabase.from("human_motion_learn").select("*")
+          .gte("created_at", since2).order("created_at", { ascending: false }).range(i, i + 999);
+        if (r.error) throw new Error(String(r.error.message).slice(0, 120));
+        all.push(...((r.data ?? []) as Array<Record<string, unknown>>));
+        if ((r.data ?? []).length < 1000) break;
+      }
+      const nowIso = new Date().toISOString();
+      const bundle = compactBundle(buildHumanLearnBundle(all as never, Date.now()));
+      const ins = await supabase.from("human_learn_profile").insert({ scope: "all", source_rows: all.length, bundle, generated_at: nowIso });
+      out.refreshed = !ins.error;
+      if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));
+    } catch (e) {
+      out.errors.push("束の作り直し: " + String((e as Error)?.message ?? e).slice(0, 100));
+    }
   }
   return out;
 }

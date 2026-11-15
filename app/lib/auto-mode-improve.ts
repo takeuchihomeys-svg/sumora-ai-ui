@@ -172,9 +172,17 @@ export function filterReallyMissing(
   const nxt = (Array.isArray(bundleKeys?.next) ? bundleKeys.next : []).filter(Boolean);
   const missing: string[] = [];
   const covered: string[] = [];
+  /**
+   * ★ 2026-11-15 竹内さん「反映させる」→ **統括が拡張自身の部品を「人が押す欄」と誤認していた**。
+   *   ⚠ 実測: 統括が「人が押す欄を自動モードが押していない 3欄」と言ったが、中身は
+   *     `AIXLINX｜div`・`#aixlinx-mini-btn`・`左のAIXLINX｜div` ＝ **全部、拡張自身の小窓**だった。
+   *     これはサイトの欄ではないので、**学ぶ対象ではない**（直しても意味が無い）。
+   *   → 拡張自身の部品は候補から除く（`isOwnPart`）。
+   */
   for (const f of Array.isArray(onlyHuman) ? onlyHuman : []) {
     const name = String(f ?? "").trim();
     if (!name) continue;
+    if (isOwnPart(name)) continue;           // ⚠ 拡張自身の部品は除く
     if (pts.has(name)) { covered.push(name); continue; }
     /**
      * ⚠ `next` は「A→B」の形。**完全一致**か、**区切り（→ ・ |）で囲まれた一致**だけ認める。
@@ -188,6 +196,16 @@ export function filterReallyMissing(
     else missing.push(name);
   }
   return { missing, covered };
+}
+
+/**
+ * 拡張自身の部品か（純関数）。
+ *   ⚠ 実測で「人が押す欄」に混ざっていた物: `AIXLINX｜div`・`#aixlinx-mini-btn`・`左のAIXLINX｜div`。
+ *     これらは**サイトの欄ではない**ので、直しても検索は良くならない。
+ */
+export function isOwnPart(name: unknown): boolean {
+  const n = String(name ?? "");
+  return /aixlinx|axlx|AIXLINX/i.test(n) || /^[#.]?(axlx|aixlinx)/i.test(n.trim());
 }
 
 /**

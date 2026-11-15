@@ -31,7 +31,7 @@ import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./l
 import { findWeakSteps } from "./learn-flow-steps";
 import { auditHumanLike } from "./human-like-audit";
 import { summarizeShotGaps } from "./shot-gaps";
-import { compareFields, autoModeCandidates } from "./auto-mode-improve";
+import { compareFields, autoModeCandidates, filterReallyMissing } from "./auto-mode-improve";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -1230,13 +1230,12 @@ export function buildHumanLearnBundle(
           ...Object.keys((points ?? {}) as Record<string, unknown>),
           ...Object.keys((next ?? {}) as Record<string, unknown>),
         ]);
-        const reallyMissing = cmp.gaps.onlyHuman.filter((f) => {
-          if (inBundle.has(f)) return false;
-          // `next` は「A→B」の形なので部分一致でも見る
-          for (const k of inBundle) if (k.includes(f)) return false;
-          return true;
-        });
-        return autoModeCandidates({ ...cmp.gaps, onlyHuman: reallyMissing }, {
+        /**
+         * ⚠ 実測: 統括が「人が押す欄」として **拡張自身の小窓**（`AIXLINX｜div` など）を挙げていた。
+         *   → `filterReallyMissing` が**束にある物と拡張自身の部品を除く**。
+         */
+        const fr = filterReallyMissing(cmp.gaps.onlyHuman, { points: [...inBundle], next: [] });
+        return autoModeCandidates({ ...cmp.gaps, onlyHuman: fr.missing }, {
           shotTodo: g.todo,
           changedWithoutClick: hl.changedWithoutClick.length,
           cursorPct: hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : 100,

@@ -570,6 +570,12 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
       audits: au ? { runs: num(au.runs), finished: num(au.finished), finish_rate: num(au.finish_rate), stalled_at: au.stalled_at } : null,
+      humanLike: (() => {
+        const h = (input as unknown as Record<string, unknown>).human_like;
+        if (!h || typeof h !== "object") return null;
+        const o = h as Record<string, unknown>;
+        return { ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged), changedWithoutClick: num(o.changedWithoutClick), withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows) };
+      })(),
     }),
     meeting: buildMeeting({
       site, verdict, coverage, rows, next, points, opens, screens, sequence,
@@ -706,6 +712,8 @@ function selfCheck(m: {
   opens: number;
   /** 2026-11-14: 実際の検索の結果（完走率が低いのに「渡してよい」を防ぐ） */
   audits?: { runs: number; finished: number; finish_rate: number; stalled_at?: Array<{ stage: string; n: number }> } | null;
+  /** ★ 2026-11-15: 自動モードが人間のように動けているか（17%・12%で ready になる矛盾を防ぐ） */
+  humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
 }): { ok: boolean; issues: string[]; capped_by: string | null } {
   const issues: string[] = [];
   const pct = Math.round((m.opsRatio || 0) * 100);
@@ -740,6 +748,33 @@ function selfCheck(m: {
     }
     if (ar < 50) {
       issues.push(`実際の検索が半分も完走していません（${ar}%）${top ? `。一番止まるのは「${top.stage}」（${top.n}回）` : ""}`);
+    }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「反映させる」→ **実測で矛盾を発見**:
+   *
+   *   ⚠ 自動モードのカーソル記録 17%・押した位置 12% なのに `verdict: ready`（渡してよい）になっていた。
+   *     「人間のように動けていない」のに「渡してよい」は**矛盾**。
+   *     統括の自己点検がこの組み合わせを見ていなかった。
+   *
+   *   → **自動モードが人間のように動けていない時は「渡してよい」にしない**。
+   *     ⚠ 閾値は 50%（半分未満なら人の真似ができていない・実測: 通常モードは96%）。
+   */
+  const hl = m.humanLike && m.humanLike.ops > 0 ? m.humanLike : null;
+  if (hl) {
+    const cursorPct = hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : 0;
+    const pointPct = hl.rows > 0 ? Math.round((hl.withPoint / hl.rows) * 100) : 0;
+    const notHuman = hl.changedWithoutClick > 0 || hl.typedOnChoose > 0 || cursorPct < 50 || pointPct < 50;
+    if (notHuman && m.verdict === "ready") {
+      const why: string[] = [];
+      if (hl.changedWithoutClick > 0) why.push(`押さずに値が変わった ${hl.changedWithoutClick}件`);
+      if (hl.typedOnChoose > 0) why.push(`選ぶ欄に打ち込んだ ${hl.typedOnChoose}件`);
+      if (cursorPct < 50) why.push(`カーソル ${cursorPct}%`);
+      if (pointPct < 50) why.push(`押した位置 ${pointPct}%`);
+      issues.push(`「渡してよい」と言っていますが、自動モードは人間のように動けていません（${why.join("／")}）`);
+    }
+    if (notHuman && m.coverage >= 65) {
+      issues.push(`材料 ${m.coverage}点は高すぎます（自動モードが人間のように動けていません: カーソル${cursorPct}%・押した位置${pointPct}%）`);
     }
   }
 
