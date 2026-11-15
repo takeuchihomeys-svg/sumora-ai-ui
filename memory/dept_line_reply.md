@@ -9598,3 +9598,8 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 対応: available→available・unavailable→taken・alternative→taken（メモ）・vacating→move_out_planned・2番手→second_position／室内写真・mgmt_* は付けない／物件ごとに割れた時は付けない
 - ブレインの段の組み立ては buildCheckResultsText に移した（文字は同じ）。テスト app/lib/__tests__/task-result-from-aix.test.ts
 - URL を含む送信で済ませる時（物件出しのタスク）は空室確認ではないので結果を付けない（今のまま）
+
+## 2026-11-15 作業員H: 文の物差しの「事実」0/39 の分け（KB 3041baaa）と本番の毎日の物差し
+- 分け: (a) 物差しの誤り＝竹内さんの「どの部分」（話題「2階の虫」）の語を、設計図の事実の欄（答えの中身「7階以上は虫が入る可能性が低い」）に探していた→「事実」を 話題が合う か 中身（2文字の並び）が竹内さんの文と4割以上重なる に（scripts/lib/compose-gold.ts・「事実（中身）」「事実（話題だけ）」も並べる）／(b) 既定（COMPOSE_ASKS_FACTS=off）では設計図の事実の欄が空＝ブレインの依頼ごとの答えが書き手の設計図に届いていない（0/39 の大半）。on で 24/39（62%）／(c) 届いているが答えが方針の文（q041・q072・q073）・中身の誤り（q057 内見可能）＝ブレインの読み／(d) AIX の番（根 D 7）は事実の文が AIX の側で比べられない
+- 本番の毎日の物差し scripts/compose-prod-daily.ts（読むだけ・--write で cron_run_logs compose-prod-daily）: 竹内さん本人の返信の番の実送信×下書き（line_watch_turns.draft_last）を要素ごとに。11/15 の直近7日 25番: 頭 76%・押さえ 70%・信頼 100%・つなぎ 17%・締め 44%・事実 59%・2通目 0%（下書きは1通だけ）
+- テスト scripts/lib/__tests__/compose-fact-measure.test.ts・監査 scripts/audit-compose-fact.ts
