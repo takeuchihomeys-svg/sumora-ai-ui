@@ -18,6 +18,7 @@
 import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { noViewingNoteAllowed } from "./look-hesitation";
+import { noViewingByDecision, type AppealDecision } from "./tsunagi-one-place";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
 import { brainAixFollowsContractOn } from "./aix-follows-contract";
@@ -30,6 +31,8 @@ export type TwoStageKind = "pickup" | "check" | "estimate";
 /** 2026-11-05 ピックアップの約束の直後のお礼・了承（スタンプも）を2段にしない（ack-topic-scope.twoStageStampAckEnabled と同じスイッチ・既定 off） */
 function twoStageStampAckOn(): boolean { return typeof process !== "undefined" && (process.env?.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on"; }
 export type TwoStageInput = {
+  /** 2026-11-15 作業員H（TSUNAGI_ONE_PLACE）: appeal-timing の判定（meta.appeal_timing と同じ物）。NO_VIEWING が網でなくこれを読む */
+  appeal?: AppealDecision;
   finalAix: string | null;
   decisionSource: string | null;
   /** 売上サポに送れる物件（未送付のピックアップ）がある */
@@ -735,11 +738,11 @@ export function pickupDirectionKeepOn(env: Record<string, string | undefined> = 
 }
 const LOOK_NOT_VIEWING_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 const EXPLICIT_VIEWING_RE = /(?:内覧|内見|見学)/;
-export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText" | "firstContact">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText" | "firstContact" | "appeal">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
   if (!v || v.kind !== "pickup") return v;
   const t = String(i.customerText ?? "");
   const add: string[] = [];
-  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t) && noViewingNoteAllowed(t, env)) { // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on は迷いの語がある番だけ
+  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t) && noViewingNoteAllowed(t, env) && noViewingByDecision(true, i.appeal, env)) { // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on は迷いの語がある番だけ
     add.push("お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・申込・お部屋を押さえる一文を足さない（竹内さんはピックアップの約束だけ）");
   }
   // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない
