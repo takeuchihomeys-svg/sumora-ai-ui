@@ -133,7 +133,12 @@ console.log("\n=== ⑤ 学習が新しくなったら取り直す仕組み");
 {
   const bg = read(path.join(REPO, "background.js"));
   t("版を見に行く間隔を持つ", bg.includes("_LEARN_CHECK_MS"));
-  t("1時間ごとに見る", /setInterval\(function \(\) \{[\s\S]{0,160}_refreshLearnedBundle\(false\)/.test(bg));
+  /**
+   * ⚠ 2026-11-15: `_refreshLearnedBundle(false)`（直呼び）から `...Queued(false)` に変えた。
+   *   理由: 同時に何本も走って DB が止まった（実測 約1秒で130回）。
+   *   意図は同じ（定期的に版を確かめて取りに行く）ので、**定期的に呼んでいる**ことを見る。
+   */
+  t("定期的に見る（Queued 経由・同時1本）", /setInterval\(function \(\) \{[\s\S]{0,200}_refreshLearnedBundleQueued\(false\)/.test(bg));
   t("版が同じなら取りに行かない", bg.includes('skipped: "same_version"'));
   t("版を保存する", bg.includes("axlx_learn_ver"));
   t("24時間固定ではない", !bg.includes("24 * 3600 * 1000"));

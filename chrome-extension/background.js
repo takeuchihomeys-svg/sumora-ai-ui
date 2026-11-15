@@ -453,7 +453,7 @@ async function _learnSwitchSite(url) {
      * ⚠ 版が同じでも、**サイトが違えば入れ替える必要がある**（別の束だから）。
      */
     await chrome.storage.local.set({ axlx_learn_at: 0 });
-    var r = await _refreshLearnedBundle(true);
+    var r = await _refreshLearnedBundleQueued(true);
     console.log("[learn] " + s + " の学びに入れ替えました:", JSON.stringify(r));
     return r;
   } catch (e) {
@@ -2473,7 +2473,7 @@ if (msg.type === "axlx-human-shot") {
  *     （＝サーバーで学んだ事が現場に届いていない）。
  *   → 使える物も一緒に置く。ページ側は「あれば使う」（無ければ今まで通り）。
  */
-var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axlx_learn_ver"];
+var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axlx_learn_ver", "axlx_learn_by_site"];
 /**
  * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
  *   ⚠ 旧は**24時間に1回**しか取りに行かなかったので、学習しても**最大24時間反映されなかった**
@@ -2491,8 +2491,91 @@ var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axl
  *     ⚠ 束の取り直し（重い方）は版が変わった時だけなので、5分ごとでも通信は増えない。
  */
 var _LEARN_CHECK_MS = 5 * 60 * 1000;   // 版を見に行く間隔（5分。軽い確認だけ）
+/**
+ * ★ 2026-11-15 竹内さん「学習の束の取り直しが重なって、DB が止まった件（急ぎ）」
+ *
+ *   ⚠ 実際に起きた事（実測・サーバーの記録）:
+ *     01:40:30〜01:41:30 UTC（JST 10:40〜10:41）に、拡張から
+ *     `GET /api/human-learn-profile` が**約1秒で約130回**重なって届いた（同じ事務所の端末から）。
+ *     サーバーは1回ごとに束（1行 約40KB）を読み、同じ1行に読んだ印を書いていたため DB の手が埋まり、
+ *     **約1分後に DB 全体が約1分半止まった**（1行読むだけの処理まで15秒）。
+ *     ＝ 下書き・AIX・画面の読み込みが時間切れ。
+ *
+ *   ⚠ 原因（拡張の側）:
+ *     ① `_refreshLearnedBundle` が**同時に何本も走れた**（起動・タブ読み込み・5分ごと・サイト切替が重なる）
+ *     ② 失敗しても**すぐ次の呼び出しが来た**（間を空けていなかった）
+ *     ③ 起動時に**全端末が同じ瞬間**に取りに行った（ずらしが無い）
+ *     ④ 版が同じでも **scope ごとの取り直し（realpro / itandi / 全体）**をしていた
+ *        → 1回の `?touch=0` で足りるのに、**3回の重い取得**が発生
+ *
+ *   → 下の4つで直す（サーバー側の対策と重ねて、呼ばない側でも守る）。
+ */
+var _learnInflight = null;       // 実行中の1本（これがあれば新しい実行はせず、この結果を待つ）
+var _learnFailCount = 0;         // 続けて失敗した回数（間隔を延ばすのに使う）
+var _learnNextTryAt = 0;         // 次に試してよい時刻（失敗の後はここまで待つ）
+/** 失敗した後の間: 1分 → 5分 → 15分（それ以上は15分のまま） */
+function _learnBackoffMs(n) {
+  if (n <= 0) return 0;
+  if (n === 1) return 60 * 1000;
+  if (n === 2) return 5 * 60 * 1000;
+  return 15 * 60 * 1000;
+}
+/** 起動・タブ読み込みの時にずらす（端末ごとにばらばら・0〜30秒） */
+function _learnStartJitterMs() {
+  return Math.floor(Math.random() * 30000);
+}
+
+/**
+ * 同時に1本だけ。実行中なら**新しく呼ばずに、実行中の結果を待って使う**。
+ *   ⚠ `force` が来ても、実行中なら**その結果でよい**（同じ束を取りに行くだけなので）。
+ *     ただし**サイトが違う**時（`force` かつ実行中の物と違う）は、終わってから1回だけ走らせる。
+ *
+ *   ⚠ 成否の後始末（間隔を延ばす・戻す）は**ここで1か所**でやる。
+ *     `_refreshLearnedBundle` の中に散らすと、早期 return のどれかで記録し忘れて静かに壊れる。
+ */
+function _refreshLearnedBundleQueued(force) {
+  if (_learnInflight) {
+    // 実行中 → そのまま待つ（重ねて呼ばない）
+    return _learnInflight;
+  }
+  var p = _refreshLearnedBundle(force).then(function (r) {
+    _learnInflight = null;
+    /**
+     * 失敗したら間隔を延ばす（1分 → 5分 → 15分）。
+     *   ⚠ `skipped` は失敗ではない（版が同じ・間隔内・backoff 中）＝**失敗回数を戻す**。
+     *     「何もしなかった」を失敗に数えると、正常な時まで間隔が延びて学びが届かなくなる。
+     */
+    var hardFail = !r || r.ok === false;
+    if (hardFail) {
+      _learnFailCount = Math.min(9, (_learnFailCount || 0) + 1);
+      _learnNextTryAt = Date.now() + _learnBackoffMs(_learnFailCount);
+      console.warn("[learn] 取り直しに失敗（" + _learnFailCount + "回目）→ " + Math.round(_learnBackoffMs(_learnFailCount) / 1000) + "秒あけます");
+    } else {
+      _learnFailCount = 0;
+      _learnNextTryAt = 0;
+    }
+    return r;
+  }).catch(function (e) {
+    _learnInflight = null;
+    _learnFailCount = Math.min(9, (_learnFailCount || 0) + 1);
+    _learnNextTryAt = Date.now() + _learnBackoffMs(_learnFailCount);
+    console.warn("[learn] 取り直しで例外（" + _learnFailCount + "回目）→ 間隔をあけます:", (e && e.message) || e);
+    return { ok: false, error: String((e && e.message) || e) };
+  });
+  _learnInflight = p;
+  return p;
+}
+
 async function _refreshLearnedBundle(force) {
   try {
+    /**
+     * ④ 失敗の後は間を空ける（1分 → 5分 → 15分）。
+     *   ⚠ 旧は失敗しても次の呼び出しがすぐ来た（5分ごと・サイト切替・起動）。
+     *     サーバーが重い時ほど**追い打ち**になっていた。
+     */
+    if (Date.now() < _learnNextTryAt) {
+      return { ok: true, skipped: "backoff", retry_in_ms: _learnNextTryAt - Date.now() };
+    }
     var st = await chrome.storage.local.get(_LEARN_KEYS);
     var last = Number(st && st.axlx_learn_at) || 0;
     var lastVer = String((st && st.axlx_learn_ver) || "");
@@ -2517,7 +2600,22 @@ async function _refreshLearnedBundle(force) {
         if (head.ok) {
           var hj = await head.json();
           var hv = String((hj && hj.generated_at) || "");
+          /**
+           * ★ 2026-11-15 竹内さん「版が同じなら取り直さない」（依頼1-4）
+           *   ⚠ 旧は `lastVer` が**空**（初回）の時や、版は同じでも `axlx_learn_at` が古い時に
+           *     scope ごとの重い取得（realpro / itandi / 全体）を**3回**やっていた。
+           *   → 版が**分かっている**（`hv` がある）かつ `hv === lastVer` なら**ここで終わる**（取得しない）。
+           *     ⚠ `lastVer` が空の時も `hv` があれば、手元に束が入っているかを別に見る（下）。
+           */
           if (hv && hv === lastVer) return { ok: true, skipped: "same_version" };
+          if (hv && !lastVer) {
+            // 初回でも、既に同じ版の束が storage に入っているなら取り直さない
+            var bySiteNow = st && st.axlx_learn_by_site;
+            if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length) {
+              await chrome.storage.local.set({ axlx_learn_ver: hv });
+              return { ok: true, skipped: "same_version_first" };
+            }
+          }
           console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
         }
       } catch (e) {
@@ -2709,22 +2807,36 @@ async function _refreshLearnedBundle(force) {
     return { ok: false, error: String((e && e.message) || e) };
   }
 }
-// 起動した時に1回（前回から1時間たっていれば取りに行く）
-try { _refreshLearnedBundle(false).catch(function () {}); } catch (_) {}
 /**
- * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
- *   **1時間ごと**に版を確かめ、新しければ取り込む（学んだら最大1時間で反映）。
- *   ⚠ 版が同じなら通信は1回だけ（軽い）。
+ * 起動した時（前回から5分たっていれば版を確かめ、新しければ取りに行く）。
+ *   ★ 2026-11-15 竹内さん「起動の時はずらす」（依頼1-3）
+ *     ⚠ 旧は**全端末が同じ瞬間**に取りに行った（事務所の PC を同時に起動すると全部が重なる）。
+ *     → **0〜30秒のずらし**を入れる（端末ごとにばらばら＝同時に来ない）。
+ *     ⚠ ずらしても、起動直後に必要な物は storage に**前回の束**が残っているので動く。
  */
 try {
-  setInterval(function () {
-    _refreshLearnedBundle(false).catch(function () {});
-  }, _LEARN_CHECK_MS);
+  setTimeout(function () {
+    _refreshLearnedBundleQueued(false).catch(function () {});
+  }, _learnStartJitterMs());
+} catch (_) {}
+/**
+ * 2026-11-14 竹内さん「学習して改善したら自動モード強化されるように」:
+ *   **5分ごと**に版を確かめ、新しければ取り込む。
+ *   ⚠ 版が同じなら通信は1回だけ（軽い）。
+ *   ★ 2026-11-15: 実際に走るのは `Queued`（同時1本・失敗後は間隔をあける）。
+ *     ⚠ 全端末が同じタイミングにならないよう、**開始を少しばらす**（0〜60秒）。
+ */
+try {
+  setTimeout(function () {
+    setInterval(function () {
+      _refreshLearnedBundleQueued(false).catch(function () {});
+    }, _LEARN_CHECK_MS);
+  }, Math.floor(Math.random() * 60000));
 } catch (_) {}
 try {
   chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
     if (!msg) return;
-    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundle(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundleQueued(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
     if (msg.type !== "axlx-learn-status") return;
     chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src"])).then(function (r) {
       var nx = (r && r.axlx_learn_next) || {};
@@ -6283,6 +6395,19 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   // v2.5.45 ITANDI も同じ: 一覧の画面でない・拡張の読み直しの後で中身が答えないタブは一覧を1回開き直す。それでもだめならこのサイトを飛ばす（理由を残す）
   if (site === "itandi") tab = await _ensureItandiTab(tab, auditRun, customer && customer.id);
 
+  /**
+   * ★ 2026-11-15 竹内さん「物件探しの条件を、検索の直前に読み直す件」（依頼2-1・2-2）
+   *
+   *   ⚠ 背景: 会話からお客様の最新の条件を判断して `property_customers` を更新する流れを Claude が作った。
+   *     だが拡張が**古い条件のまま検索**すると、更新が物件出しに効かない。
+   *   → **自動検索・AIX モードは、お客様ごとに検索を始める直前に `/api/property-customers` から読み直す**。
+   *     ⚠ キャッシュした条件で回さない（`cache: "no-store"`）。
+   *   → `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す。
+   *
+   *   ⚠ 読めなかった時は**今までの条件で続行**する（検索を止めない・理由を残す）。
+   *   ⚠ 手動の一括検索でも同じ（人が押した時こそ最新の条件で動くべき）。
+   */
+  var customer = await _refreshCustomerBeforeSearch(customer, site);
   var conds = _buildBatchConditions(customer, isWide, opts);
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
   //   popup はお客様の登録の条件から欄を作り直すので、同じ上書きを searchOverride で渡して一時調整の欄に入れさせる（pass は area_mode）
@@ -6567,6 +6692,27 @@ function _buildBatchConditions(c, isWide, opts) {
   } else if (c.desired_area) {
     areaArr = c.desired_area.split(/[・、,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
   }
+  /**
+   * ★ 2026-11-15 竹内さん「物件探しの条件を、検索の直前に読み直す件」（依頼2-3）
+   *   「検索の条件に、次の2つも並べる: その他の要望（other_requests を「・」で区切った1つずつ）／必須・できれば（requirement_strength）」
+   *
+   *   ⚠ `other_requests` は**文字列**（例:「ペット可・2階以上・角部屋」）で来る事も、
+   *     **配列**で来る事もある（サーバーの形が1つに決まっていない）。
+   *   → どちらでも**1つずつの配列**にする（`・` `、` `,` で区切る・空は捨てる・上限12個）。
+   *     ⚠ 検索の欄（page-script）はこの配列を「その他の要望」として使う。
+   *       ⚠ 使えるかは page-script 側の対応次第（未対応でも**捨てない**＝`other_requests_list` として残す）。
+   */
+  var otherList = (function () {
+    try {
+      var v = c.other_requests;
+      if (v == null) return [];
+      var arr = Array.isArray(v) ? v : String(v).split(/[・、,／\/]+/);
+      return arr.map(function (x) { return String(x == null ? "" : x).trim(); })
+        .filter(function (x) { return !!x; })
+        .filter(function (x, i, a) { return a.indexOf(x) === i; })   // 重複を消す
+        .slice(0, 12);
+    } catch (_) { return []; }
+  })();
   return {
     is_wide: !!isWide, // 修正5: page-script 側の広ロジック（間取り拡張等）に伝搬
     // 2026-09-29 v2.5.39 通勤の到達時間で駅を選ぶ材料（_applyCommuteReach が読む。page-script は使わない）
@@ -6576,6 +6722,12 @@ function _buildBatchConditions(c, isWide, opts) {
     area_mode: (c.area_mode === 'both') ? null : (c.area_mode || null), // 'both'はnull(自動判定)にフォールバック
     rent_max: c.rent_max || null,
     requirement_strength: c.requirement_strength || null, // v2.5.79 広げて検索でも家賃の上限を上げない「必ず」の印（resolution-core）
+    /**
+     * ★ 2026-11-15 依頼2-3: その他の要望を**1つずつの配列**で渡す（検索の条件に並べる）。
+     *   ⚠ `other_requests`（元の文字列）も残す（page-script が今まで通り読めるように）。
+     */
+    other_requests: c.other_requests || null,
+    other_requests_list: otherList,
     rent_min: c.rent_min_search || c.rent_min || null, // 2026-10-02 ⑫ 書いた下限・無ければ上限から出したおおよその下限（サーバーの rent_min_search）
     walk_minutes: c.walk_minutes || null,
     building_age: c.building_age || null,
@@ -6594,8 +6746,82 @@ function _buildBatchConditions(c, isWide, opts) {
   };
 }
 
-function _batchWaitForTabComplete(tabId) {
-  return new Promise(function(resolve) {
+/**
+ * ★ 2026-11-15 竹内さん「物件探しの条件を、検索の直前に読み直す件」（依頼2）
+ *
+ *   ⚠ 背景: 会話からお客様の最新の条件を判断して `property_customers` を更新する流れを Claude が作った。
+ *     だが拡張が**古い条件のまま検索**すると、更新が物件出しに効かない。
+ *   → 検索を始める直前に、その人の行だけ読み直す（`?id=<id>` が使えるならそれ・無ければ一覧から拾う）。
+ *
+ *   何をするか:
+ *     ① `cache: "no-store"` で読み直す（キャッシュを使わない）
+ *     ② `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す
+ *        （`_nudge` があればそこに・無ければ console）
+ *     ③ 読めなければ**今までの条件で続行**（検索を止めない・理由を残す）
+ *
+ *   ⚠ 返すのは**顧客オブジェクト**（読めなければ元の物をそのまま返す）。
+ *   ⚠ 条件の中身（賃料・エリア等）はサーバーが作った物をそのまま使う（拡張で作り直さない）。
+ *
+ * @param {object|null} c いま使っている顧客
+ * @param {string} site サイト名（印を出す時の文言用）
+ * @returns {Promise<object|null>} 読み直した顧客（失敗時は元の物）
+ */
+async function _refreshCustomerBeforeSearch(c, site) {
+  try {
+    if (!c || c.id == null) return c;
+    var id = String(c.id);
+    var url = "https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(id) + "&fresh=" + Date.now();
+    var res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+    if (!res.ok) {
+      console.warn("[customer] 条件を読み直せませんでした（HTTP " + res.status + "）→ 今までの条件で検索します");
+      return c;
+    }
+    var j = await res.json();
+    /**
+     * ⚠ API の返す形が「配列」「{customer}」「1件そのもの」のどれでも動くようにする。
+     */
+    var fresh = null;
+    if (Array.isArray(j)) fresh = j.find(function (x) { return x && String(x.id) === id; }) || null;
+    else if (j && Array.isArray(j.customers)) fresh = j.customers.find(function (x) { return x && String(x.id) === id; }) || null;
+    else if (j && j.customer && String(j.customer.id) === id) fresh = j.customer;
+    else if (j && String(j.id) === id) fresh = j;
+    if (!fresh) {
+      console.warn("[customer] 読み直した中にこのお客様が居ません → 今までの条件で検索します");
+      return c;
+    }
+
+    /**
+     * ② `updated_at` が前より新しければ「条件が変わった」印を出す。
+     *   ⚠ 時刻の形が複数ある（ISO・数値）ので `Date.parse` で寄せる。読めなければ印を出さない（誤報しない）。
+     */
+    var before = Date.parse(String(c.updated_at || "")) || 0;
+    var after = Date.parse(String(fresh.updated_at || "")) || 0;
+    if (after && before && after > before) {
+      var msg = "🔔 条件が変わりました（" + (c.name || fresh.name || "このお客様") + "）→ 新しい条件で検索します";
+      console.log("[customer] " + msg + "（" + String(c.updated_at) + " → " + String(fresh.updated_at) + "）");
+      try { if (typeof _nudge === "function") _nudge(msg); } catch (_) {}
+      /**
+       * 点検にも残す（後から「その時 条件が変わっていたか」を確かめられる）。
+       *   ⚠ 前後の時刻だけ（条件の中身は入れない）。
+       */
+      try {
+        if (typeof _axlxWorkNote === "function") _axlxWorkNote(msg, Date.now() + 8000);
+      } catch (_) {}
+    }
+
+    // ③ 新しい条件を返す（読めなかった項目は元の値で埋める＝急に条件が消えないように）
+    var merged = {};
+    var k;
+    for (k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) merged[k] = c[k]; }
+    for (k in fresh) { if (Object.prototype.hasOwnProperty.call(fresh, k) && fresh[k] != null) merged[k] = fresh[k]; }
+    return merged;
+  } catch (e) {
+    console.warn("[customer] 条件の読み直しで例外 → 今までの条件で検索します:", (e && e.message) || e);
+    return c;
+  }
+}
+
+function _batchWaitForTabComplete(tabId) {  return new Promise(function(resolve) {
     var resolved = false;
     var listener = function(id, info) {
       if (id === tabId && info.status === "complete" && !resolved) {

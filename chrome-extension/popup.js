@@ -3022,9 +3022,16 @@ function renderCustomerRow(c, dimmed) {
   const label = STATUS_LABELS[c.status] || c.status;
 
   const doneClass = isCompletedToday(c) ? " done-today" : "";
+  /**
+   * ★ 2026-11-15 依頼2-4: **重複してできた行（`_axIsAutoDuplicate`）は一括検索の対象から外す**。
+   *   ⚠ 行は一覧に出す（人が見て気づける）が、**チェックボックスを出さない**＝自動検索に選べない。
+   *     選べると同じお客様を2回検索して同じ物件を2回送る。
+   *   ⚠ 代わりに「重複」の印を出す（人が「これは重複」と分かる・手で消せる）。
+   */
+  const dup = !!c._axIsAutoDuplicate;
   return `
     <div class="customer-item${dimmed ? " dimmed" : ""}${doneClass}" data-id="${esc(String(c.id))}">
-      <label class="bulk-check-wrap"><input type="checkbox" class="bulk-check" data-id="${esc(String(c.id))}"></label>
+      ${dup ? '<label class="bulk-check-wrap" title="重複してできた行のため自動検索の対象外です"><span style="font-size:11px;opacity:.55;">重複</span></label>' : `<label class="bulk-check-wrap"><input type="checkbox" class="bulk-check" data-id="${esc(String(c.id))}"></label>`}
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
         <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}${customerAccountChipHtml(c)}${computeAreaModeBadgeHtml(d.area)}</div>
@@ -6054,8 +6061,48 @@ function customerMatchesAreaTypeFilter(c, filterMode) {
 }
 
 // ── Search + Account + AreaType + Linked filter ────────────────────
+/**
+ * ★ 2026-11-15 竹内さん「会話に結ばれていない new_inquiry の行（重複してできた行）は、
+ *   顧客の一覧で自動検索の対象から外す」（依頼2-4）
+ *
+ *   ⚠ 重複してできた行＝ `parent_customer_id` を持つ子の行（会話が親に結ばれている）。
+ *     これを一覧に出すと**同じお客様を2回検索**して、同じ物件を2回送る。
+ *   → 一覧からは**隠さない**（人が見て気づけるように）が、**自動検索の対象からは外す**。
+ *     ⚠ `_axIsAutoDuplicate` を付ける（一覧の描画と、一括検索の対象作りがこれを見る）。
+ *   ⚠ `status === "new_inquiry"` でも `parent_customer_id` が無ければ**本物の新規**（対象にする）。
+ */
+function _axMarkAutoDuplicate(list) {
+  try {
+    var arr = Array.isArray(list) ? list : [];
+    var byId = {};
+    arr.forEach(function (c) { if (c && c.id != null) byId[String(c.id)] = c; });
+    arr.forEach(function (c) {
+      if (!c) return;
+      var isDup = false;
+      try {
+        var pid = c.parent_customer_id;
+        // 親が一覧に居る＝この行は重複してできた子
+        if (pid != null && byId[String(pid)]) isDup = true;
+        // ⚠ 親が一覧に居なくても、parent があるなら重複（除外は一覧の外に居るだけ）
+        else if (pid != null && String(pid) !== "") isDup = true;
+      } catch (_) {}
+      c._axIsAutoDuplicate = isDup;
+    });
+    return arr;
+  } catch (_) { return list; }
+}
+
 function getFilteredCustomers(q) {
-  let result = allCustomers;
+  let result = _axMarkAutoDuplicate(allCustomers);
+  /**
+   * ⚠ 自動検索の対象から重複を外す（依頼2-4）。
+   *   ・一覧には**出す**（人が見て「これは重複」と気づける・手で消せる）
+   *   ・一括検索の選択（`_axBulkTargets`）と自動便の対象からは**外す**
+   *   ⚠ `todayOnly` / `needs_action` は「今日やること」なので、重複も**出さない**（やる事が二重になる）。
+   */
+  if (currentAccount === "__needs_action__" || todayOnly) {
+    result = result.filter(function (c) { return !c._axIsAutoDuplicate; });
+  }
   if (currentAccount === "__needs_action__") {
     result = result.filter(needsActionToday);
   } else {
@@ -6147,7 +6194,20 @@ function setBulkSearchMode(mode) {
 }
 
 function executeBulkSearch(site) {
-  const ids = Array.from(selectedCustomerIds);
+  /**
+   * ★ 2026-11-15 依頼2-4: **重複してできた行は自動検索の対象から外す**（2重の守り）。
+   *   ⚠ チェックボックスを出さないので普通は選べないが、**前に選んだまま残っている**事がある
+   *     （フィルタを変えた・再描画の前）。ここでも外す。
+   *   ⚠ 外した数を出す（黙って減らさない＝人が「あれ？」と思わない）。
+   */
+  const ids = Array.from(selectedCustomerIds).filter(function (id) {
+    var c = (allCustomers || []).find(function (x) { return String(x.id) === String(id); });
+    return !(c && c._axIsAutoDuplicate);
+  });
+  const dropped = Array.from(selectedCustomerIds).length - ids.length;
+  if (dropped > 0) {
+    try { alert("重複してできた行を " + dropped + "件 外しました（自動検索の対象外）"); } catch (_) {}
+  }
   if (!ids.length) return;
 
   // ループをbackground.jsに委ねる（popup.jsはリアプロページリロードで消えるため）

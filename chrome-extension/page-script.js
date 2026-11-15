@@ -2061,8 +2061,61 @@
   //     （その時の読み戻しは stall.form に入れる＝入れ終わっていない値なので点検の比べ（form）には使わない）
   var _fillStartedAt = 0;
   var _hiddenSince = null, _hiddenMs = 0;
-  function _auditReset(runId) {
-    _fillRunId = runId || null;
+  /**
+   * ★ 2026-11-15 竹内さん「検索の条件に、その他の要望と必須・できればも並べる」（依頼2-3）
+   *
+   *   ⚠ 「その他の要望」は自由文なのでサイトの欄には入れられない（無理に入れると検索が壊れる）。
+   *   → **検索の直前に、画面の隅に小さく出す**（人が見て必要な物だけ手で入れる）。
+   *     ⚠ 見せるだけ（押させない・検索の邪魔をしない・8秒で消える）。
+   *     ⚠ 入力した中身は残さない（要望はお客様の情報・写真にもDBにも入れない）。
+   *     ⚠ 同じ内容を何度も出さない（同じ検索で2回描かない）。
+   */
+  var _otherReqShownFor = "";
+  function _showOtherRequests(cond) {
+    try {
+      if (!cond) return;
+      var list = [];
+      if (Array.isArray(cond.other_requests_list)) list = cond.other_requests_list.slice(0, 10);
+      else if (cond.other_requests) {
+        list = String(cond.other_requests).split(/[・、,／\/]+/).map(function (s) { return String(s).trim(); }).filter(Boolean).slice(0, 10);
+      }
+      var strength = String(cond.requirement_strength || "").trim();
+      if (!list.length && !strength) return;
+      var stamp = list.join("|") + "#" + strength;
+      if (stamp === _otherReqShownFor) return;   // 同じ内容は描き直さない
+      _otherReqShownFor = stamp;
+      var old = document.getElementById("axlx-other-req");
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      var d = document.createElement("div");
+      d.id = "axlx-other-req";
+      d.setAttribute("data-axlx", "1");
+      d.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:2147483000;max-width:260px;"
+        + "background:rgba(17,24,39,.94);color:#fff;border-radius:10px;padding:8px 10px;"
+        + "font:600 11px/1.5 -apple-system,system-ui,sans-serif;pointer-events:none;opacity:.95;box-shadow:0 4px 14px rgba(0,0,0,.3)";
+      var html = "";
+      if (strength) {
+        html += '<div style="opacity:.85;margin-bottom:3px">条件の強さ: ' + _escHtml(strength) + "</div>";
+      }
+      if (list.length) {
+        html += '<div style="opacity:.85;margin-bottom:2px">その他の要望:</div>';
+        html += '<div>・' + list.map(_escHtml).join("<br>・") + "</div>";
+      }
+      d.innerHTML = html;
+      (document.body || document.documentElement).appendChild(d);
+      // 8秒で消す（見せるだけ・ずっと残らない）
+      setTimeout(function () {
+        try { if (d && d.parentNode) d.parentNode.removeChild(d); } catch (_) {}
+      }, 8000);
+    } catch (_) {}
+  }
+  /** 画面に出す時の安全な文字（タグを消す） */
+  function _escHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+    });
+  }
+
+  function _auditReset(runId) {    _fillRunId = runId || null;
     _fillStartedAt = Date.now();
     _hiddenMs = 0;
     _hiddenSince = (document.visibilityState === 'hidden') ? Date.now() : null;
@@ -3679,6 +3732,17 @@
     _auditReset(cond && cond._audit_run_id);
     _auditStepP('fill_start', cond && cond.area_mode);
     _auditStepP('vis', document.visibilityState);
+    /**
+     * ★ 2026-11-15 竹内さん「検索の条件に、次の2つも並べる: その他の要望（other_requests を「・」で区切った1つずつ）／
+     *   必須・できれば（requirement_strength）」（依頼2-3）
+     *
+   *   ⚠ 「その他の要望」は**自由文**（例: ペット可・上の階を希望・角部屋）なので、
+   *     サイトの決まった欄には入れられない（無理に入れると検索が壊れる）。
+     *   → **検索の直前に画面へ出す**（人が見て、必要な物だけ手で入れる）。
+     *     ⚠ 消さない・押させない（見せるだけ・検索の邪魔をしない）。
+     *     ⚠ 入力した中身は残さない（要望はお客様の情報なので、写真にもDBにも入れない）。
+     */
+    try { _showOtherRequests(cond); } catch (_) {}
     // 2026-09-27 v2.5.32 入力を始めた合図（content.js → background）。一括検索はこれが来なければタブを読み直して1回だけやり直す
     try { window.postMessage({ from: 'aixlinx-fill-started', customerId: _fillCustomerId || null, runId: _fillRunId || null }, '*'); } catch (_) {}
     _fillCondForStamp = cond || null; // 2026-11-10 検索の印（誰の一覧か）を notifyDone で書く時に使う
