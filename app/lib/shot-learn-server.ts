@@ -112,7 +112,13 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
      *   → **Claude で読む**。DeepSeek が使えるのは「文を作る」ような推論が短くて済む仕事。
      */
     const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
-    if (!apiKey) return { sl: null, why: "no_api_key:ANTHROPIC_API_KEY が無い" };
+    /**
+     * ⚠ 2026-11-15: DeepSeek を主に使うので、**Claude のキーが無くても止めない**。
+     *   どちらのキーも無い時だけ止める。
+     */
+    if (!apiKey && !(process.env.DEEPSEEK_API_KEY ?? "").trim()) {
+      return { sl: null, why: "no_api_key:DEEPSEEK_API_KEY も ANTHROPIC_API_KEY も無い" };
+    }
     /**
      * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
      *
@@ -155,8 +161,62 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
       } catch { return null; }
     };
 
+    /**
+     * ★ 2026-11-15 竹内さん「DeepSeek 対応を入れて画像学習する」:
+     *
+     *   ⚠ 旧は **Claude 固定・max_tokens 2000** だった。
+     *     実測（同じ1920pxの実画面で比較）:
+     *       Claude Haiku     max 2000  → 欄 27個・1.59円
+     *       DeepSeek flash   max 2500  → **0字**（推論 6,762字で打ち切り）
+     *       DeepSeek flash   max 8000  → **0字**（推論 21,320字）
+     *       **DeepSeek flash max 12000 → 欄 58個・0.17円** ← これが一番良い
+     *   → **DeepSeek V4.1 Flash（`deepseek-flash`）を max_tokens 12000** で使う。
+     *     ⚠ 読めない原因は**モデルではなく max_tokens** だった（8000では足りない）。
+     *     ⚠ `thinking:{disabled}` は速いが誤読するので使わない。
+     *     ⚠ Claude は**予備**（DeepSeek のキーが無い時だけ）。
+     */
     /** 1回読む（base64 を渡す）。⚠ 読めなかった**理由**も返す */
     const ask = async (b64: string, note: string): Promise<{ sl: ShotLearn | null; why: string | null }> => {
+      const dsKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
+      if (dsKey) {
+        const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` },
+          body: JSON.stringify({
+            model: (process.env.SHOT_LEARN_MODEL || "deepseek-flash").trim(),
+            max_tokens: Math.max(12000, Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000),
+            reasoning_effort: (process.env.SHOT_LEARN_EFFORT ?? "low").trim(),
+            messages: [
+              { role: "system", content: SHOT_LEARN_PROMPT },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: note },
+                  { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
+                ],
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(180_000),
+        });
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          return { sl: null, why: `deepseek_http_${res.status}:` + String(t).slice(0, 100) };
+        }
+        const j = await res.json() as {
+          choices?: Array<{ message?: { content?: string; reasoning_content?: string }; finish_reason?: string }>;
+        };
+        const text = String(j.choices?.[0]?.message?.content ?? "").trim();
+        const finish = String(j.choices?.[0]?.finish_reason ?? "");
+        if (!text) {
+          const rn = String(j.choices?.[0]?.message?.reasoning_content ?? "").length;
+          return { sl: null, why: `deepseek_empty(finish=${finish}・推論${rn}字)` + (finish === "length" ? ":max_tokens不足" : "") };
+        }
+        const parsed = parseShotLearn(text);
+        if (!parsed.fields.length && parsed.screen === "other") return { sl: null, why: "no_fields:" + text.slice(0, 80) };
+        return { sl: parsed, why: null };
+      }
+      /** 予備: DeepSeek のキーが無い時だけ Claude */
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -165,8 +225,8 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: process.env.SHOT_LEARN_MODEL || "claude-haiku-4-5",
-          max_tokens: Number(process.env.SHOT_LEARN_MAX_TOKENS) || 4000,
+          model: process.env.SHOT_LEARN_CLAUDE_MODEL || "claude-haiku-4-5",
+          max_tokens: 4000,
           system: SHOT_LEARN_PROMPT,
           messages: [{
             role: "user",
@@ -180,11 +240,11 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
       });
       if (!res.ok) {
         const t = await res.text().catch(() => "");
-        return { sl: null, why: `http_${res.status}:` + String(t).slice(0, 100) };
+        return { sl: null, why: `claude_http_${res.status}:` + String(t).slice(0, 100) };
       }
       const j = await res.json() as { content?: Array<{ text?: string }>; stop_reason?: string };
       const text = String(j.content?.[0]?.text ?? "").trim();
-      if (!text) return { sl: null, why: "empty_text(stop=" + String(j.stop_reason ?? "?") + ")" };
+      if (!text) return { sl: null, why: "claude_empty(stop=" + String(j.stop_reason ?? "?") + ")" };
       const parsed = parseShotLearn(text);
       if (!parsed.fields.length && parsed.screen === "other") return { sl: null, why: "no_fields:" + text.slice(0, 80) };
       return { sl: parsed, why: null };
