@@ -9,7 +9,7 @@ const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); 
 const jst = (y: number, m: number, d: number, h = 12) => Date.UTC(y, m - 1, d, h - 9);
 const said = jst(2026, 11, 13); // 金曜
 
-t("既定 off", () => { assert.equal(situationTimelineOn({}), false); assert.equal(sentPropsFullOn({}), false); });
+t("既定 off", () => { assert.equal(situationTimelineOn({}), true); assert.equal(situationTimelineOn({ BRAIN_SITUATION_TIMELINE: "off" }), false); assert.equal(sentPropsFullOn({}), false); });
 t("時の言葉: 来週・再来週・週末・月末・来月・N月下旬・N月N日・明日・N日・給料日", () => {
   const w = (s: string) => resolveTimeWords(s, said).map((x) => `${x.word}=${x.label}`);
   assert.deepEqual(w("来週から動けます"), ["来週=11/16（月）〜11/22（日）"]);

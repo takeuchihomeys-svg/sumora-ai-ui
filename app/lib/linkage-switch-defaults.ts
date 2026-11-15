@@ -14,7 +14,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   BRAIN_OUR_SEND_UPTAKE: "off",
   BRAIN_SEVEN_FIELDS: "off",
   BRAIN_SITUATION_NOW: "off",
-  BRAIN_SITUATION_TIMELINE: "off",
+  BRAIN_SITUATION_TIMELINE: "on",
   BRAIN_STAFF_HAND: "on",
   BRAIN_TURN_AIMS: "off",
   CHECK_ORDER_TABLE: "off",
