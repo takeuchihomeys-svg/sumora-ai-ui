@@ -60,7 +60,8 @@ type Missing<T> = T | typeof BRIEF_NONE;
 /** 答えに使う事実（出所は answer-source の7つ・確かさは compose-decided の3つ） */
 export type BriefFact = { quote: string; value: string; from: string; source?: AnswerSourceKind; who?: StaffWho; certainty?: Certainty };
 export type ConductorBrief = {
-  main: Missing<{ from: "turn_contract"; items: Array<{ kind: string; quote: string; topic: string | null }> }>;
+  /** 2026-11-15 作業員I（作業員J の見つけ）: 依頼ごとの「何についての話か（asks.about）」「どの物件か（asks.property）」と、話の中心の物件（meta.current_property）を足した */
+  main: Missing<{ from: "turn_contract"; items: Array<{ kind: string; quote: string; topic: string | null; about?: string | null; property?: string | null }>; property?: string | null }>;
   facts: Missing<BriefFact[]>;
   /** 依頼ごとの 今言える部分／確認が要る部分（compose-decided.askPartsOf） */
   split?: Missing<Array<{ quote: string; source: AnswerSourceKind; who?: StaffWho; now: string | null; check: string | null; certainty: Certainty }>>;
@@ -102,7 +103,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
 
   // ① 主の要件
   const main: ConductorBrief["main"] = asks.length
-    ? { from: "turn_contract", items: asks.slice(0, 4).map((a) => ({ kind: str(a.kind, 12) ?? "?", quote: str(a.quote, 40) ?? "", topic: str(a.topic, 20) })) }
+    ? { from: "turn_contract", items: asks.slice(0, 4).map((a) => ({ kind: str(a.kind, 12) ?? "?", quote: str(a.quote, 40) ?? "", topic: str(a.topic, 20), ...(str(a.about, 20) ? { about: str(a.about, 20) } : {}), ...(str(a.property, 40) ? { property: str(a.property, 40) } : {}) })), ...(str(m.current_property, 40) ? { property: str(m.current_property, 40) } : {}) }
     : BRIEF_NONE;
   notYet.push("customer_part");
   if (main === BRIEF_NONE) notYet.push("main");

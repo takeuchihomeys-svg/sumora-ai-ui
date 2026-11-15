@@ -52,7 +52,8 @@ function sectionLine(k: string, v: unknown): string | null {
   const o = obj(v);
   const a = Array.isArray(v) ? v.map(obj).filter((x): x is Record<string, unknown> => !!x) : [];
   switch (k) {
-    case "main": return o && Array.isArray(o.items) ? `主の要件: ${(o.items as unknown[]).map(obj).map((x) => cut(x?.quote, 24)).join("・")}` : null;
+    // 2026-11-15 作業員I: 何についての話か（about）・どの物件か（property）と話の中心の物件を出す（作業員J の見つけ: 指示書に出ていなかった）
+    case "main": return o && Array.isArray(o.items) ? `主の要件: ${(o.items as unknown[]).map(obj).map((x) => `${cut(x?.quote, 24)}${x?.about ? `（${cut(x.about, 20)}${x?.property && x.property !== o.property ? `・${cut(x.property, 20)}` : ""}）` : x?.property && x.property !== o.property ? `（${cut(x.property, 20)}）` : ""}`).join("・")}${o.property ? `／話の中心の物件: ${cut(o.property, 30)}` : ""}` : null;
     case "facts": return a.length ? `事実: ${a.slice(0, 3).map((x) => `${cut(x.value, 30)}（${cut(x.from, 8)}${x.certainty ? `・${x.certainty}` : ""}）`).join("・")}` : null;
     case "split": return a.length ? `今言える／確認: ${a.slice(0, 2).map((x) => `${cut(x.now ?? "-", 20)}／${cut(x.check ?? "-", 20)}`).join("・")}` : null;
     case "missing": return o && Array.isArray(o.keys) ? `足りない: ${(o.keys as unknown[]).map(obj).slice(0, 4).map((x) => cut(x?.key, 16)).join("・")}` : null;
