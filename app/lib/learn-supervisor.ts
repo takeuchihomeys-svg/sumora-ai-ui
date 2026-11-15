@@ -54,6 +54,13 @@ export type SupervisorInput = {
     points: number;
     opens: number;
     weak: number;
+    /**
+     * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+     *   **前回の弱い所の一覧**（`kind|name`）。これと比べて
+     *   「直った（前回あって今回無い）」と「まだ直っていない（両方ある）」を分ける。
+     *   ⚠ 無い（旧い記録）時は比べない（初回と同じ扱い）。
+     */
+    prevWeak?: Array<{ kind?: string; name?: string }> | null;
   } | null;
   /** サイト（この判断がどのサイトの物か・all なら全体） */
   site?: string;
@@ -196,6 +203,13 @@ export type SupervisorAdvice = {
   /** ⑤ 人が読む行（画面・報告用） */
   lines: string[];
   /**
+   * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+   *   **直った物**（前回あって今回無い）。⚠ 点は上げない（言葉にするだけ）。
+   */
+  fixed?: Array<{ kind: string; name: string }>;
+  /** 前回も同じ指摘（まだ直っていない）の数 */
+  ongoing?: number;
+  /**
    * 2026-11-14 竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」:
    *   **打ち合わせで統括自身が話す内容**（議題・根拠・竹内さんへの質問）。
    *   ⚠ ただの数字の列ではなく「**何を決めたいか**」を出す。
@@ -296,6 +310,34 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   const actions: SupervisorAdvice["actions"] = [];
   const seen = new Set<string>();
 
+  /**
+   * ★ 2026-11-15 竹内さん「ほかにも統括が連携弱い部分等あれば土台作って強化する」
+   *   「学習も弱い部分を見つけて強化できるようにするために」
+   *
+   *   ⚠ **実測で判明（統括が「直ったか」を確かめていなかった）**:
+   *     同じ指摘「欄の種類が分からない」が **1,241回**出ていた。
+   *     ところが**直近の束では全部判定済み**（photo 26個・name 32個・なしは5個だけ）。
+   *     ＝ もう直っているのに、統括は**過去の記録を数え続けて**同じ事を言っていた。
+   *
+   *   → **前回の指摘と比べて3つに分ける**:
+   *     ・`fixed`    … 前回あって今回**無い**（直った）→ 言葉で「直りました」と言う（点は上げない）
+   *     ・`ongoing`  … 前回も今回もある（まだ直っていない）→ **優先度を上げる**（同じ事を言い続けない）
+   *     ・`new`      … 今回だけ（新しい指摘）
+   *     ⚠ 前回が無い（初回）時は全部 `new`（比べる相手が無い）。
+   */
+  const prevWeak: ReadonlyArray<{ kind?: string; name?: string }> =
+    inp.prev && Array.isArray(inp.prev.prevWeak) ? inp.prev.prevWeak : [];
+  const keyOf = (w: { kind?: string; name?: string }) => String(w.kind || "") + "|" + String(w.name || "");
+  const prevKeys = new Set(prevWeak.map(keyOf).filter((k) => !k.startsWith("|") && k !== "|"));
+  const nowKeys = new Set(weakList.filter((w) => w && w.name).map((w) => keyOf(w)));
+  /** 前回あって今回無い＝直った（最大6件・名前つき） */
+  const fixedWeak = prevKeys.size
+    ? prevWeak.filter((w) => { const k = keyOf(w); return k && !nowKeys.has(k); }).slice(0, 6)
+      .map((w) => ({ kind: String(w.kind || ""), name: String(w.name || "").slice(0, 40) }))
+    : [];
+  /** 前回も今回もある＝まだ直っていない（優先度を上げる） */
+  const ongoingKeys = new Set([...prevKeys].filter((k) => nowKeys.has(k)));
+
   // ── ② 次にやる事 ──
   for (const w of weakList) {
     if (!w || !w.name) continue;
@@ -303,8 +345,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     if (seen.has(key)) continue;
     seen.add(key);
     const f = FIX[String(w.kind)] || { what: "学びが弱い", how: "記録を増やしてもう一度学ぶ", priority: 9 };
+    /**
+     * ⚠ **前回も同じ指摘**なら優先度を上げる（1つ上＝数字を1つ下げる）。
+     *   同じ事を言い続けている物を後回しにしない（現場が直す順番を誤らない）。
+     */
+    const isOngoing = ongoingKeys.has(key);
     actions.push({
-      priority: f.priority,
+      priority: Math.max(1, f.priority - (isOngoing ? 1 : 0)),
       what: f.what,
       why: String(w.why || ""),
       how: f.how,
@@ -545,6 +592,21 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    *     ⚠ 「次にやる事」の**前**に出す（何を直したかを先に言い、その上で次を決める）。
    */
   const impRows = inp.improvements && Array.isArray(inp.improvements.recent) ? inp.improvements.recent : [];
+  /**
+   * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+   *   **直った物を言葉にする**（実測: 同じ指摘を1,241回出していたが、直近の束では全部判定済みだった）。
+   *   ⚠ 点は上げない（直った事で甘くしない）。「直りました」と言うだけ。
+   *   ⚠ 前回の記録が無い時は何も言わない（比べる相手が無い）。
+   */
+  if (fixedWeak.length) {
+    lines.push(`  前回から直った事（${fixedWeak.length}件）:`);
+    for (const f of fixedWeak) {
+      lines.push(`    ・[${f.kind}] ${f.name}`);
+    }
+  }
+  if (ongoingKeys.size) {
+    lines.push(`  ⚠ 前回も同じ指摘（${ongoingKeys.size}件・優先度を上げています）`);
+  }
   if (impRows.length) {
     lines.push(`  今日 強化した事（${num(inp.improvements?.total)}件のうち ${Math.min(5, impRows.length)}件）:`);
     for (const r of impRows.slice(0, 5)) {
@@ -580,6 +642,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     score: { coverage, weak: weakN, delta },
     block,
     lines,
+    /**
+     * ★ 2026-11-15: **直った物**（前回あって今回無い）。APIが保存して次回の比較に使う。
+     *   ⚠ 次回の `prev.prevWeak` に「今回の弱い所」を入れるのは API の役目。
+     */
+    fixed: fixedWeak,
+    /** 前回も同じ指摘（まだ直っていない）の数 */
+    ongoing: ongoingKeys.size,
     self_check: selfCheck({
       verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
@@ -785,6 +854,25 @@ function buildMeeting(m: {
       label: "実際の検索",
       value: `${m.audits.runs}回中 完走${m.audits.finished}回（完走率 ${m.audits.finish_rate}%）・途中で止まった ${m.audits.abandoned}回`,
     });
+    /**
+     * ★ 2026-11-15 竹内さん「統括てきにいま弱い部分はあるのか確認する／あれば細かく強化する」
+     *
+     *   ⚠ **実測で判明（統括が古い版に引っぱられていた）**:
+     *     `search_audits` 全1,197件のうち**新しい版は8件だけ**で、大半が v2.5.91 などの**古い記録**。
+     *     統括はそれを混ぜて「完走率 18%」と言っていた＝**もう直した古い版の失敗**で判断していた。
+     *   → **一番新しい版の完走率**を根拠に出す（「いまの版でどうか」が分かる）。
+     *     ⚠ 新しい版の件数が少ない時は「まだ少ない」と正直に言う（推測で良しとしない）。
+     */
+    const au = m.audits as unknown as { latest?: { version?: string; n?: number; finish_rate?: number } | null };
+    if (au && au.latest && num(au.latest.n) > 0) {
+      const ln = num(au.latest.n);
+      const lr = num(au.latest.finish_rate);
+      evidence.push({
+        label: "いまの版の実際の検索",
+        value: `v${String(au.latest.version)} で ${ln}回・完走率 ${lr}%`
+          + (ln < 5 ? "（⚠ 件数がまだ少ない＝判断は保留）" : ""),
+      });
+    }
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
     }

@@ -337,16 +337,42 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *     だから「良くなったか」を一度も言えていなかった（`learn_supervisor_log` に128件あるのに未使用）。
    *   → **前回の判断**を読んで渡す。比べるのは数だけ（記録・順番・場所・開き方・弱い所）。
    */
-  let prevAdvice: { at: string | null; rows: number; next: number; points: number; opens: number; weak: number } | null = null;
+  let prevAdvice: {
+    at: string | null; rows: number; next: number; points: number; opens: number; weak: number;
+    /** ★ 2026-11-15: 前回の弱い所の一覧（`kind|name`）＝「直った」を判定するため */
+    prevWeak?: Array<{ kind?: string; name?: string }> | null;
+  } | null = null;
   try {
     const { data: prevRows } = await supabase
       .from("learn_supervisor_log")
-      .select("created_at, next_n, points_n, opens_n, weak_n, rows")
+      .select("created_at, next_n, points_n, opens_n, weak_n, rows, meeting")
       .eq("scope", scope && scope !== "all" ? scope : "all")
       .order("created_at", { ascending: false })
       .limit(1);
     const p = (prevRows ?? [])[0] as Record<string, unknown> | undefined;
     if (p) {
+      /**
+       * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+       *   前回の**弱い所の一覧**を `meeting.weak_list` から取り出す（保存してある）。
+       *   ⚠ 旧い記録には入っていない → その時は null（比べない＝初回と同じ扱い）。
+       *   ⚠ 形が違えば空にする（壊れたデータで誤判定しない）。
+       */
+      let prevWeak: Array<{ kind?: string; name?: string }> | null = null;
+      try {
+        const m = p.meeting as Record<string, unknown> | null;
+        const wl = m && Array.isArray((m as { weak_list?: unknown }).weak_list)
+          ? ((m as { weak_list: unknown[] }).weak_list) : null;
+        if (wl) {
+          prevWeak = wl
+            .filter((x) => x && typeof x === "object")
+            .map((x) => {
+              const o = x as Record<string, unknown>;
+              return { kind: String(o.kind ?? ""), name: String(o.name ?? "").slice(0, 40) };
+            })
+            .filter((x) => x.name)
+            .slice(0, 40);
+        }
+      } catch (_) { prevWeak = null; }
       prevAdvice = {
         at: typeof p.created_at === "string" ? p.created_at : null,
         rows: Number(p.rows) || 0,
@@ -354,6 +380,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
         points: Number(p.points_n) || 0,
         opens: Number(p.opens_n) || 0,
         weak: Number(p.weak_n) || 0,
+        prevWeak,
       };
     }
   } catch (e) {
