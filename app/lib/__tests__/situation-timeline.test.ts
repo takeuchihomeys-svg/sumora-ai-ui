@@ -94,3 +94,28 @@ t("時系列の帳面: 問いの文の日付は入れない（q092「ここは�
   assert.deepEqual(rec.words.map((w) => w.word), ["来週"]);
 });
 console.log("timeline-question ok");
+
+// ── 今の状況の記録（BRAIN_SITUATION_NOW）
+import { buildSituationNow, situationNowOn, situationNowDigest, factIdOf } from "../situation-now";
+t("今の状況の記録: 送った事・確認した事・前の項目（答えたか）・開いている約束・要件と送った所まで・食い違い（id 付き）", () => {
+  assert.equal(situationNowOn({}), false);
+  const facts = [
+    { sent_at: "2026-11-10T01:00:00Z", origin: "staff_text", kind: "confirmation_promised", status: "promised", detail: { object: "募集状況" } },
+    { sent_at: "2026-11-10T02:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: { propertyNames: ["Aマンション 101"] } },
+    { sent_at: "2026-11-10T03:00:00Z", origin: "staff_text", kind: "pickup_declared", status: "promised", detail: {} },
+    { sent_at: "2026-11-10T04:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: {} },
+  ];
+  const aix = [{ aix_type: "property_check_result", line_message_id: "L1", sent_at: "2026-11-10T05:00:00Z", created_at: "2026-11-10T05:00:00Z", check_pattern: "availability", property_names: ["Aマンション"], prop_statuses: ["available"] }];
+  const exchange = { ours: [{ key: "q.move_in", kind: "question", label: "入居の時期を聞いた", purpose: "", expect: "answer", dueHours: 24, text: "ご入居はいつ頃をご希望でしょうか", at: "2026-11-10T06:00:00Z" }], theirs: [], open: [{ kind: "our_question_unanswered", what: "", at: "2026-11-10T06:00:00Z", overdue: false }] } as never;
+  const s = buildSituationNow({ facts, aix, exchange, nowMs: Date.parse("2026-11-11T01:00:00Z"),
+    asks: { items: [{ id: "q1", quote: "空いてますか" }], progress: { sentUpTo: 0, answered: [], promised: [], remaining: ["q1"] }, msgs: [{ no: 1, slot: "aix", aix: "property_check_result" }] } });
+  assert.deepEqual(s.sent!.map((x) => x.sent_id), [factIdOf(facts[1]), factIdOf(facts[3])]);
+  assert.equal(s.checked![0].check_id, "aix:L1"); assert.equal(s.checked![0].what, "vacancy"); assert.equal(s.checked![0].told, true);
+  assert.equal(s.our_items![0].item_id, "2026-11-10T06:00:00Z#0"); assert.equal(s.our_items![0].answered, false);
+  // 確認の約束は後に確認の報告が無い＝開いたまま・ピックアップの約束は後に送付＝閉じた
+  assert.deepEqual(s.promises_open!.map((p) => p.kind), ["confirmation_promised"]);
+  assert.deepEqual(s.asks, { done: [], promised: [], open: ["q1"] });
+  assert.deepEqual(s.this_turn, { sent_up_to: 0, remaining: [{ no: 1, slot: "aix", aix: "property_check_result" }] });
+  assert.deepEqual(situationNowDigest(s), { tw: 0, tv: 0, se: 2, ch: 1, oi: 1, ou: 1, po: 1, ao: 1, cf: 0 });
+});
+console.log("situation-now ok");

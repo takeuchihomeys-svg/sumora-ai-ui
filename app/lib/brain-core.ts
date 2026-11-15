@@ -503,7 +503,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（app/lib/material-clash.ts・BRAIN_MATERIAL_CLASH=shadow の時だけ・記録だけ） */
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
-  situation_now?: { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
+  situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
@@ -1758,6 +1758,13 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
         const tc = mm.turn_contract as { asks?: unknown } | null | undefined;
         if (mode === "on" && tc && Array.isArray(tc.asks)) tc.asks = al.annotateAsks(tc.asks as Array<Record<string, unknown>>, led);
         if (!led.check.ok) console.log(JSON.stringify({ tag: "brain:ask-ledger", digest: led.digest, issues: led.check.issues.map((x) => x.code) }));
+        // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_NOW=on）に要件の済み・約束・未と、この番の送った所まで・残っている役目（M の progressAfterSends・送る前）
+        const snow = mm.situation_now as { v?: number; asks?: unknown; this_turn?: unknown } | undefined;
+        if (snow && snow.v === 1) {
+          const pr = al.progressAfterSends(led, []);
+          snow.asks = { done: pr.answered, promised: pr.promised, open: pr.remaining };
+          snow.this_turn = { sent_up_to: pr.sentUpTo, remaining: led.msgs.filter((m) => m.no > pr.sentUpTo).map((m) => ({ no: m.no, slot: m.slot, aix: m.aix })) };
+        }
       }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-ledger-failed", error: e instanceof Error ? e.message : String(e) })); }
@@ -4355,6 +4362,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       console.log(JSON.stringify({ tag: "brain:material-clash", conversationId, ...dg }));
     } catch (e) { console.warn("[brain-core] material-clash skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-15 作業員L（BRAIN_SITUATION_NOW・既定 off・記録だけ）: 今の状況の記録を1つに（送った事・確認した事・前に送った文の項目・開いている約束・食い違い）。
+  //   要件（asks・this_turn）は作業員M の要件の帳面が meta に入った後（後処理）で足す
+  let situationNowRec: import("@/app/lib/situation-now").SituationNow | undefined;
+  try {
+    const sn = await import("@/app/lib/situation-now");
+    if (sn.situationNowOn()) {
+      const el = await import("@/app/lib/exchange-ledger");
+      const exchange = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.now() });
+      situationNowRec = sn.buildSituationNow({ timeline: situationTimelineRec, facts: (recordedFacts ?? []) as never, aix: aixLogs as never, exchange, clash: materialClashRec, nowMs: Date.now() });
+      console.log(JSON.stringify({ tag: "brain:situation-now", conversationId, ...sn.situationNowDigest(situationNowRec) }));
+    }
+  } catch (e) { console.warn("[brain-core] situation-now skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
   //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・最初の会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
@@ -6796,7 +6815,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
-      situation_now: situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined,
+      situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
