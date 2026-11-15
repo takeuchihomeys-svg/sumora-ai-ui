@@ -123,6 +123,8 @@ export type SupervisorInput = {
     runs: number;
     finished: number;
     abandoned: number;
+    /** ⚠ 2026-11-15: 判断できない回（操作の記録が無い）。完走率の分母から外す */
+    unknown?: number;
     finish_rate: number;
     /** 止まった場所（日本語・多い順） */
     stalled_at?: Array<{ stage: string; n: number }>;
@@ -906,9 +908,17 @@ function buildMeeting(m: {
    *   **実際の検索の結果**を根拠に出す（これが無いと現場の現実を無視した判断になる）。
    */
   if (m.audits && num(m.audits.runs) > 0) {
+    /**
+     * ⚠ 2026-11-15: `runs` は**全部の回**、`finish_rate` は**判断できる回だけ**で数える。
+     *   そのまま並べると「12回中 完走7回（完走率100%）」と**数字が食い違って見える**。
+     *   → 判断できない回（古い版で操作の記録が無い等）があれば**その数を添える**。
+     */
+    const unk = num(m.audits.unknown);
+    const judged = Math.max(0, num(m.audits.runs) - unk);
     evidence.push({
       label: "実際の検索",
-      value: `${m.audits.runs}回中 完走${m.audits.finished}回（完走率 ${m.audits.finish_rate}%）・途中で止まった ${m.audits.abandoned}回`,
+      value: `${m.audits.runs}回中 完走${m.audits.finished}回（完走率 ${m.audits.finish_rate}%）・途中で止まった ${m.audits.abandoned}回`
+        + (unk > 0 ? `・判断できない ${unk}回（操作の記録が無い＝古い版。${judged}回で数えています）` : ""),
     });
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });

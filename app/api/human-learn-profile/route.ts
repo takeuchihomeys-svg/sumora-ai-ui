@@ -108,9 +108,15 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   try {
     const { summarizeAudits } = await import("@/app/lib/learn-audit-summary");
     const since24 = new Date(Date.now() - 24 * 3600_000).toISOString();
+    /**
+     * ⚠ 2026-11-15 **実測で見つけた抜け**: ここで `filled` を取っていなかった。
+     *   そのため `summarizeAudits` の「人の検索は操作が10手以上なら完走」判定が
+     *   **常に0手に見えて効かず**、統括は古い「完走率8%」のままだった。
+     *   → `filled` を取る（人の操作が何手入ったかを見るため。中身は使わない）。
+     */
     let aq = supabase
       .from("search_audits")
-      .select("created_at, status, site, mode, area_mode, cause_key, error, severity, steps, result, ext_version")
+      .select("created_at, status, site, mode, area_mode, cause_key, error, severity, steps, result, ext_version, filled")
       .gte("created_at", since24)
       .order("created_at", { ascending: false })
       .limit(300);

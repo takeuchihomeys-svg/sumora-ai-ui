@@ -22,6 +22,12 @@ export type AuditRow = {
   error?: string | null;
   error_kind?: string | null;
   severity?: string | null;
+  /**
+   * ⚠ 2026-11-15: **実際に読んでいる列**（人の操作が何手入ったかを見る）。
+   *   型に無かったため、`summarizeAudits` の「人の検索は操作10手以上で完走」判定が
+   *   **効かないまま**だった（統括が「完走率8%」と誤解した原因の1つ）。
+   */
+  filled?: unknown;
   steps?: unknown;
   result?: unknown;
   ext_version?: string | null;
@@ -37,6 +43,14 @@ export type AuditSummary = {
   abandoned: number;
   /** いま走っている回（started） */
   started: number;
+  /**
+   * ⭐ 2026-11-15: **判断できない回**（操作の記録が1手も無い）。
+   *   ⚠ 古い版（2.5.91 等）は `filled.ops` を送っていなかったので、
+   *     「止まった」のか「動いたが記録が無い」のか**区別できない**。
+   *     これを `abandoned` に混ぜると完走率が実際より低く出る（統括が誤解する）。
+   *   → **別に数える**（`finish_rate` の分母からも外す）。
+   */
+  unknown: number;
   /** 完走率（0〜100） */
   finish_rate: number;
   /** 止まった場所（段の名前 → 回数） */
@@ -142,14 +156,42 @@ export function summarizeAudits(
     return !Number.isFinite(t) || t >= since;
   });
 
-  let finished = 0, abandoned = 0, started = 0, bad = 0;
+  let finished = 0, abandoned = 0, started = 0, bad = 0, unknown = 0;
   const stageN: Record<string, number> = {};
   const causeN: Record<string, number> = {};
   const errN: Record<string, number> = {};
+  /**
+   * ★ 2026-11-15 **実測で見つけた集計の誤り**（統括が「完走率8%」と誤解した原因）:
+   *
+   *   ⚠ `brain_normal / single` が **完走20回・止まり385回**になっていた。
+   *     ところが止まった回にも**人の操作が 1016手**入っていた（＝人が最後まで操作していた）。
+   *   なぜか: 人の検索（通常・スタッフモード）は**結果の取り込みが無い**ので
+   *     `finished` を送る経路が無く、20分後に見回りが `abandoned` にしていた。
+   *     → **止まっていない回が「止まった」に数えられていた**。
+   *
+   *   → 人の検索は**「最後まで操作したか」で完走を判断する**（操作が10手以上あれば完走扱い）。
+   *     ⚠ 画面の変更はしない（集計だけ）。拡張側も v2.7.85 で閉じるように直したので、
+   *       これからは `finished` が来る（古い記録のためにもこの判定は残す）。
+   */
+  const opsCount = (r: AuditRow): number => {
+    const f = (r as { filled?: unknown }).filled;
+    if (!f || typeof f !== "object") return 0;
+    const ops = (f as { ops?: unknown }).ops;
+    return Array.isArray(ops) ? ops.length : 0;
+  };
+  const isHumanMode = (r: AuditRow): boolean => /brain_normal|brain_staff|human_trace/i.test(String(r.mode ?? ""));
 
   for (const r of inWindow) {
     const s = String(r.status ?? "").toLowerCase();
-    if (s === "finished") finished++;
+    const opsN = opsCount(r);
+    const humanDone = isHumanMode(r) && opsN >= 10;
+    /**
+     * 判断できない回（操作の記録が無い）。`abandoned` に混ぜない。
+     *   ⚠ `finished` は記録が無くても完走（エラー無しで終わった）と分かるので残す。
+     */
+    const unknowable = s !== "finished" && opsN === 0 && !String(r.error ?? "").trim();
+    if (s === "finished" || humanDone) finished++;
+    else if (unknowable) unknown++;
     else if (s === "abandoned") abandoned++;
     else if (s === "started") started++;
 
@@ -172,7 +214,7 @@ export function summarizeAudits(
      *   → 「(段が残っていない)」ではなく **「終わりの合図が来なかった」** と言う（正しく伝える）。
      */
     const steps = Array.isArray(r.steps) ? (r.steps as Array<Record<string, unknown>>) : [];
-    if (s !== "finished") {
+    if (s !== "finished" && !humanDone && !unknowable) {
       let last = "";
       for (let i = steps.length - 1; i >= 0; i--) {
         const k = String(steps[i]?.k ?? "").replace(/^page:/, "").trim();
@@ -191,7 +233,13 @@ export function summarizeAudits(
     Object.entries(o).map(([k, n]) => ({ [key]: k, n } as never)).sort((a, b) => (b as { n: number }).n - (a as { n: number }).n).slice(0, cap);
 
   const runs = inWindow.length;
-  const finish_rate = runs > 0 ? Math.round((finished / runs) * 100) : 0;
+  /**
+   * ⚠ 2026-11-15: **判断できない回は分母から外す**（`unknown`）。
+   *   古い版（操作の記録を送っていない）の回を「止まり」に混ぜると、
+   *   完走率が実際より低く出て統括が誤解する（実測: 8% → 58% に直った）。
+   */
+  const judged = Math.max(0, runs - unknown);
+  const finish_rate = judged > 0 ? Math.round((finished / judged) * 100) : 0;
   const stalled_at = toArr(stageN, "stage") as Array<{ stage: string; n: number }>;
   const causes = toArr(causeN, "cause") as Array<{ cause: string; n: number }>;
   const errors = toArr(errN, "error") as Array<{ error: string; n: number }>;
@@ -204,20 +252,20 @@ export function summarizeAudits(
    */
   let top_problem: string | null = null;
   let advice: string | null = null;
-  if (runs > 0 && finish_rate < 90) {
+  if (judged > 0 && finish_rate < 90) {
     const topStage = stalled_at[0];
     if (topStage && topStage.stage.startsWith("終わりの合図が来なかった")) {
-      top_problem = `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）。うち ${topStage.n}回は「終わりの合図が来なかった」回です`;
+      top_problem = `${judged}回のうち ${finished}回しか完走していません（${finish_rate}%）。うち ${topStage.n}回は「終わりの合図が来なかった」回です`;
       advice = "検索の手順ではなく**記録の経路**を疑う（PC・タブを閉じた／20分たって見回りに拾われた／finished が届いていない）";
     } else {
       top_problem = topStage
-        ? `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）。一番多いのは「${topStage.stage}」で止まる（${topStage.n}回）`
-        : `${runs}回のうち ${finished}回しか完走していません（${finish_rate}%）`;
+        ? `${judged}回のうち ${finished}回しか完走していません（${finish_rate}%）。一番多いのは「${topStage.stage}」で止まる（${topStage.n}回）`
+        : `${judged}回のうち ${finished}回しか完走していません（${finish_rate}%）`;
     }
   }
 
   return {
-    runs, finished, abandoned, started, finish_rate,
+    runs, finished, abandoned, started, unknown, finish_rate,
     stalled_at, causes, errors, bad, top_problem, advice,
   };
 }

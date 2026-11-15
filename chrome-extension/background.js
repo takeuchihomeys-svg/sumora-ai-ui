@@ -4694,6 +4694,32 @@ async function _auditOnFillDone(msg, sender) {
     _auditTracker.attachFill(_rid, { audit: msg.audit || null, error: _pageErr });
     // 2026-09-29 見張り（C1・C2）: ここまで来た回はブレインモード（点検の記録がある回）だけ。待たない
     _watchAfterFill(msg, run, sender);
+    /**
+     * ★ 2026-11-15 **実測で見つけた「完走率が低い」本当の原因**:
+     *
+     *   ⚠ `brain_normal / single` が **完走20回・止まり385回**（止まった回にも人の操作が 1016手 入っている）。
+     *     `brain_staff / single` も 完走11・止まり188。
+     *     統括はこれを見て「完走率8%・検索が押せていない」と判断していたが、
+     *     **実際は人が最後まで操作して検索を押していた**（`filled.ops` が35〜53手）。
+     *
+     *   なぜ閉じないか: `finished` を送るのは
+     *     ① 一括の結果が届いた時（`_auditOnBatchDone`・`trigger === "single"`）
+     *     ② 失敗した時（`_pageErr`）
+     *     ③ レインズ（結果の取り込みが無い）
+     *   の3つだけ。**通常/スタッフモードの人の検索は①②③のどれにも当たらない**ので、
+     *   `started` のまま20分残り、見回り（`sweepSearchAudits`）に `abandoned` にされていた。
+     *   → **止まっていないのに止まったと記録されていた**（統括の判断が狂う最大の原因）。
+     *
+     *   → 人の検索（`brain_normal` / `brain_staff`）は**結果の取り込みが無い**ので、
+     *     `fill-done` が届いた時点で閉じる（理由も段に残す）。
+     *     ⚠ 自動（`brain_aix`）は今まで通り結果を待つ（勝手に閉じない）。
+     */
+    var _humanRun = run.mode === "brain_normal" || run.mode === "brain_staff";
+    if (!_pageErr && _humanRun && (run.trigger === "single" || run.trigger === "local")) {
+      _auditStep(_rid, "human_search_done", "人が押した検索（結果の取り込みは無い）→ ここで閉じる");
+      _auditFinish(_rid, {});
+      return;
+    }
     // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
     if (run.site === "reins" || ((run.trigger === "single" || run.trigger === "local") && _pageErr)) _auditFinish(_rid, {});
   } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }

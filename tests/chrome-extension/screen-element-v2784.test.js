@@ -54,7 +54,7 @@ t("見つからなければ理由を残す", /screen_no_element/.test(ps));
 t("⚠ 画面の位置を aim.x として直接返さない", !/var aim = \{ x: v\.x, y: v\.y, n: Number\(v\.n\) \|\| 0 \};\s*\n\s*_noteAimUsed\(name, aim, null\);\s*\n\s*return aim;[\s\S]{0,100}fromScreen: true/.test(ps) && !/_noteAimUsed\(name, _sa, null\)/.test(ps));
 
 // ── ⑥ 版 ────────────
-t("版が 2.7.84", manifest.version === "2.7.84");
+t("版が 2.7.84 以降（2.7.85 で地域の確認を直した）", Number(manifest.version.split(".")[2]) >= 84);
 
 // ── ⑦ 構文 ────────────
 let ok = true;

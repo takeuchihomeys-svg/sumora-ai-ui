@@ -362,26 +362,46 @@ export async function learnFromWeakShots(
    *     その場の会話にしか残らず、次に同じ失敗をする。
    */
   const outcomes: Array<{ ok: boolean; fields: number; ms: number; why?: string | null }> = [];
-  for (const t of targets) {
-    out.tried++;
-    const got = await readShotFieldsWithWhy(t.shot_key);
-    const sl = got.sl;
-    if (!sl) {
-      out.skipped++;
-      outcomes.push({ ok: false, fields: 0, ms: got.ms, why: got.why });
-      continue;
+  /**
+   * ⚠ 2026-11-15 **実測で見つけた無駄**: `concurrency`（`--conc`）を受け取っていたのに
+   *   **どこでも使っていなかった**（1枚ずつ順番に読んでいた）。
+   *   実測: 55枚が 200秒たっても1枚も返らない（1枚 30〜60秒 × 55枚＝**約27〜55分**）。
+   *   → **同時に読む**（既定4）。1枚あたりの待ちはそのままだが、全体の時間が 1/4 になる。
+   *   ⚠ API の制限に当たるので**最大6**まで（それ以上は 429 で逆に遅くなる）。
+   *   ⚠ 書く順番は問わない（写真ごとに別の行を更新するので衝突しない）。
+   */
+  const conc = Math.max(1, Math.min(6, Math.round(opt.concurrency ?? 4) || 4));
+  let cursor = 0;
+  let done = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= targets.length) return;
+      const t = targets[i];
+      out.tried++;
+      const got = await readShotFieldsWithWhy(t.shot_key);
+      const sl = got.sl;
+      if (!sl) {
+        out.skipped++;
+        outcomes.push({ ok: false, fields: 0, ms: got.ms, why: got.why });
+      } else {
+        out.learned++;
+        out.fields += sl.fields.length;
+        outcomes.push({ ok: true, fields: sl.fields.length, ms: got.ms });
+        if (!opt.dryRun) {
+          const { error } = await supabase
+            .from("human_motion_learn")
+            .update({ shot_learn: sl })
+            .eq("id", t.id);
+          if (error) out.errors.push(String(error.message).slice(0, 120));
+          else out.saved++;
+        }
+      }
+      done++;
+      try { opt.onProgress?.(done, targets.length, got.why ?? `${sl?.fields.length ?? 0}個`); } catch (_) { /* 表示の失敗で学習を止めない */ }
     }
-    out.learned++;
-    out.fields += sl.fields.length;
-    outcomes.push({ ok: true, fields: sl.fields.length, ms: got.ms });
-    if (opt.dryRun) continue;
-    const { error } = await supabase
-      .from("human_motion_learn")
-      .update({ shot_learn: sl })
-      .eq("id", t.id);
-    if (error) out.errors.push(String(error.message).slice(0, 120));
-    else out.saved++;
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(conc, targets.length) }, () => worker()));
   /**
    * 読み方の成績を残す（⚠ dry-run では書かない・失敗しても学習は止めない）。
    */

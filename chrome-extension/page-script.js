@@ -5269,9 +5269,19 @@
             // ケースA: モーダルが市区郡ページ表示中 → 大阪府をスキップして市区郡を直接クリック
             // ケースB: モーダルが都道府県ページ表示中 → 大阪府をクリック
             var prefClicked = false;
+            /**
+             * ⚠ 2026-11-15: `doAfterWard` の中で使う（**使う所より前に宣言**）。
+             *   地域がそろったかを確かめ始めた時刻。押し切るまで待つための上限に使う。
+             */
+            var _wardVerifyStart = 0;
 
             function doAfterWard() {
               console.log('[AX] STEP3完了: 市区郡クリック済 → next_step_button2 確認');
+              /**
+               * ⚠ 2026-11-15: 確認を始めた時刻（**押し直しの上限を時間で測る**ため）。
+               *   `var` は**使う所より前に**置く（後ろに置くと undefined のまま catch に飲まれて黙って動かない）。
+               */
+              _wardVerifyStart = Date.now();
               /**
                * 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている」「検索ボタンも押していなかった」:
                *   ⚠ 旧は `clickWardPrecise()` が true を返した**直後**に `doAfterWard()` を呼んでいた。
@@ -5295,15 +5305,51 @@
                   _afterWardConfirmed();
                   return;
                 }
-                if (n >= 8) {
-                  var msg = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '）';
+                /**
+                 * ⚠ 2026-11-15 **実測で見つけた本物の原因**（自動モードが必ず止まる）:
+                 *
+                 *   点検記録（2.7.79・10:49・まりあ）:
+                 *     page:ward_by_code ×8 → ward_verify_fail「欲しい3区・入った0区」
+                 *     → AXLX_AREA_MISMATCH で中止
+                 *
+                 *   なぜ8回とも「入った0区」だったか:
+                 *     ① `clickWardPrecise` は**キューに積むだけ**（人が押す速さで1つずつ・1区 620〜1400ms＋迷い）
+                 *     ② なのに確認は **620ms 後に1回**だけ（`setTimeout(..., 620)`）
+                 *     ③ 3区なら押し終わるまで **約3〜6秒**かかる → その前に「そろっていない」と判定
+                 *     ④ 足そうとまたキューに積む（`__axPending` で弾かれるか、二重に積まれる）
+                 *     ⑤ 8回×620ms＝**約5秒**で打ち切り → 押し終わる前に必ず中止
+                 *   → **1区も押せていないのに「地域がそろいません」で止まっていた**（まりあさんの自動モードは今日0回成功）。
+                 *
+                 *   → 直し方: 「時間で決める」のをやめ、**キューが空になるまで待つ**（`whenClickQueueIdle`）。
+                 *     そのうえで:
+                 *       ・**押し直しはキューが空になってから**（押している最中に積むと二重押し＝外れる）
+                 *       ・待ち切れない時の上限は**45秒**（3区＋迷い＋長い停止8〜25秒を1回挟んでも足りる）
+                 *       ・押し直しは**2回まで**（同じ事を何度も積まない）
+                 */
+                var t0 = _wardVerifyStart || (_wardVerifyStart = Date.now());
+                var elapsed = Date.now() - t0;
+                var MAX_MS = 45000;
+                var MAX_RETRY = 2;
+                if (isClickQueueBusy()) {
+                  if (elapsed > MAX_MS) {
+                    var msg0 = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・押す列が' + Math.round(elapsed / 1000) + '秒たっても終わらない）';
+                    _auditStepP('ward_verify_fail', msg0 + ' 入った:[' + chk.checked.join(',') + '] 足りない:[' + chk.missing.join(',') + ']');
+                    notifyDone('AXLX_AREA_MISMATCH: ' + msg0);
+                    return;
+                  }
+                  whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n); }, 260); });
+                  return;
+                }
+                _wardVerifyStart = 0;
+                if (n >= MAX_RETRY || elapsed > MAX_MS) {
+                  var msg = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・' + Math.round(elapsed / 1000) + '秒待った）';
                   _auditStepP('ward_verify_fail', msg + ' 入った:[' + chk.checked.join(',') + '] 足りない:[' + chk.missing.join(',') + ']');
                   console.warn('[AX] ' + msg + ' → 誤った地域で検索しないため中止します');
                   showWarnToast(msg);
                   notifyDone('AXLX_AREA_MISMATCH: ' + msg);
                   return;
                 }
-                // まだそろっていない → 足す（余計は外す）
+                // まだそろっていない（かつ押す列は空）→ 足す（余計は外す）
                 if (n === 0) {
                   console.log('[AX] 確定前に確認: そろっていません（入った' + chk.checked.length + '・足りない' + chk.missing.length + '）→ 足します');
                 }
@@ -5321,7 +5367,8 @@
                   });
                 } catch (_) {}
                 try { if (chk.missing.length) clickWardPrecise([wardFull, wardShort]); } catch (_) {}
-                setTimeout(function () { _verifyThenConfirm(n + 1); }, 620 + Math.floor(Math.random() * 260));
+                // 積んだ後は**キューが空になるまで待ってから**もう一度確かめる（時間で決めない）
+                whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n + 1); }, 400); });
               })(0);
             }
 

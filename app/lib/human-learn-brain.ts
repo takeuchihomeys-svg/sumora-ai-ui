@@ -1268,6 +1268,11 @@ export function buildHumanLearnBundle(
         runs: audits.runs,
         finished: audits.finished,
         abandoned: audits.abandoned,
+        /**
+         * ⚠ 2026-11-15: **判断できない回**を渡す（これが無いと「12回中 完走7回（完走率100%）」と
+         *   数字が食い違って見え、統括が自分の判断を疑う）。
+         */
+        unknown: audits.unknown,
         finish_rate: audits.finish_rate,
         stalled_at: audits.stalled_at,
         causes: audits.causes,
