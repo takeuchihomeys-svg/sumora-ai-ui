@@ -82,7 +82,7 @@ console.log("\n■ ③ fieldName の実際の動き（本物の要素で確か�
 
 console.log("\n■ ④ 記録自体は止まらない（名前が無くても seen は増える）");
 {
-  ok("_pushOp に早期 return が無い（f:null でも積む）", /_opsRing\.push\(\{ t: t, k: String\(kind/.test(recCode));
+  ok("_pushOp に早期 return が無い（f:null でも積む）", /_opsRing\.push\(_opObj\)/.test(recCode) || /_opsRing\.push\(\{ t: t, k: String\(kind/.test(recCode));
   ok("  _opsSeen++ がある（拾った回数が分かる）", /_opsSeen\+\+/.test(recCode));
 }
 

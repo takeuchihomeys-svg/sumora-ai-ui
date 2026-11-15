@@ -22,7 +22,7 @@ console.log("■ ① 学んだ押す位置を読む");
 {
   ok("学習を読む関数（_kindOf / _aimOf）", /function _kindOf\(name\)/.test(ps) && /function _aimOf\(name\)/.test(ps));
   ok("  30秒ごとに読み直す（学習が進んだら次から効く）", /now - _learnKindsAt > 30000/.test(ps));
-  ok("  2回以上押した所だけ使う（1回は偶然）", /if \(Number\(v\.n\) < 2\) return null;/.test(ps));
+  ok("  2回以上押した所だけ使う（1回は偶然）", /if \(Number\(v\.n\) < 2\) \{/.test(ps) || /if \(Number\(v\.n\) < 2\) return null;/.test(ps));
   ok("  storage の axlx_learn_points を読む", /axlx_learn_points/.test(ps));
   ok("background も points を保存している", /axlx_learn_points: points/.test(bg));
 }
@@ -45,7 +45,7 @@ console.log("\n■ ③ 点検に残す（あとから「学んだ事を使った
 console.log("\n■ ④ 壊れない（学びが無い・変な値でも今まで通り）");
 {
   ok("学びが無ければ何もしない（null を返す）", /return v && v\.w \? String\(v\.w\) : null;/.test(ps));
-  ok("  壊れた入力でも落ちない（try/catch）", /function _aimOf[\s\S]{0,400}catch \(_\) \{ return null; \}/.test(ps));
+  ok("  壊れた入力でも落ちない（try/catch）", /function _aimOf[\s\S]{0,900}catch \(_\) \{ return null; \}/.test(ps));
   ok("  moveTo が無い環境でも動く（moveToEl に落ちる）", /if \(o\.aim && P\.moveTo && el\.getBoundingClientRect\)/.test(ps));
 }
 

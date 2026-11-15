@@ -1091,8 +1091,7 @@
       if (Number(v.n) < 2) {
         _noteAimUsed(name, null, "few_times:" + Number(v.n));
         return null;
-      }
-      var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };
+      }      var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };
       _noteAimUsed(name, aim, null);
       return aim;
     } catch (_) { return null; }
@@ -2470,6 +2469,112 @@
     }
     window.postMessage(msg, '*');
   }
+
+  /**
+   * ★ 2026-11-15 竹内さん「学習と自動モードの強化もお願い」→ **実測で判明**:
+   *
+   *   ⚠ `search_audits` が 60件中 **54件「途中で止まった（abandoned）」**になっていた。
+   *     統括はこれを見て「完走率 8%」と言い、**検索が押せていないと判断**していた。
+   *   ところが中身を見ると、止まった回も**最後まで操作が進んでいた**（最後の操作が `click:検索`・全49手）。
+   *
+   *   ⚠ 原因: 終わりの合図（`notifyDone`）は **拡張が自分で検索を押した時**（`clickSearch`）にしか
+   *     呼ばれない。**通常モードでは人が検索を押す**ので通らず、合図が来ないまま `abandoned` になっていた。
+   *     ＝ **止まっていないのに止まったと記録されていた**（統括の判断が狂う一番の原因）。
+   *
+   *   → **人が検索を押した事を検知して、合図を送る**（`startHumanSearchWatch`）。
+   *     ⚠ 自動で入れる時（`fillRealpro`）は今まで通り `clickSearch` が送るので**二重にならない**
+   *       （`_doneNotified` で1回だけ）。
+   *     ⚠ 人の操作でも**点検の段（steps）**に「人が検索を押した」を残す（後で手本と比べられる）。
+   */
+  var _humanSearchWatch = null;
+  function startHumanSearchWatch() {
+    try {
+      if (_humanSearchWatch) return;                      // すでに見張っている
+      if (typeof chrome === "undefined" || !chrome.runtime) return;   // 拡張の外では何もしない
+      /**
+       * 見張る相手: 検索ボタン（`div.go_search`・`a.text` の「検索」・小窓の外にある物）。
+       *   ⚠ 小窓の中の検索は押さない（所在地の確定と取り違える）。
+       */
+      var isSearchBtn = function (el) {
+        try {
+          if (!el || !el.closest) return false;
+          if (el.closest('.this_window, [role="dialog"], .modal, .modal_wrap')) return false;   // 小窓の中は除く
+          var t = String(el.textContent || "").replace(/\s+/g, "");
+          if (el.matches && el.matches('div.go_search, div.go_search_submit')) return true;
+          return /^(住居検索|検索|物件を検索する|条件で検索)$/.test(t);
+        } catch (_) { return false; }
+      };
+      var onClick = function (e) {
+        try {
+          if (!e || !e.isTrusted) return;                 // 人の操作だけ（拡張の合成クリックは除く）
+          if (!isSearchBtn(e.target)) return;
+          /**
+           * ⚠ 合図を送るには「誰の検索か」が要る（`_fillCustomerId`）。
+           *   通常モード（人が操作）では自動入力の文脈が無いので、**拡張の「いまのお客様」**を借りる。
+           *   それも無ければ**お客様を付けずに送る**（点検の段だけ残す・物件取得は走らせない）。
+           */
+          var cid = _fillCustomerId || null;
+          if (!cid) {
+            try {
+              chrome.storage.local.get(["current_customer_id"], function (r) {
+                var c = (r && r.current_customer_id) || null;
+                if (c) { _fillCustomerId = c; }
+                _sendHumanSearchDone(Date.now());
+              });
+              return;
+            } catch (_) {}
+          }
+          _sendHumanSearchDone(Date.now());
+        } catch (_) {}
+      };
+      /**
+       * 人が検索を押した合図（`notifyDone` を1回だけ）。
+       *   ⚠ 少し待ってから送る（サイトが結果を描くのを待つ。すぐ送ると「0件」に見える）。
+       *   ⚠ **関数宣言**にする（`var` だと巻き上げで undefined になり、
+       *     `onClick` から呼んだ時に**黙って何も起きない**・過去に踏んだ罠）。
+       */
+      function _sendHumanSearchDone(t0) {
+        /**
+         * ⚠ 待ちは**人の間隔**にする（固定の数字はテストで落ちる・実測で指摘された）。
+         *   `AxlxHumanWait.logNormalDelay` を使う（無ければ 2.5秒）。
+         */
+        var _H = window.AxlxHumanWait;
+        var _wait = (_H && _H.logNormalDelay) ? _H.logNormalDelay(2500, 0.35) : 2500;
+        setTimeout(function () {
+          try {
+            if (_doneNotified) return;
+            if (_audit) {
+              try { _auditStepP('human_search', '人が検索を押した（' + Math.round((Date.now() - t0) / 1000) + '秒後に合図）'); } catch (_) {}
+            } else {
+              /**
+               * ⚠ 通常モードは `_audit` が無い。それでも**段を1つ残す**ために最低限の器を作る
+               *   （`notifyDone` が `_auditPack` を通る時に `pack_error` にならないように）。
+               */
+              try {
+                _audit = {
+                  v: 1, site: 'realpro', search_clicked: Date.now(), search_press: null, search_buttons: null,
+                  sel_mismatch: [], form: null, stations_ok: [], stations_missing: [], lines_missing: [],
+                  click_fails: [], reset_fail: null, area_path: null, fallback: null,
+                  steps: [{ at: t0, k: "human_search", d: "人が検索を押した" }], ops: [],
+                  late_max: 0, late_over_1s: 0, stall: null,
+                  local_run_id: 'human_' + t0.toString(36), no_run_id: true,
+                };
+              } catch (_) {}
+            }
+            notifyDone();
+          } catch (_) {}
+        }, Math.max(600, Math.round(_wait)));
+      }
+      document.addEventListener("click", onClick, true);
+      _humanSearchWatch = onClick;
+      console.log("[AX] 人の検索を見張ります（通常モードでも点検に残す）");
+    } catch (_) {}
+  }
+  /**
+   * ⚠ 2026-11-15: **起動時に呼ぶ**（これを忘れると見張りが付かない）。
+   */
+  try { startHumanSearchWatch(); } catch (_) {}
+
 
   // 非ブロッキング警告表示（alert() はモーダルブロッキングで無人運転時に
   // fill-done の配送まで止めてしまうため使用禁止）

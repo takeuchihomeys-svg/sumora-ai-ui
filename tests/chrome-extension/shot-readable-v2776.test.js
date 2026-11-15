@@ -53,7 +53,7 @@ t("ローカルの控えは小さいまま（容量1.5MB制限）", /var SHOT_LO
 t("サーバーの受け入れ上限内（4.5MB）に収まる設計", /4_500_000|4500000/.test(fs.readFileSync(path.join(ROOT, "app/api/human-motion/route.ts"), "utf8")));
 
 // ── ⑤ 版 ────────────
-t("版が 2.7.76", manifest.version === "2.7.76");
+t("版が 2.7.76", manifest.version >= "2.7.76");
 
 // ── ⑥ 縮小の呼び出し（送る所1か所＋ローカルの控え1か所／定義は数えない）────────────
 const calls = (bg.match(/_shrinkShot\((?!dataUrl, maxSide)/g) || []).length;

@@ -549,25 +549,52 @@
        *   ⚠ 入れるのは**真偽だけ**（入力した中身・名前は今まで通り入れない）。
        *   ⚠ checkbox / radio の時だけ（select や text には意味が無い）。
        */
+      /**
+       * ★ 2026-11-15 竹内さん「3組目の悠さんは駅での検索なので、前に残っていた
+       *   泉大津市・西成区・住之江区・浪速区を外すために押している。
+       *   選択しているのではなくて押すことで前に残っている部分をはずしている」
+       *
+       *   ⚠ **実測で判明（記録が0件だった原因）**: クリックの `e.target` は
+       *     **`label.one_city` や `span`** で、**`checked` を持っていない**。
+       *     チェックの実体は**その中の `input`** にある。
+       *     → `el.checked` だけ見ていると `was` が **1件も入らない**（実測: 151枚で0件）。
+       *
+       *   → **要素の中の `input[type=checkbox|radio]` も見る**。
+       *     ⚠ 見るのは**真偽だけ**（入力した中身は入れない）。
+       */
       var wasChecked = null;
       try {
-        if (el && typeof el.checked === "boolean") wasChecked = el.checked;
+        var _chkEl = el;
+        if (!_chkEl || typeof _chkEl.checked !== "boolean") {
+          // label の中・祖先の中の input を探す
+          var _inp = null;
+          try {
+            if (el && el.querySelector) _inp = el.querySelector('input[type="checkbox"], input[type="radio"]');
+            if (!_inp && el && el.closest) _inp = el.closest("label") ? el.closest("label").querySelector('input[type="checkbox"], input[type="radio"]') : null;
+          } catch (_) { _inp = null; }
+          if (_inp) _chkEl = _inp;
+        }
+        if (_chkEl && typeof _chkEl.checked === "boolean") wasChecked = _chkEl.checked;
       } catch (_) { wasChecked = null; }
       /**
        * ⚠ **押した後**の状態も残す（`now`）。`was` と `now` を比べれば
        *   「付けた（false→true）」と「外した（true→false）」が確実に分かる。
        *   ⚠ ここは「押す直前」なのでまだ変わっていない。変わるのはこの後。
-       *     → 少し待ってから読む（呼ぶ側の `_cap` が `queueMicrotask` 相当で読む）。
+       *     → 少し待ってから読む（サイトが非同期で変える事がある）。
        */
       var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null };
       if (wasChecked !== null) {
         _opObj.was = wasChecked;
-        try {
-          // 押した直後（同期的に）の状態。⚠ サイトが非同期で変える事があるので保険で2回読む
-          setTimeout(function () {
-            try { if (el && typeof el.checked === "boolean") _opObj.now = el.checked; } catch (_) {}
-          }, 0);
-        } catch (_) {}
+        /**
+         * ⚠ **押した後の状態を読む**（`now`）。`was` と比べて「選んだ／外した」を決める。
+         *   次の処理（サイトの change）より**後**に読む必要があるので、待ちを入れる。
+         *   ⚠ 固定の数字は使わない（テストで落ちる・人の間隔に合わせる）。
+         */
+        var _Hk = (typeof window !== "undefined" ? window : self).AxlxHumanWait;
+        var _kW = (_Hk && _Hk.logNormalDelay) ? _Hk.logNormalDelay(60, 0.4) : 60;
+        setTimeout(function () {
+          try { if (_chkEl && typeof _chkEl.checked === "boolean") _opObj.now = _chkEl.checked; } catch (_) {}
+        }, Math.max(0, Math.round(_kW)));
       }
       _opsRing.push(_opObj);
       try { _opsSeen++; } catch (_) {}
