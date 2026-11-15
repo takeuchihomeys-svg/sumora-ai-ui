@@ -22,7 +22,7 @@
 //   on でも道（返信か AIX か）と組み立ては決め直さない（読んで番号を付けるだけ・KB 0dbfbc97「後の役は決め直さない」）。
 // テスト: app/lib/__tests__/ask-ledger.test.ts
 
-import { planFromMeta, planMessages, type PlanAsk, type PlanSlot, type TwoMessagePlan } from "./two-message-plan";
+import { planFromMeta, planMessages, aixFamilyKey, type PlanAsk, type PlanSlot, type TwoMessagePlan } from "./two-message-plan";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
@@ -183,12 +183,12 @@ export function checkAskLedger(items: ReadonlyArray<AskEntry>, plan?: TwoMessage
     }
     // 取りこぼし②: AIX の要件が2種類あるのに、AIX の通は1つ目の AIX だけ（組み立ては AIX を1つしか持たない）＝2つ目の AIX を送る通が無い
     const mAix = aixOfMsg(e.msg);
-    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && mAix !== e.aix) {
+    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && aixFamilyKey(mAix) !== aixFamilyKey(e.aix)) {
       issues.push({ id: e.id, code: "dropped", why: `AIX の要件（${e.aix}）に、その AIX の通が無い（${e.msg}通目は ${mAix}）` });
       continue;
     }
     // 取り違え③: 要件の AIX とブレインの最終の AIX（押される AIX）が違い、最終の AIX の要件が1つも無い＝組み立ては要件の AIX、押されるのは最終の AIX
-    if (e.route === "aix" && e.aix && finalAix && e.aix !== finalAix && !items.some((x) => x.route === "aix" && x.aix === finalAix)) {
+    if (e.route === "aix" && e.aix && finalAix && aixFamilyKey(e.aix) !== aixFamilyKey(finalAix) && !items.some((x) => x.route === "aix" && x.aix && aixFamilyKey(x.aix) === aixFamilyKey(finalAix))) {
       issues.push({ id: e.id, code: "misrouted", why: `要件の AIX（${e.aix}）と最終の AIX（${finalAix}）が違う` });
     }
     // 取り違え①: AIX の番（スタッフだけが知る事）を返信の通で答える
@@ -231,7 +231,8 @@ export function annotateAsks<T extends Record<string, unknown>>(rawAsks: Readonl
 }
 
 // ── 送った所まで（継ぎ目②の純関数）───────────────────────────────────
-export type SentMove = { kind: "reply" | "aix"; aix?: string | null };
+/** 送った通。template＝AIX のテンプレートの通として送った（AIX の画面の2通目）。手打ちの返信は template を付けない */
+export type SentMove = { kind: "reply" | "aix"; aix?: string | null; template?: boolean };
 export type AskProgress = {
   /** 組み立ての何通目まで送ったか（0＝まだ） */
   sentUpTo: number;
@@ -248,7 +249,8 @@ export type AskProgress = {
 };
 /**
  * 実際に送った通を、帳面の組み立てに順に当てる（純関数）。
- *   返信の送信は次の「返信」か「AIX テンプレート」の通に当てる（テンプレートはスタッフが手で送る文の通）。
+ *   返信の送信は、次の AIX の通の手前までで「返信」の通に当てる（template の印がある時はテンプレートの通）。手前に返信の通が無ければテンプレートの通に当てる
+ *   （竹内さんの AT の T は手打ちの文＝印が無くてもテンプレートの席を埋める）。
  *   AIX の送信は次の「AIX」の通に当てる。種類が違えば offPlan に書いて止める（推し直さない＝3か所が別々に推し直して食い違う元を作らない）。
  *   組み立てで飛ばした通（例: テンプレートを送らずに返信）は、飛ばした通の要件を残りに入れる。
  */
@@ -258,14 +260,20 @@ export function progressAfterSends(ledger: AskLedger, sends: ReadonlyArray<SentM
   let offPlan: string | null = null;
   for (const s of sends) {
     let hit = -1;
-    for (let j = cursor; j < ledger.msgs.length; j++) {
-      const m = ledger.msgs[j];
-      if (s.kind === "aix" ? m.slot === "aix" : m.slot !== "aix") { hit = j; break; }
+    if (s.kind === "aix") {
+      for (let j = cursor; j < ledger.msgs.length; j++) if (ledger.msgs[j].slot === "aix") { hit = j; break; }
+    } else {
+      // 次の AIX の通の手前まで（そこまでの返信・テンプレートの通が候補）
+      let end = ledger.msgs.length;
+      for (let j = cursor; j < ledger.msgs.length; j++) if (ledger.msgs[j].slot === "aix") { end = j; break; }
+      const win = ledger.msgs.slice(cursor, end).map((m, k) => ({ m, j: cursor + k }));
+      const want = s.template ? "aix_template" : "reply";
+      hit = (win.find((x) => x.m.slot === want) ?? win[0])?.j ?? -1;
     }
     if (hit < 0) { offPlan = s.kind === "aix" ? `組み立てに無い AIX（${baseKey(s.aix) ?? "?"}）を送った` : "組み立ての通より多く返信を送った"; break; }
     const m = ledger.msgs[hit];
     const k = baseKey(s.aix);
-    if (s.kind === "aix" && k && m.aix && k !== m.aix) { offPlan = `組み立ての AIX（${m.aix}）と違う AIX（${k}）を送った`; break; }
+    if (s.kind === "aix" && k && m.aix && aixFamilyKey(k) !== aixFamilyKey(m.aix)) { offPlan = `組み立ての AIX（${m.aix}）と違う AIX（${k}）を送った`; break; }
     done.add(m.no);
     cursor = hit + 1;
   }
@@ -296,4 +304,28 @@ export function openAsksFrom(ledger: AskLedger | null | undefined, progress: Ask
 export function askLedgerAlert(ledger: AskLedger | null | undefined): string | null {
   if (!ledger || ledger.check.ok) return null;
   return `要件の帳面: ${ledger.check.issues.slice(0, 3).map((x) => `${x.code === "dropped" ? "取りこぼし" : x.code === "doubled" ? "重ね" : "取り違え"}（${x.why}）`).join("／")}`;
+}
+
+// ── 送り済み・残りの書き戻し（継ぎ目②・conversations.ask_progress・ASK_PROGRESS=on の時だけ）────────────
+/** 既定 off（ASK_PROGRESS=on の時だけ返信・AIX の送信の後に conversations.ask_progress を書く） */
+export function askProgressOn(env: Env = envOf()): boolean {
+  return (env.ASK_PROGRESS ?? "").trim().toLowerCase() === "on";
+}
+/** conversations.ask_progress の形。seen_customer_at が今の帳面と同じ時だけ続きとして読む（新しいお客様の発言の後は数え直し） */
+export type AskProgressRecord = AskProgress & { v: 1; seen_customer_at: string | null; sends: SentMove[]; at: string };
+/** 前の記録に今の送信を1つ足して数え直す（純関数）。帳面が無い・送信の数が多すぎる時は null（書かない） */
+export function nextAskProgress(ledger: AskLedger | null | undefined, prev: unknown, move: SentMove, nowIso: string): AskProgressRecord | null {
+  if (!ledger) return null;
+  const p = prev as Partial<AskProgressRecord> | null | undefined;
+  const same = !!p && p.v === 1 && Array.isArray(p.sends) && (p.seen_customer_at ?? null) === (ledger.seen_customer_at ?? null);
+  const sends = [...(same ? (p!.sends as SentMove[]) : []), { kind: move.kind, ...(move.aix ? { aix: String(move.aix).slice(0, 60) } : {}), ...(move.template ? { template: true } : {}) }];
+  if (sends.length > 12) return null;
+  return { v: 1, seen_customer_at: ledger.seen_customer_at ?? null, sends, ...progressAfterSends(ledger, sends), at: nowIso };
+}
+/** 読む側（AIX の2通目・画面の帯・次の番）: 今の帳面の続きの記録だけ返す（古い番の記録は null） */
+export function askProgressOf(ledger: AskLedger | null | undefined, raw: unknown): AskProgressRecord | null {
+  const p = raw as Partial<AskProgressRecord> | null | undefined;
+  if (!ledger || !p || p.v !== 1 || !Array.isArray(p.sends)) return null;
+  if ((p.seen_customer_at ?? null) !== (ledger.seen_customer_at ?? null)) return null;
+  return p as AskProgressRecord;
 }
