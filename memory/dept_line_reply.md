@@ -9591,3 +9591,10 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - ③ 弊社の見積書の送り返し: 質問あり→答える返信／質問なし→内覧の誘い／その物件が退去予定（送った物件の現況）→AIX【申込へ】／文がまだ→待つ
 - 今までの連携: customer-sent-property（持ち込みの物件の値）は 🌟 の並べ方（pickup-rank）と好みの学び（customer-pref-learning）に渡る・image-wants は条件欄と会話の「欲しい」を集めるが画像の書き起こしは外していた＝手本の画像の特徴は要望の欄に届いていなかった。要望の欄に書けば image-wants・customer-wants が条件として読む
 - テスト app/lib/__tests__/image-route-1115.test.ts
+
+## 2026-11-15 作業員H: AIX【物件確認した】の確認の型から line_tasks.result（案A・907c74b4・TASK_RESULT_FROM_AIX・既定 off）
+- 画面（app/page.tsx）の AIX 送信の後の完了が id と source だけ送っていた＝ line_tasks.result 30日 0/247 → ブレインの【空室確認の回答結果（確定事実）】は一度も出ていなかった
+- 画面は AIX の種類・check_pattern・prop_statuses・物件名も一緒に送る（見た目は変えない）。line-tasks/complete が結果の無い AIX の完了に app/lib/task-result-from-aix.ts で結果を付け、今の書き戻し（sent_properties の募集状況）もそのまま動く
+- 対応: available→available・unavailable→taken・alternative→taken（メモ）・vacating→move_out_planned・2番手→second_position／室内写真・mgmt_* は付けない／物件ごとに割れた時は付けない
+- ブレインの段の組み立ては buildCheckResultsText に移した（文字は同じ）。テスト app/lib/__tests__/task-result-from-aix.test.ts
+- URL を含む送信で済ませる時（物件出しのタスク）は空室確認ではないので結果を付けない（今のまま）

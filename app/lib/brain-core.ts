@@ -100,6 +100,7 @@ import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { staffHandMaterialOn, staffHandLine } from "@/app/lib/staff-hand-material";
+import { buildCheckResultsText } from "@/app/lib/task-result-from-aix";
 import { guarantorDocsOn, guarantorDocsAsked, guarantorDocsLine, type GuarantorDocRow } from "@/app/lib/guarantor-docs-line";
 import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
@@ -3039,11 +3040,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const allTasks = (openTasksResult.data ?? []) as OpenTask[];
   const openTasks = allTasks.filter((t) => t.status === "pending").slice(0, 5);
   const taskLabel: Record<string, string> = { property_check: "物件確認（空室確認）", property_send: "物件送付" };
-  const TASK_RESULT_LABEL: Record<string, string> = { available: "空室あり（申込可）", taken: "申込済み・埋まった", second_position: "2番手（先行申込あり）", move_out_planned: "退去予定（募集前）" };
-  const resolvedWithResult = allTasks.filter((t) => t.status !== "pending" && t.result).slice(0, 3);
-  const checkResultsText = resolvedWithResult.length > 0
-    ? `\n【空室確認の回答結果（確定事実）】\n${resolvedWithResult.map((t) => `- ${taskLabel[t.task_type] ?? t.task_type}: ${TASK_RESULT_LABEL[t.result ?? ""] ?? t.result}${t.result_note ? `（${t.result_note.slice(0, 60)}）` : ""}`).join("\n")}\n※「募集終了」「申込済み」となった物件について「募集状況を確認します」と言ってはならない（確認済みの確定事実。再言及は誤情報になる）`
-    : "";
+  // 2026-11-15 作業員H: 段の組み立ては task-result-from-aix.buildCheckResultsText に移した（文字は同じ・AIX から結果を付ける TASK_RESULT_FROM_AIX のテストで同じ関数を通す）
+  const checkResultsText = buildCheckResultsText(allTasks);
   // M1: AIX「物件確認した」でスタッフが入力した物件別の空き状況（aix_usage_logs.property_names / prop_statuses）。
   // line_tasks 由来の checkResultsText は「タスク単位の代表1値」しか持たないため、
   // 「3件確認して1件だけ空室」のような物件粒度の確定事実はここでしか供給できない。

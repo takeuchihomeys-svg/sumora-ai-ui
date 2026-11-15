@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
+import { taskResultFromAix, taskResultFromAixOn } from "@/app/lib/task-result-from-aix";
 
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
@@ -30,14 +31,23 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { id, source, result, result_note } = await req.json() as {
+  const body = await req.json() as {
     id: string;
     source?: string;
     // 空室確認の構造化結果（物件あった=available / 2番手=second_position / 埋まってた=taken / 退去予定=move_out_planned）
     result?: "available" | "taken" | "second_position" | "move_out_planned";
     result_note?: string;
+    // 2026-11-15 作業員H（案A・907c74b4）: AIX 送信の後の完了で画面が一緒に送る、AIX で選んだ確認の型（物件確認した の check_pattern・物件ごとの prop_statuses）
+    aix_type?: string | null; check_pattern?: string | null; prop_statuses?: string[] | null; property_names?: string[] | null;
   };
+  const { id, source } = body;
+  let { result, result_note } = body;
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+  // 結果が無い AIX 送信の完了は、選んだ確認の型から結果を付ける（task-result-from-aix・既定 off: TASK_RESULT_FROM_AIX=on）
+  if (!result && source === "aix" && taskResultFromAixOn()) {
+    const r = taskResultFromAix({ aixType: body.aix_type, checkPattern: body.check_pattern, propStatuses: body.prop_statuses, propertyNames: body.property_names });
+    if (r) { result = r.result; result_note = result_note ?? r.note ?? undefined; console.log(JSON.stringify({ tag: "line-tasks:result-from-aix", id, result: r.result })); }
+  }
 
   const VALID_RESULTS = ["available", "taken", "second_position", "move_out_planned"];
   const completedAt = new Date().toISOString();
