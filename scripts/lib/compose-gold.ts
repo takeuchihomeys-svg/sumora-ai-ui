@@ -11,7 +11,7 @@ import { headWordOf, type HeadWord } from "../../app/lib/compose-head";
 import { composeAsksFactsOn, asksFactsOf } from "../../app/lib/compose-asks-facts";
 
 export type Root = "A" | "B" | "C" | "D";
-export const ELEMENTS = ["主の役目", "頭", "つなぎ", "押さえ", "信頼", "潜在", "締め", "事実"] as const;
+export const ELEMENTS = ["主の役目", "頭", "つなぎ", "押さえ", "信頼", "潜在", "締め", "事実", "事実（中身）", "事実（話題だけ）"] as const;
 export type El = typeof ELEMENTS[number];
 export type Prob = { id: string; customer?: string; staffText?: string; context?: Array<{ s: string; t: string; aix?: boolean }> };
 export type ElementResult = { el: El; goldHas: boolean; hit: boolean; root: Root | null; ex: string; detail?: Record<string, string> };
@@ -100,7 +100,15 @@ export function evalGoldTurn(g: TakeuchiGold, b: Record<string, unknown>, p: Pro
   const factText = [f.part ?? "", ...(composeAsksFactsOn() ? asksFactsOf(b).map((x) => x.text) : [])].join("／").replace(/^／+|／+$/g, "");
   const gw = [...new Set(String(g.part ?? "").normalize("NFKC").match(/[一-龯ァ-ヶーA-Za-z0-9]{2,}/gu) ?? [])];
   const factHit = !!factText && gw.length > 0 && gw.filter((w) => factText.normalize("NFKC").includes(w)).length * 2 >= gw.length;
-  push("事実", !!g.part, factHit, !!factText, `竹内=${g.part} 設計図=${factText || "空"}`, false, { id: g.id, customer: customerText.slice(0, 160), takeuchiPart: g.part ?? "", takeuchi: String(p.staffText).slice(0, 240), asks: JSON.stringify(obj(b.turn_contract)?.asks ?? []).slice(0, 500) });
+  // 2026-11-15 作業員H（統括役の頼み・事実 0/39 の調べ）: 上の「事実」は竹内さんの「どの部分」（話題・何について＝「2階の虫」「初期費用の分割払い」）の語を、
+  //   設計図の事実の欄（答えの中身＝「7階以上は虫が入る可能性が低い」「クレジットカード払いのみ分割対応可」）に探していた＝話題と答えを比べる物差しの誤り（a）。
+  //   「事実（中身）」は設計図の答えの中身の語（数字・単位つきの値と2文字以上の語）が竹内さんの実際の文に半分以上あるかで数える（中身が竹内さんの言った事と合うか）
+  const fr = factContentRatio(factText, String(p.staffText ?? ""));
+  const factHit2 = fr.n > 0 && fr.ratio >= FACT_CONTENT_MIN;
+  push("事実（中身）", !!g.part, factHit2, !!factText, `竹内=${g.part} 中身の重なり=${fr.n ? Math.round(fr.ratio * 100) + "%" : "空"}`, false);
+  // 「事実」は話題が合う か 中身が竹内さんの文と重なる のどちらかで当たり（11/15 から・前の話題だけの数えは「事実（話題だけ）」）
+  push("事実（話題だけ）", !!g.part, factHit, !!factText, `竹内=${g.part} 設計図=${factText || "空"}`, false);
+  push("事実", !!g.part, factHit || factHit2, !!factText, `竹内=${g.part} 設計図=${factText || "空"}`, false, { id: g.id, customer: customerText.slice(0, 160), takeuchiPart: g.part ?? "", takeuchi: String(p.staffText).slice(0, 240), asks: JSON.stringify(obj(b.turn_contract)?.asks ?? []).slice(0, 500) });
   // 頭: 頭の木（COMPOSE_HEAD_SPLIT の決め方）× 竹内さんの頭の一言。外れは型が粗い（B）
   const ctx = p.context ?? [];
   const prevStaff = [...ctx].reverse().find((m) => m.s === "staff") ?? null;
@@ -114,4 +122,24 @@ export function evalGoldTurn(g: TakeuchiGold, b: Record<string, unknown>, p: Pro
   const inviteT = /_cta$/.test(tk), inviteB = /_cta$/.test(bc);
   out.push({ el: "締め", goldHas: true, hit: tk === bc, root: tk === bc ? null : pathWrong(b) ? "D" : inviteT !== inviteB || (inviteT && tk !== bc) ? (leadHit ? "B" : "C") : "A", ex: ex(`竹内=${tk} 決め表=${bc}`) });
   return out;
+}
+
+/** 中身の重なり: 設計図の答えの2文字の並び（漢字・カタカナ・数字を含む物）のうち、竹内さんの文にある割合 */
+export const FACT_CONTENT_MIN = 0.4;
+export function factContentRatio(fact: string, staff: string): { ratio: number; n: number } {
+  const norm = (x: string) => String(x ?? "").normalize("NFKC").replace(/[s！!。、,，・／/（）()「」【】]+/g, "");
+  const f = norm(fact), st = norm(staff);
+  const grams = new Set<string>();
+  for (let i = 0; i + 2 <= f.length; i++) { const g = f.slice(i, i + 2); if (/[一-龯ァ-ヶー0-9]/u.test(g)) grams.add(g); }
+  if (!grams.size) return { ratio: 0, n: 0 };
+  let hit = 0; for (const g of grams) if (st.includes(g)) hit++;
+  return { ratio: hit / grams.size, n: grams.size };
+}
+/** 設計図の事実の欄の中身の語（数字と単位の値・2文字以上の語・言い回しの語は除く） */
+const FACT_STOP = new Set(["する", "させて", "頂き", "いただき", "します", "ます", "こと", "ため", "お客様", "可能", "ご案内", "お送り", "伝える", "約束", "確認しご連絡", "ご連絡"]);
+export function factContentWords(text: string): string[] {
+  const t = String(text ?? "").normalize("NFKC");
+  const nums = t.match(/d[d,.]*s*(?:円|万円|万|帖|畳|分|階|日|時|ヶ月|か月|ヵ月|%|㎡|件|号室)?/g) ?? [];
+  const words = t.replace(/d[d,.]*/g, " ").match(/[一-龯ァ-ヶー]{2,}/gu) ?? [];
+  return [...new Set([...nums.map((x) => x.replace(/s+/g, "")), ...words].filter((w) => !FACT_STOP.has(w)))].slice(0, 12);
 }

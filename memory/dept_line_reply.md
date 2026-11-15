@@ -9604,3 +9604,7 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 守り（app/lib/human-learn-profile-guard.ts・route）: 軽い確認は版（bundle->>generated_at）だけ・読んだ印は10分に1回だけ応答の後で・CDN の短いキャッシュ（s-maxage 30/60秒＋stale-while-revalidate）で同じ要求を1つに・同じ関数の中の重なった読み・作り直しを1本に・作ってから5分は作り直さない。索引 (scope, created_at desc) は既にある
 - テスト app/lib/__tests__/human-learn-profile-guard.test.ts（01:40 の形: 130回→読み1回・作り直し40回→1本・印 302回→0回）
 - 拡張の側（Cursor）への頼み: 束の取り直しを同時に1本だけ（実行中なら待つ）・失敗した時は間を空けて取り直す・起動の時の取り直しにずらしの間を入れる
+## 2026-11-15 作業員H: 文の物差しの「事実」0/39 の分け（KB 3041baaa）と本番の毎日の物差し
+- 分け: (a) 物差しの誤り＝竹内さんの「どの部分」（話題「2階の虫」）の語を、設計図の事実の欄（答えの中身「7階以上は虫が入る可能性が低い」）に探していた→「事実」を 話題が合う か 中身（2文字の並び）が竹内さんの文と4割以上重なる に（scripts/lib/compose-gold.ts・「事実（中身）」「事実（話題だけ）」も並べる）／(b) 既定（COMPOSE_ASKS_FACTS=off）では設計図の事実の欄が空＝ブレインの依頼ごとの答えが書き手の設計図に届いていない（0/39 の大半）。on で 24/39（62%）／(c) 届いているが答えが方針の文（q041・q072・q073）・中身の誤り（q057 内見可能）＝ブレインの読み／(d) AIX の番（根 D 7）は事実の文が AIX の側で比べられない
+- 本番の毎日の物差し scripts/compose-prod-daily.ts（読むだけ・--write で cron_run_logs compose-prod-daily）: 竹内さん本人の返信の番の実送信×下書き（line_watch_turns.draft_last）を要素ごとに。11/15 の直近7日 25番: 頭 76%・押さえ 70%・信頼 100%・つなぎ 17%・締め 44%・事実 59%・2通目 0%（下書きは1通だけ）
+- テスト scripts/lib/__tests__/compose-fact-measure.test.ts・監査 scripts/audit-compose-fact.ts
