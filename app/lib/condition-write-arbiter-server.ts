@@ -1,6 +1,6 @@
 // app/lib/condition-write-arbiter-server.ts
 // condition-write-arbiter.ts の DB の口（直前の履歴と根拠の発言の時刻を読む）。読むのは1人の直近6時間の履歴だけ（軽い）。
-// スイッチ CONDITION_WRITE_ARBITER=off（既定）|shadow|on。off の時は DB を読まずにそのまま返す。
+// スイッチ CONDITION_WRITE_ARBITER=shadow（既定）|on|off。off の時は DB を読まずにそのまま返す。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { arbitrateConditionUpdates, conditionWriteArbiterMode, REVERT_WINDOW_MS, type HistoryRowLike } from "./condition-write-arbiter";
 

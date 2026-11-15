@@ -42,6 +42,7 @@ import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
 // 2026-10-07 決め手の条件（気に入った部屋＋あと一つの不満から作る次の物件の像・closing-target.ts）
 import { closingTargetCodes, CLOSING_POINTS, CLOSING_JA, type ClosingTargetJudgeInput } from "./closing-target";
+import { sentLikeCodes, SENT_LIKE_POINTS, SENT_LIKE_JA, type SentLikeProfile } from "./sent-like-fit";
 import { proposalRangeCodes, wideSqmMargin, proposalSizeWideEnabled, FEWER_ROOM_LDK_MIN_SQM, PROPOSAL_POINTS, PROPOSAL_JA, PROPOSAL_HOLD_CODES, PROPOSAL_POSITIVE_CODES, type ProposalRange } from "./proposal-range-codes";
 import { reactionCodesFor, REACTION_POINTS, REACTION_JA, REACTION_HOLD_CODES, type ReactionNegative } from "./reaction-negatives";
 import { hookLeanCodesOf, HOOK_LEAN_CODES, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, hookLeanCode, type HookLeanJudgeInput } from "./hook-lean-core";
@@ -662,6 +663,7 @@ export const REASON_JA: Record<string, string> = {
   ...Object.fromEntries(HOOK_FEATURE_KEYS.map((f) => [hookLeanCode(f), `刺さった新着に多い特徴（${HOOK_FEATURE_JA[f]}・この型のお客様）`])),
   // 2026-10-07 決め手の条件（closing-target.ts）
   ...CLOSING_JA,
+  ...SENT_LIKE_JA,
   // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.ts）
   ...PROPOSAL_JA,
   // 2026-10-20 送った物件へのお客様の反応・メモ（reaction-negatives.ts・AIX_REACTIONS_LINK=on の時だけ付く）
@@ -937,6 +939,8 @@ export const REASON_POINTS: Record<string, number> = {
   ...Object.fromEntries(HOOK_LEAN_CODES.map((c) => [c, HOOK_BONUS.bonusEach])),
   // 2026-10-07 決め手の条件に合う +12・一番の点だけ合う +6（加点だけ・推測の像なので外れの減点はしない・closing-target.CLOSING_POINTS）
   ...CLOSING_POINTS,
+  // 2026-11-15 送ってきた・刺さった物件の像に似ている（sent-like-fit・加点だけ・STAR_SENT_LIKE=on の時だけ呼ぶ側が像を渡す）
+  ...SENT_LIKE_POINTS,
   // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.PROPOSAL_POINTS）・部屋数が1つ少ない広い LDK（FLOOR_PLAN_LARGER と同じ +5）
   ...PROPOSAL_POINTS,
   // 2026-10-20 送った物件へのお客様の反応・メモ（弱い減点 −8・NG と言った物は −15 で保留・解消は +4・reaction-negatives.ts）
@@ -2030,6 +2034,11 @@ export type JudgeOptions = {
    *   解消した物に *_OK（+4・保留・外す候補には付けない）。渡さなければ今まで通り（AIX_REACTIONS_LINK=off は呼ぶ側が null）
    */
   reactionNegatives?: ReadonlyArray<ReactionNegative> | null;
+  /**
+   * 2026-11-15 作業員K: お客様が送ってきた物件・刺さった物件の像（sent-like-server.loadSentLikeProfile）。渡すと像に似た物件に SENT_LIKE_HIGH（+6）／_LOW（+3）。
+   *   保留・外す候補には付けない。渡さなければ今まで通り（STAR_SENT_LIKE=off＝既定は呼ぶ側が null）
+   */
+  sentLike?: SentLikeProfile | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -2314,6 +2323,10 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     for (const c of closingTargetCodes(facts, opts.closingTarget)) if (!codes.includes(c)) codes.push(c);
   }
   if (reactionOk.length && !holds.length && !drops.length) for (const c of reactionOk) if (!codes.includes(c)) codes.push(c);
+  // 2026-11-15 作業員K: 送ってきた・刺さった物件の像（sent-like-fit）。加点だけ・保留・外す候補には付けない
+  if (opts.sentLike && !holds.length && !drops.length) {
+    for (const c of sentLikeCodes(opts.sentLike, { floorPlan: facts.floorPlan, areaSqm: facts.areaSqm ?? null, buildingAge: facts.buildingAge, walkMinutes: facts.walkMinutes })) if (!codes.includes(c)) codes.push(c);
+  }
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
     for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
@@ -2422,6 +2435,8 @@ function isNewPositive(c: string): boolean {
     || /^REACTION_.+_OK$/.test(c)
     // 2026-10-07 決め手の条件に合う
     || c === "CLOSING_FIT" || c === "CLOSING_MAIN_OK" || c === "CLOSING_NEAR_FAVORITE"
+    // 2026-11-15 送ってきた・刺さった物件に似ている
+    || c === "SENT_LIKE_HIGH" || c === "SENT_LIKE_LOW"
     // 2026-10-13 広げて提案してよい範囲の中（このお客様）・部屋数が1つ少ない広い LDK
     || PROPOSAL_POSITIVE_CODES.has(c) || c === "FLOOR_PLAN_FEWER_ROOM_WIDE"
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)

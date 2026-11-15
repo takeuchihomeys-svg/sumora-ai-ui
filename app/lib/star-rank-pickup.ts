@@ -16,6 +16,7 @@ import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-su
 import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
 import { starSituationOf, type StarCandidate, type StarSituation } from "./recommend-star-rank";
 import { renovationOfText } from "./listing-renovation";
+import { planTokenOf } from "./sent-like-fit";
 import { oldAgeApplies, oldAgeModeOf, type OldAgeMode } from "./old-building-age";
 
 export type StarPickupRow = {
@@ -100,6 +101,8 @@ export function starCandidateOfPickup(r: StarPickupRow, score: number): StarCand
     zeroZero: zeroZeroOfPickup(r),
     floor: num(r.equipment?.floor),
     walkMinutes: parseWalkMinutesFromSummary(r.summary_text ?? null),
+    // 2026-11-15 間取り（送ってきた／刺さった物件の像と比べる・sent-like-fit）
+    floorPlan: planTokenOf(`${r.property_name ?? ""} ${r.summary_text ?? ""}`),
     equipmentKeys: equipmentKeysOf(r.equipment),
     // 2026-10-06d リノベ済み（物件名の「（フルリノベーション）」・説明文）と敷金＋礼金（同点の分け方）
     renovated: renovatedOfPickup(r),

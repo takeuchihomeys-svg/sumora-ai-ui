@@ -4,7 +4,7 @@ import { resolveScreeningSync } from "@/app/lib/conversation-status";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
 import { isTestOnlyConversation } from "@/app/lib/test-conversations";
-import { normalizeRentUnits } from "@/app/lib/rent-units";
+import { normalizeRentUnits, syncScreeningPcGuardOn } from "@/app/lib/rent-units";
 
 export const maxDuration = 60;
 
@@ -131,10 +131,10 @@ async function handleFormatMessage(conversationId: string, msgText: string): Pro
   if (!conv.property_customer_id) {
     // 初回フォーマット: 条件解析 → 新規 property_customer 作成 → 紐付け
     const conditions0 = await parseConditionsWithAI(msgText);
-    // 2026-11-15 作業員K（SYNC_SCREENING_PC_GUARD=on で効く・既定 off）:
+    // 2026-11-15 作業員K（SYNC_SCREENING_PC_GUARD・既定 on＝統括役の決め・=off で戻す）:
     //   ①家賃の単位の誤りを直す（他の経路と同じ線・rent-units.ts）。この経路だけ無く、10倍の家賃の行が4つ残っていた
     //   ②同じ LINE のお客様の行が既にあれば新しく作らずに結ぶ。同時に2回届いて 5ms 差で2行でき、片方が会話に結ばれない new_inquiry のまま残っていた（6人）
-    const guard = String(process.env.SYNC_SCREENING_PC_GUARD ?? "").trim().toLowerCase() === "on";
+    const guard = syncScreeningPcGuardOn();
     const conditions = guard && conditions0 ? normalizeRentUnits(conditions0) : conditions0;
     if (guard && conv.line_user_id) {
       const { data: same } = await supabase.from("property_customers").select("id")

@@ -14,3 +14,8 @@ export function normalizeRentUnits<T extends Record<string, unknown>>(parsed: T)
   }
   return out as T;
 }
+
+/** sync-from-screening の新規の物件顧客の守り（家賃の単位・同じ LINE のお客様の行に結ぶ）。既定 on（2026-11-15 統括役の決め）・SYNC_SCREENING_PC_GUARD=off で戻す */
+export function syncScreeningPcGuardOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.SYNC_SCREENING_PC_GUARD ?? "").trim().toLowerCase() !== "off";
+}

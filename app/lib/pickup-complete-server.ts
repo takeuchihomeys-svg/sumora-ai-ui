@@ -249,7 +249,14 @@ export async function loadStarSituation(propertyCustomerId: string | null): Prom
   try {
     const { data, error } = await supabase.from("property_customers").select(STAR_SITUATION_COLUMNS).eq("id", propertyCustomerId).maybeSingle();
     if (error) return null;
-    return starSituationFromConditions((data ?? null) as Parameters<typeof starSituationFromConditions>[0]);
+    const sit = starSituationFromConditions((data ?? null) as Parameters<typeof starSituationFromConditions>[0]);
+    // 2026-11-15 作業員K: 送ってきた物件・刺さった物件の像（STAR_SENT_LIKE=on の時だけ・既定 off）。当て直し scripts/audit-star-sent-like.ts
+    if (sit) {
+      const { loadSentLikeProfile } = await import("@/app/lib/sent-like-server");
+      const like = await loadSentLikeProfile(supabase, propertyCustomerId);
+      if (like) sit.like = like;
+    }
+    return sit;
   } catch {
     return null;
   }
