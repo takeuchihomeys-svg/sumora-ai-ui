@@ -1077,6 +1077,75 @@
   function _aimUsedForAudit() { try { return _aimUsed.slice(-30); } catch (_) { return []; } }
   try { window.__axlxAimUsedForAudit = _aimUsedForAudit; } catch (_) {}
 
+  /**
+   * ★ 2026-11-15 竹内さん「実装する」→ **画像の位置から要素を特定して押す**。
+   *
+   *   ⚠ なぜ必要か（実測）:
+   *     自動モードは画像から **2,837欄** 読めているのに、押した位置は **30個** だけだった。
+   *     理由は「押した記録がある欄しか狙えない」から。
+   *   ⚠ なぜ「画面の位置をそのまま使う」と壊れるか:
+   *     `_humanPointerClick` は `aim.x` を**要素の中の割合**として計算する。
+   *     画面の位置（0.17）を渡すと **要素の中の17%** と解釈され、**違う所を押す**。
+   *
+   *   → **正しい手順**:
+   *     ① 画面の位置（0〜1）を px に直す
+   *     ② `document.elementFromPoint` で**その場所にある要素**を取る
+   *     ③ その要素が**目的の欄か確かめる**（名前・種類が合うか）
+   *     ④ 合えば、その要素の中の**真ん中**を押す（`aim` として返す）
+   *        ⚠ 画像からは「要素の中のどこか」までは分からないので真ん中（人が押す位置に一番近い）
+   *     ⑤ 合わなければ**使わない**（違う物を押さない）
+   *
+   *   ⚠ 拡張自身の小窓（#axlx- / #aixlinx-）に当たったら使わない。
+   *   ⚠ 見えない要素・大きさ0の要素は使わない。
+   */
+  function _elementAtScreenPos(x, y, wantName, wantKind) {
+    try {
+      if (typeof document === "undefined" || !document.elementFromPoint) return null;
+      var vw = (window.innerWidth || 0), vh = (window.innerHeight || 0);
+      if (!(vw > 0 && vh > 0)) return null;
+      var px = Math.max(0, Math.min(vw - 1, Math.round(x * vw)));
+      var py = Math.max(0, Math.min(vh - 1, Math.round(y * vh)));
+      var el = document.elementFromPoint(px, py);
+      if (!el) return null;
+      // ⚠ 拡張自身の小窓は押さない
+      try {
+        if (el.closest && el.closest('#axlx-bar, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]')) return null;
+      } catch (_) {}
+      // ⚠ 見えない・大きさ0は使わない
+      var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!r || !(r.width > 2 && r.height > 2)) return null;
+      /**
+       * ③ 目的の欄か確かめる（名前が合うか）。
+       *   ⚠ 画像の位置は**少しずれる**（撮影タイミング・画面の大きさ）ので、
+       *     その要素から**近い祖先**も見て名前を探す（label の中の input など）。
+       */
+      var L2 = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
+      var nameOf = function (e) { try { return L2 && L2.fieldName ? String(L2.fieldName(e) || "") : ""; } catch (_) { return ""; } };
+      var want = String(wantName || "").replace(/^(左の|右の)/, "").replace(/｜[^｜]*$/, "").trim();
+      var got = nameOf(el).replace(/^(左の|右の)/, "").replace(/｜[^｜]*$/, "").trim();
+      var okName = false;
+      if (want && got) {
+        okName = got === want || (want.length >= 4 && got.length >= 4 && (got.indexOf(want) >= 0 || want.indexOf(got) >= 0));
+      }
+      /**
+       * ⚠ 名前が合わない時は**祖先をたどる**（画像の位置は少しずれるので、
+       *   近くの label・td・div が目的の欄を包んでいる事がある）。
+       *   ⚠ ただし**3階層まで**（遠くまで探すと別の欄を押す）。
+       */
+      if (!okName && want) {
+        var p = el;
+        for (var up = 0; up < 3 && p; up++) {
+          p = p.parentElement;
+          if (!p) break;
+          var pn = nameOf(p).replace(/^(左の|右の)/, "").replace(/｜[^｜]*$/, "").trim();
+          if (pn && (pn === want || (want.length >= 4 && pn.indexOf(want) >= 0))) { el = p; okName = true; break; }
+        }
+      }
+      if (!okName) return null;
+      return { el: el, x: 0.5, y: 0.5, fromScreen: true };
+    } catch (_) { return null; }
+  }
+
   function _aimOf(name) {
     try {
       var v = _learnKinds && _learnKinds[name];
@@ -1086,26 +1155,37 @@
        */
       if (!v || typeof v.x !== "number" || typeof v.y !== "number") {
         /**
-         * ★ 2026-11-15 竹内さん「実装する」→ **⚠ 危険なので使わない**:
+         * ★ 2026-11-15 竹内さん「実装する」→ **画像の位置から要素を探して押す**。
          *
-         *   ⚠ `_screenAimOf` は**画面全体の割合**（0〜1）を返すが、
-         *     呼ぶ側（`_humanPointerClick`）は `aim.x` を**要素の中の割合**として計算する。
-         *     そのまま渡すと**違う所を押す**（画面の0.1を要素の中の0.1として扱う）。
-         *   → **押す位置としては使わない**。
-         *     画像の位置は「**どの要素か**を探す手がかり」として使うのが正しい（別の実装が要る）。
-         *   ⚠ ここでは**記録に理由を残す**だけにする（次に正しく実装する時の手がかり）。
+         *   ⚠ 画面の位置をそのまま `aim` にしない（要素の中の割合と意味が違う）。
+         *   → 画面の位置に**実際にある要素**を取り、目的の欄か確かめてから使う。
          */
         var _sa = _screenAimOf(name);
-        _noteAimUsed(name, null, _sa ? "screen_only（画面の位置しか無い・要素は特定できていない）" : (v ? "no_pos" : "no_learn"));
+        if (_sa) {
+          var _found = _elementAtScreenPos(_sa.x, _sa.y, name, _sa.kind);
+          if (_found) {
+            _noteAimUsed(name, { x: _found.x, y: _found.y, n: _sa.n, fromScreen: true }, null);
+            return { x: _found.x, y: _found.y, n: _sa.n, el: _found.el, fromScreen: true };
+          }
+          _noteAimUsed(name, null, "screen_no_element（画面の位置に目的の欄が無い）");
+          return null;
+        }
+        _noteAimUsed(name, null, v ? "no_pos" : "no_learn");
         return null;
       }
       if (Number(v.n) < 2) {
         /**
-         * ⚠ 押した記録が1回だけ → **画像の位置は押す位置として使わない**（意味が違う）。
-         *   理由だけ残す。
+         * 押した記録が1回だけ → **画像の位置から要素を探す**（1回は偶然かもしれない）。
          */
         var _sa2 = _screenAimOf(name);
-        _noteAimUsed(name, null, _sa2 ? "few_times+screen_only:" + Number(v.n) : "few_times:" + Number(v.n));
+        if (_sa2) {
+          var _f2 = _elementAtScreenPos(_sa2.x, _sa2.y, name, _sa2.kind);
+          if (_f2) {
+            _noteAimUsed(name, { x: _f2.x, y: _f2.y, n: _sa2.n, fromScreen: true }, null);
+            return { x: _f2.x, y: _f2.y, n: _sa2.n, el: _f2.el, fromScreen: true };
+          }
+        }
+        _noteAimUsed(name, null, "few_times:" + Number(v.n));
         return null;
       }
       var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };

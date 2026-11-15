@@ -39,19 +39,25 @@ t("axlx_learn_screen を作る", /axlx_learn_screen: _screenAim/.test(bg));
 t("3回以上見た欄だけ入れる", /\(Number\(f\.n\) \|\| 0\) < 3\) continue/.test(bg));
 t("押す位置とは別の入れ物（混ぜない）", /_screenAim\[k\] = \{ x:/.test(bg));
 
-// ── ③ ⚠ 画面の位置を「押す位置」として使わない ────────────
+// ── ③ ✅ 画面の位置から**要素を特定して**使う（v2.7.84 で実装）────────────
 t("_screenAimOf がある（読む所）", /function _screenAimOf/.test(ps));
-t("⚠ 画面の位置を aim として**返していない**（呼び出し側で return しない）", !/var _sa = _screenAimOf\(name\);\s*\n\s*if \(_sa\) \{\s*\n\s*_noteAimUsed\(name, _sa/.test(ps) && !/var _sa2 = _screenAimOf\(name\);\s*\n\s*if \(_sa2\)/.test(ps));
-t("理由（screen_only）を記録に残す", /screen_only/.test(ps));
-t("「要素は特定できていない」と書いてある", /要素は特定できていない/.test(ps));
-t("⚠ 違う所を押すと明記", /違う所を押す/.test(ps));
+/**
+ * ⚠ 2026-11-15 竹内さん「実装する」で設計を進めた:
+ *   旧: 画面の位置を **aim として使わない**（意味が違うので危険）→ 記録だけ
+ *   新: **要素を特定してから**使う（`elementFromPoint` ＋ 名前の確認）
+ *   → v2.7.83 の「使わない」テストは v2.7.84 で「要素を特定して使う」に変わった。
+ */
+t("✅ 要素を特定する関数がある", /function _elementAtScreenPos/.test(ps));
+t("✅ 要素を特定してから使う", /_elementAtScreenPos\(_sa\.x, _sa\.y, name/.test(ps));
+t("⚠ 要素が見つからなければ使わない（違う物を押さない）", /screen_no_element/.test(ps));
+t("⚠ 名前が合わなければ使わない", /if \(!okName\) return null/.test(ps));
 
 // ── ④ 押した記録がある時は今まで通り ────────────
 t("押した記録（n>=2）は今まで通り使う", /var aim = \{ x: v\.x, y: v\.y, n: Number\(v\.n\) \|\| 0 \}/.test(ps));
 t("1回だけの記録は使わない（偶然）", /if \(Number\(v\.n\) < 2\)/.test(ps));
 
 // ── ⑤ 版 ────────────
-t("版が 2.7.83", manifest.version === "2.7.83");
+t("版が 2.7.83 以降", manifest.version >= "2.7.83");
 
 // ── ⑥ 構文 ────────────
 let ok1 = true, ok2 = true;
