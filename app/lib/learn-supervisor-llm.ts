@@ -26,7 +26,7 @@
  *   npx tsx --env-file=.env.local scripts/supervisor-think.ts
  *   npx tsx --env-file=.env.local scripts/supervisor-think.ts --model=deepseek-flash
  */
-import { DEEPSEEK_MODEL_PRO, DEEPSEEK_MODEL_FLASH, DEEPSEEK_MAX_TOKENS_SAFE } from "./deepseek-models";
+import { DEEPSEEK_MODEL_PRO, DEEPSEEK_MODEL_FLASH, DEEPSEEK_MAX_TOKENS_THINK } from "./deepseek-models";
 
 export const SUPERVISOR_MODEL_DEFAULT = DEEPSEEK_MODEL_PRO;
 
@@ -107,7 +107,7 @@ export async function thinkAsSupervisor(
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model,
-        max_tokens: opt.maxTokens ?? DEEPSEEK_MAX_TOKENS_SAFE,
+        max_tokens: opt.maxTokens ?? DEEPSEEK_MAX_TOKENS_THINK,
         messages: [
           { role: "system", content: SUPERVISOR_THINK_PROMPT },
           { role: "user", content: "材料:\n" + String(material ?? "").slice(0, 6000) },

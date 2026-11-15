@@ -103,11 +103,16 @@ export async function GET(req: NextRequest) {
           scope,
           verdict: "llm_think",
           headline: "統括が材料から考えた（" + think.model + "）",
-          coverage: null,
-          weak_n: Array.isArray(b.weak) ? b.weak.length : null,
-          next_n: b.next_n ?? null,
-          points_n: b.points_n ?? null,
-          rows: b.rows ?? null,
+          /**
+           * ⚠ `coverage` / `next_n` / `points_n` / `rows` は **NOT NULL**（実測:
+           *   `null value in column "coverage"/"next_n" ... violates not-null constraint`）。
+           *   材料の値は決定論が付けた物をそのまま使う（LLM の判断で数を作らない）。
+           */
+          coverage: Number((b as { coverage?: unknown }).coverage) || 0,
+          weak_n: Array.isArray(b.weak) ? b.weak.length : 0,
+          next_n: Number(b.next_n) || 0,
+          points_n: Number(b.points_n) || 0,
+          rows: Number(b.rows) || 0,
           meeting: {
             llm_think: {
               next: think.next, why: think.why, how: think.how,

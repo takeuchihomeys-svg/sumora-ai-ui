@@ -33,7 +33,13 @@ console.log("■ ① モデル名は1か所で持つ（散らばると片方だ�
   ok("  deepseek-v4-pro がある", /DEEPSEEK_MODEL_PRO = "deepseek-v4-pro"/.test(models));
   ok("  flash もある", /DEEPSEEK_MODEL_FLASH = "deepseek-flash"/.test(models));
   ok("  ⚠ 推論で使い切らないよう max_tokens の安全値を定義", /DEEPSEEK_MAX_TOKENS_SAFE = 4000/.test(models));
-  ok("  ⚠ LLM 側がそれを既定にしている", /opt\.maxTokens \?\? DEEPSEEK_MAX_TOKENS_SAFE/.test(llm));
+  /**
+   * ★ 2026-11-15 実測: 統括の判断（3行だけ）は **2,500** が最適。
+   *   4000 → 推論6,900字で **60秒を超えて時間切れ**／2000以下 → **答え0字**（推論で使い切る）。
+   *   → 2500 で「答えが出る」と「60秒に収まる」の両方を満たす（実測 16〜23秒）。
+   */
+  ok("  ⚠ 統括の思考用は 2500（4000だと時間切れ・2000以下だと答え0字）", /DEEPSEEK_MAX_TOKENS_THINK = 2500/.test(models));
+  ok("  ⚠ LLM 側が思考用の値を使う", /opt\.maxTokens \?\? DEEPSEEK_MAX_TOKENS_THINK/.test(llm));
 }
 
 console.log("\n■ ② 統括の思考（材料に無い事を言わせない）");
@@ -86,6 +92,20 @@ console.log("\n■ ⑦ 費用の歯止め");
   ok("  ⚠ 1日1回の cron", (vercel.crons || []).filter((c) => /supervisor-think/.test(c.path)).length === 1);
   ok("  ⚠ 材料を6,000字に切る（費用が膨らまない）", /slice\(0, 6000\)/.test(llm));
   ok("  時間切れで諦める（budgetMs）", /budgetMs/.test(llm));
+}
+
+console.log("\n■ ⑧ ⚠ NOT NULL の列に null を入れない（実測で2回踏んだ）");
+{
+  /**
+   * ⚠ 実測: `learn_supervisor_log` の `coverage` と `next_n` は **NOT NULL**。
+   *   `null` を入れると `null value in column "..." violates not-null constraint` で**保存できない**。
+   *   → 0 で埋める（材料の値は決定論が付けた物をそのまま使う）。
+   */
+  const script = fs.readFileSync(path.join(dir, "scripts", "supervisor-think.ts"), "utf8");
+  ok("  ⚠ 手元のスクリプトが数値を 0 で埋める", /coverage: num\(b\.coverage\)/.test(script) && /next_n: num\(b\.next_n\)/.test(script));
+  ok("  ⚠ cron も 0 で埋める", /coverage: Number\(.*\) \|\| 0/.test(api) && /next_n: Number\(b\.next_n\) \|\| 0/.test(api));
+  ok("  ⚠ NOT NULL だったとコメントに残している", /NOT NULL/.test(script) || /NOT NULL/.test(api));
+  ok("  ⚠ 保存の形が cron と手元で同じ（meeting.llm_think）", /llm_think/.test(script) && /llm_think/.test(api));
 }
 
 console.log(`\n${passed} 件合格 / ${failed} 件失敗`);

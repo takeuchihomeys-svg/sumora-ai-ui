@@ -24,16 +24,26 @@ const args = process.argv.slice(2);
 const argOf = (k: string, d: string) => (args.find((a) => a.startsWith(`--${k}=`)) || "").replace(`--${k}=`, "") || d;
 const scope = argOf("scope", "realpro");
 const model = argOf("model", "");
+const doSave = args.includes("--save");
 const base = process.env.NEXT_PUBLIC_SITE_URL || "https://sumora-ai-ui.vercel.app";
 
 type Bundle = {
   rows?: number; with_ops?: number; next_n?: number; points_n?: number;
+  /** 材料の点（決定論が付けた物・LLM では作らない） */
+  coverage?: number | null;
+  weak_n?: number | null;
   weak?: Array<{ kind?: string; name?: string; why?: string }>;
   scene_flows?: Array<{ scene?: string; runs?: number; ops?: number; steps?: string[]; variants?: number }>;
   stopped_scene?: string | null;
   improvements?: { total?: number; recent?: Array<{ area?: string; title?: string }> } | null;
   human_ops?: number; auto_ops?: number; same_runs?: number;
   supervisor?: { lines?: string[] };
+};
+
+/** 数を安全に読む（null/undefined は 0・NOT NULL の列に入れる時用） */
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 };
 
 void (async () => {
@@ -70,4 +80,44 @@ void (async () => {
   console.log("  なぜ:     " + t.why);
   console.log("  どう直す: " + t.how);
   console.log(`  （${t.model}・${t.ms}ms・入力${t.usage?.input ?? "?"} 出力${t.usage?.output ?? "?"}トークン）`);
+
+  /**
+   * ★ 2026-11-15 竹内さん「日々進化していくように統括のがブレインとなって強化していく」
+   *   `--save` を付けたら **`learn_supervisor_log` に残す**（cron を待たずに今すぐ反映）。
+   *   ⚠ 保存の形は cron（`/api/cron/supervisor-think`）と**同じ**（`meeting.llm_think`）。
+   *     ⚠ 形が違うと「cron で走った時」と「手元で走らせた時」で読む所が変わり、静かに壊れる。
+   */
+  if (doSave) {
+    const { supabase } = await import("../app/lib/supabase-server");
+    const nowIso = new Date().toISOString();
+    const weakN = Array.isArray(b.weak) ? b.weak.length : null;
+    const ins = await supabase.from("learn_supervisor_log").insert({
+      scope,
+      verdict: "llm_think",
+      headline: "統括が材料から考えた（" + t.model + "・手元）",
+      /**
+       * ⚠ `coverage` / `next_n` / `points_n` / `rows` は **NOT NULL**（実測:
+       *   `null value in column "next_n" ... violates not-null constraint`）。
+       *   材料の値は決定論が付けた物をそのまま使う（LLM の判断で数を作らない）。
+       *   無ければ 0（NOT NULL を満たす）。
+       */
+      coverage: num(b.coverage),
+      weak_n: weakN === null ? 0 : weakN,
+      next_n: num(b.next_n),
+      points_n: num(b.points_n),
+      rows: num(b.rows),
+      meeting: {
+        llm_think: {
+          next: t.next, why: t.why, how: t.how,
+          model: t.model, ms: t.ms, usage: t.usage,
+          material_chars: material.length, at: nowIso,
+        },
+        deterministic_lines: lines.slice(0, 20),
+      },
+      bundle_at: nowIso,
+    });
+    console.log(ins.error ? "記録できません: " + ins.error.message : "記録しました（learn_supervisor_log・scope=" + scope + "）");
+  } else {
+    console.log("\n（記録に残す時は --save を付けてください）");
+  }
 })();
