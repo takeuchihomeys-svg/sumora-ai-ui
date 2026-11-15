@@ -1,5 +1,5 @@
 // app/lib/__tests__/cond-pickup-promise.test.ts — 条件の番の最初の一手（2026-11-06 作業員4）
-import { resultFirstPromiseOn, RESULT_FIRST_PROMISE_RULE, condPickupRules, condPickupPromiseOn, firstCondPickupOn, COND_PICKUP_PROMISE_RULE, FIRST_COND_PICKUP_RULE, firstCondMaterialLine } from "../cond-pickup-promise";
+import { resultFirstPromiseOn, RESULT_FIRST_PROMISE_RULE, condPickupRules, condPickupPromiseOn, firstCondPickupOn, COND_PICKUP_PROMISE_RULE, FIRST_COND_PICKUP_RULE, firstCondMaterialLine, COND_PICKUP_SENT_FIRST_RULE, condPickupSentFirstOn } from "../cond-pickup-promise";
 import { pickupConditionsReady } from "../hearing-form";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) pass++; else { fail++; console.log(`  NG ${n}`); } };
@@ -14,5 +14,7 @@ t("配線: pickupConditionsReady の答えをそのまま1行に", firstCondMate
 t("③ 結果が先: 既定 on（11/10）・off で外れる", resultFirstPromiseOn({}) && condPickupRules({}).includes(RESULT_FIRST_PROMISE_RULE) && !condPickupRules({ BRAIN_RESULT_FIRST_PROMISE: "off" }).includes(RESULT_FIRST_PROMISE_RULE) && condPickupRules({}).split("\n").length === 3);
 t("③ だけ on（①②を止めても）", condPickupRules({ BRAIN_COND_PICKUP_PROMISE: "off", BRAIN_FIRST_COND_PICKUP: "off", BRAIN_RESULT_FIRST_PROMISE: "on" }) === RESULT_FIRST_PROMISE_RULE);
 t("③ 中身: route は promise・aix は後の AIX のまま・結果が材料にある時だけ aix・竹内さんの数", RESULT_FIRST_PROMISE_RULE.includes("route を promise") && RESULT_FIRST_PROMISE_RULE.includes("aix の欄は約束の後の AIX のまま") && RESULT_FIRST_PROMISE_RULE.includes("材料に既にある時だけ") && RESULT_FIRST_PROMISE_RULE.includes("116番") && RESULT_FIRST_PROMISE_RULE.includes("募集状況確認させて頂きます"));
+// 11/15 作業員H（q439・12838）: 送った資料で答えられる希望は既定 off・①と一緒の時だけ
+t("④ 送った資料が先: 既定 off・on で①の後に足す・①が off なら足さない", !condPickupSentFirstOn({}) && !condPickupRules({}).includes(COND_PICKUP_SENT_FIRST_RULE) && condPickupRules({ COND_PICKUP_SENT_FIRST: "on" }).includes(COND_PICKUP_SENT_FIRST_RULE) && !condPickupRules({ COND_PICKUP_SENT_FIRST: "on", BRAIN_COND_PICKUP_PROMISE: "off" }).includes(COND_PICKUP_SENT_FIRST_RULE));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;
