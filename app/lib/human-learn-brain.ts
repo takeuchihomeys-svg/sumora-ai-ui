@@ -1368,6 +1368,28 @@ export async function saveSupervisorForBundle(
       rows: Number(bundle.source?.rows) || 0,
       bundle_at: bundle.generated_at,
     };
+    /**
+     * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+     *   保存する**前に**、この束の弱い所の一覧を `meeting.weak_list` に入れておく
+     *   （`SupervisorAdvice` には `weak` が無い・入力にしか無いため、ここで橋渡しする）。
+     *   → 次回の統括が「前回あって今回無い＝直った」を比べられる。
+     *   ⚠ `kind` と `name` だけ・最大40件（大きさを抑える）。
+     */
+    try {
+      const wl = Array.isArray((bundle as unknown as { weak?: unknown }).weak)
+        ? ((bundle as unknown as { weak: Array<{ kind?: unknown; name?: unknown }> }).weak) : null;
+      if (wl && Array.isArray(wl)) {
+        const svAny = sv as unknown as { meeting?: Record<string, unknown> | null };
+        const base0 = (svAny.meeting && typeof svAny.meeting === "object") ? svAny.meeting : {};
+        svAny.meeting = {
+          ...base0,
+          weak_list: wl
+            .filter((x) => x && x.name)
+            .map((x) => ({ kind: String(x.kind ?? "").slice(0, 30), name: String(x.name ?? "").slice(0, 40) }))
+            .slice(0, 40),
+        };
+      }
+    } catch (_) {}
     out.all = await saveSupervisorLog("all", sv, base);
     const per = (bundle.supervisor_by_site || {}) as Record<string, typeof sv>;
     for (const [sn, one] of Object.entries(per)) {

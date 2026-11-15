@@ -59,14 +59,23 @@ export function toLogRow(
      */
     meeting: (() => {
       const m = (a.meeting && typeof a.meeting === "object") ? (a.meeting as Record<string, unknown>) : null;
-      const wl = Array.isArray((a as unknown as { weak?: unknown }).weak)
-        ? ((a as unknown as { weak: Array<{ kind?: unknown; name?: unknown }> }).weak) : null;
-      if (!m && !wl) return null;
+      /**
+       * ⚠ 2026-11-15 **実測で判明**: `a.weak` を見ていたが `SupervisorAdvice` に `weak` は無い
+       *   （弱い所の一覧は**入力**（`SupervisorInput.weak`）にしか無い）。
+       *   → 保存する側（`saveSupervisorForBundle`）が入力の一覧を `adv.meeting.weak_list` に
+       *     **先に入れておく**。ここではそれをそのまま残す（二重に作らない）。
+       */
+      const wl = (a as unknown as { weak?: unknown }).weak;
+      const already = m && Array.isArray((m as { weak_list?: unknown }).weak_list);
+      if (!m && !wl && !already) return null;
       const base = m ? { ...m } : {};
-      if (wl) {
+      if (!already && Array.isArray(wl)) {
         (base as Record<string, unknown>).weak_list = wl
-          .filter((x) => x && x.name)
-          .map((x) => ({ kind: String(x.kind ?? "").slice(0, 30), name: String(x.name ?? "").slice(0, 40) }))
+          .filter((x) => x && (x as { name?: unknown }).name)
+          .map((x) => {
+            const o = x as { kind?: unknown; name?: unknown };
+            return { kind: String(o.kind ?? "").slice(0, 30), name: String(o.name ?? "").slice(0, 40) };
+          })
           .slice(0, 40);
       }
       return base;
