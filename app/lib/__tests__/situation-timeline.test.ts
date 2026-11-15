@@ -119,3 +119,13 @@ t("今の状況の記録: 送った事・確認した事・前の項目（答え
   assert.deepEqual(situationNowDigest(s), { tw: 0, tv: 0, se: 2, ch: 1, oi: 1, ou: 1, po: 1, ao: 1, cf: 0 });
 });
 console.log("situation-now ok");
+import { sentPropsFullMode } from "../sent-props-text";
+t("送った物件 count: 見出しは全部の件数・詳しい行は新しい順に20件・それより前の行は出さない", () => {
+  assert.equal(sentPropsFullMode({ SENT_PROPS_FULL: "count" }), "count");
+  const ps = Array.from({ length: 25 }, (_, i) => prop(i));
+  const c = buildSentPropsText(ps, { detailN: 20, olderLine: false });
+  assert.match(c, /【すでに送付済みの物件（25件）】/);
+  assert.ok(!/それより前に送った物件/.test(c));
+  assert.match(c, /- 物件24 124/); assert.ok(!/- 物件4 104/.test(c));
+});
+console.log("sent-count ok");

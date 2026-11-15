@@ -9,7 +9,7 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentPropsFullOn, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentPropsFullOn, sentPropsFullMode, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
 import { refResolveOn, refResolveModeOf, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -2595,7 +2595,7 @@ async function analyzeConversationCore(
       console.log(JSON.stringify({ tag: "brain:ref-resolve", conversationId, mode: refMode, items: rr.items.length, refCount: rr.refCount, digest: refResolveRec.digest }));
     } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-failed", conversationId, error: String(e).slice(0, 160) })); }
   }
-  let sentPropsText = buildSentPropsText(sentProps, sentPropsFullOn() ? { detailN: SENT_PROPS_DETAIL_N } : {});
+  let sentPropsText = buildSentPropsText(sentProps, sentPropsFullOn() ? { detailN: SENT_PROPS_DETAIL_N, olderLine: sentPropsFullMode() === "on" } : {});
   if (refMode === "on" && refResolveRec) { const line = refResolveLine(refResolveRec); if (line) sentPropsText += `\n${line}`; }
   // 2026-11-15 作業員H（竹内さん「お客さんが送ってきたのが物件や見積書と分かれば…」「相手が送ったのとこっちが送っているのの関連性も」）:
   //   今の連投のお客様の画像を、種類・物件（確かさ）・こちらが送った物件との関連（何回目の送信の何件目）・見積書の内訳（名前を伏せた数字だけ）・

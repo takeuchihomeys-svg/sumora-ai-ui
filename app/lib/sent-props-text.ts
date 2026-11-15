@@ -166,11 +166,16 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
 //   元は brain-core の取得の上限 20件（新しい順）→ 号室の重複除けで 18〜19件に減る所。食い違いの番は本質の道の外れが 65%（持っていた番 29%）。
 //   SENT_PROPS_FULL=on: 取得を SENT_PROPS_FULL_LIMIT 件まで広げ、見出しの件数は全部の件数、詳しい行は新しい順に SENT_PROPS_DETAIL_N 件・
 //   それより前は「名前 号室（送った日）」だけの短い1行にまとめる（再提案しないの範囲は全部に効く）。既定 off。
-export const sentPropsFullOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_PROPS_FULL ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 統括役の決め（①）: count＝取得を広げて見出しの件数だけ全部の件数にする（詳しい行は新しい順に20件のまま・それより前の行は出さない）。
+//   on＝count＋「それより前に送った物件」の1行（16問×3回で q057・q112 が悪化＝試験の版）。既定 off。
+export type SentPropsFullMode = "off" | "count" | "on";
+export const sentPropsFullMode = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): SentPropsFullMode => { const v = (env.SENT_PROPS_FULL ?? "").trim().toLowerCase(); return v === "on" || v === "count" ? v : "off"; };
+/** 取得を広げるか（count と on） */
+export const sentPropsFullOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => sentPropsFullMode(env) !== "off";
 export const SENT_PROPS_FULL_LIMIT = 80;
 export const SENT_PROPS_DETAIL_N = 20;
 
-export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: number } = {}): string {
+export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: number; olderLine?: boolean } = {}): string {
   if (sentProps.length === 0) return "";
   // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように」→ 内覧・見積の相手を取り違えない
   const recommendedProps = sentProps.filter((p) => !p.shared_only && p.channel === "recommendation");
@@ -208,6 +213,6 @@ export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: numb
   const detail = opts.detailN ? byNew.slice(0, opts.detailN) : byNew;
   const older = opts.detailN ? byNew.slice(opts.detailN) : [];
   // 2026-11-15 試験 q057（本質の道 3→1）の後: 前は「名前と号室と送った日だけ・再提案しない」を足していた。下の「※上記の物件は絶対に再提案しない」と重なるので名前だけの形に
-  const olderLine = older.length ? `\n▼それより前に送った物件（${older.length}件）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
+  const olderLine = older.length && opts.olderLine !== false ? `\n▼それより前に送った物件（${older.length}件）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
   return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${detail.map(line).join("\n")}${olderLine}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
 }
