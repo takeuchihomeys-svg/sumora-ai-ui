@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/condition-write-arbiter.test.ts
 //   実物（property_condition_history の直近30日の取り合い・値は条件の欄だけ・お客様は伏せる）をそのまま使う
 import { arbitrateField, arbitrateConditionUpdates, normalizeConditionValue, conditionWriteArbiterMode, type HistoryRowLike } from "../condition-write-arbiter";
-import { normalizeRentUnits } from "../rent-units";
+import { normalizeRentUnits, syncScreeningPcGuardOn } from "../rent-units";
 import { categoryOfCode } from "../prop-brain-score-category";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -55,11 +55,12 @@ const sh = arbitrateConditionUpdates({ mode: "shadow", writer: "brain_bridge", n
 t("shadow は書くが skip を返す", sh.skipped.length === 1 && sh.updates.floor_plan === "1K");
 const on = arbitrateConditionUpdates({ mode: "on", writer: "brain_bridge", now: "2026-10-20T01:00:21Z", current: { floor_plan: "1K以上（ワンルーム除く）" }, updates: { floor_plan: "1K", rent_max: 80000 }, history: h2 });
 t("on は戻しの欄だけ外す", on.skipped.length === 1 && !("floor_plan" in on.updates) && on.updates.rent_max === 80000);
-t("スイッチ既定 off", conditionWriteArbiterMode({}) === "off" && conditionWriteArbiterMode({ CONDITION_WRITE_ARBITER: "shadow" }) === "shadow" && conditionWriteArbiterMode({ CONDITION_WRITE_ARBITER: "x" }) === "off");
+t("スイッチ既定 shadow・off/on で切り替え", conditionWriteArbiterMode({}) === "shadow" && conditionWriteArbiterMode({ CONDITION_WRITE_ARBITER: "off" }) === "off" && conditionWriteArbiterMode({ CONDITION_WRITE_ARBITER: "on" }) === "on" && conditionWriteArbiterMode({ CONDITION_WRITE_ARBITER: "x" }) === "shadow");
 
 // 家賃の単位
 const ru = normalizeRentUnits({ rent_max: 1000000, rent_min: 8, initial_cost_limit: 600000 });
 t("家賃 10倍 → /10・万円 → 円・初期費用の 60万はそのまま", ru.rent_max === 100000 && ru.rent_min === 80000 && ru.initial_cost_limit === 600000);
+t("同期の守りは既定 on・off で戻す", syncScreeningPcGuardOn({}) && !syncScreeningPcGuardOn({ SYNC_SCREENING_PC_GUARD: "off" }) && syncScreeningPcGuardOn({ SYNC_SCREENING_PC_GUARD: "on" }));
 t("正しい家賃はそのまま", normalizeRentUnits({ rent_max: 130000 }).rent_max === 130000);
 
 // 採点の項目

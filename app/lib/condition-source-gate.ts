@@ -106,10 +106,25 @@ function stripReferences(s: string): string {
   return s.replace(REFERENCE_AS_CONDITION_RE, " ").replace(COST_SENSE_HOLD_RE, " ");
 }
 
+/**
+ * 2026-11-15 作業員K（物件の問い合わせの通から条件を書いた実物 88f68b 10/28）: 見落としていた2つの形。
+ *   ・ポータルの部屋の札「Ｆａｓｅｃｉａ Ｒｕｍｉｎａ（3階/304/1LDK/30.58m²） こちらもお願いします！」＝条件と読み、condition_brain がその他を書いた
+ *   ・その他に「〇〇の初期費用を知りたい」「過去気になっていた物件: …」＝1件の物件の質問・物件名の並び
+ *   CONDITION_INQUIRY_SHAPES_1115=on の時だけ足す（既定 off・scripts/audit-condition-source-gate.ts の B＝誤って止める 0 を確かめてから）
+ */
+const INQUIRY_SHAPES_1115: ReadonlyArray<readonly [string, RegExp]> = [
+  ["部屋の札（階／号室／間取り／広さ）", /[0-9]{1,2}階\s*[/／]\s*[0-9]{2,4}(?:号室?)?\s*[/／]|[（(][^）)]{0,20}(?:[1-4]S?(?:LDK|DK|K)|1R|ワンルーム)\s*[/／]\s*[0-9]+(?:\.[0-9]+)?\s*(?:m²|㎡|m2|平米)\s*[）)]/],
+  ["1件の物件の質問", /[ァ-ヶーA-Za-z]{3,}[^。\n、]{0,12}の(?:初期費用|家賃|空き|募集|間取り|見積)(?:を|が|は)?(?:知りたい|教えて|気になる)|(?:前から|以前から|過去に?|ずっと)?気になって(?:い)?た物件/],
+];
+export function inquiryShapes1115On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.CONDITION_INQUIRY_SHAPES_1115 ?? "").trim().toLowerCase() === "on";
+}
+
 /** 物件の問い合わせの形（当たった形の名前）。無ければ [] */
 export function inquiryShapesOf(text: string | null | undefined): string[] {
   const s = stripReferences(nf(text));
-  return INQUIRY_SHAPES.filter(([, re]) => re.test(s)).map(([k]) => k);
+  const shapes = inquiryShapes1115On() ? [...INQUIRY_SHAPES, ...INQUIRY_SHAPES_1115] : INQUIRY_SHAPES;
+  return shapes.filter(([, re]) => re.test(s)).map(([k]) => k);
 }
 
 /** 「探す条件を言っている」印（問い合わせと同居した文を節に分けるかの判定） */

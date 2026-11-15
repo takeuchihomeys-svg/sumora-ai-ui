@@ -14,12 +14,13 @@
 //   ・止めた欄は書かず、「条件の更新の案」として記録に残す（迷う物は自動で書かない＝頼み4 ②）
 //   ・値の比べは空白・全角半角・区切り（、・,／/）をそろえてから
 //
-// スイッチ: CONDITION_WRITE_ARBITER=off（既定）|shadow（止めずに「止めるならこれ」をログ）|on（止める）
+// スイッチ: CONDITION_WRITE_ARBITER=shadow（既定・止めずに「止めるならこれ」をログ）|on（止める）|off（何もしない）
+//   2026-11-15 統括役の決め: 既定 shadow で1週間見て、止めた物を目で確かめ誤り0なら on
 
 export type ArbiterMode = "off" | "shadow" | "on";
 export function conditionWriteArbiterMode(env: Record<string, string | undefined> = process.env): ArbiterMode {
   const v = String(env.CONDITION_WRITE_ARBITER ?? "").trim().toLowerCase();
-  return v === "on" || v === "shadow" ? v : "off";
+  return v === "on" || v === "off" ? v : "shadow";
 }
 
 /** 取り合いを見る自動の書き手（人の直し・決まった戻しは入れない） */

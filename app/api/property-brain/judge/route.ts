@@ -139,7 +139,9 @@ export async function POST(req: NextRequest) {
     // 2026-10-20 送った物件へのお客様の反応・メモ（売上サポと同じ値・AIX_REACTIONS_LINK=on の時だけ・既定 off＝null）
     const { loadReactionState } = await import("@/app/lib/reaction-negatives-server");
     const reactionNegatives = (await loadReactionState(supabase, customerId))?.negatives ?? null;
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null, proposalRange, reactionNegatives }));
+    // 2026-11-15 作業員K: 送ってきた・刺さった物件の像（STAR_SENT_LIKE=on の時だけ読む・既定 off は null）
+    const sentLike = await (await import("@/app/lib/sent-like-server")).loadSentLikeProfile(supabase, customerId ?? null);
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null, proposalRange, reactionNegatives, sentLike }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;
