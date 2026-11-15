@@ -24,10 +24,39 @@ console.log("■ ① 同じ欄かどうか（表記の揺れを吸収）");
 {
   ok("完全一致", sameField("検索", "検索"));
   ok("接頭辞を落とす", sameField("左の検索｜span", "検索"));
-  ok("片方が他方を含む", sameField("左の大阪市西区", "大阪市西区"));
+  ok("片方が他方を含む（4文字以上）", sameField("左の大阪市西区", "大阪市西区"));
   ok("違う欄は違う", !sameField("検索", "リセット"));
   ok("空は同じにしない", !sameField("", ""));
-  ok("短すぎる名前は部分一致しない（誤爆防止）", !sameField("分", "分譲"));
+  /**
+   * ⚠ 2026-11-15 実測で誤った対応が出た:
+   *   `"2"` と `"2"` が一致して、画像の「2」（ページ送り）に
+   *   押した記録の「2」（賃料の選択肢）を対応させていた。
+   */
+  ok("⚠ 短い名前（2文字以下）は部分一致させない", !sameField("分", "分譲"));
+  ok("⚠ 極端に短い物は部分一致させない（2 ⊂ 2024）", !sameField("2", "2024"));
+  /**
+   * ⚠ 長さ比が 0.5 未満は部分一致させない（`2` ⊂ `2024` の誤爆防止）。
+   *   "住居検索"(4) / "検索"(2) = 0.5 なので**ちょうど境界**。
+   *   → 同じ長さの半分以上なら許す（"大阪市西区"(5) / "大阪市西区"(5) = 1.0）。
+   */
+  ok("4文字以上で長さが近ければ部分一致を許す", sameField("左の大阪市西区", "大阪市西区"));
+  ok("短すぎる物は許さない（住居検索 vs 検索）", !sameField("住居検索", "検索"));
+}
+
+console.log("\n■ ①-b 種類が違えば対応させない（別の欄）");
+{
+  const r = matchImageToPressed(
+    [{ name: "2", kind: "link", x: 0.28, y: 0.94 }],
+    { "2": { n: 2, x: 0.17, y: 0.2, w: "select" } },
+  );
+  ok("⚠ 名前が同じでも link と select は対応させない", r.matched.length === 0, r.matched);
+  ok("画像側は「押していない」に入る", r.notPressed.includes("2"));
+  // 似た種類（link と button）は許す
+  const r2 = matchImageToPressed(
+    [{ name: "絞り込み条件", kind: "link" }],
+    { "絞り込み条件": { n: 2, x: 0.5, y: 0.5, w: "button" } },
+  );
+  ok("link と button は同じとみなす（サイト差）", r2.matched.length === 1, r2.matched);
 }
 
 console.log("\n■ ② ⚠ 空の point_fields を「押した」と数えない（実測の罠）");
@@ -77,10 +106,10 @@ console.log("\n■ ⑤ 種類が違う欄を見つける（プルダウンかボ
   const r = matchImageToPressed(img, pressed);
   // 名前が違うので突き合わせられない → kindConflicts には入らない（正直に）
   ok("名前が違えば突き合わせない（推測しない）", r.matched.length === 0);
-  // 同じ名前で種類が違う場合
+  // 同じ名前で種類が違う場合は**対応させない**（別の欄の可能性）
   const r2 = matchImageToPressed([{ name: "賃料", kind: "select" }], { "賃料": { n: 2, x: 0.1, y: 0.3, w: "button" } });
-  ok("⚠ 種類が違えば conflicts に入る", r2.kindConflicts.length === 1, r2.kindConflicts);
-  ok("種類の一致は false", r2.kindConflicts[0].kindMatch === false);
+  ok("⚠ 種類が違えば対応させない（conflicts ではなく notPressed）", r2.kindConflicts.length === 0 && r2.notPressed.includes("賃料"), r2);
+  ok("押した側は notInImage に入る", r2.notInImage.includes("賃料"), r2.notInImage);
 }
 
 console.log("\n■ ⑥ 統括が言える事（悪い所だけ名指し）");
@@ -91,9 +120,9 @@ console.log("\n■ ⑥ 統括が言える事（悪い所だけ名指し）");
   ok("押した位置が0なら指摘する", say1.some((s) => s.what.includes("押した位置が1つも記録されていない")), say1);
   ok("画像からは何欄読めたかを添える", say1.some((s) => s.why.includes("1欄")), say1);
 
-  // 種類の食い違い
+  // 種類の食い違いは「対応させない」ので conflicts は出ない（設計変更）
   const r2 = matchImageToPressed([{ name: "賃料", kind: "select" }], { "賃料": { n: 2, w: "button" } });
-  ok("種類の食い違いを指摘する", whatSupervisorCanSay(r2).some((s) => s.what.includes("種類が違う")), whatSupervisorCanSay(r2));
+  ok("種類が違う欄は対応させない（誤った対応を防ぐ）", r2.kindConflicts.length === 0 && r2.notPressed.includes("賃料"), r2);
 
   // 良い状態なら何も言わない
   const r3 = matchImageToPressed([{ name: "検索", kind: "button" }], { "検索": { n: 2, x: 0.5, y: 0.5, w: "button" } });

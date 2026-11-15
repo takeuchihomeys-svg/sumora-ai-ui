@@ -86,7 +86,26 @@ export function sameField(a: unknown, b: unknown): boolean {
   const x = nm(a), y = nm(b);
   if (!x || !y) return false;
   if (x === y) return true;
-  if (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))) return true;
+  /**
+   * ★ 2026-11-15 実測で判明（**誤った対応**が出た）:
+   *   ⚠ `"2"` と `"2"` が一致して、画像の「2」（ページ送り）に
+   *     押した記録の「2」（賃料の選択肢）を対応させていた。
+   *     → **短い名前（3文字未満）は部分一致させない**。
+   *   ⚠ `"絞り込み条件"` が別の欄に当たっていたのも同じ理由。
+   *   → **部分一致は4文字以上**に限る。
+   */
+  const minLen = 4;
+  if (x.length < minLen || y.length < minLen) return false;
+  if (x.includes(y) || y.includes(x)) {
+    /**
+     * ⚠ さらに、**片方が極端に短い**時は部分一致にしない（`検索` ⊂ `住居検索` は良いが
+     *   `2` ⊂ `2024` のような誤爆を防ぐ）。
+     */
+    const short = Math.min(x.length, y.length);
+    const long = Math.max(x.length, y.length);
+    if (short / long < 0.5) return false;
+    return true;
+  }
   return false;
 }
 
@@ -122,11 +141,31 @@ export function matchImageToPressed(
   const notPressed: string[] = [];
   const kindConflicts: FieldMatch[] = [];
 
+  /**
+   * ★ 2026-11-15 実測で判明（**誤った対応**）:
+   *   ⚠ 画像の `"2"（link）` に、押した記録の `"2"（select）` を対応させていた。
+   *     名前が同じでも**種類が違えば別の欄**（ページ送り vs 賃料の選択肢）。
+   *   → 名前が同じでも**種類が食い違う時は対応させない**（`notPressed` 側に回す）。
+   *     ⚠ 種類が片方でも空なら、名前だけで対応させる（比べられないので）。
+   */
+  const kindCompatible = (a: string | null, b: string | null): boolean => {
+    if (!a || !b) return true;            // 比べられない時は名前で判断
+    if (a === b) return true;
+    // ⚠ 似た種類は許す（link と button はサイトによって同じ物を指す）
+    const near = (x: string, y: string) =>
+      (x === "link" && y === "button") || (x === "button" && y === "link") ||
+      (x === "text" && y === "select") || (x === "select" && y === "text");
+    return near(a, b);
+  };
+
   for (const f of img) {
     let hit = -1;
     for (let i = 0; i < pressedList.length; i++) {
       if (used.has(i)) continue;
-      if (sameField(f.name, pressedList[i].name)) { hit = i; break; }
+      if (!sameField(f.name, pressedList[i].name)) continue;
+      // ⚠ 種類が食い違う物は対応させない（別の欄の可能性）
+      if (!kindCompatible(f.kind, pressedList[i].kind)) continue;
+      hit = i; break;
     }
     if (hit < 0) { notPressed.push(f.name); continue; }
     used.add(hit);
