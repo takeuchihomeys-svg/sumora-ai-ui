@@ -419,6 +419,32 @@
     var _rec = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
     if (typeof _rec === "function" && _tapEl) _rec("click", _tapEl);
   } catch (_) {}
+  /**
+   * ★ 2026-11-15 竹内さん「実装する」→ 統括の1番（0円）:
+   *   **自動モードで押した位置が記録されていない**（通常74% / 自動12%）。
+   *
+   *   ⚠ 実測で判明した原因: 記録側（`_pushPoint`）は `by === "auto"` の時、
+   *     位置を **0.5（真ん中）に固定**していた。
+   *     ＝ 実際にどこを押したかは**カーソルが知っているのに使っていなかった**。
+   *
+   *   → **カーソルの実際の位置**を押した要素の中の割合にして記録する。
+   *     ⚠ 要素の外に居たら（狙いがずれていたら）記録しない（嘘を入れない）。
+   */
+  try {
+    var _recPt = (typeof self !== "undefined" ? self : window).__axlxRecNotePoint;
+    if (typeof _recPt === "function" && _tapEl && _tapEl.getBoundingClientRect) {
+      var _r2 = _tapEl.getBoundingClientRect();
+      var _p2 = position();
+      if (_r2 && _r2.width > 0 && _r2.height > 0 && _p2) {
+        var _fx2 = (_p2.x - _r2.left) / _r2.width;
+        var _fy2 = (_p2.y - _r2.top) / _r2.height;
+        // ⚠ 要素の中に居る時だけ（0〜1）。外なら記録しない（嘘を入れない）
+        if (_fx2 >= 0 && _fx2 <= 1 && _fy2 >= 0 && _fy2 <= 1) {
+          _recPt(_tapEl, "auto", { clientX: _p2.x, clientY: _p2.y, synthetic: true });
+        }
+      }
+    }
+  } catch (_) {}
     /**
      * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件
      *   ⚠ 人が押した操作（isTrusted）だけを写真に付けていたので、**録画モードの写真には何も付かなかった**

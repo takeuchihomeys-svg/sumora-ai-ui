@@ -629,6 +629,11 @@
   try {
     if (typeof window !== "undefined") {
       window.__axlxRecNoteOp = _recNoteOp;
+  /**
+   * ★ 2026-11-15 竹内さん「実装する」: **押した位置**を外から記録できるようにする。
+   *   ⚠ `page-script.js` は世界が違って見えないが、`pointer-ui.js` は同じ世界なので呼べる。
+   */
+  try { window.__axlxRecNotePoint = _pushPoint; } catch (_) {}
       window.__axlxRecNoteName = _recNoteName;
     }
     /**
@@ -793,10 +798,22 @@
       if (!name) return;                      // 名前が取れない（img/body 等）は積まない
       var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
       if (!r || !(r.width > 0 && r.height > 0)) return;
-      var syn = (by === "auto");
-      var fx = syn ? 0.5 : ((Number(ev.clientX) - r.left) / r.width);
-      var fy = syn ? 0.5 : ((Number(ev.clientY) - r.top) / r.height);
-      if (!syn && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
+  /**
+   * ★ 2026-11-15 竹田さん「実装する」:
+   *   機械（自動モード）の押した位置も、**カーソルの実際の位置**から記録する。
+   *
+   *   ⚠ 旧は `by === "auto"` の時 **0.5（真ん中）に固定**していたので、
+   *     自動モードの押した位置は「全部真ん中」になり、**学びになっていなかった**
+   *     （実測: 自動モードの押した位置が12%・通常は74%）。
+   *   → `ev.synthetic === true` の時は **ev.clientX/clientY をそのまま使う**
+   *     （呼ぶ側がカーソルの実際の位置を渡してくる）。
+   *     ⚠ 座標が渡ってこない時だけ真ん中（今まで通り）。
+   */
+  var syn = (by === "auto") && !(ev && ev.synthetic === true);
+  var hasXY = ev && Number.isFinite(Number(ev.clientX)) && Number.isFinite(Number(ev.clientY));
+  var fx = (syn || !hasXY) ? 0.5 : ((Number(ev.clientX) - r.left) / r.width);
+  var fy = (syn || !hasXY) ? 0.5 : ((Number(ev.clientY) - r.top) / r.height);
+  if (!syn && hasXY && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
       // 2026-11-14: null を作らない（読み込み前のクリックも積めるように）
       var cur = _livePoints || (_livePoints = {});
       var t = Date.now();
