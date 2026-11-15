@@ -89,3 +89,8 @@ t("AIX要対応: 同じ AIX・同じ要件を果たす組だけ閉じる（見�
   assert.match(aixItemCloseDecision("viewing_invite", "phone_call").why, /果たしたか確かめる/);
 });
 console.log("aix-item-close ok");
+t("時系列の帳面: 問いの文の日付は入れない（q092「ここは最短11月中旬でしょうか？」は物件の入居日の問い）", () => {
+  const rec = buildTimeline({ customerMsgs: [{ text: "見てきました。\nここは最短11月中旬でしょうか？", atMs: said }, { text: "10月後半くらいに入れるところとかありますか？", atMs: said }, { text: "来週から動けます", atMs: said }], calendar: [], nowMs: said });
+  assert.deepEqual(rec.words.map((w) => w.word), ["来週"]);
+});
+console.log("timeline-question ok");

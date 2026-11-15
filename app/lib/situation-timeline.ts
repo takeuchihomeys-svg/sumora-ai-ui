@@ -96,7 +96,10 @@ const hm = (ms: number) => { const d = new Date(ms + JST_OFFSET_MS); return `${d
 export type TimelineInput = { customerMsgs: ReadonlyArray<{ text: string | null; atMs: number }>; calendar: ReadonlyArray<CalendarRow>; nowMs: number };
 export type TimelineRecord = { words: Array<TimeWord & { saidAtMs: number }>; viewings: CalendarRead[]; promises: CalendarRead[] };
 export function buildTimeline(i: TimelineInput): TimelineRecord {
-  const words = i.customerMsgs.flatMap((m) => resolveTimeWords(m.text, m.atMs).map((w) => ({ ...w, saidAtMs: m.atMs })));
+  // 2026-11-15 試験 q092 で直した: 「ここは最短11月中旬でしょうか？」は物件の入居日を聞いている問い＝お客様の予定ではない。
+  //   問いの文（？・か で終わる）の日付は帳面に入れない（お客様が自分の予定として言った文だけ）
+  const statements = (t: string | null) => String(t ?? "").split(/(?<=[。！!？?\n])/).filter((s) => s.trim() && !/[？?]\s*$|(?:でしょうか|ですか|ますか|か)\s*[。]?\s*$/.test(s.trim())).join("");
+  const words = i.customerMsgs.flatMap((m) => resolveTimeWords(statements(m.text), m.atMs).map((w) => ({ ...w, saidAtMs: m.atMs })));
   const cal = readCalendarEvents(i.calendar);
   return { words: words.slice(-8), viewings: cal.filter((c) => c.kind === "viewing"), promises: cal.filter((c) => c.kind === "promise") };
 }
