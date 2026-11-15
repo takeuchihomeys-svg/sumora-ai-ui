@@ -34,7 +34,7 @@ export function shotLearnMax(env: Record<string, string | undefined> = process.e
 
 /** `shot_learn` がまだ無い記録から、写真の置き場所（shot_key）を集める */
 export async function findShotsToLearn(opt: { site?: string | null; days?: number; limit?: number } = {}): Promise<
-  Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null }>
+  Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number }>
 > {
   const days = Math.max(1, Math.min(30, opt.days ?? 7));
   const since = new Date(Date.now() - days * 86400_000).toISOString();
@@ -48,7 +48,7 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
    */
   let q = supabase
     .from("human_motion_learn")
-    .select("id, shot_key, site, mode, shot_w, shot_taken, shot_learn")
+    .select("id, shot_key, site, mode, shot_w, shot_taken, shot_learn, shot_ops")
     .gte("created_at", since)
     .eq("shot_taken", true)
     .order("shot_w", { ascending: false, nullsFirst: false })
@@ -57,16 +57,39 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
   if (opt.site && opt.site !== "all") q = q.eq("site", opt.site);
   const { data, error } = await q;
   if (error) return [];
-  return ((data ?? []) as Array<{ id: unknown; shot_key?: string | null; site?: string | null; mode?: string | null; shot_w?: number | null; shot_learn?: unknown }>)
-    .filter((r) => !!r.shot_key && !r.shot_learn)                 // まだ読んでいない物だけ
-    /**
-     * ⚠ **実測**: 480x244 の小さい写真は欄が**1つも読めない**（`fields: []`）。
-     *   読めない写真に1枚ずつお金を払うのは無駄。
-     *   → **大きい写真（1000px以上・小窓が開いた瞬間に撮った物）を先に読む**（DBで並べた上で念のため）。
-     *     ⚠ 小さい物も捨てない（後ろに回すだけ）。
-     */
-    .sort((a, b) => (Number(b.shot_w) || 0) - (Number(a.shot_w) || 0))
-    .map((r) => ({ id: r.id, shot_key: String(r.shot_key), site: r.site ?? null, mode: r.mode ?? null }));
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの録画でもちゃんと学習できるように」
+   *
+   *   ⚠ **実測で判明**: この関数が `shot_w` を**返していなかった**ので、
+   *     呼ぶ側（`scripts/shot-learn.ts`）が大きさを出せず **`0px×186`** になっていた。
+   *     「読める大きさだけ読む」判定もできず、**480px（読めない）を読んでいた**。
+   *   → **`shot_w` を返す**。さらに:
+   *     ・**480px 未満は読まない**（実測: 欄が1つも読めない＝お金の無駄）
+   *     ・**同じ画面（操作の並びが同じ）は1枚だけ**（実測: 475枚のうち画面は82通りだけ）
+   *     ・**大きい順**に読む（小窓が開いた瞬間の写真が一番読める）
+   */
+  const rows = ((data ?? []) as Array<{ id: unknown; shot_key?: string | null; site?: string | null; mode?: string | null; shot_w?: number | null; shot_learn?: unknown; shot_ops?: unknown }>)
+    .filter((r) => !!r.shot_key && !r.shot_learn)
+    .map((r) => ({
+      id: r.id, shot_key: String(r.shot_key), site: r.site ?? null, mode: r.mode ?? null,
+      shot_w: Number(r.shot_w) || 0,
+      shot_ops: Array.isArray(r.shot_ops) ? (r.shot_ops as Array<{ f?: unknown; k?: unknown }>) : null,
+    }))
+    .sort((a, b) => b.shot_w - a.shot_w)
+    .filter((r) => r.shot_w >= 800);   // ⚠ 480px は読まない
+  // 同じ画面（操作の並びが同じ）は1枚だけ
+  const seen = new Map<string, number>();
+  const out: Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number }> = [];
+  for (const r of rows) {
+    const sig = (r.shot_ops ?? []).map((o) => String(o?.f ?? "") + ":" + String(o?.k ?? "")).join("|");
+    const key = sig && sig !== ":diag" && sig !== ":" ? sig : "(操作なし)";
+    const n = seen.get(key) ?? 0;
+    if (n >= 1) continue;
+    seen.set(key, n + 1);
+    out.push({ id: r.id, shot_key: r.shot_key, site: r.site, mode: r.mode, shot_w: r.shot_w });
+    if (out.length >= Math.max(1, opt.limit ?? 200)) break;
+  }
+  return out;
 }
 
 /** 写真1枚を Vision で読む（読めなければ null・投げない） */
