@@ -9,7 +9,7 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentPropsFullOn, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
 import { refResolveOn, refResolveModeOf, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -502,6 +502,8 @@ export type SuggestedAixMeta = {
   material_conflicts?: string[];
   /** 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（app/lib/material-clash.ts・BRAIN_MATERIAL_CLASH=shadow の時だけ・記録だけ） */
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
+  /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
+  situation_now?: { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
@@ -1882,7 +1884,7 @@ async function analyzeConversationCore(
           .or(linkOr)
           .or("source.is.null,source.neq.line_group")
           .order("sent_at", { ascending: false })
-          .limit(materialTurnMustOn() ? WIDE_LIMIT.sentProps : 20),
+          .limit(sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : materialTurnMustOn() ? WIDE_LIMIT.sentProps : 20), // 2026-11-15 作業員L: SENT_PROPS_FULL（既定 off）
         supabase
           .from("sent_properties")
           .select("property_name, room_no, sent_at, rent")
@@ -1903,7 +1905,7 @@ async function analyzeConversationCore(
       .select("property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
+      .limit(sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
     // templates: match_templates RAGに移行済み。バルクフェッチ廃止。
     // 旧: won_count 上位5件を全会話共通で注入 → キャッシュ破棄の原因かつ文脈無関係。
     // 新: 会話コンテキスト（フェーズ・戦略・人間性）に近いテンプレを match_templates RAGで取得。
@@ -2033,7 +2035,7 @@ async function analyzeConversationCore(
         (res as { data: unknown }).data = r.rows;
         if (r.beyondLimit) console.log(JSON.stringify({ tag: "brain:material-turn-must", conversationId, label, kept: r.beyondLimit }));
       };
-      cut(sentPropsResult, 20, "sent_properties"); cut(sentImagePropsResult, 20, "sent_image_properties"); cut(aixLogsResult, 30, "aix_usage_logs"); cut(viewingHistoryResult, 3, "viewing_history");
+      cut(sentPropsResult, sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : 20, "sent_properties"); cut(sentImagePropsResult, sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : 20, "sent_image_properties"); cut(aixLogsResult, 30, "aix_usage_logs"); cut(viewingHistoryResult, 3, "viewing_history");
     } catch (e) { console.warn("[brain-core] material-turn-must skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // H5(Fable5): 全メッセージが画像/添付のみ（テキスト0件）の場合は分析しない。
@@ -2552,7 +2554,7 @@ async function analyzeConversationCore(
       console.log(JSON.stringify({ tag: "brain:ref-resolve", conversationId, mode: refMode, items: rr.items.length, refCount: rr.refCount, digest: refResolveRec.digest }));
     } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-failed", conversationId, error: String(e).slice(0, 160) })); }
   }
-  let sentPropsText = buildSentPropsText(sentProps);
+  let sentPropsText = buildSentPropsText(sentProps, sentPropsFullOn() ? { detailN: SENT_PROPS_DETAIL_N } : {});
   if (refMode === "on" && refResolveRec) { const line = refResolveLine(refResolveRec); if (line) sentPropsText += `\n${line}`; }
   // 2026-11-15 作業員H（竹内さん「お客さんが送ってきたのが物件や見積書と分かれば…」「相手が送ったのとこっちが送っているのの関連性も」）:
   //   今の連投のお客様の画像を、種類・物件（確かさ）・こちらが送った物件との関連（何回目の送信の何件目）・見積書の内訳（名前を伏せた数字だけ）・
@@ -3750,6 +3752,20 @@ ${sh}`;
       console.log(JSON.stringify({ tag: "brain:flow-signals", conversationId, fs: flowSignalsRec.kinds }));
     } catch (e) { console.warn("[brain-core] flow-signals skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-15 作業員L（竹内さん「時系列の部分も具体的に強化」「カレンダーから予定もちゃんと把握する　時間がある予定は内覧予定」・BRAIN_SITUATION_TIMELINE・既定 off）:
+  //   お客様の時の言葉を言った日を基準に絶対の日付に直した値と、カレンダーの予定（時刻がある＝内覧・終日＝約束と連絡）を【時系列の帳面】に。読み方は situation-timeline.ts の1か所
+  let situationTimelineRec: import("@/app/lib/situation-timeline").TimelineRecord | null = null;
+  try {
+    const stl = await import("@/app/lib/situation-timeline");
+    if (stl.situationTimelineOn() && conversationId) {
+      const { data: cal } = await supabase.from("calendar_events").select("title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: true }).limit(40);
+      const custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      situationTimelineRec = stl.buildTimeline({ customerMsgs: custMsgs, calendar: (cal ?? []) as never, nowMs: Date.now() });
+      const tb = stl.timelineBlock(situationTimelineRec, Date.now());
+      if (tb) customerStateBlockText += tb;
+      console.log(JSON.stringify({ tag: "brain:situation-timeline", conversationId, words: situationTimelineRec.words.length, viewings: situationTimelineRec.viewings.length, promises: situationTimelineRec.promises.length }));
+    }
+  } catch (e) { console.warn("[brain-core] situation-timeline skipped:", e instanceof Error ? e.message : String(e)); }
   let materialConflictsRec: MaterialConflicts | null = null;
   if (BRAIN_MATERIAL_PROVENANCE_ON && opts?.strategy) {
     try {
@@ -6741,6 +6757,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       ...(BRAIN_PLAN_AHEAD_ON ? ((pa) => pa ? { plan_ahead: pa, plan_ahead_at: new Date().toISOString() } : prevPlanAhead ? { plan_ahead: prevPlanAhead, ...(prevPlanAheadAt ? { plan_ahead_at: prevPlanAheadAt } : {}) } : {})(normalizePlanAhead((parsed as { plan_ahead?: unknown }).plan_ahead)) : {}),
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
+      // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
+      situation_now: situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined,
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,

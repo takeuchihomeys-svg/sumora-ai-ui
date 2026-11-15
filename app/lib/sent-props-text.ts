@@ -161,7 +161,16 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
   return out;
 }
 
-export function buildSentPropsText(sentProps: SentProp[]): string {
+// ── 2026-11-15 作業員L（現状把握の物差し・統括役の頼み1）: 送った物件の件数の切れ ─────────────────────────────
+//   試験の答案 258番（竹内さん本人の番）で、材料の【すでに送付済みの物件（N件）】が DB の件数と食い違う番が 26（例 DB 30件 → 18件）。
+//   元は brain-core の取得の上限 20件（新しい順）→ 号室の重複除けで 18〜19件に減る所。食い違いの番は本質の道の外れが 65%（持っていた番 29%）。
+//   SENT_PROPS_FULL=on: 取得を SENT_PROPS_FULL_LIMIT 件まで広げ、見出しの件数は全部の件数、詳しい行は新しい順に SENT_PROPS_DETAIL_N 件・
+//   それより前は「名前 号室（送った日）」だけの短い1行にまとめる（再提案しないの範囲は全部に効く）。既定 off。
+export const sentPropsFullOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_PROPS_FULL ?? "").trim().toLowerCase() === "on";
+export const SENT_PROPS_FULL_LIMIT = 80;
+export const SENT_PROPS_DETAIL_N = 20;
+
+export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: number } = {}): string {
   if (sentProps.length === 0) return "";
   // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように」→ 内覧・見積の相手を取り違えない
   const recommendedProps = sentProps.filter((p) => !p.shared_only && p.channel === "recommendation");
@@ -194,5 +203,10 @@ export function buildSentPropsText(sentProps: SentProp[]): string {
   const sheetNote = deliveredProps.some((p) => p.sheet_vacancy)
     ? `\n※「送った資料の現況」は送った時点の資料の字（今の空きはスタッフの確認が正）。空室＝内覧の日程をすぐ組める／退去予定＝退去予定日・入居可能日が書いてあればその日以降、日付が無い・相談ならいつから見られるかはスタッフが確かめる事。`
     : "";
-  return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${deliveredProps.map(line).join("\n")}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
+  // SENT_PROPS_FULL: 新しい順に detailN 件は詳しい行・それより前は短い1行（件数は全部）
+  const byNew = opts.detailN ? [...deliveredProps].sort((a, b) => (Date.parse(b.sent_at) || 0) - (Date.parse(a.sent_at) || 0)) : deliveredProps;
+  const detail = opts.detailN ? byNew.slice(0, opts.detailN) : byNew;
+  const older = opts.detailN ? byNew.slice(opts.detailN) : [];
+  const olderLine = older.length ? `\n▼それより前に送った物件（${older.length}件・名前と号室と送った日だけ・再提案しない）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
+  return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${detail.map(line).join("\n")}${olderLine}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
 }

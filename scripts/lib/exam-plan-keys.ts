@@ -27,7 +27,9 @@ export const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pat
   // 2026-11-13 作業員22: 決めた事が書き手まで届いたか（DELIVERY_CHECK=shadow）。欄ごと・下の欄ごとの届きを答案に残す
   "delivery_check", "material_on_hand", "material_missing",
   // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）・材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）
-  "judge_basis_rec", "material_clash"] as const;
+  "judge_basis_rec", "material_clash",
+  // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_TIMELINE）
+  "situation_now"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
