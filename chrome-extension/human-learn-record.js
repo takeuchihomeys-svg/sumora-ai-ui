@@ -914,7 +914,25 @@
          *   → 押した直後に分かった「何が開いたか」（`o`）を `opened` として載せる。
          *     ⚠ 入るのは**種類だけ**（modal / options / result / form / modal_close / none）。中身の文字は入れない。
          */
-        return { t: o.t, k: o.k, f: o.f, w: o.w, g: o.g, by: o.by || null, opened: o.opened || null };
+        /**
+       * ★ 2026-11-15 竹内さん「3組目の悠さんは駅での検索なので、前に残っていた
+       *   泉大津市・西成区・住之江区・浪速区を外すために押している。
+       *   選択しているのではなくて押すことで前に残っている部分をはずしている」
+       *
+       *   ⚠ **ここが真の原因だった（2回続けて見落とした）**:
+       *     `_pushOp` で `was`/`now` を正しく積んでいたのに、**送信する時に捨てていた**
+       *     （`by` と `opened` だけ送っていた）。
+       *     実測: まりあさんの録画151枚で `was` が **0件**・2.7.79 の録画でも 0件。
+       *   → **`was`（押す前）と `now`（押した後）も送る**。
+       *     ⚠ 真偽だけ（入力した中身は入れない）。
+       */
+      return {
+        t: o.t, k: o.k, f: o.f, w: o.w, g: o.g,
+        by: o.by || null,
+        opened: o.opened || null,
+        ...(typeof o.was === "boolean" ? { was: o.was } : {}),
+        ...(typeof o.now === "boolean" ? { now: o.now } : {}),
+      };
       });
     } catch (_) { return null; }
   }

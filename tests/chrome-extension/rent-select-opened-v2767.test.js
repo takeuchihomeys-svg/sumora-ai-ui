@@ -55,7 +55,7 @@ console.log("\n■ ② 押した後に「何が開いたか」をその操作に
 
 console.log("\n■ ③ `shot_ops` に `opened` を載せる（DBから学べるように）");
 {
-  ok("  ⚠ 送る形に opened が入っている", /return \{ t: o\.t, k: o\.k, f: o\.f, w: o\.w, g: o\.g, by: o\.by \|\| null, opened: o\.opened \|\| null \}/.test(rec));
+  ok("  ⚠ 送る形に opened が入っている", /opened: o\.opened \|\| null/.test(rec));
   ok("  ⚠ 種類だけ（12文字に切る）", /o\.opened = String\(last\.o\)\.slice\(0, 12\)/.test(rec));
 }
 
