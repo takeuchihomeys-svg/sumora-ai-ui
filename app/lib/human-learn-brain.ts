@@ -207,10 +207,11 @@ export type HumanLearnBundle = {
     total: number;
     with_ops: number;
     /**
-     * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていない…必ず届くように」:
-     *   写真から読んだ欄の種類（画面ごと）。⚠ 数だけでは統括は何も言えない。
+     * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」:
+     *   写真から読んだ欄の種類（画面ごと）。**画面の位置（x, y）と領域も持つ**。
+     *   ⚠ 押した記録が無い欄でも、この位置から狙える。
      */
-    learned?: Record<string, Array<{ name: string; kind: string; n: number }>>;
+    learned?: Record<string, Array<{ name: string; kind: string; n: number; x?: number; y?: number; zone?: string }>>;
     /** 種類の内訳（統括が「プルダウンが何個」と言える） */
     kinds?: Record<string, number>;
   };
@@ -1476,7 +1477,25 @@ export function buildHumanLearnBundle(
         learned: Object.fromEntries(
           Object.entries(shotLearn.screens).map(([screen, v]) => [
             screen,
-            (v.fields ?? []).slice(0, 40).map((f) => ({ name: String(f.name).slice(0, 40), kind: String(f.kind).slice(0, 12), n: Number(f.n) || 0 })),
+            /**
+             * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」「実装する」:
+             *   ⚠ 実測: ここで **`x`/`y` を落としていた**ので、束には名前と種類しか入っていなかった。
+             *     画像から読んだ「画面のどこにあるか」が**拡張に届いていなかった**
+             *     ＝ 押した記録が無い欄は狙えない状態だった。
+             *   → **`x`/`y`（画面の位置）と `zone`（領域）も載せる**。
+             *     ⚠ 押した記録が無い欄でも、画像の位置から狙えるようになる。
+             */
+            (v.fields ?? []).slice(0, 40).map((f) => {
+              const rec = f as unknown as { name?: unknown; kind?: unknown; n?: unknown; x?: unknown; y?: unknown; zone?: unknown };
+              return {
+                name: String(rec.name ?? "").slice(0, 40),
+                kind: String(rec.kind ?? "").slice(0, 12),
+                n: Number(rec.n) || 0,
+                ...(typeof rec.x === "number" ? { x: rec.x } : {}),
+                ...(typeof rec.y === "number" ? { y: rec.y } : {}),
+                ...(typeof rec.zone === "string" && rec.zone ? { zone: String(rec.zone).slice(0, 10) } : {}),
+              };
+            }),
           ]),
         ),
         /** 種類の内訳（すぐ集計できる形・統括が「プルダウンが何個」と言える） */

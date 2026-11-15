@@ -1085,15 +1085,62 @@
        *   実測の目安: `n < 2` は偶然かもしれないので使わない（今まで通り）。
        */
       if (!v || typeof v.x !== "number" || typeof v.y !== "number") {
-        _noteAimUsed(name, null, v ? "no_pos" : "no_learn");
+        /**
+         * ★ 2026-11-15 竹内さん「実装する」→ **⚠ 危険なので使わない**:
+         *
+         *   ⚠ `_screenAimOf` は**画面全体の割合**（0〜1）を返すが、
+         *     呼ぶ側（`_humanPointerClick`）は `aim.x` を**要素の中の割合**として計算する。
+         *     そのまま渡すと**違う所を押す**（画面の0.1を要素の中の0.1として扱う）。
+         *   → **押す位置としては使わない**。
+         *     画像の位置は「**どの要素か**を探す手がかり」として使うのが正しい（別の実装が要る）。
+         *   ⚠ ここでは**記録に理由を残す**だけにする（次に正しく実装する時の手がかり）。
+         */
+        var _sa = _screenAimOf(name);
+        _noteAimUsed(name, null, _sa ? "screen_only（画面の位置しか無い・要素は特定できていない）" : (v ? "no_pos" : "no_learn"));
         return null;
       }
       if (Number(v.n) < 2) {
-        _noteAimUsed(name, null, "few_times:" + Number(v.n));
+        /**
+         * ⚠ 押した記録が1回だけ → **画像の位置は押す位置として使わない**（意味が違う）。
+         *   理由だけ残す。
+         */
+        var _sa2 = _screenAimOf(name);
+        _noteAimUsed(name, null, _sa2 ? "few_times+screen_only:" + Number(v.n) : "few_times:" + Number(v.n));
         return null;
-      }      var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };
+      }
+      var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };
       _noteAimUsed(name, aim, null);
       return aim;
+    } catch (_) { return null; }
+  }
+
+  /**
+   * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」「実装する」:
+   *
+   *   **画像から読んだ「画面のどこか」を狙う**（押した記録が無い欄でも狙える）。
+   *
+   *   ⚠ 実測: 自動モードは画像から2,837欄読めているのに、押した位置は30個だけだった。
+   *     理由は「押した記録がある欄しか狙えない」から。
+   *   ⚠ `_learnKinds`（`axlx_learn_points`）は**要素の中の割合**（0〜1）。
+   *     画像の `x`/`y` は**画面全体の割合**（0〜1）で**意味が違う**。
+   *     混ぜると狙いが外れるので、**別の入れ物**（`axlx_learn_screen`）から引く。
+   */
+  var _learnScreen = null;
+  function _screenAimOf(name) {
+    try {
+      if (_learnScreen === null) {
+        _learnScreen = undefined;   // 読み込み中
+        try {
+          chrome.storage.local.get(["axlx_learn_screen"], function (r) {
+            try { _learnScreen = (r && r.axlx_learn_screen) || {}; } catch (_) { _learnScreen = {}; }
+          });
+        } catch (_) { _learnScreen = {}; }
+      }
+      if (!_learnScreen || typeof _learnScreen !== "object") return null;
+      var v = _learnScreen[name];
+      if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
+      if (Number(v.n) < 3) return null;   // ⚠ 画像は3回以上見た物だけ（1〜2回は偶然）
+      return { x: v.x, y: v.y, screen: true, n: Number(v.n) || 0 };
     } catch (_) { return null; }
   }
 

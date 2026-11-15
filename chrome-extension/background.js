@@ -2772,7 +2772,33 @@ async function _refreshLearnedBundle(force) {
     /** 今のモードの押す順番（あれば mode 別、無ければ全体） */
     var myMode = await _modeLabelNow();
     var modeNext = (myMode && byMode[myMode] && byMode[myMode].next) ? byMode[myMode].next : null;
+    /**
+     * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」「実装する」:
+     *   **画像から読んだ「画面のどこか」**を、押す位置とは**別の入れ物**に入れる。
+     *   ⚠ 押す位置（`axlx_learn_points`）は**要素の中の割合**。画像の位置は**画面の割合**。
+     *     意味が違うので混ぜない。
+     *   ⚠ 3回以上見た欄だけ（1〜2回は偶然の可能性）。
+     */
+    var _screenAim = {};
+    try {
+      var learned = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
+      if (learned && typeof learned === "object") {
+        for (var _sc in learned) {
+          var list = Array.isArray(learned[_sc]) ? learned[_sc] : [];
+          for (var _i = 0; _i < list.length; _i++) {
+            var f = list[_i];
+            if (!f || typeof f.name !== "string" || typeof f.x !== "number" || typeof f.y !== "number") continue;
+            if ((Number(f.n) || 0) < 3) continue;
+            var k = String(f.name).slice(0, 40);
+            if (!_screenAim[k] || (Number(_screenAim[k].n) || 0) < (Number(f.n) || 0)) {
+              _screenAim[k] = { x: Math.round(f.x * 100) / 100, y: Math.round(f.y * 100) / 100, n: Number(f.n) || 0, kind: f.kind || null, screen: _sc };
+            }
+          }
+        }
+      }
+    } catch (_) {}
     await chrome.storage.local.set({
+      axlx_learn_screen: _screenAim,
       axlx_learn_next: next,
       axlx_learn_points: points,
       axlx_learn_motion: motion,

@@ -45,7 +45,7 @@ console.log("\n■ ③ 点検に残す（あとから「学んだ事を使った
 console.log("\n■ ④ 壊れない（学びが無い・変な値でも今まで通り）");
 {
   ok("学びが無ければ何もしない（null を返す）", /return v && v\.w \? String\(v\.w\) : null;/.test(ps));
-  ok("  壊れた入力でも落ちない（try/catch）", /function _aimOf[\s\S]{0,900}catch \(_\) \{ return null; \}/.test(ps));
+  ok("  壊れた入力でも落ちない（try/catch）", /function _aimOf[\s\S]{0,2500}catch \(_\) \{ return null; \}/.test(ps));
   ok("  moveTo が無い環境でも動く（moveToEl に落ちる）", /if \(o\.aim && P\.moveTo && el\.getBoundingClientRect\)/.test(ps));
 }
 
