@@ -17,6 +17,7 @@
 import { CHECK_DEPTH, CHECK_ORDER_TYPES, type CheckOrderCues, type CheckStep, pickCheckOrder } from "./check-order";
 import { FOCUS_ORDER } from "./conductor-focus";
 import { rosterById } from "./conductor-roles";
+import { feelingNextSend } from "./feeling-conductor-table";
 import type { BasisDepth } from "./judge-basis-types";
 
 type Env = Record<string, string | undefined>;
@@ -254,7 +255,9 @@ export const allocationDigest = (a: Allocation | null | undefined): string | nul
 /** digest の長さの都合で短くした名前（型の番号だけ） 例 "T4/d:judge>fetch>deep>combine>compose>writer" */
 export const allocationDigestShort = (a: Allocation | null | undefined): string | null => (a ? `${a.typeId.split("_")[0]}/${DEPTH_SHORT[a.depth]}:${a.parts.join(">")}` : null);
 
-export type AllocationMeta = { name: string; parts: Part[]; est_usd: number; max_usd: number; from: "type" | "scene"; depth_from: "judge_basis" | "brain_depth" | "default" };
+export type AllocationMeta = { name: string; parts: Part[]; est_usd: number; max_usd: number; from: "type" | "scene"; depth_from: "judge_basis" | "brain_depth" | "default"; /** 2026-11-15 作業員I: 気持ち・状況の表の次に送る物で足した部品 */ feeling_add?: Part[] };
+/** 2026-11-15 作業員I（統括の土台③）: 気持ち・状況の表の「次に送る物」（竹内さんの決定のある行）に要る部品。表は深さ・費用の上限を決めない（その決定は無い）＝部品を足すだけ */
+export const FEELING_NEXT_PARTS: Readonly<Record<string, Part>> = { estimate_sheet: "estimate", viewing_invite: "viewing_calendar", meeting_place: "viewing_calendar", cost_explain: "aix_desk" };
 /** 判断の後の meta から配分を選んで記録の形にする（meta は変えない・action は読まない）。
  *  型: meta.check_order_type（型の表を配線した後）→ 無ければ場面（meta.scene_evidence.scene または引数の scene）の既定の型。
  *  深さ: judge_basis.depth → brain_depth.depth → 型の既定。 */
@@ -268,7 +271,10 @@ export function allocationFromMeta(meta: Record<string, unknown> | null | undefi
   const bd = normDepth((meta.brain_depth as { depth?: unknown } | null | undefined)?.depth);
   const a = pickAllocation(typeId, jb ?? bd ?? null);
   if (!a) return null;
-  return { name: a.name, parts: a.parts, est_usd: a.estUsd, max_usd: a.stop.maxUsd, from: typeRaw && ALLOCATION[typeRaw] ? "type" : "scene", depth_from: jb ? "judge_basis" : bd ? "brain_depth" : "default" };
+  const fn = feelingNextSend(meta);
+  const add = fn?.aix && FEELING_NEXT_PARTS[fn.aix] && !a.parts.includes(FEELING_NEXT_PARTS[fn.aix]) ? [FEELING_NEXT_PARTS[fn.aix]] : [];
+  const parts = add.length ? [...a.parts, ...add] : a.parts;
+  return { name: a.name, parts, est_usd: Math.round((a.estUsd + add.reduce((s, p) => s + partCostUsd(p), 0)) * 10000) / 10000, max_usd: a.stop.maxUsd, from: typeRaw && ALLOCATION[typeRaw] ? "type" : "scene", depth_from: jb ? "judge_basis" : bd ? "brain_depth" : "default", ...(add.length ? { feeling_add: add } : {}) };
 }
 
 /** meta.conductor_allocation（AllocationMeta）→ digest.al（"T4/d:judge>fetch>…"・90字まで）。形が違う物は null */

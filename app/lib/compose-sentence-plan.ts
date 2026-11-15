@@ -829,6 +829,8 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   ref_resolve: "other",
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF・記録だけ）とその入力
   conductor_brief_inputs: "other", conductor_brief: "other",
+  // 2026-11-15 作業員I: 気持ち・状況の表の入力と判断（FEELING_CONDUCTOR_TABLE・on の時は指示書の feeling 欄で書き手へ）
+  feeling_situation_inputs: "none", feeling_conductor: "other",
   // 2026-11-13 作業員22: 届いたかの確かめ（DELIVERY_CHECK・記録だけ）
   delivery_check: "none",
   // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）と、材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）＝どちらも記録だけ・文に渡さない

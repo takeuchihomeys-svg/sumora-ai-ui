@@ -23,6 +23,7 @@ import type { NowThisTurn, AnswerSource } from "./brain-now-later";
 import type { AskPart } from "./ask-parts";
 import type { SendCombo } from "./send-combo-table";
 import type { V2WhyOrder } from "./compose-plan-rows-v2";
+import { feelingPriorityCues } from "./feeling-conductor-table";
 
 type Env = Record<string, string | undefined>;
 export function priorityTableOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -249,7 +250,8 @@ export function priorityCuesFromMeta(meta: M | null | undefined): PriorityCues {
     splitParts: split,
     askedAgain: uptake.some((u) => u?.kind === "asked_again" || u?.kind === "misread"),
     notHooked: uptake.some((u) => u?.hook === "not_hooked"),
-    hooked: co.has("hooked"), takenWorry: co.has("takenWorry"), firstContact: co.has("firstContact"), hasQuestion: co.has("hasQuestion"),
+    // 2026-11-15 作業員I（統括の土台③）: FEELING_CONDUCTOR_TABLE=on の時は気持ちの表（先に取られる不安・刺さっている強さ3）も手がかりにする（既定 off＝今のまま）
+    hooked: co.has("hooked") || feelingPriorityCues(m).hooked === true, takenWorry: co.has("takenWorry") || feelingPriorityCues(m).takenWorry === true, firstContact: co.has("firstContact"), hasQuestion: co.has("hasQuestion"),
     resultReady: co.has("resultReady"), broughtUnchecked: co.has("customerSentProperty") && !co.has("resultReady"),
     ackOnly: co.has("ackOnly"), pendingPromise: co.has("pendingPromise"),
   };

@@ -582,6 +582,9 @@ export type SuggestedAixMeta = {
   /** 2026-11-12 作業員22: 統括の指示書の入力と指示書（CONDUCTOR_BRIEF=shadow の時だけ・記録だけ） */
   conductor_brief_inputs?: import("@/app/lib/conductor-brief").BriefInputs;
   conductor_brief?: import("@/app/lib/conductor-brief").ConductorBrief;
+  /** 2026-11-15 作業員I（統括の土台③）: 気持ち・状況の表の入力（見積の数・内覧の段階）と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ） */
+  feeling_situation_inputs?: import("@/app/lib/feeling-conductor-table").FeelingSituationInput;
+  feeling_conductor?: import("@/app/lib/feeling-conductor-table").FeelingDecision;
   /** 2026-11-12 作業員22: 判断の根拠のメモの次の行き先・答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT・文の統括へ plan） */
   judge_next?: import("@/app/lib/brain-judge-basis").JudgeNext;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
@@ -1699,6 +1702,16 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (p) Object.assign(meta as unknown as Record<string, unknown>, p);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:combine-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-15 作業員I（統括の土台③・設計図 feeling_conductor_linkage_1115 の段4・追記）: 気持ち・状況から統括の5つの判断を表で決める。
+  //   FEELING_CONDUCTOR_TABLE=shadow は meta.feeling_conductor に記録だけ／on は重点（conductor_focus）も表の重点にする。優先度の表・指示書の強さ・次の一手は各部品が on の時に読む（既定 off＝何もしない）
+  try {
+    const ft = await import("@/app/lib/feeling-conductor-table");
+    if (ft.feelingTableMode() !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      mm.feeling_conductor = ft.decideFromFeeling(mm, (mm.feeling_situation_inputs ?? {}) as import("@/app/lib/feeling-conductor-table").FeelingSituationInput);
+      ft.applyFeelingFocus(mm);
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "conductor:feeling-table-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB d030d496・fd1c7c62）: 判断の順番の型（check-order.pickCheckOrder）を meta から選んで記録だけ。CHECK_ORDER_TABLE=shadow|on の時だけ
   //   meta.check_order_type（型の id）・meta.check_order（候補・手がかり）を足す（既定 off＝何も足さない）。返信か AIX かは読まない・変えない。配分より先に置く（配分が型の id を読む）
   try {
@@ -6826,6 +6839,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
       // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）
       conductor_brief_inputs: briefOnNow ? briefInputs : undefined,
+      // 2026-11-15 作業員I: 気持ち・状況の表の入力（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ・読み物は既に手元の aixLogs と行動台帳だけ＝DB を読み足さない）
+      feeling_situation_inputs: (process.env.FEELING_CONDUCTOR_TABLE ?? "").trim().toLowerCase() === "on" || (process.env.FEELING_CONDUCTOR_TABLE ?? "").trim().toLowerCase() === "shadow" ? {
+        estimatesSent: aixLogs.filter((l) => l.aix_type === "estimate_sheet" && l.sent_at).length,
+        viewing: brainLedger.facts.viewingDone ? "done" as const : brainLedger.facts.viewingAppointment ? (aixLogs.some((l) => l.aix_type === "meeting_place" && l.sent_at && (!brainLedger.facts.viewingAppointment?.sentAt || l.sent_at >= brainLedger.facts.viewingAppointment.sentAt)) ? "place_sent" as const : "scheduled" as const) : "none" as const,
+      } : undefined,
       check_order_scene: checkOrderMode() !== "off" ? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene : undefined,
       aix_now: BRAIN_NOW_LATER_ON ? aixNowOf(nowLaterParsed, finalAix) : undefined,
       customer_concern: customerConcern,

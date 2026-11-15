@@ -22,6 +22,7 @@ import { intakeDigestLine } from "./conductor-intake";
 import { allocationMetaDigest } from "./conductor-allocation";
 import { checkOrderDigest } from "./check-order-wire";
 import { conductorBriefDigest } from "./conductor-brief";
+import { feelingDigest, type FeelingDecision } from "./feeling-conductor-table";
 import { deliveryDigest } from "./delivery-check";
 import { onHandDigest } from "./material-on-hand";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
@@ -150,6 +151,8 @@ export type FreshDigest = {
   co?: string;
   /** 2026-11-12 統括の指示書の1行（型|目的|足りない情報|照らし合わせ|事実|疑いの印|確かさ|未の数・conductor-brief.ts・CONDUCTOR_BRIEF=shadow の時だけ） */
   cb?: string;
+  /** 2026-11-15 作業員I: 気持ち・状況の表（feeling-conductor-table.feelingDigest・meta.feeling_conductor がある番だけ） */
+  fl?: string;
   /** 2026-11-13 決めた事が書き手まで届いた数（欄の届き/値あり|下の欄の届き/値あり・delivery-check.ts・DELIVERY_CHECK=shadow の時だけ） */
   dv?: string;
   /** 2026-11-13 mm が手元にあった数/mm の数（material-on-hand・MATERIAL_ON_HAND=shadow の時だけ） */
@@ -224,6 +227,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const co = checkOrderDigest(meta.check_order); return co ? { co } : {}; })()),
     // 2026-11-12 作業員22: 統括の指示書（conductor-brief.conductorBriefDigest・meta.conductor_brief がある番だけ）
     ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
+    // 2026-11-15 作業員I: 気持ち・状況の表の当たった行と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ）
+    ...((() => { const fl = feelingDigest(meta.feeling_conductor as FeelingDecision | undefined); return fl ? { fl } : {}; })()),
     // 2026-11-13 作業員22: 決めた事が書き手まで届いた数（delivery-check.deliveryDigest・meta.delivery_check がある番だけ）
     ...((() => { const dv = deliveryDigest(meta.delivery_check); return dv ? { dv } : {}; })()),
     ...((() => { const mh = onHandDigest(meta.material_on_hand); return mh ? { mh } : {}; })()),
