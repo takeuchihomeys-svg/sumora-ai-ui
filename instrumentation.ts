@@ -26,7 +26,7 @@ export async function register() {
     } catch (e) {
       console.warn("[instrumentation] alt provider install failed:", String(e));
     }
-    // 2026-11-15 作業員H: RAG（match_* の RPC）ごとの見張り（呼ばれた・0件・失敗・近さ・時間を rag_call_logs に）。RAG_WATCH=on の時だけ（既定 off）
+    // 2026-11-15 作業員H: RAG（match_* の RPC）ごとの見張り（呼ばれた・0件・失敗・近さ・時間を rag_call_logs に）。11/15 から既定 on（止める RAG_WATCH=off）
     //   開発サーバの包み直し（下）には入れていない＝手元の HMR の後は外れる（見張りは本番の数え用）
     try {
       const { installRagWatch } = await import("./app/lib/rag-watch-server");

@@ -1,11 +1,11 @@
-// RAG の見張り（2026-11-15 作業員H・RAG_WATCH・既定 off）
+// RAG の見張り（2026-11-15 作業員H・RAG_WATCH・既定 on）
 // 実行: npx tsx app/lib/__tests__/rag-watch.test.ts
 import { ragWatchOn, ragRpcName, topSimilarity, ragArgsMeta, buildRagRow, wrapFetchWithRagWatch, ragWatchStats, ragWatchFindings, type RagCallRow } from "../rag-watch";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 
 (async () => {
-  t("既定 off", !ragWatchOn({}) && ragWatchOn({ RAG_WATCH: "on" }));
+  t("既定 on・=off で止める（11/15）", ragWatchOn({}) && !ragWatchOn({ RAG_WATCH: "off" }));
   t("RPC の名前: match_* だけ", ragRpcName(new URL("https://x.supabase.co/rest/v1/rpc/match_takeuchi_compose")) === "match_takeuchi_compose" && ragRpcName(new URL("https://x.supabase.co/rest/v1/rpc/get_stats")) === null && ragRpcName(new URL("https://x.supabase.co/rest/v1/messages?select=*")) === null);
   t("近さ: similarity / score の最大", topSimilarity([{ similarity: 0.61 }, { similarity: 0.7234 }]) === 0.723 && topSimilarity([{ score: 0.5 }]) === 0.5 && topSimilarity([{ id: 1 }]) === null && topSimilarity([]) === null && topSimilarity([{ distance: 0.2 }, { distance: 0.3 }]) === 0.8);
   t("引数: 件数と名前だけ（値は残さない）", JSON.stringify(ragArgsMeta(JSON.stringify({ query_embedding: [0.1], match_count: 8, p_scene: "内覧" }))) === JSON.stringify({ match_count: 8, arg_keys: ["match_count", "p_scene", "query_embedding"] }));

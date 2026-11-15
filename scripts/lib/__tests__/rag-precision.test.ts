@@ -30,3 +30,23 @@ const all = tl.find((x) => x.rag === "返信の手本" && x.scene === "全体");
 t("足し算: 空の数・全体の行", !!all && all.n === 2 && all.empty === 1, all);
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
+// 連携①の読み（実物の digest の形）
+import("../rag-precision").then(({ readingOf, readingMatch, rerankByReading }) => {
+  const r1 = readingOf({ tc: "2:r1p1a0n0", ta: "[\"search_condition\", \"search_condition\"]", intent: "desire", emoF: "普通の依頼", fc: "promise_make:search|束:promise_make(6件・51%)" });
+  const r2 = readingOf({ tc: "1:r0p0a1n0", ta: "[\"viewing_day:GrandPaseo south 302号室\"]", intent: "chat", emoF: "内覧したい", fc: "relation|束:close(30件・40%)" });
+  const ok1 = !!r1 && r1.route === "promise" && r1.about.join() === "search_condition" && r1.focus === "promise_make" && r1.emo === "普通の依頼";
+  const ok2 = !!r2 && r2.route === "aix" && r2.about.join() === "viewing_day" && r2.focus === "relation";
+  const ok3 = readingMatch(r1, r1, "about") && !readingMatch(r1, r2, "route") && !readingMatch(r1, null, "intent");
+  const ranked = rerankByReading([{ id: "x", family: "内覧", reply: null, sim: 0.82, conversationId: "c9", at: null, reading: r2 }, { id: "y", family: "返信", reply: "探す約束", sim: 0.8, conversationId: "c8", at: null, reading: r1 }], r1, ["route", "focus"]);
+  const ok4 = ranked[0].id === "y" && Math.abs(ranked[0].sim - 0.9) < 1e-9;
+  console.log(ok1 && ok2 && ok3 && ok4 ? "  OK  連携①: 読み・突き合わせ・加点の並べ替え" : `  NG  連携① ${JSON.stringify({ r1, r2, ok1, ok2, ok3, ok4 })}`);
+  if (!(ok1 && ok2 && ok3 && ok4)) process.exit(1);
+});
+import("../rag-precision").then(({ tallyRag }) => {
+  const base = { rag: "R", got: 1, top1Route: true, majRoute: true, skeleton: null, topSim: 0.8 };
+  const tl = tallyRag([{ ...base, scene: "返信:条件提示" }, { ...base, scene: "重点:answer" }]);
+  const all = tl.find((x) => x.scene === "全体"), f = tl.find((x) => x.scene === "重点:answer");
+  const ok = !!all && all.n === 1 && !!f && f.n === 1;
+  console.log(ok ? "  OK  重点の写しは全体に足さない" : "  NG  重点の写し");
+  if (!ok) process.exit(1);
+});
