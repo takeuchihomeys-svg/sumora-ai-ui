@@ -41,3 +41,65 @@ export async function recordExamWeaknesses(sb: SupabaseClient, label: string, hi
     return `弱い所の台帳に書けない: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
   }
 }
+
+/**
+ * ★ 2026-11-15 竹内さん「バグあったらちゃんとそこもちゃんと記憶して改善するように
+ *   統括の土台も強化していくようにする。学習したら強化する形」
+ *
+ *   **写真読み取りの失敗を台帳に残す**。
+ *   ⚠ 今までは `why`（読めなかった理由）を**その場のログに出すだけ**だったので、
+ *     「46枚読めなかった」のような事実が**どこにも残らず**、統括は次の日も同じことを言っていた。
+ *   → 理由ごとに1行（`learn:photo:<理由の種類>`）。回数が増えるほど「一番よく起きる失敗」が分かる。
+ *   ⚠ 入れるのは**理由の種類と回数だけ**（写真の置き場所・お客様の情報は入れない）。
+ */
+export async function recordPhotoLearnWeaknesses(
+  sb: SupabaseClient,
+  results: ReadonlyArray<{ ok: boolean; why: string | null; shot_w: number }>,
+  opts: { nowIso?: string; label?: string } = {},
+): Promise<{ rows: number; hits: number; skipped?: string; summary: string }> {
+  const nowIso = opts.nowIso ?? new Date().toISOString();
+  if (!results.length) return { rows: 0, hits: 0, summary: "写真の読み取り: 対象なし" };
+  // 理由を「種類」に丸める（数字や時刻を落として数えられるように）
+  const kindOf = (why: string | null): string => {
+    const w = String(why ?? "").trim();
+    if (!w) return "nothing";
+    if (w.startsWith("deepseek_empty")) return w.includes("length") ? "max_tokens不足" : "答えが空";
+    if (w.startsWith("deepseek_http_")) return "APIエラー(" + w.replace(/[^0-9]/g, "").slice(0, 3) + ")";
+    if (w.startsWith("no_fields")) return "欄が見つからない";
+    if (w.startsWith("signed_url_failed")) return "写真を取れない";
+    if (w.startsWith("no_api_key")) return "キーが無い";
+    if (w.startsWith("exception")) return "例外";
+    return w.split(":")[0].slice(0, 20);
+  };
+  const acc = new Map<string, { n: number; sizes: Set<number> }>();
+  for (const r of results) {
+    if (r.ok) continue;
+    const k = kindOf(r.why);
+    const cur = acc.get(k) || { n: 0, sizes: new Set<number>() };
+    cur.n++;
+    cur.sizes.add(Math.round(r.shot_w / 100) * 100);
+    acc.set(k, cur);
+  }
+  const okN = results.filter((r) => r.ok).length;
+  const failN = results.length - okN;
+  if (!failN) return { rows: 0, hits: 0, summary: `写真の読み取り: ${okN}枚すべて読めた` };
+  const hits: WeaknessHit[] = [...acc.entries()].map(([k, v]) => ({
+    key: `learn:photo:${k}`.slice(0, 80),
+    title: `写真から読めない（${k}）`,
+    area: "learn" as const,
+    symptom: `${v.n}枚が読めなかった（大きさ ${[...v.sizes].join("/")}px）`,
+    n: v.n,
+    evidence: {},
+  }));
+  try {
+    if (!brainWeaknessLedgerEnabled()) return { rows: 0, hits: failN, skipped: "BRAIN_WEAKNESS_LEDGER is off", summary: `写真の読み取り: ${okN}枚読めた・${failN}枚読めず（台帳は off）` };
+    const r = await upsertWeaknessHits(sb, hits, { nowIso, ...(opts.label ? { onceLabel: opts.label } : {}) });
+    const top = [...acc.entries()].sort((a, b) => b[1].n - a[1].n)[0];
+    return {
+      rows: r.rows, hits: r.hits, skipped: r.skipped,
+      summary: `写真の読み取り: ${okN}枚読めた・${failN}枚読めず（一番多い理由: ${top ? top[0] + " " + top[1].n + "枚" : "－"}）`,
+    };
+  } catch (e) {
+    return { rows: 0, hits: failN, summary: `写真の読み取り: ${okN}枚読めた・${failN}枚読めず（台帳に書けない: ${String(e instanceof Error ? e.message : e).slice(0, 100)}）` };
+  }
+}

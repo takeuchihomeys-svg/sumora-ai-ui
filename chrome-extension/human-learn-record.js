@@ -535,7 +535,41 @@
         var d = t - last.t;
         if (d >= 0 && d <= 60000) gap = d;
       }
-      _opsRing.push({ t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null });
+      /**
+       * ★ 2026-11-15 竹内さん「3組目の悠さんは駅での検索なので、前に残っていた
+       *   泉大津市・西成区・住之江区・浪速区を外すために押している。
+       *   選択しているのではなくて押すことで前に残っている部分をはずしている」
+       *
+       *   ⚠ **私は2回続けて同じ誤読をした**（「選んでいる」と読んだ）。
+       *     理由は記録に**押す前の状態が無かった**から。押した後の名前だけ見ると
+       *     「外した」のか「選んだ」のか区別できない（同じ `click` なので）。
+       *
+       *   → **押す直前の状態（`was`: true=チェック済み / false=未チェック）を残す**。
+       *     これで「黒→白（外した）」と「白→黒（選んだ）」を**記録だけで区別**できる。
+       *   ⚠ 入れるのは**真偽だけ**（入力した中身・名前は今まで通り入れない）。
+       *   ⚠ checkbox / radio の時だけ（select や text には意味が無い）。
+       */
+      var wasChecked = null;
+      try {
+        if (el && typeof el.checked === "boolean") wasChecked = el.checked;
+      } catch (_) { wasChecked = null; }
+      /**
+       * ⚠ **押した後**の状態も残す（`now`）。`was` と `now` を比べれば
+       *   「付けた（false→true）」と「外した（true→false）」が確実に分かる。
+       *   ⚠ ここは「押す直前」なのでまだ変わっていない。変わるのはこの後。
+       *     → 少し待ってから読む（呼ぶ側の `_cap` が `queueMicrotask` 相当で読む）。
+       */
+      var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null };
+      if (wasChecked !== null) {
+        _opObj.was = wasChecked;
+        try {
+          // 押した直後（同期的に）の状態。⚠ サイトが非同期で変える事があるので保険で2回読む
+          setTimeout(function () {
+            try { if (el && typeof el.checked === "boolean") _opObj.now = el.checked; } catch (_) {}
+          }, 0);
+        } catch (_) {}
+      }
+      _opsRing.push(_opObj);
       try { _opsSeen++; } catch (_) {}
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
     } catch (_) {}

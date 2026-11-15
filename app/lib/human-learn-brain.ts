@@ -1093,6 +1093,33 @@ export function buildHumanLearnBundle(
       return (Array.isArray(x.shot_ops) && x.shot_ops.length > 0) || (Array.isArray(x.field_order) && x.field_order.length > 0);
     }).length,
     /**
+     * ★ 2026-11-15 竹内さん「3組目の悠さんは駅での検索なので、前に残っていた
+     *   泉大津市・西成区・住之江区・浪速区を外すために押している。
+     *   選択しているのではなくて押すことで前に残っている部分をはずしている」
+     *   「統括はこのこと理解するために必要な土台作り細部まで理解できるようにする」
+     *
+     *   ⚠ 統括は**押した欄の名前だけ**を見ていたので「泉大津市を選んでいる」と読んでいた。
+     *     実際は「前のお客さんの泉大津市を**外していた**」＝**意味が正反対**。
+     *   → 記録の `was`/`now`（押す前・押した後の checked）から
+     *     **外した数・選んだ数**を出して材料に入れる（`toggle-meaning.ts`）。
+     *   ⚠ 旧版の記録は区別できないので、その時は「区別できない」と正直に書く。
+     */
+    toggles: (() => {
+      try {
+        const all: Array<{ f?: unknown; was?: unknown; now?: unknown }> = [];
+        for (const r of list) {
+          const ops = (r as unknown as Record<string, unknown>).shot_ops;
+          if (Array.isArray(ops)) all.push(...(ops as never[]));
+        }
+        if (!all.length) return null;
+        const off = all.filter((o) => o && o.was === true && o.now === false).length;
+        const on = all.filter((o) => o && o.was === false && o.now === true).length;
+        const unknown = all.filter((o) => o && typeof o.was !== "boolean").length;
+        if (!off && !on && !unknown) return null;
+        return { off, on, unknown };
+      } catch (_) { return null; }
+    })(),
+    /**
      * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」
      *   → ⚠ **統括は「前回と比べる」仕組みを持っているのに、常に `prev: null` で渡していた**。
      *     だから「良くなったか悪くなったか」を一度も言えていなかった

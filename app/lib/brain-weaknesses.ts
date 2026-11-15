@@ -9,11 +9,22 @@
 //   切替: BRAIN_WEAKNESS_LEDGER（既定 on・off で書かない）
 
 export type WeaknessStatus = "open" | "in_progress" | "fixed" | "wont_fix";
-export type WeaknessArea = "brain" | "writer" | "aix" | "exam" | "conductor" | "memory";
+/**
+ * ★ 2026-11-15 竹内さん「バグあったらちゃんとそこもちゃんと記憶して改善するように
+ *   統括の土台も強化していくようにする。学習したら強化する形」:
+ *   **拡張（自動モード）と写真読み取り**の弱い所も同じ台帳に載せる。
+ *   ⚠ 今までは brain / writer / aix / exam / conductor / memory だけで、
+ *     「写真が読めない」「検索で止まる」のような**仕組みの弱い所**が台帳に無かった
+ *     ＝ 統括が「また同じ事を言う」だけで**直したかを追えなかった**。
+ */
+export type WeaknessArea = "brain" | "writer" | "aix" | "exam" | "conductor" | "memory" | "ext" | "learn";
 export const WEAKNESS_STATUSES: readonly WeaknessStatus[] = ["open", "in_progress", "fixed", "wont_fix"];
-export const WEAKNESS_AREAS: readonly WeaknessArea[] = ["brain", "writer", "aix", "exam", "conductor", "memory"];
+export const WEAKNESS_AREAS: readonly WeaknessArea[] = ["brain", "writer", "aix", "exam", "conductor", "memory", "ext", "learn"];
 export const STATUS_JA: Record<WeaknessStatus, string> = { open: "未着手", in_progress: "作業中", fixed: "直した", wont_fix: "やらない" };
-export const AREA_JA: Record<WeaknessArea, string> = { brain: "道を選ぶ力", writer: "文を作る力", aix: "AIX", exam: "試験・物差し", conductor: "つなぎ", memory: "記憶・つなぎ" };
+export const AREA_JA: Record<WeaknessArea, string> = {
+  brain: "道を選ぶ力", writer: "文を作る力", aix: "AIX", exam: "試験・物差し", conductor: "つなぎ", memory: "記憶・つなぎ",
+  ext: "拡張（自動モード・操作）", learn: "学習（写真・記録）",
+};
 
 /** 印だけ（文は入れない） */
 /** reopened＝再発の印（直した行に同じ key が当たって open に戻した時刻と、その時の直し・新しい順・11/06 統括役）

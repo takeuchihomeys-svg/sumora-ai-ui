@@ -1821,8 +1821,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── CSP回避: content.jsに代わってproperty-customersをfetch ─────────────────
-  /**
-   * 2026-11-11 竹内さん「データベース等にはいっているのか」:
+/**
+ * ★ 2026-11-15 竹内さん「許可の記憶もごっちゃごちゃにならないように土台整えるのも強化していく」:
+ *
+ *   **このPCの名前を自動で決める**（一度決めたら変えない）。
+ *   ⚠ 実測: `device_label` が全部空だったので、記録が**どのPCの物か分からなかった**。
+ *     複数台で使うと「このPCは自動モードにしてよい」のような**許可の記憶が混ざる**。
+ *
+ *   ⚠ 名前は**人が読める短い物**にする（OS と画面の大きさから作る）。
+ *     例: `Win-1920` / `Mac-1512`。⚠ 個人名・IP・シリアルは入れない。
+ *   ⚠ 一度保存したら**変えない**（名前が変わると記録が別のPCに見える）。
+ */
+async function _ensureDeviceLabel() {
+  try {
+    const cur = await chrome.storage.local.get("deviceLabel");
+    if (cur && cur.deviceLabel) return String(cur.deviceLabel);
+    let os = "PC";
+    try {
+      const p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+      if (/win/i.test(String(p))) os = "Win";
+      else if (/mac/i.test(String(p))) os = "Mac";
+      else if (/linux/i.test(String(p))) os = "Linux";
+      else if (/android/i.test(String(p))) os = "Android";
+    } catch (_) {}
+    let w = 0;
+    try { w = (screen && screen.width) || 0; } catch (_) {}
+    const label = os + "-" + (w || "?");
+    try { await chrome.storage.local.set({ deviceLabel: label, deviceLabelAt: Date.now() }); } catch (_) {}
+    console.log("[device] このPCの名前を決めました: " + label);
+    return label;
+  } catch (_) { return null; }
+}
+
+/**
+ * 2026-11-11 竹内さん「データベース等にはいっているのか」:
    *   通常モードで覚えた人の動きを DB（human_motion_learn）に残す。
    *   ・画面側（human-learn-upload.js）は**鍵を持たない**ので、ここで付けて送る（認証情報をページに出さない）
    *   ・送るのは数と傾向だけ。入力した中身・名前・電話は送らない
@@ -1841,10 +1873,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           shot_w: msg.shot_w || null,
           shot_h: msg.shot_h || null,
           install_id: await _snapInstallId(),
-          // 2026-11-11: `chrome.storage.local.get(...)` は Promise を返さない → `.catch` で落ちる。await で受ける
-          device_label: await (async function () {
-            try { const r = await chrome.storage.local.get("deviceLabel"); return (r && r.deviceLabel) || null; } catch (_) { return null; }
-          })(),
+          /**
+           * ★ 2026-11-15 竹内さん「許可の記憶もごっちゃごちゃにならないように土台整えるのも強化していく」:
+           *   ⚠ 実測: 記録は**全部 `device_label` が空**だった（1台しか無いのに、どのPCか分からない）。
+           *     これでは「このPCは自動モードにしてよい／このPCはスタッフ用」のような**許可の記憶**が
+           *     混ざっても**区別できない**。
+           *   → **端末名を自動で決めて保存**する（人は何もしなくてよい）。
+           */
+          device_label: await _ensureDeviceLabel(),
           ext_version: _extVersion(),
           at: Date.now(),
         };
@@ -3316,7 +3352,7 @@ async function _sendShotNow(job) {
   try {
     const hdr = await _getAutomationKeyHeader();
     let devLabel = null;
-    try { const r0 = await chrome.storage.local.get("deviceLabel"); devLabel = (r0 && r0.deviceLabel) || null; } catch (_) {}
+    try { devLabel = await _ensureDeviceLabel(); } catch (_) {}
     /**
      * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
      *   ⚠ 旧は `motion` を**全部ゼロ**（n:0・kinds:{}・scrolls:{n:0}…）で送っていた。

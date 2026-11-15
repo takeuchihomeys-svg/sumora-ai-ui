@@ -4048,6 +4048,36 @@
       cond.detail_area = null;
     }
 
+    /**
+     * ★ 2026-11-15 竹内さん「このお客さんは沿線駅絞り込みの検索なので、もともとの地域の部分はずしている。
+     *   それで駅いれている。間取りももともと1LDKで残っていたのでその部分もはずしている。
+     *   この考え方は駅のお客さんから地域のお客さんで学習するときも同じとなる」
+     *
+     *   ⚠ 上の `area_mode` の分岐は**条件（cond）の中身**を消すだけで、
+     *     **画面に残っている前のお客さんの選択**は消していなかった。
+     *     実測（悠さんの録画）: 沿線・駅で選んだ後に**所在地絞り込み**を開いて
+     *       泉大津市・西成区・住之江区・浪速区を選び直していた（＝前の地域が残っていた）。
+     *
+     *   → **モードを切り替えたら、反対側の画面の選択を外す**（人がやる事と同じ）。
+     *     ⚠ 押すのは**実際のラベル**（`label.one_city` / `label.one_line` / `label.one_station`）。
+     *       `city_code[]` や `station_id[]` は**隠れた input** なので、
+     *       それだけ外しても画面のチェックは残る（実測: 駅は `label.one_station` が86回・`station_id[]` が72回）。
+     *     ⚠ 小窓（モーダル）を開かないと外せない → 開いて外して閉じる。
+     *       手順は下の `_clearPrevAreaSelection`（既にある）に任せる。
+     */
+    try {
+      var _wantStationMode = (cond.area_mode === "station") || (hasStation || hasRoutes) && (cond.area_mode !== "ward");
+      var _wantWardMode = (cond.area_mode === "ward") || (hasCities || cond.detail_ward);
+      if (_wantStationMode) {
+        // 駅で検索する → **前のお客さんの地域（区・町字）を外す**
+        try { window.__axlxNeedClearWard = true; } catch (_) {}
+      }
+      if (_wantWardMode) {
+        // 地域で検索する → **前のお客さんの沿線・駅を外す**
+        try { window.__axlxNeedClearStation = true; } catch (_) {}
+      }
+    } catch (_) {}
+
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;

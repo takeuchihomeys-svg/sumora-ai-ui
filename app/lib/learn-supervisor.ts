@@ -155,6 +155,16 @@ export type SupervisorInput = {
     /** 「自動/AIXモードのPCが無かった」で終わった数（運用の問題・処理ではない） */
     mode_absent?: { aix_absent: number; brain_absent: number } | null;
   } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「3組目の悠さんは駅での検索なので、前に残っていた
+   *   泉大津市・西成区・住之江区・浪速区を外すために押している。
+   *   選択しているのではなくて押すことで前に残っている部分をはずしている」
+   *
+   *   **外した数・選んだ数**（押す前と後の checked から決める・`toggle-meaning.ts`）。
+   *   ⚠ これが無いと統括は「泉大津市を選んでいる」と**正反対に読む**（実測で2回誤読）。
+   *   `off` が多い回は「前のお客さんの条件が残っていた」証拠。
+   */
+  toggles?: { off: number; on: number; unknown: number } | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -689,6 +699,8 @@ function buildMeeting(m: {
   /** 2026-11-14: 人の手本と機械の動きの数（人の割合で判断を制限する） */
   humanOps?: number;
   autoOps?: number;
+  /** 2026-11-15: 外した数・選んだ数（押す前と後の checked から・`toggle-meaning.ts`） */
+  toggles?: { off: number; on: number; unknown: number } | null;
   /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
   sameRuns?: { n: number; max_same: number } | null;
   shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
@@ -817,6 +829,20 @@ function buildMeeting(m: {
   }
   const sc = Object.entries(m.siteCounts).filter(([k]) => k && k !== "(空)");
   if (sc.length) evidence.push({ label: "サイト別の記録", value: sc.map(([k, v]) => `${k} ${v}件`).join("・") });
+  /**
+   * ★ 2026-11-15 竹内さん「統括はこのこと理解するために必要な土台作り細部まで理解できるようにする」:
+   *   **「外した」と「選んだ」を分けて出す**。
+   *   ⚠ これが無いと統括は「泉大津市を選んでいる」と**正反対に読む**（実測で2回誤読）。
+   *   `off` が多い＝前のお客さんの条件が残っていた証拠。
+   */
+  if (m.toggles && (m.toggles.off > 0 || m.toggles.on > 0 || m.toggles.unknown > 0)) {
+    const tg = m.toggles;
+    const parts: string[] = [];
+    if (tg.off > 0) parts.push(`前に残っていたのを外した ${tg.off}件`);
+    if (tg.on > 0) parts.push(`選んだ ${tg.on}件`);
+    if (tg.unknown > 0 && !tg.off && !tg.on) parts.push(`区別できない ${tg.unknown}件（旧版の記録）`);
+    evidence.push({ label: "押した操作の中身", value: parts.join("／") });
+  }
   const mc = Object.entries(m.modeCounts);
   if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });
 
@@ -1020,6 +1046,20 @@ function buildMeeting(m: {
   }
   if (m.block) {
     agenda.push({ priority: 0, topic: "自動に渡すと危ない状態", why: m.block, decide: "自動を止めるか、警告だけで続けるか" });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「統括はこのこと理解するために必要な土台作り細部まで理解できるようにする」:
+   *   **前のお客さんの条件を外す仕事が多い**時は議題にする。
+   *   ⚠ 「外した」が多い＝前のお客さんの条件が残っている＝**別のお客さんの条件で検索する危険**。
+   *     統括がこれを自分から言えれば、私は「選んでいる」と誤読しない。
+   */
+  if (m.toggles && m.toggles.off > 0) {
+    agenda.push({
+      priority: 1,
+      topic: "前のお客さんの条件を外す仕事が発生している",
+      why: `押した操作のうち **${m.toggles.off}件が「前に残っていたのを外した」**（選んだのは ${m.toggles.on}件）`,
+      decide: "リセットを確実にする（今は人が1つずつ外している）／このままでよいか",
+    });
   }
   const siteKeys = Object.keys(m.siteCounts).filter((k) => k && k !== "(空)");
   if (siteKeys.length === 1 && m.site === "all") {

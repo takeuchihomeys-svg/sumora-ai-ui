@@ -71,6 +71,24 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
 
 /** 写真1枚を Vision で読む（読めなければ null・投げない） */
 export async function readShotFields(shotKey: string): Promise<ShotLearn | null> {
+  const r = await readShotFieldsWithWhy(shotKey);
+  return r.sl;
+}
+
+/**
+ * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」:
+ *   **読めなかった理由と時間**も返す。
+ *   ⚠ 旧の `readShotFields` は `null` だけ返していたので、
+ *     「何枚読めなかった」の**理由がどこにも残らなかった**（＝改善できない）。
+ */
+export async function readShotFieldsWithWhy(shotKey: string): Promise<{ sl: ShotLearn | null; why: string | null; ms: number }> {
+  const t0 = Date.now();
+  const r = await readShotFieldsCore(shotKey);
+  return { sl: r.sl, why: r.why, ms: Date.now() - t0 };
+}
+
+/** 中身（理由付き）。`readShotFields` と `readShotFieldsWithWhy` の共通の実体 */
+async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | null; why: string | null }> {
   try {
     /**
      * Storage の**署名付き URL** を作る（非公開でも読める・公開設定に依存しない）。
@@ -78,7 +96,7 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
      */
     const signed = await supabase.storage.from(BUCKET).createSignedUrl(shotKey, 60 * 10);
     const url = signed?.data?.signedUrl ?? null;
-    if (!url) return null;
+    if (!url) return { sl: null, why: "signed_url_failed:" + String(signed?.error?.message ?? "no_url").slice(0, 80) };
     /**
      * 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（DeepSeek では読めない）**:
      *
@@ -94,7 +112,7 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
      *   → **Claude で読む**。DeepSeek が使えるのは「文を作る」ような推論が短くて済む仕事。
      */
     const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
-    if (!apiKey) return null;
+    if (!apiKey) return { sl: null, why: "no_api_key:ANTHROPIC_API_KEY が無い" };
     /**
      * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
      *
@@ -137,8 +155,8 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
       } catch { return null; }
     };
 
-    /** 1回読む（base64 を渡す） */
-    const ask = async (b64: string, note: string): Promise<ShotLearn | null> => {
+    /** 1回読む（base64 を渡す）。⚠ 読めなかった**理由**も返す */
+    const ask = async (b64: string, note: string): Promise<{ sl: ShotLearn | null; why: string | null }> => {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -148,7 +166,7 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
         },
         body: JSON.stringify({
           model: process.env.SHOT_LEARN_MODEL || "claude-haiku-4-5",
-          max_tokens: 2000,
+          max_tokens: Number(process.env.SHOT_LEARN_MAX_TOKENS) || 4000,
           system: SHOT_LEARN_PROMPT,
           messages: [{
             role: "user",
@@ -158,13 +176,18 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
             ],
           }],
         }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(120_000),
       });
-      if (!res.ok) return null;
-      const j = await res.json() as { content?: Array<{ text?: string }> };
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        return { sl: null, why: `http_${res.status}:` + String(t).slice(0, 100) };
+      }
+      const j = await res.json() as { content?: Array<{ text?: string }>; stop_reason?: string };
       const text = String(j.content?.[0]?.text ?? "").trim();
-      if (!text) return null;
-      return parseShotLearn(text);
+      if (!text) return { sl: null, why: "empty_text(stop=" + String(j.stop_reason ?? "?") + ")" };
+      const parsed = parseShotLearn(text);
+      if (!parsed.fields.length && parsed.screen === "other") return { sl: null, why: "no_fields:" + text.slice(0, 80) };
+      return { sl: parsed, why: null };
     };
 
     /**
@@ -173,7 +196,7 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
      */
     const whole = await loadImage("whole");
     if (whole) {
-      const sl = await ask(
+      const r1 = await ask(
         whole.toString("base64"),
         "この画面写真の**全体**から、フォームの作りを読み取って JSON で返してください。"
         + "左の条件だけでなく、上の見出し・中央の一覧・下のページ送り・小窓も見てください。"
@@ -181,36 +204,40 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
         + "x と y は**この画像全体**の中の割合（左上0・右下1）で返してください。"
         + "それぞれの欄が画面のどの領域か（left/top/center/right/bottom/modal）も zone に入れてください。",
       );
-      if (sl && sl.fields.length) return sl;
+      if (r1.sl && r1.sl.fields.length) return { sl: r1.sl, why: null };
       /**
        * ② 全体で読めなかった（小窓が覆っている等）時だけ、**左を切り出して**読む（保険）。
        *   ⚠ この時は座標を元の写真の割合に戻す（切り出した幅の分だけ x を縮める）。
        */
       const left = await loadImage("left");
       if (left) {
-        const sl2 = await ask(
+        const r2 = await ask(
           left.toString("base64"),
           "この画像は**画面の左側（検索条件の欄）だけ**を切り出した物です。"
           + "ここに見えているフォームの欄だけを JSON で返してください。"
           + "欄の名前は画像の文字をそのまま書き、読めない時は name を null にしてください。"
           + "x と y は**この画像の中**の割合（左端0・右端1）で返してください。",
         );
-        if (sl2 && sl2.fields.length) {
+        if (r2.sl && r2.sl.fields.length) {
           return {
-            ...sl2,
-            fields: sl2.fields.map((f) => ({
-              ...f,
-              x: typeof f.x === "number" ? Math.round(f.x * LEFT_CROP_RATIO * 100) / 100 : null,
-              zone: f.zone || "left",
-            })),
+            sl: {
+              ...r2.sl,
+              fields: r2.sl.fields.map((f) => ({
+                ...f,
+                x: typeof f.x === "number" ? Math.round(f.x * LEFT_CROP_RATIO * 100) / 100 : null,
+                zone: f.zone || "left",
+              })),
+            },
+            why: null,
           };
         }
+        return { sl: null, why: r1.why || r2.why || "no_fields(全体も左も読めず)" };
       }
-      return sl && sl.fields.length ? sl : null;
+      return { sl: null, why: r1.why || "no_fields(全体で読めず・左の切り出しも作れず)" };
     }
-    return null;
-  } catch {
-    return null;
+    return { sl: null, why: "image_load_failed:写真を取れない" };
+  } catch (e) {
+    return { sl: null, why: "exception:" + String((e && (e as Error).message) || e).slice(0, 100) };
   }
 }
 
@@ -220,16 +247,29 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
  */
 export async function learnFromWeakShots(
   opt: { site?: string | null; days?: number; limit?: number; dryRun?: boolean } = {},
-): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[] }> {
+): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string }> {
   const max = Math.max(1, Math.min(shotLearnMax(), opt.limit ?? shotLearnMax()));
-  const out = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] as string[] };
+  const out = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] as string[], recipe: undefined as string | undefined };
   const targets = (await findShotsToLearn({ site: opt.site, days: opt.days, limit: max })).slice(0, max);
+  /**
+   * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:
+   *   **どの読み方で何枚読めたか**を残す（成功も失敗も）。
+   *   ⚠ これが無いと「max_tokens 8000 で0枚・12000 で58個」のような発見が
+   *     その場の会話にしか残らず、次に同じ失敗をする。
+   */
+  const outcomes: Array<{ ok: boolean; fields: number; ms: number; why?: string | null }> = [];
   for (const t of targets) {
     out.tried++;
-    const sl = await readShotFields(t.shot_key);
-    if (!sl) { out.skipped++; continue; }
+    const got = await readShotFieldsWithWhy(t.shot_key);
+    const sl = got.sl;
+    if (!sl) {
+      out.skipped++;
+      outcomes.push({ ok: false, fields: 0, ms: got.ms, why: got.why });
+      continue;
+    }
     out.learned++;
     out.fields += sl.fields.length;
+    outcomes.push({ ok: true, fields: sl.fields.length, ms: got.ms });
     if (opt.dryRun) continue;
     const { error } = await supabase
       .from("human_motion_learn")
@@ -237,6 +277,24 @@ export async function learnFromWeakShots(
       .eq("id", t.id);
     if (error) out.errors.push(String(error.message).slice(0, 120));
     else out.saved++;
+  }
+  /**
+   * 読み方の成績を残す（⚠ dry-run では書かない・失敗しても学習は止めない）。
+   */
+  if (!opt.dryRun && outcomes.length) {
+    try {
+      const { saveReadRecipeScore } = await import("./read-recipe");
+      const recipe = {
+        model: (process.env.SHOT_LEARN_MODEL || "deepseek-flash"),
+        maxTokens: Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000,
+        effort: process.env.SHOT_LEARN_EFFORT || "low",
+        area: "whole" as const,
+      };
+      const r = await saveReadRecipeScore(recipe, outcomes);
+      out.recipe = r.summary
+        ? `${r.summary.ok}/${r.summary.tried}枚・欄${r.summary.fields}個・1枚${r.summary.fieldsPerOk}個${r.summary.topWhy ? `（読めない理由 ${r.summary.topWhy}）` : ""}`
+        : undefined;
+    } catch (_) { /* 記録できなくても学習は終わっている */ }
   }
   return out;
 }
