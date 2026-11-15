@@ -65,7 +65,7 @@ function sectionLine(k: string, v: unknown): string | null {
     case "next": return o ? `次の一手: ${cut(o.dest, 16)}・${cut(o.strength, 10)}` : null;
     case "next_concrete": { const s = o && Array.isArray(o.steps) ? (o.steps as unknown[]).map(obj).filter((x): x is Record<string, unknown> => !!x) : []; return s.length ? `次の一手の具体: ${s.slice(0, 2).map((x) => `${cut(x.item, 24)}（${cut(obj(x.when)?.word ?? obj(x.when)?.at, 10)}）`).join("・")}` : null; }
     // 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ指示書にある）
-    case "feeling": return o ? `気持ち・状況の表: ${[o.focus ? `重点 ${cut(o.focus, 14)}` : "", o.push ? `一手の強さ ${cut(o.push, 6)}` : "", o.combo ? `組 ${cut(o.combo, 40)}` : "", o.next ? `次に送る物 ${cut(o.next, 20)}` : ""].filter(Boolean).join("・")}` : null;
+    case "feeling": return o ? `気持ち・状況の表: ${[o.focus ? `重点 ${cut(o.focus, 14)}` : "", o.push ? `一手の強さ ${cut(o.push, 6)}` : "", o.combo ? `組 ${cut(o.combo, 40)}` : "", o.next ? `次に送る物 ${cut(o.next, 20)}` : "", o.tool ? `AIX ツール ${cut(o.tool, 60)}` : ""].filter(Boolean).join("・")}` : null;
     case "aim": return o ? `目的: ${cut(o.purpose ?? "-", 20)}${o.mid && o.mid !== BRIEF_NONE ? `・中期: ${cut(o.mid, 20)}` : ""}` : null;
     default: return null;
   }

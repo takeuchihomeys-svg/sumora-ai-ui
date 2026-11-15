@@ -23,6 +23,7 @@ import { allocationMetaDigest } from "./conductor-allocation";
 import { checkOrderDigest } from "./check-order-wire";
 import { conductorBriefDigest } from "./conductor-brief";
 import { feelingDigest, type FeelingDecision } from "./feeling-conductor-table";
+import { aixToolDigest, type AixToolOrder } from "./feeling-aix-tool";
 import { deliveryDigest } from "./delivery-check";
 import { onHandDigest } from "./material-on-hand";
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
@@ -153,6 +154,8 @@ export type FreshDigest = {
   cb?: string;
   /** 2026-11-15 作業員I: 気持ち・状況の表（feeling-conductor-table.feelingDigest・meta.feeling_conductor がある番だけ） */
   fl?: string;
+  /** 2026-11-15 作業員I: 次に送る物 → AIX ツールへの指示（feeling-aix-tool.aixToolDigest・? は決まっていない案） */
+  fa?: string;
   /** 2026-11-13 決めた事が書き手まで届いた数（欄の届き/値あり|下の欄の届き/値あり・delivery-check.ts・DELIVERY_CHECK=shadow の時だけ） */
   dv?: string;
   /** 2026-11-13 mm が手元にあった数/mm の数（material-on-hand・MATERIAL_ON_HAND=shadow の時だけ） */
@@ -229,6 +232,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
     // 2026-11-15 作業員I: 気持ち・状況の表の当たった行と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ）
     ...((() => { const fl = feelingDigest(meta.feeling_conductor as FeelingDecision | undefined); return fl ? { fl } : {}; })()),
+    ...((() => { const fa = Array.isArray(meta.feeling_aix_order) ? aixToolDigest(meta.feeling_aix_order as AixToolOrder[]) : null; return fa ? { fa } : {}; })()),
     // 2026-11-13 作業員22: 決めた事が書き手まで届いた数（delivery-check.deliveryDigest・meta.delivery_check がある番だけ）
     ...((() => { const dv = deliveryDigest(meta.delivery_check); return dv ? { dv } : {}; })()),
     ...((() => { const mh = onHandDigest(meta.material_on_hand); return mh ? { mh } : {}; })()),

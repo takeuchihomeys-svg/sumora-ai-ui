@@ -132,3 +132,50 @@ t("数え: 竹内さんの一手と比べる（AIX の種類・申込で抑え�
   assert.equal(compareTurn(d2, { route: "reply", aixTypes: [], text: "確認させて頂きます！！" }).next, false);
 });
 console.log(`全部 ${n} 件 ok`);
+
+// ── 2026-11-15 作業員I: 次に送る物 → AIX ツール（物件出し）への指示 ──
+import { aixToolOrders, aixToolDigest, HOOK_POINT_TO_TOOL } from "../app/lib/feeling-aix-tool";
+import { HOOK_POINTS } from "../app/lib/our-send-uptake";
+import { AIX_BUTTON_LABELS } from "../app/lib/aix-taxonomy";
+import { starSituationOf } from "../app/lib/recommend-star-rank";
+import { HOOK_FEATURE_KEYS } from "../app/lib/hook-lean-core";
+let n2 = 0;
+const t2 = (name: string, f: () => void) => { f(); n2++; console.log("ok", name); };
+t2("名前が揃っている（HOOK_POINTS・AIX の種類・🌟の場面の鍵・判定の学びの鍵）", () => {
+  const sit = starSituationOf({}) as unknown as Record<string, unknown>;
+  for (const [p, v] of Object.entries(HOOK_POINT_TO_TOOL)) {
+    assert.ok((HOOK_POINTS as readonly string[]).includes(p), p);
+    if (v?.star && v.star !== "equip") assert.ok(v.star in sit, v.star);
+    if (v?.hook) assert.ok((HOOK_FEATURE_KEYS as readonly string[]).includes(v.hook), v.hook);
+  }
+  for (const a of ["property_recommendation", "estimate_sheet", "cost_explain", "viewing_invite", "meeting_place"]) assert.ok(AIX_BUTTON_LABELS[a], a);
+});
+t2("迷い（物件どうし）→ AIX【物件オススメ】で1件を推す（決定）", () => {
+  const meta: Record<string, unknown> = { ...mind("迷い", { hesitation: "複数物件で迷う" }) };
+  meta.feeling_conductor = decideFromFeeling(meta);
+  const o = aixToolOrders(meta);
+  assert.equal(o[0].kind, "recommend_one"); assert.equal(o[0].aix, "property_recommendation"); assert.equal(o[0].decided, true);
+});
+t2("安くしたい → AIX【見積書送る】・条件の言い直し → 条件の更新の案（決定）", () => {
+  const meta: Record<string, unknown> = { ...mind("安くしたい"), condition_change_type: "area_change" };
+  meta.feeling_conductor = decideFromFeeling(meta, { estimatesSent: 0 });
+  const o = aixToolOrders(meta);
+  assert.deepEqual(o.map((x) => x.kind), ["estimate", "condition_update"]);
+  assert.ok(o.every((x) => x.decided));
+  assert.equal(aixToolDigest(o), "estimate:estimate_sheet|condition_update:area_change");
+});
+t2("刺さった点 → 次のピックアップの重みは決まっていない案（decided=false・指示書の1行に出さない）", () => {
+  const meta: Record<string, unknown> = { our_send_uptake: [{ part: "x", kind: "property", uptake: "reacted", hook: "hooked", degree: "strong", point: "駅・場所", cue: "駅近いのいい" }, { part: "y", kind: "property", uptake: "reacted", hook: "hooked", degree: "mid", point: "家賃", cue: null }] };
+  meta.feeling_conductor = decideFromFeeling(meta);
+  const o = aixToolOrders(meta);
+  assert.equal(o.length, 1); assert.equal(o[0].kind, "pickup_weights"); assert.equal(o[0].decided, false);
+  assert.deepEqual(o[0].star, ["stationNear"]); assert.deepEqual(o[0].hook, ["walk_near", "rent_upper"]);
+  assert.equal(aixToolDigest(o), "?pickup_weights:stationNear");
+});
+t2("on: 指示書の書き手への1行に決まった AIX ツールの指示が出る", () => {
+  const meta: Record<string, unknown> = { ...mind("先に取られる不安"), check_order_type: "T2_question_fact", condition_change_type: "rent_change" };
+  meta.feeling_conductor = decideFromFeeling(meta);
+  meta.feeling_aix_order = aixToolOrders(meta);
+  withEnv("on", () => { const b = buildConductorBrief(meta); const line = briefLineForRole({ ...meta, conductor_brief: b }, "close") ?? ""; assert.match(line, /AIX ツール 申込で抑える流れ→返信の一手（申込の流れ）／登録の条件そのもの/); });
+});
+console.log(`AIX ツールへの指示 ${n2} 件 ok`);

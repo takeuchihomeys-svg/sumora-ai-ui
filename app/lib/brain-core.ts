@@ -585,6 +585,7 @@ export type SuggestedAixMeta = {
   /** 2026-11-15 作業員I（統括の土台③）: 気持ち・状況の表の入力（見積の数・内覧の段階）と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ） */
   feeling_situation_inputs?: import("@/app/lib/feeling-conductor-table").FeelingSituationInput;
   feeling_conductor?: import("@/app/lib/feeling-conductor-table").FeelingDecision;
+  feeling_aix_order?: import("@/app/lib/feeling-aix-tool").AixToolOrder[];
   /** 2026-11-12 作業員22: 判断の根拠のメモの次の行き先・答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT・文の統括へ plan） */
   judge_next?: import("@/app/lib/brain-judge-basis").JudgeNext;
   /** 同: 今の番に押す AIX（this_turn=deliver の時だけ aix・他は null）。物差しが今と後を分けて数えるため */
@@ -1710,6 +1711,9 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       mm.feeling_conductor = ft.decideFromFeeling(mm, (mm.feeling_situation_inputs ?? {}) as import("@/app/lib/feeling-conductor-table").FeelingSituationInput);
       ft.applyFeelingFocus(mm);
+      // 2026-11-15 作業員I（竹内さん「AIX ツールや LINE 統括の部分との連携もしっかり精密に」）: 次に送る物 → AIX ツール（物件出し）への指示（記録・決まっていない物は案）
+      const { aixToolOrders } = await import("@/app/lib/feeling-aix-tool");
+      mm.feeling_aix_order = aixToolOrders(mm);
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:feeling-table-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB d030d496・fd1c7c62）: 判断の順番の型（check-order.pickCheckOrder）を meta から選んで記録だけ。CHECK_ORDER_TABLE=shadow|on の時だけ

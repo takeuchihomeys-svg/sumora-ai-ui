@@ -266,9 +266,10 @@ export function feelingNextSend(meta: unknown, env?: Env): (NonNullable<FeelingD
   return d?.next ? { ...d.next, from: d.nextFrom ?? "" } : null;
 }
 /** ⑤ 指示書の欄（on の時だけ・書き手への1行に出す） */
-export function feelingBriefSection(meta: unknown, env?: Env): { focus: string | null; push: string | null; combo: string | null; next: string | null; rows: string[] } | null {
+export function feelingBriefSection(meta: unknown, env?: Env): { focus: string | null; push: string | null; combo: string | null; next: string | null; rows: string[]; tool?: string } | null {
   if (!feelingTableOn(env)) return null;
   const d = decisionOf(meta);
   if (!d || !d.rows.length) return null;
-  return { focus: d.focus, push: d.push ? PUSH_LEVEL_JA[d.push] : null, combo: d.combo, next: d.next?.what ?? null, rows: d.rows };
+  const tool = Array.isArray(obj(meta)?.feeling_aix_order) ? (obj(meta)!.feeling_aix_order as Array<{ decided?: boolean; what?: string; to?: string }>).filter((x) => x.decided).map((x) => `${x.what}→${x.to}`).join("／").slice(0, 120) : "";
+  return { focus: d.focus, push: d.push ? PUSH_LEVEL_JA[d.push] : null, combo: d.combo, next: d.next?.what ?? null, rows: d.rows, ...(tool ? { tool } : {}) };
 }
