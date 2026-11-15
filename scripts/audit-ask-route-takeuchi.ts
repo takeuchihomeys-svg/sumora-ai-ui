@@ -1,0 +1,83 @@
+// scripts/audit-ask-route-takeuchi.ts — 竹内さんの実際の送信で「要件→行き先」の型を数える（読むだけ・LLM なし・費用 0・2026-11-15 作業員M）
+//   竹内さん 11/15「どの部分を返信で答えているか、どの部分は AIX で送る必要があるから AIX で送るかを把握する。細かく細分化して強化」。
+//   ブレインの要件の行き先（brain_decision_logs.digest.tc＝要件の数と route の内訳 r/p/a/n）×ブレインの最終の AIX と、
+//   竹内さん本人の番（その番の手が全部 竹内さん）の実際の送信（返信の通・AIX の種類と数・順番）を並べ、型と外れを数える。
+//   外れの型（要件の帳面 app/lib/ask-ledger.ts の3つに合わせる）:
+//     取りこぼし（AIX 側）  … 竹内さんは AIX を送ったのに、ブレインの要件に AIX も約束も無い
+//     取りこぼし（2つ目の AIX）… 竹内さんは AIX を2種類以上送ったのに、ブレインの要件の AIX は1つ以下（組み立ては AIX の席を1つしか持たない）
+//     取り違え（AIX→返信）  … ブレインの要件は AIX なのに、竹内さんは返信だけ（AIX は次の番以降）
+//     取り違え（返信→AIX）  … ブレインの要件は返信だけなのに、竹内さんは AIX だけ
+//     重ねの候補            … ブレインは返信と AIX の両方の要件・竹内さんは1通だけ
+//   物件オススメ＋物件ピックアップ（property_recommendation＋property_send）は1つの束として1種類に数える（オススメ1＋9 の型）。
+//   申込以降の会話は外す。営業時間（JST 9〜22時）は流さない。本文は出さない（数と会話 id の頭8字だけ）。
+//   実行: npx tsx --env-file=<鍵のある .env> scripts/audit-ask-route-takeuchi.ts [--days=60] [--out=<json>]
+import { createClient } from "@supabase/supabase-js";
+import { writeFileSync } from "node:fs";
+import { readWatchTurns } from "./lib/prod-yardstick-db";
+import { tcMix, sendShape, outlierOf, aixBundleFamily as fam } from "./lib/ask-route-of";
+
+const argv = process.argv.slice(2);
+const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
+const jstHour = (new Date().getUTCHours() + 9) % 24;
+if (jstHour >= 9 && jstHour < 22) { console.error("営業時間（JST 9〜22時）は流さない"); process.exit(1); }
+const days = Number(arg("days", "60")) || 60;
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const POST_APPLY_RE = /記入欄】|・氏名、フリガナ|申込(?:み)?(?:用)?フォーマット|お申込に必要なご情報|ご本人確認書類として|審査(?:結果|が通|通過しました)|ご契約(?:書|手続)/;
+
+async function main() {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const turns = await readWatchTurns(sb, since);
+  const convs = [...new Set(turns.map((t) => t.conversation_id))];
+  type M = { at: number; aix: boolean; writer: string | null; customer: boolean; text: string };
+  const msgs = new Map<string, M[]>();
+  for (let i = 0; i < convs.length; i += 50) {
+    for (let j = 0; ; j += 1000) {
+      const { data, error } = await sb.from("messages").select("conversation_id, created_at, sender, staff_writer, is_aix_generated, text").in("conversation_id", convs.slice(i, i + 50)).gte("created_at", since).order("created_at", { ascending: true }).range(j, j + 999);
+      if (error) throw new Error(error.message);
+      for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+        const a = msgs.get(r.conversation_id as string) ?? [];
+        a.push({ at: Date.parse(r.created_at as string), aix: !!r.is_aix_generated, writer: (r.staff_writer as string | null) ?? null, customer: r.sender === "customer", text: String(r.text ?? "") });
+        msgs.set(r.conversation_id as string, a);
+      }
+      if ((data ?? []).length < 1000) break;
+    }
+  }
+  const ids = [...new Set(turns.map((t) => t.decision_id).filter((x): x is string => !!x))];
+  const tcOf = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from("brain_decision_logs").select("id, digest").in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ id: string; digest: { tc?: string } | null }>) tcOf.set(r.id, r.digest?.tc ?? null);
+  }
+  const table = new Map<string, number>();
+  const outliers = new Map<string, Array<{ conv: string; at: string; scene: string; brain: string; staff: string }>>();
+  let takeuchi = 0, skipped = 0;
+  for (const t of turns) {
+    const at = Date.parse(t.customer_turn_at);
+    const all = msgs.get(t.conversation_id) ?? [];
+    if (all.some((m) => !m.customer && m.at <= at + 86_400_000 && POST_APPLY_RE.test(m.text))) { skipped++; continue; }
+    const moves: M[] = [];
+    for (const m of all.filter((x) => x.at > at)) { if (m.customer || m.at - at >= 86_400_000) break; moves.push(m); }
+    if (!moves.length || !moves.every((m) => m.writer === "takeuchi")) continue;
+    takeuchi++;
+    const mix = tcMix(t.decision_id ? tcOf.get(t.decision_id) : null);
+    const shape = sendShape(moves);
+    const kinds = [...new Set((t.staff_aix ?? []).map((a) => fam(String(a.aix_type ?? ""))).filter(Boolean))];
+    const brainMix = mix ? `${mix.r ? "R" : ""}${mix.p ? "P" : ""}${mix.a ? (mix.a > 1 ? `A${mix.a}` : "A") : ""}` || "要件は触れないだけ" : "記録なし";
+    const key = `${brainMix} → ${shape}${kinds.length >= 2 ? `（AIX ${kinds.length}種）` : ""}`;
+    table.set(key, (table.get(key) ?? 0) + 1);
+    const o = outlierOf(mix, shape, kinds.length);
+    if (o !== "合う") outliers.set(o, [...(outliers.get(o) ?? []), { conv: t.conversation_id.slice(0, 8), at: t.customer_turn_at.slice(5, 16), scene: String(t.scene_key ?? ""), brain: `${brainMix}/${t.brain_action ?? "返信"}`, staff: `${shape}/${kinds.join("+")}` }]);
+  }
+  console.log(`# 要件→行き先（竹内さん本人の番・直近 ${days}日・見張りの番 ${turns.length}・竹内さんの番 ${takeuchi}・申込以降で外した ${skipped}）`);
+  console.log("\n## 型（ブレインの要件の行き先 R=返信 P=約束 A=AIX → 竹内さんの送信の並び）");
+  for (const [k, n] of [...table].sort((a, b) => b[1] - a[1])) console.log(`- ${k}: ${n}`);
+  console.log("\n## 外れ");
+  for (const [k, list] of [...outliers].sort((a, b) => b[1].length - a[1].length)) {
+    const sc = new Map<string, number>(); for (const r of list) sc.set(r.scene, (sc.get(r.scene) ?? 0) + 1);
+    console.log(`- ${k}: ${list.length}（場面 ${[...sc].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([s, n]) => `${s || "なし"} ${n}`).join("・")}）`);
+    for (const r of list.slice(0, 4)) console.log(`    · ${r.at} ${r.conv} ブレイン ${r.brain} ／ 竹内さん ${r.staff}`);
+  }
+  if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ days, takeuchi, table: Object.fromEntries(table), outliers: Object.fromEntries(outliers) }, null, 1));
+}
+if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

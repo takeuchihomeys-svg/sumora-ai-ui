@@ -1742,6 +1742,23 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (rec) mm.send_combo = { combo: rec.pick.combo, order: rec.pick.order, gap: rec.pick.gap, row: rec.pick.row, digest: rec.digest, cues };
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:send-combo-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-15 作業員M（竹内さん「どの部分を返信で答え、どの部分を AIX で送るかを把握する・細分化」・P0 ca55d42b）: 要件の帳面（app/lib/ask-ledger.ts）。
+  //   turn_contract.asks の要件1つずつに id と「何通目で答えるか」を付け、取りこぼし・重ね・取り違えを確かめる。ASK_LEDGER=shadow は meta.ask_ledger に記録だけ／
+  //   on は記録＋meta.turn_contract.asks に id・msg を書き足す（既定 off＝何も足さない）。道と組み立ては決め直さない（組み立ては planFromMeta か aix-template-generate と同じ planMessages）
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    const mode = al.askLedgerMode();
+    if (mode !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      const led = al.askLedgerFromMeta(mm);
+      if (led) {
+        mm.ask_ledger = led;
+        const tc = mm.turn_contract as { asks?: unknown } | null | undefined;
+        if (mode === "on" && tc && Array.isArray(tc.asks)) tc.asks = al.annotateAsks(tc.asks as Array<Record<string, unknown>>, led);
+        if (!led.check.ok) console.log(JSON.stringify({ tag: "brain:ask-ledger", digest: led.digest, issues: led.check.issues.map((x) => x.code) }));
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-ledger-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {
