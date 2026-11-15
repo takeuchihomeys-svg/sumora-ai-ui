@@ -5242,7 +5242,8 @@ CREATE OR REPLACE FUNCTION match_takeuchi_compose(
   p_exclude_key TEXT DEFAULT NULL
 )
 RETURNS TABLE(message_id UUID, scene TEXT, purpose TEXT, seq TEXT[], main_line TEXT, body TEXT, customer_gist TEXT, weight REAL, similarity FLOAT, score FLOAT)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- 2026-11-15 作業員H: search_path が public だけだと extensions の vector の <=> が見つからず毎回失敗していた（42883・文の設計図の手本の RAG が静かに空）→ extensions を足す
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 BEGIN
   RETURN QUERY
   SELECT e.message_id, e.scene, e.purpose, e.seq, e.main_line, e.body, e.customer_gist, e.weight,
