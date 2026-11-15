@@ -165,6 +165,12 @@ export type SupervisorInput = {
    *   `off` が多い回は「前のお客さんの条件が残っていた」証拠。
    */
   toggles?: { off: number; on: number; unknown: number } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていない…必ず届くように」:
+   *   **写真から読んだ欄の種類の内訳**（`{select:12, checkbox:8, ...}`）。
+   *   ⚠ 実測: 写真から415件学んでいたのに、統括には数（total/with_ops）しか渡っていなかった。
+   */
+  photoKinds?: Record<string, number> | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -580,9 +586,37 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       /** 2026-11-14: 人の手本と機械の動き */
       humanOps,
       autoOps,
-      /** 2026-11-14: 同じ画面の続き・写真の容量 */
-      sameRuns: sr,
-      shotBytes: sb,
+  /** 2026-11-14: 同じ画面の続き・写真の容量 */
+  sameRuns: sr,
+  shotBytes: sb,
+  /**
+   * ★ 2026-11-15 竹内さん「ここの記憶の部分は自動検索でお客さんを連続で検索するにあたってかなり重要になる」
+   *   「また理解できていない部分は土台作って細分化する考えを統括は大切にする」
+   *
+   *   ⚠ 実測で判明: `toggles` を作ったのに**ここで渡していなかった**ので、
+   *     統括の根拠にも議題にも**出ていなかった**（＝作った意味が無かった）。
+   *   → **必ず渡す**。`off`（前に残っていたのを外した）が多い回は
+   *     「前のお客さんの条件が残っている」＝**連続検索で一番危ない状態**。
+   */
+  toggles: (() => {
+    const t = (input as unknown as Record<string, unknown>).toggles as { off?: unknown; on?: unknown; unknown?: unknown } | null | undefined;
+    if (!t || typeof t !== "object") return null;
+    return { off: num(t.off), on: num(t.on), unknown: num(t.unknown) };
+  })(),
+  /**
+   * ★ 2026-11-15: **写真から読んだ欄の種類**を統括に届ける
+   *   （実測: 415件学んでいたのに数しか渡っていなかった）。
+   */
+  photoKinds: (() => {
+    const k = (input as unknown as Record<string, unknown>).photo_kinds;
+    if (!k || typeof k !== "object") return null;
+    const out: Record<string, number> = {};
+    for (const [key, v] of Object.entries(k as Record<string, unknown>)) {
+      const n = num(v);
+      if (n > 0) out[String(key).slice(0, 12)] = n;
+    }
+    return Object.keys(out).length ? out : null;
+  })(),
       /**
        * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
        *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
@@ -701,6 +735,8 @@ function buildMeeting(m: {
   autoOps?: number;
   /** 2026-11-15: 外した数・選んだ数（押す前と後の checked から・`toggle-meaning.ts`） */
   toggles?: { off: number; on: number; unknown: number } | null;
+  /** 2026-11-15: 写真から読んだ欄の種類の内訳（統括が「プルダウンが何個」と言える） */
+  photoKinds?: Record<string, number> | null;
   /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
   sameRuns?: { n: number; max_same: number } | null;
   shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
@@ -842,6 +878,21 @@ function buildMeeting(m: {
     if (tg.on > 0) parts.push(`選んだ ${tg.on}件`);
     if (tg.unknown > 0 && !tg.off && !tg.on) parts.push(`区別できない ${tg.unknown}件（旧版の記録）`);
     evidence.push({ label: "押した操作の中身", value: parts.join("／") });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていないのはなぜなのか…必ず届くように」:
+   *   **写真から読んだ欄の種類**を根拠に出す。
+   *   ⚠ 実測: 写真から415件学んでいたのに、統括には**数（total/with_ops）しか渡っていなかった**。
+   *     統括が「プルダウンが何個・チェックが何個」と言えるようにする。
+   */
+  if (m.photoKinds && Object.keys(m.photoKinds).length) {
+    const KJ: Record<string, string> = { select: "プルダウン", text: "入力", checkbox: "チェック", radio: "選択1つ", button: "押す", link: "リンク" };
+    const txt = Object.entries(m.photoKinds)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, n]) => `${KJ[k] ?? k} ${n}`)
+      .join("・");
+    evidence.push({ label: "写真から読んだ欄の種類", value: txt });
   }
   const mc = Object.entries(m.modeCounts);
   if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });

@@ -200,7 +200,17 @@ export type HumanLearnBundle = {
     fields: Array<{ name: string; kind: string; n: number }>;
   }>;
   /** 写真を何枚見たか・そのうち操作が付いていた枚数 */
-  shots?: { total: number; with_ops: number };
+  shots?: {
+    total: number;
+    with_ops: number;
+    /**
+     * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていない…必ず届くように」:
+     *   写真から読んだ欄の種類（画面ごと）。⚠ 数だけでは統括は何も言えない。
+     */
+    learned?: Record<string, Array<{ name: string; kind: string; n: number }>>;
+    /** 種類の内訳（統括が「プルダウンが何個」と言える） */
+    kinds?: Record<string, number>;
+  };
   /**
    * 2026-11-13 竹内さん「学習の統括が強化されるように、その点も徹底する」:
    *   **次に何を学ぶか**（統括の判断）。弱い所を優先度順の「やる事」に変えた物。
@@ -1120,6 +1130,23 @@ export function buildHumanLearnBundle(
       } catch (_) { return null; }
     })(),
     /**
+     * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていないのはなぜなのか…必ず届くように」:
+     *   **写真から読んだ欄の種類の内訳**を統括に渡す。
+     *   ⚠ 実測: 束には `shots: {total, with_ops}` の**数だけ**で、中身が届いていなかった。
+     */
+    photo_kinds: (() => {
+      try {
+        const acc: Record<string, number> = {};
+        for (const s of Object.values(shotLearn.screens)) {
+          for (const f of s.fields ?? []) {
+            const k = String(f.kind || "?").slice(0, 12);
+            acc[k] = (acc[k] ?? 0) + (Number(f.n) || 1);
+          }
+        }
+        return Object.keys(acc).length ? acc : null;
+      } catch (_) { return null; }
+    })(),
+    /**
      * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」
      *   → ⚠ **統括は「前回と比べる」仕組みを持っているのに、常に `prev: null` で渡していた**。
      *     だから「良くなったか悪くなったか」を一度も言えていなかった
@@ -1332,7 +1359,43 @@ export function buildHumanLearnBundle(
     supervisor,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
     ...(weak.length ? { weak } : {}),
-    ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
+    ...(Object.keys(shotLearn.screens).length ? {
+      screen_flow: shotLearn.screens,
+      /**
+       * ★ 2026-11-15 竹内さん「統括の部分に学習した部分が届いていないのはなぜなのか
+       *   ... 必ず届くように、統括はすべて理解するようにする」
+       *
+       *   ⚠ 実測で判明（**届いていなかった本当の理由**）:
+       *     束の `shots` は `{ total, with_ops }` の**数だけ**だった。
+       *     写真からは **415件**学んでいる（`shot_learn` に欄の種類・名前・領域が入っている）のに、
+       *     統括には**その中身が1つも渡っていなかった**（数だけ）。
+       *   → **写真から読んだ欄の種類を束に載せる**（画面ごとの `fields`＝名前・種類・回数）。
+       *     ⚠ 名前は40字まで・画面ごと40件まで（大きくなりすぎないように）。
+       *     ⚠ **入力した中身・お客様の情報は入っていない**（欄の名前と種類だけ）。
+       */
+      shots: {
+        total: shotLearn.total,
+        with_ops: shotLearn.withOps,
+        /** 写真から読んだ欄の種類（画面ごと） */
+        learned: Object.fromEntries(
+          Object.entries(shotLearn.screens).map(([screen, v]) => [
+            screen,
+            (v.fields ?? []).slice(0, 40).map((f) => ({ name: String(f.name).slice(0, 40), kind: String(f.kind).slice(0, 12), n: Number(f.n) || 0 })),
+          ]),
+        ),
+        /** 種類の内訳（すぐ集計できる形・統括が「プルダウンが何個」と言える） */
+        kinds: (() => {
+          const acc: Record<string, number> = {};
+          for (const v of Object.values(shotLearn.screens)) {
+            for (const f of v.fields ?? []) {
+              const k = String(f.kind || "?").slice(0, 12);
+              acc[k] = (acc[k] ?? 0) + (Number(f.n) || 1);
+            }
+          }
+          return acc;
+        })(),
+      },
+    } : {}),
     ...(learnPlan.items.length || learnPlan.filled || (learnPlan.cleanup && learnPlan.cleanup.length) || (learnPlan.mode_plan && learnPlan.mode_plan.length) ? { learn_plan: learnPlan } : {}),
     ...(Object.keys(by_mode).length ? { by_mode } : {}),
     /**
