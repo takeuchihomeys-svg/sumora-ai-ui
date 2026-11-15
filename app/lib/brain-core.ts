@@ -321,7 +321,8 @@ import { brainFastSlowEnabled, brainSlowSecondEnabled, decideTurnDifficulty, fas
 // 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 import { brainSevenOn, brainSevenOutputItem, normalizeBrainSeven, normalizeBrainLatent } from "@/app/lib/brain-seven-fields";
-import { judgeNextOf, brainJudgeBasisOn, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
+import { materialClashMode, detectMaterialClash, materialClashDigest } from "@/app/lib/material-clash"; // 2026-11-15 作業員L（BRAIN_MATERIAL_CLASH・既定 off・記録だけ）
+import { judgeNextOf, brainJudgeBasisOn, brainJudgeBasisShadow, brainJudgeBasisOutputItem, normalizeJudgeBasis } from "@/app/lib/brain-judge-basis"; // 2026-11-12 作業員17（BRAIN_JUDGE_BASIS・既定 off）
 import { turnReadMode, turnReadOutputItem, normalizeTurnRead, turnReadFocusOn, normalizeTurnFocus, turnReadTopicsOn, normalizeTurnTopics, type TurnRead, type TurnFocus, type TurnTopic } from "@/app/lib/turn-read";
 
 /** 2026-11-10 作業員1（型2・q374）: 手続きの一般の問いで返信に決めた番の turn_contract の asks（promise→reply）をそろえる（PROCEDURE_GENERAL_ASK_REPLY・11/11 既定 on・止める =off） */
@@ -499,6 +500,8 @@ export type SuggestedAixMeta = {
   plan_ahead_at?: string;
   /** 2026-11-03 材料の食い違い（BRAIN_MATERIAL_PROVENANCE=on の時だけ）→ digest.cf */
   material_conflicts?: string[];
+  /** 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（app/lib/material-clash.ts・BRAIN_MATERIAL_CLASH=shadow の時だけ・記録だけ） */
+  material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
@@ -552,6 +555,8 @@ export type SuggestedAixMeta = {
   seven_read?: import("@/app/lib/takeuchi-seven-read").SevenRead;
   /** 2026-11-12 作業員17: 判断の根拠のメモ（読んだ手がかり・深さ・読みの候補・優先・重点・順番）・BRAIN_JUDGE_BASIS=on の時だけ（判断は変えない・物差しは scripts/judge-basis-score.ts） */
   judge_basis?: import("@/app/lib/brain-judge-basis").JudgeBasis;
+  /** 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow の時だけ）。読む側（文の統括・配分・指示書）は読まない＝道と下書きは off と同じ。digest.jbr に短く残す */
+  judge_basis_rec?: import("@/app/lib/brain-judge-basis").JudgeBasis;
   /** 2026-11-12 作業員10（案A）: 潜在の4欄（takeuchi-seven-read の LatentFour）・BRAIN_SEVEN_FIELDS=on の時だけ */
   /** 2026-11-12 作業員16（案1）: 今の番と後の番を分ける欄・BRAIN_NOW_LATER_FIRST=on の時だけ（記録だけ・判断は aix/turn_contract のまま） */
   now_vs_later?: NowVsLater;
@@ -1738,6 +1743,7 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
+      else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-13 作業員22（竹内さん「決めた事が書き手まで届いていない」・KB 2301dbf1・5cf2d736）: 欄ごと・下の欄ごとに書き手まで届いたかを記録だけ（DELIVERY_CHECK=shadow・既定 off）。
@@ -4284,6 +4290,17 @@ ${history}`;
 
 ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
   ]);
+  // 2026-11-15 作業員L（統括の土台②・KB 878a2f0b q091）: 材料どうしの食い違いの見張り（記録だけ・BRAIN_MATERIAL_CLASH=shadow・既定 off）。
+  //   送る文（system と user）をそのまま読むだけで、送る文は1文字も変えない。決まった形の網（LLM なし）
+  let materialClashRec: import("@/app/lib/material-clash").MaterialClash | null = null;
+  if (isFreshLayer && materialClashMode() === "shadow") {
+    try {
+      const uText = (userContent as Array<{ text?: string }>).map((b) => (typeof b.text === "string" ? b.text : "")).join("\n");
+      materialClashRec = detectMaterialClash({ system: `${sys.staticText}\n${sys.dynamicText}`, user: uText });
+      const dg = materialClashDigest(materialClashRec);
+      console.log(JSON.stringify({ tag: "brain:material-clash", conversationId, ...dg }));
+    } catch (e) { console.warn("[brain-core] material-clash skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
   //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・最初の会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
@@ -6723,6 +6740,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       need: BRAIN_NEED_ON ? (normalizeNeed((parsed as { need?: unknown }).need) ?? undefined) : undefined,
       ...(BRAIN_PLAN_AHEAD_ON ? ((pa) => pa ? { plan_ahead: pa, plan_ahead_at: new Date().toISOString() } : prevPlanAhead ? { plan_ahead: prevPlanAhead, ...(prevPlanAheadAt ? { plan_ahead_at: prevPlanAheadAt } : {}) } : {})(normalizePlanAhead((parsed as { plan_ahead?: unknown }).plan_ahead)) : {}),
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
+      material_clash: materialClashRec ?? undefined,
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
@@ -6791,6 +6809,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       seven_read: brainSevenOn() ? (normalizeBrainSeven((parsed as { seven_read?: unknown }).seven_read) ?? undefined) : undefined,
       latent_read: brainSevenOn() ? (normalizeBrainLatent((parsed as { latent_read?: unknown }).latent_read) ?? undefined) : undefined,
       judge_basis: brainJudgeBasisOn() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
+      // 2026-11-15 作業員L: shadow は記録だけの鍵に（読む側は judge_basis しか読まない）
+      judge_basis_rec: brainJudgeBasisShadow() ? (normalizeJudgeBasis((parsed as { judge_basis?: unknown }).judge_basis) ?? undefined) : undefined,
       // 2026-11-12 作業員22: 判断の根拠のメモの次の行き先と答えられるのに約束にした印（BRAIN_JUDGE_BASIS_NEXT=on の時だけ・文の統括へ plan）
       judge_next: judgeNextOf((parsed as { judge_basis?: unknown }).judge_basis),
       // 2026-11-12 作業員16（案1・BRAIN_NOW_LATER_FIRST=on の時だけ）: 今の番と後の番（記録だけ・決め直さない）

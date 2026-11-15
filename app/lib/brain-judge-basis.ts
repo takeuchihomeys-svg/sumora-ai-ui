@@ -14,7 +14,27 @@ type Env = Record<string, string | undefined>;
  *  置き方は judge_basis と同じ（道を書き終えた後・JSON の最後）。道の前には置かない */
 export const brainJudgeBasisNextOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_JUDGE_BASIS_NEXT ?? "").trim().toLowerCase() === "on";
 export const BRAIN_JUDGE_BASIS_NEXT_FIELDS = `"next_dest": "書き終えた道の後で、この番のあとお客様を進める先を ${NEXT_DEST.join("|")} から1つ（道は変えない）", "held_answerable": {"held": 会話・資料・会社の事実で答えられる問いを確かめる約束にしたか true|false, "quote": "その問いのお客様の言葉 25字（無ければ空）"}`;
-export const brainJudgeBasisOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => (env.BRAIN_JUDGE_BASIS ?? "").trim().toLowerCase() === "on";
+/** 2026-11-15 作業員L（統括の土台①・統括の外れの場所を本番で記録する）: 3つの形。
+ *  off    … 出力の指定も meta も無い（今まで通り）
+ *  on     … 出力の指定を足し meta.judge_basis に入れる＝文の統括（compose-sentence-plan・compose-brief）・配分（conductor-allocation の深さ）・指示書・疑いの印が読む＝下書きが変わりうる
+ *  shadow … 出力の指定は on と同じ（ブレインに書かせないと記録できない）が、meta.judge_basis_rec にだけ入れる＝読む側は誰も読まない（記録だけ・judge_next も作らない）。
+ *           本番の記録は brain_decision_logs.digest.jbr（judgeBasisRecDigest）。数えるのは scripts/judge-basis-score.ts（--results で答案・--prod で本番の記録）
+ *  費用: on と shadow はブレインの今回の発言の層の出力が 1回 約250〜400 トークン増える（指定の文は約1.5k 字・前置きでなく毎回の所）。
+ *  試験（11/15 作業員L・DeepSeek・10問×1回・L1115-jb-off → L1115-jb-shadow）: 最終の道 8/10 → 8/10・合格 5 → 7 だが、本質の道（LLM の最初の答え）7 → 4、
+ *    q051 が返信→AIX:property_check_result に悪化（下書き 4/5 → 3/5）。出力の指定を足すと道が揺れる（KB c5fd146d と同じ型）＝記録だけでも「道を変えない」とは言えない。
+ *    → 既定は off のまま。shadow にするのは --majority（3回の過半数）で悪化0を確かめてから。 */
+export type JudgeBasisMode = "off" | "on" | "shadow";
+export const JUDGE_BASIS_DEFAULT_MODE: JudgeBasisMode = "off";
+export function judgeBasisMode(env: Env = typeof process !== "undefined" ? process.env : {}): JudgeBasisMode {
+  const v = (env.BRAIN_JUDGE_BASIS ?? "").trim().toLowerCase();
+  return v === "on" || v === "shadow" || v === "off" ? v : JUDGE_BASIS_DEFAULT_MODE;
+}
+/** 読む側（文の統括・配分・指示書・judge_next）に渡す形か＝on の時だけ。shadow は記録だけなので false */
+export const brainJudgeBasisOn = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => judgeBasisMode(env) === "on";
+/** 記録だけの形か（meta.judge_basis_rec に入れる） */
+export const brainJudgeBasisShadow = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => judgeBasisMode(env) === "shadow";
+/** ブレインに書かせるか（on か shadow） */
+export const brainJudgeBasisAsk = (env: Env = typeof process !== "undefined" ? process.env : {}): boolean => judgeBasisMode(env) !== "off";
 
 export type BasisReading = { reading: string; focus: Focus | null };
 export type JudgeBasis = {
@@ -45,7 +65,7 @@ export const BRAIN_JUDGE_BASIS_LEGEND = `目的＝${PURPOSE_KINDS.map((k) => `${
 /** ブレインの「今回の発言」の出力に足す項目（off なら空文字）。brainSevenOutputItem の後ろに続ける */
 export function brainJudgeBasisOutputItem(env?: Env): string {
   const field = brainJudgeBasisNextOn(env) ? `${BRAIN_JUDGE_BASIS_FIELD.slice(0, -1)}, ${BRAIN_JUDGE_BASIS_NEXT_FIELDS}}` : BRAIN_JUDGE_BASIS_FIELD;
-  return brainJudgeBasisOn(env) ? `、（以下は書き終えた後のメモ＝aix・action・reply_mode・reply_direction・turn_contract・seven_read 等を全部書き終えた後で JSON の一番最後に書く。これを書くために道・AIX・返信の方向を変えない。${BRAIN_JUDGE_BASIS_LEGEND}）${field}` : "";
+  return brainJudgeBasisAsk(env) ? `、（以下は書き終えた後のメモ＝aix・action・reply_mode・reply_direction・turn_contract・seven_read 等を全部書き終えた後で JSON の一番最後に書く。これを書くために道・AIX・返信の方向を変えない。${BRAIN_JUDGE_BASIS_LEGEND}）${field}` : "";
 }
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -91,4 +111,31 @@ export function judgeNextOf(raw: unknown, env?: Env): JudgeNext | undefined {
   const jb = normalizeJudgeBasis(raw);
   if (!jb || (!jb.nextDest && !jb.held)) return undefined;
   return { dest: jb.nextDest, held: jb.held?.held === true, quote: jb.held?.held && jb.held.quote ? jb.held.quote : null };
+}
+
+/** 2026-11-15 作業員L: 本番の記録（brain_decision_logs.digest.jbr）の短い形。scripts/judge-basis-score.ts --prod が judgeBasisFromRecDigest で戻して数える。
+ *  d 深さ・f 重点・p 優先・o 順番・r 読みの候補の重点・c 選んだ読み・u 目的・m 足りない情報の種類（[] は無い・欄なしは書いていない） */
+export type JudgeBasisRecDigest = { d?: string; f?: string; p?: string[]; o?: string[]; r?: Array<string | null>; c?: number; u?: string; m?: string[] };
+export function judgeBasisRecDigest(t: JudgeBasis | null | undefined): JudgeBasisRecDigest | null {
+  if (!t) return null;
+  const out: JudgeBasisRecDigest = {};
+  if (t.depth) out.d = t.depth;
+  if (t.focus) out.f = t.focus;
+  if (t.priority.length) out.p = [...t.priority];
+  if (t.order.length) out.o = [...t.order];
+  if (t.readings.length) out.r = t.readings.map((r) => r.focus);
+  if (t.chosen != null) out.c = t.chosen;
+  if (t.purpose) out.u = t.purpose;
+  if (t.missing) out.m = t.missing.map((m) => m.kind);
+  return Object.keys(out).length ? out : null;
+}
+/** digest.jbr → 判断の根拠のメモの生の形（normalizeJudgeBasis に通せる形・読みの文は残していないので「読みN」） */
+export function judgeBasisFromRecDigest(d: unknown): Record<string, unknown> | null {
+  if (!d || typeof d !== "object") return null;
+  const o = d as JudgeBasisRecDigest;
+  return {
+    depth: o.d ?? null, focus: o.f ?? null, priority: o.p ?? [], order: o.o ?? [],
+    readings: (o.r ?? []).map((f, i) => ({ reading: `読み${i + 1}`, focus: f })), chosen: o.c ?? null,
+    purpose: o.u ?? null, missing: Array.isArray(o.m) ? o.m.map((k) => ({ kind: k })) : undefined,
+  };
 }
