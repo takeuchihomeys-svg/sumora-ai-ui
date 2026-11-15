@@ -9,6 +9,7 @@
 // 実例: 12643（外した額の御見積書・管理会社の確認の後）・11865（新着のピックアップ・後の通）・12562（来週の連絡を待つ）。
 import { chooseDeadlineWord, toNextMoveWhen, type PromiseWhenKind } from "./promise-deadline-words";
 import type { SendCombo } from "./send-combo-table";
+import { feelingNextSend } from "./feeling-conductor-table";
 import type { PriorityRow } from "./priority-table";
 
 type Env = Record<string, string | undefined>;
@@ -29,7 +30,7 @@ export type ConcreteStep = {
 export type ConcreteNext = {
   steps: ConcreteStep[];
   /** 何を決めた材料 */
-  from: "customer_wait" | "deferred" | "open_promise" | "ready_now" | "type_table";
+  from: "customer_wait" | "deferred" | "open_promise" | "ready_now" | "feeling_table" | "type_table";
   /** 今の番の組（send_combo_table が正）と優先度の表の組（参考） */
   combo: SendCombo | string | null;
   comboRef: SendCombo | null;
@@ -130,7 +131,15 @@ export function concreteNextMove(i: ConcreteInput): ConcreteNext {
       steps: [{ route: "aix", aix: "property_send", what: "property", item: "送れる物件の候補", when: { at: "now", word: null, from: "type_table" } }] };
   }
 
-  // ⑤ 材料が無い＝型の表の受け（具体にしない・何を作らない）
+  // ⑤ 2026-11-15 作業員I（統括の土台③）: 番の材料に次の一手が無い時は、気持ち・状況の表の「次に送る物」（竹内さんの決定のある行だけ・FEELING_CONDUCTOR_TABLE=on の時だけ）
+  const fn = feelingNextSend(m);
+  if (fn) {
+    const what: ConcreteWhat = fn.aix === "estimate_sheet" ? "estimate" : fn.aix === "property_send" || fn.aix === "property_recommendation" ? "property" : fn.aix === "cost_explain" ? "doc" : "none";
+    return { ...base, from: "feeling_table", why: `気持ち・状況の表（${fn.from}）`.slice(0, 60),
+      steps: [{ route: fn.aix ? "aix" : "reply", aix: fn.aix, what, item: fn.what, when: custTime ? { at: "customer", word: custTime, from: "customer" } : { at: fn.aix ? "now" : "next_turn", word: null, from: "type_table" } }] };
+  }
+
+  // ⑥ 材料が無い＝型の表の受け（具体にしない・何を作らない）
   return { ...base, from: "type_table", why: "番の材料に次の一手の中身が無い（型の表の受け）",
     steps: [{ route: "reply", aix: null, what: "none", item: i.typeDest ?? "未", when: custTime ? { at: "customer", word: custTime, from: "customer" } : { at: "next_turn", word: null, from: "type_table" } }] };
 }
