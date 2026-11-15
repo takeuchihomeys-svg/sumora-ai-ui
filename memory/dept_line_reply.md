@@ -9584,3 +9584,10 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 壊した 8 の内訳: 持ち込みの確認の約束を2択（AIX 物件確認した｜2段）にした q202×2（既存の TWO_CHOICE_NARROW_CHECK_PROMISE・既定 off で直る形）／持ち込み＋探すの番を見積の2段にした q077×2／ピックアップの約束を返信に q372・q090／check_question が route=aix のブレインを約束に q411（→ TWO_STAGE_CHECK_QUESTION_KEEP_AIX）・探す約束を確認の約束に q032（既存の TWO_STAGE_KIND_FROM_ABOUT）
 - TWO_STAGE_CHECK_QUESTION_KEEP_AIX（既定 off・app/lib/check-question-brain-first.ts・brain-core）: ブレインの依頼が route="aix" で同じボタンなら check_question に書き換えない。依頼に約束（route=promise・管理会社の確認）がある番は今まで通り
 - テスト app/lib/__tests__/check-question-keep-aix.test.ts。監査 scripts/audit-exam-two-stage-miss.ts（台帳）・audit-exam-two-stage-essence.ts（答案）
+
+## 2026-11-15 作業員H: 画像の3つの型の行き先（竹内さんの決定 KB 1d2400c6・H-14）— CUSTOMER_IMAGE_ROUTE_1115・CUSTOMER_IMAGE_TASTE_WANTS（既定 off）
+- ① こちらが送った物件と同じマンションの他社・ポータルの画面: 関連は「他社の画面」に固定し、後の一言で行き先（比べ・安さ→最大限割引の御見積書／内覧→AIX【内覧調整】／空き→送った時に確認済み／一言なし→待つ）
+- ② 好みの手本（こういう・こんな・イメージ）: 好みを条件に足してピックアップの約束（2段:pickup）→物件の AIX。画像の特徴（白基調・広いリビング・築浅・駅近・ペット可・設備）を app/lib/image-taste-wants(-server).ts で property_customers の こだわり（設備）／その他（それ以外）に1つずつ・[画像の好み] の印（できれば・[必須] なし）・今ある要望と重ねない・NG に当たる物は足さない・数の欄（築年数・駅徒歩）は変えない・履歴は書き手 image_taste。書く時は line-webhook-text のお客様の文の後（画像の後の一言で手本と分かった時）
+- ③ 弊社の見積書の送り返し: 質問あり→答える返信／質問なし→内覧の誘い／その物件が退去予定（送った物件の現況）→AIX【申込へ】／文がまだ→待つ
+- 今までの連携: customer-sent-property（持ち込みの物件の値）は 🌟 の並べ方（pickup-rank）と好みの学び（customer-pref-learning）に渡る・image-wants は条件欄と会話の「欲しい」を集めるが画像の書き起こしは外していた＝手本の画像の特徴は要望の欄に届いていなかった。要望の欄に書けば image-wants・customer-wants が条件として読む
+- テスト app/lib/__tests__/image-route-1115.test.ts

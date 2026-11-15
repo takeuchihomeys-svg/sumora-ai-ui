@@ -2560,7 +2560,7 @@ async function analyzeConversationCore(
         for (const mm of typedMessages) { if (mm.sender !== "customer") break; turn.push(mm); }
         const bundled = sentProps.filter((sp) => !sp.shared_only).map((sp) => ({ ...sp }));
         attachBundles(bundled);
-        const sentForLink = bundled.map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sentAt: sp.sent_at, rent: sp.rent, bundleNo: sp.bundle_no ?? null, bundlePos: sp.bundle_pos ?? null }));
+        const sentForLink = bundled.map((sp) => ({ name: sp.property_name, room: sp.room_no || null, sentAt: sp.sent_at, rent: sp.rent, bundleNo: sp.bundle_no ?? null, bundlePos: sp.bundle_pos ?? null, vacating: /退去予定/.test(`${sp.sheet_vacancy ?? ""}${sp.recruitment_status ?? ""}`) }));
         // ⑤ こちらが送った物件の側: お客様の今の一言に名前が出た送った物件（どれに反応したか）
         const reacted = reactedSentProperties(turn.filter((mm) => !/^\s*\[画像\]/.test(mm.text ?? "")).map((mm) => mm.text ?? "").join(" "), sentForLink);
         if (reacted.length) sentPropsText += `\n【お客様の今の一言が反応したこちらの送った物件】${reacted.slice(0, 3).map((s) => `${s.name}${s.room ? ` ${s.room}` : ""}${s.bundleNo ? `（${s.bundleNo}回目の送信の${s.bundlePos ?? "?"}件目）` : ""}`).join("・")}`;

@@ -415,6 +415,15 @@ export async function handleTextMessage(
     await resolveEngagementSignal(db, convId, text).catch((e) => console.warn("[resolveEngagementSignal]", e));
   });
 
+  // 2026-11-15 竹内さんの決定（KB 1d2400c6・H-14 ②）: 画像の後の一言で好みの手本（こういう・こんな）と分かったら、画像の特徴を AIX ツールの要望の欄へ
+  //   （image-taste-wants-server・既定 off: CUSTOMER_IMAGE_TASTE_WANTS=on かつ CUSTOMER_IMAGE_ROUTE_1115=on）
+  if (process.env.CUSTOMER_IMAGE_TASTE_WANTS === "on") {
+    after(async () => {
+      const { applyImageTasteWants } = await import("@/app/lib/image-taste-wants-server");
+      await applyImageTasteWants(db as unknown as Parameters<typeof applyImageTasteWants>[0], convId).catch((e) => console.warn("[image-taste-wants]", e));
+    });
+  }
+
   // 新規客（初メッセージ）検知 → @鈴木即時通知
   after(async () => {
     const { count: msgCount } = await db
