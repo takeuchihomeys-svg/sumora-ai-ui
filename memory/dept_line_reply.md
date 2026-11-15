@@ -9598,3 +9598,9 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 対応: available→available・unavailable→taken・alternative→taken（メモ）・vacating→move_out_planned・2番手→second_position／室内写真・mgmt_* は付けない／物件ごとに割れた時は付けない
 - ブレインの段の組み立ては buildCheckResultsText に移した（文字は同じ）。テスト app/lib/__tests__/task-result-from-aix.test.ts
 - URL を含む送信で済ませる時（物件出しのタスク）は空室確認ではないので結果を付けない（今のまま）
+
+## 2026-11-15 作業員H: 拡張の学習の束（/api/human-learn-profile）の重なりで DB が止まった件の守り（HUMAN_LEARN_PROFILE_GUARD・既定 off）
+- 11/15 01:40:43〜55Z: 拡張（大阪の端末・kix1）からこの経路へ約130回が重なり、DB に human_learn_profile の GET 452件（版だけの確認も束の全体 1行約40KB を読む）・PATCH 302件（全部 同じ1行 id=1556 の read_count＝鍵の取り合い）。01:42〜01:43Z に主キーの1行の読みまで15秒の止まり
+- 守り（app/lib/human-learn-profile-guard.ts・route）: 軽い確認は版（bundle->>generated_at）だけ・読んだ印は10分に1回だけ応答の後で・CDN の短いキャッシュ（s-maxage 30/60秒＋stale-while-revalidate）で同じ要求を1つに・同じ関数の中の重なった読み・作り直しを1本に・作ってから5分は作り直さない。索引 (scope, created_at desc) は既にある
+- テスト app/lib/__tests__/human-learn-profile-guard.test.ts（01:40 の形: 130回→読み1回・作り直し40回→1本・印 302回→0回）
+- 拡張の側（Cursor）への頼み: 束の取り直しを同時に1本だけ（実行中なら待つ）・失敗した時は間を空けて取り直す・起動の時の取り直しにずらしの間を入れる

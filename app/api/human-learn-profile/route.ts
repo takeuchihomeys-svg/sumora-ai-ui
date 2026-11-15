@@ -11,9 +11,10 @@
 //
 // ?scope=all（既定）／?scope=realpro のようにサイトごとも取れる
 // 読んだ印（read_at・read_count）を残す（どの PC が読んでいるか分かる）
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -474,12 +475,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, scope, count: rows.length, rows }, { headers: CORS });
   }
 
-  const r = await supabase
-    .from("human_learn_profile")
-    .select("id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count")
-    .eq("scope", scope)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  // 2026-11-15 作業員H（DB の止まり 11/15 01:40〜01:43Z の調べ・HUMAN_LEARN_PROFILE_GUARD・既定 on・=off で戻す）:
+  //   拡張の束の取りに来る呼び出しが 1秒に百件近く重なり、①版だけ見る軽い確認（touch=0）まで束の全体（bundle・1行 約40KB）を読み、
+  //   ②読むたびに同じ1行（id=1556）へ read_count の書き込み（PATCH 302件）＝同じ行の鍵の取り合い、③束が30分より古いと来た数だけ束を作り直す（1回 約15秒）が重なった。
+  //   守り: 軽い確認は版だけ読む・読んだ印は10分に1回だけ後で書く・同じ版の束はCDN で60秒まとめる（同じ要求を1つにまとめる）・作り直しは同じ所で1本だけ（human-learn-profile-guard.ts）
+  const guard = learnProfileGuardOn();
+  const lightReq = req.nextUrl.searchParams.get("touch") === "0" && req.nextUrl.searchParams.get("fresh") !== "1";
+  // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
+  const rowCols: string = guard && lightReq
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at"
+    : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
+  // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
+  type RowRes = { data: unknown[] | null; error: { message: string } | null };
+  const r: RowRes = await coalesce<RowRes>(`row:${scope}:${guard && lightReq ? "light" : "full"}`, guard, async (): Promise<RowRes> => {
+    const q = await supabase.from("human_learn_profile").select(rowCols).eq("scope", scope).order("created_at", { ascending: false }).limit(1);
+    return { data: (q.data ?? null) as unknown[] | null, error: q.error ? { message: q.error.message } : null };
+  });
 
   if (r.error) {
     /**
@@ -493,7 +504,7 @@ export async function GET(req: NextRequest) {
       { status: missing ? 200 : 500, headers: CORS },
     );
   }
-  const row = (r.data ?? [])[0] as Record<string, unknown> | undefined;
+  const row = ((r.data ?? []) as unknown as Array<Record<string, unknown>>)[0];
   /**
    * 2026-11-13 竹内さん「連携するようにする」（学習が22:20のcron待ちで、すぐ確かめられない）:
    *   束が**無い**時と、**古い**時（前回から30分以上たっている）は、
@@ -524,17 +535,21 @@ export async function GET(req: NextRequest) {
   if (lightCheck && !forceFresh && row) {
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
-      generated_at: (row.bundle && typeof row.bundle === "object")
+      generated_at: guard && lightReq
+        ? (row.generated_at ?? row.created_at)
+        : (row.bundle && typeof row.bundle === "object")
         ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
         : row.created_at,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
-    }, { headers: CORS });
+    }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;
-  if (stale || forceFresh) {
+  // 守りの時: 束の作り直しは同じ所で1本だけ（重なった要求は同じ結果を待つ）。作ってから短い間（LEARN_BUILD_MIN_GAP_MS）は作り直さない
+  const builtRecently = guard && !!row && Date.now() - Date.parse(String(row.created_at ?? 0)) < LEARN_BUILD_MIN_GAP_MS;
+  if ((stale || forceFresh) && !(builtRecently && !forceFresh)) {
     try {
-      const fresh = await buildNow(scope, (m) => { why = m; });
+      const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, () => buildNow(scope, (m) => { why = m; }));
       if (fresh) {
         return NextResponse.json({
           ok: true, empty: false, scope, generated_now: true,
@@ -568,7 +583,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, empty: true, scope, bundle: null, lines: [], why: why || "no_rows_or_build_failed" }, { headers: CORS });
   }
 
-  if (touch) {
+  if (touch && guard) {
+    // 守りの時: 読んだ印は前の印から10分たった時だけ・応答の後で（同じ1行への書き込みの取り合いを作らない）
+    if (shouldTouchRead(row.read_at as string | null | undefined)) {
+      after(async () => {
+        try { await supabase.from("human_learn_profile").update({ read_at: new Date().toISOString(), read_count: (Number(row.read_count) || 0) + 1 }).eq("id", row.id as number); } catch { /* 印は残らなくてもよい */ }
+      });
+    }
+  } else if (touch) {
     try {
       await supabase
         .from("human_learn_profile")
@@ -590,6 +612,6 @@ export async function GET(req: NextRequest) {
       lines: row.lines ?? [],
       bundle: row.bundle,
     },
-    { headers: CORS },
+    { headers: guard ? { ...CORS, ...cacheHeaders("bundle") } : CORS },
   );
 }
