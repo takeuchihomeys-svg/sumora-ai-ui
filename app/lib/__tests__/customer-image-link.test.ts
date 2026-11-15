@@ -2,7 +2,6 @@
 //   元の番の形（14日の本番の書き起こしの形・名前と番号は架空に置き換えた）で、画像→結び付け→ブレインの材料の1行→決まりの材料（道の候補）までを通す。LLM も DB も使わない。
 // 実行: npx tsx app/lib/__tests__/customer-image-link.test.ts
 import { readFileSync } from "node:fs";
-import { readFileSync } from "node:fs";
 import { linkCustomerImage, linkTurnImages, buildImageLinkBlock, estimateFactsFromTranscript, asksOf, reactedSentProperties, customerImageLinkOn, type SentForLink } from "../customer-image-link";
 
 let pass = 0, fail = 0;
