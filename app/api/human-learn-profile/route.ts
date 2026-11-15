@@ -457,9 +457,15 @@ export async function GET(req: NextRequest) {
       }
       const now = new Date().toISOString();
       const bundle = compactBundle(buildHumanLearnBundle(rows, Date.now()));
+      /**
+       * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列に無い）。
+       *   入れると `Could not find the 'generated_at' column` で失敗する。
+       *   → `created_at` は自動で入るので送らない。
+       */
       const ins = await supabase.from("human_learn_profile").insert({
-        scope: "all", source_rows: rows.length, bundle, generated_at: now,
+        scope: "all", source_rows: rows.length, bundle,
       });
+      void now;
       if (ins.error) throw new Error(String(ins.error.message).slice(0, 160));
       g.__axlxBundleRefreshAt = Date.now();
       // 古い束を整理（20件より前を消す・今までの束は残す）

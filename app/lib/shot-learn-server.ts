@@ -51,9 +51,24 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
     .select("id, shot_key, site, mode, shot_w, shot_taken, shot_learn, shot_ops")
     .gte("created_at", since)
     .eq("shot_taken", true)
+    /**
+     * ★ 2026-11-15 竹内さん「通常モードの録画でもちゃんと学習できるように」→ **実測で判明（3回目の罠）**:
+     *
+     *   ⚠ 大きい順に `limit` 件取ると、**学習済みの大きい写真が枠を埋めて**
+     *     **未学習が1件も入らない**（実測: 20件全部が学習済みで「読む物がありません」になった）。
+     *     未学習は742枚もあるのに0件と表示された。
+     *
+     *   → **未学習だけをDBで絞る**（`shot_learn IS NULL`）。
+     *     取ってから絞ると、枠が学習済みで埋まって同じ事になる。
+     */
+    .is("shot_learn", null)
     .order("shot_w", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
-    .limit(Math.max(1, Math.min(400, opt.limit ?? 200)));
+    /**
+     * ⚠ 同じ画面を1枚に絞るので、**多めに取る**（`limit` の4倍・最大2000）。
+     *   取る数が少ないと、同じ画面ばかりで1枚しか残らない。
+     */
+    .limit(Math.max(200, Math.min(2000, (opt.limit ?? 200) * 4)));
   if (opt.site && opt.site !== "all") q = q.eq("site", opt.site);
   const { data, error } = await q;
   if (error) return [];
@@ -403,9 +418,16 @@ export async function learnFromWeakShots(
       }
       const nowIso = new Date().toISOString();
       const bundle = compactBundle(buildHumanLearnBundle(all as never, Date.now()));
-      const ins = await supabase.from("human_learn_profile").insert({ scope: "all", source_rows: all.length, bundle, generated_at: nowIso });
+      /**
+       * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列は id・created_at・scope・source_rows・
+       *   source_from・source_to・ext_version・bundle・lines・read_at・read_count）。
+       *   入れると `Could not find the 'generated_at' column` で**束が作れない**。
+       *   → `created_at` は自動で入るので、**送らない**（bundle の中に生成時刻を持たせる）。
+       */
+      const ins = await supabase.from("human_learn_profile").insert({ scope: "all", source_rows: all.length, bundle });
       out.refreshed = !ins.error;
       if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));
+      void nowIso;
     } catch (e) {
       out.errors.push("束の作り直し: " + String((e as Error)?.message ?? e).slice(0, 100));
     }
