@@ -98,6 +98,7 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 // ⑥ 取り違え: 空き・募集状況を返信で答える
 {
   const L = buildAskLedger({ asks: [{ quote: "まだ募集してますか", route: "reply", about: "vacancy", kind: "question" }] });
+  t("⑥ 一般の見込み（埋まる可能性）は除く（q072）", buildAskLedger({ asks: [{ quote: "今見ている物件は埋まる可能性が高いですか", route: "reply", about: "vacancy", kind: "question" }] }).check.ok);
   t("⑥ 取り違え misrouted（空きを返信）", L.check.misrouted.length === 1, L.check);
 }
 

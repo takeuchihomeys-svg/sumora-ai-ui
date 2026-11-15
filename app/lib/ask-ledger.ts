@@ -183,23 +183,30 @@ export function checkAskLedger(items: ReadonlyArray<AskEntry>, plan?: TwoMessage
     }
     // 取りこぼし②: AIX の要件が2種類あるのに、AIX の通は1つ目の AIX だけ（組み立ては AIX を1つしか持たない）＝2つ目の AIX を送る通が無い
     const mAix = aixOfMsg(e.msg);
-    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && aixFamilyKey(mAix) !== aixFamilyKey(e.aix)) {
+    //   内覧調整・待ち合わせの席が確認の要件を文の中で受ける形（TWO_MESSAGE_SEAT_FOLLOWS_FINAL の (i)・viewCheckInAix）は取りこぼしにしない
+    const foldedInView = !!mAix && VIEW_SEAT.has(mAix) && !!e.aix && CHECK_KEYS.has(e.aix);
+    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && !foldedInView && aixFamilyKey(mAix) !== aixFamilyKey(e.aix)) {
       issues.push({ id: e.id, code: "dropped", why: `AIX の要件（${e.aix}）に、その AIX の通が無い（${e.msg}通目は ${mAix}）` });
       continue;
     }
     // 取り違え③: 要件の AIX とブレインの最終の AIX（押される AIX）が違い、最終の AIX の要件が1つも無い＝組み立ては要件の AIX、押されるのは最終の AIX
-    if (e.route === "aix" && e.aix && finalAix && aixFamilyKey(e.aix) !== aixFamilyKey(finalAix) && !items.some((x) => x.route === "aix" && x.aix && aixFamilyKey(x.aix) === aixFamilyKey(finalAix))) {
+    //   組み立てに最終の AIX の席がある時（TWO_MESSAGE_SEAT_FOLLOWS_FINAL）は取り違えにしない＝押された AIX を組みが読める
+    const finalSeat = !!finalAix && !!plan?.messages.some((m) => m.slot === "aix" && m.aix && aixFamilyKey(m.aix) === aixFamilyKey(finalAix));
+    if (e.route === "aix" && e.aix && finalAix && !finalSeat && aixFamilyKey(e.aix) !== aixFamilyKey(finalAix) && !items.some((x) => x.route === "aix" && x.aix && aixFamilyKey(x.aix) === aixFamilyKey(finalAix))) {
       issues.push({ id: e.id, code: "misrouted", why: `要件の AIX（${e.aix}）と最終の AIX（${finalAix}）が違う` });
     }
     // 取り違え①: AIX の番（スタッフだけが知る事）を返信の通で答える
     if (e.route === "aix" && e.slot === "reply") issues.push({ id: e.id, code: "misrouted", why: `AIX の番（${e.aix ?? "AIX"}）を返信の通（${e.msg}通目）で答える` });
     // 取り違え②: 空き・募集状況を返信で言い切る（P0 ca55d42b: 募集状況はスタッフだけが知る）。約束（promise）は取り違えではない
     //   不安・気持ち（「埋まる可能性高いですか」の焦り＝q072）は受け止めを返信で書くので除く＝問い・依頼だけ
-    else if (e.route === "reply" && e.about === "vacancy" && e.slot === "reply" && (e.kind === "question" || e.kind === "request")) issues.push({ id: e.id, code: "misrouted", why: `空き・募集状況（「${e.quote.slice(0, 16)}」）を返信で答える＝確認の約束か AIX の番` });
+    //   一般の見込み（「埋まる可能性は高いか」＝好条件はすぐ埋まる・試験 q072 の正解は返信）と、一般の事で答える（basis=general）番も除く
+    else if (e.route === "reply" && e.about === "vacancy" && e.slot === "reply" && (e.kind === "question" || e.kind === "request") && e.basis !== "general" && !/埋ま|決まって?しま|すぐ(?:に)?(?:無く|なく)/.test(e.quote)) issues.push({ id: e.id, code: "misrouted", why: `空き・募集状況（「${e.quote.slice(0, 16)}」）を返信で答える＝確認の約束か AIX の番` });
   }
   const ids = (c: AskIssueCode) => [...new Set(issues.filter((x) => x.code === c).map((x) => x.id))];
   return { ok: issues.length === 0, dropped: ids("dropped"), doubled: ids("doubled"), misrouted: ids("misrouted"), issues };
 }
+const VIEW_SEAT = new Set(["viewing_invite", "meeting_place"]);
+const CHECK_KEYS = new Set(["property_check_result", "acknowledge_check"]);
 const ROUTE_JA: Record<AskRoute, string> = { reply: "返信", promise: "約束", aix: "AIX", none: "触れない" };
 
 /** 判断の後の meta から帳面を作る（meta は変えない）。asks が無い番は null */
