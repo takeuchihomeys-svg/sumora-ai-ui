@@ -129,6 +129,12 @@ type Pair = { kind: "star" | "naka"; writer: AppealWriter; staff: AppealRecord; 
     console.log(`  今推す理由: ${d.whyNow || "（無し）"}`);
     console.log(`  強さ: ${d.strength}`);
     console.log(`  狙う返事: ${d.aim}`);
+    if (c.n && kind === "naka" && w === "takeuchi") {
+      const ys = xs.filter((p) => p.ai && p.staff.points.includes("spacious") && !p.ai.points.includes("spacious"));
+      const wantSp = ys.filter((p) => p.staff.why.some((x) => x.topic === "spacious")).length;
+      const both = xs.filter((p) => p.ai && p.staff.points.includes("spacious")).length;
+      console.log(`  広さ: 竹内さんが推した ${both}通のうち AI が落とした ${ys.length}通（その内 お客様の希望に広さ ${wantSp}通）`);
+    }
     if (c.n) console.log(`  1通の推した点の数: ${(c as Row).pointsPerText}・強さのずれ（送った→AI）: ${(c as Row).strengthMiss || "なし"}・狙う返事のずれ: ${(c as Row).aimMiss || "なし"}`);
     if (c.n) console.log(`  AI の文と比べた ${c.n}通: 推した点の重なり ${c.pointsOverlap}・希望に応える点が同じ ${c.whySame}・外れを先に ${c.gapFirstSame}・前への言及 ${c.prevRefSame}・今推す理由 ${c.whyNowSame}・強さ ${c.strengthSame}・狙う返事 ${c.aimSame}\n    AI に無い点（竹内さん側だけ）: ${c.aiMissing}\n    AI だけの点: ${c.aiExtra}`);
     else console.log(`  AI の文と比べられる番 0`);
