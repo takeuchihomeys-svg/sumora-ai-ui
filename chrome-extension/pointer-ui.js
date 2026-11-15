@@ -202,7 +202,28 @@
     var from = { x: _pos.x, y: _pos.y };
     var dist = Math.sqrt(Math.pow(t.x - from.x, 2) + Math.pow(t.y - from.y, 2));
     // 近すぎる時は動かさない（同じ場所を押すたびに震えない）
-    if (dist < 4) { _place(t.x, t.y); _pos = t; return Promise.resolve(true); }
+    if (dist < 4) {
+      _place(t.x, t.y);
+      _pos = t;
+      /**
+       * ⚠ 2026-11-15: 動かない時も**押す位置を `mousemove` で知らせる**。
+       *   記録側は `mousemove` でしか学ばないので、ここを飛ばすと
+       *   「同じ所を続けて押した時」だけ記録に残らない（実測の 65% の一因）。
+       */
+      try {
+        var _nearEl = (typeof document !== "undefined" && document.elementFromPoint)
+          ? document.elementFromPoint(t.x, t.y) : null;
+        if (_nearEl && typeof MouseEvent === "function") {
+          _nearEl.dispatchEvent(new MouseEvent("mousemove", {
+            bubbles: true, cancelable: true, view: window,
+            clientX: Math.round(t.x), clientY: Math.round(t.y),
+            screenX: Math.round(t.x), screenY: Math.round(t.y),
+            buttons: 0,
+          }));
+        }
+      } catch (_) {}
+      return Promise.resolve(true);
+    }
     /**
      * 2026-11-11 竹内さん「通常モードの動きから学ぶのか」:
      *   通常モードで覚えた**実測の速さ**があれば、その速さで動く（人が実際に動かしていた速さ）。
@@ -237,12 +258,52 @@
         if (i >= pts.length) {
           _pos = t;
           _place(t.x, t.y);
+          // 2026-11-15: 最後の位置も `mousemove` を出す（押す直前の位置を記録に残す）
+          try {
+            var _endEl = (typeof document !== "undefined" && document.elementFromPoint)
+              ? document.elementFromPoint(t.x, t.y) : null;
+            if (_endEl && typeof MouseEvent === "function") {
+              _endEl.dispatchEvent(new MouseEvent("mousemove", {
+                bubbles: true, cancelable: true, view: window,
+                clientX: Math.round(t.x), clientY: Math.round(t.y),
+                screenX: Math.round(t.x), screenY: Math.round(t.y),
+                buttons: 0,
+              }));
+            }
+          } catch (_) {}
           resolve(true);
           return;
         }
         var p = pts[i];
         _pos = { x: p.x, y: p.y };
         _place(p.x, p.y);
+        /**
+         * ★ 2026-11-15 竹内さん「ちゃんと人間の動きでできるようにする」
+         *
+         *   ⚠ **実測で判明（核心）**: 自動モードの記録 54件で「カーソルの動き」があるのは **19件（35%）だけ**。
+         *     65% は「カーソルを動かさずに押している」状態だった。
+         *   ⚠ 原因: この `moveTo` は**見えるカーソル（DOM の丸）を動かすだけ**で、
+         *     `mousemove` イベントを**一度も出していなかった**（実測 0箇所）。
+         *     記録側（`human-learn.js` の `hMove`）は **`mousemove` でしか学ばない**ので、
+         *     どれだけ丁寧に動かしても**記録に残らない**＝「人の動き」として学べない。
+         *   → 点を動かすたびに **`mousemove` を出す**。
+         *     ⚠ `isTrusted: false` になる（拡張が作ったイベント）ので、
+         *       記録側は `by: "auto"` として区別できる（人の手本と混ぜない）。
+         *     ⚠ サイトの要素には**触らない**（イベントを出すだけ・`cancelable: true` で止められる）。
+         *     ⚠ 出せなくてもカーソルは動く（止まらない）。
+         */
+        try {
+          var _tg = (typeof document !== "undefined" && document.elementFromPoint)
+            ? document.elementFromPoint(p.x, p.y) : null;
+          if (_tg && typeof MouseEvent === "function") {
+            _tg.dispatchEvent(new MouseEvent("mousemove", {
+              bubbles: true, cancelable: true, view: window,
+              clientX: Math.round(p.x), clientY: Math.round(p.y),
+              screenX: Math.round(p.x), screenY: Math.round(p.y),
+              buttons: 0,
+            }));
+          }
+        } catch (_) {}
         var w = waits ? (waits[Math.min(i, waits.length - 1)] || 20) : Math.round(total / pts.length);
         i++;
         // ひと息（軌跡の途中で止まる）: 止まっている間はカーソルを動かさない
@@ -414,6 +475,22 @@
         var wobble2 = Math.sin(t * Math.PI * 3.3 + ph * 1.7) * amp * 0.45 * (1 - t * 0.6);
         _pos = { x: start.x + wobble, y: start.y + wobble2 };
         _place(_pos.x, _pos.y);
+        /**
+         * ⚠ 2026-11-15: 迷っている間の動きも `mousemove` で知らせる。
+         *   「押す前に迷う」のは人の大事な特徴なので、ここが記録に残らないと学べない。
+         */
+        try {
+          var _wEl = (typeof document !== "undefined" && document.elementFromPoint)
+            ? document.elementFromPoint(_pos.x, _pos.y) : null;
+          if (_wEl && typeof MouseEvent === "function") {
+            _wEl.dispatchEvent(new MouseEvent("mousemove", {
+              bubbles: true, cancelable: true, view: window,
+              clientX: Math.round(_pos.x), clientY: Math.round(_pos.y),
+              screenX: Math.round(_pos.x), screenY: Math.round(_pos.y),
+              buttons: 0,
+            }));
+          }
+        } catch (_) {}
         setTimeout(step, 45 + Math.floor(Math.random() * 45));
       }
       step();
