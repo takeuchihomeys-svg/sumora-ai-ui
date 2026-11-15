@@ -207,8 +207,38 @@ export function aixKindsOfAsks(asks: ReadonlyArray<PlanAsk>): string[] {
   if (i > 0) { ks.splice(i, 1); ks.unshift("property_check_result"); }
   return ks;
 }
+/**
+ * 2026-11-15 作業員M（統括役の頼み・取り違え「要件の AIX と押される最終の AIX が違う」q187・q330・q104 等）:
+ *   試験の正解はどれも最終の AIX の側（q330 内覧調整＝竹内さんは内覧調整の AIX の文の中で物件の確認も・q104 内覧調整・q187 見積書／物件確認した）。
+ *   要件の AIX だけで席を作ると、押される AIX の席が無く remainingAfterAix が null になり、AIX の後の通が組みを読めない（継ぎ目④）。
+ *   → 最終の AIX が要件の AIX のどの種類とも違う時:
+ *     (i) 最終の AIX が内覧調整・待ち合わせで、要件の AIX が全部 物件確認（確認の結果・確認します）＝確認は内覧の AIX の文の中（viewCheckInAix と同じ考え）＝最終の AIX の席1つ
+ *     (ii) それ以外＝最終の AIX の席も足す（物件確認した を先・最終の AIX・残りは要件の順＝planAixAix）
+ *   BRAIN_AIX_FOLLOWS_CONTRACT（最終の物件の AIX を要件に寄せる・既定 on）は道を変える側で、当てる範囲は最終の AIX が物件の AIX（property_send 等）の時だけ。
+ *   こちらは道を変えず組み立ての席を最終の AIX に合わせるだけ。既定 off（TWO_MESSAGE_SEAT_FOLLOWS_FINAL=on の時だけ）
+ */
+export function twoMessageSeatFollowsFinalOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL ?? "").trim().toLowerCase() === "on";
+}
+const CHECK_AIX_KEYS = new Set(["property_check_result", "acknowledge_check"]);
 export function planMessages(i: PlanInput): TwoMessagePlan {
-  const kinds = twoMessageAixAixOn() ? aixKindsOfAsks((i.asks ?? []).filter((a) => a && typeof a.quote === "string")) : [];
+  const asks = (i.asks ?? []).filter((a) => a && typeof a.quote === "string");
+  let kinds = twoMessageAixAixOn() ? aixKindsOfAsks(asks) : [];
+  const fin = baseKey(i.finalAix);
+  if (twoMessageSeatFollowsFinalOn() && fin) {
+    const askKinds = aixKindsOfAsks(asks);
+    if (askKinds.length && !askKinds.some((k) => aixFamilyKey(k) === aixFamilyKey(fin))) {
+      // (i) 内覧の AIX の文の中で確認も＝要件の確認の AIX を最終の AIX に寄せて1席
+      if (VIEW_AIX.has(fin) && askKinds.every((k) => CHECK_AIX_KEYS.has(k))) {
+        return planMessagesOne({ ...i, asks: asks.map((a) => (a.route === "aix" ? { ...a, aix: fin } : a)), finalAix: fin });
+      }
+      // (ii) 最終の AIX の席も足す（物件確認した を先）
+      const ks = [...askKinds, fin];
+      const ci = ks.indexOf("property_check_result");
+      if (ci > 0) { ks.splice(ci, 1); ks.unshift("property_check_result"); }
+      kinds = ks;
+    }
+  }
   if (kinds.length >= 2) return planAixAix(i, kinds);
   return planMessagesOne(i);
 }
