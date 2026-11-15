@@ -9,6 +9,7 @@
 // 書き方: 約束の行の status は変えない（読む側7つの動きを変えない）。detail.closed_by に {kind, sent_at, aix_type, line_message_id, how} を足すだけ。
 //   スイッチ PROMISE_CLOSE_LINK=on（既定 off）。書くのは sent-facts.upsertFacts の後。
 export const PROMISE_OF_DONE: Readonly<Record<string, string>> = { confirmation_reported: "confirmation_promised", properties_sent: "pickup_declared", estimate_sent: "estimate_declared" };
+export const UNNAMED_CLOSE_MAX_MS = 7 * 86_400_000;
 export const promiseCloseLinkOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CLOSE_LINK ?? "").trim().toLowerCase() === "on";
 
 export type FactForLink = { id?: string | number; kind: string; status: string; sent_at: string; aix_type?: string | null; line_message_id?: string | null; detail?: Record<string, unknown> | null };
@@ -35,7 +36,9 @@ export function linkPromiseClosures(rows: ReadonlyArray<FactForLink>, done: Read
     const match = (c: FactForLink) => { const cw = words(c.detail); return cw.length > 0 && cw.some((x) => dw.some((y) => x.includes(y) || y.includes(x))); };
     // 物件・要件が合う約束があればそれを全部（同じ約束を重ねた行も同じ約束＝一緒に閉じる）。無ければ、名前の無い約束を全部（両方に名前があって合わない約束は閉じない）
     const same = dw.length ? cands.filter(match) : [];
-    const picks = same.length ? same : cands.filter((c) => !(dw.length && words(c.detail).length));
+    // 2026-11-15 見本の目視（14日・20組）で直した: 名前の無い済みの行が「初期費用」の確認の約束を 289時間後に閉じていた（募集状況の報告で費用の約束を閉じる誤り）。
+    //   名前の付いた約束は、名前の合う済みの行でしか閉じない。名前の無い約束を名前で閉じない時も、7日より前の約束は閉じない（別の話の報告で古い約束を閉じない）
+    const picks = same.length ? same : cands.filter((c) => !words(c.detail).length && at - Date.parse(c.sent_at) <= UNNAMED_CLOSE_MAX_MS);
     for (const pick of picks) {
       used.add(String(pick.id));
       out.push({ promiseId: pick.id!, closedBy: { kind: d.kind, sent_at: d.sent_at, aix_type: d.aix_type ?? null, line_message_id: d.line_message_id ?? null, how: same.length ? "same_object" : "unnamed" } });

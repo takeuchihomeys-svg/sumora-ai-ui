@@ -75,3 +75,17 @@ t("約束の結び付け: 物件が合う約束を全部（重ねた約束も）
   assert.equal(promiseClosedOf({ detail: {} }), false);
 });
 console.log("promise-close-link ok");
+
+// ── AIX要対応の閉じ方（AIX_ITEM_CLOSE_STRICT）
+import { aixItemCloseDecision, aixItemCloseStrictOn } from "../aix-item-close-rule";
+t("AIX要対応: 同じ AIX・同じ要件を果たす組だけ閉じる（見積は同封の時だけ）・他は待ちのまま", () => {
+  assert.equal(aixItemCloseStrictOn({}), false);
+  assert.equal(aixItemCloseDecision("property_check", "property_check_result").close, true);
+  assert.equal(aixItemCloseDecision("property_send", "property_recommendation").close, true);
+  assert.equal(aixItemCloseDecision("viewing_invite", "meeting_place").close, true);
+  assert.equal(aixItemCloseDecision("estimate_sheet", "property_check_result", { estimateSent: true }).close, true);
+  assert.equal(aixItemCloseDecision("estimate_sheet", "property_check_result").close, false);
+  assert.equal(aixItemCloseDecision("property_check_result", "property_recommendation").close, false);
+  assert.match(aixItemCloseDecision("viewing_invite", "phone_call").why, /果たしたか確かめる/);
+});
+console.log("aix-item-close ok");
