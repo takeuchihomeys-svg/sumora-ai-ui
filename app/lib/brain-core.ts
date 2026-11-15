@@ -3668,13 +3668,15 @@ ${sh}`;
     try {
       const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
       const { nearOpinionDigest } = await import("@/app/lib/conductor-near-opinion");
+      // 11/15 作業員H: 時間切れの時にどの段まで進んだかをログに（nop9o-1 の原因の切り分け・NEAR_OPINION_PARALLEL）
+      const nearTrace = { stage: "start", ms: {} as Record<string, number> };
       const r = await Promise.race([
-        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }),
+        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }, nearTrace),
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
       nearOpinionNote = r === null ? "timeout" : `${nearOpinionDigest(r.op)}|${r.inBand}`;
-      console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null }));
+      console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null, stage: r === null ? nearTrace.stage : undefined, stageMs: r === null ? nearTrace.ms : undefined }));
     } catch (e) { console.warn("[brain-core] near-opinion skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-11-13 作業員5（統括役・主と従と鮮度・S1・S10）: 前回の全体分析（closing_strategy）が、お客様が外した物件・結果を送って済んだ確認・別の物件へ移った前の物件を

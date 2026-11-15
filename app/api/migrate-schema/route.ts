@@ -5739,6 +5739,29 @@ SELECT
 FROM property_candidate_pools p
 CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.candidates) = 'array' THEN p.candidates ELSE '[]'::jsonb END) c;
 
+-- ── rag_call_logs: RAG（match_* の RPC）ごとの見張り（2026-11-15 作業員H・竹内さん「精度の高い RAG か・統括ちゃんとできているか」）──
+-- 出口（instrumentation.ts → app/lib/rag-watch-server.ts が globalThis.fetch を包む・RAG_WATCH=on の時だけ）で1回ずつ1行。
+-- 問いの文・手本の中身は残さない（数と RPC の名前と引数の名前だけ）。毎朝 app/api/cron/rag-watch-daily が0件・失敗・遅いが続く RAG を拾う。
+CREATE TABLE IF NOT EXISTS rag_call_logs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  rpc TEXT NOT NULL,
+  route TEXT,
+  status INT,
+  ok BOOLEAN,
+  rows INT,
+  top_sim REAL,
+  ms INT,
+  match_count INT,
+  arg_keys TEXT[],
+  error TEXT,
+  env TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rag_call_logs_created ON rag_call_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_call_logs_rpc ON rag_call_logs(rpc, created_at DESC);
+ALTER TABLE rag_call_logs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON rag_call_logs FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
