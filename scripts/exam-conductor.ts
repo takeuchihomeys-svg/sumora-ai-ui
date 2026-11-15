@@ -38,6 +38,7 @@ import { readObs } from "./lib/exam-flake";
 import { preflightAdd, preflightOn, unsolvableFromObs, stoppedForBaseIds } from "./lib/exam-preflight";
 import { materialGapsOf, type GapRow, type GapProblem } from "./lib/exam-material-gaps";
 import { readGateExcluded } from "./lib/exam-application-gate";
+import { prodEnvWanted, readProdEnvCache, refreshProdEnv, prodEnvCacheAgeMs } from "./lib/exam-prod-env";
 import { problemHash } from "./lib/brain-exam-baseline";
 /** 2026-11-05 作業員1（作業員4の気付き・問題の id のぶつかり）: 依頼の作業ツリーの手元の problems.json の中身の hash の候補（揺れの記録を id だけで引かない） */
 const hashCache = new Map<string, Map<string, string[]>>();
@@ -97,6 +98,24 @@ function configExamEnv(nowMs = Date.now()): Record<string, string> {
   if (!c.examEnv || (c.examEnvFrom && !(nowMs >= Date.parse(c.examEnvFrom)))) return {};
   return c.examEnv;
 }
+/**
+ * 2026-11-15 作業員I（統括役の見つけ: 本番は Vercel の環境変数で 61個のスイッチを上書き・試験はコードの既定で流れていた）: 本番のスイッチの組（brain_switch_versions の最新の行の控え prod-env.json）を
+ *   依頼の env の一番下に敷く（本番の組 → 係の examEnv → 依頼の env）。入れる時: 依頼の --prod-env／係の設定 "prodEnv": "on"（"prodEnvFrom" の時刻から）／EXAM_PROD_ENV=on。止める EXAM_PROD_ENV=off
+ */
+const PROD_ENV_FILE = join(ROOT, "prod-env.json");
+function prodExamEnv(j?: { prodEnv?: boolean; env?: Record<string, string> }, nowMs = Date.now()): Record<string, string> {
+  const c = readJson<{ prodEnv?: string; prodEnvFrom?: string }>(CONFIG, {});
+  if (!prodEnvWanted({ env: { ...process.env, ...(j?.env ?? {}) }, jobProdEnv: !!j?.prodEnv, config: c, nowMs })) return {};
+  return readProdEnvCache(PROD_ENV_FILE)?.env ?? {};
+}
+/** 依頼の env の下敷き（本番の組＋係の examEnv） */
+const jobBaseEnv = (j?: { prodEnv?: boolean; env?: Record<string, string> }) => ({ ...prodExamEnv(j), ...configExamEnv() });
+/** 控えが無いか3時間より古ければ読み直す（読めなければ前の控えのまま） */
+async function ensureProdEnv(maxAgeMs = 3 * 3600_000): Promise<void> {
+  const age = prodEnvCacheAgeMs(PROD_ENV_FILE);
+  if (age !== null && age < maxAgeMs) return;
+  try { const c = await refreshProdEnv(db() as never, PROD_ENV_FILE); if (c) log(`本番のスイッチの組を読んだ: hash ${c.hash}・${Object.keys(c.env).length}個（commit ${String(c.commit ?? "?").slice(0, 7)}・最後に見た ${c.lastSeenAt ?? "?"}）`); } catch (e) { log(`本番のスイッチの組を読めない（前の控えのまま）: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
+}
 const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
 const log = (s: string) => { ensureDirs(); const line = `${new Date().toISOString()} ${s}`; console.log(line); appendFileSync(LOG, line + "\n"); };
@@ -111,6 +130,7 @@ export type ExamJob = {
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** 2026-11-07 統括役（弱い所 418・試験の統括ブレインの第1段）: 係が自動で足した守りの問題（1回だけ回す）・狙いの無い依頼の RAG の選びの数 */ guards?: string[]; selectN?: number;
   /** 2026-11-06 統括役（依頼そのものを削る）: 掘りの依頼（--dig）。回数は --repeat のまま（揺れる問題も増やさない）・外れた問題の確かめ直しもしない＝既定 on の判断に使わない */ dig?: boolean;
+  /** 2026-11-15 作業員I: 本番のスイッチの組を env の下敷きに入れる（--prod-env） */ prodEnv?: boolean;
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
@@ -277,13 +297,14 @@ ${d.diffText}`, tally, { maxTokens: 200 });
 
 async function addJob(): Promise<void> {
   ensureDirs();
+  if (flag("prod-env")) await ensureProdEnv();
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
   // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
   //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
   const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(Number(arg("cap-usd")) > 0 ? { capUsd: Number(arg("cap-usd")) } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("prod-env") ? { prodEnv: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(Number(arg("cap-usd")) > 0 ? { capUsd: Number(arg("cap-usd")) } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
@@ -718,7 +739,7 @@ function nearResolveHook(j: ExamJob, stage: "before" | "after"): void {
   const t0 = Date.now();
   // shell: true は引数を空白でつなぐ＝パスの空白（竹内 悠馬）を引用符で包む
   // 2026-11-13 作業員8b: 係の設定の examEnv（EXAM_NEAR_ORIGIN_VECTOR 等）も近い番の読みに乗せる（試験の依頼と同じ下敷き）
-  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000, env: { ...process.env, ...configExamEnv() } });
+  const r = spawnSync("npx", ["tsx", `"--env-file=${d.envPath}"`, "scripts/exam-near-resolve.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000, env: { ...process.env, ...jobBaseEnv() } });
   const out = String(r.stdout ?? "");
   const last = out.trim().split(/\r?\n/).filter((l) => l.startsWith("鍵が要る読みの控え")).pop() ?? `終わりの番号 ${r.status}${r.error ? `・${r.error.message}` : ""}`;
   log(`  鍵が要る読みを解いた（${stage}・${j.label}・頼み ${d.total}・日 ${d.days.join(",")}・${Math.round((Date.now() - t0) / 1000)}秒）: ${last.slice(0, 200)}`);
@@ -784,7 +805,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...configExamEnv(), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...jobBaseEnv(j), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -810,6 +831,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     writeFileSync(repsFile, JSON.stringify(rp.reps, null, 1));
     log(`流す: ${j.label}（${j.owner}・${j.switch}・${ids.length ? ids.length + "問" : "rag"}・${j.repeat}回${rp.flaky.length ? `・揺れる ${rp.flaky.map((x) => `${x.id}×${rp.reps[x.id]}`).join(",")}` : ""}・${j.cwd}）`);
     for (const f of rp.flaky) log(`  揺れる ${f.id}: ${f.why}`);
+    { const pe = prodExamEnv(j); if (Object.keys(pe).length) log(`  本番のスイッチの組を下敷きに: ${Object.keys(pe).length}個（hash ${readProdEnvCache(PROD_ENV_FILE)?.hash ?? "?"}・依頼の env が上書き）`); }
     if (rp.stable?.length) log(`  安定（揺れの記録で独立に3回以上同じ答え）→ 1回: ${rp.stable.join(",")}`);
     // 2026-11-07 作業員8: --repeat は構成（前の答えの置き場・夜の基準の控え）の鍵に入る＝問題ごとの回は --reps-file が決め、--repeat は夜の基準と同じ上限（NIGHT_BASE_REPEAT）にそろえる（回が少ない依頼も同じ置き場の前を使い回す）
     const argv = ["scripts/brain-exam.ts", `--label=${j.label}`, "--conv=auto", "--baseline=main", `--repeat=${ids.length ? Math.max(maxRep, NIGHT_BASE_REPEAT) : maxRep}`, `--stage=${j.stage}`];
@@ -838,7 +860,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       log(`  流す時の見込み: ${chk.line}`);
       if (!chk.go) { finishStop(j, `流す前に止めた: ${chk.line}。夜の基準ができた後に流すか、--cap-usd を上げて積み直す`); return; }
     }
-    const r = runTsx(j.cwd, argv, { ...configExamEnv(), ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
+    const r = runTsx(j.cwd, argv, { ...jobBaseEnv(j), ...j.env, EXAM_STOP_FILE: stopFile, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile); cur = r.child;
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
@@ -910,7 +932,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         log(`  確かめ直し: 外れた ${fails.length}問（${fails.join(",")}）だけ今の main で前を作る（${cfl}）`);
         appendFileSync(outFile, `\n=== ${at()} 確かめ直し: 外れた問題だけ今の main で前を作る（${fails.join(",")}）===\n`);
         await runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${cfl}`, "--conv=auto", "--baseline=main", "--baseline-only", `--repeat=${maxRep}`, `--stage=${j.stage}`, `--only=${fails.join(",")}`, `--reps-file=${cfReps}`],
-          { ...configExamEnv(), ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
+          { ...jobBaseEnv(j), ...j.env, EXAM_BASELINE_NIGHTLY: "off", ...(pin.snapDay ? { EXAM_DB_SNAPSHOT_DAY: pin.snapDay } : {}), ...(guard.laneOld ? { EXAM_CONCURRENCY: "1" } : bizLane ? { EXAM_CONCURRENCY: String(bizLane) } : {}) }, outFile).done;
         const blCf = baseLabelOf(j.cwd, cfl), blN = baseLabelOf(j.cwd, j.label);
         if (blCf && blN) {
           const merged = mergePinnedBase(readRows(join(resultsDirOf(j.cwd), `${blN}.jsonl`)) as unknown as Array<{ id: string }>, readRows(join(resultsDirOf(j.cwd), `${blCf}.jsonl`)) as unknown as Array<{ id: string }>, fails);
@@ -1053,6 +1075,8 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
     const tscAlerted = new Set<string>();
     let emptyNoted = false; let nightSkipNoted = "";
     for (;;) {
+      // 2026-11-15 作業員I: 本番のスイッチの組の控えを3時間ごとに読み直す（入れる設定の時だけ）
+      if (prodEnvWanted({ env: process.env, config: readJson<{ prodEnv?: string; prodEnvFrom?: string }>(CONFIG, {}) }) || readJobs().some((x) => x.prodEnv)) await ensureProdEnv();
       // 2026-11-05 作業員4（竹内さん KB 95f492fc ⑤）: 危ない所の見張りの手元の分を夜1回（2つ目の流す役だけ・止める EXAM_HAZARD_AUDIT=off）。本番の分は Vercel の cron hazard-audit-db
       if (REMOTE_ONLY && (process.env.EXAM_HAZARD_AUDIT ?? "").trim().toLowerCase() !== "off") {
         mkdirSync(MARKS, { recursive: true });
