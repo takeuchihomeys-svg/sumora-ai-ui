@@ -29,7 +29,9 @@ export const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pat
   // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）・材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）
   "judge_basis_rec", "material_clash",
   // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_TIMELINE）
-  "situation_now"] as const;
+  "situation_now",
+  // 2026-11-15 作業員M: 要件の帳面（ASK_LEDGER=shadow|on・要件の id・何通目・取りこぼし／重ね／取り違え）と返信と AIX の組（SEND_COMBO_TABLE=shadow）。scripts/ask-ledger-score.ts が答案から読む
+  "ask_ledger", "send_combo"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
