@@ -42,6 +42,13 @@ export type SupervisorInput = {
   weak: ReadonlyArray<{ kind: string; name: string; why?: string }>;
   /** モード別の記録数（normal / staff / aix …） */
   mode_counts?: Record<string, number>;
+  /**
+   * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」:
+   *   **端末ごとの記録数**。⚠ 1台だけなら `single_device: true`（他のPCが学習に参加していない）。
+   */
+  device_count?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  single_device?: boolean;
   /** サイト別の記録数（realpro / itandi） */
   site_counts?: Record<string, number>;
   /** 材料（操作の並び）がある記録の数 */
@@ -661,6 +668,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
       siteCounts: inp.site_counts || {},
       modeCounts: inp.mode_counts || {},
+      /**
+       * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」
+       */
+      deviceCount: num((inp as { device_count?: unknown }).device_count),
+      devices: Array.isArray((inp as { devices?: unknown }).devices)
+        ? ((inp as { devices: Array<{ device: string; n: number; with_ops: number }> }).devices) : [],
+      singleDevice: (inp as { single_device?: unknown }).single_device === true,
       shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
       /** 2026-11-14: 実際の検索の結果も議題に使う */
       audits: au,
@@ -781,6 +795,13 @@ function buildMeeting(m: {
   guessedOpens: number;
   siteCounts: Record<string, number>;
   modeCounts: Record<string, number>;
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+   *   **端末（PC）の数と一覧**。⚠ 1台だけなら「他のPCが参加していない」と名指しで言う。
+   */
+  deviceCount?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  singleDevice?: boolean;
   /** 2026-11-14: 実際の検索の結果も議題に使う */
   audits?: SupervisorInput["audits"];
   /** 2026-11-14: 現場への指示の詰まりも議題に使う */
@@ -875,6 +896,30 @@ function buildMeeting(m: {
     }
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
+    }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+   *
+   *   ⚠ **実測**: 全6,027件の記録のうち、**端末は1台だけ**（`588ff8d3` が6,026件・他は診断用1件）。
+   *     統括は `install_id` を一度も読んでいなかったので「1台しか無い」と言えなかった。
+   *   → **端末の数を根拠に出す**。1台だけなら「他のPCが参加していない」と**名指しで言う**。
+   *     ⚠ 端末のIDは先頭8文字だけ出す（長いIDを並べても読めない）。
+   */
+  const devN = num(m.deviceCount);
+  const devList = Array.isArray(m.devices) ? m.devices : [];
+  if (devN > 0) {
+    if (devN === 1 || m.singleDevice === true) {
+      evidence.push({
+        label: "⚠ 記録している端末",
+        value: `1台だけ（${devList[0] ? String(devList[0].device) : "?"}・${num(devList[0]?.n)}件）。`
+          + "他のPCは学習に参加していない（そのPCで検索していない／記録が届いていない）",
+      });
+    } else {
+      evidence.push({
+        label: "記録している端末",
+        value: `${devN}台（` + devList.slice(0, 4).map((d) => `${String(d.device)}:${num(d.n)}件/操作${num(d.with_ops)}`).join("・") + "）",
+      });
     }
   }
   /**

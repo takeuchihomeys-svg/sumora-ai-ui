@@ -40,6 +40,13 @@ export async function OPTIONS() {
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version",
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+   *   **端末（PC）ごとの記録**を数えるために `install_id` を読む。
+   *   ⚠ これが無いと「1台しか記録が無い（他のPCが学習に参加していない）」を統括が言えない。
+   *   ⚠ 端末のIDは**先頭8文字だけ**材料に出す（長いIDは読めない・個人情報でもないが短く）。
+   */
+  "install_id",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
   "scrolls_n", "scroll_dy", "shot_ops", "shot_learn",

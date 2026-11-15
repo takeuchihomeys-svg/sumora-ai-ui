@@ -32,6 +32,18 @@ import { findWeakSteps } from "./learn-flow-steps";
 
 export type MotionRow = {
   created_at?: string | null;
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」
+   *
+   *   ⚠ **実測で判明（統括が端末を見ていなかった）**: `learn_supervisor.ts` も
+   *     `human-learn-brain.ts` も `install_id` を**一度も読んでいなかった**（実測 0箇所）。
+   *     そのため「どのPCの記録か」が分からず、
+   *       「1台だけしか記録が無い（他のPCが学習に参加していない）」
+   *       「あるPCだけ極端に少ない（設定が違う・モードになっていない）」
+   *     を統括が言えなかった。
+   *   → `install_id` を読み、**端末ごとの記録数と、端末をまたいで学べているか**を材料に入れる。
+   */
+  install_id?: string | null;
   site?: string | null;
   mode?: string | null;
   ext_version?: string | null;
@@ -165,6 +177,13 @@ export type HumanLearnBundle = {
   }>;
   /** どのモードの記録が何件あったか（順位づけの材料） */
   mode_counts?: Record<string, number>;
+  /**
+   * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」:
+   *   **端末ごとの記録数**（多い順・最大8台・IDは先頭8文字だけ）。⚠ 1台だけなら `single_device: true`。
+   */
+  device_count?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  single_device?: boolean;
   /**
    * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
    *   録画から作った**一連の動きの型**（押す順番を1本の鎖にした物・意味のあるまとまり）。
@@ -889,6 +908,33 @@ export function buildHumanLearnBundle(
   }
   const by_mode: NonNullable<HumanLearnBundle["by_mode"]> = {};
   const mode_counts: Record<string, number> = {};
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」
+   *
+   *   ⚠ **実測**: 全6,027件の記録のうち、**端末は1台だけ**（`588ff8d3` が6,026件・他は診断用の1件）。
+   *     つまり「ほかのPCでやっても学べているか」を**確かめられない状態**（他のPCの記録が0件）。
+   *   ⚠ さらに統括は `install_id` を**一度も読んでいなかった**ので、
+   *     「1台しか記録が無い」事自体を言えなかった。
+   *   → **端末ごとの記録数と、操作が付いている数**を材料に入れる。
+   *     ・`device_count` … 何台のPCから記録が来ているか
+   *     ・`devices` … 端末ごと（多い順・最大8台・IDは先頭8文字だけ）
+   *     ・`single_device` … 1台だけか（＝他のPCが学習に参加していない）
+   */
+  const devBuckets = new Map<string, { n: number; withOps: number }>();
+  for (const r of list) {
+    const id = String(r.install_id ?? "").trim().slice(0, 8) || "(不明)";
+    if (!devBuckets.has(id)) devBuckets.set(id, { n: 0, withOps: 0 });
+    const d = devBuckets.get(id)!;
+    d.n++;
+    if (Number(r.ops) > 0) d.withOps++;
+  }
+  const devices = [...devBuckets.entries()]
+    .map(([device, v]) => ({ device, n: v.n, with_ops: v.withOps }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 8);
+  const device_count = devBuckets.size;
+  /** 1台だけ（他のPCの記録が無い） */
+  const single_device = device_count <= 1;
   for (const [m, sub] of modeBuckets) {
     mode_counts[m] = sub.length;
     if (sub.length < 3) continue;
@@ -1080,6 +1126,13 @@ export function buildHumanLearnBundle(
     gap_ms: median(gapSamples),
     weak,
     mode_counts,
+    /**
+     * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」:
+     *   端末ごとの記録数（多い順・最大8台）。⚠ 1台だけなら `single_device: true`。
+     */
+    device_count,
+    devices,
+    single_device,
     site_counts: (() => {
       const sc: Record<string, number> = {};
       for (const r of list) {
@@ -1238,6 +1291,32 @@ export function buildHumanLearnBundle(
       gap_ms: median(sGaps),
       weak: sWeak,
       mode_counts: sModeCounts,
+      /**
+       * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」:
+       *   **サイト別にも端末を渡す**（サイトごとに別のPCが使われている事がある）。
+       */
+      device_count: (() => {
+        const set = new Set<string>();
+        for (const r of sub) set.add(String((r as unknown as Record<string, unknown>).install_id ?? "").trim().slice(0, 8) || "(不明)");
+        return set.size;
+      })(),
+      devices: (() => {
+        const m = new Map<string, { n: number; withOps: number }>();
+        for (const r of sub) {
+          const x = r as unknown as Record<string, unknown>;
+          const id = String(x.install_id ?? "").trim().slice(0, 8) || "(不明)";
+          if (!m.has(id)) m.set(id, { n: 0, withOps: 0 });
+          const d = m.get(id)!;
+          d.n++;
+          if (Number(x.ops) > 0) d.withOps++;
+        }
+        return [...m.entries()].map(([device, v]) => ({ device, n: v.n, with_ops: v.withOps })).sort((a, b) => b.n - a.n).slice(0, 8);
+      })(),
+      single_device: (() => {
+        const set = new Set<string>();
+        for (const r of sub) set.add(String((r as unknown as Record<string, unknown>).install_id ?? "").trim().slice(0, 8) || "(不明)");
+        return set.size <= 1;
+      })(),
       site_counts: { [siteName]: sub.length },
       with_ops: sub.filter((r) => {
         const x = r as unknown as Record<string, unknown>;
@@ -1303,6 +1382,14 @@ export function buildHumanLearnBundle(
     opens: withGuessedOpens(opens, [...Object.keys(points), ...Object.keys(next)]),
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     supervisor,
+    /**
+     * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+     *   **端末ごとの記録**を束に出す（統括が「1台しか無い＝他のPCが参加していない」と言えるように）。
+     *   ⚠ 端末のIDは先頭8文字だけ（長いIDは読めない）。
+     */
+    device_count,
+    devices,
+    single_device,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
