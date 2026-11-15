@@ -207,6 +207,7 @@ export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: numb
   const byNew = opts.detailN ? [...deliveredProps].sort((a, b) => (Date.parse(b.sent_at) || 0) - (Date.parse(a.sent_at) || 0)) : deliveredProps;
   const detail = opts.detailN ? byNew.slice(0, opts.detailN) : byNew;
   const older = opts.detailN ? byNew.slice(opts.detailN) : [];
-  const olderLine = older.length ? `\n▼それより前に送った物件（${older.length}件・名前と号室と送った日だけ・再提案しない）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
+  // 2026-11-15 試験 q057（本質の道 3→1）の後: 前は「名前と号室と送った日だけ・再提案しない」を足していた。下の「※上記の物件は絶対に再提案しない」と重なるので名前だけの形に
+  const olderLine = older.length ? `\n▼それより前に送った物件（${older.length}件）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
   return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${detail.map(line).join("\n")}${olderLine}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
 }

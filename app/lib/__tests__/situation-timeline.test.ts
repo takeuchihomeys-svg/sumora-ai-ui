@@ -50,7 +50,7 @@ t("送った物件: SENT_PROPS_FULL の時は件数は全部・詳しい行は�
   assert.ok(!/それより前に送った物件/.test(off));
   const on = buildSentPropsText(ps, { detailN: 20 });
   assert.match(on, /【すでに送付済みの物件（25件）】/);
-  assert.match(on, /▼それより前に送った物件（5件・名前と号室と送った日だけ・再提案しない）: 物件4 104（11\/1）、物件3 103/);
+  assert.match(on, /▼それより前に送った物件（5件）: 物件4 104（11\/1）、物件3 103/);
   assert.match(on, /- 物件24 124/);
   assert.ok(!/- 物件4 104/.test(on));
 });
