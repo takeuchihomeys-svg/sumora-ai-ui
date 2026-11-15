@@ -30,7 +30,43 @@ export type ShotField = {
   y?: number | null;
   /** 押せそうか（グレーでない） */
   enabled?: boolean;
+  /**
+   * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
+   *   **画面のどの領域か**（左の条件／上の見出し／中央の一覧／下のページ送り／小窓）。
+   *   ⚠ 左34%だけを読んでいた時は、物件の一覧・ページ送り・小窓が**全部読めていなかった**。
+   *     全体を読むと「どの欄がどの領域にあるか」が要る（同じ「検索」でも左の条件と上の見出しで意味が違う）。
+   */
+  zone?: string | null;
 };
+
+/** 画面の領域（読み取る時に使う名前・増やす時は実画面で確かめてから） */
+export const SHOT_ZONES = {
+  left: "左（検索の条件）",
+  top: "上（見出し・絞り込み）",
+  center: "中央（物件の一覧）",
+  right: "右（補足・広告）",
+  bottom: "下（ページ送り・合計）",
+  modal: "小窓（重なった窓）",
+  other: "その他",
+} as const;
+
+export type ShotZone = keyof typeof SHOT_ZONES;
+
+/**
+ * 位置（0〜1）から領域を決める（純関数）。
+ *   ⚠ 見た目ではなく**位置だけ**で決める（写真が読めなくても使える・費用0）。
+ *   ⚠ 小窓は位置では決められない（中央に浮く）→ 読んだ側が `zone:"modal"` を付ける。
+ */
+export function zoneOf(x: number | null | undefined, y: number | null | undefined): ShotZone {
+  const px = typeof x === "number" && Number.isFinite(x) ? x : null;
+  const py = typeof y === "number" && Number.isFinite(y) ? y : null;
+  if (px == null || py == null) return "other";
+  if (py >= 0.93) return "bottom";     // 一番下の帯（ページ送り・合計）
+  if (px <= 0.30) return "left";       // 左の条件
+  if (py <= 0.12) return "top";        // 上の見出し
+  if (px >= 0.82) return "right";      // 右の補足
+  return "center";                     // 中央（一覧）
+}
 
 /** 写真1枚から学んだ事 */
 export type ShotLearn = {
@@ -44,6 +80,11 @@ export type ShotLearn = {
   confidence: number;
   /** 人が読む1行 */
   note?: string;
+  /**
+   * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
+   *   **画面のどこに何があるか**（領域ごとの欄の数と代表）。全体を読んだ時だけ入る。
+   */
+  zones?: Array<{ zone: string; n: number; names: string[] }>;
 };
 
 const KINDS = ["select", "text", "checkbox", "radio", "button", "link"];
@@ -194,9 +235,16 @@ export function cleanFields(raw: unknown): ShotField[] {
     seen.add(key);
     const fx = typeof o.x === "number" ? Math.max(0, Math.min(1, Math.round(o.x * 100) / 100)) : null;
     const fy = typeof o.y === "number" ? Math.max(0, Math.min(1, Math.round(o.y * 100) / 100)) : null;
+    /**
+     * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
+     *   `zone`（画面のどの領域か）も通す。位置から決まるので、AI が書かなくても埋まる。
+     */
+    const zRaw = typeof o.zone === "string" ? String(o.zone).trim().toLowerCase() : "";
+    const zone = zRaw in SHOT_ZONES ? zRaw : zoneOf(fx, fy);
     out.push({
       name, kind,
       x: fx, y: fy,
+      zone,
       ...(o.enabled === false ? { enabled: false } : {}),
     });
     if (out.length >= 60) break;
@@ -766,11 +814,19 @@ export function findWeakPoints(
 export const SHOT_LEARN_PROMPT = [
   "あなたはブラウザの画面写真を見て、フォームの作りだけを読み取る係です。",
   "次の JSON だけを返してください（説明文は書かない）。",
-  '{ "screen": "form" | "modal" | "result" | "other", "confidence": 0.0〜1.0, "fields": [ { "name": "...", "kind": "select|text|checkbox|radio|button|link", "x": 0.0〜1.0, "y": 0.0〜1.0, "enabled": true|false } ] }',
+  '{ "screen": "form" | "modal" | "result" | "other", "confidence": 0.0〜1.0, "fields": [ { "name": "...", "kind": "select|text|checkbox|radio|button|link", "x": 0.0〜1.0, "y": 0.0〜1.0, "enabled": true|false, "zone": "left|top|center|right|bottom|modal|other" } ] }',
   "",
+  /**
+   * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
+   *   ⚠ 旧は**左34%だけ**を切り出して読んでいたので、物件の一覧・ページ送り・小窓が
+   *     **1つも読めていなかった**（実測: 名前が読めたのは左の条件だけ）。
+   *   → **画面全体**を読ませ、**どの領域にあるか**を `zone` で返させる。
+   */
   "決まり:",
+  "・**画面全体を見る**。左の条件だけでなく、上の見出し・中央の一覧・下のページ送り・小窓も見る。",
+  "・zone は欄の場所: left=左の条件 / top=上の見出し・絞り込み / center=中央（物件の一覧）/ right=右の補足 / bottom=下（ページ送り・合計）/ modal=重なった小窓 / other=その他。",
   "・kind は「見た目」で決める。プルダウン（∨ が付いた選択欄）は select、文字を打つ欄は text、四角いチェックは checkbox、丸い選択は radio、押すボタンは button、リンクは link。",
-  "・name は欄の見出しの文字（例: 賃料・築年数・間取り・徒歩）。見出しが読めなければ近くの短い文字。**40字以内**。",
+  "・name は欄の見出しの文字（例: 賃料・築年数・間取り・徒歩・次のページ）。見出しが読めなければ近くの短い文字。**40字以内**。",
   "・x と y は画面全体を 0〜1 とした位置（左上が 0,0）。",
   "・グレーで押せないように見える欄は enabled: false。",
   "・**入力された中身（数字・文字・お客様の名前・住所）は絶対に書かない**。欄の名前だけ。",
@@ -801,6 +857,12 @@ export const SHOT_LEARN_PROMPT = [
    */
   "・**画面に重なっている拡張機能の小窓（『AIXLINX』『物件検索サポート』『案内』『学習中』の表示）は読まない**。それはサイトの欄ではない。",
   "・読むのは**その小窓の外側（後ろ）にあるサイトの画面**の欄だけ。小窓が画面を覆っていて見えない時は fields を空配列にする。",
+  /**
+   * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
+   *   一覧（物件）は「押す欄」ではないが、**どこに何件並んでいるか**は画面の把握に要る。
+   *   ⚠ 物件名・住所・賃料などの中身は書かせない（個人情報・物件情報を残さない）。
+   */
+  "・中央の一覧（物件が並んでいる所）は、**行がいくつ見えるか**だけを `{ \"name\": \"一覧の行\", \"kind\": \"other\", \"zone\": \"center\", \"rows\": 数字 }` の形で1件返す。物件名・住所・賃料は書かない。",
 ].join("\n");
 
 /** LLM の返事を読む（純関数・壊れた JSON でも落ちない） */
@@ -811,10 +873,39 @@ export function parseShotLearn(text: string): ShotLearn {
   try {
     const j = JSON.parse(m[0]) as Record<string, unknown>;
     const conf = typeof j.confidence === "number" ? Math.max(0, Math.min(1, Math.round(j.confidence * 100) / 100)) : 0.5;
-    return { screen: cleanScreen(j.screen), fields: cleanFields(j.fields), by: "llm", confidence: conf };
+    const fields = cleanFields(j.fields);
+    /**
+     * ★ 2026-11-15: 位置から領域を埋める（AI が zone を書いていればそちらを優先）。
+     *   ⚠ これで「左の条件」「中央の一覧」「下のページ送り」を分けて数えられる。
+     */
+    const withZone = fields.map((f) => ({ ...f, zone: (f.zone && String(f.zone)) || zoneOf(f.x, f.y) }));
+    return { screen: cleanScreen(j.screen), fields: withZone, by: "llm", confidence: conf, zones: summarizeZones(withZone) };
   } catch {
     return { screen: "other", fields: [], by: "llm", confidence: 0 };
   }
+}
+
+/**
+ * 領域ごとにまとめる（純関数）。「画面のどこに何があるか」を1行で言えるようにする。
+ *   ⚠ 名前は3つまで（多すぎると読めない）。数は全部。
+ */
+export function summarizeZones(fields: ReadonlyArray<ShotField>): Array<{ zone: string; n: number; names: string[] }> {
+  const acc = new Map<string, { n: number; names: string[] }>();
+  for (const f of Array.isArray(fields) ? fields : []) {
+    const z = String((f && f.zone) || "other");
+    const cur = acc.get(z) || { n: 0, names: [] };
+    cur.n++;
+    const nm = String(f?.name ?? "").trim();
+    if (nm && cur.names.length < 3 && cur.names.indexOf(nm) < 0) cur.names.push(nm);
+    acc.set(z, cur);
+  }
+  return [...acc.entries()].map(([zone, v]) => ({ zone, n: v.n, names: v.names })).sort((a, b) => b.n - a.n);
+}
+
+/** 領域の日本語（人が読む用） */
+export function zoneJa(z: unknown): string {
+  const k = String(z ?? "other") as ShotZone;
+  return SHOT_ZONES[k] ?? SHOT_ZONES.other;
 }
 
 /** 人が読む1行（点検・報告用） */

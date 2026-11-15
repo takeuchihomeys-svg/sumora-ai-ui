@@ -124,9 +124,9 @@ console.log("\n■ ④ 1枚の中で同じ名前を2回数えない");
 console.log("\n■ ⑤ 本体（shot-learn-server.ts）が同じ決まりを持っている");
 {
   ok("  ⚠ 左34%を切り出している", /LEFT_CROP_RATIO = 0\.34/.test(src));
-  ok("  ⚠ 1200px に拡大している", /resize\(\{ width: 1200/.test(src));
+  ok("  2026-11-15「画面全体を見る」: 全体を先に読み、左は保険（拡大しない＝等倍）", /loadImage\("whole"\)/.test(src) && !/resize\(\{ width: 1200/.test(src));
   ok("  ⚠ 切り出した座標を元に戻している（x × 0.34）", /\* LEFT_CROP_RATIO/.test(src));
-  ok("  ⚠ 左で読めない時だけ全体で読む（保険）", /左で読めなかった時だけ全体で読む/.test(src));
+  ok("  2026-11-15: 全体を先に読み、左は保険", /loadImage\("whole"\)/.test(src) && /loadImage\("left"\)/.test(src));
   ok("  voteFieldsFromRuns がある", /export function voteFieldsFromRuns/.test(src));
   ok("  ⚠ 名前で束ねている", /名前で束ねる/.test(src));
   ok("  ⚠ 位置のばらつきを実測した記録がある", /ばらつき 0\.50|y が 0\.47/.test(src));

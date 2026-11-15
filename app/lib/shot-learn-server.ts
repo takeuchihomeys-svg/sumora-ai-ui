@@ -96,27 +96,27 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
     const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
     if (!apiKey) return null;
     /**
-     * ★ 2026-11-14 竹内さん「これで画像の部分から学習できるようにする」→ **実測で確立した方法**:
+     * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
      *
-     *   ⚠ 全体写真をそのまま読ませると、AI は**中央に重なった拡張の小窓**を読む（実測）:
-     *     ビジポイント / 近い順で検索 / リアプロで看護師募集 / Bandit利用で割合 / 全自動キーコピー
-     *     ＝ サイトの欄ではなく**拡張のボタン**（同じ位置・同じ形の別物）。
-     *   ⚠ プロンプトに「小窓は読まない」と書いても直らない（小窓が後ろの欄を覆っていて見えない）。
+     *   ⚠ 旧は**左34%だけ**を切り出して読んでいた（中央の小窓を避けるため）。
+     *     そのため**物件の一覧・ページ送り・小窓・右上の絞り込み**が1つも読めていなかった。
+     *     実測: 写真から読めた名前は全部「左の条件」の物だけだった。
      *
-     *   → **左34%（検索条件のサイドバー）を切り出して 1200px に拡大**して読む（実測で確立）:
-     *     マップ検索 / 閲覧履歴 / 駅からの移動手段(select) / 駅歩 / 交通手段 /
-     *     賃料(select) / 上限なし / 下限なし / 共有部・共益費含む(checkbox) /
-     *     敷金・礼金なし / フリーワード / 所在地域つり込み / 沿線・駅名つり込み
+     *   → **画面全体を読む**。ただし次の2つで小窓の誤読を防ぐ:
+     *     ① 撮る時に**拡張の小窓を隠している**（v2.7.62〜 `_hideForShot`）
+     *     ② 隠せていない時のために、**左34%を切り出した物も一緒に渡す**（全体で読めない時の保険）
      *
-     *   ⚠ 切り出す位置は**写真の左端から**（拡張の小窓は中央に浮いているので左には来ない）。
-     *   ⚠ 座標は**切り出した画像の中の割合**になるので、元の写真の座標に戻す（`LEFT_CROP_RATIO` を掛ける）。
-     *   ⚠ 小窓を隠した写真（v2.7.62以降）は全体を読んでもよいが、
-     *     **左を切り出した方が確実**なので常に左を優先し、読めなかった時だけ全体で読む。
+     *   ⚠ 切り出しは**等倍のまま**（縮めない）。縮めてから切ると欄が潰れる（実測 163px）。
+     *   ⚠ 領域（left/top/center/bottom/modal）は `zone` として残す（どこに何があるか）。
      */
     const LEFT_CROP_RATIO = 0.34;
 
-    /** 写真を取って、左側を切り出して返す（sharp が無ければ null） */
-    const cropLeft = async (): Promise<Buffer | null> => {
+    /**
+     * 画像を**縮めずに**読み込む（必要なら左だけ切り出す）。
+     *   ⚠ 旧は 1200px に拡大していたが、元が小さいと**嘘の解像度**になるだけなので拡大しない。
+     *     大きすぎる時（2000px超）だけ縮める（費用と転送のため）。
+     */
+    const loadImage = async (mode: "whole" | "left"): Promise<Buffer | null> => {
       try {
         const sharpMod = (await import("sharp")).default;
         const r = await fetch(url);
@@ -126,13 +126,14 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
         const W = Number(meta.width) || 0;
         const H = Number(meta.height) || 0;
         if (!W || !H) return null;
-        const w = Math.max(80, Math.round(W * LEFT_CROP_RATIO));
-        return await sharpMod(buf)
-          .extract({ left: 0, top: 0, width: w, height: H })
-          .resize({ width: 1200, kernel: "lanczos3" })
-          .sharpen({ sigma: 0.8 })
-          .jpeg({ quality: 90 })
-          .toBuffer();
+        const MAX_SIDE = 2000;   // これを超える時だけ縮める（読める大きさは保つ）
+        if (mode === "left") {
+          const w = Math.max(80, Math.round(W * LEFT_CROP_RATIO));
+          return await sharpMod(buf).extract({ left: 0, top: 0, width: w, height: H }).jpeg({ quality: 90 }).toBuffer();
+        }
+        const long = Math.max(W, H);
+        if (long > MAX_SIDE) return await sharpMod(buf).resize({ width: MAX_SIDE, kernel: "lanczos3" }).jpeg({ quality: 90 }).toBuffer();
+        return await sharpMod(buf).jpeg({ quality: 90 }).toBuffer();
       } catch { return null; }
     };
 
@@ -166,44 +167,48 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
       return parseShotLearn(text);
     };
 
-    // ① 左側を切り出して読む（確実）
-    const left = await cropLeft();
-    if (left) {
+    /**
+     * ① **画面全体**を読む（本命）。左の条件・中央の一覧・下のページ送りまで見る。
+     *   ⚠ 撮る時に拡張の小窓は隠している（v2.7.62〜）ので、全体でも誤読しにくい。
+     */
+    const whole = await loadImage("whole");
+    if (whole) {
       const sl = await ask(
-        left.toString("base64"),
-        "この画像は**画面の左側（検索条件の欄）だけ**を切り出した物です。"
-        + "ここに見えているフォームの欄だけを JSON で返してください。"
+        whole.toString("base64"),
+        "この画面写真の**全体**から、フォームの作りを読み取って JSON で返してください。"
+        + "左の条件だけでなく、上の見出し・中央の一覧・下のページ送り・小窓も見てください。"
         + "欄の名前は画像の文字をそのまま書き、読めない時は name を null にしてください。"
-        + "x と y は**この画像の中**の割合（左端0・右端1）で返してください。",
+        + "x と y は**この画像全体**の中の割合（左上0・右下1）で返してください。"
+        + "それぞれの欄が画面のどの領域か（left/top/center/right/bottom/modal）も zone に入れてください。",
       );
-      if (sl && sl.fields.length) {
-        /**
-         * ⚠ 座標を**元の写真の割合**に戻す（切り出した幅の分だけ x を縮める）。
-         *   戻さないと「画面の左34%の中の0.5」＝元の 0.17 を 0.5 として学習してしまう。
-         */
-        return {
-          ...sl,
-          fields: sl.fields.map((f) => ({
-            ...f,
-            x: typeof f.x === "number" ? Math.round(f.x * LEFT_CROP_RATIO * 100) / 100 : null,
-          })),
-        };
+      if (sl && sl.fields.length) return sl;
+      /**
+       * ② 全体で読めなかった（小窓が覆っている等）時だけ、**左を切り出して**読む（保険）。
+       *   ⚠ この時は座標を元の写真の割合に戻す（切り出した幅の分だけ x を縮める）。
+       */
+      const left = await loadImage("left");
+      if (left) {
+        const sl2 = await ask(
+          left.toString("base64"),
+          "この画像は**画面の左側（検索条件の欄）だけ**を切り出した物です。"
+          + "ここに見えているフォームの欄だけを JSON で返してください。"
+          + "欄の名前は画像の文字をそのまま書き、読めない時は name を null にしてください。"
+          + "x と y は**この画像の中**の割合（左端0・右端1）で返してください。",
+        );
+        if (sl2 && sl2.fields.length) {
+          return {
+            ...sl2,
+            fields: sl2.fields.map((f) => ({
+              ...f,
+              x: typeof f.x === "number" ? Math.round(f.x * LEFT_CROP_RATIO * 100) / 100 : null,
+              zone: f.zone || "left",
+            })),
+          };
+        }
       }
+      return sl && sl.fields.length ? sl : null;
     }
-
-    // ② 左で読めなかった時だけ全体で読む（保険）
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const whole = Buffer.from(await res.arrayBuffer());
-    const sl2 = await ask(
-      whole.toString("base64"),
-      "この画面写真から、フォームの作りだけを読み取って JSON で返してください。"
-      + "画面に重なっている拡張機能の小窓（AIXLINX・案内・学習中）は読まないでください。",
-    );
-    if (!sl2) return null;
-    // 何も読めなかった時は保存しない（推測で埋めない）
-    if (!sl2.fields.length && sl2.screen === "other") return null;
-    return sl2;
+    return null;
   } catch {
     return null;
   }

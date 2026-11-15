@@ -65,7 +65,7 @@ console.log("\n■ ② キューをやめて「その場で送る」");
 
 console.log("\n■ ③ 容量を小さくする（長辺1000px・JPEG40%）");
 {
-  ok("縮小は小さい時 480px・20%（小窓の時だけ 1280px）", /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(src) && /SHOT_SEND_SIDE = 480/.test(src));
+  ok("2026-11-15: 等倍で送る（上限1920px）", /const cap = _big \? SHOT_BIG_SIDE : SHOT_MAX_SIDE/.test(src) && /SHOT_MAX_SIDE = 1920/.test(src));
   ok("縮めた物を送る（元の大きさではない）", /data_url: shotForUpload/.test(src));
   ok("元と送る物の大きさをログに出す", /撮りました: 元 /.test(src));
   ok("OffscreenCanvas を使う（service worker に DOM が無い）", /OffscreenCanvas/.test(src) && /createImageBitmap/.test(src));

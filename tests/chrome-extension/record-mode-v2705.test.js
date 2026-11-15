@@ -72,7 +72,7 @@ console.log("\n■ ⑤ 写真の仕組み自体は壊していない");
 {
   ok("1枚撮る関数が残っている（_takeShot）", /async function _takeShot\(msg, done\)/.test(bg));
   ok("メッセージの受け口は今まで通り", /if \(msg\.type === "axlx-human-shot"\) \{[\s\S]{0,120}_takeShot\(msg/.test(bg));
-  ok("縮小は大きさを切り替える（小窓の時だけ大きい）", /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(bg));
+  ok("2026-11-15: 等倍で送る（上限1920px・小窓はさらに高画質）", /const cap = _big \? SHOT_BIG_SIDE : SHOT_MAX_SIDE/.test(bg));
   ok("撮る前に窓を前に出す（v2.7.4）", /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/.test(bg));
 }
 
@@ -91,8 +91,8 @@ console.log("\n■ ⑥ 「撮れた枚数」は**本当に保存できた枚数*
 console.log("\n■ ⑦ 容量オーバー（ResourceExceeded）で保存0枚にならない（2026-11-12）");
 {
   ok("Chrome にフルサイズ画像を入れない（data: dataUrl を書かない）", !/\n\s*data: dataUrl,/.test(bg));
-  ok("送る画像は小窓の時だけ大きく、それ以外は 480px・20%", /SHOT_SEND_SIDE = 480/.test(bg) && /SHOT_SEND_Q = 0\.20/.test(bg) && /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(bg));
-  ok("  ⚠ 1枚あたりの目安を 10〜25KB と記録", /10〜25KB/.test(bg));
+ok("2026-11-15「読めるサイズ」: 等倍で送る（上限1920px・q70）", /SHOT_MAX_SIDE = 1920/.test(bg) && /SHOT_SEND_Q = 0\.70/.test(bg) && /const cap = _big \? SHOT_BIG_SIDE : SHOT_MAX_SIDE/.test(bg));
+ok("  ⚠ 1枚あたり 40KB 前後と記録（実測）", /40KB/.test(bg));
   ok("Chrome に残すのは 320px・15% の小さい物だけ", /SHOT_LOCAL_SIDE = 320/.test(bg) && /SHOT_LOCAL_Q = 0\.15/.test(bg));
   ok("上げられたら**目印だけ**残す（_keepShotMeta）", /async function _keepShotMeta/.test(bg) && /cloud: true/.test(bg));
   ok("上げられなかった時だけ小さい画像を残す（_keepShotLocal）", /async function _keepShotLocal/.test(bg));

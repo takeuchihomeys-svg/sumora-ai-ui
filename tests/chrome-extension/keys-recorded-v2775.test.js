@@ -56,7 +56,7 @@ t("開き方を見る noteOpened は残っている", /noteOpened\(_openedFor\)/
 t("拡張自身の小窓は記録しない判定は残っている", /#axlx-bar/.test(rec));
 
 // ── ④ 版 ────────────
-t("版が 2.7.75", manifest.version === "2.7.75");
+t("版が 2.7.76 以降（写真を読める大きさにした版）", manifest.version === "2.7.76");
 
 // ── ⑤ 構文が壊れていない（実際に読める）────────────
 let syntaxOk = true;

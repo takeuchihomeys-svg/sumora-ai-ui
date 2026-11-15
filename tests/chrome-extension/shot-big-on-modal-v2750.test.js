@@ -30,12 +30,12 @@ const rec = read("human-learn-record.js");
 const bgCode = bg.split("\n").filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join("\n");
 const recCode = rec.split("\n").filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join("\n");
 
-console.log("■ ① 大きい時の設定（1280px・JPEG45%）");
+console.log("■ ① 大きい時の設定（2026-11-15: 等倍・高画質）");
 {
-  ok("SHOT_BIG_SIDE = 1280", /var SHOT_BIG_SIDE = 1280;/.test(bgCode));
-  ok("SHOT_BIG_Q = 0.45", /var SHOT_BIG_Q = 0\.45;/.test(bgCode));
-  ok("  ⚠ 小さい時（480px）は変えていない", /var SHOT_SEND_SIDE = 480;/.test(bgCode));
-  ok("  ⚠ 小さい時（JPEG20%）も変えていない", /var SHOT_SEND_Q = 0\.20;/.test(bgCode));
+  ok("SHOT_BIG_SIDE = 1920（等倍）", /var SHOT_BIG_SIDE = 1920;/.test(bgCode));
+  ok("SHOT_BIG_Q = 0.82（文字が小さいので高画質）", /var SHOT_BIG_Q = 0\.82;/.test(bgCode));
+  ok("  ⚠ 480px 固定をやめた（欄が163pxになり読めない）", !/var SHOT_SEND_SIDE = 480;/.test(bgCode));
+  ok("  等倍の上限 1920px・品質 q70", /var SHOT_MAX_SIDE = 1920;/.test(bgCode) && /var SHOT_SEND_Q = 0\.70;/.test(bgCode));
 }
 
 console.log("\n■ ② 大きく撮る条件は1か所（_shouldShotBig）");
@@ -46,7 +46,7 @@ console.log("\n■ ② 大きく撮る条件は1か所（_shouldShotBig）");
   ok("  プルダウン系の欄名でも大きく", /rental_cost|transportation|room_layout/.test(bgCode));
   ok("  ⚠ 迷ったら小さい（return false）", /return false;\s*\} catch \(_\) \{ return false; \}/.test(bgCode) || /\/\/ ③ 拡張が「この写真は大きく」と言ってきた[\s\S]{0,200}?return false;/.test(bg));
   ok("  撮影で使う", /const _big = _shouldShotBig\(msg\)/.test(bgCode));
-  ok("  ⚠ 大きさを切り替えている", /_big \? SHOT_BIG_SIDE : SHOT_SEND_SIDE/.test(bgCode));
+  ok("  ⚠ 大きさを切り替えている", /const cap = _big \? SHOT_BIG_SIDE : SHOT_MAX_SIDE/.test(bgCode));
 }
 
 console.log("\n■ ③ ページ側が「何が開いているか」を調べて送る（背景はDOMを持てない）");
