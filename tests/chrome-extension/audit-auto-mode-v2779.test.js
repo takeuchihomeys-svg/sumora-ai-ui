@@ -35,7 +35,7 @@ t("分析スクリプトが在る", fs.existsSync(scrPath));
 // 畳む関数がそろっている
 for (const fn of ["runOfRow", "foldRuns", "foldTapClick", "fieldName", "countRetries",
   "countChangedWithoutClick", "countDirectTyping", "collectGaps", "judgeMechanical",
-  "isPerRowField", "countAdjacentRepresses", "countPerRowPresses"]) {
+  "isPerRowField", "countAdjacentRepresses", "countPerRowPresses", "kindsKeyVsOpsKey"]) {
   t(`純関数 ${fn} が書き出されている`, new RegExp(`export function ${fn}\\b`).test(lib));
 }
 
@@ -213,6 +213,9 @@ t("スクリプトが foldRuns を使う", /foldRuns\(/.test(scr));
 t("スクリプトが foldTapClick を使う", /foldTapClick\(/.test(scr));
 t("スクリプトが run を畳んだ数を出す", /同じ run を畳むと/.test(scr));
 t("スクリプトが直接入力を見る", /直接入力/.test(scr));
+t("スクリプトが記録の経路の欠けを見る", /kindsKeyVsOpsKey/.test(scr) && /記録の経路が欠けています/.test(scr));
+t("純関数が経路の欠けを判定する", /export function kindsKeyVsOpsKey/.test(lib));
+t("「見えていない」と「していない」を区別する", /見えていない/.test(scr));
 t("スクリプトが押さずに値が変わる欄を見る", /押さずに値だけ変わった欄/.test(scr));
 t("スクリプトが機械的な所を見る", /機械的な所/.test(scr));
 t("スクリプトが抜けを見る", /抜け（学べない理由）/.test(scr));

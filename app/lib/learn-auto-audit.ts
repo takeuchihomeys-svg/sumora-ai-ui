@@ -254,3 +254,33 @@ export function countPerRowPresses(ops: ReadonlyArray<AutoOp>): Record<string, n
   }
   return out;
 }
+
+/**
+ * ★ 2026-11-15 竹内さん「直接入力されてしまっている部分も見つけられるようにする」
+ *
+ *   **記録の経路そのものが壊れていないか**を、2つの数を見比べて確かめる。
+ *   `kinds`（その回に打った・押した・選んだ回数）と `shot_ops`（操作1件ずつの並び）は
+ *   **同じ操作を別の所で数えた物**なので、大きく食い違ったら**記録の経路が欠けている**。
+ *
+ *   実測（v2.7.75 より前）: `kinds.key` は 36回なのに `shot_ops` の `key` は **0件**。
+ *     ＝ 打ち込みが記録に載っていない（受け口が click/change だけだった）。
+ *     → 「直接入力が0件」を**『していない』と読み違える**所だった（実際は『見えていない』）。
+ *
+ *   @returns 打ち込み・選び直しの**欠け**（0 なら経路は健全）
+ */
+export function kindsKeyVsOpsKey(
+  rows: ReadonlyArray<AutoRow>,
+  opsOf: (r: AutoRow) => ReadonlyArray<AutoOp>,
+): { kindsKey: number; opsKey: number; gap: number; broken: boolean } {
+  let kindsKey = 0;
+  let opsKey = 0;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const k = r?.kinds as Record<string, unknown> | null | undefined;
+    if (k && typeof k === "object") kindsKey += Math.max(0, Number(k.key) || 0);
+    for (const o of opsOf(r)) if (String(o?.k) === "key") opsKey++;
+  }
+  // ⚠ 間引き（1.2秒に1回）があるので数は完全には一致しない。
+  //    「打ったのに1件も載っていない」時だけ壊れていると見る（誤報を出さない）。
+  const broken = kindsKey >= 3 && opsKey === 0;
+  return { kindsKey, opsKey, gap: kindsKey - opsKey, broken };
+}

@@ -29,6 +29,7 @@ import {
   countDirectTyping, collectGaps, judgeMechanical, countAdjacentRepresses,
   countPerRowPresses, isPerRowField, type AutoRow, type AutoOp,
 } from "../app/lib/learn-auto-audit";
+import { kindsKeyVsOpsKey } from "../app/lib/learn-auto-audit";
 
 const args = process.argv.slice(2);
 const argOf = (k: string, d: string) => (args.find((a) => a.startsWith(`--${k}=`)) || "").replace(`--${k}=`, "") || d;
@@ -44,7 +45,7 @@ void (async () => {
   let rows: AutoRow[] = [];
   for (let from = 0; from < 5000; from += 1000) {
     const { data } = await supabase.from("human_motion_learn")
-      .select("created_at,mode,shot_ops,point_fields,shot_taken,shot_key,shot_w,shot_learn,moves_n,gap_ms,ops,opens,ext_version")
+      .select("created_at,mode,shot_ops,point_fields,shot_taken,shot_key,shot_w,shot_learn,moves_n,gap_ms,ops,opens,kinds,ext_version")
       .eq("mode", "aix").gte("created_at", since)
       .order("created_at", { ascending: false }).range(from, from + 999);
     rows = rows.concat((data ?? []) as AutoRow[]);
@@ -136,6 +137,17 @@ void (async () => {
 
   // ── ④ 直接入力 ────────────
   console.log("\n④ 直接入力（選ぶ所に文字を打ち込んでいる疑い）");
+  /**
+   * ⚠ まず**記録の経路**を確かめる（「0件」が『していない』なのか『見えていない』なのか）。
+   *   実測（v2.7.75 より前）: `kinds.key` 36回に対し `shot_ops` の `key` 0件だった。
+   */
+  const kk = kindsKeyVsOpsKey(rows, (r) => foldTapClick(r.shot_ops ?? []) as AutoOp[]);
+  if (kk.broken) {
+    console.log(`   ⚠ 記録の経路が欠けています: 打った ${kk.kindsKey}回 なのに 記録に ${kk.opsKey}件（見えていない）`);
+    console.log(`     → 拡張の版が 2.7.75 より前だと打ち込みが記録に載りません（受け口が click/change だけだった）`);
+  } else if (kk.kindsKey > 0) {
+    console.log(`   打った ${kk.kindsKey}回 → 記録 ${kk.opsKey}件（間引きあり・経路は健全）`);
+  }
   const keyOps: Record<string, number> = {};
   for (const r of folded) for (const [f, c] of Object.entries(countDirectTyping(r.ops))) keyOps[f] = (keyOps[f] || 0) + c;
   const keyTotal = Object.values(keyOps).reduce((a, b) => a + b, 0);
@@ -176,6 +188,7 @@ void (async () => {
   console.log("\n⑥ ブラッシュアップの候補（この順）");
   const todo: string[] = [];
   const oldVer = Object.keys(ver).filter((v) => v !== "?" && v < "2.7.70");
+  if (kk.broken) todo.push(`記録の経路が欠けている（打った${kk.kindsKey}回が記録0件）→ 2.7.75 以降で撮り直す`);
   if (oldVer.length) todo.push(`古い版の録画: ${oldVer.join("・")} → 今の版で自動モードを1回回して撮り直す`);
   if (keyTotal > 0) todo.push(`直接入力が ${keyTotal}回 → 選ぶ所は**選ぶ**（打ち込まない）`);
   if (cnc.length) todo.push(`押さずに値が変わる欄: ${cnc.slice(0, 3).map(([f]) => f).join("・")} → 選択の操作を通す`);
