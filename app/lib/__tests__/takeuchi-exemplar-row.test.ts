@@ -81,9 +81,9 @@ const e2: BankEntry = { ...e1, id: "m-2", hand: false };
   await t("off なら表を読まず、注記も出ない", async () => {
     resetExemplarTableCache();
     const s = sbOf(async () => ({ data: [], error: null }));
-    assert.equal(await warmExemplarTable(s.sb, {}), 0);
+    assert.equal(await warmExemplarTable(s.sb, { TAKEUCHI_EXEMPLAR: "off" }), 0);
     assert.equal(s.calls(), 0);
-    assert.equal(exemplarNoteFor({ scene: "conditions", customerText: "広い所", meta }, {}), null);
+    assert.equal(exemplarNoteFor({ scene: "conditions", customerText: "広い所", meta }, { TAKEUCHI_EXEMPLAR: "off" }), null);
   });
   await t("表が空・無い・投げる・時間切れでも落ちず注記なし", async () => {
     const on = { TAKEUCHI_EXEMPLAR: "on" };
@@ -112,7 +112,7 @@ const e2: BankEntry = { ...e1, id: "m-2", hand: false };
     const note = exemplarNoteFor({ scene: "conditions", customerText: "広い所がいいです", meta }, on);
     assert.ok(note && note.note.includes("文は写さない") && !note.note.includes(STAFF1));
     assert.ok(!/潜在: で、/.test(note.note), "きっかけが空でも「で、」を付けない");
-    assert.equal(exemplarNoteFor({ scene: "conditions", customerText: "広い所がいいです", meta }, {}), null, "off なら取り置きがあっても出ない");
+    assert.equal(exemplarNoteFor({ scene: "conditions", customerText: "広い所がいいです", meta }, { TAKEUCHI_EXEMPLAR: "off" }), null, "off なら取り置きがあっても出ない");
     resetExemplarTableCache();
   });
   await t("夜だけ動く", () => {

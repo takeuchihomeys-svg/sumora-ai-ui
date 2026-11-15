@@ -9,7 +9,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 const src = readFileSync(join(__dirname, "../../api/generate-reply/route.ts"), "utf8");
 
-t("既定 off（空・off・ON 以外）", !composeConductorOn({}) && !composeConductorOn({ COMPOSE_CONDUCTOR: "off" }) && !composeConductorOn({ COMPOSE_CONDUCTOR: "1" }));
+t("既定 on（2026-11-15）・off で戻す", composeConductorOn({}) && !composeConductorOn({ COMPOSE_CONDUCTOR: "off" }));
 const decl = src.match(/const composeConductor = composeConductorOn\(\) && [^?]+\?/);
 t("変数は composeConductorOn() の下でだけ作る（off なら null）", !!decl && /:\s*null;/.test(src.slice(src.indexOf("const composeConductor ="), src.indexOf("const composeConductor =") + 1400)));
 const uses = [...src.matchAll(/composeConductor\b(?!On)/g)].map((m) => src.slice(Math.max(0, m.index! - 40), m.index! + 40));

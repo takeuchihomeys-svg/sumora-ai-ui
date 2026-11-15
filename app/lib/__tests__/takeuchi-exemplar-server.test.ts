@@ -13,7 +13,7 @@ writeFileSync(p, JSON.stringify([
 ]));
 const meta = { reply_direction: "2階は虫が入りやすいと正直に答える" };
 // off なら null
-assert.equal(exemplarNoteFor({ scene: "question", customerText: "駐車場は？", meta }, { TAKEUCHI_EXEMPLAR_BANK: p }), null);
+assert.equal(exemplarNoteFor({ scene: "question", customerText: "駐車場は？", meta }, { TAKEUCHI_EXEMPLAR: "off", TAKEUCHI_EXEMPLAR_BANK: p }), null);
 // on・束あり
 const r = exemplarNoteFor({ scene: "question", customerText: "駐車場は？", meta }, { TAKEUCHI_EXEMPLAR: "on", TAKEUCHI_EXEMPLAR_BANK: p });
 assert.ok(r && r.note.includes("文は写さない"));
