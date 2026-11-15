@@ -27,6 +27,7 @@ import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge
 import { classifyByKeywords } from "@/app/lib/condition-intent";
 import { FREE_TEXT_CONDITION_FIELDS, mergeFreeTextClauses } from "@/app/lib/condition-merge";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
+import { applyConditionWriteArbiter } from "@/app/lib/condition-write-arbiter-server";
 import { resolveScopeForBundle } from "@/app/lib/condition-change-scope";
 import { detectConditionRevert } from "@/app/lib/condition-restore";
 import { secondaryNeedOf } from "@/app/lib/condition-reading";
@@ -246,6 +247,15 @@ async function applyBrainConditionChange(
   if (Object.keys(updates).length === 0) return;
   // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（rent-raise.withRentOrder）
   { const ro = withRentOrder(pc as { rent_max?: number | null; rent_min?: number | null } | null, updates); if (ro.note) { Object.assign(updates, ro.updates); console.log(JSON.stringify({ tag: "bg-async:rent-order", convId, note: ro.note })); } }
+  // 2026-11-15 作業員K: 自動の書き手どうしの取り合い（別の書き手が直前に書いた欄を、同じ発言から前の値に戻す）を止める
+  //   （condition-write-arbiter.ts・CONDITION_WRITE_ARBITER 既定 off／shadow はログだけ）。根拠の発言はこの番のお客様の最後の発言
+  const { data: lastCust } = await db.from("messages").select("id").eq("conversation_id", convId).eq("sender", "customer")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  {
+    const kept = await applyConditionWriteArbiter(db, { customerId: pcId, writer: "brain_bridge", messageId: (lastCust?.id as string | undefined) ?? null, current: pc as Record<string, unknown> | null, updates, convId });
+    for (const f of Object.keys(updates)) if (!(f in kept)) { delete updates[f]; delete changedFields[f]; }
+    if (Object.keys(updates).length === 0) return;
+  }
 
   const conditionActuallyChanged = Object.keys(changedFields).length > 0;
   await db.from("property_customers")
@@ -253,8 +263,6 @@ async function applyBrainConditionChange(
     .eq("id", pcId);
   // 2026-09-30: ブレインの橋も条件の履歴に残す（旧は残していなかった）。根拠の発言は今回のお客様の最後の発言
   {
-    const { data: lastCust } = await db.from("messages").select("id").eq("conversation_id", convId).eq("sender", "customer")
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
     void recordConditionHistory(db, pcId, pc as Record<string, unknown> | null, updates, conditionSourceTag("brain_bridge", (lastCust?.id as string | undefined) ?? null))
       .catch((e) => console.warn("[condition-history] brain-bridge:", e));
   }
