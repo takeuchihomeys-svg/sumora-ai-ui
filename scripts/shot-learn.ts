@@ -27,13 +27,20 @@ const argOf = (k: string, d: string) => (args.find((a) => a.startsWith(`--${k}=`
 const dryRun = args.includes("--dry-run");
 const noRefresh = args.includes("--no-refresh");
 const site = argOf("site", "all");
+/**
+ * ★ 2026-11-15 竹内さん「通常モードの写真から学習する」:
+ *   **モードで絞れる**ようにする（`--mode=normal` / `--mode=aix`）。
+ *   ⚠ 通常モードは**人の手本**（自動モードの手本にしない）。
+ *     分けて学ぶ事で「人の動きだけ」を手本にできる。
+ */
+const mode = argOf("mode", "all");
 const days = Number(argOf("days", "7"));
 const limit = Number(argOf("limit", String(shotLearnMax())));
 const conc = Math.max(1, Math.min(6, Number(argOf("conc", "4")) || 4));
 
 void (async () => {
-  console.log(`写真から学ぶ: site=${site} days=${days} limit=${limit} 並列${conc}${dryRun ? "（dry-run＝書かない）" : ""}`);
-  const targets = await findShotsToLearn({ site, days, limit });
+  console.log(`写真から学ぶ: site=${site} mode=${mode} days=${days} limit=${limit} 並列${conc}${dryRun ? "（dry-run＝書かない）" : ""}`);
+  const targets = await findShotsToLearn({ site, mode, days, limit });
   console.log(`まだ読んでいない写真: ${targets.length}件（読むのは ${Math.min(limit, targets.length)}件まで）`);
   if (!targets.length) { console.log("読む物がありません（全部読み済み／写真なし）"); return; }
   // 読む写真の大きさの内訳（⚠ 480px ばかりなら意味が無いので先に見せる）

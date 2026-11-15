@@ -33,7 +33,7 @@ export function shotLearnMax(env: Record<string, string | undefined> = process.e
 }
 
 /** `shot_learn` がまだ無い記録から、写真の置き場所（shot_key）を集める */
-export async function findShotsToLearn(opt: { site?: string | null; days?: number; limit?: number } = {}): Promise<
+export async function findShotsToLearn(opt: { site?: string | null; mode?: string | null; days?: number; limit?: number } = {}): Promise<
   Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number }>
 > {
   const days = Math.max(1, Math.min(30, opt.days ?? 7));
@@ -70,6 +70,12 @@ export async function findShotsToLearn(opt: { site?: string | null; days?: numbe
      */
     .limit(Math.max(200, Math.min(2000, (opt.limit ?? 200) * 4)));
   if (opt.site && opt.site !== "all") q = q.eq("site", opt.site);
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの写真から学習する」:
+   *   **モードで絞る**（`normal` = 人の手本 / `aix` = 自動モード）。
+   *   ⚠ 通常モードは人の手本として一番大事。分けて学ぶ。
+   */
+  if (opt.mode && opt.mode !== "all") q = q.eq("mode", opt.mode);
   const { data, error } = await q;
   if (error) return [];
   /**
@@ -344,11 +350,11 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
  *   ⚠ `dry_run` の時は**読むだけで書かない**（費用を確かめる時）。
  */
 export async function learnFromWeakShots(
-  opt: { site?: string | null; days?: number; limit?: number; dryRun?: boolean; noRefresh?: boolean; concurrency?: number; onProgress?: (done: number, total: number, last: string) => void } = {},
+  opt: { site?: string | null; mode?: string | null; days?: number; limit?: number; dryRun?: boolean; noRefresh?: boolean; concurrency?: number; onProgress?: (done: number, total: number, last: string) => void } = {},
 ): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean }> {
   const max = Math.max(1, Math.min(shotLearnMax(), opt.limit ?? shotLearnMax()));
   const out: { tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean } = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] };
-  const targets = (await findShotsToLearn({ site: opt.site, days: opt.days, limit: max })).slice(0, max);
+  const targets = (await findShotsToLearn({ site: opt.site, mode: opt.mode, days: opt.days, limit: max })).slice(0, max);
   /**
    * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:
    *   **どの読み方で何枚読めたか**を残す（成功も失敗も）。

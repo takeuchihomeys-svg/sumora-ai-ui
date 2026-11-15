@@ -75,5 +75,16 @@ console.log("\n■ ⑥ 3つの罠をコメントで残している");
   ok("学習済みが枠を埋めると書いてある", /学習済み.*枠を埋め/.test(src));
 }
 
+console.log("\n■ ⑦ モードで絞れる（通常モード = 人の手本）");
+{
+  ok("findShotsToLearn が mode を受ける", /mode\?: string \| null/.test(src));
+  ok("DBで mode を絞る", /\.eq\("mode", opt\.mode\)/.test(src));
+  ok("learnFromWeakShots が mode を渡す", /mode: opt\.mode/.test(src));
+  const scr = readFileSync(join(__dirname, "../../../scripts/shot-learn.ts"), "utf8");
+  ok("スクリプトが --mode を受ける", /argOf\("mode"/.test(scr));
+  ok("スクリプトが findShotsToLearn に mode を渡す", /findShotsToLearn\(\{ site, mode,/.test(scr));
+  ok("画面に mode を出す", /mode=\$\{mode\}/.test(scr));
+}
+
 console.log(`\n結果: 合格 ${pass} / 不合格 ${fail}`);
 if (fail) process.exit(1);
