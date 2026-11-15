@@ -403,6 +403,10 @@
     {
       "path": "/api/cron/compose-prod-daily",
       "schedule": "20 20 * * *"
+    },
+    {
+      "path": "/api/cron/linkage-watch",
+      "schedule": "40 20 * * *"
     }
   ]
 }
