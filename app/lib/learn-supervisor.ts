@@ -628,6 +628,17 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const r = { ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged), changedWithoutClick: num(o.changedWithoutClick), withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows) };
     return r.ops > 0 ? r : null;
   })(),
+  /**
+   * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
+   *   **学習の抜け**を統括に届ける。
+   */
+  shotGaps: (() => {
+    const g = (input as unknown as Record<string, unknown>).shot_gaps;
+    if (!g || typeof g !== "object") return null;
+    const o = g as Record<string, unknown>;
+    const r = { total: num(o.total), unlearnedBig: num(o.unlearnedBig), unlearnedSmall: num(o.unlearnedSmall), learnedButEmpty: num(o.learnedButEmpty), learnedOk: num(o.learnedOk), todo: num(o.todo) };
+    return r.total > 0 ? r : null;
+  })(),
       /**
        * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
        *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
@@ -750,6 +761,8 @@ function buildMeeting(m: {
   photoKinds?: Record<string, number> | null;
   /** 2026-11-15: 自動モードが人間のように動けているかの点検結果 */
   humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
+  /** 2026-11-15: 学習の抜け（未学習・欄0・小さすぎる） */
+  shotGaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
   /**
    * ★ 2026-11-15 竹内さん「自動で直接入力されている部分ないかちゃんと人間のように
    *   入力やクリックカーソルの移動おこなっているか その部分も強化するようにする
@@ -768,6 +781,13 @@ function buildMeeting(m: {
     withPoint: number;
     rows: number;
   } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
+   *   **学習の抜け**（未学習の大きい写真・欄0だった写真・小さすぎる写真）。
+   *   ⚠ 実測: 102枚読んだが**まだ374枚**未学習だった。統括は「何枚読んだか」しか
+   *     知らされていなかったので「374枚残っている」と言えなかった。
+   */
+  shot_gaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
   /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
   sameRuns?: { n: number; max_same: number } | null;
   shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
@@ -941,6 +961,20 @@ function buildMeeting(m: {
     else parts.push(`押してから変えた ${h.clickedThenChanged}件`);
     parts.push(`カーソル ${p(h.withCursor)}%・押した位置 ${p(h.withPoint)}%`);
     evidence.push({ label: "自動モードの人間らしさ", value: parts.join("／"), guessed: h.typedOnChoose > 0 || h.changedWithoutClick > 0 });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
+   *   **学習の抜け**（未学習の大きい写真・欄0・小さすぎる）を根拠に出す。
+   *   ⚠ 実測: 102枚読んだが**まだ374枚**未学習。統括が「次はこれを読む」と決められる。
+   */
+  if (m.shotGaps && m.shotGaps.total > 0) {
+    const g = m.shotGaps;
+    const parts: string[] = [];
+    parts.push(`写真 ${g.total}枚（学べた ${g.learnedOk}枚）`);
+    if (g.todo > 0) parts.push(`⚠ まだ読める ${g.todo}枚（未学習${g.unlearnedBig}・欄0が${g.learnedButEmpty}）`);
+    if (g.unlearnedSmall > 0) parts.push(`小さいので読めない ${g.unlearnedSmall}枚`);
+    if (!g.todo && !g.unlearnedSmall) parts.push("抜けなし");
+    evidence.push({ label: "学習の抜け", value: parts.join("／"), guessed: g.todo > 0 });
   }
   const mc = Object.entries(m.modeCounts);
   if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });
@@ -1183,6 +1217,27 @@ function buildMeeting(m: {
         decide: "カーソルを動かしてから押す・値を入れる前に欄を開く（人がやる順番にする）",
       });
     }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
+   *   **まだ読める写真が残っている**時は議題にする（統括が「次はこれを読む」と決める）。
+   *   ⚠ 費用がかかるので**枚数と概算**を付ける（1枚 0.17円・実測）。
+   */
+  if (m.shotGaps && m.shotGaps.todo > 0) {
+    agenda.push({
+      priority: 1,
+      topic: "まだ学習していない写真が残っている",
+      why: `${m.shotGaps.todo}枚が読めるのに未学習（未学習${m.shotGaps.unlearnedBig}・欄0が${m.shotGaps.learnedButEmpty}）`,
+      decide: `読む（約${Math.max(1, Math.round(m.shotGaps.todo * 0.17))}円・1枚0.17円）／後でよいか`,
+    });
+  }
+  if (m.shotGaps && m.shotGaps.unlearnedSmall > 0 && m.shotGaps.unlearnedBig === 0) {
+    agenda.push({
+      priority: 2,
+      topic: "小さい写真しか残っていない",
+      why: `${m.shotGaps.unlearnedSmall}枚（480px では欄が読めない・実測）`,
+      decide: "今の版（2.7.78）で録画し直す（費用0）",
+    });
   }
   const siteKeys = Object.keys(m.siteCounts).filter((k) => k && k !== "(空)");
   if (siteKeys.length === 1 && m.site === "all") {

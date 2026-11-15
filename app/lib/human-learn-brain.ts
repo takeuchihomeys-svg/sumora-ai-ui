@@ -30,6 +30,7 @@ import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, pla
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 import { findWeakSteps } from "./learn-flow-steps";
 import { auditHumanLike } from "./human-like-audit";
+import { summarizeShotGaps } from "./shot-gaps";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -1162,6 +1163,26 @@ export function buildHumanLearnBundle(
           clickedThenChanged: r.clickedThenChanged.length, changedWithoutClick: r.changedWithoutClick.length,
           withCursor: r.withCursor, withPoint: r.withPoint, rows: r.rows,
         };
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
+     *   **学習の抜け**を数えて統括に渡す（未学習の大きい写真・欄0・小さすぎる）。
+     */
+    shot_gaps: (() => {
+      try {
+        const states = list.map((r) => {
+          const x = r as unknown as Record<string, unknown>;
+          const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+          return {
+            w: Number(x.shot_w) || 0,
+            hasKey: !!x.shot_key,
+            learned: !!(sl && typeof sl === "object"),
+            fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
+          };
+        });
+        const g = summarizeShotGaps(states);
+        return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
       } catch (_) { return null; }
     })(),
     /**
