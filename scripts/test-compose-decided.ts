@@ -15,7 +15,9 @@ const withEnv = (v: string | undefined, f: () => void) => { const p = process.en
 const emptyPlanMeta = { conductor_focus: { focus: "relation", why: "お礼だけ" }, customer_mindset: { state: "迷い", anxiety: { target: "費用", direction: "前向き" } }, near_opinion: "似た番で竹内さんは新着の約束を添えた" };
 const factMeta = { turn_contract: { asks: [{ quote: "初期費用はいくら", kind: "question", route: "reply", basis: "company_fact", answer: "仲介手数料0円です" }] } };
 
-t("既定 off: 書き手への注記は今と同じ（出所・下の種類・近い番の行は出ない・空の番は空のまま）", () => withEnv(undefined, () => {
+// 11/15 既定 on（=off で戻る）
+t("既定 on", () => withEnv(undefined, () => { assert.equal(composeDecidedOn(), true); }));
+t("=off: 書き手への注記は今と同じ（出所・下の種類・近い番の行は出ない・空の番は空のまま）", () => withEnv("off", () => {
   assert.equal(composeDecidedOn(), false);
   assert.equal(writerNoteOf(emptyPlanMeta).compose, "");
   const w = writerNoteOf(factMeta).writer;

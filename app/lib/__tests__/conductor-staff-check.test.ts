@@ -8,7 +8,7 @@ import { join } from "node:path";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(extra)); } };
 
-t("既定 off・shadow と on だけ", staffCheckMode({}) === "off" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: "shadow" }) === "shadow" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: " ON " }) === "on" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: "yes" }) === "off");
+t("既定 shadow（11/15）・=off で止まる・shadow と on だけ", staffCheckMode({}) === "shadow" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: "off" }) === "off" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: "shadow" }) === "shadow" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: " ON " }) === "on" && staffCheckMode({ CONDUCTOR_STAFF_CHECK: "yes" }) === "off");
 
 // 10911（点検役・名前は伏せた）: お客様が物件の画像を送った番で、画像の物件名が空・入口の統括の自信 low
 const r10911 = decideStaffCheck({ intakeConfidence: "low", turnHasImage: true, currentProperty: "", asks: [{ route: "reply", basis: "material" }], depthReason: "持ち込み" });

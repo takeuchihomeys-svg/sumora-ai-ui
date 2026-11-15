@@ -10,7 +10,8 @@ import { SUBSTATES, SUBSTATE_SKIP_MOVE_IN_RE, PLANT_JA, type Substate } from "./
 import { PLANT_NOT_PROMISE_RE, type TurnAims } from "./brain-turn-aims";
 
 type Env = Record<string, string | undefined>;
-export const turnAimsAfterOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.TURN_AIMS_AFTER ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-dec1〜3（TURN_AIMS_AFTER+COMPOSE_DECIDED・下書きまで・6問×2回）確かな悪化0
+export const turnAimsAfterOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.TURN_AIMS_AFTER ?? "on").trim().toLowerCase() !== "off";
 
 /** お客様の今の連投の言葉で状態を選ぶ網（上から順・最初に当たった1つ）。当たらなければ作らない（推測で埋めない） */
 const MATCH: Array<[Substate["id"], RegExp]> = [

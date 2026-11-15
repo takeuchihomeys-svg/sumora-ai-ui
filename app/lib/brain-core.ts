@@ -10,7 +10,7 @@ import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
 import { buildSentProps, buildSentPropsText, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
-import { refResolveOn, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
+import { refResolveOn, refResolveModeOf, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
@@ -2505,7 +2505,7 @@ async function analyzeConversationCore(
     const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
     return Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
   })());
-  const refMode = (process.env.REF_RESOLVE ?? "").trim().toLowerCase();
+  const refMode = refResolveModeOf(); // 2026-11-15 作業員J: 既定 on（ref-resolve.refResolveModeOf）
   if (refResolveOn()) {
     try {
       attachBundles(sentProps);

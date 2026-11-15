@@ -3,7 +3,7 @@
 import { factsThree, turnFactMarks, turnFactMarksLine, factLedgerThreeOn, memoItemsToThree } from "../customer-fact-ledger";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, d = "") => { if (ok) pass++; else { fail++; console.log(`NG ${n} ${d}`); } };
-t("既定 off", !factLedgerThreeOn({}) && factLedgerThreeOn({ FACT_LEDGER_THREE: "on" }));
+t("既定 on（11/15）・=off で止まる", factLedgerThreeOn({}) && !factLedgerThreeOn({ FACT_LEDGER_THREE: "off" }));
 // 12548
 const x1 = { circumstances: [{ text: "12月に異動・法人契約で会社の上限が8万円", at: "2026-11-05T01:00:00Z" }] };
 const m1 = turnFactMarks("会社の規定だと8万までなんですがありますか？", x1);

@@ -362,7 +362,8 @@ export function focusSubOfTakeuchiText(focus: Focus, text: string, o: { aix?: st
 
 // ── 連投の話題ごとの主と従（2026-11-13 作業員5・統括役・点検役「会話の流れの読み」・12083: 3件の調べ依頼が主・「送って頂いた物件も検討します」が従でこちらのピックアップへの反応）──
 //   CONDUCTOR_TOPIC_STATE=on の時だけ（既定 off・strategy-freshness.ts と同じスイッチ）。入口の統括が話題ごとに主か従かと、どのこちらの送信への答えかを書く
-export const turnTopicsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0（入口の統括 CONDUCTOR_INTAKE が off の間はここは読まれない）
+export const turnTopicsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "on").trim().toLowerCase() !== "off";
 export type TurnTopic = { what: string; role: "main" | "sub"; reply_to: string | null };
 export const TURN_TOPICS_RULES = `【今回の連投の話題（turn_topics）】お客様の今回の連投に話題が2つ以上ある時は、話題ごとに1行: what＝話題（20字以内）・role＝main（この番で一番応える話題）か sub（添える話題・こちらの前の送信への反応など）・reply_to＝こちらのどの送信への答えか（「物件ピックアップ」「見積書」「確認の結果」など20字以内・無ければ null）。話題が1つなら1行だけ。従の話題も落とさない`;
 export const TURN_TOPICS_FIELD = `"turn_topics": [{"what": "話題（20字以内）", "role": "main|sub", "reply_to": "こちらのどの送信への答えか または null"}]`;

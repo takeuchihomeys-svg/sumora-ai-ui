@@ -121,7 +121,8 @@ export function factLedgerBlock(facts: ReadonlyArray<Fact>, nowMs: number): stri
 // ── 2026-11-13 作業員1（点検役「会話の流れの読み」・12548・12370・12306）: 帳面に「事情」「外した物件」「言い直した条件（範囲付き）」「再来」を持たせ、
 //   今の一通と照らす印（前提にしている／言い直し／前の決定の取り消し／再来）を出す。決めるのはブレイン（印は材料だけ）。既定 off（FACT_LEDGER_THREE=on）
 export function factLedgerThreeOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FACT_LEDGER_THREE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0
+  return (env.FACT_LEDGER_THREE ?? "on").trim().toLowerCase() !== "off";
 }
 export type FactThreeInput = {
   /** お客様の事情（メモの事情・決める人・会社の上限 等） */

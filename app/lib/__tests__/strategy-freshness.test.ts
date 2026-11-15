@@ -3,7 +3,7 @@ import { topicStateOn, staleStrategyMarks, staleStrategyLine } from "../strategy
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
-it("既定 off", () => { ok(!topicStateOn({})); ok(topicStateOn({ CONDUCTOR_TOPIC_STATE: "on" })); });
+it("既定 on（11/15）・=off で止まる", () => { ok(topicStateOn({})); ok(!topicStateOn({ CONDUCTOR_TOPIC_STATE: "off" })); });
 it("12196: お客様が外した物件を cs が指したまま → excluded", () => {
   const m = staleStrategyMarks({
     cs: "お客様が送ってくださったプレサンス立売堀アーバンスタイルの募集状況と法人契約の可否を管理会社に確認し、分かり次第すぐご連絡",

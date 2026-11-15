@@ -26,12 +26,17 @@ const brief = (steps: unknown[]) => ({
 });
 const base = { turn_contract: { asks: [{ quote: "内覧できますか", kind: "question", route: "reply", answer: "現在空室で内覧可能", basis: "material" }], lead_with: 0 }, seven_read: { lead: "viewing" } };
 
-t("既定 off: 行も注記も変えない", () => {
-  assert.equal(composeBriefRolesOn({}), false);
+// 11/15 既定 on（=off で戻る）。off の時は行も注記も変えない
+t("=off: 行も注記も変えない", () => {
+  assert.equal(composeBriefRolesOn({}), true);
+  assert.equal(composeBriefRolesOn({ COMPOSE_BRIEF_ROLES: "off" }), false);
+  process.env.COMPOSE_BRIEF_ROLES = "off";
+  try {
   const meta = { ...base, conductor_brief: brief([{ route: "reply", aix: null, what: "none", item: "内覧の候補日", when: { at: "customer", word: "週末", from: "customer" } }]) };
   const r = rows(meta, "viewing", "内覧できますか？");
   assert.ok(!r.some((x) => x.stand.some((s) => s.startsWith("next_concrete"))));
-  assert.equal(briefRolesNote(r, meta, {}), "");
+  assert.equal(briefRolesNote(r, meta, { COMPOSE_BRIEF_ROLES: "off" }), "");
+  } finally { delete process.env.COMPOSE_BRIEF_ROLES; }
 });
 t("on: 次の一手の具体をつなぎ（何を）と締め（お客様の言った時期）の材料に", () => {
   process.env.COMPOSE_BRIEF_ROLES = "on";

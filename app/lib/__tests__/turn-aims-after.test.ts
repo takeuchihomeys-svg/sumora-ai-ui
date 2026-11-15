@@ -9,7 +9,8 @@ const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; consol
 const ON = { TURN_AIMS_AFTER: "on" };
 const d = (customerText: string, route: "reply" | "aix" = "reply") => deriveTurnAimsAfter({ customerText, route, env: ON });
 
-t("既定 off", !turnAimsAfterOn({}) && deriveTurnAimsAfter({ customerText: "一度検討致します。", route: "reply", env: {} }) === null);
+// 11/15 既定 on（=off で戻る）
+t("既定 on・=off で止まる", turnAimsAfterOn({}) && !turnAimsAfterOn({ TURN_AIMS_AFTER: "off" }) && deriveTurnAimsAfter({ customerText: "一度検討致します。", route: "reply", env: { TURN_AIMS_AFTER: "off" } }) === null);
 // 試験の実物の言葉
 t("q425 内覧なしで決める迷い", d("内覧なくても大丈夫かな思ってました")?.state === "内覧なしで決める迷い");
 t("q368 検討します", d("ありがとうございます。\n一度検討致します。")?.state === "検討します（保留）");

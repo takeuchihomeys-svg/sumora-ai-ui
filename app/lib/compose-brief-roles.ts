@@ -14,7 +14,9 @@ import type { ConcreteStep } from "./next-move-concrete";
 
 type Env = Record<string, string | undefined>;
 export function composeBriefRolesOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COMPOSE_BRIEF_ROLES ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-brief1〜2（CONDUCTOR_BRIEF=shadow と一緒・下書きまで・4問×2回）確かな悪化0。
+  //   ⚠ 指示書（meta.conductor_brief）は CONDUCTOR_BRIEF=shadow の時だけできる（既定 off）＝それまでは on でも何も足さない
+  return (env.COMPOSE_BRIEF_ROLES ?? "on").trim().toLowerCase() !== "off";
 }
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const briefOf = (meta: unknown): ConductorBrief | null => (obj(obj(meta)?.conductor_brief) as unknown as ConductorBrief | null) ?? null;

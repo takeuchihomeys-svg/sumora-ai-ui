@@ -11,8 +11,14 @@
 
 type Env = Record<string, string | undefined>;
 export function refResolveOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  const v = (env.REF_RESOLVE ?? "").trim().toLowerCase();
+  const v = refResolveModeOf(env);
   return v === "on" || v === "shadow";
+}
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-ref1〜3・jc-ref084・jd-q094-ref（狙い q161,q084,q086,q152,q438,q123・守り q094,q091,q103,q076）。
+//   1回だけの外れ（q084 1/2・q094 0/1）は回し直し（3〜4回）で合格＝確かな悪化0。brain-core もこの読みを使う（=shadow で記録だけ）
+export function refResolveModeOf(env: Env = typeof process !== "undefined" ? process.env : {}): "on" | "shadow" | "off" {
+  const v = (env.REF_RESOLVE ?? "on").trim().toLowerCase();
+  return v === "shadow" ? "shadow" : v === "off" ? "off" : v === "on" ? "on" : "off";
 }
 
 export type RefKind = "ours" | "brought" | "new_arrival" | "prev";

@@ -9,7 +9,8 @@
 // 切替: CONDUCTOR_TOPIC_STATE=on（既定 off）。決めるのはブレイン（印の付いた所を読みに使わない・材料の1行だけ）
 
 type Env = Record<string, string | undefined>;
-export const topicStateOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "").trim().toLowerCase() === "on";
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0
+export const topicStateOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "on").trim().toLowerCase() !== "off";
 
 export type FreshMsg = { sender: string; text: string | null | undefined; created_at: string };
 export type StaleMark = { kind: "excluded" | "answered" | "moved"; name: string | null; at: string };
