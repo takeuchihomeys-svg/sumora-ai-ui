@@ -467,6 +467,11 @@
    */
   var OPS_RING_MAX = 60;
   /**
+   * 2026-11-15: 打ち込み（`key`）の間引き用（同じ欄を1.2秒に1回だけ積む）。
+   *   ⚠ 使用する `_cap` より**前**に置く（後ろに置くと undefined で黙って動かない・過去に踏んだ）。
+   */
+  var _recKeyLast = { f: "", t: 0 };
+  /**
    * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `site=realpro` は入るが
    *   **`shot_ops` が 0件**だった。
    *   ⚠ 原因: この輪には**人が押した操作（isTrusted）だけ**を入れていた。
@@ -653,6 +658,27 @@
           }
         } catch (_) {}
         /**
+         * 2026-11-15 竹内さん「自動モードの録画で…直接入力されてしまっている部分も見つけられるようにする」:
+         *   ⚠ **打ち込んだ操作が記録に1件も載っていなかった**（実測: `kinds.key` は 36回なのに
+         *     `shot_ops` の `k:"key"` は **0件**）。
+         *   理由: ここ（記録の受け口）が `click` と `change` しか拾っておらず、
+         *     `keydown` は `human-learn.js` の**数える所**にしか行っていなかった。
+         *   → 打ち込みも積む（**欄の名前と時刻だけ・打った中身は入れない**）。
+         *     ⚠ 1文字ごとに積むと欄の名前が埋まるので、**同じ欄は1.2秒に1回**に間引く。
+         */
+        try {
+          if (e.type === "keydown" && e.target) {
+            var _kt = e.target;
+            var _kf = "";
+            try { _kf = String((L && L.fieldName ? L.fieldName(_kt) : (_kt.name || _kt.id || "")) || "").slice(0, 30); } catch (_) {}
+            var _nowK = Date.now();
+            if (_kf && !(_recKeyLast.f === _kf && _nowK - _recKeyLast.t < 1200)) {
+              _recKeyLast = { f: _kf, t: _nowK };
+              _pushOp("key", _kt, _by);
+            }
+          }
+        } catch (_) {}
+        /**
          * 2026-11-14 竹内さん「賃料の部分のプルダウンのしくみ…理解できるのかな」
          *   → 実測: 賃料の操作 401件すべて `w:"select"` なのに、**「何が開いたか」が 0件**だった。
          *     集計（`opens`）には入るが、**`shot_ops` には載せていなかった**。
@@ -683,6 +709,13 @@
     };
     document.addEventListener("click", _cap, true);
     document.addEventListener("change", _cap, true);
+    /**
+     * 2026-11-15 竹内さん「直接入力されてしまっている部分も見つけられるようにする」:
+     *   ⚠ 打ち込み（`keydown`）を拾っていなかったので、**打った操作が記録に1件も残らなかった**
+     *     （実測: `kinds.key` 36回に対し `shot_ops` の `key` 0件）。
+     *   → 記録の受け口にも付ける（中身は入れない・欄の名前と時刻だけ）。
+     */
+    document.addEventListener("keydown", _cap, true);
   } catch (_) {}
   }
   /**
@@ -1257,11 +1290,23 @@
       // 人が押した時・打った時・選んだ時＋**拡張が押した時**（自動モードの画面も残す）
       document.addEventListener("click", h, true);
       document.addEventListener("change", h, true);
+      /**
+       * 2026-11-15 竹内さん「直接入力されてしまっている部分も見つけられるようにする」:
+       *   ⚠ 写真も `click`/`change`/`wheel` しか撮っておらず、**打ち込んだ瞬間の画面が残らなかった**。
+       *     文字を打つ欄（賃料の下限・面積など）は「打って入れた」のか「選んで入れた」のかを
+       *     後から見分けられない。
+       *   → 打ち込みでも撮る（`shootAfter` の中で間引きがあるので連写にはならない）。
+       */
+      document.addEventListener("keydown", h, true);
       window.addEventListener("wheel", function (e) {
         if (e) { _noteShotDiag(e.isTrusted ? "trusted_wheel" : "auto_wheel"); shootAfter("wheel", null, null); }
       }, { passive: true, capture: true });
       _shootDetach = function () {
-        try { document.removeEventListener("click", h, true); document.removeEventListener("change", h, true); } catch (_) {}
+        try {
+          document.removeEventListener("click", h, true);
+          document.removeEventListener("change", h, true);
+          document.removeEventListener("keydown", h, true);
+        } catch (_) {}
       };
       console.log("[AX] 画面の写真: どのモードでも撮ります（" + site + "）");
       // 起動直後に1枚（「撮れるか」を確かめられるように）
