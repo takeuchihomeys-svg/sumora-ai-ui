@@ -6,7 +6,7 @@
 //     judge_basis が無い行（off で回した答案）でも、重点は brain.conductor_focus.focus（conductor-focus の shadow）があればそれで数える。
 //   出す物: 場面ごとの重点の当たり／深さ別の当たり／外れた段（読み・選び・深さ・優先・重点・順番・道）／選んだ順番が竹内さんと合ったか。
 import { focusOfAix, type Focus } from "../../app/lib/conductor-focus";
-import { normalizeJudgeBasis, BASIS_ROUTE_WORD_RE, type JudgeBasis } from "../../app/lib/brain-judge-basis";
+import { normalizeJudgeBasis, judgeBasisFromRecDigest, BASIS_ROUTE_WORD_RE, type JudgeBasis } from "../../app/lib/brain-judge-basis";
 import { checkOrderById, CHECK_DEPTH } from "../../app/lib/check-order";
 import { DEPTH_KINDS, FOCUS_KINDS, FOCUS_TOP_PRIORITY, MISS_STAGES, PURPOSE_KINDS, MISSING_KINDS, type Purpose, type MissingKind, type BasisGold, type BasisMissStage, type BasisDepth } from "../../app/lib/judge-basis-types";
 
@@ -73,7 +73,8 @@ const sameSet = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) => a.length
 export type BrainBasis = { log: JudgeBasis | null; focus: Focus | null; focusFrom: "judge_basis" | "conductor_focus" | null; hasLog: boolean };
 export function brainBasisOf(row: AnswerRow): BrainBasis {
   const b = (row.brain ?? {}) as Record<string, unknown>;
-  const log = normalizeJudgeBasis(b.judge_basis);
+  // 2026-11-15 作業員L: on の judge_basis → shadow の judge_basis_rec → 本番の記録の短い形 jbr（digest.jbr を brain に入れた行）の順
+  const log = normalizeJudgeBasis(b.judge_basis) ?? normalizeJudgeBasis(b.judge_basis_rec) ?? normalizeJudgeBasis(judgeBasisFromRecDigest(b.jbr));
   if (log?.focus) return { log, focus: log.focus, focusFrom: "judge_basis", hasLog: true };
   const cf = (b.conductor_focus as { focus?: string } | null | undefined)?.focus;
   const f = (FOCUS_KINDS as readonly string[]).includes(String(cf)) ? (cf as Focus) : null;
@@ -171,4 +172,21 @@ export function formatReport(r: Report): string {
   out.push("", "## ブレインが選んだ深さ別（none＝judge_basis が無い行）");
   for (const k of [...DEPTH_KINDS, "none"]) if (r.byDepth[k]) out.push(tallyLine(k, r.byDepth[k]));
   return out.join("\n");
+}
+
+/**
+ * 2026-11-15 作業員L（統括の土台①）: 本番の記録（brain_decision_logs.digest.jbr＋スタッフが押した AIX）→ 問題の spec と答案の行の形。
+ *   正解は「スタッフが窓の中で押した AIX」から重点だけ推定（inferFocusFromAccept・押さなかった番は重点の正解なし＝道だけ数える）。
+ *   道の当たりは brain-aix-feedback.pairBrainDecisions の matched（AIX を出した番は押した AIX と同じか／出さなかった番は押さなかったか）。判定保留の番は外す。
+ */
+export type ProdPair = { id: string; scene: string | null; jbr: unknown; pressAix: string | null; matched: boolean | null; pending: boolean };
+export function prodRowsOf(pairs: ReadonlyArray<ProdPair>): { specs: SpecLite[]; rows: AnswerRow[]; pending: number } {
+  const specs: SpecLite[] = [], rows: AnswerRow[] = [];
+  let pending = 0;
+  for (const p of pairs) {
+    if (p.pending) { pending++; continue; }
+    specs.push({ id: p.id, scene: p.scene ?? "(場面なし)", accept: p.pressAix ? [`AIX:${p.pressAix}`] : [] });
+    rows.push({ id: p.id, rep: 1, brain: { jbr: p.jbr }, path: { ok: p.matched } });
+  }
+  return { specs, rows, pending };
 }

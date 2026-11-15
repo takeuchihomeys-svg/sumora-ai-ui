@@ -25,7 +25,9 @@ export const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pat
   // 2026-11-12 作業員10: 潜在の外れの束で、答案に送ってきた動機・気持ち・今の番と後の番 等が無く、文の統括への受け渡しを測れなかった（brain-exam.ts から移した時に抜けていた分）
   "latent_intent", "customer_emotion", "now_vs_later", "info_kind", "our_send_uptake",
   // 2026-11-13 作業員22: 決めた事が書き手まで届いたか（DELIVERY_CHECK=shadow）。欄ごと・下の欄ごとの届きを答案に残す
-  "delivery_check", "material_on_hand", "material_missing"] as const;
+  "delivery_check", "material_on_hand", "material_missing",
+  // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）・材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）
+  "judge_basis_rec", "material_clash"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};

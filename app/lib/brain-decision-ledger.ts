@@ -8,6 +8,8 @@ import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
 import { materialMissingKey, MATERIAL_KEY_SIDE } from "./material-missing-key";
 import { turnReadDigestExtra } from "./turn-read";
+import { judgeBasisRecDigest, type JudgeBasis } from "./brain-judge-basis";
+import { materialClashDigest } from "./material-clash";
 
 /** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
 export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -81,6 +83,10 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   // 2026-11-11 作業員14（KB 5cb0dd4c）: 番ごとの「何の事か」の読み（turn_contract の about・property → ta／latent_intent → li／turn_read → tr）を残す。
   //   今は digest.tc が道の数だけ・cs が締めの方針で、竹内さんの番と対象・意図の当たりを測れなかった。記録だけ（判断は変えない）。TURN_READ=log|on（既定 off）
   Object.assign(out as Record<string, unknown>, turnReadDigestExtra(meta, env));
+  // 2026-11-15 作業員L（統括の土台①）: 判断の根拠のメモ（shadow の judge_basis_rec か on の judge_basis）の短い形 jbr。本番で外れの段（読み・選び・深さ・目的・優先・重点・順番）を数える元（scripts/judge-basis-score.ts --prod）
+  { const jb = (meta.judge_basis_rec ?? meta.judge_basis) as JudgeBasis | undefined; const d = jb && typeof jb === "object" ? judgeBasisRecDigest(jb) : null; if (d) (out as Record<string, unknown>).jbr = d; }
+  // 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow の番だけ meta.material_clash）の短い形 mcl
+  { const mc = materialClashDigest(meta.material_clash); if (mc) (out as Record<string, unknown>).mcl = mc; }
   return out;
 }
 
