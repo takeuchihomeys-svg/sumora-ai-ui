@@ -13,7 +13,8 @@ t("既定 on（2026-11-15）・off で戻す", composeConductorOn({}) && !compos
 const decl = src.match(/const composeConductor = composeConductorOn\(\) && [^?]+\?/);
 t("変数は composeConductorOn() の下でだけ作る（off なら null）", !!decl && /:\s*null;/.test(src.slice(src.indexOf("const composeConductor ="), src.indexOf("const composeConductor =") + 1400)));
 const uses = [...src.matchAll(/composeConductor\b(?!On)/g)].map((m) => src.slice(Math.max(0, m.index! - 40), m.index! + 40));
-t("使う所は宣言1・ログ5・注記2・digest 5 の13か所だけ（増えたら off の時の影響をここで見直す）", uses.length === 13, uses.length);
+// 2026-11-15 統括役: 14か所目＝言い回しの目録（patternCatalogNoteFor）が composeConductor?.mf.keep を読む所（?. で off の時は undefined＝目録は今まで通り）を見直して数を直した
+t("使う所は宣言1・ログ5・注記2・digest 5・目録1 の14か所だけ（増えたら off の時の影響をここで見直す）", uses.length === 14, uses.length);
 t("注記は composeConductor?.note がある時だけ", /if \(composeConductor\?\.note\) lines\.push\(composeConductor\.note\.trim\(\)\);/.test(src));
 t("digest は composeConductor がある時だけ（無ければ {}）", /\.\.\.\(composeConductor \? \(\(\) => \{[\s\S]{0,600}\}\)\(\) : \{\}\)/.test(src));
 t("ログは composeConductor がある時だけ", /if \(composeConductor\) console\.info\("\[compose-conductor\]"/.test(src));
