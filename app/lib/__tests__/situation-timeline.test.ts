@@ -59,7 +59,7 @@ console.log(`${n} tests ok`);
 // ── 約束と果たした通の結び付け（PROMISE_CLOSE_LINK）
 import { linkPromiseClosures, promiseClosedOf, promiseCloseLinkOn } from "../promise-close-link";
 t("約束の結び付け: 物件が合う約束を全部（重ねた約束も）・名前が合わない約束は閉じない・名前の無い約束は閉じる", () => {
-  assert.equal(promiseCloseLinkOn({}), false);
+  assert.equal(promiseCloseLinkOn({}), true); assert.equal(promiseCloseLinkOn({ PROMISE_CLOSE_LINK: "off" }), false);
   const rows = [
     { id: 1, kind: "confirmation_promised", status: "promised", sent_at: "2026-11-10T01:00:00Z", detail: { propertyNames: ["Aマンション 101号室"] } },
     { id: 2, kind: "confirmation_promised", status: "promised", sent_at: "2026-11-10T02:00:00Z", detail: { propertyNames: ["Aマンション"] } },

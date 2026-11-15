@@ -7,10 +7,10 @@
 // ここで決める: 済みの行1つ → 結ぶ約束の行1つ（同じ会話・前に出た・まだ結ばれていない・同じ種類）。
 //   物件・要件が両方に書いてあれば一致する物を全部（重ねた約束も同じ約束）、無ければ名前の無い約束を全部。結べない時は結ばない（開いたまま残す＝統括とスタッフへの指示で「果たしたか確かめる」）。
 // 書き方: 約束の行の status は変えない（読む側7つの動きを変えない）。detail.closed_by に {kind, sent_at, aix_type, line_message_id, how} を足すだけ。
-//   スイッチ PROMISE_CLOSE_LINK=on（既定 off）。書くのは sent-facts.upsertFacts の後。
+//   スイッチ PROMISE_CLOSE_LINK（11/15 統括役の決めで既定 on＝記録だけ・止める =off）。書くのは sent-facts.upsertFacts の後。1週間の見本（scripts/audit-promise-close-sample.ts）で確かめてから読む側を closed_by に揃える。
 export const PROMISE_OF_DONE: Readonly<Record<string, string>> = { confirmation_reported: "confirmation_promised", properties_sent: "pickup_declared", estimate_sent: "estimate_declared" };
 export const UNNAMED_CLOSE_MAX_MS = 7 * 86_400_000;
-export const promiseCloseLinkOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CLOSE_LINK ?? "").trim().toLowerCase() === "on";
+export const promiseCloseLinkOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CLOSE_LINK ?? "on").trim().toLowerCase() !== "off"; // 2026-11-15 統括役の決め: 記録だけ（detail.closed_by を足す・status は変えない）で既定 on。止める PROMISE_CLOSE_LINK=off
 
 export type FactForLink = { id?: string | number; kind: string; status: string; sent_at: string; aix_type?: string | null; line_message_id?: string | null; detail?: Record<string, unknown> | null };
 export type CloseLink = { promiseId: string | number; closedBy: { kind: string; sent_at: string; aix_type: string | null; line_message_id: string | null; how: "same_object" | "unnamed" } };
