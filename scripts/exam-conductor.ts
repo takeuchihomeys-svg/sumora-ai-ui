@@ -35,6 +35,9 @@ import { pathCheck, composePlanMarkers } from "./lib/exam-path-check";
 import { markersOf } from "./lib/exam-miss-stage";
 import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
 import { readObs } from "./lib/exam-flake";
+import { preflightAdd, preflightOn, unsolvableFromObs, stoppedForBaseIds } from "./lib/exam-preflight";
+import { materialGapsOf, type GapRow, type GapProblem } from "./lib/exam-material-gaps";
+import { readGateExcluded } from "./lib/exam-application-gate";
 import { problemHash } from "./lib/brain-exam-baseline";
 /** 2026-11-05 作業員1（作業員4の気付き・問題の id のぶつかり）: 依頼の作業ツリーの手元の problems.json の中身の hash の候補（揺れの記録を id だけで引かない） */
 const hashCache = new Map<string, Map<string, string[]>>();
@@ -98,7 +101,9 @@ const LOG = join(ROOT, "conductor.log");
 const ensureDirs = () => { for (const d of [ROOT, DONE, RES]) mkdirSync(d, { recursive: true }); };
 const log = (s: string) => { ensureDirs(); const line = `${new Date().toISOString()} ${s}`; console.log(line); appendFileSync(LOG, line + "\n"); };
 let _sb: ReturnType<typeof createClient> | null = null;
-const db = () => (_sb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""));
+// 2026-11-15 作業員I（統括役の穴5）: 流す役の .env.local にサービスの鍵が無いと公開キーに落ち、exam_runs の書き込みが RLS で拒まれていた（runner-main.log「new row violates row-level security policy」）。
+//   本番の調子を見る healthDb と同じ道（serviceKeyFrom: 環境のサービスの鍵 → .env.prod）で鍵を取る。どちらも無い時だけ公開キー（今まで通り）
+const db = () => (_sb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", serviceKeyFrom(process.env, () => { try { return readFileSync(".env.prod", "utf8"); } catch { return null; } }) || (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "")));
 const readJson = <T>(f: string, d: T): T => { try { return JSON.parse(readFileSync(f, "utf8")) as T; } catch { return d; } };
 
 export type ExamJob = {
@@ -394,6 +399,25 @@ async function addJob(): Promise<void> {
     const needsBase = predictNeedsBase(cwd, ids);
     const plan = planExam({ label, kind, switchName: base.switch, ids, group, needsBase, repsOverride: job.runner === "brain-exam" ? (() => { try { return jobRepsPlan(job, ids).reps; } catch { return undefined; } })() : undefined, diffStage: base.stage === "brain" || base.stage === "draft" ? base.stage : null, brainText: flag("brain-text"), defaultOn: flag("default-on"), capUsd: Number(arg("cap-usd", "2")) || 2 });
     log(`  ${plan.line}`);
+    // 2026-11-15 作業員I（統括役の穴 2・3）: 積む時点の点検。鍵が無い・前も今も解けない問題・比べる問題が少ない・上限を超える は積まずに理由と直し方の案を出す。
+    //   守りが無いのは積んで知らせる。止める EXAM_ADD_PREFLIGHT=off・1本だけ通す --force（scripts/lib/exam-preflight.ts）
+    if (job.runner === "brain-exam" && ids.length && preflightOn()) {
+      const rp = (() => { try { return jobRepsPlan(job, ids).reps; } catch { return {} as Record<string, number>; } })();
+      const unsolvable: Record<string, string> = {};
+      try { for (const [id, why] of readGateExcluded(cwd)) if (ids.includes(id)) unsolvable[id] = `申込の門で外れた${why ? `・${String(why).slice(0, 40)}` : ""}`; } catch { /* 一覧が無ければ見ない */ }
+      const neverPassed: Record<string, string> = {};
+      for (const id of ids) { if (unsolvable[id]) continue; try { const u = unsolvableFromObs(readObs(id)); if (u) neverPassed[id] = u; } catch { /* 記録が無ければ見ない */ } }
+      const examNight = join(cwd, "..", "exam-night");
+      const pf = preflightAdd({
+        runner: job.runner, cwd, hasEnvFile: existsSync(join(cwd, ".env.local")), fallbackCwd: existsSync(join(examNight, ".env.local")) && examNight !== cwd ? examNight : null,
+        ids, guards: job.guards ?? [], planUsd: plan.cost.usd, capUsd: job.capUsd ?? null, reps: rp, unitUsd: job.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP,
+        unsolvable, neverPassed, dig: !!job.dig,
+      });
+      for (const w of pf.warns) log(`  ⚠ ${w}`);
+      if (pf.go && pf.drop.length) { for (let k = ids.length - 1; k >= 0; k--) if (pf.drop.includes(ids[k])) ids.splice(k, 1); job.only = ids.join(","); if (job.guards) job.guards = job.guards.filter((g) => !pf.drop.includes(g)); log(`  外した: ${pf.drop.join(",")}（残り ${ids.length}問）`); }
+      if (!pf.go && !flag("force")) throw new Error(`積まない（点検）: ${pf.blocks.join("／")}${pf.hints.length ? `。案: ${pf.hints.join("／")}` : ""}（それでも積む時は --force・点検を止める EXAM_ADD_PREFLIGHT=off）`);
+      if (!pf.go) log(`  --force で点検を越えて積む: ${pf.blocks.join("／")}`);
+    }
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
     try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
     if (plan.route === "yardstick") {
@@ -597,7 +621,7 @@ export function remoteTypeErrors(out: string): string[] {
 }
 function finishStop(j: ExamJob & { file: string }, verdict: string): void {
   const at = new Date().toISOString();
-  finish(j, { label: j.label, owner: j.owner, runner: j.runner, cwd: j.cwd, verdict, at }, `| ${at.slice(0, 16)} | ${j.runner} | ${j.owner} | ${j.label} | ${verdict.slice(0, 80)} | - | - | $0 |`, verdict);
+  finish(j, { label: j.label, owner: j.owner, runner: j.runner, cwd: j.cwd, verdict, at, only: j.only }, `| ${at.slice(0, 16)} | ${j.runner} | ${j.owner} | ${j.label} | ${verdict.slice(0, 80)} | - | - | $0 |`, verdict);
 }
 async function runTscRemoteJob(j: ExamJob & { file: string }): Promise<void> {
   const outFile = join(RES, `${j.label}.out.log`);
@@ -981,7 +1005,14 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       try {
         // ブレインの段の key は「本質の道→正解の道」（正解は問題の accept の1つ目）
         const probAccept = (() => { try { return new Map(readJson<Array<{ id: string; accept?: string[] }>>(join(j.cwd, "scripts", "brain-exam", "problems.json"), []).map((p) => [p.id, p.accept?.[0] ?? null])); } catch { return new Map<string, string | null>(); } })();
-        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5, acceptOf: (id) => probAccept.get(id) ?? null });
+        // 2026-11-15 作業員I: 外れの番ごとに材料の欄の穴（台帳の写しの不足・答えの出所なし・最初に入力が違った呼び出し）を札で付ける（exam-material-gaps・止める EXAM_MISS_GAPS=off）
+        const gapsOf = (() => {
+          if ((process.env.EXAM_MISS_GAPS ?? "").trim().toLowerCase() === "off") return undefined;
+          const probs = new Map(readJson<Array<GapProblem>>(join(j.cwd, "scripts", "brain-exam", "problems.json"), []).map((p) => [p.id, p]));
+          const rowsAll = readRows(rowsFile) as unknown as GapRow[];
+          return (id: string) => materialGapsOf(rowsAll.filter((r) => r.id === id), probs.get(id));
+        })();
+        const hits = weaknessHitsFromMisses(j.label, missStages, { max: 5, acceptOf: (id) => probAccept.get(id) ?? null, gapsOf });
         if (hits.length) {
           appendFileSync(join(RES, "weakness-pending.jsonl"), JSON.stringify({ label: j.label, at: at(), hits }) + "\n");
           log(`  弱い所: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? await recordExamWeaknesses(db() as never, j.label, hits) : `台帳の鍵が無い＝${hits.length}行を weakness-pending.jsonl に残した（${hits.map((h) => h.key).join("・")}）`}`);
@@ -1057,7 +1088,9 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
             //   夜に依頼が積まれた時にその依頼の問題で積む（印は書かないので同じ夜のうちに積める）。止める: EXAM_NIGHT_BASE_QUEUED_ONLY=off
             const queuedOnly = (process.env.EXAM_NIGHT_BASE_QUEUED_ONLY ?? "").trim().toLowerCase() !== "off";
             for (const d of queuedOnly ? [ROOT] : [ROOT, DONE]) for (const f of readdirSync(d)) { if (!/\.json(\.claimed)?$/.test(f)) continue; const j = readJson<Record<string, unknown> | null>(join(d, f), null); if (j && isExamJobShape(j)) jobs.push(j as never); }
-            const ids = nightBaseIds(jobs, { nowMs: Date.now(), hasNightly });
+            // 2026-11-15 作業員I（統括役の穴1）: 前を作る分で流す前に止まった依頼（直近2日）の問題も夜の基準に入れる＝積み直した時に前の答えが夜の基準にある。止める EXAM_NIGHT_BASE_STOPPED=off
+            const stopped = (process.env.EXAM_NIGHT_BASE_STOPPED ?? "").trim().toLowerCase() === "off" ? [] : stoppedForBaseIds(readdirSync(RES).filter((f) => f.endsWith(".json")).map((f) => readJson<{ label?: string; verdict?: string; at?: string; only?: string } | null>(join(RES, f), null) ?? {}), { nowMs: Date.now() });
+            const ids = [...new Set([...nightBaseIds(jobs, { nowMs: Date.now(), hasNightly }), ...(hasNightly ? stopped : [])])].sort();
             if ((process.env.EXAM_NIGHT_BASE_SKIP ?? "").trim().toLowerCase() !== "off") {
               const rev = (r: string) => { try { return execFileSync("git", ["rev-parse", "--verify", `${r}^{commit}`], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return null; } };
               // brain-exam の resolveMainRef と同じ: origin/main が main に含まれれば main・でなければ origin/main

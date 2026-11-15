@@ -36,7 +36,7 @@ export function serviceKeyFrom(env: Record<string, string | undefined>, readProd
 //   前（main）で合格していた問題がそうなったら「悪化が確定」＝残りを回しても判断（悪化0か）は変わらない → 止める。
 //   どの問題も合否が決まった（残りの回で変わらない）時も止める（残りは答えを変えない回＝無駄）。
 //   ※ 行の score.pass は試験の中の採点。最後の集計（rescore）で変わる事がまれにある＝打ち切った後に --report で集計し直した数を正とする
-export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean }; foreignMsgs?: number; pcMismatch?: string[] };
+export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean }; foreignMsgs?: number; pcMismatch?: string[]; path?: { code?: string | null } | null };
 /** 2026-11-04 作業員2の頼み: 混ざりの印のある回（他の問題の発言が混ざった・条件の行が回す前に違った）は、悪化とも合格とも数えない（brain-exam の混ざりの印と同じ見方） */
 export function isMixedRow(r: RowLite): boolean { return (r.foreignMsgs ?? 0) > 0 || (r.pcMismatch ?? []).some((k) => k !== "他の問題の発言"); }
 export type EarlyVerdict = { stop: "worse" | "settled" | null; why: string; worse: string[] };
@@ -80,6 +80,12 @@ export function staleExamGuard(src: string, behind: number | null, maxMin: numbe
   const m = maxMin > 0 ? Math.max(maxMin, longMin) : maxMin;
   return { maxMin: m, oldStop, laneOld, note: [`古い brain-exam（止める印を見ない）・上限を延ばした ${maxMin}→${m}分`, laneNote, behindNote].filter(Boolean).join("・") };
 }
+export function pathSameOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean { return (env.EXAM_WORSE_PATH_SAME ?? "").trim().toLowerCase() !== "off"; }
+/** その問題の回が前も今も全部同じ道か（道の記録が無い回があれば false＝言い切らない） */
+export function samePathAll(id: string, cur: RowLite[], base: RowLite[]): boolean {
+  const codes = [...cur, ...base].filter((r) => r.id === id && !r.error && !isMixedRow(r)).map((r) => r.path?.code ?? null);
+  return codes.length > 0 && codes.every((c) => c != null && c === codes[0]);
+}
 export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<string>): { sure: Array<{ id: string; why: string }>; flake: Array<{ id: string; why: string }> } {
   const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error || isMixedRow(r)) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);
@@ -89,6 +95,9 @@ export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<s
     if (!y || !(y.p * 2 > y.n) || x.p * 2 > x.n) continue;
     const gap = (y.p / y.n) * x.n - x.p;
     const why = `合格 前 ${y.p}/${y.n} → 今 ${x.p}/${x.n}`;
+    // 2026-11-15 作業員I（統括役の穴4: q091・q179・q021 等が悪化と出て良い直しを止める）: 揺れる問題で、道が前も今も全部の回で同じ＝違うのは判定（要点・依頼）の合否だけ
+    //   → 揺れの範囲の差に入れる（道の確かな悪化は道の物差し pathRegressions で別に見る）。止める EXAM_WORSE_PATH_SAME=off
+    if (flaky.has(id) && gap >= 2 && pathSameOn() && samePathAll(id, cur, base)) { flake.push({ id, why: `${why}（道は前も今も同じ・判定の揺れ）` }); continue; }
     (flaky.has(id) && gap < 2 ? flake : sure).push({ id, why });
   }
   return { sure, flake };
