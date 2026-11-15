@@ -1,7 +1,7 @@
 // 要件の帳面（作業員M・2026-11-15・竹内さん「どの部分を返信で答え、どの部分を AIX で送るかを把握する」）
 // 実行: npx tsx app/lib/__tests__/ask-ledger.test.ts
 // 場面は本番の竹内さんの番の形（名前・物件名は伏せた）。asks は turn_contract.asks のまま
-import { askLedgerMode, askIdOf, askKeyOf, matchPrevId, buildAskLedger, checkAskLedger, askLedgerFromMeta, askLedgerOf, annotateAsks, progressAfterSends, openAsksFrom, askLedgerAlert, asksOf, type AskEntry } from "../ask-ledger";
+import { askLedgerMode, askIdOf, askKeyOf, matchPrevId, buildAskLedger, checkAskLedger, askLedgerFromMeta, askLedgerOf, annotateAsks, progressAfterSends, openAsksFrom, askLedgerAlert, asksOf, askProgressOn, nextAskProgress, askProgressOf, type AskEntry } from "../ask-ledger";
 import { planMessages, type TwoMessagePlan } from "../two-message-plan";
 
 let passed = 0, failed = 0;
@@ -66,8 +66,10 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
   t("③ AIX の後: 質問は残り・次の通はテンプレート", p.remaining.includes(L.items[1].id) && p.next?.slot === "aix_template", p);
   // テンプレートを飛ばして返信を送った（竹内さんの AR）
   const p2 = progressAfterSends(L, [{ kind: "aix", aix: "estimate_sheet" }, { kind: "reply" }]);
-  t("③ AR で送った: 返信はテンプレートの席に当たるので質問はまだ残り＝次は返信", p2.remaining.includes(L.items[1].id) && p2.next?.slot === "reply", p2);
-  const p3 = progressAfterSends(L, [{ kind: "aix", aix: "estimate_sheet" }, { kind: "reply" }, { kind: "reply" }]);
+  t("③ AR で送った: 手打ちの返信は返信の席（テンプレートは飛ばす）＝質問は答えた", p2.answered.includes(L.items[1].id) && p2.remaining.length === 0, p2);
+  const p2t = progressAfterSends(L, [{ kind: "aix", aix: "estimate_sheet" }, { kind: "reply", template: true }]);
+  t("③ テンプレートの印の送信はテンプレートの席＝質問は残り・次は返信", p2t.remaining.includes(L.items[1].id) && p2t.next?.slot === "reply", p2t);
+  const p3 = progressAfterSends(L, [{ kind: "aix", aix: "estimate_sheet" }, { kind: "reply", template: true }, { kind: "reply" }]);
   t("③ 3通送った: 全部答えた", p3.remaining.length === 0 && p3.next === null && !p3.offPlan, p3);
 }
 
@@ -175,6 +177,24 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 {
   const items: AskEntry[] = [{ id: "q1", quote: "a", kind: null, route: "reply", aix: null, about: null, basis: null, msg: null, slot: null, later: false }];
   t("単体: 行き先ありで通なし＝取りこぼし", checkAskLedger(items).dropped[0] === "q1");
+}
+
+// 送り済み・残りの書き戻し（ASK_PROGRESS）
+{
+  t("ASK_PROGRESS 既定 off", askProgressOn({}) === false && askProgressOn({ ASK_PROGRESS: "on" }) === true);
+  const L = buildAskLedger({ asks: [
+    { quote: "この物件まだ空いてますか", route: "promise", about: "vacancy", kind: "question" },
+    { quote: "初期費用も知りたいです", route: "aix", aix: "estimate_sheet", about: "property_cost", kind: "request" },
+  ], finalAix: "estimate_sheet", seenCustomerAt: "2026-11-15T01:00:00Z" });
+  const r1 = nextAskProgress(L, null, { kind: "reply" }, "2026-11-15T01:01:00Z")!;
+  t("1通目: 約束済み・次は AIX", r1.sends.length === 1 && r1.promised.length === 1 && r1.next?.slot === "aix", r1);
+  const r2 = nextAskProgress(L, JSON.parse(JSON.stringify(r1)), { kind: "aix", aix: "estimate_sheet" }, "2026-11-15T01:02:00Z")!;
+  t("2通目: 前の記録に足す・見積は答えた", r2.sends.length === 2 && r2.answered.length === 1 && r2.remaining.length === 0, r2);
+  const L2 = { ...L, seen_customer_at: "2026-11-15T05:00:00Z" };
+  const r3 = nextAskProgress(L2, r2, { kind: "reply" }, "2026-11-15T05:01:00Z")!;
+  t("新しいお客様の発言の後は数え直し", r3.sends.length === 1);
+  t("読む側: 今の帳面の続きだけ", askProgressOf(L, r2) !== null && askProgressOf(L2, r2) === null && askProgressOf(L, { v: 2 }) === null);
+  t("帳面が無ければ書かない", nextAskProgress(null, null, { kind: "reply" }, "x") === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
