@@ -27,7 +27,9 @@ function answerText(text: string): string {
 
 /** 1番: 竹内さんの実送信（同じ番の文を全部）× 下書き */
 export function compareProdTurn(takeuchiTexts: ReadonlyArray<string>, draft: string): ProdElResult[] {
-  const T = takeuchiTexts.join("\n"), D = String(draft ?? "");
+  // 下書きは竹内さんの1通目に当たる（2通目は別の通）＝要素は1通目で比べ、2通目は「2通目の役目が下書きの1通に入っているか」で数える（11/15 の見直し:
+  //   旧は全部の通をつないで比べ、2通目の誘い・締めを1通目の下書きの外れに数えていた＝見張り 12406 は1通目の締めが下書きと同じなのに外れ）
+  const T = takeuchiTexts[0] ?? "", D = String(draft ?? "");
   const out: ProdElResult[] = [];
   const ot = openerOfText(takeuchiTexts[0] ?? ""), od = openerOfText(D);
   out.push({ el: "頭", has: true, hit: ot === od, detail: `竹内=${ot} 下書き=${od}` });
@@ -39,13 +41,18 @@ export function compareProdTurn(takeuchiTexts: ReadonlyArray<string>, draft: str
   out.push({ el: "潜在", has: lt, hit: lt && ld, detail: `竹内=${lt} 下書き=${ld}` });
   const it = inviteOf(T), id = inviteOf(D);
   out.push({ el: "つなぎ", has: it !== "none", hit: it !== "none" && it === id, detail: `竹内=${it} 下書き=${id}` });
-  const ct = closingOfText(takeuchiTexts[takeuchiTexts.length - 1] ?? ""), cd = closingOfText(D);
+  const ct = closingOfText(T), cd = closingOfText(D);
   out.push({ el: "締め", has: true, hit: ct === cd, detail: `竹内=${ct} 下書き=${cd}` });
   const at = answerText(T);
   const fr = at ? factContentRatio(at, D) : { ratio: 0, n: 0 };
   out.push({ el: "事実", has: fr.n > 0, hit: fr.n > 0 && fr.ratio >= FACT_CONTENT_MIN, detail: `重なり=${fr.n ? Math.round(fr.ratio * 100) + "%" : "答えの文なし"}` });
+  // 2通目: 竹内さんが返信を2通に分けた番で、2通目の中身の役目（答え・約束・推し・誘い・サポート）が下書きの1通の中にあるか
   const two = takeuchiTexts.length >= 2;
-  out.push({ el: "2通目", has: two, hit: two && /\n―\n|\n---\n|【2通目】|２通目/.test(D), detail: `竹内=${takeuchiTexts.length}通` });
+  const MAIN2 = new Set(["info", "promise", "appeal", "support", "cta_viewing", "cta_apply", "ask", "decline"]);
+  const t2 = two ? [...new Set(takeuchiTexts.slice(1).flatMap((x) => sentencesOf(x).map(tagSentence)).filter((t) => MAIN2.has(t)))] : [];
+  const dTags = new Set(sentencesOf(D).map(tagSentence));
+  const has2 = two && t2.length > 0;
+  out.push({ el: "2通目", has: has2, hit: has2 && t2.every((t) => dTags.has(t)), detail: `竹内=${takeuchiTexts.length}通（2通目の役目 ${t2.join("+") || "なし"}）` });
   return out;
 }
 export type ProdTally = Record<ProdEl, { has: number; hit: number }>;
