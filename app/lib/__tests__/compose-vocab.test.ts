@@ -9,7 +9,7 @@ let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const ON = { COMPOSE_VOCAB_UNIFIED: "on" };
 
-t("既定 off", () => { assert.equal(composeVocabUnifiedOn({}), false); assert.equal(composeVocabUnifiedOn(ON), true); });
+t("既定 on（2026-11-15）・off で戻す", () => { assert.equal(composeVocabUnifiedOn({}), true); assert.equal(composeVocabUnifiedOn({ COMPOSE_VOCAB_UNIFIED: "off" }), false); assert.equal(composeVocabUnifiedOn(ON), true); });
 
 t("対応表: 段9つ・趣旨6・重点7 は全部、文の役目13種に写る", () => {
   for (const p of BASE_ORDER) assert.ok(PART_TO_ROLES[p].length && PART_TO_ROLES[p].every((r) => (SENTENCE_ROLES as readonly string[]).includes(r)), p);
@@ -21,7 +21,7 @@ const meta = { turn_contract: { asks: [{ quote: "家賃6万までで", route: "p
 const plan = buildSentencePlan(readTurnUnderstanding(meta), readSevenFields(meta));
 
 t("off の時は設計図を変えない", () => {
-  const r = applySceneConstraints(plan, "conditions", {});
+  const r = applySceneConstraints(plan, "conditions", { COMPOSE_VOCAB_UNIFIED: "off" });
   assert.deepEqual(r.rows.map((x) => x.role), plan.rows.map((x) => x.role));
 });
 t("on: 書かない段（条件の番の誘い）に当たる従の行を外す・主は残す", () => {

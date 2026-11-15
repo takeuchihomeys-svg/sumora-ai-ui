@@ -27,7 +27,7 @@ const bank = [
 const h = pickExemplar(bank, { scene: "viewing", latent: "taken", lead: "apply" });
 t("引く: 同じ鍵の中で代表の並び（medoid）", h?.level === 0 && h.ex.id === "b", h);
 t("引く: 自分は外す・広げる段", pickExemplar(bank, { scene: "question", latent: "cost_total", lead: "estimate" })?.level === 2 && pickExemplar(bank, { scene: "x", latent: "none", lead: "keep" }) === null && pickExemplar(bank, { scene: "cost", latent: "cost_total", lead: "estimate" }, "d") === null);
-t("注記: 既定 off", !exemplarOn({}) && exemplarNote(h, {}) === null);
+t("注記: 既定 on（2026-11-15）・off なら出さない", exemplarOn({}) && !exemplarOn({ TAKEUCHI_EXEMPLAR: "off" }) && exemplarNote(h, { TAKEUCHI_EXEMPLAR: "off" }) === null);
 const note = exemplarNote(h, { TAKEUCHI_EXEMPLAR: "on" }) ?? "";
 t("注記: 並びとブレインの欄（文は写さない）", note.includes("並び: uke > answer > barrier > apply") && note.includes("3. barrier（事実（先回りの裏付け））") && !note.includes("x\n"), note);
 

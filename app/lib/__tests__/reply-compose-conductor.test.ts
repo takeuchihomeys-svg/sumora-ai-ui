@@ -12,11 +12,13 @@ const empty: ComposeInputs = { focus: null, plan: null, replyMsg: null, read: []
 const base = (o: Partial<FocusInput> = {}): FocusInput => ({ inputs: empty, scene: "ack", ackOnly: true, prevStaff: "other", customerAskedNew: false, keepSaidToday: false, ...o });
 
 // スイッチ
-t("既定 off", composeConductorOn({}) === false);
+t("既定 on（2026-11-15）・off で戻す", composeConductorOn({}) === true && composeConductorOn({ COMPOSE_CONDUCTOR: "off" }) === false);
 t("on で on", composeConductorOn({ COMPOSE_CONDUCTOR: "on" }) === true);
 
 // ① 読む
+process.env.COMPOSE_PLAN_FALLBACK = "off";
 const r0 = readComposeInputs(null);
+delete process.env.COMPOSE_PLAN_FALLBACK;
 t("メタが無い時は全部 null", r0.focus === null && r0.plan === null && r0.replyMsg === null && r0.read.length === 0);
 const r1 = readComposeInputs({ conductor_focus: { focus: "relation", why: "お礼だけ", keepPromise: true } });
 t("重点と keepPromise を読む（作業員5 の名前）", r1.focus?.focus === "relation" && r1.focus?.keepPromise === true && r1.read.includes("重点"));
@@ -125,8 +127,8 @@ t("口: 統括の重点を読んだ記録", bc3.read.includes("重点") && bc3.m
 // 2026-11-12 作業員7（COMPOSE_PLAN_FALLBACK）: meta に組み立てが無い時（CONDUCTOR_COMBINE off の本番）に代わりを作る
 {
   const meta = { reply_mode: "auto_reply", turn_contract: { asks: [{ quote: "空いてますか", route: "promise", about: "vacancy" }] } };
-  delete process.env.COMPOSE_PLAN_FALLBACK;
-  t("代わり: 既定 off は今まで通り空", readComposeInputs(meta).plan === null);
+  process.env.COMPOSE_PLAN_FALLBACK = "off";
+  t("代わり: off は今まで通り空（2026-11-15 から既定 on）", readComposeInputs(meta).plan === null);
   process.env.COMPOSE_PLAN_FALLBACK = "on";
   const r = readComposeInputs(meta);
   t("代わり: on で組み立てと返信の通がある", !!r.plan && !!r.replyMsg && r.read.includes("組み合わせ（代わり）"));

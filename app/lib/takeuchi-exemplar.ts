@@ -109,9 +109,9 @@ export function pickExemplar<T extends Exemplar & { hand?: boolean }>(bank: Read
   return null;
 }
 
-/** 既定 off。入れる TAKEUCHI_EXEMPLAR=on */
+/** 2026-11-15 既定 on（作業員K の試験 k1115-exemplar-p1〜p4: 8問＋守り・束のファイル無し＝本番と同じ表から・確かな悪化0）。止める TAKEUCHI_EXEMPLAR=off */
 export function exemplarOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TAKEUCHI_EXEMPLAR ?? "").trim().toLowerCase() === "on";
+  return (env.TAKEUCHI_EXEMPLAR ?? "").trim().toLowerCase() !== "off";
 }
 /** 設計図の注記（文は写させない: 役目の並び・1文ずつのなぜとブレインの欄・使った事実・潜在の4つ）。off なら null */
 export function exemplarNote(hit: { ex: Exemplar; level: number } | null, env?: Record<string, string | undefined>): string | null {
