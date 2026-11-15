@@ -193,7 +193,7 @@ function rest() {
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し"], "setTimeout 50": [1, "パネルの動き"] },
+    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [2, "拡張の再読み込み直後のやり直し・案内の記録の返事が来ない時の予備（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"] },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);
@@ -253,8 +253,36 @@ function rest() {
     ok(`node --check ${f}`, good);
   }
 
-  console.log(`\n${pass} passed, ${fail} failed`);
-  if (fail) process.exit(1);
+console.log("\n■ ⑥ 自動モードの間隔（2026-11-10 対数正規・12操作ごとに8秒の休憩）");
+{
+  // 中央値 0.9秒・12操作ごとに 8秒。固定周期でないこと（同じ値が続かない・等間隔でない）を確かめる
+  const rng = seeded(3);
+  const p = HW.createPacer({ baseMs: 900, breakEvery: 12, breakMs: 8000 });
+  const xs = [];
+  for (let i = 0; i < 240; i++) xs.push(p.next(rng));
+  const normal = xs.filter((x) => !x.isBreak).map((x) => x.ms);
+  const breaks = xs.filter((x) => x.isBreak).map((x) => x.ms);
+  ok(`休憩は 12操作ごと（${breaks.length}回／240操作）`, breaks.length === 20);
+  ok("休憩の印は 12・24・36… の所", xs.filter((x) => x.isBreak).map((x) => x.n).slice(0, 3).join(",") === "12,24,36");
+  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  ok(`ふだんの間の中央値 ≒ 0.9秒（${med(normal)}ms）`, Math.abs(med(normal) - 900) < 120);
+  ok(`休憩の中央値 ≒ 8秒（${med(breaks)}ms）`, Math.abs(med(breaks) - 8000) < 1200);
+  ok(`ふだんの間がばらつく（${new Set(normal).size}通り／220回）`, new Set(normal).size > 100);
+  ok(`休憩がばらつく（${new Set(breaks).size}通り／20回）`, new Set(breaks).size > 10);
+  ok("下の端は 200ms 以上", normal.every((v) => v >= 200));
+  ok("右に裾が長い（平均 > 中央値）＝人がたまに間を置く形", normal.reduce((a, b) => a + b, 0) / normal.length > med(normal));
+  ok("どの間も 中央値の6倍を超えない（止まらない）", normal.every((v) => v <= 900 * 6) && breaks.every((v) => v <= 8000 * 6));
+  eq("nextMs は next の ms と同じ形", typeof HW.createPacer().nextMs(rng), "number");
+  eq("reset で数え直す", (() => { const q = HW.createPacer(); q.next(rng); q.next(rng); q.reset(); return q.count(); })(), 0);
+  eq("壊れた設定でも落ちない（既定に戻る）", typeof HW.createPacer({ baseMs: 0, breakEvery: -3, breakMs: "x" }).next(rng).ms, "number");
+  eq("logNormalDelay(0) は 0（待たない）", HW.logNormalDelay(0), 0);
+  // 固定周期でないこと（等間隔の検出を避ける）: 連続する2つの間が同じになる確率が低い
+  const same = normal.slice(1).filter((v, i) => v === normal[i]).length;
+  ok(`同じ値が続く回数が少ない（${same}回／219回）`, same < 20);
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);
 }
 
 function sortObj(o) { return Object.fromEntries(Object.entries(o).sort()); }

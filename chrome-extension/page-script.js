@@ -110,13 +110,44 @@
     el.value = String(val);
     el.dispatchEvent(new Event("change", {bubbles:true}));
   }
+  // 2026-11-10 人間的な動き: 値を一瞬で入れると「貼り付けた」動きになる。数字などの短い欄は1文字ずつ打つ
+  //   （人の打鍵の間は 60〜220ms・たまに止まる）。長い文字列（40字超）は今まで通り一気に入れる（待ちが長くなりすぎない）。
+  //   1文字ずつでも最後は input/change を出して React の state を更新する（今までと同じ検出力）。
+  var TYPE_MAX_CHARS = 40;
+  function typeTextLikeHuman(el, value) {
+    var s = String(value);
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    var H = window.AxlxHumanWait;
+    if (!el || s.length > TYPE_MAX_CHARS || !H || !H.humanDelay) {
+      setter.call(el, s);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return Promise.resolve(false);
+    }
+    return new Promise(function (resolve) {
+      var i = 0;
+      var step = function () {
+        i++;
+        setter.call(el, s.slice(0, i));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        if (i >= s.length) {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          resolve(true);
+          return;
+        }
+        // 打鍵の間 60〜220ms（対数正規・右に裾）。5%ほどで「考えて止まる」300〜600ms をはさむ
+        var wait = H.logNormalDelay ? H.logNormalDelay(110, 0.3) : H.humanDelay(110);
+        if (Math.random() < 0.05) wait += 300 + Math.floor(Math.random() * 300);
+        setTimeout(step, wait);
+      };
+      if (el.focus) { try { el.focus(); } catch (_) {} }
+      step();
+    });
+  }
   function setTxtVal(name, val) {
     var el = document.querySelector('input[name="' + name + '"]');
     if (!el || val == null) return;
-    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-    setter.call(el, String(val));
-    el.dispatchEvent(new Event("input",  {bubbles:true}));
-    el.dispatchEvent(new Event("change", {bubbles:true}));
+    return typeTextLikeHuman(el, val);
   }
   function setCheckboxes(name, vals) {
     var svals = (vals || []).map(String);
@@ -132,7 +163,7 @@
     enqueueHumanAction(function() { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val);
   }
   function queueTxtVal(name, val) {
-    enqueueHumanAction(function() { setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val);
+    enqueueHumanAction(function() { return setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val);
   }
 
   function getDirectText(el) {
@@ -153,8 +184,19 @@
   // - 各クリック間: 呼び出し側指定のランダム間隔（60〜200ms程度）
   // - 8%の確率で 300〜700ms の「迷い」ポーズを追加（人間の躊躇を再現）
   // - el.__axPending フラグでポーリング再実行時の二重エンキューを防止
+  // 2026-11-10 人間的な動き: クリックの列の間隔を対数正規にする（旧は一様乱数 min〜max で、間隔の分布が平ら＝機械らしい）。
+  //   人の操作の間は「短い事が多く、たまに大きく伸びる」形（右に裾が長い）。中央値を (min+max)/2 にして同じ範囲に収める。
+  //   下の端は min・上の端は max×1.6（たまに大きく伸びる分）。human-wait.js が無ければ今まで通り一様。
   function humanRand(min, max) {
-    return min + Math.floor(Math.random() * (max - min + 1));
+    var lo = Number(min), hi = Number(max);
+    if (!(isFinite(lo) && isFinite(hi)) || hi <= lo) return lo || 0;
+    var H = window.AxlxHumanWait;
+    if (H && H.logNormalDelay) {
+      var med = (lo + hi) / 2;
+      var v = H.logNormalDelay(med, 0.3);
+      return Math.max(lo, Math.min(Math.round(hi * 1.6), v));
+    }
+    return lo + Math.floor(Math.random() * (hi - lo + 1));
   }
   // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 固定の数字の待ちを共通の関数で散らす。
   //   human-wait.js（self.AxlxHumanWait）は content.js が先にページへ入れる。読めない時は元の値で動く（止まらない）。
@@ -162,6 +204,64 @@
   function _hd(ms) { var H = window.AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
   function _pd(ms) { var H = window.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
   function _clickEl(el) { el.click(); }
+  // 2026-11-10 人間的な動き: 押す前に、その要素が画面に入るまで少しずつ動かす（人が目で探して手を伸ばす形）。
+  //   一瞬で飛ばさない（behavior: smooth）。画面に入っているなら何もしない。押す・選ぶの中身は変えない。
+  function _ensureInView(el) {
+    try {
+      if (!el || !el.getBoundingClientRect) return;
+      var r = el.getBoundingClientRect();
+      var vh = window.innerHeight || 800;
+      if (r.top >= 0 && r.bottom <= vh) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    } catch (_) {}
+  }
+  // 2026-11-10 人間的な動き: マウスが要素まで「動いて」から押す。人の軌跡（少し曲がる）をなぞって
+  //   mousemove / mouseover / mousedown / mouseup / click を順に出す（押すのは最後の1回だけ＝二重に効かせない）。
+  //   軌跡は human-wait.js の pointerPath（純関数・依存ゼロ）。読めない時は今まで通り click だけ。
+  var _pointer = { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 };
+  function _humanPointerClick(el, fallbackFn) {
+    var H = window.AxlxHumanWait;
+    var fire = fallbackFn || _clickEl;
+    if (!el || !el.getBoundingClientRect || !H || !H.pointerPath) { fire(el); return Promise.resolve(false); }
+    var r;
+    try { r = el.getBoundingClientRect(); } catch (_) { fire(el); return Promise.resolve(false); }
+    if (!r || (r.width <= 0 && r.height <= 0)) { fire(el); return Promise.resolve(false); }
+    var to = { x: r.left + r.width * (0.35 + Math.random() * 0.3), y: r.top + r.height * (0.35 + Math.random() * 0.3) };
+    var pts = H.pointerPath(_pointer, to, 10 + Math.floor(Math.random() * 8));
+    var waits = H.pointerDelays ? H.pointerDelays(pts.length, 260 + Math.random() * 340) : pts.map(function () { return 30; });
+    var i = 0;
+    function ev(type, p) {
+      try {
+        var t = el;
+        var o = { bubbles: true, cancelable: true, view: window, clientX: Math.round(p.x), clientY: Math.round(p.y), button: 0, buttons: type === "mousedown" ? 1 : 0 };
+        // 軌跡の途中は「その点の下にある要素」へ、最後の点だけ狙った要素へ（人が上を通る形）
+        if (type === "mousemove" && i < pts.length - 1) {
+          var under = document.elementFromPoint(Math.round(p.x), Math.round(p.y));
+          t = under || el;
+        }
+        t.dispatchEvent(new MouseEvent(type, o));
+      } catch (_) {}
+    }
+    return new Promise(function (resolve) {
+      var step = function () {
+        if (i >= pts.length - 1) {
+          var p = pts[pts.length - 1];
+          _pointer = { x: p.x, y: p.y };
+          ["mouseover", "mousedown", "mouseup"].forEach(function (type) { ev(type, p); });
+          try { fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
+          resolve(true);
+          return;
+        }
+        var pt = pts[i];
+        ev("mousemove", pt);
+        i++;
+        setTimeout(step, waits[Math.min(i, waits.length - 1)] || 30);
+      };
+      // 押す前に要素の上へ（mouseover は最初に1回）
+      try { el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+      step();
+    });
+  }
   // ★ 修正(Bug2): 選択側クリックの実行時ガード。
   // 同一駅が複数路線に出現するモーダルでは同名inputが2つ描画され、内部状態で同期している場合
   // 1個目のクリックで両方checkedになる → キューに残った2個目のクリックがトグル解除として作用し
@@ -195,17 +295,25 @@
   function _scheduleClickDrain() {
     if (_clickQueueTimer || !_clickQueue.length) return;
     var item = _clickQueue.shift();
-    var hesitate = (Math.random() < 0.08) ? humanRand(300, 700) : 0; // 低確率の長め「迷い」ポーズ
+    // 2026-11-10 人間的な動き: 「迷い」ポーズを一様の8%から、毎回ちがう確率（前後±25%）にする
+    var hesitate = (Math.random() < (0.08 * (0.75 + Math.random() * 0.5))) ? humanRand(300, 700) : 0;
     var _planned = item.gap + hesitate, _setAt = Date.now();
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
       _auditOp(item.label, _planned, Date.now() - _setAt);
+      // 2026-11-10: 中の処理が非同期（1文字ずつの打鍵）でも、終わってから次へ進む（順番が崩れない）
+      var done = function () {
+        if (item.el) item.el.__axPending = false;
+        _scheduleClickDrain();
+      };
       try {
-        if (item.el) item.fn(item.el);
-        else item.fn();
+        if (item.el) _ensureInView(item.el);
+        // 2026-11-10 人間的な動き: 要素を押す時は、人の軌跡でマウスを動かしてから押す（mousemove〜click）。
+        //   item.fn は今まで通り最後の1回だけ呼ぶ（_clickIfUnchecked 等のガードはそのまま効く）
+        var ret = item.el ? _humanPointerClick(item.el, item.fn) : item.fn();
+        if (ret && typeof ret.then === "function") { ret.then(done, done); return; }
       } catch (e) { console.error('[AX] humanClick 例外（続行）', e); }
-      if (item.el) item.el.__axPending = false;
-      _scheduleClickDrain();
+      done();
     }, item.gap + hesitate);
   }
   function isClickQueueBusy() {
@@ -369,9 +477,25 @@
     var late = waited - planned;
     if (late > _audit.late_max) _audit.late_max = late;
     if (late > 1000) _audit.late_over_1s++;
-    _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited });
+    _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited, by: 'auto' });
     if (_audit.ops.length > 80) _audit.ops.shift();
   }
+  // ── 2026-11-10 竹内「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」──
+  //   拡張が出す操作（isTrusted=false）と、人が本当に押した操作（isTrusted=true）を区別して数える（human-trace.js の共通部品）。
+  //   案内モード（スタッフが押す）では人の操作だけが来る＝「人が操作しているか」を点検の記録で確かめられる。
+  //   入力の中身（値）は残さない。数と、最後の操作の種類・欄の名前・間の平均だけ。
+  var _HTr = (function () {
+    try {
+      var HT = (typeof window !== "undefined" ? window : self).AxlxHumanTrace;
+      if (!HT) return null;
+      var tr = HT.create({});
+      tr.attach(document, window);
+      return tr;
+    } catch (_) { return null; }
+  })();
+  function _humanSnapshot() { return _HTr ? _HTr.snapshot() : null; }
+  // 2026-11-10 案内モード（realpro-guide.js）から読めるように外に出す（案内は押さないので、人の操作だけが数えられる）
+  try { window.__axlxHumanSnapshot = _humanSnapshot; } catch (_) {}
   try {
     document.addEventListener('visibilitychange', function () {
       var hidden = document.visibilityState === 'hidden';
@@ -441,6 +565,8 @@
     if (!_audit) return null;
     try {
       delete _audit._searchWaitMarked;
+      // 2026-11-10: 人が動いたか（拡張の操作と区別した数）を点検の記録に載せる
+      _audit.human = _humanSnapshot();
       var a = _audit;
       if (JSON.stringify(a).length > 8000) {
         a = JSON.parse(JSON.stringify(a));

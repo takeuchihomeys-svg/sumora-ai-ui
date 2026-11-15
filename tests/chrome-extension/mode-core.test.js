@@ -27,10 +27,10 @@ eq("スタッフとAIXが両方 true → スタッフ優先（自動化を止め
 eq("スタッフが切れて aixMode が残っていれば AIX", M.readState({ staffMode: true, staffModeAt: NOW - 3 * H, aixMode: true }, NOW).mode, "aix");
 
 console.log("\n■ 書き込み — モードとブレインは互いに触らない");
-eq("スタッフを選ぶ", M.storageUpdateForMode("staff", NOW), { staffMode: true, staffModeAt: NOW, aixMode: false });
-eq("AIXを選ぶ", M.storageUpdateForMode("aix", NOW), { staffMode: false, staffModeAt: null, aixMode: true });
-eq("通常を選ぶ", M.storageUpdateForMode("normal", NOW), { staffMode: false, staffModeAt: null, aixMode: false });
-eq("知らない値（旧 'brain' 等）→ 通常", M.storageUpdateForMode("brain", NOW), { staffMode: false, staffModeAt: null, aixMode: false });
+eq("スタッフを選ぶ", M.storageUpdateForMode("staff", NOW), { staffMode: true, staffModeAt: NOW, aixMode: false, autoModeAt: null });
+eq("AIXを選ぶ", M.storageUpdateForMode("aix", NOW), { staffMode: false, staffModeAt: null, aixMode: true, autoModeAt: NOW });
+eq("通常を選ぶ", M.storageUpdateForMode("normal", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null });
+eq("知らない値（旧 'brain' 等）→ 通常", M.storageUpdateForMode("brain", NOW), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: null });
 eq("モードの書き込みに brainMode が入っていない", ["normal", "staff", "aix"].every((m) => !("brainMode" in M.storageUpdateForMode(m, NOW))), true);
 eq("ブレインON", M.storageUpdateForBrain(true), { brainMode: true });
 eq("ブレインOFF", M.storageUpdateForBrain(false), { brainMode: false });

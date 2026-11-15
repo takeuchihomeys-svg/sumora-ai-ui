@@ -7,7 +7,7 @@
 const fs = require("fs");
 const path = require("path");
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
-const read = (f) => fs.readFileSync(path.join(dir, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n");
 const P = require(path.join(dir, "realpro-guide-plan.js"));
 
 let passed = 0, failed = 0;

@@ -28,6 +28,35 @@
     return r;
   }
 
+  /** 標準正規（Box-Muller・テストで乱数を固定できる） */
+  function _gauss(rng) {
+    var u1 = _rand(rng), u2 = _rand(rng);
+    if (u1 <= 1e-12) u1 = 1e-12;
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+
+  /**
+   * lo〜hi の間を対数正規で引く（2026-11-10 人間的な動き）。
+   *   中央値 = lo と hi の幾何平均寄り（hi が lo の4倍以上なら幾何平均・そうでなければ算術平均）。
+   *   値は lo〜hi に必ず収める（サイトへの負荷・待ちの上限は今までと同じ）。
+   */
+  function logBetween(lo, hi, rng) {
+    var a = Math.max(1, Number(lo) || 0), b = Math.max(a, Number(hi) || a);
+    if (b === a) return Math.round(a);
+    var med = (b / a >= 4) ? Math.sqrt(a * b) : (a + b) / 2;
+    var sigma = 0.32;
+    var v = med * Math.exp(sigma * _gauss(rng));
+    return Math.round(Math.min(b, Math.max(a, v)));
+  }
+
+  /** 確率 p の「たまに起きる事」を、一様でなく p の前後で揺らして決める（同じ周期で来ない） */
+  function humanChance(rng, p) {
+    var base = typeof p === "number" && p >= 0 && p <= 1 ? p : 0.1;
+    // 前後 ±25% で揺らす（0.14 なら 0.105〜0.175）。1回ずつ独立なので、そろう事は無い
+    var q = base * (0.75 + _rand(rng) * 0.5);
+    return _rand(rng) < q;
+  }
+
   /** 自動便の payload か */
   function isAuto(payload) {
     return !!(payload && typeof payload === "object" && payload.source === "auto_schedule");
@@ -48,14 +77,18 @@
   //     （旧は web_brain なら sort=null＝AD 順・ページは既定。手の AIXツールの一括検索は sort も max_pages も無い＝今まで通り）
   function _sortOf(v) { return v === "updated" ? "updated" : (v === "ad" ? "ad" : null); }
   function _pagesOf(v) { var n = Number(v); return isFinite(n) && n > 0 ? Math.floor(n) : null; }
+  /** 更新日の日数（1以上の整数だけ受ける・それ以外は null） */
+  function _daysOf(v) { var n = Number(v); return (v != null && isFinite(n) && n > 0) ? Math.floor(n) : null; }
   function optsFromPayload(payload) {
     var plan = decidedDays(payload);
     var pl = (payload && typeof payload === "object" && payload._plan && typeof payload._plan === "object") ? payload._plan : null;
+    // 2026-11-10 ITANDI の更新日（サーバーの payload.itandi_update_days・作業員A）。無ければ null＝今まで通りリアプロの値に落とす
+    var itDays = _daysOf(payload && payload.itandi_update_days);
     if (!isAuto(payload)) {
       var s = (pl && pl.sort) || _sortOf(payload && payload.sort);
       var mp = (pl && pl.max_pages) || _pagesOf(payload && payload.max_pages);
-      if (!plan && !s && !mp) return null;
-      return { mode: null, rp_update_days: plan ? plan.days : null, rp_update_days_none: !!(plan && plan.days == null), sort: s || null, max_pages: mp || null };
+      if (!plan && !s && !mp && itDays == null) return null;
+      return { mode: null, rp_update_days: plan ? plan.days : null, rp_update_days_none: !!(plan && plan.days == null), itandi_update_days: itDays, sort: s || null, max_pages: mp || null };
     }
     var pm = payload.mode === "pm";
     var days = payload.rp_update_days != null ? Number(payload.rp_update_days) : NaN;
@@ -63,6 +96,7 @@
       mode: pm ? "pm" : "am",
       rp_update_days: plan ? plan.days : (pm && isFinite(days) && days > 0 ? days : null),
       rp_update_days_none: !!(plan && plan.days == null),
+      itandi_update_days: itDays,
       sort: (pl && pl.sort) || _sortOf(payload.sort),
       max_pages: (pl && pl.max_pages) || _pagesOf(payload.max_pages),
     };
@@ -126,15 +160,30 @@
     return { days: cover, widened: true, gap_hours: gapH };
   }
   //   2026-09-30 v2.5.44 そのお客様の計画（plan_by_customer[id]）を _plan に写す（sort・stop_at_last・max_pages をお客様ごとに）
+  //   2026-11-10 ITANDI の計画（e.itandi_days・サーバー・作業員A）も読む。今の時刻で数え直すのはリアプロと同じ。
+  //     itandi_days の無い計画（古いサーバー）は itandi_update_days を消す（計画の前の値＝ITANDI だけ狭くならないように）
   function payloadForCustomer(payload, customerId, nowMs) {
     if (!payload || typeof payload !== "object" || customerId == null) return payload || null;
     var pl = planForCustomer(payload, customerId);
     var plan = payload.update_days_plan;
     var e = plan && plan.by_customer ? plan.by_customer[String(customerId)] : null;
     var hasDays = !!(e && typeof e === "object" && ("days" in e));
-    if (!hasDays && !pl) return payload;
+    var hasItDays = !!(e && typeof e === "object" && ("itandi_days" in e));
+    if (!hasDays && !hasItDays && !pl) return payload;
     var out = Object.assign({}, payload);
     if (pl) out._plan = pl; else delete out._plan;
+    if (hasItDays) {
+      var ni = _daysOf(e.itandi_days);
+      var wi = widenForNow(ni, e.last_search_at || null, nowMs != null ? nowMs : Date.now());
+      out.itandi_update_days = wi.days;
+      out._update_days_itandi = {
+        days: wi.days, widened: !!e.itandi_widened || wi.widened,
+        gap_hours: wi.gap_hours != null ? Math.round(wi.gap_hours * 10) / 10 : (e.itandi_gap_hours == null ? null : Number(e.itandi_gap_hours)),
+      };
+    } else {
+      delete out.itandi_update_days;
+      delete out._update_days_itandi;
+    }
     if (!hasDays) return out;
     var n = e.days == null ? null : Number(e.days);
     var days = n != null && isFinite(n) && n > 0 ? Math.floor(n) : null;
@@ -148,6 +197,23 @@
   }
 
   /**
+   * 2026-11-10 ITANDI の検索の時だけ、payload の itandi_update_days（と _update_days_itandi）を
+   *   rp_update_days（と _update_days）の位置に写した写しを返す。
+   *   読む側（itandi-page-script.js・itandi-guide-plan.js・itandi-update-days.js）は今まで通り cond.rp_update_days を読むので、
+   *   ここで位置を替えるだけで ITANDI の更新日が効く（読む側は変えない＝リアプロと混ざらない）。
+   *   リアプロ・レインズ、itandi_update_days の無い payload は元のまま（今まで通りリアプロの値に落とす）。
+   */
+  function optsForSite(payload, site) {
+    if (!payload || typeof payload !== "object" || String(site || "") !== "itandi") return payload;
+    if (!Object.prototype.hasOwnProperty.call(payload, "itandi_update_days")) return payload;
+    var out = Object.assign({}, payload);
+    out.rp_update_days = _daysOf(payload.itandi_update_days);
+    if (payload._update_days_itandi && typeof payload._update_days_itandi === "object") out._update_days = payload._update_days_itandi;
+    out._site_update_days = "itandi";
+    return out;
+  }
+
+  /**
    * storage に置く形（お客様×サイトの印付き）。
    *   2026-09-30 v2.5.43 extra.last_search_at＝このお客様×サイトの前回の検索の時刻（更新順の一覧で「前回より古い行」で止める線・update-order-stop.js）
    */
@@ -157,6 +223,7 @@
     return {
       customerId: String(customerId), site: String(site || ""), mode: opts.mode,
       rp_update_days: opts.rp_update_days, rp_update_days_none: !!opts.rp_update_days_none, sort: opts.sort, max_pages: opts.max_pages,
+      itandi_update_days: opts.itandi_update_days == null ? null : opts.itandi_update_days,
       last_search_at: e.last_search_at ? String(e.last_search_at) : null,
       at: Number(nowMs) || 0,
     };
@@ -193,7 +260,21 @@
     if (site && stored.site && String(stored.site) !== String(site)) return null;
     var age = (Number(nowMs) || 0) - (Number(stored.at) || 0);
     if (!(age >= 0) || age > TTL_MS) return null;
-    return { mode: stored.mode, rp_update_days: stored.rp_update_days, sort: stored.sort, max_pages: stored.max_pages, last_search_at: stored.last_search_at || null };
+    return { mode: stored.mode, rp_update_days: stored.rp_update_days, itandi_update_days: stored.itandi_update_days == null ? null : stored.itandi_update_days, sort: stored.sort, max_pages: stored.max_pages, last_search_at: stored.last_search_at || null };
+  }
+
+  /**
+   * ITANDI の検索の時だけ、storage の record（1サイト分）の itandi_update_days を rp_update_days の位置に写した写しを返す。
+   *   forCustomer が返した値（{mode, rp_update_days, itandi_update_days, sort, max_pages, last_search_at}）を受ける。
+   *   itandi_update_days が無い（古い record・リアプロの回）→ 元のまま＝今まで通りリアプロの値に落ちる。
+   */
+  function optsForSiteRecord(opts, site) {
+    if (!opts || typeof opts !== "object" || String(site || "") !== "itandi") return opts;
+    if (opts.itandi_update_days == null) return opts;
+    var out = Object.assign({}, opts);
+    out.rp_update_days = _daysOf(opts.itandi_update_days);
+    out._site_update_days = "itandi";
+    return out;
   }
 
   /**
@@ -247,11 +328,13 @@
   /**
    * 同じお客様のリアプロ → ITANDI の間（ミリ秒）。人が次のサイトのタブに移って見る間:
    *   多くは 8〜28秒、7回に1回くらい 40〜95秒の一息
+   *   2026-11-10 人間的な動き: 一息の判定を対数正規から作る（旧は 0.14 の一様で「7回に1回」が機械的にそろう）。
+   *     ふだんの間も中央値寄りに集まる形（右に裾）。範囲（8〜28秒・40〜95秒）は変えない＝サイトへの負荷は増やさない
    */
   function siteGapMs(rng) {
-    var breath = _rand(rng) < 0.14;
-    var r = _rand(rng);
-    return breath ? Math.round(40000 + r * 55000) : Math.round(8000 + r * 20000);
+    var breath = humanChance(rng, 0.14);
+    if (breath) return logBetween(40000, 95000, rng);
+    return logBetween(8000, 28000, rng);
   }
 
   /**
@@ -259,9 +342,9 @@
    *   多くは 15〜60秒、6回に1回くらい 90〜200秒の一息（旧は 3〜8秒の一様乱数）
    */
   function customerGapMs(rng) {
-    var breath = _rand(rng) < 0.16;
-    var r = _rand(rng);
-    return breath ? Math.round(90000 + r * 110000) : Math.round(15000 + r * 45000);
+    var breath = humanChance(rng, 0.16);
+    if (breath) return logBetween(90000, 200000, rng);
+    return logBetween(15000, 60000, rng);
   }
 
   /**
@@ -283,6 +366,63 @@
     return out.sort(function (a, b) { return (rank[a] == null ? 9 : rank[a]) - (rank[b] == null ? 9 : rank[b]); });
   }
 
+  // ── 2026-11-10 自動モードの勤務時間のゲート ──
+  //   竹内「自動モードは勤務時間の中でだけ動かす」。決まり: JST 9:00〜21:00 の間だけ動く／12:00〜13:00 は休憩（動かない）／
+  //   土日は動かない／90分続けて動いたら小休憩（WORK_REST_MS）をはさむ。
+  //   ここは純関数だけで持つ（chrome.* を使わない＝テストで固定できる）。呼ぶ側（background）が今の時刻と
+  //   「この回を始めた時刻」を渡す。**サーバーの一時停止（automation_settings.paused）は別の歯止めとして残す**。
+  var WORK_START_H = 9;        // 始まり（JST）
+  var WORK_END_H = 21;         // 終わり（JST・21:00 ちょうどで閉じる）
+  var WORK_REST_FROM_H = 12;   // 昼の休憩の始まり（12:00〜13:00）
+  var WORK_REST_TO_H = 13;
+  var WORK_CONTINUOUS_MS = 90 * 60 * 1000; // 90分続いたら
+  var WORK_REST_MS = 10 * 60 * 1000;       // 小休憩の長さ（10分）
+
+  /** JST の曜日（0=日）・時・分 */
+  function jstParts(nowMs) {
+    var t = typeof nowMs === "number" ? nowMs : Date.now();
+    var j = new Date(t + 9 * 3600 * 1000); // UTC の値に +9 して UTC の取り出しを使う（実行環境の時計に頼らない）
+    return { day: j.getUTCDay(), hour: j.getUTCHours(), minute: j.getUTCMinutes() };
+  }
+
+  /**
+   * 今この PC が自動の検索を始めてよいか（勤務時間のゲート）。
+   * @returns {{ open: boolean, reason: string|null, resumeAt: number|null }}
+   *   reason … "weekend" | "before_open" | "after_close" | "lunch" | null
+   *   resumeAt … 次に動ける時刻（ミリ秒・分かる時だけ）
+   */
+  function workGate(nowMs) {
+    var t = typeof nowMs === "number" ? nowMs : Date.now();
+    var p = jstParts(t);
+    // その日の 00:00 JST の実時刻 = t − （JST の0時からの秒数）×1000
+    var j = new Date(t + 9 * 3600 * 1000);
+    var secOfDay = j.getUTCHours() * 3600 + j.getUTCMinutes() * 60 + j.getUTCSeconds();
+    var day0 = t - secOfDay * 1000;
+    if (p.day === 0 || p.day === 6) return { open: false, reason: "weekend", resumeAt: null };
+    if (p.hour < WORK_START_H) return { open: false, reason: "before_open", resumeAt: day0 + WORK_START_H * 3600 * 1000 };
+    if (p.hour >= WORK_END_H) {
+      // 次の営業日（月〜金）の 9:00。金曜の夜なら月曜
+      var addDays = 1;
+      for (var k = 0; k < 8; k++) {
+        var nDay = (p.day + addDays) % 7;
+        if (nDay !== 0 && nDay !== 6) break;
+        addDays++;
+      }
+      return { open: false, reason: "after_close", resumeAt: day0 + addDays * 86400 * 1000 + WORK_START_H * 3600 * 1000 };
+    }
+    if (p.hour >= WORK_REST_FROM_H && p.hour < WORK_REST_TO_H) {
+      return { open: false, reason: "lunch", resumeAt: day0 + WORK_REST_TO_H * 3600 * 1000 };
+    }
+    return { open: true, reason: null, resumeAt: null };
+  }
+
+  /** 90分続けて動いたか（restUntil より前なら休憩中＝まだ動かない） */
+  function continuousRestDue(workedSinceMs, nowMs) {
+    var s = Number(workedSinceMs) || 0;
+    var t = typeof nowMs === "number" ? nowMs : Date.now();
+    return !!(s > 0 && t - s >= WORK_CONTINUOUS_MS);
+  }
+
   /** 飛ばしたサイトを完了の記録に残す文（無ければ null） */
   function skippedNote(skippedSites) {
     var list = Array.isArray(skippedSites) ? skippedSites : [];
@@ -294,8 +434,14 @@
     STORAGE_KEY: STORAGE_KEY, TTL_MS: TTL_MS,
     isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, withSite: withSite, forCustomer: forCustomer,
     payloadForCustomer: payloadForCustomer, decidedDays: decidedDays, planForCustomer: planForCustomer, stopLineAllowed: stopLineAllowed,
+    optsForSite: optsForSite, optsForSiteRecord: optsForSiteRecord,
     pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,
+    logBetween: logBetween, humanChance: humanChance,
+    // 2026-11-10 自動モードの勤務時間のゲート（JST 9〜21時・12〜13時は休憩・土日なし・90分で小休憩）
+    jstParts: jstParts, workGate: workGate, continuousRestDue: continuousRestDue,
+    WORK_START_H: WORK_START_H, WORK_END_H: WORK_END_H, WORK_REST_FROM_H: WORK_REST_FROM_H, WORK_REST_TO_H: WORK_REST_TO_H,
+    WORK_CONTINUOUS_MS: WORK_CONTINUOUS_MS, WORK_REST_MS: WORK_REST_MS,
   };
 });

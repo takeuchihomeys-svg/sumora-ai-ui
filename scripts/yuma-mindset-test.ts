@@ -6,10 +6,14 @@
 //       最後の確かめ: LLM_TEST_FINAL_CLAUDE=1 … [回数=1]
 import { createClient } from "@supabase/supabase-js";
 import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 
 let h: LlmTestHarness | null = null;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
-const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
+// 10/09: --conv=auto|YUMA2〜YUMA5 でテスト専用の会話（YUMA の順番待ちなし）。無ければ YUMA
+const CONV_ARG = process.argv.find((a) => a.startsWith("--conv="))?.slice(7) ?? null;
+let lease: TestConvLease | null = null;
+let YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 let cleanup: string[] = [];
 
 type Turn = { s: "staff" | "customer"; t: string; aix?: boolean };
@@ -32,19 +36,23 @@ const SCENES: Scene[] = [
     wantState: ["迷い"], wantAix: ["(なし)"] },
 ];
 
-async function insertScene(sc: Scene) {
+async function insertScene(sc: Scene, from = 0, to = sc.turns.length, times0?: string[]) {
   h!.assertSceneSafe(sc.turns.map((t) => t.t), sc.id);
-  const times = h!.sceneTimes(sc.turns.length);
-  const ins = await sb.from("messages").insert(sc.turns.map((t, i) => ({ conversation_id: YUMA, sender: t.s, text: t.t, is_aix_generated: !!t.aix, created_at: times[i] }))).select("id");
+  const times = times0 ?? h!.sceneTimes(sc.turns.length);
+  if (to <= from) return times;
+  const ins = await sb.from("messages").insert(sc.turns.slice(from, to).map((t, i) => ({ conversation_id: YUMA, sender: t.s, text: t.t, is_aix_generated: !!t.aix, created_at: times[from + i] }))).select("id");
   if (ins.error) throw new Error(`場面を作れず: ${ins.error.message}`);
   cleanup.push(...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+  return times;
 }
 async function removeScene() { if (!cleanup.length) return; await sb.from("messages").delete().in("id", cleanup); cleanup = []; }
 
 async function main() {
+  if (CONV_ARG) { lease = acquireTestConversation(CONV_ARG, "yuma-mindset-test"); YUMA = lease.id; console.log(`テストの会話: ${lease.name}（${YUMA}）`); }
   h = await setupLlmTest("yuma-mindset-test");
   const { analyzeConversation } = await import("../app/lib/brain-core");
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
+  const { extractStrategy } = await import("../app/lib/brain-layers");
   const pos = process.argv.slice(2).filter((a) => !a.startsWith("--"));
   const reps = Math.max(1, Math.min(6, Number(pos[0] ?? 2)));
   const only = (pos[1] ?? "").split(",").filter(Boolean);
@@ -56,18 +64,22 @@ async function main() {
   for (const sc of SCENES.filter((s) => !only.length || only.includes(s.id))) {
     let okState = 0, okAix = 0, okGap = 0, okAnx = 0, okHes = 0;
     for (let k = 0; k < reps; k++) {
-      await h.waitUntilYumaQuiet(cleanup);
-      await insertScene(sc);
+      if (!lease || lease.isYuma) await h.waitUntilYumaQuiet(cleanup);
+      // 本番と同じ2層（試験の --layer=prod と同じ）: 最後のお客様の連投の前までで全体の分析 → 戦略を渡して今回の発言の層
+      let burst = sc.turns.length; while (burst - 1 >= 0 && sc.turns[burst - 1].s === "customer") burst--;
+      const times = await insertScene(sc, 0, burst);
       try {
-        h.assertYuma(YUMA, "brain");
-        const meta = await runInDeepseekScope(async () => {
+        if (!lease || lease.isYuma) h.assertYuma(YUMA, "brain"); else h.assertTestConversation(YUMA, "brain");
+        const run = (o: Record<string, unknown>) => runInDeepseekScope(async () => {
           setDeepseekScope({ conversationId: YUMA, mark: { kind: "all" } });
-          return analyzeConversation(YUMA, true, (cc.status as string) ?? "proposing", null, "brain", {
-            autoSendEnabled: false, customerName: "YUMA",
-            prevPhase: typeof prevDir?.current_phase === "string" ? prevDir.current_phase : null, prevAix: null,
-            mode: strategy ? "incremental" : "full", layer: strategy ? "fresh" : "combined", strategy: strategy ?? null,
-          });
+          return analyzeConversation(YUMA, true, (cc.status as string) ?? "proposing", null, "brain", { autoSendEnabled: false, customerName: "YUMA", ...o } as never);
         });
+        void strategy; void prevDir;
+        const m0 = (await run({ prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null })) as Record<string, unknown> | null;
+        const st = m0 ? extractStrategy(m0 as never, "combined", 0, new Date().toISOString()) : null;
+        await insertScene(sc, burst, sc.turns.length, times);
+        await new Promise((r) => setTimeout(r, 1000));
+        const meta = await run({ prevPhase: (m0?.checkpoint_stage as string | null) ?? null, prevAix: m0 && m0.reply_mode === "aix" ? (m0.action as string | null) ?? null : null, prevMeta: m0 ?? undefined, mode: st ? "incremental" : "full", layer: st ? "fresh" : "combined", strategy: st });
         const m = (meta ?? {}) as Record<string, unknown>;
         const ms = (m.customer_mindset ?? null) as { state?: string; anxiety?: { target: string; direction: string } | null; hesitation?: string | null; decideGap?: { point: string; solve: string; property: string | null; quote: string } | null } | null;
         const a = (m.action as string) || "(なし)";
@@ -87,4 +99,4 @@ async function main() {
   for (const s of summary) console.log(s);
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; })
-  .finally(async () => { await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
+  .finally(async () => { await removeScene(); lease?.release(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });

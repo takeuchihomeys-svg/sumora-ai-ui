@@ -352,20 +352,45 @@ setupSidePanel();
 
 // 2026-10-06 v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 更新・起動のたびに、古い版の値
 //   （AIX連動 aixMode=true・案内モード OFF guideMode=false）を「光って選択するモード」に書き直す（mode-core.js guideOnlyMigration）
+// 2026-11-10: 自動モードを選べるようにしたので、**選んだ印（autoModeAt）が無い古い aixMode=true だけ**を落とす（選んだ自動は消さない）
 function _migrateGuideOnly() {
   try {
     var core = self.AxlxModeCore;
-    var upd = core && core.guideOnlyMigration ? core.guideOnlyMigration() : null;
-    if (upd) chrome.storage.local.set(upd);
+    if (!core || !core.guideOnlyMigration) return;
+    chrome.storage.local.get(["aixMode", "autoModeAt"], function (st) {
+      var upd = core.guideOnlyMigration(st || {});
+      if (upd) chrome.storage.local.set(upd);
+    });
   } catch (_) {}
 }
 chrome.runtime.onInstalled.addListener(_migrateGuideOnly);
 chrome.runtime.onStartup.addListener(_migrateGuideOnly);
 _migrateGuideOnly();
-/** 自動の物を始めてよいか（GUIDE_ONLY の間は常に false） */
+/** 自動の物を始めてよいか。
+ *  2026-10-06 v2.5.77: 「光って選択するモード」の間は常に false（自動の道を閉じる）。
+ *  2026-11-10: 自動モード（mode-core の AUTO_MODE）を選んでいる時だけ開く。通常・スタッフは今まで通り閉じたまま。
+ *  呼ぶ側は同期で判断したい所（一括検索の入口・Realtime・コマンドの入口）なので、storage を読まずに覚えている値（_autoModeChosen）を見る。
+ *  値は起動時と storage の変化のたびに _refreshAutoModeChosen が書く。 */
+var _autoModeChosen = false;
+async function _refreshAutoModeChosen() {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.GUIDE_ONLY) { _autoModeChosen = true; return; }
+    var st = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]);
+    _autoModeChosen = core.effectiveState(st || {}, Date.now()).mode === core.AUTO_MODE;
+  } catch (_) { _autoModeChosen = false; }
+}
+try {
+  _refreshAutoModeChosen();
+  chrome.storage.onChanged.addListener(function (ch, area) {
+    if (area !== "local" || !ch) return;
+    if (ch.aixMode || ch.autoModeAt || ch.staffMode || ch.staffModeAt) _refreshAutoModeChosen();
+  });
+} catch (_) {}
 function _guideOnly() {
   var core = self.AxlxModeCore;
-  return !!(core && core.GUIDE_ONLY);
+  if (!(core && core.GUIDE_ONLY)) return false;
+  return !_autoModeChosen;
 }
 
 // content script から chrome.storage.session へのアクセスを許可
@@ -1374,6 +1399,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   //   ①拡張の中に最新 50回（axlx_guide_station_miss_log・ブレインでない時もここだけは残る）
   //   ②ブレインの回（popup が run_id を作った回）は search_audits の filled.guide_stations に（案内モードは拡張が入力しない＝filled は他に使われない）
   //   集計は scripts/audit-guide-station-miss.ts
+  //
+  // 2026-11-10 案内モードの「実際に入った値」（realpro-guide.js／itandi-guide.js の reportFilledForm）。
+  //   拡張の入力の中だけで audit.form を読んでいたため、案内モード（入力しない）では search_audits.filled.form が
+  //   10/05 からほぼ0件だった。スタッフが検索を押した時に案内の側が読んで、ここへ来る。
+  //   search_audits.filled に form・intended・guide_stations を入れる（phase=started の口を使い回す＝新しい表・列は要らない）。
+  if (msg.type === "axlx-guide-filled") {
+    (async () => {
+      try {
+        const _site = (msg.site === "itandi") ? "itandi" : "realpro";
+        const runId = msg.runId ? String(msg.runId) : null;
+        if (!runId) { sendResponse({ ok: false, error: "runId なし" }); return; }
+        const filled = { v: 1, site: _site, form: msg.form || null };
+        if (msg.guide_stations) filled.guide_stations = msg.guide_stations;
+        // 2026-11-10 竹内「人間が動いているか確認もできるように」: 人の押した・打った・動かした数（点検の記録に残す）
+        if (msg.human && typeof msg.human === "object") filled.human = msg.human;
+        // 2026-11-10 竹内「人と自動の動きの差」: 人の操作の時刻（自動の ops と同じ形・人と自動を比べる材料）
+        if (Array.isArray(msg.ops) && msg.ops.length) filled.ops = msg.ops.slice(-80);
+        const body = { phase: "started", brain: true, run_id: runId, site: _site, filled: filled };
+        if (msg.intended && typeof msg.intended === "object") body.intended = msg.intended;
+        const posted = self.AxlxSearchAudit ? await self.AxlxSearchAudit.post(body) : null;
+        sendResponse({ ok: !!(posted && posted.ok), posted: posted });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message });
+      }
+    })();
+    return true;
+  }
   if (msg.type === "axlx-guide-station-miss") {
     (async () => {
       try {
@@ -1710,8 +1762,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // 2026-09-25 竹内「更新日も拡張ツールと連動」: 一括検索も更新日で絞る（旧は渡しておらず、すべて表示で検索していた）。
             //   決まりは個別検索（preloadAdjForm）と同じ: 手で決めた値 → 送った日と確認した日の新しい方から 1/3/7/14（初めては絞らない）
             var _bulkRpDays = self.AxlxRpUpdateDays ? self.AxlxRpUpdateDays.effectiveRpUpdateDays(_bc, Date.now()) : null;
-            console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + " (" + _bc.customer_name + ")");
-            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays }, _bulkAudit);
+            // 2026-11-10 手の一括でも ITANDI は ITANDI の手の指定（itandi_update_days）→ 無ければリアプロと同じ線で数える。
+            //   旧は ITANDI の回にもリアプロの手の指定をそのまま渡していた（DB_STRUCTURE.md の「混ざっている所 2」）
+            var _bulkItDays = null;
+            try {
+              if (self.AxlxRpUpdateDays && self.AxlxRpUpdateDays.effectiveRpUpdateDays) {
+                _bulkItDays = self.AxlxRpUpdateDays.effectiveRpUpdateDays(Object.assign({}, _bc, { rp_update_days: _bc.itandi_update_days }), Date.now());
+              }
+            } catch (_) { _bulkItDays = null; }
+            console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + (String(_bulkSite) === "itandi" ? "／ITANDI=" + (_bulkItDays ? _bulkItDays + "日以内" : "指定なし") : "") + " (" + _bc.customer_name + ")");
+            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays, itandi_update_days: _bulkItDays }, _bulkAudit);
             // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
             //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
             //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
@@ -3663,9 +3723,11 @@ async function _isAixModeActive() {
 //   ブレイン×AIX「脳」（旧「ブレイン」と同じ）／ブレイン×通常「脳通」／通常 なし）。on はスタッフが有効か（TTL 込み）
 function _updateStaffModeBadge(on) {
   try {
-    chrome.storage.local.get(["aixMode", "brainMode"]).then(function(st) {
+    chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]).then(function(st) {
       var core = self.AxlxModeCore;
-      var mode = on ? "staff" : (st && st.aixMode && !(core && core.GUIDE_ONLY) ? "aix" : "normal"); // v2.5.77 AIX連動は出さない
+      // 2026-11-10 自動モード: 選んだ印（autoModeAt）があり、aix と読める時だけ「自動」のバッジ（v2.5.77 の「出さない」をやめる）
+      var readMode = core ? core.effectiveState(st || {}, Date.now()).mode : ((st && st.aixMode) ? "aix" : "normal");
+      var mode = on ? "staff" : readMode;
       var b = core ? core.badge(mode, !!(st && st.brainMode)) : { text: on ? "手動" : "", color: "#16a34a" };
       chrome.action.setBadgeText({ text: b.text });
       if (b.text) chrome.action.setBadgeBackgroundColor({ color: b.color });
@@ -3675,7 +3737,7 @@ function _updateStaffModeBadge(on) {
 
 // popup のトグル操作・TTL自動解除をバッジに即時反映
 chrome.storage.onChanged.addListener(function(changes, area) {
-  if (area === "local" && (changes.staffMode || changes.aixMode || changes.brainMode)) {
+  if (area === "local" && (changes.staffMode || changes.aixMode || changes.autoModeAt || changes.brainMode)) {
     _isStaffModeActive().then(_updateStaffModeBadge);
   }
 });
@@ -3702,6 +3764,33 @@ chrome.alarms.onAlarm.addListener(async function(alarm) {
 //   ロックは取った後で書くので、同じ PC で間を置かずに2回呼ばれると別々のコマンドを2本同時に走らせうる
 //   （例: itandi とレインズのボタンを続けて押す）。拾っている最中（ロックを書くまで）は2本目を始めない。
 var _pollClaimInFlight = false;
+// 2026-11-10 自動モードの回の間隔（対数正規・12操作ごとに休憩）。1つの回の中で持ち回る
+var _autoPacer = null;
+// 自動モードで回している時の「続けて動き始めた時刻」（90分で小休憩）。0＝回していない
+var _autoWorkedSince = 0;
+var _autoModeOn = false;
+
+/**
+ * 2026-11-10 自動モードの勤務時間のゲート（auto-run.js の workGate）。
+ *   JST 9:00〜21:00 の間だけ・12:00〜13:00 は休憩・土日は動かない・90分続いたら小休憩。
+ *   自動モードで拾った時に1回見る（開いていなければ指示を拾わない＝サーバーの pending は残る）。
+ *   戻り値: { open, reason, resumeAt }
+ */
+function _autoWorkGate() {
+  var A = self.AxlxAutoRun;
+  if (!A || !A.workGate) return { open: true, reason: null, resumeAt: null };
+  var g = A.workGate(Date.now());
+  if (!g.open) return g;
+  // 90分続けて動いていたら小休憩（休憩の後は数え直し）
+  if (_autoWorkedSince && A.continuousRestDue(_autoWorkedSince, Date.now())) {
+    var t = Date.now() + (A.WORK_REST_MS || 600000);
+    console.log("[batch] 自動モード: 90分続いたので小休憩（" + new Date(t).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) + " まで）");
+    _autoWorkedSince = 0;
+    return { open: false, reason: "continuous_rest", resumeAt: t };
+  }
+  if (!_autoWorkedSince) _autoWorkedSince = Date.now();
+  return { open: true, reason: null, resumeAt: null };
+}
 
 async function _pollAndRunBatch() {
   if (_pollClaimInFlight) {
@@ -3726,6 +3815,18 @@ async function _pollAndRunBatch() {
     var _modeSt = _core ? (_core.effectiveState || _core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: !!_modeRaw.brainMode };
     var _bh = _core ? (_core.effectiveBehavior || _core.behavior)(_modeSt.mode, _modeSt.brain) : { claimCommands: false, claimAix: false, claimBrainCommands: false };
     if (!_bh.claimCommands) return;
+    // 2026-11-10 自動モードの勤務時間のゲート（JST 9〜21時・12〜13時は休憩・土日なし・90分で小休憩）。
+    //   開いていない時は指示を拾わない（pending のまま残る＝時間内に別の PC か次の見回りが拾う）。サイトへのアクセスは増えない
+    _autoModeOn = (_modeSt.mode === (_core && _core.AUTO_MODE ? _core.AUTO_MODE : "aix"));
+    if (_autoModeOn) {
+      var _wg = _autoWorkGate();
+      if (!_wg.open) {
+        try { await chrome.storage.local.set({ autoWorkGate: { open: false, reason: _wg.reason, resumeAt: _wg.resumeAt, at: Date.now() } }); } catch (_) {}
+        console.log("[batch] 自動モードの勤務時間の外（" + _wg.reason + "）→ 今回は拾わない");
+        return;
+      }
+      try { await chrome.storage.local.set({ autoWorkGate: { open: true, reason: null, resumeAt: null, at: Date.now() } }); } catch (_) {}
+    }
     var _qs = [];
     if (_bh.claimAix) _qs.push("aix=1");
     if (_bh.claimBrainCommands) _qs.push("brain=1");
@@ -4246,7 +4347,14 @@ async function _runBatchSearch(command) {
     // 次顧客がいる場合のみ: 人間らしい間隔（3〜8秒ランダム）を挿入
     if (i < targets.length - 1) {
       // 自動便（午後の便は1コマンドで何人も）は人が次のお客様に移る間（多くは15〜60秒・時々一息）。手動の一括は今までどおり
+      // 2026-11-10: 自動モードの回は対数正規のペーサー（human-wait.js の createPacer・12操作ごとに休憩）を混ぜる＝等間隔にしない
       var _interCustomerDelay = (autoSched && _AR) ? _AR.customerGapMs() : 3000 + Math.floor(Math.random() * 5000);
+      if (_autoModeOn && self.AxlxHumanWait && self.AxlxHumanWait.createPacer) {
+        var _pc = _autoPacer || (_autoPacer = self.AxlxHumanWait.createPacer({ baseMs: 900, breakEvery: 12, breakMs: 8000 }));
+        var _pcr = _pc.next();
+        _interCustomerDelay = Math.max(_interCustomerDelay, _pcr.ms) + (_pcr.isBreak ? _pcr.ms : 0);
+        if (_pcr.isBreak) console.log("[batch] 自動モード: 12操作ごとの小休憩をはさむ");
+      }
       console.log("[batch] 次顧客まで待機 " + _interCustomerDelay + "ms");
       _watchSet({ waitingFor: "次のお客様までの間（" + Math.round(_interCustomerDelay / 1000) + "秒）" });
       await new Promise(function(r) { setTimeout(r, _interCustomerDelay); });
@@ -4329,6 +4437,12 @@ function _recordBulkSearch(customer, site, isWide) {
 
 async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts: コマンドの payload か手動の一括の { rp_update_days }（_buildBatchConditions）
   // auditRun: 検索の点検の { runId, trigger, commandId }（ブレインの時だけ・無ければ null）。popup に渡し、popup を通らない経路では conditions に載せる
+  // 2026-11-10 ITANDI の検索は ITANDI の更新日（payload.itandi_update_days）を使う。
+  //   読む側（itandi-page-script.js・itandi-guide-plan.js・itandi-update-days.js）は今まで通り cond.rp_update_days を読むので、
+  //   ここで ITANDI の値の位置に写す（リアプロ・レインズと混ざらない・キーが無い命令は今まで通りリアプロの値に落ちる）
+  if (site === "itandi" && self.AxlxAutoRun && self.AxlxAutoRun.optsForSite) {
+    opts = self.AxlxAutoRun.optsForSite(opts, site);
+  }
   var siteUrlPrefixes = {
     reins: "https://system.reins.jp",
     itandi: "https://itandibb.com",

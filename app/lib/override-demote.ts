@@ -10,12 +10,13 @@
 
 type Env = Record<string, string | undefined>;
 
-export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards";
+export type OverrideFamily = "signal" | "signal_decided" | "search_exhausted" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards";
 
 /** 家族ごとの戻す環境変数（"off" で旧の上書きに戻す） */
 export const DEMOTE_ENV: Record<OverrideFamily, string> = {
   signal: "BRAIN_DEMOTE_SIGNAL",
   signal_decided: "BRAIN_DEMOTE_SIGNAL_DECIDED",
+  search_exhausted: "BRAIN_DEMOTE_SEARCH_EXHAUSTED",
   image_only: "BRAIN_DEMOTE_IMAGE_ONLY",
   two_stage_promise: "BRAIN_DEMOTE_TWO_STAGE",
   closed_ack_wait: "BRAIN_DEMOTE_CLOSED_ACK",
@@ -29,11 +30,17 @@ const DEFAULT_ON: Record<OverrideFamily, boolean> = {
   // 竹内さんの決定で入れた場面の信号（室内写真 S11・内覧の流れの段階）。10/13 の試験で下げると q017（室内写真→返信）・q045（内覧の希望→全力サポート）の道が外れた
   //   ＝ブレインの材料（場面の証拠・内覧の流れの行）だけではまだ届かない → 今は上書きのまま（食い違いのログも出ない）。材料を強くしてから下げる
   signal_decided: false,
+  // 竹内さんの決定（10/13）の見本の確かめ: 出し切りの書き換え（search-exhausted）は既に「お礼・了承だけの番は外す＋送れる候補が無い＋お客様の返信の番で、ブレインが物件を
+  //   もっと出す（物件の AIX／探す約束）と読んだ＝刺さらなかった」の時だけ。下げると q001・q002・q006・q007（竹内さんは新着待ち）がピックアップの約束になった（10/13 試験）
+  //   → 書き換えは残す。直すのはお礼の番に全力サポートを2つ目に並べていた所（search-result-choice ackOnly）＋材料の行
+  search_exhausted: false,
   image_only: true,
   two_stage_promise: true,
   closed_ack_wait: true,
   viewing_day_ack: true,
-  turn_route_guards: true,
+  // 4-6（10/13 試験）: ブレイン自身の AIX（llm）への関所を下げると q052（決まった内覧の後のオンライン内見の了承→待ち合わせ）・q072（〇日以降の事情→内覧調整）の道が外れた
+  //   ＝この関所はブレイン自身の読み違いも正している → 今は上書きのまま（BRAIN_DEMOTE_TURN_GUARDS=on で下げる）。材料（今の番は内覧を頼んでいない等）を足してから下げる
+  turn_route_guards: false,
 };
 
 export function overrideDemoted(f: OverrideFamily, env: Env = process.env): boolean {
@@ -106,4 +113,22 @@ export function closedAckMaterialLine(staffLine: string): string {
 export function viewingDayAckMaterialLine(staffLine: string): string {
   const q = Array.from(String(staffLine ?? "").replace(/\s+/g, " ")).slice(0, 40).join("");
   return `【内覧当日の送り出しの後のお礼だけ（材料）】今日は内覧の日で、こちらの最後の送信は送り出し（「${q}」）、お客様の今の発言はお礼・了承だけ。実データ（180日）: この場面でスタッフは返信せず、内覧が終わってから「本日お時間頂きありがとうございました」（AIX【挨拶→内覧後】・60件）を送っている。同じ送り出しを繰り返す返信は書かない`;
+}
+
+// ─── 竹内さんの決定（10/13・feedback_zenryoku_support_timing）: AIX【全力サポート】の出し時 ─────────────────
+// 旧（search-exhausted）: 出し切りの印（全部ピックアップ・新着待ちの約束・物件の AIX の送付）があれば、ブレインが物件の AIX を選んでも主を【全力サポート】に書き換えた。
+// 新: 出し切りの印だけで全力サポートを主にしない。全力サポートは「お客様から返信が来た＋送った物件が刺さらなかった（反応が薄い・断り）＋送れる物件が無い」がそろった時に、
+//   約束して固める（次に物件が見つかったら決める）。お礼・了承（よろしくお願いします）の番はまず返信で完了→次の一手は物件ピックアップ（複数の時）か物件オススメ（1件の時）。
+//   これはブレインが決める（材料の行を LLM の前に渡す・後の書き換えはしない＝ログに残す）。戻す BRAIN_DEMOTE_SEARCH_EXHAUSTED=off（旧の書き換え）
+export function zenryokuTimingMaterialLine(i: { exhausted: boolean; markerAt: string | null; ackOnly: boolean; pickupReady: boolean | null }): string {
+  const head = "【全力サポートの出し時（材料・竹内さんの決まり 10/13）】AIX【全力サポート】は、お客様から返信が来て、送った物件が刺さらなかった（反応が薄い・見送り・断り）上で、送れる物件が無い時に、約束して固める（次に物件が見つかったら決める）。出し切りの印だけでは主にしない。";
+  const ack = i.ackOnly ? "今の発言はお礼・了承だけ＝まず返信で完了させ（下書きを出す）、次の一手は物件ピックアップ（送れる物件が複数）か物件オススメ（1件）。全力サポートにしない。" : "";
+  const ex = i.exhausted
+    ? `この会話は今の条件の物件を一度出し切っている（${i.markerAt ? `印 ${i.markerAt.slice(0, 10)}` : "印あり"}）。${i.pickupReady === true ? "売上サポに送れる新しい候補がある＝物件の AIX。" : "送れる新しい候補は無い。"}`
+    : "";
+  return `${head}${ex}${ack}`;
+}
+/** 全力サポートの出し時の材料の行（既定 on・ZENRYOKU_TIMING_MATERIAL=off で止める） */
+export function zenryokuMaterialEnabled(env: Env = process.env): boolean {
+  return (env.ZENRYOKU_TIMING_MATERIAL ?? "").trim().toLowerCase() !== "off";
 }

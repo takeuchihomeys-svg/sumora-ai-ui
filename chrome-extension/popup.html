@@ -26,10 +26,12 @@
         <!-- 2026-10-06 v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」:
              モードの帯（青い帯）をやめ、今の動きの説明はここの小さな灰色の印にマウスを乗せた時だけ出す（一時停止中は ⏸） -->
         <span id="mode-dot" class="mode-dot" style="display:none"></span>
-        <select id="mode-select" class="mode-select" title="モード：通常／スタッフ（自動化を無視・2時間で自動OFF）／AIX連動（AIXの指示で自動検索）">
+        <select id="mode-select" class="mode-select" title="モード：通常／スタッフ（今の人が押す案内・2時間で自動OFF）／自動（もともとの自動検索）">
           <option value="normal">通常</option>
           <option value="staff">スタッフ</option>
-          <!-- v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: AIX連動（自動検索）は今は選べない（mode-core.js GUIDE_ONLY） -->
+          <!-- 2026-11-10 竹内「拡張に3つのモードを並べる: 通常／スタッフ（今の人が押す案内）／自動（もともとの自動検索）」:
+               自動モードを選んだ時だけ自動の道を開く（mode-core.js の AUTO_MODE・GUIDE_ONLY） -->
+          <option value="aix">自動</option>
         </select>
       </div>
       <!-- サイドパネル: お客さん一覧に戻る／下のバー: 折りたたむ（モードの切り替えではない） -->
