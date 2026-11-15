@@ -8,12 +8,19 @@ import { allocationFromMeta } from "../app/lib/conductor-allocation";
 import { buildConductorBrief, BRIEF_NONE } from "../app/lib/conductor-brief";
 import { briefLineForRole } from "../app/lib/compose-brief-roles";
 import { compareTurn } from "./feeling-conductor-count";
+import { FOCUS_KINDS, type Focus as FocusReal } from "../app/lib/conductor-focus";
+import { NEXT_DEST, NEXT_STRENGTH, type NextDest as NDReal, type NextStrength as NSReal } from "../app/lib/next-move-types";
+import type { Focus as FocusLocal, NextDest as NDLocal, NextStrength as NSLocal } from "../app/lib/feeling-conductor-table";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const withEnv = (v: string | null, f: () => void) => { const k = "FEELING_CONDUCTOR_TABLE"; const old = process.env[k]; if (v == null) delete process.env[k]; else process.env[k] = v; try { f(); } finally { if (old == null) delete process.env[k]; else process.env[k] = old; } };
 const mind = (state: string, extra: Record<string, unknown> = {}) => ({ customer_mindset: { state, anxiety: null, hesitation: null, decideGap: null, ...extra } });
 
+// 型の名前が元の部品と同じ（import しない代わりに突き合わせる）
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const _s1: Same<FocusLocal, FocusReal> = true; const _s2: Same<NDLocal, NDReal> = true; const _s3: Same<NSLocal, NSReal> = true; void _s1; void _s2; void _s3;
+t("型の名前が conductor-focus・next-move-types と同じ", () => { assert.equal(FOCUS_KINDS.length, 7); assert.equal(NEXT_DEST.length, 10); assert.equal(NEXT_STRENGTH.length, 5); });
 t("既定 off・shadow は判断に使わない", () => {
   assert.equal(feelingTableMode({}), "off");
   assert.equal(feelingTableMode({ FEELING_CONDUCTOR_TABLE: "shadow" }), "shadow");

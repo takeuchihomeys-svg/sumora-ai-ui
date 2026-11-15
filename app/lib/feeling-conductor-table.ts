@@ -11,8 +11,11 @@
 // ■ スイッチ FEELING_CONDUCTOR_TABLE: off（既定・何もしない）／shadow（meta.feeling_conductor に記録だけ）／on（記録＋重点・優先度の表の手がかり・指示書の次の一手の強さ・具体の一手・書き手への欄に使う）
 //   ②の強さの言葉 → 次の一手の強さ（next-move-types.NextStrength）への読み替え: 押す=strong・添える=invite・待つ=door・引く=none（作業員I の読み替え・竹内さんの決定ではない＝要確認）
 
-import type { Focus } from "./conductor-focus";
-import type { NextDest, NextStrength } from "./next-move-types";
+// 型は他の部品から import しない（next-move-types は型だけでも 1,877 ファイルを引き、brain-core の型と輪になって型の検査が重くなる＝11/15 リモートの組み立てで OOM）。
+//   名前は conductor-focus.FOCUS_KINDS・next-move-types.NEXT_DEST/NEXT_STRENGTH と同じ（scripts/test-feeling-conductor-table.ts が突き合わせる）
+export type Focus = "answer" | "promise_make" | "promise_keep" | "ease" | "close" | "propose" | "relation";
+export type NextDest = "viewing" | "apply" | "estimate" | "ask_send" | "ask_condition" | "keep_send" | "wait_check" | "answer_only" | "door" | "none";
+export type NextStrength = "strong" | "invite" | "together" | "door" | "none";
 
 type Env = Record<string, string | undefined>;
 type M = Record<string, unknown>;
