@@ -7,7 +7,7 @@
 //   → 統括に録画データを見せて改善の順番を決めさせる。私は材料を揃える係に徹する。
 //
 // 実行: npx tsx app/lib/__tests__/auto-mode-improve.test.ts
-import { compareFields, autoModeCandidates } from "../auto-mode-improve";
+import { compareFields, autoModeCandidates, filterReallyMissing } from "../auto-mode-improve";
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -104,6 +104,41 @@ console.log("\n■ ⑦ なぜ必要かをコードに残している");
   ok("推測で直して失敗したと書いてある", /推測で直す/.test(src));
   ok("費用の上限を付けると書いてある", /費用がかかる物は.*上限/.test(src));
   ok("0.15以上は違う所と書いてある", /0\.15/.test(src));
+}
+
+console.log("\n■ ⑧ 束に入っている物を「足りない」と言わない（統括の把握）");
+{
+  /**
+   * ⚠ 実測の失敗: 統括が「人が押す欄を自動が押していない」と10欄挙げたが、
+   *   7欄は既に束に入っていた。統括が「手本に無い」と「束に入っていない」を混同していた。
+   */
+  const onlyHuman = ["img", "span", "update_date", "rental_cost2", "div.building_tr", "nazo_new"];
+  const bundleKeys = {
+    points: ["update_date", "rental_cost2", "square_meter_l"],
+    next: ["update_date→rental_cost2", "required_time→transportation_id"],
+  };
+  const r = filterReallyMissing(onlyHuman, bundleKeys);
+  ok("束にある欄は「足りない」に入れない", !r.missing.includes("update_date"), r.missing);
+  ok("束にある欄は covered に入る", r.covered.includes("update_date"));
+  ok("束に無い欄は missing に入る", r.missing.includes("nazo_new"), r.missing);
+  /**
+   * ⚠ 期待値の確認: `img`・`span`・`div.building_tr` は **束に無い**ので missing が正しい。
+   *   束にあるのは `update_date` と `rental_cost2` の2つだけ（points と next に1つずつ）。
+   */
+  ok("数が合う（足りない4件・束にある2件）", r.missing.length === 4 && r.covered.length === 2, r);
+
+  // ⚠ 部分一致の罠: `img` が `img.room_layout_image` に当たって誤って除外しない
+  const r2 = filterReallyMissing(["img"], { points: ["img.room_layout_image"], next: [] });
+  ok("⚠ 部分一致で誤って除外しない（img は img.room_layout_image と別）", r2.missing.includes("img"), r2);
+
+  // next の「A→B」は区切りで見る
+  const r3 = filterReallyMissing(["rental_cost2"], { points: [], next: ["update_date→rental_cost2"] });
+  ok("next の「A→B」で一致すれば covered", r3.covered.includes("rental_cost2"), r3);
+  const r4 = filterReallyMissing(["rental"], { points: [], next: ["update_date→rental_cost2"] });
+  ok("⚠ 途中の文字では一致にしない（rental は rental_cost2 と別）", r4.missing.includes("rental"), r4);
+
+  ok("空でも落ちない", filterReallyMissing([], {}).missing.length === 0);
+  ok("null でも落ちない", filterReallyMissing(null as never, null as never).missing.length === 0);
 }
 
 console.log(`\n結果: 合格 ${pass} / 不合格 ${fail}`);

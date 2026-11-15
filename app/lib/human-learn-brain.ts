@@ -1216,7 +1216,27 @@ export function buildHumanLearnBundle(
           return { w: Number(x.shot_w) || 0, hasKey: !!x.shot_key, learned: !!(sl && typeof sl === "object"), fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0 };
         }));
         const hl = auditHumanLike(list as never);
-        return autoModeCandidates(cmp.gaps, {
+        /**
+         * ★ 2026-11-15 竹内さん「このように統括は弱い部分ちゃんと把握するようにする」:
+         *
+         *   ⚠ 実測の失敗: 統括が「人が押す欄を自動モードが押していない」と**10欄**挙げたが、
+         *     **7欄は既に束に入っていた**（`points`/`next` にあった）。
+         *     統括が「手本に無い」と「束に入っていない」を**混同**していた。
+         *
+         *   → **束に入っているかどうか**を判定して、本当に足りない物だけを候補にする。
+         *     `points` = 押す位置、`next` = 押す順番。どちらかに入っていれば「束にある」。
+         */
+        const inBundle = new Set<string>([
+          ...Object.keys((points ?? {}) as Record<string, unknown>),
+          ...Object.keys((next ?? {}) as Record<string, unknown>),
+        ]);
+        const reallyMissing = cmp.gaps.onlyHuman.filter((f) => {
+          if (inBundle.has(f)) return false;
+          // `next` は「A→B」の形なので部分一致でも見る
+          for (const k of inBundle) if (k.includes(f)) return false;
+          return true;
+        });
+        return autoModeCandidates({ ...cmp.gaps, onlyHuman: reallyMissing }, {
           shotTodo: g.todo,
           changedWithoutClick: hl.changedWithoutClick.length,
           cursorPct: hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : 100,

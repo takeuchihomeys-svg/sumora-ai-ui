@@ -151,6 +151,46 @@ export function compareFields(
 }
 
 /**
+ * ★ 2026-11-15 竹内さん「このように統括は弱い部分ちゃんと把握するようにする」:
+ *
+ *   **「手本に無い」と「束に入っていない」を混同しない**（純関数）。
+ *
+ *   ⚠ 実測の失敗: 統括が「人が押す欄を自動モードが押していない」と**10欄**挙げたが、
+ *     **7欄は既に束に入っていた**（`points`/`next` にあった）。
+ *     統括は「人が押した欄」と「束に入っている欄」を**別々に見ていなかった**。
+ *
+ *   → **束に入っている物を除いて**、本当に足りない欄だけを返す。
+ *     - `points`（押す位置）のキー
+ *     - `next`（押す順番）のキー（「A→B」の形なので部分一致でも見る）
+ *     ⚠ 部分一致は**誤って除外しない**ように、区切りの両側で見る（`f` が独立した欄名の時だけ）。
+ */
+export function filterReallyMissing(
+  onlyHuman: ReadonlyArray<string>,
+  bundleKeys: { points?: ReadonlyArray<string>; next?: ReadonlyArray<string> },
+): { missing: string[]; covered: string[] } {
+  const pts = new Set((Array.isArray(bundleKeys?.points) ? bundleKeys.points : []).filter(Boolean));
+  const nxt = (Array.isArray(bundleKeys?.next) ? bundleKeys.next : []).filter(Boolean);
+  const missing: string[] = [];
+  const covered: string[] = [];
+  for (const f of Array.isArray(onlyHuman) ? onlyHuman : []) {
+    const name = String(f ?? "").trim();
+    if (!name) continue;
+    if (pts.has(name)) { covered.push(name); continue; }
+    /**
+     * ⚠ `next` は「A→B」の形。**完全一致**か、**区切り（→ ・ |）で囲まれた一致**だけ認める。
+     *   単なる `includes` だと `img` が `img.room_layout_image` に当たって誤って除外する。
+     */
+    const hit = nxt.some((k) => {
+      if (k === name) return true;
+      return k.split(/→|・|\|/).map((s: string) => s.trim()).indexOf(name) >= 0;
+    });
+    if (hit) covered.push(name);
+    else missing.push(name);
+  }
+  return { missing, covered };
+}
+
+/**
  * 統括に渡す「改善の候補」（統括が順番を決める）。
  *   ⚠ 費用がかかる物は**必ず上限と概算**を付ける（勝手にお金を使わない）。
  *   ⚠ 効果が大きい順に並べる（別のお客さんの条件で検索する危険 → 押せない → 見た目）。
