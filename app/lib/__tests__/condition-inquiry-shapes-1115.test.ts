@@ -6,8 +6,8 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const kind = (s: string) => classifyConditionTurn(s).kind;
 
-t("既定 off", !inquiryShapes1115On({}) && inquiryShapes1115On({ CONDITION_INQUIRY_SHAPES_1115: "on" }));
-process.env.CONDITION_INQUIRY_SHAPES_1115 = "";
+t("既定 on・off で戻す", inquiryShapes1115On({}) && !inquiryShapes1115On({ CONDITION_INQUIRY_SHAPES_1115: "off" }));
+process.env.CONDITION_INQUIRY_SHAPES_1115 = "off";
 t("off: 部屋の札は今まで通り条件", kind("Ｆ ａｓｅｃｉａ Ｒｕｍｉｎａ（3階/304/1LDK/30.58m²） こちらもお願いします！立て続けで申し訳ありません") === "condition");
 process.env.CONDITION_INQUIRY_SHAPES_1115 = "on";
 for (const s of [
