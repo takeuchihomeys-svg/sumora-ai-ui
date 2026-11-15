@@ -17,6 +17,7 @@
 //   見積書: 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」・「お部屋の募集状況と最大限割引させて頂いたお見積書お送りさせていただきます！！」
 import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
+import { noViewingNoteAllowed } from "./look-hesitation";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
 import { brainAixFollowsContractOn } from "./aix-follows-contract";
@@ -738,7 +739,7 @@ export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStag
   if (!v || v.kind !== "pickup") return v;
   const t = String(i.customerText ?? "");
   const add: string[] = [];
-  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t)) {
+  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t) && noViewingNoteAllowed(t, env)) { // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on は迷いの語がある番だけ
     add.push("お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・申込・お部屋を押さえる一文を足さない（竹内さんはピックアップの約束だけ）");
   }
   // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない
