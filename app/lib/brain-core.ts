@@ -2903,7 +2903,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const brainLedgerInput: LedgerInput = {
     recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, prop_statuses: l.prop_statuses ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
-    lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
+    // 2026-11-15 作業員H（TASK_RESULT_FROM_AIX の届き先の確かめ）: 読みは result を取っているのに、ここで落としていた＝行動台帳の「確認の結果を伝えた（confirmation_reported）」が
+    //   ブレインの台帳には一度も立たなかった（customer-state の台帳は result を渡している）。TASK_RESULT_TO_LEDGER=on の時だけ渡す（既定 off・台帳が変わる＝試験で確かめてから）
+    lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null; result?: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at, ...((process.env.TASK_RESULT_TO_LEDGER ?? "").trim().toLowerCase() === "on" ? { result: t.result ?? null } : {}) })),
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
     recordedFacts,
   };

@@ -2,13 +2,25 @@
 //   ブレインの【空室確認の回答結果（確定事実）】の段が読めるようになる事を、元の番の形（aix_usage_logs の 60日の実物の値の組）で確かめる。LLM も DB も使わない。
 // 実行: npx tsx app/lib/__tests__/task-result-from-aix.test.ts
 import { readFileSync } from "node:fs";
-import { taskResultFromAix, taskResultFromAixOn, buildCheckResultsText } from "../task-result-from-aix";
+import { taskResultFromAix, taskResultFromAixOn, buildCheckResultsText, resultOfAixText } from "../task-result-from-aix";
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
 const PCR = "property_check_result";
 
-ok("既定 off", taskResultFromAixOn({}) === false && taskResultFromAixOn({ TASK_RESULT_FROM_AIX: "on" }));
+ok("既定 on・=off で止める（11/15）", taskResultFromAixOn({}) === true && taskResultFromAixOn({ TASK_RESULT_FROM_AIX: "off" }) === false);
+// 11/15 監査の実物の形（数字・名前は伏せた）: 型は募集終了なのに文は2番手＝付けない
+{
+  const t2 = "お送り頂きました物件の募集状況確認させて頂きましたところ、〇〇は既に1番手のお申し込みが入っており、現在2番手以降でのお申込み受付となるお部屋となります！！";
+  ok("文の読み: 2番手", resultOfAixText(t2) === "second_position");
+  ok("型と文が食い違えば付けない（unavailable×2番手）", taskResultFromAix({ aixType: "property_check_result", checkPattern: "available", propStatuses: ["unavailable"], text: t2 }) === null);
+  const t3 = "お送り頂きました〇〇につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！";
+  ok("文の読み: 募集に出ていない＝埋まった", resultOfAixText(t3) === "taken");
+  ok("型と文が同じなら付ける", taskResultFromAix({ aixType: "property_check_result", checkPattern: "unavailable", propStatuses: ["unavailable"], text: t3 })?.result === "taken");
+  const t4 = "お送り頂きました物件の中で〇〇 別のお部屋ですが#号室現在募集中となります！！";
+  ok("同じ建物の別の部屋（alternative）は文の募集中と比べない", taskResultFromAix({ aixType: "property_check_result", checkPattern: "available", propStatuses: ["alternative"], text: t4 })?.result === "taken");
+  ok("文が無い時は今まで通り型だけで", taskResultFromAix({ aixType: "property_check_result", checkPattern: "unavailable", propStatuses: ["unavailable"] })?.result === "taken");
+}
 ok("募集中（available・1件・99回の形）→ available", taskResultFromAix({ aixType: PCR, checkPattern: "available", propStatuses: ["available"], propertyNames: ["サンプル本町 502"] })?.result === "available");
 ok("募集中が2件そろう（36回の形）→ available", taskResultFromAix({ aixType: PCR, checkPattern: "available", propStatuses: ["available", "available"] })?.result === "available");
 ok("募集終了（unavailable・物件ごとの値なし・36回の形）→ taken", taskResultFromAix({ aixType: PCR, checkPattern: "unavailable", propStatuses: null })?.result === "taken");
