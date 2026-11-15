@@ -5,8 +5,9 @@
 //     鍵らしい名前（switch-fingerprint の SECRET_NAME）はもともと表に入っていない。試験の仕組みが決めるスイッチ（LLM_・EXAM_）と
 //     本番の外の動き（AUTOMATION_・NEXT_PUBLIC_SUPABASE）は入れない。
 //   重なりの順: 本番の組 → 係の設定の examEnv → 依頼の env（依頼が一番強い＝試すスイッチは依頼の値）
-//   止める: EXAM_PROD_ENV=off（係・依頼の env）。入れる: 係の設定 config.json の "prodEnv": "on"（＋ "prodEnvFrom": ISO＝その時刻から）か依頼の --prod-env
-//   ⚠ 本番の組を入れると録音の鍵（プロンプト）が変わる＝夜の基準も同じ組で作り直す（作り直しは1回・約$5〜12）。だから既定は off・on は夜の基準と同時に
+//   既定 on（2026-11-15 統括役の決定）: 係の設定 config.json の "prodEnvFrom"（ISO）の時刻から入れる（夜の基準の作り直しと同じ時刻にそろえる）。
+//   止める: EXAM_PROD_ENV=off（係・依頼の env）か config.json の "prodEnv": "off"。依頼の --prod-env は時刻を待たずに入れる
+//   ⚠ 本番の組を入れると録音の鍵（プロンプト）が変わる＝夜の基準も同じ組で作り直す（作り直しは1回・約$5〜12・11/15 夜に作り直す）
 import { readFileSync, writeFileSync, statSync } from "node:fs";
 
 export const PROD_ENV_SKIP = /^(?:LLM_|EXAM_|AUTOMATION_|NEXT_PUBLIC_SUPABASE)/;
@@ -27,14 +28,14 @@ export function parseSwitchText(text: string): Record<string, string> {
   return out;
 }
 
-/** 入れるか: EXAM_PROD_ENV（on/off）が一番強い → 依頼の印 → 係の設定（prodEnv: "on"・prodEnvFrom の時刻から） */
+/** 入れるか: EXAM_PROD_ENV（on/off）が一番強い → 依頼の印 → 係の設定（既定 on・prodEnv: "off" で止める・prodEnvFrom の時刻から） */
 export function prodEnvWanted(o: { env?: Record<string, string | undefined>; jobProdEnv?: boolean; config?: { prodEnv?: string; prodEnvFrom?: string } | null; nowMs?: number }): boolean {
   const e = String(o.env?.EXAM_PROD_ENV ?? "").trim().toLowerCase();
   if (e === "off") return false;
   if (e === "on") return true;
   if (o.jobProdEnv) return true;
   const c = o.config;
-  if (String(c?.prodEnv ?? "").trim().toLowerCase() !== "on") return false;
+  if (String(c?.prodEnv ?? "").trim().toLowerCase() === "off") return false;
   return !c?.prodEnvFrom || (o.nowMs ?? Date.now()) >= Date.parse(c.prodEnvFrom);
 }
 

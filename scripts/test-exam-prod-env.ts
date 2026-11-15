@@ -8,7 +8,9 @@ t("K=V の並び → env（LLM_・EXAM_・AUTOMATION_・鍵らしい名前は入
   assert.deepEqual(e, { BRAIN_MESSAGE_PLAN: "off", CHECK_REQUEST_FOCUS: "on", NOW_REGION: "iad1" });
 });
 t("入れるか: EXAM_PROD_ENV が一番強い → 依頼の印 → 係の設定（時刻から）", () => {
-  assert.equal(prodEnvWanted({}), false);
+  assert.equal(prodEnvWanted({}), true, "既定 on");
+  assert.equal(prodEnvWanted({ config: { prodEnv: "off" } }), false);
+  assert.equal(prodEnvWanted({ config: { prodEnvFrom: "2026-11-15T13:00:00Z" }, nowMs: Date.parse("2026-11-15T12:00:00Z") }), false);
   assert.equal(prodEnvWanted({ jobProdEnv: true }), true);
   assert.equal(prodEnvWanted({ jobProdEnv: true, env: { EXAM_PROD_ENV: "off" } }), false);
   assert.equal(prodEnvWanted({ env: { EXAM_PROD_ENV: "on" } }), true);
