@@ -5638,6 +5638,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         }
       }
       const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
+        // 2026-11-15 作業員H（TSUNAGI_ONE_PLACE・既定 off）: つなぎを決めるのは appeal-timing の判定1つ＝2段の NO_VIEWING はこれを読む
+        appeal: appealTiming ? { kind: appealTiming.verdict.kind, level: appealTiming.verdict.level } : null,
         screeningBrainReply,
         sentReactionBrainReply,
         // 2026-11-13 作業員7b（ASK_PARTS_SPLIT・既定 off）: ブレインの依頼の部分が全部 今言えるか（持ち込みの網を下げる）

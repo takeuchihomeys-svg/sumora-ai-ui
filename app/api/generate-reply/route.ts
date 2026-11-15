@@ -390,6 +390,7 @@ import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
 import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
+import type { AppealDecision } from "@/app/lib/tsunagi-one-place";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -5707,7 +5708,7 @@ async function handleGenerateReply(req: NextRequest) {
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）
-      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithNoViewing({ customerText: customerMsgUnits.join("\n") || (message ?? ""), direction: replyDirectionWithKeep({
+      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithNoViewing({ customerText: customerMsgUnits.join("\n") || (message ?? ""), appeal: (brainMeta as { appeal_timing?: AppealDecision } | null | undefined)?.appeal_timing ?? null, direction: replyDirectionWithKeep({
         direction: brainDirForGen(brainMeta?.reply_direction), scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
         staffToday: recentMessages.filter((m) => m.sender === "staff" && m.createdAt && jstParts(m.createdAt).d === jstParts().d && jstParts(m.createdAt).m === jstParts().m).map((m) => m.text ?? ""),
         firstContact: isFirstEverReplyFromMsgs === true, nearKeepShare: composeNearKeepShare,
