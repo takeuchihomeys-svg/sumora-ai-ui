@@ -393,10 +393,32 @@
      *   拡張が押すたびに、**どこを押したか・どれくらい間が空いたか**を記録側へ知らせる。
      *   ⚠ これは**人の実測とは別の入れ物**（`axlx_auto_motion`）に貯まる（人の速さを汚さない）。
      */
-    try {
-      var _n = (typeof self !== "undefined" ? self : window).__axlxNoteAutoOp;
-      if (typeof _n === "function") _n("tap", _tapEl, null);
-    } catch (_) {}
+  try {
+    var _n = (typeof self !== "undefined" ? self : window).__axlxNoteAutoOp;
+    if (typeof _n === "function") _n("tap", _tapEl, null);
+  } catch (_) {}
+  /**
+   * ★ 2026-11-15 竹内さん「プルダウンの場合で押す部分もちゃんと理解できていない」
+   *   「所在地のところ1つずつ押す前におそらく自動で入れているからエラー起きている」
+   *
+   *   ⚠ **実測で判明（自動モードの弱点の核心）**:
+   *     自動モードの機械の操作 17手のうち、**click が11・change が6**。
+   *     しかし `rental_cost2`・`transportation_id`・`required_time`・`structured_date`・`update_date` は
+   *     **change だけ**で click が無かった（＝「押さずに値を入れた」ように見える）。
+   *     所在地の区は**機械が1回も押していない**（0回）。
+   *     **押した位置（`point_fields`）が0種類**・`one_city` の操作が 0/100枚。
+   *
+   *   ⚠ 原因: この `tap`（見えるカーソルの押下）は `__axlxNoteAutoOp`（自動用の別の入れ物）にしか
+   *     記録しておらず、**`shot_ops`（点検・学習に載る方）には積んでいなかった**。
+   *     → 記録を見ると「押していない」ように見え、統括が「直接入力している」と判断していた。
+   *
+   *   → **`__axlxRecNoteOp` も呼ぶ**（押した物の名前を `shot_ops` に残す）。
+   *     ⚠ これで「押してから値が変わった」が記録で確かめられる。
+   */
+  try {
+    var _rec = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
+    if (typeof _rec === "function" && _tapEl) _rec("click", _tapEl);
+  } catch (_) {}
     /**
      * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件
      *   ⚠ 人が押した操作（isTrusted）だけを写真に付けていたので、**録画モードの写真には何も付かなかった**

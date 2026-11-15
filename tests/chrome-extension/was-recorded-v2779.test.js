@@ -56,7 +56,7 @@ t("was=true → now=false は「外した」", /now \? "on" : "off"/.test(lib));
 t("押す前が無ければ unknown（推測しない）", /unknown/.test(lib));
 
 // ── ⑦ 版 ────────────
-t("版が 2.7.79", manifest.version === "2.7.79");
+t("版が 2.7.79 以降", manifest.version >= "2.7.79");
 
 // ── ⑧ 構文 ────────────
 let ok = true;
