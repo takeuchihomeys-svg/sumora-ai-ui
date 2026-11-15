@@ -206,7 +206,7 @@ export function keepAllQuestionsRule(contractNote: string): boolean {
  *   入れる APPLY_WORDING_1028=on（既定 off）。決めるのは書く役
  */
 export function applyWording1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_WORDING_1028 ?? "").trim().toLowerCase() === "on";
+  return (env.APPLY_WORDING_1028 ?? "").trim().toLowerCase() !== "off";
 }
 export function applyPushWordingLine(customerTexts: ReadonlyArray<string | null | undefined>): string {
   const recent = customerTexts.slice(-4).map((t) => String(t ?? "")).join("\n");

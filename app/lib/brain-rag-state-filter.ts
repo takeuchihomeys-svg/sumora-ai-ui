@@ -8,7 +8,7 @@
 // スイッチ: BRAIN_RAG_STATE_FILTER=on（既定 off＝今と同じ件数・同じ行）
 
 export function brainRagStateFilterOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_RAG_STATE_FILTER ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_RAG_STATE_FILTER ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 会話の状態の名前（conversations.status と同じ語） */

@@ -13,6 +13,6 @@ t("区切りが4を超える時は後ろの B から外す", r2.filter((b) => b.
 t("元の配列は変えない", !!B.cache_control);
 t("場面の文が空なら今のまま", withSceneBlock([C], "  ", 2).length === 1);
 t("文字の集まりは同じ（並びだけ）", withSceneBlock([A, C], "一覧", 2).map((b) => b.text).sort().join() === ["一覧", "A", "会話の材料"].sort().join());
-t("既定 off", !brainCacheOrderOn({}) && brainCacheOrderOn({ BRAIN_CACHE_ORDER: "on" }));
+t("既定 on（2026-11-15）・off で戻す", brainCacheOrderOn({}) && brainCacheOrderOn({ BRAIN_CACHE_ORDER: "on" }) && !brainCacheOrderOn({ BRAIN_CACHE_ORDER: "off" }));
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

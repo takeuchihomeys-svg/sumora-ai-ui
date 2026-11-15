@@ -23,7 +23,7 @@ export function broughtMaxAgeDays(env: Record<string, string | undefined> = type
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 export function aixBroughtPrefillEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? env.AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() === "on";
+  return (env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? env.AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() !== "off";
 }
 
 /**
@@ -98,7 +98,7 @@ export function orderByCustomerText(names: ReadonlyArray<string | null | undefin
   return list.map((n, i) => ({ n, i, p: pos(n) })).sort((a, b) => (a.p - b.p) || (a.i - b.i)).slice(0, max).map((x) => x.n);
 }
 export function aixEstimatePrefillEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() === "on";
+  return (env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() !== "off";
 }
 
 /**
@@ -143,8 +143,8 @@ export function checkFormVacatingHoldOn(env: Record<string, string | undefined> 
   return (env.CHECK_FORM_VACATING_HOLD ?? "").trim().toLowerCase() === "on";
 }
 export function checkForm1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CHECK_FORM_1028 ?? "").trim().toLowerCase() === "on";
+  return (env.CHECK_FORM_1028 ?? "").trim().toLowerCase() !== "off";
 }
 export function aixCheckFormMaterialEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_CHECK_FORM_MATERIAL ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_CHECK_FORM_MATERIAL ?? "").trim().toLowerCase() !== "off";
 }

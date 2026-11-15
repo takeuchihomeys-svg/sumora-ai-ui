@@ -5,9 +5,11 @@ const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { f
 const withEnv = <T>(v: string | undefined, f: () => T): T => { const o = process.env.IMAGE_WANT_BURNERS; if (v === undefined) delete process.env.IMAGE_WANT_BURNERS; else process.env.IMAGE_WANT_BURNERS = v; try { return f(); } finally { if (o === undefined) delete process.env.IMAGE_WANT_BURNERS; else process.env.IMAGE_WANT_BURNERS = o; } };
 const pref = "独立洗面台・浴室トイレ別・エアコン付き・ペット相談可・三口ガスコンロ・カウンターキッチン・カウンターキッチン[希望]";
 const wants = extractImageWants({ conditions: { preferences: pref } } as never);
-const off = withEnv(undefined, () => imageAnalysisNeed(wants));
+const off = withEnv("off", () => imageAnalysisNeed(wants));
 const on = withEnv("on", () => imageAnalysisNeed(wants));
-t("既定 off: 今まで通り（コンロは出ない）", !off.labels.some((l) => /コンロ/.test(l)), off);
+const dflt = withEnv(undefined, () => imageAnalysisNeed(wants));
+t("off で戻す: 今まで通り（コンロは出ない）", !off.labels.some((l) => /コンロ/.test(l)), off);
+t("既定 on（2026-11-15）: ガスコンロ3口が出る", dflt.labels.includes("ガスコンロ3口"), dflt);
 t("on: ガスコンロ3口が出る", on.labels.includes("ガスコンロ3口"), on);
 t("ラベル", burnersLabel("三口ガスコンロ") === "ガスコンロ3口" && burnersLabel("2口コンロ希望") === "コンロ2口");
 console.log(`${pass} passed, ${fail} failed`);

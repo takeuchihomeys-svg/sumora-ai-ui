@@ -257,7 +257,7 @@ export function imageAnalysisNeed(wants: ImageWant[]): ImageAnalysisNeed {
       //   コンロの口数は strong=false で「画像で確かめたい希望」に出ていなかった（ロトの条件「三口ガスコンロ」）。
       //   写真の読みはコンロを両向きに読み違える（equipment-question の PHOTO_REQUIRED）＝点にはせず、スタッフが資料・写真で確かめる希望として出す。
       //   入れる IMAGE_WANT_BURNERS=on（既定 off）
-      const burnersOn = key === "burners" && (process.env.IMAGE_WANT_BURNERS ?? process.env.NEXT_PUBLIC_IMAGE_WANT_BURNERS ?? "").trim().toLowerCase() === "on";
+      const burnersOn = key === "burners" && (process.env.IMAGE_WANT_BURNERS ?? process.env.NEXT_PUBLIC_IMAGE_WANT_BURNERS ?? "").trim().toLowerCase() !== "off";
       if (!f?.strong && !burnersOn) continue;
       // 「収納」は WIC と重なる時は WIC だけ出す
       if (key === "storage" && wantFeatures(w.text).includes("wic")) continue;

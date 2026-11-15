@@ -14,7 +14,7 @@ function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw 
 const GROUND = "かしこまりました！！\n11/1（日）ご案内させて頂きます！！\n\n11/1 13:00に〇〇 \n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n住所: 大阪府大阪市生野区田島5丁目21-3";
 const DRAFT = "はい😊！！\n11/1 13:00 現地でお待ちしております！！\n何卒よろしくお願い致します！！";
 console.log("staff-only-grounded");
-it("切替は既定 off", () => { eq(staffOnlyGroundedEnabled({}), false); eq(staffOnlyGroundedEnabled({ STAFF_ONLY_GROUNDED: "on" }), true); });
+it("切替は既定 on（2026-11-15）・off で戻す", () => { eq(staffOnlyGroundedEnabled({}), true); eq(staffOnlyGroundedEnabled({ STAFF_ONLY_GROUNDED: "on" }), true); eq(staffOnlyGroundedEnabled({ STAFF_ONLY_GROUNDED: "off" }), false); });
 it("下書きは内覧の確定に当たる（今まで通り）", () => eq(findStaffOnlyFact(DRAFT)?.kind, "viewing_fixed"));
 it("同じ日付・時刻をこちらが送っていれば根拠あり", () => eq(isStaffOnlyFactGrounded(findStaffOnlyFact(DRAFT), GROUND), true));
 it("違う時刻・材料なしは根拠なし", () => {
@@ -26,8 +26,8 @@ it("「10月28日 17時」の書き方も同じ日時とみる", () => {
 });
 it("自信の印: on で根拠のある言い直しは staff_only_fact にしない", () => {
   const sig = () => confidenceSignals({ draft: DRAFT, customerText: "かしこまりました！", groundText: GROUND }).map((s) => s.code);
-  delete process.env.STAFF_ONLY_GROUNDED;
-  eq(sig().includes("staff_only_fact"), true);
+  process.env.STAFF_ONLY_GROUNDED = "off"; // 2026-11-15 既定 on にしたので off を明示
+  try { eq(sig().includes("staff_only_fact"), true); } finally { delete process.env.STAFF_ONLY_GROUNDED; }
   process.env.STAFF_ONLY_GROUNDED = "on";
   try { eq(sig().includes("staff_only_fact"), false); } finally { delete process.env.STAFF_ONLY_GROUNDED; }
 });

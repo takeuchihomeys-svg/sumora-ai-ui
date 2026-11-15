@@ -330,7 +330,7 @@ export function templateReplyPartNote(p: TwoMessagePlan | null | undefined, sent
  *   既定 off（TWO_MESSAGE_AFTER_AIX_T_DRAFT=on の時だけ・off は今と同じ＝返信の席だけ）
  */
 export function afterAixTemplateDraftOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? (env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? "")).trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? (env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? "")).trim().toLowerCase() !== "off";
 }
 export function afterAixReplyBrief(p: TwoMessagePlan | null | undefined, sentAix: string | null | undefined, asks: ReadonlyArray<PlanAsk> | null | undefined, env: Env = envOf()): { answers: Array<{ quote: string; answer: string | null }>; role: string; template?: boolean } | null {
   const rest = remainingAfterAix(p, sentAix);
@@ -366,7 +366,7 @@ export function twoMessageAnnounceVisible(v: string | null | undefined, isTestCo
  *   NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_AUTO: 既定 off／on＝YUMA・テスト専用の会話だけ（全員に広げるのは竹内さんの確認の後）
  */
 export function twoMessageAfterAixAutoOn(v: string | null | undefined, isTestConv: boolean): boolean {
-  return (v ?? "").trim().toLowerCase() === "on" && isTestConv;
+  return (v ?? "").trim().toLowerCase() !== "off" && isTestConv;
 }
 
 /** AIX の後の返信の下書きを作る時の指定（generate-reply の replyHint＝スタッフが押した指定）。材料が無ければ "" */

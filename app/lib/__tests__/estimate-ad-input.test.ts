@@ -10,7 +10,7 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 
 console.log("estimate-ad-input");
-it("切替は既定 off", () => { eq(estimateAdInputEnabled({}), false); eq(estimateAdInputEnabled({ NEXT_PUBLIC_ESTIMATE_AD_INPUT: "on" }), true); });
+it("切替は既定 on（2026-11-15）・off で戻す", () => { eq(estimateAdInputEnabled({}), true); eq(estimateAdInputEnabled({ NEXT_PUBLIC_ESTIMATE_AD_INPUT: "on" }), true); eq(estimateAdInputEnabled({ NEXT_PUBLIC_ESTIMATE_AD_INPUT: "off" }), false); });
 it("使う AD の順: 入れた円 → 入れたヶ月×家賃 → 分かった円 → 分かったヶ月×家賃", () => {
   eq(resolveAdYen({ override: { months: null, yen: 70000 }, knownYen: 65000, rent: 65000 }), { yen: 70000, source: "input_yen" });
   eq(resolveAdYen({ override: { months: 1.5, yen: null }, knownYen: 65000, rent: 60000 }), { yen: 90000, source: "input_months" });

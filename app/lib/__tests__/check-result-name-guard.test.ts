@@ -14,7 +14,7 @@ const hist = [
 ];
 const bundle = "【アーバネックス堺筋本町 701号室】\n\n初期費用さらに\n🌟137,750円割引させて頂き\n初期費用：173,480円";
 
-t("既定 off", checkResultNameGuardOn({}) === false && checkResultNameGuardOn({ CHECK_RESULT_NAME_GUARD: "on" }) === true);
+t("既定 on（2026-11-15）・off で戻す", checkResultNameGuardOn({}) === true && checkResultNameGuardOn({ CHECK_RESULT_NAME_GUARD: "on" }) === true && checkResultNameGuardOn({ CHECK_RESULT_NAME_GUARD: "off" }) === false);
 t("費用の文の見出しから物件名", estimateHeadName(bundle) === "アーバネックス堺筋本町 701号室");
 t("見出しが無い・仮の名前は null", estimateHeadName("初期費用：1円") === null && estimateHeadName("【物件①】") === null);
 const names = propertyNamesInTexts(hist);

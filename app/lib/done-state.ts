@@ -245,7 +245,7 @@ export function viewingHoursOf(text: string | null | undefined): number[] {
 export function viewingAckLine(appointment: LedgerFacts["viewingAppointment"]): string {
   const a = appointment;
   // 2026-10-28 竹内さん #16（かずき「11/2日は何卒」）: DATE_SLASH_NO_NICHI=on は「M/Dは」（スラッシュの日付の後に「日」を付けない）
-  const suffix = process.env.VIEWING_ACK_DATE_SUFFIX === "off" ? "" : (process.env.DATE_SLASH_NO_NICHI ?? "").trim().toLowerCase() === "on" ? "は" : "日は";
+  const suffix = process.env.VIEWING_ACK_DATE_SUFFIX === "off" ? "" : (process.env.DATE_SLASH_NO_NICHI ?? "").trim().toLowerCase() !== "off" ? "は" : "日は";
   const day = !a ? "" : a.day === "today" ? "本日" : a.day === "tomorrow" ? "明日" : a.day === "later" && a.dateMD ? `${a.dateMD}${suffix}` : "";
   return `${day}何卒よろしくお願い致します！！`;
 }

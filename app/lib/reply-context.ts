@@ -2872,7 +2872,7 @@ export const SCHEDULE_ASK_RE = /(?:如何|いかが)でしょうか/;
  *   「〜について／方法／手続き／流れ」の説明の形は0通＝外しても内覧の決め打ちを見逃さない。FC_FALSE_BLOCK_1027=on の時だけ（既定 off）
  */
 export function fcFalseBlockFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() === "on";
+  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() !== "off";
 }
 const STAFF_ASSERT_SCHEDULE_TOPIC_FIX_RE = new RegExp(STAFF_ASSERT_SCHEDULE_RE.source.replace("|ご案内させて(?:頂|いただ)きます[！!]*$", "|(?<!(?:について|につきまして|方法|手続き|流れ|内容|詳細|書類)[をのは]?)ご案内させて(?:頂|いただ)きます[！!]*$"), "m");
 /** 返信が内覧の日時を決め打ちで締めているか（スイッチ on の時は手続きの説明の「〜についてご案内させて頂きます」を数えない） */

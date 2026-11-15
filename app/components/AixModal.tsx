@@ -1464,7 +1464,7 @@ export default function AixModal({
   //   ①②③の枠に、見積書ツールへの引き継ぎ（/api/estimate-handoff の target＋candidates）の物件名をお客様が書いた順に出す。入れる: NEXT_PUBLIC_AIX_ESTIMATE_PREFILL=on（既定 off）
   const [estimateSlotNames, setEstimateSlotNames] = useState<string[]>([]);
   useEffect(() => {
-    if ((process.env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() !== "on") return;
+    if ((process.env.NEXT_PUBLIC_AIX_ESTIMATE_PREFILL ?? "").trim().toLowerCase() === "off") return;
     if (actionType !== "estimate_sheet" || !estimateMultiMode || !conversationId) return;
     let cancelled = false;
     fetch(`/api/estimate-handoff?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER })
@@ -1485,7 +1485,7 @@ export default function AixModal({
   }, [actionType, conversationId]);
   const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
   // 2026-10-28 竹内さん #15（かずき 10/27）: 見積書を複数送る時、枠ごとに物件資料も付け、物件ごとに［物件資料→見積書→文］の順で送る（NEXT_PUBLIC_ESTIMATE_PER_PROPERTY=on）
-  const estPerProp = (process.env.NEXT_PUBLIC_ESTIMATE_PER_PROPERTY ?? "").trim().toLowerCase() === "on";
+  const estPerProp = (process.env.NEXT_PUBLIC_ESTIMATE_PER_PROPERTY ?? "").trim().toLowerCase() !== "off";
   const [estimateMultiPropFiles, setEstimateMultiPropFiles] = useState<(File | null)[]>([null, null, null]);
   const [estimateMultiPropPreviews, setEstimateMultiPropPreviews] = useState<(string | null)[]>([null, null, null]);
   /** 物件ごとの費用の文（見積書のある枠の順＝送る順）。生成し直すたびに作り直す */
@@ -1505,7 +1505,7 @@ export default function AixModal({
   const prefilledRef = useRef(prefilled);
   prefilledRef.current = prefilled;
   const prefillTriedRef = useRef<Set<string>>(new Set());
-  const broughtPrefillOn = (process.env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() === "on";
+  const broughtPrefillOn = (process.env.NEXT_PUBLIC_AIX_BROUGHT_PREFILL ?? "").trim().toLowerCase() !== "off";
   const broughtTriedRef = useRef(false);
   const namePrefill = useMemo(() => {
     const msgs = recentMessages ?? [];
@@ -9244,7 +9244,7 @@ export default function AixModal({
           {/* 送信ボタン（展開中も送信可） */}
           <div className="border-t border-[#f0f2f5] px-4 py-3">
             {/* 2026-10-28 竹内さん #11: LINE から開くメッセージ編集の画面にも「会話を合わせる」（AixModal と同じ会話を合わせる生成・NEXT_PUBLIC_EDIT_CONV_MATCH=on） */}
-            {(process.env.NEXT_PUBLIC_EDIT_CONV_MATCH ?? "").trim().toLowerCase() === "on" && (
+            {(process.env.NEXT_PUBLIC_EDIT_CONV_MATCH ?? "").trim().toLowerCase() !== "off" && (
               <button
                 onClick={async () => { setPreviewBackup(preview); await generate({ conversation_match: true }); }}
                 disabled={loading}

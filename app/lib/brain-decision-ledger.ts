@@ -92,5 +92,5 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
 
 /** digest にブレインの今の状況（turn_contract.situation・80字）を残すか（既定 off・BRAIN_DIGEST_SITUATION=on） */
 export function brainDigestSituationOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_DIGEST_SITUATION ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_DIGEST_SITUATION ?? "").trim().toLowerCase() !== "off";
 }

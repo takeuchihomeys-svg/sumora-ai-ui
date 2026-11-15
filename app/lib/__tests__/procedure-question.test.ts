@@ -227,7 +227,8 @@ describe("PROCEDURE_MOVE_IN_WIDE（実物）", () => {
     ["331b0338 09-10", "ありがとうございます！\n入居時期はいつまでまってもらうことできますか？", "hold_period"],
   ];
   for (const [name, t, fact] of hits) {
-    it(`止める（off）と届かない: ${name}`, () => { const o = process.env.PROCEDURE_MOVE_IN_WIDE; process.env.PROCEDURE_MOVE_IN_WIDE = "off"; try { ok(!matchCompanyFacts(t).some((f) => f.id === fact), "off なのに届いた"); } finally { if (o === undefined) delete process.env.PROCEDURE_MOVE_IN_WIDE; else process.env.PROCEDURE_MOVE_IN_WIDE = o; } });
+    // 2026-11-15 PROCEDURE_EARLIEST_MOVE_IN も既定 on にした＝「最短入居日」は別の道（EARLIEST）でも届く。WIDE だけの効きを見るため EARLIEST も off を明示（終わったら戻す）
+    it(`止める（off）と届かない: ${name}`, () => { const o = process.env.PROCEDURE_MOVE_IN_WIDE; const oe = process.env.PROCEDURE_EARLIEST_MOVE_IN; process.env.PROCEDURE_MOVE_IN_WIDE = "off"; process.env.PROCEDURE_EARLIEST_MOVE_IN = "off"; try { ok(!matchCompanyFacts(t).some((f) => f.id === fact), "off なのに届いた"); } finally { if (o === undefined) delete process.env.PROCEDURE_MOVE_IN_WIDE; else process.env.PROCEDURE_MOVE_IN_WIDE = o; if (oe === undefined) delete process.env.PROCEDURE_EARLIEST_MOVE_IN; else process.env.PROCEDURE_EARLIEST_MOVE_IN = oe; } });
     it(`on で会社の事実 ${fact} が届く: ${name}`, () => withWide(() => ok(matchCompanyFacts(t).some((f) => f.id === fact), JSON.stringify(matchCompanyFacts(t).map((f) => f.id)))));
   }
   const misses: Array<[string, string]> = [

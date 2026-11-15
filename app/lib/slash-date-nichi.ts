@@ -6,7 +6,7 @@
 //   （「10/13日以降」「9/17日までに」「10/31日ごろ」「10/17日当日」の「日」は日付の日＝外す）。スタッフの送信 365日で 430通中 直す 272通・触らない 1通（7/1日曜日）（前後を目で読んだ）
 //   normalizeBannedPhrasing（手本の入口と返信・AIX の出口の共通）で掛ける。
 export function slashDateNichiOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.DATE_SLASH_NO_NICHI ?? "").trim().toLowerCase() === "on";
+  return (env.DATE_SLASH_NO_NICHI ?? "").trim().toLowerCase() !== "off";
 }
 
 // 「日」の後ろがこれらで始まる時は語の一部（日割・日間 等）なので触らない

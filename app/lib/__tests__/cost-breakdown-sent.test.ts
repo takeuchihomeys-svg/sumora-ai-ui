@@ -14,6 +14,6 @@ const got = pickSentEstimateUrls(rows);
 t("直近の1回の送信だけ・新しい順・重複なし", JSON.stringify(got) === JSON.stringify(["u-b", "u-a"]), got);
 t("無ければ空", pickSentEstimateUrls([]).length === 0);
 t("最大3件", pickSentEstimateUrls([1, 2, 3, 4].map((i) => ({ image_url: `u${i}`, read_at: `2026-10-25T03:0${i}:00Z` }))).length === 3);
-t("既定 off", !costBreakdownSentEstimateOn({}) && costBreakdownSentEstimateOn({ COST_BREAKDOWN_SENT_ESTIMATE: "on" }));
+t("既定 on（2026-11-15）・off で戻す", costBreakdownSentEstimateOn({}) && costBreakdownSentEstimateOn({ COST_BREAKDOWN_SENT_ESTIMATE: "on" }) && !costBreakdownSentEstimateOn({ COST_BREAKDOWN_SENT_ESTIMATE: "off" }));
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

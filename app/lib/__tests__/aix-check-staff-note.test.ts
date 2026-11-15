@@ -10,7 +10,7 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 
 console.log("aix-check-staff-note");
-it("切替は既定 off", () => { eq(aixCheckStaffNoteEnabled({}), false); eq(aixCheckStaffNoteEnabled({ NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE: "on" }), true); });
+it("切替は既定 on（2026-11-15）・off で戻す", () => { eq(aixCheckStaffNoteEnabled({}), true); eq(aixCheckStaffNoteEnabled({ NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE: "on" }), true); eq(aixCheckStaffNoteEnabled({ NEXT_PUBLIC_AIX_CHECK_STAFF_NOTE: "off" }), false); });
 it("10/15 会話D: 条件「ペット2匹（小型犬）可、2人入居可能」＋発言「どうしても2匹難しいですかね？」", () => {
   eq(checkResultStaffNotes("ペット2匹（小型犬）可、2人入居可能", ["どうしても2匹難しいですかね？"]),
     ["※ 小型犬2匹の飼育可否も一緒に管理会社に確認（お客様の条件）", "※ 二人入居の可否も一緒に確認"]);

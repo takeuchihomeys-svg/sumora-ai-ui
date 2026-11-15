@@ -16,7 +16,7 @@ import { PRE_APPLY_STATUSES } from "./application-form-detect";
 export const APPLY_AIX_SUB_MODES: ReadonlySet<string> = new Set(["format", "confirm", "docs_request"]);
 
 export function aixApplyStatusOn(v: string | undefined): boolean {
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 
 /** AIX【申込へ】を送った後に status を applying に上げるか */

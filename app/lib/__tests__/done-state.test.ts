@@ -122,8 +122,10 @@ it("待ち合わせ案内済み（台帳）は決まっている・内覧後の�
   expect(resolveViewingScheduled({ appointment: null, viewingDone: { appointment: appt, thankedAt: "x" }, thread: null }).scheduled).toBe(false);
   expect(viewingAckLine(appt)).toBe("明日何卒よろしくお願い致します！！");
   expect(viewingAckLine(null)).toBe("何卒よろしくお願い致します！！");
-  // 7巡目: 日付の時は「M/D日は」（人の手打ち 10/6日は・10/10日は）
-  expect(viewingAckLine({ ...appt, dateMD: "10/10", day: "later" as const })).toBe("10/10日は何卒よろしくお願い致します！！");
+  // 7巡目: 日付の時は「M/D日は」（人の手打ち 10/6日は・10/10日は）＝DATE_SLASH_NO_NICHI=off の形（2026-11-15 既定 on にしたので off を明示・終わったら戻す）
+  { const old = process.env.DATE_SLASH_NO_NICHI; process.env.DATE_SLASH_NO_NICHI = "off";
+    try { expect(viewingAckLine({ ...appt, dateMD: "10/10", day: "later" as const })).toBe("10/10日は何卒よろしくお願い致します！！"); }
+    finally { if (old === undefined) delete process.env.DATE_SLASH_NO_NICHI; else process.env.DATE_SLASH_NO_NICHI = old; } }
 });
 it("注記は見出しを持ち、未定に戻す2つの定型を名指しで止める（決まっていなければ空）", () => {
   const n = buildViewingScheduledNote({ scheduled: true, source: "meeting_place", label: "9/27 13:00（明日） 現地待ち合わせ" });

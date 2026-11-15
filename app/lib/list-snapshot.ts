@@ -13,7 +13,7 @@ export const LIST_SNAPSHOT_ROWS = 40;
 export const LIST_FIRST_PAGE_TIMEOUT_MS = 6000;
 
 export function listSnapshotOn(v: string | undefined): boolean {
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 
 type Store = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem?(k: string): void };

@@ -202,7 +202,7 @@ if ((process.env.TWO_MESSAGE_PLAN ?? "").trim().toLowerCase() === "off") {
 }
 
 // ⑫ 2026-11-06 弱い所 305: AIX の後の自動の下書き（既定 off・on でも YUMA だけ）
-t("⑫ 既定 off", !twoMessageAfterAixAutoOn(undefined, true));
+t("⑫ 既定 on（2026-11-15・YUMA だけ）・off で戻す", twoMessageAfterAixAutoOn(undefined, true) && !twoMessageAfterAixAutoOn(undefined, false) && !twoMessageAfterAixAutoOn("off", true));
 t("⑫ on でも YUMA 以外は動かない", !twoMessageAfterAixAutoOn("on", false));
 t("⑫ on の YUMA は動く", twoMessageAfterAixAutoOn("on", true));
 t("⑫ all は全員に広げない（竹内さんの確認の後）", !twoMessageAfterAixAutoOn("all", false));
@@ -211,7 +211,7 @@ t("⑫ all は全員に広げない（竹内さんの確認の後）", !twoMessa
 { const asks13 = [{ quote: "ここの初期費用知りたいです", route: "aix", aix: "estimate_sheet", answer: null }] as never;
   const p13 = planMessages({ asks: asks13, finalAix: "estimate_sheet" });
   t("⑬ 見積書の番は A→T", p13.shape === "AT");
-  t("⑬ off は今と同じ（返信の席が無い＝指定なし）", afterAixReplyBrief(p13, "estimate_sheet", asks13, {}) === null);
+  t("⑬ off は今と同じ（返信の席が無い＝指定なし）", afterAixReplyBrief(p13, "estimate_sheet", asks13, { TWO_MESSAGE_AFTER_AIX_T_DRAFT: "off" }) === null); // 2026-11-15 既定 on にしたので off を明示
   const b13 = afterAixReplyBrief(p13, "estimate_sheet", asks13, { TWO_MESSAGE_AFTER_AIX_T_DRAFT: "on" });
   t("⑬ on は続きの通の指定が出る", !!b13 && b13.template === true);
   const h13 = afterAixDraftHint(b13, "estimate_sheet");

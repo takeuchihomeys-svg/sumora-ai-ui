@@ -13,6 +13,6 @@ t("壊れていたら null", loadListSnapshot(s2, 0) === null);
 t("保存先が無い・行が無い時は何もしない", !saveListSnapshot(null, rows) && !saveListSnapshot(mem(), []));
 const s3 = { getItem: () => null, setItem: () => { throw new Error("quota"); } };
 t("保存に失敗しても投げない", saveListSnapshot(s3, rows) === false);
-t("スイッチは既定 off", !listSnapshotOn(undefined) && listSnapshotOn("on"));
+t("スイッチは既定 on（2026-11-15）・off で戻す", listSnapshotOn(undefined) && listSnapshotOn("on") && !listSnapshotOn("off"));
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

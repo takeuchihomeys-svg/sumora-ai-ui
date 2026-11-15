@@ -12,7 +12,7 @@
 import { moveInFromCustomerText, farMoveInPlan, ymdStr, type FarMoveInPlan } from "./contact-promise";
 
 export function todoFarMoveInEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TODO_FAR_MOVE_IN ?? "").trim().toLowerCase() === "on";
+  return (env.TODO_FAR_MOVE_IN ?? "").trim().toLowerCase() !== "off";
 }
 
 /** お客様の入居の時期を読む発言の古さの上限（これより前の発言の時期は今は当てにしない） */

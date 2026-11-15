@@ -6,7 +6,7 @@
 import { jstYmd } from "./jst-date";
 
 export function viewingDoneOnAfterGreetingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.VIEWING_DONE_ON_AFTER_GREETING ?? "").trim().toLowerCase() === "on";
+  return (env.VIEWING_DONE_ON_AFTER_GREETING ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 内覧後の挨拶の記録か（log-aix-usage の aix_type と app_sub_mode） */

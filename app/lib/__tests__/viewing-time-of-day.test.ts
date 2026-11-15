@@ -18,10 +18,14 @@ const MSGS = [
 const days = ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-24"].map((ymd) => ({ ymd, fullyBooked: false, slots: ["11:00〜18:30"] }));
 
 console.log("viewing-time-of-day");
-it("切替は既定 off・off は今まで通り（日の指定なし）", () => {
+it("切替は既定 on（2026-11-15）・off で戻すと今まで通り（日の指定なし）", () => {
   delete process.env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY;
-  eq(viewingTimeOfDayEnabled(), false);
-  eq(customerViewingDateSpec(MSGS, NOW).kind, "none");
+  eq(viewingTimeOfDayEnabled(), true);
+  process.env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY = "off";
+  try {
+    eq(viewingTimeOfDayEnabled(), false);
+    eq(customerViewingDateSpec(MSGS, NOW).kind, "none");
+  } finally { delete process.env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY; }
 });
 it("on: 前の流れの日（10/24）＋朝方 → その日だけ・10:30〜12:00", () => {
   process.env.NEXT_PUBLIC_VIEWING_TIME_OF_DAY = "on";

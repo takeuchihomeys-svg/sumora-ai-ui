@@ -10,7 +10,7 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${label} expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 const at = (iso: string) => Date.parse(iso);
 
-it("既定 off・on で入る", () => { eq(brainStaffBurstWaitEnabled({}), false); eq(brainStaffBurstWaitEnabled({ BRAIN_STAFF_BURST_WAIT: "on" }), true); });
+it("既定 on（2026-11-15）・off で戻す", () => { eq(brainStaffBurstWaitEnabled({}), true); eq(brainStaffBurstWaitEnabled({ BRAIN_STAFF_BURST_WAIT: "on" }), true); eq(brainStaffBurstWaitEnabled({ BRAIN_STAFF_BURST_WAIT: "off" }), false); });
 it("未来穂の形: 17:24:03 にスタッフの1通目・36秒後の下書き作成 → 送っている途中", () => {
   const msgs = [{ sender: "customer", createdAt: "2026-10-22T07:50:00Z" }, { sender: "staff", createdAt: "2026-10-22T08:13:08Z" }, { sender: "staff", createdAt: "2026-10-22T08:24:03Z" }];
   eq(staffSendingNow(msgs, at("2026-10-22T08:24:39Z")), true);

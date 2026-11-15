@@ -7,7 +7,7 @@
 // 決め: 最後の通がこちらの送信で、STAFF_BURST_WAIT_MS 以内なら「スタッフが送っている途中」＝ブレインの再分析を待たせる（前の判断で下書きを作る）。
 //   切替 BRAIN_STAFF_BURST_WAIT=on の時だけ（既定 off）。テスト: app/lib/__tests__/staff-burst.test.ts
 export function brainStaffBurstWaitEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_STAFF_BURST_WAIT ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_STAFF_BURST_WAIT ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 2通目までの間（実例 5分51秒）より少し長く */

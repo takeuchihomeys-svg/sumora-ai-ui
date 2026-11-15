@@ -2049,7 +2049,7 @@ export const RENT_MIN_RATIO = 0.85;
 
 /** リノベーション物件の築年の扱いを直すか（2026-10-20 竹内さん・KB 6497a18a）。既定 off */
 export function renovAgeFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROPERTY_RENOV_AGE_1020 ?? "").trim().toLowerCase() === "on";
+  return (env.PROPERTY_RENOV_AGE_1020 ?? "").trim().toLowerCase() !== "off";
 }
 /** 築年の希望超過を減点しない（リノベ済みと読めた時だけ・資料の印 terms.renovated か物件名・説明文。listing-renovation.renovationOfText と同じ線） */
 export function renovatedAgeOk(facts: Pick<PropertyFacts, "name" | "rawText">, terms?: { renovated?: boolean | null } | null, env?: Record<string, string | undefined>): boolean {

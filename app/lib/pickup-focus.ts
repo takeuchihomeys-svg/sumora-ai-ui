@@ -71,7 +71,7 @@ export function pickupFocusNote(cands: ReadonlyArray<FocusCandidate>): string {
 // 入れる PICKUP_SEND_FORM_1028=on（既定 off）。決めるのは書く役（材料）
 
 export function pickupSendForm1028On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PICKUP_SEND_FORM_1028 ?? "").trim().toLowerCase() === "on";
+  return (env.PICKUP_SEND_FORM_1028 ?? "").trim().toLowerCase() !== "off";
 }
 
 /** お客様の問いの中のエリアの言い方（「御堂筋沿線」「〇〇線沿い」「〇〇周辺」）。無ければ null */

@@ -10,7 +10,7 @@ import { aixButtonText, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "./aix
 import { jstDayStartMs, jstMDHm } from "./jst-date";
 
 export function aixOverdueRemindEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_OVERDUE_REMIND ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_OVERDUE_REMIND ?? "").trim().toLowerCase() !== "off";
 }
 
 export const AIX_OVERDUE_MS = 24 * 60 * 60 * 1000;

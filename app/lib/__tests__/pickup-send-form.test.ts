@@ -2,7 +2,7 @@
 import { customerAreaAsk, pickupSendFormNote, pickupSendForm1028On } from "../pickup-focus";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
-t("既定 off", pickupSendForm1028On({}) === false && pickupSendForm1028On({ PICKUP_SEND_FORM_1028: "on" }));
+t("既定 on（2026-11-15）・off で戻す", pickupSendForm1028On({}) === true && pickupSendForm1028On({ PICKUP_SEND_FORM_1028: "on" }) && pickupSendForm1028On({ PICKUP_SEND_FORM_1028: "off" }) === false);
 t("御堂筋沿線の問い", customerAreaAsk(["ありがとうございます", "御堂筋沿線で無いですか？"]) === "御堂筋沿線", customerAreaAsk(["御堂筋沿線で無いですか？"]));
 t("〇〇線沿い", customerAreaAsk(["谷町線沿いでお願いします"]) === "谷町線沿い");
 t("問いが無い", customerAreaAsk(["よろしくお願いします"]) === null);

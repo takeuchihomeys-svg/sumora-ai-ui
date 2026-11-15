@@ -9,7 +9,7 @@ const sleep = <T,>(ms: number, v: T) => new Promise<T>((r) => setTimeout(() => r
   await it("間に合えば中身", async () => eq(await withCap(sleep(10, "ok"), 200, "fb"), "ok"));
   await it("間に合わなければ fallback・onTimeout を呼ぶ", async () => { let n = 0; const t0 = Date.now(); eq(await withCap(sleep(500, "late"), 50, "fb", () => n++), "fb"); eq(n, 1); eq(Date.now() - t0 < 300, true); });
   await it("null の fallback（読めない時は確かめない＝今と同じ）", async () => eq(await withCap(sleep(500, { data: [1] }), 30, null), null));
-  await it("既定 off", () => { eq(sendPrecheckFastOn({}), false); eq(sendPrecheckFastOn({ SEND_PRECHECK_FAST: "on" }), true); });
+  await it("既定 on（2026-11-15）・off で戻す", () => { eq(sendPrecheckFastOn({}), true); eq(sendPrecheckFastOn({ SEND_PRECHECK_FAST: "on" }), true); eq(sendPrecheckFastOn({ SEND_PRECHECK_FAST: "off" }), false); });
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();
