@@ -639,6 +639,22 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const r = { total: num(o.total), unlearnedBig: num(o.unlearnedBig), unlearnedSmall: num(o.unlearnedSmall), learnedButEmpty: num(o.learnedButEmpty), learnedOk: num(o.learnedOk), todo: num(o.todo) };
     return r.total > 0 ? r : null;
   })(),
+  /**
+   * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
+   *   **改善候補**を統括に届ける（統括が順番を決める）。
+   */
+  autoFix: (() => {
+    const a = (input as unknown as Record<string, unknown>).auto_fix;
+    if (!Array.isArray(a) || !a.length) return null;
+    return (a as Array<Record<string, unknown>>).slice(0, 8).map((x) => ({
+      key: String(x.key ?? "").slice(0, 20),
+      what: String(x.what ?? "").slice(0, 80),
+      why: String(x.why ?? "").slice(0, 120),
+      how: String(x.how ?? "").slice(0, 120),
+      cost: String(x.cost ?? "").slice(0, 40),
+      effect: String(x.effect ?? "").slice(0, 80),
+    }));
+  })(),
       /**
        * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
        *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
@@ -757,12 +773,21 @@ function buildMeeting(m: {
   autoOps?: number;
   /** 2026-11-15: 外した数・選んだ数（押す前と後の checked から・`toggle-meaning.ts`） */
   toggles?: { off: number; on: number; unknown: number } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「この自動モードの改善は録画している学習データから統括が改善する」:
+   *   **自動モードの改善候補**を統括の材料に入れる（統括が順番を決める）。
+   *   ⚠ 私は何度も「コードを読んで推測で直す」をやって失敗した（2回誤読・2回渡し忘れ）。
+   *     → 統括に決めさせる。私は材料を揃える係に徹する。
+   */
+  auto_fix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
   /** 2026-11-15: 写真から読んだ欄の種類の内訳（統括が「プルダウンが何個」と言える） */
   photoKinds?: Record<string, number> | null;
   /** 2026-11-15: 自動モードが人間のように動けているかの点検結果 */
   humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
   /** 2026-11-15: 学習の抜け（未学習・欄0・小さすぎる） */
   shotGaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
+  /** 2026-11-15: 自動モードの改善候補（統括が順番を決める） */
+  autoFix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
   /**
    * ★ 2026-11-15 竹内さん「自動で直接入力されている部分ないかちゃんと人間のように
    *   入力やクリックカーソルの移動おこなっているか その部分も強化するようにする
@@ -975,6 +1000,18 @@ function buildMeeting(m: {
     if (g.unlearnedSmall > 0) parts.push(`小さいので読めない ${g.unlearnedSmall}枚`);
     if (!g.todo && !g.unlearnedSmall) parts.push("抜けなし");
     evidence.push({ label: "学習の抜け", value: parts.join("／"), guessed: g.todo > 0 });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
+   *   **改善候補**を根拠に出す（統括が順番を決める材料）。
+   */
+  if (Array.isArray(m.autoFix) && m.autoFix.length) {
+    const top = m.autoFix[0];
+    evidence.push({
+      label: "自動モードの改善候補",
+      value: `${m.autoFix.length}件。一番は「${top.what}」（${top.why}・${top.cost}）`,
+      guessed: false,
+    });
   }
   const mc = Object.entries(m.modeCounts);
   if (mc.length) evidence.push({ label: "モード別の記録", value: mc.map(([k, v]) => `${k} ${v}件`).join("・") });
@@ -1238,6 +1275,21 @@ function buildMeeting(m: {
       why: `${m.shotGaps.unlearnedSmall}枚（480px では欄が読めない・実測）`,
       decide: "今の版（2.7.78）で録画し直す（費用0）",
     });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
+   *   **改善候補を議題に出す**（統括が「これからやる」と宣言する）。
+   *   ⚠ 費用がかかる物は「読む＝約N円／後でよいか」の形で竹内さんに聞く。
+   */
+  if (Array.isArray(m.autoFix) && m.autoFix.length) {
+    for (const f of m.autoFix.slice(0, 3)) {
+      agenda.push({
+        priority: f.cost.includes("0円") ? 1 : 2,
+        topic: `自動モードを直す: ${f.what}`,
+        why: `${f.why}（効く事: ${f.effect}）`,
+        decide: `${f.how}（${f.cost}）`,
+      });
+    }
   }
   const siteKeys = Object.keys(m.siteCounts).filter((k) => k && k !== "(空)");
   if (siteKeys.length === 1 && m.site === "all") {

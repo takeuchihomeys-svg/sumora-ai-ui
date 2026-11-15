@@ -1048,11 +1048,53 @@
     } catch (_) { return null; }
   }
 
-  function _aimOf(name) {    try {
+  /**
+   * ★ 2026-11-15 竹内さん「学んだ『押す位置』を自動モードが実際に使っているか未検証」
+   *   「その部分も強化するようにする」
+   *
+   *   ⚠ 学んだ位置（`points`）を `_aimOf` で引いて狙っているが、
+   *     **実際に狙ったかどうかが記録に残っていなかった**ので、
+   *     「学習が効いているか」を測れなかった。
+   *   → 使った時に**1件だけ記録**を残す（`_aimUsed`）。
+   *     - 欄の名前・狙った位置・学びがあったか・何回目の学びか
+   *   ⚠ 中身（入力した値）は記録しない（名前と座標だけ）。
+   */
+  var _aimUsed = [];
+  function _noteAimUsed(name, aim, why) {
+    try {
+      if (_aimUsed.length > 60) _aimUsed.shift();
+      _aimUsed.push({
+        f: String(name || "").slice(0, 30),
+        x: aim && typeof aim.x === "number" ? Math.round(aim.x * 100) / 100 : null,
+        y: aim && typeof aim.y === "number" ? Math.round(aim.y * 100) / 100 : null,
+        // 学びが無くて狙えなかった時は why に理由（no_learn / few_times など）
+        why: aim ? null : String(why || "").slice(0, 20),
+        at: Date.now(),
+      });
+    } catch (_) {}
+  }
+  /** 点検に載せる形（拡張 → DB） */
+  function _aimUsedForAudit() { try { return _aimUsed.slice(-30); } catch (_) { return []; } }
+  try { window.__axlxAimUsedForAudit = _aimUsedForAudit; } catch (_) {}
+
+  function _aimOf(name) {
+    try {
       var v = _learnKinds && _learnKinds[name];
-      if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
-      if (Number(v.n) < 2) return null;
-      return { x: v.x, y: v.y };
+      /**
+       * ⚠ **狙えなかった理由も残す**（「学びが無い」のか「回数が足りない」のかで次が変わる）。
+       *   実測の目安: `n < 2` は偶然かもしれないので使わない（今まで通り）。
+       */
+      if (!v || typeof v.x !== "number" || typeof v.y !== "number") {
+        _noteAimUsed(name, null, v ? "no_pos" : "no_learn");
+        return null;
+      }
+      if (Number(v.n) < 2) {
+        _noteAimUsed(name, null, "few_times:" + Number(v.n));
+        return null;
+      }
+      var aim = { x: v.x, y: v.y, n: Number(v.n) || 0 };
+      _noteAimUsed(name, aim, null);
+      return aim;
     } catch (_) { return null; }
   }
 
@@ -2353,9 +2395,15 @@
     if (!_audit) return null;
     try {
       delete _audit._searchWaitMarked;
-      // 2026-11-10: 人が動いたか（拡張の操作と区別した数）を点検の記録に載せる
-      _audit.human = _humanSnapshot();
-      var a = _audit;
+    // 2026-11-10: 人が動いたか（拡張の操作と区別した数）を点検の記録に載せる
+    _audit.human = _humanSnapshot();
+    /**
+     * ★ 2026-11-15 竹内さん「学んだ『押す位置』を自動モードが実際に使っているか未検証」:
+     *   **学んだ位置を狙ったか（狙えなかった理由も）**を点検に載せる。
+     *   ⚠ これで「学習が効いているか」を数字で確かめられる。
+     */
+    try { if (typeof _aimUsed !== "undefined" && _aimUsed.length) _audit.aim_used = _aimUsed.slice(-20); } catch (_) {}
+    var a = _audit;
       if (JSON.stringify(a).length > 8000) {
         a = JSON.parse(JSON.stringify(a));
         ['stations_missing', 'lines_missing', 'click_fails'].forEach(function (k) { a[k] = (a[k] || []).slice(0, 6).map(function (m) { if (m && m.sample) m.sample = m.sample.slice(0, 3); return m; }); });

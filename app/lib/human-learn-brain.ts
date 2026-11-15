@@ -31,6 +31,7 @@ import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./l
 import { findWeakSteps } from "./learn-flow-steps";
 import { auditHumanLike } from "./human-like-audit";
 import { summarizeShotGaps } from "./shot-gaps";
+import { compareFields, autoModeCandidates } from "./auto-mode-improve";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -1183,6 +1184,43 @@ export function buildHumanLearnBundle(
         });
         const g = summarizeShotGaps(states);
         return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「この自動モードの改善は録画している学習データから統括が改善する」:
+     *   人と機械を**欄ごとに比べて**改善候補を出す（統括が順番を決める）。
+     *   ⚠ 費用がかかる物は上限と概算を付ける。
+     */
+    auto_fix: (() => {
+      try {
+        const posOf = (list2: Array<Record<string, unknown>>) => {
+          const acc: Record<string, { n: number; x: number | null; y: number | null }> = {};
+          for (const r of list2) {
+            for (const [k, v] of Object.entries((r.point_fields ?? {}) as Record<string, unknown>)) {
+              const o = v as { n?: unknown; x?: unknown; y?: unknown };
+              const c = Number(o?.n) || 0;
+              if (c < 2) continue;
+              if (!acc[k]) acc[k] = { n: 0, x: null, y: null };
+              acc[k].n += c;
+              if (acc[k].x == null) { acc[k].x = typeof o.x === "number" ? o.x : null; acc[k].y = typeof o.y === "number" ? o.y : null; }
+            }
+          }
+          return Object.entries(acc).map(([f, v]) => ({ f, n: v.n, x: v.x, y: v.y }));
+        };
+        const humanRows = list.filter((r) => String((r as Record<string, unknown>).mode ?? "") === "normal") as Array<Record<string, unknown>>;
+        const autoRows = list.filter((r) => String((r as Record<string, unknown>).mode ?? "") === "aix") as Array<Record<string, unknown>>;
+        const cmp = compareFields(posOf(humanRows), posOf(autoRows), []);
+        const g = summarizeShotGaps(list.map((r) => {
+          const x = r as unknown as Record<string, unknown>;
+          const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+          return { w: Number(x.shot_w) || 0, hasKey: !!x.shot_key, learned: !!(sl && typeof sl === "object"), fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0 };
+        }));
+        const hl = auditHumanLike(list as never);
+        return autoModeCandidates(cmp.gaps, {
+          shotTodo: g.todo,
+          changedWithoutClick: hl.changedWithoutClick.length,
+          cursorPct: hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : 100,
+        });
       } catch (_) { return null; }
     })(),
     /**
