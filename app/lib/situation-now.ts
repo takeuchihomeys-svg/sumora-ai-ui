@@ -98,7 +98,7 @@ export function buildSituationNow(i: SituationInput): SituationNow {
     out.this_turn = { sent_up_to: i.asks.progress.sentUpTo, remaining: i.asks.msgs.filter((m) => m.no > i.asks!.progress!.sentUpTo).map((m) => ({ no: m.no, slot: m.slot, aix: m.aix })) };
   }
   // 食い違い（材料の塊どうし）
-  if (i.clash) out.conflicts = i.clash.opposed.filter((o) => o.level === "yes").map((o) => ({ kind: o.kind, a_id: `block:${o.a}`, b_id: `block:${o.b}`, why: "道について逆を言う材料の塊" }))
+  if (i.clash) out.conflicts = i.clash.opposed.filter((o) => o.level === "yes").map((o): { kind: string; a_id: string; b_id: string; why: string } => ({ kind: o.kind, a_id: `block:${o.a}`, b_id: `block:${o.b}`, why: "道について逆を言う材料の塊" }))
     .concat(i.clash.shapeNoRoute.map((s) => ({ kind: "shape_no_route", a_id: `block:${s.block}`, b_id: `block:${s.with[0] ?? ""}`, why: "形だけを並べて道を言わない塊" })));
   return out;
 }
