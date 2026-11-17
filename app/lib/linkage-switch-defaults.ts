@@ -44,7 +44,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   PROMISE_READ_UNIFIED: "off",
   REF_RESOLVE: "on",
   SECOND_MSG_MATERIALS: "on",
-  SENT_PROPS_FULL: "off",
+  SENT_PROPS_FULL: "count",
   SITUATION_NOW_FULFILLABLE: "on",
   TASK_RESULT_FROM_AIX: "on",
   TURN_AIMS_AFTER: "on",
