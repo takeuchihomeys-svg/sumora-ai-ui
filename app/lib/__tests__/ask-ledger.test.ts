@@ -126,13 +126,19 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
   t("AIX→テンプレートの同じ要件は重ねにしない", L.check.ok, L.check);
 }
 
-// AIX の要件が2種類（見積書＋内覧調整）＝組み立ては AIX を1つしか持たない → 2つ目は取りこぼし
+// AIX の要件が2種類（見積書＋内覧調整）: TWO_MESSAGE_AIX_AIX=off の組み立ては AIX を1つしか持たない → 2つ目は取りこぼし／既定 on（11/18）は AIX→AIX の席で外れ0
 {
-  const L = buildAskLedger({ asks: [
+  const asks2 = [
     { quote: "見積もりお願いします", route: "aix", aix: "estimate_sheet", kind: "request" },
     { quote: "週末内覧できますか", route: "aix", aix: "viewing_invite", kind: "request" },
-  ], finalAix: "estimate_sheet" });
-  t("AIX 2種類: 2つ目の AIX は取りこぼし", L.check.dropped.length === 1 && L.check.dropped[0] === L.items[1].id && L.check.misrouted.length === 0, L.check);
+  ];
+  const o = process.env.TWO_MESSAGE_AIX_AIX;
+  process.env.TWO_MESSAGE_AIX_AIX = "off";
+  const L = buildAskLedger({ asks: asks2, finalAix: "estimate_sheet" });
+  if (o === undefined) delete process.env.TWO_MESSAGE_AIX_AIX; else process.env.TWO_MESSAGE_AIX_AIX = o;
+  t("AIX 2種類（off）: 2つ目の AIX は取りこぼし", L.check.dropped.length === 1 && L.check.dropped[0] === L.items[1].id && L.check.misrouted.length === 0, L.check);
+  const Lon = buildAskLedger({ asks: asks2, finalAix: "estimate_sheet" });
+  t("AIX 2種類（既定 on）: AIX→AIX の席で外れ0", Lon.check.ok && Lon.items[1].slot === "aix" && (Lon.items[1].msg ?? 0) > 1 && Lon.shape === "ATA", Lon);
 }
 // 要件の AIX と最終の AIX（押される AIX）が違う → 取り違え
 {

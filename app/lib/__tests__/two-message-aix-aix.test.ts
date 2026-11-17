@@ -8,7 +8,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 const withEnv = <T>(v: string | undefined, f: () => T): T => { const o = process.env.TWO_MESSAGE_AIX_AIX; if (v === undefined) delete process.env.TWO_MESSAGE_AIX_AIX; else process.env.TWO_MESSAGE_AIX_AIX = v; try { return f(); } finally { if (o === undefined) delete process.env.TWO_MESSAGE_AIX_AIX; else process.env.TWO_MESSAGE_AIX_AIX = o; } };
 
-t("既定 off", twoMessageAixAixOn({}) === false && twoMessageAixAixOn({ TWO_MESSAGE_AIX_AIX: "on" }) === true);
+t("既定 on（11/18）", twoMessageAixAixOn({}) === true && twoMessageAixAixOn({ TWO_MESSAGE_AIX_AIX: "off" }) === false);
 
 // q014 の形: 案内できますか（物件確認した）＋初期費用の見積もり（見積書）・最終の AIX は見積書
 const q014 = [
@@ -18,9 +18,9 @@ const q014 = [
 t("種類: 物件確認した を先", JSON.stringify(aixKindsOfAsks(q014)) === JSON.stringify(["property_check_result", "estimate_sheet"]));
 t("種類: 物件の束は1つ", aixKindsOfAsks([{ quote: "a", route: "aix", aix: "property_send" }, { quote: "b", route: "aix", aix: "property_recommendation/x" }]).length === 1);
 {
-  const off = withEnv(undefined, () => planMessages({ asks: q014, finalAix: "estimate_sheet" }));
-  t("off は今と同じ（AIX の席は1つ）", off.messages.filter((m) => m.slot === "aix").length === 1, off.messages);
-  const offL = withEnv(undefined, () => buildAskLedger({ asks: q014, finalAix: "estimate_sheet" }));
+  const off = withEnv("off", () => planMessages({ asks: q014, finalAix: "estimate_sheet" }));
+  t("off は前と同じ（AIX の席は1つ）", off.messages.filter((m) => m.slot === "aix").length === 1, off.messages);
+  const offL = withEnv("off", () => buildAskLedger({ asks: q014, finalAix: "estimate_sheet" }));
   t("off の帳面は取りこぼし1", offL.check.dropped.length === 1, offL.check);
 
   const on = withEnv("on", () => planMessages({ asks: q014, finalAix: "estimate_sheet" }));
@@ -62,7 +62,7 @@ t("種類: 物件の束は1つ", aixKindsOfAsks([{ quote: "a", route: "aix", aix
 // AIX が1種類の番は on でも今と同じ
 {
   const asks = [{ quote: "見積もりください", route: "aix", aix: "estimate_sheet", kind: "request" }];
-  const a = withEnv(undefined, () => planMessages({ asks, finalAix: "estimate_sheet" }));
+  const a = withEnv("off", () => planMessages({ asks, finalAix: "estimate_sheet" }));
   const b = withEnv("on", () => planMessages({ asks, finalAix: "estimate_sheet" }));
   t("1種類は on でも同じ", JSON.stringify(a) === JSON.stringify(b));
 }

@@ -23,7 +23,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   COMPOSE_SENTENCE_PLAN: "on",
   CONDITION_WRITE_ARBITER: "off",
   CONDUCTOR_ALLOCATION: "off",
-  CONDUCTOR_BRIEF: "off",
+  CONDUCTOR_BRIEF: "shadow",
   CONDUCTOR_COMBINE: "off",
   CONDUCTOR_EXCHANGE_LEDGER_BRAIN: "off",
   CONDUCTOR_FOCUS: "shadow",

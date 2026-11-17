@@ -549,7 +549,7 @@ export async function POST(req: NextRequest) {
 
             const prevMeta = convForPatch?.last_brain_meta as Record<string, unknown> | null;
             if (!prevMeta) return; // meta がなければスキップ（通常サイクルに委譲）
-            // 2026-11-15 作業員M（統括役の決定）: 要件の帳面（meta.ask_ledger・ASK_LEDGER）は Haiku に渡す分から外す（next_steps・closing_strategy の更新に要らず費用だけ増える）。保存の patchedMeta には残る
+            // 2026-11-15 作業員M（統括役の決定）: 要件の帳面（meta.ask_ledger・ASK_LEDGER）と統括の指示書（meta.conductor_brief・11/18 から既定 on）は Haiku に渡す分から外す（next_steps・closing_strategy の更新に要らず費用だけ増える）。保存の patchedMeta には残る
 
             // 2. AIXタイプの意味マップ
             const AIX_STAGE_LABEL: Record<string, string> = {
@@ -584,7 +584,7 @@ export async function POST(req: NextRequest) {
 前回の分析結論にAIX送信の事実を差分反映し、更新後のJSONを返してください。
 
 【前回の分析結論】
-${JSON.stringify((({ ask_ledger: _askLedger, ...rest }) => rest)(prevMeta as Record<string, unknown>), null, 2)}
+${JSON.stringify((({ ask_ledger: _askLedger, conductor_brief: _brief, ...rest }) => rest)(prevMeta as Record<string, unknown>), null, 2)}
 
 【新たな事実】
 ${stageNote}
