@@ -14,7 +14,7 @@ import { shapeOfSends } from "@/app/lib/two-message-plan";
 import { focusOfTakeuchiTurn, openPromiseAt, turnSituationTextV2, type HistMsg } from "@/app/lib/conductor-focus";
 
 /** 2026-11-05 作業員5（竹内さん承認・KB P0 575a7cd5・P1 977cbded）: 状況の文 v2・埋め込み v2・竹内さんの番の重点も書く（既定 off・=on で）。列 situation_v2/embedding_v2/focus が要る */
-export const conductorTurnVectorsV2On = (env: Record<string, string | undefined> = process.env) => (env.CONDUCTOR_TURN_VECTORS_V2 ?? "").trim().toLowerCase() === "on";
+export const conductorTurnVectorsV2On = (env: Record<string, string | undefined> = process.env) => (env.CONDUCTOR_TURN_VECTORS_V2 ?? "").trim().toLowerCase() !== "off";
 
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null; staff_writer: string | null; staff_writer_confidence: string | null };
 const COLS = "id, conversation_id, sender, text, created_at, is_aix_generated, line_message_id, staff_writer, staff_writer_confidence";

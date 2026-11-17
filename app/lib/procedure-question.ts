@@ -91,7 +91,7 @@ const MOVE_IN_LEAD_RE = new RegExp([
  *   資料に入居時期が無い時は今まで通り2択（返信か 確認した→入居可能日）。PROCEDURE_EARLIEST_MOVE_IN=on の時だけ（既定 off）
  */
 export function procedureEarliestMoveInEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROCEDURE_EARLIEST_MOVE_IN ?? "").trim().toLowerCase() === "on";
+  return (env.PROCEDURE_EARLIEST_MOVE_IN ?? "").trim().toLowerCase() !== "off";
 }
 const EARLIEST_MOVE_IN_RE = new RegExp(`最短(?:で|の)?\s*(?:入居|ご入居|引っ?越)[^。\n]{0,12}(?:${HOW_LONG}|いつ|日)|最短(?:で|の)?\s*いつ(?:から|頃|ごろ)?[^。\n]{0,8}(?:入居|住め|住む|入れ|引っ?越)|(?:いつ|何日)(?:から|頃|ごろ)?[^。\n]{0,6}(?:入居|住め|入れ)[^。\n]{0,6}(?:最短|一番早)`);
 /** 探す条件（「最短入居できる物件」）・内覧の日の話は外す */

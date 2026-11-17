@@ -8,7 +8,7 @@
 // スイッチ: COST_BREAKDOWN_SENT_ESTIMATE=on（既定 off＝今と同じ・貼られた画像があれば常にそちらが先）
 
 export function costBreakdownSentEstimateOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COST_BREAKDOWN_SENT_ESTIMATE ?? "").trim().toLowerCase() === "on";
+  return (env.COST_BREAKDOWN_SENT_ESTIMATE ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 新しい順の読み取りの行から、直近の1回の送信（最新から windowMs 以内）の見積書の URL を最大 max 件（重複なし） */

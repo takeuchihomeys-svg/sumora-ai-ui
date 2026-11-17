@@ -4,7 +4,7 @@ import { holdFloorPickerUiOn, holdFloorPickerForBrain, buildHoldMgmtInfo, holdFo
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
-t("スイッチ既定 off", !holdFloorPickerUiOn(undefined) && holdFloorPickerUiOn("on") && !holdFloorPickerForBrain({}) && holdFloorPickerForBrain({ AIX_HOLD_FLOOR_PICKER: "on" }));
+t("スイッチ既定 on（2026-11-15）・off で戻す", holdFloorPickerUiOn(undefined) && holdFloorPickerUiOn("on") && !holdFloorPickerUiOn("off") && holdFloorPickerForBrain({}) && holdFloorPickerForBrain({ AIX_HOLD_FLOOR_PICKER: "on" }) && !holdFloorPickerForBrain({ AIX_HOLD_FLOOR_PICKER: "off" }));
 
 // KID 10/25 の手打ちの実物
 const kid = "こちらお申込みしてお部屋押さえることができるか管理会社確認しましたところ11月末退去予定の為期間が長く\nお部屋止めをできないとのことでした。";

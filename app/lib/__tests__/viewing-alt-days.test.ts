@@ -13,8 +13,8 @@ function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected
 const AT = Date.parse("2026-10-23T03:30:00Z");
 const withEnv = (v: string | undefined, fn: () => void) => { const o = process.env.VIEWING_ALT_DAYS_AFTER_CONFIRM; if (v == null) delete process.env.VIEWING_ALT_DAYS_AFTER_CONFIRM; else process.env.VIEWING_ALT_DAYS_AFTER_CONFIRM = v; try { fn(); } finally { if (o == null) delete process.env.VIEWING_ALT_DAYS_AFTER_CONFIRM; else process.env.VIEWING_ALT_DAYS_AFTER_CONFIRM = o; } };
 
-console.log("切替（既定 off）");
-it("既定 off・on で入る", () => { eq(viewingAltDaysEnabled({}), false); eq(viewingAltDaysEnabled({ VIEWING_ALT_DAYS_AFTER_CONFIRM: "on" }), true); });
+console.log("切替（既定 on・2026-11-15）");
+it("既定 on（2026-11-15）・off で戻す", () => { eq(viewingAltDaysEnabled({}), true); eq(viewingAltDaysEnabled({ VIEWING_ALT_DAYS_AFTER_CONFIRM: "on" }), true); eq(viewingAltDaysEnabled({ VIEWING_ALT_DAYS_AFTER_CONFIRM: "off" }), false); });
 
 console.log("別の日の打診を読む（番 6613 の実物）");
 it("「内見24か25でも可能なんですがいかがでしょうか」→ 10/24・10/25", () => eq(altDaysOfCustomerText("お世話になっております！ 内見24か25でも可能なんですがいかがでしょうか？🥹", AT), ["10/24", "10/25"]));
@@ -35,7 +35,7 @@ it("材料の行: 確定の後の別の日の打診（決めるのはブレイ�
   ok(/別の日を打診している（10\/24・10\/25）/.test(t), t); ok(/会話を読んで決める/.test(t), t);
   eq(/別の日を打診/.test(buildViewingFlowBrainText({ ...EMPTY_VIEWING_FLOW, stage: "confirmed", confirmed: true, label: "10/28 17:00" })), false, "無い時は今と同じ");
 });
-it("off: 決まった内覧の後の「24か25でも可能」はブレインの AIX【内覧調整】を返信に下げる（今まで通り）", () => withEnv(undefined, () => {
+it("off: 決まった内覧の後の「24か25でも可能」はブレインの AIX【内覧調整】を返信に下げる（今まで通り）", () => withEnv("off", () => {
   eq(viewingInviteToReply({ text: "内見24か25でも可能なんですがいかがでしょうか？", viewingDecided: true }).yes, true);
 }));
 it("on: 別の日の打診がある時は下げない（ブレインの判断のまま）・打診が無い追加は今まで通り下げる", () => withEnv("on", () => {

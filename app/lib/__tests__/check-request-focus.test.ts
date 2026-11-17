@@ -12,7 +12,7 @@ const hist = [
   { sender: "staff", text: "かしこまりました！！\n\nソルテラス関目高殿駅前・阪急千里線下新庄駅徒歩4分・アーバンパーク淡路の3件、上の階の空き状況も含めて管理会社に募集状況確認させて頂きます！！" },
   { sender: "customer", text: "[スタンプ]" },
 ];
-t("既定 off", checkRequestFocusOn({}) === false && checkRequestFocusOn({ CHECK_REQUEST_FOCUS: "on" }));
+t("既定 on（2026-11-15）・off で戻す", checkRequestFocusOn({}) === true && checkRequestFocusOn({ CHECK_REQUEST_FOCUS: "on" }) && checkRequestFocusOn({ CHECK_REQUEST_FOCUS: "off" }) === false);
 const r = checkRequestFocus(hist);
 t("上の階を拾う", r.keys.includes("上の階のお部屋"), r);
 t("お客様の言葉と約束", /上の階空いてたり/.test(r.quote ?? "") && /上の階の空き状況も含めて/.test(r.promise ?? ""), r);

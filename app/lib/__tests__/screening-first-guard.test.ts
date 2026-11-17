@@ -12,7 +12,7 @@ const DRAFT = "〇〇さん、お見積もりのご確認ありがとうござ�
 const ASK = ["お世話になっております。\n見積もりまでありがとうございます🙇\nこちら審査を先に通していただくこと可能でしょうか？💦"];
 const on = (f: () => void) => { process.env.COMPANY_FACT_SCREENING_FIRST_GUARD = "on"; try { f(); } finally { delete process.env.COMPANY_FACT_SCREENING_FIRST_GUARD; } };
 console.log("screening-first-guard");
-it("off は今まで通り当てない", () => { delete process.env.COMPANY_FACT_SCREENING_FIRST_GUARD; eq(findCompanyFactContradiction(DRAFT, ASK), null); });
+it("off は今まで通り当てない", () => { process.env.COMPANY_FACT_SCREENING_FIRST_GUARD = "off"; try { eq(findCompanyFactContradiction(DRAFT, ASK), null); } finally { delete process.env.COMPANY_FACT_SCREENING_FIRST_GUARD; } }); // 2026-11-15 既定 on にしたので off を明示
 it("on: 審査だけ先に…できかねます は事実違い", () => on(() => eq(findCompanyFactContradiction(DRAFT, ASK)?.factId, "screening_first")));
 it("on: お客様が聞いていない時は当てない", () => on(() => eq(findCompanyFactContradiction(DRAFT, ["ありがとうございます"]), null)));
 it("on: 正しい答え（お申込し審査かけさせて頂きます）は当てない", () => on(() => eq(findCompanyFactContradiction("かしこまりました！！\nお申込し審査かけさせて頂きます！！", ASK), null)));

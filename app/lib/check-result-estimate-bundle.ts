@@ -140,7 +140,7 @@ export function buildCheckResultSendPlan(props: ReadonlyArray<BundlePropertyInpu
  */
 export function checkAltEstimateOn(env?: Record<string, string | undefined>): boolean {
   const v = env ? env.NEXT_PUBLIC_CHECK_ALT_ESTIMATE : (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_CHECK_ALT_ESTIMATE : undefined);
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 /** 見積書の同封の文・申込の状況の行を出す確認の結果か（物件あった／スイッチ on の時は別の部屋が募集してたも） */
 export function checkPatternTakesEstimate(pattern: string | null | undefined, altOn: boolean = checkAltEstimateOn()): boolean {

@@ -8,7 +8,9 @@ const on = <T,>(f: () => T): T => { process.env.COMPANY_FACT_1028 = "on"; try { 
 const KID = "ただ今の家が1ヶ月前の月割りなので\n今家が見つかってないとなると\n11月に申告すると12月末になります\n\n年末に引っ越しをしたくないので\n来年まで見送ろうと思っているので\nいったん紹介は大丈夫です";
 const R = "25日以降にお金のお支払いしたいと思っているのですが、今審査通したら少し早いですか？";
 console.log("company-facts-1028");
-it("off は渡さない", () => { eq(ids(KID), []); eq(ids(R), []); });
+// 2026-11-15 既定 on にしたので off を明示して見る（終わったら元に戻す）
+const off = <T,>(f: () => T): T => { const old = process.env.COMPANY_FACT_1028; process.env.COMPANY_FACT_1028 = "off"; try { return f(); } finally { if (old === undefined) delete process.env.COMPANY_FACT_1028; else process.env.COMPANY_FACT_1028 = old; } };
+it("off は渡さない", () => { eq(off(() => ids(KID)), []); eq(off(() => ids(R)), []); });
 it("on: KID の見送りに新着の出方と審査の2段", () => eq(on(() => ids(KID)), ["new_listing_timing", "screening_two_stage"]));
 it("on: R の支払い時期の希望に入居日と日割", () => eq(on(() => ids(R)), ["move_in_day_prorated"]));
 it("on: 審査の通りやすさの不安には2段を出さない（保証会社の事実の受け持ち）", () => eq(on(() => ids("夜職のみなので審査も不安です😭")), []));

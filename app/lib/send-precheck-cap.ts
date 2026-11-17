@@ -10,7 +10,7 @@
 export const SEND_PRECHECK_CAP_MS = 4_000;
 
 export function sendPrecheckFastOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.SEND_PRECHECK_FAST ?? "").trim().toLowerCase() === "on";
+  return (env.SEND_PRECHECK_FAST ?? "").trim().toLowerCase() !== "off";
 }
 
 /** p が ms 以内に終わらなければ fallback を返す（p は止めない・結果は捨てる）。fallback の時は onTimeout を呼ぶ */

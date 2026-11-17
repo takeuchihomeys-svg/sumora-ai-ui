@@ -154,13 +154,15 @@ it("物件の鍵・号室・場面・版", () => {
   eq(brainVersionOf({}), "local");
   eq(brainDecisionLedgerCols({}, "", {}).building_key, null);
 });
-it("digest の短い項目（tc・pp・cp・cs）・無い物は入れない", () => {
-  eq(brainDecisionDigestExtra({ two_choice_mode: true, pending_pickup: true, checkpoint_stage: "viewing", closing_strategy: "x".repeat(80) }), { tc: true, pp: true, cp: "viewing", cs: "x".repeat(60) });
+// 2026-11-06 作業員4（弱い所 306）で2択の印は tc → tw に変わった（コード側 brain-decision-ledger.ts のコメント）。試験を合わせる
+it("digest の短い項目（tw・pp・cp・cs）・無い物は入れない", () => {
+  eq(brainDecisionDigestExtra({ two_choice_mode: true, pending_pickup: true, checkpoint_stage: "viewing", closing_strategy: "x".repeat(80) }), { tw: true, pp: true, cp: "viewing", cs: "x".repeat(60) } as never);
   eq(brainDecisionDigestExtra({ two_choice_mode: false }), {});
 });
-it("digest の st（ブレインの今の状況）は BRAIN_DIGEST_SITUATION=on の時だけ・80字（版の記録 ver は別の試験＝ここは off）", () => {
+it("digest の st（ブレインの今の状況）は既定 on（2026-11-15）・BRAIN_DIGEST_SITUATION=off で戻す・80字（版の記録 ver は別の試験＝ここは off）", () => {
   const m = { turn_contract: { situation: "あ".repeat(100) } };
-  eq(brainDecisionDigestExtra(m, {}), {});
+  eq(brainDecisionDigestExtra(m, { BRAIN_DIGEST_SITUATION: "off", BRAIN_DIGEST_VER: "off" }), {});
+  eq(brainDecisionDigestExtra(m, { BRAIN_DIGEST_VER: "off" }), { st: "あ".repeat(80) });
   eq(brainDecisionDigestExtra(m, { BRAIN_DIGEST_SITUATION: "on", BRAIN_DIGEST_VER: "off" }), { st: "あ".repeat(80) });
   eq(brainDecisionDigestExtra({ turn_contract: { situation: " " } }, { BRAIN_DIGEST_SITUATION: "on", BRAIN_DIGEST_VER: "off" }), {});
 });

@@ -23,7 +23,7 @@ export type Anatomy = {
 export const SKIPPED_TYPES = ["hours", "restate_conditions", "restate_viewing", "cost_assert", "double_apology", "apply_promise", "deadline_promise", "keep_promise_absent"] as const;
 export type SkippedType = typeof SKIPPED_TYPES[number];
 /** 解剖に重点と背景も読ませる（既定 off）。on の間は anatomy が無い行と focus が無い行を新しい順に約1,000通まで読む */
-export const anatomyFocusOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.TAKEUCHI_ANATOMY_FOCUS ?? "").trim().toLowerCase() === "on";
+export const anatomyFocusOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.TAKEUCHI_ANATOMY_FOCUS ?? "").trim().toLowerCase() !== "off";
 
 /** 場面×趣旨で偏りなく選ぶ（組ごとに上限 cap・新しい順・合計 total まで） */
 export function pickBalanced<T extends { scene: string; purpose: string; sent_at: string }>(rows: ReadonlyArray<T>, total = 200, cap?: number): T[] {

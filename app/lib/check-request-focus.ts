@@ -9,7 +9,7 @@
 // 直し: 前の物件確認の結果より後の、お客様の頼みとこちらの確認の約束から「頼まれた事」の語を拾い、結果をその頼みに答える形で書くよう材料に渡す。
 //   決めるのは書く役（本文を書き換えない）。入れる CHECK_REQUEST_FOCUS=on（既定 off）
 export function checkRequestFocusOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CHECK_REQUEST_FOCUS ?? "").trim().toLowerCase() === "on";
+  return (env.CHECK_REQUEST_FOCUS ?? "").trim().toLowerCase() !== "off";
 }
 
 type Msg = { sender: string; text: string | null | undefined };

@@ -9,10 +9,10 @@
 //    ブレインが決めた物件（brainPropertyPick）があれば一覧で先にチェックを入れる。スイッチ NEXT_PUBLIC_AIX_TOOL_PICK=on（既定 off）
 
 export function viewingVacancyPickOn(v: string | undefined): boolean {
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 export function aixToolPickOn(v: string | undefined): boolean {
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 送った資料の読み取りの行（image_details.lines）から退去予定の字を1つ（見出し「退去予定」。無ければ ""・30字まで・字のまま） */

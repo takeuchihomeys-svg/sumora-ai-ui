@@ -16,9 +16,10 @@ const PROMISE = "かしこまりました！！\nご条件に合ったお部屋�
 const BOTH = "11月中旬ごろからお部屋探し再開いただくのをオススメ致します！！\nそれまでに新着で良いお部屋が出ましたらピックアップしてお送りさせて頂きます！！";
 
 console.log("resume-advice");
-it("切替は既定 off", () => {
-  eq(ledgerResumeAdviceEnabled({}), false);
+it("切替は既定 on（2026-11-15）・off で戻す", () => {
+  eq(ledgerResumeAdviceEnabled({}), true);
   eq(ledgerResumeAdviceEnabled({ LEDGER_RESUME_ADVICE_NOT_PROMISE: "on" }), true);
+  eq(ledgerResumeAdviceEnabled({ LEDGER_RESUME_ADVICE_NOT_PROMISE: "off" }), false);
 });
 it("勧めの文を見分ける", () => {
   eq(isCustomerSearchAdvice("11月中旬ごろからお部屋探し再開いただくのをオススメ致します😊！！"), true);
@@ -35,8 +36,9 @@ it("文の選び: off は今まで通り・on は勧めを飛ばす", () => {
   eq(pickupDeclSentence([ss[0]], STAFF_PICKUP_DECL_RE, true), null);
 });
 it("台帳: off は今まで通り約束（響夢さんの文）", () => {
-  delete process.env.LEDGER_RESUME_ADVICE_NOT_PROMISE;
-  eq(classifyStaffTextFacts(ADVICE, null).map((e) => e.kind), ["pickup_declared"]);
+  process.env.LEDGER_RESUME_ADVICE_NOT_PROMISE = "off"; // 2026-11-15 既定 on にしたので off を明示
+  try { eq(classifyStaffTextFacts(ADVICE, null).map((e) => e.kind), ["pickup_declared"]); }
+  finally { delete process.env.LEDGER_RESUME_ADVICE_NOT_PROMISE; }
 });
 it("台帳: on は勧めの文を約束にしない・本当の約束は残す", () => {
   process.env.LEDGER_RESUME_ADVICE_NOT_PROMISE = "on";

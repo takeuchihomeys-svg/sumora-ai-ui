@@ -11,9 +11,10 @@ function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw 
 
 const CONV = "2026-10-28T01:00:00.000Z", PICK = "2026-10-28T03:00:00.000Z", OLD = "2026-10-27T01:00:00.000Z";
 console.log("pickup-list-order");
-it("切替は既定 off", () => {
-  eq(pickupOrderAnalyzedFirstEnabled({}), false);
+it("切替は既定 on（2026-11-15）・off で戻す", () => {
+  eq(pickupOrderAnalyzedFirstEnabled({}), true);
   eq(pickupOrderAnalyzedFirstEnabled({ PICKUP_ORDER_ANALYZED_FIRST: "on" }), true);
+  eq(pickupOrderAnalyzedFirstEnabled({ PICKUP_ORDER_ANALYZED_FIRST: "off" }), false);
 });
 it("off は今まで通り会話の更新（無ければ予備）", () => {
   eq(pickupListOrderAt({ convUpdatedAt: CONV, lastPickupAt: PICK, fallback: OLD }, false), CONV);

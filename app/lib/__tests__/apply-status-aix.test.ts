@@ -4,7 +4,7 @@ import { aixApplyStatusOn, shouldPromoteOnApplyAix, manualDraftPostApplyOn, manu
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
-t("画面のスイッチ既定 off", !aixApplyStatusOn(undefined) && !aixApplyStatusOn("") && aixApplyStatusOn("on"));
+t("画面のスイッチ既定 on（2026-11-15）・off で戻す", aixApplyStatusOn(undefined) && aixApplyStatusOn("") && aixApplyStatusOn("on") && !aixApplyStatusOn("off"));
 t("申込書（フォーマット）を送った・物件提案中 → 上げる", shouldPromoteOnApplyAix("format", "proposing"));
 t("申込確定・書類依頼も上げる", shouldPromoteOnApplyAix("confirm", "viewing") && shouldPromoteOnApplyAix("docs_request", "estimate_request"));
 t("申込誘導（後押し）は上げない", !shouldPromoteOnApplyAix("push", "proposing"));

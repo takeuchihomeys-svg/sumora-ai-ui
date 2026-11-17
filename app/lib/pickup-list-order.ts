@@ -7,7 +7,7 @@
 // テスト: app/lib/__tests__/pickup-list-order.test.ts
 
 export function pickupOrderAnalyzedFirstEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PICKUP_ORDER_ANALYZED_FIRST ?? "").trim().toLowerCase() === "on";
+  return (env.PICKUP_ORDER_ANALYZED_FIRST ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 並びの時刻（ISO）。enabled=false は今まで通り convUpdatedAt ?? fallback */

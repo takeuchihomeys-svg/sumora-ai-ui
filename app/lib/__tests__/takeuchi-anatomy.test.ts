@@ -18,7 +18,7 @@ t("趣旨の食い違いを拾う", a ? anatomyConflicts({ ...a, purpose: "appea
 t("指示は伏せ済みの物だけ", /伏せ済み/.test(anatomyPrompt({ maskedCustomer: "YUMAです", maskedBody: body, scene: "property_share" })));
 
 // 2026-11-05 作業員5: 重点と背景（既定 off・元の項目は変えない）
-t("重点の読み: 既定 off", !anatomyFocusOn({}) && anatomyFocusOn({ TAKEUCHI_ANATOMY_FOCUS: "on" }));
+t("重点の読み: 既定 on（2026-11-15）・off で戻す", anatomyFocusOn({}) && anatomyFocusOn({ TAKEUCHI_ANATOMY_FOCUS: "on" }) && !anatomyFocusOn({ TAKEUCHI_ANATOMY_FOCUS: "off" }));
 t("重点の指示は元の指示の後ろに足すだけ", ANATOMY_SYSTEM_FOCUS.startsWith(ANATOMY_SYSTEM) && /promise_keep/.test(ANATOMY_SYSTEM_FOCUS) && !/promise_keep/.test(ANATOMY_SYSTEM));
 const af = parseAnatomy('{"scene":"x","purpose":"ack","main_point":"受ける","worry_answer":null,"parts":["uke"],"why_order":"a","omitted":[],"background":"送った見積書を見て安さに驚いた","focus":"promise_keep"}');
 t("重点と背景を読む", af?.focus === "promise_keep" && af?.background === "送った見積書を見て安さに驚いた", af);

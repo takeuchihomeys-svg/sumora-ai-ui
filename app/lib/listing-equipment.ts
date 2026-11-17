@@ -673,7 +673,7 @@ const PET_SELF_NONE_RE = /ペット(?:飼育)?(?:は|が)?(?:なし|無し|無|�
  *   「ペット なし」（空白入り）は自分がペットを飼っていない話。PROPERTY_PET_WANT_1020=on の時だけ（既定 off）
  */
 export function petWantFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROPERTY_PET_WANT_1020 ?? "").trim().toLowerCase() === "on";
+  return (env.PROPERTY_PET_WANT_1020 ?? "").trim().toLowerCase() !== "off";
 }
 const PET_SELF_NONE_SPACED_RE = /ペット[\s　]*(?:飼育)?[\s　]*(?:は|が)?[\s　]*(?:なし|無し|いない|いません|飼っていない|飼わない)/;
 /** 「ペット不可でも可」「ペット禁止でも大丈夫」＝こだわらない（希望ではない） */

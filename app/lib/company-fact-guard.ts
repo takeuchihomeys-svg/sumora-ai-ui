@@ -74,7 +74,7 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     exclude: /(?:れ|け)ば|場合|キャンセル/,
     label: "審査だけ先に出すことはできる（会社の事実・そのお部屋にお申込みすること）のに「できかねます」と断っています",
     suggestion: "断りの文を削除し「かしこまりました！！お申込しお部屋の審査かけさせて頂きます」の形にする（申込はAIX【申込へ】）",
-    enabledIf: () => (process.env.COMPANY_FACT_SCREENING_FIRST_GUARD ?? "").trim().toLowerCase() === "on",
+    enabledIf: () => (process.env.COMPANY_FACT_SCREENING_FIRST_GUARD ?? "").trim().toLowerCase() !== "off",
   },
   {
     factId: "room_photo",

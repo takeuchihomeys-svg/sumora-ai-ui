@@ -3,7 +3,7 @@
 import { viewingDoneOnAfterGreetingOn, isAfterViewingGreeting, pickViewingEventsDoneAfterGreeting } from "../viewing-done-after-greeting";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
-t("既定 off", !viewingDoneOnAfterGreetingOn({}) && viewingDoneOnAfterGreetingOn({ VIEWING_DONE_ON_AFTER_GREETING: "on" }));
+t("既定 on（2026-11-15）・off で戻す", viewingDoneOnAfterGreetingOn({}) && viewingDoneOnAfterGreetingOn({ VIEWING_DONE_ON_AFTER_GREETING: "on" }) && !viewingDoneOnAfterGreetingOn({ VIEWING_DONE_ON_AFTER_GREETING: "off" }));
 t("内覧後の挨拶だけ", isAfterViewingGreeting("greeting_viewing", "after") && isAfterViewingGreeting("greeting_viewing", "after:thanks") && !isAfterViewingGreeting("greeting_viewing", "before") && !isAfterViewingGreeting("viewing_invite", "after"));
 // 今＝10/28 15:00 JST（06:00Z）
 const now = Date.parse("2026-10-28T06:00:00Z");

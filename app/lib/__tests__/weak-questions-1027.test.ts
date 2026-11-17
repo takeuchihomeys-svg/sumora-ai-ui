@@ -46,7 +46,7 @@ t("on: strong はブレインの約束でも従来どおり（守らない）", 
 // ② 行き先が未定の内覧の日時（q141）
 {
   const f: ViewingFlow = { ...EMPTY_VIEWING_FLOW, stage: "date_agreed", label: "10/26 17:00", timeFixed: true, currentReply: "date_time", reason: "test" };
-  const off = withEnv("VIEWING_PLACE_UNDECIDED_LINE", undefined, () => buildViewingFlowBrainText(f));
+  const off = withEnv("VIEWING_PLACE_UNDECIDED_LINE", "off", () => buildViewingFlowBrainText(f)); // 2026-11-15 既定 on にしたので off を明示
   const on = withEnv("VIEWING_PLACE_UNDECIDED_LINE", "on", () => buildViewingFlowBrainText(f));
   t("off: 行き先未定の1文は無い", !off.includes("行き先") && off.includes("次の一手は meeting_place"));
   t("on: 行き先未定なら meeting_place はまだ送れない", on.includes("行き先") && on.includes("meeting_place はまだ送れない") && on.includes("見るお部屋（行き先）が決まっていれば次の一手は meeting_place"));

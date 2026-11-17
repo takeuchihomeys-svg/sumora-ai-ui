@@ -188,7 +188,7 @@ export function parseCustomerDay(text: string, atMs: number): string | null {
  *   どう返すか（確定の日のまま／日程の変更として AIX【内覧調整】）はブレインが決める（P0）
  */
 export function viewingAltDaysEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.VIEWING_ALT_DAYS_AFTER_CONFIRM ?? "").trim().toLowerCase() === "on";
+  return (env.VIEWING_ALT_DAYS_AFTER_CONFIRM ?? "").trim().toLowerCase() !== "off";
 }
 const ALT_TWO_DAYS_RE = /(?<![0-9\/月:.])([0-9]{1,2})\s*日?\s*(?:か|or|もしくは|または)\s*([0-9]{1,2})\s*日?\s*(?=でも|で|なら|は|に|あたり|辺り|頃|ごろ)/g;
 const ALT_ONE_DAY_RE = /(?<![0-9\/月:.])([0-9]{1,2})\s*日?\s*(?:は|で|なら|でも|の方)(?=[^0-9\n]{0,14}(?:[0-9]{1,2}\s*時|大丈夫|構いません|かまいません|可能|いけ|行け|空い|都合|お願い))/g;
@@ -577,7 +577,7 @@ const REPLY_JA: Record<CustomerDateReply, string> = {
  */
 /** 2026-10-27 日にちが決まった番に「行き先が未定なら待ち合わせ場所はまだ送れない」の1文を足すか（既定 off・VIEWING_PLACE_UNDECIDED_LINE=on） */
 export function viewingPlaceUndecidedLineEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.VIEWING_PLACE_UNDECIDED_LINE ?? "").trim().toLowerCase() === "on";
+  return (env.VIEWING_PLACE_UNDECIDED_LINE ?? "").trim().toLowerCase() !== "off";
 }
 
 export function viewingFlowNextAix(f: ViewingFlow): "viewing_invite" | "meeting_place" | null {
