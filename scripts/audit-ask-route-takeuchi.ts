@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns } from "./lib/prod-yardstick-db";
-import { tcMix, sendShape, outlierOf, aixBundleFamily as fam } from "./lib/ask-route-of";
+import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf } from "./lib/ask-route-of";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -52,6 +52,9 @@ async function main() {
   const table = new Map<string, number>();
   const outliers = new Map<string, Array<{ conv: string; at: string; scene: string; brain: string; staff: string }>>();
   let takeuchi = 0, skipped = 0;
+  // 2026-11-18 統括役の割り当て（W46 の当たりの低い場面）: 場面（line_watch_turns.scene_key）ごとに、帳面の3つ×原因の3つで数える
+  const byScene = new Map<string, { n: number; cells: Map<string, number> }>();
+  const focus = arg("scenes", "返信:条件提示,返信:短い了承・お礼,AIX:estimate_sheet").split(",").filter(Boolean);
   for (const t of turns) {
     const at = Date.parse(t.customer_turn_at);
     const all = msgs.get(t.conversation_id) ?? [];
@@ -66,7 +69,14 @@ async function main() {
     const brainMix = mix ? `${mix.r ? "R" : ""}${mix.p ? "P" : ""}${mix.a ? (mix.a > 1 ? `A${mix.a}` : "A") : ""}` || "要件は触れないだけ" : "記録なし";
     const key = `${brainMix} → ${shape}${kinds.length >= 2 ? `（AIX ${kinds.length}種）` : ""}`;
     table.set(key, (table.get(key) ?? 0) + 1);
-    const o = outlierOf(mix, shape, kinds.length);
+    let o = outlierOf(mix, shape, kinds.length);
+    if (o === "合う" && shape.includes("A") && aixKindMismatch(t.brain_action, kinds)) o = "AIX の種類が違う";
+    const sk = String(t.scene_key ?? "（場面なし）");
+    const srow = byScene.get(sk) ?? { n: 0, cells: new Map<string, number>() };
+    srow.n++;
+    const cell = `${ledgerClassOf(o)}／${causeOf(o)}`;
+    srow.cells.set(cell, (srow.cells.get(cell) ?? 0) + 1);
+    byScene.set(sk, srow);
     if (o !== "合う") outliers.set(o, [...(outliers.get(o) ?? []), { conv: t.conversation_id.slice(0, 8), at: t.customer_turn_at.slice(5, 16), scene: String(t.scene_key ?? ""), brain: `${brainMix}/${t.brain_action ?? "返信"}`, staff: `${shape}/${kinds.join("+")}` }]);
   }
   console.log(`# 要件→行き先（竹内さん本人の番・直近 ${days}日・見張りの番 ${turns.length}・竹内さんの番 ${takeuchi}・申込以降で外した ${skipped}）`);
@@ -77,6 +87,19 @@ async function main() {
     const sc = new Map<string, number>(); for (const r of list) sc.set(r.scene, (sc.get(r.scene) ?? 0) + 1);
     console.log(`- ${k}: ${list.length}（場面 ${[...sc].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([s, n]) => `${s || "なし"} ${n}`).join("・")}）`);
     for (const r of list.slice(0, 4)) console.log(`    · ${r.at} ${r.conv} ブレイン ${r.brain} ／ 竹内さん ${r.staff}`);
+  }
+  console.log("\n## 場面ごと（帳面の3つ／原因の3つ・目安の振り分け＝読んで直す前）");
+  const scenes = [...byScene].sort((a, b) => b[1].n - a[1].n);
+  for (const [sk, row] of [...scenes.filter(([k]) => focus.includes(k)), ...scenes.filter(([k]) => !focus.includes(k)).slice(0, 12)]) {
+    const ok = row.cells.get("合う／合う") ?? 0;
+    const rest = [...row.cells].filter(([c]) => c !== "合う／合う").sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ${n}`).join("・");
+    console.log(`- ${focus.includes(sk) ? "★" : ""}${sk}: ${row.n}番・合う ${ok}（${Math.round((ok / row.n) * 100)}%）・${rest}`);
+  }
+  for (const sk of focus) for (const [k, list] of outliers) {
+    const xs = list.filter((r) => r.scene === sk);
+    if (!xs.length) continue;
+    console.log(`  ★${sk} の ${k}: ${xs.length}`);
+    for (const r of xs.slice(0, 3)) console.log(`    · ${r.at} ${r.conv} ブレイン ${r.brain} ／ 竹内さん ${r.staff}`);
   }
   if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ days, takeuchi, table: Object.fromEntries(table), outliers: Object.fromEntries(outliers) }, null, 1));
 }

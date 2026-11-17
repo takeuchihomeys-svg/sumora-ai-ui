@@ -185,10 +185,10 @@ type PlanInput = {
  *   (a) AIX の要件の種類ごとに AIX の席を作り（AIX→AIX）、(b) 席の AIX は要件の AIX から作る（最終の AIX は要件に AIX が無い時だけ）。
  *   順: 物件確認した（確認の結果）を先に、残りは要件の順（feedback_promise_order_split「物件の募集確認→結果 AIX→…」・send-combo-table の aix_then_aix の行）。
  *   物件オススメ＋ピックアップは1つの束（オススメ1＋9 の型）。2つ目からの AIX にテンプレートの席は足さない（余計な通を作らない）。
- *   既定 off（TWO_MESSAGE_AIX_AIX=on の時だけ）。off は今と同じ。
+ *   既定 on（2026-11-18 統括役の決定・試験 M1115-aixaix-p1/p2 で確かな悪化0・比べた 7/7問）。TWO_MESSAGE_AIX_AIX=off で前と同じ（AIX の席は1つ）。
  */
 export function twoMessageAixAixOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_AIX_AIX ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_AIX_AIX ?? "").trim().toLowerCase() !== "off";
 }
 /** 物件オススメ＋ピックアップは1つの束（要件の帳面 ask-ledger も同じ見方） */
 export const aixFamilyKey = (k: string): string => (/^(?:property_send|property_recommendation)$/.test(k) ? "property_bundle" : k);

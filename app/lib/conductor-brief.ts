@@ -15,7 +15,7 @@
 //   ⑩ doubts   下の役の答えを事実と突き合わせた疑いの印（conductor-doubt の DOUBT_TABLE・種類ごとに何と何を突き合わせるか・なぜ・直しの多い順・決め直さない）
 //   ⑪ sure     番の確かさ（conductor-doubt の SURE_CUES の重み・高・中・低）と人に回す線の案（HANDOFF_RULE）
 // 決まり: どの欄も事実と名前だけ。返信か AIX かを決める言葉は入れない（疑いの印は道を読んで照らすが、道を変えない）。部品が無い欄は「未」。
-// スイッチ: CONDUCTOR_BRIEF（既定 off＝何も足さない／shadow・on＝meta.conductor_brief と digest.cb に記録だけ）。
+// スイッチ: CONDUCTOR_BRIEF（11/18 から既定 on＝記録・off＝何も足さない／shadow・on＝meta.conductor_brief と digest.cb に記録だけ）。
 //
 // ■ 2026-11-13 作業員16（統括役の頼み「指示書を具体に・本番で0件」・KB 9613ffaa）: 欄を今日の名前で埋める。
 //   facts   に出所の7つ（answer-source の kind・who）と確かさ（assertable／basically／needs_check）を足す
@@ -44,8 +44,9 @@ import { feelingNextStrength, feelingBriefSection } from "./feeling-conductor-ta
 type Env = Record<string, string | undefined>;
 export type BriefMode = "off" | "shadow";
 export function conductorBriefMode(env: Env = typeof process !== "undefined" ? process.env : {}): BriefMode {
+  // 2026-11-18 作業員M（統括役の決定・作業員I の引き継ぎ）: 試験 i1115-brief-on2・i1115-brief-rowsv2b（q057,q041,q326,q158・draft）で確かな悪化0＝既定 on（作る＝記録）。止める CONDUCTOR_BRIEF=off
   const v = String(env.CONDUCTOR_BRIEF ?? "").trim().toLowerCase();
-  return v === "shadow" || v === "on" ? "shadow" : "off";
+  return v === "off" ? "off" : "shadow";
 }
 
 /** 判断の本体で集めて meta に置く入力（CONDUCTOR_BRIEF の時だけ・他の部品のスイッチが off でも集める＝プロンプトには入れない） */

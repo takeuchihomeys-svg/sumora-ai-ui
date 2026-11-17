@@ -18,7 +18,7 @@
 // 送った所まで（progressAfterSends＝継ぎ目②の純関数）: 実際に送った通（返信／AIX の種類）を組み立てに当て、答えた要件・約束した要件・残りの要件・次の通を出す。
 // 次の番（openAsksFrom）: まだ答えていない要件（残り）と、約束して結果がまだの要件を id のまま渡す。
 //
-// スイッチ ASK_LEDGER（既定 off＝何もしない／shadow＝meta.ask_ledger に記録だけ／on＝記録＋meta.turn_contract.asks に id・msg を書き足す）。
+// スイッチ ASK_LEDGER（11/18 から既定 shadow・off＝何もしない／shadow＝meta.ask_ledger に記録だけ／on＝記録＋meta.turn_contract.asks に id・msg を書き足す）。
 //   on でも道（返信か AIX か）と組み立ては決め直さない（読んで番号を付けるだけ・KB 0dbfbc97「後の役は決め直さない」）。
 // テスト: app/lib/__tests__/ask-ledger.test.ts
 
@@ -29,8 +29,10 @@ const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
 export type AskLedgerMode = "off" | "shadow" | "on";
 export function askLedgerMode(env: Env = envOf()): AskLedgerMode {
+  // 2026-11-18 作業員M（統括役の案）: 既定 shadow＝meta.ask_ledger に記録だけ（道・組み立て・プロンプトは変えない・Haiku の差分の材料からは外してある）。
+  //   試験 M1115-aixaix-p1/p2 は ASK_LEDGER=shadow を入れて確かな悪化0。止める ASK_LEDGER=off／asks に id・msg を書き足すのは =on
   const v = (env.ASK_LEDGER ?? "").trim().toLowerCase();
-  return v === "shadow" || v === "on" ? v : "off";
+  return v === "off" ? "off" : v === "on" ? "on" : "shadow";
 }
 
 /** 要件の言葉の正規化（空白・句読点・括弧を落とす）。turn-contract.buildTurnContract の keyOf と同じ落とし方（長さは切らない） */
