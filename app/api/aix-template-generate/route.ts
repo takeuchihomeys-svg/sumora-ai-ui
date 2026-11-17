@@ -122,6 +122,7 @@ import type { SecondMaterials } from "@/app/lib/second-message-materials-server"
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
 import { appealRecordFromText, appealRecordMode } from "@/app/lib/appeal-record";
+import { appealPlanReadOn, buildAppealPlan, comparePlanToText } from "@/app/lib/appeal-plan";
 import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
@@ -2511,6 +2512,8 @@ ${text}
               source: "aix-template-generate",
               // 2026-11-15 作業員K: 訴求の記録（appeal-record.ts・APPEAL_RECORD=shadow の時だけ・文と判断は変えない）。竹内さんの送った文と同じ欄で比べる（scripts/audit-appeal-record.ts）
               ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai" }) } : {}),
+              // 2026-11-15 作業員K: 訴求の計画を読む側の1つ目（締め・APPEAL_PLAN_READ=on の時だけ・文と判断は変えない）。締めの判断（recommend-cta）から作った計画の強さ・狙う返事と、書けた文の強さ・狙う返事が同じかを残す
+              ...(appealPlanReadOn() && recCta ? (() => { const plan = buildAppealPlan({ surface: "aix_second", nowIso: new Date().toISOString(), cta: recCta }); const c = comparePlanToText(plan, appealRecordFromText(text, { surface: "aix_second", writer: "ai" })); return { appeal_plan_check: { plan_strength: plan.strength, plan_aim: plan.aim, strength_same: c.strengthSame, aim_same: c.aimSame } }; })() : {}),
               brain: describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta }),
               brain_action: brainMeta?.action ?? null,
               // 2026-10-15 2通目の型（希望とのずれ・相場の好条件）を渡したか（数える用・recommend-second-wish-gap.ts）
