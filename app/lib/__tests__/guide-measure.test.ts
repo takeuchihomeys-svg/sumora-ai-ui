@@ -69,8 +69,8 @@ t("キャンセルの網: 申込の段の「辞退」だけ当てる（申込の
     assert.ok(matchCompanyFacts("キャンセル料はかかりますか", {}).some((f) => f.id === "cancel"));
   } finally { if (had === undefined) delete process.env.COMPANY_FACT_CANCEL_WIDE; else process.env.COMPANY_FACT_CANCEL_WIDE = had; }
 });
-t("見積書の AIX の印（AIX_ESTIMATE_SHEET_FLAG・既定 off）", () => {
-  assert.equal(estimateSentFlagOf("estimate_sheet", null, {}), false);
+t("見積書の AIX の印（AIX_ESTIMATE_SHEET_FLAG・既定 on）", () => {
+  assert.equal(estimateSentFlagOf("estimate_sheet", null, {}), true); assert.equal(estimateSentFlagOf("estimate_sheet", null, { AIX_ESTIMATE_SHEET_FLAG: "off" }), false);
   assert.equal(estimateSentFlagOf("estimate_sheet", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), true);
   assert.equal(estimateSentFlagOf("property_check_result", true, {}), true);
   assert.equal(estimateSentFlagOf("property_send", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), false);

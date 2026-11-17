@@ -4,7 +4,8 @@
 //   見積書そのものの AIX（estimate_sheet）は 30日 37回で 1回も立たず、ブレインの【御見積書 送付済み】（aix_usage_logs.estimate_sent を読む）が出なかった。
 //   AIX_ESTIMATE_SHEET_FLAG=on（既定 off）: estimate_sheet の時も立てる。同封の印（他の AIX）はそのまま。
 type Env = Record<string, string | undefined>;
-export const estimateSheetFlagOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.AIX_ESTIMATE_SHEET_FLAG ?? "").trim().toLowerCase() === "on";
+// 2026-11-18 統括役の決め: 記録の印を立てるだけ（テストで付き方を確かめた）＝既定 on（戻す AIX_ESTIMATE_SHEET_FLAG=off）。main に入った後、次の AIX【見積書送る】の行に estimate_sent が付いたかを軽い読みで確かめる
+export const estimateSheetFlagOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.AIX_ESTIMATE_SHEET_FLAG ?? "on").trim().toLowerCase() !== "off";
 export function estimateSentFlagOf(aixType: string | null | undefined, estimateSent: boolean | null | undefined, env?: Env): boolean {
   if (estimateSent === true) return true;
   return estimateSheetFlagOn(env) && aixType === "estimate_sheet";
