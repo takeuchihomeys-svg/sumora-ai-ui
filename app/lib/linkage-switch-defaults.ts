@@ -3,7 +3,7 @@
 export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   ACK_CONFIRM_AIX_PATH: "on",
   AIX_DESK_COMMAND: "shadow",
-  AIX_OVERDUE_REMIND: "off",
+  AIX_OVERDUE_REMIND: "on",
   AIX_SECOND_APPEAL_JUDGE: "on",
   APPLY_ROUTE_MAP: "on",
   APPLY_ROUTE_SUBSTATE: "off",
