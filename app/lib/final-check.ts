@@ -116,6 +116,7 @@ import {
 import { claudeUsageUsd, usageFromAnthropic, isDeepseekPeakAt } from "./llm-price";
 import { confirmPriorPromiseOn, priorStaffConfirmObject } from "./confirm-prior-promise";
 import { fcFactsFromCompanyOn, companyPolicyBlockForCheck, standardNoticeLinesForCheck, nightPromiseRuleForCheck, gochougoDateAlignOn, hasConcreteSlot, gochougoCondTemplateOn, stripConditionTemplate } from "./final-check-facts-source";
+import { shouldDropEmptyEvidence } from "./final-check-empty-evidence";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -3027,6 +3028,11 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
     for (const raw of r.value) {
       const evidence = (raw.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード）
+      // 2026-11-18 作業員H（FINAL_CHECK_DROP_EMPTY_EVIDENCE・11/18 から既定 on）: 証拠が「該当なし・記載なし」と自分で言っている知らせは、引用の無い指摘と同じに外す（15631・15229）
+      if (shouldDropEmptyEvidence(evidence, draft, undefined, (raw.code ?? "").trim())) {
+        console.log(JSON.stringify({ tag: "final-check:empty-evidence-dropped", pass, code: (raw.code ?? "").trim(), evidence: evidence.slice(0, 40) }));
+        continue;
+      }
       const code = (raw.code ?? "UNKNOWN").trim() || "UNKNOWN";
       // 2026-10-02 お客様自身の言葉（「家賃＋管理費で月7万円程度・西九条駅から徒歩3分以内」）の復唱に付いた FABRICATED_AMOUNT／PROPERTY は外す
       //   （引用の金額・駅・号室・物件名が全部お客様の発言にある時だけ・1つでも無ければ残す）
