@@ -76,3 +76,11 @@ t("見積書の AIX の印（AIX_ESTIMATE_SHEET_FLAG・既定 on）", () => {
   assert.equal(estimateSentFlagOf("property_send", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), false);
 });
 console.log("cancel-estflag ok");
+import { cancelWideOnlyHit, companyFactCancelWideMode } from "../company-facts";
+t("キャンセルの網の shadow: 既定 shadow・申込の段で広げた網だけに当たった時だけ記録", () => {
+  assert.equal(companyFactCancelWideMode({}), "shadow");
+  assert.equal(cancelWideOnlyHit("申込を辞退したいです", true), true);
+  assert.equal(cancelWideOnlyHit("申込を辞退したいです", false), false);
+  assert.equal(cancelWideOnlyHit("キャンセル料はかかりますか", true), false); // 今の網に当たる＝記録しない
+});
+console.log("cancel-shadow ok");

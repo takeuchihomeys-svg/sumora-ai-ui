@@ -502,6 +502,8 @@ export type SuggestedAixMeta = {
   material_conflicts?: string[];
   /** 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（app/lib/material-clash.ts・BRAIN_MATERIAL_CLASH=shadow の時だけ・記録だけ） */
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
+  /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
+  cancel_wide_shadow?: boolean;
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
   situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
@@ -2400,6 +2402,15 @@ async function analyzeConversationCore(
   ) + brandCostOverrideNote(convAccount)
     // 2026-11-05 竹内さん No.10: 延滞歴・カードローン等の審査の不安は、独立系の保証会社の知識から返信で言ってよい（材料は guarantor-companies のマスタ側・既定 on）
     + (await import("@/app/lib/guarantor-companies")).buildScreeningHistoryNote(customerTextsForCompanyFacts([...typedMessages].reverse()));
+  // 2026-11-18 作業員L（COMPANY_FACT_CANCEL_WIDE・既定 shadow）: 申込の段で広げたキャンセルの網だけに当たった番を記録する（材料には足さない）
+  let cancelWideShadow = false;
+  try {
+    const cfm = await import("@/app/lib/company-facts");
+    if (cfm.companyFactCancelWideMode() === "shadow" && cfm.cancelWideOnlyHit(customerTextsForCompanyFacts([...typedMessages].reverse()), isPostApplyStatus(convStatus))) {
+      cancelWideShadow = true;
+      console.log(JSON.stringify({ tag: "brain:cancel-wide-shadow", conversationId }));
+    }
+  } catch { /* 記録だけ */ }
   const sendReplyTimingText = buildSendReplyTimingNote({
     lastStaffAt: lastStaffAtIso,
     lastStaffAixType,
@@ -6834,6 +6845,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       ...(BRAIN_PLAN_AHEAD_ON ? ((pa) => pa ? { plan_ahead: pa, plan_ahead_at: new Date().toISOString() } : prevPlanAhead ? { plan_ahead: prevPlanAhead, ...(prevPlanAheadAt ? { plan_ahead_at: prevPlanAheadAt } : {}) } : {})(normalizePlanAhead((parsed as { plan_ahead?: unknown }).plan_ahead)) : {}),
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
+      cancel_wide_shadow: cancelWideShadow || undefined,
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）

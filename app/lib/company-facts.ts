@@ -846,7 +846,18 @@ export type CompanyFactOpts = { account?: string | null; abouts?: ReadonlyArray<
 /** 2026-11-18 作業員L（COMPANY_FACT_CANCEL_WIDE・既定 off）: 申込の段にいる時だけ、「辞退・お断り・見送り・取りやめ・白紙」も申込の取り消しとして読む。
  *  申込の前の「この物件はお断り（他の物件にする）」は意味が違うので当てない（申込の段でない時は今の網のまま） */
 export const CANCEL_WIDE_RE = /辞退|お断り|断りたい|見送|取りやめ|取り止め|白紙|なかった事に|なかったことに|やめておき|やめさせ/;
-export const companyFactCancelWideOn = (env: Record<string, string | undefined> = process.env) => (env.COMPANY_FACT_CANCEL_WIDE ?? "").trim().toLowerCase() === "on";
+/** 2026-11-18 統括役の決め: 既定 shadow＝材料には足さず、網に当たった番を記録するだけ（brain-core が meta.cancel_wide_shadow・digest.cxw）。記録が溜まったら当たった番を目で読んで on を決める。止める =off */
+export const companyFactCancelWideMode = (env: Record<string, string | undefined> = process.env): "off" | "shadow" | "on" => { const v = (env.COMPANY_FACT_CANCEL_WIDE ?? "shadow").trim().toLowerCase(); return v === "on" || v === "off" ? v : "shadow"; };
+export const companyFactCancelWideOn = (env: Record<string, string | undefined> = process.env) => companyFactCancelWideMode(env) === "on";
+/** 申込の段で、今の網には当たらず広げた網だけに当たるか（shadow の記録の元） */
+export function cancelWideOnlyHit(customerText: string | string[] | null | undefined, applying: boolean): boolean {
+  if (!applying) return false;
+  const units = unitsOf(customerText);
+  const c = COMPANY_FACTS.find((f) => f.id === "cancel");
+  if (!c) return false;
+  const asked = (t: string) => (typeof c.ask === "function" ? c.ask(t) : c.ask.test(t));
+  return !units.some(asked) && units.some((t) => CANCEL_WIDE_RE.test(t.normalize("NFKC")));
+}
 const PARKING_WORD_RE = /駐車|パーキング|車で|お車|車は|車って/;
 export function matchCompanyFacts(customerText: string | string[] | null | undefined, opts: CompanyFactOpts = {}): CompanyFact[] {
   const units = unitsOf(customerText);
