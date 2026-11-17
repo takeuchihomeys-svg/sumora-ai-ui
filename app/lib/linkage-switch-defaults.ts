@@ -12,7 +12,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   BRAIN_JUDGE_BASIS: "off",
   BRAIN_MATERIAL_CLASH: "off",
   BRAIN_NOW_LATER_FIRST: "on",
-  BRAIN_OUR_SEND_UPTAKE: "off",
+  BRAIN_OUR_SEND_UPTAKE: "on",
   BRAIN_SEVEN_FIELDS: "off",
   BRAIN_SITUATION_NOW: "shadow",
   BRAIN_SITUATION_TIMELINE: "on",
