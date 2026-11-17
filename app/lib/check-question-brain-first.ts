@@ -10,7 +10,7 @@
 type Env = Record<string, string | undefined>;
 
 export function checkQuestionBrainFirstOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-cqbf-p2/p3・k1118-cqbf-p1a＝9問＋守り 悪化0）
 }
 
 type Ask = { route?: unknown; aix?: unknown; about?: unknown; answer?: unknown };
