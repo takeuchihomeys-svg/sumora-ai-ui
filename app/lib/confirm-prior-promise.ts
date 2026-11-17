@@ -14,7 +14,7 @@ const ASK_RE = /[？?]|ますか|でしょうか|ですか|ませんか|教え�
 const DECL_WITH_OBJECT_RE = /([^\n。！!、]{2,30}?)(?:を|について(?:は)?)?(?:管理会社(?:様)?に)?確認させて(?:頂|いただ)き/;
 
 export function confirmPriorPromiseOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_CONFIRM_PRIOR_PROMISE ?? "").trim().toLowerCase() === "on";
+  return (env.FC_CONFIRM_PRIOR_PROMISE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-fc-p1〜p4 悪化0）
 }
 
 /** お礼・了承だけの発言か（問い・依頼が無い・短い） */

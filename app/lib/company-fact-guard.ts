@@ -332,7 +332,7 @@ export function findCompanyFactContradiction(
 
 const PAYMENT_UNASKED_EXCLUDE_RE = /ご入居|入居(?:は|が|でき|出来)/;
 export function paymentFactUnaskedOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_PAYMENT_FACT_UNASKED ?? "").trim().toLowerCase() === "on";
+  return (env.FC_PAYMENT_FACT_UNASKED ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-fc-p1〜p4・8問＋守り 悪化0）
 }
 
 // ─── 2026-10-08 竹内さん「管理会社などの業者の名前は、お客様から聞かれた時だけ返信に出す」 ───
