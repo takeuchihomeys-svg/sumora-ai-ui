@@ -32,6 +32,8 @@ export type AppealPlan = AppealRecord & {
   candidates: AppealCandidate[];
   /** 前の訴求（物件オススメ・ピックアップの送信）からの時間。分からなければ null */
   sinceLastAppealH: number | null;
+  /** この訴求が答える依頼の id（作業員M の要件の帳面 ask-ledger.askIdOf と同じ id）。呼ぶ側が渡した物だけ */
+  answersAsk: string[];
   /** どの部品の答えを使ったか（監査用） */
   from: { strengthAim: "recommend_cta" | "appeal_timing" | "none"; points: "brain" | "none"; whyNow: "situation_now" | "none" };
 };
@@ -71,6 +73,8 @@ export function buildAppealPlan(i: {
   roomState?: ReadonlyArray<"退去予定" | "空室" | "新着"> | null;
   /** 条件の合い方（判定の札の外れ・必須の外れ）。無ければ 0 */
   mustMiss?: ReadonlyArray<string> | null;
+  /** この訴求が答える依頼の id（ask-ledger の AskEntry.id） */
+  answersAsk?: ReadonlyArray<string> | null;
 }): AppealPlan {
   const seen = new Set<string>();
   const candidates: AppealCandidate[] = [];
@@ -99,6 +103,7 @@ export function buildAppealPlan(i: {
     latent: i.latent?.id ? { id: String(i.latent.id), top: String(i.latent.top ?? "") } : null,
     candidates,
     sinceLastAppealH: lastAppeal != null ? Math.round(((now - lastAppeal) / 3600_000) * 10) / 10 : null,
+    answersAsk: [...new Set(i.answersAsk ?? [])],
     from: { strengthAim: i.cta ? "recommend_cta" : i.timing ? "appeal_timing" : "none", points: points.length ? "brain" : "none", whyNow: i.situation ? "situation_now" : "none" },
   };
 }
