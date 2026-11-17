@@ -8,7 +8,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 // スイッチ
-t("既定 off", askLedgerMode({}) === "off" && askLedgerMode({ ASK_LEDGER: "x" }) === "off");
+t("既定 shadow（11/18）", askLedgerMode({}) === "shadow" && askLedgerMode({ ASK_LEDGER: "x" }) === "shadow" && askLedgerMode({ ASK_LEDGER: "off" }) === "off");
 t("shadow / on", askLedgerMode({ ASK_LEDGER: "shadow" }) === "shadow" && askLedgerMode({ ASK_LEDGER: " ON " }) === "on");
 
 // id: 同じ言葉＝同じ id・空白や句読点の違いは同じ・違う言葉は違う
