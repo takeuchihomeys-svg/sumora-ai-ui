@@ -3140,9 +3140,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       }\n※「御見積書を作成してお送りします」等の再宣言は禁止（既に送付済み）。費用について聞かれたら上記の金額を根拠に答えること。`
     : "";
 
+  // 2026-11-18 作業員L（BRAIN_ESTIMATE_RECORDS・既定 off）: 送った御見積書の記録（estimate_records）を材料に（見積書そのものの AIX は estimate_sent が立たず【御見積書 送付済み】が出ない）
+  let estimateRecordsText = "";
+  try {
+    const erb = await import("@/app/lib/estimate-records-block");
+    if (erb.estimateRecordsBlockOn()) {
+      const { data: erRows } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
+      estimateRecordsText = erb.estimateRecordsBlock((erRows ?? []) as never);
+    }
+  } catch (e) { console.warn("[brain-core] estimate-records block skipped:", e instanceof Error ? e.message : String(e)); }
   const tasksText = (openTasks.length > 0
     ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
-    : "") + checkResultsText + propAvailabilityText + estimateInfoText;
+    : "") + checkResultsText + propAvailabilityText + estimateInfoText + estimateRecordsText;
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
