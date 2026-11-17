@@ -144,7 +144,7 @@ import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
 import { latentFiveOn, LATENT_FIVE_FIELD, LATENT_FIVE_RULES, normalizeLatentFive, type LatentFive } from "@/app/lib/latent-five";
-import { latentRowCandidate } from "@/app/lib/latent-subkinds";
+import { latentRowCandidate, latentSubkindsOn } from "@/app/lib/latent-subkinds";
 import { readCandidatesOn, readCandidatesMode, READ_CANDIDATES_FIELD, READ_CANDIDATES_RULES, READ_CANDIDATES_FIELD_SHADOW, READ_CANDIDATES_RULES_SHADOW, normalizeReadCandidates, normalizeReadCandidatesFull, readingHandoff, readCandidatesDigest, chosenReading, type ReadCandidates, type ReadCandidatesFull } from "@/app/lib/brain-read-candidates";
 import { ourSendUptakeOn, OUR_SEND_UPTAKE_FIELD, OUR_SEND_UPTAKE_RULES, normalizeOurSendUptake, ourSendUptakeDigest, type OurSendUptakeRow } from "@/app/lib/our-send-uptake";
 import { checkOrderGuideOn, checkOrderGuideFor, preBrainCues } from "@/app/lib/check-order-guide";
@@ -574,6 +574,8 @@ export type SuggestedAixMeta = {
   latent_five?: LatentFive;
   /** 同: 潜在の下の種類（latent-subkinds・使う事実の口つき・concern が空でも立つ候補） */
   latent_five_sub?: { id: string; top: string; factSource: string | null; phraseKind: string; from: string };
+  /** 2026-11-15 作業員K: 潜在の下の種類の記録だけ（LATENT_SUBKINDS=on・LATENT_FIVE が off の時）。文の統括は読まない名前（latent_five_sub と分ける＝文と判断は変えない） */
+  latent_subkind_record?: { id: string; top: string; factSource: string | null; phraseKind: string; from: string };
   /** 同: こちらの直前の送信の部分ごとの受け取られ方と刺さり・BRAIN_OUR_SEND_UPTAKE=on の時だけ（記録だけ・文の統括が HOOK_TO_COMPOSE で読む） */
   our_send_uptake?: OurSendUptakeRow[];
   /** 2026-11-12 作業員22: 判断の順番の型の手がかりに使う今の一通の場面（CHECK_ORDER_TABLE=shadow|on の時だけ・記録だけ） */
@@ -6716,6 +6718,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       mindsetTarget: ((parsed as { mindset?: { anxiety?: { target?: string } } }).mindset?.anxiety?.target) ?? null,
       ourSendText: readHandoffRec?.latentText ?? null,
     })) : null;
+    // 2026-11-15 作業員K（統括役の決め・案①）: LATENT_FIVE が off でも、LATENT_SUBKINDS=on なら下の種類の候補を記録だけする（meta.latent_subkind_record・読む所は訴求の記録の why だけ）
+    const latentSubkindRecordOnly = !BRAIN_LATENT_FIVE_ON && latentSubkindsOn() ? ((c) => (c ? { id: c.sub.id, top: c.sub.top, factSource: c.sub.factSource ?? null, phraseKind: c.sub.phraseKind, from: c.from } : null))(latentRowCandidate({
+      concernText: null, customerText: unrepliedTurn.text ?? "",
+      mindsetTarget: ((parsed as { mindset?: { anxiety?: { target?: string } } }).mindset?.anxiety?.target) ?? null,
+      ourSendText: readHandoffRec?.latentText ?? null,
+    })) : null;
+    if (latentSubkindRecordOnly) console.log(JSON.stringify({ tag: "brain:latent-subkind-record", conversationId, sub: latentSubkindRecordOnly.id, from: latentSubkindRecordOnly.from }));
     if (BRAIN_LATENT_FIVE_ON) console.log(JSON.stringify({ tag: "brain:latent-five", conversationId, stages: latentFiveParsed ? Object.entries(latentFiveParsed).filter(([, v]) => v).map(([k]) => k) : [], sub: latentFiveSubRec?.id ?? null, from: latentFiveSubRec?.from ?? null }));
     const uptakeParsed: OurSendUptakeRow[] | null = BRAIN_OUR_SEND_UPTAKE_ON ? normalizeOurSendUptake((parsed as { our_send_uptake?: unknown }).our_send_uptake) : null;
     if (BRAIN_READ_CANDIDATES_SHADOW) console.log(JSON.stringify({ tag: "brain:read-candidates-shadow", conversationId, rc: readCandidatesDigest(readCandParsed), reading: readHandoffRec?.reading ?? null, why: readHandoffRec?.whyKind ?? null }));
@@ -6899,6 +6908,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-13 作業員16: 潜在の5段と下の種類（LATENT_FIVE=on の時だけ・記録と文の統括の材料・判断は変えない）
       latent_five: latentFiveParsed ?? undefined,
       latent_five_sub: latentFiveSubRec ?? undefined,
+      latent_subkind_record: latentSubkindRecordOnly ?? undefined,
       our_send_uptake: uptakeParsed ?? undefined,
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
       // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）
