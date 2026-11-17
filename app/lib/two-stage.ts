@@ -130,8 +130,15 @@ export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問
  *   TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE=on の時だけ（既定 off）
  */
 export const TWO_STAGE_ALSO_ANSWER_PLAIN = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。";
-export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
-  return (env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() !== "off" ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER; // 2026-11-06 既定 on（q174-guard 悪化0）
+/**
+ * 2026-11-18 作業員H（内覧の誘いの切り分け h1115-off-×6 の読み直し）: 5つのスイッチを1つずつ off にしても、q428 の2段:pickup の方向の文には
+ *   この尾の「頼まれていない内覧・申込の一文は足さない」が残っていた（6本目の止め＝TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE・既定 on）。
+ *   TSUNAGI_ONE_PLACE=on で appeal-timing が誘う判定の番は、この尾からも止めの句を外す（決める所を1か所に・他の番は今まで通り）。
+ */
+export const TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ）。";
+export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}, appeal?: AppealDecision): string {
+  if ((env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() === "off") return TWO_STAGE_ALSO_ANSWER;
+  return noViewingByDecision(true, appeal, env) ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK; // 2026-11-06 既定 on（q174-guard 悪化0）
 }
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
@@ -143,18 +150,18 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
     if (extra.length) {
       return {
         ...v,
-        direction: `${v.direction}${twoStageAlsoAnswer()}${multiPromiseDirection(extra)}`,
+        direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}${multiPromiseDirection(extra)}`,
         keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
         extraPromises: extra.map((x) => x.kind),
       };
     }
-    return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
+    return { ...v, direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}` };
   }
   const plan = planPromiseSequence(v, i);
-  if (!plan) return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
+  if (!plan) return { ...v, direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}` };
   return {
     ...v,
-    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : twoStageAlsoAnswer()}${plan.direction}`,
+    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : twoStageAlsoAnswer(undefined, i.appeal)}${plan.direction}`,
     keyTopic: plan.second ? (plan.second.kind === "wish" ? `${v.keyTopic}＋2通目に${plan.second.what}` : `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束`) : v.keyTopic,
     ...(plan.second ? { extraPromises: [plan.second.kind] } : {}),
     ...(plan.later.length ? { laterPromises: plan.later.map((x) => x.kind) } : {}),

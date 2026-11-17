@@ -25,3 +25,13 @@ t("2段: on・誘う判定 → 足さない", pickupDirectionAdjust(pv, { custom
 t("2段: on・誘わない判定（q174）→ 足す", (pickupDirectionAdjust(pv, { customerText: q174, appeal: none }, { ...on, PICKUP_DIRECTION_KEEP: "off" })?.direction ?? "").includes("内覧の依頼ではない"));
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
+// 11/18: 2段の尾（TWO_STAGE_ALSO_ANSWER_PLAIN）の止めの句も1か所の判定に従う
+import("../two-stage").then(({ twoStageAlsoAnswer, TWO_STAGE_ALSO_ANSWER_PLAIN, TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK }) => {
+  const ok = twoStageAlsoAnswer({}, { kind: "viewing", level: "suggest" }) === TWO_STAGE_ALSO_ANSWER_PLAIN
+    && twoStageAlsoAnswer({ TSUNAGI_ONE_PLACE: "on" }, { kind: "viewing", level: "suggest" }) === TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK
+    && twoStageAlsoAnswer({ TSUNAGI_ONE_PLACE: "on" }, { kind: "none", level: "avoid" }) === TWO_STAGE_ALSO_ANSWER_PLAIN
+    && twoStageAlsoAnswer({ TSUNAGI_ONE_PLACE: "on" }) === TWO_STAGE_ALSO_ANSWER_PLAIN
+    && !TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK.includes("内覧");
+  console.log(ok ? "  OK  2段の尾: on・誘う判定だけ止めの句を外す" : "  NG  2段の尾");
+  if (!ok) process.exit(1);
+});
