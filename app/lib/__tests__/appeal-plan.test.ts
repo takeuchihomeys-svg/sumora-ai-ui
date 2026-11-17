@@ -23,6 +23,7 @@ const p = buildAppealPlan({
 });
 t("候補は網のまま（同じ話題は1回）・推す点はブレインが選ぶまで空", p.candidates.length === 2 && p.points.length === 0 && p.from.points === "none");
 t("前の訴求からの間（物件オススメの送信から）", p.sinceLastAppealH === 0.5);
+t("答える依頼の id（要件の帳面と同じ id）は渡した物だけ・重複は1つ", p.answersAsk.length === 0 && buildAppealPlan({ surface: "reply", nowIso: now, answersAsk: ["a1", "a1", "a2"] }).answersAsk.join(",") === "a1,a2");
 t("今推す理由: 部屋の状況", p.whyNow.includes("退去予定"));
 const chosen = buildAppealPlan({ surface: "aix_second", nowIso: now, cta: { kind: "viewing" }, chosen: ["low_initial", "spacious"], wants: [{ key: "low_initial", from: "conditions" }] });
 t("ブレインの選び → 推す点と希望に応える点", chosen.points.length === 2 && chosen.why.length === 1 && chosen.from.points === "brain");

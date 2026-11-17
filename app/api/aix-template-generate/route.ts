@@ -121,8 +121,8 @@ import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } fr
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
-import { appealRecordFromText, appealRecordMode } from "@/app/lib/appeal-record";
-import { appealPlanReadOn, buildAppealPlan, comparePlanToText } from "@/app/lib/appeal-plan";
+import { appealRecordFromText, appealRecordMode, appealPointsOf } from "@/app/lib/appeal-record";
+import { appealPlanReadOn, buildAppealPlan, comparePlanToText, type AppealCandidate } from "@/app/lib/appeal-plan";
 import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
@@ -1380,6 +1380,9 @@ export async function POST(req: NextRequest) {
   //   採点は1通目の物件（見出しの建物名・号室）に当たる行だけ使う。読めなければ「ご査収」に倒れる（押しすぎない）。
   //   ⚠ 上の ctaGuidance（一般の CTA 率）とは別の請求として二重に入れない: 物件オススメの時はこちらだけを渡す
   let recCta: RecommendCtaDecision | null = null;
+  // 2026-11-15 作業員K: 訴求の計画を読む側の3つ目（オススメポイント＝資料の事実×希望の網・APPEAL_PLAN_READ=on の時だけ記録に使う）
+  let appealPlanFactCands: AppealCandidate[] = [];
+  let appealPlanWants: Array<{ key: string; from?: string | null }> = [];
   // 2026-09-30 竹内「資料もちゃんとよみとった方がよいなら、読みとったのを AIX テンプレートの部分にも渡す」:
   //   1通目の物件に当たる売上サポの行（採点と同じ行）から、資料の現況・駅・築年・敷金礼金・ご希望に合う点を読む（AD・点数は渡さない）
   let materialRow: SecondMaterialRow | null = null;
@@ -1548,7 +1551,9 @@ export async function POST(req: NextRequest) {
             const { customerWants } = await import("@/app/lib/recommendation-gaps");
             const { buildAppealPoints } = await import("@/app/lib/recommend-appeal-points");
             const wants = customerWants({ conditions: p as never, messages: msgs });
-            fit = savedReadFitLines(buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null }));
+            const ap = buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null });
+            fit = savedReadFitLines(ap);
+            if (appealPlanReadOn()) { appealPlanFactCands = ap.points.map((x) => ({ topic: x.key, from: "facts" as const })); appealPlanWants = wants; }
           } catch { /* 希望が読めない時は事実だけ */ }
           savedReadExtra = [...conv.extraLines, ...fit];
           console.log(JSON.stringify({ tag: "aix-template-generate:second-saved-read", head: `${head.name} ${head.room}`, extra: savedReadExtra.length, fit: fit.length }));
@@ -2513,7 +2518,13 @@ ${text}
               // 2026-11-15 作業員K: 訴求の記録（appeal-record.ts・APPEAL_RECORD=shadow の時だけ・文と判断は変えない）。竹内さんの送った文と同じ欄で比べる（scripts/audit-appeal-record.ts）
               ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai" }) } : {}),
               // 2026-11-15 作業員K: 訴求の計画を読む側の1つ目（締め・APPEAL_PLAN_READ=on の時だけ・文と判断は変えない）。締めの判断（recommend-cta）から作った計画の強さ・狙う返事と、書けた文の強さ・狙う返事が同じかを残す
-              ...(appealPlanReadOn() && recCta ? (() => { const plan = buildAppealPlan({ surface: "aix_second", nowIso: new Date().toISOString(), cta: recCta }); const c = comparePlanToText(plan, appealRecordFromText(text, { surface: "aix_second", writer: "ai" })); return { appeal_plan_check: { plan_strength: plan.strength, plan_aim: plan.aim, strength_same: c.strengthSame, aim_same: c.aimSame } }; })() : {}),
+              //   読む側の2つ目（2通目の判断）: ブレインの訴求の判断（second-appeal-judge）があれば、推す点（first・second の文から読んだ話題）と締めを計画に入れ、書けた文の点と比べる
+              ...(appealPlanReadOn() && (recCta || secondJudge) ? (() => {
+                const chosen = secondJudge ? appealPointsOf(`${secondJudge.first.text}\n${secondJudge.second?.text ?? ""}`) : [];
+                const plan = buildAppealPlan({ surface: "aix_second", nowIso: new Date().toISOString(), cta: secondJudge ? { kind: secondJudge.closing } : recCta, chosen, candidates: appealPlanFactCands, wants: appealPlanWants });
+                const c = comparePlanToText(plan, appealRecordFromText(text, { surface: "aix_second", writer: "ai" }));
+                return { appeal_plan_check: { from: secondJudge ? "second_appeal_judge" : "recommend_cta", candidates: plan.candidates.map((x) => x.topic), want_hit: `${plan.fit.wantHit}/${plan.fit.wantTotal}`, plan_points: plan.points, plan_strength: plan.strength, plan_aim: plan.aim, strength_same: c.strengthSame, aim_same: c.aimSame, points_overlap: plan.points.length ? Math.round(c.pointsOverlap * 100) / 100 : null, missing_points: c.missingPoints } };
+              })() : {}),
               brain: describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta }),
               brain_action: brainMeta?.action ?? null,
               // 2026-10-15 2通目の型（希望とのずれ・相場の好条件）を渡したか（数える用・recommend-second-wish-gap.ts）
