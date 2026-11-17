@@ -9,7 +9,7 @@ const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); 
 const jst = (y: number, m: number, d: number, h = 12) => Date.UTC(y, m - 1, d, h - 9);
 const said = jst(2026, 11, 13); // 金曜
 
-t("既定 off", () => { assert.equal(situationTimelineOn({}), true); assert.equal(situationTimelineOn({ BRAIN_SITUATION_TIMELINE: "off" }), false); assert.equal(sentPropsFullOn({}), false); });
+t("既定（時系列の帳面 on・送った物件 count）", () => { assert.equal(situationTimelineOn({}), true); assert.equal(situationTimelineOn({ BRAIN_SITUATION_TIMELINE: "off" }), false); assert.equal(sentPropsFullOn({}), true); assert.equal(sentPropsFullMode({}), "count"); assert.equal(sentPropsFullOn({ SENT_PROPS_FULL: "off" }), false); });
 t("時の言葉: 来週・再来週・週末・月末・来月・N月下旬・N月N日・明日・N日・給料日", () => {
   const w = (s: string) => resolveTimeWords(s, said).map((x) => `${x.word}=${x.label}`);
   assert.deepEqual(w("来週から動けます"), ["来週=11/16（月）〜11/22（日）"]);
@@ -98,7 +98,7 @@ console.log("timeline-question ok");
 // ── 今の状況の記録（BRAIN_SITUATION_NOW）
 import { buildSituationNow, situationNowOn, situationNowDigest, factIdOf } from "../situation-now";
 t("今の状況の記録: 送った事・確認した事・前の項目（答えたか）・開いている約束・要件と送った所まで・食い違い（id 付き）", () => {
-  assert.equal(situationNowOn({}), false);
+  assert.equal(situationNowOn({}), true); assert.equal(situationNowOn({ BRAIN_SITUATION_NOW: "off" }), false);
   const facts = [
     { sent_at: "2026-11-10T01:00:00Z", origin: "staff_text", kind: "confirmation_promised", status: "promised", detail: { object: "募集状況" } },
     { sent_at: "2026-11-10T02:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: { propertyNames: ["Aマンション 101"] } },

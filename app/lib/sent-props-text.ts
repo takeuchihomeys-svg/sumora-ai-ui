@@ -169,7 +169,9 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
 // 2026-11-15 統括役の決め（①）: count＝取得を広げて見出しの件数だけ全部の件数にする（詳しい行は新しい順に20件のまま・それより前の行は出さない）。
 //   on＝count＋「それより前に送った物件」の1行（16問×3回で q057・q112 が悪化＝試験の版）。既定 off。
 export type SentPropsFullMode = "off" | "count" | "on";
-export const sentPropsFullMode = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): SentPropsFullMode => { const v = (env.SENT_PROPS_FULL ?? "").trim().toLowerCase(); return v === "on" || v === "count" ? v : "off"; };
+export const sentPropsFullMode = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): SentPropsFullMode => { const v = (env.SENT_PROPS_FULL ?? "count").trim().toLowerCase(); return v === "on" || v === "count" ? v : "off"; };
+// 2026-11-18 作業員L: count を既定に（戻す SENT_PROPS_FULL=off）。試験 L1115-sitm-off → L1115-sitm-spcount（16問・3回の過半数・DeepSeek）で悪くなった問題 0・
+//   q057・q092 を5回ずつ（L1118-r5-count）: q057 道 3/5→4/5・本質 3→4・依頼 0/5→3/5、q092 道 0/5→1/5。on（それより前の行も出す）は q057・q112 が悪化＝試験の版のまま
 /** 取得を広げるか（count と on） */
 export const sentPropsFullOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => sentPropsFullMode(env) !== "off";
 export const SENT_PROPS_FULL_LIMIT = 80;
