@@ -40,3 +40,47 @@ t("番ごと: 返事の後の駅で 進んだ・止まった・離れた（48時
   assert.equal(applying.length, 0);
 });
 console.log(`${n} tests ok`);
+
+import { estimateRecordsBlock, estimateRecordsBlockOn } from "../estimate-records-block";
+t("送った御見積書の記録: 新しい順・同じ物件の出し直しは前の金額も・名前の無い行は落とす", () => {
+  assert.equal(estimateRecordsBlockOn({}), false);
+  const b = estimateRecordsBlock([
+    { property_name: "Aマンション", room_no: "101号室", initial_cost_yen: 180000, created_at: "2026-11-10T03:00:00Z" },
+    { property_name: "Aマンション", room_no: "101", initial_cost_yen: 220000, created_at: "2026-11-08T03:00:00Z" },
+    { property_name: "Bハイツ", room_no: null, initial_cost_yen: "150,000", created_at: "2026-11-09T03:00:00Z" },
+    { property_name: "", room_no: "1", initial_cost_yen: 1, created_at: "2026-11-09T03:00:00Z" },
+  ]);
+  assert.match(b, /- Aマンション 101号室: 11\/10送付・初期費用 180,000円（前の見積: 11\/8 220,000円）/);
+  assert.match(b, /- Bハイツ: 11\/9送付・初期費用 150,000円/);
+  assert.equal(estimateRecordsBlock([]), "");
+});
+console.log("estimate-records ok");
+
+import { matchCompanyFacts } from "../company-facts";
+import { estimateSentFlagOf } from "../estimate-sent-flag";
+t("キャンセルの網: 申込の段の「辞退」だけ当てる（申込の前の物件のお断りは当てない）・既定 off", () => {
+  const had = process.env.COMPANY_FACT_CANCEL_WIDE;
+  try {
+    delete process.env.COMPANY_FACT_CANCEL_WIDE;
+    assert.ok(!matchCompanyFacts("申込を辞退したいです", { applying: true }).some((f) => f.id === "cancel"));
+    process.env.COMPANY_FACT_CANCEL_WIDE = "on";
+    assert.ok(matchCompanyFacts("申込を辞退したいです", { applying: true }).some((f) => f.id === "cancel"));
+    assert.ok(!matchCompanyFacts("この物件はお断りして他を探したいです", { applying: false }).some((f) => f.id === "cancel"));
+    assert.ok(matchCompanyFacts("キャンセル料はかかりますか", {}).some((f) => f.id === "cancel"));
+  } finally { if (had === undefined) delete process.env.COMPANY_FACT_CANCEL_WIDE; else process.env.COMPANY_FACT_CANCEL_WIDE = had; }
+});
+t("見積書の AIX の印（AIX_ESTIMATE_SHEET_FLAG・既定 on）", () => {
+  assert.equal(estimateSentFlagOf("estimate_sheet", null, {}), true); assert.equal(estimateSentFlagOf("estimate_sheet", null, { AIX_ESTIMATE_SHEET_FLAG: "off" }), false);
+  assert.equal(estimateSentFlagOf("estimate_sheet", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), true);
+  assert.equal(estimateSentFlagOf("property_check_result", true, {}), true);
+  assert.equal(estimateSentFlagOf("property_send", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), false);
+});
+console.log("cancel-estflag ok");
+import { cancelWideOnlyHit, companyFactCancelWideMode } from "../company-facts";
+t("キャンセルの網の shadow: 既定 shadow・申込の段で広げた網だけに当たった時だけ記録", () => {
+  assert.equal(companyFactCancelWideMode({}), "shadow");
+  assert.equal(cancelWideOnlyHit("申込を辞退したいです", true), true);
+  assert.equal(cancelWideOnlyHit("申込を辞退したいです", false), false);
+  assert.equal(cancelWideOnlyHit("キャンセル料はかかりますか", true), false); // 今の網に当たる＝記録しない
+});
+console.log("cancel-shadow ok");

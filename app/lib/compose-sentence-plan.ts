@@ -834,7 +834,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   // 2026-11-13 作業員22: 届いたかの確かめ（DELIVERY_CHECK・記録だけ）
   delivery_check: "none",
   // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）と、材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）＝どちらも記録だけ・文に渡さない
-  judge_basis_rec: "none", material_clash: "none",
+  judge_basis_rec: "none", material_clash: "none", cancel_wide_shadow: "none",
   // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_TIMELINE）＝まず記録の欄。書き手への渡し方は試験の後に決める
   situation_now: "none",
   // 2026-11-13 作業員22: mm が手元にあった印（MATERIAL_ON_HAND・記録だけ）
