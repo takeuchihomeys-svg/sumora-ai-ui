@@ -13,7 +13,7 @@ import { COMPANY_FACTS } from "./company-facts";
 import { PROCEDURE_FACTS } from "./procedure-question";
 
 export function fcFactsFromCompanyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_FACTS_FROM_COMPANY ?? "").trim().toLowerCase() === "on";
+  return (env.FC_FACTS_FROM_COMPANY ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-fc-p1〜p4 悪化0）
 }
 
 /** 管理会社の確認が営業時間外になる時刻（JST・mgmt-hours-split の夜の線と同じ 18 時） */

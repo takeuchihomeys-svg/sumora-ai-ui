@@ -10,8 +10,8 @@ const txt = (b: Array<{ text: string }>) => b.map((x) => x.text).join("\n");
 const draft = "〇〇さんお世話になっております！！\n全然大丈夫です😊\n初期費用のお支払い方法はお振込での一括のみでの対応となります！！\n内覧につきましては、日程のご案内をお送りさせて頂きます！！";
 const ctx = { lastCustomerMessage: "後内とかもしたいです", recentMessages: [{ sender: "customer", text: "後内とかもしたいです" }], account: "sumora" } as unknown as FinalCheckContext;
 
-delete process.env.FC_FACTS_FROM_COMPANY; delete process.env.COMPANY_FACT_PAYMENT_LUMP;
-t("既定 off", !fcFactsFromCompanyOn({}));
+process.env.FC_FACTS_FROM_COMPANY = "off"; delete process.env.COMPANY_FACT_PAYMENT_LUMP;
+t("既定 on（2026-11-18）・off で戻す", fcFactsFromCompanyOn({}) && !fcFactsFromCompanyOn({ FC_FACTS_FROM_COMPANY: "off" }));
 const offA = txt(buildAnomalyScanPrompt(draft, ctx));
 const offC = txt(buildContextCheckPrompt(draft, ctx));
 t("off: 今までの直書き（クレジットカード払いに対応）のまま", offA.includes("クレジットカード払いに対応・緊急連絡先は必須"));

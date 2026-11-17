@@ -5,7 +5,7 @@ let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 
-it("既定 off", () => { ok(!conductorCombineOn({})); ok(conductorCombineOn({ CONDUCTOR_COMBINE: "on" })); });
+it("既定 on（2026-11-18）・off で戻す", () => { ok(conductorCombineOn({})); ok(!conductorCombineOn({ CONDUCTOR_COMBINE: "off" })); ok(conductorCombineOn({ CONDUCTOR_COMBINE: "on" })); });
 it("返信の番: 組み立てを作り、返信か AIX かは変えない・重点があれば使った順番", () => {
   const meta = { action: null, reply_mode: "reply", turn_contract: { asks: [{ quote: "駐車場はありますか", route: "reply" }] }, conductor_focus: { focus: "answer" } };
   const p = combineFromMeta(meta);
