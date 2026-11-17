@@ -25,7 +25,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   CONDITION_WRITE_ARBITER: "off",
   CONDUCTOR_ALLOCATION: "off",
   CONDUCTOR_BRIEF: "shadow",
-  CONDUCTOR_COMBINE: "off",
+  CONDUCTOR_COMBINE: "on",
   CONDUCTOR_EXCHANGE_LEDGER_BRAIN: "off",
   CONDUCTOR_FOCUS: "shadow",
   CONDUCTOR_HANDOFF: "on",
