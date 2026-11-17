@@ -2264,15 +2264,26 @@ export function compactBundle(b: HumanLearnBundle): HumanLearnBundle {
     .sort((a, c) => c[1].n - a[1].n)
     .slice(0, 160)
     .forEach(([k, v]) => { points[k] = v; });
-  const shots = b.shots
+  const shots: HumanLearnBundle["shots"] | undefined = b.shots
     ? {
         ...b.shots,
         learned: b.shots.learned
           ? Object.fromEntries(
-              Object.entries(b.shots.learned).map(([screen, list]) => [
-                screen,
-                expandAliasLearnedFields(mergeAliasPositions(list as never)).slice(0, 60),
-              ]),
+              Object.entries(b.shots.learned).map(([screen, list]) => {
+                const merged = expandAliasLearnedFields(mergeAliasPositions(list as never)).slice(0, 60);
+                // FieldWithPos.name は optional → 束の型（name必須）へ揃える
+                const normalized = merged
+                  .filter((f) => typeof f?.name === "string" && f.name)
+                  .map((f) => ({
+                    name: String(f.name),
+                    kind: String(f.kind || "unknown"),
+                    n: Number(f.n) || 0,
+                    ...(typeof f.x === "number" ? { x: f.x } : {}),
+                    ...(typeof f.y === "number" ? { y: f.y } : {}),
+                    ...(typeof f.zone === "string" ? { zone: f.zone } : {}),
+                  }));
+                return [screen, normalized];
+              }),
             )
           : b.shots.learned,
       }
