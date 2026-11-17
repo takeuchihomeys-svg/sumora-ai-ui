@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 
 export const dynamic = "force-dynamic";
 
@@ -48,8 +49,9 @@ const SELECT = [
   /**
    * 2026-11-14 竹内さん「データベースの写真から学習する」:
    *   写真がある行（`shot_taken`/`shot_key`）も学びの対象にするため読む。
+   * ★ 2026-11-15「統括は把握する」: shot_w/h も読み、大きい写真と Storage 保存を区別する。
    */
-  "shot_taken", "shot_key",
+  "shot_taken", "shot_key", "shot_w", "shot_h",
 ].join(", ");
 
 /**
@@ -67,7 +69,8 @@ const HISTORY_KEEP = 200;
  *   作った束は DB にも残す（次からは速い・他の PC も読める）。
  */
 async function buildNow(scope: string, note?: (why: string) => void) {
-  const since = new Date(Date.now() - 3 * 86400_000).toISOString();
+  // ★ 学習材料の主期間（動きと監査を同じ窓に揃える）
+  const since = sinceIso(LEARN_PERIODS.materialsMs);
   const fetchPage = (cols: string, from: number, to: number) => {
     let q = supabase.from("human_motion_learn").select(cols).gte("created_at", since);
     if (scope && scope !== "all") q = q.eq("site", scope);
@@ -81,9 +84,12 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *     **古い記録が枠を食って、新しい記録が入らない**（＝直近の検索が学習に入らない）。
    *   → 上限を 6000 に上げ、**新しい順**に読む（`order(desc)` は既にそう）ので
    *     打ち切られても**古い方**が落ちる（新しい記録は必ず入る）。
-   *   ⚠ 重くしない上限は残す（6000行・2ページ×3回の範囲）。
+   *   ⚠ 重くしない上限は残す。
+   * ★ 2026-11-16 実測: 6000打ち切りの本番束は learned 0欄、手元8236行は 96欄。
+   *   shot_learn（位置あり）が新しい自動走行より古い通常録画に多く、6000で落ちていた。
+   *   → 10000 に上げる（弱い強化の成果を本番 fresh でも消さない）。
    */
-  const MAX_ROWS = 6000;
+  const MAX_ROWS = 10_000;
   for (let i = 0; i < MAX_ROWS; i += 1000) {
     const sel = await selectDroppingMissing(
       SELECT.split(", "),
@@ -107,7 +113,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let auditsSummary: import("@/app/lib/learn-audit-summary").AuditSummary | null = null;
   try {
     const { summarizeAudits } = await import("@/app/lib/learn-audit-summary");
-    const since24 = new Date(Date.now() - 24 * 3600_000).toISOString();
+    // ★ 監査も学習材料の主期間に揃える（旧24時間 → materialsMs）
+    const since24 = sinceIso(LEARN_PERIODS.materialsMs);
     /**
      * ⚠ 2026-11-15 **実測で見つけた抜け**: ここで `filled` を取っていなかった。
      *   そのため `summarizeAudits` の「人の検索は操作が10手以上なら完走」判定が
@@ -122,7 +129,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       .limit(300);
     if (scope && scope !== "all") aq = aq.eq("site", scope);
     const ar = await aq;
-    if (!ar.error) auditsSummary = summarizeAudits((ar.data ?? []) as never, { sinceMs: 24 * 3600_000 });
+    if (!ar.error) auditsSummary = summarizeAudits((ar.data ?? []) as never, { sinceMs: LEARN_PERIODS.materialsMs });
     else console.warn("[human-learn-profile] search_audits を読めません:", ar.error.message);
   } catch (e) {
     console.warn("[human-learn-profile] 検索の結果を取れません:", e instanceof Error ? e.message : String(e));
@@ -155,7 +162,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     console.warn("[human-learn-profile] 今日の強化を読めません:", e instanceof Error ? e.message : String(e));
   }
   /** 2026-11-14: 録画の記録（`human_motion_learn`）も同じ7日で見る（try の外でも使う） */
-  const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
+  // 写真・shot_learn も学習材料の主期間に揃える（旧7日 → materialsMs）
+  const since7 = sinceIso(LEARN_PERIODS.materialsMs);
   try {
     const { learnSceneFlows, findWeakScenes, lastSceneOf, SCENE_JA } = await import("@/app/lib/learn-flow-steps");
     let fq = supabase
@@ -258,14 +266,37 @@ async function buildNow(scope: string, note?: (why: string) => void) {
            */
           const byScene = new Map<string, import("@/app/lib/learn-flow-steps").SceneFlow>();
           for (const f of (sceneFlows ?? [])) byScene.set(f.scene, { ...f });
+          /**
+           * ★ 2026-11-17 竹内さん「学習が自動に反映されない時がある」・DB実測:
+           *   filled.ops の station は `transportation_id → required_time` だけで
+           *   **駅の設定へ進む／沿線の設定へ戻る／one_station** が無い。
+           *   録画 shot_ops には 駅の設定へ進む×240・沿線の設定へ戻る×125 があるのに、
+           *   旧は「filled の steps が空でない限り録画を捨てる」ため **正本SEQが束に載らなかった**。
+           *   → 駅場面は遷移ボタン付きの録画手順を優先。他場面は従来どおり filled 優先。
+           */
+          const hasStationTransit = (steps: string[]) =>
+            (steps || []).some((s) => /駅の設定へ進む|沿線の設定へ戻る|one_station|one_line|route_id/.test(String(s)));
           for (const f of flows2) {
             const cur = byScene.get(f.scene);
             if (!cur) { byScene.set(f.scene, f); continue; }
             cur.runs += f.runs;
             cur.ops += f.ops;
             cur.raw_ops = (cur.raw_ops ?? 0) + (f.raw_ops ?? 0);
-            // 順番は filled.ops の物を残す（時刻で学んだ方が正確）。無い時だけ録画の物。
-            if (!cur.steps.length) cur.steps = f.steps;
+            if (!cur.steps.length) {
+              cur.steps = f.steps;
+            } else if (
+              f.scene === "station"
+              && hasStationTransit(f.steps)
+              && !hasStationTransit(cur.steps)
+            ) {
+              cur.steps = f.steps;
+            } else if (
+              f.scene === "station"
+              && hasStationTransit(f.steps)
+              && f.steps.length > cur.steps.length
+            ) {
+              cur.steps = f.steps;
+            }
           }
           sceneFlows = [...byScene.values()].sort((a, b) => b.ops - a.ops);
           const weak2 = findWeakScenes(sceneFlows).filter((w) => w.kind === "no_example");
@@ -285,7 +316,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *     指示の失敗は**たまに起きる**ので、短い窓では見落とす。
    *   → **7日**で見る（指示は1日数十件なので重くならない）。
    */
-  const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const since7d = sinceIso(LEARN_PERIODS.commandsMs);
   let commandsSummary: import("@/app/lib/learn-command-summary").CommandSummary | null = null;
   try {
     const { summarizeCommands } = await import("@/app/lib/learn-command-summary");
@@ -295,7 +326,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       .gte("created_at", since7d)
       .order("created_at", { ascending: false })
       .limit(600);
-    if (!cr.error) commandsSummary = summarizeCommands((cr.data ?? []) as never, { sinceMs: 7 * 86400_000 });
+    if (!cr.error) commandsSummary = summarizeCommands((cr.data ?? []) as never, { sinceMs: LEARN_PERIODS.commandsMs });
     else console.warn("[human-learn-profile] automation_commands を読めません:", cr.error.message);
   } catch (e) {
     console.warn("[human-learn-profile] 指示の状態を取れません:", e instanceof Error ? e.message : String(e));
@@ -328,12 +359,38 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch (e) {
     console.warn("[human-learn-profile] 前回の判断を読めません:", e instanceof Error ? e.message : String(e));
   }
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   拡張の read_count と、新束のあとの自動走行を材料に渡す。
+   */
+  let reflectHint: { read_count: number; read_at: string | null; auto_after: boolean } | null = null;
+  try {
+    const { fetchBundleReflectHint } = await import("@/app/lib/bundle-reflect");
+    const h = await fetchBundleReflectHint(supabase, { scope });
+    reflectHint = { read_count: h.read_count, read_at: h.read_at, auto_after: h.auto_after };
+  } catch (e) {
+    console.warn("[human-learn-profile] 反映状態を読めません:", e instanceof Error ? e.message : String(e));
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
+   *   foundation-audit を束の統括材料に載せる（Proが F29〜F32 を根拠に使える）。
+   */
+  let foundationAudit: import("@/app/lib/learn-foundation-audit").FoundationForSupervisor | null = null;
+  try {
+    const { auditLearnFoundations, compactFoundationForSupervisor } = await import("@/app/lib/learn-foundation-audit");
+    const fa = await auditLearnFoundations(supabase, { daysOps: 2, daysAudit: 3 });
+    foundationAudit = compactFoundationForSupervisor(fa);
+  } catch (e) {
+    console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
+  }
   const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
     scene_flows: sceneFlows,
     scene_missing: sceneMissing,
     scene_missing_names: sceneMissingNames,
     stopped_scene: stoppedScene,
     improvements,
+    bundle_reflect: reflectHint,
+    foundation_audit: foundationAudit,
   }, prevAdvice));
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
@@ -356,6 +413,27 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    */
   const dropped = Array.from(new Set(droppedCols));
   if (dropped.length) (bundle as unknown as Record<string, unknown>).dropped_cols = dropped;
+  /**
+   * ★ 2026-11-16/17: fresh・約31分再生成で solid 96→0 が再発。
+   *   共通 inherit + **消す書き込みは拒否**（履歴に solid≥30 があるのに 0 のまま書かない）。
+   */
+  let wipeBlocked = false;
+  try {
+    const { inheritLinkFoundations } = await import("@/app/lib/learn-bundle-preserve");
+    const b = bundle as unknown as Record<string, unknown>;
+    const pr = await inheritLinkFoundations(supabase, b, scope, { lookback: 20, minSolid: 30 });
+    if (pr.preserved) {
+      console.warn("[human-learn-profile]", pr.why);
+      try { note?.("preserved_learned:" + pr.preserved_solid); } catch (_) { /* */ }
+    }
+    if (!pr.safe_to_write) {
+      wipeBlocked = true;
+      console.warn("[human-learn-profile] 消す書き込みを拒否:", pr.why);
+      try { note?.("abort_wipe:" + pr.why); } catch (_) { /* */ }
+    }
+  } catch (e) {
+    console.warn("[human-learn-profile] learned 引き継ぎ失敗:", e instanceof Error ? e.message : String(e));
+  }
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
   /**
    * 2026-11-13 竹内さん「これ学習したところはデータベースに保管されるようになっているのか。
@@ -364,9 +442,33 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *   → 失敗したら**理由を返す**（`save_error`）。呼ぶ側（私・点検）が分かるようにする。
    *   ⚠ 消してから入れるので、**入れるのに失敗すると前の束も消える**。
    *     → 先に**入れてから**、古い物を消す（消す順を逆にした）。失敗しても前の束が残る。
+   * ★ 2026-11-17: 消す書き込み（wipeBlocked）の時は**入れない**。直前の良い束を返す。
    */
   let saveError: string | null = null;
   let saved = false;
+  if (wipeBlocked) {
+    try {
+      const prev = await supabase
+        .from("human_learn_profile")
+        .select("bundle")
+        .eq("scope", scope)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      const { countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
+      for (const row of prev.data || []) {
+        if (countLearnedSolid(row.bundle).solid >= 30) {
+          const keep = row.bundle as typeof bundle;
+          (keep as unknown as Record<string, unknown>).wipe_blocked = true;
+          (keep as unknown as Record<string, unknown>).wipe_block_why = "履歴の学習を消す書き込みを拒否";
+          return keep;
+        }
+      }
+    } catch (_) { /* 拒否後に良い束が無ければ下で通常保存を試みない */ }
+    saveError = "wipe_blocked: 学習消失を防ぐため新束を書かなかった";
+    (bundle as unknown as Record<string, unknown>).save_error = saveError;
+    (bundle as unknown as Record<string, unknown>).saved_to_db = false;
+    return bundle;
+  }
   try {
     const ins = await supabase.from("human_learn_profile").insert({
       scope,
@@ -452,7 +554,7 @@ export async function GET(req: NextRequest) {
       const buildHumanLearnBundle = mod.buildHumanLearnBundle;
       const compactBundle = mod.compactBundle;
       type MotionRowLocal = Parameters<typeof buildHumanLearnBundle>[0][number];
-      const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const since = sinceIso(LEARN_PERIODS.historyMs);
       const rows: MotionRowLocal[] = [];
       for (let i = 0; i < 10_000; i += 1000) {
         const r = await supabase.from("human_motion_learn").select("*")
@@ -467,9 +569,19 @@ export async function GET(req: NextRequest) {
        * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列に無い）。
        *   入れると `Could not find the 'generated_at' column` で失敗する。
        *   → `created_at` は自動で入るので送らない。
+       * ★ 2026-11-17: refresh=1 も消す書き込みを拒否（fresh と同じ抜け穴だった）。
        */
+      const { inheritLinkFoundations, countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
+      const b = bundle as unknown as Record<string, unknown>;
+      const pr = await inheritLinkFoundations(supabase, b, "all", { lookback: 20, minSolid: 30 });
+      if (!pr.safe_to_write) {
+        return NextResponse.json({
+          ok: true, refreshed: false, wipe_blocked: true, why: pr.why, rows: rows.length,
+          solid: countLearnedSolid(b).solid,
+        }, { headers: CORS });
+      }
       const ins = await supabase.from("human_learn_profile").insert({
-        scope: "all", source_rows: rows.length, bundle,
+        scope: "all", source_rows: rows.length, bundle: b,
       });
       void now;
       if (ins.error) throw new Error(String(ins.error.message).slice(0, 160));
@@ -482,8 +594,8 @@ export async function GET(req: NextRequest) {
         if (ids.length) await supabase.from("human_learn_profile").delete().in("id", ids);
       } catch (_) {}
       return NextResponse.json({
-        ok: true, refreshed: true, rows: rows.length,
-        shots: (bundle as unknown as Record<string, unknown>).shots ?? null,
+        ok: true, refreshed: true, rows: rows.length, preserved: pr.preserved, solid: pr.solid,
+        shots: (b as { shots?: unknown }).shots ?? null,
       }, { headers: CORS });
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) }, { status: 500, headers: CORS });
@@ -544,7 +656,7 @@ export async function GET(req: NextRequest) {
    *   **その場で記録から作る**（cron を待たない）。作った物は DB に残すので次からは速い。
    *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
    */
-  const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > 30 * 60 * 1000);
+  const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > LEARN_PERIODS.bundleFreshMs);
   /**
    * 2026-11-13: `?fresh=1` で**必ず作り直す**（30分待たずに確かめたい時）。
    *   竹内さん「学習できていない部分も学習できるようになっているのか」→ 待たずに確かめたい。
@@ -565,6 +677,32 @@ export async function GET(req: NextRequest) {
    *     ⚠ 作るのは**1回だけ**。その後の touch=0 は軽い（DBを1行読むだけ）。
    */
   const lightCheck = req.nextUrl.searchParams.get("touch") === "0";
+  /**
+   * ★ 2026-11-16 連携ボトルネック除去:
+   *   版が同じだと拡張が束を取り直さず、read_count が永久に 0 のままになる。
+   *   → `mark_read=1` は束を返さず「読んだ印」だけ付ける（軽い・版確認後の確認用）。
+   */
+  const markReadOnly = req.nextUrl.searchParams.get("mark_read") === "1";
+  if (markReadOnly && row) {
+    let readCount = Number(row.read_count) || 0;
+    let readAt: string | null = null;
+    try {
+      readAt = new Date().toISOString();
+      readCount = (Number(row.read_count) || 0) + 1;
+      await supabase
+        .from("human_learn_profile")
+        .update({ read_at: readAt, read_count: readCount })
+        .eq("id", row.id as number);
+    } catch { /* 印だけ失敗しても連携は続ける */ }
+    return NextResponse.json({
+      ok: true, empty: false, scope, marked: true,
+      generated_at: (row.bundle && typeof row.bundle === "object")
+        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+        : row.created_at,
+      read_count: readCount,
+      read_at: readAt,
+    }, { headers: CORS });
+  }
   if (lightCheck && !forceFresh && row) {
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
@@ -580,6 +718,33 @@ export async function GET(req: NextRequest) {
     try {
       const fresh = await buildNow(scope, (m) => { why = m; });
       if (fresh) {
+        /**
+         * ★ 2026-11-16 連携ボトルネック（read_count=0が続く）:
+         *   旧は「その場で作った束」を返す時に read 印を付けていなかった。
+         *   → 拡張は束を受け取っているのに DB は未読のまま → 統括が「届いていない」と誤認し続ける。
+         *   → touch あり（実際に読む時）は最新行に read_at / read_count を残す。
+         */
+        let readCount = 0;
+        let readAt: string | null = null;
+        if (touch) {
+          try {
+            const latest = await supabase
+              .from("human_learn_profile")
+              .select("id, read_count")
+              .eq("scope", scope)
+              .order("created_at", { ascending: false })
+              .limit(1);
+            const lr = (latest.data ?? [])[0] as { id?: number; read_count?: number } | undefined;
+            if (lr?.id != null) {
+              readAt = new Date().toISOString();
+              readCount = (Number(lr.read_count) || 0) + 1;
+              await supabase
+                .from("human_learn_profile")
+                .update({ read_at: readAt, read_count: readCount })
+                .eq("id", lr.id);
+            }
+          } catch { /* 印は残らなくても束は返す */ }
+        }
         return NextResponse.json({
           ok: true, empty: false, scope, generated_now: true,
           generated_at: fresh.generated_at,
@@ -589,6 +754,8 @@ export async function GET(req: NextRequest) {
           ext_version: null,
           lines: fresh.lines,
           bundle: fresh,
+          read_count: readCount,
+          read_at: readAt,
           /**
            * 2026-11-13 竹内さん「学習したところはデータベースに保管されるようになっているのか」:
            *   **DBに残せたか**を返す（残せなかったら理由も）。
@@ -612,11 +779,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, empty: true, scope, bundle: null, lines: [], why: why || "no_rows_or_build_failed" }, { headers: CORS });
   }
 
+  let servedReadCount = Number(row.read_count) || 0;
+  let servedReadAt: string | null = null;
   if (touch) {
     try {
+      servedReadAt = new Date().toISOString();
+      servedReadCount = (Number(row.read_count) || 0) + 1;
       await supabase
         .from("human_learn_profile")
-        .update({ read_at: new Date().toISOString(), read_count: (Number(row.read_count) || 0) + 1 })
+        .update({ read_at: servedReadAt, read_count: servedReadCount })
         .eq("id", row.id as number);
     } catch { /* 印は残らなくてもよい */ }
   }
@@ -633,6 +804,8 @@ export async function GET(req: NextRequest) {
       ext_version: row.ext_version,
       lines: row.lines ?? [],
       bundle: row.bundle,
+      read_count: servedReadCount,
+      read_at: servedReadAt,
     },
     { headers: CORS },
   );

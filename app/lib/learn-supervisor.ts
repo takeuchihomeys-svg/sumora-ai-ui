@@ -19,8 +19,200 @@
  *   統括が弱い部分の学習を強化する」「これらの思考や考え方は統括の部分で重要な考え方にする」:
  *   場面の名前（日本語）と、場面ごとの手順の読み上げを**統括の言葉**として使う。
  */
-import { SCENE_JA, describeSceneFlow, findWeakScenes, type SceneFlow } from "./learn-flow-steps";
+import {
+  SCENE_JA, describeSceneFlow, findWeakScenes, linkFieldsToScenes, qualityCycleLine,
+  type SceneFlow,
+} from "./learn-flow-steps";
+import { improveLoopTasks, type ImproveLoop } from "./improve-loop";
+import {
+  atomsToTaskHints, linkageLine, subdivideReproduceGaps, summarizeAtoms,
+} from "./reproduce-foundation";
+import {
+  DETAIL_DEGREE, detectPlaceNotRedone, detectSearchBeforeBasic, detectSearchBeforePlace, detailDegreeLine,
+  fineGapsToTaskHints, fineLearnEvidenceLine, fineLearnNextSteps, measureAutoCompletion,
+  measurePrecision, precisionEvidenceLine, precisionLeversLinked, precisionLeversToTasks,
+  scoreFieldsFine, supervisorLearnPower, weakDetailFields,
+  type AutoCompletion, type FieldLearnStatus, type PrecisionLever,
+} from "./learn-improve-mech";
+import { photoLearnLimitFor } from "./shot-learn-limit";
+import { buildVisionProLink, type VisionProLink } from "./vision-pro-link";
+import { atomsFromEvidence, atomsLine } from "./weak-auto-atoms";
+import { LEARN_PERIODS, periodLabelJa } from "./learn-periods";
 export { SCENE_JA };
+
+/**
+ * ★ 2026-11-16 竹内さん「学習した仕組みも統括ちゃんと理解してよりよく学習できるように
+ *   統括じたいの学習能力も上げる」／「学習面の強化を細かく」「仕組みで強化していく形」
+ *   ／「より精度上げれるように／精度上げる部分も強化／統括これらの部分ちゃんと連携」
+ *   ／「完成度わかればよりよい／完成度も理解して学習する仕組みを統括もつ」:
+ *   仕組みは根拠表示だけでなく次手に効かせる。⑨完成度を測り、上がる学習を選ぶ。
+ */
+export const LEARN_MECHANISMS = [
+  "操作のselectをVisionのtextで上書きしない",
+  "区は選ぶだけでなく前客の残りを外す",
+  "区を選ぶ＝所在地場面",
+  "材料点は量・人間動作は再現%と完走率",
+  "まとめ文言は学ばない",
+  "欄×観点で細かく学ぶ（種類・位置・押して変化・カーソル・外し・場面）",
+  "学習改善は仕組みで回す（表示だけで終わらせない）",
+  "精度は測って上げる・一連（束→拡張→自動）と食い違う次手は出さない",
+  "自動モード完成度を測り、完成度が上がる学習を選ぶ",
+  "弱い部分を見つけたらそこを改善する（細部の度を補強・人間の動きになるまで）",
+  "動きは毎回変則（学んだ直接の組だけ守る・カーソル出発/狙い/待ちを散らす）",
+  "完走優先（保険で途中切り上げない・検索はカーソル移動してから押す）",
+  "直接入力しない（カーソル移動→開いて選ぶ／押して打つ。value代入だけで条件を入れない）",
+  "画像はflash・まとめはPro（役割を混ぜない。連携: 読む→材料→統括まとめ→課題）",
+  "画像flash→材料→Pro判断を細分化してつなぐ（保存→flash読→材料→突合→photo_learn課題→Pro）",
+  "弱点は原子に分けて画像分析→Pro判断→人間らしさ改善（直押し・直書き・外し区別の変バグも細かく直す）",
+  "統括Proはなぜ弱い・どうしたらできる・仮定・100%への道を書いてから強化する（推測は仮定と明記）",
+  /**
+   * ★ 2026-11-16 竹内さん「学習した部分も学習していく／仕組み化の部分も強化」:
+   *   一度読んだ欄でも、欄×観点・原子が弱い間は再学習→束→拡張→自動→効果確認を止めない。
+   */
+  "学んだ欄も弱い間は再強化する（一度読んで終わりにしない・原子が残る限り photo_learn→反映→自動→効果確認）",
+  /**
+   * ★ 2026-11-16 竹内さん「ほかのお客さんでもずれが起きない／間違えた部分を把握して根本改善／カーソルもクリックも」:
+   *   1客のバグ直しで終わらせず、誤りを型にして根元ガードにする。
+   */
+  "現場の誤りは型で根元改善する（途中進み・畳み欄の直押し・見切れ選択・一覧の上下・カーソル無aimを他客でも再発させない）",
+  /**
+   * ★ 2026-11-16 竹内さん「統括の部分画像から学習して弱い部分を徹底的に改善し
+   *   弱い部分を強化していく仕組みもあわせてつくる」:
+   *   弱い欄・原子が残る限り、通常画像→束→拡張→自動→効果確認を周回する（scripts/weak-strengthen.ts）。
+   */
+  "弱い部分は画像から徹底学習し、弱さが残る限り強化ループを回す（特定→photo_learn→反映→自動→効果→また特定）",
+  /**
+   * ★ 2026-11-16 竹内さん「1つずつリアプロのボタンのことを理解すればより強化する／
+   *   1つずつそれぞれ強化するようにする」:
+   *   まとめて読まず、確定・沿線・賃料などボタン／欄ごとに位置・押し方・種類を学ぶ。
+   */
+  "リアプロのボタンは1つずつ理解して強化する（まとめて読まない・欄ごとにphoto_learn→それぞれ束へ）",
+  /**
+   * ★ 2026-11-16 竹内さん「proの部分がちゃんと統括できるように連携が弱い部分があれば強化／
+   *   改善する際も統括のproと打合せ／細かく細分化／打合せここでするとき統括のproとも連携」:
+   *   Cursor の改善も Pro と打合せ（--meet）し、材料を細分化してから直す。
+   */
+  "改善は統括Proと打合せしてから進める（手元の推測だけで直さない・meetで議題を渡し協力して強化）",
+  /**
+   * ★ 2026-11-16: 学習期間を揃えないと Pro が別窓の数字で誤判断する。
+   */
+  "学習材料の期間は揃える（動き・監査・写真は同じ主期間・learn-periods.ts が正本）",
+  /**
+   * ★ 2026-11-16: 完了→次客は完走率だけでは見えない。
+   */
+  "完了→次客を原子で把握する（switch_fail・owner_mismatch・no_fill_start・batch_timeout・pipeline_busy）",
+  /**
+   * ★ 2026-11-17 統括Pro「抜けが後から出る構造原因＝書き込み関所が無い」:
+   *   束書き込みは必ず preserve／safe_to_write。新経路は F35/F36 とテスト関所を先に通す。
+   */
+  "束の書き込みは消さない関所を先に通す（inherit・safe_to_write・F35/F36・新経路は関所テストを先に）",
+  /**
+   * ★ 2026-11-17 竹内さん「抜けなどあとあと出てこないように統括proはブレインとして仕組みや土台をちゃんとつくる」:
+   *   症状が出てから塞ぐのではなく、連携段・保管・反映の完了線を先に定義する。
+   */
+  "抜けは後追いで塞がず、先に完了線付き土台を作る（F番号・連携段・保管・反映を脳が先回りで定義）",
+  /**
+   * ★ 2026-11-17 竹内さん「学習の引き・RAG・DB整備／統括proを真のブレインに」:
+   *   判断前に設計知見を引き、ログ記憶と手配まで一連にする。
+   */
+  "統括Proは判断前に設計知見RAGと統括ログを引く（axesだけに頼らない・F37・把握→改善→手配）",
+  /**
+   * ★ 2026-11-17 竹内さん「把握できるのはかなり重要／設計知見と統括proの連携を細部まで」:
+   *   引いただけでは足りない。要旨・ログ・数字を根拠に残し、today先頭で把握を言う。
+   */
+  "統括Proは把握を根拠に残す（統括Pro把握＝知見要旨＋ログ記憶／todayは把握:で始める）",
+] as const;
+
+/** 操作がプルダウンと分かっている欄（Visionのtext割れを次手にしない） */
+const KNOWN_SELECT_FIELD_RE =
+  /^(rental_cost|update_date|square_meter|structured_date|transportation_id|required_time)/i;
+
+export function isKnownSelectField(name: string): boolean {
+  return KNOWN_SELECT_FIELD_RE.test(String(name || "").trim());
+}
+
+/** Vision select/text 誤割れを次手から落とす（操作がselectなら位置学習へ） */
+export function isFalseKindConflict(
+  kind: string,
+  name: string,
+  why: string,
+): boolean {
+  if (String(kind) !== "kind_conflict_in_photo") return false;
+  const w = String(why || "");
+  if (!/select/.test(w) || !/text/.test(w)) return false;
+  return isKnownSelectField(name) || /プルダウン|select/.test(w);
+}
+
+type MechTask = {
+  kind: string;
+  what: string;
+  why: string;
+  cost: string;
+  limit?: number;
+  order?: "newest" | "time" | "size";
+  fields?: string[];
+};
+
+/**
+ * 学習の仕組みを課題に効かせる（表示用の証拠と同じ定数を使う）。
+ * ・photo_learn の既知select欄 → 「種類の再判定」ではなく位置・押し方
+ * ・くれあ型の外し（toggles.off）→ ward-off 土台を課題に載せる
+ */
+export function applyLearnedMechanismsToTasks(
+  tasks: MechTask[],
+  opts?: { togglesOff?: number; togglesOn?: number; togglesUnknown?: number },
+): MechTask[] {
+  const out = tasks.map((t) => ({ ...t, fields: t.fields ? [...t.fields] : undefined }));
+  for (const t of out) {
+    if (t.kind !== "photo_learn" || !t.fields?.length) continue;
+    const selects = t.fields.filter(isKnownSelectField);
+    if (!selects.length) continue;
+    if (!/selectをVision|位置・押し方|操作のselect/.test(t.why)) {
+      t.why = `${t.why}／仕組み①: ${selects.slice(0, 4).join("・")}は操作のselectを優先（Visionのtextで上書きしない・位置・押し方を学ぶ）`;
+    }
+    if (!/位置|押し方|select/.test(t.what)) {
+      t.what = t.what.replace(/欄の種類・位置/, "欄の位置・押し方（種類は操作のselectを優先）");
+      if (!/位置・押し方|selectを優先/.test(t.what)) {
+        t.what = `${t.what}（既知selectは位置・押し方）`;
+      }
+    }
+  }
+  const offN = opts?.togglesOff ?? 0;
+  const onN = opts?.togglesOn ?? 0;
+  const unkN = opts?.togglesUnknown ?? 0;
+  if (offN > 0 && !out.some((t) => t.kind === "build_foundation" && /区|外す|ward|くれあ/.test(t.what + t.why))) {
+    const existing = out.find((t) => t.kind === "build_foundation");
+    if (existing) {
+      if (!/くれあ|区.*外|前客/.test(existing.why)) {
+        existing.why = `${existing.why}／仕組み②: 外し${offN}件（選んだ${onN}件）→条件外の区だけ外し・条件内は触らない`;
+      }
+    } else {
+      out.push({
+        kind: "build_foundation",
+        what: "区の外し土台（くれあ型: 条件外だけOFF・条件内は触らない）",
+        why: `仕組み②: 前客の残りを外す操作が${offN}件（選んだ${onN}件）。区は選ぶだけでなく外す型を束へ`,
+        cost: "無料",
+        fields: undefined,
+      });
+    }
+  }
+  /**
+   * ★ 2026-11-16 DB実測: 外し/選びが全部「区別できない」（was/now 0件）なのに
+   *   仕組み②を学べないまま次へ進むと、くれあ型の区外しが永遠に再現できない。
+   *   → 区別できない時は was/now が届く録画を課題にする。
+   */
+  if (unkN > 50 && offN === 0 && onN === 0
+    && !out.some((t) => /was\/now|外し.*区別|区別できない/.test(t.what + t.why))) {
+    out.push({
+      kind: "build_foundation",
+      what: "区の外し/選びを区別できる記録（was/now）を通常録画で取る",
+      why: `仕組み②の材料が無い: 区別できない ${unkN}件・外し0・選び0。拡張再読込後、通常で区を1つ外す→1つ選ぶを録画して was/now がDBに残るか確かめる`,
+      cost: "無料（人の手間だけ）",
+      fields: undefined,
+    });
+  }
+  return out;
+}
 
 /** 判断に使う材料（学習の束から作る） */
 export type SupervisorInput = {
@@ -81,8 +273,19 @@ export type SupervisorInput = {
   /**
    * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
    *   **写真の容量と枚数**。1枚が大きすぎる・合計が重すぎる時に言えるようにする。
+   *
+   * ★ 2026-11-15「画像データベースの保存されている／統括は把握する」:
+   *   `in_storage`＝Storage（human-motion-shots）に shot_key で保存済みの枚数。
+   *   ⚠ `shot_in_db`／行内 b64 空＝未保存ではない（正本は Storage）。
    */
-  shot_bytes?: { n: number; total_bytes: number; max_bytes: number } | null;
+  shot_bytes?: {
+    n: number;
+    total_bytes: number;
+    max_bytes: number;
+    in_storage?: number;
+    in_row_b64?: number;
+    large?: number;
+  } | null;
   /**
    * 2026-11-14 竹内さん
    *   「時間でみたらよい最大７分の録画なので順番に見れば理解できる」
@@ -132,6 +335,19 @@ export type SupervisorInput = {
     bad?: number;
     top_problem?: string | null;
     advice?: string | null;
+    /**
+     * ★ 2026-11-16: 完了→次客の細分化（switch_fail / owner_mismatch 等）
+     *   Pro が「完走率だけ」で終わらせず、次客に移れない穴を把握する材料。
+     */
+    handoff?: {
+      switch_fail: number;
+      owner_mismatch: number;
+      no_fill_start: number;
+      batch_timeout: number;
+      pipeline_busy: number;
+      line: string;
+      top?: Array<{ id: string; n: number }>;
+    } | null;
   } | null;
   /**
    * 2026-11-14 竹内さん「統括側に足りていない部分があれば強化する形とする」:
@@ -173,6 +389,131 @@ export type SupervisorInput = {
    *   ⚠ 実測: 写真から415件学んでいたのに、統括には数（total/with_ops）しか渡っていなかった。
    */
   photoKinds?: Record<string, number> | null;
+  /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる
+   *   それを自動に学習させる」「統括お願い」:
+   *   **通常モードの画像×押した位置**の突き合わせ（`image-point-match.ts`）。
+   *   ⚠ これが無いと統括は「押した位置も画像で分かる」と言えない。
+   */
+  image_match?: {
+    /** 画像から読んだ欄（通常モード） */
+    imageFields: number;
+    /** 押した位置がある欄 */
+    pressedFields: number;
+    /** 両方にある欄 */
+    matched: number;
+    /** 画面の位置（x/y）が取れた欄 */
+    withScreenPos: number;
+    /** 統括が言える事（悪い所だけ） */
+    say: Array<{ what: string; why: string; next: string }>;
+    line: string;
+  } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   **学んだ位置が自動まで届いているか**（束にある／拡張が読んだ／自動が新束のあと走った）。
+   *   ⚠ 実測: 束に x/y 71欄あったのに `read_count=0`・自動は束より前 → **学んだのに現場に未反映**。
+   */
+  bundle_reflect?: {
+    /** 拡張が使う（n≥3 かつ x/y）欄数 */
+    screen_solid: number;
+    /** x/y がある欄数 */
+    screen_all: number;
+    /** 束を拡張が読んだ回数（0＝未取得） */
+    read_count: number;
+    read_at?: string | null;
+    /** 最新束のあとに自動モードの記録があるか */
+    auto_after: boolean;
+    line: string;
+    /** ★ 2026-11-15: 止まっている段階（会話でボトルネックを言う） */
+    bottleneck?: string | null;
+    bottleneck_n?: number | null;
+    photo_in_storage?: number;
+    steps?: Array<{ n: number; name: string; ok: boolean; detail: string }>;
+  } | null;
+  /**
+   * ★ 2026-11-15: 自動モードが人間のように動けているか（`human-like-audit.ts`）
+   */
+  human_like?: {
+    ops: number;
+    typedOnChoose: number;
+    clickedThenChanged: number;
+    changedWithoutClick: number;
+    changedWithoutClickFields?: string[];
+    withCursor: number;
+    withPoint: number;
+    rows: number;
+    handCursorClicks?: number;
+    handCursorFields?: string[];
+  } | null;
+  /**
+   * ★ 2026-11-17 統括Pro: 通常vs自動の近さ差分（許可線つき）
+   *   human-nearness.ts と同じ式。束に載せて Pro / 関所が使う。
+   */
+  human_nearness?: {
+    score: number;
+    allowed: boolean;
+    line: string;
+    gaps?: string[];
+    auto_fast400pct?: number | null;
+    normal_fast400pct?: number | null;
+    auto_humanBandPct?: number | null;
+    normal_humanBandPct?: number | null;
+    auto_p50?: number | null;
+    normal_p50?: number | null;
+    auto_gN?: number;
+    normal_gN?: number;
+    allow_scoreMin?: number;
+    allow_fast400MaxPct?: number;
+    allow_humanBandMinPct?: number;
+  } | null;
+  /**
+   * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
+   *   foundation-audit の圧縮形（F29近さ・F31反映・F32連携など）。
+   */
+  foundation_audit?: import("./learn-foundation-audit").FoundationForSupervisor | null;
+  /** 学習の抜け（全モード） */
+  shot_gaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
+  /**
+   * ★ 2026-11-15「通常モードの録画で画像のデータあるのだから底から学習」:
+   *   通常モードだけの写真抜け（手本。自動は混ぜない）。
+   */
+  shot_gaps_normal?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
+  /**
+   * ★ 2026-11-15「画像は最新で録画したらそのことも把握」
+   */
+  recording_freshness?: {
+    normalLatestAt?: string | null; autoLatestAt?: string | null;
+    normalLast24h?: number; autoLast24h?: number;
+    normalLatestLearned?: boolean | null; line?: string;
+  } | null;
+  /** 自動モードの最新課題（通常から改善する対象） */
+  latest_auto_challenge?: {
+    runs?: number; extVersion?: string | null; fields?: string[];
+    changedNoClick?: string[]; retries?: string[]; line?: string;
+    challenges?: Array<{ what: string; why: string; field?: string }>;
+  } | null;
+  /** 自動の最新課題を通常から直す計画 */
+  improve_from_normal?: {
+    fields?: string[]; what?: string; why?: string; how?: string; preferNewest?: boolean;
+  } | null;
+  /**
+   * ★ 2026-11-15「改善につながるまで一連」: 段階1〜6と次の一手
+   */
+  improve_loop?: {
+    improve_line?: string;
+    bottleneck_n?: number | null;
+    bottleneck?: string | null;
+    next_n?: number | null;
+    next_kind?: string | null;
+    steps?: Array<{ n: number; name: string; ok: boolean; detail: string }>;
+  } | null;
+  /**
+   * ★ 2026-11-15「画像から学習した部分はちゃんと改善して更新」:
+   *   最新自動の課題欄のうち、束に x/y がまだ無いもの。
+   */
+  challenge_missing_in_bundle?: string[] | null;
+  /** 自動モードの改善候補（統括が順番を決める） */
+  auto_fix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -229,7 +570,12 @@ export type SupervisorAdvice = {
      *   `supervisor-do` がこれを読んで上から実行する（竹内さんが毎回指図しなくてよい形）。
      *   ⚠ `photo_learn` は1枚ごとに費用がかかるので `limit` を必ず付ける。
      */
-    learning_tasks?: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }>;
+    learning_tasks?: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }>;
+    /**
+     * ★ 2026-11-16: 画像flash→材料→Pro の細かい連携（vision-pro-link.ts）。
+     *   学習→自動の一連（bundle-reflect）とは別軸。統括が「画像学習のどこで止まっているか」を言う。
+     */
+    vision_pro_link?: VisionProLink;
     };
   /**
    * 2026-11-14 竹内さん「矛盾の部分なんで統括が整理したらよい」:
@@ -307,12 +653,78 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   const seen = new Set<string>();
 
   // ── ② 次にやる事 ──
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習」
+   *   「画像を読み取れば学習できる」「弱い部分強化するためによみとる」:
+   *   弱い所がある＋通常の読める写真が未学習 → **録画を増やせではなく画像を読め**。
+   */
+  const gapsN0 = (() => {
+    const g = (inp as unknown as Record<string, unknown>).shot_gaps_normal
+      ?? (inp as unknown as Record<string, unknown>).shot_gaps;
+    if (!g || typeof g !== "object") return null;
+    const o = g as Record<string, unknown>;
+    const todo = num(o.todo);
+    return todo > 0 ? { todo, learnedOk: num(o.learnedOk), total: num(o.total) } : null;
+  })();
+  /**
+   * ★ 2026-11-15「改善につながるまで一連」:
+   *   段階4なら拡張再読み込みが先頭（画像を足しても自動は改善されない）。
+   */
+  const loop0 = (inp as unknown as Record<string, unknown>).improve_loop as {
+    bottleneck_n?: number | null; improve_line?: string; bottleneck?: string;
+  } | null | undefined;
+  const improve0 = (inp as unknown as Record<string, unknown>).improve_from_normal as {
+    what?: string; why?: string; how?: string; fields?: string[];
+  } | null | undefined;
+  if (loop0 && loop0.bottleneck_n === 4) {
+    actions.push({
+      priority: 0,
+      what: "拡張を再読み込みして、最新の束を取り直す（改善までの一連・段階4）",
+      why: loop0.bottleneck || loop0.improve_line || "read_count=0。学んだ位置が拡張に届いていない",
+      how: "拡張 2.8.25 を再読み込み → ポップアップを開く（束取得）→ コンソールで「連携完了」→ 自動を1回 → 効果を数字で確かめる",
+    });
+  } else if (loop0 && loop0.bottleneck_n === 5) {
+    actions.push({
+      priority: 0,
+      what: "自動モードで1回検索する（改善までの一連・段階5）",
+      why: loop0.bottleneck || "拡張は読んだが新束のあとの自動が無い",
+      how: "自動モードで1回検索 → 課題欄が減ったか verify_improve",
+    });
+  } else if (improve0 && improve0.what && Array.isArray(improve0.fields) && improve0.fields.length) {
+    actions.push({
+      priority: 0,
+      what: String(improve0.what),
+      why: String(improve0.why || ""),
+      how: String(improve0.how || "通常モードの最新画像から photo_learn（newest）"),
+    });
+  } else if (weakN > 0 && gapsN0) {
+    actions.push({
+      priority: 0,
+      what: "通常モードの画像を読んで弱い所を強化する",
+      why: `通常の読める未学習写真 ${gapsN0.todo}枚（弱い所 ${weakN}件・学べ済み ${gapsN0.learnedOk}枚）`,
+      how: "通常モードの録画画像から欄の種類・位置を読む（photo_learn・mode=normal・上限あり）",
+    });
+  }
   for (const w of weakList) {
     if (!w || !w.name) continue;
     const key = String(w.kind) + "|" + String(w.name);
     if (seen.has(key)) continue;
+    /**
+     * ★ 2026-11-16: Vision の select/text 誤割れを次手にしない（操作がプルダウンなら位置学習へ）。
+     *   統括が「種類割れ」を永久に最上段にすると、完走・手の形・束反映が後回しになる。
+     *   → 仕組み①と同じ判定（isFalseKindConflict）で落とす。
+     */
+    if (isFalseKindConflict(String(w.kind), String(w.name), String(w.why || ""))) {
+      continue;
+    }
     seen.add(key);
-    const f = FIX[String(w.kind)] || { what: "学びが弱い", how: "記録を増やしてもう一度学ぶ", priority: 9 };
+    const f = FIX[String(w.kind)] || {
+      what: "学びが弱い",
+      how: gapsN0
+        ? "通常モードの録画画像から読んで強化する（photo_learn）。録画を増やす前に、すでにある画像を読む"
+        : "記録を増やしてもう一度学ぶ",
+      priority: 9,
+    };
     actions.push({
       priority: f.priority,
       what: f.what,
@@ -494,6 +906,89 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
         : humanShare < 0.3 ? "almost"
           : null;
 
+  /**
+   * ★ 2026-11-15 竹内さん「統括学習した部分を自動モード強化できないのか」「ちゃんと反映まで」:
+   *   画面位置は学んだのに拡張未取得／自動未走行なら **ready にしない**（最大 almost）。
+   *   ⚠ 実測: 束に n≥3 が33欄あっても read_count=0 → 「渡してよい」は嘘になる。
+   */
+  const brIn = inp.bundle_reflect && typeof inp.bundle_reflect === "object" ? inp.bundle_reflect : null;
+  const capByReflect: SupervisorVerdict | null =
+    brIn && num(brIn.screen_solid) >= 3 && ((num(brIn.read_count) <= 0) || brIn.auto_after !== true)
+      ? "almost"
+      : null;
+
+  /**
+   * ★ 2026-11-16 竹内さん「完全に再現できるようになるまで／足りない部分は統括が土台を作って強化」:
+   *   自己点検だけだと `ready` のまま議題に「人間らしくない」が出て**矛盾**する（実測: ready と almost が交互）。
+   *   → **人間らしさの再現が未完なら ready にしない**（最大 almost）。
+   *   完了線: DETAIL_DEGREE（カーソル≥70・押した位置≥60・直書き0・手の形あり）。
+   * ★ 2026-11-16「度だが必要なら補強して細かい部分も強化」: 押した位置 50→60 に補強。
+   */
+  const hlIn = inp.human_like && typeof inp.human_like === "object" ? inp.human_like : null;
+  const hlCursorPct = hlIn && num(hlIn.rows) > 0 ? Math.round((num(hlIn.withCursor) / num(hlIn.rows)) * 100) : null;
+  const hlPointPct = hlIn && num(hlIn.rows) > 0 ? Math.round((num(hlIn.withPoint) / num(hlIn.rows)) * 100) : null;
+  const hlHand = hlIn ? num(hlIn.handCursorClicks) : 0;
+  const hlOps = hlIn ? num(hlIn.ops) : 0;
+  const hlDirect = hlIn ? num(hlIn.changedWithoutClick) : 0;
+  const hlTyped = hlIn ? num(hlIn.typedOnChoose) : 0;
+  const humanLikeIncomplete = !!(hlIn && hlOps > 0 && (
+    hlDirect > 0 || hlTyped > 0
+    || (hlCursorPct != null && hlCursorPct < DETAIL_DEGREE.CURSOR_OK)
+    || (hlPointPct != null && hlPointPct < DETAIL_DEGREE.POINT_OK)
+    || (hlOps >= 20 && hlHand === 0)
+  ));
+  const capByHumanLike: SupervisorVerdict | null = humanLikeIncomplete ? "almost" : null;
+  /**
+   * ★ 2026-11-17 統括Pro「許可線の数値基準」:
+   *   近さ未達なら ready にしない（実測: ready と「引き渡し保留」が矛盾した）。
+   */
+  const hnIn = inp.human_nearness && typeof inp.human_nearness === "object" ? inp.human_nearness : null;
+  const hnScore = hnIn ? num(hnIn.score) : 0;
+  const hnAllowed = !!(hnIn && hnIn.allowed === true);
+  const hnHasSample = !!(hnIn && num(hnIn.auto_gN) >= 30 && num(hnIn.normal_gN) >= 30);
+  const nearnessIncomplete = !!(hnHasSample && !hnAllowed);
+  const capByNearness: SupervisorVerdict | null = nearnessIncomplete ? "almost" : null;
+  /** 再現の進み（0〜100・人が「あとどれくらい」を見る用） */
+  /**
+   * ★ 2026-11-16: 残り表示は**未達の理由**を書く（旧は失敗時も「直書き0」と出て誤読された）。
+   */
+  const reproduceParts: Array<{ ok: boolean; w: number; remain: string }> = [
+    {
+      ok: hlDirect === 0 && hlTyped === 0,
+      w: 35,
+      remain: hlDirect > 0 ? `直書き${hlDirect}` : (hlTyped > 0 ? `選ぶ欄打ち込み${hlTyped}` : "直書きあり"),
+    },
+    {
+      ok: hlCursorPct != null && hlCursorPct >= DETAIL_DEGREE.CURSOR_OK,
+      w: 25,
+      remain: `カーソル${hlCursorPct ?? 0}%（要≥${DETAIL_DEGREE.CURSOR_OK}）`,
+    },
+    {
+      ok: hlPointPct != null && hlPointPct >= DETAIL_DEGREE.POINT_OK,
+      w: 20,
+      remain: `押した位置${hlPointPct ?? 0}%（要≥${DETAIL_DEGREE.POINT_OK}）`,
+    },
+    {
+      ok: hlOps < 20 || hlHand > 0,
+      w: 20,
+      remain: "手の形なし（通常でボタン録画→cs）",
+    },
+  ];
+  const reproducePct = hlOps > 0
+    ? reproduceParts.reduce((s, p) => s + (p.ok ? p.w : 0), 0)
+    : null;
+  const reproduceRemain = reproduceParts.filter((p) => !p.ok).map((p) => p.remain);
+
+  /**
+   * ★ 2026-11-16 竹内さん「人間として自動モード動くようにできているのか、統括ちゃんと判断」:
+   *   材料点は**量**の点。完走が低い／人間らしさ未完なのに 85点のまま出すと「もういける」と誤読される。
+   *   → 人間として自動できない時は材料点の上限を 55 にする（ready の閾値65に届かせない＝判断を濁さない）。
+   */
+  const coverageRaw = coverage;
+  if (humanLikeIncomplete || nearnessIncomplete || (auditRate != null && auditRate < 50)) {
+    coverage = Math.min(coverage, 55);
+  }
+
   let verdict: SupervisorVerdict;
   if (withOps === 0 && rows > 0) verdict = "not_yet";   // 材料ゼロは「これから」段階（危ないの一歩手前）
   else if (block) verdict = "unsafe";
@@ -513,6 +1008,18 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
     if (rank[verdict] > rank[capByHuman]) verdict = capByHuman;
   }
+  if (capByReflect && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByReflect]) verdict = capByReflect;
+  }
+  if (capByHumanLike && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByHumanLike]) verdict = capByHumanLike;
+  }
+  if (capByNearness && verdict !== "unsafe") {
+    const rank: Record<SupervisorVerdict, number> = { unsafe: 3, ready: 2, almost: 1, not_yet: 0 };
+    if (rank[verdict] > rank[capByNearness]) verdict = capByNearness;
+  }
   /** 上限が効いたか（点検・会話で「なぜ ready でないか」を言えるように） */
   const cappedParts: string[] = [];
   if (capByRatio && rank2(verdict) <= rank2(capByRatio)) {
@@ -523,6 +1030,29 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   }
   if (capByHuman && rank2(verdict) <= rank2(capByHuman)) {
     cappedParts.push(`人の手本が ${Math.round((humanShare ?? 0) * 100)}%（人${humanOps}/機械${autoOps}回）なので「渡してよい」にはしない`);
+  }
+  if (capByReflect && rank2(verdict) <= rank2(capByReflect)) {
+    const why = num(brIn!.read_count) <= 0
+      ? `学んだ画面位置（n≥3 ${num(brIn!.screen_solid)}欄）が拡張に届いていない（read_count=0）`
+      : "新束のあとの自動走行がまだ無い（反映の効果を確かめていない）";
+    cappedParts.push(`${why}ので「渡してよい」にはしない`);
+  }
+  if (capByHumanLike && rank2(verdict) <= rank2(capByHumanLike)) {
+    const bits = [
+      hlDirect > 0 ? `直書き${hlDirect}` : null,
+      hlTyped > 0 ? `選ぶ欄打ち込み${hlTyped}` : null,
+      hlCursorPct != null && hlCursorPct < 70 ? `カーソル${hlCursorPct}%` : null,
+      hlPointPct != null && hlPointPct < 50 ? `押した位置${hlPointPct}%` : null,
+      hlOps >= 20 && hlHand === 0 ? "手の形0" : null,
+    ].filter(Boolean);
+    cappedParts.push(`人間らしさの再現が未完（${bits.join("・")}／再現 ${reproducePct ?? 0}%）なので「渡してよい」にはしない`);
+  }
+  if (capByNearness && rank2(verdict) <= rank2(capByNearness)) {
+    const g = Array.isArray(hnIn!.gaps) && hnIn!.gaps!.length ? hnIn!.gaps!.join("・") : `近さ${hnScore}`;
+    cappedParts.push(`人間との近さ差分が許可線未達（${g}）なので「渡してよい」にはしない`);
+  }
+  if (coverageRaw > coverage) {
+    cappedParts.push(`材料の量の点 ${coverageRaw}→${coverage}（人間として自動できる状態ではないので点数を抑えた）`);
   }
   const cappedBy: string | null = cappedParts.length ? cappedParts.join(" ／ ") : null;
 
@@ -561,27 +1091,14 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     lines.push("  次にやる事: 追加で強化する所は無し（このまま録画を続ける）");
   }
 
-  return {
-    verdict,
-    headline: HEAD[verdict],
-    actions: actions.slice(0, 8),
-    score: { coverage, weak: weakN, delta },
-    block,
-    lines,
-    self_check: selfCheck({
-      verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
-      guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
-      audits: au ? { runs: num(au.runs), finished: num(au.finished), finish_rate: num(au.finish_rate), stalled_at: au.stalled_at } : null,
-      humanLike: (() => {
-        const h = (input as unknown as Record<string, unknown>).human_like;
-        if (!h || typeof h !== "object") return null;
-        const o = h as Record<string, unknown>;
-        return { ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged), changedWithoutClick: num(o.changedWithoutClick), withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows) };
-      })(),
-    }),
-    meeting: buildMeeting({
+  /**
+   * ★ 2026-11-15: 会議を先に作り、自己点検に learning_tasks を渡す
+   *   （弱い所＋通常未学習なのに photo_learn が無い矛盾を検知するため）。
+   */
+  const meeting = buildMeeting({
       site, verdict, coverage, rows, next, points, opens, screens, sequence,
       withOps, weakN, block, actions, delta,
+      reproducePct, reproduceRemain,
       /** 推測で埋めた開き方の数（実測ではない物） */
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
       siteCounts: inp.site_counts || {},
@@ -626,6 +1143,24 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     return Object.keys(out).length ? out : null;
   })(),
   /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から…統括お願い」:
+   *   **画像×押した位置**を統括に届ける（作ったのに渡さない失敗をしない）。
+   */
+  imageMatch: (() => {
+    const im = (input as unknown as Record<string, unknown>).image_match as SupervisorInput["image_match"];
+    if (!im || typeof im !== "object") return null;
+    return im;
+  })(),
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   **反映の到達点**を統括に届ける（作ったのに渡さない失敗をしない）。
+   */
+  bundleReflect: (() => {
+    const br = (input as unknown as Record<string, unknown>).bundle_reflect as SupervisorInput["bundle_reflect"];
+    if (!br || typeof br !== "object") return null;
+    return br;
+  })(),
+  /**
    * ★ 2026-11-15: **自動モードが人間のように動けているか**を統括に届ける
    *   （実測: 自動はカーソル35%・押さずに値が変わる4件。通常は96%で問題なし）。
    */
@@ -633,8 +1168,74 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const h = (input as unknown as Record<string, unknown>).human_like;
     if (!h || typeof h !== "object") return null;
     const o = h as Record<string, unknown>;
-    const r = { ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged), changedWithoutClick: num(o.changedWithoutClick), withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows) };
+    const r = {
+      ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged),
+      changedWithoutClick: num(o.changedWithoutClick),
+      changedWithoutClickFields: Array.isArray(o.changedWithoutClickFields) ? o.changedWithoutClickFields.map(String).slice(0, 8) : [],
+      withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows),
+      handCursorClicks: num(o.handCursorClicks),
+      handCursorFields: Array.isArray(o.handCursorFields) ? o.handCursorFields.map(String).slice(0, 8) : [],
+    };
     return r.ops > 0 ? r : null;
+  })(),
+  /**
+   * ★ 2026-11-17 統括Pro: 近さ差分＋許可線を議題材料へ
+   */
+  humanNearness: (() => {
+    const n = (input as unknown as Record<string, unknown>).human_nearness;
+    if (!n || typeof n !== "object") return null;
+    const o = n as Record<string, unknown>;
+    const score = num(o.score);
+    if (!(score > 0) && num(o.auto_gN) < 1) return null;
+    return {
+      score,
+      allowed: o.allowed === true,
+      line: String(o.line || "").slice(0, 400),
+      gaps: Array.isArray(o.gaps) ? o.gaps.map(String).slice(0, 6) : [],
+      auto_fast400pct: o.auto_fast400pct == null ? null : num(o.auto_fast400pct),
+      normal_fast400pct: o.normal_fast400pct == null ? null : num(o.normal_fast400pct),
+      auto_humanBandPct: o.auto_humanBandPct == null ? null : num(o.auto_humanBandPct),
+      normal_humanBandPct: o.normal_humanBandPct == null ? null : num(o.normal_humanBandPct),
+      auto_p50: o.auto_p50 == null ? null : num(o.auto_p50),
+      normal_p50: o.normal_p50 == null ? null : num(o.normal_p50),
+      auto_gN: num(o.auto_gN),
+      normal_gN: num(o.normal_gN),
+      allow_scoreMin: num(o.allow_scoreMin) || 70,
+      allow_fast400MaxPct: num(o.allow_fast400MaxPct) || 12,
+      allow_humanBandMinPct: num(o.allow_humanBandMinPct) || 50,
+    };
+  })(),
+  /**
+   * ★ 2026-11-17: 学習土台点検（F29〜F32）を統括材料へ
+   */
+  foundationAudit: (() => {
+    const f = (input as unknown as Record<string, unknown>).foundation_audit;
+    if (!f || typeof f !== "object") return null;
+    const o = f as Record<string, unknown>;
+    const missing = Array.isArray(o.missing) ? o.missing : [];
+    const key = o.key && typeof o.key === "object" ? o.key as Record<string, { ok?: boolean; line?: string }> : {};
+    return {
+      ok_n: num(o.ok_n),
+      missing_n: num(o.missing_n),
+      total: num(o.total),
+      summary: String(o.summary || "").slice(0, 200),
+      screen_solid: num(o.screen_solid),
+      missing: missing.slice(0, 12).map((x) => {
+        const r = x as Record<string, unknown>;
+        return {
+          id: String(r.id || "").slice(0, 40),
+          line: String(r.line || "").slice(0, 180),
+          next: String(r.next || "").slice(0, 120),
+          layer: String(r.layer || "free").slice(0, 12),
+        };
+      }),
+      key: Object.fromEntries(
+        Object.entries(key).slice(0, 12).map(([id, v]) => [
+          id,
+          { ok: !!(v && v.ok), line: String((v && v.line) || "").slice(0, 220) },
+        ]),
+      ),
+    };
   })(),
   /**
    * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
@@ -646,6 +1247,34 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const o = g as Record<string, unknown>;
     const r = { total: num(o.total), unlearnedBig: num(o.unlearnedBig), unlearnedSmall: num(o.unlearnedSmall), learnedButEmpty: num(o.learnedButEmpty), learnedOk: num(o.learnedOk), todo: num(o.todo) };
     return r.total > 0 ? r : null;
+  })(),
+  shotGapsNormal: (() => {
+    const g = (input as unknown as Record<string, unknown>).shot_gaps_normal;
+    if (!g || typeof g !== "object") return null;
+    const o = g as Record<string, unknown>;
+    const r = { total: num(o.total), unlearnedBig: num(o.unlearnedBig), unlearnedSmall: num(o.unlearnedSmall), learnedButEmpty: num(o.learnedButEmpty), learnedOk: num(o.learnedOk), todo: num(o.todo) };
+    return r.total > 0 ? r : null;
+  })(),
+  recordingFreshness: (() => {
+    const f = (input as unknown as Record<string, unknown>).recording_freshness;
+    return f && typeof f === "object" ? f as SupervisorInput["recording_freshness"] : null;
+  })(),
+  latestAutoChallenge: (() => {
+    const c = (input as unknown as Record<string, unknown>).latest_auto_challenge;
+    return c && typeof c === "object" ? c as SupervisorInput["latest_auto_challenge"] : null;
+  })(),
+  improveFromNormal: (() => {
+    const p = (input as unknown as Record<string, unknown>).improve_from_normal;
+    return p && typeof p === "object" ? p as SupervisorInput["improve_from_normal"] : null;
+  })(),
+  improveLoop: (() => {
+    const p = (input as unknown as Record<string, unknown>).improve_loop;
+    return p && typeof p === "object" ? p as SupervisorInput["improve_loop"] : null;
+  })(),
+  challengeMissingInBundle: (() => {
+    const a = (input as unknown as Record<string, unknown>).challenge_missing_in_bundle;
+    if (!Array.isArray(a) || !a.length) return null;
+    return a.map((x) => String(x).slice(0, 40)).filter(Boolean).slice(0, 12);
   })(),
   /**
    * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
@@ -676,7 +1305,70 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       improvements: inp.improvements && typeof inp.improvements === "object"
         ? { total: num(inp.improvements.total), by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [] }
         : null,
+  });
+
+  return {
+    verdict,
+    headline: HEAD[verdict],
+    actions: actions.slice(0, 8),
+    score: { coverage, weak: weakN, delta },
+    block,
+    lines,
+    self_check: selfCheck({
+      verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
+      guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
+      audits: au ? {
+        runs: num(au.runs), finished: num(au.finished), finish_rate: num(au.finish_rate), stalled_at: au.stalled_at,
+      } : null,
+      humanLike: (() => {
+        const h = (input as unknown as Record<string, unknown>).human_like;
+        if (!h || typeof h !== "object") return null;
+        const o = h as Record<string, unknown>;
+        return {
+          ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged),
+          changedWithoutClick: num(o.changedWithoutClick),
+          changedWithoutClickFields: Array.isArray(o.changedWithoutClickFields) ? o.changedWithoutClickFields.map(String).slice(0, 8) : [],
+          withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows),
+          handCursorClicks: num(o.handCursorClicks),
+          handCursorFields: Array.isArray(o.handCursorFields) ? o.handCursorFields.map(String).slice(0, 8) : [],
+        };
+      })(),
+      bundleReflect: (() => {
+        const br = (input as unknown as Record<string, unknown>).bundle_reflect as SupervisorInput["bundle_reflect"];
+        return br && typeof br === "object" ? br : null;
+      })(),
+      shotGapsNormal: (() => {
+        const g = (input as unknown as Record<string, unknown>).shot_gaps_normal;
+        if (!g || typeof g !== "object") return null;
+        const todo = num((g as Record<string, unknown>).todo);
+        return todo > 0 ? { todo } : null;
+      })(),
+      learningTasks: meeting.learning_tasks || [],
+      challengeMissingInBundle: (() => {
+        const a = (input as unknown as Record<string, unknown>).challenge_missing_in_bundle;
+        if (!Array.isArray(a) || !a.length) return null;
+        return a.map((x) => String(x).slice(0, 40)).filter(Boolean).slice(0, 12);
+      })(),
+      togglesOff: (() => {
+        const t = (input as unknown as Record<string, unknown>).toggles as { off?: unknown } | null | undefined;
+        return t && typeof t === "object" ? num(t.off) : 0;
+      })(),
+      photoKinds: (() => {
+        const k = (input as unknown as Record<string, unknown>).photo_kinds;
+        if (!k || typeof k !== "object") return null;
+        const out: Record<string, number> = {};
+        for (const [key, v] of Object.entries(k as Record<string, unknown>)) {
+          const n0 = num(v);
+          if (n0 > 0) out[String(key).slice(0, 12)] = n0;
+        }
+        return Object.keys(out).length ? out : null;
+      })(),
+      imageMatch: (() => {
+        const im = (input as unknown as Record<string, unknown>).image_match as SupervisorInput["image_match"];
+        return im && typeof im === "object" ? im : null;
+      })(),
     }),
+    meeting,
   };
 }
 
@@ -715,7 +1407,26 @@ function selfCheck(m: {
   /** 2026-11-14: 実際の検索の結果（完走率が低いのに「渡してよい」を防ぐ） */
   audits?: { runs: number; finished: number; finish_rate: number; stalled_at?: Array<{ stage: string; n: number }> } | null;
   /** ★ 2026-11-15: 自動モードが人間のように動けているか（17%・12%で ready になる矛盾を防ぐ） */
-  humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
+  humanLike?: {
+    ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number;
+    changedWithoutClickFields?: string[]; withCursor: number; withPoint: number; rows: number;
+    handCursorClicks?: number; handCursorFields?: string[];
+  } | null;
+  /** ★ 2026-11-15「ちゃんと反映までやるようにする統括」: 位置はあるのに未反映で ready を防ぐ */
+  bundleReflect?: SupervisorInput["bundle_reflect"];
+  /**
+   * ★ 2026-11-15 竹内さん「この考え方統括ちゃんと把握なぜできていないのか」:
+   *   弱い所＋通常の読める未学習があるのに photo_learn が課題に無い → 矛盾。
+   */
+  shotGapsNormal?: { todo: number } | null;
+  learningTasks?: Array<{ kind: string; why?: string; what?: string; fields?: string[] }> | null;
+  /** 課題欄が束に無いもの（段階4と photo_learn の矛盾点検用） */
+  challengeMissingInBundle?: string[] | null;
+  /** くれあ型の外し件数（仕組み②の点検） */
+  togglesOff?: number;
+  /** ★ 2026-11-16: 画像材料が統括に届いているか（flash→材料の穴） */
+  photoKinds?: Record<string, number> | null;
+  imageMatch?: SupervisorInput["image_match"];
 }): { ok: boolean; issues: string[]; capped_by: string | null } {
   const issues: string[] = [];
   const pct = Math.round((m.opsRatio || 0) * 100);
@@ -766,17 +1477,129 @@ function selfCheck(m: {
   if (hl) {
     const cursorPct = hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : 0;
     const pointPct = hl.rows > 0 ? Math.round((hl.withPoint / hl.rows) * 100) : 0;
-    const notHuman = hl.changedWithoutClick > 0 || hl.typedOnChoose > 0 || cursorPct < 50 || pointPct < 50;
+    const hand0 = hl.ops >= 20 && (hl.handCursorClicks ?? 0) === 0;
+    /** ★ 2026-11-16: 再現完了線（DETAIL_DEGREE）と自己点検を一致 */
+    const notHuman = hl.changedWithoutClick > 0 || hl.typedOnChoose > 0
+      || cursorPct < DETAIL_DEGREE.CURSOR_OK
+      || pointPct < DETAIL_DEGREE.POINT_OK
+      || hand0;
     if (notHuman && m.verdict === "ready") {
       const why: string[] = [];
       if (hl.changedWithoutClick > 0) why.push(`押さずに値が変わった ${hl.changedWithoutClick}件`);
       if (hl.typedOnChoose > 0) why.push(`選ぶ欄に打ち込んだ ${hl.typedOnChoose}件`);
-      if (cursorPct < 50) why.push(`カーソル ${cursorPct}%`);
-      if (pointPct < 50) why.push(`押した位置 ${pointPct}%`);
+      if (cursorPct < DETAIL_DEGREE.CURSOR_OK) why.push(`カーソル ${cursorPct}%`);
+      if (pointPct < DETAIL_DEGREE.POINT_OK) why.push(`押した位置 ${pointPct}%`);
+      if (hand0) why.push("手の形 0回");
       issues.push(`「渡してよい」と言っていますが、自動モードは人間のように動けていません（${why.join("／")}）`);
     }
     if (notHuman && m.coverage >= 65) {
-      issues.push(`材料 ${m.coverage}点は高すぎます（自動モードが人間のように動けていません: カーソル${cursorPct}%・押した位置${pointPct}%）`);
+      issues.push(`材料 ${m.coverage}点は高すぎます（自動モードが人間のように動けていません: カーソル${cursorPct}%・押した位置${pointPct}%・度 ${DETAIL_DEGREE.CURSOR_OK}/${DETAIL_DEGREE.POINT_OK}）`);
+    }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   画面位置は学んだのに拡張未取得／自動未走行なのに「渡してよい」は矛盾。
+   */
+  const br = m.bundleReflect;
+  if (br && br.screen_solid >= 3 && m.verdict === "ready") {
+    if ((br.read_count ?? 0) <= 0) {
+      issues.push(`「渡してよい」と言っていますが、学んだ画面の位置が拡張に届いていません（n≥3 ${br.screen_solid}欄・read_count=0）`);
+    } else if (!br.auto_after) {
+      issues.push(`「渡してよい」と言っていますが、新束のあとの自動走行がまだありません（反映の効果を確かめていない）`);
+    }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの画像があるのだから底から学習」「弱い部分強化するためによみとる」
+   *   「この打ち合わせ何度もしているのでちゃんとできるようにする」:
+   *   弱い所があり、通常の読める未学習があるのに、次に学ぶ事に photo_learn が無い → **把握できていない**。
+   *   ⚠ ただし段階4（拡張未読）で止まっている時は photo_learn より need_ext_reload が正しい。
+   */
+  const todoN = num(m.shotGapsNormal?.todo);
+  const tasks = Array.isArray(m.learningTasks) ? m.learningTasks : [];
+  const bn = (() => {
+    const br = m.bundleReflect;
+    if (br && (br.read_count ?? 0) <= 0 && (br.screen_solid ?? 0) >= 3) return 4;
+    if (br && (br.read_count ?? 0) > 0 && !br.auto_after) return 5;
+    return 0;
+  })();
+  if (m.weakN > 0 && todoN > 0 && bn < 4) {
+    if (!tasks.some((t) => t && t.kind === "photo_learn")) {
+      issues.push(`弱い所 ${m.weakN}件なのに、通常モードの読める未学習 ${todoN}枚を読む課題（photo_learn）が無い（画像を読めば学習できるのに把握できていない）`);
+    }
+  }
+  /**
+   * ★ 2026-11-15「改善につながるまで一連」:
+   *   画面位置はあるのに拡張未読なのに、拡張再読込の課題が無い → 学習しても改善に繋がらない。
+   */
+  if (bn === 4 && !tasks.some((t) => t && (t.kind === "need_ext_reload" || t.kind === "reflect_auto"))) {
+    issues.push("学んだ画面位置が拡張に届いていない（read_count=0）のに、拡張再読み込み／反映確認の課題が無い（改善につながる一連が切れている）");
+  }
+  if (bn === 4 && tasks[0]?.kind === "photo_learn") {
+    const miss = (m.challengeMissingInBundle || []).length;
+    if (miss <= 0) {
+      issues.push("段階4（拡張が束を読んでいない）なのに先頭課題が photo_learn（読んでも自動に届かない）");
+    }
+    // 課題欄が束に無い時の photo_learn 先頭は正しい（更新してから拡張へ）
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「学習方法／考え方もちゃんと強化」:
+   *   自動が人間らしくないのに、学習方法の次手が課題に無い → 考え方が抜けている。
+   */
+  {
+    const hl = m.humanLike;
+    const autoWeak = !!(hl && hl.ops > 0 && (hl.changedWithoutClick > 0 || (hl.rows > 0 && hl.withCursor / hl.rows < 0.5)));
+    const hasLearnPath = tasks.some((t) =>
+      t && (t.kind === "photo_learn" || t.kind === "need_ext_reload" || t.kind === "need_auto_run" || t.kind === "verify_improve" || t.kind === "fix_scene" || t.kind === "build_foundation"),
+    );
+    if (autoWeak && !hasLearnPath && todoN > 0) {
+      issues.push("自動が人間らしくないのに、学習方法の次手（通常から読む／一連の段階）が課題に無い");
+    }
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「学んだら強化していくように／そういう仕組みをつくっていくように」:
+   *   読む課題があるのに、強化（反映〜効果確認）が無い → 仕組みが切れている。
+   */
+  {
+    const hasLearn = tasks.some((t) => t && t.kind === "photo_learn");
+    const hasStrengthen = tasks.some((t) =>
+      t && (t.kind === "reflect_auto" || t.kind === "need_ext_reload" || t.kind === "need_auto_run" || t.kind === "verify_improve"),
+    );
+    if (hasLearn && !hasStrengthen) {
+      issues.push("学ぶ（photo_learn）課題があるのに、強化（反映〜拡張〜自動〜効果確認）の次手が無い（学んだら強化の仕組みが切れている）");
+    }
+  }
+  /**
+   * ★ 2026-11-16: 画像flash→材料→Pro の細かい連携が切れていないか。
+   *   写真はあるのに材料が統括に届いていない／未読なのに課題が無い、を矛盾として出す。
+   */
+  {
+    const photo = num(m.bundleReflect?.photo_in_storage);
+    const kinds = m.photoKinds ? Object.values(m.photoKinds).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+    const img = num(m.imageMatch?.imageFields);
+    if (photo > 0 && kinds <= 0 && img <= 0) {
+      issues.push(`写真 ${photo}枚あるのに、flashで読んだ材料（種類・画像欄）が統括に届いていない（画像学習→統括の連携が切れている）`);
+    }
+  }
+  /**
+   * ★ 2026-11-16「統括じたいの学習能力」: 仕組みを次手に効かせているか自己点検。
+   *   既知select欄の photo_learn なのに仕組み①が why に無い → 理解していない。
+   *   外しが多いのに区外し土台が無い → 仕組み②が抜けている。
+   */
+  {
+    for (const t of tasks) {
+      if (!t || t.kind !== "photo_learn") continue;
+      const sels = (t.fields || []).filter(isKnownSelectField);
+      if (sels.length && !/selectをVision|操作のselect|位置・押し方/.test(String(t.why || "") + String(t.what || ""))) {
+        issues.push(`仕組み①が課題に効いていない（${sels.slice(0, 3).join("・")}の photo_learn に「操作のselectを優先」が無い）`);
+      }
+    }
+    if ((m.togglesOff ?? 0) > 0) {
+      const hasWard = tasks.some((t) =>
+        t && t.kind === "build_foundation" && /区|外す|くれあ|ward|前客/.test(String(t.what || "") + String(t.why || "")),
+      );
+      if (!hasWard) {
+        issues.push(`仕組み②が課題に効いていない（外し${m.togglesOff}件なのに区の外し土台が無い）`);
+      }
     }
   }
 
@@ -819,40 +1642,62 @@ function buildMeeting(m: {
   auto_fix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
   /** 2026-11-15: 写真から読んだ欄の種類の内訳（統括が「プルダウンが何個」と言える） */
   photoKinds?: Record<string, number> | null;
+  /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる」:
+   *   通常モードの画像×押した位置の突き合わせ。
+   */
+  imageMatch?: SupervisorInput["image_match"];
+  /** 2026-11-15: 学んだ位置が自動まで届いているか */
+  bundleReflect?: SupervisorInput["bundle_reflect"];
   /** 2026-11-15: 自動モードが人間のように動けているかの点検結果 */
-  humanLike?: { ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number; withCursor: number; withPoint: number; rows: number } | null;
+  humanLike?: {
+    ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number;
+    changedWithoutClickFields?: string[]; withCursor: number; withPoint: number; rows: number;
+    handCursorClicks?: number; handCursorFields?: string[];
+  } | null;
+  /** ★ 2026-11-17 統括Pro: 人間との近さ差分＋許可線 */
+  humanNearness?: {
+    score: number; allowed: boolean; line: string; gaps?: string[];
+    auto_fast400pct?: number | null; normal_fast400pct?: number | null;
+    auto_humanBandPct?: number | null; normal_humanBandPct?: number | null;
+    auto_p50?: number | null; normal_p50?: number | null;
+    auto_gN?: number; normal_gN?: number;
+    allow_scoreMin?: number; allow_fast400MaxPct?: number; allow_humanBandMinPct?: number;
+  } | null;
+  /** ★ 2026-11-17: 学習土台点検（統括が把握・統括する材料） */
+  foundationAudit?: {
+    ok_n: number;
+    missing_n: number;
+    total: number;
+    summary: string;
+    screen_solid: number;
+    missing: Array<{ id: string; line: string; next: string; layer: string }>;
+    key: Record<string, { ok: boolean; line: string }>;
+  } | null;
   /** 2026-11-15: 学習の抜け（未学習・欄0・小さすぎる） */
   shotGaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習」:
+   *   **通常モードだけ**の写真抜け（手本画像。自動は混ぜない）。
+   */
+  shotGapsNormal?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
+  recordingFreshness?: SupervisorInput["recording_freshness"];
+  latestAutoChallenge?: SupervisorInput["latest_auto_challenge"];
+  improveFromNormal?: SupervisorInput["improve_from_normal"];
+  improveLoop?: SupervisorInput["improve_loop"];
+  challengeMissingInBundle?: string[] | null;
   /** 2026-11-15: 自動モードの改善候補（統括が順番を決める） */
   autoFix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
-  /**
-   * ★ 2026-11-15 竹内さん「自動で直接入力されている部分ないかちゃんと人間のように
-   *   入力やクリックカーソルの移動おこなっているか その部分も強化するようにする
-   *   弱い部分は補強していく土台をつくって」→「この問題なども把握して補強していくようにする」
-   *
-   *   **自動モードが人間のように動けているか**の点検結果（`human-like-audit.ts`）。
-   *   ⚠ 実測: 自動モードはカーソル35%・押した位置35%・押さずに値が変わる4件で、
-   *     通常モード（96%・問題なし）と**はっきり差**があった。
-   */
-  human_like?: {
-    ops: number;
-    typedOnChoose: number;
-    clickedThenChanged: number;
-    changedWithoutClick: number;
-    withCursor: number;
-    withPoint: number;
-    rows: number;
-  } | null;
-  /**
-   * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
-   *   **学習の抜け**（未学習の大きい写真・欄0だった写真・小さすぎる写真）。
-   *   ⚠ 実測: 102枚読んだが**まだ374枚**未学習だった。統括は「何枚読んだか」しか
-   *     知らされていなかったので「374枚残っている」と言えなかった。
-   */
-  shot_gaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number } | null;
   /** 2026-11-14: 同じ画面が続いた記録 / 写真の容量 */
   sameRuns?: { n: number; max_same: number } | null;
-  shotBytes?: { n: number; total_bytes: number; max_bytes: number } | null;
+  shotBytes?: {
+    n: number;
+    total_bytes: number;
+    max_bytes: number;
+    in_storage?: number;
+    in_row_b64?: number;
+    large?: number;
+  } | null;
   /** 写真がある記録の数（写真の割合を実データから出すため） */
   shotRows?: number;
   /**
@@ -866,6 +1711,9 @@ function buildMeeting(m: {
   stopped_scene?: string | null;
   /** 2026-11-14: 今日の強化の実績（点は上げない・根拠に出すだけ） */
   improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  /** ★ 2026-11-16: 人間らしさの再現進度（0〜100・残りラベル） */
+  reproducePct?: number | null;
+  reproduceRemain?: string[];
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -875,7 +1723,16 @@ function buildMeeting(m: {
   const today: string[] = [];
   const agenda: SupervisorAdvice["meeting"]["agenda"] = [];
   /** 2026-11-14: 統括が決めた「次に学ぶ事」（`supervisor-do` が上から実行する） */
-  let learning_tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }> = [];
+  let learning_tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }> = [];
+  /** ★ 2026-11-16: 土台細分化の結果（根拠と課題で共有） */
+  let subdividedAtoms: ReturnType<typeof subdivideReproduceGaps> = [];
+  /** ★ 2026-11-16: 欄×観点の細かい学習（仕組み⑥） */
+  let fineStatuses: FieldLearnStatus[] = [];
+  /** ★ 2026-11-16: 精度レバー（仕組み⑧・一連と連携） */
+  let precisionLevers: PrecisionLever[] = [];
+  let precisionLinkedOk = true;
+  /** ★ 2026-11-16: 自動モード完成度（仕組み⑨） */
+  let autoCompletion: AutoCompletion | null = null;
   const questions: SupervisorAdvice["meeting"]["questions"] = [];
   const evidence: SupervisorAdvice["meeting"]["evidence"] = [];
 
@@ -907,6 +1764,12 @@ function buildMeeting(m: {
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**を根拠に出す（これが無いと現場の現実を無視した判断になる）。
    */
+  // ★ 学習期間の正本を根拠に出す（Proが別窓の数字を混ぜない）
+  evidence.push({
+    label: "学習期間（揃え）",
+    value: `材料=${periodLabelJa(LEARN_PERIODS.materialsMs)}（動き・監査・写真）／指示=${periodLabelJa(LEARN_PERIODS.commandsMs)}／履歴=${periodLabelJa(LEARN_PERIODS.historyMs)}`,
+    guessed: false,
+  });
   if (m.audits && num(m.audits.runs) > 0) {
     /**
      * ⚠ 2026-11-15: `runs` は**全部の回**、`finish_rate` は**判断できる回だけ**で数える。
@@ -922,6 +1785,26 @@ function buildMeeting(m: {
     });
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
+    }
+    // ★ 完了→次客（統括Proが把握する細分化）
+    if (m.audits.handoff && m.audits.handoff.line) {
+      const h = m.audits.handoff;
+      const any =
+        (h.switch_fail || 0) + (h.owner_mismatch || 0) + (h.no_fill_start || 0)
+        + (h.batch_timeout || 0) + (h.pipeline_busy || 0);
+      evidence.push({
+        label: "完了→次客（細分化）",
+        value: h.line,
+        guessed: any > 0,
+      });
+      if (any > 0) {
+        agenda.push({
+          priority: 0,
+          topic: "完了してから次のお客さんに移れない穴がある",
+          why: h.line,
+          decide: "一連ロック解除の競合・切替失敗・送る相手不一致を原子ごとに直す（拡張→自動1回で確認）",
+        });
+      }
     }
   }
   /**
@@ -975,11 +1858,23 @@ function buildMeeting(m: {
   /**
    * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
    *   写真の容量と、同じ画面が続いた回数を根拠に出す。
+   *
+   * ★ 2026-11-15 竹内さん「画像データベースの保存されている／そのこともちゃんと統括は把握する」:
+   *   Storage 保存（shot_key）を正とする。行内 b64 空でも「保存されていない」と言わない。
    */
-  if (m.shotBytes && num(m.shotBytes.n) > 0) {
+  if (m.shotBytes && (num(m.shotBytes.n) > 0 || num(m.shotBytes.in_storage) > 0)) {
+    const stored = num(m.shotBytes.in_storage) || num(m.shotBytes.n);
+    const rowB64 = num(m.shotBytes.in_row_b64);
+    const large = num(m.shotBytes.large);
     const maxKb = Math.round(num(m.shotBytes.max_bytes) / 1024);
     const totalMb = Math.round((num(m.shotBytes.total_bytes) / (1024 * 1024)) * 10) / 10;
-    evidence.push({ label: "写真", value: `${num(m.shotBytes.n)}枚・1枚 最大${maxKb}KB・合計 ${totalMb}MB` });
+    const parts = [
+      `Storage保存 ${stored}枚（human-motion-shots・shot_keyあり＝保存済み）`,
+      `行内b64 ${rowB64}枚（通常0・正本はStorage）`,
+    ];
+    if (large > 0) parts.push(`大きい写真 ${large}枚`);
+    if (maxKb > 0 || totalMb > 0) parts.push(`行内残 最大${maxKb}KB・合計${totalMb}MB`);
+    evidence.push({ label: "写真", value: parts.join("／") });
   }
   if (m.sameRuns && num(m.sameRuns.max_same) > 0) {
     evidence.push({ label: "同じ画面の続き", value: `最大 ${num(m.sameRuns.max_same)}枚（${num(m.sameRuns.n)}回）` });
@@ -997,7 +1892,11 @@ function buildMeeting(m: {
     const parts: string[] = [];
     if (tg.off > 0) parts.push(`前に残っていたのを外した ${tg.off}件`);
     if (tg.on > 0) parts.push(`選んだ ${tg.on}件`);
-    if (tg.unknown > 0 && !tg.off && !tg.on) parts.push(`区別できない ${tg.unknown}件（旧版の記録）`);
+    if (tg.unknown > 0 && !tg.off && !tg.on) {
+      parts.push(`区別できない ${tg.unknown}件（was/now未到着・仕組み②が学べない）`);
+    } else if (tg.unknown > 0) {
+      parts.push(`区別できない ${tg.unknown}件`);
+    }
     evidence.push({ label: "押した操作の中身", value: parts.join("／") });
   }
   /**
@@ -1016,6 +1915,40 @@ function buildMeeting(m: {
     evidence.push({ label: "写真から読んだ欄の種類", value: txt });
   }
   /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる
+   *   それを自動に学習させる」「統括お願い」:
+   *   **通常モードの画像×押した位置**を根拠に出す（統括が「どこを押しているか」を言える）。
+   */
+  if (m.imageMatch && (m.imageMatch.imageFields > 0 || m.imageMatch.pressedFields > 0)) {
+    const im = m.imageMatch;
+    evidence.push({
+      label: "通常モードの画像×押した位置",
+      value: `${im.line}／画面の位置あり ${im.withScreenPos}欄`,
+      guessed: im.withScreenPos === 0,
+    });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   **束→拡張→自動**の到達を根拠に出す（学んだのに現場に無い、を見落さない）。
+   *
+   * ★ 2026-11-15「ボトルネック改善／会話の時統括把握」:
+   *   段階と止まっている所を必ず出す（写真Storage含む）。
+   */
+  if (m.bundleReflect && (m.bundleReflect.screen_solid > 0 || (m.bundleReflect.photo_in_storage ?? 0) > 0)) {
+    evidence.push({
+      label: "学習→自動の連携",
+      value: m.bundleReflect.line,
+      guessed: (m.bundleReflect.read_count ?? 0) <= 0 || !m.bundleReflect.auto_after,
+    });
+    if (m.bundleReflect.bottleneck) {
+      evidence.push({
+        label: "連携のボトルネック",
+        value: m.bundleReflect.bottleneck,
+        guessed: true,
+      });
+    }
+  }
+  /**
    * ★ 2026-11-15 竹内さん「この問題なども把握して補強していくようにする」:
    *   **自動モードが人間のように動けているか**を根拠に出す。
    *   ⚠ 実測: 自動はカーソル35%・押した位置35%・押さずに値が変わる4件。通常は96%で問題なし。
@@ -1030,7 +1963,141 @@ function buildMeeting(m: {
     if (h.changedWithoutClick > 0) parts.push(`⚠ 押さずに値が変わった ${h.changedWithoutClick}件`);
     else parts.push(`押してから変えた ${h.clickedThenChanged}件`);
     parts.push(`カーソル ${p(h.withCursor)}%・押した位置 ${p(h.withPoint)}%`);
+    if ((h.handCursorClicks ?? 0) > 0) parts.push(`手の形 ${h.handCursorClicks}回`);
+    else if (h.ops >= 20) parts.push("⚠ 手の形 0回");
     evidence.push({ label: "自動モードの人間らしさ", value: parts.join("／"), guessed: h.typedOnChoose > 0 || h.changedWithoutClick > 0 });
+  }
+  /**
+   * ★ 2026-11-17 統括Pro「近さ加重スコアを統括束に接続／許可線を数値固定」:
+   *   F26〜F28＋近さ点を毎回根拠に出す（手元計算だけにしない）。
+   */
+  /**
+   * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
+   *   F29〜F32 を毎回根拠に出す（Pro が steps だけに偏らない材料）。
+   */
+  if (m.foundationAudit && (m.foundationAudit.total > 0 || m.foundationAudit.missing_n > 0)) {
+    const fa = m.foundationAudit;
+    evidence.push({
+      label: "学習土台点検（F番号）",
+      value: fa.summary + (fa.missing.length
+        ? `／欠: ${fa.missing.slice(0, 6).map((x) => x.id.replace(/^F\d+_/, "")).join("・")}`
+        : "／欠なし"),
+      guessed: fa.missing_n > 0,
+    });
+    const keyOrder = [
+      "F29_human_nearness",
+      "F31_learn_reflect_station",
+      "F32_link_pipeline",
+      "F33_learn_db_persist",
+      "F34_pro_brain_ready",
+      "F35_wipe_write_gate",
+      "F36_write_path_gate",
+      "F37_pro_rag_brain",
+      "F6_auto_after_bundle",
+      "F4_hand_cs",
+      "F14_station_clear_cursor",
+      "F28_auto_gap_floor",
+      "F18_fill_progress_steps",
+      "F27_op_path_kind",
+      "F8_commands_flow",
+      "F9_stalled_signal",
+    ];
+    for (const id of keyOrder) {
+      const k = fa.key[id];
+      if (!k) continue;
+      evidence.push({
+        label: `土台 ${id}`,
+        value: `${k.ok ? "✓" : "✗"} ${k.line}`,
+        guessed: !k.ok,
+      });
+    }
+  }
+  if (m.humanNearness && (m.humanNearness.auto_gN ?? 0) > 0) {
+    const n = m.humanNearness;
+    evidence.push({
+      label: "人間との差分（近さ・許可線）",
+      value: n.line || `近さ${n.score}点`,
+      guessed: !n.allowed,
+    });
+    if (!n.allowed && Array.isArray(n.gaps) && n.gaps.length) {
+      evidence.push({
+        label: "差分の未達（許可線）",
+        value: n.gaps.join("／"),
+        guessed: true,
+      });
+    }
+  }
+  if (typeof m.reproducePct === "number") {
+    const rem = Array.isArray(m.reproduceRemain) && m.reproduceRemain.length
+      ? `残り ${m.reproduceRemain.join("・")}`
+      : "条件クリア";
+    evidence.push({
+      label: "人間らしさの再現（あとどれくらい）",
+      value: `${m.reproducePct}%（完了線: 直書き0・カーソル≥${DETAIL_DEGREE.CURSOR_OK}%・押した位置≥${DETAIL_DEGREE.POINT_OK}%・手の形あり）／${rem}`,
+      guessed: m.reproducePct < 100,
+    });
+  }
+  /**
+   * ★ 2026-11-16: 今日明かした学習の仕組みを統括が持つ（次の学習の判断に使う）。
+   *   表示と課題適用は LEARN_MECHANISMS を共有（ズレ防止）。
+   */
+  {
+    const marks = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳", "㉑", "㉒", "㉓", "㉔"];
+    evidence.push({
+      label: "学習の仕組み（統括が使う）",
+      value: LEARN_MECHANISMS.map((s, i) => `${marks[i] || `${i + 1}.`}${s}`).join(" "),
+      guessed: false,
+    });
+    evidence.push({
+      label: "毎回違う人間の動き（変則）",
+      value: "お客・検索ごとにカーソル出発・狙い点・待ち・条件順を散らす。学んだ「Aの次はB」だけ守る。同じ動きのクローンにしない（v2.8.15）",
+      guessed: false,
+    });
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「通常モードの録画があれば完全に再現できるようになっていくために
+   *   必要な土台をそろえる／この考え方大切にする／統括お願い」:
+   *   通常録画の有無と、再現に足りない土台を**毎回**根拠に出す（録画を増やす前に、ある物から揃える）。
+   */
+  {
+    const normalN = num(m.modeCounts?.normal);
+    if (normalN > 0 || (m.shotGapsNormal && m.shotGapsNormal.total > 0)) {
+      const h = m.humanLike;
+      const foundation: string[] = [];
+      foundation.push(`通常録画 ${normalN || m.shotGapsNormal?.total || 0}`);
+      if (m.shotGapsNormal) {
+        foundation.push(m.shotGapsNormal.todo > 0
+          ? `⚠ 通常の読める未学習 ${m.shotGapsNormal.todo}枚`
+          : "通常画像の未学習なし");
+      }
+      if (h && h.ops > 0) {
+        const cp = h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : 0;
+        const pp = h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : 0;
+        foundation.push(h.changedWithoutClick > 0 ? `⚠ 直書き疑い ${h.changedWithoutClick}` : "直書き0");
+        foundation.push(cp >= 70 ? `カーソル${cp}%` : `⚠ カーソル${cp}%`);
+        foundation.push(pp >= DETAIL_DEGREE.POINT_OK ? `押した位置${pp}%` : `⚠ 押した位置${pp}%`);
+        foundation.push((h.handCursorClicks ?? 0) > 0 ? `手の形${h.handCursorClicks}回` : "⚠ 手の形0（通常でボタン録画→cs）");
+      }
+      if (m.bundleReflect) {
+        foundation.push((m.bundleReflect.read_count ?? 0) > 0
+          ? `拡張が束を読んだ（read ${m.bundleReflect.read_count}）`
+          : "⚠ 拡張が束未読（read_count=0→2.8.25再読込／ポップアップ開く）");
+      }
+      if (m.imageMatch && m.imageMatch.imageFields > m.imageMatch.matched) {
+        const onlyImg = m.imageMatch.imageFields - m.imageMatch.matched;
+        if (onlyImg > 0) foundation.push(`画像にあるが押していない ${onlyImg}欄（通常画像から位置を学べる）`);
+      }
+      evidence.push({
+        label: "原則（通常録画があれば完全再現へ）",
+        value: "通常モードの録画があれば完全に再現できるようになっていく。足りない土台は統括がそろえる。録画を増やす前に、すでにある通常録画（画像・操作・手の形）から学ぶ",
+        guessed: false,
+      });
+      evidence.push({
+        label: "通常録画→完全再現の土台",
+        value: foundation.join("／"),
+        guessed: typeof m.reproducePct === "number" ? m.reproducePct < 100 : true,
+      });
+    }
   }
   /**
    * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
@@ -1045,6 +2112,358 @@ function buildMeeting(m: {
     if (g.unlearnedSmall > 0) parts.push(`小さいので読めない ${g.unlearnedSmall}枚`);
     if (!g.todo && !g.unlearnedSmall) parts.push("抜けなし");
     evidence.push({ label: "学習の抜け", value: parts.join("／"), guessed: g.todo > 0 });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習」:
+   *   通常モードの画像抜けを根拠に出す（弱い所の強化はここから）。
+   */
+  if (m.shotGapsNormal && m.shotGapsNormal.total > 0) {
+    const g = m.shotGapsNormal;
+    const parts: string[] = [];
+    parts.push(`通常モード ${g.total}枚（学べた ${g.learnedOk}枚）`);
+    if (g.todo > 0) parts.push(`⚠ まだ読める ${g.todo}枚 → 弱い所の強化はここから読む`);
+    if (g.unlearnedSmall > 0) parts.push(`小さい ${g.unlearnedSmall}枚`);
+    if (!g.todo) parts.push("通常の読める未学習なし");
+    evidence.push({ label: "通常モードの画像学習", value: parts.join("／"), guessed: g.todo > 0 });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「この打ち合わせ何度もしているのでちゃんとできるようにする」:
+   *   原則を毎回根拠に出す（会話のたびに思い出す土台。忘れない）。
+   */
+  if ((m.shotGapsNormal?.todo ?? 0) > 0 || (m.shotGaps?.todo ?? 0) > 0 || m.weakN > 0 || m.latestAutoChallenge?.fields?.length) {
+    evidence.push({
+      label: "原則（自動最新課題→通常から改善）",
+      value: "最新で録画した画像も把握する。自動モードで最新の課題を見つける。課題欄は通常モードの最新〜近い画像から読んで改善する。自動の画像は手本にしない",
+      guessed: false,
+    });
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「学習方法とかも重要な部分ちゃんと学習して強化／統括ちゃんと把握して強化／考え方もちゃんと強化」:
+   *   統括が毎回**学習のやり方（考え方）**を根拠に出す（忘れない・会話の土台）。
+   *   ①自動の録画で弱い所を見つける ②通常の録画（画像・操作）から学ぶ ③順番・カーソルなど細部を直す
+   *   ④束→拡張が読む→自動で使う→効果確認 ⑤推測で埋めない・自動画像は手本にしない
+   */
+  if (m.weakN > 0 || m.latestAutoChallenge?.fields?.length || m.improveLoop || (m.humanLike && m.humanLike.ops > 0)) {
+    const bn = m.improveLoop?.bottleneck_n;
+    const stepHint =
+      bn === 4 ? "今は段階4（拡張が束を読む）で止まっている → 再読み込みが先（学習方法の順番を守る）"
+      : bn === 5 ? "今は段階5（自動で使う）→ 自動1回が先"
+      : bn === 6 ? "今は段階6（効果確認）→ 数字で確かめる"
+      : "弱い所があれば通常から学び、足りなければ土台を作り、再現まで回す";
+    evidence.push({
+      label: "学習方法（考え方）",
+      value: `①自動録画で弱い所を見つける → ②通常録画（画像・操作）から学ぶ → ③足りなければ土台を作る → ④細部を直して再現 → ⑤束→拡張→自動→効果確認。${stepHint}`,
+      guessed: false,
+    });
+    const chFields = [
+      ...(m.latestAutoChallenge?.fields || []),
+      ...(m.improveFromNormal?.fields || []),
+      ...(m.humanLike?.changedWithoutClickFields || []),
+    ];
+    const foundationGaps = (() => {
+      let n = 0;
+      const h = m.humanLike;
+      if (h && h.ops > 0) {
+        if (h.changedWithoutClick > 0) n++;
+        if (h.rows > 0 && Math.round((h.withCursor / h.rows) * 100) < 70) n++;
+        if (h.rows > 0 && Math.round((h.withPoint / h.rows) * 100) < 50) n++;
+        if ((h.handCursorClicks ?? 0) === 0 && h.ops >= 20) n++;
+      }
+      if (m.bundleReflect && (m.bundleReflect.read_count ?? 0) <= 0 && (m.bundleReflect.screen_solid ?? 0) >= 3) n++;
+      return n;
+    })();
+    evidence.push({
+      label: "質を上げる循環（統括が土台構築も含めて回す）",
+      value: qualityCycleLine({
+        reproducePct: typeof m.reproducePct === "number" ? m.reproducePct : null,
+        bottleneckN: bn ?? null,
+        challengeFields: [...new Set(chFields.map(String).filter(Boolean))].length,
+        foundationGaps,
+      }),
+      guessed: false,
+    });
+    /** 課題欄 ↔ 学習場面の連動 */
+    const links = linkFieldsToScenes(
+      [...new Set(chFields.map(String).filter(Boolean))].slice(0, 10),
+      Array.isArray(m.scene_flows) ? m.scene_flows : null,
+    );
+    if (links.length) {
+      const parts = links.map((l) =>
+        `${l.field}→${l.sceneJa}` + (l.hasExample ? `（手本${l.runs}回・${l.ops}手）` : "（⚠場面の手本薄い）"),
+      );
+      evidence.push({
+        label: "学習場面の連動（課題欄↔場面）",
+        value: parts.join("／"),
+        guessed: links.some((l) => !l.hasExample),
+      });
+    }
+    /**
+     * ★ 2026-11-16「土台強化細分化して強化」「自動録画で弱い部分を見つける」「細部にこだわる」:
+     *   足りない物を「実際に何が必要か」まで分解し、自動→通常→土台→細部→確かめるを連動させる。
+     */
+    {
+      const atoms = subdivideReproduceGaps({
+        reproducePct: typeof m.reproducePct === "number" ? m.reproducePct : null,
+        reproduceRemain: m.reproduceRemain,
+        humanLike: m.humanLike,
+        challengeFields: [
+          ...(m.latestAutoChallenge?.fields || []),
+          ...(m.latestAutoChallenge?.changedNoClick || []),
+        ],
+        reclickFields: m.latestAutoChallenge?.retries || [],
+        autoFixTop: (m.autoFix || []).slice(0, 3).map((x) => ({ what: x.what, why: x.why, how: x.how })),
+        bundleReflect: m.bundleReflect,
+        sceneFlows: Array.isArray(m.scene_flows) ? m.scene_flows : null,
+        stoppedScene: m.stopped_scene ?? null,
+      });
+      if (atoms.length) {
+        subdividedAtoms = atoms;
+        const sum = summarizeAtoms(atoms);
+        evidence.push({
+          label: "土台の細分化（実際に何が必要か）",
+          value: sum.line + (sum.topNeeds.length ? `／例: ${sum.topNeeds.slice(0, 3).join("・")}` : ""),
+          guessed: sum.byLayer.foundation > 0 || sum.byLayer.find > 0,
+        });
+        evidence.push({
+          label: "弱所発見→学習→土台→細部の連動",
+          value: linkageLine(atoms),
+          guessed: false,
+        });
+        evidence.push({
+          label: "原則（細部にこだわれば人間の動き）",
+          value: "自動録画で弱所を見つけ、通常録画から学び、足りなければ土台を細分化して作る。細部（カーソル・手・順番・間）まで徹底すれば完全に人間の動きで行える",
+          guessed: false,
+        });
+      }
+    }
+    /**
+     * ★ 2026-11-16「学習面の強化を細かく／細かくまなんでいく／仕組みで強化」:
+     *   欄ごとに観点（種類・位置・押して変化・カーソル・外し・場面）へ分解し、
+     *   足りない観点だけを次手にする（粗い「弱い所を読む」で終わらせない）。
+     */
+    {
+      const h = m.humanLike;
+      const cursorPct = h && h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : null;
+      const pointPct = h && h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : null;
+      const targetFields = [...new Set([
+        ...(m.latestAutoChallenge?.fields || []),
+        ...(m.latestAutoChallenge?.changedNoClick || []),
+        ...(m.humanLike?.changedWithoutClickFields || []),
+        ...(m.improveFromNormal?.fields || []),
+      ].map(String).filter(Boolean))].slice(0, 12);
+      const sceneLinked = linkFieldsToScenes(targetFields, Array.isArray(m.scene_flows) ? m.scene_flows : null)
+        .filter((l) => l.hasExample)
+        .map((l) => l.field);
+      const opsKind = targetFields.filter(isKnownSelectField);
+      fineStatuses = scoreFieldsFine({
+        fields: targetFields,
+        opsKindFields: opsKind,
+        clickChangeFields: [],
+        directWriteFields: [
+          ...(m.latestAutoChallenge?.changedNoClick || []),
+          ...(m.humanLike?.changedWithoutClickFields || []),
+        ],
+        reclickFields: m.latestAutoChallenge?.retries || [],
+        toggleOff: m.toggles?.off ?? 0,
+        toggleOn: m.toggles?.on ?? 0,
+        toggleUnknown: m.toggles?.unknown ?? 0,
+        cursorPct,
+        pointPct,
+        handClicks: h?.handCursorClicks ?? 0,
+        sceneLinkedFields: sceneLinked,
+      });
+      if (fineStatuses.length) {
+        const steps = fineLearnNextSteps(fineStatuses, 6);
+        const weakFs = weakDetailFields(fineStatuses);
+        const fineAvg0 = Math.round(fineStatuses.reduce((s, x) => s + x.score, 0) / fineStatuses.length);
+        evidence.push({
+          label: "細かく学ぶ（欄×観点）",
+          value: fineLearnEvidenceLine(fineStatuses)
+            + (steps.length
+              ? `／次の観点: ${steps.slice(0, 4).map((g) => `${g.field}:${g.facet}`).join("・")}`
+              : ""),
+          guessed: fineStatuses.some((s) => s.score < 100),
+        });
+        evidence.push({
+          label: "細部の度（補強）",
+          value: detailDegreeLine({
+            cursorPct,
+            pointPct,
+            fineAvg: fineAvg0,
+            weakFields: weakFs,
+          }) + "／弱い部分を見つけたら必ず改善する",
+          guessed: weakFs.length > 0 || fineAvg0 < DETAIL_DEGREE.FINE_AVG_OK,
+        });
+      }
+      /**
+       * ★ 2026-11-16「より精度上げれる／精度上げる部分も強化／統括ちゃんと連携」:
+       *   精度を測り、一連の段階と食い違わないレバーを出す（仕組み⑧）。
+       */
+      {
+        const auditRate = m.audits && num(m.audits.runs) > 0 ? num(m.audits.finish_rate) : null;
+        const chN = [
+          ...(m.latestAutoChallenge?.fields || []),
+          ...(m.humanLike?.changedWithoutClickFields || []),
+        ].filter(Boolean).length;
+        const precision = measurePrecision({
+          fineStatuses,
+          reproducePct: typeof m.reproducePct === "number" ? m.reproducePct : null,
+          auditFinishRate: auditRate,
+          challengeFieldCount: chN || (m.latestAutoChallenge?.fields?.length ?? 0),
+        });
+        precisionLevers = precisionLeversLinked({
+          precision,
+          fineStatuses,
+          bottleneckN: m.improveLoop?.bottleneck_n ?? null,
+          reproduceRemain: m.reproduceRemain,
+          hasToggleUnknown: !!(m.toggles && m.toggles.unknown > 50 && m.toggles.off === 0 && m.toggles.on === 0),
+        });
+        const bn = m.improveLoop?.bottleneck_n ?? null;
+        const top = precisionLevers[0];
+        /** 段階4〜5なのに先頭が photo_learn だけなら連携が切れている */
+        precisionLinkedOk = !(bn != null && bn >= 4 && bn <= 5 && top && top.kind === "photo_learn" && top.lift >= 80);
+        evidence.push({
+          label: "精度（測って上げる・一連と連携）",
+          value: precisionEvidenceLine(precision, precisionLevers, bn),
+          guessed: precision.score < 80,
+        });
+        /**
+         * ★ 2026-11-16「完成度わかればよりよい／完成度も理解して学習する仕組みを統括もつ」:
+         *   一連・再現・欄×観点・精度・人間として可 を1本の完成度にし、学習ヒントを付ける。
+         */
+        {
+          const humanAutoOk = (() => {
+            const h = m.humanLike;
+            if (!h || h.ops <= 0) return false;
+            if (h.changedWithoutClick > 0 || (h.typedOnChoose ?? 0) > 0) return false;
+            const cp = h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : 0;
+            const pp = h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : 0;
+            if (cp < DETAIL_DEGREE.CURSOR_OK || pp < DETAIL_DEGREE.POINT_OK) return false;
+            if (h.ops >= 20 && (h.handCursorClicks ?? 0) === 0) return false;
+            const br = m.bundleReflect;
+            if (br && ((br.read_count ?? 0) <= 0 || !br.auto_after)) return false;
+            return true;
+          })();
+          autoCompletion = measureAutoCompletion({
+            improveSteps: m.improveLoop?.steps || null,
+            bottleneckN: m.improveLoop?.bottleneck_n ?? null,
+            reproducePct: typeof m.reproducePct === "number" ? m.reproducePct : null,
+            reproduceRemain: m.reproduceRemain,
+            fineAvg: precision.fineAvg,
+            precisionScore: precision.score,
+            humanAutoOk,
+            challengeN: chN || (m.latestAutoChallenge?.fields?.length ?? 0),
+          });
+          evidence.push({
+            label: "自動モード完成度",
+            value: `${autoCompletion.line}／内訳: ${autoCompletion.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り: ${autoCompletion.remain.slice(0, 4).join("・") || "なし"}／${autoCompletion.learnHint}`,
+            guessed: autoCompletion.score < 85,
+          });
+        }
+      }
+    }
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「学んだら強化していくように／そういう仕組みをつくっていくように」:
+   *   学習と強化を分けない。読んだら必ず強化まで回す、が統括の土台。
+   */
+  {
+    const bn = m.improveLoop?.bottleneck_n;
+    const learnedToday = (m.improvements?.total ?? 0) > 0;
+    const pending = bn != null && bn >= 3;
+    evidence.push({
+      label: "学んだら強化（仕組み）",
+      value: learnedToday && pending
+        ? `今日の強化 ${m.improvements!.total}件あり／まだ段階${bn}で止まっている → 学んだあと強化（反映〜自動〜効果）を完了させる`
+        : "学ぶだけで終わらない。photo_learn のあとに必ず reflect→拡張再読込→自動1回→効果確認を付ける",
+      guessed: false,
+    });
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「続きのお客さんも地域または駅を選択してから検索／先に検索になってそのあと指定ではなく」:
+   *   統括が毎回出す決まり。駅だけ外して大阪全件、を防ぐ。
+   * ★ 2026-11-16「続き客で所在地や駅をやりなおす／もともとの条件はずして新しい条件」:
+   *   やり直しが薄いのも弱い部分として出す（細部まで強化）。
+   */
+  {
+    const sampleSteps = Array.isArray((m as { lastAuditSteps?: string[] }).lastAuditSteps)
+      ? (m as { lastAuditSteps?: string[] }).lastAuditSteps!
+      : [];
+    const slip = sampleSteps.length ? detectSearchBeforePlace(sampleSteps) : null;
+    const basicSlip = sampleSteps.length ? detectSearchBeforeBasic(sampleSteps) : null;
+    const redo = sampleSteps.length ? detectPlaceNotRedone(sampleSteps) : null;
+    evidence.push({
+      label: "検索の順番（場所→条件→検索）",
+      value: slip
+        ? slip.line
+        : "続きの客でも地域または駅を入れてから検索する。場所の前に検索しない（大阪全件防止・v2.8.18）",
+      guessed: !!(slip && slip.earlySearch),
+    });
+    evidence.push({
+      label: "基本条件→検索（間取り・敷礼）",
+      value: basicSlip
+        ? basicSlip.line
+        : "間取り・敷礼なしまで入れてから検索。保険は条件完了後の控えのみ・途中切り上げ禁止（v2.8.18）",
+      guessed: !!(basicSlip && basicSlip.earlySearch),
+    });
+    evidence.push({
+      label: "検索押し（カーソル）",
+      value: "本線も控え保険も直接clickせず、カーソル移動してから検索ボタンを押す（v2.8.18）",
+      guessed: false,
+    });
+    evidence.push({
+      label: "直接入力しない（仕組み⑬）",
+      value: "プルダウンは開いて選ぶ・文字は欄を押して打つ・value代入だけで条件を入れない。徒歩締めも chooseSelectLikeHuman（v2.8.18）",
+      guessed: false,
+    });
+    evidence.push({
+      label: "学習APIの役割分担",
+      value: "画像読み=deepseek-flash／統括まとめ=deepseek-v4-pro（learn-supervisor-pro）／関所・verdict=決定論。旧はまとめ層が無く Pro が統括になっていなかった",
+      guessed: false,
+    });
+    evidence.push({
+      label: "続き客の所在地/駅やり直し",
+      value: redo
+        ? redo.line
+        : "前客の地域・駅を外してから新しい条件を選ぶ（v2.8.18）",
+      guessed: !!(redo && redo.weak),
+    });
+    if ((slip && slip.earlySearch) || (basicSlip && basicSlip.earlySearch) || (redo && redo.weak)) {
+      agenda.push({
+        priority: 0,
+        topic: "検索の順番が弱い（場所/基本条件の前に検索）",
+        why: [
+          slip?.earlySearch ? slip.line : null,
+          basicSlip?.earlySearch ? basicSlip.line : null,
+          redo?.weak ? redo.line : null,
+        ].filter(Boolean).join("／"),
+        decide: "拡張2.8.18再読込→連続別客で 場所→間取り・敷礼→検索。保険が先に走らない／検索・入力はカーソル経由（直接入力しない）",
+      });
+    }
+  }
+  if (m.recordingFreshness && m.recordingFreshness.line) {
+    evidence.push({
+      label: "最新録画の画像",
+      value: String(m.recordingFreshness.line),
+      guessed: m.recordingFreshness.normalLatestLearned === false,
+    });
+  }
+  if (m.latestAutoChallenge && m.latestAutoChallenge.line) {
+    evidence.push({
+      label: "自動モードの最新課題",
+      value: String(m.latestAutoChallenge.line),
+      guessed: (m.latestAutoChallenge.fields?.length ?? 0) > 0,
+    });
+  }
+  /**
+   * ★ 2026-11-15「改善につながるまで一連の流れをちゃんと統括はできるようにする」
+   */
+  if (m.improveLoop && m.improveLoop.improve_line) {
+    evidence.push({
+      label: "改善までの一連",
+      value: String(m.improveLoop.improve_line),
+      guessed: (m.improveLoop.bottleneck_n ?? 0) > 0,
+    });
   }
   /**
    * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
@@ -1063,7 +2482,45 @@ function buildMeeting(m: {
 
   // ── 今日の結論（読み上げられる形）──
   today.push(`【${who}】${HEAD[m.verdict]}`);
+  if (autoCompletion) {
+    today.push(autoCompletion.line);
+    if (autoCompletion.remain.length) {
+      today.push(`完成度の残り: ${autoCompletion.remain.slice(0, 5).join("・")}`);
+    }
+    today.push(autoCompletion.learnHint);
+  }
   today.push(`材料 ${m.coverage}点／弱い所 ${m.weakN}件／記録 ${m.rows}件（操作が付いているのは ${m.withOps}件）`);
+  if (typeof m.reproducePct === "number") {
+    const rem = Array.isArray(m.reproduceRemain) && m.reproduceRemain.length
+      ? `／残り: ${m.reproduceRemain.join("・")}`
+      : "／再現の条件は揃った";
+    today.push(`人間らしさの再現 ${m.reproducePct}%${rem}`);
+  }
+  /**
+   * ★ 2026-11-16「人間として自動モード動くようにできているのか、統括ちゃんと判断」:
+   *   材料点・弱い所の件数だけでは「もう人間みたいに動ける」か分からない。
+   *   → **可否を1行で先に言う**（完走・再現・束反映・手の形）。不可なら理由を並べる。
+   */
+  {
+    const reasons: string[] = [];
+    const ar = m.audits && num(m.audits.runs) > 0 ? num(m.audits.finish_rate) : null;
+    if (ar != null && ar < 90) reasons.push(`完走率${ar}%`);
+    if (typeof m.reproducePct === "number" && m.reproducePct < 70) reasons.push(`再現${m.reproducePct}%`);
+    if (Array.isArray(m.reproduceRemain) && m.reproduceRemain.length) {
+      for (const x of m.reproduceRemain.slice(0, 3)) reasons.push(String(x));
+    }
+    const br2 = m.bundleReflect;
+    if (br2 && num(br2.screen_solid) >= 3 && num(br2.read_count) <= 0) reasons.push("拡張が束未読");
+    if (br2 && br2.auto_after !== true && num(br2.screen_solid) >= 3) reasons.push("新束後の自動未確認");
+    if (m.humanLike && num(m.humanLike.ops) >= 20 && num(m.humanLike.handCursorClicks) === 0) reasons.push("手の形0");
+    if (m.humanLike && num(m.humanLike.changedWithoutClick) > 0) reasons.push(`直書き${m.humanLike.changedWithoutClick}`);
+    if (m.verdict === "ready" && reasons.length === 0) {
+      today.push("人間として自動できるか: 可（完走・再現・反映の線を満たす）");
+    } else {
+      const uniq = [...new Set(reasons)].slice(0, 6);
+      today.push(`人間として自動できるか: 不可${uniq.length ? `（${uniq.join("・")}）` : `（結論=${HEAD[m.verdict]}）`}`);
+    }
+  }
   if (m.delta) {
     const d = m.delta;
     const parts: string[] = [];
@@ -1272,8 +2729,15 @@ function buildMeeting(m: {
     agenda.push({
       priority: 1,
       topic: "前のお客さんの条件を外す仕事が発生している",
-      why: `押した操作のうち **${m.toggles.off}件が「前に残っていたのを外した」**（選んだのは ${m.toggles.on}件）`,
-      decide: "リセットを確実にする（今は人が1つずつ外している）／このままでよいか",
+      why: `押した操作のうち **${m.toggles.off}件が「前に残っていたのを外した」**（選んだのは ${m.toggles.on}件）。くれあ型: 条件外の区だけ外し・条件内（北・中央・西など）は触らない`,
+      decide: "条件外だけ1つずつ外す型を束と自動preclearへ写す（was/nowで外しを記録）／このままでよいか",
+    });
+  } else if (m.toggles && m.toggles.unknown > 50 && m.toggles.off === 0 && m.toggles.on === 0) {
+    agenda.push({
+      priority: 1,
+      topic: "区の外し/選びが区別できない（was/nowがDBに無い）",
+      why: `区別できない ${m.toggles.unknown}件・外し0・選び0。仕組み②（前客の残りを外す）を学べない`,
+      decide: "拡張再読込→通常で区を1つ外す・1つ選ぶを録画→shot_opsに was/now が残るか確かめる",
     });
   }
   /**
@@ -1286,17 +2750,35 @@ function buildMeeting(m: {
     const h = m.humanLike;
     const cursorPct = h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : 0;
     const pointPct = h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : 0;
-    if (h.changedWithoutClick > 0 || h.typedOnChoose > 0 || cursorPct < 50 || pointPct < 50) {
+    const directFields = Array.isArray(h.changedWithoutClickFields) ? h.changedWithoutClickFields : [];
+    /** 完了線と同じ度で議題化（旧: カーソル<50 だと 50〜69% が放置された） */
+    if (h.changedWithoutClick > 0 || h.typedOnChoose > 0
+      || cursorPct < DETAIL_DEGREE.CURSOR_OK
+      || pointPct < DETAIL_DEGREE.POINT_OK) {
       const why: string[] = [];
-      if (h.changedWithoutClick > 0) why.push(`押さずに値が変わった ${h.changedWithoutClick}件`);
+      if (h.changedWithoutClick > 0) {
+        why.push(`直書き疑い（押さず変化） ${h.changedWithoutClick}件` + (directFields.length ? `（${directFields.slice(0, 4).join("・")}）` : ""));
+      }
       if (h.typedOnChoose > 0) why.push(`選ぶ欄に打ち込んだ ${h.typedOnChoose}件`);
-      if (cursorPct < 50) why.push(`カーソルの記録が ${cursorPct}% だけ`);
-      if (pointPct < 50) why.push(`押した位置の記録が ${pointPct}% だけ`);
+      if (cursorPct < DETAIL_DEGREE.CURSOR_OK) {
+        why.push(`カーソルの記録が ${cursorPct}%（要≥${DETAIL_DEGREE.CURSOR_OK}）`);
+      }
+      if (pointPct < DETAIL_DEGREE.POINT_OK) {
+        why.push(`押した位置の記録が ${pointPct}%（要≥${DETAIL_DEGREE.POINT_OK}）`);
+      }
       agenda.push({
         priority: 1,
-        topic: "自動モードが人間のように動けていない",
+        topic: "自動モードが人間のように動けていない（直書き・カーソル・細部の度）",
         why: why.join("／"),
-        decide: "カーソルを動かしてから押す・値を入れる前に欄を開く（人がやる順番にする）",
+        decide: "直書きをやめカーソル→開く→押す。弱い欄は通常モード録画から細部まで学ぶ。見つかった弱い部分は必ず改善する",
+      });
+    }
+    if ((h.handCursorClicks ?? 0) === 0 && h.ops >= 20) {
+      agenda.push({
+        priority: 1,
+        topic: "手の形（pointer）を通常モードから学ぶ土台がまだ薄い",
+        why: "shot_ops.cs=pointer の記録が無い（ボタン上で手が付く押しを通常で録画して学ぶ）",
+        decide: "通常モードでボタン操作を録画 → 束の cursor_hand → 見えるカーソルが手に変わる",
       });
     }
   }
@@ -1305,12 +2787,102 @@ function buildMeeting(m: {
    *   **まだ読める写真が残っている**時は議題にする（統括が「次はこれを読む」と決める）。
    *   ⚠ 費用がかかるので**枚数と概算**を付ける（1枚 0.17円・実測）。
    */
-  if (m.shotGaps && m.shotGaps.todo > 0) {
+  if (m.improveFromNormal && Array.isArray(m.improveFromNormal.fields) && m.improveFromNormal.fields.length) {
+    agenda.push({
+      priority: 0,
+      topic: String(m.improveFromNormal.what || "自動の最新課題を通常から改善する"),
+      why: String(m.improveFromNormal.why || ""),
+      decide: `${m.improveFromNormal.how || "通常の最新画像を読む"}（枚数は統括が課題に応じて決める・解けるまで）／後でよいか`,
+    });
+  } else {
+    const gn = m.shotGapsNormal && m.shotGapsNormal.todo > 0 ? m.shotGapsNormal : null;
+    const g = gn || (m.shotGaps && m.shotGaps.todo > 0 ? m.shotGaps : null);
+    if (g) {
+      const fromNormal = !!gn;
+      const lim = photoLearnLimitFor({ todo: g.todo, fieldCount: m.weakN });
+      agenda.push({
+        priority: m.weakN > 0 ? 0 : 1,
+        topic: fromNormal
+          ? "通常モードの画像を読んで弱い所を強化する"
+          : "まだ学習していない写真が残っている",
+        why: fromNormal
+          ? `通常モードの読める未学習 ${g.todo}枚（弱い所 ${m.weakN}件・画像を読めば学習できる）`
+          : `${g.todo}枚が読めるのに未学習（未学習${g.unlearnedBig}・欄0が${g.learnedButEmpty}）`,
+        decide: `通常モードの画像を読む（統括が ${lim}枚と判断・約${Math.max(1, Math.round(lim * 0.17))}円・1枚0.17円・課題が解けるまで）／後でよいか`,
+      });
+    }
+  }
+  if (m.recordingFreshness?.normalLatestAt && m.recordingFreshness.normalLatestLearned === false) {
     agenda.push({
       priority: 1,
-      topic: "まだ学習していない写真が残っている",
-      why: `${m.shotGaps.todo}枚が読めるのに未学習（未学習${m.shotGaps.unlearnedBig}・欄0が${m.shotGaps.learnedButEmpty}）`,
-      decide: `読む（約${Math.max(1, Math.round(m.shotGaps.todo * 0.17))}円・1枚0.17円）／後でよいか`,
+      topic: "最新の通常録画画像がまだ未学習",
+      why: `通常 最新 ${String(m.recordingFreshness.normalLatestAt).slice(0, 19)}（直近24h ${m.recordingFreshness.normalLast24h ?? 0}枚）`,
+      decide: "最新から読む（order=newest）／後でよいか",
+    });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から…統括お願い」:
+   *   画像×押した位置の突き合わせで出た**悪い所**を議題にする。
+   */
+  if (m.imageMatch && Array.isArray(m.imageMatch.say) && m.imageMatch.say.length) {
+    for (const s of m.imageMatch.say.slice(0, 2)) {
+      agenda.push({
+        priority: 1,
+        topic: s.what,
+        why: s.why,
+        decide: s.next,
+      });
+    }
+  }
+  if (m.imageMatch && m.imageMatch.withScreenPos >= 3) {
+    agenda.push({
+      priority: 2,
+      topic: "通常モードの画像から読んだ画面の位置を自動に渡す",
+      why: `画面の位置あり ${m.imageMatch.withScreenPos}欄（両方にある ${m.imageMatch.matched}欄）`,
+      decide: "束を作り直して拡張に届ける／このままでよいか",
+    });
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   位置はあるのに拡張が読んでいない／自動が新束のあと走っていない → **最優先で議題**。
+   */
+  if (m.bundleReflect && (m.bundleReflect.screen_solid >= 3 || (m.bundleReflect.photo_in_storage ?? 0) > 0)) {
+    const br = m.bundleReflect;
+    if ((br.read_count ?? 0) <= 0 && br.screen_solid >= 3) {
+      agenda.push({
+        priority: 0,
+        topic: "連携ボトルネック: 拡張が束を読んでいない（段階4）",
+        why: br.bottleneck || br.line || `画面位置 n≥3 が ${br.screen_solid}欄あるのに read_count=0`,
+        decide: "拡張 2.8.25 を再読み込み → ポップアップを開く → コンソールで「連携完了」→ 自動を1回",
+      });
+    } else if (br.screen_solid >= 3 && !br.auto_after) {
+      agenda.push({
+        priority: 0,
+        topic: "連携ボトルネック: 新束のあと自動がまだ無い（段階5）",
+        why: br.bottleneck || br.line || `read_count=${br.read_count}・自動はまだ束より前`,
+        decide: "自動モードで1回検索して、位置が効いているか数字で確かめる",
+      });
+    }
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
+   *   F31/F32/F29 が欠けていれば議題の先頭付近に出す（Proが steps だけに偏らない）。
+   */
+  if (m.foundationAudit && m.foundationAudit.missing_n > 0) {
+    const fa = m.foundationAudit;
+    const keyMiss = ["F32_link_pipeline", "F31_learn_reflect_station", "F29_human_nearness", "F6_auto_after_bundle"]
+      .map((id) => fa.key[id])
+      .filter((k) => k && !k.ok);
+    const top = fa.missing[0];
+    agenda.push({
+      priority: 0,
+      topic: "学習土台の欠落をそろえる（統括が把握した土台）",
+      why: fa.summary + (keyMiss.length
+        ? `／重要欠: ${keyMiss.map((k) => (k!.line || "").slice(0, 80)).join(" ・ ")}`
+        : (top ? `／先頭欠 ${top.id}: ${top.line.slice(0, 80)}` : "")),
+      decide: top
+        ? `${top.next}（層=${top.layer}）／後でよいか`
+        : "foundation-audit の欠を上から1本ずつ／後でよいか",
     });
   }
   if (m.shotGaps && m.shotGaps.unlearnedSmall > 0 && m.shotGaps.unlearnedBig === 0) {
@@ -1366,29 +2938,109 @@ function buildMeeting(m: {
    * 2026-11-14 竹内さん「必要な部分を統括が判断して学習すれば強化される」:
    *   統括が**自分で「次に何を学ぶか」を決める**（竹内さんが毎回指図しなくてよい形）。
    *
-   *   ⚠ 決める材料は**実データだけ**:
-   *     ・写真はあるのに `shot_learn` が0件 → **写真から読む**（弱い所の写真だけ・費用は1枚ごと）
-   *     ・手本が無い場面がある → **人が1回やる**（推測で動かさない）
-   *     ・止まる場面がある → **その場面の手本と違う所を探す**
-   *   ⚠ 費用がかかる物（Vision）は**枚数の上限**を必ず付ける。
-   *   → 判断を `learning_tasks` として残す（`supervisor-do` が上から実行できる）。
+   * ★ 2026-11-15「改善につながるまで一連の流れをちゃんと統括はできるようにする」:
+   *   ⚠ 実測: 画像学習・束まで進んでも read_count=0 で自動は改善されない。
+   *     「もっと読め」だけ出して段階4を課題にしなかった。
+   *   → **improve_loop（段階1〜6）の止まっている所から課題を出す**。
+   *     段階4なら拡張再読み込みが先（学習を足しても改善に繋がらない）。
    */
   {
-    const tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number }> = [];
+    const tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }> = [];
     const shotPct = m.shotRows != null && m.rows > 0 ? Math.round((m.shotRows / m.rows) * 100) : null;
     const opsPct = m.rows > 0 ? Math.round((m.withOps / Math.max(1, m.rows)) * 100) : 0;
-    /**
-     * ① 写真から読む（一番効く・写真はもう撮れている）。
-     *   ⚠ 「写真がある割合」と「学べている割合」の**差が大きい時だけ**（差が小さい時に走らせても意味がない）。
-     */
-    if (shotPct != null && shotPct >= 50 && opsPct < 60) {
-      tasks.push({
-        kind: "photo_learn",
-        what: "弱い所の写真から、欄の種類（プルダウン／入力／チェック）を読む",
-        why: `写真は${shotPct}%あるのに、操作が付いているのは${opsPct}%（写真から読む処理が一度も走っていない・実測 shot_learn 0件）`,
-        cost: "1枚ごとに Vision の費用（上限あり）",
-        limit: 20,
+
+    /** ① 改善までの一連（止まっている段階の次の一手） */
+    if (m.improveLoop && (m.improveLoop.bottleneck_n != null || m.improveLoop.improve_line)) {
+      const loop = {
+        steps: Array.isArray(m.improveLoop.steps) ? m.improveLoop.steps : [],
+        bottleneck_n: m.improveLoop.bottleneck_n ?? null,
+        bottleneck: m.improveLoop.bottleneck ?? null,
+        line: "",
+        improve_line: m.improveLoop.improve_line || "",
+        next_n: m.improveLoop.next_n ?? null,
+        next_kind: (m.improveLoop.next_kind as ImproveLoop["next_kind"]) ?? null,
+      } as ImproveLoop;
+      const loopTasks = improveLoopTasks({
+        loop,
+        unreadNormal: m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0,
+        challengeFields: m.latestAutoChallenge?.fields || m.improveFromNormal?.fields || [],
+        preferNewest: true,
+        missingInBundle: m.challengeMissingInBundle || [],
       });
+      for (const t of loopTasks) tasks.push({ ...t });
+      if (m.improveLoop.bottleneck_n != null) {
+        agenda.push({
+          priority: 0,
+          topic: `改善までの一連: 段階${m.improveLoop.bottleneck_n}で停止`,
+          why: m.improveLoop.improve_line || m.improveLoop.bottleneck || "",
+          decide: loopTasks[0]
+            ? `${loopTasks[0].what}（${loopTasks[0].cost}）`
+            : "止まっている段階の次の一手を進める",
+        });
+      }
+    } else {
+      /** 一連が無い時の旧ルート（反映・写真） */
+      if (m.bundleReflect && m.bundleReflect.screen_solid >= 3
+        && ((m.bundleReflect.read_count ?? 0) <= 0 || !m.bundleReflect.auto_after)) {
+        tasks.push({
+          kind: "reflect_auto",
+          what: "学んだ画面の位置を束に載せ直し、拡張・自動への反映状態を確かめる",
+          why: m.bundleReflect.line || `画面位置 n≥3 が ${m.bundleReflect.screen_solid}欄・反映が途中で止まっている`,
+          cost: "無料",
+        });
+      }
+      const gn = m.shotGapsNormal && m.shotGapsNormal.todo > 0 ? m.shotGapsNormal : null;
+      const gAll = m.shotGaps && m.shotGaps.todo > 0 ? m.shotGaps : null;
+      const g = gn || gAll;
+      const byOpsGap = shotPct != null && shotPct >= 50 && opsPct < 60;
+      const improve = m.improveFromNormal;
+      const hasImprove = !!(improve && Array.isArray(improve.fields) && improve.fields.length);
+      if (g || byOpsGap || hasImprove) {
+        const todo = g ? g.todo : Math.min(20, Math.max(1, Math.round((shotPct ?? 0) / 5)));
+        const lim = photoLearnLimitFor({
+          todo,
+          fieldCount: hasImprove ? (improve!.fields!.length) : m.weakN,
+        });
+        const task: (typeof tasks)[number] = {
+          kind: "photo_learn",
+          what: hasImprove
+            ? "自動の最新課題を、通常モードの最新画像から改善する（欄の種類・位置）"
+            : "通常モードの画像を読んで弱い所を強化する（欄の種類・位置）",
+          why: hasImprove
+            ? `${improve!.why}／読める未学習 ${todo || "?"}枚`
+            : g
+              ? `通常モードの読める未学習 ${todo}枚（弱い所 ${m.weakN}件）`
+              : `写真は${shotPct}%・操作は${opsPct}%`,
+          cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
+          limit: lim,
+          order: "newest",
+        };
+        if (hasImprove) task.fields = improve!.fields!.slice(0, 8);
+        // ★ 2026-11-16: 直書き疑いの欄も通常画像学習の対象に載せる
+        const direct = (m.humanLike && Array.isArray(m.humanLike.changedWithoutClickFields))
+          ? m.humanLike.changedWithoutClickFields : [];
+        if (direct.length) {
+          const merged = [...(task.fields || []), ...direct].filter((x, i, a) => a.indexOf(x) === i).slice(0, 10);
+          task.fields = merged;
+          if (!hasImprove) {
+            task.what = "直書き疑いの欄を、通常モードの画像・押し方から改善する";
+            task.why = `直書き疑い ${direct.join("・")}／${task.why}`;
+          }
+        }
+        tasks.push(task);
+      } else if (m.humanLike && Array.isArray(m.humanLike.changedWithoutClickFields) && m.humanLike.changedWithoutClickFields.length) {
+        const direct = m.humanLike.changedWithoutClickFields;
+        const lim = photoLearnLimitFor({ todo: Math.max(8, direct.length * 4), fieldCount: direct.length });
+        tasks.push({
+          kind: "photo_learn",
+          what: "直書き疑いの欄を、通常モードの最新画像から改善する",
+          why: `押さず変化の欄: ${direct.join("・")}`,
+          cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
+          limit: lim,
+          order: "newest",
+          fields: direct.slice(0, 8),
+        });
+      }
     }
     /** ② 手本が無い場面（推測で動かさない） */
     if (typeof m.scene_missing === "number" && m.scene_missing > 0) {
@@ -1399,14 +3051,85 @@ function buildMeeting(m: {
         cost: "無料（人の手間だけ）",
       });
     }
-    /** ③ 止まる場面（一番現場に効く） */
+    /** ③ 止まる場面（一番現場に効く）— 課題欄の場面と連動させる */
     if (typeof m.stopped_scene === "string" && m.stopped_scene) {
+      const chForStop = [
+        ...(m.latestAutoChallenge?.fields || []),
+        ...(m.humanLike?.changedWithoutClickFields || []),
+      ];
+      const stopLinks = linkFieldsToScenes(chForStop, Array.isArray(m.scene_flows) ? m.scene_flows : null)
+        .filter((l) => SCENE_JA[l.scene] === m.stopped_scene || m.stopped_scene!.includes(SCENE_JA[l.scene].slice(0, 2)));
+      const linkedWhy = stopLinks.length
+        ? `／連動する課題欄: ${stopLinks.map((l) => l.field).slice(0, 4).join("・")}`
+        : "";
       tasks.push({
         kind: "fix_scene",
         what: `「${m.stopped_scene}」で止まる原因を、手本と比べて探す`,
-        why: `途中で止まった回の最後の場面は「${m.stopped_scene}」が一番多い`,
+        why: `途中で止まった回の最後の場面は「${m.stopped_scene}」が一番多い${linkedWhy}`,
         cost: "無料",
       });
+    }
+    /**
+     * ★ 2026-11-16「統括はここの土台構築の部分もふくめておこなう」:
+     *   再現が未完で土台の抜けがある時は、土台点検を課題に載せる（学ぶだけでは循環が止まらない）。
+     *   ★ 細分化ヒント（atomsToTaskHints）も載せて、自動で見つけた弱所→通常学習を連動させる。
+     */
+    {
+      const repro = typeof m.reproducePct === "number" ? m.reproducePct : null;
+      const h = m.humanLike;
+      const needFoundation = (repro != null && repro < 100)
+        || (h && h.ops >= 20 && (
+          h.changedWithoutClick > 0
+          || (h.handCursorClicks ?? 0) === 0
+          || (h.rows > 0 && Math.round((h.withCursor / h.rows) * 100) < 70)
+        ));
+      if (needFoundation && !tasks.some((t) => t.kind === "build_foundation")) {
+        const foundN = subdividedAtoms.filter((a) => a.layer === "find").length;
+        const foundN2 = subdividedAtoms.filter((a) => a.layer === "foundation").length;
+        tasks.push({
+          kind: "build_foundation",
+          what: "再現に足りない土台を細分化してそろえる（統括の土台構築）",
+          why: repro != null
+            ? `再現 ${repro}%／細分化 見つける${foundN}・土台${foundN2}／残り ${(m.reproduceRemain || []).join("・") || "－"}`
+            : "人間らしさの再現が未完。土台を細分化してから再現する",
+          cost: "無料",
+        });
+      }
+      for (const hint of atomsToTaskHints(subdividedAtoms)) {
+        if (tasks.some((t) => t.kind === hint.kind && t.what.slice(0, 24) === hint.what.slice(0, 24))) continue;
+        if (hint.kind === "photo_learn" && tasks.some((t) => t.kind === "photo_learn")) {
+          // 既存 photo_learn に欄をマージ
+          const pl = tasks.find((t) => t.kind === "photo_learn")!;
+          const merged = [...(pl.fields || []), ...(hint.fields || [])]
+            .filter((x, i, a) => a.indexOf(x) === i).slice(0, 10);
+          pl.fields = merged;
+          if (!/細分化|自動で見つけた/.test(pl.what)) {
+            pl.what = "自動で見つけた弱所を、通常録画から細分化して学ぶ";
+            pl.why = `${hint.why}／${pl.why}`;
+          }
+          continue;
+        }
+        if (hint.kind === "build_foundation" && tasks.some((t) => t.kind === "build_foundation")) continue;
+        if (hint.kind === "need_auto_run" && tasks.some((t) => t.kind === "need_auto_run")) continue;
+        if (hint.kind === "fix_scene" && tasks.some((t) => t.kind === "fix_scene")) continue;
+        if (hint.kind === "need_human" && tasks.some((t) => t.kind === "need_human" && /手の形/.test(t.what))) continue;
+        const task: (typeof tasks)[number] = {
+          kind: hint.kind,
+          what: hint.what,
+          why: hint.why,
+          cost: hint.kind === "photo_learn"
+            ? "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）"
+            : hint.kind === "need_human" || hint.kind === "need_auto_run"
+              ? "無料（人の手間だけ）"
+              : "無料",
+        };
+        if (hint.fields?.length) {
+          task.fields = hint.fields;
+          task.order = "newest";
+          task.limit = photoLearnLimitFor({ todo: Math.max(8, hint.fields.length * 4), fieldCount: hint.fields.length });
+        }
+        tasks.push(task);
+      }
     }
     /** ④ 録画の経路（操作が届いていない） */
     if (m.rows > 0 && m.withOps / m.rows < 0.3 && (!shotPct || shotPct < 50)) {
@@ -1418,19 +3141,218 @@ function buildMeeting(m: {
       });
     }
     /**
-     * ⚠ 優先順位: 無料で効く物を先に・お金がかかる物は後ろ。
-     *   （竹内さんが「費用をかけてよい」と言った時だけ写真を読む、という順番にする）
+     * ★ 2026-11-16「通常モードの録画があれば完全に再現…土台をそろえる」:
+     *   通常録画があるのに再現が未完 → **録画を増やす前に**足りない土台を課題にする。
+     *   ・手の形0 → 2.8.25再読込のあと、通常でボタンを1回録画（cs=pointer）
+     *   ・直書き／カーソル／位置 → すでにある通常画像・操作から photo_learn／反映
      */
-    const rank: Record<string, number> = { fix_scene: 0, need_human: 1, fix_record: 2, photo_learn: 3 };
+    {
+      const normalN = num(m.modeCounts?.normal) || (m.shotGapsNormal?.total ?? 0);
+      const repro = typeof m.reproducePct === "number" ? m.reproducePct : null;
+      const h = m.humanLike;
+      if (normalN > 0 && repro != null && repro < 100 && h && h.ops > 0) {
+        const remain = Array.isArray(m.reproduceRemain) ? m.reproduceRemain : [];
+        agenda.push({
+          priority: 0,
+          topic: "通常録画はあるのに、人間らしさの再現が未完（土台をそろえる）",
+          why: `通常 ${normalN}／再現 ${repro}%／残り ${remain.join("・") || "－"}。ある通常録画から学ぶ（増やすのは土台を揃えたあと）`,
+          decide: "拡張2.8.25再読込→ポップアップ開く（束取得）→通常の既存画像・操作から学ぶ→手の形が無ければ通常でボタン1回録画→効果確認",
+        });
+        if ((h.handCursorClicks ?? 0) === 0 && h.ops >= 20) {
+          const read0 = m.bundleReflect && (m.bundleReflect.read_count ?? 0) <= 0;
+          if (read0) {
+            // 再読込が無いと cs も束も届かない → need_ext_reload は一連側で出る
+          } else {
+            tasks.push({
+              kind: "need_human",
+              what: "通常モードで手が付くボタン操作を1回録画する（手の形の土台）",
+              why: "通常録画はあるが shot_ops.cs=pointer が無い。2.8.25でボタンを押して録画すれば cursor_hand が揃う",
+              cost: "無料（人の手間だけ）",
+            });
+          }
+        }
+        const direct = Array.isArray(h.changedWithoutClickFields) ? h.changedWithoutClickFields : [];
+        const todoN = m.shotGapsNormal?.todo ?? 0;
+        if ((direct.length > 0 || remain.some((x) => /カーソル|押した位置/.test(x))) && todoN > 0
+          && !tasks.some((t) => t.kind === "photo_learn")) {
+          const lim = photoLearnLimitFor({ todo: todoN, fieldCount: Math.max(direct.length, 3) });
+          tasks.push({
+            kind: "photo_learn",
+            what: "通常録画の画像から、再現の残り（直書き・位置）を埋める",
+            why: `再現 ${repro}%・通常の読める未学習 ${todoN}枚${direct.length ? `・直書き疑い ${direct.join("・")}` : ""}`,
+            cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
+            limit: lim,
+            order: "newest",
+            fields: direct.slice(0, 8),
+          });
+        }
+      }
+    }
+    /**
+     * ★ 2026-11-16「細かくまなんでいく／学習改善も仕組み強化」:
+     *   欄×観点の抜けを課題ヒントに載せてから、仕組み①②を効かせる。
+     */
+    /**
+     * ★ 2026-11-16「弱い部分を見つけたら統括はそこを改善」「細部までこだわった改善」:
+     *   欄スコアが度未満なら議題 priority0 ＋ 改善課題必須（見つけただけで終わらせない）。
+     */
+    {
+      const weakFs = weakDetailFields(fineStatuses);
+      if (weakFs.length) {
+        const avg = Math.round(fineStatuses.reduce((s, x) => s + x.score, 0) / fineStatuses.length);
+        agenda.push({
+          priority: 0,
+          topic: `弱い部分を細部まで改善する（${weakFs.length}欄）`,
+          why: `度: 欄${DETAIL_DEGREE.WEAK_FIELD}未満／弱い: ${weakFs.slice(0, 5).join("・")}／欄×観点平均${avg}%（要≥${DETAIL_DEGREE.FINE_AVG_OK}）`,
+          decide: "通常録画から観点ごとに学ぶ→束→拡張→自動→効果確認。人間の動きになるまで細部を直す",
+        });
+      }
+    }
+    {
+      const fineHints = fineGapsToTaskHints(fineLearnNextSteps(fineStatuses, 8));
+      for (const hint of fineHints) {
+        if (hint.kind === "photo_learn" && tasks.some((t) => t.kind === "photo_learn")) {
+          const pl = tasks.find((t) => t.kind === "photo_learn")!;
+          const merged = [...(hint.fields || []), ...(pl.fields || [])]
+            .filter((x, i, a) => a.indexOf(x) === i).slice(0, 10);
+          pl.fields = merged;
+          if (!/細かく学ぶ|欄×観点/.test(pl.what)) {
+            pl.what = "欄を細かく学ぶ（位置・押して変化・仕組みに沿って）";
+            pl.why = `${hint.why}／${pl.why}`;
+          }
+          continue;
+        }
+        if (hint.kind === "build_foundation" && tasks.some((t) => t.kind === "build_foundation" && /was\/now|くれあ|区/.test(t.what + t.why))) {
+          continue;
+        }
+        if (tasks.some((t) => t.kind === hint.kind && t.what.slice(0, 20) === hint.what.slice(0, 20))) continue;
+        const task: (typeof tasks)[number] = {
+          kind: hint.kind,
+          what: hint.what,
+          why: hint.why,
+          cost: hint.kind === "photo_learn"
+            ? "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）"
+            : hint.kind === "need_human"
+              ? "無料（人の手間だけ）"
+              : "無料",
+        };
+        if (hint.fields?.length) {
+          task.fields = hint.fields;
+          if (hint.kind === "photo_learn") {
+            task.order = "newest";
+            task.limit = photoLearnLimitFor({ todo: Math.max(8, hint.fields.length * 4), fieldCount: hint.fields.length });
+          }
+        }
+        tasks.push(task);
+      }
+    }
+    /**
+     * ★ 2026-11-16「完成度も理解して学習する」:
+     *   完成度の learnHint を議題と先頭課題の why に載せる（完成度が上がる学習を選ぶ）。
+     */
+    if (autoCompletion) {
+      agenda.push({
+        priority: 0,
+        topic: `自動モード完成度 ${autoCompletion.score}/100（${autoCompletion.grade}）`,
+        why: `内訳 ${autoCompletion.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り ${autoCompletion.remain.slice(0, 3).join("・") || "なし"}`,
+        decide: autoCompletion.learnHint,
+      });
+      if (tasks[0] && !/完成度/.test(tasks[0].why)) {
+        tasks[0].why = `${tasks[0].why}／${autoCompletion.learnHint}`;
+      }
+    }
+    /**
+     * ★ 2026-11-16「精度上げる部分も強化／統括ちゃんと連携」:
+     *   精度レバーを課題に載せる。一連の先頭（拡張再読込・自動1回）と矛盾しない。
+     */
+    {
+      for (const pt of precisionLeversToTasks(precisionLevers)) {
+        if (tasks.some((t) => t.kind === pt.kind && (
+          t.what.slice(0, 18) === pt.what.slice(0, 18)
+          || (pt.kind === "need_ext_reload" || pt.kind === "need_auto_run" || pt.kind === "verify_improve")
+        ))) {
+          // 既存の一連課題に精度 why を足す
+          const ex = tasks.find((t) => t.kind === pt.kind);
+          if (ex && !/精度/.test(ex.why)) ex.why = `${ex.why}／${pt.why}`;
+          continue;
+        }
+        if (pt.kind === "photo_learn" && tasks.some((t) => t.kind === "photo_learn")) {
+          const pl = tasks.find((t) => t.kind === "photo_learn")!;
+          if (!/精度/.test(pl.why)) pl.why = `${pl.why}／${pt.why}`;
+          if (!/精度/.test(pl.what)) pl.what = pl.what.includes("細かく") ? pl.what : `精度↑ ${pl.what}`;
+          continue;
+        }
+        tasks.push({
+          kind: pt.kind,
+          what: pt.what,
+          why: pt.why,
+          cost: pt.cost,
+        });
+      }
+    }
+    /**
+     * ★ 2026-11-16「統括じたいの学習能力も上げる」:
+     *   仕組みを課題の why／土台に効かせてから並べる（表示だけの証拠にしない）。
+     */
+    {
+      const mech = applyLearnedMechanismsToTasks(tasks, {
+        togglesOff: m.toggles?.off ?? 0,
+        togglesOn: m.toggles?.on ?? 0,
+        togglesUnknown: m.toggles?.unknown ?? 0,
+      });
+      tasks.length = 0;
+      tasks.push(...mech);
+    }
+    /**
+     * 優先: 改善一連の人手（拡張再読込・自動1回）→ 反映確認 → 場面 → 写真。
+     *   ⚠ 段階4で止まっている時に photo_learn を先頭にしない。
+     *   ★ 例外: 課題欄が束に無い（missing）時は photo_learn が先（更新してから拡張へ）。
+     */
+    const bn = m.improveLoop?.bottleneck_n ?? null;
+    const hasMiss = (m.challengeMissingInBundle || []).length > 0;
+    const rank: Record<string, number> = {
+      need_ext_reload: hasMiss ? 0 : -3,
+      need_auto_run: -2,
+      reflect_auto: -1,
+      verify_improve: -0.5,
+      fix_scene: 0,
+      build_foundation: 0.5,
+      need_human: 1,
+      fix_record: 2,
+      photo_learn: hasMiss ? -4 : ((bn != null && bn >= 4) ? 5 : 3),
+    };
     tasks.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9));
+    // 同じ kind の重複を落とす
+    const seenKind = new Set<string>();
+    const dedup = tasks.filter((t) => {
+      const k = t.kind + "|" + t.what.slice(0, 40);
+      if (seenKind.has(k)) return false;
+      seenKind.add(k);
+      return true;
+    });
+    tasks.length = 0;
+    tasks.push(...dedup);
     if (tasks.length) {
+      const decideOf = (k: string) => {
+        if (k === "need_ext_reload") return "拡張を再読み込み→コンソールで連携完了→reflect で確かめる（推奨）";
+        if (k === "need_auto_run") return "自動モードで1回検索して効果を数字で見る（推奨）";
+        if (k === "verify_improve") return "最新自動の課題欄が減ったか確かめる";
+        if (k === "photo_learn") {
+          const f0 = tasks.find((t) => t.kind === "photo_learn");
+          const hasSel = (f0?.fields || []).some(isKnownSelectField);
+          return hasSel
+            ? "通常画像で位置・押し方を学ぶ（既知selectはVisionのtextで上書きしない）／一連の手前を先にやるか"
+            : "通常モードの画像を読む（費用）／一連の手前を先にやるか";
+        }
+        if (k === "reflect_auto") return "反映（束→拡張→自動）を確かめる（推奨）";
+        if (k === "build_foundation") return "足りない土台をそろえてから再現する（推奨・循環）";
+        return `${tasks[0].what} から進めるか`;
+      };
       agenda.push({
         priority: 1,
-        topic: "次に学ぶ事（統括が決めた順）",
+        topic: "次に学ぶ事（統括が決めた順・改善までの一連）",
         why: tasks.map((t, i) => `${i + 1}. ${t.what}（${t.cost}）`).join(" / "),
-        decide: tasks[0].kind === "photo_learn"
-          ? "写真から読む（費用がかかる）／無料の物を先にやるか"
-          : `${tasks[0].what} から進めるか`,
+        decide: decideOf(tasks[0].kind),
       });
     }
     /**
@@ -1457,12 +3379,18 @@ function buildMeeting(m: {
      *     「弱い所の写真だけ読む（費用は1枚ごと）」を第一の選択肢にする。
      *     `photo_learn` を action に載せ、`supervisor-do` がそのまま実行できるようにする。
      */
+    const todoN = m.shotGapsNormal?.todo || m.shotGaps?.todo || 0;
+    const learnedN = m.shotGapsNormal?.learnedOk ?? m.shotGaps?.learnedOk ?? 0;
     questions.push({
-      q: shotPct != null
-        ? `写真は${shotPct}%撮れているのに、そこから学べているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`
-        : `写真から学べているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`,
-      options: ["弱い所の写真だけ読む（推奨・1枚ごとに費用）", "まず録画の経路を直す", "今のままでよい"],
-      why: "写真は撮れているのに、写真から欄の種類を読む処理が一度も走っていない（実測0件）",
+      q: todoN > 0
+        ? `通常モードの読める未学習写真が${todoN}枚あります（学べ済み${learnedN}枚）。弱い所の強化のために読みますか？`
+        : shotPct != null
+          ? `写真は${shotPct}%撮れているのに、操作が付いているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`
+          : `写真から学べているのは${opsPct}%だけです。弱い所の写真だけ読みますか？`,
+      options: ["通常モードの画像を読んで弱い所を強化する（推奨・1枚ごとに費用）", "まず録画の経路を直す", "今のままでよい"],
+      why: todoN > 0
+        ? `通常モードの画像はあるのに未学習が残っている（弱い所 ${m.weakN}件・画像を読めば学習できる）`
+        : "写真は撮れているのに、操作の並びが薄い記録がある",
     });
   }
   if (m.opens > 0 && m.guessedOpens >= m.opens) {
@@ -1487,8 +3415,141 @@ function buildMeeting(m: {
     });
   }
 
+  /**
+   * ★ 2026-11-16「統括の学習力も強化／仕組みで強化していく形」:
+   *   仕組みを次手に効かせているかを点数化し、今日の結論と根拠に出す。
+   *   表示だけの仕組み理解では点を上げない。
+   */
+  {
+    const pl = learning_tasks.find((t) => t.kind === "photo_learn");
+    const hasSelectFields = !!(pl?.fields || []).some(isKnownSelectField);
+    const weakFsPower = fineStatuses.length ? weakDetailFields(fineStatuses) : [];
+    const hasImproveForWeak = learning_tasks.some((t) =>
+      t && (t.kind === "photo_learn" || t.kind === "build_foundation" || t.kind === "need_human"
+        || t.kind === "fix_scene" || t.kind === "verify_improve" || /細部|細かく|弱い/.test(t.what + t.why)),
+    );
+    const weakThenImproveOk = weakFsPower.length === 0
+      || (hasImproveForWeak && agenda.some((a) => /弱い部分を細部|細部まで改善|人間のように動けて/.test(a.topic)));
+    const power = supervisorLearnPower({
+      mechanismsInEvidence: evidence.some((e) => e.label.includes("学習の仕組み")),
+      photoLearnUsesSelectMech: !hasSelectFields
+        || !!(pl && /操作のselect|selectをVision|位置・押し方|細かく学ぶ|精度/.test(pl.why + pl.what)),
+      hasFineLearnEvidence: evidence.some((e) => e.label.includes("細かく学ぶ")),
+      toggleMechApplied: learning_tasks.some((t) => /was\/now|くれあ|区の外し|外し\/選び/.test(t.what + t.why))
+        || ((m.toggles?.unknown ?? 0) <= 50 && (m.toggles?.off ?? 0) === 0),
+      softCapWhenNotHuman: m.coverage <= 55
+        || (typeof m.reproducePct === "number" && m.reproducePct >= 100)
+        || !m.humanLike
+        || (m.humanLike.ops > 0 && m.humanLike.changedWithoutClick === 0
+          && (m.humanLike.rows > 0 ? m.humanLike.withCursor / m.humanLike.rows >= 0.7 : true)),
+      precisionLinked: precisionLinkedOk && evidence.some((e) => e.label.includes("精度")),
+      weakThenImproveApplied: weakThenImproveOk,
+    });
+    if (weakFsPower.length > 0 && !weakThenImproveOk) {
+      agenda.push({
+        priority: 0,
+        topic: "弱い部分を見つけたが改善課題に載っていない",
+        why: `弱い欄 ${weakFsPower.slice(0, 5).join("・")}（仕組み⑩違反）`,
+        decide: "見つけた弱い部分を必ず photo_learn／土台／人手録画の課題にする",
+      });
+    }
+    evidence.push({
+      label: "統括の学習力（仕組み適用）",
+      value: power.line + (autoCompletion ? `／完成度${autoCompletion.score}%を見て学習` : ""),
+      guessed: power.score < 100,
+    });
+    today.push(power.line);
+    const precEv = evidence.find((e) => e.label.includes("精度") && !e.label.includes("完成"));
+    if (precEv) today.push(precEv.value.split("／").slice(0, 2).join("／"));
+    if (power.score < 70) {
+      agenda.push({
+        priority: 1,
+        topic: "統括の学習力が低い（仕組みが次手に効いていない）",
+        why: power.missing.join("／") || power.line,
+        decide: "欄×観点・精度と一連の連携を課題 why に必ず載せる",
+      });
+    }
+    if (!precisionLinkedOk) {
+      agenda.push({
+        priority: 0,
+        topic: "精度上げと一連の連携が切れている",
+        why: "段階4〜5なのに精度レバーの先頭が photo_learn（学んでも現場に届かない）",
+        decide: "拡張再読込／自動1回を先にし、そのあと欄×観点で精度を上げる",
+      });
+    }
+  }
+
+  /**
+   * ★ 2026-11-16 竹内さん「画像学習の部分の連携もちゃんとできるように
+   *   flashとproのまとめる部分で判断／細かい部分のつなぐのも徹底して細分化」:
+   *   保存→flash読→材料→突合→photo_learn課題→Pro を1本の連携として根拠・議題に載せる。
+   */
+  const vision_pro_link = buildVisionProLink({
+    photoInStorage: m.shotBytes?.in_storage ?? m.shotBytes?.n ?? m.bundleReflect?.photo_in_storage ?? 0,
+    learnedOk: m.shotGapsNormal?.learnedOk ?? m.shotGaps?.learnedOk ?? 0,
+    todo: m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0,
+    photoKindsN: m.photoKinds ? Object.values(m.photoKinds).reduce((a, b) => a + (Number(b) || 0), 0) : 0,
+    imageFields: m.imageMatch?.imageFields ?? 0,
+    withScreenPos: m.imageMatch?.withScreenPos ?? 0,
+    matched: m.imageMatch?.matched ?? 0,
+    hasPhotoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
+    usedPro: null,
+  });
+  evidence.unshift({
+    label: "画像学習→統括Pro連携",
+    value: vision_pro_link.line,
+    guessed: vision_pro_link.bottleneck_n != null,
+  });
+  evidence.unshift({
+    label: "画像学習の役割（flash/Pro）",
+    value: `読む=${vision_pro_link.roles.flash_model}／まとめる=${vision_pro_link.roles.pro_model}／関所=決定論。混ぜない`,
+    guessed: false,
+  });
+  /**
+   * ★ 2026-11-16: 弱点を原子に細分化して Pro に渡す（仕組み⑯）。
+   *   根拠が揃ってから作る（この直後の evidence を使う）。
+   */
+  {
+    const weakAtoms = atomsFromEvidence(evidence);
+    if (weakAtoms.length) {
+      evidence.unshift({
+        label: "弱点の細分化（原子）",
+        value: atomsLine(weakAtoms),
+        guessed: weakAtoms.some((a) => (a.score != null && a.need != null && a.score < a.need) || a.layer === "human"),
+      });
+      const top = weakAtoms.filter((a) => a.next !== "維持").slice(0, 4);
+      if (top.length) {
+        agenda.push({
+          priority: 0,
+          topic: "弱点原子を画像分析→Pro判断で細かく直す",
+          why: top.map((a) => a.name).join("・"),
+          decide: top.map((a) => `${a.name}: ${a.next}`).join("／"),
+        });
+      }
+    }
+  }
+  if (vision_pro_link.bottleneck) {
+    agenda.push({
+      priority: 0,
+      topic: "画像学習→統括Proの連携が止まっている",
+      why: vision_pro_link.bottleneck,
+      decide: vision_pro_link.bottleneck_n === 5
+        ? "未学習があるのに photo_learn が無い → 課題に載せる（flashが読む）"
+        : vision_pro_link.bottleneck_n != null && vision_pro_link.bottleneck_n <= 2
+          ? "写真を保存し flash（photo_learn）で読む"
+          : "材料（種類・位置・突合）が統括に届くよう束を更新してから Pro に渡す",
+    });
+  }
+
   agenda.sort((a, b) => a.priority - b.priority);
-  return { today, agenda: agenda.slice(0, 6), questions: questions.slice(0, 4), evidence, learning_tasks };
+  return {
+    today,
+    agenda: agenda.slice(0, 8),
+    questions: questions.slice(0, 4),
+    evidence,
+    learning_tasks,
+    vision_pro_link,
+  };
 }
 
 function num(v: unknown): number {

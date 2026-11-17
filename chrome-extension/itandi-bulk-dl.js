@@ -1098,8 +1098,11 @@
           return;
         }
         // 2026-09-27 竹内「ITANDI もおねがい」: 自動便はページ数に上限（午後の便 1・午前の便 3＝リアプロと同じ）。手動・他の一括は今までどおり全ページ
-        // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 一括の回（自動便の指定が無い web_brain 等）も既定の上限（auto-run.js DEFAULT_MAX_PAGES）
-        var _itLimit = _AR() ? _AR().pageLimit(_autoRunFor(customerId), _AR().DEFAULT_MAX_PAGES || null) : null;
+        // 2026-11-16 竹内「最大3／新着は5」: resolveMaxPages（指定→新着5→既定3）
+        var _itOpts = _autoRunFor(customerId);
+        var _itLimit = _AR()
+          ? (_AR().resolveMaxPages ? _AR().resolveMaxPages(_itOpts, null) : _AR().pageLimit(_itOpts, _AR().DEFAULT_MAX_PAGES || null))
+          : null;
         if (_itLimit && _itAuditRes && _itAuditRes.pages >= _itLimit && !_manual) {
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;

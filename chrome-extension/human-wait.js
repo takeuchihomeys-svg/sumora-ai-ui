@@ -103,7 +103,8 @@
   var PACER_BASE_MS = 900;      // 中央値（人が1つの操作に移る間）
   var PACER_BREAK_EVERY = 12;   // 何操作ごとに休むか
   var PACER_BREAK_MS = 8000;    // 休憩の中央値
-  var PACER_SIGMA = 0.35;       // 対数の広がり（0.35 で「ふつうは 0.6〜1.3秒・たまに2秒超」）
+  // ★ 2026-11-17 統括Pro: 人間 CV≈0.64。旧0.35は裾が狭く等間隔っぽい → 0.55
+  var PACER_SIGMA = 0.55;
 
   /** 標準正規（Box-Muller）。rng は 0〜1 を返す関数（テストで固定できる） */
   function _gauss(rng) {
@@ -173,19 +174,25 @@
     var n = Math.max(2, Math.min(60, Math.floor(Number(steps) || 12)));
     var dx = b.x - a.x, dy = b.y - a.y;
     var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-    // 経路に直角な向きへ、距離の 8〜22% ずらした制御点を2つ（同じ側に寄りすぎないよう片方は逆へ小さく）
+    // ★ 2026-11-16: 曲がり幅を広げ、たまにオーバーシュートして戻る（毎回同じ弧に見えない）
     var nx = -dy / dist, ny = dx / dist;
-    var off1 = dist * (0.08 + _rand(rng) * 0.14) * (_rand(rng) < 0.5 ? -1 : 1);
-    var off2 = dist * (0.02 + _rand(rng) * 0.08) * (_rand(rng) < 0.5 ? -1 : 1);
-    var c1 = { x: a.x + dx * 0.3 + nx * off1, y: a.y + dy * 0.3 + ny * off1 };
-    var c2 = { x: a.x + dx * 0.7 + nx * off2, y: a.y + dy * 0.7 + ny * off2 };
+    var off1 = dist * (0.12 + _rand(rng) * 0.28) * (_rand(rng) < 0.5 ? -1 : 1);
+    var off2 = dist * (0.04 + _rand(rng) * 0.18) * (_rand(rng) < 0.5 ? -1 : 1);
+    var c1 = { x: a.x + dx * (0.22 + _rand(rng) * 0.2) + nx * off1, y: a.y + dy * (0.22 + _rand(rng) * 0.2) + ny * off1 };
+    var c2 = { x: a.x + dx * (0.58 + _rand(rng) * 0.22) + nx * off2, y: a.y + dy * (0.58 + _rand(rng) * 0.22) + ny * off2 };
+    // 18% で少し行き過ぎてから戻る（人が狙いを外して直す）
+    var overshoot = dist > 40 && _rand(rng) < 0.18;
+    var ox = overshoot ? nx * dist * (0.04 + _rand(rng) * 0.08) * (_rand(rng) < 0.5 ? -1 : 1) : 0;
+    var oy = overshoot ? ny * dist * (0.04 + _rand(rng) * 0.08) * (_rand(rng) < 0.5 ? -1 : 1) : 0;
+    var end = overshoot ? { x: b.x + ox, y: b.y + oy } : b;
     var out = [];
     for (var i = 0; i <= n; i++) {
       var t = i / n, mt = 1 - t;
-      var x = mt * mt * mt * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * b.x;
-      var y = mt * mt * mt * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * b.y;
+      var tgt = (overshoot && t > 0.82) ? b : end; // 終盤で本命へ戻す
+      var x = mt * mt * mt * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * tgt.x;
+      var y = mt * mt * mt * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * tgt.y;
       // 手ぶれ（終点では 0 に寄せる＝狙った所に着く）
-      var wob = (1 - t) * 0.6;
+      var wob = (1 - t) * (1.2 + _rand(rng) * 1.8);
       if (wob > 0) { x += (_rand(rng) - 0.5) * wob; y += (_rand(rng) - 0.5) * wob; }
       out.push({ x: Math.round(x), y: Math.round(y) });
     }

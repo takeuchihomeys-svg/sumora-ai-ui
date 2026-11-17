@@ -645,7 +645,7 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     const daysUsed = i?.rp_update_days != null ? parseIntLoose(i.rp_update_days) : null;
     if (r?.page_limit && daysUsed != null) {
       add("UPDATE_DAYS", "warn", `update_days:${siteKey}:cut_by_pages`, `更新日（${daysUsed}日以内）の物件を${r.page_limit}ページで打ち切った`,
-        `ページの上限（${r.page_limit}ページ）で次のページを見ていない${r.count_number != null ? `（件数 ${r.count_number}・読んだ ${r.read_rows ?? "?"}行）` : ""}${r.page_limit < SEARCH_MAX_PAGES && !(a.command_payload && (a.command_payload as { max_pages?: unknown }).max_pages) ? `・上限が今の${SEARCH_MAX_PAGES}ページより少ない（v2.5.41 以前の拡張）` : ""}`);
+        `ページの上限（${r.page_limit}ページ）で次のページを見ていない${r.count_number != null ? `（件数 ${r.count_number}・読んだ ${r.read_rows ?? "?"}行）` : ""}${r.page_limit < 3 && !(a.command_payload && (a.command_payload as { max_pages?: unknown }).max_pages) ? `・上限が既定の3ページより少ない（古い拡張）` : ""}`);
     }
     // 2026-09-30 v2.5.42 ITANDI の1回の物件数の上限（itandi-guard.js MAX_ROWS）で打ち切った（C3・見張りの ⚠ の1行にも）
     if (r?.row_limit) {

@@ -149,6 +149,12 @@ export function isLearnableName(name: unknown): boolean {
   if (/(^|[^a-z])(aixlinx|axlx)/i.test(n)) return false;
   // 「div.building_tr」「td.st_td」のような入れ物の class 付きも除く（行・セル・画像）
   if (/^(div|span|svg|td|tr|th|table|img|a|li|p)\./i.test(n) && !/btn|button|search|go_search|next|confirm/i.test(n)) return false;
+  /**
+   * ★ 2026-11-16: Vision が「北区、中央区、西区」のような**まとめ文言**を欄名にすることがある。
+   *   実測で種類割れ（select/button/link）の弱い所を永久に出した。1つの操作欄ではない。
+   */
+  if (/[、,]/.test(n) && /区/.test(n)) return false;
+  if (/をクリック|手順テキスト|ドロップダウン\)|展開中/.test(n)) return false;
   return true;
 }
 
@@ -250,6 +256,7 @@ export function cleanFields(raw: unknown): ShotField[] {
     const name = norm(o.name);
     const kind = String(o.kind ?? "").toLowerCase();
     if (!name || !KINDS.includes(kind)) continue;
+    if (!isLearnableName(name)) continue;
     const key = name + "|" + kind;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -329,8 +336,8 @@ export function cleanScreen(v: unknown): ShotLearn["screen"] {
 /**
  * 数値の記録（押した名前と種類）と、写真から読んだ欄を**突き合わせる**（純関数）。
  *   ・数値側に種類が無い（旧版の記録）→ 写真の種類で埋める
- *   ・食い違う（数値は text・写真は select）→ **写真を採る**（写真の方が確か・実際の見た目）
- *     ただし「写真の確かさ」が低い時は数値を残す
+ *   ・食い違う（数値は text・写真は select）→ **写真を採る**（見た目）
+ *   ・★ 例外 2026-11-16: 数値が select・写真が text → **数値（操作）を残す**（Vision誤読の実測）
  * @returns 直した points（元は変えない）と、直した所の一覧
  */
 export function reconcilePoints(
@@ -348,6 +355,7 @@ export function reconcilePoints(
     const f = byName.get(name);
     if (!f) continue;
     const from = v.w ?? null;
+    const photoKind = String(f.kind);
     /**
      * 2026-11-14 竹内さん「確かめて治す」:
      *
@@ -359,10 +367,17 @@ export function reconcilePoints(
      *     ・`from` が null（記録に種類が無い）＝**埋めただけ**（食い違いではない）
      *     ・`from` === 写真の種類 ＝**一致**（何もしない・記録もしない）
      *     ・`from` !== 写真の種類 ＝**本当の食い違い**（ここだけ `fixed`）
+     *
+     * ★ 2026-11-16: 操作が **select** で写真が **text** の時は**操作を残す**
+     *   （実測: rental_cost1/2 は click→change なのに Vision が text と誤読）。
+     *   種類は上書きしない・fixed にも入れない（永久に直らない指摘を出さない）。
      */
-    const differs = from != null && String(from) !== String(f.kind);
-    out[name] = { ...v, w: f.kind, w_src: "photo", w_conf: 1 } as typeof v;
-    if (differs) fixed.push({ name, from, to: f.kind });
+    if (from === "select" && photoKind === "text") {
+      continue;
+    }
+    const differs = from != null && String(from) !== photoKind;
+    out[name] = { ...v, w: photoKind, w_src: "photo", w_conf: 1 } as typeof v;
+    if (differs) fixed.push({ name, from, to: photoKind });
   }
   void minConf;
   return { points: out, fixed };
@@ -390,15 +405,42 @@ export function learnFromShots(
     /** 2026-11-14: 操作の並びが無い回でも、押した欄（順番つき）から学べるようにする */
     point_fields?: unknown;
     field_order?: unknown;
+    /**
+     * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる」:
+     *   **通常モードだけ**を手本にする時に使う（自動の録画は手本にしない）。
+     *   ⚠ 渡さなければ今まで通り全部混ぜる（後方互換）。
+     */
+    mode?: unknown;
   }>,
+  opt: { mode?: "normal" | "all" } = {},
 ): {
-  screens: Record<string, { n: number; lastPressed: Array<{ name: string; n: number }>; steps: Array<{ from: string; to: string; n: number }>; fields: Array<{ name: string; kind: string; n: number }> }>;
+  screens: Record<string, {
+    n: number;
+    lastPressed: Array<{ name: string; n: number }>;
+    steps: Array<{ from: string; to: string; n: number }>;
+    fields: Array<{ name: string; kind: string; n: number; x?: number; y?: number; zone?: string }>;
+  }>;
   total: number;
   withOps: number;
 } {
-  type Acc = { n: number; last: Record<string, number>; steps: Record<string, Record<string, number>>; fields: Record<string, Record<string, number>> };
+  /**
+   * ⚠ 2026-11-15 **実測で見つけた穴**:
+   *   通常モードの学習済み写真は x/y 付き **6102欄**あるのに、束の `shots.learned` は **x/y 0個**だった。
+   *   原因: ここで `name`/`kind` だけ取って **`x`/`y`/`zone` を捨てていた**。
+   *   → 拡張の `axlx_learn_screen`（画面の位置から狙う）に**何も届かない**状態だった。
+   *   → **位置も多数決で残す**（中央値・3回以上見た欄だけ拡張が使う）。
+   */
+  type Acc = {
+    n: number;
+    last: Record<string, number>;
+    steps: Record<string, Record<string, number>>;
+    fields: Record<string, Record<string, number>>;
+    /** 欄名 → 画面の位置の票（中央値を採る） */
+    pos: Record<string, { xs: number[]; ys: number[]; zones: Record<string, number> }>;
+  };
   const acc: Record<string, Acc> = {};
   let withOps = 0;
+  const preferNormal = opt.mode === "normal";
 
   for (const s0 of Array.isArray(shots) ? shots : []) {
     /**
@@ -406,7 +448,15 @@ export function learnFromShots(
      *   ⚠ 旧は `s.shot_ops` をそのまま読んでいたので、null が混ざると例外で**学習が丸ごと止まった**。
      */
     if (!s0 || typeof s0 !== "object") continue;
-    const s = s0 as { url?: unknown; shot_ops?: unknown; shot_learn?: unknown; created_at?: unknown; point_fields?: unknown; field_order?: unknown };
+    const s = s0 as { url?: unknown; shot_ops?: unknown; shot_learn?: unknown; created_at?: unknown; point_fields?: unknown; field_order?: unknown; mode?: unknown };
+    /**
+     * ★ 通常モードだけを手本にする（竹内さん「通常モードの録画から…自動モードに反映」）。
+     *   ⚠ 自動の録画は**結果の確認**であって手本ではない（P0）。
+     */
+    if (preferNormal) {
+      const m = String(s.mode ?? "").toLowerCase();
+      if (m === "aix" || m === "auto") continue;
+    }
     let ops = Array.isArray(s.shot_ops)
       ? (s.shot_ops as unknown[])
         .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))
@@ -437,14 +487,20 @@ export function learnFromShots(
         }
       }
     }
-    // 写真から読んだ欄（あれば）
+    // 写真から読んだ欄（あれば）※ **x/y/zone も残す**（捨てない）
     const learnedFields = (() => {
       const sl = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn : null) as Record<string, unknown> | null;
       const arr = sl && Array.isArray(sl.fields) ? sl.fields : [];
       return arr
         .map((f) => (f && typeof f === "object" ? f as Record<string, unknown> : null))
         .filter((f): f is Record<string, unknown> => !!f)
-        .map((f) => ({ name: norm(f.name), kind: String(f.kind ?? "").toLowerCase() }))
+        .map((f) => ({
+          name: norm(f.name),
+          kind: String(f.kind ?? "").toLowerCase(),
+          x: typeof f.x === "number" && f.x >= 0 && f.x <= 1 ? f.x : null,
+          y: typeof f.y === "number" && f.y >= 0 && f.y <= 1 ? f.y : null,
+          zone: typeof f.zone === "string" ? String(f.zone).slice(0, 10) : null,
+        }))
         .filter((f) => f.name && f.kind);
     })();
 
@@ -458,7 +514,7 @@ export function learnFromShots(
      *   → 材料が無い行は `total` にも入れない（`withOps` だけが学びの材料）。
      */
     if (!ops.length && !learnedFields.length) continue;
-    const a = (acc[screen] ||= { n: 0, last: {}, steps: {}, fields: {} });
+    const a = (acc[screen] ||= { n: 0, last: {}, steps: {}, fields: {}, pos: {} });
     a.n++;
     if (ops.length) withOps++;
     if (ops.length) {
@@ -472,8 +528,21 @@ export function learnFromShots(
     }
     for (const f of learnedFields) {
       ((a.fields[f.name] ||= {})[f.kind] = (a.fields[f.name][f.kind] ?? 0) + 1);
+      if (f.x != null && f.y != null) {
+        const p = (a.pos[f.name] ||= { xs: [], ys: [], zones: {} });
+        p.xs.push(f.x);
+        p.ys.push(f.y);
+        if (f.zone) p.zones[f.zone] = (p.zones[f.zone] ?? 0) + 1;
+      }
     }
   }
+
+  const median = (xs: number[]): number | null => {
+    if (!xs.length) return null;
+    const s = [...xs].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 100) / 100;
+  };
 
   const out: ReturnType<typeof learnFromShots>["screens"] = {};
   for (const [screen, a] of Object.entries(acc)) {
@@ -486,7 +555,20 @@ export function learnFromShots(
     const fields = Object.entries(a.fields)
       .map(([name, kinds]) => {
         const best = Object.entries(kinds).sort((x, y) => y[1] - x[1])[0];
-        return { name, kind: best ? best[0] : "?", n: best ? best[1] : 0 };
+        const pos = a.pos[name];
+        const mx = pos ? median(pos.xs) : null;
+        const my = pos ? median(pos.ys) : null;
+        const zone = pos && Object.keys(pos.zones).length
+          ? Object.entries(pos.zones).sort((x, y) => y[1] - x[1])[0][0]
+          : null;
+        return {
+          name,
+          kind: best ? best[0] : "?",
+          n: best ? best[1] : 0,
+          ...(mx != null ? { x: mx } : {}),
+          ...(my != null ? { y: my } : {}),
+          ...(zone ? { zone } : {}),
+        };
       })
       .sort((x, y) => y.n - x.n)
       .slice(0, 40);
@@ -788,7 +870,18 @@ export function findWeakPoints(
   }
   for (const [name, kinds] of seen) {
     if (kinds.size > 1) {
-      out.push({ kind: "kind_conflict_in_photo", name, why: "同じ欄が写真の中で違う種類に見えた（" + [...kinds].join("/") + "）", next: "次の写真でも同じ欄を読んで、多い方を採る" });
+      /**
+       * ★ 2026-11-16: select/text だけの割れで、操作上プルダウンと分かる欄は**弱い所にしない**。
+       *   実測: rental_cost1/2・update_date は click→change なのに Vision が text と誤読 →
+       *   統括が「種類割れ」を永久に次手にして、本当の穴（完走・手の形・束反映）が後ろに下がった。
+       */
+      const ks = [...kinds];
+      const onlySelectText = ks.length === 2 && ks.includes("select") && ks.includes("text");
+      const lookSelect =
+        /^(rental_cost|update_date|square_meter|structured_date|transportation_id)/i.test(name)
+        || (guessKindFromName(name)?.kind === "select");
+      if (onlySelectText && lookSelect) continue;
+      out.push({ kind: "kind_conflict_in_photo", name, why: "同じ欄が写真の中で違う種類に見えた（" + ks.join("/") + "）", next: "次の写真でも同じ欄を読んで、多い方を採る" });
     }
   }
   // ② 種類が分からない欄

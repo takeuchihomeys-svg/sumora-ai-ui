@@ -135,6 +135,8 @@ export function camelOf(key: string): string {
     commands: "commands",
     toggles: "toggles",
     photo_kinds: "photoKinds",
+    image_match: "imageMatch",
+    bundle_reflect: "bundleReflect",
     gap_ms: "gapMs",
     prev: "prev",
   };

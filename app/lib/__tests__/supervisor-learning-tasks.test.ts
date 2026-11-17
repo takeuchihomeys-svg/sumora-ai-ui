@@ -9,6 +9,11 @@
 //   ③ 写真は「撮れているのに学べていない」時だけ候補に出す・**必ず枚数上限**
 //   ④ 判断は議題に残す（後から検証できる）
 //
+// ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習」
+//   「画像を読み取れば学習できる」「弱い部分強化するためによみとる」:
+//   ⑤ 操作率が高くても、通常の未学習写真があれば photo_learn を出す
+//   ⑥ 弱い所＋未学習画像 → 「録画を増やせ」ではなく「画像を読め」
+//
 // 実行: npx tsx --env-file=.env.local app/lib/__tests__/supervisor-learning-tasks.test.ts
 import { superviseLearn } from "../learn-supervisor";
 
@@ -55,14 +60,36 @@ console.log("\n■ ③ 写真は「撮れているのに学べていない」時
   const t = tasksOf(r);
   const pl = t.find((x) => x.kind === "photo_learn");
   ok("photo_learn が出る", !!pl, t.map((x) => x.kind));
-  ok("  ⚠ 枚数の上限がある（費用の歯止め）", pl?.limit === 20, pl);
+  ok("  ⚠ 枚数がある（統括が課題に応じて決める・硬上限あり）", typeof pl?.limit === "number" && (pl?.limit as number) > 0 && (pl?.limit as number) <= 500, pl);
   ok("  1枚ごとに費用がかかると言う", (pl?.cost || "").includes("費用"), pl?.cost);
   ok("  ⚠ 無料の物より後ろ", t.findIndex((x) => x.kind === "photo_learn") === t.length - 1, t.map((x) => x.kind));
 
-  // 写真と操作の差が小さい（両方高い）→ 写真を読む候補にしない
+  // 写真と操作の差が小さい（両方高い）かつ未学習ギャップ無し → 写真を読む候補にしない
   const r2 = superviseLearn({ ...base, with_ops: 180, shot_rows: 190 });
   const t2 = tasksOf(r2);
-  ok("  ⚠ 既に学べている時は候補にしない", !t2.some((x) => x.kind === "photo_learn"), t2.map((x) => x.kind));
+  ok("  ⚠ 操作も高く未学習ギャップ無しなら候補にしない", !t2.some((x) => x.kind === "photo_learn"), t2.map((x) => x.kind));
+}
+
+console.log("\n■ ③b 操作率が高くても通常の未学習写真があれば読む（2026-11-15）");
+{
+  const r = superviseLearn({
+    ...base,
+    with_ops: 180,
+    shot_rows: 190,
+    shot_gaps_normal: { total: 500, unlearnedBig: 80, unlearnedSmall: 200, learnedButEmpty: 0, learnedOk: 220, todo: 80 },
+    weak: [{ kind: "kind_unknown", name: "transportation_id" }],
+  });
+  const t = tasksOf(r);
+  const pl = t.find((x) => x.kind === "photo_learn");
+  ok("操作率高くても photo_learn が出る", !!pl, t.map((x) => x.kind));
+  ok("  通常モード／弱い所を言う", /通常|弱い/.test(pl?.what || ""), pl?.what);
+  ok("  未読80なら統括は80枚と判断（上限20固定ではない）", pl?.limit === 80, pl);
+  const act0 = r.actions[0];
+  ok("  次にやる事の先頭は『通常の画像を読んで弱い所を強化』", (act0?.what || "").includes("通常モードの画像"), act0);
+  const ag = r.meeting.agenda.find((x) => (x.topic || "").includes("通常モードの画像"));
+  ok("  議題に『通常モードの画像を読んで弱い所を強化』", !!ag, r.meeting.agenda.map((x) => x.topic));
+  const ev = r.meeting.evidence.find((x) => x.label === "通常モードの画像学習");
+  ok("  根拠に通常モードの画像学習がある", !!ev && (ev.value || "").includes("まだ読める"), ev);
 }
 
 console.log("\n■ ④ 録画の経路（写真が少なく操作も少ない）");

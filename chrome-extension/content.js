@@ -199,7 +199,17 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
   var _cid = new URLSearchParams(window.location.search).get("sumora_cid");
   if (!_cid) return;
 
+  function _detectShikireiFlag(c) {
+    try {
+      if (!c) return false;
+      if (c.shikirei_free === true || c.shikirei_free === "true" || c.shikirei_free === 1) return true;
+      var text = [c.preferences, c.ng_points, c.other_requests, c.property_memo, c.notes, c.additional_conditions, c.raw_format_text]
+        .filter(Boolean).join(" ");
+      return /敷礼なし|敷金[・･]?礼金なし|敷金礼金0|敷金0礼金0|敷0礼0|敷礼0|初期費用.*抑/.test(text);
+    } catch (_) { return false; }
+  }
   function _buildConditions(c) {
+    var _shiki = _detectShikireiFlag(c);
     return {
       rent_max:     c.rent_max || c.max_rent || null,
       rent_min:     c.rent_min_search || c.rent_min || null, // 2026-10-02 ⑫ おおよその下限（サーバーの rent_min_search）
@@ -210,6 +220,10 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       area_min:     c.floor_area_min || c.area_min || c.min_area || null,
       area_max:     c.floor_area_max || c.area_max || c.max_area || null,
       pet_ok:       !!(c.pet),
+      // ★ 2026-11-16: sumora_cid 経路でも敷礼なしを落とさない
+      shikirei_free: _shiki,
+      prefer_no_shikirei: _shiki,
+      rp_update_days: c.rp_update_days != null ? Number(c.rp_update_days) || null : null,
     };
   }
 
@@ -290,6 +304,20 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
       sendResponse({ ok: true });
       return true;
     }
+    /**
+     * ★ 2026-11-16 連続客: fill_timeout 時に MAIN の page-script へ fillRunning 解除を中継。
+     */
+    if (msg.type === "axlx-force-fill-clear") {
+      try {
+        window.postMessage({
+          from: "axlx-force-fill-clear",
+          reason: msg.reason || "fill_timeout",
+          customerId: msg.customerId || null,
+        }, "*");
+      } catch (_) {}
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg.type !== "axlx-realnetpro-autofill") return;
     // 2026-09-18 竹内（一括検索で違うお客さんの条件が送られるバグ）:
     //   「誰の自動入力か」を依頼と一緒に page-script へ渡す。page-script はこの ID をそのまま
@@ -331,4 +359,18 @@ window.addEventListener("message", function (e) {
   } catch (err) {
     // 拡張リロード等で context が失われた場合は無視
   }
+});
+
+/** ★ 2026-11-16: fill 途中の段を background の点検へ（steps到達） */
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-progress") return;
+  try {
+    chrome.runtime.sendMessage({
+      type: "axlx-fill-progress",
+      site: "realnetpro",
+      customerId: e.data.customerId || _pendingFillCustomerId || null,
+      runId: e.data.runId || null,
+      steps: Array.isArray(e.data.steps) ? e.data.steps : [],
+    }, function () { void chrome.runtime.lastError; });
+  } catch (_) {}
 });

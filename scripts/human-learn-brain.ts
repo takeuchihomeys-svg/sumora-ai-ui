@@ -25,6 +25,12 @@ const SELECT = [
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist",
   "points_n", "point_x", "point_y", "point_fields",
   "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn",
+  /**
+   * ★ 2026-11-15「画像データベースの保存されている／統括は把握する」:
+   *   ⚠ 旧はこの3列が無く、統括に Storage 保存枚数が 0 と届いていた（誤報の原因）。
+   *   shot_b64 は重いので読まない（正本は Storage の shot_key）。
+   */
+  "shot_taken", "shot_key", "shot_w", "shot_h",
 ].join(", ");
 
 (async () => {
@@ -52,9 +58,15 @@ const SELECT = [
   }
   console.log(`■ 元にした記録: ${rows.length}件（直近${days}日）`);
 
-  const all = compactBundle(buildHumanLearnBundle(rows));
+  const { fetchBundleReflectHint } = await import("../app/lib/bundle-reflect");
+  const reflectHint = await fetchBundleReflectHint(sb, { scope: "all" });
+  const all = compactBundle(buildHumanLearnBundle(rows, Date.now(), null, null, { bundle_reflect: reflectHint }));
   console.log("\n■ 学んだこと:");
   for (const line of all.lines) console.log("  " + line);
+  if (all.supervisor?.meeting?.evidence) {
+    const ref = all.supervisor.meeting.evidence.find((e) => e.label === "自動への反映");
+    if (ref) console.log("  【反映】" + ref.value);
+  }
 
   console.log("\n■ 押す順番（上位10）:");
   Object.entries(all.next).slice(0, 10).forEach(([from, v]) => {
@@ -68,15 +80,62 @@ const SELECT = [
   });
 
   if (has("apply")) {
-    const { error } = await sb.from("human_learn_profile").insert({
+    /**
+     * ★ 2026-11-15「改善したら更新されていく」:
+     *   all だけ書くと拡張が古い realpro を優先して学びが届かない（実測 x/y 0）。
+     *   → サイト別も同時に書く。
+     * ★ 2026-11-17: 消す書き込み拒否（learn-bundle-preserve）。
+     */
+    const { inheritLinkFoundations } = await import("../app/lib/learn-bundle-preserve");
+    const nowMs = Date.now();
+    const candidates: Array<{ scope: string; bundle: Record<string, unknown>; source_rows: number; source_from: unknown; source_to: unknown; lines: unknown }> = [{
       scope: "all",
       source_rows: all.source.rows,
       source_from: all.source.from,
       source_to: all.source.to,
-      bundle: all,
+      bundle: all as unknown as Record<string, unknown>,
       lines: all.lines,
-    });
-    console.log(error ? `\n■ 書けませんでした: ${error.message}` : "\n■ human_learn_profile に書きました（scope=all）");
+    }];
+    for (const site of ["realpro", "itandi"] as const) {
+      const sub = rows.filter((r) => {
+        const s = String(r.site ?? "").toLowerCase();
+        return site === "realpro" ? (s === "realpro" || s.includes("realnet")) : (s === "itandi" || s.includes("itandi"));
+      });
+      if (sub.length < 3) continue;
+      const one = compactBundle(buildHumanLearnBundle(sub, nowMs));
+      candidates.push({
+        scope: site,
+        source_rows: one.source.rows,
+        source_from: one.source.from,
+        source_to: one.source.to,
+        bundle: one as unknown as Record<string, unknown>,
+        lines: one.lines,
+      });
+    }
+    const inserts: Array<Record<string, unknown>> = [];
+    for (const c of candidates) {
+      const pr = await inheritLinkFoundations(sb, c.bundle, c.scope, { lookback: 20, minSolid: 30 });
+      if (!pr.safe_to_write) {
+        console.warn(`  消す書き込み拒否 ${c.scope}: ${pr.why}`);
+        continue;
+      }
+      inserts.push({
+        scope: c.scope,
+        source_rows: c.source_rows,
+        source_from: c.source_from,
+        source_to: c.source_to,
+        bundle: c.bundle,
+        lines: c.lines,
+      });
+    }
+    if (!inserts.length) {
+      console.log("\n■ 書けませんでした: 全scopeで消す書き込みを拒否");
+    } else {
+      const { error } = await sb.from("human_learn_profile").insert(inserts);
+      console.log(error
+        ? `\n■ 書けませんでした: ${error.message}`
+        : `\n■ human_learn_profile に書きました（${inserts.map((x) => x.scope).join("・")}）`);
+    }
   } else {
     console.log("\n（--apply を付けると human_learn_profile に書きます）");
   }

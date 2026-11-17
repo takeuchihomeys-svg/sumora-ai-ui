@@ -1497,7 +1497,7 @@
       if (bathEl) tick(bathEl); else clickLabel("バス・トイレ別");
     }
     // 敷金・礼金なし
-    if (cond.shikirei_free) {
+    if (cond.shikirei_free || cond.prefer_no_shikirei) {
       var skiLabel = [].slice.call(document.querySelectorAll('label')).find(function(l) {
         var t = l.textContent.replace(/[\s　]/g, '');
         return t === '敷金・礼金なし' || t === '敷金礼金なし' || t === '敷礼なし';

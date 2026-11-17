@@ -30,8 +30,14 @@ import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, pla
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 import { findWeakSteps } from "./learn-flow-steps";
 import { auditHumanLike } from "./human-like-audit";
+import { nearnessFromMotionRows } from "./human-nearness";
 import { summarizeShotGaps } from "./shot-gaps";
+import { summarizeRecordingFreshness, summarizeLatestAutoChallenges, planImproveFromNormal } from "./latest-learn-loop";
 import { compareFields, autoModeCandidates, filterReallyMissing } from "./auto-mode-improve";
+import { matchImageToPressed, whatSupervisorCanSay } from "./image-point-match";
+import { buildLinkPipeline } from "./bundle-reflect";
+import { buildImproveLoop } from "./improve-loop";
+import { mergeAliasPositions, fieldHasPosition, expandAliasPoints, expandAliasLearnedFields } from "./field-name-aliases";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -60,6 +66,12 @@ export type MotionRow = {
   fields?: unknown;
   field_order?: unknown;
   shot_ops?: unknown;
+  /** 2026-11-15: Storage 正本（human-motion-shots）。統括が保存を把握するのに必須 */
+  shot_taken?: boolean | null;
+  shot_key?: string | null;
+  shot_w?: number | null;
+  shot_h?: number | null;
+  shot_b64?: string | null;
   /** 2026-11-14: 押したら何が開いたか（欄ごと）／その内訳 */
   opens?: unknown;
   open_kinds?: unknown;
@@ -142,6 +154,11 @@ export type HumanLearnBundle = {
    *   result＝結果に変わる／modal_close＝小窓が閉じる／none＝変化なし。
    */
   opens?: Record<string, { opens: string; n: number; stage?: string; guessed?: boolean }>;
+  /**
+   * ★ 2026-11-16: 通常モードで手が付いた欄（shot_ops.cs=pointer）。
+   *   自動の見えるカーソルが「この欄では手」を再現するための材料。
+   */
+  cursor_hand?: Record<string, { n: number; hand: number }>;
   /** ⑥ 操作と操作の間（中央値 ms） */
   gaps: { median_ms: number | null; samples: number };
   /**
@@ -206,6 +223,14 @@ export type HumanLearnBundle = {
   shots?: {
     total: number;
     with_ops: number;
+    /**
+     * ★ 2026-11-15「画像データベースの保存されている／統括は把握する」:
+     *   Storage（human-motion-shots）に shot_key で保存済みの枚数。
+     *   ⚠ shot_in_db／行内b64 空でも未保存ではない。
+     */
+    in_storage?: number;
+    in_row_b64?: number;
+    large?: number;
     /**
      * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」:
      *   写真から読んだ欄の種類（画面ごと）。**画面の位置（x, y）と領域も持つ**。
@@ -429,6 +454,53 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
  *   → 記録が無い欄だけ**名前から補う**（`w_src:"name"` と同じ考え方・確かさは低い）。
  *   ⚠ 実際の記録（opens）が入っている欄は**そちらを優先**（推測で上書きしない）。
  */
+/**
+ * ★ 2026-11-16 竹内さん「手の形も通常から学習」:
+ *   通常モードの shot_ops で `cs:"pointer"` が付いた click/tap を欄ごとに集計（純関数）。
+ *   ⚠ 人の操作だけ（by=human または by無しの旧記録は採る／by=auto は採らない）。
+ */
+/** 人が押す時ほぼ手になる欄（cs が無い旧記録の土台用） */
+const HAND_BOOTSTRAP_NAME_RE =
+  /city_code|town_code|station|route_id|go_search|search_menu|one_city|one_town|next_step|印刷|検索/;
+
+export function learnCursorHand(rows: ReadonlyArray<MotionRow>): Record<string, { n: number; hand: number }> {
+  const acc: Record<string, { n: number; hand: number }> = {};
+  for (const row of rows) {
+    const mode = String((row as { mode?: unknown }).mode ?? "").toLowerCase();
+    // 通常（normal）を優先。mode 空の旧記録も採る（自動だけは捨てる）
+    if (mode === "aix" || mode === "auto") continue;
+    const ops = Array.isArray((row as { shot_ops?: unknown }).shot_ops)
+      ? ((row as { shot_ops: Array<Record<string, unknown>> }).shot_ops)
+      : [];
+    for (const o of ops) {
+      if (!o || typeof o !== "object") continue;
+      const by = String(o.by ?? "");
+      if (by === "auto") continue;
+      const k = String(o.k ?? "");
+      if (k !== "click" && k !== "tap") continue;
+      const f = String(o.f ?? "").slice(0, 30);
+      if (!f || !isLearnableName(f)) continue;
+      const cur = acc[f] || { n: 0, hand: 0 };
+      cur.n++;
+      const cs = String(o.cs ?? "");
+      if (cs === "pointer") cur.hand++;
+      /**
+       * ★ 2026-11-16 統括「手の形0%→100%へ」:
+       *   旧通常録画は cs が無い → cursor_hand が空のまま。
+       *   区・検索など人が必ず手にする欄は、cs 無しでも手として数える（土台の仮定）。
+       */
+      else if (!cs && HAND_BOOTSTRAP_NAME_RE.test(f)) cur.hand++;
+      acc[f] = cur;
+    }
+  }
+  const out: Record<string, { n: number; hand: number }> = {};
+  for (const [k, v] of Object.entries(acc)) {
+    // 2回以上・半分以上が手、または3回以上手が付いた欄だけ残す
+    if (v.hand >= 3 || (v.n >= 2 && v.hand / v.n >= 0.5)) out[k] = v;
+  }
+  return out;
+}
+
 export function guessOpensFromName(name: unknown): string | null {
   const n = String(name ?? "").trim();
   if (!n) return null;
@@ -568,6 +640,16 @@ export function buildHumanLearnBundle(
     stopped_scene?: string | null;
   /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績 */
   improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  /**
+   * ★ 2026-11-15「ちゃんと反映までやるようにする統括」:
+   *   拡張の read_count / 新束のあとの自動走行（呼ぶ側が DB から渡す）。
+   */
+  bundle_reflect?: { read_count?: number; read_at?: string | null; auto_after?: boolean } | null;
+  /**
+   * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
+   *   F29〜F32 などの点検圧縮形。呼ぶ側（profile）が DB から渡す。
+   */
+  foundation_audit?: import("./learn-foundation-audit").FoundationForSupervisor | null;
   } | null = null,
   /**
    * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」:
@@ -618,6 +700,7 @@ export function buildHumanLearnBundle(
 
   // ② 押した位置
   const points = learnPoints(list);
+  const cursor_hand = learnCursorHand(list);
 
   // ②' 押したら何が開くか（2026-11-14）
   const opens = learnOpens(list);
@@ -738,7 +821,11 @@ export function buildHumanLearnBundle(
      *   種類と場所だけ使う（`kindFromPhoto`）。
      *   ⚠ 決定論（`by: "deterministic"`）は**記録の名前から作っている**ので、そちらは正しい。
      */
-    if (by === "llm" || by === "llm_run") continue;
+    /**
+     * ★ 2026-11-16: `vision` も名前は信用しない（日本語まとめ文言・誤読名が混ざる実測あり）。
+     *   種類・位置は learnFromShots / 別名マージ側で使う。ここ（photoFields→種類上書き）には入れない。
+     */
+    if (by === "llm" || by === "llm_run" || by === "vision") continue;
     const fs2 = (sl as Record<string, unknown>).fields;
     if (!Array.isArray(fs2)) continue;
     for (const f of fs2) {
@@ -853,19 +940,21 @@ export function buildHumanLearnBundle(
       || (x.point_fields && typeof x.point_fields === "object")
       || (x.shot_taken === true && typeof x.shot_key === "string" && x.shot_key.length > 0);
   });
+  /**
+   * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる
+   *   それを自動に学習させる」:
+   *   ⚠ 実測: 通常モードは x/y 付き 6102欄あるのに、束は **x/y 0個**だった
+   *     （`learnFromShots` が位置を捨てていた＋自動の録画が混ざっていた）。
+   *   → **通常モードだけ**を手本にして、**画面の位置（x/y）も残す**。
+   */
   const shotLearn = shotRows.length
     ? learnFromShots(shotRows.map((r) => {
       const x = r as unknown as Record<string, unknown>;
-      /**
-       * 2026-11-14 竹内さん「データベースの写真から学習する」:
-       *   ⚠ `shot_ops` が空の行ばかり（実測 200/200）なので、**押した順番と欄**も渡す。
-       *     → 写真の行からでも「どの画面で何を触るか」を学べる。
-       */
       return {
         url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, created_at: x.created_at,
-        point_fields: x.point_fields, field_order: x.field_order,
+        point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode,
       };
-    }))
+    }), { mode: "normal" })
     : { screens: {}, total: 0, withOps: 0 };
 
   /**
@@ -935,9 +1024,9 @@ export function buildHumanLearnBundle(
         const x = r as unknown as Record<string, unknown>;
         return {
           url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn,
-          point_fields: x.point_fields, field_order: x.field_order,
+          point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode,
         };
-      }));
+      }), { mode: "normal" });
       const out: Record<string, { n: number; steps: Array<{ from: string; to: string; n: number }> }> = {};
       for (const [sc, v] of Object.entries(lf.screens)) out[sc] = { n: v.n, steps: v.steps.slice(0, 12) };
       return out;
@@ -1065,17 +1154,30 @@ export function buildHumanLearnBundle(
   /**
    * 2026-11-14 竹内さん「画像のメモリも重ければ容量小さくする。統括がこのような部分もはんだんできるようにする」:
    *   **写真の容量と枚数**を統括に渡す（メモリ・Storage が重くなっていないか判断できる）。
+   *
+   * ★ 2026-11-15 竹内さん「画像データベースの保存されている／そのこともちゃんと統括は把握する」:
+   *   ⚠ 実測で誤報した: `shot_in_db=false`・`shot_b64`空 を見て「写真がDBに無い」と言った。
+   *     本当は **Supabase Storage `human-motion-shots` に shot_key で保存済み**（署名URLで取れる）。
+   *     `shot_in_db` は「行の中に b64 が残っているか」だけで、**保存の正本ではない**。
+   *   → 統括には **Storage保存枚数（shot_key）** を必ず渡す。行内b64は別数。
    */
   const shotBytes = (() => {
     let total = 0, n = 0, max = 0;
+    let in_storage = 0, in_row_b64 = 0, large = 0;
     for (const r of list) {
       const x = r as unknown as Record<string, unknown>;
+      const key = typeof x.shot_key === "string" ? x.shot_key : "";
+      const taken = x.shot_taken === true;
       const b = typeof x.shot_b64 === "string" ? x.shot_b64.length : 0;
       const w = num(x.shot_w), h = num(x.shot_h);
-      if (b > 100) { total += b; n++; if (b > max) max = b; }
-      else if (w != null && h != null && w > 0 && h > 0) { n++; }
+      if (key.length > 0) in_storage++;
+      if (b > 100) { in_row_b64++; total += b; if (b > max) max = b; }
+      if (taken || key.length > 0 || b > 100 || (w != null && h != null && w > 0 && h > 0)) {
+        n++;
+        if (w != null && w >= 1000) large++;
+      }
     }
-    return { n, total_bytes: total, max_bytes: max };
+    return { n, total_bytes: total, max_bytes: max, in_storage, in_row_b64, large };
   })();
 
   /**
@@ -1151,6 +1253,162 @@ export function buildHumanLearnBundle(
       } catch (_) { return null; }
     })(),
     /**
+     * ★ 2026-11-15 竹内さん「押した位置も通常モードの録画の画像から連続で読み取れば理解できる
+     *   それを自動に学習させる」「統括お願い」:
+     *   **通常モードの画像×押した位置**を突き合わせて統括に渡す。
+     *   ⚠ 自動の録画は混ぜない（手本は人だけ）。
+     */
+    image_match: (() => {
+      try {
+        const imgFields: Array<{ name: string; kind: string; x?: number; y?: number; zone?: string }> = [];
+        const pressedAcc: Record<string, { n: number; x?: number; y?: number; w?: string }> = {};
+        for (const r of list) {
+          const mode = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
+          if (mode === "aix" || mode === "auto") continue;
+          const x = r as unknown as Record<string, unknown>;
+          const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+          if (sl && Array.isArray(sl.fields)) {
+            for (const f of sl.fields as Array<Record<string, unknown>>) {
+              if (!f || typeof f !== "object") continue;
+              const name = String(f.name ?? "").trim();
+              const kind = String(f.kind ?? "").toLowerCase();
+              if (!name || !kind) continue;
+              imgFields.push({
+                name, kind,
+                ...(typeof f.x === "number" ? { x: f.x } : {}),
+                ...(typeof f.y === "number" ? { y: f.y } : {}),
+                ...(typeof f.zone === "string" ? { zone: f.zone } : {}),
+              });
+            }
+          }
+          const pf = x.point_fields;
+          if (pf && typeof pf === "object" && !Array.isArray(pf)) {
+            for (const [k, v] of Object.entries(pf as Record<string, Record<string, unknown>>)) {
+              if (!k || !v || typeof v !== "object") continue;
+              const cur = pressedAcc[k] || { n: 0 };
+              cur.n += Number(v.n) || 1;
+              if (typeof v.x === "number") cur.x = v.x;
+              if (typeof v.y === "number") cur.y = v.y;
+              if (typeof v.w === "string") cur.w = v.w;
+              pressedAcc[k] = cur;
+            }
+          }
+        }
+        // 画像欄は名前ごとに畳む。★種類は多数決（1枚判定のゆらぎを潰す・統括Pro 2026-11-16）
+        const byName = new Map<string, {
+          name: string; kind: string; x?: number; y?: number; zone?: string; n: number;
+          kindVotes: Record<string, number>;
+        }>();
+        for (const f of imgFields) {
+          const cur = byName.get(f.name);
+          if (!cur) {
+            byName.set(f.name, {
+              ...f, n: 1, kindVotes: { [f.kind]: 1 },
+            });
+          } else {
+            cur.n++;
+            cur.kindVotes[f.kind] = (cur.kindVotes[f.kind] || 0) + 1;
+            if (f.x != null && cur.x == null) cur.x = f.x;
+            if (f.y != null && cur.y == null) cur.y = f.y;
+            if (f.zone && !cur.zone) cur.zone = f.zone;
+          }
+        }
+        const uniq = [...byName.values()].map((f) => {
+          const best = Object.entries(f.kindVotes).sort((a, b) => b[1] - a[1])[0];
+          const { kindVotes: _kv, ...rest } = f;
+          return { ...rest, kind: best ? best[0] : f.kind };
+        });
+        const match = matchImageToPressed(uniq, pressedAcc);
+        const withScreenPos = uniq.filter((f) => typeof f.x === "number" && typeof f.y === "number").length;
+        return {
+          imageFields: match.imageFields,
+          pressedFields: match.pressedFields,
+          matched: match.matched.length,
+          withScreenPos,
+          say: whatSupervisorCanSay(match),
+          line: match.line,
+        };
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+     *   束に載った画面位置と、拡張が読んだか・自動が新束のあと走ったかを渡す。
+     *
+     * ★ 2026-11-15「ボトルネック改善／会話の時統括把握」:
+     *   写真 Storage → 操作 → 束 → 拡張読取 → 自動 の段階と、止まっている所を渡す。
+     */
+    bundle_reflect: (() => {
+      try {
+        let screen_all = 0, screen_solid = 0;
+        for (const s of Object.values(shotLearn.screens)) {
+          for (const f of s.fields ?? []) {
+            if (typeof f.x !== "number" || typeof f.y !== "number") continue;
+            screen_all++;
+            if ((Number(f.n) || 0) >= 3) screen_solid++;
+          }
+        }
+        const hint = {
+          read_count: Number(sceneMeta?.bundle_reflect?.read_count) || 0,
+          read_at: sceneMeta?.bundle_reflect?.read_at ?? null,
+          auto_after: sceneMeta?.bundle_reflect?.auto_after === true,
+          bundle_at: null as string | null,
+        };
+        // 画面位置がまだ無くても、写真保存の把握は出す（会話で「画像は保存されている」と言える）
+        const pipe = buildLinkPipeline({
+          photoInStorage: shotBytes.in_storage,
+          withOps,
+          screenSolid: screen_solid,
+          screenAll: screen_all,
+          hint,
+        });
+        if (screen_all <= 0 && screen_solid <= 0 && shotBytes.in_storage <= 0) return null;
+        return {
+          screen_solid,
+          screen_all,
+          read_count: hint.read_count,
+          read_at: hint.read_at,
+          auto_after: hint.auto_after,
+          line: pipe.line,
+          bottleneck: pipe.bottleneck,
+          bottleneck_n: pipe.bottleneck_n,
+          photo_in_storage: shotBytes.in_storage,
+          steps: pipe.steps,
+        };
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15「改善につながるまで一連の流れをちゃんと統括はできるようにする」:
+     *   連携1〜5に加えて効果確認(6)まで。止まっている段階の次の一手を統括が出せる。
+     */
+    improve_loop: (() => {
+      try {
+        let screen_all = 0, screen_solid = 0;
+        for (const s of Object.values(shotLearn.screens)) {
+          for (const f of s.fields ?? []) {
+            if (typeof f.x !== "number" || typeof f.y !== "number") continue;
+            screen_all++;
+            if ((Number(f.n) || 0) >= 3) screen_solid++;
+          }
+        }
+        const hint = {
+          read_count: Number(sceneMeta?.bundle_reflect?.read_count) || 0,
+          read_at: sceneMeta?.bundle_reflect?.read_at ?? null,
+          auto_after: sceneMeta?.bundle_reflect?.auto_after === true,
+          bundle_at: null as string | null,
+        };
+        const ch = summarizeLatestAutoChallenges(list as never, { hours: 48, nowMs });
+        return buildImproveLoop({
+          photoInStorage: shotBytes.in_storage,
+          withOps,
+          screenSolid: screen_solid,
+          screenAll: screen_all,
+          hint,
+          challengeFields: ch.fields,
+          canMeasure: hint.read_count > 0 && hint.auto_after,
+        });
+      } catch (_) { return null; }
+    })(),
+    /**
      * ★ 2026-11-15 竹内さん「この問題なども把握して補強していくようにする」:
      *   **自動モードが人間のように動けているか**を点検して渡す。
      *   ⚠ 実測: 自動はカーソル35%・押した位置35%・押さずに値が変わる4件。
@@ -1163,7 +1421,37 @@ export function buildHumanLearnBundle(
         return {
           ops: r.ops, typedOnChoose: r.typedOnChoose.length,
           clickedThenChanged: r.clickedThenChanged.length, changedWithoutClick: r.changedWithoutClick.length,
+          changedWithoutClickFields: r.changedWithoutClick.slice(0, 8),
           withCursor: r.withCursor, withPoint: r.withPoint, rows: r.rows,
+          handCursorClicks: r.handCursorClicks,
+          handCursorFields: r.handCursorFields.slice(0, 8),
+        };
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-17 統括Pro「近さ加重スコアを統括束に接続／許可線を数値固定」:
+     *   通常 vs 自動の ops.g 差分。手元スクリプトと同じ式（human-nearness.ts）。
+     */
+    human_nearness: (() => {
+      try {
+        const n = nearnessFromMotionRows(list as never, nowMs);
+        if (!n) return null;
+        return {
+          score: n.score.total,
+          allowed: n.allowed,
+          line: n.line,
+          gaps: n.gaps,
+          auto_fast400pct: n.auto.fast400pct,
+          normal_fast400pct: n.normal.fast400pct,
+          auto_humanBandPct: n.auto.humanBandPct,
+          normal_humanBandPct: n.normal.humanBandPct,
+          auto_p50: n.auto.p50,
+          normal_p50: n.normal.p50,
+          auto_gN: n.auto.gN,
+          normal_gN: n.normal.gN,
+          allow_scoreMin: n.allow.scoreMin,
+          allow_fast400MaxPct: n.allow.fast400MaxPct,
+          allow_humanBandMinPct: n.allow.humanBandMinPct,
         };
       } catch (_) { return null; }
     })(),
@@ -1186,6 +1474,92 @@ export function buildHumanLearnBundle(
         const g = summarizeShotGaps(states);
         return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
       } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習するように」
+     *   「画像を読み取れば学習できる」「弱い部分強化するためによみとる」:
+     *   ⚠ 旧は全モード混ぜの shot_gaps だけだったので、統括が「通常の手本画像を読め」と切れなかった。
+     *   → **通常モードだけ**の抜けを別枠で渡す（自動の画像は手本にしない）。
+     */
+    shot_gaps_normal: (() => {
+      try {
+        const states = list
+          .filter((r) => {
+            const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
+            return m !== "aix" && m !== "auto";
+          })
+          .map((r) => {
+            const x = r as unknown as Record<string, unknown>;
+            const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+            return {
+              w: Number(x.shot_w) || 0,
+              hasKey: !!x.shot_key,
+              learned: !!(sl && typeof sl === "object"),
+              fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
+            };
+          });
+        const g = summarizeShotGaps(states);
+        return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15 竹内さん「画像は最新で録画したらそのことも把握して」
+     *   「自動モードで最新の課題みつけて」「通常モードから改善していく」:
+     *   最新録画の鮮度・自動の最新課題・通常からの改善計画を統括に渡す。
+     */
+    recording_freshness: (() => {
+      try {
+        return summarizeRecordingFreshness(list as never, nowMs);
+      } catch (_) { return null; }
+    })(),
+    latest_auto_challenge: (() => {
+      try {
+        return summarizeLatestAutoChallenges(list as never, { hours: 48, nowMs });
+      } catch (_) { return null; }
+    })(),
+    improve_from_normal: (() => {
+      try {
+        const fresh = summarizeRecordingFreshness(list as never, nowMs);
+        const ch = summarizeLatestAutoChallenges(list as never, { hours: 48, nowMs });
+        return planImproveFromNormal(ch, fresh);
+      } catch (_) { return null; }
+    })(),
+    /**
+     * ★ 2026-11-15「画像から学習した部分はちゃんと改善して更新」:
+     *   課題欄が束（shots.learned の name+x/y、または points の押した位置）に載っているかを見る。
+     */
+    challenge_missing_in_bundle: (() => {
+      try {
+        const ch = summarizeLatestAutoChallenges(list as never, { hours: 48, nowMs });
+        const fields = Array.isArray(ch.fields) ? ch.fields : [];
+        if (!fields.length) return [];
+        const haveXy = new Set<string>();
+        for (const s of Object.values(shotLearn.screens)) {
+          const merged = mergeAliasPositions((s.fields ?? []).map((f) => {
+            const rec = f as { name?: unknown; x?: unknown; y?: unknown; n?: unknown; kind?: unknown; zone?: unknown };
+            return {
+              name: String(rec.name ?? ""),
+              kind: String(rec.kind ?? ""),
+              n: Number(rec.n) || 0,
+              ...(typeof rec.x === "number" ? { x: rec.x } : {}),
+              ...(typeof rec.y === "number" ? { y: rec.y } : {}),
+              ...(typeof rec.zone === "string" ? { zone: rec.zone } : {}),
+            };
+          }));
+          for (const f of merged) {
+            const name = String(f.name ?? "").trim();
+            if (!name) continue;
+            if (typeof f.x !== "number" || typeof f.y !== "number") continue;
+            haveXy.add(name);
+          }
+        }
+        // 人が押した位置（points）も「更新済み」とみなす（required_time 等）
+        for (const [k, v] of Object.entries(points || {})) {
+          const p = v as { x?: unknown; y?: unknown };
+          if (typeof p?.x === "number" && typeof p?.y === "number") haveXy.add(k);
+        }
+        return fields.filter((f) => !fieldHasPosition(f, haveXy)).slice(0, 12);
+      } catch (_) { return []; }
     })(),
     /**
      * ★ 2026-11-15 竹内さん「この自動モードの改善は録画している学習データから統括が改善する」:
@@ -1278,6 +1652,9 @@ export function buildHumanLearnBundle(
         causes: audits.causes,
         bad: audits.bad,
         top_problem: audits.top_problem,
+        advice: audits.advice ?? null,
+        // ★ 完了→次客（統括Proが把握する原子）
+        handoff: audits.handoff ?? null,
       }
       : null,
   /**
@@ -1316,6 +1693,8 @@ export function buildHumanLearnBundle(
     stopped_scene: typeof sceneMeta?.stopped_scene === "string" ? sceneMeta.stopped_scene : null,
     /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績（点は上げない） */
     improvements: sceneMeta?.improvements ?? null,
+    /** ★ 2026-11-17: 学習土台点検を統括へ（F29〜F32 を把握・統括できる形） */
+    foundation_audit: sceneMeta?.foundation_audit ?? null,
   } as SupervisorInput);
 
   /**
@@ -1331,16 +1710,17 @@ export function buildHumanLearnBundle(
     const sPoints = learnPoints(sub);
     const sOpens = learnOpens(sub);
     /** 写真として学べる行（操作の並び・押した欄・順番がある物）だけを、型の合う形にそろえる */
-    const sShotRows: Array<{ url?: unknown; shot_ops?: unknown; shot_learn?: unknown; point_fields?: unknown; field_order?: unknown }> = [];
+    const sShotRows: Array<{ url?: unknown; shot_ops?: unknown; shot_learn?: unknown; point_fields?: unknown; field_order?: unknown; mode?: unknown }> = [];
     for (const r of sub) {
       const x = r as unknown as Record<string, unknown>;
       const hasMat = (Array.isArray(x.shot_ops) && x.shot_ops.length > 0)
         || (Array.isArray(x.field_order) && x.field_order.length > 0)
-        || (x.point_fields && typeof x.point_fields === "object");
+        || (x.point_fields && typeof x.point_fields === "object")
+        || (x.shot_learn && typeof x.shot_learn === "object");
       if (!hasMat) continue;
-      sShotRows.push({ url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, point_fields: x.point_fields, field_order: x.field_order });
+      sShotRows.push({ url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode });
     }
-    const sShots = learnFromShots(sShotRows);
+    const sShots = learnFromShots(sShotRows, { mode: "normal" });
     /** 一連の動きの数（`sequencesOf` は1行ずつ受け取る） */
     let sSeqN = 0;
     for (const r of sub) {
@@ -1429,6 +1809,69 @@ export function buildHumanLearnBundle(
        */
       prev: null,
       site: siteName,
+      /**
+       * ★ 2026-11-15: サイト別でも通常モードの画像抜けを渡す
+       *   （全体だけだとサイト別統括が「通常から読め」と言えない）。
+       */
+      shot_gaps_normal: (() => {
+        try {
+          const states = sub
+            .filter((r) => {
+              const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
+              return m !== "aix" && m !== "auto";
+            })
+            .map((r) => {
+              const x = r as unknown as Record<string, unknown>;
+              const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+              return {
+                w: Number(x.shot_w) || 0,
+                hasKey: !!x.shot_key,
+                learned: !!(sl && typeof sl === "object"),
+                fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
+              };
+            });
+          const g = summarizeShotGaps(states);
+          return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
+        } catch (_) { return null; }
+      })(),
+      /** ★ 2026-11-17: サイト別も近さ差分を統括へ（許可線） */
+      human_nearness: (() => {
+        try {
+          const n = nearnessFromMotionRows(sub as never, nowMs);
+          if (!n) return null;
+          return {
+            score: n.score.total,
+            allowed: n.allowed,
+            line: n.line,
+            gaps: n.gaps,
+            auto_fast400pct: n.auto.fast400pct,
+            normal_fast400pct: n.normal.fast400pct,
+            auto_humanBandPct: n.auto.humanBandPct,
+            normal_humanBandPct: n.normal.humanBandPct,
+            auto_p50: n.auto.p50,
+            normal_p50: n.normal.p50,
+            auto_gN: n.auto.gN,
+            normal_gN: n.normal.gN,
+            allow_scoreMin: n.allow.scoreMin,
+            allow_fast400MaxPct: n.allow.fast400MaxPct,
+            allow_humanBandMinPct: n.allow.humanBandMinPct,
+          };
+        } catch (_) { return null; }
+      })(),
+      human_like: (() => {
+        try {
+          const r = auditHumanLike(sub as never);
+          if (!r.ops) return null;
+          return {
+            ops: r.ops, typedOnChoose: r.typedOnChoose.length,
+            clickedThenChanged: r.clickedThenChanged.length, changedWithoutClick: r.changedWithoutClick.length,
+            changedWithoutClickFields: r.changedWithoutClick.slice(0, 8),
+            withCursor: r.withCursor, withPoint: r.withPoint, rows: r.rows,
+            handCursorClicks: r.handCursorClicks,
+            handCursorFields: r.handCursorFields.slice(0, 8),
+          };
+        } catch (_) { return null; }
+      })(),
     });
   }
   const bundle: HumanLearnBundle = {
@@ -1457,6 +1900,7 @@ export function buildHumanLearnBundle(
      *     → **名前から分かる物だけ推測で補う**（実測がある欄は実測を優先）。
      */
     opens: withGuessedOpens(opens, [...Object.keys(points), ...Object.keys(next)]),
+    ...(Object.keys(cursor_hand).length ? { cursor_hand } : {}),
     gaps: { median_ms: median(gapSamples), samples: gapSamples.length },
     supervisor,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
@@ -1478,10 +1922,13 @@ export function buildHumanLearnBundle(
       shots: {
         total: shotLearn.total,
         with_ops: shotLearn.withOps,
+        /** Storage 保存済み（shot_key）＝正本。統括が「画像はDBに保存されている」と把握する */
+        in_storage: shotBytes.in_storage,
+        in_row_b64: shotBytes.in_row_b64,
+        large: shotBytes.large,
         /** 写真から読んだ欄の種類（画面ごと） */
         learned: Object.fromEntries(
-          Object.entries(shotLearn.screens).map(([screen, v]) => [
-            screen,
+          Object.entries(shotLearn.screens).map(([screen, v]) => {
             /**
              * ★ 2026-11-15 竹内さん「理論上この通常のように自動もできる」「実装する」:
              *   ⚠ 実測: ここで **`x`/`y` を落としていた**ので、束には名前と種類しか入っていなかった。
@@ -1489,8 +1936,12 @@ export function buildHumanLearnBundle(
              *     ＝ 押した記録が無い欄は狙えない状態だった。
              *   → **`x`/`y`（画面の位置）と `zone`（領域）も載せる**。
              *     ⚠ 押した記録が無い欄でも、画像の位置から狙えるようになる。
+             *
+             * ★ 2026-11-15「画像から学習した部分はちゃんと改善して更新」:
+             *   実測: `transportation_id` は n だけ・`駅からの移動手段` は x/y あり。
+             *   → 別名の位置を HTML name 側へ移してから束に載せる。
              */
-            (v.fields ?? []).slice(0, 40).map((f) => {
+            const mapped = (v.fields ?? []).slice(0, 40).map((f) => {
               const rec = f as unknown as { name?: unknown; kind?: unknown; n?: unknown; x?: unknown; y?: unknown; zone?: unknown };
               return {
                 name: String(rec.name ?? "").slice(0, 40),
@@ -1500,8 +1951,9 @@ export function buildHumanLearnBundle(
                 ...(typeof rec.y === "number" ? { y: rec.y } : {}),
                 ...(typeof rec.zone === "string" && rec.zone ? { zone: String(rec.zone).slice(0, 10) } : {}),
               };
-            }),
-          ]),
+            });
+            return [screen, mergeAliasPositions(mapped)];
+          }),
         ),
         /** 種類の内訳（すぐ集計できる形・統括が「プルダウンが何個」と言える） */
         kinds: (() => {
@@ -1558,15 +2010,37 @@ export function buildHumanLearnBundle(
  */
 export async function saveSupervisorForBundle(
   bundle: HumanLearnBundle,
-): Promise<{ all: { ok: boolean; skipped?: string; error?: string }; by_site: Record<string, { ok: boolean; skipped?: string; error?: string }> }> {
-  const out: { all: { ok: boolean; skipped?: string; error?: string }; by_site: Record<string, { ok: boolean; skipped?: string; error?: string }> } = {
+): Promise<{
+  all: { ok: boolean; skipped?: string; error?: string };
+  by_site: Record<string, { ok: boolean; skipped?: string; error?: string }>;
+  pro?: { used: boolean; model: string | null; why?: string | null };
+}> {
+  const out: {
+    all: { ok: boolean; skipped?: string; error?: string };
+    by_site: Record<string, { ok: boolean; skipped?: string; error?: string }>;
+    pro?: { used: boolean; model: string | null; why?: string | null };
+  } = {
     all: { ok: false, skipped: "not_attempted" },
     by_site: {},
   };
   try {
     const { saveSupervisorLog } = await import("./learn-supervisor-db");
-    const sv = bundle.supervisor;
+    let sv = bundle.supervisor;
     if (!sv) { out.all = { ok: false, skipped: "no_supervisor" }; return out; }
+    /**
+     * ★ 2026-11-16: 画像=flash／まとめ=Pro の連携。
+     *   決定論の関所のあと、Pro が今日の言葉・連携の穴・足りない土台を判断（verdict は変えない）。
+     *   失敗理由も残す（Proが動いていないのを隠さない）。
+     */
+    try {
+      const { enrichSupervisorWithPro } = await import("./learn-supervisor-pro");
+      const enriched = await enrichSupervisorWithPro(sv);
+      sv = enriched.advice;
+      bundle.supervisor = sv;
+      out.pro = { used: enriched.usedPro, model: enriched.model, why: enriched.why };
+    } catch (e) {
+      out.pro = { used: false, model: null, why: "exception:" + String((e as Error)?.message || e).slice(0, 80) };
+    }
     const base = {
       next_n: Object.keys(bundle.next || {}).length,
       points_n: Object.keys(bundle.points || {}).length,
@@ -1780,10 +2254,28 @@ export function describeBundle(b: HumanLearnBundle): string[] {
 export function compactBundle(b: HumanLearnBundle): HumanLearnBundle {
   const next: Record<string, NextStat> = {};
   Object.entries(b.next).slice(0, 120).forEach(([k, v]) => { next[k] = v; });
+  /**
+   * ★ 自動強化徹底: 別名キーにも位置を複製してから上位を残す
+   *   （拡張は名前の完全一致だけ見る・沿線を選ぶ／route_id[] など）
+   */
+  const expandedPts = expandAliasPoints(b.points);
   const points: Record<string, PointStat> = {};
-  Object.entries(b.points)
+  Object.entries(expandedPts)
     .sort((a, c) => c[1].n - a[1].n)
-    .slice(0, 120)
+    .slice(0, 160)
     .forEach(([k, v]) => { points[k] = v; });
-  return { ...b, next, points, buttons: b.buttons.slice(0, 30) };
+  const shots = b.shots
+    ? {
+        ...b.shots,
+        learned: b.shots.learned
+          ? Object.fromEntries(
+              Object.entries(b.shots.learned).map(([screen, list]) => [
+                screen,
+                expandAliasLearnedFields(mergeAliasPositions(list as never)).slice(0, 60),
+              ]),
+            )
+          : b.shots.learned,
+      }
+    : b.shots;
+  return { ...b, next, points, buttons: b.buttons.slice(0, 30), ...(shots ? { shots } : {}) };
 }

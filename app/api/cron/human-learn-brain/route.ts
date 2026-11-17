@@ -27,7 +27,9 @@ const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key", "id",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn",
+  /** Storage 保存の把握に必須（shot_b64 は重いので読まない） */
+  "shot_taken", "shot_key", "shot_w", "shot_h", "id",
 ].join(", ");
 /**
  * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
@@ -160,16 +162,25 @@ export async function GET(req: NextRequest) {
    */
   let written = 0;
   let tableMissing = false;
+  let wipeBlocked = 0;
   if (!dry) {
+    const { inheritLinkFoundations } = await import("@/app/lib/learn-bundle-preserve");
     for (const p of payloads) {
       try {
+        const b = p.bundle as unknown as Record<string, unknown>;
+        const pr = await inheritLinkFoundations(supabase, b, p.scope, { lookback: 20, minSolid: 30 });
+        if (!pr.safe_to_write) {
+          wipeBlocked++;
+          console.warn("[cron/human-learn-brain] 消す書き込み拒否", p.scope, pr.why);
+          continue;
+        }
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,
           source_rows: p.bundle.source.rows,
           source_from: p.bundle.source.from,
           source_to: p.bundle.source.to,
           ext_version: extVersion,
-          bundle: p.bundle,
+          bundle: b,
           lines: p.bundle.lines,
         });
         if (insErr) {
@@ -203,6 +214,7 @@ export async function GET(req: NextRequest) {
     table_missing: tableMissing,
     scopes: payloads.map((p) => p.scope),
     written,
+    wipe_blocked: wipeBlocked,
     learned: {
       next: Object.keys(all.next).length,
       points: Object.keys(all.points).length,

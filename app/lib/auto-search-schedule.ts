@@ -190,8 +190,11 @@ export const PM_LATEST = {
  */
 export const AM_DAILY = {
   sort: "ad" as const,
-  /** 2026-09-30 v2.5.42 3 → 5ページ（SEARCH_MAX_PAGES） */
-  maxPages: SEARCH_MAX_PAGES,
+  /**
+   * 2026-11-16 竹内「最大3で大丈夫／新着は最大5」:
+   *   既定は 3（plan_by_customer が無い legacy）。新着は plan 側で 5。
+   */
+  maxPages: 3,
   /**
    * 2026-09-30 v2.5.44 竹内さんの決定: 午前もピンポイントから（足りなければ新規だけ chain の広げて）。
    *   お客様ごとの並び・更新日・止める線は auto-search-plan（payload.plan_by_customer）。

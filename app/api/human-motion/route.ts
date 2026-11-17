@@ -244,6 +244,29 @@ export async function POST(req: NextRequest) {
           ...(typeof r.was === "boolean" ? { was: r.was } : {}),
           ...(typeof r.now === "boolean" ? { now: r.now } : {}),
           /**
+           * ★ 2026-11-16 DB実測: 拡張は `cs`（pointer/default）を送っているのに
+           *   ここで捨てていた → 手の形が永久に 0（直近2日 ops 44570件で cs=pointer 0）。
+           *   → **種類だけ通す**（中身は入れない）。
+           * ★ 2026-11-17: 押す系で欠落なら pointer を補完（録画→改善の土台F4が永久0を防ぐ）。
+           */
+          ...(() => {
+            let cs = typeof r.cs === "string" && r.cs ? String(r.cs).slice(0, 12) : "";
+            if (!cs) {
+              const w = String(r.w || "");
+              const f = String(r.f || "");
+              if (/checkbox|radio|button|select|link|label|click/.test(w)
+                || /one_city|one_station|one_line|city_code|station|route|go_search|room_layout|絞り込み|検索/.test(f)) {
+                cs = "pointer";
+              }
+            }
+            return cs ? { cs } : {};
+          })(),
+          /**
+           * ★ 2026-11-17 録画→改善: 何が開いたか（modal/options）も通す。
+           *   拡張は送っていたが API で捨て → プルダウン理解の土台が欠ける。
+           */
+          ...(typeof r.opened === "string" && r.opened ? { opened: String(r.opened).slice(0, 20) } : {}),
+          /**
            * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
            *   そこを理解して学習する」:
            *   **人が押したのか拡張が押したのか**（`isTrusted` から作った印）を残す。

@@ -263,7 +263,14 @@
     var list = Array.isArray(items) ? items.slice() : [];
     var o = opt || {};
     var min = o.min == null ? 2 : o.min;              // 2回以上そろった物だけ信じる
-    var wobble = o.wobble == null ? 0.2 : o.wobble;   // 人が時々順番を変える分
+    /**
+     * ★ 2026-11-16 竹内さん「お客さんによって動きがカーソル等含めて全く同じ／毎回違うように」:
+     *   旧デフォルト 0.2 だと、学んだ鎖に載った欄が多い時は揺らぎ候補がほぼ0で
+     *   **毎回同じ順**に見えた。人は同じお客でも少し順を変えるので、既定を上げる。
+     */
+    // ★ 2026-11-16「毎回違う／変則」: 既定をさらに上げる（直接の学んだ組は壊さない）
+    var wobble = o.wobble == null ? 0.72 : o.wobble;
+    var maxSwaps = o.maxSwaps == null ? 3 : Math.max(0, Math.min(5, Number(o.maxSwaps) || 0));
     var rand = typeof o.rand === "function" ? o.rand : Math.random;
     var map = (next && typeof next === "object") ? next : {};
     if (list.length < 2) return { items: list, changed: false, used: [], wobbled: false };
@@ -320,42 +327,43 @@
     out = NAMED.map(function (x) { return x.it; });
 
     /**
-     * 人の揺らぎ（2026-11-13 竹内さん「人間の動きにするのが絶対やで」）:
-     *   2割の確率で、隣り合う2つを入れ替える（大きく崩さない）。
-     *   ⚠ 入れ替えるのは**学んだ組が無い所**だけ（学んだ順を壊さない）。
+     * 人の揺らぎ（2026-11-13 竹内さん「人間の動きにするのが絶対やで」）
+     * ★ 2026-11-16 竹内さん「毎回違うように／カーソル・順番」:
+     *   旧: 学んだ組に**一度でも出た欄**は全部触れない → 鎖が長いと候補0＝毎回同じ。
+     *   新: **隣り合う直接の組（A→B）だけ壊さない**。鎖の外の隣同士は入れ替えてよい。
+     *   最大 maxSwaps 回まで（大きく崩さない）。
      */
     var wobbled = false;
-    if (wobble > 0 && out.length >= 3 && rand() < wobble) {
-      /**
-       * 入れ替えてよい所 = **学んだ組に関係しない隣り合う2つ**。
-       *   どちらも「学んだ組の from でも to でもない」所だけ（学んだ順を壊さない）。
-       */
-      var touching = {};
-      Object.keys(map).forEach(function (f) {
-        if (!map[f] || !map[f].next) return;
-        touching[f] = true;
-        touching[String(map[f].next)] = true;
-      });
-      var cand = [];
-      /**
-       * ⚠ 2026-11-13 竹内さん「抜けている部分ないのか」で発見:
-       *   ここも `names[list.indexOf(out[w])]` で**元の位置の名前**を引いていた
-       *   （並べ替えた後の並びと名前がずれる → **学んだ組を壊す所を入れ替えてしまう**恐れ）。
-       *   → `out` の並びに追従する名前の一覧（`namesOf`）を作って引く。
-       */
+    if (wobble > 0 && out.length >= 3 && maxSwaps > 0) {
       var namesOf = out.map(function (it) {
         var k0 = list.indexOf(it);
         return k0 >= 0 ? names[k0] : null;
       });
-      for (var w = 0; w + 1 < out.length; w++) {
-        var na = namesOf[w], nb = namesOf[w + 1];
-        if (na && nb && !touching[na] && !touching[nb]) cand.push(w);
-      }
-      if (cand.length) {
+      var isDirectEdge = function (a, b) {
+        if (!a || !b) return false;
+        var e = map[a];
+        if (!e || !e.next) return false;
+        if (String(e.next) !== String(b)) return false;
+        return Number(e.n) >= min;
+      };
+      var swapsDone = 0;
+      for (var sw = 0; sw < maxSwaps; sw++) {
+        if (rand() >= wobble) continue;
+        var cand = [];
+        for (var w = 0; w + 1 < out.length; w++) {
+          var na = namesOf[w], nb = namesOf[w + 1];
+          // 直接の学んだ組（A→B）を逆にしない。それ以外の隣は入れ替え可
+          if (na && nb && isDirectEdge(na, nb)) continue;
+          cand.push(w);
+        }
+        if (!cand.length) break;
         var pick = cand[Math.floor(rand() * cand.length)];
         var tmp = out[pick]; out[pick] = out[pick + 1]; out[pick + 1] = tmp;
+        var tmpN = namesOf[pick]; namesOf[pick] = namesOf[pick + 1]; namesOf[pick + 1] = tmpN;
         wobbled = true;
+        swapsDone++;
       }
+      if (swapsDone > 0) { /* 点検用に残す余地 */ }
     }
 
     var changed = out.some(function (it, k) { return it !== list[k]; });

@@ -17,27 +17,99 @@
 //   ⚠ 入力された中身（数字・文字・お客様の名前・住所）は**絶対に読ませない**（プロンプトで禁止）。
 //
 // 費用:
-//   ⚠ Vision は1枚ごとにお金がかかる。**弱い所がある記録だけ**・**1回の上限枚数**を決めて読む。
-//     既定は 20枚まで（`SHOT_LEARN_MAX` で変えられる）。
+//   ⚠ Vision は1枚ごとにお金がかかる。**弱い所がある記録だけ**・枚数は統括が課題に応じて決める。
+//     ★ 2026-11-16: 上限20固定を廃止。課題が解けるまで読む（硬上限は shot-learn-limit.ts）。
 //   実行は**明示的に呼ばれた時だけ**（cron の自動では走らせない）。
 import { supabase } from "./supabase-server";
 import { SHOT_LEARN_PROMPT, parseShotLearn, type ShotLearn } from "./shot-learn";
+import {
+  resolveShotLearnLimit,
+  shotLearnMax as shotLearnMaxFromLimit,
+  shotLearnModel,
+} from "./shot-learn-limit";
+
+export { shotLearnModel } from "./shot-learn-limit";
 
 const BUCKET = "human-motion-shots";
 
-/** 1回に読む枚数の上限（費用の歯止め） */
+/** 1回に読む枚数の既定／環境変数（費用の硬上限は shot-learn-limit） */
 export function shotLearnMax(env: Record<string, string | undefined> = process.env): number {
-  const v = Number(env.SHOT_LEARN_MAX);
-  if (Number.isFinite(v) && v > 0) return Math.min(60, Math.floor(v));
-  return 20;
+  return shotLearnMaxFromLimit(env);
 }
+export { photoLearnLimitFor, shotLearnHardCap, resolveShotLearnLimit } from "./shot-learn-limit";
 
 /** `shot_learn` がまだ無い記録から、写真の置き場所（shot_key）を集める */
-export async function findShotsToLearn(opt: { site?: string | null; mode?: string | null; days?: number; limit?: number } = {}): Promise<
-  Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number }>
+/**
+ * ★ 2026-11-16 仕組み㉑「1つずつリアプロのボタンを理解してそれぞれ強化」:
+ *   shot_ops の欄名が、今理解したいボタン／欄に当たるか。
+ *   （「所在地絞り込み＋」↔「左の所在地絞り込み＋｜span」など）
+ */
+export function shotOpsMatchFocus(
+  ops: Array<{ f?: unknown; k?: unknown }> | null | undefined,
+  focusFields: readonly string[] | null | undefined,
+): boolean {
+  if (!focusFields || !focusFields.length) return true;
+  const needles = focusFields
+    .map((s) => String(s || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!needles.length) return true;
+  const hay = (ops || [])
+    .map((o) => String(o?.f ?? "").toLowerCase())
+    .filter(Boolean);
+  if (!hay.length) return false;
+  return needles.some((n) => hay.some((h) => h === n || h.includes(n) || n.includes(h)));
+}
+
+export async function findShotsToLearn(opt: {
+  site?: string | null;
+  mode?: string | null;
+  days?: number;
+  limit?: number;
+  /** 時刻の下限（ISO）。指定時は days より優先（例: まりあさんの通常録画の窓） */
+  from?: string | null;
+  /** 時刻の上限（ISO・含まない） */
+  to?: string | null;
+  /** 同じ操作並びの写真を何枚まで読むか（既定1・位置の票を増やす時は2〜3） */
+  perSig?: number;
+  /**
+   * ★ 2026-11-15 竹内さん「画像も順番で時間で学習すればより強化される」「細かく強化」「連続録画で」:
+   *   `size` = 大きい順（既定・窓が開いた瞬間を優先）
+   *   `time` = **連続録画の時間順**（created_at 古い→新しい）。流れに沿って位置を固める。
+   */
+  order?: "size" | "time" | "newest";
+  /**
+   * 時間順のとき、同じ画面の写真を何ms以上空けて取るか（細かく=小さい値）。
+   *   既定: size=無視 / time=1500 / fine時は800。
+   */
+  strideMs?: number;
+  /**
+   * ★ 2026-11-16 仕組み㉑: このボタン／欄の操作が写っている写真を**先に**取る。
+   *   当たる物が足りなければ、当たる物だけで止める（他ボタンの写真で薄めない）。
+   */
+  focusFields?: string[] | null;
+} = {}): Promise<
+  Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number; created_at?: string }>
 > {
   const days = Math.max(1, Math.min(30, opt.days ?? 7));
-  const since = new Date(Date.now() - days * 86400_000).toISOString();
+  /**
+   * ⚠ 時刻に時差が無いと `new Date(...)` が**ローカル**になり、DB（+00:00）と窓がズレる
+   *   （実測: まりあ 09:32 UTC が JST 解釈で 00:32 になり「0件」）。
+   *   → 時差無しは UTC（末尾 Z）として扱う。
+   */
+  const asUtc = (s: string) => {
+    const t = String(s).trim();
+    if (!t) return null;
+    const withTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(t) ? t : t + "Z";
+    const ms = Date.parse(withTz);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  };
+  const since = (opt.from && asUtc(opt.from)) || new Date(Date.now() - days * 86400_000).toISOString();
+  const until = opt.to ? asUtc(opt.to) : null;
+  /**
+   * ★ 2026-11-15「画像は最新で録画したらそのことも把握」「通常から改善」:
+   *   `newest` = 新しい順（最新録画を先に読む）。`time` = 古い→新しい（連続の流れ）。
+   */
+  const order = opt.order === "time" ? "time" : opt.order === "newest" ? "newest" : "size";
   /**
    * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（2回目の罠）**:
    *   直近の写真を `limit` 件だけ取ってから並べ替えていたので、
@@ -45,30 +117,58 @@ export async function findShotsToLearn(opt: { site?: string | null; mode?: strin
    *   「読めた0枚」になっていた（実測: 480x244 を3枚連続で読んで全滅）。
    *   → **DBの側で大きい順に並べて取る**（`order("shot_w")`）。
    *     ⚠ limit より前に並べる（取ってから並べ替えると窓の外が漏れる）。
+   *
+   * ★ 2026-11-15「順番で時間で」「連続録画で」:
+   *   `order=time` のときは **created_at 昇順**（録画の流れどおり）。
    */
+  const focusEarly = (opt.focusFields || []).map((s) => String(s || "").trim()).filter(Boolean);
   let q = supabase
     .from("human_motion_learn")
-    .select("id, shot_key, site, mode, shot_w, shot_taken, shot_learn, shot_ops")
+    .select("id, shot_key, site, mode, shot_w, shot_taken, shot_learn, shot_ops, created_at")
     .gte("created_at", since)
-    .eq("shot_taken", true)
-    /**
-     * ★ 2026-11-15 竹内さん「通常モードの録画でもちゃんと学習できるように」→ **実測で判明（3回目の罠）**:
-     *
-     *   ⚠ 大きい順に `limit` 件取ると、**学習済みの大きい写真が枠を埋めて**
-     *     **未学習が1件も入らない**（実測: 20件全部が学習済みで「読む物がありません」になった）。
-     *     未学習は742枚もあるのに0件と表示された。
-     *
-     *   → **未学習だけをDBで絞る**（`shot_learn IS NULL`）。
-     *     取ってから絞ると、枠が学習済みで埋まって同じ事になる。
-     */
-    .is("shot_learn", null)
-    .order("shot_w", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    /**
-     * ⚠ 同じ画面を1枚に絞るので、**多めに取る**（`limit` の4倍・最大2000）。
-     *   取る数が少ないと、同じ画面ばかりで1枚しか残らない。
-     */
-    .limit(Math.max(200, Math.min(2000, (opt.limit ?? 200) * 4)));
+    .eq("shot_taken", true);
+  /**
+   * ★ 2026-11-15 竹内さん「通常モードの録画でもちゃんと学習できるように」→ **実測で判明（3回目の罠）**:
+   *
+   *   ⚠ 大きい順に `limit` 件取ると、**学習済みの大きい写真が枠を埋めて**
+   *     **未学習が1件も入らない**（実測: 20件全部が学習済みで「読む物がありません」になった）。
+   *     未学習は742枚もあるのに0件と表示された。
+   *
+   *   → **未学習だけをDBで絞る**（`shot_learn IS NULL`）。
+   *     取ってから絞ると、枠が学習済みで埋まって同じ事になる。
+   *
+   * ★ 2026-11-16 仕組み㉑（1つずつ）: focus がある時は**そのボタンの操作写真**を取る。
+   *   未学習が尽きていても、学習済みを再読してそのボタンだけ強化する（まとめての枠埋め罠とは別）。
+   */
+  if (!focusEarly.length) {
+    q = q.is("shot_learn", null);
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「進めてよい」→ **実測で判明（4回目の罠）**:
+   *   統括は通常モードの読める未学習 **528枚** と言ったのに、`findShotsToLearn` は **0件**。
+   *   なぜ: `order=time` で古い順に1600件取ると、枠が **480px（読めない）** で埋まり、
+   *   取った後の `shot_w >= 800` で全滅する（実測: nullLearn 先頭5000件は small 4964 / big 36）。
+   *   → **読める大きさ（800px以上）をDBで先に絞る**。統括の「まだ読める」と実行が一致する。
+   */
+  q = q.gte("shot_w", 800);
+  if (order === "time") {
+    q = q.order("created_at", { ascending: true }).order("shot_w", { ascending: false, nullsFirst: false });
+  } else if (order === "newest") {
+    q = q.order("created_at", { ascending: false }).order("shot_w", { ascending: false, nullsFirst: false });
+  } else {
+    q = q.order("shot_w", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
+  }
+  /**
+   * ⚠ 同じ画面を1枚に絞るので、**多めに取る**（`limit` の4倍・最大2000）。
+   *   時間順・細かく取る時は枠を広げて連続録画を落とさない。
+   * ★ 仕組み㉑ focus 時: メモリでボタン照合するので枠を最大まで広げる
+   *   （実測: 200件だと「所在地絞り込み＋」が0枚・沿線は4枚、とムラが出る）。
+   */
+  const fetchCap = focusEarly.length
+    ? 2000
+    : Math.max(200, Math.min(2000, (opt.limit ?? 200) * (order === "time" || order === "newest" ? 8 : 4)));
+  q = q.limit(fetchCap);
+  if (until) q = q.lt("created_at", until);
   if (opt.site && opt.site !== "all") q = q.eq("site", opt.site);
   /**
    * ★ 2026-11-15 竹内さん「通常モードの写真から学習する」:
@@ -88,26 +188,64 @@ export async function findShotsToLearn(opt: { site?: string | null; mode?: strin
    *     ・**480px 未満は読まない**（実測: 欄が1つも読めない＝お金の無駄）
    *     ・**同じ画面（操作の並びが同じ）は1枚だけ**（実測: 475枚のうち画面は82通りだけ）
    *     ・**大きい順**に読む（小窓が開いた瞬間の写真が一番読める）
+   *     ・**時間順**（`order=time`）なら連続録画の流れどおり・同じ画面も stride 空けて細かく取る
    */
-  const rows = ((data ?? []) as Array<{ id: unknown; shot_key?: string | null; site?: string | null; mode?: string | null; shot_w?: number | null; shot_learn?: unknown; shot_ops?: unknown }>)
-    .filter((r) => !!r.shot_key && !r.shot_learn)
+  type Row = {
+    id: unknown; shot_key: string; site: string | null; mode: string | null;
+    shot_w: number; created_at: string; shot_ops: Array<{ f?: unknown; k?: unknown }> | null;
+  };
+  type RowX = Row & { learned: boolean };
+  const rows: RowX[] = ((data ?? []) as Array<{
+    id: unknown; shot_key?: string | null; site?: string | null; mode?: string | null;
+    shot_w?: number | null; shot_learn?: unknown; shot_ops?: unknown; created_at?: string;
+  }>)
+    .filter((r) => !!r.shot_key && (focusEarly.length ? true : !r.shot_learn))
     .map((r) => ({
       id: r.id, shot_key: String(r.shot_key), site: r.site ?? null, mode: r.mode ?? null,
       shot_w: Number(r.shot_w) || 0,
+      created_at: String(r.created_at ?? ""),
       shot_ops: Array.isArray(r.shot_ops) ? (r.shot_ops as Array<{ f?: unknown; k?: unknown }>) : null,
+      learned: !!r.shot_learn,
     }))
-    .sort((a, b) => b.shot_w - a.shot_w)
     .filter((r) => r.shot_w >= 800);   // ⚠ 480px は読まない
-  // 同じ画面（操作の並びが同じ）は1枚だけ
+  if (order === "time") {
+    rows.sort((a, b) => (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0) || b.shot_w - a.shot_w);
+  } else if (order === "newest") {
+    rows.sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0) || b.shot_w - a.shot_w);
+  } else {
+    rows.sort((a, b) => b.shot_w - a.shot_w);
+  }
+  /**
+   * ★ 仕組み㉑: focus がある時は、そのボタン操作がある行だけを候補にする。
+   *   未学習を先に・足りなければ学習済みを再読（そのボタンだけ強化）。
+   */
+  const focus = focusEarly;
+  let focusedRows = focus.length
+    ? rows.filter((r) => shotOpsMatchFocus(r.shot_ops, focus))
+    : rows;
+  if (focus.length) {
+    focusedRows = [
+      ...focusedRows.filter((r) => !r.learned),
+      ...focusedRows.filter((r) => r.learned),
+    ];
+  }
+  // 同じ画面: 既定1枚。時間順・細かくは perSig と stride で票を増やす（位置の中央値が固まる）
+  const perSig = Math.max(1, Math.min(20, Math.round(opt.perSig ?? (order === "time" || order === "newest" ? 8 : 1)) || 1));
+  const strideMs = Math.max(0, Math.round(opt.strideMs ?? (order === "time" || order === "newest" ? 1500 : 0)) || 0);
   const seen = new Map<string, number>();
-  const out: Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number }> = [];
-  for (const r of rows) {
+  const lastAt = new Map<string, number>();
+  const out: Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number; created_at?: string }> = [];
+  for (const r of focusedRows) {
     const sig = (r.shot_ops ?? []).map((o) => String(o?.f ?? "") + ":" + String(o?.k ?? "")).join("|");
     const key = sig && sig !== ":diag" && sig !== ":" ? sig : "(操作なし)";
     const n = seen.get(key) ?? 0;
-    if (n >= 1) continue;
+    if (n >= perSig) continue;
+    const t = Date.parse(r.created_at) || 0;
+    const prev = lastAt.get(key);
+    if ((order === "time" || order === "newest") && strideMs > 0 && prev != null && Math.abs(t - prev) < strideMs) continue;
     seen.set(key, n + 1);
-    out.push({ id: r.id, shot_key: r.shot_key, site: r.site, mode: r.mode, shot_w: r.shot_w });
+    if (t) lastAt.set(key, t);
+    out.push({ id: r.id, shot_key: r.shot_key, site: r.site, mode: r.mode, shot_w: r.shot_w, created_at: r.created_at });
     if (out.length >= Math.max(1, opt.limit ?? 200)) break;
   }
   return out;
@@ -207,27 +345,21 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
 
     /**
      * ★ 2026-11-15 竹内さん「DeepSeek 対応を入れて画像学習する」:
-     *
-     *   ⚠ 旧は **Claude 固定・max_tokens 2000** だった。
-     *     実測（同じ1920pxの実画面で比較）:
-     *       Claude Haiku     max 2000  → 欄 27個・1.59円
-     *       DeepSeek flash   max 2500  → **0字**（推論 6,762字で打ち切り）
-     *       DeepSeek flash   max 8000  → **0字**（推論 21,320字）
-     *       **DeepSeek flash max 12000 → 欄 58個・0.17円** ← これが一番良い
-     *   → **DeepSeek V4.1 Flash（`deepseek-flash`）を max_tokens 12000** で使う。
-     *     ⚠ 読めない原因は**モデルではなく max_tokens** だった（8000では足りない）。
-     *     ⚠ `thinking:{disabled}` は速いが誤読するので使わない。
-     *     ⚠ Claude は**予備**（DeepSeek のキーが無い時だけ）。
+     *   max_tokens 12000 が必要（短いと推論で打ち切られ 0字）。
+     * ★ 2026-11-16「画像よむのはflashでまとめるのは統括（Pro）」:
+     *   Vision は **deepseek-flash のみ**。Pro は learn-supervisor-pro（まとめ層）。混ぜない。
+     *   ⚠ Claude は DeepSeek キー無し時だけ。thinking disabled は使わない。
      */
     /** 1回読む（base64 を渡す）。⚠ 読めなかった**理由**も返す */
     const ask = async (b64: string, note: string): Promise<{ sl: ShotLearn | null; why: string | null }> => {
       const dsKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
+      const model = shotLearnModel(process.env);
       if (dsKey) {
         const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` },
           body: JSON.stringify({
-            model: (process.env.SHOT_LEARN_MODEL || "deepseek-flash").trim(),
+            model,
             max_tokens: Math.max(12000, Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000),
             reasoning_effort: (process.env.SHOT_LEARN_EFFORT ?? "low").trim(),
             messages: [
@@ -350,11 +482,25 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
  *   ⚠ `dry_run` の時は**読むだけで書かない**（費用を確かめる時）。
  */
 export async function learnFromWeakShots(
-  opt: { site?: string | null; mode?: string | null; days?: number; limit?: number; dryRun?: boolean; noRefresh?: boolean; concurrency?: number; onProgress?: (done: number, total: number, last: string) => void } = {},
+  opt: {
+    site?: string | null; mode?: string | null; days?: number; limit?: number;
+    from?: string | null; to?: string | null; perSig?: number;
+    order?: "size" | "time" | "newest"; strideMs?: number;
+    dryRun?: boolean; noRefresh?: boolean; concurrency?: number;
+    /** 仕組み㉑: このボタン／欄の操作が写っている写真だけ読む */
+    focusFields?: string[] | null;
+    onProgress?: (done: number, total: number, last: string) => void;
+  } = {},
 ): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean }> {
-  const max = Math.max(1, Math.min(shotLearnMax(), opt.limit ?? shotLearnMax()));
+  // ★ 2026-11-16: 統括が付けた limit を尊重（硬上限まで）。旧は shotLearnMax()=60 で潰していた。
+  const max = resolveShotLearnLimit(opt.limit);
   const out: { tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean } = { tried: 0, learned: 0, saved: 0, skipped: 0, fields: 0, errors: [] };
-  const targets = (await findShotsToLearn({ site: opt.site, mode: opt.mode, days: opt.days, limit: max })).slice(0, max);
+  const targets = (await findShotsToLearn({
+    site: opt.site, mode: opt.mode, days: opt.days, limit: max,
+    from: opt.from, to: opt.to, perSig: opt.perSig,
+    order: opt.order, strideMs: opt.strideMs,
+    focusFields: opt.focusFields,
+  })).slice(0, max);
   /**
    * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:
    *   **どの読み方で何枚読めたか**を残す（成功も失敗も）。
@@ -409,7 +555,7 @@ export async function learnFromWeakShots(
     try {
       const { saveReadRecipeScore } = await import("./read-recipe");
       const recipe = {
-        model: (process.env.SHOT_LEARN_MODEL || "deepseek-flash"),
+        model: shotLearnModel(process.env),
         maxTokens: Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000,
         effort: process.env.SHOT_LEARN_EFFORT || "low",
         area: "whole" as const,
@@ -442,18 +588,51 @@ export async function learnFromWeakShots(
         all.push(...((r.data ?? []) as Array<Record<string, unknown>>));
         if ((r.data ?? []).length < 1000) break;
       }
-      const nowIso = new Date().toISOString();
-      const bundle = compactBundle(buildHumanLearnBundle(all as never, Date.now()));
+      const nowMs = Date.now();
+      const bundle = compactBundle(buildHumanLearnBundle(all as never, nowMs));
       /**
        * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列は id・created_at・scope・source_rows・
        *   source_from・source_to・ext_version・bundle・lines・read_at・read_count）。
        *   入れると `Could not find the 'generated_at' column` で**束が作れない**。
        *   → `created_at` は自動で入るので、**送らない**（bundle の中に生成時刻を持たせる）。
+       *
+       * ★ 2026-11-15「改善したら更新されていく」「ボトルネック」:
+       *   ⚠ 実測: `all` だけ更新して `realpro` が古いまま → 拡張が古い realpro（x/y=0）を優先して
+       *     新しい学びが自動に届かなかった。→ **サイト別も同じタイミングで書く**。
        */
-      const ins = await supabase.from("human_learn_profile").insert({ scope: "all", source_rows: all.length, bundle });
-      out.refreshed = !ins.error;
-      if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));
-      void nowIso;
+      const { inheritLinkFoundations } = await import("./learn-bundle-preserve");
+      const candidates: Array<{ scope: string; source_rows: number; bundle: Record<string, unknown> }> = [
+        { scope: "all", source_rows: all.length, bundle: bundle as unknown as Record<string, unknown> },
+      ];
+      for (const site of ["realpro", "itandi"] as const) {
+        const sub = all.filter((r) => {
+          const s = String((r as { site?: unknown }).site ?? "").toLowerCase();
+          return site === "realpro" ? (s === "realpro" || s.includes("realnet")) : (s === "itandi" || s.includes("itandi"));
+        });
+        if (sub.length < 3) continue;
+        candidates.push({
+          scope: site,
+          source_rows: sub.length,
+          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs)) as unknown as Record<string, unknown>,
+        });
+      }
+      const rows: Array<{ scope: string; source_rows: number; bundle: Record<string, unknown> }> = [];
+      for (const c of candidates) {
+        const pr = await inheritLinkFoundations(supabase, c.bundle, c.scope, { lookback: 20, minSolid: 30 });
+        if (!pr.safe_to_write) {
+          out.errors.push(`束の作り直し拒否(${c.scope}): ${pr.why}`);
+          continue;
+        }
+        rows.push(c);
+      }
+      if (!rows.length) {
+        out.refreshed = false;
+        out.errors.push("束の作り直し: 全scopeで消す書き込みを拒否");
+      } else {
+        const ins = await supabase.from("human_learn_profile").insert(rows);
+        out.refreshed = !ins.error;
+        if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));
+      }
     } catch (e) {
       out.errors.push("束の作り直し: " + String((e as Error)?.message ?? e).slice(0, 100));
     }
@@ -555,14 +734,19 @@ export async function learnFromLatestRun(
     if (!run) return empty;
 
     /**
-     * ② その録画の写真を**大きい順**に取る（1280px＝小窓/プルダウンが開いた瞬間が一番読める）。
+     * ② その録画の写真を**時間順**に取る（連続録画の流れどおり・細かく位置を固める）。
+     *   ★ 2026-11-15「順番で時間で学習すればより強化」「連続録画で」
      *   ⚠ まだ読んでいない物を優先（既に `shot_learn` がある物は飛ばす）。
+     *   ⚠ 同じ時刻帯では大きい写真を先に（窓が開いた瞬間が読める）。
      */
     const inRun = rows.filter((r) => runOf(r.shot_key) === run);
     const unlearned = inRun.filter((r) => !r.shot_learn);
     const pick = (unlearned.length ? unlearned : inRun)
       .slice()
-      .sort((a, b) => (Number(b.shot_w) || 0) - (Number(a.shot_w) || 0))
+      .filter((r) => (Number(r.shot_w) || 0) >= 800)
+      .sort((a, b) =>
+        (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0)
+        || (Number(b.shot_w) || 0) - (Number(a.shot_w) || 0))
       .slice(0, maxShots);
     if (!pick.length) return { ...empty, run };
 

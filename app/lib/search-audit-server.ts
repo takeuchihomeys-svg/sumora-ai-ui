@@ -154,6 +154,42 @@ export async function recordStarted(body: Record<string, unknown>): Promise<{ ok
   return upd.error ? { ok: false, error: upd.error.message } : { ok: true };
 }
 
+/**
+ * ★ 2026-11-17 統括Pro「steps未達」＋竹内「連携できていない」:
+ *   fill-done 前の途中段を **started 行に書き足す**。
+ *   旧: 段はメモリだけ → PCスリープ／fill_timeout で finish が来ないと
+ *     abandoned の steps=空（stalled:realpro:none）になる。
+ *   → progress で DB に残す（finished/abandoned は触らない）。
+ */
+export async function recordProgress(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; skipped?: string }> {
+  const runId = body.run_id as string;
+  if (!validRunId(runId)) return { ok: false, error: "run_id 不正" };
+  const stepsIn = Array.isArray(body.steps) ? (body.steps as Array<Record<string, unknown>>).slice(-80) : [];
+  if (!stepsIn.length) return { ok: true, skipped: "no_steps" };
+  const { row, error } = await loadRow(runId);
+  if (error) return { ok: false, error };
+  if (!row) return { ok: true, skipped: "no_row" };
+  if (row.status === "finished" || row.status === "abandoned") return { ok: true, skipped: "already_closed" };
+  const prev = Array.isArray(row.steps) ? row.steps : [];
+  const seen = new Set(
+    prev.map((s) => `${String((s as { k?: string })?.k || "")}|${String((s as { at?: number })?.at || "")}`),
+  );
+  const merged = prev.slice();
+  for (const s of stepsIn) {
+    if (!s || typeof s !== "object") continue;
+    const key = `${String((s as { k?: string }).k || "")}|${String((s as { at?: number }).at || "")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(s);
+  }
+  const upd = await supabase
+    .from("search_audits")
+    .update({ steps: capJson(merged.slice(-120)) as never })
+    .eq("run_id", runId)
+    .eq("status", "started");
+  return upd.error ? { ok: false, error: upd.error.message } : { ok: true };
+}
+
 /** 原因の表に数を足す（同じ回の原因の鍵ごとに1つ） */
 export async function bumpCauses(keys: string[], runId: string, site: string | null, atIso: string): Promise<{ ok: number; errors: string[] }> {
   const errors: string[] = [];

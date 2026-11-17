@@ -208,7 +208,17 @@
     var _cid = new URLSearchParams(window.location.search).get("sumora_cid");
     if (!_cid) return;
 
+    function _detectShikireiFlag(c) {
+      try {
+        if (!c) return false;
+        if (c.shikirei_free === true || c.shikirei_free === "true" || c.shikirei_free === 1) return true;
+        var text = [c.preferences, c.ng_points, c.other_requests, c.property_memo, c.notes, c.additional_conditions, c.raw_format_text]
+          .filter(Boolean).join(" ");
+        return /敷礼なし|敷金[・･]?礼金なし|敷金礼金0|敷金0礼金0|敷0礼0|敷礼0|初期費用.*抑/.test(text);
+      } catch (_) { return false; }
+    }
     function _buildConditions(c) {
+      var _shiki = _detectShikireiFlag(c);
       return {
         rent_max:       c.rent_max || c.max_rent || null,
         rent_min:       c.rent_min_search || c.rent_min || null, // 2026-10-02 ⑫ おおよその下限（サーバーの rent_min_search）
@@ -229,6 +239,9 @@
         itandi_lines:   c.itandi_lines   || [],
         station_names:  c.station_names  || (c.station ? [c.station] : []),
         unknown_tokens: null,
+        // ★ 2026-11-16: ITANDI の cid 経路でも敷礼なしを落とさない
+        shikirei_free: _shiki,
+        prefer_no_shikirei: _shiki,
       };
     }
 

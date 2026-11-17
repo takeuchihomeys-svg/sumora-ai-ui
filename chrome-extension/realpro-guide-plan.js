@@ -152,11 +152,64 @@
     //   → 面積 → 築年数 → 間取（左から右・上の段から） → 構造 → 絞り込み条件（ペット相談）→ 検索）。入れる値は自動入力と同じ（並びだけ変えた）
     var lm = locationMode(c);
     var lines = (c.route_ids || []).map(function (r) { return ROUTE_LINE_MAP[String(r)]; }).filter(Boolean);
+    /**
+     * ★ 2026-11-16 竹内さん「天満橋駅指定なのに天満橋が光っていなかった」:
+     *   通勤圏（例: 天満橋まで20分）で駅が100件超に広がると、案内が33路線全部を先に光らせ、
+     *   **指定駅（primary）が埋もれて光って見えない**。
+     *   → 指定駅・その路線を別枠で持ち、案内は指定を先に光らせる（圏内の他駅はそのあと）。
+     */
+    var primaryNames = [];
+    (c.primary_stations || []).forEach(function (n) {
+      var k = String(n || "").replace(/駅$/, "").trim();
+      if (k && primaryNames.indexOf(k) < 0) primaryNames.push(k);
+    });
+    if (!primaryNames.length && c.station_names && c.station_names.length && c.station_names.length > 12) {
+      // primary 未送付の旧束: 先頭1〜3を指定扱い（拡張が desired/commute を先頭に載せている前提）
+      primaryNames = c.station_names.slice(0, Math.min(3, c.station_names.length));
+    }
+    var primaryLines = (c.primary_route_ids || []).map(function (r) { return ROUTE_LINE_MAP[String(r)]; }).filter(Boolean);
+    if (!primaryLines.length && primaryNames.length && lines.length) {
+      // primary_route_ids が無い時は全 lines の先頭（popup が primary 路線を先頭に並べる）を最大6本
+      primaryLines = lines.slice(0, Math.min(6, lines.length));
+    }
+    // 指定路線を先頭に（重複除去）
+    if (primaryLines.length) {
+      var _seenL = {};
+      lines = primaryLines.concat(lines).filter(function (l) {
+        if (!l || _seenL[l]) return false;
+        _seenL[l] = true;
+        return true;
+      });
+    }
     if (lm === "area" && c.city_codes && c.city_codes.length) push({ kind: "pick_city", codes: c.city_codes.map(String).slice(0, 40), label: "「所在地絞り込み」から区を選んでください（光っている区にチェック）" });
     // 2026-10-06 v2.5.84 竹内「沿線はちゃんと選択されているのに何で駅直通全て表示されていないのか」（みくさん・梅田まで電車1本＝12路線・122駅）:
     //   旧は駅の名前を先頭の 40 で切っていた → 御堂筋・阪急京都・阪急宝塚の駅だけが光り、阪急神戸・阪神・JR・環状・おおさか東・四つ橋・谷町の 82駅が黙って落ちた。
     //   → 切らない（MAX_GUIDE_STATIONS は安全のための上限・自動入力の 240駅より上）
-    else if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, MAX_GUIDE_STATIONS), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
+    else if (lm === "station") {
+      var _stNames = c.station_names.slice(0, MAX_GUIDE_STATIONS);
+      // 指定駅を names の先頭へ（光の対象の並び＝スタッフが最初に見る所）
+      if (primaryNames.length) {
+        var _seenN = {};
+        _stNames = primaryNames.concat(_stNames).filter(function (n) {
+          var k = stationKey(n);
+          if (!k || _seenN[k]) return false;
+          _seenN[k] = true;
+          return true;
+        });
+      }
+      var _plabel = primaryNames.length
+        ? "「沿線・駅絞り込み」から**指定駅を先に**選んでください（" + primaryNames.slice(0, 3).join("・")
+          + (primaryNames.length > 3 ? " 他" : "") + "）。圏内の他駅はそのあと"
+        : "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）";
+      push({
+        kind: "pick_station",
+        names: _stNames,
+        primary_names: primaryNames.slice(0, 12),
+        primary_lines: primaryLines.slice(0, 12),
+        lines: lines,
+        label: _plabel,
+      });
+    }
     else if (lm === "route") push({ kind: "pick_route", lines: lines, label: "「沿線・駅絞り込み」から路線を選んでください" });
     if (c.walk_minutes) {
       push({ kind: "select", name: "transportation_id", value: "1", hint: "徒歩", label: "駅からの移動手段を「徒歩」に" });
@@ -263,9 +316,44 @@
    */
   function stationStepAction(x) {
     if (x.visibleUnchecked > 0) return "stations";
-    if (x.modalOpen) return x.anyChecked ? "confirm" : (x.lineBtns > 0 ? "lines" : "confirm");
+    /**
+     * ★ 2026-11-16 tomoさん「どこも光っていなかった → 大阪全域で調べてしまう」:
+     *   旧: 小窓は開いているが路線ボタンが0件（名前照合失敗）の時に confirm へ進んでいた。
+     *   → 駅ゼロのまま「確定」が光り、場所なし検索＝大阪全件の危険。
+     *   → 駅に1つも印が無い間は confirm にしない（lines / open を続ける）。
+     */
+    if (x.modalOpen) {
+      if (x.anyChecked) return "confirm";
+      return "lines";
+    }
     if (x.anyChecked) return "done";
     return x.lineBtns > 0 ? "lines" : "open";
+  }
+  /**
+   * 路線名の照合（page-script clickLineButtons と同じ・純関数）。
+   *   want=ROUTE_LINE_MAP の正式名、page=画面の label.one_line の文字。
+   *   完全一致 or 画面が正式名の末尾（「谷町線」⇔「大阪市高速軌道谷町線」）。
+   */
+  function lineLabelMatches(wantName, pageText) {
+    var w = String(wantName == null ? "" : wantName).replace(/[\s　]+/g, "");
+    var p = String(pageText == null ? "" : pageText).replace(/[\s　]+/g, "");
+    if (!w || !p) return false;
+    if (w === p) return true;
+    // 画面は「谷町線」(3字)など短いことが多い。末尾一致は2字以上で可（page-script は4だが案内は光必須）
+    if (p.length >= 2 && w.length > p.length && w.indexOf(p) === w.length - p.length) return true;
+    if (w.length >= 2 && p.length > w.length && p.indexOf(w) === p.length - w.length) return true;
+    return false;
+  }
+  /** wantLines のうち、pageLabels（文字列配列）に当たるものの index を返す */
+  function matchLineLabelIndexes(wantLines, pageLabels) {
+    var out = [], used = {};
+    (wantLines || []).forEach(function (want) {
+      for (var i = 0; i < (pageLabels || []).length; i++) {
+        if (used[i]) continue;
+        if (lineLabelMatches(want, pageLabels[i])) { out.push(i); used[i] = true; break; }
+      }
+    });
+    return out;
   }
   /** 駅・路線の小窓を閉じるボタンの文字（押したら駅の手順は済み・1駅でも印がある時） */
   var STATION_MODAL_DONE_TEXTS = ["確定してリストへ", "×とじる", "とじる", "閉じる", "決定", "この条件で絞り込む", "検索"];
@@ -290,7 +378,9 @@
 
   return {
     resultsCustomerAction: resultsCustomerAction,
-    stationStepAction: stationStepAction, matchStations: matchStations, stationKey: stationKey, missNote: missNote, STATION_NAME_ALIASES: STATION_NAME_ALIASES, MAX_GUIDE_STATIONS: MAX_GUIDE_STATIONS, STATION_MODAL_DONE_TEXTS: STATION_MODAL_DONE_TEXTS, STATION_MODAL_OPEN_TEXTS: STATION_MODAL_OPEN_TEXTS,
+    stationStepAction: stationStepAction, matchStations: matchStations, stationKey: stationKey, missNote: missNote,
+    lineLabelMatches: lineLabelMatches, matchLineLabelIndexes: matchLineLabelIndexes,
+    STATION_NAME_ALIASES: STATION_NAME_ALIASES, MAX_GUIDE_STATIONS: MAX_GUIDE_STATIONS, STATION_MODAL_DONE_TEXTS: STATION_MODAL_DONE_TEXTS, STATION_MODAL_OPEN_TEXTS: STATION_MODAL_OPEN_TEXTS,
     buildPlan: buildPlan, floorPlanValues: floorPlanValues, locationMode: locationMode, nearestUp: nearestUp, nearestDown: nearestDown,
     ROUTE_LINE_MAP: ROUTE_LINE_MAP, RENT_OPTS: RENT_OPTS, AGE_OPTS: AGE_OPTS, AREA_OPTS: AREA_OPTS, FLOOR_MAP: FLOOR_MAP, STRUCTURE_MAP: STRUCTURE_MAP,
     SLDK_SUBSTITUTE: SLDK_SUBSTITUTE, FLOOR_LABEL: FLOOR_LABEL,

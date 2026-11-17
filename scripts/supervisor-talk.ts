@@ -43,7 +43,8 @@ function hr() { console.log("─".repeat(66)); }
 
 async function fetchAdv(scope: string): Promise<{ adv: Adv | null; bundle: Record<string, unknown> | null; err?: string }> {
   try {
-    const r = await fetch(BASE + "/api/human-learn-profile?fresh=1&scope=" + encodeURIComponent(scope), { cache: "no-store" });
+    // ★ 2026-11-17: 既定 fresh=1 は学習消失の入口。読むだけは touch=0（作り直しはゲート付き経路へ）
+    const r = await fetch(BASE + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(scope), { cache: "no-store" });
     if (!r.ok) return { adv: null, bundle: null, err: "http_" + r.status };
     const j = (await r.json()) as Record<string, unknown>;
     const b = (j.bundle ?? null) as Record<string, unknown> | null;
@@ -82,6 +83,54 @@ function speak(scope: string, adv: Adv, bundle: Record<string, unknown>) {
   for (const t of (m.today && m.today.length ? m.today : [String(adv.headline || "")])) line("  " + t);
   if (adv.block) { line(); line("  ⚠ " + adv.block); }
 
+  /**
+   * ★ 2026-11-16: Pro 判断の層を先に見せる（動いているか・足りない土台）。
+   *   無い／未使用ならはっきり言う（握りつぶさない）。
+   */
+  {
+    const evAll = m.evidence || [];
+    const proSum = evAll.find((e) => String(e.label).includes("統括Proまとめ"));
+    const proFail = evAll.find((e) => String(e.label) === "統括Pro" && /未使用/.test(String(e.value)));
+    const gaps = evAll.find((e) => String(e.label).includes("足りない土台"));
+    const build = evAll.find((e) => String(e.label).includes("土台を作る次手"));
+    const roles = evAll.find((e) => String(e.label).includes("役割分担"));
+    const vision = evAll.find((e) => String(e.label) === "画像学習→統括Pro連携");
+    const visionRoles = evAll.find((e) => String(e.label).includes("画像学習の役割"));
+    line();
+    line("■ 画像学習→統括Pro連携（細分化）");
+    if (vision) {
+      line("  ・" + vision.value);
+      if (visionRoles) line("  ・役割: " + visionRoles.value);
+    } else {
+      line("  ・根拠なし（本番が古い／未適用の可能性）");
+    }
+    line();
+    line("■ 統括Pro判断");
+    const weakFix = evAll.find((e) => String(e.label).includes("弱点の細かい改善"));
+    const bugFix = evAll.find((e) => String(e.label).includes("変バグの細かい直し"));
+    const weakAtoms = evAll.find((e) => String(e.label).includes("弱点の細分化"));
+    const why100 = evAll.find((e) => String(e.label).includes("なぜ100%でないか"));
+    const path100 = evAll.find((e) => String(e.label).includes("100%への道"));
+    if (proSum) {
+      line("  ・稼働: あり");
+      line("  ・まとめ: " + proSum.value);
+      if (why100) line("  ・なぜ100%でないか: " + why100.value);
+      if (path100) line("  ・100%への道: " + path100.value);
+      if (gaps) line("  ・足りない土台: " + gaps.value);
+      if (build) line("  ・土台を作る次手: " + build.value);
+      if (weakAtoms) line("  ・弱点原子: " + weakAtoms.value);
+      if (weakFix) line("  ・弱点細かい改善: " + weakFix.value);
+      if (bugFix) line("  ・変バグ: " + bugFix.value);
+      if (roles) line("  ・役割: " + roles.value);
+    } else if (proFail) {
+      line("  ・稼働: なし → " + proFail.value);
+      line("  ・手元で回す: npx tsx --env-file=.env.local scripts/supervisor-pro.ts");
+    } else {
+      line("  ・稼働: 根拠なし（本番が古い／Pro未適用の可能性）");
+      line("  ・手元で回す: npx tsx --env-file=.env.local scripts/supervisor-pro.ts");
+    }
+  }
+
   line();
   line("■ 根拠（DBの実データ）");
   const ev = m.evidence || [];
@@ -108,7 +157,17 @@ function speak(scope: string, adv: Adv, bundle: Record<string, unknown>) {
     line(`  ・操作の並びが付いている記録: ${withOps} / ${rows}（${Math.round((withOps / rows) * 100)}%）`);
   }
   const shots = (bundle.shots ?? {}) as Record<string, unknown>;
-  if (shots.total != null) line(`  ・写真: ${String(shots.total)}枚（操作つき ${String(shots.with_ops)}枚）`);
+  const hasPhotoEv = ev.some((e) => e && e.label === "写真");
+  if (!hasPhotoEv && (shots.total != null || shots.in_storage != null)) {
+    /**
+     * ★ 2026-11-15 竹内さん「画像データベースの保存されている／統括は把握する」:
+     *   根拠に写真が無い古い束向け。Storage 保存を正とする。
+     */
+    const stored = shots.in_storage != null ? String(shots.in_storage) : String(shots.total);
+    const ops = shots.with_ops != null ? `／操作つき ${String(shots.with_ops)}枚` : "";
+    const large = shots.large != null ? `／大きい ${String(shots.large)}枚` : "";
+    line(`  ・写真: Storage保存 ${stored}枚（human-motion-shots・shot_keyあり＝保存済み）${ops}${large}`);
+  }
 
   line();
   line("■ 議題（決めたい事）");
@@ -264,7 +323,7 @@ void (async () => {
   const { adv, bundle, err } = await fetchAdv(scopeArg);
   if (err || !adv || !bundle) {
     line(`統括の判断を取れませんでした: ${err || "判断がまだありません"}`);
-    line("（学習の束がまだ作られていない可能性があります。`/api/human-learn-profile?fresh=1` を確認してください）");
+    line("（学習の束がまだ作られていない可能性があります。`/api/human-learn-profile?touch=0` で確認／作り直しはゲート付き経路）");
     process.exitCode = 1;
     return;
   }

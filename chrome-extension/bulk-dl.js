@@ -32,6 +32,42 @@
   function _setFillInProgress(on) {
     _autofillInProgress = !!on;
     _autofillStartedAt = on ? Date.now() : 0;
+    /**
+     * ★ 2026-11-16 録画実測: 住居検索へ移るとページが読み直され、この変数が false に戻る。
+     *   そのすきに前の一覧の印刷用PDFが走り、条件入力（所在地・間取り）と同時に動いていた。
+     *   → session に印を残し、fill-done まで「検索前」と扱う（検索後の読み直しでは消えている）。
+     */
+    try {
+      if (on) chrome.storage.session.set({ axlx_fill_busy: { at: Date.now() } });
+      else chrome.storage.session.remove("axlx_fill_busy");
+    } catch (_) {}
+  }
+  /** ページ読み直し後も「条件入力中」なら true（session の印を見る） */
+  var _fillBusyFromSession = false;
+  try {
+    chrome.storage.session.get(["axlx_fill_busy"], function (r) {
+      var b = r && r.axlx_fill_busy;
+      if (b && b.at && Date.now() - Number(b.at) < 20 * 60 * 1000) {
+        _fillBusyFromSession = true;
+        _autofillInProgress = true;
+        _autofillStartedAt = Number(b.at) || Date.now();
+        console.log("[AXLX bulk-dl] 条件入力中の印が残っている → 検索前の一覧は押しません");
+      }
+    });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "session" || !ch.axlx_fill_busy) return;
+      if (ch.axlx_fill_busy.newValue) {
+        _fillBusyFromSession = true;
+        _autofillInProgress = true;
+        _autofillStartedAt = Number(ch.axlx_fill_busy.newValue.at) || Date.now();
+      } else {
+        _fillBusyFromSession = false;
+        _autofillInProgress = false;
+      }
+    });
+  } catch (_) {}
+  function _isFillBusy() {
+    return !!(_autofillInProgress || _fillBusyFromSession);
   }
   var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
   var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
@@ -232,6 +268,52 @@
   function _rowSkipReason(state, item) {
     if (!state || !item || !item.btn) return "no-row";
     if (item.__axSkip) return "sent";            // _applySentSkip が印を付けた行
+    /**
+     * ★ 2026-11-16 竹内さん「送付済みとわかっていたら送らない／徹底」:
+     *   画面に「送付済み」「送付済みの建物」と出ていれば送らない（複雑にしない）。
+     *   DB照合（部屋一致）も従来どおり。どちらかで送付済みならスキップ。
+     * ★ 2026-11-17: class が無くても行内テキスト「送付済み」で検知
+     *   （1件目が送付済みなのに押して止まり、2件目へ進まない事故の予防）。
+     */
+    try {
+      if (item.btn.classList && item.btn.classList.contains("axlx-pdf-sent")) return "sent";
+      var parent = item.btn.parentNode;
+      if (parent && parent.querySelector) {
+        if (parent.querySelector(".axlx-pdf-sent-label")) return "sent";
+        if (parent.querySelector(".axlx-sent-bld-badge")) return "sent";
+      }
+      var rowEl = item.btn.closest ? item.btn.closest("tr") : null;
+      if (rowEl && rowEl.classList && rowEl.classList.contains("axlx-sent-hidden")) return "sent";
+      if (rowEl && rowEl.querySelector && rowEl.querySelector(".axlx-sent-bld-badge,.axlx-pdf-sent-label")) return "sent";
+      // 号室セル近傍の「送付済み」札（axlx／サイト素の両方）
+      var near = parent || rowEl;
+      if (near) {
+        var nearTx = "";
+        try { nearTx = String(near.innerText || near.textContent || ""); } catch (_) { nearTx = ""; }
+        if (/送付済み/.test(nearTx)) return "sent";
+      }
+      if (rowEl) {
+        var rowTx = "";
+        try { rowTx = String(rowEl.innerText || rowEl.textContent || ""); } catch (_) { rowTx = ""; }
+        // 行に「送付済み」があり、かつこの PDF ボタンの近く（同じセル／隣）なら送付済み
+        if (/送付済み/.test(rowTx)) {
+          var cell = item.btn.closest ? (item.btn.closest("td") || item.btn.closest("div")) : null;
+          var cellTx = cell ? String(cell.innerText || cell.textContent || "") : "";
+          if (/送付済み/.test(cellTx)) return "sent";
+          // ラベルがボタン直後
+          var sib = item.btn.nextSibling;
+          var guard = 0;
+          while (sib && guard < 4) {
+            guard++;
+            try {
+              var sTx = String((sib.textContent || sib.innerText || "")).trim();
+              if (/送付済み/.test(sTx)) return "sent";
+            } catch (_) {}
+            sib = sib.nextSibling;
+          }
+        }
+      }
+    } catch (_) {}
     var SK = _SK();
     if (SK && !_staffModeOn) {
       var idx = SK.indexFor(_sentRoomsStored, state.customerId, Date.now());
@@ -703,6 +785,8 @@
     updateBar();
     injectSuumoButtons();
     brainPreview();
+    // ★ 2026-11-16: 一覧の描き直しで送付済み印が消える → 自動モードならすぐ付け直す
+    try { if (_autoModeOn && !_staffModeOn) setTimeout(_reapplySentMarksIfAny, 80); } catch (_) {}
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
     // 2026-11-10 竹内さん「古い一括のなくした方がよいかも」: 古い「全ページ送る」（autoSendAllPages）は呼ばない。
@@ -727,32 +811,14 @@
      *   人がやる事と同じ: カーソルで行まで動く → 印刷用PDFを押す → 送る → 👀 資料を見る間 → 次の行。
      *   押さない/止めたい時は枠の「⏹ 止める」。スタッフモード・自動モードでない時は今まで通り何もしない。
      */
-    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && _autoModeOn && !_staffModeOn && !_autoPdfRun && !_autofillInProgress) {
+    else if (!_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && _autoModeOn && !_staffModeOn && !_autoPdfRun && !_isFillBusy()) {
       /**
-       * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
-       *   ここも同じ穴だった。`_sig !== _autoPdfSig`（＝まだ押していない一覧）だけで押し始めていたので、
-       *   **検索を押した直後（画面はまだ前の一覧）**でも条件がそろえば押してしまう。
-       *   → 自動入力のスナップショット（`_preAutofillBtns`）を取り、**新しい行が1つも無ければ押さない**。
-       *     新しい行＝今のお客様の検索で出た行。
+       * 2026-11-12 / ★ 2026-11-16 録画「条件入れる前に物件ダウンロード」:
+       *   Case C は fill-done 無しでも押せる穴だった。スナップショットが空のまま押し始めていた。
+       *   → **fill-done で armed された道（Case A）だけ**物件取得する。ここからは押さない。
        */
-      var _hasNewForAuto = tracked.some(function (t) {
-        var k = t.btn && (t.btn.href || t.btn.getAttribute("href") || "");
-        return k && !_preAutofillBtns.has(k);
-      });
-      if (_preAutofillBtns.size > 0 && !_hasNewForAuto) {
-        console.log("[AXLX bulk-dl][auto] 画面の一覧は自動入力の前からある行 → 押しません（今のお客様の検索結果ではない）");
-        _tmark("auto_pdf_arm", "blocked_not_new_rows");
-        return;
-      }
-      // この一覧でまだ1件も押していない時だけ（同じ一覧の描き直しで二重に始めない）
-      var _sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
-      if (_sig && _sig !== _autoPdfSig) {
-        _autoPdfSig = _sig;
-        _pendingAutoSendDispatched = true;
-        console.log("[AXLX bulk-dl][auto] 自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
-        _tmark("auto_pdf_arm", "rows=" + tracked.length);
-        _startAutoPressAfterLook(tracked.length);
-      }
+      console.log("[AXLX bulk-dl][auto] 検索完了前の一覧 → 押しません（fill-done 後の新しい行だけ押す）");
+      _tmark("auto_pdf_arm", "blocked_need_fill_done");
     }
     // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」: 一覧が出た時点で自動で押し始める（検索の完了合図に頼らない）
     _maybeAutoPressOnLoad();
@@ -765,7 +831,11 @@
    *   検索の完了合図（fill-done）が来ない経路でも、**自動モードなら一覧が出た時点で自動で押し始める**。
    *   画面を開いた時・一覧が描き直された時に呼ぶ（同じ一覧で二度始めない・スタッフモードでは動かない）。
    */
-  function _maybeAutoPressOnLoad() {
+  /**
+   * @param {{ afterSearch?: boolean }} [opt]
+   *   afterSearch=true … 検索後の読み直し（pending）から。条件入力中ではない。
+   */
+  function _maybeAutoPressOnLoad(opt) {
     if (_autoPdfRun || !_autoModeOn || _staffModeOn) return;
     if (_guideBlocksAuto("autoOnLoad")) return;
   if (_supBlocksAuto("autoOnLoad")) return;
@@ -775,16 +845,27 @@
      *   ここで押すと、画面に残っている**前の一覧（別のお客様・条件違い）**を送ってしまう。
      *   押してよいのは「検索を押した合図（fill-done）の後に出た新しい行」だけ。
      */
-    if (_autofillInProgress) {
+    if (_isFillBusy() && !(opt && opt.afterSearch)) {
       // 合図が来ないまま固まった時は解く（永久に押せなくしない・20分）
       if (_autofillStartedAt && Date.now() - _autofillStartedAt > _autofillStuckMs) {
         _autofillInProgress = false;
+        _fillBusyFromSession = false;
+        try { chrome.storage.session.remove("axlx_fill_busy"); } catch (_) {}
         console.warn("[AXLX bulk-dl][auto] 自動入力の合図が来ないまま20分 → 念のため解きます");
       } else {
         console.log("[AXLX bulk-dl][auto] 自動入力の最中（条件を入れる前）→ いま出ている一覧は押しません");
         _tmark("auto_pdf_load", "blocked_during_fill");
         return;
       }
+    }
+    /**
+     * ★ 2026-11-16: ちゃんと検索してから物件取得。
+     *   fill-done（armed）か、検索後の pending 再開だけ許可。勝手に一覧を押さない。
+     */
+    if (!_autoSendArmed && !(opt && opt.afterSearch)) {
+      console.log("[AXLX bulk-dl][auto] 検索完了の合図前 → 一覧を押しません");
+      _tmark("auto_pdf_load", "blocked_need_search_first");
+      return;
     }
     if (tracked.length === 0) return;
     /**
@@ -1002,14 +1083,15 @@
     return Math.round(base);
   }
   /** 検索結果を見る間に入ってから押し始める（自動モードのときだけ） */
-  function _startAutoPressAfterLook(n) {
+  function _startAutoPressAfterLook(n, opt) {
     var look = _resultsLookMs(n);
-    console.log("[AXLX bulk-dl][auto] 検索結果を一覧で見る間 " + (look / 1000).toFixed(1) + "秒（" + n + "行）");
+    console.log("[AXLX bulk-dl][auto] 検索結果を一覧で見る間 " + (look / 1000).toFixed(1) + "秒（" + n + "行）"
+      + (opt && opt.continuePages ? "・次ページ続き" : ""));
     _tmark("results_look", Math.round(look) + "ms");
     _axlxWorkNote("👀 検索結果を見ています", Date.now() + look);
     setTimeout(function () {
       _axlxClearWorkNote();
-      autoPressPdfs();
+      autoPressPdfs(opt);
     }, look);
   }
 
@@ -1281,16 +1363,24 @@
   //   ・1件ごとに 送ったら「👀 確認中…」で資料を見る間を置いてから次へ
   //   ・止める: 右下の枠の「⏹ 自動を止める」。スタッフモード・自動モードでない時は動かない
   var _autoPdfRun = null;   // { total, done, index, stopped }
-  function autoPressPdfs() {
+  /**
+   * @param {{ continuePages?: boolean }} [opt]
+   *   continuePages=true … 次ページ再開。ページカウンタをリセットしない。
+   */
+  function autoPressPdfs(opt) {
     if (!_autoModeOn) {
       _nudge("自動モードの時だけ自動で押せます（ヘッダーを「自動」に）");
       return { ok: false, reason: "not-auto" };
     }
     /**
-     * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
-     *   新しい検索が始まったら「次ページへ進んだ回数」を0に戻す（別の検索で3回の枠を使い切らない）。
+     * ★ 2026-11-16 竹内さん「2の画面まではいくけど3にいかないことが多い」:
+     *   ⚠ 旧は次ページ再開のたびに `_autoPdfPage=1` / `_autoNextPageTries=0` に戻していた。
+     *     → 内部ではいつも「1ページ目」扱い／累計送信も消える／進行が壊れる。
+     *   → **新しい検索の開始時だけ**リセット。次ページ続きは `continuePages`。
      */
-    try { _autoNextPageTries = 0; } catch (_) {}
+    if (!(opt && opt.continuePages)) {
+      try { _autoNextPageTries = 0; _autoPdfPage = 1; _autoPdfTotalSent = 0; } catch (_) {}
+    }
     if (_staffModeOn) { _nudge("スタッフモードでは自動で押しません"); return { ok: false, reason: "staff" }; }
     if (_autoPdfRun) { _nudge("いま自動で送っています（⏹ で止められます）"); return { ok: false, reason: "running" }; }
     /**
@@ -1596,17 +1686,45 @@
       _tmark("auto_pdf_start", "no-rows");
       return { ok: false, reason: "no-rows" };
     }
-    // 2026-11-11 竹内さん「資料を全部上から順にやるようになっていないか。完全に人間の動きを再現していく」:
-    //   旧は必ず上から1件ずつ＝機械的。人が一覧を見て「気になった所から」押す形にする。
-    //   ① 最初の数件は上から（ふつうは上から見る）② 途中で "目にとまった所へ飛ぶ" を混ぜる
-    //   ③ たまに "さっきの所へ戻る"（見直し）も入れる。押す順が毎回ちがう。
-    var order = _humanPickOrder(cand.length);
-    var ordered = order.map(function (i) { return cand[i]; }).filter(Boolean);
-    _autoPdfRun = { total: 0, done: 0, index: 0, order: order };
-    _tmark("auto_pdf_start", String(cand.length) + "件");
-    console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : ""));
-    _autoPressNext(ordered);
-    return { ok: true, count: cand.length };
+    var cid = _pickCustomerIdForAuto();
+    /**
+     * ★ 2026-11-16: 送付済みを読んでから絞る（読めなくても絞れる物だけ絞る＝検索は止めない）。
+     */
+    _ensureSentRoomsForAuto(cid, function () {
+      var filtered = _filterCandForAuto(cand, cid);
+      var list = filtered.allowed || [];
+      if (!list.length) {
+        var skippedAll = (filtered.sent || 0) + (filtered.cheapest || 0);
+        _nudge(skippedAll
+          ? ("👀 このページは送る部屋がありません（送付済み " + (filtered.sent || 0) + "／同じ平米の高い部屋 " + (filtered.cheapest || 0) + "）→ 次へ")
+          : "⚠ 押せる行が見つかりません");
+        _tmark("auto_pdf_start", "all-filtered sent=" + (filtered.sent || 0) + " cheap=" + (filtered.cheapest || 0));
+        // 全部送付済みなら次ページへ（既存の決まり）
+        _autoPdfRun = { total: 0, done: 0, index: 0, skipped: filtered.sent || 0, order: [] };
+        _autoFinish("このページは送る部屋が無い");
+        return;
+      }
+      // 2026-11-11 竹内さん「資料を全部上から順にやるようになっていないか。完全に人間の動きを再現していく」:
+      //   旧は必ず上から1件ずつ＝機械的。人が一覧を見て「気になった所から」押す形にする。
+      var order = _humanPickOrder(list.length);
+      var ordered = order.map(function (i) { return list[i]; }).filter(Boolean);
+      _autoPdfRun = {
+        total: 0,
+        done: 0,
+        index: 0,
+        order: order,
+        skipped: filtered.sent || 0,
+        customerId: cid || null,
+      };
+      _tmark("auto_pdf_start", String(list.length) + "件（元" + cand.length + "・送付済除外" + (filtered.sent || 0) + "・最安絞り" + (filtered.cheapest || 0) + "）");
+      console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : "")
+        + "／送付済み除外 " + (filtered.sent || 0) + "／同じ平米の高い部屋除外 " + (filtered.cheapest || 0));
+      if (filtered.sent || filtered.cheapest) {
+        _nudge("📋 送る部屋 " + list.length + "件（送付済み " + (filtered.sent || 0) + "・同じ平米の高い部屋 " + (filtered.cheapest || 0) + " は外しました）");
+      }
+      _autoPressNext(ordered);
+    });
+    return { ok: true, count: cand.length, pending: true };
   }
   /**
    * 2026-11-11 押す順を人のように決める（上から順に全部ではない）。
@@ -1660,9 +1778,212 @@
     }
     return out;
   }
-  /** 自動便の指定を引く時の顧客 ID（今のお客様・無ければ null） */
+  /** 自動便の指定を引く時の顧客 ID（スナップショット → キャッシュ → null） */
+  var _currentCustomerIdCache = null;
+  try {
+    chrome.storage.local.get(["current_customer_id"], function (r) {
+      _currentCustomerIdCache = (r && r.current_customer_id) || null;
+    });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "local" && ch.current_customer_id) {
+        _currentCustomerIdCache = (ch.current_customer_id.newValue != null) ? ch.current_customer_id.newValue : null;
+      }
+    });
+  } catch (_) {}
   function _pickCustomerIdForAuto() {
-    try { return _pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId ? _pendingCustomerForAutoSend.customerId : null; } catch (_) { return null; }
+    try {
+      if (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId) return _pendingCustomerForAutoSend.customerId;
+      return _currentCustomerIdCache || null;
+    } catch (_) { return null; }
+  }
+
+  /** 最後に付けた送付済みの材料（一覧が描き直されても再付与できる） */
+  var _sentMarkCtx = null; // { customerId, resp, at }
+
+  /**
+   * ★ 2026-11-16: 自動押下の直前に送付済みを読む（通常＝案内と同じ出所）。
+   *   バッチ以外でも `axlx_sent_rooms` を埋めてから選別する。
+   *   さらに通常と同じ印（`.axlx-pdf-sent`）を付けて、画面でも「把握できている」状態にする。
+   */
+  function _ensureSentRoomsForAuto(customerId, done) {
+    var cb = typeof done === "function" ? done : function () {};
+    if (!customerId || _staffModeOn) { cb(false); return; }
+    try {
+      // 通常（案内）と同じ API 経路 → storage にも置き、印も付ける
+      chrome.runtime.sendMessage({ type: "axlx-guide-sent-rooms", customerId: String(customerId) }, function (resp) {
+        try { if (chrome.runtime.lastError) { cb(false); return; } } catch (_) {}
+        try {
+          var SK = _SK();
+          var key = SK ? SK.STORAGE_KEY : "axlx_sent_rooms";
+          chrome.storage.session.get([key], function (r) {
+            _sentRoomsStored = (r && r[key]) || null;
+            if (!_sentRoomsStored && resp && Array.isArray(resp.rooms)) {
+              _sentRoomsStored = { customerId: String(customerId), rooms: resp.rooms, at: Date.now() };
+            }
+            var n = _sentRoomsStored && Array.isArray(_sentRoomsStored.rooms) ? _sentRoomsStored.rooms.length : 0;
+            console.log("[AXLX bulk-dl][auto] 送付済みを読み込み: " + n + "件 customer=" + customerId + (resp && resp.ok ? "" : "（読込失敗→絞らず）"));
+            _sentMarkCtx = { customerId: String(customerId), resp: resp || null, at: Date.now() };
+            try { _markSentLikeGuide(customerId, resp); } catch (_) {}
+            try { _markSentBuildingsLikeGuide(customerId); } catch (_) {}
+            cb(!!(resp && resp.ok));
+          });
+        } catch (_) { cb(!!(resp && resp.ok)); }
+      });
+    } catch (_) { cb(false); }
+  }
+
+  /** 一覧が描き直されたあと、キャッシュで印を付け直す（API を叩き直さない） */
+  function _reapplySentMarksIfAny() {
+    if (!_autoModeOn || _staffModeOn) return;
+    var ctx = _sentMarkCtx;
+    var cid = (ctx && ctx.customerId) || _pickCustomerIdForAuto();
+    if (!cid) return;
+    // 材料が新しい（15分以内）なら付け直し。古ければ読み直す
+    if (ctx && ctx.customerId === String(cid) && ctx.at && Date.now() - ctx.at < 15 * 60 * 1000) {
+      try { _markSentLikeGuide(cid, ctx.resp); } catch (_) {}
+      try { _markSentBuildingsLikeGuide(cid); } catch (_) {}
+      return;
+    }
+    try { _ensureSentRoomsForAuto(cid, function () {}); } catch (_) {}
+  }
+
+  /**
+   * ★ 2026-11-16: 通常（案内）と同じ見た目・印を自動にも付ける。
+   *   PDF に「送付済み」ラベル・チェック不可。押す選別（_rowSkipReason）もこれを見る。
+   *   号室一致 → 「送付済み」。案内の clearPdfMarks で消されても inject/rescan で付け直す。
+   */
+  function _markSentLikeGuide(customerId, resp) {
+    var SK = _SK();
+    var R = (typeof self !== "undefined" ? self : window).AxlxRealproRows;
+    if (!SK || !customerId) return;
+    // 案内 CSS が無い自動モードでも印が見えるようにする
+    try {
+      if (!document.getElementById("axlx-auto-sent-css")) {
+        var st = document.createElement("style");
+        st.id = "axlx-auto-sent-css";
+        st.textContent = ".axlx-pdf-sent{opacity:.45;cursor:not-allowed}.axlx-pdf-sent-label{margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:#e3f2fd;color:#0d47a1;vertical-align:middle}";
+        (document.head || document.documentElement).appendChild(st);
+      }
+    } catch (_) {}
+    var rooms = (resp && Array.isArray(resp.rooms)) ? resp.rooms
+      : (_sentRoomsStored && Array.isArray(_sentRoomsStored.rooms) ? _sentRoomsStored.rooms : []);
+    var custRooms = (resp && Array.isArray(resp.customerRooms)) ? resp.customerRooms : null;
+    // indexFor は TTL 付き。付け直し用に buildIndex を直接も使う
+    var idx = SK.indexFor({ customerId: String(customerId), rooms: rooms, at: Date.now() }, customerId, Date.now());
+    if (!idx && rooms.length) idx = SK.buildIndex(rooms);
+    var custIdx = custRooms ? SK.indexFor({ customerId: String(customerId), rooms: custRooms, at: Date.now() }, customerId, Date.now()) : null;
+    if (!custIdx && custRooms && custRooms.length) custIdx = SK.buildIndex(custRooms);
+    if (!idx && !custIdx) {
+      console.log("[AXLX bulk-dl][auto] 送付済み印: 索引0（rooms=" + rooms.length + "）");
+      return;
+    }
+    var rows = (R && typeof R.list === "function") ? (R.list() || []) : [];
+    // tracked が空だと list も空 → tracked から直接作る
+    if (!rows.length && tracked.length) {
+      rows = tracked.map(function (t) {
+        if (!t || !t.btn) return null;
+        var card = null;
+        try { card = extractCard(t.btn); } catch (_) { card = null; }
+        if (!card) return { name: null, room: null, btn: t.btn, cb: t.cb };
+        var labels = card.headerIdx && card.headerIdx.labels;
+        var roomCol = !(labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")));
+        var c0 = card.cells ? card.cells[0] : null;
+        return { name: card.name, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, btn: t.btn, cb: t.cb };
+      }).filter(Boolean);
+    }
+    var marked = 0;
+    var noRoom = 0;
+    rows.forEach(function (r) {
+      if (!r || !r.btn || !r.btn.classList) return;
+      if (!r.room) { noRoom++; return; }
+      // 通常（案内）と同じ: お客様に届けた部屋を優先。無い時は共有含む全部
+      var sentCust = !!(custIdx && SK.isSentRoom(custIdx, r.name, r.room));
+      var sent = !!(idx && SK.isSentRoom(idx, r.name, r.room));
+      if (!(sentCust || sent)) return;
+      r.btn.classList.add("axlx-pdf-sent");
+      if (r.cb) try { r.cb.disabled = true; r.cb.checked = false; } catch (_) {}
+      var lab = null;
+      try {
+        if (r.btn.parentNode) {
+          lab = r.btn.parentNode.querySelector(".axlx-pdf-sent-label");
+        }
+      } catch (_) {}
+      if (!lab && r.btn.parentNode) {
+        lab = document.createElement("span");
+        lab.className = "axlx-pdf-sent-label";
+        lab.textContent = "送付済み";
+        try { lab.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:#e3f2fd;color:#0d47a1;vertical-align:middle"; } catch (_) {}
+        r.btn.parentNode.insertBefore(lab, r.btn.nextSibling);
+      }
+      marked++;
+    });
+    console.log("[AXLX bulk-dl][auto] 送付済み印: " + marked + "件／行" + rows.length + "（号室なし" + noRoom + "・rooms" + rooms.length + "）");
+    if (marked) _nudge("👀 送付済み " + marked + "件を把握（通常と同じ）");
+  }
+
+  /** 号室の無い送付記録は建物印（通常の sent-check と同じ） */
+  var _sentCheckSigAuto = "";
+  function _markSentBuildingsLikeGuide(customerId) {
+    if (!customerId || _staffModeOn) return;
+    var R = (typeof self !== "undefined" ? self : window).AxlxRealproRows;
+    if (!R || typeof R.list !== "function" || typeof R.markSentForServer !== "function") return;
+    var rows = R.list() || [];
+    if (!rows.length) return;
+    var payload = rows.map(function (r) { return { name: (r && r.name) || "", room: (r && r.room) || "", url: (r && r.url) || null }; });
+    var sig = String(customerId) + "#" + payload.map(function (p) { return p.name + "|" + p.room; }).join(",");
+    if (sig === _sentCheckSigAuto) return;
+    _sentCheckSigAuto = sig;
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-guide-sent-check", customerId: String(customerId), rows: payload }, function (resp) {
+        try { if (chrome.runtime.lastError) return; } catch (_) {}
+        if (!resp || !resp.ok) return;
+        try { R.markSentForServer(resp.dropped || []); } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  /**
+   * ★ 2026-11-16 竹内さん「同じ平米は最安／送付済みは自動でも理解」:
+   *   ⚠ 真の原因: `_startAutoPressRun` が **全行をそのまま押す**だけで、
+   *     旧一括の `_selectAllowed`（送付済み・同じ建物×間取り×平米の最安）を通していなかった。
+   *     通常（案内）は `axlx-guide-sent-rooms` で隠すので分かっていた。自動は別経路。
+   *   → 押す前に同じ物差しで絞る。
+   */
+  function _filterCandForAuto(cand, customerId) {
+    var list = Array.isArray(cand) ? cand.slice() : [];
+    var state = {
+      customerId: customerId || null,
+      currentPage: 1,
+      updateStop: null,
+      cheapestSkipped: 0,
+      pageSkipped: 0,
+    };
+    // 前回の印を消す（行の再利用対策）
+    list.forEach(function (t) {
+      if (!t) return;
+      try { delete t.__axSkip; delete t.__axCheapestSkip; } catch (_) {}
+    });
+    var allowed = [];
+    var sent = 0;
+    list.forEach(function (t) {
+      var why = _rowSkipReason(state, t);
+      if (why === "sent") { sent++; t.__axSkip = true; return; }
+      allowed.push(t);
+    });
+    if (sent) {
+      console.log("[AXLX bulk-dl][auto] 送付済みの部屋 " + sent + "件は押さない（通常と同じ物差し）");
+      _tmark("auto_sent_skip", String(sent) + "件");
+    }
+    try {
+      var cheap = _applyCheapestPerLayout(state, allowed);
+      if (cheap && cheap.dropped) {
+        allowed = allowed.filter(function (t) { return !(t && t.__axCheapestSkip); });
+        _tmark("auto_cheapest_skip", cheap.dropped + "件を最安1件に");
+      }
+    } catch (e) {
+      console.warn("[AXLX bulk-dl][auto] 最安絞り失敗（絞らず続行）:", (e && e.message) || e);
+    }
+    return { allowed: allowed, sent: sent, cheapest: state.cheapestSkipped || 0, state: state };
   }
   function _autoPressNext(list) {
     if (!_autoPdfRun) return;
@@ -1670,20 +1991,48 @@
     if (!_autoModeOn || _staffModeOn) { _autoFinish("モードが変わったので止めました"); return; }
     if (_autoPdfRun.index >= list.length) { _autoFinish("全部終わりました"); return; }
     var item = list[_autoPdfRun.index++];
-    if (!item || !item.cb || !item.btn || !item.btn.isConnected) { _autoPressNext(list); return; }
+    /** 飛ばしは setTimeout で次へ（同期再帰でスタック／1件目送付済みで止まるのを防ぐ） */
+    var _skipToNext = function (why) {
+      _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
+      console.log("[AXLX bulk-dl][auto] 飛ばして次へ:", why, String((item && item.btn && item.btn.href) || "").slice(0, 70));
+      // ★ 2026-11-17: 80-200ms一様は機械的。人間は次行を目で追う（中央≈450・長尾）
+      var Hsk = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+      var skipMs = Hsk && Hsk.logNormalDelay ? Hsk.logNormalDelay(450, 0.55) : (280 + Math.floor(Math.random() * 420));
+      if (skipMs < 160) skipMs = 160;
+      if (skipMs > 1600) skipMs = 1600;
+      setTimeout(function () { _autoPressNext(list); }, Math.round(skipMs));
+    };
+    if (!item || !item.cb || !item.btn || !item.btn.isConnected) { _skipToNext("行なし"); return; }
     var url = item.btn.href;
-    // 送った行は押さない（送付済み・前回の検索より古い行の判定は、通常の一括の選別 _selectAllowed が state を持つ時に見る）
+    // 送った行は押さない（この回で既に押した URL）
     if (_onePdfSent[url]) {
       /**
        * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
        *   ⚠ 旧は**飛ばすだけで数えていなかった**ので、「全部送付済み」を判定できず、次ページへ進めなかった。
        *   → 飛ばした数を数える（`_autoFinish` が「0件送信＋1件以上飛ばした」で次ページへ進む）。
        */
-      _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
-      console.log("[AXLX bulk-dl][auto] 送った行は押さない:", String(url).slice(0, 70));
-      _autoPressNext(list);
+      _skipToNext("送った行");
       return;
     }
+    /**
+     * ★ 2026-11-16: 押す直前にもう一度送付済み／最安除外を確かめる（一覧の作り直し対策）。
+     * ★ 2026-11-17: 1件目送付済みでも2件目へ必ず進む（同期再帰やぶら下がり待ちで止まらない）。
+     */
+    if (item.__axSkip || item.__axCheapestSkip) {
+      _skipToNext(item.__axCheapestSkip ? "最安除外" : "送付済み印");
+      return;
+    }
+    try {
+      var _st = { customerId: (_autoPdfRun && _autoPdfRun.customerId) || _pickCustomerIdForAuto(), currentPage: 1 };
+      if (_rowSkipReason(_st, item) === "sent") {
+        item.__axSkip = true;
+        try {
+          if (item.btn.classList) item.btn.classList.add("axlx-pdf-sent");
+        } catch (_) {}
+        _skipToNext("送付済み");
+        return;
+      }
+    } catch (_) {}
     _autoPdfRun.total++;
     var el = document.getElementById("axlx-count");
     if (el) el.textContent = "🤖 自動 " + _autoPdfRun.total + "件目（" + (_autoPdfRun.done + 1) + "件送信済み）";
@@ -1691,13 +2040,34 @@
     _pressPrintPdf(item, function (pressed) {
       if (!pressed) {
         console.warn("[AXLX bulk-dl][auto] 印刷用PDFを押せませんでした（次へ）:", String(url).slice(0, 70));
-        setTimeout(function () { _autoPressNext(list); }, 1200);
+        var Hf = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+        var failMs = Hf && Hf.logNormalDelay ? Hf.logNormalDelay(1100, 0.45) : (900 + Math.floor(Math.random() * 600));
+        setTimeout(function () { _autoPressNext(list); }, Math.round(failMs));
         return;
       }
+      // 押した直後にもう一度送付済みなら送信待ちせず次へ（confirm やぶら下がり防止）
+      try {
+        var _st2 = { customerId: (_autoPdfRun && _autoPdfRun.customerId) || _pickCustomerIdForAuto(), currentPage: 1 };
+        if (_rowSkipReason(_st2, item) === "sent") {
+          item.__axSkip = true;
+          _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
+          console.log("[AXLX bulk-dl][auto] 押した直後に送付済みと判明 → 次へ");
+          var Hs2 = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+          var sentMs = Hs2 && Hs2.logNormalDelay ? Hs2.logNormalDelay(480, 0.5) : (320 + Math.floor(Math.random() * 360));
+          setTimeout(function () { _autoPressNext(list); }, Math.round(sentMs));
+          return;
+        }
+      } catch (_) {}
       // 押した合図で sendOnePdfNow が走る。終わる（_pdfBusy が false に戻る）のを待ってから次へ
       _waitPdfIdle(function () {
         if (_autoPdfRun) _autoPdfRun.done++;
-        setTimeout(function () { _autoPressNext(list); }, 500 + Math.floor(Math.random() * 700));
+        var Hn = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+        // 人間実測 p50≈1s。500+一様700 は機械的 → 対数正規
+        var nextMs = Hn && Hn.logNormalDelay ? Hn.logNormalDelay(900, 0.55) : (500 + Math.floor(Math.random() * 900));
+        if (Math.random() < 0.1) nextMs += 600 + Math.floor(Math.random() * 1200);
+        if (nextMs < 350) nextMs = 350;
+        if (nextMs > 4500) nextMs = 4500;
+        setTimeout(function () { _autoPressNext(list); }, Math.round(nextMs));
       });
     });
   }
@@ -1776,113 +2146,189 @@
       try { el.scrollIntoView(); } catch (__) {}
     }
   }
-  /** 1件の処理（送信中・確認中）が終わるまで待つ */
+  /**
+   * 1件の処理（送信中・確認中）が終わるまで待つ。
+   * ★ 2026-11-17: 送付済み1件目で `_pdfBusy` が立たない／立ったまま → 2件目の前で止まるのを防ぐ。
+   *   ・一度も busy にならなければ約2.5秒で次へ（キャプチャ未発火）
+   *   ・busy が立ったら終わるまで待つ（上限45秒）
+   */
   function _waitPdfIdle(cb) {
     var waited = 0;
-    var poll = function () {
-      if (!_pdfBusy) { cb(); return; }
-      waited += 500;
-      if (waited > 120000) { console.warn("[AXLX bulk-dl][auto] 1件が120秒たっても終わらない → 次へ"); cb(); return; }
-      setTimeout(poll, 500);
+    var sawBusy = !!_pdfBusy;
+    var done = false;
+    var finish = function (why) {
+      if (done) return;
+      done = true;
+      if (why) console.warn("[AXLX bulk-dl][auto] 1件待ち打ち切り → 次へ:", why);
+      try { cb(); } catch (_) {}
     };
-    setTimeout(poll, 800);
+    var poll = function () {
+      if (_pdfBusy) sawBusy = true;
+      if (!_pdfBusy && sawBusy) { finish(null); return; }
+      if (!_pdfBusy && !sawBusy && waited >= 2500) { finish("送信が始まらない"); return; }
+      var Hp = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+      var tick = Hp && Hp.logNormalDelay ? Hp.logNormalDelay(420, 0.35) : (320 + Math.floor(Math.random() * 200));
+      if (tick < 220) tick = 220;
+      if (tick > 900) tick = 900;
+      waited += tick;
+      if (waited > 45000) { finish("45秒タイムアウト"); return; }
+      setTimeout(poll, Math.round(tick));
+    };
+    var H0 = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
+    var first = H0 && H0.logNormalDelay ? H0.logNormalDelay(380, 0.4) : 400;
+    setTimeout(poll, Math.round(first));
+  }
+  /**
+   * ★ 2026-11-16 竹内さん「送ったら次のページへ／最大3で大丈夫／新着は最大5」
+   *   ⚠ 旧の自動押下は「全部送付済みの時だけ次へ・最大3回」。
+   *     → 未送付を1件でも送ると**そのページで終わって**2ページ目以降へ行かなかった。
+   *   新: このページの処理が終わったら（送った／全部送付済みのどちらでも）次へ。
+   *     上限は resolveMaxPages（既定3・新着/言い直し5）。次が無ければ終わる。
+   */
+  var _autoNextPageTries = 0;
+  var _autoPdfPage = 1;
+  var _autoPdfTotalSent = 0;
+  function _autoMaxPages() {
+    // 2026-11-16 竹内「最大3で大丈夫／新着のお客さんは最大5まで」
+    try {
+      var cid = _pickCustomerIdForAuto();
+      var opts = _autoRunFor(cid);
+      var A = _AR();
+      if (A && A.resolveMaxPages) return A.resolveMaxPages(opts, null);
+      var lim = A ? A.pageLimit(opts, null) : null;
+      if (lim && lim > 0) return lim;
+      if (A && A.DEFAULT_MAX_PAGES) return A.DEFAULT_MAX_PAGES;
+    } catch (_) {}
+    return 3;
   }
   function _autoFinish(why) {
     var n = _autoPdfRun ? _autoPdfRun.done : 0;
     var skipped = _autoPdfRun ? (Number(_autoPdfRun.skipped) || 0) : 0;
     _autoPdfRun = null;
-    /**
-     * ★ 2026-11-14 竹内さん「物件画面ないで検索したり送付済みで物件なければ次へ移動する部分もちゃんと学習を自動モードに反映する」
-     *
-     *   ⚠ 旧は**このページの行が全部送付済み（＝1件も送っていない）でも、そのまま終わって次ページへ行かなかった**。
-     *     実測（`_autoPressNext`）でも「送った行は押さない」で飛ばすだけで、飛ばした数も数えていなかった。
-     *   → ① 飛ばした数（`skipped`）を数える
-     *     ② **送ったのが0件で、飛ばしたのが1件以上**なら「このページは全部送付済み」と判断し、
-     *        **次のページへ進む**（`_autoNextPageThenRestart`）。
-     *        ⚠ 進むのは「全部送付済みの時だけ」。1件でも送ったら次ページへは進まない（今まで通り終わる）。
-     *        ⚠ 次ページが無ければ（最終ページ）今まで通り終わる。
-     */
+    _autoPdfTotalSent = (Number(_autoPdfTotalSent) || 0) + (Number(n) || 0);
     var allSkipped = (n === 0 && skipped > 0);
-    _tmark("auto_pdf_end", why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : ""));
-    console.log("[AXLX bulk-dl][auto] 自動の印刷用PDF: " + why + "（" + n + "件送信・" + skipped + "件は送付済みで飛ばした）");
+    var page = Number(_autoPdfPage) || 1;
+    var maxP = _autoMaxPages();
+    _tmark("auto_pdf_end", "P" + page + " " + why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : ""));
+    console.log("[AXLX bulk-dl][auto] P" + page + "/" + maxP + " 終了: " + why + "（この頁 " + n + "件送信・飛ばし " + skipped + "・累計 " + _autoPdfTotalSent + "件）");
     var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
     if (stopBtn) stopBtn.style.display = "none";
     _paintPdfProgress();
-    if (allSkipped) {
-      _nudge("👀 このページは全部送付済みでした（" + skipped + "件）→ 次のページを確かめます");
-      try {
-        _autoNextPageThenRestart(why);
-      } catch (_) {
-        _nudge("🤖 自動 " + why + "（" + n + "件）");
-      }
-      return;
-    }
-    _nudge("🤖 自動 " + why + "（" + n + "件）");
     /**
-     * 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:
-     *   古い一括（autoSendAllPages）を消すので、**その代わりに完了の合図をここから送る**。
-     *   background.js の一括検索（AIXツール・自動便）は「全ページ送信完了（axlx-batch-customer-done）」を最大5分待って
-     *   次のお客様へ移る。送らないと5分止まる（＝一括検索が詰まる）。
+     * 次ページへ進む条件:
+     *   ・まだ上限（既定5）未満
+     *   ・次ボタンがある
+     *   ・このページで「何かしら処理した」（送った／送付済みで飛ばした）
+     *   ※ 送ったあとでも次へ行く（旧は送ったら止まっていた）
      */
+    var canNext = page < maxP && (n > 0 || allSkipped);
+    // ★ 2026-11-16: 次ページ直後に行がまだ無くて 0件で終わっても、上限未満なら次を試す
+    //   （「2までは行くが3に行かない」＝行待ち失敗で止まっていた）
+    if (!canNext && page < maxP && /見つかりません|no-rows|行/.test(String(why || ""))) {
+      canNext = true;
+    }
+    if (canNext) {
+      var hasNext = false;
+      try { hasNext = !!(typeof _findNextPageEl === "function" && _findNextPageEl()); } catch (_) { hasNext = false; }
+      if (hasNext) {
+        if (allSkipped) _nudge("👀 P" + page + " は全部送付済み（" + skipped + "件）→ 次のページへ");
+        else if (n > 0) _nudge("✅ P" + page + " で " + n + "件送った → 次のページへ（上限 " + maxP + "）");
+        else _nudge("👉 P" + page + " の行が揃わなかった → 次のページを試す（上限 " + maxP + "）");
+        try {
+          _autoNextPageThenRestart(why, { sentThisPage: n, skipped: skipped, allSkipped: allSkipped });
+        } catch (_) {
+          _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件）");
+          _sendBatchDone(_autoPdfTotalSent, why, skipped);
+        }
+        return;
+      }
+    }
+    _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件・P" + page + "/" + maxP + "）");
     try {
       chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
         var cid = (r && r.current_customer_id) || null;
         chrome.runtime.sendMessage({
           type: "axlx-batch-customer-done",
           customerId: cid,
-          propertyCount: n,
+          propertyCount: _autoPdfTotalSent,
           audit: null,
-          auto_pdf: { why: why, sent: n, skipped: skipped },
+          auto_pdf: { why: why, sent: _autoPdfTotalSent, skipped: skipped, pages: page, max_pages: maxP },
         }, function () { void chrome.runtime.lastError; });
       });
     } catch (_) {}
   }
   /**
-   * ★ 2026-11-14 竹内さん「送付済みで物件なければ次へ移動する部分」
-   *   **このページが全部送付済みだった時**に、次のページへ進んで押し直す。
-   *   ⚠ 次ページが無ければ今まで通り終わる（完了の合図を送る）。
-   *   ⚠ 進むのは**1回だけ**（無限にページをめくらない）。`_autoNextPageTries` で数える。
-   *   ⚠ 進んだ後は**検索結果を見る間**（`_startAutoPressAfterLook`）を入れてから押し始める。
+   * ★ 2026-11-14／2026-11-16: 次のページへ進んで押し直す（上限5ページ）。
+   *   送付済みだけの頁でも、未送付を送った頁のあとでも進む。
    */
-  var _autoNextPageTries = 0;
-  function _autoNextPageThenRestart(why) {
-    if (_autoNextPageTries >= 3) {
-      console.log("[AXLX bulk-dl][auto] 次のページへ進むのが3回を超えた → ここで終わります");
-      _nudge("🤖 自動 " + why + "（次のページへ3回進みました）");
-      _sendBatchDone(0, why, 0);
+  function _autoNextPageThenRestart(why, meta) {
+    var maxP = _autoMaxPages();
+    if (_autoNextPageTries >= (maxP - 1)) {
+      console.log("[AXLX bulk-dl][auto] ページ上限 " + maxP + " に達した → 終わります");
+      _nudge("🤖 自動 " + why + "（" + maxP + "ページまで見ました・累計 " + _autoPdfTotalSent + "件）");
+      _sendBatchDone(_autoPdfTotalSent, why + "・P" + maxP + "まで", meta && meta.skipped);
       return;
     }
-    _autoNextPageTries++;
     var btn = null;
     try { btn = (typeof _findNextPageEl === "function") ? _findNextPageEl() : null; } catch (_) { btn = null; }
     if (!btn) {
-      console.log("[AXLX bulk-dl][auto] このページは全部送付済み・次のページも無い → 終わります");
-      _nudge("🤖 自動 " + why + "（次のページはありませんでした）");
-      _sendBatchDone(0, why + "・次ページ無し", 0);
+      console.log("[AXLX bulk-dl][auto] 次のページが無い → 終わります");
+      _nudge("🤖 自動 " + why + "（次のページなし・累計 " + _autoPdfTotalSent + "件）");
+      _sendBatchDone(_autoPdfTotalSent, why + "・次ページ無し", meta && meta.skipped);
       return;
     }
-    _tmark("auto_next_page", _autoNextPageTries + "回目");
-    console.log("[AXLX bulk-dl][auto] このページは全部送付済み → 次のページへ進みます（" + _autoNextPageTries + "回目）");
-    _nudge("👉 全部送付済みなので次のページへ進みます");
-    // 人が「次へ」を押すのと同じ間（少し待ってから押す）
-    // ⚠ `enqueueHumanClick` は bulk-dl.js には無い（page-script.js 側）。
-    //   ⚠ `AxlxPointerUi` の関数名も環境で違うので、**確実に在る物だけ**使う（`_humanScrollToEl` と `click()`）。
-    //   見えるカーソルは `page-script.js` の `_clickEl` が受け持つ（この押下は一覧の移動なので必須ではない）。
+    _autoNextPageTries++;
+    _autoPdfPage = (Number(_autoPdfPage) || 1) + 1;
+    _tmark("auto_next_page", "→P" + _autoPdfPage + "（" + _autoNextPageTries + "回目）");
+    console.log("[AXLX bulk-dl][auto] 次のページへ進みます → P" + _autoPdfPage + "/" + maxP
+      + (meta && meta.allSkipped ? "（前頁は全部送付済み）" : "（前頁で送信あり）"));
+    _nudge("👉 次のページへ（P" + _autoPdfPage + "/" + maxP + "）");
+    /**
+     * ★ 2026-11-16: 次へもカーソル付きで押す（通常の「左の次｜td.pager」と同じ形）。
+     */
     try {
       if (typeof _humanScrollToEl === "function") _humanScrollToEl(btn);
     } catch (_) {}
     setTimeout(function () {
-      try { if (btn && btn.isConnected) btn.click(); } catch (_) {}
+      try {
+        if (!btn || !btn.isConnected) return;
+        var P = window.AxlxPointerUi;
+        var fire = function () {
+          try {
+            if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", btn);
+            btn.click();
+          } catch (_) {}
+        };
+        if (P && P.moveToEl) {
+          try { if (P.ensure) P.ensure(); } catch (_) {}
+          P.moveToEl(btn).then(function () {
+            try { if (P.tap) P.tap(); } catch (_) {}
+            fire();
+          }, fire);
+        } else {
+          fire();
+        }
+      } catch (_) {}
     }, 700 + Math.floor(Math.random() * 1200));
-    // ページが読み直されるのを待って、もう一度押し始める
-    setTimeout(function () {
+    // ページが読み直されるのを待って、もう一度押し始める（行が出るまで短くリトライ）
+    var _waitRows = function (triesLeft) {
       try {
         if (typeof _rescanRows === "function") _rescanRows();
-        var n = 0;
-        try { n = (typeof _rowCount === "function") ? _rowCount() : 0; } catch (_) { n = 0; }
-        _startAutoPressAfterLook(n || 10);
       } catch (_) {}
-    }, 2600 + Math.floor(Math.random() * 1400));
+      var n = 0;
+      try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
+      if (n > 0 || triesLeft <= 0) {
+        if (n <= 0) {
+          console.warn("[AXLX bulk-dl][auto] 次ページの行がまだ出ない → それでも押せる物を探す");
+          _tmark("auto_next_no_rows", "P" + _autoPdfPage);
+        }
+        // ★ continuePages: ページカウンタを消さない（3ページ目に進むため）
+        _startAutoPressAfterLook(n || 10, { continuePages: true });
+        return;
+      }
+      setTimeout(function () { _waitRows(triesLeft - 1); }, 900 + Math.floor(Math.random() * 500));
+    };
+    setTimeout(function () { _waitRows(4); }, 2600 + Math.floor(Math.random() * 1400));
   }
   /** 完了の合図だけ送る（`_autoFinish` と共通） */
   function _sendBatchDone(n, why, skipped) {
@@ -2080,6 +2526,8 @@
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
+    // ★ 2026-11-16: rescan で行が入れ替わっても送付済み印を付け直す
+    try { if (_autoModeOn && !_staffModeOn) _reapplySentMarksIfAny(); } catch (_) {}
   }
   try {
     chrome.runtime.onMessage.addListener(function (msg) {
@@ -3527,8 +3975,11 @@
     //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
     //   2026-09-27: conditions は popup の経路では文字列（max_pages が読めない）→ background が置いた自動便の指定からも読む（auto-run.js）
     var _arOpts = _autoRunFor(state.customerId);
-    // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定を 3 → 5（1か所の定数 auto-run.js DEFAULT_MAX_PAGES・読めない時も 5）
-    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || (_AR() ? _AR().pageLimit(_arOpts, null) : null) || (_AR() && _AR().DEFAULT_MAX_PAGES) || 5;
+    // 2026-11-16 竹内「最大3で大丈夫／新着は最大5」: auto-run resolveMaxPages（指定→新着5→既定3）
+    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages))
+      || (_AR() && _AR().resolveMaxPages ? _AR().resolveMaxPages(_arOpts, null) : null)
+      || (_AR() ? _AR().pageLimit(_arOpts, null) : null)
+      || (_AR() && _AR().DEFAULT_MAX_PAGES) || 3;
     // 2026-09-30 v2.5.43 更新順で前回の検索より古い行まで来た → 次のページは開かない（ページの上限より前に終える＝サイトへのアクセスが減る）
     if (state.updateStop && hasNextPageBtn()) {
       clearAutoSendState();
@@ -3941,23 +4392,43 @@
     _preAutofillBtns = new Set(findPrintBtns().map(function(b) { return b.href || b.getAttribute('href') || ''; }));
     _pendingAutoSendDispatched = false;
     console.log("[AXLX bulk-dl] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
-    // バッチ中の名前ずれ防止: autofill開始時点のお客さん名をここでスナップショット
-    // autoSendAllPages() 発火時には popup が次の顧客に切り替わっている可能性があるため
+    /**
+     * ★ 2026-11-16 勇気さん実測（owner_mismatch: 送る相手=勇気 / 検索の回=り）:
+     *   旧は getCustomerFromPopup → storage の「今選んでいる客」をスナップした。
+     *   一連中に次客を選ぶと、送る相手だけ次客になり止まる。
+     *   → fill が載せた customerId を最優先。無ければ popup（従来）。
+     */
     _pendingCustomerForAutoSend = null;
-    getCustomerFromPopup(function(name, conditions, customerId) {
+    var _initCid = e.data.customerId ? String(e.data.customerId) : null;
+    var _initName = e.data.customerName ? String(e.data.customerName) : null;
+    function _armSnap(name, conditions, customerId) {
       _pendingCustomerForAutoSend = { name: name, conditions: conditions, customerId: customerId };
-      console.log("[AXLX bulk-dl] autofill initiated: customer snapshot =", name);
-      // BUG-D修正: fill-done が先着していた場合、スナップショット確定後に再チェックして安全起動
+      console.log("[AXLX bulk-dl] autofill initiated: customer snapshot =", name, customerId ? String(customerId).slice(0, 8) : "");
       if (_autoSendArmed && !_pendingAutoSendDispatched && !getAutoSendState()) {
         var _hasNBsnap = tracked.some(function(item) { var k = item.btn.href || item.btn.getAttribute('href') || ''; return k && !_preAutofillBtns.has(k); });
         if (_hasNBsnap) {
           _autoSendArmed = false;
           _pendingAutoSendDispatched = true;
-          // 2026-11-10: 旧の一括ではなく、1件ずつ押す形（自動モードなら自動で押す）
           _maybeAutoPressOnLoad();
         }
       }
-    });
+    }
+    if (_initCid) {
+      _armSnap(_initName || null, null, _initCid);
+      // 名前・条件は後から補完（IDは fill のものを守る）
+      getCustomerFromPopup(function(name, conditions, customerId) {
+        if (!_pendingCustomerForAutoSend) return;
+        if (String(_pendingCustomerForAutoSend.customerId) !== String(_initCid)) return; // 別客に上書きしない
+        if (name) _pendingCustomerForAutoSend.name = name;
+        if (conditions) _pendingCustomerForAutoSend.conditions = conditions;
+        // popup が別客を返しても customerId は _initCid のまま
+        void customerId;
+      });
+    } else {
+      getCustomerFromPopup(function(name, conditions, customerId) {
+        _armSnap(name, conditions, customerId);
+      });
+    }
   });
 
   // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
@@ -4099,8 +4570,9 @@
               console.warn("[AXLX bulk-dl] Case C: 再開フラグが古い（" + Math.round(_age / 1000) + "秒前・" + (_flag.customerName || "不明") + "）→ 送信しない");
               return;
             }
-            console.log("[AXLX bulk-dl][auto] Case C: ページリロード初回起動 → この画面の行を1件ずつ押します");
-            _maybeAutoPressOnLoad();
+            console.log("[AXLX bulk-dl][auto] Case C: 検索後のページ読み直し → この画面の行を1件ずつ押します");
+            _autoSendArmed = true;
+            _maybeAutoPressOnLoad({ afterSearch: true });
           }
         });
       } catch (_) {}

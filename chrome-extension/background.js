@@ -1563,7 +1563,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const headers = await _getAutomationKeyHeader();
         const res = await fetch(SUMORA_BATCH_API + "/api/automation/sent-rooms?customer_id=" + encodeURIComponent(String(msg.customerId || "")), { headers, signal: AbortSignal.timeout(8000) });
         const j = res.ok ? await res.json() : null;
-        sendResponse({ ok: !!(j && Array.isArray(j.rooms)), rooms: j && Array.isArray(j.rooms) ? j.rooms.slice(0, 3000) : [], customerRooms: j && Array.isArray(j.customer_rooms) ? j.customer_rooms.slice(0, 3000) : null });
+        const rooms = j && Array.isArray(j.rooms) ? j.rooms.slice(0, 3000) : [];
+        /**
+         * ★ 2026-11-16: 通常（案内）が読んだ送付済みを、自動の選別（axlx_sent_rooms）にも置く。
+         *   旧は案内だけが持っていて自動押下は storage を見ていなかった／バッチ以外では未読込だった。
+         */
+        try {
+          const SK = self.AxlxSentSkip;
+          if (SK && msg.customerId != null) {
+            const rec = { customerId: String(msg.customerId), rooms: rooms, at: Date.now() };
+            const o = {}; o[SK.STORAGE_KEY] = rec;
+            await chrome.storage.session.set(o);
+          }
+        } catch (_) {}
+        sendResponse({ ok: !!(j && Array.isArray(j.rooms)), rooms: rooms, customerRooms: j && Array.isArray(j.customer_rooms) ? j.customer_rooms.slice(0, 3000) : null });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message });
+      }
+    })();
+    return true;
+  }
+
+  /**
+   * ★ 2026-11-16: 自動押下の直前に送付済みを必ず読む（バッチ以外の自動でも同じ）。
+   *   bulk-dl が押す前に呼び、`axlx_sent_rooms` を更新してから選別する。
+   */
+  if (msg.type === "axlx-load-sent-rooms") {
+    (async () => {
+      try {
+        const cid = msg.customerId != null ? String(msg.customerId) : null;
+        if (!cid) { sendResponse({ ok: false, error: "customerId なし" }); return; }
+        await _loadSentRooms(cid, msg.site || null);
+        const SK = self.AxlxSentSkip;
+        const key = SK ? SK.STORAGE_KEY : "axlx_sent_rooms";
+        const stored = await chrome.storage.session.get([key]);
+        const rec = stored && stored[key];
+        sendResponse({
+          ok: true,
+          count: rec && Array.isArray(rec.rooms) ? rec.rooms.length : 0,
+          customerId: cid,
+        });
       } catch (e) {
         sendResponse({ ok: false, error: e && e.message });
       }
@@ -2480,7 +2519,22 @@ async function _takeShot(msg, done) {
          */
         same_run: (function () { try { return _shotSameRun || 0; } catch (_) { return 0; } })(),
         // 2026-11-13 竹内さん「写真から学習する」: この写真の直前までの操作の並び
-        ops: Array.isArray(msg.ops) ? msg.ops : null,
+        // ★ 2026-11-17: クリック撮影経路でも cs 欠落を埋める（録画→改善土台）
+        ops: (function () {
+          var raw = Array.isArray(msg.ops) ? msg.ops : null;
+          if (!raw) return null;
+          try {
+            return raw.map(function (o) {
+              if (!o || typeof o !== "object" || o.cs) return o;
+              var w = String(o.w || ""), f = String(o.f || "");
+              if (/checkbox|radio|button|select|link|label|click/.test(w)
+                || /one_city|one_station|one_line|city_code|station|route|go_search|room_layout|絞り込み|検索/.test(f)) {
+                return Object.assign({}, o, { cs: "pointer" });
+              }
+              return o;
+            });
+          } catch (_) { return raw; }
+        })(),
         // 2026-11-13: どのタブか（その場の動きの癖を一緒に送るため）
         tab_id: typeof tab.id === "number" ? tab.id : null,
       }) : null;
@@ -2553,6 +2607,8 @@ var _LEARN_KEYS = ["axlx_learn_next", "axlx_learn_points", "axlx_learn_at", "axl
  *     ⚠ 束の取り直し（重い方）は版が変わった時だけなので、5分ごとでも通信は増えない。
  */
 var _LEARN_CHECK_MS = 5 * 60 * 1000;   // 版を見に行く間隔（5分。軽い確認だけ）
+/** 自動モード中は短く見る（改善がすぐ届く・2026-11-15 ボトルネック改善） */
+var _LEARN_CHECK_AUTO_MS = 60 * 1000;
 /**
  * ★ 2026-11-15 竹内さん「学習の束の取り直しが重なって、DB が止まった件（急ぎ）」
  *
@@ -2646,7 +2702,20 @@ async function _refreshLearnedBundle(force) {
      *   ・版が変わっていなければ何もしない
      *   ・版が変わっていたら取り直す（＝学習が進んだ瞬間に反映される）
      */
-    if (!force && last && Date.now() - last < _LEARN_CHECK_MS) return { ok: true, skipped: "fresh" };
+    /**
+     * ★ 2026-11-15「新しくなったら新しくしたのもちゃんと把握」:
+     *   自動モード中は確認間隔を短くする（改善がすぐ版チェックに乗る）。
+     */
+    var _checkMs = _LEARN_CHECK_MS;
+    try {
+      if (_autoModeOn || _autoModeChosen) _checkMs = _LEARN_CHECK_AUTO_MS;
+    } catch (_) {}
+    /**
+     * ★ 2026-11-16 連携ボトルネック除去（read_count=0が続く／新束が届かない）:
+     *   旧は「前回取込から5分未満」だと **版確認すらせず return** していた。
+     *   → photo_learn で束が新しくなっても、通常モードでは最大5分気づかない。
+     *   → **版確認（touch=0）は毎回やる**。版が同じかつ新鮮な時だけ取得をスキップ。
+     */
     if (!force && last) {
       try {
         /**
@@ -2656,7 +2725,7 @@ async function _refreshLearnedBundle(force) {
          *   → 8秒で切れて `catch` に入り「取りに行く」流れになるが、
          *     その直後の取得（15秒）も**足りずに失敗**し、結果として**新しい学びが届かなかった**。
          *   → 版確認を **25秒**、取得を **40秒** に延ばす（実測 14.6秒＋余裕）。
-         *     ⚠ 5分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
+         *     ⚠ 1分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
          */
         var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(25000) });
         if (head.ok) {
@@ -2669,16 +2738,42 @@ async function _refreshLearnedBundle(force) {
            *   → 版が**分かっている**（`hv` がある）かつ `hv === lastVer` なら**ここで終わる**（取得しない）。
            *     ⚠ `lastVer` が空の時も `hv` があれば、手元に束が入っているかを別に見る（下）。
            */
-          if (hv && hv === lastVer) return { ok: true, skipped: "same_version" };
+          /**
+           * ★ 2026-11-16: 版同じでも read_count=0 なら「届いていない」扱い → 取り直して印を付ける。
+           *   版同じかつ既に読まれている時は mark_read=1 だけ飛ばしてスキップ（重い束は取らない）。
+           */
+          var _serverRead = (hj && typeof hj.read_count === "number") ? hj.read_count : 0;
+          if (hv && hv === lastVer) {
+            if (_serverRead <= 0) {
+              try { console.log("[learn] 版同じだが未読(read_count=0)→取り直して印を付けます"); } catch (_) {}
+            } else {
+              try {
+                ["realpro", "itandi", "all"].forEach(function (scMark) {
+                  fetch(SUMORA_BATCH_API + "/api/human-learn-profile?mark_read=1&scope=" + scMark, { cache: "no-store", signal: AbortSignal.timeout(15000) }).catch(function () {});
+                });
+              } catch (_) {}
+              return { ok: true, skipped: "same_version", server_read_count: _serverRead };
+            }
+          }
           if (hv && !lastVer) {
             // 初回でも、既に同じ版の束が storage に入っているなら取り直さない
             var bySiteNow = st && st.axlx_learn_by_site;
             if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length) {
               await chrome.storage.local.set({ axlx_learn_ver: hv });
-              return { ok: true, skipped: "same_version_first" };
+              if (_serverRead <= 0) {
+                try { console.log("[learn] 手元に束あり・サーバー未読→取り直して印を付けます"); } catch (_) {}
+              } else {
+                try {
+                  ["realpro", "itandi", "all"].forEach(function (scMark) {
+                    fetch(SUMORA_BATCH_API + "/api/human-learn-profile?mark_read=1&scope=" + scMark, { cache: "no-store", signal: AbortSignal.timeout(15000) }).catch(function () {});
+                  });
+                } catch (_) {}
+                return { ok: true, skipped: "same_version_first", server_read_count: _serverRead };
+              }
             }
+          } else if (hv && hv !== lastVer) {
+            console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
           }
-          console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
         }
       } catch (e) {
         // ⚠ 版が読めなくても取りに行く（安全側）。理由を残す（次に同じ事が起きたら分かる）
@@ -2707,7 +2802,12 @@ async function _refreshLearnedBundle(force) {
         var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (!sres.ok) continue;
         var sjson = await sres.json();
-        if (sjson && sjson.bundle && typeof sjson.bundle === "object") perSite[sc] = sjson.bundle;
+        if (sjson && sjson.bundle && typeof sjson.bundle === "object") {
+          perSite[sc] = sjson.bundle;
+          try {
+            if (typeof sjson.read_count === "number") perSite[sc]._server_read_count = sjson.read_count;
+          } catch (_) {}
+        }
       } catch (_) { /* 片方が取れなくても、もう片方は使う */ }
     }
     // 今いるタブのサイト（分からなければ realpro）
@@ -2719,18 +2819,67 @@ async function _refreshLearnedBundle(force) {
       else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
     } catch (_) {}
     /**
-     * 今のサイトの束を選ぶ。無ければ realpro → 最後に全体（scope=all）へ落とす
-     *   （新しいサイトでまだ学びが無い時に「何も無い」で止まらないように）。
+     * ★ 2026-11-15 竹内さん「改善したら更新されていく」「ボトルネックとなっている部分改善」:
+     *   ⚠ 実測: `all` に画面位置 x/y=71・n≥3=33 があるのに、拡張は **古い realpro**（x/y=0）を優先して
+     *     **全体を見に行かなかった** → 学んでも自動に届かない（ボトルネックの本体）。
+     *   → **必ず all も取る**。サイト別と全体で **新しい方を正**にする。
+     *     サイト別の next/points はサイト別を優先しつつ、`shots.learned`（画面位置）は新しい方から載せる。
      */
-    var res = null;
-    if (perSite[curSite]) { res = { ok: true, json: { bundle: perSite[curSite] } }; }
-    if (!res) {
+    var allBundle = null;
+    try {
       var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(40000) });
-      if (!allRes.ok) return { ok: false, error: "http_" + allRes.status };
-      res = { ok: true, raw: await allRes.json() };
+      if (allRes.ok) {
+        var allJson = await allRes.json();
+        if (allJson && allJson.bundle && typeof allJson.bundle === "object") {
+          allBundle = allJson.bundle;
+          try {
+            if (typeof allJson.read_count === "number") allBundle._server_read_count = allJson.read_count;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    function _genMs(b) {
+      if (!b || typeof b !== "object") return 0;
+      return Date.parse(String(b.generated_at || "")) || 0;
     }
-    var json = res.json || res.raw || {};
-    var bundle = json && json.bundle;
+    function _mergeLearnedShots(into, from) {
+      if (!into || !from) return into;
+      try {
+        if (!into.shots || typeof into.shots !== "object") into.shots = {};
+        if (from.shots && from.shots.learned) into.shots.learned = from.shots.learned;
+        if (from.shots && typeof from.shots.total === "number") into.shots.total = from.shots.total;
+        if (from.screen_flow && typeof from.screen_flow === "object") into.screen_flow = from.screen_flow;
+      } catch (_) {}
+      return into;
+    }
+    var siteBundle = perSite[curSite] || null;
+    var bundle = null;
+    if (siteBundle && allBundle) {
+      if (_genMs(allBundle) > _genMs(siteBundle)) {
+        // 全体の方が新しい＝学習が進んだ側。サイト別の順番は残しつつ、画面位置は全体から載せる
+        bundle = siteBundle;
+        _mergeLearnedShots(bundle, allBundle);
+        // サイト別の next が薄い時は全体の next/points も新しい方で補う
+        try {
+          if ((!bundle.next || !Object.keys(bundle.next).length) && allBundle.next) bundle.next = allBundle.next;
+          if ((!bundle.points || !Object.keys(bundle.points).length) && allBundle.points) bundle.points = allBundle.points;
+          if (allBundle.supervisor) bundle.supervisor = allBundle.supervisor;
+          bundle.generated_at = allBundle.generated_at || bundle.generated_at;
+        } catch (_) {}
+        console.log("[learn] 全体の束の方が新しい → 画面位置を all から載せました（" + curSite + " は " + String((siteBundle.generated_at || "")).slice(0, 19) + " / all " + String((allBundle.generated_at || "")).slice(0, 19) + "）");
+      } else {
+        bundle = siteBundle;
+      }
+    } else {
+      bundle = siteBundle || allBundle;
+    }
+    // perSite 台帳にも、新しい画面位置を載せておく（サイト切替ですぐ使える）
+    if (allBundle && _genMs(allBundle) > 0) {
+      for (var _psk in perSite) {
+        if (_genMs(allBundle) > _genMs(perSite[_psk])) _mergeLearnedShots(perSite[_psk], allBundle);
+      }
+      if (!perSite[curSite] && allBundle) perSite[curSite] = allBundle;
+    }
     if (!bundle || typeof bundle !== "object") {
       // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
       await chrome.storage.local.set({ axlx_learn_at: Date.now() });
@@ -2769,6 +2918,8 @@ async function _refreshLearnedBundle(force) {
      *   ⚠ サーバーが計算して返しているのに拡張が読まなければ、現場では使われない（学習が届かない）。
      */
     var opens = (bundle.opens && typeof bundle.opens === "object") ? bundle.opens : {};
+    /** ★ 2026-11-16: 通常録画で手が付いた欄（見えるカーソルの手の形学習） */
+    var cursorHand = (bundle.cursor_hand && typeof bundle.cursor_hand === "object") ? bundle.cursor_hand : {};
     /** 今のモードの押す順番（あれば mode 別、無ければ全体） */
     var myMode = await _modeLabelNow();
     var modeNext = (myMode && byMode[myMode] && byMode[myMode].next) ? byMode[myMode].next : null;
@@ -2797,8 +2948,61 @@ async function _refreshLearnedBundle(force) {
         }
       }
     } catch (_) {}
+    /**
+     * ★ 2026-11-15 竹内さん「学習からの連携をしっかり完了するまで一連の流れを拡張ちゃんと把握して
+     *   新しくなったら新しくしたのもちゃんと把握してつくる」:
+     *   取り込みのたびに **一連の到達点**を storage に残す（版・前の版・画面位置の数・完了か）。
+     *   ⚠ これが無いと「取ったつもり・新しいのに古い」が現場で分からない。
+     */
+    var _screenSolid = Object.keys(_screenAim).length;
+    var _screenAll = 0;
+    try {
+      var _lrn = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
+      if (_lrn && typeof _lrn === "object") {
+        for (var _sc2 in _lrn) {
+          var _lst2 = Array.isArray(_lrn[_sc2]) ? _lrn[_sc2] : [];
+          for (var _j2 = 0; _j2 < _lst2.length; _j2++) {
+            if (_lst2[_j2] && typeof _lst2[_j2].x === "number" && typeof _lst2[_j2].y === "number") _screenAll++;
+          }
+        }
+      }
+    } catch (_) {}
+    var _newVer = String(bundle.generated_at || "");
+    var _prevVer = lastVer || "";
+    var _updated = !!(_newVer && _prevVer && _newVer !== _prevVer);
+    var _linkComplete = _screenSolid >= 3 && Object.keys(next).length > 0 && Object.keys(points).length > 0;
+    var _link = {
+      ver: _newVer,
+      prev_ver: _prevVer || null,
+      updated: _updated,
+      at: new Date().toISOString(),
+      site: curSite,
+      next: Object.keys(next).length,
+      points: Object.keys(points).length,
+      screen_solid: _screenSolid,
+      screen_all: _screenAll,
+      complete: _linkComplete,
+      server_read_count: (typeof bundle._server_read_count === "number")
+        ? bundle._server_read_count
+        : ((perSite[curSite] && typeof perSite[curSite]._server_read_count === "number")
+          ? perSite[curSite]._server_read_count
+          : null),
+      steps: [
+        "1.サーバーの束を取得（read印つき）",
+        "2.サイト別と全体で新しい方を採用",
+        "3.画面位置(n≥3) " + _screenSolid + "欄を axlx_learn_screen へ",
+        "4.順番 " + Object.keys(next).length + "・場所 " + Object.keys(points).length + " を配置",
+        _linkComplete ? "5.連携完了（自動が使える状態）" : "5.まだ不足（画面位置か順番が薄い）",
+      ],
+    };
+    if (_updated) {
+      try { console.log("[learn] ★学びが新しくなりました: " + _prevVer.slice(0, 19) + " → " + _newVer.slice(0, 19) + "／画面位置 n≥3=" + _screenSolid + "／連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+    } else {
+      try { console.log("[learn] 学びを取り込みました（版 " + _newVer.slice(0, 19) + "）画面位置 n≥3=" + _screenSolid + " 連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+    }
     await chrome.storage.local.set({
       axlx_learn_screen: _screenAim,
+      axlx_learn_link: _link,
       axlx_learn_next: next,
       axlx_learn_points: points,
       axlx_learn_motion: motion,
@@ -2857,6 +3061,7 @@ async function _refreshLearnedBundle(force) {
         return o;
       })(),
       axlx_learn_opens: opens,
+      axlx_learn_cursor_hand: cursorHand,
       axlx_learn_shots: (bundle.shots && typeof bundle.shots === "object") ? bundle.shots : null,
       axlx_learn_seq: seqFlow,
       axlx_learn_by_mode: byMode,
@@ -2890,6 +3095,8 @@ async function _refreshLearnedBundle(force) {
       opens: Object.keys(opens).length,
       screens: Object.keys(screenFlow).length, seq: ((seqFlow.sequence || []).length),
       mode: myMode, mode_next: modeNext ? Object.keys(modeNext).length : 0,
+      screen_solid: _screenSolid, screen_all: _screenAll,
+      updated: _updated, complete: _linkComplete, ver: _newVer, prev_ver: _prevVer || null,
     };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -2914,11 +3121,15 @@ try {
  *   ★ 2026-11-15: 実際に走るのは `Queued`（同時1本・失敗後は間隔をあける）。
  *     ⚠ 全端末が同じタイミングにならないよう、**開始を少しばらす**（0〜60秒）。
  */
+/**
+ * ★ 2026-11-15「新しくなったら把握して取り込む」:
+ *   通常は5分・自動モード中は1分で版を見る（setInterval は短い方で回し、中で間隔を見る）。
+ */
 try {
   setTimeout(function () {
     setInterval(function () {
       _refreshLearnedBundleQueued(false).catch(function () {});
-    }, _LEARN_CHECK_MS);
+    }, _LEARN_CHECK_AUTO_MS);
   }, Math.floor(Math.random() * 60000));
 } catch (_) {}
 try {
@@ -2926,14 +3137,20 @@ try {
     if (!msg) return;
     if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundleQueued(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
     if (msg.type !== "axlx-learn-status") return;
-    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src"])).then(function (r) {
+    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver"])).then(function (r) {
       var nx = (r && r.axlx_learn_next) || {};
       var pt = (r && r.axlx_learn_points) || {};
+      var link = (r && r.axlx_learn_link) || null;
+      var scr = (r && r.axlx_learn_screen) || {};
       try {
         sendResponse({
           ok: true,
           at: (r && r.axlx_learn_at) || null,
           src: (r && r.axlx_learn_src) || null,
+          ver: (r && r.axlx_learn_ver) || null,
+          link: link,
+          screen_solid: link && typeof link.screen_solid === "number" ? link.screen_solid : Object.keys(scr).length,
+          complete: !!(link && link.complete),
           next_count: Object.keys(nx).length,
           points_count: Object.keys(pt).length,
           sample: Object.keys(nx).slice(0, 5).map(function (k) { return k + " → " + nx[k].next + "（" + nx[k].n + "/" + nx[k].total + "）"; }),
@@ -3222,6 +3439,25 @@ async function _recordOneShot() {
       if ((!ops || !ops.length) && _lastOpsWhy) {
         _opsForSend = [{ t: Date.now(), k: "diag", f: null, w: null, why: String(_lastOpsWhy).slice(0, 60) }];
       }
+      /**
+       * ★ 2026-11-17 録画→改善土台: 送信直前に cs 欠落を埋める。
+       *   content が古くても / API が補完する前でも、押す系は pointer を落とさない。
+       */
+      try {
+        if (Array.isArray(_opsForSend)) {
+          _opsForSend = _opsForSend.map(function (o) {
+            if (!o || typeof o !== "object") return o;
+            if (o.cs) return o;
+            var w = String(o.w || "");
+            var f = String(o.f || "");
+            if (/checkbox|radio|button|select|link|label|click/.test(w)
+              || /one_city|one_station|one_line|city_code|station|route|go_search|room_layout|絞り込み|検索/.test(f)) {
+              return Object.assign({}, o, { cs: "pointer" });
+            }
+            return o;
+          });
+        }
+      } catch (_) {}
       /**
        * 2026-11-14 竹内さん「足りていない部分や弱い部分はきょうかするようにする」:
        *   ⚠ **同じ画像が延々と撮れている**事に誰も気づけなかった（実測100枚が同一）。
@@ -4661,6 +4897,34 @@ function _auditFinish(runId, extra) {
   } catch (e) { console.warn("[search-audit] finish 失敗:", e && e.message); }
 }
 
+/**
+ * ★ 2026-11-16 統括Pro「stepsが届いていない」:
+ *   fill-done 前の途中段を open run に足す（止まっても none を減らす）。
+ */
+async function _auditOnFillProgress(msg) {
+  try {
+    if (!_auditTracker || !msg) return;
+    var st = await _auditState();
+    if (!st.enabled) return;
+    var _rid = msg.runId || null;
+    var run = _rid ? _auditTracker.get(_rid) : null;
+    if (!run) {
+      run = _auditTracker.findOpen(msg.customerId || null, msg.site || "realpro");
+      if (run) _rid = run.run_id;
+    }
+    if (!_rid) {
+      _rid = "local_" + Date.now().toString(36);
+      run = _auditTracker.begin({
+        run_id: _rid, site: msg.site || "realpro", customer_id: msg.customerId,
+        trigger: "local", mode: st.mode, post_started: false,
+      });
+    }
+    if (_auditTracker.attachProgress) _auditTracker.attachProgress(_rid, msg.steps || []);
+  } catch (e) {
+    try { console.warn("[search-audit] fill-progress 失敗:", e && e.message); } catch (_) {}
+  }
+}
+
 // fill-done に載ってきた audit を足す。知らない run_id（popup の個別の検索が作った回）はここで記録を作る
 async function _auditOnFillDone(msg, sender) {
   try {
@@ -4865,6 +5129,23 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       console.warn("[fill-done-waiter] タイムアウト customerId=" + entry.customerId + " site=" + entry.site + (extra ? "（" + extra + "）" : ""));
       // 2026-09-29 v2.5.40 本当の時間切れの時だけ画面を撮る（検索しないと決めて閉じた時＝extra ありは撮らない）
       if (!extra) _snapOnEvent("fill_timeout", "検索の完了の合図（fill-done）が来ない customer=" + entry.customerId + " site=" + entry.site);
+      /**
+       * ★ 2026-11-17 連携: fill-done 無しで捨てる前に、開いている点検を finish する。
+       *   旧は catch 任せ → _batchAudit が無い／拡張落ちで started のまま → sweep が
+       *   abandoned + steps空（stalled:realpro:none）にしていた。
+       */
+      try {
+        var _toRun = _auditTracker && _auditTracker.findOpen
+          ? _auditTracker.findOpen(entry.customerId, entry.site || "realpro")
+          : null;
+        if (_toRun && _toRun.run_id) {
+          _auditTracker.step(_toRun.run_id, "fill_timeout", extra ? String(extra).slice(0, 80) : "fill-done未着");
+          _auditFinish(_toRun.run_id, {
+            error: extra ? String(extra) : "fill-done timeout",
+            error_kind: extra ? "cancelled" : "fill_timeout",
+          });
+        }
+      } catch (_) {}
       resolve({ timedOut: true, error: null, cancelled: !!extra });
     };
     entry.timer = setTimeout(onTimeout, timeoutMs || 90000);
@@ -4917,6 +5198,67 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
   if (_bdIdx >= 0) _batchCustomerDoneWaiters.splice(_bdIdx, 1);
   // 2026-09-30 v2.5.42 ITANDI の「条件が効いていない形で止めた」（audit.guard）を待ち手に渡す（_scrapeAndSendRealpro → 1回だけ入れ直す）
   target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null, guard: (audit && audit.guard_stopped && audit.guard) ? audit.guard : null });
+}
+
+/**
+ * ★ 2026-11-16 竹内さん「完了してから次のお客さんに移ることができるように」:
+ *   一連ロック（axlx_pipeline_job）を storage＋popup メモリの両方から外す。
+ *   完了直後に次客 switch が来る競合・fill/batch 失敗でロックが残る抜けを止める。
+ *   customerId を渡すと「その客のロックだけ」外す（次客が既に始まっていたら触らない）。
+ */
+function _releasePipelineLock(reason, customerId) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    var _cid = customerId != null ? String(customerId) : null;
+    var _notify = function () {
+      console.log("[AX] 一連ロック解除(bg): " + (reason || "") + (_cid ? " cid=" + _cid : ""));
+      var payload = { type: "axlx-pipeline-clear", reason: reason || "release", customerId: _cid };
+      try {
+        chrome.runtime.sendMessage(payload, function () { void chrome.runtime.lastError; });
+      } catch (_) {}
+      try {
+        chrome.tabs.query({}, function (tabs) {
+          var left = 1;
+          var tick = function () { if (--left <= 0) finish(); };
+          (tabs || []).forEach(function (t) {
+            if (!t || !t.id || !t.url) return;
+            if (!/realnetpro\.com|itandibb\.com|system\.reins\.jp/.test(String(t.url))) return;
+            left++;
+            try {
+              chrome.tabs.sendMessage(t.id, payload, function () {
+                void chrome.runtime.lastError;
+                tick();
+              });
+            } catch (_) { tick(); }
+          });
+          tick();
+        });
+      } catch (_) { finish(); }
+    };
+    try {
+      chrome.storage.local.get("axlx_pipeline_job", function (st) {
+        void chrome.runtime.lastError;
+        var job = st && st.axlx_pipeline_job;
+        var shouldRemove = !job || !_cid || String(job.customerId) === _cid;
+        if (shouldRemove) {
+          chrome.storage.local.remove("axlx_pipeline_job", function () {
+            void chrome.runtime.lastError;
+            _notify();
+          });
+        } else {
+          console.log("[AX] 一連ロック storage 解除スキップ（別客進行中）: 進行=" + (job.name || job.customerId) + " / 対象=" + _cid);
+          _notify();
+        }
+      });
+    } catch (_) { finish(); }
+    // storage コールバックが来ない時の保険
+    setTimeout(finish, 800);
+  });
 }
 
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs, site) {
@@ -5554,6 +5896,12 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     sendResponse({ ok: true });
     return true;
   }
+  /** ★ 2026-11-16 統括Pro: fill途中の段 → steps到達 */
+  if (msg && msg.type === "axlx-fill-progress") {
+    try { _auditOnFillProgress(msg); } catch (_) {}
+    sendResponse({ ok: true });
+    return true;
+  }
   return false;
 });
 
@@ -5568,6 +5916,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     if (msg.customerId != null) _lastSentSkipped[_sentSkipKey(msg.customerId, _msgSite)] = (msg.audit && msg.audit.sent_skipped) || 0;
     _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null, _msgSite);
     _watchProgress("送信の終わり", _msgSite);
+    // ★ 2026-11-16: 一連ロック解除（popup が次客を入れてよい合図）
+    //   ⚠ fire-and-forget だと次客 switch より解除が遅れる → await は呼び出し側（_scrapeAndSendRealpro）でも行う
+    try { _releasePipelineLock("batch-customer-done", msg.customerId || null); } catch (_) {}
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
   if (msg && msg.type === "axlx-batch-progress") {
@@ -5721,6 +6072,20 @@ function _updateStaffModeBadge(on) {
 chrome.storage.onChanged.addListener(function(changes, area) {
   if (area === "local" && (changes.staffMode || changes.aixMode || changes.autoModeAt || changes.brainMode)) {
     _isStaffModeActive().then(_updateStaffModeBadge);
+    /**
+     * ★ 2026-11-15: 自動モードに切り替えた瞬間も最新の学びを取り込む。
+     *   ⚠ 指示を拾う前に切り替えただけの時も、束が古いと動き方が古いままになる。
+     */
+    try {
+      var core = self.AxlxModeCore;
+      if (!core) return;
+      chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "autoModeAt", "brainMode"]).then(function (st) {
+        var m = (core.effectiveState || core.readState)(st || {}, Date.now()).mode;
+        if (m === core.AUTO_MODE || (!!core.AI_MODE && m === core.AI_MODE)) {
+          _refreshLearnedBundleQueued(true).catch(function () {});
+        }
+      });
+    } catch (_) {}
   }
 });
 
@@ -5813,6 +6178,17 @@ async function _pollAndRunBatch() {
         return;
       }
       try { await chrome.storage.local.set({ autoWorkGate: { open: true, reason: null, resumeAt: null, at: Date.now() } }); } catch (_) {}
+      /**
+       * ★ 2026-11-15 竹内さん「録画から画像学習したのを自動に動き方を学ばせるだけなのになぜ止まる」:
+       *   ⚠ 実測: 束に画面位置 n≥3 が33欄あっても `read_count=0`（拡張が取っていない）。
+       *     学習→束までは動くのに、**自動が指示を拾う直前に最新の学びを取り直していなかった**
+       *     （5分ポーリング任せ＝手が止まる原因）。
+       *   → **自動が指示を拾う前に必ず最新の束を取り込む**（force）。
+       *     失敗しても検索は止めない（古い束のまま動く方が、何もしないよりマシ）。
+       */
+      try {
+        await _refreshLearnedBundleQueued(true);
+      } catch (_) { /* 学びが取れなくても指示は拾う */ }
     }
     var _qs = [];
     if (_bh.claimAix) _qs.push("aix=1");
@@ -6225,6 +6601,8 @@ async function _runBatchSearch(command) {
       } catch (e) {
         _passGuard.done();
         _itandiGuardCtx = null; // 2026-09-30 v2.5.42 見分けの条件はこの回だけ（失敗した回の後の手の検索に残さない）
+        // ★ 失敗パスでも一連ロックを外す（次客へ移れるように。scrape 内で外済みなら二重で無害）
+        try { await _releasePipelineLock("pass_error", effectiveCustomer && effectiveCustomer.id); } catch (_) {}
         _passFailed++;
         if (_batchAudit) _auditFinish(_batchAudit.runId, (e && e.passDeadline) ? { error: e, error_kind: "pass_deadline" } : { error: e });
         // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
@@ -6603,9 +6981,13 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         }, function(resp) {
           if (chrome.runtime.lastError) {
             console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
-            resolve({ ok: false, why: String(chrome.runtime.lastError.message || "lastError").slice(0, 120) }); return;
+            resolve({ ok: false, why: String(chrome.runtime.lastError.message || "lastError").slice(0, 120), busyCustomerId: null }); return;
           }
-          resolve({ ok: !!(resp && resp.ok), why: resp && resp.ok ? null : ("popup: " + ((resp && resp.reason) || "ok=false")) });
+          resolve({
+            ok: !!(resp && resp.ok),
+            why: resp && resp.ok ? null : ("popup: " + ((resp && resp.reason) || "ok=false")),
+            busyCustomerId: resp && resp.busyCustomerId ? String(resp.busyCustomerId) : null,
+          });
         });
       });
     };
@@ -6621,6 +7003,13 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }); } catch(_) {}
       var _startP = _createFillStartWaiter(_cidStr, _startTimeout);
       var _sw = await _sendSwitch();
+      // ★ 前客完了直後の競合: popup が pipeline_busy で拒否したら強制解除して1回だけ再送
+      if (!_sw.ok && /pipeline_busy/.test(String(_sw.why || ""))) {
+        console.warn("[batchAutofill] realnetpro: pipeline_busy → 強制解除して再送（" + (_attempt + 1) + "回目）");
+        try { await _releasePipelineLock("retry_after_pipeline_busy", _sw.busyCustomerId || null); } catch (_) {}
+        await new Promise(function (r) { setTimeout(r, 250); });
+        _sw = await _sendSwitch();
+      }
       var _lastWhy = _sw.why;
       if (_sw.ok) {
         _started = await _startP;
@@ -6675,28 +7064,42 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     // itandi-content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
     // v2.5.48: itandi-bulk-dl.js もこの合図を受け、自動の送信は「この入力を始めさせたお客様」で送る（popup の今の選択を後から読まない・名前も渡す）
     try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }); } catch(_) {}
-    var batchItandiSwitched = await new Promise(function(resolve) {
-      chrome.tabs.sendMessage(tab.id, {
-        type:          "axlx-switch-customer",
-        customerId:    String(customer.id),
-        customerName:  customer.customer_name || null,
-        site:          "itandi",
-        areaMode:      customer.area_mode || null,
-        is_wide:       isWide,
-        auto_send_all: false,
-        auditRunId:    auditRun ? auditRun.runId : null,
-        trigger:       auditRun ? auditRun.trigger : null,
-        commandId:     auditRun ? auditRun.commandId : null,
-        searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
-        autoRun:       _autoRunMsg,     // 2026-09-27 自動便の指定（自動便でなければ null）
-      }, function(resp) {
-        if (chrome.runtime.lastError) {
-          console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);
-          resolve(false); return;
-        }
-        resolve(!!(resp && resp.ok));
+    var _sendItandiSwitch = function () {
+      return new Promise(function(resolve) {
+        chrome.tabs.sendMessage(tab.id, {
+          type:          "axlx-switch-customer",
+          customerId:    String(customer.id),
+          customerName:  customer.customer_name || null,
+          site:          "itandi",
+          areaMode:      customer.area_mode || null,
+          is_wide:       isWide,
+          auto_send_all: false,
+          auditRunId:    auditRun ? auditRun.runId : null,
+          trigger:       auditRun ? auditRun.trigger : null,
+          commandId:     auditRun ? auditRun.commandId : null,
+          searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
+          autoRun:       _autoRunMsg,     // 2026-09-27 自動便の指定（自動便でなければ null）
+        }, function(resp) {
+          if (chrome.runtime.lastError) {
+            console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);
+            resolve({ ok: false, why: String(chrome.runtime.lastError.message || "lastError").slice(0, 120), busyCustomerId: null }); return;
+          }
+          resolve({
+            ok: !!(resp && resp.ok),
+            why: resp && resp.ok ? null : ("popup: " + ((resp && resp.reason) || "ok=false")),
+            busyCustomerId: resp && resp.busyCustomerId ? String(resp.busyCustomerId) : null,
+          });
+        });
       });
-    });
+    };
+    var _itSw = await _sendItandiSwitch();
+    if (!_itSw.ok && /pipeline_busy/.test(String(_itSw.why || ""))) {
+      console.warn("[batchAutofill] itandi: pipeline_busy → 強制解除して再送");
+      try { await _releasePipelineLock("retry_after_pipeline_busy_itandi", _itSw.busyCustomerId || null); } catch (_) {}
+      await new Promise(function (r) { setTimeout(r, 250); });
+      _itSw = await _sendItandiSwitch();
+    }
+    var batchItandiSwitched = !!(_itSw && _itSw.ok);
     if (!batchItandiSwitched) {
       // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
       console.warn("[batchAutofill] itandi: axlx-switch-customer 未応答 → direct fallback");
@@ -6796,6 +7199,24 @@ function _applyCommuteReach(conds, site) {
 //   sort / max_pages … 自動便（source="auto_schedule"）だけ（手動の一括検索は今までどおり）
 //   2026-09-30 v2.5.44 sort / max_pages は auto-run.js optsFromPayload の1か所から（お客様ごとの計画 plan_by_customer[id]・広げての続きの上の sort・max_pages も）。
 //     手動の一括検索・AIXツールの一括検索（sort も max_pages も無い）は今まで通り null
+/**
+ * ★ 2026-11-16 録画: 自動で「敷金・礼金なし」が外れていた。
+ *   `_buildBatchConditions` が shikirei_free を送っていなかった（popup の adj 経路だけ付いていた）。
+ *   → 顧客メモ／要望文から希望を拾って条件に載せる。
+ */
+function _detectShikireiFlag(c) {
+  try {
+    if (!c) return false;
+    if (c.shikirei_free === true || c.shikirei_free === "true" || c.shikirei_free === 1) return true;
+    if (c.prefer_no_shikirei === true || c.prefer_no_shikirei === "true") return true;
+    var text = [
+      c.preferences, c.ng_points, c.other_requests, c.property_memo, c.notes,
+      c.additional_conditions, c.raw_format_text, c.condition_summary,
+    ].filter(Boolean).join(" ");
+    return /敷礼なし|敷金[・･]?礼金なし|敷金礼金0|敷金0礼金0|敷0礼0|敷礼0|初期費用.*抑/.test(text);
+  } catch (_) { return false; }
+}
+
 function _buildBatchConditions(c, isWide, opts) {
   var _arOpts = (self.AxlxAutoRun && opts) ? self.AxlxAutoRun.optsFromPayload(opts) : null;
   var _rpDays = opts && opts.rp_update_days != null ? (Number(opts.rp_update_days) || null) : null;
@@ -6856,7 +7277,22 @@ function _buildBatchConditions(c, isWide, opts) {
     //   v2.5.34: ITANDI の直接入力の経路でも同じ値を itandi-page-script.js が「募集条件更新 N日以内」の欄に打つ（null＝空のまま）
     rp_update_days: _rpDays,
     sort_order: _arOpts ? (_arOpts.sort || null) : null,
-    max_pages: _arOpts ? (_arOpts.max_pages || null) : null
+    max_pages: _arOpts ? (_arOpts.max_pages || null) : null,
+    /**
+     * ★ 2026-11-16: 自動バッチでも敷礼なしを載せる（旧は欠落 → 画面で未チェック）。
+     */
+    shikirei_free: _detectShikireiFlag(c),
+    prefer_no_shikirei: _detectShikireiFlag(c),
+    pet_ok: !!(c.pet === true || c.pet === "true" || c.pet === 1),
+    structure_types: (function () {
+      try {
+        if (Array.isArray(c.structure_types)) return c.structure_types;
+        if (typeof c.structure_types === "string" && c.structure_types.trim()) {
+          return c.structure_types.split(/[,、・\/\.\s]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+        }
+      } catch (_) {}
+      return [];
+    })(),
   };
 }
 
@@ -7039,7 +7475,7 @@ async function _bringRealproTabFront(tab, runId, vis) {
   } catch (e) { console.warn("[batchAutofill] タブを前に出せない:", e && e.message); }
 }
 
-// 使える状態のリアプロのタブを返す（だめなら main.php を開き直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
+// 使える状態のリアプロのタブを返す（だめなら読み直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
 async function _ensureRealproTab(tab, auditRun, why, customerId) {
   var G = self.AxlxBatchGuard;
   var runId = auditRun && auditRun.runId;
@@ -7050,12 +7486,31 @@ async function _ensureRealproTab(tab, auditRun, why, customerId) {
     return tab;
   }
   var reason = why || plan.reason;
-  console.warn("[batchAutofill] リアプロのタブを読み直します: " + reason + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
-  _auditStep(runId, "tab_reload", (G ? G.reasonJa(reason) : reason) + (probe.err ? " / " + probe.err : ""));
+  /**
+   * 2026-11-16 竹内さん「自動モード途中でページ更新されてトップページに戻ってしまう」:
+   *   旧は常に裸の main.php へ `tabs.update` → 検索中でもホーム（トピックス）へ戻って崩れた。
+   *   DB実測 05:19 UTC: no_fill_start → tab_reload「ページの入力の仕組みが応答しない」→ トップ。
+   *   → main.php* なら **同じ URL を reload**（method=estate 等を残す）。ログイン切れ等だけ裸へ。
+   */
+  var recover = G && G.realproRecoverNav
+    ? G.realproRecoverNav(probe)
+    : { method: "navigate", url: "https://www.realnetpro.com/main.php", keepSearch: false };
+  var howJa = recover.method === "reload"
+    ? (recover.keepSearch ? "同じ検索画面を読み直し（トップへ戻さない）" : "同じ main.php を読み直し（トップへ飛ばさない）")
+    : "main.php へ移る";
+  console.warn("[batchAutofill] リアプロのタブを読み直します: " + reason + "／" + howJa + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
+  _auditStep(runId, "tab_reload", (G ? G.reasonJa(reason) : reason) + "／" + howJa + (probe.err ? " / " + probe.err : ""));
   if (probe.gone) {
     tab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: false });
+  } else if (recover.method === "reload") {
+    try {
+      await chrome.tabs.reload(tab.id);
+    } catch (e) {
+      console.warn("[batchAutofill] tabs.reload 失敗 → URL維持で update:", e && e.message);
+      await chrome.tabs.update(tab.id, { url: recover.url || String(probe.url) });
+    }
   } else {
-    await chrome.tabs.update(tab.id, { url: "https://www.realnetpro.com/main.php" });
+    await chrome.tabs.update(tab.id, { url: recover.url || "https://www.realnetpro.com/main.php" });
   }
   await _batchWaitForTabComplete(tab.id);
   await new Promise(function (r) { setTimeout(r, _settleMs(1800)); });
@@ -7169,14 +7624,39 @@ async function _webappAutofill(site, conditions) {
     var mainTab = allTabs.find(function(t) { return t.url && t.url.includes("realnetpro.com/main.php"); });
     var targetRealTab = mainTab || existing;
     if (targetRealTab) {
-      // 必ずmain.phpへナビゲートしてフォームをクリーンな初期状態にする
-      // ※ ping-skip最適化（alive時にナビゲーション省略）は廃止:
-      //   検索結果ページ（フォームが折りたたまれた状態）のまま送信されると
-      //   「所在地絞り込み」ボタンが見つからず中止になるバグを引き起こしていた
-      console.log("[webapp-autofill] → main.php にナビゲート（フォームクリーン化）", targetRealTab.id);
-      await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
-      await _batchWaitForTabComplete(targetRealTab.id);
-      await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+      /**
+       * 2026-11-16 竹内さん「自動途中でトップに戻る」:
+       *   旧は**毎回**裸の main.php へ飛ばしていた → 検索中にホームへ戻って崩れた。
+       *   → すでに検索の画面（estate/building）なら **同じ URL を reload**（トップへ戻さない）。
+       *     フォーム折りたたみは page-script 側の「検索条件を表示」で展開する。
+       *   main.php 以外だけ裸の main.php へ移る。
+       */
+      var _tu = String(targetRealTab.url || "");
+      var _onMain = /realnetpro\.com\/main\.php/.test(_tu);
+      var _onSearch = /[?&](?:method=estate|display=building)/.test(_tu);
+      if (_onMain && _onSearch) {
+        console.log("[webapp-autofill] 検索画面のまま読み直し（トップへ戻さない）", targetRealTab.id, _tu.slice(0, 80));
+        try { await chrome.tabs.reload(targetRealTab.id); } catch (_) {
+          await chrome.tabs.update(targetRealTab.id, { url: _tu, active: true });
+        }
+        await chrome.tabs.update(targetRealTab.id, { active: true });
+        await _batchWaitForTabComplete(targetRealTab.id);
+        await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+      } else if (_onMain) {
+        // ホーム（裸 main.php）でもフォームクリーンのために同じ URL を reload（クエリを捨てない）
+        console.log("[webapp-autofill] main.php を読み直し（裸へ飛ばさない）", targetRealTab.id);
+        try { await chrome.tabs.reload(targetRealTab.id); } catch (_) {
+          await chrome.tabs.update(targetRealTab.id, { url: _tu || siteUrls.realnetpro, active: true });
+        }
+        await chrome.tabs.update(targetRealTab.id, { active: true });
+        await _batchWaitForTabComplete(targetRealTab.id);
+        await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+      } else {
+        console.log("[webapp-autofill] → main.php にナビゲート（main.php以外から）", targetRealTab.id);
+        await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
+        await _batchWaitForTabComplete(targetRealTab.id);
+        await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
+      }
       existing = targetRealTab;
     }
   }
@@ -7468,12 +7948,30 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
   if (fillDone && fillDone.stopped) {
+    try { await _releasePipelineLock("batch_stopped", customerId); } catch (_) {}
     throw new Error("__BATCH_STOPPED__");
   }
   if (!fillDone || fillDone.timedOut) {
+    // ★ 失敗でもロックを外さないと次客 switch が pipeline_busy で止まる
+    try { await _releasePipelineLock("fill_timeout", customerId); } catch (_) {}
+    /**
+     * ★ 2026-11-16 連続客: fill-done が来ない時、ページ側の _axFillRunning が true のまま残ると
+     *   次客の fill が「重複」で無視される → さらに timeout。タブへ強制クリアを送る。
+     */
+    try {
+      var _ftTabs = await chrome.tabs.query({ url: _siteKey === "itandi" ? ["https://itandibb.com/*"] : ["https://www.realnetpro.com/*"] });
+      (_ftTabs || []).forEach(function (t) {
+        if (!t || !t.id) return;
+        try {
+          chrome.tabs.sendMessage(t.id, { type: "axlx-force-fill-clear", reason: "fill_timeout", customerId: customerId }, function () { void chrome.runtime.lastError; });
+        } catch (_) {}
+      });
+    } catch (_) {}
     throw new Error(_site + " 検索完了シグナル（fill-done）が" + Math.round(_fillDoneTimeoutMs(siteLabel === "itandi" ? "itandi" : "realnetpro") / 1000) + "秒以内に届きませんでした。");
   }
   if (fillDone.error) {
+    try { await _releasePipelineLock("fill_error", customerId); } catch (_) {}
+    // superseded は次客へ進むための正常な切替（失敗扱いのロック解除は上で済）
     throw new Error("page-script側エラー（スキップ）: " + fillDone.error);
   }
 
@@ -7483,6 +7981,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   console.log("[scrapeAndCompare] fill-done 受信 → 全ページ送信完了を待機 customer=" + customerId);
   var batchDone = await _createBatchCustomerDoneWaiter(customerId, 300000, _siteKey);
   if (batchDone && batchDone.stopped) {
+    try { await _releasePipelineLock("batch_stopped", customerId); } catch (_) {}
     throw new Error("__BATCH_STOPPED__");
   }
   var _propCount = 0;
@@ -7526,6 +8025,10 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
         : "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
     }).catch(function() {});
   }
+  // ★ 次客へ移る前に一連ロックを必ず外す（完了／batch_timeout どちらでも。解除完了を待ってから返す）
+  try {
+    await _releasePipelineLock(batchDone && batchDone.timedOut ? "batch_timeout" : "scrape_done", customerId);
+  } catch (_) {}
   return _propCount;
 }
 

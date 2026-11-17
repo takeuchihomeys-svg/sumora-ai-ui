@@ -11,6 +11,8 @@
 //
 // ⚠ 集計だけをする（DBに書かない・サイトを触らない）。純関数。
 
+import { LEARN_PERIODS } from "./learn-periods";
+
 /** `search_audits` の1行（必要な列だけ） */
 export type AuditRow = {
   created_at?: string | null;
@@ -65,6 +67,25 @@ export type AuditSummary = {
   top_problem: string | null;
   /** その時に**どこを疑うか**（`top_problem` に対する次の一手） */
   advice?: string | null;
+  /**
+   * ★ 2026-11-16: 完了→次客の細分化（統括Proが把握する材料）
+   *   steps / error に出る switch_fail・owner_mismatch・no_fill_start・batch_timeout 等。
+   *   完走率だけでは「次客に移れない」ボトルネックが見えない。
+   */
+  handoff?: AuditHandoff;
+};
+
+/** 客の一連完了→次客への切替まわり（原子） */
+export type AuditHandoff = {
+  switch_fail: number;
+  owner_mismatch: number;
+  no_fill_start: number;
+  batch_timeout: number;
+  pipeline_busy: number;
+  /** 人が読める1行 */
+  line: string;
+  /** 多い原子（id・回数） */
+  top: Array<{ id: string; n: number }>;
 };
 
 /** 段の名前を人が読める日本語に（`search_audits.steps` の k） */
@@ -99,9 +120,16 @@ const STAGE_JA: Record<string, string> = {
   search_look_done: "見直し済み",
   search_look_skip: "見直しを飛ばす",
   search_wait: "条件の反映待ち",
-  search_guard_press: "25秒押されていない→検索",
+  search_guard_press: "旧25秒保険→検索",
+  search_backup_press: "控え保険→カーソルで検索",
+  search_cursor: "検索へカーソル移動して押す",
+  search_backup_wait: "控え保険は条件待ち",
+  stall_complete_search: "完走優先→カーソルで検索",
+  stall_keep_waiting: "条件未完了のため切り上げず待つ",
+  watchdog_complete_search: "見張り→条件そろい検索",
   gate_retry: "条件を入れ直す",
   gate_warn: "条件が画面と違う",
+  gate_stop_basic: "間取り/敷礼/場所未完了で止める",
   stall_recover_search: "止まったので検索を押す",
   done: "終わった",
   finish: "終わった",
@@ -111,6 +139,15 @@ const STAGE_JA: Record<string, string> = {
   learn_aim: "学んだ位置で押す",
   learn_kind: "学んだ種類で押す",
   learn_weak: "弱い欄",
+  // ★ 2026-11-16: 完了→次客（一連ロック／切替）
+  switch_fail: "次客への切替失敗",
+  no_fill_start: "条件入力が始まらない",
+  batch_timeout: "送付完了の合図待ち切れ",
+  owner_mismatch: "送る相手と検索中の客が違う",
+  pipeline_busy: "一連ロックで次客を拒否",
+  fill_timeout: "検索完了合図が来ない",
+  clear_checks: "前客の条件を外す",
+  clear_done: "前客の条件を外し終わり",
   learn_order: "学んだ順に並べる",
 };
 
@@ -149,7 +186,8 @@ export function summarizeAudits(
 ): AuditSummary {
   const list = Array.isArray(rows) ? rows : [];
   const now = typeof opt.now === "number" ? opt.now : Date.now();
-  const since = now - (typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000);
+  // ★ 学習材料の主期間に揃える（旧24時間 → LEARN_PERIODS.materialsMs）
+  const since = now - (typeof opt.sinceMs === "number" ? opt.sinceMs : LEARN_PERIODS.materialsMs);
   const inWindow = list.filter((r) => {
     if (!r) return false;
     const t = r.created_at ? Date.parse(String(r.created_at)) : NaN;
@@ -160,6 +198,13 @@ export function summarizeAudits(
   const stageN: Record<string, number> = {};
   const causeN: Record<string, number> = {};
   const errN: Record<string, number> = {};
+  const handoffN: Record<string, number> = {
+    switch_fail: 0,
+    owner_mismatch: 0,
+    no_fill_start: 0,
+    batch_timeout: 0,
+    pipeline_busy: 0,
+  };
   /**
    * ★ 2026-11-15 **実測で見つけた集計の誤り**（統括が「完走率8%」と誤解した原因）:
    *
@@ -214,6 +259,16 @@ export function summarizeAudits(
      *   → 「(段が残っていない)」ではなく **「終わりの合図が来なかった」** と言う（正しく伝える）。
      */
     const steps = Array.isArray(r.steps) ? (r.steps as Array<Record<string, unknown>>) : [];
+    // ★ 完了→次客の原子（steps の k と error 文から数える・1回に複数あっても各1）
+    {
+      const keys = steps.map((x) => String(x?.k ?? "").replace(/^page:/, "").trim()).filter(Boolean);
+      const blob = er + " " + keys.join(" ");
+      if (keys.some((k) => k === "switch_fail") || /switch_fail/i.test(blob)) handoffN.switch_fail++;
+      if (keys.some((k) => k === "owner_mismatch") || /owner_mismatch/i.test(blob)) handoffN.owner_mismatch++;
+      if (keys.some((k) => k === "no_fill_start") || /NO_FILL_START|no_fill_start/i.test(blob)) handoffN.no_fill_start++;
+      if (keys.some((k) => k === "batch_timeout") || /batch_timeout/i.test(blob)) handoffN.batch_timeout++;
+      if (/pipeline_busy/i.test(blob)) handoffN.pipeline_busy++;
+    }
     if (s !== "finished" && !humanDone && !unknowable) {
       let last = "";
       for (let i = steps.length - 1; i >= 0; i--) {
@@ -264,8 +319,32 @@ export function summarizeAudits(
     }
   }
 
+  const handoffTop = Object.entries(handoffN)
+    .filter(([, n]) => n > 0)
+    .map(([id, n]) => ({ id, n }))
+    .sort((a, b) => b.n - a.n);
+  const handoffJa: Record<string, string> = {
+    switch_fail: "次客切替失敗",
+    owner_mismatch: "送る相手不一致",
+    no_fill_start: "入力開始なし",
+    batch_timeout: "送付完了待ち切れ",
+    pipeline_busy: "一連ロック拒否",
+  };
+  const handoff: AuditHandoff = {
+    switch_fail: handoffN.switch_fail,
+    owner_mismatch: handoffN.owner_mismatch,
+    no_fill_start: handoffN.no_fill_start,
+    batch_timeout: handoffN.batch_timeout,
+    pipeline_busy: handoffN.pipeline_busy,
+    top: handoffTop.slice(0, 5),
+    line: handoffTop.length
+      ? handoffTop.slice(0, 4).map((x) => `${handoffJa[x.id] || x.id}${x.n}回`).join("・")
+      : "完了→次客の異常なし（この期間）",
+  };
+
   return {
     runs, finished, abandoned, started, unknown, finish_rate,
     stalled_at, causes, errors, bad, top_problem, advice,
+    handoff,
   };
 }

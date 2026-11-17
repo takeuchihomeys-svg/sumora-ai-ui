@@ -88,7 +88,7 @@
       var s = (pl && pl.sort) || _sortOf(payload && payload.sort);
       var mp = (pl && pl.max_pages) || _pagesOf(payload && payload.max_pages);
       if (!plan && !s && !mp && itDays == null) return null;
-      return { mode: null, rp_update_days: plan ? plan.days : null, rp_update_days_none: !!(plan && plan.days == null), itandi_update_days: itDays, sort: s || null, max_pages: mp || null };
+      return { mode: null, rp_update_days: plan ? plan.days : null, rp_update_days_none: !!(plan && plan.days == null), itandi_update_days: itDays, sort: s || null, max_pages: mp || null, state: (pl && pl.state) || null };
     }
     var pm = payload.mode === "pm";
     var days = payload.rp_update_days != null ? Number(payload.rp_update_days) : NaN;
@@ -99,6 +99,7 @@
       itandi_update_days: itDays,
       sort: (pl && pl.sort) || _sortOf(payload.sort),
       max_pages: (pl && pl.max_pages) || _pagesOf(payload.max_pages),
+      state: (pl && pl.state) || null,
     };
   }
 
@@ -224,6 +225,7 @@
       customerId: String(customerId), site: String(site || ""), mode: opts.mode,
       rp_update_days: opts.rp_update_days, rp_update_days_none: !!opts.rp_update_days_none, sort: opts.sort, max_pages: opts.max_pages,
       itandi_update_days: opts.itandi_update_days == null ? null : opts.itandi_update_days,
+      state: opts.state ? String(opts.state) : null,
       last_search_at: e.last_search_at ? String(e.last_search_at) : null,
       at: Number(nowMs) || 0,
     };
@@ -260,7 +262,7 @@
     if (site && stored.site && String(stored.site) !== String(site)) return null;
     var age = (Number(nowMs) || 0) - (Number(stored.at) || 0);
     if (!(age >= 0) || age > TTL_MS) return null;
-    return { mode: stored.mode, rp_update_days: stored.rp_update_days, itandi_update_days: stored.itandi_update_days == null ? null : stored.itandi_update_days, sort: stored.sort, max_pages: stored.max_pages, last_search_at: stored.last_search_at || null };
+    return { mode: stored.mode, rp_update_days: stored.rp_update_days, itandi_update_days: stored.itandi_update_days == null ? null : stored.itandi_update_days, sort: stored.sort, max_pages: stored.max_pages, state: stored.state || null, last_search_at: stored.last_search_at || null };
   }
 
   /**
@@ -278,16 +280,32 @@
   }
 
   /**
-   * 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 一括の回（自動便・AIXツールの一括検索・広げての回）のページの上限（リアプロ・ITANDI とも）。
-   *   ここ1か所（bulk-dl・itandi-bulk-dl が読む・サーバーの自動便 auto-search-schedule.ts の max_pages も 5・点検の cut_by_pages はこの値で打ち切った回）
+   * 2026-11-16 竹内「最大3で大丈夫／新着のお客さんは最大5まで」:
+   *   既定（送った後・止まっている等）= 3／新着・条件の言い直し = 5
+   *   サーバー auto-search-plan PLAN_DEFAULT_MAX_PAGES / PLAN_MAX_PAGES と同じ。
    *   ITANDI は別に1回の物件数の上限（itandi-guard.js MAX_ROWS）もある
    */
-  var DEFAULT_MAX_PAGES = 5;
+  var DEFAULT_MAX_PAGES = 3;
+  var NEW_CUSTOMER_MAX_PAGES = 5;
 
   /** ページの上限（指定が無ければ既定＝今までどおり） */
   function pageLimit(opts, fallback) {
     var n = opts && Number(opts.max_pages);
     return (isFinite(n) && n > 0) ? Math.floor(n) : (fallback == null ? null : fallback);
+  }
+
+  /**
+   * お客様の状態・ヒントからページ上限を決める（指定 max_pages が最優先）。
+   *   state "new"|"cond_changed" → 5／それ以外 → 3
+   *   hint.last_property_sent_at == null（まだ物件を出していない）→ 新着扱い 5
+   */
+  function resolveMaxPages(opts, hint) {
+    var n = pageLimit(opts, null);
+    if (n) return n;
+    var st = opts && opts.state ? String(opts.state) : (hint && hint.state ? String(hint.state) : "");
+    if (st === "new" || st === "cond_changed") return NEW_CUSTOMER_MAX_PAGES;
+    if (hint && hint.last_property_sent_at == null && hint.knownCustomer) return NEW_CUSTOMER_MAX_PAGES;
+    return DEFAULT_MAX_PAGES;
   }
 
   /**
@@ -510,7 +528,8 @@
     isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, withSite: withSite, forCustomer: forCustomer,
     payloadForCustomer: payloadForCustomer, decidedDays: decidedDays, planForCustomer: planForCustomer, stopLineAllowed: stopLineAllowed,
     optsForSite: optsForSite, optsForSiteRecord: optsForSiteRecord,
-    pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
+    pageLimit: pageLimit, resolveMaxPages: resolveMaxPages, allowAdSort: allowAdSort,
+    DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES, NEW_CUSTOMER_MAX_PAGES: NEW_CUSTOMER_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,
     bulkCustomerGapMs: bulkCustomerGapMs, lookAtDocMs: lookAtDocMs,

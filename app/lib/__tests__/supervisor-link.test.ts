@@ -45,15 +45,20 @@ console.log("\n■ ② 種類ごとに実行できる（無料 / 有料 / 人）
   ok("fix_record も実行できる", /fix_record:\s*\{/.test(doCode));
   ok("  cost: false（無料）", /fix_record:\s*\{[\s\S]{0,200}?cost: false/.test(doCode));
   ok("photo_learn がある", /photo_learn:\s*\{/.test(doCode));
-  ok("  ⚠ cost: true（お金がかかる）", /photo_learn:\s*\{[\s\S]{0,300}?cost: true/.test(doCode));
+  ok("  ⚠ cost: true（お金がかかる）", /photo_learn:\s*\{[\s\S]{0,400}?cost: true/.test(doCode));
+  ok("reflect_auto がある（反映まで）", /reflect_auto:\s*\{/.test(doCode));
+  ok("  cost: false（無料）", /reflect_auto:\s*\{[\s\S]{0,200}?cost: false/.test(doCode));
   ok("need_human は人がやる", /need_human:\s*\{/.test(doCode));
+  ok("need_ext_reload がある（改善一連・段階4）", /need_ext_reload:\s*\{/.test(doCode));
+  ok("need_auto_run がある（改善一連・段階5）", /need_auto_run:\s*\{/.test(doCode));
+  ok("verify_improve がある（改善一連・段階6）", /verify_improve:\s*\{/.test(doCode));
 }
 
 console.log("\n■ ③ 費用がかかる物は勝手に走らせない");
 {
   ok("⚠ --yes-cost を付けた時だけ実行", /if \(r\.cost && !yesCost\)/.test(doCode));
   ok("  止めた理由を出す", /費用がかかるので止めました/.test(doSrc));
-  ok("  枚数の上限を必ず付ける", /Math\.min\(60,\s*Number\(t\?\.limit\)\s*\|\|\s*20\)/.test(doCode));
+  ok("  統括の limit を硬上限まで尊重する", /resolveShotLearnLimit/.test(doCode));
   ok("  実行の入口は --run=task:N", /runArg\.startsWith\("task:"\)/.test(doCode));
 }
 

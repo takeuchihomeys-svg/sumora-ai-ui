@@ -29,7 +29,7 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
 }
 
-const COLS = ["id", "created_at", "site", "shot_ops", "shot_learn", "shot_key"];
+const COLS = ["id", "created_at", "site", "shot_ops", "shot_learn", "shot_key", "point_fields", "url"];
 
 async function run() {
   // ① 材料（shot_ops）があり、まだ shot_learn が無い行を取る
@@ -69,16 +69,28 @@ async function run() {
   }
 
   // ② 埋める（cron と同じ決め方）
+  // 2026-11-16: point_fields の押した位置(x,y)を shot_learn に載せる
+  //   （プルダウンの選択位置を束へ渡す・Vision無しでも位置が学べる）
   const { cleanFields, screenOf } = await import("@/app/lib/shot-learn");
   let filled = 0;
   const errors: string[] = [];
   const sample: Array<{ id: unknown; screen: string; fields: number }> = [];
   for (const r of targets) {
     const ops = Array.isArray(r.shot_ops) ? (r.shot_ops as unknown[]) : [];
+    const pf = (r.point_fields && typeof r.point_fields === "object")
+      ? (r.point_fields as Record<string, { x?: number; y?: number; w?: string }>)
+      : {};
     const fields = cleanFields(
       ops.map((o) => {
         const y = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
-        return { name: y.f, kind: y.w, x: null, y: null };
+        const name = String(y.f ?? "");
+        const hit = pf[name];
+        return {
+          name: y.f,
+          kind: y.w || hit?.w,
+          x: typeof hit?.x === "number" ? hit.x : null,
+          y: typeof hit?.y === "number" ? hit.y : null,
+        };
       }),
     );
     if (!fields.length) continue;

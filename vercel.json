@@ -117,6 +117,10 @@
       "schedule": "20 13 * * *"
     },
     {
+      "path": "/api/cron/weak-strengthen",
+      "schedule": "35 13 * * *"
+    },
+    {
       "path": "/api/cron/scoring-learning",
       "schedule": "10 20 * * 0"
     },

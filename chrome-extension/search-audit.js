@@ -354,6 +354,41 @@
       return r;
     }
 
+    /**
+     * ★ 2026-11-16 統括Pro「stepsが届いていない36回」:
+     *   fill-done 前に途中の段を足す（完走前に止まっても「最後の段: none」を防ぐ）。
+     */
+    function attachProgress(id, steps) {
+      var r = get(id);
+      if (!r || r.finished) return null;
+      var list = Array.isArray(steps) ? steps : [];
+      for (var i = 0; i < list.length; i++) {
+        var s = list[i];
+        if (!s || !s.k) continue;
+        pushStep(r.steps, "page:" + String(s.k).slice(0, 28), s.d == null ? null : String(s.d).slice(0, 100), s.at || now());
+      }
+      pushStep(r.steps, "fill_progress", "n=" + list.length, now());
+      /**
+       * ★ 2026-11-17 連携: 途中段を DB の started 行へも書く（fill-done が来なくても none にしない）。
+       *   3秒に1回まで（通信過多防止）。
+       */
+      try {
+        if (!r._progDbAt) r._progDbAt = 0;
+        if (now() - r._progDbAt >= 3000) {
+          r._progDbAt = now();
+          send({
+            phase: "progress",
+            brain: true,
+            run_id: r.run_id,
+            site: r.site,
+            mode: r.mode,
+            steps: r.steps.slice(-40),
+          });
+        }
+      } catch (_) {}
+      return r;
+    }
+
     function attachResult(id, result) {
       var r = get(id);
       if (!r) return null;
@@ -388,7 +423,7 @@
       return send(body);
     }
 
-    return { begin: begin, get: get, findOpen: findOpen, step: step, attachFill: attachFill, attachResult: attachResult, finish: finish, _runs: runs };
+    return { begin: begin, get: get, findOpen: findOpen, step: step, attachFill: attachFill, attachProgress: attachProgress, attachResult: attachResult, finish: finish, _runs: runs };
   }
 
   return {

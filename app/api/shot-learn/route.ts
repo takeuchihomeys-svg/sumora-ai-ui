@@ -13,11 +13,12 @@
 //   GET  /api/shot-learn?mode=normal&days=1&limit=50        … 実際に読んで書き戻す
 //   GET  /api/shot-learn?count=1                           … 数えるだけ（費用0）
 //
-// ⚠ 費用がかかる（1枚 約0.03円）。**必ず limit で上限**を切る（既定5・最大60）。
+// ⚠ 費用がかかる。枚数は統括／呼ぶ側が決める（硬上限は shot-learn-limit・課題解決優先）。
 // ⚠ 読むのは欄の種類・名前・画面の種類だけ（入力した中身は読ませない）。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { readShotFields } from "@/app/lib/shot-learn-server";
+import { resolveShotLearnLimit, SHOT_LEARN_DEFAULT } from "@/app/lib/shot-learn-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const mode = (sp.get("mode") || "").trim();          // normal / aix / （空＝全部）
   const days = Math.max(1, Math.min(30, Number(sp.get("days") || "1")));
-  const limit = Math.max(1, Math.min(60, Number(sp.get("limit") || "5")));
+  const limit = resolveShotLearnLimit(Number(sp.get("limit") || String(SHOT_LEARN_DEFAULT)));
   const dry = sp.get("dry") === "1";
   const countOnly = sp.get("count") === "1";
 
@@ -81,11 +82,17 @@ export async function GET(req: NextRequest) {
     samples: [] as Array<Record<string, unknown>>,
     errors: [] as string[],
   };
+  const { readShotFieldsWithWhy } = await import("@/app/lib/shot-learn-server");
   for (const t of targets) {
     out.tried++;
     const key = String(t.shot_key);
-    const sl = await readShotFields(key);
-    if (!sl) { out.skipped++; continue; }
+    const got = await readShotFieldsWithWhy(key);
+    const sl = got.sl;
+    if (!sl) {
+      out.skipped++;
+      if (out.errors.length < 8) out.errors.push(String(got.why || "vision_null").slice(0, 160));
+      continue;
+    }
     out.learned++;
     out.fields += sl.fields.length;
     if (out.samples.length < 3) {

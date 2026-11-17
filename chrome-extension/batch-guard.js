@@ -73,6 +73,29 @@
     return { action: "use", reason: "alive", front: p.vis === "hidden" };
   }
 
+  /**
+   * 2026-11-16 竹内さん「自動モード途中でページ更新されてトップページに戻ってしまう」:
+   *   旧 `_ensureRealproTab` は応答なしのとき **必ず裸の main.php** へ `tabs.update` していた。
+   *   検索中（method=estate / display=building）でもクエリを捨ててホーム（お知らせ・トピックス）へ戻し、
+   *   画面が崩れていた（search_audits: no_fill_start → tab_reload「ページの入力の仕組みが応答しない」）。
+   *
+   *   → すでに main.php* なら **同じ URL を reload**（検索のクエリを残す）。
+   *     main.php 以外（ログイン等）だけ裸の main.php へナビゲートする。
+   * @returns {{ method: "reload"|"navigate", url: string, keepSearch: boolean }}
+   */
+  function realproRecoverNav(probe) {
+    var p = probe || {};
+    var url = typeof p.url === "string" ? p.url : "";
+    var MAIN = "https://www.realnetpro.com/main.php";
+    if (!url || !REALPRO_MAIN_RE.test(url)) {
+      return { method: "navigate", url: MAIN, keepSearch: false };
+    }
+    var keepSearch = /[?&](?:method=estate|display=building)(?:&|=|$)/.test(url)
+      || /[?&]method=estate/.test(url)
+      || /[?&]display=building/.test(url);
+    return { method: "reload", url: url, keepSearch: !!keepSearch };
+  }
+
   // ── v2.5.45 ITANDI のタブ（旧は itandibb.com の最初のタブをそのまま使っていた＝物件の詳細・ログインの画面でも入力を始めた）──
   var ITANDI_LIST_RE = /^https:\/\/itandibb\.com\/rent_rooms\/list(?:[?#/]|$)/;
   var ITANDI_ANY_RE = /^https:\/\/itandibb\.com\//;
@@ -233,11 +256,16 @@
     pickItandiTab: pickItandiTab,
     itandiTabPlan: itandiTabPlan,
     realproTabPlan: realproTabPlan,
+    realproRecoverNav: realproRecoverNav,
     realproReady: realproReady,
     reasonJa: reasonJa,
     locationGate: locationGate,
     failureNotice: failureNotice,
-    /** 入力を始めた合図（fill-started）を待つ長さ。popup は登録の条件の読み直しを最長6秒・人の間 0.8〜1.2秒待ってから押す */
-    FILL_START_TIMEOUT_MS: 25000,
+    /**
+     * 入力を始めた合図（fill-started）を待つ長さ。
+     * 2026-11-16: ホーム→住居検索の移りに時間がかかることがあるので 40秒（旧25秒だと
+     *   fill-started 前に tab_reload が走りトップへ戻す競争になっていた）。
+     */
+    FILL_START_TIMEOUT_MS: 40000,
   };
 });

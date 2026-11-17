@@ -2293,8 +2293,19 @@ function parseAreaMin(prefs) {
 
 // 敷金礼金なし希望の検出（ng_points / preferences / other_requests から）
 function detectShikireiFlag(c) {
-  const text = `${c.preferences || ""} ${c.ng_points || ""} ${c.other_requests || ""}`;
-  return /敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0|敷0礼0/.test(text);
+  if (!c) return false;
+  /**
+   * ★ 2026-11-16 録画: 敷金・礼金なしがチェックされなかった。
+   *   ① DB の真偽欄（shikirei_free / prefer_no_shikirei）
+   *   ② 顧客メモ文（中黒「・」付き表記も含む）
+   */
+  if (c.shikirei_free === true || c.shikirei_free === "true" || c.shikirei_free === 1) return true;
+  if (c.prefer_no_shikirei === true || c.prefer_no_shikirei === "true") return true;
+  const text = [
+    c.preferences, c.ng_points, c.other_requests, c.property_memo, c.notes,
+    c.additional_conditions, c.raw_format_text, c.condition_summary,
+  ].filter(Boolean).join(" ");
+  return /敷礼なし|敷金[・･]?礼金なし|敷金礼金0|敷金0礼金0|敷0礼0|敷礼0|初期費用.*抑/.test(text);
 }
 
 function formatYen(n) {
@@ -3079,12 +3090,30 @@ function buildCustomerConditionsString(c) {
 
 // ── View 2: Site selection ─────────────────────────────────────────
 function openSiteView(customer) {
+  /**
+   * ★ 2026-11-16 勇気さん実測（owner_mismatch）:
+   *   り さんの検索〜送付中に UI で勇気を選ぶと `current_customer_id` が上書きされ、
+   *   送る相手が勇気・検索の回はり → owner_mismatch で止まり「前客から切替できない」に見える。
+   *   → 一連ロック中は **別客の storage 上書きをしない**（画面は開ける・送る相手は進行中の客のまま）。
+   */
+  var _pipeBusy = null;
+  try { _pipeBusy = (customer && customer.id && _axPipelineBlocks(customer.id)) ? _axPipelineActive() : null; } catch (_) { _pipeBusy = null; }
+  if (_pipeBusy) {
+    console.warn("[AX] 一連ロック中のため送る相手の切替を保留: 進行中=" + (_pipeBusy.name || _pipeBusy.customerId) + " / 選んだ=" + (customer.customer_name || customer.id));
+    try {
+      var _uw2 = document.getElementById("unknown-warn");
+      if (_uw2) {
+        _uw2.style.display = "block";
+        _uw2.textContent = "⏳ " + ((_pipeBusy.name) || "前のお客さん") + " の検索〜送付が終わるまで、送る相手は切り替えません（選んだ: " + (customer.customer_name || "") + "）";
+      }
+    } catch (_) {}
+  }
   selectedCustomer = customer;
   // ★ 顧客選択時に名前・ID・条件文字列をstorageに保存
   //   （全ページ送る時のLINEヘッダー名 ＋ 一番オススメAIランキングのフォールバック用。
   //    リアプロは検索実行でページがリロードされ popup iframe ごと消えるため、
   //    一括検索の Case C 起動時は必ずこの storage フォールバックが使われる）
-  if (customer.customer_name) {
+  if (customer.customer_name && !_pipeBusy) {
     chrome.storage.local.set({
       current_customer_name: customer.customer_name,
       current_customer_id: customer.id || null,
@@ -3495,12 +3524,106 @@ function setupAreaModeSelector(c, siteKey) {
 //  ・押した合図（fill-done）から先は今まで通り（ブレインなら判定、bulk-dl が1件ずつ印刷用PDFを押して送る）
 var AIX_RESEARCH_GAP_MS = 10 * 60 * 1000;
 var _aiAutoSearchMemo = {};   // "customerId|site" → 押した時刻
+/**
+ * ★ 2026-11-16 竹内さん「お客さん検索中物件おくって完了するまで一連が完了するまで新しいお客さんがはいらず1つずつ」:
+ *   検索開始〜物件送付完了まで **今のお客さんだけ**。次客の自動検索・切替検索は拒否する。
+ */
+var AX_PIPELINE_TTL_MS = 12 * 60 * 1000;
+var _axPipelineJob = null; // { customerId, name, startedAt, site }
+function _axPipelineActive() {
+  if (!_axPipelineJob) return null;
+  if (Date.now() - Number(_axPipelineJob.startedAt || 0) > AX_PIPELINE_TTL_MS) {
+    console.warn("[AX] 一連ロック TTL切れ → 解除（" + (_axPipelineJob.name || _axPipelineJob.customerId) + "）");
+    _axPipelineJob = null;
+    try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
+    return null;
+  }
+  return _axPipelineJob;
+}
+function _axPipelineStart(customer, site) {
+  if (!customer || !customer.id) return;
+  _axPipelineJob = {
+    customerId: String(customer.id),
+    name: customer.customer_name || "",
+    startedAt: Date.now(),
+    site: site || "realpro",
+  };
+  try { chrome.storage.local.set({ axlx_pipeline_job: _axPipelineJob }); } catch (_) {}
+  console.log("[AX] 一連ロック開始: " + (_axPipelineJob.name || _axPipelineJob.customerId) + "（" + _axPipelineJob.site + "）");
+}
+function _axPipelineClear(reason, onlyCustomerId) {
+  // onlyCustomerId がある時は、その客のロックだけ外す（次客が既に始まっていたら触らない）
+  if (onlyCustomerId && _axPipelineJob && String(_axPipelineJob.customerId) !== String(onlyCustomerId)) {
+    console.log("[AX] 一連ロック解除スキップ（別客進行中）: 進行=" + (_axPipelineJob.name || _axPipelineJob.customerId) + " / 対象=" + onlyCustomerId);
+    return;
+  }
+  // メモリが空でも storage は消す（完了直後の競合・復元ずれで storage だけ残るのを防ぐ）
+  // ただし onlyCustomerId 指定時は storage も一致する時だけ消す
+  var had = _axPipelineJob;
+  var removeStorage = true;
+  if (onlyCustomerId) {
+    // storage は非同期で確認すると遅いので、メモリ一致時のみ消す（bg 側が storage を担当）
+    removeStorage = !!(had && String(had.customerId) === String(onlyCustomerId));
+  }
+  _axPipelineJob = null;
+  if (removeStorage) {
+    try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
+  }
+  if (had) {
+    console.log("[AX] 一連ロック解除: " + (had.name || had.customerId) + "（" + (reason || "") + "）");
+  } else if (reason) {
+    console.log("[AX] 一連ロック解除（メモリ無し）: " + reason);
+  }
+}
+function _axPipelineBlocks(customerId) {
+  var j = _axPipelineActive();
+  if (!j) return false;
+  return String(customerId || "") !== String(j.customerId);
+}
+/** storage を正としてメモリを揃える（次客 switch 直前の競合保険） */
+function _axPipelineSyncFromStorage() {
+  return new Promise(function (resolve) {
+    try {
+      chrome.storage.local.get("axlx_pipeline_job", function (st) {
+        var job = st && st.axlx_pipeline_job;
+        if (!job || !job.customerId) {
+          _axPipelineJob = null;
+          resolve(null);
+          return;
+        }
+        if (Date.now() - Number(job.startedAt || 0) > AX_PIPELINE_TTL_MS) {
+          _axPipelineJob = null;
+          try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
+          resolve(null);
+          return;
+        }
+        _axPipelineJob = job;
+        resolve(job);
+      });
+    } catch (_) {
+      resolve(_axPipelineJob || null);
+    }
+  });
+}
 function _maybeAiCustomerAutoSearch(btn, customer, site) {
   try {
     if (!_aiCustomerModeOn || _staffModeOn) return false;
     if (!btn || !customer || !customer.id) return false;
     if (btn.style.display === "none") return false;      // 検索ボタンが無い画面（一覧など）
     if (btn.dataset.automated) return false;             // 自動の一括の回はそちらの道に任せる
+    // 別客の一連（検索→送付）が終わるまで次客を入れない
+    if (_axPipelineBlocks(customer.id)) {
+      var _busy = _axPipelineActive();
+      console.warn("[AX] 一連未完了のため次客の自動検索を拒否: 進行中=" + (_busy && (_busy.name || _busy.customerId)) + " / 次=" + (customer.customer_name || customer.id));
+      try {
+        var _uw = document.getElementById("unknown-warn");
+        if (_uw) {
+          _uw.style.display = "block";
+          _uw.textContent = "⏳ " + ((_busy && _busy.name) || "前のお客さん") + " の検索〜送付が終わるまで次のお客さんに進みません";
+        }
+      } catch (_) {}
+      return false;
+    }
     var key = String(customer.id) + "|" + String(site || "realpro");
     var now = Date.now();
     var last = Number(_aiAutoSearchMemo[key] || 0);
@@ -3517,6 +3640,7 @@ function _maybeAiCustomerAutoSearch(btn, customer, site) {
     setTimeout(function () {
       if (!_aiCustomerModeOn) return;                    // 途中でモードが変わったら押さない
       if (selectedCustomer && String(selectedCustomer.id) !== String(customer.id)) return; // 別のお客様に切り替わった
+      if (_axPipelineBlocks(customer.id)) return;        // 待ちの間に別客が始まっていたら押さない
       try {
         btn.dataset.ai_customer = "1";                   // 点検で「AIXモードの自動」と分かる印
         btn.click();
@@ -4040,7 +4164,29 @@ function _runSwitchCustomer(d) {
     console.warn("[popup] 通常／スタッフモードのため自動の検索をしません（switch-customer・自動モードかAIXを選ぶと動きます）");
     return Promise.resolve({ ok: false, reason: "guide_only" });
   }
-  return _openAndClickAutofill(d, { via: "switch-customer", waitCustomersMs: 5000, areaSource: "db", autoRun: true, dedupe: true, deadlineMs: SWITCH_CLICK_DEADLINE_MS });
+  var _proceedSwitch = function () {
+    return _openAndClickAutofill(d, { via: "switch-customer", waitCustomersMs: 5000, areaSource: "db", autoRun: true, dedupe: true, deadlineMs: SWITCH_CLICK_DEADLINE_MS });
+  };
+  // ★ 一連ロック: 今のお客さんの検索〜送付が終わるまで次客の自動切替検索を入れない
+  //   ⚠ 完了直後の競合: background が storage を消した直後に次客 switch が来ると、
+  //     メモリの _axPipelineJob だけ残って pipeline_busy になり次客に移れない（勇気さん実測）。
+  //     → storage を正として再判定。空なら解除して続行。
+  //   （switch-once 試験は芯だけ抜き出すため、一連ロック関数が無い時は関所を通す）
+  var _blocks = (typeof _axPipelineBlocks === "function") ? _axPipelineBlocks : function () { return false; };
+  if (!(d && d.customerId && _blocks(d.customerId))) {
+    return _proceedSwitch();
+  }
+  var _sync = (typeof _axPipelineSyncFromStorage === "function")
+    ? _axPipelineSyncFromStorage
+    : function () { return Promise.resolve(null); };
+  return _sync().then(function (job) {
+    if (!job || String(job.customerId) === String(d.customerId)) {
+      if (!job) console.log("[AX] 一連ロック: storage空のため解除 → 次客 switch 続行 id=" + d.customerId);
+      return _proceedSwitch();
+    }
+    console.warn("[popup] 一連未完了のため switch-customer を拒否: 進行中=" + (job.name || job.customerId) + " / 次=" + d.customerId);
+    return { ok: false, reason: "pipeline_busy", busyCustomerId: String(job.customerId) };
+  });
 }
 // ==AXLX-SWITCH-CORE-END==
 
@@ -4724,8 +4870,17 @@ function openInstructions(siteKey) {
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
       // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。await 前に取得
       const _autoSort_it = autofillBtn.dataset.auto_sort || null;
-      const _autoMaxPages_it = Number(autofillBtn.dataset.auto_max_pages) || null;
       let c = selectedCustomer;
+      // 2026-11-16 竹内「最大3／新着は5」: 自動便の指定が無ければ未送付＝新着→5
+      const _autoMaxPages_it = (function () {
+        var fromBtn = Number(autofillBtn.dataset.auto_max_pages) || null;
+        if (fromBtn) return fromBtn;
+        var AR = (typeof self !== "undefined" && self.AxlxAutoRun) || null;
+        if (AR && AR.resolveMaxPages && c) {
+          return AR.resolveMaxPages(null, { knownCustomer: true, last_property_sent_at: c.last_property_sent_at || null });
+        }
+        return null;
+      })();
       const _adjWard_it    = document.getElementById("adj-area-ward")?.value.trim()    || "";
       const _adjStation_it = document.getElementById("adj-area-station")?.value.trim() || "";
       const adjArea      = [_adjStation_it, _adjWard_it].filter(Boolean).join("・")
@@ -5071,7 +5226,8 @@ function openInstructions(siteKey) {
         rent_max:        itandiEffectiveRentMax,
         rent_min:        readAdjRentMin(c, itandiEffectiveRentMax),
         area_mode:       _lockedMode_itandi || currentAreaMode,
-        shikirei_free:   !!(document.getElementById("adj-shikirei-free")?.checked),
+        shikirei_free:   !!(document.getElementById("adj-shikirei-free")?.checked) || detectShikireiFlag(c),
+        prefer_no_shikirei: detectShikireiFlag(c),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         // v2.5.51 竹内「ITANDI 築年数広げる」: 広げて検索の時はリアプロと同じく築年数を＋5年（旧は家賃だけ広げて築年数は登録のまま＝
         //   点検の「築年数が登録より狭い」が 9/30 だけで 27回）。ピンポイントは今まで通り
@@ -5167,6 +5323,8 @@ function openInstructions(siteKey) {
       recordSearchForSelected("itandi");
       autofillBtn.textContent = _guideIt ? "🔦 案内中（光った所を入力して検索）" : "✓ 自動検索中...";
       autofillBtn.classList.add("done");
+      // ★ 一連ロック: itandi も検索開始〜送付完了までこのお客さんだけ
+      try { _axPipelineStart(c, "itandi"); } catch (_) {}
       setTimeout(() => {
         autofillBtn.textContent = "🔍 itandiで自動検索";
         autofillBtn.classList.remove("done");
@@ -5250,7 +5408,16 @@ function openInstructions(siteKey) {
       const _lockedMode = autofillBtn.dataset.area_mode_locked || null; // await前に取得（非同期後は dataset が削除済み）
       // 2026-09-27 自動便の指定（午後の便＝更新順・1ページ）。await 前に取得（旧は popup の経路で page-script に届かなかった）
       const _autoSort = autofillBtn.dataset.auto_sort || null;
-      const _autoMaxPages = Number(autofillBtn.dataset.auto_max_pages) || null;
+      // 2026-11-16 竹内「最大3／新着は5」: 自動便の指定が無ければ resolveMaxPages（未送付＝新着→5）
+      const _autoMaxPages = (function () {
+        var fromBtn = Number(autofillBtn.dataset.auto_max_pages) || null;
+        if (fromBtn) return fromBtn;
+        var AR = (typeof self !== "undefined" && self.AxlxAutoRun) || null;
+        if (AR && AR.resolveMaxPages) {
+          return AR.resolveMaxPages(null, { knownCustomer: true, last_property_sent_at: c0.last_property_sent_at || null });
+        }
+        return null;
+      })();
       const c = c0;
       // 調整フォームの値を優先して使う
       const _adjWard_rp    = document.getElementById("adj-area-ward")?.value.trim()    || "";
@@ -5418,6 +5585,22 @@ function openInstructions(siteKey) {
 
       const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
+      /**
+       * ★ 2026-11-16 tomoさん「天満橋駅指定なのに光らなかった」:
+       *   通勤圏展開前の**指定駅**（希望エリア＋通勤の目的駅）。案内はこれを先に光らせる。
+       */
+      const primary_stations = [];
+      const _pushPrimary = (raw) => {
+        if (!raw) return;
+        let part = String(raw).replace(/駅$/, "").trim();
+        if (!part) return;
+        let st = resolveStation(part);
+        if (!st) {
+          const _pfx = resolveWithLinePrefixes(part);
+          if (_pfx?.type === "station") st = _pfx.resolved;
+        }
+        if (st && !primary_stations.includes(st)) primary_stations.push(st);
+      };
       if (currentAreaMode === "station") {
         const resolvedStations = [];
         // 駅名ページのDOM表記エイリアス（難波=漢字→南海、なんば=ひらがな→大阪メトロ）
@@ -5449,6 +5632,7 @@ function openInstructions(siteKey) {
           if (station) {
             resolvedStations.push(station);
             if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
+            if (!primary_stations.includes(station)) primary_stations.push(station);
             // 漢字↔ひらがなエイリアスも追加（難波→なんば でOsaka MetroのDOM、なんば→難波 で南海のDOM）
             const _stAlias = _STATION_DOM_ALIASES[station];
             if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
@@ -5484,6 +5668,8 @@ function openInstructions(siteKey) {
       // 2026-09-29 v2.5.39 通勤の到達時間で駅を選ぶ（列＋希望エリアの文・乗り換え1回まで）。駅とその沿線を入れ、駅モードに昇格
       //   旧: 下の transitRe（「まで電車で30分」の「で」を読めず・通勤の列を読まない・古い路線図）。到達時間が読めない時だけ旧のまま
       let _commuteAudit = null;
+      // 通勤の目的駅も指定駅（展開の前に残す）
+      _pushPrimary(c.commute_station);
       // 手で駅欄を編集した回（一時調整優先＝computeTempAdjOverride が station）はスタッフの指定を優先して広げない（欄の中身は preload で登録の条件が入るので「欄が空でない」では判定しない）
       const _reach = planCommuteReachFor(c, adjAreaClean, _tempAdjOverride === "station");
       if (_reach) {
@@ -5666,10 +5852,39 @@ function openInstructions(siteKey) {
         }
       }
 
+      // 指定駅の路線ID（案内が先に光らせる路線）
+      const primary_route_ids = [];
+      primary_stations.forEach((st) => {
+        (getHubLines(st) || []).forEach((l) => {
+          const id = lineNameToRouteId(l);
+          if (id && !primary_route_ids.includes(id)) primary_route_ids.push(id);
+        });
+      });
+      // 指定駅を station_names 先頭・指定路線を route_ids 先頭へ
+      if (primary_stations.length) {
+        const _ps = new Set(primary_stations);
+        realpro_station_names.splice(
+          0,
+          realpro_station_names.length,
+          ...primary_stations,
+          ...realpro_station_names.filter((s) => !_ps.has(s)),
+        );
+      }
+      if (primary_route_ids.length) {
+        const _pr = new Set(primary_route_ids);
+        route_ids.splice(
+          0,
+          route_ids.length,
+          ...primary_route_ids,
+          ...route_ids.filter((r) => !_pr.has(r)),
+        );
+      }
       console.log('[AX] autofill送信:', {
         area_mode:       _lockedMode || currentAreaMode,
-        station_names:   realpro_station_names.slice(),
-        route_ids:       route_ids.slice(),
+        primary_stations: primary_stations.slice(),
+        station_names:   realpro_station_names.slice(0, 20),
+        station_n:       realpro_station_names.length,
+        route_ids:       route_ids.slice(0, 12),
         city_codes:      city_codes.slice(),
         area:            adjAreaClean.slice(0, 40),
         area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || null),
@@ -5696,6 +5911,8 @@ function openInstructions(siteKey) {
           city_codes,
           route_ids,
           station_names: realpro_station_names,
+          primary_stations: primary_stations.slice(),
+          primary_route_ids: primary_route_ids.slice(),
           select_all_line_stations: _selectAllLineStations,
           // 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（数だけ・点検の記録用。page-script は多数の駅の押し方・止まった時の進め方に使う）
           commute:       _commuteAudit,
@@ -5706,7 +5923,12 @@ function openInstructions(siteKey) {
           area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
-          shikirei_free: !!(document.getElementById("adj-shikirei-free")?.checked),
+          /**
+           * ★ 2026-11-16: adj 未チェックでも顧客希望（detectShikireiFlag）があれば true。
+           *   旧は adj だけ → 自動で敷礼なしが画面に入らなかった。
+           */
+          shikirei_free: !!(document.getElementById("adj-shikirei-free")?.checked) || detectShikireiFlag(c),
+          prefer_no_shikirei: detectShikireiFlag(c),
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
           // 2026-09-27 自動便だけ（手動は null＝今までどおり）: sort_order="updated" で page-script が並び替えを既定（更新順）へ戻す
           sort_order: _autoSort,
@@ -5774,7 +5996,9 @@ function openInstructions(siteKey) {
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
       autofillBtn.disabled = true;
-      // fill-done が 25秒以内に来なければ自動リセット（固まり防衛）
+      // ★ 一連ロック: 検索開始〜送付完了までこのお客さんだけ（次客の自動検索を止める）
+      try { _axPipelineStart(c, "realpro"); } catch (_) {}
+      // fill-done が 25秒以内に来なければボタンだけリセット（一連ロックは送付完了/TTLまで残す）
       clearTimeout(_fillDoneWatchdog);
       _fillDoneWatchdog = setTimeout(() => {
         const _b = document.getElementById("autofill-btn");
@@ -6389,6 +6613,28 @@ function _initModeSelect() {
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   _initModeSelect();
+  /**
+   * ★ 2026-11-16 連携ボトルネック除去:
+   *   ポップアップを開いたら学習束を強制再取得（通常モードでも read_count が付く／新束がすぐ届く）。
+   *   コンソールに「連携完了」が出れば段階4まで進んだ印。
+   */
+  try {
+    // ★ 学習→反映: 開いたら必ず強制再取得（版スキップなし）。反映状態を画面にも出す。
+    chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (r) {
+      if (chrome.runtime.lastError) return;
+      try {
+        if (r && r.ok && !r.empty) console.log("[AX] 学習束を再取得:", r.skipped || "ok", r.link || "", "read=" + (r.server_read_count != null ? r.server_read_count : "?"));
+        var el = document.getElementById("unknown-warn");
+        if (el && r && r.ok) {
+          var rd = (r.server_read_count != null) ? r.server_read_count : "?";
+          el.style.display = "block";
+          el.textContent = r.empty
+            ? "⚠ 学習束が空です"
+            : ("✅ 学習反映: 束を読みました（read " + rd + "・" + (r.skipped || "取得") + "）→ 自動1回で効果確認");
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   // v2.5.80: 前回の学習済みマップを先に使い、古ければ裏で取り直す（差分の同期は1日1回・同じ表を2回取らない）
   loadLearnedMapsCached();
@@ -6625,9 +6871,34 @@ document.addEventListener("DOMContentLoaded", () => {
           const _resetLabel = selectedSite === "itandi" ? "🔍 itandiで自動検索"
             : selectedSite === "reins" ? "⚡ REINSに自動入力"
             : "🔍 リアプロで自動検索";
-          btn.textContent = _resetLabel;
-          btn.classList.remove("searching", "done");
-          btn.disabled = false;
+          // 送付中は「送付中」表示（一連ロックは customer-done まで残す）
+          if (e.data.error) {
+            btn.textContent = _resetLabel;
+            btn.classList.remove("searching", "done");
+            btn.disabled = false;
+            try { _axPipelineClear("fill-done error"); } catch (_) {}
+          } else if (_axPipelineActive()) {
+            btn.textContent = "📬 物件送付中...";
+            btn.classList.add("searching");
+            btn.disabled = true;
+          } else {
+            btn.textContent = _resetLabel;
+            btn.classList.remove("searching", "done");
+            btn.disabled = false;
+          }
+        }
+      }
+      // ★ 一連完了（全ページ送付終わり）→ 次客を入れてよい
+      if (e.data?.from === "axlx-batch-customer-done" || e.data?.type === "axlx-batch-customer-done") {
+        try { _axPipelineClear("batch-customer-done"); } catch (_) {}
+        const btnDone = document.getElementById("autofill-btn");
+        if (btnDone) {
+          const _rl = selectedSite === "itandi" ? "🔍 itandiで自動検索"
+            : selectedSite === "reins" ? "⚡ REINSに自動入力"
+            : "🔍 リアプロで自動検索";
+          btnDone.textContent = _rl;
+          btnDone.classList.remove("searching", "done");
+          btnDone.disabled = false;
         }
       }
       // bulk-dl.jsからの顧客名要求（売上番長に送る時に自動反映）
@@ -6642,10 +6913,22 @@ document.addEventListener("DOMContentLoaded", () => {
       // ── underbar.js経由の顧客切替指示（Approach D: tabs.sendMessage → postMessage 2段中継）──
       // chrome.runtime.sendMessage のiframe frame登録ラグを回避するため
       // background.js → tabs.sendMessage → underbar.js → postMessage → ここ の経路を使う
+      if (e.data?.from === "underbar-parent" && e.data?.action === "pipeline-clear") {
+        try { _axPipelineClear(e.data.reason || "underbar-clear", e.data.customerId || null); } catch (_) {}
+      }
       if (e.data?.from === "underbar-parent" && e.data?.action === "switch-customer") {
         // v2.5.48 受け口はここ1本（chrome.runtime.onMessage の側は消した）。押したかどうかを underbar に正直に返す（reqId）
         _runSwitchCustomer(e.data).then(function (r) {
-          try { window.parent.postMessage({ from: "axlx-switch-result", reqId: e.data.reqId || null, ok: !!(r && r.ok), reason: (r && r.reason) || null, dup: !!(r && r.dup) }, "*"); } catch (_) {}
+          try {
+            window.parent.postMessage({
+              from: "axlx-switch-result",
+              reqId: e.data.reqId || null,
+              ok: !!(r && r.ok),
+              reason: (r && r.reason) || null,
+              dup: !!(r && r.dup),
+              busyCustomerId: (r && r.busyCustomerId) || null,
+            }, "*");
+          } catch (_) {}
         });
       }
     });
@@ -6933,6 +7216,57 @@ document.addEventListener("DOMContentLoaded", () => {
 //   underbar.js の中継（postMessage → 上の "underbar-parent"）とここの両方が受け、自動入力のボタンを2回押していたため。
 //   受け口は underbar の中継の1本だけ（_runSwitchCustomer）。このファイルに switch-customer の onMessage を足さないこと
 //   （tests/chrome-extension/switch-once.test.js が固定）
+// ★ 2026-11-16: switch-customer 以外の runtime 合図だけ受ける（一連ロック解除）
+(function () {
+  try {
+    chrome.storage.local.get("axlx_pipeline_job", function (st) {
+      if (st && st.axlx_pipeline_job && st.axlx_pipeline_job.customerId) {
+        _axPipelineJob = st.axlx_pipeline_job;
+        console.log("[AX] 一連ロック復元: " + (_axPipelineJob.name || _axPipelineJob.customerId));
+      }
+    });
+    chrome.storage.onChanged.addListener(function (changes, area) {
+      if (area !== "local" || !changes.axlx_pipeline_job) return;
+      if (!changes.axlx_pipeline_job.newValue) {
+        try { _axPipelineClear("storage cleared"); } catch (_) {}
+        var btn = document.getElementById("autofill-btn");
+        if (btn && btn.classList.contains("searching")) {
+          btn.textContent = selectedSite === "itandi" ? "🔍 itandiで自動検索"
+            : selectedSite === "reins" ? "⚡ REINSに自動入力"
+            : "🔍 リアプロで自動検索";
+          btn.classList.remove("searching", "done");
+          btn.disabled = false;
+        }
+      }
+    });
+    chrome.runtime.onMessage.addListener(function (msg) {
+      // switch-customer は underbar 中継のみ（二重押し禁止・この受け口では扱わない）
+      // ※ 文字列 "type === \"axlx-switch-customer\"" を書かない（switch-once 試験が二重受け口検知に使う）
+      if (!msg) return false;
+      if (String(msg.type || "") === "axlx-switch-customer") return false;
+      if (msg.type === "axlx-batch-customer-done") {
+        try { window.postMessage({ from: "axlx-batch-customer-done", customerId: msg.customerId || null }, "*"); } catch (_) {}
+      }
+      // ★ 2026-11-16: background が完了／失敗／busy再送の直前に送る強制解除（メモリを即空にする）
+      if (msg.type === "axlx-pipeline-clear") {
+        var _clrBefore = _axPipelineJob;
+        try { _axPipelineClear(msg.reason || "bg-clear", msg.customerId || null); } catch (_) {}
+        // 実際に解除した時だけボタンを戻す（別客ロックを誤って触っていない）
+        if (_clrBefore && !_axPipelineJob) {
+          var btnClr = document.getElementById("autofill-btn");
+          if (btnClr && btnClr.classList.contains("searching")) {
+            btnClr.textContent = selectedSite === "itandi" ? "🔍 itandiで自動検索"
+              : selectedSite === "reins" ? "⚡ REINSに自動入力"
+              : "🔍 リアプロで自動検索";
+            btnClr.classList.remove("searching", "done");
+            btnClr.disabled = false;
+          }
+        }
+      }
+      return false;
+    });
+  } catch (_) {}
+})();
 
 // ── 一括検索ツールバーボタン ──────────────────────────────────────
 (function() {

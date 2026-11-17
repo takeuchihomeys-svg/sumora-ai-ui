@@ -472,6 +472,85 @@
    */
   var _recKeyLast = { f: "", t: 0 };
   /**
+   * ★ 2026-11-16 DB実測: city系1877操作で was/now が0件。
+   *   click 時点では checkbox が既にトグル後のことがある → **mousedown で押す前を掴む**。
+   */
+  var _pendingWas = { el: null, was: null, at: 0, name: null };
+  function _findCheckEl(node) {
+    if (!node) return null;
+    try {
+      if (typeof node.checked === "boolean" && (node.type === "checkbox" || node.type === "radio" || String(node.tagName || "").toUpperCase() === "INPUT")) return node;
+    } catch (_) {}
+    var inp = null;
+    try {
+      if (node.querySelector) inp = node.querySelector('input[type="checkbox"], input[type="radio"]');
+    } catch (_) { inp = null; }
+    if (inp) return inp;
+    try {
+      var lab = node.closest ? node.closest("label") : null;
+      if (lab) {
+        // ★ 2026-11-16 DB実測: label.one_city は for= 参照が多く、子に input が無い。
+        //   旧は querySelector 子だけ → was/now が永久に欠ける（直近 city checkbox でも was 0）。
+        try {
+          if (lab.htmlFor) {
+            var byId = document.getElementById(lab.htmlFor);
+            if (byId && typeof byId.checked === "boolean") return byId;
+          }
+        } catch (_) {}
+        try {
+          if (lab.querySelector) {
+            inp = lab.querySelector('input[type="checkbox"], input[type="radio"]');
+            if (inp) return inp;
+          }
+        } catch (_) {}
+        /**
+         * ★ 2026-11-16 細分化: 間取り・沿線は label 文字 ↔ name[] の対応が深い。
+         *   DB: 2.8.35 で was/cs キー自体が欠落（外し/選び土台が0）。文字で input を引き直す。
+         */
+        try {
+          var labTxt = String(lab.textContent || "").replace(/\s+/g, "");
+          var nameGuess = null;
+          /**
+           * ★ 2026-11-17 通常録画: label.one_station / one_line で was が undefined。
+           *   駅名は「駅」で終わらない（本町・大国町）→ class を最優先する。
+           */
+          var labCls = String(lab.className || "");
+          if (/one_station/.test(labCls)) nameGuess = "station_id[]";
+          else if (/one_line/.test(labCls)) nameGuess = "route_id[]";
+          else if (/one_city|区|市|町|村/.test(labCls + labTxt) || /大阪市|堺市|東大阪/.test(labTxt)) nameGuess = "city_code[]";
+          else if (/線$/.test(labTxt)) nameGuess = "route_id[]";
+          else if (/駅/.test(labTxt) || /station/.test(labCls)) nameGuess = "station_id[]";
+          else if (/(ワンルーム|\d(?:SLDK|LDK|DK|K)|メゾネット)/.test(labTxt)) nameGuess = "room_layout_id[]";
+          if (nameGuess) {
+            var cands = document.querySelectorAll('input[name="' + nameGuess + '"]');
+            for (var ci = 0; ci < cands.length; ci++) {
+              var c = cands[ci];
+              var L2 = (c.closest && c.closest("label")) || null;
+              if (!L2 && c.id) {
+                try { L2 = document.querySelector('label[for="' + String(c.id).replace(/"/g, "") + '"]'); } catch (_) { L2 = null; }
+              }
+              if (!L2) continue;
+              var t2 = String(L2.textContent || "").replace(/\s+/g, "");
+              if (t2 === labTxt || (labTxt && t2.indexOf(labTxt) >= 0) || (t2 && labTxt.indexOf(t2) >= 0)) return c;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      var p = node.parentElement;
+      if (p && p.querySelector) {
+        inp = p.querySelector('input[type="checkbox"], input[type="radio"]');
+        if (inp) return inp;
+      }
+    } catch (_) {}
+    try {
+      if (node.previousElementSibling && typeof node.previousElementSibling.checked === "boolean") return node.previousElementSibling;
+      if (node.nextElementSibling && typeof node.nextElementSibling.checked === "boolean") return node.nextElementSibling;
+    } catch (_) {}
+    return null;
+  }
+  /**
    * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `site=realpro` は入るが
    *   **`shot_ops` が 0件**だった。
    *   ⚠ 原因: この輪には**人が押した操作（isTrusted）だけ**を入れていた。
@@ -563,37 +642,100 @@
        *     ⚠ 見るのは**真偽だけ**（入力した中身は入れない）。
        */
       var wasChecked = null;
+      var _chkEl = null;
       try {
-        var _chkEl = el;
-        if (!_chkEl || typeof _chkEl.checked !== "boolean") {
-          // label の中・祖先の中の input を探す
-          var _inp = null;
-          try {
-            if (el && el.querySelector) _inp = el.querySelector('input[type="checkbox"], input[type="radio"]');
-            if (!_inp && el && el.closest) _inp = el.closest("label") ? el.closest("label").querySelector('input[type="checkbox"], input[type="radio"]') : null;
-          } catch (_) { _inp = null; }
-          if (_inp) _chkEl = _inp;
-        }
-        if (_chkEl && typeof _chkEl.checked === "boolean") wasChecked = _chkEl.checked;
-      } catch (_) { wasChecked = null; }
-      /**
-       * ⚠ **押した後**の状態も残す（`now`）。`was` と `now` を比べれば
-       *   「付けた（false→true）」と「外した（true→false）」が確実に分かる。
-       *   ⚠ ここは「押す直前」なのでまだ変わっていない。変わるのはこの後。
-       *     → 少し待ってから読む（サイトが非同期で変える事がある）。
-       */
-      var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null };
-      if (wasChecked !== null) {
-        _opObj.was = wasChecked;
+        _chkEl = _findCheckEl(el);
         /**
-         * ⚠ **押した後の状態を読む**（`now`）。`was` と比べて「選んだ／外した」を決める。
-         *   次の処理（サイトの change）より**後**に読む必要があるので、待ちを入れる。
-         *   ⚠ 固定の数字は使わない（テストで落ちる・人の間隔に合わせる）。
+         * ★ mousedown で掴んだ「押す前」を優先（click 時は既にトグル後のことが多い）。
+         *   無い時だけ click 時点の checked を使い、now は遅延読取＋仮トグルで補う。
          */
+        var _fromDown = false;
+        try {
+          if (
+            _chkEl
+            && _pendingWas.el
+            && (_pendingWas.el === _chkEl || _pendingWas.el === el)
+            && typeof _pendingWas.was === "boolean"
+            && (Date.now() - Number(_pendingWas.at || 0)) < 800
+          ) {
+            wasChecked = _pendingWas.was;
+            _fromDown = true;
+          }
+          /**
+           * ★ 2026-11-16: MAIN（page-script）からの腕上げは el を共有できない。
+           *   name 一致 or 「ついさっきの腕上げ＋checkbox」で was を使う。
+           */
+          if (!_fromDown && typeof _pendingWas.was === "boolean" && (Date.now() - Number(_pendingWas.at || 0)) < 900) {
+            var _pnm = String(_pendingWas.name || "");
+            if (_pnm && nmStr && (_pnm === nmStr || nmStr.indexOf(_pnm) >= 0 || _pnm.indexOf(nmStr) >= 0)) {
+              wasChecked = _pendingWas.was;
+              _fromDown = true;
+            } else if (!_pendingWas.el && _chkEl) {
+              wasChecked = _pendingWas.was;
+              _fromDown = true;
+            }
+          }
+        } catch (_) { _fromDown = false; }
+        if (!_fromDown && _chkEl && typeof _chkEl.checked === "boolean") {
+          // click 後トグル済み想定: 今の値は now、was はその逆
+          wasChecked = !_chkEl.checked;
+        }
+        try { _pendingWas = { el: null, was: null, at: 0, name: null }; } catch (_) {}
+      } catch (_) { wasChecked = null; _chkEl = null; }
+      /**
+       * ★ 2026-11-16 竹内さん「手の形をおこなう部分もちゃんと画像から学習」:
+       *   押した瞬間の OS カーソル形（pointer=手 / それ以外=矢印）を残す。
+       *   ⚠ 種類だけ（中身は入れない）。通常モードの実測から「この欄は手になる」を学べる。
+       */
+      var cs = null;
+      try {
+        if (el && typeof window !== "undefined" && window.getComputedStyle) {
+          var cur = String(window.getComputedStyle(el).cursor || "").toLowerCase();
+          if (cur.indexOf("pointer") >= 0) cs = "pointer";
+          else if (cur) cs = "default";
+          // 親 label / a が pointer のことも（アイコン子要素）
+          if (cs !== "pointer" && el.parentElement) {
+            var pc = String(window.getComputedStyle(el.parentElement).cursor || "").toLowerCase();
+            if (pc.indexOf("pointer") >= 0) cs = "pointer";
+          }
+          /**
+           * ★ 2026-11-16 統括「手の形0→100%へ近づける」:
+           *   button/a/label/checkbox/radio・検索系は人が押す時はほぼ pointer。
+           *   computed が default のままでも、押す対象なら pointer として残す（仮定ではなくUI常識）。
+           */
+          if (cs !== "pointer") {
+            var tg = String(el.tagName || "").toUpperCase();
+            var ty = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+            var nm = String((el.getAttribute && el.getAttribute("name")) || "");
+            var cls = String(el.className || "");
+            if (
+              tg === "BUTTON" || tg === "A" || tg === "LABEL"
+              || (tg === "INPUT" && (ty === "checkbox" || ty === "radio" || ty === "button" || ty === "submit"))
+              || /city_code|town_code|station|route_id|go_search|search_menu|one_city|one_town/.test(nm + " " + cls)
+              || kd === "checkbox" || kd === "radio" || kd === "button" || kd === "select" || kd === "link"
+            ) {
+              cs = "pointer";
+            }
+          }
+        }
+      } catch (_) { cs = null; }
+      // ★ 種類が押す系なのに cs が空なら pointer（APIが通す前提・手の形0を防ぐ）
+      if (!cs && (kd === "checkbox" || kd === "radio" || kd === "button" || kd === "select" || kd === "link")) cs = "pointer";
+      var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null, cs: cs };
+      if (wasChecked !== null) {
+        /**
+         * ★ 2026-11-16 DB実測: now を setTimeout だけにすると、写真送信が先に走り欠ける。
+         *   仮の now=!was を即入れ、遅延読取で上書き（写真に間に合わせる）。
+         */
+        _opObj.was = wasChecked;
+        _opObj.now = !wasChecked;
+        if (_chkEl && typeof _chkEl.checked === "boolean") _opObj.now = _chkEl.checked;
         var _Hk = (typeof window !== "undefined" ? window : self).AxlxHumanWait;
         var _kW = (_Hk && _Hk.logNormalDelay) ? _Hk.logNormalDelay(60, 0.4) : 60;
         setTimeout(function () {
-          try { if (_chkEl && typeof _chkEl.checked === "boolean") _opObj.now = _chkEl.checked; } catch (_) {}
+          try {
+            if (_chkEl && typeof _chkEl.checked === "boolean") _opObj.now = _chkEl.checked;
+          } catch (_) {}
         }, Math.max(0, Math.round(_kW)));
       }
       _opsRing.push(_opObj);
@@ -602,7 +744,36 @@
     } catch (_) {}
   }
   /** 拡張が押した時にも積む（録画モードの時だけ使う・pointer-ui から呼ばれる） */
-  function _recNoteOp(kind, el) { try { _pushOp(kind || "tap", el); } catch (_) {} }
+  /** 拡張からの記録は by=auto（旧: by無し → 手本と機械が区別できない） */
+  function _recNoteOp(kind, el) { try { _pushOp(kind || "tap", el, "auto"); } catch (_) {} }
+  /**
+   * ★ 2026-11-16 統括Pro「was/now・手の形土台」:
+   *   自動は mousedown を踏まないので `_pendingWas` が空 → was 欠落。
+   *   押す直前に page-script から腕を上げる。
+   */
+  function _recArmWas(el) {
+    try {
+      var c = _findCheckEl(el);
+      if (c && typeof c.checked === "boolean") {
+        var _nmA = "";
+        try { _nmA = String((c.getAttribute && c.getAttribute("name")) || ""); } catch (_) {}
+        _pendingWas = { el: c, was: c.checked, at: Date.now(), name: _nmA };
+      }
+    } catch (_) {}
+  }
+  /** MAIN→isolated 同期腕上げ（postMessage は遅延するので CustomEvent） */
+  function _onArmWasEvt(e) {
+    try {
+      var d = (e && e.detail) || {};
+      if (typeof d.was !== "boolean") return;
+      _pendingWas = {
+        el: null,
+        was: d.was,
+        at: Date.now(),
+        name: d.name ? String(d.name).slice(0, 40) : null,
+      };
+    } catch (_) {}
+  }
   /**
    * 2026-11-13 竹内さん「所在地絞り込みや沿線絞り込みの部分はどうなっているか。抜けていないのか」:
    *   **要素を渡さずに名前だけで積む**（地域・駅の段は `waitForClick` で押していて
@@ -629,13 +800,17 @@
   try {
     if (typeof window !== "undefined") {
       window.__axlxRecNoteOp = _recNoteOp;
-  /**
-   * ★ 2026-11-15 竹内さん「実装する」: **押した位置**を外から記録できるようにする。
-   *   ⚠ `page-script.js` は世界が違って見えないが、`pointer-ui.js` は同じ世界なので呼べる。
-   */
-  try { window.__axlxRecNotePoint = _pushPoint; } catch (_) {}
+      try { window.__axlxRecArmWas = _recArmWas; } catch (_) {}
+      /**
+       * ★ 2026-11-15 竹内さん「実装する」: **押した位置**を外から記録できるようにする。
+       *   ⚠ `page-script.js` は世界が違って見えないが、`pointer-ui.js` は同じ世界なので呼べる。
+       */
+      try { window.__axlxRecNotePoint = _pushPoint; } catch (_) {}
       window.__axlxRecNoteName = _recNoteName;
     }
+    try {
+      document.documentElement.addEventListener("axlx-rec-arm-was", _onArmWasEvt, true);
+    } catch (_) {}
     /**
      * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
      *   `page-script.js` は**ページの世界**で動くので、ここの `window.__axlxRecNoteName` は**見えない**。
@@ -644,7 +819,48 @@
      */
     window.addEventListener("message", function (e) {
       try {
-        if (!e || e.source !== window || !e.data || e.data.from !== "axlx-rec-note-name") return;
+        if (!e || e.source !== window || !e.data) return;
+        /**
+         * ★ 2026-11-16: page-script（MAIN）から来る合成 click。
+         *   ネイティブ select は本物の click を送らないので、change だけが残り「押さず変化」に見えていた。
+         *   → 名前付き click を ring に積む（中身は入れない）。
+         */
+        if (e.data.from === "axlx-rec-note-op") {
+          var kn = typeof e.data.kind === "string" ? e.data.kind : "click";
+          var nm = typeof e.data.name === "string" ? e.data.name.slice(0, 40) : "click";
+          var t = Date.now();
+          var last = _opsRing[_opsRing.length - 1];
+          if (last && last.k === kn && last.f === nm && t - Number(last.t || 0) < 120) return;
+          var gap = null;
+          if (last && typeof last.t === "number" && t > last.t) {
+            var d = t - last.t;
+            if (d >= 0 && d <= 60000) gap = d;
+          }
+          var _wasM = (typeof e.data.was === "boolean") ? e.data.was : null;
+          if (_wasM === null && typeof _pendingWas.was === "boolean" && (Date.now() - Number(_pendingWas.at || 0)) < 900) {
+            _wasM = _pendingWas.was;
+          }
+          var _opM = { t: t, k: kn, f: nm, w: (e.data.w ? String(e.data.w).slice(0, 12) : "select"), g: gap, by: "auto", el: null, cs: "pointer" };
+          if (typeof _wasM === "boolean") {
+            _opM.was = _wasM;
+            _opM.now = !_wasM;
+          }
+          _opsRing.push(_opM);
+          while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
+          return;
+        }
+        if (e.data.from === "axlx-rec-arm-was") {
+          if (typeof e.data.was === "boolean") {
+            _pendingWas = {
+              el: null,
+              was: e.data.was,
+              at: Date.now(),
+              name: e.data.name ? String(e.data.name).slice(0, 40) : null,
+            };
+          }
+          return;
+        }
+        if (e.data.from !== "axlx-rec-note-name") return;
         var n = typeof e.data.name === "string" ? e.data.name.slice(0, 30) : "";
         if (n) _recNoteName(n);
       } catch (_) {}
@@ -773,6 +989,25 @@
         } catch (_) {}
       } catch (_) {}
     };
+    /**
+     * ★ 2026-11-16: mousedown で checkbox の「押す前」を掴む（click 時はトグル後になりやすい）。
+     */
+    document.addEventListener("mousedown", function (e) {
+      try {
+        if (!e || !e.target) return;
+        var c = _findCheckEl(e.target);
+        // ★ 2026-11-17: 子要素クリックでも one_station / one_line の input を掴む（was欠落防止）
+        if (!c && e.target.closest) {
+          var labM = e.target.closest("label.one_station, label.one_line, label.one_city, label.one_town");
+          if (labM) c = _findCheckEl(labM);
+        }
+        if (c && typeof c.checked === "boolean") {
+          var _nmD = "";
+          try { _nmD = String((c.getAttribute && c.getAttribute("name")) || ""); } catch (_) {}
+          _pendingWas = { el: c, was: c.checked, at: Date.now(), name: _nmD };
+        }
+      } catch (_) {}
+    }, true);
     document.addEventListener("click", _cap, true);
     document.addEventListener("change", _cap, true);
     /**
@@ -943,13 +1178,28 @@
        *   → **`was`（押す前）と `now`（押した後）も送る**。
        *     ⚠ 真偽だけ（入力した中身は入れない）。
        */
-      return {
+      /**
+       * ★ 2026-11-16 DB実測: 2.8.35 の shot_ops に was/now/cs キーが一切無い。
+       *   object spread に頼らず**明示代入**（欠落を止める土台）。
+       */
+      var row = {
         t: o.t, k: o.k, f: o.f, w: o.w, g: o.g,
         by: o.by || null,
         opened: o.opened || null,
-        ...(typeof o.was === "boolean" ? { was: o.was } : {}),
-        ...(typeof o.now === "boolean" ? { now: o.now } : {}),
       };
+      // ★ 手の形: 欠けると土台F4が永久0。押す系は必ず pointer を補完して送る
+      var _csOut = o.cs ? String(o.cs).slice(0, 12) : null;
+      if (!_csOut) {
+        var _w = String(o.w || "");
+        if (/checkbox|radio|button|select|link|label/.test(_w) || /one_city|one_station|one_line|city_code|station|route|go_search|room_layout/.test(String(o.f || ""))) {
+          _csOut = "pointer";
+        }
+      }
+      if (_csOut) row.cs = _csOut;
+      if (typeof o.was === "boolean") row.was = o.was;
+      if (typeof o.now === "boolean") row.now = o.now;
+      // ⚠ was を推測で埋めない（外し/選びを誤学習する）。腕上げ（CustomEvent）で取る。
+      return row;
       });
     } catch (_) { return null; }
   }

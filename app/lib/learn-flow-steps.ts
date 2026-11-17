@@ -74,13 +74,22 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *     （実データでは人の押下が **25件**ある）。
    *   → **接頭辞と「｜タグ名」を落としてから判定する**。
    */
+  /**
+   * ★ 2026-11-16 竹内さん「ちゃんと次への押すところも理解しているか」:
+   *   実測の欄名は **`左の次｜td.pager`**。
+   *   旧は先に「｜td.pager」を落としてから判定していたので、残りが **`次`** だけになり
+   *   `次へ`／`pager`／`^next$` のどれにも当たらず **「その他」→ 統括が『次のページへの手本が無い』と誤認**していた
+   *   （DBには通常モードで pager クリックが複数ある）。
+   *   → **タグ側に pager があれば先に next**。落とした後の **`次` 単体**も next。
+   */
+  if (/pager|page_next|next_page/i.test(name)) return "next";
   const cleaned = name
     .replace(/^(左の|右の|上の|下の|中央の)/, "")     // 画面のどこか（拡張が付けている）
     .replace(/｜[^｜]*$/, "")                        // 「｜span」「｜div.go_search」「｜a.text」
     .trim();
   const n = (cleaned || name).toLowerCase();
   // 次のページ（一覧のページ送り）
-  if (/next_page|pager|page_next|次のページ|次へ|ページ送り|^next$/.test(n)) return "next";
+  if (/次のページ|次へ|ページ送り|^next$|^次$/.test(n)) return "next";
   /**
    * 検索を押す。
    *   ⚠ 実測の名前は `検索`（そのまま）・`住居検索`・`go_search` など**色々**。
@@ -91,12 +100,30 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
   if (/^(go_search|go_search_submit)$/.test(n) || /^search$/.test(n)) return "search";
   if (/検索/.test(n) && !/検索条件|検索結果|再検索の設定/.test(n)) return "search";
   // 所在地（区・町字・小窓）
-  if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字/.test(n)) return "area";
+  // ⚠ 「区を選ぶ」は自動課題の別名（city_code[]）。other に落とすと場面の手本が薄いと誤る
+  if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字|区を選ぶ|町字を選ぶ/.test(n)) return "area";
   /**
    * 実測の名前 `確定してリストへ｜span` は**所在地の小窓を閉じるボタン**。
    *   ⚠ 「その他」にすると、所在地の手順から**最後の1手が抜ける**（＝手順が途中で切れる）。
    */
   if (/確定してリストへ|リストへ確定/.test(n)) return "area";
+  /**
+   * ★ 2026-11-17 竹内さん「学習が自動に反映されない」・DB実測:
+   *   旧: `/設定へ進む|…|駅の設定/` を **area** に入れていた。
+   *   → 通常録画の正本「駅の設定へ進む → 駅外し → 沿線の設定へ戻る」が
+   *     **station の scene_flows から抜け**、自動の駅外し状態機械に学習が届かなかった。
+   *   → 駅モーダル遷移は **station を先に**。所在地の「地域の設定へ進む」だけ area。
+   */
+  if (/駅の設定へ進む|沿線の設定へ戻る|沿線を選び直す|路線を選び直す|沿線選択に戻る/.test(n)) {
+    return "station";
+  }
+  /**
+   * ★ 2026-11-16: 所在地モーダルの「次へ」（地域の設定へ進む／next_step_button2）。
+   *   一覧のページ送り（next）とは別。所在地の段の「次」として area に入れる。
+   *   ⚠ 「駅の設定」は上で station 済み（ここに入れない）。
+   */
+  if (/地域の設定へ進む|next_step_button|地域の設定/.test(n)) return "area";
+  if (/設定へ進む/.test(n) && !/駅の設定/.test(n)) return "area";
   /**
    * 2026-11-14 実測: `click:大阪市西区` `click:大阪市中央区` `click:大阪市北区` は
    *   **区の見出しを押した記録**で、名前に `city_code` が入らない。
@@ -106,11 +133,15 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    */
   if ((cleaned || name).length <= 14 && /[区市郡町村]$/.test(cleaned || name)) return "area";
   // 沿線・駅
-  if (/transportation_id|station|沿線|駅|required_time/.test(n)) return "station";
+  if (/transportation_id|station|沿線|駅|required_time|route_id|one_line|one_station/.test(n)) return "station";
+  /**
+   * 条件（間取り・築年など）を **一覧より先に**判定する。
+   *   ⚠ `room_layout_id[]` は旧だと `room_` に当たって「検索結果」に誤分類されていた（実測）。
+   *   ⚠ `structured_date`（築年）も条件なのに「その他」になっていた。
+   */
+  if (/rental_cost|update_date|structured_date|room_layout|madori|間取り|賃料|築年|walk|徒歩|面積|menseki|square_meter|include_common_fee|管理費|敷金|礼金|deposit/.test(n)) return "cond";
   // 検索結果の一覧（物件の取得・並べ替え）
-  if (/building_tr|property_list|sort|並び替え|結果|一覧|bukken|room_/.test(n)) return "list";
-  // 条件
-  if (/rental_cost|update_date|room_layout|madori|間取り|賃料|築年|walk|徒歩|面積|menseki|include_common_fee|管理費|敷金|礼金/.test(n)) return "cond";
+  if (/building_tr|property_list|sort|並び替え|結果|一覧|bukken|印刷用pdf|印刷用/.test(n)) return "list";
   return "other";
 }
 
@@ -573,4 +604,83 @@ export function scenePlaybook(flows: ReadonlyArray<SceneFlow>): string[] {
     .filter((f) => f.steps.length >= 2 && f.runs >= 2)
     .map((f) => `■ ${SCENE_JA[f.scene]}（${f.runs}回の実測）\n   ${f.steps.join(" → ")}`)
     .slice(0, 8);
+}
+
+/**
+ * ★ 2026-11-16 竹内さん「学習の場面もちゃんと連動できるように」:
+ *   課題の欄名 → 学習場面（area/station/cond…）に紐づける（純関数）。
+ *   統括が「この欄はどの場面の学習か」を言えるようにする。
+ */
+export function sceneOfFieldName(name: string | null | undefined): FlowScene {
+  const n = String(name ?? "").trim();
+  if (!n) return "other";
+  // change:/click: どちらでも同じ判定になるよう両方試す
+  const a = sceneOfOp(`change:${n}`);
+  if (a !== "other") return a;
+  return sceneOfOp(`click:${n}`);
+}
+
+export type FieldSceneLink = {
+  field: string;
+  scene: FlowScene;
+  sceneJa: string;
+  /** その場面の手本があるか */
+  hasExample: boolean;
+  runs: number;
+  ops: number;
+};
+
+/** 課題欄と場面の手本を突き合わせる（学習↔場面の連動） */
+export function linkFieldsToScenes(
+  fields: ReadonlyArray<string>,
+  flows: ReadonlyArray<SceneFlow> | null | undefined,
+): FieldSceneLink[] {
+  const list = Array.isArray(fields) ? fields.map((x) => String(x).trim()).filter(Boolean) : [];
+  const fl = Array.isArray(flows) ? flows : [];
+  const byScene = new Map<FlowScene, SceneFlow>();
+  for (const f of fl) byScene.set(f.scene, f);
+  const out: FieldSceneLink[] = [];
+  const seen = new Set<string>();
+  for (const field of list.slice(0, 12)) {
+    if (seen.has(field)) continue;
+    seen.add(field);
+    const scene = sceneOfFieldName(field);
+    const flow = byScene.get(scene);
+    out.push({
+      field,
+      scene,
+      sceneJa: SCENE_JA[scene],
+      hasExample: !!(flow && flow.runs >= 1 && flow.ops >= 1),
+      runs: flow?.runs ?? 0,
+      ops: flow?.ops ?? 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * ★ 2026-11-16「学習→足りなければ土台→再現→質が上がる」循環の1行。
+ *   統括が毎回この順番で把握する（土台構築も含む）。
+ */
+export function qualityCycleLine(opt: {
+  reproducePct?: number | null;
+  bottleneckN?: number | null;
+  challengeFields?: number;
+  foundationGaps?: number;
+}): string {
+  const repro = typeof opt.reproducePct === "number" ? opt.reproducePct : null;
+  const bn = opt.bottleneckN ?? null;
+  const ch = opt.challengeFields ?? 0;
+  const gaps = opt.foundationGaps ?? 0;
+  const phase =
+    bn != null && bn <= 3 ? "学ぶ（画像・操作）"
+      : bn === 4 || bn === 5 ? "反映・使う（束→拡張→自動）"
+        : bn === 6 ? "効果確認"
+          : (repro != null && repro < 100) || gaps > 0 ? "土台をそろえる"
+            : ch > 0 ? "学ぶ"
+              : "循環を回す";
+  return `循環: 学ぶ → 足りなければ土台を作る → 再現する → 質が上がる。今は「${phase}」` +
+    (repro != null ? `（再現 ${repro}%）` : "") +
+    (gaps > 0 ? `・土台の抜け ${gaps}` : "") +
+    (ch > 0 ? `・課題欄 ${ch}` : "");
 }

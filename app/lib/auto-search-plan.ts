@@ -56,8 +56,13 @@ export const OFF_AFTER_DAYS = 30;
 export const DORMANT_TIMES_PER_WEEK = 2;
 /** 新規・条件の言い直しの更新日（竹内「新規の検索の更新日は14日」） */
 export const NEW_UPDATE_DAYS = 14;
-/** 1回のページの上限（auto-search-schedule.SEARCH_MAX_PAGES と同じ・拡張 DEFAULT_MAX_PAGES） */
+/**
+ * ページ上限（2026-11-16 竹内「最大3で大丈夫／新着のお客さんは最大5まで」）
+ *   新着・条件の言い直し = 5／それ以外（送った後・止まっている等）= 3
+ *   拡張 DEFAULT_MAX_PAGES=3・NEW_CUSTOMER_MAX_PAGES=5 と同じ
+ */
 export const PLAN_MAX_PAGES = 5;
+export const PLAN_DEFAULT_MAX_PAGES = 3;
 /**
  * 2026-09-30 竹内「午後の便は今日の更新がないか見るだけやから、もっと限定的にすれば大丈夫」「午前で物件がなかった場合のお客さんだけに限定する」:
  *   午後の便は「今日の検索で通す候補が0件の人」だけ（pmRunDecision）・全員（新規も）更新順・更新日1日（前回の検索が無い人だけ空きで広げる）・
@@ -204,7 +209,9 @@ export function planFor(
     days = d == null ? NEW_UPDATE_DAYS : d <= 1 ? 1 : d <= 3 ? 3 : d <= 7 ? 7 : 14;
   }
   const stop = row.stop_at_last && ctx.stopAtLast !== false;
-  return { state, sort: row.sort, is_wide: false, days, stop_at_last: stop, max_pages: PLAN_MAX_PAGES, widen_chain: true, reason: row.note + (row.stop_at_last && !stop ? "（止める線は切ってある）" : "") };
+  // 新着・言い直しは5・それ以外は3（竹内 2026-11-16）
+  const pages = (state === "new" || state === "cond_changed") ? PLAN_MAX_PAGES : PLAN_DEFAULT_MAX_PAGES;
+  return { state, sort: row.sort, is_wide: false, days, stop_at_last: stop, max_pages: pages, widen_chain: true, reason: row.note + (row.stop_at_last && !stop ? "（止める線は切ってある）" : "") };
 }
 
 /** 環境変数（サーバーだけが読む。拡張は payload に従うだけ） */

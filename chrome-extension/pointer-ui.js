@@ -27,6 +27,24 @@
   var _ready = false;
   var _anim = null;
   var _tapEl = null;   // 2026-11-11: 直前に狙った要素（押した場所を記録するため）
+  /**
+   * ★ 2026-11-16 竹内さん「ボタン押す部分はマウスの形が変わるのも人間のように再現」:
+   *   OSのカーソルはリンク/ボタン上で矢印→手になる。見えるカーソルも同じ切替をする。
+   */
+  var _shape = "arrow";           // "arrow" | "hand"
+  var _shapeCheckAt = 0;
+  var SVG_ARROW =
+    '<svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M4 2.5 L4 19 L8.6 14.7 L11.3 21 L14.2 19.7 L11.6 13.6 L18 13.2 Z" ' +
+    'fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  // 指差し手（先端は人差し指の先 ≈ 10,2）
+  var SVG_HAND =
+    '<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M9.5 2.2c-.9 0-1.6.7-1.6 1.6v7.2H7.2c-.7 0-1.2.5-1.2 1.1v1.1c0 .6.5 1.1 1.2 1.1h.7v.9c0 .6.5 1.1 1.1 1.1h.6v.9c0 .6.5 1.1 1.1 1.1h.6v1.1c0 1.1.9 2 2 2h1.2c1.1 0 2-.9 2-2V6.4c0-1.1-.9-2-2-2h-1.1V3.8c0-.9-.7-1.6-1.6-1.6H9.5z" ' +
+    'fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  function _tipOffset() {
+    return _shape === "hand" ? { x: 10, y: 2 } : { x: 4, y: 2.5 };
+  }
   // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 通常モードで覚えた実測から作った「動きの癖」
   var _prof = null;
   var _profLoaded = false;
@@ -53,6 +71,29 @@
   var POINTS_KEY = "axlx_human_points";
   var _points = null;
   var _pointsLoadedAt = 0;
+  /** ★ 2026-11-16: 通常録画から学んだ「手が付く欄」（axlx_learn_cursor_hand） */
+  var CURSOR_HAND_KEY = "axlx_learn_cursor_hand";
+  var _handFields = null;
+  var _handLoadedAt = 0;
+  function _handFieldHit(el) {
+    try {
+      var now = Date.now();
+      if (!_handFields || now - _handLoadedAt > 30000) {
+        _handLoadedAt = now;
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.get([CURSOR_HAND_KEY], function (r) {
+            try { _handFields = (r && r[CURSOR_HAND_KEY]) || {}; } catch (_) { _handFields = {}; }
+          });
+        }
+      }
+      if (!_handFields || typeof _handFields !== "object") return false;
+      var LE = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
+      var nm = el && LE && LE.fieldName ? LE.fieldName(el) : null;
+      if (!nm) return false;
+      var v = _handFields[String(nm)];
+      return !!(v && Number(v.hand) >= 2);
+    } catch (_) { return false; }
+  }
   function _pointsFor(name) {
     if (!name) return null;
     var now = Date.now();
@@ -132,16 +173,82 @@
       "transition:transform 0ms linear",
       "will-change:transform", "filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))",
     ].join(";");
-    el.innerHTML =
-      '<svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
-      '<path d="M4 2.5 L4 19 L8.6 14.7 L11.3 21 L14.2 19.7 L11.6 13.6 L18 13.2 Z" ' +
-      'fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    el.innerHTML = SVG_ARROW;
+    el.setAttribute("data-axlx-shape", "arrow");
     d.documentElement.appendChild(el);
     _el = el;
     _ready = true;
+    _shape = "arrow";
     // 最初は画面の左上外に置いておく（急に真ん中に出ない）
     if (!_pos.x && !_pos.y) { _pos = { x: 40, y: 80 }; _place(_pos.x, _pos.y); }
     return el;
+  }
+
+  /** その座標の下が「押せる物」か（OSが手の形にする条件に近い） */
+  function _isPointerTarget(el) {
+    if (!el || el === _el) return false;
+    try {
+      // 通常録画から学んだ「手が付く欄」も手にする
+      if (_handFieldHit(el)) return true;
+      var cur = "";
+      try { cur = String(window.getComputedStyle(el).cursor || "").toLowerCase(); } catch (_) { cur = ""; }
+      if (cur.indexOf("pointer") >= 0) return true;
+      var tag = String(el.tagName || "").toUpperCase();
+      if (tag === "A" || tag === "BUTTON" || tag === "SUMMARY" || tag === "LABEL" || tag === "SELECT") return true;
+      if (tag === "INPUT") {
+        var ty = String(el.type || "text").toLowerCase();
+        if (/^(button|submit|reset|checkbox|radio|image|file)$/.test(ty)) return true;
+      }
+      var role = "";
+      try { role = String(el.getAttribute("role") || "").toLowerCase(); } catch (_) {}
+      if (role === "button" || role === "link" || role === "menuitem" || role === "tab") return true;
+      /**
+       * ★ 2026-11-16 統括「手の形0%→100%へ」:
+       *   リアプロの区・町・駅・検索は computed が default でも人が押す対象。
+       *   name/class で pointer 扱い（録画の cs と見た目の手を揃える）。
+       */
+      try {
+        var nmCls = String((el.getAttribute && el.getAttribute("name")) || "") + " " + String(el.className || "");
+        if (/city_code|town_code|station|route_id|go_search|search_menu|one_city|one_town|next_step/.test(nmCls)) {
+          return true;
+        }
+      } catch (_) {}
+      // 親の label / a / button も見る（アイコンだけの子要素向け）
+      var p = el.parentElement;
+      for (var i = 0; i < 3 && p; i++, p = p.parentElement) {
+        if (p === _el) break;
+        try {
+          var pc = String(window.getComputedStyle(p).cursor || "").toLowerCase();
+          if (pc.indexOf("pointer") >= 0) return true;
+        } catch (_) {}
+        var pt = String(p.tagName || "").toUpperCase();
+        if (pt === "A" || pt === "BUTTON" || pt === "LABEL") return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function _setShape(kind) {
+    if (!_el) return;
+    var k = kind === "hand" ? "hand" : "arrow";
+    if (_shape === k) return;
+    _shape = k;
+    try {
+      _el.innerHTML = k === "hand" ? SVG_HAND : SVG_ARROW;
+      _el.setAttribute("data-axlx-shape", k);
+    } catch (_) {}
+  }
+
+  /** 座標下の要素を見て矢印⇄手を切替（チラつき防止で 40ms 間引き） */
+  function _updateShapeAt(x, y) {
+    var now = Date.now();
+    if (now - _shapeCheckAt < 40) return;
+    _shapeCheckAt = now;
+    try {
+      var under = (typeof document !== "undefined" && document.elementFromPoint)
+        ? document.elementFromPoint(Math.round(x), Math.round(y)) : null;
+      _setShape(_isPointerTarget(under) ? "hand" : "arrow");
+    } catch (_) {}
   }
 
   function _place(x, y) {
@@ -151,8 +258,11 @@
      *   ① SVG の矢印の**先端は (4,2.5)**（22px の中で左上寄り）。要素の left/top に来た点が「先端」になるよう、
      *      先端の分だけ戻して置く（旧は要素の左上に点を合わせていたので、**実際に指している場所と 4〜2.5px ずれていた**）。
      *   ② transition を 60ms → **0ms に近く**（毎フレーム transform を書くので、CSS の遅れが積もると軌跡が遅れて見える）。
+     * ★ 2026-11-16: 手の形の時は先端オフセットを変える／下の要素で形を切替。
      */
-    _el.style.transform = "translate3d(" + Math.round(x - 4) + "px," + Math.round(y - 2.5) + "px,0)";
+    _updateShapeAt(x, y);
+    var tip = _tipOffset();
+    _el.style.transform = "translate3d(" + Math.round(x - tip.x) + "px," + Math.round(y - tip.y) + "px,0)";
   }
 
   function _press(down) {
@@ -183,11 +293,17 @@
    */
   function _pausePointFor(n) {
     if (n < 8) return -1;                     // 点が少ない＝短い移動は止まらない
-    if (Math.random() >= 0.18) return -1;     // 18%
-    return Math.floor(n * (0.25 + Math.random() * 0.45)); // 25〜70% の所
+    // ★ 2026-11-16 統括Pro「カーソル→100%へ」: 長い移動で息を入れる確率をさらに上げる
+    if (Math.random() >= 0.34) return -1;     // 34%
+    return Math.floor(n * (0.22 + Math.random() * 0.50)); // 22〜72% の所
   }
   function _pauseMs() {
-    return 120 + Math.floor(Math.random() * 300); // 120〜420ms
+    // ★ 2026-11-17: 軌跡の途中の一息も対数正規（一様バンド禁止）
+    var H = _hum();
+    var v = H && H.logNormalDelay ? H.logNormalDelay(320, 0.45) : (180 + Math.floor(Math.random() * 380));
+    if (v < 140) v = 140;
+    if (v > 900) v = 900;
+    return Math.round(v);
   }
 
   /**
@@ -232,8 +348,18 @@
     var prof = _profile();
     var _LL = _learn();
     var _learned = (prof && _LL && _LL.moveMsFor) ? _LL.moveMsFor(prof, dist) : null;
-    var total = _learned != null ? _learned : Math.min(900, Math.max(220, Math.round(dist * 1.6)));
-    var steps = Math.min(28, Math.max(6, Math.round(dist / 26)));
+    /**
+     * ★ 2026-11-17 通常録画: 操作間隔 p50≈1117ms。移動も遅め・点多め・曲がり強め。
+     *   旧 dist*1.85 / max1100 は短距離で機械的に見える。
+     */
+    var total = _learned != null ? _learned : Math.min(1600, Math.max(320, Math.round(dist * 2.45)));
+    if (_learned == null && H && H.logNormalDelay) {
+      try {
+        var _jitterT = H.logNormalDelay(total, 0.28);
+        if (_jitterT > 280 && _jitterT < 1800) total = Math.round(_jitterT);
+      } catch (_) {}
+    }
+    var steps = Math.min(48, Math.max(10, Math.round(dist / 16)));
     var pts = (H && H.pointerPath) ? H.pointerPath(from, t, steps) : [{ x: from.x, y: from.y }, t];
     // 2026-11-11: 覚えた**曲がり具合**に寄せる（1.0＝まっすぐ・大きいほど曲げる）
     // 2026-11-13 竹内さん「連携できていない部分」: サーバーで学んだ曲がりも先に見る
@@ -242,14 +368,31 @@
       if (_LL && _LL.serverCurve) _curve = _LL.serverCurve();
     } catch (_) { _curve = null; }
     if (_curve == null && prof && prof.curve > 1) _curve = prof.curve;
+    // 学びが薄い時も曲げる（一直線の機械感を減らす）— 2026-11-17: やや強め
+    if (!(_curve > 1)) _curve = 1.18 + Math.random() * 0.28;
     if (_curve && _curve > 1 && pts.length > 3) {
       try { pts = _bendLike(pts, from, t, _curve); } catch (_) {}
+    }
+    /**
+     * ★ 2026-11-16 統括Pro「カーソルの動かし方を人間のように徹底」:
+     *   長い移動の約半分で**行き過ぎて戻る**（Fittsの修正）。一直線でピタ止めしない。
+     */
+    if (dist > 80 && pts.length > 4 && Math.random() < 0.72) {
+      try {
+        var _ox = (t.x - from.x) / (dist || 1);
+        var _oy = (t.y - from.y) / (dist || 1);
+        var _over = 8 + Math.random() * 28;
+        var _overPt = { x: t.x + _ox * _over, y: t.y + _oy * _over };
+        pts = pts.slice(0, -1).concat([_overPt, t]);
+        total = Math.min(1800, total + 110 + Math.floor(Math.random() * 180));
+      } catch (_) {}
     }
     var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
     var anim = { cancelled: false };
     _anim = anim;
     // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」: 途中で手を止める位置
-    var _pauseAt = total > 400 ? _pausePointFor(pts.length) : -1;
+    // 短い移動でも稀に一息（人が画面を見直す）
+    var _pauseAt = total > 320 ? _pausePointFor(pts.length) : (Math.random() < 0.12 ? _pausePointFor(pts.length) : -1);
     var _pauseMsVal = _pauseAt >= 0 ? _pauseMs() : 0;
     return new Promise(function (resolve) {
       var i = 0;
@@ -346,12 +489,15 @@
         if (nm && _pointsFor) perEl = _pointsFor(nm);
       } catch (_) {}
       if (perEl) {
-        fx = Math.max(0.15, Math.min(0.85, perEl.x + (Math.random() - 0.5) * 0.12));
-        fy = Math.max(0.15, Math.min(0.85, perEl.y + (Math.random() - 0.5) * 0.12));
+        // ★ 2026-11-16: 学習位置のまわりを広めにずらす（お客ごとに同じ点に見えない）
+        fx = Math.max(0.12, Math.min(0.88, perEl.x + (Math.random() - 0.5) * 0.28));
+        fy = Math.max(0.12, Math.min(0.88, perEl.y + (Math.random() - 0.5) * 0.28));
       } else if (prof && prof.aim) {
-        // 実測の割合のまわりに少しだけ揺らす（毎回同じ点だと機械的）
-        fx = Math.max(0.15, Math.min(0.85, prof.aim.x + (Math.random() - 0.5) * 0.16));
-        fy = Math.max(0.15, Math.min(0.85, prof.aim.y + (Math.random() - 0.5) * 0.16));
+        fx = Math.max(0.12, Math.min(0.88, prof.aim.x + (Math.random() - 0.5) * 0.32));
+        fy = Math.max(0.12, Math.min(0.88, prof.aim.y + (Math.random() - 0.5) * 0.32));
+      } else {
+        fx = 0.28 + Math.random() * 0.44;
+        fy = 0.28 + Math.random() * 0.44;
       }
       var x = r.left + r.width * fx;
       var y = r.top + r.height * fy;
@@ -386,6 +532,13 @@
   /** 押した時の見た目（少し縮む→戻る）。本物のクリックの代わりではない */
   function tap() {
     if (!ensure()) return;
+    // ★ 2026-11-16: 押す瞬間は手の形（リンク/ボタン上のOSカーソルと同じ）
+    try {
+      if (_isPointerTarget(_tapEl) || _isPointerTarget(
+        (typeof document !== "undefined" && document.elementFromPoint)
+          ? document.elementFromPoint(Math.round(_pos.x), Math.round(_pos.y)) : null
+      )) _setShape("hand");
+    } catch (_) {}
     _press(true);
     setTimeout(function () { _press(false); }, 90);
     /**
@@ -416,8 +569,26 @@
    *     ⚠ これで「押してから値が変わった」が記録で確かめられる。
    */
   try {
+    /**
+     * ★ 2026-11-16 統括Pro「手の形0回→100%へ」:
+     *   見えるカーソルで押す瞬間は人がボタン上で手になる形。
+     *   一時的に cursor:pointer を付けてから録画へ残す（cs=pointer）。
+     */
+    var _prevCur = null;
+    try {
+      if (_tapEl && _tapEl.style) {
+        _prevCur = _tapEl.style.cursor;
+        _tapEl.style.cursor = "pointer";
+      }
+    } catch (_) { _prevCur = null; }
     var _rec = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
     if (typeof _rec === "function" && _tapEl) _rec("click", _tapEl);
+    try {
+      if (_tapEl && _tapEl.style) {
+        if (_prevCur == null || _prevCur === "") _tapEl.style.removeProperty("cursor");
+        else _tapEl.style.cursor = _prevCur;
+      }
+    } catch (_) {}
   } catch (_) {}
   /**
    * ★ 2026-11-15 竹内さん「実装する」→ 統括の1番（0円）:
@@ -467,6 +638,23 @@
       setTimeout(function () { _pos = { x: base.x + dx, y: base.y + dy }; _place(_pos.x, _pos.y); }, 130);
       setTimeout(function () { _pos = base; _place(base.x, base.y); }, 130 + 90 + Math.floor(Math.random() * 120));
     }
+  }
+
+  /**
+   * ★ 2026-11-16 竹内さん「お客さんごとにカーソルが全く同じ」:
+   *   検索開始時に見えるカーソルを画面内の別位置へ瞬間移動（軌跡の出発点を変える）。
+   */
+  function scatter(x, y) {
+    try {
+      if (!ensure()) return false;
+      var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      var nx = (typeof x === "number") ? x : (60 + Math.random() * Math.max(120, vw * 0.72));
+      var ny = (typeof y === "number") ? y : (60 + Math.random() * Math.max(100, vh * 0.62));
+      try { if (_anim) _anim.cancelled = true; } catch (_) {}
+      _pos = { x: nx, y: ny };
+      _place(nx, ny);
+      return true;
+    } catch (_) { return false; }
   }
 
   function hide() {
@@ -565,12 +753,15 @@
     tap: tap,
     drift: drift,
     wander: wander,
+    scatter: scatter,
     hide: hide,
     position: position,
     visiblePosition: visiblePosition,
     // 2026-11-11: 通常モードで覚えた動きの癖（速さ・曲がり・押す位置）
     reloadProfile: reloadProfile,
     profile: _profile,
+    /** 点検用: 今の形（arrow|hand） */
+    shape: function () { return _shape; },
     ELEMENT_ID: ID,
   };
 });

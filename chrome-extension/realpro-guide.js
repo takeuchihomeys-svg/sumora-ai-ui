@@ -43,10 +43,25 @@
   function applyMode(v) {
     // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは既定 ON
     // v2.5.94: 自動モードを選んだ時だけ OFF（拡張が入力・検索する）
+    var _wasGuide = guideOn;
     guideOn = !(v === true);
     try { document.documentElement.setAttribute("data-axlx-guide", guideOn ? "1" : "0"); } catch (_) {}
     lockAutoPaging();
-    if (!guideOn) clearPdfMarks();
+    /**
+     * ★ 2026-11-16 竹内さん「まだ送付済みなのが送付済みと表示されていない」:
+     *   旧: 自動に切り替わると／モード再読のたび clearPdfMarks() で「送付済み」を全部消していた。
+     *   自動も同じ印（.axlx-pdf-sent）を使うのに消す → 画面では把握できていないように見える。
+     *   → 案内OFF（自動）の間は送付済み印を消さない。光（通す）だけ消す。付け直しは bulk-dl。
+     */
+    if (!guideOn) {
+      try {
+        document.querySelectorAll(".axlx-pdf-go").forEach(function (el) { el.classList.remove("axlx-pdf-go"); });
+      } catch (_) {}
+      // clearPdfMarks は呼ばない（送付済み印を守る）
+    } else if (!_wasGuide && guideOn) {
+      // 自動→案内に戻った時だけ一度消して、syncResults が付け直す
+      clearPdfMarks();
+    }
     renderPanel();
   }
 
@@ -140,6 +155,43 @@
     var inv = hits.filter(inViewport);
     return (inv.length ? inv : hits)[0] || null;
   }
+  /**
+   * ★ 2026-11-16 tomoさん「どこも光っていなかった」:
+   *   旧は byText(正式路線名) だけ → 画面の label.one_line が「谷町線」だと0件 → 光が全滅 → 駅未選択で大阪全件の危険。
+   *   → page-script の clickLineButtons と同じ（完全一致＋末尾一致）で label.one_line を取る。
+   */
+  function findLineButtons(lineNames) {
+    var want = (lineNames || []).filter(Boolean);
+    if (!want.length) return [];
+    var labels = Array.prototype.slice.call(document.querySelectorAll("label.one_line"));
+    var texts = labels.map(function (lb) { return norm(lb.textContent); });
+    var idxs = Plan.matchLineLabelIndexes(want, texts);
+    var out = [];
+    idxs.forEach(function (i) {
+      if (labels[i] && visible(labels[i]) && out.indexOf(labels[i]) < 0) out.push(labels[i]);
+    });
+    // 見えている物が無い時は非表示も含める（スクロール矢印用）
+    if (!out.length) {
+      idxs.forEach(function (i) {
+        if (labels[i] && out.indexOf(labels[i]) < 0) out.push(labels[i]);
+      });
+    }
+    // one_line が無い旧DOM向けフォールバック
+    if (!out.length) {
+      want.forEach(function (ln) {
+        var el = byText([ln]);
+        if (el && out.indexOf(el) < 0) out.push(el);
+      });
+    }
+    return out;
+  }
+  /** 駅手順で光る物が空なら、必ず沿線・駅の入口を光らせる（光ゼロ＝大阪全件防止） */
+  function ensureGlowTargets(targets, kind) {
+    var t = (targets || []).filter(Boolean);
+    if (t.length) return t;
+    var op = opener(kind || "pick_station");
+    return op ? [op] : [];
+  }
   function labelOf(input) {
     if (!input) return null;
     var l = input.closest("label");
@@ -221,27 +273,84 @@
       // v2.5.84: 名前の照らし合わせは realpro-guide-plan.js matchStations（読み替え・見つからない駅）
       var sm = stationMatch(s);
       var vis = [], unchecked = [], anyChecked = false;
+      var primaryKeySet = {};
+      (s.primary_names || []).forEach(function (n) {
+        var k = Plan.stationKey(n);
+        if (k) primaryKeySet[k] = true;
+      });
+      var hasPrimary = Object.keys(primaryKeySet).length > 0;
+      var primaryUnchecked = [], primaryAnyChecked = false, primaryVis = 0;
       sm.inputs.forEach(function (c, i) {
-        if (!sm.want[Plan.stationKey(sm.texts[i])]) return;
+        var tk = Plan.stationKey(sm.texts[i]);
+        if (!sm.want[tk]) return;
         if (c.checked) anyChecked = true; // 小窓を閉じて隠れた印も数える
+        if (hasPrimary && primaryKeySet[tk] && c.checked) primaryAnyChecked = true;
         if (!visible(c) && !visible(labelOf(c))) return;
-        vis.push(c); if (!c.checked) unchecked.push(labelOf(c) || c);
+        vis.push(c);
+        if (!c.checked) {
+          var lb = labelOf(c) || c;
+          unchecked.push(lb);
+          if (hasPrimary && primaryKeySet[tk]) { primaryUnchecked.push(lb); primaryVis++; }
+        } else if (hasPrimary && primaryKeySet[tk]) {
+          primaryVis++;
+        }
       });
       var miss = sm.missNote ? " ／ " + sm.missNote : "";
-      var lineBtns = (s.lines || []).map(function (l) { return byText([l]); }).filter(Boolean);
-      var modalOpen = !!byText(Plan.STATION_MODAL_OPEN_TEXTS);
-      var act = Plan.stationStepAction({ visibleUnchecked: unchecked.length, visibleTargets: vis.length, anyChecked: anyChecked, modalOpen: modalOpen, lineBtns: lineBtns.length });
+      /**
+       * ★ 2026-11-16 tomoさん実測: 通勤圏で145駅・33路線 → 指定の天満橋が光って見えなかった。
+       *   指定駅がまだチェックされていない間は、指定駅だけ／指定路線だけを光らせる。
+       */
+      var primaryPending = false;
+      if (hasPrimary) {
+        if (primaryUnchecked.length > 0) primaryPending = true;
+        else if (!primaryAnyChecked) primaryPending = true; // 画面に指定駅がまだ出ていない → 路線を先に
+      }
+      var lineSrc = (primaryPending && s.primary_lines && s.primary_lines.length)
+        ? s.primary_lines
+        : (s.lines || []);
+      var lineBtns = findLineButtons(lineSrc);
+      // 指定路線で0件なら全路線でも探す（光ゼロ防止）
+      if (!lineBtns.length && s.lines && s.lines.length) lineBtns = findLineButtons(s.lines);
+      var modalOpen = !!byText(Plan.STATION_MODAL_OPEN_TEXTS) || document.querySelectorAll("label.one_line").length > 0
+        || document.querySelectorAll('input[name="station_id[]"]').length > 0;
+      var glowStations = (primaryPending && primaryUnchecked.length) ? primaryUnchecked : unchecked;
+      var act = Plan.stationStepAction({
+        visibleUnchecked: glowStations.length,
+        visibleTargets: primaryPending ? Math.max(primaryVis, vis.length) : vis.length,
+        anyChecked: primaryPending ? primaryAnyChecked : anyChecked,
+        modalOpen: modalOpen,
+        lineBtns: lineBtns.length,
+      });
+      // 指定未完了なのに confirm へ進まない（他駅の印だけで確定を光らせない）
+      if (primaryPending && act === "confirm" && !primaryAnyChecked) {
+        act = lineBtns.length ? "lines" : (glowStations.length ? "stations" : "open");
+      }
       if (act === "done") { markStepDone(s.id); reportStationMiss(s); return { done: true }; }
-      if (act === "stations") return { done: false, target: unchecked, note: "光っている駅にチェック（" + unchecked.length + "駅）" + miss };
-      if (act === "confirm") return { done: false, target: [byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"])], note: "駅を選び終えたら「確定してリストへ」（他の路線の駅は「設定へ戻る」から）" + miss };
-      if (act === "lines") return { done: false, target: lineBtns, note: "先に路線を押してください: " + (s.lines || []).join("・") };
-      return { done: false, target: [opener(s.kind)], note: "「沿線・駅絞り込み」を開いてください" };
+      if (act === "stations") {
+        var stNote = primaryPending && primaryUnchecked.length
+          ? "指定駅を先にチェック（" + primaryUnchecked.length + "）: " + (s.primary_names || []).slice(0, 3).join("・")
+          : "光っている駅にチェック（" + glowStations.length + "駅・通勤圏含む）";
+        return { done: false, target: ensureGlowTargets(glowStations, s.kind), note: stNote + miss };
+      }
+      if (act === "confirm") {
+        var confEl = byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"]);
+        return { done: false, target: ensureGlowTargets([confEl], s.kind), note: "駅を選び終えたら「確定してリストへ」（他の路線の駅は「設定へ戻る」から）" + miss };
+      }
+      if (act === "lines") {
+        var lnNote = primaryPending && s.primary_lines && s.primary_lines.length
+          ? "指定駅の路線を先に押してください: " + s.primary_lines.join("・")
+          : "先に路線を押してください（通勤圏の駅がすべて出ます）: " + (s.lines || []).slice(0, 6).join("・") + ((s.lines || []).length > 6 ? "…" : "");
+        return { done: false, target: ensureGlowTargets(lineBtns, s.kind), note: lnNote };
+      }
+      return { done: false, target: ensureGlowTargets([opener(s.kind)], s.kind), note: "「沿線・駅絞り込み」を開いてください" };
     }
     if (s.kind === "pick_route") {
-      var lb2 = (s.lines || []).map(function (l) { return byText([l]); }).filter(Boolean);
+      var lb2 = findLineButtons(s.lines || []);
       var conf2 = byText(["確定してリストへ"]);
-      if (conf2 && !lb2.length) return { done: false, target: [conf2], note: "路線を選び終えたら「確定してリストへ」" };
-      return lb2.length ? { done: false, target: lb2, note: "路線: " + (s.lines || []).join("・") + "（選び終えたら「確定してリストへ」）" } : { done: false, target: [opener(s.kind)] };
+      if (conf2 && !lb2.length) return { done: false, target: ensureGlowTargets([conf2], s.kind), note: "路線を選び終えたら「確定してリストへ」" };
+      return lb2.length
+        ? { done: false, target: lb2, note: "路線: " + (s.lines || []).join("・") + "（選び終えたら「確定してリストへ」）" }
+        : { done: false, target: ensureGlowTargets([opener(s.kind)], s.kind) };
     }
     if (s.kind === "pick_city") {
       var un = [], any = false;
@@ -813,7 +922,16 @@
   // ページの一番上（document の capture）で先に受ける＝bulk-dl の「押した＝送る物」の印より前に確かめる
   document.addEventListener("click", function (e) {
     var t = e.target && e.target.closest ? e.target.closest(".axlx-pdf-sent") : null;
-    if (!guideOn || !t) return;
+    if (!t) return;
+    /**
+     * ★ 2026-11-17: 自動中は confirm を出さない（ダイアログで2件目の前に止まる）。
+     *   案内ONの時だけ人が確認。自動は押さずスキップ側（bulk-dl）が担当。
+     */
+    if (!guideOn) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (!window.confirm("送付済みです。それでもダウンロードしますか？")) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
   function markPdfButtons(rows) {

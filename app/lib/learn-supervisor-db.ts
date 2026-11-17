@@ -64,17 +64,53 @@ export async function saveSupervisorLog(
   scope: string,
   adv: SupervisorAdvice,
   extra: Parameters<typeof toLogRow>[2],
-): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+): Promise<{ ok: boolean; skipped?: string; error?: string; updated?: boolean }> {
   try {
     const row = toLogRow(scope, adv, extra);
+    /**
+     * ★ 2026-11-17 統括Proを全体脳に: 同じ束でも Pro 根拠が新しい時は上書きする。
+     *   旧は same_bundle で捨て → learn_supervisor_log に Pro が残らず脳が薄くなる。
+     */
+    const proLabels = (ev: Array<{ label?: string }>) =>
+      ev.filter((e) => /統括Pro|足りない土台|土台を作る次手|統括Pro RAG|統括Pro把握|統括Pro手配/.test(String(e.label || "")));
+    const hasRag = (ev: Array<{ label?: string }>) =>
+      ev.some((e) => /統括Pro RAG|統括Pro把握/.test(String(e.label || "")));
+    const rowEv = Array.isArray((row.meeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
+      ? (row.meeting as { evidence: Array<{ label?: string }> }).evidence
+      : [];
+    const hasPro = proLabels(rowEv).length > 0;
     if (row.bundle_at) {
       const dup = await supabase
         .from("learn_supervisor_log")
-        .select("id")
+        .select("id,meeting")
         .eq("scope", row.scope)
         .eq("bundle_at", row.bundle_at)
         .limit(1);
-      if (!dup.error && Array.isArray(dup.data) && dup.data.length) return { ok: true, skipped: "same_bundle" };
+      if (!dup.error && Array.isArray(dup.data) && dup.data.length) {
+        const oldEv = Array.isArray((dup.data[0].meeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
+          ? (dup.data[0].meeting as { evidence: Array<{ label?: string }> }).evidence
+          : [];
+        const oldHasPro = proLabels(oldEv).length > 0;
+        // ★ RAG/手配が新規なら同束でも更新（脳を薄くしない）
+        const richer = hasPro && (!oldHasPro || (hasRag(rowEv) && !hasRag(oldEv)));
+        if (richer) {
+          const upd = await supabase
+            .from("learn_supervisor_log")
+            .update({
+              meeting: row.meeting,
+              actions: row.actions,
+              headline: row.headline,
+              verdict: row.verdict,
+              coverage: row.coverage,
+              weak_n: row.weak_n,
+              block: row.block,
+            })
+            .eq("id", dup.data[0].id);
+          if (upd.error) return { ok: false, error: String(upd.error.message).slice(0, 200) };
+          return { ok: true, updated: true };
+        }
+        return { ok: true, skipped: "same_bundle" };
+      }
     }
     const ins = await supabase.from("learn_supervisor_log").insert(row as unknown as Record<string, unknown>);
     if (ins.error) {

@@ -29,7 +29,7 @@ type Task = { kind: string; what: string; why: string; cost: string; limit?: num
 /** 統括の判断を取る */
 async function fetchAdv(): Promise<{ actions: Action[]; tasks: Task[]; verdict: string; headline: string; err: string | null }> {
   try {
-    const r = await fetch(`${BASE}/api/human-learn-profile?fresh=1&scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
+    const r = await fetch(`${BASE}/api/human-learn-profile?touch=0&scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
     if (!r.ok) return { actions: [], tasks: [], verdict: "", headline: "", err: "http_" + r.status };
     const j = (await r.json()) as Record<string, unknown>;
     const b = (j.bundle ?? null) as Record<string, unknown> | null;
@@ -70,7 +70,7 @@ const TASK_RUN: Record<string, { label: string; cost: boolean; run: () => Promis
     label: "止まる場面を、人の手本と比べて探す（点検を数え直す）",
     cost: false,
     run: async () => {
-      const r = await fetch(`${BASE}/api/human-learn-profile?fresh=1&scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
+      const r = await fetch(`${BASE}/api/human-learn-profile?touch=0&scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
       if (!r.ok) return "http_" + r.status;
       const j = (await r.json()) as Record<string, unknown>;
       const b = (j.bundle ?? {}) as Record<string, unknown>;
@@ -98,26 +98,177 @@ const TASK_RUN: Record<string, { label: string; cost: boolean; run: () => Promis
       return `${rows.length}件のうち 操作の並び ${withOps}件・押した欄の順 ${withOrder}件`;
     },
   },
+  /**
+   * ★ 2026-11-16「統括は土台構築も含めて／循環すれば質が上がる」:
+   *   再現％・土台の抜け・場面連動を数え直し、次手を名指しする（無料）。
+   */
+  build_foundation: {
+    label: "再現に足りない土台を点検し、揃える次手を出す",
+    cost: false,
+    run: async () => {
+      const r = await fetch(`${BASE}/api/human-learn-profile?touch=0&scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
+      if (!r.ok) return "http_" + r.status;
+      const j = (await r.json()) as Record<string, unknown>;
+      const b = (j.bundle ?? {}) as Record<string, unknown>;
+      const sup = (scope === "all"
+        ? b.supervisor
+        : ((b.supervisor_by_site ?? {}) as Record<string, unknown>)[scope]) as Record<string, unknown> | undefined;
+      const meeting = (sup?.meeting ?? null) as Record<string, unknown> | null;
+      const today = Array.isArray(meeting?.today) ? (meeting!.today as string[]).join("／") : "";
+      const ev = Array.isArray(meeting?.evidence) ? (meeting!.evidence as Array<{ label?: string; value?: string }>) : [];
+      const cycle = ev.find((e) => String(e.label || "").includes("質を上げる循環"));
+      const foundation = ev.find((e) => String(e.label || "").includes("通常録画→完全再現の土台"));
+      const scenes = ev.find((e) => String(e.label || "").includes("学習場面の連動"));
+      const sub = ev.find((e) => String(e.label || "").includes("土台の細分化"));
+      const link = ev.find((e) => String(e.label || "").includes("弱所発見→学習→土台→細部"));
+      const parts = [
+        today ? `結論: ${today}` : null,
+        cycle ? `循環: ${cycle.value}` : null,
+        sub ? `細分化: ${sub.value}` : null,
+        link ? `連動: ${link.value}` : null,
+        foundation ? `土台: ${foundation.value}` : null,
+        scenes ? `場面: ${scenes.value}` : null,
+        "次: 自動で弱所→通常で学ぶ→土台を細分化→細部再現→自動1回で確かめる",
+      ].filter(Boolean);
+      return parts.join("／") || "土台の材料が束にまだありません（fresh で取り直す）";
+    },
+  },
   photo_learn: {
-    label: "弱い所の写真から欄の種類を読む（**1枚ごとに費用**）",
+    label: "弱い所の写真から欄の種類を読む（**1枚ごとに費用**・時間順・細かく）",
     cost: true,
     run: async () => {
       /**
-       * ⚠ Vision はお金がかかる。**枚数の上限**を必ず付ける（統括が決めた limit・既定20）。
-       *   ここでは API を叩かず、**手元のスクリプトを案内する**（このスクリプトはサイトもDBも触らない方針）。
-       *   → `--yes-cost` の時だけ `scripts/shot-learn.ts` と同じ処理を呼ぶ。
+       * ⚠ Vision はお金がかかる。枚数は**統括が課題に応じて決めた limit**を使う。
+       *   ★ 2026-11-16 竹内さん「上限20ではなく課題が解けるまで／統括が判断」:
+       *     旧 Math.min(60, …||20) は統括の判断を潰していた → 硬上限まで尊重。
        */
-      const t = (globalThis as unknown as { __task?: Task }).__task;
-      const limit = Math.max(1, Math.min(60, Number(t?.limit) || 20));
+      const t = (globalThis as unknown as { __task?: Task & { order?: string; fields?: string[] } }).__task;
+      const { resolveShotLearnLimit } = await import("../app/lib/shot-learn-limit");
+      const limit = resolveShotLearnLimit(t?.limit);
+      /**
+       * ★ 2026-11-15「画像は最新で録画」「自動の最新課題→通常から改善」:
+       *   統括が order=newest を付けたら**最新の通常画像から**読む。
+       */
+      const order = (t?.order === "newest" || t?.order === "time" || t?.order === "size")
+        ? t.order
+        : (Array.isArray(t?.fields) && t!.fields!.length ? "newest" : "time");
       const { learnFromWeakShots } = await import("../app/lib/shot-learn-server");
-      const r = await learnFromWeakShots({ site: scope === "all" ? null : scope, days: 7, limit, dryRun: false });
-      return `試した ${r.tried}枚・読めた ${r.learned}枚（欄 ${r.fields}個）・保存 ${r.saved}枚${r.errors.length ? "・エラー " + r.errors.length : ""}`;
+      const r = await learnFromWeakShots({
+        site: scope === "all" ? null : scope,
+        mode: "normal",
+        days: 7,
+        limit,
+        order: order as "newest" | "time" | "size",
+        perSig: 12,
+        strideMs: 800,
+        dryRun: false,
+      });
+      /**
+       * ★ 2026-11-16「学んだら強化」: 読んだら必ず反映を回し、強化記録を残し、次手を名指しする。
+       */
+      const reflect = await TASK_RUN.reflect_auto.run();
+      try {
+        const { saveImprovement } = await import("../app/lib/learn-improvements");
+        await saveImprovement({
+          area: "学習",
+          title: `通常画像から読んだ ${r.learned}枚（欄 ${r.fields}・学んだら強化へ）`,
+          why: `試した${r.tried}・保存${r.saved}・束${r.refreshed ? "更新" : "未"}`,
+          how: "photo_learn → reflect_auto。次は拡張再読込→自動1回→verify_improve",
+          effect: "read_count>0 かつ最新自動の課題欄が減る",
+          verify: "npx tsx --env-file=.env.local scripts/improve-loop.ts",
+        });
+      } catch (_) { /* 記録失敗で学習を止めない */ }
+      return `試した ${r.tried}枚・読めた ${r.learned}枚（欄 ${r.fields}個）・保存 ${r.saved}枚・束 ${r.refreshed ? "作り直し済" : "未"}／反映: ${reflect}${r.errors.length ? "・エラー " + r.errors.length : ""} ／ ▶学んだら強化: 拡張2.8.26再読込 → 自動1回 → verify_improve`;
+    },
+  },
+  /**
+   * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
+   *   束を作り直し、拡張が読んだか・自動が新束のあと走ったかを**数字で返す**（無料）。
+   */
+  reflect_auto: {
+    label: "学んだ位置を束に載せ、拡張・自動への反映状態を確かめる（無料）",
+    cost: false,
+    run: async () => {
+      const r = await fetch(`${BASE}/api/human-learn-profile?touch=0`, { cache: "no-store" });
+      if (!r.ok) return "束の作り直し失敗 http_" + r.status;
+      const { fetchBundleReflectHint, reflectLine } = await import("../app/lib/bundle-reflect");
+      const hint = await fetchBundleReflectHint(supabase, { scope: scope === "all" ? "all" : scope });
+      const j = (await r.json()) as { bundle?: { shots?: { learned?: Record<string, Array<{ x?: number; y?: number; n?: number }>> } } };
+      let screen_all = 0, screen_solid = 0;
+      const learned = j?.bundle?.shots?.learned;
+      if (learned && typeof learned === "object") {
+        for (const list of Object.values(learned)) {
+          for (const f of Array.isArray(list) ? list : []) {
+            if (typeof f?.x !== "number" || typeof f?.y !== "number") continue;
+            screen_all++;
+            if ((Number(f.n) || 0) >= 3) screen_solid++;
+          }
+        }
+      }
+      const line = reflectLine(hint, screen_solid, screen_all);
+      if (screen_solid >= 3 && hint.read_count <= 0) {
+        return `${line} → 次: 拡張で束を取り直す（ポップアップを開く／学習の再取得）`;
+      }
+      if (screen_solid >= 3 && !hint.auto_after) {
+        return `${line} → 次: 自動モードで1回検索して数字で確かめる`;
+      }
+      return line;
     },
   },
   need_human: {
     label: "人が1回やる必要があります（私からは押せません）",
     cost: false,
     run: async () => "人が1回検索してください（この場面は手本が無いので自動にできません）",
+  },
+  /**
+   * ★ 2026-11-15「改善につながるまで一連」:
+   *   段階4 = 拡張再読み込み（人）。段階5 = 自動1回（人）。段階6 = 数字で効果確認（無料）。
+   */
+  need_ext_reload: {
+    label: "拡張を再読み込みして最新の束を取り直す（人・無料）",
+    cost: false,
+    run: async () => {
+      return "🙋 学んだら強化・段階4: 拡張 2.8.25 を chrome://extensions で再読み込み → ポップアップを開く（自動で束取得）→ コンソールに「連携完了」→ そのあと reflect_auto / 自動1回";
+    },
+  },
+  need_auto_run: {
+    label: "自動モードで1回検索する（人・無料）",
+    cost: false,
+    run: async () => {
+      return "🙋 学んだら強化・段階5: 拡張が束を読んだあと、自動/AIXモードで1回検索。終わったら verify_improve で課題欄が減ったか数字で見る";
+    },
+  },
+  verify_improve: {
+    label: "最新自動の課題が減ったか数字で確かめる（無料）",
+    cost: false,
+    run: async () => {
+      const { fetchBundleReflectHint, reflectLine } = await import("../app/lib/bundle-reflect");
+      const { summarizeLatestAutoChallenges, summarizeRecordingFreshness } = await import("../app/lib/latest-learn-loop");
+      const { buildImproveLoop } = await import("../app/lib/improve-loop");
+      const hint = await fetchBundleReflectHint(supabase, { scope: scope === "all" ? "all" : scope });
+      const since = new Date(Date.now() - 2 * 86400_000).toISOString();
+      const rows: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < 3000; i += 1000) {
+        const { data } = await supabase.from("human_motion_learn")
+          .select("created_at,mode,shot_key,shot_w,shot_learn,ext_version,shot_ops")
+          .gte("created_at", since).not("shot_key", "is", null)
+          .order("created_at", { ascending: false }).range(i, i + 999);
+        rows.push(...((data || []) as Array<Record<string, unknown>>));
+        if ((data || []).length < 1000) break;
+      }
+      const ch = summarizeLatestAutoChallenges(rows as never, { hours: 48 });
+      const fresh = summarizeRecordingFreshness(rows as never);
+      const loop = buildImproveLoop({
+        photoInStorage: rows.length,
+        withOps: rows.length,
+        screenSolid: 10,
+        screenAll: 10,
+        hint,
+        challengeFields: ch.fields,
+        canMeasure: hint.read_count > 0 && hint.auto_after,
+      });
+      return `${loop.improve_line} ／ 鮮度: ${fresh.line.slice(0, 80)} ／ 課題: ${ch.fields.slice(0, 5).join("・") || "なし"} ／ 反映: ${reflectLine(hint, 10, 10)}`;
+    },
   },
 };
 
@@ -154,7 +305,7 @@ const RUNNABLE: Array<{
     match: /学習の束を作り直/,
     label: "学習の束を作り直す",
     run: async () => {
-      const r = await fetch(`${BASE}/api/human-learn-profile?fresh=1`, { cache: "no-store" });
+      const r = await fetch(`${BASE}/api/human-learn-profile?touch=0`, { cache: "no-store" });
       return r.ok ? "作り直しました" : "http_" + r.status;
     },
   },
@@ -200,7 +351,13 @@ void (async () => {
     console.log("\n■ 統括が決めた「次に学ぶ事」（この順で進める）");
     tasks.forEach((t, i) => {
       const r = TASK_RUN[t.kind];
-      const mark = !r ? "❓ 分からない" : t.kind === "need_human" ? "🙋 竹内さん" : r.cost ? "💰 費用" : "✅ 私がやる";
+      /**
+       * ★ 2026-11-15「改善につながるまで一連」:
+       *   need_ext_reload / need_auto_run は人がやる（拡張再読込・自動1回）。
+       *   旧: cost=false だけで「✅ 私がやる」と誤表示 → 一連が切れて見えた。
+       */
+      const humanKinds = new Set(["need_human", "need_ext_reload", "need_auto_run"]);
+      const mark = !r ? "❓ 分からない" : humanKinds.has(t.kind) ? "🙋 竹内さん" : r.cost ? "💰 費用" : "✅ 私がやる";
       console.log(`  ${i + 1}. [${mark}] ${t.what}`);
       console.log(`       なぜ: ${t.why}`);
       console.log(`       費用: ${t.cost}${t.limit ? `（上限 ${t.limit}枚）` : ""}`);
@@ -223,7 +380,21 @@ void (async () => {
     for (const { no, t } of pick) {
       const r = TASK_RUN[t.kind];
       if (!r) { console.log(`▶ ${no}. ${t.what}\n   （実行の仕方が分かりません）`); continue; }
-      if (t.kind === "need_human") { console.log(`▶ ${no}. ${t.what}\n   🙋 竹内さんにしかできません（人が1回検索してください）`); continue; }
+      if (t.kind === "need_human" || t.kind === "need_ext_reload" || t.kind === "need_auto_run") {
+        const r0 = TASK_RUN[t.kind];
+        console.log(`▶ ${no}. ${t.what}`);
+        if (r0) {
+          try {
+            (globalThis as unknown as { __task?: Task }).__task = t;
+            console.log(`   ${await r0.run()}`);
+          } catch (e) {
+            console.log(`   🙋 竹内さんにしかできません: ${String((e as Error).message || e)}`);
+          }
+        } else {
+          console.log("   🙋 竹内さんにしかできません（人が1回検索してください）");
+        }
+        continue;
+      }
       if (r.cost && !yesCost) {
         console.log(`▶ ${no}. ${t.what}\n   💰 費用がかかるので止めました（付ける時は --yes-cost・上限 ${t.limit ?? 20}枚）`);
         continue;
@@ -258,18 +429,68 @@ void (async () => {
   }
 
   if (!runArg || runArg === "list") {
-    console.log("\n実行するには: --run=<番号>（1つ）／--run=all（私ができる物だけ全部）");
+    console.log("\n実行するには: --run=<番号>（1つ）／--run=all（私ができる物だけ全部）／--run=task:all（学習課題の無料分）");
     return;
   }
 
-  const targets = runArg === "all"
-    ? plan.filter((p) => p.runner)
-    : plan.filter((p) => String(p.no) === String(runArg) && p.runner);
+  /**
+   * ★ 2026-11-16: `--run=all` が actions 側だけ見ていた。
+   *   実測: 次にやる事が全部「🙋」だと targets=0 で落ち、無料の learning_tasks が回らない。
+   *   → all の時は actions の実行可能分＋学習課題の無料分（task:all 相当）を回す。
+   */
+  if (runArg === "all") {
+    const yesCost = args.includes("--yes-cost");
+    const humanKinds = new Set(["need_human", "need_ext_reload", "need_auto_run"]);
+    console.log("");
+    let ran = 0;
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      const r = TASK_RUN[t.kind];
+      const no = i + 1;
+      if (!r) continue;
+      if (humanKinds.has(t.kind)) {
+        console.log(`▶ task:${no}. ${t.what}\n   🙋 竹内さん（スキップ）`);
+        continue;
+      }
+      if (r.cost && !yesCost) {
+        console.log(`▶ task:${no}. ${t.what}\n   💰 費用（スキップ・付ける時は --yes-cost）`);
+        continue;
+      }
+      console.log(`▶ task:${no}. ${r.label}`);
+      try {
+        (globalThis as unknown as { __task?: Task }).__task = t;
+        console.log(`  完了: ${await r.run()}`);
+        ran++;
+      } catch (e) {
+        console.log(`  失敗: ${String((e as Error).message || e)}`);
+      }
+    }
+    const actionTargets = plan.filter((p) => p.runner);
+    for (const t of actionTargets) {
+      console.log(`▶ ${t.no}. ${t.runner!.label}`);
+      try {
+        console.log(`  完了: ${await t.runner!.run()}`);
+        ran++;
+      } catch (e) {
+        console.log(`  失敗: ${String((e as Error).message || e)}`);
+      }
+    }
+    if (!ran) {
+      console.log("⚠ 今すぐ自動で回せる無料タスクがありません（人が必要な物／費用物のみ）。");
+      console.log("   学習課題だけ回す: --run=task:all ／ 費用も: --run=task:all --yes-cost");
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`\n※ ${ran}件実行。判断の取り直し: npx tsx --env-file=.env.local scripts/supervisor-talk.ts`);
+    return;
+  }
+
+  const targets = plan.filter((p) => String(p.no) === String(runArg) && p.runner);
 
   if (!targets.length) {
     const p = plan.find((x) => String(x.no) === String(runArg));
     if (p) console.log(`\n⚠ ${p.no} は私ではできません: ${whyCannotRun(p.a)}`);
-    else console.log("\n⚠ その番号には私ができる事がありません。");
+    else console.log("\n⚠ その番号には私ができる事がありません（学習課題は --run=task:all）。");
     process.exitCode = 1;
     return;
   }

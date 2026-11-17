@@ -724,6 +724,22 @@
     return startForward(forwardFocus, sendResponse);
   });
 
+  // ★ 2026-11-16: background の一連ロック強制解除 → popup iframe のメモリを即空に
+  chrome.runtime.onMessage.addListener(function(msg) {
+    if (!msg || msg.type !== "axlx-pipeline-clear") return false;
+    try {
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage({
+          from: "underbar-parent",
+          action: "pipeline-clear",
+          reason: msg.reason || "bg-clear",
+          customerId: msg.customerId || null,
+        }, "*");
+      }
+    } catch (_) {}
+    return false;
+  });
+
   // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────
   // chrome.runtime.sendMessage でiframe直接に届けると frame登録ラグで失敗するため
   // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
@@ -754,7 +770,7 @@
         clearTimeout(timer);
         window.removeEventListener("message", onResult);
         console.log("[underbar] popup.js の答え ok=", !!r.ok, r.reason || "", r.dup ? "(dup)" : "");
-        sendResponse({ ok: !!r.ok, reason: r.reason || null, dup: !!r.dup });
+        sendResponse({ ok: !!r.ok, reason: r.reason || null, dup: !!r.dup, busyCustomerId: r.busyCustomerId || null });
       };
       var timer = setTimeout(function () {
         if (answered) return;

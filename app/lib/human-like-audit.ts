@@ -29,6 +29,8 @@ export type AuditOp = {
   by?: string | null;
   was?: boolean | null;
   now?: boolean | null;
+  /** 押した瞬間のカーソル形（pointer=手 / default=矢印）。通常録画から学ぶ */
+  cs?: string | null;
 };
 
 /** 1枚（写真1枚の記録） */
@@ -89,6 +91,10 @@ export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
   withCursor: number;
   /** 押した位置が記録されている枚数 */
   withPoint: number;
+  /** 手が付いたクリック（cs=pointer）の回数 */
+  handCursorClicks: number;
+  /** 手が付いた欄名（通常から学ぶ材料） */
+  handCursorFields: string[];
   /** 記録の枚数 */
   rows: number;
   /** 人の速さに寄っているか（px/s の中央値） */
@@ -137,6 +143,17 @@ export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
 
   const withCursor = list.filter((r) => Number(r.moves_n) > 0).length;
   const withPoint = list.filter((r) => r.point_fields && Object.keys(r.point_fields).length > 0).length;
+  const handSet = new Set<string>();
+  let handCursorClicks = 0;
+  for (const o of ops) {
+    if (String(o.cs || "") !== "pointer") continue;
+    const k = String(o.k || "");
+    if (k !== "click" && k !== "tap") continue;
+    handCursorClicks++;
+    const f = String(o.f || "");
+    if (f) handSet.add(f);
+  }
+  const handCursorFields = [...handSet].slice(0, 40);
   const sp = list.map((r) => Number(r.move_speed_px_s)).filter((x) => x > 0).sort((a, b) => a - b);
   const speedMedian = sp.length ? sp[Math.floor(sp.length / 2)] : null;
 
@@ -145,16 +162,18 @@ export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
   if (typedOnChooseSet.size) parts.push(`⚠ 選ぶ欄に打ち込んだ疑い ${typedOnChooseSet.size}件（${[...typedOnChooseSet].slice(0, 3).join("・")}）`);
   else if (typed) parts.push(`打ち込み ${typed}件（すべて文字の欄）`);
   else parts.push("直接打ち込みなし");
-  if (changedWithoutClick.length) parts.push(`⚠ 押さずに値が変わった ${changedWithoutClick.length}件（${changedWithoutClick.slice(0, 3).join("・")}）`);
+  if (changedWithoutClick.length) parts.push(`⚠ 直書き疑い（押さず変化） ${changedWithoutClick.length}件（${changedWithoutClick.slice(0, 3).join("・")}）`);
   else parts.push(`押してから変えた ${clickedThenChanged.length}件`);
   parts.push(`カーソル ${withCursor}/${list.length}件`);
+  if (handCursorClicks) parts.push(`手の形 ${handCursorClicks}回（${handCursorFields.slice(0, 3).join("・")}）`);
   if (speedMedian) parts.push(`速さ ${speedMedian}px/s`);
 
   return {
     ops: ops.length, typed,
     typedOnChoose: [...typedOnChooseSet],
     clickedThenChanged, changedWithoutClick,
-    withCursor, withPoint, rows: list.length, speedMedian,
+    withCursor, withPoint, handCursorClicks, handCursorFields,
+    rows: list.length, speedMedian,
     line: parts.join("／"),
   };
 }
@@ -174,9 +193,9 @@ export function findHumanLikeGaps(r: ReturnType<typeof auditHumanLike>): Array<{
   }
   if (r.changedWithoutClick.length) {
     out.push({
-      what: "押さずに値が変わっている欄がある",
+      what: "直書き疑い（押さずに値が変わっている）",
       why: `${r.changedWithoutClick.length}件（${r.changedWithoutClick.slice(0, 4).join("・")}）`,
-      next: "値を入れる前に**欄を開く**（人がやる順番）",
+      next: "value/checked 直書きをやめ、カーソル→開く→押す（人がやる順番）。通常モードの録画から押し方を学ぶ",
     });
   }
   if (r.rows > 0 && r.withCursor / r.rows < 0.5) {
@@ -191,6 +210,13 @@ export function findHumanLikeGaps(r: ReturnType<typeof auditHumanLike>): Array<{
       what: "押した位置が記録されていない回が多い",
       why: `${r.withPoint}/${r.rows}件`,
       next: "押した所（要素の中の割合）を残す",
+    });
+  }
+  if (r.ops >= 20 && r.handCursorClicks === 0) {
+    out.push({
+      what: "手の形（pointer）の記録がまだ無い",
+      why: "通常モードでボタン上のカーソル形が shot_ops.cs に残っていない",
+      next: "通常モードで録画して、ボタン上で手が付く押しを学ぶ（拡張 2.8.22〜）",
     });
   }
   return out;
