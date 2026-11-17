@@ -417,7 +417,7 @@ export async function POST(req: NextRequest) {
     // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
     try {
       const { completeAixActionItem } = await import("@/app/lib/aix-action-items");
-      await completeAixActionItem(conversation_id, aix_type);
+      await completeAixActionItem(conversation_id, aix_type, { estimateSent: estimate_sent === true });
     } catch (e) {
       console.warn("[log-aix-usage] completeAixActionItem failed:", conversation_id, e instanceof Error ? e.message : e);
     }

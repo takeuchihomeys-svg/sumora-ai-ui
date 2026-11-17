@@ -12,12 +12,13 @@
 //      終日の予定（property_send・follow_up・estimate_sheet・【必ず】・viewing の「〇〇 内覧調整」）は約束と連絡の予定として読む
 //      （60日の数: 終日の viewing 187件の題は「〇〇 内覧調整」＝時刻の無い内覧ではなく内覧の調整の予定）。
 //   ③ timelineBlock: ①②を1つの材料の塊【時系列の帳面】にする（事実だけ・道の言葉は書かない）。
-// 置き方: BRAIN_SITUATION_TIMELINE=on の時だけ brain-core が材料に足す（既定 off＝今と1文字も変わらない）。
+// 置き方: BRAIN_SITUATION_TIMELINE（11/15 から既定 on・戻す =off）の時に brain-core が材料に足す。
 import { JST_OFFSET_MS, WEEKDAYS_JA, jstDayStartMs } from "./jst-date";
 
 const DAY = 86_400_000;
 type Env = Record<string, string | undefined>;
-export const situationTimelineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_TIMELINE ?? "").trim().toLowerCase() === "on";
+export const situationTimelineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_TIMELINE ?? "on").trim().toLowerCase() !== "off";
+// 2026-11-15 作業員L: 試験 L1115-sitm-off → L1115-sitm-tlonly（16問・3回の過半数・DeepSeek）で悪くなった問題 0・最終の道 35/45→38/48・本質の道 25/45→30/48 ＝既定 on（戻す =off）
 
 const ymdOf = (ms: number) => { const d = new Date(ms + JST_OFFSET_MS); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), w: d.getUTCDay() }; };
 /** 日本時間のその日の 0時（UTC の ms） */
@@ -96,7 +97,10 @@ const hm = (ms: number) => { const d = new Date(ms + JST_OFFSET_MS); return `${d
 export type TimelineInput = { customerMsgs: ReadonlyArray<{ text: string | null; atMs: number }>; calendar: ReadonlyArray<CalendarRow>; nowMs: number };
 export type TimelineRecord = { words: Array<TimeWord & { saidAtMs: number }>; viewings: CalendarRead[]; promises: CalendarRead[] };
 export function buildTimeline(i: TimelineInput): TimelineRecord {
-  const words = i.customerMsgs.flatMap((m) => resolveTimeWords(m.text, m.atMs).map((w) => ({ ...w, saidAtMs: m.atMs })));
+  // 2026-11-15 試験 q092 で直した: 「ここは最短11月中旬でしょうか？」は物件の入居日を聞いている問い＝お客様の予定ではない。
+  //   問いの文（？・か で終わる）の日付は帳面に入れない（お客様が自分の予定として言った文だけ）
+  const statements = (t: string | null) => String(t ?? "").split(/(?<=[。！!？?\n])/).filter((s) => s.trim() && !/[？?]\s*$|(?:でしょうか|ですか|ますか|か)\s*[。]?\s*$/.test(s.trim())).join("");
+  const words = i.customerMsgs.flatMap((m) => resolveTimeWords(statements(m.text), m.atMs).map((w) => ({ ...w, saidAtMs: m.atMs })));
   const cal = readCalendarEvents(i.calendar);
   return { words: words.slice(-8), viewings: cal.filter((c) => c.kind === "viewing"), promises: cal.filter((c) => c.kind === "promise") };
 }

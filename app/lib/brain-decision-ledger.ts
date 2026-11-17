@@ -10,6 +10,7 @@ import { materialMissingKey, MATERIAL_KEY_SIDE } from "./material-missing-key";
 import { turnReadDigestExtra } from "./turn-read";
 import { judgeBasisRecDigest, type JudgeBasis } from "./brain-judge-basis";
 import { materialClashDigest } from "./material-clash";
+import { situationNowDigest } from "./situation-now";
 
 /** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
 export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -87,6 +88,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   { const jb = (meta.judge_basis_rec ?? meta.judge_basis) as JudgeBasis | undefined; const d = jb && typeof jb === "object" ? judgeBasisRecDigest(jb) : null; if (d) (out as Record<string, unknown>).jbr = d; }
   // 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow の番だけ meta.material_clash）の短い形 mcl
   { const mc = materialClashDigest(meta.material_clash); if (mc) (out as Record<string, unknown>).mcl = mc; }
+  // 2026-11-15 作業員L: 今の状況の記録の数（BRAIN_SITUATION_NOW=on の番だけ）
+  { const sn = situationNowDigest(meta.situation_now); if (sn) (out as Record<string, unknown>).sn = sn; }
   return out;
 }
 

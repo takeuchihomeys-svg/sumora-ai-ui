@@ -346,7 +346,7 @@ async function completeOneByStaffText(conversationId: string, open: { id: string
 }
 
 /** スタッフがその会話で AIX を送った → 未完了を完了（✅）にする。押した AIX がブレインの指示と同じかも残す */
-export async function completeAixActionItem(conversationId: string, aixType: string): Promise<void> {
+export async function completeAixActionItem(conversationId: string, aixType: string, opts: { estimateSent?: boolean | null } = {}): Promise<void> {
   const norm = (x: string) => (x === "property_check" ? "property_check_result" : x);
   const now = new Date().toISOString();
   // 2026-10-08: 内覧当日の朝の挨拶の行（別の行）は内覧挨拶の AIX を送った時だけ済み
@@ -363,6 +363,16 @@ export async function completeAixActionItem(conversationId: string, aixType: str
     .or(MAIN_AIX_ITEM_OR)
     .maybeSingle();
   if (!open) return;
+  // 2026-11-15 作業員L（AIX_ITEM_CLOSE_STRICT・既定 off）: 勧めと違う AIX は、同じ要件を果たす組の時だけ閉じる。それ以外は待ちのまま「果たしたか確かめる」を書く
+  const rule = await import("./aix-item-close-rule");
+  if (rule.aixItemCloseStrictOn()) {
+    const d = rule.aixItemCloseDecision(String(open.action ?? ""), aixType, opts);
+    if (!d.close) {
+      await supabase.from("aix_action_items").update({ resolution_note: d.why.slice(0, 200), updated_at: now }).eq("id", open.id).eq("status", "pending");
+      console.log(JSON.stringify({ tag: "aix-item:kept-open", conversationId, action: open.action, sent: aixType }));
+      return;
+    }
+  }
   await supabase.from("aix_action_items")
     .update({ status: "done", done_at: now, done_aix_type: aixType, done_matched: norm(open.action) === norm(aixType), done_by: "aix", updated_at: now })
     .eq("id", open.id).eq("status", "pending");
