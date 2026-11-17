@@ -4823,7 +4823,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         //   既存の信号の結果は変えない（加えるだけ）。decision_source='signal:scene_*' で brain-aix-eval の学習対象にする。
         //   2026-10-08: S5（日時の語→待ち合わせ）はブレインが「なし」の時は採らない（本番 0/10・S2/S3/S11 は竹内さんの決定で残す）
         const sceneSig0 = sceneSignalFallback(sceneEvidence);
-        const sceneSig = sceneSig0 && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
+        // 2026-11-18 作業員H（SCREENING_SIGNAL_BRAIN_FIRST・既定 off）: 審査の通りやすさの問いでブレインが「AIX なし」と言った番は S3 の信号で埋めない（q333・網は材料にする）
+        const screeningSkip = !!sceneSig0 && (await import("@/app/lib/screening-signal-brain-first")).screeningSignalSkipped({ reasonCode: sceneEvidence?.reasonCode, brainSaidNoAix });
+        if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
+        const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
         if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
