@@ -55,3 +55,24 @@ t("送った御見積書の記録: 新しい順・同じ物件の出し直しは
   assert.equal(estimateRecordsBlock([]), "");
 });
 console.log("estimate-records ok");
+
+import { matchCompanyFacts } from "../company-facts";
+import { estimateSentFlagOf } from "../estimate-sent-flag";
+t("キャンセルの網: 申込の段の「辞退」だけ当てる（申込の前の物件のお断りは当てない）・既定 off", () => {
+  const had = process.env.COMPANY_FACT_CANCEL_WIDE;
+  try {
+    delete process.env.COMPANY_FACT_CANCEL_WIDE;
+    assert.ok(!matchCompanyFacts("申込を辞退したいです", { applying: true }).some((f) => f.id === "cancel"));
+    process.env.COMPANY_FACT_CANCEL_WIDE = "on";
+    assert.ok(matchCompanyFacts("申込を辞退したいです", { applying: true }).some((f) => f.id === "cancel"));
+    assert.ok(!matchCompanyFacts("この物件はお断りして他を探したいです", { applying: false }).some((f) => f.id === "cancel"));
+    assert.ok(matchCompanyFacts("キャンセル料はかかりますか", {}).some((f) => f.id === "cancel"));
+  } finally { if (had === undefined) delete process.env.COMPANY_FACT_CANCEL_WIDE; else process.env.COMPANY_FACT_CANCEL_WIDE = had; }
+});
+t("見積書の AIX の印（AIX_ESTIMATE_SHEET_FLAG・既定 off）", () => {
+  assert.equal(estimateSentFlagOf("estimate_sheet", null, {}), false);
+  assert.equal(estimateSentFlagOf("estimate_sheet", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), true);
+  assert.equal(estimateSentFlagOf("property_check_result", true, {}), true);
+  assert.equal(estimateSentFlagOf("property_send", null, { AIX_ESTIMATE_SHEET_FLAG: "on" }), false);
+});
+console.log("cancel-estflag ok");

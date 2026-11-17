@@ -2396,7 +2396,7 @@ async function analyzeConversationCore(
   // 2026-10-20 竹内さん（13:07 の画面）: 窓はこちらの最後の送信より後のお客様の発言だけ（既に答えた前の話題の事実を「今聞いている」と渡さない）。戻す COMPANY_FACT_TURN_SCOPE=off
   const companyFactsText = buildCompanyFactsNote(
     customerTextsForCompanyFacts([...typedMessages].reverse()),
-    { account: convAccount },
+    { account: convAccount, applying: isPostApplyStatus(convStatus) },
   ) + brandCostOverrideNote(convAccount)
     // 2026-11-05 竹内さん No.10: 延滞歴・カードローン等の審査の不安は、独立系の保証会社の知識から返信で言ってよい（材料は guarantor-companies のマスタ側・既定 on）
     + (await import("@/app/lib/guarantor-companies")).buildScreeningHistoryNote(customerTextsForCompanyFacts([...typedMessages].reverse()));

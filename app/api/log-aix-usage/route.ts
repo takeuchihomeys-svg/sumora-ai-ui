@@ -1,4 +1,5 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿import { estimateSentFlagOf } from "@/app/lib/estimate-sent-flag";
+import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { viewingDoneOnAfterGreetingOn, isAfterViewingGreeting } from "@/app/lib/viewing-done-after-greeting";
 import { supabase } from "@/app/lib/supabase-server";
@@ -322,7 +323,9 @@ export async function POST(req: NextRequest) {
       // M2: 御見積書を同封したか（estimate_sheet 以外のAIX＝物件確認したの見積書同封も「送付済み」として残す）。
       // generate-reply の estimatePromised 判定が aix_type='estimate_sheet' しか見ておらず、
       // 「物件確認した＋見積書同封」で送った直後に「御見積書を作成しお送りします」と再宣言していた。
-      estimate_sent: estimate_sent === true ? true : null,
+      // 2026-11-18 作業員L（AIX_ESTIMATE_SHEET_FLAG・既定 off）: 見積書そのものの AIX（estimate_sheet）でも「御見積書を送った」の印を立てる。
+      //   30日で estimate_sheet 37回の estimate_sent が 0 回＝ブレインの【御見積書 送付済み】が出ない記録の側の切れ（同封の印は物件確認した の行だけだった）
+      estimate_sent: estimateSentFlagOf(aix_type, estimate_sent) ? true : null,
       // 見積書OCRの費用メモ（"物件名 / 初期費用合計: 〇〇円 / 割引額: 〇〇円 / クリーニング費用: 〇〇円"）。
       // brain-core が【同封済み御見積書の費用情報】としてプロンプトへ注入する
       prop_cost_notes: Array.isArray(prop_cost_notes) && prop_cost_notes.length > 0
@@ -417,7 +420,7 @@ export async function POST(req: NextRequest) {
     // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
     try {
       const { completeAixActionItem } = await import("@/app/lib/aix-action-items");
-      await completeAixActionItem(conversation_id, aix_type, { estimateSent: estimate_sent === true });
+      await completeAixActionItem(conversation_id, aix_type, { estimateSent: estimateSentFlagOf(aix_type, estimate_sent) });
     } catch (e) {
       console.warn("[log-aix-usage] completeAixActionItem failed:", conversation_id, e instanceof Error ? e.message : e);
     }
