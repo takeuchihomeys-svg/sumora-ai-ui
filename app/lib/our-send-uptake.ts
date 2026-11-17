@@ -15,7 +15,7 @@ import type { NextDest, NextStrength } from "./next-move-types";
 
 type Env = Record<string, string | undefined>;
 export function ourSendUptakeOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.BRAIN_OUR_SEND_UPTAKE ?? "").trim().toLowerCase() === "on";
+  return String(env.BRAIN_OUR_SEND_UPTAKE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-uptake-p1〜p3・8問＋守り・q029 は3回で揺れと確かめた k1118-uptake-q029）
 }
 
 /** こちらの送信の部分 */

@@ -8,7 +8,7 @@ let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) pass++; else { fail++; console.error(`NG ${name}`); } };
 const route = (rawAix: unknown, asks: unknown[]) => { const c = { asks }; return checkQuestionBrainRoute({ rawAix, contract: c, promisesPickup: brainContractPromisesPickup(c, {}) }); };
 
-t("既定 off", !checkQuestionBrainFirstOn({}) && checkQuestionBrainFirstOn({ TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST: "on" }));
+t("既定 on（2026-11-18）・off で戻す", checkQuestionBrainFirstOn({}) && !checkQuestionBrainFirstOn({ TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST: "off" }));
 // 直す番
 t("q009 ピックアップの約束→pickup", route(undefined, [{ route: "promise", about: "search_condition", answer: "家賃上限を上げた条件で他の部屋をピックアップしてお送りする" }]) === "pickup");
 t("q090 ピックアップの約束（aix 付き）→pickup", route(null, [{ route: "promise", aix: "property_send", about: "search_condition", answer: "カウンターキッチン付き物件を探し、新着で出次第お送りする約束をする" }]) === "pickup");
