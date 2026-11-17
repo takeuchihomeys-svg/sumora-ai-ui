@@ -5,14 +5,16 @@
 //   作り直さない物: 時系列＝situation-timeline.ts／前に送った文の項目＝exchange-ledger（our-part-types）／要件＝作業員M の ask-ledger
 //   （askIdOf・progressAfterSends・openAsksFrom）／約束の結び付け＝promise-close-link（detail.closed_by）／食い違い＝material-clash。
 //   作業員I の next_send は our_items の item_id を指して読む（「前のどの通のどの項目を受けて次を送るか」）。
-// スイッチ BRAIN_SITUATION_NOW=on（既定 off）。道・材料・下書きは変えない（記録だけ。書き手に渡すのは試験の後に決める）。
+// スイッチ BRAIN_SITUATION_NOW（11/18 から既定 shadow＝記録だけ・止める =off）。プロンプトに1文字も足さない＝道・材料・下書きは変えない（書き手に渡すのは試験の後に決める）。
+//   試験 L1118-sitnow（q091 q092 q013・ASK_LEDGER=shadow）で欄が入る事を確かめた。要件・送った所まで（asks・this_turn）は ASK_LEDGER が off でない時だけ入る。
 import type { TimelineRecord } from "./situation-timeline";
 import type { ExchangeLedger } from "./exchange-ledger";
 import type { MaterialClash } from "./material-clash";
 import { PROMISE_OF_DONE } from "./promise-close-link";
 
 type Env = Record<string, string | undefined>;
-export const situationNowOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_NOW ?? "").trim().toLowerCase() === "on";
+/** off / shadow（既定・記録だけ）/ on（今は shadow と同じ＝記録だけ。書き手・AIX に渡す形は試験の後に作る） */
+export const situationNowOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_NOW ?? "shadow").trim().toLowerCase() !== "off";
 
 export type Src = "db" | "text" | "brain";
 export type Sure = "high" | "mid" | "low";

@@ -98,7 +98,7 @@ console.log("timeline-question ok");
 // ── 今の状況の記録（BRAIN_SITUATION_NOW）
 import { buildSituationNow, situationNowOn, situationNowDigest, factIdOf } from "../situation-now";
 t("今の状況の記録: 送った事・確認した事・前の項目（答えたか）・開いている約束・要件と送った所まで・食い違い（id 付き）", () => {
-  assert.equal(situationNowOn({}), false);
+  assert.equal(situationNowOn({}), true); assert.equal(situationNowOn({ BRAIN_SITUATION_NOW: "off" }), false);
   const facts = [
     { sent_at: "2026-11-10T01:00:00Z", origin: "staff_text", kind: "confirmation_promised", status: "promised", detail: { object: "募集状況" } },
     { sent_at: "2026-11-10T02:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: { propertyNames: ["Aマンション 101"] } },
