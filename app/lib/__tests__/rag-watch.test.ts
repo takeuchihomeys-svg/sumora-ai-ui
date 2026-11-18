@@ -42,3 +42,23 @@ const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++
   console.log(`\n${pass} OK / ${fail} NG`);
   if (fail) process.exit(1);
 })();
+// 11/18: 同じ問いを60秒だけ置く（RAG_RPC_CACHE・既定 on）
+import("../rag-watch").then(async ({ RagRpcCache, ragRpcCacheOn, wrapFetchWithRagWatch }) => {
+  let calls = 0; const rows: Array<{ route: string | null; ms: number }> = []; const pend: Promise<unknown>[] = [];
+  let clock = 1_000;
+  const fake = async () => { calls++; return new Response(JSON.stringify([{ similarity: 0.9 }]), { status: 200 }); };
+  const w = wrapFetchWithRagWatch(fake, { insert: async (r) => { rows.push(r); }, keepAlive: (p) => { pend.push(p); }, route: () => "/api/x", env: null, now: () => clock, cache: new RagRpcCache(60_000, 200) });
+  const u = "https://x.supabase.co/rest/v1/rpc/match_reply_knowledge";
+  const b = JSON.stringify({ query_embedding: [0.1], match_count: 8 });
+  await (await w(u, { method: "POST", body: b })).json(); await Promise.all(pend);
+  clock += 10_000; const r2 = await (await w(u, { method: "POST", body: b })).json(); await Promise.all(pend);
+  clock += 61_000; await (await w(u, { method: "POST", body: b })).json(); await Promise.all(pend);
+  await (await w(u, { method: "POST", body: JSON.stringify({ query_embedding: [0.2], match_count: 8 }) })).json(); await Promise.all(pend);
+  const ok = ragRpcCacheOn({}) && !ragRpcCacheOn({ RAG_RPC_CACHE: "off" })
+    && calls === 3 && Array.isArray(r2) && (r2 as unknown[]).length === 1 && rows.some((r) => r.route === "/api/x(cache)" && r.ms === 0);
+  console.log(ok ? "  OK  同じ問いは60秒だけ置く・過ぎたら読み直す・違う問いは読む" : `  NG  キャッシュ calls=${calls}`);
+  const c = new RagRpcCache(60_000, 2); c.set("a", "1", 0); c.set("b", "2", 0); c.set("c", "3", 0);
+  const ok2 = c.size === 2 && c.get("a", 1) === null && c.get("c", 1) === "3";
+  console.log(ok2 ? "  OK  置く数の上限（古い物から外す）" : "  NG  上限");
+  if (!ok || !ok2) process.exit(1);
+});
