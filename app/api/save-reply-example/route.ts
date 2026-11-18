@@ -1077,6 +1077,7 @@ async function markRelatedDailyTasksDone(
   eventType: "estimate_sheet" | "property_send",
 ): Promise<void> {
   try {
+    if ((process.env.DAILY_TASKS_AUTODONE ?? "").trim().toLowerCase() === "off") return; // 11/18: 列の直しで動き出すので止める口
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
     const screeningKey = screeningAdminSupabaseKey();
     if (!screeningUrl || !screeningKey) return;
@@ -1086,11 +1087,14 @@ async function markRelatedDailyTasksDone(
     try {
       const { data: conv } = await supabase
         .from("conversations")
-        .select("customer_name, display_name")
+        // 2026-11-18 作業員H: conversations に display_name の列は無い（915行と同じ穴）＝この読みは毎回 42703 で落ち、customerName が null のまま return していた
+        //   （本番ログ 11/18 03:16・03:21）。AIX で物件送付・見積書送付した時の screening-admin の daily_tasks の自動の済みが一度も動いていなかった。
+        //   customer_name だけを読む。止める時は DAILY_TASKS_AUTODONE=off
+        .select("customer_name")
         .eq("id", conversationId)
         .single();
-      const c = conv as { customer_name?: string; display_name?: string } | null;
-      customerName = c?.customer_name || c?.display_name || null;
+      const c = conv as { customer_name?: string } | null;
+      customerName = c?.customer_name || null;
     } catch { /* ignore */ }
 
     if (!customerName) return; // 顧客名がなければスキップ
