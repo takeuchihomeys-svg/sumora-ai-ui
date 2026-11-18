@@ -21,7 +21,7 @@ export function intentFromAppealJudge(j: AppealJudge): ComposeIntent {
     feel: "このお部屋は自分に合っている",
     next: j.closing === "apply" ? "apply" : j.closing === "viewing" ? "viewing" : "none",
     main: { subject: "property", what: j.first.text },
-    adds: j.second && j.count === 2 ? ["appeal"] : [],
+    adds: j.second && j.count >= 2 ? ["appeal"] : [],
     closing: j.closing === "apply" ? "apply_cta" : j.closing === "viewing" ? "viewing_cta" : "receipt",
     confidence: "high",
     source: "brain",
@@ -55,7 +55,9 @@ export function secondBlueprintNote(j: AppealJudge, scene: string, data: SecondT
     `・締め（ここだけで決める・他の締めの指示より優先）: ${closingLine}（理由: ${j.closingWhy}）`,
     // 2026-11-04 grp-aix の悪化（d13194c8・18aff1b4）: この1行が訴求の点の数字（帖数・徒歩の分）まで止め、竹内さんの文にある数字を落とした → 訴求の点に付く数字は書いてよいと分ける
     "・上に無い設備・駅・築年を並べ足さない（ただし上の訴求の点に付く数字＝間取りの帖数・駅の徒歩の分・築年月は、1通目・資料のまま書いてよい）。事実は1通目・資料にある事だけ。金額・節約額は書かない（初期費用は「敷金礼金なしで初期費用を抑える事ができ」の言い方まで）。",
-    takeuchiFormSummary(scene, data.forms),
+    // 2026-11-18 設備が揃ったお部屋（SECOND_APPEAL_COUNT_BY_SCENE）: 判断の3番目以降を並べる（一番の物が先頭）
+    j.more?.length ? `・添えの訴求（2番目と一緒に1文に並べる）: ${[j.second?.text, ...j.more.map((m) => m.text)].filter(Boolean).join("・")}` : "",
+    takeuchiFormSummary(scene, data.forms, !!j.more?.length),
     ex.length ? `【竹内さんの2通目の手本（設計図の根拠・写さず構成だけ見る）】\n${ex.map((t, k) => `${k + 1}) ${t.replace(/\n+/g, " ")}`).join("\n")}` : "",
   ].filter(Boolean).join("\n");
 }
