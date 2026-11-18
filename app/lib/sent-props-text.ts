@@ -23,6 +23,8 @@ export type SentProp = {
   image_urls?: string[];
   /** 2026-10-24: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日（BRAIN_SENT_SHEET_VACANCY=on の時だけ brain-core が入れる） */
   sheet_vacancy?: string | null;
+  /** 2026-11-19 作業員L: 送った資料の画像の読み（sent_image_properties.facts）の短い1行（SENT_IMAGE_FACTS_TO_BRAIN=on の時だけ） */
+  sheet_facts?: string | null;
   /** 2026-11-13 作業員16（ref_resolve の材料・REF_RESOLVE=on の時だけ brain-core が入れる）: 何回目の送信の束か（1始まり）と、その束の何件目か */
   bundle_no?: number | null;
   bundle_pos?: number | null;
@@ -70,7 +72,29 @@ export function attachEstimates(props: SentProp[], ests: ReadonlyArray<EstimateR
 }
 
 type CustomerRow = { property_name: string | null; room_no: string | null; sent_at: string | null; rent?: number | null; recruitment_status?: string | null; applicant_rank?: number | null; customer_reaction?: string | null; source?: string | null; channel?: string | null; image_url?: string | null };
-type ImageRow = { property_name: string | null; room_no: string | null; created_at: string | null; source: string | null; channel?: string | null };
+type ImageRow = { property_name: string | null; room_no: string | null; created_at: string | null; source: string | null; channel?: string | null; facts?: Record<string, unknown> | null };
+// ── 2026-11-19 作業員L（毎朝の穴の割り当て 11/19「901号室の礼金（SUUMO との違い）」等）: 送った資料の画像の読み（sent_image_properties.facts）の中身 ──
+//   facts には家賃・管理費・敷金・礼金・間取り・面積・築年・駅・徒歩・現況が入っているのに、ブレインの【すでに送付済みの物件】には名前と号室しか渡っていなかった
+//   （材料はあるのに受け取っていない）。SENT_IMAGE_FACTS_TO_BRAIN=on（既定 off）の時だけ、送った物件の行に「送った資料の読み取り」として足す。
+export const sentImageFactsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_IMAGE_FACTS_TO_BRAIN ?? "").trim().toLowerCase() === "on";
+const yen = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? `${n.toLocaleString()}円` : null; };
+const mon = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? (n === 0 ? "0" : `${n}ヶ月`) : null; };
+/** facts → 短い1行（無い物は書かない・推測しない） */
+export function sentImageFactsLine(f: Record<string, unknown> | null | undefined): string | null {
+  if (!f || typeof f !== "object") return null;
+  const parts = [
+    yen(f.rent) ? `家賃${yen(f.rent)}` : "",
+    yen(f.admin_fee_yen) ? `管理費${yen(f.admin_fee_yen)}` : "",
+    f.deposit_months != null ? `敷金${mon(f.deposit_months)}` : yen(f.deposit_yen) ? `敷金${yen(f.deposit_yen)}` : "",
+    f.key_money_months != null ? `礼金${mon(f.key_money_months)}` : f.key_money_yen != null ? `礼金${Number(f.key_money_yen) === 0 ? "0" : yen(f.key_money_yen) ?? ""}` : "",
+    typeof f.floor_plan === "string" && f.floor_plan ? f.floor_plan : "",
+    Number(f.area_sqm) > 0 ? `${f.area_sqm}㎡` : "",
+    typeof f.building_age === "number" || typeof f.built_ym === "string" ? `築${f.built_ym ?? `${f.building_age}年`}` : "",
+    typeof f.station === "string" && f.station ? `${f.station}${Number(f.walk_minutes) > 0 ? `徒歩${f.walk_minutes}分` : ""}` : "",
+    typeof f.status === "string" && f.status ? `現況:${f.status}` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join("・").slice(0, 160) : null;
+}
 type SharedRow = { property_name: string | null; room_no: string | null; sent_at: string | null; rent?: number | null };
 
 const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
@@ -114,7 +138,7 @@ export function attachSheetVacancy(props: SentProp[], linesByUrl: ReadonlyMap<st
   return n;
 }
 
-export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: ImageRow[]; sharedRows: SharedRow[] }): SentProp[] {
+export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: ImageRow[]; sharedRows: SharedRow[]; imageFacts?: boolean }): SentProp[] {
   const seen = new Set<string>();
   const out: SentProp[] = [];
   const add = (p: SentProp) => {
@@ -125,6 +149,8 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
       // 2026-10-24: 同じ物件の別の画像（資料と見積書など）の URL はまとめておく（資料の読み取りを引く鍵）
       const ex = out.find((o) => `${o.property_name}|${o.room_no}` === key);
       for (const u of p.image_urls ?? []) if (ex && !(ex.image_urls ?? []).includes(u)) ex.image_urls = [...(ex.image_urls ?? []), u];
+      // 2026-11-19 作業員L: 同じ物件の資料の読み取りは、無ければ足す（項目の多い方を残す）
+      if (ex && p.sheet_facts && (!ex.sheet_facts || p.sheet_facts.length > ex.sheet_facts.length)) ex.sheet_facts = p.sheet_facts;
       return;
     }
     seen.add(key);
@@ -145,6 +171,7 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
       property_name: p.property_name ?? "", room_no: p.room_no ?? "", sent_at: p.created_at ?? "", rent: null,
       recruitment_status: null, applicant_rank: null, customer_reaction: null,
       sent_via: p.source ?? null, channel: rowChannel({ channel: p.channel ?? null, source: p.source }),
+      ...(input.imageFacts ? { sheet_facts: sentImageFactsLine(p.facts) } : {}),
     });
   }
   // 共有のみ（グループに出しただけ）。再提案の抑止は効かせたまま、見出しを分けて出す
@@ -190,6 +217,7 @@ export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: numb
       p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
       p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
       p.sheet_vacancy ? `送った資料（${jstMD(p.sent_at)}時点）の${p.sheet_vacancy}` : "",
+      p.sheet_facts ? `送った資料の読み取り（${p.sheet_facts}）` : "",
       p.bundle_no != null && p.bundle_pos != null ? `${p.bundle_no}回目の送信の${p.bundle_pos}件目` : "",
       p.estimate_initial_cost != null ? `御見積書の初期費用${p.estimate_initial_cost.toLocaleString()}円${p.estimate_room_no && roomKey(p.estimate_room_no) !== roomKey(p.room_no) ? `（見積は${p.estimate_room_no}号室）` : ""}` : "",
     ].filter(Boolean).join("・");

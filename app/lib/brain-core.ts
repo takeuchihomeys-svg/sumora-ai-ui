@@ -9,7 +9,7 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentPropsFullOn, sentPropsFullMode, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentImageFactsOn, sentPropsFullOn, sentPropsFullMode, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
 import { refResolveOn, refResolveModeOf, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -1947,7 +1947,7 @@ async function analyzeConversationCore(
     // 2026-09-20 竹内: 画像だけで送った物件（送信時に DeepSeek で読み取って記録した分）
     supabase
       .from("sent_image_properties")
-      .select("property_name, room_no, created_at, source, channel")
+      .select(sentImageFactsOn() ? "property_name, room_no, created_at, source, channel, facts" : "property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
@@ -2541,6 +2541,7 @@ async function analyzeConversationCore(
     customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
     imageRows: (sentImagePropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["imageRows"],
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
+    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）
   });
   // 2026-10-24 q053 型（P0「材料が届いていない」）: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日を送った物件の行に載せる
   //   （BRAIN_SENT_SHEET_VACANCY=on の時だけ・既定 off＝今と同じ）。読めなかった時は載せないだけ（判断は変えない）

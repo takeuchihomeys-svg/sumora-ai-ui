@@ -146,3 +146,15 @@ t("書き手への今の状況の塊（SITUATION_WRITER_NOTE・既定 off・事�
   assert.equal(situationWriterNote(null, now), "");
 });
 console.log("writer-note ok");
+import { sentImageFactsLine, sentImageFactsOn, buildSentProps as bsp2 } from "../sent-props-text";
+t("送った資料の読み（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）: 礼金・敷金・間取り・面積を送った物件の行へ（11/19 の 901号室の礼金）", () => {
+  assert.equal(sentImageFactsOn({}), false);
+  assert.equal(sentImageFactsLine({ rent: 98000, admin_fee_yen: 10000, deposit_months: 0, key_money_months: 1, floor_plan: "1LDK", area_sqm: 36.2, station: "中崎町", walk_minutes: 3 }), "家賃98,000円・管理費10,000円・敷金0・礼金1ヶ月・1LDK・36.2㎡・中崎町徒歩3分");
+  assert.equal(sentImageFactsLine({}), null);
+  const ps = bsp2({ customerRows: [{ property_name: "Aタワー", room_no: "901", sent_at: "2026-11-16T06:39:00Z" }] as never, imageRows: [{ property_name: "Aタワー", room_no: "901", created_at: "2026-11-16T06:39:43Z", source: "x", facts: { key_money_months: 1, floor_plan: "1LDK" } }], sharedRows: [], imageFacts: true });
+  assert.equal(ps.length, 1); assert.equal(ps[0].sheet_facts, "礼金1ヶ月・1LDK");
+  assert.match(buildSentPropsText(ps), /送った資料の読み取り（礼金1ヶ月・1LDK）/);
+  const off = bsp2({ customerRows: [], imageRows: [{ property_name: "Aタワー", room_no: "901", created_at: "2026-11-16T06:39:43Z", source: "x", facts: { key_money_months: 1 } }], sharedRows: [] });
+  assert.equal(off[0].sheet_facts, undefined);
+});
+console.log("sip-facts ok");
