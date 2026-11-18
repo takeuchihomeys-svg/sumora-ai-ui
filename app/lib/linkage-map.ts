@@ -139,6 +139,7 @@ export const LINKAGE_MAP: readonly LinkageRow[] = [
 
   // ⑤ 書き手
   { id: "writer.reply", stage: "writer", name: "返信の文を書く（本質の帯・設計図・手本）", producer: "app/api/generate-reply", key: "下書き（suggested_reply）", readers: ["check.final"], switches: [], readerSwitches: [], fill: { src: "none", why: "下書きは conversations.suggested_reply（欄の空の割合は見ない）" }, owner: "作業員9", layer: "土台", next: "決めた事が文で使われたかの印（decided-use）" },
+  { id: "writer.situation", stage: "writer", name: "書き手への今の状況（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）", producer: "situation-now.situationWriterNote（SITUATION_WRITER_NOTE）", key: "書き手の注記: 今の状況", readers: ["writer.reply"], switches: ["SITUATION_WRITER_NOTE", "BRAIN_SITUATION_NOW"], readerSwitches: [], fill: { src: "none", why: "書き手の注記（meta に残らない）" }, owner: "作業員L", layer: "連携", next: "下書きまでの試験で悪化0を確かめて on" },
   { id: "writer.aix_first", stage: "writer", name: "AIX の1通目（テンプレート・ピッカーの文）", producer: "app/api/aix/action", key: "aix_usage_logs.generated_text", readers: ["sent.aix_usage"], switches: [], readerSwitches: [], fill: T("aix_usage_logs", 7, "generated_text"), owner: "作業員1", layer: "土台", next: "-" },
   { id: "writer.aix_second", stage: "writer", name: "AIX の2通目（✨・材料→訴求の判断→書き手→締め）", producer: "app/api/aix-template-generate", key: "AIX の2通目の文", readers: ["sent.aix_usage"], switches: ["SECOND_MSG_MATERIALS", "AIX_SECOND_APPEAL_JUDGE"], readerSwitches: [], fill: { src: "none", why: "2通目の文は aix_usage_logs に別の行で残らない" }, owner: "作業員25", layer: "連携", next: "2通目に届いていない欄（NOT_YET_TO_AIX_SECOND）を順に" },
 
