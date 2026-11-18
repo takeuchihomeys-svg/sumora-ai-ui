@@ -283,7 +283,8 @@ export const CHECK_DEPTH: Readonly<Record<string, CheckDepth>> = {
 export type CheckOrderMode = "off" | "shadow" | "on";
 export function checkOrderMode(): CheckOrderMode {
   const v = String(process.env.CHECK_ORDER_TABLE ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-18 既定 on（k1118-bundle-b 悪化0）。=shadow で記録だけ・=off で止める
+  return v === "shadow" ? "shadow" : v === "off" ? "off" : "on";
 }
 
 export function checkOrderById(id: string): CheckOrderType | null {
