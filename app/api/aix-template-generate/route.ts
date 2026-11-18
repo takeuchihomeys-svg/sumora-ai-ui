@@ -1,3 +1,4 @@
+import { secondVacatingAllOn } from "@/app/lib/second-vacating";
 import { manYen } from "@/app/lib/man-yen";
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
@@ -1435,6 +1436,29 @@ export async function POST(req: NextRequest) {
   let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };
   let secondNotViewable = recommendState.notViewable;
   let secondViewableFrom: string | null = recommendState.viewableFrom;
+  // 2026-11-18 作業員L（作業員K の試験 e30d8453: AI は26回中1回も退去予定を書かず vacating=false・竹内さんは2通目で退去予定を書いた18通すべてで頭の3行以内）:
+  //   退去予定の読み（1通目の本文・送った資料の画像の読み）は物件オススメ／ピックアップの2通目だけで、物件確認した 等の2通目はブレインの property_state（無ければ
+  //   こちらの最近の通）しか見ていなかった＝1通目の AIX の本文に書いた「〇月〇日退去予定」「退去予定のお部屋」が2通目に届かない。
+  //   SECOND_VACATING_ALL_AIX=on（既定 off）: どの AIX の2通目でも、1通目の本文→送った資料の画像の読み の順で退去予定を読み、日付の無い「退去予定」も退去予定として渡す
+  if (!(actionType === "property_recommendation" || pickupPushLabel) && secondVacatingAllOn() && (sentMessage ?? "").trim()) {
+    try {
+      secondViewable = resolveRecommendViewable({ text: sentMessage, material: null, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
+      if (secondViewable.source === "brain" && conversationId) {
+        const sipHead = headOfFirstMessage(sentMessage);
+        if (sipHead) {
+          const { data } = examSnap?.sentImages
+            ? { data: snapshotRows(examSnap.sentImages, { limit: 60 }) }
+            : await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts").eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(60);
+          const sv = sentImageViewable(sipVacating((data ?? []) as SipRow[], sipHead));
+          if (sv) secondViewable = sv;
+        }
+      }
+      if (!secondViewable.notViewable && mentionsVacating(sentMessage)) secondViewable = { ...secondViewable, notViewable: true };
+      secondNotViewable = secondViewable.notViewable;
+      secondViewableFrom = secondViewable.viewableFrom;
+      console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-all", action: actionType, vacating: secondNotViewable, from: secondViewable.source, viewableFrom: secondViewableFrom }));
+    } catch (e) { console.warn("[aix-template-generate] second-vacating-all failed:", e instanceof Error ? e.message : e); }
+  }
   if (actionType === "property_recommendation" || pickupPushLabel) {
     try {
       let pickup: PickupLookupRow | null = pickupPush as PickupLookupRow | null;
