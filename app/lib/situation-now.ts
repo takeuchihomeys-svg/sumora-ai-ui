@@ -11,6 +11,7 @@ import type { TimelineRecord } from "./situation-timeline";
 import type { ExchangeLedger } from "./exchange-ledger";
 import type { MaterialClash } from "./material-clash";
 import { PROMISE_OF_DONE } from "./promise-close-link";
+import { jstMD } from "./jst-date";
 
 type Env = Record<string, string | undefined>;
 /** off / shadow（既定・記録だけ）/ on（今は shadow と同じ＝記録だけ。書き手・AIX に渡す形は試験の後に作る） */
@@ -111,4 +112,25 @@ export function situationNowDigest(s: unknown): Record<string, number> | null {
   const x = s as SituationNow;
   const n = (a: unknown[] | undefined) => (Array.isArray(a) ? a.length : 0);
   return { tw: n(x.timeline?.words), tv: n(x.timeline?.viewings), se: n(x.sent), ch: n(x.checked), oi: n(x.our_items), ou: (x.our_items ?? []).filter((o) => o.answered === false).length, po: n(x.promises_open), ao: n(x.asks?.open), cf: n(x.conflicts) };
+}
+
+// ── 2026-11-18 作業員L（統括役「状況の把握が統括と書き手の文に実際に届いて使われているか」）: 書き手に渡す1つの塊 ──────────────
+//   今の書き手（generate-reply）が受け取る状況: 行動台帳の注記（送った・約束）・内覧の報告・送った物件は募集中を確認済み（SENT_CONFIRMED_NOTE）。
+//   届いていない: ①お客様の時の言葉を言った日で直した日付（時系列の帳面はブレインの材料だけ）②これからの内覧（カレンダーの時刻がある予定・道順の質問の時だけ viewing_history）
+//   ③開いている約束がいつから開いているか ④確かめた結果（いつ・どの物件・どうだった）。下書きの「〇日にお伝えした」「先日お送りした」「来週の内覧」が材料なしで書かれる元。
+//   SITUATION_WRITER_NOTE=on（既定 off）の時だけ、meta.situation_now から事実だけの塊を作る（道の言葉は書かない・読み方の決まりも足さない）。
+export const situationWriterNoteOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_WRITER_NOTE ?? "").trim().toLowerCase() === "on";
+const STATUS_JA: Record<string, string> = { available: "募集中", open: "募集中", closed: "募集終了", ended: "募集終了", move_out_planned: "退去予定", applied: "申込あり", occupied: "入居中" };
+export function situationWriterNote(sn: unknown, nowMs: number): string {
+  if (!sn || typeof sn !== "object") return "";
+  const s = sn as SituationNow;
+  const lines: string[] = [];
+  for (const w of (s.timeline?.words ?? []).slice(-3)) lines.push(`- お客様の「${w.word}」（${jstMD(w.said)}に言った）＝${w.label}`);
+  for (const v of (s.timeline?.viewings ?? []).filter((x) => !x.done && Date.parse(x.at) >= nowMs - 12 * 36e5).slice(0, 3)) {
+    const d = new Date(Date.parse(v.at) + 9 * 36e5);
+    lines.push(`- これからの内覧の予定: ${jstMD(v.at)} ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`);
+  }
+  for (const p of (s.promises_open ?? []).slice(0, 3)) lines.push(`- 開いているこちらの約束: ${p.kind === "confirmation_promised" ? `確認${p.object ? `（${p.object}）` : ""}` : p.kind === "pickup_declared" ? "物件のピックアップ" : p.kind === "estimate_declared" ? "御見積書" : p.kind}・${jstMD(p.at)}にした約束（まだ果たしていない）`);
+  for (const c of (s.checked ?? []).slice(-3)) if (c.props.length) lines.push(`- 確かめた結果（${jstMD(c.at)}にお送り済み）: ${c.props.slice(0, 3).join("・")}${c.result.length ? `＝${c.result.slice(0, 3).map((r) => STATUS_JA[r] ?? r).join("・")}` : ""}`);
+  return lines.length ? `\n\n【今の状況（記録・日本時間・事実だけ）】\n${lines.join("\n")}` : "";
 }

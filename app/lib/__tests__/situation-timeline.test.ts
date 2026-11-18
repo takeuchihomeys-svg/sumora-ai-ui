@@ -129,3 +129,20 @@ t("送った物件 count: 見出しは全部の件数・詳しい行は新しい
   assert.match(c, /- 物件24 124/); assert.ok(!/- 物件4 104/.test(c));
 });
 console.log("sent-count ok");
+import { situationWriterNote, situationWriterNoteOn } from "../situation-now";
+t("書き手への今の状況の塊（SITUATION_WRITER_NOTE・既定 off・事実だけ）", () => {
+  assert.equal(situationWriterNoteOn({}), false);
+  const now = Date.parse("2026-11-13T03:00:00Z");
+  const note = situationWriterNote({ v: 1,
+    timeline: { words: [{ word: "来週", said: "2026-11-13T03:00:00Z", from: null, to: null, label: "11/16（月）〜11/22（日）" }], viewings: [{ at: "2026-11-16T05:00:00Z", type: "viewing", done: false }, { at: "2026-11-01T05:00:00Z", type: "viewing", done: true }], promises: [] },
+    promises_open: [{ promise_id: "sf:x", kind: "confirmation_promised", object: "募集状況", at: "2026-11-12T03:00:00Z", due_h: 24, closed_by: null, src: "db", sure: "mid" }],
+    checked: [{ check_id: "aix:L1", at: "2026-11-12T05:00:00Z", what: "vacancy", props: ["Aマンション"], result: ["available"], told: true, src: "db", sure: "high" }],
+  }, now);
+  assert.match(note, /お客様の「来週」（11\/13に言った）＝11\/16（月）〜11\/22（日）/);
+  assert.match(note, /これからの内覧の予定: 11\/16 14:00/);
+  assert.ok(!/11\/1 14:00/.test(note));
+  assert.match(note, /開いているこちらの約束: 確認（募集状況）・11\/12にした約束/);
+  assert.match(note, /確かめた結果（11\/12にお送り済み）: Aマンション＝募集中/);
+  assert.equal(situationWriterNote(null, now), "");
+});
+console.log("writer-note ok");
