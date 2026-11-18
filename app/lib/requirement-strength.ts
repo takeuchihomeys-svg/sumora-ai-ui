@@ -18,11 +18,11 @@ export type RequirementKey = "move_in" | "pet" | "rent_max" | "area" | "size";
 
 /** 2026-11-18 作業員K（統括役の決め・竹内さん memory feedback_must_have_conditions）: 広さ（㎡・帖）の要望の強さも読む。既定 off＝REQUIREMENT_SIZE=on の時だけ readRequirementStrengths が size を書く */
 export function requirementSizeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.REQUIREMENT_SIZE ?? "").trim().toLowerCase() === "on";
+  return String(env.REQUIREMENT_SIZE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（試験 A 63問・B 124問で悪化0・=off で戻す）
 }
 /** 2026-11-18 作業員K（統括役の決め）: 広さが「できれば」の人の 9割未満を保留にしない（property-brain.judgeProperty の SQM_UNDER_SOFT）。既定 off＝REQUIREMENT_SIZE_JUDGE=on の時だけ。絶対（must）は今まで通り */
 export function requirementSizeJudgeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.REQUIREMENT_SIZE_JUDGE ?? "").trim().toLowerCase() === "on";
+  return String(env.REQUIREMENT_SIZE_JUDGE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（試験 A 63問・B 124問で悪化0・=off で戻す）
 }
 export type RequirementStrengths = Partial<Record<RequirementKey, { strength: Strength; evidence: string; at?: string | null }>>;
 

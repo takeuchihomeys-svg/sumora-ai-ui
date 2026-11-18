@@ -7,7 +7,7 @@ import { buildCustomerProfile, judgeProperty, parsePropertyFacts, REASON_POINTS 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra ?? ""); } };
 
-t("スイッチ既定 off", !requirementSizeOn({}) && requirementSizeOn({ REQUIREMENT_SIZE: "on" }) && !reachSizeOn({}) && reachSizeOn({ REACH_SIZE: "on" }));
+t("スイッチ既定 on（2026-11-18）・off で戻す", requirementSizeOn({}) && !requirementSizeOn({ REQUIREMENT_SIZE: "off" }) && reachSizeOn({}) && !reachSizeOn({ REACH_SIZE: "off" }));
 t("実物（11/15）: 出来れば35㎡…なければ全然小さくても大丈夫 → できれば", sizeStrengthOf("出来れば35㎡超えてれば嬉しいです、なければ全然小さくても大丈夫です！") === "nice");
 t("30㎡以上は欲しい → 強い希望（絶対ではない）", sizeStrengthOf("30㎡以上は欲しいです") === "strong");
 t("25㎡以上ないと無理 → 絶対", sizeStrengthOf("25㎡以上ないと無理です") === "must");
@@ -35,8 +35,8 @@ t("off: 広さは数えない（今まで通り）", r0.n === 0);
   const prof = (strength: "must" | "strong" | "nice" | null) => buildCustomerProfile({ rent_max: 100_000, floor_area_min: 35, requirement_strength: strength ? { size: { strength, evidence: "x" } } : null });
   const j = (strength: "must" | "strong" | "nice" | null) => judgeProperty(parsePropertyFacts(S("80,000円", "1K 22㎡")), prof(strength));
   const prev = process.env.REQUIREMENT_SIZE_JUDGE;
-  delete process.env.REQUIREMENT_SIZE_JUDGE;
-  t("judge 既定 off: できればでも 22㎡（35㎡の希望）は今まで通り保留", !requirementSizeJudgeOn({}) && j("nice").flagCodes.includes("SQM_UNDER") && j("nice").verdict === "hold", j("nice").flagCodes);
+  process.env.REQUIREMENT_SIZE_JUDGE = "off";
+  t("judge off: できればでも 22㎡（35㎡の希望）は今まで通り保留", requirementSizeJudgeOn({}) && !requirementSizeJudgeOn({ REQUIREMENT_SIZE_JUDGE: "off" }) && j("nice").flagCodes.includes("SQM_UNDER") && j("nice").verdict === "hold", j("nice").flagCodes);
   process.env.REQUIREMENT_SIZE_JUDGE = "on";
   const n = j("nice");
   t("judge on: できれば → SQM_UNDER_SOFT（−5・保留にしない）", n.reasonCodes.includes("SQM_UNDER_SOFT") && !n.flagCodes.includes("SQM_UNDER") && REASON_POINTS.SQM_UNDER_SOFT === -5, { r: n.reasonCodes, f: n.flagCodes });
