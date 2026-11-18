@@ -142,8 +142,14 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 }
 // 要件の AIX と最終の AIX（押される AIX）が違う → 取り違え
 {
-  const L = buildAskLedger({ asks: [{ quote: "まだ空いてますか", route: "aix", aix: "property_check_result", kind: "question" }], finalAix: "estimate_sheet/with_appeal" });
-  t("要件の AIX ≠ 最終の AIX＝取り違え", L.check.misrouted.length === 1 && L.final_aix === "estimate_sheet", L.check);
+  const asksM = [{ quote: "まだ空いてますか", route: "aix", aix: "property_check_result", kind: "question" }];
+  const o = process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL;
+  process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = "off";
+  const L = buildAskLedger({ asks: asksM, finalAix: "estimate_sheet/with_appeal" });
+  if (o === undefined) delete process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; else process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = o;
+  t("要件の AIX ≠ 最終の AIX＝取り違え（席を合わせない off の時）", L.check.misrouted.length === 1 && L.final_aix === "estimate_sheet", L.check);
+  const Lon = buildAskLedger({ asks: asksM, finalAix: "estimate_sheet/with_appeal" });
+  t("既定 on（11/19）は最終の AIX の席を足すので取り違えにならない", Lon.check.ok && Lon.msgs.some((m) => m.aix === "estimate_sheet"), Lon);
 }
 
 // 同じ言葉の要件が2つ → id を分ける

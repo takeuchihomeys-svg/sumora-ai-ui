@@ -67,7 +67,7 @@ t("種類: 物件の束は1つ", aixKindsOfAsks([{ quote: "a", route: "aix", aix
   t("1種類は on でも同じ", JSON.stringify(a) === JSON.stringify(b));
 }
 
-// 席を最終の AIX に合わせる（TWO_MESSAGE_SEAT_FOLLOWS_FINAL・既定 off）
+// 席を最終の AIX に合わせる（TWO_MESSAGE_SEAT_FOLLOWS_FINAL・11/19 から既定 on）
 {
   const withBoth = <T>(f: () => T): T => { const o1 = process.env.TWO_MESSAGE_AIX_AIX, o2 = process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; process.env.TWO_MESSAGE_AIX_AIX = "on"; process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = "on"; try { return f(); } finally { if (o1 === undefined) delete process.env.TWO_MESSAGE_AIX_AIX; else process.env.TWO_MESSAGE_AIX_AIX = o1; if (o2 === undefined) delete process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; else process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = o2; } };
   // q330 の形: 内覧したい（約束）＋送った物件3件の空き（物件確認した）・最終は内覧調整
@@ -76,7 +76,9 @@ t("種類: 物件の束は1つ", aixKindsOfAsks([{ quote: "a", route: "aix", aix
     { quote: "物件A 1LDK 11階", route: "aix", aix: "property_check_result", about: "vacancy", kind: "question" },
     { quote: "物件B 1LDK 26階", route: "aix", aix: "property_check_result", about: "vacancy", kind: "question" },
   ];
+  const o3 = process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = "off";
   const offL = buildAskLedger({ asks: q330, finalAix: "viewing_invite" });
+  if (o3 === undefined) delete process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; else process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = o3;
   t("q330 off: 取り違え（要件の AIX ≠ 最終の AIX）", offL.check.misrouted.length >= 1, offL.check);
   const p = withBoth(() => planMessages({ asks: q330, finalAix: "viewing_invite" }));
   t("q330 on: 内覧調整の席1つ（確認は文の中）", p.messages.filter((m) => m.slot === "aix").length === 1 && p.messages.find((m) => m.slot === "aix")?.aix === "viewing_invite", p.messages);
