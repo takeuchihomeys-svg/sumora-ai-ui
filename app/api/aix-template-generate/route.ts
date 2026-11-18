@@ -105,7 +105,7 @@ import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib
 import { aixSecondRereadOn, aixSecondRereadMode, brainPressedDiffer, stripBrainDirection, rereadNote } from "@/app/lib/aix-second-reread";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
-import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { isEstimateCard, estimatePropertiesOf, estimateHeadOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
 import { isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote, type OtherAgentSituation, type OtherAgentLineMode } from "@/app/lib/aix-owner-answers-1021";
 import { customerAskedEstimate } from "@/app/lib/customer-mindset";
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
@@ -128,6 +128,7 @@ import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-bluepri
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
+import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1826,7 +1827,30 @@ export async function POST(req: NextRequest) {
     }
     // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（既定 on・ESTIMATE_ASKED_APPEAL=off で戻す）
     const customerAsked = customerAskedEstimate(Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
-    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
+    // 2026-11-18 作業員K（ESTIMATE_SIP_APPEAL・既定 off・estimate-sent-image-appeal.ts）: 見積書のお部屋が採点の表に無い時（持ち込みのお部屋）、
+    //   お客様が送ってきた物件の読み（sent_image_properties）を判定に通した刺さり具合で締める（竹内さんの決定 a43ade78 の材料の穴）。退去予定・今見られるかは ap のまま
+    let sipAppealFirst = false;
+    if (estimateSipAppealOn() && ap.appeal == null && conversationId) {
+      try {
+        const heads = estimateProps.map(estimateHeadOf).filter((h): h is { name: string; room: string } => !!h);
+        if (heads.length) {
+          const testPc = (body as { testPropertyCustomer?: unknown }).testPropertyCustomer;
+          let pc: Record<string, unknown> | null = examSnap && testPc && typeof testPc === "object" ? testPc as Record<string, unknown> : null;
+          if (!pc) {
+            const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+            const pcId = (cl as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+            if (pcId) { const { data } = await supabase.from("property_customers").select("*").eq("id", pcId).maybeSingle(); pc = (data ?? null) as Record<string, unknown> | null; }
+          }
+          const { data: sipRows } = examSnap?.sentImages
+            ? { data: snapshotRows(examSnap.sentImages, { limit: 60 }) }
+            : await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts").eq("conversation_id", conversationId).not("facts", "is", null).order("created_at", { ascending: false }).limit(60);
+          const sa = estimateSipAppeal((sipRows ?? []) as SipRow[], heads, pc as never);
+          if (sa.appeal) { ap = { ...ap, appeal: sa.appeal, found: sa.found }; sipAppealFirst = true; }
+          console.log(JSON.stringify({ tag: "aix-template-generate:estimate-sip-appeal", heads: heads.length, rows: (sipRows ?? []).length, appeal: sa.appeal, found: sa.found }));
+        }
+      } catch (e) { console.warn("[aix-template-generate] estimate-sip-appeal failed:", e instanceof Error ? e.message : e); }
+    }
+    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked, appealFirst: sipAppealFirst });
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
     estimateClosing = dec.closing;
     estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimateProps, closing: dec.closing, staffSentToday: greetSentToday });
