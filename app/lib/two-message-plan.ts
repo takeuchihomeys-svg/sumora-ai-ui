@@ -124,6 +124,28 @@ function withShape(p: Omit<TwoMessagePlan, "shape" | "shapeWhy">): TwoMessagePla
 
 /** 2通目の AIX テンプレート（同じ AIX の訴求・中身の通）がある AIX。竹内さんの形 AT 157・RAT 68 の AIX */
 const TEMPLATE_AIX = new Set(["estimate_sheet", "property_recommendation", "property_check_result"]);
+/**
+ * 2026-11-18 作業員M（統括役の割り振り (a)・組の表 SEND_COMBO_TABLE の「物件を送る AIX → 返信で一押し1件」を書き手に届ける）:
+ *   竹内さん本人の30日で、ブレインは AIX だけ・竹内さんは AIX → 返信 が 14件（物件を送る 11・見積書 2・audit-combo-mismatch）。
+ *   見積書・オススメ・物件確認した には AIX の続きの通（テンプレートの席）があるが、物件を送る（property_send）には無く、AIX の後の通の下書きが作られなかった。
+ *   実送信（竹内さん本人・60日・物件を送る AIX の後10分以内の手打ち 64通）: 「お送りさせて頂きましたお部屋の中でも」40（63%）・オススメ 51・ご案内 45。
+ *   on の時: 物件を送る AIX にも続きの通の席を作り、続きの通の下書きの指示を AIX の種類で分ける（物件を送る＝一押し1件と理由・見積書＝最大限割引とご査収）。
+ *   既定 off（TWO_MESSAGE_SEND_TEMPLATE=on の時だけ）
+ */
+export function twoMessageSendTemplateOn(env: Env = envOf()): boolean {
+  // 画面（AIX の後の下書きは page.tsx が作る）は NEXT_PUBLIC_ をそのまま書いた所だけビルドで埋まる
+  const pub = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_TWO_MESSAGE_SEND_TEMPLATE : undefined;
+  return (env.TWO_MESSAGE_SEND_TEMPLATE ?? pub ?? "").trim().toLowerCase() === "on";
+}
+/** AIX の続きの通の竹内さんの形（AIX の種類ごと・実送信で確かめた形だけ）。分からない種類は null */
+export function afterAixTemplateShape(sentAix: string | null | undefined): string | null {
+  const k = baseKey(sentAix);
+  if (k === "property_send" || k === "property_recommendation")
+    return "送った中から1件を一押し（竹内さんの形「お送りさせて頂きましたお部屋の中でも特に〇〇号室がオススメのお部屋となります！！」＋理由を資料の事実で1つ・何件も送った時だけ）→「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」";
+  if (k === "estimate_sheet")
+    return "竹内さんの形「〇〇号室最大限割引しました初期費用の御見積書となります！！」→「お手隙の際にご査収ください😌！！」か「お気に召されましたらお部屋ご案内させて頂きます！！」（金額は書かない＝AIX の中にある）";
+  return null;
+}
 /** AIX の中身（訴求）に寄る依頼＝テンプレートの通で答えられる（物件そのもの・費用・空き） */
 //   about の値は request-ledger の RequestAbout（property_equipment・property_cost・vacancy）
 /** 文を書く AIX（テンプレートの席が無く、スタッフが文を書く AIX）。竹内さん本人の90日（その AIX が番の最初の AIX）: 内覧調整 53番＝返信が先 4・AIX だけ 43／待ち合わせ 39＝3・28／
@@ -302,7 +324,7 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   const aixAsks = asks.filter((a) => a.route === "aix");
   // AIX のキー: 依頼の中の最初の AIX（無ければ最終の AIX）
   const aixKey = baseKey(aixAsks[0]?.aix) ?? baseKey(i.finalAix);
-  const hasTemplate = !!aixKey && TEMPLATE_AIX.has(aixKey);
+  const hasTemplate = !!aixKey && (TEMPLATE_AIX.has(aixKey) || (aixKey === "property_send" && twoMessageSendTemplateOn()));
   const aixAnswers = aixAsks.map(q);
 
   // ① AIX が無い番＝返信1通（受け・約束・答えを1通に）
@@ -459,6 +481,9 @@ export function twoMessageAfterAixAutoOn(v: string | null | undefined, isTestCon
 export function afterAixDraftHint(brief: ReturnType<typeof afterAixReplyBrief>, sentAix: string | null | undefined): string {
   if (brief?.template) {
     const qs0 = brief.answers.map((a) => `「${a.quote}」${a.answer ? `（要点: ${a.answer}）` : ""}`).join("・");
+    // 2026-11-18 作業員M（TWO_MESSAGE_SEND_TEMPLATE=on の時だけ）: AIX の種類ごとの竹内さんの形（実送信で確かめた形）を渡す
+    const shape = twoMessageSendTemplateOn() ? afterAixTemplateShape(sentAix) : null;
+    if (shape) return `【AIX の後に続けて送る通（この番の組み立て・竹内さん 11/05・組の表 AIX → 返信）】先に AIX【${aixLabelOf(sentAix)}】を送った。この通は AIX の続き: ${shape}。${qs0 ? `次の質問にも答える: ${qs0}。` : ""}AIX で送った金額・日時・資料に無い事は書かない。挨拶は入れない（同じ番の続き）。`;
     return `【AIX の後に続けて送る通（この番の組み立て・竹内さん 11/05）】先に AIX【${aixLabelOf(sentAix)}】を送った。この通は AIX の続き: 送った物の受け止めと信頼（竹内さんの形「〇〇号室最大限割引しました初期費用の御見積書となります！！」「お送りさせて頂きましたお部屋の中でも〇〇号室が…オススメのお部屋となります！！」）と、訴求（「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」）を短く。${qs0 ? `次の質問にも答える: ${qs0}。` : ""}AIX で送った金額・日時・資料に無い事は書かない。挨拶は入れない（同じ番の続き）。`;
   }
   if (!brief || !brief.answers.length) return "";
