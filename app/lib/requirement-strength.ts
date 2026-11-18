@@ -14,7 +14,12 @@
 //   送付文: mustSendLine（スタッフの言い方のまま）
 
 export type Strength = "must" | "strong" | "nice";
-export type RequirementKey = "move_in" | "pet" | "rent_max" | "area";
+export type RequirementKey = "move_in" | "pet" | "rent_max" | "area" | "size";
+
+/** 2026-11-18 作業員K（統括役の決め・竹内さん memory feedback_must_have_conditions）: 広さ（㎡・帖）の要望の強さも読む。既定 off＝REQUIREMENT_SIZE=on の時だけ readRequirementStrengths が size を書く */
+export function requirementSizeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.REQUIREMENT_SIZE ?? "").trim().toLowerCase() === "on";
+}
 export type RequirementStrengths = Partial<Record<RequirementKey, { strength: Strength; evidence: string; at?: string | null }>>;
 
 const nf = (s: unknown) => String(s ?? "").normalize("NFKC");
@@ -78,14 +83,30 @@ export function areaStrengthOf(text: string): Strength | null {
   return null;
 }
 
+// ── 広さ（㎡・帖・広め）─────────────────────────────────────
+//   「なければ（全然）小さくても大丈夫」「狭くても大丈夫」は、できれば（弱い希望）＝下限を必須にしない（11/15 の実物: 出来れば35㎡超え…なければ全然小さくても大丈夫）
+const SIZE_CTX_RE = /[0-9.]+\s*(?:㎡|m²|m2|平米|帖|畳)|広さ|広め|広い(?:部屋|お部屋|方|ところ|とこ)/;
+const SIZE_SOFT_RE = /(?:なければ|無ければ|無理なら|難しければ)[^。\n]{0,8}(?:小さく|狭く)ても|(?:小さく|狭く)ても(?:大丈夫|いい|良い|OK|構わない)/;
+const SIZE_MUST_RE = /(?:[0-9.]+\s*(?:㎡|m²|m2|平米|帖|畳))[^。\n]{0,6}(?:以上(?:は)?(?:ないと|でないと|じゃないと|必須|絶対|必要)|は必要)|(?:狭いと|小さいと)(?:困|無理|ダメ)/;
+export function sizeStrengthOf(text: string): Strength | null {
+  const t = nf(text);
+  if (!SIZE_CTX_RE.test(t)) return null;
+  if (SIZE_SOFT_RE.test(t) || (NICE_WORD_RE.test(t) && !MUST_WORD_RE.test(t))) return "nice";
+  if (SIZE_MUST_RE.test(t) || MUST_WORD_RE.test(t)) return "must";
+  // 「30㎡以上は欲しい」＝強い希望（絶対ではない）
+  if (/(?:㎡|m²|m2|平米|帖|畳)[^。\n]{0,6}(?:欲しい|ほしい)/.test(t)) return "strong";
+  return null;
+}
+
 const RANK: Record<Strength, number> = { nice: 1, strong: 2, must: 3 };
 
 /**
  * お客様の発言（古い順）から要望ごとの強さを読む。同じ要望は新しい発言が勝つ。ただし同じ会話で「急ぎ」と言った後の入居の話は絶対にする
  *   （ゆいと: 10/02 の「時間的に厳しい・一週間以内に決めたい」→ 10/03「10月後半くらいに入れるところ」）
  */
-export function readRequirementStrengths(statements: ReadonlyArray<{ text: string | null | undefined; at?: string | null }>): RequirementStrengths {
+export function readRequirementStrengths(statements: ReadonlyArray<{ text: string | null | undefined; at?: string | null }>, opts: { size?: boolean } = {}): RequirementStrengths {
   const out: RequirementStrengths = {};
+  const sizeOn = opts.size ?? requirementSizeOn();
   let urgentAt: string | null = null;
   for (const s of statements) {
     const whole = nf(s.text);
@@ -105,6 +126,7 @@ export function readRequirementStrengths(statements: ReadonlyArray<{ text: strin
       const pet = petStrengthOf(t); if (pet) out.pet = { strength: pet, evidence: ev, at: s.at ?? null };
       const rent = rentStrengthOf(t); if (rent) out.rent_max = { strength: rent, evidence: ev, at: s.at ?? null };
       const area = areaStrengthOf(t); if (area) out.area = { strength: area, evidence: ev, at: s.at ?? null };
+      if (sizeOn) { const size = sizeStrengthOf(t); if (size) out.size = { strength: size, evidence: ev, at: s.at ?? null }; }
     }
   }
   return out;
@@ -120,7 +142,7 @@ export function mergeRequirementStrengths(stored: unknown, read: RequirementStre
 export function normalizeRequirementStrengths(v: unknown): RequirementStrengths {
   if (!v || typeof v !== "object") return {};
   const out: RequirementStrengths = {};
-  for (const k of ["move_in", "pet", "rent_max", "area"] as RequirementKey[]) {
+  for (const k of ["move_in", "pet", "rent_max", "area", "size"] as RequirementKey[]) {
     const e = (v as Record<string, unknown>)[k] as { strength?: unknown; evidence?: unknown; at?: unknown } | undefined;
     if (e && (e.strength === "must" || e.strength === "strong" || e.strength === "nice")) out[k] = { strength: e.strength, evidence: String(e.evidence ?? ""), at: typeof e.at === "string" ? e.at : null };
   }

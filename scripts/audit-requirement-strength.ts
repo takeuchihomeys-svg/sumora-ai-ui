@@ -33,8 +33,8 @@ async function main() {
   const convOfPc = new Map(convs.filter((c) => c.property_customer_id).map((c) => [String(c.property_customer_id), c]));
 
   // ① 絶対のお客様
-  const mustCount: Record<RequirementKey, number> = { move_in: 0, pet: 0, rent_max: 0, area: 0 };
-  const anyCount: Record<RequirementKey, number> = { move_in: 0, pet: 0, rent_max: 0, area: 0 };
+  const mustCount: Record<RequirementKey, number> = { move_in: 0, pet: 0, rent_max: 0, area: 0, size: 0 };
+  const anyCount: Record<RequirementKey, number> = { move_in: 0, pet: 0, rent_max: 0, area: 0, size: 0 };
   const examples: string[] = [];
   for (const c of convs) {
     const cm = (byConv.get(c.id) ?? []).filter((m) => m.sender === "customer");

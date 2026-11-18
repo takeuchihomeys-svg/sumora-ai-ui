@@ -47,6 +47,15 @@ export const REACH_FIELDS: Record<ConditionStatementKind, string[]> = {
   通勤: ["commute_station", "commute_minutes"], ペット: ["pet", "preferences", "other_requests"], 徒歩: ["walk_minutes"],
 } as Record<ConditionStatementKind, string[]>;
 
+/** 2026-11-18 広さの種類（condition-reading には無い）。REACH_SIZE=on の時だけ数える（既定 off）。㎡・平米・帖で広さを言った発言 */
+export const SIZE_FIELDS = ["floor_area_min", "floor_area_max"];
+export function reachSizeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.REACH_SIZE ?? "").trim().toLowerCase() === "on";
+}
+export function sizeStatementOf(text: string): boolean {
+  return /[0-9０-９.]+\s*(?:㎡|m²|m2|平米|帖|畳)(?:以上|超|くらい|ぐらい|程度|前後)?/.test(text) && /以上|超|くらい|ぐらい|程度|前後|広|欲しい|希望|がいい|が良い|嬉しい/.test(text);
+}
+
 export type ReachMsg = { conversation_id: string; text: string | null; created_at: string };
 export type ReachHist = { property_customer_id: string; changed_field: string; created_at: string };
 export type ReachStats = { n: number; reached: number; atCreate: number; already: number; missed: number; byKind: Record<string, { n: number; ok: number }> };
@@ -56,7 +65,10 @@ export function conditionReachStats(i: {
   pcOfConv: ReadonlyMap<string, string>;
   hist: ReadonlyArray<ReachHist>;
   pcRow: ReadonlyMap<string, Row>;
+  /** 広さも数える（REACH_SIZE） */
+  size?: boolean;
 }): ReachStats {
+  const sizeOn = i.size ?? reachSizeOn();
   const histByPc = new Map<string, ReachHist[]>();
   for (const h of i.hist) { const k = h.property_customer_id; if (!histByPc.has(k)) histByPc.set(k, []); histByPc.get(k)!.push(h); }
   const out: ReachStats = { n: 0, reached: 0, atCreate: 0, already: 0, missed: 0, byKind: {} };
@@ -65,14 +77,15 @@ export function conditionReachStats(i: {
     if (!pc || !m.text || isFilledSumoraForm(m.text) || (m.text.match(/[①②③④⑤⑥⑦⑧]/g) ?? []).length >= 2) continue;
     const turn = classifyConditionTurn(m.text);
     if (!turn.conditionText) continue;
-    const kinds = [...new Set(readConditionStatements(m.text).map((x) => x.kind))];
+    const kinds: string[] = [...new Set(readConditionStatements(m.text).map((x) => x.kind as string))];
+    if (sizeOn && sizeStatementOf(turn.conditionText)) kinds.push("広さ");
     if (!kinds.length) continue;
     const t = Date.parse(m.created_at);
     const near = (histByPc.get(pc) ?? []).filter((h) => { const x = Date.parse(h.created_at); return x >= t - 60_000 && x <= t + 30 * 60_000; });
     const row = i.pcRow.get(pc) ?? {};
     const created = Date.parse(String(row.created_at ?? ""));
     for (const k of kinds) {
-      const fields = REACH_FIELDS[k] ?? [];
+      const fields = k === "広さ" ? SIZE_FIELDS : (REACH_FIELDS[k as ConditionStatementKind] ?? []);
       const bk = (out.byKind[k] ??= { n: 0, ok: 0 });
       out.n++; bk.n++;
       if (near.some((h) => fields.includes(h.changed_field))) { out.reached++; bk.ok++; continue; }
