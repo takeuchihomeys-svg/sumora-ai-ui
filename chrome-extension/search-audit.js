@@ -135,6 +135,19 @@
     return list;
   }
 
+  /**
+   * ページの段を1回だけ足す。ページは積み上げた一覧を進捗のたびに丸ごと送るので、
+   * そのまま足すと同じ段が重なり MAX_STEPS で後ろ（止まった所）が押し出される（2026-11-19 audit #1513）。
+   */
+  function pushPageStep(r, k, d, at) {
+    if (!r._pageSeen || typeof r._pageSeen !== "object" || (r._pageSeenN || 0) > 1500) { r._pageSeen = {}; r._pageSeenN = 0; }
+    var key = String(k).slice(0, 28) + "|" + String(at || "") + "|" + (d == null ? "" : String(d).slice(0, 60));
+    if (r._pageSeen[key]) return;
+    r._pageSeen[key] = 1;
+    r._pageSeenN = (r._pageSeenN || 0) + 1;
+    pushStep(r.steps, "page:" + String(k).slice(0, 28), d == null ? null : String(d).slice(0, 100), at || Date.now());
+  }
+
   function byteLen(obj) {
     try { return JSON.stringify(obj).length; } catch (_) { return Infinity; }
   }
@@ -348,7 +361,7 @@
       if (fill && fill.error) r.fill_error = String(fill.error).slice(0, 300);
       pushStep(r.steps, "fill_done", fill && fill.error ? "error: " + String(fill.error).slice(0, 100) : "ok", now());
       if (r.filled && Array.isArray(r.filled.steps)) {
-        r.filled.steps.forEach(function (s) { if (s && s.k) pushStep(r.steps, "page:" + s.k, s.d, s.at || now()); });
+        r.filled.steps.forEach(function (s) { if (s && s.k) pushPageStep(r, s.k, s.d, s.at || now()); });
         delete r.filled.steps;
       }
       return r;
@@ -365,7 +378,7 @@
       for (var i = 0; i < list.length; i++) {
         var s = list[i];
         if (!s || !s.k) continue;
-        pushStep(r.steps, "page:" + String(s.k).slice(0, 28), s.d == null ? null : String(s.d).slice(0, 100), s.at || now());
+        pushPageStep(r, s.k, s.d, s.at || now());
       }
       pushStep(r.steps, "fill_progress", "n=" + list.length, now());
       /**

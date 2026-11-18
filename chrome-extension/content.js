@@ -523,10 +523,23 @@ window.addEventListener("message", function (e) {
     } else if (e.data.from === "axlx-page-learn-refresh") {
       var rid = e.data.id;
       try {
-        chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force }, function () {
+        chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force }, function (res) {
           void chrome.runtime.lastError;
           pushAll();
-          try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid }, "*"); } catch (_) {}
+          var slim = null;
+          try {
+            if (res && typeof res === "object") {
+              slim = {
+                ok: res.ok !== false, skipped: res.skipped || null, empty: !!res.empty,
+                error: res.error ? String(res.error).slice(0, 80) : null,
+                screen_solid: typeof res.screen_solid === "number" ? res.screen_solid : null,
+                screen_all: typeof res.screen_all === "number" ? res.screen_all : null,
+                retry_in_ms: typeof res.retry_in_ms === "number" ? res.retry_in_ms : null,
+                ver: res.ver ? String(res.ver).slice(0, 19) : null,
+              };
+            }
+          } catch (_) { slim = null; }
+          try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid, res: slim }, "*"); } catch (_) {}
         });
       } catch (_) {
         try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid }, "*"); } catch (__) {}

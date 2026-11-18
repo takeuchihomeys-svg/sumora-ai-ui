@@ -419,13 +419,28 @@ function _clickAuditCtx(btn) {
   return c;
 }
 function _auditTagWith(ctx, site, customer, conditions) { return _auditTag(site, customer, conditions, ctx); }
+/**
+ * ★ 2026-11-19 タクヤ audit #1513/#1514: 同じお客様・同じサイトの開始が4秒差で2回来て、
+ *   2本目（#1514）は page が受けず（実行中）steps 0 のまま started で残った。
+ *   → 15秒以内の同じお客様・サイトの開始は、前の run_id を使い回して started を送らない。
+ */
+var _lastAuditTag = null; // { key, runId, at }
 function _auditTag(site, customer, conditions, ctx) {
   try {
     var A = self.AxlxSearchAudit, core = self.AxlxModeCore;
     if (!A || !core || !conditions) return conditions;
     var st = _modeState();
     if (!core.behavior(st.mode, st.brain).searchAudit) return conditions;
+    var _tagKey = String(A.siteKey(site)) + "|" + (customer && customer.id != null ? String(customer.id) : "") + "|" + (conditions.is_wide ? "w" : "p");
+    var _nowTag = Date.now();
+    if (!(ctx && ctx.runId) && _lastAuditTag && _lastAuditTag.key === _tagKey && customer && customer.id != null &&
+        _nowTag - _lastAuditTag.at < 15000) {
+      conditions._audit_run_id = _lastAuditTag.runId;
+      console.log("[search-audit] 同じお客様の開始が " + (_nowTag - _lastAuditTag.at) + "ms 後にもう1回 → 同じ run_id を使う");
+      return conditions;
+    }
     var runId = (ctx && ctx.runId) || A.newRunId();
+    _lastAuditTag = { key: _tagKey, runId: runId, at: _nowTag };
     conditions._audit_run_id = runId;
     var ver = null;
     try { ver = chrome.runtime.getManifest().version; } catch (_) {}

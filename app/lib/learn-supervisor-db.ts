@@ -100,6 +100,7 @@ export async function saveSupervisorLog(
         .select("id,meeting")
         .eq("scope", row.scope)
         .eq("bundle_at", row.bundle_at)
+        .order("created_at", { ascending: false })
         .limit(1);
       if (!dup.error && Array.isArray(dup.data) && dup.data.length) {
         const oldMeeting = dup.data[0].meeting;
@@ -127,11 +128,17 @@ export async function saveSupervisorLog(
               weak_n: row.weak_n,
               block: row.block,
             })
-            .eq("id", dup.data[0].id);
+            .eq("id", dup.data[0].id)
+            .select("id");
           if (upd.error) return { ok: false, error: String(upd.error.message).slice(0, 200) };
-          return { ok: true, updated: true };
+          /**
+           * 公開キー（RLS）では update が0行でもエラーにならない → 0行なら新しい行として残す（判断を消さない）。
+           * ⚠ 上書き先は「判断した束の bundle_at」の行。自動の回で後から行が積まれるため、最新順の先頭とは限らない。
+           */
+          if (Array.isArray(upd.data) && upd.data.length > 0) return { ok: true, updated: true };
+        } else {
+          return { ok: true, skipped: "same_bundle" };
         }
-        return { ok: true, skipped: "same_bundle" };
       }
     }
     const ins = await supabase.from("learn_supervisor_log").insert(row as unknown as Record<string, unknown>);

@@ -1553,23 +1553,24 @@
       var onDone = function (e) {
         if (e.source !== window || !e.data) return;
         if (e.data.from === "axlx-page-learn-refresh-done" && e.data.id === id) {
-          fin();
+          fin(e.data.res || null);
         }
       };
-      var fin = function () {
+      // 返す値: 裏側の取り直し結果（ok/skipped/error/screen_solid…）・届かなければ null・8秒で "timeout"
+      var fin = function (res) {
         if (done) return;
         done = true;
         try { window.removeEventListener("message", onDone); } catch (_) {}
-        resolve(true);
+        resolve(res === undefined ? null : res);
       };
       window.addEventListener("message", onDone);
       try {
         if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!force }, function () { fin(); });
+          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!force }, function (r) { fin(r || null); });
         }
       } catch (_) {}
       try { window.postMessage({ from: "axlx-page-learn-refresh", id: id, force: !!force }, "*"); } catch (_) {}
-      setTimeout(fin, 8000);
+      setTimeout(function () { fin("timeout"); }, 8000);
     });
   }
   function _auditLearnWarmFromState(r, force) {
@@ -2597,8 +2598,13 @@
       try {
         var d = e.data.data;
         if (d && typeof d === "object") {
+          var _wasEmpty = !_learnScreen || typeof _learnScreen !== "object" || !Object.keys(_learnScreen).length;
           _learnCacheSave(d);
           _applyLearnStoragePayload(d);
+          try {
+            var _nowN = (d.axlx_learn_screen && typeof d.axlx_learn_screen === "object") ? Object.keys(d.axlx_learn_screen).length : 0;
+            if (_audit && _wasEmpty && _nowN > 0) _auditStepP("learn_screen_late", "画面位置が後から届いた screen=" + _nowN);
+          } catch (_) {}
         }
       } catch (_) {}
     });
@@ -2608,7 +2614,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.112";
+  var _AXLX_PAGE_VER = "2.8.114";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -2870,7 +2876,18 @@
         _loadLearnNextAsync(true).then(done, done);
       };
       var warmLocal = function () {
-        _requestLearnRefresh(true).then(function () {
+        _requestLearnRefresh(true).then(function (res) {
+          try {
+            if (_audit) {
+              var _rd = res === "timeout" ? "timeout8s（裏の取り直しが終わる前に読む・後から届けば反映）"
+                : !res ? "結果なし"
+                : ((res.ok === false ? "失敗 " + (res.error || "") : (res.skipped ? "取らず " + res.skipped : (res.empty ? "束が空" : "取込"))) +
+                  (res.screen_solid != null ? " solid=" + res.screen_solid : "") +
+                  (res.retry_in_ms != null ? " 待ち" + Math.round(res.retry_in_ms / 1000) + "秒" : "") +
+                  (res.ver ? " 版" + res.ver : ""));
+              _auditStepP("learn_refresh_res", String(_rd).slice(0, 110));
+            }
+          } catch (_) {}
           return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS), 8000, true);
         }).then(function (r) {
           try { _applyLearnStoragePayload(r); } catch (_) {}
@@ -3392,8 +3409,24 @@
       return ('click:' + String(el.textContent || '').replace(/\s+/g, '')).slice(0, 40);
     } catch (e) { return 'click'; }
   }
+  function _isElQueuedOrBusy(el) {
+    if (_clickBusyItem && _clickBusyItem.el === el) return true;
+    for (var qi = 0; qi < _clickQueue.length; qi++) {
+      if (_clickQueue[qi] && _clickQueue[qi].el === el) return true;
+    }
+    return false;
+  }
   function enqueueHumanClick(el, clickFn, minGap, maxGap, _unused, opts) {
-    if (!el || el.__axPending) return false;
+    if (!el) return false;
+    /**
+     * ★ 2026-11-19 タクヤ audit #1513: 列にも処理中にも無いのに __axPending が残った欄は二度と押せず、
+     *   呼び出し側の待ち（沿線の全部チェック待ち等）が永久に回った。印だけ残った物は外して積み直す。
+     */
+    if (el.__axPending && !_isElQueuedOrBusy(el)) {
+      el.__axPending = false;
+      try { _auditStepP("stale_pending_reset", String(_opLabel(el)).slice(0, 36)); } catch (_) {}
+    }
+    if (el.__axPending) return false;
     if (_axHumanTookOver) return false;
     el.__axPending = true;
     /**
@@ -3664,6 +3697,7 @@
     try {
       // 区・select の「レーン」は迷い・停止を自分の混合（_wardGapPlan / _selGapPlan・最大約11秒）で持つ
       if (item && item.lane) return 0;
+      if (item && item._pauseDone) return 0;
       if (_wardRunActive()) return 0;
     } catch (_) {}
     _opsSincePause++;
@@ -3717,6 +3751,14 @@
         try { _auditStepP('fill_resume', '止まった後に再開'); } catch (_) {}
         _scheduleClickDrain();
       };
+      /**
+       * ★ 2026-11-19 タクヤ audit #1513「沿線選択でとまった」:
+       *   止まる前に取り出した1件を列へ戻さず捨てていた → その欄は押されないまま __axPending だけ残り、
+       *   以後 enqueueHumanClick が黙って弾く → 沿線の段が「全部チェック待ち」を40秒回り続けた。
+       *   → 止まった1件は列の先頭へ戻し、再開したらその1件から押す（同じ1件で二度止まらない）。
+       */
+      item._pauseDone = true;
+      _clickQueue.unshift(item);
       _clickBusyItem = null;
       _holdingPause = true;
       var P0 = window.AxlxPointerUi;
@@ -4258,6 +4300,7 @@
   function clearClickQueue() {
     _clickQueue.forEach(function(it) { if (it.el) it.el.__axPending = false; });
     _clickQueue.length = 0;
+    try { if (_clickBusyItem && _clickBusyItem.el) _clickBusyItem.el.__axPending = false; } catch (_) {}
     _clickBusyItem = null;
     if (_clickQueueTimer) { clearTimeout(_clickQueueTimer); _clickQueueTimer = null; }
   }
@@ -4878,7 +4921,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -4911,7 +4954,7 @@
        *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
        */
       var _pinFlush = _PIN.test(String(k));
-      var _clearKey = /station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok/.test(String(k));
+      var _clearKey = /learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok/.test(String(k));
       if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;
@@ -11457,8 +11500,24 @@
             })();
             if (!_lineOk) {
               // まだ路線が入っていない（クリックの列の途中）→ この段をもう一度
+              try {
+                window.__axlxLineWaitN = (window.__axlxLineWaitN || 0) + 1;
+                if (_audit && window.__axlxLineWaitN % 10 === 0) {
+                  var _missLn = (cond.route_ids || []).map(function (id) { return ROUTE_LINE_MAP[id]; }).filter(Boolean)
+                    .filter(function (nm) {
+                      var n0 = norm(nm);
+                      return !Array.prototype.slice.call(document.querySelectorAll('label.one_line')).some(function (l) {
+                        var c = l.querySelector('input[type="checkbox"]');
+                        if (!c && l.htmlFor) { try { c = document.getElementById(l.htmlFor); } catch (_) { c = null; } }
+                        return c && c.checked && norm(l.textContent) === n0;
+                      });
+                    });
+                  _auditStepP("station_line_wait", window.__axlxLineWaitN + "回待ち 未チェック=" + _missLn.join("・").slice(0, 80));
+                }
+              } catch (_) {}
               return false;
             }
+            try { window.__axlxLineWaitN = 0; } catch (_) {}
             return true;
           },
           function() {

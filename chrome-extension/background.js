@@ -2665,8 +2665,19 @@ function _learnStartJitterMs() {
  *   ⚠ 成否の後始末（間隔を延ばす・戻す）は**ここで1か所**でやる。
  *     `_refreshLearnedBundle` の中に散らすと、早期 return のどれかで記録し忘れて静かに壊れる。
  */
-function _refreshLearnedBundleQueued(force) {
+function _refreshLearnedBundleQueued(force, _noChain) {
   if (_learnInflight) {
+    /**
+     * ★ 2026-11-19 タクヤ audit #1513（screen=0 のまま自動開始）:
+     *   強制の取り直しが、実行中の通常確認（版が同じで何もしない）に吸収されて終わっていた。
+     *   → 実行中の結果が「何もしなかった」なら、終わった後に1回だけ強制で取り直す（backoff 中は待つ）。
+     */
+    if (force && !_noChain) {
+      return _learnInflight.then(function (r) {
+        if (r && r.skipped && r.skipped !== "backoff") return _refreshLearnedBundleQueued(true, true);
+        return r;
+      });
+    }
     // 実行中 → そのまま待つ（重ねて呼ばない）
     return _learnInflight;
   }
@@ -2756,6 +2767,7 @@ async function _refreshLearnedBundle(force) {
       "axlx_learn_link",
       "axlx_learn_needs_auto",
       "axlx_learn_screen",
+      "axlx_learn_empty_refetch_at",
     ]));
     var last = Number(st && st.axlx_learn_at) || 0;
     var lastVer = String((st && st.axlx_learn_ver) || "");
@@ -2833,6 +2845,13 @@ async function _refreshLearnedBundle(force) {
               try { console.log("[learn] 版同じだが solid 増（手元" + _localSolid + "→サーバ" + _serverSolid + "）→取り直します"); } catch (_) {}
             } else if ((_localSolid === 0 || _localSolid == null || _localScreenN === 0) && _serverSolid != null && _serverSolid > 0) {
               try { console.log("[learn] 版同じだが手元screen空/solid0（サーバ solid=" + _serverSolid + "）→取り直します"); } catch (_) {}
+            } else if (_localScreenN === 0 && Date.now() - (Number(st && st.axlx_learn_empty_refetch_at) || 0) > 10 * 60 * 1000) {
+              /**
+               * ★ 2026-11-19: 本番の版確認が screen_solid を返さない時（_serverSolid=null）も、
+               *   手元の画面位置が空なら取り直す（10分に1回まで・サーバーの負担を抑える）。
+               */
+              try { console.log("[learn] 版同じだが手元screen空（サーバ solid 不明）→取り直します"); } catch (_) {}
+              try { await chrome.storage.local.set({ axlx_learn_empty_refetch_at: Date.now() }); } catch (_) {}
             } else {
               var _localNextN = 0;
               var _localPtsN = 0;
