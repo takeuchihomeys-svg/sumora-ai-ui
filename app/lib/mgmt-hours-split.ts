@@ -114,7 +114,8 @@ export function mgmtNightNoDirectOn(env: Record<string, string | undefined> = ty
  * 切替: MGMT_NIGHT_FC_TOMORROW=on の時だけ（既定 off）。
  */
 export function mgmtNightFcTomorrowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.MGMT_NIGHT_FC_TOMORROW ?? "").trim().toLowerCase() === "on";
+  // 2026-11-18 作業員L: 試験 L1118-mgmt-off → on（q136 q157 q211 q197 q095・下書きまで2回）で悪くなった問題 0・本質の道 6/8→7/8 ＝既定 on（戻す =off）
+  return (env.MGMT_NIGHT_FC_TOMORROW ?? "on").trim().toLowerCase() !== "off";
 }
 export function mgmtNightFcTomorrowNote(o: { hour: number; customerText: string | null | undefined }, env?: Record<string, string | undefined>): string {
   if (!mgmtNightFcTomorrowOn(env) || !(o.hour >= 18)) return "";
