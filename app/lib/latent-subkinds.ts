@@ -6,7 +6,7 @@
 //   下の種類ごとに「竹内さんが言う一文の型（phraseKind）」と先回りの事実（fact）・誘導先（lead）を持つ。
 //   今の欄との対応: 作業員21 の customer-mindset.ANXIETY_TARGETS（8種）・作業員10 の LATENT_KINDS（9種）は上の種類だけを持つ＝下の種類は読めていない。
 // 置き方: 読みの欄（道の前に置ける事実）。次の一手・押す・誘導の言葉は欄に入れない（lead は表の数えのための記録で、ブレインには渡さない）。
-// スイッチ: LATENT_SUBKINDS（既定 off＝どこからも読まない）。
+// スイッチ: LATENT_SUBKINDS（2026-11-18 既定 on＝brain-core が LATENT_FIVE off の時に記録だけ・=off で止める）。
 
 /** 上の種類（compose-sentence-plan.LATENT_KINDS と同じ名前） */
 export const LATENT_TOP = ["審査", "先に取られる", "費用", "入居日・時期", "住み心地・周り", "物件が見つからない", "内覧できない", "対応・信頼", "事情の変化"] as const;
@@ -66,7 +66,8 @@ export function subkindOf(r: LatentReadLike): LatentSubkind | null {
 }
 
 export function latentSubkindsOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.LATENT_SUBKINDS ?? "").trim().toLowerCase() === "on";
+  // 2026-11-18 既定 on（記録だけ・meta.latent_subkind_record・文の統括は読まない。k1118-latsub-p1〜p3＝8問＋守り 悪化0）。=off で戻す
+  return String(env.LATENT_SUBKINDS ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 2026-11-13（点検役の文の組み立て 12362・12548・12265: customer_concern が空だと潜在の行が立たない）:
