@@ -3239,6 +3239,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const equipmentAnswer = await loadEquipmentAnswerWithin(12_000, { conversationId, customerText: unrepliedTurn.text });
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
+    // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
+    if (equipmentAnswer.question.wish) customerStateBlockText += "\n→ お客様の今の発言は設備の希望（質問の形ではない）。上の事実で、こちらが既に送った物件の中に希望に合う物件がある時は、新しい条件で探す番ではなく送った物件への問いの番（竹内さん 11/09「お送りしたお部屋でカウンターキッチン付のお部屋はこちらの1部屋・お気に召されましたらご案内」）。合う物件が無い・資料で分からない時だけ探す約束。";
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
