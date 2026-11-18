@@ -12,3 +12,10 @@ ok("off 3日は黙る", doneCheckOf({ id: 1, title: "x", stage: "built_off", upd
 ok("on なのにコミット無し", /コミット/.test(doneCheckOf({ id: 1, title: "x", stage: "on", updated_at: "2026-11-18T11:00:00Z", commits: [] }, now) ?? ""));
 ok("passed のまま3日", /悪化0/.test(doneCheckOf({ id: 1, title: "x", stage: "passed", updated_at: "2026-11-15T00:00:00Z" }, now) ?? ""));
 console.log(bad ? `${bad} failed` : "all ok"); if (bad) process.exit(1);
+import { cut, wellFormed } from "./unfinished-inventory";
+{
+  const ok2 = (n: string, c: boolean) => { console.log(`${c ? "  ✓" : "  ✗"} ${n}`); if (!c) process.exitCode = 1; };
+  const s = "絵文字＝😊😌🌟";
+  ok2("cut は絵文字を割らない", cut(s, 5) === "絵文字＝😊" && JSON.stringify(cut(s, 5)).includes("😊"));
+  ok2("片割れを落とす", wellFormed(s.slice(0, 5)) === "絵文字＝" && wellFormed("a\uD83Db") === "ab" && wellFormed("😊") === "😊");
+}

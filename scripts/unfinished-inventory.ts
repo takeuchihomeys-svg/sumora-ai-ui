@@ -156,6 +156,17 @@ function catOfSwitch(s: Sw, ex: ExamRec[] | undefined, mapRow: { layer?: string;
   return { cat: "A", why: "試験の記録なし＝試験して on" };
 }
 
+// ── 文字の切り方（2026-11-18 統括役: --import が「Empty or invalid json」で止まった＝区切りで絵文字のサロゲートの片割れが残った）──
+/** 文字の単位（コードポイント）で n 文字に切る（絵文字を半分に割らない） */
+export const cut = (s: string, n: number): string => Array.from(s).slice(0, n).join("");
+/** 片割れのサロゲートを落とす（他の所で UTF-16 の単位で切られた文字も JSON・DB に入る形にする） */
+export const wellFormed = (s: string): string => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+function cleanRow<T extends Record<string, unknown>>(r: T): T {
+  const o: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? wellFormed(v) : Array.isArray(v) ? v.map((x) => (typeof x === "string" ? wellFormed(x) : x)) : v;
+  return o as T;
+}
+
 // ── 仕事の台帳（work_items）の行にする ──
 export type WorkItemRow = {
   title: string; area: string; origin: "meeting" | "owner_request" | "found_gap" | "built_off"; requested_at: string | null; requested_quote: string | null;
@@ -174,7 +185,7 @@ const QT: Array<[RegExp, string]> = [[/つなぎ|誘い/, "つなぎ"], [/2通|�
 const qtOf = (t: string) => QT.filter(([re]) => re.test(t)).map(([, v]) => v).slice(0, 2).join("・") || null;
 const STAGE_OF_CAT: Record<Cat, string> = { A: "built_off", B: "building", C: "waiting_owner", D: "built_off" };
 function toWorkItem(i: { kind: string; key: string; cat: Cat; line: string; reason: string; who: string; date: string; src: WL | { sw: Sw; ex?: ExamRec[] } }, rank: number): WorkItemRow {
-  const blocker = i.cat === "D" ? `D（もう要らない）の案: ${i.reason}`.slice(0, 300) : i.cat === "C" ? i.reason.slice(0, 300) : null;
+  const blocker = i.cat === "D" ? cut(`D（もう要らない）の案: ${i.reason}`, 300) : i.cat === "C" ? cut(i.reason, 300) : null;
   if ("task" in i.src) {
     const r = i.src;
     const t = `${r.task} ${r.summary ?? ""} ${r.next_step ?? ""}`;
@@ -182,9 +193,9 @@ function toWorkItem(i: { kind: string; key: string; cat: Cat; line: string; reas
     const quote = /竹内さん[^「]{0,12}「([^」]{4,120})」/.exec(t)?.[1] ?? null;
     const stage = r.status === "blocked" ? "blocked" : r.status === "waiting_owner" ? "waiting_owner" : i.cat === "A" ? "testing" : STAGE_OF_CAT[i.cat];
     return {
-      title: r.task.slice(0, 200), area: areaOf(t), origin: /竹内さん/.test(t) ? "owner_request" : "found_gap", requested_at: r.created_at, requested_quote: quote,
+      title: cut(r.task, 200), area: areaOf(t), origin: /竹内さん/.test(t) ? "owner_request" : "found_gap", requested_at: r.created_at, requested_quote: quote,
       stage, owner: r.actor, switch_name: null, switch_default: null, exam_labels: [], exam_result: null, kb_ids: kb, work_log_task: r.task,
-      quality_target: qtOf(t), priority: rank, blocker: r.status === "blocked" ? (r.waiting_on || blocker) : blocker, next_step: (r.next_step ?? "").slice(0, 400) || null,
+      quality_target: qtOf(t), priority: rank, blocker: r.status === "blocked" ? (r.waiting_on || blocker) : blocker, next_step: cut(r.next_step ?? "", 400) || null,
       commits: r.commit_ref ? [r.commit_ref] : [],
     };
   }
@@ -192,7 +203,7 @@ function toWorkItem(i: { kind: string; key: string; cat: Cat; line: string; reas
   const t = `${sw.name} ${sw.note} ${sw.subject}`;
   const last = ex?.[0];
   return {
-    title: `${sw.name}（既定 ${sw.def}）: ${(sw.note || sw.subject).slice(0, 140)}`, area: areaOf(t), origin: "built_off", requested_at: sw.date ? `${sw.date}T00:00:00Z` : null, requested_quote: null,
+    title: `${sw.name}（既定 ${sw.def}）: ${cut(sw.note || sw.subject, 140)}`, area: areaOf(t), origin: "built_off", requested_at: sw.date ? `${sw.date}T00:00:00Z` : null, requested_quote: null,
     stage: i.cat === "D" ? "built_off" : last && /確かな悪化0/.test(last.verdict) ? "passed" : last && /悪化/.test(last.verdict) ? "building" : STAGE_OF_CAT[i.cat],
     owner: sw.who || null, switch_name: sw.name, switch_default: sw.def, exam_labels: (ex ?? []).slice(0, 6).map((e) => e.label), exam_result: last ? last.verdict.slice(0, 200) : null,
     kb_ids: [], work_log_task: null, quality_target: qtOf(t), priority: rank, blocker, next_step: i.cat === "A" ? (last && /確かな悪化0/.test(last.verdict) ? "既定 on のコミット（悪化0 済み）" : "試験を積んで悪化0なら既定 on") : null,
@@ -247,11 +258,11 @@ async function main() {
     L.push("", `## ${c}: ${CAT_JA[c]}（全部・効きの順）`);
     for (const i of items.filter((x) => x.cat === c)) L.push(`- [${i.kind}] **${i.key}**（効き ${i.score}・${i.who || "?"}・${i.date}）${i.line}／${i.reason}`);
   }
-  writeFileSync(join(ROOT, OUT), L.join("\n") + "\n");
+  writeFileSync(join(ROOT, OUT), wellFormed(L.join("\n")) + "\n");
   console.log(`書いた ${OUT}: 作業 ${open.length + owner.length}・スイッチ ${sws.length}`);
   // 2026-11-18 統括役の頼み: 仕事の台帳（work_items）に入れる形も出す（scripts/work-items.ts --import=<json> が読む）
   if (arg("json-out")) {
-    const rows = items.map((i, k) => toWorkItem(i, k + 1));
+    const rows = items.map((i, k) => cleanRow(toWorkItem(i, k + 1)));
     writeFileSync(arg("json-out"), JSON.stringify(rows, null, 1));
     console.log(`書いた ${arg("json-out")}: work_items ${rows.length}行`);
   }

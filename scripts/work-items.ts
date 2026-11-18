@@ -111,7 +111,9 @@ async function cmdDoneCheck() {
 }
 
 async function cmdImport() {
-  const rows = JSON.parse(readFileSync(arg("import"), "utf8")) as Array<Record<string, unknown>>;
+  // 2026-11-18 統括役: 片割れのサロゲート（絵文字を UTF-16 の単位で切った物）で「Empty or invalid json」になり 111行で止まった → 入れる前に落とす
+  const wf = (v: unknown): unknown => (typeof v === "string" ? v.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "") : Array.isArray(v) ? v.map(wf) : v);
+  const rows = (JSON.parse(readFileSync(arg("import"), "utf8")) as Array<Record<string, unknown>>).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, wf(v)])));
   const dry = flag("dry");
   const db = dry ? (null as unknown as SupabaseClient) : sb();
   const keyOf = (r: Record<string, unknown>) => (r.switch_name ? `sw:${r.switch_name}` : r.work_log_task ? `wl:${r.work_log_task}` : `t:${r.title}`);
