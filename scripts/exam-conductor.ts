@@ -62,7 +62,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom } from "./lib/exam-conductor-core";
-import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
@@ -212,7 +212,8 @@ function readJobs(): Array<ExamJob & { file: string }> {
   for (const f of readdirSync(ROOT).filter((x) => x.endsWith(".json") && x !== "config.json" && x !== "scene-map.json")) {
     let j: unknown = null; try { j = JSON.parse(readFileSync(join(ROOT, f), "utf8")); } catch { /* 壊れた・書きかけ */ }
     if (!isExamJobShape(j)) { if (!skippedNonJobs.has(f)) { skippedNonJobs.add(f); log(`  ⚠ 依頼の形でないファイルを飛ばす: ${f}（係の列のフォルダに印を置かない・点検表 18）`); } continue; }
-    out.push({ ...(j as ExamJob), file: join(ROOT, f) });
+    // 2026-11-18 作業員H: createdAt が数の依頼（手で書いた等）も ISO の文字に直して読む（並べ替えで係が落ちない・exam-conductor-core.createdAtIso）
+    out.push({ ...(j as ExamJob), createdAt: createdAtIso((j as { createdAt?: unknown }).createdAt), file: join(ROOT, f) });
   }
   return out.sort((a, b) => compareJobs(a, b));
 }
