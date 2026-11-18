@@ -10,7 +10,8 @@ export type FactLedgerMode = "off" | "shadow" | "on";
 export function factLedgerMode(env: Env = typeof process !== "undefined" ? process.env : {}): FactLedgerMode {
   const v = (env.CUSTOMER_FACT_LEDGER ?? "").trim().toLowerCase();
   // 2026-11-03 統括役の判断: shadow（作って保存だけ・ブレインには渡さない）を既定に（データを早く溜める）。on は判断を変えるので段階で
-  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
+  // 2026-11-18 既定 on（k1118-bundle-b 悪化0・前の既定は shadow）。=shadow で記録だけ・=off で止める
+  return v === "shadow" ? "shadow" : v === "off" ? "off" : "on";
 }
 export const FACT_LEDGER_VERSION = 1;
 

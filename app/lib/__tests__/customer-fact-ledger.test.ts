@@ -8,7 +8,7 @@ function it(name: string, fn: () => void) { try { fn(); passed++; console.log(` 
 function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected truthy`); }
 const NOW = Date.parse("2026-11-03T12:00:00+09:00");
 
-it("既定 shadow・off で止まる", () => { ok(factLedgerMode({}) === "shadow"); ok(factLedgerMode({ CUSTOMER_FACT_LEDGER: "off" }) === "off"); ok(factLedgerMode({ CUSTOMER_FACT_LEDGER: "on" }) === "on"); });
+it("既定 on（2026-11-18）・shadow で記録だけ・off で止まる", () => { ok(factLedgerMode({}) === "on"); ok(factLedgerMode({ CUSTOMER_FACT_LEDGER: "shadow" }) === "shadow"); ok(factLedgerMode({ CUSTOMER_FACT_LEDGER: "off" }) === "off"); ok(factLedgerMode({ CUSTOMER_FACT_LEDGER: "on" }) === "on"); });
 it("束ねて出所と時刻を付ける・一次が先", () => {
   const f = buildFactLedger({
     state: { stage: "viewing_scheduled", stageLabel: "内覧予定", since: "2026-11-02T10:00:00+09:00", properties: [{ key: "a|301", name: "Aハイツ 301", statusLabel: "内覧予定", lastAt: "2026-11-02T10:00:00+09:00", estimateSent: true, sentByUs: true, customerInterest: true }], viewings: [{ ymd: "2026-11-05", time: "14:00", name: "Aハイツ 301" }] },
