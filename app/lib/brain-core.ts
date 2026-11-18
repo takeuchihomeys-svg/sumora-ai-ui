@@ -5787,7 +5787,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           }
         }
       }
-      // 2026-11-15 作業員H（TWO_STAGE_CHECK_QUESTION_KEEP_AIX・既定 off・check-question-brain-first.ts）: ブレイン自身が依頼で route="aix" と決めた番は、
+      // 2026-11-15 作業員H（TWO_STAGE_CHECK_QUESTION_KEEP_AIX・11/18 から既定 on・check-question-brain-first.ts）: ブレイン自身が依頼で route="aix" と決めた番は、
       //   聞かれた事の確認の約束（check_question）に書き換えない（ブレインの AIX のまま・q411）。依頼に確認の約束がある番は今まで通り
       if (twoStage && /check_question/.test(twoStage.source) && !twoStageRes.direct && !isPostApplyStatus(convStatus)) {
         const { checkQuestionKeepAixOn, brainChoseAixForQuestion } = await import("@/app/lib/check-question-brain-first");
