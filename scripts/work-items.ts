@@ -133,7 +133,7 @@ async function cmdImport() {
     const h = have.get(keyOf(r));
     if (h) {
       // 段は人が進めた物を上書きしない（台帳の段が棚卸しより進んでいる時は残す）
-      const { stage: _s, ...rest } = r;
+      const { stage: _s, owner: _o, ...rest } = r; void _o; // 段と持ち主は人が決めた物を上書きしない（11/18 統括役の割り振りで書き換えた owner を残す）
       void _s;
       const { error } = await db.from("work_items").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", h.id);
       if (error) throw new Error(error.message);
