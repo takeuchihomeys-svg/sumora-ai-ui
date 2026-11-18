@@ -4233,7 +4233,10 @@ BEGIN
         'text_hash', v_check -> 'checked_text_hash',
         'elapsed_ms', v_check -> 'elapsed_ms',
         -- 2026-10-21 自信の気づき（draft-confidence.ts・DRAFT_CONFIDENCE=on の時だけ値がある）: 点・段・理由を控えに残す（自信の段ごとの答え合わせ）
-        'confidence', v_check -> 'confidence'
+        'confidence', v_check -> 'confidence',
+        -- 2026-11-18 作業員M（統括役の決定 11/15）: 統括の指示書の欄が下書きに入ったか（compose-brief-uptake・COMPOSE_BRIEF_UPTAKE が off でない時だけ値がある）。
+        --   毎日の文の物差し（compose-prod-daily）の欄ごとの割合のため。足すだけ（今の欄は変えない）・失敗しても上の EXCEPTION で元の更新は通る
+        'brief_uptake', v_check #> '{tpo_debug,brief_uptake}'
       );
       v_tpo := left(v_check #>> '{tpo_debug,tpo_label}', 300);
     END IF;
