@@ -50,7 +50,7 @@ export const REACH_FIELDS: Record<ConditionStatementKind, string[]> = {
 /** 2026-11-18 広さの種類（condition-reading には無い）。REACH_SIZE=on の時だけ数える（既定 off）。㎡・平米・帖で広さを言った発言 */
 export const SIZE_FIELDS = ["floor_area_min", "floor_area_max"];
 export function reachSizeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.REACH_SIZE ?? "").trim().toLowerCase() === "on";
+  return String(env.REACH_SIZE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（=off で戻す）
 }
 export function sizeStatementOf(text: string): boolean {
   return /[0-9０-９.]+\s*(?:㎡|m²|m2|平米|帖|畳)(?:以上|超|くらい|ぐらい|程度|前後)?/.test(text) && /以上|超|くらい|ぐらい|程度|前後|広|欲しい|希望|がいい|が良い|嬉しい/.test(text);
