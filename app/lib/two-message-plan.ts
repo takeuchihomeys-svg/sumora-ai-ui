@@ -237,10 +237,12 @@ export function aixKindsOfAsks(asks: ReadonlyArray<PlanAsk>): string[] {
  *     (i) 最終の AIX が内覧調整・待ち合わせで、要件の AIX が全部 物件確認（確認の結果・確認します）＝確認は内覧の AIX の文の中（viewCheckInAix と同じ考え）＝最終の AIX の席1つ
  *     (ii) それ以外＝最終の AIX の席も足す（物件確認した を先・最終の AIX・残りは要件の順＝planAixAix）
  *   BRAIN_AIX_FOLLOWS_CONTRACT（最終の物件の AIX を要件に寄せる・既定 on）は道を変える側で、当てる範囲は最終の AIX が物件の AIX（property_send 等）の時だけ。
- *   こちらは道を変えず組み立ての席を最終の AIX に合わせるだけ。既定 off（TWO_MESSAGE_SEAT_FOLLOWS_FINAL=on の時だけ）
+ *   こちらは道を変えず組み立ての席を最終の AIX に合わせるだけ。
+ *   既定 on（2026-11-19・試験 M1118-seatfinal-p1 で確かな悪化0・比べた 4/4問）。止める TWO_MESSAGE_SEAT_FOLLOWS_FINAL=off。
+ *   本質の悪化 q330（2/3→0/3）はブレインの最初の答え＝組み立ての前で、このスイッチは届かない（揺れ）
  */
 export function twoMessageSeatFollowsFinalOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL ?? "").trim().toLowerCase() !== "off";
 }
 const CHECK_AIX_KEYS = new Set(["property_check_result", "acknowledge_check"]);
 export function planMessages(i: PlanInput): TwoMessagePlan {
