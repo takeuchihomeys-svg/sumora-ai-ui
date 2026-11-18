@@ -20,6 +20,10 @@ export type RequirementKey = "move_in" | "pet" | "rent_max" | "area" | "size";
 export function requirementSizeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return String(env.REQUIREMENT_SIZE ?? "").trim().toLowerCase() === "on";
 }
+/** 2026-11-18 作業員K（統括役の決め）: 広さが「できれば」の人の 9割未満を保留にしない（property-brain.judgeProperty の SQM_UNDER_SOFT）。既定 off＝REQUIREMENT_SIZE_JUDGE=on の時だけ。絶対（must）は今まで通り */
+export function requirementSizeJudgeOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.REQUIREMENT_SIZE_JUDGE ?? "").trim().toLowerCase() === "on";
+}
 export type RequirementStrengths = Partial<Record<RequirementKey, { strength: Strength; evidence: string; at?: string | null }>>;
 
 const nf = (s: unknown) => String(s ?? "").normalize("NFKC");

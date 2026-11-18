@@ -2,6 +2,8 @@
 //   実行: npx tsx app/lib/__tests__/requirement-size.test.ts
 import { sizeStrengthOf, readRequirementStrengths, requirementSizeOn, normalizeRequirementStrengths } from "../requirement-strength";
 import { conditionReachStats, reachSizeOn, sizeStatementOf } from "../prop-brain-daily";
+import { requirementSizeJudgeOn } from "../requirement-strength";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, REASON_POINTS } from "../property-brain";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra ?? ""); } };
 
@@ -26,5 +28,23 @@ const r = conditionReachStats({
 t("REACH_SIZE: 広さの発言が floor_area_min に届いた", r.n === 1 && r.reached === 1 && r.byKind["広さ"]?.ok === 1, r);
 const r0 = conditionReachStats({ msgs: [{ conversation_id: "c1", text: "出来れば35㎡超えてれば嬉しいです", created_at: "2026-11-17T09:00:00Z" }], pcOfConv: new Map([["c1", "p1"]]), hist: [], pcRow: new Map(), size: false });
 t("off: 広さは数えない（今まで通り）", r0.n === 0);
+
+// ── judgeProperty へのつなぎ（REQUIREMENT_SIZE_JUDGE・既定 off）──
+{
+  const S = (rent: string, plan: string) => `【1】テスト\n${rent}\n${plan}\n`;
+  const prof = (strength: "must" | "strong" | "nice" | null) => buildCustomerProfile({ rent_max: 100_000, floor_area_min: 35, requirement_strength: strength ? { size: { strength, evidence: "x" } } : null });
+  const j = (strength: "must" | "strong" | "nice" | null) => judgeProperty(parsePropertyFacts(S("80,000円", "1K 22㎡")), prof(strength));
+  const prev = process.env.REQUIREMENT_SIZE_JUDGE;
+  delete process.env.REQUIREMENT_SIZE_JUDGE;
+  t("judge 既定 off: できればでも 22㎡（35㎡の希望）は今まで通り保留", !requirementSizeJudgeOn({}) && j("nice").flagCodes.includes("SQM_UNDER") && j("nice").verdict === "hold", j("nice").flagCodes);
+  process.env.REQUIREMENT_SIZE_JUDGE = "on";
+  const n = j("nice");
+  t("judge on: できれば → SQM_UNDER_SOFT（−5・保留にしない）", n.reasonCodes.includes("SQM_UNDER_SOFT") && !n.flagCodes.includes("SQM_UNDER") && REASON_POINTS.SQM_UNDER_SOFT === -5, { r: n.reasonCodes, f: n.flagCodes });
+  t("judge on: 絶対（must）は今まで通り保留", j("must").flagCodes.includes("SQM_UNDER") && j("must").verdict === "hold");
+  t("judge on: 強い希望（strong）も今まで通り保留", j("strong").flagCodes.includes("SQM_UNDER"));
+  t("judge on: 強さ不明も今まで通り保留", j(null).flagCodes.includes("SQM_UNDER"));
+  t("judge on: 希望以上はできればでも SQM_OK", judgeProperty(parsePropertyFacts(S("80,000円", "1K 36㎡")), prof("nice")).reasonCodes.includes("SQM_OK"));
+  if (prev === undefined) delete process.env.REQUIREMENT_SIZE_JUDGE; else process.env.REQUIREMENT_SIZE_JUDGE = prev;
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
