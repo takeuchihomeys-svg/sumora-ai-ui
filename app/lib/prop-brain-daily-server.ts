@@ -45,5 +45,11 @@ export async function loadPropBrainDaily(sb: SupabaseClient, o: { days?: number;
   for (const c of chunks(pcIds, 200)) { const { data } = await sb.from("property_customers").select("id, created_at, desired_area, floor_plan, rent_max, rent_min, move_in_time, ng_points, preferences, other_requests, commute_station, commute_minutes, pet, walk_minutes").in("id", c); for (const r of (data ?? []) as Row[]) pcRow.set(String(r.id), r); }
   const hist = (await pageAll((a, b) => sb.from("property_condition_history").select("property_customer_id, changed_field, created_at").gte("created_at", new Date(now - (days + 1) * 86_400_000).toISOString()).order("id").range(a, b) as never)) as unknown as ReachHist[];
   const reach = conditionReachStats({ msgs, pcOfConv, hist, pcRow });
-  return { audit: PROP_BRAIN_DAILY_AUDIT, days, star, reach, summary: propBrainDailySummary(star, reach, days) };
+  // ④ 2026-11-18 広さの「できれば」の効き（REQUIREMENT_SIZE_JUDGE・統括役の決め）: 期間の採点の行で SQM_UNDER_SOFT（保留にしなかった）と SQM_UNDER（保留）の数（数えるだけ）
+  const cnt = async (code: string) => {
+    const { count } = await sb.from("property_pickups").select("id", { count: "exact", head: true }).gte("created_at", since).contains("reason_codes", [code]);
+    return count ?? 0;
+  };
+  const sqm = { soft: await cnt("SQM_UNDER_SOFT"), hold: await cnt("SQM_UNDER") };
+  return { audit: PROP_BRAIN_DAILY_AUDIT, days, star, reach, sqm, summary: `${propBrainDailySummary(star, reach, days)}・広さ9割未満 保留にしない ${sqm.soft}／保留 ${sqm.hold}` };
 }
