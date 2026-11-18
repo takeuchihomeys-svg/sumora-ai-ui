@@ -47,7 +47,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   SECOND_MSG_MATERIALS: "on",
   SENT_PROPS_FULL: "count",
   SITUATION_NOW_FULFILLABLE: "on",
-  SITUATION_WRITER_NOTE: "off",
+  SITUATION_WRITER_NOTE: "on",
   TASK_RESULT_FROM_AIX: "on",
   TURN_AIMS_AFTER: "on",
   TURN_READ: "log",

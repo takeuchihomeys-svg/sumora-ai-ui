@@ -119,7 +119,8 @@ export function situationNowDigest(s: unknown): Record<string, number> | null {
 //   届いていない: ①お客様の時の言葉を言った日で直した日付（時系列の帳面はブレインの材料だけ）②これからの内覧（カレンダーの時刻がある予定・道順の質問の時だけ viewing_history）
 //   ③開いている約束がいつから開いているか ④確かめた結果（いつ・どの物件・どうだった）。下書きの「〇日にお伝えした」「先日お送りした」「来週の内覧」が材料なしで書かれる元。
 //   SITUATION_WRITER_NOTE=on（既定 off）の時だけ、meta.situation_now から事実だけの塊を作る（道の言葉は書かない・読み方の決まりも足さない）。
-export const situationWriterNoteOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_WRITER_NOTE ?? "").trim().toLowerCase() === "on";
+export const situationWriterNoteOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_WRITER_NOTE ?? "on").trim().toLowerCase() !== "off";
+// 2026-11-18 作業員L: 試験 L1118-wsit-off → L1118-wsit-on（10問・2回・下書きまで・DeepSeek）で悪くなった問題 0・下書きの道 14/20→15/20・下書きの合格 10/20→12/20・依頼 14/24→16/24 ＝既定 on（戻す =off）
 const STATUS_JA: Record<string, string> = { available: "募集中", open: "募集中", closed: "募集終了", ended: "募集終了", move_out_planned: "退去予定", applied: "申込あり", occupied: "入居中" };
 export function situationWriterNote(sn: unknown, nowMs: number): string {
   if (!sn || typeof sn !== "object") return "";

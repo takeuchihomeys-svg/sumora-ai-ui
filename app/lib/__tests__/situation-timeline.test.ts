@@ -131,7 +131,7 @@ t("送った物件 count: 見出しは全部の件数・詳しい行は新しい
 console.log("sent-count ok");
 import { situationWriterNote, situationWriterNoteOn } from "../situation-now";
 t("書き手への今の状況の塊（SITUATION_WRITER_NOTE・既定 off・事実だけ）", () => {
-  assert.equal(situationWriterNoteOn({}), false);
+  assert.equal(situationWriterNoteOn({}), true); assert.equal(situationWriterNoteOn({ SITUATION_WRITER_NOTE: "off" }), false);
   const now = Date.parse("2026-11-13T03:00:00Z");
   const note = situationWriterNote({ v: 1,
     timeline: { words: [{ word: "来週", said: "2026-11-13T03:00:00Z", from: null, to: null, label: "11/16（月）〜11/22（日）" }], viewings: [{ at: "2026-11-16T05:00:00Z", type: "viewing", done: false }, { at: "2026-11-01T05:00:00Z", type: "viewing", done: true }], promises: [] },
