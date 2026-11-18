@@ -2070,7 +2070,7 @@ async function analyzeConversationCore(
       type NameRow = { property_name?: string | null; property_names?: string[] | null };
       const allNames = [
         ...((sentPropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
-        ...((sentImagePropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((sentImagePropsResult.data ?? []) as unknown as NameRow[]).map((r) => r.property_name),
         ...((viewingHistoryResult.data ?? []) as NameRow[]).map((r) => r.property_name),
         ...((aixLogsResult.data ?? []) as NameRow[]).flatMap((r) => r.property_names ?? []),
       ];
@@ -2539,7 +2539,7 @@ async function analyzeConversationCore(
   const sentProps = buildSentProps({
     // 2026-10-24: 列を切り替える select（image_url）は型の読み取りができない＝unknown を通す（行の形は CustomerRow のまま）
     customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
-    imageRows: (sentImagePropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["imageRows"],
+    imageRows: (sentImagePropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["imageRows"], // 2026-11-19: facts を足す select は型の読み取りが通らない＝unknown を通す
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
     imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）
   });
