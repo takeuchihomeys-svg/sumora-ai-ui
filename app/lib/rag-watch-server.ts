@@ -1,6 +1,6 @@
 // app/lib/rag-watch-server.ts — RAG の見張りの包みを入れる（instrumentation.ts から1回だけ）・記録は rag_call_logs
 //   2026-11-15 作業員H。既定 on（RAG_WATCH=off で入れない）。鍵が無い・表が無い時は1回だけ警告して何もしない（本来の応答は止めない）
-import { ragWatchOn, wrapFetchWithRagWatch, type RagCallRow } from "./rag-watch";
+import { ragWatchOn, wrapFetchWithRagWatch, ragRpcCacheOn, RagRpcCache, type RagCallRow } from "./rag-watch";
 import { serverSupabaseKey } from "./supabase-server-key";
 import { usageEnvLabel } from "./llm-test-mode";
 
@@ -33,6 +33,7 @@ export async function installRagWatch(): Promise<boolean> {
     keepAlive: (p) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
     route: () => workStore?.getStore()?.route ?? null,
     env: usageEnvLabel(process.env),
+    cache: ragRpcCacheOn() ? new RagRpcCache() : null, // 11/18: 同じ問いを60秒だけ置く（RAG_RPC_CACHE=off で止める）
   });
   Object.assign(wrapped, g.fetch);
   g.fetch = wrapped;
