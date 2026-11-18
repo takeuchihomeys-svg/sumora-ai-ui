@@ -127,7 +127,7 @@ import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-bluepri
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
-import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
+import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1724,6 +1724,8 @@ export async function POST(req: NextRequest) {
         secondGapLine ?? "",
       ].filter(Boolean).join("\n");
       const scene = secondFormScene(pickupType);
+      // 2026-11-18 竹内さんの決定（推す点の数は場面で変える）: 設備が揃ったお部屋は3〜5個（SECOND_APPEAL_COUNT_BY_SCENE・既定 off）
+      const secondAppealRich = secondAppealCountBySceneOn() && equipmentRichOf(sentMessage);
       // 竹内さんの手本・型の要約（DB・サーバーの鍵で読む・無ければ手本なしで書く）
       const secondData = await (await import("@/app/lib/second-takeuchi-data-server")).loadSecondTakeuchiData();
       // 締めの候補になる状況（網）: 竹内さんが申込で締めた番の型（新着1件・見積書の後・入居が近い・急ぎ）。決めるのはブレイン
@@ -1740,12 +1742,12 @@ export async function POST(req: NextRequest) {
       // 2026-11-04 grp-aix の悪化（2a95c137）: 設計図（AIX_SECOND_BLUEPRINT=on）は判断の締めを「ここだけで決める」で強く守る。判断は刺さり具合の網（recommend-cta＝竹内さんの形の締め）を
       //   見ておらず、網の「内覧へ」と違う「ご査収だけ」を選んで外れた（材料が届いていない）→ 設計図の時だけ、網の締めと理由を判断の材料に渡す（決めるのは判断）
       const ctaHint = secondBlueprintOn() && recCta ? [`刺さり具合の網（竹内さんの形の締め）は「${({ viewing: "内覧へ", apply: "申込へ", receipt: "ご査収" } as Record<string, string>)[recCta.kind] ?? recCta.kind}」（理由: ${String(recCta.reason ?? "").slice(0, 80)}）。違う締めにする時は理由を closingWhy に書く`] : [];
-      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: ctaHint, data: secondData }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
+      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: ctaHint, data: secondData, rich: secondAppealRich }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
       const key = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(25_000),
         headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("aix_appeal_judge"), ...(secondMaterials?.headers ?? {}) },
-        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 500, thinking: { type: "disabled" }, system: APPEAL_JUDGE_SYSTEM, messages: [{ role: "user", content: prompt }] }),
+        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 500, thinking: { type: "disabled" }, system: appealJudgeSystem(secondAppealRich), messages: [{ role: "user", content: prompt }] }),
       });
       if (r.ok) {
         const d = await r.json() as { content?: Array<{ type: string; text?: string }> };
@@ -2198,7 +2200,7 @@ export async function POST(req: NextRequest) {
           userPrompt +
           `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（訴求を並べすぎた）】\n━━━━━━━━━━━━━━━━━━━━\n` +
           `前回の出力:\n${text}\n\n` +
-          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
+          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count >= 3 && secondJudge.second && secondJudge.more?.length ? `と「${[secondJudge.second.text, ...secondJudge.more.map((m) => m.text)].join("」「")}」の${secondJudge.count}つ` : secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
           `・判断の訴求だけを、理由を添えて強く言う。駅・築年・帖数・設備を足して並べない。締めは判断のまま。\n出力は本文のみ。`,
         );
         const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";

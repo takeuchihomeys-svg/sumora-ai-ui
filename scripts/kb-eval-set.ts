@@ -293,6 +293,10 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "同じ日にもう1件物件を送ってきたら約束するかAIX直接か", gold: ["0f475703"], scene: "property_share" },
   { q: "TWO_STAGE_SAME_DAY_REPROMISE は何のスイッチ", gold: ["0f475703", "6aede24e"] },
   { q: "確認の約束がまだ開いている時の2件目の空きの問い", gold: ["0f475703"], scene: "question", ho: true },
+  // 2026-11-18 竹内さんの決定（2通目の推す点の数は場面で変える・設備が揃った部屋は3〜5個・a0b53aab）
+  { q: "2通目でオススメポイントを何個並べるか", gold: ["a0b53aab"] },
+  { q: "設備が揃ったお部屋の2通目は設備を並べてよいか", gold: ["a0b53aab"] },
+  { q: "2通目の訴求は1〜2個だけに絞るのか", gold: ["a0b53aab"], ho: true },
 ];
 
 // ── 前の物差し（10/06 scripts/kb-rag-eval.ts・10/07 scripts/kb-scene-rag-eval.ts の問いをそのまま・下がっていないかを見る）──
