@@ -12,6 +12,9 @@ import { maskPII } from "../app/lib/pii-mask";
 import { isMaterialOnlyText } from "../app/lib/daily-greeting";
 import { catalogKeyOfPress } from "../app/lib/aix-catalog";
 
+// 2026-11-18 作業員L（e30d8453 の切り分け）: 物件オススメの1通目は「🌟物件名」の行。同じ15分に同封した見積の文「🌟205,000円割引」も 🌟 を持つので、
+//   🌟 の後が金額の文と見積の文（初期費用：）を外す（試験の問題の1通目が別の物件の見積の文になり、2通目の退去予定の材料が別の物件の資料になっていた）
+const REC_CARD_RE = /🌟(?![0-9０-９,，]+円)/;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const SINCE = arg("since", "2026-09-01T00:00:00Z");
@@ -42,7 +45,7 @@ type Msg = { id: string; conversation_id: string; sender: string; text: string |
     const pt = ms(p.created_at);
     const all = await msgsOf(p.conversation_id);
     const block = all.filter((m) => m.sender !== "customer" && m.is_aix_generated && Math.abs(ms(m.created_at) - pt) < 15 * 60_000);
-    const card = block.filter((m) => !m.image_url && (m.text ?? "").length > 10).find((m) => p.aix_type === "estimate_sheet" ? /初期費用[：:]/.test(m.text ?? "") : /🌟/.test(m.text ?? ""));
+    const card = block.filter((m) => !m.image_url && (m.text ?? "").length > 10).find((m) => p.aix_type === "estimate_sheet" ? /初期費用[：:]/.test(m.text ?? "") : REC_CARD_RE.test(m.text ?? "") && !/初期費用[：:]/.test(m.text ?? ""));
     if (!card) { bump(`${p.aix_type}:1通目なし`); continue; }
     if (p.aix_type === "estimate_sheet" && /^[①-⑳]/.test((card.text ?? "").trim())) { bump("estimate:複数件"); continue; }
     const lastAix = Math.max(...block.map((m) => ms(m.created_at)));
