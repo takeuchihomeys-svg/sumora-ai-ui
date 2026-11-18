@@ -31,8 +31,8 @@ export function outlierOf(mix: { r: number; p: number; a: number } | null, shape
  */
 export type CauseKind = "材料が届いていない" | "場面の読み違い" | "AIX の番の取り違え" | "合う";
 export function causeOf(outlier: string): CauseKind {
-  if (outlier === "合う") return "合う";
-  if (outlier === "要件の記録なし") return "材料が届いていない";
+  if (outlier.startsWith("合う")) return "合う";
+  if (outlier.startsWith("要件の記録なし")) return "材料が届いていない";
   if (/取り違え|取りこぼし（AIX 側）/.test(outlier)) return "AIX の番の取り違え";
   return "場面の読み違い"; // 2つ目の AIX の席・重ねの候補・AIX の種類が違う
 }
@@ -44,8 +44,8 @@ export function aixKindMismatch(brainAction: string | null | undefined, staffKin
 }
 /** 帳面の3つ（取りこぼし・重ね・取り違え）のどれか */
 export function ledgerClassOf(outlier: string): "取りこぼし" | "重ね" | "取り違え" | "記録なし" | "合う" | "種類違い" {
-  if (outlier === "合う") return "合う";
-  if (outlier === "要件の記録なし") return "記録なし";
+  if (outlier.startsWith("合う")) return "合う";
+  if (outlier.startsWith("要件の記録なし")) return "記録なし";
   if (outlier.startsWith("取りこぼし")) return "取りこぼし";
   if (outlier.startsWith("重ね")) return "重ね";
   if (outlier.startsWith("AIX の種類")) return "種類違い";

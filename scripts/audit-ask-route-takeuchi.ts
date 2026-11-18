@@ -70,6 +70,14 @@ async function main() {
     const key = `${brainMix} → ${shape}${kinds.length >= 2 ? `（AIX ${kinds.length}種）` : ""}`;
     table.set(key, (table.get(key) ?? 0) + 1);
     let o = outlierOf(mix, shape, kinds.length);
+    // 2026-11-18 夜の数えの読み: 要件に AIX が無くても、ブレインの最終の AIX が竹内さんの AIX と同じ束なら道は合う
+    //   （前の約束を果たす AIX＝お客様の今の要件の外。要件の帳面には席だけあって要件が無い＝seat_only）
+    if (o === "取りこぼし（AIX 側）" && t.brain_action && kinds.length && !aixKindMismatch(t.brain_action, kinds)) o = "合う（AIX は要件の外＝前の約束を果たす）";
+    // 2026-11-18 夜の数えを1通ずつ読んだ結果（お礼の番 5件のうち3件）: 了承・お礼の番の後、何時間も後に送った AIX は前の約束の果たし（確認の結果・ピックアップ）＝この番への答えではない。
+    //   1時間より後の最初の AIX で、それより前に AIX が無ければ番の外として数える（audit-combo-mismatch の「果たしの AIX は番の外」と同じ見方）
+    const firstAix = moves.find((m) => m.aix);
+    if (o === "取りこぼし（AIX 側）" && firstAix && firstAix.at - at > 60 * 60_000) o = "合う（AIX は1時間より後＝前の約束の果たし・番の外）";
+    if (/^記録なし$|^要件の記録なし$/.test(o) && t.customer_turn_at < "2026-10-09") o = "要件の記録なし（digest に要件の欄が無い頃・10/08 より前）";
     if (o === "合う" && shape.includes("A") && aixKindMismatch(t.brain_action, kinds)) o = "AIX の種類が違う";
     const sk = String(t.scene_key ?? "（場面なし）");
     const srow = byScene.get(sk) ?? { n: 0, cells: new Map<string, number>() };
