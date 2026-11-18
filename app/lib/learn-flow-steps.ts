@@ -140,6 +140,7 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *   ⚠ `structured_date`（築年）も条件なのに「その他」になっていた。
    */
   if (/rental_cost|update_date|structured_date|room_layout|madori|間取り|賃料|築年|walk|徒歩|面積|menseki|square_meter|include_common_fee|管理費|敷金|礼金|deposit/.test(n)) return "cond";
+  if (/^(ワンルーム|\d+[KDRSL]+)$/i.test(cleaned || name)) return "cond";
   // 検索結果の一覧（物件の取得・並べ替え）
   if (/building_tr|property_list|sort|並び替え|結果|一覧|bukken|印刷用pdf|印刷用/.test(n)) return "list";
   return "other";

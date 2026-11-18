@@ -98,7 +98,7 @@ console.log("\n■ 配線（itandi-bulk-dl・background・manifest）");
   ok("itandi-bulk-dl: 上限を超えた行は選ばない（capForPage・手動は見ない）", /G\.capForPage\(_itPicked, _checkedNow\.length, G\.MAX_ROWS\)/.test(ib) && /if \(G && !_itManualRun\) \{/.test(ib));
   ok("itandi-bulk-dl: 上限で打ち切った時は row_limit を点検に", /_itAuditResult\(\{ row_limit: _rowMax \}\)/.test(ib));
   ok("itandi-bulk-dl: 上限ちょうどで選び終えた時は次のページがある時だけ打ち切りと記録（押さない）", /_itPicked >= _G\(\)\.MAX_ROWS && clickNextPageAvailable\(\)/.test(ib) && /function clickNextPageAvailable\(\)/.test(ib));
-  ok("itandi-bulk-dl: ページの上限は自動便の指定 → 既定（DEFAULT_MAX_PAGES）", /pageLimit\(_autoRunFor\(customerId\), _AR\(\)\.DEFAULT_MAX_PAGES \|\| null\)/.test(ib));
+  ok("itandi-bulk-dl: ページの上限は resolveMaxPages（既定3・新着5）", /resolveMaxPages/.test(ib));
   ok("itandi-bulk-dl: 選んだ部屋を点検に残す（picked_rooms・150件まで）", /function _itRememberPicked\(targets\)/.test(ib) && /r\.picked_rooms = base\.picked_rooms\.slice\(0, 150\)/.test(ib));
   const bg = read("background.js");
   ok("background が itandi-guard.js を import", /^import "\.\/itandi-guard\.js";/m.test(bg));

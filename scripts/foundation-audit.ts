@@ -15,9 +15,12 @@ const sb = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
 );
 const doRecord = process.argv.includes("--record");
+const siteArg = (process.argv.find((a) => a.startsWith("--site=")) || "").replace("--site=", "") || "all";
+const site = siteArg === "itandi" || siteArg === "realpro" ? siteArg : "all";
 
 void (async () => {
-  const a = await auditLearnFoundations(sb);
+  console.log(`site=${site}`);
+  const a = await auditLearnFoundations(sb, { site: site as "all" | "realpro" | "itandi" });
   for (const line of formatFoundationAudit(a)) console.log(line);
 
   if (doRecord) {

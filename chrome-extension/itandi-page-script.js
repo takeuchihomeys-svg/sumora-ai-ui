@@ -1812,10 +1812,8 @@
   var _lastFillReq = null; // v2.5.45 直前の自動入力の依頼 { key, at }（同じ依頼の2回目を動かさない）
 
   function fill(cond) {
-    // 240秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
-    // background.js の待ち上限（FILL_DONE_TIMEOUT_MS.itandi=245秒）より5秒短くする。
-    // 2026-09-12 竹内: 85秒→150秒（路線ごとの駅選択・「電車1本」の沿線全駅選択で85秒に届くため）
-    // 2026-09-14 竹内「時間かかっても大丈夫なのでタイムアウトが原因なら時間をのばす」: 150秒→240秒（駅の多い広げて検索・電車1本の安全幅）
+    // ウォッチドッグ: フリーズ/例外時にbackground.jsを解放
+    // ★ 2026-11-18: background.js の FILL_DONE_TIMEOUT_MS.itandi（1800000=30分）に合わせ、旧240秒(4分)で自爆しないようにする。
     // 2026-09-18 竹内（一括検索の混線）: この入力を始めた時の顧客 ID を fill-done にそのまま載せて返す
     var _fillCid = _pendingFillCid;
     // 検索の点検: popup が載せた run_id（ブレインの時だけ）
@@ -1825,14 +1823,14 @@
     // v2.5.45: 時間切れ・失敗で返した後は、この回の続き（遅れて動くタイマー）が検索を押さない（次のお客様の入力と重ねない）
     var _dead = false;
     var _watchdog = setTimeout(function () {
-      console.warn("[AX] watchdog: 240s timeout — fill-done強制送信");
+      console.warn("[AX] watchdog: 1800s timeout — fill-done強制送信");
       _dead = true;
-      // skip: 検索を押していない → background はこのサイトを飛ばす（押していない検索の結果を5分待たない）
+      // skip: 検索を押していない → background はこのサイトを飛ばす（押していない検索の結果を待たない）
       var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout", skip: true };
       if (_fillCid) wmsg.customerId = _fillCid;
-      if (_myRunId && _myRunId === _itRunId) { wmsg.runId = _myRunId; _itStep("watchdog", "240秒"); wmsg.audit = _itPack(); }
+      if (_myRunId && _myRunId === _itRunId) { wmsg.runId = _myRunId; _itStep("watchdog", "1800秒"); wmsg.audit = _itPack(); }
       window.postMessage(wmsg, "*");
-    }, 240000);
+    }, 1800000);
     function _safeDone(errMsg) {
       if (_dead) return; // 時間切れで返した後・もう返した後は2回目を送らない
       _dead = true;

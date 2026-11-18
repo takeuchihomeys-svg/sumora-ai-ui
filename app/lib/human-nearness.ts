@@ -130,10 +130,20 @@ export function scoreNearness(auto: NearnessBucket, human: NearnessBucket): Near
   return { total, fastScore, hbScore, p50Score, cvScore };
 }
 
+/**
+ * 操作と操作の間の間隔だけを取る（2026-11-17 統括Pro・人間自動化土台）。
+ *
+ *   ⚠ 旧は change / diag の g も全部入れていた。
+ *     click→change は同じ押しの直後なので g が数十msになり、
+ *     短間隔%が人工的に跳ねて F28/F29 が「未達」のまま直らない。
+ *   → **click/tap/key の開始**だけを動作として数え、その g を使う。
+ */
 export function gapsFromOps(ops: ReadonlyArray<Record<string, unknown>> | null | undefined): number[] {
   if (!Array.isArray(ops)) return [];
   const out: number[] = [];
   for (const o of ops) {
+    const k = String(o?.k ?? "").toLowerCase();
+    if (!(k === "click" || k === "tap" || k === "key")) continue;
     const g = Number(o?.g);
     if (Number.isFinite(g) && g >= 0) out.push(g);
   }

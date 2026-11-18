@@ -2597,3 +2597,15 @@ const REINS_LINE_MAP = {
   "阪堺電気軌道上町線": "阪堺電気軌道上町線",
   "阪堺電気軌道阪堺線": "阪堺電気軌道阪堺線",
 };
+
+/**
+ * ★ 2026-11-17 統括Pro「地図は既にある → 自動の把握に載せる」:
+ *   popup 専用だった STATION_LINE_MAP / LINE_STATION_ORDER を page からも読めるようにする。
+ *   content.js が page-script より先にこのファイルを注入する。
+ */
+try {
+  if (typeof window !== "undefined") {
+    window.__AXLX_STATION_LINE_MAP = STATION_LINE_MAP;
+    window.__AXLX_LINE_STATION_ORDER = LINE_STATION_ORDER;
+  }
+} catch (_) {}

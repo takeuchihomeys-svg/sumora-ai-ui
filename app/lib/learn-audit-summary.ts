@@ -73,6 +73,24 @@ export type AuditSummary = {
    *   完走率だけでは「次客に移れない」ボトルネックが見えない。
    */
   handoff?: AuditHandoff;
+  /**
+   * ★ 2026-11-17 F45: 客1人の一連完了理解（場所→条件→検索→fill_done→ready_next）
+   *   ボタン理解と同型。何が完了しているかを測る。
+   */
+  flow?: AuditFlowUnderstand;
+};
+
+/** 客1人の一連の完了理解（原子） */
+export type AuditFlowUnderstand = {
+  place_ok: number;
+  conditions_ok: number;
+  search_ok: number;
+  fill_done_ok: number;
+  ready_next: number;
+  series_done: number;
+  gaps: number;
+  line: string;
+  top: Array<{ id: string; n: number }>;
 };
 
 /** 客の一連完了→次客への切替まわり（原子） */
@@ -82,6 +100,12 @@ export type AuditHandoff = {
   no_fill_start: number;
   batch_timeout: number;
   pipeline_busy: number;
+  /** ★ 2026-11-17: 次客乗り換え後の強制更新・前客閉じ */
+  tab_reload: number;
+  supersede: number;
+  /** ★ F45: 一連完了印（ready_next / series_done） */
+  series_done: number;
+  flow_handoff_gap: number;
   /** 人が読める1行 */
   line: string;
   /** 多い原子（id・回数） */
@@ -204,6 +228,19 @@ export function summarizeAudits(
     no_fill_start: 0,
     batch_timeout: 0,
     pipeline_busy: 0,
+    tab_reload: 0,
+    supersede: 0,
+    series_done: 0,
+    flow_handoff_gap: 0,
+  };
+  const flowN: Record<string, number> = {
+    place_ok: 0,
+    conditions_ok: 0,
+    search_ok: 0,
+    fill_done_ok: 0,
+    ready_next: 0,
+    series_done: 0,
+    gaps: 0,
   };
   /**
    * ★ 2026-11-15 **実測で見つけた集計の誤り**（統括が「完走率8%」と誤解した原因）:
@@ -268,6 +305,20 @@ export function summarizeAudits(
       if (keys.some((k) => k === "no_fill_start") || /NO_FILL_START|no_fill_start/i.test(blob)) handoffN.no_fill_start++;
       if (keys.some((k) => k === "batch_timeout") || /batch_timeout/i.test(blob)) handoffN.batch_timeout++;
       if (/pipeline_busy/i.test(blob)) handoffN.pipeline_busy++;
+      if (keys.some((k) => k === "tab_reload") || /tab_reload/i.test(blob)) handoffN.tab_reload++;
+      if (keys.some((k) => k === "supersede") || /supersede|superseded-by-next/i.test(blob)) handoffN.supersede++;
+      if (keys.some((k) => k === "series_done") || /series_done|flow_done_ready_next/i.test(blob)) handoffN.series_done++;
+      if (keys.some((k) => k === "flow_handoff_gap") || /flow_handoff_gap/i.test(blob)) handoffN.flow_handoff_gap++;
+      // F45 完了理解台帳
+      if (keys.some((k) => k === "flow_done_place") || /flow_done_place/.test(blob)) flowN.place_ok++;
+      if (keys.some((k) => k === "flow_done_conditions") || /flow_done_conditions/.test(blob)) flowN.conditions_ok++;
+      if (keys.some((k) => k === "flow_done_search") || /flow_done_search/.test(blob)) flowN.search_ok++;
+      if (keys.some((k) => k === "flow_done_fill_done") || /flow_done_fill_done/.test(blob)) flowN.fill_done_ok++;
+      if (keys.some((k) => k === "flow_done_ready_next") || /flow_done_ready_next|series_done/.test(blob)) {
+        flowN.ready_next++;
+        flowN.series_done++;
+      }
+      if (keys.some((k) => /^flow_gap_/.test(k)) || /flow_gap_/.test(blob)) flowN.gaps++;
     }
     if (s !== "finished" && !humanDone && !unknowable) {
       let last = "";
@@ -329,6 +380,10 @@ export function summarizeAudits(
     no_fill_start: "入力開始なし",
     batch_timeout: "送付完了待ち切れ",
     pipeline_busy: "一連ロック拒否",
+    tab_reload: "強制ページ更新",
+    supersede: "前客fillを閉じて次客へ",
+    series_done: "一連完了→次客可",
+    flow_handoff_gap: "完了理解不足",
   };
   const handoff: AuditHandoff = {
     switch_fail: handoffN.switch_fail,
@@ -336,15 +391,47 @@ export function summarizeAudits(
     no_fill_start: handoffN.no_fill_start,
     batch_timeout: handoffN.batch_timeout,
     pipeline_busy: handoffN.pipeline_busy,
+    tab_reload: handoffN.tab_reload,
+    supersede: handoffN.supersede,
+    series_done: handoffN.series_done,
+    flow_handoff_gap: handoffN.flow_handoff_gap,
     top: handoffTop.slice(0, 5),
     line: handoffTop.length
       ? handoffTop.slice(0, 4).map((x) => `${handoffJa[x.id] || x.id}${x.n}回`).join("・")
       : "完了→次客の異常なし（この期間）",
   };
 
+  const flowTop = Object.entries(flowN)
+    .filter(([, n]) => n > 0)
+    .map(([id, n]) => ({ id, n }))
+    .sort((a, b) => b.n - a.n);
+  const flowJa: Record<string, string> = {
+    place_ok: "場所完了",
+    conditions_ok: "条件完了",
+    search_ok: "検索完了",
+    fill_done_ok: "入力完了",
+    ready_next: "次客へ渡してよい",
+    series_done: "一連完了",
+    gaps: "未完了あり",
+  };
+  const flow: AuditFlowUnderstand = {
+    place_ok: flowN.place_ok,
+    conditions_ok: flowN.conditions_ok,
+    search_ok: flowN.search_ok,
+    fill_done_ok: flowN.fill_done_ok,
+    ready_next: flowN.ready_next,
+    series_done: flowN.series_done,
+    gaps: flowN.gaps,
+    top: flowTop.slice(0, 6),
+    line: flowTop.length
+      ? flowTop.slice(0, 5).map((x) => `${flowJa[x.id] || x.id}${x.n}回`).join("・")
+      : "完了理解の印なし（この期間・2.8.80以降で測る）",
+  };
+
   return {
     runs, finished, abandoned, started, unknown, finish_rate,
     stalled_at, causes, errors, bad, top_problem, advice,
     handoff,
+    flow,
   };
 }

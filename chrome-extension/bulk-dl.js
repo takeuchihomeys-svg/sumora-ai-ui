@@ -22,6 +22,12 @@
   var _autofillStartedAt = 0;
   var _autofillStuckMs = 20 * 60 * 1000; // 念のため20分で解く（合図が来ないまま固まっても永久に押せなくしない）
   /**
+   * ★ 2026-11-18 録画（17:38:49 平田さんの入力開始 → 17:39:00〜05 に大村さんの一覧の印刷用PDFを4回押した）:
+   *   押し始めの後に「別の入力が始まった」かを見る印。0 に戻さない（解除と区別するため）。
+   *   別のタブの入力も session の axlx_fill_busy で届く（initiated はそのタブの中にしか来ない）。
+   */
+  var _lastFillStartAt = 0;
+  /**
    * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
    *   ⚠ この印は **sessionStorage に残さない**（わざと）。
    *     残すと、検索を押してページが読み直された後に「まだ入力中」と誤解し、
@@ -32,6 +38,7 @@
   function _setFillInProgress(on) {
     _autofillInProgress = !!on;
     _autofillStartedAt = on ? Date.now() : 0;
+    if (on) _lastFillStartAt = _autofillStartedAt;
     /**
      * ★ 2026-11-16 録画実測: 住居検索へ移るとページが読み直され、この変数が false に戻る。
      *   そのすきに前の一覧の印刷用PDFが走り、条件入力（所在地・間取り）と同時に動いていた。
@@ -60,6 +67,8 @@
         _fillBusyFromSession = true;
         _autofillInProgress = true;
         _autofillStartedAt = Number(ch.axlx_fill_busy.newValue.at) || Date.now();
+        if (_autofillStartedAt > _lastFillStartAt) _lastFillStartAt = _autofillStartedAt;
+        _haltAutoPdfForNewFill("fill_busy_changed");
       } else {
         _fillBusyFromSession = false;
         _autofillInProgress = false;
@@ -68,6 +77,26 @@
   } catch (_) {}
   function _isFillBusy() {
     return !!(_autofillInProgress || _fillBusyFromSession);
+  }
+  /** 押し始め（since）の後に別の入力が始まったか */
+  function _newFillSince(since) {
+    return !!(since && _lastFillStartAt && _lastFillStartAt > since);
+  }
+  /**
+   * 押している途中で次のお客さんの入力が始まったら、黙って止める。
+   *   ⚠ _autoFinish は使わない（今のお客さん＝次のお客さんの名前で「送り終わり」を返してしまう）。
+   */
+  function _haltAutoPdfForNewFill(why) {
+    if (!_autoPdfRun || !_newFillSince(_autoPdfRun.startedAt)) return false;
+    _autoPdfRun.stopped = true;
+    _autoPdfRun = null;
+    console.warn("[AXLX bulk-dl][auto] 次の入力が始まった → 前の一覧の印刷用PDFを止めます（" + why + "）");
+    _tmark("auto_pdf_end", "stopped_new_fill_" + why);
+    try {
+      var _sb0 = document.getElementById("axlx-autopdf-stop-btn");
+      if (_sb0) _sb0.style.display = "none";
+    } catch (_) {}
+    return true;
   }
   var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
   var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
@@ -462,6 +491,55 @@
       return o && Array.isArray(o.list) && o.list.length ? o.list : null;
     } catch (_) { return null; }
   }
+  /**
+   * ★ 2026-11-18 竹内さん「送付済みの物件はちゃんと送ったと把握する／取得タイミングと連携」:
+   *   物件取得の段を1つずつ把握して印に残す（止まっても「どこで詰まったか」が分かる）。
+   *   段: wait_fill → armed → sent_loaded → filter → press → all_sent_next → done
+   *   送付済みを飛ばす＝失敗ではない。把握して次（未送付／次頁／客完了）へ進む。
+   */
+  var _ACQUIRE_PHASES = ["wait_fill", "armed", "sent_loaded", "filter", "press", "page_done", "batch_done"];
+  var _acquireGrasp = { phases: {}, last: null, sentMarked: 0, sentSkipped: 0, pressed: 0, allowed: 0 };
+  function _graspAcquire(phase, ok, detail) {
+    try {
+      var p = String(phase || "").slice(0, 24);
+      var d = String(detail || "").slice(0, 80);
+      var good = ok !== false;
+      if (!_acquireGrasp.phases) _acquireGrasp.phases = {};
+      _acquireGrasp.phases[p] = { ok: good, d: d, at: Date.now() };
+      _acquireGrasp.last = p;
+      _tmark("acq_" + p, (good ? "✓" : "✗") + d);
+      console.log("[AXLX bulk-dl][把握:物件取得] " + p + (good ? "✓" : "✗") + " " + d);
+      try {
+        window.postMessage({
+          from: "axlx-acquire-grasp",
+          phase: p,
+          ok: good,
+          detail: d,
+          ledger: {
+            sentMarked: _acquireGrasp.sentMarked,
+            sentSkipped: _acquireGrasp.sentSkipped,
+            pressed: _acquireGrasp.pressed,
+            allowed: _acquireGrasp.allowed,
+            last: _acquireGrasp.last,
+          },
+          ts: Date.now(),
+        }, "*");
+      } catch (_) {}
+      try {
+        chrome.storage.session.set({
+          axlx_acquire_grasp: {
+            phases: _acquireGrasp.phases,
+            last: _acquireGrasp.last,
+            sentMarked: _acquireGrasp.sentMarked,
+            sentSkipped: _acquireGrasp.sentSkipped,
+            pressed: _acquireGrasp.pressed,
+            allowed: _acquireGrasp.allowed,
+            at: Date.now(),
+          },
+        });
+      } catch (_) {}
+    } catch (_) {}
+  }
 
   // ── 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」──
   //   案内モード（storage.local guideMode・既定オン＝realpro-guide.js）の間は、自動の送信・ダウンロード・ページ送りを一切始めない。
@@ -510,6 +588,7 @@
     if (_guideOff) return false;
     console.warn("[AXLX bulk-dl] 案内モードのため自動の送信・ダウンロード・ページ送りをしない（" + where + "）");
     try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+    try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
     try { clearAutoSendState(); } catch (_) {}
     return true;
   }
@@ -819,6 +898,7 @@
        */
       console.log("[AXLX bulk-dl][auto] 検索完了前の一覧 → 押しません（fill-done 後の新しい行だけ押す）");
       _tmark("auto_pdf_arm", "blocked_need_fill_done");
+      try { _graspAcquire("wait_fill", false, "fill-done/search_armed前→物件取得はまだ（送付済把握の前段）"); } catch (_) {}
     }
     // 2026-11-10 竹内さん「自動モードの時は自動で押しておこなわれるようにする」: 一覧が出た時点で自動で押し始める（検索の完了合図に頼らない）
     _maybeAutoPressOnLoad();
@@ -1089,8 +1169,15 @@
       + (opt && opt.continuePages ? "・次ページ続き" : ""));
     _tmark("results_look", Math.round(look) + "ms");
     _axlxWorkNote("👀 検索結果を見ています", Date.now() + look);
+    var lookFrom = Date.now();
     setTimeout(function () {
       _axlxClearWorkNote();
+      if (_newFillSince(lookFrom)) {
+        console.warn("[AXLX bulk-dl][auto] 見ている間に次の入力が始まった → この一覧は押しません");
+        _tmark("auto_pdf_load", "look_cancel_new_fill");
+        return;
+      }
+      _pressSince = lookFrom;
       autoPressPdfs(opt);
     }, look);
   }
@@ -1362,12 +1449,16 @@
   //   ・対象は一覧の行（tracked）。送付済み・前回の検索より古い行は送らない（今までの選別と同じ物差し）
   //   ・1件ごとに 送ったら「👀 確認中…」で資料を見る間を置いてから次へ
   //   ・止める: 右下の枠の「⏹ 自動を止める」。スタッフモード・自動モードでない時は動かない
-  var _autoPdfRun = null;   // { total, done, index, stopped }
+  var _autoPdfRun = null;   // { total, done, index, stopped, startedAt }
+  var _pressSince = 0;      // 見る間を始めた時刻（autoPressPdfs が受け取る）
+  var _pressRunSince = 0;   // この回の押し始め（_startAutoPressRun が startedAt にする）
   /**
    * @param {{ continuePages?: boolean }} [opt]
    *   continuePages=true … 次ページ再開。ページカウンタをリセットしない。
    */
   function autoPressPdfs(opt) {
+    _pressRunSince = _pressSince || Date.now();
+    _pressSince = 0;
     if (!_autoModeOn) {
       _nudge("自動モードの時だけ自動で押せます（ヘッダーを「自動」に）");
       return { ok: false, reason: "not-auto" };
@@ -1693,12 +1784,28 @@
     _ensureSentRoomsForAuto(cid, function () {
       var filtered = _filterCandForAuto(cand, cid);
       var list = filtered.allowed || [];
+      try {
+        _acquireGrasp.sentSkipped = filtered.sent || 0;
+        _acquireGrasp.allowed = list.length;
+        _graspAcquire(
+          "filter",
+          true,
+          "候補" + cand.length + "→送る" + list.length + "／送付済除外" + (filtered.sent || 0) + "／最安除外" + (filtered.cheapest || 0)
+        );
+      } catch (_) {}
       if (!list.length) {
         var skippedAll = (filtered.sent || 0) + (filtered.cheapest || 0);
         _nudge(skippedAll
           ? ("👀 このページは送る部屋がありません（送付済み " + (filtered.sent || 0) + "／同じ平米の高い部屋 " + (filtered.cheapest || 0) + "）→ 次へ")
           : "⚠ 押せる行が見つかりません");
         _tmark("auto_pdf_start", "all-filtered sent=" + (filtered.sent || 0) + " cheap=" + (filtered.cheapest || 0));
+        try {
+          _graspAcquire(
+            "all_sent",
+            true,
+            "送付済み" + (filtered.sent || 0) + "で送る部屋0＝失敗ではない→次頁/客完了へ"
+          );
+        } catch (_) {}
         // 全部送付済みなら次ページへ（既存の決まり）
         _autoPdfRun = { total: 0, done: 0, index: 0, skipped: filtered.sent || 0, order: [] };
         _autoFinish("このページは送る部屋が無い");
@@ -1715,8 +1822,10 @@
         order: order,
         skipped: filtered.sent || 0,
         customerId: cid || null,
+        startedAt: _pressRunSince || Date.now(),
       };
       _tmark("auto_pdf_start", String(list.length) + "件（元" + cand.length + "・送付済除外" + (filtered.sent || 0) + "・最安絞り" + (filtered.cheapest || 0) + "）");
+      try { _graspAcquire("press_start", true, "未送付" + list.length + "件を押す（送付済は把握済で除外）"); } catch (_) {}
       console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : "")
         + "／送付済み除外 " + (filtered.sent || 0) + "／同じ平米の高い部屋除外 " + (filtered.cheapest || 0));
       if (filtered.sent || filtered.cheapest) {
@@ -1825,6 +1934,13 @@
             _sentMarkCtx = { customerId: String(customerId), resp: resp || null, at: Date.now() };
             try { _markSentLikeGuide(customerId, resp); } catch (_) {}
             try { _markSentBuildingsLikeGuide(customerId); } catch (_) {}
+            try {
+              _graspAcquire(
+                "sent_loaded",
+                !!(resp && resp.ok) || n > 0,
+                "DB送付済" + n + "件" + (resp && resp.ok ? "" : "（API弱→印だけで把握）")
+              );
+            } catch (_) {}
             cb(!!(resp && resp.ok));
           });
         } catch (_) { cb(!!(resp && resp.ok)); }
@@ -1918,7 +2034,15 @@
       marked++;
     });
     console.log("[AXLX bulk-dl][auto] 送付済み印: " + marked + "件／行" + rows.length + "（号室なし" + noRoom + "・rooms" + rooms.length + "）");
+    try { _acquireGrasp.sentMarked = marked; } catch (_) {}
     if (marked) _nudge("👀 送付済み " + marked + "件を把握（通常と同じ）");
+    try {
+      _graspAcquire(
+        "sent_marked",
+        true,
+        "画面印" + marked + "/" + rows.length + "（号室なし" + noRoom + "）→送った行は押さない"
+      );
+    } catch (_) {}
   }
 
   /** 号室の無い送付記録は建物印（通常の sent-check と同じ） */
@@ -1987,6 +2111,7 @@
   }
   function _autoPressNext(list) {
     if (!_autoPdfRun) return;
+    if (_haltAutoPdfForNewFill("press_next")) return;
     if (_autoPdfRun.stopped) { _autoFinish("止めました"); return; }
     if (!_autoModeOn || _staffModeOn) { _autoFinish("モードが変わったので止めました"); return; }
     if (_autoPdfRun.index >= list.length) { _autoFinish("全部終わりました"); return; }
@@ -2059,6 +2184,7 @@
         }
       } catch (_) {}
       // 押した合図で sendOnePdfNow が走る。終わる（_pdfBusy が false に戻る）のを待ってから次へ
+      var _wpCid = (_autoPdfRun && _autoPdfRun.customerId) || _pickCustomerIdForAuto();
       _waitPdfIdle(function () {
         if (_autoPdfRun) _autoPdfRun.done++;
         var Hn = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
@@ -2068,7 +2194,7 @@
         if (nextMs < 350) nextMs = 350;
         if (nextMs > 4500) nextMs = 4500;
         setTimeout(function () { _autoPressNext(list); }, Math.round(nextMs));
-      });
+      }, _wpCid);
     });
   }
   /** 「印刷用PDF」のリンクを人が押す形で押す（カーソル → 押す → 反応を見る） */
@@ -2152,10 +2278,11 @@
    *   ・一度も busy にならなければ約2.5秒で次へ（キャプチャ未発火）
    *   ・busy が立ったら終わるまで待つ（上限45秒）
    */
-  function _waitPdfIdle(cb) {
+  function _waitPdfIdle(cb, customerId) {
     var waited = 0;
     var sawBusy = !!_pdfBusy;
     var done = false;
+    var lastPing = 0;
     var finish = function (why) {
       if (done) return;
       done = true;
@@ -2166,6 +2293,11 @@
       if (_pdfBusy) sawBusy = true;
       if (!_pdfBusy && sawBusy) { finish(null); return; }
       if (!_pdfBusy && !sawBusy && waited >= 2500) { finish("送信が始まらない"); return; }
+      var now = Date.now();
+      if (sawBusy && now - lastPing > 5000) {
+        lastPing = now;
+        try { _batchProgressPing(customerId || _pickCustomerIdForAuto()); } catch (_) {}
+      }
       var Hp = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
       var tick = Hp && Hp.logNormalDelay ? Hp.logNormalDelay(420, 0.35) : (320 + Math.floor(Math.random() * 200));
       if (tick < 220) tick = 220;
@@ -2209,6 +2341,16 @@
     var allSkipped = (n === 0 && skipped > 0);
     var page = Number(_autoPdfPage) || 1;
     var maxP = _autoMaxPages();
+    try {
+      _acquireGrasp.pressed = n;
+      _acquireGrasp.sentSkipped = skipped;
+      _graspAcquire(
+        allSkipped ? "all_sent_page" : "page_done",
+        true,
+        "P" + page + " 送った" + n + "／送付済飛ばし" + skipped + "／" + String(why || "").slice(0, 40)
+          + (allSkipped ? "→送付済把握OK・次へ" : "")
+      );
+    } catch (_) {}
     _tmark("auto_pdf_end", "P" + page + " " + why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : ""));
     console.log("[AXLX bulk-dl][auto] P" + page + "/" + maxP + " 終了: " + why + "（この頁 " + n + "件送信・飛ばし " + skipped + "・累計 " + _autoPdfTotalSent + "件）");
     var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
@@ -2251,7 +2393,8 @@
           type: "axlx-batch-customer-done",
           customerId: cid,
           propertyCount: _autoPdfTotalSent,
-          audit: null,
+          // 自動の1件ずつ送る流れでも、検索後の段（一覧を見る・次ページ・読み直し後の続き）を点検に残す
+          audit: _auditResult({ currentPage: page, sentCount: _autoPdfTotalSent, sentSkipped: skipped }, { auto_pdf: true }),
           auto_pdf: { why: why, sent: _autoPdfTotalSent, skipped: skipped, pages: page, max_pages: maxP },
         }, function () { void chrome.runtime.lastError; });
       });
@@ -2280,6 +2423,23 @@
     _autoNextPageTries++;
     _autoPdfPage = (Number(_autoPdfPage) || 1) + 1;
     _tmark("auto_next_page", "→P" + _autoPdfPage + "（" + _autoNextPageTries + "回目）");
+    /**
+     * ★ 2026-11-18 DB実測: `td.pager`（onclick="pager(...)"）を押すと 2〜6秒後に録画の ring_empty が出る
+     *   ＝**ページ全体が読み直される**（直近2日の3回とも）。下の `_waitRows` はメモリ上の続きなので読み直しで消え、
+     *   自動は2頁目で黙って止まっていた（直近2日、自動が次を押した後に送った例は0）。
+     *   → 押す前に続きの印を session に置き、読み直した画面の start() で続きから押し直す。
+     */
+    try {
+      chrome.storage.session.set({
+        axlx_auto_next_page: {
+          page: _autoPdfPage,
+          tries: _autoNextPageTries,
+          total: _autoPdfTotalSent,
+          customerId: _pickCustomerIdForAuto() || null,
+          at: Date.now(),
+        },
+      });
+    } catch (_) {}
     console.log("[AXLX bulk-dl][auto] 次のページへ進みます → P" + _autoPdfPage + "/" + maxP
       + (meta && meta.allSkipped ? "（前頁は全部送付済み）" : "（前頁で送信あり）"));
     _nudge("👉 次のページへ（P" + _autoPdfPage + "/" + maxP + "）");
@@ -2289,6 +2449,8 @@
     try {
       if (typeof _humanScrollToEl === "function") _humanScrollToEl(btn);
     } catch (_) {}
+    var _oldRowBtns = [];
+    try { _oldRowBtns = tracked.map(function (t) { return t && t.btn; }).filter(Boolean); } catch (_) { _oldRowBtns = []; }
     setTimeout(function () {
       try {
         if (!btn || !btn.isConnected) return;
@@ -2312,6 +2474,22 @@
     }, 700 + Math.floor(Math.random() * 1200));
     // ページが読み直されるのを待って、もう一度押し始める（行が出るまで短くリトライ）
     var _waitRows = function (triesLeft) {
+      /**
+       * 前の頁の行がまだ画面にある＝読み直しの前。ここで続けると前の頁を押し直し、印も消してしまう。
+       *   → 前の行が消えるまで待つ。消えないまま尽きたら、続きは読み直し後の start() に任せる（印は残す）。
+       */
+      var stillOld = false;
+      try { stillOld = _oldRowBtns.some(function (b) { return b && b.isConnected; }); } catch (_) { stillOld = false; }
+      if (stillOld) {
+        if (triesLeft > 0) {
+          setTimeout(function () { _waitRows(triesLeft - 1); }, 900 + Math.floor(Math.random() * 500));
+          return;
+        }
+        console.warn("[AXLX bulk-dl][auto] 次を押しても前の頁の行が残ったまま → 読み直し後の続きに任せます");
+        _tmark("auto_next_wait_reload", "P" + _autoPdfPage);
+        _nudge("⏳ 次のページの読み込みを待っています（P" + _autoPdfPage + "）");
+        return;
+      }
       try {
         if (typeof _rescanRows === "function") _rescanRows();
       } catch (_) {}
@@ -2322,6 +2500,8 @@
           console.warn("[AXLX bulk-dl][auto] 次ページの行がまだ出ない → それでも押せる物を探す");
           _tmark("auto_next_no_rows", "P" + _autoPdfPage);
         }
+        // 読み直し無しで続けられた → 読み直し用の印は要らない（二重に始めない）
+        try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
         // ★ continuePages: ページカウンタを消さない（3ページ目に進むため）
         _startAutoPressAfterLook(n || 10, { continuePages: true });
         return;
@@ -2339,7 +2519,7 @@
           type: "axlx-batch-customer-done",
           customerId: cid,
           propertyCount: Number(n) || 0,
-          audit: null,
+          audit: _auditResult({ currentPage: _autoPdfPage, sentCount: Number(n) || 0, sentSkipped: Number(skipped) || 0 }, { auto_pdf: true }),
           auto_pdf: { why: why, sent: Number(n) || 0, skipped: Number(skipped) || 0, next_page: true },
         }, function () { void chrome.runtime.lastError; });
       });
@@ -2348,6 +2528,7 @@
   function stopAutoPdfs() {
     if (!_autoPdfRun) { _nudge("自動は動いていません"); return false; }
     _autoPdfRun.stopped = true;
+    try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
     _nudge("⏹ 止めます（いまの1件が終わってから）");
     return true;
   }
@@ -4039,7 +4220,7 @@
           // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
           setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null, updateCarry: state.updateCarry || null });
           // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null, sentCount: state.sentCount || 0 }, function () { void chrome.runtime.lastError; }); } catch (_) {}
           // AJAX: 次のinject()でCase Bが拾えるようにリセット
           // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
           _pendingAutoSendDispatched = false;
@@ -4054,6 +4235,11 @@
       if (countEl) countEl.textContent = "全ページ送信完了！";
       console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ / " + (state.sentCount || 0) + "件送信）");
     }
+  }
+
+  /** ★ 2026-11-18 平田: 送付中も無進捗5分で batch_timeout しないよう心拍（background がリセット） */
+  function _batchProgressPing(customerId, sentCount) {
+    try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: customerId || null, sentCount: sentCount || 0 }, function () { void chrome.runtime.lastError; }); } catch (_) {}
   }
 
   // ── 全ページ自動送信: 現ページを自動送信する ──────────────────────────────
@@ -4078,6 +4264,7 @@
     var countEl = document.getElementById("axlx-count");
     _tmark("page", "P" + state.currentPage, state.customerId || null);
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
+    try { _batchProgressPing(state.customerId || null, state.sentCount || 0); } catch (_) {}
 
     // 2026-11-10 竹内さん「リアプロの一気に選択されてしまうのでなくて1つ1つ行っていく形で。チェックボックスはこの印刷用PDFのところの部分のこと」:
     //   旧は**先に全行へチェックを入れて**から選別して外していた（画面で一斉にチェックが付く＝機械らしい・人が1件ずつ選ぶ形と違う）。
@@ -4194,6 +4381,8 @@
     function _oneByOneStart(state, list, index, doneCb) {
       if (index >= list.length) { doneCb(); return; }
       var item = list[index];
+      // ★ 2026-11-18 竹内さん「進捗ありは切らない」: 1件選ぶたびにも進みの合図（background の無進捗待ちを延ばす）
+      try { _batchProgressPing(state.customerId || null, state.sentCount || 0); } catch (_) {}
       if (!item || !item.cb || !item.btn) { _oneByOneStart(state, list, index + 1, doneCb); return; }
       // 前の行のチェックを外す（1件だけ選ばれている状態を作る）
       tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
@@ -4318,7 +4507,7 @@
             _tmark("sent", "P" + state.currentPage + " 1件");
             state.sentCount = (state.sentCount || 0) + kept.length;
           }
-          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+          try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null, sentCount: state.sentCount || 0 }, function () { void chrome.runtime.lastError; }); } catch (_) {}
           next();
         });
       };
@@ -4431,9 +4620,55 @@
     }
   });
 
+  /**
+   * ★ 2026-11-18 HONOKA根本（物件未取得）:
+   *   自動の検索 click 直前に page-script が `axlx-search-armed` を同期 postMessage。
+   *   → ここで session の axlx_pending_auto_send を書く（リロード後 Case C の唯一の生存経路）。
+   *   旧は popup の go_search 監視だけが書いていた → 自動 clickSearch では印ゼロ → 物件取得ゼロ。
+   *   AJAX（リロード無し）でも _autoSendArmed を立て、fill-done が消えても新行を押せる。
+   */
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "axlx-search-armed") return;
+    try {
+      var _armCid = e.data.customerId
+        || (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerId)
+        || null;
+      var _armName = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.customerName) || null;
+      var _armCond = (_pendingCustomerForAutoSend && _pendingCustomerForAutoSend.conditions) || null;
+      chrome.storage.session.set({
+        axlx_pending_auto_send: {
+          customerId: _armCid,
+          customerName: _armName,
+          conditions: _armCond,
+          ts: Date.now(),
+          armed_why: String(e.data.why || "search_armed").slice(0, 48),
+          pageVer: e.data.pageVer || null,
+        },
+      });
+      // 検索を押した＝入力中ではない。busy 印を外し、Case A/C が動けるようにする
+      _setFillInProgress(false);
+      _fillBusyFromSession = false;
+      try { chrome.storage.session.remove("axlx_fill_busy"); } catch (_) {}
+      if (_autofillInitiated || _autofillInProgress) {
+        _autoSendArmed = true;
+        _autofillInProgress = false;
+        console.log("[AXLX bulk-dl] search-armed → pending保存＋armed（リロード生存／AJAX両対応）");
+        try { _graspAcquire("armed", true, "search_armed→取得タイミングOK（送付済読込→押すへ）"); } catch (_) {}
+        setTimeout(inject, 80);
+      } else {
+        console.log("[AXLX bulk-dl] search-armed → pending保存（Case C用）");
+        try { _graspAcquire("armed", true, "pending保存（リロード後Case Cで取得開始）"); } catch (_) {}
+      }
+    } catch (err) {
+      console.warn("[AXLX bulk-dl] search-armed 失敗", err && err.message);
+    }
+  });
+
   // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
+    // ★ 2026-11-18: 入力中に来た別のお客さんを断った合図は、今のお客さんの入力・送付の構えに触らない
+    if (e.data.gateKind === "busy_other_customer") return;
     /**
      * 2026-11-12 竹内さん「自動で検索したら検索も条件入れる前にいま出ている物件のダウンロードを始めてしまう」:
      *   検索を押した合図が来た＝**ここから先の一覧は今のお客様の検索結果**。押してよい。
@@ -4446,6 +4681,7 @@
     _autofillInitiated = false;
     console.log("[AXLX bulk-dl] fill-done 受信 → 全ページ自動送信 armed");
     _treset(null); _tmark("armed", null);
+    try { _graspAcquire("armed", true, "fill-done→物件取得のタイミング（送付済把握→PDF押し）"); } catch (_) {}
     // AJAX完了はfill-done到着より先にMutationObserverが走るため、
     // Case A は _autoSendArmed=false のまま inject() を空振りしてしまう。
     // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。
@@ -4570,13 +4806,75 @@
               console.warn("[AXLX bulk-dl] Case C: 再開フラグが古い（" + Math.round(_age / 1000) + "秒前・" + (_flag.customerName || "不明") + "）→ 送信しない");
               return;
             }
-            console.log("[AXLX bulk-dl][auto] Case C: 検索後のページ読み直し → この画面の行を1件ずつ押します");
-            _autoSendArmed = true;
-            _maybeAutoPressOnLoad({ afterSearch: true });
+            /**
+             * ★ 2026-11-18 平田→大村（08:02:30 の印刷用PDF）: 次のお客さんの入力が始まる前の読み直しで、
+             *   前に残った印のまま今の一覧を押し、次のお客さんの名前で共有した。
+             *   → 印の後に新しいお客さんの入力が始まっていたら（axlx_fill_busy が新しい）・お客さんが違えば押さない。
+             */
+            chrome.storage.session.get(["axlx_fill_busy"], function (r2) {
+              var _H = (typeof self !== "undefined" ? self : window).AxlxCustomerHandoff;
+              var _why = _H ? _H.pendingFlagBlockReason(_flag, r2 && r2.axlx_fill_busy, _pickCustomerIdForAuto(), Date.now()) : null;
+              if (_why) {
+                console.warn("[AXLX bulk-dl] Case C: 検索した印が今のお客さんの物ではない（" + _why + "）→ 押しません");
+                _tmark("auto_pdf_load", "caseC_block_" + _why);
+                return;
+              }
+              console.log("[AXLX bulk-dl][auto] Case C: 検索後のページ読み直し → この画面の行を1件ずつ押します");
+              _autoSendArmed = true;
+              _maybeAutoPressOnLoad({ afterSearch: true });
+            });
           }
         });
       } catch (_) {}
     }, 2500);
+
+    // Case E: 自動が「次」を押した後の読み直し（td.pager はページ全体を読み直す）→ 次の頁を続きから押す
+    setTimeout(function () {
+      try {
+        chrome.storage.session.get(["axlx_auto_next_page"], function (data) {
+          var s = data && data.axlx_auto_next_page;
+          if (!s || typeof s !== "object") return;
+          chrome.storage.session.remove("axlx_auto_next_page");
+          var age = Date.now() - (Number(s.at) || 0);
+          if (age > 120000) {
+            console.warn("[AXLX bulk-dl][auto] Case E: 次ページの続きの印が古い（" + Math.round(age / 1000) + "秒前）→ 続けない");
+            _tmark("auto_next_page_resume", "stale_" + Math.round(age / 1000) + "s");
+            return;
+          }
+          if (_autoPdfRun || _pendingAutoSendDispatched) return;
+          var nowCid = _pickCustomerIdForAuto();
+          if (s.customerId && nowCid && String(s.customerId) !== String(nowCid)) {
+            console.warn("[AXLX bulk-dl][auto] Case E: お客さんが変わっている → 続けない");
+            _tmark("auto_next_page_resume", "customer_changed");
+            return;
+          }
+          var resumeTries = 0;
+          var go = function () {
+            resumeTries++;
+            if (_autoPdfRun || _pendingAutoSendDispatched) return;
+            var n = 0;
+            try { if (typeof _rescanRows === "function") _rescanRows(); } catch (_) {}
+            try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
+            // 自動モードの読み込み（storage.local）と行の描画を待つ。待っても来なければ印を落として止まる（黙らない）
+            if ((!_autoModeOn || n === 0) && resumeTries < 8) { setTimeout(go, 800); return; }
+            if (!_autoModeOn) {
+              _tmark("auto_next_page_resume", "not_auto");
+              return;
+            }
+            _autoPdfPage = Number(s.page) || 2;
+            _autoNextPageTries = Number(s.tries) || 1;
+            _autoPdfTotalSent = Number(s.total) || 0;
+            // 並べ替え直すと1頁目に戻る → この検索では並べ替え済みとして扱う
+            _adSortDone = true;
+            _pendingAutoSendDispatched = true;
+            console.log("[AXLX bulk-dl][auto] Case E: 次ページの読み直し後 → P" + _autoPdfPage + " を続きから押します（行=" + n + "・累計 " + _autoPdfTotalSent + "件）");
+            _tmark("auto_next_page_resume", "P" + _autoPdfPage + " rows=" + n);
+            _startAutoPressAfterLook(n || 10, { continuePages: true });
+          };
+          go();
+        });
+      } catch (_) {}
+    }, 2700);
   }
 
   if (document.readyState === "loading") {

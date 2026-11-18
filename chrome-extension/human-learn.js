@@ -765,11 +765,13 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
       xs.push(p.x); ys.push(p.y);
       var f = p.f || "?";
       if (order.indexOf(f) < 0) order.push(f);
-      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {}, w: {} };
+      if (!byField[f]) byField[f] = { n: 0, xs: [], ys: [], stages: {}, w: {}, bws: [], bhs: [] };
       byField[f].n++;
       // 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」: 要素の種類も数える
       var w = p.wk || "other";
       byField[f].w[w] = (byField[f].w[w] || 0) + 1;
+      if (typeof p.w === "number" && p.w > 0) byField[f].bws.push(p.w);
+      if (typeof p.h === "number" && p.h > 0) byField[f].bhs.push(p.h);
       // 2026-11-11: どの段階で押したかも数える（form/modal/result）
       var sg = p.s || "other";
       byField[f].stages[sg] = (byField[f].stages[sg] || 0) + 1;
@@ -786,6 +788,8 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
       var ww = byField[f].w, bw = null, bwn = -1;
       Object.keys(ww).forEach(function (k) { if (ww[k] > bwn) { bw = k; bwn = ww[k]; } });
       if (bw) fieldSpread[f].w = bw;
+      if (byField[f].bws.length) fieldSpread[f].bw = median(byField[f].bws);
+      if (byField[f].bhs.length) fieldSpread[f].bh = median(byField[f].bhs);
     });
     var points = {
       n: pt.length,

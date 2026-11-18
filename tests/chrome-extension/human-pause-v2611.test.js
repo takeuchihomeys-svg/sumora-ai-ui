@@ -17,7 +17,7 @@ function ok(name, cond, extra) { if (cond) { passed++; console.log("  ✓ " + na
 const ps = read("page-script.js");
 
 console.log("■ ① 長めの停止（人が手を止める）");
-ok("_longPauseDue がある", /function _longPauseDue\(\)/.test(ps));
+ok("_longPauseDue がある", /function _longPauseDue\((item)?\)/.test(ps)); // 2.8.108: 区の最中は止めないので item を受ける
 ok("8〜25秒（対数正規・中央値11秒）", /_ln\(11000, 0\.5, 8000, 25000\)/.test(ps));
 ok("確率は低い（2〜5%）", /var p = 0\.02 \+ Math\.min\(0\.03, _opsSincePause \/ 2000\);/.test(ps));
 ok("操作が続くほど少し上がる", /_opsSincePause\+\+/.test(ps));

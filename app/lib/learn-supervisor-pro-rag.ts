@@ -8,6 +8,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SupervisorAdvice } from "./learn-supervisor";
+import type { RagRow, Scored } from "./design-knowledge-rag";
+import { LEARN_PERIODS, sinceIso } from "./learn-periods";
 
 /** meet は Pro 側と同形（循環 import を避ける） */
 export type ProMeetOpts = { meet?: string[]; notes?: string[] };
@@ -56,8 +58,19 @@ export function buildProRagQuery(
   if (fa?.value) parts.push(String(fa.value).slice(0, 120));
   const link = ev.find((e) => /連携|F32_link/.test(String(e.label || "")));
   if (link?.value) parts.push(String(link.value).slice(0, 80));
-  const wipe = ev.find((e) => /F35|F36|消失|保管/.test(String(e.label || "") + String(e.value || "")));
+  const wipe = ev.find((e) => /F35|F36|消失|保管|solid|画面位置/.test(String(e.label || "") + String(e.value || "")));
   if (wipe?.value) parts.push(String(wipe.value).slice(0, 60));
+  /** ★ 2026-11-18: 細かい材料も問いへ（引き漏れ防止） */
+  for (const re of [
+    /原因→改善の再学習|人間のように原因/,
+    /改善する仕組みの構築|統括Proの志向/,
+    /物件取得・送付済みの把握/,
+    /統括Pro思考骨格|画像学習はちゃんと/,
+    /設計知見↔統括Pro|設計知見と統括/,
+  ]) {
+    const hit = ev.find((e) => re.test(String(e.label || "")));
+    if (hit?.value) parts.push(String(hit.label) + " " + String(hit.value).slice(0, 50));
+  }
   for (const a of (m.agenda || []).slice(0, 2)) {
     if (a?.topic) parts.push(String(a.topic).slice(0, 40));
   }
@@ -81,11 +94,85 @@ export async function fetchSupervisorProBrainPull(
   };
   try {
     const { searchKb } = await import("./design-knowledge-rag-server");
-    const scored = await searchKb(sb, query, {
-      k: 6,
-      mode: "hybrid",
-      // 札で狭めすぎると抜けを見逃す。Chrome拡張／ブレインは後で優先表示。
-    });
+    const { hybridRank } = await import("./design-knowledge-rag");
+    const fallbackQ = [
+      "リアプロ 画面把握 スクロール定着 駅外し",
+      "Chrome拡張 外してから入れる 沿線 駅",
+      "分析強化の原則 統括Pro 土台",
+      ...(meetOpts?.meet || []).slice(0, 2).map((m) => String(m).slice(0, 40)),
+    ].join(" ").slice(0, 200);
+    const rankQ = `${fallbackQ} ${query}`.slice(0, 280);
+
+    /**
+     * ★ 2026-11-17 営業時間・全件 loadRagRows が statement timeout → kb_hits空で把握崩壊。
+     *   Pro はまず軽量 keyword（上限200・埋め込みRPC無し）→ 0件の時だけ hybrid を短時間試す。
+     */
+    let scored: Scored[] = [];
+    let ragPath = "none";
+
+    const pullLite = async (): Promise<RagRow[]> => {
+      const orParts = [
+        "tags.cs.{Chrome拡張}",
+        "tags.cs.{分析強化の原則}",
+        "tags.cs.{統括Pro}",
+        "tags.cs.{RAG}",
+        "title.ilike.%画面把握%",
+        "title.ilike.%スクロール%",
+        "title.ilike.%駅外し%",
+        "title.ilike.%統括Pro%",
+        "title.ilike.%打合せ全議題%",
+        "title.ilike.%外してから入れる%",
+        "title.ilike.%原因%",
+        "title.ilike.%再学習%",
+        "title.ilike.%改善する仕組み%",
+        "title.ilike.%画面位置%",
+        "title.ilike.%消す書き込み%",
+        "title.ilike.%photo_learn%",
+        "title.ilike.%設計知見%",
+      ];
+      const { data: lite, error: liteErr } = await sb
+        .from("system_design_thinking")
+        .select("id, title, insight, rationale, context, tags, is_current, created_at, priority")
+        .eq("is_current", true)
+        .or(orParts.join(","))
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (!liteErr && lite?.length) return lite as RagRow[];
+      const { data: recent } = await sb
+        .from("system_design_thinking")
+        .select("id, title, insight, rationale, context, tags, is_current, created_at, priority")
+        .eq("is_current", true)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      return (recent || []) as RagRow[];
+    };
+
+    try {
+      const rows = await pullLite();
+      scored = hybridRank(rows, new Map(), rankQ, {
+        nowIso: new Date().toISOString(),
+        mode: "keyword",
+      }).slice(0, 6);
+      ragPath = rows.length ? "keyword_lite" : "keyword_empty";
+    } catch (eLite) {
+      ragPath = "lite_fail:" + String((eLite as Error)?.message || eLite).slice(0, 40);
+      scored = [];
+    }
+
+    if (!scored.length) {
+      try {
+        scored = await Promise.race([
+          searchKb(sb, fallbackQ, { k: 6, mode: "hybrid" }),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error("pro_rag_hybrid_timeout")), 8_000),
+          ),
+        ]);
+        if (scored.length) ragPath = "hybrid_fallback";
+      } catch (eHy) {
+        ragPath = ragPath + "|hybrid_fail:" + String((eHy as Error)?.message || eHy).slice(0, 36);
+        scored = [];
+      }
+    }
     const prefer = (tags: string[] | null | undefined) => {
       const t = tags || [];
       return t.includes("Chrome拡張") || t.includes("ブレイン") || t.includes("分析強化の原則") || t.includes("統括");
@@ -107,7 +194,8 @@ export async function fetchSupervisorProBrainPull(
     }));
 
     const log_memory: ProLogMemory[] = [];
-    const since = new Date(Date.now() - 2 * 86400_000).toISOString();
+    /** logMemoryMs（既定2日）— 把握用。historyMs より狭く Pro が直近の統括を継ぐ */
+    const since = sinceIso(LEARN_PERIODS.logMemoryMs);
     // ★ 列は advice ではなく meeting（実測: advice does not exist）
     const { data: logs } = await sb
       .from("learn_supervisor_log")
@@ -135,8 +223,8 @@ export async function fetchSupervisorProBrainPull(
 
     const ok = kb_hits.length >= 1;
     const line = ok
-      ? `統括Pro RAG ${kb_hits.length}件（${kb_hits.map((h) => h.id8).join("・")}）／ログ記憶${log_memory.length}`
-      : `統括Pro RAG 0件（query=${query.slice(0, 60)}）／ログ記憶${log_memory.length}`;
+      ? `統括Pro RAG ${kb_hits.length}件（${kb_hits.map((h) => h.id8).join("・")}）／経路=${ragPath}／ログ記憶${log_memory.length}`
+      : `統括Pro RAG 0件（query=${query.slice(0, 60)}／経路=${ragPath}）／ログ記憶${log_memory.length}`;
     return { query, kb_hits, log_memory, line, ok, why: ok ? null : "kb_hits_empty" };
   } catch (e) {
     return {

@@ -117,7 +117,7 @@
    * 中央値 medianMs・対数の広がり sigma の対数正規。
    *   下の端 = max(200ms, 中央値の1/4)・上の端 = 中央値の6倍で切る（極端な外れで止まらないように）
    */
-  function logNormalDelay(medianMs, sigma, rng) {
+  function logNormalDelay(medianMs, sigma, rng, opts) {
     var m = _num(medianMs);
     if (!m) return 0;
     var s = (typeof sigma === "number" && isFinite(sigma) && sigma > 0) ? sigma : PACER_SIGMA;
@@ -129,7 +129,8 @@
      *   対策: 下の端を `max(20, m*0.3)` にする（短い間隔でも潰れない）。上の端は今まで通り m*6。
      *   ⚠ 200ms を下回らせたくない所（ページの読み込み待ち等）は、呼ぶ側で Math.max(200, ...) する。
      */
-    var lo = Math.max(20, m * 0.3), hi = m * 6;
+    var floor = (opts && typeof opts.minGapMs === "number" && opts.minGapMs > 0) ? opts.minGapMs : 20;
+    var lo = Math.max(floor, m * 0.3), hi = m * 6;
     return Math.round(Math.min(hi, Math.max(lo, v)) * 10) / 10;
   }
 
@@ -151,7 +152,12 @@
       n++;
       var isBreak = (n % every) === 0;
       if (isBreak) breaks++;
-      return { ms: logNormalDelay(isBreak ? breakMs : base, sigma, rng), isBreak: isBreak, n: n };
+      var _opFloor = (typeof o.minOpGapMs === "number" && o.minOpGapMs > 0) ? o.minOpGapMs : 400;
+      return {
+        ms: logNormalDelay(isBreak ? breakMs : base, sigma, rng, isBreak ? null : { minGapMs: _opFloor }),
+        isBreak: isBreak,
+        n: n,
+      };
     }
     return {
       next: next,

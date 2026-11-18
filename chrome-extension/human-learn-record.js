@@ -348,7 +348,12 @@
           var pf = {};
           _liveNames.slice(0, 40).forEach(function (k) {
             var v = _live[k];
-            pf[k] = { n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: v.by || null };
+            pf[k] = {
+              n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: v.by || null,
+              ...(typeof v.bw === "number" ? { bw: v.bw } : {}),
+              ...(typeof v.bh === "number" ? { bh: v.bh } : {}),
+              ...(v.shape ? { shape: String(v.shape).slice(0, 40) } : {}),
+            };
           });
           add.points = { n: _liveNames.length, x: null, y: null, fields: pf, order: _orderLive.slice(0, 40) };
         }
@@ -476,6 +481,8 @@
    *   click 時点では checkbox が既にトグル後のことがある → **mousedown で押す前を掴む**。
    */
   var _pendingWas = { el: null, was: null, at: 0, name: null };
+  /** MAIN(_fireAt) から届いた直近の押下座標 */
+  var _pendingPointXY = { x: null, y: null, at: 0, name: "" };
   function _findCheckEl(node) {
     if (!node) return null;
     try {
@@ -559,7 +566,56 @@
    *     `_recNoteOp` を pointer-ui（拡張の押下）から呼んでもらい、ここに積む。
    *   ⚠ 入れるのは**欄の名前・種類・時刻だけ**（入力した中身は入れない）。
    */
-  function _pushOp(kind, el, by) {
+  /**
+   * ★ 2026-11-18 竹内さん「ボタンの形・種類・押した位置を録画から再現」:
+   *   click/tap の shot_ops に**要素内の押下位置（x/y）**と**幅高（bw/bh）・tag(class)** を残す。
+   *   ⚠ 入力値は入れない。座標0,0は _pendingPointXY（MAIN→postMessage）を優先。
+   */
+  function _metricsFromClick(el, ev) {
+    var out = {};
+    if (!el) return out;
+    try {
+      var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (r && r.width > 0 && r.height > 0) {
+        out.bw = Math.round(r.width);
+        out.bh = Math.round(r.height);
+      }
+      var tg = String(el.tagName || "").toLowerCase();
+      if (tg) out.bt = tg.slice(0, 12);
+      var cls = String((el.className && typeof el.className === "string") ? el.className : "").trim();
+      if (cls) {
+        var first = cls.split(/\s+/).filter(Boolean)[0];
+        if (first) out.shape = (tg ? tg + "." : "") + String(first).slice(0, 24);
+      }
+      try {
+        var role = el.getAttribute && el.getAttribute("role");
+        if (role) out.role = String(role).slice(0, 12);
+      } catch (_) {}
+      var cx = NaN, cy = NaN, hasXY = false;
+      if (ev && Number.isFinite(Number(ev.clientX)) && Number.isFinite(Number(ev.clientY))) {
+        cx = Number(ev.clientX);
+        cy = Number(ev.clientY);
+        hasXY = !(Math.abs(cx) < 1 && Math.abs(cy) < 1);
+      }
+      if (!hasXY && _pendingPointXY && (Date.now() - Number(_pendingPointXY.at || 0)) < 800
+        && Number.isFinite(Number(_pendingPointXY.x)) && Number.isFinite(Number(_pendingPointXY.y))) {
+        cx = Number(_pendingPointXY.x);
+        cy = Number(_pendingPointXY.y);
+        hasXY = true;
+      }
+      if (r && r.width > 0 && r.height > 0 && hasXY) {
+        var fx = (cx - r.left) / r.width;
+        var fy = (cy - r.top) / r.height;
+        if (fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2) {
+          out.x = Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100;
+          out.y = Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100;
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  function _pushOp(kind, el, by, ev) {
     try {
       var nm = el && L && L.fieldName ? L.fieldName(el) : null;
       // 同じ物を続けて積まない（拡張の tap と click が両方来る事がある）
@@ -583,7 +639,10 @@
           if (!(gap2 >= 0 && gap2 <= 400)) return false;      // 近い時だけ（人の2回押しは残す）
           var cb = last.el;
           if (!cb || !cb.nodeType) return false;
-          // 片方が label・片方が input（同じチェックを指している）
+          // 片方が label（またはその中の子）と input が同じチェック[] を指している
+          var c1 = _findCheckEl(cb);
+          var c2 = _findCheckEl(el);
+          if (c1 && c2 && c1 === c2 && String(c1.name || "").indexOf("[]") >= 0) return true;
           var a = String(cb.tagName || "").toUpperCase(), b = String(el.tagName || "").toUpperCase();
           var isPair = (a === "LABEL" && b === "INPUT") || (a === "INPUT" && b === "LABEL");
           if (!isPair) return false;
@@ -722,6 +781,19 @@
       // ★ 種類が押す系なのに cs が空なら pointer（APIが通す前提・手の形0を防ぐ）
       if (!cs && (kd === "checkbox" || kd === "radio" || kd === "button" || kd === "select" || kd === "link")) cs = "pointer";
       var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null, cs: cs };
+      try {
+        var _km = String(kind || "").toLowerCase();
+        if (el && (_km === "click" || _km === "tap" || _km === "change")) {
+          var _met = _metricsFromClick(el, ev);
+          if (_met.x != null) _opObj.x = _met.x;
+          if (_met.y != null) _opObj.y = _met.y;
+          if (_met.bw != null) _opObj.bw = _met.bw;
+          if (_met.bh != null) _opObj.bh = _met.bh;
+          if (_met.bt) _opObj.bt = _met.bt;
+          if (_met.shape) _opObj.shape = _met.shape;
+          if (_met.role) _opObj.role = _met.role;
+        }
+      } catch (_) {}
       if (wasChecked !== null) {
         /**
          * ★ 2026-11-16 DB実測: now を setTimeout だけにすると、写真送信が先に走り欠ける。
@@ -830,7 +902,14 @@
           var nm = typeof e.data.name === "string" ? e.data.name.slice(0, 40) : "click";
           var t = Date.now();
           var last = _opsRing[_opsRing.length - 1];
-          if (last && last.k === kn && last.f === nm && t - Number(last.t || 0) < 120) return;
+          /**
+           * ★ 2026-11-17 統括Pro F28: 合成clickと実clickが120ms内に二重で短間隔を作る。
+           *   → 同名・同種は450ms内を畳む（短間隔%の人工跳ねを止める）。
+           */
+          if (last && last.k === kn && last.f === nm && t - Number(last.t || 0) < 450) return;
+          if (last && (t - Number(last.t || 0)) <= 450
+            && /city_code\[\]|room_layout_id\[\]|station_id\[\]|route_id\[\]/.test(String(nm))
+            && (last.w === "checkbox" || /label|区|市|LDK|DK|K|ルーム/.test(String(last.f || "")))) return;
           var gap = null;
           if (last && typeof last.t === "number" && t > last.t) {
             var d = t - last.t;
@@ -845,8 +924,54 @@
             _opM.was = _wasM;
             _opM.now = !_wasM;
           }
+          try {
+            var _elSyn = null;
+            if (Number.isFinite(Number(e.data.clientX)) && Number.isFinite(Number(e.data.clientY)) && document.elementFromPoint) {
+              _elSyn = document.elementFromPoint(Number(e.data.clientX), Number(e.data.clientY));
+            }
+            if (!_elSyn && nm) {
+              try {
+                _elSyn = document.querySelector('input[name="' + nm.replace(/"/g, "") + '"], select[name="' + nm.replace(/"/g, "") + '"]');
+              } catch (_) { _elSyn = null; }
+            }
+            if (_elSyn) {
+              var _mSyn = _metricsFromClick(_elSyn, { clientX: e.data.clientX, clientY: e.data.clientY });
+              if (_mSyn.x != null) _opM.x = _mSyn.x;
+              if (_mSyn.y != null) _opM.y = _mSyn.y;
+              if (_mSyn.bw != null) _opM.bw = _mSyn.bw;
+              if (_mSyn.bh != null) _opM.bh = _mSyn.bh;
+              if (_mSyn.bt) _opM.bt = _mSyn.bt;
+              if (_mSyn.shape) _opM.shape = _mSyn.shape;
+              if (_mSyn.role) _opM.role = _mSyn.role;
+            }
+          } catch (_) {}
           _opsRing.push(_opM);
           while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
+          return;
+        }
+        /**
+         * ★ 2026-11-17 統括Pro「_fireAt→point」: MAIN から来た合成座標を point_fields へ。
+         */
+        if (e.data.from === "axlx-rec-point") {
+          var _px = Number(e.data.clientX);
+          var _py = Number(e.data.clientY);
+          if (!Number.isFinite(_px) || !Number.isFinite(_py)) return;
+          _pendingPointXY = { x: _px, y: _py, at: Date.now(), name: e.data.name ? String(e.data.name).slice(0, 40) : "" };
+          var _elPt = null;
+          try {
+            if (typeof document !== "undefined" && document.elementFromPoint) {
+              _elPt = document.elementFromPoint(_px, _py);
+            }
+          } catch (_) { _elPt = null; }
+          if (!_elPt && e.data.name) {
+            try {
+              var _nmPt = String(e.data.name);
+              _elPt = document.querySelector('input[name="' + _nmPt.replace(/"/g, "") + '"], select[name="' + _nmPt.replace(/"/g, "") + '"], [name="' + _nmPt.replace(/"/g, "") + '"]');
+            } catch (_) { _elPt = null; }
+          }
+          if (_elPt) {
+            try { _pushPoint(_elPt, "auto", { clientX: _px, clientY: _py, synthetic: true }); } catch (_) {}
+          }
           return;
         }
         if (e.data.from === "axlx-rec-arm-was") {
@@ -916,7 +1041,7 @@
             ? _t.closest('#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]')
             : (String(_t.id || "").indexOf("axlx") === 0 || String(_t.id || "").indexOf("aixlinx") === 0))) return;
         } catch (_) {}
-        _pushOp(e.type || "click", e.target, _by);
+        _pushOp(e.type || "click", e.target, _by, e);
         /**
          * ⚠ 2026-11-14: **押す前に画面の数を控える**（`noteOpened` はこの控えが無いと何もしない）。
          *   呼んでいなかったので、`opens`（何が開いたか）が**1件も残らなかった**。
@@ -956,7 +1081,7 @@
             var _nowK = Date.now();
             if (_kf && !(_recKeyLast.f === _kf && _nowK - _recKeyLast.t < 1200)) {
               _recKeyLast = { f: _kf, t: _nowK };
-              _pushOp("key", _kt, _by);
+              _pushOp("key", _kt, _by, e);
             }
           }
         } catch (_) {}
@@ -1042,13 +1167,28 @@
    *     （実測: 自動モードの押した位置が12%・通常は74%）。
    *   → `ev.synthetic === true` の時は **ev.clientX/clientY をそのまま使う**
    *     （呼ぶ側がカーソルの実際の位置を渡してくる）。
-   *     ⚠ 座標が渡ってこない時だけ真ん中（今まで通り）。
+   * ★ 2026-11-17 統括Pro: auto でも clientX/Y が実座標なら使う（0,0 だけ真ん中）。
+   *   `_fireAt` の MouseEvent は synthetic フラグを持てないため、ここを直さないと point_pct が上がらない。
    */
-  var syn = (by === "auto") && !(ev && ev.synthetic === true);
   var hasXY = ev && Number.isFinite(Number(ev.clientX)) && Number.isFinite(Number(ev.clientY));
-  var fx = (syn || !hasXY) ? 0.5 : ((Number(ev.clientX) - r.left) / r.width);
-  var fy = (syn || !hasXY) ? 0.5 : ((Number(ev.clientY) - r.top) / r.height);
-  if (!syn && hasXY && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
+  var cxU = hasXY ? Number(ev.clientX) : NaN;
+  var cyU = hasXY ? Number(ev.clientY) : NaN;
+  // 直近の MAIN 座標（800ms）を拾う（click が 0,0 のとき）
+  try {
+    if ((!hasXY || (Math.abs(cxU) < 1 && Math.abs(cyU) < 1)) && _pendingPointXY && (Date.now() - Number(_pendingPointXY.at || 0)) < 800) {
+      if (Number.isFinite(Number(_pendingPointXY.x)) && Number.isFinite(Number(_pendingPointXY.y))) {
+        cxU = Number(_pendingPointXY.x);
+        cyU = Number(_pendingPointXY.y);
+        hasXY = true;
+        ev = { clientX: cxU, clientY: cyU, synthetic: true };
+      }
+    }
+  } catch (_) {}
+  var zeroish = hasXY && Math.abs(cxU) < 1 && Math.abs(cyU) < 1;
+  var useXY = hasXY && !zeroish && (ev.synthetic === true || by === "human" || by === "auto");
+  var fx = useXY ? ((cxU - r.left) / r.width) : 0.5;
+  var fy = useXY ? ((cyU - r.top) / r.height) : 0.5;
+  if (useXY && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
       // 2026-11-14: null を作らない（読み込み前のクリックも積めるように）
       var cur = _livePoints || (_livePoints = {});
       var t = Date.now();
@@ -1069,10 +1209,19 @@
       var xs = (Array.isArray(prev.xs) ? prev.xs : []).concat([Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100]).slice(-20);
       var ys = (Array.isArray(prev.ys) ? prev.ys : []).concat([Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100]).slice(-20);
       var med = function (a) { if (!a.length) return 0; var s = a.slice().sort(function (p, q) { return p - q; }); var m = Math.floor(s.length / 2); return s[m]; };
+      var _sh = "";
+      try {
+        var _tg = String(el.tagName || "").toLowerCase();
+        var _cl = String((el.className && typeof el.className === "string") ? el.className : "").trim().split(/\s+/).filter(Boolean)[0];
+        if (_tg && _cl) _sh = (_tg + "." + _cl).slice(0, 40);
+      } catch (_) { _sh = ""; }
       cur[name] = {
         n: n, x: med(xs), y: med(ys), xs: xs, ys: ys,
         wk: (L.kindOfEl ? L.kindOfEl(el) : null) || prev.wk || null,
         by: by || prev.by || null,
+        bw: Math.round(r.width),
+        bh: Math.round(r.height),
+        shape: _sh || prev.shape || null,
       };
       cur.__last = { f: name, t: t, n: 1 };
       _savePoints(cur);
@@ -1198,6 +1347,13 @@
       if (_csOut) row.cs = _csOut;
       if (typeof o.was === "boolean") row.was = o.was;
       if (typeof o.now === "boolean") row.now = o.now;
+      if (typeof o.x === "number") row.x = o.x;
+      if (typeof o.y === "number") row.y = o.y;
+      if (typeof o.bw === "number") row.bw = o.bw;
+      if (typeof o.bh === "number") row.bh = o.bh;
+      if (o.bt) row.bt = String(o.bt).slice(0, 12);
+      if (o.shape) row.shape = String(o.shape).slice(0, 40);
+      if (o.role) row.role = String(o.role).slice(0, 12);
       // ⚠ was を推測で埋めない（外し/選びを誤学習する）。腕上げ（CustomEvent）で取る。
       return row;
       });
@@ -1311,8 +1467,13 @@
           var full = Math.max(1, (window.innerWidth || 1) * (window.innerHeight || 1));
           if (area / full < 0.02) continue;
         } catch (_) {}
-        _shotHidden.push({ el: el, v: el.style.visibility });
-        el.style.visibility = "hidden";
+        _shotHidden.push({
+          el: el,
+          v: el.style.getPropertyValue("visibility"),
+          p: el.style.getPropertyPriority("visibility"),
+        });
+        try { el.style.setProperty("visibility", "hidden", "important"); }
+        catch (_) { el.style.visibility = "hidden"; }
       }
     } catch (_) {}
   }
@@ -1320,7 +1481,12 @@
     try {
       for (var i = 0; i < _shotHidden.length; i++) {
         var h = _shotHidden[i];
-        try { if (h && h.el && h.el.style) h.el.style.visibility = h.v || ""; } catch (_) {}
+        try {
+          if (h && h.el && h.el.style) {
+            if (h.v) h.el.style.setProperty("visibility", h.v, h.p || "");
+            else h.el.style.removeProperty("visibility");
+          }
+        } catch (_) {}
       }
     } catch (_) {}
     _shotHidden = [];
@@ -1331,11 +1497,25 @@
        * background から「今から撮る」と呼ばれる。
        *   ⚠ 隠したまま返すと、撮り終わった後に**小窓が消えたまま**になる。
        *     必ず `hide:false` で戻す（background が finally で必ず呼ぶ）。
+       *   ★ 2026-11-18: 画像学習 stuck 13件「中央に拡張小窓が重なり見えない」対策。
+       *     `!important`＋2回 rAF（最大45ms保険）待ってから撮影可を返す。
        */
       if (!msg || msg.type !== "axlx-shot-hide") return;
       try {
-        if (msg.hide === false) { _showAfterShot(); sendResponse({ ok: true, hidden: 0 }); }
-        else { _hideForShot(); sendResponse({ ok: true, hidden: _shotHidden.length }); }
+        if (msg.hide === false) { _showAfterShot(); sendResponse({ ok: true, hidden: 0 }); return true; }
+        _hideForShot();
+        var doneSent = false;
+        var reply = function () {
+          if (doneSent) return;
+          doneSent = true;
+          try { sendResponse({ ok: true, hidden: _shotHidden.length }); } catch (_) {}
+        };
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(function () { requestAnimationFrame(reply); });
+          setTimeout(reply, 45);
+        } else {
+          reply();
+        }
       } catch (_) { try { sendResponse({ ok: false }); } catch (__) {} }
       return true;
     });

@@ -29,18 +29,18 @@ console.log("\n■ optsFromPayload（自動便の指定）");
 {
   const pm = { source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, is_wide: false };
   const am = { source: "auto_schedule", mode: "am", rp_update_days: 3, sort: "ad", max_pages: 3, is_wide: true };
-  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, rp_update_days_none: false, itandi_update_days: null, sort: "updated", max_pages: 1 });
-  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: "ad", max_pages: 3 });
+  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, rp_update_days_none: false, itandi_update_days: null, sort: "updated", max_pages: 1, state: null });
+  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: "ad", max_pages: 3, state: null });
   eq("web_brain は null（今までどおり）", R.optsFromPayload({ source: "web_brain", rp_update_days: 3 }), null);
   eq("手動（payload なし）は null", R.optsFromPayload(null), null);
-  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: null, max_pages: null });
+  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, rp_update_days_none: false, itandi_update_days: null, sort: null, max_pages: null, state: null });
 }
 
 console.log("\n■ record / forCustomer（storage の印）");
 {
   const o = R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1 });
   const st = R.record("c1", "itandi", o, 1000);
-  eq("同じお客様・同じサイト → 指定（v2.5.43 前回の検索の時刻 last_search_at も・置いていなければ null）", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, itandi_update_days: null, sort: "updated", max_pages: 1, last_search_at: null });
+  eq("同じお客様・同じサイト → 指定（v2.5.43 前回の検索の時刻 last_search_at も・置いていなければ null）", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, itandi_update_days: null, sort: "updated", max_pages: 1, state: null, last_search_at: null });
   eq("別のお客様 → null（前のお客様の指定を使わない）", R.forCustomer(st, "c2", "itandi", 2000), null);
   eq("別のサイト → null", R.forCustomer(st, "c1", "realnetpro", 2000), null);
   eq("古い（20分より前）→ null", R.forCustomer(st, "c1", "itandi", 1000 + R.TTL_MS + 1), null);
@@ -145,8 +145,8 @@ ok("bulk-dl: AD順のためにページを読み込み直さない（全物件�
 ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_autoPdfRunPending = function \(\) \{\s*\n\s*try \{ _rescanRows\(\); \} catch \(_\) \{\}\s*\n\s*_startAutoPressRun\(\);/.test(bd));
   ok("bulk-dl: 午後の便（更新順）は並べ替えない（allowAdSort）", /_AR\(\)\.allowAdSort\(_arOpts\)/.test(bd) && /更新順の指定 → AD へ並べ替えずに押します/.test(bd));
   ok("bulk-dl: 既に AD 高い順なら並べ替えない", /_isAdDesc/.test(bd));
-  // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定は auto-run.js DEFAULT_MAX_PAGES（5）・読めない時も 5
-  ok("bulk-dl: ページ上限は conditions → 自動便の指定 → 既定 5", /\(_AR\(\) \? _AR\(\)\.pageLimit\(_arOpts, null\) : null\) \|\| \(_AR\(\) && _AR\(\)\.DEFAULT_MAX_PAGES\) \|\| 5;/.test(bd));
+  // 2026-11-16 竹内「最大3／新着は5」: resolveMaxPages
+  ok("bulk-dl: ページ上限は resolveMaxPages（既定3）", /resolveMaxPages\(_arOpts, null\)/.test(bd) && /\|\| 3;/.test(bd));
   ok("bulk-dl: 指定は realnetpro の物だけ読む", /forCustomer\(_autoRunStored, customerId, "realnetpro", Date\.now\(\)\)/.test(bd));
   const ib = read("itandi-bulk-dl.js");
   ok("itandi-bulk-dl: 自動便のページ上限で次へ（手動は全ページのまま）", /if \(_itLimit && _itAuditRes && _itAuditRes\.pages >= _itLimit && !_manual\) \{/.test(ib));

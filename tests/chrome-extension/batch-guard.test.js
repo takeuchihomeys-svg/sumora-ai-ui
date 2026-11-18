@@ -43,6 +43,21 @@ console.log("\n■ realproTabPlan（使うか・開き直すか）");
   ok("理由の日本語", /読み直し/.test(G.reasonJa("content_script_dead")) && G.reasonJa("x") === "x");
 }
 
+console.log("\n■ realproRecoverNav（トップへ戻さない読み直し）");
+{
+  const MAIN = "https://www.realnetpro.com/main.php";
+  const ESTATE = "https://www.realnetpro.com/main.php?method=estate&display=building";
+  eq("検索画面 → reload・keepSearch", G.realproRecoverNav({ url: ESTATE }), { method: "reload", url: ESTATE, keepSearch: true });
+  eq("裸 main.php → reload（ナビゲートしない）", G.realproRecoverNav({ url: MAIN }).method, "reload");
+  eq("ログイン画面 → navigate で main.php", G.realproRecoverNav({ url: "https://www.realnetpro.com/index.php?login" }), { method: "navigate", url: MAIN, keepSearch: false });
+  eq("URL無し → navigate", G.realproRecoverNav({}).method, "navigate");
+  const bgF2 = read("background.js");
+  ok("background: tabs.reload で同じ画面を読み直す", /chrome\.tabs\.reload\(tab\.id\)/.test(bgF2) && /トップへ戻さない/.test(bgF2));
+  ok("background webapp-autofill: 検索画面なら裸へ飛ばさない", /検索画面のまま読み直し（トップへ戻さない）/.test(bgF2));
+  ok("page-script: ホーム→住居検索の前に fill-started", /phase: 'go_estate'/.test(read("page-script.js")) || /phase: \"go_estate\"/.test(read("page-script.js")));
+  ok("FILL_START_TIMEOUT は40秒以上（住居検索の移りと競争しない）", G.FILL_START_TIMEOUT_MS >= 40000);
+}
+
 console.log("\n■ locationGate（page-script の decideLocationMode と同じ・none は検索しない）");
 {
   eq("点検 24 の形: 区のお客様で city_codes も駅も無い（地域を決める前）→ 検索しない", G.locationGate({ area_mode: "ward", areas: ["大阪市北区", "大阪市福島区"] }), { ok: false, mode: "none" });
@@ -118,10 +133,10 @@ console.log("\n■ background.js の順番（静的に確かめる）");
 console.log("\n■ content.js・page-script.js（応答と合図）");
 {
   const ct = read("content.js"), ps = read("page-script.js");
-  ok("content.js: axlx-ping に pong と page を返す", /msg\.type === "axlx-ping"[\s\S]{0,400}sendResponse\(\{ ok: true, pong: true, page: page, vis: document\.visibilityState \}\)/.test(ct));
+  ok("content.js: axlx-ping に pong と page を返す", /msg\.type === "axlx-ping"[\s\S]{0,800}sendResponse\(\{\s*ok: true,\s*pong: true,\s*page: pageOk,\s*vis: document\.visibilityState,/.test(ct));
   ok("content.js: page-script に postMessage で聞く", /from: "axlx-page-ping"/.test(ct) && /"axlx-page-pong"/.test(ct));
   ok("content.js: 入力を始めた合図を background へ中継", /"aixlinx-fill-started"[\s\S]{0,300}type: "axlx-fill-started"/.test(ct));
-  ok("page-script.js: page-ping に答える", /"axlx-page-ping"[\s\S]{0,120}from: "axlx-page-pong", id: e\.data\.id/.test(ps));
+  ok("page-script.js: page-ping に答える", /"axlx-page-ping"[\s\S]{0,160}from: "axlx-page-pong",\s*id: e\.data\.id/.test(ps));
   const fr = ps.slice(ps.indexOf("function fillRealpro(cond)"));
   ok("page-script.js: 重複の呼び出しでない時だけ（実行中の確かめの後）入力を始めた合図を出す", fr.indexOf("window._axFillRunning = true;") < fr.indexOf("aixlinx-fill-started") && fr.indexOf("aixlinx-fill-started") < fr.indexOf("if (!cond) { notifyDone(); return; }"));
   const mf = JSON.parse(read("manifest.json"));

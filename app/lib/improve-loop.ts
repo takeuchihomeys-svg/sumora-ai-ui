@@ -39,7 +39,7 @@ export type ImproveTask = {
   why: string;
   cost: string;
   limit?: number;
-  order?: "newest" | "time" | "size";
+  order?: "newest" | "time" | "size" | "sequence";
   fields?: string[];
 };
 
@@ -195,16 +195,20 @@ export function improveLoopTasks(opt: {
      * ★ 2026-11-16「弱い部分再び改善／学んだ部分も学習していく」:
      *   自動待ちの間も、課題欄・弱い原子の再学習を止めない（一度読んで終わりにしない）。
      */
-    if (unread > 0 && (fields.length > 0 || missing.length > 0)) {
+    if (unread > 0) {
       const reFields = (fields.length ? fields : missing).slice(0, 8);
       tasks.push({
         kind: "photo_learn",
-        what: "弱い欄を通常の最新画像から再強化する（学んだ欄の再学習）",
-        why: `段階5待ちでも細かく強化を続ける／対象: ${reFields.slice(0, 5).join("・")}／未学習 ${unread}枚`,
+        what: reFields.length
+          ? "弱い欄を通常の最新画像から再強化する（学んだ欄の再学習）"
+          : "段階5待ちでも通常画像を読んで強化を続ける",
+        why: reFields.length
+          ? `段階5待ちでも細かく強化を続ける／対象: ${reFields.slice(0, 5).join("・")}／未学習 ${unread}枚`
+          : `段階5・未学習 ${unread}枚（欄が空でも読む課題を止めない）`,
         cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
-        limit: photoLearnLimitFor({ todo: unread, fieldCount: reFields.length }),
+        limit: photoLearnLimitFor({ todo: unread, fieldCount: reFields.length || 3 }),
         order: "newest",
-        fields: reFields,
+        ...(reFields.length ? { fields: reFields } : {}),
       });
       tasks.push({
         kind: "reflect_auto",

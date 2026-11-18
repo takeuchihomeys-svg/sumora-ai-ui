@@ -27,15 +27,15 @@ import { auditUpdateContext } from "@/app/lib/search-update-days-server";
  *     どちらも20分なので、**結果を読み終える前にサーバーが先に「止まった」**にしていた。
  *     拡張は15分待って読み、その後 bulk-dl が全ページを回る（5ページ×送信）ので20分を超える。
  *
- *   → 拡張が「まだ動いている」と言える**余裕**をサーバー側に持たせる（25 → 35分）。
- *     ⚠ 拡張の上限（20分）より**必ず長く**する。同じにするとまた競争する。
- *     ⚠ ただし**無限に待たない**（PCを閉じた回は35分で閉じる）。
+ *   → 拡張が「まだ動いている」と言える**余裕**をサーバー側に持たせる（20 → 35 → 75分）。
+ *     ⚠ 拡張の上限（`PASS_DEADLINE_MS`: realnetpro 60分・itandi 70分）より**必ず長く**する。同じにするとまた競争する。
+ *     ⚠ ただし**無限に待たない**（PCを閉じた回は75分で閉じる）。
  */
-export const STALL_MINUTES = 35;
+export const STALL_MINUTES = 75;
 export const REUSE_DIAGNOSIS_DAYS = 7;
 const MAX_JSON_CHARS = 24_000;
 
-const TRIGGERS = new Set(["bulk_queue", "bulk_manual", "single", "scrape_compare", "web_brain"]);
+const TRIGGERS = new Set(["bulk_queue", "bulk_manual", "single", "aix_customer", "scrape_compare", "web_brain"]);
 const MODES = new Set(["brain_normal", "brain_staff", "brain_aix"]);
 
 export type SearchAuditRow = {

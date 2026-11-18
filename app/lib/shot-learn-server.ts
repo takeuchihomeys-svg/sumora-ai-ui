@@ -27,6 +27,212 @@ import {
   shotLearnMax as shotLearnMaxFromLimit,
   shotLearnModel,
 } from "./shot-learn-limit";
+import { DAY_MS, LEARN_PERIODS, materialsDays } from "./learn-periods";
+import { sceneOfOp } from "./learn-flow-steps";
+
+/** `shot_key` から連続録画の run id（`run_xxx/`）を取る */
+function runOfShotKey(shotKey: string): string {
+  return (String(shotKey || "").match(/run_([a-z0-9_]+)\//i) || [])[1] || "";
+}
+
+type ShotOpLite = { by?: unknown; f?: unknown; k?: unknown; was?: unknown; now?: unknown };
+
+function lastShotOp(ops: ShotOpLite[] | null | undefined): ShotOpLite | null {
+  if (!ops?.length) return null;
+  const o = ops[ops.length - 1];
+  return o && typeof o === "object" ? o : null;
+}
+
+/** 操作の短い署名（個人情報の was/now は context の詳細用・一覧は k:f） */
+function opSigShort(op: ShotOpLite | null | undefined): string {
+  if (!op) return "";
+  const k = String(op.k ?? "").trim();
+  const f = String(op.f ?? "").trim();
+  if (k && f) return `${k}:${f}`;
+  return f || k || "";
+}
+
+function isFlowMilestoneOp(op: ShotOpLite | null | undefined): boolean {
+  const t = (String(op?.f ?? "") + String(op?.k ?? "")).toLowerCase();
+  return /所在地|沿線|確定|間取り|検索|印刷|次ページ|次のページ|go_search|room_layout|print|リストへ|ページ/.test(t);
+}
+
+function sceneOfLastOp(op: ShotOpLite | null | undefined): string {
+  if (!op) return "other";
+  const k = String(op.k ?? "").trim() || "click";
+  const f = String(op.f ?? "").trim();
+  return sceneOfOp(f ? `${k}:${f}` : k);
+}
+
+function shotOpsTailText(ops: ShotOpLite[] | null | undefined, n = 3): string {
+  const tail = (ops || []).slice(-n);
+  if (!tail.length) return "（操作なし）";
+  return tail
+    .map((o) => {
+      const was = o.was != null && String(o.was).trim() !== "" ? "***" : "-";
+      const now = o.now != null && String(o.now).trim() !== "" ? "***" : "-";
+      return `k=${o.k ?? "-"} f=${o.f ?? "-"} by=${o.by ?? "-"} was=${was} now=${now}`;
+    })
+    .join(" | ");
+}
+
+function buildShotContextNote(
+  idx: number,
+  total: number,
+  row: { shot_ops: ShotOpLite[] | null },
+  prev: { shot_ops: ShotOpLite[] | null } | null,
+): string {
+  const prevSig = prev ? opSigShort(lastShotOp(prev.shot_ops)) : "なし";
+  const curSig = opSigShort(lastShotOp(row.shot_ops)) || "なし";
+  const tail = shotOpsTailText(row.shot_ops, 3);
+  return `流れ順(${idx + 1}/${total}): 直前操作=${prevSig} -> 現在操作=${curSig} / 末尾ops: ${tail}`;
+}
+
+/**
+ * 連続録画（1 run）の中から場面変化・初出節目を優先しつつ、先頭→末尾まで均等に budget 枚を選ぶ。
+ */
+function selectIndicesForRun(
+  runRows: Array<{ created_at: string; shot_ops: ShotOpLite[] | null }>,
+  budget: number,
+  strideMs: number,
+): number[] {
+  const n = runRows.length;
+  if (!n || budget <= 0) return [];
+  if (n <= budget) return Array.from({ length: n }, (_, i) => i);
+
+  // 各コマに「流れの重要度」を付ける（先頭/末尾 > 場面切替 > 初出の操作/節目 > 操作変化）
+  const score = new Array<number>(n).fill(10);
+  const seenOp = new Set<string>();
+  const times = runRows.map((r) => Date.parse(r.created_at) || 0);
+  let lastStrideAt = times[0] || 0;
+
+  for (let i = 0; i < n; i++) {
+    const op = lastShotOp(runRows[i].shot_ops);
+    const sig = opSigShort(op);
+    const sc = sceneOfLastOp(op);
+    if (i === 0 || i === n - 1) {
+      score[i] = 100;
+    } else {
+      const pOp = lastShotOp(runRows[i - 1].shot_ops);
+      const pSig = opSigShort(pOp);
+      const pSc = sceneOfLastOp(pOp);
+      if (pSc !== sc && sc !== "other") {
+        score[i] = 85;
+      } else if (sig && !seenOp.has(sig)) {
+        score[i] = isFlowMilestoneOp(op) ? 75 : 65;
+      } else if (pSig !== sig) {
+        score[i] = isFlowMilestoneOp(op) ? 55 : 45;
+      } else if (strideMs > 0 && times[i] - lastStrideAt >= strideMs) {
+        score[i] = 25;
+        lastStrideAt = times[i];
+      }
+    }
+    if (sig) seenOp.add(sig);
+  }
+
+  // budget 個の時間・順番バケットに分け、各バケットから最も重要度の高い1枚を取る（必ず先頭→末尾を全域カバー）
+  const picked = new Set<number>([0, n - 1]);
+  if (budget === 1) return [0];
+  if (budget === 2) return [0, n - 1];
+
+  const innerBuckets = budget - 2;
+  const span = n - 2;
+  for (let b = 0; b < innerBuckets; b++) {
+    const lo = 1 + Math.floor((b * span) / innerBuckets);
+    const hi = Math.max(lo, 1 + Math.floor(((b + 1) * span) / innerBuckets) - 1);
+    let bestI = -1;
+    let bestScore = -1;
+    const mid = (lo + hi) / 2;
+    for (let i = lo; i <= hi && i < n - 1; i++) {
+      if (picked.has(i)) continue;
+      if (
+        score[i] > bestScore ||
+        (score[i] === bestScore && Math.abs(i - mid) < Math.abs(bestI - mid))
+      ) {
+        bestScore = score[i];
+        bestI = i;
+      }
+    }
+    if (bestI >= 0) picked.add(bestI);
+  }
+
+  // 取りこぼし枠があれば埋める
+  for (let i = 1; i < n - 1 && picked.size < budget; i++) {
+    if (!picked.has(i) && score[i] >= 45) picked.add(i);
+  }
+  for (let i = 1; i < n - 1 && picked.size < budget; i++) {
+    if (!picked.has(i)) picked.add(i);
+  }
+  return [...picked].sort((a, b) => a - b).slice(0, budget);
+}
+
+function pickSequenceShots(
+  rows: Array<{
+    id: unknown; shot_key: string; site: string | null; mode: string | null;
+    shot_w: number; created_at: string; shot_ops: ShotOpLite[] | null;
+  }>,
+  limit: number,
+  strideMs: number,
+  runIdPref?: string | null,
+): Array<{
+  id: unknown; shot_key: string; site: string | null; mode: string | null;
+  shot_w: number; created_at?: string; run_id?: string | null; context_note?: string | null;
+}> {
+  const byRun = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const run = runOfShotKey(r.shot_key);
+    if (!run) continue;
+    if (!byRun.has(run)) byRun.set(run, []);
+    byRun.get(run)!.push(r);
+  }
+  if (!byRun.size) return [];
+  const runStats = [...byRun.entries()].map(([run, rs]) => ({
+    run,
+    rs: rs.slice().sort((a, b) => (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0)),
+    newest: Math.max(...rs.map((r) => Date.parse(r.created_at) || 0)),
+    n: rs.length,
+  }));
+  runStats.sort((a, b) => b.newest - a.newest);
+  const orderRuns: typeof runStats = [];
+  const pref = String(runIdPref || "").trim();
+  if (pref) {
+    const hit = runStats.find((x) => x.run === pref || x.run.includes(pref));
+    if (hit) orderRuns.push(hit);
+    for (const x of runStats) {
+      if (x.run !== hit?.run) orderRuns.push(x);
+    }
+  } else {
+    const big = runStats.filter((x) => x.n >= 5);
+    if (big.length) {
+      big.sort((a, b) => b.newest - a.newest);
+      orderRuns.push(big[0]);
+      for (const x of runStats) if (x.run !== big[0].run) orderRuns.push(x);
+    } else {
+      const freq = [...runStats].sort((a, b) => b.n - a.n || b.newest - a.newest);
+      orderRuns.push(...freq);
+    }
+  }
+  const cap = Math.max(1, limit);
+  const out: Array<{
+    id: unknown; shot_key: string; site: string | null; mode: string | null;
+    shot_w: number; created_at?: string; run_id?: string | null; context_note?: string | null;
+  }> = [];
+  for (const block of orderRuns) {
+    if (out.length >= cap) break;
+    const budget = cap - out.length;
+    const idxs = selectIndicesForRun(block.rs, budget, strideMs);
+    for (const i of idxs) {
+      const r = block.rs[i];
+      const prev = i > 0 ? block.rs[i - 1] : null;
+      out.push({
+        id: r.id, shot_key: r.shot_key, site: r.site, mode: r.mode, shot_w: r.shot_w,
+        created_at: r.created_at, run_id: block.run,
+        context_note: buildShotContextNote(i, block.rs.length, r, prev),
+      });
+    }
+  }
+  return out;
+}
 
 export { shotLearnModel } from "./shot-learn-limit";
 
@@ -75,22 +281,35 @@ export async function findShotsToLearn(opt: {
    * ★ 2026-11-15 竹内さん「画像も順番で時間で学習すればより強化される」「細かく強化」「連続録画で」:
    *   `size` = 大きい順（既定・窓が開いた瞬間を優先）
    *   `time` = **連続録画の時間順**（created_at 古い→新しい）。流れに沿って位置を固める。
+   *   `sequence` = **1つの連続録画 run を先頭→末尾**（節目優先・時系列）。
    */
-  order?: "size" | "time" | "newest";
+  order?: "size" | "time" | "newest" | "sequence";
   /**
    * 時間順のとき、同じ画面の写真を何ms以上空けて取るか（細かく=小さい値）。
    *   既定: size=無視 / time=1500 / fine時は800。
    */
   strideMs?: number;
+  /** `order=sequence` のとき優先する連続録画 run（`run_...` の中身） */
+  runId?: string | null;
   /**
    * ★ 2026-11-16 仕組み㉑: このボタン／欄の操作が写っている写真を**先に**取る。
    *   当たる物が足りなければ、当たる物だけで止める（他ボタンの写真で薄めない）。
    */
   focusFields?: string[] | null;
+  /**
+   * ★ 2026-11-18 竹内さん「場面ごとの強化を画像学習にも紐づける」:
+   *   既に読んだ写真のうち **場面（scene）の印が無い物だけ** 読み直す（757/1200 が未設定の実測）。
+   *   印を付けて場面別の位置（learned_scene）に入れるため。
+   */
+  onlyNoScene?: boolean;
 } = {}): Promise<
-  Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number; created_at?: string }>
+  Array<{
+    id: unknown; shot_key: string; site: string | null; mode: string | null;
+    shot_w: number; created_at?: string; run_id?: string | null; context_note?: string | null;
+  }>
 > {
-  const days = Math.max(1, Math.min(30, opt.days ?? 7));
+  /** 既定は材料窓（materialsDays）。明示 days / from で上書き可 */
+  const days = Math.max(1, Math.min(30, opt.days ?? materialsDays()));
   /**
    * ⚠ 時刻に時差が無いと `new Date(...)` が**ローカル**になり、DB（+00:00）と窓がズレる
    *   （実測: まりあ 09:32 UTC が JST 解釈で 00:32 になり「0件」）。
@@ -103,13 +322,17 @@ export async function findShotsToLearn(opt: {
     const ms = Date.parse(withTz);
     return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
   };
-  const since = (opt.from && asUtc(opt.from)) || new Date(Date.now() - days * 86400_000).toISOString();
+  const since = (opt.from && asUtc(opt.from)) || new Date(Date.now() - days * DAY_MS).toISOString();
   const until = opt.to ? asUtc(opt.to) : null;
   /**
    * ★ 2026-11-15「画像は最新で録画したらそのことも把握」「通常から改善」:
    *   `newest` = 新しい順（最新録画を先に読む）。`time` = 古い→新しい（連続の流れ）。
    */
-  const order = opt.order === "time" ? "time" : opt.order === "newest" ? "newest" : "size";
+  const order =
+    opt.order === "time" ? "time"
+      : opt.order === "newest" ? "newest"
+        : opt.order === "sequence" ? "sequence"
+          : "size";
   /**
    * ⚠ 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（2回目の罠）**:
    *   直近の写真を `limit` 件だけ取ってから並べ替えていたので、
@@ -140,7 +363,10 @@ export async function findShotsToLearn(opt: {
    * ★ 2026-11-16 仕組み㉑（1つずつ）: focus がある時は**そのボタンの操作写真**を取る。
    *   未学習が尽きていても、学習済みを再読してそのボタンだけ強化する（まとめての枠埋め罠とは別）。
    */
-  if (!focusEarly.length) {
+  if (opt.onlyNoScene) {
+    // 読んだ写真のうち場面の印が無い物（shot_learn はあるが scene が無い）
+    q = q.not("shot_learn", "is", null).is("shot_learn->>scene", null);
+  } else if (!focusEarly.length) {
     q = q.is("shot_learn", null);
   }
   /**
@@ -153,7 +379,7 @@ export async function findShotsToLearn(opt: {
   q = q.gte("shot_w", 800);
   if (order === "time") {
     q = q.order("created_at", { ascending: true }).order("shot_w", { ascending: false, nullsFirst: false });
-  } else if (order === "newest") {
+  } else if (order === "newest" || order === "sequence") {
     q = q.order("created_at", { ascending: false }).order("shot_w", { ascending: false, nullsFirst: false });
   } else {
     q = q.order("shot_w", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
@@ -164,12 +390,17 @@ export async function findShotsToLearn(opt: {
    * ★ 仕組み㉑ focus 時: メモリでボタン照合するので枠を最大まで広げる
    *   （実測: 200件だと「所在地絞り込み＋」が0枚・沿線は4枚、とムラが出る）。
    */
-  const fetchCap = focusEarly.length
+  const fetchWide = order === "time" || order === "newest" || order === "sequence";
+  const fetchCap = focusEarly.length || order === "sequence"
     ? 2000
-    : Math.max(200, Math.min(2000, (opt.limit ?? 200) * (order === "time" || order === "newest" ? 8 : 4)));
+    : Math.max(200, Math.min(2000, (opt.limit ?? 200) * 4 * (fetchWide ? 2 : 1)));
   q = q.limit(fetchCap);
   if (until) q = q.lt("created_at", until);
   if (opt.site && opt.site !== "all") q = q.eq("site", opt.site);
+  if (opt.runId && String(opt.runId).trim()) {
+    const cleanRun = String(opt.runId).trim().replace(/^run_/, "").replace(/[^a-z0-9_]/gi, "");
+    if (cleanRun) q = q.ilike("shot_key", `%run_${cleanRun}/%`);
+  }
   /**
    * ★ 2026-11-15 竹内さん「通常モードの写真から学習する」:
    *   **モードで絞る**（`normal` = 人の手本 / `aix` = 自動モード）。
@@ -199,7 +430,7 @@ export async function findShotsToLearn(opt: {
     id: unknown; shot_key?: string | null; site?: string | null; mode?: string | null;
     shot_w?: number | null; shot_learn?: unknown; shot_ops?: unknown; created_at?: string;
   }>)
-    .filter((r) => !!r.shot_key && (focusEarly.length ? true : !r.shot_learn))
+    .filter((r) => !!r.shot_key && ((focusEarly.length || opt.onlyNoScene) ? true : !r.shot_learn))
     .map((r) => ({
       id: r.id, shot_key: String(r.shot_key), site: r.site ?? null, mode: r.mode ?? null,
       shot_w: Number(r.shot_w) || 0,
@@ -228,6 +459,14 @@ export async function findShotsToLearn(opt: {
       ...focusedRows.filter((r) => !r.learned),
       ...focusedRows.filter((r) => r.learned),
     ];
+  }
+  /**
+   * ★ 連続録画を先頭→末尾の流れで読む（節目優先・中間は間引き）。
+   *   `order=sequence` のときだけ。他の order の分岐はこの下で従来どおり。
+   */
+  if (order === "sequence") {
+    const strideSeq = Math.max(0, Math.round(opt.strideMs ?? 1500) || 0);
+    return pickSequenceShots(focusedRows, Math.max(1, opt.limit ?? 200), strideSeq, opt.runId);
   }
   // 同じ画面: 既定1枚。時間順・細かくは perSig と stride で票を増やす（位置の中央値が固まる）
   const perSig = Math.max(1, Math.min(20, Math.round(opt.perSig ?? (order === "time" || order === "newest" ? 8 : 1)) || 1));
@@ -263,14 +502,20 @@ export async function readShotFields(shotKey: string): Promise<ShotLearn | null>
  *   ⚠ 旧の `readShotFields` は `null` だけ返していたので、
  *     「何枚読めなかった」の**理由がどこにも残らなかった**（＝改善できない）。
  */
-export async function readShotFieldsWithWhy(shotKey: string): Promise<{ sl: ShotLearn | null; why: string | null; ms: number }> {
+export async function readShotFieldsWithWhy(
+  shotKey: string,
+  opt?: { contextNote?: string; runId?: string | null },
+): Promise<{ sl: ShotLearn | null; why: string | null; ms: number }> {
   const t0 = Date.now();
-  const r = await readShotFieldsCore(shotKey);
+  const r = await readShotFieldsCore(shotKey, opt);
   return { sl: r.sl, why: r.why, ms: Date.now() - t0 };
 }
 
 /** 中身（理由付き）。`readShotFields` と `readShotFieldsWithWhy` の共通の実体 */
-async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | null; why: string | null }> {
+async function readShotFieldsCore(
+  shotKey: string,
+  opt?: { contextNote?: string; runId?: string | null },
+): Promise<{ sl: ShotLearn | null; why: string | null }> {
   try {
     /**
      * Storage の**署名付き URL** を作る（非公開でも読める・公開設定に依存しない）。
@@ -351,6 +596,9 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
      *   ⚠ Claude は DeepSeek キー無し時だけ。thinking disabled は使わない。
      */
     /** 1回読む（base64 を渡す）。⚠ 読めなかった**理由**も返す */
+    const ctxNote = opt?.contextNote
+      ? `\n参考文脈（このコマの直前操作と連続流れ。画面から見える事実を優先）: ${String(opt.contextNote).slice(0, 400)}`
+      : "";
     const ask = async (b64: string, note: string): Promise<{ sl: ShotLearn | null; why: string | null }> => {
       const dsKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
       const model = shotLearnModel(process.env);
@@ -438,7 +686,9 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
         + "左の条件だけでなく、上の見出し・中央の一覧・下のページ送り・小窓も見てください。"
         + "欄の名前は画像の文字をそのまま書き、読めない時は name を null にしてください。"
         + "x と y は**この画像全体**の中の割合（左上0・右下1）で返してください。"
-        + "それぞれの欄が画面のどの領域か（left/top/center/right/bottom/modal）も zone に入れてください。",
+        + "それぞれの欄が画面のどの領域か（left/top/center/right/bottom/modal）も zone に入れてください。"
+        + "連続録画の流れとして scene・flow_step・transition・stuck も読めれば JSON に入れてください。"
+        + ctxNote,
       );
       if (r1.sl && r1.sl.fields.length) return { sl: r1.sl, why: null };
       /**
@@ -452,7 +702,9 @@ async function readShotFieldsCore(shotKey: string): Promise<{ sl: ShotLearn | nu
           "この画像は**画面の左側（検索条件の欄）だけ**を切り出した物です。"
           + "ここに見えているフォームの欄だけを JSON で返してください。"
           + "欄の名前は画像の文字をそのまま書き、読めない時は name を null にしてください。"
-          + "x と y は**この画像の中**の割合（左端0・右端1）で返してください。",
+          + "x と y は**この画像の中**の割合（左端0・右端1）で返してください。"
+          + "連続録画の流れとして scene・flow_step・transition・stuck も読めれば JSON に入れてください。"
+          + ctxNote,
         );
         if (r2.sl && r2.sl.fields.length) {
           return {
@@ -485,10 +737,14 @@ export async function learnFromWeakShots(
   opt: {
     site?: string | null; mode?: string | null; days?: number; limit?: number;
     from?: string | null; to?: string | null; perSig?: number;
-    order?: "size" | "time" | "newest"; strideMs?: number;
+    order?: "size" | "time" | "newest" | "sequence"; strideMs?: number;
     dryRun?: boolean; noRefresh?: boolean; concurrency?: number;
     /** 仕組み㉑: このボタン／欄の操作が写っている写真だけ読む */
     focusFields?: string[] | null;
+    /** `order=sequence` のとき優先 run */
+    runId?: string | null;
+    /** 場面の印が無い写真だけ読み直す（2026-11-18） */
+    onlyNoScene?: boolean;
     onProgress?: (done: number, total: number, last: string) => void;
   } = {},
 ): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean }> {
@@ -500,6 +756,8 @@ export async function learnFromWeakShots(
     from: opt.from, to: opt.to, perSig: opt.perSig,
     order: opt.order, strideMs: opt.strideMs,
     focusFields: opt.focusFields,
+    runId: opt.runId,
+    onlyNoScene: opt.onlyNoScene,
   })).slice(0, max);
   /**
    * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:
@@ -517,6 +775,8 @@ export async function learnFromWeakShots(
    *   ⚠ 書く順番は問わない（写真ごとに別の行を更新するので衝突しない）。
    */
   const conc = Math.max(1, Math.min(6, Math.round(opt.concurrency ?? 4) || 4));
+  /** 同じ run の直前コマ（並列でもレース安全: 時刻が新しい方だけ残す） */
+  const lastRunContext = new Map<string, { screen?: string; scene?: string; flow_step?: string; at: number }>();
   let cursor = 0;
   let done = 0;
   const worker = async () => {
@@ -525,7 +785,16 @@ export async function learnFromWeakShots(
       if (i >= targets.length) return;
       const t = targets[i];
       out.tried++;
-      const got = await readShotFieldsWithWhy(t.shot_key);
+      const runId = (t as { run_id?: string | null }).run_id ?? (runOfShotKey(t.shot_key) || null);
+      let contextNote = (t as { context_note?: string | null }).context_note ?? undefined;
+      if (runId) {
+        const prev = lastRunContext.get(runId);
+        if (prev?.screen || prev?.scene || prev?.flow_step) {
+          const add = `前コマ screen=${prev.screen ?? "-"} scene=${prev.scene ?? "-"} flow=${prev.flow_step ?? "-"}`;
+          contextNote = contextNote ? `${contextNote} / ${add}` : add;
+        }
+      }
+      const got = await readShotFieldsWithWhy(t.shot_key, { contextNote, runId });
       const sl = got.sl;
       if (!sl) {
         out.skipped++;
@@ -534,17 +803,38 @@ export async function learnFromWeakShots(
         out.learned++;
         out.fields += sl.fields.length;
         outcomes.push({ ok: true, fields: sl.fields.length, ms: got.ms });
+        if (runId) {
+          const at = Date.parse(String(t.created_at ?? "")) || 0;
+          const cur = lastRunContext.get(runId);
+          if (!cur || at >= cur.at) {
+            lastRunContext.set(runId, {
+              screen: sl.screen,
+              scene: sl.scene,
+              flow_step: sl.flow_step,
+              at,
+            });
+          }
+        }
         if (!opt.dryRun) {
-          const { error } = await supabase
+          const rid = runId || runOfShotKey(t.shot_key);
+          const payload = { ...sl, ...(rid ? { run_id: rid } : {}) };
+          /**
+           * ★ 2026-11-17: update がエラー無しでも 0 行のことがある（RLS・IDずれ）。
+           *   select で返った行を見てから saved にする（空振りを「保存40」と誤報しない）。
+           */
+          const { data: wrote, error } = await supabase
             .from("human_motion_learn")
-            .update({ shot_learn: sl })
-            .eq("id", t.id);
+            .update({ shot_learn: payload })
+            .eq("id", t.id)
+            .select("id");
           if (error) out.errors.push(String(error.message).slice(0, 120));
+          else if (!wrote || !wrote.length) out.errors.push(`shot_learn書き込み0行 id=${String(t.id).slice(0, 8)}`);
           else out.saved++;
         }
       }
       done++;
-      try { opt.onProgress?.(done, targets.length, got.why ?? `${sl?.fields.length ?? 0}個`); } catch (_) { /* 表示の失敗で学習を止めない */ }
+      const tag = got.why ?? `${sl?.fields.length ?? 0}個(${sl?.screen ?? "?"}/${sl?.scene ?? "-"}${sl?.flow_step ? ":" + sl.flow_step : ""}${sl?.stuck ? " 詰:" + sl.stuck : ""})`;
+      try { opt.onProgress?.(done, targets.length, tag); } catch (_) { /* 表示の失敗で学習を止めない */ }
     }
   };
   await Promise.all(Array.from({ length: Math.min(conc, targets.length) }, () => worker()));
@@ -579,7 +869,7 @@ export async function learnFromWeakShots(
   if (!opt.dryRun && out.saved > 0 && !opt.noRefresh) {
     try {
       const { buildHumanLearnBundle, compactBundle } = await import("./human-learn-brain");
-      const since2 = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const since2 = new Date(Date.now() - LEARN_PERIODS.historyMs).toISOString();
       const all: Array<Record<string, unknown>> = [];
       for (let i = 0; i < 10_000; i += 1000) {
         const r = await supabase.from("human_motion_learn").select("*")
@@ -589,7 +879,9 @@ export async function learnFromWeakShots(
         if ((r.data ?? []).length < 1000) break;
       }
       const nowMs = Date.now();
-      const bundle = compactBundle(buildHumanLearnBundle(all as never, nowMs));
+      const { fetchLearnBundleSceneMeta } = await import("./learn-bundle-scene-meta");
+      const sceneMetaAll = await fetchLearnBundleSceneMeta(supabase, "all");
+      const bundle = compactBundle(buildHumanLearnBundle(all as never, nowMs, null, null, sceneMetaAll));
       /**
        * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列は id・created_at・scope・source_rows・
        *   source_from・source_to・ext_version・bundle・lines・read_at・read_count）。
@@ -610,15 +902,17 @@ export async function learnFromWeakShots(
           return site === "realpro" ? (s === "realpro" || s.includes("realnet")) : (s === "itandi" || s.includes("itandi"));
         });
         if (sub.length < 3) continue;
+        const sceneMetaSite = await fetchLearnBundleSceneMeta(supabase, site);
         candidates.push({
           scope: site,
           source_rows: sub.length,
-          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs)) as unknown as Record<string, unknown>,
+          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs, null, null, sceneMetaSite)) as unknown as Record<string, unknown>,
         });
       }
       const rows: Array<{ scope: string; source_rows: number; bundle: Record<string, unknown> }> = [];
       for (const c of candidates) {
-        const pr = await inheritLinkFoundations(supabase, c.bundle, c.scope, { lookback: 20, minSolid: 30 });
+        const { INHERIT_LOOKBACK_DEFAULT } = await import("./learn-bundle-preserve");
+        const pr = await inheritLinkFoundations(supabase, c.bundle, c.scope, { lookback: INHERIT_LOOKBACK_DEFAULT, minSolid: 30 });
         if (!pr.safe_to_write) {
           out.errors.push(`束の作り直し拒否(${c.scope}): ${pr.why}`);
           continue;

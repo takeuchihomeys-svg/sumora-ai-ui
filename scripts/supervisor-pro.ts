@@ -15,7 +15,7 @@
  * ⚠ 統括の生の言葉をそのまま出す。私の解釈は「私の要約」と明示する。
  * ⚠ verdict / self_check / learning_tasks.kind は Pro が変えない。
  */
-import { enrichSupervisorWithPro } from "../app/lib/learn-supervisor-pro";
+import { enrichSupervisorWithPro, proMeetNotesFromBundle } from "../app/lib/learn-supervisor-pro";
 import type { SupervisorAdvice } from "../app/lib/learn-supervisor";
 
 const BASE = process.env.AUDIT_BASE || "https://sumora-ai-ui.vercel.app";
@@ -45,7 +45,8 @@ void (async () => {
   }
   hr();
 
-  // ★ 既定は最新束を読むだけ。打合せのたびに fresh=1 すると弱い強化の画面位置が消える（実測: 96欄→0）
+  // ★ 既定は最新束を読む（bundle付き）。touch=0 は light のみで束が無いので使わない。
+  //   打合せのたびに fresh=1 すると弱い強化の画面位置が消える（実測: 96欄→0）
   const q = forceFresh ? "fresh=1&" : "";
   const url = `${BASE}/api/human-learn-profile?${q}scope=${encodeURIComponent(scope)}`;
   const r = await fetch(url, { cache: "no-store" });
@@ -84,12 +85,42 @@ void (async () => {
   if (!beforeEv.length) line("  （なし → 本番がまだ Pro 未適用、または古いデプロイ）");
   else for (const e of beforeEv) line(`  ・${e.label}: ${e.value}`);
 
+  // ★ 2026-11-18: 束内 FA は solid 復元後も古いまま残り得る（missing_n>0 だと再点検をスキップしていた）
+  //   → 手元では必ず再点検し、F1 solid=96 なのに「0欄」と誤報しない
+  let bundleForPro = bundle as Record<string, unknown>;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const { auditLearnFoundations } = await import("../app/lib/learn-foundation-audit");
+    const { countLearnedSolid } = await import("../app/lib/learn-bundle-preserve");
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (url && key) {
+      const fa = await auditLearnFoundations(createClient(url, key), {
+        site: scope === "itandi" ? "itandi" : scope === "realpro" ? "realpro" : "all",
+      });
+      const solidBundle = countLearnedSolid(bundleForPro).solid;
+      bundleForPro = { ...bundleForPro, foundation_audit: fa };
+      line(`■ 土台点検（再）: ✓${fa.ok_n}／欠${fa.missing_n}／F1solid=${fa.screen_solid} 束solid=${solidBundle}`);
+      line(`  ${fa.summary.slice(0, 100)}`);
+    }
+  } catch (e) {
+    line(`■ 土台点検スキップ: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+  }
+
+  const autoNotes = proMeetNotesFromBundle(bundleForPro);
+  const allNotes = [...autoNotes, ...notes];
+  if (autoNotes.length) {
+    line();
+    line("■ 束からの事実メモ（--note 無しでも Pro に渡す）");
+    for (const n of autoNotes) line("  ・" + n);
+  }
+
   line();
   line("■ Pro に聞く（手元）…");
   const got = await enrichSupervisorWithPro(
     adv,
     process.env,
-    (meet.length || notes.length) ? { meet, notes } : null,
+    { meet, notes: allNotes.length ? allNotes : undefined, bundle: bundleForPro },
   );
   line(`  usedPro=${got.usedPro}  model=${got.model ?? "-"}  why=${got.why ?? "ok"}`);
 

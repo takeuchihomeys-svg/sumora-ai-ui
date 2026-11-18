@@ -266,6 +266,14 @@ export async function POST(req: NextRequest) {
            *   拡張は送っていたが API で捨て → プルダウン理解の土台が欠ける。
            */
           ...(typeof r.opened === "string" && r.opened ? { opened: String(r.opened).slice(0, 20) } : {}),
+          /** ★ 2026-11-18 クリック完全再現（形・種類・押下位置）: 2.8.99 が送る要素内の位置と寸法を通す（入力値は入れない） */
+          ...(typeof r.x === "number" && Number.isFinite(r.x) && r.x >= 0 && r.x <= 1 ? { x: Math.round(r.x * 100) / 100 } : {}),
+          ...(typeof r.y === "number" && Number.isFinite(r.y) && r.y >= 0 && r.y <= 1 ? { y: Math.round(r.y * 100) / 100 } : {}),
+          ...(typeof r.bw === "number" && Number.isFinite(r.bw) && r.bw > 0 && r.bw <= 5000 ? { bw: Math.round(r.bw) } : {}),
+          ...(typeof r.bh === "number" && Number.isFinite(r.bh) && r.bh > 0 && r.bh <= 5000 ? { bh: Math.round(r.bh) } : {}),
+          ...(typeof r.bt === "string" && r.bt ? { bt: r.bt.slice(0, 12) } : {}),
+          ...(typeof r.shape === "string" && r.shape ? { shape: r.shape.slice(0, 30) } : {}),
+          ...(typeof r.role === "string" && r.role ? { role: r.role.slice(0, 12) } : {}),
           /**
            * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
            *   そこを理解して学習する」:

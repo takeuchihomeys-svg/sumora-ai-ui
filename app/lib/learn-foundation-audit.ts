@@ -9,6 +9,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeHumanNearness, NEARNESS_ALLOW } from "./human-nearness";
+import { DAY_MS, LEARN_PERIODS, materialsDays, periodLabelJa, sinceIso } from "./learn-periods";
+import { fieldHasPosition, mergeAliasPositions, type FieldWithPos } from "./field-name-aliases";
+import { summarizeLatestAutoChallenges } from "./latest-learn-loop";
 
 export type FoundationItem = {
   id: string;
@@ -50,24 +53,251 @@ function countScreen(bundle: unknown): { solid: number; all: number; select: num
   return { keys: Object.keys(learned).length, all, solid, select, checkbox };
 }
 
-/** 本番DBから土台10本を点検する */
+/** shot_key から連続録画 run（`run_...`）を抜く */
+export function shotKeyRunId(shotKey: string | null | undefined): string | null {
+  const m = String(shotKey || "").match(/\/(run_[^/]+)\//);
+  return m ? m[1] : null;
+}
+
+/** `shot_learn` がエラー無しで入っているか */
+export function isShotLearnOk(sl: unknown): boolean {
+  if (sl == null) return false;
+  if (typeof sl !== "object") return false;
+  const o = sl as Record<string, unknown>;
+  if (o.error != null && o.error !== false && o.error !== "") return false;
+  return true;
+}
+
+/** 場面または flow_step がある学習（scene が other 以外 or flow_step あり） */
+export function shotLearnHasSceneFlow(sl: unknown): boolean {
+  if (!isShotLearnOk(sl)) return false;
+  const o = sl as { scene?: string; flow_step?: string };
+  const scene = String(o.scene || "").trim().toLowerCase();
+  if (scene && scene !== "other") return true;
+  return !!String(o.flow_step || "").trim();
+}
+
+export function countSeqCoveredRuns(
+  rows: Array<{ shot_key?: string | null; shot_learn?: unknown }>,
+  minLearned = 5,
+  minRatio = 0.25,
+  minMilestoneLearned = 12,
+): number {
+  const runSet = new Map<string, { total: number; learned: number; scenes: Set<string> }>();
+  for (const r of rows) {
+    const run = shotKeyRunId(r.shot_key);
+    if (!run) continue;
+    const cur = runSet.get(run) || { total: 0, learned: 0, scenes: new Set<string>() };
+    cur.total++;
+    if (isShotLearnOk(r.shot_learn)) {
+      cur.learned++;
+      const sc = String((r.shot_learn as { scene?: string } | null)?.scene || "").trim().toLowerCase();
+      if (sc && sc !== "other") cur.scenes.add(sc);
+    }
+    runSet.set(run, cur);
+  }
+  let seqCoveredRuns = 0;
+  for (const v of runSet.values()) {
+    const byRatio = v.learned >= minLearned && v.learned / v.total >= minRatio;
+    const byMilestones = v.learned >= minMilestoneLearned && v.scenes.size >= 2;
+    if (byRatio || byMilestones) seqCoveredRuns++;
+  }
+  return seqCoveredRuns;
+}
+
+export type ChallengeLearnBundle = {
+  points?: Record<string, { x?: number; y?: number; n?: number }> | null;
+  shots?: { learned?: Record<string, FieldWithPos[] | unknown[]> } | null;
+} | null;
+
+/** 束の points / shots.learned に載っている欄名（xy あり） */
+export function collectBundleFieldSets(bundle: ChallengeLearnBundle): { points: Set<string>; learned: Set<string> } {
+  const points = new Set<string>();
+  const learned = new Set<string>();
+  const pts = bundle?.points;
+  if (pts && typeof pts === "object") {
+    for (const [k, v] of Object.entries(pts)) {
+      if (typeof v?.x === "number" && typeof v?.y === "number") points.add(k);
+    }
+  }
+  const learnedObj = bundle?.shots?.learned;
+  if (learnedObj && typeof learnedObj === "object") {
+    for (const list of Object.values(learnedObj)) {
+      const arr = Array.isArray(list) ? list : [];
+      for (const f of mergeAliasPositions(arr as FieldWithPos[])) {
+        const name = String(f?.name ?? "").trim();
+        if (!name) continue;
+        if (typeof f.x === "number" && typeof f.y === "number") learned.add(name);
+      }
+    }
+  }
+  return { points, learned };
+}
+
+export type ChallengeLearnCompleteAudit = {
+  ok: boolean;
+  line: string;
+  next: string;
+  challengeN: number;
+  normalTodo: number;
+  missingPoints: string[];
+  missingLearned: string[];
+};
+
+/**
+ * F54 課題欄の学習完全化（純関数）:
+ *   課題欄が束の points と shots.learned の両方に xy で載り、通常の未学習が 0。
+ */
+export function auditChallengeLearnComplete(opt: {
+  challengeFields?: string[];
+  bundle?: ChallengeLearnBundle;
+  normalUnlearned?: number;
+}): ChallengeLearnCompleteAudit {
+  const fields = [...new Set((opt.challengeFields || []).map(String).map((s) => s.trim()).filter(Boolean))];
+  const normalTodo = Math.max(0, Number(opt.normalUnlearned) || 0);
+  const { points: havePts, learned: haveLearned } = collectBundleFieldSets(opt.bundle ?? null);
+  const missingPoints = fields.filter((f) => !fieldHasPosition(f, havePts));
+  const missingLearned = fields.filter((f) => !fieldHasPosition(f, haveLearned));
+  const fieldsOk = fields.length === 0 || (missingPoints.length === 0 && missingLearned.length === 0);
+  const ok = fieldsOk && normalTodo === 0;
+  const missTxt = [
+    missingPoints.length ? `points欠${missingPoints.slice(0, 4).join("・")}` : "",
+    missingLearned.length ? `learned欠${missingLearned.slice(0, 4).join("・")}` : "",
+    normalTodo > 0 ? `通常未学習${normalTodo}` : "",
+  ].filter(Boolean).join(" ");
+  const line =
+    `課題学習完全 課題欄=${fields.length} points欠=${missingPoints.length} learned欠=${missingLearned.length} 通常未学習=${normalTodo}`
+    + `（完了線: 課題欄は points∧learned 両方・通常未学習=0）`
+    + (missTxt ? `／${missTxt}` : "");
+  const next = ok
+    ? "維持（課題欄→通常学習→束 points+learned→自動で確認）"
+  : missingPoints.length || missingLearned.length
+      ? `photo_learn／weak-strengthen で ${[...new Set([...missingPoints, ...missingLearned])].slice(0, 6).join("・")} を束へ`
+      : normalTodo > 0
+        ? "scripts/shot-learn.ts --mode=normal で未学習を読む→束作り直し"
+        : "自動の最新課題を確認→通常から学習";
+  return { ok, line, next, challengeN: fields.length, normalTodo, missingPoints, missingLearned };
+}
+
+export type AutoReflectVerifiedAudit = {
+  ok: boolean;
+  line: string;
+  next: string;
+  readCount: number;
+  autoAfter: number;
+  reflectOk: number;
+  flowReflectOk: number;
+  aimYes: number;
+};
+
+/**
+ * F55 自動モードへの反映確認（純関数・F6+F31+F43+F46 統合）:
+ *   read≥1・新束後自動≥1・（learn_reflect_ok|learn_flow_reflect_ok|aim有）のいずれか≥1。
+ */
+export function auditAutoReflectVerified(opt: {
+  readCount?: number;
+  autoAfterBundle?: number;
+  reflectOk?: number;
+  flowReflectOk?: number;
+  aimYes?: number;
+}): AutoReflectVerifiedAudit {
+  const readCount = Math.max(0, Number(opt.readCount) || 0);
+  const autoAfter = Math.max(0, Number(opt.autoAfterBundle) || 0);
+  const reflectOk = Math.max(0, Number(opt.reflectOk) || 0);
+  const flowReflectOk = Math.max(0, Number(opt.flowReflectOk) || 0);
+  const aimYes = Math.max(0, Number(opt.aimYes) || 0);
+  const readOk = readCount >= 1;
+  const autoOk = autoAfter >= 1;
+  const markOk = reflectOk >= 1 || flowReflectOk >= 1 || aimYes >= 1;
+  const ok = readOk && autoOk && markOk;
+  const stop = !readOk ? "read" : !autoOk ? "auto" : !markOk ? "reflect印" : "";
+  const line =
+    `自動反映確認 read=${readCount} 新束後自動=${autoAfter} reflect_ok=${reflectOk} flow_reflect=${flowReflectOk} aim有=${aimYes}`
+    + `（完了線: read≥1・新束後自動≥1・reflect|flow_reflect|aim有≥1）`
+    + (stop ? `／止=${stop}` : "");
+  const next = ok
+    ? "維持（次の束でも拡張再読込→自動1回→印を確認）"
+    : !readOk
+      ? "拡張再読込→ポップアップで学習再取得（read_count≥1）"
+      : !autoOk
+        ? "自動/AIXで1回検索（新束より後）"
+        : "2.8.78+再読込→自動1回（learn_reflect_ok / learn_flow_reflect_ok / aim有）";
+  return { ok, line, next, readCount, autoAfter, reflectOk, flowReflectOk, aimYes };
+}
+
+/** ★ F56 純関数: 発見(F53/F54)→強化(F15/F28/F29)→自動反映(F55)の統括Pro完走責任 */
+export function auditProReflectResponsibility(opt: {
+  f53Ok?: boolean;
+  f54Ok?: boolean;
+  f55Ok?: boolean;
+  f15Ok?: boolean;
+  f28Ok?: boolean;
+  f29Ok?: boolean;
+  f54Next?: string;
+  f28Next?: string;
+}): { ok: boolean; done: number; total: number; missing: string[]; line: string; next: string } {
+  const gates = [
+    { name: "連続画像F53", ok: !!opt.f53Ok },
+    { name: "課題完全F54", ok: !!opt.f54Ok },
+    { name: "反映実証F55", ok: !!opt.f55Ok },
+    { name: "aim(F15)", ok: !!opt.f15Ok },
+    { name: "間隔(F28)", ok: !!opt.f28Ok },
+    { name: "近さ(F29)", ok: !!opt.f29Ok },
+  ];
+  const done = gates.filter((g) => g.ok).length;
+  const missing = gates.filter((g) => !g.ok).map((g) => g.name);
+  const ok = done === gates.length;
+  const line =
+    `統括Pro完走責任 ${done}/${gates.length}✓`
+    + (missing.length ? `（未: ${missing.join("・")}）` : "（発見→構築→強化→自動反映まで完走）")
+    + `（完了線: F53∧F54∧F55∧F15∧F28∧F29 すべて✓）`;
+  const next = ok
+    ? "維持（次の録画も連続学習→改善→反映まで完走）"
+    : !opt.f55Ok
+      ? "最優先: 拡張2.8.101再読込→自動1回でF55/F15/F28/F29を本番実証"
+      : (opt.f54Next || opt.f28Next || "未達土台を上から順に潰して自動1回で再確認");
+  return { ok, done, total: gates.length, missing, line, next };
+}
+
+export type FoundationSite = "realpro" | "itandi" | "all";
+
+/** 本番DBから土台を点検する（site指定でリアプロ／itandiを分けて測れる） */
 export async function auditLearnFoundations(
   sb: SupabaseClient,
-  opt: { daysOps?: number; daysAudit?: number } = {},
+  opt: { daysOps?: number; daysAudit?: number; site?: FoundationSite } = {},
 ): Promise<FoundationAudit> {
-  const daysOps = opt.daysOps ?? 2;
-  const daysAudit = opt.daysAudit ?? 3;
-  const sinceOps = new Date(Date.now() - daysOps * 86400_000).toISOString();
-  const sinceAudit = new Date(Date.now() - daysAudit * 86400_000).toISOString();
+  const daysOps = opt.daysOps ?? materialsDays();
+  const daysAudit = opt.daysAudit ?? materialsDays();
+  const site: FoundationSite = opt.site === "itandi" || opt.site === "realpro" ? opt.site : "all";
+  /**
+   * ★ 2026-11-17: 印ベースのF（F39〜F48）は拡張がサイト別に残す。
+   *   site=all の既定計測は realpro（今の印の主戦場）。
+   *   site=itandi なら itandi の監査だけで測る（無い＝足りない土台として見える）。
+   */
+  const markSite: "realpro" | "itandi" = site === "itandi" ? "itandi" : "realpro";
+  const sinceOps = new Date(Date.now() - daysOps * DAY_MS).toISOString();
+  const sinceAudit = new Date(Date.now() - daysAudit * DAY_MS).toISOString();
   const items: FoundationItem[] = [];
 
-  const { data: prof } = await sb
+  const profileScope = site === "all" ? "all" : site;
+  let { data: prof } = await sb
     .from("human_learn_profile")
     .select("created_at, source_rows, read_count, read_at, bundle")
-    .eq("scope", "all")
+    .eq("scope", profileScope)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // サイト別scopeの束が無い時は all を読む（supervisor_by_site は all 束にある）
+  if (!prof && site !== "all") {
+    const { data: profAll } = await sb
+      .from("human_learn_profile")
+      .select("created_at, source_rows, read_count, read_at, bundle")
+      .eq("scope", "all")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    prof = profAll;
+  }
   const sc = countScreen(prof?.bundle);
   const readOk = (Number(prof?.read_count) || 0) > 0;
 
@@ -465,9 +695,10 @@ export async function auditLearnFoundations(
     layer: "human",
   });
 
-  /** F28: 自動opsで g<400 が多すぎないか（人間は≈1.4%、自動は実測38%） */
+  /** F28: 自動の**動作間**（click/tap/key）で g<400 が多すぎないか */
   let autoFastN = 0, autoGapN = 0;
   {
+    const { gapsFromOps } = await import("./human-nearness");
     for (let i = 0; i < 2000; i += 1000) {
       const { data } = await sb
         .from("human_motion_learn")
@@ -478,9 +709,8 @@ export async function auditLearnFoundations(
       if (!data?.length) break;
       for (const r of data) {
         if (!/aix|auto/i.test(String(r.mode || ""))) continue;
-        for (const o of (Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [])) {
-          const g = Number(o.g);
-          if (!(Number.isFinite(g) && g >= 0)) continue;
+        const gs = gapsFromOps(Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : []);
+        for (const g of gs) {
           autoGapN++;
           if (g > 0 && g < 400) autoFastN++;
         }
@@ -492,11 +722,11 @@ export async function auditLearnFoundations(
   items.push({
     id: "F28_auto_gap_floor",
     ok: autoGapN >= 30 && autoFastPct <= 12,
-    line: `自動短間隔 g<400 = ${autoFastN}/${autoGapN}（${autoFastPct}%・完了線≤12%・標本≥30）`,
+    line: `自動短間隔(動作間) g<400 = ${autoFastN}/${autoGapN}（${autoFastPct}%・完了線≤12%・標本≥30・click/tap/keyのみ）`,
     next: autoGapN < 30
       ? "2.8.50再読込→自動1回（ops.gが残ること）"
       : autoFastPct > 12
-        ? "固定450-1000帯・humanRand下限・_uiGapMin を確認"
+        ? "固定450-1000帯・humanRand下限・_uiGapMin を確認（change直後の短gは測らない）"
         : "維持",
     layer: "human",
   });
@@ -510,6 +740,7 @@ export async function auditLearnFoundations(
   {
     const normalGaps: number[] = [];
     const autoGaps: number[] = [];
+    const { gapsFromOps: gapsFromOpsNear } = await import("./human-nearness");
     for (let i = 0; i < 2000; i += 1000) {
       const { data } = await sb
         .from("human_motion_learn")
@@ -521,12 +752,9 @@ export async function auditLearnFoundations(
       for (const r of data) {
         const m = String(r.mode || "").toLowerCase();
         const ops = Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [];
-        for (const o of ops) {
-          const g = Number(o.g);
-          if (!(Number.isFinite(g) && g >= 0)) continue;
-          if (m === "aix" || m === "auto") autoGaps.push(g);
-          else if (m === "normal") normalGaps.push(g);
-        }
+        const gs = gapsFromOpsNear(ops);
+        if (m === "aix" || m === "auto") autoGaps.push(...gs);
+        else if (m === "normal") normalGaps.push(...gs);
       }
       if (data.length < 1000) break;
     }
@@ -763,12 +991,13 @@ export async function auditLearnFoundations(
    */
   let norm24 = 0, normOps24 = 0, normWas24 = 0, normCs24 = 0, normHuman24 = 0, normPf24 = 0, normOpened24 = 0;
   {
-    const since24 = new Date(Date.now() - 86400_000).toISOString();
+    /** F19: 通常録画の鮮度は normalFreshMs（1日）。材料3日窓とは別枠 */
+    const sinceFresh = sinceIso(LEARN_PERIODS.normalFreshMs);
     const { data: nr } = await sb
       .from("human_motion_learn")
       .select("shot_ops,point_fields,shot_key")
       .eq("mode", "normal")
-      .gte("created_at", since24)
+      .gte("created_at", sinceFresh)
       .order("created_at", { ascending: false })
       .limit(200);
     for (const r of nr || []) {
@@ -785,10 +1014,11 @@ export async function auditLearnFoundations(
       }
     }
   }
+  const freshLabel = periodLabelJa(LEARN_PERIODS.normalFreshMs);
   items.push({
     id: "F19_normal_recording_fresh",
     ok: norm24 >= 5 && normOps24 >= 3,
-    line: `通常録画24h 画像=${norm24} shot_ops付=${normOps24}（完了線: 画像≥5 かつ ops付≥3）`,
+    line: `通常録画${freshLabel} 画像=${norm24} shot_ops付=${normOps24}（完了線: 画像≥5 かつ ops付≥3）`,
     next: norm24 < 5
       ? "通常モードで検索1回＋録画ON（手本を足す）"
       : "リアプロタブを再読込してから録画（古いcontentだとops欠ける）",
@@ -806,7 +1036,7 @@ export async function auditLearnFoundations(
   items.push({
     id: "F21_rec_point_fields",
     ok: normPf24 >= 1 || sc.solid >= 30,
-    line: `押す位置 point_fields付き通常24h=${normPf24}／束solid=${sc.solid}（完了線: 通常≥1 or solid≥30）`,
+    line: `押す位置 point_fields付き通常${freshLabel}=${normPf24}／束solid=${sc.solid}（完了線: 通常≥1 or solid≥30）`,
     next: normPf24 >= 1 || sc.solid >= 30
       ? "維持"
       : "通常モードでボタンを数回押して録画（point_fieldsが残るか）",
@@ -915,7 +1145,7 @@ export async function auditLearnFoundations(
   const { data: cmds } = await sb
     .from("automation_commands")
     .select("status")
-    .gte("created_at", sinceAudit)
+    .gte("created_at", sinceIso(LEARN_PERIODS.commandsMs))
     .limit(200);
   const pending = (cmds || []).filter((c) => c.status === "pending").length;
   const done = (cmds || []).filter((c) => c.status === "done").length;
@@ -959,11 +1189,11 @@ export async function auditLearnFoundations(
     const hasFa = !!(fa && (fa.summary || keyN > 0));
     const { data: logRows } = await sb
       .from("learn_supervisor_log")
-      .select("meeting,created_at")
-      .eq("scope", "all")
+      .select("meeting,created_at,scope")
+      .in("scope", site !== "all" ? [markSite, "all"] : ["all", "realpro", "itandi"])
       .gte("created_at", sinceAudit)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(80);
     let proInLog = 0;
     for (const r of logRows || []) {
       const ev = Array.isArray((r.meeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
@@ -998,12 +1228,14 @@ export async function auditLearnFoundations(
     let ragHitN = 0;
     let ragOkN = 0;
     {
-      const { data: logsRag } = await sb
+      let qRag = sb
         .from("learn_supervisor_log")
         .select("meeting")
-        .gte("created_at", sinceOps)
+        .gte("created_at", sinceOps);
+      if (site !== "all") qRag = qRag.eq("scope", markSite);
+      const { data: logsRag } = await qRag
         .order("created_at", { ascending: false })
-        .limit(40);
+        .limit(120);
       for (const row of logsRag || []) {
         const ev = (row.meeting as { evidence?: Array<{ label?: string; value?: string }> } | null)
           ?.evidence || [];
@@ -1047,16 +1279,17 @@ export async function auditLearnFoundations(
    *   保管が生きているかを1本の土台で測る（消える／書けない穴を見逃さない）。
    */
   {
-    const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
+    const sinceShot = sinceIso(LEARN_PERIODS.materialsMs);
+    const sinceLog = sinceIso(LEARN_PERIODS.logMemoryMs);
     const { count: shotLearnN } = await sb
       .from("human_motion_learn")
       .select("id", { count: "exact", head: true })
       .not("shot_learn", "is", null)
-      .gte("created_at", since7);
+      .gte("created_at", sinceShot);
     const { count: logN } = await sb
       .from("learn_supervisor_log")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", sinceOps);
+      .gte("created_at", sinceLog);
     const { data: last2 } = await sb
       .from("human_learn_profile")
       .select("created_at,bundle,source_rows")
@@ -1086,7 +1319,7 @@ export async function auditLearnFoundations(
     items.push({
       id: "F33_learn_db_persist",
       ok: okPersist,
-      line: `学習DB保管 shot_learn7日=${slN} 最新束solid=${latestSolid} 統括ログ2日=${lgN}`
+      line: `学習DB保管 shot_learn${periodLabelJa(LEARN_PERIODS.materialsMs)}=${slN} 最新束solid=${latestSolid} 統括ログ${periodLabelJa(LEARN_PERIODS.logMemoryMs)}=${lgN}`
         + (wiped ? " ⚠履歴にsolidありなのに最新0（消失）" : "")
         + `（完了線: shot_learn≥50・solid≥30・ログ≥1・消失なし）`,
       next: wiped
@@ -1117,24 +1350,33 @@ export async function auditLearnFoundations(
       rows: Number(r.source_rows) || 0,
       solid: solidOf(r.bundle),
     }));
+    /**
+     * ★ 2026-11-17: 「今も消す書き込みが起きているか」＝**最新行が消失か**だけ見る。
+     *   復元後に窓内の旧消失（例: 96→0→96）を数えると、関所が効いているのに永遠に✗になる。
+     *   窓12の合計は参考表示。完了線: 最新が消失でない・履歴良い時は最新solid≥30。
+     */
     let wipeEvents = 0;
     for (let i = 0; i < solidSeq.length - 1; i++) {
-      // 新しい→古いの並びに注意: i が新、i+1 が旧。旧≥30 で新=0 なら消失書き込み
+      // 新しい→古い: i が新、i+1 が旧。旧≥30 で新=0 なら消失書き込み
       if (solidSeq[i + 1].solid >= 30 && solidSeq[i].solid === 0) wipeEvents++;
     }
+    const latestSolidNow = solidSeq[0]?.solid ?? 0;
+    const wipeAtHead = solidSeq.length >= 2
+      && solidSeq[1].solid >= 30
+      && latestSolidNow === 0;
     const histGood = solidSeq.some((x) => x.solid >= 30);
-    const okWipeGate = wipeEvents === 0 && (!histGood || (solidSeq[0]?.solid ?? 0) >= 30);
+    const okWipeGate = !wipeAtHead && (!histGood || latestSolidNow >= 30);
     items.push({
       id: "F35_wipe_write_gate",
       ok: okWipeGate,
-      line: `消す書き込みゲート 直近消失回数=${wipeEvents} 最新solid=${solidSeq[0]?.solid ?? 0}`
-        + `（完了線: 消失0・履歴良い時は最新solid≥30）`,
-      next: wipeEvents > 0
+      line: `消す書き込みゲート 最新消失=${wipeAtHead ? 1 : 0}（窓12合計=${wipeEvents}）最新solid=${latestSolidNow}`
+        + `（完了線: 最新が消失でない・履歴良い時は最新solid≥30）`,
+      next: wipeAtHead
         ? "learn-bundle-preserve の拒否を全書き込み経路へ／本番デプロイ確認"
-        : (solidSeq[0]?.solid ?? 0) < 30 && histGood
+        : latestSolidNow < 30 && histGood
           ? "履歴からlearned復元（tmp-restore-link-bundle）"
           : "維持",
-      layer: wipeEvents > 0 || ((solidSeq[0]?.solid ?? 0) < 30 && histGood) ? "free" : "cost",
+      layer: wipeAtHead || (latestSolidNow < 30 && histGood) ? "free" : "cost",
     });
 
     /**
@@ -1162,16 +1404,842 @@ export async function auditLearnFoundations(
       }
       if (heavyRecentN >= 3) break;
     }
-    const okPathGate = latestHeavyOk && wipeEvents === 0;
+    const okPathGate = latestHeavyOk && !wipeAtHead;
     items.push({
       id: "F36_write_path_gate",
       ok: okPathGate,
-      line: `書き込み関所 ${latestHeavyNote} 直近重い違反=${heavyBadRecent}/${Math.max(heavyRecentN, 1)} 消失=${wipeEvents}`
-        + `（完了線: 最新の重い再生成が solid≥30|preserved かつ消失0）`,
+      line: `書き込み関所 ${latestHeavyNote} 直近重い違反=${heavyBadRecent}/${Math.max(heavyRecentN, 1)} 最新消失=${wipeAtHead ? 1 : 0}`
+        + `（完了線: 最新の重い再生成が solid≥30|preserved かつ最新が消失でない）`,
       next: !okPathGate
         ? "全insertに inheritLinkFoundations／learn-write-path-gate テスト／本番デプロイ"
         : "維持（新経路追加時は関所テストを先に通す）",
       layer: !okPathGate ? "free" : "cost",
+    });
+  }
+
+  /**
+   * ★ F38 2026-11-17 竹内さん「学習しても改善されない／拡張への反映」:
+   *   束 solid≥30 かつ拡張読込(read≥1) かつ 新束後の自動≥1 で「反映一連」完了。
+   *   読むだけで終わっている時（needs_auto）を ✗ として手配に載せる。
+   */
+  {
+    const readN = Number(prof?.read_count) || 0;
+    const autoN = afterBundle.length;
+    const okReflect = sc.solid >= 30 && readN >= 1 && autoN >= 1;
+    items.push({
+      id: "F38_improve_reflect_chain",
+      ok: okReflect,
+      line: `改善反映一連 solid=${sc.solid} read=${readN} 新束後自動=${autoN}`
+        + `（完了線: solid≥30・read≥1・新束後自動≥1）`,
+      next: okReflect
+        ? "維持（次の束でも自動1回で効果確認）"
+        : sc.solid < 30
+          ? "弱い強化／履歴からlearned復元"
+          : readN < 1
+            ? "拡張を再読込（popup開く／自動モード開始）"
+            : "自動モードで1回検索（読む→使うの切れ目を塞ぐ）",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F39 2026-11-17 竹内さん「場当たりより根本の仕組み」＋統括Pro:
+   *   パネル開いたら負債→確定清算（_axPanelDebt）。
+   *   完了線: 直近自動監査に panel_debt_open と panel_settle_ok（または modal_confirm）が両方ある。
+   */
+  {
+    let openN = 0;
+    let settleN = 0;
+    let confirmN = 0;
+    const { data: panelAudits } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of panelAudits || []) {
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; t?: string };
+        return String(o.k || o.t || "");
+      }).join("|");
+      if (/panel_debt_open/.test(joined)) openN++;
+      if (/panel_settle_ok|panel_debt_clear/.test(joined)) settleN++;
+      if (/modal_confirm|pet_panel_confirm|clear_panel_confirm/.test(joined)) confirmN++;
+    }
+    const okPanel = openN >= 1 && (settleN >= 1 || confirmN >= 1);
+    items.push({
+      id: "F39_panel_debt_settle",
+      ok: okPanel,
+      line: `パネル負債→確定清算 open=${openN} settle=${settleN} confirm=${confirmN}`
+        + `（完了線: 自動監査に open≥1 かつ settle/confirm≥1）`,
+      next: okPanel
+        ? "維持（場当たり必押を増やさず負債清算を通す）"
+        : "拡張2.8.66再読込→自動1回（panel_debt_open / panel_settle_ok を監査で確認）",
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F40 2026-11-17 竹内さん「路線画面ほかの構造把握／把握力が足りない」:
+   *   画面 kind（line_list/station_list/ward_list）を読んでから外す・入れる。
+   *   完了線: 直近自動監査に screen_grasp がある。
+   */
+  {
+    let graspN = 0;
+    let wrongN = 0;
+    const { data: graspAudits } = await sb
+      .from("search_audits")
+      .select("steps,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of graspAudits || []) {
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; t?: string };
+        return String(o.k || o.t || "");
+      }).join("|");
+      if (/screen_grasp/.test(joined)) graspN++;
+      if (/wrong_screen|screen_reopen_after_clear/.test(joined)) wrongN++;
+    }
+    const okGrasp = graspN >= 1;
+    items.push({
+      id: "F40_screen_grasp",
+      ok: okGrasp,
+      line: `画面把握 screen_grasp=${graspN} wrong/reopen印=${wrongN}`
+        + `（完了線: 自動監査に screen_grasp≥1）`,
+      next: okGrasp
+        ? "維持（誤画面操作を screen_grasp で止める）"
+        : "拡張2.8.69再読込→自動1回（screen_grasp: station=line_list|station_list）",
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F41 2026-11-17 統括Pro「done印が録画に残っていない／ボタン理解を終わらせる」:
+   *   選ぶ済/外す済/押す済・理解台帳が shot_ops に残る（2.8.76+）。
+   */
+  {
+    let doneN = 0;
+    let ledgerN = 0;
+    /** 済印の直近確認は logMemoryMs（把握用短窓）。材料3日と混ぜない */
+    const sinceDone = sinceIso(LEARN_PERIODS.logMemoryMs);
+    const { data: doneRows } = await sb
+      .from("human_motion_learn")
+      .select("shot_ops,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["aix", "auto", "brain_aix", "normal"])
+      .gte("created_at", sinceDone)
+      .order("created_at", { ascending: false })
+      .limit(120);
+    for (const r of doneRows || []) {
+      for (const o of Array.isArray(r.shot_ops) ? r.shot_ops : []) {
+        const f = String((o as { f?: string }).f || "");
+        if (/選ぶ済:|外す済:|押す済:|_done_select|_done_clear|_press_ok/.test(f)) doneN++;
+        if (/理解台帳|btn_understand/.test(f)) ledgerN++;
+      }
+    }
+    const okDone = doneN >= 1;
+    items.push({
+      id: "F41_button_done_marks",
+      ok: okDone,
+      line: `ボタン理解済印 done印=${doneN} 理解台帳=${ledgerN}`
+        + `（完了線: shot_opsに選ぶ済/外す済/押す済≥1・2.8.76+再読込後）`,
+      next: okDone
+        ? "維持（済印で弱いボタンを測る）"
+        : "拡張2.8.76再読込→自動1回（選ぶ済:station_id[] / 理解台帳）",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F42 2026-11-17 統括Pro「台帳外ゴミを課題に出さない関所」:
+   *   1DK・区名・路線名の生値を photo_learn 対象にしない（catalogTargetsOnly）。
+   *   完了線: 関所関数が課題を台帳正名だけに落とせる。
+   */
+  {
+    let gateOk = false;
+    let sample = "";
+    try {
+      const { catalogTargetsOnly } = await import("./button-catalog-targets");
+      const catSite = markSite;
+      const raw = catSite === "itandi"
+        ? ["1DK", "大阪市北区", "大阪メトロ御堂筋線", "search", "ゴミXYZ", "room_layout:in"]
+        : ["1DK", "大阪市北区", "大阪市高速軌道御堂筋線", "確定してリストへ", "ゴミXYZ"];
+      const kept = catalogTargetsOnly(raw, catSite);
+      const hasLayout = catSite === "itandi"
+        ? kept.includes("room_layout:in")
+        : kept.includes("room_layout_id[]");
+      const hasCity = catSite === "itandi"
+        ? kept.includes("city_radio")
+        : kept.includes("city_code[]");
+      const hasRoute = catSite === "itandi"
+        ? kept.includes("line_checkbox")
+        : kept.includes("route_id[]");
+      const hasConfirm = catSite === "itandi"
+        ? kept.includes("search") || kept.includes("modal_confirm")
+        : kept.includes("確定してリストへ");
+      const noGarbage = !kept.some((k) => /ゴミ|XYZ|1DK|大阪市北区|御堂筋線/.test(k));
+      gateOk = hasLayout && hasCity && hasRoute && hasConfirm && noGarbage;
+      sample = `${catSite}:` + kept.slice(0, 6).join("・");
+    } catch (e) {
+      gateOk = false;
+      sample = String((e as Error)?.message || e).slice(0, 60);
+    }
+    items.push({
+      id: "F42_catalog_targets_gate",
+      ok: gateOk,
+      line: `台帳関所 catalogTargetsOnly(${markSite}) ${gateOk ? "✓" : "✗"} → ${sample || "-"}`
+        + `（完了線: 値・区名・路線名を欄に写し台帳外を落とす・サイト別台帳）`,
+      next: gateOk
+        ? "維持（weak-strengthen は台帳正名のみ・サイト混ぜない）"
+        : "app/lib/button-catalog-targets.ts と realpro/itandi-buttons を確認",
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F43 2026-11-17 竹内さん「改善したら自動モードに連動」＋統括Pro:
+   *   新束後の自動に learn_reflect_ok が残ること（読むだけ・aim無のまま完了を ✗）。
+   *   完了線: 新束後の自動監査に learn_reflect_ok≥1 かつ aim有≥1。
+   */
+  {
+    let okLink = false;
+    let reflectOkN = 0;
+    let aimYesN = 0;
+    let aimNoN = 0;
+    let gateN = 0;
+    const bundleAt = typeof prof?.created_at === "string" ? prof.created_at : null;
+    if (bundleAt) {
+      const { data: linkAud } = await sb
+        .from("search_audits")
+        .select("steps,ext_version,mode,created_at")
+        .eq("site", markSite)
+        .in("mode", ["brain_aix", "aix", "auto"])
+        .gte("created_at", bundleAt)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      for (const a of linkAud || []) {
+        const steps = Array.isArray(a.steps) ? a.steps : [];
+        const joined = steps.map((s) => {
+          if (typeof s === "string") return s;
+          const o = s as { k?: string; d?: string };
+          return `${o.k || ""} ${o.d || ""}`;
+        }).join("|");
+        if (/learn_reflect_ok/.test(joined)) reflectOkN++;
+        if (/learn_reflect_gate/.test(joined)) gateN++;
+        if (/aim有/.test(joined)) aimYesN++;
+        if (/aim無/.test(joined)) aimNoN++;
+      }
+    }
+    okLink = reflectOkN >= 1 && aimYesN >= 1;
+    items.push({
+      id: "F43_improve_to_auto_link",
+      ok: okLink,
+      line: `改善→自動連動 reflect_ok=${reflectOkN} gate=${gateN} aim有=${aimYesN} aim無=${aimNoN}`
+        + `（完了線: 新束後自動に learn_reflect_ok≥1 かつ aim有≥1）`,
+      next: okLink
+        ? "維持（次の改善でも reflect_ok→aim有 を確認）"
+        : "2.8.78再読込＋リアプロタブ再読込→popup→自動1回（印がstepsから消えないこと）",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F44 2026-11-17 竹内さん「次客が溜まって乗り換え・強制更新のあと壊れる」＋統括Pro:
+   *   handoff 原子（owner_mismatch / no_fill_start / tab_reload / supersede）が測れること。
+   *   完了線: 直近自動に handoff 異常が減り、reload_skip_other_fill / force_clear_skip が効く版≥2.8.79。
+   */
+  {
+    let ownerN = 0, noFillN = 0, reloadN = 0, superN = 0, skipN = 0, v279 = 0;
+    const { data: hoAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode,result")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of hoAud || []) {
+      const v = String(a.ext_version || "");
+      const isV279 = /^2\.8\.(79|[89]\d|[1-9]\d{2,})/.test(v);
+      if (isV279) v279++;
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; d?: string };
+        return `${o.k || ""} ${o.d || ""}`;
+      }).join("|") + "|" + String(a.result || "");
+      // ★ 2026-11-18: 完了線「2.8.79以降の自動で owner/no_fill=0」と一致させ、旧版(2.8.31等)は合否に混ぜない
+      if (isV279) {
+        if (/owner_mismatch/.test(joined)) ownerN++;
+        if (/no_fill_start|NO_FILL_START/.test(joined)) noFillN++;
+        if (/tab_reload/.test(joined)) reloadN++;
+        if (/supersede/.test(joined)) superN++;
+        if (/reload_skip_other_fill|force_clear_skip|fill_started_inferred/.test(joined)) skipN++;
+      }
+    }
+    const harm = ownerN + noFillN;
+    const okHandoff = v279 >= 1 && harm === 0;
+    items.push({
+      id: "F44_next_customer_handoff",
+      ok: okHandoff,
+      line: `次客handoff v279+=${v279} owner=${ownerN} no_fill=${noFillN} reload=${reloadN} supersede=${superN} skip印=${skipN}`
+        + `（完了線: 2.8.79以降の自動で owner/no_fill=0）`,
+      next: okHandoff
+        ? "維持（次客連続でも force_clear_skip / reload_skip を確認）"
+        : "2.8.79再読込＋リアプロタブ再読込→次客が溜まった状態で自動連続2客",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F45 2026-11-17 竹内さん「完了したら次客／何が完了か理解／手順を1つずつ」＋統括Pro:
+   *   flow_done_* / flow_understand_ledger / series_done が自動監査に残ること。
+   *   完了線: 2.8.80以降の自動で place+conditions+search+fill_done+ready_next の印≥1。
+   */
+  {
+    let v280 = 0, placeN = 0, condN = 0, searchN = 0, fillN = 0, readyN = 0, ledgerN = 0, seriesN = 0, gapN = 0;
+    const { data: flAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of flAud || []) {
+      const v = String(a.ext_version || "");
+      if (/^2\.8\.(8\d|[9]\d|[1-9]\d{2,})/.test(v) || v === "2.8.80") v280++;
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; d?: string };
+        return `${o.k || ""} ${o.d || ""}`;
+      }).join("|");
+      if (/flow_done_place/.test(joined)) placeN++;
+      if (/flow_done_conditions/.test(joined)) condN++;
+      if (/flow_done_search/.test(joined)) searchN++;
+      if (/flow_done_fill_done/.test(joined)) fillN++;
+      if (/flow_done_ready_next|series_done/.test(joined)) { readyN++; seriesN++; }
+      if (/flow_understand_ledger/.test(joined)) ledgerN++;
+      if (/flow_gap_/.test(joined)) gapN++;
+    }
+    const okFlow = v280 >= 1 && placeN >= 1 && condN >= 1 && searchN >= 1 && fillN >= 1 && readyN >= 1;
+    items.push({
+      id: "F45_flow_completion_ledger",
+      ok: okFlow,
+      line: `完了理解台帳 v280+=${v280} place=${placeN} cond=${condN} search=${searchN} fill=${fillN} ready=${readyN} ledger=${ledgerN} series=${seriesN} gap=${gapN}`
+        + `（完了線: 2.8.80以降で place〜ready_next 各≥1）`,
+      next: okFlow
+        ? "維持（連続2客で series_done→次客切替を確認）"
+        : "2.8.80再読込＋リアプロタブ再読込→自動1客完走で flow_done_* を確認→連続2客",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F46 2026-11-17 竹内さん「流れの弱い部分を録画から強化→自動に反映」:
+   *   learn_flow_reflect_ok / now_customer が自動監査に残ること。
+   *   完了線: 2.8.81以降で learn_flow_reflect_ok≥1 かつ now_customer≥1。
+   */
+  {
+    let v281 = 0, flowRefOk = 0, flowRefGap = 0, nowCust = 0;
+    const { data: frAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of frAud || []) {
+      const v = String(a.ext_version || "");
+      if (/^2\.8\.(81|8[2-9]|9\d|[1-9]\d{2,})/.test(v) || v === "2.8.81") v281++;
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; d?: string };
+        return `${o.k || ""} ${o.d || ""}`;
+      }).join("|");
+      if (/learn_flow_reflect_ok/.test(joined)) flowRefOk++;
+      if (/learn_flow_reflect_gap/.test(joined)) flowRefGap++;
+      if (/now_customer/.test(joined)) nowCust++;
+    }
+    const okFr = v281 >= 1 && flowRefOk >= 1 && nowCust >= 1;
+    items.push({
+      id: "F46_flow_record_to_auto",
+      ok: okFr,
+      line: `録画流れ→自動 v281+=${v281} flow_reflect_ok=${flowRefOk} gap=${flowRefGap} now_customer=${nowCust}`
+        + `（完了線: 2.8.81以降で reflect_ok≥1 かつ now_customer≥1）`,
+      next: okFr
+        ? "維持（weak-strengthen の流れF46→自動1回で印を確認）"
+        : "2.8.81再読込＋リアプロタブ再読込→自動1回で learn_flow_reflect_* / now_customer を確認",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F47 2026-11-17 統括Pro徹底「全流れ地図／ボタン・外し／細分化強化の仕組み」:
+   *   flow_map_ledger + flow_subdivide_* + clear_method_* + line_station_map が自動監査に残ること。
+   *   既存 F45/F46/F41/地図を活用し、弱い原子だけ次手にする（新規地図を増やさない）。
+   *   完了線: 2.8.84以降で flow_map_ledger≥1 かつ (flow_subdivide_need|ok)≥1 かつ clear_method or line_station_map≥1。
+   */
+  {
+    let v284 = 0, mapLed = 0, subN = 0, clearN = 0, lsMap = 0, btnLed = 0;
+    const { data: fmAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of fmAud || []) {
+      const v = String(a.ext_version || "");
+      if (/^2\.8\.(84|8[5-9]|9\d|[1-9]\d{2,})/.test(v) || v === "2.8.84") v284++;
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; d?: string };
+        return `${o.k || ""} ${o.d || ""}`;
+      }).join("|");
+      if (/flow_map_ledger/.test(joined)) mapLed++;
+      if (/flow_subdivide_(need|ok)/.test(joined)) subN++;
+      if (/clear_method_/.test(joined)) clearN++;
+      if (/line_station_map/.test(joined)) lsMap++;
+      if (/btn_understand_ledger/.test(joined)) btnLed++;
+    }
+    const okFm = v284 >= 1 && mapLed >= 1 && subN >= 1 && (clearN >= 1 || lsMap >= 1);
+    items.push({
+      id: "F47_flow_map_subdivide",
+      ok: okFm,
+      line: `全流れ地図細分化 v284+=${v284} map_ledger=${mapLed} subdivide=${subN} clear_method=${clearN} line_station_map=${lsMap} btn_ledger=${btnLed}`
+        + `（完了線: 2.8.84以降で map_ledger≥1・subdivide≥1・clear|line_map≥1）`,
+      next: okFm
+        ? "維持（flow_subdivide_need の弱い原子を1つずつREALPRO_BUTTONS順で強化）"
+        : "2.8.84再読込＋リアプロタブ再読込→自動1回で flow_map_ledger / flow_subdivide_* / clear_method_* を確認",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F48 2026-11-17 竹内さん「この考え方をかなり大切にする」＋統括Pro:
+   *   脳として機能する＝弱点がすぐ分かる／改善に必要が分かる／強化の仕方が分かる／
+   *   土台を追加できる／録画からも学べる。材料が揃っているかを測る。
+   *   完了線: F34脳材料✓ かつ F46|scene反映の印≥1 かつ（F47 map_ledger|subdivide≥1 または F45 ledger≥1）。
+   */
+  {
+    const f34 = items.find((x) => x.id === "F34_pro_brain_ready");
+    const f45 = items.find((x) => x.id === "F45_flow_completion_ledger");
+    const f46 = items.find((x) => x.id === "F46_flow_record_to_auto");
+    const f47 = items.find((x) => x.id === "F47_flow_map_subdivide");
+    const brainMat = !!f34?.ok;
+    /** ★ 録画学習路は F46 必須（F45だけでは「録画→自動」が回っていない） */
+    const recLearn = !!f46?.ok;
+    const mapVis = !!f47?.ok;
+    const flowVis = !!f45?.ok;
+    const okBrain = brainMat && recLearn && mapVis && flowVis;
+    items.push({
+      id: "F48_pro_brain_loop",
+      ok: okBrain,
+      line: `統括Pro脳ループ 脳材料=${brainMat ? "✓" : "✗"} 録画学習路(F46)=${recLearn ? "✓" : "✗"} 地図細分化(F47)=${mapVis ? "✓" : "✗"} 完了台帳(F45)=${flowVis ? "✓" : "✗"}`
+        + `（完了線: F34∧F45∧F46∧F47 すべて✓＝弱点がすぐ分かり録画から学べる）`,
+      next: okBrain
+        ? "維持（weak_fixes→build_next→自動1回→効果確認を脳の指揮で回す）"
+        : "2.8.85再読込＋タブ再読込→自動1回で now_customer/learn_flow_reflect/flow_map_ledger を監査に残す→F46/F47/F48",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F49 2026-11-17 統括Pro: 写真→統括連携の数え方が事実と矛盾しない関所。
+   *   実測: 束 in_storage=9923・通常学べ1799 なのに vision_link 段1「写真が無い」
+   *   （サイト別に shot_bytes/photo_kinds 未配線）。
+   *   完了線: 束に写真があるなら vision 段1✓。学べがあるなら段3（種類|画像欄）も✓。
+   */
+  {
+    const bWrap = prof?.bundle as {
+      shots?: { in_storage?: number; kinds?: Record<string, number> };
+      bundle_reflect?: { photo_in_storage?: number };
+    } | null;
+    const shots = bWrap?.shots;
+    const inStore =
+      Number(shots?.in_storage)
+      || Number(bWrap?.bundle_reflect?.photo_in_storage)
+      || 0;
+    const kindsBundle = shots?.kinds ? Object.values(shots.kinds).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+    type Vpl = {
+      counts?: { photo_in_storage?: number; learned_ok?: number; photo_kinds_n?: number; image_fields?: number };
+      bottleneck_n?: number | null;
+    };
+    const bySite = (prof?.bundle as {
+      supervisor_by_site?: Record<string, { meeting?: { vision_pro_link?: Vpl } }>;
+      supervisor?: { meeting?: { vision_pro_link?: Vpl } };
+    } | null);
+    const vpl =
+      (site === "itandi"
+        ? bySite?.supervisor_by_site?.itandi?.meeting?.vision_pro_link
+        : bySite?.supervisor_by_site?.realpro?.meeting?.vision_pro_link)
+      || bySite?.supervisor_by_site?.[markSite]?.meeting?.vision_pro_link
+      || bySite?.supervisor?.meeting?.vision_pro_link
+      || null;
+    const c = vpl?.counts || null;
+    const photoVis = Number(c?.photo_in_storage) || 0;
+    const learnedVis = Number(c?.learned_ok) || 0;
+    const kindsVis = (Number(c?.photo_kinds_n) || 0) + (Number(c?.image_fields) || 0);
+    const step1Ok = inStore <= 0 || photoVis > 0;
+    const step3Ok = learnedVis <= 0 || kindsVis > 0;
+    const okVis = step1Ok && step3Ok;
+    items.push({
+      id: "F49_vision_photo_reach",
+      ok: okVis,
+      line: `写真→統括到達(${markSite}) 束in_storage=${inStore} vision写真=${photoVis} 学べ=${learnedVis} 種類|欄=${kindsVis}`
+        + ` 段1=${step1Ok ? "✓" : "✗"} 段3=${step3Ok ? "✓" : "✗"}`
+        + (kindsBundle > 0 && kindsVis <= 0 && learnedVis > 0 ? " ⚠束に種類あるがvision未到達" : "")
+        + `（完了線: 束に写真があるならvision写真>0／学べがあるなら種類|欄>0）`,
+      next: okVis
+        ? "維持（photo_learn→材料→突合→Pro）"
+        : !step1Ok
+          ? "サイト別統括へ shot_bytes を渡す／束再生成（vision段1の誤報を止める）"
+          : "サイト別へ photo_kinds / image_match を渡す（段3材料到達）",
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F50 2026-11-17 竹内さん「学んだ学習方法をitandiでも完全に活用」＋統括Pro:
+   *   リアプロで確立した①〜⑤の型が itandi でも使えるか（台帳・サイト別統括・記録）。
+   *   DOM・路線駅名は混ぜない。方法と関所の型だけ共通。
+   */
+  {
+    const { measureSiteMethodParity } = await import("./site-learn-method");
+    const { REALPRO_BUTTONS } = await import("./realpro-buttons");
+    const { ITANDI_BUTTONS } = await import("./itandi-buttons");
+    // ★ 移植関所は常に scope=all の束で両サイト統括を見る（サイト別scopeだと片方しか無い）
+    let allBundle = prof?.bundle;
+    if (site !== "all") {
+      const { data: allProf } = await sb
+        .from("human_learn_profile")
+        .select("bundle")
+        .eq("scope", "all")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (allProf?.bundle) allBundle = allProf.bundle;
+    }
+    const by = (allBundle as {
+      supervisor_by_site?: Record<string, { meeting?: { vision_pro_link?: { counts?: { photo_in_storage?: number } } } }>;
+      source?: { sites?: string[]; rows?: number };
+    } | null);
+    const sitesSup = Object.keys(by?.supervisor_by_site || {});
+    let rpRows = 0, itRows = 0;
+    {
+      const sinceMat = sinceIso(LEARN_PERIODS.materialsMs);
+      const { count: cRp } = await sb.from("human_motion_learn").select("id", { count: "exact", head: true }).eq("site", "realpro").gte("created_at", sinceMat);
+      const { count: cIt } = await sb.from("human_motion_learn").select("id", { count: "exact", head: true }).eq("site", "itandi").gte("created_at", sinceMat);
+      rpRows = cRp ?? 0;
+      itRows = cIt ?? 0;
+    }
+    const rpVis = Number(by?.supervisor_by_site?.realpro?.meeting?.vision_pro_link?.counts?.photo_in_storage) || 0;
+    const itVis = Number(by?.supervisor_by_site?.itandi?.meeting?.vision_pro_link?.counts?.photo_in_storage) || 0;
+    const parity = measureSiteMethodParity({
+      sitesWithSupervisor: sitesSup.length ? sitesSup : (by?.source?.sites || []),
+      rowsBySite: { realpro: rpRows, itandi: itRows },
+      visionPhotoBySite: { realpro: rpVis, itandi: itVis },
+      realproButtonsN: REALPRO_BUTTONS.length,
+      itandiButtonsN: ITANDI_BUTTONS.length,
+    });
+    items.push({
+      id: "F50_site_method_parity",
+      ok: parity.ok,
+      line: parity.line + `（計測site=${site}/印=${markSite}）`,
+      next: parity.ok
+        ? (parity.itandi_record_ask || "維持（方法は共通・DOM/台帳はサイト別）")
+        : (parity.gaps[0] || "サイト別統括と両台帳をそろえる"),
+      layer: parity.itandi_record_ask ? "human" : "free",
+    });
+  }
+
+  /**
+   * ★ F51 2026-11-17 統括Pro「人間として自動化／細部改善の仕組みと土台を徹底」:
+   *   弱所→学ぶ→土台→狙って押して残す→度で確かめる、の5段が測れること。
+   */
+  {
+    const { buildHumanDetailLoop } = await import("./human-detail-loop");
+    const { DETAIL_DEGREE } = await import("./learn-improve-mech");
+    const f15 = items.find((x) => x.id === "F15_cursor_aim_hit");
+    const f16 = items.find((x) => x.id === "F16_learn_warm");
+    const f28 = items.find((x) => x.id === "F28_auto_gap_floor");
+    const f29 = items.find((x) => x.id === "F29_human_nearness");
+    const f49 = items.find((x) => x.id === "F49_vision_photo_reach");
+    const f6 = items.find((x) => x.id === "F6_auto_after_bundle");
+    // aim有/無は F15 行から抜く
+    let aimAri = 0, aimNashi = 0;
+    {
+      const m = String(f15?.line || "").match(/aim有=(\d+).*aim無=(\d+)/);
+      if (m) { aimAri = Number(m[1]) || 0; aimNashi = Number(m[2]) || 0; }
+    }
+    let warmN = 0;
+    {
+      const m = String(f16?.line || "").match(/learn_warm=(\d+)/);
+      if (m) warmN = Number(m[1]) || 0;
+    }
+    let shortPct: number | null = null;
+    {
+      const m = String(f28?.line || "").match(/（([\d.]+)%/);
+      if (m) shortPct = Number(m[1]);
+    }
+    let nearScore: number | null = null;
+    let nearOk = !!f29?.ok;
+    {
+      const m = String(f29?.line || "").match(/近さ(\d+)点/);
+      if (m) nearScore = Number(m[1]);
+    }
+    // 直近拡張版
+    let extVer: string | null = null;
+    {
+      const { data: verRows } = await sb
+        .from("search_audits")
+        .select("ext_version")
+        .eq("site", markSite)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      for (const r of verRows || []) {
+        const v = String((r as { ext_version?: string }).ext_version || "");
+        if (/^2\.\d+\.\d+/.test(v)) { extVer = v; break; }
+      }
+    }
+    const loop = buildHumanDetailLoop({
+      aimAri,
+      aimNashi,
+      learnWarmN: warmN,
+      shortGapPct: shortPct,
+      nearnessAllowed: nearOk,
+      nearnessScore: nearScore,
+      visionPhotoOk: !!f49?.ok,
+      fireAtPointWired: true, // コード側は 2.8.86+ で配線済。版で確認
+      extVersion: extVer,
+      autoAfterBundle: !!f6?.ok,
+      pointPct: null,
+      cursorPct: null,
+    });
+    // 仕組みOK＝5段が組める＋度の線がある。完了＝bottleneckなし
+    const mechOk = loop.steps.length === 5 && loop.degree_line.includes(String(DETAIL_DEGREE.POINT_OK));
+    const doneOk = loop.bottleneck_n == null;
+    const measurable = (aimAri + aimNashi) > 0 || warmN > 0 || !!extVer;
+    items.push({
+      id: "F51_human_detail_loop",
+      ok: mechOk && measurable && (doneOk || loop.bottleneck_n! >= 3),
+      line: `人間細部ループ ${loop.line.slice(0, 160)}／版=${extVer || "?"}／原子${loop.atoms.length}`
+        + `（完了線: 5段✓＝弱所→学ぶ→土台→狙って残す→度／仕組みは測れること）`,
+      next: doneOk
+        ? "維持（細部原子を1つずつ回す）"
+        : (loop.atoms[0]?.next || loop.bottleneck || "拡張再読込→自動1回→F15/F16/F28/F49を数字で見る"),
+      layer: loop.bottleneck_n != null && loop.bottleneck_n <= 3 ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F52 2026-11-17 竹内さん「地域と駅はどちらか／混ざると検索できない」＋統括Pro:
+   *   自動監査に place_mixed / extraStation+extraWard / AREA_MIX が残らないこと。
+   */
+  {
+    let mixN = 0, xorOkN = 0, sample = 0;
+    const { data: saPlace } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,created_at")
+      .eq("site", markSite)
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const r of saPlace || []) {
+      sample++;
+      const steps = Array.isArray(r.steps) ? (r.steps as Array<{ k?: string; m?: string }>) : [];
+      const joined = steps.map((s) => `${s.k || ""} ${s.m || ""}`).join(" ");
+      if (/place_mixed|地域と駅が同時|area_ok_by=both|AREA_MIX/.test(joined)) mixN++;
+      else if (/place_side_clear|area_ok_by=ward|area_ok_by=station|gate_ward_clear|gate_station_defer/.test(joined)) xorOkN++;
+    }
+    const okXor = sample >= 3 && mixN === 0;
+    items.push({
+      id: "F52_place_xor",
+      ok: okXor,
+      line: `地域↔駅排他(${markSite}) 標本${sample} 混在印=${mixN} 片側印=${xorOkN}`
+        + `（完了線: 直近自動で place_mixed/both=0・どちらか一方）`,
+      next: okXor
+        ? "維持（関所で混在を止める）"
+        : "2.8.88再読込→自動1回。混在時は area_mode の反対側を外してから検索",
+      layer: "human",
+    });
+  }
+
+  /**
+   * ★ F53 2026-11-18 統括Pro「画像の連続流れ学習→一連理解→改善」:
+   *   連続録画 run 単位で shot_learn が scene/flow に載り、束に image_flows／result 画面があるか。
+   */
+  {
+    const sinceMat = sinceIso(LEARN_PERIODS.materialsMs);
+    const { data: imgRows } = await sb
+      .from("human_motion_learn")
+      .select("shot_key, shot_learn")
+      .eq("site", markSite)
+      .eq("shot_taken", true)
+      .gte("shot_w", 800)
+      .gte("created_at", sinceMat)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    const rows = (imgRows || []) as Array<{ shot_key?: string | null; shot_learn?: unknown }>;
+    let learnedN = 0;
+    let sceneN = 0;
+    let resultScreenN = 0;
+    for (const r of rows) {
+      if (!isShotLearnOk(r.shot_learn)) continue;
+      learnedN++;
+      if (shotLearnHasSceneFlow(r.shot_learn)) sceneN++;
+      const screen = String((r.shot_learn as { screen?: string } | null)?.screen || "");
+      if (screen === "result") resultScreenN++;
+    }
+    const seqCoveredRuns = countSeqCoveredRuns(rows);
+    const bWrap = prof?.bundle as {
+      image_flows?: { seq_learned_runs?: number };
+      screen_flow?: Record<string, unknown>;
+    } | null;
+    const bundleSeqRuns = Number(bWrap?.image_flows?.seq_learned_runs) || 0;
+    const hasResultScreen = !!(bWrap?.screen_flow?.result) || resultScreenN > 0;
+    const okF53 =
+      sceneN >= 5 && seqCoveredRuns >= 1 && bundleSeqRuns >= 1 && hasResultScreen;
+    const sampleN = rows.length;
+    items.push({
+      id: "F53_image_seq_flow",
+      ok: okF53,
+      line: `画像連続流れ(${markSite}) 標本${sampleN} learned=${learnedN} scene|flow=${sceneN} result画面=${resultScreenN}`
+        + ` 連続カバーラン=${seqCoveredRuns} 束seq_runs=${bundleSeqRuns} result束=${hasResultScreen ? "✓" : "✗"}`
+        + `（完了線: scene≥5・連続ラン≥1・束seq≥1・result画面）`,
+      next: okF53
+        ? "維持（連続画像→scene/flow→束 image_flows）"
+        : `scripts/shot-learn.ts --site=${markSite} --mode=normal --order=sequence --limit=35 で連続ラン読み取り→束作り直し`,
+      layer: okF53 ? "free" : learnedN < 30 ? "cost" : "free",
+    });
+  }
+
+  /**
+   * ★ F54 2026-11-18 竹内さん「課題の学習を完全にする」:
+   *   自動の課題欄が束 points と shots.learned の両方に載り、通常の未学習が残らない。
+   */
+  {
+    const { data: autoMotion } = await sb
+      .from("human_motion_learn")
+      .select("created_at,mode,shot_key,shot_ops,shot_taken,shot_learn,site,ext_version")
+      .eq("site", markSite)
+      .in("mode", ["aix", "auto", "brain_aix"])
+      .gte("created_at", sinceOps)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    const ch = summarizeLatestAutoChallenges((autoMotion || []) as never, { hours: 72 });
+    const { catalogTargetsOnly } = await import("./button-catalog-targets");
+    const chFields = catalogTargetsOnly(ch.fields || [], markSite);
+    const sinceMatF54 = sinceIso(LEARN_PERIODS.materialsMs);
+    let normalTodo = 0;
+    {
+      const { data: normRows } = await sb
+        .from("human_motion_learn")
+        .select("shot_learn,shot_taken,shot_w,mode")
+        .eq("site", markSite)
+        .eq("mode", "normal")
+        .eq("shot_taken", true)
+        .gte("shot_w", 800)
+        .gte("created_at", sinceMatF54)
+        .order("created_at", { ascending: false })
+        .limit(400);
+      for (const r of normRows || []) {
+        if (!isShotLearnOk(r.shot_learn)) normalTodo++;
+      }
+    }
+    const f54 = auditChallengeLearnComplete({
+      challengeFields: chFields,
+      bundle: (prof?.bundle ?? null) as ChallengeLearnBundle,
+      normalUnlearned: normalTodo,
+    });
+    items.push({
+      id: "F54_challenge_learn_complete",
+      ok: f54.ok,
+      line: `${f54.line}／最新自動課題${chFields.length}件`,
+      next: f54.next,
+      layer: f54.ok ? "free" : f54.normalTodo > 0 ? "cost" : "human",
+    });
+  }
+
+  /**
+   * ★ F55 2026-11-18 竹内さん「自動モードへの反映もちゃんとできるようにする」:
+   *   F6+F31+F43+F46 を統合: read≥1・新束後自動≥1・本番監査の反映印≥1。
+   */
+  {
+    const bundleAt = typeof prof?.created_at === "string" ? prof.created_at : null;
+    let reflectOkN = 0, flowReflectOkN = 0, aimYesN2 = 0;
+    if (bundleAt) {
+      const { data: rfAud } = await sb
+        .from("search_audits")
+        .select("steps,mode,created_at")
+        .eq("site", markSite)
+        .in("mode", ["brain_aix", "aix", "auto"])
+        .gte("created_at", bundleAt)
+        .order("created_at", { ascending: false })
+        .limit(25);
+      for (const a of rfAud || []) {
+        const steps = Array.isArray(a.steps) ? a.steps : [];
+        const joined = steps.map((s) => {
+          if (typeof s === "string") return s;
+          const o = s as { k?: string; d?: string };
+          return `${o.k || ""} ${o.d || ""}`;
+        }).join("|");
+        if (/learn_reflect_ok/.test(joined)) reflectOkN++;
+        if (/learn_flow_reflect_ok/.test(joined)) flowReflectOkN++;
+        if (/aim有/.test(joined)) aimYesN2++;
+      }
+    }
+    const f55 = auditAutoReflectVerified({
+      readCount: Number(prof?.read_count) || 0,
+      autoAfterBundle: afterBundle.length,
+      reflectOk: reflectOkN,
+      flowReflectOk: flowReflectOkN,
+      aimYes: aimYesN2,
+    });
+    items.push({
+      id: "F55_auto_reflect_verified",
+      ok: f55.ok,
+      line: f55.line,
+      next: f55.next,
+      layer: f55.ok ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F56 2026-11-18 竹内さん「発見→構築→強化→自動モードに反映されるまで統括Proが責任もって完走」:
+   *   連続画像(F53)・課題欄学習(F54)・自動反映(F55)・aim(F15)・短間隔(F28)・近さ(F29)の統合完了責任。
+   */
+  {
+    const f53 = items.find((x) => x.id === "F53_image_seq_flow");
+    const f54 = items.find((x) => x.id === "F54_challenge_learn_complete");
+    const f55 = items.find((x) => x.id === "F55_auto_reflect_verified");
+    const f15 = items.find((x) => x.id === "F15_cursor_aim_hit");
+    const f28 = items.find((x) => x.id === "F28_auto_gap_floor");
+    const f29 = items.find((x) => x.id === "F29_human_nearness");
+    const f56 = auditProReflectResponsibility({
+      f53Ok: f53?.ok,
+      f54Ok: f54?.ok,
+      f55Ok: f55?.ok,
+      f15Ok: f15?.ok,
+      f28Ok: f28?.ok,
+      f29Ok: f29?.ok,
+      f54Next: f54?.next,
+      f28Next: f28?.next,
+    });
+    items.push({
+      id: "F56_pro_reflect_responsibility",
+      ok: f56.ok,
+      line: f56.line,
+      next: f56.next,
+      layer: !f55?.ok ? "human" : "free",
     });
   }
 
@@ -1186,7 +2254,7 @@ export async function auditLearnFoundations(
     ok_n,
     missing_n,
     items,
-    summary: `土台 ${ok_n}/${items.length} ✓／欠 ${missing_n}` + (missIds.length ? `（${missIds.join("・")}…）` : ""),
+    summary: `土台(${site}/印${markSite}) ${ok_n}/${items.length} ✓／欠 ${missing_n}` + (missIds.length ? `（${missIds.join("・")}…）` : ""),
   };
 }
 
@@ -1230,6 +2298,25 @@ const KEY_FOUNDATION_IDS = [
   "F35_wipe_write_gate",
   "F36_write_path_gate",
   "F37_pro_rag_brain",
+  "F38_improve_reflect_chain",
+  "F39_panel_debt_settle",
+  "F40_screen_grasp",
+  "F41_button_done_marks",
+  "F42_catalog_targets_gate",
+  "F43_improve_to_auto_link",
+  "F44_next_customer_handoff",
+  "F45_flow_completion_ledger",
+  "F46_flow_record_to_auto",
+  "F47_flow_map_subdivide",
+  "F48_pro_brain_loop",
+  "F49_vision_photo_reach",
+  "F50_site_method_parity",
+  "F51_human_detail_loop",
+  "F52_place_xor",
+  "F53_image_seq_flow",
+  "F54_challenge_learn_complete",
+  "F55_auto_reflect_verified",
+  "F56_pro_reflect_responsibility",
   "F6_auto_after_bundle",
   "F14_station_clear_cursor",
   "F18_fill_progress_steps",

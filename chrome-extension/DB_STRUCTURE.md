@@ -67,6 +67,11 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - サイトの画面用: リアプロ（page-script.js・realpro-guide-plan.js の ROUTE_LINE_MAP・STATION_NAME_ALIASES ほか）／ITANDI（itandi-page-script.js・itandi-guide-plan.js の ITANDI_STATION_ALIAS_MAP・option_id ほか）／REINS（MADORI_LABELS）
 - 通勤: transit_graph.js・osaka-transit.js・commute-*.js
 - chrome.storage / localStorage: モード・今のお客様・一括検索の状態・送付の状態・誤送の防止（axlx_search_for）・案内（リアプロ／ITANDI で別のキー）・一時調整（tempAdj_<id>・DB に残らない）
+- chrome.storage.session `axlx_auto_next_page`（2.8.104）: 自動が「次」を押す前に置く続きの印（頁・回数・累計・お客さん・時刻）。`td.pager` が読み直した後の `start()` Case E が読んで消す。2分で無効
+- chrome.storage.session `axlx_fill_busy`（2.8.106 で中身を足した）: 条件の入力中の印。`{ at, customerId?, why? }`。background が一括で次のお客さんを始める直前に `why:"batch_customer_start"` で置き、同時に前の `axlx_pending_auto_send`・`axlx_auto_next_page` を消す。bulk-dl の Case C は「検索した印（pending.ts）より入力開始（busy.at）が新しい」「お客さんが違う」時は押さない（`customer-handoff.js` の `pendingFlagBlockReason`）
+- 2.8.107: bulk-dl は `axlx_fill_busy` が変わったら（別タブの入力の開始も）、押し始めの後に始まった入力なら印刷用PDFを黙って止める（`search_audits` の段 `auto_pdf_end=stopped_new_fill_*`・`auto_pdf_load=look_cancel_new_fill`）。background は `chrome.storage.local` の `axlx_pipeline_job`（一連のロック）が別のお客さんで12分以内なら次のお客さんを始めずに待ち（`wait_prev_customer`）、`pipeline_busy` でもロックを強制解除しない（段 `pipeline_busy_other`）。点検の段 `reset_btn`・`clear_method_place=reset_button` は出なくなる（リセットを押さない）。DB の列・表は増やしていない
+- `aixlinx-fill-done`／`axlx-fill-done` に `gateKind`（2.8.106）: 関所で止めた理由の種類。`human_takeover`（人が引き取った）・`busy_other_customer`（前のお客さんの入力中に来たので断った）の時は background が一括を止める（次のお客さんへ進まない）。DB の列は増やしていない（`search_audits.error` の文に残る）
+- 2.8.104 から、自動の1件ずつ送る流れの `axlx-batch-customer-done` にも `audit`（`_auditResult`・`auto_pdf:true`・`timings`・`sent_skipped`）が載る → `search_audits.result` に検索後の段が残る（列は増やしていない）
 
 ## 読みやすい view（2026-11-10 足した・security_invoker）
 サイトの名前は全部 `realpro` / `itandi` / `reins` に揃えてある（`ext_site_key()`）。数字は `ext_num()` で数字だけを数にしている（数字でない値は NULL）。**読む時は必ず期間で絞る**（`started_at > now() - interval '3 days'` など）。v_search_runs は古い行を時刻で突き合わせるので、絞らないと重い。

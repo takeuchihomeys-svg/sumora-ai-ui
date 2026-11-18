@@ -182,14 +182,14 @@ export function subdivideReproduceGaps(input: SubdivideInput): FoundationAtom[] 
         how: "通常のカーソル軌跡を学び、自動の enqueue が同じ順で動く",
       });
     }
-    if (pointPct < 50) {
+    if (pointPct < 60) {
       push({
         id: "foundation:press-point",
         layer: "foundation",
-        what: `押した位置の土台（今 ${pointPct}%）`,
-        need: "欄ごとの押す座標（n≥2）が束にあり、自動がそこへ当てる",
+        what: `押した位置の土台（今 ${pointPct}%・要≥60）`,
+        need: "欄ごとの押す座標（n≥2）が束にあり、自動がそこへ当てる（_fireAt→axlx-rec-point）",
         from: "normal_rec",
-        how: "通常の point_fields / 画像位置 → 束 → 拡張",
+        how: "通常の point_fields / 画像位置 → 束 → 拡張≥2.8.86",
       });
     }
     if ((h.handCursorClicks ?? 0) === 0 && h.ops >= 20) {
@@ -248,7 +248,7 @@ export function subdivideReproduceGaps(input: SubdivideInput): FoundationAtom[] 
       id: "verify:effect",
       layer: "verify",
       what: "効果確認（再現％・課題欄）",
-      need: "自動1回のあと 直書き0・カーソル≥70%・押した位置≥50%・手の形あり／課題欄が減る",
+      need: "自動1回のあと 直書き0・カーソル≥70%・押した位置≥60%・手の形あり／課題欄が減る",
       from: "auto_rec",
       how: "need_auto_run → verify_improve",
     });

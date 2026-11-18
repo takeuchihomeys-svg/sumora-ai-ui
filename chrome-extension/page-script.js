@@ -104,6 +104,114 @@
     "6676":"能勢電鉄","6713":"水間鉄道水間線","6648":"関西空港線",
   };
 
+  /**
+   * ★ 2026-11-17 統括Pro「沿線↔駅の地図を自動の把握に載せる」:
+   *   popup-maps の STATION_LINE_MAP / LINE_STATION_ORDER（window.__AXLX_*）を読む。
+   *   地図が無い時は null（DOM 同名全押しにフォールバック）。
+   */
+  function _lineStationMap() {
+    try {
+      return (typeof window !== "undefined" && window.__AXLX_STATION_LINE_MAP) || null;
+    } catch (_) { return null; }
+  }
+  function _lineStationOrder() {
+    try {
+      return (typeof window !== "undefined" && window.__AXLX_LINE_STATION_ORDER) || null;
+    } catch (_) { return null; }
+  }
+  function _normLineName(s) {
+    return String(s || "").replace(/\s+/g, "").replace(/　/g, "");
+  }
+  /** 駅名 → 地図上の沿線名配列（無ければ []） */
+  function _mapLinesOfStation(stationName) {
+    var m = _lineStationMap();
+    if (!m) return [];
+    var clean = String(stationName || "").replace(/駅$/, "").trim();
+    var lines = m[clean] || m[stationName] || null;
+    if (!lines || !lines.length) {
+      try {
+        var keys = Object.keys(m);
+        for (var i = 0; i < keys.length; i++) {
+          if (_stationNameMatch(keys[i], clean)) { lines = m[keys[i]]; break; }
+        }
+      } catch (_) {}
+    }
+    return Array.isArray(lines) ? lines.slice() : [];
+  }
+  /**
+   * 選んだ沿線 ∩ 地図の沿線 = その駅を押すべき本数の期待値。
+   * selectedLineNames が空なら地図の全沿線数（十三なら3）。
+   */
+  function _mapExpectHitsForStation(stationName, selectedLineNames) {
+    var mapLines = _mapLinesOfStation(stationName);
+    if (!mapLines.length) return 0;
+    var sel = (selectedLineNames || []).map(_normLineName).filter(Boolean);
+    if (!sel.length) return mapLines.length;
+    var n = 0;
+    for (var i = 0; i < mapLines.length; i++) {
+      var ml = _normLineName(mapLines[i]);
+      for (var j = 0; j < sel.length; j++) {
+        if (ml === sel[j] || (ml.length >= 4 && sel[j].indexOf(ml) >= 0) || (sel[j].length >= 4 && ml.indexOf(sel[j]) >= 0)) {
+          n++;
+          break;
+        }
+      }
+    }
+    return n > 0 ? n : mapLines.length;
+  }
+  /** want 駅名すべてについて地図期待本数の合計（選んだ沿線と交差） */
+  function _mapExpectWantStationTargets(names, selectedLineNames) {
+    var want = (names || []).map(function (s) { return String(s || "").replace(/駅$/, "").trim(); }).filter(Boolean);
+    if (!want.length) return 0;
+    var total = 0;
+    var any = false;
+    for (var i = 0; i < want.length; i++) {
+      var h = _mapExpectHitsForStation(want[i], selectedLineNames);
+      if (h > 0) { any = true; total += h; }
+      else total += 1; // 地図に無い駅は最低1
+    }
+    return any ? total : 0;
+  }
+  /** form / cond から今の沿線名リスト */
+  function _selectedLineNamesNow(cond) {
+    var out = [];
+    try {
+      out = _checkedLabelTexts("route_id[]") || [];
+    } catch (_) {}
+    if ((!out || !out.length) && cond && cond.route_ids && cond.route_ids.length) {
+      out = cond.route_ids.map(function (id) { return ROUTE_LINE_MAP[id] || null; }).filter(Boolean);
+    }
+    return out;
+  }
+  /** 地図の有無と期待を監査に1回載せる */
+  function _auditLineStationMap(cond) {
+    try {
+      if (!_audit) return;
+      var has = !!_lineStationMap();
+      if (!has) {
+        if (!window.__axlxMapMissingNoted) {
+          window.__axlxMapMissingNoted = true;
+          _auditStepP("line_station_map_missing", "STATION_LINE_MAP未注入");
+        }
+        return;
+      }
+      var names = (cond && cond.station_names) || [];
+      if (!names.length) return;
+      var sel = _selectedLineNamesNow(cond);
+      var parts = [];
+      for (var i = 0; i < names.length; i++) {
+        var sn = String(names[i] || "").replace(/駅$/, "").trim();
+        var ml = _mapLinesOfStation(sn);
+        var exp = _mapExpectHitsForStation(sn, sel);
+        parts.push(sn + "→地図沿線" + ml.length + " 期待" + exp + (sel.length ? ("∩選" + sel.length) : ""));
+      }
+      var sig = parts.join("|") + "|sel=" + sel.join(",");
+      if (window.__axlxLineStationMapSig === sig) return;
+      window.__axlxLineStationMapSig = sig;
+      _auditStepP("line_station_map", parts.join("／") + (sel.length ? " 選沿線=" + sel.slice(0, 6).join(",") : ""));
+    } catch (_) {}
+  }
+
   function nearestUp(opts, val) {
     for (var i = 0; i < opts.length; i++) {
       if (opts[i] !== -1 && opts[i] >= val) return String(opts[i]);
@@ -118,6 +226,13 @@
     return best;
   }
   function setSelVal(name, val) {
+    /**
+     * ★ 2026-11-17 平田さん自動: 賃料を「直接入力」に見せない。
+     *   rental_cost* は必ず chooseSelectLikeHuman（擬似一覧＋選択）へ回す。
+     */
+    if (/^rental_cost/i.test(String(name || ""))) {
+      return setSelValHuman(name, val);
+    }
     /**
      * 2026-11-11 竹内さん「通常モードなら押す場所理解しているのに自動モードでは理解できていない」:
      *   欄が**閉じている（畳まれている）**時は「＋」を押して開いてから入れる（案内モードと同じ）。
@@ -356,7 +471,74 @@
     } catch (_) {}
   }
 
+  /**
+   * ★ 2026-11-18 竹内さん「家賃や更新日選択する際、画面のスクロールをせず画面外でおこなってしまった。
+   *   画面内にあわせるようにスクロールして画面に出てから選択する」:
+   *   旧は「キューの手前で1回スクロール＋固定の短い待ち」だけで、スムーズスクロールが終わる前に
+   *   カーソルが旧座標へ動き、擬似一覧も旧座標で描かれて画面外で選んでいた。
+   *   → 選ぶ直前に: 欄とその下の一覧が画面に入っているか確かめ、入っていなければ中央へスクロールし、
+   *     **動きが止まるまで待ってから**もう一度確かめる（最大3回）。入ってからカーソルを動かす。
+   *   ⚠ 直前のスクロール抑制（900ms・逆向き）には従わない（選ぶ欄は必ず画面に出す）。
+   */
+  function _settleSelectInView(el, label) {
+    return new Promise(function (resolve) {
+      try {
+        if (!el || !el.getBoundingClientRect) { resolve(false); return; }
+        var tries = 0, scrolled = false;
+        var inView = function () {
+          var r = el.getBoundingClientRect();
+          var vh = window.innerHeight || 800;
+          // 欄が見え、下に一覧（約140px）が開ける余白を持つ（端ぎりぎりで選ばない）
+          return r.height > 0 && r.top >= 60 && r.bottom <= vh - 90;
+        };
+        var waitStable = function (cb) {
+          var last = null, same = 0, t0 = Date.now();
+          (function poll() {
+            var y = 0;
+            try { y = Math.round(el.getBoundingClientRect().top); } catch (_) {}
+            if (last !== null && Math.abs(y - last) <= 1) same++; else same = 0;
+            last = y;
+            // スクロールが始まる前の「動いていない」を止まったと誤判定しない（最短260ms見る）
+            if ((same >= 2 && Date.now() - t0 >= 260) || Date.now() - t0 > 2400) { cb(); return; }
+            setTimeout(poll, 70);
+          })();
+        };
+        var finish = function () {
+          var ok = false;
+          try { ok = inView(); } catch (_) {}
+          try { _auditStepP("select_in_view", String(label || (el.getAttribute && el.getAttribute("name")) || "select").slice(0, 30) + (scrolled ? " スクロール" + tries + "回" : " 画面内") + (ok ? " OK" : " 端")); } catch (_) {}
+          if (scrolled) {
+            // 人が「出た」と目で確かめる短い間
+            setTimeout(function () { resolve(true); }, _ln(260, 0.35, 150, 520));
+          } else {
+            resolve(false);
+          }
+        };
+        var step = function () {
+          var ok = true;
+          try { ok = inView(); } catch (_) { ok = true; }
+          if (ok || tries >= 3) { finish(); return; }
+          tries++; scrolled = true;
+          try {
+            el.scrollIntoView({ behavior: tries === 1 ? "smooth" : "auto", block: "center", inline: "nearest" });
+          } catch (_) {}
+          try { _lastScrollAt = Date.now(); } catch (_) {}
+          waitStable(step);
+        };
+        step();
+      } catch (_) { resolve(false); }
+    });
+  }
   function chooseSelectLikeHuman(el, val, opts) {
+    if (!el || val == null) return Promise.resolve(false);
+    var _lbl = (opts && opts.field) || null;
+    return _settleSelectInView(el, _lbl).then(function () {
+      return _chooseSelectLikeHumanCore(el, val, opts);
+    }, function () {
+      return _chooseSelectLikeHumanCore(el, val, opts);
+    });
+  }
+  function _chooseSelectLikeHumanCore(el, val, opts) {
     if (!el || val == null) return Promise.resolve(false);
     var o = opts || {};
     try {
@@ -476,6 +658,8 @@
           // ★ 2026-11-16: 目当ての行（want）を窓の中心に出す → カーソルが行へ届く
           var _dd = _showFakeOptions(el, want);
           var _pick = function () {
+            // 行を押した時刻（次の select の「前の操作からの間隔」の基準・2.8.109）
+            try { window.__axlxSelTapAt = Date.now(); } catch (_) {}
             // ⑥ 値を入れて change（サイトが反応するのはここ）
             try {
               /**
@@ -515,14 +699,21 @@
                 setTimeout(function () {
                   try { if (el.blur) el.blur(); } catch (_) {}
                   resolve(true);
-                }, _ln(280, 0.35, 180, 420));
-              }, _ln(380, 0.35, 240, 620));
-            }, _ln(320, 0.35, 200, 520));
+                }, _ln(120, 0.35, 70, 220));
+              }, _ln(170, 0.35, 100, 300));
+            }, _ln(130, 0.35, 70, 230));
           };
           // ② 一覧を上から見る → ③ 下へスクロール → ④ 行へカーソル → ⑤ tap
           // ★ 2026-11-16: 築年・賃料などは slow。スクロールしてから選ぶ（人間らしく）
-          var _lookMs = o.slow ? _ln(900, 0.4, 600, 1400) : _ln(500, 0.4, 320, 800);
-          var _tapMs = o.slow ? _ln(750, 0.4, 480, 1300) : _ln(420, 0.4, 260, 820);
+          /**
+           * ★ 2026-11-18 竹内さん「家賃・更新日の前後も通常モードの人間のように」:
+           *   欄の中（開く→選ぶ）の実測 通常 p25=1.05s／p50=1.3s／p75=1.85s／p90=2.0s／max=3.5s、自動 p50=2.8s／p75=4.1s。
+           *   旧 見る 0.9s＋選ぶ前 0.75s＋閉じる待ち 1.0s が重なっていた。
+           *   → 見る 0.3s・押す前 0.2s・閉じる待ち 0.4s 程度（対数正規）。たまに（8%）一覧の上で迷う（+0.7〜1.6s）。
+           */
+          var _lookMs = o.slow ? _ln(330, 0.35, 200, 560) : _ln(260, 0.35, 160, 440);
+          if (Math.random() < 0.08) _lookMs += 700 + Math.floor(Math.random() * 900);
+          var _tapMs = o.slow ? _ln(210, 0.35, 120, 400) : _ln(170, 0.35, 100, 320);
           setTimeout(function () {
             var afterScroll = function () {
               if (_dd && _dd.rowEls && _dd.rowEls[want]) {
@@ -941,13 +1132,64 @@
       // 人が「＋」を押して開く形（カーソルを動かしてから押す）
       console.log('[AX] 閉じている欄を開きます: ' + String(name || '') + ' → ' + String((op.textContent || '')).replace(/\s+/g, '').slice(0, 16));
       if (_audit) _auditStepP('open_field', String(name || '') + ' / ' + String((op.textContent || '')).replace(/\s+/g, '').slice(0, 16));
-      _humanPointerClick(op, function () { try { op.click(); } catch (_) {} });
+      /**
+       * ★ 根本: パネルを開いた瞬間に負債を立てる（閉じる＝確定してリストへが必須）。
+       *   場当たりで各所に確定を足す代わりに、開く入口で一律に負債化。
+       */
+      try { _markPanelOpened(_panelKindOf(name, op), "ensure:" + String(name || "")); } catch (_) {}
+      /**
+       * ★ 2026-11-17 竹内さん「展開のパターンも機械的」:
+       *   旧は毎回同じ opener 直押し。→ 先に opener を画面内へ／学び位置で押す／待ちを揺らす。
+       */
+      var _openKeys = [];
+      try {
+        if (/city_code|town_code/.test(String(name || ""))) _openKeys = ["左の所在地絞り込み", "所在地絞り込み＋", "所在地絞り込み"];
+        else if (/station_id|route_id/.test(String(name || ""))) _openKeys = ["左の沿線・駅絞り込み", "沿線・駅絞り込み＋", "沿線・駅絞り込み"];
+        else if (/room_layout/.test(String(name || ""))) _openKeys = ["間取り絞り込み＋", "間取り絞り込み"];
+        else _openKeys = ["絞り込み条件＋", "絞り込み条件"];
+      } catch (_) {}
+      try {
+        if (op.scrollIntoView && Math.random() < 0.7) {
+          op.scrollIntoView({
+            behavior: Math.random() < 0.8 ? "smooth" : "auto",
+            block: Math.random() < 0.55 ? "center" : "nearest",
+            inline: "nearest",
+          });
+        }
+      } catch (_) {}
+      var _doOpen = function () {
+        try {
+          if (typeof _pressLearned === "function") _pressLearned(op, _openKeys, "field_open:" + String(name || "").slice(0, 16));
+          else _humanPointerClick(op, function () { try { op.click(); } catch (_) {} });
+        } catch (_) {
+          try { op.click(); } catch (__) {}
+        }
+      };
+      // 展開前の一拍を毎回変える（機械的な即押しを避ける）
+      var _pre = 80 + Math.floor(Math.random() * 420);
+      if (Math.random() < 0.18) _pre += 200 + Math.floor(Math.random() * 500);
+      setTimeout(_doOpen, _pre);
       var t0 = Date.now();
-      var limit = maxMs || 3000;
+      var limit = (maxMs || 3000) + _pre;
+      var _openDomain = _intentDomainOfName(String(name || ""), op);
+      if (_openDomain === "other") {
+        if (/city_code|town_code/.test(String(name || ""))) _openDomain = "open_area";
+        else if (/station_id|route_id/.test(String(name || ""))) _openDomain = "open_station";
+        else if (/room_layout/.test(String(name || ""))) _openDomain = "open_layout";
+        else if (/eq_|option_|pet/.test(String(name || ""))) _openDomain = "open_filter";
+      }
       (function poll() {
-        if (vis()) { resolve(true); return; }
-        if (Date.now() - t0 > limit) { resolve(false); return; }
-        setTimeout(poll, 200);
+        if (vis()) {
+          try { _noteIntentUnderstood(_openDomain, "press", true, "open:" + String(name || "").slice(0, 20)); } catch (_) {}
+          resolve(true);
+          return;
+        }
+        if (Date.now() - t0 > limit) {
+          try { _noteIntentUnderstood(_openDomain, "press", false, "open_timeout:" + String(name || "").slice(0, 16)); } catch (_) {}
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, 160 + Math.floor(Math.random() * 120));
       })();
     });
   }
@@ -1106,12 +1348,29 @@
         }
       });
     };
+    /**
+     * ★ 2026-11-18 HONOKA: 間取りは開いたあと、欲しい欄ごとに画面内へスクロールしてから押す。
+     *   1DKだけ押して1LDKが画面外のまま残るのを防ぐ。
+     */
+    if (_layoutLike && targets.length) {
+      var _oldEnqueue = _enqueueTargets;
+      _enqueueTargets = function () {
+        targets.forEach(function (cb) {
+          try {
+            var hit = (typeof _labelForCheckbox === "function" ? _labelForCheckbox(cb) : null) || cb;
+            if (typeof _scrollIntoViewSoft === "function") _scrollIntoViewSoft(hit);
+          } catch (_) {}
+        });
+        _oldEnqueue();
+      };
+    }
     if (_needOpen && (targets[0] || cbs[0])) {
       var _openEl = targets[0] || cbs[0];
-      _ensureFieldVisible(_openEl, name, 4000).then(function () {
+      // ★ 2026-11-18 竹内さん「間取りが途中停止」: Promise を返し、呼び元（_runBasicOneByOne・間取り把握）が
+      //   「畳みを開く→クリックを積む」まで待てるようにする（旧は未積みのまま次の欄へ進み、把握の入れ直しと二重トグルし得た）
+      return _ensureFieldVisible(_openEl, name, 4000).then(function () {
         _enqueueTargets();
       }, function () { _enqueueTargets(); });
-      return;
     }
     _enqueueTargets();
   }
@@ -1125,6 +1384,21 @@
      *   旧は aim を chooseSelectLikeHuman にだけ渡し、**欄への最初のカーソル移動では使っていなかった**。
      */
     // ★ 2026-11-17 統括Pro: 既定80〜200は直接入力に見える。人の帯を既定に。
+    /**
+     * ★ 2026-11-18 竹内さん「家賃・更新日の前後のところも実際の通常モードの人間のように」:
+     *   DB実測（通常 n=32 / 自動）: 欄の中（開く→選ぶ）通常 p50=1.3s／自動 2.8s、
+     *   欄の直前 通常 p50=2.0s・p90=3.9s／自動 p50=4.1s・p75=6.5s、欄の直後 通常 p50=3.0s／自動 p50=4.1s・8秒超25%。
+     *   旧は 待ち 1.8〜3.4s（＋ずらし）＋迷い22%＋「息」「考え」＋押した後≥0.95s＋一覧の見る・選ぶ待ち が全部乗っていた。
+     *   → select は「selectレーン」: 押す前の待ちは小さく、前の操作からの間隔は通常の分布（_selGapPlan）で決める。
+     *     「息」「考え」の足しは廃止（迷い・停止は _selGapPlan の混合が持つ）。
+     */
+    var _isSelEl = false;
+    try { _isSelEl = String(el && el.tagName || "").toUpperCase() === "SELECT"; } catch (_) {}
+    if (_isSelEl) {
+      _clickQueue.push({ el: el, fn: fn, gap: _ln(110, 0.45, 50, 260), label: label || _opLabel(el), aim: aim || null, lane: "sel" });
+      _scheduleClickDrain();
+      return;
+    }
     _clickQueue.push({ el: el, fn: fn, gap: humanRand(minGap != null ? minGap : 750, maxGap != null ? maxGap : 1500, { sigma: 0.55, strictLo: true }), label: label || _opLabel(el), aim: aim || null });
     _scheduleClickDrain();
     /**
@@ -1153,36 +1427,213 @@
    */
   var _learnKinds = null;
   var _learnKindsAt = 0;
+  /** ★ 2026-11-18 MAIN world は chrome.storage 不可 → content 橋＋localStorage 正本 */
+  var _LEARN_WARM_KEYS = ["axlx_learn_points", "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_needs_auto"];
+  var _LEARN_NEXT_KEYS = [
+    "axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode",
+    "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
+  ];
+  var _LEARN_PAGE_CACHE_KEY = "axlx_learn_bundle_page";
+  var _learnPageCache = null;
+
+  function _learnHasChromeStorage() {
+    try {
+      return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local && typeof chrome.storage.local.get === "function";
+    } catch (_) { return false; }
+  }
+  function _learnCacheSave(partial) {
+    try {
+      if (!partial || typeof partial !== "object") return;
+      var cur = {};
+      try {
+        var raw = localStorage.getItem(_LEARN_PAGE_CACHE_KEY);
+        if (raw) cur = JSON.parse(raw) || {};
+      } catch (_) { cur = {}; }
+      for (var ck in partial) {
+        if (Object.prototype.hasOwnProperty.call(partial, ck)) cur[ck] = partial[ck];
+      }
+      cur.at = Date.now();
+      localStorage.setItem(_LEARN_PAGE_CACHE_KEY, JSON.stringify(cur));
+      _learnPageCache = cur;
+    } catch (_) {}
+  }
+  function _learnCacheLoad(keys) {
+    try {
+      if (!_learnPageCache) {
+        var raw = localStorage.getItem(_LEARN_PAGE_CACHE_KEY);
+        _learnPageCache = raw ? JSON.parse(raw) : null;
+      }
+      if (!_learnPageCache || typeof _learnPageCache !== "object") return null;
+      if (Number(_learnPageCache.at) && Date.now() - Number(_learnPageCache.at) > 6 * 60 * 60 * 1000) return null;
+      var out = {}, n = 0;
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        if (Object.prototype.hasOwnProperty.call(_learnPageCache, key)) {
+          out[key] = _learnPageCache[key];
+          n++;
+        }
+      }
+      return n ? out : null;
+    } catch (_) { return null; }
+  }
+  function _applyLearnStoragePayload(r) {
+    try {
+      if (!r || typeof r !== "object") return;
+      if (r.axlx_learn_points) {
+        try { _learnKinds = r.axlx_learn_points || {}; } catch (_) { _learnKinds = {}; }
+      }
+      if (r.axlx_learn_screen) {
+        try { _learnScreen = r.axlx_learn_screen || {}; } catch (_) { _learnScreen = {}; }
+      }
+      if (r.axlx_learn_scene) {
+        try { _learnSceneMap = r.axlx_learn_scene || {}; } catch (_) { _learnSceneMap = {}; }
+      }
+      if (r.axlx_learn_opens) {
+        try { _learnOpens = r.axlx_learn_opens || {}; _learnOpensAt = Date.now(); } catch (_) {}
+      }
+      if (r.axlx_learn_plan) {
+        try { _learnPlan = r.axlx_learn_plan || null; _learnPlanAt = Date.now(); } catch (_) {}
+      }
+      if (typeof _applyLearnNextStorage === "function") _applyLearnNextStorage(r);
+    } catch (_) {}
+  }
+  function _storageLocalGet(keys, timeoutMs, skipCache) {
+    keys = Array.isArray(keys) ? keys : [];
+    return new Promise(function (resolve) {
+      var finished = false;
+      var fin = function (data) {
+        if (finished) return;
+        finished = true;
+        var r = data && typeof data === "object" ? data : {};
+        if (Object.keys(r).length) _learnCacheSave(r);
+        resolve(r);
+      };
+      if (_learnHasChromeStorage()) {
+        try {
+          chrome.storage.local.get(keys, function (r) {
+            try {
+              if (chrome.runtime && chrome.runtime.lastError) {
+                fin(_learnCacheLoad(keys) || {});
+                return;
+              }
+            } catch (_) {}
+            fin(r || {});
+          });
+          return;
+        } catch (_) {}
+      }
+      if (!skipCache) {
+        var cachedFast = _learnCacheLoad(keys);
+        if (cachedFast) {
+          try { window.postMessage({ from: "axlx-page-storage-get", id: "bg" + Date.now(), keys: keys }, "*"); } catch (_) {}
+          fin(cachedFast);
+          return;
+        }
+      }
+      var id = "sg" + Date.now() + Math.random().toString(36).slice(2, 8);
+      var onMsg = function (e) {
+        if (e.source !== window || !e.data) return;
+        if (e.data.from === "axlx-page-storage-result" && e.data.id === id) {
+          window.removeEventListener("message", onMsg);
+          fin(e.data.data || {});
+        }
+      };
+      window.addEventListener("message", onMsg);
+      try { window.postMessage({ from: "axlx-page-storage-get", id: id, keys: keys }, "*"); } catch (_) {}
+      setTimeout(function () {
+        window.removeEventListener("message", onMsg);
+        if (!finished) fin(_learnCacheLoad(keys) || {});
+      }, timeoutMs || 4500);
+    });
+  }
+  function _requestLearnRefresh(force) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var id = "lr" + Date.now() + Math.random().toString(36).slice(2, 8);
+      var onDone = function (e) {
+        if (e.source !== window || !e.data) return;
+        if (e.data.from === "axlx-page-learn-refresh-done" && e.data.id === id) {
+          fin();
+        }
+      };
+      var fin = function () {
+        if (done) return;
+        done = true;
+        try { window.removeEventListener("message", onDone); } catch (_) {}
+        resolve(true);
+      };
+      window.addEventListener("message", onDone);
+      try {
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!force }, function () { fin(); });
+        }
+      } catch (_) {}
+      try { window.postMessage({ from: "axlx-page-learn-refresh", id: id, force: !!force }, "*"); } catch (_) {}
+      setTimeout(fin, 8000);
+    });
+  }
+  function _auditLearnWarmFromState(r, force) {
+    try {
+      var pk = _learnKinds && typeof _learnKinds === "object" ? Object.keys(_learnKinds).length : 0;
+      var sk = _learnScreen && typeof _learnScreen === "object" ? Object.keys(_learnScreen).length : 0;
+      var thinN = 0;
+      try {
+        if (_learnScreen && typeof _learnScreen === "object") {
+          for (var _tk in _learnScreen) {
+            var _tv = _learnScreen[_tk];
+            if (_tv && ((Number(_tv.n) || 0) < 3 || _tv.thin)) thinN++;
+          }
+        }
+      } catch (_) {}
+      var na = !!(r && r.axlx_learn_needs_auto);
+      var via = _learnHasChromeStorage() ? "chrome" : "bridge";
+      if (_audit) {
+        _auditStepP(
+          "learn_warm",
+          "points=" + pk + " screen=" + sk + (thinN ? (" thin=" + thinN) : "") +
+            (na ? " needs_auto" : "") + (force ? "（強制）" : "") + " via=" + via,
+        );
+      }
+    } catch (_) {}
+  }
   /**
    * 2026-11-14: 学んだ押す位置を**先に読み込んでおく**ための関数（地域・検索ボタンは名前が無く、
    *   `_kindOf(name)` を通らない＝読み込みの機会が無いまま押していた）。
    */
-  function _learnWarm(force) {
+  /**
+   * ★ 2026-11-17: Promise で待つ（自動開始直後に aim が空のまま押す抜けを止める）。
+   */
+  function _learnWarm(force, cb) {
     try {
-      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
       var now = Date.now();
-      if (!force && _learnKinds && !(now - _learnKindsAt > 30000)) return;  // 30秒は読み直さない（軽い）
+      if (!force && _learnKinds && _learnScreen && !(now - _learnKindsAt > 30000)) {
+        if (typeof cb === "function") try { cb(true); } catch (_) {}
+        return Promise.resolve(true);
+      }
       _learnKindsAt = now;
-      /**
-       * ★ 2026-11-16 統括Pro「aim有0・束が届いていない」:
-       *   検索開始時は強制で points + screen を取り直す（古い空キャッシュのまま押さない）。
-       */
-      chrome.storage.local.get(["axlx_learn_points", "axlx_learn_screen"], function (r) {
-        try { _learnKinds = (r && r.axlx_learn_points) || {}; } catch (_) { _learnKinds = {}; }
-        try { _learnScreen = (r && r.axlx_learn_screen) || {}; } catch (_) { _learnScreen = {}; }
-        try {
-          var pk = _learnKinds && typeof _learnKinds === "object" ? Object.keys(_learnKinds).length : 0;
-          var sk = _learnScreen && typeof _learnScreen === "object" ? Object.keys(_learnScreen).length : 0;
-          if (_audit) _auditStepP("learn_warm", "points=" + pk + " screen=" + sk + (force ? "（強制）" : ""));
-        } catch (_) {}
+      var to = force ? 8000 : 4500;
+      return _storageLocalGet(_LEARN_WARM_KEYS, to, !!force).then(function (r) {
+        try { _learnKinds = (r && r.axlx_learn_points) || _learnKinds || {}; } catch (_) { _learnKinds = {}; }
+        try { _learnScreen = (r && r.axlx_learn_screen) || _learnScreen || {}; } catch (_) { _learnScreen = {}; }
+        try { _learnSceneMap = (r && r.axlx_learn_scene) || _learnSceneMap || {}; } catch (_) { _learnSceneMap = {}; }
+        _auditLearnWarmFromState(r, force);
+        if (typeof cb === "function") try { cb(true); } catch (_) {}
+        return true;
+      }, function () {
+        _auditLearnWarmFromState(null, force);
+        if (typeof cb === "function") try { cb(false); } catch (_) {}
+        return false;
       });
-    } catch (_) {}
+    } catch (_) {
+      if (typeof cb === "function") try { cb(false); } catch (_) {}
+      return Promise.resolve(false);
+    }
   }
   function _kindOf(name) {
     try {
       _learnWarm();
       var v = _learnKinds && _learnKinds[name];
-      return v && v.w ? String(v.w) : null;
+      return v && (v.w || v.wk) ? String(v.w || v.wk) : null;
     } catch (_) { return null; }
   }
   /**
@@ -1318,12 +1769,11 @@
   var _learnOpensAt = 0;
   function _opensWarm() {
     try {
-      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
       var now = Date.now();
       if (_learnOpens && now - _learnOpensAt < 30000) return;
       _learnOpensAt = now;
-      chrome.storage.local.get(["axlx_learn_opens"], function (r) {
-        try { _learnOpens = (r && r.axlx_learn_opens) || {}; } catch (_) { _learnOpens = {}; }
+      _storageLocalGet(["axlx_learn_opens"], 2500).then(function (r) {
+        try { _learnOpens = (r && r.axlx_learn_opens) || _learnOpens || {}; } catch (_) { _learnOpens = {}; }
       });
     } catch (_) {}
   }
@@ -1350,12 +1800,11 @@
   var _learnPlanAt = 0;
   function _learnPlanWarm() {
     try {
-      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
       var now = Date.now();
       if (_learnPlan && now - _learnPlanAt < 30000) return;
       _learnPlanAt = now;
-      chrome.storage.local.get(["axlx_learn_plan"], function (r) {
-        try { _learnPlan = (r && r.axlx_learn_plan) || null; } catch (_) { _learnPlan = null; }
+      _storageLocalGet(["axlx_learn_plan"], 2500).then(function (r) {
+        try { _learnPlan = (r && r.axlx_learn_plan) || _learnPlan || null; } catch (_) { _learnPlan = null; }
       });
     } catch (_) {}
   }
@@ -1484,15 +1933,37 @@
         try {
           var _nk = String(name);
           var _keys = Object.keys(_learnKinds);
+          // ★ 2026-11-18: 短いキーの部分一致で別欄のaimを拾い右ずれ・画面外になる実測あり
+          //   → 完全一致優先。部分一致はキーが4文字以上かつ一方が他方の接頭/接尾に限る。
+          var _partial = null;
           for (var _ai = 0; _ai < _keys.length; _ai++) {
             var _k = _keys[_ai];
             if (!_k) continue;
-            if (_k === _nk || _k.indexOf(_nk) >= 0 || _nk.indexOf(_k) >= 0) {
-              var _cand = _learnKinds[_k];
-              if (_cand && typeof _cand.x === "number" && typeof _cand.y === "number") { v = _cand; break; }
+            var _cand0 = _learnKinds[_k];
+            if (!_cand0 || typeof _cand0.x !== "number" || typeof _cand0.y !== "number") continue;
+            if (_k === _nk) { v = _cand0; break; }
+            if (!_partial && _k.length >= 4 && _nk.length >= 4
+              && (_k.indexOf(_nk) === 0 || _nk.indexOf(_k) === 0
+                || _k.slice(-_nk.length) === _nk || _nk.slice(-_k.length) === _k)) {
+              _partial = _cand0;
             }
           }
+          if ((!v || typeof v.x !== "number") && _partial) v = _partial;
         } catch (_) {}
+      }
+      /**
+       * ★ 2026-11-18 場面ごとの位置（点の学習が弱い n<3 の時だけ・要素があれば使う）
+       */
+      if (!v || typeof v.x !== "number" || Number(v.n) < 3) {
+        var _scn = _sceneOfName(name);
+        var _sca = _scn ? _sceneAimOf(name, _scn) : null;
+        if (_sca) {
+          var _scf = _elementAtScreenPos(_sca.x, _sca.y, name, _sca.kind);
+          if (_scf) {
+            _noteAimUsed(name, { x: _scf.x, y: _scf.y, n: _sca.n, fromScreen: true, scene: _scn }, null);
+            return { x: _scf.x, y: _scf.y, n: _sca.n, el: _scf.el, fromScreen: true, scene: _scn };
+          }
+        }
       }
       /**
        * ⚠ **狙えなかった理由も残す**（「学びが無い」のか「回数が足りない」のかで次が変わる）。
@@ -1565,6 +2036,41 @@
    */
   var _learnScreen = null;
   /**
+   * ★ 2026-11-18 竹内さん「場面ごとの強化を画像学習にも紐づける」:
+   *   場面（area=所在地・station=沿線駅・search=検索）ごとの画面位置（束 shots.learned_scene → axlx_learn_scene）。
+   *   欄の名前から場面を決め、その場面の位置を先に引く（地域の○○と沿線の○○を混ぜない）。
+   *   ⚠ 点の学習（axlx_learn_points・要素基準）が n≥3 の時はそちらを優先（今まで通り）。
+   *   ⚠ 場面の位置は**要素があった時だけ**使う。無ければ従来の処理へ戻す（壊さない）。
+   */
+  var _learnSceneMap = null;
+  function _sceneOfName(name) {
+    var n = String(name || "");
+    if (/^(city_code|town_code)\[\]$|^one_(city|town)$|所在地/.test(n)) return "area";
+    if (/^(station_id|route_id)\[\]$|^one_(station|line)$|沿線|駅を選ぶ/.test(n)) return "station";
+    if (/^go_search$|^検索$|住居検索/.test(n)) return "search";
+    return null;
+  }
+  function _sceneAimOf(name, scene) {
+    try {
+      if (!scene || !_learnSceneMap || typeof _learnSceneMap !== "object") return null;
+      var m = _learnSceneMap[scene];
+      if (!m || typeof m !== "object") return null;
+      var keys = [String(name || "")];
+      var al = _SCREEN_AIM_ALIASES[String(name || "")];
+      if (al && al.length) keys = keys.concat(al);
+      var best = null;
+      for (var i = 0; i < keys.length; i++) {
+        var v = m[keys[i]];
+        if (!v || typeof v.x !== "number" || typeof v.y !== "number") continue;
+        if ((Number(v.n) || 0) < 2) continue;
+        if (!best || (Number(v.n) || 0) > (Number(best.n) || 0)) {
+          best = { x: v.x, y: v.y, n: Number(v.n) || 0, kind: v.kind || null, scene: scene, key: keys[i] };
+        }
+      }
+      return best;
+    } catch (_) { return null; }
+  }
+  /**
    * ★ 2026-11-15「新しくなったら新しくしたのもちゃんと把握」:
    *   ⚠ 旧は一度読んだらページを閉じるまで古いまま（束が更新されても自動に届かない）。
    *   → storage が変わったら取り直す。
@@ -1576,24 +2082,70 @@
         if (changes.axlx_learn_screen) {
           try { _learnScreen = (changes.axlx_learn_screen.newValue) || {}; } catch (_) { _learnScreen = {}; }
         }
+        if (changes.axlx_learn_scene) {
+          try { _learnSceneMap = (changes.axlx_learn_scene.newValue) || {}; } catch (_) { _learnSceneMap = {}; }
+        }
       });
     }
   } catch (_) {}
+  /**
+   * ★ 2026-11-17 統括Pro「aim無／細かい連動」:
+   *   束の画面位置は日本語名・HTML名が混在。拡張は完全一致だけだと city_code[] が aim無になる。
+   *   → 引き時に別名も見る（サーバー expand の保険）。
+   */
+  var _SCREEN_AIM_ALIASES = {
+    "city_code[]": ["所在地絞り込み", "所在地を絞り込み", "区を選ぶ"],
+    "所在地絞り込み": ["city_code[]", "区を選ぶ"],
+    "route_id[]": ["沿線を選ぶ", "沿線・駅絞り込み＋", "沿線・駅絞り込み", "路線"],
+    "沿線・駅絞り込み＋": ["route_id[]", "沿線を選ぶ"],
+    "station_id[]": ["駅", "駅を選ぶ"],
+    transportation_id: ["駅からの移動手段", "移動手段"],
+    required_time: ["分数", "徒歩分数", "駅徒歩"],
+    rental_cost1: ["賃料下限", "下限賃料", "賃料"],
+    rental_cost2: ["賃料上限", "上限賃料", "賃料"],
+    update_date: ["更新日"],
+    structured_date: ["築年数", "築年"],
+    "確定してリストへ": ["確定してリストへ｜span", "確定"],
+    "確定してリストへ｜span": ["確定してリストへ", "確定"],
+    "room_layout_id[]": ["1LDK", "2LDK", "3LDK", "1K", "1DK", "2K", "3K", "間取り", "間取り絞り込み", "間取り絞り込み＋"],
+    "検索": ["go_search", "左の検索", "左の検索｜span", "住居検索"],
+    "go_search": ["検索", "左の検索", "住居検索"],
+  };
   function _screenAimOf(name) {
     try {
+      /**
+       * ★ 2026-11-17: 旧は `_learnScreen=undefined`（読込中）にして aim を全部 null にしていた。
+       *   → 読み込み完了前の操作は学んだ位置を使えない抜け。
+       *   → 読込中も **前の画面位置を残す**／未読なら裏で warm。
+       * ★ 2026-11-17 統括Pro「aim無／point 35%」:
+       *   旧 n≥3 のみ → flashの薄い位置が捨てられ aim無。n≥1 を使い、回数が多い方を優先。
+       */
       if (_learnScreen === null) {
-        _learnScreen = undefined;   // 読み込み中
-        try {
-          chrome.storage.local.get(["axlx_learn_screen"], function (r) {
-            try { _learnScreen = (r && r.axlx_learn_screen) || {}; } catch (_) { _learnScreen = {}; }
-          });
-        } catch (_) { _learnScreen = {}; }
+        try { _learnWarm(true); } catch (_) {}
+        return null;
       }
       if (!_learnScreen || typeof _learnScreen !== "object") return null;
-      var v = _learnScreen[name];
-      if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
-      if (Number(v.n) < 3) return null;   // ⚠ 画像は3回以上見た物だけ（1〜2回は偶然）
-      return { x: v.x, y: v.y, screen: true, n: Number(v.n) || 0 };
+      var keys = [String(name || "")];
+      var al = _SCREEN_AIM_ALIASES[String(name || "")];
+      if (al && al.length) keys = keys.concat(al);
+      var best = null;
+      for (var i = 0; i < keys.length; i++) {
+        var v = _learnScreen[keys[i]];
+        if (!v || typeof v.x !== "number" || typeof v.y !== "number") continue;
+        if (Number(v.n) < 1) continue;
+        if (!best || (Number(v.n) || 0) > (Number(best.n) || 0)) {
+          best = {
+            x: v.x,
+            y: v.y,
+            screen: true,
+            n: Number(v.n) || 0,
+            fromScreen: true,
+            thin: (Number(v.n) || 0) < 3 || !!v.thin,
+            key: keys[i],
+          };
+        }
+      }
+      return best;
     } catch (_) { return null; }
   }
 
@@ -1621,6 +2173,11 @@
      *   → 待ちを長くして（移動手段は特に）、**必ず「開く→選ぶ→決める→閉じる」を出す**。
      */
     var _isTransport = (name === "transportation_id");
+    /**
+     * ★ 2026-11-17: 徒歩（移動手段）＋分数プルダウンは人が一覧を見る時間が要る。
+     *   直近自動で徒歩が押せない報告 → 待ちを長くし、必ず擬似一覧経由。
+     */
+    var _isWalkLike = _isTransport || name === "required_time";
     /**
      * ★ 2026-11-16 録画: 賃料プルダウンが早すぎる。
      *   賃料・更新日・築年・面積は人が一覧を目で探す時間が要る → 待ちを長くする。
@@ -1656,10 +2213,10 @@
           return Promise.resolve(true);
         }
       } catch (_) {}
-      return chooseSelectLikeHuman(el, val, { forceOpen: true, aim: _aim, slow: _isRentLike, field: name });
+      return chooseSelectLikeHuman(el, val, { forceOpen: true, aim: _aim, slow: _isRentLike || _isWalkLike, field: name });
     },
-      _isTransport ? 1400 : (_isRentLike ? 1800 : 900),
-      _isTransport ? 2600 : (_isRentLike ? 3400 : 1600),
+      _isWalkLike ? 1600 : (_isRentLike ? 1800 : 900),
+      _isWalkLike ? 3000 : (_isRentLike ? 3400 : 1600),
       'sel:' + name + '=' + val,
       _aim);
   }
@@ -1705,7 +2262,14 @@
   function _walkMinVal() {
     try {
       var inp = document.querySelector('input[name="required_time"]');
-      return inp ? String(inp.value || "") : "";
+      if (inp) return String(inp.value || "");
+      /** リアプロは分数が select の回もある（徒歩プルダウンと並ぶ） */
+      var sel = document.querySelector('select[name="required_time"]');
+      if (sel && sel.selectedIndex >= 0) {
+        var opt = sel.options[sel.selectedIndex];
+        return String((opt && (opt.value || opt.textContent)) || "").replace(/\s+/g, "");
+      }
+      return "";
     } catch (_) { return ""; }
   }
   function _findWalkOptionIndex(tr) {
@@ -1729,8 +2293,21 @@
     return Promise.resolve(chooseSelectLikeHuman(tr, "徒歩", { forceOpen: true, field: "transportation_id" }));
   }
   function _setWalkMinHumanQuiet(walkMinutes) {
+    if (walkMinutes == null) return Promise.resolve(false);
+    /**
+     * ★ 2026-11-17: 分数が select の画面では chooseSelectLikeHuman（徒歩プルダウンと同じ経路）。
+     *   input の時だけ type。直接 value 代入はしない。
+     */
+    var sel = document.querySelector('select[name="required_time"]');
+    if (sel) {
+      return Promise.resolve(chooseSelectLikeHuman(sel, String(walkMinutes), {
+        forceOpen: true,
+        slow: true,
+        field: "required_time",
+      }));
+    }
     var inp = document.querySelector('input[name="required_time"]');
-    if (!inp || walkMinutes == null) return Promise.resolve(false);
+    if (!inp) return Promise.resolve(false);
     return _operateWithPointer(inp, function () {
       return typeTextLikeHuman(inp, walkMinutes, { alreadyAimed: true });
     });
@@ -1755,7 +2332,10 @@
           return;
         }
         var trOk = _walkTrText().indexOf("徒歩") >= 0;
-        var minOk = walkMinutes == null || _walkMinVal() === String(walkMinutes);
+        var minGot = _walkMinVal();
+        var minOk = walkMinutes == null ||
+          minGot === String(walkMinutes) ||
+          (minGot && String(minGot).indexOf(String(walkMinutes)) >= 0);
         if (trOk && minOk) {
           try { if (window._axlxAuditStep) window._axlxAuditStep("walk_seal_ok", "徒歩+分数 OK（r" + r + "）"); } catch (_) {}
           resolve(true);
@@ -1959,57 +2539,346 @@
    *   ⚠ 30秒ごとに読み直す（学習が進んだら次の検索から効く）。
    */
   var _learnNextAt = 0;
-  function _loadLearnNext() {
+  function _applyLearnNextStorage(r) {
+    try {
+      var nx = (r && r.axlx_learn_next) || null;
+      window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
+      var sf = (r && r.axlx_learn_site_flow) || null;
+      window.__axlxLearnSiteFlow = (sf && typeof sf === "object") ? sf : null;
+      var sq = (r && r.axlx_learn_seq) || null;
+      window.__axlxLearnSeq = (sq && typeof sq === "object") ? sq : null;
+      var mn = (r && r.axlx_learn_next_mode) || null;
+      window.__axlxLearnNextMode = (mn && typeof mn === "object") ? mn : null;
+      var scf = (r && r.axlx_learn_screen_flow) || null;
+      window.__axlxLearnScreenFlow = (scf && typeof scf === "object") ? scf : null;
+      var sflows = (r && r.axlx_learn_scene_flows) || null;
+      window.__axlxLearnSceneFlows = Array.isArray(sflows) ? sflows : null;
+      window.__axlxLearnStoppedScene = (r && r.axlx_learn_stopped_scene) || null;
+      window.__axlxLearnSceneMissing = (r && r.axlx_learn_scene_missing) || null;
+      var n = nx ? Object.keys(nx).length : 0;
+      var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
+      var scn = scf ? Object.keys(scf).length : 0;
+      var sfn = Array.isArray(sflows) ? sflows.length : 0;
+      if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : "") + (scn ? "・画面ごと " + scn + "種類" : "") + (sfn ? "・場面ごと " + sfn + "種類" : ""));
+    } catch (_) {}
+  }
+  function _loadLearnNext(force) {
     try {
       var now = Date.now();
-      if (now - _learnNextAt < 30000) return;
+      if (!force && now - _learnNextAt < 30000) return;
       _learnNextAt = now;
-      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
-      /**
-       * 2026-11-13 竹内さん「site_flow を実際に使う」:
-       *   サイトごとの手順（`axlx_learn_site_flow`）も一緒に読む。
-       *   押す順番の材料が `next` だけだと3通りしか無いので、鎖から前後関係を補う。
-       */
-      chrome.storage.local.get(["axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_screen_flow", "axlx_learn_scene_flows"], function (r) {
-        try {
-          var nx = (r && r.axlx_learn_next) || null;
-          window.__axlxLearnNext = (nx && typeof nx === "object") ? nx : null;
-          var sf = (r && r.axlx_learn_site_flow) || null;
-          window.__axlxLearnSiteFlow = (sf && typeof sf === "object") ? sf : null;
-          /**
-           * 2026-11-14 竹内さん「一連の動きの学習や反映の為に抜けている部分」:
-           *   一連の動きの型（鎖）と、モード別の押す順番も読む。
-           */
-          var sq = (r && r.axlx_learn_seq) || null;
-          window.__axlxLearnSeq = (sq && typeof sq === "object") ? sq : null;
-          var mn = (r && r.axlx_learn_next_mode) || null;
-          window.__axlxLearnNextMode = (mn && typeof mn === "object") ? mn : null;
-          /**
-           * 2026-11-14 竹内さん「DBにあって反映できていないものはあるか」:
-           *   ⚠ `screen_flow`（画面ごとの手順＝小窓の中の順番）は **popup の表示にしか使われていなかった**
-           *     （自動検索では0箇所）。せっかく「小窓では 区→町字→確定 の順」と学んでいるのに使っていない。
-           *   → 読んで、条件の入力順に重ねる（`_orderByLearned` が使う）。
-           */
-          var scf = (r && r.axlx_learn_screen_flow) || null;
-          window.__axlxLearnScreenFlow = (scf && typeof scf === "object") ? scf : null;
-          /**
-           * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」:
-           *   サーバーが作った**場面ごとの手順**（`scene_flows`＝人が実際に押した順）を読む。
-           *   ⚠ 旧は 1箇所も読んでいなかった（`screen_flow` と同じ穴）。
-           *   ⚠ 使うのは**並べ替えの材料だけ**（項目は増減しない＝検索漏れを出さない）。
-           */
-          var sflows = (r && r.axlx_learn_scene_flows) || null;
-          window.__axlxLearnSceneFlows = Array.isArray(sflows) ? sflows : null;
-          window.__axlxLearnStoppedScene = (r && r.axlx_learn_stopped_scene) || null;
-          window.__axlxLearnSceneMissing = (r && r.axlx_learn_scene_missing) || null;
-          var n = nx ? Object.keys(nx).length : 0;
-          var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
-          var scn = scf ? Object.keys(scf).length : 0;
-          var sfn = Array.isArray(sflows) ? sflows.length : 0;
-          if (n || sqn) console.log("[AX] 学んだ押す順番: " + n + "通り・一連の動き " + sqn + "手" + (mn ? "・モード別あり" : "") + (scn ? "・画面ごと " + scn + "種類" : "") + (sfn ? "・場面ごと " + sfn + "種類" : ""));
-        } catch (_) {}
-      });
+      if (_learnHasChromeStorage()) {
+        chrome.storage.local.get(_LEARN_NEXT_KEYS, function (r) {
+          _applyLearnNextStorage(r);
+          _learnCacheSave(r);
+        });
+        return;
+      }
+      var cached = _learnCacheLoad(_LEARN_NEXT_KEYS);
+      if (cached) _applyLearnNextStorage(cached);
     } catch (_) {}
+  }
+  /** ★ 2026-11-17: 反映関所用（強制・Promise）。30秒スロットルを跨がない。 */
+  function _loadLearnNextAsync(force) {
+    try {
+      if (force) _learnNextAt = 0;
+      return _storageLocalGet(_LEARN_NEXT_KEYS, force ? 8000 : 4500, !!force).then(function (r) {
+        _learnNextAt = Date.now();
+        _applyLearnNextStorage(r);
+        return true;
+      }, function () { return false; });
+    } catch (_) {
+      return Promise.resolve(false);
+    }
+  }
+  try {
+    window.addEventListener("message", function (e) {
+      if (e.source !== window || !e.data || e.data.from !== "axlx-page-learn-push") return;
+      try {
+        var d = e.data.data;
+        if (d && typeof d === "object") {
+          _learnCacheSave(d);
+          _applyLearnStoragePayload(d);
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+  /**
+   * ★ 2026-11-17 統括Pro「screen=0／reflect_gap／aim無」:
+   *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
+   *   空のまま押し始めない（キュー先頭で待つ）。
+   */
+  var _AXLX_PAGE_VER = "2.8.112";
+  /**
+   * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
+   *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
+   *   6段（F45）は幹。細分化原子で弱い所だけ次に強化する（新規地図を増やさない・既存活用）。
+   */
+  var _FLOW_MAP_ATOMS = [
+    "switch",           // 客切替
+    "place_clear",      // 前客の場所を外す
+    "place_select",     // 新客の場所を入れる
+    "line_station",     // 沿線↔駅の関係（地図）
+    "conditions",       // 条件欄
+    "btn_grasp",        // どのボタンを押したか理解
+    "search",           // 検索押下
+    "fill_done",        // 入力一連完了
+    "ready_next",       // 次客へ渡してよい
+    "next_clear",       // 次客前の外し
+  ];
+  function _noteFlowAtom(atom, ok, detail) {
+    try {
+      if (!window.__axlxFlowMapAtoms) window.__axlxFlowMapAtoms = {};
+      var a = String(atom || "").slice(0, 28);
+      if (!a) return;
+      window.__axlxFlowMapAtoms[a] = {
+        ok: !!ok,
+        at: Date.now(),
+        d: String(detail || "").slice(0, 80),
+      };
+      if (_audit) {
+        _auditStepP(
+          ok ? ("flow_atom_ok_" + a) : ("flow_atom_gap_" + a),
+          String(detail || (ok ? "原子OK" : "原子不足")).slice(0, 100),
+        );
+      }
+    } catch (_) {}
+  }
+  function _noteClearMethod(kind, method, detail) {
+    try {
+      if (!window.__axlxClearMethodUnderstood) window.__axlxClearMethodUnderstood = {};
+      var k = String(kind || "place").slice(0, 20);
+      window.__axlxClearMethodUnderstood[k] = {
+        method: String(method || "").slice(0, 40),
+        at: Date.now(),
+        d: String(detail || "").slice(0, 60),
+      };
+      if (_audit) {
+        _auditStepP(
+          "clear_method_" + k,
+          String(method || "") + (detail ? (" " + String(detail).slice(0, 50)) : ""),
+        );
+      }
+      _noteFlowAtom("place_clear", true, k + ":" + method);
+      _noteFlowAtom("next_clear", true, k + ":" + method);
+    } catch (_) {}
+  }
+  /**
+   * 全流れ地図台帳: 幹6段＋細分化原子＋ボタン理解＋外し方＋沿線駅地図＋今客。
+   * 弱い原子を flow_subdivide_need に列挙 → 細分化強化の次手にする仕組み。
+   */
+  function _auditFullFlowMapLedger(where) {
+    try {
+      var flow = window.__axlxFlowUnderstood || {};
+      var atoms = window.__axlxFlowMapAtoms || {};
+      var btns = window.__axlxBtnUnderstood || {};
+      var clears = window.__axlxClearMethodUnderstood || {};
+      var now = window.__axlxNowCustomer || null;
+      var mapOk = !!_lineStationMap();
+      var btnOk = 0, btnFail = 0;
+      try {
+        Object.keys(btns).forEach(function (k) { if (btns[k]) btnOk++; else btnFail++; });
+      } catch (_) {}
+      if (btnOk > 0) _noteFlowAtom("btn_grasp", true, "ok=" + btnOk);
+      else _noteFlowAtom("btn_grasp", false, "ボタン理解0");
+      if (mapOk) _noteFlowAtom("line_station", true, "STATION_LINE_MAP載");
+      else _noteFlowAtom("line_station", false, "地図未注入");
+      if (flow.place && flow.place.ok) _noteFlowAtom("place_select", true, "place済");
+      if (flow.conditions && flow.conditions.ok) _noteFlowAtom("conditions", true, "条件済");
+      if (flow.search && flow.search.ok) _noteFlowAtom("search", true, "検索済");
+      if (flow.fill_done && flow.fill_done.ok) _noteFlowAtom("fill_done", true, "入力完了");
+      if (flow.ready_next && flow.ready_next.ok) _noteFlowAtom("ready_next", true, "次可");
+      if (flow.switch && flow.switch.ok) _noteFlowAtom("switch", true, "切替済");
+
+      atoms = window.__axlxFlowMapAtoms || {};
+      var okAtoms = [], gapAtoms = [];
+      for (var i = 0; i < _FLOW_MAP_ATOMS.length; i++) {
+        var id = _FLOW_MAP_ATOMS[i];
+        if (atoms[id] && atoms[id].ok) okAtoms.push(id);
+        else gapAtoms.push(id);
+      }
+      var clearKeys = Object.keys(clears);
+      var clearBrief = clearKeys.slice(0, 4).map(function (ck) {
+        return ck + "=" + (clears[ck] && clears[ck].method ? clears[ck].method : "?");
+      }).join(",");
+
+      if (_audit) {
+        _auditStepP(
+          "flow_map_ledger",
+          String(where || "map") +
+            " 幹ok=" + okAtoms.length + "/" + _FLOW_MAP_ATOMS.length +
+            " 地図=" + (mapOk ? "Y" : "N") +
+            " ボタンok=" + btnOk + "/fail=" + btnFail +
+            (clearBrief ? (" 外し=" + clearBrief) : " 外し=未") +
+            (now && now.phase ? (" 今客段=" + now.phase) : "") +
+            (gapAtoms.length ? (" 弱=[" + gapAtoms.slice(0, 6).join(",") + "]") : " 弱=[]"),
+        );
+        if (gapAtoms.length) {
+          _auditStepP(
+            "flow_subdivide_need",
+            "次に細分化=" + gapAtoms.slice(0, 5).join(",") +
+              "（既存F45/F46/ボタン台帳/地図を活用・新規地図を増やさない）",
+          );
+        } else {
+          _auditStepP("flow_subdivide_ok", "全流れ原子OK・細分化待ちなし");
+        }
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: ("流れ地図:" + okAtoms.length + "/" + _FLOW_MAP_ATOMS.length + (gapAtoms.length ? " 弱" + gapAtoms.length : "")).slice(0, 40),
+        }, "*");
+      } catch (_) {}
+      return { ok: gapAtoms.length === 0, okAtoms: okAtoms, gapAtoms: gapAtoms };
+    } catch (_) {
+      return { ok: false, okAtoms: [], gapAtoms: _FLOW_MAP_ATOMS.slice() };
+    }
+  }
+  /**
+   * ★ 2026-11-17 F46: 録画の場面流れ（area/cond/search/station）が自動に載っているか測る。
+   *   駅だけ見ていた旧穴を閉じ、弱い流れ→強化→自動反映の関所にする。
+   */
+  function _auditFlowLearnReflect(where) {
+    try {
+      var flows = window.__axlxLearnSceneFlows;
+      var hit = { area: false, station: false, cond: false, search: false };
+      var stepsN = { area: 0, station: 0, cond: 0, search: 0 };
+      if (Array.isArray(flows)) {
+        for (var i = 0; i < flows.length; i++) {
+          var f = flows[i] || {};
+          var sc = String(f.scene || "");
+          if (!hit.hasOwnProperty(sc)) continue;
+          var st = Array.isArray(f.steps) ? f.steps : [];
+          stepsN[sc] = st.length;
+          if (st.length > 0) hit[sc] = true;
+        }
+      }
+      var placeOk = hit.area || hit.station;
+      var condOk = hit.cond;
+      var searchOk = hit.search;
+      var allOk = placeOk && condOk && searchOk;
+      if (_audit) {
+        _auditStepP(
+          allOk ? "learn_flow_reflect_ok" : "learn_flow_reflect_gap",
+          String(where || "reflect") +
+            " area=" + (hit.area ? "Y" + stepsN.area : "N") +
+            " station=" + (hit.station ? "Y" + stepsN.station : "N") +
+            " cond=" + (hit.cond ? "Y" + stepsN.cond : "N") +
+            " search=" + (hit.search ? "Y" + stepsN.search : "N"),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: (allOk ? "流れ反映OK" : "流れ反映不足").slice(0, 40),
+        }, "*");
+      } catch (_) {}
+      return { ok: allOk, hit: hit, stepsN: stepsN };
+    } catch (_) {
+      return { ok: false, hit: {}, stepsN: {} };
+    }
+  }
+  /**
+   * ★ 今どのお客さんを検索しているか／完了までの段を常に把握する台帳。
+   */
+  function _noteNowCustomer(phase, detail) {
+    try {
+      var id = _fillCustomerId || window._axFillRunningCustomerId || null;
+      var name = null;
+      try {
+        if (_fillCondForStamp && _fillCondForStamp.customer_name) name = String(_fillCondForStamp.customer_name).slice(0, 24);
+      } catch (_) {}
+      var flow = window.__axlxFlowUnderstood || {};
+      var doneParts = [];
+      var gapParts = [];
+      var phases = ["switch", "place", "conditions", "search", "fill_done", "ready_next"];
+      for (var i = 0; i < phases.length; i++) {
+        var ph = phases[i];
+        if (flow[ph] && flow[ph].ok) doneParts.push(ph);
+        else gapParts.push(ph);
+      }
+      window.__axlxNowCustomer = {
+        id: id ? String(id) : null,
+        name: name,
+        phase: String(phase || "").slice(0, 24),
+        at: Date.now(),
+        done: doneParts.slice(),
+        gap: gapParts.slice(),
+      };
+      if (_audit) {
+        _auditStepP(
+          "now_customer",
+          String(phase || "phase") +
+            " cid=" + (id ? String(id).slice(0, 8) : "-") +
+            (name ? (" name=" + name) : "") +
+            " 完了=[" + doneParts.join(",") + "]" +
+            (gapParts.length ? (" 未=[" + gapParts.join(",") + "]") : "") +
+            (detail ? (" " + String(detail).slice(0, 40)) : ""),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: ("今の客:" + String(phase || "") + (name ? (" " + name) : "")).slice(0, 40),
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  function _ensureLearnReflectedForFill() {
+    return new Promise(function (resolve) {
+      try { if (_audit) _auditStepP("learn_reflect_gate", "取込開始 page=" + _AXLX_PAGE_VER); } catch (_) {}
+      try { if (_audit) _auditStepP("page_ver", _AXLX_PAGE_VER); } catch (_) {}
+      var done = function () {
+        try {
+          var _sf = window.__axlxLearnSceneFlows;
+          var _sfn = Array.isArray(_sf) ? _sf.length : 0;
+          var _sk = (_learnScreen && typeof _learnScreen === "object") ? Object.keys(_learnScreen).length : 0;
+          var _stHit = false;
+          if (Array.isArray(_sf)) {
+            for (var _i = 0; _i < _sf.length; _i++) {
+              var _f = _sf[_i] || {};
+              if (String(_f.scene || "") !== "station") continue;
+              var _st = Array.isArray(_f.steps) ? _f.steps.join(" ") : "";
+              if (/駅の設定へ進む|沿線の設定へ戻る|one_station|one_line/.test(_st)) _stHit = true;
+            }
+          }
+          var _flowR = { ok: false };
+          try { _flowR = _auditFlowLearnReflect("取込後"); } catch (_) {}
+          try { _auditLineStationMap(_fillCondForStamp); } catch (_) {}
+          try { _auditFullFlowMapLedger("reflect_done"); } catch (_) {}
+          if (_audit) {
+            _auditStepP(
+              (_stHit && _sk > 0) ? "learn_reflect_ok" : "learn_reflect_gap",
+              (_stHit && _sk > 0)
+                ? ("束反映OK scenes=" + _sfn + " screen=" + _sk + " flow=" + (_flowR.ok ? "Y" : "N"))
+                : ("束反映不足 scenes=" + _sfn + " screen=" + _sk + " flow=" + (_flowR.ok ? "Y" : "N")),
+            );
+          }
+          /** 駅反映＋流れ反映の両方が揃った時だけ needs_auto を下ろす合図（MAIN→content中継含む） */
+          try {
+            var _linkedOk = !!(_stHit && _sk > 0 && _flowR.ok);
+            if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+              chrome.runtime.sendMessage({ type: "axlx-learn-auto-linked", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok });
+            } else {
+              window.postMessage({ from: "axlx-page-learn-auto-linked", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok }, "*");
+            }
+          } catch (_) {}
+        } catch (_) {}
+        resolve(true);
+      };
+      var afterWarm = function () {
+        _loadLearnNextAsync(true).then(done, done);
+      };
+      var warmLocal = function () {
+        _requestLearnRefresh(true).then(function () {
+          return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS), 8000, true);
+        }).then(function (r) {
+          try { _applyLearnStoragePayload(r); } catch (_) {}
+          return _learnWarm(true);
+        }).then(afterWarm, afterWarm);
+      };
+      warmLocal();
+    });
   }
   try { _loadLearnNext(); } catch (_) {}
 
@@ -2068,15 +2937,20 @@
       //   ★ 旧: lo≥200 の時だけ下限 → 既定80〜200のキューが短間隔の主因になっていた。
       var allowShort = !!(opts && opts.allowShort);
       var floor = strict ? lo : Math.max(20, Math.round(lo * 0.88));
-      if (!allowShort && !strict && hi >= 250 && floor < 420) floor = 420;
-      if (!allowShort && !strict && lo >= 200 && floor < 420) floor = 420;
-      if (strict && floor < 700) floor = Math.max(floor, Math.min(lo, 700));
-      var ceil = hi * 2.2;
+      /**
+       * ★ 2026-11-17 統括Pro F28/F29: 短間隔47.7%→44.8%・近さ16。
+       *   硬下限700でも短間隔未達 → **操作間隔の硬下限を900**（通常 p50≈1117・human帯800〜）。
+       *   allowShort（mousedown内）だけ例外。
+       */
+      if (!allowShort && !strict && hi >= 250 && floor < 900) floor = 900;
+      if (!allowShort && !strict && lo >= 150 && floor < 900) floor = 900;
+      if (strict && floor < 1000) floor = Math.max(floor, Math.min(lo, 1000));
+      var ceil = hi * 2.4;
       var out = Math.min(ceil, Math.max(floor, v));
       // ためらい（操作間隔だけ・通常録画の長裾に寄せる）
       if (!allowShort) {
-        if (Math.random() < 0.22) out += 180 + Math.floor(Math.random() * 520);
-        else if (Math.random() < 0.07) out += 700 + Math.floor(Math.random() * 1600);
+        if (Math.random() < 0.28) out += 220 + Math.floor(Math.random() * 580);
+        else if (Math.random() < 0.10) out += 800 + Math.floor(Math.random() * 1800);
       }
       // 同一ms連発を避ける微小ジッター（1〜47ms）
       out += 1 + Math.floor(Math.random() * 47);
@@ -2157,14 +3031,36 @@
       try { _isSelect = String(el.tagName || "").toUpperCase() === "SELECT"; } catch (_) {}
       var _nm = "";
       try { _nm = String(el.getAttribute && el.getAttribute("name") || ""); } catch (_) {}
+      /**
+       * ★ 2026-11-17 竹内さん「画面もスクロールする必要がある場所ができていない」:
+       *   旧は SELECT 以外 nearest＝端に少し出るだけ／駅・区ラベルは見切れたまま押す・外す漏れ。
+       *   → チェック系・確定・開閉も **中央寄り**まで入れる（毎回 block を少し揺らす）。
+       */
+      var _cls = "";
+      try { _cls = String(el.className || ""); } catch (_) { _cls = ""; }
+      var _tx = "";
+      try { _tx = String(el.textContent || "").replace(/\s+/g, "").slice(0, 20); } catch (_) { _tx = ""; }
       var _needFull =
         _isSelect ||
-        /structured_date|rental_cost|update_date|square_meter|transportation/i.test(_nm);
+        /structured_date|rental_cost|update_date|square_meter|transportation/i.test(_nm) ||
+        /one_station|one_line|one_city|one_town|next_step|go_search|click_menu/i.test(_cls) ||
+        /確定してリスト|駅の設定へ|沿線の設定へ|絞り込み/.test(_tx);
+      var _block = "nearest";
+      if (_needFull) {
+        _block = Math.random() < 0.72 ? "center" : (Math.random() < 0.5 ? "start" : "center");
+      } else if (Math.random() < 0.35) {
+        _block = "center"; // たまに中央へ（機械的 nearest 連打を減らす）
+      }
       el.scrollIntoView({
-        behavior: "smooth",
-        block: _needFull ? "center" : "nearest",
+        behavior: Math.random() < 0.85 ? "smooth" : "auto",
+        block: _block,
         inline: "nearest",
       });
+      try {
+        if (_audit && Math.random() < 0.35) {
+          _auditStepP("scroll_into_view", String(_nm || _tx || _cls || "el").slice(0, 40) + " block=" + _block);
+        }
+      } catch (_) {}
       // スムーズの動きが終わるのを待つ（人が目で追う時間・距離に応じて 250〜700ms）
       /**
        * 2026-11-11 竹内さん「弱い部分あれば人間の動きになるように強化する」:
@@ -2207,7 +3103,7 @@
       if (_P0 && _P0.scatter) _P0.scatter(_pointer.x, _pointer.y);
     } catch (_) {}
   }
-  function _humanPointerClick(el, fallbackFn, aim) {
+  function _humanPointerClick(el, fallbackFn, aim, tgtAt) {
     var H = window.AxlxHumanWait;
     var fire = fallbackFn || _clickEl;
     if (!el || !el.getBoundingClientRect || !H || !H.pointerPath) { fire(el); return Promise.resolve(false); }
@@ -2234,6 +3130,27 @@
         _aimPt = { x: r.left + r.width * _fx, y: r.top + r.height * _fy, fx: _fx, fy: _fy };
       }
     } catch (_) { _aimPt = null; }
+    /**
+     * ★ 2026-11-18 HONOKA実測＋統括Pro「検索が画面外／徒歩が右ずれ」:
+     *   狙い点が要素外・画面外なら欄の中央へ戻す（スクロール定着後も保険）。
+     */
+    try {
+      var _vwP = window.innerWidth || 1200;
+      var _vhP = window.innerHeight || 800;
+      var _clampPt = function (pt) {
+        if (!pt) return null;
+        var x = Math.max(r.left + 2, Math.min(r.right - 2, pt.x));
+        var y = Math.max(r.top + 2, Math.min(r.bottom - 2, pt.y));
+        x = Math.max(8, Math.min(_vwP - 8, x));
+        y = Math.max(8, Math.min(_vhP - 8, y));
+        // 要素がほぼ画面外なら中央寄せに放棄
+        if (r.right < 4 || r.bottom < 4 || r.left > _vwP - 4 || r.top > _vhP - 4) {
+          return { x: Math.max(8, Math.min(_vwP - 8, r.left + r.width * 0.5)), y: Math.max(8, Math.min(_vhP - 8, r.top + r.height * 0.5)) };
+        }
+        return { x: x, y: y, fx: pt.fx, fy: pt.fy };
+      };
+      if (_aimPt) _aimPt = _clampPt(_aimPt);
+    } catch (_) {}
     // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
     //   画面の上に「見えるカーソル」を出して、押す位置まで人の軌跡で動かす（pointer-ui.js・見た目だけ・pointer-events:none）。
     //   動きながら押すと不自然なので、**着いてから**押す（本物のクリックは今まで通り1回だけ）。
@@ -2265,31 +3182,52 @@
         if (Math.random() < 0.07) _dwell += 500 + Math.floor(Math.random() * 900);
         if (_dwell < 120) _dwell = 120;
         if (_dwell > 1600) _dwell = 1600;
+        /**
+         * ★ 2026-11-18 区レーン（竹内さん「通常モードの人間の速さのように」）:
+         *   tgtAt（押したい時刻）があれば、着地後の見る時間を「目標時刻 − いま − 押下までの約170ms」にする。
+         *   着くのが遅れた時は最短80msで押す（待たせない）。漂い（drift）は入れない。
+         */
+        var _useTgt = false;
+        if (tgtAt && isFinite(Number(tgtAt))) {
+          _useTgt = true;
+          _dwell = Math.max(80, Math.min(4200, Math.round(Number(tgtAt) - Date.now() - 170)));
+        }
+        // 長く待つ時は欄の上でそっと漂わせてから押す（止まった置物にしない）
+        var _preDrift = 0;
+        if (_useTgt && _dwell > 1300) { _preDrift = _dwell - 500; _dwell = 500; }
         // 着地後に小さく漂ってから押す（狙い直し）。漂い分は dwell の外＝人間の「直してから押す」
         return new Promise(function (resolve) {
           var _doTap = function () {
             setTimeout(function () {
               try { _P.tap(); } catch (_) {}
-              Promise.resolve(_fireAt(el, fire, r)).then(function () { resolve(true); }, function () { resolve(true); });
+              Promise.resolve(_fireAt(el, fire, r, _aimPt)).then(function () { resolve(true); }, function () { resolve(true); });
             }, Math.round(_dwell));
           };
-          if (Math.random() < 0.28 && _P.drift) {
+          if (_preDrift > 0 && _P.drift) {
+            _P.drift(_preDrift, { radius: 6 + Math.random() * 12 }).then(_doTap, _doTap);
+          } else if (!_useTgt && Math.random() < 0.28 && _P.drift) {
             _P.drift(120 + Math.floor(Math.random() * 280), { radius: 6 + Math.random() * 14 }).then(_doTap, _doTap);
           } else {
             _doTap();
           }
         });
       }, function () {
-        return Promise.resolve(_fireAt(el, fire, r)).then(function () { return true; }, function () { return true; });
+        return Promise.resolve(_fireAt(el, fire, r, _aimPt)).then(function () { return true; }, function () { return true; });
       });
     }
     // ★ 2026-11-16: 狙う点も毎回ずらす（同じ欄でも同じピクセルに着かない）
+    /**
+     * ★ 2026-11-17: 学び無しでも毎回同じ「中央寄り」にならないよう帯を広げる（押す場所の人間化）。
+     */
     var to = _aimPt
       ? {
           x: _aimPt.x + (Math.random() - 0.5) * Math.min(18, r.width * 0.25),
           y: _aimPt.y + (Math.random() - 0.5) * Math.min(14, r.height * 0.25),
         }
-      : { x: r.left + r.width * (0.28 + Math.random() * 0.44), y: r.top + r.height * (0.28 + Math.random() * 0.44) };
+      : {
+          x: r.left + r.width * (0.18 + Math.random() * 0.64),
+          y: r.top + r.height * (0.18 + Math.random() * 0.64),
+        };
     var pts = H.pointerPath(_pointer, to, 12 + Math.floor(Math.random() * 16));
     // 旧 220〜700ms は速すぎ（人間の駅間隔≈1.1s と合わない）
     var _moveMs = H.logNormalDelay ? H.logNormalDelay(520, 0.45) : (380 + Math.random() * 420);
@@ -2346,10 +3284,21 @@
    *     → 擬似一覧が開いたまま次の賃料・更新日が始まり、徒歩が消える・同時操作に見えた。
    *   → **必ず Promise を返し、fire が終わるまで resolve しない**。
    */
-  function _fireAt(el, fire, r) {
+  function _fireAt(el, fire, r, aimPt) {
     return new Promise(function (resolve) {
       try {
         var cx, cy;
+        /**
+         * ★ 2026-11-18 竹内さん「学びがある時は中央押しに逃げない」:
+         *   旧は見えるカーソルが要素近くに無いと 0.3〜0.7 乱数＝真ん中寄り固定。
+         *   → 学んだ aim（要素内の割合）を優先して合成イベント座標に使う。
+         */
+        if (aimPt && typeof aimPt.fx === "number" && typeof aimPt.fy === "number" && r && r.width > 0 && r.height > 0) {
+          var _afx = Math.max(0.05, Math.min(0.95, aimPt.fx));
+          var _afy = Math.max(0.05, Math.min(0.95, aimPt.fy));
+          cx = Math.round(r.left + r.width * _afx);
+          cy = Math.round(r.top + r.height * _afy);
+        } else {
         var _P = window.AxlxPointerUi;
         var _pos = null;
         try { if (_P && _P.visiblePosition) _pos = _P.visiblePosition(); } catch (_) { _pos = null; }
@@ -2360,6 +3309,7 @@
           var fx = 0.30 + Math.random() * 0.40;
           var fy = 0.30 + Math.random() * 0.40;
           cx = Math.round(r.left + r.width * fx); cy = Math.round(r.top + r.height * fy);
+        }
         }
         var base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
         ["mousemove", "mouseover"].forEach(function (type) { try { el.dispatchEvent(new MouseEvent(type, base)); } catch (_) {} });
@@ -2381,6 +3331,11 @@
           try { ret = fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
           // ★ 2026-11-16: カーソル経由の押しを必ず録画へ残す（押した位置%を上げる）
           try { _noteClickForLearn(el); } catch (_) {}
+          /**
+           * ★ 2026-11-17 統括Pro: 押した実座標を point_fields へ（synthetic）。
+           *   pointer-ui.tap が要素外だと記録スキップするため、ここでも必ず渡す。
+           */
+          try { _notePointForLearn(el, cx, cy); } catch (_) {}
           try {
             var P = window.AxlxPointerUi;
             if (P && P.tap) P.tap();
@@ -2439,12 +3394,15 @@
   }
   function enqueueHumanClick(el, clickFn, minGap, maxGap, _unused, opts) {
     if (!el || el.__axPending) return false;
+    if (_axHumanTookOver) return false;
     el.__axPending = true;
     /**
      * ★ 2026-11-17 統括Pro「短間隔37.9%の主因／既定80〜200を廃止」:
      *   未指定の待ちは UI押し帯（≥900）へ。機械的な速さの入口を塞ぐ。
      */
     if (minGap == null || !(Number(minGap) > 0)) minGap = _uiGapMin();
+    /** ★ 2026-11-17 統括Pro: 呼び出し側の短いminGapを硬下限900で底上げ（短間隔の入口を塞ぐ） */
+    if (Number(minGap) < 900) minGap = 900;
     if (maxGap == null || !(Number(maxGap) > Number(minGap))) maxGap = Math.max(_uiGapMax(), Number(minGap) + 400);
     if (!opts) opts = {};
     if (opts.strictLo == null && Number(minGap) >= 700) opts = Object.assign({}, opts, { strictLo: true, sigma: opts.sigma != null ? opts.sigma : 0.55 });
@@ -2492,15 +3450,33 @@
       } catch (_) {}
     }
     try {
-      if (_aimQ) _auditStepP("cursor_aim", String((opts && opts.label) || (el && el.getAttribute && el.getAttribute("name")) || "el") + " aim有" + (_aimQ.fromScreen ? "(画面)" : ""));
+      if (_aimQ) _auditStepP("cursor_aim", String((opts && opts.label) || (el && el.getAttribute && el.getAttribute("name")) || "el") + " aim有" + (_aimQ.fromScreen ? "(画面)" : "") + (_aimQ.thin ? "(薄)" : ""));
       else _auditStepP("cursor_aim", String((opts && opts.label) || (el && el.getAttribute && el.getAttribute("name")) || "el") + " aim無→変則中央");
     } catch (_) {}
+    /**
+     * ★ 2026-11-17 統括Pro F28: 既定80〜200へ落ちる抜けを塞ぐ。
+     *   minGap は上で _uiGapMin 済み。|| 80 は短間隔の入口だった。
+     */
+    var _gLo = Number(minGap) > 0 ? Number(minGap) : _uiGapMin();
+    var _gHi = Number(maxGap) > _gLo ? Number(maxGap) : Math.max(_uiGapMax(), _gLo + 400);
+    if (_gLo < 700) _gLo = 700;
+    /**
+     * ★ 2026-11-18 竹内さん「地域選択する際の人間の通常モードと比べて時間がかなり遅い／通常モードの人間の速さのように」:
+     *   DB実測（audit #1498・v2.8.107）: 区の押し間隔 自動 p50=5735ms／通常 p50=836ms（約7倍）。
+     *   原因＝下限の積み上げ（押す前≥900＋押した後≥950＋確認400＋カーソル＋迷い）が区1つごとに乗っていた。
+     *   → 区（city_code / one_city）は「区レーン」に通す: 押す前の待ちは小さく、
+     *     クリックからクリックまでの間隔は通常の実測分布（_wardPaceMs）で決める。
+     */
+    var _lane = _isWardLaneEl(el) ? "ward" : null;
     _clickQueue.push({
       el: el,
       fn: clickFn || _clickEl,
-      gap: humanRand(minGap || 80, maxGap || 200, opts),
+      gap: _lane === "ward" ? _ln(110, 0.45, 50, 260) : humanRand(_gLo, _gHi, opts),
       label: (opts && opts.label) || _opLabel(el),
       aim: _aimQ || null,
+      keys: (opts && opts.keys) || null,
+      lane: _lane,
+      quick: !!(opts && opts.quick),
     });
     _scheduleClickDrain();
     return true;
@@ -2589,11 +3565,31 @@
     // 一瞬つく（8%で+0.3〜0.9秒）＝人が「お、変わったな」と手を止める形
     else if (Math.random() < 0.08) base += 300 + Math.floor(Math.random() * 600);
     base += 1 + Math.floor(Math.random() * 40);
-    return Math.min(r[1] * 2.6, Math.max(r[0] * 0.5, Math.round(base)));
+    /**
+     * ★ 2026-11-17: 旧 `r[0]*0.5` が settle を375msまで下げ短間隔の主因。
+     *   → 硬下限700（choose/other）／step・decide は900。
+     */
+    /** ★ 2026-11-17 統括Pro 近さ16: settleも短間隔に入る → 硬下限950／決定1100 */
+    var settleFloor = (kind === "step" || kind === "decide") ? 1100 : 950;
+    return Math.min(r[1] * 2.6, Math.max(settleFloor, Math.round(base)));
   }
   /** 押す前に迷う時間（0＝迷わない） */
   function _hesitateMs(el) {
     var kind = _hesitateKindOf(el);
+    /**
+     * ★ 2026-11-19 竹内さん「人の速さで迷いも人のように入れる」:
+     *   通常の人の実測（DB・realpro・直近3日・チェック/リンク等の欄）: 中央値 約2.0秒・p90 約7.2秒・
+     *   4秒以上が約26%。自動は長い停止（4秒超）が少なく、人より早く単調だった。
+     *   → 迷う欄（choose/other・押す前の迷い）に、4〜9秒の長い迷いを約12%足す（ward/sel レーンは別管理なので対象外）。
+     */
+    if (kind !== "decide") {
+      var _HW = window.AxlxHumanWait;
+      if (Math.random() < 0.12) {
+        var _long = (_HW && _HW.logNormalDelay) ? _HW.logNormalDelay(5200, 0.3) : (4000 + Math.random() * 5000);
+        _lastHesitateAt = Date.now();
+        return Math.round(Math.min(9000, Math.max(4000, _long)));
+      }
+    }
     // ★ 2026-11-16: 選ぶ系・決定系の迷いを厚く（機械の即押しを減らす）
     var base = kind === "choose" ? 0.22 : (kind === "decide" ? 0.07 : 0.10);
     // 直前（5秒以内）に迷っていたら少し迷いやすい（同じ所を見直している形）
@@ -2618,7 +3614,58 @@
    *   止まる確率は「同じ画面で操作が続いているほど少し上がる」（人が飽きて手が止まる形）。
    */
   var _opsSincePause = 0;
-  function _longPauseDue() {
+  /**
+   * ★ 2026-11-18 区レーン: 区（city_code / one_city）の押し・外し。
+   *   通常録画の区の押し間隔（audit #1498 と同日の人の実測: p25 730 / p50 836 / p75 1030 / p90 1338 ms）。
+   *   ⚠ 固定値にしない（対数正規で毎回ちがう）。下限650・上限2200。
+   */
+  function _isWardLaneEl(el) {
+    try {
+      if (!el) return false;
+      var c = String(el.className || "");
+      if (/one_city/.test(c)) return true;
+      var tag = String(el.tagName || "").toUpperCase();
+      if (tag === "INPUT" && String(el.getAttribute("name") || "") === "city_code[]") return true;
+      if (tag === "LABEL" && el.querySelector && el.querySelector('input[name="city_code[]"]')) return true;
+    } catch (_) {}
+    return false;
+  }
+  /**
+   * ★ 2026-11-18 竹内さん「手を止めたり迷うのも入れる人間のように／家賃・更新日の前後も通常モードの人間のように」:
+   *   2.8.108 は区の最中の迷い・停止を**全部消して**いた（人間らしくない）。通常の人の実測（DB・小分け読み）は
+   *   区どうし: 速い 0.9〜1.2秒が約45%・迷い 1.5〜6.5秒（中央値3.9秒）が約50%・7〜10秒の停止が約5%（5録画中2つに8秒超）。
+   *   → 3種の混合: 速い（50%）／迷い（44%・カーソルが欄の上を漂う）／停止（6%・7〜10.5秒・自動の8〜25秒は使わない）。
+   *   家賃・更新日などの select: 通常 直前 p50=2.0s・欄の中 p50=1.3s・欄どうし p50=2.2s（p90 3.5s）・たまに迷い／停止。
+   *   ⚠ 固定値にしない（対数正規）。直し直し（同じ区の選び直し）は迷い・停止を入れない（quick）。
+   */
+  function _wardPaceMs() { return _ln(900, 0.25, 650, 1600); }
+  function _wardGapPlan() {
+    var r = Math.random();
+    if (r < 0.50) return { kind: "fast", ms: _wardPaceMs() };
+    if (r < 0.94) return { kind: "hesitate", ms: _ln(3500, 0.4, 1500, 6500) };
+    return { kind: "pause", ms: _ln(8500, 0.13, 7000, 10500) };
+  }
+  function _selGapPlan() {
+    var r = Math.random();
+    if (r < 0.85) return { kind: "fast", ms: _ln(2100, 0.3, 1100, 3600) };
+    if (r < 0.97) return { kind: "hesitate", ms: _ln(4500, 0.3, 3200, 7500) };
+    return { kind: "pause", ms: _ln(8500, 0.13, 7000, 11000) };
+  }
+  /** 区を押している最中か（直近の区クリックから 20 秒以内） */
+  function _wardRunActive() {
+    try { return !!(window.__axlxWardLastAt && Date.now() - window.__axlxWardLastAt < 20000); } catch (_) { return false; }
+  }
+  function _longPauseDue(item) {
+    /**
+     * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
+     *   実測（audit #1498）: 区の再選択の直後に 19.2 秒の無操作（8〜25秒の「人が手を止めた」の範囲）。
+     *   通常の人の区選択中の最大間隔は p90≈1.3 秒。区を押している最中は長い停止を入れない（確率も進めない）。
+     */
+    try {
+      // 区・select の「レーン」は迷い・停止を自分の混合（_wardGapPlan / _selGapPlan・最大約11秒）で持つ
+      if (item && item.lane) return 0;
+      if (_wardRunActive()) return 0;
+    } catch (_) {}
     _opsSincePause++;
     // 25操作に1回くらい（約4%）。連続で操作している時ほど出やすい
     var p = 0.02 + Math.min(0.03, _opsSincePause / 2000);
@@ -2645,7 +3692,25 @@
     // 2026-11-10 v2.6.11 竹内さん「人間も止まったりするので・人間のように」:
     //   低確率で**長めの停止（8〜25秒）**を入れる（人が考え込む・画面を読み返す）。
     //   止まる前と後に必ず点検へ印を残し、止まった後は必ず続きへ戻る（失敗にしない）。
-    var pause = _longPauseDue();
+    var _isWardItem = item.lane === "ward";
+    var _isSelItem = item.lane === "sel";
+    // このアイテムの「前の操作」の時刻（select の押す時刻の基準）。fn を包む前に読む
+    var _lastClickBefore = 0;
+    try { _lastClickBefore = window.__axlxLastClickAt || 0; } catch (_) {}
+    if (item.el && !item._laneWrapped) {
+      // 押した瞬間を記録（区・selectの間隔を通常の分布に合わせる基準・長い停止を入れない判定）
+      item._laneWrapped = true;
+      var _ofn = item.fn;
+      item.fn = function () {
+        try {
+          var _tn = Date.now();
+          window.__axlxLastClickAt = _tn;
+          if (_isWardItem) window.__axlxWardLastAt = _tn;
+        } catch (_) {}
+        return _ofn.apply(this, arguments);
+      };
+    }
+    var pause = _longPauseDue(item);
     if (pause > 0) {
       try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（人が手を止めた）'); } catch (_) {}
       var _startAfterPause = function () {
@@ -2660,7 +3725,45 @@
       else { setTimeout(_endPause, pause); }
       return;
     }
-    var hesitate = _hesitateMs(item.el);
+    // 区・selectレーンの迷いは下の混合（_wardGapPlan / _selGapPlan）で決める（通常の _hesitateMs は使わない）
+    var hesitate = (_isWardItem || _isSelItem) ? 0 : _hesitateMs(item.el);
+    /**
+     * 区・selectレーン: 直前の操作があれば、「直前の操作の時刻＋通常の人の間隔（混合）」を押す時刻の目標にする。
+     *   ・速い: カーソルは前の押下の直後から動き、着いたら目標時刻まで見てから押す（_humanPointerClick の tgtAt）
+     *   ・迷い／停止: 先にカーソルを欄へ動かし、その上で漂わせてから押す（手が止まる・迷う形）
+     *   ・quick（選び直し）は迷い・停止を入れない
+     *   基準: 区は直前の区クリック（7秒以内）／select は直前の select の行を押した時刻 or 直前の操作（20秒以内）
+     */
+    var _wardTgt = null;
+    if (_isWardItem || _isSelItem) {
+      try {
+        var _nowL = Date.now();
+        var _ref = 0;
+        if (_isWardItem) {
+          var _lw = window.__axlxWardLastAt || 0;
+          if (_lw && _nowL - _lw < 7000) _ref = _lw;
+        } else {
+          _ref = Math.max(window.__axlxSelTapAt || 0, _lastClickBefore || 0);
+          if (!_ref || _nowL - _ref > 20000) _ref = 0;
+        }
+        if (_ref) {
+          var _plan = item.quick
+            ? { kind: "fast", ms: _isWardItem ? _wardPaceMs() : _ln(1500, 0.3, 1000, 2600) }
+            : (_isWardItem ? _wardGapPlan() : _selGapPlan());
+          if (_plan.kind === "fast") {
+            _wardTgt = _ref + _plan.ms;
+          } else {
+            // 経過分と、移動＋着地（約1秒）を引いた分だけ、欄の上で迷う
+            hesitate = Math.max(400, Math.round(_plan.ms - (_nowL - _ref) - 1000));
+          }
+          try {
+            if (_audit && (_plan.kind !== "fast" || Math.random() < 0.3)) {
+              _auditStepP(_plan.kind === "pause" ? "fill_pause" : "ward_pace", (_isWardItem ? "区" : "select") + " " + _plan.kind + " 目標間隔" + Math.round(_plan.ms) + "ms");
+            }
+          } catch (_) {}
+        }
+      } catch (_) { _wardTgt = null; }
+    }
     var _planned = item.gap + hesitate, _setAt = Date.now();
     if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
     // 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
@@ -2670,6 +3773,26 @@
     var _startClick = function () {
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
+      /**
+       * ★ 2026-11-17 統括Pro「aim無／learn_warm=0」:
+       *   積んだ時点で束が未温だと aim無のまま押す。押す直前に再引きする。
+       */
+      try {
+        if (item.el && !item.aim) {
+          var _re = null;
+          try { _re = _aimByEl(item.el, item.keys || null); } catch (_) { _re = null; }
+          if (!_re) {
+            try {
+              var _nmR = item.el.getAttribute && item.el.getAttribute("name");
+              if (_nmR) _re = _aimOf(_nmR);
+            } catch (_) {}
+          }
+          if (_re) {
+            item.aim = _re;
+            try { _auditStepP("cursor_aim", String(item.label || "el") + " aim有(再引き)" + (_re.fromScreen ? "(画面)" : "") + (_re.thin ? "(薄)" : "")); } catch (_) {}
+          }
+        }
+      } catch (_) {}
       _auditOp(item.label, _planned, Date.now() - _setAt);
       // 2026-11-10: 中の処理が非同期（1文字ずつの打鍵）でも、終わってから次へ進む（順番が崩れない）
       var done = function () {
@@ -2681,7 +3804,7 @@
          *   新は**ボタンの意味で変える**（_afterClickGapMs・1か所）:
          *     入力欄は速い／選択肢は結果を見る／「次へ」は行き先を確かめる／決定は画面が変わったか見る（長め）
          */
-        var settle = _afterClickGapMs(item.el);
+        var settle = _isWardItem ? _ln(110, 0.4, 60, 260) : (_isSelItem ? _ln(90, 0.4, 50, 200) : _afterClickGapMs(item.el));
         setTimeout(function () {
           _clickBusyItem = null;
           _clickQueueTimer = null;
@@ -2690,25 +3813,61 @@
       };
       try {
         // v2.5.96: 画面の外の時だけ最小の移動で見える位置へ寄せ、動かしたら終わるまで待ってから押す
+        /**
+         * ★ 2026-11-17 統括Pro F36「押す/外す前に画面内にあるか」:
+         *   _ensureInView 後も端外なら center をもう一度（スクロール未定着の関所）。
+         */
         var _viewWait = item.el ? _ensureInView(item.el) : 0;
+        var _gateScroll = function () {
+          try {
+            if (!item.el || !item.el.getBoundingClientRect) return 0;
+            var rr = item.el.getBoundingClientRect();
+            var vh2 = window.innerHeight || 800;
+            if (rr.top >= 40 && rr.bottom <= vh2 - 40) return 0;
+            item.el.scrollIntoView({
+              behavior: Math.random() < 0.8 ? "smooth" : "auto",
+              block: "center",
+              inline: "nearest",
+            });
+            try { if (_audit) _auditStepP("scroll_gate", String(item.label || "").slice(0, 36)); } catch (_) {}
+            return 280 + Math.floor(Math.random() * 320);
+          } catch (_) { return 0; }
+        };
         if (_viewWait > 0) {
           setTimeout(function () {
-            try {
-              var ret2 = item.el ? _humanPointerClick(item.el, item.fn, item.aim || null) : item.fn();
-              if (ret2 && typeof ret2.then === "function") { ret2.then(done, done); return; }
-            } catch (e2) { console.error('[AX] humanClick 例外（続行）', e2); }
-            done();
+            var extra = _gateScroll();
+            var go = function () {
+              try {
+                var ret2 = item.el ? _humanPointerClick(item.el, item.fn, item.aim || null, _wardTgt) : item.fn();
+                if (ret2 && typeof ret2.then === "function") { ret2.then(done, done); return; }
+              } catch (e2) { console.error('[AX] humanClick 例外（続行）', e2); }
+              done();
+            };
+            if (extra > 0) setTimeout(go, extra);
+            else go();
           }, _viewWait);
+          return;
+        }
+        var _extra0 = _gateScroll();
+        if (_extra0 > 0) {
+          setTimeout(function () {
+            try {
+              var ret3 = item.el ? _humanPointerClick(item.el, item.fn, item.aim || null, _wardTgt) : item.fn();
+              if (ret3 && typeof ret3.then === "function") { ret3.then(done, done); return; }
+            } catch (e3) { console.error('[AX] humanClick 例外（続行）', e3); }
+            done();
+          }, _extra0);
           return;
         }
         // 2026-11-10 人間的な動き: 要素を押す時は、人の軌跡でマウスを動かしてから押す（mousemove〜click）。
         //   item.fn は今まで通り最後の1回だけ呼ぶ（_clickIfUnchecked 等のガードはそのまま効く）
         //   ★ 2026-11-16: 学んだ押す位置（item.aim）があればその点へ（プルダウン・入力欄）
-        var ret = item.el ? _humanPointerClick(item.el, item.fn, item.aim || null) : item.fn();
+        var ret = item.el ? _humanPointerClick(item.el, item.fn, item.aim || null, _wardTgt) : item.fn();
         if (ret && typeof ret.then === "function") { ret.then(done, done); return; }
       } catch (e) { console.error('[AX] humanClick 例外（続行）', e); }
       done();
-    }, item.gap + hesitate);
+    // 区・selectレーン: 迷いは欄の上で漂って（drift）済みなので、タイマーで二重に待たない（迷い＝設計した長さだけ）
+    }, item.gap + (((_isWardItem || _isSelItem) && hesitate > 0 && window.AxlxPointerUi && window.AxlxPointerUi.drift) ? 0 : hesitate));
     };
     if (_hesitateDrift) {
       var P = window.AxlxPointerUi;
@@ -2729,9 +3888,11 @@
     //   いま処理中の1件（_clickBusyItem）も「忙しい」に数える。
     return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem || _holdingPause;
   }
-  function whenClickQueueIdle(cb) {
+  function whenClickQueueIdle(cb, pollMs) {
+    if (_axHumanTookOver) return;
     if (!isClickQueueBusy()) { cb(); return; }
-    setTimeout(function() { whenClickQueueIdle(cb); }, _pd(150));
+    // pollMs: 区レーンなど「終わった瞬間に次へ」進めたい所だけ短くする（既定 150ms）
+    setTimeout(function() { whenClickQueueIdle(cb, pollMs); }, pollMs > 0 ? pollMs : _pd(150));
   }
   /**
    * ★ 2026-11-16 竹内さん「ちゃんとひとつずつ選択できるように／同時にうごかないように／1つずつ人間のように」:
@@ -2755,10 +3916,14 @@
        */
       var afterRun = function () {
         whenClickQueueIdle(function () {
-          var pause = 450 + Math.floor(Math.random() * 900);
-          if (Math.random() < 0.12) pause += 700 + Math.floor(Math.random() * 1200);
+          /**
+           * ★ 2026-11-18 竹内さん「家賃・更新日の前後も通常モードの人間のように」:
+           *   旧は 項目どうしに 0.45〜1.35s（＋12%で+0.7〜1.9s）を足していた。select は次の欄までの間隔を
+           *   _selGapPlan（通常の分布・迷い／停止つき）が決めるので、ここの足しは短く（二重にしない）。
+           */
+          var pause = _ln(200, 0.45, 90, 650);
           setTimeout(step, pause);
-        });
+        }, 40);
       };
       try {
         if (item && typeof item.run === "function") {
@@ -2796,10 +3961,137 @@
     _axPlaceReady = true;
     try { window.__axlxForceClearAllPlace = false; } catch (_) {}
     try { if (_audit) _auditStepP("place_ready", String(why || "場所確定").slice(0, 80)); } catch (_) {}
+    try { _noteFlowPhase("place", true, why || "場所確定"); } catch (_) {}
+    try { _noteFlowAtom("place_select", true, why || "場所確定"); } catch (_) {}
+    try { _noteNowCustomer("place", why || "場所確定"); } catch (_) {}
   }
   function _markConditionsReady(why) {
     _axConditionsReady = true;
     try { if (_audit) _auditStepP("conditions_ready", String(why || "条件そろった").slice(0, 80)); } catch (_) {}
+    try { _noteFlowPhase("conditions", true, why || "条件そろった"); } catch (_) {}
+    try { _noteFlowAtom("conditions", true, why || "条件そろった"); } catch (_) {}
+    try { _noteNowCustomer("conditions", why || "条件そろった"); } catch (_) {}
+    try { _emitFillProgressHeartbeat("conditions_ready"); } catch (_) {}
+  }
+  /**
+   * ★ 2026-11-18 HONOKA根本: 欲しい間取りの hit/miss を1か所で測る（関所・検索前・把握の正本）。
+   *   旧は「1つでもチェック」で完了扱い → 1DK+1LDK なのに 1DK だけでも次へ進んだ。
+   */
+  function _layoutWantReport(wantVals) {
+    var want = (wantVals || []).map(String).filter(Boolean);
+    var allChk = [];
+    try {
+      allChk = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
+        .map(function (cb) { return String(cb.value); });
+    } catch (_) { allChk = []; }
+    var hit = want.filter(function (v) { return allChk.indexOf(v) >= 0; });
+    var missing = want.filter(function (v) { return allChk.indexOf(v) < 0; });
+    var extras = allChk.filter(function (v) { return want.indexOf(v) < 0; });
+    return {
+      wantN: want.length,
+      hitN: hit.length,
+      missing: missing,
+      extras: extras,
+      ok: want.length > 0 ? (missing.length === 0 && extras.length === 0) : extras.length === 0,
+      partial: want.length > 0 && hit.length > 0 && missing.length > 0,
+    };
+  }
+  /**
+   * ★ 2026-11-18 HONOKA根本（物件未取得）:
+   *   リアプロは検索でページ再読込 → MAIN の _autoSendArmed / notifyDone が消える。
+   *   Case C は session の axlx_pending_auto_send だけが生存経路。
+   *   旧: その印は popup の go_search 監視だけが書いていた → **自動の clickSearch では印が立たない**
+   *     → リロード後 Case C 不発 → 物件取得ゼロ／監査 status=started のまま。
+   *   → 検索 click **直前**に postMessage（同期）で content/bulk-dl に印を書かせる。
+   */
+  function _armPropertyPathBeforeSearch(why) {
+    try {
+      window.postMessage({
+        from: "axlx-search-armed",
+        customerId: _fillCustomerId || null,
+        ts: Date.now(),
+        why: String(why || "search").slice(0, 48),
+        pageVer: _AXLX_PAGE_VER,
+      }, "*");
+      try { if (_audit) _auditStepP("search_armed", "物件取得のリロード生存印 " + String(why || "").slice(0, 40)); } catch (_) {}
+    } catch (_) {}
+  }
+  /**
+   * ★ 2026-11-17 F45 統括Pro「何が完了しているか理解していない／完了→次客」:
+   *   ボタン理解（F41）と同型で、客1人の一連の段を1つずつ把握する。
+   *   段: switch → place → conditions → search → fill_done → ready_next
+   *   全部 ok のときだけ「次客へ渡してよい」と理解する（抜けを測れる）。
+   */
+  var _FLOW_PHASES = ["switch", "place", "conditions", "search", "fill_done", "ready_next"];
+  function _noteFlowPhase(phase, ok, detail) {
+    try {
+      if (!window.__axlxFlowUnderstood) window.__axlxFlowUnderstood = {};
+      var ph = String(phase || "").slice(0, 24);
+      if (!ph) return;
+      window.__axlxFlowUnderstood[ph] = {
+        ok: !!ok,
+        at: Date.now(),
+        d: String(detail || "").slice(0, 80),
+      };
+      if (_audit) {
+        _auditStepP(
+          ok ? ("flow_done_" + ph) : ("flow_gap_" + ph),
+          String(detail || (ok ? "完了理解" : "未完了")).slice(0, 100),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: ((ok ? "完了済:" : "未完了:") + ph).slice(0, 40),
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  function _flowReadyForNext() {
+    try {
+      var m = window.__axlxFlowUnderstood || {};
+      return !!(
+        m.place && m.place.ok &&
+        m.conditions && m.conditions.ok &&
+        m.search && m.search.ok &&
+        m.fill_done && m.fill_done.ok
+      );
+    } catch (_) { return false; }
+  }
+  function _auditFlowUnderstandLedger(where) {
+    try {
+      var m = window.__axlxFlowUnderstood || {};
+      var okParts = [], gapParts = [];
+      for (var i = 0; i < _FLOW_PHASES.length; i++) {
+        var ph = _FLOW_PHASES[i];
+        if (ph === "ready_next") continue;
+        var row = m[ph];
+        if (row && row.ok) okParts.push(ph);
+        else gapParts.push(ph);
+      }
+      var ready = _flowReadyForNext();
+      if (ready) {
+        _noteFlowPhase("ready_next", true, "一連完了→次客へ渡してよい");
+      } else if (gapParts.length) {
+        _noteFlowPhase("ready_next", false, "未=" + gapParts.join(","));
+      }
+      if (_audit) {
+        _auditStepP(
+          "flow_understand_ledger",
+          String(where || "ledger") +
+            " ok=[" + okParts.join(",") + "]" +
+            (gapParts.length ? " 未=[" + gapParts.join(",") + "]" : "") +
+            " ready_next=" + (ready ? "Y" : "N"),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: ("流れ台帳:ok" + okParts.length + "/未" + gapParts.length + (ready ? "/次可" : "")).slice(0, 40),
+        }, "*");
+      } catch (_) {}
+      return ready;
+    } catch (_) { return false; }
   }
   /**
    * ★ 2026-11-16 竹内さん「続きのお客さんにうつるとき所在地や駅の選択をやりなおす」
@@ -2825,20 +4117,70 @@
     } catch (_) { return false; }
   }
   function _runDeferredBasicThenSearch(why) {
-    _markPlaceReady(why || "場所のあと");
-    var q = null;
-    try { q = window.__axDeferredBasicQueue; window.__axDeferredBasicQueue = null; } catch (_) { q = null; }
-    function _goSearchAfterBasic() {
-      // 間取り・敷礼などまで入れてから検索（25秒保険より先にここだけが押してよい）
-      _markConditionsReady(why || "基本条件のあと");
-      setTimeout(clickSearch, 700 + Math.floor(Math.random() * 500));
-    }
-    if (q && q.length) {
-      try { if (_audit) _auditStepP("basic_after_place", (why || "場所のあと") + " → 条件を1つずつ" + q.length + "件"); } catch (_) {}
-      _runBasicOneByOne(q, _goSearchAfterBasic);
-      return;
-    }
-    _goSearchAfterBasic();
+    /**
+     * ★ 根本: 場所のあともパネル負債が残っていれば先に確定清算（CONFIRM=0 の根を塞ぐ）。
+     *   条件投入・検索は清算後だけ。
+     */
+    _settlePanelDebtThen("場所のあと・パネル清算:" + String(why || ""), function () {
+      _markPlaceReady(why || "場所のあと");
+      var q = null;
+      try { q = window.__axDeferredBasicQueue; window.__axDeferredBasicQueue = null; } catch (_) { q = null; }
+      function _goSearchAfterBasic() {
+        _settlePanelDebtThen("条件後・検索前清算", function () {
+          /**
+           * ★ 2026-11-18: conditions_ready の前に間取り全 hit を強制確認。
+           *   1つ欠けていれば1回だけ入れ直し → それでも欠けても印を残してから検索へ（関所が止める）。
+           */
+          function _afterLayoutGrasp() {
+            _markConditionsReady(why || "基本条件のあと");
+            setTimeout(clickSearch, 700 + Math.floor(Math.random() * 500));
+          }
+          try {
+            var wantL = (_axExpect && _axExpect.layoutVals) ? _axExpect.layoutVals.map(String) : [];
+            if (wantL.length) {
+              var rep0 = _layoutWantReport(wantL);
+              try { if (typeof _understandLayoutScene === "function") _understandLayoutScene(wantL); } catch (_) {}
+              if (rep0.missing.length) {
+                try {
+                  if (_audit) {
+                    _auditStepP(
+                      "layout_pre_search_miss",
+                      "検索前: 欲しい" + rep0.wantN + "のうち" + rep0.hitN + "だけ／不足=" + rep0.missing.slice(0, 6).join(",")
+                    );
+                  }
+                } catch (_) {}
+                try { setCheckboxes("room_layout_id[]", wantL); } catch (_) {}
+                whenClickQueueIdle(function () {
+                  var rep1 = _layoutWantReport(wantL);
+                  try { if (typeof _understandLayoutScene === "function") _understandLayoutScene(wantL); } catch (_) {}
+                  try {
+                    if (_audit) {
+                      _auditStepP(
+                        rep1.missing.length ? "layout_pre_search_still_miss" : "layout_pre_search_fixed",
+                        "入れ直し後 hit=" + rep1.hitN + "/" + rep1.wantN +
+                          (rep1.missing.length ? (" 不足=" + rep1.missing.slice(0, 6).join(",")) : "")
+                      );
+                    }
+                  } catch (_) {}
+                  _afterLayoutGrasp();
+                });
+                return;
+              }
+              try {
+                if (_audit) _auditStepP("layout_pre_search_ok", "間取り全hit " + rep0.hitN + "/" + rep0.wantN);
+              } catch (_) {}
+            }
+          } catch (_) {}
+          _afterLayoutGrasp();
+        });
+      }
+      if (q && q.length) {
+        try { if (_audit) _auditStepP("basic_after_place", (why || "場所のあと") + " → 条件を1つずつ" + q.length + "件"); } catch (_) {}
+        _runBasicOneByOne(q, _goSearchAfterBasic);
+        return;
+      }
+      _goSearchAfterBasic();
+    });
   }
   /**
    * ★ 2026-11-16: page-script（MAIN）から録画（content）へ click を渡す。
@@ -2888,6 +4230,30 @@
       window.postMessage(msg, "*");
     } catch (_) {}
   }
+  /**
+   * ★ 2026-11-17 統括Pro「_fireAt→point 座標配線」:
+   *   page-script（MAIN）から押した実座標を isolated の録画へ渡す。
+   *   旧は _noteClickForLearn だけ → point_fields が空／真ん中固定で point_pct が上がらなかった。
+   */
+  function _notePointForLearn(el, cx, cy) {
+    try {
+      if (!Number.isFinite(Number(cx)) || !Number.isFinite(Number(cy))) return;
+      var nm = "";
+      try {
+        if (el) {
+          nm = (el.getAttribute && (el.getAttribute("name") || el.getAttribute("id"))) || "";
+          if (!nm) nm = String(el.textContent || el.value || "").replace(/\s+/g, "").slice(0, 30);
+        }
+      } catch (_) { nm = ""; }
+      window.postMessage({
+        from: "axlx-rec-point",
+        name: String(nm || "").slice(0, 40),
+        clientX: Number(cx),
+        clientY: Number(cy),
+        synthetic: true,
+      }, "*");
+    } catch (_) {}
+  }
   // fillRealpro 開始時に前回残留のキューを破棄（pendingフラグも解除）
   function clearClickQueue() {
     _clickQueue.forEach(function(it) { if (it.el) it.el.__axPending = false; });
@@ -2895,6 +4261,61 @@
     _clickBusyItem = null;
     if (_clickQueueTimer) { clearTimeout(_clickQueueTimer); _clickQueueTimer = null; }
   }
+  /**
+   * ★ 2026-11-18 平田 run_mwlrwjhx_xoqv: 自動が止まったので人が引き取って入力していた間も、
+   *   裏で自動の verify が 3秒ごとに淀川区を外し続けていた（ward_extra_clear_click 59件・人の操作と並走）。
+   *   → 自動の入力中に**人が検索欄を押した／変えた**ら、自動はその場で手を引く（人の操作が優先）。
+   *   ⚠ 拡張の合成イベントは isTrusted=false なので数えない。スクロールバー・余白・拡張の小窓は数えない。
+   */
+  var _axHumanTookOver = false;
+  var _axFillStartedAt = 0;
+  function _isHumanTakeoverTarget(t) {
+    try {
+      if (!t || t.nodeType !== 1) return false;
+      if (t === document.documentElement || t === document.body) return false;
+      if (t.closest && t.closest('[id^="aixlinx-"], [id^="axlx"], [data-axlx-shape]')) return false;
+      return !!(t.closest && t.closest(
+        'input, select, textarea, label, button, a, td.pager, .click_menu, .one_city, .one_town, .one_line, .one_station, ' +
+        '.close_search_detail, .search_list, .next_step_button2, [class*="btn"], [class*="button"]'
+      ));
+    } catch (_) { return false; }
+  }
+  /**
+   * ★ 2026-11-18 竹内さん「次のお客さんが入ってきてバグ起きたのか地域の途中で止まってしまった」:
+   *   平田 audit 1488: 自動が大阪市都島区のラベルを押した直後に `human_takeover（change:city_code[]）` で止まった。
+   *   ⚠ スクリプトの .click() でもブラウザが出す change / click は isTrusted=true になる（自動の自分の操作を人と取り違えた）。
+   *   → 人の判定は**スクリプトでは作れない** pointerdown（マウス・タッチ）と keydown（キーボード）だけにする。
+   *     click / change は見ない。
+   */
+  function _onHumanTakeover(e) {
+    try {
+      if (!e || !e.isTrusted) return;
+      if (e.type !== "pointerdown" && e.type !== "keydown") return;
+      if (!window._axFillRunning || _doneNotified || _axHumanTookOver) return;
+      if (_axFillStartedAt && Date.now() - _axFillStartedAt < 1500) return;
+      if (e.type === "keydown") {
+        var _kt = e.target;
+        if (!_kt || !_kt.closest || !_kt.closest("input, select, textarea")) return;
+        if (_kt.closest('[id^="aixlinx-"], [id^="axlx"], [data-axlx-shape]')) return;
+      } else if (!_isHumanTakeoverTarget(e.target)) return;
+      _axHumanTookOver = true;
+      var what = "";
+      try {
+        var tg = e.target;
+        what = String((tg.getAttribute && tg.getAttribute("name")) || (tg.textContent || "").replace(/\s+/g, "")).slice(0, 24);
+      } catch (_) {}
+      try { clearClickQueue(); } catch (_) {}
+      try { if (_audit) _auditStepP("human_takeover", e.type + ":" + what + "（人の操作を優先して自動を止めた）"); } catch (_) {}
+      try { _noteFlowPhase("human_takeover", false, e.type + ":" + what); } catch (_) {}
+      console.warn("[AX] 人が操作したので自動入力を止めます:", e.type, what);
+      // gate: 人が物件を選ぶので bulk-dl の全ページ自動送信を構えない
+      notifyDone("human_takeover: 人が操作したので自動入力を止めました（" + e.type + ":" + what + "）", "human_takeover");
+    } catch (_) {}
+  }
+  try {
+    document.addEventListener("pointerdown", _onHumanTakeover, true);
+    document.addEventListener("keydown", _onHumanTakeover, true);
+  } catch (_) {}
   // 2026-11-10 v2.6.8 竹内さん「止まったまま動いていないなぜなのか」:
   //   万一 迷いの漂いや非同期の処理が返ってこなくても、**列が20秒止まったら強制的に次へ進める**安全弁。
   //   迷いの最長は 4.5秒＋漂い、1文字ずつの打鍵は40字でも約10秒なので、20秒は「明らかに固まった」時だけ。
@@ -3065,6 +4486,7 @@
     pauseMs  = pauseMs  !== undefined ? pauseMs  : _hd(600); // 省略時も毎回ばらつかせる（呼ぶ側の多くは既に乱数）
     var tries = 0;
     function attempt() {
+      if (_axHumanTookOver) return;
       // 人間らしいクリックキュー消化中は判定・クリックを開始しない
       // （前ステップのクリックが全て完了してから次ステップに進む＝順序保証。試行回数は消費しない）
       if (isClickQueueBusy()) {
@@ -3238,6 +4660,8 @@
      *   → 学習への記録（`__axlxRecNoteName`）は **_audit の有無に関係なく**行う。
      *     点検の配列への追加は今まで通り `_audit` がある時だけ。
      */
+    // ★ 2026-11-18: 入力が進んでいる印（次のお客さんの依頼を断るか・止まった入力として閉じるかの判定に使う）
+    try { window.__axlxFillTouchAt = Date.now(); } catch (_) {}
     try {
       if (typeof window !== "undefined" && typeof window.__axlxRecNoteName === "function") {
         /**
@@ -3270,17 +4694,81 @@
           station_then_line_clear_force: "駅のあと沿線を外す",
           // ★ 2026-11-17 通常録画正本（2.8.46）: 人が押す戻るは「沿線の設定へ戻る」
           station_clear_back_line: "沿線の設定へ戻る",
-          station_go_without_line: "沿線未選択で駅へ進まない",
+          // ⚠ station_go_without_line は録画ノートに載せない（DB汚染・学習を濁す実測）
           station_clear_blocked_no_line: "残駅あるが沿線未選択",
           station_intent_clear: "駅を外す",
           station_intent_select: "駅を選ぶ",
           line_intent_clear: "沿線を外す",
           line_intent_select: "沿線を選ぶ",
+          // ★ 2026-11-17 各ボタン理解（選ぶ済/外す済/押す済）→ shot_ops へ
+          station_done_select: "選ぶ済:station_id[]",
+          station_done_clear: "外す済:station_id[]",
+          line_done_select: "選ぶ済:route_id[]",
+          line_done_clear: "外す済:route_id[]",
+          ward_done_select: "選ぶ済:city_code[]",
+          ward_done_clear: "外す済:city_code[]",
+          town_done_select: "選ぶ済:town_code[]",
+          town_done_clear: "外す済:town_code[]",
+          layout_done_select: "選ぶ済:room_layout_id[]",
+          layout_done_clear: "外す済:room_layout_id[]",
+          pet_done_select: "選ぶ済:eq_rm[]",
+          pet_done_clear: "外す済:eq_rm[]",
+          confirm_press_ok: "押す済:確定してリストへ",
+          confirm_press_fail: "押す失敗:確定してリストへ",
+          go_press_ok: "押す済:駅の設定へ進む",
+          go_press_fail: "押す失敗:駅の設定へ進む",
+          back_press_ok: "押す済:沿線の設定へ戻る",
+          back_press_fail: "押す失敗:沿線の設定へ戻る",
+          search_press_ok: "押す済:検索",
+          switch_grasp: "切替把握",
+          ward_scene: "地域場面",
+          layout_scene: "間取り場面",
+          station_scene: "駅場面",
+          btn_understand_ledger: "理解台帳",
+          open_area_press_ok: "押す済:所在地絞り込み＋",
+          open_station_press_ok: "押す済:沿線・駅絞り込み＋",
+          open_layout_press_ok: "押す済:間取り絞り込み＋",
+          open_filter_press_ok: "押す済:絞り込み条件＋",
           learn_reflect_ok: "束の駅手順を反映",
           learn_reflect_gap: "束の駅遷移が空",
+          learn_reflect_gate: "束取込ゲート",
+          learn_warm: "学習束を温める",
           learn_station_flow_hit: "束の駅手順ヒット",
           learn_station_flow_gap: "束の駅手順ギャップ",
+          page_ver: "ページ脚本の版",
           fill_begin: "自動入力開始",
+          pet_panel_confirm: "ペット操作後に確定してリストへ",
+          pet_clear: "ペット可を外す",
+          pet_select: "ペット可を選ぶ",
+          flow_understand_ledger: "流れ台帳",
+          flow_done_switch: "完了済:切替",
+          flow_done_place: "完了済:場所",
+          flow_done_conditions: "完了済:条件",
+          flow_done_search: "完了済:検索",
+          flow_done_fill_done: "完了済:入力完了",
+          flow_done_ready_next: "完了済:次客へ渡してよい",
+          flow_gap_switch: "未完了:切替",
+          flow_gap_place: "未完了:場所",
+          flow_gap_conditions: "未完了:条件",
+          flow_gap_search: "未完了:検索",
+          flow_gap_fill_done: "未完了:入力完了",
+          flow_gap_ready_next: "未完了:次客へ渡してよい",
+          now_customer: "今の客",
+          learn_flow_reflect_ok: "流れ反映OK",
+          learn_flow_reflect_gap: "流れ反映不足",
+          station_per_line_ok: "沿線ごと駅OK",
+          station_per_line: "沿線ごと駅",
+          station_per_line_done: "沿線ごと駅揃い",
+          station_per_line_gap: "沿線ごと駅不足",
+          line_station_map: "沿線↔駅地図",
+          line_station_map_missing: "沿線↔駅地図なし",
+          line_station_map_gap: "沿線↔駅地図不足",
+          flow_map_ledger: "全流れ地図台帳",
+          flow_subdivide_need: "細分化強化が要る",
+          flow_subdivide_ok: "細分化待ちなし",
+          clear_method_station: "駅の外し方",
+          clear_method_ward: "所在地の外し方",
+          clear_method_layout: "間取りの外し方",
         };
         var _nm = _STEP_JA[String(k)] || null;
         if (_nm) {
@@ -3302,17 +4790,79 @@
           line_clear_after_station: "沿線を外す",
           station_then_line_clear_force: "駅のあと沿線を外す",
           station_clear_back_line: "沿線の設定へ戻る",
-          station_go_without_line: "沿線未選択で駅へ進まない",
           station_clear_blocked_no_line: "残駅あるが沿線未選択",
           station_intent_clear: "駅を外す",
           station_intent_select: "駅を選ぶ",
           line_intent_clear: "沿線を外す",
           line_intent_select: "沿線を選ぶ",
+          station_done_select: "選ぶ済:station_id[]",
+          station_done_clear: "外す済:station_id[]",
+          line_done_select: "選ぶ済:route_id[]",
+          line_done_clear: "外す済:route_id[]",
+          ward_done_select: "選ぶ済:city_code[]",
+          ward_done_clear: "外す済:city_code[]",
+          town_done_select: "選ぶ済:town_code[]",
+          town_done_clear: "外す済:town_code[]",
+          layout_done_select: "選ぶ済:room_layout_id[]",
+          layout_done_clear: "外す済:room_layout_id[]",
+          pet_done_select: "選ぶ済:eq_rm[]",
+          pet_done_clear: "外す済:eq_rm[]",
+          confirm_press_ok: "押す済:確定してリストへ",
+          confirm_press_fail: "押す失敗:確定してリストへ",
+          go_press_ok: "押す済:駅の設定へ進む",
+          go_press_fail: "押す失敗:駅の設定へ進む",
+          back_press_ok: "押す済:沿線の設定へ戻る",
+          back_press_fail: "押す失敗:沿線の設定へ戻る",
+          search_press_ok: "押す済:検索",
+          switch_grasp: "切替把握",
+          ward_scene: "地域場面",
+          layout_scene: "間取り場面",
+          station_scene: "駅場面",
+          btn_understand_ledger: "理解台帳",
+          open_area_press_ok: "押す済:所在地絞り込み＋",
+          open_station_press_ok: "押す済:沿線・駅絞り込み＋",
+          open_layout_press_ok: "押す済:間取り絞り込み＋",
+          open_filter_press_ok: "押す済:絞り込み条件＋",
           learn_reflect_ok: "束の駅手順を反映",
           learn_reflect_gap: "束の駅遷移が空",
+          learn_reflect_gate: "束取込ゲート",
+          learn_warm: "学習束を温める",
           learn_station_flow_hit: "束の駅手順ヒット",
           learn_station_flow_gap: "束の駅手順ギャップ",
+          page_ver: "ページ脚本の版",
           fill_begin: "自動入力開始",
+          pet_panel_confirm: "ペット操作後に確定してリストへ",
+          pet_clear: "ペット可を外す",
+          pet_select: "ペット可を選ぶ",
+          flow_understand_ledger: "流れ台帳",
+          flow_done_switch: "完了済:切替",
+          flow_done_place: "完了済:場所",
+          flow_done_conditions: "完了済:条件",
+          flow_done_search: "完了済:検索",
+          flow_done_fill_done: "完了済:入力完了",
+          flow_done_ready_next: "完了済:次客へ渡してよい",
+          flow_gap_switch: "未完了:切替",
+          flow_gap_place: "未完了:場所",
+          flow_gap_conditions: "未完了:条件",
+          flow_gap_search: "未完了:検索",
+          flow_gap_fill_done: "未完了:入力完了",
+          flow_gap_ready_next: "未完了:次客へ渡してよい",
+          now_customer: "今の客",
+          learn_flow_reflect_ok: "流れ反映OK",
+          learn_flow_reflect_gap: "流れ反映不足",
+          station_per_line_ok: "沿線ごと駅OK",
+          station_per_line: "沿線ごと駅",
+          station_per_line_done: "沿線ごと駅揃い",
+          station_per_line_gap: "沿線ごと駅不足",
+          line_station_map: "沿線↔駅地図",
+          line_station_map_missing: "沿線↔駅地図なし",
+          line_station_map_gap: "沿線↔駅地図不足",
+          flow_map_ledger: "全流れ地図台帳",
+          flow_subdivide_need: "細分化強化が要る",
+          flow_subdivide_ok: "細分化待ちなし",
+          clear_method_station: "駅の外し方",
+          clear_method_ward: "所在地の外し方",
+          clear_method_layout: "間取りの外し方",
         };
         var _nm2 = _STEP_JA2[String(k)] || null;
         if (_nm2) {
@@ -3322,7 +4872,28 @@
     } catch (_) {}
     if (!_audit) return;
     _audit.steps.push({ at: Date.now(), k: String(k).slice(0, 40), d: d == null ? null : String(d).slice(0, 120) });
-    if (_audit.steps.length > 60) _audit.steps.shift();
+    /**
+     * ★ 2026-11-17 統括Pro「学習しても自動が強化されない」実測:
+     *   旧は steps>60 で先頭から shift → fill_start / learn_reflect_* / learn_warm が消える。
+     *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
+     *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
+     */
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map)/;
+    try {
+      while (_audit.steps.length > 100) {
+        var _dropAt = -1;
+        for (var _di = 0; _di < _audit.steps.length; _di++) {
+          var _dk = String((_audit.steps[_di] && _audit.steps[_di].k) || "");
+          if (_PIN.test(_dk)) continue;
+          _dropAt = _di;
+          break;
+        }
+        if (_dropAt < 0) break;
+        _audit.steps.splice(_dropAt, 1);
+      }
+    } catch (_) {
+      if (_audit.steps.length > 100) _audit.steps.shift();
+    }
     /**
      * ★ 2026-11-16 統括Pro「steps到達が完走率の主因」:
      *   fill-done 前に途中の段を content→background へ送る（止まっても none にしない）。
@@ -3334,17 +4905,66 @@
       var _nowP = Date.now();
       if (!_audit._progAt) _audit._progAt = 0;
       if (!_audit._progN) _audit._progN = 0;
-      var _clearKey = /station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_go_without_line|station_clear_blocked|station_intent_|line_intent_|learn_reflect_|learn_station_flow_|fill_begin/.test(String(k));
-      if (_clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
+      /**
+       * ★ 2026-11-17 統括Pro「つなぐ部分が弱い／把握・完了・押した印が残らない」:
+       *   旧: PIN印も5段or8秒待ち → fill中断で now_customer / learn_warm / flow_map が監査に届かない。
+       *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
+       */
+      var _pinFlush = _PIN.test(String(k));
+      var _clearKey = /station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok/.test(String(k));
+      if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;
+        var _progSteps = _audit.steps.slice(-40);
+        try {
+          var _pinned = [];
+          for (var _pi = 0; _pi < _audit.steps.length; _pi++) {
+            var _psk = String((_audit.steps[_pi] && _audit.steps[_pi].k) || "");
+            if (_PIN.test(_psk)) _pinned.push(_audit.steps[_pi]);
+          }
+          if (_pinned.length) {
+            var _seenK = {};
+            var _merged = [];
+            for (var _mi = 0; _mi < _pinned.length; _mi++) {
+              var _mk = String((_pinned[_mi] && _pinned[_mi].k) || "");
+              if (_seenK[_mk]) continue;
+              _seenK[_mk] = true;
+              _merged.push(_pinned[_mi]);
+            }
+            for (var _mj = 0; _mj < _progSteps.length; _mj++) {
+              var _mk2 = String((_progSteps[_mj] && _progSteps[_mj].k) || "");
+              if (_seenK[_mk2]) continue;
+              _seenK[_mk2] = true;
+              _merged.push(_progSteps[_mj]);
+            }
+            _progSteps = _merged.slice(-50);
+          }
+        } catch (_) {}
         window.postMessage({
           from: "aixlinx-fill-progress",
           runId: _fillRunId || (_audit && _audit.local_run_id) || null,
           customerId: _fillCustomerId || null,
-          steps: _audit.steps.slice(-12),
+          steps: _progSteps,
         }, "*");
       }
+    } catch (_) {}
+  }
+  function _emitFillProgressHeartbeat(tag) {
+    try {
+      if (!_audit || _doneNotified) return;
+      var now = Date.now();
+      if (!_audit._opsProgAt) _audit._opsProgAt = 0;
+      if (now - _audit._opsProgAt < 2500) return;
+      _audit._opsProgAt = now;
+      window.postMessage({
+        from: "aixlinx-fill-progress",
+        runId: _fillRunId || (_audit.local_run_id) || null,
+        customerId: _fillCustomerId || null,
+        steps: _audit.steps ? _audit.steps.slice(-8) : [],
+        opsCount: _audit.ops ? _audit.ops.length : 0,
+        conditionsReady: !!_axConditionsReady,
+        tag: tag || null,
+      }, "*");
     } catch (_) {}
   }
   function _auditOp(label, planned, waited) {
@@ -3354,6 +4974,7 @@
     if (late > 1000) _audit.late_over_1s++;
     _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited, by: 'auto' });
     if (_audit.ops.length > 80) _audit.ops.shift();
+    _emitFillProgressHeartbeat(String(label || "").slice(0, 24));
   }
   // 2026-11-10 v2.5.99 竹内さん「ボタン選択する際人間ならたまにまよう」:
   //   迷った操作を点検に残す（数と合計・どこで迷ったか）。あとで人の回と比べる材料になる
@@ -3479,7 +5100,12 @@
       var r1 = sel('rental_cost1'); if (r1) f.rent_min = r1.value;
       var up = sel('update_date'); if (up) f.update_days = up.value;
       var ag = sel('structured_date'); if (ag) f.age = ag.value;
-      var wk = document.querySelector('input[name="required_time"]'); if (wk) f.walk = wk.value;
+      try {
+        var _wv = _walkMinVal();
+        if (_wv) f.walk = _wv;
+      } catch (_) {
+        var wk = document.querySelector('input[name="required_time"]'); if (wk) f.walk = wk.value;
+      }
       f.layouts = _checkedLabelTexts('room_layout_id[]');
       f.stations = _checkedLabelTexts('station_id[]');
       f.lines = _checkedLabelTexts('route_id[]');
@@ -3532,6 +5158,8 @@
    */
   function _abortFillForNextCustomer(nextId) {
     var oldId = window._axFillRunningCustomerId || _fillCustomerId;
+    /** ★ 2026-11-17: 世代を上げ、前客の遅延 force-clear が次客を壊さない印にする */
+    try { window.__axlxFillGen = (Number(window.__axlxFillGen) || 0) + 1; } catch (_) {}
     try { clearClickQueue(); } catch (_) {}
     try {
       if (window.__axStallWatch) { clearInterval(window.__axStallWatch); window.__axStallWatch = null; }
@@ -3567,6 +5195,24 @@
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
     /**
+     * ★ 2026-11-17 F45: fill完了を「理解」して台帳に残す。
+     *   エラー／門止めは fill_done 未完了。成功時だけ次客へ渡してよいかを測る。
+     */
+    try {
+      if (errMsg || gate) {
+        _noteFlowPhase("fill_done", false, gate ? ("gate:" + String(gate)) : String(errMsg || "").slice(0, 60));
+        try { _noteNowCustomer("fill_done_gap", gate ? String(gate) : String(errMsg || "").slice(0, 40)); } catch (_) {}
+      } else {
+        _noteFlowPhase("fill_done", true, "fill-done送信");
+        try { _noteNowCustomer("fill_done", "一連完了待ち"); } catch (_) {}
+      }
+      var _ready = _auditFlowUnderstandLedger(errMsg ? "fill_doneエラー" : (gate ? "fill_done門" : "fill_done成功"));
+      try { _auditFullFlowMapLedger(errMsg ? "fill_doneエラー" : (gate ? "fill_done門" : "fill_done成功")); } catch (_) {}
+      if (_ready) {
+        try { _noteNowCustomer("ready_next", "次客へ渡してよい"); } catch (_) {}
+      }
+    } catch (_) {}
+    /**
      * 2026-11-10 竹内さん「押したらちゃんと送られるようになっているから、自動モードの場合押したらちゃんとそのまま売り上げ番長に送られるようにする」:
      *   自動モードは案内（realpro-guide.js）が OFF なので「この一覧は誰の検索か」の印（axlx_search_for）が書かれず、
      *   印刷用PDF を押すたびに「違うお客様の物件では？」の小窓が出て止まっていた。
@@ -3588,6 +5234,8 @@
     var msg = { from: 'aixlinx-fill-done' };
     // v2.5.50 検索を押す前の関所で止めた（検索していない）＝この合図で物件を取りに行かせない
     if (gate) msg.gate = true;
+    // ★ 2026-11-18: 止めた理由の種類（human_takeover・busy_other_customer 等）。background が「次のお客さんへ進むか止めるか」を分ける
+    if (gate && typeof gate === "string") msg.gateKind = gate;
     // 2026-09-18: この入力を始めた時の顧客 ID をそのまま返す（誰の完了かを送る側が持つ）
     if (_fillCustomerId) msg.customerId = _fillCustomerId;
     if (errMsg) msg.error = String(errMsg).slice(0, 300);
@@ -3631,7 +5279,7 @@
   function startHumanSearchWatch() {
     try {
       if (_humanSearchWatch) return;                      // すでに見張っている
-      if (typeof chrome === "undefined" || !chrome.runtime) return;   // 拡張の外では何もしない
+      // ★ 2026-11-18 F18: page-script は MAIN world のため chrome.runtime が無くても動かせる（_storageLocalGet ブリッジ使用）
       /**
        * 見張る相手: 検索ボタン（`div.go_search`・`a.text` の「検索」・小窓の外にある物）。
        *   ⚠ 小窓の中の検索は押さない（所在地の確定と取り違える）。
@@ -3657,12 +5305,14 @@
           var cid = _fillCustomerId || null;
           if (!cid) {
             try {
-              chrome.storage.local.get(["current_customer_id"], function (r) {
-                var c = (r && r.current_customer_id) || null;
-                if (c) { _fillCustomerId = c; }
-                _sendHumanSearchDone(Date.now());
-              });
-              return;
+              if (typeof _storageLocalGet === "function") {
+                _storageLocalGet(["current_customer_id"], 600, true).then(function (r) {
+                  var c = (r && r.current_customer_id) || null;
+                  if (c) { _fillCustomerId = c; }
+                  _sendHumanSearchDone(Date.now());
+                }, function () { _sendHumanSearchDone(Date.now()); });
+                return;
+              }
             } catch (_) {}
           }
           _sendHumanSearchDone(Date.now());
@@ -3724,12 +5374,216 @@
       console.log('[AX] ' + msg);
       var t = document.createElement('div');
       t.textContent = '⚠️ ' + msg;
-      t.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;' +
+      /**
+       * ★ 2026-11-17 平田さん自動: アナウンス／警告が出ると「確定してリストへ」前で止まったように見える。
+       *   → トーストは**クリックを奪わない**（pointer-events:none）。自動は止めない。
+       */
+      t.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483646;pointer-events:none;' +
         'background:#c0392b;color:#fff;padding:12px 16px;border-radius:8px;' +
         'font-size:13px;max-width:340px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:pre-wrap;';
       document.body.appendChild(t);
       setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 15000);
     } catch (e) { /* 表示失敗は無視 */ }
+  }
+
+  /**
+   * ★ 2026-11-17 竹内さん「その場その場より根本の仕組みを強化・構築」:
+   *   通常正本は常に「パネルを開く → 操作 → 確定してリストへ」。
+   *   旧はペット／区／クリア／STEP6 に場当たりで確定を足していた → また抜けた。
+   *   → **開いたら負債（_axPanelDebt）／確定で清算** の単一仕組みにする。
+   *     ensureFieldVisible で開いた瞬間に負債。検索・条件投入前に未清算なら止めて清算。
+   */
+  var _axPanelDebt = null; // { kind, why, openedAt } | null
+  function _panelKindOf(name, openerEl) {
+    var nm = String(name || "");
+    var tx = "";
+    try { tx = String((openerEl && openerEl.textContent) || "").replace(/\s+/g, ""); } catch (_) { tx = ""; }
+    var blob = nm + " " + tx;
+    if (/所在地|city_code|town_code|one_city/.test(blob)) return "area";
+    if (/沿線|駅|station|route_id|one_line|one_station/.test(blob)) return "station";
+    if (/絞り込み条件|eq_rm|間取|room_layout|設備/.test(blob)) return "filter";
+    return "panel";
+  }
+  function _markPanelOpened(kind, why) {
+    _axPanelDebt = {
+      kind: String(kind || "panel"),
+      why: String(why || "").slice(0, 80),
+      openedAt: Date.now(),
+    };
+    try {
+      if (_audit) _auditStepP("panel_debt_open", _axPanelDebt.kind + " / " + _axPanelDebt.why);
+      console.log("[AX] パネル負債+: " + _axPanelDebt.kind + " (" + _axPanelDebt.why + ")");
+    } catch (_) {}
+  }
+  function _clearPanelDebt(why) {
+    if (!_axPanelDebt) return;
+    try {
+      if (_audit) _auditStepP("panel_debt_clear", (_axPanelDebt.kind || "") + " / " + String(why || "").slice(0, 60));
+    } catch (_) {}
+    _axPanelDebt = null;
+  }
+  /** 未清算のパネルがあれば確定してリストへ。無い／既に閉じていれば false。 */
+  function _settlePanelDebt(why) {
+    if (!_axPanelDebt) return false;
+    var debt = _axPanelDebt;
+    var confLeft = null;
+    try { confLeft = _findByText(["確定してリストへ", "この条件で絞り込む"]); } catch (_) { confLeft = null; }
+    if (!confLeft) {
+      // ボタンが無い＝もう閉じている → 負債だけ消す（二重押ししない）
+      _clearPanelDebt("already_closed:" + (why || ""));
+      return false;
+    }
+    var ok = _pressConfirmListLikeHuman(why || ("panel_settle:" + debt.kind + "/" + debt.why));
+    try {
+      if (_audit) _auditStepP(ok ? "panel_settle_ok" : "panel_settle_miss", debt.kind + " / " + String(why || "").slice(0, 40));
+    } catch (_) {}
+    return ok;
+  }
+  /**
+   * キュー空まで待ってから清算 → 次へ（検索・条件の前に必ず通す）。
+   * ★ 2026-11-17 実愛さん: 清算待ちが終わらず賃料・徒歩まで届かない抜け。
+   * ★ 2026-11-18 平田・タイムアウト多発: キューが動いているのに固定12秒で捨てていた。
+   *   竹内さん「完成度高ければタイムアウト不要／1人は物件送るまで」→ 進捗中はスライス延長、上限120秒。
+   */
+  function _settlePanelDebtThen(why, nextFn) {
+    var finished = false;
+    var finish = function () {
+      if (finished) return;
+      finished = true;
+      try { if (typeof nextFn === "function") nextFn(); } catch (_) {}
+    };
+    var settleStart = Date.now();
+    var PANEL_SETTLE_SLICE_MS = 12000;
+    // ★ 2026-11-18 竹内さん「進捗中は切らない」: キューが動いている間は上限10分（旧120秒）。キューが空なら即清算して進む（待たない）
+    var PANEL_SETTLE_CAP_MS = 900000; // ★ 2026-11-18: 10分→15分（キュー動作中の短切り上げ禁止）
+    var killer = null;
+    var armKiller = function () {
+      if (killer) clearTimeout(killer);
+      var elapsed = Date.now() - settleStart;
+      if (elapsed >= PANEL_SETTLE_CAP_MS) {
+        try {
+          if (_audit) _auditStepP("panel_settle_timeout", String(why || "").slice(0, 60) + " cap=" + PANEL_SETTLE_CAP_MS);
+          console.warn("[AX] パネル清算タイムアウト（上限）→ 条件へ進む", why);
+        } catch (_) {}
+        try { _axPanelDebt = null; } catch (_) {}
+        finish();
+        return;
+      }
+      var slice = Math.min(PANEL_SETTLE_SLICE_MS, PANEL_SETTLE_CAP_MS - elapsed);
+      killer = setTimeout(function () {
+        try {
+          if (isClickQueueBusy && Date.now() - settleStart < PANEL_SETTLE_CAP_MS) {
+            armKiller();
+            return;
+          }
+        } catch (_) {}
+        try {
+          if (_audit) _auditStepP("panel_settle_timeout", String(why || "").slice(0, 60));
+          console.warn("[AX] パネル清算タイムアウト → 条件へ進む", why);
+        } catch (_) {}
+        try { _axPanelDebt = null; } catch (_) {}
+        finish();
+      }, slice);
+    };
+    armKiller();
+    whenClickQueueIdle(function () {
+      try { _settlePanelDebt(why); } catch (_) {}
+      whenClickQueueIdle(function () {
+        if (killer) clearTimeout(killer);
+        finish();
+      });
+    });
+  }
+  /**
+   * ★ 2026-11-17 実愛さん: 地域で止まっても賃料・徒歩など新条件は1つずつ入れる。
+   *   旧は ward_verify_fail で即 notifyDone → クリア済みのまま基本条件未投入＝画面が前客のまま／空のまま。
+   *   → 基本条件を入れてから中止（検索は押さない＝誤地域の全件を出さない）。
+   */
+  function _basicsThenAbort(errMsg, why) {
+    try { showWarnToast(String(errMsg || "").slice(0, 120)); } catch (_) {}
+    _settlePanelDebtThen("abort前清算:" + String(why || ""), function () {
+      var q = null;
+      try { q = window.__axDeferredBasicQueue; window.__axDeferredBasicQueue = null; } catch (_) { q = null; }
+      function afterBasics() {
+        try { _markConditionsReady("abort_after_basic"); } catch (_) {}
+        try { if (_audit) _auditStepP("basic_then_abort", String(why || errMsg || "").slice(0, 80)); } catch (_) {}
+        notifyDone(errMsg);
+      }
+      if (q && q.length) {
+        try { if (_audit) _auditStepP("basic_before_abort", q.length + "件"); } catch (_) {}
+        _runBasicOneByOne(q, afterBasics);
+        return;
+      }
+      afterBasics();
+    });
+  }
+
+  /**
+   * ★ 2026-11-17 平田さん自動＋通常正本: 「確定してリストへ」は地域／駅／絞り込み条件の必押。
+   *   ペット外し後も同じボタン。見つからない・×だけ押す抜けを止める。
+   *   → 成功したらパネル負債も清算（根元仕組みと一体）。
+   */
+  function _pressConfirmListLikeHuman(why) {
+    var labels = ["確定してリストへ", "この条件で絞り込む", "決定"];
+    var conf = null;
+    try { conf = _findByText(labels); } catch (_) { conf = null; }
+    if (!conf) {
+      try {
+        var els = Array.prototype.slice.call(document.querySelectorAll("a,button,div,span,li,p,label"));
+        for (var i = 0; i < els.length && !conf; i++) {
+          var el = els[i];
+          if (!isVisible(el)) continue;
+          var tx = String(el.textContent || "").replace(/\s+/g, "");
+          if (!tx || tx.length > 40) continue;
+          if (/確定してリストへ|この条件で絞り込む/.test(tx)) conf = el;
+        }
+      } catch (_) {}
+    }
+    if (!conf) return false;
+    try {
+      if (_audit) _auditStepP("modal_confirm", why || "確定してリストへ");
+    } catch (_) {}
+    /**
+     * ★ 2026-11-17 平田さん: 確定は最重要。通常録画 n=332 の画面位置を必ず狙う。
+     *   keys/label で aim を引き、無ければ _screenAimOf。
+     */
+    var _confAim = null;
+    try {
+      _confAim = _screenAimOf("確定してリストへ")
+        || _aimOf("確定してリストへ")
+        || _aimByEl(conf, ["確定してリストへ", "この条件で絞り込む"]);
+    } catch (_) { _confAim = null; }
+    var _confBefore = null;
+    try {
+      var _scrB = _graspStationModalScreen();
+      _confBefore = { formLn: _scrB.formLn, formSt: _scrB.formSt, kind: _scrB.kind };
+    } catch (_) { _confBefore = null; }
+    var _confOpts = Object.assign({}, _uiGapOpts() || {}, {
+      label: "確定してリストへ",
+      keys: ["確定してリストへ", "この条件で絞り込む", "modal_confirm"],
+      aim: _confAim || undefined,
+    });
+    enqueueHumanClick(conf, function (el) {
+      try {
+        // ★ 通常録画と同じく shot_ops に「確定してリストへ」を残す（自動80件で CONFIRM=0 だった抜け）
+        if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", el);
+        try {
+          window.postMessage({ source: "axlx-page", type: "AXLX_REC_NOTE", ev: "click", label: "確定してリストへ" }, "*");
+        } catch (_) {}
+        if (typeof simulateClick === "function") simulateClick(el);
+        else el.click();
+        // ★ 押した理解: 確定が効いたか（モーダル閉鎖／form変化）
+        try {
+          setTimeout(function () {
+            try { _verifyPressUnderstood("confirm", _confBefore); } catch (_) {}
+          }, 400);
+        } catch (_) {}
+      } catch (_) {
+        try { el.click(); } catch (__) {}
+      }
+    }, _uiGapMin(), _uiGapMax(), null, _confOpts);
+    _clearPanelDebt(why || "confirm");
+    return true;
   }
 
   // next_step_button2 がY状態（市区郡選択済み）か確認
@@ -3844,7 +5698,7 @@
     return null;
   }
   /** 外す／選ぶ: label を狙い（checked=false 直書き禁止）＋aimでカーソル */
-  function _toggleCheckboxLikeHuman(cb, wantOn, minGap, maxGap) {
+  function _toggleCheckboxLikeHuman(cb, wantOn, minGap, maxGap, flags) {
     if (!cb) return;
     var hit = _labelForCheckbox(cb) || cb;
     var nm = String(cb.name || "");
@@ -3852,37 +5706,90 @@
     if (/station/.test(nm)) keys.push("station_id[]", "one_station");
     if (/route/.test(nm)) keys.push("route_id[]", "one_line");
     if (/city_code/.test(nm)) keys.push("city_code[]", "one_city");
+    if (/town_code/.test(nm)) keys.push("town_code[]", "one_town");
     if (/room_layout/.test(nm)) keys.push("room_layout_id[]");
+    if (/pet/i.test(nm) || /ペット/.test(String(hit && hit.textContent || ""))) keys.push("pet");
+    var _domain = _intentDomainOfName(nm, hit);
     // ★ 2026-11-17: 固定 420/980 ではなく駅外しと同じ人間レンジ（未指定時）
     var _g = (typeof _clearToggleGapRange === "function")
       ? _clearToggleGapRange()
-      : { lo: 220 + Math.floor(Math.random() * 120), hi: 900 + Math.floor(Math.random() * 500) };
+      : { lo: 950, hi: 1600 };
     var lo = (minGap != null && isFinite(Number(minGap))) ? Number(minGap) : _g.lo;
     var hi = (maxGap != null && isFinite(Number(maxGap))) ? Number(maxGap) : _g.hi;
+    if (lo < 900) lo = 900;
     if (hi <= lo) hi = lo + 400;
+    // ★ 2026-11-17 aim強化: keys を渡して押した位置の学びを引く（route/station/city）
     enqueueHumanClick(hit, function () {
       try {
         if (!cb || !cb.isConnected) return;
-        if (cb.checked === !!wantOn) return;
+        // ★ 2026-11-18 細部徹底: クリック実行直前に要素を視野へ入れ、連続選択時の画面外漏れを防ぐ
+        try { if (typeof _scrollIntoViewSoft === "function") _scrollIntoViewSoft(hit); } catch (_) {}
+        if (cb.checked === !!wantOn) {
+          // 既に望む状態＝「選ぶ/外す」は理解済み（二重押ししない）
+          _noteIntentUnderstood(_domain, wantOn ? "select" : "clear", true, "already");
+          return;
+        }
         // ★ 押す前に was を同期腕上げ（MAIN→isolated）
         var _wasBefore = null;
         try { _wasBefore = !!cb.checked; } catch (_) { _wasBefore = null; }
         try { _armWasForLearn(cb); } catch (_) {}
         try { _noteClickForLearn(cb, _wasBefore); } catch (_) {}
-        // ★ 2026-11-17 統括Pro「外すと選ぶを区別」: 監査に意図を残す（was欠でも測れる）
+        // ★ 意図（外す/選ぶ）を domain 付きで残す（駅・沿線・区・町・ペット・間取り）
         try {
           var _intent = wantOn ? "select" : "clear";
-          if (/station/.test(nm)) _auditStepP(wantOn ? "station_intent_select" : "station_intent_clear", String(cb.value || "").slice(0, 24));
-          else if (/route/.test(nm)) _auditStepP(wantOn ? "line_intent_select" : "line_intent_clear", String(cb.value || "").slice(0, 24));
-          try {
-            window.postMessage({ from: "axlx-rec-note-name", name: (_intent === "clear" ? "外す:" : "選ぶ:") + String(nm || "").slice(0, 20) }, "*");
-          } catch (__) {}
+          if (_audit) _auditStepP(_domain + "_intent_" + _intent, String(cb.value || nm || "").slice(0, 24));
+          window.postMessage({ from: "axlx-rec-note-name", name: (_intent === "clear" ? "外す:" : "選ぶ:") + _domain + ":" + String(nm || "").slice(0, 16) }, "*");
+          if (!wantOn && typeof _noteClearMethod === "function") {
+            _noteClearMethod(_domain, "cursor_checkbox", String(cb.value || nm || "").slice(0, 30));
+          }
         } catch (_) {}
         if (hit && hit !== cb && hit.isConnected) { try { hit.click(); } catch (_) {} }
-        // 直書き禁止: まだ合わなければ input.click をもう1回だけ
-        if (cb.checked !== !!wantOn) { try { cb.click(); } catch (_) {} }
+        /**
+         * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
+         *   録画（audit #1498）: 天王寺区が label→name→label→name→label→city_code[] と3回切り替わり、
+         *   その後に未選択へ戻っていた（押して外れた）。
+         *   原因の見立て: 押した直後に checked を**すぐ**読んで「まだ選ばれていない」と判断し、
+         *   サイト側の反映が遅れているだけなのに 2回目・3回目を重ねて**元に戻していた**。
+         *   → 押した後は反映を最大 ~240ms 待ってから判断し、本当に変わっていない時だけ次の手を打つ（1手ずつ待つ）。
+         */
+        var _settleChk = function (ms) {
+          return new Promise(function (resolve) {
+            var t0 = Date.now();
+            (function poll() {
+              var ok = false;
+              try { ok = (cb.checked === !!wantOn); } catch (_) { ok = false; }
+              if (ok || Date.now() - t0 >= ms) { resolve(ok); return; }
+              setTimeout(poll, 40);
+            })();
+          });
+        };
+        var _t0Toggle = Date.now();
+        return _settleChk(240).then(function (ok1) {
+          if (ok1) {
+            try { if (Date.now() - _t0Toggle > 60 && _audit) _auditStepP("toggle_late_ok", _domain + " 反映待ち" + (Date.now() - _t0Toggle) + "ms（重ね押ししない）"); } catch (_) {}
+            return true;
+          }
+          // 直書き禁止: まだ合わなければ input.click をもう1回だけ
+          try { cb.click(); } catch (_) {}
+          return _settleChk(240);
+        }).then(function (ok2) {
+          if (ok2) return true;
+          /**
+           * ★ 2026-11-17 DB toggleFail station=9 line=4:
+           *   native click で状態が変わらない時は simulateClick（リアプロ jQuery）を1回。
+           */
+          if (typeof simulateClick === "function") {
+            try { simulateClick(hit && hit.isConnected ? hit : cb); } catch (_) {}
+            return _settleChk(320);
+          }
+          return false;
+        }).then(function () {
+          // ★ 土台: 効いたか検証（押したつもりで終わらせない）
+          try { _verifyCheckboxUnderstood(cb, wantOn, _domain); } catch (_) {}
+          return true;
+        }, function () { return true; });
       } catch (_) {}
-    }, lo, hi, null, { keys: keys, label: nm || "toggle", sigma: 0.55 });
+    }, lo, hi, null, { keys: keys, label: nm || "toggle", sigma: 0.55, quick: !!(flags && flags.quick) });
   }
   /** 可視の駅／沿線ラベル数・チェック済み数 */
   function _visStationLabels() {
@@ -3901,68 +5808,675 @@
     return n;
   }
   /**
-   * ★ 見える駅だけ1つずつ外す（直書き禁止）。沿線は触らない。
+   * ★ 2026-11-17 竹内さん「押した／外した／選んだの理解の抜けは駅以外にも」:
+   *   土台: どの欄か（domain）・意図（select/clear/press）・結果（ok/fail）を1か所で残す。
+   *   沿線押し≠駅選択、外す≠選ぶ、押したつもり≠効いた、を全UIで同じ型にする。
+   *   domain: line|station|ward|town|pet|layout|confirm|search|go|back|other
+   */
+  function _intentDomainOfName(nm, el) {
+    var s = String(nm || "");
+    var cls = "";
+    try { cls = String((el && el.className) || ""); } catch (_) { cls = ""; }
+    var tx = "";
+    try { tx = String((el && el.textContent) || "").replace(/\s+/g, "").slice(0, 24); } catch (_) { tx = ""; }
+    if (/station_id|one_station/.test(s + cls) || /駅/.test(tx) && /one_station/.test(cls)) return "station";
+    if (/route_id|one_line/.test(s + cls)) return "line";
+    if (/city_code|one_city|所在地/.test(s + cls + tx)) return "ward";
+    if (/town_code|one_town/.test(s + cls)) return "town";
+    if (/pet|ペット|eq_rm/.test(s + cls + tx)) return "pet";
+    if (/room_layout|間取/.test(s + cls + tx)) return "layout";
+    if (/確定してリスト|この条件で絞り込む/.test(tx)) return "confirm";
+    if (/検索|go_search/.test(s + cls + tx)) return "search";
+    if (/駅の設定へ進む/.test(tx)) return "go";
+    if (/沿線の設定へ戻る|沿線を選び直す/.test(tx)) return "back";
+    if (/所在地絞り込み/.test(tx)) return "open_area";
+    if (/沿線・駅絞り込み|沿線駅絞り込み/.test(tx)) return "open_station";
+    if (/間取り絞り込み/.test(tx)) return "open_layout";
+    if (/絞り込み条件/.test(tx)) return "open_filter";
+    return "other";
+  }
+  /** domain → リアプロボタン台帳の正名（1つずつ理解の測り方） */
+  function _buttonIdOfDomain(domain) {
+    var d = String(domain || "");
+    if (d === "station") return "station_id[]";
+    if (d === "line") return "route_id[]";
+    if (d === "ward") return "city_code[]";
+    if (d === "town") return "town_code[]";
+    if (d === "layout") return "room_layout_id[]";
+    if (d === "pet") return "eq_rm[]";
+    if (d === "confirm") return "確定してリストへ";
+    if (d === "go") return "駅の設定へ進む";
+    if (d === "back") return "沿線の設定へ戻る";
+    if (d === "search") return "検索";
+    if (d === "open_area") return "所在地絞り込み＋";
+    if (d === "open_station") return "沿線・駅絞り込み＋";
+    if (d === "open_layout") return "間取り絞り込み＋";
+    if (d === "open_filter") return "絞り込み条件＋";
+    return d || "other";
+  }
+  /** 意図→結果の理解を監査＋録画に残す（抜けの測り方を統一・ボタン台帳正名付き） */
+  function _noteIntentUnderstood(domain, intent, ok, detail) {
+    try {
+      var k = String(domain || "other") + "_" + (ok ? "done_" : "fail_") + String(intent || "press");
+      // 互換: station_done_select / line_done_clear 等
+      if (ok && (intent === "select" || intent === "clear")) {
+        k = String(domain || "other") + "_done_" + intent;
+      } else if (!ok && (intent === "select" || intent === "clear")) {
+        k = "toggle_fail";
+      } else if (ok && intent === "press") {
+        k = String(domain || "other") + "_press_ok";
+      } else if (!ok && intent === "press") {
+        k = String(domain || "other") + "_press_fail";
+      }
+      if (_audit) _auditStepP(k, String(detail || "").slice(0, 80));
+      var btnId = _buttonIdOfDomain(domain);
+      try {
+        if (!window.__axlxBtnUnderstood) window.__axlxBtnUnderstood = {};
+        window.__axlxBtnUnderstood[btnId + ":" + String(intent || "press")] = !!ok;
+      } catch (_) {}
+      try {
+        var label =
+          (intent === "clear" ? "外す済:" : intent === "select" ? "選ぶ済:" : ok ? "押す済:" : "押す失敗:") +
+          String(btnId || domain || "") +
+          (detail ? ":" + String(detail).slice(0, 16) : "");
+        window.postMessage({ from: "axlx-rec-note-name", name: label.slice(0, 40) }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  /**
+   * チェック欄: 押したあと want と now が一致したか。一致しなければ1回だけリトライして理解を確定。
+   * @returns {boolean} 理解できた（効いた）
+   */
+  function _verifyCheckboxUnderstood(cb, wantOn, domain) {
+    if (!cb) return false;
+    var now = false;
+    try { now = !!cb.checked; } catch (_) { return false; }
+    if (now === !!wantOn) {
+      _noteIntentUnderstood(domain || _intentDomainOfName(cb.name, cb), wantOn ? "select" : "clear", true, String(cb.value || cb.name || "").slice(0, 24));
+      return true;
+    }
+    // もう1回だけ（理解できていない＝効いていない）
+    try {
+      var hit = _labelForCheckbox(cb) || cb;
+      if (typeof simulateClick === "function") simulateClick(hit);
+      else if (hit && hit.click) hit.click();
+      else cb.click();
+    } catch (_) {}
+    try { now = !!cb.checked; } catch (_) { now = false; }
+    var ok = now === !!wantOn;
+    _noteIntentUnderstood(domain || _intentDomainOfName(cb.name, cb), wantOn ? "select" : "clear", ok, "retry now=" + now + " want=" + wantOn);
+    return ok;
+  }
+  /**
+   * ボタン押しの理解: 押す前の印 → 押す → 期待する変化があったか。
+   * kind: confirm（モーダル閉じ／form変化）| go（station_listへ）| back（line_listへ）| search（検索開始）
+   */
+  function _verifyPressUnderstood(kind, before) {
+    var ok = false;
+    var detail = "";
+    try {
+      if (kind === "confirm") {
+        var scr = _graspStationModalScreen();
+        var area = typeof _graspAreaModalScreen === "function" ? _graspAreaModalScreen() : null;
+        ok = (scr && scr.kind === "closed") || (area && area.kind === "closed") ||
+          (before && before.formLn != null && scr.formLn !== before.formLn) ||
+          (before && before.formSt != null && scr.formSt !== before.formSt);
+        // パネルが残っていても確定文言が消えていればOK寄り
+        if (!ok) {
+          var still = false;
+          try { still = !!_findByText(["確定してリストへ", "この条件で絞り込む"]); } catch (_) { still = false; }
+          ok = !still;
+        }
+        detail = "scr=" + (scr && scr.kind) + " formLn=" + (scr && scr.formLn) + " formSt=" + (scr && scr.formSt);
+      } else if (kind === "go") {
+        var scrG = _graspStationModalScreen();
+        ok = scrG.kind === "station_list" || scrG.stVis > 0;
+        detail = "scr=" + scrG.kind + " stVis=" + scrG.stVis;
+      } else if (kind === "back") {
+        var scrB = _graspStationModalScreen();
+        ok = scrB.kind === "line_list" || scrB.lineVis > 0;
+        detail = "scr=" + scrB.kind;
+      } else if (kind === "search") {
+        ok = true; // 検索は clickSearch 側の監査で追う（ここでは押下キュー投入の理解）
+        detail = "queued";
+      }
+    } catch (_) { ok = false; }
+    _noteIntentUnderstood(kind === "go" || kind === "back" ? kind : kind, "press", ok, detail);
+    return ok;
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「地域や間取りも把握／前客→新客／外したと押したを理解／統括Pro細かく」:
+   *   駅場面と同じ型で、区・間取り・客切替も「今の残・want・次の段」を1つに決める。
+   *   外した≠押した。前客の残を残したまま新客に入らない。
+   */
+  function _countCheckedWards() {
+    try { return document.querySelectorAll('input[name="city_code[]"]:checked').length; } catch (_) { return 0; }
+  }
+  function _countCheckedTowns() {
+    try { return document.querySelectorAll('input[name="town_code[]"]:checked').length; } catch (_) { return 0; }
+  }
+  function _countCheckedLayouts() {
+    try { return document.querySelectorAll('input[name="room_layout_id[]"]:checked').length; } catch (_) { return 0; }
+  }
+  /** 前客→新客の切替把握（残チェック＋forceClear旗を測れる印にする） */
+  function _understandCustomerSwitch(prevId, nextId, cond) {
+    var prev = prevId != null ? String(prevId) : "";
+    var next = nextId != null ? String(nextId) : "";
+    var switched = !!(prev && next && prev !== next);
+    var first = !prev && !!next;
+    var same = !!(prev && next && prev === next);
+    var wardN = _countCheckedWards();
+    var townN = _countCheckedTowns();
+    var stN = 0, lnN = 0, layN = 0;
+    try { stN = _countCheckedStations(); } catch (_) { stN = 0; }
+    try { lnN = _countCheckedRoutes(); } catch (_) { lnN = 0; }
+    layN = _countCheckedLayouts();
+    var force = false;
+    try { force = !!_shouldForceClearPrevPlace(); } catch (_) { force = false; }
+    var residual = wardN + townN + stN + lnN + layN;
+    var phase = "ok_clean";
+    if (switched && residual > 0) phase = "need_clear_prev";
+    else if (switched && residual === 0) phase = "switched_clean";
+    else if (first) phase = "first_customer";
+    else if (same && residual > 0) phase = "same_customer_residual";
+    else if (same) phase = "same_customer";
+    var wantWard = (cond && cond.city_codes && cond.city_codes.length) ? cond.city_codes.length : 0;
+    var wantSt = (cond && cond.station_names && cond.station_names.length) ? cond.station_names.length : 0;
+    var wantLay = 0;
+    try {
+      if (cond && cond.floor_plan) wantLay = 1;
+      if (_axExpect && _axExpect.layoutVals && _axExpect.layoutVals.length) wantLay = _axExpect.layoutVals.length;
+    } catch (_) {}
+    try {
+      var sig = phase + "|" + prev.slice(0, 8) + ">" + next.slice(0, 8) + "|r" + residual + "|f" + (force ? 1 : 0);
+      if (window.__axlxSwitchSceneSig !== sig) {
+        window.__axlxSwitchSceneSig = sig;
+        if (_audit) {
+          _auditStepP(
+            "switch_grasp",
+            phase +
+              " prev=" + (prev ? prev.slice(0, 8) : "-") +
+              " next=" + (next ? next.slice(0, 8) : "-") +
+              " 残:区" + wardN + "町" + townN + "駅" + stN + "沿線" + lnN + "間取" + layN +
+              " forceClear=" + (force ? "Y" : "N") +
+              " want:区" + wantWard + "駅" + wantSt + "間取" + wantLay,
+          );
+        }
+        try {
+          window.postMessage({
+            from: "axlx-rec-note-name",
+            name: ("切替把握:" + phase).slice(0, 40),
+          }, "*");
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      _noteFlowPhase(
+        "switch",
+        true,
+        phase + " prev=" + (prev ? prev.slice(0, 8) : "-") + " next=" + (next ? next.slice(0, 8) : "-"),
+      );
+    } catch (_) {}
+    return {
+      phase: phase,
+      switched: switched,
+      residual: residual,
+      wardN: wardN,
+      townN: townN,
+      stN: stN,
+      lnN: lnN,
+      layN: layN,
+      force: force,
+    };
+  }
+  /** 地域（区・町）場面: 余分の外し／wantの選択／確定の段 */
+  function _understandWardScene(cond) {
+    var scr = typeof _graspAreaModalScreen === "function" ? _graspAreaModalScreen() : { kind: "unknown" };
+    var wantCodes = [];
+    try {
+      if (cond && cond.city_codes && cond.city_codes.length) {
+        wantCodes = cond.city_codes.map(String);
+      } else if (_axExpect && _axExpect.cityCodes && _axExpect.cityCodes.length) {
+        wantCodes = _axExpect.cityCodes.map(String);
+      }
+    } catch (_) { wantCodes = []; }
+    var allChk = [];
+    try {
+      allChk = Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked'))
+        .map(function (cb) { return String(cb.value); });
+    } catch (_) { allChk = []; }
+    var townN = _countCheckedTowns();
+    var hitWant = wantCodes.length
+      ? wantCodes.filter(function (v) { return allChk.indexOf(v) >= 0; })
+      : [];
+    var extras = wantCodes.length
+      ? allChk.filter(function (v) { return wantCodes.indexOf(v) < 0; })
+      : allChk.slice();
+    var phase = "unknown";
+    if (extras.length) phase = "need_clear_extras";
+    else if (wantCodes.length && hitWant.length < wantCodes.length) phase = "need_select";
+    else if (wantCodes.length && hitWant.length >= wantCodes.length && extras.length === 0) phase = "ok";
+    else if (!wantCodes.length && (allChk.length || townN)) phase = "need_clear_all";
+    else if (!wantCodes.length && !allChk.length && !townN) phase = "ok_empty";
+    try {
+      var sig = phase + "|w" + hitWant.length + "/" + wantCodes.length + "|x" + extras.length + "|t" + townN + "|" + (scr && scr.kind);
+      if (window.__axlxWardSceneSig !== sig) {
+        window.__axlxWardSceneSig = sig;
+        if (_audit) {
+          _auditStepP(
+            "ward_scene",
+            phase + " screen=" + (scr && scr.kind) +
+              " want済=" + hitWant.length + "/" + wantCodes.length +
+              " 余分=" + extras.length + " 町残=" + townN,
+          );
+        }
+        if (phase === "ok" || phase === "ok_empty") {
+          _noteIntentUnderstood("ward", extras.length ? "clear" : "select", true, "scene_" + phase);
+        }
+      }
+    } catch (_) {}
+    return {
+      phase: phase,
+      hitWant: hitWant.length,
+      wantN: wantCodes.length,
+      extras: extras.length,
+      townN: townN,
+      screen: scr && scr.kind,
+    };
+  }
+  /** 間取り場面: 前客余分の外し／want選択の段（関所・適用後で同じ印） */
+  function _understandLayoutScene(wantVals) {
+    var want = [];
+    try {
+      if (wantVals && wantVals.length) want = wantVals.map(String);
+      else if (_axExpect && _axExpect.layoutVals && _axExpect.layoutVals.length) want = _axExpect.layoutVals.map(String);
+    } catch (_) { want = []; }
+    var allChk = [];
+    try {
+      allChk = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
+        .map(function (cb) { return String(cb.value); });
+    } catch (_) { allChk = []; }
+    var hitWant = want.length ? want.filter(function (v) { return allChk.indexOf(v) >= 0; }) : [];
+    var extras = want.length
+      ? allChk.filter(function (v) { return want.indexOf(v) < 0; })
+      : allChk.slice();
+    var phase = "unknown";
+    if (extras.length) phase = "need_clear_extras";
+    else if (want.length && !hitWant.length) phase = "need_select";
+    else if (want.length && hitWant.length < want.length) phase = "need_select_more";
+    else if (want.length && hitWant.length >= want.length && !extras.length) phase = "ok";
+    else if (!want.length && allChk.length) phase = "need_clear_all";
+    else if (!want.length && !allChk.length) phase = "ok_empty";
+    try {
+      var sig = phase + "|h" + hitWant.length + "/" + want.length + "|x" + extras.length;
+      if (window.__axlxLayoutSceneSig !== sig) {
+        window.__axlxLayoutSceneSig = sig;
+        if (_audit) {
+          _auditStepP(
+            "layout_scene",
+            phase + " want済=" + hitWant.length + "/" + want.length + " 余分=" + extras.length + " 画面=" + allChk.length,
+          );
+        }
+        if (phase === "ok") {
+          _noteIntentUnderstood("layout", "select", true, "scene_ok " + hitWant.length + "/" + want.length);
+        } else if (phase === "ok_empty") {
+          _noteIntentUnderstood("layout", "clear", true, "scene_ok_empty");
+        }
+      }
+    } catch (_) {}
+    return {
+      phase: phase,
+      hitWant: hitWant.length,
+      wantN: want.length,
+      extras: extras.length,
+      checked: allChk.length,
+    };
+  }
+  /**
+   * ★ 2026-11-17 悠さん自動実測: 沿線は form で checked（was→now=true）なのに
+   *   可視 one_line だけ見ると0 →「沿線未選択で駅へ進まない」連発→駅0のまま確定。
+   *   → **form の route_id[] / station_id[] も必ず見る**（可視と大きい方）。
+   */
+  function _countCheckedRoutes() {
+    var vis = 0, form = 0;
+    try { vis = _countCheckedVisible(_visLineLabels()); } catch (_) { vis = 0; }
+    try { form = document.querySelectorAll('input[name="route_id[]"]:checked').length; } catch (_) { form = 0; }
+    return Math.max(vis, form);
+  }
+  function _countCheckedStations() {
+    var vis = 0, form = 0;
+    try {
+      vis = Array.prototype.slice.call(document.querySelectorAll("label.one_station"))
+        .filter(isVisible)
+        .filter(function (lb) {
+          var cb = lb.querySelector && lb.querySelector('input[type="checkbox"]');
+          if (!cb && lb.htmlFor) { try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; } }
+          return !!(cb && cb.checked);
+        }).length;
+    } catch (_) { vis = 0; }
+    try { form = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { form = 0; }
+    return Math.max(vis, form);
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「同じ駅名でも沿線ごとに選択／十三は該当沿線すべて押す」:
+   *   旧は駅名ごとに「1つでも checked なら1」→ 沿線3本でも十三が1つで完了扱い。
+   *   → **同名ラベルの本数ぶん**数える（沿線ごとの駅チェックを把握する）。
+   */
+  function _stationNameMatch(ptxt, clean) {
+    var t = String(ptxt || "").replace(/\s+/g, "").replace(/駅$/, "");
+    var c = String(clean || "").replace(/\s+/g, "").replace(/駅$/, "");
+    if (!t || !c) return false;
+    return t === c || (t.length >= 2 && c.length >= 2 && (t.startsWith(c) || c.startsWith(t)));
+  }
+  /** want 駅名に当たる label.one_station（または station_id[]）の本数＝沿線ごとの候補 */
+  function _countWantStationTargets(names, cond) {
+    var want = (names || []).map(function (s) { return String(s || "").replace(/駅$/, "").trim(); }).filter(Boolean);
+    if (!want.length) return 0;
+    var n = 0;
+    try {
+      var labels = Array.prototype.slice.call(document.querySelectorAll("label.one_station"));
+      if (!labels.length) {
+        Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]')).forEach(function (inp) {
+          var lab = null;
+          try { lab = _labelForCheckbox(inp) || inp.parentElement; } catch (_) { lab = inp.parentElement; }
+          var ptxt = String((lab && lab.textContent) || "");
+          if (want.some(function (c) { return _stationNameMatch(ptxt, c); })) n++;
+        });
+      } else {
+        labels.forEach(function (lab) {
+          var ptxt = String(lab.textContent || "");
+          if (want.some(function (c) { return _stationNameMatch(ptxt, c); })) n++;
+        });
+      }
+    } catch (_) {}
+    /**
+     * ★ 地図期待: DOM がまだ少ない／見えていない時も「十三×3沿線なら3本」を落とさない。
+     *   DOM本数と地図期待の大きい方を採用。
+     */
+    try {
+      var mapExp = _mapExpectWantStationTargets(want, _selectedLineNamesNow(cond || null));
+      if (mapExp > n) n = mapExp;
+    } catch (_) {}
+    return n;
+  }
+  /** want 駅名に当たる checked 本数（同名が複数沿線にあれば複数） */
+  function _countWantStationsChecked(names) {
+    var want = (names || []).map(function (s) { return String(s || "").replace(/駅$/, "").trim(); }).filter(Boolean);
+    if (!want.length) return 0;
+    var ok = 0;
+    try {
+      var inputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'));
+      inputs.forEach(function (inp) {
+        var lab = null;
+        try { lab = _labelForCheckbox(inp) || inp.parentElement; } catch (_) { lab = inp.parentElement; }
+        var ptxt = String((lab && lab.textContent) || "");
+        if (want.some(function (c) { return _stationNameMatch(ptxt, c); })) ok++;
+      });
+    } catch (_) {}
+    return ok;
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「沿線押した／駅選択／外したの理解ができていない」:
+   *   DB: 自動 line_select多数・st_select=0・go_block大量・confirmあり。
+   *   → 今の画面＋formの本数＋客の want から「次に何をすべき段」を1つに決める。
+   *   沿線押し ≠ 駅選択。外す ≠ 選ぶ。確定は駅が揃ってから。
+   */
+  function _understandStationScene(cond) {
+    var scr = _graspStationModalScreen();
+    var wantStN = (cond && cond.station_names && cond.station_names.length) ? cond.station_names.length : 0;
+    var wantLnN = (cond && cond.route_ids && cond.route_ids.length) ? cond.route_ids.length : 0;
+    var formLn = 0, formSt = 0, wantOk = 0;
+    try { formLn = _countCheckedRoutes(); } catch (_) { formLn = 0; }
+    try { formSt = _countCheckedStations(); } catch (_) { formSt = 0; }
+    var wantTargets = 0;
+    try { wantOk = wantStN ? _countWantStationsChecked(cond.station_names) : 0; } catch (_) { wantOk = 0; }
+    try { wantTargets = wantStN ? _countWantStationTargets(cond.station_names, cond) : 0; } catch (_) { wantTargets = wantStN; }
+    if (wantTargets < wantStN) wantTargets = wantStN;
+    try { _auditLineStationMap(cond); } catch (_) {}
+    var phase = "unknown";
+    if (scr.kind === "closed") phase = "need_open";
+    else if (wantLnN > 0 && formLn < 1 && scr.kind !== "station_list") phase = "need_line_select";
+    else if (wantStN > 0 && formLn >= 1 && (scr.kind === "line_list" || (scr.canGoSt && scr.kind !== "station_list")) && wantOk < 1)
+      phase = "need_go_station";
+    else if (wantStN > 0 && (scr.kind === "station_list" || scr.stVis > 0) && wantOk < wantTargets)
+      phase = "need_station_select";
+    else if (wantStN > 0 && wantOk >= wantTargets) phase = "need_confirm";
+    else if (wantStN === 0 && formLn >= 1) phase = "need_confirm_line_only";
+    else if (scr.kind === "station_list" && wantStN > 0) phase = "need_station_select";
+    try {
+      var sig = phase + "|" + scr.kind + "|ln" + formLn + "|st" + formSt + "|ok" + wantOk + "/" + wantTargets;
+      if (window.__axlxStationSceneSig !== sig) {
+        window.__axlxStationSceneSig = sig;
+        if (_audit) {
+          _auditStepP(
+            "station_scene",
+            phase + " screen=" + scr.kind +
+              " 沿線form=" + formLn + "/" + wantLnN +
+              " 駅form=" + formSt + " want済=" + wantOk + "/" + wantTargets +
+              "（名" + wantStN + "）" +
+              (scr.canGoSt ? " go可" : "") + (scr.canBackLn ? " back可" : ""),
+          );
+        }
+      }
+    } catch (_) {}
+    return {
+      screen: scr.kind,
+      formLn: formLn,
+      formSt: formSt,
+      wantLnN: wantLnN,
+      wantStN: wantStN,
+      wantTargets: wantTargets,
+      wantOk: wantOk,
+      phase: phase,
+      canGoSt: !!scr.canGoSt,
+      canBackLn: !!scr.canBackLn,
+      scr: scr,
+    };
+  }
+  /**
+   * ★ 2026-11-17 竹内さん「路線の画面の把握／ほかの画面も構造を把握／把握力が足りない」:
+   *   旧は visLn/visSt の数だけで判断 → DOMに両方残ると誤認 → back連打・駅外しを沿線画面でやる／
+   *   station_modal_fail「路線一覧なし」。
+   *   → **今どの画面か**を構造で読む土台（line_list / station_list / closed / unknown）。
+   *   正本: 沿線一覧＝one_line可視＋「駅の設定へ進む」／駅一覧＝one_station可視＋「沿線の設定へ戻る」。
+   * @returns {{ kind: string, lineVis: number, stVis: number, formSt: number, formLn: number, canGoSt: boolean, canBackLn: boolean, canConfirm: boolean }}
+   */
+  function _graspStationModalScreen() {
+    var lineVis = 0, stVis = 0, formSt = 0, formLn = 0;
+    try { lineVis = _visLineLabels().length; } catch (_) { lineVis = 0; }
+    try { stVis = _visStationLabels().length; } catch (_) { stVis = 0; }
+    try { formSt = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { formSt = 0; }
+    try { formLn = document.querySelectorAll('input[name="route_id[]"]:checked').length; } catch (_) { formLn = 0; }
+    // 遷移ボタンの可視（画面の印）
+    var canGoSt = false, canBackLn = false, canConfirm = false;
+    try {
+      var els = Array.prototype.slice.call(document.querySelectorAll("a,button,div,span,li"));
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!isVisible(el)) continue;
+        var tx = String(el.textContent || "").replace(/\s+/g, "");
+        if (!tx || tx.length > 28) continue;
+        if (/駅の設定へ進む/.test(tx)) canGoSt = true;
+        if (/沿線の設定へ戻る|沿線を選び直す/.test(tx)) canBackLn = true;
+        if (/確定してリストへ|この条件で絞り込む/.test(tx)) canConfirm = true;
+      }
+    } catch (_) {}
+    /**
+     * 判定優先:
+     *   1) 駅ラベル可視＋戻る → station_list（駅画面）
+     *   2) 沿線ラベル可視＋進む → line_list（沿線画面）
+     *   3) 駅だけ可視 → station_list
+     *   4) 沿線だけ可視 → line_list
+     *   5) 確定だけ／モーダル痕跡なし → closed
+     *   6) それ以外 → unknown
+     */
+    var kind = "unknown";
+    if (stVis > 0 && (canBackLn || lineVis === 0)) kind = "station_list";
+    else if (lineVis > 0 && (canGoSt || stVis === 0)) kind = "line_list";
+    else if (stVis > 0) kind = "station_list";
+    else if (lineVis > 0) kind = "line_list";
+    else if (!canGoSt && !canBackLn && formSt === 0 && formLn === 0 && !canConfirm) kind = "closed";
+    else if (canConfirm && lineVis === 0 && stVis === 0) kind = "closed";
+    var out = {
+      kind: kind,
+      lineVis: lineVis,
+      stVis: stVis,
+      formSt: formSt,
+      formLn: formLn,
+      canGoSt: canGoSt,
+      canBackLn: canBackLn,
+      canConfirm: canConfirm,
+    };
+    try {
+      var prev = window.__axlxScreenGraspSt;
+      var sig = kind + ":" + lineVis + ":" + stVis + ":" + formSt + ":" + formLn;
+      if (prev !== sig) {
+        window.__axlxScreenGraspSt = sig;
+        if (_audit) {
+          _auditStepP(
+            "screen_grasp",
+            "station=" + kind + " lineVis=" + lineVis + " stVis=" + stVis +
+              " formSt=" + formSt + " formLn=" + formLn +
+              (canGoSt ? " go" : "") + (canBackLn ? " back" : "") + (canConfirm ? " conf" : ""),
+          );
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+  /**
+   * ★ 所在地モーダルの画面把握（pref / ward / town / closed / unknown）
+   */
+  function _graspAreaModalScreen() {
+    var wardVis = 0, townVis = 0, prefVis = 0;
+    try {
+      wardVis = Array.prototype.slice.call(document.querySelectorAll("label.one_city")).filter(isVisible).length;
+    } catch (_) { wardVis = 0; }
+    try {
+      townVis = Array.prototype.slice.call(document.querySelectorAll("label.one_town")).filter(isVisible).length;
+    } catch (_) { townVis = 0; }
+    try {
+      prefVis = Array.prototype.slice.call(document.querySelectorAll('input[name="pref_code"]'))
+        .filter(function (inp) { return inp.parentElement && isVisible(inp.parentElement); }).length;
+    } catch (_) { prefVis = 0; }
+    var canNext = false, canConfirm = false;
+    try {
+      var els = Array.prototype.slice.call(document.querySelectorAll("a,button,div,span"));
+      for (var i = 0; i < els.length; i++) {
+        if (!isVisible(els[i])) continue;
+        var tx = String(els[i].textContent || "").replace(/\s+/g, "");
+        if (/詳細な地域の設定へ|次へ/.test(tx) && tx.length < 24) canNext = true;
+        if (/確定してリストへ/.test(tx)) canConfirm = true;
+      }
+    } catch (_) {}
+    var kind = "unknown";
+    if (townVis > 0) kind = "town_list";
+    else if (wardVis > 0) kind = "ward_list";
+    else if (prefVis > 0) kind = "pref_list";
+    else if (!canNext && !canConfirm) kind = "closed";
+    try {
+      var prev = window.__axlxScreenGraspArea;
+      var sig = kind + ":" + wardVis + ":" + townVis;
+      if (prev !== sig) {
+        window.__axlxScreenGraspArea = sig;
+        if (_audit) _auditStepP("screen_grasp", "area=" + kind + " wardVis=" + wardVis + " townVis=" + townVis);
+      }
+    } catch (_) {}
+    return { kind: kind, wardVis: wardVis, townVis: townVis, prefVis: prefVis, canNext: canNext, canConfirm: canConfirm };
+  }
+  /**
+   * ★ 駅を1つずつ外す（直書き禁止）。沿線は触らない。
+   * ★ 2026-11-17 録画「駅も今回1駅だけ外せていなかった」:
+   *   旧は isVisible でない駅をスキップ → 画面外の1駅が残る。
+   *   → **先に scrollIntoView してから外す**（見えてから押す）。
    * @returns {number}
    */
   function _uncheckVisibleStationsLikeHuman() {
-    var stN = 0;
-    var seen = {};
-    var mark = function (cb) {
+    /**
+     * ★ 2026-11-17 根本: **1回で1駅だけ**外す。
+     *   旧は checked 全件を一括キュー → scrollIntoView が連続で走り、画面外の1駅が残る／押し失敗。
+     *   → 先頭1件を中央へ寄せてから外す。残りは次ティック（状態機械が再呼出し）。
+     */
+    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'));
+    if (!cbs.length) {
+      // 可視ラベル側の残（nameずれ対策）
+      var visLeft = null;
+      _visStationLabels().some(function (lb) {
+        var cb = lb.querySelector && lb.querySelector('input[type="checkbox"]');
+        if (!cb && lb.htmlFor) { try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; } }
+        if (cb && cb.checked) { visLeft = { cb: cb, hit: lb }; return true; }
+        return false;
+      });
+      if (!visLeft) return 0;
       try {
-        var k = String(cb.name || "") + ":" + String(cb.value || "");
-        if (seen[k]) return false;
-        seen[k] = true;
-        return true;
-      } catch (_) { return true; }
-    };
-    Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked')).forEach(function (cb) {
-      var hit = _labelForCheckbox(cb);
-      if (!hit || !isVisible(hit)) return;
-      if (!mark(cb)) return;
-      _toggleCheckboxLikeHuman(cb, false); // 間隔は人間レンジ（固定420-1100禁止）
-      stN++;
-    });
-    _visStationLabels().forEach(function (lb) {
-      var cb = lb.querySelector && lb.querySelector('input[type="checkbox"]');
-      if (!cb && lb.htmlFor) { try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; } }
-      if (!cb || !cb.checked) return;
-      if (!mark(cb)) return;
-      _toggleCheckboxLikeHuman(cb, false);
-      stN++;
-    });
-    return stN;
+        visLeft.hit.scrollIntoView({
+          behavior: Math.random() < 0.8 ? "smooth" : "auto",
+          block: Math.random() < 0.75 ? "center" : "nearest",
+          inline: "nearest",
+        });
+      } catch (_) {}
+      try { if (_audit) _auditStepP("station_scroll_clear", String(visLeft.cb.value || "").slice(0, 24)); } catch (_) {}
+      _toggleCheckboxLikeHuman(visLeft.cb, false);
+      return 1;
+    }
+    var cb0 = cbs[0];
+    var hit0 = _labelForCheckbox(cb0) || cb0;
+    try {
+      if (hit0 && hit0.scrollIntoView) {
+        hit0.scrollIntoView({
+          behavior: Math.random() < 0.8 ? "smooth" : "auto",
+          block: Math.random() < 0.75 ? "center" : "nearest",
+          inline: "nearest",
+        });
+      }
+    } catch (_) {}
+    try { if (_audit) _auditStepP("station_scroll_clear", String(cb0.value || "").slice(0, 24) + " 残" + cbs.length); } catch (_) {}
+    _toggleCheckboxLikeHuman(cb0, false);
+    return 1;
   }
   /**
-   * ★ 見える沿線だけ1つずつ外す（直書き禁止）。駅は触らない。
+   * ★ 沿線を1つずつ外す（直書き禁止）。駅は触らない。
+   *   画面外の沿線もスクロールしてから外す（駅と同じ漏れ防止）。
    * @returns {number}
    */
   function _uncheckVisibleLinesLikeHuman() {
-    var lineN = 0;
-    var seen = {};
-    var mark = function (cb) {
+    /**
+     * ★ 2026-11-17 根本: 駅と同じく **1回で1沿線だけ**（一括キュー禁止）。
+     *   DB: line_clear_after_station が同一沿線を大量連打＝外し失敗のまま次へ進めていた。
+     */
+    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="route_id[]"]:checked'));
+    if (!cbs.length) {
+      var visLeft = null;
+      _visLineLabels().some(function (lb) {
+        var cb = lb.querySelector && lb.querySelector('input[type="checkbox"]');
+        if (!cb && lb.htmlFor) { try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; } }
+        if (cb && cb.checked) { visLeft = { cb: cb, hit: lb }; return true; }
+        return false;
+      });
+      if (!visLeft) return 0;
       try {
-        var k = String(cb.name || "") + ":" + String(cb.value || "");
-        if (seen[k]) return false;
-        seen[k] = true;
-        return true;
-      } catch (_) { return true; }
-    };
-    Array.prototype.slice.call(document.querySelectorAll('input[name="route_id[]"]:checked')).forEach(function (cb) {
-      var hit = _labelForCheckbox(cb);
-      if (!hit || !isVisible(hit)) return;
-      if (!mark(cb)) return;
-      _toggleCheckboxLikeHuman(cb, false);
-      lineN++;
-    });
-    _visLineLabels().forEach(function (lb) {
-      var cb = lb.querySelector && lb.querySelector('input[type="checkbox"]');
-      if (!cb && lb.htmlFor) { try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; } }
-      if (!cb || !cb.checked) return;
-      if (!mark(cb)) return;
-      _toggleCheckboxLikeHuman(cb, false);
-      lineN++;
-    });
-    return lineN;
+        visLeft.hit.scrollIntoView({
+          behavior: Math.random() < 0.8 ? "smooth" : "auto",
+          block: Math.random() < 0.75 ? "center" : "nearest",
+          inline: "nearest",
+        });
+      } catch (_) {}
+      _toggleCheckboxLikeHuman(visLeft.cb, false);
+      return 1;
+    }
+    var cb0 = cbs[0];
+    var hit0 = _labelForCheckbox(cb0) || cb0;
+    try {
+      if (hit0 && hit0.scrollIntoView) {
+        hit0.scrollIntoView({
+          behavior: Math.random() < 0.8 ? "smooth" : "auto",
+          block: Math.random() < 0.75 ? "center" : "nearest",
+          inline: "nearest",
+        });
+      }
+    } catch (_) {}
+    _toggleCheckboxLikeHuman(cb0, false);
+    return 1;
   }
   /**
    * ★ 2026-11-16 竹内さん「駅を外すとき直接入力／1つずつカーソル／まずは駅から次に沿線」:
@@ -4057,46 +6571,63 @@
     try { if (isClickQueueBusy()) return false; } catch (_) {}
 
     var transit = _learnedStationTransitLabels();
+    /** ★ 画面把握土台: 数だけでなく kind で分岐（誤画面操作を止める） */
+    var scr = _graspStationModalScreen();
     var visSt = _visStationLabels();
     var visLn = _visLineLabels();
-    var checkedSt = _countCheckedVisible(visSt);
-    var checkedLn = _countCheckedVisible(visLn);
-    // form 上の残（画面外でも残っている駅）
-    var formSt = 0;
-    try { formSt = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { formSt = 0; }
+    var checkedSt = Math.max(_countCheckedVisible(visSt), Number(scr.formSt) || 0);
+    // ★ 悠さん自動: 可視0でも form の route_id[] checked を沿線ありと見る
+    var checkedLn = Math.max(_countCheckedVisible(visLn), Number(scr.formLn) || 0);
+    var formSt = scr.formSt;
 
     if (!phase || phase === "start") {
       // ★ 土台 F23/F24: 外し開始を必ず1回残す（測れる）
       try {
         if (!window.__axlxPlaceClearBegan) {
           window.__axlxPlaceClearBegan = true;
-          if (_audit) _auditStepP("station_place_clear_begin", "沿線画面→駅の設定へ→駅外し→沿線外し" + (transit.hit ? "（束の駅手順あり）" : ""));
+          if (_audit) _auditStepP("station_place_clear_begin", "沿線画面→駅の設定へ→駅外し→沿線外し screen=" + scr.kind + (transit.hit ? "（束の駅手順あり）" : ""));
+          try { _noteClearMethod("station", "via_next_then_clear", "begin screen=" + scr.kind); } catch (_) {}
         }
       } catch (_) {}
+      // すでに駅画面にいる → 駅外しへ
+      if (scr.kind === "station_list" && (checkedSt > 0 || formSt > 0 || scr.stVis > 0)) {
+        try { window.__axlxPlaceClearPhase = "clear_stations"; } catch (_) {}
+        return false;
+      }
       if (checkedSt > 0 || (visSt.length && formSt > 0)) {
         try { window.__axlxPlaceClearPhase = "clear_stations"; } catch (_) {}
         return false;
       }
       /**
        * ★ 2026-11-17 DB実測＋竹内さん「沿線を選択せず押してエラー」:
-       *   旧: formSt>0 だけで go_station → **沿線0本のまま「駅の設定へ進む」** → サイトエラー。
-       *   通常録画正本(2.8.46): 沿線が checked → 駅の設定へ進む → 駅外し → 沿線の設定へ戻る。
-       *   → **沿線が1本以上 checked のときだけ**駅ページへ進む。
+       *   → **沿線画面（line_list）かつ沿線1本以上 checked** のときだけ駅へ進む。
        */
-      if (visLn.length > 0 && checkedLn > 0) {
+      if (scr.kind === "line_list" && checkedLn > 0) {
         try { window.__axlxPlaceClearPhase = "go_station"; window.__axlxPlaceClearGoAt = 0; } catch (_) {}
         return false;
       }
-      if (visLn.length > 0 && formSt > 0 && checkedLn === 0) {
+      if (visLn.length > 0 && checkedLn > 0 && scr.kind !== "station_list") {
+        try { window.__axlxPlaceClearPhase = "go_station"; window.__axlxPlaceClearGoAt = 0; } catch (_) {}
+        return false;
+      }
+      if (scr.kind === "line_list" && formSt > 0 && checkedLn === 0) {
         try {
           if (_audit) _auditStepP("station_clear_blocked_no_line", "残駅ありだが沿線未選択→駅へ進まない（エラー防止）");
         } catch (_) {}
-        // 沿線を先に戻せない時は見える沿線外しへは行かず、選択パスで沿線を入れるのを待つ
         return false;
       }
-      if (checkedLn > 0 && formSt === 0 && checkedSt === 0) {
+      if (scr.kind === "line_list" && checkedLn > 0 && formSt === 0 && checkedSt === 0) {
         try { window.__axlxPlaceClearPhase = "clear_lines"; } catch (_) {}
         return false;
+      }
+      if (scr.kind === "closed" && formSt === 0 && scr.formLn === 0) {
+        try {
+          window.__axlxPlaceClearPhase = "done";
+          window.__axlxStationForceClearedOnce = true;
+          window.__axlxLineForceClearedOnce = true;
+          window.__axlxNeedClearStation = false;
+        } catch (_) {}
+        return true;
       }
       // 外す物なし
       try {
@@ -4109,14 +6640,26 @@
     }
 
     if (phase === "go_station") {
-      if (visSt.length > 0) {
+      // 画面把握: すでに駅一覧なら clear へ（進むを連打しない）
+      if (scr.kind === "station_list" || visSt.length > 0) {
         try { window.__axlxPlaceClearPhase = "clear_stations"; } catch (_) {}
         return false;
       }
-      // ★ 沿線0本では絶対に押さない（通常録画・サイト仕様）
+      // ★ 沿線画面以外／沿線0本では絶対に押さない
+      if (scr.kind !== "line_list" && scr.kind !== "unknown") {
+        try {
+          if (_audit) _auditStepP("station_go_wrong_screen", "screen=" + scr.kind + "のため駅の設定へ進むを押さない");
+        } catch (_) {}
+        return false;
+      }
       if (checkedLn < 1) {
         try {
-          if (_audit) _auditStepP("station_go_without_line", "沿線未選択のため駅の設定へ進むを押さない");
+          // 録画ノート汚染防止: 監査は5秒に1回だけ
+          var _gwAt = Number(window.__axlxGoWithoutLineAt) || 0;
+          if (!_gwAt || Date.now() - _gwAt > 5000) {
+            window.__axlxGoWithoutLineAt = Date.now();
+            if (_audit) _auditStepP("station_go_without_line", "沿線未選択のため駅の設定へ進むを押さない");
+          }
         } catch (_) {}
         try { window.__axlxPlaceClearGoAt = 0; } catch (_) {}
         try { window.__axlxPlaceClearPhase = "start"; } catch (_) {}
@@ -4125,20 +6668,22 @@
       var goAt = 0;
       try { goAt = Number(window.__axlxPlaceClearGoAt) || 0; } catch (_) { goAt = 0; }
       if (!goAt) {
+        if (!scr.canGoSt && scr.kind === "line_list") {
+          try { if (_audit) _auditStepP("station_go_no_btn", "沿線画面だが駅の設定へ進むが見えない"); } catch (_) {}
+        }
         if (clickByText(transit.go)) {
           try {
             window.__axlxPlaceClearGoAt = Date.now();
-            if (_audit) _auditStepP("station_clear_via_next", "外しのため沿線画面から駅の設定へ進む（沿線はまだ外さない）" + (transit.hit ? "・束反映" : ""));
+            if (_audit) _auditStepP("station_clear_via_next", "外しのため沿線画面から駅の設定へ進む screen=" + scr.kind + (transit.hit ? "・束反映" : ""));
+            try { _noteClearMethod("station", "via_next", "駅の設定へ進む"); } catch (_) {}
           } catch (_) {}
           console.log("[AX] 強制クリア: 沿線画面→駅の設定へ進む（駅を先に外す）");
         }
-        // ⚠ 失敗時は goAt を立てない（旧: 失敗でも立てて9秒後に沿線直外しへ逃げていた）
         return false;
       }
       if (Date.now() - goAt > 9000) {
-        // 駅ページに入れない → 見える沿線だけ外して続行（最後の手段）
         try {
-          if (_audit) _auditStepP("station_clear_via_next_timeout", "駅ページへ進めず沿線外しへ");
+          if (_audit) _auditStepP("station_clear_via_next_timeout", "駅ページへ進めず沿線外しへ screen=" + scr.kind);
           window.__axlxPlaceClearPhase = "clear_lines";
         } catch (_) {}
       }
@@ -4146,22 +6691,68 @@
     }
 
     if (phase === "clear_stations") {
+      // ★ 駅画面以外では外さない（沿線画面で駅を触る誤操作防止）
+      if (scr.kind === "line_list") {
+        try {
+          if (_audit) _auditStepP("station_clear_wrong_screen", "line_list上で駅外ししない→go_stationへ");
+          window.__axlxPlaceClearPhase = "go_station";
+          window.__axlxPlaceClearGoAt = 0;
+        } catch (_) {}
+        return false;
+      }
       var nSt = _uncheckVisibleStationsLikeHuman();
+      var leftSt = formSt;
+      /**
+       * ★ 2026-11-17 DB: 外し was→now 失敗で clear が無限連打 → モーダル待ちを食いつぶし
+       *   station_modal_fail「路線一覧が表示されませんでした」。
+       *   → 残数が変わらない連続試行を数え、上限で次フェーズへ（細部の暴走止め）。
+       */
+      var stStuck = 0;
+      try {
+        var sk = "st:" + leftSt;
+        if (window.__axlxClearStuckKey === sk) stStuck = (Number(window.__axlxClearStuckN) || 0) + 1;
+        else stStuck = 0;
+        window.__axlxClearStuckKey = sk;
+        window.__axlxClearStuckN = stStuck;
+      } catch (_) { stStuck = 0; }
       if (nSt) {
         try {
-          if (_audit) _auditStepP("station_clear_cursor", "駅" + nSt + "を1つずつ外す（沿線の前）");
+          if (_audit) _auditStepP("station_clear_cursor", "駅" + nSt + "を1つずつ外す（沿線の前）残" + leftSt);
+          try { _noteClearMethod("station", "one_station_label", "外し" + nSt + "残" + leftSt); } catch (_) {}
         } catch (_) {}
         console.log("[AX] 強制クリア: 駅を先に外す", nSt);
-        return false; // キュー消化待ち
+        if (stStuck >= 7) {
+          try {
+            if (_audit) _auditStepP("station_clear_stuck", "残" + leftSt + "・外し失敗連続" + stStuck + "→沿線へ（モーダルタイムアウト防止）");
+          } catch (_) {}
+        } else {
+          return false; // キュー消化待ち
+        }
       }
-      // まだ checked の駅が残って画面外ならもう一度
-      try {
-        if (document.querySelectorAll('input[name="station_id[]"]:checked').length > 0 && visSt.length > 0) {
+      if (leftSt > 0 && stStuck < 7) {
+        var scrollTries = 0;
+        try { scrollTries = Number(window.__axlxStationClearScrollTries) || 0; } catch (_) { scrollTries = 0; }
+        if (scrollTries < 8) {
+          try {
+            var leftCb = document.querySelector('input[name="station_id[]"]:checked');
+            var leftHit = leftCb ? (_labelForCheckbox(leftCb) || leftCb) : null;
+            if (leftHit && leftHit.scrollIntoView) {
+              leftHit.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+            }
+            window.__axlxStationClearScrollTries = scrollTries + 1;
+            if (_audit) _auditStepP("station_clear_scroll_retry", "残" + leftSt + "・試行" + (scrollTries + 1));
+          } catch (_) {}
           return false;
         }
-      } catch (_) {}
+        try {
+          if (_audit) _auditStepP("station_clear_left", "残駅" + leftSt + "を外し切れず沿線へ（上限）");
+        } catch (_) {}
+      }
       try {
         window.__axlxStationForceClearedOnce = true;
+        window.__axlxStationClearScrollTries = 0;
+        window.__axlxClearStuckKey = "";
+        window.__axlxClearStuckN = 0;
         window.__axlxPlaceClearPhase = "back_to_lines";
         window.__axlxPlaceClearBackTries = 0;
         window.__axlxPlaceClearBackAt = Date.now();
@@ -4173,15 +6764,14 @@
       /**
        * ★ 2026-11-17 通常録画（2.8.46）正本:
        *   駅を1つずつ外したあと **「沿線の設定へ戻る」**（g≈1510）→ 沿線を外す／選び直す。
-       *   旧は推測文言だけでこの札を押せず、確定→開き直しに逃げていた。
+       * ★ 画面把握: line_list に着いたら clear_lines。station_list のときだけ back を押す。
+       *   DB back×5連打＝画面を読まず押していた。
        */
-      if (visLn.length > 0) {
-        // 戻った直後は人が一拍置く（録画≈1.5秒）→ すぐ外さず clear_lines へ
+      if (scr.kind === "line_list" || (visLn.length > 0 && scr.kind !== "station_list")) {
         try {
           if (!window.__axlxPlaceClearBackSettled) {
             window.__axlxPlaceClearBackSettled = true;
             var Hb = window.AxlxHumanWait;
-            // 録画 next/back p50≈1510
             var settle = Hb && Hb.logNormalDelay ? Hb.logNormalDelay(1510, 0.4) : 1510;
             if (settle < 900) settle = 900;
             if (settle > 2600) settle = 2600;
@@ -4190,13 +6780,22 @@
           }
           if (Date.now() < (Number(window.__axlxPlaceClearBackSettleUntil) || 0)) return false;
         } catch (_) {}
-        try { window.__axlxPlaceClearPhase = "clear_lines"; } catch (_) {}
+        try { window.__axlxPlaceClearPhase = "clear_lines"; window.__axlxClearStuckKey = ""; window.__axlxClearStuckN = 0; } catch (_) {}
         return false;
       }
+      try {
+        if (Date.now() < (Number(window.__axlxPlaceClearBackSettleUntil) || 0)) return false;
+      } catch (_) {}
       var tries = 0;
       try { tries = Number(window.__axlxPlaceClearBackTries) || 0; } catch (_) { tries = 0; }
-      if (tries < 6) {
-        // ★ 束の駅手順（学習）→ 録画正本文言の順
+      if (tries < 2) {
+        // 駅画面以外で back を押さない（把握）
+        if (scr.kind !== "station_list" && !scr.canBackLn) {
+          try {
+            if (_audit) _auditStepP("station_back_wrong_screen", "screen=" + scr.kind + "・back不可→待ち");
+          } catch (_) {}
+          return false;
+        }
         var backOk = clickByText(transit.back);
         if (!backOk) {
           try {
@@ -4221,14 +6820,25 @@
         if (backOk) {
           try {
             window.__axlxPlaceClearBackSettled = false;
-            if (_audit) _auditStepP("station_clear_back_line", "沿線の設定へ戻る（通常録画どおり）" + (transit.hit ? "・束反映" : ""));
+            // 押した直後は画面遷移を待つ（すぐ再押ししない）
+            var Hb2 = window.AxlxHumanWait;
+            var waitBack = Hb2 && Hb2.logNormalDelay ? Hb2.logNormalDelay(1600, 0.4) : 1600;
+            if (waitBack < 1000) waitBack = 1000;
+            if (waitBack > 2800) waitBack = 2800;
+            window.__axlxPlaceClearBackSettleUntil = Date.now() + waitBack;
+            if (_audit) _auditStepP("station_clear_back_line", "沿線の設定へ戻る#" + (tries + 1) + (transit.hit ? "・束反映" : ""));
           } catch (_) {}
           console.log("[AX] 強制クリア: 沿線の設定へ戻る（録画正本）");
+          return false;
         }
+        // 押せなかった時だけすぐ再試行可
         return false;
       }
       // 戻れない → 一旦確定して沿線モーダルを開き直す（最終手段）
-      if (clickByText(["確定してリストへ", "この条件で絞り込む", "決定"])) {
+      try {
+        if (_audit) _auditStepP("station_clear_back_giveup", "沿線へ戻れず×" + tries + "→一旦確定→再開");
+      } catch (_) {}
+      if (_pressConfirmListLikeHuman("駅クリア中の一旦確定") || clickByText(["確定してリストへ", "この条件で絞り込む", "決定"])) {
         try {
           if (_audit) _auditStepP("station_clear_confirm_mid", "沿線の設定へ戻る無し→一旦確定→沿線再開");
           window.__axlxPlaceClearPhase = "reopen";
@@ -4272,16 +6882,59 @@
     }
 
     if (phase === "clear_lines") {
+      // ★ 駅画面のまま沿線外ししない → 先に back
+      if (scr.kind === "station_list") {
+        try {
+          if (_audit) _auditStepP("line_clear_wrong_screen", "station_list上で沿線外ししない→backへ");
+          window.__axlxPlaceClearPhase = "back_to_lines";
+          window.__axlxPlaceClearBackTries = 0;
+        } catch (_) {}
+        return false;
+      }
       var nLn = _uncheckVisibleLinesLikeHuman();
+      var leftLn = scr.formLn;
+      /** ★ DB: line_clear_after_station 大量連打＝外し失敗のまま同じ沿線を押し続ける */
+      var lnStuck = 0;
+      try {
+        var lk = "ln:" + leftLn;
+        if (window.__axlxClearStuckKey === lk) lnStuck = (Number(window.__axlxClearStuckN) || 0) + 1;
+        else lnStuck = 0;
+        window.__axlxClearStuckKey = lk;
+        window.__axlxClearStuckN = lnStuck;
+      } catch (_) { lnStuck = 0; }
       if (nLn) {
         try {
-          if (_audit) _auditStepP("line_clear_after_station", "駅のあと沿線" + nLn + "を1つずつ外す");
+          if (_audit) _auditStepP("line_clear_after_station", "駅のあと沿線" + nLn + "を1つずつ外す残" + leftLn);
         } catch (_) {}
         console.log("[AX] 強制クリア: 駅のあと沿線を外す", nLn);
-        return false;
+        if (lnStuck < 8) return false;
+        try {
+          if (_audit) _auditStepP("line_clear_stuck", "残" + leftLn + "・外し失敗連続" + lnStuck + "→完了扱い（路線一覧タイムアウト防止）");
+        } catch (_) {}
+      } else if (leftLn > 0) {
+        var lnTries = 0;
+        try { lnTries = Number(window.__axlxLineClearScrollTries) || 0; } catch (_) { lnTries = 0; }
+        if (lnTries < 10 && lnStuck < 8) {
+          try {
+            var leftLcb = document.querySelector('input[name="route_id[]"]:checked');
+            var leftLhit = leftLcb ? (_labelForCheckbox(leftLcb) || leftLcb) : null;
+            if (leftLhit && leftLhit.scrollIntoView) {
+              leftLhit.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+            }
+            window.__axlxLineClearScrollTries = lnTries + 1;
+            if (_audit) _auditStepP("line_clear_scroll_retry", "残" + leftLn + "・試行" + (lnTries + 1));
+          } catch (_) {}
+          return false;
+        }
+        try {
+          if (_audit) _auditStepP("line_clear_left", "残沿線" + leftLn + "を外し切れず完了扱いにする（上限）");
+        } catch (_) {}
       }
       try {
         window.__axlxPlaceClearPhase = "done";
+        window.__axlxLineClearScrollTries = 0;
+        window.__axlxClearStuckKey = "";
+        window.__axlxClearStuckN = 0;
         window.__axlxStationForceClearedOnce = true;
         window.__axlxLineForceClearedOnce = true;
         window.__axlxNeedClearStation = false;
@@ -4304,24 +6957,117 @@
      */
     var codes = (window.__axlxWardCodes && window.__axlxWardCodes.length) ? window.__axlxWardCodes : null;
     if (codes && codes.length) {
-      var hitByCode = 0;
+      /**
+       * ★ 2026-11-17 DB実測 AREA_MISMATCH 欲しい9・入った8・足りない1（西淀川など画面外）:
+       *   旧は未選択を一括キュー → スクロールが追いつかず1区欠ける。
+       *   → **未選択の先頭1区だけ**中央へ寄せて押す。残りは verify ループが再呼出し。
+       */
+      /**
+       * ★ 2026-11-18 竹内さん「直接入力しない／外す場合も選択して外す」:
+       *   欲しくない区が checked のまま残っていると「勝手に入力された」ように見える。
+       *   → 余分な区は **先頭1つだけ** labelクリックで外す（checked=false 直書き禁止）。
+       */
+      try {
+        var wantSet = {};
+        var wantAll = (window.__axlxWardWantAll && window.__axlxWardWantAll.length) ? window.__axlxWardWantAll : codes;
+        for (var wi = 0; wi < wantAll.length; wi++) wantSet[String(wantAll[wi])] = true;
+        var extras = Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked'));
+        for (var ei = 0; ei < extras.length; ei++) {
+          if (wantSet[String(extras[ei].value)]) continue;
+          _toggleCheckboxLikeHuman(extras[ei], false, 620, 1400, { quick: true });
+          try { if (_audit) _auditStepP("ward_extra_clear_click", String(extras[ei].value || "").slice(0, 24)); } catch (_) {}
+          return true; // 1回1外し（カーソル徹底）
+        }
+      } catch (_) {}
+      var already = 0;
+      var target = null;
+      /**
+       * ★ 2026-11-18 平田 通常録画: 人は 都島→北→中央→福島→西→天王寺→浪速→淀川→西淀川 と
+       *   **画面の並び順**（左上から）に1区ずつ押す（間隔0.8〜2.2秒・外しは0回）。
+       *   自動はお客様の書いた順で画面を行き来していた → 画面の並び順に並べ替えて押す。
+       */
+      try {
+        var _domOrder = {};
+        var _allCity = document.querySelectorAll('input[name="city_code[]"]');
+        for (var di = 0; di < _allCity.length; di++) {
+          var _dv = String(_allCity[di].value);
+          if (_domOrder[_dv] == null) _domOrder[_dv] = di;
+        }
+        codes = codes.slice().sort(function (a, b) {
+          var ia = _domOrder[String(a)], ib = _domOrder[String(b)];
+          if (ia == null && ib == null) return 0;
+          if (ia == null) return 1;
+          if (ib == null) return -1;
+          return ia - ib;
+        });
+      } catch (_) {}
       for (var ci2 = 0; ci2 < codes.length; ci2++) {
         var c2 = document.querySelector('input[name="city_code[]"][value="' + String(codes[ci2]) + '"]');
         if (!c2) continue;
         var lb2 = (c2.closest && c2.closest('label')) || c2.parentElement || c2;
-        if (c2.checked) { hitByCode++; _noteWardPicked(codes[ci2], lb2.textContent); continue; }
-        if (isVisible(lb2)) {
-          /**
-           * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
-           * ★ 2026-11-16 細分化: DBでは人が `label.one_city` を押す。input 直ではなく label。
-           */
-          _toggleCheckboxLikeHuman(c2, true, 620, 1400);
-          hitByCode++;
-          _noteWardPicked(codes[ci2], lb2.textContent);
-        }
+        if (c2.checked) { already++; _noteWardPicked(codes[ci2], lb2.textContent); continue; }
+        if (!target) target = { c: c2, lb: lb2, code: codes[ci2] };
       }
-      if (hitByCode > 0) {
-        _auditStepP('ward_by_code', hitByCode + '区（コードで選択）');
+      if (target) {
+        try {
+          if (target.lb && target.lb.scrollIntoView) {
+            target.lb.scrollIntoView({
+              behavior: Math.random() < 0.85 ? "smooth" : "auto",
+              block: Math.random() < 0.7 ? "center" : "nearest",
+              inline: "nearest",
+            });
+          }
+        } catch (_) {}
+        try { if (_audit) _auditStepP("ward_scroll_select", String(target.code) + " 済" + already + "/" + codes.length); } catch (_) {}
+        /**
+         * ★ 2026-11-14 竹内さん「所在地の部分も一気に押すのではなくて一つずつカーソル動かして押すようにする」
+         * ★ 2026-11-16 細分化: DBでは人が `label.one_city` を押す。input 直ではなく label。
+         */
+        try {
+          var _selN = window.__axlxWardSelN || (window.__axlxWardSelN = {});
+          var _sk = String(target.code);
+          _selN[_sk] = (_selN[_sk] || 0) + 1;
+          if (_selN[_sk] === 3 && _audit) {
+            _auditStepP("ward_reselect_loop", _sk + " を3回選び直した（選んだ区が外されている）");
+            console.warn("[AX] 同じ区を3回選び直しています:", _sk);
+          }
+        } catch (_) {}
+        // 同じ区の2回目以降の選び直しは迷い・停止を入れない（天王寺区のように選び直しで止まらない）
+        _toggleCheckboxLikeHuman(target.c, true, 620, 1400, { quick: (window.__axlxWardSelN && window.__axlxWardSelN[String(target.code)] >= 2) });
+        _noteWardPicked(target.code, target.lb && target.lb.textContent);
+        _auditStepP('ward_by_code', '1区（コード・1つずつ）済' + (already + 1) + '/' + codes.length);
+        return true;
+      }
+      /**
+       * ★ 2026-11-18 平田1482: 欲しい9・入った1。未選択コードが querySelector でヒットしないと
+       *   ここで黙って return し、verify が「足りない」まま MAX_RETRY まで空振りする。
+       *   → DOM欠を監査に残し、一覧を下へスクロールして次の verify で拾えるようにする。
+       */
+      if (already < codes.length) {
+        var missDom = [];
+        for (var mj = 0; mj < codes.length; mj++) {
+          if (!document.querySelector('input[name="city_code[]"][value="' + String(codes[mj]) + '"]')) {
+            missDom.push(String(codes[mj]));
+          }
+        }
+        try {
+          if (_audit) {
+            _auditStepP(
+              "ward_dom_miss",
+              "既選" + already + "/" + codes.length
+                + (missDom.length ? (" DOM無=[" + missDom.slice(0, 12).join(",") + "]") : " DOMはあるが未ヒット")
+            );
+          }
+        } catch (_) {}
+        try {
+          var listBox = document.querySelector(".this_window .one_city, label.one_city, .this_window");
+          var scrollEl = (listBox && listBox.closest && (listBox.closest(".this_window") || listBox.parentElement)) || listBox;
+          if (scrollEl && scrollEl.scrollBy) scrollEl.scrollBy({ top: 180 + Math.floor(Math.random() * 80), behavior: "smooth" });
+          else if (scrollEl && scrollEl.scrollTop != null) scrollEl.scrollTop = (scrollEl.scrollTop || 0) + 200;
+        } catch (_) {}
+      }
+      if (already > 0) {
+        _auditStepP('ward_by_code', already + '区（コードで既選択）');
         return true;
       }
     }
@@ -4372,7 +7118,10 @@
 
   // v2.5.50 検索を押す前の関所の材料（fillRealpro が入れるはずの間取りを置く・無ければ見ない）
   var _axExpect = null;
-  var _axGateRetried = false;
+  /** ★ 2026-11-18 平田1484: 間取り3/4で1回リトライ打ち切り→検索なし。回数制に変更 */
+  var _axGateRetried = false; // 互換（真偽として使う旧経路）
+  var _axGateRetryN = 0;
+  var _AX_GATE_RETRY_MAX = 6;
   /**
    * 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
    *   旧は**間取りだけ**を画面で確かめ、家賃・更新日・築年・徒歩・場所（区/駅）は確かめずに検索していた
@@ -4386,7 +7135,7 @@
    *   ⚠ 「−1 / 下限なし」など“指定なし”の値は比べない（入れなくて正しい）。
    */
   function _axGateCheck() {
-    var out = { errors: [], missingLayout: false, extraLayout: false, extraStation: false, extraWard: false };
+    var out = { errors: [], missingLayout: false, extraLayout: false, extraStation: false, extraWard: false, placeMixed: false };
     try {
       if (!_axExpect) return out;
       var sel = function (n) { return document.querySelector('select[name="' + n + '"]'); };
@@ -4468,11 +7217,25 @@
         var allChk = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
           .map(function (cb) { return String(cb.value); });
         var hitWant = want.filter(function (v) { return allChk.indexOf(v) >= 0; });
+        var missingWant = want.filter(function (v) { return allChk.indexOf(v) < 0; });
         var extras = allChk.filter(function (v) { return want.indexOf(v) < 0; });
+        try { if (typeof _understandLayoutScene === "function") _understandLayoutScene(want); } catch (_) {}
         if (!hitWant.length) {
           out.missingLayout = true;
           var total = document.querySelectorAll('input[name="room_layout_id[]"]').length;
           out.errors.push('間取り（' + String(_axExpect.floorPlan || '').slice(0, 30) + '）が画面に入っていない（間取りの欄 ' + total + '個・チェック 0）');
+        }
+        /**
+         * ★ 2026-11-18 HONOKA実測＋統括Pro:
+         *   旧は「欲しい間取りが1つでもあればOK」→ 1DK+1LDK なのに 1DK だけでも関所通過。
+         *   → **全部 hit するまで missingLayout**（同名駅の全押し原則と同型）。
+         */
+        if (missingWant.length) {
+          out.missingLayout = true;
+          out.errors.push(
+            '間取りが足りない（欲しい' + want.length + 'のうち' + hitWant.length
+            + 'だけ／足りない値' + missingWant.slice(0, 6).join(',') + '）'
+          );
         }
         /**
          * ★ 2026-11-16 竹内さん「2LDK以外はずしている／新しいお客さんのように」:
@@ -4486,6 +7249,7 @@
       } else if (_axExpect.floorPlan) {
         /** 条件はあるのに値が空＝全外しのはず。チェックが残っていたら余分 */
         var leftChk = document.querySelectorAll('input[name="room_layout_id[]"]:checked').length;
+        try { if (typeof _understandLayoutScene === "function") _understandLayoutScene([]); } catch (_) {}
         if (leftChk > 0) {
           out.extraLayout = true;
           out.errors.push('間取りを外し切れていない（画面に' + leftChk + '個残っている）');
@@ -4537,22 +7301,34 @@
           out.errors.push('場所（' + String(_axExpect.areaText || '').slice(0, 24) + '）が画面に入っていない（区 ' + wardN + '・駅 ' + stN + '）');
           out.missingArea = true;
         } else {
-          // どちらか入っていれば通す。点検に「どちらで入ったか」を残す（誤解の追跡用）
-          out.area_ok_by = (wardEff > 0 && stEff > 0) ? 'both' : (wardEff > 0 ? 'ward' : 'station');
+          /**
+           * ★ 2026-11-17 竹内さん「地域と駅が混ざったら物件も検索ちゃんとできない／ここはどちらか」:
+           *   旧は both を許可していた → 日本橋などが地域＋駅で同時に残り0件になる。
+           *   → **同時はエラー**（どちらか一方だけ通す）。
+           */
+          if (wardEff > 0 && stEff > 0) {
+            out.placeMixed = true;
+            out.area_ok_by = 'both';
+            out.errors.push('地域と駅が同時に入っている（どちらか一方にする・区' + wardEff + '・駅' + stEff + '）');
+            try { if (_audit) _auditStepP('place_mixed', 'ward=' + wardEff + ' station=' + stEff); } catch (_) {}
+          } else {
+            out.area_ok_by = wardEff > 0 ? 'ward' : 'station';
+          }
           out.area_counts = { dom_ward: wardN, dom_station: stN, remembered_ward: _picked.ward, remembered_station: _picked.station };
         }
         /**
          * ★ 2026-11-16 細分化（所在地↔駅の軸）:
          *   所在地客なのに駅チェックがDOMに残る／駅客なのに区が残る → 前客の場所が混ざる。
          *   モーダル閉鎖後は DOM 0 になりやすいので、**画面に見えている残だけ**を止める。
+         * ★ 2026-11-17: areaMode が空でも両方残っていたら外し忘れとして扱う。
          */
-        if (_axExpect.areaMode === 'ward' && stN > 0) {
+        if ((_axExpect.areaMode === 'ward' || out.placeMixed) && stN > 0) {
           out.extraStation = true;
-          out.errors.push('所在地検索なのに駅・沿線が残っている（' + stN + '）');
+          if (!out.placeMixed) out.errors.push('所在地検索なのに駅・沿線が残っている（' + stN + '）');
         }
-        if (_axExpect.areaMode === 'station' && wardN > 0) {
+        if ((_axExpect.areaMode === 'station' || out.placeMixed) && wardN > 0) {
           out.extraWard = true;
-          out.errors.push('駅・沿線検索なのに所在地が残っている（' + wardN + '）');
+          if (!out.placeMixed) out.errors.push('駅・沿線検索なのに所在地が残っている（' + wardN + '）');
         }
       }
     } catch (e) { /* 読めない時は止めない（今まで通り） */ }
@@ -4604,7 +7380,47 @@
     } catch (_) { return false; }
   }
 
+  /**
+   * ★ 2026-11-17 統括Pro「done印が録画に残っていない／ボタン理解を終わらせる」:
+   *   検索前に、この回で理解できたボタン（選ぶ/外す/押す）を台帳形式で残す。
+   *   DB done=0 を終わらせる土台（再読込後に測れる）。
+   */
+  function _auditBtnUnderstandLedger(where) {
+    try {
+      var m = window.__axlxBtnUnderstood || {};
+      var keys = Object.keys(m);
+      var okN = 0, failN = 0;
+      var okParts = [], failParts = [];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (m[k]) {
+          okN++;
+          if (okParts.length < 12) okParts.push(k);
+        } else {
+          failN++;
+          if (failParts.length < 8) failParts.push(k);
+        }
+      }
+      if (_audit) {
+        _auditStepP(
+          "btn_understand_ledger",
+          String(where || "search") + " ok=" + okN + " fail=" + failN +
+            (okParts.length ? " [" + okParts.join(",") + "]" : "") +
+            (failParts.length ? " 未=" + failParts.join(",") : ""),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-rec-note-name",
+          name: ("理解台帳:ok" + okN + "/fail" + failN).slice(0, 40),
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
   function clickSearch() {
+    try { _auditBtnUnderstandLedger("search前"); } catch (_) {}
+    try { _auditFlowUnderstandLedger("search前"); } catch (_) {}
+    try { _auditFullFlowMapLedger("search前"); } catch (_) {}
     if (_guideOn()) {
       // 案内モード（data-axlx-guide が "0" 以外）＝拡張は押さない。
       //   ⚠ 自動モードなのにここに来るなら、realpro-guide.js が "0" を書けていない（＝原因が分かる）
@@ -4621,11 +7437,13 @@
      */
     if (!_axExpect) {
       try { _auditStepP("search_block_early", "条件の準備前に検索しようとした → 押さない（場所→条件→検索の順）"); } catch (_) {}
+      try { _noteFlowPhase("search", false, "expect未準備"); } catch (_) {}
       _noteSearchWhy("expect_not_ready");
       return;
     }
     if (_axExpect.areaMode && !_axPlaceReady) {
       try { _auditStepP("search_block_no_place", "場所（地域/駅）を入れる前に検索しようとした → 押さない"); } catch (_) {}
+      try { _noteFlowPhase("search", false, "場所未確定"); } catch (_) {}
       _noteSearchWhy("place_not_ready");
       return;
     }
@@ -4635,7 +7453,17 @@
      */
     if (!_axConditionsReady && !_axGateRetried) {
       try { _auditStepP("search_block_no_basic", "間取り・敷礼など基本条件の前に検索しようとした → 押さない"); } catch (_) {}
+      try { _noteFlowPhase("search", false, "条件未準備"); } catch (_) {}
       _noteSearchWhy("basic_not_ready");
+      return;
+    }
+    /**
+     * ★ 根本: パネル未清算のまま検索しない（確定してリストへ抜けの関所）。
+     */
+    if (_axPanelDebt) {
+      try { _auditStepP("search_block_panel_debt", _axPanelDebt.kind + " / " + _axPanelDebt.why); } catch (_) {}
+      _noteSearchWhy("panel_debt:" + _axPanelDebt.kind);
+      _settlePanelDebtThen("検索前のパネル清算", function () { setTimeout(clickSearch, 350); });
       return;
     }
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
@@ -4654,9 +7482,10 @@
     //   止めた時は fill-done に gate:true を付ける（content.js が error として中継＝background はこのお客様のリアプロを理由付きで飛ばす）
     var _gate = _axGateCheck();
     if (_gate.errors.length) {
-      if (!_axGateRetried) {
+      if (_axGateRetryN < _AX_GATE_RETRY_MAX) {
+        _axGateRetryN++;
         _axGateRetried = true;
-        _auditStepP('gate_retry', _gate.errors.join(' / ').slice(0, 200));
+        _auditStepP('gate_retry', 'n=' + _axGateRetryN + '/' + _AX_GATE_RETRY_MAX + ' ' + _gate.errors.join(' / ').slice(0, 160));
         /**
          * ★ 2026-11-16 竹内さん「弱い部分あれば細かく強化／操作一つずつ」:
          *   実測: 関所の入れ直しが setSelVal（押さず change）→ カーソル付きに直したあと、
@@ -4667,16 +7496,49 @@
           var _gateQ = [];
           var _selNow = function (n) { try { return document.querySelector('select[name="' + n + '"]'); } catch (_) { return null; } };
           if ((_gate.missingLayout || _gate.extraLayout) && _axExpect.layoutVals && _axExpect.layoutVals.length) {
-            _gateQ.push({ name: "room_layout_id[]", run: function () { setCheckboxes("room_layout_id[]", _axExpect.layoutVals); } });
+            _gateQ.push({ name: "room_layout_id[]", run: function () { return setCheckboxes("room_layout_id[]", _axExpect.layoutVals); } });
           } else if (_gate.extraLayout) {
-            _gateQ.push({ name: "room_layout_id[]", run: function () { setCheckboxes("room_layout_id[]", []); } });
+            _gateQ.push({ name: "room_layout_id[]", run: function () { return setCheckboxes("room_layout_id[]", []); } });
           }
-          /** ★ 2026-11-16 細分化: 軸違いの残りを関所で外す */
-          if (_gate.extraStation) {
-            _gateQ.push({ name: "station_id[]", run: function () { setCheckboxes("station_id[]", []); setCheckboxes("route_id[]", []); } });
+          /**
+           * ★ 2026-11-17 通常録画正本＋統括Pro: 関所の駅余りを setCheckboxes([]) で直外ししない。
+           *   → 旗を立てて沿線・駅モーダルを開き、駅画面→沿線画面の順で外し直す。
+           */
+          /**
+           * ★ 2026-11-17: 混在時は area_mode の「残す側」以外を外す。
+           *   ward希望→駅を外す／station希望→区を外す／不明→両方外す。
+           */
+          if (_gate.extraStation || (_gate.placeMixed && _axExpect.areaMode !== "station")) {
+            _gateQ.push({
+              name: "station_id[]",
+              run: function () {
+                try {
+                  window.__axlxNeedClearStation = true;
+                  window.__axlxPlaceClearPhase = "start";
+                  window.__axlxLineForceClearedOnce = false;
+                  window.__axlxStationForceClearedOnce = false;
+                  window.__axlxPlaceClearBegan = false;
+                  if (_audit) _auditStepP("gate_station_defer_clear", (_gate.placeMixed ? "混在→" : "") + "関所: 駅余り→駅画面経由クリア（setCheckboxes空禁止）");
+                } catch (_) {}
+                try {
+                  var openBtn = _findByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
+                  if (openBtn) enqueueHumanClick(openBtn, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+                } catch (_) {}
+              },
+            });
           }
-          if (_gate.extraWard) {
-            _gateQ.push({ name: "city_code[]", run: function () { setCheckboxes("city_code[]", []); setCheckboxes("town_code[]", []); } });
+          if (_gate.extraWard || (_gate.placeMixed && _axExpect.areaMode !== "ward")) {
+            _gateQ.push({
+              name: "city_code[]",
+              run: function () {
+                try {
+                  window.__axlxNeedClearWard = true;
+                  if (_audit) _auditStepP("gate_ward_clear", (_gate.placeMixed ? "混在→" : "") + "関所: 所在地余りを外す");
+                } catch (_) {}
+                setCheckboxes("city_code[]", []);
+                setCheckboxes("town_code[]", []);
+              },
+            });
           }
           /**
            * ★ 2026-11-16: 関所の入れ直しは**ずれている欄だけ**。
@@ -4742,8 +7604,16 @@
             _gateQ.push({
               name: "required_time",
               run: function () {
+                var _gotW = _walkMinVal();
+                var _wantW = String(_axExpect.walk);
+                if (_gotW === _wantW || (_gotW && _gotW.indexOf(_wantW) >= 0)) return;
+                var _wkSel = document.querySelector('select[name="required_time"]');
+                if (_wkSel) {
+                  queueSelValText("required_time", _wantW);
+                  return;
+                }
                 var _wk = document.querySelector('input[name="required_time"]');
-                if (_wk && String(_wk.value) !== String(_axExpect.walk)) queueTxtVal("required_time", _axExpect.walk);
+                if (_wk) queueTxtVal("required_time", _axExpect.walk);
               },
             });
             _gateQ.push({
@@ -4756,10 +7626,14 @@
             });
           }
           _runBasicOneByOne(_gateQ, function () {
+            try { window._axSearchPressedAt = 0; } catch (_) {}
             setTimeout(clickSearch, _pd(500));
           });
         } catch (_) {
-          whenClickQueueIdle(function () { setTimeout(clickSearch, _pd(500)); });
+          whenClickQueueIdle(function () {
+            try { window._axSearchPressedAt = 0; } catch (_) {}
+            setTimeout(clickSearch, _pd(500));
+          });
         }
         return;
       }
@@ -4782,6 +7656,31 @@
         return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
       });
       if (_hardGate) {
+        /**
+         * ★ 2026-11-18: リトライ残があるなら止めて検索スキップしない（間取り途中停止の本丸）。
+         *   キュー消化後に clickSearch を再入場させる。
+         */
+        if (_axGateRetryN < _AX_GATE_RETRY_MAX) {
+          _axGateRetryN++;
+          _auditStepP('gate_soft_retry', 'hard未完了→再試行 n=' + _axGateRetryN + ' ' + gateMiss.slice(0, 120));
+          // 間取り不足ならクリック入れ直しを積んでから再入場
+          try {
+            if (_gate.missingLayout || _gate.extraLayout) {
+              var openLay = _findByText(["間取り絞り込み＋", "間取り絞り込み+", "間取り絞り込み"]);
+              if (openLay) enqueueHumanClick(openLay, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+              if (_axExpect && _axExpect.layoutVals && _axExpect.layoutVals.length) {
+                setCheckboxes("room_layout_id[]", _axExpect.layoutVals);
+              }
+            }
+          } catch (_) {}
+          whenClickQueueIdle(function () {
+            setTimeout(function () {
+              try { window._axSearchPressedAt = 0; } catch (_) {}
+              try { clickSearch(); } catch (_) {}
+            }, _pd(800));
+          });
+          return;
+        }
         _auditStepP('gate_stop_basic', gateMiss);
         if (_audit) _audit.form = _readRealproForm();
         console.warn('[AX] 間取り/敷礼/場所が未完了なので検索しない: ' + gateMiss);
@@ -4937,7 +7836,41 @@
      */
     var _pressSearchBtn = function (btn) {
       if (!btn) return false;
+      /**
+       * ★ 2026-11-18 竹内さん「検索を押す際 画面が切れていた。画面表示されるようにスクロールして、検索が出てから押す」:
+       *   旧はスクロールを頼んだ直後にカーソルを動かし、まだ画面外の検索を押していた。
+       *   → 画面の中に出てから押す（スクロール後に待って再確認・最大6回＝約2秒）。出なければ今まで通り押す。
+       */
+      try {
+        var _inVNow = function () {
+          var rr = btn.getBoundingClientRect();
+          var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
+          return rr.width > 0 && rr.height > 0 && rr.top >= 0 && rr.bottom <= vh && rr.left >= 0 && rr.right <= vw;
+        };
+        if (!_inVNow()) {
+          btn.__axSearchViewTries = (Number(btn.__axSearchViewTries) || 0) + 1;
+          if (btn.__axSearchViewTries <= 6) {
+            try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (_) {}
+            try { _auditStepP("search_wait_view", "検索が画面の外 → 出てから押す（" + btn.__axSearchViewTries + "回目）"); } catch (_) {}
+            setTimeout(function () { _pressSearchBtn(btn); }, 300);
+            return false;
+          }
+        } else {
+          btn.__axSearchViewTries = 0;
+        }
+      } catch (_) {}
       _scrollIntoViewSoft(btn);
+      // ★ 2026-11-18: スクロール後に再測。まだ画面外なら aim を捨てて欄中央（画面外カーソル防止）
+      try {
+        var _rr0 = btn.getBoundingClientRect();
+        var _vh0 = window.innerHeight || 800;
+        var _vw0 = window.innerWidth || 1200;
+        if (_rr0.bottom < 0 || _rr0.top > _vh0 || _rr0.right < 0 || _rr0.left > _vw0) {
+          try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (_) {
+            try { btn.scrollIntoView(true); } catch (__) {}
+          }
+        }
+      } catch (_) {}
       if (_audit) {
         _audit.search_clicked = true;
         try {
@@ -4945,7 +7878,7 @@
           _audit.search_press = {
             at: String((btn.textContent || btn.value || '').replace(/\s+/g, '')).slice(0, 20),
             rect: { t: Math.round(_rr.top), l: Math.round(_rr.left), w: Math.round(_rr.width), h: Math.round(_rr.height) },
-            in_view: (_rr.top >= 0 && _rr.bottom <= (window.innerHeight || 800)),
+            in_view: (_rr.top >= 0 && _rr.bottom <= (window.innerHeight || 800) && _rr.left >= 0 && _rr.right <= (window.innerWidth || 1200)),
             t: Date.now() - (_fillStartedAt || Date.now()),
             which: _inModal(btn) ? "modal" : (_isSidebar(btn) ? "sidebar" : "unknown"),
             cls: String(btn.className || "").slice(0, 40),
@@ -4956,6 +7889,8 @@
       var _sAim = null;
       try {
         if (!_inModal(btn)) _sAim = _aimByEl(btn, ['左の検索', '検索', '住居検索', 'go_search']);
+        // 画面外の学びは使わない（右ずれ・画面外の根）
+        if (_sAim && _audit && _audit.search_press && _audit.search_press.in_view === false) _sAim = null;
       } catch (_) { _sAim = null; }
       try {
         _auditStepP('search_cursor', '検索へカーソル移動してから押す' + (_sAim ? (' aim=' + _sAim.key) : ''));
@@ -4970,16 +7905,35 @@
             if (ps) _audit.search_press.pointer = { x: Math.round(ps.x), y: Math.round(ps.y) };
           }
         } catch (_) {}
+        try {
+          _noteFlowPhase(
+            "search",
+            true,
+            (_audit && _audit.search_press && _audit.search_press.which)
+              ? ("which=" + _audit.search_press.which)
+              : "検索押下",
+          );
+          try { _auditStepP("search_press_ok", "検索を押した"); } catch (_) {}
+          try { _noteNowCustomer("search", "検索押下"); } catch (_) {}
+        } catch (_) {}
         notifyDone();
       };
+      /**
+       * ★ 2026-11-18: click 直前にリロード生存印（同期 postMessage）。
+       *   click → 即遷移だと whenClickQueueIdle→notifyDone が消える／Case C 不発の根を塞ぐ。
+       */
       var _queued = enqueueHumanClick(btn, function (el) {
+        try { _armPropertyPathBeforeSearch("検索click直前"); } catch (_) {}
         try { el.click(); } catch (_) {}
       }, _uiGapMin(), _uiGapMax(), null, { aim: _sAim, label: "click:検索", strictLo: true, sigma: 0.55 });
       if (_queued) {
         whenClickQueueIdle(_finishSearchPress);
       } else {
         // キューに積めない時も直接clickせず、カーソル着いてから押す
-        var _pr = _humanPointerClick(btn, function () { try { btn.click(); } catch (_) {} }, _sAim);
+        var _pr = _humanPointerClick(btn, function () {
+          try { _armPropertyPathBeforeSearch("検索click直前(直)"); } catch (_) {}
+          try { btn.click(); } catch (_) {}
+        }, _sAim);
         if (_pr && typeof _pr.then === "function") _pr.then(_finishSearchPress, _finishSearchPress);
         else setTimeout(_finishSearchPress, 600);
       }
@@ -5022,45 +7976,79 @@
       _pressSearchBtn(_byTextBtn); return;
     }
     if (_audit) { _audit.search_clicked = false; _audit.click_fails.push({ what: 'search', text: '検索', sample: _visibleTexts('button,input[type="submit"],a', 8) }); }
+    try { _noteFlowPhase("search", false, "検索ボタン無し"); } catch (_) {}
     notifyDone('clickSearch: 検索ボタンが見つかりません（フォーム折りたたみ/モーダル遮蔽の可能性）');
   }
 
   // 路線ボタンをクリック（リアプロモーダル: LABEL.one_line 構造確認済み）
   function clickLineButtons(routeIds) {
     if (!routeIds || !routeIds.length) return;
+    /**
+     * ★ 2026-11-17 打合せ: 沿線も「今どの画面か」を読んでから押す。
+     *   station_list 上で沿線押ししない／closed なら開き直す。
+     *   画面外ラベルは isVisible スキップせず scroll→押す（駅と同じ）。
+     */
+    try {
+      var _scrLn = _graspStationModalScreen();
+      if (_scrLn.kind === "station_list") {
+        if (_audit) _auditStepP("line_select_wrong_screen", "station_list上で沿線選びしない→沿線へ戻る");
+        clickByText(["沿線の設定へ戻る", "沿線を選び直す", "沿線の設定へ戻る‹", "沿線の設定へ戻る<"]);
+        return;
+      }
+      if (_scrLn.kind === "closed") {
+        if (_audit) _auditStepP("line_select_closed", "closed→沿線・駅を開き直してから選ぶ");
+        clickByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
+        return;
+      }
+    } catch (_) {}
     // label.one_line を優先（診断で確認した実DOM構造）
     var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
+    var _pickLine = function (lb) {
+      if (!lb) return false;
+      try {
+        if (lb.scrollIntoView) {
+          lb.scrollIntoView({
+            behavior: Math.random() < 0.8 ? "smooth" : "auto",
+            block: Math.random() < 0.7 ? "center" : "nearest",
+            inline: "nearest",
+          });
+        }
+      } catch (_) {}
+      var cb = lb.querySelector('input[type="checkbox"]');
+      if (!cb && lb.htmlFor) {
+        try { cb = document.getElementById(lb.htmlFor); } catch (_) { cb = null; }
+      }
+      if (cb) {
+        if (!cb.checked) _toggleCheckboxLikeHuman(cb, true, _stGapMin(), _stGapMax());
+        return true;
+      }
+      var _lo = _uiGapOpts();
+      _lo.keys = ["route_id[]", "one_line"];
+      enqueueHumanClick(lb, _clickEl, _uiGapMin(), _uiGapMax(), null, _lo);
+      return true;
+    };
     routeIds.forEach(function(id) {
       var lineName = ROUTE_LINE_MAP[id];
       if (!lineName) return;
       var lineNorm = norm(lineName);
       var found = false;
-      // PASS1: label.one_line 完全一致（★細分化: label 押し・input 直禁止）
-      for (var i = 0; i < labels.length && !found; i++) {
-        if (!isVisible(labels[i])) continue;
+      // PASS1: label.one_line 完全一致（可視優先・画面外も候補）
+      var _hitVis = null, _hitAny = null;
+      for (var i = 0; i < labels.length; i++) {
         var lNorm = norm(labels[i].textContent);
-        if (lNorm === lineNorm) {
-          var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (!cb && labels[i].htmlFor) {
-            try { cb = document.getElementById(labels[i].htmlFor); } catch (_) { cb = null; }
-          }
-          if (cb) { if (!cb.checked) _toggleCheckboxLikeHuman(cb, true); }
-          else { enqueueHumanClick(labels[i], _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts()); }
-          found = true;
-        }
+        if (lNorm !== lineNorm) continue;
+        if (isVisible(labels[i])) { _hitVis = labels[i]; break; }
+        if (!_hitAny) _hitAny = labels[i];
+      }
+      if (_hitVis || _hitAny) {
+        found = _pickLine(_hitVis || _hitAny);
+        if (_hitAny && !_hitVis && _audit) _auditStepP("line_scroll_pick", lineName);
       }
       // PASS2: 短縮名サフィックス一致（"御堂筋線" → "大阪市高速軌道御堂筋線"）
-      for (var i = 0; i < labels.length && !found; i++) {
-        if (!isVisible(labels[i])) continue;
-        var lNorm = norm(labels[i].textContent);
-        if (lNorm.length >= 4 && lineNorm.endsWith(lNorm)) {
-          var cb = labels[i].querySelector('input[type="checkbox"]');
-          if (!cb && labels[i].htmlFor) {
-            try { cb = document.getElementById(labels[i].htmlFor); } catch (_) { cb = null; }
-          }
-          if (cb) { if (!cb.checked) _toggleCheckboxLikeHuman(cb, true); }
-          else { enqueueHumanClick(labels[i], _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts()); }
-          found = true;
+      for (var j = 0; j < labels.length && !found; j++) {
+        var lNorm2 = norm(labels[j].textContent);
+        if (lNorm2.length >= 4 && lineNorm.endsWith(lNorm2)) {
+          found = _pickLine(labels[j]);
         }
       }
       // 検索の点検: 選べなかった路線（ラベルの数と見本）
@@ -5084,14 +8072,15 @@
    */
   function _stGapMin() {
     var H = window.AxlxHumanWait;
-    var v = H && H.logNormalDelay ? H.logNormalDelay(820, 0.35) : (750 + Math.floor(Math.random() * 120));
-    if (v < 650) v = 650;
-    if (v > 1000) v = 1000;
+    /** ★ 2026-11-17 統括Pro: 駅2つ目以降が短間隔の主因 → 下限を通常p50寄り（≥950） */
+    var v = H && H.logNormalDelay ? H.logNormalDelay(1100, 0.35) : (1000 + Math.floor(Math.random() * 150));
+    if (v < 950) v = 950;
+    if (v > 1300) v = 1300;
     return Math.round(v);
   }
   function _stGapMax() {
     var H = window.AxlxHumanWait;
-    var v = H && H.logNormalDelay ? H.logNormalDelay(1450, 0.4) : (1200 + Math.floor(Math.random() * 450));
+    var v = H && H.logNormalDelay ? H.logNormalDelay(1650, 0.4) : (1400 + Math.floor(Math.random() * 500));
     return Math.round(v + _stationBreath());
   }
   /** 駅を1つ押した後に足す「人の一息」（何駅目かは決めない・毎回ちがう） */
@@ -5125,10 +8114,10 @@
    */
   function _uiGapMin() {
     var H = window.AxlxHumanWait;
-    // ★ 通常録画 UI押し p50≈1117・短間隔3% → 自動の硬下限を900へ（旧750）
-    var v = H && H.logNormalDelay ? H.logNormalDelay(980, 0.4) : 950;
-    if (v < 900) v = 900;
-    if (v > 1300) v = 1300;
+    // ★ 2026-11-17 F29: 短間隔未達 → UI押し硬下限 1000（通常 p50≈1117）
+    var v = H && H.logNormalDelay ? H.logNormalDelay(1100, 0.4) : 1050;
+    if (v < 1000) v = 1000;
+    if (v > 1400) v = 1400;
     return Math.round(v);
   }
   function _uiGapMax() {
@@ -5161,6 +8150,19 @@
     _selectStationsByNameCore(names);
   }
   function _selectStationsByNameCore(names) {
+    try {
+      var _scrSel = _graspStationModalScreen();
+      if (_scrSel.kind === "line_list") {
+        if (_audit) _auditStepP("station_select_wrong_screen", "line_list上で駅選びしない→駅の設定へ");
+        clickByText(["駅の設定へ進む", "駅の設定へ進む›", "駅の設定へ進む>"]);
+        return;
+      }
+      if (_scrSel.kind === "closed") {
+        if (_audit) _auditStepP("station_select_closed", "closed→沿線・駅を開き直してから選ぶ");
+        clickByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
+        return;
+      }
+    } catch (_) {}
     names.forEach(function(name) {
       var clean = name.replace(/駅$/, '').trim();
       if (!clean) return;
@@ -5180,29 +8182,71 @@
        */
       var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_station'));
       if (!labels.length) labels = Array.prototype.slice.call(document.querySelectorAll('label'));
-      // ★ 修正(Bug2): 同一 station_code のinputは1つだけエンキュー（重複描画分の二重クリック防止）
-      var _seenStValues = {};
+      /**
+       * ★ 2026-11-17 竹内さん「沿線ごとに同名駅（十三）をすべて押す」:
+       *   旧: 非表示ラベルを skip → 画面外の十三が残る／同一 value を1つだけ → 沿線違いの同名を落とす。
+       *   新: 名前一致は**全部**スクロールして押す（要素単位の二重押しだけ防ぐ）。
+       */
+      var _seenStEls = [];
+      var _perLineN = 0;
       for (var i = 0; i < labels.length; i++) {
-        if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (txt === clean) {
-          var inp = labels[i].querySelector('input[type="checkbox"]');
-          if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp) {
-            var _stKey = inp.value || '';
-            if (_stKey && _seenStValues[_stKey]) { found = true; continue; }
-            if (_stKey) _seenStValues[_stKey] = true;
-            // ★ 細分化: one_station label 押し（沿線が既存でも駅は選ぶ）
-            if (!inp.checked) _toggleCheckboxLikeHuman(inp, true, _stGapMin(), _stGapMax());
-            found = true;
+        if (!_stationNameMatch(txt, clean)) continue;
+        var inp = labels[i].querySelector('input[type="checkbox"]');
+        if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
+        if (inp) {
+          if (_seenStEls.indexOf(inp) >= 0) { found = true; continue; }
+          _seenStEls.push(inp);
+          try {
+            if (labels[i].scrollIntoView) {
+              labels[i].scrollIntoView({
+                behavior: Math.random() < 0.8 ? "smooth" : "auto",
+                block: Math.random() < 0.7 ? "center" : "nearest",
+                inline: "nearest",
+              });
+            }
+          } catch (_) {}
+          if (!inp.checked) {
+            _toggleCheckboxLikeHuman(inp, true, _stGapMin(), _stGapMax());
+            _perLineN++;
           } else {
-            // input が無くても one_station ラベル自体を押す（録画と同じ）
-            enqueueHumanClick(labels[i], _clickEl, _stGapMin(), _stGapMax(), null, { keys: ["station_id[]", clean] });
-            found = true;
+            _perLineN++;
           }
+          found = true;
+        } else {
+          if (_seenStEls.indexOf(labels[i]) >= 0) { found = true; continue; }
+          _seenStEls.push(labels[i]);
+          try {
+            if (labels[i].scrollIntoView) {
+              labels[i].scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+            }
+          } catch (_) {}
+          enqueueHumanClick(labels[i], _clickEl, _stGapMin(), _stGapMax(), null, { keys: ["station_id[]", clean] });
+          _perLineN++;
+          found = true;
         }
       }
-      if (found) { _okMark(); return; }
+      if (found) {
+        try {
+          if (_audit) {
+            var _mapHit = 0;
+            try { _mapHit = _mapExpectHitsForStation(clean, _selectedLineNamesNow(null)); } catch (_) {}
+            var _msg = clean + " 沿線ごと" + _perLineN + "本";
+            if (_mapHit > 0) _msg += " 地図期待" + _mapHit;
+            if (_perLineN <= 1 && _mapHit > 1) _msg += "（地図より少ない／要スクロール）";
+            else if (_perLineN <= 1) _msg += "（同名が1つだけ／要確認）";
+            _auditStepP(
+              (_perLineN > 1 || (_mapHit > 0 && _perLineN >= _mapHit)) ? "station_per_line_ok" : "station_per_line",
+              _msg,
+            );
+            if (_mapHit > _perLineN) {
+              _auditStepP("line_station_map_gap", clean + " 押" + _perLineN + "<地図" + _mapHit);
+            }
+          }
+        } catch (_) {}
+        _okMark();
+        return;
+      }
 
       var els = Array.prototype.slice.call(
         document.querySelectorAll('a,button,td,li,span,div,p')
@@ -5546,40 +8590,9 @@
     _stGapFast = !!(cond && cond.commute && cond.station_names && cond.station_names.length > 60);
     // ★ 2026-11-16: お客・検索ごとにカーソル出発点を変える（軌跡がクローンにならない）
     try { _resetHumanPointerForRun(); } catch (_) {}
-    // ★ 2026-11-16 統括Pro「aim有0」: 検索開始で束を強制読み直し（空キャッシュのまま押さない）
-    try { _learnWarm(true); } catch (_) {}
     /**
-     * ★ 2026-11-17 学習→自動の反映関所:
-     *   順番・場面手順を読み直し、空なら background に束の取り直しを依頼。
-     *   測れる印: learn_reflect_ok / learn_reflect_gap
+     * ★ 2026-11-17: 反映関所は監査リセット後・キュー先頭で行う（旧はリセット前に測り screen=0 のまま押し始めていた）。
      */
-    try {
-      _loadLearnNext();
-      window.__axlxLearnStationFlowNoted = false;
-      var _sf = window.__axlxLearnSceneFlows;
-      var _sfn = Array.isArray(_sf) ? _sf.length : 0;
-      var _stHit = false;
-      if (Array.isArray(_sf)) {
-        for (var _i = 0; _i < _sf.length; _i++) {
-          var _f = _sf[_i] || {};
-          if (String(_f.scene || "") !== "station") continue;
-          var _st = Array.isArray(_f.steps) ? _f.steps.join(" ") : "";
-          if (/駅の設定へ進む|沿線の設定へ戻る|one_station|one_line/.test(_st)) _stHit = true;
-        }
-      }
-      if (_audit) {
-        _auditStepP("fill_begin", "fillRealpro開始");
-        _auditStepP(
-          _stHit ? "learn_reflect_ok" : "learn_reflect_gap",
-          _stHit
-            ? ("束の駅手順あり scenes=" + _sfn)
-            : ("束の駅遷移が空 scenes=" + _sfn + "→束取り直し依頼"),
-        );
-      }
-      if (!_stHit && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-        try { chrome.runtime.sendMessage({ type: "axlx-learn-refresh" }, function () {}); } catch (_) {}
-      }
-    } catch (_) {}
     /**
      * 2026-11-14 竹内さん「検索ボタンもおしていなかった」:
      *   「見直す間」の印（`_axSearchLookDone`）は**検索1回につき1回**だけにする。
@@ -5621,8 +8634,23 @@
       var _newCid = _fillCustomerId || null;
       var _diffCust = !!( _runCid && _newCid && String(_runCid) !== String(_newCid) );
       if (_diffCust) {
-        console.warn("[AX] 連続客: 前客fillを閉じて次客を開始 prev=" + String(_runCid).slice(0, 8) + " next=" + String(_newCid).slice(0, 8));
-        try { _abortFillForNextCustomer(_newCid); } catch (_) { window._axFillRunning = false; _doneNotified = false; }
+        /**
+         * ★ 2026-11-18 竹内さん「ちゃんと選択したお客さんで検索されるようにする」（平田さん・R.さんの取り違え）:
+         *   旧は前客の入力を**閉じて**次客を始めていた。その時 `_fillCustomerId` は既に次客の番号に変わっていて、
+         *   前客（平田さん）の検索・結果に次客（R.さん）の条件・番号が付いた＝別のお客さんに送られる経路。
+         *   → 入力中の別のお客さんの依頼は**始めない**（上書きしない）。印は前客に戻す。
+         *   次客は一括側が待つ（前客が終わってから）。
+         */
+        console.warn("[AX] 前客の入力中 → 次客は始めません（上書きしない） run=" + String(_runCid).slice(0, 8) + " next=" + String(_newCid).slice(0, 8));
+        _fillCustomerId = _runCid;
+        try { if (_audit) _auditStepP("next_customer_refused", "前客入力中→次客を断った（上書きしない） next=" + String(_newCid).slice(0, 8)); } catch (_) {}
+        try {
+          window.postMessage({
+            from: "aixlinx-fill-done", gate: true, gateKind: "busy_other_customer", customerId: _newCid,
+            error: "busy_other_customer: 前のお客さんの条件入力中のため、このお客さんは始めませんでした（上書きしない）",
+          }, "*");
+        } catch (_) {}
+        return;
       } else {
         console.warn('[AX] fillRealpro 重複呼び出しを無視 (既に実行中・同客)');
         /**
@@ -5638,7 +8666,40 @@
      *   （連続切替の supersede 後は次客用に作り直す）
      */
     try { _auditReset(cond && cond._audit_run_id); } catch (_) {}
+    _axHumanTookOver = false;
+    _axFillStartedAt = Date.now();
+    try { window.__axlxFillTouchAt = _axFillStartedAt; } catch (_) {}
     window._axFillRunning = true;
+    try { window.__axlxFillGen = (Number(window.__axlxFillGen) || 0) + 1; } catch (_) {}
+    try { _axPanelDebt = null; } catch (_) {} // ★ 客ごとにパネル負債をリセット（根本仕組み）
+    /**
+     * ★ 2026-11-17 竹内さん「前客→新客／各ボタン理解」:
+     *   切替把握を fill 開始直後に残す（残チェック・forceClear・want）。
+     *   ボタン理解台帳も客ごとにリセット。
+     */
+    try {
+      var _prevCid = window.__axlxLastFilledCustomerId || window._axFillRunningCustomerId || null;
+      var _nextCid = _fillCustomerId || null;
+      window.__axlxBtnUnderstood = {};
+      /** ★ F45: 客ごとに流れ完了台帳をリセット（前客の完了印を持ち越さない） */
+      window.__axlxFlowUnderstood = {};
+      /** ★ F47: 全流れ地図原子・外し方も客ごとにリセット */
+      window.__axlxFlowMapAtoms = {};
+      window.__axlxClearMethodUnderstood = {};
+      if (typeof _understandCustomerSwitch === "function") {
+        _understandCustomerSwitch(_prevCid, _nextCid, cond);
+      }
+      if (_prevCid && _nextCid && String(_prevCid) !== String(_nextCid)) {
+        try { _noteFlowAtom("switch", true, "前客→次客"); } catch (_) {}
+      }
+      window.__axlxLastFilledCustomerId = _nextCid;
+      try {
+        _fillCondForStamp = cond || null;
+        _noteNowCustomer("fill_start", "検索開始");
+        _auditFlowLearnReflect("fill_start");
+        _auditFullFlowMapLedger("fill_start");
+      } catch (_) {}
+    } catch (_) {}
     try { window._axFillRunningCustomerId = _fillCustomerId || null; } catch (_) {}
     /**
      * ★ 2026-11-16: 条件入力の開始を毎回知らせる（住居検索でページが変わっても bulk-dl が印を持つ）。
@@ -5696,15 +8757,24 @@
         window.postMessage({ from: 'aixlinx-fill-started', customerId: _fillCustomerId || null, runId: _fillRunId || null, phase: 'go_estate' }, '*');
       } catch (_) {}
       try { _auditStepP('go_estate_wait', 'ホーム→住居検索（fill-started送信済）'); } catch (_) {}
-      // 「住居」を押すと**ページが移る**ので、この function の続きは走らない（ページが入れ替わる）。
-      //   移った先で background がもう一度送ってくる（fill-done を返さずに待たせる）。
-      ensureRealproSearchPage(cond, function (ok) {
-        if (!ok) {
-          window._axFillRunning = false;
-          notifyDone('no_search_form: リアプロがホームの画面のままで、住居ボタンから物件検索へ移れませんでした');
-        }
-        // ok の時は何もしない（ページが移る。移らなかった時は下の再試行が受ける）
-      });
+      /**
+       * ★ 2026-11-18: ホーム画面は旧フローで learn_reflect_gate が未到達（v2.8.95 learn_warm=0）。
+       *   住居遷移の前に束温め＋反映関所を終える（ページ遷移で Main が切れても cache に残す）。
+       */
+      var _goEstateAfterLearn = function () {
+        ensureRealproSearchPage(cond, function (ok) {
+          if (!ok) {
+            window._axFillRunning = false;
+            notifyDone('no_search_form: リアプロがホームの画面のままで、住居ボタンから物件検索へ移れませんでした');
+          }
+        });
+      };
+      try {
+        enqueueHumanAction(function () { return _ensureLearnReflectedForFill(); }, 300, 800, "learn_reflect_gate");
+        whenClickQueueIdle(_goEstateAfterLearn);
+      } catch (_) {
+        _ensureLearnReflectedForFill().then(_goEstateAfterLearn, _goEstateAfterLearn);
+      }
       // ページが移らなかった場合に備えて、少し待ってからもう一度確かめる（移っていれば欄がある）
       setTimeout(function () {
         if (window._axFillRunning && document.body) {
@@ -5726,7 +8796,7 @@
     // 2026-11-10 v2.6.14 竹内さん「人間のように」で全操作が人の速度になったので、総時間の上限を15分に延ばした
     //   （background の 905秒より10秒先）。ただし**無進捗で止まった時**は下の _stallWatch が先に止める（15分待たない）。
     _doneNotified = false;
-    _axExpect = null; _axGateRetried = false; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
+    _axExpect = null; _axGateRetried = false; _axGateRetryN = 0; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
     _axPlaceReady = false; // ★ 続きの客でも場所→条件→検索。前客の「場所済み」を引きずらない
     _axConditionsReady = false; // ★ 間取り・敷礼まで終わる前に25秒保険で検索しない
     _stationPickSeen = false; // ★ 次客でも駅の「最初の1つを探す間」を入れる
@@ -5745,7 +8815,26 @@
     // 2026-11-11: 前のお客様で選んだ区・駅の覚えを消す（このお客様の分だけを見る）
     _resetPicked();
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
-    _watchdogTimer = setTimeout(function() {
+    _watchdogTimer = setTimeout(function _axWatchdogFire() {
+      /**
+       * ★ 2026-11-18 竹内さん「進捗あり・一連未完了では切らない」: 直近5分以内に操作（ops・進捗の心拍）がある間は
+       *   中止せず1分ごとに見直す（硬上限＝入力開始から60分）。無進捗で30分／60分に達した時だけ下の中止へ進む。
+       */
+      try {
+        var _wdNow = Date.now();
+        var _wdLast = Math.max(
+          (_audit && _audit._opsProgAt) || 0,
+          (_audit && _audit._progAt) || 0,
+          (_audit && _audit.ops && _audit.ops.length) ? (_fillStartedAt + Number(_audit.ops[_audit.ops.length - 1].t || 0)) : 0
+        );
+        var _wdActive = (_wdLast && _wdNow - _wdLast < 5 * 60 * 1000) || isClickQueueBusy();
+        if (!_doneNotified && _wdActive && _wdNow - _fillStartedAt < 60 * 60 * 1000) {
+          console.warn('[AX] フェイルセーフ到達だが進捗あり（' + Math.round((_wdNow - _wdLast) / 1000) + '秒前）→ 切らずに1分後に見直す');
+          try { _auditStepP('watchdog_extend', '進捗あり・中止せず延長'); } catch (_) {}
+          _watchdogTimer = setTimeout(_axWatchdogFire, 60000);
+          return;
+        }
+      } catch (_) {}
       /**
        * ★ 2026-11-16 完走優先: 条件が揃っていれば切り上げず検索（カーソル経由の clickSearch）。
        *   未完了のときだけ中止（全件検索防止）。
@@ -5758,17 +8847,17 @@
             return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
           });
           if (!_hard) {
-            console.warn('[AX] 895秒・条件そろい → 完走のため検索（カーソル経由・切り上げない）');
+            console.warn('[AX] 1800秒・条件そろい → 完走のため検索（カーソル経由・切り上げない）');
             _auditStepP('watchdog_complete_search', '条件完了済み→clickSearch（カーソル移動）');
             try { clickSearch(); } catch (_) {}
             return;
           }
         }
       } catch (_) {}
-      console.warn('[AX] フェイルセーフ: 895秒経過 → 条件未完了のため中止（不完全検索を出さない）');
+      console.warn('[AX] フェイルセーフ: 1800秒経過 → 条件未完了のため中止（不完全検索を出さない）');
       _auditStall();
-      notifyDone('watchdog-timeout: 895秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
-    }, 895000);
+      notifyDone('watchdog-timeout: 1800秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
+    }, 1800000); // ★ 2026-11-18: 895秒→30分（間取りリトライ・9区クリックが短TOで切れないように）
     // 2026-11-10 v2.6.15: 「住居」を押してページが移るとこの関数の続きは走らない。
     //   移った先の新しいページで fill がもう一度来た時に、前のページの見張りが残らないよう、
     //   ページを離れる時にタイマーを片付ける（見張りが二重に走って早く止まるのを防ぐ）
@@ -5779,6 +8868,14 @@
           if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
           if (window.__axStallWatch) { clearInterval(window.__axStallWatch); window.__axStallWatch = null; }
           if (window.__axFastSearchWatch) { clearInterval(window.__axFastSearchWatch); window.__axFastSearchWatch = null; }
+          /**
+           * ★ 2026-11-18: 検索押下後に遷移で notifyDone が消えても、生存印だけは残す。
+           */
+          try {
+            if (window._axSearchPressedAt && !_doneNotified) {
+              _armPropertyPathBeforeSearch("pagehide生存");
+            }
+          } catch (_) {}
           window._axFillRunning = false;
         });
       }
@@ -5797,9 +8894,9 @@
       var _searchPushed = false;
       var _idleSince = Date.now();
       /** 条件完了後、本線の clickSearch を待つ余裕（人が見直す間も含む） */
-      var SEARCH_BACKUP_MS = 90000;
+      var SEARCH_BACKUP_MS = 180000; // ★ 2026-11-18: 90秒→3分（本線待ちの控え）
       /** 条件未完了の間は切り上げない。完了後の無進捗だけ長く見る */
-      var STALL_AFTER_READY_MS = 300000; // 5分（完走優先・途中切り上げ禁止）
+      var STALL_AFTER_READY_MS = 1200000; // ★ 2026-11-18: 20分（完走優先・短TO除去）
       function _fillStillRunning() {
         try {
           if (isClickQueueBusy()) return true;
@@ -5871,6 +8968,27 @@
     _auditStepP('fill_start', cond && cond.area_mode);
     _auditStepP('vis', document.visibilityState);
     /**
+     * ★ 2026-11-17 統括Pro「強化は実装済だが反映一連が止まる」実測:
+     *   2.8.76 自動で learn_reflect_gap（screen=0）・aim無が並んだ。
+     *   原因: 束取込前に押し始め／監査リセットで warm 印が消える／別名未引き。
+     *   → キュー先頭で強制取込＋warm＋反映関所。切替把握もここ（2回目リセット後）で残す。
+     */
+    try {
+      window.__axlxLearnStationFlowNoted = false;
+      var _prevCid2 = window.__axlxLastFilledCustomerId || null;
+      var _nextCid2 = _fillCustomerId || null;
+      if (typeof _understandCustomerSwitch === "function") {
+        _understandCustomerSwitch(_prevCid2, _nextCid2, cond);
+      }
+    } catch (_) {}
+    try {
+      enqueueHumanAction(function () {
+        return _ensureLearnReflectedForFill();
+      }, 700, 1200, "learn_reflect_gate");
+    } catch (_) {
+      try { _ensureLearnReflectedForFill(); } catch (__) {}
+    }
+    /**
      * ★ 2026-11-15 竹内さん「検索の条件に、次の2つも並べる: その他の要望（other_requests を「・」で区切った1つずつ）／
      *   必須・できれば（requirement_strength）」（依頼2-3）
      *
@@ -5889,11 +9007,11 @@
     /**
      * 連続検索: モーダルを閉じる → **残っている条件を1つずつ外す** → 新お客さんの条件入力 → 検索
      *
-     * ★【絶対・最優先の決まり・2026-11-16 竹内さん「ここのところは決まりなのでちゃんと覚えておく」】
-     *   ⚠ **自動では「リセット」ボタンを押さない**（通常モードの人が押す操作とは分ける）。変えない。
-     *   → 前客の区・町・沿線・駅・間取り・セレクト等を**カーソルで1つずつ外す** → 新条件を入れる → 検索。
+     * ★【決まり・2026-11-18 竹内さん「リセットが壊れる原因の可能性高いので厳しければ外す形戻す」】
+     *   2.8.105 で「リセットを先に押す」にしたが、リセットでページが読み直され入力が消えた（audit 1492・1494）→ 2.8.107 で戻した。
+     *   → 前客の条件は **カーソルで1つずつ外す**（リセットは押さない）→ 新条件を入れる → 検索。
      *   細かい動きも通常と同じく **カーソルを動かしてからクリック**（直書きの checked=false 禁止）。
-     *   正本: KB 63d3284c／dept_search_tool 黄金ルール／.cursor/rules/auto-clear-not-reset.mdc
+     *   正本: dept_search_tool 黄金ルール／.cursor/rules/auto-clear-not-reset.mdc
      */
     function _doReset(callback) {
       // Step0: 検索結果ページでフォームが折りたたまれている場合→「検索条件を表示」をクリックして展開
@@ -5965,11 +9083,35 @@
         // モーダル内クリア＋閉じるのキューが全て消化されてからフォームクリアへ進む
         whenClickQueueIdle(function() {
         try {
+        /**
+         * ★ 2026-11-17 通常録画正本（01:18）＋竹内さん「駅は直接入力で外されている」:
+         *   駅・沿線は form の checked をここで外すと「直接入力」に見える。
+         *   → station_id[] / route_id[] は残チェック外しから**除外**し、
+         *     旗を立てて STEP B の `_advanceForcePlaceClearViaStationFirst`
+         *     （駅の設定へ→駅外し→沿線の設定へ戻る→沿線外し）に任せる。
+         */
         var checkboxNames = [
           "city_code[]", "town_code[]",
-          "station_id[]", "route_id[]", // ★ 駅→沿線の順
           "room_layout_id[]", "structured_type[]", "eq_rm[]",
         ];
+        try {
+          var _stLeft = document.querySelectorAll('input[name="station_id[]"]:checked').length;
+          var _lnLeft = document.querySelectorAll('input[name="route_id[]"]:checked').length;
+          if (_stLeft > 0 || _lnLeft > 0) {
+            window.__axlxNeedClearStation = true;
+            window.__axlxPlaceClearPhase = "start";
+            window.__axlxLineForceClearedOnce = false;
+            window.__axlxStationForceClearedOnce = false;
+            window.__axlxPlaceClearBegan = false;
+            if (_audit) {
+              _auditStepP(
+                "station_defer_form_clear",
+                "form残 駅" + _stLeft + "・沿線" + _lnLeft + "→駅画面経由で外す（直接外ししない）",
+              );
+            }
+            console.log("[AX] _doReset: 駅/沿線の form残は駅画面経由クリアへ委譲", _stLeft, _lnLeft);
+          }
+        } catch (_) {}
         var _H0 = window.AxlxHumanWait;
         /**
          * 2026-11-16 竹内さん「リセットではなくて外して新しいお客さんの条件入れて検索」:
@@ -5987,14 +9129,18 @@
             if (_toUncheck.length === 0) {
               console.log("[AX] _doReset: 残チェックなし → セレクト等を外す");
               _auditStepP("clear_checks", 0);
+              try { _noteClearMethod("place", "clean_no_clear", "残0"); } catch (_) {}
               _resetRest();
               return;
             }
             console.log("[AX] _doReset: 残チェック " + _toUncheck.length + "件を1つずつ外す（リセットボタンは使わない）");
             _auditStepP("clear_checks", _toUncheck.length);
+            var _needPanelConfirm = false;
             _toUncheck.forEach(function (cb, idx) {
               var hit = null;
               try {
+                var nm = String((cb && cb.getAttribute && cb.getAttribute("name")) || "");
+                if (/eq_rm|city_code|town_code/.test(nm)) _needPanelConfirm = true;
                 if (cb.id) {
                   var lb = document.querySelector('label[for="' + String(cb.id).replace(/"/g, "") + '"]');
                   if (lb) hit = lb;
@@ -6007,6 +9153,7 @@
                 try {
                   if (cb && cb.isConnected && cb.checked) {
                     if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", cb);
+                    try { _noteClearMethod(_intentDomainOfName(nm, cb), "cursor_checkbox", String(cb.value || nm || "").slice(0, 24)); } catch (_) {}
                     if (hit && hit !== cb && hit.isConnected) {
                       try { hit.click(); } catch (_) {}
                     }
@@ -6017,7 +9164,22 @@
                 } catch (_) {}
               }, lo, hi);
             });
-            whenClickQueueIdle(function () { _resetRest(); });
+            /**
+             * ★ 2026-11-17 通常正本 PET→CONFIRM / WARD→CONFIRM:
+             *   絞り込み条件・所在地を開いて外したあと、確定してリストへが無いと条件が残る／録画にも出ない。
+             *   → パネルを開いた系を外したら必ず確定を押してからセレクト外しへ。
+             */
+            whenClickQueueIdle(function () {
+              // ★ 根本: 場当たり必押ではなくパネル負債清算（開いていれば確定／閉じていれば何もしない）
+              if (_needPanelConfirm || _axPanelDebt) {
+                _settlePanelDebtThen("前客クリア後のパネル清算", function () {
+                  try { if (_audit) _auditStepP("clear_panel_confirm", "外し後に確定してリストへ（負債清算）"); } catch (_) {}
+                  _resetRest();
+                });
+                return;
+              }
+              _resetRest();
+            });
           };
           /**
            * ★ 2026-11-16 細分化: 外す前に該当パネルを開く（間取り／沿線駅／所在地）。
@@ -6034,12 +9196,21 @@
               });
             };
             _openIf('input[name="room_layout_id[]"]:checked', "room_layout_id[]");
-            _openIf('input[name="station_id[]"]:checked, input[name="route_id[]"]:checked', "station_id[]");
+            /**
+             * ★ 2026-11-17: 駅・沿線は form直外ししない（駅画面経由）。ここでは開かない。
+             *   ペット(eq_rm)は通常録画どおり「絞り込み条件＋」を開いてから外す。
+             */
+            _openIf('input[name="eq_rm[]"]:checked', "eq_rm[]");
             _openIf('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked', "city_code[]");
             chain.then(_runUncheck, _runUncheck);
           };
           _openThenUncheck();
         }
+        /**
+         * ⚠ 自動は「リセット」ボタンを押さない（2026-11-18 2.8.105 で押す形にして 2.8.107 で戻した）。
+         *   実測 audit 1492・1494: リセットを押した1〜3秒後に入力の段も録画の操作も途絶え、そのお客さんの入力が消えた
+         *   （リアプロのリセットはページを読み直す＝入力中の自動が丸ごと消える）。前の条件は1つずつ外す。
+         */
         _uncheckLeftoversThenRest();
 
       // 敷金・礼金なし チェックボックスをリセット（ラベルテキストで特定するため name リストに含められない）
@@ -6392,22 +9563,33 @@
       _basicQueue.push({
         name: "required_time",
         run: function () {
-          // 2026-11-10 v2.6.4: 移動手段を選んでから「何分にしよう」と考える間 → 1文字ずつ打つ
+          /**
+           * ★ 2026-11-17: 分数が select（プルダウン）の画面では chooseSelectLikeHuman。
+           *   input の時だけ type。旧は input だけ見て select 画面では何も押さなかった。
+           */
+          var selRt = document.querySelector('select[name="required_time"]');
+          if (selRt) {
+            enqueueHumanAction(function () {
+              return new Promise(function (resolve) {
+                Promise.resolve(chooseSelectLikeHuman(selRt, String(cond.walk_minutes), {
+                  forceOpen: true,
+                  slow: true,
+                  field: "required_time",
+                })).then(function () {
+                  setTimeout(function () {
+                    _resealWalkAfterMinutes(cond.walk_minutes, { allowUi: false }).then(function () { resolve(); }, function () { resolve(); });
+                  }, _ln(1100, 0.35, 800, 1600));
+                }, function () { resolve(); });
+              });
+            }, 900, 1500, "sel:required_time=" + cond.walk_minutes);
+            return;
+          }
           var inp = document.querySelector('input[name="required_time"]');
           if (!inp) return;
           _enqueueWithEl(inp, function () {
             return new Promise(function (resolve) {
               setTimeout(function () {
                 Promise.resolve(typeTextLikeHuman(inp, cond.walk_minutes, { alreadyAimed: true })).then(function () {
-                  /**
-                   * ★ 2026-11-16 録画（実測 sel_mismatch got:''）:
-                   *   分数を打った直後はまだ「徒歩」に見えるが、サイトが**遅れて** transportation を空にする。
-                   *   旧は直後に確認して「徒歩あり」と判定 → reseal せず → 検索直前に空。
-                   *   → **必ず 0.8〜1.6秒待ってから**確認し、空ならプルダウンで戻す。
-                   *     戻したあと分数が消えていたらもう一度打つ。
-                   */
-                  // ★ 2026-11-16: 分数直後は**静かに**確認だけ（擬似一覧を開かない＝連打に見えない）
-                  //   UIでの締めは walk_seal_final に1回だけ任せる
                   setTimeout(function () {
                     _resealWalkAfterMinutes(cond.walk_minutes, { allowUi: false }).then(function () { resolve(); }, function () { resolve(); });
                   }, _ln(1100, 0.35, 800, 1600));
@@ -6578,10 +9760,15 @@
             try {
               if (_shouldForceClearPrevPlace() && _audit) {
                 var _nChk0 = document.querySelectorAll('input[name="room_layout_id[]"]:checked').length;
-                if (_nChk0) _auditStepP("layout_clear_all", "続き客: 間取り残" + _nChk0 + "→客条件だけに差し替え want=" + vals2.length);
+                if (_nChk0) {
+                  _auditStepP("layout_clear_all", "続き客: 間取り残" + _nChk0 + "→客条件だけに差し替え want=" + vals2.length);
+                  try { _noteClearMethod("layout", "cursor_checkbox", "残" + _nChk0); } catch (_) {}
+                }
               }
             } catch (_) {}
-            setCheckboxes("room_layout_id[]", vals2);
+            // ★ 2026-11-18 竹内さん「間取りが途中停止」: クリックを積み終えてから audit・把握を積む（Promise を返す＝_runBasicOneByOne が待つ）
+            var _spL = setCheckboxes("room_layout_id[]", vals2);
+            var _afterLayoutEnq = function () {
             try {
               if (_audit) {
                 var nAfter = document.querySelectorAll('input[name="room_layout_id[]"]').length;
@@ -6590,6 +9777,32 @@
                 if (!nAfter) _auditStepP("layout_miss_dom", "間取りの欄がDOMに無い（折りたたみ・別画面の可能性）");
               }
             } catch (_) {}
+            // ★ 間取り場面の把握（外し／選ぶの段）をキュー後に測る＋足りなければ1回入れ直し
+            try {
+              enqueueHumanAction(function () {
+                try { if (typeof _understandLayoutScene === "function") _understandLayoutScene(vals2); } catch (_) {}
+                try {
+                  var rep = _layoutWantReport(vals2);
+                  if (_audit) {
+                    _auditStepP(
+                      rep.ok ? "layout_grasp_ok" : (rep.partial ? "layout_grasp_partial" : "layout_grasp_miss"),
+                      "把握 hit=" + rep.hitN + "/" + rep.wantN +
+                        (rep.missing.length ? (" 不足=" + rep.missing.slice(0, 6).join(",")) : "") +
+                        (rep.extras.length ? (" 余分=" + rep.extras.length) : "")
+                    );
+                  }
+                  if (rep.missing.length && vals2 && vals2.length) {
+                    if (_audit) _auditStepP("layout_grasp_refill", "把握後に不足分を入れ直し");
+                    setCheckboxes("room_layout_id[]", vals2);
+                  }
+                } catch (_) {}
+              }, 400, 900, "間取り把握");
+            } catch (_) {
+              try { if (typeof _understandLayoutScene === "function") _understandLayoutScene(vals2); } catch (__) {}
+            }
+            };
+            if (_spL && typeof _spL.then === "function") return _spL.then(_afterLayoutEnq, _afterLayoutEnq);
+            _afterLayoutEnq();
           },
         });
       })(_layoutsToPush && _layoutsToPush.length ? _layoutsToPush : []);
@@ -6698,41 +9911,94 @@
         });
       }
     }
-    if (cond.pet_ok) {
-      _basicQueue.push({
-        name: "eq_rm[]",
-        run: function () {
-          /**
-           * ★ 2026-11-16 KAORI録画「ペットは絞り込み条件を押してから選ぶ／直接入力になっていた」:
-           *   旧は eq_rm[] を見えないまま click → 人がやる「絞り込み条件＋ → ペット可」と違う。
-           *   → 必ず `_ensureFieldVisible`（絞り込み条件＋を開く）してからチェック。
-           */
-          var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
-          if (!petCb) {
-            try { if (_audit) _auditStepP("pet_miss", "ペット可(eq_rm=113)が見つからない"); } catch (_) {}
-            return;
+    /**
+     * ★ 2026-11-17 通常録画01:18正本＋竹内さん「ペット飼育でない客は外す」:
+     *   正本: 絞り込み条件＋ → ペット相談 was=true→now=false（eq_rm[]）。
+     *   pet_ok の時は開いて選ぶ／でない時は残っていれば同じ経路で外す。
+     */
+    _basicQueue.push({
+      name: "eq_rm[]",
+      run: function () {
+        var wantPet = !!cond.pet_ok;
+        var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
+        if (!petCb) {
+          try { if (_audit) _auditStepP("pet_miss", "ペット可(eq_rm=113)が見つからない"); } catch (_) {}
+          return;
+        }
+        // 既に希望どおりなら何もしない（開かない＝余計な操作をしない）
+        if (!!petCb.checked === wantPet) {
+          try {
+            if (_audit) _auditStepP(wantPet ? "pet_already_on" : "pet_already_off", "ペット可は既に希望どおり");
+          } catch (_) {}
+          return;
+        }
+        return _ensureFieldVisible(petCb, "eq_rm[]", 4000).then(function () {
+          var again = document.querySelector('input[name="eq_rm[]"][value="113"]');
+          if (!again) return;
+          var hit = null;
+          try {
+            // 通常録画は「ペット相談」ラベルを押す
+            hit = _labelForCheckbox(again)
+              || _findByText(["ペット相談", "ペット飼育可能", "ペット飼育", "ペット可"])
+              || again;
+          } catch (_) { hit = again; }
+          if (!!again.checked !== wantPet) {
+            if (typeof _toggleCheckboxLikeHuman === "function") {
+              _toggleCheckboxLikeHuman(again, wantPet);
+            } else {
+              enqueueHumanClick(hit, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+            }
           }
-          return _ensureFieldVisible(petCb, "eq_rm[]", 4000).then(function () {
-            var again = document.querySelector('input[name="eq_rm[]"][value="113"]');
-            if (again && !again.checked) enqueueHumanClick(again, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-            try { console.log("[AX] ペット可: 絞り込み条件を開いてから選択"); } catch (_) {}
-            // ★ 2026-11-16 監査 pet:missing 10件: クリック後に本当に入ったか検証（土台F10）
-            return new Promise(function (resolve) {
-              setTimeout(function () {
-                try {
-                  var chk = document.querySelector('input[name="eq_rm[]"][value="113"]');
-                  if (!chk || !chk.checked) {
-                    try { if (_audit) _auditStepP("pet_not_checked", "ペット可を押したのに checked=false"); } catch (_) {}
-                    if (chk) enqueueHumanClick(chk, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-                  }
-                } catch (_) {}
-                resolve();
-              }, 700);
-            });
+          try {
+            console.log("[AX] ペット可: 絞り込み条件を開いてから" + (wantPet ? "選択" : "外す"));
+            if (_audit) _auditStepP(wantPet ? "pet_select" : "pet_clear", wantPet ? "ペット可を選ぶ" : "ペット可を外す（新客は条件なし）");
+          } catch (_) {}
+          /**
+           * ★ 2026-11-17 平田さん監査 `pet_not_checked`:
+           *   旧は toggle をキューに積んだ直後（700ms）に checked を見ていた →
+           *   **押し終わる前に「外れていない」判定** → 確定も早すぎ／未押しに見える。
+           *   → **キュー空まで待ってから**検証→押し直し→確定してリストへ。
+           */
+          return new Promise(function (resolve) {
+            function _afterPetToggle() {
+              try {
+                var chk = document.querySelector('input[name="eq_rm[]"][value="113"]');
+                if (chk && !!chk.checked !== wantPet) {
+                  try {
+                    if (_audit) _auditStepP(
+                      wantPet ? "pet_not_checked" : "pet_still_checked",
+                      wantPet ? "ペット可を押したのに checked=false → 押し直し" : "ペット可を外したのに checked=true → 押し直し",
+                    );
+                  } catch (_) {}
+                  var hit2 = null;
+                  try {
+                    hit2 = _labelForCheckbox(chk)
+                      || _findByText(["ペット相談", "ペット飼育可能", "ペット飼育", "ペット可"])
+                      || chk;
+                  } catch (_) { hit2 = chk; }
+                  if (typeof _toggleCheckboxLikeHuman === "function") _toggleCheckboxLikeHuman(chk, wantPet);
+                  else enqueueHumanClick(hit2, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+                  whenClickQueueIdle(function () { setTimeout(_confirmPetPanel, 350); });
+                  return;
+                }
+              } catch (_) {}
+              _confirmPetPanel();
+            }
+            function _confirmPetPanel() {
+              try {
+                if (_pressConfirmListLikeHuman(wantPet ? "pet_select後の確定" : "pet_clear後の確定")) {
+                  if (_audit) _auditStepP("pet_panel_confirm", "ペット操作後に確定してリストへ");
+                } else {
+                  if (_audit) _auditStepP("pet_panel_confirm_miss", "ペット操作後に確定ボタンが見つからない");
+                }
+              } catch (_) {}
+              whenClickQueueIdle(function () { resolve(); });
+            }
+            whenClickQueueIdle(function () { setTimeout(_afterPetToggle, 280); });
           });
-        },
-      });
-    }
+        });
+      },
+    });
     /**
      * ★ 2026-11-16 録画: 敷金・礼金なしが入っていなかった。
      *   原因: popup が adj チェックだけ送り、顧客テキストの希望を無視 → cond.shikirei_free=false。
@@ -6799,9 +10065,17 @@
      * 2026-11-11 竹内さん「所在地も通常モードならちゃんと光るのに自動モードやAIXモードでできていない」:
      *   区は**コードで探す**のが一番確実（案内モードと同じ）。ここで控えを置き、clickWardPrecise が使う。
      */
+    /**
+     * ★ 2026-11-18 平田 run_mwlrwjhx_xoqv（淀川区を押す/外すを約20往復）:
+     *   verify は `__axlxWardCodes` を「足りない区だけ」に一時差し替える。余計な区を外す判定は
+     *   **お客様の欲しい区の全部**で見ないと、選んだ直後の区が「余計」になって外される。
+     *   → 全部の控え `__axlxWardWantAll` を別に持つ（差し替えない）。
+     */
     try {
       window.__axlxWardCodes = (cond.city_codes || []).map(String);
-    } catch (_) { window.__axlxWardCodes = null; }
+      window.__axlxWardWantAll = window.__axlxWardCodes.slice();
+      window.__axlxWardSelN = {};
+    } catch (_) { window.__axlxWardCodes = null; window.__axlxWardWantAll = null; }
     // ★ 2026-11-16: 更新日・構造・ペット・敷礼なしは上の `_basicQueue` に入れた（ここで即実行しない＝同時操作を止める）
 
     {
@@ -6872,7 +10146,17 @@
       if (prefCb && !prefCb.checked) {
         enqueueHumanClick(prefCb, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
       }
-      setTimeout(function() { _auditStepP('cities', (cond.city_codes || []).length); setCheckboxes("city_code[]", cond.city_codes); }, _hd(150));
+      setTimeout(function() {
+        _auditStepP('cities', (cond.city_codes || []).length);
+        setCheckboxes("city_code[]", cond.city_codes);
+        try {
+          enqueueHumanAction(function () {
+            try { if (typeof _understandWardScene === "function") _understandWardScene(cond); } catch (_) {}
+          }, 500, 1100, "地域把握");
+        } catch (_) {
+          try { if (typeof _understandWardScene === "function") _understandWardScene(cond); } catch (__) {}
+        }
+      }, _hd(150));
     }
 
     // 沿線・駅なし（locationMode: area または none）
@@ -6917,16 +10201,14 @@
            *   ⚠ 実測（まりあ自動）: `_humanPointerClick` 直呼びだと tryFn が即 true →
            *     **確定のクリック完了前に検索**が走っていた（確定 click より検索が先）。
            *   → **キューに積む**（押し終わるまで busy＝次の段に進まない）。
+           *
+           * ★ 2026-11-17 平田さん自動: 地域そろったあと確定前で停止／確定が最重要。
+           *   → 共通 `_pressConfirmListLikeHuman` を使い、見つからない時だけ ×。
            */
-          var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
-          if (conf) {
-            if (_audit) _auditStepP('modal_confirm', '確定してリストへ');
-            enqueueHumanClick(conf, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-            return true;
-          }
+          if (_pressConfirmListLikeHuman("所在地モーダル確定")) return true;
           var d = document.querySelector('div.this_window_close');
           if (d && isVisible(d)) {
-            if (_audit) _auditStepP('modal_confirm', '×とじる（確定が見つからない）');
+            if (_audit) _auditStepP('modal_confirm_fallback_x', '×とじる（確定が見つからない）');
             enqueueHumanClick(d, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
             return true;
           }
@@ -7220,6 +10502,7 @@
                   if (t.includes('所在地絞り込み')) {
                     if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_class', clsTargets[ci]); }
                     // 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」: 学んだ押す位置で押す
+                    try { _markPanelOpened("area", "area_open_by_class"); } catch (_) {}
                     _pressLearned(divs[i], ['左の所在地絞り込み', '所在地絞り込み＋', '所在地絞り込み'], 'area_open');
                     return true;
                   }
@@ -7236,6 +10519,7 @@
                   // 「所在地絞り込み＋」を含み、**他の絞り込みを含まない**（一番内側を採る）
                   if (tt.includes('所在地絞り込み') && !/沿線・駅絞り込み|管理会社絞り込み/.test(tt)) {
                     if (_audit && !window._axAreaOpenMarked) { window._axAreaOpenMarked = true; _auditStepP('area_open_by_area', tt.slice(0, 20)); }
+                    try { _markPanelOpened("area", "area_open_by_area"); } catch (_) {}
                     _pressLearned(cands[k], ['左の所在地絞り込み', '所在地絞り込み＋', '所在地絞り込み'], 'area_open');
                     return true;
                   }
@@ -7243,10 +10527,13 @@
               }
             } catch (_) {}
             // ③ 文字（今まで通り・最後の受け皿）
-            return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+            var openedTxt = clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+            if (openedTxt) { try { _markPanelOpened("area", "area_open_by_text"); } catch (_) {} }
+            return openedTxt;
           },
           function() {
             console.log('[AX] STEP1完了: 所在地絞り込みクリック済');
+            try { if (!_axPanelDebt) _markPanelOpened("area", "area_modal_step1"); } catch (_) {}
             _auditStepP('modal', 'area');
             /**
              * 2026-11-14 竹内さん「まだ所在地絞り込み押すことできていない。原因見つけて改善する」:
@@ -7378,6 +10665,8 @@
              *   地域がそろったかを確かめ始めた時刻。押し切るまで待つための上限に使う。
              */
             var _wardVerifyStart = 0;
+            // ★ 2026-11-18 竹内さん「区が揃うまで待つ・進捗中は切らない」: 入った区が増えた最後の時刻（増えている間は中止しない）
+            var _wardBestChecked = -1, _wardGainAt = 0;
 
             function doAfterWard() {
               console.log('[AX] STEP3完了: 市区郡クリック済 → next_step_button2 確認');
@@ -7386,6 +10675,7 @@
                *   `var` は**使う所より前に**置く（後ろに置くと undefined のまま catch に飲まれて黙って動かない）。
                */
               _wardVerifyStart = Date.now();
+              _wardBestChecked = -1; _wardGainAt = Date.now();
               /**
                * 2026-11-14 竹内さん「なぜか地域を都島区を押してしまっている」「検索ボタンも押していなかった」:
                *   ⚠ 旧は `clickWardPrecise()` が true を返した**直後**に `doAfterWard()` を呼んでいた。
@@ -7400,6 +10690,8 @@
                */
               (function _verifyThenConfirm(tries) {
                 var n = tries || 0;
+                // ★ 2026-11-18: 区の確認・押し直しの間も background の fill-done 待ちを延長（9区で無進捗扱いにしない）
+                try { _emitFillProgressHeartbeat('ward_verify'); } catch (_) {}
                 var chk = isAllWantedWardsChosen(cond.city_codes);
                 var want = (cond.city_codes || []).map(String).filter(Boolean);
                 if (want.length === 0) { _auditStepP('ward', null); _afterWardConfirmed(); return; }
@@ -7432,25 +10724,49 @@
                  */
                 var t0 = _wardVerifyStart || (_wardVerifyStart = Date.now());
                 var elapsed = Date.now() - t0;
-                var MAX_MS = 45000;
-                var MAX_RETRY = 2;
+                /**
+                 * ★ 2026-11-17 平田さん: 9区で MAX_RETRY=2 だと足りない1区で即中止＋
+                 *   `_wardVerifyStart=0` で「0秒待った」と誤表示していた。
+                 *   → タイマーはリセットしない／押し直しは足りない区数に応じて増やす。
+                 *   ⚠ 「1区でも入れば進む」は都島区だけバグと矛盾 → **全部そろってから確定**（竹内さん絶対）。
+                 *
+                 * ★ 2026-11-18 平田1482 実測（search_audits id=1482・ext 2.8.93・9区指定）:
+                 *   入った1区・足りない8・約13秒で ward_verify_fail → batch_timeout。
+                 *   `clickWardPrecise` は1回の verify で**未選択の先頭1区だけ**足す設計のまま。
+                 *   旧 `MAX_RETRY=Math.min(10,missing+3)` は9区で10で打ち切り（10×約1.3秒≈13秒）が原因。
+                 *   → 欲しい区数に比例した retry／時間上限（硬上限30回・90秒以上）。
+                 */
+                var missingN = chk.missing.length || 1;
+                // ★ 2026-11-18: 目安も短くしない（9区×長く／最低15分）
+                var MAX_MS = Math.max(900000, want.length * 90000);
+                var MAX_RETRY = Math.min(30, Math.max(4, Math.max(want.length * 3, missingN * 2 + 4)));
+                /**
+                 * ★ 2026-11-18 竹内さん「タイムアウトを取り除く／AREA_MISMATCH で検索せず batch_timeout の連鎖を止める」:
+                 *   MAX_MS・MAX_RETRY は「目安」に格下げ（超えても**入った区が増えている間は中止しない**＝区が揃うまで待つ）。
+                 *   中止するのは ①入った区が一度も増えないまま WARD_NO_GAIN_MS（5分以上） ②硬上限 WARD_HARD_MS（30分）だけ。
+                 *   目安を超えた後の押し直しは 3秒間隔にして、画面外の区などで同じクリックを積み続けない。
+                 */
+                // ★ 2026-11-18: 無増5分は短い → 最低15分／硬上限45分
+                var WARD_NO_GAIN_MS = Math.max(900000, want.length * 60000);
+                var WARD_HARD_MS = 45 * 60 * 1000;
+                if (chk.checked.length > _wardBestChecked) { _wardBestChecked = chk.checked.length; _wardGainAt = Date.now(); }
+                var _wardOverSoft = n >= MAX_RETRY || elapsed > MAX_MS;
+                var _wardGiveUp = elapsed > WARD_HARD_MS || (Date.now() - _wardGainAt) > WARD_NO_GAIN_MS;
                 if (isClickQueueBusy()) {
-                  if (elapsed > MAX_MS) {
-                    var msg0 = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・押す列が' + Math.round(elapsed / 1000) + '秒たっても終わらない）';
+                  if (_wardGiveUp) {
+                    var msg0 = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・押す列が' + Math.round(elapsed / 1000) + '秒たっても終わらない・retry=' + n + ' MAX_RETRY=' + MAX_RETRY + ' MAX_MS=' + MAX_MS + '）';
                     _auditStepP('ward_verify_fail', msg0 + ' 入った:[' + chk.checked.join(',') + '] 足りない:[' + chk.missing.join(',') + ']');
-                    notifyDone('AXLX_AREA_MISMATCH: ' + msg0);
+                    _basicsThenAbort('AXLX_AREA_MISMATCH: ' + msg0, 'ward_queue_timeout');
                     return;
                   }
-                  whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n); }, 260); });
+                  whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n); }, _ln(110, 0.4, 60, 240)); }, 40);
                   return;
                 }
-                _wardVerifyStart = 0;
-                if (n >= MAX_RETRY || elapsed > MAX_MS) {
-                  var msg = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・' + Math.round(elapsed / 1000) + '秒待った）';
+                if (_wardGiveUp) {
+                  var msg = '地域がそろいません（欲しい' + want.length + '区・入った' + chk.checked.length + '区・足りない' + chk.missing.length + '・' + Math.round(elapsed / 1000) + '秒待った・retry=' + n + ' MAX_RETRY=' + MAX_RETRY + ' MAX_MS=' + MAX_MS + '）';
                   _auditStepP('ward_verify_fail', msg + ' 入った:[' + chk.checked.join(',') + '] 足りない:[' + chk.missing.join(',') + ']');
-                  console.warn('[AX] ' + msg + ' → 誤った地域で検索しないため中止します');
-                  showWarnToast(msg);
-                  notifyDone('AXLX_AREA_MISMATCH: ' + msg);
+                  console.warn('[AX] ' + msg + ' → 基本条件は入れてから中止（検索はしない）');
+                  _basicsThenAbort('AXLX_AREA_MISMATCH: ' + msg, 'ward_verify_fail');
                   return;
                 }
                 // まだそろっていない（かつ押す列は空）→ 足す（余計は外す）
@@ -7467,12 +10783,26 @@
                      *   → キューに積んで**1つずつ カーソルを動かして**外す
                      *     （人が区を外す速さ・`clickWardPrecise` と同じ 620〜1400ms）。
                      */
-                    if (lbl) enqueueHumanClick(inp || lbl, function (el) { try { simulateClick(el); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+                    // ★ 2026-11-18 竹内さん「外す場合も選択して外す」: 狙いは見えている label（hidden input へカーソルを送らない）。checked 直書きなし
+                    // 押す瞬間に checked を見る（既に外れていれば押さない＝積み重ねで付け直さない）
+                    if (inp && lbl) _toggleCheckboxLikeHuman(inp, false, 620, 1400, { quick: true });
                   });
                 } catch (_) {}
-                try { if (chk.missing.length) clickWardPrecise([wardFull, wardShort]); } catch (_) {}
+                try {
+                  if (chk.missing.length) {
+                    // 足りない区だけ押し直し（全コード再走査だと見えない区をまたスキップする）
+                    var _prevCodes = window.__axlxWardCodes;
+                    window.__axlxWardCodes = chk.missing.slice();
+                    clickWardPrecise([wardFull, wardShort]);
+                    window.__axlxWardCodes = _prevCodes;
+                  }
+                } catch (_) {}
                 // 積んだ後は**キューが空になるまで待ってから**もう一度確かめる（時間で決めない）
-                whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n + 1); }, 400); });
+                /**
+                 * ★ 2026-11-18 区レーン: 旧は押し終わり検知150ms＋確認400ms（区1つごとに約0.5秒）。
+                 *   押した直後の状態は _toggleCheckboxLikeHuman が確かめて返すので、ここは短く（通常の人の速さに合わせる）。
+                 */
+                whenClickQueueIdle(function () { setTimeout(function () { _verifyThenConfirm(n + 1); }, _wardOverSoft ? 3000 : _ln(90, 0.4, 50, 220)); }, 40);
               })(0);
             }
 
@@ -7507,10 +10837,18 @@
                             _auditStepP('modal_close', null);
                             _afterAreaAllPressedThenNext('STEP6確定');
                           },
-                          20, 500, 500 + Math.floor(Math.random() * 350),
+                          45, 450, 500 + Math.floor(Math.random() * 350),
                           function() {
-                            // 閉じるボタンが見つからなくても検索を試みる（clickSearch が必ず notifyDone）
-                            console.warn('[AX] STEP6: モーダルを閉じられず → 条件→検索');
+                            /**
+                             * ★ 2026-11-17 平田さん: 確定前で諦めない。最後にもう一度必押してから次へ。
+                             */
+                            console.warn('[AX] STEP6: 確定リトライ → それでも無ければ条件へ');
+                            try {
+                              if (_pressConfirmListLikeHuman("STEP6最終リトライ")) {
+                                _afterAreaAllPressedThenNext('STEP6最終リトライ確定');
+                                return;
+                              }
+                            } catch (_) {}
                             _afterAreaAllPressedThenNext('STEP6閉じられず');
                           });
                         },
@@ -7538,9 +10876,15 @@
                 waitForClick(closeAreaModal, function() {
                   _afterAreaAllPressedThenNext('広げて検索・確定');
                 },
-                20, 500, 500 + Math.floor(Math.random() * 350),
+                45, 450, 500 + Math.floor(Math.random() * 350),
                 function() {
-                  console.warn('[AX] モーダルを閉じられず → 条件→検索');
+                  console.warn('[AX] 広げて検索: 確定リトライ');
+                  try {
+                    if (_pressConfirmListLikeHuman("広げて検索最終リトライ")) {
+                      _afterAreaAllPressedThenNext('広げて検索・最終リトライ確定');
+                      return;
+                    }
+                  } catch (_) {}
                   _afterAreaAllPressedThenNext('広げて検索・閉じられず');
                 });
               }
@@ -7573,6 +10917,7 @@
                  *   `wantCodes` があればその全部が checked、無ければ今まで通り。
                  *   ⚠ 足りない区は `clickWardPrecise` が**足す**（チェック済みは押さない＝外さない）。
                  */
+                try { _graspAreaModalScreen(); } catch (_) {}
                 var _chk = isAllWantedWardsChosen(cond.city_codes);
                 var _want = (cond.city_codes || []).map(String).filter(Boolean);
                 var _missing = _chk.missing;
@@ -7608,7 +10953,8 @@
                   try {
                     var inp = document.querySelector('label input[name="city_code[]"][value="' + String(code) + '"]');
                     var lbl = inp && inp.closest ? inp.closest('label') : null;
-                    if (lbl) enqueueHumanClick(lbl, function (el) { simulateClick(el); }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts()); // トグルで解除（順次）
+                    // 500ms ごとの再ポーリングで同じ区を重ねて積んでも、押す瞬間に checked を見るので付け直さない
+                    if (inp && lbl) _toggleCheckboxLikeHuman(inp, false, 620, 1400);
                   } catch (_) {}
                 });
                 /**
@@ -7674,14 +11020,23 @@
     }
 
     // 沿線 form state を事前セット（駅指定なしの場合のみ。駅指定ありはモーダル内で完結させる）
+    // ★ 2026-11-17: 残駅があるときは form に沿線を直書きしない（駅画面経由クリアへ）
     if (hasRoutes && !hasStation) {
-      // ★ 修正(Bug2): 上流（popup.js等）が駅名を station_names に入れ損ねると
-      // ここで「沿線は選択・駅は未選択」のまま黙って検索される（Bug2の症状そのもの）。
-      // サイレントに進めず必ず可視化する
-      console.warn('[AX] ⚠️ 沿線のみ検索（駅指定なし）: route_ids=' + (cond.route_ids || []).join(',') +
-        ' / station_names が空です。上流の駅名解決を確認してください');
-      showWarnToast('沿線のみで検索します（駅指定なし）');
-      setCheckboxes("route_id[]", cond.route_ids);
+      var _stLeft0 = 0;
+      try { _stLeft0 = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { _stLeft0 = 0; }
+      if (_stLeft0 > 0) {
+        try {
+          window.__axlxNeedClearStation = true;
+          window.__axlxPlaceClearPhase = "start";
+          window.__axlxLineForceClearedOnce = false;
+          if (_audit) _auditStepP("route_only_defer_st", "沿線のみだが残駅" + _stLeft0 + "→駅画面経由で先に外す");
+        } catch (_) {}
+      } else {
+        console.warn('[AX] ⚠️ 沿線のみ検索（駅指定なし）: route_ids=' + (cond.route_ids || []).join(',') +
+          ' / station_names が空です。上流の駅名解決を確認してください');
+        showWarnToast('沿線のみで検索します（駅指定なし）');
+        setCheckboxes("route_id[]", cond.route_ids);
+      }
     }
 
     // 沿線・駅モーダル：waitForClick方式（必ず駅が選択されるまでリトライ）
@@ -7689,16 +11044,41 @@
       /**
        * 2026-11-11 竹内さん「駅の場合は 1沿線・駅絞り込み 2該当する沿線 3駅の設定へ進む 4該当する駅 5確定してリストへ」
        * ★ 2026-11-16: 所在地と同じく **enqueue**（確定完了前に検索へ進まない）。
+       * ★ 2026-11-17: 共通 `_pressConfirmListLikeHuman`（確定必押）。
+       * ★ 2026-11-17 悠さん自動: 駅指定ありなのに駅0のまま確定→検索が根因。
+       *   → 駅が1つも checked なら確定しない（駅選択へ戻す）。
        */
-      var conf = _findByText(['確定してリストへ', 'この条件で絞り込む', '決定']);
-      if (conf) {
-        if (_audit) _auditStepP('station_confirm', '確定してリストへ');
-        enqueueHumanClick(conf, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-        return true;
+      if (hasStation) {
+        var _uConf = null;
+        try { _uConf = _understandStationScene(cond); } catch (_) { _uConf = null; }
+        var _wantOkC = _uConf ? _uConf.wantOk : 0;
+        var _wantN = (cond.station_names || []).length;
+        if (_wantOkC < 1 || (_wantN > 0 && _wantOkC < _wantN)) {
+          try {
+            if (_audit) {
+              _auditStepP(
+                "station_confirm_blocked",
+                "駅未揃いのまま確定しない want済=" + _wantOkC + "/" + _wantN +
+                  (_uConf ? " phase=" + _uConf.phase + " screen=" + _uConf.screen : ""),
+              );
+            }
+          } catch (_) {}
+          try {
+            if (_uConf && _uConf.phase === "need_go_station") {
+              clickByText(["駅の設定へ進む", "駅の設定へ進む›", "駅の設定へ進む>"]);
+            } else if (_uConf && (_uConf.phase === "need_station_select" || _uConf.screen === "station_list")) {
+              selectStationsByName(cond.station_names);
+            } else if (_uConf && _uConf.phase === "need_line_select" && hasRoutes) {
+              clickLineButtons(cond.route_ids);
+            }
+          } catch (_) {}
+          return false;
+        }
       }
+      if (_pressConfirmListLikeHuman("駅モーダル確定")) return true;
       var d = document.querySelector('div.this_window_close');
       if (d && isVisible(d)) {
-        if (_audit) _auditStepP('station_confirm', '×とじる（確定が見つからない）');
+        if (_audit) _auditStepP('station_confirm_fallback_x', '×とじる（確定が見つからない）');
         enqueueHumanClick(d, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
         return true;
       }
@@ -7765,7 +11145,123 @@
       } catch (_) {}
     })();
 
-    // STEP A: 「沿線・駅絞り込み＋」が出るまで待ってクリック
+    /**
+     * ★ 2026-11-17 通常連続録画正本01:34＋統括Pro continuous_switch:
+     *   CLEAR区(one_city) → 確定してリストへ → 沿線・駅絞り込み＋ → SELECT沿線 → 駅の設定へ → 駅SELECT
+     *   旧: `__axlxNeedClearWard` を立てるだけで**読んでいなかった** → 区が残ったまま駅へ。
+     *   → 駅モーダルを開く前に、残区を所在地モーダルで1つずつ外して確定する。
+     */
+    function _clearWardsBeforeStationThen(nextFn) {
+      var cityLeft = 0;
+      try { cityLeft = document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked').length; } catch (_) { cityLeft = 0; }
+      var needWard = false;
+      try { needWard = !!(window.__axlxNeedClearWard) || cityLeft > 0; } catch (_) { needWard = cityLeft > 0; }
+      if (!needWard) {
+        try { nextFn(); } catch (_) {}
+        return;
+      }
+      try {
+        if (_audit) _auditStepP("ward_clear_before_station", "区残" + cityLeft + "→所在地で外してから駅へ（連続客正本）");
+        console.log("[AX] 連続客: 残区を外してから沿線・駅へ", cityLeft);
+      } catch (_) {}
+
+      var phase = "open";
+      var openedAt = 0;
+      var clearedAt = 0;
+      var confirmedAt = 0;
+      waitForClick(
+        function () {
+          try { if (isClickQueueBusy()) return false; } catch (_) {}
+          var cityNow = 0;
+          try { cityNow = document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked').length; } catch (_) { cityNow = 0; }
+          var cityVis = Array.prototype.slice.call(document.querySelectorAll("label.one_city, label.one_town")).filter(isVisible);
+
+          if (phase === "open") {
+            if (cityVis.length > 0 || cityNow > 0 && document.querySelector("div.this_window_close, .this_window")) {
+              phase = "clear";
+              return false;
+            }
+            if (!openedAt) {
+              openedAt = Date.now();
+              if (!clickByText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"])) {
+                // クラス名でも探す
+                try {
+                  var divs = Array.prototype.slice.call(document.querySelectorAll("div.click_menu, div.one_slide_search_box"));
+                  for (var i = 0; i < divs.length; i++) {
+                    if (!isVisible(divs[i])) continue;
+                    if (/所在地絞り込み/.test(String(divs[i].textContent || "").replace(/\s+/g, ""))) {
+                      _pressLearned(divs[i], ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_before_st");
+                      break;
+                    }
+                  }
+                } catch (_) {}
+              }
+            }
+            if (Date.now() - openedAt > 8000) {
+              // 開けない → 駅へ進む（止めない）
+              try { window.__axlxNeedClearWard = false; } catch (_) {}
+              return true;
+            }
+            return false;
+          }
+
+          if (phase === "clear") {
+            if (cityNow <= 0) {
+              phase = "confirm";
+              return false;
+            }
+            if (!clearedAt || Date.now() - clearedAt > 400) {
+              clearedAt = Date.now();
+              var n = 0;
+              Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'))
+                .forEach(function (cb) {
+                  var hit = _labelForCheckbox(cb);
+                  if (hit && !isVisible(hit)) return;
+                  _toggleCheckboxLikeHuman(cb, false);
+                  n++;
+                });
+              if (n && _audit) {
+                _auditStepP("ward_clear_cursor", "区/町" + n + "を1つずつ外す（駅の前）");
+                try { _noteClearMethod("ward", "cursor_one_by_one", "駅前に区" + n); } catch (_) {}
+              }
+            }
+            return false;
+          }
+
+          if (phase === "confirm") {
+            if (confirmedAt && Date.now() - confirmedAt > 600) {
+              try { window.__axlxNeedClearWard = false; } catch (_) {}
+              return true;
+            }
+            if (!confirmedAt) {
+              if (_pressConfirmListLikeHuman("区外し後に確定→駅へ") || clickByText(["確定してリストへ", "この条件で絞り込む", "決定"])) {
+                confirmedAt = Date.now();
+                try { if (_audit) _auditStepP("ward_clear_confirm", "区外し後に確定→駅へ"); } catch (_) {}
+              } else {
+                // 既に閉じている
+                try { window.__axlxNeedClearWard = false; } catch (_) {}
+                return true;
+              }
+            }
+            return false;
+          }
+          return true;
+        },
+        function () {
+          try { nextFn(); } catch (_) {}
+        },
+        40,
+        450,
+        300,
+        function () {
+          try { window.__axlxNeedClearWard = false; } catch (_) {}
+          try { nextFn(); } catch (_) {}
+        },
+      );
+    }
+
+    // STEP A: 残区を外してから「沿線・駅絞り込み＋」
+    _clearWardsBeforeStationThen(function () {
     waitForClick(
       function() {
         var clsTargets = ['click_menu', 'one_slide_search_box'];
@@ -7776,6 +11272,7 @@
             var t = divs[i].textContent.replace(/\s+/g, '');
             if (t.includes('沿線・駅絞り込み')) {
               // 2026-11-14 竹内さん「この地域押すところ…ちゃんと学習する」: 駅の絞り込みも学んだ位置で押す
+              try { _markPanelOpened("station", "station_open"); } catch (_) {}
               _pressLearned(divs[i], ['左の沿線・駅絞り込み', '沿線・駅絞り込み＋', '沿線・駅絞り込み'], 'station_open');
               return true;
             }
@@ -7800,6 +11297,13 @@
             var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
             var vis = labels.filter(function(l) { return isVisible(l); });
             if (!vis.length) {
+              // ★ 画面把握: closed/unknown なら路線一覧待ち（無理に駅直扱いしない）
+              try {
+                var _scrB = _graspStationModalScreen();
+                if (_scrB.kind === "closed" || (_scrB.kind === "unknown" && _scrB.stVis === 0)) {
+                  return false;
+                }
+              } catch (_) {}
               // 駅ページが直接表示されている場合（事前選択済みルートでモーダルが駅一覧を直接表示）
               // input[name="station_id[]"] はhidden checkboxのためisVisibleで不可視→親ラベルで判定
               var stationInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
@@ -7832,7 +11336,22 @@
              *   ⚠ 旧: 沿線画面で `_uncheckStationsThenLinesLikeHuman` → 駅が見えず**沿線だけ直外し**。
              *   新: 沿線画面→駅の設定へ進む→駅1つずつ外す→沿線画面へ戻る→沿線外す。
              */
-            var _forcePlaceClear = (_shouldForceClearPrevPlace() || window.__axlxNeedClearStation) && !window.__axlxLineForceClearedOnce;
+            /**
+             * ★ 2026-11-17: form に駅が残っているのに沿線だけ外す＝直接入力に見える。
+             *   残駅があれば必ず駅画面経由クリアを先に完了させる。
+             */
+            var _formStLeft = 0;
+            try { _formStLeft = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { _formStLeft = 0; }
+            if (_formStLeft > 0) {
+              try {
+                window.__axlxNeedClearStation = true;
+                if (window.__axlxLineForceClearedOnce) window.__axlxLineForceClearedOnce = false;
+                if (!window.__axlxPlaceClearPhase || window.__axlxPlaceClearPhase === "done") {
+                  window.__axlxPlaceClearPhase = "start";
+                }
+              } catch (_) {}
+            }
+            var _forcePlaceClear = (_shouldForceClearPrevPlace() || window.__axlxNeedClearStation || _formStLeft > 0) && !window.__axlxLineForceClearedOnce;
             if (_forcePlaceClear) {
               try {
                 if (!window.__axlxPlaceClearPhase || window.__axlxPlaceClearPhase === "done") {
@@ -7841,6 +11360,22 @@
               } catch (_) {}
               if (!_advanceForcePlaceClearViaStationFirst()) return false;
               try { if (isClickQueueBusy()) return false; } catch (_) {}
+              /**
+               * ★ 2026-11-17 画面把握: 外し完了後にモーダルが閉じていると
+               *   「路線一覧が表示されませんでした」。→ closed なら開き直してから選ぶ。
+               */
+              try {
+                var _scrAfter = _graspStationModalScreen();
+                if (_scrAfter.kind === "closed") {
+                  if (!window.__axlxStationReopenAfterClear) {
+                    window.__axlxStationReopenAfterClear = true;
+                    if (_audit) _auditStepP("screen_reopen_after_clear", "外し後closed→沿線・駅を開き直す");
+                    clickByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
+                  }
+                  return false;
+                }
+                window.__axlxStationReopenAfterClear = false;
+              } catch (_) {}
             }
             var wantedLineNorms = (hasRoutes ? cond.route_ids : []).map(function(id) {
               return ROUTE_LINE_MAP[id] ? norm(ROUTE_LINE_MAP[id]) : null;
@@ -7848,7 +11383,8 @@
             var _clearedLines = 0;
             var _keptOverlap = 0;
             // force 済みでない通常パス: want 以外の沿線だけ外す（駅は STEP D）
-            if (!_forcePlaceClear) {
+            // ⚠ 残駅がある間は沿線直外ししない（上で force 完了するまで待つ）
+            if (!_forcePlaceClear && _formStLeft === 0) {
               vis.forEach(function(lbl) {
                 var cb = lbl.querySelector('input[type="checkbox"]');
                 if (!cb && lbl.htmlFor) {
@@ -7896,16 +11432,28 @@
             var _lineOk = !hasRoutes ? true : (function () {
               var want = (cond.route_ids || []).map(function (id) { return ROUTE_LINE_MAP[id]; }).filter(Boolean).map(norm);
               if (!want.length) return true;
+              // ★ 可視ラベル＋ form 両方（悠さん: 可視だけだと every が永遠に false）
               var nowChecked = Array.prototype.slice.call(document.querySelectorAll('label.one_line'))
-                .filter(isVisible)
-                .filter(function (l) { var c = l.querySelector('input[type="checkbox"]'); return c && c.checked; })
+                .filter(function (l) {
+                  var c = l.querySelector('input[type="checkbox"]');
+                  if (!c && l.htmlFor) { try { c = document.getElementById(l.htmlFor); } catch (_) { c = null; } }
+                  return c && c.checked;
+                })
                 .map(function (l) { return norm(l.textContent); });
+              // form に checked があるのにラベル照合が弱い時: 本数で足切り（want数≤form数）
+              var formN = 0;
+              try { formN = document.querySelectorAll('input[name="route_id[]"]:checked').length; } catch (_) { formN = 0; }
               var matchOne = function (w) {
                 return nowChecked.some(function (n) {
                   return w === n || (n.length >= 4 && w.endsWith(n)) || (w.length >= 4 && n.endsWith(w));
                 });
               };
-              return want.every(matchOne);
+              if (want.every(matchOne)) return true;
+              if (formN >= want.length && formN > 0) {
+                try { if (_audit) _auditStepP("line_ok_form", "form沿線" + formN + "≥want" + want.length + "→駅へ進む"); } catch (_) {}
+                return true;
+              }
+              return false;
             })();
             if (!_lineOk) {
               // まだ路線が入っていない（クリックの列の途中）→ この段をもう一度
@@ -7927,36 +11475,78 @@
                  */
                 if (_stationNextPressed) {
                   if (_pressBusy > 0) return false;      // まだカーソルが動いている／押している最中
-                  // 2026-11-11: 押した直後に「駅ページに移ったか」も見る（移っていなければもう一度押す）
+                  // ★ 画面把握: 駅一覧に移ったか（form/ラベル）。沿線一覧のままなら押し直し
+                  try {
+                    var _uGo = _understandStationScene(cond);
+                    if (_uGo.screen === "station_list" || _uGo.scr.stVis > 0) {
+                      try {
+                        if (window.__axlxAwaitGoUnderstand) {
+                          window.__axlxAwaitGoUnderstand = 0;
+                          _verifyPressUnderstood("go", { formLn: _uGo.formLn });
+                        }
+                      } catch (_) {}
+                      return true;
+                    }
+                    if (_uGo.screen === "line_list") {
+                      try {
+                        if (window.__axlxAwaitGoUnderstand && Date.now() - Number(window.__axlxAwaitGoUnderstand) > 2500) {
+                          window.__axlxAwaitGoUnderstand = 0;
+                          _verifyPressUnderstood("go", { formLn: _uGo.formLn });
+                        }
+                      } catch (_) {}
+                      _stationNextPressed = false;
+                      return false;
+                    }
+                  } catch (_) {}
                   if (document.querySelectorAll('label.one_line').length > 0 &&
                       document.querySelector('div.this_window_close') &&
                       !document.querySelectorAll('input[name="station_id[]"]').length) {
-                    _stationNextPressed = false;         // まだ路線の一覧のまま → もう一度押す
+                    _stationNextPressed = false;
                     return false;
                   }
-                  return true;                            // 押し終わった → 次の段（駅の選択）へ
+                  return true;
                 }
                 if (_pressBusy > 0) return false;
                 /**
-                 * ★ 2026-11-17 竹内さん「沿線ンの部分も選択せず押してエラー」＋通常録画正本:
-                 *   沿線が1本も checked でないのに「駅の設定へ進む」を押さない。
+                 * ★ 2026-11-17 竹内さん「沿線押し≠駅選択の理解」:
+                 *   場面理解で need_go_station / form沿線あり のときだけ進む。
+                 *   沿線未選択なら選ぶ段に戻す（駅へ進まない）。
                  */
-                var _lnChk = 0;
-                try {
-                  _lnChk = Array.prototype.slice.call(document.querySelectorAll("label.one_line"))
-                    .filter(isVisible)
-                    .filter(function (l) {
-                      var c = l.querySelector('input[type="checkbox"]');
-                      return c && c.checked;
-                    }).length;
-                } catch (_) { _lnChk = 0; }
-                if (_lnChk < 1) {
-                  try { if (_audit) _auditStepP("station_go_without_line", "STEP C: 沿線未選択→駅へ進まない"); } catch (_) {}
+                var _uC = null;
+                try { _uC = _understandStationScene(cond); } catch (_) { _uC = null; }
+                var _lnChk = _uC ? _uC.formLn : 0;
+                try { if (!_lnChk) _lnChk = _countCheckedRoutes(); } catch (_) {}
+                if (_uC && _uC.phase === "need_line_select") {
+                  try {
+                    if (hasRoutes) clickLineButtons(cond.route_ids);
+                    var _blkAt2 = Number(window.__axlxGoWithoutLineAt) || 0;
+                    if (Date.now() - _blkAt2 > 2000) {
+                      window.__axlxGoWithoutLineAt = Date.now();
+                      if (_audit) _auditStepP("station_go_without_line", "STEP C: 場面=need_line_select→沿線を先に選ぶ");
+                    }
+                  } catch (_) {}
                   return false;
+                }
+                if (_lnChk < 1) {
+                  try {
+                    var _blkAt = Number(window.__axlxGoWithoutLineAt) || 0;
+                    if (Date.now() - _blkAt > 2000) {
+                      window.__axlxGoWithoutLineAt = Date.now();
+                      if (_audit) _auditStepP("station_go_without_line", "STEP C: 沿線未選択→駅へ進まない form+vis=0");
+                    }
+                  } catch (_) {}
+                  return false;
+                }
+                // すでに駅画面なら STEP D へ（沿線押し済みの理解）
+                if (_uC && (_uC.screen === "station_list" || _uC.phase === "need_station_select" || _uC.phase === "need_confirm")) {
+                  if (_audit) _auditStepP("station_scene_ready", "STEP C: 既に駅画面/選択段 phase=" + _uC.phase);
+                  return true;
                 }
                 if (clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>'])) {
                   _stationNextPressed = true;
-                  if (_audit) _auditStepP('station_next_press', '駅の設定へ進む');
+                  if (_audit) _auditStepP('station_next_press', '駅の設定へ進む formLn=' + _lnChk + (_uC ? " phase=" + _uC.phase : ""));
+                  // ★ 押した理解: 直後はまだ遷移前なので印だけ。次ポーリングで _verifyPressUnderstood('go')
+                  try { window.__axlxAwaitGoUnderstand = Date.now(); } catch (_) {}
                 }
                 return false;
               },
@@ -8038,6 +11628,27 @@
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
                 waitForClick(
                   function() {
+                    /**
+                     * ★ 2026-11-17 竹内さん「沿線押しと駅選択の理解」:
+                     *   沿線画面のまま駅を選ぼうとしない。場面が line_list なら先に駅へ進む。
+                     *   駅が揃うまで確定しない（wantOk は form で数える）。
+                     */
+                    try {
+                      var _uD = _understandStationScene(cond);
+                      if (_uD.phase === "need_line_select" || (_uD.formLn < 1 && hasRoutes)) {
+                        if (hasRoutes) clickLineButtons(cond.route_ids);
+                        return false;
+                      }
+                      if (_uD.phase === "need_go_station" || _uD.screen === "line_list") {
+                        if (_uD.formLn >= 1) clickByText(["駅の設定へ進む", "駅の設定へ進む›", "駅の設定へ進む>"]);
+                        return false;
+                      }
+                      var _uDNeed = (_uD.wantTargets > 0 ? _uD.wantTargets : _uD.wantStN);
+                      if (_uD.phase === "need_confirm" && _uD.wantOk >= _uDNeed && _uDNeed > 0) {
+                        if (_audit) _auditStepP("station_select_ok", "want済=" + _uD.wantOk + "/" + _uDNeed + "（名" + _uD.wantStN + "）→確定へ");
+                        return true;
+                      }
+                    } catch (_) {}
                     // ★ 診断ログ（初回のみ）: DOM上の全checkbox/radio input名を記録
                     // station_id[] ガードの前に実行し、0件のときも必ずログが出るようにする
                     if (!window._axStDiagDone) {
@@ -8098,32 +11709,57 @@
                      */
                     selectStationsByName(cond.station_names);
                     try { if (_audit) _auditStepP("station_reselect", "駅を選び直す want=" + _wantedStCleans.length); } catch (_) {}
-                    // ★ 修正: 指定駅が「すべて」チェックされたか確認
-                    // 旧実装の .some() は1駅（前顧客の残留チェックでも可）で通過してしまい、
-                    // 複数駅指定時に残りが未選択のまま検索されるバグがあった。
-                    // DOM上にマッチするlabelが1つも無い駅（表記ゆれ等）は判定から除外し、
-                    // 全滅時は false → maxTries超過で fallbackSearchWithoutStation が中止する
-                    var _checkedCount = 0;
-                    // ★ 録画準拠: 検証も label.one_station を優先（汎用 label の誤マッチを減らす）
-                    var _stVis = Array.prototype.slice.call(document.querySelectorAll('label.one_station')).filter(isVisible);
+                    try { if (isClickQueueBusy()) return false; } catch (_) {}
+                    /**
+                     * ★ 2026-11-17: 駅の「選んだ」判定は form（可視だけだと0のまま確定していた）。
+                     *   wantOk = want名が form で checked の数。沿線押しとは別印。
+                     */
+                    var _wantOkForm = 0;
+                    var _wantTargets = 0;
+                    try { _wantOkForm = _countWantStationsChecked(cond.station_names); } catch (_) { _wantOkForm = 0; }
+                    try { _wantTargets = _countWantStationTargets(cond.station_names, cond); } catch (_) { _wantTargets = _wantedStCleans.length; }
+                    if (_wantTargets < _wantedStCleans.length) _wantTargets = _wantedStCleans.length;
+                    try { _auditLineStationMap(cond); } catch (_) {}
+                    var _checkedCount = _wantOkForm;
+                    /**
+                     * ★ 沿線ごとの同名駅: 候補本数ぶん checked になるまで完了にしない
+                     *   （旧: 駅名1つで1本 checked なら完了 → 十三が1つだけ）
+                     */
+                    var _allMatchedChecked = _wantTargets > 0 && _wantOkForm >= _wantTargets;
+                    try {
+                      if (_audit) {
+                        _auditStepP(
+                          _allMatchedChecked ? "station_per_line_done" : "station_per_line_gap",
+                          "want名" + _wantedStCleans.length + " → 候補" + _wantTargets + " 済" + _wantOkForm,
+                        );
+                      }
+                      var _mapExp2 = _mapExpectWantStationTargets(_wantedStCleans, _selectedLineNamesNow(cond));
+                      if (_mapExp2 > 0 && _wantOkForm < _mapExp2) {
+                        _auditStepP(
+                          "line_station_map_gap",
+                          "地図期待" + _mapExp2 + " 済" + _wantOkForm + "（沿線ごと不足）",
+                        );
+                        _allMatchedChecked = false;
+                      }
+                    } catch (_) {}
+                    // 可視ラベルでも二重確認（form と食い違う時の診断）
+                    var _stVis = Array.prototype.slice.call(document.querySelectorAll('label.one_station'));
                     if (!_stVis.length) _stVis = vis;
-                    var _allMatchedChecked = (cond.station_names || []).every(function(sn) {
-                      var clean = sn.replace(/駅$/, '').trim();
-                      var matched = false, ok = false;
-                      _stVis.forEach(function(l) {
-                        var txt = l.textContent.replace(/\s+/g, '').replace(/駅$/, '');
-                        if (txt !== clean &&
-                            !(txt.length >= 2 && clean.length >= 2 &&
-                              (txt.startsWith(clean) || clean.startsWith(txt)))) return;
-                        var inp = l.querySelector('input[type="checkbox"]');
-                        if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
-                        if (!inp) { matched = true; return; }
-                        matched = true;
-                        if (inp.checked) ok = true;
+                    if (!_allMatchedChecked) {
+                      var _visOk = 0;
+                      (cond.station_names || []).forEach(function(sn) {
+                        var clean = sn.replace(/駅$/, '').trim();
+                        _stVis.forEach(function(l) {
+                          var txt = l.textContent.replace(/\s+/g, '').replace(/駅$/, '');
+                          if (!_stationNameMatch(txt, clean)) return;
+                          var inp = l.querySelector('input[type="checkbox"]');
+                          if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
+                          if (inp && inp.checked) _visOk++;
+                        });
                       });
-                      if (matched && ok) _checkedCount++;
-                      return !matched || ok;
-                    });
+                      if (_visOk > _checkedCount) _checkedCount = _visOk;
+                      if (_wantTargets > 0 && _visOk >= _wantTargets) _allMatchedChecked = true;
+                    }
                     // フォールバック検証: ラベルに checkbox が紐づかない構造でも確認できる
                     // （ラベルがあっても inp=null の場合 matched=false のまま _checkedCount が増えない問題を解消）
                     // station_code[] を全件走査して親テキストと照合し、
@@ -8207,6 +11843,7 @@
       _modalTry(), _modalRetryMs(), (600 + Math.floor(Math.random() * 700)),
       function() { fallbackSearchWithoutStation('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
     );
+    }); // _clearWardsBeforeStationThen end
 
     } catch (err) {
       // 本体の同期例外（不正な条件データ等）でも fill-done を必ず送る
@@ -8260,33 +11897,31 @@
       return;
     }
 
-    // ── 物件名をセット ────────────────────────────────────────────────────────
-    _fwInput.focus();
-    _fwInput.value = _fwPropName;
-    // React / Vue 等のバインディングにも対応するため複数イベントを発火
-    ["input", "change", "keyup"].forEach(function(ev) {
-      _fwInput.dispatchEvent(new Event(ev, { bubbles: true }));
-    });
-
-    // ── 検索ボタンをクリック（page-script.js 既存の clickSearch セレクターを流用）──
-    // div.go_search は DevTools 診断済みの確定セレクター
-    // 2026-11-11 竹内さん「検索のボタンはこのように2か所ある」: 小窓の中の「検索」は押さない（左のサイドバーを優先）
-    var _fwInModal = function (el) {
-      try { return !!(el.closest && el.closest('.this_window, [role="dialog"], .modal, #modal, .modal_wrap')); } catch (_) { return false; }
+    // ── 物件名をセット（直代入禁止 → カーソル移動＋1文字ずつ入力）────────────────
+    var _pressFwSearch = function () {
+      window.__axlxEstimateSearchResult = { ok: true, triggered: true };
+      if (_guideOn()) { window.__axlxEstimateSearchResult = { ok: false, error: "guide-mode: 案内モードのため検索を押さない" }; return; }
+      try { _fwBtn.__axPending = false; } catch (_) {}
+      if (!enqueueHumanClick(_fwBtn, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, { label: "click:検索(見積)", strictLo: true, sigma: 0.55 })) {
+        _humanPointerClick(_fwBtn, function () { try { _fwBtn.click(); } catch (_) {} });
+      }
     };
-    var _fwCand = Array.prototype.slice.call(document.querySelectorAll("div.go_search, div.go_search_submit"))
-      .filter(function (d) { return !_fwInModal(d); });
-    var _fwBtn =
-      _fwCand[0] ||
-      (function() {
+    var _fwBtnPre = (function () {
+      var _fwInModal = function (el) {
+        try { return !!(el.closest && el.closest('.this_window, [role="dialog"], .modal, #modal, .modal_wrap')); } catch (_) { return false; }
+      };
+      var _fwCand = Array.prototype.slice.call(document.querySelectorAll("div.go_search, div.go_search_submit"))
+        .filter(function (d) { return !_fwInModal(d); });
+      return _fwCand[0] || (function () {
         var candidates = Array.from(document.querySelectorAll("button, input[type='submit'], div[onclick], a"))
           .filter(function (el) { return !_fwInModal(el); });
-        return candidates.find(function(el) {
+        return candidates.find(function (el) {
           var t = (el.textContent || el.value || "").trim();
-          return ["住居検索", "検索", "物件を検索する", "条件で検索"].some(function(kw) { return t.includes(kw); });
+          return ["住居検索", "検索", "物件を検索する", "条件で検索"].some(function (kw) { return t.includes(kw); });
         });
       })();
-
+    })();
+    var _fwBtn = _fwBtnPre;
     if (!_fwBtn) {
       window.__axlxEstimateSearchResult = {
         ok: false,
@@ -8294,16 +11929,10 @@
       };
       return;
     }
-
-    // triggered フラグを立ててから検索開始
-    // → background.js がこのフラグを確認して結果スキャンのポーリングを開始する
-    // → ページ遷移で page-script.js が消えても background.js が独立してスキャンを継続できる
-    window.__axlxEstimateSearchResult = { ok: true, triggered: true };
-    if (_guideOn()) { window.__axlxEstimateSearchResult = { ok: false, error: "guide-mode: 案内モードのため検索を押さない" }; return; }
-    // ★ 2026-11-16: 見積検索も直接clickせず、カーソル移動してから押す
-    try { _fwBtn.__axPending = false; } catch (_) {}
-    if (!enqueueHumanClick(_fwBtn, function (el) { try { el.click(); } catch (_) {} }, _uiGapMin(), _uiGapMax(), null, { label: "click:検索(見積)", strictLo: true, sigma: 0.55 })) {
-      _humanPointerClick(_fwBtn, function () { try { _fwBtn.click(); } catch (_) {} });
+    try {
+      Promise.resolve(typeTextLikeHuman(_fwInput, _fwPropName)).then(_pressFwSearch, _pressFwSearch);
+    } catch (_) {
+      _pressFwSearch();
     }
 
     // 詳細ボタンのクリックは background.js の Step 5 が chrome.tabs.onUpdated で
@@ -8312,25 +11941,52 @@
   });
 
   // 2026-09-27 v2.5.32 content.js の「page-script は生きているか」に答える（一括検索の前のタブの確かめ）
+  /**
+   * ★ 2026-11-17 次客乗り換え: pong に fillRunning／客ID／世代を載せる。
+   *   no_fill_start→tab_reload が「別客の fill 中」にページを壊す抜けを止める材料。
+   */
   window.addEventListener("message", function(e) {
     if (e.source !== window || !e.data || e.data.from !== "axlx-page-ping") return;
-    window.postMessage({ from: "axlx-page-pong", id: e.data.id }, "*");
+    window.postMessage({
+      from: "axlx-page-pong",
+      id: e.data.id,
+      fillRunning: !!window._axFillRunning,
+      fillCustomerId: window._axFillRunningCustomerId || _fillCustomerId || null,
+      fillGen: Number(window.__axlxFillGen) || 0,
+      pageVer: (typeof _AXLX_PAGE_VER !== "undefined") ? _AXLX_PAGE_VER : null,
+    }, "*");
   });
+  function _forceFillClearSafe(reason, onlyCustomerId) {
+    try {
+      var cur = window._axFillRunningCustomerId || _fillCustomerId || null;
+      if (onlyCustomerId != null && cur != null && String(onlyCustomerId) !== String(cur)) {
+        console.warn("[AX] force-fill-clear スキップ（別客が進行中） want=" + String(onlyCustomerId).slice(0, 8) + " cur=" + String(cur).slice(0, 8) + " reason=" + (reason || ""));
+        try { if (_audit) _auditStepP("force_clear_skip", "別客進行中→壊さない"); } catch (_) {}
+        return false;
+      }
+      console.warn("[AX] force-fill-clear: " + (reason || "") + " → fillRunning 解除");
+      try { clearClickQueue(); } catch (_) {}
+      window._axFillRunning = false;
+      window._axFillRunningCustomerId = null;
+      _doneNotified = false;
+      if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+      try {
+        if (window.__axStallWatch) { clearInterval(window.__axStallWatch); window.__axStallWatch = null; }
+        if (window.__axFastSearchWatch) { clearInterval(window.__axFastSearchWatch); window.__axFastSearchWatch = null; }
+      } catch (_) {}
+      return true;
+    } catch (_) { return false; }
+  }
   /**
    * ★ 2026-11-16 連続客: bg が fill_timeout した時に fillRunning を強制クリア。
-   *   content.js が runtime メッセージを postMessage に中継する想定／直接 runtime も受ける。
+   * ★ 2026-11-17: **客スコープ**（次客 fill 中に前客 timeout の clear で壊さない）。
    */
   try {
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener(function (msg) {
         try {
           if (!msg || msg.type !== "axlx-force-fill-clear") return;
-          console.warn("[AX] force-fill-clear: " + (msg.reason || "") + " → fillRunning 解除");
-          try { clearClickQueue(); } catch (_) {}
-          window._axFillRunning = false;
-          window._axFillRunningCustomerId = null;
-          _doneNotified = false;
-          if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+          _forceFillClearSafe(msg.reason || "fill_timeout", msg.customerId != null ? msg.customerId : null);
         } catch (_) {}
       });
     }
@@ -8338,16 +11994,34 @@
   window.addEventListener("message", function (e) {
     try {
       if (!e.data || e.data.from !== "axlx-force-fill-clear") return;
-      console.warn("[AX] force-fill-clear(msg): " + (e.data.reason || ""));
-      try { clearClickQueue(); } catch (_) {}
-      window._axFillRunning = false;
-      window._axFillRunningCustomerId = null;
-      _doneNotified = false;
+      _forceFillClearSafe(e.data.reason || "", e.data.customerId != null ? e.data.customerId : null);
     } catch (_) {}
   });
 
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill") return;
+    /**
+     * ★ 2026-11-18 竹内さん「お客さん検索中や選択中上書きしないように ちゃんと１人のお客さん完了してから次のお客さんに移るように」:
+     *   旧は別のお客さんの依頼が来ると前のお客さんの入力を閉じて（superseded）次を始めた＝入力途中の画面を上書きした。
+     *   → 前のお客さんの入力が進んでいる間（無進捗 3分未満）は断る（busy_other_customer）。
+     *     3分以上止まっている入力だけ、今まで通り閉じて次へ（止まった入力で永久に詰まらない）。
+     *   判定は customer-handoff.js の pageIncomingDecision と同じ（ページの中には読み込まないので写し）。
+     */
+    try {
+      var _incCid = e.data.customerId || null;
+      var _runCidNow = window._axFillRunningCustomerId || null;
+      var _lastTouch = Number(window.__axlxFillTouchAt) || _axFillStartedAt || 0;
+      if (window._axFillRunning && !_doneNotified && (_runCidNow || _incCid)
+          && String(_runCidNow || "") !== String(_incCid || "") && Date.now() - _lastTouch < 3 * 60 * 1000) {
+        console.warn("[AX] 前のお客さんの入力中 → 次のお客さんは始めません run=" + String(_runCidNow || "-").slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8));
+        try { if (_audit) _auditStepP("next_customer_refused", "前客入力中→次客を断った next=" + String(_incCid || "-").slice(0, 8)); } catch (_) {}
+        window.postMessage({
+          from: "aixlinx-fill-done", gate: true, gateKind: "busy_other_customer", customerId: _incCid,
+          error: "busy_other_customer: 前のお客さんの条件入力中のため、このお客さんは始めませんでした（上書きしない）",
+        }, "*");
+        return;
+      }
+    } catch (_) {}
     // 2026-09-18 竹内（一括検索で違うお客さんの条件が送られるバグ）:
     //   「誰の自動入力か」をここで覚え、notifyDone がそのまま fill-done に載せて返す。
     //   中継側の「今の顧客」ではなく**この入力を始めた時の顧客**を返すので、遅れて届いた

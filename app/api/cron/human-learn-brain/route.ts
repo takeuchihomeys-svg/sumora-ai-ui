@@ -96,11 +96,13 @@ export async function GET(req: NextRequest) {
         })
         .slice(0, 50);
       const { cleanFields, screenOf } = await import("@/app/lib/shot-learn");
+      const { sceneOfOp } = await import("@/app/lib/learn-flow-steps");
       for (const r of targets) {
         const x = r as unknown as Record<string, unknown>;
         const ops = Array.isArray(x.shot_ops) ? x.shot_ops : [];
         const fields = cleanFields(ops.map((o) => {
           const y = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
+          // ⚠ point_fields の x/y は要素内の割合・shot_learn の x/y は画面全体の割合（役割が違うので混ぜない）
           return { name: y.f, kind: y.w, x: null, y: null };
         }));
         if (!fields.length) continue;
@@ -110,9 +112,21 @@ export async function GET(req: NextRequest) {
          *     写真が「地域の小窓」なのか「条件の入力」なのかが学習に残らなかった。
          *   → 操作の名前から**画面の種類を判定**する（`screenOf`）。
          */
+        const lastOp = ops.length ? (ops[ops.length - 1] as { k?: unknown; f?: unknown }) : null;
+        const lastKey = lastOp
+          ? `${String(lastOp.k ?? "click").trim() || "click"}:${String(lastOp.f ?? "").trim()}`
+          : "";
+        const sceneGuess = lastKey ? sceneOfOp(lastKey) : "other";
+        const runFromKey = typeof x.shot_key === "string"
+          ? ((String(x.shot_key).match(/run_([a-z0-9_]+)\//i) || [])[1] || undefined)
+          : undefined;
         const out = {
           screen: screenOf({ url: x.url, ops: ops as Array<{ f?: unknown }> }),
-          fields, by: "deterministic" as const, confidence: 0.9,
+          fields,
+          by: "deterministic" as const,
+          confidence: 0.9,
+          ...(sceneGuess !== "other" ? { scene: sceneGuess } : {}),
+          ...(runFromKey ? { run_id: runFromKey } : {}),
         };
         /**
          * 2026-11-13 竹内さん「weak を実際に使う」:
@@ -137,14 +151,18 @@ export async function GET(req: NextRequest) {
   }
 
   // ② まとめる（全サイト＋サイトごと）
+  /** ★ sceneMeta 無しの薄い束で上書きしない（foundation_audit・bundle_reflect・場面は継ぐ） */
+  const { fetchLearnBundleSceneMeta } = await import("@/app/lib/learn-bundle-scene-meta");
   const now = Date.now();
-  const all = compactBundle(buildHumanLearnBundle(rows, now));
+  const sceneMetaAll = await fetchLearnBundleSceneMeta(supabase, "all");
+  const all = compactBundle(buildHumanLearnBundle(rows, now, null, null, sceneMetaAll));
   const sites = Array.from(new Set(rows.map((r) => String(r.site || "")).filter(Boolean)));
   const perSite: Array<{ scope: string; bundle: ReturnType<typeof compactBundle> }> = [];
   for (const s of sites) {
     const sub = rows.filter((r) => String(r.site || "") === s);
     if (sub.length < 5) continue; // 少なすぎる物は束にしない（偶然を学ばない）
-    perSite.push({ scope: s, bundle: compactBundle(buildHumanLearnBundle(sub, now)) });
+    const sceneMetaSite = await fetchLearnBundleSceneMeta(supabase, s);
+    perSite.push({ scope: s, bundle: compactBundle(buildHumanLearnBundle(sub, now, null, null, sceneMetaSite)) });
   }
 
   const extVersion = rows.length ? String(rows[0]?.ext_version ?? "") || null : null;
@@ -168,11 +186,27 @@ export async function GET(req: NextRequest) {
     for (const p of payloads) {
       try {
         const b = p.bundle as unknown as Record<string, unknown>;
-        const pr = await inheritLinkFoundations(supabase, b, p.scope, { lookback: 20, minSolid: 30 });
+        const { INHERIT_LOOKBACK_DEFAULT } = await import("@/app/lib/learn-bundle-preserve");
+        const pr = await inheritLinkFoundations(supabase, b, p.scope, { lookback: INHERIT_LOOKBACK_DEFAULT, minSolid: 30 });
         if (!pr.safe_to_write) {
           wipeBlocked++;
           console.warn("[cron/human-learn-brain] 消す書き込み拒否", p.scope, pr.why);
           continue;
+        }
+        /** ★ 2026-11-18: cron 束にも vision 段1補完（profile の saveSupervisor と揃える） */
+        try {
+          const { ensureVisionPhotoReachEvidence } = await import("@/app/lib/learn-supervisor-pro");
+          const sup = b.supervisor as import("@/app/lib/learn-supervisor").SupervisorAdvice | undefined;
+          if (sup?.meeting) {
+            b.supervisor = ensureVisionPhotoReachEvidence(sup, b);
+          }
+          const by = (b.supervisor_by_site || {}) as Record<string, import("@/app/lib/learn-supervisor").SupervisorAdvice>;
+          for (const [site, adv] of Object.entries(by)) {
+            if (adv?.meeting) by[site] = ensureVisionPhotoReachEvidence(adv, b);
+          }
+          if (Object.keys(by).length) b.supervisor_by_site = by;
+        } catch (ve) {
+          console.warn("[cron/human-learn-brain] vision補完スキップ:", ve instanceof Error ? ve.message.slice(0, 80) : "err");
         }
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,

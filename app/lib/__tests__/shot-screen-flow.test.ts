@@ -105,5 +105,45 @@ it("欄の種類だけを読む（中身は読まない）", () => {
   ok(!("value" in (f[0] as object)), "value が残っている");
 });
 
+console.log("=== ④ 画像の画面の位置（x/y）を落とさない（自動が狙える材料）");
+it("shot_learn の x/y が fields に残る", () => {
+  const row = {
+    mode: "normal",
+    shot_ops: [{ f: "検索", k: "click" }],
+    shot_learn: {
+      by: "llm",
+      fields: [
+        { name: "検索", kind: "button", x: 0.12, y: 0.78, zone: "left" },
+        { name: "検索", kind: "button", x: 0.14, y: 0.80, zone: "left" },
+        { name: "検索", kind: "button", x: 0.13, y: 0.79, zone: "left" },
+      ],
+    },
+  };
+  const r = learnFromShots([row, row, row] as never, { mode: "normal" });
+  const sc = Object.values(r.screens)[0];
+  ok(!!sc, "画面が無い");
+  const f = sc.fields.find((x) => x.name === "検索");
+  ok(!!f, "検索が無い");
+  ok(typeof f!.x === "number", "x が無い: " + JSON.stringify(f));
+  ok(typeof f!.y === "number", "y が無い: " + JSON.stringify(f));
+  ok(f!.zone === "left", "zone が無い: " + JSON.stringify(f));
+});
+it("自動モードの録画は通常モードだけの学習から外す", () => {
+  const n = {
+    mode: "normal",
+    shot_ops: [{ f: "検索", k: "click" }],
+    shot_learn: { fields: [{ name: "検索", kind: "button", x: 0.1, y: 0.7 }] },
+  };
+  const a = {
+    mode: "aix",
+    shot_ops: [{ f: "勝手な欄", k: "click" }],
+    shot_learn: { fields: [{ name: "勝手な欄", kind: "button", x: 0.9, y: 0.9 }] },
+  };
+  const r = learnFromShots([n, n, a, a] as never, { mode: "normal" });
+  const names = Object.values(r.screens).flatMap((s) => s.fields.map((f) => f.name));
+  ok(names.includes("検索"), "通常の欄が無い");
+  ok(!names.includes("勝手な欄"), "自動の欄が混ざった: " + names.join(","));
+});
+
 console.log(`\n結果: 合格 ${passed} / 不合格 ${failed}`);
 if (failed) { for (const f of failures) console.log("  ✗ " + f); process.exit(1); }

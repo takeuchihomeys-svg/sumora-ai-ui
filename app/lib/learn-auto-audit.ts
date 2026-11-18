@@ -198,16 +198,24 @@ export function judgeMechanical(gaps: ReadonlyArray<number>): {
  *   増やす時は**実データの名前**を見て足す（推測で増やさない）。
  */
 const PER_ROW_FIELD = /^(印刷用PDF|印刷|PDF|次へ|次のページ|ページ送り|詳細|資料|チェック|選択)$/;
+/** 2026-11-18: shot_ops 内の監査ステップノート・台帳文字は「押す対象欄」ではないため課題抽出から除外 */
+const NON_FIELD_STEP_RE = /^(理解台帳|流れ台帳|流れ地図|未完了:|完了済:|細分化強化が要る|今の客|間取り場面|ボタン台帳|切替把握)/;
 
 /** 一覧の行ごとに押す物か（押し直しとして数えない） */
 export function isPerRowField(f: unknown): boolean {
   return PER_ROW_FIELD.test(fieldName(f));
 }
 
+export function isNonFieldStepNote(f: unknown): boolean {
+  const s = fieldName(f);
+  return !s || NON_FIELD_STEP_RE.test(s);
+}
+
 /**
  * 「同じ欄を2回以上押した」＝押し直し・迷いを数える（run をまたいで数える）。
  *   ⚠ 畳んだ後の操作で数える（`tap`/`click` の対を押し直しと数えないため）。
  *   ⚠ **一覧の行ごとに押す物は除く**（`isPerRowField`）。物件の件数だけ出てしまうため。
+ *   ⚠ **監査ステップノート（`o.w === "step"` や台帳文字）は除く**（課題欄のゴミ混入を防ぐ）。
  */
 export function countRetries(
   runs: ReadonlyArray<ReadonlyArray<AutoOp>>,
@@ -216,8 +224,9 @@ export function countRetries(
   for (const ops of Array.isArray(runs) ? runs : []) {
     const c: Record<string, number> = {};
     for (const o of Array.isArray(ops) ? ops : []) {
+      if (o?.w === "step") continue;
       const f = fieldName(o?.f);
-      if (!f || isPerRowField(f)) continue;
+      if (!f || isPerRowField(f) || isNonFieldStepNote(f)) continue;
       c[f] = (c[f] || 0) + 1;
     }
     for (const [f, k] of Object.entries(c)) if (k >= 2) out[f] = (out[f] || 0) + 1;

@@ -59,6 +59,17 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       lo.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(lo);
     } catch (_) { /* 学んだ順は使わず元の順で動く */ }
+    /**
+     * ★ 2026-11-17 統括Pro「沿線↔駅の地図は既にある（STATION_LINE_MAP）→ page-script の自動把握に載せる」:
+     *   地図を作るより先に、popup-maps を page へ注入して自動が読めるようにする。
+     */
+    try {
+      const pm = document.createElement("script");
+      pm.src = chrome.runtime.getURL("popup-maps.js");
+      pm.async = false;
+      pm.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(pm);
+    } catch (_) { /* 地図無しでも DOM 同名全押しで動く */ }
     const s = document.createElement("script");
     s.async = false;
     s.src = chrome.runtime.getURL("page-script.js");
@@ -257,19 +268,26 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
   }
 })();
 
-// 2026-09-27 v2.5.32 page-script.js が生きているか（ページの中へ postMessage で聞き、答えを待つ）。答えが無ければ false
+// 2026-09-27 v2.5.32 page-script.js が生きているか（ページの中へ postMessage で聞き、答えを待つ）。
+// ★ 2026-11-17: 答えに fillRunning／客ID を載せる（次客乗り換え時の誤 tab_reload 防止）。
 function _axPingPage(timeoutMs) {
   return new Promise(function (resolve) {
     var id = "p" + Date.now() + Math.random().toString(36).slice(2, 8);
     var done = false;
     var onMsg = function (e) {
       if (e.source !== window || !e.data || e.data.from !== "axlx-page-pong" || e.data.id !== id) return;
-      finish(true);
+      finish({
+        page: true,
+        fillRunning: !!e.data.fillRunning,
+        fillCustomerId: e.data.fillCustomerId || null,
+        fillGen: Number(e.data.fillGen) || 0,
+        pageVer: e.data.pageVer || null,
+      });
     };
     var finish = function (v) { if (done) return; done = true; window.removeEventListener("message", onMsg); resolve(v); };
     window.addEventListener("message", onMsg);
-    setTimeout(function () { finish(false); }, timeoutMs || 700);
-    try { window.postMessage({ from: "axlx-page-ping", id: id }, "*"); } catch (_) { finish(false); }
+    setTimeout(function () { finish({ page: false, fillRunning: false, fillCustomerId: null, fillGen: 0, pageVer: null }); }, timeoutMs || 700);
+    try { window.postMessage({ from: "axlx-page-ping", id: id }, "*"); } catch (_) { finish({ page: false, fillRunning: false, fillCustomerId: null, fillGen: 0, pageVer: null }); }
   });
 }
 
@@ -295,7 +313,20 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
       // 2026-09-27 v2.5.32: background の _pingTab は pong を見ていたのに、ここは ok しか返さず「いつも応答なし」になっていた。
       //   pong と、page-script.js が答えるか（page）も返す（一括検索の前のタブの確かめ・batch-guard.js realproTabPlan）
       //   vis: このタブが見えているか（hidden の背面のタブはタイマーが間引かれ、入力が遅れる＝点検 26）
-      _axPingPage(700).then(function (page) { sendResponse({ ok: true, pong: true, page: page, vis: document.visibilityState }); });
+      // ★ 2026-11-17: fillRunning／fillCustomerId も返す（次客溜まり→誤更新の防止）
+      _axPingPage(700).then(function (p) {
+        var pageOk = !!(p && p.page);
+        sendResponse({
+          ok: true,
+          pong: true,
+          page: pageOk,
+          vis: document.visibilityState,
+          fillRunning: !!(p && p.fillRunning),
+          fillCustomerId: (p && p.fillCustomerId) || null,
+          fillGen: (p && p.fillGen) || 0,
+          pageVer: (p && p.pageVer) || null,
+        });
+      });
       return true;
     }
     // fill-done relay に customerId を付与するため、autofill 前に顧客IDをセットしておく
@@ -325,12 +356,66 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     //   （旧: fill-done を中継する時に「その時点の _pendingFillCustomerId」を付けていた）
     var _fillCid = msg.customerId || _pendingFillCustomerId || null;
     setTimeout(function () {
-      window.postMessage({ from: "axlx-autofill-initiated" }, "*");
-      window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions, customerId: _fillCid }, "*");
+      /**
+       * ★ 2026-11-18 竹内さん「お客さん検索中や選択中上書きしないように」:
+       *   別のお客さんの入力が進んでいる時は「入力の開始」を bulk-dl に知らせない（送る相手・一覧の控えを次のお客さんで上書きしない）。
+       *   依頼はページへ渡し、page-script が busy_other_customer で断る。
+       */
+      _axPingPage(700).then(function (p) {
+        var _busyOther = !!(p && p.fillRunning && p.fillCustomerId && _fillCid && String(p.fillCustomerId) !== String(_fillCid));
+        if (!_busyOther) window.postMessage({ from: "axlx-autofill-initiated" }, "*");
+        window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions, customerId: _fillCid }, "*");
+      });
     }, _axContentHd(500)); // 自動入力を始めるまでの間（毎回ばらつかせる）
     sendResponse({ ok: true });
   });
 }
+
+/**
+ * ★ 2026-11-18: 検索 click 直前のリロード生存印（page-script → content）。
+ *   bulk-dl も同メッセージを聞くが、content 側でも必ず session に書く（二重でも上書きで安全）。
+ */
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "axlx-search-armed") return;
+  try {
+    var _cid = e.data.customerId || _pendingFillCustomerId || null;
+    chrome.storage.session.set({
+      axlx_pending_auto_send: {
+        customerId: _cid,
+        customerName: null,
+        conditions: null,
+        ts: Date.now(),
+        armed_why: String(e.data.why || "search_armed").slice(0, 48),
+        pageVer: e.data.pageVer || null,
+      },
+    });
+    try { chrome.storage.session.remove("axlx_fill_busy"); } catch (_) {}
+  } catch (_) {}
+});
+
+/**
+ * ★ 2026-11-18 竹内さん「送付済みは送ったと把握／取得タイミングと連携」:
+ *   bulk-dl の把握台帳を content でも session に残す（リロード・分離worldでも読める）。
+ */
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "axlx-acquire-grasp") return;
+  try {
+    var led = e.data.ledger && typeof e.data.ledger === "object" ? e.data.ledger : {};
+    chrome.storage.session.set({
+      axlx_acquire_grasp: {
+        phase: String(e.data.phase || "").slice(0, 24),
+        ok: e.data.ok !== false,
+        detail: String(e.data.detail || "").slice(0, 80),
+        sentMarked: Number(led.sentMarked) || 0,
+        sentSkipped: Number(led.sentSkipped) || 0,
+        pressed: Number(led.pressed) || 0,
+        allowed: Number(led.allowed) || 0,
+        last: led.last || e.data.phase || null,
+        at: Date.now(),
+      },
+    });
+  } catch (_) {}
+});
 
 // 修正4+CRITICAL1: page-script.js の検索実行完了シグナル（aixlinx-fill-done）を background.js へ中継する
 // customerId を含めることで、別顧客のウェイターを誤解決するバグを防止する
@@ -340,6 +425,26 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
 window.addEventListener("message", function (e) {
   if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
   try {
+    // fill-done でも pending を補強（notifyDone が届いた経路／リロード直前の保険）
+    try {
+      var _doneCid = e.data.customerId || _pendingFillCustomerId || null;
+      if (!e.data.gate) {
+        chrome.storage.session.set({
+          axlx_pending_auto_send: {
+            customerId: _doneCid,
+            customerName: null,
+            conditions: null,
+            ts: Date.now(),
+            armed_why: "fill-done",
+          },
+        });
+        try { chrome.storage.session.remove("axlx_fill_busy"); } catch (_) {}
+      } else if (e.data.gateKind !== "busy_other_customer") {
+        // ★ 2026-11-18: 検索していない（関所で止めた）→ 前に残った「検索した印」で今の一覧を送らせない
+        //   （busy_other_customer は断った側の合図。進行中のお客さんの印は消さない）
+        try { chrome.storage.session.remove(["axlx_pending_auto_send", "axlx_auto_next_page"]); } catch (_) {}
+      }
+    } catch (_) {}
     chrome.runtime.sendMessage({
       type: "axlx-fill-done",
       site: "realnetpro",
@@ -353,6 +458,7 @@ window.addEventListener("message", function (e) {
       pageError: e.data.error || null,
       // v2.5.50 検索を押す前の関所で止めた時（gate）だけ error で渡す＝background はこのお客様のリアプロを飛ばす（検索していないので取りに行かない）
       error: e.data.gate ? (e.data.error || "AXLX_FILL_INCOMPLETE") : null,
+      gateKind: e.data.gateKind || null,
     }, function () {
       void chrome.runtime.lastError;
     });
@@ -374,3 +480,86 @@ window.addEventListener("message", function (e) {
     }, function () { void chrome.runtime.lastError; });
   } catch (_) {}
 });
+
+/**
+ * ★ 2026-11-18 学習→自動反映の根因修正:
+ *   MAIN world（page-script.js）は chrome.storage / chrome.runtime に直接アクセスできない。
+ *   content.js が isolated world 側で学習束を読み・更新監視して MAIN world へ中継する。
+ */
+(function () {
+  var PUSH_KEYS = [
+    "axlx_learn_points", "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_needs_auto",
+    "axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode",
+    "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
+    "axlx_learn_opens", "axlx_learn_plan", "axlx_learn_cursor_hand",
+    "axlx_human_profile", "axlx_human_learn", "axlx_human_points",
+  ];
+  function pushAll() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      chrome.storage.local.get(PUSH_KEYS, function (r) {
+        try {
+          if (chrome.runtime && chrome.runtime.lastError) return;
+          if (r && typeof r === "object" && Object.keys(r).length) {
+            window.postMessage({ from: "axlx-page-learn-push", data: r }, "*");
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+  window.addEventListener("message", function (e) {
+    if (e.source !== window || !e.data || typeof e.data !== "object") return;
+    if (e.data.from === "axlx-page-storage-get") {
+      var id = e.data.id;
+      var keys = Array.isArray(e.data.keys) ? e.data.keys : PUSH_KEYS;
+      try {
+        chrome.storage.local.get(keys, function (r) {
+          var payload = (chrome.runtime && chrome.runtime.lastError) ? {} : (r || {});
+          try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: payload }, "*"); } catch (_) {}
+        });
+      } catch (_) {
+        try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: {} }, "*"); } catch (__) {}
+      }
+    } else if (e.data.from === "axlx-page-learn-refresh") {
+      var rid = e.data.id;
+      try {
+        chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force }, function () {
+          void chrome.runtime.lastError;
+          pushAll();
+          try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid }, "*"); } catch (_) {}
+        });
+      } catch (_) {
+        try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid }, "*"); } catch (__) {}
+      }
+    } else if (e.data.from === "axlx-page-learn-auto-linked") {
+      try {
+        chrome.runtime.sendMessage({
+          type: "axlx-learn-auto-linked",
+          ok: !!e.data.ok,
+          screen: Number(e.data.screen) || 0,
+          scenes: Number(e.data.scenes) || 0,
+          flow: !!e.data.flow,
+        }, function () { void chrome.runtime.lastError; });
+      } catch (_) {}
+    }
+  });
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener(function (changes, area) {
+        if (area !== "local" || !changes) return;
+        var out = {};
+        var has = false;
+        for (var i = 0; i < PUSH_KEYS.length; i++) {
+          var k = PUSH_KEYS[i];
+          if (changes[k]) { out[k] = changes[k].newValue; has = true; }
+        }
+        if (has) {
+          try { window.postMessage({ from: "axlx-page-learn-push", data: out }, "*"); } catch (_) {}
+        }
+      });
+    }
+  } catch (_) {}
+  setTimeout(pushAll, 300);
+  setTimeout(pushAll, 1500);
+})();
+

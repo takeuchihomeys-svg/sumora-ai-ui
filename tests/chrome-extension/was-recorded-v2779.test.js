@@ -29,9 +29,10 @@ t("wasChecked を持っている", /var wasChecked = null;/.test(rec));
 t("checked を読んでいる", /\.checked === "boolean"/.test(rec));
 t("⚠ 要素の中の input も探す（label を押しても取れる）", /querySelector\('input\[type="checkbox"\], input\[type="radio"\]'\)/.test(rec));
 t("closest('label') の中も探す", /\.closest\("label"\)/.test(rec));
-t("探した要素を _chkEl として使う", /_chkEl = _inp/.test(rec));
+t("探した要素を _chkEl として使う", /_chkEl = _findCheckEl\(el\)/.test(rec) || /_chkEl = _inp/.test(rec));
 t("was を操作に載せる", /_opObj\.was = wasChecked/.test(rec));
 t("now も載せる", /_opObj\.now = _chkEl\.checked/.test(rec));
+t("mousedown で押す前を掴む（2.8.10）", /addEventListener\("mousedown"/.test(rec) && /_pendingWas/.test(rec));
 
 // ── ② 押す前に呼ばれる（capture）────────────
 t("click を capture で拾う（押す前に状態を読める）", /document\.addEventListener\("click", _cap, true\)/.test(rec));

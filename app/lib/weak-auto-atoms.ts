@@ -192,6 +192,8 @@ export function atomsFromEvidence(
       { re: /入力開始なし|no_fill_start/, id: "handoff_nofill", name: "条件入力が始まらない", next: "fill-started待ちとタブ健全性を直し、ロック解除してから次へ" },
       { re: /送付完了待ち切れ|batch_timeout/, id: "handoff_batch", name: "送付完了待ち切れ", next: "batch-done/timeout の両方で一連ロックを外してから次客へ" },
       { re: /一連ロック拒否|pipeline_busy/, id: "handoff_busy", name: "一連ロック拒否", next: "storageを正として再判定・bgが解除完了をawait" },
+      { re: /強制ページ更新|tab_reload/, id: "handoff_reload", name: "強制ページ更新", next: "別客fill中は reload_skip・fillRunning を見てから更新" },
+      { re: /完了理解不足|flow_handoff_gap/, id: "handoff_flow_gap", name: "完了理解不足", next: "flow_done_place〜ready_next が揃うまで次客へ渡さない" },
     ];
     let any = false;
     for (const p of pairs) {
@@ -205,6 +207,30 @@ export function atomsFromEvidence(
         name: "完了→次客",
         layer: "extension",
         next: "search_audits の switch_fail / owner_mismatch を見て原子ごとに直す",
+      });
+    }
+  }
+
+  // ★ 2026-11-17 F45: 完了理解台帳の抜け
+  const flow = val(/完了理解|流れ台帳|flow_done_|flow_gap_|一連完了|次客へ渡してよい/);
+  if (flow) {
+    const pairs: Array<{ re: RegExp; id: string; name: string; next: string }> = [
+      { re: /未完了あり|flow_gap_|印なし/, id: "flow_gap", name: "一連の完了印が欠けている", next: "2.8.80で place→conditions→search→fill_done→ready_next を1つずつ残す" },
+      { re: /場所完了|place/, id: "flow_place", name: "場所段の完了理解", next: "place_ready と flow_done_place が同時に残るか確認" },
+      { re: /検索完了|search/, id: "flow_search", name: "検索段の完了理解", next: "search_press_ok と flow_done_search が残るか確認" },
+    ];
+    let any = false;
+    for (const p of pairs) {
+      if (!p.re.test(flow)) continue;
+      any = true;
+      out.push({ id: p.id, name: p.name, layer: "extension", next: p.next });
+    }
+    if (!any) {
+      out.push({
+        id: "flow_generic",
+        name: "完了理解",
+        layer: "extension",
+        next: "flow_understand_ledger と series_done を監査で確認",
       });
     }
   }

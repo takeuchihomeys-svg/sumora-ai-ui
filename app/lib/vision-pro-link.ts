@@ -91,9 +91,21 @@ function n(v: unknown): number {
  *   6. Proまとめ判断
  */
 export function buildVisionProLink(opt: VisionProLinkInput = {}): VisionProLink {
-  const photo = n(opt.photoInStorage);
+  const photoExplicit = n(opt.photoInStorage);
   const learned = n(opt.learnedOk);
   const todo = n(opt.todo);
+  /**
+   * ★ 2026-11-17 統括Pro: サイト別統括で shot_bytes が 0 のまま learned/todo だけ渡る穴。
+   *   学べ済み+未読があれば写真は存在する（数え方の正本が欠けているだけ）。
+   *   → 段1を「写真が無い」と誤報しない。
+   */
+  const photoInferred = learned + todo;
+  const photo = photoExplicit > 0 ? photoExplicit : photoInferred;
+  const photoDetail = photoExplicit > 0
+    ? `${photoExplicit}枚（Storage/shot_key）`
+    : (photoInferred > 0
+      ? `${photoInferred}枚（学べ${learned}+未読${todo}から推定・shot_bytes未配線の穴を補完）`
+      : "写真が無い（読めない）");
   const kindsN = n(opt.photoKindsN);
   const imageFields = n(opt.imageFields);
   const withPos = n(opt.withScreenPos);
@@ -108,12 +120,13 @@ export function buildVisionProLink(opt: VisionProLinkInput = {}): VisionProLink 
       n: 1,
       name: "写真保存",
       ok: photo > 0,
-      detail: photo > 0 ? `${photo}枚（Storage/shot_key）` : "写真が無い（読めない）",
+      detail: photoDetail,
       role: "flash",
     },
     {
       n: 2,
       name: "flashで読む",
+      // 写真0かつ未読0かつ学べ0の時だけ「対象なし」で✓。学べがある／未読がある時は正直に。
       ok: learned > 0 || (photo === 0 && todo === 0),
       detail: learned > 0
         ? `学べ済み ${learned}枚（model=${flashModel}）`
@@ -145,12 +158,18 @@ export function buildVisionProLink(opt: VisionProLinkInput = {}): VisionProLink 
     {
       n: 5,
       name: "未読→photo_learn課題",
-      ok: todo === 0 || hasPl,
-      detail: todo === 0
-        ? "読める未学習なし（課題不要）"
-        : (hasPl
-          ? `未学習 ${todo}枚 → photo_learn 課題あり（flashが読む）`
-          : `未学習 ${todo}枚なのに photo_learn 課題が無い（統括が把握できていない）`),
+      /**
+       * ★ 2026-11-18 Pro: 写真があるのに学べ0・todo=0 だと「課題不要」誤報。
+       *   → 写真あり∧学べ0∧課題なし は関所✗（flash実行を手配する）。
+       */
+      ok: hasPl || (todo === 0 && !(photo > 0 && learned === 0)),
+      detail: hasPl
+        ? `未学習 ${todo}枚 → photo_learn 課題あり（flashが読む）`
+        : (photo > 0 && learned === 0
+          ? `写真${photo}枚あるのに学べ0・課題なし → photo_learn を出す（todo窓の誤報を止める）`
+          : (todo === 0
+            ? "読める未学習なし（課題不要）"
+            : `未学習 ${todo}枚なのに photo_learn 課題が無い（統括が把握できていない）`)),
       role: "gate",
     },
     {

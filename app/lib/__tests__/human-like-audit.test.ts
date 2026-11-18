@@ -10,7 +10,7 @@
 //   → 写真をまたいで1本にまとめてから判定しないと正しく見えない。
 //
 // 実行: npx tsx app/lib/__tests__/human-like-audit.test.ts
-import { mergeOpsAcrossShots, isChooseField, auditHumanLike, findHumanLikeGaps } from "../human-like-audit";
+import { mergeOpsAcrossShots, isChooseField, auditHumanLike, findHumanLikeGaps, isDiagOnlyRow } from "../human-like-audit";
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -96,10 +96,13 @@ console.log("\n■ ⑤ カーソルと押した位置");
     { moves_n: 20, point_fields: { rental_cost2: { n: 3 } } },
     { moves_n: 0, point_fields: null },
     { moves_n: 15, point_fields: {} },
+    // ★ 2026-11-17: diag だけの健康診断写真は分母に入れない
+    { moves_n: 1, point_fields: null, shot_ops: [{ t: 1, k: "diag", f: "" }] },
   ]);
+  ok("diag だけは分母外", isDiagOnlyRow({ shot_ops: [{ k: "diag" }] }));
   ok("カーソルの枚数を数える", r.withCursor === 2, r.withCursor);
   ok("押した位置の枚数を数える", r.withPoint === 1, r.withPoint);
-  ok("記録の枚数", r.rows === 3);
+  ok("記録の枚数（diag除外）", r.rows === 3, r.rows);
   const gaps = findHumanLikeGaps(r);
   /**
    * ⚠ カーソルは 2/3（67%）= 半分以上なので**指摘しない**（悪くない時に言わない）。
@@ -119,7 +122,17 @@ console.log("\n■ ⑥ 良い状態なら補強する所を出さない");
   ok("補強する所は0", findHumanLikeGaps(r).length === 0, findHumanLikeGaps(r));
 }
 
-console.log("\n■ ⑦ 壊れた入力でも落ちない");
+console.log("\n■ ⑦ 手の形（cs=pointer）を通常から学べる");
+{
+  const r = auditHumanLike([{ shot_ops: [
+    { t: 1000, k: "click", f: "印刷用PDF", w: "button", cs: "pointer", by: "human" },
+    { t: 2000, k: "click", f: "rental_cost2", w: "select", cs: "default", by: "human" },
+  ] }]);
+  ok("手の形クリックを数える", r.handCursorClicks === 1, r.handCursorClicks);
+  ok("手が付いた欄名を残す", r.handCursorFields.includes("印刷用PDF"), r.handCursorFields);
+}
+
+console.log("\n■ ⑧ 壊れた入力でも落ちない");
 {
   ok("空配列", auditHumanLike([]).ops === 0);
   ok("null でも落ちない", auditHumanLike(null as never).ops === 0);

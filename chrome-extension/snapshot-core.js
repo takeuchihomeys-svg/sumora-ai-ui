@@ -35,9 +35,10 @@
   var IMAGE_MAX_BYTES = 1200 * 1024; // サーバーの上限（extension-snapshots.ts の IMAGE_MAX_BYTES）と同じ
   var TOTAL_IMAGE_MAX_BYTES = 3000000; // 合計（base64 で 4.0MB＝Vercel の本文 4.5MB に収まる・extension-snapshots.ts と同じ）
   var RUN_STATE_TTL_MS = 15 * 60 * 1000; // background の BATCH_LOCK_TTL_MS と同じ（これより古い「実行中」は信じない）
-  // 1回の検索（お客様×サイト×パス）の上限。fill-done（リアプロ90秒・itandi 245秒）＋全ページの送信（無進捗5分で延長）が収まる長さ。
-  //   これを過ぎるのは「進みの合図は来るのに終わらない」「応答の無い待ち」＝固まり。ロックの15分は進みのたびに延ばす（background）
-  var PASS_DEADLINE_MS = { realnetpro: 20 * 60 * 1000, itandi: 25 * 60 * 1000, reins: 8 * 60 * 1000 };
+  // 1回の検索（お客様×サイト×パス）の上限。fill-done＋全ページ送信（進捗後は無進捗15分まで延長）が収まる長さ。
+  // ★ 2026-11-18 竹内さん「タイムアウトの部分とりのぞく」: 進捗中の短TO禁止 → リアプロ60分／ITANDI70分。
+  //   ロックの TTL は進みのたびに延ばす（background）。固まり検知は無進捗心拍側。
+  var PASS_DEADLINE_MS = { realnetpro: 60 * 60 * 1000, itandi: 70 * 60 * 1000, reins: 12 * 60 * 1000 };
   var TRIGGERS = ["stall", "pass_deadline", "waiter_timeout", "fill_timeout", "request", "run_end"];
   var SITE_ORDER = ["realpro", "itandi", "reins"];
   var SITE_JA = { realpro: "リアプロ", realnetpro: "リアプロ", itandi: "itandi", reins: "レインズ" };

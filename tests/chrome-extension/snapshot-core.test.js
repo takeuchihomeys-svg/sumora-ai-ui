@@ -102,7 +102,7 @@ console.log("\n■ 帯（score-overlay）の状態の札 — 9/29 隼斗さん�
 
 console.log("\n■ 1回の検索の上限と止まった理由の文");
 {
-  eq("上限: リアプロ20分・itandi25分・レインズ8分・知らないサイトはリアプロ", ["realnetpro", "itandi", "reins", "x"].map((s) => S.passDeadlineMs(s) / MIN), [20, 25, 8, 20]);
+  eq("上限: リアプロ60分・itandi70分・レインズ12分・知らないサイトはリアプロ", ["realnetpro", "itandi", "reins", "x"].map((s) => S.passDeadlineMs(s) / MIN), [60, 70, 12, 60]);
   ok("上限は fill-done（itandi 245秒）＋無進捗5分より長い", S.passDeadlineMs("itandi") > 245000 + 5 * MIN);
   const w = { customerName: "隼斗", site: "realnetpro", pass: null, waitingFor: "検索の完了（fill-done）と全ページの送信", lastEvent: "送信の進み", passStartedAt: NOW - 21 * MIN, lastProgressAt: NOW - 7 * MIN };
   eq("見張りの時間切れの文", S.describeStall(w, NOW, "pass_deadline"), "見張りの時間切れ（21分）: 隼斗さん・リアプロ・待っていた物=検索の完了（fill-done）と全ページの送信・最後の合図=送信の進み");

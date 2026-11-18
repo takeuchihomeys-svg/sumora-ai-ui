@@ -72,9 +72,24 @@ export async function saveSupervisorLog(
      *   旧は same_bundle で捨て → learn_supervisor_log に Pro が残らず脳が薄くなる。
      */
     const proLabels = (ev: Array<{ label?: string }>) =>
-      ev.filter((e) => /統括Pro|足りない土台|土台を作る次手|統括Pro RAG|統括Pro把握|統括Pro手配/.test(String(e.label || "")));
+      ev.filter((e) => /統括Pro|足りない土台|土台を作る次手|統括Pro RAG|統括Pro把握|統括Pro手配|録画→課題|学習方法の強化/.test(String(e.label || "")));
     const hasRag = (ev: Array<{ label?: string }>) =>
       ev.some((e) => /統括Pro RAG|統括Pro把握/.test(String(e.label || "")));
+    /** 打合せ・次手が変わったら同束でも上書き（記憶が止まると改善が続かない） */
+    const meetFingerprint = (meeting: unknown): string => {
+      const m = (meeting || {}) as {
+        today?: string[];
+        agenda?: Array<{ topic?: string; decide?: string }>;
+        evidence?: Array<{ label?: string; value?: string }>;
+      };
+      const today = (m.today || []).slice(0, 4).join("|");
+      const agenda = (m.agenda || []).slice(0, 5).map((a) => `${a.topic || ""}>${a.decide || ""}`).join("|");
+      const keyEv = (m.evidence || [])
+        .filter((e) => /足りない土台|土台を作る次手|統括Proまとめ|録画→課題|学習方法の強化|記憶→改善/.test(String(e.label || "")))
+        .map((e) => `${e.label}:${String(e.value || "").slice(0, 80)}`)
+        .join("|");
+      return `${today}#${agenda}#${keyEv}`.slice(0, 1200);
+    };
     const rowEv = Array.isArray((row.meeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
       ? (row.meeting as { evidence: Array<{ label?: string }> }).evidence
       : [];
@@ -87,12 +102,19 @@ export async function saveSupervisorLog(
         .eq("bundle_at", row.bundle_at)
         .limit(1);
       if (!dup.error && Array.isArray(dup.data) && dup.data.length) {
-        const oldEv = Array.isArray((dup.data[0].meeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
-          ? (dup.data[0].meeting as { evidence: Array<{ label?: string }> }).evidence
+        const oldMeeting = dup.data[0].meeting;
+        const oldEv = Array.isArray((oldMeeting as { evidence?: Array<{ label?: string }> } | null)?.evidence)
+          ? (oldMeeting as { evidence: Array<{ label?: string }> }).evidence
           : [];
         const oldHasPro = proLabels(oldEv).length > 0;
-        // ★ RAG/手配が新規なら同束でも更新（脳を薄くしない）
-        const richer = hasPro && (!oldHasPro || (hasRag(rowEv) && !hasRag(oldEv)));
+        const fpNew = meetFingerprint(row.meeting);
+        const fpOld = meetFingerprint(oldMeeting);
+        // ★ RAG/手配が新規、または打合せ内容が変わったら同束でも更新（脳・改善記憶を薄くしない）
+        const richer = hasPro && (
+          !oldHasPro
+          || (hasRag(rowEv) && !hasRag(oldEv))
+          || (fpNew !== fpOld && fpNew.length > 20)
+        );
         if (richer) {
           const upd = await supabase
             .from("learn_supervisor_log")

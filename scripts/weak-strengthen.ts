@@ -16,13 +16,17 @@ import { buildHumanLearnBundle, compactBundle, type MotionRow } from "../app/lib
 import { findShotsToLearn, learnFromWeakShots } from "../app/lib/shot-learn-server";
 import { aliasesOf, fieldHasPosition } from "../app/lib/field-name-aliases";
 import { realproButtonLabel, resolveRealproButtonId } from "../app/lib/realpro-buttons";
+import { itandiButtonLabel, resolveItandiButtonId } from "../app/lib/itandi-buttons";
 import { buildWeakStrengthenPlan } from "../app/lib/weak-strengthen-loop";
 import { atomsFromEvidence } from "../app/lib/weak-auto-atoms";
+import type { ButtonCatalogSite } from "../app/lib/button-catalog-targets";
 
 const args = process.argv.slice(2);
 const yesCost = args.includes("--yes-cost");
 const roundsArg = args.find((a) => a.startsWith("--rounds="));
 const maxRounds = Math.min(5, Math.max(1, Number(roundsArg?.split("=")[1] || 1) || 1));
+const siteArg = (args.find((a) => a.startsWith("--site=")) || "").replace("--site=", "").trim();
+const site: ButtonCatalogSite = siteArg === "itandi" ? "itandi" : "realpro";
 
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -142,21 +146,29 @@ async function reflectBundle() {
   }
   const { error: werr } = await sb.from("human_learn_profile").insert(inserts);
   if (werr) return `束の書き込み失敗 ${werr.message}`;
+  /**
+   * ★ 2026-11-17: 改善したら自動へ連動する印を明示（読むだけで終わらせない）。
+   *   新束は read_count=0・auto_after=false から始まる → 拡張取込→自動1回が必須。
+   */
+  console.log("  → 自動連動: 拡張2.8.78再読込＋リアプロタブ再読込→popupで束取込→自動1回（learn_reflect_ok / aim有）");
   const hint = await fetchBundleReflectHint(sb, { scope: "all" });
   const { screen_all, screen_solid } = await screenCounts();
-  return reflectLine(hint, screen_solid, screen_all);
+  return reflectLine(hint, screen_solid, screen_all) + "／要:拡張取込→自動1回";
 }
 
 /** 1ボタン理解用の focus 語（正名・別名・画面ラベル） */
 function focusNeedlesFor(field: string): string[] {
-  const id = resolveRealproButtonId(field) || field;
-  const label = realproButtonLabel(id);
+  const id =
+    site === "itandi"
+      ? (resolveItandiButtonId(field) || field)
+      : (resolveRealproButtonId(field) || field);
+  const label = site === "itandi" ? itandiButtonLabel(id) : realproButtonLabel(id);
   const set = new Set<string>([field, id, label, ...aliasesOf(field), ...aliasesOf(id)]);
   return [...set].map((s) => String(s || "").trim()).filter(Boolean);
 }
 
 async function oneRound(round: number) {
-  console.log(`\n══ 弱い部分の強化 周回${round}/${maxRounds} ══`);
+  console.log(`\n══ 弱い部分の強化 周回${round}/${maxRounds} site=${site} ══`);
   const rows = await loadRows();
   const hint = await fetchBundleReflectHint(sb, { scope: "all" });
   let { screen_all, screen_solid, learned, points, evidence } = await screenCounts();
@@ -207,12 +219,21 @@ async function oneRound(round: number) {
     if (typeof v?.x === "number") imagePos.push(k);
   }
 
-  // 欄×観点の弱い欄
-  const candidateFields = [...new Set([
-    ...(ch.fields || []),
-    "required_time", "transportation_id", "rental_cost2", "structured_date", "update_date",
-    "route_id[]", "city_code[]",
-  ])];
+  // 欄×観点の弱い欄（★台帳正名のみ。値・区名・路線名の生は buildWeakStrengthenPlan 側で写す/落とす）
+  const candidateFields = site === "itandi"
+    ? [...new Set([
+        ...(ch.fields || []),
+        "rent:lteq", "room_layout:in", "station_checkbox", "line_checkbox",
+        "filter_wards_open", "filter_stations_open", "offer_conditions_updated_at:gteq",
+        "search", "modal_confirm", "option_id:pet",
+      ])]
+    : [...new Set([
+        ...(ch.fields || []),
+        "required_time", "transportation_id", "rental_cost2", "structured_date", "update_date",
+        "route_id[]", "city_code[]", "town_code[]", "station_id[]", "room_layout_id[]",
+        "駅の設定へ進む", "沿線の設定へ戻る", "確定してリストへ", "所在地絞り込み＋",
+        "沿線・駅絞り込み＋", "間取り絞り込み＋", "絞り込み条件＋", "eq_rm[]", "検索",
+      ])];
   let weakFields: string[] = [];
   try {
     const fine = scoreFieldsFine({
@@ -234,11 +255,80 @@ async function oneRound(round: number) {
     bottleneck_n: loop.bottleneck_n,
     pointPct,
     round,
+    site,
   });
+
+  /**
+   * ★ F46 2026-11-17: 録画の弱い流れ → 強化 → 自動反映を計画に足す。
+   *   scene_flows / scene_missing / 自動の flow_done 欠けを材料にする。
+   */
+  let flowLine = "";
+  try {
+    const { findWeakFlowFromRecordings, buildFlowReflectCycle, autoFlowGapsFromStepsBlob } =
+      await import("../app/lib/flow-reflect");
+    const { data: profFlow } = await sb
+      .from("human_learn_profile")
+      .select("bundle")
+      .eq("scope", "all")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const bundle = (profFlow?.bundle && typeof profFlow.bundle === "object")
+      ? (profFlow.bundle as Record<string, unknown>)
+      : {};
+    const sceneFlows = Array.isArray(bundle.scene_flows)
+      ? (bundle.scene_flows as Array<{ scene?: string; steps?: string[]; n?: number }>)
+      : null;
+    const sceneMissing = Array.isArray(bundle.scene_missing_names)
+      ? (bundle.scene_missing_names as string[])
+      : (typeof bundle.scene_missing === "number" && Number(bundle.scene_missing) > 0
+        ? ["area", "station", "cond", "search"]
+        : null);
+    let autoBlob = "";
+    try {
+      const { data: auRows } = await sb
+        .from("search_audits")
+        .select("steps,error,mode")
+        .eq("site", "realpro")
+        .in("mode", ["brain_aix", "aix", "auto"])
+        .order("created_at", { ascending: false })
+        .limit(8);
+      for (const a of auRows || []) {
+        const steps = Array.isArray(a.steps) ? a.steps : [];
+        autoBlob += steps.map((s: unknown) => {
+          if (typeof s === "string") return s;
+          const o = s as { k?: string; d?: string };
+          return `${o.k || ""} ${o.d || ""}`;
+        }).join("|") + " " + String(a.error || "") + "|";
+      }
+    } catch (_) {}
+    const flowWeak = findWeakFlowFromRecordings({
+      sceneFlows,
+      sceneMissing,
+      autoFlowGaps: autoFlowGapsFromStepsBlob(autoBlob),
+    });
+    const flowPlan = buildFlowReflectCycle(flowWeak, { unreadNormal: unread });
+    flowLine = flowPlan.line;
+    if (flowPlan.cycle.length) {
+      // photo_learn は既存の後ろに足し、need_auto_run は重複しなければ足す
+      for (const t of flowPlan.cycle) {
+        if (t.kind === "need_auto_run" && plan.cycle.some((x) => x.kind === "need_auto_run")) continue;
+        plan.cycle.push(t);
+      }
+      plan.continue_loop = true;
+      plan.line = plan.line + " ／" + flowPlan.line;
+      if (flowPlan.needs_auto) {
+        console.log("  流れF46: needs_auto（録画→自動反映が未完）");
+      }
+    }
+  } catch (e) {
+    console.warn("  流れF46スキップ:", e instanceof Error ? e.message : e);
+  }
 
   console.log("  状態:", loop.improve_line);
   console.log("  鮮度:", fresh.line.slice(0, 100));
   console.log("  計画:", plan.line);
+  if (flowLine) console.log("  流れ:", flowLine);
   console.log("  対象:", plan.targets.slice(0, 8).join("・") || "（原子・位置%中心）");
   plan.cycle.forEach((t, i) => {
     console.log(`  ${i + 1}. [${t.kind}] ${t.what}`);
@@ -261,15 +351,33 @@ async function oneRound(round: number) {
     const focus = (t.fields || [])[0] || "";
     const focusFields = focus ? focusNeedlesFor(focus) : [];
     console.log(`  ▶ 1つずつ Vision: 「${focus || "（原子）"}」 limit=${limit}${focusFields.length ? ` focus=${focusFields.slice(0, 3).join("|")}` : ""}`);
-    const r = await learnFromWeakShots({
+    /**
+     * ★ 2026-11-17 竹内さん「通常モードの録画や自動モードの録画から学習」:
+     *   先に通常（人の手本）。0枚なら自動(aix)の同じボタン写真も読む（弱い部分がなくなるまで）。
+     */
+    let r = await learnFromWeakShots({
       site: null, mode: "normal", days: 7, limit, order: (t.order as "newest") || "newest",
       perSig: 12, strideMs: 800, dryRun: false, noRefresh: true, concurrency: 3,
       focusFields: focusFields.length ? focusFields : null,
     });
+    if (r.tried === 0 && focusFields.length) {
+      console.log(`  ↪ 通常0枚 → 自動(aix)でも「${focus}」を読む`);
+      const r2 = await learnFromWeakShots({
+        site: null, mode: "aix", days: 7, limit, order: (t.order as "newest") || "newest",
+        perSig: 12, strideMs: 800, dryRun: false, noRefresh: true, concurrency: 3,
+        focusFields: focusFields.length ? focusFields : null,
+      });
+      r = {
+        ...r2,
+        tried: r.tried + r2.tried,
+        learned: r.learned + r2.learned,
+        saved: r.saved + r2.saved,
+      };
+    }
     photoTotal.tried += r.tried;
     photoTotal.learned += r.learned;
     photoTotal.saved += r.saved;
-    console.log(`  ✓ 「${focus}」完了: 試した${r.tried}・読めた${r.learned}・保存${r.saved}${r.tried === 0 ? "（このボタンの操作写真が未学習に無い）" : ""}`);
+    console.log(`  ✓ 「${focus}」完了: 試した${r.tried}・読めた${r.learned}・保存${r.saved}${r.tried === 0 ? "（通常も自動もこのボタンの操作写真が無い）" : ""}`);
   }
   if (photoTasks.length && yesCost) {
     const ref = await reflectBundle();

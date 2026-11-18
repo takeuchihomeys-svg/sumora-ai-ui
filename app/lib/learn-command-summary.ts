@@ -10,6 +10,8 @@
 //
 // ⚠ 集計だけ（書き込まない・サイトを触らない）。純関数。
 
+import { LEARN_PERIODS } from "./learn-periods";
+
 /** `automation_commands` の1行（必要な列だけ） */
 export type CommandRow = {
   created_at?: string | null;
@@ -69,7 +71,7 @@ export type CommandSummary = {
 /**
  * 指示の状態をまとめる（純関数）。
  * @param rows 直近の指示
- * @param opt.sinceMs 何ミリ秒前まで（既定 24時間）
+ * @param opt.sinceMs 何ミリ秒前まで（既定 commandsMs=7日）
  * @param opt.now いまの時刻（テスト用）
  * @param opt.staleMs これより長く pending/running のままなら「詰まっている」（既定 30分）
  */
@@ -79,18 +81,18 @@ export function summarizeCommands(
 ): CommandSummary {
   const list = Array.isArray(rows) ? rows : [];
   const now = typeof opt.now === "number" ? opt.now : Date.now();
-  const since = now - (typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000);
+  const since = now - (typeof opt.sinceMs === "number" ? opt.sinceMs : LEARN_PERIODS.commandsMs);
   const stale = typeof opt.staleMs === "number" ? opt.staleMs : 30 * 60_000;
   /**
    * 2026-11-14 竹内さん「弱い部分はあるか。統括の部分ちゃんと機能しているのか」:
    *   ⚠ 統括が**矛盾した事を言っていた**（実測）:
    *     「拾われないまま 60件」と「モードが無かった 121件」が混ざり、**今の詰まり**が分からない。
    *   原因は**期間の混在**（pending は「今」・失敗は「7日」）。
-   *   → **今の詰まりは「24時間」**、**過去の失敗は渡された期間（7日）**で数える。
+   *   → **今の詰まりは「24時間」**、**過去の失敗は渡された期間（commandsMs=7日）**で数える。
    *     ⚠ 失敗はたまにしか起きないので短い窓では見えない → 7日で見る。
    *     ⚠ 「今詰まっている」は**長期間で見ると過去の物まで混ざる** → 24時間で見る。
    */
-  const NOW_WINDOW_MS = 24 * 3600_000;
+  const NOW_WINDOW_MS = LEARN_PERIODS.normalFreshMs;
   const nowSince = now - NOW_WINDOW_MS;
 
   let done = 0, failed = 0, pending = 0, running = 0, staleN = 0, staleOld = 0;
@@ -156,7 +158,7 @@ export function summarizeCommands(
    *   → ① 拾われないまま（24時間）→ ② モードが無かった失敗 → ③ 失敗 → ④ 待ちが多い、の順。
    *   ⚠ 期間を**言葉に書く**（「24時間」「7日」）。混ざると矛盾に見える。
    */
-  const days = Math.max(1, Math.round((typeof opt.sinceMs === "number" ? opt.sinceMs : 24 * 3600_000) / 86400_000));
+  const days = Math.max(1, Math.round((typeof opt.sinceMs === "number" ? opt.sinceMs : LEARN_PERIODS.commandsMs) / 86400_000));
   /**
    * 2026-11-14 竹内さん「日ごとにやるから前日にできていなくても持ち越さない」:
    *   前の日の自動便を閉じた数を**言葉に出す**（出さないと「なぜ減ったのか」が分からない＝統括が矛盾に見える）。

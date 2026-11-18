@@ -48,18 +48,22 @@ console.log("\n■ 人の間（毎回ちがう・機械的に同じ間隔にし�
   ok("background: 間はロックを消す時に一緒に書く（stop_all は置かない）", /batchRunning: null, batchCommandId: null, batchNextNotBefore: _nextGap \? Date\.now\(\) \+ _nextGap : 0/.test(bg) && /cmd\.command_type !== "stop_all" && \(_src/.test(bg));
 }
 
-console.log("\n■ ページの上限 5（拡張とサーバーで同じ・1か所の定数）");
+console.log("\n■ ページ上限（既定3・新着5・2026-11-16）");
 {
-  eq("拡張の既定 DEFAULT_MAX_PAGES", R.DEFAULT_MAX_PAGES, 5);
+  eq("拡張の既定 DEFAULT_MAX_PAGES=3", R.DEFAULT_MAX_PAGES, 3);
+  eq("新着 NEW_CUSTOMER_MAX_PAGES=5", R.NEW_CUSTOMER_MAX_PAGES, 5);
+  eq("resolveMaxPages: 指定なし→3", R.resolveMaxPages(null, null), 3);
+  eq("resolveMaxPages: state=new→5", R.resolveMaxPages({ state: "new" }, null), 5);
+  eq("resolveMaxPages: 未送付ヒント→5", R.resolveMaxPages(null, { knownCustomer: true, last_property_sent_at: null }), 5);
   const sched = readRoot("app/lib/auto-search-schedule.ts");
-  ok("サーバーの SEARCH_MAX_PAGES も 5", /export const SEARCH_MAX_PAGES = 5;/.test(sched));
-  ok("午前・午後の便とも SEARCH_MAX_PAGES", (sched.match(/maxPages: SEARCH_MAX_PAGES,/g) || []).length === 2);
-  eq("自動便の指定が無い時は既定へ（pageLimit の fallback）", R.pageLimit(null, R.DEFAULT_MAX_PAGES), 5);
+  ok("サーバーの SEARCH_MAX_PAGES は新着上限 5", /export const SEARCH_MAX_PAGES = 5;/.test(sched));
+  ok("午前の便の既定は 3（AM_DAILY.maxPages）", /maxPages: 3,/.test(sched));
+  eq("自動便の指定が無い時は既定へ（pageLimit の fallback）", R.pageLimit(null, R.DEFAULT_MAX_PAGES), 3);
   eq("自動便の指定（max_pages 5）はそのまま", R.pageLimit({ max_pages: 5 }, 3), 5);
-  ok("bulk-dl の既定は 5", /\|\| \(_AR\(\) && _AR\(\)\.DEFAULT_MAX_PAGES\) \|\| 5;/.test(read("bulk-dl.js")));
-  ok("itandi-bulk-dl も既定は DEFAULT_MAX_PAGES（自動便の指定 → 既定）", /pageLimit\(_autoRunFor\(customerId\), _AR\(\)\.DEFAULT_MAX_PAGES \|\| null\)/.test(read("itandi-bulk-dl.js")));
+  ok("bulk-dl の既定は 3（resolveMaxPages）", /resolveMaxPages/.test(read("bulk-dl.js")) && /\|\| 3;/.test(read("bulk-dl.js")));
+  ok("itandi-bulk-dl も resolveMaxPages", /resolveMaxPages/.test(read("itandi-bulk-dl.js")));
   const chk = readRoot("app/lib/search-audit-check.ts");
-  ok("点検の cut_by_pages は SEARCH_MAX_PAGES と比べる（古い拡張の 3 を見分ける）", /r\.page_limit < SEARCH_MAX_PAGES/.test(chk));
+  ok("点検の旧拡張判定は page_limit < 3", /r\.page_limit < 3/.test(chk));
 }
 
 console.log("\n■ 選んだ部屋を点検に残す（見張りの C2・C3 が送付済みの部屋と照らす）");

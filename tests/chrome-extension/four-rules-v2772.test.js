@@ -47,22 +47,33 @@ console.log("\n■ ② 同じ平米数は賃料が一番安い1部屋（実装�
   ok("  _applyCheapestPerLayout がある", /_applyCheapestPerLayout/.test(bd));
   ok("  ⚠ 外すのは印を付けた物だけ（全件を空にしない）", /__axCheapestSkip/.test(bd));
   ok("  ⚠ 候補(cand)を対象にする（チェック状態で絞らない）", /_applyCheapestPerLayout\(state, cand\)/.test(bd));
+  // ★ 2026-11-16: 自動押下（_startAutoPressRun）でも最安絞りを通す（旧は一括経路だけ）
+  ok("  ⚠ 自動押下の前に _filterCandForAuto がある", /function _filterCandForAuto/.test(bd));
+  ok("  ⚠ 自動押下で最安絞りを呼ぶ", /_applyCheapestPerLayout\(state, allowed\)/.test(bd));
 }
 
 console.log("\n■ ③ 送付済みは送らない（実装済みを固定）");
 {
   ok("  sent-skip.js を読み込んでいる", /import "\.\/sent-skip\.js"/.test(fs.readFileSync(path.join(dir, "chrome-extension", "background.js"), "utf8")));
   ok("  ⚠ 送った行は押さない", /_onePdfSent\[url\]/.test(bd));
+  // ★ 2026-11-16: 通常（案内）と同じ送付済みを自動でも読む
+  ok("  ⚠ 自動押下前に送付済みを読む（通常と同じ経路）", /axlx-guide-sent-rooms|axlx-load-sent-rooms/.test(bd));
+  ok("  ⚠ 自動でも _rowSkipReason で送付済みを外す", /_filterCandForAuto/.test(bd) && /why === "sent"/.test(bd));
+  const bg = fs.readFileSync(path.join(dir, "chrome-extension", "background.js"), "utf8");
+  ok("  ⚠ background に axlx-load-sent-rooms がある", /msg\.type === "axlx-load-sent-rooms"/.test(bg));
+  ok("  ⚠ 案内の送付済みも storage に置く", /axlx-guide-sent-rooms[\s\S]{0,1500}STORAGE_KEY/.test(bg));
 }
 
-console.log("\n■ ④ 全部送付済みなら次のページへ進む（新規）");
+console.log("\n■ ④ ページごとに送ったら次へ・既定3／新着5（2026-11-16）");
 {
   ok("  ⚠ 飛ばした数を数えている", /_autoPdfRun\.skipped = \(Number\(_autoPdfRun\.skipped\) \|\| 0\) \+ 1/.test(bd));
-  ok("  ⚠ 0件送信＋1件以上飛ばしたら次ページへ", /var allSkipped = \(n === 0 && skipped > 0\)/.test(bd));
+  ok("  ⚠ 全部送付済みも判定する", /var allSkipped = \(n === 0 && skipped > 0\)/.test(bd));
   ok("  _autoNextPageThenRestart がある", /function _autoNextPageThenRestart/.test(bd));
-  ok("  ⚠ 次ページが無ければ終わる（無限にめくらない）", /if \(!btn\) \{/.test(bd));
-  ok("  ⚠ 進むのは3回まで", /_autoNextPageTries >= 3/.test(bd));
-  ok("  ⚠ 新しい検索で回数を0に戻す", /_autoNextPageTries = 0/.test(bd));
+  ok("  ⚠ 次ページが無ければ終わる（無限にめくらない）", /次のページが無い/.test(bd));
+  // ★ 2026-11-16: 送ったあとでも次へ／上限5（旧は全部送付済みだけ・最大3回）
+  ok("  ⚠ 送ったあとでも次ページへ進む", /送ったあとでも次へ行く/.test(bd) || /n > 0 \|\| allSkipped/.test(bd));
+  ok("  ⚠ 上限は resolveMaxPages（既定3・新着5）", /_autoMaxPages/.test(bd) && /resolveMaxPages/.test(bd));
+  ok("  ⚠ 新しい検索でページを0に戻す", /_autoPdfPage = 1/.test(bd));
   ok("  ⚠ 進んだ後は結果を見る間を入れる", /_startAutoPressAfterLook/.test(bd));
   ok("  bulk-dl に無い関数を使っていない（enqueueHumanClick）", !/^\s*enqueueHumanClick\(btn/m.test(bd));
 }
@@ -87,7 +98,17 @@ console.log("\n■ ⑥ 実測: 人の手本は守れている（一気押しは�
   ok("  ⚠ 人が押した物だけを手本にする", /if \(hasBy && r\.by !== "human"\) continue/.test(brain));
 }
 
-console.log("\n■ ⑦ 構文");
+console.log("\n■ ⑦ プルダウン完了待ち・送付済み連携・徒歩締め（2026-11-16）");
+{
+  ok("  ⚠ _fireAt が Promise を返す（完了まで待つ）", /function _fireAt[\s\S]{0,220}return new Promise/.test(ps));
+  ok("  ⚠ fire の then を待つ（並行禁止）", /ret\.then\(function \(\) \{ resolve\(true\)/.test(ps));
+  ok("  ⚠ 関所の入れ直しは _runBasicOneByOne", /_runBasicOneByOne\(_gateQ/.test(ps));
+  ok("  ⚠ 検索直前に徒歩を締める", /pre_search_walk_seal/.test(ps));
+  ok("  ⚠ 自動が送付済み印を付ける", /_markSentLikeGuide/.test(bd));
+  ok("  ⚠ DOM の送付済み印でも飛ばす", /axlx-pdf-sent/.test(bd));
+}
+
+console.log("\n■ ⑧ 構文");
 {
   let ok1 = true, ok2 = true;
   try { execFileSync(process.execPath, ["--check", path.join(dir, "chrome-extension", "page-script.js")], { stdio: "pipe" }); } catch { ok1 = false; }

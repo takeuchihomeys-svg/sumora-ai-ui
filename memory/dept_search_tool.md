@@ -4,6 +4,1751 @@
 
 ---
 
+## 2026-11-18 21:40 **画面位置solid復元＋写真157枚を全部読む（費用OK・徹底）／束が写真の位置を約4割落とす穴を発見**
+
+竹内さん（21:08）:
+> ２　３おねがい／お金かかってもよいので画像から弱い部分徹底的に学習する／統括proおねがい
+（2=画面位置solidを履歴から束に復元・3=flashで写真を読む。直前の「ほか改善する箇所／人間の動きは完全か」への統括Pro回答の次手）
+
+**実行（コード変更なし・DBは新しい行を足しただけ）**
+1. 復元: `scripts/tmp-restore-link-bundle.ts`（donor=2026-11-18 07:43 UTC の solid=206）→ `human_learn_profile` に `all`=#2372 / `realpro`=#2373 を追加。**履歴で確認**: 束 solid は 07:43 UTC まで 206 → 以降の本番再構築で 0（本番は 11/17 10:15 のコミット＝今日の未コミット修正〔solid引き継ぎ等〕が未反映の可能性）。
+2. 写真学習: `scripts/shot-learn.ts --site=realpro --mode=normal --days=7 --order=newest`。未読 157枚（全1920px）。dry-run 2枚（欄49個）→ 本番 157枚。結果: **157/157枚・欄4027個（1枚25.6個）・保存157・読めない0・1431秒・束の作り直し済み**（flash・1枚約0.17円＝約27円）。新しい行は20/20行とも全欄に x,y。
+3. 統括Pro（`--scope=realpro --save` 2回）: 「質は上がった」vision段6まで OK／残る穴は『束→拡張』read と自動1回（拡張再読込→自動1回が先）。統括Proの数字に食い違い: 「F38 read=1」と「read_count=0のまま」が同じ出力に並ぶ（私は未解決のまま報告）。
+
+**発見した穴（私の実測・未修正）**: 束の『写真で学んだ位置』(shots.learned)は 画面種(form/result/modal/other)×**上位40欄**で切られる（`shot-learn.ts:667`・`human-learn-brain.ts:757`・`compactBundle` 60）。通常・realpro 7日・1500行の集計で form は欄名1167個のうち1127個が落ち（3回以上見た欄 480個・票の39%）。賃料(9位)・更新日(11位)・面積・徒歩・築年数は上位40に入る＝載る。落ちるのは個別の欄（区名・駅名・required_time・×とじる・room_layout_id[]・確定してリストへ・city_code[] など）。**写真をいくら読み足しても solid は上がらない**（157枚後も 206＝履歴の引き継ぎ値）。統括Proも同じ欄を次手に出していた。直し案（未実施・OK待ち）: n≥3 の欄は上位40の外でも残す（上限300前後）／同じ名前が複数レイアウトに出る時は scene 別に分ける。拡張の読み方を確かめてから。
+
+**未了（人）**: 拡張を再読み込み→ポップアップを開く（束を取り直す）→自動1回→F55/F31/F32 の数字を読む。**本番デプロイ待ち**: 束 solid 引き継ぎ・各修正は未コミットのため本番に届いていない（コミットは竹内さんの「保存して」を待つ）。
+
+## 2026-11-19 01:45 **位置継ぎを自サイトだけに限定／人の迷い（長い間）を汎用欄に追加（page-script 2.8.112）**
+- 竹内さん（01:30）「1は危ない可能性があるのでは 2したらよいなら行う 3人の速さで迷いも人のように入れる 統括pro徹底的に」への対応。
+- **1. 位置継ぎの混ぜ防止（危険の修正）**: `app/lib/learn-bundle-preserve.ts` の `scopesToSearch` を自サイトだけ（`[scope]`）に変更。`all` へは落とさない。itandi が realpro の位置を継ぐ経路を塞いだ。テスト: `app/lib/__tests__/learn-bundle-no-site-mix.test.ts`（6件）・`learn-bundle-preserve.test.ts`（11件）。
+- **2. 局所再構築（本番DBへ書き込み・削除あり）**: realpro id 2410（learned 878）・itandi id 2411（learned 206）・all id 2412（learned 878）を作成。混ぜ誤りの id 2409 は削除済み。
+- **3. 人の迷いの追加（`chrome-extension/page-script.js` `_hesitateMs`）**: 実測（人の「その他（チェック等）」n=1097・p50 1345ms・p90 12248ms・4秒以上 16%）に寄せ、`decide`（押すボタン）以外の汎用欄に 12% の長い迷い（4〜9秒・対数正規 中心 5200・σ 0.3）を入れる。区・選択レーン（`_isWardItem`/`_isSelItem`）は従来どおり 0（`_hesitateMs` を通さない）。`_AXLX_PAGE_VER` と `manifest.json` を **2.8.112** に上げた。
+- テスト: 新規 `tests/chrome-extension/human-long-pause-v2812.test.js`（版・12%・4〜9秒・decide除外・区レーン除外）。版の固定値を 2.8.112 に直した `ward-lane-v2808` `scene-aim-v2810` `human-gap-mix-v2809` も通過。`idle-close-honest-v2812` 7件も通過。`npx tsc --noEmit` 0 エラー。
+- ⚠ **機械の `g` と人の `g` は定義が違い比較不能**（機械は 0〜160ms が多い）。迷いの値を機械の数字で調整しない。
+- ⚠ **未デプロイ・拡張の再読込（chrome://extensions）が必要**。ここまで全部未コミット。コミット/デプロイは竹内さんの「保存して」を待つ。
+- 統括Pro（`--scope=realpro --save`・meet=1）の判断: 自動モード完成度 55/100。関所 verdict=almost。次の止まり = 「新しい束の後の自動走行が 0 回（F6/F32/F38/F55）」。手順: ①拡張を再読込（2.8.112）→②自動モードで1回検索→③F55の印（reflect_ok / flow_reflect_ok / aim有 ≥1）と新束後自動 ≥1 を数字で確認→④効果が出たら commit/deploy を竹内さんに求める。並行して通常の未学習 46 枚を flash で読む（位置最優先）。
+- 統括の欠（生の言葉の要点）: F53 連続画像 learned=0・scene|flow=0 ／ F28 短間隔 69.7% ／ F29 近さ 32 ／ 押した位置 14%（要 ≥60）／ 写真に拡張の小窓が写り一覧の中央が隠れる（5回）。
+- ⚠ 統括の矛盾（そのまま残す）: 「構築は拡張2.8.112まで入っている」と「拡張の再読込→自動1回」が同時に出ている。前者はリポジトリのファイルの版、後者はブラウザに読み込まれた版の話。ブラウザ側はまだ旧版の可能性が高い。
+
+## 2026-11-19 00:40 **終わりの合図が届かず閉じた回を「ok」にしない（background.js・バージョンは据え置き 2.8.111）**
+- 何が起きたか: 平田さん 15:25 UTC（JST 00:25）の自動の回は、検索（15:27:34）と次ページ（15:28:01）まで進んだが、結果を送る段で合図（fill-done／batch-customer-done）が消え、6分の閉じ処理が `error:null` で「ok（完走）」と閉じた。送付は 0 件。
+- 直したこと: background.js の6分の閉じ処理（2か所）を `AUDIT_IDLE_CLOSE_EXTRA()` に統一し、`error:"idle_close: …"`・`error_kind:"idle_close"` を付けて閉じる。点検では `ERROR_IDLE_CLOSE`（完走と数えない）。
+- テスト: `tests/chrome-extension/idle-close-honest-v2812.test.js`（7 pass）。
+- ⚠ 拡張の再読込（chrome://extensions）が必要。manifest の版は据え置き（2.8.111）。
+- 未対応（竹内さんの OK 待ち）: 検索までの待ちの大半は「人の速さ」の区・条件の目標間隔（中央値 約133秒の大半）。汎用レーンの足し算（案2）は統括Proの下限に触れるので保留。
+- 実測の補足（同じ日）: 本番の束が 15:24 の再生成で「画面位置 0」に落ちていた（原因: 本番の履歴の窓が20件のまま。コミット前の inherit 改善（窓80・all フォールバック・読み取り失敗時は書かない）が未コミット）。15:41 に履歴から復元して新しい行として書き戻し（realpro id 2407・all id 2408、いずれも 878 欄）。itandi は一時的に all から継いでしまい（混ぜ）、同じ日に取り消し（id 2409 を削除・最新は 2396）。
+- ⚠ 次の本番の再生成で消えないためには、inherit 改善の**コミットとデプロイ**が要る（「保存して」の後）。
+- 写真の flash（realpro・limit=8・新しい順・`--only-no-scene --no-refresh`）: dry-run 8/8（欄251）→ 実行 8/8 保存（欄237・1枚29.6個）。束は作り直していない（統括の「学べ=0」は束反映まで残る）。
+- ⚠ 読んだ写真の多くで、**拡張自身の小窓が一覧の中央を覆っている**（「中央に拡張機能の小窓が重なっている」）。写真学習が拡張の見た目を学ぶ恐れ。次に直すのは写真を撮る時の小窓の非表示（shot-hide）の確認。
+- 作業員の結果（同日）: 検索押下まで中央値133秒（3run）。大半は区・条件の人の速さの目標間隔（設計）。検索直前は約3秒。削れるのは学習束の強制更新（`screen=0` の時だけ強制にする案）と検索直前の二重待ち（数秒）。
+
+## 2026-11-18 22:51 **お客さんの取り違え（平田さん↔R.さん）を止める・検索は画面に出てから押す → 2.8.111**
+
+竹内さん:
+> （22:51）今録画した直近の自動モードの録画平田さんで検索したけどR.さんで上書きされてしまってR.さんの条件で検索された物件が平田さんに送られている可能性がある。また徒歩を押す際の位置が右にずれているのと、検索を押す際画面がきれていた、画面表示されるようにスクロールして検索がでてから押すようにする。駅の検索の仕方はちゃんとできていた。最初とまってしまったおそらくお客さんぶつかったのが原因の可能性ある。ちゃんと選択したお客さんで検索されるようにする。統括proおねがい
+
+**実測（読むだけ・22:43〜22:44 JST）**: 平田さん（`3b62b7e1…`）の開始2件と、R.さん（`cc6f0f3f…`）の開始が5件以上、数秒の中に入り交じった。どの開始にも終了（`finished_at`）の記録は無い。平田さん側の行は更新無し（10:35 UTC のまま）。
+
+**原因（コード・私の要約）**: `page-script.js` `fillRealpro` の「入力中の別のお客さん」分岐が、前のお客さんを**閉じて**（`_abortFillForNextCustomer`）次のお客さんを始めていた。その前に `_fillCustomerId` が次のお客さんの番号に変わるので、前のお客さんの検索・結果に次のお客さんの番号が付く。さらに、受け口の 3 分ルール（静かなら上書き）も同じ穴。
+
+**変えた所（2.8.111）**
+- `fillRealpro`: 入力中に別のお客さんの依頼が来たら、前客を閉じず**始めない**。`_fillCustomerId` を前客に戻し、`busy_other_customer` の関所で断る（一括は次へ進まない＝`customer-handoff.js` の HOLD_GATES）。
+- `clickSearch` の `_pressSearchBtn`: 検索ボタンが画面の外なら、スクロールして**画面に出てから**押す（最大6回・約2秒）。
+
+**テスト**: `tests/chrome-extension/customer-no-mix-v2811.test.js` 10 pass。`scene-aim-v2810`（22）・`human-gap-mix-v2809`（32）・`ward-lane-v2808`（41）も通過。`node --check` OK。`npx tsc --noEmit` 0。
+
+**まだ未了（正直に）**:
+- 徒歩（`required_time`）の押す位置が右にずれる件は、未修正。原因はまだ確かめていない（押す位置の記録 `learn_aim` の実測が要る）。
+- 「最初に止まった」件は、今回の変更で「別客が来たら断って止まる」になる。止まった時は一括が止まるので、人が見て再開する（自動で次へ進まない）。
+- 平田さんの検索が既に R.さんの条件で走っていた場合の結果（送るために保存された物件）は、**送る前に確認が要る**。DB の記録では平田さんの送付は無し（更新無し）だが、拡張の手元（`axlx_pending_auto_send` など）は確かめられない。
+- 2.8.111 の再読み込み後の自動1回で確かめる。
+
+## 2026-11-18 22:24 **場面ごとの位置を画像学習に紐づける → 2.8.110**
+
+竹内さん:
+> （22:11）場所ごとにちゃんと把握できているか／地域ならここ・沿線や駅ならここ等。それぞれの箇所でそのように知識を持てば全部改善されるのでは
+> （22:24）場面ごとの強化の部分ちゃんと画像学習も紐づけるようにする そうすればよりきょうかされるので 統括proおねがい
+
+**変えた所（2.8.110）**
+- サーバー `app/lib/shot-learn.ts` `learnFromShots`: 写真の場面（`shot_learn.scene`）が確かな行だけ、欄の位置を場面別の票にして `byScene` に出す（n≥2・中央値）。場面が無い／`other` は入れない。
+- 束 `app/lib/human-learn-brain.ts`: `shots.learned_scene`（場面 → 欄の位置）として載せる。旧の `shots.learned`（画面単位）は変えない。
+- 拡張 `chrome-extension/background.js`: 束の `learned_scene` を `axlx_learn_scene` に保存（n≥2）。`content.js` の PUSH_KEYS と `page-script.js` の warm keys／onChanged にも追加。
+- 拡張 `page-script.js` `_aimOf`: 欄の名前から場面を決める（`_sceneOfName`: city_code/town_code/one_city/one_town=area、station_id/route_id/one_station/one_line/沿線=station、go_search/検索=search）。**点の学習が n<3 の時だけ**、その場面の位置を `_sceneAimOf` で引き、要素が取れた時に使う。取れなければ従来処理へ戻す。
+- 写真の読み直し: `findShotsToLearn`／`learnFromWeakShots` に `onlyNoScene`（読んだ写真のうち場面の印が無い物だけ）。CLI は `scripts/shot-learn.ts --only-no-scene`。
+
+**実測（22:24・読むだけ）**: 通常・7日・撮影あり 6192件のうち、読んだ（shot_learn あり）4641件、そのうち場面の印が無い 4198件（幅800px以上に絞ると 4010件）。計画（`--plan`・同じ操作の並びは8枚まで）で読み直し対象は **385枚**（1枚およそ0.17円・約65円）。`--no-refresh` で束の自動再生成を止めて実行（束の再構築は後で1回）。
+
+**テスト**: `app/lib/__tests__/learn-scene-photo.test.ts` 8 pass（場面別の中央値・n=1 を除外・other/場面なしを除外・画面単位は従来どおり）。`tests/chrome-extension/scene-aim-v2810.test.js` 22 pass（配線の pin と場面判定の写し）。`human-gap-mix-v2809`（32）・`ward-lane-v2808`（41）も通過。`npx tsc --noEmit` 0。
+
+**まだ未了**: 読み直し後の束の再構築（`learned_scene` を載せる）・拡張の再読み込みと自動1回での効果確認（F55 など）・統括Pro の判断保存。**未コミット**（「保存して」まで）。
+
+**発見（私の要約）**: 写真の場面の印は 757/1200 が未設定・沿線/駅のラベルは0件。場面を分けても、同じ欄名で位置がずれたのは196欄中6欄だけ。効果は実測で確かめる（場面の印が増えた後の学習・自動の結果）。
+
+## 2026-11-18 20:10 **手を止める・迷うを人間のように戻す／家賃・更新日の前後も通常の人の間隔 → 2.8.109**
+
+竹内さん:
+> （19:56）手を止めたり迷うのも入れる人間のように　統括proおねがい
+> （19:57）家賃・更新日の前後のところも実際の通常モードの人間のように
+
+**何が起きていたか（私の見立て）**: 2.8.108 は区の最中の迷い・停止を全部消した＝均一で機械的。select（家賃・更新日）は 待ち1.8〜3.4s＋迷い22%＋「息」「考え」＋押した後≥0.95s＋一覧の見る/選ぶ待ち＋項目ごと0.45〜1.35s が全部乗り、自動は約9〜10秒/欄（通常は約3.2秒/欄）。
+
+**DB実測（読むだけ・小標本: 通常=人 6区ラン・select32組）**
+- 区どうし 通常: 速い(0.9〜1.2s)約45%／迷い(1.5〜6.5s・中央3.9s)約50%／停止(7〜10s・max9.5s)約5%。自動: p50=5s・最大23.9s。
+- select 通常: 欄の中 p50=1.3s(p90 2.0s)・直前 p50=2.0s(p90 3.9s)・欄どうし p50=2.2s(p90 3.5s・max4.2s)。自動: 欄の中 p50=2.8s・前後 p50=4.1s・8秒超 12〜25%。
+- 検索ボタン前: 通常 p50=3.7s・p90=13s（**今回は変えていない**）。
+
+**変えた所（chrome-extension/page-script.js・2.8.109）**
+- `_wardGapPlan()`: 速い50%(`_ln(900,0.25,650,1600)`)／迷い44%(`_ln(3500,0.4,1500,6500)`)／停止6%(`_ln(8500,0.13,7000,10500)`)。
+- `_selGapPlan()`: 速い85%(約2.1s)／迷い12%(約4.5s)／停止3%(7〜11s)。
+- drain: 区・select は `lane` ごとに計画を引く。速い＝「前の操作＋間隔」を押す時刻の目標(`_wardTgt`)、迷い・停止＝先に欄へカーソルを動かし漂ってから押す(`hesitate`)。select の基準時刻は `__axlxSelTapAt`（行を押した時刻）と `__axlxLastClickAt`（直前の操作）。
+- 迷いの**二重待ち**を除去（drift 済みなのにタイマーでも同じ分を待っていた＝区・selectだけ）。
+- `quick`: 同じ区の2回目以降の選び直し・外し直し・余計な区の外しは迷い・停止なし（天王寺区のように選び直しで止まらない）。
+- `_enqueueWithEl`: SELECT は `lane:"sel"`（押す前 `_ln(110,…)`・「息」「考え」を足さない）。`_longPauseDue` は lane 付きなら 0（停止は混合が持つ・最大約11秒）。
+- `chooseSelectLikeHuman` 内部: 見る `_ln(330|260)`・押す前 `_ln(210|170)`・選んだ後の3段 `_ln(130/170/120)`（8%で一覧の上で迷い+0.7〜1.6s）。
+- `_runBasicOneByOne` の項目間: `_ln(200,0.45,90,650)`（旧 0.45〜1.35s＋12%で+0.7〜1.9s）。
+- `_humanPointerClick`: 目標待ちの上限 1800→4200ms、1.3秒超は欄の上でそっと漂ってから押す。
+
+**テスト**: 新規 `tests/chrome-extension/human-gap-mix-v2809.test.js`（32件・実装の式を取り出して分布を計算）／`ward-lane-v2808.test.js` 41件／`human-pause-v2611` 13件 合格。`area-verify-wait-v2785` は読む範囲を拡げて1件復旧、残り4件は**以前から古い固定値（MAX_MS=45000 等・実コードは900000）**で今回の変更とは無関係。`npx tsc --noEmit` 0。
+**未検証（必ず）**: 拡張を再読み込み＋リアプロのタブも再読み込み→自動を2客以上→ `human_motion_learn` の one_city 間隔が「速い/迷い/停止」の混合か・select 間隔 p50≈2.2s か・監査の `ward_pace` / `fill_pause` を読む。読むまで「直った」と言わない。
+**矛盾の注意**: KB 413c3f65 の「区の最中は長い停止を入れない」は 5022ab57（今回）と食い違う（長い8〜25秒の停止は入れない点は共通・7〜10.5秒の停止と迷いは入れる）。413c3f65 は画面内スクロールの決定も含むため退役せず、竹内さんの判断待ち。
+
+## 2026-11-18 19:50 **地域選択が通常の人より約7倍遅い・天王寺区で押して外れて止まる・家賃/更新日が画面外 → 2.8.108**
+
+竹内さん（平田さんの自動録画・スクショ付き）:
+> 録画した　自動モード／地域選択する際の人間の通常モードと比べて時間がかなり遅い／ここ実際の通常モードの人間の速さのようにする／今回天王寺区を押して外して一瞬止まってしまった／そこの外したタイミングで／家賃や更新日選択する際 画面のスクロールをせず画面外でおこなってしまったので ここ画面内にあわせるようにスクロールして画面に出てから選択するようにする／統括proおねがい
+
+**DB実測（読むだけ・audit #1498 平田・v2.8.107・19:30:51〜19:40:24）**
+- 区（`label.one_city`）の押し間隔: **自動 p50=5735ms**（p25 4195 / p75 6826 / p90 23877）／**通常 p50=836ms**（p25 730 / p75 1030 / p90 1338）＝約7倍。9区で自動 約52秒・通常 約8秒。
+- 天王寺区: 19:32:02〜03 に label→name→label→name→label→city_code[] と**3回切り替わり**（押して外れた）→ そのあと **19.2秒の無操作** → 19:32:27 に天王寺区をもう一度押して確定。
+- 家賃・更新日: 録画に `scroll` の記録が無いまま選択（長い間隔 12.7〜21秒の前後）。
+
+**原因（コードで確認）**
+1. 速さ: 区1つごとに「押す前 ≥900（`enqueueHumanClick` の硬下限）＋押した後 ≥950（`_afterClickGapMs` choose）＋確認 260〜400＋カーソル移動＋着地 280＋迷い 22%」が**全部乗る**。短間隔を防ぐ下限の積み上げが通常の人の速さ（0.84秒）を超えていた。
+2. 外れ: `_toggleCheckboxLikeHuman` が label.click の**直後に** checked を読み、反映が遅れただけで 2回目（input.click）・3回目（simulateClick）を重ねて**元に戻していた**（見立て。次の自動で `toggle_late_ok` が点検に残るか確認する）。
+3. 停止: `_longPauseDue`（人が手を止める 8〜25秒・約2〜5%）が区の選択中にも入る。19.2秒は範囲内。
+4. 画面外: 欄へのスクロールはキューの手前で1回＋固定の短い待ちだけ。スムーズスクロールが終わる前にカーソルと擬似一覧が旧座標へ出る。
+
+**直し（`chrome-extension/page-script.js` 2.8.108）**
+- **区レーン**: `_isWardLaneEl` → `enqueueHumanClick` が `lane:"ward"`。押す前の待ち `_ln(110,0.45,50,260)`・迷い 0・押した後 `_ln(110,0.4,60,260)`。押す時刻は「直前の区クリック＋`_wardPaceMs()`（対数正規 median840 σ0.32・650〜2200）」を `_humanPointerClick(..., tgtAt)` へ渡し、着地後の見る時間で合わせる（漂いなし）。固定値ではなく毎回ちがう。計算上 p25=679 / p50=842 / p75=1043 / p90=1272（実測 730/836/1030/1338）。
+- **確認ループ**: `_verifyThenConfirm` の再確認を 400→`_ln(90,0.4,50,220)`・押し終わり検知を 150→40ms（`whenClickQueueIdle(cb, pollMs)`）。
+- **長い停止**: `_longPauseDue(item)` は区のアイテム・区クリックの直近20秒以内は 0（確率も進めない）。他の場面の 8〜25秒は今まで通り。
+- **反映待ち**: `_toggleCheckboxLikeHuman` は押した後 最大240msずつ待ち、変わっていない時だけ次の手（label→input→simulateClick を1手ずつ）。Promise を返し、押し終わるまで次の区へ進まない。
+- **画面内へ**: `chooseSelectLikeHuman` の前に `_settleSelectInView`（欄の上60・下90の余白で判定→中央へスクロール→位置が止まるまで待つ（最短260ms）→再確認 最大3回）。直前スクロール抑制（900ms）には従わない。
+- 点検の固定印: `select_in_view` / `toggle_late_ok` / `ward_pace` / `fill_pause` / `fill_resume`（`_PIN`）。次の自動で「区の間隔」「止まったか」「画面外で選んでいないか」を DB で読める。
+- テスト: `tests/chrome-extension/ward-lane-v2808.test.js`（41/41・分布と模型つき）。`human-pause-v2611`・`area-verify-wait-v2785` の期待を新しい形へ。`tsc --noEmit`=0。
+
+**⚠ 未検証**: 拡張を再読み込み＋リアプロのタブを再読み込みして、自動を1回走らせるまでは「直った」と言わない。確かめ方: `human_motion_learn`（mode=auto・site=realpro）の `one_city` の click 間隔が p50≈840 か／区の最中に 8秒超の空白が無いか／監査に `select_in_view` が出て rental_cost/update_date の前にスクロールが入っているか／`ward_reselect_loop`・天王寺の3回切替が無いか。
+**残り（別件）**: 家賃・更新日の前後の 12〜21秒の間（`息`・`考え`・`_longPauseDue`）は今回触っていない。通常の人の実測と比べて必要なら次に直す。
+
+---
+
+## 2026-11-18 18:10 **リセットで入力が消える・別のお客さんの情報で上書き → 2.8.107（リセットを外して1つずつ外す形に戻す・上書きの道を塞ぐ）**
+
+竹内さん「今録画したがリセットして潰してしまったり ほかのお客さんの情報が上書きされたりしてしまう ここの原因見つけて改善するようにする 録画から原因見つけて改善する リセットが壊れる原因の可能性高いので厳しければ外す形戻す」
+
+**DB実測（search_audits 1491〜1495・human_motion_learn・sent_properties／すべて 2.8.106）**
+- 17:38:28 人が大村さん（60be5b3d）の住居検索を押した（1491）
+- 17:38:49 平田さん（3b62b7e1）の単発の入力が開始（1492・9区）
+- 17:38:59〜17:39:06 自動が `×とじる（div.hide_room_menu_close）` と `印刷用PDF（a.print）` を交互に4回押した＝**平田さんの入力中に、画面に残った大村さんの一覧を押した**
+- 17:39:06〜07 自動が `左のリセット｜div.reset_button` を押した → 17:39:09 `reset_btn before=0 after=0` → 17:39:10 を最後に平田さんの入力の段も録画の操作も**途絶えた**（17:45 に時間切れで閉じた）
+- 17:39:05 一括（1493）が Tatsuki さん（09355563）を開始 → 17:39:27 入力開始（1494・**番号無し cid=-**）→ 17:40:10 リセット → 17:40:13 を最後に同じく途絶えた
+- 17:39:54 平田さんの単発をもう一度（1495）。画面の帯は「一括検索中（Tatsuki）」で中身は平田さんの条件（スクショ）
+- sent_properties: 17:39 の印刷用PDF 4回は**送付の行なし**（ページが消えて送られなかった）。17:42 の4行は Tatsuki さんの見積書（別の操作）
+- 点検の段が同じ時刻に4〜6回並ぶのは、進み具合の送り（fill_progress）ごとに同じ段を足し直す記録の重複（page-script はページに1つだけ・manifest に all_frames 無し）
+
+**原因**
+1. **リセット**（2.8.105）: 押した後に入力が消える（リアプロのリセットはページを読み直す推定）。2回とも同じ形
+2. **bulk-dl**: 押し始めの後に次のお客さんの入力が始まっても、止めるのは**同じタブの initiated の時だけ**。別のタブの入力（session の `axlx_fill_busy`）や「👀 検索結果を見る間」の待ちの間は止まらない
+3. **popup**: `_openAndClickAutofill` が関所を見る前に `openSiteView(c)` で画面を次のお客さんに切り替えていた。pendingPopupCmd の道は関所が無かった
+4. **background**: popup が `pipeline_busy` で断ると、別のお客さんのロックを**強制解除して再送**していた（人が押した単発を上書き）
+5. **page-script**: 入力中の断りが「両方に番号がある時」だけ。Tatsuki さんの依頼は番号無しで素通りした
+
+**直し（2.8.107）**
+- page-script: `_tryResetButtonThen` を削除し `_uncheckLeftoversThenRest()` を直接呼ぶ（2.8.104 までの形）。入力中は片方だけ番号が無い依頼も別のお客さんとして断る（`customer-handoff.js` の `pageIncomingDecision` も同じに）
+- bulk-dl: `_lastFillStartAt`（入力が始まった時刻・0 に戻さない）を持ち、①`_autoPressNext` の1件ごと ②session の `axlx_fill_busy` が変わった時（別タブ）③見る間の終わり、で「押し始めの後に入力が始まった」なら黙って止める（`_haltAutoPdfForNewFill`・`_autoFinish` は使わない＝次のお客さんの名前で完了を返さない）。点検 `auto_pdf_end=stopped_new_fill_*`・`auto_pdf_load=look_cancel_new_fill`
+- popup: `_openAndClickAutofill` は画面を切り替える前に storage のロックを見て、別のお客さんなら `pipeline_busy` で断る（switch・pendingPopupCmd の両方に効く）
+- background: 次のお客さんの前の待ち（2.8.106）に「別のお客さんの一連のロック（`axlx_pipeline_job`・12分以内）」も足す。`pipeline_busy` の時の強制解除を廃止し、storage にロックが残っていれば見送る（`pipeline_busy_other`・リアプロ／ITANDI）
+- テスト: `reset-then-next-customer.test.ts` を「リセットを押さない」に書き換え 19/19・`customer-handoff.test.ts` 38/38・`ward-reselect-loop` 16/16・`auto-next-page-resume` 27/27。古い正規表現で落ちていた `batch-guard.test.js`（ping の返事に fillRunning を足した後）・`switch-once.test.js`（`_axLearnRefreshBeforeAutofill` の足し）を今の形に直した。`tsc` 0
+
+**未確認（次の自動1回で見る）**: リセットの click が0か・前客の残りが `clear_checks` で0になるか・平田さんのような9区が最後まで押せるか・入力中に `印刷用PDF` が0か（`stopped_new_fill_`／`look_cancel_new_fill` が出たら止めた証拠）・一括が単発の進行中に `wait_prev_customer` で待つか
+
+---
+
+## 2026-11-18 17:30 **次のお客さんが入って地域の途中で止まった → 2.8.106（1人終わってから次へ・上書きしない）**
+
+竹内さん「今自動モードでしていたら次のお客さんがが入ってきてバグ起きたのか地域の途中で止まってしまった。お客さん検索中や選択中上書きしないように ちゃんと１人のお客さん完了してから次のお客さんに移るように ここの部分弱いので強化する 必要なら土台も作る」
+
+**DB実測（search_audits 1488→1489・human_motion_learn・sent_properties）**
+- 08:02:08 平田さん（3b62b7e1）: 自動が大阪市都島区（9区の1区目）を押した直後に `human_takeover（change:city_code[]）` で止まった。人は触っていない
+- 08:02:09 一括（bulk_queue）が次の大村さん（60be5b3d）を開始。08:02:30〜31 に自動が印刷用PDFを2回押した（大村さんの入力開始は 08:02:35＝その前）
+- 08:02:45 sent_properties に大村さんの名前で1件（channel=extension_group・delivery=shared＝グループ共有。お客様本人には届いていない）・08:02:55 property_pickups に1行
+- 08:03:06 人が「都道府県の設定×とじる」を押した（止まった後）
+
+**原因（3つ重なった）**
+1. 2.8.103 の「人が引き取ったら止める」が `click`／`change` を見ていた。スクリプトの `.click()` でもブラウザが出す change は `isTrusted=true` → 自動の自分のクリックを人と取り違えた（私の入れた退行）
+2. background は関所の止まり（gate）を全部「このお客様は飛ばして次へ」にしていた → 1秒後に次のお客さんへ
+3. 次のお客さんの入力が始まる前の読み直しで、bulk-dl の Case C が前に残った「検索した印」（axlx_pending_auto_send）のまま一覧を押した（推定・bulk の段は DB に残っていない。時刻 08:02:30＝読み直し＋2.5秒と合う）
+
+**直し（2.8.106）**
+- 土台 `chrome-extension/customer-handoff.js`（純関数・テスト `app/lib/__tests__/customer-handoff.test.ts` 35件）: `gateHoldsBatch`・`tabHandoffDecision`・`pageIncomingDecision`・`pendingFlagBlockReason`
+- page-script: 人の判定は `pointerdown`／`keydown` だけ（スクリプトでは作れない）。fill-done に `gateKind` を載せる。入力中（無進捗3分未満）に別のお客さんの依頼が来たら断る（`busy_other_customer`・点検 `next_customer_refused`）。3分以上止まった入力だけ従来通り閉じて次へ
+- content: `gateKind` を中継。関所で止めたら前の検索した印を消す。別のお客さんの入力中は `axlx-autofill-initiated` を bulk-dl に出さない（送る相手を上書きしない）
+- background: `human_takeover`／`busy_other_customer` は一括を止める（`_batchShouldStop`・次へ進まない）。次のお客さんを送る前に必ずタブを見て、別のお客さんの入力中は待つ（2秒ごと・最大10分・点検 `wait_prev_customer`／`_done`／`_give_up`）。始める時に前の印を消し `axlx_fill_busy{customerId, why:"batch_customer_start"}` を置く
+- bulk-dl: Case C は `pendingFlagBlockReason` で「印の後に新しいお客さんの入力が始まった／お客さんが違う」なら押さない（`caseC_block_<理由>`）。断った合図で今のお客さんの構えに触らない
+- 既存テスト ward-reselect-loop の「click と change を捕まえる」を pointerdown/keydown に直した
+
+**未確認（次の自動1回で見る）**: `human_takeover` が人の操作の時だけ出るか・9区が最後まで押せるか・`wait_prev_customer` が出た時に上書きが0か・`caseC_block_` が正しい一覧では出ないか
+
+---
+
+## 2026-11-18 17:00 **自動が「次」を押すと2頁目で止まる → 2.8.104（読み直し後も続きから押す・検索後の段を点検へ）**
+
+### DB の実測（`human_motion_learn`・直近2日・realpro）
+- `左の次｜td.pager` を押した3つの run（通常 2.8.37／2.8.93／2.8.101）すべてで、**2〜6秒後に `ring_empty`**（録画がゼロから始め直す）が出た。つまり `td.pager`（onclick="pager(...)"）は**ページ全体を読み直す**。
+- 自動の続き（`_autoNextPageThenRestart` の `_waitRows`）はメモリ上にしかないので、読み直すと消える。直近2日、**自動が「次」を押した後に印刷用PDFを送った例は 0 件**。
+- 自動の1件ずつ送る流れ（`_autoFinish`／`_sendBatchDone`）は完了の合図に `audit: null` を載せていた。そのため検索後の段（`results_look`・`auto_next_page`・`acq_*`）が `search_audits` に届かず、点検では検索ボタンまでしか見えなかった（1487 が `guide_search_click` だけだったのと同じ形）。
+
+### 直し（`2.8.104`・`bulk-dl.js`）
+| 場所 | 変更 |
+|---|---|
+| `_autoNextPageThenRestart` | 「次」を押す**前**に `chrome.storage.session.axlx_auto_next_page = {page, tries, total, customerId, at}` を置く。押す前の行（`_oldRowBtns`）を控え、**前の頁の行が画面に残っている間は続けない**（読み直しの前に前の頁を押し直さない）。行が描き直されて続けられた時（AJAX）だけ印を消す。残ったまま尽きたら `auto_next_wait_reload` を残し、続きは読み直し後に任せる |
+| `start()` の **Case E**（新） | 印を読んで消す。2分を超えた印（`stale_*`）とお客さんが違う時（`customer_changed`）は続けない。自動モードの読み込みと行を最大8回（0.8秒ごと）待ち、頁・回数・累計を戻して `_adSortDone=true`（並べ替え直すと1頁目に戻るため）、`_pendingAutoSendDispatched=true`（Case A と二重にしない）にしてから `_startAutoPressAfterLook(n, {continuePages:true})`。監査に `auto_next_page_resume` を残す |
+| `stopAutoPdfs`／`_guideBlocksAuto` | 止める時に `axlx_auto_next_page` も消す |
+| `_autoFinish`／`_sendBatchDone` | `audit: null` → `_auditResult({currentPage, sentCount, sentSkipped}, {auto_pdf:true})`。`timings`（`_tmark` の段・sessionStorage なので読み直しをまたぐ）と `sent_skipped` が点検に届く |
+| `manifest.json` | `2.8.104` |
+
+- テスト: `app/lib/__tests__/auto-next-page-resume.test.ts` 27/27。`ward-reselect-loop.test.ts` 16/16。`node --check` OK。`tsc` 0。
+- 次の自動で見ること: `search_audits.result.timings` に `auto_next_page` → `auto_next_page_resume` → `results_look` が並び、P2 で印刷用PDFが押されているか。`auto_next_wait_reload` だけで止まっていたら、読み直しが起きていない（押せていない）。
+
+---
+
+## 2026-11-18 16:25 **平田さん通常録画（検索〜送付）から学んだ → 2.8.103（人が引き取ったら自動は止める・区は画面の並び順）**
+
+### 通常録画の実測（同じ run `run_mwlrwjhx_xoqv` の後半・`search_audits` 1487 brain_normal）
+- 人の手順は 07:09:29〜07:11:38Z の約2分でした。
+  - 最初に「都道府県の設定×とじる」「×とじる」「リセット」を押す。
+  - `左の所在地絞り込み＋｜span` を開き、区を **都島→北→中央→福島→西→天王寺→浪速→淀川→西淀川**（画面の並び順）の順に1区ずつ選ぶ。間隔 0.81〜2.15 秒（中央値 1009ms）、外しは 0 回。
+  - 区の 2.2 秒後に `確定してリストへ｜span` を押す。詳細な地域は押していない。
+  - 続いて `update_date` → `rental_cost1` → `rental_cost2` → `include_common_fee` → `structured_date` → 間取り 15 クリック（中央値 約900ms）→ `左の検索｜span`。
+  - 検索の後は `印刷用PDF｜img` ×3 → `左の次｜td.pager` → `印刷用PDF｜img` ×2。
+- 人の操作間隔で 300ms 未満は 0/46 でした。自動は 79.5% です。
+- 記録の欠け:
+  - 07:04:40〜07:09:29 は操作も写真も 0 件です。
+  - 07:11:54 以降は写真の行が 0 件です（07:14:00 の `div.building_tr` 1 件だけ）。
+  - 送る・ピックアップの工程は DB にありません（原因は未確認）。
+- **裏の自動 1486 が、人が入力している間も `ward_extra_clear_click`（27123）を 3 秒ごとに 59 件出し続けていました**（約 07:09:39 まで）。
+
+### 直し（`2.8.103`・`page-script.js`）
+| 場所 | 変更 |
+|---|---|
+| `_onHumanTakeover`（新） | 自動の入力中に、人が検索欄（input/select/label/button/a/td.pager/.click_menu/.one_city など）を押したり変えたりしたら（`isTrusted`）、その場でキューを空にし、監査に `human_takeover` を残して `notifyDone(…, "human_takeover")`（gate）を送る。<br>gate なので bulk-dl の全ページ自動送信は構えない（物件は人が選ぶ）。<br>拡張の小窓（`aixlinx-*`/`axlx*`）とカーソル（`data-axlx-shape`）、余白・スクロールバーは数えない。fill 開始から 1.5 秒は数えない。 |
+| `enqueueHumanClick`／`whenClickQueueIdle`／`waitForClick` | 引き取り後は積まない・回らない（verify ループや所在地の待ちが裏で動き続けない） |
+| `fillRealpro` の開始 | `_axHumanTookOver=false`・`_axFillStartedAt` を戻す |
+| `clickWardPrecise` | 欲しい区を **画面の並び順（DOM 順）** に並べ替えてから、未選択の先頭1区を押す（人と同じく左上から） |
+| `manifest.json`／`_AXLX_PAGE_VER` | `2.8.103` |
+
+- テスト: `ward-reselect-loop.test.ts` 16/16。`node --check` OK。
+
+---
+
+## 2026-11-18 16:00 **淀川区を押す→外すの約20往復（2.8.101 の退行）→ 2.8.102 で直した**
+
+### 何が起きたか（平田さん自動・`run_mwlrwjhx_xoqv`・`search_audits` 1486・9区指定）
+- DB の操作の記録（`human_motion_learn.shot_ops` を t で重複除去）: `選ぶ:ward 27123 → 選ぶ済` の 5〜8秒後に `外す:ward 27123`（所在地の外し方）→ `区を選ぶ` → 再び選ぶ、を約20往復。淀川区以外の8区は**一度も押していない**。淀川区のクリックは label 60回・input 22回。
+- 写真（`2026-11-18/aix/run_mwlrwjhx_xoqv/…1794985404404/…409345`）でも同じ。淀川区は外れていて右の「設定中の市区郡」が空 → 約5秒後に淀川区が選ばれ、右に「大阪市淀川区」が出る。カーソルは淀川区の上から動かない。
+- 画面の `capture_error`（画像11 失敗11）とは別件。この回の写真は 237 枚が DB に入っている。
+
+### 根因（2.8.101 で入れた2つの直しの組み合わせ）
+1. `_verifyThenConfirm` は足りない区を押す時、`window.__axlxWardCodes` を一時的に「**足りない区だけ**」に差し替えて `clickWardPrecise` を呼ぶ。
+2. 同じ日に `clickWardPrecise` へ足した「余計な区はカーソルで外す」は、**その差し替え後の一覧**で余計かどうかを判断していた。
+3. 選んだ直後の淀川区は「足りない」から消える。そのため次の verify で「余計」と判断されて外れ、また「足りない」に戻って選ばれる、を繰り返していた。
+
+### 直し（`2.8.102`・`page-script.js`）
+| 場所 | 変更 |
+|---|---|
+| `__axlxWardCodes` を置く所 | 差し替えない控え `__axlxWardWantAll`（お客様の欲しい区の全部）と、区ごとの選び直し回数 `__axlxWardSelN` を同時に置く |
+| `clickWardPrecise` の余計な区の判定 | `wantSet` を `__axlxWardWantAll` から作る（無い時だけ従来の `codes`） |
+| `clickWardPrecise` の区選び | 同じ区を3回選び直したら監査に `ward_reselect_loop` を残す（次に同型が起きた時に DB で一目で分かるようにする） |
+| verify と STEP2 の stale 外し | 盲目トグル（`enqueueHumanClick`＋`simulateClick`）をやめ、`_toggleCheckboxLikeHuman(inp,false)` に変更（押す瞬間に checked を見る。500ms の再ポーリングで重ねて積んでも付け直さない） |
+| `manifest.json`／`_AXLX_PAGE_VER` | `2.8.102` |
+
+- テスト: `app/lib/__tests__/ward-reselect-loop.test.ts` 7/7（旧の判定の模型は 27123 を往復し続けて終わらない。新の判定は9区が1回ずつでそろう）。`node --check` OK・`npx tsc --noEmit` 0。
+- 統括Pro: `supervisor-pro --scope=realpro --save` 保存 ok（`pro_on_same_bundle`）・verdict=almost。
+  ⚠ Pro の文に「淀川区外し往復の根因は clear_method の欠如と直結」とあるが、これは**違う**。根因は余計な区を判断する一覧の差し替え。clear_method（F47）は台帳の印で、往復の原因ではない。
+
+### 次の自動1回で確かめる事
+- 拡張 `2.8.102` を再読込 → 自動で複数区（9区など）の客を1回。
+- `search_audits.steps` で `ward_reselect_loop` が0、`ward_extra_clear_click` が欲しい区に出ていない、`ward_verified`（9区そろった）→「確定してリストへ」まで進む。
+
+---
+
+## 2026-11-18 **連続画像学習(24枚)・動き弱点(MAIN world断絶)・直代入撤廃・F56完走責任構築（2.8.101統合）**
+
+竹内さん「ほかにも録画必要な部分ちゃんと画像学習を連続しておこなって詰まっている部分や弱い部分の課題を見つけ出す、動きとして弱い部分や直接入力してしまっている部分も見つけて改善する必要がある／課題が見つかったら自動モードが改善されるようになるために徹底的に構築する必要もあるし、細部までこだわって強化する必要がある／強化して自動モードがちゃんと反映されるまで統括proは責任もって一連の流れを行って改善するように」
+
+### DB実測と連続画像学習で突き止めた事実
+- **未学習自動2ランを連続画像学習 (`--order=sequence`) で計24枚読取（読めず0）**:
+  - `mwlf34of_xnem`（518枚未学習、`1480 abandoned`）→ **12/12枚（303欄）保存**。駅モーダル／検索後で「拡張の小窓が画面中央を覆い操作・一覧が見えない」`stuck` を抽出（`2.8.100`小窓隠し前の録画）。
+  - `mwlj76ia_p7dn`（538枚未学習、`1482` 地域不一致＋`update_date` 70秒停滞）→ **12/12枚（325欄）保存**。後半に `form/list:一覧表示後に左の条件を操作中` で `update_date` 後操作なし停滞していた場面を抽出。
+- **動きの弱い部分の実測 (`mode=aix` 657行・`ops=232`)**:
+  - `cursor_pct=48%`, **`point_pct=33%`**, **`handCursorClicks=0`**, `changedWithoutClick=0`, `typedOnChoose=0`。
+  - 真因は **`chrome-extension/pointer-ui.js` も `content.js` により MAIN world 注入されるため、`chrome.storage` と isolated world の `window.__axlxRecNoteOp / __axlxRecNotePoint` が全空振り**していたこと（かつ `tap()` 内で 606行と648行の2重送信）。
+- **本物の直接入力箇所**: `chrome-extension/page-script.js` 11408行（見積物件名フリーワード `_fwInput.focus(); _fwInput.value = _fwPropName;`）。
+- **他サイト実測**: **`itandi` は直近14日の録画・未学習写真 0件**（要人手録画 `need_human`）。
+
+### コード修正・仕組み構築（`2.8.101`）
+| 対象 | 変更内容 | 効果の狙い |
+|------|----------|------------|
+| `search-audit-server.ts` (`STALL_MINUTES`) | `35分` → **`75分`** に引上げ（`search-audit-late-finish.test.ts` 15/15✓） | 拡張上限（`realpro 60分` / `itandi 70分`）より短く競争して検索中に `abandoned` 誤切断する逆転を解消 |
+| `itandi-page-script.js` (1835) | `_watchdog` `240000`（4分）固定 → **`1800000`**（30分）へ揃える | `background.js` `FILL_DONE_TIMEOUT_MS.itandi`（30分）より先に4分で自爆する取り残しを解消 |
+| `pointer-ui.js` & `content.js` | `PUSH_KEYS` に `axlx_human_profile`/`points` を追加、MAIN world 用 `axlx-page-learn-push`/`storage-get` + `localStorage` キャッシュ実装。`tap()` から `window.postMessage({ from: "axlx-rec-note-op" \| "axlx-rec-point" })` で1回送出 | `point_pct` 33%→≥60%、`aim有`≥40%、`handCursorClicks>0`、癖の反映 |
+| `page-script.js` (11408) | `_fwInput.value = _fwPropName` 直接代入を `Promise.resolve(typeTextLikeHuman(_fwInput, _fwPropName)).then(_pressFwSearch)` へ置換 | 直接入力ゼロ徹底・1文字キー入力＋検索クリック再現 |
+| `manifest.json` & `page-script.js` | バージョンを **`2.8.101`** へ更新・同期 | 本番再読込と `search_audits` 版識別 |
+| `learn-foundation-audit.ts` / `learn-supervisor.ts` / `learn-supervisor-pro.ts` | 純関数 `auditProReflectResponsibility` と **`F56_pro_reflect_responsibility`**（`F53∧F54∧F55∧F15∧F28∧F29` の統合完了責任）を `KEY_FOUNDATION_IDS`・`keyOrder`・Pro `axes.foundation_f56` へ配線 | 「発見→構築→強化→自動反映・効果実証」の完走責任を毎回決定論で測定 |
+
+### さらに細分化・徹底強化した内容（2.8.101・束 `2305`）
+| 対象 | 詳細化・強化内容 | 実測効果 |
+|---|---|---|
+| **課題と欄×観点の純化**（`learn-auto-audit.ts`, `learn-flow-steps.ts`, `learn-supervisor.ts`, `human-learn-brain.ts`, `shot-learn.ts`） | `countRetries` から `o.w==="step"` や台帳文字列（`理解台帳`/`未完了:*`等）を除外／`scoreFieldsFine` に `catalogTargetsOnly`＋既存 `imagePositionFields`/`opsKindFields`/`clickedThenChangedFields` を配線／`shot-learn.ts` でページ送り `最初・最後` (`button/link`) と `分` (`select/text`) の誤衝突を除去／`learn-supervisor.ts` の `buildLearnMemoryLoop` に `F33/F34/F37` ログ数を `.line` 経由で配線 | **`weak`: `3→0`**／**`欄×観点`: `12%→63%`**（残弱4欄: `確定してリストへ 40%`・`住居検索 40%`・`沿線・駅絞り込み＋ 40%`・`room_layout_id[] 60%`）／**`精度`: `9→34`**／**`完成度`: `44→53`** |
+| **最新通常録画の連続読取**（`mwlqqi50_099d`・`2.8.99`） | 2枚 dry-run 後 `--order=sequence --limit=12` で **12/12枚（298欄・読めず0）** 保存 | `F53` `learned=90 / scene\|flow=44 / result=38 / 連続カバーラン=3` |
+| **single / 案内モード `stalled:none` 根絶**（`background.js`, `page-script.js`, `search-audit-server.ts`） | `background.js` `_auditOnFillProgress` で `popup single` 即登録＋6分 idle タイマー張り直し、`axlx-guide-filled` で `brain:true` 時 `finished` 送出／`page-script.js` `startHumanSearchWatch` の MAIN world 即 `return` を外し `_storageLocalGet` ブリッジ化／`TRIGGERS` へ `aix_customer` 追加 | 2.8.101 再読込後の single / 通常検索で `steps=null` 放置・`abandoned` を防止 |
+| **`F47` 外し印・`F44`・`F34` 整合**（`page-script.js`, `learn-foundation-audit.ts`） | `_toggleCheckboxLikeHuman` にクリック直前スクロール＋`!wantOn` 時 `_noteClearMethod` 追加、`_doReset` 残0時 `clean_no_clear`、`gate_retry` `extraLayout` に `return` 追加／`F44` を `2.8.79+` のみ判定へ整合／`F34/F37` を `scope` 絞り＋件数拡大 | **`F44 ✓`** (`owner=0, no_fill=0`)・**`FA 30/56 ✓`** |
+| **統括Proプロンプト細分化強化**（`learn-supervisor-pro.ts`） | `weak_fixes`・`bug_fixes` に「ファイル・欄・関数・原子ステップ・完了線」まで分解する指示を強化 | 束 **`2304 (all)` / `2305 (realpro)`** (`solid=206 ✓`) ＋統括Pro (`--scope=realpro --save`) **`ok=true`** 保存 |
+
+### 束・知識・改善ログ・統括Pro 保存実績
+- テスト：`tsc --noEmit` 0エラー、拡張5ファイル `node --check` 0エラー、`foundation-f54-f55.test.ts` **17/17**、`learn-supervisor.test.ts` **79/79**、`learn-supervisor-pro.test.ts` **55/55** 合格
+- 束更新：`2280 (all)` / `2281 (realpro)` 保存（`solid=206` 引継ぎ✓、`F53 ✓`、`F54 points欠=0/learned欠=0`、`F56 1/6✓`）
+- `learn_improvements` 3件保存、`system_design_thinking` 2件（P1決定＋P2 MAIN worldブリッジ）保存
+- 統括Pro (`--scope=realpro --save`)：`usedPro=true (deepseek-v4-pro)`, **`ok=true`** 保存済（`verdict=almost`, `coverage=55`, `weak=3`, `self_check.ok=true`）
+
+### 人手作業（反映して効果実証する最後の3歩）
+1. サーバー反映（`git push` / Vercel デプロイ）
+2. `chrome://extensions` で拡張 **`2.8.101`** を再読込 → ポップアップで学習再取得
+3. **`realpro` 自動を1回** 実行（`F55` / `F15` / `F28` / `F29` → `F56` 6/6実証） ＋ **`itandi` 通常を1回** 録画
+
+---
+
+## 2026-11-18 **課題学習完全化（points欠=0/learned欠=0）・MAIN world反映ブリッジ開通・F54/F55（2.8.100統合）**
+
+竹内さん「課題の学習を完全にする／自動モードへの反映もちゃんとできるようにする／抜けている部分の土台構築／統括pro徹底して行う」
+
+### 判明した根本原因と直し（作業員5人並列）
+| 穴 | 原因 | 修正 |
+|----|------|------|
+| **`learn_warm=0` / `aim有=0%` / `reflect_ok=0` の真因** | `page-script.js` は MAIN world 注入のため `chrome.storage`・`chrome.runtime` に直接アクセスできず空振りしていた | `content.js` に双方向ブリッジ（`axlx-page-storage-get` / `axlx-page-learn-push` / `axlx-page-learn-refresh` / `axlx-page-learn-auto-linked` + `storage.onChanged` 監視）を実装。`page-script.js` は `skipCache`・`_opensWarm`・`_learnPlanWarm` も同ブリッジ経由へ統一 |
+| **自動束取得の抜け** | `_learnRefreshForAutofill` が一部経路だけ／`same_version` で薄い束のまま早期 return | `background.js` に `_learnRefreshForAutofill()` を整備し、自動/一括/webapp/popup 直前に必ず版確認＆薄い時は取り直し |
+| **`F28` 短間隔 42.2% の主因** | 1回のクリックで `左の1LDK｜label` → `room_layout_id[]` (`96ms`) → `1LDK` 等が 2〜3重記録されていた | `human-learn-record.js` の `_sameToggle`（同一チェック `<input>` に帰着する派生クリック）と `axlx-rec-op` 重複抑制を強化 |
+| **`2.8.99` クリック形/位置 API 落ち** | `app/api/human-motion/route.ts` が `shot_ops` の `x/y/bw/bh/bt/shape/role` を保存時に落としていた | 同ルートで 0〜1 座標・寸法・タグ形・role を通すよう修正 |
+| **課題欄の未達・誤衝突・土台** | `select` vs `click`/`button`・`step` vs `click` で `bundle_weak` 12件残留／`F54` に内部印（`今の客` 等）混入／`room_layout_id[]`・`station_id[]` 別名欠 | `shot-learn.ts` 誤衝突解消（`weak 12→1`）・`field-name-aliases.ts` 安全分離・`button-catalog-targets.ts` 接頭正規化・`learn-foundation-audit.ts` に **`F54_challenge_learn_complete` / `F55_auto_reflect_verified`** 追加（Pro `axes` 連携） |
+
+### 実行実績（追加画像学習 → 束 `2278/2279` → 統括Pro save）
+- `pager` 1枚（22欄）＋ 最新通常ラン `mwlmfugf_2k5v` 14枚（345欄・読めず0）を保存
+- 束 **`2279` (realpro)**: **`F1 solid=206`**、`F53 ✓`（連続ラン=2, scene|flow=33, result=33）、**`F54: points欠=0 / learned欠=0`**（課題欄完全到達、残は通常未学習重複分266）、`bundle_weak` **1件のみ**（`same_sqm_not_narrowed`）
+- 統括Pro (`--scope=realpro --save`): `usedPro=true (deepseek-v4-pro)`, 保存 `ok=true`
+
+### 人手確認（これだけ）
+1. サーバー側デプロイ（`git push` / Vercel：特に `app/api/human-motion` の `x/y/bw/bh` 通過・`app/lib` 群）
+2. `chrome://extensions` で **2.8.100** を再読込 → ポップアップ確認 → 平田さん自動を1回実行
+3. `F55`（`read≥1`・新束後自動≥1・`learn_reflect_ok / flow_reflect_ok / aim有`）・`shot_ops.x/bw/bh`・小窓非写り込み・短間隔低下を確認
+
+---
+
+## 2026-11-18 **課題学習・反映実測＋小窓隠し強化（2.8.100）＋別名接続（solid 168）＋統括Pro save**
+
+竹内さん「見つかった課題は全部学習されたのか統括proおねがい／学習した部分はちゃんと改善されて自動モードに反映されているのか」
+
+### DB実測（隠さず数字）
+- **学習状況**: 通常361枚中 81枚学習済・**280枚未学習**／自動3,639枚中 110枚学習済（直前 `mwlj76ia_p7dn` 538枚は 0）。14課題欄のうち `required_time` (`分`)・`rental_cost1` (`賃料`) を `field-name-aliases.ts` で接続し `solid` **152→168** へ上昇。未達残り: `room_layout_id[]`（1K/1DK/1LDK等の個別位置はあるがHTML名未達）・`station_id[]`・`次のページ`・`印刷用PDF(img_xy=false)`。
+- **小窓写り込み対策 (`2.8.100`)**: 画像 `stuck` 13件（「中央に拡張小窓が重なり見えない」）に対し、`chrome-extension/human-learn-record.js` の `_hideForShot` を `visibility:hidden !important` ＋ `requestAnimationFrame`×2待ちに強化。
+- **自動モード反映**: **未反映**。前束 `2270` は `read_count=1` 到達したものの、最新束 `2272` は `read_count=0` かつ **新束後の自動走行は 0件**（直近 `search_audits` はまだ `2.8.95` の `1484`）。`F6`・`F31`・`F38`・`F43`・`F46` すべて `✗`。
+- **統括Pro (`--scope=realpro --save`)**: `usedPro=true (deepseek-v4-pro)`, 保存 `ok=true`。
+
+### 人手確認
+`chrome://extensions` **2.8.100** 再読込 → ポップアップで束 `2272` 取得 → 平田さん自動を1回実行 → `read_count≥1`・`F6/F31/F38/F43/F46`・`aim有`・`shot_ops.x/bw/bh`・小窓非写り込みを確認。
+
+---
+
+## 2026-11-18 **連続画像流れ学習（`order=sequence` / `F53` / `result`復元）＋統括Pro save**
+
+竹内さん「学習ちゃんと画像読み取って連続してよみとって一連の流れを理解して学習して改善して強化する／統括proおねがい」
+
+### 実測で見つかった穴と直し
+| 穴 | 原因 | 修正 |
+|----|------|------|
+| 通常・自動ランが末尾27枚等だけで前半（所在地・条件・検索）が0 | `newest`/`size` が末尾偏重・`learnFromShots` が `sl.screen` 無視で `result` を `form/modal` に潰していた | `shot-learn-server.ts` に `order=sequence`（先頭→末尾バケット節目均等＋直前文脈付与）・`shot-learn.ts` が LLM `screen` 優先＋`scene/flow_step/transition/stuck`・`summarizeImageSequenceFlows` |
+| `worker_scale` と `F41`〜`F53` が束で無言削除 | `key` が `slice(0,12)`、`evidence` が `slice(0,48/52/56)` で後ろが切れていた | `learn-supervisor.ts` key上限 `48`、`meeting-evidence-gates`・`learn-supervisor-pro` evidence上限 `110` |
+| 統括/Pro/cron 連携 | `image_flows` 未配線、`cron` で `scene` 無し（`point_fields` x/y 混入注意も解消） | `F53_image_seq_flow`・`human-learn-brain`・`learn-supervisor`（`order=sequence` 課題）・`learn-supervisor-pro`（`axes.image_seq_flow`/`foundation_f53`）・`supervisor-do` |
+
+### 実行実績（dry-run 確認→本番保存）
+- `mwljwbxq_wuhw` (通常 24枚, 657欄, 03:17:36→03:20:26) / `mwlksrg6_j1j7` (aix 14枚, 483欄, 03:43:32→03:48:01) / `mwlmfugf_2k5v` (通常 8枚, 207欄, 04:37:16→04:50:43) — 計 **46/46枚読取・読めず0**
+- 束再構築 (`2269` all / `2270` realpro): **`F1 solid=152`**、`learned` **`form:52 / modal:51 / result:52`**、**`F53: ✓`**（`scene|flow=19`, `result画面=27`, `連続カバーラン=1`, `束seq_runs=18`, `result束=✓`）、`FA=30/53 ✓`
+- `learn_improvements`: 1件保存 / `supervisor-pro --scope=realpro --save`: **`usedPro=true` (`deepseek-v4-pro`)・保存 `ok=true`**
+
+### 統括Proの生の言葉（要旨・矛盾もそのまま）
+- 結論: F53✓・F1 solid=152・vision_link全6段✓・worker_scale推奨4人（並列≈4・上限6）は妥当だが、**増員より先に「拡張2.8.99再読込→自動1回（`need_auto_run`）」で F6/F31/F46 の反映効果を確認**。
+- 画像からの詰まり実測: `list: 中央に拡張小窓が重なり一覧の一部が見えない`（`stuck` 検出）。
+- ⚠ 矛盾: `verdict=almost weak=0` なのに弱点細分化で `point_pct 24%→60%`・`cursor_pct 65%→70%`・`完成度 44/100`、また `read=1` と述べつつ最優先で再読込を指示（新束2270は未読）。`single:18885(0/1)` を 18885枚と誤読する傾向あり（ID）。
+
+### 人手確認
+`chrome://extensions` **2.8.99** 再読込 → ポップアップで束取得 → 平田さん自動1回（`read_count`↑・`aim有`・`F6/F31/F46`・`shot_ops.x/bw/bh` を確認）
+
+---
+
+## 2026-11-18 **統括Pro save（作業員規模・クリック完全再現）**
+
+### 統括の生の言葉（要旨）
+- 作業員は増やさない（並列実測なし・弱い欄0件・課題はflashで解ける423枚）
+- クリック完全再現の最大穴は押した位置16% → 通常画像flash→aim薄→拡張再読込→自動1回
+- 次: **2.8.99再読込→束取得→自動1回**（read_count・aim有・位置%）
+- save: `ok=true updated=pro_on_same_bundle` model=deepseek-v4-pro
+
+### ⚠ 矛盾（そのまま）
+- verdict weak=0 と言いつつ、弱点細分化で point_pct16%・cursor64%・F32段階5停止を課題にしている
+- 手元コードの `recommendWorkerScale`／evidence「作業員の規模」は**まだ本番束に未反映**（デプロイ前）。Proは旧束で「増やさない」と判断
+
+### 私の要約
+人手は2.8.99再読込→自動1回。作業員規模判断はローカル配線済み・次の束作り直しで evidence に載る。
+
+---
+
+## 2026-11-18 **クリック再現（種類w・押下位置・ボタン形）拡張 2.8.99**
+
+竹内さん「統括録画からボタンの種類・押した位置・形を完全再現」
+
+| 穴の原因 | 修正 |
+|---------|------|
+| `shot_ops` に x/y・bw/bh・bt/shape が無かった | `human-learn-record.js` の `_pushOp`／`_recentOps` で click 時に残す |
+| `point_fields` の種類が `wk` のみで束の `w` が欠ける | `learnPoints` が `wk` も読む・`summarizeMotion` が bw/bh を fields に載せる |
+| 学びがあるのに `_fireAt` が 0.3〜0.7 乱数（中央逃げ） | `page-script.js` が `aimPt` を `_fireAt` へ渡す・`_kindOf` が `wk` も見る |
+
+人手: **2.8.99** 再読込 → 通常録画1回 or 自動1回 → DB/束で `shot_ops.x`・`point_fields.w` を確認
+
+---
+
+## 2026-11-18 **統括・作業員スケール（recommend / scale_workers）**
+
+竹内さん「統括も作業員増やすの判断できるように」
+
+| 項目 | 内容 |
+|------|------|
+| 純関数 | `app/lib/supervisor-worker-scale.ts`（`recommendWorkerScale`・`countSitesParallel`） |
+| meeting | evidence「作業員の規模」／`learning_tasks` kind=`scale_workers`（無料・limit=推奨人数）／議題「作業員を増やすか」（recommend≥2 のみ） |
+| Pro | `axes.worker_scale`・PRO_RULES に作業員規模の決まり |
+| 実行 | `scripts/supervisor-do.ts` の `scale_workers` は**人数だけ返す**（Cursor 作業員は勝手に起動しない） |
+| 上限 | 6人（硬上限） |
+
+---
+
+## 2026-11-18 **タイムアウトを長く（15分〜・2.8.98）**
+
+竹内さん「タイムアウトがボトルネック／かなり長い時間にする15分など」
+
+| 項目 | 旧寄り | 今 |
+|------|--------|-----|
+| fill-done 待ち | ≈15分(905s) | **30分**（進捗で延長） |
+| batch 無進捗 | 15／進捗後30分 | **20／進捗後45分** |
+| 入力段 PASS_AUTOFILL | 8分 | **20分** |
+| 送付待ち初期 | 10分 | **20分以上** |
+| 区 無増／硬上限 | 5分／30分 | **15分／45分** |
+| STALL 完了後 | 15分 | **20分** |
+| panel_settle | 10分 | **15分** |
+
+人手: **2.8.98** 再読込 → 平田自動1回（短TOで止まらないこと）
+
+---
+
+## 2026-11-18 **所在地=クリックのみ確認／間取りの積み待ち／関所の間取り入れ直し待ち（page-script.js）**
+
+### 洗い出し（竹内さん「直接入力しない・外す時も選んで外す」）
+- `city_code[]` / `one_city` / `clickWardPrecise` / `ensureWardButtonY` / `_clearBeforeOpen` / `setCheckboxes`: **`checked=` 直書き・フォーム直代入は無し**（全部 `_toggleCheckboxLikeHuman`＝label 狙い→`hit.click()`→`cb.click()`→`simulateClick`、または `enqueueHumanClick`＋`simulateClick(label)`）。`.value=` は **select**（賃料・徒歩）の擬似一覧→カーソル後の確定のみ（所在地ではない）。
+- **直した穴**: 確定前確認の「余計な区を外す」が `enqueueHumanClick(inp || lbl, …)`＝**hidden input へカーソル**だった → **label** に統一（STEP2 の外しと同じ）。
+
+### 間取り途中停止（`room_layout_id[]`）
+- 原因: `setCheckboxes` は畳みを開く（`_ensureFieldVisible`）の **Promise を返さず**、`_runBasicOneByOne` が「まだ積んでいない」まま次の欄へ／把握（`layout_grasp`）が先に走り入れ直しと**二重トグル**し得た。
+- 修正: `setCheckboxes` が Promise を返す／間取り run と関所 `_gateQ` の間取りは **積み終えてから** audit・把握 → `_runBasicOneByOne` が待つ（トグルは従来どおりクリックのみ）。
+
+### 検索スキップ経路（特定のみ・方針は変えない）
+| 経路 | 状態 |
+|------|------|
+| `ward_verify_fail`／`ward_queue_timeout` → `_basicsThenAbort`（`basic_then_abort`） | **全件検索防止のため押さない**（竹内さん設計維持・retry は区数比例済み） |
+| `gate_stop_basic`（場所・間取り・敷礼） | 間取り入れ直しが未積みで同じ関所で止まり得た → 上の Promise 待ちで緩和 |
+| `search_block_*`（`!_axPlaceReady` / `!_axConditionsReady`） | 再スケジュールなし＝本線 or 控え保険(90秒)待ち |
+
+### 残リスク
+- 関所の入れ直しは **最大6回**（`_axGateRetryN`／`_AX_GATE_RETRY_MAX`）。6回後も足りなければ `gate_stop_basic`。
+- 9区で本当に1区も増えない（5分停滞／30分硬上限）ときだけ `ward_verify_fail`→検索しない（全件防止）。
+
+### 作業員合流
+- [所在地クリック／間取り積み待ち](f05b49c2-f03a-44a3-9af5-773fbff519c7): 外す狙いを label に統一・`setCheckboxes` Promise 待ち
+- [TO進捗延長](6ed307e5-8702-4683-9537-436e8b0c30cb): 区 verify 目安格下げ・watchdog_extend・panel_settle 10分・bulk 心拍
+- 自動録画 flash 24枚保存済（欄876）
+
+版: **2.8.97**（上記合流）
+
+---
+
+## 2026-11-18 **平田自動1484：間取り途中停止＋短TO除去＋所在地クリック徹底（2.8.96→97）**
+
+### DB実測
+- **1484** brain_aix ext **2.8.95**: `AXLX_FILL_INCOMPLETE: 間取りが足りない（欲しい4のうち3）` → `gate_stop_basic` → **検索なし**
+- place_select は OK。自動録画 `mode=aix` が 03:48 台に連続保存
+
+### 直し
+| 所 | 内容 |
+|----|------|
+| `page-script` 関所 | 間取り hard gate を **最大6回**クリック入れ直し（開く→`setCheckboxes`＝labelクリック）。`_axSearchPressedAt` をリセットして再入場 |
+| `clickWardPrecise` | 余分な区は **クリックで外す**（1回1区・直書き禁止）→「勝手に入力」見えを止める |
+| TO | PASS 60分／batch 無進捗15→進捗後30分／watchdog 30分／STALL 15分 |
+
+### 人手
+`chrome://extensions` **2.8.97** 再読込 → 束取得 → 平田さん自動1回 → 間取り全選択→検索クリック→AREA/FILL_INCOMPLETE無し
+
+---
+
+## 2026-11-18 **通常録画→画像学習（flash）強化**
+
+### DB実測
+- 通常 realpro 写真（直近6h）約300枚・sample40は学習前 `shot_learn` 空
+- dry-run: newest 32枚すべて読めた（1920px・欄724）
+- 本番: **32枚保存／欄714／読めず0**・束作り直し ✓（realpro#2253・solid96維持・read_count=0）
+
+### 統括Pro（生）
+並行で通常newestから弱い欄（確定してリストへ・room_layout・1LDK・2LDK・structured_date）をflash。次は拡張再読込→自動1回。
+
+### 人手
+`chrome://extensions` **2.8.95** 再読込 → 束取得 → 平田さん自動1回（aim有・AREA_MISMATCH無しを確認）
+
+---
+
+## 2026-11-18 **送付途中ロック＋見張り写真直列化（穴埋め）**
+
+### DB実測（再確認）
+- **search_audits 1482**: `steps` に `page:flow_gap_fill_done`（AREA_MISMATCH・9区中1区・13秒）→ 賃料など `basic_then_abort` 経路の ops → 最後に **`batch_timeout`「5分無進捗」**（`result.batch_timed_out:true`）。**連鎖**: 区 verify 打ち切りで検索せず bulk 無進捗 → 別途通常録画（03:20台）は 9区＋PDF まで進行
+- **human_motion_learn normal** 直近（02:58〜03:20 UTC）: **296行**／ops 約3094。`f` 上位: `room_layout_id[]`・`印刷用PDF`・各区 `one_city`・`確定してリストへ`・弱点印 `未完了:fill_done` / `fill_done_gap` 各約101
+
+### 穴（今回だけ）
+| 所 | 内容 |
+|----|------|
+| `background.js` 見張り写真 | `captureVisibleTab` を**録画と別経路**で呼んで quota 競合 → **`_capturePaced` に統一** |
+| `background.js` batch_timeout+sawProgress | 一連ロックを即解除＋`pipeline_busy` 強制解除で**次客 autofill が送付中 bulk を壊す** → **`axlx_pipeline_send_hold` でロック維持**、合図は **`axlx-batch-customer-done` のみ**解除。強制解除は hold 中スキップ |
+
+### 人手確認（1手順）
+`chrome://extensions` で **2.8.95** 再読込 → ポップアップで束取得 → 自動で **9区・送付まで** 1人完走 → audit に `batch_timeout` 無し／送付途中で次客に切り替わらないこと。録画 ON 時は `capture_error` が連発しないこと。
+
+### 作業員合流（2026-11-18）
+- 別名展開を inherit 後にも適用（`applyBundleAliasExpansion`）
+- batch 待ち切れ時 `sent_partial`／PASS_GUARD 進捗延長／区 verify 中 fill 心拍
+- 通常録画は `human-learn-brain --days=1 --apply` 済み → **穴**: scene_flows が station のみ
+- **追記**: `tmp-merge-hirata-scene-flows.ts --write` で area/cond/search/list/next を合流（solid 96維持・束 all#2250 / realpro#2251・read_count=0）
+
+---
+
+## 2026-11-18 **タイムアウト除去 第3弾（進捗中は切らない・区が揃うまで待つ）**
+
+竹内さん「タイムアウトで止まっている可能性が高い→取り除く／進捗あり・一連未完了では切らない」。拡張JSのみ（DB・鍵・screening-admin なし）。
+
+### 「進捗中・条件未完了・送付中」に abort する経路（点検結果）
+| 経路 | 場所 | 今回 |
+|------|------|------|
+| ward 確認 `MAX_MS`(90秒〜)/`MAX_RETRY`(最大30回) → `_basicsThenAbort('AXLX_AREA_MISMATCH')` → 検索せず fill-done error | page-script `_verifyThenConfirm` | **目安に格下げ**。中止は「入った区が5分以上増えない（欲しい区数×30秒の方が長ければそれ）」か硬上限30分だけ。目安超過後の押し直しは3秒間隔 |
+| fill 失敗保険 watchdog（30分・条件未完了で `notifyDone` 中止） | page-script `_axWatchdogFire` | 直近5分以内に ops／心拍／クリックキューが動いていれば**中止せず1分ごとに見直し**（硬上限＝入力開始から60分） |
+| `panel_settle` 上限120秒 | page-script `_settlePanelDebtThen` | キューが動く間は上限**10分**（空なら即清算で待たない）。※中止ではなく「条件へ進む」 |
+| `STALL_AFTER_READY_MS` | page-script | **中止ではない**（条件完了後は検索を押す／未完了は待ち続ける）。変更なし |
+| 入力の段 `PASS_AUTOFILL_PHASE_MS`(8分) | background `_startPassGuard.race` | 直近3分に進みの合図があれば**1分ずつ延長**（硬上限＝回の上限） |
+| `PASS_DEADLINE`（回の上限） | snapshot-core / background | 他作業で realpro60/itandi70/reins12 分。進捗ありは `limit×2` まで5分延長（既存）。テスト期待値を 60/70/12 に更新 |
+| batch 待ち（`batch_customer_done`） | background | 他作業で初回15分／進捗後30分（既存）。bulk-dl に**1件選ぶたびの心拍**を追加（`_oneByOneStart`） |
+| fill-done 待ち 905秒 | background | `axlx-fill-progress` のたびに `restart`（既存）＝無進捗905秒のみ。変更なし |
+| bulk-dl brain 判定 35秒/20秒 | bulk-dl | **abort ではなく fail-open（全件送る）**。変更なし |
+
+### AREA_MISMATCH → basic_then_abort → batch_timeout の連鎖
+- 旧: 9区のうち1区が入らず約13秒で中止 → 基本条件だけ入れて検索せず → 一連崩れ（1482）。
+- 新: 区が増えている／揃うまで待つ（心拍で fill-done も延長される）。揃えば通常どおり確定→検索→送付。
+  それでも5分以上1区も増えない／30分の時だけ従来どおり中止（誤地域の全件検索は出さない・絶対ルール維持）。
+- 検証: `node --check` 4ファイル OK・`tsc --noEmit` エラー0。`tests/chrome-extension/snapshot-core.test.js` は 104 pass／1 fail（`background: 見張りの時間切れは catch で done` の正規表現が `_releasePipelineLock` 行挿入後の形に合っていない＝今回の変更とは別の既存の不一致）。
+- 人手確認: `chrome://extensions` 再読込 → 9区自動 → audit に `ward_verify_fail`／`AREA_MISMATCH`／`batch_timeout` が無いこと。`watchdog_extend` 段は「進捗あり延長」の印。
+
+---
+
+## 2026-11-18 **通常録画学習＋タイムアウト崩れ止め（平田・送付まで1客）**
+
+### DB実測（通常モード・直近3h・realpro）
+- `human_motion_learn` **298行／ops 3097／shots 295**（01:03〜03:20 UTC）
+- 場面: **所在地 area=1005**／**PDF送付=491**／検索クリック=5（薄い）
+- 学習に載った弱点印: `未完了:fill_done`・`fill_done_gap`・`未完了:ready_next`・`流れ台帳:ok0` が各約101
+- 区ラベル実測: 淀川・西淀川・浪速・天王寺・西・中央・北 など（9区一連）
+- 監査: **1482** AREA_MISMATCH（9区中1区・13秒）＋`batch_timed_out`／**1483** brain_normal started（録画中）
+
+### タイムアウト緩和（進捗ありは切らない）
+| 所 | 内容 |
+|----|------|
+| `background.js` | fill-progress で fill-done 延長。batch: 初回10分／**進捗後無進捗15分**（`BATCH_IDLE_ACTIVE_MS`）。`sawProgress` を resolve に渡し、監査・LINEを「送付途中」と「起動前停止」に分離。進捗あり timeout は `countUnknown`（0件扱いしない） |
+| `snapshot-core.js` | `PASS_DEADLINE` **realpro 35分／itandi 40分**（旧20/25では9区＋送付で切り上がる） |
+| `page-script.js` | 区数比例 `MAX_RETRY`/`MAX_MS`・fill 心拍（既存） |
+| `bulk-dl.js` | 送付中 `axlx-batch-progress`（既存） |
+
+### 学習取り込み
+- `scripts/human-learn-brain.ts --days=1 --apply` で通常録画を束へ
+- 統括Pro `--scope=realpro --save` で次の自動完了線を確定
+
+### 人手確認
+`chrome://extensions` 再読込 → 平田さん1人・自動 → **9区そろい→検索→PDF送付完了**まで。audit に `batch_timeout` 無し／`AREA_MISMATCH` 無し。
+
+---
+
+## 2026-11-18 **タイムアウト緩和 追加（部分送付・見張りの進捗延長・区確認の心拍）**
+
+上の節で入っていなかった穴だけ塞いだ（既存: BATCH_IDLE_ACTIVE_MS 15分・fill-progress 延長・PASS_DEADLINE 35/40分・sawProgress）。
+
+| 所 | 変更前 → 後 |
+|----|------------|
+| `bulk-dl.js` | `axlx-batch-progress` に **`sentCount`（送付済み件数）** を載せる（3か所）→ background が控える |
+| `background.js` `_notifyBatchProgress` / waiter | 件数の最大値を `entry.sentCount` に保持し、待ち切れの resolve に `sentCount` を渡す |
+| `background.js` batch_timeout 分岐 | 部分送付済み（sentCount>0）: **「0件」にしない**（`_propCount=sentCount`）・`timedOut=false`（失敗パスに数えない）。audit result に `saw_progress`／`idle_sec`／`sent_partial`、step は実際の無進捗秒数（固定「5分」文言を廃止） |
+| `background.js` `_startPassGuard` | 上限到達でも **直近10分以内に進みの合図があれば5分ずつ延長**（硬上限＝上限×2・止まっていれば従来通り切る） |
+| `page-script.js` `_verifyThenConfirm` | 区の確認・押し直しのたびに `_emitFillProgressHeartbeat('ward_verify')`（9区で fill-done 待ちが切れない） |
+
+- 残る固定文言（拡張外・触っていない）: `app/lib/search-audit-check.ts` の「5分届かなかった」表示。
+- 人手確認: 再読込 → 9区自動 → 送付まで。audit の `sent_partial` / `saw_progress` を `search_audits.result` で確認。
+
+---
+
+## 2026-11-18 **タイムアウト緩和（平田・search_audits 1482 連鎖）** ※上節に統合・PASS_DEADLINE延長を追記
+
+### 実測・方針
+- 1482: `ward_verify_fail`（旧13秒打ち切り）→ `basic_then_abort` → **5分無進捗 `batch_timeout`** で一連崩壊（capture error／操作が長すぎる表示）
+- 竹内さん「完成度高ければタイムアウト不要・逆にトラブル多発」「**1人のお客さんは物件送るまで**」
+- 区数比例 verify（`MAX_MS` / `MAX_RETRY`）は別節のとおり維持。今回は **進捗があるのに切るタイマー** を最小緩和。
+
+### 修正（拡張・JSのみ）
+| 所 | 緩めた内容 |
+|----|-----------|
+| `background.js` | `axlx-fill-progress` で fill-done 待ちを延長＋見張り心拍。batch 待ち: 初回10分／**進捗後の無進捗は15分**（`BATCH_IDLE_ACTIVE_MS`）／`sawProgress` 伝播 |
+| `snapshot-core.js` | PASS_DEADLINE realpro **35分**／itandi **40分** |
+| `page-script.js` | ops/conditions_ready から fill 心拍。`panel_settle` 固定12秒→**キュー動作中スライス延長・上限120秒** |
+| `bulk-dl.js` | 送付中・PDF待ちに `axlx-batch-progress` 心拍（5秒ごと） |
+
+### 人手確認
+`chrome://extensions` 再読込 → 9区・送付まで1人完走 → audit に `batch_timeout` 無し／`batch_timed_out` 無し。長い区選択・送付中は console に `[batch-done-waiter]` 延長ログのみ。
+
+---
+
+## 2026-11-18 **所在地 verify：9区・13秒打ち切り（平田 search_audits id=1482）**
+
+### 実測（ext 2.8.93・realpro）
+- 欲しい9区・入った1区・足りない8・約13秒で `ward_verify_fail` → `AXLX_AREA_MISMATCH` → batch「5分無進捗」
+- `clickWardPrecise` は未選択の**先頭1区だけ**キュー（6360行付近・設計維持）
+- 旧 `MAX_RETRY=Math.min(10,missing+3)` が10で打ち切り → 9区には回数不足
+
+### 修正（`chrome-extension/page-script.js` `_verifyThenConfirm` 付近）
+- `MAX_MS = Math.max(90000, want.length * 10000)`
+- `MAX_RETRY = Math.min(30, Math.max(4, Math.max(want.length*3, missing*2+4)))`（9区→27回まで）
+- `ward_verify_fail` 文言に `retry=` / `MAX_RETRY=` / `MAX_MS=` を付与（後追い用）
+- 駅・沿線の類似上限は未変更
+
+### 人手確認
+`chrome://extensions` で拡張再読込 → **9区**の自動入力1回 → 監査に `ward_verified` または全9区入りまで継続（13秒で即 fail しないこと）
+
+---
+
+## 2026-11-18 **平田敏也 所在地9区切り上げ（audit 1482）**
+
+### DB実測
+- `search_audits` **1482**（2026-11-18・realpro・brain_aix・ext 2.8.93）
+- 欲しい9区・入った1区・足りない8・**13秒** → `AXLX_AREA_MISMATCH` / `ward_verify_fail` / `basic_then_abort`
+- その後 `batch_timeout`（5分無進捗）＝2度目検索前に止まったように見える本丸
+- 1478 も AREA_MISMATCH（4/9）
+
+### 原因（確定）
+1. `clickWardPrecise` は **1回1区**（画面内スクロール付き）
+2. 旧 `MAX_RETRY` 上限 **10** → 9区を選び切る前に打ち切り（10×約1.3秒≈13秒）
+3. 打ち切り後は意図的に **検索しない**（`basic_then_abort`＝誤地域の全件防止）→ bulk が無進捗タイムアウト
+
+### 直し（拡張）
+- `MAX_RETRY = min(30, max(want*3, missing*2+4))`／`MAX_MS = max(90s, want*10s)`
+- `ward_verify_fail` に retry/MAX を残す
+- `ward_dom_miss` 監査＋一覧スクロール（DOMに無い区の空振り対策）
+
+### 統括Pro
+次手: **拡張再読込→自動1回**で9区そろい→確定→検索を実証。区選択完了関所・retry監査を土台F化。
+設計知見: `9da5341b`（P1・所在地複数区は区数比例 verify）。
+
+### 人手配
+`chrome://extensions` 再読込 → 平田さん（9区）で自動1回 → audit で checked=9 / AREA_MISMATCH無しを確認。
+
+---
+
+## 2026-11-18 **solid消失防止（lookback/継承）**
+
+作業員調査: lookback=20＋0連打で solid=96 が窓外 → `historyHadSolid=false` で0 insertが合法。継承例外握りつぶしでも0保存。
+
+### 直し
+- `inheritLinkFoundations` 既定 lookback **80**／最大200で best solid 救出／**realpro←all** フォールバック
+- 履歴 SELECT 失敗＋solid不足 → `safe_to_write=false`
+- profile の catch でも solid<30 なら wipeBlocked
+- 束に `scene_flows` 永続化／cron に vision 段1補完
+- `supervisor-pro` は FA **必ず再点検**（古い missing_n>0 でスキップしない）
+- axes.`screen_solid_now`／meet「F1実測 solid=」で Pro の solid=0 誤報を関所
+- テスト `learn-bundle-preserve.test.ts` 12✓
+
+### 統括Pro（最新）
+F1 solid=96 完了線クリア。vision 全6段✓。止は **段階5 自動で使う**（拡張再読込→自動1回）。
+
+### 併せて
+- `?refresh=1` も `fetchLearnBundleSceneMeta(..., forceFullAudit)` ＋ lookback80（薄い束上書き止め）
+
+### 人手配
+**デプロイ** → 拡張再読込 → 自動1回 → F6/F31/F32。
+
+---
+
+## 2026-11-18 **vision段1→段2 写真→統括Pro（完全線・PDCA）**
+
+実測: DB shot_key 1万枚超なのに本番 `vision_pro_link=NULL`・`shots` に `in_storage` 無し → Proが段1止まりと誤報。
+追加穴: `mergeSupervisorPro(adv)` が関所前の薄い meeting を正本にして、gates の `vision_pro_link` / `photo_learn` を捨てていた → 「連携行なし」「F49 in_storage=0」矛盾。
+
+### 直し（ローカル完了）
+- `shots` を screens 空でも必ず載せる（`in_storage` 正本）
+- `ensureVisionPhotoReachEvidence` + gates で薄い meeting でも段1✓
+- 写真あり∧学べ0∧todo=0 → `ensure-gapless` が `photo_learn` 強制／段5✓・止は段2
+- `mergeSupervisorPro(**advReady**)` に変更（関所後を正本）
+- 古い F49 `in_storage=0` 行を束実測で上書き
+- テスト: vision 22／gates 42／Pro 55／tsc 0
+
+### 統括Pro生の言葉（flash 8枚実行後）
+- 連携: **vision_link 全6段✓**（画像→統括Pro連携OK）／F49 in_storage≈9908
+- flash: 8枚保存・欄214・束作り直し✓
+- 次の止: **束→自動**（solid=0／F38・拡張再読込→自動1回）。無料で F1/F33 履歴復元が先
+
+### 人手配
+**デプロイ**（配線を本番へ）→ solid 復元（SERVICE_ROLE）→ 拡張再読込→自動1回→ F6/F31/F32 で数字確認。
+
+---
+
+## 2026-11-18 **薄い site meeting 配線穴（PDCA）**
+
+実測: 本番 `supervisor_by_site.realpro` evidence≈10件・learning_tasks空。厚いのは `bundle.supervisor`(all) 側。
+
+### 原因
+- サイト別 `superviseLearn` に `improve_loop` / `shot_gaps` 未渡し
+- solid=0 で `bundle_reflect` が null
+- Pro 富化が all のみ（関所で by_site にも適用へ）
+
+### 直し（完了）
+- site に improve_loop・shot_gaps・reflect常時（solid=0でもnull禁止）
+- `meeting-evidence-gates` 薄い meeting 補完（テスト32✓）
+- cron/shot-learn → `fetchLearnBundleSceneMeta`（営業時間は直前束継承・夜のみフル点検）
+- by_site も Pro＋関所経由で log 保存
+
+### 人手配
+**デプロイ** → realpro evidence に土台・完成・録画→学び方・課題が載るか確認 → solid復元（SERVICE_ROLE）→ 再読込→自動1回。
+
+---
+
+## 2026-11-18 **学習完成（期間・土台・つながり・一連）統括Pro**
+
+竹内さん「学習機関／土台とつながりと一連の動きを完成させる／統括proお願い」
+
+### 完成線（4本柱）
+1. 学習期間 … `LEARN_PERIODS` 正本（materials=3日で ops/audit/写真揃え）
+2. 土台 … foundation-audit の重要F欠を名指し
+3. つながり … 束→拡張読込→自動使用（solid/read/auto_after）
+4. 一連 … improve_loop 1〜6
+
+### 実装
+- `learn-complete-chain.ts` … 4本柱の完成度・道筋
+- `learn-supervisor` meeting 根拠「学習完成…」＋議題 priority0
+- `ensureCompleteChainEvidence` / axes.complete_chain*
+- foundation-audit・human-learn-profile の daysOps/daysAudit → materialsDays()
+- 残りの材料窓も正本化: F33 shot_learn・weak-strengthen・findShotsToLearn 既定・F8 commandsMs・F50・束再読 historyMs／F19=normalFreshMs・F41=logMemoryMs
+
+### 人手配
+デプロイ → 拡張再読込 → 自動1回。Pro `--save` で「学習完成」根拠を確認。
+
+---
+
+## 2026-11-18 **設計知見↔統括Pro連携（細部まで抜けない）**
+
+竹内さん「設計知見と統括proともちゃんと連携／細かい部分も抜けない」
+
+### 実測
+- F37 RAG引き ✓（ログ成功・埋め込みほぼ全件）
+- F34 脳材料 ✗（fa無・vision✗・仕組み✗）→ 引くだけでは連携未完
+
+### 実装
+- `kb-pro-link.ts` … ①引く②要旨把握③土台落下④課題落下⑤細部⑥ログ記憶
+- `ensure-gapless-learn.ts` … solid低/未学習/自動0でも課題が空にならない
+- RAG問い・lite OR に原因/再学習/solid/photo_learn/設計知見を追加
+- improve-loop 段階5: 未学習があれば欄空でも photo_learn
+- Pro merge 後に連携段を測り、欠けを議題・課題へ
+
+### 人手配
+本番デプロイ後、根拠「設計知見↔統括Pro連携」が全段✓になるか確認。solid復元は SERVICE_ROLE か本番 inherit。
+
+---
+
+## 2026-11-18 **統括Pro 原因思考・再学習・土台徹底（録画+DB）**
+
+竹内さん「学習の抜け・土台・連携を細かく／人間のように原因→どう改善／新しい考え方で再学習／録画とDBから徹底／土台徹底」
+
+### DB実測（realpro foundation-audit）
+- 土台 **25/52 ✓／欠27**（束 solid=0・read_count=2）
+- 主欠: F1画面位置／F6新束後自動0／F31反映／F32連携止=画面位置／F33消失／F34脳材料／F15 aim／F16 warm／F28短間隔…
+- HONOKA 1480: status は後に **abandoned**（取得未達のまま終了）
+
+### 実装
+- `pro-cause-relearn.ts` … 症状→原因→層→改善→再学習→土台F
+- `ensureCauseRelearnEvidence` ＋ axes.cause_relearn / human_cause_think
+- supervisor-pro: 束に foundation_audit を載せてから Pro
+
+### 統括Pro生（要点）
+- 原因思考: 症状→DB/録画原因→層→改善→再学習（人間と同じ順）
+- 土台徹底: 欠27を id×完了線×次手で落とし、優先は F1/F33画面位置→F6自動→F31/F32反映連携
+- 再学習: HONOKA未取得は開始前停止／学べ課題関所／solid消失を全部覚える
+
+### 人手配
+2.8.93再読込→自動1回（F6）／画面位置復元（F1/F33）／reflect印（F31/F43）
+
+---
+
+## 2026-11-18 **統括Pro「改善構築の志向」→自動反映**
+
+竹内さん「学習してからどう強化／どんな仕組みがあれば改善／足りない・補強／改善する仕組みを作る／構築／次／反映／志向／ちゃんと自動モード」
+
+### 実装
+- `app/lib/pro-improve-construct.ts` … 志向7本＋構築段9＋欠→仕組み→構築→自動反映
+- Pro 思考順に ⑥仕組み ⑦構築 ⑧自動反映 を追加
+- axes: `improve_construct` / `pro_orientation` / `next_construct_reflect`
+- `ensureImproveConstructEvidence` で薄い meeting にも必ず載せる
+- LEARN_MECHANISMS: 学習後に仕組み構築／志向は自動反映まで
+
+### path_to_100（志向）
+①欠名指し→②仕組み（完了線）→③構築→④束→⑤再読込→⑥自動1回→⑦効果
+
+### 統括Pro生（要点）
+- 志向: 学習後は『仕組みを構築し自動へ反映』まで。build_next＝構築手、path＝欠→仕組み→構築→束→再読込→自動→効果
+- 足りない: photo_learn課題関所／acquire_grasp.armed／reflect効果印／handoff原子
+- 次: 関所で課題を出す→armed把握印を埋める→束→再読込→自動1回→F31/F43
+
+### 人手配
+本番デプロイ後、統括Proの today 先頭に「把握:」＋ build_next が構築手になること。効果は 2.8.93 再読込→自動1回。
+
+---
+
+## 2026-11-18 **物件未取得原因＋送付済み把握強化 2.8.93（統括Pro）**
+
+竹内さん「物件未取得の原因は／送付済みで詰まったのでは／送付済みは送ったと把握／取得タイミング連携／把握・認識・次手連携を統括Proで徹底強化」
+
+### DB結論（audit 1480・推測禁止）
+- `status=started`／`finished_at=null`／`filled=null`／`result=null`
+- 同窓: layoutOps=**0**／searchOps=1（人間の住居検索clickのみ）
+- **送付済み詰まりではない**＝PDF押し・送付済スキップの段に**到達していない**（取得開始前）
+- 仮説「送付済みで詰まった」は**別穴**として残す（取得後に起きうる）／今回の未取得根は fill-done／search_armed／Case C 前
+
+### 把握力の強化（2.8.93）
+- `bulk-dl.js`: `_graspAcquire` 台帳（wait_fill→armed→sent_loaded→sent_marked→filter→all_sent→press→page_done）
+- `content.js`: `axlx-acquire-grasp` → session `axlx_acquire_grasp`
+- `app/lib/property-acquire-grasp.ts`: 開始前停止 vs 送付済詰まりを分離／sent_grasped
+- 診断原子: `sent_stuck_misread`／`sent_ungrasped`／`property_path_break`
+- 統括根拠＋Pro axes.`acquire_grasp`／`ensureAcquireGraspEvidence`
+
+### 統括Pro生（deepseek-v4-pro・言い換えなし）
+- 結論: 物件未取得の主因は『送付済み詰まり』ではなく『送付済み以前の停止（armed未把握→PDF押し未達）』。送付済み把握台帳のarmed段が空のまま。次手はarmedを把握印で埋めること。
+- 連携の穴: 束→自動はacquire_graspの印が空＝自動が送付済みを認識できていない。完了→次客はswitch_fail等がaxes.handoffに未反映。
+- 弱点細分化: acquire_grasp.armed／photo_learn課題生成（未学習28）
+
+### 人手配
+1. 拡張 **2.8.93** 再読込 → リアプロ更新
+2. HONOKA自動1回 → コンソール `[把握:物件取得]` と `status≠started`
+3. 送付済みが多い一覧では `acq_sent_*`／`all_sent`→次頁（0件送信≠失敗）
+
+---
+
+## 2026-11-18 **画像学習の細部＋統括Pro「考える能力」骨格**
+
+竹内さん「画像学習はちゃんとおこなったのか／細かく強化／足りないか・どう強化・改善するか考える能力を持つ仕組み／統括Pro」
+
+### DB・束の実測（realpro）
+- shots total=6000／with_ops=5068（写真材料はある）
+- points に `w_src=photo` あり → **一部は画像学習済み**
+- weak / learn_plan: `kind_conflict_in_photo`・`photo_vs_record`（家賃・更新日・平米等）が残る → **細部は未完**
+- 本番 meeting が薄い: evidence≈10・**vision_pro_link無し**・learning_tasks空・foundation無し → Pro の axes が null になりやすい
+
+### 実装
+- `app/lib/pro-think-capability.ts` … 足りない→強化→改善の思考骨格＋画像学習判定＋細かい原子
+- 統括根拠: 「画像学習はちゃんと行ったか」「統括Pro思考骨格」「画像の細かい強化原子」
+- Pro: axes.pro_think / image_learn_done / image_fine_atoms ＋ system に考える順①〜⑦
+- 既知selectの種類衝突は **position 強化**（種類の再判定禁止）
+
+### 統括Pro生（補完後）
+- 画像学習は「一部済」だが**ちゃんと行われたか＝未完**（衝突・記録≠写真・未学習課題切れ）
+- `ensureProThinkEvidence` 後は **axes.pro_think に骨格が載る**（欠→強化→改善→細部）
+- 次: 未学習を photo_learn 課題へ（既知selectは位置観点）→束反映→再読込→自動1回
+
+### 人手配
+flash は衝突欄・位置観点を優先。本番デプロイ後は meeting が厚くなる。効果は photo_learn→束→再読込→自動1回。
+
+---
+
+## 2026-11-18 **1録画→学習→改善→反映 ＋ HONOKA根本 2.8.92（統括Pro）**
+
+竹内さん「1度の録画で学習と改善と反映／弱い部分が次学習で改善されるか／土台も細かく／統括Pro徹底」
+
+### 根本（DB＋経路）
+1. **間取り1つで完了**: 関所が `hitWant>=1` で通過 → 1DK+1LDK なのに1DKだけでも検索へ（2.8.91で missingWant 全hit必須）
+2. **物件未取得**: 自動 `clickSearch` は popup の `axlx_pending_auto_send` を書かない → リアプロ再読込で armed 消滅 → Case C 不発。audit1480 `status=started`／fill-done未達
+
+### 2.8.92 で直した
+- 検索 **click直前**に `axlx-search-armed`（同期）→ content/bulk-dl が session pending ＋ armed
+- `conditions_ready` 前に `layout_pre_search_*`（不足なら1回入れ直し）
+- 間取り把握後 `layout_grasp_*`＋不足 refill
+- pagehide でも search_armed 保険
+- `app/lib/one-rec-learn-loop.ts` … **1録画8段**（抽出→学び→仕組み→束→再読込→自動反映→検証→学び方強化）
+- 診断原子: layout_partial / property_path_break / search_offscreen
+- 統括根拠: 「1録画→学習→改善→反映」「1録画の学び方強化」
+
+### 統括Pro生（要点・言い換えなし）
+- 根は根1・根2で一致。弱い部分が次学習で改善されたかは **未確認**（axes null・自動1回の効果測定が無い）
+- 次: **2.8.92再読込→HONOKA自動1回** → `layoutOps>0`・want全hit・`status=finished`・steps残存 → one-rec verify印をF32で測る
+- 足りない土台: F32/F46/F31/F6/F44/F47/F48（測定・材料・handoff）
+
+### 人手配（効果確認まで）
+1. 拡張 **2.8.92** 再読込 → リアプロタブ更新
+2. HONOKA（1DK+1LDK）で自動1回
+3. 見る印: `layout_pre_search_ok` / `search_armed` / Case A or C / `status≠started` / 物件PDF押し開始
+
+---
+
+## 2026-11-18 **HONOKA自動: 間取り不足関所・カーソル画面外 → 2.8.91**
+
+竹内さん（画面）「HONOKA自動／1DK+1LDKなのに1DKのみ／外し選び把握／徒歩カーソル右ずれ／検索が画面外／検索後物件取得前で止まる／統括Pro録画調査→改善反映」
+
+**DB実測（監査1480）**
+- ver=2.8.90 mode=brain_aix **status=started** finished_at=null steps空 filled=null
+- intended.floor_plan=`1DK 1LDK`（条件は正しい）
+- 画面は結果一覧まで出ている＝検索は押されたが **fill-done未達** → 物件取得連携に進めず
+- 録画UIに capture_error
+
+**統括Pro生**
+- 間取り: 関所が hitWant **1つで通過**する抜け＝全hitまで missingLayout にせよ
+- カーソル: スクロール未定着＋aim学びのずれ（F40とpointは別）
+- 停止: status=started＝完了線(F45)と自動反映(F46)が繋がっていない／連携弱い
+
+**直した（2.8.91）**
+- `_axGateCheck`: 欲しい間取りの**不足分も missingLayout**（部分OK禁止）
+- 間取りセット時: 各チェックを画面内スクロールしてから押す
+- `_aimOf` 部分一致を厳格化（短いキーでの取り違え防止）
+- `_humanPointerClick`: 狙いを要素・画面内にクランプ
+- 検索: 画面外なら再スクロール／画面外時は学びaimを捨てる
+
+**人手配**: 拡張 **2.8.91** 再読込 → HONOKA自動1回 → 間取り両方・検索 in_view・fill-done/物件取得を確認
+
+---
+
+## 2026-11-18 **学習の足りない所を洗い徹底改善（統括Pro）**
+
+竹内さん「学習するために足りないところがないか統括Proちゃんと見つけて徹底的な改善」
+
+**統括Pro生**
+- 材料は足りる（通常多・未学習あり・画像欄あり）。止まっているのは **関所 read_count=0** と **記憶→改善の一連**
+- 今すぐ潰す穴: ①拡張再読込→ポップアップ ②位置flash→aim薄n≥1を束 ③自動1回でF31/F32/point/aim
+- 足りない土台: F51（弱所・土台反映）／F48脳材料・runs=0／F40≠point／F31/F32効果確認不可
+- 順: 無料関所 → flash → 人 → 効果で学び方直し
+- ※decideに残る「2.8.25」はログ記憶の名。コード正本は **2.8.90**
+
+**手元で直した**
+- 同束でも打合せ指紋が変われば統括ログ上書き（記憶が止まらない）
+- `learn-memory-loop`＋根拠「記憶→改善」
+- cron: 関所優先印は残しつつ flash（thin載せ）は同時可
+- learn_improvements に今回の強化2件
+
+**人手配**: **2.8.90再読込→束取込→自動1回**（これ無しでは徹底改善の効果測れない）
+
+---
+
+## 2026-11-18 **完全ループ＋学習方法の強化（統括Pro）**
+
+竹内さん「仕組み作るために徹底／完全にループ／学習したあと学習方法も学んでよりよい学習へ／統括Pro」
+
+**統括Pro生（要点）**
+- 関所: **read_count=0**（束→拡張）。配線 axlx-rec-point は既にある → 土台追加より再読込が先
+- meet①: 8段のうち止は段階4（拡張が束を読む）。再読込→自動1回→効果確認で回す
+- meet②: flash偏重の疑い → 学び方を**関所優先**へ直す
+- 次手: **拡張2.8.90再読込→ポップアップ→自動1回→F31/F32/point/aim**
+- 完成度 28/100（土台づくり）／verdict=almost
+
+**実装（手元）**
+- `app/lib/rec-challenge-reinforce.ts` … 録画→課題→学習→仕組み補強→**⑧学び方強化→①へ**（8段）
+- `app/lib/learn-method-strengthen.ts` … 効果前後で学び方を直す（関所優先・位置観点・1つずつ等）
+- サイト共通学習方法①〜**⑥**（効果見て①へ戻す）
+- 統括根拠: 「録画→課題→学習→仕組み補強」「学習方法の強化（効果で直して周回）」
+- 確認: `npx tsx app/lib/__tests__/rec-challenge-reinforce.test.ts`／`learn-method-strengthen.test.ts`／`scripts/rec-challenge-reinforce.ts`
+
+**人手配**
+1. **拡張2.8.90再読込→束取込→自動1回**（ループの関所を開く）
+2. 数字再測後、学び方が flash偏重なら関所優先に自動で直る（method_strengthen）
+
+**効き方の正直な線（2026-11-18）**
+- ✓ 弱所の名指し・次手・学び方修正（手元ループ＋統括根拠＋Pro）
+- ✓ cron `weak-strengthen`: read=0なら **photo_learnを止め** next_human に再読込を出す（無駄flash防止）
+- ✗ aim有・point_pct・近さの数字は、**再読込→自動1回の前は上がらない**（仕組みはあるが関所未通過）
+
+---
+
+## 2026-11-18 **統括Pro: 差埋め＝録画flash徹底／束に近さ指標 → 学習継続**
+
+竹内さん「録画から学習で差を埋められる／足りない土台／細部から改善／改善するまで統括Proは徹底的に録画から画像学習」
+
+**統括Pro生**
+- 結論: 質は上がっていない。穴はPro→拡張（read）。画像→Proは✓。
+- 足りない土台: F38 read=0／F31 reflect_ok=0／F32段5／F6新束後自動=0／F29近さ／F43 aim有=0
+- 次: ①拡張再読込→自動1回 ②通常画像flashで位置・city_code ③thin載せてaim確認 ④近さ再測
+
+**DB実測**
+- 未読通常7日 **約2854枚**（材料は十分）
+- 近さ未達・短間隔44.8%・aim有0（本番版は2.8.85走行のまま）
+- F19/F21/F49✓＝録画と写真は届いている
+
+**強化（進行中）**
+- flash連続: 40枚（欄1105）＋継続バッチ
+- 束に `human_like` / `human_nearness`（point_pct含む）を載せる抜けを修正（差が束から見える）
+- 版の効果は **2.8.90再読込＋束取込＋自動1回** が関所
+
+**人手配**
+1. 学習はこちらで継続（未読が減るまで flash）
+2. **拡張2.8.90再読込→束取込→自動1回**（read_count・aim有・reflect_okを動かす）
+
+---
+
+## 2026-11-17 **統括Pro: かぎりなく人間へ／短間隔＋画像16枚 → 2.8.90**
+
+竹内さん「ほかの部分も改善／かぎりなく近づくまで細部学習／画像学習／統括Pro」
+
+**統括Pro生**
+- 結論: 質は上がっていない。画像→Proは✓だが束→拡張→自動が段4停止。point_pct=14%。
+- 次: ①再読込→自動1回でread ②通常画像flashで位置 ③aim_press_recordでpoint残す ④F46/47/48
+- 弱点: point_pct／link_auto（read_count=0）
+
+**DB実測**
+- 近さ16・短間隔自動51.6%／aim無=86／本番版2.8.85のまま
+- F28 動作間短間隔44.8%／未学習通常354枚
+
+**強化（2.8.90）**
+- 通常画像 **16枚** flash学習（欄375）→束更新
+- 操作間隔硬下限 **900**／駅gap下限 **950**／settle **950〜1100**
+- enqueue minGap底上げ900／合成click二重記録の畳み 120→**450ms**
+- learn_warm に thin件数
+
+**人手配**
+1. **拡張 2.8.90 再読込**＋タブ再読込→ポップアップ束取込→**自動1回**
+2. 測る: 短間隔%↓・aim有・learn_warm・learn_reflect_ok・point_fields
+3. まだ短ければ追加flash→また自動1回（限界まで回す）
+
+---
+
+## 2026-11-17 **統括Pro: 画像学習→人間細部強化／aim薄許可 → 2.8.89**
+
+竹内さん「画像学習して録画から人間のように細かい部分をこだって改善／統括Pro／人間的にできていない部分を強化」
+
+**統括Pro生**
+- 結論: 画像→Proは6段✓。穴は束→自動（F31/F32 reflect_ok=0）と押した位置35%（要≥60）。
+- 次: ①拡張再読込→自動1回で反映印 ②通常画像flashで位置・課題欄を束へ ③handoff原子
+- 弱点細分: point_pct／link_auto／city_code／confirm_list／required_time／handoff
+
+**DB実測**
+- 近さ16点（短間隔自動51.6%・human帯11.7%）／aim無=86／learn_warm=0（本番走行は2.8.85）
+- F51止: aim有0%・間隔短・近さ未達／F15 aim有=0／F43 aim有=0
+
+**強化**
+- 通常画像 flash 8枚学習（欄147）→束作り直し済（required_time・city_code・確定・賃料上限等）
+- `axlx_learn_screen`: **n≥1も載せる**（thin）。solid数えは n≥3 のまま
+- `_screenAimOf`: n≥1使用・確定してリストへ別名／aim有(薄)印
+- pointer-ui も n≥1／版 **2.8.89**
+
+**人手配**
+1. **拡張 2.8.89 再読込**＋リアプロタブ再読込→ポップアップで束取込→**自動1回**
+2. 測る: `aim有`（薄含む）・`learn_warm`・`learn_reflect_ok`・point_fields
+3. デプロイ後に F49/F51 と近さを再測
+
+---
+
+## 2026-11-17 **統括Pro: 録画診断仕組み／地域↔駅排他F52／FB構造化 → 2.8.88**
+
+竹内さん「自動録画を送れば問題・足りない土台・強化が分かる仕組み／地域と駅が混ざる（どちらか）／外し忘れ／FBわかりにくい／統括Pro」
+
+**統括Pro生**
+- 結論: 録画→問題発見の上流栓は F49 写真。並行して地域/駅の種別・排他土台と FB 分離が要る。
+- 足りない土台: F49／地域駅種別／画像×位置／F51動作間gaps／FB UI分離
+
+**仕組み**
+- `auto-rec-diagnose.ts`: 録画・関所から原子（問題→足りない土台→次手）
+- **F51** 人間細部ループ／**F52** 地域↔駅排他
+- 関所: `place_mixed` で both 禁止。混在時は area_mode の反対側を外す
+- F28/F29: click→change 短間隔を測らない（動作間のみ）
+- FB: 選択式（何が起きた／あるべき駅|地域／語）＋自動添付。自由文は任意
+
+**人手配**
+1. **拡張 2.8.88 再読込** → 自動1回（混在が place_mixed で止まるか）
+2. FB「駅と地域の取り違え」で日本橋等を構造化送信
+3. **デプロイ**（F49/F51/F52・診断が束に乗る）
+
+---
+
+## 2026-11-17 **統括Pro: 人間らしさ原子／_fireAt→point／2.8.86**
+
+竹内さん「最新拡張の新録画から課題を出し改善／別客上書きで潰れた可能性／細部／録画から改善／土台／統括Pro」
+
+**統括Pro生（保存済）**
+- 結論: 押した位置35%の根は「_fireAtがsynthetic座標をpointに渡していない」＋写真保存段の確認。aim無・point_fields=0はその下流。
+- 別客上書き: **現材料に実測根拠なし**（handoff=null）。仮定で潰れたと言わない。search_audits原子を引くのが先。
+- 完成度 realpro 28/100・人間として不可／一連0/6
+
+**DB実測（直近60・aix・2.8.85）**
+- point_fields>0: **26/60**／diag-only: **14**／ops列は0でも shot_ops=60 の行が多数
+- 版はすべて 2.8.85（2.8.86未走行）
+
+**強化（原子1: 座標配線）**
+- `page-script` `_notePointForLearn` → `postMessage axlx-rec-point`（`_fireAt`から必ず）
+- `human-learn-record` が受けて `_pushPoint(..., synthetic:true)`／autoでも実座標を使う（0,0だけ真ん中）
+- `auditHumanLike`: **diagだけの行を分母除外**
+- `human_like` 束: **aix/autoだけ**で測る（通常と混ぜて弱点が薄まる抜けを止める）
+- 版 **2.8.86**
+
+**人手配**
+1. **拡張 2.8.86 再読込** → リアプロタブ更新 → **自動1回**
+2. 測る: 新行の `point_fields` 種類・`cursor_aim`（aim有）・diagだけの行が増えても%が下がらないこと
+3. サーバ側（human_like計測）は**デプロイ後**に束へ反映
+4. 別客上書きの疑いが残る時は `search_audits` の switch_fail / owner_mismatch / supersede を数字で出す
+
+---
+
+## 2026-11-17 **統括Pro: リアプロ学習法をitandiでも完全活用（F50）**
+
+竹内さん「サイト別に同じ形で／itandi改善時もリアプロのように根本理解／学んだ学習・改善方法をitandiでも完全活用」
+
+**統括Pro生**
+- 核心: リアプロで築いた学習・改善の仕組みをitandiに移植できる形にする
+- 足りない土台: foundationのサイト分離／ITANDI台帳活用／itandi記録量未確認→実測済
+
+**DB実測（3日）**
+- realpro motion≈11942／通常4758
+- **itandi motion≈4／通常1／監査11** ← 材料が極端に薄い
+- ITANDI_BUTTONS=27・REALPRO_BUTTONS=30（台帳は両方あり）
+
+**強化**
+- `site-learn-method.ts`: 方法①〜⑤は共通、DOM/台帳/路線駅名はサイト別
+- foundation `--site=realpro|itandi|all`・印クエリを markSite 化・F42もサイト別台帳
+- **F50_site_method_parity**: 両統括・両台帳・itandi記録の移植関所
+- 統括: itandi薄い時 `need_human` で通常1通し録画を要求
+- Pro axes: site_method / F50
+
+**人手配**
+1. **デプロイ**（F49配線＋F50）
+2. **ITANDI通常モードで検索1通し録画**（所在地→路線駅→条件→検索）← 必須
+3. 束再生成 → `foundation-audit --site=itandi` と `supervisor-pro --scope=itandi`
+4. リアプロ側は従来どおり 2.8.85再読込→自動1回
+
+---
+
+## 2026-11-17 **統括Pro: 弱い所徹底強化／写真→統括到達F49／録画ループ**
+
+竹内さん「統括的に弱い部分を徹底強化／一連で弱い所を録画で把握→改善→また録画／必要なら通常録画を要求／土台はすべて追加／統括Pro」
+
+**統括Pro生**
+- 結論: vision_link段1「写真が無い」は事実DB（束9923・未読2200）と矛盾。押した位置35%と一連0/6が弱い。
+- 最優先: 段1矛盾を解く→段3材料→段4突合→通常画像flash→aim→自動1回
+
+**DB実測**
+- 束 in_storage=9924／通常学べ1799・未読1746なのに vision counts.photo_in_storage=0・kinds=0
+- 原因: **サイト別** superviseLearn に shot_bytes / photo_kinds / image_match 未配線（全体にはあった）
+- foundation 28/48・F46/F47/F48✗・F49新設
+
+**強化（サーバ）**
+- サイト別にも写真材料を同じ形で渡す（shotBytes/photoKinds/imageMatch/bundle_reflect/録画鮮度/通常改善）
+- photoReach=Math.max（`0 ??` 穴を塞ぐ）／vision は学べ+未読から写真枚を推定
+- **F49_vision_photo_reach**: 束とvisionの矛盾関所
+- 仕組み: サイト別写真材料＋録画把握→改善→再録画
+
+**人手配**
+1. **デプロイ後** 束再生成（cronまたは profile fresh※位置落ち注意）→ vision段1✓・F49✓ を確認
+2. **拡張2.8.85再読込→ポップアップ束→自動1回** → F46/F47/F48
+3. **通常モード録画（要求）**: 押した位置が弱い欄（駅・外し・確定）を人で1通し録画。flashが位置を読める材料にする
+
+---
+
+## 2026-11-17 **統括Pro現状把握・つなぎ／把握／完了・押したの徹底強化 → 2.8.85**
+
+竹内さん「弱い部分徹底強化／把握・つなぎ・完了・押したが弱い可能性／統括Pro」
+
+**統括Pro生**
+- 結論: 弱いのは「押した位置35%」と「一連0/6」。材料不足ではなく**つなぎが止まっている**。
+- 真の穴: 拡張2.8.84+が人の再読込待ち／axes.handoff=nullは把握の穴
+
+**DB実測**
+- 直近自動40件の版はすべて ≤2.8.80 → now_customer/learn_flow_reflect/flow_map=0
+- foundation 29/48・F46/F47/F31/F32段7✗
+
+**強化（2.8.85）**
+- PIN印（把握・完了・学習連動）を**即送信**＋進捗にPINを必ず混ぜる
+- handoff/flow 材料なし時も根拠を残す（axes.null止め）
+- F48完了線を F34∧F45∧F46∧F47 に厳格化
+
+**人**: **2.8.85再読込→ポップアップ束取得→自動1回** → `now_customer`/`learn_flow_reflect`/`flow_map_ledger` が監査に残ること
+
+---
+
+## 2026-11-17 **統括Pro脳ループ（弱点→土台→強化→録画学習）F48・大切な考え方**
+
+竹内さん「この考え方をかなり大切にする／脳として機能したら弱点すぐ分かる／改善に必要・強化・土台を理解して追加／録画からも学習／仕組みづくり」
+
+**統括Pro生**
+- 今日の結論: 「弱点がすぐ分かる脳」は土台28/46でまだ穴。最優先はF46（録画→自動）をv281=0から回す。
+- decide: 録画学習（F46）を回す → 次に写真保存で材料が統括に届く経路
+
+**仕組み（F48）**: LEARN_MECHANISMS＋根拠「統括Pro脳ループ」＋Pro axes `brain_loop`/F47/F48
+
+**人**: **2.8.84再読込→自動1回** → foundation で F46/F47/F48
+
+---
+
+## 2026-11-17 **全流れ地図F47・細分化強化の仕組み → 2.8.84＋統括Pro徹底**
+
+竹内さん「検索→送付→完了→次客→外し→入れ直しの地図土台／弱い所を細分化強化／ボタン・動き・外し把握／統括Pro徹底」
+
+**統括Pro生**
+- meet最優先の結論: 全流れ地図はF45の6印を土台にF46で録画→自動反映まで一連。ボタン細部はREALPRO_BUTTONSを1つずつ。土台活用は既存のSTATION_LINE_MAP・btn_understand・F45/F46を使う（新規地図を増やさない）。
+- 足りない土台: F45原子のhandoff載せ／F46一連／位置%は別土台／写真保存
+
+**DB実測（foundation）**
+- ✓ F41 ボタン理解済印／✓ F45 完了理解台帳／✗ F46 録画→自動（v281=0）／✗ F43・F44
+
+**実装（2.8.84）**
+- `flow_map_ledger` / `flow_subdivide_need|ok` / `flow_atom_*` / `clear_method_*`
+- 原子10: switch→place_clear→place_select→line_station→conditions→btn_grasp→search→fill_done→ready_next→next_clear
+- foundation **F47_flow_map_subdivide** で測る
+
+**人**: **2.8.84再読込＋タブ再読込→自動1回** → `flow_map_ledger` と `flow_subdivide_*` が出ること
+
+---
+
+## 2026-11-17 **沿線↔駅の地図を自動把握へ載せる → 2.8.83＋統括Pro**
+
+竹内さん「沿線と駅の関係性／流れ理解／課題発見／地図を持っているか・無ければ作る・細分化／統括Pro」
+
+**統括Pro生**
+- 今日の結論: 地図は**既にある（STATION_LINE_MAP）**が、自動の把握（page-script）には載っていない。作るより**載せる**が先。流れは F45 完了理解台帳の継ぎ。
+- decide: ①popup-maps を page へ注入 ②地図期待∩選沿線で完了線 ③F45 6印は既実装の継ぎ確認
+
+**実装（2.8.83）**
+- `popup-maps.js` → `window.__AXLX_STATION_LINE_MAP` / `__AXLX_LINE_STATION_ORDER`
+- `content.js` が page-script より先に popup-maps を注入
+- 自動: `_mapExpectHitsForStation`／`line_station_map*` 印／wantTargets = max(DOM, 地図期待)
+
+**人**: **2.8.83再読込＋タブ再読込** → 十三×複数沿線で `line_station_map` が出る／`line_station_map_gap` が無いこと
+
+---
+
+## 2026-11-17 **沿線ごと同名駅（十三）・徒歩プルダウン・二重カーソル → 2.8.82＋統括Pro**
+
+竹内さん「同じ駅名でも沿線ごとに選択／masayaの十三は該当沿線すべて押す／マウス2つ／徒歩プルダウンが押せない／直近自動録画から課題／統括Pro」
+
+**DB実測**
+- 直近自動 formStations=`["十三"]` のみ（沿線複数でも駅1つで完了扱い）
+- station_go_without_line / 駅未揃い中止も直近にあり
+
+**統括Pro生**
+- 結論: マウス2つは変バグとして即直し。徒歩はプルダウン完了まで次に進まない確認。同名駅はDOMの station_list で全押し（画像位置と混ぜない）
+
+**根本（2.8.82）**
+- 同名駅: 非表示スキップ＋同一value除外をやめ、名前一致を全押し／完了線は候補本数ぶん checked
+- 印: `station_per_line_ok|gap|done`
+- 徒歩: required_time が select でも chooseSelectLikeHuman／待ち延長
+- 二重カーソル: `#axlx-fake-cursor` の余分を削除して1つだけ
+
+**人**: **2.8.82再読込＋リアプロタブ再読込** → 十三×複数沿線で `station_per_line_ok`／徒歩押下／カーソル1つ
+
+---
+
+## 2026-11-17 **録画の弱い流れ→強化→自動反映／今客把握 → F46・2.8.81＋統括Pro**
+
+竹内さん「連携強化／今どのお客さんを検索しているか・完了までの理解／抜けなく把握／流れの弱い部分を録画から強化して自動に反映する仕組み／統括Pro徹底」
+
+**DB実測**
+- auto: flowDone=0・reflectOk=0・reflectGapあり・handoff(no_fill等)残／human opsはあるが自動へ流れ印が無い
+- 束: solid=96・sequence_flowあり・readは増えても自動反映印が付かない回がある
+
+**根本（2.8.81・F46）**
+- `app/lib/flow-reflect.ts`: 録画 scene_flows の弱い場面→強化計画→need_auto
+- `weak-strengthen` に流れF46を合流（photo_learn＋自動1回）
+- page: `__axlxNowCustomer` / `now_customer` 印／`learn_flow_reflect_ok|gap`
+- 駅反映＋流れ反映が揃うまで needs_auto を残す／土台 **F46**
+
+**人**: **2.8.81再読込＋リアプロタブ再読込** → 自動1回で `now_customer`・`learn_flow_reflect_*`・`flow_done_*`  
+確認: 今の客の段が見える／流れ反映OK→次客
+
+---
+
+## 2026-11-17 **完了理解→次客接続・手順1つずつ把握 → F45・2.8.80＋統括Pro**
+
+竹内さん「ちゃんとお客さん検索して完了したら次のお客さんへ／1つ1つ把握／ボタンも把握していなかったように何が完了か理解していない／全手順で抜けなく連続検索／抜け補強・土台／統括Pro徹底」
+
+**統括Pro生（完了理解）**
+- 最大の穴は「完了→次客」の土台が無いこと（ボタン理解 F41 と同型の完了印が必要）
+- DB実測: `flow_done=0` / `phase=0` / `btn_ledger` はあるが一連完了の把握が無い
+
+**根本（2.8.80・F45）**
+- `__axlxFlowUnderstood` 完了理解台帳: switch → place → conditions → search → fill_done → ready_next
+- `_noteFlowPhase` / `_auditFlowUnderstandLedger` / `_flowReadyForNext`
+- fill開始で台帳リセット／検索押下・fill-doneで印／bg は `series_done`・`flow_handoff_ok|gap`
+- 集計: `audits.flow`＋handoff に `series_done`・`flow_handoff_gap`／土台 **F45**
+- steps 間引きで `flow_done_*` / `flow_gap_*` / `flow_understand` を消さない
+
+**人**: **2.8.80再読込＋リアプロタブ再読込** → 自動1客で `flow_done_*` → 連続2客で `series_done`→次客  
+確認: `flow_understand_ledger` / `flow_done_ready_next` / `series_done`／次客切替が途切れない
+
+---
+
+## 2026-11-17 **次客乗り換え・強制更新で壊れる → F44・2.8.79＋統括Pro**
+
+竹内さん「自動モード次のお客さんが入ったときバグ／次客が溜まって乗り換え・強制更新のあと壊れる／根本から改善／統括Pro」
+
+**統括Pro生**
+- 結論: 次客バグは handoff 原子の計測と一連ロックの生存が先。候補は推測のままにしない
+- DB実測あり: `owner_mismatch`／`no_fill_start→tab_reload`／fill二重開始
+
+**根本（2.8.79）**
+- `force-fill-clear` は**客スコープ**（別客 fill 中はスキップ）
+- `no_fill_start` 再試行前に fillRunning を見て、同客なら reload せず続行／別客なら更新しない
+- fill 世代 `__axlxFillGen`／pong に fillRunning を載せる
+- handoff に `tab_reload`・`supersede` を追加／土台 **F44**
+
+**人**: **2.8.79再読込＋リアプロタブ再読込** → 次客が溜まった状態で自動連続2客  
+確認: `force_clear_skip` / `reload_skip_other_fill` / `fill_started_inferred`／owner_mismatch が立たない
+
+---
+
+## 2026-11-17 **なぜ改善しても自動が強化されないか → F43連動・2.8.78＋統括Pro**
+
+竹内さん「なんで学習や改善しても自動モード強化されていないのか／細かく強化／改善したら自動連動／統括Pro」
+
+**統括Pro生**
+- 根: 束solid=96でも拡張screen=0のまま押し始めた＝改善→束→取込→aim→自動の一連が切れている
+- 穴は画像→Proではなく **束→拡張→自動**（混ぜるとまた切れる）
+- ⚠ Proが「2.8.25再読込」と言ったのは誤り（正は **2.8.78**）
+
+**DB実測（切れ目）**
+- 2.8.77 自動: aim無連発・`learn_reflect_*` が監査から消えていた
+- 原因: steps>60 で先頭 shift／指示拾い毎 force で read_count=120 水増し／fill-done だけで needs_auto を下ろしていた
+
+**改善（2.8.78）**
+- 反映印は steps 間引きで消さない（F43）
+- 自動指示拾いは needs_auto/screen空の時だけ force
+- fill-done は `learn_reflect_ok` がある時だけ needs_auto 下ろす
+- `page_ver` 印（リアプロタブ再読込が必要か分かる）
+- 土台 **F43_improve_to_auto_link**
+
+**人**: **拡張2.8.78再読込＋リアプロのタブも再読込** → popup → 自動1回  
+確認: `page_ver:2.8.78` / `learn_reflect_gate` / `learn_reflect_ok` / `aim有`
+
+---
+
+## 2026-11-17 **自動への強化反映・細かい連動 2.8.77＋統括Pro**
+
+（→ 上の **2.8.78** に更新。ゲート／screen空取り直し／aim別名は 2.8.77 で入れた）
+
+---
+
+## 2026-11-17 **土台F41/F42＋リアプロ徹底 2.8.76＋統括Pro**
+
+竹内さん「必要な仕組みも追加／土台の強化と構築を徹底／リアプロも徹底／統括Pro」
+
+**統括Pro生（足りない土台）**
+1. 台帳外ゴミを課題に出さない関所 → **F42** `catalogTargetsOnly`（実装済）
+2. ITANDI台帳を強化ループへ → `--site=itandi`（実装済）
+3. done印が録画に無い → **F41**＋検索前 `理解台帳`（2.8.76）
+4. 押した位置33%・区の外し/選びは flash→aim→自動1回（人の再読込後）
+
+**仕組み**
+- `app/lib/button-catalog-targets.ts` … 1DK→間取り、区名→city、路線名→route、ゴミ落とす
+- `weak-strengthen-loop` … 台帳正名のみ＋弱い欄（駅・間取・区）を先頭優先
+- `page-script` … `_auditBtnUnderstandLedger`（検索前）／選ぶ済・押す済の録画ノート
+- 土台監査: **F41_button_done_marks** / **F42_catalog_targets_gate**
+
+**人**: → **2.8.77** に更新（上の節）
+
+---
+
+## 2026-11-17 **【大切】リアプロ＋ITANDIのボタン・仕様をすべて細かく把握**
+
+竹内さん「ちゃんと作業員動かす／リアプロとitandiのボタンや仕様をすべて細かく把握／この考え方は大切にする」
+
+**考え方（設計知見 INSERT済）**
+- サイトごとにボタン台帳を持ち、1つずつ選ぶ/外す/押すを測る
+- 路線名・駅名はリアプロとITANDIで**混ぜない**
+- 把握の抜けを塞いでから自動を回す（実装より先に把握）
+
+**作業員（並列・完了→台帳反映済）**
+- A/B/C 反映済 → REALPRO〜30件 / ITANDI〜27件 / DB done=0・版2.8.71止まりだった
+
+**人**: → 上の **2.8.76** に更新
+
+---
+
+## 2026-11-17 **各ボタン理解（選ぶ/外す/押す）が終わるまで 2.8.75＋統括Pro**
+
+竹内さん「それぞれのボタンの理解／弱い部分がなくなるまで／通常・自動録画から学習／地域・間取り・前客→新客／外したと押した」
+
+**DB実測（自動48h・版2.8.71）**
+- 全ボタン `done=0`（選ぶ済/外す済/押す済が録画に無い）
+- layout=0 / ward_clear=0 / station sel≈0
+- aix が「沿線未選択で駅へ進まない」ノートで汚染（学習を濁す）
+- 自動はまだ **2.8.71**（2.8.74/75未再読込）
+
+**実装（2.8.75）**
+- ボタン正名で `選ぶ済:station_id[]` / `外す済:city_code[]` / `押す済:確定してリストへ` を録画へ
+- `_understandCustomerSwitch` / `_understandWardScene` / `_understandLayoutScene`
+- パネル開き（所在地＋・沿線＋・間取り＋・絞り込み＋）も押す理解
+- 台帳に `沿線の設定へ戻る`・`間取り絞り込み＋` 追加
+- `station_go_without_line` を録画ノートから外す（監査は5秒に1回）
+- `weak-strengthen`: 通常0枚なら **aix でも同じボタンを photo_learn**
+
+**統括Pro生（保存済）**
+- 最優先: **2.8.75再読込** → 通常で写真保存1回 → ボタン1つずつ flash 学習 → 自動1回
+- 完成度28/100・一連0/6
+- ⚠ 矛盾そのまま: Proは「写真保存✗ photo_in_storage=0」と言うが、土台 F19 は「通常24h 画像=195 shot_ops付=191」
+
+**人**: **chrome://extensions → 2.8.75 再読込** → 通常で検索1回（写真）→ 自動1回  
+確認印: `選ぶ済:` / `外す済:` / `押す済:` / `切替把握` / `地域場面` / `間取り場面` / `駅場面`
+
+---
+
+## 2026-11-17 **押した／外した／選んだの理解土台（全UI）2.8.74**
+
+竹内さん「抜けは駅以外にも／ボタン押した理解・外した理解／ここを理解すれば自動が完全に／統括Pro」
+
+**構築（共通型）**
+- `_intentDomainOfName`: line|station|ward|town|pet|layout|confirm|search|go|back
+- `_noteIntentUnderstood` / `_verifyCheckboxUnderstood`（want≠nowなら1回リトライ→done/fail印）
+- `_verifyPressUnderstood`: confirm（モーダル閉鎖）/ go（駅画面へ）/ back
+- チェック全部（区・町・駅・沿線・ペット・間取り）が同じ関所を通る
+- 印: `選ぶ済:ward` / `外す済:station` / `押す済:confirm` / `*_intent_select` / `toggle_fail`
+
+**駅固有（2.8.73継続）**: `_understandStationScene` phase
+**人**: **2.8.74 再読込→自動1回**（選ぶ済・外す済・押す済の印が出るか）
+
+---
+
+## 2026-11-17 **駅場面の理解（沿線≠駅≠外す）2.8.73＋統括Pro**
+
+竹内さん「外す/決定も選択場面とくに駅が弱い／沿線押し・駅選択・外したの理解／細かく徹底／統括Pro」
+
+**DB（自動6h・2.8.71）**
+- line_select=140 / st_select=**0** / one_station=**0** / go_block=355 / confirm=18
+- 沿線は押しているが駅選択の段に入れず確定していた＝**理解の欠落**
+
+**直し（2.8.73）**
+- `_understandStationScene`: phase = need_line_select | need_go_station | need_station_select | need_confirm
+- STEP C/D/確定が phase に従う（沿線画面で駅を選ばない／駅未揃いで確定しない）
+- 駅揃い判定は form の want 名（`_countWantStationsChecked`）
+- 効いた印: `station_done_select` / `line_done_select` / `station_scene` / `station_select_ok`
+
+**人**: **2.8.73 再読込→自動1回**（豊中・蛍池）。印に `station_scene need_station_select→station_select_ok` と `one_station`/`選ぶ:station` が出るか
+
+---
+
+## 2026-11-17 **悠さん自動: 沿線ありなのに駅スキップ（2.8.72）**
+
+竹内さん「沿線まで選択して駅押さずに検索／動画も見て根本改善／統括Pro／改善データ保管」
+
+**DB根因（2.8.71録画 05:26–05:30）**
+- 阪急宝塚線・大阪モノレール: `was=false→now=true`（沿線は押せていた）
+- 直後に `沿線未選択で駅へ進まない` が大量 → **駅押し ST=0** → 確定だけ
+- 判定が **可視 one_line だけ**で、form の `route_id[]:checked` を見ていなかった
+
+**直し（2.8.72）**
+- `_countCheckedRoutes` / `_countCheckedStations`（可視と form の大きい方）
+- STEP C・外し・line_ok を form 対応
+- 駅指定ありで駅0なら `station_confirm_blocked`（確定しない→駅へ戻す）
+- go_without_line 印は2秒に1回（録画汚染防止）
+
+**保管**: 設計知見【決定】悠さん自動… INSERT／統括Proへ meet 渡し
+**人**: **2.8.72 再読込→自動1回**（豊中・蛍池で駅が付くか）
+
+---
+
+## 2026-11-17 **打合せ全議題徹底（2.8.71）＋統括Pro RAG／考え方強化**
+
+竹内さん「今打合せしたのすべて改善／統括pro／弱い部分強化／自動改善まで／統括の考え方も弱ければ強化」
+
+**統括Pro生（直近）**
+- 完成度28/100・一連0/6・押した位置37%・人間として不可
+- 優先: ①拡張再読込→自動1回で F40/短間隔の印 ②RAG引き ③写真は別手配
+- ⚠ 矛盾修正済: 「F40で押した位置が上がる」は禁止（point_pct＝aim学び／F40＝DOM画面把握）
+
+**コード（2.8.71）**
+- 操作間隔硬下限 **700**／settle硬下限700〜900／UI押し下限 **1000**
+- 駅・**沿線**選び前に `screen_grasp`（誤画面→遷移／closed→開き直し）
+- 沿線も画面外ラベルを scroll→select（`line_scroll_pick`）
+- Pro RAG: 営業時間の全件読みを避け **keyword_lite（上限200）優先**／F40≠写真・F40≠point_pct をプロンプトに明記
+- KB: 【決定】打合せ全議題は一連で閉じる… を INSERT済
+
+**人**: **2.8.71 再読込→ポップアップ開く（束）→自動1回**
+確認印: `screen_grasp` / `line_scroll_pick` / `cursor_aim aim有` / `learn_warm` / `station_intent_select`／`station_modal_fail=0`／短間隔低下
+
+---
+
+## 2026-11-17 **打合せ全議題徹底（2.8.70）**
+
+（上の 2.8.71 に継続。硬下限700・駅 screen_grasp・Pro F40≠写真）
+
+---
+
+## 2026-11-17 **画面把握土台＋外してから入れる強化（2.8.69）**
+
+竹内さん「沿線・駅を一度外してから入れる弱い／細部＋土台／路線画面ほか構造把握／把握力不足／統括徹底」
+
+**DB弱点**
+- back連打×5・line_clear連打・toggleFail・station_modal_fail（路線一覧なし）
+- 外し未完のまま次へ／モーダル待ち枯渇 → CONFIRM平均0.24
+
+**土台（F40）**
+- `_graspStationModalScreen`: line_list / station_list / closed / unknown
+- `_graspAreaModalScreen`: pref / ward / town / closed
+- 誤画面操作を止める（`*_wrong_screen`）／外し後 closed → 開き直し
+- 外し失敗連続 → stuck で次へ（無限連打でモーダル枯渇させない）
+- back 上限2＋定着待ち
+
+**人**: **2.8.69 再読込** → 自動1回 → 監査 `screen_grasp` / `screen_reopen_after_clear` / `station_clear_stuck` が残るか・路線一覧タイムアウトが消えるか
+
+---
+
+## 2026-11-17 **スクロール定着／駅1つ漏れ／地域N-1／人間らしい展開（2.8.68）**
+
+竹内さん「画面スクロール不足／展開と押す位置が機械的／駅1つ外し漏れ／駅モーダル・地域選択失敗／1つずつ直して連動／録画＋統括Pro」
+
+**DB実測**
+- v2.8.67 13:45JST: `line_clear_after_station` 沿線外し大量連打
+- v2.8.60: `ward_verify_fail` 欲しい9区・入った8区・足りない1（0秒表記あり）／`learn_aim area_open` 学び無し→中央
+- failClearRows=8（was=true now=true＝外し失敗）
+
+**統括Pro（生・要約せず要点のみ再掲）**
+- 今日の結論: 5議題は『スクロール未定着→画面外を押す/外す→駅・区の漏れ』の1本に集約
+- 土台次手: F36『押す/外す前に画面内』関所 → line_clear連打と AREA_MISMATCH を同じ関所で防ぐ
+
+**直し（2.8.68）**
+- 駅・沿線外し: **1回1件**＋scroll center／form残がある限り次フェーズへ進まない
+- 区選択: **1回1区**＋scroll（一括キュー廃止）
+- `_ensureInView`: 駅・区・確定も中央寄り／展開は `_pressLearned`＋待ち揺らぎ
+- enqueue drain: `scroll_gate`（画面外なら再scroll）
+- 押す位置: 学び無し帯を広げる
+
+**人**: **2.8.68 再読込** → 自動1回 → 監査に `station_scroll_clear` / `ward_scroll_select` / `scroll_gate`／残駅0・区が全部そろうか
+
+---
+
+## 2026-11-17 **実愛さん：エリア解決／短タイムアウトで前客条件のまま（2.8.67）**
+
+竹内さん「実愛さん自動／地域外して再選択していない／賃料・徒歩かわらない／1つずつできていない／時間制限が原因か／ペット外しでずれ／新条件を全部／統括pro」
+
+**画面証拠（13:25）**
+- ポップアップ「エリア解決中...」のまま
+- 結果一覧は前客（京橋〜／徒歩10分）・サイド徒歩15・賃料10万
+- 客条件「ミナミから徒歩20分案内」
+
+**根本原因（コード＋画面）**
+1. エリア解決API待ち／例外で **fill未開始** → 前客フォームのまま
+2. popup の fill-done UI 待ちが **旧25秒**（人らしいクリア＋地域＋条件に足りない）
+3. 地域失敗で即 `notifyDone` → **賃料・徒歩を入れない**
+4. パネル清算待ちが終わらないと条件キューに届かない
+
+**直し（2.8.67）**
+- エリア解決失敗でもローカル条件で fill 続行（finally）
+- fill-done UI 待ち **180秒**
+- パネル清算 **12秒で打ち切り**して次へ
+- 地域失敗でも **基本条件を1つずつ入れてから中止**（検索はしない）
+
+**人**: **2.8.67 再読込** → 実愛さん自動1回 → サイドの徒歩/賃料が新条件になるか／監査 `basic_before_abort` or `basic_after_place`
+
+---
+
+## 2026-11-17 **根本：パネル負債→確定清算の仕組み（2.8.66）**
+
+
+竹内さん「足りていない部分あれば仕組みとして根本的な部分をきょうか／その場その場より根本を改善して構築」
+
+**考え方（P0 d16cfe1b）**: 土台不足か細分化不足。場当たり必押を足し続けない。
+
+**根元仕組み**
+- `_axPanelDebt`: パネルを開いたら負債（area / station / filter）
+- 入口: `_ensureFieldVisible`・所在地/沿線オープン
+- 清算: `_pressConfirmListLikeHuman` 成功／`_settlePanelDebt`（場所のあと・条件後・検索前・クリア後）
+- 関所: 未清算のまま `clickSearch` しない（`search_block_panel_debt`）
+
+**統括Pro**: 確定欠落は土台の書き込み関所不足。パネル開閉＝確定を一連の仕組みにせよ。
+
+**人**: **2.8.66 再読込** → 自動1回 → 監査に `panel_debt_open` / `panel_settle_ok` / `modal_confirm`
+
+---
+
+## 2026-11-17 **通常録画から細部学習→自動強化（2.8.65・統括Pro）**
+
+
+竹内さん「通常モードの録画からも学習できる部分徹底的に細かい部分改善する／統括pro」
+
+**DB実測（通常120・自動80）**
+- 通常正本: WARD→CONFIRM 66／PET→CONFIRM 13／CONFIRM→OPEN(沿線) 66／手 cs hand=3508／賃料 click→change 68・changeOnly=0
+- 自動 shot_ops: **CONFIRM=0**（確定文字が録画に無い）／監査でも modal_confirm が直近ほぼ無し
+- 自動の先頭がペット→賃料→所在地に見える分は**前客クリア段階**（fillの場所→条件とは別）。ただしクリア後の確定も欠けていた
+
+**統括Pro（生）**
+- 結論: 自動の確定欠落（CONFIRM=0）が最優先。次に順番・ペット後確定。押した位置37%は並行
+- 弱点細分化: 確定／押した位置／順番（場所→条件→検索）
+- 手配: 確定ロジック発火→自動1回確認／写真保存穴は別途
+
+**直し（2.8.65）**
+- `_pressConfirmListLikeHuman`: 学んだ位置＋**録画に確定を残す**（RecNote）
+- 前客クリアでペット/区を外したあと **確定してリストへ必押**（通常 PET→CONFIRM / WARD→CONFIRM）
+- 区外し→駅へ も共通確定関数へ
+- （2.8.64引き継ぎ）ペットキュー待ち・西淀川 scroll・賃料 chooseSelect
+
+**人**: **2.8.65 再読込** → 自動1回 → shot_ops に「確定してリストへ」が出るか／監査 `clear_panel_confirm`・`modal_confirm`・`pet_panel_confirm`
+
+---
+
+## 2026-11-17 **平田さん自動：確定リストへ／ペット／賃料／西淀川（2.8.64）**
+
+竹内さん「平田さん自動録画／ペット外し後に確定してリストへ未押し／賃料は選択で戻す／地域そろったあと確定前で停止／アナウンスで止まらない／通常と照合／統括pro」
+
+**DB監査**
+- 通常正本: `ペット相談 → 確定してリストへ → 検索`（13件）／bundle `modal:確定してリストへ n=332`
+- 自動 2.8.56: `pet_not_checked` → 確定無し（toggleキュー完了前判定）
+- 自動 2.8.60: `ward_verify_fail` 欲しい9・入った8・足りない **27113=西淀川区**
+- 賃料は既に `sel_pick` UI経由
+
+**直し（2.8.64）** ペットキュー待ち・確定aim・西淀川 scroll／リトライ増・toast非ブロック
+
+---
+
+## 2026-11-17 **自動反映連携の穴（read水増し・2.8.61・統括Pro）**
+
+竹内さん「自動モードへの反映がちゃんとできていない場合がある／連携に穴／統括pro」
+
+**DB実測**
+- 束2074 solid96／**read=738**／**auto_after=false**
+- 監査: 新束後の自動0件 → 段階5未達（読んだが自動未使用）
+- 原因: same_version 心拍が `mark_read×3` を連打 → read 水増し（「読んだ」と誤認）
+
+**統括Pro生（束内根拠）**
+- 「新束は読まれている（read=738）が自動走行が0件のため、学習→自動→効果確認の一連が未完了」
+- 「read_countだけで改善済みにしない」
+
+**直し（2.8.61）**
+- background: 心拍で mark_read 廃止（取り込む時だけ印）
+- API: 読印は10分以内なら回数を増やさない（水増し防止）
+- page-script: learnWarm を Promise化／読込中に screen を消さない／reflect 関所に screen 数
+
+**人**: **2.8.61 再読込** → **自動1回**（auto_after と learn_reflect_ok を確認）
+
+---
+
+## 2026-11-17 **録画画像学習＋新客共有＋自動反映（2.8.60・統括Pro）**
+
+竹内さん「録画から画像学習も徹底／抜け強化／自動強化／新客で物件保存が新客として共有／統括pro」
+
+**DB実測**
+- 通常写真3日標本400件が shot_learn 未読 → flash で **40枚学習（欄1041・保存40・束再生成）**
+- 最新束 read=0 / autoAfter=0（拡張がまだ新束を読んでいない）
+- 完了→次客原子（3日）: owner_mismatch1・switch_fail1・no_fill_start4（旧版 2.8.26〜31）
+
+**統括Pro生**
+- 「一番の穴は『新束が拡張に読まれていない（read=0）』と『新束のあと自動走行が無い（autoAfter=0）』。まず拡張再読込→自動1回を無料で回し、並行して photo_learn」
+- 「完了→次客は owner_mismatch 直近1件あり、switch_fail・owner_mismatch の原子で見る」
+
+**直し（2.8.60）**
+- popup: 一連ロック中に選んだ客を `_pendingShareCustomer` に残し、解除／TTL 後に storage（送る相手）へ反映
+- background: リアプロ／ITANDI の fill 開始時に `current_customer_id/name` をその客へ揃える
+- photo_learn: ⚠ `order=time` は古い未読から（直近連続を飛ばす）→ **`order=newest`** で直近連続を学習（50+40枚・欄約2700・束再生成・solid96維持）。update+select で0行誤報を止める
+- 束2072→以降: read=10（拡張が読んだ）／autoAfter=0 のまま → **自動1回が完了線**
+
+**人**: **2.8.60 再読込** → **自動1回** → 続き客で新客として物件が付くか確認（F6/F31/F32）
+
+---
+
+## 2026-11-17 **続き客の連続外し→入れ（通常連続録画→2.8.59・統括Pro）**
+
+竹内さん「連続でお客さんの条件録画／外し方・ボタン追加をちゃんと／連続できるように／統括pro」
+
+**DB正本（通常 01:34・4h）**
+- clear194 / select175 / both175 / transit165
+- CLEAR区(淀川・西・福島) → 確定 → 沿線・駅＋ → SELECT沿線 → 駅の設定へ → 駅SELECT
+- 画面「失敗3」でも ops+shot はDB保存（shotOk多数）
+
+**統括Pro生**
+- 「束01:14は録画より古く、この連続手順が束に反映されていない」
+- 「次: 束更新＋自動1回。区から駅切替の外し徹底」
+
+**直し（2.8.59）**
+- `_clearWardsBeforeStationThen`: NeedClearWard を実行（区外し→確定→駅へ）
+- preserve: 履歴より薄い solid も継ぐ（軽い再生成で96→50を防ぐ）
+- 束: 連続録画を軽い再生成で載せ、solid は履歴から復元
+
+**人**: **2.8.59 再読込** → 続き客（区→駅）1回自動確認
+
+---
+
+## 2026-11-17 **駅外し・ペット外しを通常録画正本に合わせる（2.8.58・統括Pro）**
+
+竹内さん「自動で駅が直接入力で外される／駅画面→沿線→新沿線駅／ペットでない客は外す／通常から学習／統括pro」
+
+**DB正本（通常 01:18）**
+- 駅: 駅の設定へ進む → 大国町 one_station was→false → 沿線の設定へ戻る → 沿線外し → 新沿線 → 駅の設定へ → 新駅
+- ペット: 絞り込み条件＋ → ペット相談 was→false（eq_rm[]）
+
+**統括Pro生**
+- 「通常録画正本の駅外し順と自動の_doReset form直外し・setCheckboxes空が食い違っている」
+- 「ペットの pet_ok でない時 eq_rm 外しが無い＝条件分岐の欠落」
+
+**直し（2.8.58）**
+- `_doReset`: station_id/route_id を残チェック外しから除外→駅画面経由クリアへ委譲
+- 関所 extraStation: setCheckboxes([])禁止→旗＋モーダル再開
+- STEP B: 残駅があれば沿線直外ししない／force 優先
+- ペット: wantPet に応じて選ぶ／外す（既に希望どおりなら触らない）
+
+**人**: 拡張 **2.8.58 再読込** → 続き客で駅外し・ペットなし客を1回確認
+
+---
+
+## 2026-11-17 **改善→拡張自動反映の抜け塞ぎ（統括Pro＋F38・2.8.57）**
+
+竹内さん「改善時も他影響・思考／最新改善の自動反映／学習しても改善されない／ちゃんと反映／統括pro」
+
+**統括Pro生（要約しない）**
+- 「meet 議題の核心は『学習しても改善されない抜け』＝束は読んだ（read_count117）が自動で使っていない（auto_after=false・新束後自動0・reflect_ok0）。一連は段階5で停止。まず自動1回を走らせ、F31/F32/F6 の数字で反映を確かめる。」
+- 「『他への影響を考えて改善できるか』は現状✗。…先に F36 を塞いでから束を更新する。」
+- 「穴は『束→拡張→自動』の連携側: …『読む』と『使う』の間に切れ目がある。」
+
+**DB実測（反映前）**
+- solid=96・transit✓・read_count=117・auto_after=false・F32止6・F38相当✗
+
+**直したこと**
+- light API: `screen_solid` / `needs_auto` を返す
+- 拡張 2.8.57: solid増で強制取込・needs_auto印・popup警告・自動fill-doneで印下ろし・連携段6
+- Pro: 改善は影響を考えてから／反映まで一連
+- LEARN_MECHANISMS 2本追加
+- F35/F36: 関所導入前の旧消失を直近3以外は落とさない（最新solid≥30なら✓）
+- F38_improve_reflect_chain: solid≥30・read≥1・新束後自動≥1
+
+**検証（手元）**
+- F35✓ F36✓ F37✓／F38✗ F6✗ F31✗ F32止6（自動0件のため・想定通り）
+- 設計知見 P1 挿入済（反映一連）
+
+**統括Pro生（塞いだ後）**
+- 「改善の抜け塞ぎはF35/F36の測り直し✓・F38追加・needs_auto・拡張2.8.57まで完了。残る穴は『自動1回』だけで、これをやれば一連4/6→5/6以上になり、精度が上がったか数字で測れる。」
+
+**人**: 拡張 **2.8.57 再読込** → **自動モードで1回検索**（これで F6/F31/F32/F38 が動く）
+
+---
+
 ## 2026-11-17 **本番デプロイ完了 → RAG把握細部＋preserveゲート（統括Pro）**
 
 竹内さん「デプロイ／設計知見と統括pro連携を細部まで／把握はかなり重要」
@@ -1646,17 +3391,26 @@ DB: 指示 pending **57件**（07:00UTC・picked_up無し）＝拡張が自動/A
 
 ---
 
-## ★ 黄金ルール（絶対・変えない・2026-11-16 竹内さん）
+## ★ 黄金ルール（2026-11-18 夕 竹内さん決定で戻した・2.8.107）
 
-**自動モードの次客・操作の決まり**（KB: 絶対・最優先／`kb.ts --q="自動 リセット"`）
+**自動モードの次客・操作の決まり**（竹内さん「リセットが壊れる原因の可能性高いので厳しければ外す形戻す」）
 
-1. **「リセット」ボタンは押さない**（通常モードの人が押す操作とは分ける）
-2. 前客の所在地・条件は **カーソルを動かして1つずつ外す**
-3. **新しいお客さんの条件を入れてから検索する**
-4. プルダウンも **欄へカーソル → 一覧の行へカーソル → 押す**（値の直書き・押さず変化にしない）
-5. 動かし方は全体として **通常モードのように細かく・人間らしく**再現する
+1. **自動は「リセット」ボタンを押さない**。前のお客さんの条件は **カーソルを動かして1つずつ外す**
+2. **新しいお客さんの条件を入れてから検索する**
+3. プルダウンも **欄へカーソル → 一覧の行へカーソル → 押す**（値の直書き・押さず変化にしない）
+4. 動かし方は全体として **通常モードのように細かく・人間らしく**再現する
+5. **1人のお客さんの一連（検索〜送付）が終わるまで次のお客さんを入れない**（入力中・送付中の上書き禁止・2.8.106／2.8.107）
 
-違反したら直す。推測でリセットボタンに戻さない。
+※ 2.8.105 の「リセットを先に押す」（KB `fc9c3aea`）は、リセットの1〜3秒後に入力が消えた実測（audit 1492・1494）で 2.8.107 に戻した。
+
+## 2026-11-18 リセットを先に押す（2.8.105）→ ❌ 2.8.107 で戻した（下は経緯）
+
+- 竹内さん「いちどそれでやる。完了したらリセットしてから次のお客さん移るように。そこもちゃんと徹底して行う」
+- `page-script.js` `_doReset` → `_tryResetButtonThen`: 「リセット」（ほかに「条件リセット」「条件全削除」「条件クリア」「全クリア」）を、見えている要素の文字で探して人の速さで押す（`enqueueHumanClick`）→ 900〜1500ms 待つ → 残り（city_code/town_code/room_layout_id/structured_type/eq_rm・station_id/route_id）を数える → 残りがあれば従来の `_uncheckLeftoversThenRest`（1つずつ外す）へ。欄が無い時も従来へ。
+- 「クリア」だけの文字は拾わない（他の欄と取り違えない）。駅・沿線の**モーダル内部の状態**はリセットで消えない前提の作りだったため、駅→沿線の外しは従来どおり先に行う（`station_defer_form_clear`）。
+- テスト: `app/lib/__tests__/reset-then-next-customer.test.ts` 12/12。`node --check` OK。`tsc` は別途。
+- **未確認（実機で確かめる）**: ①リセットが押せるか（リアプロの画面で「リセット」の文字の要素が見えるか）②押した後に残りが0になるか（`reset_btn` の after）③リセットが更新日・並べ替え（11時/17時便の AD 順・更新順）を消すか。消すなら、並べ替えと更新日を先に戻すのではなくリセットの後に入れ直す必要がある（今は更新日・並べ替えの入力は検索の前に入るため、順番は要確認）④リセット後に確認の表示（window.confirm 等）が出るか。
+- 次の確認: 拡張を再読み込み（2.8.105）→ 複数の地域・2ページ以上のお客様で自動を1回 → `search_audits` の `reset_btn` と `clear_checks`（残りの数）と `ward_verify_fail` を見る。
 
 ---
 

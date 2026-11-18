@@ -173,7 +173,7 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
     u.fire({ from: "axlx-switch-result", reqId: u.posted[0].reqId, ok: true }, {});
     eq("違う reqId・iframe 以外からの答えは使わない", got.length, 0);
     u.fire({ from: "axlx-switch-result", reqId: u.posted[0].reqId, ok: false, reason: "customer-not-found" }, u.iframeWin);
-    eq("popup の答えをそのまま返す", got, [{ ok: false, reason: "customer-not-found", dup: false }]);
+    eq("popup の答えをそのまま返す", got, [{ ok: false, reason: "customer-not-found", dup: false, busyCustomerId: null }]);
     u.fire({ from: "axlx-switch-result", reqId: u.posted[0].reqId, ok: true }, u.iframeWin);
     eq("答えは1回だけ・聞き手は外す", [got.length, u.listeners.message.length], [1, 0]);
 
@@ -192,11 +192,11 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
     ok("popup.js に switch-customer の chrome.runtime.onMessage は無い", !/msg\.type === "axlx-switch-customer"/.test(pp) && !/type === "axlx-switch-customer"/.test(pp));
     eq("自動入力のボタンを自動で押す所は芯の1か所だけ", (pp.match(/aBtn\.click\(\)/g) || []).length, 1);
     ok("underbar の中継が唯一の受け口", /from === "underbar-parent" && e\.data\?\.action === "switch-customer"\) \{[\s\S]{0,200}_runSwitchCustomer\(e\.data\)\.then/.test(pp));
-    ok("答えを親（underbar）へ返す（reqId）", /from: "axlx-switch-result", reqId: e\.data\.reqId \|\| null, ok: !!\(r && r\.ok\)/.test(pp));
+    ok("答えを親（underbar）へ返す（reqId）", /from:\s*"axlx-switch-result"[\s\S]{0,120}reqId:\s*e\.data\.reqId\s*\|\|\s*null[\s\S]{0,80}ok:\s*!!\(r\s*&&\s*r\.ok\)/.test(pp));
     ok("underbar は渡しただけで ok を返さない", !/\}, "\*"\);\s*\n\s*sendResponse\(\{ ok: true \}\);/.test(ub));
     ok("1回使い切りの置き場は無い", !/_pendingAuditCtx\s*=/.test(pp) && !/_setPendingAuditCtx\(/.test(pp));
     ok("ITANDI の onclick に実行中の印（始めに見る・finally で外す）",
-      /if \(_itandiFillRunningAt && Date\.now\(\) - _itandiFillRunningAt < 60000\) \{[\s\S]{0,160}return;\s*\}\s*_itandiFillRunningAt = Date\.now\(\);[\s\S]{0,160}try \{ await _itandiAutofillRun\(_auditCtx_it\); \} finally \{ _itandiFillRunningAt = 0; \}/.test(pp));
+      /if \(_itandiFillRunningAt && Date\.now\(\) - _itandiFillRunningAt < 60000\) \{[\s\S]{0,160}return;\s*\}[\s\S]{0,120}_itandiFillRunningAt = Date\.now\(\);[\s\S]{0,160}try \{ await _itandiAutofillRun\(_auditCtx_it\); \} finally \{ _itandiFillRunningAt = 0; \}/.test(pp));
     ok("3つの onclick とも点検の文脈を await の前に受け取り _auditTag に渡す",
       /_auditTag\("itandi", selectedCustomer, conditions, _auditCtx_it\)/.test(pp) && /_auditTagWith\(_auditCtx_rp, "realpro", c, \{/.test(pp) && /_auditTag\("reins", c0, conditions, _auditCtx_re\)/.test(pp));
     ok("_auditTag は渡された文脈を使う（無ければ single・AIXモードは aix_customer）", /function _auditTag\(site, customer, conditions, ctx\) \{/.test(pp) && /var _trigger = \(ctx && ctx\.trigger\) \|\| \(st\.mode === "ai" \? "aix_customer" : "single"\)/.test(pp));
@@ -211,6 +211,7 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
     ok("印の付いた onclick が見つかる", head > 0 && tail > head);
     let runs = 0, release = null, boom = false;
     const sb = { console: { log() {} }, Date, Promise, autofillBtn: { _axlxAuditCtx: null }, _itandiFillRunningAt: 0,
+      _axLearnRefreshBeforeAutofill: (cb) => cb(),
       _clickAuditCtx: (b) => { const c = b._axlxAuditCtx; b._axlxAuditCtx = null; return c; },
       _itandiAutofillRun: async () => { runs++; if (boom) throw new Error("x"); await new Promise((r) => { release = r; }); } };
     vm.createContext(sb);

@@ -5,6 +5,7 @@
 // 写真から学ぶ仕組み（app/lib/shot-learn.ts）を固定する。
 import {
   cleanFields, cleanScreen, reconcilePoints, findWeakPoints, parseShotLearn, describeShotLearn, SHOT_LEARN_PROMPT,
+  isLearnableName,
 } from "../shot-learn";
 
 let pass = 0, fail = 0;
@@ -21,12 +22,12 @@ console.log("■ ① 写真から読んだ欄を整える");
     { name: "築年数", kind: "??? " },
   ]).length === 1);
   t("座標は 0〜1 に丸める", (() => {
-    const f = cleanFields([{ name: "A", kind: "text", x: 9, y: -3 }])[0];
+    const f = cleanFields([{ name: "賃料上限", kind: "text", x: 9, y: -3 }])[0];
     return f.x === 1 && f.y === 0;
   })());
-  t("同じ名前＋種類の重複は1つ", cleanFields([{ name: "A", kind: "text" }, { name: "A", kind: "text" }]).length === 1);
-  t("  種類が違えば別物として残す", cleanFields([{ name: "A", kind: "text" }, { name: "A", kind: "select" }]).length === 2);
-  t("押せない印を残す", cleanFields([{ name: "A", kind: "button", enabled: false }])[0].enabled === false);
+  t("同じ名前＋種類の重複は1つ", cleanFields([{ name: "賃料上限", kind: "text" }, { name: "賃料上限", kind: "text" }]).length === 1);
+  t("  種類が違えば別物として残す", cleanFields([{ name: "賃料上限", kind: "text" }, { name: "賃料上限", kind: "select" }]).length === 2);
+  t("押せない印を残す", cleanFields([{ name: "検索", kind: "button", enabled: false }])[0].enabled === false);
   t("壊れた入力でも落ちない", cleanFields(null).length === 0 && cleanFields([null, 1, "x"]).length === 0);
 }
 
@@ -52,6 +53,12 @@ console.log("\n■ ③ 写真と数値を突き合わせる（名前だけでは
   t("種類が無い欄を写真で埋める（select）", r.points.rental_cost2.w === "select", r.points.rental_cost2);
   t("食い違ったら**写真を採る**（text→select）", r.points.structured_date.w === "select", r.points.structured_date);
   t("写真に無い欄はそのまま（勝手に変えない）", r.points.unknown_field.w === "select");
+  // ★ 2026-11-16: 操作が select・Vision が text → 操作を残す
+  const keepSel = reconcilePoints(
+    { rental_cost1: { x: 0.1, y: 0.2, n: 5, w: "select" } } as never,
+    [{ name: "rental_cost1", kind: "text" }] as never,
+  );
+  t("操作select×写真text → 操作を残す（Vision誤読を上書きしない）", keepSel.points.rental_cost1.w === "select" && keepSel.fixed.length === 0, keepSel);
   /**
    * 2026-11-14 竹内さん「確かめて治す」:
    *   ⚠ 旧は**埋めただけの欄も `fixed` に入れて**いたので「食い違い」が実在しなくても並んでいた
@@ -131,6 +138,52 @@ console.log("\n■ ⑦ 読めない文字を書かせない（2026-11-14 実測�
   // name が null の欄は cleanFields で落ちる（名前が無い欄は学習に使えない）
   t("  名前が null の欄は残さない", cleanFields([{ name: null, kind: "button", x: 0.5, y: 0.5 }]).length === 0);
   t("  名前がある欄は残す", cleanFields([{ name: "ピンポイント", kind: "radio", x: 0.35, y: 0.48 }]).length === 1);
+}
+
+console.log("\n■ ⑧ まとめ文言・誤読名を学ばない（2026-11-16）");
+{
+  t("北区、中央区、西区 は学ばない", !isLearnableName("北区、中央区、西区"));
+  t("大阪市北区 は学ぶ", isLearnableName("大阪市北区"));
+  t("手順テキストは学ばない", !isLearnableName("確定してリストへ (手順テキスト内)"));
+}
+
+console.log("\n■ ⑨ プルダウンの select/text 誤割れは弱い所にしない（2026-11-16）");
+{
+  const weak = findWeakPoints(
+    { rental_cost2: { n: 5, w: "select" }, update_date: { n: 3, w: "select" } } as never,
+    [
+      { name: "rental_cost2", kind: "select" },
+      { name: "rental_cost2", kind: "text" },
+      { name: "update_date", kind: "select" },
+      { name: "update_date", kind: "text" },
+      { name: "mystery", kind: "button" },
+      { name: "mystery", kind: "link" },
+    ] as never,
+    [],
+  );
+  t("rental_cost2 の select/text は弱い所に出さない", !weak.some((w) => w.name === "rental_cost2"));
+  t("update_date の select/text は弱い所に出さない", !weak.some((w) => w.name === "update_date"));
+  t("本物の種類割れ（button/link）は残す", weak.some((w) => w.name === "mystery" && w.kind === "kind_conflict_in_photo"));
+}
+
+console.log("\n■ ⑩ select×button・step×button は弱い所にしない（2026-11-18）");
+{
+  const weak = findWeakPoints(
+    { rental_cost1: { n: 5, w: "select" }, "確定してリストへ｜span": { n: 3, w: "step" } } as never,
+    [
+      { name: "rental_cost1", kind: "select" },
+      { name: "rental_cost1", kind: "button" },
+      { name: "確定してリストへ｜span", kind: "button" },
+    ] as never,
+    [{ name: "rental_cost1", from: "select", to: "button" }, { name: "確定してリストへ｜span", from: "step", to: "button" }] as never,
+  );
+  t("rental_cost1 select/button は弱い所に出さない", !weak.some((w) => w.name === "rental_cost1"));
+  t("確定してリストへ step/button は弱い所に出さない", !weak.some((w) => w.name.includes("確定してリストへ")));
+  const rec = reconcilePoints(
+    { update_date: { x: 0.1, y: 0.2, n: 4, w: "select" } } as never,
+    [{ name: "update_date", kind: "button" }] as never,
+  );
+  t("reconcile: select×button は記録を残す", rec.points.update_date.w === "select" && rec.fixed.length === 0, rec);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -49,6 +49,23 @@ ok("場所: 駅 > 路線 > 区（auto）・area_mode の指定が先", P.locatio
   ok("手順の id は重ならない", new Set(plan.steps.map((s) => s.id)).size === plan.steps.length);
 }
 
+// ★ 2026-11-16 tomoさん: 通勤圏で駅が大量でも指定駅を先に光らせる
+{
+  const many = ["天満橋"].concat(["なにわ橋", "京橋", "谷町四丁目", "南森町", "北浜", "谷町六丁目", "大江橋", "東梅田", "淀屋橋"]);
+  const plan = P.buildPlan({
+    area_mode: "station",
+    station_names: many,
+    primary_stations: ["天満橋"],
+    primary_route_ids: ["6702", "6651"],
+    route_ids: ["6702", "6651", "6768", "6603", "6701"],
+  });
+  const st = plan.steps.find((s) => s.kind === "pick_station");
+  ok("指定駅が primary_names に残る", eq(st.primary_names, ["天満橋"]), st.primary_names);
+  ok("指定駅が names の先頭", st.names[0] === "天満橋", st.names.slice(0, 3));
+  ok("指定路線が lines の先頭（谷町・京阪）", st.lines[0] === "大阪市高速軌道谷町線" && st.lines[1] === "京阪電気鉄道京阪線", st.lines.slice(0, 3));
+  ok("指定路線が primary_lines にある", (st.primary_lines || []).includes("大阪市高速軌道谷町線"), st.primary_lines);
+}
+
 // ── ② 案内は押さない・入れない・スクロールしない ──
 const g = read("realpro-guide.js").replace(/\/\/.*$/gm, "");
 ok("押す処理が無い（.click( / dispatchEvent / submit(）", !/\.click\s*\(|dispatchEvent|\.submit\s*\(/.test(g));
@@ -137,9 +154,14 @@ ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を�
   ok("スタッフが一部の駅だけ選んで閉じた → 済み", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: true, modalOpen: false, lineBtns: 2 }) === "done");
   ok("まだの駅が見えている → 駅を光らせる", A({ visibleUnchecked: 1, visibleTargets: 2, anyChecked: true, modalOpen: true, lineBtns: 0 }) === "stations");
   ok("路線の画面（駅が見えない・印なし）→ 路線を光らせる", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: true, lineBtns: 2 }) === "lines");
+  ok("小窓開・印なし・路線照合0件でも確定に進まない（大阪全件防止）", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: true, lineBtns: 0 }) === "lines");
   ok("小窓が閉じていて印なし → 開く", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: false, lineBtns: 0 }) === "open");
+  ok("路線名: 正式名⇔画面の短縮名（谷町線）", P.lineLabelMatches("大阪市高速軌道谷町線", "谷町線") && P.lineLabelMatches("大阪市高速軌道谷町線", "大阪市高速軌道谷町線"));
+  ok("路線名: 照合で index が取れる", eq(P.matchLineLabelIndexes(["大阪市高速軌道谷町線", "京阪電気鉄道京阪線"], ["御堂筋線", "谷町線", "京阪線"]), [1, 2]));
   ok("小窓の閉じるボタンの文字に「確定してリストへ」「×とじる」", P.STATION_MODAL_DONE_TEXTS.includes("確定してリストへ") && P.STATION_MODAL_DONE_TEXTS.includes("×とじる") && P.STATION_MODAL_OPEN_TEXTS.includes("駅リセット"));
   const rg2 = read("realpro-guide.js");
+  ok("案内は findLineButtons（one_line・末尾一致）を使う", /function findLineButtons\(/.test(rg2) && /Plan\.matchLineLabelIndexes/.test(rg2));
+  ok("光ゼロ防止 ensureGlowTargets がある", /function ensureGlowTargets\(/.test(rg2));
   ok("駅の手順は済みを覚える（小窓を閉じて印が読めなくなっても戻らない）", /if \(act === "done"\) \{ markStepDone\(s\.id\); (?:reportStationMiss\(s\); )?return \{ done: true \}; \}/.test(rg2)); // v2.5.84 済みの時に見つからない駅の記録も
   ok("「確定してリストへ」等を押したら駅の手順を済みに（光る駅に1つでも印）", /closeHit && \(cur\.step\.kind === "pick_route" \|\| stationAnyChecked\(cur\.step\)\)/.test(rg2));
   ok("旧の「この手順を「済み」にしてください」を出さない", !/この手順を「済み」にしてください/.test(rg2));

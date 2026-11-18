@@ -75,6 +75,66 @@
   var CURSOR_HAND_KEY = "axlx_learn_cursor_hand";
   var _handFields = null;
   var _handLoadedAt = 0;
+  /** ★ 2026-11-18 MAIN world(pointer-ui) 向け: content.js 橋＋localStorage キャッシュから癖/位置/手の形を読む */
+  var _PTR_CACHE_KEY = "axlx_pointer_cache";
+  function _ptrCacheSave(partial) {
+    try {
+      if (!partial || typeof partial !== "object") return;
+      var cur = {};
+      try {
+        var raw = localStorage.getItem(_PTR_CACHE_KEY);
+        if (raw) cur = JSON.parse(raw) || {};
+      } catch (_) { cur = {}; }
+      for (var k in partial) {
+        if (Object.prototype.hasOwnProperty.call(partial, k)) cur[k] = partial[k];
+      }
+      cur.at = Date.now();
+      localStorage.setItem(_PTR_CACHE_KEY, JSON.stringify(cur));
+    } catch (_) {}
+  }
+  function _ptrCacheLoad() {
+    try {
+      var raw = localStorage.getItem(_PTR_CACHE_KEY);
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") return null;
+      if (obj.at && Date.now() - Number(obj.at) > 6 * 60 * 60 * 1000) return null;
+      return obj;
+    } catch (_) { return null; }
+  }
+  function _applyPtrStorage(r) {
+    try {
+      if (!r || typeof r !== "object") return;
+      var LL = _learn();
+      if (r[PROF_LIVE_KEY] && typeof r[PROF_LIVE_KEY] === "object") {
+        _prof = r[PROF_LIVE_KEY];
+      } else if (r[PROF_KEY] && LL && LL.profileFrom && !_prof) {
+        _prof = LL.profileFrom(r[PROF_KEY]);
+      }
+      if (r[POINTS_KEY] && typeof r[POINTS_KEY] === "object") _points = r[POINTS_KEY];
+      if (r[CURSOR_HAND_KEY] && typeof r[CURSOR_HAND_KEY] === "object") _handFields = r[CURSOR_HAND_KEY];
+    } catch (_) {}
+  }
+  function _ptrBridgeFetch(keys) {
+    try {
+      var cached = _ptrCacheLoad();
+      if (cached) _applyPtrStorage(cached);
+      var id = "ptr" + Date.now() + Math.random().toString(36).slice(2, 8);
+      window.postMessage({ from: "axlx-page-storage-get", id: id, keys: keys }, "*");
+    } catch (_) {}
+  }
+  try {
+    window.addEventListener("message", function (e) {
+      if (!e || e.source !== window || !e.data || typeof e.data !== "object") return;
+      if (e.data.from === "axlx-page-learn-push" && e.data.data) {
+        _ptrCacheSave(e.data.data);
+        _applyPtrStorage(e.data.data);
+      } else if (e.data.from === "axlx-page-storage-result" && String(e.data.id || "").indexOf("ptr") === 0 && e.data.data) {
+        _ptrCacheSave(e.data.data);
+        _applyPtrStorage(e.data.data);
+      }
+    });
+  } catch (_) {}
   function _handFieldHit(el) {
     try {
       var now = Date.now();
@@ -82,8 +142,10 @@
         _handLoadedAt = now;
         if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
           chrome.storage.local.get([CURSOR_HAND_KEY], function (r) {
-            try { _handFields = (r && r[CURSOR_HAND_KEY]) || {}; } catch (_) { _handFields = {}; }
+            try { _handFields = (r && r[CURSOR_HAND_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _handFields = {}; }
           });
+        } else {
+          _ptrBridgeFetch([CURSOR_HAND_KEY, POINTS_KEY, PROF_LIVE_KEY, PROF_KEY]);
         }
       }
       if (!_handFields || typeof _handFields !== "object") return false;
@@ -103,15 +165,18 @@
       try {
         if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
           chrome.storage.local.get([POINTS_KEY], function (r) {
-            try { _points = (r && r[POINTS_KEY]) || {}; } catch (_) { _points = {}; }
+            try { _points = (r && r[POINTS_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _points = {}; }
           });
+        } else {
+          _ptrBridgeFetch([POINTS_KEY, CURSOR_HAND_KEY, PROF_LIVE_KEY, PROF_KEY]);
         }
       } catch (_) {}
     }
     var v = _points && _points[name];
     if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
     // 何回も押した所だけ使う（1回だけは偶然かもしれない）
-    if (Number(v.n) < 2) return null;
+    /** ★ 2026-11-17 統括Pro: n=1 の学びも捨てない（point%・aim無対策） */
+    if (Number(v.n) < 1) return null;
     return { x: v.x, y: v.y, n: Number(v.n) };
   }
   /** storage から読み直す（モードや貯まり方が変わった時） */
@@ -119,7 +184,10 @@
     try {
       var LL = _learn();
       if (!LL || !LL.profileFrom) return;
-      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+        _ptrBridgeFetch([PROF_LIVE_KEY, PROF_KEY, POINTS_KEY, CURSOR_HAND_KEY]);
+        return;
+      }
       /**
        * 2026-11-11 竹内さん「データたまって理解するたび反映」:
        *   ① 貯まるたびに作り直された癖（axlx_human_profile）があれば**それをそのまま使う**（一番新しい理解）
@@ -127,6 +195,7 @@
        */
       chrome.storage.local.get([PROF_LIVE_KEY, PROF_KEY], function (r) {
         try {
+          _ptrCacheSave(r);
           var live = r && r[PROF_LIVE_KEY];
           if (live && typeof live === "object") { _prof = live; return; }
           _prof = LL.profileFrom(r && r[PROF_KEY]);
@@ -157,6 +226,27 @@
   function ensure() {
     var d = _doc();
     if (!d || !d.body) return null;
+    /**
+     * ★ 2026-11-17 竹内さん「マウスが2つになってしまう」:
+     *   page 再注入・iframe・ensure 再入で #axlx-fake-cursor が複数残ることがある。
+     *   → 余分を消してから1つだけ使う。
+     */
+    try {
+      var all = d.querySelectorAll("#" + ID);
+      if (all && all.length) {
+        var keep = (_el && _el.isConnected) ? _el : all[0];
+        for (var xi = 0; xi < all.length; xi++) {
+          if (all[xi] !== keep) {
+            try { all[xi].parentNode && all[xi].parentNode.removeChild(all[xi]); } catch (_) {}
+          }
+        }
+        if (keep && keep.isConnected) {
+          _el = keep;
+          _ready = true;
+          return _el;
+        }
+      }
+    } catch (_) {}
     if (_el && _el.isConnected) return _el;
     if (_el && _el.parentNode) _el.parentNode.removeChild(_el);
     // 2026-11-11: 最初に使う時に、通常モードで覚えた動きの癖を読む（読めなければ今まで通り）
@@ -573,6 +663,9 @@
      * ★ 2026-11-16 統括Pro「手の形0回→100%へ」:
      *   見えるカーソルで押す瞬間は人がボタン上で手になる形。
      *   一時的に cursor:pointer を付けてから録画へ残す（cs=pointer）。
+     * ★ 2026-11-18 MAIN world 穴修正:
+     *   MAIN world では __axlxRecNoteOp / __axlxRecNotePoint が見えない。
+     *   postMessage("axlx-rec-note-op" / "axlx-rec-point") で必ず isolated world へ届ける。
      */
     var _prevCur = null;
     try {
@@ -582,7 +675,29 @@
       }
     } catch (_) { _prevCur = null; }
     var _rec = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
-    if (typeof _rec === "function" && _tapEl) _rec("click", _tapEl);
+    var _didRecOp = false;
+    if (typeof _rec === "function" && _tapEl) {
+      _rec("click", _tapEl);
+      _didRecOp = true;
+    } else if (_tapEl) {
+      try {
+        var _LLop = _learn();
+        var _nmOp = (_LLop && _LLop.fieldName) ? _LLop.fieldName(_tapEl) : "";
+        var _wkOp = (_LLop && _LLop.kindOfEl) ? _LLop.kindOfEl(_tapEl) : "";
+        var _pOp = position();
+        if (_nmOp) {
+          window.postMessage({
+            from: "axlx-rec-note-op",
+            kind: "click",
+            name: String(_nmOp).slice(0, 40),
+            w: _wkOp ? String(_wkOp).slice(0, 12) : "button",
+            clientX: _pOp ? _pOp.x : null,
+            clientY: _pOp ? _pOp.y : null,
+          }, "*");
+          _didRecOp = true;
+        }
+      } catch (_) {}
+    }
     try {
       if (_tapEl && _tapEl.style) {
         if (_prevCur == null || _prevCur === "") _tapEl.style.removeProperty("cursor");
@@ -603,7 +718,7 @@
    */
   try {
     var _recPt = (typeof self !== "undefined" ? self : window).__axlxRecNotePoint;
-    if (typeof _recPt === "function" && _tapEl && _tapEl.getBoundingClientRect) {
+    if (_tapEl && _tapEl.getBoundingClientRect) {
       var _r2 = _tapEl.getBoundingClientRect();
       var _p2 = position();
       if (_r2 && _r2.width > 0 && _r2.height > 0 && _p2) {
@@ -611,7 +726,20 @@
         var _fy2 = (_p2.y - _r2.top) / _r2.height;
         // ⚠ 要素の中に居る時だけ（0〜1）。外なら記録しない（嘘を入れない）
         if (_fx2 >= 0 && _fx2 <= 1 && _fy2 >= 0 && _fy2 <= 1) {
-          _recPt(_tapEl, "auto", { clientX: _p2.x, clientY: _p2.y, synthetic: true });
+          if (typeof _recPt === "function") {
+            _recPt(_tapEl, "auto", { clientX: _p2.x, clientY: _p2.y, synthetic: true });
+          } else {
+            try {
+              var _LLpt = _learn();
+              var _nmPt = (_LLpt && _LLpt.fieldName) ? _LLpt.fieldName(_tapEl) : "";
+              window.postMessage({
+                from: "axlx-rec-point",
+                clientX: _p2.x,
+                clientY: _p2.y,
+                name: _nmPt ? String(_nmPt).slice(0, 40) : "",
+              }, "*");
+            } catch (_) {}
+          }
         }
       }
     }
@@ -620,11 +748,11 @@
      * 2026-11-13 竹内さん「ちゃんと読み取れるようになったかな」→ `shot_ops` が 0件
      *   ⚠ 人が押した操作（isTrusted）だけを写真に付けていたので、**録画モードの写真には何も付かなかった**
      *     （録画モードで押しているのは拡張）。
-     *   → 拡張が押した時も「押した物の名前」を記録側へ知らせる（録画モードの時だけ使われる）。
+     *   → 拡張が押した時も「押した物の名前」を記録側へ知らせる（上の click 送出が無かった時だけ tap）。
      */
     try {
       var _r = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
-      if (typeof _r === "function") _r("tap", _tapEl);
+      if (!_didRecOp && typeof _r === "function") _r("tap", _tapEl);
     } catch (_) {}
     /**
      * 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」:

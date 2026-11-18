@@ -82,6 +82,23 @@ const TASK_RUN: Record<string, { label: string; cost: boolean; run: () => Promis
         : "止まる場面は分かりませんでした";
     },
   },
+  /**
+   * ★ 2026-11-18「統括も作業員増やすの判断できるように」:
+   *   推奨人数だけ返す。Cursor 作業員は勝手に起動しない。
+   */
+  scale_workers: {
+    label: "作業員の推奨人数を確認する（起動はしない）",
+    cost: false,
+    run: async () => {
+      const t = (globalThis as unknown as { __task?: Task }).__task;
+      const limit = typeof t?.limit === "number" && t.limit > 0 ? t.limit : null;
+      const adv = await fetchAdv();
+      const hit = adv.tasks.find((x) => x.kind === "scale_workers");
+      const n = limit ?? hit?.limit ?? 1;
+      const why = hit?.why || "統括の meeting に scale_workers がありません";
+      return `推奨作業員: ${n}人（実行は竹内さん判断・自動起動しない）／${why}`;
+    },
+  },
   fix_record: {
     label: "録画の記録（操作の並び）の状態を数え直す",
     cost: false,
@@ -142,14 +159,14 @@ const TASK_RUN: Record<string, { label: string; cost: boolean; run: () => Promis
        *   ★ 2026-11-16 竹内さん「上限20ではなく課題が解けるまで／統括が判断」:
        *     旧 Math.min(60, …||20) は統括の判断を潰していた → 硬上限まで尊重。
        */
-      const t = (globalThis as unknown as { __task?: Task & { order?: string; fields?: string[] } }).__task;
+      const t = (globalThis as unknown as { __task?: Task & { order?: string; runId?: string; fields?: string[] } }).__task;
       const { resolveShotLearnLimit } = await import("../app/lib/shot-learn-limit");
       const limit = resolveShotLearnLimit(t?.limit);
       /**
        * ★ 2026-11-15「画像は最新で録画」「自動の最新課題→通常から改善」:
-       *   統括が order=newest を付けたら**最新の通常画像から**読む。
+       *   統括が order=newest / sequence を付けたらその順で通常画像を読む。
        */
-      const order = (t?.order === "newest" || t?.order === "time" || t?.order === "size")
+      const order = (t?.order === "newest" || t?.order === "time" || t?.order === "size" || t?.order === "sequence")
         ? t.order
         : (Array.isArray(t?.fields) && t!.fields!.length ? "newest" : "time");
       const { learnFromWeakShots } = await import("../app/lib/shot-learn-server");
@@ -158,7 +175,8 @@ const TASK_RUN: Record<string, { label: string; cost: boolean; run: () => Promis
         mode: "normal",
         days: 7,
         limit,
-        order: order as "newest" | "time" | "size",
+        order: order as "newest" | "time" | "size" | "sequence",
+        runId: t?.runId ?? null,
         perSig: 12,
         strideMs: 800,
         dryRun: false,

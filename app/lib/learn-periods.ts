@@ -16,6 +16,8 @@ export const LEARN_PERIODS = {
   /**
    * 学習材料の主期間（人間の動き・写真・実際の検索の監査を揃える）
    * → 統括Proが同じ窓の数字で判断する
+   *
+   * ⚠ foundation-audit の daysOps と daysAudit は**両方** materials と同じ日数（別窓禁止）
    */
   materialsMs: 3 * DAY_MS,
   /** 指示（automation_commands）の見張り */
@@ -24,7 +26,24 @@ export const LEARN_PERIODS = {
   historyMs: 30 * DAY_MS,
   /** 束の鮮度（これより古い束は作り直す） */
   bundleFreshMs: 30 * 60 * 1000,
+  /** 統括Pro RAG: learn_supervisor_log の記憶窓（把握用・履歴より狭い） */
+  logMemoryMs: 2 * DAY_MS,
+  /**
+   * 通常録画の「鮮度」点検（F19）専用の短窓。
+   * 材料3日とは別：直近24hに手本があるかを測る（period-construct の normalFresh）。
+   */
+  normalFreshMs: 1 * DAY_MS,
 } as const;
+
+/** materialsMs を日数に（foundation ops/audit の既定） */
+export function materialsDays(): number {
+  return LEARN_PERIODS.materialsMs / DAY_MS;
+}
+
+/** logMemoryMs を日数に */
+export function logMemoryDays(): number {
+  return LEARN_PERIODS.logMemoryMs / DAY_MS;
+}
 
 export type LearnPeriodKey = keyof typeof LEARN_PERIODS;
 

@@ -17,6 +17,12 @@
  */
 import { photoLearnLimitFor } from "./shot-learn-limit";
 import { ensureStrengthenAfterLearn, type ImproveTask } from "./improve-loop";
+import {
+  catalogTargetsOnly,
+  preferKnownWeakTargets,
+  type ButtonCatalogSite,
+} from "./button-catalog-targets";
+import { orderItandiButtonsOneByOne, itandiButtonLabel } from "./itandi-buttons";
 import { orderRealproButtonsOneByOne, realproButtonLabel } from "./realpro-buttons";
 
 export type WeakStrengthenInput = {
@@ -41,6 +47,11 @@ export type WeakStrengthenInput = {
   oneByOne?: boolean;
   /** 1ボタンあたりの画像枚数上限（省略時は統括limitを分割） */
   perButtonLimit?: number;
+  /**
+   * ★ 2026-11-17: サイト別台帳（realpro / itandi）。混ぜない。
+   *   既定 realpro。
+   */
+  site?: ButtonCatalogSite;
 };
 
 export type WeakStrengthenPlan = {
@@ -76,11 +87,22 @@ function uniq(xs: string[]): string[] {
  */
 export function buildWeakStrengthenPlan(inp: WeakStrengthenInput): WeakStrengthenPlan {
   const oneByOne = inp.oneByOne !== false;
+  const site: ButtonCatalogSite = inp.site === "itandi" ? "itandi" : "realpro";
+  const siteJa = site === "itandi" ? "ITANDI" : "リアプロ";
   const weak = uniq(inp.weakFields || []);
   const challenge = uniq(inp.challengeFields || []);
   const atoms = uniq(inp.atoms || []);
-  const merged = uniq([...weak, ...challenge]);
-  const targets = (oneByOne ? orderRealproButtonsOneByOne(merged) : merged).slice(0, 12);
+  /**
+   * ★ 土台: 台帳正名だけ残す（1DK・区名単体・路線名の生値は欄に写すか落とす）。
+   *   実測の弱い欄（駅・間取・区）を先頭に優先。
+   */
+  const cataloged = catalogTargetsOnly([...weak, ...challenge], site);
+  const preferred = preferKnownWeakTargets(cataloged, site);
+  const ordered =
+    oneByOne
+      ? (site === "itandi" ? orderItandiButtonsOneByOne(preferred) : orderRealproButtonsOneByOne(preferred))
+      : preferred;
+  const targets = ordered.slice(0, 12);
   const unread = Math.max(0, Number(inp.unreadNormal) || 0);
   const bn = inp.bottleneck_n ?? null;
   const round = Math.max(1, Number(inp.round) || 1);
@@ -104,11 +126,11 @@ export function buildWeakStrengthenPlan(inp: WeakStrengthenInput): WeakStrengthe
         15,
       ));
     targets.forEach((id, i) => {
-      const label = realproButtonLabel(id);
+      const label = site === "itandi" ? itandiButtonLabel(id) : realproButtonLabel(id);
       cycle.push({
         kind: "photo_learn",
-        what: `リアプロ「${label}」を1つ理解して強化する（${i + 1}/${targets.length}）`,
-        why: `周回${round}・1つずつ／このボタンだけ位置・押し方・種類を学ぶ／未学習通常 ${unread}枚`,
+        what: `${siteJa}「${label}」を1つ理解して強化する（${i + 1}/${targets.length}）`,
+        why: `周回${round}・1つずつ／台帳正名のみ／このボタンだけ位置・押し方・種類を学ぶ／未学習通常 ${unread}枚`,
         cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
         limit: per,
         order: "newest",

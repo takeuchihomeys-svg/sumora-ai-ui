@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
+import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
 
 export const dynamic = "force-dynamic";
 
@@ -378,7 +379,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let foundationAudit: import("@/app/lib/learn-foundation-audit").FoundationForSupervisor | null = null;
   try {
     const { auditLearnFoundations, compactFoundationForSupervisor } = await import("@/app/lib/learn-foundation-audit");
-    const fa = await auditLearnFoundations(supabase, { daysOps: 2, daysAudit: 3 });
+    const faSite = scope === "itandi" || scope === "realpro" ? scope : "all";
+    const fa = await auditLearnFoundations(supabase, { site: faSite });
     foundationAudit = compactFoundationForSupervisor(fa);
   } catch (e) {
     console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
@@ -406,6 +408,16 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     if (sceneMissingNames) b.scene_missing_names = sceneMissingNames;
     if (stoppedScene) b.stopped_scene = stoppedScene;
   }
+  /** ★ F49: compact 後も shots.in_storage / kinds が無ければ bundle_reflect から補完 */
+  if (bundle.shots && typeof bundle.shots === "object") {
+    const sh = bundle.shots as { in_storage?: number; kinds?: Record<string, number> };
+    if (!sh.in_storage) {
+      const br = bundle.bundle_reflect as { photo_in_storage?: number } | undefined;
+      const stored = Number(br?.photo_in_storage);
+      if (Number.isFinite(stored) && stored > 0) sh.in_storage = stored;
+    }
+    if (!sh.kinds || typeof sh.kinds !== "object") sh.kinds = sh.kinds ?? {};
+  }
   /**
    * 2026-11-13 竹内さん「なんで連携できていないのか」:
    *   DB に無い列があって外した時は、**外した列を返す**（黙って落とさない）。
@@ -419,9 +431,9 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    */
   let wipeBlocked = false;
   try {
-    const { inheritLinkFoundations } = await import("@/app/lib/learn-bundle-preserve");
+    const { inheritLinkFoundations, countLearnedSolid, INHERIT_LOOKBACK_DEFAULT } = await import("@/app/lib/learn-bundle-preserve");
     const b = bundle as unknown as Record<string, unknown>;
-    const pr = await inheritLinkFoundations(supabase, b, scope, { lookback: 20, minSolid: 30 });
+    const pr = await inheritLinkFoundations(supabase, b, scope, { lookback: INHERIT_LOOKBACK_DEFAULT, minSolid: 30 });
     if (pr.preserved) {
       console.warn("[human-learn-profile]", pr.why);
       try { note?.("preserved_learned:" + pr.preserved_solid); } catch (_) { /* */ }
@@ -432,7 +444,11 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       try { note?.("abort_wipe:" + pr.why); } catch (_) { /* */ }
     }
   } catch (e) {
-    console.warn("[human-learn-profile] learned 引き継ぎ失敗:", e instanceof Error ? e.message : String(e));
+    /** ★ 2026-11-18: 例外握りつぶしで solid=0 insert を許さない */
+    const { countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
+    const solidNow = countLearnedSolid(bundle).solid;
+    if (solidNow < 30) wipeBlocked = true;
+    console.warn("[human-learn-profile] learned 引き継ぎ失敗:", e instanceof Error ? e.message : String(e), `solid=${solidNow} wipeBlocked=${wipeBlocked}`);
   }
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
   /**
@@ -564,16 +580,18 @@ export async function GET(req: NextRequest) {
         if ((r.data ?? []).length < 1000) break;
       }
       const now = new Date().toISOString();
-      const bundle = compactBundle(buildHumanLearnBundle(rows, Date.now()));
+      const { fetchLearnBundleSceneMeta } = await import("@/app/lib/learn-bundle-scene-meta");
+      const sceneMeta = await fetchLearnBundleSceneMeta(supabase, "all", { forceFullAudit: true });
+      const bundle = compactBundle(buildHumanLearnBundle(rows, Date.now(), undefined, undefined, sceneMeta));
       /**
        * ⚠ 2026-11-15 実測: `generated_at` 列は**存在しない**（実際の列に無い）。
        *   入れると `Could not find the 'generated_at' column` で失敗する。
        *   → `created_at` は自動で入るので送らない。
        * ★ 2026-11-17: refresh=1 も消す書き込みを拒否（fresh と同じ抜け穴だった）。
        */
-      const { inheritLinkFoundations, countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
+      const { inheritLinkFoundations, countLearnedSolid, INHERIT_LOOKBACK_DEFAULT } = await import("@/app/lib/learn-bundle-preserve");
       const b = bundle as unknown as Record<string, unknown>;
-      const pr = await inheritLinkFoundations(supabase, b, "all", { lookback: 20, minSolid: 30 });
+      const pr = await inheritLinkFoundations(supabase, b, "all", { lookback: INHERIT_LOOKBACK_DEFAULT, minSolid: 30 });
       if (!pr.safe_to_write) {
         return NextResponse.json({
           ok: true, refreshed: false, wipe_blocked: true, why: pr.why, rows: rows.length,
@@ -684,15 +702,22 @@ export async function GET(req: NextRequest) {
    */
   const markReadOnly = req.nextUrl.searchParams.get("mark_read") === "1";
   if (markReadOnly && row) {
+    /**
+     * ★ 2026-11-17 実測: 拡張の心拍が mark_read を連打し read_count が 738 まで水増し。
+     *   10分以内の再印は read_at だけ更新（回数は増やさない）。
+     */
     let readCount = Number(row.read_count) || 0;
     let readAt: string | null = null;
     try {
       readAt = new Date().toISOString();
-      readCount = (Number(row.read_count) || 0) + 1;
+      const prevAt = row.read_at ? Date.parse(String(row.read_at)) : 0;
+      const recent = Number.isFinite(prevAt) && prevAt > 0 && Date.now() - prevAt < 10 * 60_000;
+      const nextCount = recent && readCount > 0 ? readCount : readCount + 1;
       await supabase
         .from("human_learn_profile")
-        .update({ read_at: readAt, read_count: readCount })
+        .update({ read_at: readAt, read_count: nextCount })
         .eq("id", row.id as number);
+      readCount = nextCount;
     } catch { /* 印だけ失敗しても連携は続ける */ }
     return NextResponse.json({
       ok: true, empty: false, scope, marked: true,
@@ -704,6 +729,29 @@ export async function GET(req: NextRequest) {
     }, { headers: CORS });
   }
   if (lightCheck && !forceFresh && row) {
+    /**
+     * ★ 2026-11-17 竹内さん「学習しても改善されない／拡張への反映連携の抜け」:
+     *   版だけ返すと「読んだ」と「自動で使った」が切れ、拡張が same_version で止まっても
+     *   solid が増えた・自動未確認、が分からない。
+     *   → light でも screen_solid / needs_auto を付け、拡張が強制取込・自動1回促しできる。
+     */
+    const solidLight = countLearnedSolid(row.bundle).solid;
+    let needsAuto = solidLight >= 30;
+    try {
+      const bundleAt = String(row.created_at || "");
+      if (bundleAt && solidLight >= 30) {
+        const { data: autoAfter } = await supabase
+          .from("search_audits")
+          .select("created_at, mode")
+          .gte("created_at", bundleAt)
+          .order("created_at", { ascending: false })
+          .limit(40);
+        const hit = (autoAfter || []).some((a) =>
+          /aix|auto|brain_aix/i.test(String(a.mode || "")),
+        );
+        needsAuto = !hit;
+      }
+    } catch { /* 監査が読めなくても solid は返す */ }
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
       generated_at: (row.bundle && typeof row.bundle === "object")
@@ -711,6 +759,9 @@ export async function GET(req: NextRequest) {
         : row.created_at,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
+      screen_solid: solidLight,
+      needs_auto: needsAuto,
+      bundle_at: row.created_at,
     }, { headers: CORS });
   }
   let why: string | null = null;
@@ -782,9 +833,16 @@ export async function GET(req: NextRequest) {
   let servedReadCount = Number(row.read_count) || 0;
   let servedReadAt: string | null = null;
   if (touch) {
+    /**
+     * ★ 2026-11-17: 拡張は realpro+itandi+all の3回 GET するので、無制限 +1 だと水増し。
+     *   10分以内の再読は read_at だけ（回数は据え置き）。
+     */
     try {
       servedReadAt = new Date().toISOString();
-      servedReadCount = (Number(row.read_count) || 0) + 1;
+      const prev = Number(row.read_count) || 0;
+      const prevAt = row.read_at ? Date.parse(String(row.read_at)) : 0;
+      const recent = Number.isFinite(prevAt) && prevAt > 0 && Date.now() - prevAt < 10 * 60_000;
+      servedReadCount = recent && prev > 0 ? prev : prev + 1;
       await supabase
         .from("human_learn_profile")
         .update({ read_at: servedReadAt, read_count: servedReadCount })

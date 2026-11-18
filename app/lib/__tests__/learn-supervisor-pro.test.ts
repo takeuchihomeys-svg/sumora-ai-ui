@@ -4,13 +4,17 @@
  */
 import {
   buildSupervisorProPayload,
+  ensureVisionPhotoReachEvidence,
   mergeSupervisorPro,
   parseSupervisorPro,
+  photoReachFromBundle,
+  proMeetNotesFromBundle,
   supervisorProModel,
   supervisorProTimeoutMs,
   SUPERVISOR_PRO_TIMEOUT_MS_DEFAULT,
   type SupervisorProEnrichment,
 } from "../learn-supervisor-pro";
+import { ensureMeetingEvidenceGates, meetingGateContextFromSupervisorInput } from "../meeting-evidence-gates";
 import type { SupervisorAdvice } from "../learn-supervisor";
 import { shotLearnModel, SHOT_LEARN_DEFAULT_MODEL } from "../shot-learn-limit";
 
@@ -74,6 +78,65 @@ console.log("\n■ parse / merge（verdict を変えない）");
   ok("連携の穴が議題に", merged.meeting.agenda.some((a) => a.topic.includes("連携")));
   ok("土台議題がある", merged.meeting.agenda.some((a) => a.topic.includes("足りない土台")));
   ok("弱点議題がある", merged.meeting.agenda.some((a) => a.topic.includes("弱点細分化")));
+}
+
+console.log("\n■ 写真到達（Pro前補完）");
+{
+  const bundle = {
+    shots: { in_storage: 11364 },
+    shot_gaps_normal: { learnedOk: 10, todo: 5 },
+    foundation_audit: {
+      items: [{
+        id: "F49_vision_photo_reach",
+        ok: false,
+        line: "写真→統括到達(realpro) 束in_storage=11364 vision写真=0",
+      }],
+    },
+  };
+  ok("photoReachFromBundle は in_storage", photoReachFromBundle(bundle).photoReach >= 11364);
+  const thin = baseAdv();
+  const patched = ensureVisionPhotoReachEvidence(thin, bundle);
+  const vpl = (patched.meeting as { vision_pro_link?: { counts?: { photo_in_storage?: number } } }).vision_pro_link;
+  ok("vision_pro_link 補完", (vpl?.counts?.photo_in_storage ?? 0) >= 11364, vpl);
+  ok("連携 evidence", (patched.meeting?.evidence || []).some((e) => e.label === "画像学習→統括Pro連携"));
+  ok("F49 evidence", (patched.meeting?.evidence || []).some((e) => /F49/.test(e.label)));
+  const notes = proMeetNotesFromBundle(bundle);
+  ok("proMeetNotesFromBundle", notes.some((n) => /11364|到達/.test(n)), notes);
+  const staleBundle = {
+    shots: { in_storage: 6000 },
+    foundation_audit: {
+      items: [{
+        id: "F49_vision_photo_reach",
+        ok: false,
+        line: "写真→統括到達 束in_storage=0 vision写真=0",
+      }],
+    },
+  };
+  const staleNotes = proMeetNotesFromBundle(staleBundle);
+  ok("F49古い0は束実測で上書き", staleNotes.some((n) => /in_storage=6000|6000/.test(n))
+    && !staleNotes.some((n) => /束in_storage=0 vision/.test(n)), staleNotes);
+  const noVision = { ...thin, meeting: { ...thin.meeting!, evidence: [{ label: "完成度", value: "42%" }] } };
+  const p = buildSupervisorProPayload(noVision, { bundle, notes: [] });
+  const mn = p.meet_notes as string[];
+  ok("meet_notes 配線穴", Array.isArray(mn) && mn.some((n) => /配線穴|写真あり/.test(n)), mn);
+  const gated = ensureMeetingEvidenceGates(
+    patched,
+    meetingGateContextFromSupervisorInput(bundle, "realpro"),
+  );
+  const mergedGated = mergeSupervisorPro(gated, {
+    today: ["Pro後"],
+    link_gap: "",
+    next_line: "次",
+    foundation_gaps: [],
+    build_next: "",
+    quality_up: "",
+    weak_fixes: [],
+    bug_fixes: [],
+    why_not_100: null,
+    path_to_100: null,
+  }, { model: "m", usedPro: true });
+  ok("mergeは関所後advを正本に", (mergedGated.meeting?.evidence || []).some((e) => e.label === "画像学習→統括Pro連携"));
+  ok("merge後もphoto_learn", (mergedGated.meeting?.learning_tasks || []).some((t) => t.kind === "photo_learn"));
 }
 
 console.log("\n■ payload は判断軸を抜く");

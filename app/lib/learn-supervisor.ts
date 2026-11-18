@@ -24,6 +24,16 @@ import {
   type SceneFlow,
 } from "./learn-flow-steps";
 import { improveLoopTasks, type ImproveLoop } from "./improve-loop";
+import { buildHumanDetailLoop } from "./human-detail-loop";
+import { diagnoseAutoRecording } from "./auto-rec-diagnose";
+import { buildRecChallengeReinforce } from "./rec-challenge-reinforce";
+import { buildLearnMemoryLoop } from "./learn-memory-loop";
+import { buildOneRecLearnLoop } from "./one-rec-learn-loop";
+import { buildProThinkCapability } from "./pro-think-capability";
+import { buildAcquireGraspReport } from "./property-acquire-grasp";
+import { buildImproveConstruct } from "./pro-improve-construct";
+import { ensureGaplessLearnTasks } from "./ensure-gapless-learn";
+import { catalogTargetsOnly } from "./button-catalog-targets";
 import {
   atomsToTaskHints, linkageLine, subdivideReproduceGaps, summarizeAtoms,
 } from "./reproduce-foundation";
@@ -37,7 +47,16 @@ import {
 import { photoLearnLimitFor } from "./shot-learn-limit";
 import { buildVisionProLink, type VisionProLink } from "./vision-pro-link";
 import { atomsFromEvidence, atomsLine } from "./weak-auto-atoms";
-import { LEARN_PERIODS, periodLabelJa } from "./learn-periods";
+import { DAY_MS, LEARN_PERIODS, logMemoryDays, materialsDays, periodLabelJa } from "./learn-periods";
+import { buildLearnPeriodConstruct } from "./learn-period-construct";
+import { buildLearnCompleteChain } from "./learn-complete-chain";
+import { siteLearnMethodEvidence } from "./site-learn-method";
+import {
+  ensureMeetingEvidenceGates,
+  meetingGateContextFromSupervisorInput,
+} from "./meeting-evidence-gates";
+import { countSitesParallel, recommendWorkerScale } from "./supervisor-worker-scale";
+import type { ImageSequenceFlowSummary } from "./shot-learn";
 export { SCENE_JA };
 
 /**
@@ -63,6 +82,11 @@ export const LEARN_MECHANISMS = [
   "直接入力しない（カーソル移動→開いて選ぶ／押して打つ。value代入だけで条件を入れない）",
   "画像はflash・まとめはPro（役割を混ぜない。連携: 読む→材料→統括まとめ→課題）",
   "画像flash→材料→Pro判断を細分化してつなぐ（保存→flash読→材料→突合→photo_learn課題→Pro）",
+  "サイト別統括にも写真材料を同じ形で渡す（shot_bytes/photo_kinds/image_match・F49写真→統括到達・段1誤報禁止）",
+  "人間として自動化する細部改善は F51（弱所→学ぶ→土台→狙って残す→度）で原子1つずつ回す。間隔は動作間だけ測る",
+  "自動録画から問題・足りない土台・強化次手を diagnose（auto-rec-diagnose）で出す。地域と駅は F52 でどちらか一方（混在禁止）",
+  "弱い所は録画で把握→改善→また録画で強化（足りない通常録画は need_human で要求・土台は先に追加）",
+  "学習方法①〜⑤はサイト共通（リアプロで確立→itandiでも同じ型）。DOM・路線駅名・ボタン台帳だけサイト別（F50）",
   "弱点は原子に分けて画像分析→Pro判断→人間らしさ改善（直押し・直書き・外し区別の変バグも細かく直す）",
   "統括Proはなぜ弱い・どうしたらできる・仮定・100%への道を書いてから強化する（推測は仮定と明記）",
   /**
@@ -100,7 +124,8 @@ export const LEARN_MECHANISMS = [
   /**
    * ★ 2026-11-16: 完了→次客は完走率だけでは見えない。
    */
-  "完了→次客を原子で把握する（switch_fail・owner_mismatch・no_fill_start・batch_timeout・pipeline_busy）",
+  "完了→次客を原子で把握する（switch_fail・owner_mismatch・no_fill_start・batch_timeout・pipeline_busy・series_done・flow_handoff_gap）",
+  "完了理解を段ごとに把握する（place・conditions・search・fill_done・ready_next＝F45）",
   /**
    * ★ 2026-11-17 統括Pro「抜けが後から出る構造原因＝書き込み関所が無い」:
    *   束書き込みは必ず preserve／safe_to_write。新経路は F35/F36 とテスト関所を先に通す。
@@ -121,6 +146,52 @@ export const LEARN_MECHANISMS = [
    *   引いただけでは足りない。要旨・ログ・数字を根拠に残し、today先頭で把握を言う。
    */
   "統括Proは把握を根拠に残す（統括Pro把握＝知見要旨＋ログ記憶／todayは把握:で始める）",
+  /**
+   * ★ 2026-11-17 竹内さん「改善するときも他への影響を考える／学習しても改善されない／拡張へちゃんと反映」:
+   *   直す前に影響を洗い、束→拡張→自動→効果確認まで一連。読むだけで終わらせない。
+   */
+  "改善は他への影響を考えてから行う（消失・読込・自動使用・次客・人間らしさのどれが動くかを書いてから直す）",
+  "学習の反映は束→拡張読込→自動1回→F6/F31/F32で確かめる（read_countだけでは改善済みにしない・needs_autoなら自動を手配）",
+  /**
+   * ★ 2026-11-17 竹内さん「この考え方をかなり大切にする」:
+   *   統括Proが脳として機能し、自動の弱点がすぐ分かり、何が改善に必要か・どう強化するか・
+   *   どんな土台が要るかを理解して追加できる。録画からも学ぶ。仕組みづくりの核。
+   */
+  "統括Proは脳として自動の弱点をすぐ把握し、必要な土台・強化の仕方を理解して追加する（自動録画で弱所→通常録画から学ぶ→土台F番号を足す→細分化強化→効果確認／F46録画反映・F47流れ地図）",
+  /**
+   * ★ 2026-11-18 竹内さん「1度の録画で学習と改善と反映」:
+   *   弱所は1本に全部ある。学び・仕組み直し・反映・学び方強化を同じ周で抜けなく回す。
+   */
+  "1度の録画で学習→改善→反映まで完走する（one-rec-learn-loop・原子抽出→仕組み直し→再読込→自動1回→verify印→学び方強化）",
+  /**
+   * ★ 2026-11-18 HONOKA: 間取り部分完了禁止・検索リロード生存。
+   */
+  "間取りは欲しい全部がhitするまで完了にしない／検索はclick直前にsearch_armedで物件取得を生存させる（Case C）",
+  /**
+   * ★ 2026-11-18 竹内さん「何が足りないか／どう強化・改善するか考える能力」:
+   */
+  "統括Proは足りない→どう強化→どう改善を考える骨格を持つ（pro-think-capability・画像細部原子・仮定と100%への道）",
+  "画像学習は学べ枚数だけでなく種類到達・未読課題・衝突・記録≠写真・位置細部まで徹底する（中央固定だらけは未達）",
+  /**
+   * ★ 2026-11-18 竹内さん「送付済みは送ったと把握／取得タイミングと連携」:
+   */
+  "送付済み物件は『送った』と把握してから次へ進む（飛ばす＝失敗ではない・all_sent→次頁／客完了）",
+  "物件取得は段で把握する（wait_fill→armed→sent把握→filter→press→page_done）／開始前と送付済詰まりを分けて測る",
+  /**
+   * ★ 2026-11-18 竹内さん「学習→どう強化／仕組み／足りない／補強／改善構築／次／反映／志向／自動」:
+   */
+  "統括Proは学習のあと改善する仕組みを構築する（足りない→どう強化→どんな仕組み→構築→束→拡張→自動1回→効果）",
+  "統括Proの志向は『次にどう構築し自動へ反映するか』まで（build_next・path_to_100・verify_improveを欠かさない）",
+  /**
+   * ★ 2026-11-18 竹内さん「学習の抜け・土台・連携／人間のように原因思考／再学習／録画+DB徹底／土台徹底」:
+   */
+  "統括Proは学習・土台・連携の抜けを録画とDBから細かく見て、人間のように原因→どう改善を考える",
+  "新しい考え方で原因と改善対象を全部再学習する（症状→原因→層→手→土台F→自動反映）",
+  "土台は件数だけでなく id×完了線×次手で徹底強化する（抜けを後追いで塞がない）",
+  /**
+   * ★ 2026-11-18 竹内さん「設計知見と統括Proともちゃんと連携／細かい部分も抜けない」:
+   */
+  "設計知見と統括Proは引く→要旨把握→土台/次手へ落とす→課題へ落とす→細部材料まで一連で連携する（題だけ・引きっぱなし禁止）",
 ] as const;
 
 /** 操作がプルダウンと分かっている欄（Visionのtext割れを次手にしない） */
@@ -149,7 +220,8 @@ type MechTask = {
   why: string;
   cost: string;
   limit?: number;
-  order?: "newest" | "time" | "size";
+  order?: "newest" | "time" | "size" | "sequence";
+  runId?: string;
   fields?: string[];
 };
 
@@ -345,6 +417,22 @@ export type SupervisorInput = {
       no_fill_start: number;
       batch_timeout: number;
       pipeline_busy: number;
+      tab_reload?: number;
+      supersede?: number;
+      series_done?: number;
+      flow_handoff_gap?: number;
+      line: string;
+      top?: Array<{ id: string; n: number }>;
+    } | null;
+    /** ★ F45 完了理解台帳 */
+    flow?: {
+      place_ok: number;
+      conditions_ok: number;
+      search_ok: number;
+      fill_done_ok: number;
+      ready_next: number;
+      series_done: number;
+      gaps: number;
       line: string;
       top?: Array<{ id: string; n: number }>;
     } | null;
@@ -437,6 +525,7 @@ export type SupervisorInput = {
     ops: number;
     typedOnChoose: number;
     clickedThenChanged: number;
+    clickedThenChangedFields?: string[];
     changedWithoutClick: number;
     changedWithoutClickFields?: string[];
     withCursor: number;
@@ -445,6 +534,9 @@ export type SupervisorInput = {
     handCursorClicks?: number;
     handCursorFields?: string[];
   } | null;
+  /** ★ 2026-11-18: 欄×観点の細部採点に使う既存材料（画像位置判明欄・操作種別判明欄） */
+  image_position_fields?: string[] | null;
+  ops_kind_fields?: string[] | null;
   /**
    * ★ 2026-11-17 統括Pro: 通常vs自動の近さ差分（許可線つき）
    *   human-nearness.ts と同じ式。束に載せて Pro / 関所が使う。
@@ -514,6 +606,8 @@ export type SupervisorInput = {
   challenge_missing_in_bundle?: string[] | null;
   /** 自動モードの改善候補（統括が順番を決める） */
   auto_fix?: Array<{ key: string; what: string; why: string; how: string; cost: string; effect: string }> | null;
+  /** ★ 2026-11-18: 連続画像ランから学んだ場面連鎖・詰まり・未読ラン */
+  image_flows?: ImageSequenceFlowSummary | null;
 };
 
 export type SupervisorVerdict = "ready" | "almost" | "not_yet" | "unsafe";
@@ -570,7 +664,7 @@ export type SupervisorAdvice = {
      *   `supervisor-do` がこれを読んで上から実行する（竹内さんが毎回指図しなくてよい形）。
      *   ⚠ `photo_learn` は1枚ごとに費用がかかるので `limit` を必ず付ける。
      */
-    learning_tasks?: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }>;
+    learning_tasks?: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size" | "sequence"; runId?: string; fields?: string[] }>;
     /**
      * ★ 2026-11-16: 画像flash→材料→Pro の細かい連携（vision-pro-link.ts）。
      *   学習→自動の一連（bundle-reflect）とは別軸。統括が「画像学習のどこで止まっているか」を言う。
@@ -1097,7 +1191,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    */
   const meeting = buildMeeting({
       site, verdict, coverage, rows, next, points, opens, screens, sequence,
-      withOps, weakN, block, actions, delta,
+      withOps, weakN, weak: weakList, block, actions, delta,
       reproducePct, reproduceRemain,
       /** 推測で埋めた開き方の数（実測ではない物） */
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
@@ -1132,6 +1226,16 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    * ★ 2026-11-15: **写真から読んだ欄の種類**を統括に届ける
    *   （実測: 415件学んでいたのに数しか渡っていなかった）。
    */
+  learnPlan: (() => {
+    const lp = (input as unknown as Record<string, unknown>).learn_plan as { items?: unknown } | null | undefined;
+    if (!lp || !Array.isArray(lp.items)) return null;
+    return {
+      items: lp.items.slice(0, 40).map((it) => {
+        const o = it as { kind?: string; name?: string };
+        return { kind: String(o.kind || ""), name: String(o.name || "") };
+      }),
+    };
+  })(),
   photoKinds: (() => {
     const k = (input as unknown as Record<string, unknown>).photo_kinds;
     if (!k || typeof k !== "object") return null;
@@ -1170,6 +1274,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     const o = h as Record<string, unknown>;
     const r = {
       ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged),
+      clickedThenChangedFields: Array.isArray(o.clickedThenChangedFields) ? o.clickedThenChangedFields.map(String).slice(0, 20) : [],
       changedWithoutClick: num(o.changedWithoutClick),
       changedWithoutClickFields: Array.isArray(o.changedWithoutClickFields) ? o.changedWithoutClickFields.map(String).slice(0, 8) : [],
       withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows),
@@ -1177,6 +1282,14 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       handCursorFields: Array.isArray(o.handCursorFields) ? o.handCursorFields.map(String).slice(0, 8) : [],
     };
     return r.ops > 0 ? r : null;
+  })(),
+  imagePositionFields: (() => {
+    const a = (input as unknown as Record<string, unknown>).image_position_fields;
+    return Array.isArray(a) ? a.map(String).filter(Boolean).slice(0, 80) : [];
+  })(),
+  opsKindFields: (() => {
+    const a = (input as unknown as Record<string, unknown>).ops_kind_fields;
+    return Array.isArray(a) ? a.map(String).filter(Boolean).slice(0, 80) : [];
   })(),
   /**
    * ★ 2026-11-17 統括Pro: 近さ差分＋許可線を議題材料へ
@@ -1220,7 +1333,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       total: num(o.total),
       summary: String(o.summary || "").slice(0, 200),
       screen_solid: num(o.screen_solid),
-      missing: missing.slice(0, 12).map((x) => {
+      missing: missing.slice(0, 24).map((x) => {
         const r = x as Record<string, unknown>;
         return {
           id: String(r.id || "").slice(0, 40),
@@ -1230,7 +1343,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
         };
       }),
       key: Object.fromEntries(
-        Object.entries(key).slice(0, 12).map(([id, v]) => [
+        Object.entries(key).slice(0, 48).map(([id, v]) => [
           id,
           { ok: !!(v && v.ok), line: String((v && v.line) || "").slice(0, 220) },
         ]),
@@ -1305,9 +1418,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       improvements: inp.improvements && typeof inp.improvements === "object"
         ? { total: num(inp.improvements.total), by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [] }
         : null,
+      imageFlows: (input as unknown as { image_flows?: ImageSequenceFlowSummary | null }).image_flows ?? null,
   });
 
-  return {
+  const advice: SupervisorAdvice = {
     verdict,
     headline: HEAD[verdict],
     actions: actions.slice(0, 8),
@@ -1326,6 +1440,7 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
         const o = h as Record<string, unknown>;
         return {
           ops: num(o.ops), typedOnChoose: num(o.typedOnChoose), clickedThenChanged: num(o.clickedThenChanged),
+          clickedThenChangedFields: Array.isArray(o.clickedThenChangedFields) ? o.clickedThenChangedFields.map(String).slice(0, 20) : [],
           changedWithoutClick: num(o.changedWithoutClick),
           changedWithoutClickFields: Array.isArray(o.changedWithoutClickFields) ? o.changedWithoutClickFields.map(String).slice(0, 8) : [],
           withCursor: num(o.withCursor), withPoint: num(o.withPoint), rows: num(o.rows),
@@ -1370,6 +1485,11 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     }),
     meeting,
   };
+  /** 薄い site 別 meeting でも土台・完成・録画学習・連携・課題を必ず載せる */
+  return ensureMeetingEvidenceGates(
+    advice,
+    meetingGateContextFromSupervisorInput(inp as unknown as Record<string, unknown>, site),
+  );
 }
 
 /** 結論の強さの順（上限をかける時に使う） */
@@ -1408,7 +1528,7 @@ function selfCheck(m: {
   audits?: { runs: number; finished: number; finish_rate: number; stalled_at?: Array<{ stage: string; n: number }> } | null;
   /** ★ 2026-11-15: 自動モードが人間のように動けているか（17%・12%で ready になる矛盾を防ぐ） */
   humanLike?: {
-    ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number;
+    ops: number; typedOnChoose: number; clickedThenChanged: number; clickedThenChangedFields?: string[]; changedWithoutClick: number;
     changedWithoutClickFields?: string[]; withCursor: number; withPoint: number; rows: number;
     handCursorClicks?: number; handCursorFields?: string[];
   } | null;
@@ -1618,12 +1738,17 @@ function selfCheck(m: {
 function buildMeeting(m: {
   site: string; verdict: SupervisorVerdict; coverage: number;
   rows: number; next: number; points: number; opens: number; screens: number; sequence: number;
-  withOps: number; weakN: number; block: string | null;
+  withOps: number; weakN: number;
+  /** 弱い所の中身（画像衝突・細部強化の原子用） */
+  weak?: ReadonlyArray<{ kind: string; name: string; why?: string }>;
+  block: string | null;
   actions: SupervisorAdvice["actions"];
   delta: SupervisorAdvice["score"]["delta"];
   guessedOpens: number;
   siteCounts: Record<string, number>;
   modeCounts: Record<string, number>;
+  /** learn_plan の items（photo_vs_record 等） */
+  learnPlan?: { items?: Array<{ kind?: string; name?: string }> } | null;
   /** 2026-11-14: 実際の検索の結果も議題に使う */
   audits?: SupervisorInput["audits"];
   /** 2026-11-14: 現場への指示の詰まりも議題に使う */
@@ -1651,10 +1776,12 @@ function buildMeeting(m: {
   bundleReflect?: SupervisorInput["bundle_reflect"];
   /** 2026-11-15: 自動モードが人間のように動けているかの点検結果 */
   humanLike?: {
-    ops: number; typedOnChoose: number; clickedThenChanged: number; changedWithoutClick: number;
+    ops: number; typedOnChoose: number; clickedThenChanged: number; clickedThenChangedFields?: string[]; changedWithoutClick: number;
     changedWithoutClickFields?: string[]; withCursor: number; withPoint: number; rows: number;
     handCursorClicks?: number; handCursorFields?: string[];
   } | null;
+  imagePositionFields?: string[];
+  opsKindFields?: string[];
   /** ★ 2026-11-17 統括Pro: 人間との近さ差分＋許可線 */
   humanNearness?: {
     score: number; allowed: boolean; line: string; gaps?: string[];
@@ -1714,6 +1841,7 @@ function buildMeeting(m: {
   /** ★ 2026-11-16: 人間らしさの再現進度（0〜100・残りラベル） */
   reproducePct?: number | null;
   reproduceRemain?: string[];
+  imageFlows?: ImageSequenceFlowSummary | null;
 }): SupervisorAdvice["meeting"] {
   const num = (v: unknown): number => {
     const n = typeof v === "number" ? v : Number(v);
@@ -1723,7 +1851,7 @@ function buildMeeting(m: {
   const today: string[] = [];
   const agenda: SupervisorAdvice["meeting"]["agenda"] = [];
   /** 2026-11-14: 統括が決めた「次に学ぶ事」（`supervisor-do` が上から実行する） */
-  let learning_tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }> = [];
+  let learning_tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size" | "sequence"; runId?: string; fields?: string[] }> = [];
   /** ★ 2026-11-16: 土台細分化の結果（根拠と課題で共有） */
   let subdividedAtoms: ReturnType<typeof subdivideReproduceGaps> = [];
   /** ★ 2026-11-16: 欄×観点の細かい学習（仕組み⑥） */
@@ -1787,14 +1915,16 @@ function buildMeeting(m: {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
     }
     // ★ 完了→次客（統括Proが把握する細分化）
+    // ★ 2026-11-17: handoffが無いと axes.handoff=null → 把握の穴。無い時も必ず根拠を残す。
     if (m.audits.handoff && m.audits.handoff.line) {
       const h = m.audits.handoff;
       const any =
         (h.switch_fail || 0) + (h.owner_mismatch || 0) + (h.no_fill_start || 0)
-        + (h.batch_timeout || 0) + (h.pipeline_busy || 0);
+        + (h.batch_timeout || 0) + (h.pipeline_busy || 0)
+        + (h.tab_reload || 0) + (h.flow_handoff_gap || 0);
       evidence.push({
         label: "完了→次客（細分化）",
-        value: h.line,
+        value: h.line + ((h.series_done || 0) > 0 ? `／一連完了${h.series_done}回` : ""),
         guessed: any > 0,
       });
       if (any > 0) {
@@ -1802,9 +1932,38 @@ function buildMeeting(m: {
           priority: 0,
           topic: "完了してから次のお客さんに移れない穴がある",
           why: h.line,
-          decide: "一連ロック解除の競合・切替失敗・送る相手不一致を原子ごとに直す（拡張→自動1回で確認）",
+          decide: "一連ロック解除の競合・切替失敗・送る相手不一致・完了理解不足を原子ごとに直す（拡張→自動1回で確認）",
         });
       }
+    } else {
+      evidence.push({
+        label: "完了→次客（細分化）",
+        value: "handoff材料なし（audits未集計＝把握の穴・F44）",
+        guessed: true,
+      });
+    }
+    // ★ F45 完了理解台帳（何が完了しているか）
+    if (m.audits.flow && m.audits.flow.line) {
+      const f = m.audits.flow;
+      evidence.push({
+        label: "完了理解（流れ台帳）",
+        value: f.line,
+        guessed: (f.gaps || 0) > 0 || (f.ready_next || 0) === 0,
+      });
+      if ((f.gaps || 0) > 0 || ((f.place_ok || 0) + (f.search_ok || 0) + (f.fill_done_ok || 0) === 0)) {
+        agenda.push({
+          priority: 0,
+          topic: "何が完了しているかを理解していない（流れの抜け）",
+          why: f.line,
+          decide: "place→conditions→search→fill_done→ready_next の印を1つずつ揃えてから次客へ（F45・2.8.80）",
+        });
+      }
+    } else {
+      evidence.push({
+        label: "完了理解（流れ台帳）",
+        value: "flow材料なし（完了印が監査に届いていない＝つなぎの穴・F45/F46）",
+        guessed: true,
+      });
     }
   }
   /**
@@ -1927,6 +2086,31 @@ function buildMeeting(m: {
       guessed: im.withScreenPos === 0,
     });
   }
+  if (m.imageFlows && m.imageFlows.total_runs > 0) {
+    const imf = m.imageFlows;
+    const topUn = (imf.unlearned_runs || []).find((u) => u.total >= 5 && u.pct < 50) || imf.unlearned_runs?.[0];
+    const stuckTxt = imf.stuck_points?.[0]
+      ? `／詰まり ${imf.stuck_points[0].scene}:${imf.stuck_points[0].why}(${imf.stuck_points[0].n})`
+      : "";
+    const unTxt = topUn
+      ? `／未連続 ${topUn.run_id}(${topUn.mode} ${topUn.learned}/${topUn.total}枚=${topUn.pct}%・欠:${topUn.missing_scenes.slice(0, 4).join(",") || "なし"})`
+      : "";
+    const scrTxt = `／画面 form=${imf.screens.form} modal=${imf.screens.modal} result=${imf.screens.result}`;
+    evidence.push({
+      label: "画像の一連流れ（連続読み）",
+      value: `${imf.line}${scrTxt}${unTxt}${stuckTxt}`,
+      guessed: imf.learned_with_scene < 5 || imf.seq_learned_runs === 0 || (imf.screens.result === 0),
+    });
+    if (imf.stuck_points && imf.stuck_points.length) {
+      const topS = imf.stuck_points[0];
+      agenda.push({
+        priority: 1,
+        topic: `画像の一連流れで詰まりを検出（${topS.scene}）`,
+        why: `連続画像から「${topS.why}」を${topS.n}回検出（画面構成 form=${imf.screens.form}/modal=${imf.screens.modal}/result=${imf.screens.result}）`,
+        decide: "詰まりの原因箇所を土台/拡張で修正→order=sequence で再読→束→自動1回で改善確認",
+      });
+    }
+  }
   /**
    * ★ 2026-11-15 竹内さん「ちゃんと反映までやるようにする統括」:
    *   **束→拡張→自動**の到達を根拠に出す（学んだのに現場に無い、を見落さない）。
@@ -1934,7 +2118,7 @@ function buildMeeting(m: {
    * ★ 2026-11-15「ボトルネック改善／会話の時統括把握」:
    *   段階と止まっている所を必ず出す（写真Storage含む）。
    */
-  if (m.bundleReflect && (m.bundleReflect.screen_solid > 0 || (m.bundleReflect.photo_in_storage ?? 0) > 0)) {
+  if (m.bundleReflect) {
     evidence.push({
       label: "学習→自動の連携",
       value: m.bundleReflect.line,
@@ -1975,7 +2159,7 @@ function buildMeeting(m: {
    * ★ 2026-11-17 竹内さん「統括は土台を理解して統括できるように」:
    *   F29〜F32 を毎回根拠に出す（Pro が steps だけに偏らない材料）。
    */
-  if (m.foundationAudit && (m.foundationAudit.total > 0 || m.foundationAudit.missing_n > 0)) {
+  if (m.foundationAudit) {
     const fa = m.foundationAudit;
     evidence.push({
       label: "学習土台点検（F番号）",
@@ -1993,6 +2177,19 @@ function buildMeeting(m: {
       "F35_wipe_write_gate",
       "F36_write_path_gate",
       "F37_pro_rag_brain",
+      "F38_improve_reflect_chain",
+      "F41_button_done_marks",
+      "F42_catalog_targets_gate",
+      "F43_improve_to_auto_link",
+      "F44_next_customer_handoff",
+      "F45_flow_completion_ledger",
+      "F46_flow_record_to_auto",
+      "F47_flow_map_subdivide",
+      "F48_pro_brain_loop",
+      "F53_image_seq_flow",
+      "F54_challenge_learn_complete",
+      "F55_auto_reflect_verified",
+      "F56_pro_reflect_responsibility",
       "F6_auto_after_bundle",
       "F4_hand_cs",
       "F14_station_clear_cursor",
@@ -2053,6 +2250,31 @@ function buildMeeting(m: {
       value: "お客・検索ごとにカーソル出発・狙い点・待ち・条件順を散らす。学んだ「Aの次はB」だけ守る。同じ動きのクローンにしない（v2.8.15）",
       guessed: false,
     });
+    /**
+     * ★ 2026-11-17 竹内さん「この考え方をかなり大切にする」:
+     *   脳ループの現状を毎回根拠に出す（弱点がすぐ分かるか／土台／録画学習）。
+     */
+    {
+      const fa = m.foundationAudit;
+      const flows = Array.isArray(m.scene_flows) ? m.scene_flows : [];
+      const flowRuns = flows.reduce((n, f) => n + (Number(f.runs) || 0), 0);
+      const f46 = fa?.key?.["F46_flow_record_to_auto"];
+      const f47 = fa?.key?.["F47_flow_map_subdivide"];
+      const f34 = fa?.key?.["F34_pro_brain_ready"];
+      const miss = (fa?.missing || []).slice(0, 5).map((x) => x.id.replace(/^F\d+_/, "")).join("・");
+      const brainOk = !!(f34?.ok) && flowRuns >= 1;
+      evidence.push({
+        label: "統括Pro脳ループ（弱点→土台→強化→録画学習）",
+        value:
+          `脳材料=${f34?.ok ? "✓" : "✗"}` +
+          `／録画場面手順 runs=${flowRuns}${flows.length ? `（${flows.length}場面）` : "（無し）"}` +
+          `／F46録画→自動=${f46 ? (f46.ok ? "✓" : "✗") : "?"}` +
+          `／F47流れ地図=${f47 ? (f47.ok ? "✓" : "✗") : "?"}` +
+          (miss ? `／欠土台=${miss}` : "／欠土台なし") +
+          `（完了線: 脳材料✓・場面手順≥1・F46で録画が自動に届く）`,
+        guessed: !brainOk || !(f46?.ok),
+      });
+    }
   }
   /**
    * ★ 2026-11-16 竹内さん「通常モードの録画があれば完全に再現できるようになっていくために
@@ -2155,6 +2377,11 @@ function buildMeeting(m: {
       value: `①自動録画で弱い所を見つける → ②通常録画（画像・操作）から学ぶ → ③足りなければ土台を作る → ④細部を直して再現 → ⑤束→拡張→自動→効果確認。${stepHint}`,
       guessed: false,
     });
+    /**
+     * ★ 2026-11-17 竹内さん「学んだ学習方法をitandiでも完全に活用」:
+     *   方法①〜⑤はサイト共通。DOM・台帳・路線駅名だけサイト別。
+     */
+    evidence.push(siteLearnMethodEvidence(m.site));
     const chFields = [
       ...(m.latestAutoChallenge?.fields || []),
       ...(m.improveFromNormal?.fields || []),
@@ -2245,20 +2472,28 @@ function buildMeeting(m: {
       const h = m.humanLike;
       const cursorPct = h && h.rows > 0 ? Math.round((h.withCursor / h.rows) * 100) : null;
       const pointPct = h && h.rows > 0 ? Math.round((h.withPoint / h.rows) * 100) : null;
-      const targetFields = [...new Set([
+      const rawTargets = [...new Set([
         ...(m.latestAutoChallenge?.fields || []),
         ...(m.latestAutoChallenge?.changedNoClick || []),
         ...(m.humanLike?.changedWithoutClickFields || []),
         ...(m.improveFromNormal?.fields || []),
-      ].map(String).filter(Boolean))].slice(0, 12);
+      ].map(String).filter(Boolean))];
+      // ★ 2026-11-18: 監査ステップノート等の非欄を台帳正名に正規化（無い環境では元を維持）
+      const siteScope = m.site === "itandi" ? "itandi" : "realpro";
+      const catTargets = catalogTargetsOnly(rawTargets, siteScope);
+      const targetFields = (catTargets.length ? catTargets : rawTargets).slice(0, 12);
       const sceneLinked = linkFieldsToScenes(targetFields, Array.isArray(m.scene_flows) ? m.scene_flows : null)
         .filter((l) => l.hasExample)
         .map((l) => l.field);
-      const opsKind = targetFields.filter(isKnownSelectField);
+      const opsKind = [...new Set([
+        ...targetFields.filter(isKnownSelectField),
+        ...(m.opsKindFields || []),
+      ])];
       fineStatuses = scoreFieldsFine({
         fields: targetFields,
         opsKindFields: opsKind,
-        clickChangeFields: [],
+        imagePositionFields: m.imagePositionFields || [],
+        clickChangeFields: m.humanLike?.clickedThenChangedFields || [],
         directWriteFields: [
           ...(m.latestAutoChallenge?.changedNoClick || []),
           ...(m.humanLike?.changedWithoutClickFields || []),
@@ -2464,6 +2699,241 @@ function buildMeeting(m: {
       value: String(m.improveLoop.improve_line),
       guessed: (m.improveLoop.bottleneck_n ?? 0) > 0,
     });
+  }
+  /**
+   * ★ 2026-11-17 統括Pro「人間として自動化／細部改善の仕組みと土台」:
+   *   弱所→学ぶ→土台→狙って残す→度、を根拠に出す（F51）。
+   */
+  {
+    try {
+      const hl = m.humanLike;
+      const pointPct = hl && hl.rows > 0 ? Math.round((hl.withPoint / hl.rows) * 100) : null;
+      const cursorPct = hl && hl.rows > 0 ? Math.round((hl.withCursor / hl.rows) * 100) : null;
+      const fa = m.foundationAudit as { key?: Record<string, { ok?: boolean; line?: string }> } | null | undefined;
+      const key = fa?.key || {};
+      const f49 = key.F49_vision_photo_reach;
+      const f28 = key.F28_auto_gap_floor;
+      const f29 = key.F29_human_nearness;
+      const f6 = key.F6_auto_after_bundle;
+      const f15 = key.F15_cursor_aim_hit;
+      const f16 = key.F16_learn_warm;
+      let aimAri = 0, aimNashi = 0, warmN = 0, shortPct: number | null = null, nearScore: number | null = null;
+      const aimM = String(f15?.line || "").match(/aim有=(\d+).*aim無=(\d+)/);
+      if (aimM) { aimAri = Number(aimM[1]) || 0; aimNashi = Number(aimM[2]) || 0; }
+      const warmM = String(f16?.line || "").match(/learn_warm=(\d+)/);
+      if (warmM) warmN = Number(warmM[1]) || 0;
+      const shortM = String(f28?.line || "").match(/（([\d.]+)%/);
+      if (shortM) shortPct = Number(shortM[1]);
+      const nearM = String(f29?.line || "").match(/近さ(\d+)点/);
+      if (nearM) nearScore = Number(nearM[1]);
+      const hdl = buildHumanDetailLoop({
+        pointPct,
+        cursorPct,
+        aimAri,
+        aimNashi,
+        learnWarmN: warmN,
+        shortGapPct: shortPct,
+        nearnessAllowed: f29?.ok === true,
+        nearnessScore: nearScore,
+        visionPhotoOk: f49?.ok === true,
+        fireAtPointWired: true,
+        changedWithoutClick: hl?.changedWithoutClick ?? null,
+        autoAfterBundle: f6?.ok === true,
+      });
+      evidence.push({
+        label: "人間細部ループ",
+        value: hdl.line,
+        guessed: hdl.bottleneck_n != null,
+      });
+      evidence.push({
+        label: "土台 F51_human_detail_loop",
+        value: hdl.degree_line + (hdl.atoms[0] ? `／次原子: ${hdl.atoms[0].what}` : "／原子なし"),
+        guessed: hdl.bottleneck_n != null,
+      });
+      const diag = diagnoseAutoRecording({
+        humanLike: hl
+          ? {
+              withPoint: hl.withPoint,
+              withCursor: hl.withCursor,
+              rows: hl.rows,
+              changedWithoutClick: hl.changedWithoutClick,
+            }
+          : null,
+        aimAri,
+        aimNashi,
+        learnWarmN: warmN,
+        visionPhotoOk: f49?.ok === true,
+        gate: {
+          area_ok_by: /both/.test(String(f29?.line || "")) ? "both" : null,
+        },
+      });
+      evidence.push({
+        label: "自動録画の診断（問題→土台→次手）",
+        value: diag.line + (diag.atoms[0]
+          ? `／例: ${diag.atoms[0].problem} → 土台 ${diag.atoms[0].missing_foundation} → ${diag.atoms[0].need}`
+          : ""),
+        guessed: diag.atoms.length > 0,
+      });
+      if (diag.place.mixed || diag.place.clear_miss) {
+        evidence.push({
+          label: "土台 F52_place_xor",
+          value: diag.place.mixed
+            ? "地域と駅が混在（どちらか一方にする）"
+            : "外し忘れ疑い（反対側が残る）",
+          guessed: true,
+        });
+      }
+      /**
+       * ★ 2026-11-18 竹内さん「録画して課題見つけて改善と学習して足りない仕組みは補強」:
+       *   診断・細部・弱強化を1本にし、仕組みギャップを次手に載せる。
+       */
+      try {
+        const f32 = key.F32_link_pipeline;
+        const f31 = key.F31_learn_reflect_station;
+        const f38 = key.F38_improve_reflect_chain;
+        const readM = String(f32?.line || f38?.line || "").match(/read[_=]?(\d+)/i)
+          || String(f38?.line || "").match(/read=(\d+)/);
+        const readCount = readM ? Number(readM[1]) : (/拡張が束を読む✗|read_count=0/.test(String(f32?.line || "")) ? 0 : null);
+        const solidM = String(f38?.line || "").match(/solid=(\d+)/);
+        const refM = String(f31?.line || "").match(/reflect_ok=(\d+)/);
+        const hitM = String(f31?.line || "").match(/flow_hit=(\d+)/);
+        const rcr = buildRecChallengeReinforce({
+          pointPct,
+          cursorPct,
+          aimAri,
+          aimNashi,
+          learnWarmN: warmN,
+          shortGapPct: shortPct,
+          nearnessAllowed: f29?.ok === true,
+          nearnessScore: nearScore,
+          visionPhotoOk: f49?.ok === true,
+          fireAtPointWired: true,
+          extVersion: "2.8.93",
+          changedWithoutClick: hl?.changedWithoutClick ?? null,
+          autoAfterBundle: f6?.ok === true,
+          readCount: readCount,
+          screenSolid: solidM ? Number(solidM[1]) : null,
+          reflectOk: refM ? Number(refM[1]) : null,
+          flowHit: hitM ? Number(hitM[1]) : null,
+          humanLike: hl
+            ? {
+                withPoint: hl.withPoint,
+                withCursor: hl.withCursor,
+                rows: hl.rows,
+                changedWithoutClick: hl.changedWithoutClick,
+              }
+            : null,
+        });
+        evidence.push({
+          label: "録画→課題→学習→仕組み補強",
+          value: rcr.line + (rcr.mech_gaps[0]
+            ? `／仕組み: ${rcr.mech_gaps[0].what} → ${rcr.mech_gaps[0].how}`
+            : "") + (rcr.tasks[0] ? `／次手: ${rcr.tasks[0].what}` : ""),
+          guessed: rcr.bottleneck_n != null,
+        });
+        evidence.push({
+          label: "学習方法の強化（効果で直して周回）",
+          value: rcr.method.line + "／" + rcr.method.next_method_line
+            + (rcr.continue_loop ? "／完全ループ継続" : "／ループ完了"),
+          guessed: rcr.method.upgrades.length > 0,
+        });
+        /**
+         * ★ 2026-11-18 竹内さん「1度の録画で学習と改善と反映」:
+         *   直近自動の steps / status / 間取り hit を1本の関所に載せる。
+         */
+        try {
+          const mAny = m as unknown as {
+            lastAutoSteps?: Array<{ k?: string; m?: string; d?: string | null } | string>;
+            autoSteps?: Array<{ k?: string; m?: string; d?: string | null } | string>;
+          };
+          const lastSteps = Array.isArray(mAny.lastAutoSteps)
+            ? mAny.lastAutoSteps
+            : (Array.isArray(mAny.autoSteps) ? mAny.autoSteps : null);
+          const one = buildOneRecLearnLoop({
+            steps: lastSteps || null,
+            gate: null,
+            humanLike: hl
+              ? {
+                  withPoint: hl.withPoint,
+                  withCursor: hl.withCursor,
+                  rows: hl.rows,
+                  changedWithoutClick: hl.changedWithoutClick,
+                }
+              : null,
+            aimAri,
+            aimNashi,
+            learnWarmN: warmN,
+            visionPhotoOk: f49?.ok === true,
+            auditStatus: (m as { lastAuditStatus?: string }).lastAuditStatus || null,
+            layoutWantN: (m as { lastLayoutWantN?: number }).lastLayoutWantN ?? null,
+            layoutHitN: (m as { lastLayoutHitN?: number }).lastLayoutHitN ?? null,
+            searchArmed: (m as { lastSearchArmed?: boolean }).lastSearchArmed ?? null,
+            fillDoneReached: (m as { lastFillDone?: boolean }).lastFillDone ?? null,
+            propertyAcquireStarted: (m as { lastPropertyAcquire?: boolean }).lastPropertyAcquire ?? null,
+            extVersion: "2.8.93",
+            readCount,
+            autoAfterBundle: f6?.ok === true,
+            reflectOk: refM ? Number(refM[1]) : null,
+            pointPct,
+            unreadNormal: null,
+            usedKinds: ["one_rec_loop"],
+          });
+          evidence.push({
+            label: "1録画→学習→改善→反映",
+            value: one.line
+              + (one.bottleneck ? `／止: ${one.bottleneck}` : "")
+              + (one.atoms[0] ? `／原子: ${one.atoms[0].problem}` : "")
+              + `／検証: ${one.verify_marks.slice(0, 2).join("・")}`,
+            guessed: one.bottleneck_n != null,
+          });
+          evidence.push({
+            label: "1録画の学び方強化",
+            value: one.method.line + "／" + one.method.next_method_line
+              + (one.continue_loop ? "／次の1録画へ継続" : "／この録画周は完了"),
+            guessed: one.continue_loop,
+          });
+          /** ★ 送付済み把握 × 物件取得タイミング */
+          const acq = buildAcquireGraspReport({
+            auditStatus: (m as { lastAuditStatus?: string }).lastAuditStatus || null,
+            searchArmed: (m as { lastSearchArmed?: boolean }).lastSearchArmed ?? null,
+            fillDone: (m as { lastFillDone?: boolean }).lastFillDone ?? null,
+            acquireStarted: (m as { lastPropertyAcquire?: boolean }).lastPropertyAcquire ?? null,
+            sentSkipped: (m as { lastSentSkipped?: number }).lastSentSkipped ?? null,
+            sentMarked: (m as { lastSentMarked?: number }).lastSentMarked ?? null,
+            pressedSent: (m as { lastPressedSent?: number }).lastPressedSent ?? null,
+            allowedN: (m as { lastAllowedN?: number }).lastAllowedN ?? null,
+            stepText: (lastSteps || []).map((s) => (typeof s === "string" ? s : [s.k, s.m, s.d].filter(Boolean).join(" "))).join("\n"),
+          });
+          evidence.push({
+            label: "物件取得・送付済みの把握",
+            value: acq.line
+              + (acq.atoms[0] ? `／原子: ${acq.atoms[0].problem}` : "")
+              + `／次: ${acq.next_line}`,
+            guessed: acq.stuck_before_acquire || acq.stuck_on_sent || !acq.sent_grasped,
+          });
+        } catch (_) { /* 1録画ループ未配線でも止めない */ }
+        const f33Line = String(m.foundationAudit?.key?.F33_learn_db_persist?.line || "");
+        const f34Line = String(m.foundationAudit?.key?.F34_pro_brain_ready?.line || "");
+        const f37Line = String(m.foundationAudit?.key?.F37_pro_rag_brain?.line || "");
+        const memLogN = Number((f33Line.match(/統括ログ\d*日=(\d+)/) || [])[1]) || 0;
+        const memProN = Number((f34Line.match(/ログPro=(\d+)/) || [])[1]) || 0;
+        const memRagN = Number((f37Line.match(/ログRAG成功=(\d+)/) || [])[1]) || 0;
+        const mem = buildLearnMemoryLoop({
+          supervisorLogN: memLogN,
+          hasProLog: memProN >= 1,
+          logMemoryN: memRagN,
+          improvementN: m.improvements?.total ?? 0,
+          continueLoop: rcr.continue_loop,
+          afterPointPct: pointPct,
+          afterReadCount: readCount,
+        });
+        evidence.push({
+          label: "記憶→改善",
+          value: mem.line + `／残す: ${mem.remember_line}`,
+          guessed: mem.bottleneck_n != null,
+        });
+      } catch (_) { /* 補強ループ未配線でも止めない */ }
+    } catch (_) { /* 土台未配線でも統括は止めない */ }
   }
   /**
    * ★ 2026-11-15 竹内さん「自動モードの改善は録画している学習データから統括が改善する」:
@@ -2945,7 +3415,7 @@ function buildMeeting(m: {
    *     段階4なら拡張再読み込みが先（学習を足しても改善に繋がらない）。
    */
   {
-    const tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size"; fields?: string[] }> = [];
+    const tasks: Array<{ kind: string; what: string; why: string; cost: string; limit?: number; order?: "newest" | "time" | "size" | "sequence"; runId?: string; fields?: string[] }> = [];
     const shotPct = m.shotRows != null && m.rows > 0 ? Math.round((m.shotRows / m.rows) * 100) : null;
     const opsPct = m.rows > 0 ? Math.round((m.withOps / Math.max(1, m.rows)) * 100) : 0;
 
@@ -3040,6 +3510,80 @@ function buildMeeting(m: {
           order: "newest",
           fields: direct.slice(0, 8),
         });
+      }
+    }
+    /**
+     * ★ 2026-11-18 竹内さん「課題学習の完全化／自動モードへの反映」:
+     *   F54・F55 が ✗ のとき議題と learning_tasks に必ず載せる（抜け止め）。
+     */
+    {
+      const k54 = m.foundationAudit?.key?.F54_challenge_learn_complete;
+      const k55 = m.foundationAudit?.key?.F55_auto_reflect_verified;
+      if (k54 && k54.ok === false) {
+        agenda.push({
+          priority: 0,
+          topic: "課題欄の学習が未完（F54）",
+          why: String(k54.line || "").slice(0, 200),
+          decide: "最新自動の課題欄を通常で学び、束の points と learned の両方へ載せる",
+        });
+        const missBundle = (m.challengeMissingInBundle || []).slice(0, 10);
+        const missFields = missBundle.length
+          ? missBundle
+          : (m.latestAutoChallenge?.fields || m.improveFromNormal?.fields || []).slice(0, 10);
+        if (missFields.length) {
+          const pl = tasks.find((t) => t.kind === "photo_learn");
+          if (pl) {
+            pl.fields = [...new Set([...(pl.fields || []), ...missFields])].slice(0, 10);
+            if (!/F54|points|learned/.test(pl.why)) pl.why = `F54 ✗（束欠）／${pl.why}`;
+          } else {
+            const todo = m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 8;
+            tasks.push({
+              kind: "photo_learn",
+              what: "課題欄を通常画像から学び、束の points と learned の両方へ載せる（F54）",
+              why: `F54 ✗／${String(k54.line || "").slice(0, 120)}／欄: ${missFields.slice(0, 5).join("・")}`,
+              cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
+              limit: photoLearnLimitFor({ todo: Math.max(8, todo), fieldCount: missFields.length }),
+              order: "newest",
+              fields: missFields,
+            });
+          }
+        }
+      }
+      if (k55 && k55.ok === false) {
+        agenda.push({
+          priority: 0,
+          topic: "自動モードへの反映が未確認（F55）",
+          why: String(k55.line || "").slice(0, 200),
+          decide: "拡張再読込→自動1回→ learn_reflect_ok / aim有 を監査で確認",
+        });
+        const line55 = String(k55.line || "");
+        if ((/read[= ]0\b|read_count=0/.test(line55) || (m.bundleReflect?.read_count ?? 0) <= 0)
+          && !tasks.some((t) => t.kind === "need_ext_reload")) {
+          tasks.push({
+            kind: "need_ext_reload",
+            what: "拡張を再読み込みして束を読む（F55・read未達）",
+            why: line55.slice(0, 160) || "F55 read<1",
+            cost: "無料",
+          });
+        }
+        if ((/新束後自動=0\b/.test(line55) || m.bundleReflect?.auto_after === false)
+          && !tasks.some((t) => t.kind === "need_auto_run")) {
+          tasks.push({
+            kind: "need_auto_run",
+            what: "新束のあと自動モードで1回検索（F55・反映測定）",
+            why: line55.slice(0, 160) || "F55 新束後自動なし",
+            cost: "無料",
+          });
+        }
+        if (/reflect_ok=0|flow_reflect=0|aim有=0|止=reflect/.test(line55)
+          && !tasks.some((t) => t.kind === "verify_improve" || t.kind === "reflect_auto")) {
+          tasks.push({
+            kind: "verify_improve",
+            what: "自動監査で learn_reflect_ok / learn_flow_reflect_ok / aim有 を確認（F55）",
+            why: line55.slice(0, 160) || "F55 反映印なし",
+            cost: "無料",
+          });
+        }
       }
     }
     /** ② 手本が無い場面（推測で動かさない） */
@@ -3189,6 +3733,29 @@ function buildMeeting(m: {
       }
     }
     /**
+     * ★ 2026-11-17: itandi の記録が薄い時は、リアプロと同じ学習方法を回す材料として通常録画を要求。
+     *   実測: itandi 3日 motion≈4／通常1。型（F50・ITANDI_BUTTONS）はあっても材料が無いと回らない。
+     */
+    {
+      const itN = num(m.siteCounts?.itandi);
+      const isIt = m.site === "itandi" || (m.site === "all" && itN > 0 && itN < 30);
+      const thin = m.site === "itandi" ? m.rows < 30 : itN > 0 && itN < 30;
+      if (isIt && thin && !tasks.some((t) => t.kind === "need_human" && /ITANDI|itandi/.test(t.what))) {
+        tasks.push({
+          kind: "need_human",
+          what: "ITANDIを通常モードで検索1通し録画する（所在地→路線駅→条件→検索）",
+          why: `itandi記録が薄い（site=${m.site} rows=${m.rows}／site_counts.itandi=${itN || 0}）。リアプロと同じ学習方法①〜⑤を回す材料が要る`,
+          cost: "無料（人の手間だけ）",
+        });
+        agenda.push({
+          priority: 0,
+          topic: "ITANDIでもリアプロと同じ学習方法を回す（通常録画が足りない）",
+          why: `itandiの記録が少ない。ITANDI_BUTTONS・サイト別統括の型はあるが、通常録画が無いと①〜⑤が回らない`,
+          decide: "ITANDI通常モードで1通し録画→束再生成→supervisor --scope=itandi で弱点把握→photo_learn／土台追加",
+        });
+      }
+    }
+    /**
      * ★ 2026-11-16「細かくまなんでいく／学習改善も仕組み強化」:
      *   欄×観点の抜けを課題ヒントに載せてから、仕組み①②を効かせる。
      */
@@ -3291,6 +3858,41 @@ function buildMeeting(m: {
       }
     }
     /**
+     * ★ 2026-11-18 竹内さん「学習ちゃんと画像読み取って連続してよみとって一連の流れを理解して学習して改善して強化する」:
+     *   ランの末尾だけ読んで途中（所在地・条件・検索・結果）が切れていたら order=sequence を課題へ載せる。
+     */
+    if (m.imageFlows && m.imageFlows.total_runs > 0) {
+      const imf = m.imageFlows;
+      const runs = (imf.unlearned_runs || []).filter((u) => u.total >= 5);
+      const normRun = runs.find((u) => u.mode === "normal" && u.pct < 50);
+      const anyRun = normRun || runs.find((u) => u.pct < 50) || runs[0] || null;
+      const needSeq = imf.learned_with_scene < 5 || imf.seq_learned_runs === 0 || !!normRun || imf.screens.result === 0;
+      if (needSeq && anyRun) {
+        const existingPl = tasks.find((t) => t.kind === "photo_learn");
+        const seqWhy = `連続ラン ${anyRun.run_id}(${anyRun.mode} ${anyRun.learned}/${anyRun.total}枚=${anyRun.pct}%・欠:${anyRun.missing_scenes.join(",") || "なし"})／scene付き=${imf.learned_with_scene}`;
+        if (existingPl && !existingPl.fields?.length) {
+          existingPl.order = "sequence";
+          existingPl.runId = anyRun.run_id;
+          if (!/連続/.test(existingPl.what)) {
+            existingPl.what = `連続ラン ${anyRun.run_id} を先頭→末尾で連続読み取りし、一連の流れを学ぶ`;
+          }
+          existingPl.why = `${seqWhy}／${existingPl.why}`;
+        } else if (!existingPl || (normRun && existingPl.order !== "sequence")) {
+          const limSeq = photoLearnLimitFor({ todo: Math.min(40, Math.max(12, anyRun.total)), fieldCount: 6 });
+          tasks.push({
+            kind: "photo_learn",
+            what: `連続ラン ${anyRun.run_id} を先頭→末尾で連続読み取りし、一連の流れ（場面・遷移・詰まり）を学ぶ`,
+            why: seqWhy,
+            cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
+            limit: limSeq,
+            order: "sequence",
+            runId: anyRun.run_id,
+          });
+        }
+      }
+    }
+
+    /**
      * ★ 2026-11-16「統括じたいの学習能力も上げる」:
      *   仕組みを課題の why／土台に効かせてから並べる（表示だけの証拠にしない）。
      */
@@ -3332,6 +3934,24 @@ function buildMeeting(m: {
     });
     tasks.length = 0;
     tasks.push(...dedup);
+    /**
+     * ★ 2026-11-18: 抜け止め関所（未学習・solid消失・自動0でも課題が空にならない）
+     */
+    {
+      const sealed = ensureGaplessLearnTasks({
+        tasks,
+        unreadNormal: m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0,
+        weakFields: fineStatuses.length ? weakDetailFields(fineStatuses) : [],
+        kindConflictFields: [],
+        screenSolid: m.bundleReflect?.screen_solid ?? null,
+        readCount: m.bundleReflect?.read_count ?? null,
+        autoAfter: m.bundleReflect?.auto_after ?? null,
+        reflectOk: null,
+        bottleneckN: bn,
+      });
+      tasks.length = 0;
+      tasks.push(...sealed);
+    }
     if (tasks.length) {
       const decideOf = (k: string) => {
         if (k === "need_ext_reload") return "拡張を再読み込み→コンソールで連携完了→reflect で確かめる（推奨）";
@@ -3360,6 +3980,63 @@ function buildMeeting(m: {
      *   「何を・どの順で・いくらで」を取り出せない）。`supervisor-do` がこれを読んで実行する。
      */
     learning_tasks = tasks;
+  }
+
+  /**
+   * ★ 2026-11-18 竹内さん「統括も作業員増やすの判断できるように」:
+   *   課題量・並列レーンから推奨人数を evidence／課題（scale_workers）／議題に載せる。
+   *   ⚠ 勝手に Cursor 作業員は起動しない（supervisor-do は人数だけ返す）。
+   */
+  {
+    const unreadNormal = m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0;
+    const foundationGapsN = (() => {
+      let n = 0;
+      const h = m.humanLike;
+      if (h && h.ops > 0) {
+        if (h.changedWithoutClick > 0) n++;
+        if (h.rows > 0 && Math.round((h.withCursor / h.rows) * 100) < 70) n++;
+        if (h.rows > 0 && Math.round((h.withPoint / h.rows) * 100) < 50) n++;
+        if ((h.handCursorClicks ?? 0) === 0 && h.ops >= 20) n++;
+      }
+      if (m.bundleReflect && (m.bundleReflect.read_count ?? 0) <= 0 && (m.bundleReflect.screen_solid ?? 0) >= 3) n++;
+      return n;
+    })();
+    const sitesParallel = countSitesParallel(m.siteCounts);
+    const reloadOnlyBottleneck = learning_tasks.length <= 1
+      && (learning_tasks[0]?.kind === "need_ext_reload"
+        || m.improveLoop?.next_kind === "need_ext_reload"
+        || (learning_tasks.length === 0 && m.improveLoop?.bottleneck_n === 4));
+    const ws = recommendWorkerScale({
+      weakN: m.weakN,
+      unreadNormal,
+      learningTasksN: learning_tasks.length,
+      foundationGapsN,
+      sitesParallel,
+      currentWorkers: 1,
+      reloadOnlyBottleneck,
+    });
+    evidence.push({
+      label: "作業員の規模",
+      value: `推奨${ws.recommend}人（並列≈${ws.parallelizable}・上限${ws.cap}）／${ws.why}`,
+      guessed: false,
+    });
+    if (ws.recommend >= 2) {
+      if (!learning_tasks.some((t) => t.kind === "scale_workers")) {
+        learning_tasks.push({
+          kind: "scale_workers",
+          what: `Cursor作業員を最大${ws.recommend}人に増やす（並列≈${ws.parallelizable}）`,
+          why: ws.why,
+          cost: "無料",
+          limit: ws.recommend,
+        });
+      }
+      agenda.push({
+        priority: 2,
+        topic: "作業員を増やすか",
+        why: ws.why,
+        decide: `${ws.recommend}人まで増やして並列で進めるか（上限${ws.cap}・実行は竹内さん判断）`,
+      });
+    }
   }
 
   // ── 竹内さんに聞く事 ──
@@ -3484,11 +4161,29 @@ function buildMeeting(m: {
    *   flashとproのまとめる部分で判断／細かい部分のつなぐのも徹底して細分化」:
    *   保存→flash読→材料→突合→photo_learn課題→Pro を1本の連携として根拠・議題に載せる。
    */
+  /**
+   * ★ 2026-11-17 統括Pro: `0 ?? 束` は 0 を正として落ちない。
+   *   サイト別で shot_bytes 未配線の時も、通常抜け・shotRows・束の枚数の最大を使う。
+   */
+  const photoReach = Math.max(
+    num(m.shotBytes?.in_storage),
+    num(m.shotBytes?.n),
+    num(m.bundleReflect?.photo_in_storage),
+    num(m.shotGapsNormal?.total),
+    num(m.shotGapsNormal?.learnedOk) + num(m.shotGapsNormal?.todo),
+    num(m.shotGaps?.learnedOk) + num(m.shotGaps?.todo),
+    num(m.shotRows),
+  );
+  const learnedOkN = m.shotGapsNormal?.learnedOk ?? m.shotGaps?.learnedOk ?? 0;
+  const todoN = m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0;
+  const photoKindsN = m.photoKinds
+    ? Object.values(m.photoKinds).reduce((a, b) => a + (Number(b) || 0), 0)
+    : 0;
   const vision_pro_link = buildVisionProLink({
-    photoInStorage: m.shotBytes?.in_storage ?? m.shotBytes?.n ?? m.bundleReflect?.photo_in_storage ?? 0,
-    learnedOk: m.shotGapsNormal?.learnedOk ?? m.shotGaps?.learnedOk ?? 0,
-    todo: m.shotGapsNormal?.todo ?? m.shotGaps?.todo ?? 0,
-    photoKindsN: m.photoKinds ? Object.values(m.photoKinds).reduce((a, b) => a + (Number(b) || 0), 0) : 0,
+    photoInStorage: photoReach,
+    learnedOk: learnedOkN,
+    todo: todoN,
+    photoKindsN,
     imageFields: m.imageMatch?.imageFields ?? 0,
     withScreenPos: m.imageMatch?.withScreenPos ?? 0,
     matched: m.imageMatch?.matched ?? 0,
@@ -3505,6 +4200,135 @@ function buildMeeting(m: {
     value: `読む=${vision_pro_link.roles.flash_model}／まとめる=${vision_pro_link.roles.pro_model}／関所=決定論。混ぜない`,
     guessed: false,
   });
+  /**
+   * ★ 2026-11-18 竹内さん「何が足りないか／どう強化・改善するか考える能力」:
+   *   画像の細部穴（衝突・記録≠写真・中央固定位置）も含めて思考骨格を先に組む。
+   */
+  {
+    const weakArr = Array.isArray(m.weak) ? m.weak : [];
+    const planItems = Array.isArray(m.learnPlan?.items) ? m.learnPlan!.items! : [];
+    const conflictFields = weakArr
+      .filter((w) => String(w.kind || "") === "kind_conflict_in_photo")
+      .map((w) => String(w.name || ""))
+      .filter(Boolean);
+    const vsOnly = planItems
+      .filter((w) => String(w.kind || "") === "photo_vs_record")
+      .map((w) => String(w.name || ""))
+      .filter(Boolean);
+    const vsFields = [...conflictFields, ...vsOnly];
+    /** 画面位置ありでも 中央(0.5)ばかりは細部未達 — imageMatch に無ければ matched との差で近似 */
+    const im = m.imageMatch as { withScreenPos?: number; matched?: number; centerOnlyPos?: number; solidPos?: number } | null | undefined;
+    const centerOnly = num(im?.centerOnlyPos)
+      || (num(im?.withScreenPos) > 0 && num(im?.matched) === 0 ? num(im?.withScreenPos) : 0);
+    const solidPos = num(im?.solidPos) || num(im?.matched);
+    const think = buildProThinkCapability({
+      visionBottleneckN: vision_pro_link.bottleneck_n,
+      visionLine: vision_pro_link.line,
+      photoInStorage: photoReach,
+      learnedOk: learnedOkN,
+      todo: todoN,
+      photoKindsN,
+      withScreenPos: m.imageMatch?.withScreenPos ?? 0,
+      matched: m.imageMatch?.matched ?? 0,
+      hasPhotoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
+      centerOnlyPosN: centerOnly || null,
+      solidPosN: solidPos || null,
+      kindConflictN: conflictFields.length || null,
+      kindConflictFields: conflictFields.slice(0, 12),
+      photoVsRecordN: vsOnly.length || null,
+      photoVsRecordFields: (vsOnly.length ? vsOnly : vsFields).slice(0, 12),
+      readCount: null,
+      autoAfter: null,
+      foundationMissingN: null,
+      oneRecBottleneck: null,
+    });
+    evidence.unshift({
+      label: "画像学習はちゃんと行ったか",
+      value: think.image_learn.line
+        + (think.image_learn.gaps[0] ? `／穴: ${think.image_learn.gaps.slice(0, 3).join("・")}` : ""),
+      guessed: think.image_learn.done !== true,
+    });
+    evidence.unshift({
+      label: "統括Pro思考骨格（足りない→強化→改善）",
+      value: think.line + "／" + think.scaffold,
+      guessed: think.missing.length > 0,
+    });
+    if (think.fine_atoms.length) {
+      evidence.unshift({
+        label: "画像の細かい強化原子",
+        value: think.fine_atoms.slice(0, 8).map((a) => `${a.field}[${a.facet}]: ${a.next}`).join("／"),
+        guessed: true,
+      });
+    }
+    /** ★ 改善する仕組みを構築し、自動へ反映する志向 */
+    const acqHint = buildAcquireGraspReport({
+      auditStatus: (m as { lastAuditStatus?: string }).lastAuditStatus || null,
+      searchArmed: (m as { lastSearchArmed?: boolean }).lastSearchArmed ?? null,
+      fillDone: (m as { lastFillDone?: boolean }).lastFillDone ?? null,
+      acquireStarted: (m as { lastPropertyAcquire?: boolean }).lastPropertyAcquire ?? null,
+      sentSkipped: (m as { lastSentSkipped?: number }).lastSentSkipped ?? null,
+      sentMarked: (m as { lastSentMarked?: number }).lastSentMarked ?? null,
+    });
+    const construct = buildImproveConstruct({
+      learnedOk: learnedOkN,
+      photoTodo: todoN,
+      hasPhotoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
+      readCount: null,
+      autoAfter: null,
+      reflectOk: null,
+      foundationMissingN: null,
+      thinkMissingN: think.missing.length,
+      acquireArmed: acqHint.phases_ok.includes("armed") ? true : (acqHint.stuck_before_acquire ? false : null),
+      acquireSentGrasped: acqHint.sent_grasped,
+      stuckBeforeAcquire: acqHint.stuck_before_acquire,
+      mechanismApplied: true,
+    });
+    evidence.unshift({
+      label: "統括Proの志向（改善構築→自動反映）",
+      value: construct.orientations.slice(0, 4).map((o) => o.aim).join("／"),
+      guessed: false,
+    });
+    evidence.unshift({
+      label: "改善する仕組みの構築",
+      value: construct.line + "／" + construct.scaffold,
+      guessed: construct.gaps.length > 0,
+    });
+    evidence.unshift({
+      label: "次の構築手→自動反映",
+      value: construct.next_construct + " → " + construct.next_reflect + "／" + construct.path_line,
+      guessed: construct.gaps.length > 0,
+    });
+    if (construct.gaps.length) {
+      agenda.push({
+        priority: 0,
+        topic: "改善する仕組みを構築し自動へ反映する",
+        why: construct.gaps.slice(0, 3).map((g) => g.what).join("／"),
+        decide: [construct.next_construct, construct.next_reflect, construct.path_line].filter(Boolean).join(" → "),
+      });
+    }
+    if (think.missing.length) {
+      agenda.push({
+        priority: 0,
+        topic: "統括Proが足りない所→強化→改善を考える",
+        why: think.missing.slice(0, 4).map((x) => x.what).join("／"),
+        decide: [
+          ...think.strengthen.slice(0, 2).map((h) => h.how),
+          ...think.improve.slice(0, 2).map((h) => h.how),
+        ].filter(Boolean).join(" → ") || think.scaffold,
+      });
+    }
+    if (think.image_learn.done !== true) {
+      agenda.push({
+        priority: 0,
+        topic: "画像学習の細部を徹底強化する",
+        why: think.image_learn.line,
+        decide: think.strengthen.filter((h) => h.cost === "flash" || h.for_missing.startsWith("kind") || h.for_missing === "pos_detail" || h.for_missing === "photo_learn_task")
+          .slice(0, 3)
+          .map((h) => h.how)
+          .join("／") || "衝突欄・位置観点・photo_learn を細かく回す",
+      });
+    }
+  }
   /**
    * ★ 2026-11-16: 弱点を原子に細分化して Pro に渡す（仕組み⑯）。
    *   根拠が揃ってから作る（この直後の evidence を使う）。
@@ -3539,6 +4363,103 @@ function buildMeeting(m: {
           ? "写真を保存し flash（photo_learn）で読む"
           : "材料（種類・位置・突合）が統括に届くよう束を更新してから Pro に渡す",
     });
+  }
+
+  {
+    const matD = materialsDays();
+    const fineAvg = fineStatuses.length
+      ? Math.round(fineStatuses.reduce((s, x) => s + x.score, 0) / fineStatuses.length)
+      : null;
+    const periodConstruct = buildLearnPeriodConstruct({
+      used: {
+        daysOps: matD,
+        daysAudit: matD,
+        shotLearnDays: matD,
+        auditWindowMs: LEARN_PERIODS.materialsMs,
+        logMemoryDays: logMemoryDays(),
+        commandsDays: Math.round(LEARN_PERIODS.commandsMs / DAY_MS),
+      },
+      screenSolid: m.foundationAudit?.screen_solid ?? m.bundleReflect?.screen_solid,
+      photoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
+      unreadNormal: m.shotGapsNormal?.todo,
+      autoAfter: m.bundleReflect?.auto_after,
+      readCount: m.bundleReflect?.read_count,
+      fineLearnAvg: fineAvg,
+    });
+    evidence.unshift({
+      label: "学習期間・構築の細部",
+      value: periodConstruct.line + (periodConstruct.gaps.length ? `／${periodConstruct.next_line}` : ""),
+      guessed: periodConstruct.gaps.length > 0 || periodConstruct.construct_marks.some((x) => !x.ok),
+    });
+
+    /**
+     * ★ 2026-11-18 竹内さん「学習期間／土台とつながりと一連の動きを完成させる／統括Pro」:
+     *   4本柱（期間・土台・つながり・一連）を完成線として毎回測り、止まった柱を議題にする。
+     */
+    const keyFailIds = (m.foundationAudit?.missing || [])
+      .map((x) => String(x.id || ""))
+      .filter((id) =>
+        /F1_|F6_|F31_|F32_|F33_|F34_|F37_|F38_|F43_|F54_|F55_/.test(id),
+      );
+    const complete = buildLearnCompleteChain({
+      period: {
+        used: {
+          daysOps: matD,
+          daysAudit: matD,
+          shotLearnDays: matD,
+          auditWindowMs: LEARN_PERIODS.materialsMs,
+          logMemoryDays: logMemoryDays(),
+          commandsDays: Math.round(LEARN_PERIODS.commandsMs / DAY_MS),
+        },
+        screenSolid: m.foundationAudit?.screen_solid ?? m.bundleReflect?.screen_solid,
+        photoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
+        unreadNormal: m.shotGapsNormal?.todo,
+        autoAfter: m.bundleReflect?.auto_after,
+        readCount: m.bundleReflect?.read_count,
+        fineLearnAvg: fineAvg,
+      },
+      foundationMissingN: m.foundationAudit?.missing_n ?? null,
+      foundationOkN: m.foundationAudit?.ok_n ?? null,
+      foundationTotalN: m.foundationAudit?.total ?? null,
+      keyFoundationFails: keyFailIds,
+      linkBottleneckN: (() => {
+        const bn = m.bundleReflect?.bottleneck;
+        if (!bn) return null;
+        const m2 = String(bn).match(/段階\s*(\d+)/);
+        return m2 ? Number(m2[1]) : 1;
+      })(),
+      linkLine: m.bundleReflect?.bottleneck || m.bundleReflect?.line || null,
+      readCount: m.bundleReflect?.read_count ?? null,
+      autoAfter: m.bundleReflect?.auto_after ?? null,
+      screenSolid: m.foundationAudit?.screen_solid ?? m.bundleReflect?.screen_solid ?? null,
+      improveBottleneckN: m.improveLoop?.bottleneck_n ?? null,
+      improveLine: m.improveLoop?.improve_line ?? null,
+    });
+    evidence.unshift({
+      label: "学習完成（期間・土台・つながり・一連）",
+      value: complete.line + (complete.ok ? "" : `／次=${complete.next_line}`),
+      guessed: !complete.ok,
+    });
+    evidence.unshift({
+      label: "学習完成の道筋",
+      value: complete.path_to_complete,
+      guessed: !complete.ok,
+    });
+    for (const p of complete.pillars) {
+      evidence.push({
+        label: `学習完成・${p.name}`,
+        value: `${p.ok ? "✓" : "✗"} ${p.line}${p.ok ? "" : `／次=${p.next}`}`,
+        guessed: !p.ok,
+      });
+    }
+    if (!complete.ok && complete.bottleneck) {
+      agenda.push({
+        priority: 0,
+        topic: "学習期間・土台・つながり・一連を完成させる",
+        why: complete.bottleneck,
+        decide: complete.path_to_complete,
+      });
+    }
   }
 
   agenda.sort((a, b) => a.priority - b.priority);

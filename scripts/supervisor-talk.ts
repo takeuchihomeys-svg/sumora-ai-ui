@@ -14,6 +14,7 @@
  *   決められない事は「竹内さんに聞く」として questions に出す。
  */
 import { recentSupervisorLogs } from "../app/lib/learn-supervisor-db";
+import { supabase } from "../app/lib/supabase-server";
 
 const BASE = process.env.AUDIT_BASE || "https://sumora-ai-ui.vercel.app";
 
@@ -43,15 +44,25 @@ function hr() { console.log("─".repeat(66)); }
 
 async function fetchAdv(scope: string): Promise<{ adv: Adv | null; bundle: Record<string, unknown> | null; err?: string }> {
   try {
-    // ★ 2026-11-17: 既定 fresh=1 は学習消失の入口。読むだけは touch=0（作り直しはゲート付き経路へ）
-    const r = await fetch(BASE + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(scope), { cache: "no-store" });
-    if (!r.ok) return { adv: null, bundle: null, err: "http_" + r.status };
-    const j = (await r.json()) as Record<string, unknown>;
-    const b = (j.bundle ?? null) as Record<string, unknown> | null;
+    // ★ 2026-11-18: touch=0 は light 版（bundle 無し）のため、DB の最新束を直接読んで read_count/buildNow を汚さず取得する。
+    const { data: prof } = await supabase
+      .from("human_learn_profile")
+      .select("bundle")
+      .eq("scope", scope)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let b = ((prof as { bundle?: Record<string, unknown> } | null)?.bundle ?? null) as Record<string, unknown> | null;
+    if (!b) {
+      const r = await fetch(BASE + "/api/human-learn-profile?scope=" + encodeURIComponent(scope), { cache: "no-store" });
+      if (!r.ok) return { adv: null, bundle: null, err: "http_" + r.status };
+      const j = (await r.json()) as Record<string, unknown>;
+      b = (j.bundle ?? null) as Record<string, unknown> | null;
+    }
     if (!b) return { adv: null, bundle: null, err: "束がありません" };
     if (scope === "all") return { adv: (b.supervisor as Adv) || null, bundle: b };
     const bySite = (b.supervisor_by_site ?? {}) as Record<string, Adv>;
-    return { adv: bySite[scope] || null, bundle: b };
+    return { adv: bySite[scope] || (b.supervisor as Adv) || null, bundle: b };
   } catch (e) {
     return { adv: null, bundle: null, err: String((e as Error).message || e) };
   }

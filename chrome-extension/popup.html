@@ -392,19 +392,42 @@
     </div>
 
   </div>
+  <!-- ★ 2026-11-17 統括Pro: フィードバックを「駅/地域」専用の分かりやすい仕組みに分離 -->
   <div id="feedback-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
-    <div id="feedback-modal" style="background:#fff;border-radius:12px;padding:20px;width:300px;display:flex;flex-direction:column;gap:10px;">
-      <p style="font-weight:bold;margin:0;font-size:14px;">💬 フィードバック</p>
-      <select id="feedback-category" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-        <option value="station_area_mismatch">🚉 駅/地域の誤判定</option>
-        <option value="station_map_request">🗺️ 駅マップ追加依頼</option>
-        <option value="bug_report">🐛 バグ報告</option>
-        <option value="other">💬 その他</option>
+    <div id="feedback-modal" style="background:#fff;border-radius:12px;padding:18px;width:min(360px,92vw);max-height:90vh;overflow:auto;display:flex;flex-direction:column;gap:10px;">
+      <p style="font-weight:bold;margin:0;font-size:14px;">場所の問題を報告</p>
+      <p style="margin:0;font-size:11px;color:#6B7280;line-height:1.4;">駅と地域が混ざると検索できません。起きたことを選ぶだけで送れます。</p>
+      <label style="font-size:12px;color:#374151;">種類</label>
+      <select id="feedback-category" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;">
+        <option value="station_area_mismatch">駅と地域の取り違え・混在</option>
+        <option value="station_map_request">駅・路線マップに無い</option>
+        <option value="bug_report">その他の不具合</option>
+        <option value="other">その他</option>
       </select>
-      <textarea id="feedback-text" placeholder="例：「日本橋」が地域でも検索されてしまった" rows="4" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
+      <div id="fb-place-panel" style="display:flex;flex-direction:column;gap:8px;">
+        <label style="font-size:12px;color:#374151;">何が起きた？（1つ選ぶ）</label>
+        <div id="fb-kind-chips" style="display:flex;flex-wrap:wrap;gap:6px;">
+          <button type="button" class="fb-kind" data-kind="mixed_both" style="padding:6px 10px;border:1px solid #c7d2fe;border-radius:999px;background:#eef2ff;font-size:12px;cursor:pointer;">駅と地域が両方入った</button>
+          <button type="button" class="fb-kind" data-kind="station_as_area" style="padding:6px 10px;border:1px solid #ddd;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;">駅なのに地域でも検索された</button>
+          <button type="button" class="fb-kind" data-kind="area_as_station" style="padding:6px 10px;border:1px solid #ddd;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;">地域なのに駅でも検索された</button>
+          <button type="button" class="fb-kind" data-kind="station_not_press" style="padding:6px 10px;border:1px solid #ddd;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;">駅が押せなかった</button>
+          <button type="button" class="fb-kind" data-kind="area_not_reg" style="padding:6px 10px;border:1px solid #ddd;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;">地域が登録できなかった</button>
+          <button type="button" class="fb-kind" data-kind="clear_miss" style="padding:6px 10px;border:1px solid #ddd;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;">前の場所の外し忘れ</button>
+        </div>
+        <label style="font-size:12px;color:#374151;">あるべき場所の入れ方</label>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="fb-expect" data-expect="station" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">駅・沿線</button>
+          <button type="button" class="fb-expect" data-expect="ward" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">地域（区・町）</button>
+        </div>
+        <label style="font-size:12px;color:#374151;">問題の語（例: 日本橋）</label>
+        <input id="feedback-token" type="text" placeholder="駅名や地名を1つ" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;box-sizing:border-box;" />
+        <p id="fb-auto-context" style="margin:0;font-size:11px;color:#6B7280;line-height:1.35;"></p>
+      </div>
+      <label style="font-size:12px;color:#374151;">補足（任意）</label>
+      <textarea id="feedback-text" placeholder="任意：気づいたことを短く" rows="2" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
       <div style="display:flex;gap:8px;">
-        <button id="feedback-submit-btn" style="flex:1;padding:8px;background:#00796B;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;">送信</button>
-        <button id="feedback-cancel-btn" style="flex:1;padding:8px;background:#f3f4f6;color:#374151;border:none;border-radius:8px;font-size:13px;cursor:pointer;">キャンセル</button>
+        <button id="feedback-submit-btn" style="flex:1;padding:10px;background:#00796B;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;">送信</button>
+        <button id="feedback-cancel-btn" style="flex:1;padding:10px;background:#f3f4f6;color:#374151;border:none;border-radius:8px;font-size:13px;cursor:pointer;">閉じる</button>
       </div>
       <p id="feedback-status" style="margin:0;font-size:12px;text-align:center;color:#6B7280;"></p>
     </div>

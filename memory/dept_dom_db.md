@@ -59,6 +59,21 @@
 | モーダル確定・閉じる | `div.this_window_close` | 2026-05-17 | DevTools調査済 |
 | 駅ボタン | `label` テキスト一致（`selectStationsByName` 関数で処理） | 2026-05-17 | |
 
+### ★ 画面把握（2026-11-17・2.8.69）— 構造の正本
+
+沿線・駅モーダルは **同じ小窓の中で画面が切り替わる**。数（vis）だけで判断すると誤操作する。
+
+| kind | 印（全部見る） | やってよい操作 | やってはいけない |
+|---|---|---|---|
+| `line_list` | `label.one_line` 可視 ＋「駅の設定へ進む」 | 沿線の外し／選び、駅へ進む | 駅を外す・沿線へ戻る |
+| `station_list` | `label.one_station` 可視 ＋「沿線の設定へ戻る」 | 駅の外し／選び、沿線へ戻る | 沿線を直外し・駅へ進む連打 |
+| `closed` | 上記なし | 絞り込み＋で開き直す | 路線一覧待ちでタイムアウト |
+| `unknown` | 印が混在／過渡 | 待つ・再把握 | 推測で押す |
+
+所在地: `pref_list` / `ward_list`（`label.one_city`）/ `town_list`（`label.one_town`）/ `closed`
+
+コード: `_graspStationModalScreen()` / `_graspAreaModalScreen()` → 監査 `screen_grasp`
+
 ### その他フォーム要素
 
 | 要素 | セレクタ | 確認日 | 備考 |

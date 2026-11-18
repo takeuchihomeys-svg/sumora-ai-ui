@@ -12,7 +12,8 @@
 // 実行: npx tsx --env-file=.env.local app/lib/__tests__/learn-flow-steps.test.ts
 import {
   learnSceneFlows, findWeakScenes, sceneOfOp, describeSceneFlow, scenePlaybook, lastSceneOf, SCENE_JA,
-  type FlowOp,
+  sceneOfFieldName, linkFieldsToScenes, qualityCycleLine,
+  type FlowOp, type SceneFlow,
 } from "../learn-flow-steps";
 
 let pass = 0, fail = 0;
@@ -28,14 +29,21 @@ console.log("■ ① 操作の名前から場面を決める（実際の name �
 {
   ok("所在地絞り込み＋ は area", sceneOfOp("click:所在地絞り込み＋") === "area");
   ok("city_code[] は area", sceneOfOp("change:city_code[]") === "area");
-  ok("確定してリストへ は other（場所を選ぶ操作ではない）", sceneOfOp("click:確定してリストへ") === "other");
+  ok("確定してリストへ は area（所在地の小窓を閉じる最後の一手）", sceneOfOp("click:確定してリストへ") === "area");
   ok("transportation_id は station", sceneOfOp("change:transportation_id") === "station");
   ok("required_time（駅からの徒歩）は station", sceneOfOp("change:required_time") === "station");
+  ok("駅の設定へ進む は station（areaに落とさない・2026-11-17）", sceneOfOp("click:駅の設定へ進む") === "station");
+  ok("小窓の駅の設定へ進む｜span は station", sceneOfOp("click:小窓の駅の設定へ進む｜span.next") === "station");
+  ok("沿線の設定へ戻る は station", sceneOfOp("click:沿線の設定へ戻る") === "station");
+  ok("地域の設定へ進む は area のまま", sceneOfOp("click:地域の設定へ進む") === "area");
   ok("rental_cost2 は cond", sceneOfOp("change:rental_cost2") === "cond");
   ok("update_date は cond", sceneOfOp("change:update_date") === "cond");
   ok("go_search は search", sceneOfOp("click:go_search") === "search");
   ok("go_search_submit は search", sceneOfOp("click:go_search_submit") === "search");
   ok("次のページ は next", sceneOfOp("click:次のページ") === "next");
+  ok("左の次｜td.pager は next（実測名・2026-11-16）", sceneOfOp("click:左の次｜td.pager") === "next");
+  ok("左のnext｜span は next", sceneOfOp("click:左のnext｜span") === "next");
+  ok("次 単体も next", sceneOfOp("click:次") === "next");
   ok("next_page は next", sceneOfOp("click:next_page") === "next");
   ok("building_tr（物件の行）は list", sceneOfOp("click:building_tr") === "list");
   ok("key だけ（名前なし）は other", sceneOfOp("key") === "other");
@@ -73,11 +81,11 @@ console.log("\n■ ② 人の順番を場面ごとに分ける（実際の1回�
   ok("area が出る", !!by("area"), flows.map((f) => f.scene));
   ok("  区の名前が順番に入る", JSON.stringify(by("area")?.steps.slice(0, 2)) === JSON.stringify(["所在地絞り込み＋", "大阪市西区"]), by("area")?.steps);
   ok("  ⚠ change: は click: と同じ欄なので畳む（交互に数えない）",
-    JSON.stringify(by("area")?.steps) === JSON.stringify(["所在地絞り込み＋", "大阪市西区", "city_code[]", "大阪市中央区", "city_code[]", "大阪市北区", "city_code[]"]), by("area")?.steps);
+    JSON.stringify(by("area")?.steps) === JSON.stringify(["所在地絞り込み＋", "大阪市西区", "city_code[]", "大阪市中央区", "city_code[]", "大阪市北区", "city_code[]", "確定してリストへ"]), by("area")?.steps);
   ok("station は transportation_id → required_time", JSON.stringify(by("station")?.steps) === JSON.stringify(["transportation_id", "required_time"]), by("station")?.steps);
   ok("cond は update_date → rental_cost2", JSON.stringify(by("cond")?.steps) === JSON.stringify(["update_date", "rental_cost2"]), by("cond")?.steps);
   ok("search が出る", !!by("search"));
-  ok("確定してリストへ は場面に入れない", !flows.some((f) => f.steps.includes("確定してリストへ")));
+  ok("確定してリストへ は area の最後の一手（小窓を閉じる）", by("area")?.steps.slice(-1)[0] === "確定してリストへ", by("area")?.steps);
   ok("手数の多い場面が先（area が先頭）", flows[0].scene === "area", flows.map((f) => f.scene));
 }
 
@@ -173,7 +181,7 @@ console.log("\n■ ⑨ 止まった場面は「時系列で最後」（手数が
   // 手数が多い順の先頭は area（＝ここを取り違えていた）
   ok("  ⚠ 手数が多い順の先頭は area（これを最後と誤解していた）", learnSceneFlows([run])[0].scene === "area");
   ok("文字入力（key）だけなら1つ前の場面", lastSceneOf([H("click:rental_cost2", 1), H("key", 2), H("key", 3)]) === "cond");
-  ok("場面が無ければ null", lastSceneOf([H("確定してリストへ", 1)]) === null);
+  ok("場面が無ければ null", lastSceneOf([H("click:全く無関係なXYZボタン", 1)]) === null);
   ok("空でも落ちない", lastSceneOf([]) === null);
 }
 
@@ -186,6 +194,22 @@ console.log("\n■ ⑩ 壊れない");
   ok("k が無い操作は飛ばす", learnSceneFlows([[{ t: 1 }, { k: "change:city_code[]", t: 2 }]])[0].ops === 1);
   ok("弱い所が無ければ空", findWeakScenes([]).every((w) => w.kind === "no_example") || findWeakScenes([]).length > 0);
   ok("describeSceneFlow が落ちない", typeof describeSceneFlow(learnSceneFlows([[H("change:city_code[]", 1)]])[0]) === "string");
+}
+
+console.log("\n■ ⑪ 課題欄↔場面の連動／質の循環（2026-11-16）");
+{
+  ok("required_time → station", sceneOfFieldName("required_time") === "station");
+  ok("rental_cost2 → cond", sceneOfFieldName("rental_cost2") === "cond");
+  ok("区を選ぶ → area（city_code[]の別名・場面薄い誤りの防止）", sceneOfFieldName("区を選ぶ") === "area");
+  ok("city_code[] → area", sceneOfFieldName("city_code[]") === "area");
+  const flows: SceneFlow[] = [
+    { scene: "station", runs: 5, ops: 20, raw_ops: 22, variants: 2, gap_ms: 500, steps: ["transportation_id", "required_time"] },
+    { scene: "cond", runs: 3, ops: 12, raw_ops: 14, variants: 1, gap_ms: 400, steps: ["rental_cost2"] },
+  ];
+  const links = linkFieldsToScenes(["required_time", "rental_cost2", "謎"], flows);
+  ok("連動が2つ以上", links.length >= 2, links);
+  ok("required_time に手本あり", links.some((l) => l.field === "required_time" && l.hasExample));
+  ok("循環の行に学ぶ・土台・再現", /学ぶ/.test(qualityCycleLine({ reproducePct: 35, foundationGaps: 3 })) && /土台/.test(qualityCycleLine({ reproducePct: 35, foundationGaps: 3 })));
 }
 
 console.log("\n" + pass + " passed, " + fail + " failed");

@@ -3089,31 +3089,11 @@ function buildCustomerConditionsString(c) {
 }
 
 // ── View 2: Site selection ─────────────────────────────────────────
-function openSiteView(customer) {
-  /**
-   * ★ 2026-11-16 勇気さん実測（owner_mismatch）:
-   *   り さんの検索〜送付中に UI で勇気を選ぶと `current_customer_id` が上書きされ、
-   *   送る相手が勇気・検索の回はり → owner_mismatch で止まり「前客から切替できない」に見える。
-   *   → 一連ロック中は **別客の storage 上書きをしない**（画面は開ける・送る相手は進行中の客のまま）。
-   */
-  var _pipeBusy = null;
-  try { _pipeBusy = (customer && customer.id && _axPipelineBlocks(customer.id)) ? _axPipelineActive() : null; } catch (_) { _pipeBusy = null; }
-  if (_pipeBusy) {
-    console.warn("[AX] 一連ロック中のため送る相手の切替を保留: 進行中=" + (_pipeBusy.name || _pipeBusy.customerId) + " / 選んだ=" + (customer.customer_name || customer.id));
-    try {
-      var _uw2 = document.getElementById("unknown-warn");
-      if (_uw2) {
-        _uw2.style.display = "block";
-        _uw2.textContent = "⏳ " + ((_pipeBusy.name) || "前のお客さん") + " の検索〜送付が終わるまで、送る相手は切り替えません（選んだ: " + (customer.customer_name || "") + "）";
-      }
-    } catch (_) {}
-  }
-  selectedCustomer = customer;
-  // ★ 顧客選択時に名前・ID・条件文字列をstorageに保存
-  //   （全ページ送る時のLINEヘッダー名 ＋ 一番オススメAIランキングのフォールバック用。
-  //    リアプロは検索実行でページがリロードされ popup iframe ごと消えるため、
-  //    一括検索の Case C 起動時は必ずこの storage フォールバックが使われる）
-  if (customer.customer_name && !_pipeBusy) {
+/** 一連ロック中に選んだ次客（解除後に送る相手＝storage へ反映する） */
+var _pendingShareCustomer = null;
+function _writeCurrentCustomerStorage(customer, why) {
+  if (!customer || !customer.customer_name) return;
+  try {
     chrome.storage.local.set({
       current_customer_name: customer.customer_name,
       current_customer_id: customer.id || null,
@@ -3122,6 +3102,58 @@ function openSiteView(customer) {
       current_conversation_id: (customer.parent_customer_id && customer.linked_conversation && customer.linked_conversation.id) ? String(customer.linked_conversation.id) : null,
       current_customer_conditions: buildCustomerConditionsString(customer)
     });
+    console.log("[AX] 送る相手を storage に反映: " + (customer.customer_name || customer.id) + (why ? "（" + why + "）" : ""));
+  } catch (_) {}
+}
+/**
+ * ★ 2026-11-17: 一連解除後、UI で選んでいる新客を送る相手として共有する。
+ *   ロック中は storage を前客のまま残す（owner_mismatch 防止）。
+ *   解除後に反映しないと、物件保存・送付が前客のままになる抜けがあった。
+ */
+function _flushPendingShareCustomer(why) {
+  var c = _pendingShareCustomer || selectedCustomer;
+  _pendingShareCustomer = null;
+  if (!c || !c.id) return;
+  if (_axPipelineBlocks(c.id)) return;
+  _writeCurrentCustomerStorage(c, why || "pipeline-clear");
+  try {
+    var _uw3 = document.getElementById("unknown-warn");
+    if (_uw3 && /送る相手は切り替えません/.test(String(_uw3.textContent || ""))) {
+      _uw3.style.display = "block";
+      _uw3.textContent = "✅ 送る相手を「" + (c.customer_name || "") + "」に切り替えました（新しいお客さんとして共有）";
+    }
+  } catch (_) {}
+}
+function openSiteView(customer) {
+  /**
+   * ★ 2026-11-16 勇気さん実測（owner_mismatch）:
+   *   り さんの検索〜送付中に UI で勇気を選ぶと `current_customer_id` が上書きされ、
+   *   送る相手が勇気・検索の回はり → owner_mismatch で止まり「前客から切替できない」に見える。
+   *   → 一連ロック中は **別客の storage 上書きをしない**（画面は開ける・送る相手は進行中の客のまま）。
+   * ★ 2026-11-17: ロック中に選んだ客は `_pendingShareCustomer` に残し、解除後に新客として共有する。
+   */
+  var _pipeBusy = null;
+  try { _pipeBusy = (customer && customer.id && _axPipelineBlocks(customer.id)) ? _axPipelineActive() : null; } catch (_) { _pipeBusy = null; }
+  if (_pipeBusy) {
+    _pendingShareCustomer = customer;
+    console.warn("[AX] 一連ロック中のため送る相手の切替を保留: 進行中=" + (_pipeBusy.name || _pipeBusy.customerId) + " / 選んだ=" + (customer.customer_name || customer.id));
+    try {
+      var _uw2 = document.getElementById("unknown-warn");
+      if (_uw2) {
+        _uw2.style.display = "block";
+        _uw2.textContent = "⏳ " + ((_pipeBusy.name) || "前のお客さん") + " の検索〜送付が終わるまで、送る相手は切り替えません（選んだ: " + (customer.customer_name || "") + "）";
+      }
+    } catch (_) {}
+  } else {
+    _pendingShareCustomer = null;
+  }
+  selectedCustomer = customer;
+  // ★ 顧客選択時に名前・ID・条件文字列をstorageに保存
+  //   （全ページ送る時のLINEヘッダー名 ＋ 一番オススメAIランキングのフォールバック用。
+  //    リアプロは検索実行でページがリロードされ popup iframe ごと消えるため、
+  //    一括検索の Case C 起動時は必ずこの storage フォールバックが使われる）
+  if (customer.customer_name && !_pipeBusy) {
+    _writeCurrentCustomerStorage(customer, "openSiteView");
   }
   document.getElementById("site-customer-name").textContent = customer.customer_name;
 
@@ -3536,6 +3568,7 @@ function _axPipelineActive() {
     console.warn("[AX] 一連ロック TTL切れ → 解除（" + (_axPipelineJob.name || _axPipelineJob.customerId) + "）");
     _axPipelineJob = null;
     try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
+    try { _flushPendingShareCustomer("ttl"); } catch (_) {}
     return null;
   }
   return _axPipelineJob;
@@ -3574,6 +3607,8 @@ function _axPipelineClear(reason, onlyCustomerId) {
   } else if (reason) {
     console.log("[AX] 一連ロック解除（メモリ無し）: " + reason);
   }
+  // ★ 2026-11-17: 解除後に UI で選んでいる新客を送る相手として共有（物件保存が前客のままになる抜けを止める）
+  try { _flushPendingShareCustomer(reason || "pipeline-clear"); } catch (_) {}
 }
 function _axPipelineBlocks(customerId) {
   var j = _axPipelineActive();
@@ -4077,6 +4112,18 @@ async function _openAndClickAutofill(d, o) {
     if (!c) {
       console.warn("[popup] " + (o.via || "switch") + ": 顧客が見つかりません id=", d.customerId);
       return { ok: false, reason: "customer-not-found" };
+    }
+    /**
+     * ★ 2026-11-18 竹内さん「ほかのお客さんの情報が上書きされたりしてしまう」:
+     *   旧は画面（openSiteView）を次のお客さんに切り替えてから関所を見ていた／pendingPopupCmd は関所が無かった。
+     *   → 画面を切り替える前に、別のお客さんの一連（検索〜送付）が残っていれば何も触らずに断る。
+     */
+    if (typeof _axPipelineSyncFromStorage === "function") {
+      var _job = await _axPipelineSyncFromStorage();
+      if (_job && String(_job.customerId) !== String(c.id)) {
+        console.warn("[popup] " + (o.via || "switch") + ": 一連未完了のため画面を切り替えません 進行中=" + (_job.name || _job.customerId) + " / 次=" + c.id);
+        return { ok: false, reason: "pipeline_busy", busyCustomerId: String(_job.customerId) };
+      }
     }
     openSiteView(c);
     if (!d.site) return { ok: false, reason: "no-site" };
@@ -4853,6 +4900,7 @@ function openInstructions(siteKey) {
         _clickAuditCtx(autofillBtn);
         return;
       }
+      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
       _itandiFillRunningAt = Date.now();
       const _auditCtx_it = _clickAuditCtx(autofillBtn); // await 前に取得
       try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
@@ -5401,6 +5449,7 @@ function openInstructions(siteKey) {
     });
 
     autofillBtn.onclick = async () => {
+      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
       const _auditCtx_rp = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得（点検の文脈は click に直接渡る）
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
@@ -5472,21 +5521,27 @@ function openInstructions(siteKey) {
       // ── ボタンを即座にローディング表示（APIを待たせても固まって見えないように）──
       autofillBtn.textContent = "⏳ エリア解決中...";
       autofillBtn.disabled = true;
-      // 「エリア解決中...」固まり防衛: 20秒以内に「検索中...」に進まなければ自動リセット
-      // （APIエラー・JSエラー等で中断した場合、ボタンが永遠に disabled のままになるのを防ぐ）
+      /**
+       * ★ 2026-11-17 実愛さん画面: 「エリア解決中...」のまま地域・賃料・徒歩が前客のまま。
+       *   旧: API待ちで例外／固まり → 検索に進まずフォーム未更新。ウォッチドッグはボタンだけ戻す。
+       *   → API失敗でも**必ずローカル条件で fill へ進む**（finally でウォッチドッグ解除）。
+       */
       var _areaResolveWatchdog = setTimeout(function() {
-        var _b = document.getElementById("autofill-btn");
-        if (_b && _b.disabled && (_b.textContent || "").includes("エリア解決中")) {
-          _b.textContent = "🔍 リアプロで自動検索";
-          _b.disabled = false;
-          console.warn("[AX] エリア解決中 タイムアウト(20s): 自動リセット");
-        }
-      }, 20000);
+        console.warn("[AX] エリア解決中 15s超過: ローカル条件で続行を促す（ボタンは fill 開始まで維持）");
+      }, 15000);
       // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
       // フォールバック: c.id がない場合（旧顧客）は既存 resolveAreaWithAPI を使う
-      const apiData = c.id
-        ? await fetchBrainSearchParams(c.id, adjAreaClean)
-        : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
+      let apiData = null;
+      try {
+        apiData = c.id
+          ? await fetchBrainSearchParams(c.id, adjAreaClean)
+          : await resolveAreaWithAPI(adjAreaClean, "auto", adjC.id);
+      } catch (_areaErr) {
+        console.warn("[AX] エリア解決失敗 → ローカル条件で続行:", (_areaErr && _areaErr.message) || _areaErr);
+        apiData = null;
+      } finally {
+        clearTimeout(_areaResolveWatchdog);
+      }
 
       // ② ブレインAPI結果を地域・駅フィールドに反映（明示分離）
       // ユーザーが一時調整で手動入力した値がある場合はAPIで上書きしない（バグ修正）
@@ -5991,14 +6046,17 @@ function openInstructions(siteKey) {
           last_touch_date:      lastPropertyTouchDateJst(c) || null,
         }});
       } catch (_) { /* ignore */ }
-      clearTimeout(_areaResolveWatchdog); // エリア解決完了 → ウォッチドッグ解除
       autofillBtn.textContent = "⏳ 検索中...";
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
       autofillBtn.disabled = true;
       // ★ 一連ロック: 検索開始〜送付完了までこのお客さんだけ（次客の自動検索を止める）
       try { _axPipelineStart(c, "realpro"); } catch (_) {}
-      // fill-done が 25秒以内に来なければボタンだけリセット（一連ロックは送付完了/TTLまで残す）
+      /**
+       * ★ 2026-11-17 実愛さん: 旧25秒は人らしいクリア＋地域＋確定＋条件1つずつに足りない。
+       *   bg の fill 待ちは約905秒。UIだけ先に戻すと「止まって条件未更新」に見える。
+       *   → **180秒**まで待つ（ボタンリセットのみ・fill本体は止めない）。
+       */
       clearTimeout(_fillDoneWatchdog);
       _fillDoneWatchdog = setTimeout(() => {
         const _b = document.getElementById("autofill-btn");
@@ -6006,9 +6064,9 @@ function openInstructions(siteKey) {
           _b.textContent = "🔍 リアプロで自動検索";
           _b.classList.remove("searching", "done");
           _b.disabled = false;
-          console.warn("[AX] fill-done タイムアウト: 25秒以内に完了通知が来なかったためリセット");
+          console.warn("[AX] fill-done UIタイムアウト: 180秒以内に完了通知なし（fill本体は継続し得る）");
         }
-      }, 25000);
+      }, 180000);
       // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
       recordSearchForSelected("realpro");
     };
@@ -6610,6 +6668,17 @@ function _initModeSelect() {
   }
 }
 
+/** ★ 2026-11-18: 検索（autofill）の直前に background で学習束を版確認／取り込み（ポップアップだけに依存しない） */
+function _axLearnRefreshBeforeAutofill(cb) {
+  try {
+    chrome.runtime.sendMessage({ type: "axlx-learn-refresh" }, function () {
+      if (typeof cb === "function") cb();
+    });
+  } catch (_) {
+    if (typeof cb === "function") cb();
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   _initModeSelect();
@@ -6623,14 +6692,19 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (r) {
       if (chrome.runtime.lastError) return;
       try {
-        if (r && r.ok && !r.empty) console.log("[AX] 学習束を再取得:", r.skipped || "ok", r.link || "", "read=" + (r.server_read_count != null ? r.server_read_count : "?"));
+        if (r && r.ok && !r.empty) console.log("[AX] 学習束を再取得:", r.skipped || "ok", r.link || "", "read=" + (r.server_read_count != null ? r.server_read_count : "?"), "needs_auto=" + !!r.needs_auto);
         var el = document.getElementById("unknown-warn");
         if (el && r && r.ok) {
           var rd = (r.server_read_count != null) ? r.server_read_count : "?";
+          var sol = (r.screen_solid != null) ? r.screen_solid : "?";
           el.style.display = "block";
-          el.textContent = r.empty
-            ? "⚠ 学習束が空です"
-            : ("✅ 学習反映: 束を読みました（read " + rd + "・" + (r.skipped || "取得") + "）→ 自動1回で効果確認");
+          if (r.empty) {
+            el.textContent = "⚠ 学習束が空です";
+          } else if (r.needs_auto) {
+            el.textContent = "⚠ 学習は届いたが自動未確認（solid " + sol + "・read " + rd + "）→ 自動モードで1回検索して反映確認";
+          } else {
+            el.textContent = "✅ 学習反映: 束を読みました（solid " + sol + "・read " + rd + "・" + (r.skipped || "取得") + "）";
+          }
         }
       } catch (_) {}
     });
@@ -7162,19 +7236,68 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// ── フィードバック機能 ──────────────────────────────
+// ── フィードバック（駅/地域は選択式・別仕組み）2026-11-17 統括Pro ──
 (function() {
   var fbBtn = document.getElementById('feedback-btn');
   var fbOverlay = document.getElementById('feedback-overlay');
   var fbCancel = document.getElementById('feedback-cancel-btn');
   var fbSubmit = document.getElementById('feedback-submit-btn');
   var fbStatus = document.getElementById('feedback-status');
+  var fbCat = document.getElementById('feedback-category');
+  var fbPlace = document.getElementById('fb-place-panel');
+  var fbKind = null;
+  var fbExpect = null;
+  var KIND_JA = {
+    mixed_both: '駅と地域が両方入った',
+    station_as_area: '駅なのに地域でも検索された',
+    area_as_station: '地域なのに駅でも検索された',
+    station_not_press: '駅が押せなかった',
+    area_not_reg: '地域が登録できなかった',
+    clear_miss: '前の場所の外し忘れ',
+  };
 
   if (!fbBtn || !fbOverlay) return;
+
+  function refreshPlacePanel() {
+    var isPlace = fbCat && fbCat.value === 'station_area_mismatch';
+    if (fbPlace) fbPlace.style.display = isPlace ? 'flex' : 'none';
+    var ctx = document.getElementById('fb-auto-context');
+    if (ctx) {
+      var areaRaw = (typeof selectedCustomer !== 'undefined' && selectedCustomer)
+        ? (selectedCustomer.desired_area || selectedCustomer.area || '') : '';
+      var mode = (typeof selectedCustomer !== 'undefined' && selectedCustomer && selectedCustomer.area_mode)
+        ? String(selectedCustomer.area_mode) : '';
+      var siteKey = (typeof selectedSite !== 'undefined' ? selectedSite : '') || '';
+      var name = (typeof selectedCustomer !== 'undefined' && selectedCustomer)
+        ? (selectedCustomer.name || selectedCustomer.customer_name || '') : '';
+      ctx.textContent = '自動添付: 客=' + (name || '未選択')
+        + '／希望=' + (String(areaRaw).slice(0, 40) || 'なし')
+        + '／mode=' + (mode || '?')
+        + '／site=' + (siteKey || '?');
+    }
+  }
+
+  function paintChips() {
+    document.querySelectorAll('.fb-kind').forEach(function (b) {
+      var on = b.getAttribute('data-kind') === fbKind;
+      b.style.background = on ? '#eef2ff' : '#fff';
+      b.style.borderColor = on ? '#6366f1' : '#ddd';
+    });
+    document.querySelectorAll('.fb-expect').forEach(function (b) {
+      var on = b.getAttribute('data-expect') === fbExpect;
+      b.style.background = on ? '#ecfdf5' : '#fff';
+      b.style.borderColor = on ? '#059669' : '#ddd';
+    });
+  }
 
   fbBtn.addEventListener('click', function() {
     fbOverlay.style.display = 'flex';
     fbStatus.textContent = '';
+    fbStatus.style.color = '#6B7280';
+    fbKind = 'mixed_both';
+    fbExpect = null;
+    paintChips();
+    refreshPlacePanel();
   });
   fbCancel.addEventListener('click', function() {
     fbOverlay.style.display = 'none';
@@ -7182,30 +7305,93 @@ document.addEventListener("DOMContentLoaded", () => {
   fbOverlay.addEventListener('click', function(e) {
     if (e.target === fbOverlay) fbOverlay.style.display = 'none';
   });
+  if (fbCat) fbCat.addEventListener('change', refreshPlacePanel);
+  document.querySelectorAll('.fb-kind').forEach(function (b) {
+    b.addEventListener('click', function () {
+      fbKind = b.getAttribute('data-kind');
+      paintChips();
+    });
+  });
+  document.querySelectorAll('.fb-expect').forEach(function (b) {
+    b.addEventListener('click', function () {
+      fbExpect = b.getAttribute('data-expect');
+      paintChips();
+    });
+  });
+
   fbSubmit.addEventListener('click', async function() {
-    var category = document.getElementById('feedback-category').value;
-    var content = document.getElementById('feedback-text').value.trim();
-    if (!content) { fbStatus.textContent = '内容を入力してください'; return; }
+    var category = fbCat ? fbCat.value : 'other';
+    var note = (document.getElementById('feedback-text') || {}).value || '';
+    note = String(note).trim();
+    var token = (document.getElementById('feedback-token') || {}).value || '';
+    token = String(token).trim();
+    var isPlace = category === 'station_area_mismatch';
+    if (isPlace) {
+      if (!fbKind) {
+        fbStatus.style.color = '#b91c1c';
+        fbStatus.textContent = '「何が起きたか」を1つ選んでください';
+        return;
+      }
+      if (!fbExpect) {
+        fbStatus.style.color = '#b91c1c';
+        fbStatus.textContent = '「あるべき入れ方」（駅か地域）を選んでください';
+        return;
+      }
+      if (!token && !note) {
+        fbStatus.style.color = '#b91c1c';
+        fbStatus.textContent = '問題の語（例: 日本橋）を入れてください';
+        return;
+      }
+    } else if (!note) {
+      fbStatus.style.color = '#b91c1c';
+      fbStatus.textContent = '内容を短く書いてください（プレースホルダは送れません）';
+      return;
+    }
+
+    var areaRaw = (typeof selectedCustomer !== 'undefined' && selectedCustomer)
+      ? (selectedCustomer.desired_area || selectedCustomer.area || '') : '';
+    var mode = (typeof selectedCustomer !== 'undefined' && selectedCustomer && selectedCustomer.area_mode)
+      ? String(selectedCustomer.area_mode) : '';
+    var siteKey = (typeof selectedSite !== 'undefined' ? selectedSite : '') || '';
+    var content = isPlace
+      ? [
+          '【種別】' + (KIND_JA[fbKind] || fbKind),
+          '【あるべき】' + (fbExpect === 'ward' ? '地域（区・町）' : '駅・沿線'),
+          token ? ('【語】' + token) : '',
+          mode ? ('【客area_mode】' + mode) : '',
+          note ? ('【補足】' + note) : '',
+        ].filter(Boolean).join('\n')
+      : note;
+
     fbSubmit.disabled = true;
+    fbStatus.style.color = '#6B7280';
     fbStatus.textContent = '送信中…';
     try {
-      var areaRaw = (selectedCustomer) ? (selectedCustomer.desired_area || selectedCustomer.area || '') : '';
-      var siteKey = selectedSite || '';
       var res = await fetch(API_BASE + '/api/chrome-extension-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: category, content: content, area_raw: areaRaw, site: siteKey })
+        body: JSON.stringify({
+          category: category,
+          content: content,
+          area_raw: areaRaw,
+          token: token || null,
+          site: siteKey,
+        }),
       });
       var json = await res.json();
       if (json.ok) {
-        fbStatus.textContent = '✅ 送信しました！';
-        document.getElementById('feedback-text').value = '';
-        setTimeout(function() { fbOverlay.style.display = 'none'; }, 1200);
+        fbStatus.style.color = '#047857';
+        fbStatus.textContent = '送信しました。統括の改善材料に残ります';
+        if (document.getElementById('feedback-text')) document.getElementById('feedback-text').value = '';
+        if (document.getElementById('feedback-token')) document.getElementById('feedback-token').value = '';
+        setTimeout(function() { fbOverlay.style.display = 'none'; }, 1100);
       } else {
-        fbStatus.textContent = '❌ 送信失敗: ' + (json.error || '不明なエラー');
+        fbStatus.style.color = '#b91c1c';
+        fbStatus.textContent = '送信失敗: ' + (json.error || '不明');
       }
-    } catch(e) {
-      fbStatus.textContent = '❌ 通信エラー: ' + e.message;
+    } catch (e) {
+      fbStatus.style.color = '#b91c1c';
+      fbStatus.textContent = '通信エラー: ' + e.message;
     }
     fbSubmit.disabled = false;
   });

@@ -85,10 +85,97 @@ export type ShotLearn = {
    *   **画面のどこに何があるか**（領域ごとの欄の数と代表）。全体を読んだ時だけ入る。
    */
   zones?: Array<{ zone: string; n: number; names: string[] }>;
+  /** 検索のどの場面か（連続画像の流れ用） */
+  scene?: "area" | "station" | "cond" | "search" | "list" | "next" | "other";
+  /** 今どの操作の途中か（40字以内・入力の中身は書かない） */
+  flow_step?: string;
+  /** 直前の画面からの変化（50字以内） */
+  transition?: string;
+  /** 詰まり・エラー・押せない（無ければ null） */
+  stuck?: string | null;
+  /** 連続録画の run（任意） */
+  run_id?: string;
+};
+
+const FLOW_SCENES = ["area", "station", "cond", "search", "list", "next", "other"] as const;
+export type ShotFlowScene = (typeof FLOW_SCENES)[number];
+
+/** 場面ラベルを整える（有効値以外は other／空は未設定） */
+export function cleanScene(v: unknown): ShotFlowScene | undefined {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return undefined;
+  if ((FLOW_SCENES as readonly string[]).includes(s)) return s as ShotFlowScene;
+  return "other";
+}
+
+const flowText = (v: unknown, max: number): string | undefined => {
+  const t = String(v ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+  if (!t) return undefined;
+  /** 入力値・住所・金額らしき並びは落とす（個人情報を残さない） */
+  if (/\d{5,}|¥|円\s*\d|大阪市|堺市|梅田|難波/.test(t)) return undefined;
+  return t;
 };
 
 const KINDS = ["select", "text", "checkbox", "radio", "button", "link"];
 const norm = (s: unknown) => String(s == null ? "" : s).replace(/[\s\u3000]+/g, "").trim().slice(0, 30);
+
+/** 操作がプルダウンと分かっている欄（Vision が button/text と読んでも食い違いにしない） */
+const KNOWN_SELECT_FIELD_RE =
+  /^(rental_cost|update_date|square_meter|structured_date|transportation_id|required_time|分$)/i;
+
+/** 記録側が step・写真が button になりやすいラベル（手順ボタン） */
+const STEP_LABEL_FIELD_RE =
+  /確定してリストへ|駅の設定へ進む|沿線の設定へ戻る|沿線・駅絞り込み|所在地絞り込み|沿線を選ぶ|次のページ|最初|最後|前へ|次へ|検索/;
+
+const PHOTO_UI_KINDS = new Set(["button", "link", "click"]);
+
+/**
+ * 記録の種類と写真の種類のズレが**想定内**か（弱い所に居座らせない）。
+ * 実測: select は click→change で記録が select・Vision が text/button/click。
+ * step は手順記録・Vision が button/click。
+ */
+export function isBenignKindMismatch(
+  from: string | null | undefined,
+  photoKind: string,
+  name: string,
+): boolean {
+  if (from == null) return false;
+  const f = String(from);
+  const p = String(photoKind);
+  if (f === p) return false;
+  const n = String(name || "");
+  if (f === "select" && p === "text") return true;
+  if (f === "select" && PHOTO_UI_KINDS.has(p)) {
+    if (KNOWN_SELECT_FIELD_RE.test(n)) return true;
+    return guessKindFromName(n)?.kind === "select";
+  }
+  if (f === "text" && p === "click" && (KNOWN_SELECT_FIELD_RE.test(n) || guessKindFromName(n)?.kind === "text")) return true;
+  if ((f === "step" || PHOTO_UI_KINDS.has(f)) && PHOTO_UI_KINDS.has(p) && STEP_LABEL_FIELD_RE.test(n)) return true;
+  if ((f === "step" && p === "click") || (f === "click" && p === "step")) return true;
+  if (f === "select" && (p === "checkbox" || PHOTO_UI_KINDS.has(p)) && /room_layout_id\[\]|^room_layout/i.test(n)) return true;
+  if (f === "checkbox" && PHOTO_UI_KINDS.has(p) && /\[\]$/.test(n)) return true;
+  return false;
+}
+
+/** 写真の中だけで種類が割れていても無視してよい組み合わせか */
+function isBenignPhotoKindSplit(kinds: Set<string>, name: string): boolean {
+  if (kinds.size <= 1) return false;
+  const ks = [...kinds];
+  const onlySelectText = ks.length === 2 && ks.includes("select") && ks.includes("text");
+  const lookSelect =
+    KNOWN_SELECT_FIELD_RE.test(name) || guessKindFromName(name)?.kind === "select";
+  if (onlySelectText && lookSelect) return true;
+  const ui = ks.filter((k) => PHOTO_UI_KINDS.has(k));
+  if (ks.includes("select") && ui.length && lookSelect) return true;
+  if (ks.includes("text") && ks.includes("click") && (/required_time|keyword|free_word/i.test(name) || guessKindFromName(name)?.kind === "text")) return true;
+  if ((ks.includes("checkbox") || ks.includes("select")) && ks.some((k) => PHOTO_UI_KINDS.has(k)) && /room_layout/i.test(name)) return true;
+  if (ks.every((k) => PHOTO_UI_KINDS.has(k) || k === "step") && (STEP_LABEL_FIELD_RE.test(name) || ks.includes("step"))) return true;
+  return false;
+}
 
 /**
  * 押す対象ではない「入れ物」の名前（学習に使わない）。
@@ -372,15 +459,36 @@ export function reconcilePoints(
      *   （実測: rental_cost1/2 は click→change なのに Vision が text と誤読）。
      *   種類は上書きしない・fixed にも入れない（永久に直らない指摘を出さない）。
      */
-    if (from === "select" && photoKind === "text") {
+    if (isBenignKindMismatch(from, photoKind, name)) {
       continue;
     }
-    const differs = from != null && String(from) !== photoKind;
+    if (from == null) {
+      out[name] = { ...v, w: photoKind, w_src: "photo", w_conf: 1 } as typeof v;
+      continue;
+    }
+  if (String(from) === photoKind) continue;
     out[name] = { ...v, w: photoKind, w_src: "photo", w_conf: 1 } as typeof v;
-    if (differs) fixed.push({ name, from, to: photoKind });
+    fixed.push({ name, from, to: photoKind });
   }
   void minConf;
   return { points: out, fixed };
+}
+
+/**
+ * ★ 2026-11-18 竹内さん「40欄の切り捨てを広げる（入れる）」:
+ *   写真で読んだ欄を束に載せる時、旧は画面ごと上位40欄で切っていた（実測: form は欄名1167種のうち1127種が落ち、
+ *   3回以上見た欄が480種・票の39%）。区名・駅名・×とじる・確定などの個別の欄が束に載らなかった。
+ *   → 上位40は必ず残し、その外でも**3回以上見た欄**を回数順に足す（上限 LEARNED_KEEP_MAX）。
+ *   ⚠ 1回だけ見た欄は捨てる（誤読を束に入れない）。拡張は同じ名前の欄を画面をまたいで回数の多い方を使うので、薄い欄で壊れない。
+ */
+export const LEARNED_KEEP_TOP = 40;
+export const LEARNED_KEEP_MIN_N = 3;
+export const LEARNED_KEEP_MAX = 300;
+export function keepLearnedFields<T extends { n?: unknown }>(fields: T[]): T[] {
+  const sorted = [...(Array.isArray(fields) ? fields : [])].sort((a, b) => (Number(b.n) || 0) - (Number(a.n) || 0));
+  const top = sorted.slice(0, LEARNED_KEEP_TOP);
+  const rest = sorted.slice(LEARNED_KEEP_TOP).filter((f) => (Number(f.n) || 0) >= LEARNED_KEEP_MIN_N);
+  return [...top, ...rest].slice(0, LEARNED_KEEP_MAX);
 }
 
 /**
@@ -422,6 +530,8 @@ export function learnFromShots(
   }>;
   total: number;
   withOps: number;
+  /** 場面別の位置（場面が確かな写真のみ・n≥2） */
+  byScene: Record<string, Array<{ name: string; kind: string; n: number; x: number; y: number }>>;
 } {
   /**
    * ⚠ 2026-11-15 **実測で見つけた穴**:
@@ -439,6 +549,13 @@ export function learnFromShots(
     pos: Record<string, { xs: number[]; ys: number[]; zones: Record<string, number> }>;
   };
   const acc: Record<string, Acc> = {};
+  /**
+   * ★ 2026-11-18 竹内さん「場面ごとの強化を画像学習にも紐づける」:
+   *   場面（area=所在地・station=沿線駅・cond=条件・search・list・next）ごとに、欄の位置を別に票にする。
+   *   画面（form/result/modal）だけでは「地域の○○」と「沿線の○○」が混ざるため。
+   *   ⚠ 場面が「other」か無いもの（757/1200 が未設定の実測）は入れない（推測で場面を付けない）。
+   */
+  const sceneAcc: Record<string, Record<string, { n: number; xs: number[]; ys: number[]; kinds: Record<string, number> }>> = {};
   let withOps = 0;
   const preferNormal = opt.mode === "normal";
 
@@ -504,7 +621,9 @@ export function learnFromShots(
         .filter((f) => f.name && f.kind);
     })();
 
-    const screen = screenOf({ url: s.url, ops, fields: learnedFields });
+    const slObj = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn as Record<string, unknown> : null);
+    const llmScreen = slObj ? cleanScreen(slObj.screen) : "other";
+    const screen = llmScreen !== "other" ? llmScreen : screenOf({ url: s.url, ops, fields: learnedFields });
     /**
      * 2026-11-14 竹内さん「データベースの写真から学習する」:
      *   ⚠ 実測で **`other` が3813枚**（学べているのは modal 226・form 75 だけ）。
@@ -533,6 +652,16 @@ export function learnFromShots(
         p.xs.push(f.x);
         p.ys.push(f.y);
         if (f.zone) p.zones[f.zone] = (p.zones[f.zone] ?? 0) + 1;
+        // ★ 場面が確かな行だけ、場面別の票にも入れる（other・未設定は入れない）
+        const rowSc = slObj ? cleanScene(slObj.scene) : undefined;
+        if (rowSc && rowSc !== "other") {
+          const sc = (sceneAcc[rowSc] ||= {});
+          const q = (sc[f.name] ||= { n: 0, xs: [], ys: [], kinds: {} });
+          q.n++;
+          q.xs.push(f.x);
+          q.ys.push(f.y);
+          q.kinds[f.kind] = (q.kinds[f.kind] ?? 0) + 1;
+        }
       }
     }
   }
@@ -570,11 +699,27 @@ export function learnFromShots(
           ...(zone ? { zone } : {}),
         };
       })
-      .sort((x, y) => y.n - x.n)
-      .slice(0, 40);
-    out[screen] = { n: a.n, lastPressed, steps: steps.slice(0, 40), fields };
+      .sort((x, y) => y.n - x.n);
+    out[screen] = { n: a.n, lastPressed, steps: steps.slice(0, 40), fields: keepLearnedFields(fields) };
   }
-  return { screens: out, total: Array.isArray(shots) ? shots.length : 0, withOps };
+  /**
+   * ★ 場面別の位置（束 `shots.learned_scene`）。
+   *   2票以上（n≥2）だけ残す（1枚の偶然を採らない）。位置は中央値・種類は多い方。
+   */
+  const byScene: Record<string, Array<{ name: string; kind: string; n: number; x: number; y: number }>> = {};
+  for (const [sc, names] of Object.entries(sceneAcc)) {
+    const list: Array<{ name: string; kind: string; n: number; x: number; y: number }> = [];
+    for (const [name, q] of Object.entries(names)) {
+      if (q.n < 2) continue;
+      const mx = median(q.xs);
+      const my = median(q.ys);
+      if (mx == null || my == null) continue;
+      const kind = Object.entries(q.kinds).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "?";
+      list.push({ name, kind, n: q.n, x: mx, y: my });
+    }
+    if (list.length) byScene[sc] = list.sort((x, y) => y.n - x.n).slice(0, LEARNED_KEEP_MAX);
+  }
+  return { screens: out, total: Array.isArray(shots) ? shots.length : 0, withOps, byScene };
 }
 
 /**
@@ -876,11 +1021,7 @@ export function findWeakPoints(
        *   統括が「種類割れ」を永久に次手にして、本当の穴（完走・手の形・束反映）が後ろに下がった。
        */
       const ks = [...kinds];
-      const onlySelectText = ks.length === 2 && ks.includes("select") && ks.includes("text");
-      const lookSelect =
-        /^(rental_cost|update_date|square_meter|structured_date|transportation_id)/i.test(name)
-        || (guessKindFromName(name)?.kind === "select");
-      if (onlySelectText && lookSelect) continue;
+      if (isBenignPhotoKindSplit(kinds, name)) continue;
       out.push({ kind: "kind_conflict_in_photo", name, why: "同じ欄が写真の中で違う種類に見えた（" + ks.join("/") + "）", next: "次の写真でも同じ欄を読んで、多い方を採る" });
     }
   }
@@ -906,6 +1047,7 @@ export function findWeakPoints(
     if (!f || !f.name) continue;
     if (f.from == null) continue;              // 埋めただけ（食い違いではない）
     if (String(f.from) === String(f.to)) continue;
+    if (isBenignKindMismatch(f.from, String(f.to ?? ""), f.name)) continue;
     out.push({ kind: "photo_vs_record", name: f.name, why: `記録は「${f.from}」だが写真は「${f.to}」`, next: "写真を採る（実際の見た目）・次の回でも同じか確かめる" });
   }
   // ④ 押せない欄を押している
@@ -927,7 +1069,7 @@ export function findWeakPoints(
 export const SHOT_LEARN_PROMPT = [
   "あなたはブラウザの画面写真を見て、フォームの作りだけを読み取る係です。",
   "次の JSON だけを返してください（説明文は書かない）。",
-  '{ "screen": "form" | "modal" | "result" | "other", "confidence": 0.0〜1.0, "fields": [ { "name": "...", "kind": "select|text|checkbox|radio|button|link", "x": 0.0〜1.0, "y": 0.0〜1.0, "enabled": true|false, "zone": "left|top|center|right|bottom|modal|other" } ] }',
+  '{ "screen": "form" | "modal" | "result" | "other", "confidence": 0.0〜1.0, "fields": [ { "name": "...", "kind": "select|text|checkbox|radio|button|link", "x": 0.0〜1.0, "y": 0.0〜1.0, "enabled": true|false, "zone": "left|top|center|right|bottom|modal|other" } ], "scene": "area|station|cond|search|list|next|other", "flow_step": "...", "transition": "...", "stuck": null | "..." }',
   "",
   /**
    * ★ 2026-11-15 竹内さん「画面全体見て把握できるようにする」:
@@ -976,6 +1118,11 @@ export const SHOT_LEARN_PROMPT = [
    *   ⚠ 物件名・住所・賃料などの中身は書かせない（個人情報・物件情報を残さない）。
    */
   "・中央の一覧（物件が並んでいる所）は、**行がいくつ見えるか**だけを `{ \"name\": \"一覧の行\", \"kind\": \"other\", \"zone\": \"center\", \"rows\": 数字 }` の形で1件返す。物件名・住所・賃料は書かない。",
+  "・任意で場面の流れも返す（入力の中身・物件名・住所・金額は絶対に書かない）:",
+  "・scene … area=所在地・区町 / station=沿線駅 / cond=条件入力 / search=検索実行 / list=一覧 / next=次へ・ページ送り / other=分からない",
+  "・flow_step … 今どの操作の途中か（例: 所在地小窓で区を選択中）。40字以内。欄に入った文字は書かない。",
+  "・transition … 直前の画面・操作からの変化（例: 入力→小窓が開いた／変化なし）。50字以内。",
+  "・stuck … 詰まり・エラー・グレーで押せない・想定と違う画面。無ければ null。50字以内。",
 ].join("\n");
 
 /** LLM の返事を読む（純関数・壊れた JSON でも落ちない） */
@@ -992,10 +1139,260 @@ export function parseShotLearn(text: string): ShotLearn {
      *   ⚠ これで「左の条件」「中央の一覧」「下のページ送り」を分けて数えられる。
      */
     const withZone = fields.map((f) => ({ ...f, zone: (f.zone && String(f.zone)) || zoneOf(f.x, f.y) }));
-    return { screen: cleanScreen(j.screen), fields: withZone, by: "llm", confidence: conf, zones: summarizeZones(withZone) };
+    const scene = cleanScene(j.scene);
+    const flow_step = flowText(j.flow_step, 40);
+    const transition = flowText(j.transition, 50);
+    const stuck = sanitizeStuck(j.stuck);
+    const run_id = typeof j.run_id === "string" ? String(j.run_id).trim().slice(0, 40) || undefined : undefined;
+    return {
+      screen: cleanScreen(j.screen),
+      fields: withZone,
+      by: "llm",
+      confidence: conf,
+      zones: summarizeZones(withZone),
+      ...(scene ? { scene } : {}),
+      ...(flow_step ? { flow_step } : {}),
+      ...(transition ? { transition } : {}),
+      ...(stuck != null ? { stuck } : {}),
+      ...(run_id ? { run_id } : {}),
+    };
   } catch {
     return { screen: "other", fields: [], by: "llm", confidence: 0 };
   }
+}
+
+/** stuck 欄（null または短い説明・50字） */
+export function sanitizeStuck(v: unknown): string | null {
+  if (v == null) return null;
+  const t = String(v).replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t || /^null$/i.test(t)) return null;
+  if (/\d{5,}|¥|円\s*\d|大阪市|堺市/.test(t)) return null;
+  return t.slice(0, 50);
+}
+
+export type ImageSequenceFlowSummary = {
+  total_runs: number;
+  seq_learned_runs: number;
+  learned_with_scene: number;
+  screens: { form: number; modal: number; result: number; other: number };
+  scene_chain: string[];
+  transitions: Array<{ from: string; to: string; n: number }>;
+  stuck_points: Array<{ scene: string; why: string; n: number }>;
+  unlearned_runs: Array<{
+    run_id: string;
+    mode: string;
+    total: number;
+    learned: number;
+    pct: number;
+    missing_scenes: string[];
+  }>;
+  line: string;
+};
+
+const runIdOfKey = (key: unknown): string => {
+  const m = String(key ?? "").match(/run_([a-z0-9_]+)\//i);
+  return m ? m[1] : "";
+};
+
+const sceneOfRow = (sl: Record<string, unknown> | null): ShotFlowScene | undefined => {
+  if (!sl) return undefined;
+  return cleanScene(sl.scene);
+};
+
+const screenOfLearn = (sl: Record<string, unknown> | null): ShotLearn["screen"] => {
+  if (!sl) return "other";
+  return cleanScreen(sl.screen);
+};
+
+const rowHasLearn = (sl: Record<string, unknown> | null): boolean => {
+  if (!sl) return false;
+  const sc = sceneOfRow(sl);
+  if (sc && sc !== "other") return true;
+  if (flowText(sl.flow_step, 40)) return true;
+  if (Array.isArray(sl.fields) && sl.fields.length > 0) return true;
+  const scr = cleanScreen(sl.screen);
+  return scr !== "other";
+};
+
+const collapseAdjacent = (xs: string[]): string[] => {
+  const out: string[] = [];
+  for (const x of xs) {
+    if (!x) continue;
+    if (out[out.length - 1] !== x) out.push(x);
+  }
+  return out;
+};
+
+/**
+ * 連続画像（run 単位）から場面の流れを集計する（純関数・個人情報を残さない）。
+ */
+export function summarizeImageSequenceFlows(
+  rows: Array<{
+    id?: unknown;
+    created_at?: unknown;
+    mode?: unknown;
+    shot_key?: unknown;
+    shot_w?: unknown;
+    shot_ops?: unknown;
+    shot_learn?: unknown;
+  }>,
+): ImageSequenceFlowSummary {
+  const screens = { form: 0, modal: 0, result: 0, other: 0 };
+  let learned_with_scene = 0;
+  const transTally = new Map<string, number>();
+  const stuckTally = new Map<string, { scene: string; why: string; n: number }>();
+  const chainTally = new Map<string, number>();
+
+  type RunAcc = {
+    run_id: string;
+    mode: string;
+    shots: Array<{ at: number; sl: Record<string, unknown> | null }>;
+  };
+  const runs = new Map<string, RunAcc>();
+
+  for (const r0 of Array.isArray(rows) ? rows : []) {
+    if (!r0 || typeof r0 !== "object") continue;
+    const r = r0 as Record<string, unknown>;
+    const key = String(r.shot_key ?? "");
+    let runId = runIdOfKey(key);
+    if (!runId) {
+      const sl0 = r.shot_learn && typeof r.shot_learn === "object" ? (r.shot_learn as Record<string, unknown>) : null;
+      runId = (typeof sl0?.run_id === "string" ? String(sl0.run_id).trim() : "") || `single:${String(r.id ?? r.created_at ?? "")}`.slice(0, 40);
+    }
+    const at = Date.parse(String(r.created_at ?? "")) || 0;
+    const sl = r.shot_learn && typeof r.shot_learn === "object" ? (r.shot_learn as Record<string, unknown>) : null;
+    const scr = screenOfLearn(sl);
+    screens[scr]++;
+    if (sl) {
+      const sc = sceneOfRow(sl);
+      if ((sc && sc !== "other") || flowText(sl.flow_step, 40)) learned_with_scene++;
+    }
+    const acc = runs.get(runId) ?? { run_id: runId, mode: String(r.mode ?? "unknown"), shots: [] };
+    if (acc.shots.length === 0) acc.mode = String(r.mode ?? acc.mode);
+    acc.shots.push({ at, sl });
+    runs.set(runId, acc);
+
+    if (sl && sl.stuck != null) {
+      const why = sanitizeStuck(sl.stuck);
+      if (why) {
+        const sc = sceneOfRow(sl) ?? "other";
+        const k = sc + "|" + why;
+        const cur = stuckTally.get(k) ?? { scene: sc, why, n: 0 };
+        cur.n++;
+        stuckTally.set(k, cur);
+      }
+    }
+  }
+
+  let seq_learned_runs = 0;
+  const unlearned: ImageSequenceFlowSummary["unlearned_runs"] = [];
+
+  for (const run of runs.values()) {
+    run.shots.sort((a, b) => a.at - b.at);
+    let streak = 0;
+    let maxStreak = 0;
+    const sceneSeq: string[] = [];
+    let learned = 0;
+    const sceneSet = new Set<string>();
+
+    for (let i = 0; i < run.shots.length; i++) {
+      const { sl } = run.shots[i];
+      const learn = rowHasLearn(sl);
+      if (learn) {
+        learned++;
+        streak++;
+        maxStreak = Math.max(maxStreak, streak);
+      } else {
+        streak = 0;
+      }
+      const sc = sceneOfRow(sl) ?? (learn ? "other" : "");
+      if (sc) {
+        sceneSeq.push(sc);
+        sceneSet.add(sc);
+      }
+      if (i > 0) {
+        const prevSc = sceneOfRow(run.shots[i - 1].sl) ?? "other";
+        const curSc = sceneOfRow(sl) ?? "other";
+        if (prevSc !== curSc) {
+          const tk = prevSc + "→" + curSc;
+          transTally.set(tk, (transTally.get(tk) ?? 0) + 1);
+        }
+      }
+    }
+
+    if (maxStreak >= 2) seq_learned_runs++;
+
+    const chain = collapseAdjacent(sceneSeq.filter(Boolean));
+    if (chain.length >= 2) {
+      const label = chain.join("→");
+      chainTally.set(label, (chainTally.get(label) ?? 0) + 1);
+    }
+
+    const total = run.shots.length;
+    const pct = total ? Math.round((learned / total) * 100) : 0;
+    const allScenes = ["area", "station", "cond", "search", "list", "next"];
+    const missing_scenes = allScenes.filter((s) => !sceneSet.has(s));
+    const lastAt = run.shots.length ? Math.max(...run.shots.map((s) => s.at)) : 0;
+    unlearned.push({
+      run_id: run.run_id,
+      mode: run.mode,
+      total,
+      learned,
+      pct,
+      missing_scenes,
+      lastAt,
+    } as ImageSequenceFlowSummary["unlearned_runs"][number] & { lastAt: number });
+  }
+
+  const transitions = [...transTally.entries()]
+    .map(([k, n]) => {
+      const [from, to] = k.split("→");
+      return { from: from || "other", to: to || "other", n };
+    })
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 15);
+
+  const stuck_points = [...stuckTally.values()].sort((a, b) => b.n - a.n).slice(0, 10);
+
+  const scene_chain = [...chainTally.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([k]) => k);
+
+  unlearned.sort((a, b) => {
+    const au = a as { lastAt?: number };
+    const bu = b as { lastAt?: number };
+    return a.pct - b.pct || (bu.lastAt ?? 0) - (au.lastAt ?? 0);
+  });
+  const unlearned_runs = unlearned
+    .filter((u) => u.total > 0)
+    .slice(0, 5)
+    .map(({ run_id, mode, total, learned, pct, missing_scenes }) => ({
+      run_id,
+      mode,
+      total,
+      learned,
+      pct,
+      missing_scenes,
+    }));
+
+  const total_runs = runs.size;
+  const line =
+    `連続画像: run ${total_runs}件、場面付き学習 ${learned_with_scene}枚、連続2枚以上学習できたrun ${seq_learned_runs}件`
+    + (scene_chain[0] ? `／よく出る流れ ${scene_chain[0]}` : "")
+    + (stuck_points[0] ? `／詰まり ${stuck_points[0].scene}: ${stuck_points[0].why}（${stuck_points[0].n}回）` : "");
+
+  return {
+    total_runs,
+    seq_learned_runs,
+    learned_with_scene,
+    screens,
+    scene_chain,
+    transitions,
+    stuck_points,
+    unlearned_runs,
+    line,
+  };
 }
 
 /**

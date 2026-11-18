@@ -27,13 +27,14 @@ function ok(name, cond, extra) {
 
 const ps = read("page-script.js");
 const iWard = ps.indexOf("function doAfterWard()");
-const wardFn = ps.slice(iWard, iWard + 6000);
+const wardFn = ps.slice(iWard, iWard + 9000);
 
 console.log("■ ① 押し終わるまで待つ（時間で決めない）");
 {
   ok("doAfterWard がある", iWard > 0);
-  ok("キューが空になるまで待つ（whenClickQueueIdle）", /whenClickQueueIdle\(function \(\) \{ setTimeout\(function \(\) \{ _verifyThenConfirm\(n\)/.test(wardFn));
-  ok("積んだ後もキューが空になるまで待つ", /whenClickQueueIdle\(function \(\) \{ setTimeout\(function \(\) \{ _verifyThenConfirm\(n \+ 1\)/.test(wardFn));
+  // 2.8.108: 区レーンで確認の待ちを短く（_ln・pollMs=40）にした。「キューが空になるまで待つ」ことは変えない
+  ok("キューが空になるまで待つ（whenClickQueueIdle）", /whenClickQueueIdle\(function \(\) \{ setTimeout\(function \(\) \{ _verifyThenConfirm\(n\); \}, [^;]+\); \}, 40\);/.test(wardFn));
+  ok("積んだ後もキューが空になるまで待つ", /whenClickQueueIdle\(function \(\) \{ setTimeout\(function \(\) \{ _verifyThenConfirm\(n \+ 1\); \}, [^;]+\); \}, 40\);/.test(wardFn));
   ok("⚠ 旧の「620ms で決めつける」が消えている", !/setTimeout\(function \(\) \{ _verifyThenConfirm\(n \+ 1\); \}, 620 \+ Math\.floor/.test(wardFn));
   ok("押している最中は数えない（isClickQueueBusy）", /if \(isClickQueueBusy\(\)\)/.test(wardFn));
 }

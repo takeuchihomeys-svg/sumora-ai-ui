@@ -4,7 +4,7 @@
 // 実行: npx tsx app/lib/__tests__/auto-search-plan.test.ts
 import {
   classifyAutoSearchState, planFor, selectPlannedTargets, dormantWeekdays, priorityOfState, planByCustomerPayload, planOfPayload, planEnv,
-  PLAN_TABLE, NEW_UPDATE_DAYS, PLAN_MAX_PAGES, OFF_AFTER_DAYS, PM_PLAN, pmRunDecision, type AutoSearchStateInput,
+  PLAN_TABLE, NEW_UPDATE_DAYS, PLAN_MAX_PAGES, PLAN_DEFAULT_MAX_PAGES, OFF_AFTER_DAYS, PM_PLAN, pmRunDecision, type AutoSearchStateInput,
 } from "../auto-search-plan";
 import { SEARCH_MAX_PAGES, MAX_TARGETS_PER_RUN } from "../auto-search-schedule";
 import * as fs from "fs";
@@ -56,9 +56,9 @@ for (const mode of ["am"] as const) {
   const n = planFor("new", mode, DATE, NEW_HOT.id)!;
   t(`★ ${mode}: 新規は AD 順・更新日14・止める線なし・ピンポイント・5ページ`, n.sort === "ad" && n.days === NEW_UPDATE_DAYS && n.days === 14 && !n.stop_at_last && n.is_wide === false && n.max_pages === 5, n);
   const c = planFor("cond_changed", mode, DATE, COND.id)!;
-  t(`★ ${mode}: 言い直しの直後は新規と同じ`, c.sort === "ad" && c.days === 14 && !c.stop_at_last, c);
+  t(`★ ${mode}: 言い直しの直後は新規と同じ（5ページ）`, c.sort === "ad" && c.days === 14 && !c.stop_at_last && c.max_pages === 5, c);
   const a = planFor("active", mode, DATE, ACTIVE.id, { lastSearchAt: "2026-09-29T08:00:00Z", nowMs: NOW })!;
-  t(`★ ${mode}: 送った後は更新順・前回の検索以降だけ（止める線・元の更新日1＝空きで広げる）`, a.sort === "updated" && a.stop_at_last && a.days === 1, a);
+  t(`★ ${mode}: 送った後は更新順・前回の検索以降だけ（止める線・元の更新日1＝空きで広げる）・3ページ`, a.sort === "updated" && a.stop_at_last && a.days === 1 && a.max_pages === 3, a);
   const h = planFor("dormant_hot", mode, DATE, DORMANT_HOT.id, { lastProposalAt: DORMANT_HOT.last_proposal_at, nowMs: NOW })!;
   t(`★ ${mode}: 要対応で止まっている人は毎日・更新順（前回の検索の記録なし→最後に届けた17日前から＝14）`, !!h && h.sort === "updated" && h.stop_at_last && h.days === 14, h);
 }
@@ -88,7 +88,7 @@ t("週1回の AD 順は無い（送った後はどの曜日も更新順）", [0,
   return planFor("active", "am", d, ACTIVE.id)!.sort === "updated";
 }));
 t("表は1か所: 並びが AD 順なのは新規と言い直しだけ", Object.entries(PLAN_TABLE).filter(([, r]) => r.sort === "ad").map(([k]) => k).join() === "new,cond_changed");
-t("ページの上限は自動便と同じ 5", PLAN_MAX_PAGES === SEARCH_MAX_PAGES);
+t("新着上限は SEARCH_MAX_PAGES=5・既定は PLAN_DEFAULT_MAX_PAGES=3", PLAN_MAX_PAGES === SEARCH_MAX_PAGES && PLAN_DEFAULT_MAX_PAGES === 3);
 t("AUTO_SEARCH_STOP_AT_LAST=off → 止める線なし", planFor("active", "am", DATE, "x", { lastSearchAt: "2026-09-29T08:00:00Z", stopAtLast: false })!.stop_at_last === false
   && planEnv({ AUTO_SEARCH_STOP_AT_LAST: "off" }).stopAtLast === false && planEnv({}).stopAtLast === true && planEnv({ AUTO_SEARCH_PLAN: "legacy" }).legacy === true);
 t("対象外はどの便にも入れない", planFor("off", "am", DATE, "x") === null);

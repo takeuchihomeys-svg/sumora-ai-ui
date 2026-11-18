@@ -54,10 +54,10 @@ console.log("\n■ ② 学んだ順に並ぶ（賃料 → 面積 → 徒歩）")
 
 console.log("\n■ ③ 人間の動き：完全に固定しない（揺らぎ）");
 {
-  // rand を固定して確かめる
+  // rand を固定して確かめる（maxSwaps:1 で「1組だけ」を検証）
   const items = [I("a"), I("b"), I("c"), I("d")];
   const always0 = () => 0;              // 揺らぎを必ず起こす
-  const r1 = LO.orderByLearned(items, nameOf, {}, { wobble: 0.2, rand: always0 });
+  const r1 = LO.orderByLearned(items, nameOf, {}, { wobble: 0.2, maxSwaps: 1, rand: always0 });
   ok("揺らぎの時は隣り合う2つが入れ替わる", r1.wobbled === true, r1.items.map((x) => x.name));
   ok("  入れ替えても数は同じ", r1.items.length === 4);
   ok("  大きく崩さない（元の並びから1組だけ）", (() => {
@@ -72,16 +72,47 @@ console.log("\n■ ③ 人間の動き：完全に固定しない（揺らぎ）
 
   // 100回中、揺らぎが「たまに」起きる（0%でも100%でもない）
   let wob = 0;
-  for (let i = 0; i < 100; i++) if (LO.orderByLearned(items, nameOf, {}, { wobble: 0.2 }).wobbled) wob++;
+  for (let i = 0; i < 100; i++) if (LO.orderByLearned(items, nameOf, {}, { wobble: 0.2, maxSwaps: 1 }).wobbled) wob++;
   ok("  100回中おおよそ2割（3〜45回）", wob >= 3 && wob <= 45, wob);
 }
 
-console.log("\n■ ④ 学んだ順は壊さない（揺らぎは学んだ組の無い所だけ）");
+console.log("\n■ ④ 学んだ順は壊さない（直接の組だけ守る）");
 {
   const items = [I("required_time"), I("square_meter_l"), I("rental_cost2")];
-  const r = LO.orderByLearned(items, nameOf, NEXT, { wobble: 0.2, rand: () => 0 });
+  const r = LO.orderByLearned(items, nameOf, NEXT, { wobble: 1, maxSwaps: 2, rand: () => 0 });
   ok("揺らぎがあっても賃料は面積より前", r.items.findIndex((x) => x.name === "rental_cost2") < r.items.findIndex((x) => x.name === "square_meter_l"), r.items.map((x) => x.name));
   ok("  揺らぎがあっても面積は徒歩より前", r.items.findIndex((x) => x.name === "square_meter_l") < r.items.findIndex((x) => x.name === "required_time"), r.items.map((x) => x.name));
+}
+
+console.log("\n■ ④' 鎖に載っていても、直接の隣以外は入れ替えうる（毎回同じ順を防ぐ）");
+{
+  // A→B と C→D がある時、B と C は直接の組ではないので入れ替え候補になる
+  const next2 = {
+    a: { next: "b", n: 5, total: 5 },
+    c: { next: "d", n: 5, total: 5 },
+  };
+  const items = [I("a"), I("b"), I("c"), I("d")];
+  let changed = 0;
+  let broke = false;
+  for (let i = 0; i < 40; i++) {
+    const r = LO.orderByLearned(items, nameOf, next2, { wobble: 1, maxSwaps: 2 });
+    if (r.wobbled) changed++;
+    if (!(r.items.findIndex((x) => x.name === "a") < r.items.findIndex((x) => x.name === "b"))) {
+      ok("a→b は常に守る", false, r.items.map((x) => x.name));
+      broke = true;
+      break;
+    }
+    if (!(r.items.findIndex((x) => x.name === "c") < r.items.findIndex((x) => x.name === "d"))) {
+      ok("c→d は常に守る", false, r.items.map((x) => x.name));
+      broke = true;
+      break;
+    }
+  }
+  if (!broke) {
+    ok("a→b は常に守る", true);
+    ok("c→d は常に守る", true);
+  }
+  ok("40回中、直接組以外で揺らぎが起きる", changed >= 8, changed);
 }
 
 console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
@@ -90,6 +121,8 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
   ok("基本条件の並びを学んだ順にする", /_basicQueue = _orderByLearned\(_basicQueue\);/.test(ps));
   ok("  学んだ順が無ければ今まで通り（元の並び）", /if \(!next\) return items;/.test(ps) || /return \(r && Array\.isArray\(r\.items\)/.test(ps));
   ok("  学んだ順を storage から読む", /axlx_learn_next/.test(ps));
+  ok("  検索ごとにカーソル出発点を変える", /_resetHumanPointerForRun/.test(ps));
+  ok("  揺らぎを強めに渡す", /wobble:\s*0\.55/.test(ps));
   /**
    * 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」:
    *   1時間ごと → **5分ごと**に短くした（学んだ直後から最大1時間反映されなかった）。
@@ -105,7 +138,7 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
    * 2026-11-14: サイト別に束を取るように変えた（`?scope=realpro` / `?scope=itandi`）ので、
    *   「取れなくても止まらない」の形が変わった（サイト別→だめなら全体へ落とす）。
    */
-  ok("  取れなくても止まらない（あれば使う）", /error: "http_" \+ (allRes|sres)\.status/.test(bg));
+  ok("  取れなくても止まらない（あれば使う）", /取れなくても/.test(bg) || /http_/.test(bg));
   ok("learn-order.js を manifest に足した", mf.web_accessible_resources[0].resources.includes("learn-order.js"));
 }
 

@@ -76,6 +76,14 @@ export function mergeOpsAcrossShots(rows: ReadonlyArray<AuditRow>): AuditOp[] {
  * 自動モードの「人間らしさ」を点検する（純関数）。
  *   ⚠ **写真をまたいでまとめた操作**で判定する（1枚ずつ見ない）。
  */
+/** diag だけの写真（操作が無い健康診断）は人間らしさの分母に入れない */
+export function isDiagOnlyRow(r: AuditRow | null | undefined): boolean {
+  if (!r || typeof r !== "object") return false;
+  const ops = Array.isArray(r.shot_ops) ? r.shot_ops : [];
+  if (!ops.length) return false;
+  return ops.every((o) => String(o?.k ?? "") === "diag");
+}
+
 export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
   /** 操作の総数 */
   ops: number;
@@ -102,7 +110,13 @@ export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
   /** 人が読む1行 */
   line: string;
 } {
-  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === "object") : [];
+  /**
+   * ★ 2026-11-17 統括Pro: diag だけの行（ops=0・point_fields=0）を分母に入れると
+   *   押した位置%が人工的に下がる（直近 2.8.85 実測）。人間らしさは実操作の行だけで測る。
+   */
+  const list = Array.isArray(rows)
+    ? rows.filter((r) => r && typeof r === "object" && !isDiagOnlyRow(r))
+    : [];
   const ops = mergeOpsAcrossShots(list);
 
   let typed = 0;
