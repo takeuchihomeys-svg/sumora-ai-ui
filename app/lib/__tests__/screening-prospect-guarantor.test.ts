@@ -4,10 +4,11 @@ import { screeningProspectTurn, screeningPhoneTurnLine, SCREENING_PROSPECT_GUARA
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 const on = { SCREENING_PROSPECT_GUARANTOR_LINE: "on" };
-t("既定 off", !screeningProspectGuarantorEnabled({}) && screeningProspectGuarantorEnabled(on));
+const off = { SCREENING_PROSPECT_GUARANTOR_LINE: "off" };
+t("既定 on（11/18）・=off で止まる", screeningProspectGuarantorEnabled({}) && !screeningProspectGuarantorEnabled(off) && screeningProspectGuarantorEnabled(on));
 // 実物（q333＝10/20 竹内さんの決定の番）
 t("q333「ここって私、審査的には通りそうですかね」→ 網に掛かる", screeningProspectTurn("ここって私、審査的には通りそうですかね?！😭"));
-t("off は材料に出さない", screeningPhoneTurnLine("ここって私、審査的には通りそうですかね", {}) === "");
+t("off は材料に出さない", screeningPhoneTurnLine("ここって私、審査的には通りそうですかね", off) === "");
 t("on は材料の1行", screeningPhoneTurnLine("ここって私、審査的には通りそうですかね", on) === SCREENING_PROSPECT_GUARANTOR_LINE);
 // 掛けない（本番の言い方・screening-phone-material の注記の5つ）
 t("傷を言った相談（彼氏名義で審査落ちてて）→ 掛けない", !screeningProspectTurn("彼氏との同棲で家探してて、ここ住みたかったんですけど、彼氏名義で審査落ちててここって厳しいですよね？？"));

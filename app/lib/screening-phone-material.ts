@@ -78,7 +78,8 @@ export function screeningRiskHereTurn(text: string | null | undefined): boolean 
 //   網（候補を拾うだけ・決めるのはブレイン）: この物件（ここ・この物件・号室）＋審査＋通るか（通りそう・大丈夫・厳しい）で、傷（落ちた・ブラック・滞納 等）を言っていない。
 //   既定 off（SCREENING_PROSPECT_GUARANTOR_LINE=on）
 export function screeningProspectGuarantorEnabled(env: Env = envOf()): boolean {
-  return (env.SCREENING_PROSPECT_GUARANTOR_LINE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-18 作業員L: 試験 L1118-prosp-off → on（q332 q333 q323・3回）で悪くなった問題 0・最終の道 1/9→4/9（q333 が AIX:guarantor_info に）＝既定 on（戻す =off）
+  return (env.SCREENING_PROSPECT_GUARANTOR_LINE ?? "on").trim().toLowerCase() !== "off";
 }
 /** この物件で審査に通りそうかを聞く（傷は言っていない）か（網） */
 export function screeningProspectTurn(text: string | null | undefined): boolean {

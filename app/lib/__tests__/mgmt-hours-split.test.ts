@@ -35,7 +35,7 @@ it("ピッカーの1行: q136（礼金と駐車場）→ mgmt_parking・mgmt_ini
 it("ピッカーの1行: 管理会社の話題が無ければ空", () => eq(nightPickerLine("上記2件の空き状況を教えてください"), ""));
 
 // 2026-11-06 最終チェックの夜の1行
-it("最終チェックの夜の1行: 既定 off", () => { eq(mgmtNightFcTomorrowOn({}), false); eq(mgmtNightFcTomorrowNote({ hour: 20, customerText: "駐車場は空いてますか" }, {}), ""); });
+it("最終チェックの夜の1行: 既定 on（11/18）・=off で出さない", () => { eq(mgmtNightFcTomorrowOn({}), true); eq(mgmtNightFcTomorrowOn({ MGMT_NIGHT_FC_TOMORROW: "off" }), false); eq(mgmtNightFcTomorrowNote({ hour: 20, customerText: "駐車場は空いてますか" }, { MGMT_NIGHT_FC_TOMORROW: "off" }), ""); });
 it("最終チェックの夜の1行: on・20時の礼金と駐車場 → 出す", () => { const n = mgmtNightFcTomorrowNote({ hour: 20, customerText: "ちなみにこちらの物件礼金を調整することは難しいでしょうか？ 駐車場は敷地内まだ空きありますでしょうか？" }, { MGMT_NIGHT_FC_TOMORROW: "on" }); eq(n.includes("AIX_BOUNDARY_PROMISE にしない") && n.includes("礼金"), true, n); });
 it("最終チェックの夜の1行: on でも昼・募集状況だけは出さない", () => { const on = { MGMT_NIGHT_FC_TOMORROW: "on" }; eq(mgmtNightFcTomorrowNote({ hour: 14, customerText: "駐車場は空いてますか" }, on), ""); eq(mgmtNightFcTomorrowNote({ hour: 20, customerText: "上記2件の空き状況を教えてください" }, on), ""); });
 
