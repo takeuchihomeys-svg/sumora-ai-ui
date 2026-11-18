@@ -11,12 +11,9 @@
 /** probes を付けておく関数（migrate-schema の ALTER と同じ・名前だけ）。
  *   2026-11-18 作業員H: match_reply_knowledge・match_reply_examples・match_aix_reply_examples は HNSW に替えた（probes ではなく定義の SET hnsw.*）・
  *   match_winning_patterns は索引なし（数十行）＝ここから外し、下の RAG_HNSW_FUNCS・RAG_SEARCH_PATH_FUNCS で見張る */
-export const RAG_PROBES_FUNCS = [
-  "match_reply_knowledge", "match_reply_examples", "match_aix_reply_examples",
-  "match_winning_patterns", "match_design_thinking", "match_conversation_checkpoints",
-] as const;
+export const RAG_PROBES_FUNCS = ["match_design_thinking", "match_conversation_checkpoints"] as const;
 /** HNSW の関数（定義に hnsw.ef_search が付いているか） */
-export const RAG_HNSW_FUNCS: ReadonlyArray<string> = []; // HNSW に替える時（rag-index-1118）に3本を入れる
+export const RAG_HNSW_FUNCS = ["match_reply_knowledge", "match_reply_examples", "match_aix_reply_examples"] as const;
 /** extensions を search_path に要る関数（11/15・11/18 に public だけに戻って毎回0件になっていた match_takeuchi_compose 等） */
 export const RAG_SEARCH_PATH_FUNCS = ["match_takeuchi_compose", "match_conductor_focus", "match_conductor_turns"] as const;
 /** 必要な probes（索引の lists の最大＝ai_reply_examples・system_design_thinking の 100 以上で全区画＝厳密） */
