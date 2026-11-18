@@ -5767,6 +5767,62 @@ CREATE INDEX IF NOT EXISTS idx_rag_call_logs_rpc ON rag_call_logs(rpc, created_a
 ALTER TABLE rag_call_logs ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON rag_call_logs FROM anon, authenticated;
 
+-- 2026-11-18 竹内さん「その作業を全部把握するために必要な事は保管するようにデータベースを強化する」（統括役の頼み・作業員M）:
+--   work_items … 仕事1件＝1行で今の段を持つ台帳（work_log は経過を書き足す日誌で「何が終わっていないか」を1行で持てない）。
+--     段は todo → building → built_off → testing → passed → on → done の順。ほかに blocked・waiting_owner・dropped。
+--     お客様の文・名前は入れない（requested_quote は竹内さんの言葉だけ）。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。手で見る・足す: scripts/work-items.ts
+--   work_item_events … 段の変わり（戻った・止まった理由が後から分かる）。
+--   戻す: DROP TABLE IF EXISTS work_item_events; DROP TABLE IF EXISTS work_items;
+CREATE TABLE IF NOT EXISTS work_items (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  area TEXT,
+  origin TEXT,
+  requested_at TIMESTAMPTZ,
+  requested_quote TEXT,
+  stage TEXT NOT NULL DEFAULT 'todo',
+  done_definition TEXT NOT NULL DEFAULT '試験で悪化0 → 既定 on → 本番に入れて READY',
+  owner TEXT,
+  switch_name TEXT,
+  switch_default TEXT,
+  commits TEXT[] NOT NULL DEFAULT '{}',
+  exam_labels TEXT[] NOT NULL DEFAULT '{}',
+  exam_result TEXT,
+  kb_ids TEXT[] NOT NULL DEFAULT '{}',
+  work_log_task TEXT,
+  owner_question_id BIGINT,
+  quality_target TEXT,
+  priority INT,
+  blocker TEXT,
+  next_step TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  done_at TIMESTAMPTZ,
+  CONSTRAINT work_items_stage_chk CHECK (stage IN ('todo', 'building', 'built_off', 'testing', 'passed', 'on', 'done', 'blocked', 'waiting_owner', 'dropped')),
+  CONSTRAINT work_items_origin_chk CHECK (origin IS NULL OR origin IN ('meeting', 'owner_request', 'found_gap', 'built_off')),
+  CONSTRAINT work_items_switch_default_chk CHECK (switch_default IS NULL OR switch_default IN ('off', 'shadow', 'on'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_items_stage_priority ON work_items(stage, priority);
+CREATE INDEX IF NOT EXISTS idx_work_items_area ON work_items(area);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_work_items_switch ON work_items(switch_name) WHERE switch_name IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_work_items_work_log_task ON work_items(work_log_task) WHERE work_log_task IS NOT NULL;
+ALTER TABLE work_items ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON work_items FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE work_items_id_seq FROM anon, authenticated;
+CREATE TABLE IF NOT EXISTS work_item_events (
+  id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  from_stage TEXT,
+  to_stage TEXT,
+  actor TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(item_id, at DESC);
+ALTER TABLE work_item_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON work_item_events FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE work_item_events_id_seq FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
