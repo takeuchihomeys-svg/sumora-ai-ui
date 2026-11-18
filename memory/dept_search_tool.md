@@ -20,6 +20,13 @@
 **未了（人）**: 拡張を再読み込み→ポップアップを開く（束を取り直す）→自動1回→F55/F31/F32 の数字を読む。**本番デプロイ待ち**: 束 solid 引き継ぎ・各修正は未コミットのため本番に届いていない（コミットは竹内さんの「保存して」を待つ）。
 
 ## 2026-11-19 01:45 **位置継ぎを自サイトだけに限定／人の迷い（長い間）を汎用欄に追加（page-script 2.8.112）**
+- **反映の状態（2026-11-19 01:55 実測・竹内さん「保存して」→ コミット 36f260ad を `cursor-ext` に push）**:
+  - 拡張: Chrome の最終利用は **Profile 4**。拡張フォルダ `Desktop\AIXLINX物件検索-拡張` はリポジトリ `chrome-extension` への **junction** → 中身は最新（page-script 2.8.112・ハッシュ一致）。**chrome://extensions で再読込すれば反映**。
+  - ⚠ **Profile 3 の拡張は指す先 `Desktop\chrome-extension` が存在しない（無効の残骸）**。使わないなら Chrome 側で外す（こちらでは Chrome の設定は触らない）。
+  - 版の証拠は DB の `search_audits.ext_version`。直近の自動（11/18 15:25）は **2.8.111** で走っていた。**2.8.112 で走った検索は 0 件**＝まだ一度も動いていない。自動を1回回したら `ext_version=2.8.112` になるかで反映を確認する。
+  - 束: realpro id 2410 は拡張が読んだ（read=1）。itandi 2411・all 2412 は未読（read=0）。
+  - ⚠ **本番（Vercel）は `main` から出る**。`cursor-ext` は `main` と枝分かれ（HEAD 側 318 件・main 側 575 件）。`cursor-ext` を丸ごと `main` に載せると他の変更を壊す（過去の記録にあり）。サーバー側（inherit の自サイト限定・lookback 80）を `main` に載せるのは別作業（ファイル単位で慎重に）。
+  - コミットに入れなかったもの: `scripts/tmp-*`・`scripts/_*`（ログ・作業用）・`tmp/`（作業用 JSON）・`scripts/prune-candidates-2026-11-18.json`（候補の行リスト・個人データの恐れ）・`.cursor/rules/auto-clear-not-reset.mdc`（用途を確認してから）。
 - 竹内さん（01:30）「1は危ない可能性があるのでは 2したらよいなら行う 3人の速さで迷いも人のように入れる 統括pro徹底的に」への対応。
 - **1. 位置継ぎの混ぜ防止（危険の修正）**: `app/lib/learn-bundle-preserve.ts` の `scopesToSearch` を自サイトだけ（`[scope]`）に変更。`all` へは落とさない。itandi が realpro の位置を継ぐ経路を塞いだ。テスト: `app/lib/__tests__/learn-bundle-no-site-mix.test.ts`（6件）・`learn-bundle-preserve.test.ts`（11件）。
 - **2. 局所再構築（本番DBへ書き込み・削除あり）**: realpro id 2410（learned 878）・itandi id 2411（learned 206）・all id 2412（learned 878）を作成。混ぜ誤りの id 2409 は削除済み。
