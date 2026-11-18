@@ -19,7 +19,7 @@
 //   why_now  … 今推す理由の言い方（すぐ埋まる・問い合わせが多い・空室・退去予定・先着）
 //   feeling  … 文からは読まない（ブレインの meta から入れる口だけ・今は null）
 //
-// スイッチ: APPEAL_RECORD=off（既定）|shadow（記録を作ってログ・判断と文は変えない）。本番の道への接続はまだ（物差しの後）
+// スイッチ: APPEAL_RECORD=shadow（2026-11-18 から既定・記録を作ってログ・判断と文は変えない）|off。本番の道への接続はまだ（物差しの後）
 import { TOPICS, type TopicKey } from "./recommendation-gaps";
 import { readClosingKind } from "./recommend-cta";
 import type { NextDest, NextStrength } from "./next-move-types";
@@ -47,7 +47,8 @@ export type AppealRecord = {
 
 export type AppealRecordMode = "off" | "shadow";
 export function appealRecordMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): AppealRecordMode {
-  return String(env.APPEAL_RECORD ?? "").trim().toLowerCase() === "shadow" ? "shadow" : "off";
+  // 2026-11-18 既定 shadow（記録だけ・aix-template-generate の after() の中だけ・文と判断は変えない。文と判断に触れないことをコードで確かめた・統括役の決め A）。=off で止める
+  return String(env.APPEAL_RECORD ?? "").trim().toLowerCase() === "off" ? "off" : "shadow";
 }
 
 const nf = (s: unknown) => String(s ?? "").normalize("NFKC");

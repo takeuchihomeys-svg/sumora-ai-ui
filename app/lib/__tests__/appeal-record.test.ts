@@ -28,7 +28,7 @@ const c = compareAppealRecords(r, ai);
 t("比べ: 竹内さんの点（敷礼0・初期費用・広さ）が AI に無い", ["zero_deposit", "low_initial", "spacious"].every((k) => c.missingPoints.includes(k as never)), c.missingPoints);
 t("比べ: 強さと狙う返事がずれる", !c.strengthSame && !c.aimSame);
 t("比べ: 同じ記録は全部合う", (() => { const x = compareAppealRecords(r, r); return x.pointsOverlap === 1 && x.strengthSame && x.aimSame && x.whySame; })());
-t("スイッチ既定 off・shadow", appealRecordMode({}) === "off" && appealRecordMode({ APPEAL_RECORD: "shadow" }) === "shadow" && appealRecordMode({ APPEAL_RECORD: "on" }) === "off");
+t("スイッチ既定 shadow（2026-11-18）・off で止める", appealRecordMode({}) === "shadow" && appealRecordMode({ APPEAL_RECORD: "off" }) === "off" && appealRecordMode({ APPEAL_RECORD: "shadow" }) === "shadow");
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
