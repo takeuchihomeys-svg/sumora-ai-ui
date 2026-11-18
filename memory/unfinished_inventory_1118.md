@@ -1,7 +1,5 @@
 # 途中の物の棚卸し（2026-11-18・scripts/unfinished-inventory.ts が作った物・作業員M）
 
-（この md は仕事の台帳 work_items の写し。正は DB の work_items（scripts/work-items.ts --list）。作り直し: scripts/unfinished-inventory.ts --json-out=… → scripts/work-items.ts --import=…）
-
 竹内さん 11/18「作業の途中で終わっている物も全部やるように」。読むだけ・LLM なし・費用 0（DB は work_log だけ）。分け方と順位は語の目安で、上から読んで直す前の振り分け。D は消さずに案として出す。
 
 - 作業（work_log の task ごとの最新）: 途中 154（progress 138・started 0・blocked 16）・竹内さん待ち 47

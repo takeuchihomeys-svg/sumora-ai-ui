@@ -111,7 +111,9 @@ async function cmdDoneCheck() {
 }
 
 async function cmdImport() {
-  const rows = JSON.parse(readFileSync(arg("import"), "utf8")) as Array<Record<string, unknown>>;
+  // 2026-11-18 統括役: 片割れのサロゲート（絵文字を UTF-16 の単位で切った物）で「Empty or invalid json」になり 111行で止まった → 入れる前に落とす
+  const wf = (v: unknown): unknown => (typeof v === "string" ? v.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "") : Array.isArray(v) ? v.map(wf) : v);
+  const rows = (JSON.parse(readFileSync(arg("import"), "utf8")) as Array<Record<string, unknown>>).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, wf(v)])));
   const dry = flag("dry");
   const db = dry ? (null as unknown as SupabaseClient) : sb();
   const keyOf = (r: Record<string, unknown>) => (r.switch_name ? `sw:${r.switch_name}` : r.work_log_task ? `wl:${r.work_log_task}` : `t:${r.title}`);
@@ -131,7 +133,7 @@ async function cmdImport() {
     const h = have.get(keyOf(r));
     if (h) {
       // 段は人が進めた物を上書きしない（台帳の段が棚卸しより進んでいる時は残す）
-      const { stage: _s, ...rest } = r;
+      const { stage: _s, owner: _o, ...rest } = r; void _o; // 段と持ち主は人が決めた物を上書きしない（11/18 統括役の割り振りで書き換えた owner を残す）
       void _s;
       const { error } = await db.from("work_items").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", h.id);
       if (error) throw new Error(error.message);
