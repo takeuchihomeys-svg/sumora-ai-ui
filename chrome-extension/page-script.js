@@ -2673,7 +2673,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.129";
+  var _AXLX_PAGE_VER = "2.8.130";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -7407,6 +7407,53 @@
   var _AX_LEDGER_KEY = "axlx_entered_ledger";
   var _axLedgerAcc = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structured: 0, pet: 0, shikirei: 0, names: {} };
   var _axLedgerTimer = null;
+  /**
+   * ★ 2026-11-20 竹内さん「ちゃんとお客さんと次のお客さんの切り替える部分を把握するようにする」:
+   *   ⚠ 前客の番号（__axlxLastFilledCustomerId）は window にしか無く、リアプロは検索のたびに頁を読み直すので
+   *     次のお客さんの開始時には消えていた → 切替把握が毎回「first_customer（前客なし）」になっていた。
+   *   → 前客の番号は sessionStorage にも置く（同じタブなら頁を読み直しても残る）。
+   *   台帳の番号は「その台帳を始めたお客さん」で固定する（保存が遅れて次客の番号が付かないように）。
+   *   台帳には「そのお客さんが入れたかった物」（区のコード・駅の名前）も残し、次客と突き合わせる。
+   */
+  var _AX_LAST_CID_KEY = "axlx_last_filled_cid";
+  var _axLedgerCid = "";
+  var _axLedgerWant = null;
+  function _lastFilledCidLoad() {
+    try {
+      var w = window.__axlxLastFilledCustomerId;
+      if (w) return String(w);
+      var raw = window.sessionStorage && window.sessionStorage.getItem(_AX_LAST_CID_KEY);
+      if (!raw) return "";
+      var o = JSON.parse(raw);
+      if (!o || !o.cid || Date.now() - Number(o.at || 0) > 6 * 3600 * 1000) return "";
+      return String(o.cid);
+    } catch (_) { return ""; }
+  }
+  function _lastFilledCidSave(cid) {
+    try {
+      window.__axlxLastFilledCustomerId = cid || null;
+      if (cid && window.sessionStorage) window.sessionStorage.setItem(_AX_LAST_CID_KEY, JSON.stringify({ cid: String(cid), at: Date.now() }));
+    } catch (_) {}
+  }
+  function _wantOfCond(cond) {
+    var w = { wards: [], stations: [] };
+    try {
+      w.wards = (cond && cond.city_codes ? cond.city_codes : []).map(String).slice(0, 40);
+      w.stations = (cond && cond.station_names ? cond.station_names : []).map(function (s) { return String(s).slice(0, 16); }).slice(0, 60);
+    } catch (_) {}
+    return w;
+  }
+  /** 前客の欲しかった物と今客の欲しい物の差（外す候補・共通） */
+  function _wantDiff(prevW, curW) {
+    var out = { dropWards: [], dropStations: [], keep: 0 };
+    try {
+      if (!prevW) return out;
+      var cw = (curW && curW.wards) || [], cs = (curW && curW.stations) || [];
+      (prevW.wards || []).forEach(function (c) { if (cw.indexOf(c) < 0) out.dropWards.push(c); else out.keep++; });
+      (prevW.stations || []).forEach(function (s) { if (cs.indexOf(s) < 0) out.dropStations.push(s); else out.keep++; });
+    } catch (_) {}
+    return out;
+  }
   function _ledgerReset() {
     _axLedgerAcc = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structured: 0, pet: 0, shikirei: 0, names: {} };
   }
@@ -7454,9 +7501,10 @@
       var L = {
         at: Date.now(),
         why: String(why || ""),
-        cid: String((window._axFillRunningCustomerId || (typeof _fillCustomerId !== "undefined" ? _fillCustomerId : "")) || ""),
+        cid: String(_axLedgerCid || (window._axFillRunningCustomerId || (typeof _fillCustomerId !== "undefined" ? _fillCustomerId : "")) || ""),
         n: { stations: a.stations, lines: a.lines, wards: a.wards, towns: a.towns, layouts: a.layouts, structured: a.structured, pet: a.pet, shikirei: a.shikirei },
         names: Object.keys(a.names).slice(0, 40),
+        want: _axLedgerWant || null,
       };
       window.sessionStorage.setItem(_AX_LEDGER_KEY, JSON.stringify(L));
     } catch (_) {}
@@ -10082,7 +10130,7 @@
      *   ボタン理解台帳も客ごとにリセット。
      */
     try {
-      var _prevCid = window.__axlxLastFilledCustomerId || window._axFillRunningCustomerId || null;
+      var _prevCid = _lastFilledCidLoad() || window._axFillRunningCustomerId || null;
       var _nextCid = _fillCustomerId || null;
       window.__axlxBtnUnderstood = {};
       /** ★ F45: 客ごとに流れ完了台帳をリセット（前客の完了印を持ち越さない） */
@@ -10096,7 +10144,7 @@
       if (_prevCid && _nextCid && String(_prevCid) !== String(_nextCid)) {
         try { _noteFlowAtom("switch", true, "前客→次客"); } catch (_) {}
       }
-      window.__axlxLastFilledCustomerId = _nextCid;
+      _lastFilledCidSave(_nextCid);
       try {
         _fillCondForStamp = cond || null;
         _noteNowCustomer("fill_start", "検索開始");
@@ -10230,6 +10278,8 @@
      *   読み込み元は sessionStorage（ページが読み直されても残る）。同じページ内の前客は覚え（_axStationPicked 等）も足す。
      */
     try {
+      // 前客の保存待ち（1.2秒後に書く分）は、前客の番号のまま今ここで書き切る
+      try { if (_axLedgerTimer) { clearTimeout(_axLedgerTimer); _axLedgerTimer = null; _ledgerSave("flush_on_switch"); } } catch (_) {}
       var _pl = _ledgerLoad();
       try {
         var _pkPrev = _pickedCounts();
@@ -10258,13 +10308,20 @@
       } catch (_) {}
       window.__axlxPrevLedger = _pl;
       _ledgerReset();
+      var _curCid = String(window._axFillRunningCustomerId || (typeof _fillCustomerId !== "undefined" ? _fillCustomerId : "") || "");
+      _axLedgerCid = _curCid;
+      _axLedgerWant = _wantOfCond(cond);
       if (_pl) {
         try {
-          var _curCid = String(window._axFillRunningCustomerId || (typeof _fillCustomerId !== "undefined" ? _fillCustomerId : "") || "");
           var _prevCid = String(_pl.cid || "");
           var _who = !_prevCid ? "前客=不明" : (_curCid && _prevCid === _curCid ? "前客=同じお客さん（やり直し）" : "前客=" + _prevCid.slice(0, 8) + "→今客=" + (_curCid ? _curCid.slice(0, 8) : "不明"));
+          var _df = _wantDiff(_pl.want || null, _axLedgerWant);
+          var _dfTxt = _pl.want
+            ? " 前客の希望→今客: 外す候補 区" + _df.dropWards.length + "・駅" + _df.dropStations.length + "／共通" + _df.keep
+              + (_df.dropStations.length ? "（" + _df.dropStations.slice(0, 6).join("・") + "）" : "")
+            : " 前客の希望=控え無し";
           _auditStepP("leftover_ledger", _who + " 入れた控え 駅" + ((_pl.n && _pl.n.stations) || 0) + "・沿線" + ((_pl.n && _pl.n.lines) || 0) + "・区" + ((_pl.n && _pl.n.wards) || 0) + "・間取り" + ((_pl.n && _pl.n.layouts) || 0)
-            + (Array.isArray(_pl.names) && _pl.names.length ? " [" + _pl.names.slice(0, 10).join("・") + "]" : ""));
+            + (Array.isArray(_pl.names) && _pl.names.length ? " [" + _pl.names.slice(0, 10).join("・") + "]" : "") + _dfTxt);
         } catch (_) {}
       }
     } catch (_) { window.__axlxPrevLedger = null; }

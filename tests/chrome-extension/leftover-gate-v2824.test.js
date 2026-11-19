@@ -153,7 +153,7 @@ function makeLedgerEnv(scanObj, picked) {
   };
   vm.createContext(sb);
   vm.runInContext(
-    'var _AX_LEDGER_KEY = "axlx_entered_ledger"; var _axLedgerAcc = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structured: 0, pet: 0, shikirei: 0, names: {} }; var _axLedgerTimer = null;\n' +
+    'var _AX_LEDGER_KEY = "axlx_entered_ledger"; var _axLedgerAcc = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structured: 0, pet: 0, shikirei: 0, names: {} }; var _axLedgerTimer = null; var _axLedgerCid = ""; var _axLedgerWant = null;\n' +
       ledSrc.join("\n"),
     sb
   );

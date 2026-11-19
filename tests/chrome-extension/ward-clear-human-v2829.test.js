@@ -21,7 +21,7 @@ function body(src, name) {
   return "";
 }
 
-ok("版は manifest と page-script で同じ 2.8.129", mf.version === "2.8.129" && /_AXLX_PAGE_VER = "2\.8\.129"/.test(ps));
+ok("版は manifest と page-script で同じ（2.8.129 以上）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && /^2\.8\.(129|1[3-9]\d)$/.test(mf.version));
 
 // 区の外し: DOM に在るだけで「開いた」とみなさない
 const wc = body(ps, "_clearWardsBeforeStationThen");

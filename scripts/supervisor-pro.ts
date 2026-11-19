@@ -11,6 +11,8 @@
  *   `--fresh`  … 本番で束を作り直す（既定は最新束を読むだけ）
  *                 ⚠ 本番 fresh=1 は shots.learned の x/y が落ちる実測あり。
  *                 打合せのたびにやると弱い強化の成果が消える。必要な時だけ。
+ *   `--full-audit`  … 営業時間（JST 9〜22）でも土台を再点検する（既定は夜だけ・重い）
+ *   ⚠ 始める前に DB の応答を見て、答えなければ止める（重ねて読まない）
  *
  * ⚠ 統括の生の言葉をそのまま出す。私の解釈は「私の要約」と明示する。
  * ⚠ verdict / self_check / learning_tasks.kind は Pro が変えない。
@@ -45,6 +47,40 @@ void (async () => {
     line("⚠ --fresh: 本番で束を作り直す（shots.learned の位置が落ちる実測あり）");
   }
   hr();
+
+  /**
+   * ★ 2026-11-20 竹内さん「データベースちゃんと連携できるように、なぜとまっているのか」:
+   *   11-19 は DB が遅くなっている最中（19:40〜 読み1本に5分）にも統括Proを重ねて回し、最後は 522 で全体が止まった。
+   *   → 始める前に DB が軽い問い（件数だけ・10秒）に答えるかを見る。答えなければ**重ねて読まずに止める**。
+   */
+  {
+    const u = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (u && k) {
+      const t0 = Date.now();
+      let dbOk = false, dbWhy = "";
+      try {
+        const r0 = await fetch(`${u}/rest/v1/learn_supervisor_log?select=id&limit=1`, {
+          headers: { apikey: k, Authorization: `Bearer ${k}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+        dbOk = r0.ok;
+        dbWhy = `http_${r0.status}`;
+      } catch (e) {
+        dbWhy = e instanceof Error ? e.name : "err";
+      }
+      const ms = Date.now() - t0;
+      if (!dbOk) {
+        line(`■ DB が答えない（${dbWhy}・${ms}ms）→ 統括Proは止めます（重ねて読むと DB をさらに詰まらせる）`);
+        process.exitCode = 1;
+        return;
+      }
+      line(`■ DB 応答 ${ms}ms${ms > 3000 ? "（遅い・重い点検は控える）" : ""}`);
+    }
+  }
+  const jstH = (new Date().getUTCHours() + 9) % 24;
+  const daytime = jstH >= 9 && jstH < 22;
+  const fullAudit = args.includes("--full-audit");
 
   // ★ 既定は最新束を読む（bundle付き）。touch=0 は light のみで束が無いので使わない。
   //   打合せのたびに fresh=1 すると弱い強化の画面位置が消える（実測: 96欄→0）
@@ -89,7 +125,10 @@ void (async () => {
   // ★ 2026-11-18: 束内 FA は solid 復元後も古いまま残り得る（missing_n>0 だと再点検をスキップしていた）
   //   → 手元では必ず再点検し、F1 solid=96 なのに「0欄」と誤報しない
   let bundleForPro = bundle as Record<string, unknown>;
-  try {
+  // 営業時間（JST 9〜22）は土台の再点検（shot_ops を数千行ずつ何本も読む）をしない。束の foundation_audit を使う。`--full-audit` で強制
+  if (daytime && !fullAudit) {
+    line("■ 土台点検（再）: 営業時間なので回さない（束の土台点検を使う・夜か --full-audit で再点検）");
+  } else try {
     const { createClient } = await import("@supabase/supabase-js");
     const { auditLearnFoundations, refreshFoundationEvidence } = await import("../app/lib/learn-foundation-audit");
     const { countLearnedSolid } = await import("../app/lib/learn-bundle-preserve");

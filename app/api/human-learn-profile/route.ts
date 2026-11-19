@@ -445,13 +445,41 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *   foundation-audit を束の統括材料に載せる（Proが F29〜F32 を根拠に使える）。
    */
   let foundationAudit: import("@/app/lib/learn-foundation-audit").FoundationForSupervisor | null = null;
+  /**
+   * ★ 2026-11-20 竹内さん「データベースちゃんと連携できるように、なぜとまっているのか」:
+   *   土台点検は human_motion_learn.shot_ops を数千行ずつ何本も読む（重い）。営業時間（JST 9〜22）に
+   *   束の作り直しのたびに回すと、手元の統括Proの点検と重なって DB の手が埋まる（11-19 19:40 から読みが5分・21時に全体が 522）。
+   *   → 営業時間は直前の束の foundation_audit だけを読んで継ぐ（learn-bundle-scene-meta と同じ決まり）。無い時だけ回す。
+   */
   try {
-    const { auditLearnFoundations, compactFoundationForSupervisor } = await import("@/app/lib/learn-foundation-audit");
-    const faSite = scope === "itandi" || scope === "realpro" ? scope : "all";
-    const fa = await auditLearnFoundations(supabase, { site: faSite });
-    foundationAudit = compactFoundationForSupervisor(fa);
+    const { jstHourNow } = await import("@/app/lib/batch-daytime-guard");
+    const h = jstHourNow();
+    if (h >= 9 && h < 22) {
+      const { data: prevFa } = await supabase
+        .from("human_learn_profile")
+        .select("fa:bundle->foundation_audit")
+        .eq("scope", scope)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const fa = (prevFa as { fa?: unknown } | null)?.fa;
+      if (fa && typeof fa === "object") {
+        foundationAudit = fa as import("@/app/lib/learn-foundation-audit").FoundationForSupervisor;
+        try { note?.("foundation_audit_copied_daytime"); } catch (_) {}
+      }
+    }
   } catch (e) {
-    console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
+    console.warn("[human-learn-profile] 直前の土台点検を読めません:", e instanceof Error ? e.message : String(e));
+  }
+  if (!foundationAudit) {
+    try {
+      const { auditLearnFoundations, compactFoundationForSupervisor } = await import("@/app/lib/learn-foundation-audit");
+      const faSite = scope === "itandi" || scope === "realpro" ? scope : "all";
+      const fa = await auditLearnFoundations(supabase, { site: faSite });
+      foundationAudit = compactFoundationForSupervisor(fa);
+    } catch (e) {
+      console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
+    }
   }
   const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
     scene_flows: sceneFlows,
