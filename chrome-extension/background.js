@@ -5537,7 +5537,26 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
     }
   }
   if (!target) {
+    /**
+     * ★ 2026-11-19 (2.8.127) 竹内さん「次のお客さんに移る場面のところで固まってしまった」:
+     *   番号が合わない（押している間に画面側でお客さんが選び直された・番号が取れなかった）時、
+     *   旧は何もせず、待ちが20分（送付が進んだ後は45分）切れるまで次へ進まなかった。
+     *   → そのサイトで待っている回が**1本だけ**なら、それが終わった回なので解く（番号のずれは記録に残す）。
+     *   2本以上ある時は取り違えを避けて今まで通り何もしない。
+     */
+    var _only = [];
+    for (var _oi = 0; _oi < _batchCustomerDoneWaiters.length; _oi++) {
+      if (_waiterSiteMatch(_batchCustomerDoneWaiters[_oi], site)) _only.push(_batchCustomerDoneWaiters[_oi]);
+    }
+    if (_only.length === 1) {
+      target = _only[0];
+      console.warn('[AX] _notifyBatchCustomerDone: 番号が合わないが待ちが1本だけ → 解く 合図=' + customerId + ' 待ち=' + target.customerId + ' ' + (site || ""));
+      try { _snapOnEvent("batch_done_cid_mismatch", "完了合図の番号 " + customerId + " が待ち " + target.customerId + " と違うが、待ちが1本なので解いた"); } catch (_) {}
+    }
+  }
+  if (!target) {
     console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId, site || "");
+    try { _snapOnEvent("batch_done_no_waiter", "完了合図 " + customerId + " に合う待ちが無い（待ち " + _batchCustomerDoneWaiters.length + "本）"); } catch (_) {}
     return;  // resolve しない・タイムアウト自然消化
   }
   clearInterval(target.stopInterval);

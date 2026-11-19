@@ -90,6 +90,7 @@
     if (!_autoPdfRun || !_newFillSince(_autoPdfRun.startedAt)) return false;
     _autoPdfRun.stopped = true;
     _autoPdfRun = null;
+    try { _autoRunCid = null; } catch (_) {}
     console.warn("[AXLX bulk-dl][auto] 次の入力が始まった → 前の一覧の印刷用PDFを止めます（" + why + "）");
     _tmark("auto_pdf_end", "stopped_new_fill_" + why);
     try {
@@ -1349,8 +1350,19 @@
     _pdfBusy = true;
     _pdfSending = url;
     _paintPdfProgress();
-    // 送る1件だけを選ぶ（画面を見ている人に「いま何を送っているか」が分かる・他の行は触らない）
-    _selectOnly(item);
+    /**
+     * ★ 2026-11-19 竹内さん「AIXモードで検索している際、物件ダウンロードする際にチェックボックスにチェックをつけてしまっている。
+     *   印刷用PDFを押す部分なのに、なぜかチェックボックスにチェックをつける昔のやり方が起きてしまっている」:
+     *   原因: 自動の押下（_pressPrintPdf）も手で押した時と同じ sendOnePdfNow を通り、ここで無条件に _selectOnly（item.cb.checked = true を
+     *   カーソル無しで直接代入）が走っていた。押した直後に行頭のチェックが勝手に入って見えていた。
+     *   → 自動モード（拡張が自分で印刷用PDFを押している間・または自動の印が立っている間）はチェックを触らない。
+     *   1件の送信はチェックに依存しない（_sendOnePdf は押したリンクから組を作る）ので、送る物・記録・判定は変わらない。
+     *   手で押した時（自動でない時）の 2026-11-10 の形（押した1件だけチェック）はそのまま残す。
+     */
+    if (!_axlxNoRowCheck()) {
+      // 送る1件だけを選ぶ（画面を見ている人に「いま何を送っているか」が分かる・他の行は触らない）
+      _selectOnly(item);
+    }
     _onePdfBadge(item, "sending");
     _sendOnePdf(item, url, function (ok, reason) {
       _pdfSending = null;
@@ -1435,6 +1447,11 @@
     _lookWait = { timer: setTimeout(function () { _lookWait = null; finish("time"); }, base), skip: finish };
   }
 
+  /** 自動（AIX）の間は行のチェックを付けない（印刷用PDFを押すだけ）。手で押す時は今まで通り */
+  function _axlxNoRowCheck() {
+    try { return !!(_autoPdfRun || (_autoModeOn && !_staffModeOn)); } catch (_) { return false; }
+  }
+
   /** 画面でその1行だけチェックを入れる（他の行のチェックは外す） */
   function _selectOnly(item) {
     tracked.forEach(function (t) { if (t.cb && t.cb !== item.cb && t.cb.checked) t.cb.checked = false; });
@@ -1450,6 +1467,18 @@
   //   ・1件ごとに 送ったら「👀 確認中…」で資料を見る間を置いてから次へ
   //   ・止める: 右下の枠の「⏹ 自動を止める」。スタッフモード・自動モードでない時は動かない
   var _autoPdfRun = null;   // { total, done, index, stopped, startedAt }
+  /**
+   * ★ 2026-11-19 (2.8.127) 竹内さん「次のお客さんに移る場面のところで固まってしまった」:
+   *   完了合図（axlx-batch-customer-done）のお客さん番号を、終わる時に chrome.storage の current_customer_id から読んでいた。
+   *   押している間（10分以上）に画面側（AIXLINX の枠・読み直し）でお客さんが選び直されると番号が変わり、
+   *   background は番号が一致する待ちしか解かないため、送り終わっても20〜45分次へ進まなかった。
+   *   → 押し始めた時のお客さん番号を控え、終わりの合図は**その番号**で送る（読み直しをまたぐ時は session の印からも戻す）。
+   */
+  var _autoRunCid = null;
+  function _doneCidFrom(r) {
+    try { if (_autoRunCid) return _autoRunCid; } catch (_) {}
+    return (r && r.current_customer_id) || null;
+  }
   var _pressSince = 0;      // 見る間を始めた時刻（autoPressPdfs が受け取る）
   var _pressRunSince = 0;   // この回の押し始め（_startAutoPressRun が startedAt にする）
   /**
@@ -1824,6 +1853,7 @@
         customerId: cid || null,
         startedAt: _pressRunSince || Date.now(),
       };
+      if (cid && !_autoRunCid) _autoRunCid = cid; // 終わりの合図は押し始めたお客さんの番号で送る（途中の選び直しに引きずられない）
       _tmark("auto_pdf_start", String(list.length) + "件（元" + cand.length + "・送付済除外" + (filtered.sent || 0) + "・最安絞り" + (filtered.cheapest || 0) + "）");
       try { _graspAcquire("press_start", true, "未送付" + list.length + "件を押す（送付済は把握済で除外）"); } catch (_) {}
       console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : "")
@@ -2388,7 +2418,7 @@
     _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件・P" + page + "/" + maxP + "）");
     try {
       chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
-        var cid = (r && r.current_customer_id) || null;
+        var cid = _doneCidFrom(r);
         chrome.runtime.sendMessage({
           type: "axlx-batch-customer-done",
           customerId: cid,
@@ -2397,6 +2427,7 @@
           audit: _auditResult({ currentPage: page, sentCount: _autoPdfTotalSent, sentSkipped: skipped }, { auto_pdf: true }),
           auto_pdf: { why: why, sent: _autoPdfTotalSent, skipped: skipped, pages: page, max_pages: maxP },
         }, function () { void chrome.runtime.lastError; });
+        _autoRunCid = null; // 終わりの合図を送ったら番号の控えは捨てる（次のお客さんに持ち越さない）
       });
     } catch (_) {}
   }
@@ -2514,7 +2545,7 @@
   function _sendBatchDone(n, why, skipped) {
     try {
       chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
-        var cid = (r && r.current_customer_id) || null;
+        var cid = _doneCidFrom(r);
         chrome.runtime.sendMessage({
           type: "axlx-batch-customer-done",
           customerId: cid,
@@ -2522,6 +2553,7 @@
           audit: _auditResult({ currentPage: _autoPdfPage, sentCount: Number(n) || 0, sentSkipped: Number(skipped) || 0 }, { auto_pdf: true }),
           auto_pdf: { why: why, sent: Number(n) || 0, skipped: Number(skipped) || 0, next_page: true },
         }, function () { void chrome.runtime.lastError; });
+        _autoRunCid = null;
       });
     } catch (_) {}
   }
@@ -4848,6 +4880,8 @@
             _tmark("auto_next_page_resume", "customer_changed");
             return;
           }
+          // 読み直しをまたいでも、押し始めたお客さんの番号を引き継ぐ（終わりの合図の番号ずれ防止・2.8.127）
+          if (s.customerId) _autoRunCid = s.customerId;
           var resumeTries = 0;
           var go = function () {
             resumeTries++;
