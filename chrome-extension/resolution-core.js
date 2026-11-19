@@ -1352,6 +1352,9 @@ function expandStationRange(stationA, stationB) {
 }
 
 // desired_area → city_codes & route_ids（popup.js buildAreaRouteCodes と同一挙動）
+const SAKAI_ALL_WARDS = ["堺市堺区", "堺市中区", "堺市東区", "堺市西区", "堺市南区", "堺市北区", "堺市美原区"];
+const CITY_ALL_WARDS_MAP = { "堺市": SAKAI_ALL_WARDS, "堺市内": SAKAI_ALL_WARDS };
+
 // mode: "station" → 駅マップのみ / "ward" → 地域マップのみ / "auto" → 従来の自動判定
 // collect（任意）: { ward_names[], station_names[], realpro_lines[], detail_area } を追加収集する
 function buildAreaRouteCodes(c, mode, collect) {
@@ -1378,6 +1381,16 @@ function buildAreaRouteCodes(c, mode, collect) {
 
   const parts = parseAreaTokens(rawArea);
   for (const part of parts) {
+    // 市の名前（堺市）→ その市の全区。popup-maps.js の MULTI_WARD_MAP（堺市・堺市内）と同じ。
+    // 「堺市」は JR阪和線の駅名でもあるので、駅モードの明示・「堺市駅」と書いた時だけ駅に回す
+    const _cityWards = CITY_ALL_WARDS_MAP[part];
+    if (_cityWards && !(STATION_LINE_MAP[part] && (mode === "station" || rawArea.includes(part + "駅")))) {
+      _cityWards.forEach((w) => {
+        if (WARD_CODE_MAP[w] && !city_codes.includes(WARD_CODE_MAP[w])) city_codes.push(WARD_CODE_MAP[w]);
+        addWardName(w);
+      });
+      continue;
+    }
     if (mode === "ward") {
       // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
       if (WARD_CODE_MAP[part]) {

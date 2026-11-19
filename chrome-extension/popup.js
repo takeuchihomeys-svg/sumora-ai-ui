@@ -1495,7 +1495,9 @@ function buildAreaRouteCodes(c, mode = "auto") {
   const _stationRoutePairs = []; // 駅モード用: greedy covering set 計算に使用
   for (const part of parts) {
     // 広域地名マップ（北摂・河内等: 1トークン→複数市区）を最優先でチェック
-    if (MULTI_WARD_MAP[part]) {
+    // ★ 2026-11-19 「堺市」は駅名（JR阪和線 堺市駅）でもある。駅モードの明示・「堺市駅」と書いた時だけ駅に回す
+    const _multiAsStation = !!STATION_LINE_MAP[part] && (mode === "station" || rawArea.includes(part + "駅"));
+    if (MULTI_WARD_MAP[part] && !_multiAsStation) {
       MULTI_WARD_MAP[part].forEach(ward => {
         if (WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward]))
           city_codes.push(WARD_CODE_MAP[ward]);

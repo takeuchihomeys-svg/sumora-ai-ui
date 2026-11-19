@@ -83,6 +83,13 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *   → **タグ側に pager があれば先に next**。落とした後の **`次` 単体**も next。
    */
   if (/pager|page_next|next_page/i.test(name)) return "next";
+  /**
+   * ★ 2026-11-19 駅・沿線の「選ぶ／外す」ボタン（`左の布施｜label.one_station`・`近鉄大阪線｜label.one_line`）が
+   *   other に落ちていた。下の cleaned は「｜タグ名」を落とすので one_station / one_line が判定に見えない。
+   *   実測（通常録画 2026-11-19 02:14–02:22 UTC）: one_station ×10・one_line ×6 が other → 駅の手順から抜けていた。
+   *   → タグ（｜の後）を落とす前に見る。
+   */
+  if (/one_station|one_line|route_id/i.test(name)) return "station";
   const cleaned = name
     .replace(/^(左の|右の|上の|下の|中央の)/, "")     // 画面のどこか（拡張が付けている）
     .replace(/｜[^｜]*$/, "")                        // 「｜span」「｜div.go_search」「｜a.text」

@@ -35,6 +35,10 @@ console.log("■ ① 操作の名前から場面を決める（実際の name �
   ok("駅の設定へ進む は station（areaに落とさない・2026-11-17）", sceneOfOp("click:駅の設定へ進む") === "station");
   ok("小窓の駅の設定へ進む｜span は station", sceneOfOp("click:小窓の駅の設定へ進む｜span.next") === "station");
   ok("沿線の設定へ戻る は station", sceneOfOp("click:沿線の設定へ戻る") === "station");
+  // ★ 2026-11-19: 駅・沿線の選ぶ/外すボタン（タグ one_station / one_line）は station（other に落とさない）
+  ok("左の布施｜label.one_station は station", sceneOfOp("click:左の布施｜label.one_station") === "station");
+  ok("近鉄大阪線｜label.one_line は station", sceneOfOp("click:近鉄大阪線｜label.one_line") === "station");
+  ok("大阪市西区｜label.one_city は area のまま", sceneOfOp("click:左の大阪市西区｜label.one_city") === "area");
   ok("地域の設定へ進む は area のまま", sceneOfOp("click:地域の設定へ進む") === "area");
   ok("rental_cost2 は cond", sceneOfOp("change:rental_cost2") === "cond");
   ok("update_date は cond", sceneOfOp("change:update_date") === "cond");

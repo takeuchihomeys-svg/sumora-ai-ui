@@ -2630,7 +2630,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.119";
+  var _AXLX_PAGE_VER = "2.8.120";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -11484,7 +11484,11 @@
     // 沿線・駅モーダル操作がタイムアウトした場合のフォールバック:
     // 全件検索（エリアなし）を送信するのは誤物件LINE送信の原因になるためnotifyDone(error)で中止する。
     // fallbackSearchWithoutArea と同じ方針: エリア条件が解決できない場合は検索しない。
+    var _stationFailSent = false;
     function fallbackSearchWithoutStation(msg) {
+      // 早めに止めた後、待ちの段の時間切れからもう一度呼ばれても1回だけ（終わりの通知を二重にしない）
+      if (_stationFailSent) return;
+      _stationFailSent = true;
       var errMsg = '沿線・駅モーダル操作失敗（全件検索防止のため中止）: ' + msg;
       // 2026-11-10 v2.6.7 竹内さん「そのような失敗あれば原因を追いかけていく」:
       //   失敗した時に「その場の画面がどうだったか」を点検に残す（次に同じ失敗が起きた時に原因を特定できるように）。
@@ -11697,6 +11701,22 @@
              * ★ 2026-11-16: 沿線が全部既存でも true にしてよいが、**駅選択は絶対にスキップしない**
              *   （下の STEP D が hasStation なら必ず selectStationsByName）。
              */
+            if (_stationFailSent) return false;
+            /**
+             * ★ 2026-11-19 竹内さん「かえさん検索途中で止まった・駅の部分で詰まっている」（audit #1521）:
+             *   希望「堺市・商店街近く」（地域のお客様）の「堺市」が駅として届き、沿線（route_ids）0本のまま駅の段へ入った。
+             *   STEP C で「沿線未選択→駅へ進まない」を約80秒繰り返してから止まっていた。沿線が無いと駅は選べない。
+             *   → 沿線0本・画面の沿線 checked も0の時は、待たずに理由を残して止める（全件検索はしない）。
+             */
+            if (!hasRoutes && hasStation) {
+              var _lnNow0 = 0;
+              try { _lnNow0 = document.querySelectorAll('input[name="route_id[]"]:checked').length; } catch (_) { _lnNow0 = 0; }
+              if (_lnNow0 < 1) {
+                try { if (_audit) _auditStepP("station_no_route", "駅=" + (cond.station_names || []).join("・").slice(0, 60) + " 沿線0本→止める"); } catch (_) {}
+                fallbackSearchWithoutStation('沿線が決まっていません（駅: ' + (cond.station_names || []).join('・') + '・沿線0本）。地域の名前を駅として読んだ可能性があります。');
+                return false;
+              }
+            }
             if (hasRoutes) clickLineButtons(cond.route_ids);
             // キューに積んだ外し／押しが終わるまで次段へ進まない（沿線残し＋駅選びの原子）
             try { if (isClickQueueBusy()) return false; } catch (_) {}
