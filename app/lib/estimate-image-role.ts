@@ -10,9 +10,10 @@
 //   ファイルを差し替えた・モーダルを開き直した時は URL が変わる → 先に書いた行は使われないだけ（送った画像は今まで通り読む）。
 //   既にある見積書の行（201行）は全部 lines が空＝読み取りと同じ中身（kind だけ）。先に書けば送った後の DeepSeek の読み取りも呼ばない。
 //   ⚠ こちらがこの会話のためにアップロードした画像（property-images/aix/<会話>/）だけ。会話の中の画像の URL（お客様の画像が混ざる・初期費用について）は書かない
-//   入れる: AIX_ESTIMATE_IMAGE_ROLE=on（既定 off・試験と数えで確かめてから）
+//   2026-11-19 既定 on（統括役の了承: 文に触れない記録。YUMA で route と同じ関数・同じ upsert を当て、kind=estimate・lines 空で入り、
+//   お客様の画像の URL は外れ、既にある行は触らず、後片付けで0行を確かめた）。止める: AIX_ESTIMATE_IMAGE_ROLE=off
 export function estimateImageRoleOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_ESTIMATE_IMAGE_ROLE ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_ESTIMATE_IMAGE_ROLE ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 生成の要求から、見積書の役目を付けてよい画像の URL（こちらがこの会話のためにアップロードした物だけ・重複なし・最大10） */
