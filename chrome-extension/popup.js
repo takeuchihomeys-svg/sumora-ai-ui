@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 const API_BASE = "https://sumora-ai-ui.vercel.app";
 
@@ -5969,6 +5969,9 @@ function openInstructions(siteKey) {
         from: "aixlinx-underbar",
         action: "autofill",
         source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
+        // ★ 2026-11-19 (2.8.126) audit 1535: 手動の単発は誰の入力か（番号）をページへ渡していなかった（now_customer cid=-）。
+        //   → 別の一括が「番号の無い入力中」を見て上書き・タブ読み直しをしてしまった。番号を載せる。
+        customerId: (c && c.id) ? String(c.id) : null,
         // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
         conditions: _auditTagWith(_auditCtx_rp, "realpro", c, {
           area_mode:     _lockedMode || currentAreaMode,

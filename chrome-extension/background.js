@@ -7591,6 +7591,16 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
             _endFillDoneWaiter("realnetpro", _cidStr, "別客の入力が進行中");
             throw new Error("AXLX_OTHER_FILL_RUNNING: 別のお客さんの条件入力中のため、ページを更新せず見送ります");
           }
+          /**
+           * ★ 2026-11-19 (2.8.126) audit 1533→1535（画面更新されて止まった）:
+           *   入力中だが**誰の入力か分からない**（番号なし＝人の手動の単発）。旧は上の2つに当たらず読み直しへ進み、
+           *   人の入力を壊した。自分の入力は番号付きで始まるので、番号なしの入力中は別の入力＝読み直さず見送る。
+           */
+          if (!_probeBeforeReload.fillCustomerId) {
+            _auditStep(_runId, "reload_skip_unknown_fill", "番号なしのfill中（人の単発など）→強制更新しない");
+            _endFillDoneWaiter("realnetpro", _cidStr, "別の入力が進行中");
+            throw new Error("AXLX_OTHER_FILL_RUNNING: 別の入力（お客さん不明）が進行中のため、ページを更新せず見送ります");
+          }
         }
         // 1回だけやり直す: タブを開き直し・fill-done の待ちを数え直してから
         tab = await _ensureRealproTab(tab, auditRun, _lastWhy && /^popup|Receiving end|Could not establish/.test(_lastWhy) ? "content_script_dead" : "page_script_dead", _cidStr);
@@ -7608,6 +7618,8 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
           current_customer_name: (customer && customer.customer_name) || null,
         });
       } catch (_) {}
+      // ★ 2.8.126: このラン（お客さん）のマウスの動き計画をAPIから（失敗・遅い時は何もしない）
+      try { await _refreshMotionPlan(); } catch (_) {}
       var _startP = _createFillStartWaiter(_cidStr, _startTimeout);
       var _sw = await _sendSwitch();
       // ★ 前客完了直後の競合: popup が pipeline_busy で拒否したら強制解除して1回だけ再送
@@ -8613,6 +8625,28 @@ async function _scrapeAndCompareForCustomer(customer) {
 // suppressZeroNotify=true のとき 0件 LINE通知をスキップし、呼び出し元が集計して1回だけ通知する
 // （area_mode='both' の2パス重複通知防止用）
 // 2026-09-25: 直前の1回が「5分の待ち切れ」だったか（both の集計で「0件」と「検索できなかった」を分けるため）
+/**
+ * ★ 2026-11-19 (2.8.126) 竹内さん「動き方もAPIで決めていたら良いのでは」「APIこっちからも作れるように」:
+ *   お客さん（ラン）の入力を始める直前に `GET /api/motion-plan` を取り、`axlx_motion_plan` に置く。
+ *   → content.js が MAIN world の window.__axlxMotionPlan へ中継 → pointer-ui.js が persona を作り直す（plan_id が変われば新しい個性）。
+ *   ・fail-open: 取れない／遅い（1.5秒）／plan:null／止め印 `axlx_motion_plan_off=true` なら何もしない（ローカルの seed で同等に動く）。
+ *   ・入力開始を待たせない（最大1.5秒）。DB は使わない軽い API。
+ */
+async function _refreshMotionPlan() {
+  try {
+    var _off = await chrome.storage.local.get("axlx_motion_plan_off");
+    if (_off && _off.axlx_motion_plan_off === true) return null;
+    var _res = await fetch(SUMORA_BATCH_API + "/api/motion-plan", { cache: "no-store", signal: AbortSignal.timeout(1500) });
+    if (!_res || !_res.ok) return null;
+    var _j = await _res.json();
+    var _plan = _j && _j.plan;
+    if (!_plan || _plan.v !== 1 || !_plan.plan_id || !_plan.expires_at) return null;
+    await chrome.storage.local.set({ axlx_motion_plan: _plan });
+    return _plan;
+  } catch (_) {
+    return null;
+  }
+}
 /**
  * 送付後の外し（案B）をリアプロのタブへ頼む。**投げない**（失敗・時間切れ・off・タブなしはログだけで {ok:false|skipped} を返す）。
  *   page-script は MAIN world（content.js の中継は編集しない決まりのため chrome.runtime では受けられない）→

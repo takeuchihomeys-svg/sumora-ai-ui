@@ -37,7 +37,17 @@
   function tabHandoffDecision(probe, nextCid, waitedMs, maxWaitMs) {
     var p = probe || {};
     if (!p.fillRunning) return "go";
-    if (!p.fillCustomerId || !nextCid || String(p.fillCustomerId) === String(nextCid)) return "go";
+    if (!nextCid || String(p.fillCustomerId || "") === String(nextCid)) return "go";
+    /**
+     * ★ 2026-11-19 (2.8.126) audit 1533/1535: 入力中なのに**誰の入力か分からない**（番号なし＝人の手動の単発など）時、
+     *   旧は「同じお客さん」とみなして "go" → 一括が人の入力の途中でタブを読み直して壊した（画面更新されて止まった）。
+     *   → 番号が無くても、これから始める自分の入力はまだ始まっていないので、入力中のものは**別の入力**。
+     *     ただし番号なしの印が古いまま残る場合に永久に待たないよう、番号なしだけは上限を短く（3分・ページの無進捗の上限と同じ）。
+     */
+    if (!p.fillCustomerId) {
+      var ulim = typeof maxWaitMs === "number" ? Math.min(maxWaitMs, FILL_ALIVE_IDLE_MS) : FILL_ALIVE_IDLE_MS;
+      return (Number(waitedMs) || 0) < ulim ? "wait" : "go";
+    }
     var limit = typeof maxWaitMs === "number" ? maxWaitMs : OTHER_FILL_WAIT_MS;
     return (Number(waitedMs) || 0) < limit ? "wait" : "give_up";
   }

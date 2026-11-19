@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-19 19:10 **拡張 2.8.126: 自動録画中に「画面更新されて止まった」原因を直した（番号なしの入力中を一括が壊していた）＋動きのAPI（`GET /api/motion-plan`）を Cursor 側でも作った**（竹内さん「今録画自動モードで動画とったが変な画面になって…画面更新されて止まった」「APIこっちからも作れるように」統括pro）
+
+### 画面更新で止まった原因（DB 実測: search_audits 1533→1534→1535・JST 18:50）
+- 1533 `bulk_queue`（18:50:14）が前客の送付待ち（`pipeline_busy_send_hold`）で入力が始まらず、40秒後（18:50:56）に `no_fill_start`→`tab_reload`。
+- その間（18:50:35）に人が手動で始めた 1535 `single`（勇気さん）が入力中で、所在地を確定した直後（18:50:55）に**同じタブを読み直された**。→ 一覧（16,725棟）の画面に戻り「変な画面」。
+- 根: 手動の単発は誰の入力か（番号）をページへ渡していなかった（`now_customer cid=-`）。一括の判定は **「番号なしの入力中＝同じお客さんとみなす（go）」** で、読み直しの前の守り（`reload_skip_other_fill`）も番号が一致しない時だけ。番号なしは両方をすり抜けた。
+- 直し: ① `customer-handoff.js` `tabHandoffDecision` — 入力中で番号なしなら**別の入力として待つ**（番号なしだけ上限3分・古い印で永久に待たない）。② `background.js` — 読み直しの前に番号なしの入力中なら**見送る**（監査 `reload_skip_unknown_fill`）。③ `popup.js`→`underbar.js` — 手動の単発の autofill に `customerId` を載せてページへ渡す。テスト: `unknown-fill-v2826.test.js`（11）。
+- 確認（竹内さんへ）: 手動の単発の入力中に一括を動かしても、タブが読み直されず一括が待つ／見送ること。監査に `wait_prev_customer`（番号なし含む）か `reload_skip_unknown_fill` が出る。
+- ⚠ 未対応の点: 1533 が前客（2bdae2b2）の送付で `batch_timeout`（進捗あり）になった理由は別（送付が長引いた）。今回の直しは「人の入力を壊さない」まで。
+
+### 動きの API（Cursor 側）
+- 2.8.125 は受け口だけだったが、竹内さんの指示で Cursor 側でも作った。`app/lib/motion-plan.ts`（純関数 `buildMotionPlan`・範囲は `human-wait.js` の PERSONA_RANGE と同じ）／`app/api/motion-plan/route.ts`（GET・CORS・no-store・**DB を読まない書かない**・`MOTION_PLAN_OFF=1` で `plan:null`）／拡張 `background.js` `_refreshMotionPlan`（お客さんの入力を始める直前に取得・1.5秒で諦める・失敗は握りつぶす・`axlx_motion_plan_off=true` で止まる）。列・表は増やしていない（migrate-schema 変更なし）。Claude Code が後で中身を賢くしてもよい（同じ形 `{v:1, plan_id, expires_at, run_seed, persona}` を守る）。
+- 効き方: ランごとに新しい plan_id → pointer-ui.js が persona を作り直す。plan 無し／API 失敗でもローカル seed で動く（fail-open）。監査 `motion_stats` の `plan=` に plan_id が出れば API が使えた証拠。
+- 次の段（未実装・統括Pro の指摘）: `motion_stats` を統括の材料にして、API の persona の**中心**を動かす（今は中心 1.0 の対数正規で毎回ランダム）。DB に動きの列を持つなら migrate-schema 同時＋竹内さんの OK。
+- テスト: `npx tsx tests/motion-plan.test.ts`（13）。
 ## 2026-11-19 18:45 **拡張 2.8.125: 外しを「進捗型＋完了線F57＋送付後の外し」に／見えない町は詳細地域へ進んで外す／自動のマウスを人の実測分布＋ラン別 persona に／動きを API で渡せる形（motion_plan）**（竹内さん「入れたの覚えていたら外す、完了したらちゃんと外す、順番で」「マウスの動き方が一定になっていないか」「動き方もAPIで決めたら」統括pro）
 
 ### 外し（page-script.js・background.js）
