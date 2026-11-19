@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-19 23:00 **main に cursor-ext を統合して本番へ出した（拡張 2.8.128・merge 20eb66de）**（竹内さん「merge_full: 別の作業場所で衝突を解き、tsc とテストが通ってから main に出す」）
+- **何をしたか**: 別の作業場所（worktree `sumora-merge-wt`）で `main` を `cursor-ext` に取り込み（競合 43件＋再取り込みで6件）、競合は cursor-ext 側を採りつつ main だけにあった物を移植 → `tsc` 0・main 側で増えた/変わったテスト 81本 全 PASS → `merge-main-into-ext` と `main`（早送り・force なし）に push。
+- **main から移植した物**: 学習の守り（`human-learn-profile-guard`・巻き込み・読みの印・cache）／版の判定（`learn-audit-summary` の versions/latest）／前回の弱点→直った/続く（`weak_list`）／端末数（`install_id`）／`improvements.recent`／cron の束の位置の引き継ぎ（`carryLearnedShots`）と vision 補完の併用。
+- **台本の門**: `scripts/weak-scene-learn.ts`（リアプロの検索画面の写真だけ読む）を `hazard-audit-core.ts` の `DS_GATE_ALLOW` に理由つきで追加（見張り (o) の合格のため）。
+- **main に同じ直しが先にあった**: 途中段（phase=progress）の受け取り・`was/now/cs/opened/位置` を shot_ops に通す、は main 側にも別の書き方で入っていた。衝突は cursor-ext 側の書き方を採用（中身は同じ向き）。
+- **移していない物**: main の `readShotFieldsDetailed`（shot-learn-server）と書き直された `scripts/audit-freshness.ts` は cursor-ext 側のまま（要確認）。
+- **main で元から落ちるテスト（統合と無関係）**: deal-outcome / linkage-map / llm-alt-provider。
+- **次**: 拡張を再読み込み（2.8.128）して自動/AIX を1回流す → `search_audits`（#1538 より後）で `fill_done_implied` / `busy_retry_queued` / `batch_done_early_taken` を確かめる。
+
+---
+
 ## 2026-11-19 22:00 **拡張 2.8.128（追加）: 前のお客さんの入力中で断られた（busy_other_customer）時、一括全体を止めず最後に1回だけやり直す**（統括Proの確認に竹内さんが「wait」と回答）
 - **竹内さんの答え**: 「止めずに、前のお客さんが終わるまで待ってから次を始める（上限つき・超えたらその客だけ飛ばして記録）」。
 - **直し**: `customer-handoff.js` の `HOLD_GATES` を `["human_takeover"]` のみに（busy は止めない／人が引き取った時は今まで通り一括を止める）。`busyRetryDecision(errMsg, cid, retriedSet)` を追加（"retry"＝最後にもう1回／"give_up"＝2回目は飛ばす／null）。`background.js`: 手動一括（`_bulkTargets.push`）とキュー一括（`targets.push`）の catch で判定→最後に積み直す。点検の step は `busy_retry_queued` / `busy_give_up`。やり直す回は「検索できなかった」の知らせを出さない（最終的に諦める時だけ）。`_busyRetried` は一括ごとに作り直す。待ちの上限は既存の始める前の待ち（`tabHandoffDecision`・`OTHER_FILL_WAIT_MS` 10分）。
