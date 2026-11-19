@@ -85,8 +85,8 @@ function fnSrc(src, head) {
   ok("一括の run_id（ctx）は使い回さない", /if \(!\(ctx && ctx\.runId\) && _lastAuditTag/.test(tag));
 
   console.log("\n■ 版");
-  ok("manifest が 2.8.115", mf.version === "2.8.115", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.115", /var _AXLX_PAGE_VER = "2\.8\.115";/.test(ps));
+  ok("manifest が 2.8.116", mf.version === "2.8.116", mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.116", /var _AXLX_PAGE_VER = "2\.8\.116";/.test(ps));
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail) process.exit(1);

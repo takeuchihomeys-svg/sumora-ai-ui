@@ -2614,7 +2614,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.115";
+  var _AXLX_PAGE_VER = "2.8.116";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -4927,7 +4927,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -4960,7 +4960,7 @@
        *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
        */
       var _pinFlush = _PIN.test(String(k));
-      var _clearKey = /learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok/.test(String(k));
+      var _clearKey = /learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok/.test(String(k));
       if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;
@@ -5793,6 +5793,13 @@
           }
         } catch (_) {}
         if (hit && hit !== cb && hit.isConnected) { try { hit.click(); } catch (_) {} }
+        // 沿線の「前客の残り」と「この客で自分が押した物」を分けて数える（#1513 で取り違えた）
+        try {
+          if (wantOn && /route_id/.test(nm)) {
+            if (!window.__axlxLinePickedRun) window.__axlxLinePickedRun = {};
+            window.__axlxLinePickedRun[String(cb.value || "")] = 1;
+          }
+        } catch (_) {}
         /**
          * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
          *   録画（audit #1498）: 天王寺区が label→name→label→name→label→city_code[] と3回切り替わり、
@@ -8856,6 +8863,11 @@
       // 続き客: 沿線・駅の「全部外し→入れ直し」は客ごとに1回だけ（ポーリングで繰り返し外さない）
       window.__axlxLineForceClearedOnce = false;
       window.__axlxStationForceClearedOnce = false;
+      window.__axlxLineWaitN = 0;
+      window.__axlxLineRepressN = 0;
+      window.__axlxLineStuckSent = false;
+      window.__axlxLineOverlapSent = false;
+      window.__axlxLinePickedRun = {};
       window._axPreSearchWalkSealed = false;
       window._axWalkUiSealedOnce = false;
       window._axSearchPressedAt = 0;
@@ -11431,6 +11443,7 @@
             }).filter(Boolean);
             var _clearedLines = 0;
             var _keptOverlap = 0;
+            var _keptMine = 0;
             // force 済みでない通常パス: want 以外の沿線だけ外す（駅は STEP D）
             // ⚠ 残駅がある間は沿線直外ししない（上で force 完了するまで待つ）
             if (!_forcePlaceClear && _formStLeft === 0) {
@@ -11444,11 +11457,17 @@
                 var isWanted = wantedLineNorms.some(function(w) {
                   return w === lNorm || (lNorm.length >= 4 && w.endsWith(lNorm)) || (w.length >= 4 && lNorm.endsWith(w));
                 });
-                if (isWanted) { _keptOverlap++; return; }
+                if (isWanted) {
+                  var _mine = false;
+                  try { _mine = !!(window.__axlxLinePickedRun && window.__axlxLinePickedRun[String(cb.value || "")]); } catch (_) {}
+                  if (_mine) _keptMine++; else _keptOverlap++;
+                  return;
+                }
                 _toggleCheckboxLikeHuman(cb, false);
                 _clearedLines++;
               });
-              if (_keptOverlap > 0) {
+              if (_keptOverlap > 0 && !window.__axlxLineOverlapSent) {
+                try { window.__axlxLineOverlapSent = true; } catch (_) {}
                 try { _auditStepP("station_line_overlap", "沿線" + _keptOverlap + "本は前客と被り残し→駅は必ず選び直す"); } catch (_) {}
               }
               if (_clearedLines > 0) {
@@ -11518,7 +11537,61 @@
                         return c && c.checked && norm(l.textContent) === n0;
                       });
                     });
-                  _auditStepP("station_line_wait", window.__axlxLineWaitN + "回待ち 未チェック=" + _missLn.join("・").slice(0, 80));
+                  _auditStepP("station_line_wait", window.__axlxLineWaitN + "回待ち 未チェック=" + _missLn.join("・").slice(0, 80) + " 自押し済=" + _keptMine);
+                }
+              } catch (_) {}
+              /**
+               * ★ 2026-11-19 竹内さん「タクヤの場合沿線だけおして駅を押さなかった」（audit #1513）:
+               *   1本目だけ押され、2本目は列から落ちた後の印が残って二度と積まれず、ここで64秒回り続けた。
+               *   列が空なのに未チェックの沿線が残る時は、その沿線だけ印を外して押し直す（最大3回）。
+               *   それでも入らない時は理由（ラベル有無・チェック・印・画面）を1回だけ残す。
+               */
+              try {
+                var _lnIdle = true;
+                try { _lnIdle = !isClickQueueBusy(); } catch (_) { _lnIdle = true; }
+                var _lnLabelOf = function (id) {
+                  var nm0 = ROUTE_LINE_MAP[id] ? norm(ROUTE_LINE_MAP[id]) : "";
+                  if (!nm0) return null;
+                  var all = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
+                  for (var i0 = 0; i0 < all.length; i0++) { if (norm(all[i0].textContent) === nm0) return all[i0]; }
+                  for (var i1 = 0; i1 < all.length; i1++) {
+                    var t1 = norm(all[i1].textContent);
+                    if (t1.length >= 4 && nm0.endsWith(t1)) return all[i1];
+                  }
+                  return null;
+                };
+                var _lnCbOf = function (lb) {
+                  if (!lb) return null;
+                  var c0 = lb.querySelector('input[type="checkbox"]');
+                  if (!c0 && lb.htmlFor) { try { c0 = document.getElementById(lb.htmlFor); } catch (_) { c0 = null; } }
+                  return c0;
+                };
+                var _missIds = (cond.route_ids || []).filter(function (id) {
+                  var c1 = _lnCbOf(_lnLabelOf(id));
+                  return !(c1 && c1.checked);
+                });
+                if (_lnIdle && _missIds.length && window.__axlxLineWaitN % 8 === 0 && (window.__axlxLineRepressN || 0) < 3) {
+                  window.__axlxLineRepressN = (window.__axlxLineRepressN || 0) + 1;
+                  _missIds.forEach(function (id) {
+                    var lb1 = _lnLabelOf(id);
+                    var cb1 = _lnCbOf(lb1);
+                    [lb1, cb1].forEach(function (e1) {
+                      if (e1 && e1.__axPending && !_isElQueuedOrBusy(e1)) e1.__axPending = false;
+                    });
+                  });
+                  if (_audit) _auditStepP("station_line_repress", window.__axlxLineRepressN + "回目 未チェック=" + _missIds.map(function (id) { return ROUTE_LINE_MAP[id] || id; }).join("・").slice(0, 80));
+                  clickLineButtons(_missIds);
+                } else if (_missIds.length && (window.__axlxLineRepressN || 0) >= 3 && window.__axlxLineWaitN >= 40 && !window.__axlxLineStuckSent) {
+                  window.__axlxLineStuckSent = true;
+                  var _why = _missIds.map(function (id) {
+                    var lb2 = _lnLabelOf(id);
+                    var cb2 = _lnCbOf(lb2);
+                    return (ROUTE_LINE_MAP[id] || id) + ":" + (!lb2 ? "ラベル無" : (!cb2 ? "箱無" : (cb2.checked ? "済" : "未"))) +
+                      ((lb2 && lb2.__axPending) || (cb2 && cb2.__axPending) ? "・印残" : "");
+                  });
+                  var _scrK = "";
+                  try { _scrK = _graspStationModalScreen().kind; } catch (_) { _scrK = "?"; }
+                  if (_audit) _auditStepP("station_line_stuck", _why.join("／").slice(0, 120) + " 画面=" + _scrK + " 列=" + (_lnIdle ? "空" : "動"));
                 }
               } catch (_) {}
               return false;

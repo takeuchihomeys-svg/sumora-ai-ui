@@ -45,7 +45,7 @@ console.log("\n■ 実行記録の段が重ならない（実際に動かす）"
 const tr = A.createTracker({ post: function () { return Promise.resolve(); } });
 const run = tr.begin({ trigger: "single", site: "realpro", customer_id: "c-test", post_started: false });
 const s1 = [
-  { k: "page_ver", d: "2.8.115", at: 1000 },
+  { k: "page_ver", d: "2.8.116", at: 1000 },
   { k: "fill_start", d: "station", at: 1001 },
   { k: "station_line", d: "沿線を選ぶ", at: 1002 },
 ];
@@ -61,8 +61,8 @@ ok("終わりの合図で同じ段を送り直しても重ならない", afterFi
 
 console.log("\n■ 版");
 const mf = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-extension/manifest.json"), "utf8"));
-ok("manifest が 2.8.115", mf.version === "2.8.115", mf.version);
-ok("_AXLX_PAGE_VER が 2.8.115", /var _AXLX_PAGE_VER = "2\.8\.115";/.test(ps));
+ok("manifest が 2.8.116", mf.version === "2.8.116", mf.version);
+ok("_AXLX_PAGE_VER が 2.8.116", /var _AXLX_PAGE_VER = "2\.8\.116";/.test(ps));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
