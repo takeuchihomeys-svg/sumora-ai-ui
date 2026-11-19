@@ -88,9 +88,13 @@
    */
   function _haltAutoPdfForNewFill(why) {
     if (!_autoPdfRun || !_newFillSince(_autoPdfRun.startedAt)) return false;
+    // 止めたお客さんの番号（次のお客さんの名前で返さない・番号の分かる人にだけ「ここまで」の合図を送る・2026-11-20）
+    var _haltCid = null;
+    try { _haltCid = _autoRunCid || (_autoPdfRun && _autoPdfRun.customerId) || null; } catch (_) { _haltCid = null; }
     _autoPdfRun.stopped = true;
     _autoPdfRun = null;
     try { _autoRunCid = null; } catch (_) {}
+    try { _sendSkipDoneFor(_haltCid, "halt_new_fill_" + why, _autoPdfTotalSent); } catch (_) {}
     console.warn("[AXLX bulk-dl][auto] 次の入力が始まった → 前の一覧の印刷用PDFを止めます（" + why + "）");
     _tmark("auto_pdf_end", "stopped_new_fill_" + why);
     try {
@@ -1723,7 +1727,15 @@
       if (!el) { cb(false); return; }
       try {
         if (P && P.moveToEl) {
-          P.moveToEl(el).then(function () { try { el.click(); } catch (_) {} cb(true); }, function () { try { el.click(); } catch (_) {} cb(true); });
+          // 着いてすぐ押さない（人は目で確かめてから押す・2026-11-20）
+          P.moveToEl(el).then(function () {
+            setTimeout(function () {
+              try { if (P.tap) P.tap(); } catch (_) {}
+              try { if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", el); } catch (_) {}
+              try { el.click(); } catch (_) {}
+              cb(true);
+            }, 160 + Math.floor(Math.random() * 420));
+          }, function () { try { el.click(); } catch (_) {} cb(true); });
           return;
         }
       } catch (_) {}
@@ -2460,17 +2472,15 @@
      *   自動は2頁目で黙って止まっていた（直近2日、自動が次を押した後に送った例は0）。
      *   → 押す前に続きの印を session に置き、読み直した画面の start() で続きから押し直す。
      */
-    try {
-      chrome.storage.session.set({
-        axlx_auto_next_page: {
-          page: _autoPdfPage,
-          tries: _autoNextPageTries,
-          total: _autoPdfTotalSent,
-          customerId: _pickCustomerIdForAuto() || null,
-          at: Date.now(),
-        },
-      });
-    } catch (_) {}
+    // 番号は押し始めたお客さん（_autoRunCid）を先に使う。時刻は押す直前にも付け直す（待ちの間に古くならない・2026-11-20）
+    var _nextMark = {
+      page: _autoPdfPage,
+      tries: _autoNextPageTries,
+      total: _autoPdfTotalSent,
+      customerId: _autoRunCid || _pickCustomerIdForAuto() || null,
+      at: Date.now(),
+    };
+    try { chrome.storage.session.set({ axlx_auto_next_page: _nextMark }); } catch (_) {}
     console.log("[AXLX bulk-dl][auto] 次のページへ進みます → P" + _autoPdfPage + "/" + maxP
       + (meta && meta.allSkipped ? "（前頁は全部送付済み）" : "（前頁で送信あり）"));
     _nudge("👉 次のページへ（P" + _autoPdfPage + "/" + maxP + "）");
@@ -2484,19 +2494,32 @@
     try { _oldRowBtns = tracked.map(function (t) { return t && t.btn; }).filter(Boolean); } catch (_) { _oldRowBtns = []; }
     setTimeout(function () {
       try {
-        if (!btn || !btn.isConnected) return;
+        if (!btn || !btn.isConnected) {
+          try { btn = (typeof _findNextPageEl === "function") ? _findNextPageEl() : null; } catch (_) { btn = null; }
+        }
+        if (!btn || !btn.isConnected) {
+          // 黙って止まらない: 次が押せないなら、ここまでで終わりの合図を出す（2026-11-20 連続のお客さんが待たされない）
+          try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
+          _tmark("auto_next_page", "btn_gone");
+          _sendBatchDone(_autoPdfTotalSent, why + "・次ボタンが外れた", meta && meta.skipped);
+          return;
+        }
         var P = window.AxlxPointerUi;
         var fire = function () {
           try {
+            try { _nextMark.at = Date.now(); chrome.storage.session.set({ axlx_auto_next_page: _nextMark }); } catch (_) {}
             if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", btn);
             btn.click();
           } catch (_) {}
         };
         if (P && P.moveToEl) {
           try { if (P.ensure) P.ensure(); } catch (_) {}
+          // 着いてすぐ押さない（人は目で確かめてから押す・2026-11-20）
           P.moveToEl(btn).then(function () {
-            try { if (P.tap) P.tap(); } catch (_) {}
-            fire();
+            setTimeout(function () {
+              try { if (P.tap) P.tap(); } catch (_) {}
+              fire();
+            }, 160 + Math.floor(Math.random() * 420));
           }, fire);
         } else {
           fire();
@@ -2555,6 +2578,25 @@
         }, function () { void chrome.runtime.lastError; });
         _autoRunCid = null;
       });
+    } catch (_) {}
+  }
+  /**
+   * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+   *   読み直し後の続き（Case C／Case E）が押さずに終わる道は、旧は何も知らせず background が 20分待っていた。
+   *   → 番号が分かっているお客さんにだけ「押さずに終わった」合図を送る（番号の無い合図は送らない＝取り違えない）。
+   */
+  function _sendSkipDoneFor(cid, why, sentSoFar) {
+    if (!cid) { _tmark("auto_skip_done", "no_cid_" + why); return; }
+    try {
+      chrome.runtime.sendMessage({
+        type: "axlx-batch-customer-done",
+        customerId: String(cid),
+        propertyCount: sentSoFar == null ? null : (Number(sentSoFar) || 0),
+        skipped: true,
+        audit: _auditResult({ currentPage: _autoPdfPage, sentCount: Number(sentSoFar) || 0, sentSkipped: 0 }, { auto_pdf: true }),
+        auto_pdf: { why: why, sent: Number(sentSoFar) || 0, skipped_run: true },
+      }, function () { void chrome.runtime.lastError; });
+      _tmark("auto_skip_done", why);
     } catch (_) {}
   }
   function stopAutoPdfs() {
@@ -4879,8 +4921,36 @@
                 return;
               }
               console.log("[AXLX bulk-dl][auto] Case C: 検索後のページ読み直し → この画面の行を1件ずつ押します");
+              // 送る相手は「検索した印」のお客さん（キャッシュの今のお客さんより先・2026-11-20 取り違え防止）
+              if (_flag && _flag.customerId) _autoRunCid = _flag.customerId;
               _autoSendArmed = true;
               _maybeAutoPressOnLoad({ afterSearch: true });
+              /**
+               * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+               *   0件の検索の後は行が無く、旧は何も知らせずに終わっていた（background が 20分待ってから「検索できなかった」）。
+               *   → 少し待っても行が0で、押し始めてもいなければ「0件」の終わりの合図を、印のお客さんの番号で送る。
+               */
+              var _zeroTries = 0;
+              var _zeroCheck = function () {
+                _zeroTries++;
+                if (_autoPdfRun || _autoPdfSig) return;
+                var _n = 0;
+                try { if (typeof _rescanRows === "function") _rescanRows(); } catch (_) {}
+                try { _n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { _n = 0; }
+                if (_n > 0) {
+                  if (_zeroTries < 3) { _maybeAutoPressOnLoad({ afterSearch: true }); setTimeout(_zeroCheck, 1500); }
+                  return;
+                }
+                if (_zeroTries < 10) { setTimeout(_zeroCheck, 1200); return; }
+                if (!_autoModeOn || _staffModeOn) return;
+                var _isResult = true;
+                try { if (typeof _looksLikeSearchResult === "function") _isResult = !!_looksLikeSearchResult(); } catch (_) { _isResult = true; }
+                console.log("[AXLX bulk-dl][auto] Case C: 検索後の一覧が0件 → 終わりの合図を送ります（" + (_isResult ? "0件" : "検索結果の画面と読めない＝件数不明") + "）");
+                _pendingAutoSendDispatched = true;
+                // 検索結果の画面と読めない時（ログイン切れ等）は「0件」と言わない（件数不明 null）
+                _sendSkipDoneFor(_flag && _flag.customerId, _isResult ? "zero_rows_after_search" : "no_rows_not_result_page", _isResult ? 0 : null);
+              };
+              setTimeout(_zeroCheck, 1500);
             });
           }
         });
@@ -4895,9 +4965,12 @@
           if (!s || typeof s !== "object") return;
           chrome.storage.session.remove("axlx_auto_next_page");
           var age = Date.now() - (Number(s.at) || 0);
-          if (age > 120000) {
+          // 印は押す直前に付け直す（2.8.131）。読み込みの遅れ・裏のタブで遅くなっても切らないよう 5分まで
+          // 続けない時も黙らない: そのお客さんに「ここまで」の終わりの合図を送る（background が 20〜45分待たない・2026-11-20）
+          if (age > 300000) {
             console.warn("[AXLX bulk-dl][auto] Case E: 次ページの続きの印が古い（" + Math.round(age / 1000) + "秒前）→ 続けない");
             _tmark("auto_next_page_resume", "stale_" + Math.round(age / 1000) + "s");
+            _sendSkipDoneFor(s.customerId, "next_page_stale", s.total);
             return;
           }
           if (_autoPdfRun || _pendingAutoSendDispatched) return;
@@ -4905,6 +4978,7 @@
           if (s.customerId && nowCid && String(s.customerId) !== String(nowCid)) {
             console.warn("[AXLX bulk-dl][auto] Case E: お客さんが変わっている → 続けない");
             _tmark("auto_next_page_resume", "customer_changed");
+            _sendSkipDoneFor(s.customerId, "next_page_customer_changed", s.total);
             return;
           }
           // 読み直しをまたいでも、押し始めたお客さんの番号を引き継ぐ（終わりの合図の番号ずれ防止・2.8.127）
@@ -4920,6 +4994,13 @@
             if ((!_autoModeOn || n === 0) && resumeTries < 8) { setTimeout(go, 800); return; }
             if (!_autoModeOn) {
               _tmark("auto_next_page_resume", "not_auto");
+              _sendSkipDoneFor(s.customerId, "next_page_not_auto", s.total);
+              return;
+            }
+            if (n === 0) {
+              // 次の頁が出たのに行が無い＝ここまで。送った数のまま終わりの合図
+              _tmark("auto_next_page_resume", "no_rows");
+              _sendSkipDoneFor(s.customerId, "next_page_no_rows", s.total);
               return;
             }
             _autoPdfPage = Number(s.page) || 2;

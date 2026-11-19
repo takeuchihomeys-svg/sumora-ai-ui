@@ -38,7 +38,9 @@
    * @param {{has:function(string):boolean, add:function(string):void}|null} retried やり直し済みの番号の集合（呼び出し側が一括ごとに作る）
    */
   function busyRetryDecision(errMsg, cid, retried) {
-    if (!/busy_other_customer/.test(String(errMsg || ""))) return null;
+    // ★ 2026-11-20: 「別の入力が動いている（OTHER_FILL_RUNNING）」「前の送付が終わっていない（SEND_HOLD）」も一時の重なり。
+    //   旧は busy_other_customer だけやり直し、この2つは1回で永久に飛ばしていた。
+    if (!/busy_other_customer|AXLX_OTHER_FILL_RUNNING|AXLX_PIPELINE_SEND_HOLD/.test(String(errMsg || ""))) return null;
     if (cid == null || cid === "") return "give_up";
     var k = String(cid);
     if (retried && retried.has(k)) return "give_up";

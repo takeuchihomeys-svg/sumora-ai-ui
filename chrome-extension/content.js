@@ -159,7 +159,13 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
 
   function fix() {
     if (!document.body) return;
-    if (!isSidebarVisible()) clickShowBtn();
+    if (isSidebarVisible()) return;
+    // ページ側（page-script.js）が居れば、カーソル経由・4秒に1回の押しを頼む（2026-11-20 カーソル無しの押しをなくす）
+    if (document.documentElement.getAttribute("data-axlx-ps") === "1") {
+      window.postMessage({ from: "axlx-press-show-sidebar" }, "*");
+      return;
+    }
+    clickShowBtn();
   }
 
   // resizeイベント（content scriptからも二重対策）
@@ -426,6 +432,16 @@ window.addEventListener("message", function (e) {
   if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
   try {
     // fill-done でも pending を補強（notifyDone が届いた経路／リロード直前の保険）
+    /**
+     * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+     *   ページ側の失敗（検索画面へ移れない・30分の見張り切れ・3分止まって次へ移った・入力中の例外）は
+     *   検索を押していないのに「成功」として届き、background が結果を20分待ち、「検索した印」まで書いていた。
+     *   → この種類の失敗は関所と同じ扱い（error で渡す・検索した印は書かず消す）。
+     *   案内モード（guide-mode）はスタッフが検索する番なので今まで通り（「検索できなかった」の知らせを出さない）。
+     */
+    var _pgErr = String(e.data.error || "");
+    var _notSearched = !e.data.gate && /^(no_search_form|watchdog-timeout|stuck_superseded|fill_exception)/.test(_pgErr);
+    if (_notSearched) { e.data.gate = true; e.data.gateKind = e.data.gateKind || _pgErr.split(":")[0]; }
     try {
       var _doneCid = e.data.customerId || _pendingFillCustomerId || null;
       if (!e.data.gate) {

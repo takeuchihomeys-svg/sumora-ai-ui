@@ -4030,6 +4030,13 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
     // 2026-09-18 竹内「一括検索も条件広げて検索でできるようにする」:
     //   _batchAutofill は元から isWide を受ける作りだったのに、ここが常に false を渡していた
     var _bulkIsWide = !!msg.isWide;
+    // ★ 2026-11-20: キューの一括・Realtime・手動の一括が同じタブで同時に動くと、お客さんが混ざる → 動いている間は始めない
+    if (_batchLoopAlive || _manualBulkAlive) {
+      console.warn("[manual-bulk-search] 別の一括が動いている → 始めない");
+      sendResponse({ ok: false, error: "batch_running" });
+      return true;
+    }
+    _manualBulkAlive = true;
     sendResponse({ ok: true, started: true });
     (async () => {
       try {
@@ -4242,6 +4249,8 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
         console.log("[manual-bulk-search] ✔ 完了");
       } catch (_be2) {
         console.error("[manual-bulk-search] エラー:", _be2.message || _be2);
+      } finally {
+        _manualBulkAlive = false;
       }
     })();
     return true;
@@ -4864,6 +4873,11 @@ async function _sbHandleCommand(payload) {
     return;
   }
 
+  // ★ 2026-11-20: この SW で一括が動いている間は、ロックの時刻が古くても受けない（二重に走らせない・止めた印を消さない）
+  if (_batchLoopAlive || _manualBulkAlive) {
+    console.log("[SB-RT] 一括が動いている → スキップ (customerId=" + customerId + ")");
+    return;
+  }
   // batchRunning ロックチェック（二重実行防止）
   var stLock = await chrome.storage.local.get("batchRunning");
   var lock = stLock.batchRunning;
@@ -5407,6 +5421,7 @@ function _notifyFillDone(site, customerId, error) {
   }
   sel.resolve.forEach(function (w) {
     clearTimeout(w.timer);
+    try { if (w.stopInterval) clearInterval(w.stopInterval); } catch (_) {}
     w.resolve({ timedOut: false, error: error || null });
   });
   _fillDoneWaiters = _fillDoneWaiters.filter(function (w) { return sel.resolve.indexOf(w) < 0; });
@@ -5444,6 +5459,7 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       console.log("[fill-done-waiter] _batchShouldStop 検知 → stopped:true で解決");
       resolve({ timedOut: false, stopped: true, error: null });
     }, 500);
+    entry.stopInterval = stopInterval; // 合図で解く時にも止める（残ると後のお客さんの「止める」で空の解決を呼ぶ）
     var onTimeout = function (extra) {
       clearInterval(stopInterval);
       clearTimeout(entry.timer);
@@ -5553,11 +5569,46 @@ function _endFillDoneWaiter(site, customerId, why) { var w = _findFillDoneWaiter
 // bulk-dl.js が tryNext→全ページ完了時に chrome.runtime.sendMessage で通知する。
 // _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
 var _batchCustomerDoneWaiters = [];
+/**
+ * 送付途中の hold（axlx_pipeline_send_hold）の番号。15分を過ぎた物・時刻の無い旧形式（文字だけ）は無いものとする。
+ *   ★ 2026-11-20: 旧は storage.local に期限無しで残り、ブラウザを開き直しても後のお客さんが全員 SEND_HOLD で飛ばされ得た。
+ *   anyAge=true は「完了合図で落とす」時用（古くても番号が合えば落とす）。
+ */
+function _sendHoldCid(v, anyAge) {
+  try {
+    if (!v) return null;
+    if (typeof v === "string") return anyAge ? v : null;
+    if (!v.cid) return null;
+    if (!anyAge && (!v.at || Date.now() - Number(v.at) > 15 * 60 * 1000)) return null;
+    return String(v.cid);
+  } catch (_) { return null; }
+}
+// 待ちが解けた／切れたお客さんの番号（遅れて届く前のお客さんの合図を、次の人の待ちに当てないため・1時間）
+var _finishedCids = new Map();
+function _markFinishedCid(cid) {
+  if (!cid) return;
+  try {
+    var now = Date.now();
+    _finishedCids.set(String(cid), now);
+    _finishedCids.forEach(function (at, k) { if (now - at > 3600000) _finishedCids.delete(k); });
+  } catch (_) {}
+}
+function _isRecentlyFinishedCid(cid) {
+  try {
+    if (!cid) return false;
+    var at = _finishedCids.get(String(cid));
+    if (!at || Date.now() - at > 3600000) return false;
+    for (var i = 0; i < _batchCustomerDoneWaiters.length; i++) {
+      if (_batchCustomerDoneWaiters[i].customerId && String(_batchCustomerDoneWaiters[i].customerId) === String(cid)) return false;
+    }
+    return true;
+  } catch (_) { return false; }
+}
 
 // 2026-09-30 v2.5.43 同時の回（リアプロと ITANDI が同じお客様で並んで走る）: 待ち手はサイトも持ち、合図の送り主のタブの URL（site）で当てる。
 //   site が分からない合図（旧の経路）は今までどおりお客様 ID だけで当てる（待ちが1本の時）
 function _waiterSiteMatch(w, site) { return !site || !w.site || String(w.site) === String(site); }
-function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
+function _notifyBatchCustomerDone(customerId, propertyCount, audit, site, skippedRun) {
   var target = null;
   // 厳密一致優先
   if (customerId) {
@@ -5583,6 +5634,16 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
     for (var _oi = 0; _oi < _batchCustomerDoneWaiters.length; _oi++) {
       if (_waiterSiteMatch(_batchCustomerDoneWaiters[_oi], site)) _only.push(_batchCustomerDoneWaiters[_oi]);
     }
+    /**
+     * ★ 2026-11-20 竹内さん「前のお客さんと今検索しているお客さんの把握」:
+     *   待ちが切れて次へ進んだ前のお客さんの遅れた合図が、次のお客さんの待ちを解いていた（次の人は送らずに完了扱い）。
+     *   → 合図の番号が「もう終わった／待ちが切れたお客さん」なら、1本だけでも解かない。
+     */
+    if (_only.length === 1 && customerId && (skippedRun || _isRecentlyFinishedCid(customerId))) {
+      console.warn('[AX] _notifyBatchCustomerDone: 終わった前のお客さんの遅れた合図 → 次のお客さんの待ちは解かない 合図=' + customerId + ' 待ち=' + _only[0].customerId);
+      try { _snapOnEvent("batch_done_late_prev", "前のお客さん " + customerId + " の遅れた完了合図を、待ち " + _only[0].customerId + " に当てなかった"); } catch (_) {}
+      return;
+    }
     if (_only.length === 1) {
       target = _only[0];
       console.warn('[AX] _notifyBatchCustomerDone: 番号が合わないが待ちが1本だけ → 解く 合図=' + customerId + ' 待ち=' + target.customerId + ' ' + (site || ""));
@@ -5593,13 +5654,15 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
     console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId, site || "");
     try { _snapOnEvent("batch_done_no_waiter", "完了合図 " + customerId + " に合う待ちが無い（待ち " + _batchCustomerDoneWaiters.length + "本）"); } catch (_) {}
     // 待ち手がまだ無い（fill-done 待ち→送付待ちの切替の隙間）なら覚えておき、後から作る待ち手がすぐ受け取る（2.8.128）
-    try { if (customerId && _batchCustomerDoneWaiters.length === 0) _rememberEarlyBatchDone(customerId, site, propertyCount, audit); } catch (_) {}
+    // 「押さずに終わった」合図（skipped）は覚えない＝同じお客さんの次の回（駅のパス等）を先回りで終わらせない（2026-11-20）
+    try { if (customerId && !skippedRun && _batchCustomerDoneWaiters.length === 0) _rememberEarlyBatchDone(customerId, site, propertyCount, audit); } catch (_) {}
     return;  // resolve しない・タイムアウト自然消化
   }
   clearInterval(target.stopInterval);
   clearTimeout(target.timer);
   var _bdIdx = _batchCustomerDoneWaiters.indexOf(target);
   if (_bdIdx >= 0) _batchCustomerDoneWaiters.splice(_bdIdx, 1);
+  _markFinishedCid(target.customerId);
   // 2026-09-30 v2.5.42 ITANDI の「条件が効いていない形で止めた」（audit.guard）を待ち手に渡す（_scrapeAndSendRealpro → 1回だけ入れ直す）
   target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null, guard: (audit && audit.guard_stopped && audit.guard) ? audit.guard : null });
 }
@@ -5758,6 +5821,7 @@ function _createBatchCustomerDoneWaiter(customerId, timeoutMs, site) {
       clearInterval(entry.stopInterval);
       var idx = _batchCustomerDoneWaiters.indexOf(entry);
       if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
+      _markFinishedCid(entry.customerId);
       var lim = Math.round(_idleMs() / 1000);
       console.warn("[batch-done-waiter] " + lim + "秒（無進捗）タイムアウト customer=" + entry.customerId + (entry.site ? " site=" + entry.site : "") + (entry.sawProgress ? "（送付進捗あり）" : ""));
       _snapOnEvent("waiter_timeout", "全ページの送信の終わりの合図が " + lim + "秒来ない customer=" + entry.customerId + (entry.site ? " site=" + entry.site : ""));
@@ -5821,6 +5885,8 @@ function _notifyBatchProgress(customerId, site, sentCount) {
 // ・撮る物: ページの文字（件数・ページ・モーダル・帯・フォームの値）＋拡張の状態＋ログの末尾80行＋（許可があれば）画面の写真
 //   サイトへのアクセスは増えない（読み込み直し・クリックはしない）
 var _batchLoopAlive = false;
+// 手動の一括（axlx-manual-bulk-search）が動いている間 true（Realtime・アラームが二重に始めない）
+var _manualBulkAlive = false;
 var _batchWatch = null;
 var _watchSavedAt = 0;
 var _lockRefreshedAt = 0;
@@ -6514,7 +6580,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // 送付途中タイムアウトで残した hold は完了合図で必ず落とす
     try {
       chrome.storage.local.get("axlx_pipeline_send_hold", function (st) {
-        var h = st && st.axlx_pipeline_send_hold;
+        var h = _sendHoldCid(st && st.axlx_pipeline_send_hold, true);
         if (h && msg.customerId != null && String(h) === String(msg.customerId)) {
           chrome.storage.local.remove("axlx_pipeline_send_hold");
         }
@@ -6526,7 +6592,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // 2026-09-29 v2.5.41 送付済みで飛ばした数（0件の知らせを「新しい物件なし」に言い分ける）
     if (msg.customerId != null) _lastSentSkipped[_sentSkipKey(msg.customerId, _msgSite)] = (msg.audit && msg.audit.sent_skipped) || 0;
     try { _impliedFillDone(msg.customerId || null, _msgSite, "全ページ送信の完了合図"); } catch (_) {}
-    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null, _msgSite);
+    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null, _msgSite, !!msg.skipped);
     _watchProgress("送信の終わり", _msgSite);
     // ★ 2026-11-16: 一連ロック解除（popup が次客を入れてよい合図）
     //   ⚠ fire-and-forget だと次客 switch より解除が遅れる → await は呼び出し側（_scrapeAndSendRealpro）でも行う
@@ -6708,6 +6774,19 @@ _isStaffModeActive().then(_updateStaffModeBadge);
 
 chrome.alarms.onAlarm.addListener(async function(alarm) {
   if (alarm.name !== "sumora-batch-poll") return;
+  /**
+   * ★ 2026-11-20: ロックの時刻は進み（_watchProgress）でしか延びない。引き継ぎ待ち・裏のタブ・長い休憩の間に 15分を過ぎると、
+   *   旧はアラームが「古いロック」と見て2本目の一括を始め、共有の印（止める・やり直し済み）を初期化していた。
+   *   → この SW で一括が生きている間はロックを延ばして終わる（SW が死んだ後の取り残しだけ上書きする）。
+   */
+  if (_manualBulkAlive) return;
+  // 1時間まったく進んでいない一括は「生きている」と見なさない（待ちが全部切れても戻らない時の最後の逃げ道）
+  var _loopStale = false;
+  try { _loopStale = !!(_batchWatch && _batchWatch.lastProgressAt && Date.now() - _batchWatch.lastProgressAt > 60 * 60000); } catch (_) {}
+  if (_batchLoopAlive && !_loopStale) {
+    try { await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() } }); } catch (_) {}
+    return;
+  }
   var st = await chrome.storage.local.get("batchRunning");
   var lock = st.batchRunning;
   if (lock) {
@@ -7763,7 +7842,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         var _sendHold = null;
         try {
           var _hSt = await chrome.storage.local.get("axlx_pipeline_send_hold");
-          _sendHold = _hSt && _hSt.axlx_pipeline_send_hold;
+          _sendHold = _sendHoldCid(_hSt && _hSt.axlx_pipeline_send_hold);
         } catch (_) {}
         if (_sendHold) {
           _auditStep(_runId, "pipeline_busy_send_hold", "前客送付途中 cid=" + String(_sendHold).slice(0, 8));
@@ -7832,11 +7911,12 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
-        func: function(c) {
-          window.postMessage({ from: "axlx-autofill-initiated" }, "*");
-          window.postMessage({ from: "aixlinx-fill", conditions: c }, "*");
+        // ★ 2026-11-20: お客さんの番号を付けて渡す（番号無しだと完了の合図が誰の物か分からず、前客の断りも効かない）。
+        //   「入力を始めた」合図は page-script が断るかを決めた後に番号付きで出す
+        func: function(c, cid) {
+          window.postMessage({ from: "aixlinx-fill", conditions: c, customerId: cid || null }, "*");
         },
-        args: [conds]
+        args: [conds, _cidStr || null]
       });
       if (!(await _fbStartP)) {
         _endFillDoneWaiter("realnetpro", _cidStr, "直接入力も始まらない");
@@ -7893,7 +7973,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       var _itSendHold = null;
       try {
         var _itHSt = await chrome.storage.local.get("axlx_pipeline_send_hold");
-        _itSendHold = _itHSt && _itHSt.axlx_pipeline_send_hold;
+        _itSendHold = _sendHoldCid(_itHSt && _itHSt.axlx_pipeline_send_hold);
       } catch (_) {}
       if (_itSendHold) {
         throw new Error("AXLX_PIPELINE_SEND_HOLD: 前のお客さんの送付が完了していません（batch_timeout・進捗あり）");
@@ -8887,7 +8967,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     if (_saw) _out.countUnknown = true;
     // ★ 2026-11-18: 送付進捗ありの無進捗切り上げ — 一連ロックは batch-customer-done まで維持（次客 autofill で壊さない）
     if (_saw) {
-      try { await chrome.storage.local.set({ axlx_pipeline_send_hold: String(customerId) }); } catch (_) {}
+      try { await chrome.storage.local.set({ axlx_pipeline_send_hold: { cid: String(customerId), at: Date.now() } }); } catch (_) {}
     }
     // ★ 2026-11-18: 部分送付済みなら「失敗パス」に数えない（0件扱い・次客への破壊的な切替の根拠にしない）
     if (_sentPartial > 0) _out.timedOut = false;

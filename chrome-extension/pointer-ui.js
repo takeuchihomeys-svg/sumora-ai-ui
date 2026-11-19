@@ -370,6 +370,20 @@
     } catch (_) {}
   }
 
+  /**
+   * ★ 2026-11-20 竹内さん「最初画面おかしくなる問題」「人間のように」:
+   *   通り道の mousemove は拡張の記録（human-learn.js の hMove）が isTrusted で捨てるので誰も使っていない。
+   *   一方、通り道の一覧の行・号室メニューへ送るとサイト側が反応し得る（検索の始めに号室メニューが開く件の候補）。
+   *   → 号室メニューには送らない。通り道（path=true）は一覧の行（tr）にも送らない。着地（押す所）は今まで通り。
+   */
+  function _moveEvTarget(el, path) {
+    try {
+      if (!el || !el.closest) return el || null;
+      if (el.closest('[class*="room_menu"]')) return null;
+      if (path && el.closest("tr")) return null;
+    } catch (_) {}
+    return el;
+  }
   function _place(x, y) {
     if (!_el) return;
     /**
@@ -621,8 +635,8 @@
        *   「同じ所を続けて押した時」だけ記録に残らない（実測の 65% の一因）。
        */
       try {
-        var _nearEl = (typeof document !== "undefined" && document.elementFromPoint)
-          ? document.elementFromPoint(t.x, t.y) : null;
+        var _nearEl = _moveEvTarget((typeof document !== "undefined" && document.elementFromPoint)
+          ? document.elementFromPoint(t.x, t.y) : null, false);
         if (_nearEl && typeof MouseEvent === "function") {
           _nearEl.dispatchEvent(new MouseEvent("mousemove", {
             bubbles: true, cancelable: true, view: window,
@@ -697,8 +711,8 @@
           _place(t.x, t.y);
           // 2026-11-15: 最後の位置も `mousemove` を出す（押す直前の位置を記録に残す）
           try {
-            var _endEl = (typeof document !== "undefined" && document.elementFromPoint)
-              ? document.elementFromPoint(t.x, t.y) : null;
+            var _endEl = _moveEvTarget((typeof document !== "undefined" && document.elementFromPoint)
+              ? document.elementFromPoint(t.x, t.y) : null, false);
             if (_endEl && typeof MouseEvent === "function") {
               _endEl.dispatchEvent(new MouseEvent("mousemove", {
                 bubbles: true, cancelable: true, view: window,
@@ -730,8 +744,8 @@
          *     ⚠ 出せなくてもカーソルは動く（止まらない）。
          */
         try {
-          var _tg = (typeof document !== "undefined" && document.elementFromPoint)
-            ? document.elementFromPoint(p.x, p.y) : null;
+          var _tg = _moveEvTarget((typeof document !== "undefined" && document.elementFromPoint)
+            ? document.elementFromPoint(p.x, p.y) : null, true);
           if (_tg && typeof MouseEvent === "function") {
             _tg.dispatchEvent(new MouseEvent("mousemove", {
               bubbles: true, cancelable: true, view: window,
@@ -1054,8 +1068,8 @@
          *   「押す前に迷う」のは人の大事な特徴なので、ここが記録に残らないと学べない。
          */
         try {
-          var _wEl = (typeof document !== "undefined" && document.elementFromPoint)
-            ? document.elementFromPoint(_pos.x, _pos.y) : null;
+          var _wEl = _moveEvTarget((typeof document !== "undefined" && document.elementFromPoint)
+            ? document.elementFromPoint(_pos.x, _pos.y) : null, true);
           if (_wEl && typeof MouseEvent === "function") {
             _wEl.dispatchEvent(new MouseEvent("mousemove", {
               bubbles: true, cancelable: true, view: window,

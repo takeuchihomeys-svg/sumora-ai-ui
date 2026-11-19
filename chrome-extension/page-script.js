@@ -14,37 +14,49 @@
     });
   } catch(e){}
 
-  window.addEventListener('resize', function() {
-    function tryClick(delay) {
-      setTimeout(function() {
-        var all = document.querySelectorAll('a,button,input,div,span,td,p');
-        for (var i = 0; i < all.length; i++) {
-          var el = all[i];
-          if (!el.offsetParent) continue;
-          var txt = (el.textContent || el.value || '').trim();
-          if (txt.indexOf('検索条件を表示') >= 0) {
-            /**
-             * ★ 2026-11-16 統括Pro「カーソル67%・直click禁止」:
-             *   旧は resize 時に el.click() 直押し → カーソル記録が付かない。
-             *   → カーソル経由（無ければ従来の click に落とす）。
-             */
-            try {
-              if (typeof _humanPointerClick === "function") {
-                _humanPointerClick(el, function () { try { el.click(); } catch (_) {} });
-              } else {
-                el.click();
-              }
-            } catch (_) {
-              try { el.click(); } catch (__) {}
-            }
-            return;
-          }
-        }
-      }, delay);
+  /**
+   * 「検索条件を表示」（左の条件の欄を出す）を押す所を1か所にする。
+   * ★ 2026-11-20 竹内さん「全部人間がやるように徹底的に」:
+   *   旧は resize のたびにここで3回、content.js でも3回＋画面の書き換えのたびに（カーソル無しで）押していた
+   *   ＝開いてすぐ閉じる・カーソル無しの押しが出る。
+   *   → content.js もここへ頼む（postMessage `axlx-press-show-sidebar`）。4秒に1回まで・押している最中は重ねない・
+   *     文字が短い見えている要素だけ（大きな入れ物の真ん中を押さない）・必ずカーソル経由。
+   */
+  var _axShowBtnAt = 0;
+  function _axPressShowSidebar() {
+    if (Date.now() - _axShowBtnAt < 4000) return false;
+    var all = document.querySelectorAll('a,button,input,div,span,td,p');
+    var best = null, bestLen = 1e9;
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (!el.offsetParent) continue;
+      var txt = (el.textContent || el.value || '').trim();
+      if (txt.indexOf('検索条件を表示') < 0 || txt.length > 24) continue;
+      if (txt.length < bestLen) { best = el; bestLen = txt.length; }
     }
-    tryClick(_hd(300));
-    tryClick(_hd(800));
-    tryClick(_hd(1800));
+    if (!best) return false;
+    _axShowBtnAt = Date.now();
+    try {
+      if (typeof _humanPointerClick === "function") {
+        _humanPointerClick(best, function () { try { best.click(); } catch (_) {} });
+      } else {
+        best.click();
+      }
+    } catch (_) {
+      try { best.click(); } catch (__) {}
+    }
+    return true;
+  }
+  try { document.documentElement.setAttribute("data-axlx-ps", "1"); } catch (_) {}
+  window.addEventListener('message', function (e) {
+    try {
+      if (e.source !== window || !e.data || e.data.from !== "axlx-press-show-sidebar") return;
+      _axPressShowSidebar();
+    } catch (_) {}
+  });
+  window.addEventListener('resize', function() {
+    setTimeout(_axPressShowSidebar, _hd(300));
+    setTimeout(_axPressShowSidebar, _hd(1800));
   });
 
   // ── リアプロ自動入力 ──────────────────────────────────────────────
@@ -2673,7 +2685,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.130";
+  var _AXLX_PAGE_VER = "2.8.131";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -2977,6 +2989,7 @@
      *   生 click イベント直送はカーソル記録が付かない。必ずカーソル経由。
      */
     if (!el) return;
+    if (_axFireDepth > 0) { try { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (_) {} return; }
     try {
       if (typeof _humanPointerClick === "function" && window.AxlxPointerUi) {
         void _humanPointerClick(el, function (x) {
@@ -3061,11 +3074,20 @@
    *       （押す順番はキューが守る・次の間隔も入っている）。
    *     ⚠ 見えるカーソル（pointer-ui）が無い環境では、中の `fire(el)` がそのまま押す（今まで通り）。
    */
+  /**
+   * ★ 2026-11-20 竹内さん「全部人間がやるように徹底的に」:
+   *   キューは「カーソルを動かす→押し込む（mousedown/up）→ fire(el)」の順で、fire が _clickEl だと
+   *   中でもう一度カーソルを動かして押し込んでいた（見えるカーソルが2回押す・待たない void なので次の操作と重なる）。
+   *   → _fireAt が fire を呼んでいる間（カーソルが着いて押し込んだ後）は、移動も押し込みもせず本物のクリックだけ。
+   */
+  var _axFireDepth = 0;
+  var _axFireEl = null;
   function _clickEl(el) {
     try {
       if (!el) return;
       // ★ 押す直前に was 腕上げ（checkbox/radio・label 経由も）
       try { _armWasForLearn(el); } catch (_) {}
+      if (_axFireDepth > 0) { el.click(); return; }
       // 見えるカーソルで動かしながら押す（失敗しても必ず押す＝止まらない）
       void _humanPointerClick(el, function (x) {
         try { _armWasForLearn(x || el); } catch (_) {}
@@ -3256,7 +3278,28 @@
     if (!el || !el.getBoundingClientRect || !H || !H.pointerPath) { fire(el); return Promise.resolve(false); }
     var r;
     try { r = el.getBoundingClientRect(); } catch (_) { fire(el); return Promise.resolve(false); }
-    if (!r || (r.width <= 0 && r.height <= 0)) { fire(el); return Promise.resolve(false); }
+    if (!r || (r.width <= 0 && r.height <= 0)) {
+      /**
+       * ★ 2026-11-20 竹内さん「直接入力になっていないか・全部人間がやるように徹底的に」:
+       *   隠れた checkbox/radio（大きさ0）は旧はカーソル無しで押していた（駅・区・町の input を直接押す経路の共通の根）。
+       *   → 見えている label があれば、カーソルを label へ動かして押し込み、そこで本来の押し（fire(el)）をする。
+       *   見える物が無い時だけ今まで通り押し、点検に hidden_press を残す（DB で数えられるように）。
+       */
+      var _proxy = null;
+      try {
+        var _tp = String(el.type || "").toLowerCase();
+        if (String(el.tagName || "").toUpperCase() === "INPUT" && (_tp === "checkbox" || _tp === "radio")) {
+          _proxy = _labelForCheckbox(el);
+          if (_proxy === el || !_proxy || !isVisible(_proxy)) _proxy = null;
+        }
+      } catch (_) { _proxy = null; }
+      if (_proxy) {
+        return _humanPointerClick(_proxy, function () { return fire(el); }, aim, tgtAt);
+      }
+      try { _auditStepP("hidden_press", String(_opLabel(el)).slice(0, 40) + " 見える欄が無くカーソル無しで押した"); } catch (_) {}
+      fire(el);
+      return Promise.resolve(false);
+    }
     /**
      * ★ 2026-11-19: 枠の中に押せる点が1つも無い（帯の中のスクロールで固定の帯の下・画面の外）時は、
      *   先にその要素を見える所まで送ってから押す（1回だけ・送っても隠れたままなら今まで通り押す）。
@@ -3529,7 +3572,10 @@
             } catch (_) {}
           }
           var ret = null;
+          var _prevFireEl = _axFireEl;
+          _axFireDepth++; _axFireEl = el;
           try { ret = fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
+          finally { _axFireDepth = Math.max(0, _axFireDepth - 1); _axFireEl = _prevFireEl; }
           // ★ 2026-11-16: カーソル経由の押しを必ず録画へ残す（押した位置%を上げる）
           try { _noteClickForLearn(el); } catch (_) {}
           /**
@@ -6009,6 +6055,16 @@
         _done();
       }, humanRand(40, 90, { allowShort: true }));
     };
+    if (_axFireDepth > 0) {
+      // カーソルが着いて押し込み済み: 同じ要素なら click だけ・別の要素（label↔input）なら動かさずに押す
+      if (_axFireEl === el) {
+        try { el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window})); } catch (_) {}
+        _done();
+      } else {
+        press();
+      }
+      return;
+    }
     var P = window.AxlxPointerUi;
     if (P && P.ensure && P.moveToEl) {
       _axPressing = el;
@@ -9919,6 +9975,34 @@
    *   ・移ったら（URL か欄の出現で確かめる）入力を続ける。移れなければ fill-done(error) で止める（全件検索しない）
    *   ・押すのは人の形（カーソルが動いてから押す）。読み込み直しはしない（サイトに余計な負担をかけない）
    */
+  /**
+   * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+   *   ホーム→「住居検索」でページが本当に移ると、入力の途中（このファイルの中身）が消え、
+   *   誰も入力の指示を送り直さないので background が 30分待ってからそのお客さんを飛ばしていた。
+   *   → 移る前に {番号・条件} を sessionStorage に置き、移った先で読み込み時に同じお客さんの入力を続ける（90秒以内・1回だけ）。
+   */
+  var _AX_REFILL_KEY = "axlx_refill_after_nav";
+  (function _resumeFillAfterNav() {
+    var raw = null;
+    try { raw = sessionStorage.getItem(_AX_REFILL_KEY); } catch (_) { raw = null; }
+    if (!raw) return;
+    try { sessionStorage.removeItem(_AX_REFILL_KEY); } catch (_) {}
+    var j = null;
+    try { j = JSON.parse(raw); } catch (_) { j = null; }
+    if (!j || !j.cond || !j.at || Date.now() - Number(j.at) > 90000) return;
+    var tries = 0;
+    var go = function () {
+      tries++;
+      var formReady = !!(document.querySelector('select[name="rental_cost2"]') || document.querySelector('input[name="city_code[]"]') || document.querySelector('div.go_search'));
+      var guideKnown = document.documentElement.getAttribute("data-axlx-guide") != null;
+      if ((!formReady || !guideKnown) && tries < 30) { setTimeout(go, 500); return; }
+      if (!formReady || window._axFillRunning) return;
+      console.log("[AX] 住居検索へ移った後 → 同じお客さんの入力を続けます " + String(j.cid || "-").slice(0, 8));
+      try { window.postMessage({ from: "aixlinx-fill", conditions: j.cond, customerId: j.cid || null, resumedAfterNav: true }, "*"); } catch (_) {}
+    };
+    setTimeout(go, 800);
+  })();
+
   function ensureRealproSearchPage(cond, done) {
     var hasForm = function () {
       // 2026-11-10 v2.6.16: 検索の画面かどうかの判定。
@@ -10084,7 +10168,8 @@
     if (window._axFillRunning) {
       var _runCid = window._axFillRunningCustomerId || null;
       var _newCid = _fillCustomerId || null;
-      var _diffCust = !!( _runCid && _newCid && String(_runCid) !== String(_newCid) );
+      // 片方だけ番号が無い＝別の人として扱う（customer-handoff.js の pageIncomingDecision と揃える・2026-11-20）
+      var _diffCust = !!((_runCid || _newCid) && String(_runCid || "") !== String(_newCid || ""));
       if (_diffCust) {
         /**
          * ★ 2026-11-18 竹内さん「ちゃんと選択したお客さんで検索されるようにする」（平田さん・R.さんの取り違え）:
@@ -10216,6 +10301,10 @@
        *   住居遷移の前に束温め＋反映関所を終える（ページ遷移で Main が切れても cache に残す）。
        */
       var _goEstateAfterLearn = function () {
+        // ページが本当に移ると、この入力（page-script の中身）は全部消える → 移った先で同じお客さんの入力を続ける控え
+        try {
+          sessionStorage.setItem(_AX_REFILL_KEY, JSON.stringify({ cid: _fillCustomerId || null, cond: cond, at: Date.now() }));
+        } catch (_) {}
         ensureRealproSearchPage(cond, function (ok) {
           if (!ok) {
             window._axFillRunning = false;
@@ -10243,6 +10332,7 @@
       }, 4000);
       return;
     }
+    try { sessionStorage.removeItem(_AX_REFILL_KEY); } catch (_) {} // 検索の画面で入力を始めた＝移り先の控えは要らない
     clearClickQueue(); // 前回実行の残留クリックキューを破棄（誤クリック防止）
     // fill-done 保証: 実行開始時にフラグをリセットし、フェイルセーフを仕掛ける
     // （background.js 側のタイムアウトより必ず先に発火させる）
@@ -10671,11 +10761,26 @@
         function _uncheckLeftoversThenRest() {
           var _runUncheck = function () {
             var _toUncheck = [];
+            /**
+             * ★ 2026-11-20 竹内さん「所在地のところ直接入力…1つずつおすようにする」:
+             *   区・町・駅・沿線は小窓の中にあり、閉じている間は label が見えない（押すとカーソル無しの直接入力になる）。
+             *   → 見えていない場所の欄はここでは外さず、小窓を開いて外す係（_clearWardsBeforeStationThen・
+             *     _clearStationsBeforeWardThen・所在地/沿線の小窓の外し）に任せる。見えている物だけここで外す。
+             */
+            var _hiddenPlace = 0;
             checkboxNames.forEach(function (name) {
               [].slice.call(document.querySelectorAll("input[name='" + name + "']:checked")).forEach(function (cb) {
+                if (/city_code|town_code|station_id|route_id/.test(name)) {
+                  var _lb = null;
+                  try { _lb = _labelForCheckbox(cb); } catch (_) { _lb = null; }
+                  if (!(_lb && isVisible(_lb)) && !isVisible(cb)) { _hiddenPlace++; return; }
+                }
                 _toUncheck.push(cb);
               });
             });
+            if (_hiddenPlace > 0) {
+              try { _auditStepP("reset_skip_hidden_place", _hiddenPlace + "件（小窓を開いて外す係に任せる）"); } catch (_) {}
+            }
             if (_toUncheck.length === 0) {
               console.log("[AX] _doReset: 残チェックなし → セレクト等を外す");
               _auditStepP("clear_checks", 0);
@@ -10707,8 +10812,12 @@
                     if (hit && hit !== cb && hit.isConnected) {
                       try { hit.click(); } catch (_) {}
                     }
-                    if (cb.checked) {
-                      try { cb.click(); } catch (_) {}
+                    // label が外すのが遅れる事がある: すぐ input も押すと戻ってしまうので、少し待って残っていた時だけ
+                    var _isLabel = !!(hit && hit !== cb && String(hit.tagName || "").toUpperCase() === "LABEL");
+                    if (!_isLabel) {
+                      if (cb.checked) { try { cb.click(); } catch (_) {} }
+                    } else {
+                      setTimeout(function () { try { if (cb.isConnected && cb.checked) cb.click(); } catch (_) {} }, 320);
                     }
                   }
                 } catch (_) {}
@@ -13520,7 +13629,8 @@
   function _forceFillClearSafe(reason, onlyCustomerId) {
     try {
       var cur = window._axFillRunningCustomerId || _fillCustomerId || null;
-      if (onlyCustomerId != null && cur != null && String(onlyCustomerId) !== String(cur)) {
+      // ★ 2026-11-20: 進行中の番号が分からない入力が動いている時は、別のお客さん宛ての clear で壊さない
+      if (onlyCustomerId != null && ((cur != null && String(onlyCustomerId) !== String(cur)) || (cur == null && window._axFillRunning))) {
         console.warn("[AX] force-fill-clear スキップ（別客が進行中） want=" + String(onlyCustomerId).slice(0, 8) + " cur=" + String(cur).slice(0, 8) + " reason=" + (reason || ""));
         try { if (_audit) _auditStepP("force_clear_skip", "別客進行中→壊さない"); } catch (_) {}
         return false;
@@ -13572,8 +13682,23 @@
       var _incCid = e.data.customerId || null;
       var _runCidNow = window._axFillRunningCustomerId || null;
       var _lastTouch = Number(window.__axlxFillTouchAt) || _axFillStartedAt || 0;
-      if (window._axFillRunning && !_doneNotified && (_runCidNow || _incCid)
-          && String(_runCidNow || "") !== String(_incCid || "") && Date.now() - _lastTouch < 3 * 60 * 1000) {
+      var _otherCust = window._axFillRunning && !_doneNotified && (_runCidNow || _incCid)
+          && String(_runCidNow || "") !== String(_incCid || "");
+      /**
+       * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+       *   旧は「3分以上止まった前客なら閉じて次へ」のつもりが、中（fillRealpro）で別客を必ず断り、
+       *   さらに片方に番号が無いと「同じ人の重複」として黙って無視（このとき _fillCustomerId だけ次客に変わり、
+       *   前客の結果が次客の番号で返り得た）。→ 3分以上止まった前客は、ここで前客の番号のまま閉じてから次客を始める。
+       */
+      if (_otherCust && Date.now() - _lastTouch >= 3 * 60 * 1000) {
+        console.warn("[AX] 前のお客さんの入力が3分以上止まっている → 前客を閉じて次へ run=" + String(_runCidNow || "-").slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8));
+        try { if (_audit) _auditStepP("stuck_prev_closed", "前客が3分以上無進捗→前客の番号で閉じて次客へ next=" + String(_incCid || "-").slice(0, 8)); } catch (_) {}
+        try { if (_runCidNow) _fillCustomerId = _runCidNow; } catch (_) {}
+        try { notifyDone("stuck_superseded: 前のお客さんの入力が3分以上進まず、次のお客さんに移りました"); } catch (_) {}
+        try { _forceFillClearSafe("stuck_superseded", null); } catch (_) {}
+        _otherCust = false;
+      }
+      if (_otherCust) {
         console.warn("[AX] 前のお客さんの入力中 → 次のお客さんは始めません run=" + String(_runCidNow || "-").slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8));
         try { if (_audit) _auditStepP("next_customer_refused", "前客入力中→次客を断った next=" + String(_incCid || "-").slice(0, 8)); } catch (_) {}
         window.postMessage({
@@ -13632,7 +13757,7 @@
     } catch (err) {
       // fill-done 保証: 同期例外でも必ず完了シグナルを送る
       console.error('[AX] fillRealpro 同期例外 → fill-done送信', err);
-      notifyDone('fillRealpro listener: ' + ((err && err.message) || String(err)));
+      notifyDone('fill_exception: fillRealpro listener: ' + ((err && err.message) || String(err)));
     }
   });
 })();

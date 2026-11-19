@@ -567,10 +567,9 @@
     if (a === "toggle") { expanded ? setSize(false) : doExpand(); }
     if (a === "autofill") {
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
+      // 「入力を始めた」合図（axlx-autofill-initiated）は page-script.js が、前のお客さんの入力中で断るかを決めた後に
+      // お客さんの番号付きで出す。ここで番号無しに先に出すと、断られた時でも前のお客さんの送付を止めていた（2026-11-20）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions, customerId: e.data.customerId || null }, "*");
-      // バッチ・手動どちらも bulk-dl.js の全ページ自動送信フローを起動する
-      // （background.js は axlx-batch-customer-done を待って次顧客へ移るため競合しない）
-      window.postMessage({ from: "axlx-autofill-initiated" }, "*");
     }
     if (a === "itandi-autofill") {
       // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）

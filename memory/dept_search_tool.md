@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-20 04:00 **拡張 2.8.131: 機械的な押し方と、連続のお客さんが止まる・取り違える穴をまとめて塞ぐ**（竹内さん「ほかにも今弱い部分やバグ抜けている部分は徹底的に強化する ちゃんと人間が動くような動きになるように テストも繰り返して連続でお客さんちゃんと検索できるようにするように」）
+- ⚠ DB（Supabase）は 04:00 も答えない（15秒で時間切れ）。下はコードを読んで経路を確かめた物で、**起きた回数は DB で確かめていない**。DB が戻ったら下の段の名前で数える。
+- 作業員2人に読むだけの点検を頼んだ（機械的な押し方 31件・連続のお客さんの穴 19件）。影響が大きい物から直した。
+- **人の押し方**:
+  - 二重押し: 押す順番待ち（`enqueueHumanClick`）→`_humanPointerClick`→`_fireAt` が押し込んだ後に `_clickEl`／`fireClick`／`simulateClick` がもう一度カーソルを動かして押し込んでいた（カーソルが2回叩く・次の押しと重なる）。→ `_axFireDepth`／`_axFireEl` で「押しの中」なら1回だけ押す。
+  - 隠れた checkbox（大きさ0）はカーソル無しで押していた（駅・区・町の input を直接押す経路の共通の根）。→ 見える label があればカーソルを label へ動かして押す。無い時だけ今まで通り押して `hidden_press` を残す。
+  - カーソルの通り道（`pointer-ui.js` `moveTo`）が一覧の行に mousemove を投げて号室メニューを開いていた。→ 通り道では行（tr）と号室メニューに投げない（`_moveEvTarget`）。
+  - 「検索条件を表示」: content.js が画面の書き換えのたびにカーソル無しで押し、page-script も resize で3回押していた。→ page-script の `_axPressShowSidebar` 1か所（4秒に1回・文字の短い見える要素だけ・カーソル経由）。content.js は `axlx-press-show-sidebar` で頼む。
+  - 次のお客さんの前の片付け（`_doReset` `_runUncheck`）: 閉じた小窓の中の区・町・駅・沿線を直接外していた。→ 見えていない場所の欄は小窓を開いて外す係に任せる（`reset_skip_hidden_place`）。label で外した直後に input も押して戻る事があった → 320ms 待って残っていた時だけ。
+  - 次ページ・並べ替え（bulk-dl）: カーソルが着いた瞬間に押していた → 160〜580ms 置いて押す。
+- **連続のお客さん**:
+  - 0件の検索の後に終わりの合図が出ず 20分止まっていた → Case C で行が0なら0件の合図（検索結果の画面と読めない時は件数 null）。送る相手は「検索した印」のお客さん（`_flag.customerId`）。
+  - 次ページの続き（Case E）が古い・お客さんが変わった・自動でない・行が無い時に黙って終わっていた → そのお客さんに「ここまで」の合図（`_sendSkipDoneFor`・番号が無い時は送らない）。印の時刻は押す直前に付け直し、期限を 120秒→300秒。次ボタンが外れた時も合図。次の入力で止めた時も止めたお客さんに合図。
+  - background: 押さずに終わった合図（`skipped`）は「先に届いた完了」として覚えない・待ち1本の救済にも使わない。待ちが解けた／切れたお客さんの遅れた合図は次の人の待ちを解かない（`batch_done_late_prev`）。fill-done の待ちを解く時に見張りの setInterval も止める。
+  - 送付途中の hold（`axlx_pipeline_send_hold`）が期限無しで残り、後のお客さんが全員飛ばされ得た → `{cid, at}`・15分で無効。`AXLX_PIPELINE_SEND_HOLD`／`AXLX_OTHER_FILL_RUNNING` も1回やり直す（`busyRetryDecision`）。
+  - 二重の一括: アラームが「ロックが15分古い」と見て2本目を始めていた → この SW で一括が生きている間はロックを延ばして終わる（1時間まったく進まない時だけ上書き）。手動の一括が動いている間は Realtime・アラーム・別の手動の一括を始めない。
+  - ページ側の失敗（`no_search_form`・`watchdog-timeout`・`stuck_superseded`・`fill_exception`）が「成功」として届き、20分待ち＋「検索した印」まで書いていた → content.js で gate 扱い（error で渡す・印を消す）。案内モードは今まで通り。
+  - 3分以上止まった前客: 外の判定は「閉じて次へ」のつもりが中で必ず断っていた。片方に番号が無いと「同じ人」と見なし、前客の結果が次客の番号で返り得た → 外で前客の番号のまま閉じてから次へ（`stuck_prev_closed`）。中の判定も「片方だけ番号が無い＝別の人」。番号の分からない入力中は別のお客さん宛ての clear で壊さない。
+  - ホーム→「住居検索」で頁が移ると入力が消え、30分待っていた → 移る前に sessionStorage `axlx_refill_after_nav` に {番号・条件} を置き、移った先で同じお客さんの入力を続ける（90秒・1回）。
+  - underbar と background の予備の直接入力が番号無しの「入力を始めた」を先に出していた（断られた時も前客の送付を止めた）→ 出さない（page-script が断るか決めた後に番号付きで出す）。予備の直接入力にもお客さんの番号を付けた。
+- **確かめる事（DB が戻ったら）**: `search_audits.steps` の `hidden_press`・`reset_skip_hidden_place`・`stuck_prev_closed` の数、`batch_customer_done` の `auto_pdf.why` が `zero_rows_after_search` 等で 20分待ち（`waiter_timeout`）が減ったか、`batch_done_late_prev` が出たか。
+- **まだ直していない（次）**: `_toggleCheckboxLikeHuman` の最大4回のやり直し、`_pressLearned`・`clickNextStepBtn`・`ensureWardButtonY`・`clickByText` が順番待ちの外で押す（`isClickQueueBusy` が `_pressBusy` を見ない）、popup の一連ロック（12分）が進みで延びない、`human_takeover` の誤判定で一括全体が止まる、`property-customers` の取得失敗で全員止まる、ITANDI 側の bulk-dl に同じ抜けがあるか。
+- テスト `continuous-human-v2831.test.js`（42件）。変えた8ファイルだけ HEAD に戻した控えと比べて、新しく落ちたテスト0・前から落ちていたテストの ✗ の数も増えていない。`customer-handoff.test.ts` 38件・tsc 0。
+
+---
+
 ## 2026-11-20 03:10 **拡張 2.8.130: 前客→今客の把握が頁の読み直しで消えていた／DB を詰まらせない守り**（竹内さん「ちゃんとお客さんと次のお客さんの切り替える部分を把握するようにする」「データベースちゃんと連携できるように、なぜとまっているのか」「夜は自動検索止まる制約している部分のことかな？」）
 - ⚠ DB（Supabase）は 03:00 時点でも 522。原因はコードと手元の記録の時刻から絞った（DB の数字では確かめていない）。
 - **① 前客→今客（根本）**: 切替把握（`_understandCustomerSwitch`）の前客の番号は `window.__axlxLastFilledCustomerId` だけにあった。リアプロは検索のたびに頁を読み直すので、次のお客さんの開始時には消えていて、**2人目以降も毎回 `first_customer`（前客なし）**になっていた（コードで確定・DB 未確認）。
