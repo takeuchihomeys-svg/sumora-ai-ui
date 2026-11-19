@@ -1103,6 +1103,34 @@
     return (inv.length ? inv : hits)[0] || null;
   }
   /**
+   * ★ 2026-11-19 #1532（くれあ・2.8.121）: 左の帯の「…絞り込み＋」は一番内側の要素を押す。
+   *   `div.click_menu, div.one_slide_search_box` を文書の順で探すと、他の絞り込みもまとめて含む外側の箱（210×204）が先に当たり、
+   *   ボタンで学んだ位置（横50%・縦50%）をその箱に当てて「閲覧履歴」の辺りを押していた（写真 23043）。
+   *   小窓が開かず前の客の駅を外せない → 関所が「地域と駅が混在」で6回やり直し → 人が止めた。
+   *   人は文字の span を押している（`左の沿線・駅絞り込み＋｜span`）。
+   */
+  function _sidebarOpenerEl(word, otherRe) {
+    var exact = null;
+    try { exact = _findByText([word + "＋", word + "+", word]); } catch (_) { exact = null; }
+    if (exact) return exact;
+    var best = null, bestA = Infinity;
+    try {
+      var divs = document.querySelectorAll("div.click_menu, div.one_slide_search_box");
+      for (var i = 0; i < divs.length; i++) {
+        var d = divs[i];
+        if (!isVisible(d)) continue;
+        var t = norm(d.textContent);
+        if (t.indexOf(norm(word)) < 0) continue;
+        if (otherRe && otherRe.test(t)) continue;
+        var rr = d.getBoundingClientRect();
+        var a = Math.max(1, rr.width * rr.height);
+        if (a < bestA) { best = d; bestA = a; }
+      }
+    } catch (_) {}
+    return best;
+  }
+  var _SIDEBAR_OTHER_RE = /所在地絞り込み.*沿線・駅絞り込み|沿線・駅絞り込み.*所在地絞り込み|管理会社絞り込み|閲覧履歴|駅からの移動/;
+  /**
    * ★ 2026-11-16: リアプロ「敷金・礼金なし」チェックを広く探す。
    *   完全一致だけでなく「敷金」「礼金」「なし」を含むラベルも対象。
    */
@@ -2640,7 +2668,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.121";
+  var _AXLX_PAGE_VER = "2.8.122";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3247,9 +3275,12 @@
         if (_useTgt && _dwell > 1300) { _preDrift = _dwell - 500; _dwell = 500; }
         // 着地後に小さく漂ってから押す（狙い直し）。漂い分は dwell の外＝人間の「直してから押す」
         return new Promise(function (resolve) {
+          /**
+           * ★ 2026-11-19 #1532: 見えるカーソルの「押す」は _fireAt の中で1回だけ（本物のクリックと同じ瞬間）。
+           *   旧はここでも tap して押下1回にカーソルが2回押し込み・記録も span と div の2本（0.4〜0.6秒差）になっていた。
+           */
           var _doTap = function () {
             setTimeout(function () {
-              try { _P.tap(); } catch (_) {}
               Promise.resolve(_fireAt(el, fire, r, _aimPt)).then(function () { resolve(true); }, function () { resolve(true); });
             }, Math.round(_dwell));
           };
@@ -3388,7 +3419,7 @@
           try { _notePointForLearn(el, cx, cy); } catch (_) {}
           try {
             var P = window.AxlxPointerUi;
-            if (P && P.tap) P.tap();
+            if (_tag !== "SELECT") { if (P && P.tap) P.tap(); }
           } catch (_) {}
           if (ret && typeof ret.then === "function") {
             ret.then(function () { resolve(true); }, function () { resolve(false); });
@@ -7178,15 +7209,11 @@
             openedAt = clk.tick() || 1;
             var opened = false;
             try {
-              var divs = Array.prototype.slice.call(document.querySelectorAll("div.click_menu, div.one_slide_search_box"));
-              for (var i = 0; i < divs.length; i++) {
-                if (!isVisible(divs[i])) continue;
-                if (/沿線・駅絞り込み/.test(String(divs[i].textContent || "").replace(/\s+/g, ""))) {
-                  try { _markPanelOpened("station", "station_open"); } catch (_) {}
-                  _pressLearned(divs[i], ["左の沿線・駅絞り込み", "沿線・駅絞り込み＋", "沿線・駅絞り込み"], "station_open_before_ward");
-                  opened = true;
-                  break;
-                }
+              var _stOp = _sidebarOpenerEl("沿線・駅絞り込み", _SIDEBAR_OTHER_RE);
+              if (_stOp) {
+                try { _markPanelOpened("station", "station_open"); } catch (_) {}
+                _pressLearned(_stOp, ["左の沿線・駅絞り込み", "沿線・駅絞り込み＋", "沿線・駅絞り込み"], "station_open_before_ward");
+                opened = true;
               }
             } catch (_) {}
             if (!opened) clickByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
@@ -7294,14 +7321,8 @@
             openedAt = clk.tick() || 1;
             if (!clickByText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"])) {
               try {
-                var divs = Array.prototype.slice.call(document.querySelectorAll("div.click_menu, div.one_slide_search_box"));
-                for (var i = 0; i < divs.length; i++) {
-                  if (!isVisible(divs[i])) continue;
-                  if (/所在地絞り込み/.test(String(divs[i].textContent || "").replace(/\s+/g, ""))) {
-                    _pressLearned(divs[i], ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_before_st");
-                    break;
-                  }
-                }
+                var _arOp = _sidebarOpenerEl("所在地絞り込み", _SIDEBAR_OTHER_RE);
+                if (_arOp) _pressLearned(_arOp, ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_before_st");
               } catch (_) {}
             }
             return false;
@@ -11629,6 +11650,14 @@
     _clearWardsBeforeStationThen(function () {
     waitForClick(
       function() {
+        try {
+          var _stOpB = _sidebarOpenerEl('沿線・駅絞り込み', _SIDEBAR_OTHER_RE);
+          if (_stOpB) {
+            try { _markPanelOpened("station", "station_open"); } catch (_) {}
+            _pressLearned(_stOpB, ['左の沿線・駅絞り込み', '沿線・駅絞り込み＋', '沿線・駅絞り込み'], 'station_open');
+            return true;
+          }
+        } catch (_) {}
         var clsTargets = ['click_menu', 'one_slide_search_box'];
         for (var ci = 0; ci < clsTargets.length; ci++) {
           var divs = Array.prototype.slice.call(document.querySelectorAll('div.' + clsTargets[ci]));

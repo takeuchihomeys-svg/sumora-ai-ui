@@ -99,7 +99,7 @@ console.log("\n■ ④ 自動の1押下を1本に畳む（記録側）");
 }
 
 console.log("\n■ ⑤ 版");
-ok("manifest が 2.8.121", mf.version === "2.8.121", mf.version);
-ok("_AXLX_PAGE_VER が 2.8.121", /var _AXLX_PAGE_VER = "2\.8\.121";/.test(ps));
+ok("manifest が 2.8.121 以降", mf.version.localeCompare("2.8.121", undefined, { numeric: true }) >= 0, mf.version);
+ok("_AXLX_PAGE_VER が manifest と同じ", ps.indexOf('var _AXLX_PAGE_VER = "' + mf.version + '";') >= 0);
 console.log(`\n結果: ${pass} 合格 / ${fail} 不合格`);
 process.exit(fail ? 1 : 0);
