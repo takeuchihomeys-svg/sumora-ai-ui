@@ -50,7 +50,27 @@ export function toLogRow(
     block: a.block ? String(a.block).slice(0, 300) : null,
     delta: a.score?.delta ?? null,
     actions: Array.isArray(a.actions) ? a.actions.slice(0, 8) : [],
-    meeting: a.meeting ?? null,
+    /**
+     * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」（main 側の決定を取り込み・2026-11-19 統合）:
+     *   **今回の弱い所の一覧**（`kind|name`）を `meeting.weak_list` に残す。
+     *   → 次回の統括が「前回あって今回無い＝直った」「両方ある＝まだ直っていない」を**比べられる**。
+     *   ⚠ 入れるのは `kind` と `name` だけ（理由の長文は入れない・大きさを抑える）。最大40件。
+     *   ⚠ 保存する側（`saveSupervisorForBundle`）が入力の一覧を `adv.meeting.weak_list` に先に入れておく。ここではそれをそのまま残す（二重に作らない）。
+     */
+    meeting: (() => {
+      const m = (a.meeting && typeof a.meeting === "object") ? (a.meeting as Record<string, unknown>) : null;
+      const wl = (a as unknown as { weak?: unknown }).weak;
+      const already = m && Array.isArray((m as { weak_list?: unknown }).weak_list);
+      if (!m && !wl && !already) return null;
+      const base = m ? { ...m } : {};
+      if (!already && Array.isArray(wl)) {
+        (base as Record<string, unknown>).weak_list = wl
+          .filter((x) => x && (x as { name?: unknown }).name)
+          .map((x: { kind?: unknown; name?: unknown }) => ({ kind: String(x.kind ?? "").slice(0, 30), name: String(x.name ?? "").slice(0, 40) }))
+          .slice(0, 40);
+      }
+      return base;
+    })(),
     bundle_at: extra.bundle_at ?? null,
   };
 }

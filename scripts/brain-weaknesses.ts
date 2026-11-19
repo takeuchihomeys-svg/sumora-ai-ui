@@ -8,12 +8,17 @@
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --set-status <key> <open|in_progress|fixed|wont_fix> [--ref=<commit・スイッチ>] [--root=…] [--dry]
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --collect-exam [--dry]       … 手元の試験の外れの理由（reasons-latest.json）を足す（同じ回は二重に足さない）
 //   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --collect-miss-stages [--dry] … 試験の係が残した外れの切り分け（exam-queue/results/weakness-pending.jsonl・1回5行まで）を足す（同じ回は二重に足さない）
+//   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --mark <key> --tier=<土台|連携|細分化> --next="<次の一手>" [--cause=<材料|場面|判断>] [--owner=…] [--by=…] [--dry]
+//        … 人が決めた印・原因・次の一手を evidence に足す（推定の印 tier_guess は外す・状態は変えない）
+//   npx tsx --env-file=.env.local scripts/brain-weaknesses.ts --apply-marks=<marks.json> [--by=…] [--dry]
+//        … 同じ物をまとめて（[{key,tier,next,cause?,owner?}]）。閉じるのは今まで通り --set-status で1行ずつ（まとめて閉じる口は作らない）
+//   --open・--list・--collect-* の後に、新しく入った行（--since-hours=24）に印なしがあれば「印なし N行」を1行出す（2026-11-15 作業員I・無ければ何も出さない）
 //   書くのはサーバーの鍵（RLS 有効・ポリシーなし）。お客様の文・名前は入れない（印＝問題 id・番 id だけ）。LINE には何も送らない。
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
-import { SEED_WEAKNESSES, STATUS_JA, AREA_JA, WEAKNESS_STATUSES, WEAKNESS_AREAS, isWeaknessKey, weaknessHitsFromExamReasons, type WeaknessArea, type WeaknessRow, type WeaknessStatus } from "../app/lib/brain-weaknesses";
+import { applyWeaknessMark, unmarkedWeaknessLine, WEAKNESS_TIERS, WEAKNESS_CAUSES, type WeaknessMark, type WeaknessCause, SEED_WEAKNESSES, STATUS_JA, AREA_JA, WEAKNESS_STATUSES, WEAKNESS_AREAS, isWeaknessKey, weaknessHitsFromExamReasons, type WeaknessArea, type WeaknessRow, type WeaknessStatus } from "../app/lib/brain-weaknesses";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -37,12 +42,29 @@ function line(r: WeaknessRow): string {
   return `- [${STATUS_JA[r.status] ?? r.status}・${AREA_JA[r.area] ?? r.area}] ${r.title}（${r.key}）通算 ${r.occurrences}${r.last_seen ? `・最後 ${r.last_seen.slice(0, 10)}` : ""}${r.fix_ref ? ` → ${r.fix_ref}` : ""}${evs ? `\n    印: ${evs}` : ""}`;
 }
 
+/** 印なしの1行（新しく入った行に印なしがある時だけ出す） */
+async function printUnmarked(rows?: WeaknessRow[]) {
+  const l = unmarkedWeaknessLine(rows ?? (await all()), new Date().toISOString(), Number(arg("since-hours", "24")) || 24);
+  if (l) console.log(`\n${l}`);
+}
+async function markOne(k: string, m: WeaknessMark): Promise<string> {
+  const { data, error } = await sb.from("brain_weaknesses").select("key, title, evidence").eq("key", k).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`鍵が無い: ${k}`);
+  const ev = applyWeaknessMark((data as { evidence: WeaknessRow["evidence"] }).evidence, m, new Date().toISOString());
+  if (DRY) return `印（dry）: ${k} ${m.tier}・${m.cause ?? "-"}・${m.next.slice(0, 40)}`;
+  const { error: e2 } = await sb.from("brain_weaknesses").update({ evidence: ev, updated_at: new Date().toISOString() }).eq("key", k);
+  if (e2) throw new Error(e2.message);
+  return `印を付けました: ${(data as { title: string }).title}（${k}）${m.tier}`;
+}
+
 async function main() {
   if (has("open") || has("list")) {
     const rows = (await all()).filter((r) => has("list") || r.status === "open" || r.status === "in_progress");
     const order: WeaknessStatus[] = has("list") ? [...WEAKNESS_STATUSES] : ["in_progress", "open"];
     console.log(`ブレインの弱い所（${has("list") ? "全部" : "開いている物"} ${rows.length}件）`);
     for (const st of order) { const g = rows.filter((r) => r.status === st); if (!g.length) continue; console.log(`\n■ ${STATUS_JA[st]}（${g.length}）`); g.forEach((r) => console.log(line(r))); }
+    await printUnmarked(rows);
     return;
   }
   if (has("seed")) {
@@ -91,11 +113,27 @@ async function main() {
     console.log(`状態を変えました: ${(data as { title: string }).title}（${k}）${STATUS_JA[(data as { status: WeaknessStatus }).status]}→${STATUS_JA[st as WeaknessStatus]}`);
     return;
   }
+  if (has("mark")) {
+    const [k] = after("mark");
+    const tier = arg("tier") as WeaknessMark["tier"], cause = (arg("cause") || undefined) as WeaknessCause | undefined;
+    if (!k || !WEAKNESS_TIERS.includes(tier) || !arg("next")) throw new Error(`使い方: --mark <key> --tier=<${WEAKNESS_TIERS.join("|")}> --next="…" [--cause=<${WEAKNESS_CAUSES.join("|")}>] [--owner=…]`);
+    console.log(await markOne(k, { tier, next: arg("next"), cause, owner: arg("owner") || undefined, by: arg("by") || undefined }));
+    return;
+  }
+  if (arg("apply-marks")) {
+    const marks = JSON.parse(readFileSync(arg("apply-marks"), "utf8")) as Array<WeaknessMark & { key: string }>;
+    if (!Array.isArray(marks)) throw new Error("marks.json は配列");
+    let n = 0;
+    for (const m of marks) { console.log(await markOne(m.key, { tier: m.tier, next: m.next, cause: m.cause, owner: m.owner, by: m.by ?? (arg("by") || undefined) })); n++; }
+    console.log(`${DRY ? "（dry）" : ""}${n}行`);
+    return;
+  }
   if (has("collect-miss-stages")) {
     const file = join(examCacheRoot(), "exam-queue", "results", "weakness-pending.jsonl");
     if (!existsSync(file)) { console.log("足す物が無い（weakness-pending.jsonl）"); return; }
     const recs = readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as { label: string; hits: Parameters<typeof recordExamWeaknesses>[2] }; } catch { return null; } }).filter((x): x is { label: string; hits: Parameters<typeof recordExamWeaknesses>[2] } => !!x && !!x.label && Array.isArray(x.hits));
     for (const r of recs) console.log(`${r.label}: ${await recordExamWeaknesses(sb, r.label, r.hits, { dry: DRY })}`);
+    await printUnmarked();
     return;
   }
   if (has("collect-exam")) {
@@ -105,6 +143,7 @@ async function main() {
     const rec = JSON.parse(readFileSync(file, "utf8")) as { label?: string; at?: string; reasons?: Array<{ id: string; kind: string }> };
     const label = rec.label ?? "unknown";
     console.log(await recordExamWeaknesses(sb, label, weaknessHitsFromExamReasons(label, rec.reasons ?? [], rec.at), { dry: DRY }));
+    await printUnmarked();
     return;
   }
   console.log(readFileSync(__filename, "utf8").split("\n").filter((l) => l.startsWith("//")).join("\n"));

@@ -23,6 +23,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { cutBeforeApplicationMaterial, applicationMaterialReason } from "../app/lib/test-pii-guard";
+// 2026-11-12 作業員10（統括役）: 申込の記録で引く門も通す（文の網だけでは q036・q054・q100・q139 が残った）
+import { loadTurnApplicationRecords } from "../app/lib/turn-application-gate-server";
+import { turnApplicationReason } from "../app/lib/turn-application-gate";
+import { gateCheckSpecs, writeGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { resolveReplyScene } from "../app/lib/reply-scene";
 import { subSceneOf } from "../app/lib/reply-subscene";
@@ -134,6 +138,7 @@ type Msg = { id: number | string; sender: string; text: string | null; created_a
 /** 1問の会話を作る。作れない時は理由（文字列）を返す */
 export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string> {
   if (isTestConversation(spec.conv)) return "テスト・社内の会話";
+  { const why = turnApplicationReason(await loadTurnApplicationRecords(sb, spec.conv), spec.at); if (why) return `申込の門: ${why}`; }
   const { data: conv } = await sb.from("conversations").select("customer_name, property_customer_id").eq("id", spec.conv).maybeSingle();
   const { data } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).lte("created_at", spec.at).order("created_at", { ascending: false }).limit(60);
   const msgs = ((data ?? []) as Msg[]).reverse();
@@ -244,17 +249,21 @@ async function rebuild(only: string[] = []) {
   const skipped: string[] = [];
   // 2026-10-15 ③ 共有の置き場（全部の作業ツリー）に同じ正解の問題があれば DB から作り直さずに使う。--fresh で必ず作り直す・EXAM_SHARED_PROBLEMS=off で止める
   const useShared = sharedProblemsEnabled() && !flag("fresh");
+  const gateOut: Array<{ id: string; reason: string }> = [];
   let fromShared = 0;
   for (const s of spec) {
     if (only.length && !only.includes(s.id)) { const p = prev.get(s.id); if (p) out.push(p); continue; }
     const sp = useShared ? readSharedProblem<ExamProblem>(s as unknown as Record<string, unknown>) : null;
-    if (sp) { out.push(sp); fromShared++; continue; }
+    // 共有の置き場の問題も門に通す（前に作った問題は門を通っていない）
+    if (sp) { const why = turnApplicationReason(await loadTurnApplicationRecords(sb, s.conv), s.at); if (why) { skipped.push(`${s.id}（${s.type}）: 申込の門: ${why}`); gateOut.push({ id: s.id, reason: why }); continue; } out.push(sp); fromShared++; continue; }
     const r = await buildProblem(s);
-    if (typeof r === "string") { skipped.push(`${s.id}（${s.type}）: ${r}`); continue; }
+    if (typeof r === "string") { skipped.push(`${s.id}（${s.type}）: ${r}`); if (r.startsWith("申込の門: ")) gateOut.push({ id: s.id, reason: r.slice(6) }); continue; }
     out.push(r);
     console.log(`${r.id} [${r.type}] ${r.sub} 客「${oneLine(r.customer).slice(0, 60)}」 正解=${r.accept.join("|")}`);
   }
   writeFileSync(PROBLEMS_FILE, JSON.stringify(out, null, 1));
+  // 門で外れた id（本文は書かない）を一覧に（--only の時は前の一覧に足す）
+  if (only.length) { const prevGate = readGateExcluded(); writeGateExcluded([...[...prevGate].filter(([id]) => !only.includes(id)).map(([id, reason]) => ({ id, reason })), ...gateOut]); } else writeGateExcluded(gateOut);
   console.log(`\n問題 ${out.length} 問（spec ${spec.length}${fromShared ? `・共有の置き場から ${fromShared}問` : ""}）→ ${PROBLEMS_FILE}`);
   sharePublish(out);
   if (skipped.length) console.log(`作れなかった ${skipped.length}:\n  ${skipped.join("\n  ")}`);
@@ -461,6 +470,14 @@ async function suggestScenes() {
 if (require.main === module) {
   (async () => {
     if (flag("rebuild")) await rebuild(arg("only").split(",").filter(Boolean));
+    // 2026-11-12 作業員10: spec の全部の問題を門に通して一覧だけ書く（DB を会話ごとに少し読む・営業時間の外に）。--remove-from-problems で problems.json からも外す
+    else if (flag("gate-check")) {
+      const spec = readSpec();
+      const out = await gateCheckSpecs(spec, (conv) => loadTurnApplicationRecords(sb, conv));
+      writeGateExcluded(out);
+      if (flag("remove-from-problems")) { const ids = new Set(out.map((x) => x.id)); const ps = readProblems(); writeFileSync(PROBLEMS_FILE, JSON.stringify(ps.filter((p) => !ids.has(p.id)), null, 1)); }
+      console.log(`申込の門で外れた問題 ${out.length}/${spec.length}（scripts/brain-exam/gate-excluded.json）:\n  ${out.map((x) => `${x.id}: ${x.reason}`).join("\n  ")}`);
+    }
     // 2026-10-15 ③ 手元の problems.json の今の正解の問題を共有の置き場に置くだけ（DB を読まない）
     else if (flag("share")) { const ids = new Map(readSpec().map((s) => [s.id, s])); const { specHashOf } = await import("./lib/exam-problems-store"); sharePublish(readProblems().filter((p) => ids.has(p.id) && specHashOf(p as unknown as Record<string, unknown>) === specHashOf(ids.get(p.id) as unknown as Record<string, unknown>))); }
     else if (flag("add")) await add();
@@ -468,6 +485,6 @@ if (require.main === module) {
     else if (flag("suggest-sends")) await suggestSends();
     else if (flag("suggest-scenes")) await suggestScenes();
     else if (arg("add-batch")) await addBatch();
-    else console.log("使い方: --rebuild [--only=q001,q002] ／ --suggest [--days=14] ／ --add --conv= --at= --type= --accept= --why= [--must-not=] [--ask=] [--ng=] [--tags=]");
+    else console.log("使い方: --rebuild [--only=q001,q002] ／ --gate-check [--remove-from-problems] ／ --suggest [--days=14] ／ --add --conv= --at= --type= --accept= --why= [--must-not=] [--ask=] [--ng=] [--tags=]");
   })().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });
 }

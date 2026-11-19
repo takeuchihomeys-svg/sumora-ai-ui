@@ -9856,6 +9856,14 @@ export default function Home() {
                       ))}
                     </div>
                   )}
+                  {/* 2026-11-13 作業員7b（FIRST_HEARING_SEQUENCE）: 決まった文の通（条件ヒアリングのフォームの案内）はそのまま入力欄へ */}
+                  {seq.filter((s) => s.slot === "reply" && !!s.text).map((s, i) => (
+                    <div key={`fixed-${i}`} className="mt-1 rounded border border-indigo-200 bg-white px-2 py-1">
+                      <div className="text-[10px] font-bold">決まった文（{s.role}）</div>
+                      <div className="whitespace-pre-wrap text-[11px] text-slate-700">{s.text}</div>
+                      <button onClick={() => { setReplyDraft(String(s.text)); }} className="mt-0.5 rounded-full border border-indigo-400 px-2 text-[10px] font-bold">この通を入力欄へ</button>
+                    </div>
+                  ))}
                 </div>
               );
             })()}
@@ -10904,6 +10912,10 @@ export default function Home() {
                   </span>
                 )}
               </div>
+            )}
+            {/* 2026-11-13 作業員5（conductor-staff-check）: 統括の自信が低く人に回した番の理由（スタッフ向けの注記・お客様には送らない・サーバーの CONDUCTOR_STAFF_CHECK の時だけ値が来る） */}
+            {checkResult?.staff_check?.note && replyDraft.trim() && (
+              <div className="mb-1 rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-[10px] font-medium text-orange-800">{checkResult.staff_check.note}</div>
             )}
 
             {/* 🧠 最終チェック指摘リスト（block=🔴 / warning=🟡・折りたたみ式） */}
@@ -12644,7 +12656,8 @@ export default function Home() {
                 fetch("/api/line-tasks/complete", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-                  body: JSON.stringify({ id: _t.id, source: "aix" }),
+                  // 2026-11-15 作業員H（案A・907c74b4）: AIX で選んだ確認の型も渡す（結果を付けるかはサーバーの TASK_RESULT_FROM_AIX・見た目は変わらない）
+                  body: JSON.stringify({ id: _t.id, source: "aix", aix_type: aixModalType, check_pattern: meta?.checkPattern ?? null, prop_statuses: meta?.propStatuses ?? null, property_names: meta?.propertyNames ?? null, text: lastAixLogTextRef.current ?? null }),
                 }).catch(() => {});
               }
               if (_tasks.length > 0) {

@@ -2,7 +2,12 @@ import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSente
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
 import { positiveNoNegativeEnabled, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
-import { replySplitWriterNote, replyCountOf } from "@/app/lib/reply-split";
+import { replySplitWriterNote, replyCountOf, replySplitSelfNote } from "@/app/lib/reply-split";
+import { fcBlueprintMarkOn, markUnmatchedSentences, blueprintMarkLog, blueprintEmbedLog, conditionTokensForMark } from "@/app/lib/final-check-blueprint-match";
+import { blueprintRedoMode, conductorRedoPlan, blueprintRedoLog } from "@/app/lib/blueprint-redo";
+import { staffCheckMode, decideStaffCheck, staffCheckWriterLine, type StaffCheckInput } from "@/app/lib/conductor-staff-check";
+// 2026-11-12 作業員7（TURN_AIMS_AFTER・既定 off）: 道が決まった後に目的・中期・仕込みを作り、文の統括への受け渡しにだけ渡す
+import { metaWithTurnAimsAfter } from "@/app/lib/turn-aims-after";
 import { mgmtHoursSplitEnabled, isVacancyConfirmObject, COMPANY_CLOSE_HOUR, mgmtNightClosingOn, nightMgmtClosingLine } from "@/app/lib/mgmt-hours-split";
 import { brainStaffBurstWaitEnabled, staffSendingNow } from "@/app/lib/staff-burst";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
@@ -140,7 +145,8 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { createExitRecorder } from "@/app/lib/exit-edits";
 import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
-import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+import { fcKeepsBrainSentence } from "@/app/lib/final-check-answer-keep";
+import { runFinalCheck, runFinalCheckWithRevision, runGroundedRevision, runDeterministicChecks, safetyLineIssues, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
 import { scoreDraftConfidence, draftConfidenceEnabled } from "@/app/lib/draft-confidence";
@@ -342,6 +348,7 @@ const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWait
 import { hesitationKindOf } from "@/app/lib/customer-mindset";
 import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, ensureFamilyConsultSupport, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
 import { writerFromText } from "@/app/lib/staff-writer";
+import { exampleWriterRecordedOn, loadRecordedWriters, writerBoostOf } from "@/app/lib/example-writer-recorded";
 import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
 import { fixTakeuchiWording, fixProxyNegotiate } from "@/app/lib/takeuchi-wording-r11";
 import { fixUnsentReviewAck } from "@/app/lib/unsent-review-ack";
@@ -364,6 +371,25 @@ import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 import { isCustomerEcho, draftEchoGuardEnabled } from "@/app/lib/draft-echo";
 import { composeConductorOn, buildComposeConductor, verifyDraft, sendBackDecision, composeConductorDigest } from "@/app/lib/reply-compose-conductor";
+import { composeVocabUnifiedOn, applySceneConstraints, stripWritingBlueprintOrder } from "@/app/lib/compose-vocab";
+import { applyOrderTable, orderBasisDigest, pickElementTypes, elementTypesNote, uptakePlan, uptakeNote, trustTurnNote, propertyNameNote } from "@/app/lib/compose-order-table";
+const maybeStripWb = (note: string, on: boolean): string => (on ? stripWritingBlueprintOrder(note) : note);
+import { composeSlotsAndClosing } from "@/app/lib/compose-value-slots";
+import { headNote } from "@/app/lib/compose-head";
+import { phraseCatalogNote, formSlotsNote } from "@/app/lib/compose-phrase-catalog";
+import { composePlanRowsV2On, buildPlanRowsV2, planRowsV2Note, planRowsV2Digest } from "@/app/lib/compose-plan-rows-v2";
+// 2026-11-13 作業員10（COMPOSE_BRIEF_ROLES・既定 off）: 統括の指示書の役目ごとの欄（briefForRole）を書き手への注記に
+import { briefRolesNote } from "@/app/lib/compose-brief-roles";
+import { briefUptakeMode, briefUptake, uptakeDigest as briefUptakeDigest, uptakeNote as briefUptakeNote } from "@/app/lib/compose-brief-uptake";
+import { dateWordsOf } from "@/app/lib/compose-brief";
+import { composeAsksFactsOn, asksFactsOf, recordFactsOf, composeFactsNote, type EstimateRec } from "@/app/lib/compose-asks-facts";
+import { composeBriefMode, buildComposeBrief, draftDoubts as composeDraftDoubts, composeSure, linkReport as composeLinkReport, composeBriefDigest } from "@/app/lib/compose-brief";
+import { orderTypeOf } from "@/app/lib/compose-order-table";
+import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-server";
+import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
+import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
+import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
+import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -2779,7 +2805,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // 2026-09-11 データ衛生: 生成失敗文・テスト送信を後段で除外する分（+4）を多めに取る
         match_count: (spec?.examples.pgvectorMatchCount ?? 20) + 4,
         filter_states: stateAliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
+      }) as { data: Array<{ id?: string; customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; customer_intent: string | null; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
         // 類似度0.5未満は低品質として除外。生成失敗文・テスト送信は正解例にしない（isUsableExampleText）
@@ -2796,9 +2822,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // 2026-09-13: +0.2 は類似度の幅（0.5〜0.8）に対して大きすぎ、似ていない実例を上げていた。
         //   本番の問い38件で 0.05 が最良（上位8件の平均 cos 0.5536 → 0.5575）→ fresh 0.05 / stale 0.02
         const intentBoost = brainFresh ? 0.05 : 0.02;
+        // 2026-11-15 作業員I（竹内さん「ちゃんと竹内の LINE から学習する」）: EXAMPLE_WRITER_RECORDED=on の時だけ、書き手を送信の記録（messages.staff_writer・sure）で決める。無ければ文の推定（今と同じ）。既定 off
+        const recW = exampleWriterRecordedOn() ? await loadRecordedWriters(supabase, aboveThreshold.map((ex) => ex.id ?? "")) : null;
+        const wBoost = (ex: { id?: string; sent_reply: string }) => (recW ? writerBoostOf(recW.get(ex.id ?? "") ?? null, ex.sent_reply) : exampleWriterBoost(ex.sent_reply));
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message) + exampleWriterBoost(a.sent_reply);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message) + exampleWriterBoost(b.sent_reply);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message) + wBoost(a);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message) + wBoost(b);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
@@ -4347,6 +4376,8 @@ async function handleGenerateReply(req: NextRequest) {
           new Promise<string>((r) => setTimeout(() => r(""), 5_000)),
         ])
       : "";
+    // 2026-11-13 作業員1: 書き手に届いた印（欄の名前 customer_memo・conductor-field-links と同じ）。ブレインの側は brain:customer-memo
+    if (conversationId && !isTemplateOptimize) console.log(JSON.stringify({ tag: "writer:customer-memo", field: "customer_memo", conversationId, chars: customerMemoNote.length, postApply: postApplyConversation }));
     const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
@@ -4457,8 +4488,10 @@ async function handleGenerateReply(req: NextRequest) {
           // 2026-11-03 作業員6: 統括の受け渡しの1ブロック（作業員2の conductor-handoff・CONDUCTOR_HANDOFF=on の時だけ）を構成のブレインにも同じ形で渡す
           situation: [
             String((brainMeta as { reply_direction?: string | null } | null)?.reply_direction ?? ""),
-            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: brainMeta as unknown as Record<string, unknown> })) : "")).catch(() => ""),
+            await import("@/app/lib/conductor-handoff").then((h) => (h.conductorHandoffOn() && brainMeta ? h.handoffNote(h.buildHandoff({ to: "compose", meta: metaWithTurnAimsAfter(brainMeta as unknown as Record<string, unknown>, customerMsgUnits.join("\n") || (message ?? "")) })) : "")).catch(() => ""),
           ].filter(Boolean).join("\n\n") || null,
+          // 2026-11-12 作業員10（受け渡しの漏れ・COMPOSE_SENTENCE_PLAN=on の時だけ）: 構成のブレインに受け口はあるが渡していなかった気持ちと訴求の判断を渡す
+          ...(composeSentencePlanOn() && brainMeta ? (() => { const c = readComposeContext(brainMeta); return { emotion: [c.three?.worry, c.latent4 ? [c.latent4.feeling, c.latent4.want].filter(Boolean).join("・") : null, c.mood ? c.mood.base : null, c.concern].filter(Boolean).join("／").slice(0, 200) || null, appeal: c.appealTiming }; })() : {}),
         })).catch((e) => { console.warn(JSON.stringify({ tag: "compose:failed", error: e instanceof Error ? e.message : String(e) })); return null; })
       : null;
     /** 書き直し1回の記録（COMPOSE_REWRITE・digest の compose_rewrite へ） */
@@ -4489,6 +4522,45 @@ async function handleGenerateReply(req: NextRequest) {
         })()
       : null;
     if (composeConductor) console.info("[compose-conductor]", JSON.stringify({ conversationId, focus: composeConductor.mf.key, source: composeConductor.mf.source, keep: composeConductor.mf.keep, nearKeep: composeNearKeepShare, read: composeConductor.read }));
+    // 2026-11-11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN=on・既定 off）: 一通の読み（主と従）と竹内さんの7つの欄を受け取り、
+    //   役目・どの部分の何・どうやって・次へ・主か従かを1文ずつ書き手に渡す（app/lib/compose-sentence-plan.ts・決定論・材料の無い欄は空のまま）
+    // 2026-11-12 作業員10（COMPOSE_ASKS_FACTS=on・既定 off）: 見積の金額は estimate_records から値のまま（この会話の新しい3件だけ・軽い1回）
+    const composeRecordEstimates: EstimateRec[] = composeAsksFactsOn() && composeSentencePlanOn() && conversationId && !isTemplateOptimize && !postApplyConversation
+      ? await (async () => { try { const { data } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, discount_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(3); return (data ?? []) as EstimateRec[]; } catch { return []; } })()
+      : [];
+    // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
+    if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
+    const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
+      ? (() => {
+          try {
+            const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta, { nextIntent: composeRun?.intent.next ?? null });
+            const plan0 = buildSentencePlan(u, s7, { scene: composeConductorScene, ctx: readComposeContext(brainMeta, { nextIntent: composeRun?.intent.next && composeRun.intent.next !== "none" ? composeRun.intent.next : null }) });
+            // 2026-11-12 作業員10（語彙を1つに・COMPOSE_VOCAB_UNIFIED=on・既定 off）: 場面の要る段・書かない段を設計図の行に効かせる（app/lib/compose-vocab.ts）
+            const planU = applySceneConstraints(plan0, composeConductorScene);
+            // 2026-11-12 作業員10（COMPOSE_ORDER_TABLE=on・既定 off）: 型（T1〜T9）ごとの竹内さんの組み立ての順に従の行を並べ替える。判断の根拠は off でも digest に残す
+            const ord = applyOrderTable(planU, u, composeConductorScene);
+            const plan = ord.plan;
+            // 2026-11-12 作業員10: 作業員5 の竹内さんの手本（場面×潜在×誘導先・TAKEUCHI_EXEMPLAR=on の時だけ）を設計図の注記の後ろに（文は写させない）
+            const ex = (() => { try { return exemplarNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            // 要る役目の行は書き手に渡さない（竹内さんの24番で4/4が竹内さんの文に無い役目だった＝記録だけ）
+            // 2026-11-12 作業員10（COMPOSE_ELEMENT_TYPES=on・既定 off）: 要素ごとの言葉の型（押す線・信頼の作り方・潜在の一文）をブレインの欄から選んで1行に。選んだ型は off でも digest に
+            const elem = pickElementTypes(brainMeta);
+            // 2026-11-12 作業員10（COMPOSE_VALUE_SLOTS・COMPOSE_CLOSING_TABLE=on・既定 off）: 役目×場面→出す値の欄・順位・出さない値（値は材料から決まった計算で）と返信の締めの決め表。digest は off でも残す
+            const slots = (() => { try { return composeSlotsAndClosing({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), firstContact: isFirstEverReplyFromMsgs === true, nthToday: (() => { const day = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10); const today = day(Date.now()); return recentMessages.filter((m) => m.sender === "staff" && !m.isAix && m.createdAt && day(Date.parse(String(m.createdAt))) === today).length + 1; })() }); } catch { return null; } })();
+            // 2026-11-12 作業員10（COMPOSE_BRIEF=shadow|on・既定 off）: 文の統括の指示書を1か所に（記録だけ・書き手への指示文にも本文にも足さない）。書いた後の疑いの印・自信の印・連携の表は下の tpo_debug.compose_brief
+            const brief = composeBriefMode() !== "off" ? (() => { try { return buildComposeBrief({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), materialText: [contractMaterialFacts ?? "", ownProperty?.note ?? ""].join("\n"), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? ""), firstContact: isFirstEverReplyFromMsgs === true }); } catch { return null; } })() : null;
+            // 2026-11-13 作業員10（COMPOSE_PLAN_ROWS_V2=on・既定 off）: 設計図の1行を10欄に細分化（行の数と役目は竹内さんの場面×主の役目の並び・立てない条件つき）
+            const rowsV2 = composePlanRowsV2On() ? (() => { try { const tc = (brainMeta as Record<string, unknown> | null)?.turn_contract as { asks?: Array<{ route?: string }>; lead_with?: number } | undefined; const leadAsk = tc?.asks?.[typeof tc?.lead_with === "number" ? tc.lead_with : 0]; return buildPlanRowsV2({ plan, s7, meta: brainMeta, scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), facts: [...asksFactsOf(brainMeta), ...recordFactsOf({ estimates: composeRecordEstimates, viewing: ledger.facts.viewingAppointment ?? null })], closing: null, recentStaff: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => ({ text: m.text ?? "", aix: !!m.isAix })), staffOnlyTurn: leadAsk?.route === "aix" }); } catch { return null; } })() : null;
+            const note0 = [sentencePlanNote(plan), ord.noteLine && sentencePlanNote(plan) ? ord.noteLine : "", sentencePlanNote(plan) ? elementTypesNote(elem) : "", sentencePlanNote(plan) ? uptakeNote(uptakePlan(brainMeta)) : "", sentencePlanNote(plan) ? trustTurnNote({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), firstContact: isFirstEverReplyFromMsgs === true, meta: brainMeta, recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-8).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? propertyNameNote({ property: u.main?.property ?? null, customerText: customerMsgUnits.join("\n") || (message ?? ""), recentStaffTexts: recentMessages.filter((m) => m.sender === "staff").slice(-3).map((m) => m.text ?? "") }) : "", sentencePlanNote(plan) ? slots?.note ?? "" : "", sentencePlanNote(plan) ? composeFactsNote([...asksFactsOf(brainMeta), ...recordFactsOf({ estimates: composeRecordEstimates, viewing: ledger.facts.viewingAppointment ?? null })]) : "", sentencePlanNote(plan) && rowsV2 ? planRowsV2Note(rowsV2.rows) : "", sentencePlanNote(plan) && rowsV2 ? briefRolesNote(rowsV2.rows, brainMeta) : "", sentencePlanNote(plan) ? phraseCatalogNote({ scene: composeConductorScene, mainRole: plan.rows.find((r) => r.rank === "main")?.role ?? null, roles: plan.rows.map((r) => r.role) }) : "", sentencePlanNote(plan) ? formSlotsNote({ scene: composeConductorScene, mainRole: plan.rows.find((r) => r.rank === "main")?.role ?? null, dates: dateWordsOf([contractMaterialFacts ?? "", customerMsgUnits.join("\n") || (message ?? ""), ...recentMessages.filter((m) => m.sender === "staff").slice(-5).map((m) => m.text ?? "")].join("\n")) }) : "", sentencePlanNote(plan) ? headNote({ customerText: customerMsgUnits.join("\n") || (message ?? ""), prev: (() => { const st = [...recentMessages].reverse().find((m) => m.sender === "staff"); return st ? { text: st.text ?? null, aix: !!st.isAix } : null; })() }) : ""].filter(Boolean).join("\n");
+            // 2026-11-12 作業員23（根B）: 竹内さんの文型カタログ（受け・潜在の一文・押さえ方・締め・継続の約束の骨と割合・SENTENCE_PATTERN_CATALOG=on の時だけ・既定 off）
+            const pc = (() => { try { return patternCatalogNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta, keepKind: composeConductor?.mf.keep ? "new_listing" : null }); } catch { return null; } })();
+            // 2026-11-12 作業員23（KB 2301dbf1）: 文の要素の型（つなぎ・押さえ方・信頼・潜在の過半数の形だけ・COMPOSE_ELEMENTS=on の時だけ・既定 off・道は決め直さない）
+            const ce = (() => { try { return composeElementsNoteFor({ scene: composeConductorScene, customerText: customerMsgUnits.join("\n") || (message ?? ""), meta: brainMeta }); } catch { return null; } })();
+            return { plan, brief, composeRows: rowsV2 ? planRowsV2Digest(rowsV2.rows) : null, rowsV2: rowsV2?.rows ?? null, briefOrderType: orderTypeOf(composeConductorScene, plan.rows.find((r) => r.rank === "main")?.role ?? null), briefAppeal: !!s7.appeal, note: (() => { const n1 = note0 && ex ? `${note0}\n${ex.note}` : note0; const n2 = n1 && pc ? `${n1}\n${pc.note}` : n1; return n2 && ce ? `${n2}\n${ce.note}` : n2; })(), digest: `${sentencePlanDigest(plan)}${ex ? `｜手本=${ex.key}#${ex.level}` : ""}${planU.removed.length ? `｜外した=${planU.removed.join(",")}` : ""}${planU.requiredRoles.length ? `｜要る=${planU.requiredRoles.join(",")}` : ""}｜${orderBasisDigest(ord.basis)}｜言葉の型=${[...elem.push_line, ...elem.trust, ...elem.latent_line].join(",") || "-"}${slots ? `｜${slots.digest}` : ""}${pc ? `｜文型=${pc.key}` : ""}${ce ? `｜要素=${ce.key}` : ""}` };
+          } catch (e) { console.warn(JSON.stringify({ tag: "compose-sentence-plan:failed", error: e instanceof Error ? e.message : String(e) })); return null; }
+        })()
+      : null;
+    if (composeSentencePlan) console.info("[compose-sentence-plan]", JSON.stringify({ conversationId, plan: composeSentencePlan.digest }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
     // ①エリア語彙拡張＋ひらがな接頭の誤検出排除 ②家賃以外の金額（初期費用/礼金/年収等）をマスク
@@ -5554,6 +5626,24 @@ async function handleGenerateReply(req: NextRequest) {
       lines.push("※これはスタッフへの行動方針であり物件の事実情報ではない。「退去予定」「空き予定」「〜月末まで」等の期日・空室情報は会話履歴やDBで確認された事実のみ本文に書くこと。");
       return lines.join("\n") + "\n";
     })();
+    // 2026-11-13 作業員5（自信が無い時に統括が人に回す段・CONDUCTOR_STAFF_CHECK=shadow|on・既定 off）: 入口の統括の自信が low で、はっきりした理由
+    //   （指す物が解けない・答えの出所が推測だけ・読みの候補が割れた）がある番は、スタッフに確かめてもらう。注記は final_check.staff_check（画面）・
+    //   on の時だけ書き手に「言い切らない」の1行（brainGuidanceNote の後ろ・下書き欄には何も入れない）
+    const staffCheckRec = staffCheckMode() !== "off" && brainMeta ? (() => { try {
+      const bm = brainMeta as unknown as Record<string, unknown>;
+      return decideStaffCheck({
+        intakeConfidence: (bm.conductor_intake as { answer?: { confidence?: string } | null } | undefined)?.answer?.confidence ?? null,
+        ref: (bm.ref_resolve ?? null) as StaffCheckInput["ref"],
+        turnHasImage: unrepliedCustomerTexts.some(isImageTextUnit),
+        currentProperty: typeof bm.current_property === "string" ? bm.current_property : null,
+        asks: ((bm.turn_contract as { asks?: Array<{ route?: unknown; basis?: unknown }> } | undefined)?.asks) ?? null,
+        latentFive: (bm.latent_five ?? null) as StaffCheckInput["latentFive"],
+        readCandidates: (bm.read_candidates ?? null) as StaffCheckInput["readCandidates"],
+        depthReason: (bm.brain_depth as { reason?: string } | undefined)?.reason ?? null,
+      });
+    } catch { return null; } })() : null;
+    if (staffCheckRec) console.log(JSON.stringify({ tag: "conductor:staff-check", conversationId, mode: staffCheckMode(), reasons: staffCheckRec.reasons, ref_detail: staffCheckRec.ref_detail ?? null, depth: staffCheckRec.depth, depth_match: staffCheckRec.depth_match }));
+    const staffCheckWriterNote = staffCheckMode() === "on" && staffCheckRec && brainGuidanceNote ? `\n${staffCheckWriterLine(staffCheckRec)}\n` : "";
 
     // ── 場面と返信方針（TPO）独立ブロック（2026-09-08）──
     // brainMeta の有無（T1/T2/T3）に関係なく必ず生成プロンプトへ注入する。
@@ -5598,7 +5688,23 @@ async function handleGenerateReply(req: NextRequest) {
       const tcNote = renderTurnContractNote(turnContract);
       if (tcNote) lines.push(tcNote);
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
+      if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
+      // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
+      void (async () => {
+        try {
+          const w = await import("@/app/lib/compose-plan-watch");
+          if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
+          const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
+          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const d = dc.deliveryCheckOf(meta0);
+          const sv = ds.subValuesOf(meta0);
+          noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
+            digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+          }) as unknown as Record<string, unknown>);
+        } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
+      })();
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）
@@ -5615,6 +5721,9 @@ async function handleGenerateReply(req: NextRequest) {
         ((brainMeta as { send_sequence?: Array<{ slot?: string; role?: string }> } | null)?.send_sequence ?? [])
           .filter((x) => x?.slot === "reply" && typeof x.role === "string").map((x) => String(x.role)));
       if (splitNoteLine) { lines.push(splitNoteLine); console.info("[reply-split]", JSON.stringify({ conversationId, count: splitCount })); }
+      // 2026-11-12 作業員7（REPLY_SPLIT_WRITER_SELF・既定 off）: ブレインが通数を決めていない番は、書き手が竹内さんの2つの分け方（別の要件／次の一歩）で自分で決める
+      const splitSelfLine = replySplitSelfNote(splitCount);
+      if (splitSelfLine) { lines.push(splitSelfLine); console.info("[reply-split-self]", JSON.stringify({ conversationId })); }
       // 2026-11-05 作業員9（弱い所 324・KB P1 9fd703f4）: 2段の確認の方向の結び「確認出来次第ご連絡」が下の【管理会社の状況】の「明日」より勝っていた＝
       //   夜の管理会社への確認だけ、方向のすぐ下で結びの前に「本日管理会社営業時間外の為、明日」を入れさせる（判断・結びの言葉は変えない・MGMT_NIGHT_CLOSING=on・既定 off）
       if (mgmtNightClosingOn() && /確認出来次第ご連絡/.test(`${brainDirTop ?? ""}\n${effectiveReplyDirection ?? ""}`)) {
@@ -6239,7 +6348,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-11-03 作業員6 場面の技能（SCENE_SKILLS=on・既定 off）: 会社のルールを場面で絞り（rules_scene と同じ関数）、設計知見の木から組んだ決まりの本を後ろに足す
         ((testFlags.rules_scene === "on" || sceneSkillsOn()) && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules) + sceneRuleBookNote + ownerWriterBookNote),
       // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
-      resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
+      resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote + staffCheckWriterNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
       // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）
@@ -6282,13 +6391,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       { scene: replyScene, on: sceneMaterialsOn, composeOn: !!composeRun?.note, brainContract: turnContract?.source === "brain", messagePlan: turnContract?.source === "brain" ? (turnContract.messagePlan ?? null) : null, ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off",
         // 2026-10-20 文の設計図（竹内さん f5a4b51a「文生成にも軸」）: 既定 off＝"" を渡す（指示は変わらない）。分かれ道は今は他社で内覧の1つだけ（申込までの地図が入ったら地図の分かれ道に替える）
         // on の時に万一投げても返信は止めない（"" に落とす）
-        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return buildWritingBlueprintNote({
+        // 2026-11-12 作業員10（COMPOSE_VOCAB_UNIFIED=on・設計図の注記が出る番だけ）: 場面の設計図から設計図と二重の行（並び・要る段・書かない段）を外す
+        blueprintNote: !isTemplateOptimize && writingBlueprintEnabled() ? (() => { try { return maybeStripWb(buildWritingBlueprintNote({
           scene: replyScene,
           routeBranch: isOtherAgentViewingPlan(message ?? "") || isOtherAgentViewingApplyQuestion(message ?? "") ? "other_agent_viewing" : null,
           questions: replySceneResolved?.questions?.length ? replySceneResolved.questions : questionsOf(message ?? ""),
           sentThisTurn: replyAixPre?.timing === "now",
           promiseOutstanding: ledgerActive ? !!ledger.facts.pickupPromisedUnfulfilled : false,
-        }) + (() => {
+        }), composeVocabUnifiedOn() && !!composeSentencePlan?.note) + (() => {
           // 2026-10-23 計画7: 10/20 の会話の型（writing-blueprint-patterns.ts・e0e83baa/1bc5683e/c0b845e8/9b8dbfca/adc4d260/317c7a7c/d9fa213d/bf2c0517/d9533aad/5192922a）
           const pn = buildBlueprintPatternNote({
             scene: replyScene, customerText: message ?? "", messages: recentMessages, customerConditions,
@@ -6918,7 +7028,18 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             let finalCheckGateLog: FinalCheckGateLog | null = null; // 2026-10-02 要否の判定（作り直しで finalCheck が置き換わっても tpo_debug に残す）
             if (isTemplateOptimize && draftBody.trim()) {
               console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
+              // 2026-11-12 作業員20: テンプレ最適化でも BANNED_WORD の安全の線（ブランド名・プレースホルダ・システム語・作業メモ）だけは最終チェックと同じ語の一覧で見る
+              //   （本文は変えない・当たった時だけ block の結果を載せて画面の指摘と自動送信の関所に届ける・passes_completed が空なので関所は完走の証拠にしない・戻す TEMPLATE_SAFETY_LINE=off）
+              if ((process.env.TEMPLATE_SAFETY_LINE ?? "").trim().toLowerCase() !== "off") {
+                const safetyHits = safetyLineIssues(draftBody);
+                if (safetyHits.length) {
+                  console.warn(JSON.stringify({ tag: "template-optimize:safety-line", conversationId, codes: safetyHits.map((i) => `${i.code}:${i.evidence.slice(0, 20)}`) }));
+                  finalCheck = { ok: false, issues: safetyHits, passes_completed: [], elapsed_ms: 0, checked_text_hash: await sha1(draftBody.trim()), revision_count: 0 };
+                }
+              }
             }
+            // 2026-11-13 作業員5（やり直しの輪・FC_BLUEPRINT_REDO=shadow）: 最終チェックの文脈を印の段まで持ち出す（書き直しの口に同じ文脈を渡す）
+            let fcCtxForBlueprintRedo: Parameters<typeof runGroundedRevision>[2] | null = null;
             if (!isTemplateOptimize && draftBody.trim()) {
               try {
                 // 段階の日本語説明（MEDIUM-2: STAGE_SKIP検出用）
@@ -7037,6 +7158,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-19 竹内（慶次事例）: 宣言行の条件語の根拠に登録条件も使う
         customerConditions,
                 };
+                fcCtxForBlueprintRedo = finalCheckCtx;
                 // センシティブ案件（クレーム/審査否決/キャンセル）は「参考のみ・手動確認必須」の草稿のため
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
                 // （謝罪ニュアンス等を revision が壊すリスク回避＋最大90秒超の無駄コスト削減。指摘の可視化だけで十分）
@@ -7080,6 +7202,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const retryIssues = finalCheck.issues.filter(
                   // 2026-10-09: 本質（ブレイン）に反する中身を足させる・消させる指摘はフィードバック再生成に渡さない（turn-contract.issueContradictsContract）
                   (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND" && !issueContradictsContract(it, turnContract)
+                    // 2026-11-12 作業員15: 段階の語の網（審査・契約・鍵）が今の質問・ブレインの答え／約束の文を作り直しに渡さない（既定 on・FC_ANSWER_KEEP=off で止める）
+                    && !fcKeepsBrainSentence(it, { contract: turnContract, draft: draftBody, customerText: message })
                 );
                 // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す
                 const firstPass = { issues: finalCheck.pre_revision_issues ?? finalCheck.issues.map((i) => `${i.code}:${i.severity}`), head: draftBody.slice(0, 80) };
@@ -7147,6 +7271,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     if (gen2.body.trim()) {
                       // 2026-09-11 統合設計: gen2 にも gen1 と同じ台帳の決定論自動修正を掛ける（旧実装は gen1 のみ＝非対称）
                       const gen2Body = applyLedgerFixToDraft(gen2.body);
+                      // 2026-11-12 作業員15: 作り直し（1回目の文→2回目の文）も出口の記録に残す（旧は作り直しの前の文が先頭80字しか残らず、作り直しで消えた文を数えられなかった・記録だけ）
+                      exitRec.record(2, "final_check_regen", draftBody, gen2Body, retryIssuesDedup.map((it) => `${it.code}:${it.severity}`));
                       // 再生成ドラフトにも最終チェック＋接地修正ループを適用（未チェック文は絶対に出さない）
                       // 予算はループ単位ではなく「check1開始からの総経過時間」から逆算（regen込みで最悪2〜3分に膨らむのを防止。
                       // 全体上限150s − 経過時間、下限20s）
@@ -7685,9 +7811,45 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const groundForFacts = [...recentMessages.map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""].join("\n");
                 const tcMiss = turnContract ? auditDraftAgainstContract(finalDraftText, turnContract, lastTwoStaffForContract) : [];
                 const aixC = classifyAixContent(finalDraftText, groundForFacts).filter((h) => !h.grounded).map((h) => h.catalogKey);
+                // 2026-11-13 作業員9（統括役 S9・FC_BLUEPRINT_MARK 既定 off）: 最終チェックの4つ目の段＝設計図の行（作業員10 の rowsV2）に当たらない文の印（印だけ・本文は変えない）
+                if (fcBlueprintMarkOn() && composeSentencePlan?.rowsV2?.length) {
+                  const marks = markUnmatchedSentences(finalDraftText ?? "", composeSentencePlan.rowsV2, {
+                    conditionTokens: conditionTokensForMark(customerConditions ?? ""),
+                    propertyNames: [...ledger.facts.propertiesSentNames, ...(brainMeta?.current_property ? [String(brainMeta.current_property)] : [])],
+                  });
+                  logWatchMaterial(JSON.stringify(blueprintMarkLog(conversationId, marks, composeSentencePlan.rowsV2.length, blueprintEmbedLog(finalDraftText ?? "", composeSentencePlan.rowsV2))));
+                  // 2026-11-13 作業員5（やり直しの輪・FC_BLUEPRINT_REDO=shadow・既定 off）: 印を統括に戻し、統括が一手（消す／条件を絞る／対象を直す）を決めて1回だけ書き直す。
+                  //   shadow＝書き直した文と前後の印の数を見張りに残すだけ（下書きは変えない）。応答の後（after）に回し、返信を待たせない
+                  const redoPlan = blueprintRedoMode() === "shadow" ? conductorRedoPlan(marks, { focus: ((brainMeta as Record<string, unknown> | null)?.conductor_focus ?? null) as { focus?: string | null } | null }) : null;
+                  const redoCtx = fcCtxForBlueprintRedo, redoRows = composeSentencePlan.rowsV2, redoDraft = finalDraftText ?? "";
+                  const redoMarkOpts = { conditionTokens: conditionTokensForMark(customerConditions ?? ""), propertyNames: [...ledger.facts.propertiesSentNames, ...(brainMeta?.current_property ? [String(brainMeta.current_property)] : [])] };
+                  if (redoPlan && redoCtx) {
+                    try {
+                      after(async () => {
+                        const revised = await runGroundedRevision(redoDraft, redoPlan.issues as CheckIssue[], redoCtx, 15000).catch(() => null);
+                        const marksAfter = revised ? markUnmatchedSentences(revised, redoRows, redoMarkOpts) : null;
+                        logWatchMaterial(JSON.stringify(blueprintRedoLog(conversationId, redoPlan, redoDraft, revised, marksAfter)));
+                      });
+                    } catch (e) { console.warn("[generate-reply] blueprint redo skipped:", e instanceof Error ? e.message : e); }
+                  }
+                }
                 Object.assign(finalCheck.tpo_debug, {
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   ...(composeRun ? { compose: composeDigestLine({ intent: composeRun.intent, blueprint: composeRun.blueprint, writerGotNote: !!composeRun.note, draft: finalDraftText }) } : {}),
+                  ...(composeSentencePlan ? { compose_plan: composeSentencePlan.digest, ...(composeSentencePlan.composeRows ? { compose_rows: composeSentencePlan.composeRows } : {}) } : {}),
+                  ...(composeSentencePlan?.brief ? (() => { try {
+                    const b = composeSentencePlan.brief; const doubts = composeDraftDoubts(b, finalDraftText ?? "");
+                    const cbSure = (brainMeta as Record<string, unknown> | null)?.conductor_brief as { sure?: { level?: string } } | undefined;
+                    const sure = composeSure(b, { orderType: composeSentencePlan.briefOrderType, appealAsked: composeSentencePlan.briefAppeal, conductorSure: cbSure?.sure?.level ?? null, doubts });
+                    const link = composeLinkReport(b, composeSentencePlan.note ?? "");
+                    return { compose_brief: composeBriefDigest(b, { doubts, sure, link }) };
+                  } catch { return {}; } })() : {}),
+                  // 2026-11-15 作業員I（竹内さん「文生成する部分も…統括も強化とともにちゃんと強化されていくように」）: 統括の指示書の欄ごとに、渡した物を下書きが入れたか（COMPOSE_BRIEF_UPTAKE=shadow|note・既定 off・記録だけ）
+                  ...(briefUptakeMode() !== "off" && (brainMeta as Record<string, unknown> | null)?.conductor_brief ? (() => { try {
+                    const items = briefUptake((brainMeta as Record<string, unknown>).conductor_brief as never, finalDraftText ?? "");
+                    const dg = briefUptakeDigest(items); const nt = briefUptakeMode() === "note" ? briefUptakeNote(items) : null;
+                    return { ...(dg ? { brief_uptake: dg } : {}), ...(nt ? { brief_uptake_note: nt } : {}) };
+                  } catch { return {}; } })() : {}),
                   ...(composeConductor ? (() => {
                     const misses = verifyDraft(finalDraftText ?? "", composeConductor.mf);
                     const sb = sendBackDecision(misses, { alreadySentBack: false });
@@ -7765,6 +7927,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 console.warn("[generate-reply] draft confidence failed:", conversationId, e instanceof Error ? e.message : String(e));
               }
             }
+            // 2026-11-13 作業員5（CONDUCTOR_STAFF_CHECK）: 統括が人に回した番の理由を画面の注記と影の関所に（下書きは変えない）
+            if (staffCheckRec && finalCheck) finalCheck.staff_check = { reasons: staffCheckRec.reasons, note: staffCheckRec.note, gate: staffCheckRec.gate, ...(staffCheckRec.ref_detail ? { ref_detail: staffCheckRec.ref_detail } : {}) };
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）

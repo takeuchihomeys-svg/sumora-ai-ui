@@ -124,7 +124,7 @@ async function snapOf(q: AixQuestion): Promise<AixQuestionSnap | null> {
       .eq("conversation_id", conv).lte("created_at", cut).order("created_at", { ascending: false }).limit(60),
     sb.from("sent_image_properties").select("property_name, room_no, created_at, facts")
       .eq("conversation_id", conv).lte("created_at", cut).gte("created_at", new Date(cutMs - 14 * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(60),
-    sb.from("aix_usage_logs").select("aix_type, check_pattern, send_keyword, created_at, picker_choices")
+    sb.from("aix_usage_logs").select("aix_type, check_pattern, send_keyword, created_at, picker_choices, property_names, prop_statuses, sent_at") // 11/12 作業員1: 物件確認した の値（AIX_CHECK_VALUE_PREFILL の試験）・本文 generated_text は写さない（名前が入る）
       .eq("conversation_id", conv).lte("created_at", cut).order("created_at", { ascending: false }).limit(30),
   ]);
   // 送った印（sent_at）がその番より後の物は、その番の時点では送っていない

@@ -17,6 +17,7 @@ import { hasOutgoingResidue } from "./outgoing-residue";
 import { APPLICATION_FORMAT_RE } from "./apply-sub-mode";
 import { draftToSendableText } from "./draft-text";
 import { confidenceFromCheck, draftConfidenceEnabled } from "./draft-confidence";
+import { staffCheckOf } from "./conductor-staff-check";
 
 export const SHADOW_GATE_VERSION = "sg-2026-11-11";
 
@@ -131,6 +132,10 @@ export function shadowAutoGate(i: ShadowGateInput): ShadowGate {
     rentBudgetSentence: null,
   });
   if (!v.ok) lines.push(v.reason);
+  // 2026-11-13 作業員5（conductor-staff-check）: 統括が人に回した番は、その理由（ref_unresolved 等）を止めた線に入れる（影だけ・本物の送信の経路は触らない）。
+  //   控えに staff_check が無い番（CONDUCTOR_STAFF_CHECK=off の時）は何も足さない
+  const sc = staffCheckOf(i.finalCheck);
+  if (sc) lines.push(...sc.reasons);
   // 予約に積む前の網（auto-reply-dispatch と同じ順・同じ関数）
   if (text && hasOutgoingResidue(text)) lines.push("outgoing_residue");
   if (text && APPLICATION_FORMAT_RE.test(text)) lines.push("application_format_in_draft");

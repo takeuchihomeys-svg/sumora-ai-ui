@@ -16,12 +16,33 @@ import { moveInEstimateFromVacate, MOVE_IN_ESTIMATE_HOW } from "./vacate-move-in
 import { TWO_PERSON_CHECK_REQUEST_RE, TWO_PERSON_SEARCH_RE } from "./scene-patterns";
 
 export type ContractTermTopic =
-  | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company" | "two_person";
+  | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company" | "two_person"
+  // 2026-11-11 作業員1（弱い所 564）: ペットの可否・清掃費（CONTRACT_TERMS_PET_CLEANING=on の時だけ拾う）
+  | "pet" | "cleaning_fee";
 
 export const CONTRACT_TERM_LABEL: Record<ContractTermTopic, string> = {
   key_money: "礼金", deposit: "敷金", free_rent: "フリーレント", guarantor_company: "保証会社", guarantor_person: "保証人",
   move_in: "入居時期・退去予定", parking: "駐車場", management_company: "管理会社", two_person: "二人入居",
+  pet: "ペット", cleaning_fee: "清掃費（クリーニング費用）",
 };
+
+/**
+ * 2026-11-11 作業員1（弱い所 564「資料・決まりで答えられる質問をブレインが AIX にする」14日 aix_but_text 18番のうち 10番）:
+ *   実物 10597「室内清掃費ってつけないんですかね？」→ ブレインは AIX【物件確認した】、竹内さんは資料（特記事項「退去時ハウスクリーニング代として40,000円(税別)、
+ *   エアコンクリーニング代として20,000円(税別)」）のとおり返信「室内清掃費用は入居時の負担ではなく退去時に…¥40,000円（税別）と…¥20,000円（税別）が発生いたします！！」。
+ *   ペットの可否も資料（「ペット: ペット相談（小型犬、猫可）」「【条件】 ペット相談…」）に書いてある事が多いのに、今までは「不可」だけ答えていた（procedure-question）。
+ *   資料に書いてあれば資料の事実で答え、無い・言い切れない（お客様の動物・頭数が資料に無い）時は AIX【確認した】（スタッフしか知らない事は AIX・KB P0 ca55d42b）。
+ *   既定 off（入れる CONTRACT_TERMS_PET_CLEANING=on）。on の時は「確認した」系（procedure-question）のペットは brain-core で外す（道を2つにしない）
+ */
+export function contractTermsPetCleaningOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONTRACT_TERMS_PET_CLEANING ?? "").trim().toLowerCase() === "on";
+}
+/** ペットの可否の問い（「ここは犬のみですか？」「猫飼えますか」「ペット可ですか」）。探す条件（ペット可の物件ありますか）は NOT_MATERIAL_RE が外す */
+const PET_TOPIC_RE = /(?:ペット|猫|ねこ|ネコ|犬|わんちゃん|ワンちゃん|うさぎ|ウサギ|ハムスター|インコ|フェレット)[^。\n]{0,12}(?:飼|可|OK|大丈夫|いけ|相談|住め|一緒|のみ|だけ|ですか|でしょうか|は\?)/;
+/** 清掃費・クリーニング費用の問い（「室内清掃費ってつけないんですかね？」「退去時の費用はかかりますか」） */
+const CLEANING_TOPIC_RE = /(?:清掃|クリーニング|エアコン洗浄)(?:費用?|代金?|料)?[^。\n]{0,12}(?:いくら|かかり|かかる|必要|要り|いります|あります|ある\?|つけ|付け|入って|入り|退去|入居時|契約時|ですか|でしょうか|ですかね|は\?)|退去(?:時|の際|する時|するとき)[^。\n]{0,12}(?:費用|お金|金額|いくら|かかり|かかる|請求)/;
+/** 見積書の中身の問い（クリーニング代が見積の中に入っているか等）は AIX【初期費用について】の側（cost-breakdown）＝清掃費の網に入れない */
+const CLEANING_ESTIMATE_RE = /見積|初期費用|内訳|合計|総額|トータル/;
 
 /**
  * 2026-10-18 竹内さん 10/18「二人入居は資料に記載があり判断できれば即答」（10/16 の確認の約束 proxy_two_person_check は書いていない時だけ）。
@@ -66,6 +87,8 @@ const TOPIC_RES: Array<[ContractTermTopic, RegExp]> = [
   ["management_company", /管理会社[^。\n]{0,8}(?:どこ|どちら|何|なに|どの|名前)|(?:どこ|どちら)[^。\n]{0,6}管理会社|元付[^。\n]{0,6}(?:どこ|どちら)/],
   // 2026-10-18 竹内さん 10/18: 二人入居の可否の問い（探す条件・広さの相談は TWO_PERSON_SEARCH_RE で外す＝detectContractTermTopics）
   ["two_person", TWO_PERSON_CHECK_REQUEST_RE],
+  ["pet", PET_TOPIC_RE],
+  ["cleaning_fee", CLEANING_TOPIC_RE],
 ];
 /** 交渉（下げる・付けられるか）・探す条件・一般の意味の文は「資料の値の質問」ではない（交渉の結果はスタッフだけが知る＝AIX） */
 const NOT_MATERIAL_RE = /物件(?:で|を|は|が)?(?:何か)?(?:あり|探|ない|無い)|(?:マンション|アパート)(?:は|って|で)?(?:あり|ござい)|お部屋(?:で|を)?(?:あり|探)|希望|条件|であれば|なら|がいい|が良い|下げ|下が|安く|交渉|減額|値引|値下|調整|どうにも|どうにか|つけれ|つけられ|付けれ|付けられ|なくせ|無くせ|免除|物件(?:は|って|が)?(?:少な|多)|件数|探して|探し|お部屋(?:は|って)?少な|というのは|とは\?|って何|ってなん|危な|近く|近隣|周辺|変更|早め|遅ら/;
@@ -83,7 +106,8 @@ export function detectContractTermTopics(text: string | null | undefined): Contr
   const out: ContractTermTopic[] = [];
   for (const [topic, re] of TOPIC_RES) {
     if (topic === "two_person" && !twoPersonMaterialAnswerEnabled()) continue;
-    if (sentences.some((s) => re.test(s) && !(topic === "two_person" && TWO_PERSON_SEARCH_RE.test(s)))) out.push(topic);
+    if ((topic === "pet" || topic === "cleaning_fee") && !contractTermsPetCleaningOn()) continue;
+    if (sentences.some((s) => re.test(s) && !(topic === "two_person" && TWO_PERSON_SEARCH_RE.test(s)) && !(topic === "cleaning_fee" && CLEANING_ESTIMATE_RE.test(s)))) out.push(topic);
   }
   return out;
 }
@@ -284,6 +308,8 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
     if (facts.length) return { topic, route: "material", facts, why: "資料に駐車場の記載" };
     return { topic, route: "confirm", facts: [], why: "資料に駐車場の記載なし" };
   }
+  if (topic === "pet") return routePet(m, opts.questionText ?? "");
+  if (topic === "cleaning_fee") return routeCleaningFee(m);
   if (topic === "two_person") {
     const tp = readTwoPersonMaterial(lines, m.pdfText);
     if (tp) return { topic, route: "material", facts: [tp.verdict === "可" ? `二人入居可（資料「${tp.evidence}」）` : `二人入居不可（資料「${tp.evidence}」）`], why: tp.verdict === "可" ? "資料に二人入居可の記載" : "資料に二人入居不可・単身限定の記載" };
@@ -295,6 +321,121 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
   const moto = motodukeOfPdf(m.pdfText);
   if (moto) return { topic, route: "material", facts: [`元付: ${moto}`], why: "資料に元付（管理会社）の記載" };
   return { topic, route: "confirm", facts: [], why: "資料に管理会社の記載なし" };
+}
+
+// ─── ペット・清掃費（2026-11-11 作業員1・弱い所 564）────────────────────────────
+// 資料の形（売上サポの直近 300行で読んだ実物）:
+//   ペット: 「ペット: 可/小型犬:可/猫:可（ペット相談（小型犬、猫可））」「ペット: ペット相談」「ペット: 不可」「ペット: 新規入居者よりペット飼育不可」
+//          「ペット: 小型犬or猫1匹まで飼育可(敷金1ヶ月)・ペット相談」／文字層「【条件】 ペット相談（小型犬、猫可）・外国人契約可能…」
+//   清掃費: 「ハウスクリーニング代:33,000円(税込/退去時)」「室内清掃費用：33,000円（契約時）」「クリーニング費用：80,000円」（時期の記載なし）
+//          「退去時ハウスクリーニング代として40,000円(税別)、エアコンクリーニング代として20,000円(税別)必要となります。」
+//   ⚠ 「室内清掃費用：33,000円（契約時）」のように入居時（契約時）に払う物もある＝時期は資料のとおり。書いてない時は足さない。
+
+export type PetAnimal = "cat" | "dog" | "large_dog" | "other";
+/** お客様の文の動物・頭数（無ければ空） */
+export function petAskOf(text: string | null | undefined): { animals: PetAnimal[]; count: number | null } {
+  const t = String(text ?? "").normalize("NFKC");
+  const animals: PetAnimal[] = [];
+  if (/猫|ねこ|ネコ/.test(t)) animals.push("cat");
+  if (/(?:大型|中型)犬|大きい犬|大きめの犬/.test(t)) animals.push("large_dog");
+  else if (/犬|わんちゃん|ワンちゃん|いぬ/.test(t)) animals.push("dog");
+  if (/うさぎ|ウサギ|ハムスター|インコ|フェレット|爬虫類|ヘビ|トカゲ/.test(t)) animals.push("other");
+  const c = t.match(/([2-9二三四五])\s*(?:匹|頭|羽|ひき)/);
+  const n = c ? ({ 二: 2, 三: 3, 四: 4, 五: 5 } as Record<string, number>)[c[1]] ?? Number(c[1]) : null;
+  return { animals, count: n };
+}
+/** 資料のペットの記載（文字のまま・最大3つ） */
+export function petEvidenceOf(m: ContractMaterial): string[] {
+  const out: string[] = [];
+  const body = (x: string) => x.replace(/^[^:：]{1,6}[:：]\s*/, "");
+  const add = (s: string) => { const c = clean(s); if (c && !out.some((x) => body(x).includes(body(c)) || body(c).includes(body(x)))) out.push(c.length > 90 ? c.slice(0, 90) + "…" : c); };
+  for (const l of linesOf(m.lines ?? [], /^ペット\s*[:：]/)) add(l);
+  for (const l of linesOf(m.lines ?? [], /^入居条件\s*[:：]/)) { const seg = l.replace(/^入居条件\s*[:：]\s*/, "").split(/・(?![^（(]*[）)])/).find((x) => /ペット/.test(x)); if (seg) add(`入居条件: ${seg}`); }
+  const pdf = String(m.pdfText ?? "");
+  for (const raw of pdf.split(/\n/)) {
+    const l = clean(raw);
+    if (!/^【条件】/.test(l)) continue;
+    const seg = l.replace(/^【条件】\s*/, "").split(/・(?![^（(]*[）)])/).find((x) => /ペット/.test(x));
+    if (seg) add(`条件: ${seg}`);
+  }
+  return out.slice(0, 3);
+}
+const PET_NG_STRIP_RE = /ペット(?:飼育)?(?:・?一時預かり)?(?:不可|禁止|NG)|飼育不可/g;
+const PET_OK_RE = /ペット(?:飼育)?(?:可|OK|相談)|飼育可|(?:小型犬|犬|猫)[^、・\n]{0,5}可(?!否)/;
+function routePet(m: ContractMaterial, questionText: string): ContractRoute {
+  const topic: ContractTermTopic = "pet";
+  const ev = petEvidenceOf(m);
+  if (!ev.length) return { topic, route: "confirm", facts: [], why: "資料にペットの記載なし" };
+  const j = ev.join(" ").normalize("NFKC").replace(/\s+/g, "").replace(/ペット[:：]/g, "ペット");
+  const ng = new RegExp(PET_NG_STRIP_RE.source).test(j);
+  const okHit = PET_OK_RE.test(j.replace(PET_NG_STRIP_RE, ""));
+  if (ng && okHit) return { topic, route: "confirm", facts: ev, why: "資料のペットの記載に可と不可の両方がある（言い切れない）" };
+  if (ng) return { topic, route: "material", facts: ev, why: "資料にペット不可の記載" };
+  if (!okHit) return { topic, route: "confirm", facts: ev, why: "資料のペットの記載から可否が読めない" };
+  // 可・相談の物件: お客様の動物・頭数が資料に書いてある時だけ言い切る（KB fd38ad9a・1bc5683e「猫飼育可能か確認させて頂きます」）
+  const ask = petAskOf(questionText);
+  if (ask.animals.includes("other")) return { topic, route: "confirm", facts: ev, why: "犬・猫以外の動物は資料に書いてない（管理会社に確認）" };
+  if (ask.animals.includes("large_dog")) return { topic, route: "confirm", facts: ev, why: "中型・大型犬は資料で言い切れない（管理会社に確認）" };
+  if (ask.animals.includes("cat")) {
+    if (/猫[^、・\n]{0,2}不可/.test(j)) return { topic, route: "material", facts: ev, why: "資料に猫不可の記載" };
+    if (!/猫[^、・\n]{0,5}可(?!否)|犬猫|犬・猫|犬又は猫|犬or猫|犬もしくは猫|犬、猫/.test(j)) return { topic, route: "confirm", facts: ev, why: "資料に猫の可否の記載なし（管理会社に確認）" };
+  }
+  if (ask.animals.includes("dog") && !/犬/.test(j)) return { topic, route: "confirm", facts: ev, why: "資料に犬の可否の記載なし（管理会社に確認）" };
+  if (ask.count && ask.count > 1) {
+    const lim = j.match(/([1-9])匹まで/);
+    if (!lim) return { topic, route: "confirm", facts: ev, why: `${ask.count}匹の可否は資料に書いてない（管理会社に確認）` };
+    if (Number(lim[1]) < ask.count) return { topic, route: "confirm", facts: ev, why: `資料は${lim[1]}匹まで（${ask.count}匹は管理会社に確認）` };
+  }
+  return { topic, route: "material", facts: ev, why: "資料にペット可・相談の記載" };
+}
+
+/** 資料の清掃費の記載（金額のある所だけ・文字のまま・最大3つ）と時期 */
+export function cleaningFeeEvidenceOf(m: ContractMaterial): Array<{ text: string; timing: "退去時" | "契約時" | null }> {
+  // 文字層は行で切れているので、記号で始まらない行はつなぐ（金額の途中の改行「40,000円(\n税別)」）。ページの頭の「9527751出力日:…」は外す
+  const pdf = String(m.pdfText ?? "").replace(/\n(?=[^\n【■●◇□※・])/g, "").replace(/\d{6,8}出力日:[^\n]*?(?:場合がございます。?|$)/gm, "\n");
+  const src = [...(m.lines ?? []).map((l) => String(l ?? "")), pdf].join("\n");
+  const out: Array<{ text: string; timing: "退去時" | "契約時" | null }> = [];
+  const keyOf = (x: string) => x.replace(/[\s()（）]/g, "").replace(/税込\/?|税別|内税|外税/g, "");
+  const timingOf = (x: string): "退去時" | "契約時" | null => (/退去|解約時|退室/.test(x) ? "退去時" : /契約時|入居時|入居の際/.test(x) ? "契約時" : null);
+  // 2026-11-11 監査（売上サポ 40行を目で読んだ）: 1つの区切りに複数の項目が入ると、隣の項目の時期（「カギ交換費用：16,500円（契約時）」「■退去時精算手数料」）を
+  //   清掃費の時期と読んだ → 項目ごとに切る。区切り: 改行・■●★◆・。・、・「 , 」「 / 」と、仮名・漢字の項目の前の「・」（「・1LDK:33,000円」では切らない）。
+  //   時期はその項目の中（清掃の語の直前8字＝閉じ括弧より後・語から後ろ）だけで読み、無ければ直後の区切りが時期だけの時（「…33,000 円 ( 内税 ) / 退去時」）・
+  //   「、」でつながる前の清掃費の項目の時期（「退去時ハウスクリーニング代として40,000円(税別)、エアコンクリーニング代として…」）。どれも無ければ時期なし。
+  const parts = src.split(/(\n|[■●★◆。、‧※]|\s?,\s|\s\/\s?|\/\s|・(?=[ぁ-んァ-ヶ一-龠][ぁ-んァ-ヶー一-龠]))/);
+  let prev: { timing: "退去時" | "契約時" | null } | null = null;
+  for (let i = 0; i < parts.length; i += 2) {
+    const delimBefore = i > 0 ? parts[i - 1] : "";
+    // ⚠ AD（広告料）の行が同じ区切りにつながる形（「清掃費：52,800円（税込）A D 100％」）がある＝AD はお客様向けの材料に出さない（ここで切る）
+    const seg = clean(parts[i] ?? "").replace(/\s*(?:A\s?D|広告料)\s*[0-9０-９].*$/, "");
+    const at = seg.search(/(?:ハウス|ルーム|室内|エアコン|ペット)?(?:清掃|クリーニング|洗浄)/);
+    const isFee = at >= 0 && !/消毒|管理形態/.test(seg)
+      && /(?:清掃|クリーニング|洗浄)[^。]{0,24}?\d[\d,]{2,}\s*円|\d[\d,]{2,}\s*円[^。]{0,10}(?:清掃|クリーニング)/.test(seg);
+    if (!isFee) { prev = null; continue; }
+    // 語の直前は時期・見出し・項目名の頭だけ残す（「退去時」「【退去費用】 」「エアコン分解」。前の項目の残り「期解約違約金無し」は外す）
+    const head = (seg.slice(Math.max(0, at - 8), at).replace(/^.*[)）]/, "").match(/(?:退去時?(?:に|の)?|契約時|入居時|【[^】]{1,6}】\s*|[ァ-ヶー]{2,6}[一-龠]{0,2})$/) ?? [""])[0];
+    let text = (head + seg.slice(at)).trim();
+    let timing = timingOf(text);
+    const next = clean(parts[i + 2] ?? "");
+    const nt = next.match(/^[(（]?\s*(退去時|契約時|入居時|退去の際)/);
+    if (!timing && nt) { timing = timingOf(nt[1]); text = `${text} / ${nt[1]}`; }
+    if (!timing && delimBefore === "、" && prev?.timing) timing = prev.timing;
+    if (text.length > 80) text = text.slice(0, 80) + "…";
+    prev = { timing };
+    if (out.some((x) => keyOf(x.text) === keyOf(text))) continue;
+    out.push({ text, timing });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+function routeCleaningFee(m: ContractMaterial): ContractRoute {
+  const topic: ContractTermTopic = "cleaning_fee";
+  const ev = cleaningFeeEvidenceOf(m);
+  if (!ev.length) return { topic, route: "confirm", facts: [], why: "資料に清掃費（クリーニング費用）の金額の記載なし" };
+  const timings = [...new Set(ev.map((e) => e.timing))];
+  const why = timings.every((x) => x === "退去時") ? "資料に退去時の清掃費の記載"
+    : timings.every((x) => x === "契約時") ? "資料に契約時（入居時）の清掃費の記載"
+    : timings.includes(null) ? "資料に清掃費の金額の記載（払う時期の記載が無い所あり＝時期は足さない）" : "資料に清掃費の記載（退去時と契約時の両方）";
+  return { topic, route: "material", facts: ev.map((e) => e.text), why };
 }
 
 /** 弊社（資料の奇数ページの帯＝蓮産業）。元付として数えない */
@@ -343,6 +484,8 @@ const HOW: Record<ContractTermTopic, string> = {
   move_in: "「〇〇は〇月〇日退去予定のお部屋となります！！」「即入居可能なお部屋となります！！」の形（資料の文字のまま。早めない・足さない）",
   parking: "有る時「駐車場、月額〇円で空きございます！！」（資料に空き・料金がある時だけその値）／無い時「こちらの物件は駐車場がございませんので、近隣の月極駐車場をお探し頂く形となります！！」。資料に料金だけで空きの記載が無ければ、空きは確認すると添える",
   management_company: "「お部屋管理会社は〇〇という会社となります！！」の形（資料の会社名のまま）",
+  pet: "可・相談の時「〇〇はペット飼育可能なお部屋となります😊！！」（「ペット相談」も「ペット飼育可能」と書く＝竹内さん 10/09・資料の条件＝種類・頭数・敷金や賃料の追加はそのまま添える）／不可の時「〇〇はペット飼育不可のお部屋となります。」。お客様の動物・頭数が資料に無い時は本文で可と言い切らず、確認の約束にお客様の条件をそのまま入れる（「猫飼育可能か確認させて頂きます」）",
+  cleaning_fee: "資料の項目名・金額・時期のまま（例「室内清掃費用は入居時の負担ではなく退去時に室内クリーニング費用として¥40,000円（税別）とエアコンクリーニング費用¥20,000円（税別）が発生いたします！！」＝竹内さんの実送信）。資料に時期（退去時・契約時）が無い時は時期を足さない。契約時と書いてある物は初期費用の側（退去時と言わない）",
   two_person: "可の時「〇〇は二人入居可能なお部屋となります😊！！」／不可の時「〇〇は1人入居専用のお部屋となり、二人入居が出来ないお部屋となります。」の形（資料に書いてあるとおり即答・確認の約束はしない＝竹内さん 10/18）",
 };
 

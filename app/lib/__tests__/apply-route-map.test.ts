@@ -162,7 +162,8 @@ it("brain-core: off の時プロンプトは同じ（applyRouteText は '' で�
   // 差し込みを外すと main と同じ並び（system・会話専用ブロックには入れていない）
   const sysStart = src.indexOf("export function buildBrainSystemBlocks"), sysEnd = src.indexOf("export function brainRequestBase");
   ok(!src.slice(sysStart, sysEnd).includes("applyRoute"), "system ブロックに入れない");
-  const freshA = src.indexOf("const freshStableA"), cst = src.indexOf("const customerSpecificText");
+  // 2026-11-12 作業員7: 会話専用ブロック A/B は freshStableA〜freshStableText まで（10/22 ddc3d126 で毎回変わる並び buildCustomerSpecific がこの間に入り、旧の区切り customerSpecificText では毎回変わる並びの applyRouteText まで拾って落ちていた）
+  const freshA = src.indexOf("const freshStableA"), cst = src.indexOf("const freshStableText");
   ok(!src.slice(freshA, cst).includes("applyRoute"), "会話専用ブロック A/B に入れない");
 });
 

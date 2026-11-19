@@ -232,8 +232,34 @@ export function narrowKeepsTwoChoice(reason: string | null | undefined, ackOnly:
   return true;
 }
 export type NarrowPromiseOrNow = { keep: true; preferred: "reply" | "aix" } | { keep: false; decide: "keep_final" | "aix_estimate" };
+/**
+ * 2026-11-12 作業員7（KB 1a78e4e3 ④「決めた判断を後の役が決め直さない」・既定 off・TWO_CHOICE_NARROW_ESTIMATE_SOLE=on）:
+ *   見積の約束の2択を AIX 見積書で決め切る（aix_estimate）のは、ブレインの依頼に見積以外の約束（空き・探す・設備の確認）が無い番だけ。
+ *   試験の答案（11/08〜）: two_choice_narrow(estimate) が道を変えた 54回のうち、本質を壊した 23・直した 15。
+ *   壊した q077（連投の2つの依頼＝見積の約束＋空きの確認3つ・正解 2段:check/2段:pickup）を AIX 見積書にしていた。直した q183・q184・q133・q134 は見積だけの約束か AIX の依頼で、この線では止まらない
+ */
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める TWO_CHOICE_NARROW_ESTIMATE_SOLE=off）
+export function narrowEstimateSoleOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_CHOICE_NARROW_ESTIMATE_SOLE ?? "on").trim().toLowerCase() !== "off";
+}
+/** ブレインの依頼に見積以外の約束があるか（あれば見積書で決め切らない） */
+export function hasNonCostPromise(asks: ReadonlyArray<{ route?: unknown; about?: unknown }> | null | undefined): boolean {
+  return (asks ?? []).some((a) => a?.route === "promise" && !!a.about && a.about !== "property_cost");
+}
 /** 約束か、その場の AIX かの2択（resolvePromiseOrNow）を絞る。確認（持ち込み）だけ残し、先に選んだ側は約束の返信 */
-export function narrowPromiseOrNow(p: NonNullable<PromiseOrNow>, ackOnly = false): NarrowPromiseOrNow {
+/**
+ * 2026-11-13 作業員16（統括役の決め・2段の外れ T1「持ち込みの確認が2択になる」17回: q013 ×8・q202 ×8・q369 ×1）:
+ *   持ち込みの物件の空きを聞いた番で、ブレインの本質が 2段:check（約束の側）の時は、2択（AIX【物件確認した】か【見積書送る】｜2段:check）に残さず 2段:check で決め切る。
+ *   正は竹内さんの決定 KB 0f475703（11/11「同じ日の2通目でも、募集状況の確認は約束の返信に寄せる」・竹内さん本人の約100日 約束 18／直接の AIX 5）。
+ *   KB 56b662a4（11/05「2択は絞る＋先の側・持ち込みの確認は残す」）は退役させず、持ち込みの未確認の番だけ 0f475703 を上にする。
+ *   優先度の表の T4_property_shared.brought_unchecked（約束が先・promise_then_aix_later）と同じ線。その場の側（ブレインが AIX を選んだ番）は今のまま2択。
+ *   既定 off（TWO_CHOICE_NARROW_CHECK_PROMISE=on の時だけ）
+ */
+export function twoChoiceNarrowCheckPromiseOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_CHOICE_NARROW_CHECK_PROMISE ?? "").trim().toLowerCase() === "on";
+}
+export function narrowPromiseOrNow(p: NonNullable<PromiseOrNow>, ackOnly = false, o: { checkPromise?: boolean } = {}): NarrowPromiseOrNow {
+  if (p.kind === "check" && p.side === "promise" && (o.checkPromise ?? twoChoiceNarrowCheckPromiseOn())) return { keep: false, decide: "keep_final" };
   if (p.kind === "check") return { keep: true, preferred: "reply" };
   if (p.kind === "estimate") return p.side === "promise" ? { keep: false, decide: "aix_estimate" } : { keep: false, decide: "keep_final" };
   // pickup のその場の側: お礼・了承の番は AIX のまま（KB 2d0f33cf）。お礼でない番（条件の言い直し・探し直し）は決定では約束の返信だが、

@@ -1,6 +1,6 @@
 // 統括の③深さ（2026-10-29・記録だけの第1段）
 // 実行: npx tsx app/lib/__tests__/brain-depth.test.ts
-import { decideBrainDepth, deepRecheckOn, deepRecheckFor, deepRecheckDigest } from "../brain-depth";
+import { decideBrainDepth, deepRecheckOn, deepRecheckFor, deepRecheckDigest, depthGateRecord, depthCostRecord, brainDepthV2On } from "../brain-depth";
 import { toFreshDigest } from "../brain-layers";
 import { recheckMaterialLine } from "../brain-recheck";
 
@@ -59,6 +59,38 @@ it("digest に dp（深さ）と dr（深く読み直した番）が残る（配
   const d = toFreshDigest({ brain_depth: { depth: "deep", reason: "複数の依頼" }, deep_recheck_digest: deepRecheckDigest("複数の依頼", "estimate_sheet", null) }, null) as Record<string, unknown>;
   eq(d.dp, "d:複数の依頼"); eq(d.dr, "複数の依頼:estimate_sheet→r");
   const e = toFreshDigest({}, null) as Record<string, unknown>; eq("dp" in e || "dr" in e, false);
+});
+it("v2（BRAIN_DEPTH_V2=on・既定 off）: 疑い・指す物が複数・72時間ぶり・持ち込み・40字までのお礼", () => {
+  const on = { BRAIN_DEPTH_V2: "on" };
+  // 11865「おとり物件てことですか」: 既定は一般・v2 は疑いで深く
+  eq(decideBrainDepth({ ...base, turnText: "おとり物件てことですか🙇‍♀️ 調べてくださりありがとうございます！" }, {}).depth, "normal");
+  eq(decideBrainDepth({ ...base, turnText: "おとり物件てことですか🙇‍♀️ 調べてくださりありがとうございます！" }, on), { depth: "deep", reason: "疑い" });
+  // 12592「こちらこそありがとうございました！分かりました！」: 既定は一般（20字超え）・v2 は浅い
+  eq(decideBrainDepth({ ...base, ackOnly: true, turnText: "こちらこそありがとうございました！分かりました！" }, {}).depth, "normal");
+  eq(decideBrainDepth({ ...base, ackOnly: true, turnText: "こちらこそありがとうございました！分かりました！" }, on).depth, "light");
+  eq(decideBrainDepth({ ...base, turnText: "べニール南堀江とアーベル更紗北堀江どちらがいいですかね", refCount: 2 }, on), { depth: "deep", reason: "指す物が複数" });
+  eq(decideBrainDepth({ ...base, gapHours: 80, turnText: "お久しぶりです" }, on), { depth: "deep", reason: "数日ぶりの再開" });
+  eq(decideBrainDepth({ ...base, brought: true, turnText: "https://suumo.jp/chintai/x" }, on), { depth: "normal", reason: "持ち込み" });
+  // 13898「もぉ少し初期費用安く」: 既定も v2 も費用の不満で深い
+  eq(decideBrainDepth({ ...base, turnText: "もぉ少し初期費用安くできたりしませんか？" }, on).reason, "費用の不満");
+  eq(decideBrainDepth({ ...base, turnText: "ちょっと不安で…" }, on).reason, "疑い");
+  // 問いのあるお礼は40字でも浅くしない
+  eq(decideBrainDepth({ ...base, ackOnly: true, turnText: "ありがとうございます！駐車場ありますか？" }, on).depth === "light", false);
+  // 7日以上は v2 でも「久しぶりの連絡」のまま（数日ぶりは 72時間〜7日）
+  eq(decideBrainDepth({ ...base, gapHours: 24 * 10, turnText: "こんにちは" }, on).reason, "久しぶりの連絡");
+  eq(decideBrainDepth({ ...base, gapHours: 50, turnText: "こんにちは" }, on).reason, "一般");
+  // 名指す物が1つは深くしない
+  eq(decideBrainDepth({ ...base, turnText: "べニール南堀江はまだ空いてますか", refCount: 1 }, on).reason, "一般");
+});
+it("v2 の記録: 深い時だけ動かす物（run/skip）と浅い番の字数の前後", () => {
+  const running = { material_fetch: true, reading_candidates: false, deep_check: true };
+  eq(depthGateRecord("deep", running), { run: ["material_fetch", "deep_check"], skip: [] });
+  eq(depthGateRecord("normal", running), { run: [], skip: ["material_fetch", "deep_check"] });
+  eq(depthGateRecord("light", {}), { run: [], skip: [] });
+  eq(depthCostRecord("light", { sysChars: 30000, convChars: 8000, turnChars: 1200 }), { before: 39200, after: 1200, saved: 38000 });
+  eq(depthCostRecord("normal", { sysChars: 1, convChars: 1, turnChars: 1 }), null);
+  eq(depthCostRecord("light", { sysChars: NaN, convChars: -5, turnChars: 10 }), { before: 10, after: 10, saved: 0 });
+  eq(brainDepthV2On({}), false); eq(brainDepthV2On({ BRAIN_DEPTH_V2: " ON " }), true);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

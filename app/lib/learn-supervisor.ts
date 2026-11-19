@@ -306,6 +306,13 @@ export type SupervisorInput = {
   weak: ReadonlyArray<{ kind: string; name: string; why?: string }>;
   /** モード別の記録数（normal / staff / aix …） */
   mode_counts?: Record<string, number>;
+  /**
+   * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   **端末ごとの記録数**。⚠ 1台だけなら `single_device: true`（他のPCが学習に参加していない）。
+   */
+  device_count?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  single_device?: boolean;
   /** サイト別の記録数（realpro / itandi） */
   site_counts?: Record<string, number>;
   /** 材料（操作の並び）がある記録の数 */
@@ -318,6 +325,13 @@ export type SupervisorInput = {
     points: number;
     opens: number;
     weak: number;
+    /**
+     * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+     *   **前回の弱い所の一覧**（`kind|name`）。これと比べて
+     *   「直った（前回あって今回無い）」と「まだ直っていない（両方ある）」を分ける。
+     *   ⚠ 無い（旧い記録）時は比べない（初回と同じ扱い）。
+     */
+    prevWeak?: Array<{ kind?: string; name?: string }> | null;
   } | null;
   /** サイト（この判断がどのサイトの物か・all なら全体） */
   site?: string;
@@ -388,7 +402,15 @@ export type SupervisorInput = {
    *   **今日なにを強化したか**（`learn_improvements` の集計）。
    *   ⚠ 判断の材料ではなく**実績**（点は上げない・効いたかは数字で確かめる）。
    */
-  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  improvements?: {
+    total: number;
+    by_area: Array<{ area: string; n: number }>;
+    /**
+     * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」（main 側の決定を取り込み）:
+     *   直した**中身**（題・なぜ・どう・効果）。統括が言葉にする（点は上げない）。
+     */
+    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  } | null;
   /**
    * 2026-11-14 竹内さん「データベースと統括もちゃんと関連しなきゃいけない」:
    *   **実際の検索の結果**（`search_audits` の集計）。これが無いと統括は現場の現実を知らない
@@ -641,6 +663,13 @@ export type SupervisorAdvice = {
   /** ⑤ 人が読む行（画面・報告用） */
   lines: string[];
   /**
+   * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」（main 側の決定を取り込み）:
+   *   **直った物**（前回あって今回無い）。⚠ 点は上げない（言葉にするだけ）。
+   */
+  fixed?: Array<{ kind: string; name: string }>;
+  /** 前回も同じ指摘（まだ直っていない）の数 */
+  ongoing?: number;
+  /**
    * 2026-11-14 竹内さん「打ち合わせは絶対にここの統括が話をしてくるようにする」:
    *   **打ち合わせで統括自身が話す内容**（議題・根拠・竹内さんへの質問）。
    *   ⚠ ただの数字の列ではなく「**何を決めたいか**」を出す。
@@ -729,6 +758,31 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   const withOps = num(inp.with_ops);
   const weakList = Array.isArray(inp.weak) ? inp.weak : [];
   const weakN = weakList.length;
+
+  /**
+   * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   ⚠ **実測で判明（統括が「直ったか」を確かめていなかった）**:
+   *     同じ指摘「欄の種類が分からない」が **1,241回**出ていた。
+   *     ところが**直近の束では全部判定済み**（photo 26個・name 32個・なしは5個だけ）。
+   *     ＝ もう直っているのに、統括は**過去の記録を数え続けて**同じ事を言っていた。
+   *   前回の指摘と比べて3つに分ける。
+   *     ・`fixed`    … 前回あって今回**無い**（直った）→ 言葉で「直りました」と言う（点は上げない）
+   *     ・`ongoing`  … 前回も今回もある（まだ直っていない）→ **優先度を上げる**（同じ事を言い続けない）
+   *     ・`new`      … 今回だけ（新しい指摘）
+   *     ⚠ 前回が無い（初回）時は全部 `new`（比べる相手が無い）。
+   */
+  const prevWeak: ReadonlyArray<{ kind?: string; name?: string }> =
+    inp.prev && Array.isArray(inp.prev.prevWeak) ? inp.prev.prevWeak : [];
+  const keyOf = (w: { kind?: string; name?: string }) => String(w.kind || "") + "|" + String(w.name || "");
+  const prevKeys = new Set(prevWeak.map(keyOf).filter((k) => !k.startsWith("|") && k !== "|"));
+  const nowKeys = new Set(weakList.filter((w) => w && w.name).map((w) => keyOf(w)));
+  /** 前回あって今回無い＝直った（最大6件・名前つき） */
+  const fixedWeak = prevKeys.size
+    ? prevWeak.filter((w) => { const k = keyOf(w); return k && !nowKeys.has(k); }).slice(0, 6)
+      .map((w) => ({ kind: String(w.kind || ""), name: String(w.name || "").slice(0, 40) }))
+    : [];
+  /** 前回も今回もある＝まだ直っていない（優先度を上げる） */
+  const ongoingKeys = new Set([...prevKeys].filter((k) => nowKeys.has(k)));
 
   /**
    * 材料の揃い具合（0〜100）。何が「学べた」と言えるかの目安:
@@ -821,8 +875,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
         : "記録を増やしてもう一度学ぶ",
       priority: 9,
     };
+    /**
+     * ⚠ **前回も同じ指摘**なら優先度を上げる（1つ上＝数字を1つ下げる）。
+     *   同じ事を言い続けている物を後回しにしない（現場が直す順番を誤らない）。
+     */
+    const isOngoing = ongoingKeys.has(key);
     actions.push({
-      priority: f.priority,
+      priority: Math.max(1, f.priority - (isOngoing ? 1 : 0)),
       what: f.what,
       why: String(w.why || ""),
       how: f.how,
@@ -1170,6 +1229,38 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
   lines.push(`  材料の揃い: ${coverage}/100（順番${next}通り・場所${points}個・開き方${opens}個・画面${screens}種類・一連${sequence}手）`);
   lines.push(`  弱い所: ${weakN}件`);
   if (block) lines.push(`  ⚠ ${block}`);
+  /**
+   * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   旧は**件数だけ**渡していたので、統括は「5件強化した」とは言えても**何を直したか**を言葉にしていなかった。
+   *   → **直した中身を統括の言葉に出す**（題だけ・最大5件）。⚠ 点は上げない（強化した事で点数を甘くしない）。
+   *   ⚠ 「次にやる事」の**前**に出す（何を直したかを先に言い、その上で次を決める）。
+   */
+  const impRows = inp.improvements && Array.isArray(inp.improvements.recent) ? inp.improvements.recent : [];
+  /**
+   * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+   *   **直った物を言葉にする**。⚠ 点は上げない（直った事で甘くしない）。「直りました」と言うだけ。
+   *   ⚠ 前回の記録が無い時は何も言わない（比べる相手が無い）。
+   */
+  if (fixedWeak.length) {
+    lines.push(`  前回から直った事（${fixedWeak.length}件）:`);
+    for (const f of fixedWeak) {
+      lines.push(`    ・[${f.kind}] ${f.name}`);
+    }
+  }
+  if (ongoingKeys.size) {
+    lines.push(`  ⚠ 前回も同じ指摘（${ongoingKeys.size}件・優先度を上げています）`);
+  }
+  if (impRows.length) {
+    lines.push(`  今日 強化した事（${num(inp.improvements?.total)}件のうち ${Math.min(5, impRows.length)}件）:`);
+    for (const r of impRows.slice(0, 5)) {
+      const area = String((r as { area?: unknown }).area ?? "");
+      const title = String((r as { title?: unknown }).title ?? "").slice(0, 70);
+      const effect = String((r as { effect?: unknown }).effect ?? "").slice(0, 60);
+      lines.push(`    ・[${area}] ${title}${effect ? ` … ${effect}` : ""}`);
+    }
+  } else if (inp.improvements && num(inp.improvements.total) > 0) {
+    lines.push(`  今日 強化した事: ${num(inp.improvements.total)}件（中身はまだ記録されていません）`);
+  }
   if (delta) {
     const up = (v: number, label: string) => {
       if (v > 0) return `${label}+${v}`;
@@ -1199,6 +1290,11 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens),
       siteCounts: inp.site_counts || {},
       modeCounts: inp.mode_counts || {},
+      /** ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」（main 側の決定を取り込み） */
+      deviceCount: num((inp as { device_count?: unknown }).device_count),
+      devices: Array.isArray((inp as { devices?: unknown }).devices)
+        ? ((inp as { devices: Array<{ device: string; n: number; with_ops: number }> }).devices) : [],
+      singleDevice: (inp as { single_device?: unknown }).single_device === true,
       shotRows: num((input as unknown as Record<string, unknown>).shot_rows),
       /** 2026-11-14: 実際の検索の結果も議題に使う */
       audits: au,
@@ -1418,7 +1514,11 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
       stopped_scene: typeof inp.stopped_scene === "string" ? inp.stopped_scene : null,
       /** 2026-11-14 竹内さん「強化したら統括に保存しておく」: 今日の強化の実績（点は上げない） */
       improvements: inp.improvements && typeof inp.improvements === "object"
-        ? { total: num(inp.improvements.total), by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [] }
+        ? {
+          total: num(inp.improvements.total),
+          by_area: Array.isArray(inp.improvements.by_area) ? inp.improvements.by_area : [],
+          recent: Array.isArray(inp.improvements.recent) ? inp.improvements.recent : undefined,
+        }
         : null,
       imageFlows: (input as unknown as { image_flows?: ImageSequenceFlowSummary | null }).image_flows ?? null,
   });
@@ -1430,6 +1530,13 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     score: { coverage, weak: weakN, delta },
     block,
     lines,
+    /**
+     * ★ 2026-11-15: **直った物**（前回あって今回無い）。APIが保存して次回の比較に使う。
+     *   ⚠ 次回の `prev.prevWeak` に「今回の弱い所」を入れるのは API の役目。
+     */
+    fixed: fixedWeak,
+    /** 前回も同じ指摘（まだ直っていない）の数 */
+    ongoing: ongoingKeys.size,
     self_check: selfCheck({
       verdict, coverage, weakN, rows, withOps, opsRatio, cappedBy, block,
       guessedOpens: num((input as unknown as Record<string, unknown>).guessed_opens), opens,
@@ -1749,6 +1856,10 @@ function buildMeeting(m: {
   guessedOpens: number;
   siteCounts: Record<string, number>;
   modeCounts: Record<string, number>;
+  /** ★ 2026-11-15: 端末ごとの記録数（他のPCが学習に参加しているか・main 側の決定を取り込み） */
+  deviceCount?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  singleDevice?: boolean;
   /** learn_plan の items（photo_vs_record 等） */
   learnPlan?: { items?: Array<{ kind?: string; name?: string }> } | null;
   /** 2026-11-14: 実際の検索の結果も議題に使う */
@@ -1839,7 +1950,11 @@ function buildMeeting(m: {
   scene_missing_names?: string;
   stopped_scene?: string | null;
   /** 2026-11-14: 今日の強化の実績（点は上げない・根拠に出すだけ） */
-  improvements?: { total: number; by_area: Array<{ area: string; n: number }> } | null;
+  improvements?: {
+    total: number;
+    by_area: Array<{ area: string; n: number }>;
+    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  } | null;
   /** ★ 2026-11-16: 人間らしさの再現進度（0〜100・残りラベル） */
   reproducePct?: number | null;
   reproduceRemain?: string[];
@@ -1913,6 +2028,24 @@ function buildMeeting(m: {
       value: `${m.audits.runs}回中 完走${m.audits.finished}回（完走率 ${m.audits.finish_rate}%）・途中で止まった ${m.audits.abandoned}回`
         + (unk > 0 ? `・判断できない ${unk}回（操作の記録が無い＝古い版。${judged}回で数えています）` : ""),
     });
+    /**
+     * ★ 2026-11-15 竹内さん「統括てきにいま弱い部分はあるのか確認する／あれば細かく強化する」（main 側の決定を取り込み）:
+     *   ⚠ **実測で判明（統括が古い版に引っぱられていた）**: 全1,197件のうち新しい版は8件だけで、大半が v2.5.91 などの古い記録。
+     *   → **一番新しい版の完走率**を根拠に出す（「いまの版でどうか」が分かる）。
+     *     ⚠ 新しい版の件数が少ない時は「まだ少ない」と正直に言う（推測で良しとしない）。
+     */
+    {
+      const au = m.audits as unknown as { latest?: { version?: string; n?: number; finish_rate?: number } | null };
+      if (au && au.latest && num(au.latest.n) > 0) {
+        const ln = num(au.latest.n);
+        const lr = num(au.latest.finish_rate);
+        evidence.push({
+          label: "いまの版の実際の検索",
+          value: `v${String(au.latest.version)} で ${ln}回・完走率 ${lr}%`
+            + (ln < 5 ? "（⚠ 件数がまだ少ない＝判断は保留）" : ""),
+        });
+      }
+    }
     if (Array.isArray(m.audits.stalled_at) && m.audits.stalled_at.length) {
       evidence.push({ label: "止まりやすい場所", value: m.audits.stalled_at.slice(0, 3).map((x) => `${x.stage}（${x.n}回）`).join("・") });
     }
@@ -1966,6 +2099,30 @@ function buildMeeting(m: {
         value: "flow材料なし（完了印が監査に届いていない＝つなぎの穴・F45/F46）",
         guessed: true,
       });
+    }
+  }
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   ⚠ **実測**: 全6,027件の記録のうち、**端末は1台だけ**。統括は `install_id` を一度も読んでいなかったので「1台しか無い」と言えなかった。
+   *   → **端末の数を根拠に出す**。1台だけなら「他のPCが参加していない」と**名指しで言う**。
+   *     ⚠ 端末のIDは先頭8文字だけ出す（長いIDを並べても読めない）。
+   */
+  {
+    const devN = num(m.deviceCount);
+    const devList = Array.isArray(m.devices) ? m.devices : [];
+    if (devN > 0) {
+      if (devN === 1 || m.singleDevice === true) {
+        evidence.push({
+          label: "⚠ 記録している端末",
+          value: `1台だけ（${devList[0] ? String(devList[0].device) : "?"}・${num(devList[0]?.n)}件）。`
+            + "他のPCは学習に参加していない（そのPCで検索していない／記録が届いていない）",
+        });
+      } else {
+        evidence.push({
+          label: "記録している端末",
+          value: `${devN}台（` + devList.slice(0, 4).map((d) => `${String(d.device)}:${num(d.n)}件/操作${num(d.with_ops)}`).join("・") + "）",
+        });
+      }
     }
   }
   /**

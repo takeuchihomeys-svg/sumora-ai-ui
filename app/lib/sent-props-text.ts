@@ -23,7 +23,51 @@ export type SentProp = {
   image_urls?: string[];
   /** 2026-10-24: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日（BRAIN_SENT_SHEET_VACANCY=on の時だけ brain-core が入れる） */
   sheet_vacancy?: string | null;
+  /** 2026-11-13 作業員16（ref_resolve の材料・REF_RESOLVE=on の時だけ brain-core が入れる）: 何回目の送信の束か（1始まり）と、その束の何件目か */
+  bundle_no?: number | null;
+  bundle_pos?: number | null;
+  /** 送ったのはどちらか（ours＝こちらが送った・この一覧は全部 ours。持ち込みは ref-resolve の RefBrought で別に持つ） */
+  sent_by?: "ours" | null;
+  /** その物件で送った御見積書の初期費用（aix_usage_logs の estimate_sheet の本文から）と、見積の号室（作業員1 と決めた形） */
+  estimate_initial_cost?: number | null;
+  estimate_room_no?: string | null;
 };
+
+// ── 2026-11-13 束の番号と見積の初期費用（ref_resolve の材料・既定 off） ─────────────────────────────
+/** 送った時刻の並びで束に分ける（前の行から gapMin 分以内は同じ束）。付けた束の数を返す。共有のみは付けない */
+export function attachBundles(props: SentProp[], gapMin = 10): number {
+  const own = props.filter((p) => !p.shared_only && Number.isFinite(Date.parse(p.sent_at))).sort((a, b) => Date.parse(a.sent_at) - Date.parse(b.sent_at));
+  let no = 0, pos = 0, prev = -Infinity;
+  for (const p of own) {
+    const t = Date.parse(p.sent_at);
+    if (t - prev > gapMin * 60_000) { no++; pos = 0; }
+    pos++; prev = t;
+    p.bundle_no = no; p.bundle_pos = pos; p.sent_by = "ours";
+  }
+  return no;
+}
+export type EstimateRec = { property_name: string; room_no: string | null; initial_cost: number; at: string };
+/** 見積の記録（estimate_records の property_name・room_no・initial_cost_yen・created_at・統括役の決め 11/13: AIX の本文から拾うのはやめた）→ EstimateRec。初期費用の無い行は拾わない */
+export function estimatesFromRecords(rows: ReadonlyArray<{ property_name?: string | null; room_no?: string | null; initial_cost_yen?: number | string | null; created_at?: string | null }>): EstimateRec[] {
+  return rows.flatMap((r) => {
+    const name = String(r.property_name ?? "").trim();
+    const cost = typeof r.initial_cost_yen === "number" ? r.initial_cost_yen : Number(String(r.initial_cost_yen ?? "").replace(/[,，円]/g, ""));
+    if (!name || !Number.isFinite(cost) || cost <= 0) return [];
+    const room = String(r.room_no ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
+    return [{ property_name: name, room_no: room || null, initial_cost: cost, at: r.created_at ?? "" }];
+  });
+}
+const roomKey = (r: string | null | undefined) => String(r ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
+/** 送った物件の行に、同じ物件（名前が同じ・号室が同じか見積に号室が無い）の一番新しい見積の初期費用を付ける。付けた数を返す */
+export function attachEstimates(props: SentProp[], ests: ReadonlyArray<EstimateRec>): number {
+  let n = 0;
+  for (const p of props) {
+    if (p.shared_only) continue;
+    const hit = ests.filter((e) => e.property_name === p.property_name && (!e.room_no || !p.room_no || roomKey(e.room_no) === roomKey(p.room_no))).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    if (hit) { p.estimate_initial_cost = hit.initial_cost; p.estimate_room_no = hit.room_no; n++; }
+  }
+  return n;
+}
 
 type CustomerRow = { property_name: string | null; room_no: string | null; sent_at: string | null; rent?: number | null; recruitment_status?: string | null; applicant_rank?: number | null; customer_reaction?: string | null; source?: string | null; channel?: string | null; image_url?: string | null };
 type ImageRow = { property_name: string | null; room_no: string | null; created_at: string | null; source: string | null; channel?: string | null };
@@ -117,7 +161,16 @@ export function buildSentProps(input: { customerRows: CustomerRow[]; imageRows: 
   return out;
 }
 
-export function buildSentPropsText(sentProps: SentProp[]): string {
+// ── 2026-11-15 作業員L（現状把握の物差し・統括役の頼み1）: 送った物件の件数の切れ ─────────────────────────────
+//   試験の答案 258番（竹内さん本人の番）で、材料の【すでに送付済みの物件（N件）】が DB の件数と食い違う番が 26（例 DB 30件 → 18件）。
+//   元は brain-core の取得の上限 20件（新しい順）→ 号室の重複除けで 18〜19件に減る所。食い違いの番は本質の道の外れが 65%（持っていた番 29%）。
+//   SENT_PROPS_FULL=on: 取得を SENT_PROPS_FULL_LIMIT 件まで広げ、見出しの件数は全部の件数、詳しい行は新しい順に SENT_PROPS_DETAIL_N 件・
+//   それより前は「名前 号室（送った日）」だけの短い1行にまとめる（再提案しないの範囲は全部に効く）。既定 off。
+export const sentPropsFullOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_PROPS_FULL ?? "").trim().toLowerCase() === "on";
+export const SENT_PROPS_FULL_LIMIT = 80;
+export const SENT_PROPS_DETAIL_N = 20;
+
+export function buildSentPropsText(sentProps: SentProp[], opts: { detailN?: number } = {}): string {
   if (sentProps.length === 0) return "";
   // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように」→ 内覧・見積の相手を取り違えない
   const recommendedProps = sentProps.filter((p) => !p.shared_only && p.channel === "recommendation");
@@ -130,6 +183,8 @@ export function buildSentPropsText(sentProps: SentProp[]): string {
       p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
       p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
       p.sheet_vacancy ? `送った資料（${jstMD(p.sent_at)}時点）の${p.sheet_vacancy}` : "",
+      p.bundle_no != null && p.bundle_pos != null ? `${p.bundle_no}回目の送信の${p.bundle_pos}件目` : "",
+      p.estimate_initial_cost != null ? `御見積書の初期費用${p.estimate_initial_cost.toLocaleString()}円${p.estimate_room_no && roomKey(p.estimate_room_no) !== roomKey(p.room_no) ? `（見積は${p.estimate_room_no}号室）` : ""}` : "",
     ].filter(Boolean).join("・");
     if (p.shared_only) return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)} グループに共有のみ・お客様には未送付${facts ? `・${facts}` : ""}）`;
     const via = p.channel === "recommendation" ? "・🌟オススメで送付" : p.channel === "pickup" ? "・📤ピックアップで送付" : "";
@@ -148,5 +203,10 @@ export function buildSentPropsText(sentProps: SentProp[]): string {
   const sheetNote = deliveredProps.some((p) => p.sheet_vacancy)
     ? `\n※「送った資料の現況」は送った時点の資料の字（今の空きはスタッフの確認が正）。空室＝内覧の日程をすぐ組める／退去予定＝退去予定日・入居可能日が書いてあればその日以降、日付が無い・相談ならいつから見られるかはスタッフが確かめる事。`
     : "";
-  return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${deliveredProps.map(line).join("\n")}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
+  // SENT_PROPS_FULL: 新しい順に detailN 件は詳しい行・それより前は短い1行（件数は全部）
+  const byNew = opts.detailN ? [...deliveredProps].sort((a, b) => (Date.parse(b.sent_at) || 0) - (Date.parse(a.sent_at) || 0)) : deliveredProps;
+  const detail = opts.detailN ? byNew.slice(0, opts.detailN) : byNew;
+  const older = opts.detailN ? byNew.slice(opts.detailN) : [];
+  const olderLine = older.length ? `\n▼それより前に送った物件（${older.length}件・名前と号室と送った日だけ・再提案しない）: ${older.map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}（${jstMD(p.sent_at)}）`).join("、")}` : "";
+  return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${detail.map(line).join("\n")}${olderLine}${sharedBlock}${recNote}${sheetNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
 }

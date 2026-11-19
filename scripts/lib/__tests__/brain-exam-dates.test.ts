@@ -1,6 +1,6 @@
 // ブレインの試験の日付のずらし（scripts/lib/brain-exam-dates.ts）
 // 実行: npx tsx scripts/lib/__tests__/brain-exam-dates.test.ts（自己完結。全 PASS で exit 0）
-import { shiftExamText, shiftBareDay, examShiftDays } from "../brain-exam-dates";
+import { shiftExamText, shiftBareDay, examShiftDays, shiftRowTexts, shiftLedgerTextOn } from "../brain-exam-dates";
 
 let fail = 0, pass = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -34,5 +34,14 @@ eq("来週・定休も曜日に頼る", [examShiftDays({ diffDays: 3, texts: ["�
 eq("EXAM_DATE_SHIFT=week で旧", examShiftDays({ diffDays: 6, texts: ["明日"], mode: "week" }), { days: 7, exact: false });
 eq("経っていない・noDateShift はずらさない", [examShiftDays({ diffDays: 0, texts: [] }).days, examShiftDays({ diffDays: 5, texts: [], noDateShift: true }).days], [0, 0]);
 
+// 2026-11-13 作業員8b: 台帳の文の欄の日付（q406 の形）
+{
+  const at0 = Date.parse("2026-10-22T11:27:39Z");
+  const row = { id: "x1", conversation_id: "c", created_at: "2026-10-22T10:00:00Z", due_date: "2026-10-24", body: "直近\n10/23(金) 10:30〜11:30\n10/24(土) 13:00〜", meta: { note: "10/24（土）ご案内" }, aix_usage_log_id: "10/24" };
+  const out = shiftRowTexts(row, new Set(["created_at", "due_date", "conversation_id"]), (x) => shiftExamText(x, 21, 2026, at0));
+  eq("台帳の文: 会話と同じだけずれる（10/24(土)→11/14(土)）", [out.body, out.meta.note], ["直近\n11/13(金) 10:30〜11:30\n11/14(土) 13:00〜", "11/14（土）ご案内"]);
+  eq("台帳の文: 時刻・日付の列と id はそのまま", [out.created_at, out.due_date, out.id, out.aix_usage_log_id], [row.created_at, row.due_date, "x1", "10/24"]);
+  eq("スイッチは既定 off", [shiftLedgerTextOn({}), shiftLedgerTextOn({ EXAM_SHIFT_LEDGER_TEXT: "on" })], [false, true]);
+}
 console.log(`brain-exam-dates: ${pass} PASS / ${fail} FAIL`);
 if (fail) process.exitCode = 1;

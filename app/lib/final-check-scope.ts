@@ -80,12 +80,38 @@ const SAFETY_CODES: ReadonlySet<string> = new Set([
  * その指摘が何の指摘か。
  * ⚠ 知らない code は **fact**（＝出す）。分類を書き忘れた物を黙って捨てないため。
  */
-export function classifyIssueScope(code: string | null | undefined): IssueScope {
+export function classifyIssueScope(code: string | null | undefined, env?: Record<string, string | undefined>): IssueScope {
   const c = (code ?? "").trim();
   if (!c) return "fact";
   if (SAFETY_CODES.has(c)) return "safety";
+  // 2026-11-12 作業員20（根1・FC_SEVERITY_TABLE・既定 off）: 誤りを含む style は画面から消さない（下の ERROR_BEARING_STYLE_CODES）
+  if (fcSeverityTableEnabled(env) && ERROR_BEARING_STYLE_CODES.has(c)) return "fact";
   if (STYLE_CODES.has(c)) return "style";
   return "fact";
+}
+
+// ── 2026-11-12 作業員20 根1「重みを1つの表」（FC_SEVERITY_TABLE=on の時だけ・既定 off）──
+//   全読みで見つけた食い違い: 画面から外す物（STYLE_CODES・広）と書き直しを省く物（STYLE_NO_ERROR_CODES・狭）が別の表で、下の 10/02 のコメントが
+//   「間違いを含む＝書き直す」と書く code（創作約束・主語逆転・承りましたの目的語…）が STYLE_CODES にも入っていた。書き直しが失敗すると
+//   splitFinalCheckIssues（route）が画面から外し ok=true に戻す＝誰にも見えない。→ 誤りを含む style は fact に戻す（画面に出す・block は止める）。
+//   判断の根拠: ①assignSeverity が block にする ②10/02 のコメントが「誤り（主語・目的語・創作）」と書いた ③STYLE_NO_ERROR_CODES に入っていない、の3つが揃った物だけ
+export function fcSeverityTableEnabled(env?: Record<string, string | undefined>): boolean {
+  const e = env ?? (typeof process !== "undefined" ? process.env : {});
+  return (e.FC_SEVERITY_TABLE ?? "").trim().toLowerCase() === "on";
+}
+export const ERROR_BEARING_STYLE_CODES: ReadonlySet<string> = new Set([
+  "CONFIRM_NO_OBJECT",              // 確認対象が会話に無い確認の約束（創作約束）
+  "CONFIRM_SUBJECT_THEFT",          // お客様が確認すると言ったのにこちらが確認すると書く（主語の取り違え）
+  "GOCHOUGO_STAFF_TASK",            // 「ご都合よろしいお日にちに撮影」（お客様の都合をこちらの作業に接続）
+  "GOCHOUGO_REVERSED",              // 「ご都合よろしいお日にちをお伝え」（主語逆転）
+  "UKETAMAWARI_OBJECT_UNANCHORED",  // 「〜承りました」の目的語をお客様が伝えていない
+]);
+
+/** 重みの表の1行（code → 事実/安全/文体 × 書き直しに渡す・画面に出す・止める）。classifyIssueScope・isStyleNoErrorCode・severity から1か所で引く */
+export type IssueWeight = { scope: IssueScope; toRevision: boolean; toScreen: boolean; stops: boolean };
+export function issueWeight(code: string | null | undefined, severity?: string | null, env?: Record<string, string | undefined>): IssueWeight {
+  const scope = classifyIssueScope(code, env);
+  return { scope, toRevision: !isStyleNoErrorCode(code), toScreen: scope !== "style", stops: scope !== "style" && severity === "block" };
 }
 
 /** 分類に必要な2つだけ見る（他の項目はそのまま通す＝呼び出し側の型を壊さない） */
@@ -97,18 +123,18 @@ export type ScopedIssue = { code?: string | null; severity?: string | null };
  * 竹内 2026-09-21「ファイナルチェックはハルシネーションが起きた文をお客さんに送るということを
  *   事前に防ぐ部分」→ 見せるのは fact と safety だけ。style は数えるだけ。
  */
-export function splitFinalCheckIssues<T extends ScopedIssue>(issues: readonly T[]): { shown: T[]; styleOnly: T[] } {
+export function splitFinalCheckIssues<T extends ScopedIssue>(issues: readonly T[], env?: Record<string, string | undefined>): { shown: T[]; styleOnly: T[] } {
   const shown: T[] = [], styleOnly: T[] = [];
   for (const i of issues ?? []) {
-    if (classifyIssueScope(i.code as string | null) === "style") styleOnly.push(i);
+    if (classifyIssueScope(i.code as string | null, env) === "style") styleOnly.push(i);
     else shown.push(i);
   }
   return { shown, styleOnly };
 }
 
 /** 文体の指摘が block になっていたら作り直しが走ってしまう。style は必ず block から外す */
-export function hasBlockingIssue(issues: readonly ScopedIssue[]): boolean {
-  return (issues ?? []).some((i) => i.severity === "block" && classifyIssueScope(i.code as string | null) !== "style");
+export function hasBlockingIssue(issues: readonly ScopedIssue[], env?: Record<string, string | undefined>): boolean {
+  return (issues ?? []).some((i) => i.severity === "block" && classifyIssueScope(i.code as string | null, env) !== "style");
 }
 
 // ── 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」 ──

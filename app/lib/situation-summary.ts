@@ -14,7 +14,8 @@ import type { ComposeIntent } from "./compose-blueprint";
 
 type Env = Record<string, string | undefined>;
 export function nowFulfillableEnabled(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SITUATION_NOW_FULFILLABLE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0
+  return (env.SITUATION_NOW_FULFILLABLE ?? "on").trim().toLowerCase() !== "off";
 }
 
 const DAY = 86_400_000;

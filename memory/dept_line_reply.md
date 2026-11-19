@@ -9514,3 +9514,97 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 費用: DeepSeek 約 $0.9＋生成・Claude 7回 $0.63。テスト専用の会話（YUMA4/5）の行は0件残り。設計知見への記録は未（本番 DB は読むだけの指示）。
 - **確かめる人の直し（10/14）**: ①言わない事の線を「値を本文で書く・確定する」形だけに（STAFF_VALUE_LINE_RE。本番 must_not 92種で落とすのは13＝金額を書く・内覧日の確定・日時の創作 等）＋その AIX 自身の話題の行（内覧日調整の「内覧の日程」等・mustNotForAix）。話題の語だけの行（見積書・日程の催促）・審査や空室の断言の線は渡す ②依頼の振り分けは押された AIX がブレインの読みと同じ番だけ（meta.action がこの AIX か・この AIX で受ける依頼がある）。違う番は言わない事・気持ちだけ。約束の依頼は果たす種類の AIX（見積→見積書送る・確認→物件確認した・探す→ピックアップ・内覧→内覧日調整）ならこの AIX で受ける（promiseFulfilledBy） ③返信の依頼は AIX の文の外のまま: scripts/audit-aix-reply-asks-split.ts（60日）質問のある番の竹内さんの AIX 202番のうち 163番は別の手打ちの通も送り（87番は AIX の後だけ）・AIX だけの39番は質問がその AIX の依頼だった（内覧可能ですか→内覧日調整）。⚠ AIX を送ると ai_draft が消え次のお客様の発言までブレインが動かない＝AIX の後の返信の下書きが無い（竹内さんは手打ち）は別の担当の課題 ④鮮度の幅を 5秒（BRAIN_FRESHNESS_TOLERANCE_MS）に。
   - 直した後の前後（DeepSeek・link3a/3b・30番×2回）: 内覧日調整 0.68→0.73（良くなった番 3・02c26493 0.78→0.94・2bce444d 0.56→0.82／悪くなった番 0）・余計な文 1.50→1.05・無い約束 0.25→0.15。物件ピックアップ 0.64→0.62（条件の行の語順の揺れ・88d3839f は前後とも 0.36〜0.53 で同じ分布）。✨物件オススメは3回とも 0.44→0.43 と下がった＝**✨は既定 off（AIX_BRAIN_CONTRACT_TEMPLATE=on で入れる）**。費用 DeepSeek $0.41（ブレイン）。
+
+## 11/11 作業員10 文の統括の1文ずつの設計図（KB P1 c3673fba・COMPOSE_SENTENCE_PLAN・既定 off・枝 feat/compose-1105）
+- app/lib/compose-sentence-plan.ts: 一通の読み（主と従＝turn_read.main/subs の受け口・無ければ turn_contract の asks）＋竹内さんの7つの欄（meta.seven_read＝takeuchi-seven-read の SevenRead の受け口）→ 1文ずつ（役目13種・どの部分の何・どうやって・次へ・主/従）。主が先・従は後。材料の無い欄は行にしない
+- 物差し scripts/audit-compose-understanding.ts（AI なし・DB なし）: 正解 scripts/compose-understanding/gold-1111.json（竹内さんの番24・Claude Code が手で付けた・申込の門で q054・q139 外し）× 試験の答案の brain
+  今の文の統括→新: 主の役目 4/24→14/24・主→従の順 4→15・何の事 0→17・何の物件 0/7→6/7・誘導先 2/23→5/23・つなぎ 0→5/18・潜在 0→3/16。訴求・押さえ方・信頼の作り方・どの部分は 0（ブレインの材料に欄が無い＝作業員5・14 の欄が届けば上がる）
+- 今の文の統括（reply-compose-conductor）が持つ欄: 重点1つ（7種）・継続の約束・書かない事。compose-blueprint: 趣旨・主語・メインの1文・添え・締め（next は持つが設計図に出ない・emotion/appeal は受け口があるが route が渡していない）
+- 11/11 夜の直し（ebe9bf7f）: 注記の「設計図に無い役目は足さない」を外し、主が確かめる約束の時は確かめる中身（最短・可否・日付・金額）を言い切らせない行に。試験（DeepSeek・draft・--baseline=main・--dig）: q145×3 合格 1→1・悪化0（$0.142）／q057・q136・q060・q036×1 合格 2→2・本質 3/4→3/4・pathWorse 0・essenceWorse 0・確かな悪化 0（$0.301）。試験の統括の「道の確かめ」は compose_plan の印を知らず「通る 0問」と出る（新しい digest の欄のため）
+- 本番で7つの欄を埋める所はまだ無い（seven_read は夜の読みだけ）。案は報告に（ブレインの出力に一部の欄を足す＋場面ごとの傾向表）
+- 11/12 受け渡し（37e38ee1・COMPOSE_SENTENCE_PLAN の下）: 受け渡しの表 HANDOFF_FIELDS・漏れの検出 handoffLeaks・ブレインの全欄→受け口 BRAIN_FIELD_ROUTE（新しい欄に受け口が無いとテストが落ちる）。案B（fbe6853b）: 場面×誘導先の押さえ方・信頼の作り方の表 compose-how-table（198通）。道の確かめに compose_plan（exam-path-check.composePlanMarkers・連携の表の行）。物差し（固定 brain brains-1112.json）: 誘導先 12/23・つなぎ 8/18・潜在 4/16・押さえ方 10/24・信頼 9/23
+- 11/12 朝 6問 --majority（COMPOSE_SENTENCE_PLAN=on・draft・--baseline=main）: q063/q072/q136/q175 合格 3→3・q022/q145/q206/q175 合格 4→4・本質 4/10→6/11・pathWorse/essenceWorse/確かな悪化 0（$0.667）。+TAKEUCHI_EXEMPLAR（a1507b6e・束 exam-cache/anatomy-seven/exemplar-bank.json）q063/q206×3 dig 2→2・悪化0（$0.195）
+- 11/12 writer:asks の外れ（26問・70回）を読んだ: 下書きの段は3問（q072 竹内さんの撮影/オンライン内見→抑えて内覧の提案を落とす＝設計図＋手本で直る見込み／q427 カード決済可を「不可」と断言・q429 最短入居を確認の約束に＝会社の事実の材料）。残り23問はブレインの段の答案（下書きが無い）なのに exam-miss-stage が書き手に数えている＝持ち主の付け違い
+
+## 🧯 最終チェックはボトルネックか（11/12 作業員15・竹内「ファイナルチェックの部分ボトルネックになっていないかも確認」）— 黄金ルール
+- **測った**（14日・読むだけ・`scripts/audit-final-check-revision-loss.ts`）: line_watch_turns 241番で 書き直し採用 42（17%）・作り直し（regen）21（9%）・修正切れ 10。送った例の書き直しの記録 35件を目で読んだ: 正しかった 17（作り話の日付・金額・物件名・禁止語・スタッフと同じ形）／中立 6／**ブレインの判断・竹内さんの形を落とした 12**（次へのつなぎ 3・答え 2・内覧へ 3・申込へ 1・約束 1・挨拶 1・会社の事実に反する断定を足した 1）
+- **ボトルネックの段**: ①段階の語の網 TIMING_VOCAB_MISMATCH（審査・契約・鍵・block）が「いつ住めるか」への答えを確認の約束に置き換える（57b3e676・6fd93747・f8989a39）②書き直し LLM が会社の事実に反する断定を足す（61845054「お振込での一括のみ」・再検査 V16 は聞かれた窓だけ見るので通った）③作り直し（regen）は前の文が80字しか残らず数えられなかった ④UKETAMAWARI_OBJECT_UNANCHORED・GOCHOUGO_*（語の網・block）が内覧の受け・日程の問いを消す（次の候補・未着手）
+- **直し（既定 off）**: `app/lib/final-check-answer-keep.ts`。`FC_ANSWER_KEEP=on`＝①の指摘を、ブレインが入居・契約・審査を返信で答える番／ブレインの探す約束の文／（ブレインなし）お客様が時期を聞いた番で、時期の答えの文の時だけ書き直し・作り直しに渡さない（本文と block の表示は残る）。`FC_REVISION_NO_NEW_FACT=on`＝書き直しが足した文に会社の事実の断定（聞かれたかを問わない）があれば採らない。③は記録だけ（exitEdits に `final_check_regen`）。テスト `app/lib/__tests__/final-check-answer-keep.test.ts`（実物の文・誤って捨てる 0）
+- **11/12 続き（既定 off）**: `FC_UKETAMAWARI_BRAIN`（承りの目的語がブレインの扱う項目の種類なら書き直しに渡さない）・`FC_GOCHOUGO_RESCHEDULE`（お客様が内覧の日の変更を頼んだ番の GOCHOUGO_AFTER_FIXED を渡さない）・`FC_PROMISE_KEEP`（ブレインの約束・提案の文を DOUBLE_DECLARATION／RULE_VIOLATION／GOCHOUGO_NO_CONDITION で消さない・ブレインの alreadySaid は除く）・`FC_PROPERTY_NAME_NORMALIZE`（FABRICATED_PROPERTY を全角空白・中黒・号室の有無を外して会話と比べる）。安全の線のコードは対象外（テストで確かめた）
+- **⚠ カード払いの即答が本番の既定で逆向き**: `reply-context.ts` KNOWN_FACT_ANSWERS の card_pay は `COMPANY_FACT_PAYMENT_LUMP !== "off"` で「お振込での一括のみ」＝env 無しで一括のみ（company-facts は `=== "on"` の時だけ一括のみ＝10/18 竹内さん「カード払いなら分割可・3.24%」）。お客様の文に「カードで／クレジット／カード払い」があると、生成の【姿勢】の「即答」と最終チェック FACT_DEFERRED_ANSWER の修正案に一括のみが入る（61845054 の書き直しの出所）。直し `KNOWN_FACT_CARD_FIX`（company-facts と同じ向き・カードの答えは実送信の形）＋ `COMPANY_FACT_CARD_KESSAI`（「カードで決済」を支払いの質問に拾う・q427 で off/on とも一括のみが素通りした穴）。11/12 統括役: 10/18 の決まりに反する不具合なので**既定 on**（off で旧）
+- **11/12 既定 on（統括役の決め・(a)）**: FC_ANSWER_KEEP・FC_REVISION_NO_NEW_FACT・FC_GOCHOUGO_RESCHEDULE・FC_PROMISE_KEEP（=off で止める）。FC_UKETAMAWARI_BRAIN・FC_PROPERTY_NAME_NORMALIZE は試していないので既定 off。試験（--stage=draft・DeepSeek・q429〜q431＋守り q165・q171・$0.391）は悪化0・作り話の素通り0だが、3問とも消える文が下書きに出ず効き目は測れていない。**7日後（11/19）に `npx tsx --env-file=.env.local scripts/audit-final-check-revision-loss.ts --days=7` で前後比べ（消えた文がスタッフの実送信に残っていた 12/41 が減るか・増えた作り話の素通りが無いかを目で読む）**。試験の問題 q427〜q431 を足した（最終チェックの書き直しの番）
+
+## 11/11 作業員1: 契約条件の網にペット・清掃費（弱い所 564）／今の番の物件にお客様が送ってきた URL・画像の物件（KB 親 P0 ecd7b961）— 既定 off・試験はまだ
+- **A. ペット・清掃費（CONTRACT_TERMS_PET_CLEANING=on）**: contract-terms-question.ts に topic `pet`・`cleaning_fee`。資料（売上サポの image_lines「ペット: …」「入居条件: …」・文字層の【条件】・特記事項の清掃費）に書いてあれば本文で資料のとおり、無い・言い切れない（お客様の動物・頭数が資料に無い＝KB fd38ad9a・1bc5683e）は AIX【確認した】。実物 10597「室内清掃費ってつけないんですかね？」＝ブレイン AIX【物件確認した】／竹内さんは資料のとおり返信。清掃費は時期（退去時・契約時）を項目ごとに読む（監査 40行で隣の項目の「（契約時）」「■退去時精算手数料」を取り違えた→項目ごとに切る・AD の行がつながる形は切る）。見積の中身の問い（見積・初期費用・内訳の語）は清掃費の網に入れない（cost-breakdown の側）。on の時は「確認した」系のペット（procedure-question）を brain-core・brain-deep-check で外す。S9 の資料の返信に cleaning_fee を足した。テスト app/lib/__tests__/contract-terms-pet-cleaning.test.ts
+- **B. 今の番の物件（TURN_SHARED_PROPERTY_TARGET=on）**: turn-shared-property.ts（純関数）・turn-shared-property-server.ts。今の番のお客様の画像の書き起こし・共有文の物件名・SUUMO のページの物件名（共有文に名前の無い URL を1件だけ読む）、名前が無い時はこちらが送った部屋（sent_image_properties.facts）の指紋（㎡・間取り・家賃・丸い数の面積は両方一致の時だけ）で1部屋に決まる時だけ。brain-core で材料の1行と資料の写しの対象（threadDocTarget の前段: 引用・名指し → 送ってきた物件 → 主語の抜けの推定）。帖の指紋は記録に帖が無いので未。テスト app/lib/__tests__/turn-shared-property.test.ts
+- **11/11 作業員1 弱い所 573・574（OFFLINE_RESULT_MATERIAL=on・既定 off）**: 電話・内覧の結果の保存の道はあるのに使われていない（電話終了後 AIX 0回／電話をかける 43回・customer_memos の call 0件・viewing_report 3/135）。スタッフは手打ちのお礼の1通（「先ほどはお電話ありがとうございました」「本日お時間頂きありがとうございました」）に結果を書いている → offline-result.ts がその1通から ①日程 ②新しい条件 ③確認の約束（もう確認できた結果は分ける） ④申込する部屋（内覧の予定と別の部屋も印）を取り、brain-core の材料の1行に。審査の事情・個人の事情は取らない。60日の実送信 77通のうち中身のある 40通を目で読んで直した。気に入った点・合わなかった点・気持ちは文に無い＝画面の入力の案（aix_feature_suggestions 経由）。テスト app/lib/__tests__/offline-result.test.ts
+
+## 11/14 作業員E: 🌟の前の作業メモ（下書き ee4eef81）— AIX_PRE_STAR_MEMO_STRIP（既定 off）
+- **実物**: ai_reply_examples ee4eef81（6/30・物件オススメの ai_draft）の先頭「礼金が1ヶ月あるため、「敷金礼金なし」はオススメポイントに記載しません。…合致。\n---\n🌟…」。送った文（sent_reply）には無い＝スタッフが手で消した。
+- **出所**: 書き手（AIX property_recommendation / estimate_sheet）の出力そのもの。書き直し・最終チェック・手本ではない。同じ型は全期間で AI 下書き 18件（6/16〜7/03）・**直近30日は 0**（下書き 1,171・見張り 535・会話の下書き 29 で「記載しません／〜のため〜しません／区切り線」0。「※」の行 48件は全部お客様向けの実文）。
+- **入口**: aix/action の静的 system に「出力の最初の文字は必ず🌟」「確認メモ・前置きは絶対に含めない」が既にあり効いている（7/03 以降 0）。足さない。
+- **出口の穴**: 今の stripMetaNarration では18件中15件で🌟の前にメモが残る（ee4eef81 は1文字も落ちない）。→ app/lib/pre-star-memo.ts（純関数）: 最初の🌟の行の前に ①！？・お客様向けの絵文字なし ②ございま・申し訳・させて頂・お世話なし ③作業の印（記載・出力・確認します/事項・判断・合致・照合・→・OK・作成・整理・特定・処理・NG・✅・**）あり → 🌟から後ろだけ。aix/action の finalize で stripPreStarMemo → stripMetaNarration → stripPreStarMemo の3段（property_recommendation・estimate_sheet・situation_kind の時は掛けない）。
+- **監査**: scripts/audit-pre-star-memo.ts（全期間 10,215行）: スタッフの送った文に当たる 0（誤削除0）／AI の下書き 18件が全部🌟から始まる形に。③を外すと見積書の「【物件名】\n初期費用さらに」・スタッフの「（室内イメージ）URL」に当たる（だから③は必須）。
+- **既定 off の理由**: 入口が効いていて直近30日は 0。on にするのは試験・YUMA で悪化0を見てから。テスト app/lib/__tests__/pre-star-memo.test.ts（14件・実物を名前を伏せて）。
+- **同じ日 頼み3**: line_tasks.result が直近30日 410件中 0件（API は受け取るのに画面2か所が渡していない）→ aix_feature_suggestions 907c74b4（pending）に「AIX【物件確認した】の型から result を付ける案A／済みボタンで4択の案B」。
+
+## 2026-11-14 作業員G: 材料が「無い」か「あるのに受け取っていない」か（brain_unknowns 11/13 の58件）
+- あるのに受け取っていない → 塞いだ（どれも既定 off）
+  - 見積の金額: AIX【物件確認した】＋同封の estimate_records（source=check_names）は30日93行すべて金額が空。同じ AIX で送った札の文（messages）に「初期費用：N円」が60ログ全部にある → `ESTIMATE_CARD_FILL=on`（app/lib/estimate-card-fill.ts・ログを書く時に埋める）＋過去分 `scripts/backfill-estimate-card-costs.ts`（下見 95行中91行が埋まる・`--apply` で書く）。REF_RESOLVE の estimatesFromRecords・COMPOSE_ASKS_FACTS・調べ役が読む
+  - 保証会社: 売上サポの資料の文字層の「保証会社：〜」がブレインに届いていなかった → `BRAIN_GUARANTOR_DOCS=on`（app/lib/guarantor-docs-line.ts・保証会社／審査の話の番だけ1会話30行を読む）
+  - 内覧の件数と時間: 会社の事実 viewing_duration はあるのに「30分でしたら1件ぐらいしか回れない」を網が拾わない → `COMPANY_FACT_VIEWING_COUNT=on`（company-facts.viewingCountInTimeAsked・180日の候補11通で当てるのは元の1通だけ）
+- テスト: app/lib/__tests__/recv-material-1114.test.ts
+- 11/14 続き（統括役の決め）: `ESTIMATE_CARD_FILL`・`COMPANY_FACT_VIEWING_COUNT` を既定 on（=off で戻る）。過去分は 07:36 に 91行を書いた（check_names 89・aix_text_room 2）。`BRAIN_UNKNOWNS_POST_APPLY_GATE` を既定 on（申込以降の自己申告は数えない・審査落ちの切り替えは rejectionSwitchKeep で数える・11/13 は 81→74）。`MATERIAL_FETCH_ESTIMATE_RECORDS=on`（既定 off）で足りない事実の段の見積の取り先を estimate_records の金額のある行に
+
+## 2026-11-15 作業員H: 本番の物差しの弱い場面（AIX:application_push 1/3・AIX:condition_hearing 0/2）と弱い所 aix:screening-consult-phone-call
+- 調べ: `scripts/audit-scene-push-hearing-phone.ts --days=14`（見張りの番を両側から・伏せ字）・`scripts/audit-screening-risk-here.ts --days=120`（網の全件監査）。読むだけ・LLM なし
+- condition_hearing 0/2（12240・12306）は物差しの数えの外れ: 場面ごとの比べ（sceneDrift）が最初の一手だけを見ていて、竹内さんの「挨拶の返信→同じ分に AIX【条件ヒアリング】」を外れに数えていた（2枠の方は組の窓で当たり）→ `YARDSTICK_DRIFT_COMBO=on`（既定 off・数えだけ）。11/14 01:10 の窓で 0/2→2/2・合計 30/39→32/39・他の場面は変化0
+- application_push の外れ2番はどちらも申込歴ありの会話:
+  - 14618（615499ba「どちらか審査通る方でお願いできますか？できればフェニックスの方が」）: フォームと本人確認書類は前回の申込で受け取り済み → 竹内さんは返信で受けた（AIX なし）。比べ 3db9db75（フォーム未提出）は AIX【申込へ】→ `REAPPLY_FORM_ON_HAND_LINE=on`（既定 off・申込歴ありの材料に1行）。竹内さんの決定としては未確認（問いの案）
+  - 13916（fecda03f「交渉できるのであれば不動産変えようかな」）: 条件付きの申込の意思＝交渉の結果（スタッフだけが知る）がまだ無い → 竹内さんは交渉の約束の返信。120日で同じ型は1通だけ＝網は作らず、場面の下の種類として記録
+- 審査の相談→AIX【電話】: 竹内さんの電話の番（12348・732692f2 09/28）は「この物件で自分の審査の傷を言って通るか聞く」型で、10/28 の網（審査＋相談）に掛かっていなかった → `SCREENING_RISK_HERE_PHONE=on`（既定 off・材料の行・app/lib/screening-phone-material.ts）。120日の「審査」の通 251 で掛かるのは2通＝どちらも竹内さんが AIX【電話】（誤り0）。持ち込みの網を外す `BROUGHT_SCREENING_NO_PROMISE`（作業員7b）と組で効く
+- テスト: app/lib/__tests__/scene-push-hearing-phone-1115.test.ts
+
+## 2026-11-15 作業員H: お客様の画像の書類の中身（個人情報）— 受け取り・読む時・出口の3段
+- 見つけた物: 保証会社の「アシストレント契約書」（借主の氏名・住所）を Vision が見積書と分け、【見積書・初期費用の明細】で中身まで保存（c024b7b9 11/12 2枚・申込前の会話＝DeepSeek に回る経路あり）。全期間で同じ網に当たる保存の行 10＋種類不明の個人の値 2（マイページの姓名・振込出金の画面）
+- 受け取り: `IMAGE_LABEL_1115`（既定 on・=off で戻す・app/lib/image-label.ts）契約書・保証委託の条文・重要事項説明書の頁・申込書／同意書（氏名の欄つき）→【書類：契約書・保証会社の書類】（種類だけ）。振込出金→支払いの控え・入居者ログイン／回収用紙→手続き・地図→【物件以外：地図の画面】・口コミ→【口コミの画面】・マイページの姓名→個人情報の画像。見積書の宛名「〇〇 様」は保存前に「（お名前）様」。400日の見出しのある画像に当て直して物件・見積への誤り0
+- 読む時: `IMAGE_DOC_READ_REDACT`（既定 on・app/lib/image-doc-redact.ts・llm-request-sanitize の fetch の包み＝Anthropic・DeepSeek の全呼び出し）昔の行に残った書類の中身を種類だけに・見積書の宛名を伏せる
+- 出口: `ALT_IMAGE_DOC_GATE`（既定 on・alt-pii-gate）画像の書き起こしに契約書の中身・マイページの氏名があれば DeepSeek に出さない（宛名は止めず伏せる側＝全期間の宛名の形 14行のうち4行は人の名前でなかった）
+- DB: 竹内さんの OK（11/15「おすすめで」）で 12行を種類だけの見出しに書き換え（記録 scripts/data/image-doc-rewrite-20261115.json・id と前の見出しだけ）。写しは要約・台帳に金額・会社名だけ（人の名前なし）。別の出所の写し: reply_engagement_signals 2726856e（記入済み申込フォームの写し）は触っていない
+- 監査: scripts/audit-contract-doc-images.ts・scripts/audit-image-doc-redact.ts・scripts/audit-customer-images.ts --label。テスト app/lib/__tests__/image-doc-guard-1115.test.ts
+
+## 2026-11-15 作業員H: お客様の画像の結び付け→ブレインの材料（CUSTOMER_IMAGE_LINK・既定 off）
+- app/lib/customer-image-link.ts（純関数）: 画像ごとに 種類（物件の画面／資料／SNS／写真・見積書の弊社／他社・書類・物件以外）・どの部分か（外観・室内・間取り図・募集の画面・費用）・物件（名前・号室・家賃・管理費・間取り・㎡・駅徒歩・築年・確かさ high/mid/low）・こちらが送った物件との照合（同じ部屋／同じ建物・何回目の送信の何件目・家賃だけの照合はしない）・関連の型（送った物件への反応／送った物件の他社の画面／似た別の物件（好みの手本）／新しい持ち込み）・募集状況が手元にあるか・見積書の内訳（宛名を伏せて数字だけ・弊社＝蓮産業の読み違いも）・前後20分の一言の向き（空き・費用・内覧・好み・比べ）・連投の中の順・決まりの材料（KB id）・人に回すか
+- brain-core: 送った物件の一覧の後に【お客様が送った画像の結び付け】を足す・お客様の一言に名前が出た送った物件（⑤）・物件が引けない画像は ref_resolve の handoff に ref_needs_name
+- 45日の実送信（scripts/audit-customer-images.ts --link・275枚）: 持ち込み（新しい物件）は竹内さんほぼ全部「約束の返信」（acda2b5c）／送った物件の資料の送り返しは約束なしで AIX 直接（内覧→内覧調整・費用→見積書送る）／他社の見積書は約束の返信（87ff68e1）／送った物件の他社の画面・好みの手本・弊社の見積書の送り返しは数が少なく決まっていない
+- テスト app/lib/__tests__/customer-image-link.test.ts（25 pass）・試験 h1115-imglink-on（画像の番 15問）
+
+## 2026-11-15 作業員H: 試験の外れ「2段で道が変わる」（通算 363）の中身
+- 数え（scripts/audit-exam-two-stage-essence.ts・答案の本質の道と書き換え後の道を比べる・14日 82答案）: 書き換えが壊した 8・書き換えが直した 12・両方外れ 21・両方当たり 41。台帳の「2段で道が変わる」の大半は、ブレインの本質（依頼の route）がもう約束で、書き換えはそれに沿っただけ＝書き換えより土台（手元の結果・送れる候補がブレインに届かない）が主
+- 壊した 8 の内訳: 持ち込みの確認の約束を2択（AIX 物件確認した｜2段）にした q202×2（既存の TWO_CHOICE_NARROW_CHECK_PROMISE・既定 off で直る形）／持ち込み＋探すの番を見積の2段にした q077×2／ピックアップの約束を返信に q372・q090／check_question が route=aix のブレインを約束に q411（→ TWO_STAGE_CHECK_QUESTION_KEEP_AIX）・探す約束を確認の約束に q032（既存の TWO_STAGE_KIND_FROM_ABOUT）
+- TWO_STAGE_CHECK_QUESTION_KEEP_AIX（既定 off・app/lib/check-question-brain-first.ts・brain-core）: ブレインの依頼が route="aix" で同じボタンなら check_question に書き換えない。依頼に約束（route=promise・管理会社の確認）がある番は今まで通り
+- テスト app/lib/__tests__/check-question-keep-aix.test.ts。監査 scripts/audit-exam-two-stage-miss.ts（台帳）・audit-exam-two-stage-essence.ts（答案）
+
+## 2026-11-15 作業員H: 画像の3つの型の行き先（竹内さんの決定 KB 1d2400c6・H-14）— CUSTOMER_IMAGE_ROUTE_1115・CUSTOMER_IMAGE_TASTE_WANTS（既定 off）
+- ① こちらが送った物件と同じマンションの他社・ポータルの画面: 関連は「他社の画面」に固定し、後の一言で行き先（比べ・安さ→最大限割引の御見積書／内覧→AIX【内覧調整】／空き→送った時に確認済み／一言なし→待つ）
+- ② 好みの手本（こういう・こんな・イメージ）: 好みを条件に足してピックアップの約束（2段:pickup）→物件の AIX。画像の特徴（白基調・広いリビング・築浅・駅近・ペット可・設備）を app/lib/image-taste-wants(-server).ts で property_customers の こだわり（設備）／その他（それ以外）に1つずつ・[画像の好み] の印（できれば・[必須] なし）・今ある要望と重ねない・NG に当たる物は足さない・数の欄（築年数・駅徒歩）は変えない・履歴は書き手 image_taste。書く時は line-webhook-text のお客様の文の後（画像の後の一言で手本と分かった時）
+- ③ 弊社の見積書の送り返し: 質問あり→答える返信／質問なし→内覧の誘い／その物件が退去予定（送った物件の現況）→AIX【申込へ】／文がまだ→待つ
+- 今までの連携: customer-sent-property（持ち込みの物件の値）は 🌟 の並べ方（pickup-rank）と好みの学び（customer-pref-learning）に渡る・image-wants は条件欄と会話の「欲しい」を集めるが画像の書き起こしは外していた＝手本の画像の特徴は要望の欄に届いていなかった。要望の欄に書けば image-wants・customer-wants が条件として読む
+- テスト app/lib/__tests__/image-route-1115.test.ts
+
+## 2026-11-15 作業員H: AIX【物件確認した】の確認の型から line_tasks.result（案A・907c74b4・TASK_RESULT_FROM_AIX・既定 off）
+- 画面（app/page.tsx）の AIX 送信の後の完了が id と source だけ送っていた＝ line_tasks.result 30日 0/247 → ブレインの【空室確認の回答結果（確定事実）】は一度も出ていなかった
+- 画面は AIX の種類・check_pattern・prop_statuses・物件名も一緒に送る（見た目は変えない）。line-tasks/complete が結果の無い AIX の完了に app/lib/task-result-from-aix.ts で結果を付け、今の書き戻し（sent_properties の募集状況）もそのまま動く
+- 対応: available→available・unavailable→taken・alternative→taken（メモ）・vacating→move_out_planned・2番手→second_position／室内写真・mgmt_* は付けない／物件ごとに割れた時は付けない
+- ブレインの段の組み立ては buildCheckResultsText に移した（文字は同じ）。テスト app/lib/__tests__/task-result-from-aix.test.ts
+- URL を含む送信で済ませる時（物件出しのタスク）は空室確認ではないので結果を付けない（今のまま）
+
+## 2026-11-15 作業員H: 拡張の学習の束（/api/human-learn-profile）の重なりで DB が止まった件の守り（HUMAN_LEARN_PROFILE_GUARD・既定 off）
+- 11/15 01:40:43〜55Z: 拡張（大阪の端末・kix1）からこの経路へ約130回が重なり、DB に human_learn_profile の GET 452件（版だけの確認も束の全体 1行約40KB を読む）・PATCH 302件（全部 同じ1行 id=1556 の read_count＝鍵の取り合い）。01:42〜01:43Z に主キーの1行の読みまで15秒の止まり
+- 守り（app/lib/human-learn-profile-guard.ts・route）: 軽い確認は版（bundle->>generated_at）だけ・読んだ印は10分に1回だけ応答の後で・CDN の短いキャッシュ（s-maxage 30/60秒＋stale-while-revalidate）で同じ要求を1つに・同じ関数の中の重なった読み・作り直しを1本に・作ってから5分は作り直さない。索引 (scope, created_at desc) は既にある
+- テスト app/lib/__tests__/human-learn-profile-guard.test.ts（01:40 の形: 130回→読み1回・作り直し40回→1本・印 302回→0回）
+- 拡張の側（Cursor）への頼み: 束の取り直しを同時に1本だけ（実行中なら待つ）・失敗した時は間を空けて取り直す・起動の時の取り直しにずらしの間を入れる
+## 2026-11-15 作業員H: 文の物差しの「事実」0/39 の分け（KB 3041baaa）と本番の毎日の物差し
+- 分け: (a) 物差しの誤り＝竹内さんの「どの部分」（話題「2階の虫」）の語を、設計図の事実の欄（答えの中身「7階以上は虫が入る可能性が低い」）に探していた→「事実」を 話題が合う か 中身（2文字の並び）が竹内さんの文と4割以上重なる に（scripts/lib/compose-gold.ts・「事実（中身）」「事実（話題だけ）」も並べる）／(b) 既定（COMPOSE_ASKS_FACTS=off）では設計図の事実の欄が空＝ブレインの依頼ごとの答えが書き手の設計図に届いていない（0/39 の大半）。on で 24/39（62%）／(c) 届いているが答えが方針の文（q041・q072・q073）・中身の誤り（q057 内見可能）＝ブレインの読み／(d) AIX の番（根 D 7）は事実の文が AIX の側で比べられない
+- 本番の毎日の物差し scripts/compose-prod-daily.ts（読むだけ・--write で cron_run_logs compose-prod-daily）: 竹内さん本人の返信の番の実送信×下書き（line_watch_turns.draft_last）を要素ごとに。11/15 の直近7日 25番: 頭 76%・押さえ 70%・信頼 100%・つなぎ 17%・締め 44%・事実 59%・2通目 0%（下書きは1通だけ）
+- テスト scripts/lib/__tests__/compose-fact-measure.test.ts・監査 scripts/audit-compose-fact.ts

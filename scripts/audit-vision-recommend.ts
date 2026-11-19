@@ -11,6 +11,7 @@
 // を比べる。設計知見「生成文と実送信を同じ整形で突き合わせる」。
 // 読み取りのみ。
 export {};
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { extractPhraseShapes } from "../app/lib/phrase-shape";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");

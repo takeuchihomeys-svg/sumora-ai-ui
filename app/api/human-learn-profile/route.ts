@@ -11,13 +11,20 @@
 //
 // ?scope=all（既定）／?scope=realpro のようにサイトごとも取れる
 // 読んだ印（read_at・read_count）を残す（どの PC が読んでいるか分かる）
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
 
 export const dynamic = "force-dynamic";
+/**
+ * ★ 2026-11-15 竹内さん「vercelで動かす形の方が良いのかな？」（main 側の決定を取り込み・2026-11-19 統合）
+ *   `maxDuration` が未設定だと Vercel の既定（10秒）で切られる。統括に DeepSeek V4 Pro で考えさせると実測 29.6秒かかる
+ *   → 既存の他の LLM API と同じ **60秒**。足りない時は LLM の判断を諦めて決定論を使う（`thinkAsSupervisor` が null を返す＝止まらない）。
+ */
+export const maxDuration = 60;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -31,6 +38,13 @@ export async function OPTIONS() {
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version",
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+   *   **端末（PC）ごとの記録**を数えるために `install_id` を読む。
+   *   ⚠ これが無いと「1台しか記録が無い（他のPCが学習に参加していない）」を統括が言えない。
+   *   ⚠ 端末のIDは**先頭8文字だけ**材料に出す（長いIDは読めない・個人情報でもないが短く）。
+   */
+  "install_id",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
   "scrolls_n", "scroll_dy", "shot_ops", "shot_learn",
@@ -154,11 +168,37 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    * 2026-11-14 竹内さん「また今日強化されたら『強化した』と統括に保存しておくようにする」:
    *   **今日なにを強化したか**を統括に渡す（根拠に出す・点は上げない）。
    */
-  let improvements: { total: number; by_area: Array<{ area: string; n: number }> } | null = null;
+  let improvements: {
+    total: number;
+    by_area: Array<{ area: string; n: number }>;
+    /**
+     * ★ 2026-11-15 竹内さん「このように進化した部分ちゃんと統括にはいるようにする」
+     *   「強化必要な部分もちゃんと統括理解してそこの部分を細かく録画画面から読み取って改善されるようにする」
+     *
+     *   ⚠ 旧は**件数だけ**渡していた（`total` と `by_area`）ので、
+     *     統括は「5件強化した」とは言えても**何を直したか**を知らず、次の判断に活かせなかった。
+     *   → **直した中身（題・なぜ・どう・効果）も渡す**（`recent`）。
+     *     ⚠ 長くしない（最大8件・各120字まで）。統括の材料が膨らむと肝心の弱い所が埋もれる。
+     */
+    recent?: Array<{ at: string; area: string; title: string; why: string; how: string; effect: string }>;
+  } | null = null;
   try {
     const { improvementSummary } = await import("@/app/lib/learn-improvements");
     const imp = await improvementSummary(1);
-    if (!imp.error) improvements = { total: imp.total, by_area: imp.byArea };
+    if (!imp.error) {
+      improvements = {
+        total: imp.total,
+        by_area: imp.byArea,
+        recent: (imp.recent ?? []).slice(0, 8).map((r) => ({
+          at: String(r.at ?? "").slice(0, 19),
+          area: String(r.area ?? "").slice(0, 20),
+          title: String(r.title ?? "").slice(0, 120),
+          why: String((r as { why?: unknown }).why ?? "").slice(0, 120),
+          how: String((r as { how?: unknown }).how ?? "").slice(0, 120),
+          effect: String(r.effect ?? "").slice(0, 120),
+        })),
+      };
+    }
   } catch (e) {
     console.warn("[human-learn-profile] 今日の強化を読めません:", e instanceof Error ? e.message : String(e));
   }
@@ -338,16 +378,42 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *     だから「良くなったか」を一度も言えていなかった（`learn_supervisor_log` に128件あるのに未使用）。
    *   → **前回の判断**を読んで渡す。比べるのは数だけ（記録・順番・場所・開き方・弱い所）。
    */
-  let prevAdvice: { at: string | null; rows: number; next: number; points: number; opens: number; weak: number } | null = null;
+  let prevAdvice: {
+    at: string | null; rows: number; next: number; points: number; opens: number; weak: number;
+    /** ★ 2026-11-15: 前回の弱い所の一覧（`kind|name`）＝「直った」を判定するため */
+    prevWeak?: Array<{ kind?: string; name?: string }> | null;
+  } | null = null;
   try {
     const { data: prevRows } = await supabase
       .from("learn_supervisor_log")
-      .select("created_at, next_n, points_n, opens_n, weak_n, rows")
+      .select("created_at, next_n, points_n, opens_n, weak_n, rows, meeting")
       .eq("scope", scope && scope !== "all" ? scope : "all")
       .order("created_at", { ascending: false })
       .limit(1);
     const p = (prevRows ?? [])[0] as Record<string, unknown> | undefined;
     if (p) {
+      /**
+       * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」:
+       *   前回の**弱い所の一覧**を `meeting.weak_list` から取り出す（保存してある）。
+       *   ⚠ 旧い記録には入っていない → その時は null（比べない＝初回と同じ扱い）。
+       *   ⚠ 形が違えば空にする（壊れたデータで誤判定しない）。
+       */
+      let prevWeak: Array<{ kind?: string; name?: string }> | null = null;
+      try {
+        const m = p.meeting as Record<string, unknown> | null;
+        const wl = m && Array.isArray((m as { weak_list?: unknown }).weak_list)
+          ? ((m as { weak_list: unknown[] }).weak_list) : null;
+        if (wl) {
+          prevWeak = wl
+            .filter((x) => x && typeof x === "object")
+            .map((x) => {
+              const o = x as Record<string, unknown>;
+              return { kind: String(o.kind ?? ""), name: String(o.name ?? "").slice(0, 40) };
+            })
+            .filter((x) => x.name)
+            .slice(0, 40);
+        }
+      } catch (_) { prevWeak = null; }
       prevAdvice = {
         at: typeof p.created_at === "string" ? p.created_at : null,
         rows: Number(p.rows) || 0,
@@ -355,6 +421,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
         points: Number(p.points_n) || 0,
         opens: Number(p.opens_n) || 0,
         weak: Number(p.weak_n) || 0,
+        prevWeak,
       };
     }
   } catch (e) {
@@ -648,12 +715,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, scope, count: rows.length, rows }, { headers: CORS });
   }
 
-  const r = await supabase
-    .from("human_learn_profile")
-    .select("id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count")
-    .eq("scope", scope)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  // 2026-11-15 作業員H（DB の止まり 11/15 01:40〜01:43Z の調べ・HUMAN_LEARN_PROFILE_GUARD・既定 on・=off で戻す）＋ 2026-11-19 統合:
+  //   拡張の束の取りに来る呼び出しが 1秒に百件近く重なり、①版だけ見る軽い確認（touch=0）まで束の全体（bundle・1行 約40KB）を読み、
+  //   ②読むたびに同じ1行（id=1556）へ read_count の書き込み（PATCH 302件）＝同じ行の鍵の取り合い、③束が30分より古いと来た数だけ束を作り直す（1回 約15秒）が重なった。
+  //   守り: 軽い確認は版だけ読む・読んだ印は10分に1回だけ後で書く・同じ版の束はCDN で60秒まとめる（同じ要求を1つにまとめる）・作り直しは同じ所で1本だけ（human-learn-profile-guard.ts）
+  const guard = learnProfileGuardOn();
+  const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
+  // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
+  const rowCols: string = guard && lightReq
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at"
+    : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
+  // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
+  type RowRes = { data: unknown[] | null; error: { message: string } | null };
+  const r: RowRes = await coalesce<RowRes>(`row:${scope}:${guard && lightReq ? "light" : "full"}`, guard, async (): Promise<RowRes> => {
+    const q = await supabase.from("human_learn_profile").select(rowCols).eq("scope", scope).order("created_at", { ascending: false }).limit(1);
+    return { data: (q.data ?? null) as unknown[] | null, error: q.error ? { message: q.error.message } : null };
+  });
 
   if (r.error) {
     /**
@@ -667,7 +744,7 @@ export async function GET(req: NextRequest) {
       { status: missing ? 200 : 500, headers: CORS },
     );
   }
-  const row = (r.data ?? [])[0] as Record<string, unknown> | undefined;
+  const row = ((r.data ?? []) as unknown as Array<Record<string, unknown>>)[0];
   /**
    * 2026-11-13 竹内さん「連携するようにする」（学習が22:20のcron待ちで、すぐ確かめられない）:
    *   束が**無い**時と、**古い**時（前回から30分以上たっている）は、
@@ -721,9 +798,11 @@ export async function GET(req: NextRequest) {
     } catch { /* 印だけ失敗しても連携は続ける */ }
     return NextResponse.json({
       ok: true, empty: false, scope, marked: true,
-      generated_at: (row.bundle && typeof row.bundle === "object")
-        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
-        : row.created_at,
+      generated_at: guard && lightReq
+        ? (row.generated_at ?? row.created_at)
+        : (row.bundle && typeof row.bundle === "object")
+          ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+          : row.created_at,
       read_count: readCount,
       read_at: readAt,
     }, { headers: CORS });
@@ -735,7 +814,32 @@ export async function GET(req: NextRequest) {
      *   solid が増えた・自動未確認、が分からない。
      *   → light でも screen_solid / needs_auto を付け、拡張が強制取込・自動1回促しできる。
      */
-    const solidLight = countLearnedSolid(row.bundle).solid;
+    // ★ 統合（2026-11-19）: 守りの時の軽い確認は束の全体を読まない。束は行ごとに変わらない（id 固定）ので、
+    //   solid（位置つき欄の数）は束の `shots.learned` だけを id ごとに1回読んで覚える（束が替わるまで再読しない）。
+    let solidLight: number;
+    if (guard && lightReq) {
+      const memo = ((globalThis as unknown as { __axlxSolidById?: Map<string, number> }).__axlxSolidById ??= new Map<string, number>());
+      const key = `${scope}:${String(row.id)}`;
+      const hit = memo.get(key);
+      if (typeof hit === "number") {
+        solidLight = hit;
+      } else {
+        solidLight = await coalesce<number>(`solid:${key}`, true, async () => {
+          try {
+            const q = await supabase.from("human_learn_profile").select("learned:bundle->shots->learned").eq("id", row.id as number).limit(1);
+            const lr = ((q.data ?? []) as unknown as Array<{ learned?: unknown }>)[0];
+            const n = countLearnedSolid({ shots: { learned: lr?.learned } }).solid;
+            if (!q.error) {
+              if (memo.size > 50) memo.clear();
+              memo.set(key, n);
+            }
+            return n;
+          } catch { return 0; }
+        });
+      }
+    } else {
+      solidLight = countLearnedSolid(row.bundle).solid;
+    }
     let needsAuto = solidLight >= 30;
     try {
       const bundleAt = String(row.created_at || "");
@@ -754,20 +858,24 @@ export async function GET(req: NextRequest) {
     } catch { /* 監査が読めなくても solid は返す */ }
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
-      generated_at: (row.bundle && typeof row.bundle === "object")
-        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
-        : row.created_at,
+      generated_at: guard && lightReq
+        ? (row.generated_at ?? row.created_at)
+        : (row.bundle && typeof row.bundle === "object")
+          ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+          : row.created_at,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
       screen_solid: solidLight,
       needs_auto: needsAuto,
       bundle_at: row.created_at,
-    }, { headers: CORS });
+    }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;
-  if (stale || forceFresh) {
+  // 守りの時: 束の作り直しは同じ所で1本だけ（重なった要求は同じ結果を待つ）。作ってから短い間（LEARN_BUILD_MIN_GAP_MS）は作り直さない
+  const builtRecently = guard && !!row && Date.now() - Date.parse(String(row.created_at ?? 0)) < LEARN_BUILD_MIN_GAP_MS;
+  if ((stale || forceFresh) && !(builtRecently && !forceFresh)) {
     try {
-      const fresh = await buildNow(scope, (m) => { why = m; });
+      const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, () => buildNow(scope, (m) => { why = m; }));
       if (fresh) {
         /**
          * ★ 2026-11-16 連携ボトルネック（read_count=0が続く）:
@@ -832,7 +940,21 @@ export async function GET(req: NextRequest) {
 
   let servedReadCount = Number(row.read_count) || 0;
   let servedReadAt: string | null = null;
-  if (touch) {
+  if (touch && guard) {
+    // 守りの時: 読んだ印は前の印から10分たった時だけ・応答の後で（同じ1行への書き込みの取り合いを作らない）。
+    //   拡張は realpro+itandi+all の3回 GET するので、10分以内の再読は回数を増やさない（2026-11-17 実測の水増し対策と同じ）。
+    if (shouldTouchRead(row.read_at as string | null | undefined)) {
+      servedReadAt = new Date().toISOString();
+      servedReadCount = (Number(row.read_count) || 0) + 1;
+      const markAt = servedReadAt;
+      const markCount = servedReadCount;
+      after(async () => {
+        try { await supabase.from("human_learn_profile").update({ read_at: markAt, read_count: markCount }).eq("id", row.id as number); } catch { /* 印は残らなくてもよい */ }
+      });
+    } else {
+      servedReadAt = typeof row.read_at === "string" ? row.read_at : null;
+    }
+  } else if (touch) {
     /**
      * ★ 2026-11-17: 拡張は realpro+itandi+all の3回 GET するので、無制限 +1 だと水増し。
      *   10分以内の再読は read_at だけ（回数は据え置き）。
@@ -865,6 +987,6 @@ export async function GET(req: NextRequest) {
       read_count: servedReadCount,
       read_at: servedReadAt,
     },
-    { headers: CORS },
+    { headers: guard ? { ...CORS, ...cacheHeaders("bundle") } : CORS },
   );
 }

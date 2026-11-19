@@ -84,3 +84,21 @@ export function firstContactSuggestedAction(action: string | null | undefined, p
   if (typeof pickup === "string" && pickup) return pickup;
   return null;
 }
+
+/**
+ * 2026-11-12 作業員4（弱い所 brain:question-first-then-condition-hearing・統括役「問い・不安がある初回は先に返信で答え、条件ヒアリングはその後」）:
+ *   真の初回でお客様が「（気になる物件を）こちらから送ってもいいか」と自分で物件を送る申し出をした番は、AIX【条件ヒアリング】を残さず返信にする。
+ *   実送信（11/12 に会話ごとに最初の8通を読んだ・初回6会話）:
+ *     - q432（11/05 tomo「スモ割適用になるか、随時お送りさせていただいてもよろしいでしょうか」）: 竹内さんは返信だけ（最大限割引・いつでもお送りください・
+ *       確認と御見積書）→ フォームはお客様のお礼の後の番（50分後）。＝この番の正解は返信
+ *     - q020・q101・q021・q433・q434: どれも挨拶（＋問い・不安への答え）の返信の 6秒〜1分半後に AIX【条件ヒアリング】のフォーム＝1つの番で「返信→AIX」。
+ *       この5つは同じ形なので、ここでは触らない（問いへの答えは挨拶の文に入れる・q021 の 10/09 竹内さんの答えと同じ）
+ *   止めた線: 「送ってもらえますか」「送ってくださると嬉しい」（こちらに送ってほしい）は当てない。申し出は「送っても（いい・よろしい・大丈夫）」
+ *   「お送りさせて頂いても」「こちらから送ります」の形だけ。既定 off（FIRST_CONTACT_SELF_SEND_REPLY=on）
+ */
+const SELF_SEND_RE = /(?:お?送り?させて(?:頂|いただ)(?:いて|け)|(?:お?送り|送っ)ても(?:いい|良い|よろし|大丈夫|問題|OK|ok|宜し)|(?:こちらから(?:も)?|(?:物件|お部屋|URL|リンク)を?)(?:随時|どんどん|また)?(?:物件|お部屋|URL|リンク)?を?(?:お送りします|送ります|お送りさせて))/;
+export function customerOffersToSendProperties(customerTexts: ReadonlyArray<string>): boolean {
+  return customerTexts.some((t) => SELF_SEND_RE.test((t ?? "").replace(/\s+/g, "")));
+}
+export const firstContactSelfSendReplyOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
+  (env.FIRST_CONTACT_SELF_SEND_REPLY ?? "").trim().toLowerCase() === "on";

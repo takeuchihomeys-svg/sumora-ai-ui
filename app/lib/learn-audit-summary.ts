@@ -12,6 +12,14 @@
 // ⚠ 集計だけをする（DBに書かない・サイトを触らない）。純関数。
 
 import { LEARN_PERIODS } from "./learn-periods";
+/**
+ * ★ 2026-11-15 竹内さん「古いか最新かの理解の部分ちゃんと細部まで細かく強化する」（main 側の決定を取り込み・2026-11-19 統合）:
+ *   版の比較は**共通の1か所**（`parseExtVersion` / `compareExtVersion`）を使う。
+ *   ⚠ ここで独自に書くと、片方だけ直して**静かにずれる**（`"2.7.9" > "2.7.74"` の罠）。
+ */
+import { parseExtVersion as _parseExtVersion, compareExtVersion as _compareExtVersion } from "./automation-pause-gate";
+/** ⚠ import 名をそのまま関数の中で使うと「未使用」に見えるので、束ねて渡す */
+const _ver = { parseExtVersion: _parseExtVersion, compareExtVersion: _compareExtVersion };
 
 /** `search_audits` の1行（必要な列だけ） */
 export type AuditRow = {
@@ -63,6 +71,20 @@ export type AuditSummary = {
   errors: Array<{ error: string; n: number }>;
   /** 特に重い物（severity=bad）の数 */
   bad: number;
+  /**
+   * ★ 2026-11-15 竹内さん「古いか最新かの理解の部分ちゃんと細部まで細かく強化する」:
+   *   **版ごとの完走率**。⚠ 全期間を混ぜると**もう直した古い版の失敗**で判断してしまう
+   *   （実測: 1,197件のうち新しい版は8件だけ・大半が v2.5.91 などの古い記録）。
+   *   ⚠ 並びは**版として読めた物だけ**新しい順（`parseExtVersion` で数字に直して比べる）。
+   */
+  versions?: Array<{ version: string; n: number; finished: number; finish_rate: number }>;
+  /** 版として読めなかった物（`(不明)` など）。⚠ 古いとも新しいとも言わない（別枠） */
+  versions_unreadable?: Array<{ version: string; n: number; finished: number; finish_rate: number }>;
+  /**
+   * 一番新しい版の完走率（統括が「いまの版でどうか」を見る）。
+   *   ⚠ `confident: false` は**件数が少ない**（既定5件未満）＝判断しない。
+   */
+  latest?: { version: string; n: number; finished: number; finish_rate: number; confident: boolean; min_n: number } | null;
   /** いま一番多い「止まり方」を人が読める1文に */
   top_problem: string | null;
   /** その時に**どこを疑うか**（`top_problem` に対する次の一手） */
@@ -346,6 +368,70 @@ export function summarizeAudits(
    */
   const judged = Math.max(0, runs - unknown);
   const finish_rate = judged > 0 ? Math.round((finished / judged) * 100) : 0;
+
+  /**
+   * ★ 2026-11-15 竹内さん「古いか最新かの理解の部分ちゃんと細部まで細かく強化する」（main 側の決定を取り込み）
+   *
+   *   ⚠ **実測で判明（統括の判断が古い版に引っぱられていた）**:
+   *     `search_audits` 全1,197件のうち、**新しい版（v2.7.5x以降）は 8件だけ**で、
+   *     大半は**古い版（v2.5.91 など）**の記録だった。統括はそれを混ぜて「完走率 18%」と言っていた。
+   *   → 版を**細部まで正しく**判定する:
+   *     ① 版の比較は**共通の1か所**（`automation-pause-gate` の `parseExtVersion` / `compareExtVersion`）を使う。
+   *        ⚠ 文字列で比べると `"2.7.9" > "2.7.74"` になる（桁の罠）。
+   *     ② 桁が足りない版（`2.7`）も 0 で埋めて比べる（`2.7` = `2.7.0`）。
+   *     ③ 形が違う版（`(不明)`・空・`v2.7.1`）は**古いとも新しいとも言わない**（別枠で数える）。
+   *     ④ 一番新しい版の**件数が少ない時は判断しない**（「まだ少ない」と正直に言う）。
+   */
+  const { parseExtVersion, compareExtVersion } = _ver;
+  const verOf = (r: Record<string, unknown>) => String(r.ext_version ?? "").trim();
+  /** 版の3つの状態: 読めた（新しい/古いが決まる）・読めない・空 */
+  type VerState = { kind: "ok"; raw: string; num: number[] } | { kind: "unknown"; raw: string };
+  const verState = (raw: string): VerState => {
+    const num = parseExtVersion(raw.replace(/^v/i, ""));
+    return num ? { kind: "ok", raw: raw.replace(/^v/i, ""), num } : { kind: "unknown", raw };
+  };
+
+  const byVer: Record<string, { n: number; finished: number }> = {};
+  for (const r of inWindow) {
+    const v = verOf(r as Record<string, unknown>) || "(不明)";
+    if (!byVer[v]) byVer[v] = { n: 0, finished: 0 };
+    byVer[v].n++;
+    if (String((r as Record<string, unknown>).status ?? "").toLowerCase() === "finished") byVer[v].finished++;
+  }
+  /** 版ごとの一覧。⚠ **読めた版だけ**新しい順に並べる（読めない版は末尾に別枠）。 */
+  const parsedVersions = Object.entries(byVer).map(([version, v]) => {
+    const st = verState(version);
+    return {
+      version: st.kind === "ok" ? st.raw : version,
+      n: v.n,
+      finished: v.finished,
+      finish_rate: v.n > 0 ? Math.round((v.finished / v.n) * 100) : 0,
+      /** 版として読めたか（読めない物は「新旧を決めない」） */
+      comparable: st.kind === "ok",
+      _num: st.kind === "ok" ? st.num : null,
+    };
+  });
+  const versions = parsedVersions
+    .filter((v) => v.comparable)
+    .sort((a, b) => compareExtVersion(b._num as number[], a._num as number[]))
+    .slice(0, 8)
+    .map((v) => ({ version: v.version, n: v.n, finished: v.finished, finish_rate: v.finish_rate }));
+  /** 版として読めなかった物（`(不明)` など）は**別枠**で数える（古いとも新とも言わない） */
+  const versionsUnreadable = parsedVersions
+    .filter((v) => !v.comparable)
+    .map((v) => ({ version: v.version, n: v.n, finished: v.finished, finish_rate: v.finish_rate }))
+    .slice(0, 5);
+
+  /**
+   * ④ 一番新しい版の完走率。
+   *   ⚠ **件数が少ない（既定 5件未満）時は `confident: false`** にして、統括が「まだ判断しない」と言えるようにする。
+   */
+  const MIN_N_FOR_JUDGE = 5;
+  const topVer = versions[0] ?? null;
+  const latest = topVer
+    ? { ...topVer, confident: topVer.n >= MIN_N_FOR_JUDGE, min_n: MIN_N_FOR_JUDGE }
+    : null;
+
   const stalled_at = toArr(stageN, "stage") as Array<{ stage: string; n: number }>;
   const causes = toArr(causeN, "cause") as Array<{ cause: string; n: number }>;
   const errors = toArr(errN, "error") as Array<{ error: string; n: number }>;
@@ -433,5 +519,11 @@ export function summarizeAudits(
     stalled_at, causes, errors, bad, top_problem, advice,
     handoff,
     flow,
+    /** ★ 2026-11-15: 版ごとの内訳（古い版の失敗で判断しないため） */
+    versions,
+    /** 版として読めなかった物（別枠・新旧を決めない） */
+    versions_unreadable: versionsUnreadable,
+    /** 一番新しい版の完走率（件数が少ない時は `confident: false`＝判断しない） */
+    latest,
   };
 }

@@ -6,6 +6,20 @@
 //   どの問題も通らなければ知らせる（止めない）。判断のブレイン（brain-core 共用）しか当たらない直し・表に無いファイルだけの直しは「分からない」で知らせない。
 //   止める: EXAM_PATH_CHECK=off
 import type { ConductorLink } from "../../app/lib/conductor-linkage";
+import { readTurnUnderstanding, readSevenFields, buildSentencePlan } from "../../app/lib/compose-sentence-plan";
+
+/**
+ * 2026-11-12 作業員10: 文の統括の設計図（COMPOSE_SENTENCE_PLAN）の道の印。前の答えは off で作られ compose_plan の記録を持たないので、
+ *   前の答えの brain から設計図を作り直し、主の行が出る（＝on なら書き手に注記が渡る）番に「compose_plan:<主の役目>」を付ける（道の確かめだけに使う）
+ */
+export function composePlanMarkers(brain: unknown): string[] {
+  try {
+    if (!brain || typeof brain !== "object" || !(brain as { turn_contract?: unknown }).turn_contract) return [];
+    const p = buildSentencePlan(readTurnUnderstanding(brain), readSevenFields(brain));
+    const main = p.rows.find((r) => r.rank === "main");
+    return main ? [`compose_plan:${main.role}`] : [];
+  } catch { return []; }
+}
 
 /** 変えたファイルに当たる連携の表の行（files の頭が一致・「（…）」の注は外して比べる） */
 export function touchedLinks(changed: readonly string[], links: readonly ConductorLink[]): ConductorLink[] {

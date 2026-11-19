@@ -25,6 +25,7 @@
 //   ② 文字層が無い（画像だけで送った）物件は、送った資料の画像から設備欄の文字をそのまま写す（equipment-answer-server）
 //   ③ 画像で分析の間取り図の読み取り（property_sheet_facts の water）は食い違いの見張りだけ
 import { readEquipmentItemsFromText, BUILDING_KEYS, type EquipKey, type EquipFact } from "./listing-equipment";
+import { isAfterCutoff, type DeepseekCutoff } from "./post-apply";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. 質問の検出
@@ -365,4 +366,16 @@ export function parseSheetEquipText(text: string): SheetEquipText | null {
   try { j = JSON.parse(m[0]) as Record<string, unknown>; } catch { return null; }
   if (typeof j.equip_text !== "string") return null;
   return { see: String(j.see ?? "").slice(0, 60), equip_text: j.equip_text.replace(/\s+/g, " ").trim().slice(0, 500) };
+}
+
+/**
+ * 送った資料の画像の設備欄を DeepSeek で読んでよいか（純関数・2026-11-13 作業員8b・統括役）。竹内さんの決まり（9/26）「申込の間の部分は DeepSeek に渡さず」。
+ *   readSheetEquipText だけ申込の線を見ていなかった（他の読みの入口 image-detail-store・sent-image-record は見ている）。
+ *   会話が分からない（conversationId 無し）時は今まで通り読む。線の判定は本番の isAfterCutoff（線より後＝切り替えた後だけ・申込中は読まない）。
+ *   既定 on（決まりを守る線）・止める EQUIP_SHEET_CUTOFF=off
+ */
+export function equipSheetReadAllowed(o: { conversationId: string | null | undefined; sentAt: string | null; cutoff: DeepseekCutoff | undefined; env?: Record<string, string | undefined> }): boolean {
+  if (String((o.env ?? process.env).EQUIP_SHEET_CUTOFF ?? "").trim().toLowerCase() === "off") return true;
+  if (!o.conversationId) return true;
+  return isAfterCutoff(o.sentAt ?? new Date().toISOString(), o.cutoff);
 }

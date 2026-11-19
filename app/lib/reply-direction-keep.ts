@@ -6,6 +6,7 @@
 //   了承・検討の番（9〜12%）・物件への感想の番（q174）には入れない。同じ日にこちらがもう言っていれば入れない（KB 1d07b3df）。
 // 切替: REPLY_DIRECTION_KEEP（11/06 既定 on・=off で止める）。テスト: app/lib/__tests__/reply-direction-keep.test.ts
 import { hasKeepPromise } from "./reply-compose-conductor";
+import { noViewingNoteAllowed } from "./look-hesitation";
 
 type Env = Record<string, string | undefined>;
 export function replyDirectionKeepOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -38,5 +39,6 @@ const EXPLICIT_VIEWING_RE = /内覧|内見|見学/;
 export function replyDirectionWithNoViewing(o: { direction: string | null; customerText: string }, env?: Env): string | null {
   if (!o.direction || !replyDirectionNoViewingOn(env)) return o.direction;
   if (!LOOK_RE.test(o.customerText) || EXPLICIT_VIEWING_RE.test(o.customerText)) return o.direction;
+  if (!noViewingNoteAllowed(o.customerText, env)) return o.direction; // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on の時は迷いの語がある番だけ（q428）
   return `${o.direction}（お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・内覧の可否の確認・申込・お部屋を押さえる一文を足さない。竹内さんは新たにピックアップしてお送りする約束だけ）`;
 }

@@ -1,6 +1,7 @@
 // 画像の読み取り（DeepSeek）でプロンプトキャッシュが効いているかを測る（読み取りのみ・DB に書かない）
 // 2026-09-22 竹内「プロンプトキャッシュもちゃんとできているのか」
 // 実行: npx tsx --env-file=.env.local scripts/measure-image-read-cache.ts
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 

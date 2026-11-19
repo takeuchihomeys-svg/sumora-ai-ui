@@ -102,12 +102,12 @@ export function hollowNoWorse<T extends { verdict: string; planned: number; both
 
 /** (h) 2026-11-05 作業員1（KB 3892c30c・統括役）: 分からない事の3つの表の開いている数と24時間で新しく増えた数（夜の cron link-brain-watch の結果から）。
  *  表は RLS で手元の公開キーでは読めない＝cron がサーバーの鍵で数えて cron_run_logs に残した物を読む。古い（36時間超）・無い時は null */
-export type UnknownsOpen = { weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number };
+export type UnknownsOpen = { weak_open: number; weak_new24h: number; unknown_rows: number; unknown_new24h: number; owner_open: number; weak_tier_guess?: number; weak_no_next?: number; weak_tier_check?: number };
 export function unknownsOpenLine(o: UnknownsOpen | null | undefined, at: string | null, nowMs: number): { ok: boolean | null; line: string } {
   if (!o || !at) return { ok: null, line: "分からない事の3つの表: 不明（夜の link-brain-watch の数が無い）" };
   const ageH = (nowMs - Date.parse(at)) / 3_600_000;
   if (!(ageH <= 36)) return { ok: null, line: `分からない事の3つの表: 不明（数が ${Math.round(ageH)}時間前で古い）` };
-  return { ok: true, line: `分からない事の3つの表: 弱い所 開いている ${o.weak_open}（新+${o.weak_new24h}）・分からない事 ${o.unknown_rows}行（新+${o.unknown_new24h}）・竹内さんへの確認 開いている ${o.owner_open}` };
+  return { ok: true, line: `分からない事の3つの表: 弱い所 開いている ${o.weak_open}（新+${o.weak_new24h}）・分からない事 ${o.unknown_rows}行（新+${o.unknown_new24h}）・竹内さんへの確認 開いている ${o.owner_open}${o.weak_tier_guess != null ? `・弱い所の印 推定のまま ${o.weak_tier_guess}・次の一手が空 ${o.weak_no_next ?? 0}・要確認 ${o.weak_tier_check ?? 0}` : ""}` };
 }
 
 /** (i) 2026-11-05 作業員1（点検表 10〜12）: 試験の係の記録（conductor.log）から、24時間の
@@ -160,8 +160,21 @@ export function deepseekFailLine(c: DsFailCounts): { ok: boolean; line: string }
  *   deepseekSafeCutoff・cutBeforeApplicationMaterial・LLM_TEST の写し）を通していないファイル。注記の行は見ない。
  */
 const DS_CALL_RE = /\b(?:sharedPropertyImageRead|readPropertyImage(?:Detail)?|callDeepSeekRead|readPropertyImageDetailByTranscript)\s*\(|api\.deepseek\.com/;
-const DS_GUARD_RE = /\b(?:loadDeepseekCutoff|isAfterCutoff|deepseekSafeCutoff|cutBeforeApplicationMaterial|findRereadTargets|runSentImageReread|setupLlmTest)\b/;
-export function deepseekWithoutCutoff(src: string): boolean {
+const DS_GUARD_RE = /\b(?:loadDeepseekCutoff|isAfterCutoff|deepseekSafeCutoff|cutBeforeApplicationMaterial|findRereadTargets|runSentImageReread|setupLlmTest)\b|script-deepseek-gate/;
+/**
+ * (o) の許可の一覧（2026-11-13 作業員8b・統括役）: 会話の材料を DeepSeek に送らない台本（見張りの誤検知）。足す時は理由を必ず書く。
+ *   会話の画像を読む台本は許可せず、scripts/lib/script-deepseek-gate を import する（fetch の出口の申込の門）
+ */
+export const DS_GATE_ALLOW: Readonly<Record<string, string>> = {
+  "scripts/audit-image-read-grounding.ts": "物件ピックアップ（property_pickups＝検索で取った物件の資料）だけ読む・会話の画像を送らない",
+  "scripts/debug-detail-read.ts": "物件ピックアップの資料だけ読む（readPropertyImageDetail が空になる理由の確かめ）",
+  "scripts/yuma-pickup-deepseek-test.ts": "テスト用の会話 YUMA の物件ピックアップの資料だけ",
+  "scripts/verify-sheet-vacancy-read.ts": "手元の物件の資料の画像 12枚だけ（DB を読まない・個人情報なし）",
+  "scripts/weak-scene-learn.ts": "リアプロの検索画面（拡張の通常録画の写真）の欄の種類・位置だけ読む・お客様の会話の画像と個人情報は送らない（2026-11-19 統合で追加）",
+  "scripts/outcome-loss-reason.ts": "conversations.deepseek_cutoff_at の線より前のお客様の発言だけを maskPII して送る（台本の中で線を見ている）",
+};
+export function deepseekWithoutCutoff(src: string, file?: string): boolean {
+  if (file && DS_GATE_ALLOW[file.replace(/\\/g, "/")]) return false;
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
   return DS_CALL_RE.test(code) && !DS_GUARD_RE.test(code);
 }

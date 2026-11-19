@@ -165,12 +165,28 @@ export function toExamRunFromConductor(
   };
 }
 
+/**
+ * 2026-11-15 作業員H（統括役の決め・11/15 01:42Z の exam_runs の RLS の拒否 401）: 試験の記録を書く係の多くは
+ *   `SUPABASE_SERVICE_ROLE_KEY ?? NEXT_PUBLIC_SUPABASE_ANON_KEY` で DB につなぐ＝サーバーの鍵が無い env では公開の鍵に落ち、
+ *   RLS で拒否されて試験の記録が DB に残らなかった（黙って落ちる）。サーバーの鍵が無い時は公開の鍵で書きに行かず、「書けない」と1行出す。
+ *   既定 on（EXAM_RUNS_REQUIRE_SERVICE_KEY=off で前の形＝公開の鍵でも書きに行く）
+ */
+export function examRunsServiceKeyMissing(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  if ((env.EXAM_RUNS_REQUIRE_SERVICE_KEY ?? "").trim().toLowerCase() === "off") return false;
+  return !(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+}
+
 /** DB へ1行（同じ label は上書き）。DB が無ければ false（今まで通りファイルで動く） */
 export async function upsertExamRun(
   sb: { from: (t: string) => { upsert: (row: Record<string, unknown>, opts?: Record<string, unknown>) => Promise<{ error: { message: string } | null }> } } | null,
   row: ExamRunRow,
+  env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!sb) return { ok: false, error: "no_db" };
+  if (examRunsServiceKeyMissing(env)) {
+    console.warn(`[exam-runs] サーバーの鍵（SUPABASE_SERVICE_ROLE_KEY）が無いので試験の記録（${row.label}）を DB に書けない（公開の鍵では RLS で拒否される）。鍵のある .env.local を --env-file で指して立ち上げ直す`);
+    return { ok: false, error: "no_service_key" };
+  }
   try {
     const { error } = await sb.from("exam_runs").upsert(
       { ...row, summary: row.summary ?? null },

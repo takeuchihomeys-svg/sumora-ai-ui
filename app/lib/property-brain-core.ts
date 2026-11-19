@@ -432,6 +432,14 @@ export async function runConditionBrain(
     const gg = gateExtractedConditions(updates, turn, (cur0 ?? null) as Record<string, unknown> | null);
     if (gg.dropped.length) console.log(JSON.stringify({ tag: "conditionBrain:source-gate", convId, dropped: gg.dropped }));
     updates = gg.extracted;
+    // 2026-11-15 作業員K: 自動の書き手どうしの取り合いを止める（condition-write-arbiter.ts・CONDITION_WRITE_ARBITER 既定 off）。
+    //   測った取り合い7回のうち4回はここ（丸ごとの上書き）が brain_bridge の直前の書き込みを前の値に戻していた
+    if (Object.keys(updates).length) {
+      const { applyConditionWriteArbiter } = await import("@/app/lib/condition-write-arbiter-server");
+      const { data: lastCust0 } = await supabase.from("messages").select("id").eq("conversation_id", convId).eq("sender", "customer")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      updates = await applyConditionWriteArbiter(supabase, { customerId, writer: "condition_brain", messageId: (lastCust0?.id as string | undefined) ?? null, current: (cur0 ?? null) as Record<string, unknown> | null, updates: updates as Record<string, unknown>, convId }) as typeof updates;
+    }
   }
   const hasUpdates = Object.keys(updates).length > 0;
 

@@ -5,6 +5,7 @@
 import { supabase } from "@/app/lib/supabase-server";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
 import { detectConfirmTopics } from "@/app/lib/procedure-question";
+import { contractTermsPetCleaningOn } from "@/app/lib/contract-terms-question";
 import { splitPropertyName } from "@/app/lib/customer-state";
 import { pastConversationLines, newMaterialOnly, queryKeywords, type DeepCheckTopic } from "@/app/lib/brain-deep-check";
 
@@ -34,12 +35,23 @@ export async function loadDeepCheckMaterial(o: {
   const jobs: Array<Promise<void>> = [];
   const add = (src: string, p: Promise<string | null | undefined>) => jobs.push(p.then((note) => { notes.push({ src, note }); }).catch((e) => { console.warn(`[brain-deep-check] ${src} skipped:`, e instanceof Error ? e.message : String(e)); }));
   add("equipment", import("@/app/lib/equipment-answer-server").then(({ loadEquipmentAnswerWithin }) => loadEquipmentAnswerWithin(budget, { conversationId: o.conversationId, customerText: text })).then((r) => r?.note));
-  add("contract_terms", import("@/app/lib/contract-terms-answer-server").then(({ loadContractTermsAnswerWithin }) => loadContractTermsAnswerWithin(budget, { conversationId: o.conversationId, customerText: text, target })).then((r) => r?.note));
+  const contractTermsP = import("@/app/lib/contract-terms-answer-server").then(({ loadContractTermsAnswerWithin }) => loadContractTermsAnswerWithin(budget, { conversationId: o.conversationId, customerText: text, target }));
+  add("contract_terms", contractTermsP.then((r) => r?.note));
   add("material", import("@/app/lib/material-answer-server").then(({ loadMaterialAnswerWithin }) => loadMaterialAnswerWithin(budget, { conversationId: o.conversationId, customerText: text, target })).then((r) => r?.note));
   add("procedure", import("@/app/lib/procedure-answer-server").then(({ loadProcedureAnswerWithin }) => loadProcedureAnswerWithin(budget, { conversationId: o.conversationId, customerText: text, target: target ? { ...target, vacating: o.fallbackTarget?.vacating } : null })).then((r) => r?.note));
   const confirmTopics = detectConfirmTopics(text);
   if (confirmTopics.length && target) {
-    add("confirm_topic", import("@/app/lib/procedure-answer-server").then(({ loadConfirmTopicRoutesWithin }) => loadConfirmTopicRoutesWithin(budget, { conversationId: o.conversationId, topics: confirmTopics, target })).then((r) => r?.note));
+    // 2026-11-11 作業員1（弱い所 564）: 契約条件の網がペットを受け持った時（CONTRACT_TERMS_PET_CLEANING=on）は「確認した」系からペットを外す（道を2つにしない）
+    add("confirm_topic", (async () => {
+      let topics = confirmTopics;
+      if (topics.includes("pet") && contractTermsPetCleaningOn()) {
+        const ct = await contractTermsP.catch(() => null);
+        if (ct?.topics.includes("pet")) topics = topics.filter((t) => t !== "pet");
+      }
+      if (!topics.length) return null;
+      const { loadConfirmTopicRoutesWithin } = await import("@/app/lib/procedure-answer-server");
+      return (await loadConfirmTopicRoutesWithin(budget, { conversationId: o.conversationId, topics, target }))?.note;
+    })());
   }
   add("company_fact", Promise.resolve(buildCompanyFactsNote(text, { account: o.account ?? null })));
   // 過去の会話（1回目の履歴より前も・依頼の型の語がある行だけ・最大6行）

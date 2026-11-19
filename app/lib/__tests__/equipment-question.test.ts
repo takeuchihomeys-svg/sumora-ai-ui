@@ -6,7 +6,7 @@
 // 実行: npx tsx app/lib/__tests__/equipment-question.test.ts
 import {
   detectEquipmentQuestion, pickEquipmentTargets, resolveEquipAnswer, equipAnswerPlan, buildEquipmentAnswerNote, textItemsFromSheetText, parseSheetEquipText,
-  mentionsUnknownBuilding, pickupMaterialUsable,
+  mentionsUnknownBuilding, pickupMaterialUsable, equipSheetReadAllowed,
   type SentPropertyLite, type EquipPropertyAnswer,
 } from "../equipment-question";
 import { parseListingEquipment, readEquipmentItemsFromText } from "../listing-equipment";
@@ -230,6 +230,18 @@ describe("否定の書き方（「〇〇なし」を有ると読まない）", (
     const plan = equipAnswerPlan([{ name: "X", roomNo: "101", by: "name", materialRead: true, answers: [resolveEquipAnswer("aircon", { text: readEquipmentItemsFromText("エアコンなし") })] }]);
     truthy(plan.mode !== "answer", JSON.stringify(plan));
   });
+});
+
+// ── 2026-11-13 作業員8b: 送った資料の設備欄の読みの申込の線（両方の向き・本番の isAfterCutoff と同じ）──
+describe("申込の線: readSheetEquipText", () => {
+  const cut = "2026-10-13T00:00:00Z"; // 申込から切り替えた線（ここから後は渡してよい）
+  it("線より前（申込の間）に送った資料は読まない", () => falsy(equipSheetReadAllowed({ conversationId: "c1", sentAt: "2026-10-12T10:00:00Z", cutoff: cut, env: {} })));
+  it("線より後（切り替えた後）に送った資料は読む", () => truthy(equipSheetReadAllowed({ conversationId: "c1", sentAt: "2026-10-14T10:00:00Z", cutoff: cut, env: {} })));
+  it("申込中（線なし＝null）は読まない", () => falsy(equipSheetReadAllowed({ conversationId: "c1", sentAt: "2026-10-14T10:00:00Z", cutoff: null, env: {} })));
+  it("申込に入っていない会話（全部＝-Infinity）は読む", () => truthy(equipSheetReadAllowed({ conversationId: "c1", sentAt: "2026-10-14T10:00:00Z", cutoff: -Infinity, env: {} })));
+  it("会話が分からない時は今まで通り読む", () => truthy(equipSheetReadAllowed({ conversationId: null, sentAt: null, cutoff: null, env: {} })));
+  it("EQUIP_SHEET_CUTOFF=off で今まで通り（申込中でも読む）", () => truthy(equipSheetReadAllowed({ conversationId: "c1", sentAt: null, cutoff: null, env: { EQUIP_SHEET_CUTOFF: "off" } })));
+  it("配線: readSheetEquipText が DeepSeek の前に線を見る", () => { const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "equipment-answer-server.ts"), "utf8") as string; const i = src.indexOf("equipSheetReadAllowed({"), j = src.indexOf("callDeepSeekRead(null, content"); truthy(i > 0 && j > i, "線の確かめが DeepSeek の呼び出しより前"); });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

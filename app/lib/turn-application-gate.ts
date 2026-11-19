@@ -49,7 +49,9 @@ export function turnApplicationReason(r: TurnApplicationRecords | null | undefin
   if (!firsts.length && (r.isPostApply || DRAFT_SKIP_STATUSES.has((r.status ?? "").trim()))) return "今が申込以降で始まりの時刻が分からない";
   // 記録の時刻は無いが、申込以降の status から戻した印がある＝戻す前のどこかが申込中（始まりが分からない）→ 戻す前の番は外す
   //   実物（11/11）: 会話 8590144d は押下・書類の記録が無く 9/26 に申込から戻した。9/22〜23 の竹内さんの番 7通（「お部屋抑えていただきたいです」の後を含む）が文の解剖に入っていた
+  //   2026-11-11 夜の直し: 戻しの後に書類の印の通（メール・電話の値 等）があると firsts が空でなくなり、この線を通り抜けていた（198通の読みで 8590144d が 0通しか外れなかった）。
+  //   → 「戻しより前の記録が1つも無い」＝戻した申込以降の期間が status だけだった時は、戻す前の番を外す
   const back = ms(r.backAt);
-  if (!firsts.length && back !== null && at < back) return "申込から戻す前の番（始まりの時刻が分からない）";
+  if (back !== null && at < back && !firsts.some((x) => x.t < back)) return "申込から戻す前の番（始まりの時刻が分からない）";
   return null;
 }

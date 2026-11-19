@@ -10,7 +10,7 @@ import { maskPIIForAlt } from "@/app/lib/pii-mask";
 import { loadAltNameMask } from "@/app/lib/pii-known-names";
 import {
   splitTurn, sentThisTurn, outstandingAsks, openPromises, confirmAnswersOf, askedCostKind, lastCustomerBundle,
-  buildSecondMaterialsNote, secondMaterialsRoute, buildBrainBundleNote, buildPropertyJudgeNote, type SmMsg, type SentThisTurn, type BrainBundleMeta,
+  buildSecondMaterialsNote, secondMaterialsRoute, aixCheckValuePrefillOn, checkValueLines, type CheckValueRow, buildBrainBundleNote, buildPropertyJudgeNote, type SmMsg, type SentThisTurn, type BrainBundleMeta,
 } from "@/app/lib/second-message-materials";
 import type { LedgerItem } from "@/app/lib/request-ledger";
 
@@ -39,6 +39,8 @@ export async function loadSecondMaterials(o: {
   /** 押した AIX のピッカー（物件確認した＝check_pattern・物件オススメ＝pickup_type） */
   pickerValue?: string | null;
   /** 2通目が推す物件の売上サポの行（物件オススメ・ピックアップの後） */
+  /** 2026-11-12 作業員1: 試験（exam-aix-text）の写しの AIX の履歴（テスト専用の会話の時だけ route が渡す）。有れば確認の結果の値はここから・その番の時刻で窓を切る */
+  snapshotAixUsage?: ReadonlyArray<Record<string, unknown>> | null;
   propertyRow?: { property_name?: string | null; room_no?: string | null; recommended?: number | boolean | null; reason_codes?: string[] | null } | null;
 }): Promise<SecondMaterials> {
   const nowMs = Date.now();
@@ -46,19 +48,21 @@ export async function loadSecondMaterials(o: {
   const { before, turnStaff } = splitTurn(o.recent, o.sentMessage);
   const sent = sentThisTurn({ actionType: o.actionType, turnStaff });
   const asks = outstandingAsks(o.recent, turnStaff, nowMs, o.brainRequestStatus);
-  const promises = openPromises(o.recent, turnStaff, nowMs);
+  const promises = openPromises(o.recent, turnStaff, nowMs, { actionType: o.actionType ?? null, sentMessage: o.sentMessage ?? null });
   const bundle = lastCustomerBundle(before);
   const costKind = askedCostKind(bundle);
 
   let postApply = true, cutoffAll = false, sensitive = false, readFailed = !cid;
   let account: string | null = null, pcId: string | null = null, ngPoints = (o.ngPointsFromBrain ?? "").trim() || null;
   let answers: string[] = [];
+  // 2026-11-12 作業員1（AIX_CHECK_VALUE_PREFILL=on）: この番の 物件確認した の値（物件名×状況）
+  let checkValues: string[] = [];
   if (cid) {
     try {
       const [facts, conv, checks, sens] = await Promise.all([
         loadPostApplyFacts(supabase, cid),
         supabase.from("conversations").select("account, property_customer_id").eq("id", cid).maybeSingle(),
-        supabase.from("aix_usage_logs").select("generated_text, created_at").eq("conversation_id", cid)
+        supabase.from("aix_usage_logs").select(aixCheckValuePrefillOn() ? "generated_text, created_at, property_names, prop_statuses, check_pattern" : "generated_text, created_at").eq("conversation_id", cid)
           .eq("aix_type", "property_check_result").not("sent_at", "is", null).order("created_at", { ascending: false }).limit(10),
         screeningPiiClaudeEnabled()
           ? (screeningSensitiveInMessages(o.recent.map((m) => ({ sender: m.sender ?? null, text: m.text ?? null }))) ?? loadScreeningSensitive(supabase, cid))
@@ -72,6 +76,14 @@ export async function loadSecondMaterials(o: {
       account = c?.account ?? null;
       pcId = c?.property_customer_id ?? null;
       answers = confirmAnswersOf((checks.data ?? []) as Array<{ generated_text?: string | null; created_at?: string | null }>, { nowMs });
+      if (aixCheckValuePrefillOn()) {
+        if (o.snapshotAixUsage) {
+          // 試験の写し: その番の時刻（会話の最後の通）を今として、写しの 物件確認した の行から
+          const turnMs = Math.max(0, ...o.recent.map((m) => Date.parse(String(m.rawCreatedAt ?? "")) || 0));
+          const rows = o.snapshotAixUsage.filter((r) => r.aix_type === "property_check_result") as CheckValueRow[];
+          checkValues = checkValueLines(rows, turnMs || nowMs);
+        } else checkValues = checkValueLines((checks.data ?? []) as CheckValueRow[], nowMs);
+      }
       if (!ngPoints && c?.property_customer_id) {
         const { data: pc } = await supabase.from("property_customers").select("ng_points").eq("id", c.property_customer_id).maybeSingle();
         ngPoints = ((pc as { ng_points?: string | null } | null)?.ng_points ?? "").trim() || null;
@@ -123,7 +135,7 @@ export async function loadSecondMaterials(o: {
       propertyJudgeNote = buildPropertyJudgeNote({ label: [o.propertyRow.property_name, room].filter(Boolean).join(" "), recommended: !!o.propertyRow.recommended, goodJa: sp.goodJa, badJa: sp.badJa, reaction, bundleNegativesJa });
     } catch (e) { console.warn("[second-materials] 物件の判断が読めない", e instanceof Error ? e.message : String(e)); }
   }
-  let note = buildSecondMaterialsNote({ sent, asks, promises, answers, ngPoints, companyFactsNote, memoNote, costKind, brainBundleNote, meaningNote, propertyJudgeNote });
+  let note = buildSecondMaterialsNote({ checkValues, sent, asks, promises, answers, ngPoints, companyFactsNote, memoNote, costKind, brainBundleNote, meaningNote, propertyJudgeNote });
 
   let goesAlt = false;
   try { goesAlt = (await import("@/app/lib/llm-alt-provider")).willRouteAlt("aix_template", { postApply }); } catch { goesAlt = false; }

@@ -1,0 +1,648 @@
+[
+ {
+  "id": "q022",
+  "rep": 3,
+  "at": "2026-11-11T22:33:27.621Z",
+  "brain": {
+   "current_property": "カーサピエント 203",
+   "reply_mode": "auto_reply",
+   "reply_direction": "検討の意思を尊重しつつ、未履行のピックアップ約束を意識した返信で待つ",
+   "key_topics": [
+    "エアコン確認結果の受領への返礼",
+    "検討を尊重する旨",
+    "新エリアのピックアップ継続の姿勢"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧催促",
+    "申込誘導",
+    "物件名"
+   ],
+   "next_steps": [
+    "Step1: 検討への謝意を伝え、エアコン確認済みのカーサピエント203の状態を整理して反応を待つ",
+    "Step2: 未履行のピックアップ約束（旭区・都島区・城東区・阿倍野区・今里方面）を果たす物件を準備する",
+    "Step3: 顧客から次の興味・内覧希望が出たら即AIXで対応"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "検討します・御見積書を送った後の検討（R 10/05 の形）"
+   },
+   "hesitancy_pattern": "thinking",
+   "turn_contract": {
+    "situation": "カーサピエント203の見積書・エアコン確認結果を送付済み。顧客は検討中と返答。新エリアのピックアップ約束が未履行。",
+    "background": "11/11に顧客が持ち込んだカーサピエント203の見積書を送付し、エアコンが全室備え付けと確認した。顧客は検討中と伝えてきた。その他、旭区・都島区・城東区・阿倍野区・今里方面の新着",
+    "asks": [
+     {
+      "quote": "確認していただきありがとうございます！",
+      "kind": "feeling",
+      "route": "none",
+      "answer": null,
+      "basis": "conversation",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": "カーサピエント 203",
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "検討します！",
+      "kind": "report",
+      "route": "none",
+      "answer": null,
+      "basis": "conversation",
+      "aix": null,
+      "about": "self",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": null,
+    "close_only": true,
+    "must_not": [
+     "内覧日時の提案",
+     "申込フォーマット送付",
+     "見積書の金額再提示"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "迷い",
+    "anxiety": null,
+    "hesitation": "費用で迷う",
+    "decideGap": {
+     "point": "初期費用",
+     "solve": "b",
+     "property": "カーサピエント 203",
+     "quote": "他のところで見積もりをだしてもらって、28万くらいやったんで"
+    }
+   },
+   "seven_read": {
+    "point": {
+     "what": "エアコン確認結果への御礼と「検討します」の一言",
+     "how": "受け止めを1行で",
+     "skipped": "新物件ピックアップの中身提示"
+    },
+    "bridge": {
+     "what": "次につなげたいのは未送付の旭区・都島区・城東区・阿倍野区・今里方面の新着ピックアップ",
+     "how": "宣言済みのピックアップを実行する姿勢を示す"
+    },
+    "lead": "answer_only",
+    "appeal": null,
+    "latent": {
+     "what": "カーサピエント203の初期費用が他社の28万より安いか不安に思っている",
+     "fact": "見積書は355,880円・他社28万より高額前提",
+     "how": "この点は既に見積書で提示済み。今は触れず、検討を見守る"
+    },
+    "point_how": [
+     "conclusion_first"
+    ],
+    "trust_how": [
+     "kept_promise"
+    ],
+    "push": {
+     "push": false,
+     "strength": null,
+     "reason": "検討中のため押さず待つ"
+    }
+   },
+   "latent_read": {
+    "trigger": {
+     "kind": "prev_send",
+     "text": "エアコン確認結果の連絡"
+    },
+    "part": {
+     "property": "カーサピエント 203",
+     "point": "設備"
+    },
+    "feeling": {
+     "what": "エアコンの確認が取れて安心している",
+     "strength": "mid"
+    },
+    "want": "カーサピエント203と並行して他のエリアの物件も比較検討したい",
+    "fact": "未履行のピックアップ約束がある",
+    "phrase": null,
+    "lead": null
+   }
+  }
+ },
+ {
+  "id": "q022",
+  "rep": 1,
+  "at": "2026-11-11T22:33:27.615Z",
+  "brain": {
+   "current_property": "カーサピエント 203号室",
+   "reply_mode": "auto_reply",
+   "reply_direction": "検討の意思を受け止め、未履行のピックアップ約束を果たして新たな候補物件を送る",
+   "key_topics": [
+    "旭区・都島区・城東区・阿倍野区・今里方面のピックアップ約束の履行"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "初期費用の再説明",
+    "内覧日時の候補",
+    "申込の催促"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: 旭区・都島区・城東区・阿倍野区・今里方面の条件でChrome拡張を使って物件を再検索する",
+    "Step2: AIXボタン『物件ピックアップした』を押す",
+    "Step3: 【AIX】物件ピックアップ紹介（後続）をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "検討します・御見積書を送った後の検討（R 10/05 の形）"
+   },
+   "hesitancy_pattern": "thinking",
+   "turn_contract": {
+    "situation": "カーサピエント203の見積とエアコン確認に対応し、お客様が検討中。未履行のピックアップ約束あり",
+    "background": "カーサピエント203号室の見積（初期費用355,880円）を送り、エアコン2台設置を確認して報告した直後。お客様は費用面で慎重に検討している。11/10に約束した旭区・都島区・城東",
+    "asks": [
+     {
+      "quote": "確認していただきありがとうございます！検討します！",
+      "kind": "feeling",
+      "route": "none",
+      "answer": null,
+      "basis": "conversation",
+      "aix": null,
+      "about": "other",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": null,
+    "close_only": false,
+    "must_not": [
+     "申込の催促",
+     "初期費用の再計算",
+     "内覧日程の提案"
+    ],
+    "proposals": [],
+    "feeling": null
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "迷い",
+    "anxiety": {
+     "target": "費用",
+     "direction": "後ろ向き"
+    },
+    "hesitation": "費用で迷う",
+    "decideGap": {
+     "point": "初期費用",
+     "solve": "b",
+     "property": "カーサピエント 203号室",
+     "quote": "28万くらいやったんですけどもっと安くなる可能性はありますか"
+    }
+   },
+   "seven_read": {
+    "point": {
+     "what": "検討の意思表示そのものと、未履行のピックアップ約束",
+     "how": "受け止めつつ、新たな候補を送る",
+     "skipped": "エアコン確認へのさらなる言及"
+    },
+    "bridge": {
+     "what": "約束したエリアの件",
+     "how": "ピックアップ物件を送付して検討材料を増やす"
+    },
+    "lead": "keep",
+    "appeal": null,
+    "latent": {
+     "what": "カーサピエント203の初期費用35.5万円が他社28万より高いため、費用を抑えられる別物件への関心がある",
+     "fact": "管理費込み10万以内・築5年以内・カウンターキッチンの条件",
+     "how": "初期費用を抑えられる物件を含めてピックアップする"
+    },
+    "point_how": [
+     "accept_first"
+    ],
+    "trust_how": [
+     "kept_promise"
+    ],
+    "push": {
+     "push": false,
+     "strength": null,
+     "reason": "お客様は検討中で、押すと離脱リスクが高い"
+    }
+   },
+   "latent_read": {
+    "trigger": {
+     "kind": "customer_words",
+     "text": "確認していただきありがとうございます！検討します！"
+    },
+    "part": {
+     "property": "カーサピエント 203号室",
+     "point": "初期費用"
+    },
+    "feeling": {
+     "what": "エアコンの件は解決してひと安心。ただ初期費用が他社より高いため、費用面で慎重に検討している",
+     "strength": "mid"
+    },
+    "want": "納得できる初期費用の物件を見つけて決めたい",
+    "fact": "カーサピエント203は初期費用355,880円。他社は28万。未履行のピックアップ約束あり",
+    "phrase": null,
+    "lead": null
+   }
+  }
+ },
+ {
+  "id": "q072",
+  "rep": 1,
+  "at": "2026-11-11T22:33:27.620Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "内覧希望を受け、11/26以降でご案内できることを伝え、お部屋が埋まる前に申込で抑えた状態での内覧を提案し、候補日をAIXで送る",
+   "key_topics": [
+    "内覧候補日を11/26以降で提示",
+    "申込でお部屋を抑えた状態での内覧提案",
+    "お部屋が埋まる不安への対応"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "初期費用の再説明",
+    "審査の再説明"
+   ],
+   "customer_questions": [
+    "今見てる物件埋まる可能性高いですかね"
+   ],
+   "next_steps": [
+    "Step1（今すぐ）: AIX【内覧調整】で11/26以降の候補日を提示し、お申込みでお部屋を抑えた状態での内覧を提案する",
+    "Step2: AIXボタンviewing_inviteを押す",
+    "Step3: 【AIX】内覧日調整をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）"
+   ],
+   "reply_opener": "かしこまりました",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "内覧の希望・すぐ来られない"
+   },
+   "customer_concern": {
+    "topic": "時期",
+    "object": "都合つくのが11月中以降の予定"
+   },
+   "turn_contract": {
+    "situation": "募集中の物件の見積書を送付済み。顧客は内覧希望だが11/26以降しか来られず、物件が埋まるか不安",
+    "background": "11/11深夜に顧客が送った4件のSUUMO物件の募集状況を確認し、募集中のビビアンパレス桜川公園707号室等の見積書を送付済み。顧客は内覧したいが11/26以降しか都合がつかず、",
+    "asks": [
+     {
+      "quote": "内覧したいんですが都合つくのが11月中以降の予定なんですが",
+      "kind": "request",
+      "route": "promise",
+      "answer": "内覧の候補日を11/26以降で提示し、申込でお部屋を抑えた状態での内覧を提案",
+      "basis": "judgement",
+      "aix": "viewing_invite",
+      "about": "viewing_day",
+      "property": null,
+      "when": "viewing_day",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "今見てる物件埋まる可能性高いですかね",
+      "kind": "question",
+      "route": "reply",
+      "answer": "人気エリアの募集中物件のため埋まる可能性は高く、申込でお部屋を抑えることを提案",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "vacancy",
+      "property": null,
+      "when": "now",
+      "whose": "other_applicant",
+      "polarity": null
+     }
+    ],
+    "lead_with": 1,
+    "close_only": false,
+    "must_not": [
+     "内覧の日時を本文で確定する",
+     "埋まらないと言い切る",
+     "謝罪する"
+    ],
+    "proposals": [
+     "お申込みでお部屋を抑えた状態でのご内覧"
+    ],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "内覧したい",
+    "anxiety": {
+     "target": "先に取られる",
+     "direction": "前向き"
+    },
+    "hesitation": null,
+    "decideGap": null
+   },
+   "seven_read": {
+    "point": {
+     "what": "内覧したいが11/26以降しか来られず、物件が埋まる不安",
+     "how": "申込で部屋を抑えた状態での内覧を提案して不安を解消",
+     "skipped": "具体的な物件名を特定しない"
+    },
+    "bridge": {
+     "what": "内覧の候補日を11/26以降で出す",
+     "how": "AIX【内覧調整】で候補日を提示"
+    },
+    "lead": "viewing",
+    "appeal": null,
+    "latent": {
+     "what": "気に入った物件が11/26まで埋まらないか心配",
+     "fact": "人気エリアの募集中物件は埋まる可能性が高い",
+     "how": "申込でお部屋を抑える提案をして不安を解消"
+    },
+    "point_how": [
+     "accept_first",
+     "reason_fact"
+    ],
+    "trust_how": [
+     "preempt",
+     "deadline",
+     "options"
+    ],
+    "push": {
+     "push": true,
+     "strength": "mid",
+     "reason": "内覧希望で物件が埋まる不安があるため、申込で抑える提案をする"
+    }
+   },
+   "latent_read": {
+    "trigger": {
+     "kind": "customer_words",
+     "text": "今見てる物件埋まる可能性高いですかね"
+    },
+    "part": {
+     "property": null,
+     "point": "空き・募集状況"
+    },
+    "feeling": {
+     "what": "気に入った物件が埋まってしまう前に内覧したいという焦り",
+     "strength": "strong"
+    },
+    "want": "内覧する前に物件が埋まらないように抑えておきたい",
+    "fact": "募集中の物件は埋まる可能性が高く、申込で抑えることが可能",
+    "phrase": null,
+    "lead": null
+   }
+  }
+ },
+ {
+  "id": "q072",
+  "rep": 3,
+  "at": "2026-11-11T22:33:27.622Z",
+  "brain": {
+   "current_property": "エステムプラザ難波WESTIIプレディア",
+   "reply_mode": "auto_reply",
+   "reply_direction": "内覧希望を受け止め、11月26日以降の候補日をAIXで提示し、空き状況を踏まえて申込で抑える選択肢も添えて内覧へ進める",
+   "key_topics": [
+    "11月26日以降の内覧候補日を提示",
+    "お申込みでお部屋を抑えた状態の内覧を提案"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "具体的な日時の本文記載",
+    "現時点で空室と断定",
+    "他物件の新規提案"
+   ],
+   "customer_questions": [
+    "今見てる物件が埋まる可能性は高いか",
+    "都合が11月以降でも内覧可能か"
+   ],
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "内覧の希望・すぐ来られない"
+   },
+   "hesitancy_pattern": "waiting",
+   "customer_concern": {
+    "topic": "時期",
+    "object": "今見てる物件埋まる可能性高いですかね"
+   },
+   "turn_contract": {
+    "situation": "11月26日以降しか内覧に来られないが、今見ている物件が募集中で埋まる可能性を心配している",
+    "background": "お客様はSUUMOで気に入った物件を送り、スタッフが募集状況を確認し募集中の物件と見積書を送付。エポス審査の可否も会話済みで、次に内覧希望を表明し、都合が11月26日以降にしかつか",
+    "asks": [
+     {
+      "quote": "内覧したいんですが都合つくのが11月中以降の予定なんですが、今見てる物件埋まる可",
+      "kind": "concern",
+      "route": "promise",
+      "answer": null,
+      "basis": "judgement",
+      "aix": "viewing_invite",
+      "about": "viewing_day",
+      "property": null,
+      "when": "future",
+      "whose": "customer",
+      "polarity": null
+     },
+     {
+      "quote": "今見てる物件埋まる可能性高いですかね",
+      "kind": "question",
+      "route": "reply",
+      "answer": "埋まる前に申込で抑える選択肢の提案を含めて答える",
+      "basis": "company_fact",
+      "aix": null,
+      "about": "vacancy",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": false,
+    "must_not": [
+     "具体的な日時の本文記載",
+     "空室の断定",
+     "他物件の新規提案"
+    ],
+    "proposals": [
+     "申込でお部屋を抑えた状態の内覧"
+    ],
+    "feeling": {
+     "kind": "anxious",
+     "acknowledge": true
+    }
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "先に取られる不安",
+    "anxiety": {
+     "target": "先に取られる",
+     "direction": "前向き"
+    },
+    "hesitation": "時期・入居日で迷う",
+    "decideGap": null
+   },
+   "seven_read": {
+    "point": {
+     "what": "内覧に行けるのが11月26日以降であることと、物件が埋まる可能性への不安",
+     "how": "内覧の候補日を出しつつ申込で抑える案を示して安心させる",
+     "skipped": "エポス審査の詳細"
+    },
+    "bridge": {
+     "what": "11月26日以降の内覧候補日を提示すること",
+     "how": "AIX内覧調整で実際の予定から候補日を送る"
+    },
+    "lead": "viewing",
+    "appeal": {
+     "property": "エステムプラザ難波WESTIIプレディア",
+     "point": "募集中であること・エポス審査",
+     "how": "埋まる前にお申込みで抑えられることを提案"
+    },
+    "latent": {
+     "what": "気に入った物件が内覧に行く前に埋まってしまうのではないかという不安",
+     "fact": "お客様は都合が11月26日以降しかつかない",
+     "how": "申込でお部屋を抑えた状態での内覧を提案する"
+    },
+    "point_how": [
+     "accept_first",
+     "name_property"
+    ],
+    "trust_how": [
+     "preempt",
+     "options"
+    ],
+    "push": {
+     "push": true,
+     "strength": "mid",
+     "reason": "気に入った物件を他に取られる不安があるため、先に抑える選択肢を示す"
+    }
+   },
+   "latent_read": {
+    "trigger": {
+     "kind": "customer_words",
+     "text": "内覧したいんですが都合つくのが11月中以降の予定なんですが、今見てる物件埋まる可能性高いですかね"
+    },
+    "part": {
+     "property": "エステムプラザ難波WESTIIプレディア",
+     "point": "内覧の日程"
+    },
+    "feeling": {
+     "what": "気に入った物件が内覧前に埋まるのではないかという不安",
+     "strength": "mid"
+    },
+    "want": "内覧前に物件が埋まってしまわないようにしたい",
+    "fact": "お客様は11月26日以降しか都合がつかない",
+    "phrase": null,
+    "lead": null
+   }
+  }
+ },
+ {
+  "id": "q022",
+  "rep": 2,
+  "at": "2026-11-11T22:34:35.548Z",
+  "brain": {
+   "reply_mode": "auto_reply",
+   "reply_direction": "確認結果への感謝を1行で受け取り、検討を見守る待ちの姿勢で締め、空室の今ご内覧頂ける旨の扉の1文を添える",
+   "key_topics": [
+    "新着物件をピックアップしてお送りする旨"
+   ],
+   "avoid_topics": [
+    "見積書",
+    "初期費用",
+    "内覧日の調整",
+    "申込誘導",
+    "エアコン確認の催促"
+   ],
+   "reply_opener": "はい",
+   "appeal_timing": {
+    "kind": "apply",
+    "level": "suggest",
+    "reason": "検討します・御見積書を送った後の検討（R 10/05 の形）"
+   },
+   "hesitancy_pattern": "thinking",
+   "turn_contract": {
+    "situation": "見積送付済み・エアコン確認済み・顧客は検討保留。未履行の物件ピックアップ約束あり",
+    "background": "カーサピエント203の見積送付後、管理会社にエアコン2台設置を確認し報告済み。顧客はお礼とともに「検討します」と保留した。直前に旭区・都島区・城東区・阿倍野区・今里方面のピックアッ",
+    "asks": [
+     {
+      "quote": "確認していただきありがとうございます！検討します！",
+      "kind": "feeling",
+      "route": "reply",
+      "answer": "お礼を受け止め、検討を見守る。新着物件のピックアップを約束どおり続ける旨を軽く添",
+      "basis": "conversation",
+      "aix": null,
+      "about": "reaction_to_sent",
+      "property": null,
+      "when": "now",
+      "whose": "customer",
+      "polarity": null
+     }
+    ],
+    "lead_with": 0,
+    "close_only": true,
+    "must_not": [],
+    "proposals": [],
+    "feeling": {
+     "kind": "positive",
+     "acknowledge": true
+    },
+    "ack_form": "receive_only"
+   },
+   "conductor_roles": "cp,wr,ck",
+   "customer_mindset": {
+    "state": "迷い",
+    "anxiety": null,
+    "hesitation": null,
+    "decideGap": null
+   },
+   "seven_read": {
+    "point": {
+     "what": "エアコン確認へのお礼と「検討します」の保留",
+     "how": "お礼を受け止め、検討を見守る",
+     "skipped": "内覧や申込の具体的な誘導はしない"
+    },
+    "bridge": null,
+    "lead": "keep",
+    "appeal": null,
+    "latent": null,
+    "point_how": [
+     "accept_first"
+    ],
+    "trust_how": [
+     "kept_promise",
+     "support"
+    ],
+    "push": {
+     "push": false,
+     "strength": null,
+     "reason": "お礼のみで検討保留のため押さない"
+    }
+   },
+   "latent_read": {
+    "trigger": {
+     "kind": "prev_send",
+     "text": "エアコン確認完了の報告"
+    },
+    "part": {
+     "property": "カーサピエント 203号室",
+     "point": "設備確認"
+    },
+    "feeling": {
+     "what": "確認してもらえて安心した。今は検討したい",
+     "strength": "mid"
+    },
+    "want": "じっくり物件を比較検討したい",
+    "fact": null,
+    "phrase": null,
+    "lead": null
+   }
+  }
+ }
+]

@@ -52,3 +52,17 @@ export function examShiftDays(o: { diffDays: number; texts: string[]; noDateShif
   if (String(o.mode ?? "").trim().toLowerCase() === "week") return { days: week, exact: false };
   return o.texts.some((t) => WEEKDAY_DEP_RE.test(t ?? "")) ? { days: week, exact: false } : { days: o.diffDays, exact: true };
 }
+
+/**
+ * 台帳の行の文の欄の日付をずらす（純関数・2026-11-13 作業員8b・統括役の了承）。試験の時計は会話・正解・条件の日付はずらすが、
+ *   台帳の文（約束・内覧の候補などの本文の「10/24(土)」）はずらしていなかった＝q406 で会話は 11/14(土)・台帳は 10/24 のまま食い違って外れた
+ *   （台帳の文に M/D がある問題 154/317・会話に曜日の言い方もある 54）。時刻・日付の列（skip）と id はそのまま。jsonb の中の文字も同じく。
+ *   止める: 既定 off・EXAM_SHIFT_LEDGER_TEXT=on で入れる（brain-exam の insertLedger）
+ */
+export function shiftRowTexts<T>(v: T, skip: ReadonlySet<string>, shift: (s: string) => string, key = ""): T {
+  if (typeof v === "string") return (skip.has(key) || /(^|_)id$/.test(key) || /^\d{4}-\d{2}-\d{2}/.test(v) ? v : shift(v)) as T;
+  if (Array.isArray(v)) return v.map((x) => shiftRowTexts(x, skip, shift, key)) as T;
+  if (v && typeof v === "object") { const o: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = key === "" && skip.has(k) ? x : shiftRowTexts(x, skip, shift, key === "" ? k : key); return o as T; }
+  return v;
+}
+export const shiftLedgerTextOn = (env: Record<string, string | undefined> = process.env): boolean => String(env.EXAM_SHIFT_LEDGER_TEXT ?? "").trim().toLowerCase() === "on";

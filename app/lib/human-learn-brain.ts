@@ -44,6 +44,8 @@ export type MotionRow = {
   site?: string | null;
   mode?: string | null;
   ext_version?: string | null;
+  /** ★ 2026-11-15: 端末（PC）の識別（どのPCが学習に参加しているかを数える・先頭8文字だけ使う） */
+  install_id?: string | null;
   ops?: number | null;
   moves_n?: number | null;
   move_speed_px_s?: number | null;
@@ -230,6 +232,13 @@ export type HumanLearnBundle = {
   }>;
   /** どのモードの記録が何件あったか（順位づけの材料） */
   mode_counts?: Record<string, number>;
+  /**
+   * ★ 2026-11-15 竹内さん「ほかのPCでやってもちゃんと学習されるようになっているか」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   **端末ごとの記録数**（多い順・最大8台・IDは先頭8文字だけ）。⚠ 1台だけなら `single_device: true`。
+   */
+  device_count?: number;
+  devices?: Array<{ device: string; n: number; with_ops: number }>;
+  single_device?: boolean;
   /**
    * 2026-11-14 竹内さん「画面録画したのみたら一連の動き学習できるからいまみてみて」:
    *   録画から作った**一連の動きの型**（押す順番を1本の鎖にした物・意味のあるまとまり）。
@@ -1263,6 +1272,30 @@ export function buildHumanLearnBundle(
     if (!modeBuckets.has(m)) modeBuckets.set(m, []);
     modeBuckets.get(m)!.push(r);
   }
+  /**
+   * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」（main 側の決定を取り込み・2026-11-19 統合）:
+   *   ⚠ **実測**: 全6,027件の記録のうち、**端末は1台だけ**（他のPCの記録が0件＝「ほかのPCでも学べているか」を確かめられない状態）。
+   *   ⚠ 統括は `install_id` を**一度も読んでいなかった**ので、「1台しか記録が無い」事自体を言えなかった。
+   *   → **端末ごとの記録数と、操作が付いている数**を材料に入れる。
+   *     ・`device_count` … 何台のPCから記録が来ているか
+   *     ・`devices` … 端末ごと（多い順・最大8台・IDは先頭8文字だけ）
+   *     ・`single_device` … 1台だけか（＝他のPCが学習に参加していない）
+   */
+  const devBuckets = new Map<string, { n: number; withOps: number }>();
+  for (const r of list) {
+    const id = String(r.install_id ?? "").trim().slice(0, 8) || "(不明)";
+    if (!devBuckets.has(id)) devBuckets.set(id, { n: 0, withOps: 0 });
+    const d = devBuckets.get(id)!;
+    d.n++;
+    if (Number(r.ops) > 0) d.withOps++;
+  }
+  const devices = [...devBuckets.entries()]
+    .map(([device, v]) => ({ device, n: v.n, with_ops: v.withOps }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 8);
+  const device_count = devBuckets.size;
+  /** 1台だけ（他のPCの記録が無い） */
+  const single_device = device_count <= 1;
   const by_mode: NonNullable<HumanLearnBundle["by_mode"]> = {};
   const mode_counts: Record<string, number> = {};
   for (const [m, sub] of modeBuckets) {
@@ -1589,6 +1622,10 @@ export function buildHumanLearnBundle(
     gap_ms: median(gapSamples),
     weak,
     mode_counts,
+    /** ★ 2026-11-15: 端末ごとの記録数（多い順・最大8台）。⚠ 1台だけなら `single_device: true`。 */
+    device_count,
+    devices,
+    single_device,
     site_counts: (() => {
       const sc: Record<string, number> = {};
       for (const r of list) {
@@ -2018,6 +2055,29 @@ export function buildHumanLearnBundle(
       gap_ms: median(sGaps),
       weak: sWeak,
       mode_counts: sModeCounts,
+      /** ★ 2026-11-15: サイト別にも端末を渡す（サイトごとに別のPCが使われている事がある） */
+      device_count: (() => {
+        const set = new Set<string>();
+        for (const r of sub) set.add(String((r as unknown as Record<string, unknown>).install_id ?? "").trim().slice(0, 8) || "(不明)");
+        return set.size;
+      })(),
+      devices: (() => {
+        const dm = new Map<string, { n: number; withOps: number }>();
+        for (const r of sub) {
+          const x = r as unknown as Record<string, unknown>;
+          const id = String(x.install_id ?? "").trim().slice(0, 8) || "(不明)";
+          if (!dm.has(id)) dm.set(id, { n: 0, withOps: 0 });
+          const d = dm.get(id)!;
+          d.n++;
+          if (Number(x.ops) > 0) d.withOps++;
+        }
+        return [...dm.entries()].map(([device, v]) => ({ device, n: v.n, with_ops: v.withOps })).sort((a, b) => b.n - a.n).slice(0, 8);
+      })(),
+      single_device: (() => {
+        const set = new Set<string>();
+        for (const r of sub) set.add(String((r as unknown as Record<string, unknown>).install_id ?? "").trim().slice(0, 8) || "(不明)");
+        return set.size <= 1;
+      })(),
       site_counts: { [siteName]: sub.length },
       with_ops: sub.filter((r) => {
         const x = r as unknown as Record<string, unknown>;
@@ -2313,6 +2373,14 @@ export function buildHumanLearnBundle(
       ? { stopped_scene: sceneMeta.stopped_scene }
       : {}),
     supervisor,
+    /**
+     * ★ 2026-11-15 竹内さん「この拡張ツール使ってほかのPCでやってもちゃんと学習されるようになっているか」:
+     *   **端末ごとの記録**を束に出す（統括が「1台しか無い＝他のPCが参加していない」と言えるように）。
+     *   ⚠ 端末のIDは先頭8文字だけ（長いIDは読めない）。
+     */
+    device_count,
+    devices,
+    single_device,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
     ...(shotGapsAll ? { shot_gaps: shotGapsAll } : {}),
     ...(shotGapsNormalAll ? { shot_gaps_normal: shotGapsNormalAll } : {}),
@@ -2408,6 +2476,28 @@ export async function saveSupervisorForBundle(
       rows: Number(bundle.source?.rows) || 0,
       bundle_at: bundle.generated_at,
     };
+    /**
+     * ★ 2026-11-15 竹内さん「学習も弱い部分を見つけて強化できるようにするために」（main 側の決定を取り込み・2026-11-19 統合）:
+     *   保存する**前に**、この束の弱い所の一覧を `meeting.weak_list` に入れておく
+     *   （`SupervisorAdvice` には `weak` が無い・入力にしか無いため、ここで橋渡しする）。
+     *   → 次回の統括が「前回あって今回無い＝直った」を比べられる。
+     *   ⚠ `kind` と `name` だけ・最大40件（大きさを抑える）。
+     */
+    try {
+      const wl = Array.isArray((bundle as unknown as { weak?: unknown }).weak)
+        ? ((bundle as unknown as { weak: Array<{ kind?: unknown; name?: unknown }> }).weak) : null;
+      if (wl && Array.isArray(wl)) {
+        const svAny = sv as unknown as { meeting?: Record<string, unknown> | null };
+        const base0 = (svAny.meeting && typeof svAny.meeting === "object") ? svAny.meeting : {};
+        svAny.meeting = {
+          ...base0,
+          weak_list: wl
+            .filter((x) => x && x.name)
+            .map((x) => ({ kind: String(x.kind ?? "").slice(0, 30), name: String(x.name ?? "").slice(0, 40) }))
+            .slice(0, 40),
+        };
+      }
+    } catch (_) {}
     out.all = await saveSupervisorLog("all", sv, base);
     const per = (bundle.supervisor_by_site || {}) as Record<string, typeof sv>;
     for (const [sn, one] of Object.entries(per)) {

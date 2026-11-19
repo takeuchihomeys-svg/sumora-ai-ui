@@ -5,6 +5,7 @@
 //   優先順: ①既にお客様が引用した画像（今まさに文を作る場面） ②直近に送った画像（これから引用される）
 //
 // 実行: npx tsx --env-file=.env.local scripts/backfill-image-details.ts [--days=5] [--limit=60] [--conc=5]
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImageDetail } from "../app/lib/property-image-read";
 

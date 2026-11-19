@@ -1,6 +1,7 @@
 // 返信を2〜3通に分ける下書き（2026-11-07 作業員9・REPLY_SPLIT_WRITER）
 // 実行: npx tsx app/lib/__tests__/reply-split.test.ts
-import { splitReplyDraft, joinReplyDraft, replySplitWriterNote, replyCountOf, mapReplyParts, replySplitWriterOn } from "../reply-split";
+import { splitReplyDraft, joinReplyDraft, replySplitWriterNote, replyCountOf, mapReplyParts, replySplitWriterOn, replySplitSelfNote, replySplitSelfOn } from "../reply-split";
+import { readFileSync } from "node:fs";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
 const ON = { REPLY_SPLIT_WRITER: "on" };
@@ -22,5 +23,10 @@ t("「----」や前後の空白も印", splitReplyDraft("A\n  ----  \nB").length
 t("つなぎ直し", joinReplyDraft(["A", " B "]) === "A\n---\nB");
 t("通ごとに当てる", mapReplyParts(draft, (p, i) => i === 0 ? p : p.toUpperCase()).split("\n---\n").length === 2);
 t("1通なら丸ごと当てる", mapReplyParts("abc", (p) => p + "!") === "abc!");
+// 11/12 書き手が自分で分ける（REPLY_SPLIT_WRITER_SELF・作業員7）
+t("自分で分ける: 既定 off", !replySplitSelfOn({}) && replySplitSelfNote(1, {}) === null);
+t("自分で分ける: on で1行（分ける2つと実物）", ["基本は返信1通", "別の時", "次の一歩", "---", "オンライン内見"].every((w) => (replySplitSelfNote(1, { REPLY_SPLIT_WRITER_SELF: "on" }) ?? "").includes(w)));
+t("ブレインが2通と決めた番は出さない", replySplitSelfNote(2, { REPLY_SPLIT_WRITER_SELF: "on" }) === null);
+t("route に配線", readFileSync("app/api/generate-reply/route.ts", "utf8").includes("const splitSelfLine = replySplitSelfNote(splitCount);"));
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

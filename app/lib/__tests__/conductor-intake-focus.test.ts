@@ -7,13 +7,15 @@ function ok(v: unknown, label = "") { if (!v) throw new Error(`${label} expected
 const m = [{ brain: "judge", short: "返信か AIX か" }];
 
 it("CONDUCTOR_FOCUS=off: 先頭の文は重点なし・版は ci-v1／ci-v3 のまま（既定は shadow）", () => {
-  ok(intakePrefixVersion({ CONDUCTOR_FOCUS: "off" }) === "ci-v1"); ok(intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_FOCUS: "off" }) === "ci-v3"); ok(intakePrefixVersion({}) === "ci-v1+f1");
+  ok(intakePrefixVersion({ CONDUCTOR_FOCUS: "off" }) === "ci-v1"); ok(intakePrefixVersion({ CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_FOCUS: "off" }) === "ci-v3"); ok(intakePrefixVersion({ CONDUCTOR_TOPIC_STATE: "off" }) === "ci-v1+f1s1"); ok(intakePrefixVersion({ CONDUCTOR_FOCUS_SUB: "off", CONDUCTOR_TOPIC_STATE: "off" }) === "ci-v1+f1");
+  // 11/15 CONDUCTOR_TOPIC_STATE 既定 on（話題の状態の段＝版に t1）
+  ok(intakePrefixVersion({}) === "ci-v1+f1s1t1");
   ok(!intakePrefix(m, { CONDUCTOR_FOCUS: "off" }).includes(FOCUS_INTAKE_RULES)); ok(!intakePrefix(m, { CONDUCTOR_FOCUS: "off" }).includes("focus_read"));
 });
 it("CONDUCTOR_FOCUS=shadow: 先頭に重点の段・書き方に focus_read・版に +f1（ci-v3 の上にも重なる）", () => {
-  const env = { CONDUCTOR_FOCUS: "shadow", CONDUCTOR_INTAKE_CUES: "v3" };
+  const env = { CONDUCTOR_FOCUS: "shadow", CONDUCTOR_INTAKE_CUES: "v3", CONDUCTOR_TOPIC_STATE: "off" }; // 11/15 話題の状態（既定 on）は別の版の印 t1 なので外して見る
   const p = intakePrefix(m, env);
-  ok(p.includes(FOCUS_INTAKE_RULES)); ok(p.includes("focus_read")); ok(intakePrefixVersion(env) === "ci-v3+f1"); ok(p.includes("AIX の番になる合図"));
+  ok(p.includes(FOCUS_INTAKE_RULES)); ok(p.includes("focus_read")); ok(intakePrefixVersion(env) === "ci-v3+f1s1"); ok(intakePrefixVersion({ ...env, CONDUCTOR_FOCUS_SUB: "off" }) === "ci-v3+f1"); ok(p.includes("AIX の番になる合図"));
 });
 it("後ろに近い番の重点の1行（渡した時だけ）", () => {
   const base = { customerTurn: "ありがとうございます", lastStaff: null, ledgerBlock: "", carryLine: "", ruleMeta: "" };

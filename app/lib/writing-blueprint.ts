@@ -17,6 +17,7 @@
 // ⚠ 場面は reply-scene の9場面（ReplyScene）＋申込までの地図の分かれ道の名前（文字列。地図が無い時は無視）で引く。
 
 import type { ReplyScene } from "./reply-scene";
+import { promiseReadUnifiedOn, isPromiseSentence } from "./promise-read";
 
 // ─── 段（パーツ）────────────────────────────────────────────────
 export type BlueprintPart =
@@ -73,10 +74,13 @@ export function classifySentence(s: string): BlueprintPart {
   if (GREETING_RE.test(t) && t.replace(GREETING_RE, "").replace(/[\s!！。、]/g, "").length <= 14) return "greeting";
   if (CLOSING_RE.test(t)) return "closing";
   if (ACK_RE.test(t) && t.replace(ACK_RE, "").replace(/[\s!！。、😊😌]/g, "").length <= 2) return "ack";
-  if (THANKS_RE.test(t) && t.length <= 40 && !PROMISE_RE.test(t)) return "thanks";
+  // 2026-11-12 作業員4: 約束の判定を promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は今の網）
+  const isPromise = (x: string) => (promiseReadUnifiedOn() ? isPromiseSentence(x) : PROMISE_RE.test(x));
+  if (THANKS_RE.test(t) && t.length <= 40 && !isPromise(t)) return "thanks";
   if (SUPPORT_RE.test(t)) return "support";
   if (INVITE_RE.test(t)) return "invite";
-  if (PROMISE_RE.test(t) && !PAST_DONE_RE.test(t)) return "promise";
+  // 統一の読み（promise-tracker の promiseSentences）は済んだ報告を自分で外す。PAST_DONE_RE は「お送り頂きました物件の…確認させて頂きます」の約束まで外していた
+  if (isPromise(t) && (promiseReadUnifiedOn() || !PAST_DONE_RE.test(t))) return "promise";
   if (GREETING_RE.test(t)) return "greeting";
   return "answer";
 }

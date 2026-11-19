@@ -1,0 +1,3510 @@
+{
+ "at": "2026-11-12T06:29:14.718Z",
+ "n": 53,
+ "noBrain": 0,
+ "now": {
+  "主の役目": {
+   "goldHas": 53,
+   "hit": 16,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "役目の組み合わせ": {
+   "goldHas": 52,
+   "hit": 3,
+   "extra": 0,
+   "bothEmpty": 1
+  },
+  "主→従の順": {
+   "goldHas": 53,
+   "hit": 16,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "何の物件": {
+   "goldHas": 10,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 43
+  },
+  "何の事": {
+   "goldHas": 53,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "どの部分": {
+   "goldHas": 39,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 14
+  },
+  "誘導先": {
+   "goldHas": 48,
+   "hit": 5,
+   "extra": 0,
+   "bothEmpty": 5
+  },
+  "次へのつなぎ": {
+   "goldHas": 38,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 15
+  },
+  "訴求": {
+   "goldHas": 11,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 42
+  },
+  "潜在意識のカバー": {
+   "goldHas": 22,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 31
+  },
+  "要点の押さえ方": {
+   "goldHas": 53,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "信頼の作り方": {
+   "goldHas": 47,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 6
+  }
+ },
+ "new": {
+  "主の役目": {
+   "goldHas": 53,
+   "hit": 33,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "役目の組み合わせ": {
+   "goldHas": 52,
+   "hit": 11,
+   "extra": 0,
+   "bothEmpty": 1
+  },
+  "主→従の順": {
+   "goldHas": 53,
+   "hit": 36,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "何の物件": {
+   "goldHas": 10,
+   "hit": 8,
+   "extra": 26,
+   "bothEmpty": 17
+  },
+  "何の事": {
+   "goldHas": 53,
+   "hit": 39,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "どの部分": {
+   "goldHas": 39,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 14
+  },
+  "誘導先": {
+   "goldHas": 48,
+   "hit": 27,
+   "extra": 4,
+   "bothEmpty": 1
+  },
+  "次へのつなぎ": {
+   "goldHas": 38,
+   "hit": 18,
+   "extra": 4,
+   "bothEmpty": 11
+  },
+  "訴求": {
+   "goldHas": 11,
+   "hit": 0,
+   "extra": 0,
+   "bothEmpty": 42
+  },
+  "潜在意識のカバー": {
+   "goldHas": 22,
+   "hit": 6,
+   "extra": 2,
+   "bothEmpty": 29
+  },
+  "要点の押さえ方": {
+   "goldHas": 53,
+   "hit": 32,
+   "extra": 0,
+   "bothEmpty": 0
+  },
+  "信頼の作り方": {
+   "goldHas": 47,
+   "hit": 29,
+   "extra": 6,
+   "bothEmpty": 0
+  }
+ },
+ "coverage": {
+  "何の物件": {
+   "got": 35,
+   "inPlan": 27
+  },
+  "何の事": {
+   "got": 52,
+   "inPlan": 41
+  },
+  "どの部分": {
+   "got": 0,
+   "inPlan": 0
+  },
+  "今の状況": {
+   "got": 52,
+   "inPlan": 0
+  },
+  "要点": {
+   "got": 0,
+   "inPlan": 0
+  },
+  "最善（道）": {
+   "got": 49,
+   "inPlan": 49
+  },
+  "主": {
+   "got": 52,
+   "inPlan": 42
+  },
+  "従": {
+   "got": 13,
+   "inPlan": 6
+  },
+  "押さえた要点": {
+   "got": 0,
+   "inPlan": 0
+  },
+  "次へのつなぎ": {
+   "got": 0,
+   "inPlan": 0
+  },
+  "誘導先": {
+   "got": 47,
+   "inPlan": 46
+  },
+  "訴求": {
+   "got": 0,
+   "inPlan": 0
+  },
+  "潜在意識のカバー": {
+   "got": 9,
+   "inPlan": 9
+  },
+  "要点の押さえ方": {
+   "got": 53,
+   "inPlan": 42
+  },
+  "信頼の作り方": {
+   "got": 53,
+   "inPlan": 42
+  }
+ },
+ "per": [
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q022",
+   "brainFrom": "compose-1105\\scripts\\brain-exam\\results\\main-44d4b15-a8d2fed623.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "uke",
+     "apply",
+     "keep"
+    ],
+    "lead": "apply",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "worry",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": "カーサピエント 203号室",
+    "about": "reaction_to_sent",
+    "latent": "費用"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "extra",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q023",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcm6ib1.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "keep",
+     "trust"
+    ],
+    "lead": "keep",
+    "latent": "事情の変化"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer"
+    ],
+    "lead": null,
+    "property": "S-RESIDENCE難波大国町domina 207号室",
+    "about": "other",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q025",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcm6ib1.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "worry",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "グランパシフィック難波元町 5C",
+    "about": "reaction_to_sent",
+    "latent": "費用"
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "extra",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "(型の外)",
+   "seven": false,
+   "latent4": false,
+   "id": "q041",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmfxwd.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "trust",
+     "keep"
+    ],
+    "lead": "apply",
+    "latent": "入居日・時期"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "Luxe難波WEST 403号室",
+    "about": "viewing_day",
+    "latent": "入居日・時期"
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "(型の外)",
+   "seven": false,
+   "latent4": false,
+   "id": "q055",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmpjxe.jsonl",
+   "gold": {
+    "main": "viewing",
+    "roles": [
+     "uke",
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "viewing",
+    "roles": [
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "アーバネックス堺筋本町 501号室",
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q057",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmpjxe.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "apply"
+    ],
+    "lead": "apply",
+    "latent": "先に取られる"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "BLANCOSTA SQUARE 204号室",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q063",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-44d4b15-a8d2fed623-rmwcoqjso.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "greet",
+     "answer",
+     "answer"
+    ],
+    "lead": "answer_only",
+    "latent": "住み心地・周り"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "CRESTTAPP野田 204号室",
+    "about": "property_equipment",
+    "latent": "住み心地・周り"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q064",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-ac67c24-8381e072a8-rmwd28oyf.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "latent": "住み心地・周り"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "CRESTTAPP野田 204",
+    "about": "property_equipment",
+    "latent": "住み心地・周り"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "miss",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q065",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-7f1b91d-8381e072a8-rmwcg3yj4.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "trust"
+    ],
+    "lead": "answer_only",
+    "latent": "入居日・時期"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": null,
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "extra",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q069",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb2zi06.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "greet",
+     "uke",
+     "answer",
+     "answer",
+     "ask_send",
+     "ask_send"
+    ],
+    "lead": "ask_send",
+    "latent": "対応・信頼"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [],
+    "lead": null,
+    "property": null,
+    "about": "vacancy",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q072",
+   "brainFrom": "compose-1105\\scripts\\brain-exam\\results\\main-44d4b15-a8d2fed623.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "greet",
+     "answer",
+     "apply",
+     "apply",
+     "viewing"
+    ],
+    "lead": "apply",
+    "latent": "先に取られる"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "worry",
+     "promise",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": null,
+    "about": "viewing_day",
+    "latent": "先に取られる"
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "miss",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q073",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3a2ss.jsonl",
+   "gold": {
+    "main": "viewing",
+    "roles": [
+     "uke",
+     "viewing",
+     "barrier",
+     "keep"
+    ],
+    "lead": "viewing",
+    "latent": "費用"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [],
+    "lead": null,
+    "property": null,
+    "about": null,
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q078",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3a2ss.jsonl",
+   "gold": {
+    "main": "ask_send",
+    "roles": [
+     "uke",
+     "uke",
+     "ask_send",
+     "estimate",
+     "close"
+    ],
+    "lead": "ask_send",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "answer",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": null,
+    "about": "self",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q109",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3r2bm.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "uke",
+     "viewing",
+     "keep"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "デザイナーズ8マンション 302",
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q145",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-d8a3e61-a8d2fed623-rmwd0usy9.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "apply",
+     "close"
+    ],
+    "lead": "apply",
+    "latent": "先に取られる"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer"
+    ],
+    "lead": "answer_only",
+    "property": "エスリード中之島クロスゲート 302号室",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q160",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9dm093.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "answer",
+     "answer"
+    ],
+    "lead": "answer_only",
+    "latent": "費用"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "LIVIAZ NAMBA KRASS 1201号室",
+    "about": "property_cost",
+    "latent": "費用"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q166",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9dm093.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "apply",
+     "viewing",
+     "viewing"
+    ],
+    "lead": "apply",
+    "latent": "対応・信頼"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "アーバネックス難波WEST 903号室",
+    "about": "company",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "(型の外)",
+   "seven": false,
+   "latent4": false,
+   "id": "q173",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9dm093.jsonl",
+   "gold": {
+    "main": "trust",
+    "roles": [
+     "greet",
+     "uke",
+     "trust",
+     "trust",
+     "ask_send"
+    ],
+    "lead": "ask_send",
+    "latent": "事情の変化"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "keep"
+    ],
+    "lead": "keep",
+    "property": "ブランシュール 2階",
+    "about": "self",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "(型の外)",
+   "seven": false,
+   "latent4": false,
+   "id": "q200",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9ekwnf.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "uke",
+     "worry",
+     "keep",
+     "keep"
+    ],
+    "lead": "keep",
+    "latent": "入居日・時期"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "self",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q206",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-44d4b15-a8d2fed623-rmwcoqjso.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "keep",
+     "keep",
+     "trust",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": "物件が見つからない"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": "セレニテ天満橋アリア 1104号室",
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T1_conditions_first",
+   "seven": false,
+   "latent4": false,
+   "id": "q207",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9f1bxr.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "trust"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T4_property_shared",
+   "seven": false,
+   "latent4": false,
+   "id": "q208",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9f1bxr.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "uke",
+     "promise",
+     "promise"
+    ],
+    "lead": "none",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "ロイヤルミナミ",
+    "about": "vacancy",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "extra",
+    "次へのつなぎ": "extra",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T1_conditions_first",
+   "seven": false,
+   "latent4": false,
+   "id": "q214",
+   "brainFrom": "compose-1105\\scripts\\brain-exam\\results\\main-48fb22e-a8d2fed623.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "trust"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q326",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9f1bxr.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "answer",
+     "answer"
+    ],
+    "lead": "answer_only",
+    "latent": "費用"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "フジパレス式内町I番館 103号室",
+    "about": "property_cost",
+    "latent": "費用"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "hit",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q024",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcm6ib1.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "keep",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q051",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmfxwd.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "close"
+    ],
+    "lead": "none",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ],
+    "lead": null,
+    "property": "ウェルスクエア池田井口堂 308号室",
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "both_empty",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "both_empty",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q110",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3r2bm.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q112",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3r2bm.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q172",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9dm093.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "keep",
+     "keep"
+    ],
+    "lead": "keep",
+    "latent": "物件が見つからない"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T5_ack_hypothesis",
+   "seven": false,
+   "latent4": false,
+   "id": "q213",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9f1bxr.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T3_question_staff_only",
+   "seven": false,
+   "latent4": false,
+   "id": "q149",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9d6b4f.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "greet",
+     "promise",
+     "promise"
+    ],
+    "lead": "none",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ],
+    "lead": "answer_only",
+    "property": "ライオンズマンション千代田柳風台 103",
+    "about": "property_equipment",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "extra",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T3_question_staff_only",
+   "seven": false,
+   "latent4": false,
+   "id": "q150",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9d6b4f.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "greet",
+     "promise",
+     "promise"
+    ],
+    "lead": "none",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ],
+    "lead": "answer_only",
+    "property": "サンライト阿倍野8 202号室",
+    "about": "property_equipment",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "extra",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T2_question_fact",
+   "seven": false,
+   "latent4": false,
+   "id": "q197",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9ekwnf.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "greet",
+     "uke",
+     "uke",
+     "keep",
+     "promise",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep",
+     "promise",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T9_apply_signal",
+   "seven": false,
+   "latent4": false,
+   "id": "q106",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-912fb54-8381e072a8-rmwbejfvw.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "answer",
+     "answer",
+     "answer"
+    ],
+    "lead": "apply",
+    "latent": "審査"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer"
+    ],
+    "lead": "answer_only",
+    "property": "コンフォリア・リヴ博労町一丁目Q 406号室",
+    "about": "procedure",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T9_apply_signal",
+   "seven": false,
+   "latent4": false,
+   "id": "q130",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-c8cd0b2-8381e072a8-rmwb1r06y.jsonl",
+   "gold": {
+    "main": "apply",
+    "roles": [
+     "uke",
+     "apply"
+    ],
+    "lead": "apply",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "answer"
+    ],
+    "lead": null,
+    "property": "スプランディッド大阪EAST 608号室",
+    "about": "procedure",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T9_apply_signal",
+   "seven": false,
+   "latent4": false,
+   "id": "q175",
+   "brainFrom": "compose-1105\\scripts\\brain-exam\\results\\main-cab2f0f-a8d2fed623.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "viewing",
+     "trust"
+    ],
+    "lead": "viewing",
+    "latent": "対応・信頼"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "スプランディッド難波SOUTH 406号室",
+    "about": "other_party",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T4_property_shared",
+   "seven": false,
+   "latent4": false,
+   "id": "q013",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwclvhtd.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "greet",
+     "promise",
+     "promise"
+    ],
+    "lead": "none",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "https://www.eheya.net/detail/30000049201",
+    "about": "vacancy",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "extra",
+    "次へのつなぎ": "extra",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "both_empty",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T4_property_shared",
+   "seven": false,
+   "latent4": false,
+   "id": "q120",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9csfgz.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "uke",
+     "promise",
+     "promise",
+     "close"
+    ],
+    "lead": "estimate",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "エステムコート難波サウスプレイスVIIIハイド（1階部分）",
+    "about": "property_cost",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "extra",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T4_property_shared",
+   "seven": false,
+   "latent4": false,
+   "id": "q133",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9csfgz.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "uke",
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": "ウェルスクエア池田井口堂308号室",
+    "about": "property_cost",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "hit",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "miss",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T4_property_shared",
+   "seven": false,
+   "latent4": false,
+   "id": "q151",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-ac67c24-118f718528-rmwc0uqx5.jsonl",
+   "gold": {
+    "main": "promise",
+    "roles": [
+     "greet",
+     "uke",
+     "promise",
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "小若江 貸家",
+    "about": "property_equipment",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T1_conditions_first",
+   "seven": false,
+   "latent4": false,
+   "id": "q001",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwclvhtd.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "trust",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": "物件が見つからない"
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T1_conditions_first",
+   "seven": false,
+   "latent4": false,
+   "id": "q004",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwclvhtd.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "trust",
+     "close"
+    ],
+    "lead": "keep",
+    "latent": "費用"
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T1_conditions_first",
+   "seven": false,
+   "latent4": false,
+   "id": "q009",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwclvhtd.jsonl",
+   "gold": {
+    "main": "keep",
+    "roles": [
+     "uke",
+     "keep",
+     "trust"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "keep"
+    ]
+   },
+   "new": {
+    "main": "keep",
+    "roles": [
+     "keep"
+    ],
+    "lead": "keep",
+    "property": null,
+    "about": "search_condition",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q029",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcm6ib1.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "apply"
+    ],
+    "lead": "apply",
+    "property": "プレジオ本町 1005号室",
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q114",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-c8cd0b2-8381e072a8-rmwbeu4jn.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "greet",
+     "uke",
+     "uke",
+     "ask_send",
+     "promise",
+     "close"
+    ],
+    "lead": "ask_send",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [],
+    "lead": null,
+    "property": "エストレーラ 305号室",
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T6_considering",
+   "seven": false,
+   "latent4": false,
+   "id": "q144",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-96491c3-8381e072a8-rmw9d6b4f.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "keep"
+    ],
+    "lead": "keep",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": null,
+    "about": "reaction_to_sent",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q049",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmfxwd.jsonl",
+   "gold": {
+    "main": "viewing",
+    "roles": [
+     "uke",
+     "viewing",
+     "close"
+    ],
+    "lead": "viewing",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "viewing"
+    ],
+    "lead": "viewing",
+    "property": "Quintet NAMBA 815",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q068",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb2zi06.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer"
+    ],
+    "lead": "answer_only",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer"
+    ],
+    "lead": "answer_only",
+    "property": "フォーリアライズ本町レクス 301号室",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T7_viewing",
+   "seven": false,
+   "latent4": false,
+   "id": "q141",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-8d6cdc2-a8d2fed623-rmwcdjhir.jsonl",
+   "gold": {
+    "main": "uke",
+    "roles": [
+     "uke",
+     "ask_send",
+     "close"
+    ],
+    "lead": "ask_send",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer"
+    ],
+    "lead": "answer_only",
+    "property": "プレジオ難波EURO 402号室",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "extra"
+   },
+   "hitNow": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "both_empty",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "both_empty"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q014",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwclvhtd.jsonl",
+   "gold": {
+    "main": "estimate",
+    "roles": [
+     "uke",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "promise",
+    "roles": [
+     "promise",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "eheya.netの物件",
+    "about": "property_cost",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q043",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmfxwd.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "answer",
+     "trust"
+    ],
+    "lead": "answer_only",
+    "latent": "対応・信頼"
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": "answer",
+    "roles": [
+     "answer",
+     "worry"
+    ],
+    "lead": "answer_only",
+    "property": "LIVIAZ NAMBA KRASS 1201号室",
+    "about": "company",
+    "latent": "費用"
+   },
+   "hitNew": {
+    "主の役目": "hit",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "both_empty",
+    "潜在意識のカバー": "miss",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q047",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-e8ef90c-6288b358ad-rmwcmfxwd.jsonl",
+   "gold": {
+    "main": "answer",
+    "roles": [
+     "uke",
+     "answer",
+     "answer",
+     "answer"
+    ],
+    "lead": "answer_only",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "answer"
+    ],
+    "lead": "answer_only",
+    "property": "エスリードレジデンス大阪天王寺 1201号室",
+    "about": "viewing_day",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "both_empty",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "both_empty",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  },
+  {
+   "type": "T8_cost",
+   "seven": false,
+   "latent4": false,
+   "id": "q075",
+   "brainFrom": "brain-exam-main\\scripts\\brain-exam\\results\\main-16e8d0c-6288b358ad-rmwb3a2ss.jsonl",
+   "gold": {
+    "main": "estimate",
+    "roles": [
+     "uke",
+     "uke",
+     "estimate"
+    ],
+    "lead": "estimate",
+    "latent": null
+   },
+   "now": {
+    "main": "uke",
+    "roles": [
+     "uke"
+    ]
+   },
+   "new": {
+    "main": null,
+    "roles": [
+     "estimate"
+    ],
+    "lead": "estimate",
+    "property": "フォーライズ本町レクス301",
+    "about": "property_cost",
+    "latent": null
+   },
+   "hitNew": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "hit",
+    "主→従の順": "hit",
+    "何の物件": "extra",
+    "何の事": "hit",
+    "どの部分": "miss",
+    "誘導先": "hit",
+    "次へのつなぎ": "hit",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "hit",
+    "信頼の作り方": "hit"
+   },
+   "hitNow": {
+    "主の役目": "miss",
+    "役目の組み合わせ": "miss",
+    "主→従の順": "miss",
+    "何の物件": "both_empty",
+    "何の事": "miss",
+    "どの部分": "miss",
+    "誘導先": "miss",
+    "次へのつなぎ": "miss",
+    "訴求": "miss",
+    "潜在意識のカバー": "both_empty",
+    "要点の押さえ方": "miss",
+    "信頼の作り方": "miss"
+   }
+  }
+ ]
+}

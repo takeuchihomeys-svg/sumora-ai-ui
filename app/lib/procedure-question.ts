@@ -35,6 +35,7 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 import { readSheetVacancy, sheetVacancyFieldsEnabled, vacateMonthDay } from "./sheet-vacancy";
+import { unifyScreeningDays } from "./screening-days";
 import { moveInEstimateFromVacate, MOVE_IN_ESTIMATE_HOW } from "./vacate-move-in-estimate";
 export type ProcedureKind = "screening_period" | "move_in_lead" | "flow" | "docs" | "id_doc";
 export type ProcedureQuestion = {
@@ -305,7 +306,7 @@ export function resolveProcedurePlan(o: {
 
 /** 事実（実送信・会社の決定）。送る文ではなく事実として渡す（丸写しを促さない） */
 export const PROCEDURE_FACTS = {
-  flow: "申込から入居までの流れ: ①お申込み（お申込フォーマットのご入力＋ご本人確認書類）→ ②保証会社による審査（早ければ2〜3営業日、長くて1週間程）→ ③審査通過後、ご契約のお手続き（ご契約書類の記入・初期費用のご入金で1週間程）→ ④完了次第ご入居。",
+  get flow(): string { return unifyScreeningDays("申込から入居までの流れ: ①お申込み（お申込フォーマットのご入力＋ご本人確認書類）→ ②保証会社による審査（早ければ2〜3営業日、長くて1週間程）→ ③審査通過後、ご契約のお手続き（ご契約書類の記入・初期費用のご入金で1週間程）→ ④完了次第ご入居。"); },
   lead: "空室で即入居できるお部屋なら、お申込から最短で1週間〜2週間程がご入居の目安。",
   call: "審査の過程で保証会社からご本人確認のお電話が入る場合がある。",
   // 2026-10-01 竹内「パスポートの場合はパスポートと現在の住所記載の住民票がいる」（旧「パスポートしか無い時は一度パスポートで進められる」を置き換え）

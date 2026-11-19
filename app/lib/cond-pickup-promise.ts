@@ -26,9 +26,17 @@ export const FIRST_COND_PICKUP_RULE = "【竹内さんの形・初回に条件�
 export const resultFirstPromiseOn = (env: Env = envOf()) => notOff(env.BRAIN_RESULT_FIRST_PROMISE);
 export const RESULT_FIRST_PROMISE_RULE = "【読み方と竹内さんの一手・結果がまだ無い依頼（11/06）】お客様が物件を探して・送って・もう一度探して・「〇〇無しだと」等と頼んだ番、物件の URL・名前を送って空きを聞いた番は、その結果（新しい条件で探した物件・その物件の募集状況）はスタッフがこれから確かめる物で、まだ AIX で送れる物は無い。材料の送れる候補が前の条件で探した物なら、新しい条件の結果ではない。竹内さんの一手はまず約束の文（「〇〇のご条件でオススメできるお部屋ピックアップしてお送りさせて頂きます」「お送り頂きました〇〇の募集状況確認させて頂きます」）で、AIX（物件の AIX・物件確認した）は確かめた後（竹内さんの120日: 探す依頼 116番のうち文が先 99・物件を送ってきた 167番のうち文が先 125）。この番は turn_contract の該当の ask の route を promise にする（aix の欄は約束の後の AIX のままでよい）。route を aix にするのは、その依頼の結果（新しい条件で送れる物件・確認済みの募集状況）が材料に既にある時だけ。";
 
+// 2026-11-15 作業員H（統括役の頼み③・見張り 12838＝試験 q439）: ①の行は「新しい条件・地域や環境の希望」を全部ピックアップの約束に寄せる。
+//   12838 のお客様「カウンターキッチンだと嬉しい（2人暮らし）」は、こちらが送ったお部屋の中に合う1部屋があった＝竹内さんは
+//   「お送りしたお部屋でカウンターキッチン付のお部屋はこちらの1部屋・お気に召されましたらご都合よろしいお日にちにご案内」と送った資料から答えて誘った。
+//   下書きは新たなピックアップの約束＋全力サポート。読み方（送った資料で答えられるか）を①の後に1組で足す。①が on の時だけ効く。
+//   既定 off（COND_PICKUP_SENT_FIRST=on で入れる）。線は1番だけ＝試験 q439 と本番の数え（送った束の後に設備・広さの希望が来た番）で確かめてから on を決める。
+export const condPickupSentFirstOn = (env: Env = envOf()) => (env.COND_PICKUP_SENT_FIRST ?? "").trim().toLowerCase() === "on";
+export const COND_PICKUP_SENT_FIRST_RULE = "【読み方・送った資料で答えられる希望（11/15）】上の条件の番の前に確かめる: お客様の希望（設備・広さ・間取り・階 等）に合う物件が、こちらが既に送った資料（材料の送った物件・ピックアップ資料）の中にある時は、新しい条件で探す番ではなく送った物件への問いの番。新たなピックアップの約束（2段:pickup）にしない＝送ったお部屋の中で合う物件を資料の通りに答え（例「お送りさせて頂きましたお部屋で〇〇付のお部屋はこちらの1部屋になります」）、ご都合のよいお日にちにご案内すると誘う。合う1件を特に推すなら AIX【1件特にオススメする】。送った資料に合う物件が無い時・資料で分からない時だけ上の条件の番の形。";
+
 /** ブレインの決まりに足す行（スイッチが on の物だけ・無ければ ""） */
 export function condPickupRules(env: Env = envOf()): string {
-  return [condPickupPromiseOn(env) ? COND_PICKUP_PROMISE_RULE : "", firstCondPickupOn(env) ? FIRST_COND_PICKUP_RULE : "", resultFirstPromiseOn(env) ? RESULT_FIRST_PROMISE_RULE : ""].filter(Boolean).join("\n");
+  return [condPickupPromiseOn(env) ? COND_PICKUP_PROMISE_RULE : "", condPickupPromiseOn(env) && condPickupSentFirstOn(env) ? COND_PICKUP_SENT_FIRST_RULE : "", firstCondPickupOn(env) ? FIRST_COND_PICKUP_RULE : "", resultFirstPromiseOn(env) ? RESULT_FIRST_PROMISE_RULE : ""].filter(Boolean).join("\n");
 }
 
 /** 2026-11-06 統括役の決め: ②の「初回で条件がそろったか」は hearing-form.pickupConditionsReady の1か所で数える（自分で数えない）。その答えを材料の1行にする */

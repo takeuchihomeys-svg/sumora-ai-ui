@@ -12,7 +12,14 @@
 //   （CONDUCTOR_ 入口の統括・TWO_ 2通の組み合わせと2段・FLASH_／WRITER_ 書き手・MGMT_ 管理会社の時間の線・TAKEUCHI_ 竹内さんの書き方・EXAMPLE_ 手本・TURN_CONTRACT 本質の帯）。
 //   足すと指紋（ハッシュ）が変わる＝brain_switch_versions に新しい行が1つ増える（前の行は残る）
 export const SWITCH_PREFIXES = ["BRAIN_", "AIX_", "REPLY_", "SENT_", "EXHAUSTED_", "SITUATION_", "SCREENING_", "STALE_", "SEND_", "PROGRESS_", "DATE_", "COMPOSE_", "SECOND_", "LLM_ALT_ACTIONS", "FINAL_CHECK", "DRAFT_", "OPS_ANOMALY_",
-  "CONDUCTOR_", "TWO_", "FLASH_", "WRITER_", "MGMT_", "TAKEUCHI_", "EXAMPLE_", "TURN_CONTRACT", "PICKUP_DIRECTION", "CLOSER_"];
+  "CONDUCTOR_", "TWO_", "FLASH_", "WRITER_", "MGMT_", "TAKEUCHI_", "EXAMPLE_", "TURN_CONTRACT", "PICKUP_DIRECTION", "CLOSER_",
+  // 2026-11-15 統括役（竹内さん「許可する・おねがい」・KB 3041baaa P0）: 既定 off の部品 299個のうち 64個が本番の環境変数に名前があり、
+  //   値（on/off）を Vercel の権限なしで確かめるため、スイッチの名前の頭を広げた。鍵らしい名前（SECRET_NAME）と長い値は今まで通り入れない。
+  "PROPERTY_", "PICKUP_", "CUSTOMER_", "COMPANY_FACT_", "FC_", "APPLY_", "ACK_", "VIEWING_", "STAFF_", "REAPPLY_", "TODO_", "RECOMMEND_",
+  "IMAGE_", "CHECK_", "PROMISE_", "PROCEDURE_", "CONDITION_", "WATCH_", "SEARCH_", "READING_", "OUTCOME_", "OTHER_", "LEDGER_", "HOLD_",
+  "GREETING_", "FIRST_", "ESTIMATE_", "CURRENT_", "ZENRYOKU_", "VACATE_", "SHEET_", "REQUEST_", "READ_", "OUR_", "LATENT_", "FAR_",
+  "FAMILY_", "FACT_", "COST_", "CIRCUMSTANCE_", "BROUGHT_", "BG_", "AUTO_", "AUTOMATION_", "ASK_", "APPEAL_", "ALT_", "TURN_", "NEXT_PUBLIC_",
+  "MATERIAL_", "STAR_", "NOW_", "EQUIP_", "YARDSTICK_", "HUMAN_", "TASK_", "ENGAGEMENT_", "SYNC_", "NEXT_MOVE", "KB_", "MESSAGE_", "SITUATION_"];
 const SECRET_NAME = /KEY|SECRET|TOKEN|PASSWORD|URL|ENDPOINT|WEBHOOK|DSN/i;
 /** 値がスイッチの形（on/off/shadow・数・語の並び。LLM_ALT_ACTIONS の印の並びは長い＝300字まで・空白なし）だけ */
 const SWITCH_VALUE = /^[\w.,:=@/-]{1,300}$/;

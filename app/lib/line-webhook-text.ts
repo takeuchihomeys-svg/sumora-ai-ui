@@ -49,6 +49,7 @@ import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 // 2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」: 宛先と発言者を分ける
 import { lineTargetKind, groupConversationName } from "@/app/lib/line-target";
 import { RESET_ON_CONDITION_CHANGE } from "@/app/lib/search-update-days";
+import { engagementTextMaskOn, maskEngagementText } from "@/app/lib/engagement-text-mask";
 
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 export type AccountConfig = {
@@ -414,6 +415,15 @@ export async function handleTextMessage(
     await resolveEngagementSignal(db, convId, text).catch((e) => console.warn("[resolveEngagementSignal]", e));
   });
 
+  // 2026-11-15 竹内さんの決定（KB 1d2400c6・H-14 ②）: 画像の後の一言で好みの手本（こういう・こんな）と分かったら、画像の特徴を AIX ツールの要望の欄へ
+  //   （image-taste-wants-server・既定 off: CUSTOMER_IMAGE_TASTE_WANTS=on かつ CUSTOMER_IMAGE_ROUTE_1115=on）
+  if (process.env.CUSTOMER_IMAGE_TASTE_WANTS === "on") {
+    after(async () => {
+      const { applyImageTasteWants } = await import("@/app/lib/image-taste-wants-server");
+      await applyImageTasteWants(db as unknown as Parameters<typeof applyImageTasteWants>[0], convId).catch((e) => console.warn("[image-taste-wants]", e));
+    });
+  }
+
   // 新規客（初メッセージ）検知 → @鈴木即時通知
   after(async () => {
     const { count: msgCount } = await db
@@ -724,7 +734,8 @@ async function resolveEngagementSignal(
     .update({
       customer_replied_at: new Date().toISOString(),
       response_minutes: minutes,
-      customer_reply_text: (customerText ?? "").slice(0, 200),
+      // 2026-11-15 作業員H（個人情報・竹内さんの OK）: 申込フォーム・個人の値の返信を記録に残さない（engagement-text-mask・既定 on・ENGAGEMENT_TEXT_MASK=off で前の形）
+      customer_reply_text: engagementTextMaskOn() ? maskEngagementText((customerText ?? "").slice(0, 200)) : (customerText ?? "").slice(0, 200),
       signal_type: isPositive ? "positive" : "neutral",
       signal_reason: isPositive ? "成約パターンキーワード検出" : "返信あり",
     })

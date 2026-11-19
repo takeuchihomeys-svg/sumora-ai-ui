@@ -1,3 +1,4 @@
+import { promiseReadUnifiedOn, isPromiseSentence } from "./promise-read";
 // app/lib/compose-blueprint.ts — 文の指示役（構成のブレイン）: 意図（趣旨・主語・メインの1文・添え・締め）→ 文の設計図（純関数・DB/LLM なし）
 //
 // 2026-11-03 作業員6（竹内さん 11/03 KB 885e25fd「文生成の際も統括されるから文の中でぶつかっているのを防ぎ、竹内の LINE の構成のように全体として意味の通った文に」・
@@ -89,7 +90,8 @@ const T: Array<[SentenceTag, (s: string) => boolean]> = [
   ["support", (s) => /全力でサポート|最善|ご満足頂|ご安心|ご不安|出来る限り|できる限り|お力になれ/.test(s)],
   ["decline", (s) => /申し訳|難し|募集終了|申込が入|お申込が入っ|必須となります|出来かね|できかね|終了して|決まってしまい|お取り扱い出来ません/.test(s)],
   ["appeal", (s) => /オススメ|おすすめ|好条件|特に|人気|抑える事が|抑えられ|お得|ピッタリ|ぴったり|如何でしょうか/.test(s)],
-  ["promise", (s) => /(?:確認|お送り|ピックアップ|ご連絡|交渉|調整|作成|手配|審査掛け|抑え|お伝え|探させ|お調べ).{0,20}(?:させて頂きます|致します|いたします)/.test(s) || /次第/.test(s)],
+  // 2026-11-12 作業員4: 約束の札を promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は今の網）
+  ["promise", (s) => (promiseReadUnifiedOn() ? isPromiseSentence(s) : /(?:確認|お送り|ピックアップ|ご連絡|交渉|調整|作成|手配|審査掛け|抑え|お伝え|探させ|お調べ).{0,20}(?:させて頂きます|致します|いたします)/.test(s) || /次第/.test(s))],
   ["ask", (s) => /お送りください|ご記入|頂けますでしょうか|ございますか|でしょうか|教えて|お送りの程|ご確認ください|幸い/.test(s)],
   ["info", (s) => /となります|でございます|可能です|ございます|頂けます|流れ|必要|出来ます|できます|です/.test(s)],
 ];
@@ -268,6 +270,8 @@ export function blueprintNote(bp: ComposeBlueprint): string {
     `・趣旨: ${COMPOSE_PURPOSE_JA[it.purpose]}（理由: ${it.why || "―"}）${it.feel ? `／お客様に感じてほしい事: ${it.feel}` : ""}`,
     it.purpose !== "ack" ? `・主語: ${({ customer: "お客様のこと", property: "物件", us: "こちら（弊社）がする事", process: "手続き・流れ" } as const)[it.main.subject]}` : "",
     ...bp.parts.map((p, k) => `${k + 1}. ${roleJa[p.role]}: ${p.say}${p.nets?.length ? `（この部品の中の決まり: ${p.nets.join("／")}）` : ""}`),
+    // 2026-11-12 作業員10（受け渡しの漏れ）: 意図の next（次にしてほしい事）は決めていたのに設計図に出ていなかった（COMPOSE_SENTENCE_PLAN が off でない時に出す・11/12 既定 on）
+    (envOf().COMPOSE_SENTENCE_PLAN ?? "").trim().toLowerCase() !== "off" && it.next !== "none" ? `・次にしてほしい事: ${({ reply: "返信をもらう", viewing: "内覧", apply: "申込・抑える", send_property: "物件を送ってもらう", wait_check: "確認の結果を待ってもらう", answer_only: "答えて終わり", none: "" } as const)[it.next]}` : "",
     `・長さ: ${({ short: "短く（50字前後）", mid: "中くらい（100字前後）", long: "長め（140字前後）" } as const)[bp.lengthBand]}・竹内さんの型: ${TAKEUCHI_PURPOSE_FORMS[it.purpose].seq}`,
     "・メインの1文が一番に伝わるように。添えはメインより短く、メインの後ろに。",
   ].filter(Boolean).join("\n");

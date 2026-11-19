@@ -12,6 +12,7 @@
 //
 // 使い方: 束の候補（判定済みの札 codes と事実）を渡す → 並び（一番オススメが先頭）と、それぞれの理由。
 
+import { sentLikePoints, type SentLikeProfile } from "./sent-like-fit";
 export type StarCandidate = {
   /** 見分け（物件名＋号室など） */
   key: string;
@@ -36,6 +37,8 @@ export type StarCandidate = {
   vacancy?: "open" | "later" | null;
   /** 階（号室・資料から） */
   floor?: number | null;
+  /** 2026-11-15 間取り（説明文の 1LDK 等・送ってきた／刺さった物件の像と比べる sent-like-fit） */
+  floorPlan?: string | null;
   equipmentKeys?: readonly string[] | null;
   /** 2026-10-06d リノベーション済み（資料の文字・listing-renovation.renovationOfText）。null＝分からない */
   renovated?: boolean | null;
@@ -107,7 +110,9 @@ export type StarRanked = { key: string; fit: number; tier: "line" | "below" | "n
  */
 export type StarSituation = { zero: boolean; spacious: boolean; newBuild: boolean; stationNear: boolean; floorHigh: boolean; moveInUrgent: boolean; equipKeys: string[]; /** 2026-10-06c 1LDK以上（1K・1R を含まない）の間取りを希望＝二人以上・広い間取りの型 */ household?: boolean;
   /** 2026-10-06f 築古（old-building-age の線以上・リノベ済みを除く）をオススメの点で下げる（初期費用重視の型・築年の列なし・「古くても良い」と言っていない）。recommend-score が見る */
-  oldAgeAvoid?: boolean };
+  oldAgeAvoid?: boolean;
+  /** 2026-11-15 作業員K: お客様が送ってきた物件・刺さった物件の像（sent-like-fit.ts・STAR_SENT_LIKE=on の時だけ呼ぶ側が入れる）。合い方に上限10点まで足す */
+  like?: SentLikeProfile | null };
 /** 話題の鍵 → 設備の鍵（listing-equipment） */
 const TOPIC_EQUIP: Record<string, string[]> = {
   bath_toilet: ["bath_toilet"], washbasin: ["washbasin"], laundry_in: ["laundry_in"], autolock: ["autolock"], security: ["autolock", "monitor_intercom"],
@@ -174,6 +179,10 @@ export function starFitScores(cands: readonly StarCandidate[], rule = STAR_RANK_
       if (sit.stationNear && sitRule.stationNear && rankIn(walks, c.walkMinutes, "low") === 0) { fit += sitRule.stationNear; reasons.push("駅から一番近い（駅近の希望）"); }
       if (sit.floorHigh && sitRule.floorHigh && rankIn(floors, c.floor, "high") === 0) { fit += sitRule.floorHigh; reasons.push("一番高い階（2階以上の希望）"); }
       if (sit.moveInUrgent && sitRule.vacantNow && vacSplit && c.vacancy === "open") { fit += sitRule.vacantNow; reasons.push("空室ですぐ入れる（入居を急ぐ）"); }
+      if (sit.like) {
+        const lk = sentLikePoints(sit.like, { floorPlan: c.floorPlan, areaSqm: c.areaSqm, buildingAge: c.buildingAge, walkMinutes: c.walkMinutes });
+        if (lk.points) { fit += lk.points; reasons.push(...lk.reasons.slice(0, 2)); }
+      }
       if (sit.equipKeys.length && sitRule.equipEach && Array.isArray(c.equipmentKeys)) {
         const hit = sit.equipKeys.filter((k) => c.equipmentKeys!.includes(k));
         if (hit.length) { fit += sitRule.equipEach * hit.length; reasons.push(`希望の設備（${hit.join("・")}）`); }

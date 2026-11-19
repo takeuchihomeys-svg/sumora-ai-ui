@@ -38,6 +38,7 @@ export type ImageKind =
   | "payment" | "procedure" | "defect_report" | "chat" | "search_condition" | "route"
   | "pet_photo" | "person_photo" | "pet_document"
   | "personal_unknown"
+  | "contract_document" | "map" | "review"
   | "unknown";
 
 /** 見出しの文字（会話本文にそのまま入る。received-document の書類名の語＝申込書・口座・保険 等を含めない） */
@@ -57,6 +58,9 @@ export const IMAGE_KIND_LABEL: Readonly<Record<ImageKind, string>> = {
   person_photo: "物件以外：人物の写真",
   pet_document: "物件以外：ペットの書類",
   personal_unknown: "物件以外：個人情報の載った画像",
+  contract_document: "書類：契約書・保証会社の書類",
+  map: "物件以外：地図の画面",
+  review: "口コミの画面",
   unknown: "種類不明",
 };
 
@@ -66,6 +70,7 @@ const KIND_GROUP: Readonly<Record<ImageKind, ImageGroup>> = {
   payment: "non_property", procedure: "non_property", defect_report: "non_property", chat: "non_property",
   search_condition: "non_property", route: "non_property", pet_photo: "non_property", person_photo: "non_property",
   pet_document: "non_property", personal_unknown: "non_property",
+  contract_document: "non_property", map: "non_property", review: "unknown",
   unknown: "unknown",
 };
 
@@ -74,7 +79,37 @@ const KIND_GROUP: Readonly<Record<ImageKind, ImageGroup>> = {
 //   実データ（お客様の画像の全期間）で支払いの控え 6件の全部に 振込依頼人名・お客様氏名・携帯番号・引落口座の番号 が残っていた。
 //   書き起こしを読む所は無い（物件の取り出し・条件の読み取りは物件以外を飛ばす）＝見出し「支払いの控えが届いた」だけで足りる。
 //   戻す: IMAGE_PAYMENT_DROP=off（見出し＋書き起こしの旧の形）
-const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document", "payment", "personal_unknown"]);
+const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document", "payment", "personal_unknown", "contract_document"]);
+
+/**
+ * 2026-11-15 作業員H（統括役の頼み①・個人情報）: 保証会社の「アシストレント契約書」（借主の氏名・住所が全部載る）を Vision が見積書（estimate）と分け、
+ *   【見積書・初期費用の明細】の見出しで中身まで保存していた（直近14日 c024b7b9 2枚）。契約書・保証会社の申込書・同意書の類は分類に関わらず先に
+ *   「書類：契約書・保証会社の書類」（種類だけ・書き起こしを残さない）にする。あわせて⑤種類不明の中から拾える物（振込の画面・入居者のログイン／マイページ・地図・口コミ）を足す。
+ *   既定 on（IMAGE_LABEL_1115=off で戻す）。見積書・物件の画像に当たらない事は scripts/audit-customer-images.ts --label で全件を読んで確かめる
+ */
+export function imageLabel1115On(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.IMAGE_LABEL_1115 ?? "").trim().toLowerCase() !== "off"; // 11/15 統括役: 既定 on（400日の見出しのある画像 195枚の当て直しで誤り0・=off で戻す）
+}
+/** 契約書・保証会社の申込書・同意書（借主・契約者の欄つき）。見積書の「保証会社：〇〇」「保証会社代」は当てない */
+//   契約の条文・重要事項説明書の頁（保証委託料の条文・定期借家の条文・「契約書(案)」の送付書類）も書類の種類だけ（0133b787 10/05 の3枚）
+export const CONTRACT_DOC_RE = /アシストレント\s*契約書|アシストレント[\s\S]{0,300}(?:借主|契約者|乙)[\s\S]{0,40}氏名|保証委託契約(?:書|の内容|内容)|保証委託料[\s\S]{0,200}(?:保証の範囲|保証限度額)|定期借家(?:賃貸)?契約の種類|重要事項説明書作成日|契約書\s*[（(]\s*案\s*[）)]|(?:保証|賃貸借|駐車場使用)契約書[\s\S]{0,400}(?:借主|賃借人|契約者|連帯保証人|乙)|(?:入居|賃貸|保証)(?:の)?申込書[\s\S]{0,300}(?:氏名|生年月日|勤務先)|同意書[\s\S]{0,300}(?:氏名|署名)|(?:借主|賃借人|契約者)\s*[（(]?\s*乙?\s*[）)]?\s*\n?\s*氏名\s*[:：]/;
+const PAYMENT_1115_RE = /振込出金|合計引落金額|振込金額[\s\S]{0,80}振込手数料/;
+const PROCEDURE_1115_RE = /入居者\s*ID|入居マニュアル|契約物件[\s\S]{0,40}契約情報|回収用紙|返金金額/;
+const MAP_1115_RE = /【地図上の表示内容】|地図上に|マップに相談/;
+const REVIEW_1115_RE = /参考になった|元住人/;
+/** マイページの名前（「マイページ\n姓 名\nアカウントを編集」の形） */
+export const MYPAGE_NAME_RE = /マイページ\s*\n\s*[\p{Script=Han}\p{Script=Katakana}]{1,5}[ 　][\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]{1,5}/u;
+/** 見積書の宛名・人の名前を伏せる（「〇〇 様」・「様」だけの行の前の行の頭の語）。お客様・入居者・皆様は残す */
+export function maskEstimateAddressee(t: string): string {
+  const lines = String(t ?? "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*様\s*$/.test(lines[i]) && i > 0 && !/見積書|御見積|請求書|^\s*$/.test(lines[i - 1])) lines[i - 1] = lines[i - 1].replace(/^\s*[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}ー]{1,10}(?:[ 　]+[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}ー]{1,10})?/u, "（お名前）");
+    // 物件名の行（「物件名 〇〇日様 102号」の読み違い）・会社や見出しの語（「〇〇業様」「概算様」）は人の名前ではない（全期間の当たり 14行を読んで決めた）
+    if (/物件名/.test(lines[i])) continue;
+    lines[i] = lines[i].replace(/([\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}ー]{1,10}(?:[ 　]+[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}ー]{1,10})?)[ 　]*様/gu, (m, n: string) => /(?:お客|入居者|契約者|皆|各位|^お|業|社|店|概算|見積書|御中)$/.test(n) ? m : "（お名前）様");
+  }
+  return lines.join("\n");
+}
 
 /**
  * 種類が決まらない画像（【種類不明】）の書き起こしに当たったら、書き起こしを残さない個人情報の語（迷う物は個人情報側に倒す）。
@@ -86,7 +121,8 @@ const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_documen
  */
 export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様|氏名(?:\s*フリガナ)?\s*[:：]?\s*[\p{Script=Han}\p{Script=Katakana}]{1,6}[ 　]?[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]{1,6}|名義人|振込(?:依頼)?人|パソコン振込|会員\s*(?:ID|ＩＤ|番号)|(?<![\p{Script=Han}])[\p{Script=Han}]{1,4}[ 　][\p{Script=Han}\p{Script=Hiragana}]{1,4}\s*様/u;
 export function personalHintIn(content: string | null | undefined): boolean {
-  return PERSONAL_HINT_RE.test(String(content ?? "").normalize("NFKC"));
+  const t = String(content ?? "").normalize("NFKC");
+  return PERSONAL_HINT_RE.test(t) || (imageLabel1115On() && MYPAGE_NAME_RE.test(t));
 }
 export function personalHintDropEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.IMAGE_PERSONAL_HINT_DROP ?? "").trim().toLowerCase() !== "off";
@@ -198,6 +234,7 @@ function classifyCustomerImageBase(imageType: string | null | undefined, content
 
   // 個人情報の載る書類は分類に関わらず先に（書き起こしを捨てる）
   if (PET_DOCUMENT_RE.test(t)) return "pet_document";
+  if (imageLabel1115On() && CONTRACT_DOC_RE.test(t)) return "contract_document";
 
   // Vision が物件・見積書と分けた物は採る（実データで物件以外の取り違え 0件）。中の種類だけ指紋で分ける
   if (type === "estimate") return PAYMENT_RE.test(t) ? "payment" : "estimate";
@@ -216,8 +253,13 @@ function classifyCustomerImageBase(imageType: string | null | undefined, content
     if (PERSON_WORD_RE.test(t)) return "person_photo";
     return "unknown";
   }
-  if (PAYMENT_RE.test(t)) return "payment";
+  if (PAYMENT_RE.test(t) || (imageLabel1115On() && PAYMENT_1115_RE.test(t))) return "payment";
   if (DEFECT_RE.test(t)) return "defect_report";
+  if (imageLabel1115On()) {
+    if (PROCEDURE_1115_RE.test(t)) return "procedure";
+    if (MAP_1115_RE.test(t)) return "map";
+    if (REVIEW_1115_RE.test(t) && !hasPropertyValues(t) && !PORTAL_RE.test(t)) return "review";
+  }
   if (PROCEDURE_RE.test(t)) return "procedure";
   if (CHAT_RE.test(t)) return "chat";
   if (ROUTE_RE.test(t)) return "route";
@@ -243,7 +285,9 @@ export function labeledImageText(kind: ImageKind, content: string | null | undef
   const t = (content ?? "").trim();
   if (!t) return "[画像]";
   const head = `[画像] 【${IMAGE_KIND_LABEL[kind]}】`;
-  return dropsTranscript(kind) ? head : `${head}\n${maskTranscriptMobile(t)}`;
+  if (dropsTranscript(kind)) return head;
+  // 2026-11-15 作業員H（IMAGE_LABEL_1115=on）: 見積書の宛名（「〇〇 様」）を保存する前に伏せる（会話本文は DeepSeek に回る経路がある）
+  return `${head}\n${maskTranscriptMobile(kind === "estimate" && imageLabel1115On() ? maskEstimateAddressee(t) : t)}`;
 }
 
 // ── 保存済みの本文から読む ──────────────────────────────────────────

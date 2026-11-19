@@ -10,12 +10,33 @@ export function cheapNow(d = new Date()): boolean { const { h, dow } = jstHM(d);
 /** 本数の上限（JST 9〜22 は1本・それ以外は2本） */
 export function maxExamsNow(d = new Date()): number { const { h } = jstHM(d); return h >= 9 && h < 22 ? 1 : 2; }
 
+// ─── 本番の調子（2026-11-14 作業員F: 数えを軽く） ────────────────────────────
+//   11/13 昼の DB 固まりの調べ: prodHealthy の count exact が cron_run_logs（21万行）を2分ごとに頭から読んでいた。
+//   数えずに「上限＋1行まで」だけ読む。判断は「LLM の失敗＋cron の失敗 > 上限」のまま＝各々を上限＋1で止めても答えは同じ。
+/** 本番の調子を見る間（既定 5分・EXAM_PROD_WATCH_MS で変える） */
+export function prodWatchMs(env: Record<string, string | undefined> = process.env): number { const n = Number(env.EXAM_PROD_WATCH_MS); return Number.isFinite(n) && n >= 60_000 ? n : 300_000; }
+/** 1つの数えで読む行の上限（上限＋1 読めば「上限を超えた」が分かる） */
+export function prodHealthCap(max: number): number { return Math.max(1, Math.floor(max) + 1); }
+/** 判断（純関数）。nl・nc は上限＋1で止めた数でも、止めない数でも同じ答え */
+export function prodHealthVerdict(nl: number, nc: number, max: number): { ok: boolean; why: string } {
+  return nl + nc > max ? { ok: false, why: `本番の失敗 直近10分 LLM ${nl}・cron ${nc}（上限 ${max}）` } : { ok: true, why: `本番の失敗 LLM ${nl}・cron ${nc}` };
+}
+/** service_role の鍵: 環境に無ければ .env.prod の行から（中身は表示しない）。無ければ "" */
+export function serviceKeyFrom(env: Record<string, string | undefined>, readProdEnv: () => string | null): string {
+  const e = String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  if (e && e !== "invalid") return e;
+  const txt = readProdEnv();
+  if (!txt) return "";
+  const line = txt.split(/\r?\n/).find((x) => x.startsWith("SUPABASE_SERVICE_ROLE_KEY=")) ?? "";
+  return line.slice("SUPABASE_SERVICE_ROLE_KEY=".length).trim().replace(/^"(.*)"$/, "$1");
+}
+
 // ─── ① 早めの打ち切り ─────────────────────────────────────────────────────
 //   brain-exam の合格は「その問題の回の過半数が合格」（passN*2 > n）。予定の回数 n のうち落ちた回 f が f*2 >= n になった時点で、その問題はもう合格できない。
 //   前（main）で合格していた問題がそうなったら「悪化が確定」＝残りを回しても判断（悪化0か）は変わらない → 止める。
 //   どの問題も合否が決まった（残りの回で変わらない）時も止める（残りは答えを変えない回＝無駄）。
 //   ※ 行の score.pass は試験の中の採点。最後の集計（rescore）で変わる事がまれにある＝打ち切った後に --report で集計し直した数を正とする
-export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean }; foreignMsgs?: number; pcMismatch?: string[] };
+export type RowLite = { id: string; rep: number; error?: string; score?: { pass?: boolean }; foreignMsgs?: number; pcMismatch?: string[]; path?: { code?: string | null } | null };
 /** 2026-11-04 作業員2の頼み: 混ざりの印のある回（他の問題の発言が混ざった・条件の行が回す前に違った）は、悪化とも合格とも数えない（brain-exam の混ざりの印と同じ見方） */
 export function isMixedRow(r: RowLite): boolean { return (r.foreignMsgs ?? 0) > 0 || (r.pcMismatch ?? []).some((k) => k !== "他の問題の発言"); }
 export type EarlyVerdict = { stop: "worse" | "settled" | null; why: string; worse: string[] };
@@ -59,6 +80,12 @@ export function staleExamGuard(src: string, behind: number | null, maxMin: numbe
   const m = maxMin > 0 ? Math.max(maxMin, longMin) : maxMin;
   return { maxMin: m, oldStop, laneOld, note: [`古い brain-exam（止める印を見ない）・上限を延ばした ${maxMin}→${m}分`, laneNote, behindNote].filter(Boolean).join("・") };
 }
+export function pathSameOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean { return (env.EXAM_WORSE_PATH_SAME ?? "").trim().toLowerCase() !== "off"; }
+/** その問題の回が前も今も全部同じ道か（道の記録が無い回があれば false＝言い切らない） */
+export function samePathAll(id: string, cur: RowLite[], base: RowLite[]): boolean {
+  const codes = [...cur, ...base].filter((r) => r.id === id && !r.error && !isMixedRow(r)).map((r) => r.path?.code ?? null);
+  return codes.length > 0 && codes.every((c) => c != null && c === codes[0]);
+}
 export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<string>): { sure: Array<{ id: string; why: string }>; flake: Array<{ id: string; why: string }> } {
   const tally = (rows: RowLite[]) => { const m = new Map<string, { p: number; n: number }>(); for (const r of rows) { if (r.error || isMixedRow(r)) continue; const x = m.get(r.id) ?? { p: 0, n: 0 }; x.n++; if (r.score?.pass) x.p++; m.set(r.id, x); } return m; };
   const c = tally(cur), b = tally(base);
@@ -68,6 +95,9 @@ export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<s
     if (!y || !(y.p * 2 > y.n) || x.p * 2 > x.n) continue;
     const gap = (y.p / y.n) * x.n - x.p;
     const why = `合格 前 ${y.p}/${y.n} → 今 ${x.p}/${x.n}`;
+    // 2026-11-15 作業員I（統括役の穴4: q091・q179・q021 等が悪化と出て良い直しを止める）: 揺れる問題で、道が前も今も全部の回で同じ＝違うのは判定（要点・依頼）の合否だけ
+    //   → 揺れの範囲の差に入れる（道の確かな悪化は道の物差し pathRegressions で別に見る）。止める EXAM_WORSE_PATH_SAME=off
+    if (flaky.has(id) && gap >= 2 && pathSameOn() && samePathAll(id, cur, base)) { flake.push({ id, why: `${why}（道は前も今も同じ・判定の揺れ）` }); continue; }
     (flaky.has(id) && gap < 2 ? flake : sure).push({ id, why });
   }
   return { sure, flake };

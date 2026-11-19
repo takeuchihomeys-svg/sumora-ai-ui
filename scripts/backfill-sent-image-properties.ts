@@ -8,6 +8,7 @@
 //   （送った件数の数え方・物件出しの「一度送った建物を除く」判定に使われるので、古い誤読を混ぜない）。
 // ⚠ 照合（会話に出ている物件名に寄せる）を通った物は照合済みの名前、通らない物は読んだ名前（source で区別）
 // 実行: npx tsx --env-file=.env.local scripts/backfill-sent-image-properties.ts [--days=90] [--limit=10] [--conc=6] [--dry]
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImage } from "../app/lib/property-image-read";
 import { resolveReadProperty } from "../app/lib/property-name-match";

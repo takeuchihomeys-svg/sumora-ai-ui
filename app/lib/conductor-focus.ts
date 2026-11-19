@@ -13,6 +13,7 @@
 //   (c) 近い番の重点の多数決（狭い束だけ・束の外は場面の多い重点に寄せる）と digest の1語
 import { purposeOfText } from "./compose-blueprint";
 import { stripLoneSurrogates } from "./conductor-turn-vectors";
+import { promiseReadUnifiedOn, lastOpenPromise } from "./promise-read";
 
 type Env = Record<string, string | undefined>;
 /**
@@ -102,6 +103,8 @@ export function stageAt(hist: ReadonlyArray<HistMsg>): string {
 const PROMISE_RE = /(?:確認|お送り|ピックアップ|ご連絡|交渉|調整|作成|手配|お調べ|探させ).{0,20}(?:させて頂きます|致します|いたします)|次第/;
 /** 開いている約束: こちらの最後の約束の文の後に、果たす AIX（物件・確認の結果・見積書）がまだ無い（決まった計算・候補） */
 export function openPromiseAt(hist: ReadonlyArray<HistMsg>): string | null {
+  // 2026-11-12 作業員4: 約束の読みを promise-read に寄せる（PROMISE_READ_UNIFIED=on・既定 off は下の今の読み）
+  if (promiseReadUnifiedOn()) { const last = hist[hist.length - 1]; const p = lastOpenPromise({ msgs: hist, nowMs: last ? Date.parse(last.created_at) + 1 : Date.now(), days: 3650 }); return p ? p.sentence.slice(0, 60) : null; }
   for (let i = hist.length - 1; i >= 0; i--) {
     const m = hist[i];
     if (m.sender === "customer") continue;
@@ -190,7 +193,7 @@ export const FOCUS_INTAKE_RULES = [
 ].join("\n");
 export const FOCUS_INTAKE_FIELD = `"focus_read": {"surface": "表（30字以内）", "background": "背景（40字以内）", "focus": "${FOCUS_KINDS.join("|")}", "why": "理由（30字以内）"}`;
 
-export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean };
+export type FocusRead = { surface: string; background: string; focus: Focus; why: string; near: string | null; keepPromise?: boolean; sub?: string | null; topics?: TurnTopic[]; noTouch?: string[]; repeatScope?: RepeatScope | null };
 /** 入口の統括の答えから focus_read を読む（一覧に無い重点は捨てる） */
 export function parseFocusRead(raw: unknown, near: NearFocus | null = null): FocusRead | null {
   const o = (raw && typeof raw === "object" ? (raw as Record<string, unknown>).focus_read ?? raw : null) as Record<string, unknown> | null;
@@ -198,7 +201,13 @@ export function parseFocusRead(raw: unknown, near: NearFocus | null = null): Foc
   const focus = String(o.focus ?? "").trim() as Focus;
   if (!(FOCUS_KINDS as readonly string[]).includes(focus)) return null;
   const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
-  return { surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
+  const sub = o.focus_sub !== undefined ? normalizeFocusSub(focus, o.focus_sub) : undefined;
+  const topics = parseTurnTopics(o.turn_topics ?? (raw && typeof raw === "object" ? (raw as Record<string, unknown>).turn_topics : undefined));
+  // 2026-11-13 作業員5（作業員10 の頼み・CONDUCTOR_FOCUS_GUARD）: 触れない話題と条件の繰り返しの範囲（欄が無い答えは何も足さない）
+  const top = (k: string) => (o[k] !== undefined ? o[k] : raw && typeof raw === "object" ? (raw as Record<string, unknown>)[k] : undefined);
+  const noTouch = top("no_touch") !== undefined ? parseNoTouch(top("no_touch")) : undefined;
+  const repeatScope = top("repeat_scope") !== undefined ? normalizeRepeatScope(top("repeat_scope")) : undefined;
+  return { ...(sub !== undefined ? { sub } : {}), ...(topics ? { topics } : {}), ...(noTouch !== undefined ? { noTouch } : {}), ...(repeatScope !== undefined ? { repeatScope } : {}), surface: s(o.surface, 30), background: s(o.background, 40), focus, why: s(o.why, 30), near: near ? `${near.inBand ? "束" : "場面"}:${near.focus}${near.inBand ? `(${near.n}件・${Math.round(near.share * 100)}%)` : ""}` : null };
 }
 /** 入口の統括の後ろ（毎回変わる部分）に入れる、近い番の重点の1行（束の時だけ・外は場面の多い重点だけ） */
 export function nearFocusLine(near: NearFocus | null): string {
@@ -267,7 +276,7 @@ export function laterOverrode(steps: ReadonlyArray<OrderStep>, decided: Readonly
   return null;
 }
 /** meta.conductor_focus（作業員4の受け口）に入れる形 */
-export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}) } : null);
+export const conductorFocusMeta = (r: FocusRead | null) => (r ? { focus: r.focus, why: r.why || null, surface: r.surface || null, background: r.background || null, near: r.near, ...(r.keepPromise !== undefined ? { keepPromise: r.keepPromise } : {}), ...(r.sub ? { focus_sub: r.sub } : {}), ...(r.topics?.length ? { turn_topics: r.topics } : {}), ...(r.noTouch?.length ? { no_touch: r.noTouch } : {}), ...(r.repeatScope ? { repeat_scope: r.repeatScope } : {}) } : null);
 /** digest.cf の1語（表・背景は入れない＝短く） */
 export const focusReadDigest = (r: FocusRead | null | undefined) => (r ? `${r.focus}${r.near ? `|${r.near}` : ""}` : null);
 
@@ -293,4 +302,101 @@ export function focusBrainLine(fr: Pick<FocusRead, "focus" | "surface" | "backgr
 export function focusHumanOnlyMiss(pred: string | null | undefined, gold: string | null | undefined): boolean {
   const pair = new Set(["relation", "promise_keep"]);
   return !!pred && !!gold && pred !== gold && pair.has(pred) && pair.has(gold);
+}
+
+// ── 重点の下の種類（2026-11-13 作業員5・統括役「足りない土台は具体的に細分化して入れる」・KB d16cfe1b・575a7cd5）──────────
+//   本番の外れ10番の7番が promise_make に絡んでいた（探して送る約束・確認の約束・すぐ果たせる番が1つの札に混ざる）・答えは「手元の事実で言い切る」を約束に下げる。
+//   下の種類は文の統括・書き手が書き分ける単位（欄の名前は作業員10・作業員22 とそろえる: meta.conductor_focus.focus_sub）。CONDUCTOR_FOCUS_SUB=on の時だけ（既定 off）
+//   promise_keep の fulfill_now（スタッフがこの番ですぐ果たす＝AIX）は統括役 11/13 の決め: 見積・合う物件をその場で送る番は約束でなく果たし（直すのは AIX を選べているか）
+export const FOCUS_SUBS = {
+  promise_make: ["check", "search", "estimate", "check_estimate"],
+  promise_keep: ["fulfill_now", "report"],
+  answer: ["fact", "compare", "ask_back"],
+  ease: ["cost", "screening", "timing"],
+} as const satisfies Partial<Record<Focus, readonly string[]>>;
+export type FocusSub = (typeof FOCUS_SUBS)[keyof typeof FOCUS_SUBS][number];
+// 2026-11-13 統括役: 既定 on（入口の記録の欄・ブレインの道は変えない・81番の解き直しで重点 54→57・下の種類が竹内さんの文と 33/40）。=off で止める
+export const focusSubOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_FOCUS_SUB ?? "").trim().toLowerCase() !== "off";
+export const FOCUS_SUB_LABEL: Record<FocusSub, string> = {
+  check: "確認の約束（管理会社に聞く・募集状況・設備・入居日）", search: "探して送る約束（ピックアップしてお送り）", estimate: "見積の約束（御見積書を作成しお送り）", check_estimate: "確認と見積の両方の約束（募集状況を確認し、最大限割引の御見積書もお送り）",
+  fulfill_now: "スタッフがこの番で果たす（結果・見積・物件を AIX で送る）", report: "前に約束した結果を受けた後の続き",
+  fact: "資料・記録の事実で言い切る", compare: "比べて勧める", ask_back: "条件を聞き返す",
+  cost: "費用の不安", screening: "審査の不安", timing: "時期の不安",
+};
+export const FOCUS_SUB_RULES = `【重点の下の種類（focus_sub・重点が次の4つの時だけ1つ選ぶ。他の重点は null）】${(Object.keys(FOCUS_SUBS) as Array<keyof typeof FOCUS_SUBS>).map((k) => `${k}: ${FOCUS_SUBS[k].map((s) => `${s}=${FOCUS_SUB_LABEL[s as FocusSub]}`).join("／")}`).join("。")}。
+見分け（竹内さんの実際の送信から）: 断られた・条件を言い直された・初回の条件のフォーム → 竹内さんは「〜周辺全域から〜をピックアップしてお送り」＝promise_make の search。物件の募集状況・設備を聞かれた → 「確認させて頂きます」＝check。物件が届き、募集状況の確認と御見積書の両方を約束する（「確認出来次第、最大限割引の御見積書とあわせて」）＝check_estimate。お客様の問いの答えが送った物件の記録・資料にある（番手・募集中の部屋・内装）→ 言い切る＝answer の fact（約束に下げない）。`;
+export const focusIntakeField = (env: Env = typeof process !== "undefined" ? process.env : {}) =>
+  focusSubOn(env) ? FOCUS_INTAKE_FIELD.replace(`"why": "理由（30字以内）"}`, `"why": "理由（30字以内）", "focus_sub": "下の種類 または null"}`) : FOCUS_INTAKE_FIELD;
+/** 重点に合う下の種類だけ残す（合わなければ null） */
+export function normalizeFocusSub(focus: Focus, raw: unknown): FocusSub | null {
+  const list = (FOCUS_SUBS as Partial<Record<Focus, readonly string[]>>)[focus];
+  const v = String(raw ?? "").trim();
+  return list && list.includes(v) ? (v as FocusSub) : null;
+}
+/** 竹内さんの送信の文から下の種類を決まった札で読む（正解づくり・試験の物差し用。読めなければ null） */
+export function focusSubOfTakeuchiText(focus: Focus, text: string, o: { aix?: string | null } = {}): FocusSub | null {
+  const t = String(text ?? "");
+  if (focus === "promise_make") {
+    // 11/13 統括役: 確認と見積の両方を約束した文は check_estimate（解き直しの外れ check→estimate 4番）
+    const est = /御?見積書?[^。！!]{0,12}(?:作成|お送り)/.test(t), chk = /確認(?:させて|出来次第|でき次第)/.test(t);
+    if (est && chk) return "check_estimate";
+    if (est) return "estimate";
+    if (/ピックアップ[^。！!]{0,10}(?:し|させて)|新着で?募集に出次第|お部屋(?:全て)?(?:探|お探し)させて/.test(t)) return "search";
+    if (/確認(?:させて|出来次第|でき次第)/.test(t)) return "check";
+    return null;
+  }
+  if (focus === "promise_keep") return o.aix ? "fulfill_now" : null;
+  if (focus === "ease") {
+    if (/審査/.test(t)) return "screening";
+    if (/費用|初期費用|割引/.test(t)) return "cost";
+    if (/入居|時期|月中|月末|上旬|下旬/.test(t)) return "timing";
+    return null;
+  }
+  if (focus === "answer") {
+    if (/いかがでしょうか|如何でしょうか|ございますか|でしょうか[？?]/.test(t)) return "ask_back";
+    if (/方が|比べ|より[^。]{0,8}(?:オススメ|おすすめ)/.test(t)) return "compare";
+    return "fact";
+  }
+  return null;
+}
+
+// ── 連投の話題ごとの主と従（2026-11-13 作業員5・統括役・点検役「会話の流れの読み」・12083: 3件の調べ依頼が主・「送って頂いた物件も検討します」が従でこちらのピックアップへの反応）──
+//   CONDUCTOR_TOPIC_STATE=on の時だけ（既定 off・strategy-freshness.ts と同じスイッチ）。入口の統括が話題ごとに主か従かと、どのこちらの送信への答えかを書く
+// 2026-11-15 作業員J: 11/15 試験で悪化0・既定 on（=off で戻す）。試験 j1115b-sit1〜5・jc-sit076（CONDUCTOR_OUR_SIDE・CONDUCTOR_TOPIC_STATE・FACT_LEDGER_THREE・SITUATION_NOW_FULFILLABLE を一緒に・狙い q411,q334,q409,q186,q407,q429,q421,q372・守り q202,q211,q076 等）確かな悪化0（入口の統括 CONDUCTOR_INTAKE が off の間はここは読まれない）
+export const turnTopicsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_TOPIC_STATE ?? "on").trim().toLowerCase() !== "off";
+export type TurnTopic = { what: string; role: "main" | "sub"; reply_to: string | null };
+export const TURN_TOPICS_RULES = `【今回の連投の話題（turn_topics）】お客様の今回の連投に話題が2つ以上ある時は、話題ごとに1行: what＝話題（20字以内）・role＝main（この番で一番応える話題）か sub（添える話題・こちらの前の送信への反応など）・reply_to＝こちらのどの送信への答えか（「物件ピックアップ」「見積書」「確認の結果」など20字以内・無ければ null）。話題が1つなら1行だけ。従の話題も落とさない`;
+export const TURN_TOPICS_FIELD = `"turn_topics": [{"what": "話題（20字以内）", "role": "main|sub", "reply_to": "こちらのどの送信への答えか または null"}]`;
+export function parseTurnTopics(raw: unknown): TurnTopic[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  return raw.slice(0, 6).map((x) => (x && typeof x === "object" ? x as Record<string, unknown> : {})).filter((x) => s(x.what, 20))
+    .map((x) => ({ what: s(x.what, 20), role: x.role === "sub" ? "sub" as const : "main" as const, reply_to: s(x.reply_to, 20) && s(x.reply_to, 20) !== "null" ? s(x.reply_to, 20) : null }));
+}
+
+// ── 触れない話題と条件の繰り返しの範囲（2026-11-13 作業員5・作業員10 の頼み「meta.conductor_focus の別の欄に」）──────────
+//   書き手・文の統括（作業員10 の設計図の行）が読む欄。決めるのは入口の統括（ここは欄の形と読み取りだけ・判断は変えない）。
+//   no_touch: 今の番で触れない話題（お客様が断った・見送った物件や申込・前の番で答え済みの事・スタッフだけが知る事で返信に書かない事）。
+//   repeat_scope: お客様の条件をどこまで繰り返すか。12196（11/08）竹内さんは条件の言い直しの番で変わった点だけ「家賃管理費込み12万円以内」と書き、
+//     下書きは前の条件を全部（エリア・家賃・間取り・広さ・築年・徒歩）繰り返した＝最終チェックの4つ目の段の condition_repeat の印。
+//   CONDUCTOR_FOCUS_GUARD=on の時だけ（既定 off・入口の版に g1）
+export const focusGuardOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_FOCUS_GUARD ?? "").trim().toLowerCase() === "on";
+export const REPEAT_SCOPES = ["none", "changed", "all"] as const;
+export type RepeatScope = typeof REPEAT_SCOPES[number];
+export const REPEAT_SCOPE_LABEL: Record<RepeatScope, string> = {
+  none: "条件を繰り返さない", changed: "変わった・聞かれた条件だけ繰り返す", all: "条件を全部まとめて繰り返す（初回の条件の受け・まとめ直し）",
+};
+export const FOCUS_GUARD_RULES = `【触れない話題（no_touch）と条件の繰り返し（repeat_scope）】no_touch＝今の番の返信で触れない話題を最大3つ（各20字以内・無ければ []）: お客様が断った・見送った物件や申込／前の番で答え済みの事／スタッフだけが知る事（確認の結果・見積の金額・日程の確定）で返信に書かない事。repeat_scope＝お客様の条件をどこまで繰り返すか: ${REPEAT_SCOPES.map((k) => `${k}=${REPEAT_SCOPE_LABEL[k]}`).join("／")}。見分け（竹内さんの実際の送信から）: 条件を言い直された番は変わった点だけ（「家賃管理費込み12万円以内」）＝changed。初回の条件のフォームの受けは all。お礼・了承・物件の質問の番は none`;
+export const FOCUS_GUARD_FIELD = `"no_touch": ["触れない話題（20字以内）"], "repeat_scope": "${REPEAT_SCOPES.join("|")}"`;
+/** 触れない話題: 文字列の配列だけ・空と重複は捨てる・最大3つ */
+export function parseNoTouch(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) { const v = String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 20); if (v && v !== "null" && !out.includes(v)) out.push(v); if (out.length >= 3) break; }
+  return out;
+}
+/** 一覧に無い範囲は null */
+export function normalizeRepeatScope(raw: unknown): RepeatScope | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  return (REPEAT_SCOPES as readonly string[]).includes(v) ? (v as RepeatScope) : null;
 }

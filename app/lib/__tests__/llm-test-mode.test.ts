@@ -9,7 +9,7 @@ import {
 } from "../llm-test-mode";
 import { buildRuleCheckPrompt, ISSUE_SCHEMA } from "../final-check";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
-import { readAltConfig, shouldRouteAlt, routedByTestMode, resolveRouteName, willRouteAlt, toOpenAIBody, jsonSchemaInstruction, stripWholeCodeFence } from "../llm-alt-provider";
+import { readAltConfig, batchAltDefaultActions, shouldRouteAlt, routedByTestMode, resolveRouteName, willRouteAlt, toOpenAIBody, jsonSchemaInstruction, stripWholeCodeFence } from "../llm-alt-provider";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -33,7 +33,8 @@ console.log("── ★ 本番（Vercel・NODE_ENV=production）では絶対に�
   const prod = { LLM_TEST_MODE: "deepseek-all", VERCEL: "1", VERCEL_ENV: "production", NODE_ENV: "production", LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "reply_generate", DEEPSEEK_API_KEY: "k" };
   t("本番に誤って入っても readTestMode は null", readTestMode(prod) === null);
   t("本番の readAltConfig は testMode=null（今までの設定のまま）", readAltConfig(prod)?.testMode === null);
-  t("本番の readAltConfig の actions は reply_generate だけ", JSON.stringify([...(readAltConfig(prod)?.actions ?? [])]) === JSON.stringify(["reply_generate"]));
+  // 11/12 統括役: 3b675547 から夜の一括の読み（BATCH_ALT_DEFAULT_ACTIONS）が既定で足される＝本番の actions は env の reply_generate＋その一覧（テストが古いまま落ちていた）
+  t("本番の readAltConfig の actions は reply_generate＋夜の一括の既定だけ", JSON.stringify([...(readAltConfig(prod)?.actions ?? [])].sort()) === JSON.stringify(["reply_generate", ...batchAltDefaultActions(prod)].sort()));
   t("本番: 名札なしの判定（classify）は回さない", shouldRouteAlt(readAltConfig(prod), "classify") === false);
   t("本番: 最終チェックらしき呼び出しも回さない", shouldRouteAlt(readAltConfig(prod), resolveRouteName(null, "以下の各記述について、情報源に根拠があるかどうか")) === false);
   t("本番: LLM_TEST_MODE だけ（ALT なし）なら readAltConfig は null（何もしない）", readAltConfig({ LLM_TEST_MODE: "deepseek-all", VERCEL: "1", NODE_ENV: "production", DEEPSEEK_API_KEY: "k" }) === null);

@@ -1,6 +1,6 @@
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面
 // 実行: npx tsx app/lib/__tests__/two-choice.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { twoChoicePhotoAtHandDirectOn, resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoiceNarrowOn, resayPromiseFirstOn, isResayTurn } from "../two-choice";
+import { twoChoicePhotoAtHandDirectOn, resolveTwoChoice, TRADEOFF_QUESTION_RE, MORE_PROPERTY_REQUEST_RE, narrowKeepsTwoChoice, narrowPromiseOrNow, twoChoiceNarrowOn, twoChoiceNarrowCheckPromiseOn, resolvePromiseOrNow, resayPromiseFirstOn, isResayTurn } from "../two-choice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -139,6 +139,30 @@ it("約束かその場か: 持ち込みの確認（10360・10368・10415）は�
 it("約束かその場か: 見積の後の費用の質問（9758・約束の側）は AIX 見積書で決め切る", () => { const v = narrowPromiseOrNow(pon("estimate", "promise")); expect(v.keep).toBe(false); expect(!v.keep ? v.decide : "").toBe("aix_estimate"); });
 it("約束かその場か: ピックアップのその場の側は、お礼の番は2択を外して AIX のまま・お礼でない番（8950・9767）は残して先の側＝約束の返信", () => { expect(narrowPromiseOrNow(pon("pickup", "now"), true).keep).toBe(false); const v = narrowPromiseOrNow(pon("pickup", "now"), false); expect(v.keep ? v.preferred : "").toBe("reply"); });
 it("約束かその場か: 見積のその場の側は2択を外して今の答え（AIX 見積書）のまま", () => { expect(narrowPromiseOrNow(pon("estimate", "now")).keep).toBe(false); });
+// 2026-11-13 作業員16（TWO_CHOICE_NARROW_CHECK_PROMISE・既定 off・2段の外れ T1・竹内さんの決定 KB 0f475703）
+it("持ち込みの未確認（約束の側）: 既定 off は今のまま2択／on は 2段:check で決め切る（keep_final）・その場の側は2択のまま", () => {
+  expect(twoChoiceNarrowCheckPromiseOn({})).toBe(false);
+  expect(twoChoiceNarrowCheckPromiseOn({ TWO_CHOICE_NARROW_CHECK_PROMISE: "on" })).toBe(true);
+  expect(narrowPromiseOrNow(pon("check", "promise")).keep).toBe(true);
+  const v = narrowPromiseOrNow(pon("check", "promise"), false, { checkPromise: true });
+  expect(v.keep).toBe(false); expect(!v.keep ? v.decide : "").toBe("keep_final");
+  expect(narrowPromiseOrNow(pon("check", "now"), false, { checkPromise: true }).keep).toBe(true);
+  expect(narrowPromiseOrNow(pon("estimate", "promise"), false, { checkPromise: true }).keep).toBe(false);
+});
+it("q013 の形（URL＋案内できますか・ブレインの本質 2段:check）: 2択の左は物件確認した → on で 2段:check のまま", () => {
+  const base = { finalAix: null, decisionSource: null, firstContact: false, postApply: false, alreadyTwo: false };
+  const p = resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "https://suumo.jp/chintai/jnc_000012345678/\n案内できますか" });
+  expect(p?.side).toBe("promise"); expect(p?.kind).toBe("check");
+  const v = narrowPromiseOrNow(p!, false, { checkPromise: true });
+  expect(v.keep).toBe(false); expect(!v.keep ? v.decide : "").toBe("keep_final");
+});
+it("q202 の形（持ち込み・まだ募集状況を確かめていない・空きの問い無しで見積の左になる番も）: on で 2段:check のまま（2択の見積書送るに倒さない）", () => {
+  const base = { finalAix: null, decisionSource: null, firstContact: false, postApply: false, alreadyTwo: false };
+  const p = resolvePromiseOrNow({ ...base, twoStageKind: "check", customerText: "堺筋本町 2LDK 7階\nhttps://suumo.jp/chintai/bc_1/\nby SUUMO\nこちらもお願いします" });
+  expect(p?.side).toBe("promise");
+  const v = narrowPromiseOrNow(p!, false, { checkPromise: true });
+  expect(v.keep).toBe(false);
+});
 // 2026-11-05 言い直しは約束（RESAY_PROMISE_FIRST）: 9767 の実物の文
 it("言い直し: 既定 on・off で戻す", () => { expect(resayPromiseFirstOn({})).toBe(true); expect(resayPromiseFirstOn({ RESAY_PROMISE_FIRST: "off" })).toBe(false); });
 it("言い直し: 探し直し（9767）は言い直しの番", () => { expect(isResayTurn("こんばんは。\n一時家探しをやめていたのですが、もし記録が残っていれば以前ご依頼した条件でもう一度探していただけますか？", null)).toBe(true); });

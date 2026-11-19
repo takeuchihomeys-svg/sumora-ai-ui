@@ -15,6 +15,7 @@
 
 import { MOBILE_RE, EMAIL_RE, APPLICATION_FORM_RE, INCOME_VALUE_RE } from "./test-pii-guard";
 import { isIdDocument } from "./id-document-guard";
+import { CONTRACT_DOC_RE, MYPAGE_NAME_RE } from "./image-label";
 import { classifyPersonalDocument } from "./personal-document-guard";
 
 const URL_RE = /https?:\/\/[^\s"'<>）)]+/g;
@@ -27,10 +28,35 @@ export const LABELED_ID_RE = /(?:マイナンバー|個人番号|免許証番号
 /** 口座番号の値 */
 export const BANK_ACCOUNT_RE = /口座番号\s*[:：は]?\s*[0-9０-９]{6,8}/;
 
+/**
+ * 2026-11-15 作業員H（統括役の頼み②）: お客様の画像の書き起こし（会話本文の「[画像] …」）に、契約書・保証会社の書類の中身（借主の氏名・住所）や
+ *   見積書の宛名（「〇〇 様」）が残っていると、上の値の網（携帯・メール・生年月日・番号）には当たらずに DeepSeek に渡っていた（c024b7b9 11/12 アシストレント契約書・申込前の会話）。
+ *   画像の書き起こしの部分だけを見る（指示文の語では止めない）。既定 on（ALT_IMAGE_DOC_GATE=off で止める・統括役 11/15）。
+ *   見積書の宛名「〇〇 様」は止めずに伏せる側（llm-request-sanitize → image-doc-redact・DeepSeek にも Anthropic にも出る前に「（お名前）様」）＝
+ *   全期間の「[画像]」7,996行で宛名の形に当たる 14行のうち 4行は人の名前ではなかった（会社・物件名の読み違い）ので、止める網には入れない。
+ *   止める網（契約書・マイページの氏名）は全期間で当たる行 0（11/15 に DB の 12行を種類だけに書き換えた後）。保存の側の網は image-label の IMAGE_LABEL_1115
+ */
+export function altImageDocGateOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.ALT_IMAGE_DOC_GATE ?? "").trim().toLowerCase() !== "off";
+}
+const IMAGE_SEG_RE = /\[画像\][^\n]*(?:\n(?!\s*(?:\[(?:顧客|お客様|スタッフ|AIX)|お客様[:：]|スタッフ[:：]))[^\n]*){0,40}/g;
+/** 画像の書き起こしに書類の中身（契約書・保証会社の書類・マイページの氏名）が残っていれば理由・無ければ null */
+export function altImageDocSignal(text: string | null | undefined): string | null {
+  const raw = String(text ?? "");
+  if (!raw.includes("[画像]")) return null;
+  for (const seg of raw.match(IMAGE_SEG_RE) ?? []) {
+    const t = seg.normalize("NFKC");
+    if (CONTRACT_DOC_RE.test(t)) return "画像の書き起こしに契約書・保証会社の書類の中身";
+    if (MYPAGE_NAME_RE.test(t)) return "画像の書き起こしにマイページの氏名";
+  }
+  return null;
+}
+
 /** 送る本文に個人を特定する値があれば理由（日本語）・無ければ null */
 export function altPiiSignal(text: string | null | undefined): string | null {
   const raw = String(text ?? "");
   if (!raw) return null;
+  if (altImageDocGateOn()) { const d = altImageDocSignal(raw); if (d) return d; }
   const t = raw.replace(URL_RE, " ");
   if (APPLICATION_FORM_RE.test(t) && (MOBILE_RE.test(t) || BIRTH_FULL_RE.test(t) || LABELED_BIRTH_RE.test(t) || INCOME_VALUE_RE.test(t))) return "記入済みの申込フォーム";
   if (MOBILE_RE.test(t)) return "携帯電話の番号";

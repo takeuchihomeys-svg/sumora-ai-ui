@@ -12,6 +12,7 @@ import { staffActsOf } from "@/app/lib/customer-sim-shadow";
 import { extractDraftFacts } from "@/app/lib/draft-fact-grounding";
 import { loadDraftGroundExtra } from "@/app/lib/draft-fact-grounding-server";
 import { draftConfidenceEnabled, confidenceFromCheck } from "@/app/lib/draft-confidence";
+import { autoGateFinalCheckEnabled, finalCheckStateOf } from "@/app/lib/auto-gate-final-check";
 
 export const maxDuration = 60;
 
@@ -130,6 +131,8 @@ export async function GET(req: NextRequest) {
       suggestedAixAction: action,
       draft: sendable,
       draftHasBlock: hasBlock(c.ai_draft_check),
+      // 2026-11-12 作業員20（台帳 auto-gate:passes-without-final-check）: 最終チェックの結果が無い・3パス未完走の下書きは送らない（AUTO_GATE_FINAL_CHECK=off で今までどおり）
+      finalCheckState: autoGateFinalCheckEnabled() ? finalCheckStateOf(c.ai_draft_check) : undefined,
       // 2026-10-21 自信の気づき: 自信が低い下書きは送らない（DRAFT_CONFIDENCE=on の時だけ・draft-confidence.ts）
       draftConfidenceLow: draftConfidenceEnabled() && confidenceFromCheck(c.ai_draft_check)?.band === "low",
       status: c.status,

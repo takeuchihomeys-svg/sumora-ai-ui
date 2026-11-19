@@ -17,6 +17,8 @@
 //   このボタン・ピッカーの意味（竹内基準・aix-catalog.aixMeaningForGenerator・お手本の文は渡さない）／物件の判断の中身（売上サポの理由・合う条件・決め手・お客様の反応）
 import { buildRequestLedger, applyBrainRequestStatus, uncoveredRequests, TOPIC_JA, type LedgerItem, type RequestItem } from "./request-ledger";
 import { trackPromises, type OpenPromise } from "./promise-tracker";
+import { promiseReadUnifiedOn } from "./promise-read";
+import { openPromisesAfterFirst } from "./aix-second-link";
 import { findConfirmReportSentence } from "./action-ledger";
 import { isEstimateCard, estimatePropertiesOf } from "./estimate-second-message";
 import { contractFreshForAix, askIsThisAix, promiseFulfilledBy } from "./aix-brain-contract";
@@ -105,7 +107,7 @@ const msOf = (iso: string | null | undefined, fallback: number) => {
 };
 
 /** 時刻を付けた古い順の発言（時刻の無い通は前の通の直後とみなす・1通目は今） */
-function timed(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> {
+export function timed(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> {
   const out: Array<{ sender: string; text: string; createdAt: string; isAix: boolean }> = [];
   let prev = nowMs - 86_400_000;
   for (const m of msgs) {
@@ -141,7 +143,10 @@ export function outstandingAsks(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyA
 }
 
 /** まだ果たしていない約束（この番の1通目までで果たしていない物） */
-export function openPromises(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number): OpenPromise[] {
+export function openPromises(msgs: ReadonlyArray<SmMsg>, turnStaff: ReadonlyArray<string>, nowMs: number, o?: { actionType?: string | null; sentMessage?: string | null; env?: Record<string, string | undefined> }): OpenPromise[] {
+  // 2026-11-12 作業員25（PROMISE_READ_UNIFIED=on の時だけ・既定 off＝下の旧のまま）: 約束の読みを promise-read に寄せ、1通目（AIX）のボタンの種類で果たした約束を閉じる。
+  //   旧は文しか見ないので、🌟の物件の札で果たしたピックアップ・新着の約束を「まだ果たしていない」と2通目に渡していた（aix-second-link.ts）
+  if (o && promiseReadUnifiedOn(o.env)) return openPromisesAfterFirst(timed(msgs, turnStaff, nowMs), { nowMs, actionType: o.actionType ?? null, sentMessage: o.sentMessage ?? null });
   return trackPromises(timed(msgs, turnStaff, nowMs), nowMs).open.filter((p) => !/記録なし/.test(p.status));
 }
 
@@ -186,7 +191,39 @@ const SENT_KIND_LINE: Record<SentKind, string> = {
   none: "この番ではまだ資料・画像・見積書を送っていない（約束の文だけ）。「ご査収ください」は書かない。",
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-11-12 作業員1（竹内さん 11/12「進めて良い」・材料の抜けの台帳 ⑥・AIX_CHECK_VALUE_PREFILL・既定 off）
+//   人が直した番（weak-spots 2026-10-16）の「管理会社・スタッフの確認の結果」66番は全部 AIX の文の側で、2通目の材料には
+//   確認の結果の文（generated_text＝answers）しか無く、1通目の AIX【物件確認した】でスタッフが入れた値（物件名ごとの状況・ピッカー）が値の形で届いていなかった。
+//   → この番（TURN_WINDOW_MS 以内）の 物件確認した の記録の 物件名×状況 を「確認の結果（値）」の欄として2通目の材料に足す。
+//     2通目は物件の状況をこの値だけで書き、ここに無い物件・値は書かず〇〇にする（送る前に止まる＝既存の未置換の止め）。画面の入力欄は変えない。
+//   ⚠ prop_statuses は粗い（「募集中・1番手で申込あり」も unavailable と記録された実物がある）→ unavailable は「募集中ではない（申込あり・募集終了を含む）」と書き、
+//     1通目の文と食い違う時は1通目の文が正と添える。
+// ─────────────────────────────────────────────────────────────────────────────
+export function aixCheckValuePrefillOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_CHECK_VALUE_PREFILL ?? "").trim().toLowerCase() === "on";
+}
+export type CheckValueRow = { property_names?: string[] | null; prop_statuses?: string[] | null; check_pattern?: string | null; created_at?: string | null };
+const STATUS_JA: Record<string, string> = { available: "募集中", unavailable: "募集中ではない（申込あり・募集終了を含む）", ended: "募集終了", second: "2番手以降", applied: "申込あり" };
+/** この番の 物件確認した の記録 → 物件名×状況の行（新しい記録が先・同じ物件は1行） */
+export function checkValueLines(rows: ReadonlyArray<CheckValueRow>, nowMs: number, windowMs: number = TURN_WINDOW_MS): string[] {
+  const out: string[] = []; const seen = new Set<string>();
+  for (const r of rows) {
+    const at = r.created_at ? Date.parse(r.created_at) : NaN;
+    if (!Number.isFinite(at) || nowMs - at > windowMs || at - nowMs > 60_000) continue;
+    const names = (r.property_names ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+    names.forEach((name, i) => {
+      if (seen.has(name)) return; seen.add(name);
+      const st = String((r.prop_statuses ?? [])[i] ?? "").trim();
+      out.push(`${name}: ${st ? STATUS_JA[st] ?? st : "（状況の値なし＝書かない）"}`);
+    });
+  }
+  return out.slice(0, 8);
+}
+
 export type SecondMaterialsInput = {
+  /** 2026-11-12 この番の確認の結果の値（checkValueLines・AIX_CHECK_VALUE_PREFILL=on の時だけ） */
+  checkValues?: ReadonlyArray<string>;
   sent: SentThisTurn;
   asks: ReadonlyArray<LedgerItem>;
   promises: ReadonlyArray<OpenPromise>;
@@ -322,6 +359,10 @@ export function buildSecondMaterialsNote(i: SecondMaterialsInput): string {
   if (i.answers.length) {
     L.push("・確認の結果（AIX の記録・事実の出どころ。書く時はこの言葉どおり・足さない）:");
     for (const a of i.answers) L.push(`  - 「${a}」`);
+  }
+  if (i.checkValues?.length) {
+    L.push("・この番の確認の結果（値・1通目の AIX【物件確認した】でスタッフが入れた物）。2通目で物件の状況を書く時はこの値だけを使う。ここに無い物件・値は作らず〇〇と書く（送る前に止まる）。1通目の文と食い違う時は1通目の文が正:");
+    for (const v of i.checkValues) L.push(`  - ${v}`);
   }
   if (i.ngPoints?.trim()) L.push(`・お客様の NG 条件（物件の良い所・合う所として書かない）: ${i.ngPoints.trim().slice(0, 160)}`);
   const body = L.join("\n");

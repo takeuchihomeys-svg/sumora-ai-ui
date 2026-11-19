@@ -11,6 +11,7 @@
 //     連帯保証人 7/12・退去予定 5/7）。続く audit-image-read-grounding.ts で「資料に無い可否を作る」も分かり、条件の行は推論 low のまま残した。
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-sent-image-combined-read.ts [--n=30] [--baseline] [--days=14]
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImageDetail } from "../app/lib/property-image-read";
 import { readPropertyImageBoth } from "./audit-image-both-prompt";

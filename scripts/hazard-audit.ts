@@ -155,7 +155,7 @@ async function main() {
 
   // (o) 2026-11-05 scripts/ で DeepSeek を直接呼ぶのに申込の線（loadDeepseekCutoff 等）を通していない台本（点検表 17）
   {
-    const bad = readFiles(["scripts"]).filter((f) => deepseekWithoutCutoff(f.text)).map((f) => f.file);
+    const bad = readFiles(["scripts"]).filter((f) => deepseekWithoutCutoff(f.text, f.file)).map((f) => f.file);
     checks.push({ key: "o", ok: bad.length === 0, line: `DeepSeek を呼ぶのに申込の線を通さない台本 ${bad.length}`, detail: bad });
   }
 

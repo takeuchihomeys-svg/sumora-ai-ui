@@ -88,6 +88,56 @@ export function effectiveExhaustStrength(strength: "strong" | "weak" | null | un
   return strength ?? null;
 }
 
+// ─── 2026-11-12 作業員1（試験 q001・q002 の外れ19行 pickup_unless_ack・統括役の決め）──────────────────────────────
+//   最初の束「天王寺周辺全域から…ピックアップさせて頂きました」は「全て」が無いので weak＝材料は「出し切りとは限らない…まだ探せるならピックアップの約束」
+//   と渡り、ブレインの本質がピックアップの約束を選んでいた（竹内さんは新着待ち）。
+//   実送信（120日・「〇〇周辺全域から…ピックアップさせて頂きました」の後のお客様の「もう少し探して・見たい・もっと」の番）:
+//     新しい条件の無い番 5/5 がスタッフは新着待ち・全力サポート（新しいピックアップの約束 0）／新しい条件を足した番 2/2 は新しいピックアップの約束。
+//   → 「〇〇周辺全域から／沿線全域から…ピックアップさせて頂きました」が一番新しい印で、今の番が新しい条件の無い「もう少し」の時だけ、材料の強さを strong にする。
+//   後の規則（rule:search_exhausted の上書き）には使わない＝材料だけ（判断はブレイン・P0 9eb6aa9c）。10/09 の広い weak の印付けの失敗（4日 43番）を繰り返さないよう狭く。
+//   既定 off（入れる EXHAUSTED_AREA_ALL_STRONG=on）。
+export function exhaustedAreaAllStrongOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXHAUSTED_AREA_ALL_STRONG ?? "").trim().toLowerCase() === "on";
+}
+/** 出し切りの判定に「送れる候補があるか」（売上サポの今送れる候補）を渡すか。既定 off（入れる EXHAUSTED_PICKUP_READY=on）＝今まで brain-core は null を渡していた */
+export function exhaustedPickupReadyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXHAUSTED_PICKUP_READY ?? "").trim().toLowerCase() === "on";
+}
+/** エリア全域から束で送った報告（「天王寺周辺全域から…ピックアップさせて頂きました」「御堂筋線沿線全域から…」） */
+export const AREA_ALL_PICKED_RE = /(?:周辺|沿線|エリア)(?:の)?全域から[^。\n]{0,60}?ピックアップ(?:させて|して)(?:頂|いただ)きました/;
+/** もっと見たい・探してほしい（「もう少し探していただけますか」「もう少し見てみたい」「他にも送って」） */
+export const MORE_ASK_RE = /(?:もう少し|もうちょっと|もっと|他にも|ほかにも|他の|追加で|まだ)[^。\n]{0,14}(?:探|見|送|ピックアップ|物件|お部屋|部屋|候補|紹介)/;
+/** 今の番に新しい条件の言葉がある（エリア・駅・広さ・家賃・設備・費用・築年）＝新しい条件で探す番（強くしない） */
+export const TURN_NEW_CONDITION_RE = /\d+\s*(?:㎡|m2|平米|万|帖|畳|分|LDK|DK|K|R)|[一-龠ァ-ヶ]{1,6}(?:駅|区|市|町|線)|エリア|近い|近く|寄り|広い|広め|大きめ|狭|築|新し|南向き|日当たり|駐車場|駐輪場|ペット|オートロック|バス|トイレ|洗面|キッチン|収納|安く|安い|抑え|初期費用|敷金|礼金|家賃|予算|階以上|角部屋|ガス|IH|ネット無料/;
+
+/** 内覧の日の話（「明日見れる他の物件」「一緒に案内」） */
+const VIEWING_DAY_ASK_RE = /内覧|内見|見れる|見られる|見に行|案内|明日|本日|今日/;
+/** 今の番の言葉だけ（画像の書き起こし・URL の行は見ない） */
+function turnWords(text: string | null | undefined): string {
+  const lines = String(text ?? "").normalize("NFKC").split("\n").filter((l) => !/^\s*\[(?:画像|スタンプ|ファイル)\]/.test(l) && !/https?:\/\//.test(l));
+  // 画像の書き起こし（物件の画面の「御堂筋線 昭和町駅 徒歩5分」等）は話し言葉の行ではない＝画像のある番は話し言葉の終わり方の行だけ見る
+  if (!/\[画像\]/.test(String(text ?? ""))) return lines.join("\n");
+  return lines.filter((l) => /(?:です|ます|たい|ません|ください|下さい|ほしい|欲しい|か[？?]?|[？?！!🙇]|ね|よ|が、|けど)[\s🙇‍♀️♂️😊😌✨]*$/u.test(l.trim())).join("\n");
+}
+
+/**
+ * 材料の強さだけを上げる（weak → strong）。上げた時は upgraded=true。判定（exhausted）・印の時刻は変えない。
+ *   印の文: 一番新しい印が AIX の物件の送付（文の無い印・同じ束の数秒後）の時もあるので、印の時刻の前後10分のこちらの文から探す（msgs を渡した時）
+ */
+export function areaAllExhaustUpgrade<T extends { exhausted: boolean; strength?: "strong" | "weak" | null; markerText?: string | null; markerAt?: string | null }>(
+  r: T, turnText: string | null | undefined, env?: Record<string, string | undefined>,
+  msgs?: ReadonlyArray<{ sender: string; text?: string | null; createdAt?: string | null }>,
+): T & { upgraded?: boolean } {
+  if (!exhaustedAreaAllStrongOn(env) || !r.exhausted || r.strength !== "weak") return r;
+  const at = r.markerAt ? Date.parse(r.markerAt) : NaN;
+  const near = Number.isFinite(at) ? (msgs ?? []).filter((m) => m.sender !== "customer" && m.createdAt && Math.abs(Date.parse(m.createdAt) - at) <= 10 * 60_000).map((m) => String(m.text ?? "")) : [];
+  if (![String(r.markerText ?? ""), ...near].some((x) => AREA_ALL_PICKED_RE.test(x.normalize("NFKC")))) return r;
+  const w = turnWords(turnText);
+  // 監査（120日の実物 14番）: 「明日見れる他の物件ありますか？」は内覧の日の話（スタッフは即日内覧できる部屋を案内）＝出し切りの番ではない
+  if (!MORE_ASK_RE.test(w) || TURN_NEW_CONDITION_RE.test(w) || VIEWING_DAY_ASK_RE.test(w)) return r;
+  return { ...r, strength: "strong", upgraded: true };
+}
+
 /** 弱い印だけの出し切りはブレインの材料に下げる（上書きしない）か。**既定 off（旧のまま）**・BRAIN_DEMOTE_SEARCH_EXHAUSTED=on で下げる。
  *  10/13 試験（出し切り7問・DeepSeek）: 下げると道 7/7→5/7・合格 1→0（q003 が悪化・q002 q006 は2段の約束に）＝試験の正解（竹内さんの実送信）は送付だけの印の後でも全力サポート。
  *  本番4日の 43番ではスタッフが物件の AIX を送った番が多い（21/42）＝食い違う。材料を強くしてから on にする（入れない判断・報告に書いた） */

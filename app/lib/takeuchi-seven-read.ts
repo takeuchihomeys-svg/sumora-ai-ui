@@ -153,3 +153,50 @@ export function sevenBlueprintNote(r: SevenRead | null, env?: Record<string, str
   if (r.point_how.length || r.trust_how.length) L.push(`押さえ方 ${r.point_how.join(",")}／信頼 ${r.trust_how.join(",")}`);
   return L.join("\n");
 }
+
+/**
+ * 2026-11-12 作業員5（竹内さんの指示 KB d72ad06b・P1「潜在は何で（きっかけ）・何の部分を・どんな気持ちで（強さも）・本当はどうしたいのか の4つに分けて読む」）。
+ *   ⑤ 潜在を4つ＋先回りの事実・言い方（竹内さんの文の1文をそのまま）・誘導先で読む。種類で止めない。
+ */
+export const TRIGGER_KINDS = ["customer_words", "scene", "prev_send", "property_fact"] as const;
+export type TriggerKind = typeof TRIGGER_KINDS[number];
+export type LatentFour = {
+  trigger: { kind: TriggerKind; text: string };
+  part: { property: string | null; point: string };
+  feeling: { what: string; strength: "strong" | "mid" | "weak" };
+  want: string;
+  fact: string | null;
+  phrase: string | null;
+  lead: LeadTo | null;
+};
+export const LATENT_FOUR_SYSTEM = [
+  "あなたは賃貸仲介会社の社長（竹内さん）の LINE の返信1通から、お客様の言っていない奥の心配（潜在）を竹内さんがどう読んだかを、4つに分けて書く担当です（文は直さない）。種類（『審査の不安』『費用の不安』）で止めず、この物件・この時期・この人の事情で具体に書く。",
+  "trigger: 何でそれが分かったか。kind＝customer_words（お客様の言葉）/scene（場面・段階）/prev_send（こちらが前に送った物・言った事）/property_fact（物件の事実）。text＝きっかけになった言葉・事実（30字以内・お客様の言葉はそのまま）。",
+  "part: 何の部分か。property＝物件名と号室（無ければ null）・point＝その物件・話の中のどの点か（初期費用・空き・入居日・審査・広さ・立地・内覧の日 等を具体に）。",
+  "feeling: どんな気持ちか（what＝具体に・40字以内）と強さ（strength＝strong 口に出して強く気にしている/mid 言葉の端に出ている/weak 竹内さんが先回りして読んだだけ）。",
+  "want: 本当はどうしたいのか（40字以内・例: 1部屋しか無いこの部屋を内覧の前に確保したい）。",
+  "fact: 竹内さんが先回りに使った事実（例: 1部屋のみの募集・保証会社通過後オーナー審査まではキャンセル料がかからない・代理契約・最大限割引の御見積・通りやすい保証会社・申込から1〜2週間で入居）。無ければ null。phrase: その事実を言った竹内さんの文を1文そのまま（無ければ null）。lead: 次に何へつなげたか（viewing/apply/estimate/ask_send/keep/answer_only/none）。",
+  "奥の心配が読めない番は {\"none\":true} だけを返す。名前は YUMA、伏せた所は〈〉のまま。推測で事実を足さない。出力は JSON だけ: {\"trigger\":{\"kind\":\"…\",\"text\":\"…\"},\"part\":{\"property\":null,\"point\":\"…\"},\"feeling\":{\"what\":\"…\",\"strength\":\"mid\"},\"want\":\"…\",\"fact\":null,\"phrase\":null,\"lead\":\"…\"}",
+].join("\n");
+const s80 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, 80) : null);
+/** 読み取り（none・要る欄が無い時は null） */
+export function parseLatentFour(text: string): LatentFour | null {
+  const m = String(text ?? "").match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let j: Record<string, unknown>;
+  try { j = JSON.parse(m[0]) as Record<string, unknown>; } catch { return null; }
+  if (j.none === true) return null;
+  const o = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : null);
+  const tr = o(j.trigger), pa = o(j.part), fe = o(j.feeling);
+  if (!fe || !s80(fe.what) || !s80(j.want)) return null;
+  const kind = typeof tr?.kind === "string" && (TRIGGER_KINDS as readonly string[]).includes(tr.kind) ? (tr.kind as TriggerKind) : "scene";
+  const st = fe.strength === "strong" || fe.strength === "weak" ? fe.strength : "mid";
+  return {
+    trigger: { kind, text: s80(tr?.text) ?? "" },
+    part: { property: s80(pa?.property), point: s80(pa?.point) ?? "" },
+    feeling: { what: s80(fe.what)!, strength: st },
+    want: s80(j.want)!,
+    fact: s80(j.fact), phrase: typeof j.phrase === "string" && j.phrase.trim() ? j.phrase.trim().slice(0, 160) : null,
+    lead: typeof j.lead === "string" && (LEAD_TO as readonly string[]).includes(j.lead) ? (j.lead as LeadTo) : null,
+  };
+}

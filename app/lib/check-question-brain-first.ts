@@ -36,3 +36,25 @@ export function checkQuestionBrainRoute(i: { rawAix: unknown; contract: unknown;
   if (asks.every((a) => a?.route === "reply" || a?.route === "none")) return "reply";
   return null;
 }
+
+// ─── 2026-11-15 作業員H（統括役の頼み・試験の外れの台帳で通算一番多い「2段で道が変わる」の調べ）────────────────
+//   上の型の反対側: ブレインが自分の依頼（turn_contract）で route="aix"（その AIX で結果を送る）と決めた番まで、
+//   聞かれた事の確認の約束（check_question）に書き換えていた。試験の答案 14日（scripts/audit-exam-two-stage-essence.ts）:
+//   check_question の書き換えが入った答案 18 のうち、本質（ブレインの道）が当たりで書き換えで外れた番 2・書き換えで当たりになった番 0。
+//   実物: q411（物件確認した＋御見積書同封の後の「鍵交換代は必須ですか」→ 竹内さんは AIX【確認した】・ブレインは route=aix の物件確認した/設備）。
+//   P0 ca55d42b（スタッフだけが知る事は AIX）と決定 0f4604a9（手元に無ければ約束・あればどのボタン）: 手元にあるかを決めるのはブレイン（P0 9eb6aa9c）。
+//   守り: ブレインが route="promise" と書いた番（q177・q180・q015・q163・q092 の形＝aix の欄が物件確認したでも依頼は約束）は今まで通り書き換える。
+//   既定 off（TWO_STAGE_CHECK_QUESTION_KEEP_AIX=on）
+export function checkQuestionKeepAixOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_CHECK_QUESTION_KEEP_AIX ?? "").trim().toLowerCase() === "on";
+}
+/** ブレインの依頼に route="aix" で今の AIX（または同じボタン）を送る ask があり、確認の約束（route=promise）の ask が無いか */
+export function brainChoseAixForQuestion(i: { finalAix: unknown; contract: unknown }): boolean {
+  const fa = String(i.finalAix ?? "").trim();
+  if (!fa || /^(?:null|none|undefined)$/i.test(fa)) return false;
+  const c = i.contract as { asks?: unknown } | null;
+  const asks = c && Array.isArray(c.asks) ? (c.asks as Ask[]) : [];
+  if (!asks.length || contractHasCheckPromise(asks)) return false;
+  const btn = fa.split("/")[0];
+  return asks.some((a) => a?.route === "aix" && String(a?.aix ?? "").split("/")[0] === btn);
+}

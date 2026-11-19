@@ -227,6 +227,8 @@ export type JudgeInput = {
   aixMapping?: boolean;
 };
 export type VerdictDetail = {
+  /** 2026-11-13 作業員1（WATCH_AIX_RECORD_V2）: staff_aix が空の理由（pressed／none／next_turn／unknown・aix-record.staffAixState） */
+  staff_aix_state?: "pressed" | "none" | "next_turn" | "unknown";
   /** 2026-11-11 M5・M6（物差し）で事実の比べを緩めた印（relative_day_only・draft_named_property） */
   measure_notes?: string[];
   v: string;

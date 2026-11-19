@@ -91,12 +91,21 @@ export interface ViewingFlow {
   requested: string | null;
   /** 2026-10-28 確定の後の今回の連投で、お客様が確定の日と別の日を打診した（「24か25でも可能」「24は19時まで」）。材料だけ（段階は変えない・VIEWING_ALT_DAYS_AFTER_CONFIRM=on の時だけ） */
   altDaysAfterConfirm?: string[];
+  /** 2026-11-13 作業員5（統括役・見張り 12265）: 確定した内覧の当日に、今回の連投でお客様が別の物件の追加の内見を頼んだ（「時間あったら今日ここも内見させて」）。VIEWING_SAME_DAY_ADD_ON=on の時だけ */
+  sameDayAddOn?: boolean;
   reason: string;
 }
 
 const DAY = 86_400_000;
 /** 候補を出した／希望を言った後、内覧の話が何も動かなければ「流れは続いていない」とする日数（打診→待ち合わせは 75% が 26時間以内・最長でも数日） */
 export const VIEWING_FLOW_STALE_DAYS = 7;
+export const viewingSameDayAddOnOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
+  (env.VIEWING_SAME_DAY_ADD_ON ?? "").trim().toLowerCase() === "on";
+/** 当日の追加の内見（「ここも内見させて」「この物件も」「追加で」「もう1件」「ついでに」）。「彼氏も一緒に」「本日の内見12時15着」は追加の物件ではない */
+const SAME_DAY_ADD_RE = /(?:ここ|こちら|そこ|この物件|この部屋|このお部屋|他の物件|別の物件).{0,4}も|追加で|もう1件|もう一件|ついでに/;
+const SAME_DAY_VIEW_RE = /内見|内覧|見せ|見れ|見られ|見たい|見に/;
+/** 候補日を頼んだ（「候補日教えて」「いつ空いて」）＝内覧調整のまま */
+const CANDIDATE_ASK_RE = /候補|いつ(?:なら|が|空|行け)|空いて(?:る|い)(?:日|時間)|別日/;
 const nfkc = (s: string | null | undefined) => (s ?? "").normalize("NFKC");
 const ms = (iso: string | null | undefined): number => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? t : NaN; };
 
@@ -204,6 +213,20 @@ export function parseCustomerTime(text: string): string | null {
   return `${h}:${min}`;
 }
 
+// 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める VIEWING_WEEKDAY_TO_OFFERED=off）
+export const viewingWeekdayToOfferedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
+  (env.VIEWING_WEEKDAY_TO_OFFERED ?? "on").trim().toLowerCase() !== "off";
+/** 候補の日（M/D）のうち、その曜日（0=日）の物。年はお客様の発言の時刻の年（12月の発言で1月の候補は翌年） */
+export function offeredDaysOfWeekday(offered: readonly string[], dow: number, atMs: number): string[] {
+  const p = jstParts(Number.isFinite(atMs) ? atMs : Date.now());
+  return offered.filter((md) => {
+    const m = Number(md.split("/")[0]), d = Number(md.split("/")[1]);
+    if (!m || !d) return false;
+    const y = m < p.m - 6 ? p.y + 1 : m > p.m + 6 ? p.y - 1 : p.y;
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === dow;
+  });
+}
+
 export type DateReplyCtx = {
   atMs: number;
   /** こちらが出している候補の日（M/D）。1つだけなら「大丈夫です」で決まる */
@@ -230,7 +253,13 @@ export function classifyCustomerDateReply(text: string | null | undefined, ctx: 
   const scope = dateLines.join("\n");
   // 「27日以降」「月曜日以降」は日を決めていない（範囲）→ 日・開始時刻の指定に読まない
   const rangeDay = RANGE_DAY_RE.test(scope);
-  const day = rangeDay ? null : parseCustomerDay(scope, ctx.atMs);
+  let day = rangeDay ? null : parseCustomerDay(scope, ctx.atMs);
+  // 2026-11-13 作業員5（統括役・q406）: 曜日だけ（「土曜日で」）の返事は、こちらの候補にその曜日の日が1つだけあればその日に読む
+  //   （次の土曜を今日から数えると候補の日とずれる時がある＝試験の仮の時計・候補が翌週の時）。VIEWING_WEEKDAY_TO_OFFERED=on の時だけ（既定 off）
+  if (day && !ctx.offeredDays.includes(day) && viewingWeekdayToOfferedOn() && !MD_RE.test(scope)) {
+    const wd = scope.match(WEEKDAY_RE)?.[1];
+    if (wd) { const hit = offeredDaysOfWeekday(ctx.offeredDays, "日月火水木金土".indexOf(wd), ctx.atMs); if (hit.length === 1) day = hit[0]; }
+  }
   const time = rangeDay ? null : parseCustomerTime(scope);
   const vague = VAGUE_DAY_RE.test(scope);
   const neg = NEG_RE.test(scope);
@@ -494,6 +523,20 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     const cur = st.label?.split(" ")[0] ?? null;
     for (const m of msgs.slice(i)) for (const d of altDaysOfCustomerText(m.text ?? "", ms(m.createdAt))) if (d !== cur && !altDaysAfterConfirm.includes(d)) altDaysAfterConfirm.push(d);
   }
+  // 2026-11-13 作業員5（統括役・見張り 12265）: 確定した内覧の当日に、別の物件の追加の内見を頼まれた番（材料だけ・段階は変えない）。
+  //   竹内さん 11/08「ここも内覧手配くんどいて今日しょーへい内覧させてもらう！！」・スタッフ 8/23「フォレ長堀通南も一緒にご案内させていただきます」・9/02「本日13:00より…2部屋ご案内」＝返信で当日の内覧に組み込む（内覧調整の候補日にしない）。
+  //   「内見行ける候補日教えてください」（候補日を頼んだ）は今まで通り内覧調整
+  let sameDayAddOn = false;
+  if (viewingSameDayAddOnOn() && st.stage === "confirmed" && lastIdx >= 0 && msgs[lastIdx].sender === "customer") {
+    let i = lastIdx; while (i - 1 >= 0 && msgs[i - 1].sender === "customer") i--;
+    const cur = st.label?.split(" ")[0] ?? null;
+    for (const m of msgs.slice(i)) {
+      const tx = nfkc(m.text);
+      const today = jstParts(ms(m.createdAt)); const todayMd = `${today.m}/${today.d}`;
+      // 「もし時間あったら」の条件付きも当日の追加（customerWishes は条件付きを希望にしない＝ここでは使わない）
+      if (cur === todayMd && SAME_DAY_ADD_RE.test(tx) && SAME_DAY_VIEW_RE.test(tx) && !CANDIDATE_ASK_RE.test(tx) && !CANCEL_RE.test(tx)) sameDayAddOn = true;
+    }
+  }
   return {
     stage: st.stage, confirmed,
     label: st.stage === "date_agreed" || st.stage === "confirmed" || (st.stage === "proposing" && st.meetingOffered) ? st.label : null,
@@ -504,6 +547,7 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     placePromised: st.stage === "date_agreed" && st.placePromised, meetingOffered: st.stage === "proposing" && st.meetingOffered,
     currentWish, reason: st.reason, requested: st.stage === "wished" ? st.requested : null,
     ...(altDaysAfterConfirm.length ? { altDaysAfterConfirm } : {}),
+    ...(sameDayAddOn ? { sameDayAddOn } : {}),
   };
 }
 
@@ -557,6 +601,7 @@ export function buildViewingFlowBrainText(f: ViewingFlow): string {
     lines.push(`・候補を出した後のお客様の日にちの返事: ${f.lastReply ? REPLY_JA[f.lastReply] : "まだ無い"}${f.askedDay ? `（${f.askedDay}）` : ""}`);
   }
   if (f.currentReply) lines.push(`・今回のお客様の発言: ${REPLY_JA[f.currentReply]}`);
+  if (f.stage === "confirmed" && f.sameDayAddOn) lines.push("・本日の確定した内覧に、お客様が別の物件の追加の内見を頼んでいる → viewing_invite（候補日）にしない。本日の内覧に組み込めるか（時刻・行き方）を返信で答える（竹内さん: 「ここも内覧手配しておいて今日内覧させてもらう」）。組み込めるかの空きはスタッフが確かめる");
   if (f.stage === "confirmed" && f.altDaysAfterConfirm?.length) lines.push(`・確定の後に、お客様が別の日を打診している（${f.altDaysAfterConfirm.join("・")}）。確定の日のままか、日程の変更か（その日の空きはスタッフしか分からない）は会話を読んで決める。確定の日時を本文で言い切らない`);
   // 待ち合わせを「いかがでしょうか」で送った時は、台帳の待ち合わせ案内はその打診そのもの（「別に1つある」ではない）
   if (f.confirmed && f.stage !== "confirmed" && !f.meetingOffered) lines.push("・これとは別に、待ち合わせ場所を送った（確定した）内覧が1つある（台帳の待ち合わせ案内）");

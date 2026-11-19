@@ -26,6 +26,14 @@ export async function register() {
     } catch (e) {
       console.warn("[instrumentation] alt provider install failed:", String(e));
     }
+    // 2026-11-15 作業員H: RAG（match_* の RPC）ごとの見張り（呼ばれた・0件・失敗・近さ・時間を rag_call_logs に）。11/15 から既定 on（止める RAG_WATCH=off）
+    //   開発サーバの包み直し（下）には入れていない＝手元の HMR の後は外れる（見張りは本番の数え用）
+    try {
+      const { installRagWatch } = await import("./app/lib/rag-watch-server");
+      await installRagWatch();
+    } catch (e) {
+      console.warn("[instrumentation] rag watch install failed:", String(e));
+    }
     // 2026-10-01 竹内「1～4すべて改善する」: 開発サーバだけ、Next の resetFetch（HMR）で素の fetch に戻された瞬間に同じ順で包み直す
     //   （包みの付け直しを持たない入口の Claude が記録0・テスト用の切り替えも外れていた）。本番（NODE_ENV=production・Vercel）では何もしない
     if (process.env.NODE_ENV !== "production") {

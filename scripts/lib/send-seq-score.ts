@@ -73,10 +73,13 @@ export function seqStats(rows: SeqRow[]) {
   const multiReplyWant = rows.filter((x) => replies(x.want) >= 2);
   const draftSplit = multiReplyWant.filter((x) => draftPartCount(x.draft) >= 2).length;
   const draftHave = multiReplyWant.filter((x) => !!x.draft).length;
+  /** 11/12: 返信1通以下が正解の番で下書きを「---」で割った（書き手が自分で分ける REPLY_SPLIT_WRITER_SELF の守り） */
+  const singleDraft = rows.filter((x) => replies(x.want) <= 1 && !!x.draft);
+  const draftOverSplit = singleDraft.filter((x) => draftPartCount(x.draft) >= 2);
   const rawRows = rows.filter((x) => !!x.raw);
   const rawMatch = rawRows.filter((x) => x.raw === x.want).length;
   const rawMultiWant = rawRows.filter((x) => x.want.length >= 2);
-  return { rawN: rawRows.length, rawMatch, rawMultiN: rawMultiWant.length, rawMultiHit: rawMultiWant.filter((x) => x.raw === x.want).length, n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, recorded: rows.filter((x) => x.recorded).length };
+  return { rawN: rawRows.length, rawMatch, rawMultiN: rawMultiWant.length, rawMultiHit: rawMultiWant.filter((x) => x.raw === x.want).length, n, match, countMatch, multiN: multiWant.length, multiHit, singleN: singleWant.length, overSplit, underSplit, multiReplyN: multiReplyWant.length, draftSplit, draftHave, singleDraftN: singleDraft.length, draftOverSplit, recorded: rows.filter((x) => x.recorded).length };
 }
 
 /** 要約の1行（pct は brain-exam の書き方を受け取る） */
@@ -88,5 +91,35 @@ export function sendSeqSummary(rows: SeqRow[], pct: (a: number, b: number) => st
   return `送る物の並び（回 ${s.n}・正解は札 ${fromTag}／実送信 ${s.n - fromTag}・ブレインが send_sequence を出した ${s.recorded}）: 一致 ${pct(s.match, s.n)}｜返信の通数の一致 ${pct(s.countMatch, s.n)}｜2通以上の番の一致 ${pct(s.multiHit, s.multiN)}`
     + `｜1通の番を割った ${s.overSplit.length}/${s.singleN}${list(s.overSplit)}｜2通以上の番を1通に ${s.underSplit.length}/${s.multiN}`
     + (s.rawN ? `｜本質（LLM の最初の並び）の一致 ${pct(s.rawMatch, s.rawN)}・2通以上の番 ${pct(s.rawMultiHit, s.rawMultiN)}` : "")
-    + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "");
+    + (s.multiReplyN ? `｜返信2通以上の番の下書き「---」で分かれた ${s.draftSplit}/${s.draftHave}（下書きあり）` : "")
+    + (s.singleDraftN ? `｜返信1通の番の下書きを「---」で割った ${s.draftOverSplit.length}/${s.singleDraftN}${list(s.draftOverSplit)}` : "");
+}
+
+/**
+ * 2026-11-13 作業員7b（統括役の頼み・竹内さん 11/13「返信と AIX の組み合わせも、ちゃんと行っていけるように」）: 係の結果に並びの悪化を出す（pathRegressions と同じ線）。
+ *   問題ごとに前（基準）と今の並びの一致の率を比べ、前が過半数で一致・今が半分未満で、差が 0.5 以上の問題を返す。正解の並びが無い問題は数えない。
+ *   係は EXAM_SEQ_SCORE=on の時だけ使う（既定 off）。
+ */
+export function examSeqScoreOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_SEQ_SCORE ?? "").trim().toLowerCase() === "on";
+}
+export type SeqRowForWorse = { id: string; error?: unknown; brain?: SeqBrain };
+export function seqRegressions(cur: ReadonlyArray<SeqRowForWorse>, base: ReadonlyArray<SeqRowForWorse>, ids: ReadonlyArray<string>, wantOf: (id: string) => string | null): Array<{ id: string; want: string; from: string; to: string; why: string }> {
+  const out: Array<{ id: string; want: string; from: string; to: string; why: string }> = [];
+  const stat = (rows: ReadonlyArray<SeqRowForWorse>, id: string, want: string) => {
+    const xs = rows.filter((r) => r.id === id && !r.error && r.brain);
+    if (!xs.length) return null;
+    const got = xs.map((r) => brainSeqOf(r.brain).seq);
+    const ok = got.filter((g) => seqMatch(want, g)).length;
+    const cnt = new Map<string, number>(); for (const g of got) cnt.set(g, (cnt.get(g) ?? 0) + 1);
+    return { rate: ok / xs.length, ok, n: xs.length, top: [...cnt].sort((a, b) => b[1] - a[1])[0][0] };
+  };
+  for (const id of ids) {
+    const want = wantOf(id);
+    if (!want) continue;
+    const b = stat(base, id, want), c = stat(cur, id, want);
+    if (!b || !c) continue;
+    if (b.rate > 0.5 && c.rate < 0.5 && b.rate - c.rate >= 0.5) out.push({ id, want, from: b.top, to: c.top, why: `${b.ok}/${b.n}→${c.ok}/${c.n}` });
+  }
+  return out;
 }

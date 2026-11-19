@@ -8,11 +8,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { runYardstick } from "../../../../scripts/lib/prod-yardstick-db";
+import { cronChainOn, runCronChain } from "@/app/lib/cron-chain";
 
-export const maxDuration = 120;
+// 11/15 作業員H: 朝の数えの子を後ろで呼ぶ分（CRON_CHAIN_PROD_YARDSTICK=on）を見て 300 に（off の時の動きは同じ）
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const t0 = Date.now();
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -29,6 +32,13 @@ export async function GET(req: NextRequest) {
     const result = { summary, days, turns: out.turns, down: out.down, few: out.few, beyond: out.beyond,
       scenes: out.drift.map((d) => ({ scene: d.scene, verdict: d.verdict, before: d.before, after: d.after, pBefore: +d.pBefore.toFixed(3), pAfter: +d.pAfter.toFixed(3) })) };
     await finishCronLog(logId, true, result);
+    // 2026-11-15 作業員H（cron の枠が上限 100本）: 朝の数えの子を順に呼ぶ（CRON_CHAIN_PROD_YARDSTICK=on の時だけ・既定 off＝今まで通り）。
+    //   on で子の数えが残るのを確かめてから vercel.json の子の行（compose-prod-daily・rag-watch-daily）を外して枠を空ける
+    if (cronChainOn("prod-yardstick")) {
+      const [{ GET: composeDaily }, { GET: ragDaily }] = await Promise.all([import("../compose-prod-daily/route"), import("../rag-watch-daily/route")]);
+      const chain = await runCronChain(req, [{ name: "compose-prod-daily", run: composeDaily }, { name: "rag-watch-daily", run: ragDaily }], { budgetMs: 110_000, deadlineMs: t0 + 280_000 });
+      return NextResponse.json({ ok: true, ...result, chain });
+    }
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

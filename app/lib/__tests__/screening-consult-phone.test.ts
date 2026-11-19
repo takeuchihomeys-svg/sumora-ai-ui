@@ -41,5 +41,14 @@ it("名義貸しの行は on の時「通常の審査の相談は電話にしな
   ok(/電話にしない/.test(screeningPhoneTurnLine("友人の名義で契約できますか", { SCREENING_PHONE_LINE: "on", SCREENING_CONSULT_PHONE: "off" })));
 });
 
+it("q406 咲（竹内さんの決定 11/12 KB 030882c3）: 日の答え＋審査の相談は、待ち合わせ場所を先に・電話は後（日の答えまで電話にまとめない）", () => {
+  const q406 = "土曜日 で\nお願い出来ればと思います☺️🤲🏻\n\n\n相談なのですが、\n今、水商売をしていて\nいつも 不動産屋さんに\n審査通るように職場の案内してもらうのですが...🥲🙂‍↕️";
+  ok(screeningConsultTurn(q406), "q406 は網に掛かる");
+  const t = screeningPhoneTurnLine(q406, ON);
+  ok(/待ち合わせ場所）を先に送り、審査の電話はその後/.test(t), t);
+  ok(/誘いへの答えが無い時だけ、同じ発言の他の事は電話の中で一緒に話す/.test(t), t);
+  ok(!/。同じ発言の他の事は電話の中で一緒に話す）/.test(t), "旧の『他の事は電話の中で』だけの言い方は残さない");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

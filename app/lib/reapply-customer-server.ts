@@ -4,7 +4,7 @@
 import { loadPostApplyFacts, loadParallelSecondState, parallelEligible, type PostApplyFacts } from "@/app/lib/post-apply";
 import { parallelSecondEnabled } from "@/app/lib/parallel-second";
 import {
-  resolveReapply, detectReturnPattern, staffPatternOf, reapplyMarkEnabled, buildReapplyBrainNote,
+  resolveReapply, detectReturnPattern, staffPatternOf, reapplyMarkEnabled, buildReapplyBrainNote, formOnHand,
   PATTERN_WINDOW_BEFORE_MS, PATTERN_WINDOW_AFTER_MS,
   type ReapplyInfo, type ReapplyState, type PatternMsg, type PatternPicker,
 } from "@/app/lib/reapply-customer";
@@ -50,8 +50,12 @@ export async function loadReapplyInfo(sb: Sb, conversationId: string, facts?: Po
 
 /** ブレインの材料（申込歴ありでなければ空文字） */
 export async function reapplyBrainNoteFor(sb: Sb, conversationId: string): Promise<{ note: string; info: ReapplyInfo | null }> {
-  const info = await loadReapplyInfo(sb, conversationId);
-  return { note: info ? buildReapplyBrainNote(info) : "", info };
+  if (!reapplyMarkEnabled()) return { note: "", info: null };
+  // 2026-11-15 作業員H: フォームと本人確認書類が手元にあるか（REAPPLY_FORM_ON_HAND_LINE=on の時だけ材料の1行）を同じ読みで見る
+  let facts: PostApplyFacts | undefined;
+  try { facts = await loadPostApplyFacts(sb, conversationId); } catch { facts = undefined; }
+  const info = await loadReapplyInfo(sb, conversationId, facts);
+  return { note: info ? buildReapplyBrainNote(info, Date.now(), { formOnHand: !!facts && formOnHand(facts) }) : "", info };
 }
 
 export type ReapplyConvRow = {

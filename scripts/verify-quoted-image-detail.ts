@@ -2,6 +2,7 @@
 //
 // 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように」
 // 実行: npx tsx --env-file=.env.local scripts/verify-quoted-image-detail.ts [--n=10] [--days=30]
+import "./lib/script-deepseek-gate"; // 2026-11-13 申込の門（申込の線より後の会話の画像は DeepSeek に送らない・竹内さんの決まり 9/26）
 import { createClient } from "@supabase/supabase-js";
 import { readPropertyImageDetail } from "../app/lib/property-image-read";
 
