@@ -256,6 +256,33 @@ export async function POST(req: NextRequest) {
            */
           ...(typeof r.g === "number" && r.g >= 0 && r.g <= 60000 ? { g: Math.round(r.g) } : {}),
           /**
+           * ★ 2026-11-19 拡張が送る押す前／後の状態・手の形・開いた物・押した位置を通す（真偽・種類・数だけ・入力値は入れない）。
+           *   ⚠ main はここで捨てていたので、DB の shot_ops に was/cs/opened/位置が1件も無かった
+           *     （直近300行で 0件・土台 F3/F4/F17/F20/F22/F25 が永久に ✗）。
+           */
+          ...(typeof r.was === "boolean" ? { was: r.was } : {}),
+          ...(typeof r.now === "boolean" ? { now: r.now } : {}),
+          ...(() => {
+            let cs = typeof r.cs === "string" && r.cs ? String(r.cs).slice(0, 12) : "";
+            if (!cs) {
+              const w = String(r.w || "");
+              const f = String(r.f || "");
+              if (/checkbox|radio|button|select|link|label|click/.test(w)
+                || /one_city|one_station|one_line|city_code|station|route|go_search|room_layout|絞り込み|検索/.test(f)) {
+                cs = "pointer";
+              }
+            }
+            return cs ? { cs } : {};
+          })(),
+          ...(typeof r.opened === "string" && r.opened ? { opened: String(r.opened).slice(0, 20) } : {}),
+          ...(typeof r.x === "number" && Number.isFinite(r.x) && r.x >= 0 && r.x <= 1 ? { x: Math.round(r.x * 100) / 100 } : {}),
+          ...(typeof r.y === "number" && Number.isFinite(r.y) && r.y >= 0 && r.y <= 1 ? { y: Math.round(r.y * 100) / 100 } : {}),
+          ...(typeof r.bw === "number" && Number.isFinite(r.bw) && r.bw > 0 && r.bw <= 5000 ? { bw: Math.round(r.bw) } : {}),
+          ...(typeof r.bh === "number" && Number.isFinite(r.bh) && r.bh > 0 && r.bh <= 5000 ? { bh: Math.round(r.bh) } : {}),
+          ...(typeof r.bt === "string" && r.bt ? { bt: r.bt.slice(0, 12) } : {}),
+          ...(typeof r.shape === "string" && r.shape ? { shape: r.shape.slice(0, 30) } : {}),
+          ...(typeof r.role === "string" && r.role ? { role: r.role.slice(0, 12) } : {}),
+          /**
            * 2026-11-14 竹内さん「通常モードで行っているのはスタッフ等人間が実際の動きをしているので
            *   そこを理解して学習する」:
            *   **人が押したのか拡張が押したのか**（`isTrusted` から作った印）を残す。
