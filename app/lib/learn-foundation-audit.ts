@@ -2388,3 +2388,42 @@ export function compactFoundationForSupervisor(a: FoundationAudit): FoundationFo
     key,
   };
 }
+
+type EvidenceLine = { label: string; value: string; guessed?: boolean };
+
+/**
+ * 手元で再点検した結果で、束の統括根拠の「学習土台点検（F番号）」「土台 Fxx」を置き換える。
+ * 本番の束の根拠は本番の点検の数え方で書かれており、Pro の axes はこの行から数字を取るため、
+ * 再点検を foundation_audit に入れるだけでは Pro に古い数字（例: F28 70.6%）が残る。
+ */
+export function refreshFoundationEvidence(
+  evidence: EvidenceLine[],
+  a: FoundationAudit,
+  siteTag = "",
+): EvidenceLine[] {
+  const c = compactFoundationForSupervisor(a);
+  const summary: EvidenceLine = {
+    label: "学習土台点検（F番号）",
+    value: `${siteTag}${c.summary}` + (c.missing.length
+      ? `／欠: ${c.missing.slice(0, 6).map((x) => x.id.replace(/^F\d+_/, "")).join("・")}`
+      : "／欠なし"),
+    guessed: c.missing_n > 0,
+  };
+  const keyLine = (id: string): EvidenceLine => ({
+    label: `土台 ${id}`,
+    value: `${c.key[id].ok ? "✓" : "✗"} ${c.key[id].line}`,
+    guessed: !c.key[id].ok,
+  });
+  const seen = new Set<string>();
+  const out = evidence.map((e) => {
+    if (e.label === summary.label) { seen.add(e.label); return summary; }
+    const m = /^土台 (F\d+_\w+)$/.exec(e.label);
+    if (m && c.key[m[1]]) { seen.add(e.label); return keyLine(m[1]); }
+    return e;
+  });
+  if (!seen.has(summary.label)) out.push(summary);
+  for (const id of Object.keys(c.key)) {
+    if (!seen.has(`土台 ${id}`)) out.push(keyLine(id));
+  }
+  return out;
+}

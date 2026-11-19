@@ -90,7 +90,7 @@ void (async () => {
   let bundleForPro = bundle as Record<string, unknown>;
   try {
     const { createClient } = await import("@supabase/supabase-js");
-    const { auditLearnFoundations } = await import("../app/lib/learn-foundation-audit");
+    const { auditLearnFoundations, refreshFoundationEvidence } = await import("../app/lib/learn-foundation-audit");
     const { countLearnedSolid } = await import("../app/lib/learn-bundle-preserve");
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -100,7 +100,11 @@ void (async () => {
       });
       const solidBundle = countLearnedSolid(bundleForPro).solid;
       bundleForPro = { ...bundleForPro, foundation_audit: fa };
-      line(`■ 土台点検（再）: ✓${fa.ok_n}／欠${fa.missing_n}／F1solid=${fa.screen_solid} 束solid=${solidBundle}`);
+      if (adv.meeting?.evidence) {
+        const siteTag = scope === "all" ? "" : `［${scope}］`;
+        adv = { ...adv, meeting: { ...adv.meeting, evidence: refreshFoundationEvidence(adv.meeting.evidence, fa, siteTag) } };
+      }
+      line(`■ 土台点検（再）: ✓${fa.ok_n}／欠${fa.missing_n}／F1solid=${fa.screen_solid} 束solid=${solidBundle}（統括根拠の土台行も置き換え）`);
       line(`  ${fa.summary.slice(0, 100)}`);
     }
   } catch (e) {
