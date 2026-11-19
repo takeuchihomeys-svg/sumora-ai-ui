@@ -1285,7 +1285,21 @@ export async function POST(req: NextRequest) {
     // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけここで作る
     ? (planFromMeta(brainMeta, lastCustomerMsg?.rawCreatedAt ?? null) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
     : null;
-  const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
+  const twoMsgNote0 = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
+  // 2026-11-19 作業員M（統括役の割り振り・継ぎ目②の読む側・ASK_PROGRESS_READ=on の時だけ・既定 off）: この番で実際に送った所まで（conversations.ask_progress）を
+  //   要件の帳面（meta.ask_ledger）と突き合わせ、まだ答えていない要件・もう答えた要件・次の通を2通目の書き手に渡す（今の帳面の続きの記録だけ・古い番の記録は読まない）
+  let askProgressNoteText = "";
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    if (al.askProgressReadOn() && conversationId && !isStaleMeta) {
+      const led = al.askLedgerOf(brainMeta);
+      if (led) {
+        const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", conversationId).maybeSingle();
+        askProgressNoteText = al.askProgressNote(led, al.askProgressOf(led, (apRow as { ask_progress?: unknown } | null)?.ask_progress));
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "aix-template:ask-progress-failed", error: e instanceof Error ? e.message : String(e) })); }
+  const twoMsgNote = [twoMsgNote0, askProgressNoteText].filter(Boolean).join("\n");
   // 2026-11-12 竹内さんの決定「Aでおねがい」（AIX_SECOND_REREAD=on・既定 off・aix-second-reread.ts）: ブレインの勧めた AIX と押された AIX が違う2通目は、
   //   押された AIX を正として、その意味で読み直した結果（なぜ今・何に応えるか・押さえる要点）を渡す。前の方向（返信方向・勝ちパターン・判断理由）は渡さない。
   //   読み直せない時は案B（方向を渡さず、押された AIX と会話だけ）。道は変えない（押された AIX が道）
