@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { readRelativeArea, readRideAsks, extLines, type AreaPlan } from "@/app/lib/osaka-area-profile";
 import { customerAreaPlan } from "@/app/lib/area-want";
 import { desiredKeys, loadSearchKnowledge } from "@/app/lib/property-search-knowledge-server";
+import { cityAllWards, isCityNameNotStation } from "@/app/lib/city-all-wards";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -824,6 +825,19 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // ── 市の名前だけ（堺市・堺市内）→ 全区 ─────────────────────────────
+      const _allWards = cityAllWards(tok, desired_area);
+      if (_allWards) {
+        for (const w of _allWards) {
+          const code = WARD_CODE_MAP[w];
+          if (!code) continue;
+          if (!result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+          if (!result.itandi.ward_names.includes(w)) result.itandi.ward_names.push(w);
+          if (!result.reins.ward_names.includes(w)) result.reins.ward_names.push(w);
+        }
+        continue;
+      }
+
       // ── 市区名（WARD_CODE_MAP に完全一致 or 短縮区名補完） ─────────────────────────────
       // 「平野区」→「大阪市平野区」、「堺区」→「堺市堺区」のように短縮区名を補完して解決
       const wardKey = WARD_CODE_MAP[tok]
@@ -1026,7 +1040,8 @@ commute_constraints: 通勤・通学・乗り換え制約
           // ── Step 2: stations → station_map / line_stations 照合（バッチ化）──
           // 旧: 駅ごとにシリアルDB往復（15駅×0.5s=7.5s）
           // 新: 既解決駅のreins補完を1往復にまとめ、未解決駅はresolveStationsFromListに委譲（計2往復）
-          const allAiStations = ai.stations ?? [];
+          // 市の名前（堺市）とその一部（堺）は駅にしない（全区は上のトークンで入れ済み）
+          const allAiStations = (ai.stations ?? []).filter((s: string) => !isCityNameNotStation(s, desired_area));
           const needReinsCheck: string[] = [];
           const unresolvedStations: string[] = [];
 
