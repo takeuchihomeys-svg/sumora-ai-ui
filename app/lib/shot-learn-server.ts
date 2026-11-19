@@ -831,7 +831,11 @@ export async function learnFromWeakShots(
         }
         if (!opt.dryRun) {
           const rid = runId || runOfShotKey(t.shot_key);
-          const payload = { ...sl, ...(rid ? { run_id: rid } : {}) };
+    /**
+     * 読んだ時刻（learned_at）を写真の結果に残す（JSON の中なので表の変更は無し）。
+     *   束の作成より後に読んだ写真かどうかを後から見分けるため。
+     */
+          const payload = { ...sl, ...(rid ? { run_id: rid } : {}), learned_at: new Date().toISOString() };
           /**
            * ★ 2026-11-17: update がエラー無しでも 0 行のことがある（RLS・IDずれ）。
            *   select で返った行を見てから saved にする（空振りを「保存40」と誤報しない）。

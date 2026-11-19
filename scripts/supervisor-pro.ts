@@ -107,6 +107,32 @@ void (async () => {
     line(`■ 土台点検スキップ: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
   }
 
+  // ★ 2026-11-19: 本番の束に shot_gaps が無いと、学べ済みを 0 と数えて「flash未実行」と誤判定する。
+  //   束に無い時だけ DB の件数で補う（束の作りと同じ期間 materialsMs）。
+  try {
+    const hasGaps = (v: unknown) => !!v && typeof v === "object" && Number((v as { total?: unknown }).total) > 0;
+    if (!hasGaps(bundleForPro.shot_gaps_normal) || !hasGaps(bundleForPro.shot_gaps)) {
+      const { createClient } = await import("@supabase/supabase-js");
+      const { shotGapsFromDb } = await import("../app/lib/shot-gaps-db");
+      const { LEARN_PERIODS } = await import("../app/lib/learn-periods");
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+      if (url && key) {
+        const sinceIso = new Date(Date.now() - LEARN_PERIODS.materialsMs).toISOString();
+        const g = await shotGapsFromDb(createClient(url, key), { site: scope, sinceIso });
+        bundleForPro = {
+          ...bundleForPro,
+          ...(!hasGaps(bundleForPro.shot_gaps) && g.shot_gaps ? { shot_gaps: g.shot_gaps } : {}),
+          ...(!hasGaps(bundleForPro.shot_gaps_normal) && g.shot_gaps_normal ? { shot_gaps_normal: g.shot_gaps_normal } : {}),
+        };
+        const n = g.shot_gaps_normal;
+        line(`■ 写真の学べ済み（束に無いので DB で数えた・通常）: ${n ? `写真${n.total}枚・学べた${n.learnedOk}・欄0が${n.learnedButEmpty}・未学習(大)${n.unlearnedBig}・(小)${n.unlearnedSmall}` : "写真なし"}`);
+      }
+    }
+  } catch (e) {
+    line(`■ 写真の学べ済みを数えられない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+  }
+
   const autoNotes = proMeetNotesFromBundle(bundleForPro);
   const allNotes = [...autoNotes, ...notes];
   if (autoNotes.length) {

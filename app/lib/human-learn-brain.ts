@@ -211,6 +211,9 @@ export type HumanLearnBundle = {
   supervisor?: SupervisorAdvice;
   /** サイト別の判断（リアプロ／itandi） */
   supervisor_by_site?: Record<string, SupervisorAdvice>;
+  /** 写真の学習の抜け（全モード／通常だけ）。統括Pro が束から学べ済み・未読を数える */
+  shot_gaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number };
+  shot_gaps_normal?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number };
   /**
    * 2026-11-14 竹内さん「いま通常と自動のところで自動で強化必要な部分強化するのと、
    *   できていない部分もちゃんとデータベースに理解させて強化していく形とする」:
@@ -1549,6 +1552,33 @@ export function buildHumanLearnBundle(
    *   → 統括（`learn-supervisor.ts`）に**1つの結論**と**次にやる事**を決めさせる。
    *   ⚠ サイト別にも判断する（リアプロと itandi は性質が違う）。
    */
+  /**
+   * 学習の抜け（全モード／通常だけ）。統括の入力と束の両方に同じ値を載せる。
+   *   ★ 2026-11-19: 束に載せていなかったので、束を読む統括Pro（photoReachFromBundle）は
+   *     学べ済みを常に 0 と数え、「flash未実行」と誤判定していた（DB には shot_learn あり）。
+   */
+  const shotGapsOf = (rowsIn: typeof list) => {
+    try {
+      const states = rowsIn.map((r) => {
+        const x = r as unknown as Record<string, unknown>;
+        const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+        return {
+          w: Number(x.shot_w) || 0,
+          hasKey: !!x.shot_key,
+          learned: !!(sl && typeof sl === "object"),
+          fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
+        };
+      });
+      const g = summarizeShotGaps(states);
+      return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
+    } catch (_) { return null; }
+  };
+  const shotGapsAll = shotGapsOf(list);
+  const shotGapsNormalAll = shotGapsOf(list.filter((r) => {
+    const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
+    return m !== "aix" && m !== "auto";
+  }));
+
   const supervisor: SupervisorAdvice = superviseLearn({
     rows: list.length,
     next: Object.keys(next).length,
@@ -1701,49 +1731,14 @@ export function buildHumanLearnBundle(
      * ★ 2026-11-15 竹内さん「ここの抜けていた部分もちゃんと統括は把握できるように」:
      *   **学習の抜け**を数えて統括に渡す（未学習の大きい写真・欄0・小さすぎる）。
      */
-    shot_gaps: (() => {
-      try {
-        const states = list.map((r) => {
-          const x = r as unknown as Record<string, unknown>;
-          const sl = x.shot_learn as { fields?: unknown } | null | undefined;
-          return {
-            w: Number(x.shot_w) || 0,
-            hasKey: !!x.shot_key,
-            learned: !!(sl && typeof sl === "object"),
-            fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
-          };
-        });
-        const g = summarizeShotGaps(states);
-        return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
-      } catch (_) { return null; }
-    })(),
+    shot_gaps: shotGapsAll,
     /**
      * ★ 2026-11-15 竹内さん「通常モードの録画で画像のデータあるのだから底から学習するように」
      *   「画像を読み取れば学習できる」「弱い部分強化するためによみとる」:
      *   ⚠ 旧は全モード混ぜの shot_gaps だけだったので、統括が「通常の手本画像を読め」と切れなかった。
      *   → **通常モードだけ**の抜けを別枠で渡す（自動の画像は手本にしない）。
      */
-    shot_gaps_normal: (() => {
-      try {
-        const states = list
-          .filter((r) => {
-            const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
-            return m !== "aix" && m !== "auto";
-          })
-          .map((r) => {
-            const x = r as unknown as Record<string, unknown>;
-            const sl = x.shot_learn as { fields?: unknown } | null | undefined;
-            return {
-              w: Number(x.shot_w) || 0,
-              hasKey: !!x.shot_key,
-              learned: !!(sl && typeof sl === "object"),
-              fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
-            };
-          });
-        const g = summarizeShotGaps(states);
-        return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
-      } catch (_) { return null; }
-    })(),
+    shot_gaps_normal: shotGapsNormalAll,
     /**
      * ★ 2026-11-15 竹内さん「画像は最新で録画したらそのことも把握して」
      *   「自動モードで最新の課題みつけて」「通常モードから改善していく」:
@@ -2319,6 +2314,8 @@ export function buildHumanLearnBundle(
       : {}),
     supervisor,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
+    ...(shotGapsAll ? { shot_gaps: shotGapsAll } : {}),
+    ...(shotGapsNormalAll ? { shot_gaps_normal: shotGapsNormalAll } : {}),
     ...(weak.length ? { weak } : {}),
     /**
      * ★ 2026-11-18 F49: screens が空でも `shots.in_storage` / `kinds` を必ず載せる（buildBundleShotsSummary）。
