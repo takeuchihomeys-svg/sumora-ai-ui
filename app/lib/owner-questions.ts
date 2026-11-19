@@ -14,7 +14,7 @@ export type OwnerQuestion = {
 };
 
 /** 話題の並び（先に出す物から）。無い話題は後ろに名前順 */
-export const TOPIC_ORDER = ["用意してもらう物", "ブレインの判断", "やることリスト", "申込歴・2番手", "試験・見張り", "費用", "管理ツール連携", "その他"];
+export const TOPIC_ORDER = ["統括の判断", "用意してもらう物", "ブレインの判断", "やることリスト", "申込歴・2番手", "試験・見張り", "費用", "管理ツール連携", "その他"];
 
 export function optionsOf(q: Pick<OwnerQuestion, "options">): string[] {
   return Array.isArray(q.options) ? (q.options as unknown[]).map((o) => String(o)).filter(Boolean) : [];

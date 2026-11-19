@@ -656,6 +656,8 @@ export type SupervisorAdvice = {
     agenda: Array<{ priority: number; topic: string; why: string; decide: string }>;
     /** 竹内さんに聞く事（判断を委ねる） */
     questions: Array<{ q: string; options?: string[]; why: string }>;
+    /** ★ 2026-11-19 統括Pro が迷った所（推奨つき・trigger つき）。台帳 owner_questions へは supervisor-pro.ts --save が入れる */
+    owner_asks?: Array<{ question: string; options: string[]; recommended: string; why: string; trigger: string; source: "pro" | "gate"; key: string }>;
       /** 根拠（数字。推測は guessed:true） */
     evidence: Array<{ label: string; value: string; guessed?: boolean }>;
     /**

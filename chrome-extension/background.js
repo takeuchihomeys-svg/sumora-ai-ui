@@ -5162,6 +5162,26 @@ function _auditStep(runId, k, d) {
   try { if (_auditTracker && runId) _auditTracker.step(runId, k, d); } catch (_) {}
 }
 
+/**
+ * ★ 2026-11-19 (2.8.128) 竹内さん「連続検索として抜けている所を徹底的に」:
+ *   個別（single/local）の点検は、最後の fill 進捗から6分で idle_close に閉じる。
+ *   しかし PDF の送付は1件約21秒（20件で7分）かかり、送付中は fill 進捗が出ない → **健全に送付中でも6分で idle_close に閉じ**、
+ *   後から届く結果（件数・ページ）の行き先が無くなって統括に「止まった」と見えていた。
+ *   → 一覧側の送付の進み（axlx-batch-progress）が来るたびに、そのお客さんの閉じ待ちを張り直す（元から閉じ待ちが無い回には触らない）。
+ */
+function _auditTouchIdleTimer(customerId, msgSite) {
+  try {
+    if (!_auditTracker || !customerId) return;
+    var run = _auditTracker.findOpen(String(customerId), msgSite === "itandi" ? "itandi" : "realpro");
+    if (!run || !(run.trigger === "single" || run.trigger === "local")) return;
+    var rid = run.run_id;
+    var prev = _auditSingleTimers.get(rid);
+    if (!prev) return;
+    clearTimeout(prev);
+    _auditSingleTimers.set(rid, setTimeout(function () { _auditSingleTimers.delete(rid); _auditFinish(rid, AUDIT_IDLE_CLOSE_EXTRA()); }, AUDIT_SINGLE_CLOSE_MS));
+  } catch (_) {}
+}
+
 function _auditFinish(runId, extra) {
   try {
     if (!_auditTracker || !runId) return;
@@ -6502,6 +6522,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-progress") {
     // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
     try { _impliedFillDone(msg.customerId || null, _msgSite, "送付の進み"); } catch (_) {}
+    try { _auditTouchIdleTimer(msg.customerId || null, _msgSite); } catch (_) {}
     _notifyBatchProgress(msg.customerId || null, _msgSite, msg.sentCount > 0 ? msg.sentCount : 0);
   }
   return false;

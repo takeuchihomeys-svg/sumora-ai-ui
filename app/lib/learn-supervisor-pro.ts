@@ -27,6 +27,10 @@ import { buildLearnCompleteChain } from "./learn-complete-chain";
 import { materialsDays, logMemoryDays, LEARN_PERIODS, DAY_MS } from "./learn-periods";
 import { countLearnedSolid } from "./learn-bundle-preserve";
 import {
+  parseOwnerAsks, parseConfidence, deriveGateAsks, mergeAsks, proTextOf,
+  type OwnerAsk, type AskConfidence,
+} from "./supervisor-owner-ask";
+import {
   buildBundleForProMeet,
   ensureMeetingEvidenceGates,
   meetingGateContextFromSupervisorInput,
@@ -95,6 +99,11 @@ export type SupervisorProEnrichment = {
   why_not_100: string | null;
   /** 100%に近づける全体の道筋 */
   path_to_100: string | null;
+  /** ★ 2026-11-19 最善の判断: 確信（high/mid/low）と根拠。迷う所は owner_asks（推奨つき）で竹内さんへ */
+  confidence?: AskConfidence | null;
+  confidence_why?: string | null;
+  decision_basis?: string[];
+  owner_asks?: OwnerAsk[];
 };
 
 export type SupervisorProAskResult =
@@ -154,7 +163,11 @@ export const SUPERVISOR_PRO_SYSTEM = [
   "【課題学習完全 F54／自動反映 F55】axes.foundation_f54 / axes.foundation_f55 を必ず見る。F54: 自動の課題欄が束 points と shots.learned の両方に載っているか・通常未学習が残っていないか。欠け欄は名指しして photo_learn→束更新。F55: read≥1・新束後自動≥1・本番監査に learn_reflect_ok|learn_flow_reflect_ok|aim有 のいずれかがあるか（F6+F31+F43+F46 統合）。止まった段を foundation_gaps と path_to_100 に書く。",
   "【完走責任】統括Proは『連続画像で詰まり/弱点/直接入力を発見→コード/土台を構築→細部まで強化→束→拡張反映→自動1回でF55/F15/F28/human_like改善実証』まで一連の責任を持つ。束に載せただけ・コードを直しただけで完了と言わず、F55(read≥1∧新束後自動≥1∧reflect|flow_reflect|aim有≥1)と直接入力0・動き近さが通るまで、未達の段・弱い欄・人の手を順番に名指しして回し続ける。",
   "【作業員の規模】axes.worker_scale / 『作業員の規模』を必ず見る。推奨人数は実測（並列≈・弱い欄・未学習・課題数）の正本だけ使う。推測で人数を作らない。増やすべき時は next_line / build_next に『作業員N人で並列』と書く。scale_workers の limit は変えない。勝手に起動せず判断だけ。",
-  "出力は JSON だけ: {\"today\":[\"…\"],\"link_gap\":\"…\"|null,\"next_line\":\"…\"|null,\"foundation_gaps\":[\"…\"],\"build_next\":\"…\"|null,\"quality_up\":\"…\"|null,\"weak_fixes\":[{\"field\":\"…\",\"gap\":\"…\",\"next\":\"…\",\"layer\":\"flash\",\"why\":\"…\",\"how\":\"…\",\"hypothesis\":\"仮定: …\",\"toward100\":\"…\"}],\"bug_fixes\":[\"…\"],\"why_not_100\":\"…\",\"path_to_100\":\"…\"}",
+  "【最善の判断・迷ったら竹内さんへ推奨つきで確認】判断の順: ①実データ（axes・束・監査・meet_notes の数字）②設計知見（kb_hits。P0→P1→新しい順）③影響範囲。候補が2つ以上残る時は、根拠の数字で並べて1つに絞る。絞れない・根拠の数字が無い時は推測で決めず、確信を low にして owner_asks に出す。",
+  "確信（confidence）: high=数字と設計知見の両方が同じ方を指す／mid=数字はあるが設計知見が薄い（または逆）／low=候補が拮抗・根拠の数字が無い・統括の言葉同士が食い違う。confidence_why に1文、decision_basis に根拠（数字・kb の id）を最大4つ。",
+  "聞く場面（owner_asks に出す）: ①費用が出る（photo_learn・flash の実行）②DB の構造変更 ③一括・次のお客さんへの進み方など動き方の方針の変更 ④本番（main/Vercel）への反映 ⑤統括の言葉同士の矛盾（例: 到達が高いのに反映の実証 read=0）⑥確信が low。聞かずに決めてよいのは『無料・元に戻せる・既に決まった方針の中』だけ。",
+  "owner_asks の各件: {question（竹内さんがそのまま読んで答えられる1文）, options（2〜4個・短く）, recommended（必ず options の1つ・自分が最善と考える方）, why（推奨の根拠＝数字か設計知見・1文）, trigger（cost|db_change|policy|deploy|contradiction|low_confidence|other）}。推奨は『何もしない』ではなく根拠のある最善案にする（根拠が無ければ保留を推奨）。聞きすぎない（最大3件・meet の議題を言い換えただけの質問は禁止）。答えが来るまで、その作業は next_line に『確認待ち』と書いて進めない。",
+  "出力は JSON だけ: {\"confidence\":\"high|mid|low\",\"confidence_why\":\"…\",\"decision_basis\":[\"…\"],\"owner_asks\":[{\"question\":\"…\",\"options\":[\"…\",\"…\"],\"recommended\":\"…\",\"why\":\"…\",\"trigger\":\"cost\"}],\"today\":[\"…\"],\"link_gap\":\"…\"|null,\"next_line\":\"…\"|null,\"foundation_gaps\":[\"…\"],\"build_next\":\"…\"|null,\"quality_up\":\"…\"|null,\"weak_fixes\":[{\"field\":\"…\",\"gap\":\"…\",\"next\":\"…\",\"layer\":\"flash\",\"why\":\"…\",\"how\":\"…\",\"hypothesis\":\"仮定: …\",\"toward100\":\"…\"}],\"bug_fixes\":[\"…\"],\"why_not_100\":\"…\",\"path_to_100\":\"…\"}",
 ].join("\n");
 
 /** Cursor／打合せから Pro に渡す追加議題 */
@@ -1037,16 +1050,22 @@ export function parseSupervisorPro(text: string): SupervisorProEnrichment | null
       : String(o.path_to_100).replace(/\s+/g, " ").trim().slice(0, 280) || null;
     if (!today.length && !link_gap && !next_line && !foundation_gaps.length && !build_next && !weak_fixes.length
       && !why_not_100 && !path_to_100) return null;
+    const confidence = parseConfidence(o.confidence);
+    const confidence_why = o.confidence_why == null ? null : String(o.confidence_why).replace(/\s+/g, " ").trim().slice(0, 160) || null;
+    const decision_basis = (Array.isArray(o.decision_basis) ? o.decision_basis : [])
+      .map((x) => String(x ?? "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 4).map((s) => s.slice(0, 140));
+    const owner_asks = parseOwnerAsks(o.owner_asks);
     return {
       today, link_gap, next_line, foundation_gaps, build_next, quality_up,
       weak_fixes, bug_fixes, why_not_100, path_to_100,
+      confidence, confidence_why, decision_basis, owner_asks,
     };
   } catch {
     return null;
   }
 }
 
-const PRO_EV_LABEL = /^(統括Proまとめ|足りない土台（統括Pro判断）|土台を作る次手（統括Pro）|役割分担（画像\/統括）|統括Pro|統括Pro RAG|統括Pro把握|統括Pro手配|弱点の細かい改善（統括Pro）|変バグの細かい直し（統括Pro）|なぜ100%でないか（統括Pro）|100%への道（統括Pro）)$/;
+const PRO_EV_LABEL = /^(統括Proまとめ|足りない土台（統括Pro判断）|土台を作る次手（統括Pro）|役割分担（画像\/統括）|統括Pro|統括Pro RAG|統括Pro把握|統括Pro手配|弱点の細かい改善（統括Pro）|変バグの細かい直し（統括Pro）|なぜ100%でないか（統括Pro）|100%への道（統括Pro）|統括Pro確信（迷い）)$/;
 const PRO_AGENDA_TOPIC = /統括Pro/;
 
 /** Pro のまとめを advice に載せる（verdict / self_check / learning_tasks の kind は変えない）。 */
@@ -1349,6 +1368,37 @@ export function mergeSupervisorPro(
       ].slice(0, 14);
     }
     meeting.evidence = (meeting.evidence || []).slice(0, 110);
+  }
+  /**
+   * ★ 2026-11-19 竹内さん「判断も統括pro最善の判断できるように／迷ったら俺に推奨で確認とるかたちで」:
+   *   Pro の確信と根拠を根拠行に残し、迷う所（Pro の owner_asks＋決定論の関所）を推奨つきの問いにして meeting.questions / owner_asks に載せる。
+   *   関所は Pro の出した文だけを見る（meet の議題＝竹内さんの言葉では鳴らさない）。台帳 owner_questions へは scripts/supervisor-pro.ts --save が入れる。
+   */
+  {
+    const evVals = (meeting.evidence || []).filter((e) => !PRO_EV_LABEL.test(String(e.label || ""))).map((e) => String(e.value || ""));
+    const gate = deriveGateAsks({
+      proText: proTextOf(enrich),
+      verdict: adv.verdict,
+      coverage: adv.score?.coverage ?? null,
+      evidenceValues: evVals,
+      confidence: enrich.confidence ?? null,
+      confidenceWhy: enrich.confidence_why ?? null,
+    });
+    const asks = mergeAsks(enrich.owner_asks ?? [], gate);
+    (meeting as { owner_asks?: OwnerAsk[] }).owner_asks = asks;
+    meeting.questions = [
+      ...asks.map((a) => ({ q: `【統括Pro】${a.question}`, options: a.options, why: `オススメ: ${a.recommended}（${a.why}）` })),
+      ...(meeting.questions || []).filter((q) => !/^【統括Pro】/.test(String(q?.q || ""))),
+    ].slice(0, 8);
+    meeting.evidence = [
+      {
+        label: "統括Pro確信（迷い）",
+        value: `確信=${enrich.confidence ?? "未申告"}${enrich.confidence_why ? `（${enrich.confidence_why}）` : ""}／迷い${asks.length}件${asks.length ? `（${asks.map((a) => a.trigger).join("・")}）` : ""}`
+          + (enrich.decision_basis?.length ? `／根拠: ${enrich.decision_basis.join("｜")}` : ""),
+        guessed: !enrich.confidence,
+      },
+      ...(meeting.evidence || []).filter((e) => !/^統括Pro確信（迷い）$/.test(String(e.label || ""))),
+    ].slice(0, 110);
   }
   return { ...adv, meeting };
 }

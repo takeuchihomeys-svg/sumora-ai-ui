@@ -17,6 +17,7 @@
  */
 import { enrichSupervisorWithPro, proMeetNotesFromBundle } from "../app/lib/learn-supervisor-pro";
 import type { SupervisorAdvice } from "../app/lib/learn-supervisor";
+import { renderOwnerAsks, type OwnerAsk } from "../app/lib/supervisor-owner-ask";
 
 const BASE = process.env.AUDIT_BASE || "https://sumora-ai-ui.vercel.app";
 const args = process.argv.slice(2);
@@ -138,7 +139,19 @@ void (async () => {
   }
 
   const autoNotes = proMeetNotesFromBundle(bundleForPro);
-  const allNotes = [...autoNotes, ...notes];
+  // ★ 2026-11-19: 既に竹内さんへ出して未回答の問いは Pro に渡す（同じ事を聞き直さない・答えが来るまで該当の作業は保留）
+  const openAskNotes: string[] = [];
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const { fetchOpenSupervisorAsks } = await import("../app/lib/supervisor-owner-ask-server");
+    const u = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    if (u && k) {
+      const open = await fetchOpenSupervisorAsks(createClient(u, k));
+      for (const o of open) openAskNotes.push(`確認待ち（竹内さんへ出して未回答・聞き直さない・この作業は保留）: ${o.question.slice(0, 120)}／オススメ=${o.recommended ?? "なし"}`);
+    }
+  } catch { /* 台帳が読めなくても判断は続ける */ }
+  const allNotes = [...autoNotes, ...openAskNotes, ...notes];
   if (autoNotes.length) {
     line();
     line("■ 束からの事実メモ（--note 無しでも Pro に渡す）");
@@ -199,6 +212,28 @@ void (async () => {
   line("■ 関所（Proは変えない）");
   line(`  verdict=${got.advice.verdict}  coverage=${got.advice.score?.coverage ?? "-"}  weak=${got.advice.score?.weak ?? "-"}`);
   line(`  self_check.ok=${got.advice.self_check?.ok}  block=${got.advice.block ?? "なし"}`);
+
+  // ★ 2026-11-19 竹内さん「迷ったら俺に推奨で確認とるかたちで」: Pro の迷い＋決定論の関所を、推奨つきで竹内さんに出す
+  {
+    const asks = ((got.advice.meeting as { owner_asks?: OwnerAsk[] } | undefined)?.owner_asks) || [];
+    const ev = (m.evidence || []).find((e) => String(e.label) === "統括Pro確信（迷い）");
+    line();
+    line("■ 統括Proの確信・竹内さんへの確認（迷い・推奨つき）");
+    if (ev) line("  " + ev.value);
+    let ids: Array<string | null> = asks.map(() => null);
+    if (asks.length && doSave && got.usedPro) {
+      try {
+        const { createClient } = await import("@supabase/supabase-js");
+        const { saveOwnerAsks } = await import("../app/lib/supervisor-owner-ask-server");
+        const res = await saveOwnerAsks(createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || ""), scope, asks);
+        ids = asks.map((a) => res.saved.find((s) => s.ask === a)?.id ?? res.skipped.find((s) => s.ask === a)?.id ?? null);
+        line(`  台帳 owner_questions: 追加${res.saved.length}件／既にある${res.skipped.length}件${res.errors.length ? "／失敗: " + res.errors.join("・") : ""}`);
+      } catch (e) {
+        line(`  台帳へ入れられない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+      }
+    }
+    for (const l of renderOwnerAsks(asks, ids)) line(l);
+  }
 
   if (doSave && got.usedPro) {
     const { saveSupervisorLog } = await import("../app/lib/learn-supervisor-db");

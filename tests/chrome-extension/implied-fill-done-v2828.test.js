@@ -104,5 +104,39 @@ ok("待ちが無い時の完了を覚える", /_rememberEarlyBatchDone\(customer
 ok("待ち手を作る時にまず先着の完了を確かめる", /function _createBatchCustomerDoneWaiter\([^)]*\) \{\s*\n\s*var _early = _takeEarlyBatchDone/.test(bg));
 ok("fill-done の待ちを作る時に前の先着を消す", /_clearEarlyBatchDone\(customerId, site === "itandi"/.test(bg));
 
+console.log("■ 送付中の点検が6分で idle_close に閉じない");
+{
+  const a2 = bg.indexOf("function _auditTouchIdleTimer(");
+  const b2 = bg.indexOf("function _auditFinish(");
+  ok("関数がある", a2 > 0 && b2 > a2);
+  const timers = new Map();
+  const fired = [];
+  const sb = {
+    console: { warn() {} }, Map,
+    _auditSingleTimers: timers, AUDIT_SINGLE_CLOSE_MS: 50,
+    AUDIT_IDLE_CLOSE_EXTRA() { return { error_kind: "idle_close" }; },
+    _auditFinish(rid, x) { fired.push([rid, x.error_kind]); },
+    setTimeout, clearTimeout,
+    _auditTracker: { findOpen(cid, site) { return cid === "A" && site === "realpro" ? { run_id: "r1", trigger: "single" } : cid === "H" ? { run_id: "r2", trigger: "bulk_manual" } : null; } },
+  };
+  vm.createContext(sb);
+  vm.runInContext(bg.slice(a2, b2), sb);
+  timers.set("r1", setTimeout(() => fired.push(["r1", "OLD"]), 30));
+  sb._auditTouchIdleTimer("A", "realnetpro");
+  setTimeout(() => {
+    ok("進みが来ると古い閉じ待ちは捨てて張り直す（古い方は鳴らない）", !fired.some((f) => f[1] === "OLD"), fired);
+    setTimeout(() => {
+      ok("張り直した閉じ待ちは時間が来れば idle_close で閉じる", fired.some((f) => f[0] === "r1" && f[1] === "idle_close"), fired);
+      const before = timers.size;
+      sb._auditTouchIdleTimer("H", "realnetpro");
+      sb._auditTouchIdleTimer("Z", "realnetpro");
+      ok("一括の回・知らない客・元から閉じ待ちが無い回には触らない", timers.size === before && !timers.has("r2"));
+      ok("配線: 送付の進みで張り直す", /_auditTouchIdleTimer\(msg\.customerId \|\| null, _msgSite\)/.test(bg));
+      console.log("\n" + passed + " 件 ✓ / " + failed + " 件 ✗");
+      process.exit(failed ? 1 : 0);
+    }, 120);
+  }, 45);
+  return;
+}
 console.log("\n" + passed + " 件 ✓ / " + failed + " 件 ✗");
 process.exit(failed ? 1 : 0);
