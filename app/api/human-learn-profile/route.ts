@@ -68,7 +68,7 @@ const SELECT = [
    * 2026-11-14 竹内さん「データベースの写真から学習する」:
    *   写真がある行（`shot_taken`/`shot_key`）も学びの対象にするため読む。
    */
-  "shot_taken", "shot_key",
+  "shot_taken", "shot_key", "shot_w",
 ].join(", ");
 
 /**

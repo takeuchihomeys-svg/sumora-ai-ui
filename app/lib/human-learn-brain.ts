@@ -29,6 +29,7 @@
 import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, planLearnFromWeak, learnSequenceFromShots, isLearnableName } from "./shot-learn";
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 import { findWeakSteps } from "./learn-flow-steps";
+import { summarizeShotGaps } from "./shot-gaps";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -161,6 +162,9 @@ export type HumanLearnBundle = {
   supervisor?: SupervisorAdvice;
   /** サイト別の判断（リアプロ／itandi） */
   supervisor_by_site?: Record<string, SupervisorAdvice>;
+  /** 写真の学習の抜け（全モード／通常だけ）。統括Pro が束から学べ済み・未読を数える */
+  shot_gaps?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number };
+  shot_gaps_normal?: { total: number; unlearnedBig: number; unlearnedSmall: number; learnedButEmpty: number; learnedOk: number; todo: number };
   /**
    * 2026-11-14 竹内さん「いま通常と自動のところで自動で強化必要な部分強化するのと、
    *   できていない部分もちゃんとデータベースに理解させて強化していく形とする」:
@@ -1116,6 +1120,33 @@ export function buildHumanLearnBundle(
    *   → 統括（`learn-supervisor.ts`）に**1つの結論**と**次にやる事**を決めさせる。
    *   ⚠ サイト別にも判断する（リアプロと itandi は性質が違う）。
    */
+  /**
+   * 写真の学習の抜け（全モード／通常だけ）を束に載せる。
+   *   ★ 2026-11-19: 束に無かったので、束を読む統括Pro は学べ済みを常に 0 と数え、
+   *     「写真はあるが学べ済み0（flash未実行）」と誤判定していた（DB には shot_learn あり）。
+   */
+  const shotGapsOf = (rowsIn: typeof list) => {
+    try {
+      const states = rowsIn.map((r) => {
+        const x = r as unknown as Record<string, unknown>;
+        const sl = x.shot_learn as { fields?: unknown } | null | undefined;
+        return {
+          w: Number(x.shot_w) || 0,
+          hasKey: !!x.shot_key,
+          learned: !!(sl && typeof sl === "object"),
+          fields: Array.isArray(sl?.fields) ? sl!.fields.length : 0,
+        };
+      });
+      const g = summarizeShotGaps(states);
+      return g.total ? { total: g.total, unlearnedBig: g.unlearnedBig, unlearnedSmall: g.unlearnedSmall, learnedButEmpty: g.learnedButEmpty, learnedOk: g.learnedOk, todo: g.todo } : null;
+    } catch (_) { return null; }
+  };
+  const shotGapsAll = shotGapsOf(list);
+  const shotGapsNormalAll = shotGapsOf(list.filter((r) => {
+    const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
+    return m !== "aix" && m !== "auto";
+  }));
+
   const supervisor: SupervisorAdvice = superviseLearn({
     rows: list.length,
     next: Object.keys(next).length,
@@ -1391,6 +1422,8 @@ export function buildHumanLearnBundle(
     devices,
     single_device,
     ...(Object.keys(supervisor_by_site).length ? { supervisor_by_site } : {}),
+    ...(shotGapsAll ? { shot_gaps: shotGapsAll } : {}),
+    ...(shotGapsNormalAll ? { shot_gaps_normal: shotGapsNormalAll } : {}),
     ...(weak.length ? { weak } : {}),
     ...(Object.keys(shotLearn.screens).length ? { screen_flow: shotLearn.screens, shots: { total: shotLearn.total, with_ops: shotLearn.withOps } } : {}),
     ...(learnPlan.items.length || learnPlan.filled || (learnPlan.cleanup && learnPlan.cleanup.length) || (learnPlan.mode_plan && learnPlan.mode_plan.length) ? { learn_plan: learnPlan } : {}),

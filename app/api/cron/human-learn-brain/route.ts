@@ -28,7 +28,7 @@ const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
   "moves_n", "move_speed_px_s", "move_curve", "move_ms", "move_dist", "gap_ms",
   "points_n", "point_x", "point_y", "point_fields",
-  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key", "id",
+  "scrolls_n", "scroll_dy", "kinds", "fields", "field_order", "shot_ops", "shot_learn", "shot_key", "shot_w", "id",
 ].join(", ");
 /**
  * 2026-11-13 竹内さん「ほかにちゃんと学習の面とかで連携できていない部分などあるか」:
