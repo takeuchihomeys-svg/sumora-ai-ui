@@ -194,7 +194,7 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 
 // 送り済み・残りの書き戻し（ASK_PROGRESS）
 {
-  t("ASK_PROGRESS 既定 off", askProgressOn({}) === false && askProgressOn({ ASK_PROGRESS: "on" }) === true);
+  t("ASK_PROGRESS 既定 on（11/19・書くだけ）", askProgressOn({}) === true && askProgressOn({ ASK_PROGRESS: "off" }) === false);
   const L = buildAskLedger({ asks: [
     { quote: "この物件まだ空いてますか", route: "promise", about: "vacancy", kind: "question" },
     { quote: "初期費用も知りたいです", route: "aix", aix: "estimate_sheet", about: "property_cost", kind: "request" },

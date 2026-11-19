@@ -1,6 +1,6 @@
 // app/lib/ask-progress-server.ts — 送り済み・残りの書き戻し（継ぎ目②）。返信・AIX の送信の後に、要件の帳面（last_brain_meta.ask_ledger）に対して
 //   送った通と答えた／約束した／残りの要件を conversations.ask_progress に書く（作業員M・2026-11-15・統括役の決定）。
-//   ASK_PROGRESS=on の時だけ（既定 off＝何もしない）。失敗しても送信は止めない（警告だけ）。last_brain_meta には書かない（ブレイン・log-aix-usage と上書きしあわない）
+//   11/19 から既定 on（書くだけ・止める ASK_PROGRESS=off）。帳面（meta.ask_ledger）が無い番は何もしない。失敗しても送信は止めない（警告だけ）。last_brain_meta には書かない（ブレイン・log-aix-usage と上書きしあわない）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askProgressOn, askLedgerOf, nextAskProgress, type SentMove } from "./ask-ledger";
 

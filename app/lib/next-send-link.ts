@@ -2,14 +2,14 @@
 //   2026-11-19 作業員M（統括役の割り振り・竹内さん 11/15「前の返信の内容・前に送った文を把握する部分が弱い可能性」「次に送る事の関連性も含めて具体的に強化」）。
 //   名前は作業員L の meta.situation_now とそろえる: our_items の item_id（前に送った文の項目）・promises_open の promise_id（開いている約束）・
 //   asks の ask_id（要件の帳面 askIdOf）・sent の sent_id。次に送る物の中身は決めない（決めるのはブレインと統括）＝ここは「受け先」と「つながりの種類」の記録だけ。
-//   スイッチ NEXT_SEND_LINK（既定 off＝何もしない／shadow＝meta.next_send_link と統括の指示書の欄に記録だけ）。書き手・道には渡さない
+//   スイッチ NEXT_SEND_LINK（11/19 から既定 shadow＝meta.next_send_link と統括の指示書の欄に記録だけ／off＝何もしない）。書き手・道には渡さない
 //   テスト: app/lib/__tests__/next-send-link.test.ts
 
 type Env = Record<string, string | undefined>;
 export type NextSendLinkMode = "off" | "shadow";
 export function nextSendLinkMode(env: Env = typeof process !== "undefined" ? process.env : {}): NextSendLinkMode {
-  const v = (env.NEXT_SEND_LINK ?? "").trim().toLowerCase();
-  return v === "shadow" || v === "on" ? "shadow" : "off";
+  // 2026-11-19 統括役の決定: 既定 shadow（記録だけ・書き手と道には渡さない）。止める NEXT_SEND_LINK=off
+  return (env.NEXT_SEND_LINK ?? "").trim().toLowerCase() === "off" ? "off" : "shadow";
 }
 
 /** つながりの種類（引き継ぎの7つ） */
