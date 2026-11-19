@@ -787,6 +787,10 @@ async function callMergeApi(payload) {
   //   サーバー（merge-pdfs）にも回のお客様（batch_owner）を渡し、同じ照らしをもう一度させる（名前と ID の食い違いもそこで見る）
   let _own = null;
   try { _own = self.AxlxBatchGuard && self.AxlxBatchGuard.sendOwner ? self.AxlxBatchGuard.sendOwner(_batchWatch, _batchLoopAlive, payload && payload.site, payload && payload.property_customer_id) : null; } catch (_) { _own = null; }
+  if (_own && _own.prev) {
+    _auditStep(_auditOpenRunId(payload.property_customer_id, null), "owner_prev_ok",
+      "次客 " + String(_own.ownerId).slice(0, 8) + " の回が待っている間の前客の送付→前客のまま送る");
+  }
   if (_own && _own.batch && !_own.ok) {
     const _why = "送る相手 " + String(payload.property_customer_id).slice(0, 8) + "（" + (payload.customer_name || "名前なし") + "）が、検索している回のお客様 " + _own.ownerId.slice(0, 8) + "（" + (_own.ownerName || "名前なし") + "）と違う";
     console.warn("[owner] 送らない: " + _why);
@@ -7491,6 +7495,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     var _H = self.AxlxCustomerHandoff;
     var _waitT0 = Date.now();
     var _waitNoted = false;
+    var _prevSendNoted = false;
     for (;;) {
       var _pv = await _probeRealproTab(tab.id);
       var _hd = _H ? _H.tabHandoffDecision(_pv, _cidStr, Date.now() - _waitT0) : "go";
@@ -7511,11 +7516,37 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
           _pv = Object.assign({}, _pv, { fillCustomerId: _lockJob.customerId });
         }
       }
+      /**
+       * ★ 2026-11-19 #1530/#1531 竹内さん「連続でお客さん検索する際に…止まらないようにする」:
+       *   前客の「入力」が終わっても、検索を押した後の一覧の取得・送付がまだ（前客の点検の回が開いている）なら待つ。
+       *   旧は入力が終わった所で次客へ進み、前客の送付は次客の回と照らされて断られていた（owner_mismatch×2→前客は6分で idle_close）。
+       */
+      if (_hd === "go") {
+        try {
+          var _ps = await chrome.storage.session.get("axlx_pending_auto_send");
+          var _pa = _ps && _ps.axlx_pending_auto_send;
+          var _paCid = _pa && _pa.customerId ? String(_pa.customerId) : null;
+          if (_paCid && _paCid !== _cidStr && Date.now() - Number(_pa.ts || 0) < 10 * 60 * 1000
+            && _auditTracker && _auditTracker.findOpen && _auditTracker.findOpen(_paCid, "realpro")) {
+            _hd = (Date.now() - _waitT0) < (_H ? _H.OTHER_FILL_WAIT_MS : 10 * 60 * 1000) ? "wait" : "go";
+            _pv = Object.assign({}, _pv, { fillCustomerId: _paCid });
+            if (_hd === "wait" && !_prevSendNoted) {
+              _prevSendNoted = true;
+              _auditStep(_runId, "wait_prev_send", "前客 " + _paCid.slice(0, 8) + " の検索後の取得・送付が終わるまで待つ");
+            }
+          }
+        } catch (_) {}
+      }
+      if (_pv && _pv.fillCustomerId && String(_pv.fillCustomerId) !== _cidStr) {
+        try { _watchSet({ prevCustomerId: String(_pv.fillCustomerId) }, "realnetpro"); } catch (_) {}
+      }
       if (_hd === "go") {
         if (_waitNoted) _auditStep(_runId, "wait_prev_customer_done", Math.round((Date.now() - _waitT0) / 1000) + "秒待って前客の入力が終わった");
+        try { _watchSet({ prevCustomerId: null }, "realnetpro"); } catch (_) {}
         break;
       }
       if (_hd === "give_up") {
+        try { _watchSet({ prevCustomerId: null }, "realnetpro"); } catch (_) {}
         _auditStep(_runId, "wait_prev_customer_give_up", "前客の入力が終わらない cid=" + String(_pv.fillCustomerId || "").slice(0, 8));
         _endFillDoneWaiter("realnetpro", _cidStr, "別客の入力が進行中");
         throw new Error("AXLX_OTHER_FILL_RUNNING: 前のお客さんの条件入力が終わらないため、上書きせず見送ります");

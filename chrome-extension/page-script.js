@@ -747,6 +747,11 @@
               var _sr = el.getBoundingClientRect();
               var _ax = _sr.left + _sr.width * Math.max(0.2, Math.min(0.8, _aimSel.x));
               var _ay = _sr.top + _sr.height * Math.max(0.2, Math.min(0.8, _aimSel.y != null ? _aimSel.y : 0.5));
+              // ★ 2026-11-19 #1531: 徒歩の select は右側に分数の欄が重なる → 見えている所の点へ直す
+              try {
+                var _shp = _visibleHitPoint(el, { x: _ax, y: _ay });
+                if (_shp) { _ax = _shp.x; _ay = _shp.y; }
+              } catch (_) {}
               try { if (P.setTarget) P.setTarget(el); } catch (_) {}
               P.moveTo(_ax, _ay).then(function () { try { if (P.tap) P.tap(); } catch (_) {} _afterAim(); }, _afterAim);
               return;
@@ -2668,7 +2673,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.122";
+  var _AXLX_PAGE_VER = "2.8.123";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3180,6 +3185,71 @@
       if (_P0 && _P0.scatter) _P0.scatter(_pointer.x, _pointer.y);
     } catch (_) {}
   }
+  /**
+   * ★ 2026-11-19 竹内さん「徒歩のプルダウンの最初押す部分みぎにずれてる／検索ボタンを画面外から押している」:
+   *   要素の枠（getBoundingClientRect）は「見えている所」と違う事がある。
+   *     ・徒歩（transportation_id）の select は枠が 230px あるが、右側は分数の入力欄が上に重なっている
+   *       （録画 #1531: 押した記録が b=55x29/input の右端＝分数の欄）。
+   *     ・左の帯が中でスクロールしていると、検索ボタンは画面の内側でも上の固定の帯（マップ検索・閲覧履歴）の下に隠れる
+   *       （#1530 写真: カーソルが閲覧履歴の上）。
+   *   → その点で一番上にある物（elementFromPoint）が狙った要素（か中の子・その要素のラベル）の時だけ「押せる点」とする。
+   */
+  function _hitOkAt(el, x, y) {
+    try {
+      var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      if (!(x >= 1 && y >= 1 && x <= vw - 1 && y <= vh - 1)) return false;
+      var h = document.elementFromPoint(Math.round(x), Math.round(y));
+      if (!h) return false;
+      if (h === el || (el.contains && el.contains(h))) return true;
+      if (h.contains && h.contains(el) && String(h.tagName || "").toUpperCase() === "LABEL") return true;
+      if (el.id && h.closest && h.closest('label[for="' + el.id + '"]')) return true;
+      var lb = el.closest ? el.closest("label") : null;
+      if (lb && (h === lb || lb.contains(h))) return true;
+      if (el.labels && el.labels.length) {
+        for (var i = 0; i < el.labels.length; i++) {
+          if (el.labels[i] === h || el.labels[i].contains(h)) return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+  /**
+   * 押せる点を返す（{x,y,fx,fy}）。pt が押せる点ならそのまま。違えば枠の中を格子で見て、pt（無ければ中央）に一番近い押せる点。
+   * 1点も無ければ null（＝隠れている・画面の外）。
+   */
+  function _visibleHitPoint(el, pt) {
+    try {
+      if (!el || !el.getBoundingClientRect || typeof document.elementFromPoint !== "function") return pt || null;
+      var r = el.getBoundingClientRect();
+      if (!r || r.width <= 0 || r.height <= 0) return null;
+      if (pt && _hitOkAt(el, pt.x, pt.y)) return pt;
+      var want = pt || { x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 };
+      var best = null, bestD = Infinity;
+      var FX = [0.12, 0.25, 0.38, 0.5, 0.62, 0.75, 0.88];
+      var FY = [0.3, 0.5, 0.7];
+      for (var i = 0; i < FX.length; i++) {
+        for (var j = 0; j < FY.length; j++) {
+          var x = r.left + r.width * FX[i], y = r.top + r.height * FY[j];
+          if (!_hitOkAt(el, x, y)) continue;
+          var d = (x - want.x) * (x - want.x) + (y - want.y) * (y - want.y);
+          if (d < bestD) { bestD = d; best = { x: x, y: y, fx: FX[i], fy: FY[j] }; }
+        }
+      }
+      return best;
+    } catch (_) { return pt || null; }
+  }
+  /** 欄の中央付近（25〜75%）が全部押せる＝重なり・隠れが無い普通の欄 */
+  function _hitPlain(el) {
+    try {
+      var r = el.getBoundingClientRect();
+      if (!r || r.width <= 0 || r.height <= 0) return false;
+      var pts = [[0.5, 0.5], [0.28, 0.5], [0.72, 0.5]];
+      for (var i = 0; i < pts.length; i++) {
+        if (!_hitOkAt(el, r.left + r.width * pts[i][0], r.top + r.height * pts[i][1])) return false;
+      }
+      return true;
+    } catch (_) { return true; }
+  }
   function _humanPointerClick(el, fallbackFn, aim, tgtAt) {
     var H = window.AxlxHumanWait;
     var fire = fallbackFn || _clickEl;
@@ -3187,6 +3257,22 @@
     var r;
     try { r = el.getBoundingClientRect(); } catch (_) { fire(el); return Promise.resolve(false); }
     if (!r || (r.width <= 0 && r.height <= 0)) { fire(el); return Promise.resolve(false); }
+    /**
+     * ★ 2026-11-19: 枠の中に押せる点が1つも無い（帯の中のスクロールで固定の帯の下・画面の外）時は、
+     *   先にその要素を見える所まで送ってから押す（1回だけ・送っても隠れたままなら今まで通り押す）。
+     */
+    try {
+      if (!el.__axOccScrolled && !_visibleHitPoint(el, null)) {
+        el.__axOccScrolled = 1;
+        try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" }); } catch (_) {}
+        try { if (_audit) _auditStepP("press_hidden_scroll", String(_opLabel(el)).slice(0, 40) + " 押す点が隠れている→見える所まで送ってから押す"); } catch (_) {}
+        return new Promise(function (res) {
+          setTimeout(function () { res(_humanPointerClick(el, fallbackFn, aim, tgtAt)); }, 380 + Math.floor(Math.random() * 220));
+        });
+      }
+      el.__axOccScrolled = 0;
+      r = el.getBoundingClientRect();
+    } catch (_) {}
     /**
      * 2026-11-14 竹内さん「この地域押すところや、検索押すところちゃんと学習する」:
      *   ⚠ 学んだ**押した位置**（`aim`＝人がその要素のどこを押したか）は
@@ -3228,6 +3314,25 @@
       };
       if (_aimPt) _aimPt = _clampPt(_aimPt);
     } catch (_) {}
+    /**
+     * ★ 2026-11-19: 狙う点の上に別の物が重なっていれば、その要素が見えている所の一番近い点へ直す。
+     *   学びが無い時も、重なりのある欄（徒歩の select 等）は見えている所を狙う（普通の欄は今まで通り pointer-ui に任せる）。
+     */
+    try {
+      if (_aimPt) {
+        var _hp = _visibleHitPoint(el, _aimPt);
+        if (_hp && _hp !== _aimPt) {
+          try { if (_audit) _auditStepP("aim_hit_fix", String(_opLabel(el)).slice(0, 40) + " 狙いの点に別の物が重なる→横" + Math.round(_hp.fx * 100) + "%へ"); } catch (_) {}
+          _aimPt = _hp;
+        }
+      } else if (!_hitPlain(el)) {
+        var _hp2 = _visibleHitPoint(el, null);
+        if (_hp2) {
+          _aimPt = _hp2;
+          try { if (_audit) _auditStepP("aim_hit_fix", String(_opLabel(el)).slice(0, 40) + " 欄の中央に別の物が重なる→見えている横" + Math.round(_hp2.fx * 100) + "%を押す"); } catch (_) {}
+        }
+      }
+    } catch (_) {}
     // 2026-11-10 v2.6.0 竹内さん「リアプロとITANDI人間のようにマウス動くようにする」:
     //   画面の上に「見えるカーソル」を出して、押す位置まで人の軌跡で動かす（pointer-ui.js・見た目だけ・pointer-events:none）。
     //   動きながら押すと不自然なので、**着いてから**押す（本物のクリックは今まで通り1回だけ）。
@@ -3241,6 +3346,7 @@
             // 見えるカーソル側も毎回ピクセルをずらす（クローン軌跡防止）
             var _jx = _aimPt.x + (Math.random() - 0.5) * Math.min(16, r.width * 0.22);
             var _jy = _aimPt.y + (Math.random() - 0.5) * Math.min(12, r.height * 0.22);
+            if (!_hitOkAt(el, _jx, _jy) && _hitOkAt(el, _aimPt.x, _aimPt.y)) { _jx = _aimPt.x; _jy = _aimPt.y; }
             return _P.moveTo(_jx, _jy);
           }
         } catch (_) {}
@@ -5084,7 +5190,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -7172,9 +7278,23 @@
    *   → 所在地へ入る前に「沿線・駅絞り込み」を開き、駅→沿線の順で1つずつ外して確定してから次へ進む。
    *     外し切れない時も止めずに進み、検索前の関所（_axGateCheck の混在）がもう一度これで外す。
    */
-  function _clearStationsBeforeWardThen(nextFn, why) {
+  function _clearStationsBeforeWardThen(nextFn, why, round) {
     var _why = why || "所在地";
-    var _next = function () { try { nextFn(); } catch (_) {} };
+    var _round = Number(round) || 0;
+    /**
+     * ★ 2026-11-19 竹内さん「駅のお客さんから地域のお客さんに移るとき必ず、駅と沿線外す…ちゃんと外して次に移る」:
+     *   #1532 は前客の駅5・沿線1が残ったまま区へ進み、関所の混在→やり直し6回→人の操作で止まった。
+     *   → 外し終わって駅・沿線がまだ残っていれば、開く→外す→確定を最大3回までやり直す（残れば理由を残して関所へ）。
+     */
+    var _next = function () {
+      var lx = _leftNow();
+      if ((lx.st || lx.ln) && _round < 2) {
+        try { if (_audit) _auditStepP("station_clear_retry", (_round + 2) + "回目: 駅" + lx.st + "・沿線" + lx.ln + "が残る→もう一度開いて外す"); } catch (_) {}
+        setTimeout(function () { _clearStationsBeforeWardThen(nextFn, why, _round + 1); }, _ln(700, 0.35, 400, 1300));
+        return;
+      }
+      try { nextFn(); } catch (_) {}
+    };
     var _leftNow = function () {
       var st = 0, ln = 0;
       try { st = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) { st = 0; }
@@ -7182,7 +7302,7 @@
       return { st: st, ln: ln };
     };
     var left0 = _leftNow();
-    if (!left0.st && !left0.ln) { _next(); return; }
+    if (!left0.st && !left0.ln) { try { nextFn(); } catch (_) {} return; }
     try {
       window.__axlxNeedClearStation = true;
       window.__axlxPlaceClearPhase = "start";
@@ -7204,8 +7324,11 @@
         try { scr = _graspStationModalScreen(); } catch (_) { scr = { kind: "unknown" }; }
         if (phase === "open") {
           if (scr.kind === "line_list" || scr.kind === "station_list") { phase = "clear"; return false; }
-          if (!openedAt || (clk.tick() - openedAt > 6000 && reopenN < 1)) {
-            if (openedAt) reopenN++;
+          if (!openedAt || (clk.tick() - openedAt > 6000 && reopenN < 2)) {
+            if (openedAt) {
+              reopenN++;
+              try { if (_audit) _auditStepP("station_clear_open_retry", "沿線・駅絞り込みが開かない→押し直す（" + reopenN + "）"); } catch (_) {}
+            }
             openedAt = clk.tick() || 1;
             var opened = false;
             try {
@@ -7219,7 +7342,7 @@
             if (!opened) clickByText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
             return false;
           }
-          if (clk.tick() - openedAt > 12000) { phase = "fail_open"; return true; }
+          if (clk.tick() - openedAt > 12000 && reopenN >= 2) { phase = "fail_open"; return true; }
           return false;
         }
         if (phase === "clear") {
@@ -7272,8 +7395,9 @@
    *   → 6秒で1回押し直し・14秒で諦める時は理由と残数を残す。見えない残（畳まれた町）だけになったら確定へ進む。
    *     関所（_axGateCheck）の区余りもこれで外す（setCheckboxes 空の直外しをやめる）。
    */
-  function _clearWardsBeforeStationThen(nextFn, why) {
+  function _clearWardsBeforeStationThen(nextFn, why, round) {
     var _why = why || "駅";
+    var _round = Number(round) || 0;
     var _wardLeft = function () {
       try { return document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked').length; } catch (_) { return 0; }
     };
@@ -7297,6 +7421,16 @@
     var hiddenOnlySince = 0;
     var clk = _activeClock();
     var _finish = function (how) {
+      /**
+       * ★ 2026-11-19 竹内さん「地域のお客さんから駅に移る場合もちゃんとここの部分外す」:
+       *   開けなかった・時間切れで区/町が残っていれば、開く→外す→確定を最大3回までやり直す
+       *   （見えない残＝畳まれた町だけの時は確定で済んでいるのでやり直さない）。
+       */
+      if (how !== "完了" && _wardLeft() > 0 && _round < 2) {
+        try { if (_audit) _auditStepP("ward_clear_retry", (_round + 2) + "回目: 区/町" + _wardLeft() + "が残る（" + how + "）→もう一度開いて外す"); } catch (_) {}
+        setTimeout(function () { _clearWardsBeforeStationThen(nextFn, why, _round + 1); }, _ln(700, 0.35, 400, 1300));
+        return;
+      }
       try { window.__axlxNeedClearWard = false; } catch (_) {}
       try { if (_audit) _auditStepP("ward_clear_before_station_done", how + " 残 区/町" + _wardLeft() + "→" + _why); } catch (_) {}
       try { nextFn(); } catch (_) {}
@@ -8330,7 +8464,13 @@
         var _inVNow = function () {
           var rr = btn.getBoundingClientRect();
           var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
-          return rr.width > 0 && rr.height > 0 && rr.top >= 0 && rr.bottom <= vh && rr.left >= 0 && rr.right <= vw;
+          if (!(rr.width > 0 && rr.height > 0 && rr.top >= 0 && rr.bottom <= vh && rr.left >= 0 && rr.right <= vw)) return false;
+          /**
+           * ★ 2026-11-19 #1530 竹内さん「検索ボタンを画面外から押している…ちゃんとスクロールして画面に見えるようになってから」:
+           *   左の帯が中でスクロールしていると、枠は画面の内側でも上の固定の帯の下に隠れていた（カーソルが閲覧履歴の上）。
+           *   → ボタンの中央付近が本当に一番上に見えている時だけ「見えている」とする。
+           */
+          return !!_visibleHitPoint(btn, null) && _hitPlain(btn);
         };
         if (!_inVNow()) {
           btn.__axSearchViewTries = (Number(btn.__axSearchViewTries) || 0) + 1;

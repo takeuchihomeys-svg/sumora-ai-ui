@@ -245,6 +245,14 @@
     var base = { batch: true, ownerId: String(w.customerId), ownerName: w.customerName || null, runId: w.runId || null, commandId: w.commandId || null };
     if (!customerId) return Object.assign(base, { ok: true, fill: true, reason: "no_customer" });
     var same = String(customerId) === base.ownerId;
+    /**
+     * ★ 2026-11-19 #1530/#1531: 次のお客様の回が「前客の入力・送付が終わるのを待っている」間（prevCustomerId）は、
+     *   前客あての送付は前客の物として通す（旧は次客を回のお客様として前客の送付を断り、前客の回が6分で閉じられていた）。
+     *   batch:false ＝回のお客様との照らし・名前の付け替えをしない。
+     */
+    if (!same && w.prevCustomerId && String(customerId) === String(w.prevCustomerId)) {
+      return { batch: false, ok: true, prev: true, ownerId: base.ownerId, ownerName: base.ownerName, runId: base.runId, reason: "prev_in_flight" };
+    }
     return Object.assign(base, { ok: same, fill: false, reason: same ? null : "mismatch" });
   }
 

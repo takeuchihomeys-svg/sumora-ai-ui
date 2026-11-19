@@ -94,6 +94,8 @@ function runStationClear(opts) {
     _clickEl: () => {}, _uiGapMin: () => 0, _uiGapMax: () => 0, _uiGapOpts: () => ({}),
     _audit: {},
     _auditStepP: (k, d) => log.steps.push([k, d]),
+    setTimeout: (f) => f(),
+    _ln: () => 0,
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
@@ -122,6 +124,13 @@ function runStationClear(opts) {
   const r = runStationClear({ st: 2, ln: 1, opens: false });
   ok("開けない時も止めずに進む（関所が再確認）", r.log.next === 1, r.log.next);
   ok("開けなかった理由と残数を残す", r.log.steps.some((s) => s[0] === "station_clear_before_ward_done" && /開けず 残 駅2・沿線1/.test(s[1])), r.log.steps);
+  // ★ 2.8.123 竹内さん「ちゃんと外して次に移る」: 残れば開く→外す→確定を最大3回（1回の中で押し直し2回）
+  ok("2.8.123: 残れば最大3回までやり直す（station_clear_retry×2・開く押下 3×3）",
+    r.log.steps.filter((s) => s[0] === "station_clear_retry").length === 2 && r.log.opened === 9, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
+}
+{
+  const r = runStationClear({ st: 2, ln: 1, opens: true });
+  ok("2.8.123: 外し切れた時はやり直さない", !r.log.steps.some((s) => s[0] === "station_clear_retry") && r.log.next === 1, r.log.steps);
 }
 
 console.log("\n■ ② 駅の前に区を外す（_clearWardsBeforeStationThen・最上位へ移動）");
@@ -167,6 +176,8 @@ function runWardClear(opts) {
     _audit: {},
     _auditStepP: (k, d) => log.steps.push([k, d]),
     console: { log: () => {} },
+    setTimeout: (f) => f(),
+    _ln: () => 0,
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
@@ -191,6 +202,8 @@ function runWardClear(opts) {
 {
   const r = runWardClear({ left: 2, opens: false });
   ok("開けない時は理由と残数を残して進む", r.log.next === 1 && r.log.steps.some((s) => s[0] === "ward_clear_before_station_done" && /開けず 残 区\/町2/.test(s[1])), r.log.steps);
+  ok("2.8.123: 開けず区が残れば最大3回までやり直す（ward_clear_retry×2）",
+    r.log.steps.filter((s) => s[0] === "ward_clear_retry").length === 2 && r.log.opened === 6, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
 }
 {
   const r = runWardClear({ left: 2, opens: true, hidden: true });
@@ -268,7 +281,10 @@ const pin = (ps.match(/var _PIN = \/\^\(([^)]*)\)\//) || [])[1] || "";
 ["station_clear_before_ward", "station_name_absent", "ward_clear_before_station", "ward_clear_open_retry", "ward_clear_hidden_left", "station_go_stuck"].forEach((k) => {
   ok("記録が間引かれない: " + k, pin.split("|").indexOf(k) >= 0);
 });
-ok("版 2.8.119", /_AXLX_PAGE_VER = "2\.8\.119"/.test(ps));
+{
+  const mfv = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-extension/manifest.json"), "utf8")).version;
+  ok("版: _AXLX_PAGE_VER が manifest と同じ（2.8.119 以降）", ps.indexOf('_AXLX_PAGE_VER = "' + mfv + '"') >= 0 && mfv.localeCompare("2.8.119", undefined, { numeric: true }) >= 0, mfv);
+}
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
