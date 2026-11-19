@@ -4039,6 +4039,7 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
         // 2026-09-29 見張り: 前の回の「止める」は持ち越さない
         _watchStop = null;
         _watchSkipped = [];
+        _busyRetried = new Set(); // 2.8.128 busy_other_customer のやり直し済みは一括ごとに作り直す
         var _bulkRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
         if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
         var _bulkAll = await _bulkRes.json();
@@ -4203,6 +4204,17 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
             // レインズは fill-done で閉じる（_auditOnFillDone）
             if (_bulkAudit && _bulkSite !== "reins") _auditFinish(_bulkAudit.runId, {});
           } catch (_be) {
+            // ★ 2.8.128 busy_other_customer（前のお客さんの入力中で断られた）: 一括は止めず、最後にもう1回だけやり直す（2回目も断られたらこの客だけ飛ばす）
+            var _bulkBd = null;
+            try {
+              _bulkBd = self.AxlxCustomerHandoff ? self.AxlxCustomerHandoff.busyRetryDecision(_be && _be.message, _bc && _bc.id, _busyRetried) : null;
+              if (_bulkBd === "retry") {
+                _bulkTargets.push(_bc);
+                if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_retry_queued", "前客の入力中で断られた→一括の最後にもう1回だけやり直す");
+              } else if (_bulkBd === "give_up") {
+                if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_give_up", "2回目も前客の入力中で断られた→このお客さんだけ飛ばす");
+              }
+            } catch (_) { _bulkBd = null; }
             if (_bulkAudit) _auditFinish(_bulkAudit.runId, { error: _be });
             if (_be && _be.message === "__BATCH_STOPPED__") {
               console.log("[manual-bulk-search] ストップ要求 → 中断");
@@ -4213,7 +4225,7 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
             if (self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, _bulkSite, Date.now())) continue; // 知らせは見張りの1通だけ
             // 例外スキップ時も必ず1件アナウンス（4人検索→4人分アナウンス要件）
             // 2026-09-25 竹内（検索の点検）: 例外は「0件」ではない（検索できていない）→「⚠ 検索できなかった」に分ける
-            if (_bc.customer_name) {
+            if (_bc.customer_name && _bulkBd !== "retry") {
               var _bulkSiteLabel = _bulkSite === "itandi" ? "itandi" : _bulkSite === "reins" ? "レインズ" : "リアプロ";
               fetch(SUMORA_BATCH_API + "/api/notify-group", {
                 method: "POST",
@@ -5333,6 +5345,8 @@ var _fillDoneWaiters = [];
 // stop_command (Realtime WebSocket) と axlx-force-stop-batch (window.postMessage 経由)
 // の両方で true にセットする。バッチ開始時に false へリセットする。
 var _batchShouldStop = false;
+// 2.8.128 busy_other_customer で断られて最後にやり直し済みのお客さん（一括ごとに作り直す）
+var _busyRetried = new Set();
 
 // resolve 値は { timedOut: boolean, error: string|null } に統一。
 // error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
@@ -7079,6 +7093,7 @@ async function _runBatchSearch(command) {
   });
 
   var batchErrors = []; // 修正12: サイト別の失敗を集約してサーバーへ可視化する
+  _busyRetried = new Set(); // 2.8.128 busy_other_customer で断られたお客さんを最後に1回だけやり直す（一括ごと）
 
   // 2026-09-30 v2.5.43 1人×1サイトの回（地域→駅の2パスを含む）。順の回も同時の回もここを通る（var はこの関数の中だけ＝2本が並んでも混ざらない）。
   //   laneMode=true の時は見張り（_batchWatch.lanes[site]）・待ち手・時間切れがこのサイトだけで閉じる（片方の失敗がもう片方を止めない）
@@ -7210,6 +7225,19 @@ async function _runBatchSearch(command) {
         // ★ 失敗パスでも一連ロックを外す（次客へ移れるように。scrape 内で外済みなら二重で無害）
         try { await _releasePipelineLock("pass_error", effectiveCustomer && effectiveCustomer.id); } catch (_) {}
         _passFailed++;
+        // ★ 2.8.128 busy_other_customer（前のお客さんの入力中で断られた）: 一括は止めず、そのお客さんを最後にもう1回だけやり直す
+        //   （始める前に前のお客さんの入力が終わるまで待つ＝上限10分）。2回目も断られたら、そのお客さんだけ飛ばして点検に残す。「検索できなかった」の知らせは最終的に諦める時だけ。
+        var _bd = null;
+        try {
+          _bd = self.AxlxCustomerHandoff ? self.AxlxCustomerHandoff.busyRetryDecision(e && e.message, effectiveCustomer.id, _busyRetried) : null;
+          if (_bd === "retry") {
+            var _again = targets.filter(function (t) { return String(t.id) === String(effectiveCustomer.id); })[0];
+            if (_again) targets.push(_again);
+            if (_batchAudit) _auditStep(_batchAudit.runId, "busy_retry_queued", "前客の入力中で断られた→一括の最後にもう1回だけやり直す");
+          } else if (_bd === "give_up") {
+            if (_batchAudit) _auditStep(_batchAudit.runId, "busy_give_up", "2回目も前客の入力中で断られた→このお客さんだけ飛ばす");
+          }
+        } catch (_) { _bd = null; }
         if (_batchAudit) _auditFinish(_batchAudit.runId, (e && e.passDeadline) ? { error: e, error_kind: "pass_deadline" } : { error: e });
         // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
         if (e && e.message === "__BATCH_STOPPED__") {
@@ -7223,7 +7251,7 @@ async function _runBatchSearch(command) {
         // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 1パスの回の失敗（fill-done の時間切れ・タブが応答しない・地域が決まらない・例外）を
         //   ピックアップ用グループに1回知らせる（旧は何も送らず、命令が error で閉じるだけ）。地域→駅の2パスは下の集計が1回知らせる。
         //   5分の待ち切れは _scrapeAndSendRealpro が知らせる（投げないのでここには来ない＝2回言わない）
-        if (!_isMultiPass && self.AxlxBatchGuard && !_watchStopped) {
+        if (!_isMultiPass && self.AxlxBatchGuard && !_watchStopped && _bd !== "retry") {
           var _failText = self.AxlxBatchGuard.failureNotice({
             customerName: customer.customer_name,
             siteLabel: batchSite === "itandi" ? "itandi" : batchSite === "reins" ? "レインズ" : "リアプロ",

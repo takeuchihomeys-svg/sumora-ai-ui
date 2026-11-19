@@ -27,7 +27,8 @@ const read = (f: string) => fs.readFileSync(path.join(root, "chrome-extension", 
 
 console.log("一括を止める関所");
 ok("human_takeover は一括を止める", H.gateHoldsBatch("human_takeover"));
-ok("busy_other_customer は一括を止める", H.gateHoldsBatch("busy_other_customer"));
+// 2.8.128 竹内さん（統括の確認）「止めずに前のお客さんが終わるまで待つ」: busy は止めず最後に1回やり直す（busyRetryDecision）
+ok("busy_other_customer は一括を止めない（最後に1回だけやり直す）", !H.gateHoldsBatch("busy_other_customer"));
 ok("ふつうの関所（条件不足）は今まで通り飛ばして次へ", !H.gateHoldsBatch("AXLX_FILL_INCOMPLETE") && !H.gateHoldsBatch(true) && !H.gateHoldsBatch(null));
 
 console.log("タブに次のお客さんを送ってよいか");
@@ -67,7 +68,7 @@ ok("_onHumanTakeover は pointerdown/keydown 以外を捨てる", /e\.type !== "
 ok("fill-done に止めた理由の種類（gateKind）を載せる", /msg\.gateKind = gate/.test(ps));
 ok("入力中に別のお客さんが来たら断る（busy_other_customer）", /gateKind: "busy_other_customer"/.test(ps) && /next_customer_refused/.test(ps));
 ok("入力が進んでいる印（__axlxFillTouchAt）を段ごとに更新", /window\.__axlxFillTouchAt = Date\.now\(\)/.test(ps));
-ok("ページの版 2.8.107", /_AXLX_PAGE_VER = "2\.8\.107"/.test(ps));
+ok("ページの版 2.8.107 以上", (function () { var m = /_AXLX_PAGE_VER = "2\.8\.(\d+)"/.exec(ps); return !!m && Number(m[1]) >= 107; })());
 
 console.log("配線（content・background・bulk-dl）");
 const ct = read("content.js");

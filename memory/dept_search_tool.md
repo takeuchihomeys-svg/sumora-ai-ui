@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-19 22:00 **拡張 2.8.128（追加）: 前のお客さんの入力中で断られた（busy_other_customer）時、一括全体を止めず最後に1回だけやり直す**（統括Proの確認に竹内さんが「wait」と回答）
+- **竹内さんの答え**: 「止めずに、前のお客さんが終わるまで待ってから次を始める（上限つき・超えたらその客だけ飛ばして記録）」。
+- **直し**: `customer-handoff.js` の `HOLD_GATES` を `["human_takeover"]` のみに（busy は止めない／人が引き取った時は今まで通り一括を止める）。`busyRetryDecision(errMsg, cid, retriedSet)` を追加（"retry"＝最後にもう1回／"give_up"＝2回目は飛ばす／null）。`background.js`: 手動一括（`_bulkTargets.push`）とキュー一括（`targets.push`）の catch で判定→最後に積み直す。点検の step は `busy_retry_queued` / `busy_give_up`。やり直す回は「検索できなかった」の知らせを出さない（最終的に諦める時だけ）。`_busyRetried` は一括ごとに作り直す。待ちの上限は既存の始める前の待ち（`tabHandoffDecision`・`OTHER_FILL_WAIT_MS` 10分）。
+- **テスト**: `tests/chrome-extension/busy-wait-v2828.test.js` 14 ✓、`app/lib/__tests__/customer-handoff.test.ts` 38 ✓（旧「busy は一括を止める」の期待は意図的に変更）。実機は未観測。
+
+---
+
 ## 2026-11-19 21:00 **拡張 2.8.128: 検索後に fill-done が届かなくても、一覧で送付が進んでいれば「検索は終わった」とみなす／完了の合図が待ち手より先に来ても受け取れる**（竹内さん「ちゃんと改善されたのか／徹底的に改善する自動モードとAIXモード使えるように」）
 - **正直な状況**: 2.8.127（チェックを付けない・完了合図の番号ずれ）は**テストでだけ確認**。実機の一覧では未観測。この時間は本番DB（Supabase）が全表で応答せず（REST の入口は 401 を即返すが、鍵付きの読みが全部時間切れ）、DB の実データでの検証は**できていない**。
 - **原因の候補（実測は 2.8.127 作業時の search_audits 1530・1535・1538）**: 検索ボタンを押した後に fill-done の合図が届かず `idle_close` になる回で、一覧側の PDF 送付（`axlx-batch-progress`）は普通に始まっていた。background は fill-done を最大30分（既定 `FILL_DONE_TIMEOUT_MS`）待ち、満了すると「検索完了シグナルが届きません」で失敗扱い＝次のお客さんへ進めない／進んでも壊れる。さらに、完了合図（`axlx-batch-customer-done`）が「fill-done 待ち→送付待ち」の切替の隙間に着くと待ち手がまだ無く捨てられ、次に作る送付待ちが20分待つ形があり得た。

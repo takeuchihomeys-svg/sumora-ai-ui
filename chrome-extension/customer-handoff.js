@@ -17,11 +17,33 @@
 (function (root) {
   "use strict";
 
-  /** 一括を止める（次のお客さんへ進まない）関所の種類 */
-  var HOLD_GATES = ["human_takeover", "busy_other_customer"];
+  /**
+   * 一括を止める（次のお客さんへ進まない）関所の種類。
+   * ★ 2026-11-19 (2.8.128) 竹内さん（統括の確認に答えて）「busy_other_customer は止めずに、前のお客さんが終わるまで待ってから次を始める
+   *   （上限つき・上限を超えたらそのお客さんだけ飛ばして記録）」:
+   *   busy_other_customer（前のお客さんの入力中に次が来て断られた）は一括全体を止めない。そのお客さんは一括の最後にもう1回だけやり直す
+   *   （始める前に前のお客さんの入力が終わるまで待つ＝tabHandoffDecision・上限10分）。2回目も断られたら、そのお客さんだけ飛ばして点検に残す。
+   *   人が引き取った（human_takeover）は今まで通り一括を止める（人が操作している画面を上書きしない）。
+   */
+  var HOLD_GATES = ["human_takeover"];
 
   function gateHoldsBatch(kind) {
     return HOLD_GATES.indexOf(String(kind || "")) >= 0;
+  }
+
+  /**
+   * busy_other_customer で断られた時の扱い。"retry"＝最後にもう1回だけやり直す／"give_up"＝2回目なのでこのお客さんだけ飛ばす／null＝関係ないエラー。
+   * @param {string} errMsg 失敗のメッセージ
+   * @param {string|number|null} cid お客さんの番号
+   * @param {{has:function(string):boolean, add:function(string):void}|null} retried やり直し済みの番号の集合（呼び出し側が一括ごとに作る）
+   */
+  function busyRetryDecision(errMsg, cid, retried) {
+    if (!/busy_other_customer/.test(String(errMsg || ""))) return null;
+    if (cid == null || cid === "") return "give_up";
+    var k = String(cid);
+    if (retried && retried.has(k)) return "give_up";
+    if (retried) retried.add(k);
+    return "retry";
   }
 
   /** タブで前のお客さんの入力が続いている時に待つ上限（入力は人の速さで数分かかる） */
@@ -101,6 +123,7 @@
     OTHER_FILL_WAIT_MS: OTHER_FILL_WAIT_MS,
     FILL_ALIVE_IDLE_MS: FILL_ALIVE_IDLE_MS,
     gateHoldsBatch: gateHoldsBatch,
+    busyRetryDecision: busyRetryDecision,
     tabHandoffDecision: tabHandoffDecision,
     pageIncomingDecision: pageIncomingDecision,
     pendingFlagBlockReason: pendingFlagBlockReason,
