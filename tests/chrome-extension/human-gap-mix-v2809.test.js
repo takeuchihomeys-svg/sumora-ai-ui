@@ -86,7 +86,7 @@ console.log("\n■ ③ 配線（ソース）");
   ok("quick（選び直し）は迷い・停止を入れない", /var _plan = item\.quick/.test(ps) && /quick: !!\(opts && opts\.quick\)/.test(ps));
   ok("_toggleCheckboxLikeHuman が flags.quick を渡す", /function _toggleCheckboxLikeHuman\(cb, wantOn, minGap, maxGap, flags\)/.test(ps) && /quick: !!\(flags && flags\.quick\)/.test(ps));
   ok("区の選び直し（2回目以降）と外し直しが quick", /_toggleCheckboxLikeHuman\(target\.c, true, 620, 1400, \{ quick: /.test(ps) && /_toggleCheckboxLikeHuman\(extras\[ei\], false, 620, 1400, \{ quick: true \}\)/.test(ps) && /_toggleCheckboxLikeHuman\(inp, false, 620, 1400, \{ quick: true \}\)/.test(ps));
-  ok("迷いの二重待ちをしない（drift 済みはタイマーに足さない）", /\(_isWardItem \|\| _isSelItem\) && hesitate > 0 && window\.AxlxPointerUi && window\.AxlxPointerUi\.drift\) \? 0 : hesitate/.test(ps));
+  ok("迷いの二重待ちをしない（drift 済みはタイマーに足さない）", /\(_isWardItem \|\| _isSelItem(?: \|\| _isPickItem)?\) && hesitate > 0 && window\.AxlxPointerUi && window\.AxlxPointerUi\.drift\) \? 0 : hesitate/.test(ps));
   ok("select は lane:sel（押す前の待ちが小さい・「息」「考え」を足さない）", /lane: "sel"/.test(ps) && /gap: _ln\(110, 0\.45, 50, 260\), label: label \|\| _opLabel\(el\), aim: aim \|\| null, lane: "sel"/.test(ps));
   ok("select の行を押した時刻を記録（__axlxSelTapAt）", /window\.__axlxSelTapAt = Date\.now\(\);/.test(ps));
   ok("直前の操作の時刻を記録（__axlxLastClickAt）", /window\.__axlxLastClickAt = _tn;/.test(ps));

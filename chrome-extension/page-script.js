@@ -747,6 +747,7 @@
               var _sr = el.getBoundingClientRect();
               var _ax = _sr.left + _sr.width * Math.max(0.2, Math.min(0.8, _aimSel.x));
               var _ay = _sr.top + _sr.height * Math.max(0.2, Math.min(0.8, _aimSel.y != null ? _aimSel.y : 0.5));
+              try { if (P.setTarget) P.setTarget(el); } catch (_) {}
               P.moveTo(_ax, _ay).then(function () { try { if (P.tap) P.tap(); } catch (_) {} _afterAim(); }, _afterAim);
               return;
             } catch (_) { _afterAim(); return; }
@@ -836,6 +837,7 @@
        *   ⚠ 狙いは 0.2〜0.8 に丸める（端すぎる所は押さない＝押し間違いを防ぐ）。
        */
       var _move = function () {
+        try { if (P.setTarget) P.setTarget(el); } catch (_) {}
         try {
           if (o.aim && P.moveTo && el.getBoundingClientRect) {
             var _r = el.getBoundingClientRect();
@@ -1448,6 +1450,7 @@
   var _LEARN_NEXT_KEYS = [
     "axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode",
     "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
+    "axlx_learn_gaps",
   ];
   var _LEARN_PAGE_CACHE_KEY = "axlx_learn_bundle_page";
   var _learnPageCache = null;
@@ -2572,6 +2575,13 @@
       window.__axlxLearnSceneFlows = Array.isArray(sflows) ? sflows : null;
       window.__axlxLearnStoppedScene = (r && r.axlx_learn_stopped_scene) || null;
       window.__axlxLearnSceneMissing = (r && r.axlx_learn_scene_missing) || null;
+      // 束の人の押す間隔（中央値）。選ぶレーンの速さの基準。key が来ない呼び出しでは前の値を残す
+      if (r && Object.prototype.hasOwnProperty.call(r, "axlx_learn_gaps")) {
+        var _gp = r.axlx_learn_gaps || null;
+        var _gms = _gp ? Number(_gp.median_ms) : 0;
+        var _gn = _gp ? Number(_gp.samples) : 0;
+        window.__axlxLearnGapMs = (_gms > 0 && _gn >= 10) ? Math.max(800, Math.min(3000, _gms)) : null;
+      }
       var n = nx ? Object.keys(nx).length : 0;
       var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
       var scn = scf ? Object.keys(scf).length : 0;
@@ -2630,7 +2640,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.120";
+  var _AXLX_PAGE_VER = "2.8.121";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3197,6 +3207,7 @@
     if (_P && _P.ensure) {
       try { _P.ensure(); } catch (_) {}
       var _move = function () {
+        try { if (_P.setTarget) _P.setTarget(el); } catch (_) {}
         try {
           if (_aimPt && _P.moveTo) {
             // 見えるカーソル側も毎回ピクセルをずらす（クローン軌跡防止）
@@ -3522,8 +3533,10 @@
      *   → 区（city_code / one_city）は「区レーン」に通す: 押す前の待ちは小さく、
      *     クリックからクリックまでの間隔は通常の実測分布（_wardPaceMs）で決める。
      */
-    var _lane = _isWardLaneEl(el) ? "ward" : null;
+    var _pickKind = _isWardLaneEl(el) ? null : _pickLaneKind(el);
+    var _lane = _isWardLaneEl(el) ? "ward" : (_pickKind ? "pick" : null);
     _clickQueue.push({
+      pickKind: _pickKind,
       el: el,
       fn: clickFn || _clickEl,
       gap: _lane === "ward" ? _ln(110, 0.45, 50, 260) : humanRand(_gLo, _gHi, opts),
@@ -3694,6 +3707,53 @@
    *   ⚠ 固定値にしない（対数正規）。直し直し（同じ区の選び直し）は迷い・停止を入れない（quick）。
    */
   function _wardPaceMs() { return _ln(900, 0.25, 650, 1600); }
+  /**
+   * ★ 2026-11-19 竹内さん「束にある人の押す間隔を使って待ちを人に近づける」:
+   *   DB実測（realpro・7日・1押下に畳んだ間隔の中央値）:
+   *     間取り→間取り 自動6.2秒／人0.91秒（n=82）・駅→駅 自動6.1秒／人1.04秒（n=34）・沿線→沿線 人1.33秒。
+   *   原因は区と同じ積み上げ（押す前≥0.95秒＋迷い（12%で4〜9秒）＋押した後≥0.95秒＋移動）。
+   *   → 一覧の中で続けて選ぶ物（駅・沿線・町字・間取り）は「選ぶレーン」に通す。
+   *     2つ目からは「前に押した時刻＋人の間隔」を押す時刻にする。1つ目は今まで通り（一覧を探す間を残す）。
+   *     間隔の中央値＝束の人の押す間隔（axlx_learn_gaps.median_ms・全体の中央値）× 欄ごとの比（人の実測から）。
+   */
+  var _PICK_RATIO = { station: 0.62, line: 0.79, town: 0.67, layout: 0.54 };
+  var _PICK_HUMAN_GAP_FALLBACK = 1685;
+  function _pickNameOf(el) {
+    try {
+      if (!el) return "";
+      var tag = String(el.tagName || "").toUpperCase();
+      if (tag === "INPUT") return String(el.getAttribute("name") || "");
+      if (tag === "LABEL") {
+        var inp = el.querySelector && el.querySelector('input[type="checkbox"]');
+        if (!inp && el.htmlFor) inp = document.getElementById(el.htmlFor);
+        if (inp) return String(inp.getAttribute("name") || "");
+      }
+    } catch (_) {}
+    return "";
+  }
+  function _pickLaneKind(el) {
+    try {
+      if (!el) return null;
+      var c = String(el.className || "");
+      var nm = _pickNameOf(el);
+      if (/one_station/.test(c) || nm === "station_id[]") return "station";
+      if (/one_line/.test(c) || nm === "route_id[]") return "line";
+      if (/one_town/.test(c) || nm === "town_code[]") return "town";
+      if (nm === "room_layout_id[]") return "layout";
+    } catch (_) {}
+    return null;
+  }
+  function _pickPaceMs(kind) {
+    var base = Number(window.__axlxLearnGapMs) > 0 ? Number(window.__axlxLearnGapMs) : _PICK_HUMAN_GAP_FALLBACK;
+    var med = base * (_PICK_RATIO[kind] || 0.62);
+    return _ln(med, 0.28, 600, 2400);
+  }
+  function _pickGapPlan(kind) {
+    var r = Math.random();
+    if (r < 0.88) return { kind: "fast", ms: _pickPaceMs(kind) };
+    if (r < 0.98) return { kind: "hesitate", ms: _ln(2600, 0.35, 1600, 5000) };
+    return { kind: "pause", ms: _ln(7500, 0.15, 6000, 10000) };
+  }
   function _wardGapPlan() {
     var r = Math.random();
     if (r < 0.50) return { kind: "fast", ms: _wardPaceMs() };
@@ -3750,11 +3810,20 @@
     //   止まる前と後に必ず点検へ印を残し、止まった後は必ず続きへ戻る（失敗にしない）。
     var _isWardItem = item.lane === "ward";
     var _isSelItem = item.lane === "sel";
+    // 選ぶレーンは「同じ種類を7秒以内に押した直後」だけ（1つ目は一覧を探す間を残して普通の道）
+    var _pickRef = 0;
+    if (item.lane === "pick") {
+      try {
+        var _pl = window.__axlxPickLastAt || 0;
+        if (_pl && window.__axlxPickLastKind === item.pickKind && Date.now() - _pl < 7000) _pickRef = _pl;
+      } catch (_) { _pickRef = 0; }
+    }
+    var _isPickItem = _pickRef > 0;
     // このアイテムの「前の操作」の時刻（select の押す時刻の基準）。fn を包む前に読む
     var _lastClickBefore = 0;
     try { _lastClickBefore = window.__axlxLastClickAt || 0; } catch (_) {}
     if (item.el && !item._laneWrapped) {
-      // 押した瞬間を記録（区・selectの間隔を通常の分布に合わせる基準・長い停止を入れない判定）
+      // 押した瞬間を記録（区・select・選ぶレーンの間隔を通常の分布に合わせる基準・長い停止を入れない判定）
       item._laneWrapped = true;
       var _ofn = item.fn;
       item.fn = function () {
@@ -3762,6 +3831,7 @@
           var _tn = Date.now();
           window.__axlxLastClickAt = _tn;
           if (_isWardItem) window.__axlxWardLastAt = _tn;
+          if (item.lane === "pick") { window.__axlxPickLastAt = _tn; window.__axlxPickLastKind = item.pickKind; }
         } catch (_) {}
         return _ofn.apply(this, arguments);
       };
@@ -3790,7 +3860,7 @@
       return;
     }
     // 区・selectレーンの迷いは下の混合（_wardGapPlan / _selGapPlan）で決める（通常の _hesitateMs は使わない）
-    var hesitate = (_isWardItem || _isSelItem) ? 0 : _hesitateMs(item.el);
+    var hesitate = (_isWardItem || _isSelItem || _isPickItem) ? 0 : _hesitateMs(item.el);
     /**
      * 区・selectレーン: 直前の操作があれば、「直前の操作の時刻＋通常の人の間隔（混合）」を押す時刻の目標にする。
      *   ・速い: カーソルは前の押下の直後から動き、着いたら目標時刻まで見てから押す（_humanPointerClick の tgtAt）
@@ -3825,6 +3895,22 @@
               _auditStepP(_plan.kind === "pause" ? "fill_pause" : "ward_pace", (_isWardItem ? "区" : "select") + " " + _plan.kind + " 目標間隔" + Math.round(_plan.ms) + "ms");
             }
           } catch (_) {}
+        }
+      } catch (_) { _wardTgt = null; }
+    }
+    if (_isPickItem) {
+      try {
+        var _pPlan = item.quick ? { kind: "fast", ms: _pickPaceMs(item.pickKind) } : _pickGapPlan(item.pickKind);
+        item.gap = _ln(110, 0.45, 50, 260);
+        if (_pPlan.kind === "fast") {
+          _wardTgt = _pickRef + _pPlan.ms;
+        } else {
+          hesitate = Math.max(400, Math.round(_pPlan.ms - (Date.now() - _pickRef) - 1000));
+        }
+        if (_audit && (_pPlan.kind !== "fast" || Math.random() < 0.3)) {
+          _auditStepP(_pPlan.kind === "pause" ? "fill_pause" : "pick_pace",
+            String(item.pickKind) + " " + _pPlan.kind + " 目標間隔" + Math.round(_pPlan.ms) + "ms"
+            + (Number(window.__axlxLearnGapMs) > 0 ? "（束の人の間隔" + Math.round(window.__axlxLearnGapMs) + "ms）" : "（束なし・既定）"));
         }
       } catch (_) { _wardTgt = null; }
     }
@@ -3868,7 +3954,7 @@
          *   新は**ボタンの意味で変える**（_afterClickGapMs・1か所）:
          *     入力欄は速い／選択肢は結果を見る／「次へ」は行き先を確かめる／決定は画面が変わったか見る（長め）
          */
-        var settle = _isWardItem ? _ln(110, 0.4, 60, 260) : (_isSelItem ? _ln(90, 0.4, 50, 200) : _afterClickGapMs(item.el));
+        var settle = (_isWardItem || item.lane === "pick") ? _ln(110, 0.4, 60, 260) : (_isSelItem ? _ln(90, 0.4, 50, 200) : _afterClickGapMs(item.el));
         setTimeout(function () {
           _clickBusyItem = null;
           _clickQueueTimer = null;
@@ -3931,7 +4017,7 @@
       } catch (e) { console.error('[AX] humanClick 例外（続行）', e); }
       done();
     // 区・selectレーン: 迷いは欄の上で漂って（drift）済みなので、タイマーで二重に待たない（迷い＝設計した長さだけ）
-    }, item.gap + (((_isWardItem || _isSelItem) && hesitate > 0 && window.AxlxPointerUi && window.AxlxPointerUi.drift) ? 0 : hesitate));
+    }, item.gap + (((_isWardItem || _isSelItem || _isPickItem) && hesitate > 0 && window.AxlxPointerUi && window.AxlxPointerUi.drift) ? 0 : hesitate));
     };
     if (_hesitateDrift) {
       var P = window.AxlxPointerUi;

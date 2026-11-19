@@ -493,6 +493,7 @@ window.addEventListener("message", function (e) {
     "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
     "axlx_learn_opens", "axlx_learn_plan", "axlx_learn_cursor_hand",
     "axlx_human_profile", "axlx_human_learn", "axlx_human_points",
+    "axlx_learn_gaps",
   ];
   function pushAll() {
     try {

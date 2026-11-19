@@ -615,6 +615,39 @@
     return out;
   }
 
+  /**
+   * ★ 2026-11-19 DB実測: 自動の1回の押下が 2〜4本の記録になっていた
+   *   （見えるカーソルの tap・page-script の合成 click・label の click・input の click が別々に入る）。
+   *   名前の形が違う（`左の布施｜label.one_station` と `布施`）ので、今の重複除去では畳めなかった。
+   *   → 自動どうし・押す系どうしで 400ms 以内・名前の芯（場所の頭と `｜` 以降を外した物）が同じなら1本に畳む。
+   *     後から来た記録の was/now・位置・形は、前の記録に無い時だけ移す（捨てない）。人の記録は畳まない。
+   */
+  var _PRESS_KIND = { click: 1, tap: 1 };
+  var _FOLD_KEYS = ["was", "now", "x", "y", "bw", "bh", "bt", "shape", "role", "cs", "w"];
+  function _opCore(f) {
+    var s = String(f || "");
+    var i = s.indexOf("｜");
+    if (i >= 0) s = s.slice(0, i);
+    return s.replace(/^(左の|小窓の)/, "");
+  }
+  function _foldAutoPress(last, op) {
+    try {
+      if (!last || !op || op.by !== "auto" || last.by !== "auto") return false;
+      if (!_PRESS_KIND[String(last.k || "")] || !_PRESS_KIND[String(op.k || "")]) return false;
+      var d = Number(op.t) - Number(last.t || 0);
+      if (!(d >= 0 && d <= 400)) return false;
+      var a = _opCore(last.f), b = _opCore(op.f);
+      if (!a || a !== b) return false;
+      for (var i = 0; i < _FOLD_KEYS.length; i++) {
+        var k = _FOLD_KEYS[i];
+        if ((last[k] == null || last[k] === "") && op[k] != null && op[k] !== "") last[k] = op[k];
+      }
+      if (String(op.f || "").indexOf("｜") >= 0 && String(last.f || "").indexOf("｜") < 0) last.f = op.f;
+      if (!last.el && op.el) last.el = op.el;
+      return true;
+    } catch (_) { return false; }
+  }
+
   function _pushOp(kind, el, by, ev) {
     try {
       var nm = el && L && L.fieldName ? L.fieldName(el) : null;
@@ -810,6 +843,7 @@
           } catch (_) {}
         }, Math.max(0, Math.round(_kW)));
       }
+      if (_foldAutoPress(last, _opObj)) return;
       _opsRing.push(_opObj);
       try { _opsSeen++; } catch (_) {}
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
@@ -945,6 +979,7 @@
               if (_mSyn.role) _opM.role = _mSyn.role;
             }
           } catch (_) {}
+          if (_foldAutoPress(last, _opM)) return;
           _opsRing.push(_opM);
           while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
           return;

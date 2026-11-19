@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-19 17:30 **拡張 2.8.121: 一覧の複数選択の待ちを束の人の間隔に寄せる＋1回押したら1件だけ記録**（竹内さん「束にある人の押す間隔を使って待ちを人に近づける＋1回押したら1件だけ記録する」を選択）
+- **DB 実測（realpro・自動=mode aix・1押下に畳んだ後）**: 自動の同じ一覧の中の押す間が 間取り 中央 6.2秒（人 0.91秒）・駅 6.1秒（人 1.04秒）。原因は1件ごとに「間 900〜1000ms の下限＋12%の迷い 4〜9秒＋押した後の落ち着き 950ms 以上」が重なっていた。束の人の間隔 `serverGapMs` は 1705ms（38件）。
+- **pick の列（page-script.js）**: 駅（one_station/station_id[]）・路線（one_line/route_id[]）・町字（one_town/town_code[]）・間取り（room_layout_id[]）を `lane:"pick"`。区の列（ward）と同じ形で、**同じ種類を7秒以内に続けて押す時だけ**「前に押した時刻＋人の間」に揃える。人の間 = 束の `axlx_learn_gaps.median_ms`（10件以上・800〜3000ms）× 種類の比（駅0.62・路線0.79・町字0.67・間取り0.54）／束が無い時は 1685ms。88%は速く・10%迷い（1.6〜5秒）・2%一息（6〜10秒）。迷いの二重待ち・押した後の 950ms は pick では足さない。点検の段 `pick_pace`（束の間隔を使ったか付き）。
+  - 試算（テスト）: 間取り p25/50/75 = 786/968/1229ms（人 832/912/1194）・駅 897/1106/1417ms（人 765/1037/1493）。
+- **束の間隔を MAIN の世界へ**: content.js の PUSH_KEYS と page-script の `_LEARN_NEXT_KEYS` に `axlx_learn_gaps`（`window.__axlxLearnGapMs`）。
+- **押した要素の取り違え**: pointer-ui の `_tapEl` は `moveToEl` でしか更新されず、`moveTo(x,y)` で動いた時は前の要素の名前で記録していた → `setTarget(el)` を足し、`_humanPointerClick` と select の2か所で呼ぶ。
+- **1押下＝1記録（human-learn-record.js）**: 自動（by auto）の click/tap が 400ms 以内・同じ欄（「左の」「小窓の」と「｜」の後ろを除いた名前）なら1件に畳む（was/now/x/y/bw/bh/bt/shape/role/cs/w の無い所だけ足す・「｜」付きの名前を残す）。人の押下は畳まない。
+- テスト: `tests/chrome-extension/pick-lane-v2821.test.js` 31件 ✓。`ward-lane-v2808`・`human-gap-mix-v2809` の正規表現を pick を含む形に緩めた。他の失敗（版の 2.8.119 固定・前からの構造の古い物）は HEAD と同じで、今回の変更で増えた物は無い。
+- DB に送る値・API の変更は無し（DB_STRUCTURE.md は変えない）。
+- **次に要る事**: 竹内さんが拡張 2.8.121 を再読込→自動1回。`search_audits` の `pick_pace` と F28/F29・F55（束が自動に反映されたか）を測り直す。
+
 ## 2026-11-19 16:50 **統括Pro の土台の数字が本番の古い数え方のまま残っていた → 手元の再点検で置き換え**
 - 統括Pro（id 4156・束 16:16）が「meet_notes は F28 0% なのに axes は 70.6%」と矛盾を出した。
   原因: Pro の axes は統括の根拠の行（`土台 F28_auto_gap_floor` 等）から数字を取る。根拠の行は**本番(main)の古い数え方**で書かれ、

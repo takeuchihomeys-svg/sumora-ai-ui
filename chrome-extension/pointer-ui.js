@@ -874,10 +874,17 @@
     });
   }
 
+  /**
+   * 押す要素を先に教える（座標で moveTo する時も、tap の記録が前の要素の名前にならないように）。
+   * 2026-11-19 DB実測: 学んだ位置へ moveTo で動いた押下が、直前の駅・区の名前で記録されていた。
+   */
+  function setTarget(el) { _tapEl = el || null; }
+
   return {
     ensure: ensure,
     moveTo: moveTo,
     moveToEl: moveToEl,
+    setTarget: setTarget,
     tap: tap,
     drift: drift,
     wander: wander,

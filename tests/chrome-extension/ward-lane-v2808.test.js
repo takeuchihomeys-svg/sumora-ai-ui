@@ -23,10 +23,10 @@ function ok(name, cond, detail) { cond ? pass++ : fail++; console.log((cond ? " 
 console.log("■ ① 区レーン（通常の人の速さ）");
 {
   ok("区の要素を見分ける（one_city / city_code[]）", /function _isWardLaneEl\(el\)/.test(ps) && /one_city/.test(ps.split("function _isWardLaneEl")[1].slice(0, 500)));
-  ok("enqueueHumanClick が区を lane:ward にする", /var _lane = _isWardLaneEl\(el\) \? "ward" : null;/.test(ps) && /lane: _lane,/.test(ps));
+  ok("enqueueHumanClick が区を lane:ward にする", /var _lane = _isWardLaneEl\(el\) \? "ward" : /.test(ps) && /lane: _lane,/.test(ps));
   ok("区の押す前の待ちは小さい（下限900の積み上げをしない）", /gap: _lane === "ward" \? _ln\(110, 0\.45, 50, 260\)/.test(ps));
-  ok("通常の迷い（_hesitateMs）は区・selectに足さない（迷いは混合で決める）", /var hesitate = \(_isWardItem \|\| _isSelItem\) \? 0 : _hesitateMs\(item\.el\);/.test(ps));
-  ok("押した後の待ちも短い（区・select）", /var settle = _isWardItem \? _ln\(110, 0\.4, 60, 260\) : \(_isSelItem \? _ln\(90, 0\.4, 50, 200\) : _afterClickGapMs\(item\.el\)\);/.test(ps));
+  ok("通常の迷い（_hesitateMs）は区・selectに足さない（迷いは混合で決める）", /var hesitate = \(_isWardItem \|\| _isSelItem[^)]*\) \? 0 : _hesitateMs\(item\.el\);/.test(ps));
+  ok("押した後の待ちも短い（区・select）", /var settle = \(_isWardItem[^)]*\) \? _ln\(110, 0\.4, 60, 260\) : \(_isSelItem \? _ln\(90, 0\.4, 50, 200\) : _afterClickGapMs\(item\.el\)\);/.test(ps));
   ok("押す時刻の目標（直前の区クリック＋通常の間隔）を _humanPointerClick へ渡す（3か所）",
     (ps.match(/_humanPointerClick\(item\.el, item\.fn, item\.aim \|\| null, _wardTgt\)/g) || []).length === 3);
   ok("_humanPointerClick が tgtAt を受ける", /function _humanPointerClick\(el, fallbackFn, aim, tgtAt\)/.test(ps));
