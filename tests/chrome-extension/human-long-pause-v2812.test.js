@@ -24,7 +24,7 @@ const ward = ps.indexOf("var hesitate = (_isWardItem || _isSelItem) ? 0 : _hesit
 ok("区・選択レーンの迷いは 0（_hesitateMs を呼ばない）", ward > 0);
 
 // 版
-ok("_AXLX_PAGE_VER が 2.8.118", /var _AXLX_PAGE_VER = "2\.8\.118";/.test(ps));
+ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
 
 console.log(fail ? `\n${fail} 件失敗` : "\nすべて OK");
 process.exit(fail ? 1 : 0);

@@ -97,7 +97,7 @@ function runStationClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(srcSt, ctx);
+  vm.runInContext(extractFn("_activeClock") + "\n" + srcSt, ctx);
   vm.runInContext("_clearStationsBeforeWardThen", ctx)(() => { log.next++; }, "所在地");
   return { log, st };
 }
@@ -170,7 +170,7 @@ function runWardClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(srcW, ctx);
+  vm.runInContext(extractFn("_activeClock") + "\n" + srcW, ctx);
   vm.runInContext("_clearWardsBeforeStationThen", ctx)(() => { log.next++; });
   return { log, w };
 }
@@ -268,7 +268,7 @@ const pin = (ps.match(/var _PIN = \/\^\(([^)]*)\)\//) || [])[1] || "";
 ["station_clear_before_ward", "station_name_absent", "ward_clear_before_station", "ward_clear_open_retry", "ward_clear_hidden_left", "station_go_stuck"].forEach((k) => {
   ok("記録が間引かれない: " + k, pin.split("|").indexOf(k) >= 0);
 });
-ok("版 2.8.118", /_AXLX_PAGE_VER = "2\.8\.118"/.test(ps));
+ok("版 2.8.119", /_AXLX_PAGE_VER = "2\.8\.119"/.test(ps));
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

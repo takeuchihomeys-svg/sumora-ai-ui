@@ -5432,15 +5432,69 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       resolve({ timedOut: true, error: null, cancelled: !!extra });
     };
     entry.timer = setTimeout(onTimeout, timeoutMs || FILL_DONE_TIMEOUT_MS.realnetpro || 900000);
+    /**
+     * ★ 2026-11-19 竹内さん「タイムアウトでボトルネックとなっている部分を取り除いていく」（audit #1493）:
+     *   入力の初めに1回だけ「前に出す」を試し、それでも見えない（最小化・別のデスクトップ・画面ロック）と
+     *   ページのタイマーが止められて入力が進まないまま 30分の待ち切れまで待っていた（1864秒・fill_timeout）。
+     *   → 進捗が2分無い間だけ1分ごとにタブが見えているかを確かめ、見えなければウィンドウを戻す。
+     *     4回続けて見えないままなら、理由を付けて待ちを閉じる（約6分・進捗がある間は何もしない）。
+     */
+    var _hidLastProg = Date.now(), _hidN = 0, _hidBusy = false;
+    var _hidWatch = setInterval(function () {
+      if (_fillDoneWaiters.indexOf(entry) < 0) { clearInterval(_hidWatch); return; }
+      if (_hidBusy || Date.now() - _hidLastProg < 120000) return;
+      _hidBusy = true;
+      _fillTabHiddenCheck(entry).then(function (r) {
+        _hidBusy = false;
+        if (_fillDoneWaiters.indexOf(entry) < 0) { clearInterval(_hidWatch); return; }
+        if (!r || !r.hidden) { _hidN = 0; return; }
+        _hidN++;
+        var _hidRun = null;
+        try {
+          _hidRun = _auditTracker && _auditTracker.findOpen
+            ? _auditTracker.findOpen(entry.customerId, entry.site === "itandi" ? "itandi" : "realpro")
+            : null;
+        } catch (_) { _hidRun = null; }
+        var _hidRid = _hidRun && _hidRun.run_id;
+        var _hidSec = Math.round((Date.now() - _hidLastProg) / 1000);
+        _auditStep(_hidRid, "tab_hidden_stall", _hidN + "回目: タブが見えないまま進捗" + _hidSec + "秒無し→ウィンドウを戻す");
+        _restoreWindowForTab(r.tabId, _hidRid, entry.site === "itandi" ? "ITANDI: " : "リアプロ: ").catch(function () {});
+        if (_hidN >= 4) {
+          clearInterval(_hidWatch);
+          onTimeout("AXLX_TAB_HIDDEN: ウィンドウが隠れていて入力が進みません（最小化・別のデスクトップ・画面ロック）。画面を前に出してからもう一度");
+        }
+      }, function () { _hidBusy = false; });
+    }, 60000);
     // 2026-09-27 v2.5.32: タブを読み直して1回やり直す時は待ちを始めから数え直す（_restartFillDoneWaiter）／
     //   検索しないと決めた時（タブが応答しない・地域が決まらない）は待たずに閉じる（_endFillDoneWaiter）
     entry.restart = function () {
       clearTimeout(entry.timer);
       entry.timer = setTimeout(onTimeout, timeoutMs || FILL_DONE_TIMEOUT_MS.realnetpro || 900000);
+      _hidLastProg = Date.now();
+      _hidN = 0;
     };
     entry.end = function (why) { onTimeout(why || "検索しない"); };
     _fillDoneWaiters.push(entry);
   });
+}
+/** 待っているお客さんのタブ（無ければそのサイトの応答するタブ）が全部 hidden か。{ hidden, tabId } or null */
+async function _fillTabHiddenCheck(entry) {
+  var isIt = entry && entry.site === "itandi";
+  var tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: isIt ? ["*://itandibb.com/*", "*://*.itandibb.com/*"] : ["*://realnetpro.com/*", "*://*.realnetpro.com/*"] });
+  } catch (_) { tabs = []; }
+  if (!tabs || !tabs.length) return null;
+  var probes = [];
+  for (var i = 0; i < tabs.length && i < 4; i++) {
+    var p = null;
+    try { p = isIt ? await _probeItandiTab(tabs[i].id) : await _probeRealproTab(tabs[i].id); } catch (_) { p = null; }
+    if (p && p.pong) probes.push({ tabId: tabs[i].id, p: p });
+  }
+  var mine = probes.filter(function (x) { return x.p.fillCustomerId && String(x.p.fillCustomerId) === String(entry.customerId); });
+  var cand = mine.length ? mine : probes;
+  if (!cand.length) return null;
+  return { hidden: cand.every(function (x) { return x.p.vis === "hidden"; }), tabId: cand[0].tabId };
 }
 function _findFillDoneWaiter(site, customerId) {
   for (var i = 0; i < _fillDoneWaiters.length; i++) {

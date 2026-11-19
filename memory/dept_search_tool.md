@@ -19,7 +19,33 @@
 
 **未了（人）**: 拡張を再読み込み→ポップアップを開く（束を取り直す）→自動1回→F55/F31/F32 の数字を読む。**本番デプロイ待ち**: 束 solid 引き継ぎ・各修正は未コミットのため本番に届いていない（コミットは竹内さんの「保存して」を待つ）。
 
-## 2026-11-19 11:30 **駅↔所在地の切り替えの大穴・駅の一覧に無い名前で止まる・関所の外し方（page-script 2.8.118・未コミット）**
+## 2026-11-19 11:55 **タイムアウトのボトルネックを取り除く: 期限を「動ける間だけ」数える・欄を開く押し直し・隠れたタブで30分待たない（page-script 2.8.119／background・未コミット）**
+
+竹内さん「タイムアウトでボトルネックとなっている部分を取り除いていく必要がある 統括pro徹底的におねがい」。
+
+**DB 実測（realpro search_audits 直近80件 #1422〜#1514・読むだけ）**
+- #1493: タブが hidden のまま 1864秒 → fill_timeout。入力の初めに1回だけ前に出し、以後は30分の待ち切れまで待っていた。
+- #1479: `open_timeout:city_code[]`。欄を開く期限（3秒＋一拍）で押し直さず false → 開いていない欄へ進む。
+- 手順の中の短い期限が壁時計: 駅の設定へ戻る 9秒・沿線再開 12秒・2.8.118 の外し関数（開く6秒で押し直し／12・14秒で諦め／見えない残3秒／確定後2.5秒）。人らしい長い間・押しの列が忙しい間・タブが隠れている間も数えて、押し直し・諦めが早まる型。
+
+**直した事**
+- `page-script.js` `_activeClock(capMs)`（`waitForClick` の直前）: 押しの列が空き・タブが見えている間だけ進む時計。見ていない長い間は1回 1.2秒まで。`var _placeClearClock` を共有。
+  - `_advanceForcePlaceClearViaStationFirst` の go_station 9秒・reopen 12秒 → `_placeClearClock.tick()` で数える（GoAt/ReopenAt に `tick() || 1` を入れる・0 で消す所はそのまま）。
+  - `_clearStationsBeforeWardThen`・`_clearWardsBeforeStationThen` の期限を関数ごとの `clk = _activeClock()` に（壁時計 0）。
+- `_ensureFieldVisible`: 期限を動ける間で数える／期限で1回だけ押し直して同じだけ待つ（記録 `open_field_retry`）／それでも開かなければ `open_field_timeout` を残して false。押す直前にもう一度見るので開いている欄は押さない。
+- `background.js` `_createFillDoneWaiter`: 進捗が2分無い間だけ1分ごとに `_fillTabHiddenCheck(entry)`（待っている客の `fillCustomerId` のタブ優先・無ければ応答するタブ全部が hidden の時だけ）→ hidden なら `_restoreWindowForTab`＋記録 `tab_hidden_stall`、4回続けば `AXLX_TAB_HIDDEN: …` で待ちを閉じる（約6分）。進捗（restart）で数え直す。待ちが終われば見張りも止まる。
+- `_PIN`／`_clearKey` に `open_field_retry`・`open_field_timeout`。
+- テスト: `tests/chrome-extension/active-clock-v2819.test.js`（37件）。`place-switch-v2818` は `_activeClock` を一緒に読むように。全体は基準と同じ 63件失敗（新しい失敗 0）。版ピン8本を 2.8.119 に。
+
+**統括Pro（#4072 に上書き保存・確認済み）の矛盾（そのまま）**
+- 「hiddenタブ… 入力の初めに1回だけ前に出す・以後30分待つ、が未実装」→ decide「入力の初めに1回だけタブを前に出し、以後30分待つ」。それは #1493 の原因そのもの（今まで動いていた形）で、直しではない。
+- また「switch_grasp が残沿線0のとき station_line を選び続ける分岐」を原因に挙げた（2.8.118 で STEP C は画面を見ていると確認済み）。
+
+**未調査**: #1504 検索完了→PDF送付の開始まで164秒／0手順で捨てられた重複ラン #1505〜1510・#1514。
+
+**未了（人）**: 拡張を再読み込み→所在地の客→駅の客→所在地の客を1回ずつ→`open_field_retry`・`tab_hidden_stall`・`station_clear_before_ward_done` を search_audits で読む。
+
+## 2026-11-19 11:30 **駅↔所在地の切り替えの大穴・駅の一覧に無い名前で止まる・関所の外し方（page-script 2.8.118・コミット済み 3c3b86ac）**
 竹内さん（10:28）: 「今回みつかったなかで抜けている部分や大きな穴だった部分改善する必要がある 沿線おしたあとは駅の設定にページ移動することは理解できていないのか 駅を押すところでのボトルネックはないか（地域のところではあったタイムアウトの部分等） 駅と地域は混ぜないということもちゃんと理解できているか 新しいお客さんが所在地で検索する場合駅外して所在地を入れるなど これらの点穴がないか細部まで細かく強化するようにする 統括proおねがい」
 - **大穴（DB #1478 区4/9・#1476 fill-done 未着・#1479）**: 所在地・場所なしの客で、前客の駅・沿線を**誰も外していなかった**。`_doReset` は駅・沿線を直外しせず「駅画面経由で外す」旗に回すが、それを動かすのは駅の流れ（STEP B）だけ。→ `_clearStationsBeforeWardThen(nextFn, why)`（最上位）を新設し、所在地・場所なしの枝の頭で呼ぶ: 残0なら何もせず即次へ／残があれば「沿線・駅絞り込み」を開く（6秒で1回押し直し・12秒で諦め）→ `_advanceForcePlaceClearViaStationFirst` で駅→沿線の順に1つずつ外す → 確定 → 所在地へ。記録 `station_clear_before_ward`(_done/_timeout)・`station_clear_confirm_before_ward`。
 - **駅の前の区外し（地域と同じ型のタイムアウト）**: `_clearWardsBeforeStationThen` は「所在地絞り込み」を1回押して**8秒で黙って諦め**、区を残したまま駅へ進んでいた（#1479 open_timeout）。→ 最上位へ移し、6秒で押し直し（`ward_clear_open_retry`）・14秒で諦める時は理由と残数（`ward_clear_before_station_done 開けず 残 区/町N`）・見えない残だけなら3秒で確定へ（`ward_clear_hidden_left`）・上限 40→120回。
