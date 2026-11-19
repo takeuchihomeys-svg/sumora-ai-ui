@@ -175,6 +175,33 @@ function bundleNum(v: unknown): number {
   return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0;
 }
 
+/**
+ * 束の shots.learned（画面ごとの写真から読んだ欄）から、種類の数・欄の名前・位置付き・押した欄との一致を数える。
+ */
+export function learnedFieldsSummary(learned: unknown, points?: unknown): {
+  kindsN: number;
+  names: number;
+  withPos: number;
+  matched: number;
+} {
+  const out = { kindsN: 0, names: 0, withPos: 0, matched: 0 };
+  if (!learned || typeof learned !== "object") return out;
+  const names = new Set<string>();
+  for (const list of Object.values(learned as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    for (const f of list as Array<Record<string, unknown> | null>) {
+      if (!f || typeof f !== "object") continue;
+      if (typeof f.kind === "string" && f.kind) out.kindsN++;
+      if (typeof f.x === "number" && typeof f.y === "number") out.withPos++;
+      if (typeof f.name === "string" && f.name) names.add(f.name);
+    }
+  }
+  out.names = names.size;
+  const pressed = points && typeof points === "object" ? new Set(Object.keys(points as object)) : new Set<string>();
+  for (const nm of names) if (pressed.has(nm)) out.matched++;
+  return out;
+}
+
 /** 束／foundation／source から写真到達を測る（Pro 前の正本・0を落とさない） */
 export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
   photoReach: number;
@@ -233,9 +260,16 @@ export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
     );
   }
   const im = bundle?.image_match as { imageFields?: number; withScreenPos?: number; matched?: number } | undefined;
-  const imageFields = bundleNum(im?.imageFields);
-  const withScreenPos = bundleNum(im?.withScreenPos);
-  const matched = bundleNum(im?.matched);
+  let imageFields = bundleNum(im?.imageFields);
+  let withScreenPos = bundleNum(im?.withScreenPos);
+  let matched = bundleNum(im?.matched);
+  // ★ 2026-11-19: 本番の束には photo_kinds / image_match が無い（統括の入力でだけ数えていた）。
+  //   写真から読んだ欄そのもの（shots.learned）は束にあるので、無い時はそこから数える。
+  const fromLearned = learnedFieldsSummary(shots.learned, bundle?.points);
+  if (!photoKindsN) photoKindsN = fromLearned.kindsN;
+  if (!imageFields) imageFields = fromLearned.names;
+  if (!withScreenPos) withScreenPos = fromLearned.withPos;
+  if (!matched) matched = fromLearned.matched;
   const photoReach = Math.max(
     inStorage,
     bundleNum(shots.total),
@@ -321,7 +355,13 @@ export function ensureVisionPhotoReachEvidence(
   const hasVisionEv = ev.some((e) => /^画像学習→統括Pro連携$/.test(String(e.label || "")));
   const prevLink = (meeting as { vision_pro_link?: VisionProLink }).vision_pro_link;
   const prevPhoto = bundleNum(prevLink?.counts?.photo_in_storage);
-  const needsLink = !prevLink || (prevPhoto <= 0 && pr.photoReach > 0) || !hasVisionEv;
+  // 前の連携の数が束の実数より小さい（学べ0・材料0 なのに束にはある）時も作り直す
+  const prevUnder = !!prevLink && (
+    (bundleNum(prevLink.counts?.learned_ok) <= 0 && pr.learnedOk > 0)
+    || (bundleNum(prevLink.counts?.image_fields) <= 0 && pr.imageFields > 0)
+    || (bundleNum(prevLink.counts?.matched) <= 0 && pr.matched > 0)
+  );
+  const needsLink = !prevLink || (prevPhoto <= 0 && pr.photoReach > 0) || !hasVisionEv || prevUnder;
   const f49Stale = pr.f49Line != null && /束in_storage=0\b|in_storage=0\b/.test(pr.f49Line) && pr.photoReach > 0;
   if (!needsLink && pr.f49Line && !f49Stale
     && ev.some((e) => /F49_vision_photo_reach|土台 F49/.test(String(e.label || "")))) {

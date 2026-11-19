@@ -10,7 +10,7 @@ import {
   photoKindsFromScreens,
   imageMatchFromRows,
 } from "../human-learn-brain";
-import { photoReachFromBundle } from "../learn-supervisor-pro";
+import { photoReachFromBundle, learnedFieldsSummary } from "../learn-supervisor-pro";
 import { buildVisionProLink } from "../vision-pro-link";
 import { shotGapsFromCounts } from "../shot-gaps-db";
 
@@ -136,6 +136,36 @@ console.log("\n■ DB の件数から抜けを作る（束に無い時の補い�
   ok("写真0枚なら null", shotGapsFromCounts({ total: 0, learned: 0, learnedWithFields: 0, unlearnedBig: 0 }) === null);
   const pr = photoReachFromBundle({ shot_gaps_normal: g, shots: { in_storage: 3778 } });
   ok("補った数で photoReach が学べ済みを読む", pr.learnedOk === 3460, pr);
+}
+
+console.log("\n■ 束に photo_kinds / image_match が無くても shots.learned から段3・段4を数える");
+{
+  const bundle = {
+    shot_gaps_normal: { total: 10, learnedOk: 8, todo: 2 },
+    shots: {
+      in_storage: 10,
+      learned: {
+        form: [
+          { name: "マップ検索", kind: "button", x: 0.08, y: 0.06, n: 3 },
+          { name: "賃料", kind: "select", x: 0.2, y: 0.3, n: 2 },
+          { name: "敷金・礼金なし", kind: "checkbox", n: 1 },
+        ],
+        modal: [{ name: "賃料", kind: "select", x: 0.5, y: 0.5, n: 1 }],
+      },
+    },
+    points: { "賃料": { n: 5 }, "検索": { n: 3 } },
+  };
+  const s = learnedFieldsSummary(bundle.shots.learned, bundle.points);
+  ok("種類4・名前3・位置3・一致1", s.kindsN === 4 && s.names === 3 && s.withPos === 3 && s.matched === 1, s);
+  const pr = photoReachFromBundle(bundle);
+  ok("photoReach が段3・段4の数を持つ", pr.photoKindsN === 4 && pr.imageFields === 3 && pr.withScreenPos === 3 && pr.matched === 1, pr);
+  const vpl = buildVisionProLink({
+    photoInStorage: pr.photoReach, learnedOk: pr.learnedOk, todo: pr.todo,
+    photoKindsN: pr.photoKindsN, imageFields: pr.imageFields, withScreenPos: pr.withScreenPos, matched: pr.matched,
+  });
+  ok("段3 材料✓", vpl.steps[2]?.ok === true, vpl.steps[2]);
+  ok("段4 突合✓", vpl.steps[3]?.ok === true, vpl.steps[3]);
+  ok("shots.learned が無ければ 0", learnedFieldsSummary(undefined).kindsN === 0);
 }
 
 console.log(`\n結果: 合格 ${pass} / 不合格 ${fail}`);

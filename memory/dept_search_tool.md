@@ -12,7 +12,12 @@
   - `human-learn-brain.ts`: 抜けの数え方を `shotGapsOf` に1つにまとめ、統括の入力と**束の最上位**の両方に `shot_gaps` / `shot_gaps_normal` を載せる（型も追加）。
   - `app/lib/shot-gaps-db.ts`（新）: 束に無い時、DB の件数（`count: exact, head: true`・中身は読まない・約0.3秒）で数える。`scripts/supervisor-pro.ts` が束に無い時だけ補う。
   - テスト `supervisor-photo-reach.test.ts` 20件（束に載る・Pro が読む・段2✓・件数から作る）。tsc 0。
-- **本番（main）**: 作業員が `main` に同じ「束の最上位に載せる」直しを移植中 → デプロイ後に束を作り直す。
+- **本番（main）に出した**（15:40）:
+  - `8af74600` 束の最上位に `shot_gaps` / `shot_gaps_normal`（`shot-gaps.ts` を main に追加・束を作る2か所の読む列に `shot_w`）。テスト `bundle-shot-gaps` 3件・tsc 0。
+  - `ae8a3c33` resolve-area: 「堺市」「堺市内」を堺市駅ではなく全7区で読む（`city-all-wards.ts` を main に）。※DB `station_map` の「堺市→阪和線」（hardcoded・6月）の行は残したまま（消すかは竹内さんの判断待ち）。
+- **束の作り直し（15:45 本番）**: realpro・all を `fresh=1` で作り直し・保存 OK。束 realpro に `shot_gaps_normal`（写真1205・学べた996・未学習209）が載った。solid 878 維持。
+- **段3・段4も同じ型の穴だった（16:00）**: 統括Pro は束に無い `photo_kinds` / `image_match` だけを見て「材料が統括に届く✗」と言っていた。束の `shots.learned` には902欄（種類付き902・位置付き878・押した欄と一致29）が既にあった → `learnedFieldsSummary` で `shots.learned` から数える。前の連携の数が束の実数より小さい時も作り直す（`prevUnder`）。テスト 25件。
+- **統括Pro（id 4152・realpro 束 06:45:13・deepseek-v4-pro）**: 画像→統括Pro 6段すべて✓。残りは「拡張 2.8.120 再読み込み→自動1回→read_count≥1・reflect/aim 有（F55）」と「土台の欠27（先頭 F3_toggle_was_now）」。
 - `supervisor-wiring.test.ts` の5件失敗は今回と無関係（`learn-supervisor.ts` の読み取り点検・前から）。
 
 ## 2026-11-19 13:55 **統括Proの「写真は学べ0（flash未実行）」誤判定の原因（束が古い）** ※不完全な見立て。上の 14:20 が正
