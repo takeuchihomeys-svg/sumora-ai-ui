@@ -150,6 +150,114 @@ export function gapsFromOps(ops: ReadonlyArray<Record<string, unknown>> | null |
   return out;
 }
 
+/** 1押下に畳む窓（ms）。自動は1回の押下が2〜3本の click 記録になる（別経路の記録） */
+export const PRESS_FOLD_MS = 300;
+
+export type PressOpRow = {
+  install_id?: unknown;
+  mode?: unknown;
+  shot_ops?: unknown;
+};
+
+export type PressGapStat = {
+  /** 1押下（塊の先頭）どうしの差 */
+  gaps: number[];
+  /** 重複除去の前（行ごとに足した click/tap/key の数） */
+  rawOps: number;
+  /** 重複除去の後（click/tap/key のみ） */
+  uniqueOps: number;
+  /** 畳む前の click/tap/key の数（重複除去後・t あり） */
+  beforeFold: number;
+  /** 畳んだ後の押下数 */
+  presses: number;
+  /** t が無くて数えられなかった操作 */
+  noT: number;
+};
+
+const PRESS_KINDS = new Set(["click", "tap", "key"]);
+
+/**
+ * 行をまたいで重複を除き、1押下に畳んだ「押す間隔」を群ごとに出す（純関数）。
+ *
+ *   ⚠ 写真ごとに直前60件の操作の輪を shot_ops に丸ごと入れているため、
+ *     行ごとに数えると同じ操作を26〜58倍重ねて数える。
+ *   ⚠ 自動は1回の押下が2〜3本の click 記録になる（名前の形が違う別経路）。
+ *
+ *   1. click/tap/key だけ（step/diag/change は外す。g=1〜2ms の step が p50 を潰す）
+ *   2. 重複除去: 鍵 = install_id + t + k + f（install_id が無ければ t+k+f）
+ *   3. 群（install_id × classify の戻り値）ごとに t 順に並べ、
+ *      「300ms 以内に続く click/tap」を1押下に畳む（key は畳まない）
+ *   4. 塊の先頭どうしの t の差 = 間隔
+ *
+ * classify が null を返した操作は数えない。
+ */
+export function pressGapsFromRows(
+  rows: ReadonlyArray<PressOpRow> | null | undefined,
+  classify: (row: PressOpRow, op: Record<string, unknown>) => string | null,
+  foldMs: number = PRESS_FOLD_MS,
+): Record<string, PressGapStat> {
+  const out: Record<string, PressGapStat> = {};
+  const seen = new Set<string>();
+  const groups = new Map<string, { cls: string; ops: Array<{ t: number; k: string }> }>();
+  const stat = (cls: string): PressGapStat =>
+    (out[cls] ||= { gaps: [], rawOps: 0, uniqueOps: 0, beforeFold: 0, presses: 0, noT: 0 });
+
+  for (const r of rows || []) {
+    const ops = Array.isArray(r?.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [];
+    const inst = r?.install_id == null ? "" : String(r.install_id);
+    for (const o of ops) {
+      const k = String(o?.k ?? "").toLowerCase();
+      if (!PRESS_KINDS.has(k)) continue;
+      const cls = classify(r, o);
+      if (!cls) continue;
+      const s = stat(cls);
+      s.rawOps++;
+      const t = Number(o?.t);
+      if (!Number.isFinite(t)) {
+        s.noT++;
+        continue;
+      }
+      const key = `${inst}|${t}|${k}|${String(o?.f ?? "")}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      s.uniqueOps++;
+      const gk = `${inst}#${cls}`;
+      let g = groups.get(gk);
+      if (!g) {
+        g = { cls, ops: [] };
+        groups.set(gk, g);
+      }
+      g.ops.push({ t, k });
+    }
+  }
+
+  for (const g of groups.values()) {
+    const s = stat(g.cls);
+    const ops = g.ops.sort((a, b) => a.t - b.t);
+    s.beforeFold += ops.length;
+    let prevHead: number | null = null;
+    let lastClickT: number | null = null;
+    for (const o of ops) {
+      const isClick = o.k === "click" || o.k === "tap";
+      if (isClick && lastClickT != null && o.t - lastClickT <= foldMs) {
+        lastClickT = o.t; // 同じ押下の続き（別経路の記録）
+        continue;
+      }
+      s.presses++;
+      if (prevHead != null) s.gaps.push(o.t - prevHead);
+      prevHead = o.t;
+      lastClickT = isClick ? o.t : null;
+    }
+  }
+  return out;
+}
+
+/** 行の表示用: 重複除去・畳みの前後の数を短く残す（後から検証できる形） */
+export function pressStatNote(label: string, s: PressGapStat | undefined): string {
+  if (!s) return `${label}元0→重複除去0→1押下0`;
+  return `${label}元${s.rawOps}→重複除去${s.uniqueOps}→1押下${s.presses}`;
+}
+
 export function computeHumanNearness(input: {
   normalGaps: number[];
   autoGaps: number[];

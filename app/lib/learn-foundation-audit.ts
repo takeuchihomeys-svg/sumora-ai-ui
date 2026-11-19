@@ -8,7 +8,13 @@
  * ⚠ DB を読む。書くのは呼び出し側（saveImprovement）が決める。
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeHumanNearness, NEARNESS_ALLOW } from "./human-nearness";
+import {
+  computeHumanNearness,
+  NEARNESS_ALLOW,
+  PRESS_FOLD_MS,
+  pressGapsFromRows,
+  pressStatNote,
+} from "./human-nearness";
 import { DAY_MS, LEARN_PERIODS, materialsDays, periodLabelJa, sinceIso } from "./learn-periods";
 import { fieldHasPosition, mergeAliasPositions, type FieldWithPos } from "./field-name-aliases";
 import { summarizeLatestAutoChallenges } from "./latest-learn-loop";
@@ -593,28 +599,35 @@ export async function auditLearnFoundations(
    *   機械的: 同一バケット偏り大・CVが極端に低い／高い。
    */
   let gapHumanN = 0, gapAutoN = 0, gapHumanCv = 0, gapAutoCv = 0, gapAutoTopShare = 0, gapAutoP50 = 0;
+  let gapNote = "";
   {
-    const { data: gapRows } = await sb
-      .from("human_motion_learn")
-      .select("mode,shot_ops")
-      .gte("created_at", sinceOps)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    const hGaps: number[] = [];
-    const aGaps: number[] = [];
-    for (const r of gapRows || []) {
-      const mode = String((r as { mode?: string }).mode || "");
-      const isAutoMode = /aix|auto/i.test(mode);
-      for (const o of (Array.isArray((r as { shot_ops?: unknown }).shot_ops)
-        ? ((r as { shot_ops: Array<Record<string, unknown>> }).shot_ops)
-        : [])) {
-        const g = Number(o.g);
-        if (!Number.isFinite(g) || g <= 0 || g >= 20000) continue;
-        const by = String(o.by || "");
-        const isAuto = by === "auto" || (isAutoMode && by !== "human");
-        (isAuto ? aGaps : hGaps).push(g);
-      }
+    /**
+     * 数え方（2026-11-19）: click/tap/key のみ・site で絞る・行をまたいで重複除去・
+     * 300ms 以内の click/tap を1押下に畳み、塊の先頭どうしの差を間隔にする（pressGapsFromRows）。
+     */
+    // 輪の重複を除くと1行あたりの新しい操作は1件前後 → F28/F29 と同じ幅（2頁）で読む
+    const gapRows: Array<{ mode?: unknown; install_id?: unknown; shot_ops?: unknown }> = [];
+    for (let i = 0; i < 2000; i += 1000) {
+      const { data } = await sb
+        .from("human_motion_learn")
+        .select("mode,install_id,shot_ops")
+        .eq("site", markSite)
+        .gte("created_at", sinceOps)
+        .order("created_at", { ascending: false })
+        .range(i, i + 999);
+      if (!data?.length) break;
+      for (const r of data) gapRows.push(r);
+      if (data.length < 1000) break;
     }
+    const st = pressGapsFromRows(gapRows, (r, o) => {
+      const isAutoMode = /aix|auto/i.test(String(r.mode || ""));
+      const by = String(o.by || "");
+      return by === "auto" || (isAutoMode && by !== "human") ? "auto" : "human";
+    });
+    // 完了線は従来どおり（0 < g < 20000 だけ）
+    const hGaps: number[] = (st.human?.gaps || []).filter((g) => g > 0 && g < 20000);
+    const aGaps: number[] = (st.auto?.gaps || []).filter((g) => g > 0 && g < 20000);
+    gapNote = `${pressStatNote("自動", st.auto)}／${pressStatNote("人間", st.human)}`;
     const cvOf = (arr: number[]) => {
       if (arr.length < 5) return 0;
       const mean = arr.reduce((s, x) => s + x, 0) / arr.length;
@@ -650,7 +663,7 @@ export async function auditLearnFoundations(
   items.push({
     id: "F26_gap_humanlike",
     ok: gapOk,
-    line: `間隔自然さ 自動n=${gapAutoN} CV=${gapAutoCv} p50=${gapAutoP50} topShare=${Math.round(gapAutoTopShare * 100)}%／人間n=${gapHumanN} CV=${gapHumanCv}（完了線: 自動≥30かつCV0.4〜1.2かつtop≤22%）`,
+    line: `間隔自然さ 自動n=${gapAutoN} CV=${gapAutoCv} p50=${gapAutoP50} topShare=${Math.round(gapAutoTopShare * 100)}%／人間n=${gapHumanN} CV=${gapHumanCv}（完了線: 自動≥30かつCV0.4〜1.2かつtop≤22%・click/tap/keyのみ・site絞り・重複除去・${PRESS_FOLD_MS}ms内click/tapを1押下に畳み: ${gapNote}）`,
     next: gapOk
       ? "維持"
       : gapAutoN < 30
@@ -697,32 +710,37 @@ export async function auditLearnFoundations(
 
   /** F28: 自動の**動作間**（click/tap/key）で g<400 が多すぎないか */
   let autoFastN = 0, autoGapN = 0;
+  let autoGapNote = "";
   {
-    const { gapsFromOps } = await import("./human-nearness");
+    /**
+     * 数え方（2026-11-19）: site で絞り・行をまたいで重複除去・
+     * 300ms 以内の click/tap を1押下に畳んだ塊の先頭どうしの差（pressGapsFromRows）。
+     */
+    const rowsAll: Array<{ mode?: unknown; install_id?: unknown; shot_ops?: unknown }> = [];
     for (let i = 0; i < 2000; i += 1000) {
       const { data } = await sb
         .from("human_motion_learn")
-        .select("shot_ops,mode")
+        .select("shot_ops,mode,install_id")
+        .eq("site", markSite)
         .gte("created_at", sinceOps)
         .order("created_at", { ascending: false })
         .range(i, i + 999);
       if (!data?.length) break;
-      for (const r of data) {
-        if (!/aix|auto/i.test(String(r.mode || ""))) continue;
-        const gs = gapsFromOps(Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : []);
-        for (const g of gs) {
-          autoGapN++;
-          if (g > 0 && g < 400) autoFastN++;
-        }
-      }
+      for (const r of data) rowsAll.push(r);
       if (data.length < 1000) break;
     }
+    const st = pressGapsFromRows(rowsAll, (r) => (/aix|auto/i.test(String(r.mode || "")) ? "auto" : null));
+    for (const g of st.auto?.gaps || []) {
+      autoGapN++;
+      if (g > 0 && g < 400) autoFastN++;
+    }
+    autoGapNote = pressStatNote("自動", st.auto);
   }
   const autoFastPct = autoGapN ? Math.round((autoFastN / autoGapN) * 1000) / 10 : 0;
   items.push({
     id: "F28_auto_gap_floor",
     ok: autoGapN >= 30 && autoFastPct <= 12,
-    line: `自動短間隔(動作間) g<400 = ${autoFastN}/${autoGapN}（${autoFastPct}%・完了線≤12%・標本≥30・click/tap/keyのみ）`,
+    line: `自動短間隔(動作間) g<400 = ${autoFastN}/${autoGapN}（${autoFastPct}%・完了線≤12%・標本≥30・click/tap/keyのみ・重複除去・${PRESS_FOLD_MS}ms内click/tapを1押下に畳み: ${autoGapNote}）`,
     next: autoGapN < 30
       ? "2.8.50再読込→自動1回（ops.gが残ること）"
       : autoFastPct > 12
@@ -738,32 +756,35 @@ export async function auditLearnFoundations(
   let nearLine = "近さ未計測";
   let nearOk = false;
   {
-    const normalGaps: number[] = [];
-    const autoGaps: number[] = [];
-    const { gapsFromOps: gapsFromOpsNear } = await import("./human-nearness");
+    const rowsAll: Array<{ mode?: unknown; install_id?: unknown; shot_ops?: unknown }> = [];
     for (let i = 0; i < 2000; i += 1000) {
       const { data } = await sb
         .from("human_motion_learn")
-        .select("shot_ops,mode")
+        .select("shot_ops,mode,install_id")
+        .eq("site", markSite)
         .gte("created_at", sinceOps)
         .order("created_at", { ascending: false })
         .range(i, i + 999);
       if (!data?.length) break;
-      for (const r of data) {
-        const m = String(r.mode || "").toLowerCase();
-        const ops = Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [];
-        const gs = gapsFromOpsNear(ops);
-        if (m === "aix" || m === "auto") autoGaps.push(...gs);
-        else if (m === "normal") normalGaps.push(...gs);
-      }
+      for (const r of data) rowsAll.push(r);
       if (data.length < 1000) break;
     }
+    // 重複除去・1押下に畳む（自動も通常も同じ畳み方）
+    const st = pressGapsFromRows(rowsAll, (r) => {
+      const m = String(r.mode || "").toLowerCase();
+      if (m === "aix" || m === "auto") return "auto";
+      if (m === "normal") return "normal";
+      return null;
+    });
+    const normalGaps = st.normal?.gaps || [];
+    const autoGaps = st.auto?.gaps || [];
+    const note = `重複除去・${PRESS_FOLD_MS}ms内click/tapを1押下に畳み: ${pressStatNote("自動", st.auto)}／${pressStatNote("通常", st.normal)}`;
     if (normalGaps.length >= 30 && autoGaps.length >= 30) {
       const n = computeHumanNearness({ normalGaps, autoGaps });
       nearOk = n.allowed;
-      nearLine = n.line;
+      nearLine = `${n.line}（${note}）`;
     } else {
-      nearLine = `標本不足 通常g=${normalGaps.length} 自動g=${autoGaps.length}（各≥30で測る）`;
+      nearLine = `標本不足 通常g=${normalGaps.length} 自動g=${autoGaps.length}（各≥30で測る・${note}）`;
     }
   }
   items.push({
@@ -1531,17 +1552,31 @@ export async function auditLearnFoundations(
     const sinceDone = sinceIso(LEARN_PERIODS.logMemoryMs);
     const { data: doneRows } = await sb
       .from("human_motion_learn")
-      .select("shot_ops,ext_version,mode")
+      .select("shot_ops,ext_version,mode,install_id")
       .eq("site", markSite)
-      .in("mode", ["aix", "auto", "brain_aix", "normal"])
+      // 済印は自動（aix）の記録にだけ付く。normal を混ぜると通常の行で先頭が埋まり 0 になる
+      .in("mode", ["aix", "auto", "brain_aix"])
       .gte("created_at", sinceDone)
       .order("created_at", { ascending: false })
-      .limit(120);
+      // 済印は直近の行ほど輪から落ちている（実測: 最初に出るのが先頭から約176行目）→ 300行読む
+      .limit(300);
+    // 写真ごとに直前の操作の輪を丸ごと入れているので、行をまたいで重複を除いて数える
+    const seenDone = new Set<string>();
     for (const r of doneRows || []) {
+      const inst = r.install_id == null ? "" : String(r.install_id);
       for (const o of Array.isArray(r.shot_ops) ? r.shot_ops : []) {
-        const f = String((o as { f?: string }).f || "");
-        if (/選ぶ済:|外す済:|押す済:|_done_select|_done_clear|_press_ok/.test(f)) doneN++;
-        if (/理解台帳|btn_understand/.test(f)) ledgerN++;
+        const oo = o as { f?: string; t?: unknown; k?: unknown };
+        const f = String(oo.f || "");
+        const isDone = /選ぶ済:|外す済:|押す済:|_done_select|_done_clear|_press_ok/.test(f);
+        const isLedger = /理解台帳|btn_understand/.test(f);
+        if (!isDone && !isLedger) continue;
+        if (Number.isFinite(Number(oo.t))) {
+          const key = `${inst}|${Number(oo.t)}|${String(oo.k ?? "")}|${f}`;
+          if (seenDone.has(key)) continue;
+          seenDone.add(key);
+        }
+        if (isDone) doneN++;
+        if (isLedger) ledgerN++;
       }
     }
     const okDone = doneN >= 1;
@@ -1549,7 +1584,7 @@ export async function auditLearnFoundations(
       id: "F41_button_done_marks",
       ok: okDone,
       line: `ボタン理解済印 done印=${doneN} 理解台帳=${ledgerN}`
-        + `（完了線: shot_opsに選ぶ済/外す済/押す済≥1・2.8.76+再読込後）`,
+        + `（完了線: shot_opsに選ぶ済/外す済/押す済≥1・2.8.76+再読込後・自動(aix/auto/brain_aix)の直近${(doneRows || []).length}行・重複除去済み）`,
       next: okDone
         ? "維持（済印で弱いボタンを測る）"
         : "拡張2.8.76再読込→自動1回（選ぶ済:station_id[] / 理解台帳）",
