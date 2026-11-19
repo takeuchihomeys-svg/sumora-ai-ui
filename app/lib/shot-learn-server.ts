@@ -278,6 +278,12 @@ export async function findShotsToLearn(opt: {
   /** 同じ操作並びの写真を何枚まで読むか（既定1・位置の票を増やす時は2〜3） */
   perSig?: number;
   /**
+   * ★ 2026-11-19 竹内さん「今回は全部読み取っても大丈夫」「徹底的に学習」:
+   *   true = 同じ操作並びの上限（perSig）も、連続の間引き（strideMs）もしない。
+   *   窓の中の読める写真（800px以上・未学習）を**全部**候補にする（件数は limit と硬上限で止まる）。
+   */
+  all?: boolean;
+  /**
    * ★ 2026-11-15 竹内さん「画像も順番で時間で学習すればより強化される」「細かく強化」「連続録画で」:
    *   `size` = 大きい順（既定・窓が開いた瞬間を優先）
    *   `time` = **連続録画の時間順**（created_at 古い→新しい）。流れに沿って位置を固める。
@@ -469,8 +475,13 @@ export async function findShotsToLearn(opt: {
     return pickSequenceShots(focusedRows, Math.max(1, opt.limit ?? 200), strideSeq, opt.runId);
   }
   // 同じ画面: 既定1枚。時間順・細かくは perSig と stride で票を増やす（位置の中央値が固まる）
-  const perSig = Math.max(1, Math.min(20, Math.round(opt.perSig ?? (order === "time" || order === "newest" ? 8 : 1)) || 1));
-  const strideMs = Math.max(0, Math.round(opt.strideMs ?? (order === "time" || order === "newest" ? 1500 : 0)) || 0);
+  // ★ 2026-11-19 all: 同じ操作並びの上限も間引きも外す（全部読む）
+  const perSig = opt.all
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(1, Math.min(20, Math.round(opt.perSig ?? (order === "time" || order === "newest" ? 8 : 1)) || 1));
+  const strideMs = opt.all
+    ? 0
+    : Math.max(0, Math.round(opt.strideMs ?? (order === "time" || order === "newest" ? 1500 : 0)) || 0);
   const seen = new Map<string, number>();
   const lastAt = new Map<string, number>();
   const out: Array<{ id: unknown; shot_key: string; site: string | null; mode: string | null; shot_w: number; created_at?: string }> = [];
@@ -745,6 +756,8 @@ export async function learnFromWeakShots(
     runId?: string | null;
     /** 場面の印が無い写真だけ読み直す（2026-11-18） */
     onlyNoScene?: boolean;
+    /** ★ 2026-11-19: 窓の中の読める未学習を全部読む（同じ画面の上限・間引きなし） */
+    all?: boolean;
     onProgress?: (done: number, total: number, last: string) => void;
   } = {},
 ): Promise<{ tried: number; learned: number; saved: number; skipped: number; fields: number; errors: string[]; recipe?: string; refreshed?: boolean }> {
@@ -758,6 +771,7 @@ export async function learnFromWeakShots(
     focusFields: opt.focusFields,
     runId: opt.runId,
     onlyNoScene: opt.onlyNoScene,
+    all: opt.all,
   })).slice(0, max);
   /**
    * ★ 2026-11-15 竹内さん「読み取り方なども学んだらその部分強化するように」「２でやる」:

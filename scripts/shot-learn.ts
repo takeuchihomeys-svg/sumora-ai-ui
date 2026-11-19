@@ -37,6 +37,8 @@ const noRefresh = args.includes("--no-refresh");
 const fine = args.includes("--fine");
 /** ★ 2026-11-18: 読んだ写真のうち場面の印（scene）が無い物だけ読み直す（場面別の位置に使う） */
 const onlyNoScene = args.includes("--only-no-scene");
+/** ★ 2026-11-19 竹内さん「今回は全部読み取っても大丈夫」: 同じ画面の上限も連続の間引きもしない（窓の中を全部） */
+const all = args.includes("--all");
 const site = argOf("site", "all");
 /**
  * ★ 2026-11-15 竹内さん「通常モードの写真から学習する」:
@@ -68,7 +70,7 @@ const strideMs = Math.max(0, Number(argOf("stride-ms", fine ? "800" : order === 
 
 void (async () => {
   console.log(`写真から学ぶ: site=${site} mode=${mode} days=${days} limit=${limit} 並列${conc} order=${order}${runId ? ` run=${runId}` : ""}${focusFields?.length ? ` focus=${focusFields.join(",")}` : ""}${from ? ` from=${from}` : ""}${to ? ` to=${to}` : ""} perSig=${perSig} strideMs=${strideMs}${fine ? " fine" : ""}${dryRun ? "（dry-run＝書かない）" : ""}`);
-  const targets = await findShotsToLearn({ site, mode, days, limit, from, to, perSig, order, strideMs, runId, focusFields, onlyNoScene });
+  const targets = await findShotsToLearn({ site, mode, days, limit, from, to, perSig, order, strideMs, runId, focusFields, onlyNoScene, all });
   console.log(`まだ読んでいない写真: ${targets.length}件（読むのは ${Math.min(limit, targets.length)}件まで）`);
   if (!targets.length) { console.log("読む物がありません（全部読み済み／写真なし）"); return; }
   // 読む写真の大きさの内訳（⚠ 480px ばかりなら意味が無いので先に見せる）
@@ -92,7 +94,7 @@ void (async () => {
 
   const started = Date.now();
   const r = await learnFromWeakShots({
-    site, mode, days, limit, from, to, perSig, order, strideMs, runId, focusFields, onlyNoScene, dryRun, noRefresh, concurrency: conc,
+    site, mode, days, limit, from, to, perSig, order, strideMs, runId, focusFields, onlyNoScene, all, dryRun, noRefresh, concurrency: conc,
     onProgress: (done, total, last) => {
       const pct = Math.round((done / Math.max(1, total)) * 100);
       if (dryRun || done % 4 === 0 || done === total) console.log(`  … ${done}/${total}（${pct}%）${Math.round((Date.now() - started) / 1000)}秒  ${last}`);
