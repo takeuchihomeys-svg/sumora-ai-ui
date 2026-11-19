@@ -39,13 +39,17 @@ console.log("■ ① サーバーの見回りは拡張の上限より長い（�
   ok("STALL_MINUTES がある", !!m, m && m[0]);
   const stall = m ? Number(m[1]) : 0;
   ok("  20分より長い（拡張の PASS_DEADLINE と同点にしない）", stall > 20, stall);
-  ok("  35分（結果を読み終える余裕を残す）", stall === 35, stall);
+  ok("  75分以上（拡張の60分/70分より長く検索中に捨てない）", stall >= 75, stall);
   // 拡張側の上限（実物から読む）
   const snap = read("chrome-extension/snapshot-core.js");
   const pm = snap.match(/realnetpro:\s*(\d+)\s*\*\s*60\s*\*\s*1000/);
+  const pmIt = snap.match(/itandi:\s*(\d+)\s*\*\s*60\s*\*\s*1000/);
   ok("  拡張のリアプロの上限が読める", !!pm, pm && pm[0]);
+  ok("  拡張のITANDIの上限が読める", !!pmIt, pmIt && pmIt[0]);
   const extMin = pm ? Number(pm[1]) : 0;
-  ok("  ⚠ サーバー > 拡張（逆になると検索中に捨てる）", stall > extMin, { stall, extMin });
+  const itandiMin = pmIt ? Number(pmIt[1]) : 0;
+  ok("  ⚠ サーバー > 拡張 realpro（逆になると検索中に捨てる）", stall > extMin, { stall, extMin });
+  ok("  ⚠ サーバー > 拡張 itandi（逆になると検索中に捨てる）", stall > itandiMin, { stall, itandiMin });
 }
 
 console.log("\n■ ② 遅れて届いた finished で abandoned を上げ直す");

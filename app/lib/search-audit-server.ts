@@ -27,15 +27,15 @@ import { auditUpdateContext } from "@/app/lib/search-update-days-server";
  *     どちらも20分なので、**結果を読み終える前にサーバーが先に「止まった」**にしていた。
  *     拡張は15分待って読み、その後 bulk-dl が全ページを回る（5ページ×送信）ので20分を超える。
  *
- *   → 拡張が「まだ動いている」と言える**余裕**をサーバー側に持たせる（25 → 35分）。
- *     ⚠ 拡張の上限（20分）より**必ず長く**する。同じにするとまた競争する。
- *     ⚠ ただし**無限に待たない**（PCを閉じた回は35分で閉じる）。
+ *   → 拡張が「まだ動いている」と言える**余裕**をサーバー側に持たせる（20 → 35 → 75分）。
+ *     ⚠ 拡張の上限（`PASS_DEADLINE_MS`: realnetpro 60分・itandi 70分）より**必ず長く**する。同じにするとまた競争する。
+ *     ⚠ ただし**無限に待たない**（PCを閉じた回は75分で閉じる）。
  */
-export const STALL_MINUTES = 35;
+export const STALL_MINUTES = 75;
 export const REUSE_DIAGNOSIS_DAYS = 7;
 const MAX_JSON_CHARS = 24_000;
 
-const TRIGGERS = new Set(["bulk_queue", "bulk_manual", "single", "scrape_compare", "web_brain"]);
+const TRIGGERS = new Set(["bulk_queue", "bulk_manual", "single", "aix_customer", "scrape_compare", "web_brain"]);
 const MODES = new Set(["brain_normal", "brain_staff", "brain_aix"]);
 
 export type SearchAuditRow = {
@@ -151,6 +151,40 @@ export async function recordStarted(body: Record<string, unknown>): Promise<{ ok
     if (!/duplicate|unique/i.test(ins.error.message)) return { ok: false, error: ins.error.message };
   }
   const upd = await supabase.from("search_audits").update(cols).eq("run_id", runId);
+  return upd.error ? { ok: false, error: upd.error.message } : { ok: true };
+}
+
+/**
+ * fill-done 前の途中段を **started 行に書き足す**（拡張の phase: "progress"）。
+ *   ⚠ 旧は progress を受け付けず、段はメモリだけ → PCスリープ／fill_timeout で finish が来ないと
+ *     abandoned の steps=空（stalled:realpro:none）になる。finished/abandoned の行は触らない。
+ */
+export async function recordProgress(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; skipped?: string }> {
+  const runId = body.run_id as string;
+  if (!validRunId(runId)) return { ok: false, error: "run_id 不正" };
+  const stepsIn = Array.isArray(body.steps) ? (body.steps as Array<Record<string, unknown>>).slice(-80) : [];
+  if (!stepsIn.length) return { ok: true, skipped: "no_steps" };
+  const { row, error } = await loadRow(runId);
+  if (error) return { ok: false, error };
+  if (!row) return { ok: true, skipped: "no_row" };
+  if (row.status === "finished" || row.status === "abandoned") return { ok: true, skipped: "already_closed" };
+  const prev = Array.isArray(row.steps) ? row.steps : [];
+  const seen = new Set(
+    prev.map((s) => `${String((s as { k?: string })?.k || "")}|${String((s as { at?: number })?.at || "")}`),
+  );
+  const merged = prev.slice();
+  for (const s of stepsIn) {
+    if (!s || typeof s !== "object") continue;
+    const key = `${String((s as { k?: string }).k || "")}|${String((s as { at?: number }).at || "")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(s);
+  }
+  const upd = await supabase
+    .from("search_audits")
+    .update({ steps: capJson(merged.slice(-120)) as never })
+    .eq("run_id", runId)
+    .eq("status", "started");
   return upd.error ? { ok: false, error: upd.error.message } : { ok: true };
 }
 

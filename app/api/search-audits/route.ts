@@ -8,7 +8,7 @@ import { waitUntil } from "@vercel/functions";
 import { completeAuthOk } from "@/app/lib/pickup-complete";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import {
-  validRunId, recordStarted, recordFinished, runDiagnosis, listCauses, listRuns, setCauseStatus, latestWeekly,
+  validRunId, recordStarted, recordProgress, recordFinished, runDiagnosis, listCauses, listRuns, setCauseStatus, latestWeekly,
 } from "@/app/lib/search-audit-server";
 import { supabase } from "@/app/lib/supabase-server";
 import { buildDailyDigest, digestLines, type DailyAuditRow } from "@/app/lib/search-audit-daily";
@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json(r, { status: r.ok ? 200 : 500, headers: CORS });
   }
+  if (body.phase === "progress") {
+    const r = await recordProgress(body);
+    return NextResponse.json(r, { status: r.ok ? 200 : 500, headers: CORS });
+  }
   if (body.phase === "finished") {
     const r = await recordFinished(body);
     if (r.ok && r.needsAi) {
@@ -80,7 +84,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json(r, { status: r.ok ? 200 : 500, headers: CORS });
   }
-  return NextResponse.json({ ok: false, error: "phase は started か finished" }, { status: 400, headers: CORS });
+  return NextResponse.json({ ok: false, error: "phase は started / progress / finished" }, { status: 400, headers: CORS });
 }
 
 /** 見張りの C3（回の終わり）。決定論の印を書き、LLM の段は後ろで待つ。失敗しても投げない */
