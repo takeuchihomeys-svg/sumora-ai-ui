@@ -5396,6 +5396,7 @@ function _fillDoneTimeoutMs(site) {
 function _createFillDoneWaiter(site, customerId, timeoutMs) {
   // 2026-09-18: この顧客を新しく待ち始める＝前回「捨てた」記録は用済み（再検索が詰まらないように消す）
   _clearFillDoneAbandoned(customerId, site);
+  try { _clearEarlyBatchDone(customerId, site === "itandi" ? "itandi" : "realnetpro"); } catch (_) {} // 新しい回の始まり＝前の回の「先に届いた完了」は用済み
   return new Promise(function (resolve) {
     var entry = { site: site || null, customerId: customerId || null, resolve: resolve, timer: null };
     // Fix 3: _batchShouldStop を 500ms ごとにポーリングし、true になったら即解決する。
@@ -5557,6 +5558,8 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
   if (!target) {
     console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId, site || "");
     try { _snapOnEvent("batch_done_no_waiter", "完了合図 " + customerId + " に合う待ちが無い（待ち " + _batchCustomerDoneWaiters.length + "本）"); } catch (_) {}
+    // 待ち手がまだ無い（fill-done 待ち→送付待ちの切替の隙間）なら覚えておき、後から作る待ち手がすぐ受け取る（2.8.128）
+    try { if (customerId && _batchCustomerDoneWaiters.length === 0) _rememberEarlyBatchDone(customerId, site, propertyCount, audit); } catch (_) {}
     return;  // resolve しない・タイムアウト自然消化
   }
   clearInterval(target.stopInterval);
@@ -5648,7 +5651,69 @@ function _extendFillDoneWaitersOnProgress(customerId, site, why) {
   _watchProgress(why || "fill途中", siteKey);
 }
 
+/**
+ * ★ 2026-11-19 (2.8.128) 竹内さん「ちゃんと改善されたのか／徹底的に」:
+ *   実測（search_audits 1530・1535・1538）: 検索ボタンを押した後に fill-done の合図が届かず idle_close になっても、
+ *   リアプロの一覧では PDF の送付（axlx-batch-progress）は普通に始まっていた。
+ *   旧は「fill-done が来ない」だけで最大30分（既定）待ち → 次のお客さんへ進めない／進んでも「検索完了シグナルが届きません」で失敗扱い。
+ *   ・一覧側から「この客の送付が進んでいる／終わった」合図が来た＝検索は終わっている → 待っている fill-done を解く（_impliedFillDone）
+ *   ・完了の合図が、待ち手が出来る前に来た時（fill-done 待ち → 送付待ちの切替の隙間）は覚えておき、後から作る待ち手がすぐ受け取る
+ */
+var _earlyBatchDone = []; // { customerId, site, propertyCount, guard, at }
+var EARLY_BATCH_DONE_TTL_MS = 3 * 60 * 1000;
+function _rememberEarlyBatchDone(customerId, site, propertyCount, audit) {
+  var now = Date.now();
+  _earlyBatchDone = _earlyBatchDone.filter(function (e) { return now - e.at < EARLY_BATCH_DONE_TTL_MS; });
+  _earlyBatchDone.push({ customerId: customerId ? String(customerId) : null, site: site || null, propertyCount: propertyCount != null ? propertyCount : null, guard: (audit && audit.guard_stopped && audit.guard) ? audit.guard : null, at: now });
+}
+function _takeEarlyBatchDone(customerId, site) {
+  var now = Date.now();
+  for (var i = 0; i < _earlyBatchDone.length; i++) {
+    var e = _earlyBatchDone[i];
+    if (now - e.at >= EARLY_BATCH_DONE_TTL_MS) continue;
+    if (!customerId || !e.customerId || String(e.customerId) !== String(customerId)) continue;
+    if (site && e.site && String(e.site) !== String(site)) continue;
+    _earlyBatchDone.splice(i, 1);
+    return e;
+  }
+  return null;
+}
+function _clearEarlyBatchDone(customerId, site) {
+  if (!customerId) return;
+  _earlyBatchDone = _earlyBatchDone.filter(function (e) {
+    return !(e.customerId && String(e.customerId) === String(customerId) && (!site || !e.site || String(e.site) === String(site)));
+  });
+}
+/** 一覧側の送付の合図から、待っている fill-done を解く。番号が合う待ち、または番号が無い時に待ちがそのサイトで1本だけの時に限る（取り違えない） */
+function _impliedFillDone(customerId, site, why) {
+  try {
+    var siteKey = site === "itandi" ? "itandi" : site === "reins" ? "reins" : "realnetpro";
+    var cands = _fillDoneWaiters.filter(function (w) { return !w.site || w.site === siteKey || w.site === site; });
+    var hit = null;
+    if (customerId) {
+      hit = cands.filter(function (w) { return w.customerId && String(w.customerId) === String(customerId); })[0] || null;
+      // 番号が違う待ちしか無い時は何もしない（前のお客さんの遅れた合図で次のお客さんを解かない）
+    } else if (cands.length === 1) {
+      hit = cands[0];
+    }
+    if (!hit) return false;
+    clearTimeout(hit.timer);
+    try { _notifyFillDone(hit.site || siteKey, hit.customerId, null); } catch (_) { return false; }
+    try {
+      var rid = _auditOpenRunId(String(hit.customerId), hit.site === "itandi" ? "itandi" : "realpro");
+      if (rid) _auditStep(rid, "fill_done_implied", String(why || "送付の合図").slice(0, 80) + "（fill-doneは届かなかったが一覧で送付が進んでいるので完了とみなす）");
+    } catch (_) {}
+    console.warn("[fill-done] 届かなかったが一覧で送付が進んでいる → 完了とみなす customer=" + hit.customerId + " " + (why || ""));
+    return true;
+  } catch (_) { return false; }
+}
+
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs, site) {
+  var _early = _takeEarlyBatchDone(customerId, site);
+  if (_early) {
+    try { _snapOnEvent("batch_done_early_taken", "完了の合図が待ち手より先に届いていた customer=" + customerId); } catch (_) {}
+    return Promise.resolve({ ok: true, propertyCount: _early.propertyCount, guard: _early.guard });
+  }
   return new Promise(function(resolve) {
     var baseMs = timeoutMs || BATCH_IDLE_MS;
     var entry = { customerId: customerId || null, site: site || null, resolve: resolve, timer: null, stopInterval: null, timeoutMs: baseMs, sawProgress: false };
@@ -6426,6 +6491,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     _auditOnBatchDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
     // 2026-09-29 v2.5.41 送付済みで飛ばした数（0件の知らせを「新しい物件なし」に言い分ける）
     if (msg.customerId != null) _lastSentSkipped[_sentSkipKey(msg.customerId, _msgSite)] = (msg.audit && msg.audit.sent_skipped) || 0;
+    try { _impliedFillDone(msg.customerId || null, _msgSite, "全ページ送信の完了合図"); } catch (_) {}
     _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null, _msgSite);
     _watchProgress("送信の終わり", _msgSite);
     // ★ 2026-11-16: 一連ロック解除（popup が次客を入れてよい合図）
@@ -6435,6 +6501,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
   if (msg && msg.type === "axlx-batch-progress") {
     // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
+    try { _impliedFillDone(msg.customerId || null, _msgSite, "送付の進み"); } catch (_) {}
     _notifyBatchProgress(msg.customerId || null, _msgSite, msg.sentCount > 0 ? msg.sentCount : 0);
   }
   return false;

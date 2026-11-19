@@ -4,38 +4,48 @@
 
 ---
 
-## 2026-11-19 19:50 **拡張 2.8.127: AIX の自動ダウンロードで行のチェックが付く旧のやり方を止めた／次のお客さんへ移る所の固まり（終わり合図の番号ずれ）を直した**（竹内さん「AIXモードで…印刷用PDFを押す部分なのになぜかチェックボックスにチェックをつける昔のやり方が起きている」「次のお客さんに移る場面のところで固まってしまった」統括pro・作業員を増やして確認）
-
-### 1. 行のチェックが付く（原因確定・コード実測）
-- 根: 自動の押下（`_pressPrintPdf`→`btn.click()`→background の `axlx-pdf-captured`）も手で押した時と同じ `sendOnePdfNow` を通り、そこで無条件に `_selectOnly(item)`（`item.cb.checked = true` をカーソル無しで直接代入）が走っていた（2026-11-10 の「押した1件だけチェック」の見せ方が自動にも出ていた）。旧の道 `_oneByOneStart`／`_humanClickCb`（カーソルでチェックを押す）は呼び出し元が無く動いていない（`autoSendOnePage`・`autoSendAllPages` は使われない）。
-- 直し（`bulk-dl.js`）: `_axlxNoRowCheck()`（`_autoPdfRun` がある間、または自動の印が立っていてスタッフモードでない間）が真なら `_selectOnly` を呼ばない。1件の送信は押したリンクから組を作り（`_buildOneItem`）チェックに依存しないので、送る物・記録・ブレイン判定は変わらない。**手で押した時**の 2026-11-10 の形（押した1件だけチェック）は残す。
-- テスト: `tests/chrome-extension/no-row-check-v2827.test.js`（7）。
-- ⚠ 2026-11-10 の決定（「チェックボックスはこの印刷用PDFのところの部分のこと…印刷用PDF押したら、チェックボックス押して…」）は手動の1件ずつの形で、今回の竹内さんの指示（AIX は印刷用PDFを押すだけ）と食い違う部分を **自動だけ**直した。手動の形を変えるかは竹内さんの判断。
-
-### 2. 次のお客さんに移る所で固まる（DB 実測＋コード・一部は未確定）
-- DB（search_audits）: 直近の AIX の自動 1530・1535・1538 が `idle_close`（検索を押した後 fill-done が6分来ない・steps は120件の上限で後半が見えない）。1534・1536 は bulk_manual が `started` のまま閉じない。録画（human-motion-shots）は 10:33Z で終了（上限）し、**移る瞬間は DB に無い**。1538 の録画では 10:23〜10:33Z に印刷用PDFを約21秒間隔で押し続け、ページ送り（`td.pager`）で2回読み直し、3ページ目の最中まで確認できた。
-- 原因の候補（コード）: 終わりの合図 `axlx-batch-customer-done` の番号を、終わる時に `chrome.storage` の `current_customer_id` から読んでいた（`_autoFinish`・`_sendBatchDone`）。押している間（10分以上・ページ送りで画面を読み直す）に画面側でお客さんが選び直されると番号が変わり、background は番号が完全一致する待ちしか解かず、送り終わっても 20分（送付が進んだ後は45分）次へ進まない。
-- 直し: ① `bulk-dl.js` `_autoRunCid` — 押し始めたお客さんの番号を控え、終わりの合図はその番号で送る（読み直しをまたぐ時は `axlx_auto_next_page.customerId` から戻す）。送ったら捨てる。② `background.js` `_notifyBatchCustomerDone` — 番号が合わなくても、そのサイトの待ちが**1本だけ**なら解く（`batch_done_cid_mismatch` を記録）。2本以上は取り違えないので解かない（`batch_done_no_waiter` を記録）。テスト: `batch-done-cid-v2827.test.js`（11）。
-- ⚠ 未確定: 実際に固まった時の記録が無い（録画は10:33Zで終了・1536 は steps 0）。次の自動で、監査・`_snapOnEvent` に `batch_done_cid_mismatch`／`batch_done_no_waiter` が出るかで当たりを確かめる。ほかの候補（作業員の洗い出し）: ページ側が番号なしの入力を黙って無視して約4〜5分待つ／`busy_other_customer` で一括全体が止まる（変えるには竹内さんの OK が必要）／検索を押した後の fill-done が消える（1512・1530・1535・1538 で steps が検索直後で止まる＝ページ読み直しで届かない疑い・未調査）。
-- 別件（一覧が一度空になる現象・19:30 の相談）: 毎回の入力開始の約5秒後に `×とじる｜div.hide_room_menu_close` が押されている（5回すべて）。リアプロの号室メニューが開いた状態を `_doReset` の Step1 が「開いているモーダル」として閉じている。開いた原因（カーソルが一覧の行の上に居る間に開く）は未特定。
+## 2026-11-19 21:00 **拡張 2.8.128: 検索後に fill-done が届かなくても、一覧で送付が進んでいれば「検索は終わった」とみなす／完了の合図が待ち手より先に来ても受け取れる**（竹内さん「ちゃんと改善されたのか／徹底的に改善する自動モードとAIXモード使えるように」）
+- **正直な状況**: 2.8.127（チェックを付けない・完了合図の番号ずれ）は**テストでだけ確認**。実機の一覧では未観測。この時間は本番DB（Supabase）が全表で応答せず（REST の入口は 401 を即返すが、鍵付きの読みが全部時間切れ）、DB の実データでの検証は**できていない**。
+- **原因の候補（実測は 2.8.127 作業時の search_audits 1530・1535・1538）**: 検索ボタンを押した後に fill-done の合図が届かず `idle_close` になる回で、一覧側の PDF 送付（`axlx-batch-progress`）は普通に始まっていた。background は fill-done を最大30分（既定 `FILL_DONE_TIMEOUT_MS`）待ち、満了すると「検索完了シグナルが届きません」で失敗扱い＝次のお客さんへ進めない／進んでも壊れる。さらに、完了合図（`axlx-batch-customer-done`）が「fill-done 待ち→送付待ち」の切替の隙間に着くと待ち手がまだ無く捨てられ、次に作る送付待ちが20分待つ形があり得た。
+- **直し（`background.js`・page-script は版だけ）**: ①`_impliedFillDone(customerId, site, why)`: 一覧の送付の進み／完了の合図が来たら、**番号が合う**待ち（番号が無い時は**そのサイトで待ちが1本だけ**の時）の fill-done を解く。前のお客さんの番号の合図では次の待ちを解かない。記録は audit step `fill_done_implied`。②`_rememberEarlyBatchDone`／`_takeEarlyBatchDone`／`_clearEarlyBatchDone`: 待ち手が無い時の完了合図を3分間覚え、後から作る `_createBatchCustomerDoneWaiter` がすぐ受け取る（番号・サイトが合う物だけ・新しい回の fill-done 待ちを作る時に前の物を消す）。
+- **テスト**: `tests/chrome-extension/implied-fill-done-v2828.test.js`（19 ✓）。`batch-done-cid-v2827.test.js` 11 ✓ のまま。
+- **実機で見る所**: audit steps に `fill_done_implied`（あれば fill-done が実際に落ちていた証拠）／`_snapOnEvent` の `batch_done_early_taken`／`batch_done_cid_mismatch`／`batch_done_no_waiter`。
+- **まだ直せていない（DB が戻ったら実測してから）**: 検索前に一覧が一度空になる件（`_doReset` が リアプロの room-menu の「×とじる」を押す。何が開くかは不明）／番号無し fill を page が黙って無視して4〜5分待つ件／`busy_other_customer` で一括全体が止まる件（変えるなら竹内さんの OK）／`bulk_manual` の点検が閉じない件／steps 上限120で検索後の段が見えない件。DB 変更・API 変更なし（`DB_STRUCTURE.md`・migrate-schema は不要）。
 
-## 2026-11-19 19:10 **拡張 2.8.126: 自動録画中に「画面更新されて止まった」原因を直した（番号なしの入力中を一括が壊していた）＋動きのAPI（`GET /api/motion-plan`）を Cursor 側でも作った**（竹内さん「今録画自動モードで動画とったが変な画面になって…画面更新されて止まった」「APIこっちからも作れるように」統括pro）
-
-### 画面更新で止まった原因（DB 実測: search_audits 1533→1534→1535・JST 18:50）
-- 1533 `bulk_queue`（18:50:14）が前客の送付待ち（`pipeline_busy_send_hold`）で入力が始まらず、40秒後（18:50:56）に `no_fill_start`→`tab_reload`。
-- その間（18:50:35）に人が手動で始めた 1535 `single`（勇気さん）が入力中で、所在地を確定した直後（18:50:55）に**同じタブを読み直された**。→ 一覧（16,725棟）の画面に戻り「変な画面」。
-- 根: 手動の単発は誰の入力か（番号）をページへ渡していなかった（`now_customer cid=-`）。一括の判定は **「番号なしの入力中＝同じお客さんとみなす（go）」** で、読み直しの前の守り（`reload_skip_other_fill`）も番号が一致しない時だけ。番号なしは両方をすり抜けた。
-- 直し: ① `customer-handoff.js` `tabHandoffDecision` — 入力中で番号なしなら**別の入力として待つ**（番号なしだけ上限3分・古い印で永久に待たない）。② `background.js` — 読み直しの前に番号なしの入力中なら**見送る**（監査 `reload_skip_unknown_fill`）。③ `popup.js`→`underbar.js` — 手動の単発の autofill に `customerId` を載せてページへ渡す。テスト: `unknown-fill-v2826.test.js`（11）。
-- 確認（竹内さんへ）: 手動の単発の入力中に一括を動かしても、タブが読み直されず一括が待つ／見送ること。監査に `wait_prev_customer`（番号なし含む）か `reload_skip_unknown_fill` が出る。
-- ⚠ 未対応の点: 1533 が前客（2bdae2b2）の送付で `batch_timeout`（進捗あり）になった理由は別（送付が長引いた）。今回の直しは「人の入力を壊さない」まで。
-
+---
+
+## 2026-11-19 19:50 **拡張 2.8.127: AIX の自動ダウンロードで行のチェックが付く旧のやり方を止めた／次のお客さんへ移る所の固まり（終わり合図の番号ずれ）を直した**（竹内さん「AIXモードで…印刷用PDFを押す部分なのになぜかチェックボックスにチェックをつける昔のやり方が起きている」「次のお客さんに移る場面のところで固まってしまった」統括pro・作業員を増やして確認）
+
+### 1. 行のチェックが付く（原因確定・コード実測）
+- 根: 自動の押下（`_pressPrintPdf`→`btn.click()`→background の `axlx-pdf-captured`）も手で押した時と同じ `sendOnePdfNow` を通り、そこで無条件に `_selectOnly(item)`（`item.cb.checked = true` をカーソル無しで直接代入）が走っていた（2026-11-10 の「押した1件だけチェック」の見せ方が自動にも出ていた）。旧の道 `_oneByOneStart`／`_humanClickCb`（カーソルでチェックを押す）は呼び出し元が無く動いていない（`autoSendOnePage`・`autoSendAllPages` は使われない）。
+- 直し（`bulk-dl.js`）: `_axlxNoRowCheck()`（`_autoPdfRun` がある間、または自動の印が立っていてスタッフモードでない間）が真なら `_selectOnly` を呼ばない。1件の送信は押したリンクから組を作り（`_buildOneItem`）チェックに依存しないので、送る物・記録・ブレイン判定は変わらない。**手で押した時**の 2026-11-10 の形（押した1件だけチェック）は残す。
+- テスト: `tests/chrome-extension/no-row-check-v2827.test.js`（7）。
+- ⚠ 2026-11-10 の決定（「チェックボックスはこの印刷用PDFのところの部分のこと…印刷用PDF押したら、チェックボックス押して…」）は手動の1件ずつの形で、今回の竹内さんの指示（AIX は印刷用PDFを押すだけ）と食い違う部分を **自動だけ**直した。手動の形を変えるかは竹内さんの判断。
+
+### 2. 次のお客さんに移る所で固まる（DB 実測＋コード・一部は未確定）
+- DB（search_audits）: 直近の AIX の自動 1530・1535・1538 が `idle_close`（検索を押した後 fill-done が6分来ない・steps は120件の上限で後半が見えない）。1534・1536 は bulk_manual が `started` のまま閉じない。録画（human-motion-shots）は 10:33Z で終了（上限）し、**移る瞬間は DB に無い**。1538 の録画では 10:23〜10:33Z に印刷用PDFを約21秒間隔で押し続け、ページ送り（`td.pager`）で2回読み直し、3ページ目の最中まで確認できた。
+- 原因の候補（コード）: 終わりの合図 `axlx-batch-customer-done` の番号を、終わる時に `chrome.storage` の `current_customer_id` から読んでいた（`_autoFinish`・`_sendBatchDone`）。押している間（10分以上・ページ送りで画面を読み直す）に画面側でお客さんが選び直されると番号が変わり、background は番号が完全一致する待ちしか解かず、送り終わっても 20分（送付が進んだ後は45分）次へ進まない。
+- 直し: ① `bulk-dl.js` `_autoRunCid` — 押し始めたお客さんの番号を控え、終わりの合図はその番号で送る（読み直しをまたぐ時は `axlx_auto_next_page.customerId` から戻す）。送ったら捨てる。② `background.js` `_notifyBatchCustomerDone` — 番号が合わなくても、そのサイトの待ちが**1本だけ**なら解く（`batch_done_cid_mismatch` を記録）。2本以上は取り違えないので解かない（`batch_done_no_waiter` を記録）。テスト: `batch-done-cid-v2827.test.js`（11）。
+- ⚠ 未確定: 実際に固まった時の記録が無い（録画は10:33Zで終了・1536 は steps 0）。次の自動で、監査・`_snapOnEvent` に `batch_done_cid_mismatch`／`batch_done_no_waiter` が出るかで当たりを確かめる。ほかの候補（作業員の洗い出し）: ページ側が番号なしの入力を黙って無視して約4〜5分待つ／`busy_other_customer` で一括全体が止まる（変えるには竹内さんの OK が必要）／検索を押した後の fill-done が消える（1512・1530・1535・1538 で steps が検索直後で止まる＝ページ読み直しで届かない疑い・未調査）。
+- 別件（一覧が一度空になる現象・19:30 の相談）: 毎回の入力開始の約5秒後に `×とじる｜div.hide_room_menu_close` が押されている（5回すべて）。リアプロの号室メニューが開いた状態を `_doReset` の Step1 が「開いているモーダル」として閉じている。開いた原因（カーソルが一覧の行の上に居る間に開く）は未特定。
+
+## 2026-11-19 19:10 **拡張 2.8.126: 自動録画中に「画面更新されて止まった」原因を直した（番号なしの入力中を一括が壊していた）＋動きのAPI（`GET /api/motion-plan`）を Cursor 側でも作った**（竹内さん「今録画自動モードで動画とったが変な画面になって…画面更新されて止まった」「APIこっちからも作れるように」統括pro）
+
+### 画面更新で止まった原因（DB 実測: search_audits 1533→1534→1535・JST 18:50）
+- 1533 `bulk_queue`（18:50:14）が前客の送付待ち（`pipeline_busy_send_hold`）で入力が始まらず、40秒後（18:50:56）に `no_fill_start`→`tab_reload`。
+- その間（18:50:35）に人が手動で始めた 1535 `single`（勇気さん）が入力中で、所在地を確定した直後（18:50:55）に**同じタブを読み直された**。→ 一覧（16,725棟）の画面に戻り「変な画面」。
+- 根: 手動の単発は誰の入力か（番号）をページへ渡していなかった（`now_customer cid=-`）。一括の判定は **「番号なしの入力中＝同じお客さんとみなす（go）」** で、読み直しの前の守り（`reload_skip_other_fill`）も番号が一致しない時だけ。番号なしは両方をすり抜けた。
+- 直し: ① `customer-handoff.js` `tabHandoffDecision` — 入力中で番号なしなら**別の入力として待つ**（番号なしだけ上限3分・古い印で永久に待たない）。② `background.js` — 読み直しの前に番号なしの入力中なら**見送る**（監査 `reload_skip_unknown_fill`）。③ `popup.js`→`underbar.js` — 手動の単発の autofill に `customerId` を載せてページへ渡す。テスト: `unknown-fill-v2826.test.js`（11）。
+- 確認（竹内さんへ）: 手動の単発の入力中に一括を動かしても、タブが読み直されず一括が待つ／見送ること。監査に `wait_prev_customer`（番号なし含む）か `reload_skip_unknown_fill` が出る。
+- ⚠ 未対応の点: 1533 が前客（2bdae2b2）の送付で `batch_timeout`（進捗あり）になった理由は別（送付が長引いた）。今回の直しは「人の入力を壊さない」まで。
+
 
 - **2026-11-19 19:30 人間に近づいたかの確認（計算のみ・サイト不触）**: `tests/chrome-extension/motion-vs-human-v2826.test.js`（10件）。人の距離分布（中央値116px）で新 planMove を6000回・旧の式を6000回引いて、本番DBの人の実測と並べた。速さ p50: 人375／新355／旧233。速さ CV: 0.64／0.65／0.51。移動ms p50: 284／326〜336／500〜518。曲がり p50: 1.02／1.03／1.32。行き過ぎ: 新12%／旧47%（80px超）。検索ごとの速さ p50 のばらつき CV 0.26（旧は0）。**弱い所**: 曲がりの CV は人0.16に対し新0.07（人は時々大きく曲がる）。調整: `BEND_BASE_EXCESS` 0.04→0.025・`BEND_SIGMA` 1.1→1.4。**未確認**: 実機の自動は #1535 以降 0件（2.8.126 の `motion_stats` がまだ DB に無い）／間隔（F29 近さ58・human帯28%）は動きの改善では変わらない別の課題。
-### 動きの API（Cursor 側）
-- 2.8.125 は受け口だけだったが、竹内さんの指示で Cursor 側でも作った。`app/lib/motion-plan.ts`（純関数 `buildMotionPlan`・範囲は `human-wait.js` の PERSONA_RANGE と同じ）／`app/api/motion-plan/route.ts`（GET・CORS・no-store・**DB を読まない書かない**・`MOTION_PLAN_OFF=1` で `plan:null`）／拡張 `background.js` `_refreshMotionPlan`（お客さんの入力を始める直前に取得・1.5秒で諦める・失敗は握りつぶす・`axlx_motion_plan_off=true` で止まる）。列・表は増やしていない（migrate-schema 変更なし）。Claude Code が後で中身を賢くしてもよい（同じ形 `{v:1, plan_id, expires_at, run_seed, persona}` を守る）。
-- 効き方: ランごとに新しい plan_id → pointer-ui.js が persona を作り直す。plan 無し／API 失敗でもローカル seed で動く（fail-open）。監査 `motion_stats` の `plan=` に plan_id が出れば API が使えた証拠。
-- 次の段（未実装・統括Pro の指摘）: `motion_stats` を統括の材料にして、API の persona の**中心**を動かす（今は中心 1.0 の対数正規で毎回ランダム）。DB に動きの列を持つなら migrate-schema 同時＋竹内さんの OK。
-- テスト: `npx tsx tests/motion-plan.test.ts`（13）。
+### 動きの API（Cursor 側）
+- 2.8.125 は受け口だけだったが、竹内さんの指示で Cursor 側でも作った。`app/lib/motion-plan.ts`（純関数 `buildMotionPlan`・範囲は `human-wait.js` の PERSONA_RANGE と同じ）／`app/api/motion-plan/route.ts`（GET・CORS・no-store・**DB を読まない書かない**・`MOTION_PLAN_OFF=1` で `plan:null`）／拡張 `background.js` `_refreshMotionPlan`（お客さんの入力を始める直前に取得・1.5秒で諦める・失敗は握りつぶす・`axlx_motion_plan_off=true` で止まる）。列・表は増やしていない（migrate-schema 変更なし）。Claude Code が後で中身を賢くしてもよい（同じ形 `{v:1, plan_id, expires_at, run_seed, persona}` を守る）。
+- 効き方: ランごとに新しい plan_id → pointer-ui.js が persona を作り直す。plan 無し／API 失敗でもローカル seed で動く（fail-open）。監査 `motion_stats` の `plan=` に plan_id が出れば API が使えた証拠。
+- 次の段（未実装・統括Pro の指摘）: `motion_stats` を統括の材料にして、API の persona の**中心**を動かす（今は中心 1.0 の対数正規で毎回ランダム）。DB に動きの列を持つなら migrate-schema 同時＋竹内さんの OK。
+- テスト: `npx tsx tests/motion-plan.test.ts`（13）。
 ## 2026-11-19 18:45 **拡張 2.8.125: 外しを「進捗型＋完了線F57＋送付後の外し」に／見えない町は詳細地域へ進んで外す／自動のマウスを人の実測分布＋ラン別 persona に／動きを API で渡せる形（motion_plan）**（竹内さん「入れたの覚えていたら外す、完了したらちゃんと外す、順番で」「マウスの動き方が一定になっていないか」「動き方もAPIで決めたら」統括pro）
 
 ### 外し（page-script.js・background.js）
