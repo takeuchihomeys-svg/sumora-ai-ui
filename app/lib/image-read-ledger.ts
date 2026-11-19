@@ -19,7 +19,7 @@
 // 戻す: IMAGE_READ_LEDGER=off（AIX は台帳を作らない・送った後は今まで通り読む）
 import { createHash } from "node:crypto";
 import { supabase } from "@/app/lib/supabase-server";
-import { PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_PROMPT, parseReadResult, parseTranscript, type ReadResult, type ReadItem, type ImageKind } from "@/app/lib/property-image-read";
+import { PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_PROMPT, PROPERTY_IMAGE_ROOMS_LINE, imageReadRoomsOn, parseReadResult, parseTranscript, type ReadResult, type ReadItem, type ImageKind } from "@/app/lib/property-image-read";
 import { JA_KANJI_INSTRUCTION, jaKanji } from "@/app/lib/ja-kanji";
 import { parseLedgerFacts, trimTranscriptRepetition, type LedgerFacts } from "@/app/lib/recommend-fact-guard";
 export { trimTranscriptRepetition };
@@ -67,6 +67,9 @@ export const LEDGER_ITEMS_SYSTEM = PROPERTY_IMAGE_PROMPT
   .replace("- station: 一番近い駅の名前（「駅」は付けない。バス停は除く）。", "- station: 交通・最寄り駅の欄に書いてある一番近い駅の名前（「駅」は付けない。バス停は除く。交通の欄が無ければ \"\"）。")
   .replace("- 画像に書かれていない物件名・金額・日付を作らないこと（読めない項目は null か \"\" のまま）", "- 文字に書かれていない物件名・金額・駅・日付を作らないこと（無い項目は null か \"\" のまま）。admin_fee は「管理費」「共益費」の見出しの金額だけ（駐車場・町内会費は入れない）")
   + `\n${JA_KANJI_INSTRUCTION}`;
+
+/** 2026-11-19 作業員L: IMAGE_READ_ROOMS=on の時だけ部屋ごとの帖数の1行を足す（off は LEDGER_ITEMS_SYSTEM のまま） */
+export function ledgerItemsSystem(env?: Record<string, string | undefined>): string { return imageReadRoomsOn(env) ? LEDGER_ITEMS_SYSTEM.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : LEDGER_ITEMS_SYSTEM; }
 
 export const LEDGER_TRANSCRIBE_MAX_TOKENS = 3000;
 export const LEDGER_ITEMS_MAX_TOKENS = 2000;
@@ -244,7 +247,7 @@ async function readLedger(url: string, hash: string | null, opts: { conversation
     // ② 写した文字から 物件の一覧（text）と条件の行（text）を並べて読む
     const left = Math.max(5_000, budget - (Date.now() - t0));
     const [itemsOut, detailOut] = await Promise.all([
-      callDeepSeekRead(LEDGER_ITEMS_SYSTEM, parsed.body.slice(0, 6000), { maxTokens: LEDGER_ITEMS_MAX_TOKENS, timeoutMs: Math.min(left, 25_000), model },
+      callDeepSeekRead(ledgerItemsSystem(), parsed.body.slice(0, 6000), { maxTokens: LEDGER_ITEMS_MAX_TOKENS, timeoutMs: Math.min(left, 25_000), model },
         (t) => { const r = parseReadResult(t); return r.items.length || /"is_property"/.test(t) ? r : null; },
         { retryIf: (elapsed) => left - elapsed >= 4_000, retryTimeoutMs: (elapsed) => left - elapsed }),
       import("./property-detail-source").then(({ readPropertyDetailFromText, PROPERTY_TRANSCRIPT_DETAIL_SYSTEM }) =>
