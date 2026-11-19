@@ -39,7 +39,7 @@ console.log("■ ① 前に押せた「次」の印を先に使う（実際の�
 console.log("\n■ ② onclick を持つ td でも押せる（素の click だけに頼らない）");
 {
   const seg = bd.slice(bd.indexOf("function clickNextPageBtn"), bd.indexOf("function clickNextPageBtn") + 3000);
-  t("素の click", /try \{ el\.click\(\); \} catch/.test(seg));
+  t("素の click", /try \{ el\.click\(\); \} catch|\n\s*el\.click\(\);/.test(seg));
   t("  onclick を直接呼ぶ", /var oc = el\.getAttribute && el\.getAttribute\("onclick"\)/.test(seg));
   t("  中の <a> も押す", /querySelector\("a\[href\]"\)/.test(seg));
 }
@@ -49,7 +49,7 @@ console.log("\n■ ③ 押した後に「本当に進んだか」を確かめる
   t("確かめる関数（_verifyNextPage）", /function _verifyNextPage\(urlBefore, maxMs\)/.test(bd));
   t("  URL が変わったかを見る", /location\.href\) !== urlBefore/.test(bd));
   t("  時間切れで false", /Date\.now\(\) - t0 > limit[\s\S]{0,60}resolve\(false\)/.test(bd));
-  t("tryNext が進んだかを待つ", /_verifyNextPage\(_urlBefore, 7000\)\.then\(function \(moved\)/.test(bd));
+  t("tryNext が進んだかを待つ", /_verifyNextPage\(_urlBefore, 14000\)\.then\(function \(moved\)/.test(bd));
   t("  進まなければ止める（同じページを繰り返さない）", /if \(!moved\) \{[\s\S]{0,600}clearAutoSendState\(\)/.test(bd));
   t("  進まなかった事を記録に残す（next_page_not_moved）", /next_page_not_moved: true/.test(bd));
 }

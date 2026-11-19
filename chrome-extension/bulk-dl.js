@@ -4106,20 +4106,47 @@
      *   付いている事があり、素の `click()` では**ハンドラが動かない**事がある。
      *   → ① 素の click → ② 動かなければ onclick を直接呼ぶ → ③ それでもだめなら中の a を押す。
      */
+    /**
+     * ★ 2026-11-20 竹内さん「次への部分も直接入力になっていないか・人間が押すような形か」:
+     *   旧は カーソル無しで click → onclick の直接実行 → 中の a の click を**同時に3回**出していた（機械的・2頁送りの恐れ）。
+     *   → カーソルを「次」へ動かしてから1回だけ押す。頁が変わらない時だけ、間を置いて onclick → 中の a の順に1つずつ足す。
+     */
     var urlBefore = String(location.href);
-    var rowBefore = document.querySelectorAll('.building_tr, .building_list, [class*="building_tr"]').length;
-    try { el.click(); } catch (_) {}
-    // onclick を直接呼ぶ（属性に書かれている式を実行）
-    try {
-      var oc = el.getAttribute && el.getAttribute("onclick");
-      if (oc) { try { (new Function(oc)).call(el); } catch (_) {} }
-    } catch (_) {}
-    // 中に <a> があればそれも押す
-    try {
-      var innerA = el.querySelector && el.querySelector("a[href]");
-      if (innerA) { try { innerA.click(); } catch (_) {} }
-    } catch (_) {}
-    console.log("[AXLX bulk-dl] clickNextPageBtn: クリック完了 tag=" + el.tagName);
+    var _moved = function () { return String(location.href) !== urlBefore || !el.isConnected; };
+    var _fallbacks = [
+      function () { var oc = el.getAttribute && el.getAttribute("onclick"); if (oc) (new Function(oc)).call(el); },
+      function () { var innerA = el.querySelector && el.querySelector("a[href]"); if (innerA) innerA.click(); },
+    ];
+    var _tryFallback = function (i) {
+      if (i >= _fallbacks.length) return;
+      setTimeout(function () {
+        if (_moved()) return;
+        try { _fallbacks[i](); _tmark("next_fallback", "#" + (i + 1)); } catch (_) {}
+        _tryFallback(i + 1);
+      }, 2200 + Math.floor(Math.random() * 900));
+    };
+    var _pressOnce = function () {
+      try {
+        if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", el);
+        el.click();
+      } catch (_) {}
+      _tryFallback(0);
+    };
+    setTimeout(function () {
+      try {
+        var P = window.AxlxPointerUi;
+        if (P && P.moveToEl) {
+          try { if (P.ensure) P.ensure(); } catch (_) {}
+          P.moveToEl(el).then(function () {
+            try { if (P.tap) P.tap(); } catch (_) {}
+            _pressOnce();
+          }, _pressOnce);
+        } else {
+          _pressOnce();
+        }
+      } catch (_) { _pressOnce(); }
+    }, 600 + Math.floor(Math.random() * 900));
+    console.log("[AXLX bulk-dl] clickNextPageBtn: カーソルで押す tag=" + el.tagName);
     /** 2026-11-14 竹内さん「実際のところから学習する」: 押せた「次」の場所を覚える */
     _rememberPager(el);
     return true;
@@ -4231,7 +4258,7 @@
          */
         var countElW = document.getElementById("axlx-count");
         if (countElW) countElW.textContent = "次ページを開いています…";
-        _verifyNextPage(_urlBefore, 7000).then(function (moved) {
+        _verifyNextPage(_urlBefore, 14000).then(function (moved) {
           if (!moved) {
             clearAutoSendState();
             var d = {};

@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-20 02:40 **拡張 2.8.129: 前のお客さんの区が外せず止まる／最初の画面が乱れる／所在地・「次」の直接入力をなくす**（竹内さん「前のお客さんのこと把握していたら押したのを外したらよいだけ…かたまるとかなく」「所在地のところ直接入力…1つずつおすようにする」「次への部分も…全部人間がやるように徹底的に」「前のお客さんと今のお客さんの把握する力が弱い」）
+- ⚠ **DB で確かめられていない**: Supabase（wfwsmwxakhyxobytszoq）が 11-19 21時ごろから 522（接続の時間切れ）。原因は竹内さんの画面の知らせ（「見えない残…カーソルで外せない」）とコードを読んで特定した。DB が戻ったら下の「確かめる事」を読む。
+- **① 区の外しで止まる（一番の原因）**: `_clearWardsBeforeStationThen` の開く段が「`.this_window` が DOM に**在るだけ**」で開いた扱いにしていた。リアプロは閉じても小窓の中身を DOM に残すので、**小窓を開かずに**見える区を探し→0件→「見えない残」で止まっていた。
+  → `_graspAreaModalScreen()` で画面を読んで決める（区・町の一覧なら外す段へ／都道府県なら「大阪府」を押す／閉じていれば「所在地絞り込み」を押す）。外す段で見えない区が残る時は、閉じていたら開き直す（2回まで・`leftover_ward_reopen`）、都道府県・町の画面なら区の一覧へ戻る（3回まで・`leftover_ward_back`）。区だけ残る時は町の画面へ進まない。止まる時の文に戻った回数を足した。
+- **② 最初の画面が乱れる**: `_doReset` の Step1 が一覧の**号室メニューの ×とじる（`hide_room_menu_close`）**を検索の小窓の閉じると取り違え、駅・沿線外しを走らせていた（隠れた欄へスクロールして押す＝画面が飛ぶ・直接入力に見える）。
+  → 号室メニューを除く（`_isRoomMenuEl`）。号室メニューが**画面に出ている時だけ**カーソルで閉じる（`room_menu_close`・駅や沿線には触らない）。小窓の外からの駅・沿線外しは**見えている物だけ**（`_uncheckVisible*LikeHuman(true)`）。小窓の中の状態機械からの呼び出しは今まで通り。
+- **③ 所在地の代替が直接入力だった**: 小窓が失敗した時の代替（`fallbackSearchWithoutArea` と `_areaAtLeastOneThenSearch`）が、小窓を閉じたまま `pref_code` と `setCheckboxes('city_code[]')` を押していた。
+  → `_areaFallbackViaModal(codes, done)` を足し、所在地絞り込み→大阪府→区を1つずつカーソルで押す→確定してリストへ、に変えた（全部入っていれば小窓を開かない・上限 90×450ms・`area_fallback_modal` / `area_fallback_modal_timeout`）。
+- **④「次」（頁送り）が機械的だった**: `bulk-dl.js` の `clickNextPageBtn` が `el.click()`・onclick の直実行・中の `<a>` を**同時に3回**押していた（カーソル無し）。
+  → 600〜1500ms 置いてカーソルを動かし1回押す（`moveToEl`→`tap`→`__axlxRecNoteOp`）。頁が変わらない時だけ 2.2〜3.1秒後に onclick（`next_fallback #1`）、それでもだめなら中の `<a>`。確かめの待ちを 7秒→14秒。
+- **⑤ 前客・今客の把握**: 次のお客さんへ移る時の台帳に、前のページで押した駅・区（`_axStationPicked` / `_axWardPicked`）も足す（40件まで）。点検 `leftover_ledger` に「前客=xxxx→今客=yyyy」（同じなら「同じお客さん（やり直し）」・不明なら「前客=不明」）と名前を10件まで残す。
+- **版**: 2.8.129（manifest・`_AXLX_PAGE_VER`）。テスト `tests/chrome-extension/ward-clear-human-v2829.test.js`（25件）・`pager-learn.test.js` を新しい押し方に合わせた。HEAD と比べて新しく落ちたテストは0。tsc 0。
+- **未対応（要確認）**: 号室メニューが何で開くかは分かっていない（`pointer-ui.js` の `moveTo` が経路上の要素に mousemove を送るのが候補・未確認なので触っていない）。
+- **確かめる事（DB が戻ったら・軽く）**: #1538 より後の `search_audits` で `leftover_ledger`（前客→今客）・`leftover_ward_reopen` / `leftover_ward_back` / `ward_clear_pref`・`room_menu_close`・`area_fallback_modal(_timeout)`・`next_fallback` が出ているか、止まり（見えない残）が消えたか。統括Pro `--scope=realpro --save` もその後。
+
+---
+
 ## 2026-11-19 23:00 **main に cursor-ext を統合して本番へ出した（拡張 2.8.128・merge 20eb66de）**（竹内さん「merge_full: 別の作業場所で衝突を解き、tsc とテストが通ってから main に出す」）
 - **何をしたか**: 別の作業場所（worktree `sumora-merge-wt`）で `main` を `cursor-ext` に取り込み（競合 43件＋再取り込みで6件）、競合は cursor-ext 側を採りつつ main だけにあった物を移植 → `tsc` 0・main 側で増えた/変わったテスト 81本 全 PASS → `merge-main-into-ext` と `main`（早送り・force なし）に push。
 - **main から移植した物**: 学習の守り（`human-learn-profile-guard`・巻き込み・読みの印・cache）／版の判定（`learn-audit-summary` の versions/latest）／前回の弱点→直った/続く（`weak_list`）／端末数（`install_id`）／`improvements.recent`／cron の束の位置の引き継ぎ（`carryLearnedShots`）と vision 補完の併用。

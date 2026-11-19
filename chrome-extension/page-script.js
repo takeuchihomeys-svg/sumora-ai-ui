@@ -2673,7 +2673,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.128";
+  var _AXLX_PAGE_VER = "2.8.129";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -4657,6 +4657,36 @@
       if (r.width === 0 && r.height === 0) return false; // display:none祖先の検出
       return true;
     } catch(e) { return false; }
+  }
+  /** 一覧の号室メニュー（印刷用PDF等の小さな menu）の中の要素か。検索の小窓（div.this_window_close）とは別物 */
+  function _isRoomMenuEl(el) {
+    try {
+      if (!el) return false;
+      if (/room_menu/.test(String(el.className || ""))) return true;
+      return !!(el.closest && el.closest('[class*="room_menu"]'));
+    } catch (_) { return false; }
+  }
+  /** 号室メニューの ×とじる が**画面の中に本当に出ている**時だけ返す（隠れ・透明・画面外は null＝押さない） */
+  function _roomMenuCloseOnScreen() {
+    try {
+      var cands = Array.prototype.slice.call(document.querySelectorAll('.hide_room_menu_close, [class*="room_menu"] a, [class*="room_menu"] div, [class*="room_menu"] span'));
+      for (var i = 0; i < cands.length; i++) {
+        var el = cands[i];
+        var t = String(el.textContent || "").replace(/\s+/g, "");
+        if (!/とじる|閉じる/.test(t) || t.length > 8) continue;
+        if (!isVisible(el)) continue;
+        var s = window.getComputedStyle(el);
+        if (Number(s.opacity) === 0) continue;
+        var r = el.getBoundingClientRect();
+        var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+        if (r.left < 0 || r.top < 0 || r.right > vw || r.bottom > vh) continue;
+        var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        var top = document.elementFromPoint ? document.elementFromPoint(cx, cy) : el;
+        if (top && top !== el && !el.contains(top) && !top.contains(el)) continue;
+        return el;
+      }
+    } catch (_) {}
+    return null;
   }
 
   // テキストで要素を探してクリック（完全一致→包含の順）
@@ -6732,13 +6762,22 @@
    *   → **先に scrollIntoView してから外す**（見えてから押す）。
    * @returns {number}
    */
-  function _uncheckVisibleStationsLikeHuman() {
+  function _uncheckVisibleStationsLikeHuman(onlyVisible) {
     /**
      * ★ 2026-11-17 根本: **1回で1駅だけ**外す。
      *   旧は checked 全件を一括キュー → scrollIntoView が連続で走り、画面外の1駅が残る／押し失敗。
      *   → 先頭1件を中央へ寄せてから外す。残りは次ティック（状態機械が再呼出し）。
      */
-    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked'));
+    /**
+     * ★ 2026-11-20 竹内さん「最初画面おかしくなる」「直接入力してしまっている可能性」:
+     *   小窓が閉じていて見えない駅まで画面を送って押していた（画面が飛ぶ・カーソル無しの直接外しに見える）。
+     *   → onlyVisible の時（小窓の外からの呼び出し）は見える駅だけ外す。見えない残りは小窓を開いて外す経路が担当する。
+     */
+    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked')).filter(function (cb) {
+      if (!onlyVisible) return true;
+      var h = _labelForCheckbox(cb) || cb;
+      return isVisible(h);
+    });
     if (!cbs.length) {
       // 可視ラベル側の残（nameずれ対策）
       var visLeft = null;
@@ -6780,12 +6819,16 @@
    *   画面外の沿線もスクロールしてから外す（駅と同じ漏れ防止）。
    * @returns {number}
    */
-  function _uncheckVisibleLinesLikeHuman() {
+  function _uncheckVisibleLinesLikeHuman(onlyVisible) {
     /**
      * ★ 2026-11-17 根本: 駅と同じく **1回で1沿線だけ**（一括キュー禁止）。
      *   DB: line_clear_after_station が同一沿線を大量連打＝外し失敗のまま次へ進めていた。
      */
-    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="route_id[]"]:checked'));
+    var cbs = Array.prototype.slice.call(document.querySelectorAll('input[name="route_id[]"]:checked')).filter(function (cb) {
+      if (!onlyVisible) return true;
+      var h = _labelForCheckbox(cb) || cb;
+      return isVisible(h);
+    });
     if (!cbs.length) {
       var visLeft = null;
       _visLineLabels().some(function (lb) {
@@ -6829,8 +6872,8 @@
   function _uncheckStationsThenLinesLikeHuman(opts) {
     var o = opts || {};
     var forceAll = !!o.forceAll;
-    var stN = _uncheckVisibleStationsLikeHuman();
-    var lineN = _uncheckVisibleLinesLikeHuman();
+    var stN = _uncheckVisibleStationsLikeHuman(true);
+    var lineN = _uncheckVisibleLinesLikeHuman(true);
     if (stN || lineN) {
       try {
         if (_audit) {
@@ -7942,6 +7985,75 @@
    *   → 6秒で1回押し直し・14秒で諦める時は理由と残数を残す。見えない残（畳まれた町）だけになったら確定へ進む。
    *     関所（_axGateCheck）の区余りもこれで外す（setCheckboxes 空の直外しをやめる）。
    */
+  /**
+   * 区コードで入れ直す時も小窓を通す（直接チェック禁止）: 所在地絞り込み→大阪府→区を1つずつ→確定してリストへ。
+   * 終わったら done(ok)。押せなくても done は必ず呼ぶ（呼び元が checked の数で判断する）。
+   */
+  function _areaFallbackViaModal(codes, done) {
+    var want = (codes || []).map(String).filter(Boolean);
+    var phase = "open", openedAt = 0, prefAt = 0, confirmedAt = 0, pickTicks = 0;
+    var fin = false;
+    var end = function (ok) { if (fin) return; fin = true; try { done(ok); } catch (_) {} };
+    var allOn = want.length > 0 && want.every(function (c) {
+      var i = document.querySelector('input[name="city_code[]"][value="' + c.replace(/"/g, "") + '"]');
+      return !!(i && i.checked);
+    });
+    if (!want.length || allOn) { end(allOn); return; }
+    try { _auditStepP("area_fallback_modal", "区" + want.length + "を小窓で1つずつ（直接チェックしない）"); } catch (_) {}
+    waitForClick(
+      function () {
+        try { if (isClickQueueBusy()) return false; } catch (_) {}
+        var g = null;
+        try { g = _graspAreaModalScreen(); } catch (_) { g = { kind: "unknown" }; }
+        if (phase === "open") {
+          if (g.kind === "ward_list") { phase = "pick"; return false; }
+          if (g.kind === "pref_list") {
+            if (!prefAt || Date.now() - prefAt > 3500) { prefAt = Date.now(); clickByText(["大阪府"]); }
+            return false;
+          }
+          if (g.kind === "town_list") {
+            if (!prefAt || Date.now() - prefAt > 3500) { prefAt = Date.now(); clickByText(["市区郡の設定へ戻る", "市区郡の選択へ戻る", "市区郡を選び直す", "大阪府"]); }
+            return false;
+          }
+          if (!openedAt || Date.now() - openedAt > 6000) {
+            openedAt = Date.now();
+            var op = null;
+            try { op = _sidebarOpenerEl("所在地絞り込み", _SIDEBAR_OTHER_RE); } catch (_) { op = null; }
+            if (op) _pressLearned(op, ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_fallback");
+            else clickByText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"]);
+          }
+          return false;
+        }
+        if (phase === "pick") {
+          pickTicks++;
+          var n = 0;
+          want.forEach(function (code) {
+            var inp = document.querySelector('input[name="city_code[]"][value="' + code.replace(/"/g, "") + '"]');
+            if (!inp || inp.checked) return;
+            var h = _labelForCheckbox(inp);
+            if (!h || !isVisible(h)) return;
+            _toggleCheckboxLikeHuman(inp, true);
+            n++;
+          });
+          if (n && pickTicks < 12) return false;
+          phase = "confirm";
+          return false;
+        }
+        if (phase === "confirm") {
+          if (confirmedAt) return Date.now() - confirmedAt > 800;
+          if (_pressConfirmListLikeHuman("所在地フォールバック確定")) { confirmedAt = Date.now(); return false; }
+          return true;
+        }
+        return true;
+      },
+      function () { end(true); },
+      90, 450, 300,
+      function () {
+        try { _auditStepP("area_fallback_modal_timeout", "phase=" + phase); } catch (_) {}
+        end(false);
+      }
+    );
+  }
   function _clearWardsBeforeStationThen(nextFn, why, round, progArg) {
     var _why = why || "駅";
     var _round = Number(round) || 0;
@@ -7968,6 +8080,8 @@
     var confirmedAt = 0;
     var hiddenOnlySince = 0;
     var townStepTried = false;
+    var prefPressedAt = 0;
+    var wardBackTried = 0;
     var clk = (progArg && progArg.clk) || _activeClock();
     if (!prog) { prog = _leftoverProgressNew(cityLeft, clk.tick()); prog.clk = clk; }
     var altClosed = !prog.alt, altWaitUntil = 0;
@@ -7985,7 +8099,7 @@
       var d = _leftoverProgressStep(prog, _wl, clk.tick());
       // 見えない残（畳まれた町）だけを確定して終えた時は、カーソルで外せないので回し直さない（旧と同じ）。残りはきれい確認の関所が判定する
       if (how === "完了" && _wl > 0 && hiddenLeftSeen) {
-        d = { action: "stuck", why: "見えない残" + _wl + "（畳まれた町・カーソルで外せない）" };
+        d = { action: "stuck", why: "見えない残" + _wl + "（区/町の一覧に出せず・戻る" + wardBackTried + "回・カーソルで外せない）" };
       }
       if (d.action === "continue" || d.action === "alt") {
         try {
@@ -8030,11 +8144,28 @@
               altClosed = true;
             }
           }
-          if (cityVis.length > 0 || cityNow > 0 && document.querySelector("div.this_window_close, .this_window")) {
+          /**
+           * ★ 2026-11-20 竹内さん「前のお客さんの条件も外すことちゃんとできていない…押したのを外したらよいだけ」:
+           *   旧は `div.this_window_close, .this_window` が DOM に在るだけで「開いた」とみなし、小窓を開かずに外しへ進んでいた
+           *   （閉じた小窓の区は見えない→「見えない残3（畳まれた町）」で中止・台帳には福島区・西区・淀川区と残っていた）。
+           *   → 画面を読んで決める: 区/町の一覧が見える＝外しへ／都道府県の画面＝大阪府を押して区の一覧へ／それ以外＝所在地絞り込みを押して開く。
+           */
+          var _ga = null;
+          try { _ga = _graspAreaModalScreen(); } catch (_) { _ga = { kind: "unknown" }; }
+          if (cityVis.length > 0 || _ga.kind === "ward_list" || _ga.kind === "town_list") {
             phase = "clear";
             return false;
           }
           if (cityNow <= 0) return true;
+          if (_ga.kind === "pref_list") {
+            if (!prefPressedAt || clk.tick() - prefPressedAt > 3500) {
+              prefPressedAt = clk.tick() || 1;
+              if (clickByText(["大阪府"])) {
+                try { if (_audit) _auditStepP("ward_clear_pref", "都道府県の画面→大阪府を押して区の一覧へ（前客の区を外すため）"); } catch (_) {}
+              }
+            }
+            return false;
+          }
           if (!openedAt || (clk.tick() - openedAt > 6000 && reopenN < 1)) {
             if (openedAt) {
               reopenN++;
@@ -8077,6 +8208,40 @@
             }
             if (!n) {
               if (!hiddenOnlySince) hiddenOnlySince = clk.tick() || 1;
+              /**
+               * ★ 2026-11-20: 見えない残りが**区**（city_code）の時は町の画面へ進まない（逆方向）。
+               *   都道府県の画面なら大阪府を押す／町の画面なら区の一覧へ戻る（戻るボタン・大阪府の道しるべ）を1つずつ押す。
+               */
+              var _hidWard = 0, _hidTown = 0;
+              try {
+                Array.prototype.forEach.call(document.querySelectorAll('input[name="city_code[]"]:checked'), function (cb) { var h = _labelForCheckbox(cb); if (!h || !isVisible(h)) _hidWard++; });
+                Array.prototype.forEach.call(document.querySelectorAll('input[name="town_code[]"]:checked'), function (cb) { var h = _labelForCheckbox(cb); if (!h || !isVisible(h)) _hidTown++; });
+              } catch (_) {}
+              var _gc = null;
+              try { _gc = _graspAreaModalScreen(); } catch (_) { _gc = { kind: "unknown" }; }
+              if ((_hidWard > 0 || _hidTown > 0) && _gc.kind === "closed" && reopenN < 2) {
+                reopenN++;
+                phase = "open";
+                openedAt = 0;
+                hiddenOnlySince = 0;
+                try { if (_audit) _auditStepP("leftover_ward_reopen", "小窓が閉じている・見えない区/町" + (_hidWard + _hidTown) + "→所在地絞り込みを開き直す"); } catch (_) {}
+                return false;
+              }
+              if (_hidWard > 0 && wardBackTried < 3 && clk.tick() - hiddenOnlySince > 500 && (_gc.kind === "pref_list" || _gc.kind === "town_list")) {
+                wardBackTried++;
+                var _backOk = false;
+                if (_gc.kind === "pref_list") {
+                  _backOk = clickByText(["大阪府"]);
+                } else {
+                  _backOk = clickByText(["市区郡の設定へ戻る", "市区郡の選択へ戻る", "市区郡を選び直す", "市区郡の設定に戻る", "地域の設定へ戻る", "大阪府"]);
+                }
+                hiddenOnlySince = 0;
+                try {
+                  if (_audit) _auditStepP("leftover_ward_back", "見えない区" + _hidWard + "（" + _gc.kind + "）→区の一覧へ" + (_backOk ? "押した" : "押せる物なし") + "#" + wardBackTried);
+                } catch (_) {}
+                return false;
+              }
+              if (_hidWard > 0 && _hidTown === 0) townStepTried = true;
               /**
                * ★ 2026-11-19 (2.8.125) 竹内さん「一連の流れに入れたらよいだけ」:
                *   見えない残 = 町の一覧（town_list）にだけ在る町。区の画面では見えず外せなかった（→確定して進み関所で中止）。
@@ -10072,11 +10237,36 @@
           _pl = _pl || { at: Date.now(), n: { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structured: 0, pet: 0, shikirei: 0 }, names: [] };
           _pl.n.stations = Math.max(_pl.n.stations || 0, _pkPrev.station);
           _pl.n.wards = Math.max(_pl.n.wards || 0, _pkPrev.ward);
+          /**
+           * ★ 2026-11-20 竹内さん「前のお客さんと今検索しているお客さんの把握する力がかなり弱い」:
+           *   同じページ内の前客の覚え（押した駅・区の名前）も台帳の名前に足す（数だけだと「何を外すか」が分からない）。
+           */
+          try {
+            var _nm = Array.isArray(_pl.names) ? _pl.names.slice() : [];
+            var _addNm = function (kind, map) {
+              Object.keys(map || {}).forEach(function (k) {
+                var t = String(((map[k] || {}).text) || k).slice(0, 16);
+                var key = kind + ":" + t;
+                if (t && _nm.indexOf(key) < 0) _nm.push(key);
+              });
+            };
+            _addNm("駅", _axStationPicked);
+            _addNm("区", _axWardPicked);
+            _pl.names = _nm.slice(0, 40);
+          } catch (_) {}
         }
       } catch (_) {}
       window.__axlxPrevLedger = _pl;
       _ledgerReset();
-      if (_pl) { try { _auditStepP("leftover_ledger", "前客の入れた控え 駅" + ((_pl.n && _pl.n.stations) || 0) + "・沿線" + ((_pl.n && _pl.n.lines) || 0) + "・区" + ((_pl.n && _pl.n.wards) || 0) + "・間取り" + ((_pl.n && _pl.n.layouts) || 0)); } catch (_) {} }
+      if (_pl) {
+        try {
+          var _curCid = String(window._axFillRunningCustomerId || (typeof _fillCustomerId !== "undefined" ? _fillCustomerId : "") || "");
+          var _prevCid = String(_pl.cid || "");
+          var _who = !_prevCid ? "前客=不明" : (_curCid && _prevCid === _curCid ? "前客=同じお客さん（やり直し）" : "前客=" + _prevCid.slice(0, 8) + "→今客=" + (_curCid ? _curCid.slice(0, 8) : "不明"));
+          _auditStepP("leftover_ledger", _who + " 入れた控え 駅" + ((_pl.n && _pl.n.stations) || 0) + "・沿線" + ((_pl.n && _pl.n.lines) || 0) + "・区" + ((_pl.n && _pl.n.wards) || 0) + "・間取り" + ((_pl.n && _pl.n.layouts) || 0)
+            + (Array.isArray(_pl.names) && _pl.names.length ? " [" + _pl.names.slice(0, 10).join("・") + "]" : ""));
+        } catch (_) {}
+      }
     } catch (_) { window.__axlxPrevLedger = null; }
     // 2026-11-11: 前のお客様で選んだ区・駅の覚えを消す（このお客様の分だけを見る）
     _resetPicked();
@@ -10330,10 +10520,25 @@
       whenClickQueueIdle(function() {
 
       // Step1: 開いているモーダルを先に閉じる
+      /**
+       * ★ 2026-11-20 竹内さん「最初画面おかしくなる問題がまだ残っている」:
+       *   旧は文字「×とじる」の要素を全部「開いている検索のモーダル」とみなしていた。
+       *   一覧の号室メニューの ×とじる（div.hide_room_menu_close）も当たり（今日の5回すべて入力開始の約5秒後に押していた）、
+       *   さらに下の「駅→沿線を外す」が閉じた小窓の見えない駅へ画面を送って押していた（画面が飛ぶ・直接外しに見える）。
+       *   → 検索の小窓の ×とじる だけを Step1 で扱う。号室メニューは画面に本当に出ている時だけ閉じ、駅・沿線には触らない。
+       */
       var closeBtn = [].slice.call(document.querySelectorAll("a, button, div, span")).find(function(el) {
         var t = (el.textContent || "").trim();
-        return (t === "× とじる" || t === "×とじる" || t === "とじる" || t === "閉じる") && el.offsetParent !== null;
+        if (!((t === "× とじる" || t === "×とじる" || t === "とじる" || t === "閉じる") && el.offsetParent !== null)) return false;
+        return !_isRoomMenuEl(el);
       });
+      if (!closeBtn) {
+        var _rmClose = _roomMenuCloseOnScreen();
+        if (_rmClose) {
+          try { if (_audit) _auditStepP("room_menu_close", "号室メニューが画面に出ている→閉じる（検索の小窓ではない・駅/沿線は触らない）"); } catch (_) {}
+          enqueueHumanClick(_rmClose, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+        }
+      }
       var closeDelay = 0;
       if (closeBtn) {
         // ★ 修正: モーダルが開いている場合、閉じる前に路線・駅の選択をクリア
@@ -11542,15 +11747,13 @@
           if (codes.length > 0) {
             // 町丁目モーダルは失敗したが区コードがある → 直接チェックで代替（ピンポイントが区レベルに降格）
             showWarnToast('所在地モーダル失敗 → 市区コードで代替検索: ' + msg);
-            var prefCb2 = document.querySelector('input[name="pref_code"][value="27"]');
-            if (prefCb2 && !prefCb2.checked) {
-              enqueueHumanClick(prefCb2, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-            }
-            setTimeout(function() {
-              try { setCheckboxes('city_code[]', codes); } catch (e) { console.error('[AX] fallback setCheckboxes例外', e); }
-              setTimeout(function() {
-                // キュー化された順次クリックが全て反映されてから判定する
-                whenClickQueueIdle(function() {
+            /**
+             * ★ 2026-11-20 竹内さん「所在地のところ直接入力してしまっている可能性あるので1つずつおすようにする」:
+             *   旧は小窓が閉じたまま pref_code と city_code[] を押していた（見えない欄＝カーソル無しの直接入力）。
+             *   → 所在地絞り込みを開き、大阪府→区を1つずつカーソルで押して「確定してリストへ」を押す。
+             */
+            _areaFallbackViaModal(codes, function () {
+              whenClickQueueIdle(function() {
                 // 1つ以上実際にチェックされた場合のみ検索（全件検索防止）
                 var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
                 if (applied > 0) {
@@ -11560,9 +11763,8 @@
                   showWarnToast(em);
                   notifyDone(em);
                 }
-                });
-              }, 600 + Math.floor(Math.random() * 300));
-            }, 240 + Math.floor(Math.random() * 160));
+              });
+            });
             return;
           }
           // city_codes もない → 全件検索は絶対にしないが、**区が1つでも入れば検索へ進む**
@@ -11579,10 +11781,8 @@
         function _areaAtLeastOneThenSearch(why) {
           try {
             var codes = (cond.city_codes || []).map(String);
-            if (codes.length) {
-              try { setCheckboxes('city_code[]', codes); } catch (_) {}
-            }
-            setTimeout(function () {
+            // 2.8.129: 区の入れ直しも小窓を開いて1つずつ押す（閉じたまま city_code[] を押さない）
+            _areaFallbackViaModal(codes, function () {
               whenClickQueueIdle(function () {
                 var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
                 if (_audit) _auditStepP('area_force_search', applied + '区で検索へ（' + String(why).slice(0, 60) + '）');
@@ -11595,7 +11795,7 @@
                   notifyDone(em);
                 }
               });
-            }, 700 + Math.floor(Math.random() * 300));
+            });
           } catch (_) {}
         }
 
