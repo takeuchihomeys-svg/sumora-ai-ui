@@ -58,8 +58,8 @@ function makeRun() {
   ok("新しい段は間引かない（_PIN）", /\|learn_screen_kept\|/.test(ps));
 
   console.log("\n■ 版");
-  ok("manifest が 2.8.117", mf.version === "2.8.117", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.117", /var _AXLX_PAGE_VER = "2\.8\.117";/.test(ps));
+  ok("manifest が 2.8.118", mf.version === "2.8.118", mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.118", /var _AXLX_PAGE_VER = "2\.8\.118";/.test(ps));
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail) process.exit(1);
