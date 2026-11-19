@@ -5,7 +5,7 @@ import { buildAskLedger, nextAskProgress, askProgressReadOn, askProgressNote, as
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
-t("NEXT_SEND_LINK 既定 off", nextSendLinkMode({}) === "off" && nextSendLinkMode({ NEXT_SEND_LINK: "shadow" }) === "shadow");
+t("NEXT_SEND_LINK 既定 shadow（11/19）", nextSendLinkMode({}) === "shadow" && nextSendLinkMode({ NEXT_SEND_LINK: "off" }) === "off");
 t("ASK_PROGRESS_READ 既定 off", askProgressReadOn({}) === false && askProgressReadOn({ ASK_PROGRESS_READ: "on" }) === true);
 const sn = (o: Record<string, unknown>) => ({ v: 1, ...o });
 // 約束を果たす

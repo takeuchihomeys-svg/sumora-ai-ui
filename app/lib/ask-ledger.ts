@@ -318,7 +318,8 @@ export function askLedgerAlert(ledger: AskLedger | null | undefined): string | n
 // ── 送り済み・残りの書き戻し（継ぎ目②・conversations.ask_progress・ASK_PROGRESS=on の時だけ）────────────
 /** 既定 off（ASK_PROGRESS=on の時だけ返信・AIX の送信の後に conversations.ask_progress を書く） */
 export function askProgressOn(env: Env = envOf()): boolean {
-  return (env.ASK_PROGRESS ?? "").trim().toLowerCase() === "on";
+  // 2026-11-19 統括役の決定: 文に触れない記録なので既定 on（書くだけ・YUMA で書く口を確かめた）。止める ASK_PROGRESS=off。読む側は ASK_PROGRESS_READ（既定 off）
+  return (env.ASK_PROGRESS ?? "").trim().toLowerCase() !== "off";
 }
 /** conversations.ask_progress の形。seen_customer_at が今の帳面と同じ時だけ続きとして読む（新しいお客様の発言の後は数え直し） */
 export type AskProgressRecord = AskProgress & { v: 1; seen_customer_at: string | null; sends: SentMove[]; at: string };
