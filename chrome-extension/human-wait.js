@@ -385,8 +385,8 @@
   var HUMAN_REF_DIST = 116;       // 実測の移動距離の中央値
   var HUMAN_FITTS_EXP = 0.3;      // 遠いほど速く動く（Fitts 的）＝移動時間は距離の 0.7 乗で伸びる
   var MOVE_MS_MIN = 90, MOVE_MS_MAX = 1600;
-  var BEND_BASE_EXCESS = 0.04;    // 曲がり（道のり÷直線−1）の中央値（gain=1 のとき）
-  var BEND_SIGMA = 1.1;
+  var BEND_BASE_EXCESS = 0.025;    // 曲がり（道のり÷直線−1）の中央値（gain=1 のとき）
+  var BEND_SIGMA = 1.4;
 
   /**
    * 1回の移動にかかる時間(ms)を引く。速さを対数正規で引く（学習した速さがあっても一定にしない）。

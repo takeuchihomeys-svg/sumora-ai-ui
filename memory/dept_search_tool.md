@@ -14,6 +14,8 @@
 - 確認（竹内さんへ）: 手動の単発の入力中に一括を動かしても、タブが読み直されず一括が待つ／見送ること。監査に `wait_prev_customer`（番号なし含む）か `reload_skip_unknown_fill` が出る。
 - ⚠ 未対応の点: 1533 が前客（2bdae2b2）の送付で `batch_timeout`（進捗あり）になった理由は別（送付が長引いた）。今回の直しは「人の入力を壊さない」まで。
 
+
+- **2026-11-19 19:30 人間に近づいたかの確認（計算のみ・サイト不触）**: `tests/chrome-extension/motion-vs-human-v2826.test.js`（10件）。人の距離分布（中央値116px）で新 planMove を6000回・旧の式を6000回引いて、本番DBの人の実測と並べた。速さ p50: 人375／新355／旧233。速さ CV: 0.64／0.65／0.51。移動ms p50: 284／326〜336／500〜518。曲がり p50: 1.02／1.03／1.32。行き過ぎ: 新12%／旧47%（80px超）。検索ごとの速さ p50 のばらつき CV 0.26（旧は0）。**弱い所**: 曲がりの CV は人0.16に対し新0.07（人は時々大きく曲がる）。調整: `BEND_BASE_EXCESS` 0.04→0.025・`BEND_SIGMA` 1.1→1.4。**未確認**: 実機の自動は #1535 以降 0件（2.8.126 の `motion_stats` がまだ DB に無い）／間隔（F29 近さ58・human帯28%）は動きの改善では変わらない別の課題。
 ### 動きの API（Cursor 側）
 - 2.8.125 は受け口だけだったが、竹内さんの指示で Cursor 側でも作った。`app/lib/motion-plan.ts`（純関数 `buildMotionPlan`・範囲は `human-wait.js` の PERSONA_RANGE と同じ）／`app/api/motion-plan/route.ts`（GET・CORS・no-store・**DB を読まない書かない**・`MOTION_PLAN_OFF=1` で `plan:null`）／拡張 `background.js` `_refreshMotionPlan`（お客さんの入力を始める直前に取得・1.5秒で諦める・失敗は握りつぶす・`axlx_motion_plan_off=true` で止まる）。列・表は増やしていない（migrate-schema 変更なし）。Claude Code が後で中身を賢くしてもよい（同じ形 `{v:1, plan_id, expires_at, run_seed, persona}` を守る）。
 - 効き方: ランごとに新しい plan_id → pointer-ui.js が persona を作り直す。plan 無し／API 失敗でもローカル seed で動く（fail-open）。監査 `motion_stats` の `plan=` に plan_id が出れば API が使えた証拠。
