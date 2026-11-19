@@ -1772,6 +1772,30 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-ledger-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-19 作業員M（統括役の割り振り・継ぎ目②の読む側・ASK_PROGRESS_READ=on の時だけ・既定 off）: 前の番の要件の帳面（prevMeta.ask_ledger）と、
+  //   前の番で実際に送った所まで（conversations.ask_progress）から、まだ答えていない要件・約束して結果がまだの要件を meta.ask_carry に（統括の指示書が読む）。
+  //   名前は作業員L の situation_now（asks.open・asks.promised・ask_id）とそろえる。道・プロンプトは変えない（記録と指示書の欄だけ）
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    if (al.askProgressReadOn() && !args[5]?.recheck) {
+      const prevLed = al.askLedgerOf(args[5]?.prevMeta ?? null);
+      if (prevLed) {
+        const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", args[0]).maybeSingle();
+        const carry = al.askCarryFrom(prevLed, (apRow as { ask_progress?: unknown } | null)?.ask_progress);
+        if (carry) (meta as unknown as Record<string, unknown>).ask_carry = carry;
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-carry-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-19 作業員M（統括役の割り振り・統括の next_send のつながり・NEXT_SEND_LINK=shadow の時だけ・既定 off）: 前のどの通のどの項目を受けて次を送るか・
+  //   つながりの種類（7つ）・なぜ・根拠を meta.next_send_link に記録だけ（名前は situation_now の item_id・promise_id・ask_id・sent_id）。統括の指示書の next にも写す
+  try {
+    const nsl = await import("@/app/lib/next-send-link");
+    if (nsl.nextSendLinkMode() !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      const link = nsl.nextSendLinkOf(mm);
+      if (link) mm.next_send_link = link;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:next-send-link-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {

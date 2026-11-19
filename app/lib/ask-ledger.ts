@@ -338,3 +338,40 @@ export function askProgressOf(ledger: AskLedger | null | undefined, raw: unknown
   if ((p.seen_customer_at ?? null) !== (ledger.seen_customer_at ?? null)) return null;
   return p as AskProgressRecord;
 }
+
+// ── 読む側（2026-11-19 作業員M・統括役の割り振り: AIX の2通目・画面の帯・統括の指示書）────────────
+/** 読む側の既定 off（ASK_PROGRESS_READ=on の時だけ ask_progress を読んで渡す）。書く側 ASK_PROGRESS とは別（書いて貯めてから読む側を試験する） */
+export function askProgressReadOn(env: Env = envOf()): boolean {
+  return (env.ASK_PROGRESS_READ ?? "").trim().toLowerCase() === "on";
+}
+const quoteOf = (led: AskLedger, id: string) => led.items.find((e) => e.id === id)?.quote ?? id;
+const SLOT_JA: Record<PlanSlot, string> = { reply: "返信", aix: "AIX", aix_template: "AIX の続きの通" };
+/** AIX の2通目・AIX の後の返信の書き手への1段（送った所まで・まだ答えていない要件・約束して結果がまだの要件・次の通）。渡す物が無ければ "" */
+export function askProgressNote(led: AskLedger | null | undefined, pr: AskProgressRecord | null | undefined): string {
+  if (!led || !pr) return "";
+  const L: string[] = [];
+  if (pr.offPlan) L.push(`・組み立てと違う送り方をした（${pr.offPlan}）＝下の残りは目安`);
+  if (pr.remaining.length) L.push(`・まだ答えていない要件: ${pr.remaining.slice(0, 4).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.answered.length) L.push(`・もう答えた要件（繰り返さない）: ${pr.answered.slice(0, 4).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.promised.length) L.push(`・約束して結果がまだの要件（結果は確かめてから）: ${pr.promised.slice(0, 3).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.next) L.push(`・次の通: ${pr.next.no}通目の${SLOT_JA[pr.next.slot]}${pr.next.aix ? `（${pr.next.aix}）` : ""}`);
+  return L.length ? `【この番の送った所まで（要件の帳面・${pr.sentUpTo}通目まで送った）】\n${L.join("\n")}` : "";
+}
+/** 画面の帯の1行（送った所まで・残り）。無ければ null */
+export function askProgressBand(led: AskLedger | null | undefined, pr: AskProgressRecord | null | undefined): string | null {
+  if (!led || !pr || (!pr.remaining.length && !pr.next)) return null;
+  const rest = pr.remaining.slice(0, 2).map((id) => `「${quoteOf(led, id).slice(0, 14)}」`).join("・");
+  return `${pr.sentUpTo}/${led.count}通 送った${rest ? `・まだ: ${rest}` : ""}${pr.next ? `・次は${SLOT_JA[pr.next.slot]}` : ""}${pr.offPlan ? "・⚠組み立てと違う" : ""}`;
+}
+/**
+ * 次の番の統括へ（前の番の帳面と送った所まで → まだの要件・約束して結果がまだの要件）。
+ *   名前は作業員L の situation_now（asks.open・asks.promised・ask_id）とそろえる＝id は askIdOf。前の帳面の続きでない記録（古い）は読まない
+ */
+export type AskCarry = { from_seen: string | null; open: string[]; promised: string[]; items: Array<{ ask_id: string; quote: string; state: "open" | "promised"; route: AskRoute; aix: string | null }> };
+export function askCarryFrom(prevLed: AskLedger | null | undefined, rawProgress: unknown): AskCarry | null {
+  const pr = askProgressOf(prevLed, rawProgress);
+  if (!prevLed || !pr) return null;
+  const items = openAsksFrom(prevLed, pr).map((x) => ({ ask_id: x.id, quote: x.quote, state: x.state, route: x.route, aix: x.aix }));
+  if (!items.length) return null;
+  return { from_seen: prevLed.seen_customer_at, open: items.filter((x) => x.state === "open").map((x) => x.ask_id), promised: items.filter((x) => x.state === "promised").map((x) => x.ask_id), items };
+}

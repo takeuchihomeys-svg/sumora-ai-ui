@@ -81,6 +81,10 @@ export type ConductorBrief = {
   next_concrete?: Missing<ConcreteNext>;
   next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
+  /** 2026-11-19 作業員M: 前のどの通のどの項目を受けて次を送るか・つながりの種類・なぜ（meta.next_send_link・NEXT_SEND_LINK=shadow の時だけ・名前は situation_now の item_id・promise_id・ask_id・sent_id） */
+  next_link?: { kind: string; refs: Array<Record<string, string>>; why: string };
+  /** 2026-11-19 作業員M: 前の番でまだ答えていない要件・約束して結果がまだの要件（meta.ask_carry・ASK_PROGRESS_READ=on の時だけ・id は askIdOf） */
+  carry_asks?: { open: string[]; promised: string[] };
   /** 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ） */
   feeling?: ReturnType<typeof feelingBriefSection>;
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
@@ -211,7 +215,11 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const decided = buildDecidedLedger(m, { openPromises: (ledger?.open ?? []).filter((o) => o.kind === "our_promise_unkept").map((o) => o.what) });
   // ⑬ 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ・書き手への1行に出す）
   const feeling = feelingBriefSection(m);
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), aim, ...(feeling ? { feeling } : {}), decided, doubts, sure, notYet };
+  const nlRec = obj(m.next_send_link) as { kind?: unknown; refs?: unknown; why?: unknown } | null;
+  const next_link = nlRec && typeof nlRec.kind === "string" ? { kind: nlRec.kind, refs: (Array.isArray(nlRec.refs) ? nlRec.refs : []).slice(0, 4) as Array<Record<string, string>>, why: String(nlRec.why ?? "").slice(0, 80) } : undefined;
+  const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown } | null;
+  const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[] } : undefined;
+  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
