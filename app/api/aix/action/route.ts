@@ -179,6 +179,7 @@ import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-for
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
 import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote , pickupSendForm1028On, pickupSendFormNote } from "@/app/lib/pickup-focus";
 import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
+import { estimateImageRoleOn, estimateRoleUrls, estimateRoleRows } from "@/app/lib/estimate-image-role";
 
 export const maxDuration = 300;
 
@@ -1734,6 +1735,17 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
+
+    // 2026-11-19 作業員H（画像の記録の①・既定 off）: 見積書の画像（この会話のためにアップロードした物だけ）に役目を先に付ける。
+    //   生成の時の URL と送った URL は同じ（AixModal の uploadImageCached）＝送った後の読み取りが失敗・線の手前でも役目が残る。
+    //   既にある行は触らない（ignoreDuplicates）。詳しくは app/lib/estimate-image-role.ts。入れる AIX_ESTIMATE_IMAGE_ROLE=on
+    if (convId && estimateImageRoleOn()) {
+      const roleUrls = estimateRoleUrls(body as { estimate_image_urls?: unknown; estimate_image_url?: unknown }, convId);
+      if (roleUrls.length) after(async () => {
+        const { error } = await supabase.from("image_details").upsert(estimateRoleRows(roleUrls, convId), { onConflict: "image_url", ignoreDuplicates: true });
+        console.log(JSON.stringify({ tag: "aix:estimate-image-role", conversationId: convId, action: currentAction, n: roleUrls.length, error: error?.message ?? null }));
+      });
+    }
 
     // AIX完了後テンプレ誘導: レスポンスに suggest_template_category を付与（マッピングのあるアクションのみ）
     const suggestTemplateCategory = AIX_SUGGEST_TEMPLATE_CATEGORY[currentAction] ?? null;
