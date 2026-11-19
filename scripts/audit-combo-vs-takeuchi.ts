@@ -9,7 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns, readDecisionSources, aixFamily } from "./lib/prod-yardstick-db";
 import { pickSendCombo } from "../app/lib/send-combo-table";
-import { takeuchiCombo, type StaffMove } from "./lib/combo-of-moves";
+import { takeuchiCombo, assignAixKinds, type StaffMove } from "./lib/combo-of-moves";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -44,7 +44,8 @@ async function main() {
     const after = (msgs.get(t.conversation_id) ?? []).filter((m) => m.at > at);
     const first = after.find((m) => !m.customer);
     if (!first || first.writer !== "takeuchi") continue;
-    const tc = takeuchiCombo(at, after);
+    // 2026-11-19 作業員M（台帳 #404）: AIX の通に種類を付けて、オススメ＋ピックアップの束を1つの AIX と数える
+    const tc = takeuchiCombo(at, assignAixKinds(after, (t.staff_aix ?? []).filter((a) => a.at && a.aix_type).map((a) => ({ at: Date.parse(String(a.at)), aixType: String(a.aix_type) }))));
     if (!tc) continue;
     const ds = t.decision_id ? src.get(String(t.decision_id)) ?? "" : "";
     const route: "reply" | "two_stage" | "aix" = /two_stage_promise/.test(ds) ? "two_stage" : aixFamily(t.brain_action) !== "返信" ? "aix" : "reply";
