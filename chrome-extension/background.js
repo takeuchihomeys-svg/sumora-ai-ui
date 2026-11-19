@@ -3144,6 +3144,30 @@ async function _refreshLearnedBundle(force) {
         }
       }
     } catch (_) { _sceneAim = {}; }
+    /**
+     * ★ 2026-11-19 竹内さん「束不安定なのはどう改善したら最善なのか」→「拡張の保険」:
+     *   本番の作り直し（#2413〜#2420）は位置0の束を出し、手元の良い位置を空で上書きしていた。
+     *   → サイトごとに最後の良い位置を控え（axlx_learn_screen_keep）、新しい束が位置0ならそのサイトの控えを使う。
+     *   ⚠ 控えはサイト別（リアプロの位置を ITANDI に使わない・タブ切替で消さない）。
+     */
+    var _screenKept = null;
+    try {
+      var _keepSt = await chrome.storage.local.get(["axlx_learn_screen_keep"]);
+      var _keep = (_keepSt && _keepSt.axlx_learn_screen_keep && typeof _keepSt.axlx_learn_screen_keep === "object")
+        ? _keepSt.axlx_learn_screen_keep : {};
+      var _ks = String(curSite || "");
+      if (_ks) {
+        if (Object.keys(_screenAim).length) {
+          _keep[_ks] = { screen: _screenAim, scene: _sceneAim, ver: String(bundle.generated_at || ""), at: Date.now() };
+          await chrome.storage.local.set({ axlx_learn_screen_keep: _keep });
+        } else if (_keep[_ks] && _keep[_ks].screen && typeof _keep[_ks].screen === "object" && Object.keys(_keep[_ks].screen).length) {
+          _screenAim = _keep[_ks].screen;
+          if (!Object.keys(_sceneAim).length && _keep[_ks].scene && typeof _keep[_ks].scene === "object") _sceneAim = _keep[_ks].scene;
+          _screenKept = String(_keep[_ks].ver || "kept").slice(0, 19);
+          try { console.log("[learn] 新しい束の画面位置が0 → " + _ks + " の控え（版 " + _screenKept + "）を使います"); } catch (_) {}
+        }
+      }
+    } catch (_) {}
     var _screenAllKeys = Object.keys(_screenAim).length;
     var _screenSolid = 0;
     try {
@@ -3178,6 +3202,7 @@ async function _refreshLearnedBundle(force) {
       screen_solid: _screenSolid,
       screen_all: _screenAll,
       screen_keys: _screenAllKeys,
+      screen_kept: _screenKept,
       complete: _linkComplete,
       server_read_count: (typeof bundle._server_read_count === "number")
         ? bundle._server_read_count

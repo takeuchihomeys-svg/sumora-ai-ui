@@ -2614,7 +2614,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.114";
+  var _AXLX_PAGE_VER = "2.8.115";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -2888,9 +2888,15 @@
               _auditStepP("learn_refresh_res", String(_rd).slice(0, 110));
             }
           } catch (_) {}
-          return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS), 8000, true);
+          return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS, ["axlx_learn_link"]), 8000, true);
         }).then(function (r) {
           try { _applyLearnStoragePayload(r); } catch (_) {}
+          try {
+            var _lk = r && r.axlx_learn_link;
+            if (_audit && _lk && _lk.screen_kept) {
+              _auditStepP("learn_screen_kept", "束の画面位置0→" + (_lk.site || "") + "の控え 版" + String(_lk.screen_kept).slice(0, 19) + " keys=" + (_lk.screen_keys || 0));
+            }
+          } catch (_) {}
           return _learnWarm(true);
         }).then(afterWarm, afterWarm);
       };
@@ -4921,7 +4927,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;

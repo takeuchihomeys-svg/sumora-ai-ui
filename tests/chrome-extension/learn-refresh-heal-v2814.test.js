@@ -73,7 +73,9 @@ function fnSrc(src, head) {
   ok("ページは結果で resolve する", /fin\(e\.data\.res \|\| null\);/.test(ps) && /setTimeout\(function \(\) \{ fin\("timeout"\); \}, 8000\);/.test(ps));
   ok("warmLocal が learn_refresh_res を残す", /_auditStepP\("learn_refresh_res"/.test(ps));
   ok("後から届いた画面位置を残す", /_auditStepP\("learn_screen_late"/.test(ps));
-  ok("新しい段は間引かない（_PIN）", /var _PIN = \/\^\([^\n]*\|learn_refresh_res\|learn_screen_late\|stale_pending_reset\|station_line_wait\)/.test(ps));
+  const pinLine = (ps.match(/var _PIN = \/\^\(([^\n]*)\)\//) || [])[1] || "";
+  const pinKeys = pinLine.split("|");
+  ok("新しい段は間引かない（_PIN）", ["learn_refresh_res", "learn_screen_late", "stale_pending_reset", "station_line_wait"].every((k) => pinKeys.includes(k)), pinKeys.slice(-6));
 
   console.log("\n■ 同じお客様の開始が続けて来ても行を2本にしない");
   const tag = fnSrc(pp, "function _auditTag(site, customer, conditions, ctx)");
@@ -83,8 +85,8 @@ function fnSrc(src, head) {
   ok("一括の run_id（ctx）は使い回さない", /if \(!\(ctx && ctx\.runId\) && _lastAuditTag/.test(tag));
 
   console.log("\n■ 版");
-  ok("manifest が 2.8.114", mf.version === "2.8.114", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.114", /var _AXLX_PAGE_VER = "2\.8\.114";/.test(ps));
+  ok("manifest が 2.8.115", mf.version === "2.8.115", mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.115", /var _AXLX_PAGE_VER = "2\.8\.115";/.test(ps));
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail) process.exit(1);

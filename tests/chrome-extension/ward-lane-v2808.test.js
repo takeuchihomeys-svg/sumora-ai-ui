@@ -116,8 +116,8 @@ console.log("\n■ ④ 家賃・更新日は画面内に入ってから選ぶ");
 
 function done() {
   console.log("\n■ ⑤ 版");
-  ok("manifest が 2.8.114", mf.version === "2.8.114", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.114", /var _AXLX_PAGE_VER = "2\.8\.114";/.test(ps));
+  ok("manifest が 2.8.115", mf.version === "2.8.115", mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.115", /var _AXLX_PAGE_VER = "2\.8\.115";/.test(ps));
   console.log(`\n結果: ${pass} 合格 / ${fail} 不合格`);
   process.exit(fail ? 1 : 0);
 }
