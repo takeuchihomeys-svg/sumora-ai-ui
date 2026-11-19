@@ -7,8 +7,8 @@ import { estimateImageRoleOn, estimateRoleUrls, estimateRoleRows } from "../esti
 const CONV = "0a1b2c3d-1111-2222-3333-444455556666";
 const own = (n: string) => `https://example.supabase.co/storage/v1/object/public/property-images/aix/${CONV}/1763500000000_${n}.jpg`;
 
-test("既定 off・on で入る", () => {
-  assert.equal(estimateImageRoleOn({}), false);
+test("既定 on（11/19）・off で止まる", () => {
+  assert.equal(estimateImageRoleOn({}), true);
   assert.equal(estimateImageRoleOn({ AIX_ESTIMATE_IMAGE_ROLE: "on" }), true);
   assert.equal(estimateImageRoleOn({ AIX_ESTIMATE_IMAGE_ROLE: "off" }), false);
 });
