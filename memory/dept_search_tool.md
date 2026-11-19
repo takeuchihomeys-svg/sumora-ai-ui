@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-11-19 18:45 **拡張 2.8.125: 外しを「進捗型＋完了線F57＋送付後の外し」に／見えない町は詳細地域へ進んで外す／自動のマウスを人の実測分布＋ラン別 persona に／動きを API で渡せる形（motion_plan）**（竹内さん「入れたの覚えていたら外す、完了したらちゃんと外す、順番で」「マウスの動き方が一定になっていないか」「動き方もAPIで決めたら」統括pro）
+
+### 外し（page-script.js・background.js）
+- **A案 進捗型**: `_clearStationsBeforeWardThen` / `_clearWardsBeforeStationThen` は回数上限（旧: 最大3回）をやめ、残り数が前回より減る間は続ける。減らない2回で別経路（開いたモーダルを閉じ1.5〜4.5秒待って開き直す）→さらに2回減らなければ理由を残して終える。時間上限150秒（動ける間だけ数える時計）。監査: `leftover_progress` / `leftover_alt_route`。純関数 `_leftoverProgressStep`。
+- **F57 外し完了線**: 画面の残0 かつ 台帳の名前の残0（`_ledgerNamesLeft`）かつ 混在印0 で `leftover_done_F57`。名前が残るときは `_leftoverSweepNames` でカーソルから1つずつ外す。到達しない客は `leftover_stuck`（`error_kind=leftover_stuck`）で入力を中止（汚れたまま検索しない）。
+- **見えない町（2.8.125 追加）**: 町は区の画面では見えず、旧は「見えない残→確定して進む→関所で中止」だった。→ 区の画面に町だけ残るとき `div.next_step_button2`（詳細な地域の設定へ進む）をカーソルで**1回だけ**押し、出た町を1つずつ外す。監査 `leftover_town_step`。⚠ 本番の実画面で未確認（ボタンが押せない状態だと従来どおり関所で中止になる）。
+- **B案 送付後の外し**: `background.js` `_scrapeAndSendRealpro` が送付完了後・次客の前に `_postSendClearRealpro` → `chrome.scripting.executeScript({world:"MAIN"})` で `window.__axlxPostSendClearP()`（リアプロのみ・最後の客は待たない・失敗は握りつぶす・上限125秒）。監査 `post_send_clear`。止める印 `axlx_post_send_clear_off=true`。
+
+### マウス（human-wait.js・pointer-ui.js・human-learn.js・content.js・page-script.js）
+- 旧は曲がり1.18〜1.46・行き過ぎ72%・最小320ms・押し込み90ms固定・押下は同時で、人の実測（速さp50 375px/s CV0.64・曲がりp50 1.02・移動p50 284ms・距離p50 116px）より芝居がかっていた。自動150行は `moves_n=0`（動きが測れていない）。
+- `human-wait.js` に `makePersona`/`planMove`/`pressMs`/`motionSummary`/`sanitizePlan`（seed 付き乱数・依存ゼロ）。ラン（検索）ごとに persona（speed_scale/curve_gain/overshoot_p/hesitate_p/press_ms/tremor/dwell_scale）が変わる。同じ seed は再現。
+- `pointer-ui.js`: `AxlxPointerUi.holdMs()`（押し込み45〜180ms）・`motionStats()`・`newRun(seed)`・`persona()`。**自動の動きは人の学習記録（`axlx_human_profile`）に混ぜない**（`hMove` の `!isTrusted` 除外は不変）。
+- `page-script.js`: `_fireAt` が mousedown を押し込み時間だけ先に出してから mouseup→click。fill 開始で `window.__axlxRunId` を置き persona を切り替え。検索ボタンを押す直前に監査 `motion_stats`（n・速p50/CV・ms p50・曲がり p50/p90・距離・行き過ぎ%・迷い%・persona・plan_id）。`_PIN/_clearKey` に追加。
+- **届き方の穴を塞いだ**: `axlx_learn_motion`（サーバーの束の動き）は `PUSH_KEYS` に無く MAIN world に届いていなかった → `content.js` の `PUSH_KEYS` に `axlx_learn_motion` と `axlx_motion_plan` を追加し `window.__axlxServerMotion` / `__axlxMotionPlan` へ。
+
+### 動きの API（Claude Code 側で作る・拡張は受け口だけ）
+`axlx_motion_plan` = `{ "v":1, "plan_id":"…", "expires_at":"ISO", "run_seed":"…(任意)", "persona":{ "speed_scale":0.7〜1.4, "curve_gain":0〜1.5, "overshoot_p":0.08〜0.28, "hesitate_p":0.10〜0.30, "press_ms":60〜120, "tremor":…, "dwell_scale":… }(任意) }`。期限切れ・不正は無視し、無い時・API失敗時はローカル seed で動く（止まらない）。範囲外は拡張側で丸める。**表・API（`app/api/*`）は Claude Code 側**。`motion_stats`（監査の段）を DB に列として持つなら `migrate-schema` 同時＋竹内さんの OK が要る（今は監査の段の文字だけ・DB 構造は変えていない）。
+
+### 確認（竹内さんへ）
+拡張を再読込→連続で自動（駅→地域→駅）→ 監査で `leftover_done_F57` / `leftover_town_step` / `post_send_clear` / `motion_stats` を見る。テスト: `leftover-progress-v2825`(86)・`motion-human-v2825`(105)・`wire-v2825`(6)・`leftover-gate-v2824`(40)。全体は HEAD 比で新規失敗0。
 ## 2026-11-19 18:10 **拡張 2.8.124: 「前客の条件が残っているか」を読んで判断する力＋入れたものの控え（台帳）で外し忘れを防ぐ＋外した後の「きれい確認」関所**（竹内さん「前のお客さんの条件が残っていると判断できる能力…どこを外すのかも理解できる」「外すのもちゃんと検索で入れたのを覚えていたらはずせる…外し忘れが起きないように徹底的に細かい部分を改善する」統括pro）
 - **DB 実測（読むだけ）**: 直近の自動 #1532（2.8.121）は `place_mixed`2・`gate_retry`2・`gate_station_defer_clear`2＝前客の駅5・沿線1が残ったまま区へ進み、検索前の関所で初めて気付いて止まった。#1531（2.8.121・地域）・#1530（駅）は idle_close。2.8.124 の実走はまだ無い。
 - **原因（私の読み）**: 旧は「残っているか見ない」で全部外す手順を流し、**外し切れたかを確かめずに**入力へ進んでいた（flag を無条件で立てるだけ）。

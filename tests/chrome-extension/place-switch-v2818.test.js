@@ -99,7 +99,7 @@ function runStationClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(extractFn("_activeClock") + "\n" + srcSt, ctx);
+  vm.runInContext(extractFn("_activeClock") + "\n" + extractFn("_leftoverProgressNew") + "\n" + extractFn("_leftoverProgressStep") + "\n" + srcSt, ctx);
   vm.runInContext("_clearStationsBeforeWardThen", ctx)(() => { log.next++; }, "所在地");
   return { log, st };
 }
@@ -125,8 +125,12 @@ function runStationClear(opts) {
   ok("開けない時も止めずに進む（関所が再確認）", r.log.next === 1, r.log.next);
   ok("開けなかった理由と残数を残す", r.log.steps.some((s) => s[0] === "station_clear_before_ward_done" && /開けず 残 駅2・沿線1/.test(s[1])), r.log.steps);
   // ★ 2.8.123 竹内さん「ちゃんと外して次に移る」: 残れば開く→外す→確定を最大3回（1回の中で押し直し2回）
-  ok("2.8.123: 残れば最大3回までやり直す（station_clear_retry×2・開く押下 3×3）",
-    r.log.steps.filter((s) => s[0] === "station_clear_retry").length === 2 && r.log.opened === 9, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
+  // 2.8.125 進捗型に変更（回数上限3回→「2回続けて減らなければ別経路・別経路でも減らなければ終える」）:
+  //   進捗なし → 試し1（初回）・2（retry）・3（別経路へ）・4（別経路 retry）・5（終える）ではなく、
+  //   初回→retry(1)→別経路→retry(2)→終える の4回（開く押下 3×4）。残れば理由 leftover_progress を残す
+  ok("2.8.125: 進捗なしは retry×2＋別経路×1 のあと終える（station_clear_retry×2・leftover_alt_route×1・開く押下 3×4）",
+    r.log.steps.filter((s) => s[0] === "station_clear_retry").length === 2 && r.log.steps.filter((s) => s[0] === "leftover_alt_route").length === 1 &&
+    r.log.opened === 12 && r.log.next === 1, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
 }
 {
   const r = runStationClear({ st: 2, ln: 1, opens: true });
@@ -181,7 +185,7 @@ function runWardClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(extractFn("_activeClock") + "\n" + srcW, ctx);
+  vm.runInContext(extractFn("_activeClock") + "\n" + extractFn("_leftoverProgressNew") + "\n" + extractFn("_leftoverProgressStep") + "\n" + srcW, ctx);
   vm.runInContext("_clearWardsBeforeStationThen", ctx)(() => { log.next++; });
   return { log, w };
 }
@@ -202,8 +206,10 @@ function runWardClear(opts) {
 {
   const r = runWardClear({ left: 2, opens: false });
   ok("開けない時は理由と残数を残して進む", r.log.next === 1 && r.log.steps.some((s) => s[0] === "ward_clear_before_station_done" && /開けず 残 区\/町2/.test(s[1])), r.log.steps);
-  ok("2.8.123: 開けず区が残れば最大3回までやり直す（ward_clear_retry×2）",
-    r.log.steps.filter((s) => s[0] === "ward_clear_retry").length === 2 && r.log.opened === 6, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
+  // 2.8.125 進捗型: 進捗なしは retry×2＋別経路×1 のあと終える（開く押下 2×4）
+  ok("2.8.125: 開けず区が残れば retry×2＋別経路×1 のあと終える（ward_clear_retry×2・leftover_alt_route×1）",
+    r.log.steps.filter((s) => s[0] === "ward_clear_retry").length === 2 && r.log.steps.filter((s) => s[0] === "leftover_alt_route").length === 1 &&
+    r.log.opened === 8 && r.log.next === 1, { opened: r.log.opened, steps: r.log.steps.map((s) => s[0]) });
 }
 {
   const r = runWardClear({ left: 2, opens: true, hidden: true });

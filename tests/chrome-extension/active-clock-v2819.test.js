@@ -126,7 +126,7 @@ function runStationClear(opts) {
   const origBusy = ctx.isClickQueueBusy;
   ctx.isClickQueueBusy = () => { const b = origBusy(); if (b) log.polls++; return b; };
   vm.createContext(ctx);
-  vm.runInContext(srcClock + "\n" + fn("_clearStationsBeforeWardThen"), ctx);
+  vm.runInContext(srcClock + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + fn("_clearStationsBeforeWardThen"), ctx);
   vm.runInContext("_clearStationsBeforeWardThen", ctx)(() => { log.next++; }, "所在地");
   return log;
 }
@@ -165,7 +165,7 @@ const srcW = fn("_clearWardsBeforeStationThen");
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(srcClock + "\n" + srcW, ctx);
+  vm.runInContext(srcClock + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + srcW, ctx);
   vm.runInContext("_clearWardsBeforeStationThen", ctx)(() => { log.next++; });
   ok("タブが隠れていた13秒を数えず押し直さない（旧: 6秒で押し直し・14秒で諦め）", log.opened === 1 && log.toggled === 2 && log.next === 1, log);
   ok("押し直しの記録も出ない", !log.steps.some((s) => s[0] === "ward_clear_open_retry"), log.steps);

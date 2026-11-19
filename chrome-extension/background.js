@@ -4060,6 +4060,8 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
         };
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
+          // 2.8.125 案B: 最後のお客さんは送付後の外しを待たずに戻す（_scrapeAndSendRealpro が見る）
+          try { self._axlxLastCustomerId = (_bi === _bulkTargets.length - 1 && _bc && _bc.id != null) ? String(_bc.id) : null; } catch (_) {}
           /**
            * 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通なので休憩の間もいれるように。人間がおこなっているから」:
            *   一括検索でも、働き続けたら休む（自動モードと同じ決まり）。
@@ -5168,6 +5170,8 @@ function _auditFinish(runId, extra) {
     var x = extra || {};
     if (x.error && x.error.message) x = Object.assign({}, x, { error: x.error.message });
     if (x.error && String(x.error) === "__BATCH_STOPPED__") x = Object.assign({}, x, { error_kind: "stopped" });
+    // 2.8.125 前客の条件を外し切れず中止した回（page-script の fill-done error 頭 "leftover_stuck:"）は種類を付けて点検で数えられるように
+    if (x.error && !x.error_kind && /leftover_stuck:/.test(String(x.error))) x = Object.assign({}, x, { error_kind: "leftover_stuck" });
     _auditTracker.finish(runId, x);
   } catch (e) { console.warn("[search-audit] finish 失敗:", e && e.message); }
 }
@@ -7160,6 +7164,8 @@ async function _runBatchSearch(command) {
       return;
     }
     var customer = searchOverride ? self.AxlxSearchOverride.applyToCustomer(targets[i], searchOverride) : targets[i];
+    // 2.8.125 案B: 最後のお客さんは送付後の外しを待たずに戻す（_scrapeAndSendRealpro が見る）
+    try { self._axlxLastCustomerId = (i === targets.length - 1 && customer && customer.id != null) ? String(customer.id) : null; } catch (_) {}
     // 長い一括（午後の便で何人も・リアプロ＋ITANDI）でロックの15分を超えて別のコマンドが並んで走らないよう、お客様ごとに印を新しくする
     try { await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() } }); } catch (_) {}
     // 自動便: ITANDI のタブが開いていない PC は ITANDI を飛ばす（タブを新しく開かない・失敗と数えない）。お客様ごとに見直す（途中で閉じた・開いた）
@@ -8607,6 +8613,45 @@ async function _scrapeAndCompareForCustomer(customer) {
 // suppressZeroNotify=true のとき 0件 LINE通知をスキップし、呼び出し元が集計して1回だけ通知する
 // （area_mode='both' の2パス重複通知防止用）
 // 2026-09-25: 直前の1回が「5分の待ち切れ」だったか（both の集計で「0件」と「検索できなかった」を分けるため）
+/**
+ * 送付後の外し（案B）をリアプロのタブへ頼む。**投げない**（失敗・時間切れ・off・タブなしはログだけで {ok:false|skipped} を返す）。
+ *   page-script は MAIN world（content.js の中継は編集しない決まりのため chrome.runtime では受けられない）→
+ *   chrome.scripting.executeScript({world:"MAIN"}) でページ側の公開関数 window.__axlxPostSendClearP() を呼ぶ（Promise を待てる）。
+ *   ページ側は fail-open（例外・120秒でも結果を返す・入力中は何もしない）。ここの待ちは最大125秒。
+ */
+async function _postSendClearRealpro(customerId) {
+  var _t0 = Date.now();
+  try {
+    var _off = await chrome.storage.local.get("axlx_post_send_clear_off");
+    if (_off && _off.axlx_post_send_clear_off === true) { console.log("[post-send-clear] off フラグ → 実行しない"); return { skipped: "off" }; }
+    var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
+    if (!_tab || !_tab.id) { console.log("[post-send-clear] リアプロのタブなし → 何もしない"); return { skipped: "no_tab" }; }
+    var _exec = chrome.scripting.executeScript({
+      target: { tabId: _tab.id },
+      world: "MAIN",
+      func: function () {
+        try {
+          if (typeof window.__axlxPostSendClearP === "function") return window.__axlxPostSendClearP();
+        } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+        return { ok: false, why: "no_page_fn" };
+      },
+    });
+    var _to = new Promise(function (resolve) { setTimeout(function () { resolve("__timeout__"); }, 125000); });
+    var _r = await Promise.race([_exec, _to]);
+    var _res = (_r && _r !== "__timeout__" && _r[0] && _r[0].result) || null;
+    var _note = _r === "__timeout__" ? "125秒待ち切れ（次客へ進む）" : (_res ? ("ok=" + !!_res.ok + " 残=" + (_res.left == null ? "-" : _res.left) + (_res.why ? " " + _res.why : "") + (_res.skipped ? " 見送り=" + _res.skipped : "")) : "応答なし");
+    console.log("[post-send-clear] " + _note + " " + Math.round((Date.now() - _t0) / 1000) + "秒 customer=" + customerId);
+    try {
+      var _rid = _auditOpenRunId(String(customerId), "realpro");
+      if (_rid) _auditStep(_rid, "post_send_clear", _note.slice(0, 100));
+    } catch (_) {}
+    return _res || { ok: false, why: _note };
+  } catch (e) {
+    console.warn("[post-send-clear] 失敗（非致命・次客へ進む）:", e && e.message ? e.message : e);
+    return { ok: false, why: "error" };
+  }
+}
 var _scrapeLastOutcome = { timedOut: false };
 // 2026-09-30 v2.5.43 同時の回: 直前の1回の結果はサイトごと（realnetpro／itandi）。_scrapeLastOutcome は最後に終わった物（旧の読み手のため残す）
 var _scrapeOutcomeBySite = {};
@@ -8715,6 +8760,24 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
         ? "🔍【新しい物件なし】" + customerName + "さんの" + _site + "検索は送付済みの部屋だけでした（" + _skippedHere + "件は飛ばしました・資料もダウンロードしていません）"
         : "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
     }).catch(function() {});
+  }
+  /**
+   * ★ 2026-11-19 竹内さん「入れたのを覚えていたら外せるので、完了したらちゃんと外すようにすれば問題ない。順番に行えば」→ 統括Pro 案B:
+   *   リアプロの送付が終わった直後（次客の switch／fill より前・一連ロックを外す前）に、そのタブへ「送付後の外し」を頼み、
+   *   最大120秒まで待つ（非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
+   *   ・ITANDI には入れない（リアプロの連続のみ）／送付が途中のまま切り上げた回（送付進捗あり）は触らない
+   *   ・最後のお客さん（_axlxLastCustomerId）は待たずに戻す（ページを汚れたまま残さないが、完了を待たせない）
+   *   ・chrome.storage.local の axlx_post_send_clear_off が true なら実行しない（切り替えフラグ）
+   */
+  if (_siteKey === "realnetpro") {
+    try {
+      if (!(batchDone && batchDone.timedOut && batchDone.sawProgress)) {
+        var _psIsLast = !!(self._axlxLastCustomerId && String(self._axlxLastCustomerId) === String(customerId));
+        var _psP = _postSendClearRealpro(customerId);
+        if (_psIsLast) { _psP.catch(function () {}); }
+        else { await _psP; }
+      }
+    } catch (_) { /* 次客を止めない */ }
   }
   // ★ 次客へ移る前に一連ロックを外す。送付進捗ありの batch_timeout は batch-customer-done まで維持
   try {

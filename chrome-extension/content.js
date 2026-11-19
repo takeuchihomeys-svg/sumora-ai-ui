@@ -493,6 +493,10 @@ window.addEventListener("message", function (e) {
     "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
     "axlx_learn_opens", "axlx_learn_plan", "axlx_learn_cursor_hand",
     "axlx_human_profile", "axlx_human_learn", "axlx_human_points",
+    // ★ 2026-11-19 v2.8.25: サーバーで学んだ動き（速さ・曲がり）と、ラン単位の動き計画を MAIN world（pointer-ui.js）へ。
+    //   → window.__axlxServerMotion / window.__axlxMotionPlan（pointer-ui.js が axlx-page-learn-push で受ける）
+    //   ⚠ "axlx_learn_gaps" は配列の最後に置く（pick-lane-v2821 のテストが末尾を見る）
+    "axlx_learn_motion", "axlx_motion_plan",
     "axlx_learn_gaps",
   ];
   function pushAll() {

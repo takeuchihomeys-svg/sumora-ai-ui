@@ -174,10 +174,13 @@
    *   from / to は { x, y }。返り値は { x, y } の配列（出発点を含む）。steps は点の数。
    *   曲がりは3次ベジェ（制御点を経路の左右にランダムにずらす）＋最後に少しだけ手ぶれを足す。
    */
-  function pointerPath(from, to, steps, rng) {
+  function pointerPath(from, to, steps, rng, persona) {
     var a = from && typeof from === "object" ? from : { x: 0, y: 0 };
     var b = to && typeof to === "object" ? to : { x: 0, y: 0 };
     var n = Math.max(2, Math.min(60, Math.floor(Number(steps) || 12)));
+    // 2026-11-19 v2.8.25: persona（ラン単位のクセ）を渡した時だけ「人の実測に近い」曲がり（ほぼ直線＋小さな弧）で作る。
+    //   引数無し（従来）の時は下の今までの作り方のまま（既存の呼び出し・テストを壊さない）。
+    if (persona && typeof persona === "object") return _personaPath(a, b, n, rng, persona).pts;
     var dx = b.x - a.x, dy = b.y - a.y;
     var dist = Math.sqrt(dx * dx + dy * dy) || 1;
     // ★ 2026-11-16: 曲がり幅を広げ、たまにオーバーシュートして戻る（毎回同じ弧に見えない）
@@ -207,9 +210,20 @@
   }
 
   /** 軌跡の各点の待ち（ミリ秒）。移動の速さは一定にせず、最初と最後をゆっくりにする（人の加速・減速） */
-  function pointerDelays(n, totalMs, rng) {
+  function pointerDelays(n, totalMs, rng, persona) {
     var N = Math.max(2, Math.floor(Number(n) || 12));
     var total = _num(totalMs) || 400;
+    // 2026-11-19 v2.8.25: persona を渡した時は、端の遅さを控えめにした釣鐘の速さ（ピーク速度 ≒ 平均の2倍前後）で配る。
+    //   途中の「ためらい」は planMove 側で決める（ここでは足さない＝合計は total にそろう）。
+    if (persona && typeof persona === "object") {
+      var pw = [], psum = 0;
+      for (var pi = 0; pi < N; pi++) {
+        var pt = (pi + 1) / N;
+        var pv = (0.55 + 1.9 * Math.pow(Math.abs(pt - 0.5) * 2, 2)) * (0.75 + _rand(rng) * 0.5);
+        pw.push(pv); psum += pv;
+      }
+      return pw.map(function (x) { return Math.max(4, Math.round(((total * x) / psum) * 10) / 10); });
+    }
     /**
      * 2026-11-11 竹内さん「マウスとクリックと選択の間隔等も人間のようになっているのか。間隔もちゃんとばらばらで不規則に」:
      *   旧は Math.round で ms に丸めていたため、**24点で18種類**しか無く「ほぼ等速」に見えていた。
@@ -234,6 +248,320 @@
     }
     var back = out.reduce(function (a, b) { return a + b; }, 0) / total;
     return out.map(function (x) { return Math.max(4, Math.round((x / back) * 10) / 10); });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 2026-11-19 v2.8.25 自動モードのカーソルを「人の実測分布」に寄せる＋検索（ラン）ごとの動きの個性（persona）
+  //
+  //   ★ 本番DBの実測（human_motion_learn・通常モード・リアプロ・直近150行）
+  //       速さ px/s: p10/p50/p90 = 130/375/478・CV 0.64   曲がり（道のり÷直線）: p50 1.02・CV 0.16（ほぼ直線）
+  //       1回の移動時間: p50 284ms・CV 0.91                 移動距離: p50 116px
+  //     自動モード（mode=aix）の行は 150行すべて moves_n=0＝自動の動きは今まで測れていなかった。
+  //   ★ 旧の自動の動き: 曲がり 1.18〜1.46＋ベジェ 4〜40%＋行き過ぎ 18%＋72%（8〜36px）・移動は最低320ms・押し込み 90ms 固定。
+  //   ★ ここ（依存ゼロ・純関数・rng を引数に取れる）: seededRng / makePersona / sanitizePlan / moveMsSample / planMove /
+  //     pressMs / motionSummary。pointerPath・pointerDelays は persona を任意引数で受ける（無ければ従来のまま）。
+  //   ⚠ 人の記録（human-learn.js の hMove の !isTrusted 除外）は変えない＝自動の動きが人の学習に混ざらない。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 文字列・数を 32bit の整数にする（FNV-1a）。seed が文字列（客IDなど）でも使えるように */
+  function hashSeed(s) {
+    var str = String(s == null ? "" : s), h = 2166136261;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  /** seed 固定の乱数（mulberry32）。同じ seed なら同じ列・seed が違えば違う列。0以上1未満 */
+  function seededRng(seed) {
+    var a = (typeof seed === "number" && isFinite(seed)) ? (Math.floor(seed) >>> 0) : hashSeed(seed);
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // persona の値の範囲（計画・外から来た値もここへ丸める）
+  var PERSONA_RANGE = {
+    speed_scale: [0.6, 1.7],     // 速さの倍率（1.0＝人の実測の中央値 375px/s）
+    curve_gain: [0.4, 1.5],      // 曲がりの強さ（1.0＝実測の p50 付近・小さいほど直線）
+    overshoot_p: [0.08, 0.28],   // 80px 超の移動で行き過ぎる確率
+    hesitate_p: [0.10, 0.30],    // 途中で一息つく確率
+    press_ms: [60, 120],         // 押し込みの中央値(ms)
+    tremor: [0.4, 1.6],          // 手ぶれ(px)
+    dwell_scale: [0.6, 1.6],     // 一息・止まりの長さの倍率
+  };
+  var PERSONA_KEYS = ["speed_scale", "curve_gain", "overshoot_p", "hesitate_p", "press_ms", "tremor", "dwell_scale"];
+  /** 個性の無い中立の persona（persona を渡されなかった時・壊れた時の既定） */
+  var NEUTRAL_PERSONA = { seed: 0, speed_scale: 1, curve_gain: 1, overshoot_p: 0.16, hesitate_p: 0.18, press_ms: 90, tremor: 1.0, dwell_scale: 1, source: "neutral" };
+
+  function _clampKey(key, v) {
+    var r = PERSONA_RANGE[key];
+    var x = Number(v);
+    if (!isFinite(x)) return null;
+    return Math.max(r[0], Math.min(r[1], x));
+  }
+  function _round3(x) { return Math.round(x * 1000) / 1000; }
+
+  /**
+   * サーバーの「動き計画」を安全な形にして返す（無効なら null＝無視してローカルで作る）。
+   *   形: { v:1, plan_id, expires_at(ISO), run_seed?, persona?:{...} }
+   *   ・v が 1 でない／plan_id が無い／expires_at が読めない・過ぎている → null
+   *   ・persona の各値は範囲に丸める・数でない値は捨てる
+   */
+  function sanitizePlan(plan, nowMs) {
+    try {
+      if (!plan || typeof plan !== "object") return null;
+      if (Number(plan.v) !== 1) return null;
+      var id = (typeof plan.plan_id === "string" || typeof plan.plan_id === "number") ? String(plan.plan_id).slice(0, 64) : "";
+      if (!id) return null;
+      var exp = Date.parse(plan.expires_at);
+      var now = (typeof nowMs === "number" && isFinite(nowMs)) ? nowMs : Date.now();
+      if (!isFinite(exp) || exp <= now) return null;
+      var out = { v: 1, plan_id: id, expires_at: String(plan.expires_at), run_seed: null, persona: {} };
+      var rs = Number(plan.run_seed);
+      if (plan.run_seed != null && plan.run_seed !== "" && isFinite(rs)) out.run_seed = Math.floor(rs) >>> 0;
+      var pp = (plan.persona && typeof plan.persona === "object") ? plan.persona : null;
+      if (pp) {
+        for (var i = 0; i < PERSONA_KEYS.length; i++) {
+          var k = PERSONA_KEYS[i];
+          if (pp[k] == null || pp[k] === "") continue;
+          var c = _clampKey(k, pp[k]);
+          if (c != null) out.persona[k] = c;
+        }
+      }
+      return out;
+    } catch (_) { return null; }
+  }
+
+  /**
+   * ラン（検索）単位の「動きのクセ」を seed から作る。同じ seed → 同じ値・seed が違えば違う値。
+   *   乱数の引く順は固定（計画で一部を上書きしても、他の値は seed から変わらない）。
+   *   plan（任意）: 有効なら run_seed を seed に使い、persona の値があればそれを（範囲に丸めて）優先。
+   *   中心: speed_scale は対数正規 σ0.25（中心1.0）・curve_gain は対数正規 σ0.25（中心1.0・上限1.5）。
+   */
+  function makePersona(seed, plan, nowMs) {
+    var sp = sanitizePlan(plan, nowMs);
+    var s = (sp && sp.run_seed != null) ? sp.run_seed : seed;
+    var rng = seededRng((s == null) ? 0 : s);
+    var p = {
+      seed: (typeof s === "number" && isFinite(s)) ? (Math.floor(s) >>> 0) : hashSeed(s),
+      speed_scale: _clampKey("speed_scale", Math.exp(0.25 * _gauss(rng))),
+      curve_gain: _clampKey("curve_gain", Math.exp(0.25 * _gauss(rng))),
+      overshoot_p: 0.08 + 0.20 * _rand(rng),
+      hesitate_p: 0.10 + 0.20 * _rand(rng),
+      press_ms: 60 + 60 * _rand(rng),
+      tremor: 0.4 + 1.2 * _rand(rng),
+      dwell_scale: _clampKey("dwell_scale", Math.exp(0.25 * _gauss(rng))),
+      source: "local",
+    };
+    if (sp) {
+      for (var k in sp.persona) { if (Object.prototype.hasOwnProperty.call(sp.persona, k)) p[k] = sp.persona[k]; }
+      p.source = "plan";
+      p.plan_id = sp.plan_id;
+    }
+    for (var i = 0; i < PERSONA_KEYS.length; i++) p[PERSONA_KEYS[i]] = _round3(p[PERSONA_KEYS[i]]);
+    return p;
+  }
+
+  /** persona に欠け・壊れた値があっても中立で埋める（呼ぶ側が毎回守らなくてよいように） */
+  function _fixPersona(persona) {
+    var p = (persona && typeof persona === "object") ? persona : NEUTRAL_PERSONA;
+    var o = {};
+    for (var i = 0; i < PERSONA_KEYS.length; i++) {
+      var k = PERSONA_KEYS[i];
+      var c = _clampKey(k, p[k]);
+      o[k] = (c == null) ? NEUTRAL_PERSONA[k] : c;
+    }
+    return o;
+  }
+
+  // ── 1回の移動の分布（人の実測に寄せる） ──
+  var HUMAN_SPEED_PX_S = 375;     // 中央値（実測 p50）
+  var HUMAN_SPEED_SIGMA = 0.5;    // 対数のばらつき（距離の効果と合わせて CV≈0.6）
+  var HUMAN_REF_DIST = 116;       // 実測の移動距離の中央値
+  var HUMAN_FITTS_EXP = 0.3;      // 遠いほど速く動く（Fitts 的）＝移動時間は距離の 0.7 乗で伸びる
+  var MOVE_MS_MIN = 90, MOVE_MS_MAX = 1600;
+  var BEND_BASE_EXCESS = 0.04;    // 曲がり（道のり÷直線−1）の中央値（gain=1 のとき）
+  var BEND_SIGMA = 1.1;
+
+  /**
+   * 1回の移動にかかる時間(ms)を引く。速さを対数正規で引く（学習した速さがあっても一定にしない）。
+   *   中央の速さ = (speedPxS || 375) × persona.speed_scale × (距離/116)^0.3・σ0.5。90〜1600ms に丸める。
+   */
+  function moveMsSample(dist, persona, rng, speedPxS) {
+    var d = Math.max(1, Number(dist) || 1);
+    var p = _fixPersona(persona);
+    var base = (typeof speedPxS === "number" && isFinite(speedPxS) && speedPxS >= 100 && speedPxS <= 1200) ? speedPxS : HUMAN_SPEED_PX_S;
+    var med = base * p.speed_scale * Math.pow(d / HUMAN_REF_DIST, HUMAN_FITTS_EXP);
+    var v = med * Math.exp(HUMAN_SPEED_SIGMA * _gauss(rng));
+    var ms = (d / v) * 1000;
+    return Math.round(Math.max(MOVE_MS_MIN, Math.min(MOVE_MS_MAX, ms)));
+  }
+
+  /** persona 付きの軌跡: ほぼ直線＋小さな弧（3次ベジェ）＋まれな行き過ぎ＋終点へ向かって減る手ぶれ。終点は必ず狙い点 */
+  function _personaPath(a, b, n, rng, persona) {
+    var p = _fixPersona(persona);
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / dist, uy = dy / dist;
+    var nx = -uy, ny = ux;
+    // 曲がり（道のり÷直線−1）を対数正規で引く→弧の深さ d/L=√(excess×3/8)→ベジェの制御点のずれ h=d/0.75
+    var excess = Math.min(0.3, BEND_BASE_EXCESS * p.curve_gain * Math.exp(BEND_SIGMA * _gauss(rng)));
+    var h = dist * Math.sqrt(excess * 3 / 8) / 0.75;
+    var side = _rand(rng) < 0.5 ? -1 : 1;
+    var h1 = h * (0.8 + 0.5 * _rand(rng)) * side;
+    var h2 = h * (0.8 + 0.5 * _rand(rng)) * side * (_rand(rng) < 0.18 ? -0.5 : 1); // たまに S 字
+    var f1 = 0.26 + _rand(rng) * 0.12, f2 = 0.62 + _rand(rng) * 0.12;
+    var c1 = { x: a.x + dx * f1 + nx * h1, y: a.y + dy * f1 + ny * h1 };
+    var c2 = { x: a.x + dx * f2 + nx * h2, y: a.y + dy * f2 + ny * h2 };
+    // 行き過ぎ: 80px 超で persona.overshoot_p・量は 4〜14px（旧は 72% で 8〜36px）
+    var over = dist > 80 && _rand(rng) < p.overshoot_p;
+    var op = over ? Math.max(4, Math.min(14, dist * (0.04 + 0.06 * _rand(rng)))) : 0;
+    var lat = over ? (_rand(rng) - 0.5) * 0.5 * op : 0;
+    var end = over ? { x: b.x + ux * op + nx * lat, y: b.y + uy * op + ny * lat } : b;
+    if (over) { c2 = { x: c2.x + ux * op * 0.6, y: c2.y + uy * op * 0.6 }; }
+    var out = [];
+    function jit(x, y, t) {
+      var wob = (1 - t) * p.tremor * (0.5 + _rand(rng));
+      if (wob > 0) { x += (_rand(rng) - 0.5) * wob; y += (_rand(rng) - 0.5) * wob; }
+      return { x: Math.round(x), y: Math.round(y) };
+    }
+    for (var i = 0; i <= n; i++) {
+      var t = i / n, mt = 1 - t;
+      var x = mt * mt * mt * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * end.x;
+      var y = mt * mt * mt * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * end.y;
+      out.push(i === 0 ? { x: Math.round(a.x), y: Math.round(a.y) } : jit(x, y, t));
+    }
+    if (over) {
+      // 行き過ぎた点から本命へ短く戻す（3点・だんだん遅くなる動き）
+      var k = 3;
+      var ex = out[n].x, ey = out[n].y;
+      for (var j = 1; j <= k; j++) {
+        var u = j / k, e = 1 - Math.pow(1 - u, 2);
+        out.push({ x: Math.round(ex + (b.x - ex) * e), y: Math.round(ey + (b.y - ey) * e) });
+      }
+    }
+    out[out.length - 1] = { x: Math.round(b.x), y: Math.round(b.y) };
+    return { pts: out, overshoot: over, excess: excess };
+  }
+
+  function _pathLen(pts) {
+    var s = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var ddx = pts[i].x - pts[i - 1].x, ddy = pts[i].y - pts[i - 1].y;
+      s += Math.sqrt(ddx * ddx + ddy * ddy);
+    }
+    return s;
+  }
+
+  /**
+   * 1回の移動を丸ごと作る（純関数）。pointer-ui.js の moveTo はこの結果をそのまま再生する。
+   *   from / to: { x, y }   opts: { persona, rng, speedPxS（学習した速さ・中央値に使う）, curve（学習した曲がり・1付近なら直線寄り） }
+   *   返り値: { pts, waits, ms, dist, pathLen, straight, curve, overshoot, paused, pauseAt, pauseMs, peakRatio, speed }
+   *     ms は移動の時間（一息の止まりは含めない）・pauseAt は pts の添字（無ければ -1）。
+   */
+  function planMove(from, to, opts) {
+    var o = opts || {};
+    var rng = o.rng;
+    var persona = _fixPersona(o.persona);
+    var a = from && typeof from === "object" ? from : { x: 0, y: 0 };
+    var b = to && typeof to === "object" ? to : { x: 0, y: 0 };
+    var dist = Math.sqrt(Math.pow(b.x - a.x, 2) + Math.pow(b.y - a.y, 2));
+    if (!(dist >= 1)) {
+      return { pts: [{ x: Math.round(b.x), y: Math.round(b.y) }], waits: [], ms: 0, dist: 0, pathLen: 0, straight: 0, curve: 1, overshoot: false, paused: false, pauseAt: -1, pauseMs: 0, peakRatio: 1, speed: 0 };
+    }
+    var ms = moveMsSample(dist, persona, rng, o.speedPxS);
+    var steps = Math.min(48, Math.max(8, Math.round(dist / 14)));
+    // 学習した曲がり（1.0＝直線）が 1 付近なら弧を小さく（c=1.05 で 1.0 倍・上限 2 倍・下限 0.25 倍）
+    var eff = {};
+    for (var k in persona) { if (Object.prototype.hasOwnProperty.call(persona, k)) eff[k] = persona[k]; }
+    var c = Number(o.curve);
+    if (isFinite(c) && c > 0) eff.curve_gain = persona.curve_gain * Math.max(0.25, Math.min(2.0, (Math.max(1, c) - 1) / BEND_BASE_EXCESS));
+    var built = _personaPath(a, b, steps, rng, eff);
+    var pts = built.pts;
+    if (built.overshoot) {
+      // 行き過ぎを直す分の時間（対数正規 中央値 90ms・50〜220ms）
+      ms += Math.round(Math.max(50, Math.min(220, 90 * Math.exp(0.4 * _gauss(rng)))));
+    }
+    var waits = pointerDelays(pts.length, ms, rng, persona);
+    // ためらい（途中で一息）: 確率は persona.hesitate_p（短い移動は 1/4）・長さは対数正規（中央値 320ms×dwell_scale・140〜900ms）
+    var long = dist >= 60;
+    var pauseAt = -1, pauseMs = 0;
+    if (pts.length >= 8 && _rand(rng) < persona.hesitate_p * (long ? 1 : 0.25)) {
+      pauseAt = Math.floor(pts.length * (0.22 + _rand(rng) * 0.5));
+      pauseMs = Math.round(Math.max(140, Math.min(900, 320 * persona.dwell_scale * Math.exp(0.45 * _gauss(rng)))));
+    }
+    var pathLen = _pathLen(pts);
+    var sumW = 0, peak = 0;
+    for (var i = 0; i < pts.length - 1; i++) {
+      var w = waits[i] || 4;
+      var sx = pts[i + 1].x - pts[i].x, sy = pts[i + 1].y - pts[i].y;
+      var sp = Math.sqrt(sx * sx + sy * sy) / w;
+      if (sp > peak) peak = sp;
+      sumW += w;
+    }
+    var mean = sumW > 0 ? pathLen / sumW : 0;
+    return {
+      pts: pts, waits: waits, ms: ms, dist: dist, pathLen: pathLen, straight: dist,
+      curve: pathLen / dist, overshoot: !!built.overshoot, paused: pauseAt >= 0, pauseAt: pauseAt, pauseMs: pauseMs,
+      peakRatio: mean > 0 ? peak / mean : 1, speed: (dist / ms) * 1000,
+    };
+  }
+
+  /** 押し込み（見えるカーソルの縮み）の時間(ms): persona.press_ms を中央値とする対数正規（σ0.3・45〜180ms） */
+  function pressMs(persona, rng) {
+    var p = _fixPersona(persona);
+    var v = p.press_ms * Math.exp(0.3 * _gauss(rng));
+    return Math.round(Math.max(45, Math.min(180, v)));
+  }
+
+  function _pct(sorted, q) {
+    if (!sorted.length) return null;
+    var idx = (sorted.length - 1) * q, lo = Math.floor(idx), hi = Math.ceil(idx);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  function _cv(arr) {
+    if (arr.length < 2) return null;
+    var m = 0, i;
+    for (i = 0; i < arr.length; i++) m += arr[i];
+    m /= arr.length;
+    if (!(m > 0)) return null;
+    var v = 0;
+    for (i = 0; i < arr.length; i++) v += (arr[i] - m) * (arr[i] - m);
+    return Math.sqrt(v / arr.length) / m;
+  }
+  function _r2(x) { return x == null ? null : Math.round(x * 100) / 100; }
+  /**
+   * 自動の動きの記録（{ dist, ms, curve, overshoot, paused, peakRatio }の配列）を要約する。
+   *   監査（search_audits）に載せる用。軌跡の点そのものは持たない（サイズ・プライバシー）。
+   */
+  function motionSummary(moves) {
+    var arr = Array.isArray(moves) ? moves.filter(function (m) { return m && Number(m.ms) > 0 && Number(m.dist) > 0; }) : [];
+    var sp = [], ms = [], cv = [], di = [], pk = [], over = 0, pause = 0;
+    arr.forEach(function (m) {
+      sp.push((Number(m.dist) / Number(m.ms)) * 1000);
+      ms.push(Number(m.ms)); di.push(Number(m.dist));
+      cv.push(Number(m.curve) > 0 ? Number(m.curve) : 1);
+      if (Number(m.peakRatio) > 0) pk.push(Number(m.peakRatio));
+      if (m.overshoot) over++;
+      if (m.paused) pause++;
+    });
+    function s(a) { return a.slice().sort(function (x, y) { return x - y; }); }
+    var n = arr.length;
+    return {
+      n: n,
+      speed_p50: n ? Math.round(_pct(s(sp), 0.5)) : null, speed_cv: _r2(_cv(sp)),
+      ms_p50: n ? Math.round(_pct(s(ms), 0.5)) : null, ms_cv: _r2(_cv(ms)),
+      curve_p50: n ? _r2(_pct(s(cv), 0.5)) : null, curve_p90: n ? _r2(_pct(s(cv), 0.9)) : null, curve_cv: _r2(_cv(cv)),
+      dist_p50: n ? Math.round(_pct(s(di), 0.5)) : null,
+      peak_p50: pk.length ? _r2(_pct(s(pk), 0.5)) : null,
+      over_pct: n ? Math.round((over / n) * 1000) / 10 : null,
+      pause_pct: n ? Math.round((pause / n) * 1000) / 10 : null,
+    };
   }
 
   // ── 2026-11-10 v2.5.98 竹内さん「人間なので休憩するときもある」──
@@ -283,6 +611,16 @@
     createPacer: createPacer,
     pointerPath: pointerPath,
     pointerDelays: pointerDelays,
+    // 2026-11-19 v2.8.25: ラン単位のクセ（persona）と人の実測に寄せた1回の移動
+    hashSeed: hashSeed,
+    seededRng: seededRng,
+    PERSONA_RANGE: PERSONA_RANGE,
+    sanitizePlan: sanitizePlan,
+    makePersona: makePersona,
+    moveMsSample: moveMsSample,
+    planMove: planMove,
+    pressMs: pressMs,
+    motionSummary: motionSummary,
     humanRange: humanRange,
     humanDelay: humanDelay,
     settleRange: settleRange,

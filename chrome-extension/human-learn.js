@@ -1018,6 +1018,18 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
   var _srvMotionAt = 0;
   function _serverMotion() {
     var now = Date.now();
+    /**
+     * ★ 2026-11-19 v2.8.25: MAIN world（ページ側）には chrome.storage が無く、サーバーで学んだ motion が**届いていなかった**。
+     *   content.js の橋（axlx-page-learn-push）が pointer-ui.js 経由で window.__axlxServerMotion に置く → chrome.storage が無い時はそれを読む。
+     *   （isolated world では今まで通り chrome.storage）。無ければ null＝手元の癖・既定の動き。
+     */
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+        var _g = (typeof self !== "undefined" ? self : (typeof window !== "undefined" ? window : null));
+        var _gm = _g && _g.__axlxServerMotion;
+        return (_gm && typeof _gm === "object") ? _gm : null;
+      }
+    } catch (_) { return null; }
     if (_srvMotion && now - _srvMotionAt < 60000) return _srvMotion;
     _srvMotionAt = now;
     try {
@@ -1052,6 +1064,19 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
     var ms = (dist / profile.speed_px_s) * 1000;
     // 速さから出した時間を 120〜1600ms に丸める（0ms で飛ばない・長すぎて止まらない）
     return Math.max(120, Math.min(1600, Math.round(ms)));
+  }
+
+  /**
+   * 2026-11-19 v2.8.25: 学習した「速さ」(px/s) をそのまま返す（サーバー → 手元の癖の順・無ければ null）。
+   *   moveMsFor は dist/speed で時間を一定に決めてしまうので、自動の動きは**この速さを分布の中央値**にして
+   *   対数正規で引く（pointer-ui.js の moveTo → human-wait.js の planMove）。100〜1200 px/s に丸める。
+   */
+  function learnedSpeedPxS(profile) {
+    var srv = _serverMotion();
+    var s = srv && typeof srv.speed_px_s === "number" ? srv.speed_px_s : null;
+    if (!(s > 0) && profile && typeof profile.speed_px_s === "number") s = profile.speed_px_s;
+    if (!(s > 0) || !isFinite(s)) return null;
+    return Math.max(100, Math.min(1200, s));
   }
 
   /**
@@ -1344,6 +1369,7 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
     profileFrom: profileFrom,
     moveMsFor: moveMsFor,
     serverCurve: serverCurve,
+    learnedSpeedPxS: learnedSpeedPxS,
     serverGapMs: serverGapMs,
     serverLearnLines: serverLearnLines,
     learnedLines: learnedLines,

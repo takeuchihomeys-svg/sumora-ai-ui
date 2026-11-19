@@ -36,9 +36,12 @@ function extractFn(name) {
 
 const sandbox0 = { };
 vm.createContext(sandbox0);
-vm.runInContext(["_axWantPlaceMode", "_planLeftover"].map(extractFn).join("\n"), sandbox0);
+vm.runInContext(["_axWantPlaceMode", "_planLeftover", "_ledgerNamesLeft", "_f57Judge", "_leftoverStuckText"].map(extractFn).join("\n"), sandbox0);
 const want = sandbox0._axWantPlaceMode;
 const plan = sandbox0._planLeftover;
+const _ledgerNamesLeft = sandbox0._ledgerNamesLeft;
+const _f57Judge = sandbox0._f57Judge;
+const _leftoverStuckText = sandbox0._leftoverStuckText;
 
 console.log("\n■ ① 今回のお客さんが欲しい場所（_axWantPlaceMode）");
 ok("区コードあり→area", want({ city_codes: ["27100"] }) === "area");
@@ -104,6 +107,9 @@ function runGate(opts) {
     _clearStationsBeforeWardThen: (next) => { log.stClear++; log.forceOpenAtStationClear = win.__axlxLedgerForceOpenSt; if (opts.afterStClear) opts.afterStClear(); next(); },
     _clearWardsBeforeStationThen: (next) => { log.wdClear++; next(); },
     _ledgerClear: () => { log.ledgerCleared++; },
+    // 2.8.125 進捗型・F57 で関所に加わった関数（純関数は本物、中止は記録だけ）
+    _ledgerNamesLeft, _f57Judge, _leftoverStuckText,
+    _leftoverAbort: (m) => { log.aborted = (log.aborted || 0) + 1; log.abortMsg = m; },
   };
   vm.createContext(sb);
   vm.runInContext(gateSrc, sb);
@@ -127,7 +133,8 @@ ok("台帳だけに駅がある→沿線・駅を開いて確かめる（強制�
 r = runGate({ cond: { station_names: ["梅田"] }, scans: [{ stations: 3 }, { stations: 3 }] });
 ok("駅→駅は外し専用を呼ばない（入れ直しの既存手順へ）", r.stClear === 0 && r.wdClear === 0 && r.proceed === 1, r);
 r = runGate({ round: 1, scans: [{ stations: 5 }, { stations: 5 }] });
-ok("外し切れず駅が残る→leftover_unclean で理由を残して進む", r.proceed === 1 && r.steps.some((s) => s[0] === "leftover_unclean"), r);
+ // 2.8.125 竹内さん「最大3回って形だと残ってしまう」→ 外し切れず場所が残る時は汚れたまま関所へ進まず leftover_stuck で中止（旧: leftover_unclean で進む）
+ ok("外し切れず駅が残る→leftover_stuck で理由を残して中止（進まない）", r.proceed === 0 && r.aborted === 1 && /^leftover_stuck:/.test(r.abortMsg) && r.steps.some((s) => s[0] === "leftover_stuck"), r);
 
 console.log("\n■ ⑤ 台帳の保存・読み込み");
 const ledSrc = ["_ledgerLoad", "_ledgerClear", "_ledgerReset", "_ledgerSave", "_ledgerNames", "_ledgerSaveSoon"].map(extractFn);
@@ -176,7 +183,7 @@ ok("_doReset が点検に leftover_scan を残す", /_auditStepP\("leftover_scan
 ok("_doReset の完了が _cleanStartGate を通る", /_cleanStartGate\(cond, _rr, _cb0/.test(ps));
 ok("探索の起点で台帳を読み込んでから覚えを消す（順序）", ps.indexOf("window.__axlxPrevLedger = _pl;") > 0 && ps.indexOf("window.__axlxPrevLedger = _pl;") < ps.indexOf("_resetPicked();", ps.indexOf("window.__axlxPrevLedger = _pl;")));
 ok("検索押下・pagehide・選択のたびに台帳を保存", /_ledgerSave\("search"\)/.test(ps) && /_ledgerSave\("pagehide"\)/.test(ps) && /_ledgerSaveSoon\("station"\)/.test(ps) && /_ledgerSaveSoon\("ward"\)/.test(ps));
-ok("監査の間引きから leftover_ を守る", /search_wait_view\|leftover_\)/.test(ps));
+ok("監査の間引きから leftover_ を守る", /search_wait_view\|leftover_(\|post_send_clear)?\)/.test(ps));
 const mf = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 ok("版: _AXLX_PAGE_VER が manifest と同じ（2.8.124 以降）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && mf.version.localeCompare("2.8.124", undefined, { numeric: true }) >= 0, mf.version);
 

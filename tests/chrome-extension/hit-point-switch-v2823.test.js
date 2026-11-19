@@ -96,9 +96,10 @@ console.log("\n■ ② 押す前に使う（カーソル移動・プルダウン
 
 console.log("\n■ ③ 客が替わる時に駅・沿線／区を外し切る（最大3回）");
 {
-  ok("区の前の駅外し: 残れば開き直して外す（station_clear_retry）", /if \(\(lx\.st \|\| lx\.ln\) && _round < 2\)[\s\S]{0,300}"station_clear_retry"[\s\S]{0,200}_clearStationsBeforeWardThen\(nextFn, why, _round \+ 1\)/.test(ps));
+  // 2.8.125 竹内さん「最大3回って形だと残ってしまう」→ 回数上限（_round < 2）をやめ進捗型（_leftoverProgressStep）に。期待はその形に直した
+  ok("区の前の駅外し: 残れば開き直して外す（進捗型・station_clear_retry）", /_leftoverProgressStep\(prog, lx\.st \+ lx\.ln, clk\.tick\(\)\)[\s\S]{0,1200}"station_clear_retry"[\s\S]{0,400}_clearStationsBeforeWardThen\(nextFn, why, _round \+ 1, prog\)/.test(ps) && !/_round < 2\)[\s\S]{0,200}station_clear_retry/.test(ps));
   ok("沿線・駅絞り込みの押し直しは2回まで（open_retry を残す）", /reopenN < 2\)[\s\S]{0,200}"station_clear_open_retry"/.test(ps));
-  ok("駅の前の区外し: 開けず・時間切れで残ればやり直す（ward_clear_retry）", /if \(how !== "完了" && _wardLeft\(\) > 0 && _round < 2\)[\s\S]{0,300}"ward_clear_retry"[\s\S]{0,200}_clearWardsBeforeStationThen\(nextFn, why, _round \+ 1\)/.test(ps));
+  ok("駅の前の区外し: 開けず・時間切れ・残りがあればやり直す（進捗型・ward_clear_retry）", /_leftoverProgressStep\(prog, _wl, clk\.tick\(\)\)[\s\S]{0,1500}"ward_clear_retry"[\s\S]{0,500}_clearWardsBeforeStationThen\(nextFn, why, _round \+ 1, prog\)/.test(ps) && !/how !== "完了" && _wardLeft\(\) > 0 && _round < 2/.test(ps));
 }
 
 console.log("\n■ ④ 連続の客: 前客の送付を断らない・送付が終わるまで待つ");

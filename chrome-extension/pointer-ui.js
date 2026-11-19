@@ -77,6 +77,15 @@
   var _handLoadedAt = 0;
   /** ★ 2026-11-18 MAIN world(pointer-ui) 向け: content.js 橋＋localStorage キャッシュから癖/位置/手の形を読む */
   var _PTR_CACHE_KEY = "axlx_pointer_cache";
+  /** ★ 2026-11-19 v2.8.25: サーバーで学んだ動き／ラン単位の動き計画（content.js の橋で届く） */
+  var MOTION_KEY = "axlx_learn_motion";
+  var PLAN_KEY = "axlx_motion_plan";
+  function _root() {
+    try {
+      return (typeof self !== "undefined" ? self : null) || (typeof window !== "undefined" ? window : null) ||
+        (typeof globalThis !== "undefined" ? globalThis : null);
+    } catch (_) { return null; }
+  }
   function _ptrCacheSave(partial) {
     try {
       if (!partial || typeof partial !== "object") return;
@@ -113,6 +122,24 @@
       }
       if (r[POINTS_KEY] && typeof r[POINTS_KEY] === "object") _points = r[POINTS_KEY];
       if (r[CURSOR_HAND_KEY] && typeof r[CURSOR_HAND_KEY] === "object") _handFields = r[CURSOR_HAND_KEY];
+      /**
+       * ★ 2026-11-19 v2.8.25: サーバーで学んだ動き（axlx_learn_motion）と動き計画（axlx_motion_plan）を MAIN world の
+       *   グローバルへ置く。human-learn.js の _serverMotion は chrome.storage が無い時にこれを読む。
+       *   （content.js の PUSH_KEYS に2キーを足した＝ axlx-page-learn-push で届く）。null は「無い」として消す。
+       */
+      _applyMotionKeys(r);
+    } catch (_) {}
+  }
+  function _applyMotionKeys(r) {
+    try {
+      var _R = _root();
+      if (!_R || !r || typeof r !== "object") return;
+      if (Object.prototype.hasOwnProperty.call(r, MOTION_KEY)) {
+        _R.__axlxServerMotion = (r[MOTION_KEY] && typeof r[MOTION_KEY] === "object") ? r[MOTION_KEY] : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(r, PLAN_KEY)) {
+        _R.__axlxMotionPlan = (r[PLAN_KEY] && typeof r[PLAN_KEY] === "object") ? r[PLAN_KEY] : null;
+      }
     } catch (_) {}
   }
   function _ptrBridgeFetch(keys) {
@@ -145,7 +172,7 @@
             try { _handFields = (r && r[CURSOR_HAND_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _handFields = {}; }
           });
         } else {
-          _ptrBridgeFetch([CURSOR_HAND_KEY, POINTS_KEY, PROF_LIVE_KEY, PROF_KEY]);
+          _ptrBridgeFetch([CURSOR_HAND_KEY, POINTS_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY]);
         }
       }
       if (!_handFields || typeof _handFields !== "object") return false;
@@ -168,7 +195,7 @@
             try { _points = (r && r[POINTS_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _points = {}; }
           });
         } else {
-          _ptrBridgeFetch([POINTS_KEY, CURSOR_HAND_KEY, PROF_LIVE_KEY, PROF_KEY]);
+          _ptrBridgeFetch([POINTS_KEY, CURSOR_HAND_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY]);
         }
       } catch (_) {}
     }
@@ -185,7 +212,7 @@
       var LL = _learn();
       if (!LL || !LL.profileFrom) return;
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
-        _ptrBridgeFetch([PROF_LIVE_KEY, PROF_KEY, POINTS_KEY, CURSOR_HAND_KEY]);
+        _ptrBridgeFetch([PROF_LIVE_KEY, PROF_KEY, POINTS_KEY, CURSOR_HAND_KEY, MOTION_KEY, PLAN_KEY]);
         return;
       }
       /**
@@ -193,8 +220,9 @@
        *   ① 貯まるたびに作り直された癖（axlx_human_profile）があれば**それをそのまま使う**（一番新しい理解）
        *   ② 無ければ、貯まった実測（axlx_human_learn）から今この場で作る
        */
-      chrome.storage.local.get([PROF_LIVE_KEY, PROF_KEY], function (r) {
+      chrome.storage.local.get([PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY], function (r) {
         try {
+          _applyMotionKeys(r);
           _ptrCacheSave(r);
           var live = r && r[PROF_LIVE_KEY];
           if (live && typeof live === "object") { _prof = live; return; }
@@ -208,6 +236,7 @@
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener(function (ch, area) {
         if (area !== "local" || !ch) return;
+        if (ch[PLAN_KEY]) _applyMotionKeys((function () { var o = {}; o[PLAN_KEY] = ch[PLAN_KEY].newValue; return o; })());
         if (ch[PROF_LIVE_KEY] || ch[PROF_KEY]) reloadProfile();
       });
     }
@@ -355,10 +384,11 @@
     _el.style.transform = "translate3d(" + Math.round(x - tip.x) + "px," + Math.round(y - tip.y) + "px,0)";
   }
 
-  function _press(down) {
+  function _press(down, depth) {
     if (!_el) return;
+    var d = (typeof depth === "number" && depth > 0.5 && depth < 1) ? depth : 0.86;
     _el.style.transform = _el.style.transform.replace(/\s*scale\([^)]*\)/, "");
-    _el.style.transform += down ? " scale(0.86)" : " scale(1)";
+    _el.style.transform += down ? " scale(" + (Math.round(d * 100) / 100) + ")" : " scale(1)";
   }
 
   /**
@@ -394,6 +424,180 @@
     if (v < 140) v = 140;
     if (v > 900) v = 900;
     return Math.round(v);
+  }
+
+  /**
+   * ★ 2026-11-19 v2.8.25 ラン（検索）ごとの「動きの個性」（persona）。
+   *   ・persona は「ラン／お客さん」が変わった時に作り直す。変わりの検知は**この中で完結**（page-script.js は触らない）:
+   *       window.__axlxRunId と window._axFillRunningCustomerId の組が変わった／一度空になってから入った → 新しいラン。
+   *       どちらも空（ラン外）の時は、最後の動きから 90秒 空いたら作り直す（休憩の長い待ちは run_key があるので変わらない）。
+   *   ・同じラン内では persona を固定し、各移動の乱数は persona の seed 付き乱数から1本ずつ派生させる
+   *     （ラン内の個性は一貫・移動ごとの細部は毎回ちがう）。
+   *   ・サーバーの動き計画（window.__axlxMotionPlan＝ axlx_motion_plan）が有効なら run_seed と persona の値を優先
+   *     （範囲に丸める・期限切れ/不正は無視）。無くても API が失敗してもローカルの seed で同等に動く。
+   *   ・human-wait.js が読めない時は persona が作れない＝moveTo は従来の動き（_planLegacy）に戻る。
+   */
+  var IDLE_REBUILD_MS = 90 * 1000;
+  var _persona = null;
+  var _personaKey = "";
+  var _personaPlanSig = "";
+  var _personaSawEmpty = false;
+  var _personaAt = 0;
+  var _lastMoveAt = 0;
+  var _runRng = null;
+  var _forcedSeed = null;
+  function _runKey() {
+    var R = _root();
+    var rid = R && R.__axlxRunId, cid = R && R._axFillRunningCustomerId;
+    var a = (rid == null) ? "" : String(rid), b = (cid == null) ? "" : String(cid);
+    return (a || b) ? (a + "|" + b) : "";
+  }
+  function _planNow() {
+    try {
+      var H = _hum();
+      var R = _root();
+      return (H && H.sanitizePlan && R) ? H.sanitizePlan(R.__axlxMotionPlan) : null;
+    } catch (_) { return null; }
+  }
+  function _rebuildPersona(key, plan, now) {
+    var H = _hum();
+    if (!H || !H.makePersona) { _persona = null; _runRng = null; return null; }
+    var seed;
+    if (_forcedSeed != null) { seed = _forcedSeed; _forcedSeed = null; }
+    else seed = (H.hashSeed(String(key) + ":" + now) ^ Math.floor(Math.random() * 4294967296)) >>> 0;
+    try { _persona = H.makePersona(seed, plan ? _root().__axlxMotionPlan : null); } catch (_) { _persona = null; }
+    if (!_persona) { _runRng = null; return null; }
+    _personaKey = key || "";
+    _personaPlanSig = plan ? (plan.plan_id + ":" + (plan.run_seed == null ? "" : plan.run_seed)) : "";
+    _personaSawEmpty = !key;
+    _personaAt = now;
+    _runRng = H.seededRng((_persona.seed ^ 0x9e3779b9) >>> 0);
+    return _persona;
+  }
+  /** 今のラン用の persona（必要なら作り直す）。作れなければ null＝従来の動き */
+  function _ensurePersona() {
+    var now = Date.now();
+    var key = _runKey();
+    var plan = _planNow();
+    var sig = plan ? (plan.plan_id + ":" + (plan.run_seed == null ? "" : plan.run_seed)) : "";
+    var need = !_persona || _forcedSeed != null;
+    if (!need) {
+      if (sig && sig !== _personaPlanSig) need = true;                              // 新しい計画が来た
+      else if (key && (key !== _personaKey || _personaSawEmpty)) need = true;        // 新しいラン
+      else if (!key && now - _lastMoveAt > IDLE_REBUILD_MS) need = true;             // ラン外で長く空いた
+    }
+    if (!key) _personaSawEmpty = true;
+    var p = need ? _rebuildPersona(key, plan, now) : _persona;
+    _lastMoveAt = now;
+    return p;
+  }
+  /** 次の1回の移動用の乱数（persona の seed 付き乱数から派生・無ければ null＝Math.random） */
+  function _moveRng() {
+    try {
+      var H = _hum();
+      if (!_runRng || !H || !H.seededRng) return null;
+      return H.seededRng(Math.floor(_runRng() * 4294967296));
+    } catch (_) { return null; }
+  }
+  /** 呼び出し側が明示的に新しいランを始める（seed を渡せば再現できる）。persona を返す */
+  function newRun(seed) {
+    if (typeof seed === "number" && isFinite(seed)) _forcedSeed = Math.floor(seed) >>> 0;
+    else if (seed != null && seed !== "") { var H = _hum(); _forcedSeed = H && H.hashSeed ? H.hashSeed(seed) : null; }
+    else _forcedSeed = (Math.floor(Math.random() * 4294967296)) >>> 0;
+    return _ensurePersona();
+  }
+  /** 見えるカーソルの押し込み時間(ms)。persona.press_ms を中央値とする対数正規（45〜180ms）。page-script.js の押す時間にも使える */
+  function holdMs() {
+    try {
+      var H = _hum();
+      var p = _ensurePersona();
+      if (p && H && H.pressMs) return H.pressMs(p, _moveRng());
+    } catch (_) {}
+    return 90;
+  }
+  /** いまの persona の要約（監査用・値は範囲内に丸め済み） */
+  function personaInfo() {
+    var p = _persona || _ensurePersona();
+    if (!p) return null;
+    var o = {};
+    for (var k in p) { if (Object.prototype.hasOwnProperty.call(p, k)) o[k] = p[k]; }
+    return o;
+  }
+  /** 自動の動きの記録（軌跡の点は持たない）。最大 200件のリング */
+  var MAX_AUTO_MOVES = 200;
+  function _noteMove(m) {
+    try {
+      var R = _root();
+      if (!R) return;
+      if (!R.__axlxAutoMoves || !Array.isArray(R.__axlxAutoMoves)) R.__axlxAutoMoves = [];
+      var a = R.__axlxAutoMoves;
+      a.push(m);
+      if (a.length > MAX_AUTO_MOVES) a.splice(0, a.length - MAX_AUTO_MOVES);
+    } catch (_) {}
+  }
+  /**
+   * 自動の動きの指標（監査の motion_stats に載せる用）:
+   *   { n, speed_p50, speed_cv, ms_p50, ms_cv, curve_p50, curve_p90, curve_cv, dist_p50, peak_p50, over_pct, pause_pct, plan_id, persona }
+   */
+  function motionStats() {
+    var H = _hum();
+    var R = _root();
+    var moves = (R && Array.isArray(R.__axlxAutoMoves)) ? R.__axlxAutoMoves : [];
+    var s = (H && H.motionSummary) ? H.motionSummary(moves) : { n: moves.length };
+    var plan = _planNow();
+    s.plan_id = (plan && plan.plan_id) || (_persona && _persona.plan_id) || null;
+    var p = _persona;
+    s.persona = p ? {
+      seed: p.seed, source: p.source,
+      speed_scale: p.speed_scale, curve_gain: p.curve_gain, overshoot_p: p.overshoot_p, hesitate_p: p.hesitate_p,
+      press_ms: p.press_ms, tremor: p.tremor, dwell_scale: p.dwell_scale,
+    } : null;
+    return s;
+  }
+  function _ptsLen(pts) {
+    var s = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+      s += Math.sqrt(dx * dx + dy * dy);
+    }
+    return s;
+  }
+
+  /**
+   * 従来の動きの計画（persona が作れない時＝human-wait.js が読めない時の安全な予備）。2026-11-19 までの moveTo と同じ。
+   *   返り値: { pts, waits, total, pauseAt, pauseMs, overshoot }
+   */
+  function _planLegacy(from, t, dist, H, _LL, prof, _curve) {
+    var _learned = (prof && _LL && _LL.moveMsFor) ? _LL.moveMsFor(prof, dist) : null;
+    var total = _learned != null ? _learned : Math.min(1600, Math.max(320, Math.round(dist * 2.45)));
+    if (_learned == null && H && H.logNormalDelay) {
+      try {
+        var _jitterT = H.logNormalDelay(total, 0.28);
+        if (_jitterT > 280 && _jitterT < 1800) total = Math.round(_jitterT);
+      } catch (_) {}
+    }
+    var steps = Math.min(48, Math.max(10, Math.round(dist / 16)));
+    var pts = (H && H.pointerPath) ? H.pointerPath(from, t, steps) : [{ x: from.x, y: from.y }, t];
+    // 学びが薄い時も曲げる（一直線の機械感を減らす）
+    if (!(_curve > 1)) _curve = 1.18 + Math.random() * 0.28;
+    if (_curve && _curve > 1 && pts.length > 3) {
+      try { pts = _bendLike(pts, from, t, _curve); } catch (_) {}
+    }
+    var over = false;
+    if (dist > 80 && pts.length > 4 && Math.random() < 0.72) {
+      try {
+        var _ox = (t.x - from.x) / (dist || 1);
+        var _oy = (t.y - from.y) / (dist || 1);
+        var _over = 8 + Math.random() * 28;
+        var _overPt = { x: t.x + _ox * _over, y: t.y + _oy * _over };
+        pts = pts.slice(0, -1).concat([_overPt, t]);
+        total = Math.min(1800, total + 110 + Math.floor(Math.random() * 180));
+        over = true;
+      } catch (_) {}
+    }
+    var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
+    var pauseAt = total > 320 ? _pausePointFor(pts.length) : (Math.random() < 0.12 ? _pausePointFor(pts.length) : -1);
+    return { pts: pts, waits: waits, total: total, pauseAt: pauseAt, pauseMs: pauseAt >= 0 ? _pauseMs() : 0, overshoot: over };
   }
 
   /**
@@ -437,53 +641,53 @@
      */
     var prof = _profile();
     var _LL = _learn();
-    var _learned = (prof && _LL && _LL.moveMsFor) ? _LL.moveMsFor(prof, dist) : null;
     /**
-     * ★ 2026-11-17 通常録画: 操作間隔 p50≈1117ms。移動も遅め・点多め・曲がり強め。
-     *   旧 dist*1.85 / max1100 は短距離で機械的に見える。
+     * ★ 2026-11-19 v2.8.25 自動のカーソルを「人の実測分布」に寄せる（本番DB 通常モード・リアプロ 直近150行）:
+     *   速さ p50=375px/s・CV 0.64／曲がり p50=1.02（ほぼ直線）／移動時間 p50=284ms・CV 0.91／距離 p50=116px。
+     *   ・速さは対数正規で引く（中央値 375px/s × persona.speed_scale・サーバー/手元で学んだ速さがあれば中央値をそれに置き換える。一定にしない）
+     *   ・曲がりは persona.curve_gain の小さな弧（学んだ曲がりが 1 付近ならほぼ直線）
+     *   ・行き過ぎは 80px 超で persona.overshoot_p（0.08〜0.28）・量 4〜14px・ためらいは persona.hesitate_p
+     *   ・persona は検索（ラン）ごとに変わる（同じラン内は固定）。軌跡の作り方は human-wait.js の planMove（純関数）。
+     *   ・human-wait.js が読めない時だけ従来の動き（_planLegacy）。
+     * 2026-11-11 竹内さん「通常モードの動きから学ぶのか」/ 2026-11-13「連携できていない部分」:
+     *   覚えた**曲がり具合**に寄せる（1.0＝まっすぐ）。サーバーで学んだ曲がりを先に見る。
      */
-    var total = _learned != null ? _learned : Math.min(1600, Math.max(320, Math.round(dist * 2.45)));
-    if (_learned == null && H && H.logNormalDelay) {
-      try {
-        var _jitterT = H.logNormalDelay(total, 0.28);
-        if (_jitterT > 280 && _jitterT < 1800) total = Math.round(_jitterT);
-      } catch (_) {}
-    }
-    var steps = Math.min(48, Math.max(10, Math.round(dist / 16)));
-    var pts = (H && H.pointerPath) ? H.pointerPath(from, t, steps) : [{ x: from.x, y: from.y }, t];
-    // 2026-11-11: 覚えた**曲がり具合**に寄せる（1.0＝まっすぐ・大きいほど曲げる）
-    // 2026-11-13 竹内さん「連携できていない部分」: サーバーで学んだ曲がりも先に見る
     var _curve = null;
     try {
       if (_LL && _LL.serverCurve) _curve = _LL.serverCurve();
     } catch (_) { _curve = null; }
     if (_curve == null && prof && prof.curve > 1) _curve = prof.curve;
-    // 学びが薄い時も曲げる（一直線の機械感を減らす）— 2026-11-17: やや強め
-    if (!(_curve > 1)) _curve = 1.18 + Math.random() * 0.28;
-    if (_curve && _curve > 1 && pts.length > 3) {
-      try { pts = _bendLike(pts, from, t, _curve); } catch (_) {}
-    }
-    /**
-     * ★ 2026-11-16 統括Pro「カーソルの動かし方を人間のように徹底」:
-     *   長い移動の約半分で**行き過ぎて戻る**（Fittsの修正）。一直線でピタ止めしない。
-     */
-    if (dist > 80 && pts.length > 4 && Math.random() < 0.72) {
+    var _pp = null, _mp = null;
+    try { _pp = _ensurePersona(); } catch (_) { _pp = null; }
+    if (_pp && H && H.planMove) {
       try {
-        var _ox = (t.x - from.x) / (dist || 1);
-        var _oy = (t.y - from.y) / (dist || 1);
-        var _over = 8 + Math.random() * 28;
-        var _overPt = { x: t.x + _ox * _over, y: t.y + _oy * _over };
-        pts = pts.slice(0, -1).concat([_overPt, t]);
-        total = Math.min(1800, total + 110 + Math.floor(Math.random() * 180));
-      } catch (_) {}
+        var _spd = (_LL && _LL.learnedSpeedPxS) ? _LL.learnedSpeedPxS(prof) : null;
+        _mp = H.planMove(from, t, { persona: _pp, rng: _moveRng(), speedPxS: _spd, curve: _curve });
+        if (!_mp || !_mp.pts || _mp.pts.length < 2) _mp = null;
+      } catch (_) { _mp = null; }
     }
-    var waits = (H && H.pointerDelays) ? H.pointerDelays(pts.length, total) : null;
+    var pts, waits, total, _pauseAt, _pauseMsVal, _moveRec;
+    if (_mp) {
+      pts = _mp.pts; waits = _mp.waits; total = _mp.ms;
+      _pauseAt = _mp.pauseAt; _pauseMsVal = _mp.pauseMs;
+      _moveRec = { dist: _mp.dist, ms: _mp.ms, pathLen: _mp.pathLen, curve: _mp.curve, overshoot: _mp.overshoot, paused: _mp.paused, peakRatio: _mp.peakRatio };
+    } else {
+      var _pl = _planLegacy(from, t, dist, H, _LL, prof, _curve);
+      pts = _pl.pts; waits = _pl.waits; total = _pl.total;
+      _pauseAt = _pl.pauseAt; _pauseMsVal = _pl.pauseMs;
+      var _plen = _ptsLen(pts);
+      _moveRec = { dist: dist, ms: total, pathLen: _plen, curve: dist > 0 ? _plen / dist : 1, overshoot: !!_pl.overshoot, paused: _pauseAt >= 0, peakRatio: null };
+    }
+    // 自動の動きの指標（軌跡の点は残さない）
+    try {
+      _moveRec.dist = Math.round(_moveRec.dist * 10) / 10; _moveRec.pathLen = Math.round(_moveRec.pathLen * 10) / 10;
+      _moveRec.straight = _moveRec.dist; _moveRec.curve = Math.round(_moveRec.curve * 1000) / 1000;
+      if (_moveRec.peakRatio != null) _moveRec.peakRatio = Math.round(_moveRec.peakRatio * 100) / 100;
+      _moveRec.at = Date.now();
+      _noteMove(_moveRec);
+    } catch (_) {}
     var anim = { cancelled: false };
     _anim = anim;
-    // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」: 途中で手を止める位置
-    // 短い移動でも稀に一息（人が画面を見直す）
-    var _pauseAt = total > 320 ? _pausePointFor(pts.length) : (Math.random() < 0.12 ? _pausePointFor(pts.length) : -1);
-    var _pauseMsVal = _pauseAt >= 0 ? _pauseMs() : 0;
     return new Promise(function (resolve) {
       var i = 0;
       function step() {
@@ -629,8 +833,14 @@
           ? document.elementFromPoint(Math.round(_pos.x), Math.round(_pos.y)) : null
       )) _setShape("hand");
     } catch (_) {}
-    _press(true);
-    setTimeout(function () { _press(false); }, 90);
+    /**
+     * ★ 2026-11-19 v2.8.25: 押し込みの時間は 90ms 固定をやめ、persona.press_ms を中央値とする対数正規（45〜180ms）。
+     *   縮み率も 0.86 固定ではなく 0.79〜0.89 でゆらす。同じ時間は holdMs() で外へ出す（page-script.js の押す時間にも使える）。
+     */
+    var _hold = holdMs();
+    var _depth = 0.84 + ((function () { var g = _moveRng(); return g ? g() : Math.random(); })() - 0.5) * 0.10;
+    _press(true, _depth);
+    setTimeout(function () { _press(false); }, _hold);
     /**
      * 2026-11-11 竹内さん「動きも学習させたい」:
      *   拡張が押すたびに、**どこを押したか・どれくらい間が空いたか**を記録側へ知らせる。
@@ -895,6 +1105,11 @@
     // 2026-11-11: 通常モードで覚えた動きの癖（速さ・曲がり・押す位置）
     reloadProfile: reloadProfile,
     profile: _profile,
+    // 2026-11-19 v2.8.25: ラン単位の動きの個性・押し込み時間・自動の動きの指標
+    holdMs: holdMs,
+    newRun: newRun,
+    persona: personaInfo,
+    motionStats: motionStats,
     /** 点検用: 今の形（arrow|hand） */
     shape: function () { return _shape; },
     ELEMENT_ID: ID,
