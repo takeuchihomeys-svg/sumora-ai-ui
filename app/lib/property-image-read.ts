@@ -50,6 +50,13 @@ export const PROPERTY_IMAGE_MAX_TOKENS = 8000;
 //   ⚠ ここで読んだ値は「記録と分析（🌟の候補一覧・ブレインの点の検証）」にだけ使う。返信の本文に数字を書く材料にはしない
 //     （下の PROPERTY_IMAGE_DETAIL_PROMPT の「金額・住所・駅徒歩・面積は書かない」線はそのまま＝誤読がそのまま事故になるため）。
 //   ⚠ 指示の文は固定で先頭（画像はその後）＝ DeepSeek のキャッシュが効く形のまま。お客様の画像・本人確認書類は呼び出し側で出さない
+// 2026-11-19 作業員L（毎朝の穴の割り当て 11/19「402号室のリビング帖数」の土台）: 部屋ごとの帖数（LDK・洋室・和室）を読む欄。
+//   今の読みは間取りと㎡だけで、お客様の「リビング何帖ですか」に資料から答えられなかった。IMAGE_READ_ROOMS=on（既定 off）の時だけ指示に1項目足す
+//   （off の時は指示の文が1文字も変わらない＝キャッシュも今のまま）。保存先は sent_image_properties.facts.rooms（jsonb の中・列は足さない）
+export const imageReadRoomsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.IMAGE_READ_ROOMS ?? "").trim().toLowerCase() === "on";
+export const PROPERTY_IMAGE_ROOMS_LINE = `\n- rooms: 間取り図に書かれた部屋ごとの帖数（例 [{"name":"LDK","jo":10.5},{"name":"洋室","jo":6}]。name は LDK・DK・K・洋室・和室・寝室のどれか、jo は帖の数字）。書かれていなければ []`;
+/** 物件の画像を読む指示（IMAGE_READ_ROOMS=on の時だけ部屋ごとの帖数の1行を足す） */
+export function propertyImagePrompt(env?: Record<string, string | undefined>): string { return imageReadRoomsOn(env) ? PROPERTY_IMAGE_PROMPT.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : PROPERTY_IMAGE_PROMPT; }
 export const PROPERTY_IMAGE_PROMPT =`この画像から物件情報を読み取ってください。JSONのみ返答（説明文・コードブロック・前置き一切不要）：
 {"items":[{"property_name":"","room_number":"","rent":null,"admin_fee":null,"deposit":null,"key_money":null,"floor_plan":"","area_sqm":null,"station":"","walk_minutes":null,"built":"","ad":"","status":"","vacancy_date":""}],"is_property":true}
 - items: 画像に出ている物件を全部。1件だけなら1つ、一覧なら全部
@@ -266,9 +273,18 @@ export type ReadItem = {
   walkMinutes?: number | null;
   built?: string | null;
   ad?: string | null;
+  /** 2026-11-19 作業員L: 部屋ごとの帖数（IMAGE_READ_ROOMS=on の時だけ読む） */
+  rooms?: Array<{ name: string; jo: number }> | null;
 };
 export type ReadResult = { items: ReadItem[]; isProperty: boolean; raw: string; usage?: { input: number; output: number; cacheHit?: number } };
 
+const ROOM_NAME_OK = /^(?:LDK|DK|K|L|洋室|和室|寝室|サービスルーム|S)\d?$/;
+/** 部屋ごとの帖数（名前が決まった語・帖が 2〜40 の物だけ・最大8部屋） */
+export function roomsOf(v: unknown): Array<{ name: string; jo: number }> | null {
+  if (!Array.isArray(v)) return null;
+  const out = v.flatMap((r) => { const o = (r && typeof r === "object" ? r : {}) as { name?: unknown; jo?: unknown }; const name = String(o.name ?? "").normalize("NFKC").trim(); const jo = Number(String(o.jo ?? "").replace(/[^0-9.]/g, "")); return ROOM_NAME_OK.test(name) && Number.isFinite(jo) && jo >= 2 && jo <= 40 ? [{ name, jo }] : []; }).slice(0, 8);
+  return out.length ? out : null;
+}
 /** 応答から JSON を取り出す（```json で囲まれる事がある） */
 export function parseReadResult(content: string): ReadResult {
   const raw = (content ?? "").trim();
@@ -315,6 +331,7 @@ export function parseReadResult(content: string): ReadResult {
         walkMinutes: num(o.walk_minutes ?? o["徒歩"]),
         built: str(o.built ?? o["築年月"]),
         ad: str(o.ad ?? o["広告料"]),
+        rooms: roomsOf(o.rooms ?? o["部屋"]),
       };
       // 号室が配列で返る事がある（物件一覧の画像）
       const rooms = Array.isArray(roomRaw) ? roomRaw.map((x) => String(x)) : [String(roomRaw ?? "")];
@@ -351,7 +368,7 @@ export async function readPropertyImage(
         // 2026-09-29: 推論なし・温度0（下の PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS の注記）
         ...(thinking ? {} : { thinking: { type: "disabled" }, temperature: 0 }),
         messages: [{ role: "user", content: [
-          { type: "text", text: PROPERTY_IMAGE_PROMPT },
+          { type: "text", text: propertyImagePrompt() },
           { type: "image_url", image_url: { url: imageUrl } },
         ] }],
       }),

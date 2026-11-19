@@ -399,8 +399,10 @@ export type ImageReadItemLike = {
   propertyName?: string | null; roomNumber?: string | null; rent?: number | null; adminFee?: number | null; deposit?: number | null; keyMoney?: number | null;
   floorPlan?: string | null; areaSqm?: number | null; station?: string | null; walkMinutes?: number | null; built?: string | null; ad?: string | null;
   status?: string | null; vacancyDate?: string | null;
+  /** 2026-11-19 作業員L: 部屋ごとの帖数（IMAGE_READ_ROOMS=on の読み） */
+  rooms?: Array<{ name: string; jo: number }> | null;
 };
-export type ImageFacts = ParsedFacts & { station?: string | null; walk_minutes?: number | null; status?: string | null; vacancy_date?: string | null; read_items?: number };
+export type ImageFacts = ParsedFacts & { station?: string | null; walk_minutes?: number | null; status?: string | null; vacancy_date?: string | null; read_items?: number; rooms?: Array<{ name: string; jo: number }> };
 
 /**
  * 2026-09-25 竹内「候補の記憶を太くする」: お客様に送った画像1枚の読み取り（DeepSeek）→ 候補の値（sent_image_properties.facts）。
@@ -446,6 +448,7 @@ export function factsFromImageRead(item: ImageReadItemLike, now: Date | string =
   if (room) { out.room_no = room.replace(/号室?$/, ""); const f = floorFromRoomNo(out.room_no); if (f != null) out.floor = f; }
   if (item.status) out.status = item.status;
   if (item.vacancyDate) out.vacancy_date = item.vacancyDate;
+  if (Array.isArray(item.rooms) && item.rooms.length) out.rooms = item.rooms.slice(0, 8);
   return out;
 }
 
