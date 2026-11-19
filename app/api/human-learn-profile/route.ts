@@ -15,6 +15,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
+import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
 export const dynamic = "force-dynamic";
 /**
@@ -433,6 +434,10 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let saveError: string | null = null;
   let saved = false;
   try {
+    const carry = await carryLearnedShots(supabase, scope, bundle);
+    (bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
+  } catch { /* 位置を継げなくても束は残す */ }
+  try {
     const ins = await supabase.from("human_learn_profile").insert({
       scope,
       source_rows: bundle.source.rows,
@@ -527,7 +532,7 @@ export async function GET(req: NextRequest) {
   const lightReq = req.nextUrl.searchParams.get("touch") === "0" && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at"
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };
@@ -586,6 +591,14 @@ export async function GET(req: NextRequest) {
         : row.created_at,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
+      // 拡張はこの数で「手元の画面位置が古い・空」を見て取り直す（無い古い束は返さない＝拡張は従来どおり）
+      ...(() => {
+        const raw = guard && lightReq
+          ? (row as Record<string, unknown>).screen_solid
+          : (row.bundle && typeof row.bundle === "object" ? (row.bundle as Record<string, unknown>).screen_solid : null);
+        const n = raw == null || raw === "" ? NaN : Number(raw);
+        return Number.isFinite(n) ? { screen_solid: n } : {};
+      })(),
     }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;

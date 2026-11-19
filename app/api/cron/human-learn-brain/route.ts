@@ -22,6 +22,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { buildHumanLearnBundle, compactBundle, type MotionRow } from "@/app/lib/human-learn-brain";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
 const SELECT = [
   "created_at", "site", "mode", "ext_version", "ops",
@@ -163,6 +164,10 @@ export async function GET(req: NextRequest) {
   if (!dry) {
     for (const p of payloads) {
       try {
+        try {
+          const carry = await carryLearnedShots(supabase, p.scope, p.bundle);
+          (p.bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
+        } catch { /* 位置を継げなくても束は残す */ }
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,
           source_rows: p.bundle.source.rows,
