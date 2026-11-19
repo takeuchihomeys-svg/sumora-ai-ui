@@ -20,8 +20,8 @@ const cs = rd("chrome-extension/content.js");
 const mf = JSON.parse(rd("chrome-extension/manifest.json"));
 
 console.log("■ 版");
-ok("manifest が 2.8.116", mf.version === "2.8.116", mf.version);
-ok("_AXLX_PAGE_VER が 2.8.116", /var _AXLX_PAGE_VER = "2\.8\.116";/.test(ps));
+ok("manifest が 2.8.117", mf.version === "2.8.117", mf.version);
+ok("_AXLX_PAGE_VER が 2.8.117", /var _AXLX_PAGE_VER = "2\.8\.117";/.test(ps));
 
 console.log("■ background: 束の learned_scene を axlx_learn_scene へ");
 ok("learned_scene を読む", /bundle\.shots\.learned_scene/.test(bg));

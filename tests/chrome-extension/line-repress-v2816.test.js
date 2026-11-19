@@ -106,7 +106,26 @@ const rc = fs.readFileSync(path.join(root, "resolution-core.js"), "utf8");
 ok("resolution-core（写し）にも湊", /"湊": \["南海電鉄南本線"\]/.test(rc));
 const gaps = [];
 for (const [line, sts] of Object.entries(M.LINE_STATION_ORDER)) for (const st of sts) if (!M.STATION_LINE_MAP[st]) gaps.push(st + "（" + line + "）");
-ok("沿線の並びにあって逆引きに無い駅は 69 以下（増やさない・埋めたら上限を下げる）", gaps.length <= 69, gaps.length);
+ok("沿線の並びにあって逆引きに無い駅は 15 以下（地名と重なる13駅だけ・増やさない）", gaps.length <= 15, gaps);
+ok("穴埋めの駅が入っている（北花田・泉ケ丘・樟葉・なにわ橋・浜寺駅前）", ["北花田", "泉ケ丘", "樟葉", "なにわ橋", "浜寺駅前"].every((s) => Array.isArray(M.STATION_LINE_MAP[s])));
+ok("地名と重なる駅は入れていない（茨木・八尾・住吉・久宝寺・中之島）", ["茨木", "八尾", "住吉", "久宝寺", "中之島"].every((s) => !M.STATION_LINE_MAP[s]));
+
+console.log("\n■ あいまい一致（resolveStation）の既存の判定を変えない");
+const popupSrc = fs.readFileSync(path.join(root, "popup.js"), "utf8");
+function fnOf(name) {
+  const i = popupSrc.indexOf("function " + name + "(");
+  const m = /\r?\n\}\r?\n/.exec(popupSrc.slice(i));
+  return popupSrc.slice(i, i + m.index + m[0].length);
+}
+const W = loadMaps("popup-maps.js", ["WARD_CODE_MAP"]).WARD_CODE_MAP;
+const rctx = { STATION_LINE_MAP: M.STATION_LINE_MAP, WARD_CODE_MAP: W, STATION_ALIASES: {}, LEARNED_STATION_MAP: {} };
+vm.createContext(rctx);
+vm.runInContext(fnOf("resolveStation") + ";this.rs=resolveStation;", rctx);
+ok("「大和」は今まで通り 大和田（新しい 大和川 に変わらない）", rctx.rs("大和") === "大和田", rctx.rs("大和"));
+ok("中央区の「南久宝寺町」を八尾の久宝寺駅にしない", rctx.rs("南久宝寺町") !== "久宝寺", rctx.rs("南久宝寺町"));
+ok("「東粉浜」は粉浜ではなく東粉浜", rctx.rs("東粉浜") === "東粉浜", rctx.rs("東粉浜"));
+ok("「北花田」は北花田口ではなく北花田", rctx.rs("北花田") === "北花田", rctx.rs("北花田"));
+ok("「湊駅」は湊", rctx.rs("湊駅") === "湊", rctx.rs("湊駅"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
