@@ -8,7 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns, readDecisionSources, aixFamily } from "./lib/prod-yardstick-db";
 import { pickSendCombo, type SendCombo } from "../app/lib/send-combo-table";
-import { takeuchiCombo, type StaffMove } from "./lib/combo-of-moves";
+import { takeuchiCombo, assignAixKinds, type StaffMove } from "./lib/combo-of-moves";
 import { maskPII } from "../app/lib/pii-mask";
 
 const argv = process.argv.slice(2);
@@ -55,7 +55,8 @@ async function main() {
     const after = all.filter((m) => m.at > at);
     const moves: Msg[] = [];
     for (const m of after) { if (m.customer || m.at - at >= 24 * 3_600_000) break; moves.push(m); }
-    const sc = takeuchiCombo(at, after);
+    // 2026-11-19 作業員M（台帳 #404）: AIX の通に種類を付けて、オススメ＋ピックアップの束を1つの AIX と数える
+    const sc = takeuchiCombo(at, assignAixKinds(after, (t.staff_aix ?? []).filter((a) => a.at && a.aix_type).map((a) => ({ at: Date.parse(String(a.at)), aixType: String(a.aix_type) }))));
     if (!sc || !moves.length) { noMove++; continue; }
     const writers = new Set(moves.map((m) => m.writer ?? "unknown"));
     const group = writers.size === 1 && writers.has("takeuchi") ? "竹内さん" : writers.size === 1 && writers.has("employee") ? "従業員" : "混ざり";
