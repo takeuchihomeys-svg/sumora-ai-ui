@@ -9,7 +9,7 @@
 // 直し: ①物件名の入力が空の時は、同封した見積書の見出しの物件名を対象の物件名に使う ②会話の履歴にある別の物件名は「今回の物件ではない」と材料に書く。
 //   決めるのは書く役（本文を決定論で書き換えない）。入れる CHECK_RESULT_NAME_GUARD=on（既定 off）
 export function checkResultNameGuardOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CHECK_RESULT_NAME_GUARD ?? "").trim().toLowerCase() === "on";
+  return (env.CHECK_RESULT_NAME_GUARD ?? "").trim().toLowerCase() !== "off";
 }
 
 const norm = (s: string) => String(s ?? "").normalize("NFKC").replace(/\s+/g, "").replace(/号室$/, "");

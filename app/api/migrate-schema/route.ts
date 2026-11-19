@@ -422,8 +422,9 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ai_reply_examples: 埋め込みベクトルカラム（OpenAI text-embedding-3-small 1536次元）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS embedding vector(1536);
-CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_embedding ON ai_reply_examples
-  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- 2026-11-18 作業員H（竹内さん「LINE が重い」・Disk IO の使い切り）: ivfflat＋probes=100 は毎回索引を全部読んでいた → HNSW に替えた（scripts/sql/rag-index-1118.sql・戻す rag-index-1118-rollback.sql）
+CREATE INDEX IF NOT EXISTS ai_reply_examples_embedding_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops);
+DROP INDEX IF EXISTS idx_ai_reply_examples_embedding;
 
 -- タスク管理テーブル（物件確認・物件出し依頼）
 CREATE TABLE IF NOT EXISTS line_tasks (
@@ -485,7 +486,8 @@ RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
       last_used_at = NOW()
   WHERE id = p_id;
 $$;
-CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+-- 2026-11-18 作業員H（竹内さん「LINE が重い」・Disk IO の使い切り）: ivfflat＋probes=100 は毎回索引を全部読んでいた → HNSW に替えた（scripts/sql/rag-index-1118.sql・戻す rag-index-1118-rollback.sql）（knowledge は halfvec の写しに HNSW・ivfflat は並びの式のせいで一度も使われていなかった）
+DROP INDEX IF EXISTS ai_reply_knowledge_embedding_idx;
 -- match_reply_knowledge: 4引数版(boost_state付き)を正本とする。3引数overloadはPGRST203の原因になるため削除（正本と別の関数なので消しても困らない）。
 -- ※ 正本は末尾の「RAG の厳密化」節（2026-09-13: 加点方式・source 返却）だけに置く。
 --   2026-10-17: ここと⑥にあった古い版（戻り値が違う）の DROP→CREATE を外した。毎晩「古い版に戻す→正本に戻す」を繰り返し、
@@ -1179,8 +1181,8 @@ CREATE TABLE IF NOT EXISTS winning_patterns (
   created_at            timestamptz DEFAULT now(),
   updated_at            timestamptz DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS winning_patterns_embedding_idx
-  ON winning_patterns USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+-- 2026-11-18 作業員H: winning_patterns は数十行＝索引は要らない（ivfflat が更新の繰り返しで 68MB に膨らみ、probes=100 で毎回全部読んでいた）
+DROP INDEX IF EXISTS winning_patterns_embedding_idx;
 
 -- 成約分析（analyze-closed-conversation）: 申込/成約確定時に Opus 4.8 が
 -- 会話全体から抽出した「確定人間性プロファイル」を顧客に保存する
@@ -2712,16 +2714,21 @@ ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS staff_reply_intent TEXT;
 
 -- match_reply_examples: customer_intent を返り値に追加（意図一致+0.2ブーストのため）
 -- ※ 2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した・間に止まっても消えない）
+-- 2026-11-18 作業員H（竹内さん「LINE が重い」・Disk IO の使い切り）: ivfflat＋probes=100 は毎回索引を全部読んでいた → HNSW に替えた（scripts/sql/rag-index-1118.sql・戻す rag-index-1118-rollback.sql）
 CREATE OR REPLACE FUNCTION match_reply_examples(query_embedding vector(1536), match_count int, filter_states text[])
 RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_state text, is_starred boolean, reply_angle text, customer_intent text, similarity float)
-LANGUAGE sql STABLE AS $func$
-  SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, ae.customer_intent, (1 - (ae.embedding <=> query_embedding))::float AS similarity
-  FROM ai_reply_examples ae
-  WHERE ae.conversation_state = ANY(filter_states)
-    AND ae.embedding IS NOT NULL
-    AND ae.entry_source = 'line_reply'
-  ORDER BY ae.embedding <=> query_embedding
-  LIMIT match_count
+LANGUAGE sql STABLE
+AS $func$
+  WITH cand AS MATERIALIZED (
+    SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, ae.customer_intent,
+           (ae.embedding <=> query_embedding) AS d
+    FROM ai_reply_examples ae
+    WHERE ae.conversation_state = ANY(filter_states) AND ae.embedding IS NOT NULL AND ae.entry_source = 'line_reply'
+    ORDER BY ae.embedding <=> query_embedding
+    LIMIT match_count
+  )
+  SELECT id, customer_message, sent_reply, conversation_state, is_starred, reply_angle, customer_intent, (1 - d)::float AS similarity
+  FROM cand ORDER BY d
 $func$;
 
 -- match_winning_patterns: customer_intent / staff_reply_intent を返り値に追加（2026-08-24）
@@ -3060,25 +3067,18 @@ RETURNS TABLE(
 LANGUAGE sql
 STABLE
 AS $func$
-  SELECT
-    ae.id,
-    ae.customer_message,
-    ae.sent_reply,
-    ae.conversation_state,
-    ae.is_starred,
-    ae.reply_angle,
-    ae.aix_action,
-    ae.outcome_status,
-    CASE
-      WHEN filter_action IS NOT NULL AND ae.aix_action = filter_action
-      THEN (1 - (ae.embedding <=> query_embedding))::float + 0.05
-      ELSE (1 - (ae.embedding <=> query_embedding))::float
-    END AS similarity
-  FROM ai_reply_examples ae
-  WHERE ae.entry_source IN ('aix_template', 'aix_action', 'aix_property')
-    AND ae.embedding IS NOT NULL
-  ORDER BY ae.embedding <=> query_embedding
-  LIMIT match_count
+  -- 2026-11-18 作業員H: HNSW＋iterative_scan（ivfflat.probes=100 の全読みをやめた・scripts/sql/rag-index-1118.sql）
+  WITH cand AS MATERIALIZED (
+    SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, ae.aix_action, ae.outcome_status,
+           (ae.embedding <=> query_embedding) AS d
+    FROM ai_reply_examples ae
+    WHERE ae.entry_source IN ('aix_template', 'aix_action', 'aix_property') AND ae.embedding IS NOT NULL
+    ORDER BY ae.embedding <=> query_embedding
+    LIMIT match_count
+  )
+  SELECT id, customer_message, sent_reply, conversation_state, is_starred, reply_angle, aix_action, outcome_status,
+         CASE WHEN filter_action IS NOT NULL AND aix_action = filter_action THEN (1 - d)::float + 0.05 ELSE (1 - d)::float END AS similarity
+  FROM cand ORDER BY d
 $func$;
 
 -- ── ai_reply_examples.entry_source の取りうる値（2026-08-29時点の台帳）──
@@ -3326,20 +3326,24 @@ UPDATE ai_reply_knowledge SET embedding_h = embedding::halfvec(1536)
 -- match_reply_knowledge 正本（2026-09-13 改善5）: boost_state 一致を「必ず先頭」から距離への 0.03 の加点へ
 --   （本番の問い24件で類似度上位30件との重なり 平均約9 → 約27）。source を返す（成約分析 closed_won_analysis の仮説上限の免除に使う）
 --   2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した・間に止まっても消えない。SET は下の DO ブロックが付け直す）
+-- 2026-11-18 作業員H: 並びの式（COALESCE − boost）では索引が使えず毎回全行（表＋TOAST 約220MB）を読んでいた
+--   → embedding_h（halfvec）の HNSW で候補（match_count×5）を取り、その中で boost を当てて並べ直す（引数・戻り値は同じ）。embedding_h が無い行は上で埋める
+CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_h_hnsw ON ai_reply_knowledge USING hnsw (embedding_h halfvec_cosine_ops);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity double precision, hypothesis_status text, created_at timestamptz, source text)
 LANGUAGE sql STABLE AS $$
-  -- 2026-10-18: 距離は halfvec の写し（行の中）で測る・写しが無い行だけ float（TOAST）に戻る。距離の式は似た度と並びで同じ1つ
+  WITH cand AS MATERIALIZED (
+    SELECT ak.id, (ak.embedding_h <=> query_embedding::halfvec(1536)) AS d
+    FROM ai_reply_knowledge ak
+    WHERE ak.embedding_h IS NOT NULL AND ak.importance >= min_importance
+      AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
+    ORDER BY ak.embedding_h <=> query_embedding::halfvec(1536)
+    LIMIT GREATEST(match_count, 1) * 5
+  )
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
-    (1 - COALESCE(ak.embedding_h <=> query_embedding::halfvec(1536), ak.embedding <=> query_embedding))::float AS similarity,
-    ak.hypothesis_status,
-    ak.created_at,
-    ak.source
-  FROM ai_reply_knowledge ak
-  WHERE (ak.embedding_h IS NOT NULL OR ak.embedding IS NOT NULL) AND ak.importance >= min_importance
-    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY COALESCE(ak.embedding_h <=> query_embedding::halfvec(1536), ak.embedding <=> query_embedding)
-    - CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0.03 ELSE 0 END
+         (1 - c.d)::float AS similarity, ak.hypothesis_status, ak.created_at, ak.source
+  FROM cand c JOIN ai_reply_knowledge ak ON ak.id = c.id
+  ORDER BY c.d - CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0.03 ELSE 0 END
   LIMIT match_count
 $$;
 GRANT EXECUTE ON FUNCTION match_reply_knowledge(vector, integer, integer, text) TO anon, authenticated, service_role;
@@ -3348,10 +3352,14 @@ GRANT EXECUTE ON FUNCTION match_reply_knowledge(vector, integer, integer, text) 
 --   vector の読み込みと ALTER を1つの DO ブロック（1回の呼び出し）にまとめる。確かめ: select proname, proconfig from pg_proc where proname like 'match_%';
 DO $$ BEGIN
   PERFORM '[1,0]'::vector <=> '[0,1]'::vector;
-  EXECUTE 'ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes = 100';
-  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET ivfflat.probes = 100';
-  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET ivfflat.probes = 100';
-  EXECUTE 'ALTER FUNCTION match_winning_patterns(vector, integer, text, integer) SET ivfflat.probes = 100';
+  -- 2026-11-18 作業員H: match_reply_knowledge・match_reply_examples・match_aix_reply_examples は HNSW → probes でなく hnsw.ef_search・iterative_scan を付ける
+  --   （定義の SET hnsw.* は vector が読み込まれていない接続の CREATE で permission denied になるため、ここで ALTER する）・match_winning_patterns は索引なし＝付けない
+  EXECUTE 'ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET hnsw.ef_search = 100';
+  EXECUTE 'ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET hnsw.iterative_scan = relaxed_order';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET hnsw.ef_search = 100';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET hnsw.iterative_scan = relaxed_order';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.ef_search = 100';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.iterative_scan = relaxed_order';
   EXECUTE 'ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100';
   EXECUTE 'ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100';
 END $$;
@@ -4233,7 +4241,10 @@ BEGIN
         'text_hash', v_check -> 'checked_text_hash',
         'elapsed_ms', v_check -> 'elapsed_ms',
         -- 2026-10-21 自信の気づき（draft-confidence.ts・DRAFT_CONFIDENCE=on の時だけ値がある）: 点・段・理由を控えに残す（自信の段ごとの答え合わせ）
-        'confidence', v_check -> 'confidence'
+        'confidence', v_check -> 'confidence',
+        -- 2026-11-18 作業員M（統括役の決定 11/15）: 統括の指示書の欄が下書きに入ったか（compose-brief-uptake・COMPOSE_BRIEF_UPTAKE が off でない時だけ値がある）。
+        --   毎日の文の物差し（compose-prod-daily）の欄ごとの割合のため。足すだけ（今の欄は変えない）・失敗しても上の EXCEPTION で元の更新は通る
+        'brief_uptake', v_check #> '{tpo_debug,brief_uptake}'
       );
       v_tpo := left(v_check #>> '{tpo_debug,tpo_label}', 300);
     END IF;
@@ -5766,6 +5777,62 @@ CREATE INDEX IF NOT EXISTS idx_rag_call_logs_created ON rag_call_logs(created_at
 CREATE INDEX IF NOT EXISTS idx_rag_call_logs_rpc ON rag_call_logs(rpc, created_at DESC);
 ALTER TABLE rag_call_logs ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON rag_call_logs FROM anon, authenticated;
+
+-- 2026-11-18 竹内さん「その作業を全部把握するために必要な事は保管するようにデータベースを強化する」（統括役の頼み・作業員M）:
+--   work_items … 仕事1件＝1行で今の段を持つ台帳（work_log は経過を書き足す日誌で「何が終わっていないか」を1行で持てない）。
+--     段は todo → building → built_off → testing → passed → on → done の順。ほかに blocked・waiting_owner・dropped。
+--     お客様の文・名前は入れない（requested_quote は竹内さんの言葉だけ）。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。手で見る・足す: scripts/work-items.ts
+--   work_item_events … 段の変わり（戻った・止まった理由が後から分かる）。
+--   戻す: DROP TABLE IF EXISTS work_item_events; DROP TABLE IF EXISTS work_items;
+CREATE TABLE IF NOT EXISTS work_items (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  area TEXT,
+  origin TEXT,
+  requested_at TIMESTAMPTZ,
+  requested_quote TEXT,
+  stage TEXT NOT NULL DEFAULT 'todo',
+  done_definition TEXT NOT NULL DEFAULT '試験で悪化0 → 既定 on → 本番に入れて READY',
+  owner TEXT,
+  switch_name TEXT,
+  switch_default TEXT,
+  commits TEXT[] NOT NULL DEFAULT '{}',
+  exam_labels TEXT[] NOT NULL DEFAULT '{}',
+  exam_result TEXT,
+  kb_ids TEXT[] NOT NULL DEFAULT '{}',
+  work_log_task TEXT,
+  owner_question_id BIGINT,
+  quality_target TEXT,
+  priority INT,
+  blocker TEXT,
+  next_step TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  done_at TIMESTAMPTZ,
+  CONSTRAINT work_items_stage_chk CHECK (stage IN ('todo', 'building', 'built_off', 'testing', 'passed', 'on', 'done', 'blocked', 'waiting_owner', 'dropped')),
+  CONSTRAINT work_items_origin_chk CHECK (origin IS NULL OR origin IN ('meeting', 'owner_request', 'found_gap', 'built_off')),
+  CONSTRAINT work_items_switch_default_chk CHECK (switch_default IS NULL OR switch_default IN ('off', 'shadow', 'on'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_items_stage_priority ON work_items(stage, priority);
+CREATE INDEX IF NOT EXISTS idx_work_items_area ON work_items(area);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_work_items_switch ON work_items(switch_name) WHERE switch_name IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_work_items_work_log_task ON work_items(work_log_task) WHERE work_log_task IS NOT NULL;
+ALTER TABLE work_items ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON work_items FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE work_items_id_seq FROM anon, authenticated;
+CREATE TABLE IF NOT EXISTS work_item_events (
+  id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  from_stage TEXT,
+  to_stage TEXT,
+  actor TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(item_id, at DESC);
+ALTER TABLE work_item_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON work_item_events FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE work_item_events_id_seq FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

@@ -12,14 +12,14 @@ function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringif
 const withEnv = (k: string, v: string | undefined, fn: () => void) => { const old = process.env[k]; if (v == null) delete process.env[k]; else process.env[k] = v; try { fn(); } finally { if (old == null) delete process.env[k]; else process.env[k] = old; } };
 const petWants = (c: Record<string, unknown>) => parseEquipmentWants(c as never).wants.filter((w) => w.key === "pet").map((w) => w.mode);
 
-console.log("切替（既定 off）");
-it("どちらも既定 off・on で入る", () => {
-  eq(petWantFixEnabled({}), false); eq(petWantFixEnabled({ PROPERTY_PET_WANT_1020: "on" }), true);
-  eq(renovAgeFixEnabled({}), false); eq(renovAgeFixEnabled({ PROPERTY_RENOV_AGE_1020: "ON" }), true);
+console.log("切替（既定 on・2026-11-15）");
+it("どちらも既定 on（2026-11-15）・off で戻す", () => {
+  eq(petWantFixEnabled({}), true); eq(petWantFixEnabled({ PROPERTY_PET_WANT_1020: "on" }), true); eq(petWantFixEnabled({ PROPERTY_PET_WANT_1020: "off" }), false);
+  eq(renovAgeFixEnabled({}), true); eq(renovAgeFixEnabled({ PROPERTY_RENOV_AGE_1020: "ON" }), true); eq(renovAgeFixEnabled({ PROPERTY_RENOV_AGE_1020: "off" }), false);
 });
 
 console.log("ペットの希望の向き（実データ 361人で ng になった3人のうち2人が読み違い）");
-it("off は今まで通り（NG欄の「ペット不可」は ng）", () => withEnv("PROPERTY_PET_WANT_1020", undefined, () => {
+it("off は今まで通り（NG欄の「ペット不可」は ng）", () => withEnv("PROPERTY_PET_WANT_1020", "off", () => {
   eq(petWants({ ng_points: "1階NG、ペット不可" }), ["ng"]);
 }));
 it("on: NG欄の「ペット不可」＝ペット不可の物件が NG＝ペット飼育可能を望む（must）", () => withEnv("PROPERTY_PET_WANT_1020", "on", () => {
@@ -32,7 +32,7 @@ it("on: 「ペット可NG」はそのまま ng（ペットのいる建物を避�
   eq(petWants({ ng_points: "ペット可NG" }), ["ng"]);
 }));
 it("on: 「ペット なし」（空白入り）は自分が飼っていない話＝希望にしない（off は must に割れていた）", () => {
-  withEnv("PROPERTY_PET_WANT_1020", undefined, () => eq(petWants({ preferences: "ペット なし" }), ["must"]));
+  withEnv("PROPERTY_PET_WANT_1020", "off", () => eq(petWants({ preferences: "ペット なし" }), ["must"]));
   withEnv("PROPERTY_PET_WANT_1020", "on", () => eq(petWants({ preferences: "ペット なし" }), []));
 });
 it("on: ペット相談（小型犬、猫可）の物件は、NG欄の「ペット不可」の人に ○（ワールドアイ京町堀 204 の形）", () => withEnv("PROPERTY_PET_WANT_1020", "on", () => {
@@ -41,14 +41,14 @@ it("on: ペット相談（小型犬、猫可）の物件は、NG欄の「ペッ�
   eq(m.rows.filter((r) => r.want.key === "pet").map((r) => r.result), ["ok"]);
 }));
 it("純関数 petWantOverride（off は null）", () => {
-  eq(petWantOverride("ペット不可", "ng_points", {}), null);
+  eq(petWantOverride("ペット不可", "ng_points", { PROPERTY_PET_WANT_1020: "off" }), null);
   eq(petWantOverride("ペット不可", "ng_points", { PROPERTY_PET_WANT_1020: "on" }), "must");
   eq(petWantOverride("ペット不可", "preferences", { PROPERTY_PET_WANT_1020: "on" }), null);
 });
 
 console.log("リノベーション物件の築年（KB 6497a18a サマックスYUIハイツ 205・築30年）");
 it("off は false（今まで通り希望超過で −10 保留）", () => {
-  eq(renovatedAgeOk({ name: "サマックスYUIハイツ 205", rawText: "フルリノベーション済み" }, null, {}), false);
+  eq(renovatedAgeOk({ name: "サマックスYUIハイツ 205", rawText: "フルリノベーション済み" }, null, { PROPERTY_RENOV_AGE_1020: "off" }), false);
 });
 it("on: 資料の印・物件名・説明文のリノベ済みは減点しない", () => {
   const env = { PROPERTY_RENOV_AGE_1020: "on" };

@@ -201,7 +201,7 @@ export const PROGRESS_PUSH_RE = /まだ(?:です|でしょう|ですか|なの|�
 const PROGRESS_PUSH_RE_NARROW = /まだ(?:です|でしょう|ですか|なの|かな)|(?:連絡|返事|返信)(?:が|は)?(?:ない|無い|来ない|きてない|来てない|頂けて|いただけて)|進捗|いつ(?:頃|ごろ)?(?:送|届|来|ご連絡|連絡)|どうなっ(?:て|た)|お待ちして(?:おり|い)ます(?:が|けど)|催促/;
 const WHEN_BECOME_RE = /いつ(?:頃|ごろ)?になり/;
 const OUR_PROMISE_WORD_RE = /連絡|返事|返信|お返答|ご回答|結果|見積|資料|お送り|送って|送り/;
-export function progressPushNarrowOn(): boolean { return (process.env.PROGRESS_PUSH_NARROW ?? "").trim().toLowerCase() === "on"; }
+export function progressPushNarrowOn(): boolean { return (process.env.PROGRESS_PUSH_NARROW ?? "").trim().toLowerCase() !== "off"; }
 export function isProgressPushMessage(text: string | null | undefined, opts: { isAckOnly?: boolean } = {}): boolean {
   const t = (text ?? "").trim();
   if (!t || opts.isAckOnly) return false;

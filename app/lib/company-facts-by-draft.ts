@@ -11,7 +11,7 @@
 import { COMPANY_FACTS, type CompanyFact } from "./company-facts";
 
 export function fcCompanyFactsByDraftEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_COMPANY_FACTS_BY_DRAFT ?? "").trim().toLowerCase() === "on";
+  return (env.FC_COMPANY_FACTS_BY_DRAFT ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 下書きがその事実に触れたと分かる語（事実の id ごと）。ここに無い事実は今まで通り（お客様が聞いた時だけ） */

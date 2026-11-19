@@ -62,7 +62,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom } from "./lib/exam-conductor-core";
-import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
@@ -75,6 +75,7 @@ import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
+import { examRefusalOf } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
@@ -212,7 +213,8 @@ function readJobs(): Array<ExamJob & { file: string }> {
   for (const f of readdirSync(ROOT).filter((x) => x.endsWith(".json") && x !== "config.json" && x !== "scene-map.json")) {
     let j: unknown = null; try { j = JSON.parse(readFileSync(join(ROOT, f), "utf8")); } catch { /* 壊れた・書きかけ */ }
     if (!isExamJobShape(j)) { if (!skippedNonJobs.has(f)) { skippedNonJobs.add(f); log(`  ⚠ 依頼の形でないファイルを飛ばす: ${f}（係の列のフォルダに印を置かない・点検表 18）`); } continue; }
-    out.push({ ...(j as ExamJob), file: join(ROOT, f) });
+    // 2026-11-18 作業員H: createdAt が数の依頼（手で書いた等）も ISO の文字に直して読む（並べ替えで係が落ちない・exam-conductor-core.createdAtIso）
+    out.push({ ...(j as ExamJob), createdAt: createdAtIso((j as { createdAt?: unknown }).createdAt), file: join(ROOT, f) });
   }
   return out.sort((a, b) => compareJobs(a, b));
 }
@@ -906,6 +908,17 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
       const runText = existsSync(outFile) ? readFileSync(outFile).subarray(startSize).toString("utf8") : "";
       // 前（main）の実行だけが落ちて自分の回は流れた時は済みにしてよい＝合格の数が読めない時だけ落ちとみなす
       if (summarize(runText).pass == null && handleStartCrash(j, runText, outFile)) { await cleanupRun(j.cwd, j.label, outFile, startSize); return; }
+      // 2026-11-19 作業員H（統括役の頼み・11/19 夜 M の4本 $6.29）: brain-exam が始める前に「回さない（費用0）」と返した回
+      //   （--select=rag の選びの失敗・前と今が上限に収まらない）は、足し直さずに理由で済ませる（同じ依頼をもう一度流しても同じ所で止まる）
+      const refused = examRefusalOf(runText);
+      if (refused) {
+        await cleanupRun(j.cwd, j.label, outFile, startSize);
+        const verdict = `回さなかった（費用0）: ${refused}`;
+        finish(j, { label: j.label, owner: j.owner, switch: j.switch, verdict, at: new Date().toISOString() },
+          `| ${new Date().toISOString().slice(0, 16)} | ${j.switch} | ${j.owner} | ${j.label} | ${verdict} | - | - | ? |`, `試験 ${j.label}: ${verdict}`);
+        log(`  ⛔ ${j.label}: ${verdict}`);
+        return;
+      }
     }
     if (early) {
       const e = early as { stop: string; why: string; base: string };

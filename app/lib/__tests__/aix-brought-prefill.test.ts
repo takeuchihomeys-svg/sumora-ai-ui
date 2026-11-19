@@ -52,7 +52,7 @@ for (const junk of ["(thanks)", "あと、こちらの物件も見積もり出�
 }
 t("台帳が無い時は0件", broughtForCheck(null).count === 0);
 t("材料は0件なら空", broughtMaterialLine({ rooms: [], count: 0, lastCheckAt: null }) === "");
-t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBroughtPrefillEnabled({ NEXT_PUBLIC_AIX_BROUGHT_PREFILL: "on" }) === true);
+t("スイッチ既定 on（2026-11-15）・off で戻す", aixBroughtPrefillEnabled({}) === true && aixBroughtPrefillEnabled({ NEXT_PUBLIC_AIX_BROUGHT_PREFILL: "on" }) === true && aixBroughtPrefillEnabled({ NEXT_PUBLIC_AIX_BROUGHT_PREFILL: "off" }) === false);
 
 // 見積書の枠: お客様が書いた順（#4 未来穂 10/22 の形・名前は実物）
 {
@@ -62,18 +62,20 @@ t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBrought
   t("お客様が書いた順・重複なし", o.join(",") === "レジュールアッシュOSAKAディフィール 807号室,グランドロアール上新庄 402号室,Live Casa上新庄 0102号室", o);
   t("文に無い物は後ろ", orderByCustomerText(["別の物件 101号室", "グランドロアール上新庄 402号室"], cust).join(",") === "グランドロアール上新庄 402号室,別の物件 101号室");
   t("最大3件", orderByCustomerText(["a物件", "b物件", "c物件", "d物件"], "").length === 3);
-  t("見積書の先入れは既定 off", aixEstimatePrefillEnabled({}) === false);
+  t("見積書の先入れは既定 on（2026-11-15）・off で戻す", aixEstimatePrefillEnabled({}) === true && aixEstimatePrefillEnabled({ NEXT_PUBLIC_AIX_ESTIMATE_PREFILL: "off" }) === false);
 }
 
 // 竹内さんの文の型の材料
 {
-  const a = checkResultFormMaterial({ pattern: "available", hasEstimate: false });
+  // 旧の行（CHECK_FORM_1028=off）の形を見る（2026-11-15 既定 on にしたので off を明示）
+  const env0 = { CHECK_FORM_1028: "off" };
+  const a = checkResultFormMaterial({ pattern: "available", hasEstimate: false, env: env0 });
   t("物件あった: ご査収・ご案内が多数・申込の締めは申込が入りそうな時だけ", /ご査収/.test(a) && /申込・抑えたいと言った時/.test(a));
   t("見積書が無い時は見積の約束をしない", /約束も書かない/.test(a));
-  t("見積書がある時は見積の約束の行は無い", !/約束も書かない/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true })));
-  t("物件なかった: 1文で終える", /1文で終える/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false })));
-  t("管理会社に確認した等は空", checkResultFormMaterial({ pattern: "mgmt_parking", hasEstimate: false }) === "");
-  t("型の材料は既定 off", aixCheckFormMaterialEnabled({}) === false);
+  t("見積書がある時は見積の約束の行は無い", !/約束も書かない/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true, env: env0 })));
+  t("物件なかった: 1文で終える", /1文で終える/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env: env0 })));
+  t("管理会社に確認した等は空", checkResultFormMaterial({ pattern: "mgmt_parking", hasEstimate: false, env: env0 }) === "");
+  t("型の材料は既定 on（2026-11-15）・off で戻す", aixCheckFormMaterialEnabled({}) === true && aixCheckFormMaterialEnabled({ AIX_CHECK_FORM_MATERIAL: "off" }) === false);
 }
 
 // 物件オススメの2通目: ご希望に合わない点（資料で確かめた物）を書く役に渡す（RECOMMEND_SECOND_WISH_NG）
@@ -105,7 +107,7 @@ t("スイッチ既定 off", aixBroughtPrefillEnabled({}) === false && aixBrought
   t("退去予定はご査収", /退去予定/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: false, vacating: true, env })));
   const u = checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env });
   t("物件なかった: 物件名は入れ号室は書かない・付随の確認は書かない", /号室は書かない/.test(u) && /駐車場/.test(u));
-  t("既定 off は旧の行のまま", checkForm1028On({}) === false && /ご査収（/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true, env: {} })) && !/駐車場/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env: {} })));
+  t("既定 on（2026-11-15）・off で戻すと旧の行のまま", checkForm1028On({}) === true && checkForm1028On({ CHECK_FORM_1028: "off" }) === false && /ご査収（/.test(checkResultFormMaterial({ pattern: "available", hasEstimate: true, env: { CHECK_FORM_1028: "off" } })) && !/駐車場/.test(checkResultFormMaterial({ pattern: "unavailable", hasEstimate: false, env: { CHECK_FORM_1028: "off" } })));
 }
 
 // 2026-11-03 竹内さんの決定 No.16: 退去予定の締めのお部屋抑えは申込が入りそうな時だけ（CHECK_FORM_VACATING_HOLD・既定 off・off は旧の形）

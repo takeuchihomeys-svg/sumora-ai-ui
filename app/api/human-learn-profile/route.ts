@@ -17,6 +17,7 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
 import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
+import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
 export const dynamic = "force-dynamic";
 /**
@@ -553,6 +554,10 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     return bundle;
   }
   try {
+    const carry = await carryLearnedShots(supabase, scope, bundle);
+    (bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
+  } catch { /* 位置を継げなくても束は残す */ }
+  try {
     const ins = await supabase.from("human_learn_profile").insert({
       scope,
       source_rows: bundle.source.rows,
@@ -723,7 +728,7 @@ export async function GET(req: NextRequest) {
   const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at"
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };

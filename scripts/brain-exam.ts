@@ -61,6 +61,7 @@ import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
+import { examRefusalLine, baseNowGate } from "./lib/exam-cost-gate";
 import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
 import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
@@ -204,6 +205,24 @@ const JUDGE_RULES = (process.env.EXAM_JUDGE_RULES ?? "").trim().toLowerCase() ==
 /** --select=rag で選んだ問題（null＝選んでいない＝今まで通り） */
 let SELECTED: Set<string> | null = null;
 let selectKbNow: Record<string, string> | null = null;
+/** 2026-11-19 作業員H: --select=rag の選びだけを回す子の書き出し先（親が付ける・この時は選びだけして終わる） */
+const SELECT_ONLY_OUT = (arg("select-only-out") ?? "").trim();
+/** 回さない（費用0）を係に返す（exam-conductor が印を読んで「回さなかった」で済ませる・足し直しはしない） */
+function refuseRun(why: string): void { console.error(examRefusalLine(why)); process.exitCode = 3; }
+/** --select=rag の選びを、共通の入口（setupLlmTest）を通した子で回す。失敗は ok:false と理由（親は全部の問題に切り替えない） */
+function selectInChild(): { ok: true; picked: string[]; kbNow: Record<string, string> | null } | { ok: false; why: string } {
+  const out = join(RESULTS_DIR, `${LABEL}.select.json`);
+  try { unlinkSync(out); } catch { /* 前の回の物を読まない */ }
+  // 鍵は親の env をそのまま渡す（--env-file を付けない＝.env.local の無い作業ツリーでも落ちない）
+  const cmd = ["tsx", "scripts/brain-exam.ts", ...args.filter((a) => !a.startsWith("--select-only-out")), `--select-only-out=${out}`];
+  const r = spawnSync("npx", process.platform === "win32" ? cmd.map((x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)) : cmd, { cwd: process.cwd(), stdio: "inherit", env: process.env, shell: process.platform === "win32" });
+  if (r.status !== 0) return { ok: false, why: `選びの子が終わりの番号 ${r.status ?? r.signal ?? "?"} で落ちた` };
+  try {
+    const j = JSON.parse(readFileSync(out, "utf8")) as { picked?: unknown; kbNow?: Record<string, string> | null };
+    if (!Array.isArray(j.picked)) return { ok: false, why: "選びの子の書き出しに picked が無い" };
+    return { ok: true, picked: j.picked.map(String), kbNow: j.kbNow ?? null };
+  } catch (e) { return { ok: false, why: `選びの子の書き出しが読めない（${String(e instanceof Error ? e.message : e).slice(0, 120)}）` }; }
+}
 /** 落ちた問題に出す知見（summarize の前に読む） */
 let kbLinksForReport: Record<string, KbLink[]> = {};
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
@@ -1275,6 +1294,16 @@ async function prepareMainBaseline(): Promise<boolean> {
   const waitedReuse: string[] = [], pinnedIds: string[] = [];
   let childUsd = 0; const childRuns: string[] = [];
   let pinnedUsd = 0;
+  // 2026-11-19 作業員H（統括役の頼み・11/19 夜 M の4本 $6.29）: 前（main）を作る前に「前と今を1回ずつでも上限に収まるか」を確かめる。
+  //   収まらなければ回さない（費用0・係に理由を返す）。収まる時は前の子の上限から今の分を取っておく（前が上限まで使って今が 0問、を作らない）。
+  //   前だけを作る回（--baseline-only・夜の基準）は今の側が無いので確かめない。止める: EXAM_BASE_NOW_GATE=off
+  let reserveNowUsd = 0;
+  if (plan.run.length && !flag("baseline-only") && process.env.EXAM_BASE_NOW_GATE !== "off") {
+    const g = baseNowGate({ capUsd: MAX_USD, spentUsd: spentUsdNow(), baseRuns: plan.run.length, nowProblems: picked.length });
+    if (!g.go) { refuseRun(g.why); return false; }
+    reserveNowUsd = g.reserveNowUsd;
+    if (MAX_USD !== null) console.log(`  費用の門（前と今）: ${g.why}`);
+  }
   if (plan.run.length) {
     const cassetteDir = resolve(String(process.env.LLM_CASSETTE_DIR ?? "").trim() || DEFAULT_CASSETTE_DIR);
     if (flag("baseline-dry")) {
@@ -1315,7 +1344,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow())) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow() - reserveNowUsd)) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -1562,6 +1591,14 @@ async function main() {
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
   mkdirSync(RESULTS_DIR, { recursive: true });
   if (REPORT) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
+  // 2026-11-19 作業員H: --select=rag の選びだけを回す子（親が spawn する・共通の入口 setupLlmTest の中で埋め込みを呼ぶ）。
+  //   同じ process で setupLlmTest を2回呼ぶと録音・Batches の包みが重なる＝選びは別の process に分ける
+  if (SELECT_ONLY_OUT) {
+    const hs = await setupLlmTest(`brain-exam-sel-${LABEL}`.slice(0, 60));
+    try { await selectByRag(); atomicWriteJson(SELECT_ONLY_OUT, { at: new Date().toISOString(), picked: [...(SELECTED ?? [])], kbNow: selectKbNow }); }
+    finally { await hs.finish(); }
+    return;
+  }
   // 2026-10-15 ① 前（main の版）: 取り置きを使い、無い問題だけ main の作業ツリーで回す（自分の鍵・線を取る前に＝同時1本）
   if (STAGE_DECISION) {
     const d = STAGE_DECISION, cnt = (c: string) => d.files.filter((f) => f.cls === c).length;
@@ -1569,9 +1606,15 @@ async function main() {
     for (const f of d.files.filter((x) => x.cls !== "none").slice(0, 12)) console.log(`  ${f.cls.padEnd(5)} ${f.file}（${f.why}）`);
   }
   // 2026-10-16 --select=rag は「前」を回す前に決める（前も選んだ問題だけ・main の子には --only で渡る）
-  //   選びが失敗しても（埋め込み・KB・表が読めない等）試験は止めない＝安全側で全部
+  // 2026-11-19 作業員H（統括役の頼み・11/19 夜の M の4本 $6.29 の無駄）: 旧は選びを入口（setupLlmTest）の前に呼び、埋め込みが入口の網で止まり、
+  //   「安全側で全部の問題」に切り替えて前だけ 290問を上限まで回していた（今は 0問・比べた 0/0）。
+  //   → 選びは入口を通した子（--select-only-out）で回す。失敗したら全部に切り替えず、回さずに理由を返す（費用0）
   if (SELECT === "rag" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") {
-    try { await selectByRag(); } catch (e) { SELECTED = null; selectKbNow = null; console.warn(`--select=rag が失敗 → 安全側で全部の問題: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`); }
+    const r = selectInChild();
+    if (!r.ok) { refuseRun(`--select=rag の選びが失敗（${r.why}）＝全部の問題には切り替えない。--only=<問題> で名指しするか、選びを直して足し直す`); return; }
+    if (!r.picked.length) { refuseRun("--select=rag で選んだ問題が0（比べる物が無い）"); return; }
+    SELECTED = new Set(r.picked); selectKbNow = r.kbNow;
+    console.log(`--select=rag（入口を通した子）: ${r.picked.length}問`);
   }
   else if (SELECT && SELECT !== "rag") throw new Error(`--select=${SELECT} は無い（--select=rag だけ）`);
   if (BASELINE_MAIN && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") { const go = await prepareMainBaseline(); if (!go) return; if (flag("baseline-only")) { console.log("--baseline-only: 前（main）の取り置きだけ作った"); return; } }

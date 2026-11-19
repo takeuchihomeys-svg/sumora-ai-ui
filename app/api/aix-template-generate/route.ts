@@ -1,3 +1,4 @@
+import { secondVacatingAllOn } from "@/app/lib/second-vacating";
 import { manYen } from "@/app/lib/man-yen";
 // 2026-10-22 竹内さんの決定（4f027a6b・721d5cf3）: AIX のブレイン（実行の指揮官＋実行役＋確かめ）。AIX_BRAIN のボタンごとの切替（既定＝内覧日調整だけ）
 import { aixBrainEnabledFor } from "@/app/lib/aix-brain";
@@ -104,7 +105,7 @@ import { aixSecondLinkOn, decideGapOfMeta, secondDecideGapLine } from "@/app/lib
 import { aixSecondRereadOn, aixSecondRereadMode, brainPressedDiffer, stripBrainDirection, rereadNote } from "@/app/lib/aix-second-reread";
 import { applyWording1028On, applyPushWordingLine } from "@/app/lib/aix-brain-contract";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
-import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { isEstimateCard, estimatePropertiesOf, estimateHeadOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
 import { isEstimateCorrectionContext, resolveOtherAgentEstimate, applyEstimateOwnerLines, estimateOwnerNote, type OtherAgentSituation, type OtherAgentLineMode } from "@/app/lib/aix-owner-answers-1021";
 import { customerAskedEstimate } from "@/app/lib/customer-mindset";
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
@@ -121,11 +122,14 @@ import { secondMsgMaterialsOn, applySecondFinalChecks, type BrainBundleMeta } fr
 import type { SecondMaterials } from "@/app/lib/second-message-materials-server";
 import { recommendSecondAppealOn, recentAreaText, recentRequestCoversProperty, appendReceiptAfterCta, ensureRentTotalInRecommend } from "@/app/lib/recommend-second-appeal";
 import { buildSecondAppealNote, secondAppealPointsOn } from "@/app/lib/second-appeal-points";
+import { appealRecordFromText, appealRecordMode, appealPointsOf } from "@/app/lib/appeal-record";
+import { appealPlanReadOn, buildAppealPlan, comparePlanToText, type AppealCandidate } from "@/app/lib/appeal-plan";
 import { secondBlueprintOn, secondBlueprintNote } from "@/app/lib/second-blueprint";
 import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal-judge";
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
-import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, APPEAL_JUDGE_SYSTEM, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
+import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
+import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
@@ -1281,7 +1285,21 @@ export async function POST(req: NextRequest) {
     // 統括が置いた組み立て（meta.two_message_plan・1つの正）が先。無い時だけここで作る
     ? (planFromMeta(brainMeta, lastCustomerMsg?.rawCreatedAt ?? null) ?? planMessages({ asks: ((brainMeta as { turn_contract?: { asks?: PlanAsk[] } } | null)?.turn_contract?.asks ?? null), finalAix: (brainMeta?.action as string | undefined) ?? null }))
     : null;
-  const twoMsgNote = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
+  const twoMsgNote0 = twoMsgPlan ? templateReplyPartNote(twoMsgPlan, actionType) : "";
+  // 2026-11-19 作業員M（統括役の割り振り・継ぎ目②の読む側・ASK_PROGRESS_READ=on の時だけ・既定 off）: この番で実際に送った所まで（conversations.ask_progress）を
+  //   要件の帳面（meta.ask_ledger）と突き合わせ、まだ答えていない要件・もう答えた要件・次の通を2通目の書き手に渡す（今の帳面の続きの記録だけ・古い番の記録は読まない）
+  let askProgressNoteText = "";
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    if (al.askProgressReadOn() && conversationId && !isStaleMeta) {
+      const led = al.askLedgerOf(brainMeta);
+      if (led) {
+        const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", conversationId).maybeSingle();
+        askProgressNoteText = al.askProgressNote(led, al.askProgressOf(led, (apRow as { ask_progress?: unknown } | null)?.ask_progress));
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "aix-template:ask-progress-failed", error: e instanceof Error ? e.message : String(e) })); }
+  const twoMsgNote = [twoMsgNote0, askProgressNoteText].filter(Boolean).join("\n");
   // 2026-11-12 竹内さんの決定「Aでおねがい」（AIX_SECOND_REREAD=on・既定 off・aix-second-reread.ts）: ブレインの勧めた AIX と押された AIX が違う2通目は、
   //   押された AIX を正として、その意味で読み直した結果（なぜ今・何に応えるか・押さえる要点）を渡す。前の方向（返信方向・勝ちパターン・判断理由）は渡さない。
   //   読み直せない時は案B（方向を渡さず、押された AIX と会話だけ）。道は変えない（押された AIX が道）
@@ -1378,6 +1396,9 @@ export async function POST(req: NextRequest) {
   //   採点は1通目の物件（見出しの建物名・号室）に当たる行だけ使う。読めなければ「ご査収」に倒れる（押しすぎない）。
   //   ⚠ 上の ctaGuidance（一般の CTA 率）とは別の請求として二重に入れない: 物件オススメの時はこちらだけを渡す
   let recCta: RecommendCtaDecision | null = null;
+  // 2026-11-15 作業員K: 訴求の計画を読む側の3つ目（オススメポイント＝資料の事実×希望の網・APPEAL_PLAN_READ=on の時だけ記録に使う）
+  let appealPlanFactCands: AppealCandidate[] = [];
+  let appealPlanWants: Array<{ key: string; from?: string | null }> = [];
   // 2026-09-30 竹内「資料もちゃんとよみとった方がよいなら、読みとったのを AIX テンプレートの部分にも渡す」:
   //   1通目の物件に当たる売上サポの行（採点と同じ行）から、資料の現況・駅・築年・敷金礼金・ご希望に合う点を読む（AD・点数は渡さない）
   let materialRow: SecondMaterialRow | null = null;
@@ -1430,6 +1451,29 @@ export async function POST(req: NextRequest) {
   let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };
   let secondNotViewable = recommendState.notViewable;
   let secondViewableFrom: string | null = recommendState.viewableFrom;
+  // 2026-11-18 作業員L（作業員K の試験 e30d8453: AI は26回中1回も退去予定を書かず vacating=false・竹内さんは2通目で退去予定を書いた18通すべてで頭の3行以内）:
+  //   退去予定の読み（1通目の本文・送った資料の画像の読み）は物件オススメ／ピックアップの2通目だけで、物件確認した 等の2通目はブレインの property_state（無ければ
+  //   こちらの最近の通）しか見ていなかった＝1通目の AIX の本文に書いた「〇月〇日退去予定」「退去予定のお部屋」が2通目に届かない。
+  //   SECOND_VACATING_ALL_AIX=on（既定 off）: どの AIX の2通目でも、1通目の本文→送った資料の画像の読み の順で退去予定を読み、日付の無い「退去予定」も退去予定として渡す
+  if (!(actionType === "property_recommendation" || pickupPushLabel) && secondVacatingAllOn() && (sentMessage ?? "").trim()) {
+    try {
+      secondViewable = resolveRecommendViewable({ text: sentMessage, material: null, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
+      if (secondViewable.source === "brain" && conversationId) {
+        const sipHead = headOfFirstMessage(sentMessage);
+        if (sipHead) {
+          const { data } = examSnap?.sentImages
+            ? { data: snapshotRows(examSnap.sentImages, { limit: 60 }) }
+            : await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts").eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(60);
+          const sv = sentImageViewable(sipVacating((data ?? []) as SipRow[], sipHead));
+          if (sv) secondViewable = sv;
+        }
+      }
+      if (!secondViewable.notViewable && mentionsVacating(sentMessage)) secondViewable = { ...secondViewable, notViewable: true };
+      secondNotViewable = secondViewable.notViewable;
+      secondViewableFrom = secondViewable.viewableFrom;
+      console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-all", action: actionType, vacating: secondNotViewable, from: secondViewable.source, viewableFrom: secondViewableFrom }));
+    } catch (e) { console.warn("[aix-template-generate] second-vacating-all failed:", e instanceof Error ? e.message : e); }
+  }
   if (actionType === "property_recommendation" || pickupPushLabel) {
     try {
       let pickup: PickupLookupRow | null = pickupPush as PickupLookupRow | null;
@@ -1546,7 +1590,9 @@ export async function POST(req: NextRequest) {
             const { customerWants } = await import("@/app/lib/recommendation-gaps");
             const { buildAppealPoints } = await import("@/app/lib/recommend-appeal-points");
             const wants = customerWants({ conditions: p as never, messages: msgs });
-            fit = savedReadFitLines(buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null }));
+            const ap = buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null });
+            fit = savedReadFitLines(ap);
+            if (appealPlanReadOn()) { appealPlanFactCands = ap.points.map((x) => ({ topic: x.key, from: "facts" as const })); appealPlanWants = wants; }
           } catch { /* 希望が読めない時は事実だけ */ }
           savedReadExtra = [...conv.extraLines, ...fit];
           console.log(JSON.stringify({ tag: "aix-template-generate:second-saved-read", head: `${head.name} ${head.room}`, extra: savedReadExtra.length, fit: fit.length }));
@@ -1717,6 +1763,8 @@ export async function POST(req: NextRequest) {
         secondGapLine ?? "",
       ].filter(Boolean).join("\n");
       const scene = secondFormScene(pickupType);
+      // 2026-11-18 竹内さんの決定（推す点の数は場面で変える）: 設備が揃ったお部屋は3〜5個（SECOND_APPEAL_COUNT_BY_SCENE・既定 off）
+      const secondAppealRich = secondAppealCountBySceneOn() && equipmentRichOf(sentMessage);
       // 竹内さんの手本・型の要約（DB・サーバーの鍵で読む・無ければ手本なしで書く）
       const secondData = await (await import("@/app/lib/second-takeuchi-data-server")).loadSecondTakeuchiData();
       // 締めの候補になる状況（網）: 竹内さんが申込で締めた番の型（新着1件・見積書の後・入居が近い・急ぎ）。決めるのはブレイン
@@ -1733,12 +1781,12 @@ export async function POST(req: NextRequest) {
       // 2026-11-04 grp-aix の悪化（2a95c137）: 設計図（AIX_SECOND_BLUEPRINT=on）は判断の締めを「ここだけで決める」で強く守る。判断は刺さり具合の網（recommend-cta＝竹内さんの形の締め）を
       //   見ておらず、網の「内覧へ」と違う「ご査収だけ」を選んで外れた（材料が届いていない）→ 設計図の時だけ、網の締めと理由を判断の材料に渡す（決めるのは判断）
       const ctaHint = secondBlueprintOn() && recCta ? [`刺さり具合の網（竹内さんの形の締め）は「${({ viewing: "内覧へ", apply: "申込へ", receipt: "ご査収" } as Record<string, string>)[recCta.kind] ?? recCta.kind}」（理由: ${String(recCta.reason ?? "").slice(0, 80)}）。違う締めにする時は理由を closingWhy に書く`] : [];
-      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: ctaHint, data: secondData }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
+      const { prompt } = appealJudgePrompt({ firstMessage: sentMessage, customerPoints, conditions: resolvedCustomerConditions, situation: bm?.turn_contract?.situation ?? null, scene, notViewable: secondNotViewable, materialFacts: secondMaterialNote, closingCandidates: ctaHint, data: secondData, rich: secondAppealRich }); // 10/29: 締めの候補の網は2回とも締めを崩した（内覧・ご査収が減る）＝今は渡さない（closingCandidates は数えるだけ）
       const key = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", signal: AbortSignal.timeout(25_000),
         headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("aix_appeal_judge"), ...(secondMaterials?.headers ?? {}) },
-        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 500, thinking: { type: "disabled" }, system: APPEAL_JUDGE_SYSTEM, messages: [{ role: "user", content: prompt }] }),
+        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 500, thinking: { type: "disabled" }, system: appealJudgeSystem(secondAppealRich), messages: [{ role: "user", content: prompt }] }),
       });
       if (r.ok) {
         const d = await r.json() as { content?: Array<{ type: string; text?: string }> };
@@ -1793,7 +1841,30 @@ export async function POST(req: NextRequest) {
     }
     // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（既定 on・ESTIMATE_ASKED_APPEAL=off で戻す）
     const customerAsked = customerAskedEstimate(Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
-    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
+    // 2026-11-18 作業員K（ESTIMATE_SIP_APPEAL・既定 off・estimate-sent-image-appeal.ts）: 見積書のお部屋が採点の表に無い時（持ち込みのお部屋）、
+    //   お客様が送ってきた物件の読み（sent_image_properties）を判定に通した刺さり具合で締める（竹内さんの決定 a43ade78 の材料の穴）。退去予定・今見られるかは ap のまま
+    let sipAppealFirst = false;
+    if (estimateSipAppealOn() && ap.appeal == null && conversationId) {
+      try {
+        const heads = estimateProps.map(estimateHeadOf).filter((h): h is { name: string; room: string } => !!h);
+        if (heads.length) {
+          const testPc = (body as { testPropertyCustomer?: unknown }).testPropertyCustomer;
+          let pc: Record<string, unknown> | null = examSnap && testPc && typeof testPc === "object" ? testPc as Record<string, unknown> : null;
+          if (!pc) {
+            const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+            const pcId = (cl as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+            if (pcId) { const { data } = await supabase.from("property_customers").select("*").eq("id", pcId).maybeSingle(); pc = (data ?? null) as Record<string, unknown> | null; }
+          }
+          const { data: sipRows } = examSnap?.sentImages
+            ? { data: snapshotRows(examSnap.sentImages, { limit: 60 }) }
+            : await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts").eq("conversation_id", conversationId).not("facts", "is", null).order("created_at", { ascending: false }).limit(60);
+          const sa = estimateSipAppeal((sipRows ?? []) as SipRow[], heads, pc as never);
+          if (sa.appeal) { ap = { ...ap, appeal: sa.appeal, found: sa.found }; sipAppealFirst = true; }
+          console.log(JSON.stringify({ tag: "aix-template-generate:estimate-sip-appeal", heads: heads.length, rows: (sipRows ?? []).length, appeal: sa.appeal, found: sa.found }));
+        }
+      } catch (e) { console.warn("[aix-template-generate] estimate-sip-appeal failed:", e instanceof Error ? e.message : e); }
+    }
+    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked, appealFirst: sipAppealFirst });
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
     estimateClosing = dec.closing;
     estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimateProps, closing: dec.closing, staffSentToday: greetSentToday });
@@ -2191,7 +2262,7 @@ export async function POST(req: NextRequest) {
           userPrompt +
           `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（訴求を並べすぎた）】\n━━━━━━━━━━━━━━━━━━━━\n` +
           `前回の出力:\n${text}\n\n` +
-          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
+          `ブレインの判断は「${secondJudge.first.text}」${secondJudge.count >= 3 && secondJudge.second && secondJudge.more?.length ? `と「${[secondJudge.second.text, ...secondJudge.more.map((m) => m.text)].join("」「")}」の${secondJudge.count}つ` : secondJudge.count === 2 && secondJudge.second ? `と「${secondJudge.second.text}」の2つ` : "の1つ"}を強く言う事。前回は ${before} 個の要素を並べている。\n` +
           `・判断の訴求だけを、理由を添えて強く言う。駅・築年・帖数・設備を足して並べない。締めは判断のまま。\n出力は本文のみ。`,
         );
         const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
@@ -2508,6 +2579,16 @@ ${text}
             generated_text: text.slice(0, 2000),
             conditions_snapshot: {
               source: "aix-template-generate",
+              // 2026-11-15 作業員K: 訴求の記録（appeal-record.ts・APPEAL_RECORD=shadow の時だけ・文と判断は変えない）。竹内さんの送った文と同じ欄で比べる（scripts/audit-appeal-record.ts）
+              ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai" }) } : {}),
+              // 2026-11-15 作業員K: 訴求の計画を読む側の1つ目（締め・APPEAL_PLAN_READ=on の時だけ・文と判断は変えない）。締めの判断（recommend-cta）から作った計画の強さ・狙う返事と、書けた文の強さ・狙う返事が同じかを残す
+              //   読む側の2つ目（2通目の判断）: ブレインの訴求の判断（second-appeal-judge）があれば、推す点（first・second の文から読んだ話題）と締めを計画に入れ、書けた文の点と比べる
+              ...(appealPlanReadOn() && (recCta || secondJudge) ? (() => {
+                const chosen = secondJudge ? appealPointsOf(`${secondJudge.first.text}\n${secondJudge.second?.text ?? ""}`) : [];
+                const plan = buildAppealPlan({ surface: "aix_second", nowIso: new Date().toISOString(), cta: secondJudge ? { kind: secondJudge.closing } : recCta, chosen, candidates: appealPlanFactCands, wants: appealPlanWants });
+                const c = comparePlanToText(plan, appealRecordFromText(text, { surface: "aix_second", writer: "ai" }));
+                return { appeal_plan_check: { from: secondJudge ? "second_appeal_judge" : "recommend_cta", candidates: plan.candidates.map((x) => x.topic), want_hit: `${plan.fit.wantHit}/${plan.fit.wantTotal}`, plan_points: plan.points, plan_strength: plan.strength, plan_aim: plan.aim, strength_same: c.strengthSame, aim_same: c.aimSame, points_overlap: plan.points.length ? Math.round(c.pointsOverlap * 100) / 100 : null, missing_points: c.missingPoints } };
+              })() : {}),
               brain: describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta }),
               brain_action: brainMeta?.action ?? null,
               // 2026-10-15 2通目の型（希望とのずれ・相場の好条件）を渡したか（数える用・recommend-second-wish-gap.ts）

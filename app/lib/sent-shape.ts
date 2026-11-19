@@ -292,7 +292,8 @@ export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null
     // 2026-10-09 竹内さん「入れたり入れなかったりする1行も…違いが明確になる可能性」: 竹内さんの手打ち 180日 739番で、何卒は文の長さとその日最初で割れる
     //   （初回 5文以上 71%・3〜4文 24%／続きの会話 5文以上 39%・3〜4文 30%・1〜2文 22%／その日最初 41%・続き 28%）。中身の種類だけより当たる（67%→71%）。
     //   時間帯・やり取りの回数・日数・直前の文の長さは効かなかった（scripts/audit-customer-mindset.ts --phase=optional-lines）。既定 off・SENT_SHAPE_NANITOZO_LEN=on で入る（試験で確かめるまで）
-    + (T.takeuchi && (process.env.SENT_SHAPE_NANITOZO_LEN ?? "").trim().toLowerCase() === "on"
+    //   2026-11-19 作業員H: 今の main（c3eede8）で h1119-nanitozo-on 6問 確かな悪化0（良くなった q170・q175）・off-g2 系の悪化0 と合わせて既定 on（止める SENT_SHAPE_NANITOZO_LEN=off）
+    + (T.takeuchi && (process.env.SENT_SHAPE_NANITOZO_LEN ?? "").trim().toLowerCase() !== "off"
       ? `文の長さとその日最初でも割れる: 5文以上の返信 39%（初回は71%）・3〜4文 30%・1〜2文 22%／その日最初の返信 41%・同じ日の続き 28%。`
       : "")
     + `付けるなら**最終行に1行だけ**（実送信の${T.nanitozoLastLine}%が最終行。本文の途中に置かない）。`

@@ -1077,6 +1077,10 @@ async function markRelatedDailyTasksDone(
   eventType: "estimate_sheet" | "property_send",
 ): Promise<void> {
   try {
+    // 11/18 統括役の決め: 一度も動いていなかった処理で、申込ツールのタスクを自動で済みにする（スタッフの目に見える物が変わる）＝既定は shadow（何件済みにするかを記録だけ・書かない）。
+    //   on で済みにする・off で読みもしない。数日の件数を見て竹内さんに確かめてから on
+    const autodoneMode = (process.env.DAILY_TASKS_AUTODONE ?? "shadow").trim().toLowerCase();
+    if (autodoneMode === "off") return;
     const screeningUrl = process.env.SCREENING_ADMIN_SUPABASE_URL;
     const screeningKey = screeningAdminSupabaseKey();
     if (!screeningUrl || !screeningKey) return;
@@ -1086,11 +1090,14 @@ async function markRelatedDailyTasksDone(
     try {
       const { data: conv } = await supabase
         .from("conversations")
-        .select("customer_name, display_name")
+        // 2026-11-18 作業員H: conversations に display_name の列は無い（915行と同じ穴）＝この読みは毎回 42703 で落ち、customerName が null のまま return していた
+        //   （本番ログ 11/18 03:16・03:21）。AIX で物件送付・見積書送付した時の screening-admin の daily_tasks の自動の済みが一度も動いていなかった。
+        //   customer_name だけを読む（DAILY_TASKS_AUTODONE: 既定 shadow＝記録だけ・on で済みにする・off で何もしない）
+        .select("customer_name")
         .eq("id", conversationId)
         .single();
-      const c = conv as { customer_name?: string; display_name?: string } | null;
-      customerName = c?.customer_name || c?.display_name || null;
+      const c = conv as { customer_name?: string } | null;
+      customerName = c?.customer_name || null;
     } catch { /* ignore */ }
 
     if (!customerName) return; // 顧客名がなければスキップ
@@ -1116,6 +1123,7 @@ async function markRelatedDailyTasksDone(
       return;
     }
     if (!tasks || tasks.length === 0) return;
+    if (autodoneMode !== "on") { console.log(JSON.stringify({ tag: "daily-tasks-autodone:shadow", conversationId, eventType, would_mark_done: tasks.length })); return; }
 
     // 対象タスクを一括で done=true に更新
     const ids = (tasks as { id: string }[]).map((t) => t.id);

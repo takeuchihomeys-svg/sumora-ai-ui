@@ -319,6 +319,7 @@ const CHIP_JA: Record<string, string> = {
   FLOOR_PLAN_WIDE: "広げた間取り（LDK→DK）",
   BUILDING_AGE_WIDE: "広げた築年の幅（＋5年）",
   SQM_WIDE: "広さが希望より少し狭い（広げてよい幅）",
+  SQM_UNDER_SOFT: "広さが希望より狭い（広さはできれば）",
   // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」（proposal-range）
   FLOOR_PLAN_FEWER_ROOM_WIDE: "部屋数は1つ少ないが広い LDK",
   PROPOSAL_AREA_OUT: "このお客様には場所を広げない（保留）",

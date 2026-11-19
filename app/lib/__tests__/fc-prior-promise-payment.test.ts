@@ -13,7 +13,7 @@ const recent8f = [
   { sender: "staff", text: "あわせて桜川・新町・西長堀周辺全域から管理費込み10万以下〇〇さんにオススメ出来るお部屋新たにピックアップしてお送りさせて頂きます😊！！" },
   { sender: "customer", text: "ご協力ありがとうございます" },
 ];
-t("既定 off", !confirmPriorPromiseOn({}) && !paymentFactUnaskedOn({}));
+t("既定 on（2026-11-18）・off で戻す", confirmPriorPromiseOn({}) && paymentFactUnaskedOn({}) && !confirmPriorPromiseOn({ FC_CONFIRM_PRIOR_PROMISE: "off" }) && !paymentFactUnaskedOn({ FC_PAYMENT_FACT_UNASKED: "off" }));
 t("8f67f33b: 前の通の対象つきの確認の約束を返す", priorStaffConfirmObject(recent8f, "ご協力ありがとうございます") === "プレサンス立売堀アーバンスタイルの募集状況", priorStaffConfirmObject(recent8f, "ご協力ありがとうございます"));
 t("問いがある番は返さない", priorStaffConfirmObject(recent8f, "ありがとうございます、いつ頃分かりますか？") === null);
 t("AIX の通の約束は数えない", priorStaffConfirmObject([recent8f[0], { sender: "staff", text: "〇〇の募集状況確認させて頂きます！！", isAix: true }, { sender: "customer", text: "ありがとうございます" }], "ありがとうございます") === null);
@@ -27,7 +27,7 @@ const revised = "〇〇さんお世話になっております！！\n全然大�
 const original = "プレジオ阿波座1308号室の初期費用、カード決済可能か管理会社に確認させて頂きます！！\n本日営業時間外の為、明日確認出来次第ご連絡させて頂きます！！";
 const cust = ["後内とかもしたいです"];
 const sent = "〇〇さん\nお世話になっております！！\n全然大丈夫です😊\n\n弊社事務所にご来社いただく必要がございますが初期費用のお支払い方法カードでの決済も可能です！！\nカード取扱手数料として支払額の3.24%が決済手数料として追加で発生いたします！！";
-delete process.env.FC_PAYMENT_FACT_UNASKED; delete process.env.COMPANY_FACT_PAYMENT_LUMP;
+process.env.FC_PAYMENT_FACT_UNASKED = "off"; delete process.env.COMPANY_FACT_PAYMENT_LUMP;
 t("off: 聞かれていない番の「一括のみ」は今まで通り素通り", findCompanyFactContradiction(revised, cust) === null);
 process.env.FC_PAYMENT_FACT_UNASKED = "on";
 const hit = findCompanyFactContradiction(revised, cust);

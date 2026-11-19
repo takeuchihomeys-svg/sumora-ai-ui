@@ -24,3 +24,30 @@ export function outlierOf(mix: { r: number; p: number; a: number } | null, shape
   return "合う";
 }
 
+
+/**
+ * 2026-11-18 統括役の割り当て（W46 の当たりの低い場面）: 外れの型を、竹内さんの決まり（CLAUDE.md の3つ）の原因に分ける目安（決定論・読んで直す前の初めの振り分け）。
+ *   材料: ブレインの要件の記録が無い（材料が届いていない）／場面: 道は合っているが組・AIX の種類・1通に両方（場面や決まりの読み違い）／AIX: 返信か AIX かの取り違え
+ */
+export type CauseKind = "材料が届いていない" | "場面の読み違い" | "AIX の番の取り違え" | "合う";
+export function causeOf(outlier: string): CauseKind {
+  if (outlier.startsWith("合う")) return "合う";
+  if (outlier.startsWith("要件の記録なし")) return "材料が届いていない";
+  if (/取り違え|取りこぼし（AIX 側）/.test(outlier)) return "AIX の番の取り違え";
+  return "場面の読み違い"; // 2つ目の AIX の席・重ねの候補・AIX の種類が違う
+}
+/** 道は合っているが AIX の種類が違う（ブレインの最終の AIX と竹内さんの AIX の束が違う） */
+export function aixKindMismatch(brainAction: string | null | undefined, staffKinds: readonly string[]): boolean {
+  const b = String(brainAction ?? "").split("/")[0].trim();
+  if (!b || b === "null" || !staffKinds.length) return false;
+  return !staffKinds.includes(aixBundleFamily(b));
+}
+/** 帳面の3つ（取りこぼし・重ね・取り違え）のどれか */
+export function ledgerClassOf(outlier: string): "取りこぼし" | "重ね" | "取り違え" | "記録なし" | "合う" | "種類違い" {
+  if (outlier.startsWith("合う")) return "合う";
+  if (outlier.startsWith("要件の記録なし")) return "記録なし";
+  if (outlier.startsWith("取りこぼし")) return "取りこぼし";
+  if (outlier.startsWith("重ね")) return "重ね";
+  if (outlier.startsWith("AIX の種類")) return "種類違い";
+  return "取り違え";
+}

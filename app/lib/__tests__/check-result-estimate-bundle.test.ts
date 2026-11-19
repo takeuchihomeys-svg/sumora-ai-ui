@@ -69,7 +69,7 @@ console.log("② 送る並び（物件ごとに［資料・見積書 → 費用�
   t("見積書が1件以上・物件あった・on の時だけ", shouldUseEstimateBundle({ on: true, pattern: "available", estimateCount: 1 })
     && !shouldUseEstimateBundle({ on: true, pattern: "available", estimateCount: 0 })
     && !shouldUseEstimateBundle({ on: false, pattern: "available", estimateCount: 2 })
-    && !shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 1 }));
+    && !shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 1, altOn: false }));
   t("戻す環境変数 off で止まる・既定は on", checkResultEstimateBundleOn("off") === false && checkResultEstimateBundleOn("OFF") === false && checkResultEstimateBundleOn(undefined) === true && checkResultEstimateBundleOn("") === true);
   t("10件まで（①〜⑩）", CHECK_RESULT_MAX_PROPS === 10 && circled(9) === "⑩" && circled(10) === "11.");
 }
@@ -112,5 +112,5 @@ t("別の部屋: スイッチ on の時だけ見積の束", shouldUseEstimateBun
   && !shouldUseEstimateBundle({ on: true, pattern: "alternative", estimateCount: 0, altOn: true }));
 t("見積・申込の行を出す結果: 物件あった は常に・別の部屋 は on の時だけ・物件なし は出さない", checkPatternTakesEstimate("available", false) && checkPatternTakesEstimate("alternative", true)
   && !checkPatternTakesEstimate("alternative", false) && !checkPatternTakesEstimate("unavailable", true));
-t("スイッチの既定は off", !checkAltEstimateOn({}) && checkAltEstimateOn({ NEXT_PUBLIC_CHECK_ALT_ESTIMATE: "on" }));
+t("スイッチの既定は on（2026-11-15）・off で戻す", checkAltEstimateOn({}) && checkAltEstimateOn({ NEXT_PUBLIC_CHECK_ALT_ESTIMATE: "on" }) && !checkAltEstimateOn({ NEXT_PUBLIC_CHECK_ALT_ESTIMATE: "off" }));
 if (fail > 0) process.exit(1);

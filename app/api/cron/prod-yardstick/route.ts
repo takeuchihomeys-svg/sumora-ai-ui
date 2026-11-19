@@ -35,8 +35,9 @@ export async function GET(req: NextRequest) {
     // 2026-11-15 作業員H（cron の枠が上限 100本）: 朝の数えの子を順に呼ぶ（CRON_CHAIN_PROD_YARDSTICK=on の時だけ・既定 off＝今まで通り）。
     //   on で子の数えが残るのを確かめてから vercel.json の子の行（compose-prod-daily・rag-watch-daily）を外して枠を空ける
     if (cronChainOn("prod-yardstick")) {
-      const [{ GET: composeDaily }, { GET: ragDaily }] = await Promise.all([import("../compose-prod-daily/route"), import("../rag-watch-daily/route")]);
-      const chain = await runCronChain(req, [{ name: "compose-prod-daily", run: composeDaily }, { name: "rag-watch-daily", run: ragDaily }], { budgetMs: 110_000, deadlineMs: t0 + 280_000 });
+      // 2026-11-18 作業員K: 物件出しのブレインの毎朝の物差し（prop-brain-daily）も子に足す（新しい cron は足さない）
+      const [{ GET: composeDaily }, { GET: ragDaily }, { GET: propBrainDaily }] = await Promise.all([import("../compose-prod-daily/route"), import("../rag-watch-daily/route"), import("../prop-brain-daily/route")]);
+      const chain = await runCronChain(req, [{ name: "compose-prod-daily", run: composeDaily }, { name: "rag-watch-daily", run: ragDaily }, { name: "prop-brain-daily", run: propBrainDaily }], { budgetMs: 110_000, deadlineMs: t0 + 280_000 });
       return NextResponse.json({ ok: true, ...result, chain });
     }
     return NextResponse.json({ ok: true, ...result });

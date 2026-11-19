@@ -194,13 +194,24 @@ export function jobSize(j: JobSizeLite): number {
   return n * Math.max(1, j.repeat ?? 1);
 }
 export const AGE_NO_SIZE_MS = 4 * 3600_000;
+/**
+ * 2026-11-18 作業員H（11:10 に係が落ちた: 依頼 k1118-sizejudge-tsc1 の createdAt が数（ミリ秒）で、localeCompare が TypeError）:
+ *   依頼の createdAt は ISO の文字の約束だが、手で書いた依頼・別の台本の依頼で数や空が入っても係を止めない。数は ISO に直し、読めない物は空の文字（並びの最後）
+ */
+export function createdAtIso(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) { try { return new Date(v).toISOString(); } catch { return ""; } }
+  return "";
+}
 export function compareJobs(a: JobSizeLite, b: JobSizeLite, nowMs: number = Date.now()): number {
   const pa = a.priority ?? 5, pb = b.priority ?? 5;
   if (pa !== pb) return pa - pb;
-  const sa = nowMs - Date.parse(a.createdAt) >= AGE_NO_SIZE_MS ? 0 : jobSize(a);
-  const sb = nowMs - Date.parse(b.createdAt) >= AGE_NO_SIZE_MS ? 0 : jobSize(b);
+  const ca = createdAtIso(a.createdAt as unknown), cb = createdAtIso(b.createdAt as unknown);
+  const sa = nowMs - Date.parse(ca) >= AGE_NO_SIZE_MS ? 0 : jobSize(a);
+  const sb = nowMs - Date.parse(cb) >= AGE_NO_SIZE_MS ? 0 : jobSize(b);
   if (sa !== sb) return sa - sb;
-  return a.createdAt.localeCompare(b.createdAt);
+  if (!ca !== !cb) return ca ? -1 : 1; // 読めない createdAt は後ろへ
+  return ca.localeCompare(cb);
 }
 export const JOB_MAX_PROBLEMS = 12;
 /** 問題の id を12問ずつに分ける（揺れる問題は入っている側に付ける） */

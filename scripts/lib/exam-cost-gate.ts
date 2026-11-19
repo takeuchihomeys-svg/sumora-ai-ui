@@ -10,6 +10,39 @@
 //   KB: a62a4164（使い回し）・4c91ffd9（試験のブレインが何を何回）・e9d2303e（pass^k・回帰）・d57f27eb（3組・全問は最後に1回）
 import { isDeepseekPeakAt } from "../../app/lib/llm-price";
 
+// ─── 2026-11-19 作業員H（統括役の頼み・試験の無駄は最優先）: 前だけ流れて今が流れない形を、始める前に止める ───
+//   11/19 夜の M1118n-* の4本（$6.29）: --select=rag の選びが入口（setupLlmTest）の前で止まり、全部の問題（290問）に切り替わった
+//   → 前（main）を作る子に残りの上限を丸ごと渡したので、前が上限まで使い、今の側は 0問（比べた 0/0）。
+//   ①前と今を1回ずつ回すだけでも残りの上限を超えるなら回さない（費用0・理由を返す）
+//   ②前を作る子の上限から、今の側の分（1問1回の見込み・残りの半分まで）を取っておく
+/** 係が「回さなかった（費用0）」と読む印（brain-exam が出し、exam-conductor が拾う） */
+export const EXAM_REFUSAL_TAG = "⛔ 試験を回さない（費用0）:";
+export function examRefusalLine(why: string): string { return `${EXAM_REFUSAL_TAG} ${why.replace(/\s+/g, " ").trim()}`; }
+/** 出力から「回さない」の理由を読む（無ければ null） */
+export function examRefusalOf(text: string): string | null {
+  const i = text.lastIndexOf(EXAM_REFUSAL_TAG);
+  if (i < 0) return null;
+  const line = text.slice(i + EXAM_REFUSAL_TAG.length).split(/\r?\n/)[0].trim();
+  return line || "理由なし";
+}
+export type BaseNowGate = { go: true; reserveNowUsd: number; why: string } | { go: false; why: string };
+/**
+ * 前（main）を作る前の確かめ。capUsd＝この回の上限（無ければ確かめない）、spentUsd＝もう使った額、
+ * baseRuns＝前を作る問題×回、nowProblems＝今の側の問題の数（今は少なくとも1問1回）。
+ */
+export function baseNowGate(o: { capUsd: number | null; spentUsd: number; baseRuns: number; nowProblems: number; unitUsd?: number }): BaseNowGate {
+  if (o.capUsd == null || !Number.isFinite(o.capUsd)) return { go: true, reserveNowUsd: 0, why: "上限なし" };
+  const unit = o.unitUsd ?? 0.03;
+  const left = Math.max(0, o.capUsd - Math.max(0, o.spentUsd));
+  const base = Math.max(0, o.baseRuns) * unit, now = Math.max(0, o.nowProblems) * unit;
+  if (o.nowProblems <= 0) return { go: false, why: "今の側の問題が0（前だけ作っても比べられない）" };
+  if (base + now > left) {
+    return { go: false, why: `前を作る ${o.baseRuns}回（約 $${base.toFixed(2)}）＋今の ${o.nowProblems}問×1回（約 $${now.toFixed(2)}）＞ 残りの上限 $${left.toFixed(2)}＝前だけ流れて今が流れない形になる（問題を絞る・--only で名指し・分ける・--cap-usd を上げる）` };
+  }
+  const reserveNowUsd = Math.min(now, left / 2);
+  return { go: true, reserveNowUsd, why: `前 約 $${base.toFixed(2)}＋今 約 $${now.toFixed(2)} ≤ 残り $${left.toFixed(2)}・前の子の上限から今の分 $${reserveNowUsd.toFixed(2)} を取っておく` };
+}
+
 /** 1問の見込みの材料 */
 export type CostItem = {
   id: string;

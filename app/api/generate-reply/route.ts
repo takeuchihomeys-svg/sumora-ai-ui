@@ -1,3 +1,4 @@
+import { situationWriterNote, situationWriterNoteOn } from "@/app/lib/situation-now";
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
@@ -391,6 +392,7 @@ import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
 import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
 import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
+import type { AppealDecision } from "@/app/lib/tsunagi-one-place";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -5674,7 +5676,9 @@ async function handleGenerateReply(req: NextRequest) {
     })();
     // 2026-10-28 竹内さん（和樹・あかり・てん）: こちらが送った物件＝送った時点で募集中を確認済み、を書く役にも事実で渡す（SENT_CONFIRMED_NOTE=on の時だけ・app/lib/sent-confirmed.ts）
     const sentConfirmedWriterNote = ledgerActive && !isFollowUp && sentConfirmedNoteEnabled() ? buildSentConfirmedNote(ledger.entries, Date.now()) : "";
-    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote;
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote
+      // 2026-11-18 作業員L（SITUATION_WRITER_NOTE・既定 off）: 今の状況の記録（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）を書き手にも事実で
+      + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "");
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });
@@ -5708,7 +5712,7 @@ async function handleGenerateReply(req: NextRequest) {
       const tcBrain = turnContract?.source === "brain";
       // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
       // 2026-11-06 作業員9（弱い所 322・REPLY_DIRECTION_KEEP=on・既定 off）: 条件の番は方向の文に竹内さんの形の継続の約束を1文（59%・app/lib/reply-direction-keep.ts）
-      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithNoViewing({ customerText: customerMsgUnits.join("\n") || (message ?? ""), direction: replyDirectionWithKeep({
+      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? replyDirectionWithNoViewing({ customerText: customerMsgUnits.join("\n") || (message ?? ""), appeal: (brainMeta as { appeal_timing?: AppealDecision } | null | undefined)?.appeal_timing ?? null, direction: replyDirectionWithKeep({
         direction: brainDirForGen(brainMeta?.reply_direction), scene: resolveReplyScene({ customerText: message ?? "" }).scene, customerText: customerMsgUnits.join("\n") || (message ?? ""),
         staffToday: recentMessages.filter((m) => m.sender === "staff" && m.createdAt && jstParts(m.createdAt).d === jstParts().d && jstParts(m.createdAt).m === jstParts().m).map((m) => m.text ?? ""),
         firstContact: isFirstEverReplyFromMsgs === true, nearKeepShare: composeNearKeepShare,

@@ -18,6 +18,7 @@
 import { splitRequests } from "./request-ledger";
 import { jstParts } from "./jst-date";
 import { noViewingNoteAllowed } from "./look-hesitation";
+import { noViewingByDecision, type AppealDecision } from "./tsunagi-one-place";
 import { MGMT_TOPIC_RE, mgmtNightNoDirectOn } from "./mgmt-hours-split";
 import { routeFix1020 } from "./brain-route-fix-1020";
 import { brainAixFollowsContractOn } from "./aix-follows-contract";
@@ -30,6 +31,8 @@ export type TwoStageKind = "pickup" | "check" | "estimate";
 /** 2026-11-05 ピックアップの約束の直後のお礼・了承（スタンプも）を2段にしない（ack-topic-scope.twoStageStampAckEnabled と同じスイッチ・既定 off） */
 function twoStageStampAckOn(): boolean { return typeof process !== "undefined" && (process.env?.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on"; }
 export type TwoStageInput = {
+  /** 2026-11-15 作業員H（TSUNAGI_ONE_PLACE）: appeal-timing の判定（meta.appeal_timing と同じ物）。NO_VIEWING が網でなくこれを読む */
+  appeal?: AppealDecision;
   finalAix: string | null;
   decisionSource: string | null;
   /** 売上サポに送れる物件（未送付のピックアップ）がある */
@@ -127,8 +130,15 @@ export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問
  *   TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE=on の時だけ（既定 off）
  */
 export const TWO_STAGE_ALSO_ANSWER_PLAIN = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ・頼まれていない内覧・申込の一文は足さない）。";
-export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
-  return (env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() !== "off" ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER; // 2026-11-06 既定 on（q174-guard 悪化0）
+/**
+ * 2026-11-18 作業員H（内覧の誘いの切り分け h1115-off-×6 の読み直し）: 5つのスイッチを1つずつ off にしても、q428 の2段:pickup の方向の文には
+ *   この尾の「頼まれていない内覧・申込の一文は足さない」が残っていた（6本目の止め＝TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE・既定 on）。
+ *   TSUNAGI_ONE_PLACE=on で appeal-timing が誘う判定の番は、この尾からも止めの句を外す（決める所を1か所に・他の番は今まで通り）。
+ */
+export const TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK = "同じ発言の他のご希望・ご質問にも一言ずつ応える（お客様がはっきり書いた事だけ）。";
+export function twoStageAlsoAnswer(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}, appeal?: AppealDecision): string {
+  if ((env.TWO_STAGE_ALSO_ANSWER_NO_VIEWING_EXAMPLE ?? "").trim().toLowerCase() === "off") return TWO_STAGE_ALSO_ANSWER;
+  return noViewingByDecision(true, appeal, env) ? TWO_STAGE_ALSO_ANSWER_PLAIN : TWO_STAGE_ALSO_ANSWER_PLAIN_INVITE_OK; // 2026-11-06 既定 on（q174-guard 悪化0）
 }
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
@@ -140,18 +150,18 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
     if (extra.length) {
       return {
         ...v,
-        direction: `${v.direction}${twoStageAlsoAnswer()}${multiPromiseDirection(extra)}`,
+        direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}${multiPromiseDirection(extra)}`,
         keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
         extraPromises: extra.map((x) => x.kind),
       };
     }
-    return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
+    return { ...v, direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}` };
   }
   const plan = planPromiseSequence(v, i);
-  if (!plan) return { ...v, direction: `${v.direction}${twoStageAlsoAnswer()}` };
+  if (!plan) return { ...v, direction: `${v.direction}${twoStageAlsoAnswer(undefined, i.appeal)}` };
   return {
     ...v,
-    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : twoStageAlsoAnswer()}${plan.direction}`,
+    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : twoStageAlsoAnswer(undefined, i.appeal)}${plan.direction}`,
     keyTopic: plan.second ? (plan.second.kind === "wish" ? `${v.keyTopic}＋2通目に${plan.second.what}` : `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束`) : v.keyTopic,
     ...(plan.second ? { extraPromises: [plan.second.kind] } : {}),
     ...(plan.later.length ? { laterPromises: plan.later.map((x) => x.kind) } : {}),
@@ -735,11 +745,11 @@ export function pickupDirectionKeepOn(env: Record<string, string | undefined> = 
 }
 const LOOK_NOT_VIEWING_RE = /一旦見て|見てみたい|見てみます|気になります|気になってます|良さそう|いいですね|綺麗ですね/;
 const EXPLICIT_VIEWING_RE = /(?:内覧|内見|見学)/;
-export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText" | "firstContact">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
+export function pickupDirectionAdjust(v: TwoStageVerdict | null, i: Pick<TwoStageInput, "customerText" | "firstContact" | "appeal">, env?: Record<string, string | undefined>): TwoStageVerdict | null {
   if (!v || v.kind !== "pickup") return v;
   const t = String(i.customerText ?? "");
   const add: string[] = [];
-  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t) && noViewingNoteAllowed(t, env)) { // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on は迷いの語がある番だけ
+  if (pickupDirectionNoViewingOn(env) && LOOK_NOT_VIEWING_RE.test(t) && !EXPLICIT_VIEWING_RE.test(t) && noViewingNoteAllowed(t, env) && noViewingByDecision(true, i.appeal, env)) { // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on は迷いの語がある番だけ
     add.push("お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・申込・お部屋を押さえる一文を足さない（竹内さんはピックアップの約束だけ）");
   }
   // 条件の言い直しのピックアップの約束（rule:two_stage_promise(pickup)）だけ。pickup_unless_ack（物件への感想・質問の番）には入れない＝q174 の竹内さんは入れていない

@@ -10,7 +10,7 @@
 type Env = Record<string, string | undefined>;
 
 export function checkQuestionBrainFirstOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_STAGE_CHECK_QUESTION_BRAIN_FIRST ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-cqbf-p2/p3・k1118-cqbf-p1a＝9問＋守り 悪化0）
 }
 
 type Ask = { route?: unknown; aix?: unknown; about?: unknown; answer?: unknown };
@@ -44,9 +44,10 @@ export function checkQuestionBrainRoute(i: { rawAix: unknown; contract: unknown;
 //   実物: q411（物件確認した＋御見積書同封の後の「鍵交換代は必須ですか」→ 竹内さんは AIX【確認した】・ブレインは route=aix の物件確認した/設備）。
 //   P0 ca55d42b（スタッフだけが知る事は AIX）と決定 0f4604a9（手元に無ければ約束・あればどのボタン）: 手元にあるかを決めるのはブレイン（P0 9eb6aa9c）。
 //   守り: ブレインが route="promise" と書いた番（q177・q180・q015・q163・q092 の形＝aix の欄が物件確認したでも依頼は約束）は今まで通り書き換える。
-//   既定 off（TWO_STAGE_CHECK_QUESTION_KEEP_AIX=on）
+//   11/18 から既定 on（止める TWO_STAGE_CHECK_QUESTION_KEEP_AIX=off）
 export function checkQuestionKeepAixOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.TWO_STAGE_CHECK_QUESTION_KEEP_AIX ?? "").trim().toLowerCase() === "on";
+  // 11/18 統括役の決め: h1115-keepaix-on2-p2 悪化0（6/6）・p1 の q411 は揺れ（同じ木 h1118-keepaix-q411 で 4/4・合格 3→3）→ 既定 on（止める =off）
+  return (env.TWO_STAGE_CHECK_QUESTION_KEEP_AIX ?? "").trim().toLowerCase() !== "off";
 }
 /** ブレインの依頼に route="aix" で今の AIX（または同じボタン）を送る ask があり、確認の約束（route=promise）の ask が無いか */
 export function brainChoseAixForQuestion(i: { finalAix: unknown; contract: unknown }): boolean {

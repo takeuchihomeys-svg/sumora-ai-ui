@@ -12,3 +12,12 @@ ok("返信→AIX", outlierOf({ r: 1, p: 0, a: 0 }, "A", 1) === "取り違え（�
 ok("重ねの候補", outlierOf({ r: 1, p: 0, a: 1 }, "A", 1) === "重ねの候補（1通で両方）");
 ok("合う", outlierOf({ r: 0, p: 1, a: 0 }, "R", 0) === "合う" && outlierOf(null, "R", 0) === "要件の記録なし");
 console.log(bad ? `${bad} failed` : "all ok"); if (bad) process.exit(1);
+import { causeOf, aixKindMismatch, ledgerClassOf } from "./lib/ask-route-of";
+{
+  const ok2 = (n: string, c: boolean) => { console.log(`${c ? "  ✓" : "  ✗"} ${n}`); if (!c) process.exitCode = 1; };
+  ok2("原因: 記録なし＝材料", causeOf("要件の記録なし") === "材料が届いていない");
+  ok2("原因: 取り違え＝AIX の番", causeOf("取り違え（AIX→返信）") === "AIX の番の取り違え" && causeOf("取りこぼし（AIX 側）") === "AIX の番の取り違え");
+  ok2("原因: 2つ目の AIX・種類違い＝場面", causeOf("取りこぼし（2つ目の AIX）") === "場面の読み違い" && causeOf("AIX の種類が違う") === "場面の読み違い");
+  ok2("種類違い", aixKindMismatch("estimate_sheet/x", ["property_check_result"]) && !aixKindMismatch("property_send", ["物件の束"]) && !aixKindMismatch(null, ["a"]));
+  ok2("帳面の3つ", ledgerClassOf("重ねの候補（1通で両方）") === "重ね" && ledgerClassOf("取りこぼし（2つ目の AIX）") === "取りこぼし" && ledgerClassOf("AIX の種類が違う") === "種類違い");
+}

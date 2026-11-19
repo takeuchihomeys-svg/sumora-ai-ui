@@ -74,7 +74,7 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     exclude: /(?:れ|け)ば|場合|キャンセル/,
     label: "審査だけ先に出すことはできる（会社の事実・そのお部屋にお申込みすること）のに「できかねます」と断っています",
     suggestion: "断りの文を削除し「かしこまりました！！お申込しお部屋の審査かけさせて頂きます」の形にする（申込はAIX【申込へ】）",
-    enabledIf: () => (process.env.COMPANY_FACT_SCREENING_FIRST_GUARD ?? "").trim().toLowerCase() === "on",
+    enabledIf: () => (process.env.COMPANY_FACT_SCREENING_FIRST_GUARD ?? "").trim().toLowerCase() !== "off",
   },
   {
     factId: "room_photo",
@@ -332,7 +332,7 @@ export function findCompanyFactContradiction(
 
 const PAYMENT_UNASKED_EXCLUDE_RE = /ご入居|入居(?:は|が|でき|出来)/;
 export function paymentFactUnaskedOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FC_PAYMENT_FACT_UNASKED ?? "").trim().toLowerCase() === "on";
+  return (env.FC_PAYMENT_FACT_UNASKED ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-fc-p1〜p4・8問＋守り 悪化0）
 }
 
 // ─── 2026-10-08 竹内さん「管理会社などの業者の名前は、お客様から聞かれた時だけ返信に出す」 ───

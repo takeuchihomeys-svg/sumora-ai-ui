@@ -100,7 +100,7 @@ export function findStaffOnlyFact(draft: string | null | undefined): StaffOnlyFa
 //   こちらが AIX【待ち合わせ場所】で送った日時の言い直し（確定はスタッフが済ませた）＝スタッフしか知らない事を作ったのではない。
 //   内覧の確定・待ち合わせの住所は、同じ日付と時刻（住所は番地）が会話のこちらの通（材料）にあれば根拠ありとする。STAFF_ONLY_GROUNDED=on の時だけ（既定 off）
 export function staffOnlyGroundedEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.STAFF_ONLY_GROUNDED ?? "").trim().toLowerCase() === "on";
+  return (env.STAFF_ONLY_GROUNDED ?? "").trim().toLowerCase() !== "off";
 }
 // 空白は1つの区切りに残す（消すと「11/1 13:00」が「11/113:00」になって日付の終わりが分からなくなる）
 const N0 = (x: string) => x.normalize("NFKC").replace(/\s+/g, " ");

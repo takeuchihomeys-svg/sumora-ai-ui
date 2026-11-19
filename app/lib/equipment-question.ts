@@ -33,19 +33,19 @@ import { isAfterCutoff, type DeepseekCutoff } from "./post-apply";
 
 export type EquipTopic =
   | "gas_stove" | "ih" | "burners" | "aircon" | "bath_toilet" | "washbasin" | "laundry_in" | "autolock" | "delivery_box"
-  | "net_free" | "elevator" | "reheating" | "bath_dryer" | "washlet" | "city_gas" | "balcony";
+  | "net_free" | "elevator" | "reheating" | "bath_dryer" | "washlet" | "city_gas" | "balcony" | "counter_kitchen";
 
 export const EQUIP_TOPIC_LABEL: Record<EquipTopic, string> = {
   gas_stove: "ガスコンロ", ih: "IHコンロ", burners: "コンロの口数", aircon: "エアコン", bath_toilet: "バス・トイレ別", washbasin: "独立洗面台",
   laundry_in: "室内洗濯機置場", autolock: "オートロック", delivery_box: "宅配ボックス", net_free: "インターネット無料", elevator: "エレベーター",
-  reheating: "追い焚き", bath_dryer: "浴室乾燥機", washlet: "温水洗浄便座", city_gas: "都市ガス", balcony: "バルコニー",
+  reheating: "追い焚き", bath_dryer: "浴室乾燥機", washlet: "温水洗浄便座", city_gas: "都市ガス", balcony: "バルコニー", counter_kitchen: "カウンターキッチン",
 };
 
 /** 話題 → 資料の設備の鍵（listing-equipment） */
 const TOPIC_KEY: Record<EquipTopic, EquipKey> = {
   gas_stove: "gas_stove", ih: "ih", burners: "burner2", aircon: "aircon", bath_toilet: "bath_toilet", washbasin: "washbasin",
   laundry_in: "laundry_in", autolock: "autolock", delivery_box: "delivery_box", net_free: "net_free", elevator: "elevator",
-  reheating: "reheating", bath_dryer: "bath_dryer", washlet: "washlet", city_gas: "city_gas", balcony: "balcony",
+  reheating: "reheating", bath_dryer: "bath_dryer", washlet: "washlet", city_gas: "city_gas", balcony: "balcony", counter_kitchen: "counter_kitchen",
 };
 
 /** 売上サポの資料（同じ物件名の行）を読んでよい古さの上限（日） */
@@ -103,22 +103,39 @@ function splitSentences(text: string): string[] {
   return String(text ?? "").normalize("NFKC").split(/(?<=[。！!？?\n])/).map((s) => s.trim()).filter(Boolean);
 }
 
-export type EquipmentQuestion = { topics: EquipTopic[]; sentences: string[] };
+export type EquipmentQuestion = { topics: EquipTopic[]; sentences: string[]; wish?: boolean };
+
+/**
+ * 2026-11-18 作業員H（統括役の決め・q439＝見張り 12838 の根「材料が届いていない」）: 送った束の後の「カウンターキッチンだと嬉しい」のような
+ *   設備の希望は、質問の形でないので設備の読み（送った物件の資料＝sent_image_properties.facts・売上サポの行）に届いていなかった。
+ *   竹内さんは送った資料から「お送りしたお部屋でカウンターキッチン付はこちらの1部屋」と答えて内覧に誘った。
+ *   on の時だけ、希望の言い方（だと嬉しい・が良い・できれば〜・希望）も設備の読みに通す（読みは新しく作らない＝今の設備の答えの材料をそのまま）。
+ *   カウンターキッチンの話題（listing-equipment の counter_kitchen）もこのスイッチの時だけ足す（今までの質問の動きは1つも変えない）。
+ *   切替: EQUIPMENT_WISH_LOOKUP=on（既定 off）。決めるのはブレイン（材料の1行を渡すだけ）。
+ */
+export function equipmentWishLookupOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EQUIPMENT_WISH_LOOKUP ?? "").trim().toLowerCase() === "on";
+}
+const WISH_RE = /(?:だと|なら|があると|があれば|付きだと|付きが|がいい|が良い|がよい)(?:嬉し|うれし|助かり|いい|良い|よい|ありがたい|最高)|できれば|出来れば|希望(?:です|します|して)|欲しい|ほしい/;
+const WISH_ONLY_TOPIC_RES: Array<[EquipTopic, RegExp]> = [["counter_kitchen", /カウンターキッチン|対面(?:式)?キッチン/]];
 
 /**
  * お客様の文から「物件の設備の有無の質問」を読む。当たらなければ null（決定論・LLM なし）。
  * 1文の中に設備の語と聞く形の両方があり、探す条件・入居後の困りごと・手続きの文ではない時だけ。
  */
-export function detectEquipmentQuestion(text: string | null | undefined): EquipmentQuestion | null {
+export function detectEquipmentQuestion(text: string | null | undefined, env?: Record<string, string | undefined>): EquipmentQuestion | null {
   const t = String(text ?? "");
+  const wishOn = equipmentWishLookupOn(env);
+  let wish = false;
   if (!t.trim() || CONDITION_FORM_RE.test(t)) return null;
   const topics = new Set<EquipTopic>();
   const sentences: string[] = [];
   for (const s of splitSentences(t)) {
     if (/^\s*\[(?:画像|動画|スタンプ|ファイル)\]/.test(s)) continue;
-    if (!QUESTION_RE.test(s) || NOT_EQUIP_Q_RE.test(s)) continue;
+    const isWish = wishOn && !QUESTION_RE.test(s) && WISH_RE.test(s);
+    if ((!QUESTION_RE.test(s) && !isWish) || NOT_EQUIP_Q_RE.test(s)) continue;
     const hit: EquipTopic[] = [];
-    for (const [topic, re] of TOPIC_RES) if (re.test(s)) hit.push(topic);
+    for (const [topic, re] of [...TOPIC_RES, ...(wishOn ? WISH_ONLY_TOPIC_RES : [])]) if (re.test(s)) hit.push(topic);
     // 「洗濯機置場はベランダですか」は洗濯機置場の話（ベランダの有無ではない）
     if (hit.includes("laundry_in")) { const i = hit.indexOf("balcony"); if (i >= 0) hit.splice(i, 1); }
     // 「IH」があればコンロの話は IH（「IHコンロ」を ガスコンロ と読まない）
@@ -126,9 +143,10 @@ export function detectEquipmentQuestion(text: string | null | undefined): Equipm
     if (!hit.length) continue;
     hit.forEach((h) => topics.add(h));
     sentences.push(s);
+    if (isWish) wish = true;
   }
   if (!topics.size) return null;
-  return { topics: [...topics], sentences };
+  return wish ? { topics: [...topics], sentences, wish: true } : { topics: [...topics], sentences };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

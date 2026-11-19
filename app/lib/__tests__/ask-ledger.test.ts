@@ -8,7 +8,7 @@ let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 // スイッチ
-t("既定 off", askLedgerMode({}) === "off" && askLedgerMode({ ASK_LEDGER: "x" }) === "off");
+t("既定 shadow（11/18）", askLedgerMode({}) === "shadow" && askLedgerMode({ ASK_LEDGER: "x" }) === "shadow" && askLedgerMode({ ASK_LEDGER: "off" }) === "off");
 t("shadow / on", askLedgerMode({ ASK_LEDGER: "shadow" }) === "shadow" && askLedgerMode({ ASK_LEDGER: " ON " }) === "on");
 
 // id: 同じ言葉＝同じ id・空白や句読点の違いは同じ・違う言葉は違う
@@ -98,6 +98,7 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 // ⑥ 取り違え: 空き・募集状況を返信で答える
 {
   const L = buildAskLedger({ asks: [{ quote: "まだ募集してますか", route: "reply", about: "vacancy", kind: "question" }] });
+  t("⑥ 一般の見込み（埋まる可能性）は除く（q072）", buildAskLedger({ asks: [{ quote: "今見ている物件は埋まる可能性が高いですか", route: "reply", about: "vacancy", kind: "question" }] }).check.ok);
   t("⑥ 取り違え misrouted（空きを返信）", L.check.misrouted.length === 1, L.check);
 }
 
@@ -125,18 +126,30 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
   t("AIX→テンプレートの同じ要件は重ねにしない", L.check.ok, L.check);
 }
 
-// AIX の要件が2種類（見積書＋内覧調整）＝組み立ては AIX を1つしか持たない → 2つ目は取りこぼし
+// AIX の要件が2種類（見積書＋内覧調整）: TWO_MESSAGE_AIX_AIX=off の組み立ては AIX を1つしか持たない → 2つ目は取りこぼし／既定 on（11/18）は AIX→AIX の席で外れ0
 {
-  const L = buildAskLedger({ asks: [
+  const asks2 = [
     { quote: "見積もりお願いします", route: "aix", aix: "estimate_sheet", kind: "request" },
     { quote: "週末内覧できますか", route: "aix", aix: "viewing_invite", kind: "request" },
-  ], finalAix: "estimate_sheet" });
-  t("AIX 2種類: 2つ目の AIX は取りこぼし", L.check.dropped.length === 1 && L.check.dropped[0] === L.items[1].id && L.check.misrouted.length === 0, L.check);
+  ];
+  const o = process.env.TWO_MESSAGE_AIX_AIX;
+  process.env.TWO_MESSAGE_AIX_AIX = "off";
+  const L = buildAskLedger({ asks: asks2, finalAix: "estimate_sheet" });
+  if (o === undefined) delete process.env.TWO_MESSAGE_AIX_AIX; else process.env.TWO_MESSAGE_AIX_AIX = o;
+  t("AIX 2種類（off）: 2つ目の AIX は取りこぼし", L.check.dropped.length === 1 && L.check.dropped[0] === L.items[1].id && L.check.misrouted.length === 0, L.check);
+  const Lon = buildAskLedger({ asks: asks2, finalAix: "estimate_sheet" });
+  t("AIX 2種類（既定 on）: AIX→AIX の席で外れ0", Lon.check.ok && Lon.items[1].slot === "aix" && (Lon.items[1].msg ?? 0) > 1 && Lon.shape === "ATA", Lon);
 }
 // 要件の AIX と最終の AIX（押される AIX）が違う → 取り違え
 {
-  const L = buildAskLedger({ asks: [{ quote: "まだ空いてますか", route: "aix", aix: "property_check_result", kind: "question" }], finalAix: "estimate_sheet/with_appeal" });
-  t("要件の AIX ≠ 最終の AIX＝取り違え", L.check.misrouted.length === 1 && L.final_aix === "estimate_sheet", L.check);
+  const asksM = [{ quote: "まだ空いてますか", route: "aix", aix: "property_check_result", kind: "question" }];
+  const o = process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL;
+  process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = "off";
+  const L = buildAskLedger({ asks: asksM, finalAix: "estimate_sheet/with_appeal" });
+  if (o === undefined) delete process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL; else process.env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL = o;
+  t("要件の AIX ≠ 最終の AIX＝取り違え（席を合わせない off の時）", L.check.misrouted.length === 1 && L.final_aix === "estimate_sheet", L.check);
+  const Lon = buildAskLedger({ asks: asksM, finalAix: "estimate_sheet/with_appeal" });
+  t("既定 on（11/19）は最終の AIX の席を足すので取り違えにならない", Lon.check.ok && Lon.msgs.some((m) => m.aix === "estimate_sheet"), Lon);
 }
 
 // 同じ言葉の要件が2つ → id を分ける
@@ -181,7 +194,7 @@ t("違う要件は引き継がない", matchPrevId("駐車場ありますか", [
 
 // 送り済み・残りの書き戻し（ASK_PROGRESS）
 {
-  t("ASK_PROGRESS 既定 off", askProgressOn({}) === false && askProgressOn({ ASK_PROGRESS: "on" }) === true);
+  t("ASK_PROGRESS 既定 on（11/19・書くだけ）", askProgressOn({}) === true && askProgressOn({ ASK_PROGRESS: "off" }) === false);
   const L = buildAskLedger({ asks: [
     { quote: "この物件まだ空いてますか", route: "promise", about: "vacancy", kind: "question" },
     { quote: "初期費用も知りたいです", route: "aix", aix: "estimate_sheet", about: "property_cost", kind: "request" },

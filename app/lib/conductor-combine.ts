@@ -9,7 +9,7 @@ import { planForConductor, type PlanAsk, type TwoMessagePlan } from "./two-messa
 import { FOCUS_KINDS, focusOrder, orderDigest, type Focus } from "./conductor-focus";
 
 type Env = Record<string, string | undefined>;
-export const conductorCombineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_COMBINE ?? "").trim().toLowerCase() === "on";
+export const conductorCombineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_COMBINE ?? "").trim().toLowerCase() !== "off"; // 2026-11-18 既定 on（k1115-combine-p1/p2・9問 悪化0）
 
 /** seen_customer_at＝この組み立てが見た一番新しいお客様の発言の時刻（meta.analyzed_msg_ts）。読む側はこれより新しい発言があれば使わない（conductor-replan.planIsStale・ea2a9405②） */
 export type CombinePatch = { two_message_plan: TwoMessagePlan & { seen_customer_at?: string | null }; two_message_plan_digest: string | null; conductor_order: string | null; combine_check?: unknown };

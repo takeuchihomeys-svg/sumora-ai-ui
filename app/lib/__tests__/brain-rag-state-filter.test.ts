@@ -10,6 +10,6 @@ const rows = [
 const got = filterKnowledgeByState(rows, "proposing", 4).map((r) => r.id);
 t("状態の名前が違う行を落とし、TPO・AIX の種類・空の行は残す・順は保つ・k 件", JSON.stringify(got) === JSON.stringify([1, 3, 4, 6]), got);
 t("今の状態が分からない時は落とさない", filterKnowledgeByState(rows, null, 10).length === 7);
-t("既定 off", !brainRagStateFilterOn({}) && brainRagStateFilterOn({ BRAIN_RAG_STATE_FILTER: "on" }));
+t("既定 on（2026-11-15）・off で戻す", brainRagStateFilterOn({}) && brainRagStateFilterOn({ BRAIN_RAG_STATE_FILTER: "on" }) && !brainRagStateFilterOn({ BRAIN_RAG_STATE_FILTER: "off" }));
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

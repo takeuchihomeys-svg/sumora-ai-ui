@@ -154,7 +154,7 @@ const CONTRACT_BAN: PhaseBan = {
  */
 export const CUSTOMER_KEY_EXCHANGE_COST_RE = /鍵(?:の)?交換(?:代|費用?|料)?/;
 export function keyBanAllowRe(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): RegExp {
-  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() === "on" ? new RegExp(`${CUSTOMER_CONTRACT_KEY_RE.source}|${CUSTOMER_KEY_EXCHANGE_COST_RE.source}`) : CUSTOMER_CONTRACT_KEY_RE;
+  return (env.FC_FALSE_BLOCK_1027 ?? "").trim().toLowerCase() !== "off" ? new RegExp(`${CUSTOMER_CONTRACT_KEY_RE.source}|${CUSTOMER_KEY_EXCHANGE_COST_RE.source}`) : CUSTOMER_CONTRACT_KEY_RE;
 }
 const KEY_BAN: PhaseBan = {
   re: KEY_HANDOVER_RE, severity: "block", code: "TIMING_VOCAB_MISMATCH",

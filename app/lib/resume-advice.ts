@@ -9,7 +9,7 @@
 // テスト: app/lib/__tests__/resume-advice.test.ts
 
 export function ledgerResumeAdviceEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LEDGER_RESUME_ADVICE_NOT_PROMISE ?? "").trim().toLowerCase() === "on";
+  return (env.LEDGER_RESUME_ADVICE_NOT_PROMISE ?? "").trim().toLowerCase() !== "off";
 }
 
 /** お客様の動き（探し・再開・開始）＋「いただく／頂く」 */

@@ -18,7 +18,7 @@
 // 送った所まで（progressAfterSends＝継ぎ目②の純関数）: 実際に送った通（返信／AIX の種類）を組み立てに当て、答えた要件・約束した要件・残りの要件・次の通を出す。
 // 次の番（openAsksFrom）: まだ答えていない要件（残り）と、約束して結果がまだの要件を id のまま渡す。
 //
-// スイッチ ASK_LEDGER（既定 off＝何もしない／shadow＝meta.ask_ledger に記録だけ／on＝記録＋meta.turn_contract.asks に id・msg を書き足す）。
+// スイッチ ASK_LEDGER（11/18 から既定 shadow・off＝何もしない／shadow＝meta.ask_ledger に記録だけ／on＝記録＋meta.turn_contract.asks に id・msg を書き足す）。
 //   on でも道（返信か AIX か）と組み立ては決め直さない（読んで番号を付けるだけ・KB 0dbfbc97「後の役は決め直さない」）。
 // テスト: app/lib/__tests__/ask-ledger.test.ts
 
@@ -29,8 +29,10 @@ const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 
 export type AskLedgerMode = "off" | "shadow" | "on";
 export function askLedgerMode(env: Env = envOf()): AskLedgerMode {
+  // 2026-11-18 作業員M（統括役の案）: 既定 shadow＝meta.ask_ledger に記録だけ（道・組み立て・プロンプトは変えない・Haiku の差分の材料からは外してある）。
+  //   試験 M1115-aixaix-p1/p2 は ASK_LEDGER=shadow を入れて確かな悪化0。止める ASK_LEDGER=off／asks に id・msg を書き足すのは =on
   const v = (env.ASK_LEDGER ?? "").trim().toLowerCase();
-  return v === "shadow" || v === "on" ? v : "off";
+  return v === "off" ? "off" : v === "on" ? "on" : "shadow";
 }
 
 /** 要件の言葉の正規化（空白・句読点・括弧を落とす）。turn-contract.buildTurnContract の keyOf と同じ落とし方（長さは切らない） */
@@ -183,23 +185,30 @@ export function checkAskLedger(items: ReadonlyArray<AskEntry>, plan?: TwoMessage
     }
     // 取りこぼし②: AIX の要件が2種類あるのに、AIX の通は1つ目の AIX だけ（組み立ては AIX を1つしか持たない）＝2つ目の AIX を送る通が無い
     const mAix = aixOfMsg(e.msg);
-    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && aixFamilyKey(mAix) !== aixFamilyKey(e.aix)) {
+    //   内覧調整・待ち合わせの席が確認の要件を文の中で受ける形（TWO_MESSAGE_SEAT_FOLLOWS_FINAL の (i)・viewCheckInAix）は取りこぼしにしない
+    const foldedInView = !!mAix && VIEW_SEAT.has(mAix) && !!e.aix && CHECK_KEYS.has(e.aix);
+    if (e.route === "aix" && e.slot === "aix" && e.aix && mAix && !foldedInView && aixFamilyKey(mAix) !== aixFamilyKey(e.aix)) {
       issues.push({ id: e.id, code: "dropped", why: `AIX の要件（${e.aix}）に、その AIX の通が無い（${e.msg}通目は ${mAix}）` });
       continue;
     }
     // 取り違え③: 要件の AIX とブレインの最終の AIX（押される AIX）が違い、最終の AIX の要件が1つも無い＝組み立ては要件の AIX、押されるのは最終の AIX
-    if (e.route === "aix" && e.aix && finalAix && aixFamilyKey(e.aix) !== aixFamilyKey(finalAix) && !items.some((x) => x.route === "aix" && x.aix && aixFamilyKey(x.aix) === aixFamilyKey(finalAix))) {
+    //   組み立てに最終の AIX の席がある時（TWO_MESSAGE_SEAT_FOLLOWS_FINAL）は取り違えにしない＝押された AIX を組みが読める
+    const finalSeat = !!finalAix && !!plan?.messages.some((m) => m.slot === "aix" && m.aix && aixFamilyKey(m.aix) === aixFamilyKey(finalAix));
+    if (e.route === "aix" && e.aix && finalAix && !finalSeat && aixFamilyKey(e.aix) !== aixFamilyKey(finalAix) && !items.some((x) => x.route === "aix" && x.aix && aixFamilyKey(x.aix) === aixFamilyKey(finalAix))) {
       issues.push({ id: e.id, code: "misrouted", why: `要件の AIX（${e.aix}）と最終の AIX（${finalAix}）が違う` });
     }
     // 取り違え①: AIX の番（スタッフだけが知る事）を返信の通で答える
     if (e.route === "aix" && e.slot === "reply") issues.push({ id: e.id, code: "misrouted", why: `AIX の番（${e.aix ?? "AIX"}）を返信の通（${e.msg}通目）で答える` });
     // 取り違え②: 空き・募集状況を返信で言い切る（P0 ca55d42b: 募集状況はスタッフだけが知る）。約束（promise）は取り違えではない
     //   不安・気持ち（「埋まる可能性高いですか」の焦り＝q072）は受け止めを返信で書くので除く＝問い・依頼だけ
-    else if (e.route === "reply" && e.about === "vacancy" && e.slot === "reply" && (e.kind === "question" || e.kind === "request")) issues.push({ id: e.id, code: "misrouted", why: `空き・募集状況（「${e.quote.slice(0, 16)}」）を返信で答える＝確認の約束か AIX の番` });
+    //   一般の見込み（「埋まる可能性は高いか」＝好条件はすぐ埋まる・試験 q072 の正解は返信）と、一般の事で答える（basis=general）番も除く
+    else if (e.route === "reply" && e.about === "vacancy" && e.slot === "reply" && (e.kind === "question" || e.kind === "request") && e.basis !== "general" && !/埋ま|決まって?しま|すぐ(?:に)?(?:無く|なく)/.test(e.quote)) issues.push({ id: e.id, code: "misrouted", why: `空き・募集状況（「${e.quote.slice(0, 16)}」）を返信で答える＝確認の約束か AIX の番` });
   }
   const ids = (c: AskIssueCode) => [...new Set(issues.filter((x) => x.code === c).map((x) => x.id))];
   return { ok: issues.length === 0, dropped: ids("dropped"), doubled: ids("doubled"), misrouted: ids("misrouted"), issues };
 }
+const VIEW_SEAT = new Set(["viewing_invite", "meeting_place"]);
+const CHECK_KEYS = new Set(["property_check_result", "acknowledge_check"]);
 const ROUTE_JA: Record<AskRoute, string> = { reply: "返信", promise: "約束", aix: "AIX", none: "触れない" };
 
 /** 判断の後の meta から帳面を作る（meta は変えない）。asks が無い番は null */
@@ -309,7 +318,8 @@ export function askLedgerAlert(ledger: AskLedger | null | undefined): string | n
 // ── 送り済み・残りの書き戻し（継ぎ目②・conversations.ask_progress・ASK_PROGRESS=on の時だけ）────────────
 /** 既定 off（ASK_PROGRESS=on の時だけ返信・AIX の送信の後に conversations.ask_progress を書く） */
 export function askProgressOn(env: Env = envOf()): boolean {
-  return (env.ASK_PROGRESS ?? "").trim().toLowerCase() === "on";
+  // 2026-11-19 統括役の決定: 文に触れない記録なので既定 on（書くだけ・YUMA で書く口を確かめた）。止める ASK_PROGRESS=off。読む側は ASK_PROGRESS_READ（既定 off）
+  return (env.ASK_PROGRESS ?? "").trim().toLowerCase() !== "off";
 }
 /** conversations.ask_progress の形。seen_customer_at が今の帳面と同じ時だけ続きとして読む（新しいお客様の発言の後は数え直し） */
 export type AskProgressRecord = AskProgress & { v: 1; seen_customer_at: string | null; sends: SentMove[]; at: string };
@@ -328,4 +338,41 @@ export function askProgressOf(ledger: AskLedger | null | undefined, raw: unknown
   if (!ledger || !p || p.v !== 1 || !Array.isArray(p.sends)) return null;
   if ((p.seen_customer_at ?? null) !== (ledger.seen_customer_at ?? null)) return null;
   return p as AskProgressRecord;
+}
+
+// ── 読む側（2026-11-19 作業員M・統括役の割り振り: AIX の2通目・画面の帯・統括の指示書）────────────
+/** 読む側の既定 off（ASK_PROGRESS_READ=on の時だけ ask_progress を読んで渡す）。書く側 ASK_PROGRESS とは別（書いて貯めてから読む側を試験する） */
+export function askProgressReadOn(env: Env = envOf()): boolean {
+  return (env.ASK_PROGRESS_READ ?? "").trim().toLowerCase() === "on";
+}
+const quoteOf = (led: AskLedger, id: string) => led.items.find((e) => e.id === id)?.quote ?? id;
+const SLOT_JA: Record<PlanSlot, string> = { reply: "返信", aix: "AIX", aix_template: "AIX の続きの通" };
+/** AIX の2通目・AIX の後の返信の書き手への1段（送った所まで・まだ答えていない要件・約束して結果がまだの要件・次の通）。渡す物が無ければ "" */
+export function askProgressNote(led: AskLedger | null | undefined, pr: AskProgressRecord | null | undefined): string {
+  if (!led || !pr) return "";
+  const L: string[] = [];
+  if (pr.offPlan) L.push(`・組み立てと違う送り方をした（${pr.offPlan}）＝下の残りは目安`);
+  if (pr.remaining.length) L.push(`・まだ答えていない要件: ${pr.remaining.slice(0, 4).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.answered.length) L.push(`・もう答えた要件（繰り返さない）: ${pr.answered.slice(0, 4).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.promised.length) L.push(`・約束して結果がまだの要件（結果は確かめてから）: ${pr.promised.slice(0, 3).map((id) => `「${quoteOf(led, id)}」`).join("・")}`);
+  if (pr.next) L.push(`・次の通: ${pr.next.no}通目の${SLOT_JA[pr.next.slot]}${pr.next.aix ? `（${pr.next.aix}）` : ""}`);
+  return L.length ? `【この番の送った所まで（要件の帳面・${pr.sentUpTo}通目まで送った）】\n${L.join("\n")}` : "";
+}
+/** 画面の帯の1行（送った所まで・残り）。無ければ null */
+export function askProgressBand(led: AskLedger | null | undefined, pr: AskProgressRecord | null | undefined): string | null {
+  if (!led || !pr || (!pr.remaining.length && !pr.next)) return null;
+  const rest = pr.remaining.slice(0, 2).map((id) => `「${quoteOf(led, id).slice(0, 14)}」`).join("・");
+  return `${pr.sentUpTo}/${led.count}通 送った${rest ? `・まだ: ${rest}` : ""}${pr.next ? `・次は${SLOT_JA[pr.next.slot]}` : ""}${pr.offPlan ? "・⚠組み立てと違う" : ""}`;
+}
+/**
+ * 次の番の統括へ（前の番の帳面と送った所まで → まだの要件・約束して結果がまだの要件）。
+ *   名前は作業員L の situation_now（asks.open・asks.promised・ask_id）とそろえる＝id は askIdOf。前の帳面の続きでない記録（古い）は読まない
+ */
+export type AskCarry = { from_seen: string | null; open: string[]; promised: string[]; items: Array<{ ask_id: string; quote: string; state: "open" | "promised"; route: AskRoute; aix: string | null }> };
+export function askCarryFrom(prevLed: AskLedger | null | undefined, rawProgress: unknown): AskCarry | null {
+  const pr = askProgressOf(prevLed, rawProgress);
+  if (!prevLed || !pr) return null;
+  const items = openAsksFrom(prevLed, pr).map((x) => ({ ask_id: x.id, quote: x.quote, state: x.state, route: x.route, aix: x.aix }));
+  if (!items.length) return null;
+  return { from_seen: prevLed.seen_customer_at, open: items.filter((x) => x.state === "open").map((x) => x.ask_id), promised: items.filter((x) => x.state === "promised").map((x) => x.ask_id), items };
 }

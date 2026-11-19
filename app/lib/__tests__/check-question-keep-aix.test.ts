@@ -7,7 +7,7 @@ import { checkQuestionKeepAixOn, brainChoseAixForQuestion, checkQuestionBrainRou
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
 
-ok("既定 off", checkQuestionKeepAixOn({}) === false && checkQuestionKeepAixOn({ TWO_STAGE_CHECK_QUESTION_KEEP_AIX: "on" }) === true);
+ok("既定 on・=off で止める（11/18）", checkQuestionKeepAixOn({}) === true && checkQuestionKeepAixOn({ TWO_STAGE_CHECK_QUESTION_KEEP_AIX: "off" }) === false);
 // q411（物件確認した＋御見積書同封の後の「鍵交換代は必須ですか・しなくてもいい」→ 竹内さんは AIX【確認した】）: 当たった答案のブレインの依頼
 const q411Hit = { asks: [{ quote: "鍵交換代は必須ですか", kind: "question", route: "aix", answer: null, basis: "staff_only", aix: "property_check_result" }] };
 ok("q411（当たった答案）: route=aix の物件確認した → 書き換えない", brainChoseAixForQuestion({ finalAix: "property_check_result", contract: q411Hit }));

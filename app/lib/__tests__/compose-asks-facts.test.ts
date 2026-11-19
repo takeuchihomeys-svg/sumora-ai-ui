@@ -21,8 +21,9 @@ t("記録の値（見積の金額・内覧の日時）は値のまま", () => {
   assert.equal(recordFactsOf({ estimates: [{ property_name: "x", initial_cost_yen: null }], viewing: null }).length, 0);
 });
 t("既定 off は何も足さない", () => {
-  assert.equal(composeAsksFactsOn({}), false);
-  assert.equal(composeFactsNote(asksFactsOf(meta), {}), "");
+  assert.equal(composeAsksFactsOn({}), true); // 11/18 既定 on
+  assert.equal(composeAsksFactsOn({ COMPOSE_ASKS_FACTS: "off" }), false);
+  assert.equal(composeFactsNote(asksFactsOf(meta), { COMPOSE_ASKS_FACTS: "off" }), "");
   assert.match(composeFactsNote(asksFactsOf(meta), { COMPOSE_ASKS_FACTS: "on" }), /「審査はどのくらい？」→ 申込から審査3〜10日（会社の事実）/);
 });
 console.log(`compose-asks-facts: ${n} pass`);

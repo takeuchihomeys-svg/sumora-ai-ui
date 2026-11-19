@@ -39,7 +39,7 @@ import { isGenericBuildingName } from "./generic-building-name";
 import { EQUIP_LABELS, conditionalFloorOf, floorFromRoom, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
-import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
+import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, requirementSizeJudgeOn, type RequirementStrengths } from "./requirement-strength";
 // 2026-10-07 決め手の条件（気に入った部屋＋あと一つの不満から作る次の物件の像・closing-target.ts）
 import { closingTargetCodes, CLOSING_POINTS, CLOSING_JA, type ClosingTargetJudgeInput } from "./closing-target";
 import { sentLikeCodes, SENT_LIKE_POINTS, SENT_LIKE_JA, type SentLikeProfile } from "./sent-like-fit";
@@ -594,6 +594,7 @@ export const REASON_JA: Record<string, string> = {
   SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
   SQM_WIDE: "広さが希望より少し狭い（広げて提案してよい幅の中・保留にしない）",
   SQM_UNDER: "広さが希望の9割未満",
+  SQM_UNDER_SOFT: "広さが希望の9割未満（広さはできれば・保留にしない）",
   SQM_UNKNOWN: "要確認: 広さ",
   // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」（room-jo.ts）
   ROOM_JO_OK: "洋室の帖数が希望以上",
@@ -866,6 +867,7 @@ export const REASON_POINTS: Record<string, number> = {
   ...RENT_BAND_POINTS,
   FLOOR_PLAN_ALT_MATCH: 8,
   SQM_OK: 3, SQM_SLIGHTLY_UNDER: 0, SQM_UNDER: -10, SQM_UNKNOWN: 0,
+  SQM_UNDER_SOFT: -5, // 2026-11-18 広さはできれば（REQUIREMENT_SIZE_JUDGE）: 広げた幅（SQM_WIDE −3）より下・保留（−10）より上
   // 2026-09-27 洋室の帖数（希望以上 +3＝広さの ○ と同じ・狭い −15 外す候補・目安より狭い −10 保留・読めない 0点の要確認）
   //   間取り図の読みだけで狭い −10 保留（ROOM_JO_IMG_NG・図の帖数の読み違いが実物で 4件あったので外す候補にしない）
   ROOM_JO_OK: 3, ROOM_JO_NG: -15, ROOM_JO_SOFT_NG: -10, ROOM_JO_IMG_NG: -10, ROOM_JO_UNKNOWN: 0,
@@ -1635,7 +1637,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_NOT_ZERO_SOFT: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
   FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_FEWER_ROOM_WIDE: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"], FLOOR_PLAN_TOO_SMALL: ["間取り", "ng"],
-  SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
+  SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNDER_SOFT: ["広さ", "soft_ng"], SQM_UNKNOWN: ["広さ", "unread"],
   ROOM_JO_OK: ["洋室の帖数", "ok"], ROOM_JO_NG: ["洋室の帖数", "ng"], ROOM_JO_SOFT_NG: ["洋室の帖数", "ng"], ROOM_JO_IMG_NG: ["洋室の帖数", "ng"], ROOM_JO_UNKNOWN: ["洋室の帖数", "unread"],
   LDK_JO_OK: ["リビングの帖数", "ok"], LDK_JO_NG: ["リビングの帖数", "ng"], LDK_JO_UNKNOWN: ["リビングの帖数", "unread"],
   WALK_OK: ["徒歩", "ok"], WALK_SLIGHTLY_OVER: ["徒歩", "soft_ng"], WALK_OVER: ["徒歩", "ng"],
@@ -2049,7 +2051,7 @@ export const RENT_MIN_RATIO = 0.85;
 
 /** リノベーション物件の築年の扱いを直すか（2026-10-20 竹内さん・KB 6497a18a）。既定 off */
 export function renovAgeFixEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PROPERTY_RENOV_AGE_1020 ?? "").trim().toLowerCase() === "on";
+  return (env.PROPERTY_RENOV_AGE_1020 ?? "").trim().toLowerCase() !== "off";
 }
 /** 築年の希望超過を減点しない（リノベ済みと読めた時だけ・資料の印 terms.renovated か物件名・説明文。listing-renovation.renovationOfText と同じ線） */
 export function renovatedAgeOk(facts: Pick<PropertyFacts, "name" | "rawText">, terms?: { renovated?: boolean | null } | null, env?: Record<string, string | undefined>): boolean {
@@ -2156,6 +2158,9 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: 30㎡以上の希望は −10㎡まで提案してよい（dept_search_tool.md の決まり・
     //   実送信 −5〜−10㎡ 32部屋の刺さり 19%＝希望以上 17%）。広さが決め手のお客様（提案の範囲 sizeWide=false）は今まで通り −5㎡。PROPOSAL_SIZE_WIDE=off で旧
     else if (a >= profile.sqmMin - wideSqmMargin(profile.sqmMin, opts.proposalRange?.sizeWide ?? true)) add("SQM_WIDE", reasonPoints("SQM_WIDE"));
+    // 2026-11-18 作業員K（統括役の決め）: 広さの要望が「できれば」（requirement_strength.size=nice・「なければ全然小さくても大丈夫」）の人は、
+    //   9割未満でも保留にせず −5 の情報の札（SQM_UNDER_SOFT）。絶対（must）・強い希望（strong）・強さ不明は今まで通り保留。REQUIREMENT_SIZE_JUDGE=on の時だけ（既定 off）
+    else if (requirementSizeJudgeOn() && profile.requirementStrengths?.size?.strength === "nice") add("SQM_UNDER_SOFT", reasonPoints("SQM_UNDER_SOFT"));
     else add("SQM_UNDER", reasonPoints("SQM_UNDER"), "hold");
   }
 

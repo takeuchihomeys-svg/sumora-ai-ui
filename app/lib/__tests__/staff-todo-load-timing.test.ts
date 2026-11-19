@@ -11,8 +11,8 @@ function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw 
 
 (async () => {
   console.log("staff-todo-load-timing");
-  await it("切替は既定 off（on の時だけ）", () => {
-    eq(staffTodoFastLoadEnabled({}), false);
+  await it("切替は既定 on（2026-11-15）・off で戻す", () => {
+    eq(staffTodoFastLoadEnabled({}), true);
     eq(staffTodoFastLoadEnabled({ STAFF_TODO_FAST_LOAD: "on" }), true);
     eq(staffTodoFastLoadEnabled({ STAFF_TODO_FAST_LOAD: " ON " }), true);
     eq(staffTodoFastLoadEnabled({ STAFF_TODO_FAST_LOAD: "off" }), false);

@@ -10,6 +10,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { completeAuthOk } from "@/app/lib/pickup-complete";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { humanMotionPaceOn, BurstMeter, PacedWriter } from "@/app/lib/human-motion-pacer";
+
+// 2026-11-18 作業員H（本番 12:16〜12:22 の DB の時間切れ・human_motion_learn の POST が5分で241件重なった）:
+//   重なった時だけ受け取りを先に返し、間を空けて25行ずつまとめて書く（app/lib/human-motion-pacer.ts・止める HUMAN_MOTION_PACE=off）
+const _isMissingCol = (e: { code?: string | null; message?: string | null } | null | undefined) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /column .* does not exist|Could not find the .* column/i.test(String(e.message ?? "")));
+/** 溜めた行を1行ずつ書く時（まとめて書けなかった時）: 無い列を1つずつ外して入れ直す（POST の今の形と同じ考え・最大8回） */
+async function insertOneDroppingMissing(row: Record<string, unknown>): Promise<void> {
+  const r = { ...row };
+  let ins = await supabase.from("human_motion_learn").insert(r);
+  for (let i = 0; i < 8 && _isMissingCol(ins.error); i++) {
+    const m = /column "?([a-z_]+)"? of|'([a-z_]+)' column|column "?([a-z_]+)"? does not exist|Could not find the '([a-z_]+)' column/i.exec(String(ins.error?.message ?? ""));
+    const col = m ? (m[1] || m[2] || m[3] || m[4]) : null;
+    if (!col || !(col in r)) break;
+    delete r[col];
+    ins = await supabase.from("human_motion_learn").insert(r);
+  }
+  if (ins.error) console.warn("[human-motion] 溜めた行を書けません:", ins.error.message);
+}
+const motionMeter = new BurstMeter();
+const motionWriter = new PacedWriter<Record<string, unknown>>({
+  insertMany: async (rows) => { const r = await supabase.from("human_motion_learn").insert(rows); return { error: r.error ? { message: r.error.message, code: r.error.code } : null }; },
+  insertOne: insertOneDroppingMissing,
+  log: (x) => console.warn(x),
+});
 
 export const dynamic = "force-dynamic";
 
@@ -400,6 +425,13 @@ export async function POST(req: NextRequest) {
    *   列が無いと insert が 42703（column does not exist）で落ち、**写真も動きの記録も消える**。
    *   → 落ちたら列を外してもう一度入れる（画像は Storage の shot_key で残っている）。
    */
+  // 重なった時は受け取りだけ返す（写真を表に入れる大きい行は溜めない＝今まで通りその場で書く）
+  const bigRow = typeof row.shot_b64 === "string" && (row.shot_b64 as string).length > 100;
+  if (humanMotionPaceOn() && !bigRow && motionMeter.hit(Date.now())) {
+    const p = motionWriter.push(row as Record<string, unknown>);
+    try { const { waitUntil } = await import("@vercel/functions"); waitUntil(p); } catch { /* Vercel 以外は流れが続く */ }
+    return NextResponse.json({ ok: true, queued: true, pending: motionWriter.pending, shot_key: row.shot_taken ? (row.shot_key ?? null) : null }, { status: 200, headers: CORS });
+  }
   let ins = await supabase.from("human_motion_learn").insert(row);
   /** 無い列を外した記録（点検用に返す・静かに握りつぶさない） */
   const droppedCols: string[] = [];

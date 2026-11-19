@@ -7,6 +7,7 @@
 // 切替: REPLY_DIRECTION_KEEP（11/06 既定 on・=off で止める）。テスト: app/lib/__tests__/reply-direction-keep.test.ts
 import { hasKeepPromise } from "./reply-compose-conductor";
 import { noViewingNoteAllowed } from "./look-hesitation";
+import { noViewingByDecision, type AppealDecision } from "./tsunagi-one-place";
 
 type Env = Record<string, string | undefined>;
 export function replyDirectionKeepOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -36,9 +37,10 @@ export function replyDirectionNoViewingOn(env: Env = typeof process !== "undefin
   return (env.REPLY_DIRECTION_NO_VIEWING ?? "").trim().toLowerCase() !== "off"; // 2026-11-06 既定 on（q174-guard: q087・q129 確かな悪化0・統括役の決め）
 }
 const EXPLICIT_VIEWING_RE = /内覧|内見|見学/;
-export function replyDirectionWithNoViewing(o: { direction: string | null; customerText: string }, env?: Env): string | null {
+export function replyDirectionWithNoViewing(o: { direction: string | null; customerText: string; appeal?: AppealDecision }, env?: Env): string | null {
   if (!o.direction || !replyDirectionNoViewingOn(env)) return o.direction;
   if (!LOOK_RE.test(o.customerText) || EXPLICIT_VIEWING_RE.test(o.customerText)) return o.direction;
   if (!noViewingNoteAllowed(o.customerText, env)) return o.direction; // 11/15 作業員H: NO_VIEWING_HESITATION_ONLY=on の時は迷いの語がある番だけ（q428）
+  if (!noViewingByDecision(true, o.appeal, env)) return o.direction; // 11/15 作業員H: TSUNAGI_ONE_PLACE=on の時は appeal-timing の判定を読む（誘う判定なら足さない）
   return `${o.direction}（お客様の「一旦見てみたい」「良さそう」等は物件への感想で内覧の依頼ではない＝内覧・内覧の可否の確認・申込・お部屋を押さえる一文を足さない。竹内さんは新たにピックアップしてお送りする約束だけ）`;
 }

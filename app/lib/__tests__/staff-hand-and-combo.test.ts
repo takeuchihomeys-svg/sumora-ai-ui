@@ -31,7 +31,8 @@ const ps = pickSendCombo({ type: null, route: "aix", cues: comboCuesFromMeta(aix
 t("② 物件を送る AIX → 一押しの返信", ps?.combo === "aix_then_reply" && /一押し/.test(ps.order));
 // 969f0162・043502cc（見積書の AIX の後に「最大限割引しました初期費用の御見積書となります」＋保証会社の説明）
 const es = pickSendCombo({ type: null, route: "aix", cues: comboCuesFromMeta(aix("estimate_sheet")) });
-t("② 見積書 → 割引と保証会社の説明の返信", es?.combo === "aix_then_reply" && /保証会社/.test(es.order));
+// 2026-11-18 作業員M: 実送信（竹内さん本人・60日・見積書の後の手打ち 75通）で保証会社は 2通だけ＝形は「最大限割引＋ご査収・ご案内」に直した
+t("② 見積書 → 最大限割引とご査収・ご案内の返信", es?.combo === "aix_then_reply" && /最大限割引/.test(es.order) && /ご査収/.test(es.order) && !/保証会社/.test(es.order));
 // cd0503c7・a8c55dde 11/06 05:54（確認の結果の AIX → 物件を送る AIX）: 約束が2つ開いていて結果が手元
 const two = comboCuesFromMeta(aix("property_check_result", { action_ledger: { facts: { pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: true } }, now_vs_later: { ready_now: ["確認の結果"] } }));
 t("② 約束2つ・結果が手元 の手がかり", two.twoOpenPromises === true && two.resultReady === true);

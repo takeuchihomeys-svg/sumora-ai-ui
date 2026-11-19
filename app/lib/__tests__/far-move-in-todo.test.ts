@@ -16,9 +16,10 @@ const iso = (s: string) => new Date(Date.parse(s)).toISOString();
 const SAID = { conversation_id: "c1", text: "ここもあんまり待ってもらえない感じですかね、、\n12月末から1月前半で引っ越しできそうです！", created_at: iso("2026-10-16T18:02:25+09:00") };
 
 console.log("far-move-in-todo");
-it("切替は既定 off", () => {
-  eq(todoFarMoveInEnabled({}), false);
+it("切替は既定 on（2026-11-15）・off で戻す", () => {
+  eq(todoFarMoveInEnabled({}), true);
   eq(todoFarMoveInEnabled({ TODO_FAR_MOVE_IN: "on" }), true);
+  eq(todoFarMoveInEnabled({ TODO_FAR_MOVE_IN: "off" }), false);
 });
 it("入居の時期の発言から連絡の日（1ヶ月半前）と幅の言い方", () => {
   const p = farMoveInOfTurns([SAID], AT)!;

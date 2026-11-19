@@ -120,10 +120,18 @@ export function resolveEstimateClosing(i: {
   notViewable?: boolean;
   /** お客様が直近（3日）にこのお部屋の見積・初期費用を頼んだ（customer-mindset.customerAskedEstimate） */
   customerAsked?: boolean;
+  /** 2026-11-18 刺さり具合を「頼まれた見積」より先に見る（お客様が送ってきた物件の読みで刺さり具合を作れた時・ESTIMATE_SIP_APPEAL・estimate-sent-image-appeal.ts） */
+  appealFirst?: boolean;
 }): { closing: EstimateClosing; reason: string } {
   if (i.ctaPreference === "apply") return { closing: "apply", reason: "スタッフが「申込へ押し込む」を選んだ" };
   if (i.ctaPreference === "viewing") return { closing: "viewing", reason: "スタッフが「内覧に誘う」を選んだ" };
   if (i.viewed) return { closing: "receipt", reason: "内覧の後（申込の話はブレインがお客様の反応で決める）" };
+  // 2026-11-18 作業員K（竹内さんの決定 a43ade78「採点の刺さり具合で締める・刺さらない→ご査収」の材料が持ち込みのお部屋に無かった穴）:
+  //   お客様が送ってきた物件の読みを判定に通した刺さり具合がある時は、頼まれた見積の線より先に見る（竹内さんの実送信: 刺さらない 20通 ご査収 12・内覧 5・申込 3／刺さる 3通 内覧 3）
+  if (i.appealFirst && i.appeal && !(i.reactionKind && HOLD_BACK.has(i.reactionKind))) {
+    if (i.appeal === "strong") return i.notViewable ? { closing: "apply", reason: "送ってきた物件の読みで刺さる・退去予定（申込誘導）" } : { closing: "viewing", reason: "送ってきた物件の読みで刺さる・今見られる（内覧誘導）" };
+    return { closing: "receipt", reason: "送ってきた物件の読みで刺さると言えない（ご査収）" };
+  }
   // 2026-10-09 竹内さん「初期費用の見積を頼む＝その物件に興味がある。費用に納得できれば内覧や申込につなげられる。見積書の文には今まで通り内覧訴求や申込訴求を加え、
   //   お客様に次の方向を示しつつ待つ形（未内覧で空室なら内覧訴求が主）。代表確認を一度に出さない（further-discount の線は変えない）」。
   //   竹内さんの実送信（120日・頼まれた見積・内覧の前 98通）: 内覧 36%・申込 33%・ご査収だけ 32%（＝7割が訴求を添えている）。既定 on・ESTIMATE_ASKED_APPEAL=off で戻す

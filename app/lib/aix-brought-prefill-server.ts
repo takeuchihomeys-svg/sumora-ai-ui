@@ -6,7 +6,7 @@ import { broughtForCheck, broughtMaxAgeDays, type BroughtPrefill } from "@/app/l
 
 /** AIX の文の生成に「お客様が送ってきた物件」の名前を渡すか（既定 off・AIX_BROUGHT_MATERIAL=on） */
 export function aixBroughtMaterialEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.AIX_BROUGHT_MATERIAL ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_BROUGHT_MATERIAL ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 失敗・時間切れ（4秒）は null（材料を足さないだけ） */

@@ -920,7 +920,7 @@ export default function Home() {
   const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
   // 2026-10-28 竹内さん #30（ひめの 10/28）: 下書きの2通目・3通目を押したら大きな編集の画面で直せる（NEXT_PUBLIC_EXTRA_DRAFT_EDIT=on）
   const [extraEditIdx, setExtraEditIdx] = useState<number | null>(null);
-  const extraDraftEditOn = (process.env.NEXT_PUBLIC_EXTRA_DRAFT_EDIT ?? "").trim().toLowerCase() === "on";
+  const extraDraftEditOn = (process.env.NEXT_PUBLIC_EXTRA_DRAFT_EDIT ?? "").trim().toLowerCase() !== "off";
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);

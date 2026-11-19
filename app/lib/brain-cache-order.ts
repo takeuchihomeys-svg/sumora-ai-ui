@@ -9,7 +9,7 @@
 // スイッチ: BRAIN_CACHE_ORDER=on（既定 off＝今と1文字も同じ並び）
 
 export function brainCacheOrderOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_CACHE_ORDER ?? "").trim().toLowerCase() === "on";
+  return (env.BRAIN_CACHE_ORDER ?? "").trim().toLowerCase() !== "off";
 }
 
 export type UserBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "1h" } };

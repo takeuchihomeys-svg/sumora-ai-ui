@@ -9,7 +9,7 @@ const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); 
 const jst = (y: number, m: number, d: number, h = 12) => Date.UTC(y, m - 1, d, h - 9);
 const said = jst(2026, 11, 13); // 金曜
 
-t("既定 off", () => { assert.equal(situationTimelineOn({}), false); assert.equal(sentPropsFullOn({}), false); });
+t("既定（時系列の帳面 on・送った物件 count）", () => { assert.equal(situationTimelineOn({}), true); assert.equal(situationTimelineOn({ BRAIN_SITUATION_TIMELINE: "off" }), false); assert.equal(sentPropsFullOn({}), true); assert.equal(sentPropsFullMode({}), "count"); assert.equal(sentPropsFullOn({ SENT_PROPS_FULL: "off" }), false); });
 t("時の言葉: 来週・再来週・週末・月末・来月・N月下旬・N月N日・明日・N日・給料日", () => {
   const w = (s: string) => resolveTimeWords(s, said).map((x) => `${x.word}=${x.label}`);
   assert.deepEqual(w("来週から動けます"), ["来週=11/16（月）〜11/22（日）"]);
@@ -50,7 +50,7 @@ t("送った物件: SENT_PROPS_FULL の時は件数は全部・詳しい行は�
   assert.ok(!/それより前に送った物件/.test(off));
   const on = buildSentPropsText(ps, { detailN: 20 });
   assert.match(on, /【すでに送付済みの物件（25件）】/);
-  assert.match(on, /▼それより前に送った物件（5件・名前と号室と送った日だけ・再提案しない）: 物件4 104（11\/1）、物件3 103/);
+  assert.match(on, /▼それより前に送った物件（5件）: 物件4 104（11\/1）、物件3 103/);
   assert.match(on, /- 物件24 124/);
   assert.ok(!/- 物件4 104/.test(on));
 });
@@ -59,7 +59,7 @@ console.log(`${n} tests ok`);
 // ── 約束と果たした通の結び付け（PROMISE_CLOSE_LINK）
 import { linkPromiseClosures, promiseClosedOf, promiseCloseLinkOn } from "../promise-close-link";
 t("約束の結び付け: 物件が合う約束を全部（重ねた約束も）・名前が合わない約束は閉じない・名前の無い約束は閉じる", () => {
-  assert.equal(promiseCloseLinkOn({}), false);
+  assert.equal(promiseCloseLinkOn({}), true); assert.equal(promiseCloseLinkOn({ PROMISE_CLOSE_LINK: "off" }), false);
   const rows = [
     { id: 1, kind: "confirmation_promised", status: "promised", sent_at: "2026-11-10T01:00:00Z", detail: { propertyNames: ["Aマンション 101号室"] } },
     { id: 2, kind: "confirmation_promised", status: "promised", sent_at: "2026-11-10T02:00:00Z", detail: { propertyNames: ["Aマンション"] } },
@@ -75,3 +75,86 @@ t("約束の結び付け: 物件が合う約束を全部（重ねた約束も）
   assert.equal(promiseClosedOf({ detail: {} }), false);
 });
 console.log("promise-close-link ok");
+
+// ── AIX要対応の閉じ方（AIX_ITEM_CLOSE_STRICT）
+import { aixItemCloseDecision, aixItemCloseStrictOn } from "../aix-item-close-rule";
+t("AIX要対応: 同じ AIX・同じ要件を果たす組だけ閉じる（見積は同封の時だけ）・他は待ちのまま", () => {
+  assert.equal(aixItemCloseStrictOn({}), false);
+  assert.equal(aixItemCloseDecision("property_check", "property_check_result").close, true);
+  assert.equal(aixItemCloseDecision("property_send", "property_recommendation").close, true);
+  assert.equal(aixItemCloseDecision("viewing_invite", "meeting_place").close, true);
+  assert.equal(aixItemCloseDecision("estimate_sheet", "property_check_result", { estimateSent: true }).close, true);
+  assert.equal(aixItemCloseDecision("estimate_sheet", "property_check_result").close, false);
+  assert.equal(aixItemCloseDecision("property_check_result", "property_recommendation").close, false);
+  assert.match(aixItemCloseDecision("viewing_invite", "phone_call").why, /果たしたか確かめる/);
+});
+console.log("aix-item-close ok");
+t("時系列の帳面: 問いの文の日付は入れない（q092「ここは最短11月中旬でしょうか？」は物件の入居日の問い）", () => {
+  const rec = buildTimeline({ customerMsgs: [{ text: "見てきました。\nここは最短11月中旬でしょうか？", atMs: said }, { text: "10月後半くらいに入れるところとかありますか？", atMs: said }, { text: "来週から動けます", atMs: said }], calendar: [], nowMs: said });
+  assert.deepEqual(rec.words.map((w) => w.word), ["来週"]);
+});
+console.log("timeline-question ok");
+
+// ── 今の状況の記録（BRAIN_SITUATION_NOW）
+import { buildSituationNow, situationNowOn, situationNowDigest, factIdOf } from "../situation-now";
+t("今の状況の記録: 送った事・確認した事・前の項目（答えたか）・開いている約束・要件と送った所まで・食い違い（id 付き）", () => {
+  assert.equal(situationNowOn({}), true); assert.equal(situationNowOn({ BRAIN_SITUATION_NOW: "off" }), false);
+  const facts = [
+    { sent_at: "2026-11-10T01:00:00Z", origin: "staff_text", kind: "confirmation_promised", status: "promised", detail: { object: "募集状況" } },
+    { sent_at: "2026-11-10T02:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: { propertyNames: ["Aマンション 101"] } },
+    { sent_at: "2026-11-10T03:00:00Z", origin: "staff_text", kind: "pickup_declared", status: "promised", detail: {} },
+    { sent_at: "2026-11-10T04:00:00Z", origin: "aix", aix_type: "property_send", kind: "properties_sent", status: "done", detail: {} },
+  ];
+  const aix = [{ aix_type: "property_check_result", line_message_id: "L1", sent_at: "2026-11-10T05:00:00Z", created_at: "2026-11-10T05:00:00Z", check_pattern: "availability", property_names: ["Aマンション"], prop_statuses: ["available"] }];
+  const exchange = { ours: [{ key: "q.move_in", kind: "question", label: "入居の時期を聞いた", purpose: "", expect: "answer", dueHours: 24, text: "ご入居はいつ頃をご希望でしょうか", at: "2026-11-10T06:00:00Z" }], theirs: [], open: [{ kind: "our_question_unanswered", what: "", at: "2026-11-10T06:00:00Z", overdue: false }] } as never;
+  const s = buildSituationNow({ facts, aix, exchange, nowMs: Date.parse("2026-11-11T01:00:00Z"),
+    asks: { items: [{ id: "q1", quote: "空いてますか" }], progress: { sentUpTo: 0, answered: [], promised: [], remaining: ["q1"] }, msgs: [{ no: 1, slot: "aix", aix: "property_check_result" }] } });
+  assert.deepEqual(s.sent!.map((x) => x.sent_id), [factIdOf(facts[1]), factIdOf(facts[3])]);
+  assert.equal(s.checked![0].check_id, "aix:L1"); assert.equal(s.checked![0].what, "vacancy"); assert.equal(s.checked![0].told, true);
+  assert.equal(s.our_items![0].item_id, "2026-11-10T06:00:00Z#0"); assert.equal(s.our_items![0].answered, false);
+  // 確認の約束は後に確認の報告が無い＝開いたまま・ピックアップの約束は後に送付＝閉じた
+  assert.deepEqual(s.promises_open!.map((p) => p.kind), ["confirmation_promised"]);
+  assert.deepEqual(s.asks, { done: [], promised: [], open: ["q1"] });
+  assert.deepEqual(s.this_turn, { sent_up_to: 0, remaining: [{ no: 1, slot: "aix", aix: "property_check_result" }] });
+  assert.deepEqual(situationNowDigest(s), { tw: 0, tv: 0, se: 2, ch: 1, oi: 1, ou: 1, po: 1, ao: 1, cf: 0 });
+});
+console.log("situation-now ok");
+import { sentPropsFullMode } from "../sent-props-text";
+t("送った物件 count: 見出しは全部の件数・詳しい行は新しい順に20件・それより前の行は出さない", () => {
+  assert.equal(sentPropsFullMode({ SENT_PROPS_FULL: "count" }), "count");
+  const ps = Array.from({ length: 25 }, (_, i) => prop(i));
+  const c = buildSentPropsText(ps, { detailN: 20, olderLine: false });
+  assert.match(c, /【すでに送付済みの物件（25件）】/);
+  assert.ok(!/それより前に送った物件/.test(c));
+  assert.match(c, /- 物件24 124/); assert.ok(!/- 物件4 104/.test(c));
+});
+console.log("sent-count ok");
+import { situationWriterNote, situationWriterNoteOn } from "../situation-now";
+t("書き手への今の状況の塊（SITUATION_WRITER_NOTE・既定 off・事実だけ）", () => {
+  assert.equal(situationWriterNoteOn({}), true); assert.equal(situationWriterNoteOn({ SITUATION_WRITER_NOTE: "off" }), false);
+  const now = Date.parse("2026-11-13T03:00:00Z");
+  const note = situationWriterNote({ v: 1,
+    timeline: { words: [{ word: "来週", said: "2026-11-13T03:00:00Z", from: null, to: null, label: "11/16（月）〜11/22（日）" }], viewings: [{ at: "2026-11-16T05:00:00Z", type: "viewing", done: false }, { at: "2026-11-01T05:00:00Z", type: "viewing", done: true }], promises: [] },
+    promises_open: [{ promise_id: "sf:x", kind: "confirmation_promised", object: "募集状況", at: "2026-11-12T03:00:00Z", due_h: 24, closed_by: null, src: "db", sure: "mid" }],
+    checked: [{ check_id: "aix:L1", at: "2026-11-12T05:00:00Z", what: "vacancy", props: ["Aマンション"], result: ["available"], told: true, src: "db", sure: "high" }],
+  }, now);
+  assert.match(note, /お客様の「来週」（11\/13に言った）＝11\/16（月）〜11\/22（日）/);
+  assert.match(note, /これからの内覧の予定: 11\/16 14:00/);
+  assert.ok(!/11\/1 14:00/.test(note));
+  assert.match(note, /開いているこちらの約束: 確認（募集状況）・11\/12にした約束/);
+  assert.match(note, /確かめた結果（11\/12にお送り済み）: Aマンション＝募集中/);
+  assert.equal(situationWriterNote(null, now), "");
+});
+console.log("writer-note ok");
+import { sentImageFactsLine, sentImageFactsOn, buildSentProps as bsp2 } from "../sent-props-text";
+t("送った資料の読み（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）: 礼金・敷金・間取り・面積を送った物件の行へ（11/19 の 901号室の礼金）", () => {
+  assert.equal(sentImageFactsOn({}), false);
+  assert.equal(sentImageFactsLine({ rent: 98000, admin_fee_yen: 10000, deposit_months: 0, key_money_months: 1, floor_plan: "1LDK", area_sqm: 36.2, station: "中崎町", walk_minutes: 3 }), "家賃98,000円・管理費10,000円・敷金0・礼金1ヶ月・1LDK・36.2㎡・中崎町徒歩3分");
+  assert.equal(sentImageFactsLine({}), null);
+  const ps = bsp2({ customerRows: [{ property_name: "Aタワー", room_no: "901", sent_at: "2026-11-16T06:39:00Z" }] as never, imageRows: [{ property_name: "Aタワー", room_no: "901", created_at: "2026-11-16T06:39:43Z", source: "x", facts: { key_money_months: 1, floor_plan: "1LDK" } }], sharedRows: [], imageFacts: true });
+  assert.equal(ps.length, 1); assert.equal(ps[0].sheet_facts, "礼金1ヶ月・1LDK");
+  assert.match(buildSentPropsText(ps), /送った資料の読み取り（礼金1ヶ月・1LDK）/);
+  const off = bsp2({ customerRows: [], imageRows: [{ property_name: "Aタワー", room_no: "901", created_at: "2026-11-16T06:39:43Z", source: "x", facts: { key_money_months: 1 } }], sharedRows: [] });
+  assert.equal(off[0].sheet_facts, undefined);
+});
+console.log("sip-facts ok");

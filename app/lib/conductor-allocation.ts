@@ -24,7 +24,8 @@ type Env = Record<string, string | undefined>;
 export type AllocationMode = "off" | "shadow" | "on";
 export function allocationMode(env: Env = typeof process !== "undefined" ? process.env : {}): AllocationMode {
   const v = String(env.CONDUCTOR_ALLOCATION ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-18 既定 on（k1118-bundle-b＝CHECK_ORDER_TABLE・CUSTOMER_FACT_LEDGER と組みで11問＋守り 悪化0）。=shadow で記録だけ・=off で止める
+  return v === "shadow" ? "shadow" : v === "off" ? "off" : "on";
 }
 
 /** 部品（FOCUS_ORDER にある役の名前だけ） */

@@ -14,7 +14,7 @@ const H = 3600_000;
 const NOW = Date.parse("2026-10-28T02:00:00Z"); // JST 11:00
 const row = (id: string, ageH: number, o: Partial<AixActionItemRow> = {}): AixActionItemRow => ({ id, conversation_id: "c", customer_name: "山田", action: "viewing_invite", check_pattern: null, status: "pending", done_aix_type: null, done_at: null, created_at: new Date(NOW - ageH * H).toISOString(), ...o });
 
-it("既定 off・on で入る", () => { eq(aixOverdueRemindEnabled({}), false); eq(aixOverdueRemindEnabled({ AIX_OVERDUE_REMIND: "on" }), true); });
+it("既定 on（2026-11-15）・off で戻す", () => { eq(aixOverdueRemindEnabled({}), true); eq(aixOverdueRemindEnabled({ AIX_OVERDUE_REMIND: "on" }), true); eq(aixOverdueRemindEnabled({ AIX_OVERDUE_REMIND: "off" }), false); });
 it("24〜48時間の未対応だけ・古い順（24時間未満・48時間超・済み・取り下げは入れない）", () => {
   const items = [row("a", 30), row("b", 25), row("c", 10), row("d", 50), row("e", 30, { status: "done" }), row("f", 30, { status: "dismissed" })];
   eq(overdueAixItems(items, NOW).map((i) => i.id), ["a", "b"]);

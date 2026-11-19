@@ -7,7 +7,9 @@ const on = <T,>(f: () => T): T => { process.env.PROGRESS_PUSH_NARROW = "on"; try
 const TEN = "色々検討したんですけど、シーズンフラッツ第一候補なんですけど最短入居日っていつになりますか？";
 const YUKI = "ありがとうございます！これは最大の割引でしょうか💦 あと、申し込ませていただいたら支払い時期はいつになりますか？";
 console.log("progress-push-narrow");
-it("off は今まで通り（時期の質問も催促）", () => { eq(isProgressPushMessage(TEN), true); eq(isProgressPushMessage(YUKI), true); });
+// 2026-11-15 既定 on にしたので off を明示して見る（終わったら元に戻す）
+const off = <T,>(f: () => T): T => { const o = process.env.PROGRESS_PUSH_NARROW; process.env.PROGRESS_PUSH_NARROW = "off"; try { return f(); } finally { if (o === undefined) delete process.env.PROGRESS_PUSH_NARROW; else process.env.PROGRESS_PUSH_NARROW = o; } };
+it("off は今まで通り（時期の質問も催促）", () => { eq(off(() => isProgressPushMessage(TEN)), true); eq(off(() => isProgressPushMessage(YUKI)), true); });
 it("on: 入居日の時期の質問は催促にしない", () => eq(on(() => isProgressPushMessage(TEN)), false));
 it("on: 支払い時期の質問は催促にしない", () => eq(on(() => isProgressPushMessage(YUKI)), false));
 it("on: こちらの約束の時期（資料はいつになりますか）は催促", () => eq(on(() => isProgressPushMessage("見積書の資料はいつになりますか？")), true));

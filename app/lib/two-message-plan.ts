@@ -124,6 +124,28 @@ function withShape(p: Omit<TwoMessagePlan, "shape" | "shapeWhy">): TwoMessagePla
 
 /** 2通目の AIX テンプレート（同じ AIX の訴求・中身の通）がある AIX。竹内さんの形 AT 157・RAT 68 の AIX */
 const TEMPLATE_AIX = new Set(["estimate_sheet", "property_recommendation", "property_check_result"]);
+/**
+ * 2026-11-18 作業員M（統括役の割り振り (a)・組の表 SEND_COMBO_TABLE の「物件を送る AIX → 返信で一押し1件」を書き手に届ける）:
+ *   竹内さん本人の30日で、ブレインは AIX だけ・竹内さんは AIX → 返信 が 14件（物件を送る 11・見積書 2・audit-combo-mismatch）。
+ *   見積書・オススメ・物件確認した には AIX の続きの通（テンプレートの席）があるが、物件を送る（property_send）には無く、AIX の後の通の下書きが作られなかった。
+ *   実送信（竹内さん本人・60日・物件を送る AIX の後10分以内の手打ち 64通）: 「お送りさせて頂きましたお部屋の中でも」40（63%）・オススメ 51・ご案内 45。
+ *   on の時: 物件を送る AIX にも続きの通の席を作り、続きの通の下書きの指示を AIX の種類で分ける（物件を送る＝一押し1件と理由・見積書＝最大限割引とご査収）。
+ *   既定 off（TWO_MESSAGE_SEND_TEMPLATE=on の時だけ）
+ */
+export function twoMessageSendTemplateOn(env: Env = envOf()): boolean {
+  // 画面（AIX の後の下書きは page.tsx が作る）は NEXT_PUBLIC_ をそのまま書いた所だけビルドで埋まる
+  const pub = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_TWO_MESSAGE_SEND_TEMPLATE : undefined;
+  return (env.TWO_MESSAGE_SEND_TEMPLATE ?? pub ?? "").trim().toLowerCase() === "on";
+}
+/** AIX の続きの通の竹内さんの形（AIX の種類ごと・実送信で確かめた形だけ）。分からない種類は null */
+export function afterAixTemplateShape(sentAix: string | null | undefined): string | null {
+  const k = baseKey(sentAix);
+  if (k === "property_send" || k === "property_recommendation")
+    return "送った中から1件を一押し（竹内さんの形「お送りさせて頂きましたお部屋の中でも特に〇〇号室がオススメのお部屋となります！！」＋理由を資料の事実で1つ・何件も送った時だけ）→「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」";
+  if (k === "estimate_sheet")
+    return "竹内さんの形「〇〇号室最大限割引しました初期費用の御見積書となります！！」→「お手隙の際にご査収ください😌！！」か「お気に召されましたらお部屋ご案内させて頂きます！！」（金額は書かない＝AIX の中にある）";
+  return null;
+}
 /** AIX の中身（訴求）に寄る依頼＝テンプレートの通で答えられる（物件そのもの・費用・空き） */
 //   about の値は request-ledger の RequestAbout（property_equipment・property_cost・vacancy）
 /** 文を書く AIX（テンプレートの席が無く、スタッフが文を書く AIX）。竹内さん本人の90日（その AIX が番の最初の AIX）: 内覧調整 53番＝返信が先 4・AIX だけ 43／待ち合わせ 39＝3・28／
@@ -185,10 +207,10 @@ type PlanInput = {
  *   (a) AIX の要件の種類ごとに AIX の席を作り（AIX→AIX）、(b) 席の AIX は要件の AIX から作る（最終の AIX は要件に AIX が無い時だけ）。
  *   順: 物件確認した（確認の結果）を先に、残りは要件の順（feedback_promise_order_split「物件の募集確認→結果 AIX→…」・send-combo-table の aix_then_aix の行）。
  *   物件オススメ＋ピックアップは1つの束（オススメ1＋9 の型）。2つ目からの AIX にテンプレートの席は足さない（余計な通を作らない）。
- *   既定 off（TWO_MESSAGE_AIX_AIX=on の時だけ）。off は今と同じ。
+ *   既定 on（2026-11-18 統括役の決定・試験 M1115-aixaix-p1/p2 で確かな悪化0・比べた 7/7問）。TWO_MESSAGE_AIX_AIX=off で前と同じ（AIX の席は1つ）。
  */
 export function twoMessageAixAixOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_AIX_AIX ?? "").trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_AIX_AIX ?? "").trim().toLowerCase() !== "off";
 }
 /** 物件オススメ＋ピックアップは1つの束（要件の帳面 ask-ledger も同じ見方） */
 export const aixFamilyKey = (k: string): string => (/^(?:property_send|property_recommendation)$/.test(k) ? "property_bundle" : k);
@@ -207,8 +229,40 @@ export function aixKindsOfAsks(asks: ReadonlyArray<PlanAsk>): string[] {
   if (i > 0) { ks.splice(i, 1); ks.unshift("property_check_result"); }
   return ks;
 }
+/**
+ * 2026-11-15 作業員M（統括役の頼み・取り違え「要件の AIX と押される最終の AIX が違う」q187・q330・q104 等）:
+ *   試験の正解はどれも最終の AIX の側（q330 内覧調整＝竹内さんは内覧調整の AIX の文の中で物件の確認も・q104 内覧調整・q187 見積書／物件確認した）。
+ *   要件の AIX だけで席を作ると、押される AIX の席が無く remainingAfterAix が null になり、AIX の後の通が組みを読めない（継ぎ目④）。
+ *   → 最終の AIX が要件の AIX のどの種類とも違う時:
+ *     (i) 最終の AIX が内覧調整・待ち合わせで、要件の AIX が全部 物件確認（確認の結果・確認します）＝確認は内覧の AIX の文の中（viewCheckInAix と同じ考え）＝最終の AIX の席1つ
+ *     (ii) それ以外＝最終の AIX の席も足す（物件確認した を先・最終の AIX・残りは要件の順＝planAixAix）
+ *   BRAIN_AIX_FOLLOWS_CONTRACT（最終の物件の AIX を要件に寄せる・既定 on）は道を変える側で、当てる範囲は最終の AIX が物件の AIX（property_send 等）の時だけ。
+ *   こちらは道を変えず組み立ての席を最終の AIX に合わせるだけ。
+ *   既定 on（2026-11-19・試験 M1118-seatfinal-p1 で確かな悪化0・比べた 4/4問）。止める TWO_MESSAGE_SEAT_FOLLOWS_FINAL=off。
+ *   本質の悪化 q330（2/3→0/3）はブレインの最初の答え＝組み立ての前で、このスイッチは届かない（揺れ）
+ */
+export function twoMessageSeatFollowsFinalOn(env: Env = envOf()): boolean {
+  return (env.TWO_MESSAGE_SEAT_FOLLOWS_FINAL ?? "").trim().toLowerCase() !== "off";
+}
+const CHECK_AIX_KEYS = new Set(["property_check_result", "acknowledge_check"]);
 export function planMessages(i: PlanInput): TwoMessagePlan {
-  const kinds = twoMessageAixAixOn() ? aixKindsOfAsks((i.asks ?? []).filter((a) => a && typeof a.quote === "string")) : [];
+  const asks = (i.asks ?? []).filter((a) => a && typeof a.quote === "string");
+  let kinds = twoMessageAixAixOn() ? aixKindsOfAsks(asks) : [];
+  const fin = baseKey(i.finalAix);
+  if (twoMessageSeatFollowsFinalOn() && fin) {
+    const askKinds = aixKindsOfAsks(asks);
+    if (askKinds.length && !askKinds.some((k) => aixFamilyKey(k) === aixFamilyKey(fin))) {
+      // (i) 内覧の AIX の文の中で確認も＝要件の確認の AIX を最終の AIX に寄せて1席
+      if (VIEW_AIX.has(fin) && askKinds.every((k) => CHECK_AIX_KEYS.has(k))) {
+        return planMessagesOne({ ...i, asks: asks.map((a) => (a.route === "aix" ? { ...a, aix: fin } : a)), finalAix: fin });
+      }
+      // (ii) 最終の AIX の席も足す（物件確認した を先）
+      const ks = [...askKinds, fin];
+      const ci = ks.indexOf("property_check_result");
+      if (ci > 0) { ks.splice(ci, 1); ks.unshift("property_check_result"); }
+      kinds = ks;
+    }
+  }
   if (kinds.length >= 2) return planAixAix(i, kinds);
   return planMessagesOne(i);
 }
@@ -272,7 +326,7 @@ function planCore(i: PlanInput): Omit<TwoMessagePlan, "shape" | "shapeWhy"> {
   const aixAsks = asks.filter((a) => a.route === "aix");
   // AIX のキー: 依頼の中の最初の AIX（無ければ最終の AIX）
   const aixKey = baseKey(aixAsks[0]?.aix) ?? baseKey(i.finalAix);
-  const hasTemplate = !!aixKey && TEMPLATE_AIX.has(aixKey);
+  const hasTemplate = !!aixKey && (TEMPLATE_AIX.has(aixKey) || (aixKey === "property_send" && twoMessageSendTemplateOn()));
   const aixAnswers = aixAsks.map(q);
 
   // ① AIX が無い番＝返信1通（受け・約束・答えを1通に）
@@ -386,7 +440,7 @@ export function templateReplyPartNote(p: TwoMessagePlan | null | undefined, sent
  *   既定 off（TWO_MESSAGE_AFTER_AIX_T_DRAFT=on の時だけ・off は今と同じ＝返信の席だけ）
  */
 export function afterAixTemplateDraftOn(env: Env = envOf()): boolean {
-  return (env.TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? (env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? "")).trim().toLowerCase() === "on";
+  return (env.TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? (env.NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_T_DRAFT ?? "")).trim().toLowerCase() !== "off";
 }
 export function afterAixReplyBrief(p: TwoMessagePlan | null | undefined, sentAix: string | null | undefined, asks: ReadonlyArray<PlanAsk> | null | undefined, env: Env = envOf()): { answers: Array<{ quote: string; answer: string | null }>; role: string; template?: boolean } | null {
   const rest = remainingAfterAix(p, sentAix);
@@ -422,13 +476,16 @@ export function twoMessageAnnounceVisible(v: string | null | undefined, isTestCo
  *   NEXT_PUBLIC_TWO_MESSAGE_AFTER_AIX_AUTO: 既定 off／on＝YUMA・テスト専用の会話だけ（全員に広げるのは竹内さんの確認の後）
  */
 export function twoMessageAfterAixAutoOn(v: string | null | undefined, isTestConv: boolean): boolean {
-  return (v ?? "").trim().toLowerCase() === "on" && isTestConv;
+  return (v ?? "").trim().toLowerCase() !== "off" && isTestConv;
 }
 
 /** AIX の後の返信の下書きを作る時の指定（generate-reply の replyHint＝スタッフが押した指定）。材料が無ければ "" */
 export function afterAixDraftHint(brief: ReturnType<typeof afterAixReplyBrief>, sentAix: string | null | undefined): string {
   if (brief?.template) {
     const qs0 = brief.answers.map((a) => `「${a.quote}」${a.answer ? `（要点: ${a.answer}）` : ""}`).join("・");
+    // 2026-11-18 作業員M（TWO_MESSAGE_SEND_TEMPLATE=on の時だけ）: AIX の種類ごとの竹内さんの形（実送信で確かめた形）を渡す
+    const shape = twoMessageSendTemplateOn() ? afterAixTemplateShape(sentAix) : null;
+    if (shape) return `【AIX の後に続けて送る通（この番の組み立て・竹内さん 11/05・組の表 AIX → 返信）】先に AIX【${aixLabelOf(sentAix)}】を送った。この通は AIX の続き: ${shape}。${qs0 ? `次の質問にも答える: ${qs0}。` : ""}AIX で送った金額・日時・資料に無い事は書かない。挨拶は入れない（同じ番の続き）。`;
     return `【AIX の後に続けて送る通（この番の組み立て・竹内さん 11/05）】先に AIX【${aixLabelOf(sentAix)}】を送った。この通は AIX の続き: 送った物の受け止めと信頼（竹内さんの形「〇〇号室最大限割引しました初期費用の御見積書となります！！」「お送りさせて頂きましたお部屋の中でも〇〇号室が…オススメのお部屋となります！！」）と、訴求（「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」）を短く。${qs0 ? `次の質問にも答える: ${qs0}。` : ""}AIX で送った金額・日時・資料に無い事は書かない。挨拶は入れない（同じ番の続き）。`;
   }
   if (!brief || !brief.answers.length) return "";

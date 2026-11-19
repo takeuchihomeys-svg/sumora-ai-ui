@@ -71,6 +71,31 @@ export const OWN_PROPERTY_RETURNED_ESTIMATE_LINE =
   "お客様がその物件を見て評価・関心を聞いてきた番＝費用を言っていなくても、最大限割引の御見積書（estimate_sheet）か内覧の案内で答える" +
   "（実送信: こちらの資料の送り返しで竹内さんが募集状況を確認した番 0/7・スタッフ全体は見積書 14/21）。";
 
+/**
+ * 2026-11-18 作業員H（竹内さん「画像の物件名も把握するようにする」・統括役の頼み）: 直近10日の物件系の画像 14通を目で読むと、
+ *   ポータルの画面の物件名が次の形で落ちていた（取り出し 6/14）:
+ *   ・SUUMO の見出し「ザ・タワー大阪(1LDK/9階/55.1m²)の賃貸住宅情報」「第二福井マンション(2LDK/2階/65m²)の賃貸住宅情報｜エイブル…」
+ *     （行の途中・前に「着信/通知音量 suumo スーモ 最近みた物件…」の画面の文字がある）
+ *   ・HOME'S 等の「賃貸アパート シエーナ魚崎 9万円／管理費等…」（種別の後に名前・その後に家賃）
+ *   取り出しは広くてよい（KB 277094fd: 同じ物件かを言い切るのは matchOwnProperty）。既定 off（OWN_PROPERTY_PORTAL_TITLE=on・CUSTOMER_IMAGE_LINK の試験と一緒に確かめる）
+ */
+export function ownPropertyPortalTitleOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.OWN_PROPERTY_PORTAL_TITLE ?? "").trim().toLowerCase() === "on";
+}
+const SUUMO_TITLE_RE = /([^\s/｜|「」【】]{2,40}?)\s*[（(][^）)]{0,30}(?:LDK|SLDK|DK|K|R|ワンルーム)[^）)]{0,30}[）)]\s*の賃貸(?:住宅|物件)?情報/;
+const PORTAL_KIND_NAME_RE = /賃貸(?:アパート|マンション|一戸建て?|テラスハウス|タウンハウス)\s+(.{2,40}?)\s+[0-9.]+\s*万円/;
+/** ポータルの画面の見出しから物件名（号室は分からない） */
+export function portalTitleName(text: string): string | null {
+  const t = String(text ?? "").normalize("NFKC");
+  const m = t.match(SUUMO_TITLE_RE) ?? t.match(PORTAL_KIND_NAME_RE);
+  if (!m) return null;
+  const v = m[1].trim();
+  if (v.length < 2 || v.length > 40) return null;
+  if (/^(?:大阪|東京|京都|兵庫|〒|賃料|家賃|所在地|交通|最近みた物件|お気に入り|メニュー|suumo|SUUMO)/i.test(v)) return null;
+  if (/[0-9.]+万円/.test(v)) return null;
+  return v;
+}
+
 /** 見出しの値から物件名（と、値の中に混ざっている号室）を取り出す */
 function cleanNameValue(raw: string): ScreenshotProperty | null {
   let v = raw.replace(/\*+/g, "").trim();
@@ -123,6 +148,11 @@ export function extractScreenshotProperty(text: string | null | undefined): Scre
       if (room) return { name: got.name, room };
     }
     return got;
+  }
+  // E: ポータルの画面の見出し（SUUMO「〇〇(1LDK/9階/55m²)の賃貸住宅情報」・「賃貸アパート 〇〇 9万円」）。OWN_PROPERTY_PORTAL_TITLE=on の時だけ
+  if (ownPropertyPortalTitleOn()) {
+    const pn = portalTitleName(lines.join(" "));
+    if (pn) return { name: pn, room: null };
   }
   // A / C: 1行目（種類のラベルは飛ばす）の「名前 号室」
   const first = lines.find((l) => !TYPE_LABEL_RE.test(l)) ?? "";

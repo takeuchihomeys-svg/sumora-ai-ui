@@ -103,13 +103,26 @@ function fakeExec(opts: { failIf?: (sql: string) => boolean; tick?: () => void }
     const src = readFileSync(join(__dirname, "..", "..", "api", "migrate-schema", "route.ts"), "utf8");
     const a = src.indexOf("const SQL = `"), b = src.indexOf("`.trim();", a);
     const parts = splitSql((new Function("return `" + src.slice(a + "const SQL = `".length, b) + "`")() as string).trim()).filter((s) => !isCommentOnly(s));
-    const doIdx = parts.findIndex((s) => s.includes("ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes"));
+    // 2026-11-18 作業員H: knowledge・examples・aix_examples は HNSW（DO ブロックで hnsw.* を付ける）・winning_patterns は索引なし
+    const doIdx = parts.findIndex((s) => s.includes("ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes"));
     ok(doIdx > 0, "DO block found");
     ok(parts[doIdx].includes("PERFORM '[1,0]'::vector"), "vector load in same call");
-    for (const name of ["match_reply_knowledge", "match_reply_examples", "match_aix_reply_examples", "match_winning_patterns", "match_design_thinking", "match_conversation_checkpoints"]) {
+    for (const name of ["match_design_thinking", "match_conversation_checkpoints"]) {
       const last = parts.map((s, i) => (new RegExp(`CREATE OR REPLACE FUNCTION ${name}\\s*\\(`).test(s) ? i : -1)).reduce((x, y) => Math.max(x, y), -1);
       ok(last >= 0 && last < doIdx, `${name} defined before DO (${last} < ${doIdx})`);
     }
+    // 2026-11-18: HNSW の3本は定義に SET hnsw.* を書かない（vector が読み込まれていない接続の CREATE で permission denied）
+    //   → 定義の後の DO ブロック（vector を読み込む同じ呼び出し）で hnsw.ef_search・iterative_scan を付ける・probes は付けない
+    for (const name of ["match_reply_knowledge", "match_reply_examples", "match_aix_reply_examples"]) {
+      const defs = parts.map((s, i) => (new RegExp(`CREATE OR REPLACE FUNCTION ${name}\\s*\\(`).test(s) ? i : -1)).filter((i) => i >= 0);
+      const last = defs.length ? defs[defs.length - 1] : -1;
+      ok(last >= 0 && last < doIdx, `${name} defined before DO (${last} < ${doIdx})`);
+      ok(!/SET hnsw\./.test(parts[last]), `${name} def has no SET hnsw`);
+      ok(new RegExp(`ALTER FUNCTION ${name}\\([^)]*\\) SET hnsw\\.ef_search = 100`).test(parts[doIdx]), `${name} ef_search in DO`);
+      ok(new RegExp(`ALTER FUNCTION ${name}\\([^)]*\\) SET hnsw\\.iterative_scan = relaxed_order`).test(parts[doIdx]), `${name} iterative_scan in DO`);
+      ok(!new RegExp(`ALTER FUNCTION ${name}\\([^)]*\\) SET ivfflat`).test(parts[doIdx]), `${name} no probes`);
+    }
+    ok(!parts.some((s) => /CREATE INDEX IF NOT EXISTS (?:idx_ai_reply_examples_embedding|ai_reply_knowledge_embedding_idx|winning_patterns_embedding_idx)\b/.test(s)), "old ivfflat indexes not recreated");
     // 毎晩失敗していた文を外した
     ok(!parts.some((s) => /CREATE INDEX IF NOT EXISTS idx_system_design_thinking_embedding/.test(s.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n"))), "ivfflat index removed");
     ok(!parts.some((s) => /^\s*CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_sys_key_full_created/m.test(s)), "sys_key_full btree removed");

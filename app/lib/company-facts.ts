@@ -650,7 +650,7 @@ export const COMPANY_FACTS: CompanyFact[] = [
     id: "new_listing_timing",
     // 実送信: 10/25 竹内さん（KID「年末に引っ越ししたくないので来年まで見送る」への答え）「明日月曜日は週明けで土日に募集が出たお部屋も掲載されますので新着物件が最もでる曜日」・
     //   7/13「月の初め、末期ごろが新着の物件出てくるタイミング…週始めの月曜日はお申込みされていたお部屋などがキャンセルや審査落ちで再募集で多くご紹介できる曜日」
-    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() === "on"
+    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() !== "off"
       && (/新着[^。\n]{0,12}(?:いつ|曜日|出やす|多い|タイミング|出ます|出る|出てき)|(?:いつ|何曜日|どの曜日)[^。\n]{0,10}(?:新着|物件(?:が|は)?出)/.test(t.normalize("NFKC"))
         || (/見送|来年まで|年明けまで|間に合わ|また(?:今度|改めて)/.test(t) && /引っ?越|申告|解約|退去|月割|年末|見つかって(?:い)?ない/.test(t))),
     not: /^\s*\[(?:画像|動画|ファイル)\]/,
@@ -661,7 +661,7 @@ export const COMPANY_FACTS: CompanyFact[] = [
     id: "screening_two_stage",
     // 実送信: 「お申込み後の流れ」の型（9/30・10/26 ほか）「①【保証会社による審査】（審査期間3日〜1週間）②【オーナーによる最終審査】保証会社審査通過後…ご入居日の最終確認」・
     //   9/28「オーナー審査移行後ご入居日の変更が出来ません」・10/25 竹内さん「オーナー審査は保証会社通過しましたら9割方審査通過致します」
-    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() === "on"
+    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() !== "off"
       // 通りやすさ（通りますか・厳しい・不安）は保証会社の事実が受け持つ＝ここは時期・段階の問い（期間・いつ・間に合う・流れ・オーナー審査）と時期の都合の見送りだけ
       && (/審査[^。\n]{0,16}(?:どれくらい|どのくらい|期間|何日|いつ|間に合|流れ|最短)|オーナー(?:審査|の審査)/.test(t.normalize("NFKC"))
         || (/見送|来年まで|年明けまで|間に合わ/.test(t) && /引っ?越|申告|解約|退去|月割|年末/.test(t))),
@@ -674,7 +674,7 @@ export const COMPANY_FACTS: CompanyFact[] = [
     id: "move_in_day_prorated",
     // 実送信: 7/11「7月31日にご入居の場合、7月分の日割家賃は1日分のみ…1日ご入居の場合のみ日割家賃がかからず…月初めのご入居が一番費用を抑えられます」・
     //   10/27 竹内さん（R「25日以降にお金のお支払いしたい…今審査通したら少し早いですか？」）「11月30日のご入居で動かさせて頂き…25日〜27日の間にご入金頂き鍵の手配…日割家賃が1日分となり費用を抑えられるのとご入金の期日を25日以後にする事が可能」
-    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() === "on"
+    ask: (t) => (process.env.COMPANY_FACT_1028 ?? "").trim().toLowerCase() !== "off"
       && /(?:支払|払い|払え|入金|振込|振り込)[^。\n]{0,16}(?:以降|以後|過ぎ)|(?:[0-9]{1,2}日|月末|給料日|ボーナス)[^。\n]{0,10}(?:以降|以後|過ぎ)[^。\n]{0,16}(?:支払|払|入金|振込)/.test(t.normalize("NFKC")),
     not: /^\s*\[(?:画像|動画|ファイル)\]/,
     n: 2,
@@ -842,7 +842,22 @@ function unitsOf(customerText: string | string[] | null | undefined): string[] {
  *   語の網は候補。ブレインが内覧の当日（viewing_day）と読んだ駐車場・車の話には car_visit を渡し、物件の設備・空き（property_equipment・vacancy）と読んだ駐車場の話には渡さない。
  *   戻す COMPANY_FACT_AXIS=off（語の網だけ）
  */
-export type CompanyFactOpts = { account?: string | null; abouts?: ReadonlyArray<string> | null };
+export type CompanyFactOpts = { account?: string | null; abouts?: ReadonlyArray<string> | null; /** 2026-11-18 作業員L: 申込の段にいるか（申込以降の会話の状態）。キャンセルの網を広げる時だけ見る */ applying?: boolean };
+/** 2026-11-18 作業員L（COMPANY_FACT_CANCEL_WIDE・既定 off）: 申込の段にいる時だけ、「辞退・お断り・見送り・取りやめ・白紙」も申込の取り消しとして読む。
+ *  申込の前の「この物件はお断り（他の物件にする）」は意味が違うので当てない（申込の段でない時は今の網のまま） */
+export const CANCEL_WIDE_RE = /辞退|お断り|断りたい|見送|取りやめ|取り止め|白紙|なかった事に|なかったことに|やめておき|やめさせ/;
+/** 2026-11-18 統括役の決め: 既定 shadow＝材料には足さず、網に当たった番を記録するだけ（brain-core が meta.cancel_wide_shadow・digest.cxw）。記録が溜まったら当たった番を目で読んで on を決める。止める =off */
+export const companyFactCancelWideMode = (env: Record<string, string | undefined> = process.env): "off" | "shadow" | "on" => { const v = (env.COMPANY_FACT_CANCEL_WIDE ?? "shadow").trim().toLowerCase(); return v === "on" || v === "off" ? v : "shadow"; };
+export const companyFactCancelWideOn = (env: Record<string, string | undefined> = process.env) => companyFactCancelWideMode(env) === "on";
+/** 申込の段で、今の網には当たらず広げた網だけに当たるか（shadow の記録の元） */
+export function cancelWideOnlyHit(customerText: string | string[] | null | undefined, applying: boolean): boolean {
+  if (!applying) return false;
+  const units = unitsOf(customerText);
+  const c = COMPANY_FACTS.find((f) => f.id === "cancel");
+  if (!c) return false;
+  const asked = (t: string) => (typeof c.ask === "function" ? c.ask(t) : c.ask.test(t));
+  return !units.some(asked) && units.some((t) => CANCEL_WIDE_RE.test(t.normalize("NFKC")));
+}
 const PARKING_WORD_RE = /駐車|パーキング|車で|お車|車は|車って/;
 export function matchCompanyFacts(customerText: string | string[] | null | undefined, opts: CompanyFactOpts = {}): CompanyFact[] {
   const units = unitsOf(customerText);
@@ -850,6 +865,7 @@ export function matchCompanyFacts(customerText: string | string[] | null | undef
   const asked = (f: CompanyFact, t: string) => (typeof f.ask === "function" ? f.ask(t) : f.ask.test(t));
   const acct = (opts.account ?? "").trim().toLowerCase();
   const hit = COMPANY_FACTS.filter((f) => (!f.brand || (f.brand as readonly string[]).includes(acct)) && units.some((t) => asked(f, t) && !(f.not && f.not.test(t))));
+  if (opts.applying && companyFactCancelWideOn() && units.some((t) => CANCEL_WIDE_RE.test(t.normalize("NFKC")))) { const c = COMPANY_FACTS.find((f) => f.id === "cancel"); if (c && !hit.includes(c)) hit.push(c); }
   const ab = process.env.COMPANY_FACT_AXIS === "off" ? [] : (opts.abouts ?? []);
   if (!ab.length) return hit;
   const parking = units.some((t) => PARKING_WORD_RE.test(t.normalize("NFKC")));

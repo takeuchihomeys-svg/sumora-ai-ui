@@ -810,7 +810,7 @@ export const HANDOFF_FIELDS: readonly HandoffField[] = [
  */
 export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none">> = {
   // 文の統括の設計図が運ぶ
-  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", latent_five: "plan", latent_five_sub: "plan", info_kind: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
+  turn_contract: "plan", turn_read: "plan", turn_focus: "plan", turn_topics: "plan", seven_read: "plan", latent_read: "plan", latent_five: "plan", latent_five_sub: "plan", latent_subkind_record: "none", info_kind: "plan", main_point: "plan", three_layer: "plan", latent_intent: "plan", customer_concern: "plan", appeal_timing: "plan",
   conductor_focus: "plan", plan_ahead: "plan", future_timeline: "plan", hesitancy_pattern: "plan", message_plan: "plan", current_property: "plan",
   customer_emotion: "plan", customer_mindset: "plan", our_side_note: "plan", engagement_stance: "plan", purchase_signal_level: "plan", reply_direction: "plan",
   // 2026-11-12 作業員7: この番の目的・中期の狙い・仕込み（BRAIN_TURN_AIMS・TURN_AIMS_AFTER）は受け渡し（conductor-handoff の decided）が運ぶ
@@ -834,7 +834,7 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   // 2026-11-13 作業員22: 届いたかの確かめ（DELIVERY_CHECK・記録だけ）
   delivery_check: "none",
   // 2026-11-15 作業員L: 判断の根拠のメモの記録だけの形（BRAIN_JUDGE_BASIS=shadow）と、材料どうしの食い違いの見張り（BRAIN_MATERIAL_CLASH=shadow）＝どちらも記録だけ・文に渡さない
-  judge_basis_rec: "none", material_clash: "none",
+  judge_basis_rec: "none", material_clash: "none", cancel_wide_shadow: "none",
   // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_TIMELINE）＝まず記録の欄。書き手への渡し方は試験の後に決める
   situation_now: "none",
   // 2026-11-13 作業員22: mm が手元にあった印（MATERIAL_ON_HAND・記録だけ）

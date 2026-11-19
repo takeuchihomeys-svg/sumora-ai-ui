@@ -13,7 +13,7 @@
 
 /** 速い読み方（③④と②の締め切り）を使うか（既定 off・STAFF_TODO_FAST_LOAD=on で入れる） */
 export function staffTodoFastLoadEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.STAFF_TODO_FAST_LOAD ?? "").trim().toLowerCase() === "on";
+  return (env.STAFF_TODO_FAST_LOAD ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 締め切りの後に残す時間（組み立て・LINE への送信・控えの保存） */

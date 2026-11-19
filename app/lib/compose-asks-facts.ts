@@ -1,4 +1,4 @@
-// app/lib/compose-asks-facts.ts — ブレインの依頼ごとの答えと、記録の値（見積の金額・内覧の日時）を文の統括の設計図の「事実」の欄へ渡す（COMPOSE_ASKS_FACTS・既定 off・純関数）
+// app/lib/compose-asks-facts.ts — ブレインの依頼ごとの答えと、記録の値（見積の金額・内覧の日時）を文の統括の設計図の「事実」の欄へ渡す（COMPOSE_ASKS_FACTS・11/18 から既定 on・止める =off・旧は既定 off・純関数）
 //   作業員10・2026-11-12 統括役（作業員1 の材料の抜けの台帳 6415f992: 文の事実が届いていない56件のうち c＝連携の切れ目 34件。
 //     正解53 の28件はすべて、ブレインは turn_contract.asks に答え（answer・basis）を書いているのに設計図の事実の欄が空だった。
 //     作業員1 の数えで c の中身は 内覧の日時 14・金額 8・入居時期 5）
@@ -8,7 +8,8 @@
 
 type Env = Record<string, string | undefined>;
 export function composeAsksFactsOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COMPOSE_ASKS_FACTS ?? "").trim().toLowerCase() === "on";
+  // 11/18 統括役の決め: h1115-asksfacts-s1〜s6（16問×2回・draft）で確かな悪化0 → 既定 on（止める COMPOSE_ASKS_FACTS=off）
+  return (env.COMPOSE_ASKS_FACTS ?? "").trim().toLowerCase() !== "off";
 }
 export type ComposeFact = { id: string; text: string; from: "会話" | "資料" | "会社の事実" | "一般" | "判断" | "約束の中身" | "見積の記録" | "内覧の記録"; quote?: string | null };
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);

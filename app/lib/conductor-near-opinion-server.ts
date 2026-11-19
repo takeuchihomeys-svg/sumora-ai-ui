@@ -17,10 +17,11 @@ export type NearOpinionResult = { op: NearOpinion | null; line: string; inBand: 
  * 2026-11-15 作業員H（統括役の頼み 5・nop9o-1 の時間切れ）: match_conductor_focus の RPC そのものは 18ms（1,150行・EXPLAIN）・手元から 130〜180ms。
  *   時間切れの元は RPC ではなく、2秒の中に読みが順番に 8回（状況の文の読み→埋め込み→RPC→状況の文→近い返信の文→手本の文→申込の線→表示名）並ぶ事。
  *   手元の実測（f6e1d308・11/14）: 冷えた1回目 状況 331・埋め込み 451・RPC 178・状況の文 144ms（ここまでで 1.1秒）、2回目以降 0.4秒。ブレインの他の読みと重なる本番・試験の初回で 2秒を越える。
- *   NEAR_OPINION_PARALLEL=on（既定 off）: 互いに待たない読みを同時に（状況の文と近い返信の文・申込の線と表示名）＝2往復減らす。読みの URL は変えない（試験の写しの台本が同じ URL で引くため）。
+ *   NEAR_OPINION_PARALLEL（11/18 から既定 on・止める =off）: 互いに待たない読みを同時に（状況の文と近い返信の文・申込の線と表示名）＝2往復減らす。読みの URL は変えない（試験の写しの台本が同じ URL で引くため）。
  *   trace を渡すと、どの段まで進んだか・段ごとの ms を書く（時間切れの時にブレインのログに出す）。
  */
-export const nearOpinionParallelOn = (env: Record<string, string | undefined> = process.env): boolean => (env.NEAR_OPINION_PARALLEL ?? "").trim().toLowerCase() === "on";
+// 11/18 統括役の決め: h1115-nopar-on-p1/p2（7問・brain）で悪化0 → 既定 on（止める NEAR_OPINION_PARALLEL=off）
+export const nearOpinionParallelOn = (env: Record<string, string | undefined> = process.env): boolean => (env.NEAR_OPINION_PARALLEL ?? "").trim().toLowerCase() !== "off";
 export type NearOpinionTrace = { stage: string; ms: Record<string, number> };
 
 /** minShare: 既定 0.8（入口の意見の線）。作業員5の 294（予算と止め時）は 0.65 等を渡して使う */

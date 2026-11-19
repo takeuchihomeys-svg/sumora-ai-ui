@@ -12,9 +12,10 @@ let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const cell = (key: string, state: string) => ({ key, state }) as never;
 
-t("既定は off（未設定・変な値）・shadow／on は記録だけ", () => {
-  assert.equal(conductorBriefMode({}), "off");
-  assert.equal(conductorBriefMode({ CONDUCTOR_BRIEF: "x" }), "off");
+t("既定は on＝記録（11/18・未設定・変な値）・off で止める・shadow／on は記録だけ", () => {
+  assert.equal(conductorBriefMode({}), "shadow");
+  assert.equal(conductorBriefMode({ CONDUCTOR_BRIEF: "x" }), "shadow");
+  assert.equal(conductorBriefMode({ CONDUCTOR_BRIEF: "off" }), "off");
   assert.equal(conductorBriefMode({ CONDUCTOR_BRIEF: "shadow" }), "shadow");
   assert.equal(conductorBriefMode({ CONDUCTOR_BRIEF: "on" }), "shadow");
 });

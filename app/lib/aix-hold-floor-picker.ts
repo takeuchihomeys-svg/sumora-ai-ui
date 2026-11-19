@@ -16,10 +16,10 @@ export const HOLD_PICKER_LABEL = "お部屋止めについて";
 export const FLOOR_PICKER_LABEL = "床の色について";
 
 export function holdFloorPickerUiOn(v: string | undefined): boolean {
-  return (v ?? "").trim().toLowerCase() === "on";
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 export function holdFloorPickerForBrain(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_HOLD_FLOOR_PICKER ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_HOLD_FLOOR_PICKER ?? "").trim().toLowerCase() !== "off";
 }
 
 export const HOLD_RESULTS = ["申込可能", "申込不可"] as const;

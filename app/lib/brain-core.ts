@@ -9,7 +9,7 @@ import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { maskPII, maskHonorificNames, maskPIIForAlt } from "@/app/lib/pii-mask";
 import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { brainCacheOrderOn, withSceneBlock } from "@/app/lib/brain-cache-order";
-import { buildSentProps, buildSentPropsText, sentPropsFullOn, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
+import { buildSentProps, buildSentPropsText, sentImageFactsOn, sentPropsFullOn, sentPropsFullMode, SENT_PROPS_FULL_LIMIT, SENT_PROPS_DETAIL_N, sentSheetVacancyOn, attachSheetVacancy, attachBundles, attachEstimates, estimatesFromRecords } from "@/app/lib/sent-props-text";
 import { refResolveOn, refResolveModeOf, resolveRefs, refResolveLine, refResolveDigest, refHandoffReasons, portalIdOf, type RefResolve, type RefBrought, type RefHandoffReason } from "@/app/lib/ref-resolve";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -144,7 +144,7 @@ import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
 import { latentFiveOn, LATENT_FIVE_FIELD, LATENT_FIVE_RULES, normalizeLatentFive, type LatentFive } from "@/app/lib/latent-five";
-import { latentRowCandidate } from "@/app/lib/latent-subkinds";
+import { latentRowCandidate, latentSubkindsOn } from "@/app/lib/latent-subkinds";
 import { readCandidatesOn, readCandidatesMode, READ_CANDIDATES_FIELD, READ_CANDIDATES_RULES, READ_CANDIDATES_FIELD_SHADOW, READ_CANDIDATES_RULES_SHADOW, normalizeReadCandidates, normalizeReadCandidatesFull, readingHandoff, readCandidatesDigest, chosenReading, type ReadCandidates, type ReadCandidatesFull } from "@/app/lib/brain-read-candidates";
 import { ourSendUptakeOn, OUR_SEND_UPTAKE_FIELD, OUR_SEND_UPTAKE_RULES, normalizeOurSendUptake, ourSendUptakeDigest, type OurSendUptakeRow } from "@/app/lib/our-send-uptake";
 import { checkOrderGuideOn, checkOrderGuideFor, preBrainCues } from "@/app/lib/check-order-guide";
@@ -502,8 +502,10 @@ export type SuggestedAixMeta = {
   material_conflicts?: string[];
   /** 2026-11-15 作業員L（統括の土台②）: 材料どうしの食い違いの見張り（app/lib/material-clash.ts・BRAIN_MATERIAL_CLASH=shadow の時だけ・記録だけ） */
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
+  /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
+  cancel_wide_shadow?: boolean;
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
-  situation_now?: { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
+  situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
@@ -574,6 +576,8 @@ export type SuggestedAixMeta = {
   latent_five?: LatentFive;
   /** 同: 潜在の下の種類（latent-subkinds・使う事実の口つき・concern が空でも立つ候補） */
   latent_five_sub?: { id: string; top: string; factSource: string | null; phraseKind: string; from: string };
+  /** 2026-11-15 作業員K: 潜在の下の種類の記録だけ（LATENT_SUBKINDS=on・LATENT_FIVE が off の時）。文の統括は読まない名前（latent_five_sub と分ける＝文と判断は変えない） */
+  latent_subkind_record?: { id: string; top: string; factSource: string | null; phraseKind: string; from: string };
   /** 同: こちらの直前の送信の部分ごとの受け取られ方と刺さり・BRAIN_OUR_SEND_UPTAKE=on の時だけ（記録だけ・文の統括が HOOK_TO_COMPOSE で読む） */
   our_send_uptake?: OurSendUptakeRow[];
   /** 2026-11-12 作業員22: 判断の順番の型の手がかりに使う今の一通の場面（CHECK_ORDER_TABLE=shadow|on の時だけ・記録だけ） */
@@ -1758,9 +1762,40 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
         const tc = mm.turn_contract as { asks?: unknown } | null | undefined;
         if (mode === "on" && tc && Array.isArray(tc.asks)) tc.asks = al.annotateAsks(tc.asks as Array<Record<string, unknown>>, led);
         if (!led.check.ok) console.log(JSON.stringify({ tag: "brain:ask-ledger", digest: led.digest, issues: led.check.issues.map((x) => x.code) }));
+        // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_NOW=on）に要件の済み・約束・未と、この番の送った所まで・残っている役目（M の progressAfterSends・送る前）
+        const snow = mm.situation_now as { v?: number; asks?: unknown; this_turn?: unknown } | undefined;
+        if (snow && snow.v === 1) {
+          const pr = al.progressAfterSends(led, []);
+          snow.asks = { done: pr.answered, promised: pr.promised, open: pr.remaining };
+          snow.this_turn = { sent_up_to: pr.sentUpTo, remaining: led.msgs.filter((m) => m.no > pr.sentUpTo).map((m) => ({ no: m.no, slot: m.slot, aix: m.aix })) };
+        }
       }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-ledger-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-19 作業員M（統括役の割り振り・継ぎ目②の読む側・ASK_PROGRESS_READ=on の時だけ・既定 off）: 前の番の要件の帳面（prevMeta.ask_ledger）と、
+  //   前の番で実際に送った所まで（conversations.ask_progress）から、まだ答えていない要件・約束して結果がまだの要件を meta.ask_carry に（統括の指示書が読む）。
+  //   名前は作業員L の situation_now（asks.open・asks.promised・ask_id）とそろえる。道・プロンプトは変えない（記録と指示書の欄だけ）
+  try {
+    const al = await import("@/app/lib/ask-ledger");
+    if (al.askProgressReadOn() && !args[5]?.recheck) {
+      const prevLed = al.askLedgerOf(args[5]?.prevMeta ?? null);
+      if (prevLed) {
+        const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", args[0]).maybeSingle();
+        const carry = al.askCarryFrom(prevLed, (apRow as { ask_progress?: unknown } | null)?.ask_progress);
+        if (carry) (meta as unknown as Record<string, unknown>).ask_carry = carry;
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:ask-carry-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-19 作業員M（統括役の割り振り・統括の next_send のつながり・NEXT_SEND_LINK=shadow の時だけ・既定 off）: 前のどの通のどの項目を受けて次を送るか・
+  //   つながりの種類（7つ）・なぜ・根拠を meta.next_send_link に記録だけ（名前は situation_now の item_id・promise_id・ask_id・sent_id）。統括の指示書の next にも写す
+  try {
+    const nsl = await import("@/app/lib/next-send-link");
+    if (nsl.nextSendLinkMode() !== "off") {
+      const mm = meta as unknown as Record<string, unknown>;
+      const link = nsl.nextSendLinkOf(mm);
+      if (link) mm.next_send_link = link;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "brain:next-send-link-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（KB fd1c7c62・ea2a9405①）: 番ごとの部品の配分（型×深さ）を記録だけ。CONDUCTOR_ALLOCATION=shadow|on の時だけ meta.conductor_allocation を足す
   //   （既定 off＝何も足さない＝今と同じ）。返信か AIX か（action）は読まない・変えない。部品を実際に止めるのは試験で悪化0を確かめてから
   try {
@@ -1936,7 +1971,7 @@ async function analyzeConversationCore(
     // 2026-09-20 竹内: 画像だけで送った物件（送信時に DeepSeek で読み取って記録した分）
     supabase
       .from("sent_image_properties")
-      .select("property_name, room_no, created_at, source, channel")
+      .select(sentImageFactsOn() ? "property_name, room_no, created_at, source, channel, facts" : "property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(sentPropsFullOn() ? SENT_PROPS_FULL_LIMIT : materialTurnMustOn() ? WIDE_LIMIT.sentImages : 20),
@@ -2059,7 +2094,7 @@ async function analyzeConversationCore(
       type NameRow = { property_name?: string | null; property_names?: string[] | null };
       const allNames = [
         ...((sentPropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
-        ...((sentImagePropsResult.data ?? []) as NameRow[]).map((r) => r.property_name),
+        ...((sentImagePropsResult.data ?? []) as unknown as NameRow[]).map((r) => r.property_name),
         ...((viewingHistoryResult.data ?? []) as NameRow[]).map((r) => r.property_name),
         ...((aixLogsResult.data ?? []) as NameRow[]).flatMap((r) => r.property_names ?? []),
       ];
@@ -2387,10 +2422,19 @@ async function analyzeConversationCore(
   // 2026-10-20 竹内さん（13:07 の画面）: 窓はこちらの最後の送信より後のお客様の発言だけ（既に答えた前の話題の事実を「今聞いている」と渡さない）。戻す COMPANY_FACT_TURN_SCOPE=off
   const companyFactsText = buildCompanyFactsNote(
     customerTextsForCompanyFacts([...typedMessages].reverse()),
-    { account: convAccount },
+    { account: convAccount, applying: isPostApplyStatus(convStatus) },
   ) + brandCostOverrideNote(convAccount)
     // 2026-11-05 竹内さん No.10: 延滞歴・カードローン等の審査の不安は、独立系の保証会社の知識から返信で言ってよい（材料は guarantor-companies のマスタ側・既定 on）
     + (await import("@/app/lib/guarantor-companies")).buildScreeningHistoryNote(customerTextsForCompanyFacts([...typedMessages].reverse()));
+  // 2026-11-18 作業員L（COMPANY_FACT_CANCEL_WIDE・既定 shadow）: 申込の段で広げたキャンセルの網だけに当たった番を記録する（材料には足さない）
+  let cancelWideShadow = false;
+  try {
+    const cfm = await import("@/app/lib/company-facts");
+    if (cfm.companyFactCancelWideMode() === "shadow" && cfm.cancelWideOnlyHit(customerTextsForCompanyFacts([...typedMessages].reverse()), isPostApplyStatus(convStatus))) {
+      cancelWideShadow = true;
+      console.log(JSON.stringify({ tag: "brain:cancel-wide-shadow", conversationId }));
+    }
+  } catch { /* 記録だけ */ }
   const sendReplyTimingText = buildSendReplyTimingNote({
     lastStaffAt: lastStaffAtIso,
     lastStaffAixType,
@@ -2519,8 +2563,9 @@ async function analyzeConversationCore(
   const sentProps = buildSentProps({
     // 2026-10-24: 列を切り替える select（image_url）は型の読み取りができない＝unknown を通す（行の形は CustomerRow のまま）
     customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
-    imageRows: (sentImagePropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["imageRows"],
+    imageRows: (sentImagePropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["imageRows"], // 2026-11-19: facts を足す select は型の読み取りが通らない＝unknown を通す
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
+    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）
   });
   // 2026-10-24 q053 型（P0「材料が届いていない」）: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日を送った物件の行に載せる
   //   （BRAIN_SENT_SHEET_VACANCY=on の時だけ・既定 off＝今と同じ）。読めなかった時は載せないだけ（判断は変えない）
@@ -2588,7 +2633,7 @@ async function analyzeConversationCore(
       console.log(JSON.stringify({ tag: "brain:ref-resolve", conversationId, mode: refMode, items: rr.items.length, refCount: rr.refCount, digest: refResolveRec.digest }));
     } catch (e) { console.warn(JSON.stringify({ tag: "brain:ref-resolve-failed", conversationId, error: String(e).slice(0, 160) })); }
   }
-  let sentPropsText = buildSentPropsText(sentProps, sentPropsFullOn() ? { detailN: SENT_PROPS_DETAIL_N } : {});
+  let sentPropsText = buildSentPropsText(sentProps, sentPropsFullOn() ? { detailN: SENT_PROPS_DETAIL_N, olderLine: sentPropsFullMode() === "on" } : {});
   if (refMode === "on" && refResolveRec) { const line = refResolveLine(refResolveRec); if (line) sentPropsText += `\n${line}`; }
   // 2026-11-15 作業員H（竹内さん「お客さんが送ってきたのが物件や見積書と分かれば…」「相手が送ったのとこっちが送っているのの関連性も」）:
   //   今の連投のお客様の画像を、種類・物件（確かさ）・こちらが送った物件との関連（何回目の送信の何件目）・見積書の内訳（名前を伏せた数字だけ）・
@@ -3131,9 +3176,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       }\n※「御見積書を作成してお送りします」等の再宣言は禁止（既に送付済み）。費用について聞かれたら上記の金額を根拠に答えること。`
     : "";
 
+  // 2026-11-18 作業員L（BRAIN_ESTIMATE_RECORDS・既定 off）: 送った御見積書の記録（estimate_records）を材料に（見積書そのものの AIX は estimate_sent が立たず【御見積書 送付済み】が出ない）
+  let estimateRecordsText = "";
+  try {
+    const erb = await import("@/app/lib/estimate-records-block");
+    if (erb.estimateRecordsBlockOn()) {
+      const { data: erRows } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
+      estimateRecordsText = erb.estimateRecordsBlock((erRows ?? []) as never);
+    }
+  } catch (e) { console.warn("[brain-core] estimate-records block skipped:", e instanceof Error ? e.message : String(e)); }
   const tasksText = (openTasks.length > 0
     ? `\n【この会話の未完了タスク】${openTasks.map((t) => taskLabel[t.task_type] ?? t.task_type).join(" / ")}\n※next_steps はこれらの未完了タスクを考慮すること。`
-    : "") + checkResultsText + propAvailabilityText + estimateInfoText;
+    : "") + checkResultsText + propAvailabilityText + estimateInfoText + estimateRecordsText;
 
   type Viewing = { viewing_date: string; viewing_time: string | null; status: string | null; property_name?: string | null; property_address?: string | null };
   // viewing_history（is_primaryを含む全件）を優先・存在しなければviewingsにフォールバック
@@ -3210,6 +3264,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const equipmentAnswer = await loadEquipmentAnswerWithin(12_000, { conversationId, customerText: unrepliedTurn.text });
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
+    // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
+    if (equipmentAnswer.question.wish) customerStateBlockText += "\n→ お客様の今の発言は設備の希望（質問の形ではない）。上の事実で、こちらが既に送った物件の中に希望に合う物件がある時は、新しい条件で探す番ではなく送った物件への問いの番（竹内さん 11/09「お送りしたお部屋でカウンターキッチン付のお部屋はこちらの1部屋・お気に召されましたらご案内」）。合う物件が無い・資料で分からない時だけ探す約束。";
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
@@ -4355,6 +4411,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       console.log(JSON.stringify({ tag: "brain:material-clash", conversationId, ...dg }));
     } catch (e) { console.warn("[brain-core] material-clash skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-15 作業員L（BRAIN_SITUATION_NOW・既定 off・記録だけ）: 今の状況の記録を1つに（送った事・確認した事・前に送った文の項目・開いている約束・食い違い）。
+  //   要件（asks・this_turn）は作業員M の要件の帳面が meta に入った後（後処理）で足す
+  let situationNowRec: import("@/app/lib/situation-now").SituationNow | undefined;
+  try {
+    const sn = await import("@/app/lib/situation-now");
+    if (sn.situationNowOn()) {
+      const el = await import("@/app/lib/exchange-ledger");
+      const exchange = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.now() });
+      situationNowRec = sn.buildSituationNow({ timeline: situationTimelineRec, facts: (recordedFacts ?? []) as never, aix: aixLogs as never, exchange, clash: materialClashRec, nowMs: Date.now() });
+      console.log(JSON.stringify({ tag: "brain:situation-now", conversationId, ...sn.situationNowDigest(situationNowRec) }));
+    }
+  } catch (e) { console.warn("[brain-core] situation-now skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
   //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
   //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・最初の会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
@@ -4782,7 +4850,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         //   既存の信号の結果は変えない（加えるだけ）。decision_source='signal:scene_*' で brain-aix-eval の学習対象にする。
         //   2026-10-08: S5（日時の語→待ち合わせ）はブレインが「なし」の時は採らない（本番 0/10・S2/S3/S11 は竹内さんの決定で残す）
         const sceneSig0 = sceneSignalFallback(sceneEvidence);
-        const sceneSig = sceneSig0 && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
+        // 2026-11-18 作業員H（SCREENING_SIGNAL_BRAIN_FIRST・既定 off）: 審査の通りやすさの問いでブレインが「AIX なし」と言った番は S3 の信号で埋めない（q333・網は材料にする）
+        const screeningSkip = !!sceneSig0 && (await import("@/app/lib/screening-signal-brain-first")).screeningSignalSkipped({ reasonCode: sceneEvidence?.reasonCode, brainSaidNoAix });
+        if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
+        const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
         if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
@@ -5671,6 +5742,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         }
       }
       const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {
+        // 2026-11-15 作業員H（TSUNAGI_ONE_PLACE・既定 off）: つなぎを決めるのは appeal-timing の判定1つ＝2段の NO_VIEWING はこれを読む
+        appeal: appealTiming ? { kind: appealTiming.verdict.kind, level: appealTiming.verdict.level } : null,
         screeningBrainReply,
         sentReactionBrainReply,
         // 2026-11-13 作業員7b（ASK_PARTS_SPLIT・既定 off）: ブレインの依頼の部分が全部 今言えるか（持ち込みの網を下げる）
@@ -5739,7 +5812,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           }
         }
       }
-      // 2026-11-15 作業員H（TWO_STAGE_CHECK_QUESTION_KEEP_AIX・既定 off・check-question-brain-first.ts）: ブレイン自身が依頼で route="aix" と決めた番は、
+      // 2026-11-15 作業員H（TWO_STAGE_CHECK_QUESTION_KEEP_AIX・11/18 から既定 on・check-question-brain-first.ts）: ブレイン自身が依頼で route="aix" と決めた番は、
       //   聞かれた事の確認の約束（check_question）に書き換えない（ブレインの AIX のまま・q411）。依頼に確認の約束がある番は今まで通り
       if (twoStage && /check_question/.test(twoStage.source) && !twoStageRes.direct && !isPostApplyStatus(convStatus)) {
         const { checkQuestionKeepAixOn, brainChoseAixForQuestion } = await import("@/app/lib/check-question-brain-first");
@@ -6695,6 +6768,13 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       mindsetTarget: ((parsed as { mindset?: { anxiety?: { target?: string } } }).mindset?.anxiety?.target) ?? null,
       ourSendText: readHandoffRec?.latentText ?? null,
     })) : null;
+    // 2026-11-15 作業員K（統括役の決め・案①）: LATENT_FIVE が off でも、LATENT_SUBKINDS=on なら下の種類の候補を記録だけする（meta.latent_subkind_record・読む所は訴求の記録の why だけ）
+    const latentSubkindRecordOnly = !BRAIN_LATENT_FIVE_ON && latentSubkindsOn() ? ((c) => (c ? { id: c.sub.id, top: c.sub.top, factSource: c.sub.factSource ?? null, phraseKind: c.sub.phraseKind, from: c.from } : null))(latentRowCandidate({
+      concernText: null, customerText: unrepliedTurn.text ?? "",
+      mindsetTarget: ((parsed as { mindset?: { anxiety?: { target?: string } } }).mindset?.anxiety?.target) ?? null,
+      ourSendText: readHandoffRec?.latentText ?? null,
+    })) : null;
+    if (latentSubkindRecordOnly) console.log(JSON.stringify({ tag: "brain:latent-subkind-record", conversationId, sub: latentSubkindRecordOnly.id, from: latentSubkindRecordOnly.from }));
     if (BRAIN_LATENT_FIVE_ON) console.log(JSON.stringify({ tag: "brain:latent-five", conversationId, stages: latentFiveParsed ? Object.entries(latentFiveParsed).filter(([, v]) => v).map(([k]) => k) : [], sub: latentFiveSubRec?.id ?? null, from: latentFiveSubRec?.from ?? null }));
     const uptakeParsed: OurSendUptakeRow[] | null = BRAIN_OUR_SEND_UPTAKE_ON ? normalizeOurSendUptake((parsed as { our_send_uptake?: unknown }).our_send_uptake) : null;
     if (BRAIN_READ_CANDIDATES_SHADOW) console.log(JSON.stringify({ tag: "brain:read-candidates-shadow", conversationId, rc: readCandidatesDigest(readCandParsed), reading: readHandoffRec?.reading ?? null, why: readHandoffRec?.whyKind ?? null }));
@@ -6795,8 +6875,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       ...(BRAIN_PLAN_AHEAD_ON ? ((pa) => pa ? { plan_ahead: pa, plan_ahead_at: new Date().toISOString() } : prevPlanAhead ? { plan_ahead: prevPlanAhead, ...(prevPlanAheadAt ? { plan_ahead_at: prevPlanAheadAt } : {}) } : {})(normalizePlanAhead((parsed as { plan_ahead?: unknown }).plan_ahead)) : {}),
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
+      cancel_wide_shadow: cancelWideShadow || undefined,
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
-      situation_now: situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined,
+      situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
@@ -6878,6 +6959,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-13 作業員16: 潜在の5段と下の種類（LATENT_FIVE=on の時だけ・記録と文の統括の材料・判断は変えない）
       latent_five: latentFiveParsed ?? undefined,
       latent_five_sub: latentFiveSubRec ?? undefined,
+      latent_subkind_record: latentSubkindRecordOnly ?? undefined,
       our_send_uptake: uptakeParsed ?? undefined,
       // 2026-11-12 作業員22: 判断の順番の型の手がかりの場面（CHECK_ORDER_TABLE=shadow|on の時だけ・既定 off は欄なし＝今と同じ）
       // 2026-11-12 作業員22: 統括の指示書の入力（CONDUCTOR_BRIEF=shadow の時だけ・既定 off は欄なし）

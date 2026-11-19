@@ -348,7 +348,7 @@ export async function POST(req: NextRequest) {
     //   旧は upsert を投げて部分 UNIQUE の重複（23505）で失敗させてから下の UPDATE に回っていた（審査管理の行の更新のたびに失敗の INSERT が1回）。
     //   SCREENING_SYNC_PRECHECK=on の時は先に引き、あれば upsert を投げずに同じ UPDATE（M-7）に回す（結果は旧と同じ・失敗の INSERT が出ない）
     let preDup = false;
-    if (!existingConv && upsertData.line_user_id && (process.env.SCREENING_SYNC_PRECHECK ?? "").trim().toLowerCase() === "on") {
+    if (!existingConv && upsertData.line_user_id && (process.env.SCREENING_SYNC_PRECHECK ?? "").trim().toLowerCase() !== "off") {
       let dupQ = supabase.from("conversations").select("id").eq("line_user_id", upsertData.line_user_id as string).neq("id", String(record.id));
       if (resolvedAccount) dupQ = dupQ.eq("account", resolvedAccount);
       const { data: dupRows } = await dupQ.limit(1);

@@ -85,7 +85,37 @@ function urlOf(input: RequestInfo | URL): URL | null {
   try { return input instanceof URL ? input : new URL(typeof input === "string" ? input : (input as Request).url); } catch { return null; }
 }
 /** fetch を包む: match_* の RPC だけ見て row を insert に渡す（応答はそのまま返す・数えは複製で読む） */
-export function wrapFetchWithRagWatch(original: FetchLike, deps: { insert: (r: RagCallRow) => Promise<void>; keepAlive: (p: Promise<unknown>) => void; route: () => string | null; env: string | null; now?: () => number }): FetchLike {
+/**
+ * 2026-11-18 作業員H（竹内さん「LINE がつながりにくい・重い時がある」・統括役の調べ: RAG の RPC 4つが1回 100〜175MB をディスクから読み、Disk IO の枠を使い切っていた）:
+ *   同じ問い（同じ RPC・同じ引数＝同じ埋め込み）が短い間に何度も来る（返信の生成・ブレイン・AIX が同じ番で同じ問いを引く）。
+ *   応答を関数の中に60秒だけ置き、同じ問いはディスクを読まずに返す。手本・ナレッジは60秒で変わる物ではない（夜の学習で入れ替わる）。
+ *   止める: RAG_RPC_CACHE=off（既定 on）。置くのは 200 件まで・応答 200 の時だけ・本文が 2MB を越える物は置かない。
+ */
+export function ragRpcCacheOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.RAG_RPC_CACHE ?? "").trim().toLowerCase() !== "off";
+}
+export class RagRpcCache {
+  private m = new Map<string, { at: number; text: string }>();
+  constructor(private ttlMs = 60_000, private max = 200) {}
+  get(key: string, now: number): string | null {
+    const e = this.m.get(key);
+    if (!e) return null;
+    if (now - e.at > this.ttlMs) { this.m.delete(key); return null; }
+    this.m.delete(key); this.m.set(key, e); // 新しく使った物を後ろへ
+    return e.text;
+  }
+  set(key: string, text: string, now: number): void {
+    if (text.length > 2_000_000) return;
+    this.m.delete(key); this.m.set(key, { at: now, text });
+    while (this.m.size > this.max) { const k = this.m.keys().next().value as string | undefined; if (k === undefined) break; this.m.delete(k); }
+  }
+  get size(): number { return this.m.size; }
+}
+export function ragCacheKey(rpc: string, body: unknown): string | null {
+  return typeof body === "string" && body.length ? `${rpc}|${body}` : null;
+}
+
+export function wrapFetchWithRagWatch(original: FetchLike, deps: { insert: (r: RagCallRow) => Promise<void>; keepAlive: (p: Promise<unknown>) => void; route: () => string | null; env: string | null; now?: () => number; cache?: RagRpcCache | null }): FetchLike {
   const now = deps.now ?? Date.now;
   return async (input, init) => {
     const rpc = ragRpcName(urlOf(input));
@@ -94,10 +124,20 @@ export function wrapFetchWithRagWatch(original: FetchLike, deps: { insert: (r: R
     let route: string | null = null;
     try { route = deps.route(); } catch { route = null; }
     const body = init?.body;
+    const key = deps.cache ? ragCacheKey(rpc, body) : null;
+    if (deps.cache && key) {
+      const hit = deps.cache.get(key, t0);
+      if (hit !== null) {
+        let json: unknown = null; try { json = JSON.parse(hit); } catch { json = null; }
+        deps.keepAlive(deps.insert({ ...buildRagRow({ rpc, route, status: 200, json, ms: 0, body, env: deps.env }), route: `${route ?? "?"}(cache)` }).catch(() => {}));
+        return new Response(hit, { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+      }
+    }
     try {
       const res = await original(input, init);
       const ms = now() - t0;
       const copy = res.clone();
+      if (deps.cache && key && res.status === 200) { const forCache = res.clone(); deps.keepAlive(forCache.text().then((t) => deps.cache!.set(key, t, now())).catch(() => {})); }
       deps.keepAlive((async () => {
         let json: unknown = null;
         try { json = await copy.json(); } catch { json = null; }

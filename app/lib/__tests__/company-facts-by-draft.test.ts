@@ -13,7 +13,7 @@ function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw 
 const D7560 = "初期費用のクレジットカード決済も可能です！！カード手数料として合計金額に3.24%が別途かかりますが、カード会社の方で分割の設定も頂けます！！";
 const D8271 = "初期費用も最大限割引させて頂き、〇〇さんのお引越しにかかる費用を出来る限り抑えさせて頂きます！！";
 console.log("company-facts-by-draft");
-it("切替は既定 off", () => { eq(fcCompanyFactsByDraftEnabled({}), false); eq(fcCompanyFactsByDraftEnabled({ FC_COMPANY_FACTS_BY_DRAFT: "on" }), true); });
+it("切替は既定 on（2026-11-15）・off で戻す", () => { eq(fcCompanyFactsByDraftEnabled({}), true); eq(fcCompanyFactsByDraftEnabled({ FC_COMPANY_FACTS_BY_DRAFT: "on" }), true); eq(fcCompanyFactsByDraftEnabled({ FC_COMPANY_FACTS_BY_DRAFT: "off" }), false); });
 it("7560: カード払い・分割・3.24% → credit_card", () => eq(companyFactsMentionedByDraft(D7560, "giga").map((f) => f.id), ["credit_card"]));
 it("8271: 最大限割引 → アカウントのブランドの事実だけ", () => {
   eq(companyFactsMentionedByDraft(D8271, "giga").map((f) => f.id), ["max_discount_ieyasu_giga"]);
