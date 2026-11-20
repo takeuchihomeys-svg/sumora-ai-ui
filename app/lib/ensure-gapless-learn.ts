@@ -38,7 +38,8 @@ export function ensureGaplessLearnTasks(inp: GaplessInput): GaplessTask[] {
   const list = Array.isArray(inp.tasks) ? [...inp.tasks] : [];
   const has = (k: string) => list.some((t) => t && t.kind === k);
   const unread = Math.max(0, Number(inp.unreadNormal) || 0);
-  const solid = Number(inp.screenSolid);
+  // ★ 2026-11-20: null／未設定は「不明」。Number(null)=0 で「学習量が消えた」と誤判定していた（材料が無いのに課題を作らない）
+  const solid = inp.screenSolid === null || inp.screenSolid === undefined ? NaN : Number(inp.screenSolid);
   const read = Number(inp.readCount);
   const fields = [
     ...(inp.weakFields || []),
@@ -57,9 +58,10 @@ export function ensureGaplessLearnTasks(inp: GaplessInput): GaplessTask[] {
   }
 
   const photoN = Math.max(0, Number(inp.photoReach) || 0);
-  const learnedN = Math.max(0, Number(inp.learnedOk) || 0);
+  // ★ 2026-11-20: 学べた数も null は「不明」（0 と見ない）。材料が無いのに「学べ0」と判定しない
+  const learnedN = inp.learnedOk === null || inp.learnedOk === undefined ? NaN : Math.max(0, Number(inp.learnedOk) || 0);
   /** ★ 2026-11-18 Pro: 写真あり∧学べ0∧todo窓0 でも flash 課題を出す */
-  const needFlashThoughTodo0 = photoN > 0 && learnedN === 0;
+  const needFlashThoughTodo0 = photoN > 0 && Number.isFinite(learnedN) && learnedN === 0;
 
   // 未学習 or 衝突欄があるのに photo_learn 無し（または写真あるのに学べ0）
   if ((unread > 0 || fields.length > 0 || needFlashThoughTodo0) && !has("photo_learn")) {
@@ -131,10 +133,13 @@ export function ensureGaplessLearnTasks(inp: GaplessInput): GaplessTask[] {
 
   // 重複除去
   const seen = new Set<string>();
-  return list.filter((t) => {
+  const uniq = list.filter((t) => {
     const k = `${t.kind}|${t.what.slice(0, 36)}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+  // ★ 2026-11-20 決まり「順番は無料で効く物が先・お金がかかる物は後ろ」: 費用ありは最後へ（無料どうしの順は変えない）
+  const isPaid = (t: GaplessTask) => /費用|Vision/.test(t.cost || "");
+  return [...uniq.filter((t) => !isPaid(t)), ...uniq.filter((t) => isPaid(t))];
 }

@@ -4203,6 +4203,16 @@ function buildMeeting(m: {
       });
     }
   }
+  /**
+   * ★ 2026-11-20 決まり「順番は無料で効く物が先・お金がかかる物は後ろ」（統括の順番の最後の並べ替え）:
+   *   費用ありの課題（Vision 等）は最後へ。無料どうしの順は変えない（土台→止まる場面 の順を守る）。
+   */
+  {
+    const paid = (t: { cost?: string }) => /費用|Vision/.test(t.cost || "");
+    const free = learning_tasks.filter((t) => !paid(t));
+    const pay = learning_tasks.filter((t) => paid(t));
+    learning_tasks = [...free, ...pay];
+  }
 
   // ── 竹内さんに聞く事 ──
   if (m.rows > 0 && m.withOps / m.rows < 0.3) {
