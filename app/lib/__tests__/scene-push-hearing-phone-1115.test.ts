@@ -12,11 +12,11 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
 const FFF5 = "よろしくお願いします！！ 彼氏との同棲で家探してて、ここ住みたかったんですけど、彼氏名義で審査落ちててここって厳しいですよね？？"; // 見張り 12348・竹内さん AIX【電話】
 const P732 = "ここの物件、日本セーフティと全保連だと思うのですが。 日本セーフティが通らなさそうみたいで。 審査面が心配なんですよ。"; // 09/28・竹内さん AIX【電話】
 const ON = { SCREENING_RISK_HERE_PHONE: "on" };
-ok("既定 off", screeningRiskHerePhoneEnabled({}) === false && screeningRiskHerePhoneEnabled(ON) === true);
+ok("既定 on（2026-11-20）・off で止める", screeningRiskHerePhoneEnabled({}) === true && screeningRiskHerePhoneEnabled({ SCREENING_RISK_HERE_PHONE: "off" }) === false);
 ok("12348（竹内さん 電話）は網に掛かる", screeningRiskHereTurn(FFF5));
 ok("09/28 732692f2（竹内さん 電話）は網に掛かる", screeningRiskHereTurn(P732));
 ok("12348 は今までの網（審査＋相談）には掛かっていなかった＝材料が届いていなかった", !screeningConsultTurn(FFF5));
-ok("off なら材料の行は出ない", screeningPhoneTurnLine(FFF5, {}) === "");
+ok("off なら材料の行は出ない", screeningPhoneTurnLine(FFF5, { SCREENING_RISK_HERE_PHONE: "off" }) === "");
 {
   const t = screeningPhoneTurnLine(FFF5, ON);
   ok("on: 電話をかける の行", /電話をかける/.test(t) && /phone_call/.test(t) && /保証会社について/.test(t), t);

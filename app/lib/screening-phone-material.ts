@@ -57,7 +57,8 @@ export function screeningConsultTurn(text: string | null | undefined): boolean {
 //     「1番手の保証会社のところは審査通りませんでした」（物件の指し方が無い・q117）・初回の条件の紙。
 //   網は候補だけ（決めるのはブレイン）。既定 off（SCREENING_RISK_HERE_PHONE=on で入る）。根の決まりは 10/28 竹内さんの決定 701e2665（お客様から審査の相談→段階を問わず電話）
 export function screeningRiskHerePhoneEnabled(env: Env = envOf()): boolean {
-  return (env.SCREENING_RISK_HERE_PHONE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2（統括役の決め）: 既定 on（試験 k1119-riskphone・6問×2回で確かな悪化0・合格 4→5）。止める SCREENING_RISK_HERE_PHONE=off
+  return (env.SCREENING_RISK_HERE_PHONE ?? "").trim().toLowerCase() !== "off";
 }
 const HERE_PROPERTY_RE = /ここ|この(?:物件|お?部屋|マンション)|こちらの(?:物件|お?部屋)|\d{3,4}号室/;
 const OWN_SCREENING_SCAR_RE = /審査(?:に|が|で|は)?落ち(?:て|た|まし|ちゃ)|落ちて(?:て|る|い)|通らな(?:さそう|かった)|通りませんでした|否決|ブラック|ブラリス|滞納/;
