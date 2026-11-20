@@ -95,3 +95,7 @@ assert.equal(promiseFulfilledBy({ at: at(0), kind: "callback" }, ev), "n/a");
 assert.equal(promiseClosedConversation("applying", [], at(0)), true);
 assert.equal(promiseClosedConversation("proposing", [{ sender: "customer", text: "部屋決まりました", created_at: at(2) }], at(0)), true);
 console.log("promise-shared: ok");
+// 見積の約束を手打ちの文で果たした（作業員N の B1）
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [{ sender: "staff", text: "レオンコンフォート新梅田501号室最大限割引しました初期費用の御見積書となります！！", created_at: at(4), is_aix_generated: false }], aix: [], sent: [] }), { by: "staff_text", at: at(4) });
+assert.equal(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [{ sender: "staff", text: "御見積書作成させて頂きます！！", created_at: at(4), is_aix_generated: false }], aix: [], sent: [] }), null);
+console.log("promise-estimate-text: ok");
