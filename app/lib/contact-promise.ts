@@ -222,7 +222,8 @@ export function farMoveInTurn(i: {
  *   FAR_MOVE_IN_STALE_CONDITION=on の時だけ（既定 off・統括役が試験の後に決める）
  */
 export function farMoveInStaleConditionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.FAR_MOVE_IN_STALE_CONDITION ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員K2（統括役の決め）: 既定 on。試験 k1118-re-fmstale（7問・悪化は q174 の1回だけ）→ k2-1120-fmstale-q174-1 で q174 を3回流して3回とも合格（前の外れは揺れ）。止める FAR_MOVE_IN_STALE_CONDITION=off
+  return (env.FAR_MOVE_IN_STALE_CONDITION ?? "").trim().toLowerCase() !== "off";
 }
 export function conditionMonthsStale(text: string | null | undefined, nowIso: string): boolean {
   const t = normalizeDateText(text);

@@ -9,6 +9,8 @@ t("本番（LLM_TEST_MODE 無し）は今そのもの", monthClockNowIso({ EXAM_
 t("試験はずらした日数だけ戻す", monthClockNowIso({ LLM_TEST_MODE: "deepseek-all", EXAM_MONTH_SHIFT_DAYS: "30" }, now) === "2026-10-04T03:00:00.000Z");
 t("読めない値・0 はずらさない", monthClockShiftMs({ LLM_TEST_MODE: "x", EXAM_MONTH_SHIFT_DAYS: "abc" }) === 0 && monthClockShiftMs({ LLM_TEST_MODE: "x", EXAM_MONTH_SHIFT_DAYS: "0" }) === 0);
 // 9月に「10月入居」と言った問題を 11/03 の試験で読む: 今日で読むと来年の10月＝先の入居、ずらす前（9/20）で読むと今年の10月＝先ではない
+// 2026-11-21 作業員K2: FAR_MOVE_IN_STALE_CONDITION が既定 on になった（過ぎた月は先の入居にしない＝この弱さは on で直る）。ここは弱さの再現なので off で読む
+process.env.FAR_MOVE_IN_STALE_CONDITION = "off";
 const turn = [{ text: "お部屋探して頂けますか？", at: "2026-11-03T02:59:00Z" }];
 const today = farMoveInTurn({ customerTurn: turn, conditionMoveIn: "10月", staffHistory: [], nowIso: new Date(now).toISOString() });
 const atProblem = farMoveInTurn({ customerTurn: turn, conditionMoveIn: "10月", staffHistory: [], nowIso: monthClockNowIso({ LLM_TEST_MODE: "x", EXAM_MONTH_SHIFT_DAYS: "44" }, now) });
