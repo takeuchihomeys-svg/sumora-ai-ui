@@ -28,7 +28,7 @@ check("② aim が無い欄は今まで通り", /if \(!\(_aimSel && typeof _aimS
 
 check("③ 反映待ち 600ms", /return _settleChk\(600\)\.then\(function \(ok1\)/.test(src));
 check("③ 旧 240ms が無い", !/_settleChk\(240\)/.test(src));
-check("③ 押し直しは tap 付き", /_tapIfCursorOn\(hit\); \} catch \(_\) \{\}\s*try \{ cb\.click\(\); \}/.test(src));
+check("③ 押し直しはカーソルを動かしてから（_humanPointerClick）2.8.149〜", /_humanPointerClick\(hit, function \(\) \{ try \{ cb\.click\(\); \}/.test(src));
 check("③ _tapIfCursorOn はカーソルが欄の上の時だけ", /function _tapIfCursorOn\(el\)[\s\S]{0,500}if \(cp\.x < r\.left - 2 \|\| cp\.x > r\.right \+ 2/.test(src));
 
 check("④ 外しの直接押しは2回確かめてから", /clear_retry_press/.test(src) && !/setTimeout\(function \(\) \{ try \{ if \(cb\.isConnected && cb\.checked\) cb\.click\(\); \} catch \(_\) \{\} \}, 320\);/.test(src));

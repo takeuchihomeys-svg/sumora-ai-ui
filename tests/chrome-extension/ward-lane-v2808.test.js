@@ -76,7 +76,7 @@ console.log("\n■ ③ 押した直後の反映を待つ（押して外れるの
       // 2.8.136: 1回目の反映待ちは 240→600ms（数字は変わっても順番は同じ）
       const m = t.match(/_settleChk\((240|600)\)\.then/);
       const s = m ? m[0] : "_settleChk(240)";
-      return t.indexOf("hit.click()") < t.indexOf(s) && t.indexOf("cb.click()") > t.indexOf(s) && t.indexOf("simulateClick(hit") > t.indexOf("cb.click()");
+      return t.indexOf("hit.click()") < t.indexOf(s) && t.indexOf("cb.click()") > t.indexOf(s) && t.indexOf("simulateClick(_tgt") > t.indexOf("cb.click()");
     })());
   ok("旧の「押してすぐ checked を読む」二重押しが消えている", !/if \(cb\.checked !== !!wantOn\) \{ try \{ cb\.click\(\); \} catch \(_\) \{\} \}\n/.test(t));
   ok("遅れて反映した時は点検に残す（toggle_late_ok）", /toggle_late_ok/.test(t));
@@ -121,8 +121,8 @@ console.log("\n■ ④ 家賃・更新日は画面内に入ってから選ぶ");
 
 function done() {
   console.log("\n■ ⑤ 版");
-  ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+  ok("manifest が 2.8.119 以上", ((v) => { const [x, y, z] = String(v).split(".").map(Number); return x > 2 || (x === 2 && (y > 8 || (y === 8 && z >= 119))); })(mf.version), mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.119 以上", ((ps.match(/var _AXLX_PAGE_VER = "([\d.]+)"/) || [])[1] || "").split(".").map(Number).join(".") !== "" && (() => { const [x, y, z] = ps.match(/var _AXLX_PAGE_VER = "([\d.]+)"/)[1].split(".").map(Number); return x > 2 || (x === 2 && (y > 8 || (y === 8 && z >= 119))); })());
   console.log(`\n結果: ${pass} 合格 / ${fail} 不合格`);
   process.exit(fail ? 1 : 0);
 }

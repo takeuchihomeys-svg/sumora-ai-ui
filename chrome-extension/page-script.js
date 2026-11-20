@@ -2735,7 +2735,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.148";
+  var _AXLX_PAGE_VER = "2.8.149";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -6393,11 +6393,13 @@
             try { if (Date.now() - _t0Toggle > 60 && _audit) _auditStepP("toggle_late_ok", _domain + " 反映待ち" + (Date.now() - _t0Toggle) + "ms（重ね押ししない）"); } catch (_) {}
             return true;
           }
-          // 直書き禁止: まだ合わなければ input.click をもう1回だけ
-          try { _tapIfCursorOn(hit); } catch (_) {}
-          try { cb.click(); } catch (_) {}
-          // ★ 2026-11-20: 2回目の後は長めに待つ（遅れて反映するサイトで3回目を重ねて元に戻さない）
-          return _settleChk(420);
+          // ★ 2026-11-20 竹内さん「外すも入れるも1つずつカーソルで動いてクリックする」: まだ合わなければ、
+          //   直の input.click ではなく **カーソルを動かしてから** 押し直す（_humanPointerClick＝カーソル→押し）。
+          //   2回目の後は長めに待つ（遅れて反映するサイトで3回目を重ねて元に戻さない）。
+          try { _auditStepP("toggle_repress", _domain + " 反映が無いのでカーソルで押し直す"); } catch (_) {}
+          return _humanPointerClick(hit, function () { try { cb.click(); } catch (_) {} }).then(function () {
+            return _settleChk(420);
+          }, function () { return _settleChk(420); });
         }).then(function (ok2) {
           if (ok2) return true;
           /**
@@ -6405,9 +6407,14 @@
            *   native click で状態が変わらない時は simulateClick（リアプロ jQuery）を1回。
            */
           if (typeof simulateClick === "function") {
-            try { _tapIfCursorOn(hit); } catch (_) {}
-            try { simulateClick(hit && hit.isConnected ? hit : cb); } catch (_) {}
-            return _settleChk(480);
+            // ★ 2026-11-20: simulateClick も直では押さない（カーソルを動かしてから押す）。
+            //   それでも届かない時だけ、直押しだったと印（toggle_direct・clear_method）に残す。
+            var _tgt = hit && hit.isConnected ? hit : cb;
+            try { _auditStepP("toggle_direct", _domain + " カーソルで押してもずれたので直で押した（要確認）"); } catch (_) {}
+            try { _noteClearMethod(_domain, "direct_fallback", String(cb.value || nm || "").slice(0, 30)); } catch (_) {}
+            return _humanPointerClick(_tgt, function () { try { simulateClick(_tgt); } catch (_) {} }).then(function () {
+              return _settleChk(480);
+            }, function () { return _settleChk(480); });
           }
           return false;
         }).then(function () {
