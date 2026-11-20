@@ -1,6 +1,6 @@
 // お客様ごとの全体の統括の計画（作業員M 2026-11-21・台帳 #101）
 // 実行: npx tsx app/lib/__tests__/customer-plan.test.ts
-import { customerPlanMode, buildCustomerPlan, planChangedFields } from "../customer-plan";
+import { customerPlanMode, buildCustomerPlan, planChangedFields, conductorBriefPlanOn, planBriefSection } from "../customer-plan";
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
@@ -36,5 +36,19 @@ const p3 = buildCustomerPlan({ meta: { ...meta, ask_carry: { open: ["qold"], pro
 t("持ち越した要件（ask_carry）が先", JSON.stringify(p3.asks) === JSON.stringify({ open: ["qold"], promised: ["qpro"] }), p3.asks);
 t("meta が無ければ null", buildCustomerPlan({ meta: null, nowIso: "x" }) === null);
 t("同じ計画なら変わった欄は無い", planChangedFields(p1, { ...p1, updated_at: "later", aims: { ...p1.aims, since: "other" } }).length === 0);
+// 読む側（CONDUCTOR_BRIEF_PLAN・既定 off）
+{
+  t("CONDUCTOR_BRIEF_PLAN 既定 off", conductorBriefPlanOn({}) === false && conductorBriefPlanOn({ CONDUCTOR_BRIEF_PLAN: "on" }) === true);
+  const prevPlan = JSON.parse(JSON.stringify({ ...p1, promises_open: [{ promise_id: "sf:p1", kind: "check_promised", due_h: 30 }, { promise_id: "sf:p2", kind: "x", due_h: 3 }], asks: { open: ["qa", "qb"], promised: [] } }));
+  const now = Date.parse("2026-11-21T07:01:00Z");
+  const sameNext = planBriefSection(prevPlan, { conductor_brief: { next: { dest: "viewing" } }, customer_mindset: { state: "迷い" } }, now)!;
+  t("計画の欄: 狙い・続いている時間", sameNext.mid_aim === "今週中に内覧" && sameNext.aim_hours === 6, sameNext);
+  t("計画の欄: 次の一手が計画と同じ", sameNext.next_vs_plan === "same" && sameNext.prev_next.dest === "viewing");
+  t("計画の欄: 24時間以上開いている約束", JSON.stringify(sameNext.overdue_promises) === JSON.stringify(["sf:p1"]));
+  t("計画の欄: 持ち越した要件の数・気持ちの動き", sameNext.carried_open === 2 && sameNext.feeling_moved === "刺さっている→迷い", sameNext);
+  t("計画の欄: 次の一手が変わった", planBriefSection(prevPlan, { conductor_brief: { next: { dest: "estimate" } } }, now)!.next_vs_plan === "changed");
+  t("計画の欄: 今の一手が無ければ unknown", planBriefSection(prevPlan, {}, now)!.next_vs_plan === "unknown");
+  t("前の計画が無ければ null", planBriefSection(null, {}, now) === null && planBriefSection({ v: 2 }, {}, now) === null);
+}
 console.log(`\ncustomer-plan: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
