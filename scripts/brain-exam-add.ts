@@ -57,6 +57,8 @@ export type ExamSpec = {
   acceptWhen?: { searchExhausted?: string[]; /** 10/09: 全力サポートが正解の時の依頼（答え方は aix＝AIX の文で応える） */ searchExhaustedAsks?: ExamAsk[]; note?: string };
   /** 10/13 レビュー（重要3）: 厳しい採点の正解（物件の AIX の種類まで分ける。無ければ accept）。brain-exam-score.judgePath の strict で当てる */
   acceptStrict?: string[];
+  /** 2026-11-21 作業員H（#450）: 正解が従業員の番（竹内さんの番が見つからない）＝合否の数えに入れない（brain-exam の --include-employee の時だけ回す） */
+  writer?: "employee";
   /** 10/09: 日付をずらさない（月の家賃の計算など、ずらすと月の言い方と食い違う問題） */
   noDateShift?: boolean;
   /** 2026-10-09 主語の抜け: 今の番の物件の正解（竹内さんの返事が指した建物）。ブレインの current_property と照らす（brain-exam-score.judgeCurrentProperty） */

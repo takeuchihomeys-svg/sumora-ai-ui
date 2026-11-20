@@ -4271,7 +4271,8 @@
   "why": "資料に無く、スタッフも確認の約束→後で管理会社の回答（管理組合の管轄）",
   "id": "q149",
   "addedAt": "2026-10-15",
-  "addedBy": "brain-exam-add --add-batch"
+  "addedBy": "brain-exam-add --add-batch",
+  "writer": "employee"
  },
  {
   "type": "返信かAIXか",
@@ -4304,7 +4305,8 @@
   "why": "資料に入居者の条件が無く、スタッフも確認の約束→後で AIX",
   "id": "q150",
   "addedAt": "2026-10-15",
-  "addedBy": "brain-exam-add --add-batch"
+  "addedBy": "brain-exam-add --add-batch",
+  "writer": "employee"
  },
  {
   "type": "返信かAIXか",
@@ -4343,7 +4345,8 @@
   "why": "サイトによってペット可/不可が違う＝資料で言い切れない。スタッフも確認の約束と見積の約束",
   "id": "q151",
   "addedAt": "2026-10-15",
-  "addedBy": "brain-exam-add --add-batch"
+  "addedBy": "brain-exam-add --add-batch",
+  "writer": "employee"
  },
  {
   "type": "AIXの種類",
@@ -4730,7 +4733,8 @@
   ],
   "why": "竹内さん 10/16「二人入居を聞かれたら、まず物件ごとに違うので管理会社に確認と約束→答えは AIX【管理会社に確認した】の新しいピッカーから返信」（当時のスタッフは即答した＝新しい決まりで正解を決める）",
   "addedAt": "2026-10-18",
-  "addedBy": "brain-exam-add"
+  "addedBy": "brain-exam-add",
+  "writer": "employee"
  },
  {
   "type": "待って・閉じる",

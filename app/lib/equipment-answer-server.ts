@@ -25,8 +25,11 @@ const READ_TIMEOUT_MS = 20_000;
 export type SheetEquipTextRead = { facts: SheetEquipText | null; source: "saved" | "read" | "none"; ms: number };
 
 /** 送った資料の画像から設備欄の文字を写す（保存済みを先に引く・無ければ DeepSeek で1回＝崩れた時だけ同じ前置きで読み直し） */
-export async function readSheetEquipText(imageUrl: string, o?: { conversationId?: string | null; timeoutMs?: number }): Promise<SheetEquipTextRead> {
+export async function readSheetEquipText(imageUrlIn: string, o?: { conversationId?: string | null; timeoutMs?: number }): Promise<SheetEquipTextRead> {
   const t0 = Date.now();
+  // 2026-11-21 作業員H（K2 と揃え）: 試験で借りた会話に写した送った資料の読みは image_url に「#exam-<会話の頭8字>」を付ける（image_url が主キー＝本番の元の行とぶつからない）。
+  //   保存済みの読み・画像の読み・送った時刻の突き合わせは元の URL で行う（付けたままだと保存済みが当たらず DeepSeek を毎回呼ぶ）。本番の URL には付かない＝本番は変わらない
+  const imageUrl = imageUrlIn.replace(/#exam-[\w-]+$/, "");
   if (!/^https?:\/\//.test(imageUrl)) return { facts: null, source: "none", ms: 0 };
   const unitKey = `eqtext|${createHash("sha1").update(imageUrl).digest("hex")}`;
   const { data: saved, error } = await supabase.from(FACTS_TABLE).select("text_facts")
