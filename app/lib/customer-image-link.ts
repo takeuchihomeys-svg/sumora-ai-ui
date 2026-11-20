@@ -8,7 +8,7 @@
 //   書類（本人確認書類・収入証明書・契約書）は種類だけ（中身は保存されていない）＝ここでも種類だけ。見積書は名前を伏せてから数字だけ取る。
 //   書き起こしの全文はブレインに渡さない（取った値と短い一言だけ）。
 // 【決めるのはブレイン】ここは候補の網と事実の並びだけ（P0 9eb6aa9c）。行き先は竹内さんの決まり（KB の id）を「材料」として添える。決まりの無い型は「決まっていない」と書く。
-// 既定 off（CUSTOMER_IMAGE_LINK=on で入る）。
+// 2026-11-20 から既定 on（CUSTOMER_IMAGE_LINK=off で止める）。
 
 import { savedImageKind, imageKindGroup, stripImageLabel, maskEstimateAddressee, IMAGE_KIND_LABEL, type ImageKind } from "./image-label";
 import { factsFromPropertyText, type CustomerSentFacts } from "./customer-sent-property";
@@ -18,7 +18,8 @@ import { savedPersonalDocumentLabel } from "./personal-document-guard";
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function customerImageLinkOn(env: Env = envOf()): boolean {
-  return (env.CUSTOMER_IMAGE_LINK ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2（統括役の決め）: 既定 on（試験 k1119-imgroute-a・ROUTE_1115 と一緒に on・9問×2回で確かな悪化0・本質 3/16→5/16）。止める CUSTOMER_IMAGE_LINK=off
+  return (env.CUSTOMER_IMAGE_LINK ?? "").trim().toLowerCase() !== "off";
 }
 
 // ── 種類 ─────────────────────────────────────────────────────────
@@ -266,7 +267,8 @@ export function buildImageLinkBlock(links: ReadonlyArray<ImageLink>): string {
 //   ② 好みの手本の画像: 好みを条件に足して約束の返信 → 物件の AIX（特徴は image-taste-wants で AIX ツールの要望の欄へ）
 //   ③ こちらの見積書の送り返し: 文も一緒に来る。質問があれば答える返信・無ければ内覧の誘い。その物件が退去予定なら申込に誘導（AIX【申込へ】）
 export function imageRoute1115On(env: Env = envOf()): boolean {
-  return (env.CUSTOMER_IMAGE_ROUTE_1115 ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2: 既定 on（k1119-imgroute-a で悪化0）。好みの手本を要望の欄に書くのは CUSTOMER_IMAGE_TASTE_WANTS=on の時だけ（既定 off のまま）。止める CUSTOMER_IMAGE_ROUTE_1115=off
+  return (env.CUSTOMER_IMAGE_ROUTE_1115 ?? "").trim().toLowerCase() !== "off";
 }
 function sameName(a: string, b: string): boolean {
   const n = (x: string) => x.normalize("NFKC").replace(/\s+/g, "");
