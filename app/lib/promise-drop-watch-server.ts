@@ -32,15 +32,18 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o
   const out: PromiseDrop[] & { partial?: boolean; scanned?: number; total?: number } = [];
   let scanned = 0;
   const one = async (c: string) => {
-    const [cv, m, a, s, i, p] = await Promise.all([
-      sb.from("conversations").select("customer_name, call_name, status").eq("id", c).maybeSingle(),
+    const [cv, m, a, i, p] = await Promise.all([
+      sb.from("conversations").select("customer_name, call_name, status, line_user_id").eq("id", c).maybeSingle(),
       sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", since).limit(300),
-      sb.from("sent_properties").select("sent_at").eq("conversation_id", c).gte("sent_at", since).limit(300),
       sb.from("aix_action_items").select("action, status, created_at").eq("conversation_id", c).gte("created_at", since).limit(200),
       sb.from("property_pickups").select("created_at, status, sent_at, expired_at").eq("conversation_id", c).gte("created_at", since).limit(300),
     ]);
-    const conv = cv.data as { customer_name?: string | null; call_name?: string | null; status?: string | null } | null;
+    const conv = cv.data as { customer_name?: string | null; call_name?: string | null; status?: string | null; line_user_id?: string | null } | null;
+    // 送った物件は会話か、お客様（物件出しの台帳 property_customers）のどちらかで結ぶ。売上番長グループへの物件出し（source=line_group）はお客様に届いた送付ではないので数えない（brain-core と同じ線・11/21 の試しで確かめた）
+    const { data: pcs } = conv?.line_user_id ? await sb.from("property_customers").select("id").eq("line_user_id", conv.line_user_id).limit(5) : { data: [] };
+    const pcIds = ((pcs ?? []) as Array<{ id: string }>).map((x) => x.id);
+    const s = await sb.from("sent_properties").select("sent_at").or(pcIds.length ? `conversation_id.eq.${c},${pcIds.map((id) => `property_customer_id.eq.${id}`).join(",")}` : `conversation_id.eq.${c}`).or("source.is.null,source.neq.line_group").gte("sent_at", since).limit(300);
     const input: PdInput = {
       conversationId: c, customerName: conv?.call_name || conv?.customer_name || null, status: conv?.status ?? null,
       msgs: (m.data ?? []) as PdInput["msgs"], aix: (a.data ?? []) as PdInput["aix"], sent: (s.data ?? []) as PdInput["sent"],

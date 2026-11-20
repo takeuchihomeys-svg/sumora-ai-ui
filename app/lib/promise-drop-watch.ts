@@ -35,14 +35,18 @@ export type PdKind = "pickup" | "check";
 export function promiseDropKindOf(text: string): PdKind | null {
   const t = String(text ?? "").normalize("NFKC");
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
-  if (/ピックアップ(?:させて頂|して(?:お送り|送らせ))|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)/.test(t)) return "pickup";
+  if (/ピックアップ(?:させて頂|して(?:お送り|送らせ)|出来次第お送り|でき次第お送り)|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)/.test(t)) return "pickup";
   if (/(?:募集状況|空き状況|空室状況)(?:を)?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
   return null;
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
 const FULFIL_AIX = /property|recommend|check_result|estimate|pickup/;
 /** お客様が探すのを止めた・他で決めた（見張らない） */
-const STOPPED_RE = /他(?:社|の(?:所|ところ|不動産))?で(?:決ま|決め)|決まりました|見送|(?:もう|一旦|いったん)(?:大丈夫|結構|探すのをやめ)|探すのをやめ|キャンセル(?:で|します)/;
+// 2026-11-21 本番の試しで直した: お客様の「部屋決まった」・こちらの締め（「無事お部屋決まりよかったです」「またお引越しの機会」）も止めた印
+// 確認の約束は、こちらの手打ちの文で結果を伝えて果たす事もある（「管理会社より…」「確認させて頂きましたところ」）
+const CHECK_ANSWERED_RE = /確認(?:させて頂き|致し|いたし|し)ましたところ|管理会社(?:より|から|様より)|募集(?:中|終了|が終了|停止)|(?:申込|お申込み?)(?:が)?(?:入って|入り)/;
+const STAFF_CLOSED_RE = /お部屋(?:が)?決まり(?:よかった|良かった|おめでとう)|またお引越しの機会/;
+const STOPPED_RE = /部屋(?:が|は)?決ま(?:った|りました|りまし)|他(?:社|の(?:所|ところ|不動産))?で(?:決ま|決め)|決まりました|見送|(?:もう|一旦|いったん)(?:大丈夫|結構|探すのをやめ)|探すのをやめ|キャンセル(?:で|します)/;
 const STOP_STATUS = new Set(["applying", "application", "screening", "approved", "contract", "closed_won", "closed_lost", "closed", "cancelled", "lost", "dropped", "won"]);
 
 export type PromiseDrop = {
@@ -75,6 +79,8 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   if (input.sent.some((s) => after(s.sent_at))) return null;
   const custAfter = ms.filter((m) => m.sender === "customer" && after(m.created_at));
   if (custAfter.some((m) => STOPPED_RE.test(String(m.text ?? "").normalize("NFKC")))) return null;
+  if (promise.kind === "check" && ms.some((m) => m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && CHECK_ANSWERED_RE.test(String(m.text ?? "").normalize("NFKC")))) return null;
+  if (ms.some((m) => m.sender === "staff" && after(m.created_at) && STAFF_CLOSED_RE.test(String(m.text ?? "").normalize("NFKC")))) return null;
   return {
     conversationId: input.conversationId, customerName: input.customerName, kind: promise.kind, promisedAt: promise.at,
     days: Math.floor(ageH / 24), customerSpokeAfter: custAfter.length > 0,

@@ -50,6 +50,16 @@ assert.equal(promiseDropOf(base({ status: "applying", msgs: [promise] }), now29)
 // AIX の文（is_aix_generated）は約束に数えない
 assert.equal(promiseDropOf(base({ msgs: [{ ...promise, is_aix_generated: true }] }), now29), null);
 
+// 11/21 本番の試しで直した: お客様の「部屋決まった」・こちらの締め → 出ない／「ピックアップ出来次第お送り」も約束
+assert.equal(promiseDropOf(base({ msgs: [promise, { sender: "customer", text: "別のところで部屋決まったので大丈夫です", created_at: at(5) }] }), now29), null);
+assert.equal(promiseDropOf(base({ msgs: [promise, { sender: "staff", text: "ご丁寧にご連絡いただきありがとうございます！！\n無事お部屋決まりよかったです！！\nまたお引越しの機会がございましたら何時でもお気軽にご連絡ください😊！！", created_at: at(6), is_aix_generated: false }] }), now29), null);
+assert.equal(promiseDropKindOf("本庄西・天六・中津周辺を中心に、Aさんにオススメできるお部屋のピックアップ出来次第お送りさせて頂きます！！"), "pickup");
+
+// 確認の約束は手打ちで結果を伝えても果たした
+const chk = { sender: "staff", text: "お送り頂きました2件、募集状況確認させて頂きます！！", created_at: at(0), is_aix_generated: false };
+assert.equal(promiseDropOf(base({ msgs: [chk, { sender: "staff", text: "サンライトあべの202号室ですが、管理会社より募集終了とのご連絡がございました", created_at: at(20), is_aix_generated: false }] }), now29), null);
+assert.ok(promiseDropOf(base({ msgs: [chk] }), now29));
+
 // 文の形: 「〇〇さん → AIX【ボタン】」（feedback_group_aix_only）
 const post = buildPromiseDropPost([d!, d2!], now29)!;
 assert.ok(post.startsWith("【AIX要対応・お約束した物件がまだ届いていません】"));
