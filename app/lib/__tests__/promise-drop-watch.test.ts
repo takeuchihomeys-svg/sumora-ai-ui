@@ -73,3 +73,25 @@ assert.equal(promiseDropDue(new Date(now29 - 2 * H).toISOString(), now29), false
 assert.equal(promiseDropDue(new Date(now29 - 30 * H).toISOString(), now29), true);
 
 console.log("promise-drop-watch: ok");
+
+// 2026-11-21 作業員N（B1）と共有の決まり
+import { promiseKindNameOf, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, PROMISE_KIND_NAMES } from "../promise-drop-watch";
+assert.deepEqual([...PROMISE_KIND_NAMES], ["pickup", "check", "estimate", "viewing_slot", "callback", "other"]);
+assert.equal(promiseKindNameOf("最大限割引した御見積書作成させて頂きます！！"), "estimate");
+assert.equal(promiseKindNameOf("折り返しお電話させて頂きます！！"), "callback");
+assert.equal(promiseKindNameOf("内覧の候補日確認させて頂きます！！"), "viewing_slot");
+assert.equal(promiseKindNameOf("ご査収ください"), null);
+// 期限: 言葉があればその日の終わり（JST 24時）・「出来次第」は期限にしない・無ければ72時間
+const said = Date.parse("2026-11-20T03:00:00Z"); // JST 11/20 12:00
+assert.deepEqual(promiseDeadlineMs("明日一番で確認させて頂きます", said), { ms: Date.parse("2026-11-21T15:00:00Z"), by: "words" });
+assert.deepEqual(promiseDeadlineMs("確認出来次第ご連絡させて頂きます", said), { ms: said + 72 * H, by: "default72h" });
+assert.equal(promiseDeadlineMs("本日はお時間頂きありがとうございました！！ピックアップさせて頂きます", said).by, "default72h");
+// 果たした印（判定できる3つ・他は n/a）
+const ev = { msgs: [], aix: [{ aix_type: "estimate_sheet", sent_at: at(5), created_at: at(5) }], sent: [] };
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "estimate" }, ev), { by: "aix:estimate_sheet", at: at(5) });
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "pickup" }, ev), { by: "aix:estimate_sheet", at: at(5) });
+assert.equal(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [], aix: [], sent: [{ sent_at: at(3) }] }), null);
+assert.equal(promiseFulfilledBy({ at: at(0), kind: "callback" }, ev), "n/a");
+assert.equal(promiseClosedConversation("applying", [], at(0)), true);
+assert.equal(promiseClosedConversation("proposing", [{ sender: "customer", text: "部屋決まりました", created_at: at(2) }], at(0)), true);
+console.log("promise-shared: ok");
