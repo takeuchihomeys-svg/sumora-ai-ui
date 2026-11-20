@@ -190,3 +190,23 @@ export function mergePinnedBase<R extends { id: string }>(nightly: ReadonlyArray
   const c = new Set(confirmed), have = new Set(current.map((r) => r.id));
   return [...nightly.filter((r) => !(c.has(r.id) && have.has(r.id))), ...current.filter((r) => c.has(r.id))];
 }
+
+/**
+ * 2026-11-21 作業員H（竹内さん「試験はなぜそんなにお金がかかるのか」・統括役の OK・KB c257f9e7「前は commit ごとに1回」に戻す）:
+ *   夜の基準の控え（nightly-base-<構成>.json）は夜の基準の依頼（stage=brain の構成）だけが書いていた。draft の依頼などは構成が違うので
+ *   控えが見つからず、夜の間に main が進むたびに前を作り直していた（直近7日 前 $42.9＝試験の費用の半分・20以上の commit×6以上の構成）。
+ *   → 前を今の main で作った依頼は、その構成の「この晩の前の commit」を控える（無い・晩より前の物なら新しく・同じ commit なら作った問題を足す）。
+ *     後の依頼は decideBasePin がその commit に固定し、悪化に見えた問題だけ今の main で確かめ直す（pin confirm）。止める EXAM_BASELINE_PIN_ANY=off
+ * 返す: 書く控え（書かない時は null）
+ */
+export function nightPinUpdate(cur: (NightlyBase & { cfg?: string; snapDay?: string }) | null, built: { commit: string; cfg: string; snapDay: string; problems: string[] }, nowMs: number, nightStart: number): (NightlyBase & { cfg: string; snapDay: string }) | null {
+  if (!built.problems.length) return null;
+  if (cur && cur.commit === built.commit) {
+    const problems = [...new Set([...(cur.problems ?? []), ...built.problems])];
+    if (problems.length === (cur.problems ?? []).length) return null;
+    return { ...cur, cfg: cur.cfg ?? built.cfg, snapDay: cur.snapDay ?? built.snapDay, problems };
+  }
+  const curAt = cur ? Date.parse(cur.at) : NaN;
+  if (cur && Number.isFinite(curAt) && curAt >= nightStart) return null; // この晩の控え（別の commit）は上書きしない＝その晩は最初の commit に固定
+  return { commit: built.commit, at: new Date(nowMs).toISOString(), cfg: built.cfg, snapDay: built.snapDay, problems: [...new Set(built.problems)] };
+}

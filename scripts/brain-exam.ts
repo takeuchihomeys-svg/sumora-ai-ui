@@ -61,7 +61,7 @@ import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
-import { examRefusalLine, baseNowGate } from "./lib/exam-cost-gate";
+import { examRefusalLine, baseNowGate, nightStartMs } from "./lib/exam-cost-gate";
 import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
 import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
@@ -80,7 +80,7 @@ import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
-import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
+import { decideBasePin, defaultOnFromSubjects, touchesExam, nightPinUpdate, type NightlyRecord } from "./lib/exam-base-pin";
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
@@ -1505,6 +1505,15 @@ async function prepareMainBaseline(): Promise<boolean> {
   // 2026-11-07: 残り（時間の予算などで今は回さない問題）があっても、作れた問題だけで控えを書く（problems に入らない問題は昼の依頼が今の main で前を作る＝decideBasePin の missing）
   if (flag("baseline-only") && ref === "main" && !pinnedNightly && /^night-base-/.test(LABEL) && picked.some((p) => now.has(p.id))) {
     try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
+  }
+  // 2026-11-21 作業員H（KB c257f9e7「前は commit ごとに1回」・統括役の OK）: 前を今の main（か固定した commit）で作った依頼は、この構成の「この晩の前の commit」を控える。
+  //   後の依頼は decideBasePin がその commit に固定し、悪化に見えた問題だけ今の main で確かめ直す。夜の基準の依頼（night-base-*）は上で書く。止める EXAM_BASELINE_PIN_ANY=off
+  if (ref === "main" && !/^night-base-/.test(LABEL) && process.env.EXAM_BASELINE_NIGHTLY !== "off" && process.env.EXAM_BASELINE_PIN_ANY !== "off") {
+    try {
+      const cur = existsSync(nightlyFile) ? (JSON.parse(readFileSync(nightlyFile, "utf8")) as NightlyRecord) : null;
+      const up = nightPinUpdate(cur, { commit, cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) }, Date.now(), nightStartMs(Date.now()));
+      if (up) { atomicWriteJson(nightlyFile, up, true); console.log(`  この晩の前の commit を控えた: ${commit.slice(0, 7)}・${up.problems.length}問（構成 ${ch}・後の依頼はこの commit に固定）`); }
+    } catch (e) { console.warn(`  ⚠ この晩の前の commit を控えられない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
   }
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
