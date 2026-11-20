@@ -302,7 +302,7 @@ import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
-import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocDigestNote, threadDocTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
+import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocSentImageOn, focusDocDigestNote, threadDocTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
 import { APPLY_INFO_OR_FILTER, readApplyInfoState, applyInfoBrainLine, applyIntentFormStateOn, isApplyIntentTurn, type ApplyInfoMsg } from "@/app/lib/apply-info-state"; // 2026-11-11 作業員3 A2
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
@@ -3375,10 +3375,13 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   if (docDigestTarget) {
     try {
-      const [{ loadContractMaterial }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
+      const [{ loadContractMaterial, sentImageUrlFor }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
       const fr = docDigestTarget;
+      // 2026-11-21 作業員L（#428 の訳ログ: 11/20 夜の試験で資料の行が空の 11/12 が no_material）: 対象の部屋に、こちらが送った資料の画像があれば
+      //   その画像の読み取り（image_details の行）も資料に入れる（答えの道 contract-terms と同じ読み）。FOCUS_DOC_SENT_IMAGE=on の時だけ（既定 off）
+      const docImageUrl = focusDocSentImageOn() ? await sentImageUrlFor({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null }).catch(() => null) : null;
       const { material } = await Promise.race([
-        loadContractMaterial({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null }),
+        loadContractMaterial({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null, imageUrl: docImageUrl, withSentFacts: focusDocSentImageOn() }),
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 6_000)),
       ]);
       const topics = fr.roomNo ? FOCUS_DOC_TOPICS : FOCUS_DOC_TOPICS.filter((t) => t === "parking"); // 号室が分からない時は建物の項目だけ（contract-terms と同じ線）
