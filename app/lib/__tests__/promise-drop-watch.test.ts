@@ -137,4 +137,6 @@ assert.equal(promiseDropKindOf("〇〇さんのご条件に合ったお部屋ピ
   assert.equal(promiseDropOf(base({ msgs: turn }), now29), null);
   assert.equal(overduePromisesOf({ status: "proposing", msgs: turn, aix: [], sent: [] }, now29).length, 0);
 }
+import { promiseInputWaitTurn } from "../promise-drop-watch";
+assert.equal(typeof promiseInputWaitTurn, "function");
 console.log("promise-holes: ok");
