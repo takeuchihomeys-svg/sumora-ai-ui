@@ -5,7 +5,9 @@
 //   受け口は保存に失敗すると 500 を返すだけで、本文はどこにも残らなかった（LINE の送り直しは LINE の管理画面の「Webhook の再送」が on の時だけ・こちらからは確かめられない）。
 //   → 失敗した時は、生の本文と署名をそのまま Blob に置き（private・お客様の文が入るので公開しない）、DB が戻った後の受け口の成功のついでに少しずつ入れ直す（新しい cron は足さない）。
 //   入れ直しは同じ受け口（/api/line-webhook）に同じ本文と署名で送る＝署名の確かめと重複の防ぎ（line_message_id）がそのまま効く。時刻は LINE の event.timestamp を使う。
-// スイッチ LINE_WEBHOOK_INBOX（既定 on・止める =off）。BLOB_READ_WRITE_TOKEN が無ければ何もしない（ログだけ）。
+// スイッチ LINE_WEBHOOK_INBOX（既定 on・止める =off）。鍵は LINE_INBOX_BLOB_TOKEN（private の置き場の鍵・無ければ BLOB_READ_WRITE_TOKEN）。鍵が無ければ何もしない（ログだけ）。
+//   2026-11-21 統括役: 本番の BLOB_READ_WRITE_TOKEN の置き場は public だった（「Cannot use private access on a public store」で dropped）。
+//   お客様の文は public に置かない＝private で置けなければ dropped のまま（public に落とさない）。private の置き場は竹内さんに作ってもらう
 // テスト: app/lib/__tests__/line-webhook-inbox.test.ts
 import { put, list, del, get } from "@vercel/blob";
 
@@ -16,8 +18,12 @@ export const INBOX_PREFIX = "line-webhook-inbox/pending/";
 /** 入れ直しの印（受け口がこの見出しを見たら、時刻を LINE の event.timestamp にし、ついでの入れ直しはしない） */
 export const REPLAY_HEADER = "x-line-inbox-replay";
 
+/** 置き場の鍵（private の置き場の LINE_INBOX_BLOB_TOKEN が先・無ければ今の BLOB_READ_WRITE_TOKEN） */
+export function inboxBlobToken(env: Env = envOf()): string {
+  return (env.LINE_INBOX_BLOB_TOKEN ?? "").trim() || (env.BLOB_READ_WRITE_TOKEN ?? "").trim();
+}
 export function lineInboxOn(env: Env = envOf()): boolean {
-  return (env.LINE_WEBHOOK_INBOX ?? "").trim().toLowerCase() !== "off" && !!(env.BLOB_READ_WRITE_TOKEN ?? "").trim();
+  return (env.LINE_WEBHOOK_INBOX ?? "").trim().toLowerCase() !== "off" && !!inboxBlobToken(env);
 }
 
 export type InboxSource = "webhook" | "relay";
@@ -54,14 +60,14 @@ export function replayAtOf(event: { timestamp?: unknown } | null | undefined, is
 export async function inboxPut(rawBody: string, signature: string, reason: string, source: InboxSource, env: Env = envOf()): Promise<string | null> {
   const c = inboxCountsOf(rawBody);
   if (!lineInboxOn(env)) {
-    console.error(JSON.stringify({ tag: "line-inbox:dropped", source, reason, ...c, why: "LINE_WEBHOOK_INBOX が off か BLOB_READ_WRITE_TOKEN が無い" }));
+    console.error(JSON.stringify({ tag: "line-inbox:dropped", source, reason, ...c, why: "LINE_WEBHOOK_INBOX が off か Blob の鍵（LINE_INBOX_BLOB_TOKEN・BLOB_READ_WRITE_TOKEN）が無い" }));
     return null;
   }
   const receivedAt = new Date().toISOString();
   const item: InboxItem = { v: 1, receivedAt, source, reason: reason.slice(0, 200), signature, rawBody, tries: 0 };
   const path = inboxPathOf(receivedAt, Math.random().toString(36).slice(2));
   try {
-    await put(path, JSON.stringify(item), { access: "private", contentType: "application/json", addRandomSuffix: false });
+    await put(path, JSON.stringify(item), { access: "private", contentType: "application/json", addRandomSuffix: false, token: inboxBlobToken(env) });
     inboxMarkDirty();
     console.warn(JSON.stringify({ tag: "line-inbox:stored", source, reason, path, ...c }));
     return path;
@@ -73,12 +79,12 @@ export async function inboxPut(rawBody: string, signature: string, reason: strin
 
 /** 置いてある物を古い順に少しだけ取る */
 export async function inboxListPending(limit = 3): Promise<Array<{ pathname: string; uploadedAt: Date }>> {
-  const r = await list({ prefix: INBOX_PREFIX, limit: Math.max(1, Math.min(limit * 3, 50)) });
+  const r = await list({ prefix: INBOX_PREFIX, limit: Math.max(1, Math.min(limit * 3, 50)), token: inboxBlobToken() });
   return r.blobs.map((b) => ({ pathname: b.pathname, uploadedAt: b.uploadedAt })).sort((a, b) => a.pathname.localeCompare(b.pathname)).slice(0, limit);
 }
 
 async function readItem(pathname: string): Promise<InboxItem | null> {
-  const r = await get(pathname, { access: "private", useCache: false });
+  const r = await get(pathname, { access: "private", useCache: false, token: inboxBlobToken() });
   if (!r) return null;
   const text = await new Response(r.stream).text();
   const o = JSON.parse(text) as InboxItem;
@@ -88,7 +94,7 @@ async function readItem(pathname: string): Promise<InboxItem | null> {
 /** 1つ入れ直す: 同じ受け口に同じ本文と署名で送り、2xx なら消す。4xx（署名・宛先の拒否）も消す（何度送っても同じ）。5xx は残す（次の機会に） */
 export async function inboxReplayOne(pathname: string, targetUrl: string): Promise<"done" | "kept" | "gone" | "dropped"> {
   const item = await readItem(pathname).catch(() => null);
-  if (!item) { await del(pathname).catch(() => {}); return "gone"; }
+  if (!item) { await del(pathname, { token: inboxBlobToken() }).catch(() => {}); return "gone"; }
   const res = await fetch(targetUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-line-signature": item.signature, [REPLAY_HEADER]: item.receivedAt },
@@ -96,8 +102,8 @@ export async function inboxReplayOne(pathname: string, targetUrl: string): Promi
     signal: AbortSignal.timeout(20_000),
   }).catch(() => null);
   const c = inboxCountsOf(item.rawBody);
-  if (res && res.ok) { await del(pathname).catch(() => {}); console.log(JSON.stringify({ tag: "line-inbox:replayed", pathname, ...c })); return "done"; }
-  if (res && res.status >= 400 && res.status < 500) { await del(pathname).catch(() => {}); console.error(JSON.stringify({ tag: "line-inbox:dropped", pathname, why: `入れ直しが ${res.status} で拒まれた`, ...c })); return "dropped"; }
+  if (res && res.ok) { await del(pathname, { token: inboxBlobToken() }).catch(() => {}); console.log(JSON.stringify({ tag: "line-inbox:replayed", pathname, ...c })); return "done"; }
+  if (res && res.status >= 400 && res.status < 500) { await del(pathname, { token: inboxBlobToken() }).catch(() => {}); console.error(JSON.stringify({ tag: "line-inbox:dropped", pathname, why: `入れ直しが ${res.status} で拒まれた`, ...c })); return "dropped"; }
   console.warn(JSON.stringify({ tag: "line-inbox:kept", pathname, status: res?.status ?? null, ...c }));
   return "kept";
 }

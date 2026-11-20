@@ -1,12 +1,13 @@
 // LINE の webhook の本文を貯めて入れ直す（作業員M 2026-11-21・竹内さん「返信が来ているのにツールに反映されない」）
 // 実行: npx tsx app/lib/__tests__/line-webhook-inbox.test.ts（Blob・DB には触らない純関数だけ）
-import { lineInboxOn, inboxPathOf, inboxCountsOf, replayAtOf, INBOX_PREFIX, inboxPut, inboxSkipList, inboxIdleMinutes } from "../line-webhook-inbox";
+import { lineInboxOn, inboxPathOf, inboxCountsOf, replayAtOf, INBOX_PREFIX, inboxPut, inboxSkipList, inboxIdleMinutes, inboxBlobToken } from "../line-webhook-inbox";
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 t("既定 on（鍵がある時）", lineInboxOn({ BLOB_READ_WRITE_TOKEN: "x" }) === true);
 t("off で止まる", lineInboxOn({ BLOB_READ_WRITE_TOKEN: "x", LINE_WEBHOOK_INBOX: "off" }) === false);
 t("Blob の鍵が無ければ何もしない", lineInboxOn({}) === false);
+t("private の置き場の鍵が先（無ければ今の鍵）", inboxBlobToken({ LINE_INBOX_BLOB_TOKEN: "priv", BLOB_READ_WRITE_TOKEN: "pub" }) === "priv" && inboxBlobToken({ BLOB_READ_WRITE_TOKEN: "pub" }) === "pub" && lineInboxOn({ LINE_INBOX_BLOB_TOKEN: "priv" }) === true);
 {
   const p = inboxPathOf("2026-11-21T03:04:05.678Z", "ab/c!d12345678901");
   t("置き場の名前（時刻の順・記号を落とす）", p.startsWith(INBOX_PREFIX) && p === `${INBOX_PREFIX}2026-11-21T03-04-05-678Z-abcd12345678.json`, p);
