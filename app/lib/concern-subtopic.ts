@@ -8,7 +8,8 @@
 //   既定 off（BRAIN_CONCERN_SUBTOPIC=on の時だけ meta に customer_concern_detail を記録・道は変えない）
 
 export function concernSubtopicOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_CONCERN_SUBTOPIC ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2（統括役の決め）: 既定 on（試験 k1119-concern-q106・3問×3回で確かな悪化0・合格 2→3）。止める BRAIN_CONCERN_SUBTOPIC=off
+  return (env.BRAIN_CONCERN_SUBTOPIC ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 費用 → 見積の項目 */
