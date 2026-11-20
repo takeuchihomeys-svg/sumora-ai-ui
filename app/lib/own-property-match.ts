@@ -66,7 +66,8 @@ export function ownPropertyRoomLabelWideOn(): boolean { return process.env.OWN_P
  *   スタッフ全体は見積書 14/21。費用を言っていない「ここだとどうですか」にも竹内さんは最大限割引の御見積書で答えている（8931）。
  *   既定 off（OWN_PROPERTY_RETURNED_ESTIMATE=on で使う）
  */
-export function ownPropertyReturnedEstimateOn(): boolean { return process.env.OWN_PROPERTY_RETURNED_ESTIMATE === "on"; }
+// 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0）。止める OWN_PROPERTY_RETURNED_ESTIMATE=off
+export function ownPropertyReturnedEstimateOn(): boolean { return (process.env.OWN_PROPERTY_RETURNED_ESTIMATE ?? "").trim().toLowerCase() !== "off"; }
 export const OWN_PROPERTY_RETURNED_ESTIMATE_LINE =
   "\n  → この番は「お客様が自分で見つけた物件の画像＋『ここはどうでしょうか』＝物件確認した」の決まりに当たらない（こちらが送った物件で募集中は確認済み）。" +
   "お客様がその物件を見て評価・関心を聞いてきた番＝費用を言っていなくても、最大限割引の御見積書（estimate_sheet）か内覧の案内で答える" +
