@@ -130,6 +130,7 @@ import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
 import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
+import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/second-block-receipt";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1356,6 +1357,12 @@ export async function POST(req: NextRequest) {
   let aixChainNote = buildAixChainNote(sentMessage, { recommendScene: actionType === "property_recommendation" || (actionType === "estimate_sheet" && isEstimateCard(sentMessage)) });
   if (aixChainNote) {
     console.log(JSON.stringify({ tag: "aix-template-generate:chain-note", actionType, len: (sentMessage ?? "").length }));
+  }
+  // 2026-11-21 作業員K2（SECOND_BLOCK_RECEIPT_SEEN・既定 off・second-block-receipt.ts）: 同じ送付の塊の前の AIX の通（ピックアップのお知らせ）で
+  //   もうご査収を言った事を書き手に渡す（2通目のご査収の重ね スタッフ 90%・竹内さん 53%・1通目＝🌟の通しか渡していなかった）
+  if (secondBlockReceiptSeenOn()) {
+    const brn = secondBlockReceiptNote((recentMessages ?? []) as Array<{ sender?: string; text?: string; isAix?: boolean; rawCreatedAt?: string }>, sentMessage);
+    if (brn) { aixChainNote = `${aixChainNote ?? ""}${brn}`; console.log(JSON.stringify({ tag: "aix-template-generate:block-receipt-seen", actionType })); }
   }
 
   // 2026-09-20 竹内「生成される文が長すぎる。実際の成約データや直近の会話をみて改善する」:
