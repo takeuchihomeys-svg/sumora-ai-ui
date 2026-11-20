@@ -539,8 +539,8 @@ async function runBg(opts) {
   ok("最後のお客さんは待たずに戻す（_axlxLastCustomerId と同じ客なら await しない）", /_psIsLast[\s\S]{0,200}_psP\.catch/.test(scrape));
   ok("一括（_runBatchSearch）と手の一括の両方の客ループで最後の客の印を置く", (bg.match(/self\._axlxLastCustomerId = /g) || []).length === 2);
   ok("_auditFinish が leftover_stuck: を error_kind=leftover_stuck にする", /leftover_stuck:\/\.test\(String\(x\.error\)\)[\s\S]{0,120}error_kind: "leftover_stuck"/.test(bg));
-  ok("監査の間引き保護 _PIN に post_send_clear と leftover_ がある", /_PIN = \/\^\([^\n]*leftover_\|post_send_clear\)\//.test(ps));
-  ok("即送信の _clearKey に post_send_clear と leftover_ がある", /var _clearKey = [^\n]*leftover_\|post_send_clear\/\.test\(String\(k\)\)/.test(ps));
+  ok("監査の間引き保護 _PIN に post_send_clear と leftover_ がある", /_PIN = \/\^\([^\n]*leftover_\|post_send_clear(\|[a-z_]+)*\)\//.test(ps));
+  ok("即送信の _clearKey に post_send_clear と leftover_ がある", /var _clearKey = [^\n]*leftover_\|post_send_clear(\|[a-z_]+)*\/\.test\(String\(k\)\)/.test(ps));
   ok("新しい監査名 leftover_stuck / leftover_done_F57 / leftover_progress / leftover_alt_route は leftover_ で守られる", ["leftover_stuck", "leftover_done_F57", "leftover_progress", "leftover_alt_route"].every((k) => /^(leftover_|post_send_clear)/.test(k)));
   ok("_doReset の完了は今まで通り関所（_cleanStartGate）を通る", /_cleanStartGate\(cond, _rr, _cb0/.test(ps));
   ok("直外し（checked=false の直書き）を新しい関数で使っていない", !/\.checked = false/.test(extractFn("_leftoverSweepNames") + extractFn("_postSendClear") + extractFn("_cleanStartGate")));

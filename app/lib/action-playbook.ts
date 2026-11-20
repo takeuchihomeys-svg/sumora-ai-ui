@@ -17,13 +17,17 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
+import { AUTO_RULES, RULE_SCENE_JA, autoRulesVersion, type RuleScene } from "./auto-procedure-rules";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
 /** 手順に載せる欄の数の上限（長い手順は先頭だけ） */
 export const PLAYBOOK_MAX_STEPS = 12;
-/** 手順書の作り方の版（欄の名前・値の判定を変えたら上げる。版の印に入る） */
-export const PLAYBOOK_BUILD_V = 2;
+/**
+ * 手順書の作り方の版（欄の名前・値の判定を変えたら上げる。版の印に入る）
+ *   3（2026-11-20）: 1手ずつの細部（押す欄・押す位置・開く物）と、自動の決まり（auto-procedure-rules.ts）を載せる。
+ */
+export const PLAYBOOK_BUILD_V = 3;
 /** 束がこれより古いと検査で「古い」と出す（束は夜に作り直す想定） */
 export const PLAYBOOK_STALE_MS = 36 * 60 * 60 * 1000;
 
@@ -51,6 +55,35 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "確定してリストへ": "確定してリストへ",
   "検索": "検索を押す",
   "go_search": "検索を押す",
+  // 2026-11-20 実測（自動 run_mwofi2sn_jbec の shot_ops に出た欄名）
+  "絞り込み条件＋": "絞り込み条件を開く",
+  "eq_rm[]": "ペットの欄（チェック）",
+  "ペット相談": "ペット相談の欄（チェック）",
+  "square_meter_l": "面積（下限）",
+  "印刷用PDF": "印刷用PDFを押す",
+  "次": "次のページへ",
+};
+
+/** 手順の1手の細部（押す欄・学んだ押す位置・押すと開く物） */
+export type PlaybookStep = {
+  /** 人が読む名前 */
+  step: string;
+  /** 押す欄の名前（束の名前・飾りを落とした物） */
+  field: string;
+  /** 学んだ押す位置（要素の中の割合）。学んでいなければ null */
+  aim: { x: number; y: number; n: number; confidence: "solid" | "thin" } | null;
+  /** 押すと開く物（人が確かめて学んだ物だけ）。無ければ null */
+  opens: string | null;
+};
+
+/** 手順書に載せる自動の決まり（auto-procedure-rules.ts の写し） */
+export type PlaybookRule = {
+  id: string;
+  scene: RuleScene;
+  scene_label: string;
+  text: string;
+  since: string | null;
+  kb: string | null;
 };
 
 /** 場面の手順の1件（束の scene_flows を手順書の形にしたもの） */
@@ -73,6 +106,10 @@ export type PlaybookScene = {
   /** 分からない欄の名前（未分類・地名か欄か人が確かめる候補） */
   unknown: string[];
   confidence: "solid" | "thin";
+  /** 1手ずつの細部（steps と同じ順・同じ数） */
+  detail: PlaybookStep[];
+  /** この場面に効く自動の決まり（id） */
+  rules: string[];
 };
 
 /** 押す位置の1件（束の points の欄ごと・人が押した位置の票） */
@@ -120,6 +157,10 @@ export type Playbook = {
   next_n: number;
   /** 足りない所・迷い・分からない欄（人が確かめる文） */
   gaps: string[];
+  /** 自動の決まり（全部・場面つき） */
+  rules: PlaybookRule[];
+  /** 自動の決まりの版（拡張の点検記録 playbook_seen の rv と突き合わせる） */
+  rules_v: string;
 };
 
 type SceneFlowLike = {
@@ -177,10 +218,13 @@ export function isPlaybookValue(raw: string): boolean {
  */
 export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
   steps: string[];
+  /** steps と同じ順の欄の名前（飾りを落とした物） */
+  fields: string[];
   unknown: string[];
   values_dropped: number;
 } {
   const out: string[] = [];
+  const fields: string[] = [];
   const unknown: string[] = [];
   let values_dropped = 0;
   for (const raw of steps) {
@@ -194,35 +238,81 @@ export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
       item = `未分類（${n.slice(0, 40)}）`;
       if (!unknown.includes(n)) unknown.push(n.slice(0, 40));
     }
-    if (out[out.length - 1] !== item) out.push(item);
+    if (out[out.length - 1] !== item) { out.push(item); fields.push(n); }
   }
-  return { steps: out, unknown, values_dropped };
+  return { steps: out, fields, unknown, values_dropped };
 }
 
-/** 場面の手順 → 手順書の場面（値を外す・名前を読める形に・件数で上限） */
-export function playbookSceneOf(f: SceneFlowLike): PlaybookScene {
+type PosIndex = Map<string, { x: number; y: number; n: number }>;
+type OpenIndex = Map<string, string>;
+
+/** 束の points を「飾りを落とした欄の名前」で引けるようにする（同じ名前は票の多い方） */
+function indexPositions(points: BundleLike["points"]): PosIndex {
+  const m: PosIndex = new Map();
+  for (const [k, p] of Object.entries(points ?? {})) {
+    const n = Number(p?.n) || 0;
+    if (n < 1 || typeof p?.x !== "number" || typeof p?.y !== "number") continue;
+    const key = cleanPlaybookName(k);
+    const cur = m.get(key);
+    if (!cur || cur.n < n) m.set(key, { x: p.x, y: p.y, n });
+  }
+  return m;
+}
+
+/** 束の opens を同じく引けるようにする（人が確かめた物だけ・推測は入れない） */
+function indexOpens(opens: BundleLike["opens"]): OpenIndex {
+  const m: OpenIndex = new Map();
+  for (const [k, o] of Object.entries(opens ?? {})) {
+    if (o?.guessed === true || !(Number(o?.n) > 0) || typeof o?.opens !== "string") continue;
+    m.set(cleanPlaybookName(k), o.opens);
+  }
+  return m;
+}
+
+/** 手順書の場面 → 効く自動の決まり（同じ場面の物。press は全部の場面に効くので playbook.rules で見る） */
+function rulesForScene(scene: string): string[] {
+  return AUTO_RULES.filter((r) => r.scene === scene).map((r) => r.id);
+}
+
+/** 場面の手順 → 手順書の場面（値を外す・名前を読める形に・件数で上限・1手ずつの細部） */
+export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn: OpenIndex = new Map()): PlaybookScene {
   const scene = String(f.scene ?? "other");
   const runs = Number(f.runs) || 0;
   const norm = normalizePlaybookSteps((Array.isArray(f.steps) ? f.steps : []).map((x) => String(x)));
+  const steps = norm.steps.slice(0, PLAYBOOK_MAX_STEPS);
+  const detail: PlaybookStep[] = steps.map((step, i) => {
+    const field = norm.fields[i] ?? "";
+    const p = pos.get(field);
+    return {
+      step,
+      field,
+      aim: p ? { x: p.x, y: p.y, n: p.n, confidence: p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin" } : null,
+      opens: opn.get(field) ?? null,
+    };
+  });
   return {
     scene,
     label: (SCENE_JA as Record<string, string>)[scene] ?? scene,
     runs,
     ops: Number(f.ops) || 0,
-    steps: norm.steps.slice(0, PLAYBOOK_MAX_STEPS),
+    steps,
     gap_ms: typeof f.gap_ms === "number" && Number.isFinite(f.gap_ms) ? f.gap_ms : null,
     variants: Number(f.variants) || 0,
     values_dropped: norm.values_dropped,
     unknown: norm.unknown,
     confidence: runs >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin",
+    detail,
+    rules: rulesForScene(scene),
   };
 }
 
 /** 束 → 手順書（純関数。同じ束からは同じ版） */
 export function buildPlaybook(bundle: BundleLike): Playbook {
+  const posIdx = indexPositions(bundle.points);
+  const openIdx = indexOpens(bundle.opens);
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
-    .map(playbookSceneOf);
+    .map((f) => playbookSceneOf(f, posIdx, openIdx));
   const learned = new Set(scenes.map((s) => s.scene));
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
@@ -272,8 +362,22 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     if (s.unknown.length) gaps.push(`${s.label}：欄の名前が分からないもの（${s.unknown.join("・")}）・地名か欄かを人が確かめる`);
   }
   if (missing.length) gaps.push(`まだ学んでいない場面：${missing.map((k) => (SCENE_JA as Record<string, string>)[k]).join("・")}`);
+  for (const s of scenes) {
+    const noAim = s.detail.filter((d) => !d.aim).map((d) => d.step);
+    if (noAim.length) gaps.push(`${s.label}：押す位置を学んでいない手 ${noAim.length}件（${noAim.slice(0, 4).join("・")}）`);
+  }
 
-  const body = JSON.stringify({ build_v: PLAYBOOK_BUILD_V, scenes, missing, points: { solid, thin }, positions, opens, next_n });
+  // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
+  const rules: PlaybookRule[] = AUTO_RULES.map((r) => ({
+    id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: r.kb,
+  }));
+  const rules_v = autoRulesVersion();
+  const ruleOnly = [...new Set(rules.map((r) => r.scene))].filter((sc) => sc !== "press" && !learned.has(sc));
+  if (ruleOnly.length) {
+    gaps.push(`人の手本（録画の場面）がまだ無く、自動の決まりだけの場面：${ruleOnly.map((sc) => RULE_SCENE_JA[sc]).join("・")}`);
+  }
+
+  const body = JSON.stringify({ build_v: PLAYBOOK_BUILD_V, scenes, missing, points: { solid, thin }, positions, opens, next_n, rules_v });
   return {
     v: 1,
     build_v: PLAYBOOK_BUILD_V,
@@ -288,6 +392,8 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     opens_guessed,
     next_n,
     gaps,
+    rules,
+    rules_v,
   };
 }
 
@@ -311,6 +417,13 @@ export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[
     }
     if (s.unknown.length) issues.push(`${s.label}：未分類の欄 ${s.unknown.length}件`);
     if (s.runs > 0 && s.variants === 0) issues.push(`${s.label}：順番の数が0（束の欠けの疑い・0と読まない）`);
+  }
+  // 自動の決まり（拡張で直した物）が手順書に入っているか・コードの決まりと同じ版か
+  if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) issues.push(`作り方が古い（build_v=${pb.build_v}・今は ${PLAYBOOK_BUILD_V}）`);
+  if (!Array.isArray(pb.rules) || !pb.rules.length) issues.push("自動の決まりが手順書に入っていない");
+  else if (pb.rules_v !== autoRulesVersion()) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${autoRulesVersion()}）`);
+  for (const s of pb.scenes) {
+    if (!Array.isArray(s.detail) || s.detail.length !== s.steps.length) issues.push(`${s.label}：1手ずつの細部が手順と合わない`);
   }
   const based = Date.parse(pb.based_on);
   if (!Number.isFinite(based)) issues.push("束の作成時刻が読めない");

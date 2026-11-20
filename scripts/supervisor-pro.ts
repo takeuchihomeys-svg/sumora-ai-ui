@@ -248,7 +248,18 @@ void (async () => {
       for (const o of open) openAskNotes.push(`確認待ち（竹内さんへ出して未回答・聞き直さない・この作業は保留）: ${o.question.slice(0, 120)}／オススメ=${o.recommended ?? "なし"}`);
     }
   } catch { /* 台帳が読めなくても判断は続ける */ }
-  const allNotes = [...autoNotes, ...(liveReflectNote ? [liveReflectNote] : []), ...openAskNotes, ...notes];
+  // ★ 2026-11-20 竹内さん「手順書の重要度と優先度あげる」「改善したら手順書が改善されるように」:
+  //   手順書の反映（コードの決まり × DB の手順書 × 自動が読んだ印 × 決まりを守れたか）を Pro の材料の**先頭**に置く。
+  let playbookNote: string | null = null;
+  try {
+    const { fetchPlaybookReflect, playbookReflectNote } = await import("../app/lib/playbook-reflect-server");
+    const rep = await fetchPlaybookReflect(process.env, { scope: scope === "itandi" ? "itandi" : "realpro", runs: 8 });
+    playbookNote = playbookReflectNote(rep);
+    line(`■ ${playbookNote}`);
+  } catch (e) {
+    line(`■ 手順書の反映を読めない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+  }
+  const allNotes = [...(playbookNote ? [playbookNote] : []), ...autoNotes, ...(liveReflectNote ? [liveReflectNote] : []), ...openAskNotes, ...notes];
   if (autoNotes.length) {
     line();
     line("■ 束からの事実メモ（--note 無しでも Pro に渡す）");

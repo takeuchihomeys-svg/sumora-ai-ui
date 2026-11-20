@@ -16,8 +16,9 @@ const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-e
 let fail = 0;
 function check(name, ok) { console.log((ok ? "✓ " : "✗ ") + name); if (!ok) fail++; }
 
-check("manifest 2.8.136", manifest.version === "2.8.136");
-check("_AXLX_PAGE_VER 2.8.136", /_AXLX_PAGE_VER = "2\.8\.136"/.test(src));
+const _vGe = (v) => v.split(".").map(Number).reduce((a, n, i) => a || (n !== [2, 8, 136][i] ? (n > [2, 8, 136][i] ? 1 : -1) : 0), 0) >= 0;
+check("manifest 2.8.136 以降", _vGe(manifest.version), manifest.version);
+check("_AXLX_PAGE_VER が manifest と同じ", new RegExp('_AXLX_PAGE_VER = "' + manifest.version.replace(/\./g, "\\.") + '"').test(src));
 
 check("① 確定の押下に decide: true", /keys: \["確定してリストへ", "この条件で絞り込む", "modal_confirm"\],\s*aim: _confAim \|\| undefined,\s*decide: true,/.test(src));
 check("① 確定の文字の要素は decide", /\^\(確定してリストへ\|この条件で絞り込む\|検索\|決定\)\$/.test(src));

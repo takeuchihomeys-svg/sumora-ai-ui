@@ -1523,6 +1523,7 @@
   var _LEARN_NEXT_KEYS = [
     "axlx_learn_next", "axlx_learn_site_flow", "axlx_learn_seq", "axlx_learn_next_mode",
     "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
+    "axlx_learn_playbook",
     "axlx_learn_gaps",
   ];
   var _LEARN_PAGE_CACHE_KEY = "axlx_learn_bundle_page";
@@ -2664,6 +2665,11 @@
       window.__axlxLearnSceneFlows = Array.isArray(sflows) ? sflows : null;
       window.__axlxLearnStoppedScene = (r && r.axlx_learn_stopped_scene) || null;
       window.__axlxLearnSceneMissing = (r && r.axlx_learn_scene_missing) || null;
+      // 手順書（場面の手順・1手ずつの細部・自動の決まり）。key が来ない呼び出しでは前の値を残す
+      if (r && Object.prototype.hasOwnProperty.call(r, "axlx_learn_playbook")) {
+        var _pb = r.axlx_learn_playbook || null;
+        window.__axlxLearnPlaybook = (_pb && typeof _pb === "object") ? _pb : null;
+      }
       // 束の人の押す間隔（中央値）。選ぶレーンの速さの基準。key が来ない呼び出しでは前の値を残す
       if (r && Object.prototype.hasOwnProperty.call(r, "axlx_learn_gaps")) {
         var _gp = r.axlx_learn_gaps || null;
@@ -2729,7 +2735,52 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.136";
+  var _AXLX_PAGE_VER = "2.8.137";
+  /**
+   * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
+   *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
+   */
+  var _AXLX_RULES_DONE = [
+    "order_human", "area_before_cond", "no_reset_button", "clear_per_panel", "no_hidden_press",
+    "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
+    "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
+  ];
+  /**
+   * 手順書を読んだ印を点検記録に残す（DB の手順書と、この拡張の決まりが揃っているかを後から数えて確かめる）。
+   *   playbook_seen: v=手順書の版 rv=決まりの版 決まり=拡張に有る数/手順書の数 無い=拡張に無い決まり 手順書に無い=手順書が古い分 場面=数 手=数
+   *   playbook_none: 手順書が届いていない（学習の取り込みを見直す）
+   */
+  function _auditPlaybookSeen() {
+    if (!_audit) return;
+    var pb = window.__axlxLearnPlaybook;
+    if (!pb || typeof pb !== "object" || !Array.isArray(pb.scenes)) {
+      _auditStepP("playbook_none", "手順書が届いていない page=" + _AXLX_PAGE_VER);
+      return;
+    }
+    var ids = Array.isArray(pb.rules) ? pb.rules.map(function (x) { return String((x && x.id) || ""); }).filter(Boolean) : [];
+    var have = 0, lack = [], extra = [];
+    for (var i = 0; i < ids.length; i++) {
+      if (_AXLX_RULES_DONE.indexOf(ids[i]) >= 0) have++; else lack.push(ids[i]);
+    }
+    for (var j = 0; j < _AXLX_RULES_DONE.length; j++) {
+      if (ids.indexOf(_AXLX_RULES_DONE[j]) < 0) extra.push(_AXLX_RULES_DONE[j]);
+    }
+    var hands = 0;
+    for (var s = 0; s < pb.scenes.length; s++) {
+      var sc = pb.scenes[s] || {};
+      hands += Array.isArray(sc.detail) ? sc.detail.length : (Array.isArray(sc.steps) ? sc.steps.length : 0);
+    }
+    var _short = function (a) { return a.length ? (a.slice(0, 2).join(",") + (a.length > 2 ? ",+" + (a.length - 2) : "")) : "-"; };
+    _auditStepP(
+      "playbook_seen",
+      "v=" + String(pb.version || "-").slice(0, 8) +
+        " rv=" + String(pb.rules_v || "-").slice(0, 8) +
+        " 決まり=" + have + "/" + ids.length +
+        " 無い=" + _short(lack) +
+        " 手順書に無い=" + _short(extra) +
+        " 場面=" + pb.scenes.length + " 手=" + hands,
+    );
+  }
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -2968,6 +3019,7 @@
           try { _flowR = _auditFlowLearnReflect("取込後"); } catch (_) {}
           try { _auditLineStationMap(_fillCondForStamp); } catch (_) {}
           try { _auditFullFlowMapLedger("reflect_done"); } catch (_) {}
+          try { _auditPlaybookSeen(); } catch (_) {}
           if (_audit) {
             _auditStepP(
               (_stHit && _sk > 0) ? "learn_reflect_ok" : "learn_reflect_gap",
@@ -5390,7 +5442,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -5423,7 +5475,7 @@
        *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
        */
       var _pinFlush = _PIN.test(String(k));
-      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear/.test(String(k));
+      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear|playbook_|hidden_press|clear_stage/.test(String(k));
       if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;

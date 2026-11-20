@@ -183,7 +183,7 @@ ok("_doReset が点検に leftover_scan を残す", /_auditStepP\("leftover_scan
 ok("_doReset の完了が _cleanStartGate を通る", /_cleanStartGate\(cond, _rr, _cb0/.test(ps));
 ok("探索の起点で台帳を読み込んでから覚えを消す（順序）", ps.indexOf("window.__axlxPrevLedger = _pl;") > 0 && ps.indexOf("window.__axlxPrevLedger = _pl;") < ps.indexOf("_resetPicked();", ps.indexOf("window.__axlxPrevLedger = _pl;")));
 ok("検索押下・pagehide・選択のたびに台帳を保存", /_ledgerSave\("search"\)/.test(ps) && /_ledgerSave\("pagehide"\)/.test(ps) && /_ledgerSaveSoon\("station"\)/.test(ps) && /_ledgerSaveSoon\("ward"\)/.test(ps));
-ok("監査の間引きから leftover_ を守る", /search_wait_view\|leftover_(\|post_send_clear)?\)/.test(ps));
+ok("監査の間引きから leftover_ を守る", /search_wait_view\|leftover_(\|post_send_clear)?(\|[a-z_]+)*\)/.test(ps));
 const mf = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 ok("版: _AXLX_PAGE_VER が manifest と同じ（2.8.124 以降）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && mf.version.localeCompare("2.8.124", undefined, { numeric: true }) >= 0, mf.version);
 

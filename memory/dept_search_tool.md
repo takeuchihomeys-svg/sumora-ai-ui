@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.137: 手順書を最優先に・直したら手順書も直る仕組み（決まりの正本・拡張へ渡す・読んだ印・反映の点検・統括Pro の先頭）**（竹内さん「改善したのは手順書にちゃんと反映されるようになっているのか」「手順書の重要度と優先度あげる」「改善したら手順書が改善されるように仕組みをちゃんとつくって強化する」）
+- 実測（DB・リアプロの最新の束 id 2532・作り方 2）: 手順書は人の録画の順番と押す位置だけで、**2.8.105〜2.8.136 で直した自動の決まりは0件**。前客の外し・ペットの場面も無い。
+  さらに拡張は手順書をページへ**渡していなかった**（content.js の PUSH_KEYS・page-script の _LEARN_NEXT_KEYS に無い）＝自動は手順書を読んでいなかった。統括Pro も手順書を見ていなかった。
+- 仕組み（直したら手順書が直る）:
+  1. **決まりの正本** `app/lib/auto-procedure-rules.ts` の `AUTO_RULES`（16件・場面・文・入った版・設計知見・コードの印・点検記録での確かめ方）。
+  2. **手順書の作り方 3**（`action-playbook.ts`）: 決まり全部＋決まりの版 `rules_v`・場面ごとの1手ずつの細部（押す欄・学んだ押す位置 solid/thin・人が確かめた開く物）・押す位置を学んでいない手／決まりだけの場面を「足りない所」に出す。束を書く時（`prepareBundleForWrite`・`human-learn-profile`）に毎回作り直す。
+  3. **拡張へ渡す**: content.js PUSH_KEYS／page-script `_LEARN_NEXT_KEYS` に `axlx_learn_playbook`・`window.__axlxLearnPlaybook`。反映の関所の後に **`playbook_seen`**（v=手順書の版 rv=決まりの版 決まり=有る/全部 無い=拡張が古い分 手順書に無い=手順書が古い分 場面 手）／届かなければ `playbook_none`。拡張の決まりの一覧は `_AXLX_RULES_DONE`。
+  4. **点検**: `scripts/check-playbook-reflect.ts`（読むだけ・DB の手順書 × コード × 自動が読んだ印 × 直近の自動で決まりを守れたか。決まりの入った版より前の拡張の回は「確かめられない」）。
+  5. **統括Pro**: 手順書の反映を Pro の材料の**先頭**（【最優先・手順書】）に置く（`app/lib/playbook-reflect-server.ts`）。
+  6. **関所（テスト）**: 拡張の版を上げたのに `AUTO_RULES_REVIEWED_UP_TO` を上げていない・決まりの印がコードに無い・`_AXLX_RULES_DONE` と一覧が食い違う → `app/lib/__tests__/auto-procedure-rules.test.ts` が落ちる（わざと版だけ上げて落ちるのを確かめた）。
+- `_PIN` に playbook_／hidden_press／clear_stage／clear_retry_press／sel_one_press／search_cursor／search_armed／modal_confirm／confirm_press_ok（決まりの確かめに要る段を間引かない）。
+- テスト: app `auto-procedure-rules.test.ts` 88・`action-playbook` 47・`bundle-write-prepare` 5。拡張 `playbook-reflect-v28137.test.js` 21（実際の関数を動かして印の形・120文字）。拡張全体 ✗240→237（悪くなった物 0）。`leftover-gate-v2824`／`leftover-progress-v2825`／`human-flow-detail-v28136` は正規表現・版の見方だけ広げた（意図は同じ）。tsc 0。
+- ⚠ **決まりを足す・変える時の手順**: `auto-procedure-rules.ts` の AUTO_RULES → page-script の `_AXLX_RULES_DONE` → 拡張の版を上げたら `AUTO_RULES_REVIEWED_UP_TO` も → テスト → DB の手順書を作り直す（`scripts/attach-playbook.ts`）→ 自動1回 → `check-playbook-reflect.ts`。
+- ⚠ 再読込（2.8.137）→ ポップアップで学習を取り直す → 自動1回 → `check-playbook-reflect.ts` で `playbook_seen` が出て「揃っている」になるか。
+
 ## 2026-11-20 **拡張 2.8.136: 一連の動きの細部（確定の前の長い止まり・徒歩の2回押し・重ね押し・点検の段の埋まり）**（竹内さん「ほかに人間としての動きがちゃんとできるように／一連の動きをみて／細部まで改善」）
 - 実測（12:46〜 の自動・run_mwofi2sn_jbec・2人・操作441件を時系列で読んだ）:
   - 確定してリストへ の前に **14.45秒**（1人目ペットの後）・6.92秒（2人目所在地）・4.89秒（2人目ペットの後）。確定は span＝「その他」→ 12% の 4〜9秒の迷い＋手を止める（8〜25秒）。

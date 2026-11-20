@@ -513,6 +513,8 @@ window.addEventListener("message", function (e) {
     //   → window.__axlxServerMotion / window.__axlxMotionPlan（pointer-ui.js が axlx-page-learn-push で受ける）
     //   ⚠ "axlx_learn_gaps" は配列の最後に置く（pick-lane-v2821 のテストが末尾を見る）
     "axlx_learn_motion", "axlx_motion_plan",
+    // ★ 2026-11-20 v2.8.137: 手順書（場面の手順・1手ずつの細部・自動の決まり）もページへ（自動が読んだ印を点検記録に残す）
+    "axlx_learn_playbook",
     "axlx_learn_gaps",
   ];
   function pushAll() {
