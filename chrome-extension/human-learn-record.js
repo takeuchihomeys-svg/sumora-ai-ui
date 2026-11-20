@@ -1519,9 +1519,19 @@
           el: el,
           v: el.style.getPropertyValue("visibility"),
           p: el.style.getPropertyPriority("visibility"),
+          o: el.style.getPropertyValue("opacity"),
+          op: el.style.getPropertyPriority("opacity"),
         });
         try { el.style.setProperty("visibility", "hidden", "important"); }
         catch (_) { el.style.visibility = "hidden"; }
+        /**
+         * ★ 2.8.139: 中の iframe（popup.html）は underbar.js が `visibility:visible` を直に付けるので、
+         *   親を `visibility:hidden` にしても**中身だけ写る**（CSS は子の visible が勝つ）。
+         *   実測: 読んだ写真 1000枚のうち 373枚で「拡張の小窓が重なる」と読まれていた。
+         *   → `opacity:0` も付ける（子が上書きできない）。
+         */
+        try { el.style.setProperty("opacity", "0", "important"); }
+        catch (_) { el.style.opacity = "0"; }
       }
     } catch (_) {}
   }
@@ -1533,6 +1543,8 @@
           if (h && h.el && h.el.style) {
             if (h.v) h.el.style.setProperty("visibility", h.v, h.p || "");
             else h.el.style.removeProperty("visibility");
+            if (h.o) h.el.style.setProperty("opacity", h.o, h.op || "");
+            else h.el.style.removeProperty("opacity");
           }
         } catch (_) {}
       }

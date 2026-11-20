@@ -38,13 +38,28 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 
-/** 偽の要素（`style.visibility` と `getBoundingClientRect` だけ持つ） */
+/** 偽の style（本物は setProperty / getPropertyValue / removeProperty を使う） */
+function fakeStyle() {
+  const pri = {};
+  const s = { visibility: "", opacity: "" };
+  s.setProperty = (k, v, p) => { s[k] = String(v); pri[k] = p || ""; };
+  s.getPropertyValue = (k) => s[k] || "";
+  s.getPropertyPriority = (k) => pri[k] || "";
+  s.removeProperty = (k) => { s[k] = ""; pri[k] = ""; };
+  return s;
+}
+/** 偽の要素（style と `getBoundingClientRect` だけ持つ） */
 function fakeEl(id, w, h) {
   return {
     id,
-    style: { visibility: "" },
+    style: fakeStyle(),
     getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0, right: w, bottom: h }),
   };
+}
+/** 写真に写るか（CSS: visibility は子の visible が勝つ・opacity は親が 0 なら子も見えない） */
+function paintedChild(parent, child) {
+  const vis = child.style.visibility || parent.style.visibility || "visible";
+  return vis !== "hidden" && parent.style.opacity !== "0" && child.style.opacity !== "0";
 }
 
 function runHide(els, vw, vh) {
@@ -123,6 +138,26 @@ console.log("\n■ ④ 2回隠しても壊れない（撮影が重なった時�
   ok("  1つだけ覚えている", api.count() === 1, api.count());
   api.show();
   ok("  ⚠ 2回隠しても元に戻る（空のまま消えない）", a.style.visibility === "", a.style.visibility);
+}
+
+console.log("\n■ ④' 中の iframe が visible を直に持っていても写らない（2.8.139・実測 1000枚中 373枚で小窓が写っていた）");
+{
+  const wrap = fakeEl("aixlinx-float-wrap", 520, 400);
+  const frame = { style: fakeStyle() };
+  frame.style.visibility = "visible";                   // underbar.js が直に付ける
+  const api = runHide([wrap], 1920, 1080);
+  ok("  隠す前は写る", paintedChild(wrap, frame));
+  api.hide();
+  ok("  ⚠ 隠すと中の iframe も写らない（opacity:0）", !paintedChild(wrap, frame), wrap.style);
+  ok("  opacity は !important", wrap.style.getPropertyPriority("opacity") === "important");
+  api.show();
+  ok("  戻すと opacity は空に戻る", wrap.style.opacity === "", wrap.style.opacity);
+  ok("  戻すと中の iframe がまた写る", paintedChild(wrap, frame));
+  const b = fakeEl("axlx-bar", 220, 300);
+  b.style.setProperty("opacity", "0.9", "");
+  const api2 = runHide([b], 1920, 1080);
+  api2.hide(); api2.show();
+  ok("  ⚠ 元の opacity（0.9）は 0.9 に戻る", b.style.opacity === "0.9", b.style.opacity);
 }
 
 console.log("\n■ ⑤ 隠した後に撮って戻す順番（本物のコードで確認）");

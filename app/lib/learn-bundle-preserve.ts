@@ -106,6 +106,61 @@ async function loadBestSolidRow(
   return { row: best, error: null };
 }
 
+type LearnedRec = { name?: unknown; kind?: unknown; x?: unknown; y?: unknown; n?: unknown };
+
+function isSolidRec(r: LearnedRec | undefined): boolean {
+  return !!r && typeof r.x === "number" && typeof r.y === "number" && (Number(r.n) || 0) >= 3;
+}
+
+/**
+ * 古い learned と今作った learned を**欄ごとに**合わせる（純関数）。
+ *   ・同じ欄（画面・名前・種類・同じ名前の何個目か）が両方にある → 今の方。ただし古い方が確か（n≥3）で今の方が確かでない時だけ古い方
+ *   ・古い方にしか無い欄 → 残す／今の方にしか無い欄 → 足す
+ *   ⚠ 旧は古い learned で**丸ごと置き換え**ていた。今作った束は直近 10000 行しか読まないので
+ *     確かな欄が古い束より少なく、毎回置き換わる → 2026-11-19 00:54 から 38 束 learned が1字も変わらず、
+ *     その後に読んだ写真（11-20 の 147枚・欄 4327個）が束に届いていなかった。
+ *   確かな欄の数は古い束より減らない（消さない守りはそのまま）。
+ */
+export function mergeLearnedKeepSolid(
+  cur: unknown,
+  old: unknown,
+): { learned: Record<string, unknown[]>; from_new: number; kept_old: number } {
+  const asMap = (v: unknown): Record<string, unknown[]> => {
+    const out: Record<string, unknown[]> = {};
+    if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+    for (const [k, list] of Object.entries(v as Record<string, unknown>)) if (Array.isArray(list)) out[k] = list;
+    return out;
+  };
+  const curM = asMap(cur);
+  const oldM = asMap(old);
+  const keyed = (list: unknown[]) => {
+    const seen = new Map<string, number>();
+    return list.map((r) => {
+      const rec = (r && typeof r === "object" ? r : {}) as LearnedRec;
+      const base = `${String(rec.name ?? "")}\u0000${String(rec.kind ?? "")}`;
+      const i = seen.get(base) ?? 0;
+      seen.set(base, i + 1);
+      return { key: `${base}\u0000${i}`, rec: r };
+    });
+  };
+  const learned: Record<string, unknown[]> = {};
+  let from_new = 0, kept_old = 0;
+  for (const screen of new Set([...Object.keys(curM), ...Object.keys(oldM)])) {
+    const oldByKey = new Map(keyed(oldM[screen] ?? []).map((e) => [e.key, e.rec]));
+    const out: unknown[] = [];
+    const used = new Set<string>();
+    for (const e of keyed(curM[screen] ?? [])) {
+      const o = oldByKey.get(e.key) as LearnedRec | undefined;
+      if (o && isSolidRec(o) && !isSolidRec(e.rec as LearnedRec)) { out.push(o); kept_old++; }
+      else { out.push(e.rec); from_new++; }
+      used.add(e.key);
+    }
+    for (const [k, r] of oldByKey) if (!used.has(k)) { out.push(r); kept_old++; }
+    if (out.length) learned[screen] = out;
+  }
+  return { learned, from_new, kept_old };
+}
+
 function applyLearnedFromOld(
   bundle: Record<string, unknown>,
   oldB: unknown,
@@ -115,10 +170,12 @@ function applyLearnedFromOld(
   if (!old.learned || typeof old.learned !== "object") return;
   const curSh = ((bundle.shots as Record<string, unknown>) || {});
   const oldSh = ((oldB as { shots?: Record<string, unknown> })?.shots || {});
+  const merged = mergeLearnedKeepSolid(curSh.learned, old.learned);
   bundle.shots = {
     ...oldSh,
     ...curSh,
-    learned: old.learned,
+    learned: merged.learned,
+    learned_from_new: merged.from_new,
     preserved_learned: true,
     preserved_solid: oldSolid,
     in_storage: Math.max(Number(curSh.in_storage) || 0, Number(oldSh.in_storage) || 0),

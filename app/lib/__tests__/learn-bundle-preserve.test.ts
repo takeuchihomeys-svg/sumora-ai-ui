@@ -7,6 +7,7 @@ import {
   hasStationTransitSteps,
   inheritLinkFoundations,
   INHERIT_LOOKBACK_DEFAULT,
+  mergeLearnedKeepSolid,
 } from "../learn-bundle-preserve";
 
 let pass = 0;
@@ -99,6 +100,53 @@ void (async () => {
     );
     ok("best救出 solid≥30", pr2.solid >= 30, pr2);
     ok("safe", pr2.safe_to_write === true, pr2);
+  }
+
+  console.log("\n■ 欄ごとに合わせる（丸ごと置き換えで新しい写真が届かなかった・2026-11-20）");
+  {
+    const old = {
+      form: [
+        { name: "検索", kind: "button", x: 0.1, y: 0.1, n: 9 },
+        { name: "賃料", kind: "select", x: 0.2, y: 0.2, n: 5 },
+        { name: "大阪市淀川区", kind: "checkbox", x: 0.3, y: 0.3, n: 4 },
+        { name: "検索", kind: "button", x: 0.15, y: 0.9, n: 3 },
+      ],
+      list: [{ name: "×とじる", kind: "button", x: 0.9, y: 0.1, n: 6 }],
+    };
+    const cur = {
+      form: [
+        { name: "検索", kind: "button", x: 0.12, y: 0.11, n: 4 },
+        { name: "賃料", kind: "select", x: 0.25, y: 0.2, n: 1 },
+        { name: "徒歩", kind: "select", x: 0.4, y: 0.4, n: 3 },
+      ],
+    };
+    const m = mergeLearnedKeepSolid(cur, old);
+    const f = m.learned.form as Array<{ name: string; x: number; n: number }>;
+    ok("今の方が確かなら今の位置（検索 0.12）", f.find((r) => r.name === "検索")?.x === 0.12, f);
+    ok("古い方が確かで今が確かでない → 古い位置（賃料 0.2・n5）", f.find((r) => r.name === "賃料")?.n === 5, f);
+    ok("今にしか無い欄は足す（徒歩）", f.some((r) => r.name === "徒歩"), f);
+    ok("古い方にしか無い欄は残す（淀川区・2つ目の検索・別画面の×とじる）",
+      f.some((r) => r.name === "大阪市淀川区") && f.filter((r) => r.name === "検索").length === 2 && (m.learned.list?.length ?? 0) === 1, m.learned);
+    const solidOld = countLearnedSolid({ shots: { learned: old } }).solid;
+    const solidNew = countLearnedSolid({ shots: { learned: m.learned } }).solid;
+    ok(`確かな欄は減らない（${solidOld} → ${solidNew}）`, solidNew >= solidOld);
+    ok("今の方から 2（検索・徒歩）・古い方から 4（賃料・淀川区・2つ目の検索・×とじる）", m.from_new === 2 && m.kept_old === 4, m);
+  }
+  {
+    // 実測の形: 古い束（確か 96）の方が今の束（確か 40・新しい欄あり）より多い → 旧は丸ごと置き換えで新しい欄が消えていた
+    const cur = learnedSolidN(40) as { shots: { learned: Record<string, unknown[]> } };
+    cur.shots.learned["新しい欄"] = [{ name: "新しい欄", n: 5, x: 0.5, y: 0.5 }];
+    const b: Record<string, unknown> = { shots: { learned: cur.shots.learned } };
+    const pr = await inheritLinkFoundations(
+      mockSb({ realpro: [{ bundle: learnedSolidN(96), created_at: "2026-11-19T00:54:00Z" }] }) as never,
+      b,
+      "realpro",
+      { lookback: 80, minSolid: 30 },
+    );
+    const lr = (b.shots as { learned: Record<string, unknown[]> }).learned;
+    ok("⚠ 継いでも今読んだ新しい欄が束に残る", Array.isArray(lr["新しい欄"]), Object.keys(lr).length);
+    ok("確かな欄は古い束以上（96+1）", pr.solid >= 97, pr);
+    ok("継いだ印は残る", (b.shots as { preserved_learned?: boolean }).preserved_learned === true);
   }
 
   console.log("\n■ inherit: 履歴読めず solid不足 → 拒否");
