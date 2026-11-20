@@ -38,7 +38,8 @@ import type { SentencePlan, SevenFields } from "./compose-sentence-plan";
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function composeValueSlotsOn(env: Env = envOf()): boolean {
-  return (env.COMPOSE_VALUE_SLOTS ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（②の組 grp-reply-1121 で確かな悪化0）。止める COMPOSE_VALUE_SLOTS=off（締めの COMPOSE_CLOSING_TABLE は試験に入っていないので既定 off のまま）
+  return (env.COMPOSE_VALUE_SLOTS ?? "").trim().toLowerCase() !== "off";
 }
 export function composeClosingTableOn(env: Env = envOf()): boolean {
   return (env.COMPOSE_CLOSING_TABLE ?? "").trim().toLowerCase() === "on";
