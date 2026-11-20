@@ -294,3 +294,18 @@ export function hazardAuditDue(lastJstDay: string | null, now: Date = new Date()
   const day = j.toISOString().slice(0, 10), h = j.getUTCHours();
   return { due: lastJstDay !== day && h >= fromHour && h < toHour, day };
 }
+
+/**
+ * 2026-11-20 作業員H（作業員M の頼み・AIX の2通目の系統の前と今を比べる道）: 依頼の --after-aix-draft=<none|hint> を読む（純関数）。
+ *   none＝AIX を送った後の返信の下書きを指定なしで作る／hint＝自動の下書き（afterAixDraftHint）。無い・空は付けない（今まで通り）。違う値は error
+ */
+export function parseAfterAixDraft(v: string | null | undefined): { value: "none" | "hint" | null } | { error: string } {
+  const s = String(v ?? "").trim();
+  if (!s) return { value: null };
+  if (s === "none" || s === "hint") return { value: s };
+  return { error: `--after-aix-draft=${s} は無い（none か hint）` };
+}
+/** 依頼から brain-exam に渡す引数（付けていない依頼は空＝今までの argv のまま）。前（main）の子にも childArgs でそのまま渡る */
+export function afterAixDraftArgv(j: { afterAixDraft?: string | null }): string[] {
+  return j.afterAixDraft === "none" || j.afterAixDraft === "hint" ? [`--after-aix-draft=${j.afterAixDraft}`] : [];
+}

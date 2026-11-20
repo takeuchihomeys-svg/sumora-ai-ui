@@ -13,6 +13,7 @@
 // 読んだ印（read_at・read_count）を残す（どの PC が読んでいるか分かる）
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { buildLeaseOn, tryAcquireLease, releaseLease, buildDecision, supabaseLeaseDb } from "@/app/lib/build-lease";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
@@ -918,7 +919,21 @@ export async function GET(req: NextRequest) {
   const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), hasBundle: !!row, forceFresh });
   if ((stale || forceFresh) && !daytimeHold && !(builtRecently && !forceFresh)) {
     try {
-      const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, () => buildNow(scope, (m) => { why = m; }));
+      // ★ 2026-11-20 作業員H（11/20 10:24〜10:38 の再起動の直後に時間切れ 181回・kix1 と iad1 の箱で作り直しが重なった）:
+      //   coalesce はその箱の中だけ → 作り直しは DB の印（build_leases・期限つき）で全体の中で1本だけ。
+      //   取れない（他の箱が作っている）・印が書けない（DB が重い）時は作らずに古い束を返す（束が無ければ空で返し、拡張は次の呼び出しで受け取る）。
+      //   作り直しに失敗した時も下で古い束を返す。表が無い（migrate の前）時だけ今まで通り。止める: BUILD_LEASE=off（app/lib/build-lease.ts）
+      const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, async () => {
+        if (!buildLeaseOn()) return buildNow(scope, (m) => { why = m; });
+        const leaseDb = supabaseLeaseDb(supabase as never);
+        const key = `human-learn-profile:${scope}`, holder = `${process.env.VERCEL_REGION ?? "local"}:${Math.random().toString(36).slice(2, 10)}`;
+        const lease = await tryAcquireLease(leaseDb, key, holder, (maxDuration + 30) * 1000);
+        const d = buildDecision(lease, !!row);
+        console.log(JSON.stringify({ tag: "human-learn-profile:build-lease", scope, lease, decision: d }));
+        if (d !== "build") { why = lease === "held" ? "building_elsewhere" : "build_lease_unavailable"; return null; }
+        try { return await buildNow(scope, (m) => { why = m; }); }
+        finally { if (lease === "acquired") await releaseLease(leaseDb, key, holder); }
+      });
       if (fresh) {
         /**
          * ★ 2026-11-16 連携ボトルネック（read_count=0が続く）:

@@ -3858,6 +3858,17 @@ ALTER TABLE human_learn_profile ENABLE ROW LEVEL SECURITY;
 --   公開キーで読み書きできても個人情報は漏れない。
 --   直前の ENABLE は古い版を当てた DB のために残す（この次の1行で必ず DISABLE にする）。
 ALTER TABLE human_learn_profile DISABLE ROW LEVEL SECURITY;
+-- build_leases: 重い作り直しを全体の中で1本だけにする期限つきの印（2026-11-20 作業員H・11/20 10:24〜10:38 の再起動の直後に
+--   /api/human-learn-profile の作り直し（buildNow）が別々の関数の箱で重なり時間切れ 181回）。主キーで1つだけ入る・期限 until を過ぎた行は次に取る人が消す。
+--   app/lib/build-lease.ts（BUILD_LEASE・既定 on・=off で今まで通り）。行は数行だけ（作っている間だけある）
+CREATE TABLE IF NOT EXISTS build_leases (
+  key TEXT PRIMARY KEY,
+  holder TEXT NOT NULL,
+  until TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- human_learn_profile と同じ扱い（サーバーの鍵が無い所でも読み書きできるように・中身は印だけ）
+ALTER TABLE build_leases DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE human_learn_profile IS '人の動きの記録をまとめた学習の束（押す順番・押す場所・動きの速さ）。拡張はこれを読む。入力した中身は入れない。2026-11-13 竹内さん承認';
 
 -- ── 2026-11-14 竹内さん「統括はデータベース必要なら強化や追加できるようにしていく」──
