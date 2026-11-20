@@ -4,7 +4,7 @@ import { linkCustomerImage } from "../customer-image-link";
 import { customerImageRecordOn, customerImageRecordRow } from "../customer-image-record";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra); } };
-t("既定 off", !customerImageRecordOn({}) && customerImageRecordOn({ CUSTOMER_IMAGE_RECORD: "on" }));
+t("既定 on・=off で止める", customerImageRecordOn({}) && !customerImageRecordOn({ CUSTOMER_IMAGE_RECORD: "off" }));
 const at = "2026-11-20T10:00:00.000Z";
 const msg = (text: string, image_type: string | null = null) => ({ id: "m1", conversation_id: "c1", created_at: at, text, image_type });
 // こちらの資料の送り返し（画面の文字だけ・人の名前なし）
