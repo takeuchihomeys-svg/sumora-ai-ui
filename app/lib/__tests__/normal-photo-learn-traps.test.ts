@@ -55,7 +55,7 @@ console.log("\n■ ② 実行: 読める大きさをDBで先に絞る（時間�
 console.log("\n■ ③ 束: shot_gaps_normal を統括に渡す");
 {
   ok("human-learn-brain が shot_gaps_normal を作る", /shot_gaps_normal:/.test(brainSrc));
-  ok("  通常だけ（aix/auto を除外）", /m !== "aix" && m !== "auto"/.test(brainSrc) || /!== "aix"/.test(brainSrc));
+  ok("  通常だけ（自動モードを除外）", /m !== "aix" && m !== "auto"/.test(brainSrc) || /!== "aix"/.test(brainSrc) || /!isAutoMode\(/.test(brainSrc));
 }
 
 console.log("\n■ ④ 弱い所の how は『すでにある画像を読む』");

@@ -4,13 +4,21 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.152: 2.8.151 の残り2つを直す＋自動か手動かを押し1回ごとの by で判断する**（竹内さん「直していないものちゃんと改善する また自動か手動かもちゃんと判断するようにする 統括proおねがい」）
+- ① 印刷用PDF（`a.print`）など位置が付かなかった拡張の押し: `pointer-ui.js` の `tap()` が見えるカーソルの位置を `{clientX, clientY, synthetic:true}` で `__axlxRecNoteOp` に渡す → `_recNoteOp(kind, el, ev)` が `_pushOp` へ。`_pushPoint` は拡張の押しの位置を `_pendingPointXY` に控え、直後の `btn.click()`（座標0,0）にも同じ位置を付ける。
+- ② 自動の押しが `axlx_human_points`（見えるカーソルが「人の位置」として狙う鍵）に入っていた: `_pushPoint` は by:"auto" を `_liveAutoPoints`（ページの中だけ）へ分け、`_savePoints` は人の押しだけ。`save()` の POINTS_KEY2 へ移す時も `by:"auto"` を飛ばす。`pointer-ui.js` の `_pointsFor` も `by:"auto"` を返さない（旧版が積んだ物も無視）。
+- ③ 人／自動の印: 人の記録（`rec.detail()`＝isTrusted だけ）の位置に `by:"human"`、自動モードの集計（`flushAuto`）に `by:"auto"`。`human-learn.js` の `mergeMotion` は人と自動の位置を平均しない（人が先）。
+- サーバー: `app/lib/press-by.ts`（`isAutoMode`＝aix/ai/auto/brain_*・`pointBy`＝by:auto か syn:true が自動）を正本に。旧は場所ごとに aix だけ／aix|auto だけで `brain_aix` が漏れていた。束の自動の点検（`auditHumanLike(..., {pressBy:"auto"})`）は拡張の押しの位置・手の形だけ数える（自動の途中で人が押した位置を「自動の位置」と数えない）。`auto_fix` の人と自動の位置比べもモードでなく by。`learn-foundation-audit`・`human-nearness`・`shot-learn`・`latest-learn-loop` も `isAutoMode`。
+- ⚠ 見え方が変わる: 統括の「押した位置%（自動）」は人の押しを数えなくなるので、2.8.151 より前の行では下がって見える（正しい数え方になった）。
+- テスト: `tests/chrome-extension/press-by-v28152.test.js`（37件）・`app/lib/__tests__/press-by.test.ts`（13件）。次に確かめる事: 2.8.152 で自動1回 → 自動の写真の行に `a.print` の位置が `by:"auto"` で載るか・`axlx_human_points` に by:auto が増えないか。
+
 ## 2026-11-20 **拡張 2.8.151: 自動の写真の行に「押した位置」を載せる（統括の「押した位置19%」の正体は記録の抜け）**（竹内さん「押した位置は画像から学習したら改善されるので 通常モードの録画から学習して改善する」「枚数も改善するためならどれだけ使ってもよい 統括pro判断するかたちとする」）
 - 本番DB（自動の写真 直近300行・読むだけ）: 2.8.145 の写真 99行で `point_fields` 付きは **0行**。2.8.133 の 141/141 は自動の位置ではなく、自動の途中に人が物件の行（`building_tr`・by=human）を1回押した位置が全部の写真に付いていただけ。
 - 原因: 写真の行の位置は `axlx-recent-motion` が返す `rec.detail()` の位置＝**人の押し（isTrusted）だけ**。自動の押しは `_opsRing` に x/y 付きで残っていた（2.8.145 の自動の押し 73回のうち x/y あり 37回）のに写真の行に載っていなかった。自動は束の位置で狙えている（F15 狙いあり 97%）。
 - 直した事: `human-learn-record.js` に `_autoPressPointsSince(ring, sinceT)`。人の位置が無い写真には、前の写真より後の自動の押し（x/y がある click/tap だけ）を `by:"auto"` で載せる（`_motionReplyAt` で同じ押しを2枚に載せない）。
 - 束（`human-learn-brain.ts` の `learnPoints`）: `by:"auto"` の位置は人の位置が無い欄の代わりだけ。人の位置を回数で上書きしない（自動が自分の押し方を学び直す輪を防ぐ）。
 - 写真学習: 決定（設計知見 P1）「枚数は改善のためなら必要なだけ・統括Proが決める」。統括の F54 の完了線（通常の未学習＝0）どおり通常7日の未学習 390枚を読む（2枚 dry-run で欄49個・読めない0を確かめてから）。
-- 残り: `a.print`（印刷用PDF）など x/y が付かない自動の押しが半分ある（20回）。`_livePoints` が自動の押しも `axlx_human_points`（pointer-ui が人の位置として読む鍵）に積んでいる（手元で自動が自分の位置を学ぶ輪・未修正）。
+- 残り（→ 2.8.152 で直した）: `a.print`（印刷用PDF）など x/y が付かない自動の押しが半分ある（20回）。`_livePoints` が自動の押しも `axlx_human_points`（pointer-ui が人の位置として読む鍵）に積んでいる。
 - テスト: `tests/chrome-extension/auto-point-photo-v28151.test.js`（16件）。次に確かめる事: 2.8.151 で自動1回 → 自動の写真の行の `point_fields` 付きの割合（統括の「押した位置%」）。
 
 ## 2026-11-20 **拡張 2.8.150: 画面を一瞬で飛ばさない・見えない欄は見えるまで待ってからカーソルで押す**（竹内さん「一連の動きでバグが起きている部分や機械的になっている部分 人間の動きができていない部分はちゃんと細かく改善する…完全に人間の動きでうごくことができるように」）

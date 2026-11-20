@@ -16,6 +16,7 @@ import {
   pressStatNote,
 } from "./human-nearness";
 import { DAY_MS, LEARN_PERIODS, materialsDays, periodLabelJa, sinceIso } from "./learn-periods";
+import { isAutoMode } from "./press-by";
 import { fieldHasPosition, mergeAliasPositions, type FieldWithPos } from "./field-name-aliases";
 import { summarizeLatestAutoChallenges } from "./latest-learn-loop";
 
@@ -771,9 +772,8 @@ export async function auditLearnFoundations(
     }
     // 重複除去・1押下に畳む（自動も通常も同じ畳み方）
     const st = pressGapsFromRows(rowsAll, (r) => {
-      const m = String(r.mode || "").toLowerCase();
-      if (m === "aix" || m === "auto") return "auto";
-      if (m === "normal") return "normal";
+      if (isAutoMode(r.mode)) return "auto";
+      if (String(r.mode || "").toLowerCase() === "normal") return "normal";
       return null;
     });
     const normalGaps = st.normal?.gaps || [];

@@ -356,6 +356,8 @@
     }
     var v = _points && _points[name];
     if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
+    /** ★ 2026-11-20 (2.8.152): 人の位置だけを狙う（2.8.151 までは自動の押しもこの鍵に積まれていた） */
+    if (v.by === "auto") return null;
     // 何回も押した所だけ使う（1回だけは偶然かもしれない）
     /** ★ 2026-11-17 統括Pro: n=1 の学びも捨てない（point%・aim無対策） */
     if (Number(v.n) < 1) return null;
@@ -1119,7 +1121,9 @@
     var _rec = (typeof self !== "undefined" ? self : window).__axlxRecNoteOp;
     var _didRecOp = false;
     if (typeof _rec === "function" && _tapEl) {
-      _rec("click", _tapEl);
+      /** ★ 2026-11-20 (2.8.152): 位置も渡す（旧は名前だけ → 印刷用PDF など拡張の btn.click() が位置なしで残った） */
+      var _pRec = position();
+      _rec("click", _tapEl, _pRec ? { clientX: _pRec.x, clientY: _pRec.y, synthetic: true } : null);
       _didRecOp = true;
     } else if (_tapEl) {
       try {

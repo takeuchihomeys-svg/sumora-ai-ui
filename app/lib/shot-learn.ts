@@ -19,6 +19,8 @@
 //   入力された中身（文字・数字）・お客様の名前は読まない・残さない。
 // ⚠ LLM は「迷った時だけ」呼ぶ（決定論で分かる物は決定論で決める＝費用を抑える）。
 
+import { isAutoMode } from "./press-by";
+
 /** 写真から読んだ1つの欄 */
 export type ShotField = {
   /** 欄の名前（name 属性・見出しの文字）。30字まで */
@@ -570,10 +572,7 @@ export function learnFromShots(
      * ★ 通常モードだけを手本にする（竹内さん「通常モードの録画から…自動モードに反映」）。
      *   ⚠ 自動の録画は**結果の確認**であって手本ではない（P0）。
      */
-    if (preferNormal) {
-      const m = String(s.mode ?? "").toLowerCase();
-      if (m === "aix" || m === "auto") continue;
-    }
+    if (preferNormal && isAutoMode(s.mode)) continue;
     let ops = Array.isArray(s.shot_ops)
       ? (s.shot_ops as unknown[])
         .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))

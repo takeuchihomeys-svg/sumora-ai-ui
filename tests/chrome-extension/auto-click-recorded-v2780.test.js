@@ -35,7 +35,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "chrome-extension/ma
 
 // ── ① tap が shot_ops に載る記録を呼ぶ ────────────
 t("tap が __axlxRecNoteOp を呼ぶ", (ptr.match(/__axlxRecNoteOp/g) || []).length >= 2);
-t("押した要素を渡す", /_rec\("click", _tapEl\)/.test(ptr));
+t("押した要素を渡す", /_rec\("click", _tapEl(\)|, )/.test(ptr));
 t("要素が無ければ呼ばない", /_rec === "function" && _tapEl/.test(ptr) || /_tapEl\) _rec/.test(ptr));
 t("自動用の記録（__axlxNoteAutoOp）も残す", /__axlxNoteAutoOp/.test(ptr));
 

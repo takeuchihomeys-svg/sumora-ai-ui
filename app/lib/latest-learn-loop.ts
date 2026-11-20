@@ -18,6 +18,7 @@ import {
   foldRuns, foldTapClick, countChangedWithoutClick, countRetries, fieldName,
   type AutoRow, type AutoOp,
 } from "./learn-auto-audit";
+import { isAutoMode } from "./press-by";
 
 export type ShotRowLite = {
   created_at?: string | null;
@@ -69,8 +70,7 @@ export type LatestAutoChallenge = {
 };
 
 function isAuto(mode: unknown): boolean {
-  const m = String(mode ?? "").toLowerCase();
-  return m === "aix" || m === "auto";
+  return isAutoMode(mode);
 }
 function isNormal(mode: unknown): boolean {
   return !isAuto(mode);

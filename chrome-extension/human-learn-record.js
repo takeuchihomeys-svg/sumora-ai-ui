@@ -147,6 +147,7 @@
   var _opsSeen = 0;
   var _opsAsk = 0;
   var _motionReplyAt = 0;
+  var _liveAutoPoints = {};
   /**
    * ⚠ 2026-11-14 竹内さん「さっきの録画から読み取って改善するようにする」→ **実測で判明（重大）**:
    *   DB の 49件のうち **24件が「操作は22件あるのに押した場所は1個だけ」**だった（`ops22/pf1` が15件）。
@@ -321,6 +322,7 @@
     try {
       var det = rec.detail();
       var motion = L.summarizeMotion(det);
+      _markPointsBy(motion.points, "human");
       add.moves = motion.moves; add.points = motion.points; add.scrolls = motion.scrolls;
       /**
        * 2026-11-14 竹内さん「実際の通常モードでの検索のデータと比べてのギャップを強化」:
@@ -334,7 +336,7 @@
        * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
        *   → ⚠ **自動モード（拡張が押す）では順番が空のまま**だった。
        *     `motion.points` は `isTrusted` の物だけなので、拡張の押下は入らない。
-       *   → この受け口で貯めた `_livePoints`（人も拡張も）から**順番と欄**を作って足す。
+       *   → この受け口で貯めた `_livePoints`（人）と `_liveAutoPoints`（拡張）から**順番と欄**を作って足す。
        *     ⚠ 人の手本が既にある時は**そちらを優先**（人の押し方の方が正確）。
        */
       try {
@@ -345,23 +347,34 @@
           // **押された順**が要る → `_orderLive` を使う
           add.order = _orderLive.slice(0, 40);
         }
-        if (!add.fields || !add.fields.length) add.fields = _liveNames.slice(0, 40);
+        if (!add.fields || !add.fields.length) {
+          add.fields = _liveNames.concat(Object.keys(_liveAutoPoints || {}).filter(function (k) {
+            return k !== "__last" && _liveNames.indexOf(k) < 0;
+          })).slice(0, 40);
+        }
         /**
          * 欄ごとの押した位置も `_livePoints` から作る（自動モードでも位置が残る）。
          *   ⚠ 人の記録が既にある時は上書きしない。
          */
         if (!add.points || !add.points.fields || !Object.keys(add.points.fields).length) {
+          /** 人の位置が先・人が押していない欄だけ自動の位置（by で区別して送る） */
+          var _autoLive = _liveAutoPoints || {};
+          var _pfNames = _liveNames.filter(function (k) { return _live[k].by !== "auto"; });
+          Object.keys(_autoLive).forEach(function (k) {
+            if (k !== "__last" && _autoLive[k] && _autoLive[k].n && _pfNames.indexOf(k) < 0) _pfNames.push(k);
+          });
           var pf = {};
-          _liveNames.slice(0, 40).forEach(function (k) {
-            var v = _live[k];
+          _pfNames.slice(0, 40).forEach(function (k) {
+            var human = _live[k] && _live[k].by !== "auto" ? _live[k] : null;
+            var v = human || _autoLive[k];
             pf[k] = {
-              n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: v.by || null,
+              n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: human ? "human" : "auto",
               ...(typeof v.bw === "number" ? { bw: v.bw } : {}),
               ...(typeof v.bh === "number" ? { bh: v.bh } : {}),
               ...(v.shape ? { shape: String(v.shape).slice(0, 40) } : {}),
             };
           });
-          add.points = { n: _liveNames.length, x: null, y: null, fields: pf, order: _orderLive.slice(0, 40) };
+          add.points = { n: _pfNames.length, x: null, y: null, fields: pf, order: _orderLive.slice(0, 40) };
         }
       } catch (_) {}
       /**
@@ -406,6 +419,7 @@
                   Object.keys(pf).slice(0, 60).forEach(function (k) {
                     var v = pf[k];
                     if (!v || typeof v.x !== "number" || typeof v.y !== "number") return;
+                    if (v.by === "auto") return;
                     var old = cur[k] || null;
                     var nOld = old ? Number(old.n) || 0 : 0;
                     var nNew = Number(v.n) || 0;
@@ -678,6 +692,16 @@
       return true;
     } catch (_) { return false; }
   }
+  /** 欄ごとの位置に、誰が押したか（human / auto）を付ける。既に付いている物は変えない */
+  function _markPointsBy(points, by) {
+    try {
+      var fs = points && points.fields;
+      if (!fs || typeof fs !== "object") return;
+      Object.keys(fs).forEach(function (k) {
+        if (fs[k] && typeof fs[k] === "object" && !fs[k].by) fs[k].by = by;
+      });
+    } catch (_) {}
+  }
   /** 写真の行に載せる自動の押した位置（sinceT より後・x/y がある click/tap だけ・要素の中の割合） */
   function _autoPressPointsSince(ring, sinceT) {
     var fields = {}, order = [], xs = [], ys = [], n = 0;
@@ -917,7 +941,7 @@
   }
   /** 拡張が押した時にも積む（録画モードの時だけ使う・pointer-ui から呼ばれる） */
   /** 拡張からの記録は by=auto（旧: by無し → 手本と機械が区別できない） */
-  function _recNoteOp(kind, el) { try { _pushOp(kind || "tap", el, "auto"); } catch (_) {} }
+  function _recNoteOp(kind, el, ev) { try { _pushOp(kind || "tap", el, "auto", ev || null); } catch (_) {} }
   /**
    * ★ 2026-11-16 統括Pro「was/now・手の形土台」:
    *   自動は mousedown を踏まないので `_pendingWas` が空 → was 欠落。
@@ -1303,8 +1327,18 @@
   var fx = useXY ? ((cxU - r.left) / r.width) : 0.5;
   var fy = useXY ? ((cyU - r.top) / r.height) : 0.5;
   if (useXY && !(fx >= -0.2 && fx <= 1.2 && fy >= -0.2 && fy <= 1.2)) return;
+  /** 拡張の押しは直後の btn.click()（座標0,0）にも同じ位置を付けられるように控える */
+  if (useXY && ev && ev.synthetic === true) {
+    try { _pendingPointXY = { x: cxU, y: cyU, at: Date.now(), name: "" }; } catch (_) {}
+  }
+      /**
+       * ★ 2026-11-20 (2.8.152) 竹内さん「自動か手動かもちゃんと判断するようにする」:
+       *   人の押し（isTrusted）だけを `axlx_human_points`（見えるカーソルが「人の位置」として狙う鍵）に積む。
+       *   自動の押しはこのページの中だけの `_liveAutoPoints` に分ける（自動が自分の位置を学び直す輪を作らない）。
+       */
+      var _isAutoBy = by === "auto";
       // 2026-11-14: null を作らない（読み込み前のクリックも積めるように）
-      var cur = _livePoints || (_livePoints = {});
+      var cur = _isAutoBy ? _liveAutoPoints : (_livePoints || (_livePoints = {}));
       var t = Date.now();
       /**
        * 同じ欄の click → change は1回に畳む（120〜400ms 以内）。
@@ -1313,7 +1347,7 @@
       if (cur.__last && cur.__last.f === name && t - Number(cur.__last.t || 0) < 400) {
         cur.__last.n = (Number(cur.__last.n) || 1) + 1;
         cur.__last.t = t;
-        _savePoints(cur);
+        if (!_isAutoBy) _savePoints(cur);
         return;
       }
       // 押された順に足す（同じ欄が離れて2回目なら**残す**＝押し直しとして学ぶ）
@@ -1338,7 +1372,7 @@
         shape: _sh || prev.shape || null,
       };
       cur.__last = { f: name, t: t, n: 1 };
-      _savePoints(cur);
+      if (!_isAutoBy) _savePoints(cur);
     } catch (_) {}
   }
   // var _livePoints = null;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
@@ -1521,6 +1555,7 @@
           try { det = rec.detail(); } catch (_) {}
           var LL = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
           var m = (LL && LL.summarizeMotion) ? LL.summarizeMotion(det) : null;
+          if (m) _markPointsBy(m.points, "human");
           /**
            * ★ 2026-11-20 (2.8.151) 竹内さん「押した位置は画像から学習したら改善される」→ DB 実測:
            *   自動の写真 99行のうち押した位置（point_fields）が付いたのは 0行。rec の位置は人の押し（isTrusted）だけなので、
@@ -1899,6 +1934,7 @@
         if (o.scroll != null) det.scrolls.push({ dy: o.scroll, dir: o.scroll > 0 ? "down" : "up", y: 0 });
       });
       var motion = L.summarizeMotion(det);
+      _markPointsBy(motion.points, "auto");
       adds.moves = motion.moves; adds.points = motion.points; adds.scrolls = motion.scrolls;
       /**
        * 2026-11-14 竹内さん「自動検索の部分学習反映されるようにちゃんと連携する

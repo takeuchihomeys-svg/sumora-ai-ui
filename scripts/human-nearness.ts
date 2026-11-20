@@ -9,6 +9,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { computeHumanNearness, NEARNESS_ALLOW } from "../app/lib/human-nearness";
+import { isAutoMode } from "../app/lib/press-by";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -44,7 +45,7 @@ async function main() {
       for (const o of ops) {
         const g = Number(o.g);
         if (!(Number.isFinite(g) && g >= 0)) continue;
-        if (m === "aix" || m === "auto") autoGaps.push(g);
+        if (isAutoMode(m)) autoGaps.push(g);
         else if (m === "normal") normalGaps.push(g);
       }
     }

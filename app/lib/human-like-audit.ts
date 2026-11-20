@@ -20,6 +20,8 @@
  * ⚠ 入れるのは**欄の名前・操作の種類・真偽**だけ（入力した中身は見ない）。
  */
 
+import { opBy, rowHasPointBy, type PressBy } from "./press-by";
+
 /** 1件の操作 */
 export type AuditOp = {
   t?: number | null;
@@ -84,7 +86,11 @@ export function isDiagOnlyRow(r: AuditRow | null | undefined): boolean {
   return ops.every((o) => String(o?.k ?? "") === "diag");
 }
 
-export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
+/**
+ * @param opt.pressBy "auto" … 自動モードの点検。押した位置・手の形は**拡張の押し**（by:"auto"）だけ数える
+ *   （自動の途中で人が押した位置を「自動が押した位置」と数えない。2.8.133 で 141/141 と出た誤り）。
+ */
+export function auditHumanLike(rows: ReadonlyArray<AuditRow>, opt: { pressBy?: PressBy } = {}): {
   /** 操作の総数 */
   ops: number;
   /** 直接打ち込み（key）の数 */
@@ -156,10 +162,13 @@ export function auditHumanLike(rows: ReadonlyArray<AuditRow>): {
   }
 
   const withCursor = list.filter((r) => Number(r.moves_n) > 0).length;
-  const withPoint = list.filter((r) => r.point_fields && Object.keys(r.point_fields).length > 0).length;
+  const withPoint = list.filter((r) => (opt.pressBy
+    ? rowHasPointBy(r.point_fields, opt.pressBy)
+    : !!(r.point_fields && Object.keys(r.point_fields).length > 0))).length;
   const handSet = new Set<string>();
   let handCursorClicks = 0;
   for (const o of ops) {
+    if (opt.pressBy && opBy(o) !== null && opBy(o) !== opt.pressBy) continue;
     if (String(o.cs || "") !== "pointer") continue;
     const k = String(o.k || "");
     if (k !== "click" && k !== "tap") continue;

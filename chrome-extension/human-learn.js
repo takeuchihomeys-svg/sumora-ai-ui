@@ -851,9 +851,19 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
 
     var fieldSpread = {};
     var pf = pp.fields || {}, af = ap.fields || {};
+    /**
+     * 2.8.152 竹内さん「自動か手動かもちゃんと判断するようにする」:
+     *   人の位置と自動の位置（by:"auto"）は混ぜて平均しない。人が先・同じ側どうしだけ合わせる（by は残す）。
+     */
+    var _byOf = function (v) { return v && (v.by === "auto" || v.syn === true) ? "auto" : "human"; };
     Object.keys(af).forEach(function (f) {
       var pre = pf[f] || null;
-      fieldSpread[f] = pre ? { n: (Number(pre.n) || 0) + (Number(af[f].n) || 0), x: blend(pre.x, af[f].x, pre.n, af[f].n), y: blend(pre.y, af[f].y, pre.n, af[f].n), ...(pre.w || af[f].w ? { w: af[f].w || pre.w } : {}), ...(pre.stage || af[f].stage ? { stage: af[f].stage || pre.stage } : {}) } : af[f];
+      if (pre && _byOf(pre) !== _byOf(af[f])) {
+        fieldSpread[f] = _byOf(pre) === "human" ? pre : af[f];
+        return;
+      }
+      fieldSpread[f] = pre ? {
+        ...((af[f] && af[f].by) || pre.by ? { by: (af[f] && af[f].by) || pre.by } : {}), n: (Number(pre.n) || 0) + (Number(af[f].n) || 0), x: blend(pre.x, af[f].x, pre.n, af[f].n), y: blend(pre.y, af[f].y, pre.n, af[f].n), ...(pre.w || af[f].w ? { w: af[f].w || pre.w } : {}), ...(pre.stage || af[f].stage ? { stage: af[f].stage || pre.stage } : {}) } : af[f];
     });
     Object.keys(pf).forEach(function (f) {
       if (!fieldSpread[f] && Object.keys(fieldSpread).length < 20) fieldSpread[f] = pf[f];

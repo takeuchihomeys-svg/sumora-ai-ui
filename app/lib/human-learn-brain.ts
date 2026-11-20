@@ -30,6 +30,7 @@ import { reconcilePoints, findWeakPoints, learnFromShots, guessKindFromName, pla
 import { superviseLearn, type SupervisorAdvice, type SupervisorInput } from "./learn-supervisor";
 import { findWeakSteps } from "./learn-flow-steps";
 import { auditHumanLike } from "./human-like-audit";
+import { isAutoMode, pointBy } from "./press-by";
 import { nearnessFromMotionRows } from "./human-nearness";
 import { summarizeShotGaps } from "./shot-gaps";
 import { summarizeRecordingFreshness, summarizeLatestAutoChallenges, planImproveFromNormal } from "./latest-learn-loop";
@@ -491,7 +492,7 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
       const w =
         typeof r.w === "string" ? r.w.slice(0, 10)
         : (typeof r.wk === "string" ? r.wk.slice(0, 10) : null);
-      const isAuto = r.by === "auto";
+      const isAuto = pointBy(r) === "auto";
       const oldAuto = autoOnly.has(key);
       if (old && isAuto && !oldAuto) continue;
       // 回数の多い方（新しい実測）を採る。同じ回数なら新しい行を採る（後の行）。人の位置は自動の位置より先
@@ -568,9 +569,8 @@ const HAND_BOOTSTRAP_NAME_RE =
 export function learnCursorHand(rows: ReadonlyArray<MotionRow>): Record<string, { n: number; hand: number }> {
   const acc: Record<string, { n: number; hand: number }> = {};
   for (const row of rows) {
-    const mode = String((row as { mode?: unknown }).mode ?? "").toLowerCase();
     // 通常（normal）を優先。mode 空の旧記録も採る（自動だけは捨てる）
-    if (mode === "aix" || mode === "auto") continue;
+    if (isAutoMode((row as { mode?: unknown }).mode)) continue;
     const ops = Array.isArray((row as { shot_ops?: unknown }).shot_ops)
       ? ((row as { shot_ops: Array<Record<string, unknown>> }).shot_ops)
       : [];
@@ -833,8 +833,7 @@ export function imageMatchFromRows(rows: ReadonlyArray<MotionRow>): SupervisorIn
     const imgFields: Array<{ name: string; kind: string; x?: number; y?: number; zone?: string }> = [];
     const pressedAcc: Record<string, { n: number; x?: number; y?: number; w?: string }> = {};
     for (const r of rows) {
-      const mode = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
-      if (mode === "aix" || mode === "auto") continue;
+      if (isAutoMode((r as { mode?: unknown }).mode)) continue;
       const x = r as unknown as Record<string, unknown>;
       const sl = x.shot_learn as { fields?: unknown } | null | undefined;
       if (sl && Array.isArray(sl.fields)) {
@@ -855,6 +854,7 @@ export function imageMatchFromRows(rows: ReadonlyArray<MotionRow>): SupervisorIn
       if (pf && typeof pf === "object" && !Array.isArray(pf)) {
         for (const [k, v] of Object.entries(pf as Record<string, Record<string, unknown>>)) {
           if (!k || !v || typeof v !== "object") continue;
+          if (pointBy(v) === "auto") continue;
           const cur = pressedAcc[k] || { n: 0 };
           cur.n += Number(v.n) || 1;
           if (typeof v.x === "number") cur.x = v.x;
@@ -1527,11 +1527,8 @@ export function buildHumanLearnBundle(
    */
   const humanLikeForBundle = (() => {
     try {
-      const autoRows = list.filter((row) => {
-        const m = String((row as Record<string, unknown>).mode ?? "");
-        return m === "aix" || m === "auto";
-      });
-      const r = auditHumanLike((autoRows.length ? autoRows : list) as never);
+      const autoRows = list.filter((row) => isAutoMode((row as Record<string, unknown>).mode));
+      const r = autoRows.length ? auditHumanLike(autoRows as never, { pressBy: "auto" }) : auditHumanLike(list as never);
       if (!r.ops) return null;
       const rows = r.rows || 0;
       return {
@@ -1616,10 +1613,7 @@ export function buildHumanLearnBundle(
     } catch (_) { return null; }
   };
   const shotGapsAll = shotGapsOf(list);
-  const shotGapsNormalAll = shotGapsOf(list.filter((r) => {
-    const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
-    return m !== "aix" && m !== "auto";
-  }));
+  const shotGapsNormalAll = shotGapsOf(list.filter((r) => !isAutoMode((r as { mode?: unknown }).mode)));
 
   const supervisor: SupervisorAdvice = superviseLearn({
     rows: list.length,
@@ -1851,10 +1845,12 @@ export function buildHumanLearnBundle(
      */
     auto_fix: (() => {
       try {
-        const posOf = (list2: Array<Record<string, unknown>>) => {
+        /** 人の位置は人の押し（by≠auto）だけ・自動の位置は拡張の押し（by:auto）だけ。モードでは分けない */
+        const posOf = (list2: Array<Record<string, unknown>>, want: "human" | "auto") => {
           const acc: Record<string, { n: number; x: number | null; y: number | null }> = {};
           for (const r of list2) {
             for (const [k, v] of Object.entries((r.point_fields ?? {}) as Record<string, unknown>)) {
+              if (pointBy(v) !== want) continue;
               const o = v as { n?: unknown; x?: unknown; y?: unknown };
               const c = Number(o?.n) || 0;
               if (c < 2) continue;
@@ -1865,9 +1861,8 @@ export function buildHumanLearnBundle(
           }
           return Object.entries(acc).map(([f, v]) => ({ f, n: v.n, x: v.x, y: v.y }));
         };
-        const humanRows = list.filter((r) => String((r as Record<string, unknown>).mode ?? "") === "normal") as Array<Record<string, unknown>>;
-        const autoRows = list.filter((r) => String((r as Record<string, unknown>).mode ?? "") === "aix") as Array<Record<string, unknown>>;
-        const cmp = compareFields(posOf(humanRows), posOf(autoRows), []);
+        const allRows = list as unknown as Array<Record<string, unknown>>;
+        const cmp = compareFields(posOf(allRows, "human"), posOf(allRows, "auto"), []);
         const g = summarizeShotGaps(list.map((r) => {
           const x = r as unknown as Record<string, unknown>;
           const sl = x.shot_learn as { fields?: unknown } | null | undefined;
@@ -2129,10 +2124,7 @@ export function buildHumanLearnBundle(
       shot_gaps_normal: (() => {
         try {
           const states = sub
-            .filter((r) => {
-              const m = String((r as { mode?: unknown }).mode ?? "").toLowerCase();
-              return m !== "aix" && m !== "auto";
-            })
+            .filter((r) => !isAutoMode((r as { mode?: unknown }).mode))
             .map((r) => {
               const x = r as unknown as Record<string, unknown>;
               const sl = x.shot_learn as { fields?: unknown } | null | undefined;
@@ -2307,11 +2299,8 @@ export function buildHumanLearnBundle(
       })(),
       human_like: (() => {
         try {
-          const autoRows = sub.filter((row) => {
-            const m = String((row as Record<string, unknown>).mode ?? "");
-            return m === "aix" || m === "auto";
-          });
-          const r = auditHumanLike((autoRows.length ? autoRows : sub) as never);
+          const autoRows = sub.filter((row) => isAutoMode((row as Record<string, unknown>).mode));
+          const r = autoRows.length ? auditHumanLike(autoRows as never, { pressBy: "auto" }) : auditHumanLike(sub as never);
           if (!r.ops) return null;
           return {
             ops: r.ops, typedOnChoose: r.typedOnChoose.length,

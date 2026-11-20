@@ -8,6 +8,8 @@
  * ★ 純関数。DBに書かない。ops.g から測る。
  */
 
+import { isAutoMode } from "./press-by";
+
 export type NearnessBucket = {
   ops: number;
   gN: number;
@@ -316,7 +318,7 @@ export function nearnessFromMotionRows(
     const ops = Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [];
     const gs = gapsFromOps(ops);
     if (!gs.length) continue;
-    if (m === "aix" || m === "auto") autoGaps.push(...gs);
+    if (isAutoMode(m)) autoGaps.push(...gs);
     else if (m === "normal") normalGaps.push(...gs);
   }
   if (normalGaps.length < 10 && autoGaps.length < 10) return null;
