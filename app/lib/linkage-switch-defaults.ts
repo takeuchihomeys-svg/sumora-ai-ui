@@ -35,6 +35,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   CONDUCTOR_STAFF_CHECK: "shadow",
   CONDUCTOR_TOPIC_STATE: "on",
   CUSTOMER_IMAGE_LINK: "on",
+  CUSTOMER_IMAGE_RECORD: "off",
   CUSTOMER_IMAGE_TASTE_WANTS: "off",
   CUSTOMER_MINDSET: "on",
   CUSTOMER_SENT_PROPERTY: "on",

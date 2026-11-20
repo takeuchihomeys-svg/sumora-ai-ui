@@ -50,6 +50,25 @@ const ITEM_RES: Array<[keyof EstimateItems, RegExp]> = [
   ["rent", /(?<![前割月分])(?:家賃|賃料)\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*)/],
   ["admin", /(?:共益費|管理費)\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*)/],
 ];
+/**
+ * 2026-11-21 作業員G（画像の把握の表 C5-b）: 他社の見積書の書き起こしが表の形（「敷金 | 0円」「家賃保証(2年)| 17,080円」「初期費用詳細合計額: 135,780円」）で、
+ *   見出しと値の間の「|」と、言い方の違う見出し（仲介会社関連費用・家賃保証・〜合計額）で内訳が取れていなかった（60日の【見積書】10枚のうち 1枚）。
+ *   既定 off（ESTIMATE_TABLE_PARSE=on）。取れなかった時だけ足す形で読む（今取れている行は変わらない）。
+ */
+export function estimateTableParseOn(env: Env = envOf()): boolean {
+  return (env.ESTIMATE_TABLE_PARSE ?? "").trim().toLowerCase() === "on";
+}
+const TABLE_EXTRA: Partial<Record<keyof EstimateItems, string>> = {
+  total: "(?:初期費用)?(?:詳細)?合計額",
+  brokerage: "仲介(?:会社関連)?(?:手数料|費用)",
+  guarantee: "家賃保証(?:\\([^)]{0,8}\\))?",
+};
+function tableItemRe(k: keyof EstimateItems, re: RegExp): RegExp {
+  // 元の見出し（キャプチャの前まで）＋言い方の違う見出し、区切りに「|」も許す
+  const head = re.source.replace(/\\s\*\[:：\]\?\\s\*\[¥￥\]\?\\s\*\(.*$/, "");
+  const alt = TABLE_EXTRA[k];
+  return new RegExp(`(?:${head}${alt ? `|${alt}` : ""})\\s*[:：|｜]\\s*[¥￥]?\\s*([0-9][0-9,]*|[-ー－なし無し]+)`);
+}
 export const ESTIMATE_ITEM_LABEL: Record<keyof EstimateItems, string> = { deposit: "敷金", key_money: "礼金", brokerage: "仲介手数料", guarantee: "保証会社", key_change: "鍵交換", insurance: "火災保険", prorated: "日割家賃", advance_rent: "前家賃", rent: "家賃", admin: "管理費", total: "総額" };
 /** 宛名・人の名前を伏せる（「〇〇 様」・「様」だけの行の前の行の頭の語）。数字だけ取る前に必ず通す */
 export const maskEstimateNames = maskEstimateAddressee;
@@ -59,8 +78,9 @@ export function estimateFactsFromTranscript(raw: string): EstimateFacts | null {
   const t = maskEstimateNames(String(raw ?? "").normalize("NFKC"));
   if (!ESTIMATE_DOC_RE.test(t)) return null;
   const items: EstimateItems = {};
+  const tableOn = estimateTableParseOn();
   for (const [k, re] of ITEM_RES) {
-    const m = t.match(re);
+    const m = t.match(re) ?? (tableOn ? t.match(tableItemRe(k, re)) : null);
     if (!m) continue;
     const v = /^[-ー－なし無し]+$/.test(m[1]) ? 0 : Number(m[1].replace(/,/g, ""));
     if (Number.isFinite(v) && v >= 0 && v <= 3_000_000) items[k] = v;
