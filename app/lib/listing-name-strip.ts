@@ -10,8 +10,10 @@
 //   切替 LISTING_NAME_STRIP=on の時だけ（既定 off）。入口（ピックアップの記録）と出口（物件オススメの見出しをそろえる所）の2か所で使う。
 // テスト: app/lib/__tests__/listing-name-strip.test.ts
 
+// 2026-11-20 作業員K2（統括役の決め）: 既定 on。scripts/audit-listing-name-strip.ts を60日の全件に当て、変わる名前 10種類（全部「(イタンジ最新)」を外すだけ）・
+//   本文の見出し 862通のうち 1通（同じ ACT正雀）を目で読んで誤り0。旧名・フリガナ等のかっこ 349種類は残る。止める LISTING_NAME_STRIP=off
 export function listingNameStripEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LISTING_NAME_STRIP ?? "").trim().toLowerCase() === "on";
+  return (env.LISTING_NAME_STRIP ?? "").trim().toLowerCase() !== "off";
 }
 
 /** かっこの中にあれば外す語（サイト名・「最新」） */

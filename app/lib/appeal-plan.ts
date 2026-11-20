@@ -7,13 +7,15 @@
 //   ・今推す理由（whyNow）と前の訴求からの間（sinceLastAppealH）は、統括の situation_now（作業員L）の送った物・開いている約束から
 //   語彙: strength＝next-move-types.NextStrength・aim＝NextDest（作業員16・22 の次の一手の表・作業員L の situation_now・作業員I の書き手の対応表と同じ表）
 //
-// 読む側（既定 off・APPEAL_PLAN_READ=on）: ①締め（今と同じ答えになるかの確かめ・aix-template-generate）→ ②2通目の網と判断 → ③オススメポイント の順につなぐ
+// 読む側（2026-11-20 既定 on・APPEAL_PLAN_READ=off で止める）: ①締め（今と同じ答えになるかの確かめ・aix-template-generate）→ ②2通目の網と判断 → ③オススメポイント の順につなぐ
 import type { TopicKey } from "./recommendation-gaps";
 import type { NextDest, NextStrength } from "./next-move-types";
 import { compareAppealRecords, type AppealCompare, type AppealRecord, type AppealSurface, type WantLite } from "./appeal-record";
 
+// 2026-11-20 作業員K2（統括役の決め）: 既定 on。読む側は aix_generate_log の記録（appeal_plan_check）に計画との比べを足すだけで、文と判断は変えない（試験は要らない）。
+//   APPEAL_RECORD=shadow の記録は 11/19〜20 の本番で 9件（物件オススメ）＝計画と文の比べも同じ番で残す。止める APPEAL_PLAN_READ=off
 export function appealPlanReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.APPEAL_PLAN_READ ?? "").trim().toLowerCase() === "on";
+  return String(env.APPEAL_PLAN_READ ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 網の出所（今ある3つ） */

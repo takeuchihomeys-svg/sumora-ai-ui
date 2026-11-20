@@ -8,11 +8,12 @@
 //   KNOWLEDGE_USAGE_TABLE=on の時: 数えは小さな表 knowledge_usage（knowledge_id・used_delta・last_used_at）に足し、
 //   毎晩の update-knowledge の cron の最初に fold_knowledge_usage() で ai_reply_knowledge に1回だけ書き戻す（読む側は今のまま used_count を読む）。
 //   ⚠ update-knowledge の cron は used_count=0 の行を消す → 書き戻しはその前（cron の最初）。書き戻しは on・off に関係なく毎晩回す（off にした後の残りも戻す）
-//   新しい表・関数が無い（migrate の前）・失敗した時は今まで通りの RPC に戻す（数えを落とさない）。止める: 既定 off（=on で入る）
+//   新しい表・関数が無い（migrate の前）・失敗した時は今まで通りの RPC に戻す（数えを落とさない）。11/20 既定 on・止める: KNOWLEDGE_USAGE_TABLE=off
 type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string; code?: string } | null }>;
 
 export function knowledgeUsageTableOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.KNOWLEDGE_USAGE_TABLE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 既定 on（統括役の決め: 文と判断に触れない数えの移し替え・本番の BEGIN…ROLLBACK で確かめ済み）。止める KNOWLEDGE_USAGE_TABLE=off
+  return (env.KNOWLEDGE_USAGE_TABLE ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 使ったナレッジの id を数える（重複は1つ・空は何もしない）。返り値はどちらで数えたか */

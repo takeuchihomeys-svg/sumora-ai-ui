@@ -14,14 +14,14 @@ function fakeRpc(fail: Record<string, string> = {}) {
   return { rpc, calls };
 }
 
-test("既定 off・on で入る", () => {
-  assert.equal(knowledgeUsageTableOn({}), false);
-  assert.equal(knowledgeUsageTableOn({ KNOWLEDGE_USAGE_TABLE: "on" }), true);
+test("既定 on（11/20）・off で止まる", () => {
+  assert.equal(knowledgeUsageTableOn({}), true);
+  assert.equal(knowledgeUsageTableOn({ KNOWLEDGE_USAGE_TABLE: "off" }), false);
 });
 
 test("off: 今まで通り increment_knowledge_used_count（重複は1つ・空は除く）", async () => {
   const f = fakeRpc();
-  assert.equal(await recordKnowledgeUsage(f.rpc, ["a", "b", "a", "", null], {}), "legacy");
+  assert.equal(await recordKnowledgeUsage(f.rpc, ["a", "b", "a", "", null], { KNOWLEDGE_USAGE_TABLE: "off" }), "legacy");
   assert.deepEqual(f.calls, [{ fn: "increment_knowledge_used_count", args: { p_ids: ["a", "b"] } }]);
 });
 
