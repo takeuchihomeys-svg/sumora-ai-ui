@@ -220,6 +220,8 @@ void (async () => {
         bundle_reflect: {
           ...built,
           built_read_count: frozen ?? null,
+          prev_read_count: frozen ?? null,
+          judged_read_count: live.read_count,
           read_count: live.read_count,
           read_at: live.read_at,
           auto_after: live.auto_after,

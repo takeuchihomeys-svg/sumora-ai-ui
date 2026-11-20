@@ -528,8 +528,12 @@ export type SupervisorInput = {
     screen_solid: number;
     /** x/y がある欄数 */
     screen_all: number;
-    /** 束を拡張が読んだ回数（0＝未取得） */
+    /** 束を拡張が読んだ回数（0＝未取得）。※作った時点の値は「前の束」の読まれ数（prev_read_count と同じ）。判定には judged_read_count を使う */
     read_count: number;
+    /** ★ 2026-11-20: **判断する束**（この束）の読まれ数。作る時は必ず 0（作ったばかり）・統括Pro では DB の最新行の今の値 */
+    judged_read_count?: number;
+    /** ★ 2026-11-20: 作った時点の前の束の読まれ数（今、拡張が使っている束） */
+    prev_read_count?: number;
     read_at?: string | null;
     /** 最新束のあとに自動モードの記録があるか */
     auto_after: boolean;
@@ -1067,8 +1071,10 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
    *   ⚠ 実測: 束に n≥3 が33欄あっても read_count=0 → 「渡してよい」は嘘になる。
    */
   const brIn = inp.bundle_reflect && typeof inp.bundle_reflect === "object" ? inp.bundle_reflect : null;
+  /** ★ 2026-11-20: 判定に使うのは「判断する束」の読まれ数（作ったばかりの束は 0 ＝まだ拡張が読んでいない） */
+  const judgedRead = brIn ? judgedReadCount(brIn) : 0;
   const capByReflect: SupervisorVerdict | null =
-    brIn && num(brIn.screen_solid) >= 3 && ((num(brIn.read_count) <= 0) || brIn.auto_after !== true)
+    brIn && num(brIn.screen_solid) >= 3 && ((judgedRead <= 0) || brIn.auto_after !== true)
       ? "almost"
       : null;
 
@@ -1187,8 +1193,8 @@ export function superviseLearn(input: SupervisorInput): SupervisorAdvice {
     cappedParts.push(`人の手本が ${Math.round((humanShare ?? 0) * 100)}%（人${humanOps}/機械${autoOps}回）なので「渡してよい」にはしない`);
   }
   if (capByReflect && rank2(verdict) <= rank2(capByReflect)) {
-    const why = num(brIn!.read_count) <= 0
-      ? `学んだ画面位置（n≥3 ${num(brIn!.screen_solid)}欄）が拡張に届いていない（read_count=0）`
+    const why = judgedRead <= 0
+      ? `学んだ画面位置（n≥3 ${num(brIn!.screen_solid)}欄）の束は作ったばかりで、拡張がまだ読んでいない（判断する束の読まれ数 0）`
       : "新束のあとの自動走行がまだ無い（反映の効果を確かめていない）";
     cappedParts.push(`${why}ので「渡してよい」にはしない`);
   }
@@ -1731,8 +1737,8 @@ function selfCheck(m: {
    */
   const br = m.bundleReflect;
   if (br && br.screen_solid >= 3 && m.verdict === "ready") {
-    if ((br.read_count ?? 0) <= 0) {
-      issues.push(`「渡してよい」と言っていますが、学んだ画面の位置が拡張に届いていません（n≥3 ${br.screen_solid}欄・read_count=0）`);
+    if (judgedReadCount(br) <= 0) {
+      issues.push(`「渡してよい」と言っていますが、学んだ画面の位置の束を拡張がまだ読んでいません（n≥3 ${br.screen_solid}欄・判断する束の読まれ数 0）`);
     } else if (!br.auto_after) {
       issues.push(`「渡してよい」と言っていますが、新束のあとの自動走行がまだありません（反映の効果を確かめていない）`);
     }
@@ -1747,8 +1753,8 @@ function selfCheck(m: {
   const tasks = Array.isArray(m.learningTasks) ? m.learningTasks : [];
   const bn = (() => {
     const br = m.bundleReflect;
-    if (br && (br.read_count ?? 0) <= 0 && (br.screen_solid ?? 0) >= 3) return 4;
-    if (br && (br.read_count ?? 0) > 0 && !br.auto_after) return 5;
+    if (br && judgedReadCount(br) <= 0 && (br.screen_solid ?? 0) >= 3) return 4;
+    if (br && judgedReadCount(br) > 0 && !br.auto_after) return 5;
     return 0;
   })();
   if (m.weakN > 0 && todoN > 0 && bn < 4) {
@@ -1761,7 +1767,7 @@ function selfCheck(m: {
    *   画面位置はあるのに拡張未読なのに、拡張再読込の課題が無い → 学習しても改善に繋がらない。
    */
   if (bn === 4 && !tasks.some((t) => t && (t.kind === "need_ext_reload" || t.kind === "reflect_auto"))) {
-    issues.push("学んだ画面位置が拡張に届いていない（read_count=0）のに、拡張再読み込み／反映確認の課題が無い（改善につながる一連が切れている）");
+    issues.push("学んだ画面位置の束を拡張がまだ読んでいない（判断する束の読まれ数 0）のに、拡張再読み込み／反映確認の課題が無い（改善につながる一連が切れている）");
   }
   if (bn === 4 && tasks[0]?.kind === "photo_learn") {
     const miss = (m.challengeMissingInBundle || []).length;
@@ -4635,4 +4641,16 @@ function buildMeeting(m: {
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * ★ 2026-11-20 竹内さん「反映の流れ」（承認済み）: 判断する束の読まれ数。
+ *   新しい束（judged_read_count）を優先し、無ければ従来の read_count（古い行の値）。
+ *   ⚠ bundle_reflect.read_count は作った時点の**前の束**の値なので、判定にはそのまま使わない。
+ */
+export function judgedReadCount(br: { read_count?: number; judged_read_count?: number } | null | undefined): number {
+  if (!br) return 0;
+  const j = br.judged_read_count;
+  if (typeof j === "number" && Number.isFinite(j)) return Math.max(0, j);
+  return num(br.read_count);
 }
