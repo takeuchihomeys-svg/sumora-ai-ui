@@ -123,6 +123,11 @@ function fakeExec(opts: { failIf?: (sql: string) => boolean; tick?: () => void }
       ok(!new RegExp(`ALTER FUNCTION ${name}\\([^)]*\\) SET ivfflat`).test(parts[doIdx]), `${name} no probes`);
     }
     ok(!parts.some((s) => /CREATE INDEX IF NOT EXISTS (?:idx_ai_reply_examples_embedding|ai_reply_knowledge_embedding_idx|winning_patterns_embedding_idx)\b/.test(s)), "old ivfflat indexes not recreated");
+    // 2026-11-20: 手本の2つは部分の HNSW と、関数だけ seqscan・bitmapscan を止める（0:10 の cron の CREATE OR REPLACE の後に DO で付け直す）
+    for (const name of ["match_reply_examples", "match_aix_reply_examples"]) for (const g of ["enable_seqscan", "enable_bitmapscan"])
+      ok(new RegExp(`ALTER FUNCTION ${name}\\([^)]*\\) SET ${g} = off`).test(parts[doIdx]), `${name} ${g} off in DO`);
+    ok(parts.some((s) => /CREATE INDEX IF NOT EXISTS ai_reply_examples_aix_hnsw ON ai_reply_examples USING hnsw \(embedding vector_cosine_ops\) WHERE entry_source IN/.test(s)), "aix partial hnsw");
+    ok(parts.some((s) => /CREATE INDEX IF NOT EXISTS ai_reply_examples_line_hnsw ON ai_reply_examples USING hnsw \(embedding vector_cosine_ops\) WHERE entry_source = 'line_reply'/.test(s)), "line partial hnsw");
     // 毎晩失敗していた文を外した
     ok(!parts.some((s) => /CREATE INDEX IF NOT EXISTS idx_system_design_thinking_embedding/.test(s.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n"))), "ivfflat index removed");
     ok(!parts.some((s) => /^\s*CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_sys_key_full_created/m.test(s)), "sys_key_full btree removed");

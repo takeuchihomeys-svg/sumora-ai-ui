@@ -425,6 +425,10 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS embedding vector(1536);
 -- 2026-11-18 作業員H（竹内さん「LINE が重い」・Disk IO の使い切り）: ivfflat＋probes=100 は毎回索引を全部読んでいた → HNSW に替えた（scripts/sql/rag-index-1118.sql・戻す rag-index-1118-rollback.sql）
 CREATE INDEX IF NOT EXISTS ai_reply_examples_embedding_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops);
 DROP INDEX IF EXISTS idx_ai_reply_examples_embedding;
+-- 2026-11-20 作業員H: 本番に近い問いで測ると、手本の2つの関数は全体の HNSW を使わず表を全部読んでいた（Seq Scan・1.66万ブロック・2.5〜2.9秒・昼は8秒の打ち切り）。
+--   絞り込み（entry_source）と同じ条件の部分の HNSW にすると計画が索引を選ぶ（scripts/sql/rag-index-1120.sql・戻す rag-index-1120-rollback.sql）
+CREATE INDEX IF NOT EXISTS ai_reply_examples_aix_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops) WHERE entry_source IN ('aix_template', 'aix_action', 'aix_property');
+CREATE INDEX IF NOT EXISTS ai_reply_examples_line_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops) WHERE entry_source = 'line_reply';
 
 -- タスク管理テーブル（物件確認・物件出し依頼）
 CREATE TABLE IF NOT EXISTS line_tasks (
@@ -3394,6 +3398,12 @@ DO $$ BEGIN
   EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET hnsw.iterative_scan = relaxed_order';
   EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.ef_search = 100';
   EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.iterative_scan = relaxed_order';
+  -- 2026-11-20 作業員H: 手本の2つは計画が表の全部読み（Seq Scan・ベクトルの TOAST の読みを見積もりに入れない）を選んでいた → この2つの関数だけ
+  --   seqscan・bitmapscan を止める（状態が多い時は部分の HNSW・少ない時は状態の btree の厳密な検索を計画が選ぶ・本番に近い問いで 2.5〜2.9秒 → 1〜41ms・厳密との重なり 24/24・14.6/15）
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_bitmapscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_bitmapscan = off';
   EXECUTE 'ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100';
   EXECUTE 'ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100';
 END $$;
