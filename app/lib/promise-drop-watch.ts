@@ -90,6 +90,7 @@ export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by:
   const d = promiseDueDay(scrubbed, atMs);
   return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + PROMISE_DROP_MIN_H * 3_600_000, by: "default72h" };
 }
+const PICKUP_SENT_RE = /新着で出(?:た|ました)?|オススメ出来るお部屋(?:と|に)なります|お部屋(?:を)?お送りさせて頂きました|(?:こちらの)?お部屋如何でしょうか/;
 const ESTIMATE_SENT_RE = /(?:御見積書|お見積(?:もり|り)?書?)(?:と)?(?:なります|になります|お送りさせて頂きました|お送り致しました|送らせて頂きました|添付)/;
 export type PromiseEvidence = { msgs: ReadonlyArray<PdMsg>; aix: ReadonlyArray<PdAix>; sent: ReadonlyArray<PdSent> };
 /**
@@ -109,6 +110,9 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName 
   // 2026-11-21 作業員N の B1 の数え（見積の約束2つが AIX 無しで「果たしていない」）: こちらの手打ちの文で御見積書を送った番も果たした
   //   （「御見積書となります」「お見積りお送りさせて頂きました」。「作成させて頂きます」は約束なので数えない。画像だけの送付は中身が分からないので数えない）
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && ESTIMATE_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
+  // 2026-11-21 作業員N の確かめ（a260169b）: グループに出た物件を、竹内さんが LINE で手で送った番（AIX も送付の記録も無い）。
+  //   こちらの手打ちの文に「新着で出」「オススメ出来るお部屋となります」「こちらのお部屋如何でしょうか」等があれば果たした（画像だけは数えない）
+  if (promise.kind === "pickup") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && PICKUP_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
   // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;

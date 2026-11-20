@@ -139,4 +139,5 @@ assert.equal(promiseDropKindOf("〇〇さんのご条件に合ったお部屋ピ
 }
 import { promiseInputWaitTurn } from "../promise-drop-watch";
 assert.equal(typeof promiseInputWaitTurn, "function");
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "pickup" }, { msgs: [{ sender: "staff", text: "はい！！ こちら新着で出たAさんにオススメ出来るお部屋となります😊！！", created_at: at(30), is_aix_generated: false }], aix: [], sent: [] }), { by: "staff_text", at: at(30) });
 console.log("promise-holes: ok");
