@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.146: 前客の区を1つずつ外す（送る→押す→外れたか確かめる→次）・ページ上限で止めた理由を残す**（竹内さん「地域ちゃんと外せていなかった」「次へのところも２つ目で終わって3つ目にいかなかった」「前のお客さんの条件を逆算したらなにをはずすのか把握するの簡単なのになんでできないのか」）
+- 本番DBで判明（#1558・2.8.145・run sa_mwotvv7n_opqfujgk・前客 堺市7区→次客 駅3）:
+  - 外す物は分かっていた（`leftover_ledger` 入れた控え 区:堺市堺区…美原区 の7区）。外せなかったのは**押し方**。
+  - 箱ごとの外し（`_runUncheck`）が7区を**まとめて**順番待ちに積み、押す相手も `label[for]` 優先（選ぶ時の `_labelForCheckbox` と別）。1区目を送っている間に一覧が見えなくなり、7区とも `hidden_press`（カーソル無し）→外れず。
+  - 開き直しの係（`_clearWardsBeforeStationThen`）も見える区を forEach で一度に積む形。2周目は7区とも見えず「区/町7 外し切れず」→ `ward_clear_open_retry` のまま止まった。
+- 直した事（page-script.js）:
+  - 新 `_clearWardsOneByOne(done, why)`: 画面の並び順に**1区ずつ** — 小窓の一覧の中でスクロールする箱を探して送る（`_scrollIntoScrollParent`・箱が無ければ画面を送る）→ 押す点が見えるまで最大1.5秒待つ → `_toggleCheckboxLikeHuman(cb,false)` → 外れたか最大2.5秒確かめる → 次。外れない区は2回まで。見えない区は**直接押さない**（`ward_hidden_diag` に隠れ元の要素・display・大きさ・label[for] の数・画面の種類を残す）。
+  - 所在地の段（`_openThenUncheck`）は `_stage(city_code)` をやめ、開く→1区ずつ→`_settlePanelDebtThen`（確定）→次の段。
+  - 開き直しの係の clear の段も1区ずつ（`oneBusy` の間は次の判断をしない・時間切れ 120→220回）。
+  - 印: `ward_clear_one`／`_ok`／`_ng`／`_offscreen`／`_done`・`ward_hidden_diag`（`_PIN`・`RULE_STEP`・`KEEP_STEP` で上限でも落とさない）。
+- ページ（#1556）: 午後の便の命令は **`max_pages=2`**（`PM_PLAN`・2026-09-30 竹内さん「午後の便は今日の更新がないか見るだけ…もっと限定的に」）。上限どおりに止まっていたが、記録も画面も「P2 全部終わりました」で理由が見えなかった。
+  - bulk-dl.js `_autoFinish`: 上限なら `auto_page_limit`（P/上限・出どころ「便の指定N／既定」・次のページの有無）、上限前なら `auto_page_stop`。次のページがあるのに上限で止めた時は画面にも「📄 上限 Nページ（…）で終わり・次のページは見ていません」。
+  - ⚠ **未決**: 11/15 の決定（KB a42719a1「自動押下・自動便ともページ上限は既定3」）と午後の便2ページ（9/30）の食い違い。PM_PLAN は変えていない（竹内さんに確認待ち）。
+- 決まり `ward_clear_one`（scene clear・since 2.8.146・確かめ: `page:ward_clear_one` がある回は `page:ward_clear_one_done` がある）。`AUTO_RULES_REVIEWED_UP_TO`・manifest・`_AXLX_PAGE_VER` = 2.8.146。
+- 試験: 新 `tests/chrome-extension/ward-clear-one-v28146.test.js`（33・動きの模擬: 1区ずつ・重ね押し0・見えない区は押さない・外れない区は2回まで）。leftover-progress・place-switch・active-clock の模擬に `_clearWardsOneByOne` の代役、clear-per-panel の段の並びの確かめを新しい形に。全体 209本 ✗226（2.8.145 と同じ・悪化0）。
+- 次に確かめる事: 2.8.146 の自動で前客の区が残る回に `ward_hidden_diag` が出たら、隠れ元（どの要素が display:none か）を読んで開き方を直す。
+
 ## 2026-11-20 **拡張 2.8.145: 手順書の質 — 決まりの確かめを誤らない・確かめられる決まりを 6→13・確かめの印を記録の上限で落とさない**（竹内さん「手順書の質上げる」）
 - 本番DBで判明（`check-playbook-reflect.ts` の「守れていない」8件は全部が判定の誤り）:
   - #1552（`human_`）: 人が押した検索の回を自動の決まりで判定していた。

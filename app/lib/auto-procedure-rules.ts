@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.145";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.146";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -282,6 +282,16 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す",
     file: "search-audit.js",
+  },
+  {
+    id: "ward_clear_one",
+    scene: "clear",
+    text: "前のお客さんの区・町は、まとめて押さず1区ずつ外す。小窓の一覧の中で見えない所にある区は一覧を送って見せてからカーソルで押し、外れたのを確かめてから次の区へ。見えない区は直接押さない（何が隠しているかを点検に残し、小窓を開き直して外す）",
+    since: "2.8.146",
+    kb: null,
+    marker: "1区ずつ: 小窓の一覧を送って見せる→カーソルで押す→外れたか確かめる→次",
+    file: "page-script.js",
+    verify: { onlyIf: ["page:ward_clear_one"], mustHave: "page:ward_clear_one_done" },
   },
 ];
 

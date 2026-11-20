@@ -232,6 +232,13 @@ function runWardClear(opts) {
     _pressLearned: () => {},
     _labelForCheckbox: (cb) => cb,
     _toggleCheckboxLikeHuman: () => { log.toggled++; if (!opts.noEffect) w.left = Math.max(0, w.left - 1); },
+    // 2.8.146: 見える区を1つずつ外す係（中身は ward-clear-one-v28146 で確かめる）
+    _clearWardsOneByOne: (done) => {
+      Array.from(ctx.document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'))
+        .filter((cb) => ctx.isVisible(ctx._labelForCheckbox(cb) || cb))
+        .forEach((cb) => ctx._toggleCheckboxLikeHuman(cb, false));
+      done();
+    },
     _noteClearMethod: () => {},
     _pressConfirmListLikeHuman: () => { log.confirmed++; w.panel = false; return true; },
     enqueueHumanClick: () => { log.closeClicks++; w.panel = false; },

@@ -18,10 +18,11 @@ function check(name, ok) {
 check("manifest 2.8.135 以降", /^2\.8\.(13[5-9]|1[4-9]\d)$/.test(manifest.version));
 check("_AXLX_PAGE_VER 2.8.135 以降", /_AXLX_PAGE_VER = "2\.8\.(13[5-9]|1[4-9]\d)"/.test(src));
 
-const unc = src.slice(src.indexOf("function _uncheckLeftoversThenRest"), src.indexOf("function _uncheckLeftoversThenRest") + 9000);
+const unc = src.slice(src.indexOf("function _uncheckLeftoversThenRest"), src.indexOf("function _uncheckLeftoversThenRest") + 12000);
 check("① _runUncheck が段（onlyRe/skipRe/after）を受ける", /var _runUncheck = function \(onlyRe, skipRe, after\)/.test(unc));
 check("① 段の外しが終わったら次へ（_next）", /_settlePanelDebtThen\("前客クリア後のパネル清算"[\s\S]{0,200}_next\(\)/.test(unc));
-check("① 間取り→ペット→所在地の順の段", /_stage\('input\[name="room_layout_id\[\]"\]:checked'[\s\S]{0,200}_stage\('input\[name="eq_rm\[\]"\]:checked'[\s\S]{0,200}_stage\('input\[name="city_code\[\]"\]:checked/.test(unc));
+// 2.8.146: 所在地の段は _stage ではなく1区ずつ外す係（_clearWardsOneByOne）
+check("① 間取り→ペット→所在地の順の段", /_stage\('input\[name="room_layout_id\[\]"\]:checked'[\s\S]{0,200}_stage\('input\[name="eq_rm\[\]"\]:checked'[\s\S]{0,400}input\[name="city_code\[\]"\]:checked[\s\S]{0,900}_clearWardsOneByOne\(/.test(unc));
 check("① 全部の箱を先に開ける旧形（chain.then(_runUncheck, _runUncheck)）が無い", !/chain\.then\(_runUncheck, _runUncheck\)/.test(unc));
 check("① 残りの段は前の段の欄を除く", /_runUncheck\(null, \/\^\(room_layout_id\|eq_rm\|city_code\|town_code\)\/, _resetRest\)/.test(unc));
 check("① 前の段で外したら『残0』の記録を付けない", /if \(!_clearedAny\)/.test(unc));

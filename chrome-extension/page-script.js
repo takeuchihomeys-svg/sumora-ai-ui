@@ -2735,7 +2735,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.145";
+  var _AXLX_PAGE_VER = "2.8.146";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -2744,7 +2744,7 @@
     "order_human", "area_before_cond", "no_reset_button", "clear_per_panel", "no_hidden_press",
     "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
     "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
-    "one_cursor", "audit_keep_reason", "ward_detail_skip", "audit_rule_evidence",
+    "one_cursor", "audit_keep_reason", "ward_detail_skip", "audit_rule_evidence", "ward_clear_one",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -5460,7 +5460,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -8371,6 +8371,133 @@
       }
     );
   }
+  /**
+   * 欄を「中でスクロールする箱」（所在地の小窓の一覧など）の中で見える所まで送る。箱が無ければ画面を送る。
+   * scrollIntoView は画面の見え方だけを見て止まる事があり、小窓の一覧の下にある区が見切れたまま押されていた（#1558）。
+   * @returns {Element|null} 送った箱
+   */
+  function _scrollIntoScrollParent(el) {
+    var cont = null;
+    try {
+      var p = el.parentElement;
+      while (p && p !== document.body && p !== document.documentElement) {
+        var cs = window.getComputedStyle(p);
+        if (/(auto|scroll)/.test(String(cs.overflowY || "")) && p.scrollHeight > p.clientHeight + 4) { cont = p; break; }
+        p = p.parentElement;
+      }
+      var r = el.getBoundingClientRect();
+      if (cont) {
+        var cr = cont.getBoundingClientRect();
+        if (r.top < cr.top + 8 || r.bottom > cr.bottom - 8) {
+          var dy = (r.top + r.height / 2) - (cr.top + cr.height * (0.42 + Math.random() * 0.16));
+          cont.scrollBy({ top: Math.round(dy), behavior: Math.random() < 0.85 ? "smooth" : "auto" });
+          _lastScrollAt = Date.now();
+          _lastScrollDir = dy > 0 ? 1 : -1;
+        }
+      }
+      setTimeout(function () {
+        try {
+          var r2 = el.getBoundingClientRect();
+          var vh = window.innerHeight || 800;
+          if (r2.top < 40 || r2.bottom > vh - 40) {
+            el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            _lastScrollAt = Date.now();
+          }
+        } catch (_) {}
+      }, cont ? 420 : 0);
+    } catch (_) {}
+    return cont;
+  }
+  /** 見えない区・町の欄を、何が隠しているかと一緒に点検へ残す（同じ欄は1回だけ） */
+  function _auditHiddenWard(cb, lb) {
+    if (!_audit) return;
+    var why = "";
+    try {
+      var el = lb || cb, n = 0;
+      while (el && el !== document.body && n < 12) {
+        var cs = window.getComputedStyle(el), r = el.getBoundingClientRect();
+        var off = cs.display === "none" || cs.visibility === "hidden";
+        if (off || (r.width === 0 && r.height === 0)) {
+          why = String(el.tagName || "").toLowerCase() + "." + String(el.className || "").replace(/\s+/g, ".").slice(0, 30)
+            + (el.id ? "#" + String(el.id).slice(0, 20) : "") + " disp=" + cs.display + " vis=" + cs.visibility
+            + " " + Math.round(r.width) + "x" + Math.round(r.height);
+          if (off) break;
+        }
+        el = el.parentElement; n++;
+      }
+    } catch (_) {}
+    var forN = 0;
+    try { if (cb.id) forN = document.querySelectorAll('label[for="' + String(cb.id).replace(/"/g, "") + '"]').length; } catch (_) {}
+    var scr = "";
+    try { var g = _graspAreaModalScreen(); scr = g.kind + "/区" + g.wardVis + "/町" + g.townVis; } catch (_) {}
+    try { _auditStepP("ward_hidden_diag", String(cb.value || "") + " " + (lb ? "label有" : "label無") + " for" + forN + " 画面=" + scr + " 隠れ元=" + (why || "不明")); } catch (_) {}
+  }
+  /**
+   * ★ 2026-11-20 (2.8.146) 竹内さん「地域ちゃんと外せていなかった」「所在地選択する際に画面外にあってスクロールせずに画面外にいった」
+   *   「前のお客さんの条件を逆算したらなにをはずすのか把握するの簡単なのになんでできないのか」「ちゃんと１つ１つできるようにする」:
+   *   実測 #1558: 外す区（堺市7区）は台帳で分かっていた。外せなかったのは押し方 —
+   *   7区をまとめて順番待ちに積み、外れたかを確かめずに次を押していた（選ぶ時の clickWardPrecise は1区ずつ）。
+   *   途中で一覧が見えなくなっても止まらず、7区とも hidden_press（カーソル無し）→外れず「区/町7 外し切れず」。
+   *   → 選ぶ時と同じく1区ずつ: 小窓の一覧を送って見せる→カーソルで押す→外れたか確かめる→次。
+   *     見えない区は直接押さず、理由を ward_hidden_diag に残して開き直しの係（_clearWardsBeforeStationThen）に任せる。
+   */
+  function _clearWardsOneByOne(done, why) {
+    var t0 = Date.now();
+    var tries = {};
+    var okN = 0, ngN = 0, hidN = 0;
+    var _left = function () {
+      try { return Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked')); } catch (_) { return []; }
+    };
+    var finish = function (how) {
+      try { if (_audit) _auditStepP("ward_clear_one_done", how + " 外した" + okN + "・外れず" + ngN + "・見えず" + hidN + "・残" + _left().length + "（" + (why || "前客") + "）"); } catch (_) {}
+      try { done(); } catch (_) {}
+    };
+    var step = function () {
+      if (_axHumanTookOver) return;
+      if (Date.now() - t0 > 90000) { finish("時間切れ"); return; }
+      var left = _left();
+      if (!left.length) { finish("完了"); return; }
+      var cb = null, lb = null;
+      for (var i = 0; i < left.length; i++) {
+        var k = String(left[i].name) + ":" + String(left[i].value);
+        if ((tries[k] || 0) >= 2) continue;
+        var l = null;
+        try { l = _labelForCheckbox(left[i]) || left[i]; } catch (_) { l = left[i]; }
+        if (!isVisible(l)) {
+          if (!tries[k]) { hidN++; try { _auditHiddenWard(left[i], l === left[i] ? null : l); } catch (_) {} }
+          tries[k] = 2;
+          continue;
+        }
+        cb = left[i]; lb = l; tries[k] = (tries[k] || 0) + 1;
+        break;
+      }
+      if (!cb) { finish(hidN ? "見えない区だけ残る" : "外れない区だけ残る"); return; }
+      var code = String(cb.value || "");
+      var nm0 = String(lb.textContent || "").replace(/\s+/g, "").slice(0, 16);
+      var cont = _scrollIntoScrollParent(lb);
+      try { if (_audit) _auditStepP("ward_clear_one", nm0 + "(" + code + ") " + (cont ? "一覧を送って" : "") + "見せてから外す"); } catch (_) {}
+      var w0 = Date.now();
+      (function waitShown() {
+        var shown = false;
+        try { shown = !!_visibleHitPoint(lb, null); } catch (_) { shown = true; }
+        if (!shown && Date.now() - w0 < 1500) { setTimeout(waitShown, 120); return; }
+        if (!shown) { try { if (_audit) _auditStepP("ward_clear_one_offscreen", nm0 + " 送っても押す点が見えない"); } catch (_) {} }
+        _toggleCheckboxLikeHuman(cb, false, null, null, { quick: okN > 0 });
+        whenClickQueueIdle(function () {
+          var p0 = Date.now();
+          (function poll() {
+            var off = false;
+            try { off = !cb.isConnected || !cb.checked; } catch (_) { off = true; }
+            if (!off && Date.now() - p0 < 2500) { setTimeout(poll, 120); return; }
+            if (off) okN++; else ngN++;
+            try { if (_audit) _auditStepP(off ? "ward_clear_one_ok" : "ward_clear_one_ng", nm0 + "(" + code + ")"); } catch (_) {}
+            setTimeout(step, _ln(380, 0.35, 220, 800));
+          })();
+        });
+      })();
+    };
+    step();
+  }
   function _clearWardsBeforeStationThen(nextFn, why, round, progArg) {
     var _why = why || "駅";
     var _round = Number(round) || 0;
@@ -8403,6 +8530,7 @@
     if (!prog) { prog = _leftoverProgressNew(cityLeft, clk.tick()); prog.clk = clk; }
     var altClosed = !prog.alt, altWaitUntil = 0;
     var hiddenLeftSeen = false;
+    var oneBusy = false;
     var _finish = function (how) {
       /**
        * ★ 2026-11-19 竹内さん「地域のお客さんから駅に移る場合もちゃんとここの部分外す」:
@@ -8509,19 +8637,22 @@
             phase = "confirm";
             return false;
           }
+          if (oneBusy) return false;
           if (!clearedAt || clk.tick() - clearedAt > 400) {
             clearedAt = clk.tick();
             var n = 0;
             Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'))
               .forEach(function (cb) {
-                var hit = _labelForCheckbox(cb);
-                if (hit && !isVisible(hit)) return;
-                _toggleCheckboxLikeHuman(cb, false);
+                var hit = _labelForCheckbox(cb) || cb;
+                if (!isVisible(hit)) return;
                 n++;
               });
-            if (n && _audit) {
-              _auditStepP("ward_clear_cursor", "区/町" + n + "を1つずつ外す（" + _why + "の前）");
+            if (n) {
+              if (_audit) _auditStepP("ward_clear_cursor", "区/町" + n + "を1つずつ外す（送る→押す→確かめる・" + _why + "の前）");
               try { _noteClearMethod("ward", "cursor_one_by_one", _why + "前に区" + n); } catch (_) {}
+              oneBusy = true;
+              _clearWardsOneByOne(function () { oneBusy = false; clearedAt = clk.tick(); }, _why + "の前");
+              return false;
             }
             if (!n) {
               if (!hiddenOnlySince) hiddenOnlySince = clk.tick() || 1;
@@ -8605,7 +8736,8 @@
       function () {
         _finish(phase === "fail_open" ? "開けず" : "完了");
       },
-      120,
+      // 1区ずつ確かめながら外すので、区が多い時（7区など）も途中で時間切れにしない
+      220,
       450,
       300,
       function () {
@@ -11126,7 +11258,24 @@
             };
             _stage('input[name="room_layout_id[]"]:checked', "room_layout_id[]", /^room_layout_id/);
             _stage('input[name="eq_rm[]"]:checked', "eq_rm[]", /^eq_rm/);
-            _stage('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked', "city_code[]", /^(city_code|town_code)/);
+            // 区・町はまとめて積まず、1区ずつ「送る→押す→外れたか確かめる」（_clearWardsOneByOne・#1558）
+            chain = chain.then(function () {
+              var el = null;
+              try { el = document.querySelector('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'); } catch (_) { el = null; }
+              if (!el) return true;
+              try { _auditStepP("clear_stage", "city_code[] を開けて1区ずつ外す"); } catch (_) {}
+              return _ensureFieldVisible(el, "city_code[]", 4000).then(function () { return true; }, function () { return false; })
+                .then(function () {
+                  return new Promise(function (resolve) {
+                    whenClickQueueIdle(function () {
+                      _clearedAny = true;
+                      _clearWardsOneByOne(function () {
+                        _settlePanelDebtThen("前客の区を1つずつ外した後の確定", function () { resolve(true); });
+                      }, "前客の区");
+                    });
+                  });
+                });
+            });
             var _rest = function () { _runUncheck(null, /^(room_layout_id|eq_rm|city_code|town_code)/, _resetRest); };
             chain.then(_rest, _rest);
           };

@@ -2451,6 +2451,24 @@
         return;
       }
     }
+    /**
+     * ★ 2026-11-20 (2.8.146) 竹内さん「次へのところも２つ目で終わって3つ目にいかなかった」:
+     *   実測 #1556: 午後の便の命令は max_pages=2（PM_PLAN）。上限で止まったのに記録も画面も「P2 全部終わりました」で、
+     *   上限で止めたのか次のページが無かったのか分からなかった。→ 止めた理由（上限・次のページの有無・上限の出どころ）を残して見せる。
+     */
+    var _nextLeft = false;
+    try { _nextLeft = !!(typeof _findNextPageEl === "function" && _findNextPageEl()); } catch (_) { _nextLeft = false; }
+    var _limSrc = "既定";
+    try {
+      var _ro = _autoRunFor(_pickCustomerIdForAuto());
+      if (_ro && Number(_ro.max_pages) > 0) _limSrc = "便の指定" + Number(_ro.max_pages);
+    } catch (_) {}
+    if (page >= maxP) {
+      _tmark("auto_page_limit", "P" + page + "/" + maxP + " 上限で終わり（" + _limSrc + "）" + (_nextLeft ? "・次のページあり" : "・次のページ無し"));
+      if (_nextLeft) _nudge("📄 上限 " + maxP + "ページ（" + _limSrc + "）で終わり・次のページは見ていません");
+    } else {
+      _tmark("auto_page_stop", "P" + page + "/" + maxP + " 上限前に終わり" + (_nextLeft ? "（次のページあり・送った" + n + "件）" : "（次のページ無し）"));
+    }
     _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件・P" + page + "/" + maxP + "）");
     try {
       chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
