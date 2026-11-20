@@ -202,9 +202,9 @@ void (async () => {
     line(`■ 写真の学べ済みを数えられない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
   }
 
-  const autoNotes = proMeetNotesFromBundle(bundleForPro);
-  // ★ 2026-11-20 竹内さん「反映の流れ」: 束に写された反映（read_count）は**作った時点の値で固定**される。
-  //   新しい束は必ず read=0 で作られるので、統括は今の読まれ数を見られない。→ 今の行の値を事実メモに足す（古い値と並べる）。
+  // ★ 2026-11-20 竹内さん「反映の流れ」（差分を見せて承認済み）:
+  //   束に写された反映（bundle_reflect.read_count）は**作った時点の値で固定**される。その値は「前の束」の読まれ数。
+  //   統括が見るべきは DB の最新行（判断する束）の今の値。→ 今の値を bundle_reflect に入れ、作った時点の値は built_read_count に残す。
   let liveReflectNote: string | null = null;
   try {
     const { createClient } = await import("@supabase/supabase-js");
@@ -213,13 +213,27 @@ void (async () => {
     const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
     if (u && k) {
       const live = await fetchBundleReflectHint(createClient(u, k), { scope });
-      const frozen = ((bundleForPro.bundle_reflect ?? {}) as { read_count?: number }).read_count;
-      liveReflectNote = `反映の今（DBの最新行）: 拡張が読んだ ${live.read_count}回${live.read_at ? `（${String(live.read_at).slice(0, 16)}）` : ""}・新束のあと自動=${live.auto_after ? "あり" : "なし"}／束に写された作った時点の値は read=${frozen ?? "無"}（古い。作った時の値で固定されている）`;
+      const built = (bundleForPro.bundle_reflect ?? {}) as Record<string, unknown>;
+      const frozen = built.read_count;
+      bundleForPro = {
+        ...bundleForPro,
+        bundle_reflect: {
+          ...built,
+          built_read_count: frozen ?? null,
+          read_count: live.read_count,
+          read_at: live.read_at,
+          auto_after: live.auto_after,
+          source: "live",
+        },
+      };
+      liveReflectNote = `反映の今（DBの最新行・判断する束）: 拡張が読んだ ${live.read_count}回${live.read_at ? `（${String(live.read_at).slice(0, 16)}）` : ""}・新束のあと自動=${live.auto_after ? "あり" : "なし"}／作った時点の値（前の束の読まれ数）は read=${frozen ?? "無"}（古い。今の判断には使わない）`;
       line(`■ ${liveReflectNote}`);
     }
   } catch (e) {
     line(`■ 反映の今を読めない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
   }
+  // 反映の今を入れた後の束から、束からの事実メモを作る（古い値を混ぜない）
+  const autoNotes = proMeetNotesFromBundle(bundleForPro);
   // ★ 2026-11-19: 既に竹内さんへ出して未回答の問いは Pro に渡す（同じ事を聞き直さない・答えが来るまで該当の作業は保留）
   const openAskNotes: string[] = [];
   try {
