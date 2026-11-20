@@ -52,17 +52,35 @@ async function main() {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
   const days = Number(arg("days", "30")) || 30;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  type Row = { id: number; scene_key: string | null; kbscene: string | null; brain_reply_mode: string | null; staff_texts: Array<{ text?: string }> | null; staff_aix: Array<{ aix_type?: string }> | null; verdict: string | null; reason: string | null };
+  type Row = { id: number; conversation_id: string; writer?: string; scene_key: string | null; kbscene: string | null; brain_reply_mode: string | null; staff_texts: Array<{ text?: string }> | null; staff_aix: Array<{ aix_type?: string }> | null; verdict: string | null; reason: string | null };
   const rows: Row[] = [];
   for (let from = 0; ; from += 500) {
     const { data, error } = await sb.from("line_watch_turns")
-      .select("id,scene_key,kbscene:materials->brain->kb->>scene,brain_reply_mode,staff_texts,staff_aix,verdict,reason:verdict_detail->>reason")
+      .select("id,conversation_id,scene_key,kbscene:materials->brain->kb->>scene,brain_reply_mode,staff_texts,staff_aix,verdict,reason:verdict_detail->>reason")
       .gte("customer_turn_at", since).not("verdict", "is", null).neq("verdict", "na")
       .order("id").range(from, from + 499);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as unknown as Row[]));
     if ((data ?? []).length < 500) break;
   }
+  // 2026-11-21 統括役（KB 41dadfe6・正解は竹内さん本人の番だけ）: staff_texts・staff_aix の時刻の前後60秒のこちらの送信（messages.staff_writer）で書き手を付ける
+  const byConv = new Map<string, Row[]>();
+  for (const r of rows) { const a = byConv.get(r.conversation_id) ?? []; a.push(r); byConv.set(r.conversation_id, a); }
+  const atsOf = (r: Row) => [...(r.staff_texts ?? []), ...(r.staff_aix ?? [])].map((x) => Date.parse(String((x as { at?: string }).at ?? ""))).filter((t) => Number.isFinite(t));
+  for (const [conv, rs] of byConv) {
+    const all = rs.flatMap(atsOf);
+    if (!all.length) { for (const r of rs) r.writer = "unknown"; continue; }
+    const lo = new Date(Math.min(...all) - 120_000).toISOString(), hi = new Date(Math.max(...all) + 120_000).toISOString();
+    const { data: ms, error: me } = await sb.from("messages").select("created_at,staff_writer").eq("conversation_id", conv).eq("sender", "staff").gte("created_at", lo).lte("created_at", hi).limit(1000);
+    if (me) throw new Error(me.message);
+    const marks = (ms ?? []).map((m) => ({ t: Date.parse(m.created_at), w: String(m.staff_writer ?? "") })).filter((m) => m.w);
+    for (const r of rs) {
+      const ws = new Set(atsOf(r).flatMap((t) => marks.filter((m) => Math.abs(m.t - t) <= 60_000).map((m) => m.w)));
+      r.writer = ws.size === 0 ? "unknown" : ws.size === 1 ? [...ws][0] : "mixed";
+    }
+  }
+  const writers: Record<string, number> = {};
+  for (const r of rows) writers[r.writer ?? "unknown"] = (writers[r.writer ?? "unknown"] ?? 0) + 1;
   const isMatch = (v: string | null) => v === "same" || v === "same_meaning";
   const groups = new Map<string, { n: number; match: number; moves: Record<string, number>; aixTypes: Record<string, number>; sample: number[] }>();
   const add = (k: string, r: Row) => {
@@ -77,15 +95,19 @@ async function main() {
   for (const r of rows) {
     verdicts[r.verdict ?? "?"] = (verdicts[r.verdict ?? "?"] ?? 0) + 1;
     const off = offKindOf(r.scene_key, r.kbscene);
-    add(off ?? "normal", r);
-    if (off === "word_brain_mismatch") add(`mismatch:${r.scene_key}→${r.kbscene}`, r);
+    // 主は竹内さんの番（竹内:）・全体は参考（全体:）
+    for (const pre of r.writer === "takeuchi" ? ["竹内:", "全体:"] : ["全体:"]) {
+      add(pre + (off ?? "normal"), r);
+      if (off === "word_brain_mismatch") add(`${pre}mismatch:${r.scene_key}→${r.kbscene}`, r);
+    }
   }
   const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 1000) / 10}%` : "-");
-  console.log(`臨機応変の土台 A1・A4・A5（${days}日・見張りの番 ${rows.length}・判定 ${JSON.stringify(verdicts)}）`);
-  const order = ["normal", "scene_empty", "scene_other", "brain_other", "word_brain_mismatch"];
-  for (const k of [...order, ...[...groups.keys()].filter((k) => k.startsWith("mismatch:")).sort((a, b) => groups.get(b)!.n - groups.get(a)!.n).slice(0, 12)]) {
+  console.log(`臨機応変の土台 A1・A4・A5（${days}日・見張りの番 ${rows.length}・判定 ${JSON.stringify(verdicts)}・書き手 ${JSON.stringify(writers)}）。主は竹内さんの番（竹内:）・全体は参考`);
+  const base = ["normal", "scene_empty", "scene_other", "brain_other", "word_brain_mismatch"];
+  for (const pre of ["竹内:", "全体:"]) for (const k of [...base.map((b) => pre + b), ...[...groups.keys()].filter((k) => k.startsWith(`${pre}mismatch:`)).sort((a, b) => groups.get(b)!.n - groups.get(a)!.n).slice(0, 12)]) {
     const g = groups.get(k); if (!g) continue;
-    console.log(`- ${k}: ${g.n}番（${pct(g.n, rows.length)}）・一致 ${pct(g.match, g.n)}・スタッフの一手 ${Object.entries(g.moves).map(([m, c]) => `${m} ${c}`).join(" ")}・AIX ${Object.entries(g.aixTypes).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, c]) => `${t} ${c}`).join(" ")}・例 ${g.sample.join(",")}`);
+    const denom = pre === "竹内:" ? (writers.takeuchi ?? 0) : rows.length;
+    console.log(`- ${k}: ${g.n}番（${pct(g.n, denom)}）・一致 ${pct(g.match, g.n)}・スタッフの一手 ${Object.entries(g.moves).map(([m, c]) => `${m} ${c}`).join(" ")}・AIX ${Object.entries(g.aixTypes).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, c]) => `${t} ${c}`).join(" ")}・例 ${g.sample.join(",")}`);
   }
   const out = arg("out");
   if (out) writeFileSync(out, JSON.stringify({ days, n: rows.length, verdicts, groups: Object.fromEntries(groups) }, null, 1));
