@@ -130,7 +130,30 @@ export function factsFromPropertyText(text: string): CustomerSentFacts {
   if (best) { out.station = best.station; out.walk = best.walk; }
   if (/新築/.test(t)) out.ageYears = 0;
   else { const ag = t.match(/築\s*(\d{1,2})\s*年/); if (ag) out.ageYears = num(ag[1]); }
+  if (out.ageYears == null && propertyAgeFromYearOn()) out.ageYears = ageFromBuiltYear(t);
   return out;
+}
+
+/**
+ * 2026-11-21 作業員G（#447・画像の把握の表 C2-a）: 物件の資料の築年は「築年:2015年03月」「築年月 2023年10月」「竣工:1994年10月」「2023年築」の形
+ *   （年が書いてあって「築N年」が無い）で、60日の物件の資料の画像で築年が取れたのは 3/21（14%）だった（16枚は語があるのに取れていない）。
+ *   年から築年数を数える（今の年−建った年・月があれば今の月より後は1引く・建つ前は 0）。1950年より前・今より3年以上先（読み違い「2139年」）は取らない。
+ *   既定 off（PROPERTY_AGE_FROM_YEAR=on）
+ */
+export function propertyAgeFromYearOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_AGE_FROM_YEAR ?? "").trim().toLowerCase() === "on";
+}
+export function ageFromBuiltYear(text: string, now: Date = new Date()): number | null {
+  const t = String(text ?? "").normalize("NFKC");
+  const m = t.match(/(?:築年月?|竣工(?:年月)?|建築年月?|完成(?:年月)?|築年数)\s*[:：】\]]?\s*(\d{4})\s*年\s*(?:(\d{1,2})\s*月)?/) ?? t.match(/(\d{4})\s*年\s*(?:(\d{1,2})\s*月)?\s*築/);
+  if (!m) return null;
+  const y = Number(m[1]), mo = m[2] ? Number(m[2]) : null;
+  const ny = now.getFullYear(), nm = now.getMonth() + 1;
+  if (!Number.isFinite(y) || y < 1950 || y > ny + 3) return null;
+  if (mo != null && (mo < 1 || mo > 12)) return null;
+  let age = ny - y;
+  if (mo != null && mo > nm) age -= 1;
+  return Math.max(0, age);
 }
 
 /** 名前の無い物件の重複の鍵（同じ値の掲載を別の URL で2回送った時に1件にする） */
