@@ -972,7 +972,13 @@ BEGIN
     WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
     ELSE hypothesis_status
   END
-  WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5;
+  WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1388,7 +1394,13 @@ BEGIN
     ELSE hypothesis_status
   END
   WHERE id = ANY(ARRAY_CAT(COALESCE(p_correct_ids, ARRAY[]::UUID[]), COALESCE(p_wrong_ids, ARRAY[]::UUID[])))
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1489,7 +1501,13 @@ BEGIN
     ELSE hypothesis_status
   END
   WHERE id = ANY(ARRAY_CAT(COALESCE(p_correct_ids, ARRAY[]::UUID[]), COALESCE(p_wrong_ids, ARRAY[]::UUID[])))
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1580,7 +1598,13 @@ BEGIN
       COALESCE(p_correct_pairs, '[]'::jsonb) || COALESCE(p_wrong_pairs, '[]'::jsonb)
     ) AS elem
   )
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
