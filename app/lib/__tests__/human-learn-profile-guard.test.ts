@@ -2,7 +2,7 @@
 //   その時の形（Vercel・Supabase のログ）: 12秒に関数の呼び出し 約130回・DB へ GET 452件（版だけの確認も束の全体を読む）・PATCH 302件（全部 同じ1行 id=1556 の read_count）
 // 実行: npx tsx app/lib/__tests__/human-learn-profile-guard.test.ts
 import { readFileSync } from "node:fs";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS } from "../human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS, holdDaytimeRebuild } from "../human-learn-profile-guard";
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
@@ -35,6 +35,20 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("配線: 軽い確認は版だけ読む（束の全体を読まない）", /generated_at:bundle->>generated_at/.test(route));
     ok("配線: 読んだ印は守りの時は応答の後で・10分に1回", /shouldTouchRead\(row\.read_at/.test(route) && /after\(async \(\) => \{\s*try \{ await supabase\.from\("human_learn_profile"\)\.update/.test(route));
     ok("配線: 作り直しは1本にまとめる・作ってから5分は作らない", /coalesce\(`build:\$\{scope\}`/.test(route) && /builtRecently/.test(route));
+    ok("配線（2026-11-20）: 営業時間の古い束は作り直さない（holdDaytimeRebuild）", /holdDaytimeRebuild\(\{ hour: jstHourNow\(\), hasBundle: !!row, forceFresh \}\)/.test(route) && /!daytimeHold/.test(route));
+    ok("配線（2026-11-20）: 手動の refresh は全列 select(\"*\") をやめ、自動と同じ列の一覧（SELECT）で読む", !/\.select\("\*"\)/.test(route) && /selectDroppingMissing\(\s*SELECT\.split/.test(route));
+    ok("配線（2026-11-20）: needs_auto は自動の記録だけを DB で絞って見る（新しい順40件の抜けをなくす）", /\.or\("mode\.ilike\.\*aix\*,mode\.ilike\.\*auto\*"\)/.test(route) && !/\.limit\(40\)/.test(route));
+  }
+  {
+    // 2026-11-20 昼の保留の判定（純関数）: 営業時間（JST 9〜22時）・束がある・?fresh=1 でない・HUMAN_LEARN_DAYTIME_REBUILD=on でない
+    const base = { hasBundle: true, forceFresh: false, env: {} as Record<string, string> };
+    ok("昼（10時）・束あり・普通の要求 → 作り直さない", holdDaytimeRebuild({ ...base, hour: 10 }) === true);
+    ok("夜（23時）→ 作り直す（22:20 の cron 後の挙動は今まで通り）", holdDaytimeRebuild({ ...base, hour: 23 }) === false);
+    ok("朝（8時）→ 作り直す", holdDaytimeRebuild({ ...base, hour: 8 }) === false);
+    ok("束が1件も無い → 昼でも作る（拡張が何も無いで止まらない）", holdDaytimeRebuild({ ...base, hour: 10, hasBundle: false }) === false);
+    ok("?fresh=1 は強制 → 昼でも作る", holdDaytimeRebuild({ ...base, hour: 10, forceFresh: true }) === false);
+    ok("戻す HUMAN_LEARN_DAYTIME_REBUILD=on → 昼も作る（旧の動き）", holdDaytimeRebuild({ ...base, hour: 10, env: { HUMAN_LEARN_DAYTIME_REBUILD: "on" } }) === false);
+    ok("境界: 9時ちょうどは昼（保留）・22時ちょうどは夜（作る）", holdDaytimeRebuild({ ...base, hour: 9 }) === true && holdDaytimeRebuild({ ...base, hour: 22 }) === false);
   }
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exitCode = 1;

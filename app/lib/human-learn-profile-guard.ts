@@ -22,6 +22,20 @@ export const READ_MARK_MIN_GAP_MS = 10 * 60_000;
 /** 束を作ってから作り直さない間 */
 export const LEARN_BUILD_MIN_GAP_MS = 5 * 60_000;
 
+/**
+ * 営業時間（JST 9〜22時）に、古くなった束を**その場で作り直さない**か（純関数）。
+ *   ⚠ 2026-11-20 竹内さん「今すぐすべて行う」（負荷対策）。営業時間は1万行の集計を拡張の呼び出しで回さない。
+ *   ⚠ 2026-11-15 の決め「束の更新は1日1回だけ。すぐ反映したいなら手で実行が必要」と合う（手動の ?refresh=1 は今まで通り）。
+ *   ⚠ 束が1件も無い時は作る（拡張が「何も無い」で止まらないように）。?fresh=1 は強制なので作る。
+ *   戻す: HUMAN_LEARN_DAYTIME_REBUILD=on（昼も古い束を作り直す＝旧の動き）
+ */
+export function holdDaytimeRebuild(o: { hour: number; hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
+  const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
+  if ((env.HUMAN_LEARN_DAYTIME_REBUILD ?? "").trim().toLowerCase() === "on") return false;
+  if (o.forceFresh || !o.hasBundle) return false;
+  return o.hour >= 9 && o.hour < 22;
+}
+
 export function shouldTouchRead(readAt: string | null | undefined, nowMs: number = Date.now()): boolean {
   const t = Date.parse(String(readAt ?? ""));
   return !Number.isFinite(t) || nowMs - t >= READ_MARK_MIN_GAP_MS;

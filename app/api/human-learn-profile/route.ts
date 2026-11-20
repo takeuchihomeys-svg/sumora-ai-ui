@@ -16,7 +16,8 @@ import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS } from "@/app/lib/human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild } from "@/app/lib/human-learn-profile-guard";
+import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
 export const dynamic = "force-dynamic";
@@ -672,12 +673,16 @@ export async function GET(req: NextRequest) {
       type MotionRowLocal = Parameters<typeof buildHumanLearnBundle>[0][number];
       const since = sinceIso(LEARN_PERIODS.historyMs);
       const rows: MotionRowLocal[] = [];
+      // ★ 2026-11-20: 写真の文字列（shot_b64）まで全列を読んでいた（select("*")）→ 自動の作り直しと同じ列の一覧（SELECT）で読む
       for (let i = 0; i < 10_000; i += 1000) {
-        const r = await supabase.from("human_motion_learn").select("*")
-          .gte("created_at", since).order("created_at", { ascending: false }).range(i, i + 999);
-        if (r.error) throw new Error(String(r.error.message).slice(0, 160));
-        rows.push(...((r.data ?? []) as MotionRowLocal[]));
-        if ((r.data ?? []).length < 1000) break;
+        const sel = await selectDroppingMissing(
+          SELECT.split(", "),
+          (colsCsv) => supabase.from("human_motion_learn").select(colsCsv)
+            .gte("created_at", since).order("created_at", { ascending: false }).range(i, i + 999),
+        );
+        if (sel.error) throw new Error(String(sel.error.message).slice(0, 160));
+        rows.push(...((sel.data ?? []) as MotionRowLocal[]));
+        if ((sel.data ?? []).length < 1000) break;
       }
       const now = new Date().toISOString();
       const { fetchLearnBundleSceneMeta } = await import("@/app/lib/learn-bundle-scene-meta");
@@ -877,12 +882,15 @@ export async function GET(req: NextRequest) {
     try {
       const bundleAt = String(row.created_at || "");
       if (bundleAt && solidLight >= 30) {
+        // ★ 2026-11-20: 新しい順 40 件だけ見ていた → 通常の検索が40件を超えると自動の記録が見えず、needs_auto が永久に残っていた。
+        //   → 自動（aix／auto）の記録だけを DB で絞って見る（1件あれば十分・軽い）
         const { data: autoAfter } = await supabase
           .from("search_audits")
           .select("created_at, mode")
           .gte("created_at", bundleAt)
+          .or("mode.ilike.*aix*,mode.ilike.*auto*")
           .order("created_at", { ascending: false })
-          .limit(40);
+          .limit(5);
         const hit = (autoAfter || []).some((a) =>
           /aix|auto|brain_aix/i.test(String(a.mode || "")),
         );
@@ -906,7 +914,9 @@ export async function GET(req: NextRequest) {
   let why: string | null = null;
   // 守りの時: 束の作り直しは同じ所で1本だけ（重なった要求は同じ結果を待つ）。作ってから短い間（LEARN_BUILD_MIN_GAP_MS）は作り直さない
   const builtRecently = guard && !!row && Date.now() - Date.parse(String(row.created_at ?? 0)) < LEARN_BUILD_MIN_GAP_MS;
-  if ((stale || forceFresh) && !(builtRecently && !forceFresh)) {
+  // ★ 2026-11-20: 営業時間は古い束を拡張の呼び出しで作り直さない（最新の束を返す・作り直しは 22:20 の cron と手動の refresh=1）
+  const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), hasBundle: !!row, forceFresh });
+  if ((stale || forceFresh) && !daytimeHold && !(builtRecently && !forceFresh)) {
     try {
       const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, () => buildNow(scope, (m) => { why = m; }));
       if (fresh) {
