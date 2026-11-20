@@ -48,3 +48,5 @@ const acc = { key: "sumora", token: "", secret: "x" } as never;
   console.log(`\nline-webhook-ensure-conversation: ${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
 })();
+
+export {}; // モジュールにする（import が無いと型の名前 R が他の台本とぶつかる・tsc 11/21）
