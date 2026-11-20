@@ -1,6 +1,6 @@
 // 送った資料の読みの写しの選び方・除き方（scripts/lib/exam-ledger-sip.ts）
 // 実行: npx tsx scripts/lib/__tests__/exam-ledger-sip.test.ts（全 PASS で exit 0）
-import { filterSipRows, pickSipRowsDesc, sipBaseExcludeOf, sipExcludePrefixes, sipSourceExcluded } from "../exam-ledger-sip";
+import { examSipImageUrl, filterSipRows, pickSipRowsDesc, sipBaseExcludeOf, sipExcludePrefixes, sipSourceExcluded } from "../exam-ledger-sip";
 
 let pass = 0, fail = 0;
 const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else { fail++; console.error(`✗ ${name}`, d); } };
@@ -31,5 +31,6 @@ ok("他の行が上限に届かない時は足した行を全部", ids(pickSipRo
 ok("頭が無ければ今まで通り上限まで", ids(pickSipRowsDesc(desc, 3, [])) === "o1,g1,o2");
 ok("前だけの除き", sipBaseExcludeOf({ EXAM_LEDGER_SIP_BASE_EXCLUDE: "aix_log" }) === "aix_log" && sipBaseExcludeOf({}) === null);
 
+ok("借りた会話の image_url に印・二重に付けない・外すと元", examSipImageUrl("https://x/a.png", "d040f80a-4fae") === "https://x/a.png#exam-d040f80a" && examSipImageUrl("https://x/a.png#exam-d040f80a", "f7deb105-xx") === "https://x/a.png#exam-f7deb105" && String(examSipImageUrl("https://x/a.png", "d040f80a-4fae")).replace(/#exam-[\w-]+$/, "") === "https://x/a.png" && examSipImageUrl(null, "x") === null);
 console.log(`exam-ledger-sip: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

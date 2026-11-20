@@ -58,7 +58,7 @@ import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, ai
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
-import { filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
+import { examSipImageUrl, filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
@@ -123,7 +123,12 @@ function loadProblems(): ExamProblem[] {
   const inSpec = new Set(spec.map((s) => String(s.id)));
   const outOfSpec = r.problems.filter((p) => !inSpec.has(p.id)).map((p) => p.id);
   if (outOfSpec.length) console.log(`問題: spec に無い ${outOfSpec.length}問（${outOfSpec.slice(0, 8).join(",")}${outOfSpec.length > 8 ? "…" : ""}）は回さない（外した問題・古い写し）`);
-  return (problemsCache = r.problems.filter((p) => inSpec.has(p.id)));
+  // 2026-11-21 作業員H（#450・統括役）: 正解が従業員の番の問題（spec の writer:"employee"）は合否の数えに入れない＝--include-employee の時だけ回す（依頼の --only に入っていても数えない）。
+  //   竹内さんの番が見つかったら差し替え、竹内さんの答え（owner_questions）で正解を決め直す
+  const employeeIds = new Set(spec.filter((s) => s.writer === "employee").map((s) => String(s.id)));
+  const skipEmployee = r.problems.filter((p) => inSpec.has(p.id) && employeeIds.has(p.id) && !process.argv.includes("--include-employee")).map((p) => p.id);
+  if (skipEmployee.length) console.log(`問題: 正解が従業員の番の ${skipEmployee.length}問（${skipEmployee.join(",")}）は数えない（writer:employee・回す時は --include-employee）`);
+  return (problemsCache = r.problems.filter((p) => inSpec.has(p.id) && !skipEmployee.includes(p.id)));
 }
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
@@ -566,6 +571,7 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     const objs = sipRows.map((lr, k) => {
       const o: Record<string, unknown> = { ...lr.row };
       o.conversation_id = S().conv;
+      o.image_url = examSipImageUrl(o.image_url, S().conv); // 2026-11-21 作業員H（K2 と揃え）: image_url は主キー＝本番の元の行とぶつからない印を付ける
       for (const col of c.times) { const v = o[col]; if (typeof v === "string") o[col] = col === c.time ? sceneTimeOf(lr.ago, ctxAgo, times, k) : sceneTimeOf(Math.round((atMs - Date.parse(v)) / 60_000), ctxAgo, times, k); }
       return o;
     });

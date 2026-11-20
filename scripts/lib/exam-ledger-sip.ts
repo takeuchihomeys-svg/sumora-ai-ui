@@ -38,3 +38,9 @@ export function sipBaseExcludeOf(env: Record<string, string | undefined>): strin
   const v = sipExcludePrefixes(env.EXAM_LEDGER_SIP_BASE_EXCLUDE).join(",");
   return v || null;
 }
+
+/** 借りた会話に入れる時の image_url（主キー）: 「元の URL#exam-<会話の頭8字>」。読む側（equipment-answer-server の readSheetEquipText）は #exam- を外して元の URL で引く */
+export function examSipImageUrl(url: unknown, conv: string): unknown {
+  if (typeof url !== "string" || !url) return url;
+  return `${url.replace(/#exam-[\w-]+$/, "")}#exam-${conv.slice(0, 8)}`;
+}
