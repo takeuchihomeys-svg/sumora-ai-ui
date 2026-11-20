@@ -81,7 +81,8 @@ export const OWN_PROPERTY_RETURNED_ESTIMATE_LINE =
  *   取り出しは広くてよい（KB 277094fd: 同じ物件かを言い切るのは matchOwnProperty）。既定 off（OWN_PROPERTY_PORTAL_TITLE=on・CUSTOMER_IMAGE_LINK の試験と一緒に確かめる）
  */
 export function ownPropertyPortalTitleOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.OWN_PROPERTY_PORTAL_TITLE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（統括役の①の組 grp-brain-1121 で確かな悪化0）。止める OWN_PROPERTY_PORTAL_TITLE=off
+  return (env.OWN_PROPERTY_PORTAL_TITLE ?? "").trim().toLowerCase() !== "off";
 }
 /*
  * 2026-11-21 作業員G（竹内さん 11/21「画像の把握の部分を細かく」・memory/image_understanding_map.md の行 C2）:
