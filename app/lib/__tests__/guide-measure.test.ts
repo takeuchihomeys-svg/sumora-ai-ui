@@ -84,3 +84,18 @@ t("キャンセルの網の shadow: 既定 shadow・申込の段で広げた網�
   assert.equal(cancelWideOnlyHit("キャンセル料はかかりますか", true), false); // 今の網に当たる＝記録しない
 });
 console.log("cancel-shadow ok");
+// 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は「止まった」でなく engaged
+t("提案中に質問が返る番は engaged（止まったと分ける）", () => {
+  const msgs = [
+    { sender: "customer", text: "他にもありますか", created_at: at(1) },
+    { sender: "staff", text: "ご条件でピックアップしてお送りさせて頂きます！！", created_at: at(2), staff_writer: "takeuchi", is_aix_generated: false },
+    { sender: "customer", text: "この部屋は駐車場ありますか？", created_at: at(5) },
+  ];
+  const ds = [{ created_at: at(1.5), stage: "proposing" }, { created_at: at(5.5), stage: "proposing" }];
+  const [g] = guideTurnsOf("c1", msgs, [], ds);
+  assert.equal(g.outcome, "engaged");
+  const [s] = guideTurnsOf("c2", [...msgs.slice(0, 2), { sender: "customer", text: "了解です", created_at: at(5) }], [], ds);
+  assert.equal(s.outcome, "stuck");
+  assert.equal(guideTable([g]).get("proposing|reply:promise|*")?.engaged, 1);
+});
+console.log("guide-engaged ok");
