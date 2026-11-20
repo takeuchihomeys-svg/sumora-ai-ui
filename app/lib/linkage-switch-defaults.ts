@@ -31,6 +31,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   CONDUCTOR_HANDOFF: "on",
   CONDUCTOR_INTAKE: "off",
   CONDUCTOR_NEAR_OPINION: "on",
+  CONDUCTOR_OVERDUE_PROMISES: "off",
   CONDUCTOR_STAFF_CHECK: "shadow",
   CONDUCTOR_TOPIC_STATE: "on",
   CUSTOMER_IMAGE_LINK: "on",
