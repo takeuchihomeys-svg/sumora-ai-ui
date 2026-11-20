@@ -125,4 +125,16 @@ assert.equal(od2.length, 1);
 assert.equal(od2[0].kind, "pickup");
 assert.equal(od2[0].promisedAt, at(10));
 assert.equal(od2[0].dueBy, "default72h");
+assert.equal(promiseDropKindOf("〇〇さんのご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！"), null);
+// 同じ番の後ろの通で条件の入力をお願いした約束も、入力待ち（dfa8a68f の形）
+{
+  const turn = [
+    { sender: "customer", text: "この物件空いてますか", created_at: at(-1) },
+    { sender: "staff", text: "こちらは現在募集が埋まってしまったお部屋となります！！\n引き続きピックアップしてお送りさせて頂きますので、何卒よろしくお願い致します！！", created_at: at(0), is_aix_generated: false },
+    { sender: "staff", text: "ご希望のお部屋探しご条件）\n①ご入居時期", created_at: at(0.01), is_aix_generated: true },
+    { sender: "staff", text: "ご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！", created_at: at(0.02), is_aix_generated: false },
+  ];
+  assert.equal(promiseDropOf(base({ msgs: turn }), now29), null);
+  assert.equal(overduePromisesOf({ status: "proposing", msgs: turn, aix: [], sent: [] }, now29).length, 0);
+}
 console.log("promise-holes: ok");
