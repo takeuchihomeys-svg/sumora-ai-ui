@@ -372,13 +372,29 @@ export async function POST(req: NextRequest) {
         // 2026-09-22 竹内「やる」: 物件名・号室の読み取りは recordSentImageProperty の1回だけ
         //   （旧は extract-property-info と ここの2か所で同じ画像を DeepSeek で読んでいた）。
         //   資料の中身の読み取り（ensureImageDetail）とは並べて動かす。どちらかが失敗してももう一方は残る
-        await Promise.all([
+        const sentAtIso = new Date().toISOString();
+        const [rec] = await Promise.all([
           recordSentImageProperty({ imageUrl: image_url, conversationId: conversation_id, source: src }),
           ensureImageDetail(image_url, conversation_id).catch((e) => {
             console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
             return null;
           }),
         ]);
+        // 2026-11-21 作業員G（#448）: AIX で送った画像で物件が読み取れなかった（室内写真など）時は、同じ時の AIX の記録の物件名（1件だけの時）に結ぶ。
+        //   AIX の記録（log-aix-usage）は送信の後に書かれることがあるので少し待つ。既定 off（SENT_IMAGE_AIX_ATTRIBUTE=on）
+        if (!rec.matched && src.startsWith("aix:")) {
+          const { attributeSentImageFromAixLog } = await import("@/app/lib/sent-image-aix-attribute-server");
+          const { sentImageAixAttributeOn } = await import("@/app/lib/sent-image-aix-attribute");
+          if (sentImageAixAttributeOn()) {
+            const { supabase } = await import("@/app/lib/supabase-server");
+            // 読み取り（最大80秒）＋待ち30秒＜ maxDuration 120・間に合わない物は夜の backfill-sent-image-aix-attribute で埋める
+            for (const waitMs of [10_000, 20_000]) {
+              await new Promise((r) => setTimeout(r, waitMs));
+              const res = await attributeSentImageFromAixLog(supabase, { imageUrl: image_url, conversationId: conversation_id, source: src, sentAt: sentAtIso });
+              if (res !== "no_match") break;
+            }
+          }
+        }
       } catch (e) {
         console.warn("[send-line-message] 画像の物件読み取り失敗:", e instanceof Error ? e.message : e);
       }
