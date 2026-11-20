@@ -17,7 +17,7 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
-import { AUTO_RULES, RULE_SCENE_JA, autoRulesVersion, type RuleScene } from "./auto-procedure-rules";
+import { AUTO_RULES, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -29,8 +29,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *   4（2026-11-20）: 押す位置に source を付けた（その欄で測った／写し）。
  *   5（2026-11-20）: source を field／alias（同じ欄の別名へ写した測った値）／mismatch（開くボタンにチェック欄の位置が写った）の3つに。
  *     4 では alias（賃料上限 等の正しい測り）まで「写し」にしていた。数は positions_alias／positions_mismatch。
+ *   6（2026-11-20）: 決まりごとに点検記録で確かめる段（verified_by）を載せ、確かめる印が無い決まりを gaps に出す。
  */
-export const PLAYBOOK_BUILD_V = 5;
+export const PLAYBOOK_BUILD_V = 6;
 /** 束がこれより古いと検査で「古い」と出す（束は夜に作り直す想定） */
 export const PLAYBOOK_STALE_MS = 36 * 60 * 60 * 1000;
 
@@ -87,6 +88,8 @@ export type PlaybookRule = {
   text: string;
   since: string | null;
   kb: string | null;
+  /** 点検記録で確かめる段（無ければ空＝コードにあるかだけ確かめる） */
+  verified_by: string[];
 };
 
 /** 場面の手順の1件（束の scene_flows を手順書の形にしたもの） */
@@ -431,8 +434,13 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
   const rules: PlaybookRule[] = AUTO_RULES.map((r) => ({
     id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: r.kb,
+    verified_by: verifyKeysOf(r.verify),
   }));
   const rules_v = autoRulesVersion();
+  const unverified = rules.filter((r) => !r.verified_by.length).map((r) => r.id);
+  if (unverified.length) {
+    gaps.push(`自動の決まり ${rules.length}件のうち ${unverified.length}件は点検記録で確かめる印が無い（コードにあるかだけ・${unverified.slice(0, 6).join("・")}${unverified.length > 6 ? ` 他${unverified.length - 6}` : ""}）`);
+  }
   const ruleOnly = [...new Set(rules.map((r) => r.scene))].filter((sc) => sc !== "press" && !learned.has(sc));
   if (ruleOnly.length) {
     gaps.push(`人の手本（録画の場面）がまだ無く、自動の決まりだけの場面：${ruleOnly.map((sc) => RULE_SCENE_JA[sc]).join("・")}`);

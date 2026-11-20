@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.145: 手順書の質 — 決まりの確かめを誤らない・確かめられる決まりを 6→13・確かめの印を記録の上限で落とさない**（竹内さん「手順書の質上げる」）
+- 本番DBで判明（`check-playbook-reflect.ts` の「守れていない」8件は全部が判定の誤り）:
+  - #1552（`human_`）: 人が押した検索の回を自動の決まりで判定していた。
+  - #1551（2.8.142・120段）: 背景の `pushStep` の上限で先頭が落ち、`page:playbook_seen`・`page:cursor_one`・`page:flow_done_place` が消えた（`KEEP_STEP` に決まりの印が無かった）。
+  - #1546・#1547（段0・始まっていない回）: 「印が無い」で ng。
+  - 直近10回のうち4回は拡張 **2.5.91**（古いPC・新しい決まりが届かない）。
+- 直し:
+  1. search-audit.js `RULE_STEP`（決まりの確かめに使う段）。`pushStep` の落とす順: 普通の段 → 決まりの段の重複（同じ種類が後にもある物）→ 残す段以外 → 先頭。page-script `_PIN` に `walk_seal_|pet_panel_confirm|conditions_ready|next_step`。
+  2. `auto-procedure-rules.ts`: verify に `onlyIf`／`minSteps`／`mustHaveAny`／`maxCount`／`seq`。記録が空＝no_data、先頭が落ちた回（≥100段で begin 無し）は mustHave を no_data。確かめ方を足した決まり: order_human（場所→条件→検索の順）・area_before_cond（area_all_done→conditions_ready）・pet_confirm（確定ミス無し）・walk_presearch（walk_seal_ok→search_armed ≤3秒）・audit_one_progress（fill_progress ≤1）・audit_keep_reason（長い回に begin）・ward_detail_skip（Y待ち切れ→区で確定か次へ）。新しい決まり `audit_rule_evidence`。
+  3. `checkRulesInCode`: verify が見る段が `KEEP_STEP`／`RULE_STEP` に無ければ食い違いとして出す（統括Pro にも出る）。
+  4. `playbook-reflect-server.ts`: `run_id=not.like.human_*`。
+  5. 手順書（`action-playbook.ts` 作り方 v6）: 決まりごとに `verified_by`（確かめる段）、確かめる印の無い決まりを gaps に。
+  6. page-script: 検索前の徒歩がずれていた時の印 `walk_seal_fix`。
+- 結果（本番DB・直近10回）: 守れていない 8 → 0（誤りが消えた）。確かめられる決まり 6 → 13／20。
+- テスト: 新 `app/lib/__tests__/playbook-rule-evidence.test.ts` 35件。`auto-procedure-rules.test.ts` の「空の記録は playbook_read・one_cursor を ng」を新しい仕様（全部 no_data）に。拡張一式 208本・悪化0。tsc 0。
+
 ## 2026-11-20 **拡張 2.8.144: 区→町（詳細地域）で止まらない — 選び直しが効かない区を押し直す／Y にならない時は区をそろえて確定**（竹内さん「録画から課題見つけて改善する ちゃんと改善する 徹底的に改善する」）
 - 録画の回（run `mwoqsmy8_ib0b`・平田さん自動・audit 1551・拡張 2.8.142）の押した記録（`shot_ops`）を時刻順に読んで判明:
   - 欲しいのは 9区＋上本町（`detail_ward`=大阪市天王寺区）。9区がそろった後、`div.next_step_button2` が Y（`town_search_Y`）にならず `ensureWardButtonY` が天王寺区を**外す→選ぶ**。

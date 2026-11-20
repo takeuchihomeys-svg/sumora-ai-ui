@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.144";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.145";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -46,7 +46,30 @@ export type RuleVerify = {
   maxGap?: { from: string; to: string; ms: number };
   /** この段の d が、この順に出る（含む文字で判定・出ない物は飛ばす） */
   order?: { key: string; seq: string[] };
+  /** この段のどれも無い回は no_data（その場面が無かった回を数えない） */
+  onlyIf?: string[];
+  /** 段がこれより少ない回は no_data（長い回だけで確かめる決まり） */
+  minSteps?: number;
+  /** どれか1つあれば守れた（無ければ守れていない） */
+  mustHaveAny?: string[];
+  /** この段が n 回より多ければ守れていない */
+  maxCount?: { key: string; n: number };
+  /** 段の初めて出た時刻がこの順（出ない物は飛ばす・2つ以上出た回だけ確かめる） */
+  seq?: string[];
 };
+
+/** 点検記録の段の上限（chrome-extension/search-audit.js の MAX_STEPS と同じ） */
+export const AUDIT_MAX_STEPS = 120;
+
+/** verify が見る段の名前（search-audit.js の RULE_STEP／KEEP_STEP に入っていないと上限で落ちる） */
+export function verifyKeysOf(v: RuleVerify | undefined): string[] {
+  if (!v) return [];
+  const keys = [
+    v.mustHave, ...(v.mustNot ?? []), v.maxGap?.from, v.maxGap?.to, v.order?.key,
+    ...(v.onlyIf ?? []), ...(v.mustHaveAny ?? []), v.maxCount?.key, ...(v.seq ?? []),
+  ];
+  return [...new Set(keys.filter((k): k is string => typeof k === "string" && k.length > 0))];
+}
 
 export type AutoRule = {
   /** 変えない（拡張の _AXLX_RULES_DONE と揃える） */
@@ -75,6 +98,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "bbfcae84",
     marker: "stall_complete_search",
     file: "page-script.js",
+    verify: { seq: ["page:flow_done_place", "page:flow_done_conditions", "page:flow_done_search"] },
   },
   {
     id: "area_before_cond",
@@ -84,6 +108,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "71eba123",
     marker: "場所のあとで条件を1つずつ入れる（並行しない）",
     file: "page-script.js",
+    verify: { seq: ["page:area_all_done", "page:conditions_ready"] },
   },
   {
     id: "no_reset_button",
@@ -122,6 +147,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "1de1e224",
     marker: "pet_panel_confirm",
     file: "page-script.js",
+    verify: { onlyIf: ["page:pet_panel_confirm", "page:pet_panel_confirm_miss"], mustNot: ["page:pet_panel_confirm_miss"] },
   },
   {
     id: "confirm_decide",
@@ -151,6 +177,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "71eba123",
     marker: "検索前 徒歩+分数 OK（待たずに押す）",
     file: "page-script.js",
+    verify: { maxGap: { from: "page:walk_seal_ok", to: "page:search_armed", ms: 3000 } },
   },
   {
     id: "hidden_work_no_pause",
@@ -225,6 +252,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "進捗の印は最後の1つだけ残す",
     file: "search-audit.js",
+    verify: { onlyIf: ["fill_progress"], maxCount: { key: "fill_progress", n: 1 } },
   },
   {
     id: "audit_keep_reason",
@@ -234,6 +262,7 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "回の始まり・終わり・代替の理由は残し",
     file: "search-audit.js",
+    verify: { minSteps: AUDIT_MAX_STEPS - 20, mustHave: "begin" },
   },
   {
     id: "ward_detail_skip",
@@ -243,6 +272,16 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "町まで進めない時は区をそろえて確定",
     file: "page-script.js",
+    verify: { onlyIf: ["page:ward_btn_y_timeout"], mustHaveAny: ["page:ward_detail_skip", "page:next_step"] },
+  },
+  {
+    id: "audit_rule_evidence",
+    scene: "switch",
+    text: "決まりを守れたかの確かめに使う印（手順書を読んだ印・カーソル1つの印・段の完了など）は、点検記録が上限に達しても同じ種類を最低1つ残す。記録が空の回・先頭が落ちた回・人が押した検索の回は「守れていない」と数えない",
+    since: "2.8.145",
+    kb: null,
+    marker: "普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す",
+    file: "search-audit.js",
   },
 ];
 
@@ -275,6 +314,16 @@ export function checkRulesInCode(files: { pageScript: string; searchAudit: strin
     const src = r.file === "page-script.js" ? files.pageScript : files.searchAudit;
     if (!src.includes(r.marker)) issues.push(`決まり ${r.id} の目印が ${r.file} に無い（直しが消えた／一覧が古い）`);
   }
+  // 確かめに使う段が点検記録の上限で落ちないか（search-audit.js の KEEP_STEP／RULE_STEP）
+  const keepRe = readRegexVar(files.searchAudit, "KEEP_STEP");
+  const ruleRe = readRegexVar(files.searchAudit, "RULE_STEP");
+  if (!keepRe || !ruleRe) issues.push("search-audit.js の KEEP_STEP／RULE_STEP が読めない");
+  else {
+    for (const r of rules) {
+      const lost = verifyKeysOf(r.verify).filter((k) => !keepRe.test(k) && !ruleRe.test(k));
+      if (lost.length) issues.push(`決まり ${r.id} の確かめに使う段（${lost.join("・")}）が search-audit.js の RULE_STEP に無い（記録の上限で落ちる）`);
+    }
+  }
   const m = files.pageScript.match(/var _AXLX_RULES_DONE = \[([\s\S]*?)\];/);
   const done = m ? [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]) : [];
   const ids = rules.map((r) => r.id);
@@ -292,6 +341,13 @@ export function checkRulesInCode(files: { pageScript: string; searchAudit: strin
     issues.push(`拡張の版 ${ver} に対して決まりの一覧は ${AUTO_RULES_REVIEWED_UP_TO} までしか見直していない（直した事が手順書に載っていない恐れ）`);
   }
   return issues;
+}
+
+/** `var NAME = /…/;` の形の正規表現をファイルの中身から読む（読めなければ null） */
+function readRegexVar(src: string, name: string): RegExp | null {
+  const m = src.match(new RegExp(`var ${name} = /(.+)/([a-z]*);`));
+  if (!m) return null;
+  try { return new RegExp(m[1], m[2]); } catch { return null; }
 }
 
 /** 版の比べ（"2.8.137" の形・a<b なら負） */
@@ -315,14 +371,36 @@ export function judgeRulesOnAudit(
     .filter((s) => s && typeof s.k === "string")
     .map((s) => ({ k: String(s.k), d: s.d == null ? "" : String(s.d), at: Number(s.at) || 0 }))
     .sort((a, b) => a.at - b.at);
+  const has = (k: string) => list.some((s) => s.k === k);
+  // 上限まで溜まって回の始まり（begin）が落ちた回は、先頭の段（手順書を読んだ印など）も落ちている
+  const headLost = list.length >= AUDIT_MAX_STEPS - 20 && !has("begin");
   return rules.map((r): RuleJudge => {
     const v = r.verify;
     if (!v) return { id: r.id, result: "no_data", why: "点検記録での確かめ方が無い（コードにあるかだけ確かめる）" };
+    if (!list.length) return { id: r.id, result: "no_data", why: "記録が空（始まっていない回）" };
     if (extVersion && r.since && /^\d+(\.\d+)*$/.test(extVersion) && compareExtVersion(extVersion, r.since) < 0) {
       return { id: r.id, result: "no_data", why: `この回の拡張 ${extVersion} は決まり（${r.since}〜）より前` };
     }
-    if (v.mustHave && !list.some((s) => s.k === v.mustHave)) {
+    if (v.onlyIf && !v.onlyIf.some(has)) return { id: r.id, result: "no_data", why: `${v.onlyIf.join("・")} が無い（その場面が無かった回）` };
+    if (v.minSteps && list.length < v.minSteps) return { id: r.id, result: "no_data", why: `段が ${list.length}（${v.minSteps} 未満の短い回）` };
+    if (v.mustHave && !has(v.mustHave)) {
+      if (headLost && v.mustHave !== "begin") return { id: r.id, result: "no_data", why: `${v.mustHave} が無いが、記録の先頭が上限で落ちた回（begin も無い）` };
       return { id: r.id, result: "ng", why: `${v.mustHave} が無い` };
+    }
+    if (v.mustHaveAny && !v.mustHaveAny.some(has)) {
+      return { id: r.id, result: "ng", why: `${v.mustHaveAny.join("・")} のどれも無い` };
+    }
+    if (v.maxCount) {
+      const c = list.filter((s) => s.k === v.maxCount!.key).length;
+      if (c > v.maxCount.n) return { id: r.id, result: "ng", why: `${v.maxCount.key} が ${c}回（${v.maxCount.n}回まで）` };
+    }
+    if (v.seq) {
+      const firsts = v.seq.map((k) => ({ k, at: list.find((s) => s.k === k)?.at })).filter((x): x is { k: string; at: number } => typeof x.at === "number");
+      if (firsts.length < 2) return { id: r.id, result: "no_data", why: `${v.seq.join("→")} のうち出たのが ${firsts.length}つ` };
+      for (let i = 1; i < firsts.length; i++) {
+        if (firsts[i].at < firsts[i - 1].at) return { id: r.id, result: "ng", why: `順番が違う（${firsts[i].k} が ${firsts[i - 1].k} より先）` };
+      }
+      if (!v.mustNot && !v.maxGap && !v.order) return { id: r.id, result: "ok", why: `順番どおり（${firsts.map((x) => x.k.replace(/^page:/, "")).join("→")}）` };
     }
     if (v.mustNot) {
       const hit = list.filter((s) => v.mustNot!.includes(s.k));
@@ -353,6 +431,7 @@ export function judgeRulesOnAudit(
       }
       return { id: r.id, result: "ok", why: `順番どおり（${seen.length}段）` };
     }
+    if (v.mustHave || v.mustHaveAny || v.maxCount) return { id: r.id, result: "ok", why: "確かめた段がそろっている" };
     return { id: r.id, result: "no_data", why: "確かめ方が空" };
   });
 }

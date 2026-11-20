@@ -134,16 +134,36 @@
    */
   var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout))/;
 
-  // 段の記録（最大 MAX_STEPS 件・残す段以外の古い物から落とす）
+  /**
+   * ★ 2026-11-20 (2.8.145) 手順書の決まりの確かめ（app/lib/auto-procedure-rules.ts の verify）に使う段。
+   *   実測 audit #1551（2.8.142・120段）: 先頭が落ちて page:playbook_seen・page:cursor_one・page:flow_done_place が消え、
+   *   決まり playbook_read・one_cursor を「守れていない」と誤って数えた。
+   *   → 普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す（同じ種類が後にもある物から落とす）。
+   *   ⚠ 決まりの verify に段を足したらここにも足す（checkRulesInCode が食い違いを止める）。
+   */
+  var RULE_STEP = /^(fill_progress|page:(playbook_seen|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|flow_done_|flow_gap_|area_all_done|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step))/;
+
+  function _stepKey(s) { return String((s && s.k) || ""); }
+
+  // 段の記録（最大 MAX_STEPS 件）。落とす順: 普通の段 → 決まりの段の重複（後にも同じ種類がある物） → 残す段以外 → 先頭
   function pushStep(steps, k, d, now) {
     var list = Array.isArray(steps) ? steps : [];
     list.push({ at: typeof now === "number" ? now : Date.now(), k: String(k).slice(0, 40), d: d == null ? null : String(d).slice(0, 160) });
     while (list.length > MAX_STEPS) {
-      var drop = 0;
-      for (var i = 0; i < list.length; i++) {
-        if (!KEEP_STEP.test(String((list[i] && list[i].k) || ""))) { drop = i; break; }
+      var drop = -1, i, key;
+      for (i = 0; i < list.length && drop < 0; i++) {
+        key = _stepKey(list[i]);
+        if (!KEEP_STEP.test(key) && !RULE_STEP.test(key)) drop = i;
       }
-      list.splice(drop, 1);
+      for (i = 0; i < list.length && drop < 0; i++) {
+        key = _stepKey(list[i]);
+        if (KEEP_STEP.test(key) || !RULE_STEP.test(key)) continue;
+        for (var j = i + 1; j < list.length; j++) { if (_stepKey(list[j]) === key) { drop = i; break; } }
+      }
+      for (i = 0; i < list.length && drop < 0; i++) {
+        if (!KEEP_STEP.test(_stepKey(list[i]))) drop = i;
+      }
+      list.splice(drop < 0 ? 0 : drop, 1);
     }
     return list;
   }
@@ -504,6 +524,7 @@
     pickIntended: pickIntended,
     pushStep: pushStep,
     KEEP_STEP: KEEP_STEP,
+    RULE_STEP: RULE_STEP,
     isHumanSearchAudit: isHumanSearchAudit,
     softenIdleClose: softenIdleClose,
     clampAudit: clampAudit,

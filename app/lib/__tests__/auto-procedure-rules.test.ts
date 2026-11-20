@@ -117,8 +117,9 @@ console.log("■ 点検記録で守れたかを確かめる");
   ok("手順書が届いていない → ng", b.playbook_read.result === "ng");
 
   const empty = judgeRulesOnAudit([]);
-  ok("記録が空なら ng は『手順書を読んだ印』『1つのカーソルの印』が無いだけ（他は無い物を悪いと言わない）",
-    empty.filter((x) => x.result === "ng").map((x) => x.id).join(",") === "playbook_read,one_cursor", empty.filter((x) => x.result === "ng").map((x) => x.id).join(","));
+  // 2.8.145: 記録が空の回（始まっていない回・実測 #1546/#1547）は ng と数えない
+  ok("記録が空なら ng は無い（全部 no_data）",
+    empty.every((x) => x.result === "no_data"), empty.filter((x) => x.result === "ng").map((x) => x.id).join(","));
   const cur = (steps: { k: string; d: string }[]) => judgeRulesOnAudit(steps, AUTO_RULES, "2.8.138").find((x) => x.id === "one_cursor")!.result;
   ok("1つのカーソルの印があれば ok", cur([{ k: "page:cursor_one", d: "要素=1 OSを隠す=1 形=arrow" }]) === "ok");
   ok("カーソルが2つ・古い作りなら ng", cur([{ k: "page:cursor_one", d: "" }, { k: "page:cursor_two", d: "要素=2" }]) === "ng" && cur([{ k: "page:cursor_old", d: "" }]) === "ng");
@@ -126,7 +127,7 @@ console.log("■ 点検記録で守れたかを確かめる");
   const oldExt = Object.fromEntries(judgeRulesOnAudit(bad, AUTO_RULES, "2.8.133").map((x) => [x.id, x]));
   ok("直す前の拡張（2.8.133）の回は、後から入った決まりを ng にしない（no_data）",
     oldExt.no_hidden_press.result === "no_data" && oldExt.search_decide.result === "no_data" && oldExt.playbook_read.result === "no_data", JSON.stringify(oldExt.no_hidden_press));
-  ok("前からある決まり（since 無し）は古い拡張の回でも見る", AUTO_RULES.filter((r) => !r.since && r.verify).every((r) => oldExt[r.id].result !== "no_data" || /無い/.test(oldExt[r.id].why)));
+  ok("前からある決まり（since 無し）は古い拡張の回でも見る（版で no_data にしない）", AUTO_RULES.filter((r) => !r.since && r.verify).every((r) => oldExt[r.id].result !== "no_data" || !/より前/.test(oldExt[r.id].why)));
   const newExt = Object.fromEntries(judgeRulesOnAudit(bad, AUTO_RULES, "2.8.137").map((x) => [x.id, x]));
   ok("直した後の拡張（2.8.137）の回なら ng を出す", newExt.no_hidden_press.result === "ng" && newExt.search_decide.result === "ng");
   const seenOnly: AuditStep[] = [{ k: "page:playbook_seen", d: "v=a", at: 1 }];

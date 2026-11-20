@@ -47,7 +47,8 @@ export async function fetchPlaybookReflect(env: Env, opts: { scope?: string; run
   );
   const site = scope === "all" ? "realpro" : scope;
   const audits = await rest<Array<{ run_id: string; created_at: string; ext_version: string | null; steps: AuditStep[] | null }>>(
-    env, `search_audits?select=run_id,created_at,ext_version,steps&site=eq.${encodeURIComponent(site)}&order=created_at.desc&limit=${n}`,
+    // 人が押した検索の回（human_）は自動の決まりで確かめない（2.8.145・実測 #1552 を「守れていない」と数えていた）
+    env, `search_audits?select=run_id,created_at,ext_version,steps&site=eq.${encodeURIComponent(site)}&run_id=not.like.human_*&order=created_at.desc&limit=${n}`,
   );
 
   const runs: PlaybookReflectReport["runs"] = [];
