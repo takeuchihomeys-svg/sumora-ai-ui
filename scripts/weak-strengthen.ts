@@ -144,6 +144,8 @@ async function reflectBundle() {
       console.warn("  realpro 束書き込み拒否:", prOne.why);
     }
   }
+  const { prepareBundleForWrite } = await import("../app/lib/bundle-write-prepare");
+  for (const r of inserts) prepareBundleForWrite(r.bundle as Record<string, unknown>);
   const { error: werr } = await sb.from("human_learn_profile").insert(inserts);
   if (werr) return `束の書き込み失敗 ${werr.message}`;
   /**

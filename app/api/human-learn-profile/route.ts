@@ -573,12 +573,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *   手順書を作って一緒に保存する。拡張は `playbook` を取り出して保存する（axlx_learn_playbook）。
    *   ⚠ 引き継ぎの後に作る（引き継いだ押す位置・場面の手順も入るように）。
    */
-  try {
-    const { buildPlaybook } = await import("@/app/lib/action-playbook");
-    (bundle as unknown as Record<string, unknown>).playbook = buildPlaybook(bundle as never);
-  } catch (e) {
-    console.warn("[human-learn-profile] 手順書を作れません:", e instanceof Error ? e.message : String(e));
-  }
+  //   ★ 2026-11-20（2回目）: ここで作ると、下の carryLearnedShots（前の束から押す位置を継ぐ）の前になり、
+  //     継いだ位置が手順書に入らなかった。→ 作るのは insert の直前（prepareBundleForWrite・下）。
   // DB にも残す（同じ scope の古い行は消す＝いつも1つだけ）
   /**
    * 2026-11-13 竹内さん「これ学習したところはデータベースに保管されるようになっているのか。
@@ -618,6 +614,13 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     const carry = await carryLearnedShots(supabase, scope, bundle);
     (bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
   } catch { /* 位置を継げなくても束は残す */ }
+  try {
+    const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
+    const prep = prepareBundleForWrite(bundle as unknown as Record<string, unknown>);
+    if (!prep.playbook_ok) console.warn("[human-learn-profile] 手順書を作れません（束は書く）");
+  } catch (e) {
+    console.warn("[human-learn-profile] 書く前の整えに失敗:", e instanceof Error ? e.message : String(e));
+  }
   try {
     const ins = await supabase.from("human_learn_profile").insert({
       scope,
@@ -735,6 +738,9 @@ export async function GET(req: NextRequest) {
           solid: countLearnedSolid(b).solid,
         }, { headers: CORS });
       }
+      // ★ 2026-11-20: refresh=1 も名前の除去と手順書を通す（ここだけ通していなかった＝古い手順書の写しが残る）
+      const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
+      prepareBundleForWrite(b);
       const ins = await supabase.from("human_learn_profile").insert({
         scope: "all", source_rows: rows.length, bundle: b,
       });
@@ -1061,6 +1067,21 @@ export async function GET(req: NextRequest) {
     } catch { /* 印は残らなくてもよい */ }
   }
 
+  /**
+   * ★ 2026-11-20 竹内さん「改善したら手順書が改善されるように」:
+   *   決まり（auto-procedure-rules.ts）を直してデプロイしても、次に束を書くまで DB の手順書は古いまま拡張へ渡っていた。
+   *   → 渡す時に作り方・決まりの版が古ければその場で作り直して渡す（DB は書かない・次の書き込みで揃う）。
+   */
+  let servedBundle = row.bundle;
+  let playbookRefreshed: string | null = null;
+  try {
+    const { refreshPlaybookIfStale } = await import("@/app/lib/action-playbook");
+    const rf = refreshPlaybookIfStale(row.bundle as Record<string, unknown> | null);
+    if (rf.refreshed) { servedBundle = rf.bundle; playbookRefreshed = rf.why; }
+  } catch (e) {
+    console.warn("[human-learn-profile] 手順書の作り直し（渡す時）に失敗:", e instanceof Error ? e.message : String(e));
+  }
+
   return NextResponse.json(
     {
       ok: true,
@@ -1072,7 +1093,8 @@ export async function GET(req: NextRequest) {
       source_to: row.source_to,
       ext_version: row.ext_version,
       lines: row.lines ?? [],
-      bundle: row.bundle,
+      bundle: servedBundle,
+      playbook_refreshed: playbookRefreshed,
       read_count: servedReadCount,
       read_at: servedReadAt,
     },

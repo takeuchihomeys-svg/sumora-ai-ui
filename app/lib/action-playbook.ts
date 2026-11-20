@@ -26,8 +26,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
 /**
  * 手順書の作り方の版（欄の名前・値の判定を変えたら上げる。版の印に入る）
  *   3（2026-11-20）: 1手ずつの細部（押す欄・押す位置・開く物）と、自動の決まり（auto-procedure-rules.ts）を載せる。
+ *   4（2026-11-20）: 押す位置に source（その欄で測った／種類の平均の写し）と写しの数 positions_kind。
  */
-export const PLAYBOOK_BUILD_V = 3;
+export const PLAYBOOK_BUILD_V = 4;
 /** 束がこれより古いと検査で「古い」と出す（束は夜に作り直す想定） */
 export const PLAYBOOK_STALE_MS = 36 * 60 * 60 * 1000;
 
@@ -123,6 +124,8 @@ export type PlaybookPosition = {
   x: number | null;
   y: number | null;
   confidence: "solid" | "thin";
+  /** field: この欄で測った位置／kind: 種類の平均の写し（同じ値が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある） */
+  source: "field" | "kind";
 };
 
 /** 開く欄の1件（束の opens・押すと何が開くか） */
@@ -150,6 +153,8 @@ export type Playbook = {
   points: { solid: number; thin: number };
   /** 押す位置の一覧（欄ごと・票の多い順。学んだ物を全部載せる） */
   positions: PlaybookPosition[];
+  /** positions のうち種類の平均の写し（その欄で測っていない）の数 */
+  positions_kind: number;
   /** 押すと開く欄の数（人が確かめて学んだ物だけ＝推測は数えない） */
   opens_known: number;
   /** 押すと開く欄の一覧（推測の印つき・全部載せる） */
@@ -258,15 +263,28 @@ export const PLAYBOOK_KIND_COPY_MIN = 3;
  *   ＝チェック欄の種類の平均が名前に写された物で、ボタン（所在地絞り込み＋）で測った位置ではない。
  *   → 同じ値が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある物は source=kind。同じ欄はその欄で測った物（field）を先に、次に票の多い方。
  */
+function pointSignature(p: { n?: number; x?: unknown; y?: unknown; w?: unknown }): string {
+  return `${p.n}|${p.x}|${p.y}|${String(p.w ?? "")}`;
+}
+
+/** 同じ（票・x・y・種類）が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある＝種類の平均の写し、の印の集まり */
+function kindCopySignatures(points: BundleLike["points"]): Set<string> {
+  const count = new Map<string, number>();
+  for (const p of Object.values(points ?? {})) {
+    if (!p || (Number(p.n) || 0) < 1) continue;
+    const s = pointSignature(p);
+    count.set(s, (count.get(s) ?? 0) + 1);
+  }
+  return new Set([...count].filter(([, c]) => c >= PLAYBOOK_KIND_COPY_MIN).map(([s]) => s));
+}
+
 function indexPositions(points: BundleLike["points"]): PosIndex {
   const entries = Object.entries(points ?? {}).filter(([, p]) => (Number(p?.n) || 0) >= 1 && typeof p?.x === "number" && typeof p?.y === "number");
-  const sig = (p: { n?: number; x?: unknown; y?: unknown; w?: unknown }) => `${p.n}|${p.x}|${p.y}|${String(p.w ?? "")}`;
-  const sigCount = new Map<string, number>();
-  for (const [, p] of entries) sigCount.set(sig(p), (sigCount.get(sig(p)) ?? 0) + 1);
+  const copies = kindCopySignatures(points);
   const m: PosIndex = new Map();
   for (const [k, p] of entries) {
     const n = Number(p.n) || 0;
-    const source: "field" | "kind" = (sigCount.get(sig(p)) ?? 0) >= PLAYBOOK_KIND_COPY_MIN ? "kind" : "field";
+    const source: "field" | "kind" = copies.has(pointSignature(p)) ? "kind" : "field";
     const key = cleanPlaybookName(k);
     const cur = m.get(key);
     const better = !cur || (cur.source === "kind" && source === "field") || (cur.source === source && cur.n < n);
@@ -334,6 +352,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
   // 押す位置: 束の points を欄ごとに全部載せる（票1以上・票の多い順）。数は solid/thin で数える
+  const copySigs = kindCopySignatures(bundle.points);
   const positions: PlaybookPosition[] = Object.entries(bundle.points ?? {})
     .map(([field, p]) => {
       const n = Number(p?.n) || 0;
@@ -344,12 +363,14 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
         x: typeof p?.x === "number" && Number.isFinite(p.x) ? p.x : null,
         y: typeof p?.y === "number" && Number.isFinite(p.y) ? p.y : null,
         confidence: (n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin") as "solid" | "thin",
+        source: (copySigs.has(pointSignature(p ?? {})) ? "kind" : "field") as "field" | "kind",
       };
     })
     .filter((p) => p.n >= 1)
     .sort((a, b) => b.n - a.n);
   const solid = positions.filter((p) => p.confidence === "solid").length;
   const thin = positions.filter((p) => p.confidence === "thin").length;
+  const kindCopies = positions.filter((p) => p.source === "kind").length;
 
   // 開く欄: 人が確かめて学んだ物（n≥1 かつ推測でない）だけを「知っている」と数える。推測は別に数える
   const opens: PlaybookOpen[] = Object.entries(bundle.opens ?? {})
@@ -366,6 +387,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
 
   const gaps: string[] = [];
   if (!positions.length) gaps.push("押す位置が1つも無い（束の points が空）");
+  if (kindCopies) gaps.push(`押す位置 ${positions.length}件のうち ${kindCopies}件は種類の平均の写し（その欄で測っていない・確かな位置に数えない方がよい）`);
   if (opens_guessed) gaps.push(`開く欄 ${opens_guessed}件は推測のまま（人が開いて確かめていない・数に入れない）`);
   if (next_n && !learned.has("next")) gaps.push(`次のページへ：束の next に ${next_n}件あるが、場面の手順（人が押した順）にはまだなっていない（整理の抜けの疑い）`);
   if (!scenes.length) gaps.push("場面の手順が1つも無い（まだ学んでいない）");
@@ -405,6 +427,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     missing,
     points: { solid, thin },
     positions,
+    positions_kind: kindCopies,
     opens_known,
     opens,
     opens_guessed,
@@ -419,6 +442,25 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
  * 手順書の検査（純関数）。抜けがあれば文で返す（空＝問題なし）。
  *   ⚠ 「問題なし」は「この検査では見つからない」という意味。手順が正しいとは言わない。
  */
+/**
+ * 束の手順書が古ければ（作り方の版が下・決まりの版がコードと違う・無い）作り直した写しを返す（元の束は変えない）。
+ *   API が拡張へ渡す時に使う＝決まりを直してデプロイしたら、次に束を書く前でも拡張は新しい手順書を読む。
+ */
+export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | undefined): {
+  bundle: Record<string, unknown> | null | undefined; refreshed: boolean; why: string | null;
+} {
+  if (!bundle || typeof bundle !== "object") return { bundle, refreshed: false, why: null };
+  const pb = bundle.playbook as Partial<Playbook> | null | undefined;
+  let why: string | null = null;
+  if (!pb || typeof pb !== "object") why = "手順書が無い";
+  else if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) why = `作り方が古い（${pb.build_v ?? "-"}→${PLAYBOOK_BUILD_V}）`;
+  else if (pb.rules_v !== autoRulesVersion()) why = `決まりの版が古い（${pb.rules_v ?? "-"}→${autoRulesVersion()}）`;
+  if (!why) return { bundle, refreshed: false, why: null };
+  const copy: Record<string, unknown> = { ...bundle };
+  copy.playbook = buildPlaybook(copy as never);
+  return { bundle: copy, refreshed: true, why };
+}
+
 export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[] {
   const issues: string[] = [];
   if (!pb.scenes.length) issues.push("場面が0（手順書が空）");

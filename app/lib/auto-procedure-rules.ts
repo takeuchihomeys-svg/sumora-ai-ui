@@ -237,6 +237,35 @@ export type RuleJudge = {
   why: string;
 };
 
+/**
+ * コード（拡張のファイルの中身）と決まりの一覧の食い違いを数える（純関数）。
+ *   テストと、統括Pro に渡す反映の点検（playbook-reflect-server）が同じ物を使う＝テストを回し忘れても統括Pro で出る。
+ */
+export function checkRulesInCode(files: { pageScript: string; searchAudit: string; manifestJson: string }, rules: ReadonlyArray<AutoRule> = AUTO_RULES): string[] {
+  const issues: string[] = [];
+  for (const r of rules) {
+    const src = r.file === "page-script.js" ? files.pageScript : files.searchAudit;
+    if (!src.includes(r.marker)) issues.push(`決まり ${r.id} の目印が ${r.file} に無い（直しが消えた／一覧が古い）`);
+  }
+  const m = files.pageScript.match(/var _AXLX_RULES_DONE = \[([\s\S]*?)\];/);
+  const done = m ? [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]) : [];
+  const ids = rules.map((r) => r.id);
+  const lack = ids.filter((id) => !done.includes(id));
+  const extra = done.filter((id) => !ids.includes(id));
+  if (!m) issues.push("拡張に _AXLX_RULES_DONE が無い");
+  else {
+    if (lack.length) issues.push(`一覧にあって拡張の _AXLX_RULES_DONE に無い: ${lack.join("・")}`);
+    if (extra.length) issues.push(`拡張にあって一覧（AUTO_RULES）に無い: ${extra.join("・")}（手順書に載らない）`);
+  }
+  let ver = "";
+  try { ver = String(JSON.parse(files.manifestJson).version ?? ""); } catch { /* 下で出す */ }
+  if (!ver) issues.push("manifest.json の版が読めない");
+  else if (compareExtVersion(AUTO_RULES_REVIEWED_UP_TO, ver) !== 0) {
+    issues.push(`拡張の版 ${ver} に対して決まりの一覧は ${AUTO_RULES_REVIEWED_UP_TO} までしか見直していない（直した事が手順書に載っていない恐れ）`);
+  }
+  return issues;
+}
+
 /** 版の比べ（"2.8.137" の形・a<b なら負） */
 export function compareExtVersion(a: string, b: string): number {
   const x = a.split(".").map((p) => Number(p) || 0), y = b.split(".").map((p) => Number(p) || 0);

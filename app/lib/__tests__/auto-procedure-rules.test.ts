@@ -4,10 +4,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, compareExtVersion,
+  AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, compareExtVersion, checkRulesInCode,
   judgeRulesOnAudit, judgePlaybookReflect, parsePlaybookSeen, type AuditStep,
 } from "../auto-procedure-rules";
-import { buildPlaybook, checkPlaybook, PLAYBOOK_BUILD_V } from "../action-playbook";
+import { buildPlaybook, checkPlaybook, PLAYBOOK_BUILD_V, refreshPlaybookIfStale } from "../action-playbook";
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
@@ -206,6 +206,43 @@ console.log("■ 種類の平均の写しを、その欄の押す位置と取り
   ok("ボタンはその欄で測った位置（票1でも写しより先）", d[0].aim?.source === "field" && d[0].aim?.x === 0.42 && d[0].aim?.confidence === "thin", JSON.stringify(d[0].aim));
   ok("測った物が無い欄は写しと書く（solid にしない）", d[1].aim?.source === "kind" && d[1].aim?.confidence === "thin", JSON.stringify(d[1].aim));
   ok("写しの手は足りない所に出る", pb.gaps.some((g) => /種類の平均の写し/.test(g) && /区の欄/.test(g)), pb.gaps.join(" / "));
+}
+
+console.log("■ 統括Pro でも同じ点検（テストを回し忘れても出る）");
+{
+  const files = { pageScript, searchAudit: read("search-audit.js"), manifestJson: read("manifest.json") };
+  const now = checkRulesInCode(files);
+  ok("今のコードは食い違い 0", now.length === 0, now.join(" / "));
+  const bumped = checkRulesInCode({ ...files, manifestJson: JSON.stringify({ version: "2.8.199" }) });
+  ok("版だけ上げて一覧を見直していない → 出る", bumped.some((x) => /見直していない/.test(x)), bumped.join(" / "));
+  const lost = checkRulesInCode({ ...files, pageScript: files.pageScript.split("function _pickGapPlan").join("function _pickGapRenamed") });
+  ok("直しの目印が消えた → 出る", lost.some((x) => /pick_pace の目印/.test(x)), lost.join(" / "));
+  const extra = checkRulesInCode({ ...files, pageScript: files.pageScript.replace('"audit_one_progress",', '"audit_one_progress", "new_unlisted",') });
+  ok("拡張にだけ足した決まり → 出る（手順書に載らない）", extra.some((x) => /new_unlisted/.test(x)), extra.join(" / "));
+}
+
+console.log("■ 渡す時の作り直し（決まりを直してデプロイしたら、次の書き込みを待たずに拡張へ）");
+{
+  const base = { scene_flows: [{ scene: "area", runs: 3, ops: 9, steps: ["所在地絞り込み＋"], gap_ms: 1, variants: 1 }], points: {} };
+  const cur = { ...base, playbook: buildPlaybook(base as never) };
+  const r0 = refreshPlaybookIfStale(cur as never);
+  ok("今の手順書は作り直さない（同じ物を返す）", !r0.refreshed && r0.bundle === (cur as unknown));
+  const oldRules = { ...base, playbook: { ...cur.playbook, rules_v: "00000000" } };
+  const r1 = refreshPlaybookIfStale(oldRules as never);
+  ok("決まりの版が古ければ作り直す", r1.refreshed && (r1.bundle as { playbook: { rules_v: string } }).playbook.rules_v === autoRulesVersion(), String(r1.why));
+  ok("元の束は変えない（DB の行の写しを書き換えない）", oldRules.playbook.rules_v === "00000000");
+  const oldBuild = { ...base, playbook: { ...cur.playbook, build_v: 2 } };
+  ok("作り方が古ければ作り直す", refreshPlaybookIfStale(oldBuild as never).refreshed);
+  ok("手順書が無ければ作る", refreshPlaybookIfStale(base as never).refreshed);
+  ok("束が無ければ何もしない", !refreshPlaybookIfStale(null).refreshed);
+}
+
+console.log("■ 押す位置の一覧にも写しの印（一覧の確かな数を水増ししない）");
+{
+  const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
+  const pb = buildPlaybook({ scene_flows: [], points: { a: copy, b: copy, c: copy, d: { n: 5, w: "button", x: 0.4, y: 0.2 } } } as never);
+  ok("写し3件・測った1件", pb.positions_kind === 3 && pb.positions.filter((p) => p.source === "field").length === 1);
+  ok("写しの数が足りない所に出る", pb.gaps.some((g) => /4件のうち 3件は種類の平均の写し/.test(g)), pb.gaps.join(" / "));
 }
 
 console.log("■ 反映の突き合わせ（DB の手順書 × コード × 自動が読んだ印）");

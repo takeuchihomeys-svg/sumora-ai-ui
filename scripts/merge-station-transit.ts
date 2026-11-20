@@ -113,6 +113,9 @@ void (async () => {
 
     if (!doWrite) continue;
     if (!pr.safe_to_write) { console.warn(scope, "書かない（学習が消える恐れ）"); continue; }
+    // 前の束を写して書くので、手順書（と名前の除去）は書く直前に作り直す（古い手順書を写さない）
+    const { prepareBundleForWrite } = await import("../app/lib/bundle-write-prepare");
+    prepareBundleForWrite(bundle as Record<string, unknown>);
     const { data: ins, error } = await sb
       .from("human_learn_profile")
       .insert({

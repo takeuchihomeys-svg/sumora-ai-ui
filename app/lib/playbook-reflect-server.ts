@@ -7,7 +7,7 @@
 //   判定は auto-procedure-rules.ts の純関数（judgePlaybookReflect／judgeRulesOnAudit）。統括Pro と点検スクリプトが同じ物を使う。
 
 import {
-  AUTO_RULES, judgePlaybookReflect, judgeRulesOnAudit, parsePlaybookSeen,
+  AUTO_RULES, checkRulesInCode, judgePlaybookReflect, judgeRulesOnAudit, parsePlaybookSeen,
   type AuditStep, type PlaybookSeen,
 } from "./auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "./action-playbook";
@@ -74,11 +74,27 @@ export async function fetchPlaybookReflect(env: Env, opts: { scope?: string; run
   }
 
   const pb = row?.playbook && typeof row.playbook === "object" ? (row.playbook as Parameters<typeof judgePlaybookReflect>[0]["playbook"]) : null;
+  const reflect = judgePlaybookReflect({ playbook: pb, buildV: PLAYBOOK_BUILD_V, seen: seenList });
+  // コード側の食い違い（テストを回し忘れても統括Pro に出す）。拡張のファイルが無い所（本番の関数の箱）では見ない
+  try {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "chrome-extension");
+    if (existsSync(join(dir, "page-script.js"))) {
+      const code = checkRulesInCode({
+        pageScript: readFileSync(join(dir, "page-script.js"), "utf8"),
+        searchAudit: readFileSync(join(dir, "search-audit.js"), "utf8"),
+        manifestJson: readFileSync(join(dir, "manifest.json"), "utf8"),
+      });
+      if (code.length) { reflect.ok = false; reflect.why.unshift(...code.map((c) => `コード: ${c}`)); }
+      else reflect.facts.push("コード: 決まりの目印・拡張の一覧・見直した版は揃っている");
+    }
+  } catch { /* 読めなくても DB 側の判定は返す */ }
   return {
     scope,
     bundle_id: row?.id ?? null,
     bundle_at: row?.created_at ?? null,
-    reflect: judgePlaybookReflect({ playbook: pb, buildV: PLAYBOOK_BUILD_V, seen: seenList }),
+    reflect,
     runs,
     per_rule: [...per.values()],
   };
