@@ -18,7 +18,8 @@
 import { matchKnownProperty, MATCH_MIN_SCORE } from "./property-name-match";
 import { savedImageKind, imageKindGroup, stripImageLabel } from "./image-label";
 
-export type ScreenshotProperty = { name: string; room: string | null };
+/** via: どこから取ったか（portal_title＝ポータルの画面の見出し＝他社の画面。同じ部屋と言い切らない） */
+export type ScreenshotProperty = { name: string; room: string | null; via?: "portal_title" };
 
 /** 号室の表記ゆれ（0507 と 507・「号室」付き）を揃える */
 export function normalizeRoom(room: string | null | undefined): string | null {
@@ -82,18 +83,89 @@ export const OWN_PROPERTY_RETURNED_ESTIMATE_LINE =
 export function ownPropertyPortalTitleOn(env: Record<string, string | undefined> = process.env): boolean {
   return (env.OWN_PROPERTY_PORTAL_TITLE ?? "").trim().toLowerCase() === "on";
 }
-const SUUMO_TITLE_RE = /([^\s/｜|「」【】]{2,40}?)\s*[（(][^）)]{0,30}(?:LDK|SLDK|DK|K|R|ワンルーム)[^）)]{0,30}[）)]\s*の賃貸(?:住宅|物件)?情報/;
-const PORTAL_KIND_NAME_RE = /賃貸(?:アパート|マンション|一戸建て?|テラスハウス|タウンハウス)\s+(.{2,40}?)\s+[0-9.]+\s*万円/;
-/** ポータルの画面の見出しから物件名（号室は分からない） */
-export function portalTitleName(text: string): string | null {
+/*
+ * 2026-11-21 作業員G（竹内さん 11/21「画像の把握の部分を細かく」・memory/image_understanding_map.md の行 C2）:
+ *   180日のお客様の画像 1,267通で on/off を当てると、取り出しは 101→149通に増えたが、増えた 48通のうち 23通が物件名ではなかった:
+ *   ①SUUMO が名前を伏せた見出し「桜川 1K 6階(1K/6階/21.37m²)の賃貸住宅情報」→「6階」（9通）
+ *   ②名前に空白がある「JS House(…)」「大辛ロイヤル A4(…)」「facile vaieur(…)」→ 最後の語だけ（4通）
+ *   ③HOME'S の「〇〇 賃貸マンション 特典あり 6.7万円」（名前が種別の前）・「賃貸マンション 特典あり 〇〇 16万円」→「特典あり」・「特典あり 〇〇」（6通）
+ *   ④名前を伏せた「賃貸マンション JR大阪環状線 野田駅 徒歩7分 5.9万円」→ 駅の文字（2通）
+ *   ⑤「BRAVE常盤町II(13階/1301/1LDK/41.54m2)」→ 括弧ごと（号室 1301 を取り損ね）（3通）
+ *   照合（matchOwnProperty）は 23→23 で変わらなかったが、結び付け（customer-image-link）は名前があると確かさ mid・持ち込みの物件として
+ *   「物件: 特典あり」をブレインに渡す＝読み違いの材料になる。→ 取り出しの形を直してから既定 on を決める。
+ *   直し: SUUMO の見出しは「(」の前の語を後ろから最大3語（画面の文字・時刻・数字・「！」で終わる語で止める）・最後の語が「N階」なら伏せた見出し＝取らない。
+ *   HOME'S は種別の後の値から「特典あり」を外し、括弧の付録から号室・末尾の号室を分ける。値が無い・駅の文字の時は種別の前の語（最大2語＋号室）を見る。
+ */
+const SUUMO_TITLE_RE = /([^()]{0,160}?)[（(]([^）)]{0,40}(?:LDK|SLDK|DK|K|R|ワンルーム)[^）)]{0,40})[）)]\s*の賃貸(?:住宅|物件)?情報/;
+const HOMES_TITLE_RE = /(\S{2,40}?)の賃貸(?:物件|住宅)情報\s*[（(]/;
+const PORTAL_KIND_RE = /賃貸(?:アパート|マンション|一戸建て?|テラスハウス|タウンハウス)/;
+const PORTAL_KIND_NAME_RE = /賃貸(?:アパート|マンション|一戸建て?|テラスハウス|タウンハウス)\s+(.{2,60}?)\s+[0-9.]+\s*万円/;
+/** 画面の文字（名前ではない語）。ここで後ろからの拾いを止める */
+const PORTAL_STOP_TOKEN_RE = /^(?:メニュー|お気に入り|最近み?た?物件|最近見た物件|た物件|スーモ|suumo|SUUMO|【SUUMO】|アプリで開く|LIFULL|HOME'S|LINEMO|docomo|au|SoftBank|着信\/通知音量|一覧|間取り|パノラマ|.*画像一覧.*|.*(?:タイトル|書き起こし|物件詳細).*|#+|[♡❤️]+\d*|[0-9]{1,2}:[0-9]{2}\S*|[0-9]+%?|[0-9]+\/[0-9]+|[345]G|[-・*•]+|.*[！!:：】\]]|.*\.(?:jp|com)|https?:.*)$/i;
+/** 間取り図の部屋の語（HOME'S の画面で名前の前に並ぶ） */
+const FLOOR_PLAN_TOKEN_RE = /^(?:PS|MB|UB|SB|WC|CL|SIC|W-?CL|WIC|洗面?|洗濯|脱|玄関?|バルコニー|物入|浴室|トイレ|収納|DK.*|LDK.*|洋室.*|和室.*|K|[A-Z]{1,3}|\(.*\)|.*帖|.*m2)$/;
+const FLOOR_ONLY_RE = /^[0-9]{1,3}階$/;
+const MADORI_TOKEN_RE = /^(?:[1-9]?(?:S?LDK|DK|K|R)|ワンルーム)$/;
+const HIDDEN_NAME_VALUE_RE = /駅|徒[歩步]\s*[0-9]+\s*分|線\s|^特典あり$/;
+function nameBad(v: string): boolean {
+  if (v.length < 2 || v.length > 40) return true;
+  if (/^(?:大阪|東京|京都|兵庫|〒|賃料|家賃|所在地|交通|最近みた物件|お気に入り|メニュー|suumo|SUUMO|特典)/i.test(v)) return true;
+  if (/[0-9.]+万円/.test(v) || FLOOR_ONLY_RE.test(v) || MADORI_TOKEN_RE.test(v)) return true;
+  return false;
+}
+/** 語の並びの後ろから名前を拾う（止める語まで・最大 max 語）。拾えなければ null */
+function nameFromTail(tokens: string[], max: number, floorPlanStop: boolean): string | null {
+  const got: string[] = [];
+  for (let i = tokens.length - 1; i >= 0 && got.length < max; i--) {
+    const w = tokens[i];
+    if (PORTAL_STOP_TOKEN_RE.test(w) || (floorPlanStop && FLOOR_PLAN_TOKEN_RE.test(w))) break;
+    got.unshift(w);
+  }
+  return got.length ? got.join(" ") : null;
+}
+/** 括弧の付録（「13階/1301/1LDK/41.54m2」）の中の号室 */
+function roomInAppendix(app: string): string | null {
+  for (const part of app.split("/").map((s) => s.trim())) if (/^[0-9]{3,4}[A-Za-z]?$/.test(part)) return normalizeRoom(part);
+  return null;
+}
+/** ポータルの画面の見出しから物件名（と分かる時は号室） */
+export function portalTitleProperty(text: string): ScreenshotProperty | null {
   const t = String(text ?? "").normalize("NFKC");
-  const m = t.match(SUUMO_TITLE_RE) ?? t.match(PORTAL_KIND_NAME_RE);
-  if (!m) return null;
-  const v = m[1].trim();
-  if (v.length < 2 || v.length > 40) return null;
-  if (/^(?:大阪|東京|京都|兵庫|〒|賃料|家賃|所在地|交通|最近みた物件|お気に入り|メニュー|suumo|SUUMO)/i.test(v)) return null;
-  if (/[0-9.]+万円/.test(v)) return null;
-  return v;
+  const s = t.match(SUUMO_TITLE_RE);
+  if (s) {
+    const tokens = s[1].split(/\s+/).filter(Boolean);
+    // SUUMO が名前を伏せた見出し（「桜川 1K 6階(…)」＝駅 間取り 階）は取らない
+    if (tokens.length && FLOOR_ONLY_RE.test(tokens[tokens.length - 1])) return null;
+    const name = nameFromTail(tokens, 3, false); // SUUMO の見出しは「JS House」の様に短い英字の語も名前（間取りの語で止めない）
+    if (name && !nameBad(name)) return { name, room: roomInAppendix(s[2]), via: "portal_title" };
+    return null;
+  }
+  // HOME'S の PC の見出し「〇〇の賃貸物件情報（1K/10階）」（名前が種別の後に来ず「物件詳細」を名前にしていた）
+  const h = t.match(HOMES_TITLE_RE);
+  if (h) {
+    const name = h[1].trim();
+    return !nameBad(name) && !PORTAL_STOP_TOKEN_RE.test(name) ? { name, room: null, via: "portal_title" } : null;
+  }
+  const k = t.match(PORTAL_KIND_NAME_RE);
+  if (!k) return null;
+  let v = k[1].trim().replace(/^特典あり\s*/, "").trim();
+  let room: string | null = null;
+  const paren = v.match(/\(([^()]*)\)\s*$/);
+  if (paren && paren.index !== undefined) { room = roomInAppendix(paren[1]); v = v.slice(0, paren.index).trim(); }
+  const tail = v.match(/^(.{2,40}?)\s+([0-9]{3,4}[A-Za-z]?)$/) ?? v.match(/^(.{2,40}?[^\s0-9A-Za-z+])([0-9]{3,4})$/);
+  if (tail) { v = tail[1].trim(); room = room ?? normalizeRoom(tail[2]); }
+  if (v && !HIDDEN_NAME_VALUE_RE.test(v) && !nameBad(v)) return { name: v, room, via: "portal_title" };
+  // 種別の後に名前が無い（「〇〇 [号室] 賃貸マンション 特典あり 6.7万円」・名前を伏せた画面）＝種別の前の語を見る
+  const before = t.slice(0, t.search(PORTAL_KIND_RE)).split(/\s+/).filter(Boolean);
+  let r2: string | null = null;
+  if (before.length && /^[0-9]{3,4}$/.test(before[before.length - 1])) r2 = normalizeRoom(before.pop()!);
+  const name = nameFromTail(before, 2, true);
+  if (name && !nameBad(name) && !HIDDEN_NAME_VALUE_RE.test(name)) return { name, room: r2, via: "portal_title" };
+  return null;
+}
+/** ポータルの画面の見出しから物件名だけ（旧の名前・テストが使う） */
+export function portalTitleName(text: string): string | null {
+  return portalTitleProperty(text)?.name ?? null;
 }
 
 /** 見出しの値から物件名（と、値の中に混ざっている号室）を取り出す */
@@ -151,8 +223,8 @@ export function extractScreenshotProperty(text: string | null | undefined): Scre
   }
   // E: ポータルの画面の見出し（SUUMO「〇〇(1LDK/9階/55m²)の賃貸住宅情報」・「賃貸アパート 〇〇 9万円」）。OWN_PROPERTY_PORTAL_TITLE=on の時だけ
   if (ownPropertyPortalTitleOn()) {
-    const pn = portalTitleName(lines.join(" "));
-    if (pn) return { name: pn, room: null };
+    const pp = portalTitleProperty(lines.join(" "));
+    if (pp) return pp;
   }
   // A / C: 1行目（種類のラベルは飛ばす）の「名前 号室」
   const first = lines.find((l) => !TYPE_LABEL_RE.test(l)) ?? "";
@@ -206,6 +278,11 @@ export function matchOwnProperty(item: ScreenshotProperty, sent: ReadonlyArray<S
   //   建物としては同じ（same_building）に倒し、断定はしない（この判定の元からの方針「違うとは言わない・分からないと言う」）。
   if (!room) return { kind: "same_building", sent: cands[cands.length - 1] ?? null, score: hit.score };
   const sameRoom = cands.find((c) => !normalizeRoom(c.room) || normalizeRoom(c.room) === room);
+  // 2026-11-21 作業員G: ポータルの画面の見出しから取った物（他社の画面）は、号室まで同じでも same_room と言い切らない。
+  //   実物 3890f691 09-12: こちらが 9/10 に送った部屋と同じ号室の HOME'S の画面 → 店は「お送り頂きました物件、募集状況確認させて頂きます」（確認した）。
+  //   same_room だと buildOwnPropertyNote が「募集状況確認の宣言をしない」と書き、結び付けは「募集状況は手元にある」と書く＝要る確認を止める。
+  //   竹内さんの決定 H-14 ①（KB 1d2400c6）「他社の同じ物件の画面は決め打ちせず後の文で」に合わせて same_building に倒す。
+  if (sameRoom && item.via === "portal_title") return { kind: "same_building", sent: sameRoom, score: hit.score };
   if (sameRoom) return { kind: "same_room", sent: sameRoom, score: hit.score };
   return { kind: "same_building", sent: cands[cands.length - 1] ?? null, score: hit.score };
 }
