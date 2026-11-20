@@ -230,3 +230,21 @@ export function attributeBaseCost(req: { label: string; usd: number; commit7: st
   const baseUsd = picked.reduce((s, r) => s + r.usd, 0);
   return { usd: req.usd, baseUsd, total: req.usd + baseUsd, runs: picked.map((r) => r.m![1]), estimated };
 }
+
+/**
+ * 2026-11-21 作業員H（統括役の頼み）: 晩の上限の数えを「済んだ依頼は実際の費用・まだ流れていない依頼は見込み」にする。
+ *   旧は上限（cap）の合計で数え、11/21 夜は実際 約 $2 の依頼が $19.80 と数えられて3組を積めなかった（--force で越えた）。
+ *   done＝済み（結果の usd があればそれ）・running/queued＝見込み（planUsd → cap → 問題×回×単価）。結果の usd は "$0.321" の形でも数でもよい
+ */
+export function budgetUsdOf(j: { state: "done" | "running" | "queued"; resultUsd?: string | number | null; planUsd?: number | null; capUsd?: number | null; problems: number; repeat?: number | null; unitUsd?: number }): number {
+  const unit = j.unitUsd ?? 0.03;
+  const est = j.planUsd ?? j.capUsd ?? Math.max(1, j.problems) * Math.max(1, j.repeat ?? 1) * unit;
+  if (j.state !== "done") return Math.max(0, Number(est) || 0);
+  const r = typeof j.resultUsd === "number" ? j.resultUsd : Number(String(j.resultUsd ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(r) && String(j.resultUsd ?? "").trim() !== "" ? Math.max(0, r) : Math.max(0, Number(est) || 0);
+}
+/** 分けた依頼の1本の見込み（全体の見込みを問題の数で割る） */
+export function partPlanUsd(totalPlanUsd: number | null | undefined, partProblems: number, totalProblems: number): number | undefined {
+  if (totalPlanUsd == null || !Number.isFinite(totalPlanUsd) || totalProblems <= 0) return undefined;
+  return Number((totalPlanUsd * partProblems / totalProblems).toFixed(4));
+}

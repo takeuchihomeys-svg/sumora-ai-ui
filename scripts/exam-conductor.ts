@@ -75,7 +75,7 @@ import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
-import { examRefusalOf, nightBudgetGate, nightCapUsd, type NightJob } from "./lib/exam-cost-gate";
+import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
@@ -230,21 +230,24 @@ function readJobs(): Array<ExamJob & { file: string }> {
   return out.sort((a, b) => compareJobs(a, b));
 }
 const longWaitNoted = new Set<string>();
-/** 晩の上限を数える依頼: 列の待ち（.json・.claimed）と済み（done）。1本の額＝cap → 積んだ時の見込み（planUsd）→ 問題×回×$0.03。tsc・cmd は数えない */
+/** 晩の上限を数える依頼: 列の待ち（.json・.claimed）と済み（done）。tsc・cmd は数えない。
+ *  2026-11-21 作業員H: 済んだ依頼は結果の実際の費用（results/<label>.json の usd）・流れている／待っている依頼は見込み（planUsd → cap → 問題×回×$0.03）。
+ *  旧は cap の合計で数え、実際 約 $2 の晩が $19.80 と数えられた（exam-cost-gate.budgetUsdOf） */
 function nightJobsForBudget(): NightJob[] {
   const out: NightJob[] = [];
-  const read = (dir: string) => {
+  const read = (dir: string, done: boolean) => {
     let fs: string[] = []; try { fs = readdirSync(dir); } catch { return; }
     for (const f of fs) {
       if (!/\.json(\.claimed)?$/.test(f) || f === "config.json" || f === "scene-map.json" || f === "prod-env.json") continue;
       let j: (ExamJob & { planUsd?: number }) | null = null; try { j = JSON.parse(readFileSync(join(dir, f), "utf8")); } catch { continue; }
       if (!j || (j.runner && j.runner !== "brain-exam")) continue;
       const n = String(j.only ?? "").split(",").filter(Boolean).length || 8;
-      const usd = j.capUsd ?? j.planUsd ?? n * Math.max(1, j.repeat ?? 1) * BRAIN_USD_PER_REP;
+      const res = done ? readJson<{ usd?: string | number }>(join(RES, `${j.label}.json`), {}) : {};
+      const usd = budgetUsdOf({ state: done ? "done" : f.endsWith(".claimed") ? "running" : "queued", resultUsd: res.usd ?? null, planUsd: j.planUsd ?? null, capUsd: j.capUsd ?? null, problems: n, repeat: j.repeat, unitUsd: BRAIN_USD_PER_REP });
       out.push({ label: j.label, createdAt: createdAtIso(j.createdAt as unknown), usd });
     }
   };
-  read(ROOT); read(DONE);
+  read(ROOT, false); read(DONE, true);
   return out;
 }
 /**
@@ -475,7 +478,7 @@ async function addJob(): Promise<void> {
     // 2026-11-21 作業員H（1晩の上限は全員で $10・竹内さんの決め）: その晩に積んだ依頼の上限の合計で超えるなら積まない（EXAM_NIGHT_CAP_USD・既定 10・=off で止める）
     (job as ExamJob & { planUsd?: number }).planUsd = Number(plan.cost.usd.toFixed(4));
     if (job.runner === "brain-exam") {
-      const nb = nightBudgetGate(nightJobsForBudget(), job.capUsd ?? plan.cost.usd, Date.now(), nightCapUsd());
+      const nb = nightBudgetGate(nightJobsForBudget(), plan.cost.usd, Date.now(), nightCapUsd()); // 2026-11-21: この依頼も見込みで数える（cap ではない）
       if (!nb.go && !flag("force")) throw new Error(`積まない（晩の上限）: ${nb.why}。統括役に知らせる・急ぎなら --force`);
       log(`  晩の上限: ${nb.why}${!nb.go ? "（--force で越えて積む）" : ""}`);
     }
@@ -505,7 +508,7 @@ async function addJob(): Promise<void> {
   })();
   if (parts.length > 1) {
     parts.forEach((ids, k) => {
-      const pj: ExamJob = { ...job, id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
+      const pj: ExamJob = { ...job, ...(partPlanUsd((job as ExamJob & { planUsd?: number }).planUsd, ids.length, parts.flat().length) != null ? { planUsd: partPlanUsd((job as ExamJob & { planUsd?: number }).planUsd, ids.length, parts.flat().length) } : {}), id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
       writeFileSync(join(ROOT, `${pj.createdAt.replace(/[:.]/g, "-")}-${pj.label}.json`), JSON.stringify(pj, null, 1));
     });
     log(`足した: ${job.label} を ${parts.length}本に分けた（12問まで・時間の見積もりで: ${parts.map((x, k) => `${job.label}-p${k + 1}=${x.length}問`).join("・")}）`);
