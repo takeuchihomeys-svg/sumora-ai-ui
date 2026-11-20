@@ -77,7 +77,7 @@ import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
 import { planFromMeta, planMessages, afterAixReplyBrief, afterAixDraftHint, type PlanAsk } from "../app/lib/two-message-plan";
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
-import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
+import { isNoLineTestConversation, isTestOnlyConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
@@ -1160,6 +1160,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-20 作業員H（作業員M の頼み・AIX の2通目の系統の前と今）: --after-aix-draft は「AIX の後の返信の下書き」を作る＝前の答えの形が違う。
     //   付けた時だけ構成に足す（付けない回の置き場は変えない・付けた回は付けた前の答えとだけ比べる）
     ...(AFTER_AIX_DRAFT ? { afterAixDraft: AFTER_AIX_DRAFT } : {}),
+    // 2026-11-21 作業員H: 回の始めに借りた会話の前の分析を空に戻す回は、戻していない前の答えと比べない（構成に足す＝前を作り直す）
+    ...(process.env.EXAM_RESET_BRAIN_STATE !== "off" ? { brainState: "reset" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」・scripts/lib/exam-base-pin.ts）:
@@ -1888,6 +1890,14 @@ async function main() {
       if (!reuse) await writePc(S().yumaPc, p.pc);
       else if ((await verifyPc(S().yumaPc, pcPatchOf(p.pc))).length) await writePc(S().yumaPc, p.pc); // 前の回のブレインの書き戻し（要約等）がある時だけ写し直す
       else writeCount.pcSkip++;
+      // 2026-11-21 作業員H（統括役の OK・回が独立していなかった）: 借りた会話の brain_strategy（【前回の全体分析】）と conversation_direction は試験が戻しておらず、
+      //   前の回（前の問題の別の会話のことも）のブレインが書いた値を次の回が読んでいた（録音の比べ: 同じ問題の回で要求の頭から 4〜8% の所が違い、
+      //   後ろが毎回キャッシュに当たらない・q332 は回ごとに別の戦略の文）。問題の写しにこの2つの値は無い＝回の始めに空に戻し、どの回も同じ所から始める。
+      //   止める EXAM_RESET_BRAIN_STATE=off（YUMA とテスト専用の会話だけ）
+      if (process.env.EXAM_RESET_BRAIN_STATE !== "off" && (S().conv === YUMA || isTestOnlyConversation(S().conv))) {
+        const rs = await sb.from("conversations").update({ brain_strategy: null, conversation_direction: null }).eq("id", S().conv);
+        if (rs.error) console.warn(`  ⚠ 借りた会話の前の分析を戻せない（${rs.error.message}）`);
+      }
       // 10/09 ③ 読み直して確かめる（前の実行の要約の書き戻しが遅れて来ると混ざる）
       await new Promise((r) => setTimeout(r, 800));
       let mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc));
