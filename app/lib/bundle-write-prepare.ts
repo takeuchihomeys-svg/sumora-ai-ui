@@ -10,10 +10,13 @@
 //   先に呼ぶと、過去の行から名前や古い手順が戻る。
 import { stripCustomerNames } from "./bundle-privacy";
 import { buildPlaybook } from "./action-playbook";
+import { cleanOpenerCheckboxCopies } from "./field-name-aliases";
 
 export type PrepareBundleResult = {
   names_stripped: boolean;
   playbook_ok: boolean;
+  /** 開くボタンの名前から外したチェック欄の写し（拡張が人の押した所の代わりに使ってしまう物） */
+  opener_copies_removed: number;
 };
 
 /** 束を書く形に整える（束を直接書き換える）。 */
@@ -28,6 +31,12 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
   } catch {
     // 名前の除去に失敗しても束は捨てない（呼び元がログに残す）
   }
+  let opener_copies_removed = 0;
+  try {
+    opener_copies_removed = cleanOpenerCheckboxCopies(bundle);
+  } catch {
+    // 外せなくても束は書く（手順書が mismatch として足りない所に出す）
+  }
   let playbook_ok = false;
   try {
     bundle.playbook = buildPlaybook(bundle as never);
@@ -35,5 +44,5 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
   } catch {
     // 手順書が作れなくても束は書く（拡張は手順書無しで動く）
   }
-  return { names_stripped, playbook_ok };
+  return { names_stripped, playbook_ok, opener_copies_removed };
 }

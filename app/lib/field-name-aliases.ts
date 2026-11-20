@@ -29,6 +29,27 @@ function skipAliasPositionCopy(target: string, alias: string): boolean {
   return false;
 }
 
+/**
+ * 箱を開くボタンの名前（「所在地絞り込み＋」「左の所在地絞り込み＋｜span」「沿線・駅絞り込み」等）。
+ * ⚠ 別名の組ではボタンと箱の中のチェック欄（city_code[]・route_id[]）が同じ組にいるが、
+ *   押す位置は要素の中の割合なので、チェック欄の位置をボタンへ写すと人の押した所ではなくなる。
+ *   2026-11-18 から `左の所在地絞り込み＋｜span` の測った位置（n=6 x0.55/y0.6 等）が
+ *   city_code[] の写し（n=1238 x0.5/y0.5）で上書きされ続けていた（本番DBの履歴で確認）。
+ */
+export function isOpenerName(name: string): boolean {
+  const n = String(name || "").trim().replace(/^(左|右)の/, "").replace(/｜.*$/, "");
+  return /＋$|\+$|絞り込み$/.test(n);
+}
+
+/** その位置を別の名前へ写してよいか（チェック欄の位置を開くボタンへ写さない・測った別の種類を上書きしない） */
+function kindBlocksCopy(target: string, srcKind: unknown, curKind?: unknown): boolean {
+  const sk = String(srcKind ?? "");
+  if (sk === "checkbox" && isOpenerName(target)) return true;
+  const ck = String(curKind ?? "");
+  if (ck && sk && ck !== sk) return true;
+  return false;
+}
+
 function hasRoomLayoutOptionInSet(set: Set<string>): boolean {
   for (const h of set) {
     if ((ROOM_LAYOUT_VISION_NAMES as readonly string[]).includes(h)) return true;
@@ -109,6 +130,7 @@ export function mergeAliasPositions<T extends FieldWithPos>(fields: T[]): T[] {
       if (a === nm) continue;
       if (skipAliasPositionCopy(nm, a)) continue;
       const src = byName.get(a);
+      if (src && kindBlocksCopy(nm, src.kind)) continue;
       if (src && typeof src.x === "number" && typeof src.y === "number") {
         return {
           ...f,
@@ -151,16 +173,17 @@ export function fieldHasPosition(
  *   → 束を書く前に、xy がある欄の位置を**別名キーにも複製**する。
  *   例: `route_id[]` に位置があれば `沿線を選ぶ` にも同じ x/y/n を載せる。
  */
-export function expandAliasPoints<T extends { x?: number; y?: number; n?: number }>(
+export function expandAliasPoints<T extends { x?: number; y?: number; n?: number; w?: unknown }>(
   points: Record<string, T>,
 ): Record<string, T> {
-  const out: Record<string, T> = { ...points };
-  for (const [name, v] of Object.entries(points)) {
+  const out: Record<string, T> = dropOpenerCheckboxCopies(points);
+  for (const [name, v] of Object.entries(out)) {
     if (!v || typeof v.x !== "number" || typeof v.y !== "number") continue;
     for (const a of aliasesOf(name)) {
       if (a === name) continue;
       if (skipAliasPositionCopy(a, name)) continue;
       const cur = out[a];
+      if (kindBlocksCopy(a, v.w, cur && typeof cur.x === "number" ? cur.w : undefined)) continue;
       if (cur && typeof cur.x === "number" && typeof cur.y === "number") {
         // 既にある方の n が大きいなら残す
         if ((Number(cur.n) || 0) >= (Number(v.n) || 0)) continue;
@@ -169,6 +192,59 @@ export function expandAliasPoints<T extends { x?: number; y?: number; n?: number
     }
   }
   return out;
+}
+
+/**
+ * 既に写ってしまったチェック欄の位置を開くボタンの名前から外す（測った値は残す）。
+ * 外す条件: 開くボタンの名前・種類が checkbox・別名の組に同じ x/y/n のチェック欄が有る。
+ */
+export function dropOpenerCheckboxCopies<T extends { x?: number; y?: number; n?: number; w?: unknown }>(
+  points: Record<string, T>,
+): Record<string, T> {
+  const out: Record<string, T> = { ...points };
+  for (const [name, v] of Object.entries(points)) {
+    if (!v || String(v.w ?? "") !== "checkbox" || !isOpenerName(name)) continue;
+    const copied = aliasesOf(name).some((a) => {
+      if (a === name || isOpenerName(a)) return false;
+      const s = points[a];
+      return !!s && s.x === v.x && s.y === v.y && s.n === v.n;
+    });
+    if (copied) delete out[name];
+  }
+  return out;
+}
+
+function dropOpenerCheckboxFieldCopies<T extends FieldWithPos>(fields: T[]): T[] {
+  return fields.filter((f) => {
+    const nm = String(f?.name ?? "").trim();
+    if (!nm || String(f.kind ?? "") !== "checkbox" || !isOpenerName(nm)) return true;
+    return !fields.some((s) => {
+      const sn = String(s?.name ?? "").trim();
+      return sn !== nm && !isOpenerName(sn) && aliasesOf(nm).includes(sn) && s.x === f.x && s.y === f.y && s.n === f.n;
+    });
+  });
+}
+
+/** 束の points と shots.learned から、開くボタンの名前に写ったチェック欄の位置だけを外す（他は触らない）。外した数を返す。 */
+export function cleanOpenerCheckboxCopies(bundle: Record<string, unknown>): number {
+  let removed = 0;
+  const pts = bundle.points;
+  if (pts && typeof pts === "object" && !Array.isArray(pts)) {
+    const before = Object.keys(pts).length;
+    const next = dropOpenerCheckboxCopies(pts as Record<string, { x?: number; y?: number; n?: number; w?: unknown }>);
+    removed += before - Object.keys(next).length;
+    bundle.points = next;
+  }
+  const learned = (bundle.shots as { learned?: Record<string, unknown> } | undefined)?.learned;
+  if (learned && typeof learned === "object") {
+    for (const [screen, list] of Object.entries(learned)) {
+      if (!Array.isArray(list)) continue;
+      const next = dropOpenerCheckboxFieldCopies(list as FieldWithPos[]);
+      removed += list.length - next.length;
+      learned[screen] = next;
+    }
+  }
+  return removed;
 }
 
 /**
@@ -187,7 +263,7 @@ export function applyBundleAliasExpansion(bundle: Record<string, unknown>): void
   const out: Record<string, unknown> = {};
   for (const [screen, list] of Object.entries(learned)) {
     const arr = Array.isArray(list) ? list : [];
-    const merged = expandAliasLearnedFields(mergeAliasPositions(arr as FieldWithPos[]));
+    const merged = expandAliasLearnedFields(mergeAliasPositions(dropOpenerCheckboxFieldCopies(arr as FieldWithPos[])));
     out[screen] = merged.map((f) => ({
       name: String(f.name || ""),
       kind: String(f.kind || "unknown"),
@@ -210,6 +286,7 @@ export function expandAliasLearnedFields<T extends FieldWithPos>(fields: T[]): T
     for (const a of aliasesOf(nm)) {
       if (a === nm || have.has(a)) continue;
       if (skipAliasPositionCopy(a, nm)) continue;
+      if (kindBlocksCopy(a, f.kind)) continue;
       have.add(a);
       out.push({ ...f, name: a });
     }

@@ -26,5 +26,25 @@ console.log("■ 名前の無い束は変えずに手順書だけ付く");
   ok("それでも手順書は付く", r.playbook_ok === true);
 }
 
+console.log("■ 開くボタンの名前に写ったチェック欄の位置を外してから手順書を作る（束 2532 の形）");
+{
+  const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
+  const b: Record<string, unknown> = {
+    points: {
+      "city_code[]": copy, "所在地絞り込み": copy, "所在地を絞り込み": copy, "左の所在地絞り込み＋｜span": copy,
+      "左の所在地絞り込み＋｜div.one_slide_searc": { n: 1, w: "button", x: 0.42, y: 0.18, w_src: "photo" },
+    },
+    shots: { learned: { form: [{ name: "city_code[]", kind: "checkbox", n: 9, x: 0.5, y: 0.5, zone: "左" }, { name: "所在地絞り込み", kind: "checkbox", n: 9, x: 0.5, y: 0.5 }] } },
+    scene_flows: [{ scene: "area", runs: 6, steps: ["所在地絞り込み＋", "city_code[]"] }],
+  };
+  const r = prepareBundleForWrite(b);
+  const pts = b.points as Record<string, Record<string, unknown>>;
+  ok("写し 4件を外したと返す（points 3・欄一覧 1）", r.opener_copies_removed === 4, String(r.opener_copies_removed));
+  ok("測ったボタンは他の印ごと残る", pts["左の所在地絞り込み＋｜div.one_slide_searc"]?.w_src === "photo");
+  ok("欄一覧の他の値は変えない", JSON.stringify((b.shots as { learned: { form: unknown[] } }).learned.form) === JSON.stringify([{ name: "city_code[]", kind: "checkbox", n: 9, x: 0.5, y: 0.5, zone: "左" }]));
+  const pb = b.playbook as { positions_mismatch: number };
+  ok("手順書の取り違えは 0", pb.positions_mismatch === 0, String(pb.positions_mismatch));
+}
+
 console.log(`\n結果: ${pass} 通過 / ${fail} 失敗`);
 if (fail) process.exitCode = 1;
