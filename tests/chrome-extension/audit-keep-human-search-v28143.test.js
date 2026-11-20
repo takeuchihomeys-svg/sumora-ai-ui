@@ -81,7 +81,7 @@ function ok(name, cond, detail) {
   {
     const ps = read("page-script.js");
     const pin = (ps.match(/var _PIN = \/\^\(([^\n]*)\)\//) || [])[1] || "";
-    ok("_PIN に fallback_ と area_all_done", /\|fallback_\|area_all_done$/.test(pin), pin.slice(-60));
+    ok("_PIN に fallback_ と area_all_done", /\|fallback_\|/.test(pin + "|") && /\|area_all_done\|/.test(pin + "|"), pin.slice(-60));
   }
 
   console.log("■ ③ bulk-dl: 押す途中で飛ばした理由を数える");

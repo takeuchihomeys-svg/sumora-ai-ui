@@ -2735,7 +2735,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.143";
+  var _AXLX_PAGE_VER = "2.8.144";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -2744,7 +2744,7 @@
     "order_human", "area_before_cond", "no_reset_button", "clear_per_panel", "no_hidden_press",
     "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
     "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
-    "one_cursor", "audit_keep_reason",
+    "one_cursor", "audit_keep_reason", "ward_detail_skip",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -5460,7 +5460,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -12303,26 +12303,48 @@
            *   旧は外す押しのカーソルが動き始めてから 240〜400ms で選ぶ押しを始めていた（2つのカーソルの動きが重なる）。
            *   → 外す押しが終わってから間を置いて選ぶ押しへ。選ぶ押しが終わってから Y を確かめる。
            */
+          /**
+           * ★ 2026-11-20 平田さん自動の録画（run mwoqsmy8_ib0b・2.8.142）:
+           *   天王寺区を外す押し（was:true→now:true）→選ぶ押し（was:false→now:false）で**付け直しが効かず**、
+           *   その後 Y 待ち4.5秒＋「詳細な地域の設定へ進む」待ち15秒＝約26秒止まって「所在地モーダル失敗」へ落ちていた。
+           *   → 選ぶ押しの後に checked を確かめ、外れたままなら**カーソルでもう1回だけ**押す（印 ward_btn_y_recheck）。
+           */
+          var _afterSelectPressed = function (rechecked) {
+            setTimeout(function() {
+              if (wInp && !wInp.checked && !rechecked) {
+                try { if (_audit) _auditStepP('ward_btn_y_recheck', norm(wTarget.textContent).slice(0, 20) + ' が外れたまま → もう1回押す'); } catch (_) {}
+                _pressHumanTracked(wTarget, function () { try { simulateClick(wTarget); } catch (_) {} }).then(function () { _afterSelectPressed(true); });
+                return;
+              }
+              if (isWardButtonY()) {
+                console.log('[AX] ensureWardButtonY: Y確認 → callback');
+                try { if (_audit) _auditStepP('ward_btn_y_ok', rechecked ? '押し直しでY' : 'Y'); } catch (_) {}
+                callback();
+              } else {
+                waitForClick(isWardButtonY, function () {
+                  try { if (_audit) _auditStepP('ward_btn_y_ok', '待ってY'); } catch (_) {}
+                  callback();
+                }, 15, 300, 240 + Math.floor(Math.random() * 160), function() {
+                  console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
+                  try {
+                    if (_audit) _auditStepP('ward_btn_y_timeout', '区' + document.querySelectorAll('label input[name="city_code[]"]:checked').length + '入り・' + norm(wTarget.textContent).slice(0, 20) + (wInp && wInp.checked ? ' 入り' : ' 外れ'));
+                  } catch (_) {}
+                  callback();
+                });
+              }
+            }, 320 + Math.floor(Math.random() * 200));
+          };
           var _selectStep = function () {
             setTimeout(function() {
               _pressHumanTracked(wTarget, function () { try { simulateClick(wTarget); } catch (_) {} }).then(function () {
                 console.log('[AX] ensureWardButtonY: カーソル移動→クリック→select 待機');
-                setTimeout(function() {
-                  if (isWardButtonY()) {
-                    console.log('[AX] ensureWardButtonY: Y確認 → callback');
-                    callback();
-                  } else {
-                    waitForClick(isWardButtonY, callback, 15, 300, 240 + Math.floor(Math.random() * 160), function() {
-                      console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
-                      callback();
-                    });
-                  }
-                }, 320 + Math.floor(Math.random() * 200));
+                _afterSelectPressed(false);
               });
             }, 240 + Math.floor(Math.random() * 160));
           };
           if (wInp && wInp.checked) {
             console.log('[AX] ensureWardButtonY: checked→カーソルでdeselect 待機');
+            try { if (_audit) _auditStepP('ward_btn_y_toggle', norm(wTarget.textContent).slice(0, 20) + ' を外して選び直す（区' + document.querySelectorAll('label input[name="city_code[]"]:checked').length + '入り）'); } catch (_) {}
             _pressHumanTracked(wTarget, function () { try { wTarget.click(); } catch (_) {} }).then(_selectStep);
           } else {
             _selectStep();
@@ -12726,7 +12748,48 @@
               if (hasDetailArea) {
                 // STEP3後確認: div.next_step_button2 が見えることを確認
                 // 見えない場合 = 市区郡がトグルで解除された → 再クリックして再選択
+                /**
+                 * ★ 2026-11-20 平田さん自動の録画（9区＋上本町）: ensureWardButtonY で Y にならないまま STEP4 に来ると、
+                 *   clickNextStepBtn は N の間は押さないので 15秒待って「所在地モーダル失敗」→ 代替の経路へ落ちていた。
+                 *   → Y にならないなら町まで進むのはやめ、**欲しい区が全部入っているか確かめてから**「確定してリストへ」。
+                 *     足りない区はカーソルで1つずつ押し直す（直接チェックしない）。印 ward_detail_skip。
+                 *   決まり ward_detail_skip: 町まで進めない時は区をそろえて確定
+                 */
+                function _wardOnlyConfirm(why) {
+                  var want = (cond.city_codes || []).map(String).filter(Boolean);
+                  var chk = isAllWantedWardsChosen(want);
+                  try {
+                    if (_audit) {
+                      _audit.fallback = '町（' + townNamesForStep5.join('、') + '）まで進めず → 区' + want.length + 'で確定: ' + String(why).slice(0, 80);
+                      _auditStepP('ward_detail_skip', String(why).slice(0, 80) + ' 入った' + chk.checked.length + '・足りない' + chk.missing.length);
+                    }
+                  } catch (_) {}
+                  showWarnToast('町（' + townNamesForStep5.join('、') + '）まで絞れず → 区で検索します');
+                  chk.missing.forEach(function (code) {
+                    var inp = document.querySelector('label input[name="city_code[]"][value="' + String(code).replace(/"/g, "") + '"]');
+                    if (inp && !inp.checked) _toggleCheckboxLikeHuman(inp, true);
+                  });
+                  whenClickQueueIdle(function () {
+                    waitForClick(closeAreaModal, function () {
+                      _afterAreaAllPressedThenNext('町まで進めず・区で確定');
+                    },
+                    45, 450, 500 + Math.floor(Math.random() * 350),
+                    function () {
+                      try {
+                        if (_pressConfirmListLikeHuman("町まで進めず最終リトライ")) {
+                          _afterAreaAllPressedThenNext('町まで進めず・最終リトライ確定');
+                          return;
+                        }
+                      } catch (_) {}
+                      fallbackSearchWithoutArea('町まで進めず・確定も押せず');
+                    });
+                  }, 40);
+                }
                 function startSTEP4() {
+                  if (!isWardButtonY() && document.querySelectorAll('label.one_town').length === 0) {
+                    _wardOnlyConfirm('「詳細な地域の設定へ進む」がYにならない');
+                    return;
+                  }
                   waitForClick(clickNextStepBtn,
                     function() {
                       console.log('[AX] STEP4完了: 詳細な地域へ進むクリック済 → 町字待機 detailArea:', detailAreaName);

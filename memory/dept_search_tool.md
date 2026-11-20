@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.144: 区→町（詳細地域）で止まらない — 選び直しが効かない区を押し直す／Y にならない時は区をそろえて確定**（竹内さん「録画から課題見つけて改善する ちゃんと改善する 徹底的に改善する」）
+- 録画の回（run `mwoqsmy8_ib0b`・平田さん自動・audit 1551・拡張 2.8.142）の押した記録（`shot_ops`）を時刻順に読んで判明:
+  - 欲しいのは 9区＋上本町（`detail_ward`=大阪市天王寺区）。9区がそろった後、`div.next_step_button2` が Y（`town_search_Y`）にならず `ensureWardButtonY` が天王寺区を**外す→選ぶ**。
+    外す押し 08:55:49.677（was:true now:true）→ 選ぶ押し 08:55:50.877（was:false now:false）＝**選び直しが効かず外れたまま**。
+  - その後 Y 待ち約4.5秒＋`clickNextStepBtn`（N の間は押さない）約15秒 → 「詳細な地域の設定へ進む」ボタンが見つかりません → `fallbackSearchWithoutArea`（約26秒止まり・「所在地モーダル失敗」の警告）。
+  - 最後は `_areaFallbackViaModal` が「欲しい区が全部入っている」で即終わり → 9区で検索（上本町は天王寺区の中なので範囲は足りている）。
+  - DB: realpro の複数区＋町の回 33回中、町まで進めたのは 3回（id 369・157・156・いずれも 2.5.x・2区）。直近は0回。
+- 直し（page-script.js）:
+  1. `ensureWardButtonY`: 選ぶ押しの後に `wInp.checked` を確かめ、外れたままなら**カーソルでもう1回だけ**押す（印 `ward_btn_y_recheck`）。印 `ward_btn_y_toggle`／`ward_btn_y_ok`／`ward_btn_y_timeout`（入っている区の数・その区が入りか外れか）。
+  2. `startSTEP4` の入口: Y でも町の一覧（`label.one_town`）でもなければ `_wardOnlyConfirm` — `isAllWantedWardsChosen` で欲しい区を確かめ、足りない区は `_toggleCheckboxLikeHuman` で1つずつ → 押し終わってから `closeAreaModal`（確定してリストへ）→ `_afterAreaAllPressedThenNext('町まで進めず・区で確定')`。確定も押せない時だけ `fallbackSearchWithoutArea`。印 `ward_detail_skip`・`_audit.fallback` に理由。警告は「町（上本町）まで絞れず → 区で検索します」。約26秒 → 約6秒。
+  3. `_PIN`／search-audit `KEEP_STEP` に `ward_detail_skip`・`ward_btn_y_timeout`（長い回でも理由が落ちない）。
+- 手順書: 決まり `ward_detail_skip`（場面 area・2.8.144）を `auto-procedure-rules.ts` と `_AXLX_RULES_DONE` に追加、`AUTO_RULES_REVIEWED_UP_TO` 2.8.144。
+- ⚠ 竹内さんに確認待ち: ①リアプロは区を複数選ぶと「詳細な地域の設定へ進む」が Y にならない仕様か（実画面で未確認・2区の時は 2.5.x で進めた）②希望に「天王寺区」と「上本町」が両方ある時、区を丸ごと選んでいるなら町の絞り込みは省いてよいか（今は町まで試して、進めなければ区で検索）。
+- テスト: 新 `ward-detail-skip-v28144.test.js` 23件。`audit-keep-human-search-v28143` の _PIN の確かめを「末尾」→「含む」に。拡張一式 208本・前回から悪化0（✗226 は前から）。tsc 0。
+
 ## 2026-11-20 **拡張 2.8.143: 録画の点検 — 人の検索の回を「止まり」にしない／代替の理由を記録から落とさない／PDF を飛ばした理由を残す**（竹内さん「今録画したけど、完全になっているのかな 自動モードや手順書で抜けている部分があれば 改善していく」）
 - 録画の回（run `mwoqsmy8_ib0b`・08:53:58〜09:00:12 UTC・拡張 2.8.142）を DB で確認:
   - 写真 400枚すべて保管庫にあり（白い写真なし・拡張の窓は灰色で塗れている＝2.8.141 が効いている）。押した記録に本物の手の形 `csr` も入っている。

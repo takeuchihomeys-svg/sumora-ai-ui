@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.143";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.144";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -234,6 +234,15 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "回の始まり・終わり・代替の理由は残し",
     file: "search-audit.js",
+  },
+  {
+    id: "ward_detail_skip",
+    scene: "area",
+    text: "区を選んだ後「詳細な地域の設定へ進む」が押せる状態（Y）にならない時は、町まで進むのをやめ、欲しい区が全部入っているか確かめて（足りない区はカーソルで1つずつ押して）「確定してリストへ」を押す。選び直した区が外れたままならもう1回だけ押す",
+    since: "2.8.144",
+    kb: null,
+    marker: "町まで進めない時は区をそろえて確定",
+    file: "page-script.js",
   },
 ];
 
