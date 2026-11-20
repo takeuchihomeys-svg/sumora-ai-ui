@@ -9,7 +9,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   APPLY_ROUTE_MAP: "on",
   APPLY_ROUTE_SUBSTATE: "off",
   BRAIN_COMPOSE_BLUEPRINT: "off",
-  BRAIN_ESTIMATE_RECORDS: "off",
+  BRAIN_ESTIMATE_RECORDS: "on",
   BRAIN_JUDGE_BASIS: "off",
   BRAIN_MATERIAL_CLASH: "off",
   BRAIN_NOW_LATER_FIRST: "on",
