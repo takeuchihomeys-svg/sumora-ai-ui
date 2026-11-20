@@ -10,6 +10,7 @@ import { secondLinesFromCard } from "@/app/lib/estimate-explain";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase-server";
+import { recordKnowledgeUsage } from "@/app/lib/knowledge-usage";
 // 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
 import { sumoraLlmMarks, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
@@ -375,7 +376,8 @@ function incrementKnowledgeUsage(ids: string[]): void {
   if (!ids.length) return;
   after(async () => {
     try {
-      await supabase.rpc("increment_knowledge_used_count", { p_ids: [...new Set(ids)] });
+      // 2026-11-20 作業員H: KNOWLEDGE_USAGE_TABLE=on の時は小さな表 knowledge_usage に足す（毎晩書き戻す・app/lib/knowledge-usage.ts）
+      await recordKnowledgeUsage((fn, a) => supabase.rpc(fn, a), ids);
     } catch {
       // 使用回数更新の失敗は生成に影響させない
     }
