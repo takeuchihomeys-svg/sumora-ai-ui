@@ -4,6 +4,8 @@
 import { readFileSync } from "node:fs";
 import { linkCustomerImage, linkTurnImages, buildImageLinkBlock, estimateFactsFromTranscript, asksOf, reactedSentProperties, customerImageLinkOn, type SentForLink } from "../customer-image-link";
 
+// 2026-11-20 作業員K2: CUSTOMER_IMAGE_ROUTE_1115 が既定 on になった＝このファイルは結び付けの前の行き先（route off）を確かめる
+process.env.CUSTOMER_IMAGE_ROUTE_1115 = "off";
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
 
@@ -21,7 +23,7 @@ const OWN_EST = "[画像] 【見積書・初期費用の明細】\n御見積書\
 // 3d2b1f6a 11/04 の形（号室の一覧の資料を Vision が見積と分けた）
 const LISTING_AS_EST = "[画像] 【見積書・初期費用の明細】\n詳細(特約等)\n※鍵交換代:30,000円(税別)\n| 号室 | 現況 | 間取/専有面積 | 敷金 | 礼金 | 家賃 |\n| 405 | R中 | 1K 22.23㎡ | 0円 | 0円 | 58,000円 |\n合計 2";
 
-ok("既定 off", customerImageLinkOn({}) === false && customerImageLinkOn({ CUSTOMER_IMAGE_LINK: "on" }) === true);
+ok("既定 on（2026-11-20）・off で止める", customerImageLinkOn({}) === true && customerImageLinkOn({ CUSTOMER_IMAGE_LINK: "off" }) === false);
 {
   const l = linkCustomerImage({ text: MATERIAL, at: "2026-11-06T04:02:00Z", customerWords: "こちらの物件気になってます 一旦内見して決めたい", sent: SENT });
   ok("資料: 物件名・号室（確かさ high）", l.kind === "property_material" && l.property?.name === "サンプラザ照ヶ丘1棟" && l.property?.room === "404" && l.property?.certainty === "high", JSON.stringify(l.property));

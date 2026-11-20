@@ -4,7 +4,7 @@ import { concernSub, roomsIn, concernDetail, concernSubtopicOn } from "../concer
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, d = "") => { if (ok) pass++; else { fail++; console.log(`NG ${n} ${d}`); } };
 
-t("既定 off", !concernSubtopicOn({}) && concernSubtopicOn({ BRAIN_CONCERN_SUBTOPIC: "on" }));
+t("既定 on（2026-11-20）・off で止める", concernSubtopicOn({}) && !concernSubtopicOn({ BRAIN_CONCERN_SUBTOPIC: "off" }));
 t("費用→鍵交換", concernSub("費用", "鍵交換代っていくらかかりますか？") === "鍵交換");
 t("費用→日割", concernSub("費用", "日割り家賃は入りますか") === "日割家賃");
 t("費用→礼金", concernSub("費用", "礼金なしにできますか") === "礼金");
