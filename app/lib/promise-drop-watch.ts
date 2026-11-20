@@ -33,8 +33,21 @@ export type PdInput = { conversationId: string; customerName: string | null; sta
 
 /** 約束の種類（こちらの手打ちの文の言葉で・作らない）。新着を随時は期日が無いので見張らない */
 export type PdKind = "pickup" | "check";
-export function promiseDropKindOf(text: string): PdKind | null {
+/**
+ * 約束を読む前に、約束でない節を落とす（2026-11-21 作業員N の B1 の確かめで見つかった穴）:
+ *   穴1 過去形の報告（「御見積書をお送りさせて頂きました」「確認させて頂きましたところ」）は約束でない
+ *   穴2 条件つき（「ご条件お送り頂きますと、ピックアップさせて頂きます」）は、お客様が条件を送るまで期限が始まらない＝約束に数えない
+ *   節は 。！!？?・改行 で切る（同じ節の中に条件の言葉があれば、その節だけ落とす）
+ */
+export function promiseClausesOf(text: string): string {
   const t = String(text ?? "").normalize("NFKC");
+  return t.split(/(?<=[。！!？?\n])/).filter((c) =>
+    !/(?:頂き|いただき|致し|いたし)ました(?:[！!。？?\n]|ところ|$)/.test(c) &&
+    !/(?:頂き|いただき)ますと|(?:頂|いただ)ければ|(?:頂|いただ)けましたら|(?:頂|いただ)けますと|(?:下さ|くださ)いましたら/.test(c),
+  ).join("");
+}
+export function promiseDropKindOf(text: string): PdKind | null {
+  const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
   if (/ピックアップ(?:させて頂|して(?:お送り|送らせ)|出来次第お送り|でき次第お送り)|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)/.test(t)) return "pickup";
   if (/(?:募集状況|空き状況|空室状況)(?:を)?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
@@ -59,7 +72,7 @@ export const PROMISE_KIND_JUDGEABLE: ReadonlySet<PromiseKindName> = new Set<Prom
 export function promiseKindNameOf(text: string): PromiseKindName | null {
   const k = promiseDropKindOf(text);
   if (k) return k;
-  const t = String(text ?? "").normalize("NFKC");
+  const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
   if (/御?見積(?:書)?(?:を)?(?:作成|お作り)(?:して|させて頂)|御?見積(?:書)?(?:を)?お送りさせて頂/.test(t)) return "estimate";
   if (/内覧(?:の)?(?:候補日?|日程|ご日程|お日にち)(?:を)?(?:確認|お調べ|お送り)させて頂|ご案内(?:可能な)?(?:日時|お時間)(?:を)?確認させて頂/.test(t)) return "viewing_slot";
@@ -94,6 +107,8 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName 
   // 2026-11-21 作業員N の B1 の数え（見積の約束2つが AIX 無しで「果たしていない」）: こちらの手打ちの文で御見積書を送った番も果たした
   //   （「御見積書となります」「お見積りお送りさせて頂きました」。「作成させて頂きます」は約束なので数えない。画像だけの送付は中身が分からないので数えない）
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && ESTIMATE_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
+  // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
+  if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
 }
 /** 見張らない会話か（申込以降・お客様が決めた・こちらが締めた）。約束の時刻より後の発言で見る */
@@ -103,6 +118,32 @@ export function promiseClosedConversation(status: string | null, msgs: ReadonlyA
   return msgs.some((m) => Date.parse(m.created_at) > t0 && (
     (m.sender === "customer" && STOPPED_RE.test(String(m.text ?? "").normalize("NFKC"))) ||
     (m.sender === "staff" && STAFF_CLOSED_RE.test(String(m.text ?? "").normalize("NFKC")))));
+}
+
+/** 1つの会話の、期限を過ぎて果たしていない約束（全部・同じ種類の言い直しは新しい方1つ）。事実だけ（作業員N の統括の材料 CONDUCTOR_OVERDUE_PROMISES 用） */
+export type OverduePromise = { kind: PromiseKindName; promisedAt: string; dueAt: string; dueBy: "words" | "default72h"; daysOver: number };
+export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix" | "sent">, nowMs: number, o: { maxDays?: number } = {}): OverduePromise[] {
+  const maxDays = o.maxDays ?? PROMISE_DROP_MAX_DAYS;
+  const ms = [...input.msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const byKind = new Map<PromiseKindName, { at: string; text: string }>();
+  for (const m of ms) {
+    if (m.sender !== "staff" || m.is_aix_generated) continue;
+    const k = promiseKindNameOf(String(m.text ?? ""));
+    if (!k || !PROMISE_KIND_JUDGEABLE.has(k)) continue;
+    // 種類ごとに一番新しい約束1つ（果たす前の言い直しは新しい方にまとまる・果たした後の新しい約束も新しい方を見る）
+    byKind.set(k, { at: m.created_at, text: String(m.text ?? "") });
+  }
+  const out: OverduePromise[] = [];
+  for (const [kind, p] of byKind) {
+    const t0 = Date.parse(p.at);
+    if ((nowMs - t0) / 864e5 > maxDays) continue;
+    const due = promiseDeadlineMs(p.text, t0);
+    if (nowMs < due.ms) continue;
+    if (promiseFulfilledBy({ at: p.at, kind }, { msgs: ms, aix: input.aix, sent: input.sent })) continue;
+    if (promiseClosedConversation(input.status, ms, p.at)) continue;
+    out.push({ kind, promisedAt: p.at, dueAt: new Date(due.ms).toISOString(), dueBy: due.by, daysOver: Math.floor((nowMs - due.ms) / 864e5) });
+  }
+  return out.sort((a, b) => a.promisedAt.localeCompare(b.promisedAt));
 }
 
 export type PromiseDrop = {
