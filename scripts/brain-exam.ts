@@ -118,7 +118,11 @@ function loadProblems(): ExamProblem[] {
     const n = publishProblems(r.problems.filter((p) => specIds.has(p.id) && !stale.has(p.id)) as unknown as Array<Record<string, unknown>>);
     if (n) console.log(`問題: 共有の置き場に ${n}問を置いた（他の作業ツリーが作り直さない）`);
   } catch (e) { console.warn("問題を共有の置き場に置けない:", String(e)); }
-  return (problemsCache = r.problems);
+  // 2026-11-21 作業員H（41dadfe6・従業員の番の問題を spec から外した）: 手元の problems.json に spec に無い問題が残っていても回さない（作業ツリーごとの古い写し）
+  const inSpec = new Set(spec.map((s) => String(s.id)));
+  const outOfSpec = r.problems.filter((p) => !inSpec.has(p.id)).map((p) => p.id);
+  if (outOfSpec.length) console.log(`問題: spec に無い ${outOfSpec.length}問（${outOfSpec.slice(0, 8).join(",")}${outOfSpec.length > 8 ? "…" : ""}）は回さない（外した問題・古い写し）`);
+  return (problemsCache = r.problems.filter((p) => inSpec.has(p.id)));
 }
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
