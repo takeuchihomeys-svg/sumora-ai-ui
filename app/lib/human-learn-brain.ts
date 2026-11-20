@@ -467,6 +467,11 @@ export function learnNextPress(
 /** 要素ごとの押した位置をまとめる（回数の多い実測に寄せる） */
 export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, PointStat> {
   const out: Record<string, PointStat> = {};
+  /**
+   * 自動が押した位置（by:"auto"）は人の位置が無い欄の代わりにだけ使う。
+   *   ⚠ 自動は束の位置を狙って押すので、回数で人の位置を上書きさせると自分の押し方を学び直す輪になる。
+   */
+  const autoOnly = new Set<string>();
   for (const row of rows) {
     const f = row.point_fields;
     if (!f || typeof f !== "object") continue;
@@ -486,12 +491,16 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
       const w =
         typeof r.w === "string" ? r.w.slice(0, 10)
         : (typeof r.wk === "string" ? r.wk.slice(0, 10) : null);
-      // 回数の多い方（新しい実測）を採る。同じ回数なら新しい行を採る（後の行）
-      if (!old || n >= old.n) {
+      const isAuto = r.by === "auto";
+      const oldAuto = autoOnly.has(key);
+      if (old && isAuto && !oldAuto) continue;
+      // 回数の多い方（新しい実測）を採る。同じ回数なら新しい行を採る（後の行）。人の位置は自動の位置より先
+      if (!old || (oldAuto && !isAuto) || n >= old.n) {
         const next: PointStat = { x, y, n };
         const wUse = w || old?.w;
         if (wUse) next.w = wUse;
         out[key] = next;
+        if (isAuto) autoOnly.add(key); else autoOnly.delete(key);
       }
     }
   }

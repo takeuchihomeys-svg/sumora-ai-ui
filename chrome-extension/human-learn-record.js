@@ -146,6 +146,7 @@
   var _opsRing = [];
   var _opsSeen = 0;
   var _opsAsk = 0;
+  var _motionReplyAt = 0;
   /**
    * ⚠ 2026-11-14 竹内さん「さっきの録画から読み取って改善するようにする」→ **実測で判明（重大）**:
    *   DB の 49件のうち **24件が「操作は22件あるのに押した場所は1個だけ」**だった（`ops22/pf1` が15件）。
@@ -676,6 +677,35 @@
       if (!last.el && op.el) last.el = op.el;
       return true;
     } catch (_) { return false; }
+  }
+  /** 写真の行に載せる自動の押した位置（sinceT より後・x/y がある click/tap だけ・要素の中の割合） */
+  function _autoPressPointsSince(ring, sinceT) {
+    var fields = {}, order = [], xs = [], ys = [], n = 0;
+    var list = Array.isArray(ring) ? ring : [];
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      if (!o || o.by !== "auto" || !_PRESS_KIND[String(o.k || "")]) continue;
+      if (!(Number(o.t) > (Number(sinceT) || 0))) continue;
+      if (o.x == null || o.y == null) continue;
+      var x = Number(o.x), y = Number(o.y);
+      if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) continue;
+      var f = String(o.f || "").slice(0, 40);
+      if (!f) continue;
+      var cur = fields[f];
+      if (!cur) {
+        cur = fields[f] = { n: 0, x: x, y: y, by: "auto" };
+        if (o.w) cur.w = String(o.w).slice(0, 10);
+        if (typeof o.bw === "number") cur.bw = o.bw;
+        if (typeof o.bh === "number") cur.bh = o.bh;
+        if (o.shape) cur.shape = String(o.shape).slice(0, 40);
+        order.push(f);
+      }
+      cur.n++; cur.x = x; cur.y = y;
+      xs.push(x); ys.push(y); n++;
+    }
+    if (!n) return null;
+    var mid = function (a) { var s = a.slice().sort(function (p, q) { return p - q; }); return s[Math.floor(s.length / 2)]; };
+    return { n: n, x: mid(xs), y: mid(ys), fields: fields, order: order.slice(0, 40) };
   }
 
   function _pushOp(kind, el, by, ev) {
@@ -1491,6 +1521,20 @@
           try { det = rec.detail(); } catch (_) {}
           var LL = (typeof self !== "undefined" ? self : window).AxlxHumanLearn || L;
           var m = (LL && LL.summarizeMotion) ? LL.summarizeMotion(det) : null;
+          /**
+           * ★ 2026-11-20 (2.8.151) 竹内さん「押した位置は画像から学習したら改善される」→ DB 実測:
+           *   自動の写真 99行のうち押した位置（point_fields）が付いたのは 0行。rec の位置は人の押し（isTrusted）だけなので、
+           *   自動が _opsRing に x/y 付きで残した押しが写真の行に載っていなかった（統括の「押した位置19%」の正体）。
+           *   → 人の位置が無い写真には、前の写真からあとの自動の押し（x/y あり）を by:"auto" で載せる。
+           */
+          try {
+            var _hasHumanPt = !!(m && m.points && m.points.fields && Object.keys(m.points.fields).length);
+            if (m && !_hasHumanPt) {
+              var _ap = _autoPressPointsSince(_opsRing, _motionReplyAt);
+              if (_ap) m.points = _ap;
+            }
+          } catch (_) {}
+          _motionReplyAt = Date.now();
           sendResponse({ ok: !!m, motion: m || null });
         } catch (_) { try { sendResponse({ ok: false, motion: null }); } catch (__) {} }
         return true;
