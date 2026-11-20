@@ -173,6 +173,11 @@
   var _shotPendingAt = 0;
   var _shotLast = 0;
   var _shotCount = 0;
+  /** 自動モード（aix・ai）の写真は画面が変わった時だけ（autoShotDecide） */
+  var _shotAuto = false;
+  var _autoShotSig = null;
+  var _autoShotSigAt = 0;
+  var _autoShotSkipped = 0;
   var rec = null;
   var site = (function () {
     try {
@@ -1495,6 +1500,47 @@
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
   /**
+   * ★ 2026-11-20 竹内さん（自動モードの写真の撮り方）「自動モードは画面が変わった時だけ撮る」:
+   *   実測: 自動の写真 13,210枚/7日のうち読んだのは 536枚（4%）。1回の自動で 14分に 1000枚・Storage 1日 300〜700MB。
+   *   → 自動（aix・ai）は画面の印（_screenSig）が前の写真と同じなら撮らない。同じ画面が 15秒続いたら
+   *     止まっている証拠として1枚撮る。撮らなかった枚数は次の写真の shot_ops に k:"same" で残す。
+   *   ⚠ 通常・スタッフ（人の手本）は今まで通り操作ごとに撮る。
+   */
+  var AUTO_SHOT_SAME_MS = 15000;
+  function _isAutoModeSt(st) {
+    var s = st || {};
+    if (s.staffMode) return false;
+    return !!(s.aiMode || s.aixMode);
+  }
+  function autoShotDecide(prevSig, prevAt, sig, now) {
+    if (!prevSig || sig !== prevSig) return "shoot";
+    if (now - (Number(prevAt) || 0) >= AUTO_SHOT_SAME_MS) return "shoot";
+    return "skip";
+  }
+  /** 画面の印（見た目の種類だけ・文字や入力値は読まない） */
+  function _screenSig(openedKind) {
+    var parts = [];
+    try { parts.push(String(location.pathname || "")); } catch (_) { parts.push(""); }
+    parts.push(String(openedKind || ""));
+    try {
+      var sels = ["label.one_city", "label.one_town", "label.one_station", "label.one_line", ".building_tr"];
+      var vis = "";
+      for (var i = 0; i < sels.length; i++) {
+        var e = document.querySelector(sels[i]);
+        vis += (e && e.offsetParent !== null) ? "1" : "0";
+      }
+      parts.push(vis);
+    } catch (_) { parts.push("?"); }
+    try {
+      var b = document.querySelector(".building_tr");
+      parts.push(b ? String(b.id || (b.getAttribute && b.getAttribute("data-id")) || "").slice(0, 24) : "");
+      var pg = document.querySelector(".pagination .active, .pager .current, .page_now");
+      parts.push(pg ? String(pg.textContent || "").trim().slice(0, 4) : "");
+    } catch (_) {}
+    try { parts.push(String(Math.round((window.scrollY || 0) / Math.max(200, (window.innerHeight || 800) * 0.8)))); } catch (_) {}
+    return parts.join("|");
+  }
+  /**
    * 2026-11-14 実測: 写真の中央に拡張自身の小窓（「AIXLINX 物件検索サポート」「案内」「学習中」）が写り、
    *   読み取りが**サイトの欄ではなく拡張のボタン**を読んでいた（ピンポイント→ビジポイント 等）。
    *
@@ -1668,6 +1714,19 @@
       if (_shotPending) { _shotPending = false; diag(false, "timeout_stuck"); }  // 張り付きを解く
       if (now - _shotLast < SHOT_MIN_GAP_MS) return;   // 間引きは「失敗」ではない（数えない）
       if (_shotCount >= SHOT_MAX_PER_SESSION) { diag(false, "max_reached"); return; }
+      var _sameSkippedNow = 0;
+      if (_shotAuto) {
+        var _sig = "";
+        try { _sig = _screenSig(_openedKind()); } catch (_) { _sig = ""; }
+        if (_sig && autoShotDecide(_autoShotSig, _autoShotSigAt, _sig, now) === "skip") {
+          _autoShotSkipped++;
+          return;   // 間引き（失敗ではない・数えない）
+        }
+        _sameSkippedNow = _autoShotSkipped;
+        _autoShotSkipped = 0;
+        _autoShotSig = _sig;
+        _autoShotSigAt = now;
+      }
       /**
        * 2026-11-14 竹内さん「今録画しているのから自動モードで地域。ちゃんと動きとカーソルの動きは
        *   理解しているか。ボタン押されているのか」→ **DBで判明**:
@@ -1712,7 +1771,14 @@
          *     「この画面では次にこれを押す」を学べる。
          *   ⚠ 送るのは**欄の名前と操作の種類・時刻だけ**（入力した中身・文字は送らない）。
          */
-        ops: _recentOps(),
+        ops: (function () {
+          var o = _recentOps();
+          if (_sameSkippedNow > 0) {
+            // 先頭に置く（送る側が shot_ops を 80件で切るので末尾だと落ちる）
+            try { o = [{ t: now, k: "same", f: null, w: null, same: _sameSkippedNow, by: "auto" }].concat(Array.isArray(o) ? o : []); } catch (_) {}
+          }
+          return o;
+        })(),
       }, function (res) {
         void chrome.runtime.lastError;
         _shotPending = false;
@@ -1875,6 +1941,7 @@
   var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];
   // var _shooting = false;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function apply(st) {
+    _shotAuto = _isAutoModeSt(st);
     if (shouldLearn(st)) { startWatching(); ensureBadge(); }
     else { stopWatching(); removeBadge(); }
     /**
