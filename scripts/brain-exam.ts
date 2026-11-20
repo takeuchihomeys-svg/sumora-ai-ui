@@ -69,7 +69,7 @@ function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
 import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
-import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
+import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, skipNoRegressionOn, noRegressionPossible, repsOnlyIfDifferOn, firstTwoSameAsBase, passPathOf, type PassPath, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
@@ -1743,8 +1743,14 @@ async function main() {
   const doneSigs = new Map<string, string[]>();
   // 2026-11-11 作業員8: 過半数の印（exam-flake.majoritySigOfRow）。過半数が決まった問題の残りの回を呼ばない（--repeat-flaky／--reps-file の時だけ＝取り置きは回が揃わなくても使える形）
   const doneMaj = new Map<string, string[]>();
-  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) { doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]); doneMaj.set(r.id, [...(doneMaj.get(r.id) ?? []), majoritySigOfRow(r)]); }
-  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0 };
+  const donePP = new Map<string, PassPath[]>(); // 2026-11-21 作業員H: 回ごとの合格と道（最初の2回が前と同じなら3回目から回さない）
+  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) { donePP.set(r.id, [...(donePP.get(r.id) ?? []), passPathOf(r as never)]); doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]); doneMaj.set(r.id, [...(doneMaj.get(r.id) ?? []), majoritySigOfRow(r)]); }
+  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0, noRegression: 0, sameAsBase: 0 };
+  // 2026-11-21 作業員H: 前（main）が合格も道も過半数で✕の問題は、今を重ねて回しても悪化にならない＝2回目以降を回さない（exam-flake.noRegressionPossible・EXAM_SKIP_NO_REGRESSION=off で止める）
+  const baseRowsById = new Map<string, ResultRow[]>();
+  if ((skipNoRegressionOn() || repsOnlyIfDifferOn()) && !IS_BASELINE_CHILD && BASELINE && BASELINE !== "main") for (const r of readResults(BASELINE)) baseRowsById.set(r.id, [...(baseRowsById.get(r.id) ?? []), r]);
+  const noRegCache = new Map<string, boolean>();
+  const noRegressionFor = (id: string) => { let v = noRegCache.get(id); if (v === undefined) { v = noRegressionPossible((baseRowsById.get(id) ?? []) as never); noRegCache.set(id, v); } return v; };
   const EARLY_STOP = majorityEarlyStopOn() && (REPEAT_FLAKY || !!REPS_OF) && REPEAT > 1;
   if (REPEAT_FLAKY && REPEAT > 1) {
     const c = { flaky: 0, stable: 0, unknown: 0 } as Record<string, number>;
@@ -1841,6 +1847,9 @@ async function main() {
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
     else if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
     // 2026-11-11 作業員8: 済んだ回で過半数が決まった（同じ過半数の印が回の数の半分より多い）→ 残りの回は過半数を変えられない＝呼ばない（止める EXAM_MAJORITY_EARLY_STOP=off）
+    if (rep > 1 && skipNoRegressionOn() && baseRowsById.size && noRegressionFor(p.id)) { skippedReps.n++; skippedReps.noRegression++; continue; }
+    // 2026-11-21 作業員H（KB c6bb716c に戻す）: 最初の2回がどちらも前の過半数と同じなら3回目から回さない（EXAM_REPS_ONLY_IF_DIFFER=off で止める）
+    if (rep > 2 && repsOnlyIfDifferOn() && baseRowsById.size && firstTwoSameAsBase(donePP.get(p.id) ?? [], (baseRowsById.get(p.id) ?? []) as never)) { skippedReps.n++; skippedReps.sameAsBase++; continue; }
     if (EARLY_STOP && rep > 1 && majoritySettled(doneMaj.get(p.id) ?? [], REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[p.id] ?? 1)) : REPEAT)) { skippedReps.n++; skippedReps.settled++; continue; }
     const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
@@ -2134,6 +2143,7 @@ async function main() {
     appendFileSync(OUT, JSON.stringify(row) + "\n");
     if (!row.error) {
       doneSigs.set(p.id, [...(doneSigs.get(p.id) ?? []), sigOfRow(row)]);
+      if (!row.error) donePP.set(p.id, [...(donePP.get(p.id) ?? []), passPathOf(row as never)]);
       doneMaj.set(p.id, [...(doneMaj.get(p.id) ?? []), majoritySigOfRow(row)]);
       // 揺れの記録（共有）。録音の再生だけで出た回は前の答えの写し＝independent=false（安定の証拠に数えない）
       if (flakeEnabled()) {
@@ -2184,7 +2194,7 @@ async function main() {
   }
   if ((REPEAT_FLAKY || REPS_OF) && REPEAT > 1) {
     flakeSkip = skippedReps;
-    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}${skippedReps.settled ? `・過半数が決まった ${skippedReps.settled}` : ""}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
+    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}${skippedReps.settled ? `・過半数が決まった ${skippedReps.settled}` : ""}${skippedReps.noRegression ? `・前が✕で悪化になりえない ${skippedReps.noRegression}` : ""}${skippedReps.sameAsBase ? `・最初の2回が前と同じ ${skippedReps.sameAsBase}` : ""}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
   }
   await loadKbLinksForReport();
   const s = summarize(LABEL, BASELINE || null);
