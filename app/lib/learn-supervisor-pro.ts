@@ -14,6 +14,7 @@
  *   ⚠ Pro は verdict / self_check / block / learning_tasks の kind・limit を**変えない**。
  */
 import { DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_ENDPOINT } from "./llm-alt-provider";
+import { recordAltUsage } from "./llm-usage-recorder";
 import type { SupervisorAdvice } from "./learn-supervisor";
 import { buildVisionProLink, markVisionProUsed, type VisionProLink } from "./vision-pro-link";
 import { atomsFromEvidence, type WeakAtom } from "./weak-auto-atoms";
@@ -1422,6 +1423,7 @@ async function callProOnce(
       ? "【RAG】kb_hits は設計知見から引いた現行の決まり。矛盾したら段が上・新しい方。無い物は仮定と書く。"
       : "【RAG】kb_hits が空。設計知見を引く経路を次手に含める。",
   ].join("\n") + "\n";
+  const t0 = Date.now();
   const r = await fetch(DEEPSEEK_ENDPOINT, {
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
@@ -1437,6 +1439,7 @@ async function callProOnce(
       // ⚠ 思考が max_tokens を食って本文0字になるのを防ぐ（実測 finish=length）
       thinking: { type: "disabled" },
       messages: [
+        // ★ 固定の指示を先頭に置く（DeepSeek は同じ先頭を自動でキャッシュする）。動く材料は後ろ。
         { role: "system", content: SUPERVISOR_PRO_SYSTEM },
         {
           role: "user",
@@ -1445,13 +1448,37 @@ async function callProOnce(
       ],
     }),
   });
+  /**
+   * ★ 2026-11-20 竹内さん「プロンプトキャッシュの効果を測る」: 統括Pro の呼び出しは今まで使用量を残していなかった
+   *   （ヘッダ x-sumora-action は送るだけで読む所が無い＝llm_usage_logs に1行も無い）。
+   *   → キャッシュに当たった入力（prompt_cache_hit_tokens）を cache_read に入れて残す。記録の失敗で統括は止めない。
+   */
+  const recordUsage = (
+    usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | null,
+    status: number,
+    errorType: string | null,
+  ) => {
+    try {
+      recordAltUsage({
+        model, action: SUPERVISOR_PRO_ACTION, conversationId: null,
+        usage: usage ?? { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+        status, errorType, durationMs: Date.now() - t0,
+        sysHead: SUPERVISOR_PRO_SYSTEM.slice(0, 200), sysKeyFull: null, maxTokens,
+      });
+    } catch { /* 記録の失敗で統括は止めない */ }
+  };
   if (!r.ok) {
     await r.text().catch(() => "");
+    recordUsage(null, r.status, `http_${r.status}`);
     return { text: "", finish: `http_${r.status}`, status: r.status };
   }
   const d = await r.json() as {
     choices?: Array<{ message?: { content?: string; reasoning_content?: string }; finish_reason?: string }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
   };
+  const hit = Number(d.usage?.prompt_cache_hit_tokens ?? 0) || 0;
+  const miss = Number(d.usage?.prompt_cache_miss_tokens ?? Math.max(0, (Number(d.usage?.prompt_tokens ?? 0) || 0) - hit)) || 0;
+  recordUsage({ input_tokens: miss, output_tokens: Number(d.usage?.completion_tokens ?? 0) || 0, cache_read_input_tokens: hit }, r.status, null);
   const text = String(d.choices?.[0]?.message?.content ?? "").trim();
   const finish = String(d.choices?.[0]?.finish_reason ?? "");
   return { text, finish, status: r.status };

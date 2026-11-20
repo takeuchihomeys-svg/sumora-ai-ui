@@ -115,7 +115,8 @@ console.log("\n■ ⑤ 小さくする（拡張が読む時に重くしない）
   for (let i = 0; i < 300; i++) many["f" + i] = { n: i + 1, x: 0.5, y: 0.5 };
   const b = buildHumanLearnBundle([row({ point_fields: many })], NOW);
   const c = compactBundle(b);
-  t("押す場所は 120件まで", Object.keys(c.points).length <= 120, Object.keys(c.points).length);
+  // 2026-11-20: 上限は 160（compactBundle・commit 6a53fddc で 120→160。別名キーを足す分の場所を取る）。テストの期待値を合わせた
+  t("押す場所は 160件まで", Object.keys(c.points).length <= 160, Object.keys(c.points).length);
   t("回数の多い物から残す", (c.points["f299"]?.n ?? 0) > 0);
   t("元の束は変えない（純関数）", Object.keys(b.points).length === 300);
   t("describeBundle が読める形", describeBundle(c).length > 0);
