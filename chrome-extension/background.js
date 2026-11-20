@@ -2181,30 +2181,58 @@ var _capLastAt = 0;
  */
 var CAP_MIN_GAP_MS = 700;
 /**
- * 2026-11-14 竹内さん「1から順に進めていく」:
- *   写真を撮る**瞬間だけ**、拡張自身の小窓を隠す（`visibility:hidden`）。
- *   ⚠ 小窓が写っていると、写真から読む AI が**サイトの欄ではなく拡張のボタン**を読む（実測で確定）。
- *   ⚠ 失敗しても撮影は続ける（隠せないだけで、写真は撮れる）。
- *   @returns 隠せたか（true の時だけ戻す）
+ * 2026-11-14 実測: 写真に拡張の小窓が写ると、読む AI が**サイトの欄ではなく拡張のボタン**を読む。
+ * ★ 2.8.141 竹内さん「白黒にフラッシュになってしまう」:
+ *   旧 `_setShotHidden` は撮る瞬間だけ小窓を隠して戻していた → 自動の回（写真 中央値 400ms おき）で点滅。
+ *   → 画面は変えず、窓の位置を content script に聞き（`axlx-shot-rects`）、撮った写真のその所を塗る。
+ *   ⚠ 答えが無いタブ（content script が居ない）は塗らずにそのまま撮る。
+ *   @returns { rects, vw, vh } または null
  */
-async function _setShotHidden(tabId, hide) {
-  if (typeof tabId !== "number") return false;
+async function _shotMaskInfo(tabId) {
+  if (typeof tabId !== "number") return null;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "axlx-shot-hide", hide: hide !== false });
-    /**
-     * ⚠ 2026-11-14 実測: 隠した**直後**に撮ると、まだ描画が終わっておらず
-     *   **小窓が写った古い絵**が撮れる事がある（`visibility` の反映は次の描画フレーム）。
-     *   → 隠した時だけ**2フレーム分（約32ms）待つ**。戻す時は待たない（人を待たせない）。
-     *   ⚠ 待ちすぎると `captureVisibleTab` の間隔（700ms）に食い込むので 32ms に留める。
-     */
-    if (hide !== false) await new Promise(function (r) { setTimeout(r, 32); });
-    return true;
+    // ⚠ 上のフレームだけに聞く（サイト内の別フレームが先に「無し」と答えると塗られない）
+    const r = await chrome.tabs.sendMessage(tabId, { type: "axlx-shot-rects" }, { frameId: 0 });
+    if (!r || !Array.isArray(r.rects) || !r.rects.length || !(r.vw > 0) || !(r.vh > 0)) return null;
+    return { rects: r.rects.slice(0, 12), vw: r.vw, vh: r.vh };
   } catch (_) {
-    /**
-     * ⚠ content script が居ないタブ（更新前から開いているタブ）は答えない。
-     *   その場合は**何もしない**（注入まではしない・写真は撮る）。
-     */
-    return false;
+    return null;
+  }
+}
+/**
+ * 撮った写真の拡張の窓の所を灰色一色で塗る（読む AI に「ここは拡張の窓」と分かる形）。
+ *   ⚠ 写真は画面の CSS px × 拡大率なので、写真の幅 ÷ 画面の幅で合わせる。
+ *   ⚠ 失敗したら塗らない写真を返す（撮影は止めない）。
+ */
+async function _maskShot(dataUrl, info) {
+  try {
+    if (!info || !info.rects || !info.rects.length) return dataUrl;
+    if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return dataUrl;
+    const comma = String(dataUrl).indexOf(",");
+    if (comma < 0) return dataUrl;
+    const bin = atob(String(dataUrl).slice(comma + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const bmp = await createImageBitmap(new Blob([arr], { type: "image/jpeg" }));
+    const W = bmp.width, H = bmp.height;
+    const sx = W / info.vw, sy = H / info.vh;
+    const cv = new OffscreenCanvas(W, H);
+    const ctx = cv.getContext("2d");
+    if (!ctx) { try { bmp.close && bmp.close(); } catch (_) {} return dataUrl; }
+    ctx.drawImage(bmp, 0, 0);
+    try { bmp.close && bmp.close(); } catch (_) {}
+    ctx.fillStyle = "#808080";
+    for (const r of info.rects) {
+      ctx.fillRect(Math.floor(r.x * sx), Math.floor(r.y * sy), Math.ceil(r.w * sx), Math.ceil(r.h * sy));
+    }
+    const out = await cv.convertToBlob({ type: "image/jpeg", quality: 0.6 });
+    const buf = new Uint8Array(await out.arrayBuffer());
+    let s = "";
+    const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) s += String.fromCharCode.apply(null, buf.subarray(i, i + CH));
+    return "data:image/jpeg;base64," + btoa(s);
+  } catch (_) {
+    return dataUrl;
   }
 }
 function _capturePaced(windowId) {
@@ -2390,14 +2418,13 @@ async function _takeShot(msg, done) {
          *     実物: ピンポイント / 広げて検索 / リアプロで自動検索 / レインズでも探す / 全条件をコピー
          *     誤読: ビジポイント / 近い順で検索 / リアプロで看護師募集 / Banch何度も利用 / 全自動キーコピー
          *   ⚠ プロンプトで「小窓は読まない」と指示しても直らない（小窓が後ろの欄を**覆っている**）。
-         *   → **撮る瞬間だけ小窓を隠す**。撮ったら必ず戻す（`finally`）。
-         *     ⚠ 隠すのは拡張が作った要素だけ（サイトには触らない）。
+         *   → 撮った写真の小窓の所を灰色で塗る（2.8.141〜。画面は変えない＝点滅させない）。
          */
-        const _hideWin = await _setShotHidden(tab.id, true);
+        const _mask = await _shotMaskInfo(tab.id);
         try {
           dataUrl = await _capturePaced(tab.windowId);
+          if (dataUrl && _mask) dataUrl = await _maskShot(dataUrl, _mask);
         } finally {
-          if (_hideWin) { try { await _setShotHidden(tab.id, false); } catch (_) {} }
           if (!wasActive && prevId != null) {
             try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
           }
@@ -2419,13 +2446,10 @@ async function _takeShot(msg, done) {
           const prevId = prev && prev[0] ? prev[0].id : null;
           await chrome.tabs.update(tab.id, { active: true });
           await new Promise(function (r) { setTimeout(r, 320); });   // 描画が変わるのを待つ（少し長め）
-          // 2026-11-14: 撮る瞬間だけ拡張の小窓を隠す（1つ目の経路と同じ）
-          const _hideWin2 = await _setShotHidden(tab.id, true);
-          try {
-            dataUrl = await _capturePaced(tab.windowId);
-          } finally {
-            if (_hideWin2) { try { await _setShotHidden(tab.id, false); } catch (_) {} }
-          }
+          // 1つ目の経路と同じく、撮った写真の小窓の所を塗る（画面は変えない）
+          const _mask2 = await _shotMaskInfo(tab.id);
+          dataUrl = await _capturePaced(tab.windowId);
+          if (dataUrl && _mask2) dataUrl = await _maskShot(dataUrl, _mask2);
           if (prevId != null && prevId !== tab.id) {
             try { await chrome.tabs.update(prevId, { active: true }); } catch (_) {}
           }

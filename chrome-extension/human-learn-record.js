@@ -626,17 +626,22 @@
   var _FOLD_KEYS = ["was", "now", "x", "y", "bw", "bh", "bt", "shape", "role", "cs", "csr", "w"];
   /**
    * ページの CSS の cursor の値（決め打ちしない）。`url(...) 4 4, pointer` は最後の言葉。
-   *   ⚠ 見えるカーソルの間は pointer-ui.js が `html.axlx-one-cursor *{cursor:none}` を付けるので、外して読んで戻す。
+   *   ⚠ 見えるカーソルの間は pointer-ui.js が `html.axlxOneCursor *{cursor:none}` を付けるので、外して読んで戻す
+   *     （2.8.140 までの名前 `axlx-one-cursor` も同じ扱い）。
    */
+  var _OS_CLS_ALL = ["axlxOneCursor", "axlx-one-cursor"];
   function _rawCssCursor(el) {
     try {
       if (!el || typeof window === "undefined" || !window.getComputedStyle) return null;
       var html = document.documentElement;
-      var on = !!(html && html.classList && html.classList.contains("axlx-one-cursor"));
+      var had = [];
+      for (var k = 0; k < _OS_CLS_ALL.length; k++) {
+        if (html && html.classList && html.classList.contains(_OS_CLS_ALL[k])) had.push(_OS_CLS_ALL[k]);
+      }
       var c = "";
-      if (on) html.classList.remove("axlx-one-cursor");
+      for (var k2 = 0; k2 < had.length; k2++) html.classList.remove(had[k2]);
       try { c = String(window.getComputedStyle(el).cursor || ""); } catch (_) { c = ""; }
-      if (on) html.classList.add("axlx-one-cursor");
+      for (var k3 = 0; k3 < had.length; k3++) html.classList.add(had[k3]);
       c = c.toLowerCase();
       var parts = c.split(",");
       c = String(parts[parts.length - 1] || "").trim();
@@ -1490,37 +1495,31 @@
   var SHOT_MIN_GAP_MS = 400;   // これより短い間隔では撮らない
   var SHOT_MAX_PER_SESSION = 300; // 1ページで撮る上限（暴走しないように）
   /**
-   * 2026-11-14 竹内さん「1から順に進めていく」→ **実測で判明（写真から学習できない一番の原因）**:
+   * 2026-11-14 実測: 写真の中央に拡張自身の小窓（「AIXLINX 物件検索サポート」「案内」「学習中」）が写り、
+   *   読み取りが**サイトの欄ではなく拡張のボタン**を読んでいた（ピンポイント→ビジポイント 等）。
    *
-   *   ⚠ 写真の**中央に拡張自身の小窓**（「AIXLINX 物件検索サポート」「案内」「学習中」）が写っている。
-   *     そのため写真から欄を読ませると、**サイトの欄ではなく拡張のボタン**を読んでいた（実測で確定）:
-   *       実物のボタン : ピンポイント / 広げて検索 / リアプロで自動検索 / レインズでも探す / 全条件をコピー
-   *       AI の読み取り : ビジポイント / 近い順で検索 / リアプロで看護師募集 / Banch何度も利用 / 全自動キーコピー
-   *     ＝ 同じ位置・同じ形の**別物**（だから種類は当たるのに名前だけ滅茶苦茶だった）。
-   *   ⚠ プロンプトで「小窓は読まない」と指示しても直らない（小窓が画面を覆っているので、
-   *     後ろのサイトの欄が**見えない**）。指示では解決できない。
-   *   → **撮る瞬間だけ小窓を隠す**（`visibility:hidden`）。撮ったら**すぐ戻す**。
-   *     ⚠ 隠すのは**拡張が作った要素だけ**（サイトの要素には触らない）。
-   *     ⚠ `display:none` ではなく `visibility:hidden` にする（レイアウトが動くと撮る絵がずれる）。
-   */
-  var _shotHidden = [];
-  /**
-   * 隠す相手（拡張が画面に出す物）。
-   *   ⚠ 2026-11-14 実測: 実際に画面を覆っていたのは
-   *     `aixlinx-float-wrap`（本体の大きな窓）・`axlx-guide-panel`（案内）・
-   *     `axlx-bar` / `axlx-itandi-bar`（右の操作パネル）・`axlx-learn-badge`（学習中の印）。
-   *     `[id^='axlx-']` だけだと `aixlinx-` を落とす・`[class^='axlx-']` は**先頭一致のみ**。
-   *   → **部分一致（`*=`）**で拾う（どこかに印があれば隠す）。
+   * ★ 2.8.141 竹内さん「白黒にフラッシュになってしまう」:
+   *   旧（2.7.62〜2.8.140）は撮る瞬間だけ小窓を隠して（visibility・2.8.139 から opacity も）すぐ戻していた。
+   *   実測: 自動の回は写真が中央値 400ms おき → 1秒に2〜3回、白い小窓と黒い右パネルが消えて戻る＝点滅。
+   *   → **人の画面には一切触らない**。窓の位置だけ background に返し、撮った写真のその所を灰色で塗る（`_maskShot`）。
+   *     ⚠ 塗った所の下のサイトは読めない（隠していた頃は読めた）。点滅より優先（竹内さんの指摘）。
    */
   var SHOT_HIDE_SEL = "[id^='axlx-'], [id^='aixlinx-'], [id*='axlx-'], [id*='aixlinx-'], "
     + "[class^='axlx-'], [class*='axlx-'], [class*='aixlinx-'], [data-axlx]";
-  function _hideForShot() {
+  /**
+   * 写真で塗る所（拡張の窓の画面上の位置・CSS px）。
+   *   ⚠ 画面の 2% 以上の物だけ（見えるカーソル・学習中の小さな印は塗らない）。
+   *   ⚠ 見えていない物（幅0・visibility:hidden・opacity:0）は塗らない。画面の外は切る。
+   */
+  function _shotMaskRects() {
+    var out = { rects: [], vw: 0, vh: 0 };
     try {
-      if (_shotHidden.length) return;
+      var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      out.vw = vw; out.vh = vh;
+      if (!vw || !vh) return out;
       var els = null;
       try { els = document.querySelectorAll(SHOT_HIDE_SEL); } catch (_) { els = null; }
       if (!els || !els.length) {
-        // 属性セレクタが通らない環境の保険（ID を1つずつ見る）
         els = [];
         var all = document.body ? document.body.querySelectorAll("[id]") : [];
         for (var k = 0; k < all.length; k++) {
@@ -1528,82 +1527,49 @@
           if (idv.indexOf("axlx") === 0 || idv.indexOf("aixlinx") === 0) els.push(all[k]);
         }
       }
-      for (var i = 0; i < els.length; i++) {
+      /**
+       * ⚠ 2.8.141 実測（白黒のフラッシュの本当の原因）: pointer-ui.js（2.8.138〜）は見えるカーソルの間
+       *   `<html>` に class `axlx-one-cursor` を付ける → `[class*='axlx-']` に当たり、旧の隠し方は**ページ全体**を
+       *   隠していた（自動の回の写真 14枚が真っ白・08:24:34〜40・同じ時刻に cursor_one OSを隠す=1）。
+       *   → html・body・サイトを含む物・画面の 85% 以上を覆う物は窓ではないので塗らない。
+       */
+      var root = document.documentElement, body = document.body;
+      var taken = [];
+      for (var i = 0; i < els.length && out.rects.length < 12; i++) {
         var el = els[i];
-        if (!el || !el.style) continue;
-        /**
-         * ⚠ **画面を覆っている大きな物だけ**隠す（小さな印は残しても邪魔にならない）。
-         *   隠しすぎると、人が「あれ？消えた」と不安になる。
-         *   → 面積が画面の 2% 以上の物だけ（`axlx-learn-badge` は小さいので残る）。
-         */
+        if (!el || !el.getBoundingClientRect) continue;
+        if (el === root || el === body) continue;
+        try { if (body && el.contains && el.contains(body)) continue; } catch (_) {}
+        var inside = false;
+        for (var t = 0; t < taken.length; t++) {
+          try { if (taken[t] !== el && taken[t].contains(el)) { inside = true; break; } } catch (_) {}
+        }
+        if (inside) continue;
         try {
-          var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-          var area = r ? Math.max(0, r.width) * Math.max(0, r.height) : 0;
-          var full = Math.max(1, (window.innerWidth || 1) * (window.innerHeight || 1));
-          if (area / full < 0.02) continue;
-        } catch (_) {}
-        _shotHidden.push({
-          el: el,
-          v: el.style.getPropertyValue("visibility"),
-          p: el.style.getPropertyPriority("visibility"),
-          o: el.style.getPropertyValue("opacity"),
-          op: el.style.getPropertyPriority("opacity"),
-        });
-        try { el.style.setProperty("visibility", "hidden", "important"); }
-        catch (_) { el.style.visibility = "hidden"; }
-        /**
-         * ★ 2.8.139: 中の iframe（popup.html）は underbar.js が `visibility:visible` を直に付けるので、
-         *   親を `visibility:hidden` にしても**中身だけ写る**（CSS は子の visible が勝つ）。
-         *   実測: 読んだ写真 1000枚のうち 373枚で「拡張の小窓が重なる」と読まれていた。
-         *   → `opacity:0` も付ける（子が上書きできない）。
-         */
-        try { el.style.setProperty("opacity", "0", "important"); }
-        catch (_) { el.style.opacity = "0"; }
-      }
-    } catch (_) {}
-  }
-  function _showAfterShot() {
-    try {
-      for (var i = 0; i < _shotHidden.length; i++) {
-        var h = _shotHidden[i];
-        try {
-          if (h && h.el && h.el.style) {
-            if (h.v) h.el.style.setProperty("visibility", h.v, h.p || "");
-            else h.el.style.removeProperty("visibility");
-            if (h.o) h.el.style.setProperty("opacity", h.o, h.op || "");
-            else h.el.style.removeProperty("opacity");
+          if (window.getComputedStyle) {
+            var cs = window.getComputedStyle(el);
+            if (cs && (cs.visibility === "hidden" || cs.display === "none" || Number(cs.opacity) === 0)) continue;
           }
         } catch (_) {}
+        var r = el.getBoundingClientRect();
+        var x1 = Math.max(0, r.left), y1 = Math.max(0, r.top);
+        var x2 = Math.min(vw, r.right), y2 = Math.min(vh, r.bottom);
+        var w = x2 - x1, h = y2 - y1;
+        if (!(w > 0 && h > 0)) continue;
+        var ratio = (w * h) / (vw * vh);
+        if (ratio < 0.02 || ratio >= 0.85) continue;
+        out.rects.push({ x: Math.round(x1), y: Math.round(y1), w: Math.round(w), h: Math.round(h) });
+        taken.push(el);
       }
     } catch (_) {}
-    _shotHidden = [];
+    return out;
   }
   try {
     chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
-      /**
-       * background から「今から撮る」と呼ばれる。
-       *   ⚠ 隠したまま返すと、撮り終わった後に**小窓が消えたまま**になる。
-       *     必ず `hide:false` で戻す（background が finally で必ず呼ぶ）。
-       *   ★ 2026-11-18: 画像学習 stuck 13件「中央に拡張小窓が重なり見えない」対策。
-       *     `!important`＋2回 rAF（最大45ms保険）待ってから撮影可を返す。
-       */
-      if (!msg || msg.type !== "axlx-shot-hide") return;
-      try {
-        if (msg.hide === false) { _showAfterShot(); sendResponse({ ok: true, hidden: 0 }); return true; }
-        _hideForShot();
-        var doneSent = false;
-        var reply = function () {
-          if (doneSent) return;
-          doneSent = true;
-          try { sendResponse({ ok: true, hidden: _shotHidden.length }); } catch (_) {}
-        };
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(function () { requestAnimationFrame(reply); });
-          setTimeout(reply, 45);
-        } else {
-          reply();
-        }
-      } catch (_) { try { sendResponse({ ok: false }); } catch (__) {} }
+      /** background から「今から撮る」。画面は変えず、塗る所だけ返す（すぐ返す・待たない）。 */
+      if (!msg || msg.type !== "axlx-shot-rects") return;
+      try { sendResponse(Object.assign({ ok: true }, _shotMaskRects())); }
+      catch (_) { try { sendResponse({ ok: false, rects: [] }); } catch (__) {} }
       return true;
     });
   } catch (_) {}

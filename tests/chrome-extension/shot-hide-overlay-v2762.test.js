@@ -9,15 +9,13 @@
 //       実物のボタン : ピンポイント / 広げて検索 / リアプロで自動検索 / レインズでも探す / 全条件をコピー
 //       AI の読み取り : ビジポイント / 近い順で検索 / リアプロで看護師募集 / Banch何度も利用 / 全自動キーコピー
 //
-//     ＝ 同じ位置・同じ形の**別物**（だから種類 radio/button は当たるのに、名前だけ滅茶苦茶だった）。
-//     ⚠ プロンプトで「小窓は読まない」と指示しても直らない（小窓が後ろの欄を覆っている＝見えない）。
-//     ⚠ 「文字が潰れている」と誤診していた（実際は**読む相手を間違えていた**）。
+//   2.7.62〜2.8.140 は「撮る瞬間だけ小窓を隠して戻す」だった。
+//   ★ 2.8.141 竹内さん「白黒にフラッシュになってしまう」:
+//     ・自動の回は写真が 400ms おき → 1秒に2〜3回、小窓が消えて戻る＝点滅。
+//     ・さらに見えるカーソルの印（html の class）が `[class*='axlx-']` に当たり、**ページ全体**が消えていた（写真 14枚が真っ白）。
+//   → **画面には触らない**。窓の位置だけ返し、撮った写真のその所を灰色で塗る。
 //
-//   → **撮る瞬間だけ小窓を隠す**（`visibility:hidden`）。撮ったら必ず戻す。
-//     隠すのは**拡張が作った要素だけ**（サイトの要素には触らない）。
-//
-// ⚠ このテストは「隠す仕組みが**両方の撮影経路**にあり、**必ず戻す**」ことを固定する。
-//   片方だけ直すと、もう片方の経路で撮った写真に小窓が写り続ける。
+// ⚠ このテストは「塗る仕組みが**両方の撮影経路**にあり、**画面を隠す処理が残っていない**」ことを固定する。
 const fs = require("fs");
 const path = require("path");
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
@@ -31,94 +29,71 @@ function ok(name, cond, extra) {
 
 const bg = read("background.js");
 const rec = read("human-learn-record.js");
-const bgCode = bg.split("\n").filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join("\n");
-const recCode = rec.split("\n").filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join("\n");
+const ptr = read("pointer-ui.js");
+const strip = (s) => s.split("\n").filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join("\n");
+const bgCode = strip(bg);
+const recCode = strip(rec);
+const ptrCode = strip(ptr);
 
-console.log("■ ① 撮る側（background）が小窓を隠す");
+console.log("■ ① 撮る側（background）は窓の位置を聞いて写真を塗る");
 {
-  ok("_setShotHidden がある", /async function _setShotHidden\(tabId, hide\)/.test(bgCode));
-  ok("  content script に axlx-shot-hide を送る", /type:\s*"axlx-shot-hide"/.test(bgCode));
-  ok("  隠せなくても撮影は続ける（例外を投げない）", /catch \(_\) \{[\s\S]{0,400}?return false;[\s\S]{0,40}?\n\}/.test(bgCode));
+  ok("_shotMaskInfo がある", /async function _shotMaskInfo\(tabId\)/.test(bgCode));
+  ok("  content script に axlx-shot-rects を送る（上のフレームだけ）", /type:\s*"axlx-shot-rects" \}, \{ frameId: 0 \}/.test(bgCode));
+  ok("_maskShot がある", /async function _maskShot\(dataUrl, info\)/.test(bgCode));
+  ok("  灰色一色で塗る", /fillStyle = "#808080"/.test(bgCode));
+  ok("  失敗したら塗らない写真を返す（撮影は止めない）", /catch \(_\) \{\s*return dataUrl;\s*\}/.test(bgCode));
 }
 
-console.log("\n■ ② 撮影の**両方の経路**で隠している（片方だけ直すと漏れる）");
+console.log("\n■ ② 撮影の**両方の経路**で塗っている（片方だけ直すと漏れる）");
 {
-  const hides = bgCode.match(/_setShotHidden\(tab\.id, true\)/g) || [];
-  ok("  隠す呼び出しが2か所（通常経路＋やり直し経路）", hides.length === 2, { hides: hides.length });
-  const restores = bgCode.match(/_setShotHidden\(tab\.id, false\)/g) || [];
-  ok("  ⚠ 戻す呼び出しも2か所", restores.length === 2, { restores: restores.length });
+  const asks = bgCode.match(/await _shotMaskInfo\(tab\.id\)/g) || [];
+  ok("  位置を聞く呼び出しが2か所（通常経路＋やり直し経路）", asks.length === 2, { asks: asks.length });
+  const masks = bgCode.match(/dataUrl = await _maskShot\(dataUrl, _mask2?\)/g) || [];
+  ok("  塗る呼び出しも2か所", masks.length === 2, { masks: masks.length });
 }
 
-console.log("\n■ ③ 撮ったら**必ず**戻す（finally の中）");
+console.log("\n■ ③ ⚠ 画面を隠す処理が残っていない（点滅の元）");
 {
-  const iH = bgCode.indexOf("_setShotHidden(tab.id, true)");
-  const seg = bgCode.slice(iH, iH + 900);
-  ok("  隠す → try → 撮る → finally で戻す の形", /try \{\s*dataUrl = await _capturePaced/.test(seg));
-  ok("  ⚠ finally の中で戻している（例外でも戻る）", /finally \{[\s\S]{0,200}?_setShotHidden\(tab\.id, false\)/.test(seg));
+  ok("  background に _setShotHidden が無い", !/_setShotHidden/.test(bgCode));
+  ok("  background が axlx-shot-hide を送らない", !/axlx-shot-hide/.test(bgCode));
+  ok("  content script に _hideForShot が無い", !/_hideForShot/.test(recCode));
+  ok("  content script に _showAfterShot が無い", !/_showAfterShot/.test(recCode));
+  ok("  content script が style.visibility / opacity を書き換えない（撮影の所）",
+    !/style\.setProperty\("(visibility|opacity)"/.test(recCode) && !/style\.visibility = "hidden"/.test(recCode));
 }
 
-console.log("\n■ ④ 隠す側（content script）が拡張の要素だけを隠す");
+console.log("\n■ ④ 窓の位置を返す側（content script）");
 {
-  ok("_hideForShot がある", /function _hideForShot\(\)/.test(recCode));
-  ok("_showAfterShot がある", /function _showAfterShot\(\)/.test(recCode));
-  ok("  隠すのは visibility:hidden（display:none ではない）", /visibility = "hidden"/.test(recCode));
-  ok("  ⚠ display:none を使っていない（レイアウトが動くと絵がずれる）", !/style\.display = "none"/.test(recCode));
-  // セレクタが拡張の物だけであること
+  ok("_shotMaskRects がある", /function _shotMaskRects\(\)/.test(recCode));
+  ok("  axlx-shot-rects の受け口がある", /msg\.type !== "axlx-shot-rects"/.test(recCode));
   const sel = (recCode.match(/var SHOT_HIDE_SEL = ([\s\S]{0,300}?);/) || [])[1] || "";
   ok("  セレクタに拡張の印が入っている", /axlx|aixlinx/.test(sel), sel.slice(0, 120));
-  ok("  ⚠ サイトの要素（body/html/*）を隠していない", !/[,\s"'](body|html|div|\*)[,\s"']/.test(sel), sel.slice(0, 120));
+  ok("  ⚠ aixlinx-float-wrap を拾う", /\[id\^='aixlinx-'\]/.test(sel));
+  ok("  クラスも部分一致で拾う", /\[class\*='axlx-'\]/.test(sel));
+  ok("  ⚠ html・body は塗らない", /if \(el === root \|\| el === body\) continue;/.test(recCode));
+  ok("  ⚠ 画面の 85% 以上を覆う物は窓ではない", /ratio >= 0\.85/.test(recCode));
+  ok("  面積が 2% 未満の物は塗らない", /ratio < 0\.02/.test(recCode));
 }
 
-console.log("\n■ ⑤ 戻す時に元の値を戻す（隠したまま消さない）");
+console.log("\n■ ⑤ ⚠ 見えるカーソルの html の印が「拡張の要素」に当たらない（ページ全体が消えた元）");
 {
-  ok("  元の visibility を覚えている", /_shotHidden\.push\(\{ el: el, v: el\.style\.visibility \}\)/.test(recCode));
-  ok("  覚えた値を戻している", /h\.el\.style\.visibility = h\.v \|\| ""/.test(recCode));
-  ok("  戻したら一覧を空にする", /_shotHidden = \[\];/.test(recCode));
+  const cls = (ptrCode.match(/var OS_CLS = "([^"]+)";/) || [])[1] || "";
+  ok("  印の名前がある", !!cls, cls);
+  ok("  ⚠ 印に axlx- / aixlinx- を含めない", !/axlx-|aixlinx-/.test(cls), cls);
+  ok("  旧の印（axlx-one-cursor）は外す", /OS_CLS_OLD = "axlx-one-cursor"/.test(ptrCode) && /classList\.remove\(OS_CLS_OLD\)/.test(ptrCode));
+  ok("  古い style が残っていても新しい印の CSS に直す", /s\.textContent !== css/.test(ptrCode));
 }
 
-console.log("\n■ ⑥ 撮る直前と直後で小窓が消えて戻る（順番）");
-{
-  const iHide = recCode.indexOf("function _hideForShot()");
-  const iMsg = recCode.indexOf('msg.type !== "axlx-shot-hide"');
-  ok("  メッセージの受け口がある", iMsg > 0);
-  ok("  hide:false で戻す", /msg\.hide === false[\s\S]{0,120}_showAfterShot\(\)/.test(recCode));
-  ok("  それ以外は隠す", /else \{ _hideForShot\(\)/.test(recCode));
-  void iHide;
-}
-
-console.log("\n■ ⑥b 実際に画面を覆っていたIDを隠せる（実測で確認した名前）");
-{
-  /**
-   * ⚠ 実測: 写真の中央を覆っていたのは `aixlinx-float-wrap`。
-   *   旧のセレクタ `#axlx-bar, ...` は**列挙**だったので、これを落としていた。
-   *   さらに `[class^='axlx-']` は**先頭一致のみ**（`foo axlx-bar` を拾えない）。
-   */
-  const selLine = (recCode.match(/var SHOT_HIDE_SEL = ([\s\S]{0,300}?);/) || [])[1] || "";
-  ok("  ⚠ aixlinx-float-wrap を拾う（旧は落としていた）", /\[id\^='aixlinx-'\]/.test(selLine), selLine.slice(0, 160));
-  ok("  a x l x を含む id を拾う", /\[id\*='axlx-'\]/.test(selLine));
-  ok("  クラスも部分一致で拾う", /\[class\*='axlx-'\]/.test(selLine));
-  ok("  data-axlx も拾う", /\[data-axlx\]/.test(selLine));
-
-  // 面積の小さい物は残す（学習中の印など）
-  ok("  面積が小さい物は隠さない（人が不安にならない）", /area \/ full < 0\.02/.test(recCode));
-}
-
-console.log("\n■ ⑥c 隠した直後に撮らない（描画待ち）");
-{
-  ok("  ⚠ 隠した時だけ待つ", /hide !== false\) await new Promise\(function \(r\) \{ setTimeout\(r, 32\)/.test(bgCode));
-  const seg = bgCode.slice(bgCode.indexOf("async function _setShotHidden"), bgCode.indexOf("async function _setShotHidden") + 1200);
-  ok("  ⚠ 待ちは 100ms 未満（撮影の間隔 700ms を食い込まない）", /setTimeout\(r, 32\)/.test(seg));
-  ok("  戻す時は待たない", !/hide === false\) await new Promise/.test(seg));
-}
-
-console.log("\n■ ⑦ プロンプトも「小窓を読まない」と言っている（二重の守り）");
+console.log("\n■ ⑥ プロンプトも「小窓・灰色の所を読まない」と言っている（二重の守り）");
 {
   const sl = fs.readFileSync(path.join(dir, "..", "app", "lib", "shot-learn.ts"), "utf8");
   ok("  指示文に小窓の除外がある", /拡張機能の小窓|AIXLINX/.test(sl));
   ok("  読めない時は null と書いてある", /name を null にする/.test(sl));
+  const sls = fs.readFileSync(path.join(dir, "..", "app", "lib", "shot-learn-server.ts"), "utf8");
+  ok("  全体を読む指示に「灰色の四角は読まない」がある", /灰色一色の四角は拡張の窓を塗りつぶした所/.test(sls));
 }
 
-console.log("\n■ ⑧ 構文");
+console.log("\n■ ⑦ 構文");
 {
   /**
    * ⚠ `new Function(bg)` は background.js では通らない（`importScripts` 等の
@@ -132,6 +107,7 @@ console.log("\n■ ⑧ 構文");
   };
   ok("background.js の構文が通る", check("background.js"));
   ok("human-learn-record.js の構文が通る", check("human-learn-record.js"));
+  ok("pointer-ui.js の構文が通る", check("pointer-ui.js"));
 }
 
 console.log(`\n${passed} 件合格 / ${failed} 件失敗`);

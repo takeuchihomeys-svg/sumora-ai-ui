@@ -73,7 +73,14 @@
    */
   var _iid = "p" + Math.random().toString(36).slice(2, 8);
   var OS_STYLE_ID = "axlx-one-cursor-style";
-  var OS_CLS = "axlx-one-cursor";
+  /**
+   * ⚠ 2.8.141: `<html>` に付ける印は **`axlx-` を含めない**。
+   *   旧の `axlx-one-cursor` は「拡張の要素」を見分ける `[class^="axlx-"]`／`[class*='axlx-']` に当たり、
+   *   見えるカーソルの間は**ページ全体が拡張の要素**に見えていた（撮影の隠しでページが真っ白＝白黒のフラッシュ・
+   *   学んだ位置から欄を探すと空・押した記録を捨てる・見張りの写真を全部塗る）。
+   */
+  var OS_CLS = "axlxOneCursor";
+  var OS_CLS_OLD = "axlx-one-cursor";
   var POS_KEY = "axlx_cursor_pos";
   var _realPos = null;
   var _realLsn = false;
@@ -85,12 +92,17 @@
     if (!d || !d.documentElement) return;
     try {
       var html = d.documentElement;
+      if (html.classList.contains(OS_CLS_OLD)) html.classList.remove(OS_CLS_OLD);
       if (on) {
-        if (!d.getElementById(OS_STYLE_ID)) {
-          var s = d.createElement("style");
+        var css = "html." + OS_CLS + ",html." + OS_CLS + " *{cursor:none!important}";
+        var s = d.getElementById(OS_STYLE_ID);
+        if (!s) {
+          s = d.createElement("style");
           s.id = OS_STYLE_ID;
-          s.textContent = "html." + OS_CLS + ",html." + OS_CLS + " *{cursor:none!important}";
+          s.textContent = css;
           (d.head || html).appendChild(s);
+        } else if (s.textContent !== css) {
+          s.textContent = css;
         }
         if (!html.classList.contains(OS_CLS)) html.classList.add(OS_CLS);
       } else if (html.classList.contains(OS_CLS)) {

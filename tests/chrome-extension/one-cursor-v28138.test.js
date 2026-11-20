@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ── 小さなページ（2つの世界で共有） ──
 function mkClassList() {
   const s = new Set();
-  return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c) };
+  return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c), _set: s };
 }
 const doc = {};
 function mkEl(tag) {
@@ -57,7 +57,7 @@ const listeners = [];
 const store = {};
 const sessionStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
 function getComputedStyle(el) {
-  if (doc.documentElement.classList.contains("axlx-one-cursor")) return { cursor: "none" };
+  if (doc.documentElement.classList.contains("axlxOneCursor")) return { cursor: "none" };
   return { cursor: el && el._cursor ? el._cursor : "auto" };
 }
 class MouseEvent { constructor(type, o) { this.type = type; Object.assign(this, o || {}); } }
@@ -137,19 +137,21 @@ function realMouse(type, x, y, mv) {
   console.log("\n■ ⑤ 見えるカーソルの間は OS のカーソルを隠す／人が本物のマウスを動かしたら逆");
   {
     const el = doc.getElementById("axlx-fake-cursor");
-    ok("見えるカーソルが出ている間は OS カーソルを隠す class", doc.documentElement.classList.contains("axlx-one-cursor"));
+    ok("見えるカーソルが出ている間は OS カーソルを隠す class", doc.documentElement.classList.contains("axlxOneCursor"));
     ok("隠す CSS は cursor:none", /cursor:none!important/.test((doc.getElementById("axlx-one-cursor-style") || {}).textContent || ""));
+    // 2.8.141: html の class に axlx- が入ると `[class*='axlx-']` でページ全体が「拡張の要素」になる（白黒のフラッシュ）
+    ok("⚠ html の class に axlx- / aixlinx- を含めない", !/axlx-|aixlinx-/.test(Array.from(doc.documentElement.classList._set || []).join(" ") || String(doc.documentElement.className || "")));
     realMouse("mousemove", 700, 120, 0);
-    ok("スクロール後の動き0の mousemove では切り替えない", doc.documentElement.classList.contains("axlx-one-cursor") && el.style.opacity !== "0");
+    ok("スクロール後の動き0の mousemove では切り替えない", doc.documentElement.classList.contains("axlxOneCursor") && el.style.opacity !== "0");
     realMouse("mousemove", 700, 120, 3);
-    ok("人が本物のマウスを動かすと OS カーソルが戻る", !doc.documentElement.classList.contains("axlx-one-cursor"));
+    ok("人が本物のマウスを動かすと OS カーソルが戻る", !doc.documentElement.classList.contains("axlxOneCursor"));
     ok("同時に見えるカーソルは隠れる（2つにならない）", el.style.opacity === "0");
     ok("隠れている間は記録側の位置を返さない（人の押しを自動の位置で書かない）", B.visiblePosition() === null);
     const pm = A.moveTo(720, 160);
     const firstX = Number(el.getAttribute("data-x")), firstY = Number(el.getAttribute("data-y"));
     ok("本物のマウスが居た所から動き出す（1つのマウスに見える）", Math.abs(firstX - 700) <= 3 && Math.abs(firstY - 120) <= 3, { firstX, firstY });
     await pm;
-    ok("次に自動が動くと見えるカーソルが戻り OS カーソルを隠す", el.style.opacity === "1" && doc.documentElement.classList.contains("axlx-one-cursor"));
+    ok("次に自動が動くと見えるカーソルが戻り OS カーソルを隠す", el.style.opacity === "1" && doc.documentElement.classList.contains("axlxOneCursor"));
   }
 
   console.log("\n■ ⑥ 見えている時は出だしで瞬間移動しない（本物のマウスは飛ばない）");
@@ -178,7 +180,7 @@ function realMouse(type, x, y, mv) {
     const lab = mkEl("label"); lab._cursor = "pointer"; lab.setAttribute("class", "one_city"); under = lab;
     A.tap();
     ok("CSS が pointer のラベルは手", el.getAttribute("data-axlx-shape") === "hand");
-    ok("形を読む時は OS カーソルを隠す class を外して読む（none を読まない）", doc.documentElement.classList.contains("axlx-one-cursor"));
+    ok("形を読む時は OS カーソルを隠す class を外して読む（none を読まない）", doc.documentElement.classList.contains("axlxOneCursor"));
     ok("名前で手にする旧の決め打ちは無い", !/city_code\|town_code\|station\|route_id\|go_search/.test(code));
     under = null;
   }
@@ -186,7 +188,7 @@ function realMouse(type, x, y, mv) {
   console.log("\n■ ⑧ 消す時は OS カーソルも戻す");
   {
     A.hide();
-    ok("hide で OS カーソルが戻る", !doc.documentElement.classList.contains("axlx-one-cursor"));
+    ok("hide で OS カーソルが戻る", !doc.documentElement.classList.contains("axlxOneCursor"));
   }
 
   console.log(`\n${passed} 件合格 / ${failed} 件失敗`);

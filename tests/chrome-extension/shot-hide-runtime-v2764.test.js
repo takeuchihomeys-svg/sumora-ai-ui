@@ -1,20 +1,21 @@
 // tests/chrome-extension/shot-hide-runtime-v2764.test.js
 // 実行: node tests/chrome-extension/shot-hide-runtime-v2764.test.js
-// 2026-11-14 竹内さん「これで改善されたかな」
+// 2026-11-14 竹内さん「これで改善されたかな」（文字があるかだけでなく、動かして確かめる）
 //
-//   ⚠ 前のテスト（shot-hide-overlay-v2762）は**文字があるか**しか見ていなかった。
-//     それでは「隠す関数が本当に隠すか」は分からない（動かして確かめる必要がある）。
-//
-//   このテストは **偽の DOM を作って、本物の `_hideForShot` / `_showAfterShot` を動かす**。
-//     ・画面の 2% 以上の拡張の窓 → 隠れる
-//     ・小さい印（学習中バッジ） → 隠さない（人が不安にならない）
-//     ・サイトの要素 → 触らない
-//     ・戻す時 → 元の値に戻る（`""` の人も `visible` の人も元のまま）
-//     ・2回隠しても壊れない（`_shotHidden` が二重にならない）
+// ★ 2.8.141 竹内さん「白黒にフラッシュになってしまう」:
+//   撮る瞬間に小窓を隠す方式をやめ、**写真の方を塗る**方式にした。
+//   このテストは **偽のページを作って、本物の `_shotMaskRects`（窓の位置）と `_maskShot`（写真を塗る）を動かす**。
+//     ・画面の 2% 以上の拡張の窓 → 塗る位置に入る
+//     ・小さい印・見えていない窓 → 入らない
+//     ・⚠ html に見えるカーソルの印（旧 `axlx-one-cursor`）があっても、ページ全体を塗らない（実測: 写真14枚が真っ白）
+//     ・窓の中の部品は数えない（12枠を使い切って2つ目の窓が漏れない）
+//     ・画面の外は切る
+//     ・写真の大きさ（拡大率）に合わせて塗る
 const fs = require("fs");
 const path = require("path");
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
 const src = fs.readFileSync(path.join(dir, "human-learn-record.js"), "utf8").replace(/\r\n/g, "\n");
+const bgSrc = fs.readFileSync(path.join(dir, "background.js"), "utf8").replace(/\r\n/g, "\n");
 
 let passed = 0, failed = 0;
 function ok(name, cond, extra) {
@@ -22,155 +23,151 @@ function ok(name, cond, extra) {
   else { failed++; console.log("  ✗ " + name + (extra !== undefined ? "\n      " + JSON.stringify(extra).slice(0, 400) : "")); }
 }
 
-/**
- * 本物の `_hideForShot` / `_showAfterShot` の**中身**を取り出して、
- * 偽の `document` / `window` の下で動かす（写しではなく本物を動かす）。
- */
-function extractFn(name) {
-  const start = src.indexOf("function " + name + "(");
-  if (start < 0) throw new Error(name + " が見つからない");
-  let d = 0, i = start;
-  for (; i < src.length; i++) {
-    const c = src[i];
+function extractFn(text, head) {
+  const start = text.indexOf(head);
+  if (start < 0) throw new Error(head + " が見つからない");
+  let d = 0, i = text.indexOf("{", start);
+  for (; i < text.length; i++) {
+    const c = text[i];
     if (c === "{") d++;
     else if (c === "}") { d--; if (d === 0) { i++; break; } }
   }
-  return src.slice(start, i);
+  return text.slice(start, i);
 }
 
-/** 偽の style（本物は setProperty / getPropertyValue / removeProperty を使う） */
-function fakeStyle() {
-  const pri = {};
-  const s = { visibility: "", opacity: "" };
-  s.setProperty = (k, v, p) => { s[k] = String(v); pri[k] = p || ""; };
-  s.getPropertyValue = (k) => s[k] || "";
-  s.getPropertyPriority = (k) => pri[k] || "";
-  s.removeProperty = (k) => { s[k] = ""; pri[k] = ""; };
-  return s;
-}
-/** 偽の要素（style と `getBoundingClientRect` だけ持つ） */
-function fakeEl(id, w, h) {
-  return {
-    id,
-    style: fakeStyle(),
-    getBoundingClientRect: () => ({ width: w, height: h, left: 0, top: 0, right: w, bottom: h }),
+/** 偽の要素（親子・class・大きさ・見え方だけ持つ） */
+function el(id, cls, rect, style) {
+  const e = {
+    id, className: cls || "", parent: null, kids: [], _style: style || {},
+    getBoundingClientRect: () => ({
+      left: rect[0], top: rect[1], width: rect[2], height: rect[3], right: rect[0] + rect[2], bottom: rect[1] + rect[3],
+    }),
+    contains(o) { for (let p = o; p; p = p.parent) if (p === e) return true; return false; },
+    add(...cs) { for (const c of cs) { c.parent = e; e.kids.push(c); } return e; },
   };
+  return e;
 }
-/** 写真に写るか（CSS: visibility は子の visible が勝つ・opacity は親が 0 なら子も見えない） */
-function paintedChild(parent, child) {
-  const vis = child.style.visibility || parent.style.visibility || "visible";
-  return vis !== "hidden" && parent.style.opacity !== "0" && child.style.opacity !== "0";
-}
+function all(root) { const out = []; (function walk(n) { out.push(n); n.kids.forEach(walk); })(root); return out; }
+/** 拡張の印（id/class の axlx- / aixlinx-）＝ SHOT_HIDE_SEL と同じ判定 */
+function isExt(n) { return /axlx-|aixlinx-/.test(n.id || "") || /axlx-|aixlinx-/.test(n.className || ""); }
 
-function runHide(els, vw, vh) {
-  const hideSrc = extractFn("_hideForShot");
-  const showSrc = extractFn("_showAfterShot");
+function runRects(html, body, vw, vh) {
+  const fn = extractFn(src, "function _shotMaskRects()");
   const fakeDoc = {
-    querySelectorAll: (sel) => {
-      // セレクタは「拡張の印」で絞る物なので、偽の要素のうち印がある物だけ返す
-      if (/axlx|aixlinx/.test(sel)) return els.filter((e) => /axlx|aixlinx/.test(e.id));
-      return [];
-    },
-    body: { querySelectorAll: () => els },
+    documentElement: html, body,
+    querySelectorAll: () => all(html).filter(isExt),
   };
-  const fakeWin = { innerWidth: vw, innerHeight: vh };
-  // 本物の関数を組み立てる（var _shotHidden も本物の宣言を使う）
-  const factory = new Function(
-    "document", "window",
-    "var _shotHidden = [];\n"
-    + "var SHOT_HIDE_SEL = \"[id^='axlx-'], [id^='aixlinx-']\";\n"
-    + hideSrc + "\n" + showSrc + "\n"
-    + "return { hide: _hideForShot, show: _showAfterShot, count: function () { return _shotHidden.length; } };",
-  );
+  const fakeWin = {
+    innerWidth: vw, innerHeight: vh,
+    getComputedStyle: (n) => Object.assign({ visibility: "visible", display: "block", opacity: "1" }, n._style),
+  };
+  const factory = new Function("document", "window",
+    "var SHOT_HIDE_SEL = \"[id^='axlx-']\";\n" + fn + "\nreturn _shotMaskRects();");
   return factory(fakeDoc, fakeWin);
 }
 
-console.log("■ ① 画面を覆う拡張の窓は隠れる（実測で確認したID）");
+console.log("■ ① 画面を覆う拡張の窓だけが塗る位置に入る（サイトの要素は入らない）");
 {
-  const big = fakeEl("aixlinx-float-wrap", 520, 400);   // 中央の大きな窓
-  const bar = fakeEl("axlx-bar", 220, 300);             // 右の操作パネル
-  const site = fakeEl("suumo-list", 1200, 600);         // サイトの要素
-  const api = runHide([big, bar, site], 1920, 1080);
-  api.hide();
-  ok("  中央の大きな窓が隠れる", big.style.visibility === "hidden", big.style.visibility);
-  ok("  右の操作パネルが隠れる", bar.style.visibility === "hidden", bar.style.visibility);
-  ok("  ⚠ サイトの要素は触らない", site.style.visibility === "", site.style.visibility);
-  ok("  隠した数は2", api.count() === 2, api.count());
+  const html = el("", "", [0, 0, 1920, 1080]);
+  const body = el("", "", [0, 0, 1920, 1080]);
+  const big = el("aixlinx-float-wrap", "", [700, 300, 520, 400]);
+  const bar = el("axlx-bar", "", [1700, 0, 220, 900]);
+  const site = el("suumo-list", "", [0, 0, 1200, 600]);
+  html.add(body); body.add(big, bar, site);
+  const r = runRects(html, body, 1920, 1080);
+  ok("  2つ入る", r.rects.length === 2, r.rects);
+  ok("  中央の窓の位置", JSON.stringify(r.rects[0]) === JSON.stringify({ x: 700, y: 300, w: 520, h: 400 }), r.rects[0]);
+  ok("  画面の大きさも返す", r.vw === 1920 && r.vh === 1080);
 }
 
-console.log("\n■ ② 小さい印は残す（人が『あれ？消えた』とならない）");
+console.log("\n■ ② ⚠ html に見えるカーソルの印（axlx-one-cursor）があってもページ全体を塗らない");
 {
-  const badge = fakeEl("axlx-learn-badge", 100, 20);    // 学習中の小さな印
-  const api = runHide([badge], 1920, 1080);
-  api.hide();
-  ok("  ⚠ 小さい印は隠さない（面積2%未満）", badge.style.visibility === "", badge.style.visibility);
-  ok("  隠した数は0", api.count() === 0);
-  const small = fakeEl("axlx-learn-badge", 100, 20);
-  const api2 = runHide([small], 400, 300);              // 100x20 / 400x300 = 1.67%（まだ2%未満）
-  api2.hide();
-  ok("  1.67% では隠さない（しきい値2%の手前）", small.style.visibility === "", small.style.visibility);
-  const mid = fakeEl("axlx-learn-badge", 100, 20);
-  const api3 = runHide([mid], 320, 240);                // 100x20 / 320x240 = 2.6%（2%超え）
-  api3.hide();
-  ok("  ⚠ 2.6% なら隠す（面積比で決めている）", mid.style.visibility === "hidden", mid.style.visibility);
+  const html = el("", "axlx-one-cursor", [0, 0, 1920, 1080]);
+  const body = el("", "", [0, 0, 1920, 1080]);
+  const big = el("aixlinx-float-wrap", "", [700, 300, 520, 400]);
+  html.add(body); body.add(big);
+  const r = runRects(html, body, 1920, 1080);
+  ok("  ⚠ html は入らない（入ると写真が全部灰色＝旧は真っ白に隠れた）", r.rects.every((x) => x.w < 1920), r.rects);
+  ok("  窓だけ1つ", r.rects.length === 1, r.rects);
+  const body2 = el("", "axlx-x", [0, 0, 1920, 1080]);
+  const html2 = el("", "", [0, 0, 1920, 1080]).add(body2);
+  ok("  ⚠ body に印があっても入らない", runRects(html2, body2, 1920, 1080).rects.length === 0);
+  const html3 = el("", "", [0, 0, 1920, 1080]);
+  const body3 = el("", "", [0, 0, 1920, 1080]);
+  const cover = el("axlx-cover", "", [0, 0, 1900, 1000]);
+  html3.add(body3); body3.add(cover);
+  ok("  ⚠ 画面の 85% 以上を覆う物は入らない", runRects(html3, body3, 1920, 1080).rects.length === 0);
 }
 
-console.log("\n■ ③ 戻すと元の値に戻る（`visible` を指定していた物も元のまま）");
+console.log("\n■ ③ 小さい印・見えていない窓は入らない");
 {
-  const a = fakeEl("aixlinx-float-wrap", 520, 400);
-  const b = fakeEl("axlx-bar", 220, 300);
-  b.style.visibility = "visible";                       // 元から visible だった
-  const api = runHide([a, b], 1920, 1080);
-  api.hide();
-  ok("  隠れている", a.style.visibility === "hidden" && b.style.visibility === "hidden");
-  api.show();
-  ok("  ⚠ 元が空だった物は空に戻る", a.style.visibility === "", a.style.visibility);
-  ok("  ⚠ 元が visible だった物は visible に戻る", b.style.visibility === "visible", b.style.visibility);
-  ok("  一覧が空になる", api.count() === 0);
+  const html = el("", "", [0, 0, 1920, 1080]);
+  const body = el("", "", [0, 0, 1920, 1080]);
+  const badge = el("axlx-learn-badge", "", [10, 10, 100, 20]);
+  const hid = el("axlx-guide", "", [100, 100, 600, 400], { visibility: "hidden" });
+  const none = el("axlx-guide2", "", [100, 100, 600, 400], { display: "none" });
+  const zero = el("axlx-guide3", "", [100, 100, 600, 400], { opacity: "0" });
+  html.add(body); body.add(badge, hid, none, zero);
+  ok("  どれも入らない", runRects(html, body, 1920, 1080).rects.length === 0);
+  const html2 = el("", "", [0, 0, 320, 240]);
+  const body2 = el("", "", [0, 0, 320, 240]);
+  const mid = el("axlx-learn-badge", "", [0, 0, 100, 20]);
+  html2.add(body2); body2.add(mid);
+  ok("  2.6% なら入る（面積比で決めている）", runRects(html2, body2, 320, 240).rects.length === 1);
 }
 
-console.log("\n■ ④ 2回隠しても壊れない（撮影が重なった時）");
+console.log("\n■ ④ 窓の中の部品は数えない（2つ目の窓が漏れない）");
 {
-  const a = fakeEl("aixlinx-float-wrap", 520, 400);
-  const api = runHide([a], 1920, 1080);
-  api.hide();
-  api.hide();                                            // 2回目は何もしない
-  ok("  1つだけ覚えている", api.count() === 1, api.count());
-  api.show();
-  ok("  ⚠ 2回隠しても元に戻る（空のまま消えない）", a.style.visibility === "", a.style.visibility);
+  const html = el("", "", [0, 0, 1920, 1080]);
+  const body = el("", "", [0, 0, 1920, 1080]);
+  const panel = el("axlx-bulk-panel", "", [1500, 0, 420, 1000]);
+  for (let i = 0; i < 20; i++) panel.add(el("axlx-row-" + i, "", [1500, i * 50, 420, 48]));
+  const big = el("aixlinx-float-wrap", "", [700, 300, 520, 400]);
+  html.add(body); body.add(panel, big);
+  const r = runRects(html, body, 1920, 1080);
+  ok("  ⚠ パネルと中央の窓の2つ（中の20行は数えない）", r.rects.length === 2, r.rects);
 }
 
-console.log("\n■ ④' 中の iframe が visible を直に持っていても写らない（2.8.139・実測 1000枚中 373枚で小窓が写っていた）");
+console.log("\n■ ⑤ 画面の外は切る");
 {
-  const wrap = fakeEl("aixlinx-float-wrap", 520, 400);
-  const frame = { style: fakeStyle() };
-  frame.style.visibility = "visible";                   // underbar.js が直に付ける
-  const api = runHide([wrap], 1920, 1080);
-  ok("  隠す前は写る", paintedChild(wrap, frame));
-  api.hide();
-  ok("  ⚠ 隠すと中の iframe も写らない（opacity:0）", !paintedChild(wrap, frame), wrap.style);
-  ok("  opacity は !important", wrap.style.getPropertyPriority("opacity") === "important");
-  api.show();
-  ok("  戻すと opacity は空に戻る", wrap.style.opacity === "", wrap.style.opacity);
-  ok("  戻すと中の iframe がまた写る", paintedChild(wrap, frame));
-  const b = fakeEl("axlx-bar", 220, 300);
-  b.style.setProperty("opacity", "0.9", "");
-  const api2 = runHide([b], 1920, 1080);
-  api2.hide(); api2.show();
-  ok("  ⚠ 元の opacity（0.9）は 0.9 に戻る", b.style.opacity === "0.9", b.style.opacity);
+  const html = el("", "", [0, 0, 1000, 800]);
+  const body = el("", "", [0, 0, 1000, 800]);
+  const w = el("axlx-bar", "", [800, -100, 400, 500]);
+  html.add(body); body.add(w);
+  const r = runRects(html, body, 1000, 800);
+  ok("  切った位置", JSON.stringify(r.rects[0]) === JSON.stringify({ x: 800, y: 0, w: 200, h: 400 }), r.rects[0]);
 }
 
-console.log("\n■ ⑤ 隠した後に撮って戻す順番（本物のコードで確認）");
-{
-  const bg = fs.readFileSync(path.join(dir, "background.js"), "utf8").replace(/\r\n/g, "\n");
-  const i = bg.indexOf("async function _setShotHidden");
-  const seg = bg.slice(i, i + 1600);
-  ok("  隠す → 32ms 待つ（描画待ち）", /if \(hide !== false\) await new Promise\(function \(r\) \{ setTimeout\(r, 32\); \}\);/.test(seg));
-  ok("  戻す時は待たない", !/hide !== false/.test(seg.split("setTimeout(r, 32)")[1] || ""));
-  const calls = bg.match(/_setShotHidden\(tab\.id, true\)/g) || [];
-  ok("  ⚠ 両方の撮影経路で隠す（2か所）", calls.length === 2, calls.length);
-  ok("  ⚠ 必ず finally で戻す", (bg.match(/finally \{[\s\S]{0,200}?_setShotHidden\(tab\.id, false\)/g) || []).length >= 1);
-}
+console.log("\n■ ⑥ 本物の _maskShot が写真の大きさに合わせて塗る");
+(async () => {
+  const fn = extractFn(bgSrc, "async function _maskShot(dataUrl, info)");
+  const fills = [];
+  let style = "";
+  class FakeCanvas {
+    constructor(w, h) { this.w = w; this.h = h; }
+    getContext() {
+      return {
+        drawImage() {},
+        set fillStyle(v) { style = v; }, get fillStyle() { return style; },
+        fillRect: (x, y, w, h) => fills.push([x, y, w, h]),
+      };
+    }
+    async convertToBlob() { return new Blob([Buffer.from("MASKED")]); }
+  }
+  const factory = new Function("OffscreenCanvas", "createImageBitmap", "atob", "btoa", "Blob",
+    fn + "\nreturn _maskShot;");
+  const maskShot = factory(FakeCanvas, async () => ({ width: 3840, height: 2160, close() {} }), atob, btoa, Blob);
+  const src64 = "data:image/jpeg;base64," + Buffer.from("PHOTO").toString("base64");
+  const out = await maskShot(src64, { rects: [{ x: 700, y: 300, w: 520, h: 400 }], vw: 1920, vh: 1080 });
+  ok("  塗った写真を返す", Buffer.from(out.split(",")[1], "base64").toString() === "MASKED", out.slice(0, 60));
+  ok("  ⚠ 拡大率2倍に合わせて塗る", JSON.stringify(fills[0]) === JSON.stringify([1400, 600, 1040, 800]), fills);
+  ok("  灰色", style === "#808080", style);
+  const same = await maskShot(src64, { rects: [], vw: 1920, vh: 1080 });
+  ok("  塗る所が無ければ元のまま", same === src64);
+  const brokenFactory = new Function("OffscreenCanvas", "createImageBitmap", "atob", "btoa", "Blob", fn + "\nreturn _maskShot;");
+  const broken = brokenFactory(FakeCanvas, async () => { throw new Error("decode"); }, atob, btoa, Blob);
+  ok("  ⚠ 失敗しても元の写真を返す（撮影は止めない）", (await broken(src64, { rects: [{ x: 0, y: 0, w: 10, h: 10 }], vw: 100, vh: 100 })) === src64);
 
-console.log(`\n${passed} 件合格 / ${failed} 件失敗`);
-if (failed > 0) process.exit(1);
+  console.log(`\n${passed} 件合格 / ${failed} 件失敗`);
+  if (failed > 0) process.exit(1);
+})();

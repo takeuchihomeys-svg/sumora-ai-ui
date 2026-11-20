@@ -137,7 +137,7 @@ console.log("\n■ ⑤ 本体（shot-learn-server.ts）が同じ決まりを持�
 console.log("\n■ ⑥ 拡張側（小窓を隠す・押したら何が開いたかを送る）");
 {
   const rec = fs.readFileSync(path.join(dir, "chrome-extension", "human-learn-record.js"), "utf8");
-  ok("  小窓を隠す（_hideForShot）", /function _hideForShot|_hideForShot/.test(rec));
+  ok("  小窓の所を写真で塗る位置を返す（_shotMaskRects・2.8.141〜 画面は隠さない）", /function _shotMaskRects\(\)/.test(rec));
   ok("  ⚠ opened を shot_ops に載せている", /opened: o\.opened \|\| null/.test(rec));
 }
 
