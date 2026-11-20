@@ -84,15 +84,40 @@ void (async () => {
 
   // ★ 既定は最新束を読む（bundle付き）。touch=0 は light のみで束が無いので使わない。
   //   打合せのたびに fresh=1 すると弱い強化の画面位置が消える（実測: 96欄→0）
-  const q = forceFresh ? "fresh=1&" : "";
-  const url = `${BASE}/api/human-learn-profile?${q}scope=${encodeURIComponent(scope)}`;
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) {
-    line(`束を取れませんでした: http_${r.status}`);
-    process.exitCode = 1;
-    return;
+  // ★ 2026-11-20 竹内さん「反映の流れ」: API は touch の既定（読む）で read_count を +1 する。
+  //   統括の読み込みがそれを増やすと、拡張が読んだ数と混ざる（10:42 の統括 1回で read が 0→1）。
+  //   → 通常は DB の最新1行を直接読む（読むだけ・印は付かない）。fresh=1（作り直し）の時だけ API。
+  let j: Record<string, unknown> | null = null;
+  let via = "";
+  if (!forceFresh) {
+    const u = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (u && k) {
+      try {
+        const rr = await fetch(
+          `${u}/rest/v1/human_learn_profile?select=bundle,created_at&scope=eq.${encodeURIComponent(scope)}&order=created_at.desc&limit=1`,
+          { headers: { apikey: k, Authorization: `Bearer ${k}` }, cache: "no-store", signal: AbortSignal.timeout(20_000) },
+        );
+        if (rr.ok) {
+          const rows = (await rr.json()) as Array<{ bundle?: unknown }>;
+          if (rows[0]?.bundle) { j = { bundle: rows[0].bundle }; via = "DBの最新1行（読んだ印は付けない）"; }
+        }
+      } catch { /* API へ戻す */ }
+    }
   }
-  const j = (await r.json()) as Record<string, unknown>;
+  if (!j) {
+    const q = forceFresh ? "fresh=1&" : "";
+    const url = `${BASE}/api/human-learn-profile?${q}scope=${encodeURIComponent(scope)}`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      line(`束を取れませんでした: http_${r.status}`);
+      process.exitCode = 1;
+      return;
+    }
+    j = (await r.json()) as Record<string, unknown>;
+    via = forceFresh ? "API（fresh＝作り直し）" : "API（読んだ印が付く・DB が読めなかった時だけ）";
+  }
+  line(`■ 束の読み方: ${via}`);
   const bundle = (j.bundle ?? null) as Record<string, unknown> | null;
   if (!bundle) {
     line("束がありません");
@@ -178,6 +203,23 @@ void (async () => {
   }
 
   const autoNotes = proMeetNotesFromBundle(bundleForPro);
+  // ★ 2026-11-20 竹内さん「反映の流れ」: 束に写された反映（read_count）は**作った時点の値で固定**される。
+  //   新しい束は必ず read=0 で作られるので、統括は今の読まれ数を見られない。→ 今の行の値を事実メモに足す（古い値と並べる）。
+  let liveReflectNote: string | null = null;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const { fetchBundleReflectHint } = await import("../app/lib/bundle-reflect");
+    const u = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (u && k) {
+      const live = await fetchBundleReflectHint(createClient(u, k), { scope });
+      const frozen = ((bundleForPro.bundle_reflect ?? {}) as { read_count?: number }).read_count;
+      liveReflectNote = `反映の今（DBの最新行）: 拡張が読んだ ${live.read_count}回${live.read_at ? `（${String(live.read_at).slice(0, 16)}）` : ""}・新束のあと自動=${live.auto_after ? "あり" : "なし"}／束に写された作った時点の値は read=${frozen ?? "無"}（古い。作った時の値で固定されている）`;
+      line(`■ ${liveReflectNote}`);
+    }
+  } catch (e) {
+    line(`■ 反映の今を読めない: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+  }
   // ★ 2026-11-19: 既に竹内さんへ出して未回答の問いは Pro に渡す（同じ事を聞き直さない・答えが来るまで該当の作業は保留）
   const openAskNotes: string[] = [];
   try {
@@ -190,7 +232,7 @@ void (async () => {
       for (const o of open) openAskNotes.push(`確認待ち（竹内さんへ出して未回答・聞き直さない・この作業は保留）: ${o.question.slice(0, 120)}／オススメ=${o.recommended ?? "なし"}`);
     }
   } catch { /* 台帳が読めなくても判断は続ける */ }
-  const allNotes = [...autoNotes, ...openAskNotes, ...notes];
+  const allNotes = [...autoNotes, ...(liveReflectNote ? [liveReflectNote] : []), ...openAskNotes, ...notes];
   if (autoNotes.length) {
     line();
     line("■ 束からの事実メモ（--note 無しでも Pro に渡す）");

@@ -75,6 +75,25 @@ export type PlaybookScene = {
   confidence: "solid" | "thin";
 };
 
+/** 押す位置の1件（束の points の欄ごと・人が押した位置の票） */
+export type PlaybookPosition = {
+  field: string;
+  n: number;
+  w: string | null;
+  x: number | null;
+  y: number | null;
+  confidence: "solid" | "thin";
+};
+
+/** 開く欄の1件（束の opens・押すと何が開くか） */
+export type PlaybookOpen = {
+  field: string;
+  opens: string | null;
+  n: number;
+  /** 推測のまま（人が開いて確かめていない） */
+  guessed: boolean;
+};
+
 export type Playbook = {
   v: 1;
   /** 作り方の版 */
@@ -87,10 +106,18 @@ export type Playbook = {
   scenes: PlaybookScene[];
   /** まだ1件も学んでいない場面（人が1回通して録る候補） */
   missing: string[];
-  /** 押す位置の確かさ（全体） */
+  /** 押す位置の確かさ（全体の数） */
   points: { solid: number; thin: number };
-  /** 押すと開く欄の数 */
+  /** 押す位置の一覧（欄ごと・票の多い順。学んだ物を全部載せる） */
+  positions: PlaybookPosition[];
+  /** 押すと開く欄の数（人が確かめて学んだ物だけ＝推測は数えない） */
   opens_known: number;
+  /** 押すと開く欄の一覧（推測の印つき・全部載せる） */
+  opens: PlaybookOpen[];
+  /** 推測のまま・票0の開く欄の数 */
+  opens_guessed: number;
+  /** 束の `next`（次のページ等）の学びの数（場面の手順にはまだ入っていないかもしれない） */
+  next_n: number;
   /** 足りない所・迷い・分からない欄（人が確かめる文） */
   gaps: string[];
 };
@@ -107,8 +134,9 @@ type SceneFlowLike = {
 type BundleLike = {
   generated_at?: string | null;
   scene_flows?: SceneFlowLike[] | null;
-  points?: Record<string, { n?: number }> | null;
-  opens?: Record<string, unknown> | null;
+  points?: Record<string, { n?: number; w?: unknown; x?: unknown; y?: unknown }> | null;
+  opens?: Record<string, { opens?: unknown; n?: unknown; guessed?: unknown }> | null;
+  next?: Record<string, unknown> | null;
 };
 
 /** FNV-1a（32bit）の16進。版の印に使う（暗号ではない） */
@@ -199,14 +227,41 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
-  let solid = 0, thin = 0;
-  for (const p of Object.values(bundle.points ?? {})) {
-    const n = Number(p?.n) || 0;
-    if (n >= PLAYBOOK_SOLID_RUNS) solid++;
-    else if (n >= 1) thin++;
-  }
+  // 押す位置: 束の points を欄ごとに全部載せる（票1以上・票の多い順）。数は solid/thin で数える
+  const positions: PlaybookPosition[] = Object.entries(bundle.points ?? {})
+    .map(([field, p]) => {
+      const n = Number(p?.n) || 0;
+      return {
+        field,
+        n,
+        w: typeof p?.w === "string" ? p.w : null,
+        x: typeof p?.x === "number" && Number.isFinite(p.x) ? p.x : null,
+        y: typeof p?.y === "number" && Number.isFinite(p.y) ? p.y : null,
+        confidence: (n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin") as "solid" | "thin",
+      };
+    })
+    .filter((p) => p.n >= 1)
+    .sort((a, b) => b.n - a.n);
+  const solid = positions.filter((p) => p.confidence === "solid").length;
+  const thin = positions.filter((p) => p.confidence === "thin").length;
+
+  // 開く欄: 人が確かめて学んだ物（n≥1 かつ推測でない）だけを「知っている」と数える。推測は別に数える
+  const opens: PlaybookOpen[] = Object.entries(bundle.opens ?? {})
+    .map(([field, o]) => ({
+      field,
+      opens: typeof o?.opens === "string" ? o.opens : null,
+      n: Number(o?.n) || 0,
+      guessed: o?.guessed === true,
+    }))
+    .sort((a, b) => b.n - a.n);
+  const opens_known = opens.filter((o) => !o.guessed && o.n > 0).length;
+  const opens_guessed = opens.length - opens_known;
+  const next_n = Object.keys(bundle.next ?? {}).length;
 
   const gaps: string[] = [];
+  if (!positions.length) gaps.push("押す位置が1つも無い（束の points が空）");
+  if (opens_guessed) gaps.push(`開く欄 ${opens_guessed}件は推測のまま（人が開いて確かめていない・数に入れない）`);
+  if (next_n && !learned.has("next")) gaps.push(`次のページへ：束の next に ${next_n}件あるが、場面の手順（人が押した順）にはまだなっていない（整理の抜けの疑い）`);
   if (!scenes.length) gaps.push("場面の手順が1つも無い（まだ学んでいない）");
   for (const s of scenes) {
     if (s.confidence === "thin") gaps.push(`${s.label}：検索${s.runs}回だけ（3回未満・人が1回通して確かめる候補）`);
@@ -218,7 +273,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   }
   if (missing.length) gaps.push(`まだ学んでいない場面：${missing.map((k) => (SCENE_JA as Record<string, string>)[k]).join("・")}`);
 
-  const body = JSON.stringify({ build_v: PLAYBOOK_BUILD_V, scenes, missing, points: { solid, thin } });
+  const body = JSON.stringify({ build_v: PLAYBOOK_BUILD_V, scenes, missing, points: { solid, thin }, positions, opens, next_n });
   return {
     v: 1,
     build_v: PLAYBOOK_BUILD_V,
@@ -227,7 +282,11 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     scenes,
     missing,
     points: { solid, thin },
-    opens_known: Object.keys(bundle.opens ?? {}).length,
+    positions,
+    opens_known,
+    opens,
+    opens_guessed,
+    next_n,
     gaps,
   };
 }
@@ -239,6 +298,10 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
 export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[] {
   const issues: string[] = [];
   if (!pb.scenes.length) issues.push("場面が0（手順書が空）");
+  // 学んだ押す位置が手順書に全部入っているか（入れ忘れ・数の食い違いの網）
+  if (pb.positions.length !== pb.points.solid + pb.points.thin) issues.push("押す位置の数が合わない（一覧と数）");
+  if (pb.opens_known + pb.opens_guessed !== pb.opens.length) issues.push("開く欄の数が合わない（一覧と数）");
+  if (pb.positions.some((p) => p.x == null || p.y == null)) issues.push("押す位置に座標の無い物がある（押せない）");
   for (const s of pb.scenes) {
     if (!(s.scene in SCENE_JA)) issues.push(`場面の名前が知らない物：${s.scene}`);
     if (!s.steps.length) issues.push(`${s.label}：手順が空`);

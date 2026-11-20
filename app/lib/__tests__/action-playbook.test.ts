@@ -16,7 +16,7 @@ const sceneFlows = [
   { scene: "station", runs: 2, ops: 7, steps: ["沿線・駅絞り込み＋", "route_id[]"], gap_ms: null, variants: 1 },
   { scene: "other", runs: 9, ops: 3, steps: ["x"], gap_ms: null, variants: 1 }, // 場面が決まらない＝手順書に入れない
 ];
-const points = { a: { n: 9 }, b: { n: 3 }, c: { n: 1 } };
+const points = { a: { n: 9, w: "checkbox", x: 0.1, y: 0.2 }, b: { n: 3, x: 0.3, y: 0.4 }, c: { n: 1, x: 0.5, y: 0.5 } };
 
 console.log("■ 値の判定（手順から外すもの）");
 {
@@ -43,7 +43,7 @@ console.log("■ 欄の名前（人が読む形・連続の畳み）");
 
 console.log("■ 場面の手順（束の scene_flows から）");
 {
-  const pb = buildPlaybook({ generated_at: "2026-11-20T01:00:00Z", scene_flows: sceneFlows, points, opens: { x: { opens: "modal" } } });
+  const pb = buildPlaybook({ generated_at: "2026-11-20T01:00:00Z", scene_flows: sceneFlows, points, opens: { x: { opens: "modal", n: 3, guessed: false } } });
   ok("場面は束の順のまま（other は外す）", pb.scenes.map((s) => s.scene).join(",") === "area,cond,station", pb.scenes.map((s) => s.scene).join(","));
   ok("場面の名前は人が読む日本語（SCENE_JA）", pb.scenes[0].label === SCENE_JA.area && pb.scenes[0].label === "所在地絞り込み", pb.scenes[0].label);
   ok("3回以上は solid・2回以下は thin", pb.scenes[0].confidence === "solid" && pb.scenes[2].confidence === "thin");
@@ -54,6 +54,26 @@ console.log("■ 場面の手順（束の scene_flows から）");
   ok("押すと開く欄の数", pb.opens_known === 1);
   ok("based_on は束の作成時刻", pb.based_on === "2026-11-20T01:00:00Z");
   ok("作り方の版が入る", pb.build_v >= 2);
+}
+
+console.log("■ 学んだ押す位置・開く欄を全部載せる（整理の抜け・推測の印）");
+{
+  const pb = buildPlaybook({
+    generated_at: "2026-11-20T01:00:00Z", scene_flows: sceneFlows, points,
+    opens: {
+      update_date: { opens: "options", n: 0, guessed: true },
+      rental_cost1: { opens: "options", n: 0, guessed: true },
+      "検索｜span": { opens: "result", n: 4, guessed: false },
+      town_code: { opens: "modal", n: 2 },
+    },
+    next: { pass: { n: 2 }, keyword: { n: 3 } },
+  });
+  ok("押す位置は学んだ物を全部載せる（票の多い順）", pb.positions.length === 3 && pb.positions[0].field === "a" && pb.positions[0].n === 9, JSON.stringify(pb.positions.map((p) => p.field)));
+  ok("押す位置の確かさ（solid/thin）と座標", pb.positions[0].confidence === "solid" && pb.positions[2].confidence === "thin" && pb.positions[0].x === 0.1 && pb.positions[0].w === "checkbox");
+  ok("推測の開く欄は『知っている』に数えない", pb.opens_known === 2 && pb.opens_guessed === 2, `${pb.opens_known}/${pb.opens_guessed}`);
+  ok("推測の開く欄は一覧に残す（guessed の印つき）", pb.opens.some((o) => o.field === "update_date" && o.guessed === true));
+  ok("次のページの学び（next）は件数を出し、場面の手順に無いと gaps に出す", pb.next_n === 2 && pb.gaps.some((g) => /次のページへ：束の next に 2件/.test(g)), pb.gaps.join(" / "));
+  ok("押す位置が空だと gaps に出す", buildPlaybook({ scene_flows: sceneFlows }).gaps.some((g) => /押す位置が1つも無い/.test(g)));
 }
 
 console.log("■ 足りない場面・迷い・薄さ・分からない欄（gaps）");

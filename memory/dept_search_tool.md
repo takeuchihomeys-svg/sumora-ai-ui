@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.133: 束に手順書（`playbook`）を載せて拡張が保存（`axlx_learn_playbook`）・束から名前を外す（段階名は残す）**（竹内さん「手順書は束の中に載せる」「入力内容として外す」「反映の流れ」）
+- 変更: `background.js` に `axlx_learn_playbook` を追加（束の `playbook` をそのまま保存・無ければ null）。`manifest.json` を 2.8.133 に。
+- サーバー（`app/api/human-learn-profile/route.ts`）: 束を作る時に `stripCustomerNames`（`app/lib/bundle-privacy.ts`）で「今の客:段階 〈名前〉」の名前を外し（件数は足す）、`buildPlaybook`（`app/lib/action-playbook.ts`）で `playbook` を作って束に入れる。
+- ⚠ 拡張が手順書を**読むだけ**で、自動の動きは変えていない（まだ使っていない・並べ替えの材料にするのは次の作業）。
+- ⚠ 拡張を再読込するまで `axlx_learn_playbook` は入らない。束の `playbook` は次に束を作った時（夜の作り直し・手動の refresh）から入る。
+- ⚠ 過去の束の行には名前が残っている（新しい行から外れる）。過去の行の掃除は DB の書き換えなので、件数と中身を確かめてから（未着手）。
+- DB の構造は変えていない（束は JSON・列を増やさない）。
+
 ## 2026-11-20 **拡張 2.8.132: 2.8.131 の「まだ直していない」を片付ける（列の外の押し・選び直し・一瞬のスクロール・重ね押し・連続の止まり）**（竹内さん「改善して完了させる 自動モード完成するまで改善する テストして完全なものをつくる 統括proおねがい」）
 - ⚠ DB（Supabase）はまだ答えない（`/rest/v1`・`/auth/v1/health` が15秒で時間切れ・`/storage/v1/status` は200＝入口は生きていて Postgres が止まっている）。下はコードの経路の直しで、**回数は DB で確かめていない**。統括Pro も DB の事前点検で止まる。
 - **押しを1つずつ**: `_pressLearned`・`clickNextStepBtn`・`ensureWardButtonY`・`clickByText`・`simulateClick` の「列の外の押し」を `_pressBusy`（＋`_pressBusyAt`・8秒で忘れる）で数え、`isClickQueueBusy` が見る（見張り・次の段が押している最中に動かない）。新しい `_pressHumanTracked`（カーソルで押して終わるまで数える・失敗でも必ず戻す）。`ensureWardButtonY` は固定の時間を重ねず「外す→待つ→選ぶ→待つ→確かめ」を押し終わってから順に。同じ物を1.6秒以内に押し直さない（`_pressLearned`）。カーソルの動きは取り消されても Promise が返る（`pointer-ui.js` `moveTo` は cancelled で resolve(false)）ので止まらない。

@@ -505,6 +505,30 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     if (sceneMissingNames) b.scene_missing_names = sceneMissingNames;
     if (stoppedScene) b.stopped_scene = stoppedScene;
   }
+  /**
+   * ★ 2026-11-20 竹内さん「入力内容として外す」: 束からお客様の名前らしい文字列を外す（段階名は残す・件数は足す）。
+   *   実測: 束の next のキーに「今の客:fill_start 〈名前〉」が入っていた（拡張が段階名に名前を付けて記録）。
+   */
+  try {
+    const { stripCustomerNames } = await import("@/app/lib/bundle-privacy");
+    const cleaned = stripCustomerNames(bundle as unknown as Record<string, unknown>);
+    if (cleaned.changed) {
+      for (const k of Object.keys(cleaned.value)) (bundle as unknown as Record<string, unknown>)[k] = cleaned.value[k];
+      note?.("privacy_names_stripped");
+    }
+  } catch (e) {
+    console.warn("[human-learn-profile] 名前の除去に失敗:", e instanceof Error ? e.message : String(e));
+  }
+  /**
+   * ★ 2026-11-20 竹内さん「手順書は束の中に載せる」: 束（場面の手順・押す位置・開く欄・次のページ）から
+   *   手順書を作って一緒に保存する。拡張は `playbook` を取り出して保存する（axlx_learn_playbook）。
+   */
+  try {
+    const { buildPlaybook } = await import("@/app/lib/action-playbook");
+    (bundle as unknown as Record<string, unknown>).playbook = buildPlaybook(bundle as never);
+  } catch (e) {
+    console.warn("[human-learn-profile] 手順書を作れません:", e instanceof Error ? e.message : String(e));
+  }
   /** ★ F49: compact 後も shots.in_storage / kinds が無ければ bundle_reflect から補完 */
   if (bundle.shots && typeof bundle.shots === "object") {
     const sh = bundle.shots as { in_storage?: number; kinds?: Record<string, number> };
