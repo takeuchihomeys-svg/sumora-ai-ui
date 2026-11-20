@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.137";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.138";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -206,6 +206,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "function _auditPlaybookSeen()",
     file: "page-script.js",
     verify: { mustHave: "page:playbook_seen", mustNot: ["page:playbook_none"] },
+  },
+  {
+    id: "one_cursor",
+    scene: "press",
+    text: "カーソルは1つだけ（拡張の2か所で位置を共有して順番に動かす・本物のマウスと同時に出さない・人が本物を動かしたらそこから続ける）。形と色はスタッフの PC（Windows）の標準で、手・矢印・I はページが出す形に合わせる",
+    since: "2.8.138",
+    kb: null,
+    marker: "function _auditOneCursor()",
+    file: "page-script.js",
+    verify: { mustHave: "page:cursor_one", mustNot: ["page:cursor_two", "page:cursor_old"] },
   },
   {
     id: "audit_one_progress",

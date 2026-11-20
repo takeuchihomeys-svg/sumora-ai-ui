@@ -117,8 +117,12 @@ console.log("■ 点検記録で守れたかを確かめる");
   ok("手順書が届いていない → ng", b.playbook_read.result === "ng");
 
   const empty = judgeRulesOnAudit([]);
-  ok("記録が空なら ng は『手順書を読んだ印が無い』だけ（他は無い物を悪いと言わない）",
-    empty.filter((x) => x.result === "ng").map((x) => x.id).join(",") === "playbook_read", empty.filter((x) => x.result === "ng").map((x) => x.id).join(","));
+  ok("記録が空なら ng は『手順書を読んだ印』『1つのカーソルの印』が無いだけ（他は無い物を悪いと言わない）",
+    empty.filter((x) => x.result === "ng").map((x) => x.id).join(",") === "playbook_read,one_cursor", empty.filter((x) => x.result === "ng").map((x) => x.id).join(","));
+  const cur = (steps: { k: string; d: string }[]) => judgeRulesOnAudit(steps, AUTO_RULES, "2.8.138").find((x) => x.id === "one_cursor")!.result;
+  ok("1つのカーソルの印があれば ok", cur([{ k: "page:cursor_one", d: "要素=1 OSを隠す=1 形=arrow" }]) === "ok");
+  ok("カーソルが2つ・古い作りなら ng", cur([{ k: "page:cursor_one", d: "" }, { k: "page:cursor_two", d: "要素=2" }]) === "ng" && cur([{ k: "page:cursor_old", d: "" }]) === "ng");
+  ok("2.8.138 より前の拡張の回は確かめられない（no_data）", judgeRulesOnAudit([], AUTO_RULES, "2.8.137").find((x) => x.id === "one_cursor")!.result === "no_data");
   const oldExt = Object.fromEntries(judgeRulesOnAudit(bad, AUTO_RULES, "2.8.133").map((x) => [x.id, x]));
   ok("直す前の拡張（2.8.133）の回は、後から入った決まりを ng にしない（no_data）",
     oldExt.no_hidden_press.result === "no_data" && oldExt.search_decide.result === "no_data" && oldExt.playbook_read.result === "no_data", JSON.stringify(oldExt.no_hidden_press));

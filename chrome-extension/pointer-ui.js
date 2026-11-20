@@ -31,19 +31,162 @@
    * ★ 2026-11-16 竹内さん「ボタン押す部分はマウスの形が変わるのも人間のように再現」:
    *   OSのカーソルはリンク/ボタン上で矢印→手になる。見えるカーソルも同じ切替をする。
    */
-  var _shape = "arrow";           // "arrow" | "hand"
+  /**
+   * ★ 2026-11-20 竹内さん「マウスの色や選択するときのマウスの形が実際の人間の形と違う」:
+   *   スタッフの PC（Windows）の標準カーソルに合わせる＝**白い矢印・黒い縁**／リンク等の**白い手（人差し指）**／
+   *   文字の上は**I の形**。旧は黒い矢印・白い縁と、手の形が崩れた塊だった。押した時に縮む見た目も OS には無いのでやめた。
+   */
+  var _shape = "arrow";           // "arrow" | "hand" | "ibeam"
   var _shapeCheckAt = 0;
   var SVG_ARROW =
-    '<svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
-    '<path d="M4 2.5 L4 19 L8.6 14.7 L11.3 21 L14.2 19.7 L11.6 13.6 L18 13.2 Z" ' +
-    'fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
-  // 指差し手（先端は人差し指の先 ≈ 10,2）
+    '<svg width="20" height="22" viewBox="0 0 20 22" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M1 1 L1 17.2 L4.9 13.4 L7.6 19.6 L10.3 18.4 L7.7 12.4 L13 12.4 Z" ' +
+    'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="miter"/></svg>';
   var SVG_HAND =
-    '<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
-    '<path d="M9.5 2.2c-.9 0-1.6.7-1.6 1.6v7.2H7.2c-.7 0-1.2.5-1.2 1.1v1.1c0 .6.5 1.1 1.2 1.1h.7v.9c0 .6.5 1.1 1.1 1.1h.6v.9c0 .6.5 1.1 1.1 1.1h.6v1.1c0 1.1.9 2 2 2h1.2c1.1 0 2-.9 2-2V6.4c0-1.1-.9-2-2-2h-1.1V3.8c0-.9-.7-1.6-1.6-1.6H9.5z" ' +
-    'fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+    '<svg width="20" height="24" viewBox="0 0 20 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M6 2.3 C6 1.5 6.7 0.9 7.5 0.9 C8.3 0.9 9 1.5 9 2.3 L9 8.6 C9 7.9 9.6 7.4 10.4 7.4 C11.2 7.4 11.8 7.9 11.8 8.6 ' +
+    'L11.8 9.3 C11.8 8.6 12.4 8.1 13.2 8.1 C14 8.1 14.6 8.6 14.6 9.3 L14.6 10.2 C14.6 9.5 15.2 9 16 9 C16.8 9 17.4 9.5 17.4 10.2 ' +
+    'L17.4 15.6 C17.4 17.8 16.4 19.4 15.4 20.4 L15.4 22.6 L7.6 22.6 L7.6 20.8 C6.4 19.6 4.6 17.4 3.1 15 ' +
+    'C2.5 14.1 2.8 13.1 3.6 12.8 C4.4 12.5 5.2 12.9 5.6 13.6 L6 14.3 Z" fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/>' +
+    '<path d="M9 8.6 V12.6 M11.8 9.3 V12.6 M14.6 10.2 V12.6" fill="none" stroke="#000" stroke-width="0.9"/></svg>';
+  var SVG_IBEAM =
+    '<svg width="10" height="20" viewBox="0 0 10 20" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M2 1.5 C4 1.5 5 2.2 5 3.5 C5 2.2 6 1.5 8 1.5 M5 3.5 V16.5 M2 18.5 C4 18.5 5 17.8 5 16.5 C5 17.8 6 18.5 8 18.5" fill="none" stroke="#fff" stroke-width="3"/>' +
+    '<path d="M2 1.5 C4 1.5 5 2.2 5 3.5 C5 2.2 6 1.5 8 1.5 M5 3.5 V16.5 M2 18.5 C4 18.5 5 17.8 5 16.5 C5 17.8 6 18.5 8 18.5" fill="none" stroke="#000" stroke-width="1.2"/></svg>';
+  function _svgOf(k) { return k === "hand" ? SVG_HAND : (k === "ibeam" ? SVG_IBEAM : SVG_ARROW); }
+  /** 指している点（矢印の先・人差し指の先・I の真ん中）が要素の左上から何 px か */
   function _tipOffset() {
-    return _shape === "hand" ? { x: 10, y: 2 } : { x: 4, y: 2.5 };
+    if (_shape === "hand") return { x: 7.5, y: 0.9 };
+    if (_shape === "ibeam") return { x: 5, y: 10 };
+    return { x: 1, y: 1 };
+  }
+
+  /**
+   * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように…実際の人間のように1つのマウスでおこなう」:
+   *   リアプロ・ITANDI ではこのファイルが**2つの世界で別々に動く**（manifest の content script＝bulk-dl・記録側／
+   *   content.js がページへ入れる方＝page-script の自動）。画面の要素は1つでも、位置と動きを**別々に持って**いたので、
+   *   両方が動くと同じ要素が2か所に交互に描かれた（2つに見える・飛ぶ）。さらに `hide()` を誰も呼ばず、
+   *   自動の後も見えるカーソルが残る → 人が本物のマウスを動かすと**本物と見えるカーソルの2つ**になった。
+   *   → ① 位置は要素（data-x/y）に置いて両方の世界で同じ物を使う ② 動いている間は data-busy で順番待ち（1つの手）
+   *     ③ 見えるカーソルが出ている間はページの OS カーソルを隠す ④ 人が本物のマウスを動かしたら、見えるカーソルを隠して
+   *        OS カーソルを戻す。次に自動が動く時は**本物のマウスが居た所から**動き出す（同じ1つのマウスに見える）。
+   */
+  var _iid = "p" + Math.random().toString(36).slice(2, 8);
+  var OS_STYLE_ID = "axlx-one-cursor-style";
+  var OS_CLS = "axlx-one-cursor";
+  var POS_KEY = "axlx_cursor_pos";
+  var _realPos = null;
+  var _realLsn = false;
+  var _posSavedAt = 0;
+  var _curCache = null;
+
+  function _osHide(on) {
+    var d = _doc();
+    if (!d || !d.documentElement) return;
+    try {
+      var html = d.documentElement;
+      if (on) {
+        if (!d.getElementById(OS_STYLE_ID)) {
+          var s = d.createElement("style");
+          s.id = OS_STYLE_ID;
+          s.textContent = "html." + OS_CLS + ",html." + OS_CLS + " *{cursor:none!important}";
+          (d.head || html).appendChild(s);
+        }
+        if (!html.classList.contains(OS_CLS)) html.classList.add(OS_CLS);
+      } else if (html.classList.contains(OS_CLS)) {
+        html.classList.remove(OS_CLS);
+      }
+    } catch (_) {}
+  }
+
+  function _sharedEl() {
+    if (_el && _el.isConnected) return _el;
+    try { var d = _doc(); return d ? d.getElementById(ID) : null; } catch (_) { return null; }
+  }
+
+  /** 人が本物のマウスを動かした（isTrusted）→ 見えるカーソルを隠し、OS カーソルを戻す */
+  function _humanTook(x, y) {
+    _osHide(false);
+    var el = _sharedEl();
+    if (!el) return;
+    try {
+      el.style.opacity = "0";
+      el.setAttribute("data-human-at", String(Date.now()));
+      el.setAttribute("data-rx", String(Math.round(x)));
+      el.setAttribute("data-ry", String(Math.round(y)));
+    } catch (_) {}
+  }
+
+  function _installRealMouse() {
+    if (_realLsn || typeof window === "undefined" || !window.addEventListener) return;
+    _realLsn = true;
+    var h = function (e) {
+      if (!e || !e.isTrusted) return;
+      // スクロールの後に Chrome が出す hover 直しの mousemove は動きが 0（本物の手ではない）
+      if (e.type === "mousemove" && !e.movementX && !e.movementY) return;
+      _realPos = { x: e.clientX, y: e.clientY };
+      _humanTook(e.clientX, e.clientY);
+    };
+    try {
+      window.addEventListener("mousemove", h, true);
+      window.addEventListener("mousedown", h, true);
+    } catch (_) {}
+  }
+
+  /** 画面のカーソルが今どこに居るか（もう1つの世界が動かした分・人が本物のマウスで動かした分も含む） */
+  function _syncFromShared() {
+    var el = _sharedEl();
+    if (!el) return;
+    try {
+      var at = Number(el.getAttribute("data-at")) || 0;
+      var hAt = Number(el.getAttribute("data-human-at")) || 0;
+      var x, y;
+      var human = hAt > 0 && hAt >= at;
+      if (human) { x = Number(el.getAttribute("data-rx")); y = Number(el.getAttribute("data-ry")); }
+      else { x = Number(el.getAttribute("data-x")); y = Number(el.getAttribute("data-y")); }
+      if (isFinite(x) && isFinite(y) && el.hasAttribute(human ? "data-rx" : "data-x")) _pos = { x: x, y: y };
+    } catch (_) {}
+  }
+
+  function _busyByOther() {
+    var el = _sharedEl();
+    if (!el) return false;
+    try {
+      var b = String(el.getAttribute("data-busy") || "");
+      if (!b) return false;
+      var i = b.indexOf(":");
+      return b.slice(0, i) !== _iid && (Number(b.slice(i + 1)) || 0) > Date.now();
+    } catch (_) { return false; }
+  }
+  function _claim(ms) {
+    try { if (_el) _el.setAttribute("data-busy", _iid + ":" + (Date.now() + Math.max(300, ms || 0))); } catch (_) {}
+  }
+  function _release() {
+    try {
+      if (_el && String(_el.getAttribute("data-busy") || "").indexOf(_iid + ":") === 0) _el.removeAttribute("data-busy");
+    } catch (_) {}
+  }
+  /** もう1つの世界が動かしている間は待つ（最大 6 秒・止まった手を待ち続けない） */
+  function _waitTurn(cb) {
+    var t0 = Date.now();
+    (function poll() {
+      if (!_busyByOther() || Date.now() - t0 > 6000) { cb(); return; }
+      setTimeout(poll, 40);
+    })();
+  }
+
+  function _savePos(x, y) {
+    var now = Date.now();
+    if (now - _posSavedAt < 250) return;
+    _posSavedAt = now;
+    try { window.sessionStorage.setItem(POS_KEY, JSON.stringify({ x: Math.round(x), y: Math.round(y), at: now })); } catch (_) {}
+  }
+  function _loadPos() {
+    try {
+      var v = JSON.parse(window.sessionStorage.getItem(POS_KEY) || "null");
+      if (v && isFinite(v.x) && isFinite(v.y) && Date.now() - (Number(v.at) || 0) < 30 * 60 * 1000) return { x: Number(v.x), y: Number(v.y) };
+    } catch (_) {}
+    return null;
   }
   // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 通常モードで覚えた実測から作った「動きの癖」
   var _prof = null;
@@ -270,8 +413,9 @@
           }
         }
         if (keep && keep.isConnected) {
-          _el = keep;
+          if (_el !== keep) { _el = keep; _syncFromShared(); }
           _ready = true;
+          _installRealMouse();
           return _el;
         }
       }
@@ -283,14 +427,12 @@
     var el = d.createElement("div");
     el.id = ID;
     el.setAttribute("aria-hidden", "true");
-    // 白い縁取りの矢印（どんな背景でも見える）＋ 押した時に少し縮む
     el.style.cssText = [
-      "position:fixed", "left:0", "top:0", "width:22px", "height:22px",
+      "position:fixed", "left:0", "top:0", "width:20px", "height:24px",
       "pointer-events:none", "z-index:2147483647",
-      // 2026-11-11: 60ms の transition は、毎フレーム位置を書く時に**遅れが積もって軌跡がずれる**。
-      //   縮み（押した時）だけ transition を使い、位置は即座に反映する（transform の translate は transition の対象外にする）
-      "transition:transform 0ms linear",
-      "will-change:transform", "filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))",
+      // 2026-11-11: 60ms の transition は、毎フレーム位置を書く時に**遅れが積もって軌跡がずれる**。位置は即座に反映する
+      "transition:none",
+      "will-change:transform", "filter:drop-shadow(1px 1px 1px rgba(0,0,0,.35))",
     ].join(";");
     el.innerHTML = SVG_ARROW;
     el.setAttribute("data-axlx-shape", "arrow");
@@ -298,67 +440,97 @@
     _el = el;
     _ready = true;
     _shape = "arrow";
-    // 最初は画面の左上外に置いておく（急に真ん中に出ない）
-    if (!_pos.x && !_pos.y) { _pos = { x: 40, y: 80 }; _place(_pos.x, _pos.y); }
+    _installRealMouse();
+    // 出だし: 人が本物のマウスを動かした所 → 同じタブの前のページで居た所 → 左上の近く（急に真ん中に出ない）
+    if (!_pos.x && !_pos.y) {
+      _pos = _realPos ? { x: _realPos.x, y: _realPos.y } : (_loadPos() || { x: 40, y: 80 });
+      _place(_pos.x, _pos.y);
+    }
     return el;
   }
 
-  /** その座標の下が「押せる物」か（OSが手の形にする条件に近い） */
-  function _isPointerTarget(el) {
-    if (!el || el === _el) return false;
+  /**
+   * ページが本当に出すカーソル（CSS の cursor）を読む。見えるカーソルの間は OS カーソルを隠す class が付いているので、
+   * 外して読んでから戻す（要素ごとに1回・動き始めに作り直す）。
+   */
+  function _rawCursor(el) {
     try {
-      // 通常録画から学んだ「手が付く欄」も手にする
-      if (_handFieldHit(el)) return true;
-      var cur = "";
-      try { cur = String(window.getComputedStyle(el).cursor || "").toLowerCase(); } catch (_) { cur = ""; }
-      if (cur.indexOf("pointer") >= 0) return true;
-      var tag = String(el.tagName || "").toUpperCase();
-      if (tag === "A" || tag === "BUTTON" || tag === "SUMMARY" || tag === "LABEL" || tag === "SELECT") return true;
-      if (tag === "INPUT") {
-        var ty = String(el.type || "text").toLowerCase();
-        if (/^(button|submit|reset|checkbox|radio|image|file)$/.test(ty)) return true;
-      }
-      var role = "";
-      try { role = String(el.getAttribute("role") || "").toLowerCase(); } catch (_) {}
-      if (role === "button" || role === "link" || role === "menuitem" || role === "tab") return true;
-      /**
-       * ★ 2026-11-16 統括「手の形0%→100%へ」:
-       *   リアプロの区・町・駅・検索は computed が default でも人が押す対象。
-       *   name/class で pointer 扱い（録画の cs と見た目の手を揃える）。
-       */
-      try {
-        var nmCls = String((el.getAttribute && el.getAttribute("name")) || "") + " " + String(el.className || "");
-        if (/city_code|town_code|station|route_id|go_search|search_menu|one_city|one_town|next_step/.test(nmCls)) {
-          return true;
+      if (_curCache && _curCache.has(el)) return _curCache.get(el);
+    } catch (_) {}
+    var c = "";
+    try {
+      var html = document.documentElement;
+      var on = html.classList.contains(OS_CLS);
+      if (on) html.classList.remove(OS_CLS);
+      try { c = String(window.getComputedStyle(el).cursor || "").toLowerCase(); } catch (_) { c = ""; }
+      if (on) html.classList.add(OS_CLS);
+    } catch (_) {}
+    try { if (_curCache) _curCache.set(el, c); } catch (_) {}
+    return c;
+  }
+
+  /** その点の下が「選べる文字」か（Chrome は cursor:auto の文字の上で I の形にする） */
+  function _textUnder(x, y) {
+    try {
+      var d = document;
+      if (!d.caretRangeFromPoint) return false;
+      var r = d.caretRangeFromPoint(x, y);
+      var n = r && r.startContainer;
+      if (!n || n.nodeType !== 3) return false;
+      var s = String(n.nodeValue || "");
+      if (!s.trim()) return false;
+      var a = Math.max(0, r.startOffset - 1), b = Math.min(s.length, r.startOffset + 1);
+      if (a >= b) return false;
+      var rr = d.createRange();
+      rr.setStart(n, a); rr.setEnd(n, b);
+      var rects = rr.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var q = rects[i];
+        if (x >= q.left - 1 && x <= q.right + 1 && y >= q.top - 1 && y <= q.bottom + 1) {
+          var pe = n.parentElement;
+          var us = "";
+          try { var cs = pe ? window.getComputedStyle(pe) : null; us = cs ? String(cs.userSelect || cs.webkitUserSelect || "") : ""; } catch (_) {}
+          return us !== "none";
         }
-      } catch (_) {}
-      // 親の label / a / button も見る（アイコンだけの子要素向け）
-      var p = el.parentElement;
-      for (var i = 0; i < 3 && p; i++, p = p.parentElement) {
-        if (p === _el) break;
-        try {
-          var pc = String(window.getComputedStyle(p).cursor || "").toLowerCase();
-          if (pc.indexOf("pointer") >= 0) return true;
-        } catch (_) {}
-        var pt = String(p.tagName || "").toUpperCase();
-        if (pt === "A" || pt === "BUTTON" || pt === "LABEL") return true;
       }
     } catch (_) {}
     return false;
   }
 
+  /**
+   * ★ 2026-11-20: 人の画面と同じ形を出す（Chrome がその場で出す形）。
+   *   CSS の cursor が pointer → 手／text → I／auto → 文字を打つ欄・選べる文字の上は I、それ以外は矢印。
+   *   旧は区・駅・ラベル・select・チェック欄を名前で「手」にしていたが、ページの CSS が矢印ならスタッフの画面も矢印。
+   */
+  function _shapeFor(el, x, y) {
+    if (!el || el === _el) return "arrow";
+    var c = _rawCursor(el);
+    if (c.indexOf("pointer") >= 0) return "hand";
+    if (c === "text" || c === "vertical-text") return "ibeam";
+    if (c && c !== "auto") return "arrow";
+    var tag = String(el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || el.isContentEditable) return "ibeam";
+    if (tag === "INPUT") {
+      var ty = String(el.type || "text").toLowerCase();
+      return /^(text|search|email|number|tel|url|password)$/.test(ty) ? "ibeam" : "arrow";
+    }
+    if (tag === "SELECT" || tag === "BUTTON" || tag === "IMG") return "arrow";
+    return _textUnder(x, y) ? "ibeam" : "arrow";
+  }
+
   function _setShape(kind) {
     if (!_el) return;
-    var k = kind === "hand" ? "hand" : "arrow";
+    var k = kind === "hand" ? "hand" : (kind === "ibeam" ? "ibeam" : "arrow");
+    try { var cur = _el.getAttribute("data-axlx-shape"); if (cur) _shape = cur; } catch (_) {}
     if (_shape === k) return;
     _shape = k;
     try {
-      _el.innerHTML = k === "hand" ? SVG_HAND : SVG_ARROW;
+      _el.innerHTML = _svgOf(k);
       _el.setAttribute("data-axlx-shape", k);
     } catch (_) {}
   }
 
-  /** 座標下の要素を見て矢印⇄手を切替（チラつき防止で 40ms 間引き） */
+  /** 座標下の要素を見て 矢印／手／I を切替（チラつき防止で 40ms 間引き） */
   function _updateShapeAt(x, y) {
     var now = Date.now();
     if (now - _shapeCheckAt < 40) return;
@@ -366,7 +538,7 @@
     try {
       var under = (typeof document !== "undefined" && document.elementFromPoint)
         ? document.elementFromPoint(Math.round(x), Math.round(y)) : null;
-      _setShape(_isPointerTarget(under) ? "hand" : "arrow");
+      _setShape(_shapeFor(under, x, y));
     } catch (_) {}
   }
 
@@ -396,14 +568,18 @@
     _updateShapeAt(x, y);
     var tip = _tipOffset();
     _el.style.transform = "translate3d(" + Math.round(x - tip.x) + "px," + Math.round(y - tip.y) + "px,0)";
+    try {
+      _el.setAttribute("data-x", String(Math.round(x)));
+      _el.setAttribute("data-y", String(Math.round(y)));
+      _el.setAttribute("data-at", String(Date.now()));
+      if (_el.style.opacity === "0") _el.style.opacity = "1";
+    } catch (_) {}
+    _osHide(true);
+    _savePos(x, y);
   }
 
-  function _press(down, depth) {
-    if (!_el) return;
-    var d = (typeof depth === "number" && depth > 0.5 && depth < 1) ? depth : 0.86;
-    _el.style.transform = _el.style.transform.replace(/\s*scale\([^)]*\)/, "");
-    _el.style.transform += down ? " scale(" + (Math.round(d * 100) / 100) + ")" : " scale(1)";
-  }
+  /** OS のカーソルは押しても形も大きさも変わらないので、見た目は何もしない（押し込みの時間は holdMs で外が使う） */
+  function _press() {}
 
   /**
    * 画面の外に出さない（スクロールで要素が外れた時など）
@@ -619,9 +795,19 @@
    * Promise は「着いたら」解決（待たなくてもよい）。動きながら押すと不自然なので、押す前に await すると良い。
    */
   function moveTo(x, y) {
+    if (!ensure()) return Promise.resolve(false);
+    if (_busyByOther()) {
+      return new Promise(function (resolve) { _waitTurn(function () { resolve(_moveToNow(x, y)); }); });
+    }
+    return _moveToNow(x, y);
+  }
+
+  function _moveToNow(x, y) {
     var t = _clamp({ x: Number(x) || 0, y: Number(y) || 0 });
     if (!ensure()) return Promise.resolve(false);
     try { if (_anim) { _anim.cancelled = true; } } catch (_) {}
+    try { _curCache = typeof WeakMap === "function" ? new WeakMap() : null; } catch (_) { _curCache = null; }
+    _syncFromShared();
     var H = _hum();
     var from = { x: _pos.x, y: _pos.y };
     var dist = Math.sqrt(Math.pow(t.x - from.x, 2) + Math.pow(t.y - from.y, 2));
@@ -702,6 +888,7 @@
     } catch (_) {}
     var anim = { cancelled: false };
     _anim = anim;
+    _claim(1000);
     return new Promise(function (resolve) {
       var i = 0;
       function step() {
@@ -709,6 +896,8 @@
         if (i >= pts.length) {
           _pos = t;
           _place(t.x, t.y);
+          anim.done = true;
+          _release();
           // 2026-11-15: 最後の位置も `mousemove` を出す（押す直前の位置を記録に残す）
           try {
             var _endEl = _moveEvTarget((typeof document !== "undefined" && document.elementFromPoint)
@@ -759,9 +948,11 @@
         i++;
         // ひと息（軌跡の途中で止まる）: 止まっている間はカーソルを動かさない
         if (i - 1 === _pauseAt && _pauseMsVal > 0) {
+          _claim(w + _pauseMsVal + 500);
           setTimeout(step, w + _pauseMsVal);
           return;
         }
+        _claim(w + 500);
         setTimeout(step, w);
       }
       step();
@@ -840,12 +1031,10 @@
   /** 押した時の見た目（少し縮む→戻る）。本物のクリックの代わりではない */
   function tap() {
     if (!ensure()) return;
-    // ★ 2026-11-16: 押す瞬間は手の形（リンク/ボタン上のOSカーソルと同じ）
+    // 押す瞬間の形も、その点でページが出す形（手にするかはページの CSS 次第・2026-11-20）
     try {
-      if (_isPointerTarget(_tapEl) || _isPointerTarget(
-        (typeof document !== "undefined" && document.elementFromPoint)
-          ? document.elementFromPoint(Math.round(_pos.x), Math.round(_pos.y)) : null
-      )) _setShape("hand");
+      _shapeCheckAt = 0;
+      _updateShapeAt(_pos.x, _pos.y);
     } catch (_) {}
     /**
      * ★ 2026-11-19 v2.8.25: 押し込みの時間は 90ms 固定をやめ、persona.press_ms を中央値とする対数正規（45〜180ms）。
@@ -1015,6 +1204,9 @@
    */
   function scatter(x, y) {
     try {
+      // ★ 2026-11-20「1つのマウス」: 見えているカーソルは瞬間移動させない（本物のマウスは飛ばない）。出だしは次の moveTo が今の所から動く
+      var cur = _sharedEl();
+      if (cur && cur.style.opacity !== "0" && cur.hasAttribute("data-x")) return false;
       if (!ensure()) return false;
       var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
       var nx = (typeof x === "number") ? x : (60 + Math.random() * Math.max(120, vw * 0.72));
@@ -1029,9 +1221,13 @@
   function hide() {
     try { if (_el && _el.parentNode) _el.parentNode.removeChild(_el); } catch (_) {}
     _el = null; _ready = false;
+    _osHide(false);
   }
 
-  function position() { return { x: _pos.x, y: _pos.y }; }
+  function position() {
+    if (!_anim || _anim.cancelled || _anim.done) _syncFromShared();
+    return { x: _pos.x, y: _pos.y };
+  }
   /**
    * 2026-11-11: 画面の中に収まっているか（スクロールで要素が画面外へ出た時に「どこを指しているか」を返すため）。
    *   画面の外なら null。呼ぶ側は「カーソルが見えていない」として扱う。
@@ -1039,8 +1235,12 @@
   function visiblePosition() {
     try {
       var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+      var sh = _sharedEl();
+      if (!sh) return null;
+      if (!_el || !_el.isConnected || _el !== sh) { _el = sh; _ready = true; }
+      if (!_anim || _anim.cancelled || _anim.done) _syncFromShared();
+      if (sh.style.opacity === "0") return null;
       if (_pos.x < 0 || _pos.y < 0 || _pos.x > vw || _pos.y > vh) return null;
-      if (!_el || !_el.isConnected) return null;
       return { x: _pos.x, y: _pos.y };
     } catch (_) { return null; }
   }
@@ -1053,10 +1253,20 @@
    *   Promise は動き終わったら解決。
    */
   function drift(ms, opts) {
+    if (!ensure()) return Promise.resolve(false);
+    if (_busyByOther()) {
+      return new Promise(function (resolve) { _waitTurn(function () { resolve(_driftNow(ms, opts)); }); });
+    }
+    return _driftNow(ms, opts);
+  }
+
+  function _driftNow(ms, opts) {
     var o = opts || {};
     if (!ensure()) return Promise.resolve(false);
     var total = Math.max(120, Math.min(6000, Number(ms) || 400));
     var radius = Number(o.radius) || 18;
+    try { _curCache = typeof WeakMap === "function" ? new WeakMap() : null; } catch (_) { _curCache = null; }
+    _syncFromShared();
     var start = { x: _pos.x, y: _pos.y };
     var t0 = Date.now();
     var anim = { cancelled: false };
@@ -1065,6 +1275,7 @@
     // 漂う向き（左右上下にゆらぐ）を毎回ちがう位相で
     var ph = Math.random() * Math.PI * 2;
     var amp = radius * (0.35 + Math.random() * 0.65);
+    _claim(600);
     return new Promise(function (resolve) {
       function step() {
         if (anim.cancelled) { resolve(false); return; }
@@ -1072,9 +1283,12 @@
         if (el >= total) {
           _pos = start;
           _place(start.x, start.y);
+          anim.done = true;
+          _release();
           resolve(true);
           return;
         }
+        _claim(600);
         var t = el / total;
         var wobble = Math.sin(t * Math.PI * 2 + ph) * amp * (1 - t * 0.6);
         var wobble2 = Math.sin(t * Math.PI * 3.3 + ph * 1.7) * amp * 0.45 * (1 - t * 0.6);
@@ -1144,5 +1358,15 @@
     /** 点検用: 今の形（arrow|hand） */
     shape: function () { return _shape; },
     ELEMENT_ID: ID,
+    /** 点検用: 1つのカーソル（2つの世界で位置を共有・OS カーソルと同時に出さない・形はページの CSS） */
+    oneCursorInfo: function () {
+      var d = _doc();
+      return {
+        v: 1,
+        count: d ? d.querySelectorAll("#" + ID).length : 0,
+        os_hidden: !!(d && d.documentElement && d.documentElement.classList.contains(OS_CLS)),
+        shape: _shape,
+      };
+    },
   };
 });

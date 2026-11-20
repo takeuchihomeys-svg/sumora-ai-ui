@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.138: カーソルは1つ（2つの世界で共有・本物のマウスと同時に出さない）・Windows の形と色・形はページの CSS に合わせる**（竹内さん「マウスの色や選択するときのマウスの形が実際の人間の形と違う」「同時に２つマウス出現しないように（さっきの録画であった）」）
+- 原因（コードで確定）: `pointer-ui.js` はリアプロ・ITANDI で**2つの世界**で動く（manifest の content script＝`bulk-dl.js`・記録側／`content.js` がページへ入れる方＝`page-script.js` の自動）。画面の要素は1つでも位置と動きを別々に持ち、両方が動くと同じ要素が2か所に交互に描かれた。さらに `hide()` を誰も呼ばず、自動の後も見えるカーソルが残る → 人が本物のマウスを動かすと本物と見えるカーソルの2つ。記録側（content script）の `visiblePosition()` も自分の古い位置を返していた（自動の押した位置の記録がずれる）。
+  ⚠ DB の写真（run mwofi2sn_jbec 36枚・縮小）ではカーソルの数は読み取れなかった（写真で確かめたわけではない）。
+- 直し（`pointer-ui.js`）: ①位置を要素の data-x/y に置き2つの世界で共有（`_syncFromShared`）②動いている間は data-busy で順番待ち（`_waitTurn`・最大6秒）③見えるカーソルの間はページの OS カーソルを隠す（`html.axlx-one-cursor *{cursor:none}`）④人が本物のマウスを動かしたら（isTrusted・動き0のスクロール後の mousemove は除く）見えるカーソルを隠して OS カーソルを戻し、次に自動が動く時は本物のマウスの所から動き出す ⑤見えている時の `scatter`（出だしの瞬間移動）をやめる ⑥ページを移っても同じタブの前の位置から（sessionStorage）。
+- 見た目: Windows の標準＝白い矢印・黒い縁（旧は黒い矢印・白い縁）／白い手（旧は崩れた塊）／文字の上は I。押した時に縮む見た目をやめた（OS のカーソルは縮まない）。
+- 形の決め方: ページが本当に出す形（CSS の cursor・OS カーソルを隠す class を外して読む）。pointer→手／text→I／auto→文字を打つ欄・選べる文字の上は I・他は矢印。旧は区・駅・ラベル・select・チェック欄を名前で「手」にしていた（ページの CSS が矢印ならスタッフの画面も矢印）。
+  ⚠ 記録側（`human-learn-record.js`）の `cs`（手の形）は今も「押す系なら pointer」と決め打ちで残している（統括の「手の形」の数字は実測ではない）。今回は変えていない。
+- 決まり `one_cursor`（`auto-procedure-rules.ts`・手順書に載る）。入力を始める時に `cursor_one`／`cursor_two`／`cursor_old` を点検記録へ（`_auditOneCursor`）。
+- テスト: `one-cursor-v28138.test.js` 29（2つの世界で実際の関数を動かす・順番待ちを外すと落ちるのを確かめた）。`ai-customer-mode-v2634`（先端と transition の書き方だけ）・`human-wait`（40ms の見る間隔を許可に）。app `auto-procedure-rules` 110。拡張全体 ✗237→236（悪くなった物 0）。tsc 0。
+- ⚠ 再読込（2.8.138）→ 自動1回で: 点検記録に `cursor_one`／カーソルが1つ・本物のマウスを動かしたら見えるカーソルが消えるか・区やボタンの上の形がスタッフの画面と同じか。
+
 ## 2026-11-20 **手順書の連携の穴を埋めた（書く経路・GET の作り直し・押す位置の出どころ・開くボタンの位置の上書き）**（竹内さん「ここの連携部分ちゃんとできるように 細かい部分ちゃんとできるように」）※拡張のコードは変えていない（2.8.137 のまま）
 - 書く経路: 束を insert する所は全部 `prepareBundleForWrite` を通す（weak-strengthen・human-learn-brain・improve-loop・tmp-reflect-bundle・merge-station-transit も）。API は引き継ぎ（carryLearnedShots）の**後**・insert の前。refresh=1 も同じ。関所: `learn-write-path-gate.test.ts` ①b（insert があって prepare が無いファイルで落ちる）。
 - 読む経路: GET `/api/human-learn-profile` は `refreshPlaybookIfStale` で、手順書が無い・作り方が古い・決まりの版がコードと違う時は**その場で作り直して渡す**（`playbook_refreshed`）。統括Pro の手順書の点検にコードの点検（`checkRulesInCode`・「コード:」）も入れた。

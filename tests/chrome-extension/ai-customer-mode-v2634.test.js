@@ -284,8 +284,9 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   ok("マウス: 1点ごとの待ちが違う（24点で16種類以上）", new Set(w).size >= 16);
   // 2026-11-11 竹内さん「マウスちゃんとした場所にうごくようになっているか」: 矢印の先端と座標を一致させる
   const pu5 = fs5.readFileSync(path.join(dir, "pointer-ui.js"), "utf8");
-  ok("カーソル: 矢印の先端（4, 2.5）の分だけ戻して置く（指す点＝置く点）", /Math\.round\(x - 4\) \+ "px," \+ Math\.round\(y - 2\.5\)/.test(pu5));
-  ok("カーソル: 位置は遅れずに反映（transition 0ms）", /transition:transform 0ms linear/.test(pu5));
+  // 2026-11-20 v2.8.138: Windows の矢印（先端 1,1）・手・I の形ごとに指す点を戻す。位置は transition 無し
+  ok("カーソル: 形ごとの先端の分だけ戻して置く（指す点＝置く点）", /Math\.round\(x - tip\.x\) \+ "px," \+ Math\.round\(y - tip\.y\)/.test(pu5) && /return \{ x: 1, y: 1 \};/.test(pu5));
+  ok("カーソル: 位置は遅れずに反映（transition 無し）", /"transition:none"/.test(pu5));
   ok("カーソル: 画面の端でも丸めない（端の要素を正しく指せる）", /function _clamp\(p\) \{\s*return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5) || /return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5));
   ok("カーソル: 画面の外なら visiblePosition は null（見えていない扱い）", /function visiblePosition\(\)/.test(pu5) && /if \(_pos\.x < 0 \|\| _pos\.y < 0 \|\| _pos\.x > vw \|\| _pos\.y > vh\) return null;/.test(pu5));
   // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」
