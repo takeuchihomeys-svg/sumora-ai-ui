@@ -27,7 +27,12 @@ assert.equal(a[0].remeasured, "advanced");
 assert.equal(a[0].bucket, "④約束待ちのお礼で窓が閉じた");
 
 // B: 約束の時に送れる候補があった（2時間前の pending）→ ③
-const b = promiseStuckRowsOf("convB-xxxx", msgsA, aixA, decA, [], [{ created_at: T(-1), expired_at: null, sent_at: null, status: "pending" }]);
+// B: 約束の時に送れる候補があった（お客様の発言の後・約束の前に作られた pending）→ ③
+const b = promiseStuckRowsOf("convB-xxxx", msgsA, aixA, decA, [], [{ created_at: T(0.5), expired_at: null, sent_at: null, status: "pending" }]);
+// B2: 条件の言い直しを受けた約束（ご条件で）で、候補が言い直しより前（古い条件）→ ③に数えない（11/21 統括役の決め）
+const b2 = promiseStuckRowsOf("convB2-xxxx", msgsA, aixA, decA, [], [{ created_at: T(-1), expired_at: null, sent_at: null, status: "pending" }]);
+assert.equal(b2[0].pendingAtPromise, 0);
+assert.equal(b2[0].bucket, "④約束待ちのお礼で窓が閉じた");
 assert.equal(b[0].pendingAtPromise, 1);
 assert.equal(b[0].bucket, "③候補があったのに約束");
 
