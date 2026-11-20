@@ -13,6 +13,8 @@ import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@
 // 2026-09-27 竹内: テスト用の会話（YUMA）は手本・学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
+import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
+import { clipChars, exampleDbGuardOn } from "@/app/lib/example-db-guard";
 import { pickServerTpoDebug, tpoDebugFallbackEnabled } from "@/app/lib/tpo-debug-fallback";
 import { ragIntakeExcludeReason, ragIntakeGuardEnabled, inApplyWindow, POST_APPLY_TEXT_RE, RAG_EXCLUDED_ENTRY_SOURCE } from "@/app/lib/rag-garbage";
 
@@ -522,8 +524,8 @@ async function registerAlignmentFix(params: {
       implementation_notes: JSON.stringify({
         mismatch_type: diffType,
         mismatch_label: ALIGNMENT_DIFF_LABEL[diffType],
-        ai_draft: aiDraft.slice(0, 300),
-        sent_text: sentReply.slice(0, 300),
+        ai_draft: clipChars(aiDraft, 300),
+        sent_text: clipChars(sentReply, 300),
         action_type: aixType,
         action_label: actionLabel,
         similarity: Math.round(sim * 100) / 100,
@@ -942,7 +944,7 @@ all_dayは時刻が特定できない場合のみtrue。時刻があればfalse�
   if (eventType === "viewing") {
     autoNotes = `件数: 1件\n物件: （未確定）（現地）`;
   } else {
-    autoNotes = sentReply.slice(0, 200);
+    autoNotes = clipChars(sentReply, 200);
   }
 
   await supabase.from("calendar_events").insert({
@@ -1538,11 +1540,10 @@ export async function POST(req: NextRequest) {
       console.warn("[save-reply-example] tpo_debug の補い（ai_draft_check）に失敗:", e instanceof Error ? e.message : e);
     }
   }
-  const [embedding, insertResult] = await Promise.all([
-    embeddingPromise,
-    supabase
-      .from("ai_reply_examples")
-      .insert({
+  // 2026-11-20 作業員L（統括役の頼み・台帳 #373 と同じ形）: 11/20 に「save-reply-example error: Empty or invalid json」が3回（16:50 JST・同じ送信の再試行）。
+  //   どこかの欄（画面から来る tpoDebug・ai_components・本文）に絵文字の片割れ（対の無いサロゲート）か \u0000 が入ると、PostgREST が本文ごと断り手本が残らない。
+  //   書く直前に壊れる文字だけ取り除く（db-json-sanitize・正しい絵文字は1文字も消えない）。直した欄はログに出す（次に出所を特定できる）。戻す EXAMPLE_DB_JSON_GUARD=off
+  const exampleRow = {
         conversation_state: conversationState,
         customer_message: customerMessage,
         sent_reply: sentReply,
@@ -1577,7 +1578,18 @@ export async function POST(req: NextRequest) {
             return { ...(base ?? {}), stance_sent_lite: lite };
           } catch { return base; }
         })(),
-      })
+      };
+  let exampleRowSafe = exampleRow;
+  if (exampleDbGuardOn()) {
+    const safe = sanitizeJsonForDb(exampleRow);
+    if (safe.fixed) console.warn(JSON.stringify({ tag: "save-reply-example:json-fixed", conversationId: conversationId ?? null, ...safe.fix }));
+    exampleRowSafe = safe.value;
+  }
+  const [embedding, insertResult] = await Promise.all([
+    embeddingPromise,
+    supabase
+      .from("ai_reply_examples")
+      .insert(exampleRowSafe)
       .select("id")
       .single(),
   ]);
