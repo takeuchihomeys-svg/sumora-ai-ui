@@ -203,8 +203,31 @@ export function createdAtIso(v: unknown): string {
   if (typeof v === "number" && Number.isFinite(v)) { try { return new Date(v).toISOString(); } catch { return ""; } }
   return "";
 }
+/**
+ * 2026-11-21 作業員H（統括役の頼み・M の5本が2日間一度も流れず後から積んだ依頼が先に流れた）: 順番は priority だけで決まっていて、
+ *   既定（5）で積んだ依頼は、後から -2〜-5 で積まれる依頼がある限り永遠に回ってこなかった（M1119-* 4本・M1120-combo-sendtpl・どれも priority 5）。
+ *   待った時間で priority を下げる（6時間ごとに -1・上限なし）＝古い依頼もいつかは先頭に来る。止める EXAM_JOB_AGING=off
+ */
+export const JOB_AGING_STEP_MS = 6 * 3600_000;
+export const JOB_LONG_WAIT_MS = 24 * 3600_000;
+export function jobAgingOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_JOB_AGING ?? "").trim().toLowerCase() !== "off";
+}
+/** 待った時間を足した priority（小さいほど先） */
+export function effectivePriority(j: Pick<JobSizeLite, "priority" | "createdAt">, nowMs: number = Date.now(), on: boolean = jobAgingOn()): number {
+  const p = j.priority ?? 5;
+  if (!on) return p;
+  const t = Date.parse(createdAtIso(j.createdAt as unknown));
+  if (!Number.isFinite(t)) return p;
+  return p - Math.max(0, Math.floor((nowMs - t) / JOB_AGING_STEP_MS));
+}
+/** 長く待っている（24時間以上）か。知らせる線 */
+export function longWaiting(j: Pick<JobSizeLite, "createdAt">, nowMs: number = Date.now()): boolean {
+  const t = Date.parse(createdAtIso(j.createdAt as unknown));
+  return Number.isFinite(t) && nowMs - t >= JOB_LONG_WAIT_MS;
+}
 export function compareJobs(a: JobSizeLite, b: JobSizeLite, nowMs: number = Date.now()): number {
-  const pa = a.priority ?? 5, pb = b.priority ?? 5;
+  const pa = effectivePriority(a, nowMs), pb = effectivePriority(b, nowMs);
   if (pa !== pb) return pa - pb;
   const ca = createdAtIso(a.createdAt as unknown), cb = createdAtIso(b.createdAt as unknown);
   const sa = nowMs - Date.parse(ca) >= AGE_NO_SIZE_MS ? 0 : jobSize(a);
