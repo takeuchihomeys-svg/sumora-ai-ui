@@ -3370,6 +3370,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
         } else docDigestTarget = threadDocTarget(pt);
       } catch (e) { console.warn("[brain-core] focus-doc-digest target skipped:", e instanceof Error ? e.message : String(e)); }
     }
+    // 2026-11-20 作業員L（#428）: 対象のお部屋が決まらない番も訳を1行（主のお部屋が無く、今の番の物件が無い・複数）
+    if (!docDigestTarget) console.log(JSON.stringify({ tag: "brain:focus-doc-digest-empty", conversationId, why: "no_target" }));
   }
   if (docDigestTarget) {
     try {
@@ -3382,6 +3384,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const topics = fr.roomNo ? FOCUS_DOC_TOPICS : FOCUS_DOC_TOPICS.filter((t) => t === "parking"); // 号室が分からない時は建物の項目だけ（contract-terms と同じ線）
       const digest = focusDocDigestNote({ name: fr.name, roomNo: fr.roomNo ?? null }, topics.map((t) => routeContractTerm(t, material, {})));
       if (digest) { customerStateBlockText += `\n\n${digest}`; console.log(JSON.stringify({ tag: "brain:focus-doc-digest", conversationId, target: fr.name, chars: digest.length })); }
+      // 2026-11-20 作業員L（#428）: 11/19 の試験 a・c で行が出なかった訳が分からなかった → 行が空の時も訳を1行（資料が無い／資料に項目が無い／号室が無く建物の項目だけ）
+      else console.log(JSON.stringify({ tag: "brain:focus-doc-digest-empty", conversationId, why: !(material.lines?.length) &&!material.pdfText && !material.terms ? "no_material" : fr.roomNo ? "no_topic_in_material" : "no_room_building_only" }));
     } catch (e) { console.warn("[brain-core] focus-doc-digest skipped:", e instanceof Error ? e.message : String(e)); }
   }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
