@@ -127,12 +127,43 @@
     return out;
   }
 
-  // 段の記録（最大40件・古い物から落とす）
+  /**
+   * ★ 2026-11-20 (2.8.143) 実測 audit #1551: 120段を超えると先頭から落ち、begin・fill_done と
+   *   「所在地の小窓が失敗→区で代替」の理由（page:fallback_area）が消えて、統括が原因を追えなかった。
+   *   → 回の始まり・終わり・代替の理由は残し、それ以外の古い段から落とす（全部が残す段なら先頭から）。
+   */
+  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_))/;
+
+  // 段の記録（最大 MAX_STEPS 件・残す段以外の古い物から落とす）
   function pushStep(steps, k, d, now) {
     var list = Array.isArray(steps) ? steps : [];
     list.push({ at: typeof now === "number" ? now : Date.now(), k: String(k).slice(0, 40), d: d == null ? null : String(d).slice(0, 160) });
-    while (list.length > MAX_STEPS) list.shift();
+    while (list.length > MAX_STEPS) {
+      var drop = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (!KEEP_STEP.test(String((list[i] && list[i].k) || ""))) { drop = i; break; }
+      }
+      list.splice(drop, 1);
+    }
     return list;
+  }
+
+  /**
+   * ★ 2026-11-20 (2.8.143) 実測 audit #1552: 自動モード中に人が検索を押した回（page-script の human_ 印）は
+   *   一覧の結果が来ないことがあり、6分後に idle_close（bad）で閉じて「止まった」と数えられていた。
+   */
+  function isHumanSearchAudit(audit, runId) {
+    if (/^human_/.test(String(runId || ""))) return true;
+    return !!(audit && audit.no_run_id === true && /^human_/.test(String(audit.local_run_id || "")));
+  }
+
+  /** 6分の閉じ処理: 人が押した検索で入力の誤りが無い回は「区切り」として閉じる（止まりにしない） */
+  function softenIdleClose(run, extra) {
+    if (!extra || extra.error_kind !== "idle_close") return { soft: false, extra: extra };
+    if (run && run.human_search && !run.fill_error) {
+      return { soft: true, extra: {}, note: "人が押した検索のあと結果の合図が来ないまま6分 → 区切りとして閉じる（止まりではない）" };
+    }
+    return { soft: false, extra: extra };
   }
 
   /**
@@ -354,9 +385,22 @@
       if (r) pushStep(r.steps, k, d, now());
     }
 
+    /** 同じサイトでまだ開いている「人が押した検索」の回（exceptId 以外）。次の回が始まったら区切りとして閉じる */
+    function openHumanSearchRuns(site, exceptId) {
+      var sk = siteKey(site);
+      var out = [];
+      runs.forEach(function (r) {
+        if (r.finished || !r.human_search || r.run_id === exceptId) return;
+        if (sk && r.site && r.site !== sk) return;
+        out.push(r.run_id);
+      });
+      return out;
+    }
+
     function attachFill(id, fill) {
       var r = get(id);
       if (!r) return null;
+      if (isHumanSearchAudit(fill && fill.audit, r.run_id)) r.human_search = true;
       r.filled = fill && fill.audit ? clampAudit(fill.audit) : r.filled;
       if (fill && fill.error) r.fill_error = String(fill.error).slice(0, 300);
       pushStep(r.steps, "fill_done", fill && fill.error ? "error: " + String(fill.error).slice(0, 100) : "ok", now());
@@ -443,7 +487,7 @@
       return send(body);
     }
 
-    return { begin: begin, get: get, findOpen: findOpen, step: step, attachFill: attachFill, attachProgress: attachProgress, attachResult: attachResult, finish: finish, _runs: runs };
+    return { begin: begin, get: get, findOpen: findOpen, step: step, openHumanSearchRuns: openHumanSearchRuns, attachFill: attachFill, attachProgress: attachProgress, attachResult: attachResult, finish: finish, _runs: runs };
   }
 
   return {
@@ -459,6 +503,9 @@
     snapshotCustomer: snapshotCustomer,
     pickIntended: pickIntended,
     pushStep: pushStep,
+    KEEP_STEP: KEEP_STEP,
+    isHumanSearchAudit: isHumanSearchAudit,
+    softenIdleClose: softenIdleClose,
     clampAudit: clampAudit,
     readCountText: readCountText,
     modeLabel: modeLabel,

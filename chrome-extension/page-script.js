@@ -2735,7 +2735,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.142";
+  var _AXLX_PAGE_VER = "2.8.143";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -2744,7 +2744,7 @@
     "order_human", "area_before_cond", "no_reset_button", "clear_per_panel", "no_hidden_press",
     "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
     "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
-    "one_cursor",
+    "one_cursor", "audit_keep_reason",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -5460,7 +5460,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;

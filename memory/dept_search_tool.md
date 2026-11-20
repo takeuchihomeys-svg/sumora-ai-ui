@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.143: 録画の点検 — 人の検索の回を「止まり」にしない／代替の理由を記録から落とさない／PDF を飛ばした理由を残す**（竹内さん「今録画したけど、完全になっているのかな 自動モードや手順書で抜けている部分があれば 改善していく」）
+- 録画の回（run `mwoqsmy8_ib0b`・08:53:58〜09:00:12 UTC・拡張 2.8.142）を DB で確認:
+  - 写真 400枚すべて保管庫にあり（白い写真なし・拡張の窓は灰色で塗れている＝2.8.141 が効いている）。押した記録に本物の手の形 `csr` も入っている。
+  - 平田さんの自動（audit 1551）は**完走 ok**: 区→賃料5〜8万→間取り4/4→構造・更新日→検索（aim 有）→P1・P2 で PDF 2件（送付済み14件は飛ばす）。
+  - 束の画面位置: 拡張 `screen=559` と統括 `solid=1045` は**数え方の違い**（束 2538 の learned は 1045欄・名前で 557種類＝拡張は名前ごとに1つ）。⚠ 同じ名前が別の画面にある欄（1019組→557）は拡張側で1つにまとまる＝設計上の課題として残す。
+- 見つけた抜けと直し:
+  1. **audit 1552**: 自動モード中に人が検索を押した回（`human_` 印）が結果待ちのまま6分で `idle_close`（bad）。→ `search-audit.js` `isHumanSearchAudit`／`softenIdleClose`、tracker `openHumanSearchRuns`、background `_auditFinish` で区切り（段 `human_search_idle`）に、`_auditCloseHumanSearchRuns` で次の回が始まったら閉じる（段 `human_search_superseded`）。6分の閉じ処理の2か所（`AUDIT_IDLE_CLOSE_EXTRA()`）はそのまま。
+  2. **audit 1551**: 段が120を超えて先頭から落ち、begin・fill_done・「所在地の小窓が失敗→区で代替」（`page:fallback_area`）の理由が消えていた（`filled` も空）。→ `pushStep` は `KEEP_STEP`（begin/fill_done/finish/result/human_search/page:fallback_/area_all_done/modal_confirm_fallback/fill_start 等）以外の古い段から落とす。page-script `_PIN` に `fallback_|area_all_done`。
+  3. **audit 1551 P2**: 「送る8件」で送ったのは1件・印刷用PDFを押したのは2回、6件は押さずに飛ばした理由が残っていなかった。→ bulk-dl `_tallySkip`／`_skipWhyText` で理由×回数を `auto_pdf_end` に載せる（次の録画で正しく飛ばしたか分かる）。
+- 手順書: 決まり `audit_keep_reason`（2.8.143）を `auto-procedure-rules.ts` と page-script `_AXLX_RULES_DONE` に追加、`AUTO_RULES_REVIEWED_UP_TO` 2.8.143。
+- 残り（未対応・観察）: 拡張の中で作った単発の回（1551・1538・1532）は `intended`／`customer_snapshot` が空（popup の started が届いていない）＝統括が「入れようとした条件」を照らせない。所在地の小窓がなぜ失敗したかは次の録画で `fallback_area` を読んでから。
+- テスト: 新 `audit-keep-human-search-v28143.test.js` 40件。拡張一式 207本・前回の基準から悪化0（✗226 は前から）。tsc 0。
+
 ## 2026-11-20 **拡張 2.8.142: 人の自動検索の最中に自動便を拾わない／忙しいページを読み直さない**（竹内さん「そして画面録画してい ここからも原因見つけて改善する」）
 - 録画の回（run `mwoppjwh_y6ev`）と search_audits で判明: 平田さんの自動検索（1545・trigger=single・08:24:28 UTC）の**7秒後**に 16時の自動便（automation_commands `f23cd0d5`・auto_schedule・07:00 に積まれ 08:24:35 に拾った）が同じリアプロのタブで2本目（1546・2bdae2b2）を始めた。1545 は `area_open_by_class`（08:24:42）を最後に止まり6分後に `idle_close`、1546 は段0のまま `started`・命令は `running` のまま。写真も 08:24:41.7 で途切れた。
 - 穴: ①`_pollAndRunBatch` は人の回（single/local）もページの入力中も見ずに拾っていた ②一括の `_batchAutofill` は「別のお客さんの入力中は待つ」より**前**に `_ensureRealproTab` を通り、content.js は答えてもページが 0.7秒で答えない（入力中で忙しい）と**すぐ読み直す**＝入力中の画面ごと消し得る。⚠ 一括側の段はメモリにしか無く終わらないと DB に残らないので、②が実際に起きたかは確定できていない（両方を塞いだ）。

@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.142";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.143";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -224,6 +224,15 @@ export const AUTO_RULES: AutoRule[] = [
     since: "2.8.136",
     kb: null,
     marker: "進捗の印は最後の1つだけ残す",
+    file: "search-audit.js",
+  },
+  {
+    id: "audit_keep_reason",
+    scene: "switch",
+    text: "点検記録が長くなっても、回の始まり・入力の終わり・所在地を区で代替した理由は落とさない。人が押した検索の回は、次の回が始まるか6分で区切りとして閉じる（止まりと数えない）",
+    since: "2.8.143",
+    kb: null,
+    marker: "回の始まり・終わり・代替の理由は残し",
     file: "search-audit.js",
   },
 ];

@@ -2151,6 +2151,26 @@
     }
     return { allowed: allowed, sent: sent, cheapest: state.cheapestSkipped || 0, state: state };
   }
+  /**
+   * ★ 2026-11-20 (2.8.143) 実測 audit #1551 P2: 「送る8件」のうち送ったのは1件・押したのは2回で、
+   *   残り6件を押さずに飛ばした理由がどこにも残らず、正しく飛ばしたのか取りこぼしたのか分からなかった。
+   *   → 押す途中で飛ばした理由を数え、auto_pdf_end に載せる。
+   */
+  function _tallySkip(why) {
+    try {
+      if (!_autoPdfRun) return;
+      var w = _autoPdfRun.skipWhy || (_autoPdfRun.skipWhy = {});
+      var key = String(why || "?").slice(0, 20);
+      w[key] = (Number(w[key]) || 0) + 1;
+    } catch (_) {}
+  }
+  function _skipWhyText(run) {
+    var w = run && run.skipWhy;
+    if (!w) return "";
+    var parts = [];
+    for (var k in w) parts.push(k + "×" + w[k]);
+    return parts.length ? "／途中で飛ばした理由: " + parts.join("・") : "";
+  }
   function _autoPressNext(list) {
     if (!_autoPdfRun) return;
     if (_haltAutoPdfForNewFill("press_next")) return;
@@ -2161,6 +2181,7 @@
     /** 飛ばしは setTimeout で次へ（同期再帰でスタック／1件目送付済みで止まるのを防ぐ） */
     var _skipToNext = function (why) {
       _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
+      _tallySkip(why);
       console.log("[AXLX bulk-dl][auto] 飛ばして次へ:", why, String((item && item.btn && item.btn.href) || "").slice(0, 70));
       // ★ 2026-11-17: 80-200ms一様は機械的。人間は次行を目で追う（中央≈450・長尾）
       var Hsk = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
@@ -2206,6 +2227,7 @@
     // 人が押すのと同じ: 行までカーソルが動いて「印刷用PDF」を押す → 押した合図（axlx-pdf-captured）で1件送る
     _pressPrintPdf(item, function (pressed) {
       if (!pressed) {
+        _tallySkip("押せず");
         console.warn("[AXLX bulk-dl][auto] 印刷用PDFを押せませんでした（次へ）:", String(url).slice(0, 70));
         var Hf = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
         var failMs = Hf && Hf.logNormalDelay ? Hf.logNormalDelay(1100, 0.45) : (900 + Math.floor(Math.random() * 600));
@@ -2218,6 +2240,7 @@
         if (_rowSkipReason(_st2, item) === "sent") {
           item.__axSkip = true;
           _autoPdfRun.skipped = (Number(_autoPdfRun.skipped) || 0) + 1;
+          _tallySkip("押した直後に送付済み");
           console.log("[AXLX bulk-dl][auto] 押した直後に送付済みと判明 → 次へ");
           var Hs2 = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
           var sentMs = Hs2 && Hs2.logNormalDelay ? Hs2.logNormalDelay(480, 0.5) : (320 + Math.floor(Math.random() * 360));
@@ -2378,6 +2401,7 @@
   function _autoFinish(why) {
     var n = _autoPdfRun ? _autoPdfRun.done : 0;
     var skipped = _autoPdfRun ? (Number(_autoPdfRun.skipped) || 0) : 0;
+    var whyText = _skipWhyText(_autoPdfRun);
     _autoPdfRun = null;
     _autoPdfTotalSent = (Number(_autoPdfTotalSent) || 0) + (Number(n) || 0);
     var allSkipped = (n === 0 && skipped > 0);
@@ -2393,7 +2417,7 @@
           + (allSkipped ? "→送付済把握OK・次へ" : "")
       );
     } catch (_) {}
-    _tmark("auto_pdf_end", "P" + page + " " + why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : ""));
+    _tmark("auto_pdf_end", "P" + page + " " + why + " " + n + "件" + (skipped ? "（送付済みで飛ばした " + skipped + "件）" : "") + whyText);
     console.log("[AXLX bulk-dl][auto] P" + page + "/" + maxP + " 終了: " + why + "（この頁 " + n + "件送信・飛ばし " + skipped + "・累計 " + _autoPdfTotalSent + "件）");
     var stopBtn = document.getElementById("axlx-autopdf-stop-btn");
     if (stopBtn) stopBtn.style.display = "none";

@@ -5198,6 +5198,7 @@ async function _auditBegin(ctx) {
     var st = await _auditState();
     if (!st.enabled) return null;
     var run = _auditTracker.begin(Object.assign({}, ctx, { mode: st.mode }));
+    if (run) _auditCloseHumanSearchRuns(run.site, run.run_id);
     return run ? { runId: run.run_id, trigger: run.trigger, commandId: run.command_id } : null;
   } catch (e) {
     console.warn("[search-audit] begin 失敗（検索は続ける）:", e && e.message);
@@ -5215,6 +5216,17 @@ function _auditPostIntended(auditRun, site, conds) {
 
 function _auditStep(runId, k, d) {
   try { if (_auditTracker && runId) _auditTracker.step(runId, k, d); } catch (_) {}
+}
+
+/** 次の回が始まったら、同じサイトで開いたままの「人が押した検索」の回を区切りとして閉じる（6分の idle_close を待たない） */
+function _auditCloseHumanSearchRuns(site, exceptRid) {
+  try {
+    if (!_auditTracker || !_auditTracker.openHumanSearchRuns) return;
+    _auditTracker.openHumanSearchRuns(site, exceptRid).forEach(function (rid) {
+      _auditStep(rid, "human_search_superseded", "次の回が始まった → 人が押した検索の回を区切りとして閉じる");
+      _auditFinish(rid, {});
+    });
+  } catch (_) {}
 }
 
 /** 開いている人の回（single/local）。site を渡すとそのサイトだけ（"realpro"/"itandi"）。無ければ null */
@@ -5258,6 +5270,13 @@ function _auditFinish(runId, extra) {
     var t = _auditSingleTimers.get(runId);
     if (t) { clearTimeout(t); _auditSingleTimers.delete(runId); }
     var x = extra || {};
+    try {
+      var _A0 = self.AxlxSearchAudit;
+      if (_A0 && _A0.softenIdleClose) {
+        var _sf = _A0.softenIdleClose(_auditTracker.get(runId), x);
+        if (_sf.soft) { _auditTracker.step(runId, "human_search_idle", _sf.note); x = _sf.extra; }
+      }
+    } catch (_) {}
     if (x.error && x.error.message) x = Object.assign({}, x, { error: x.error.message });
     if (x.error && String(x.error) === "__BATCH_STOPPED__") x = Object.assign({}, x, { error_kind: "stopped" });
     // 2.8.125 前客の条件を外し切れず中止した回（page-script の fill-done error 頭 "leftover_stuck:"）は種類を付けて点検で数えられるように
@@ -5298,6 +5317,7 @@ async function _auditOnFillProgress(msg) {
         _auditSingleTimers.set(_rid, _tProg);
       } catch (_) {}
     }
+    if (run && !run.human_search) _auditCloseHumanSearchRuns(run.site, _rid);
     if (_auditTracker.attachProgress) _auditTracker.attachProgress(_rid, msg.steps || []);
   } catch (e) {
     try { console.warn("[search-audit] fill-progress 失敗:", e && e.message); } catch (_) {}
@@ -5335,6 +5355,7 @@ async function _auditOnFillDone(msg, sender) {
     }
     var _pageErr = msg.pageError || msg.error || null;
     _auditTracker.attachFill(_rid, { audit: msg.audit || null, error: _pageErr });
+    if (!run.human_search) _auditCloseHumanSearchRuns(run.site, _rid);
     // 2026-09-29 見張り（C1・C2）: ここまで来た回はブレインモード（点検の記録がある回）だけ。待たない
     _watchAfterFill(msg, run, sender);
     /**
