@@ -16,7 +16,7 @@
   - 印: `ward_clear_one`／`_ok`／`_ng`／`_offscreen`／`_done`・`ward_hidden_diag`（`_PIN`・`RULE_STEP`・`KEEP_STEP` で上限でも落とさない）。
 - ページ（#1556）: 午後の便の命令は **`max_pages=2`**（`PM_PLAN`・2026-09-30 竹内さん「午後の便は今日の更新がないか見るだけ…もっと限定的に」）。上限どおりに止まっていたが、記録も画面も「P2 全部終わりました」で理由が見えなかった。
   - bulk-dl.js `_autoFinish`: 上限なら `auto_page_limit`（P/上限・出どころ「便の指定N／既定」・次のページの有無）、上限前なら `auto_page_stop`。次のページがあるのに上限で止めた時は画面にも「📄 上限 Nページ（…）で終わり・次のページは見ていません」。
-  - ⚠ **未決**: 11/15 の決定（KB a42719a1「自動押下・自動便ともページ上限は既定3」）と午後の便2ページ（9/30）の食い違い。PM_PLAN は変えていない（竹内さんに確認待ち）。
+  - ✅ **決定（同日）**: 竹内さん「午後の便も3ページにする（11/15 の決定に合わせる）」→ `PM_PLAN.max_pages` 2→3（`PLAN_DEFAULT_MAX_PAGES`）。設計知見 P1【決定】午後の便もページ上限は3ページ。既に積まれた今日の午後の命令（pending・max_pages=2）は書き換えていない。
 - 決まり `ward_clear_one`（scene clear・since 2.8.146・確かめ: `page:ward_clear_one` がある回は `page:ward_clear_one_done` がある）。`AUTO_RULES_REVIEWED_UP_TO`・manifest・`_AXLX_PAGE_VER` = 2.8.146。
 - 試験: 新 `tests/chrome-extension/ward-clear-one-v28146.test.js`（33・動きの模擬: 1区ずつ・重ね押し0・見えない区は押さない・外れない区は2回まで）。leftover-progress・place-switch・active-clock の模擬に `_clearWardsOneByOne` の代役、clear-per-panel の段の並びの確かめを新しい形に。全体 209本 ✗226（2.8.145 と同じ・悪化0）。
 - 次に確かめる事: 2.8.146 の自動で前客の区が残る回に `ward_hidden_diag` が出たら、隠れ元（どの要素が display:none か）を読んで開き方を直す。

@@ -66,11 +66,12 @@ export const PLAN_DEFAULT_MAX_PAGES = 3;
 /**
  * 2026-09-30 竹内「午後の便は今日の更新がないか見るだけやから、もっと限定的にすれば大丈夫」「午前で物件がなかった場合のお客さんだけに限定する」:
  *   午後の便は「今日の検索で通す候補が0件の人」だけ（pmRunDecision）・全員（新規も）更新順・更新日1日（前回の検索が無い人だけ空きで広げる）・
- *   前回の検索（午前）以降だけ（止める線あり）・2ページ（リアプロ・ITANDI とも）
+ *   前回の検索（午前）以降だけ（止める線あり）・2ページ（リアプロ・ITANDI とも）→ 2026-11-20 から3ページ（下）
  * 2026-11-10 竹内さん「またピンポイントで検索したら広げて検索する流れちゃんとおこなっていく」→ 午後の便でも広げる（widen_chain: true）
  *   午後は更新日1日のまま広げる（範囲は今日の更新だけ・並びは更新順のまま）。更新日はピンポイントの回と同じ値を使う
+ * 2026-11-20 竹内さん「午後の便も3ページにする（11/15 の決定に合わせる）」: 2→3ページ（自動便も既定3ページ・KB a42719a1）
  */
-export const PM_PLAN = { sort: "updated" as const, stop_at_last: true, max_pages: 2, widen_chain: true, note: "午後: 今日の候補0件の人だけ・更新順・更新日1日・午前以降だけ・2ページ・広げてあり" };
+export const PM_PLAN = { sort: "updated" as const, stop_at_last: true, max_pages: PLAN_DEFAULT_MAX_PAGES, widen_chain: true, note: "午後: 今日の候補0件の人だけ・更新順・更新日1日・午前以降だけ・3ページ・広げてあり" };
 
 const DAY_MS = 86_400_000;
 const ms = (s: string | null | undefined) => { const v = Date.parse(String(s ?? "")); return Number.isFinite(v) ? v : NaN; };
