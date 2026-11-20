@@ -62,6 +62,7 @@ export async function inboxPut(rawBody: string, signature: string, reason: strin
   const path = inboxPathOf(receivedAt, Math.random().toString(36).slice(2));
   try {
     await put(path, JSON.stringify(item), { access: "private", contentType: "application/json", addRandomSuffix: false });
+    inboxMarkDirty();
     console.warn(JSON.stringify({ tag: "line-inbox:stored", source, reason, path, ...c }));
     return path;
   } catch (e) {
@@ -101,12 +102,29 @@ export async function inboxReplayOne(pathname: string, targetUrl: string): Promi
   return "kept";
 }
 
+/**
+ * 2026-11-21 統括役の指摘①: 成功のたびに Blob の list を呼ぶと本番の通数で回数が多い → 最後に空だったのが N 分以内なら list しない（関数の実体ごとの覚え）。
+ *   貯めた時（inboxPut）は覚えを消す＝同じ実体なら次の成功で入れ直す。止める LINE_WEBHOOK_INBOX_IDLE_MIN=0
+ */
+let lastEmptyAt = 0;
+export function inboxIdleMinutes(env: Env = envOf()): number {
+  const n = Number((env.LINE_WEBHOOK_INBOX_IDLE_MIN ?? "10").trim());
+  return Number.isFinite(n) && n >= 0 ? n : 10;
+}
+/** list を飛ばすか（純関数・テスト用に時刻を渡せる） */
+export function inboxSkipList(lastEmptyMs: number, nowMs: number, idleMin: number): boolean {
+  return idleMin > 0 && lastEmptyMs > 0 && nowMs - lastEmptyMs < idleMin * 60_000;
+}
+export function inboxMarkDirty(): void { lastEmptyAt = 0; }
+
 /** 受け口が成功した後のついでに、古い物から少しだけ入れ直す（新しい cron を足さない）。投げない */
 export async function inboxDrain(targetUrl: string, limit = 3, env: Env = envOf()): Promise<{ done: number; kept: number; dropped: number }> {
   const out = { done: 0, kept: 0, dropped: 0 };
   if (!lineInboxOn(env)) return out;
+  if (inboxSkipList(lastEmptyAt, Date.now(), inboxIdleMinutes(env))) return out;
   try {
     const items = await inboxListPending(limit);
+    if (!items.length) { lastEmptyAt = Date.now(); return out; }
     for (const it of items) {
       const r = await inboxReplayOne(it.pathname, targetUrl);
       if (r === "done" || r === "gone") out.done++;
