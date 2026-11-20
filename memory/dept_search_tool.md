@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.150: 画面を一瞬で飛ばさない・見えない欄は見えるまで待ってからカーソルで押す**（竹内さん「一連の動きでバグが起きている部分や機械的になっている部分 人間の動きができていない部分はちゃんと細かく改善する…完全に人間の動きでうごくことができるように」）
+- 本番DB（直近80回のうち 2.8.120 以降 15回前後）で見た弱い所: `hidden_press` 9回（2.8.145・堺市の区7つをカーソル無しで押した）、`press_hidden_scroll` 6回、`leftover_after_clear` 5回、`no_fill_start`・`switch_fail`（2.8.146 で1回）。
+- 直した（機械的な動き）: ①検索ボタンが6回待っても画面外の時の `behavior:"instant"` → smooth（印 `search_scroll_smooth`）②小窓の一覧の送り `_scrollIntoScrollParent` が15%で一瞬に飛んでいた（"auto"）→ いつも smooth ③プルダウンを見せる送り `_settleSelectInView` の2回目以降も smooth。これで page-script に instant は0か所。
+- 直した（カーソル無しの押し）: `_humanPointerClick` で大きさ0の欄は、最大1.2秒見えるまで待ってからカーソルで押す（印 `hidden_wait_ok`）。それでも見えない時だけ今まで通り `hidden_press`。label が見えれば先に label へ（今まで通り）。
+- ⚠ 前回 2.8.149 の誤りを直した: `toggle_repress`／`toggle_direct` は page 側の段なので DB では `page:` が付く。KEEP_STEP の上の段に入れていて効いていなかった → `page:(toggle_repress|toggle_direct|hidden_wait_|…` へ移した。
+- コードの点検: 直の `.click()`・`simulateClick()` は、列（カーソル→押す）の中か `_humanPointerClick` の中だけ。残りは保険（カーソルの部品が無い環境）と、呼ばれていない経路（`_verifyCheckboxUnderstood` の lookOnly=false）。プルダウンの「既に同じ値なら開き直さない」は `queueSelVal`（sel_skip_same）・`queueSelValText`（sel_already）とも入っていた。
+- 未解決（データ1回）: 2.8.146 で switch_fail「message channel closed」→ main.php へ移る → 2回目の fill-started が40秒来ない。移る先の判断（`realproRecoverNav` は url が main.php でないと main.php へ）が原因かもしれないが、1回だけなので直していない。
+- 試験: `tests/chrome-extension/human-motion-smooth-v28150.test.js`（12）。`ward-clear-one-v28146`（距離）と `toggle-cursor-repress-v28149`（KEEP の形）を更新。`human-serial-v2832`（他の人の未追跡）は手元だけ instant の数を「1以下」に。全体は悪化0（`ai-customer-mode` の「同じ値が3回続かない」は乱数で揺れる。直す前のコードでも落ちる）。
+- 次に確かめる事: 2.8.150 で自動1回 → `hidden_press` が0か・`hidden_wait_ok`／`search_scroll_smooth`／`toggle_repress` の数。
+
 ## 2026-11-20 **拡張 2.8.149: チェックの押し直しを直押しにしない（外しも入れるもカーソルで押す・直押しは印を残す）**（竹内さん「外すときの質は入れるときと比べて弱い部分あるのか…１つずつカーソルが動くのもクリックもできているか…徹底的に細かい部分まで改善する」→ 選択「外しと入れる両方直す」）
 - 調べた事実: 外しも入れるも `_toggleCheckboxLikeHuman` → `enqueueHumanClick`（カーソルの狙い・列）を通る。ただし反映が無い時の押し直しが `cb.click()`・`simulateClick()` の直押しだった（外しと入れる共通）。外しの印 `clear_method` は直押しでも「cursor_checkbox」と書いていた（誤記録）。
 - 直した: 押し直しは `_humanPointerClick`（カーソルを動かしてから押す）。simulateClick の最後の手段も同じくカーソルで包む。直押しに落ちた時だけ印 `toggle_direct`（clear_method は `direct_fallback`）。押し直しの印 `toggle_repress`。`search-audit.js` の KEEP_STEP に両方（DBに残る）。

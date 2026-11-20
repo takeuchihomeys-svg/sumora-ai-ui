@@ -132,7 +132,7 @@
    *   「所在地の小窓が失敗→区で代替」の理由（page:fallback_area）が消えて、統括が原因を追えなかった。
    *   → 回の始まり・終わり・代替の理由は残し、それ以外の古い段から落とす（全部が残す段なら先頭から）。
    */
-  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|toggle_repress|toggle_direct|page:(fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|post_send_cancel|clear_cancelled))/;
+  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(toggle_repress|toggle_direct|hidden_wait_|fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|post_send_cancel|clear_cancelled))/;
 
   /**
    * ★ 2026-11-20 (2.8.145) 手順書の決まりの確かめ（app/lib/auto-procedure-rules.ts の verify）に使う段。

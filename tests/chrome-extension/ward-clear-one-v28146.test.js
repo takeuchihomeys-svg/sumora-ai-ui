@@ -62,7 +62,7 @@ function makeSandbox(wards) {
   ok("_clearWardsOneByOne がある", fnAt > 0 && /function _clearWardsOneByOne\(done, why\)/.test(src));
   ok("押す相手は選ぶ時と同じ _labelForCheckbox", /_labelForCheckbox\(left\[i\]\)/.test(src));
   ok("小窓の一覧の中で送る（_scrollIntoScrollParent）", /var cont = _scrollIntoScrollParent\(lb\)/.test(src));
-  ok("中でスクロールする箱を探して scrollBy", /overflowY[\s\S]{0,120}scrollHeight > p\.clientHeight[\s\S]{0,400}cont\.scrollBy\(/.test(src));
+  ok("中でスクロールする箱を探して scrollBy", /overflowY[\s\S]{0,120}scrollHeight > p\.clientHeight[\s\S]{0,700}cont\.scrollBy\(/.test(src));
   ok("押した後は外れたか確かめる（ok/ng の印）", /tg \+ "_ok" : tg \+ "_ng"/.test(src) && /_clearChecksOneByOne\([^)]*"ward_clear_one"\)/.test(src));
   ok("checked を直に書かない", !/\.checked\s*=(?!=)/.test(src));
 

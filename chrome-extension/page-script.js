@@ -532,7 +532,8 @@
           if (ok || tries >= 3) { finish(); return; }
           tries++; scrolled = true;
           try {
-            el.scrollIntoView({ behavior: tries === 1 ? "smooth" : "auto", block: "center", inline: "nearest" });
+            // ★ 2026-11-20: 2回目以降も一瞬で飛ばさない（人はホイールで送る）。止まるのは waitStable が待つ
+            el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
           } catch (_) {}
           try { _lastScrollAt = Date.now(); } catch (_) {}
           waitStable(step);
@@ -2735,7 +2736,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.149";
+  var _AXLX_PAGE_VER = "2.8.150";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -3411,6 +3412,32 @@
       if (_proxy) {
         return _humanPointerClick(_proxy, function () { return fire(el); }, aim, tgtAt);
       }
+      /**
+       * ★ 2026-11-20 竹内さん「人間の動きができていない部分は細かく改善」:
+       *   本番 2.8.145 で堺市の区7つを hidden_press（カーソル無し）で押していた。小窓が開く途中・一覧の描き直しの途中で
+       *   一瞬だけ大きさ0になっている事がある → 最大1.2秒、見えるまで待ってからカーソルで押す。それでも見えない時だけ今まで通り。
+       */
+      if (!el.__axHidWaited) {
+        el.__axHidWaited = 1;
+        var _hw0 = Date.now();
+        return new Promise(function (res) {
+          (function pollHid() {
+            var vis = false;
+            try { var rr = el.getBoundingClientRect(); vis = rr.width > 0 || rr.height > 0; } catch (_) {}
+            if (!vis) {
+              try { var px = _labelForCheckbox(el); vis = !!(px && px !== el && isVisible(px)); } catch (_) {}
+            }
+            if (vis || Date.now() - _hw0 >= 1200) {
+              el.__axHidWaited = vis ? 0 : 1;
+              if (vis) { try { _auditStepP("hidden_wait_ok", String(_opLabel(el)).slice(0, 40) + " " + (Date.now() - _hw0) + "ms 待って見えた→カーソルで押す"); } catch (_) {} }
+              res(_humanPointerClick(el, fallbackFn, aim, tgtAt));
+              return;
+            }
+            setTimeout(pollHid, 120);
+          })();
+        });
+      }
+      el.__axHidWaited = 0;
       try { _auditStepP("hidden_press", String(_opLabel(el)).slice(0, 40) + " 見える欄が無くカーソル無しで押した"); } catch (_) {}
       fire(el);
       return Promise.resolve(false);
@@ -8427,7 +8454,8 @@
         var cr = cont.getBoundingClientRect();
         if (r.top < cr.top + 8 || r.bottom > cr.bottom - 8) {
           var dy = (r.top + r.height / 2) - (cr.top + cr.height * (0.42 + Math.random() * 0.16));
-          cont.scrollBy({ top: Math.round(dy), behavior: Math.random() < 0.85 ? "smooth" : "auto" });
+          // ★ 2026-11-20: 15%で一瞬に飛んでいた（behavior を auto にしていた）→ いつも人の速さで送る
+          cont.scrollBy({ top: Math.round(dy), behavior: "smooth" });
           _lastScrollAt = Date.now();
           _lastScrollDir = dy > 0 ? 1 : -1;
         }
@@ -9809,10 +9837,10 @@
         var _vh0 = window.innerHeight || 800;
         var _vw0 = window.innerWidth || 1200;
         if (_rr0.bottom < 0 || _rr0.top > _vh0 || _rr0.right < 0 || _rr0.left > _vw0) {
-          // ⚠ ここは直後に押すので instant のまま（smooth だと動いている途中の位置を狙う）。上の6回の待ちを抜けた時だけ通る
-          try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (_) {
-            try { btn.scrollIntoView(true); } catch (__) {}
-          }
+          // ★ 2026-11-20 竹内さん「機械的な所を細部まで」: 旧は instant（一瞬で飛ぶ）。人の速さで送り、
+          //   押すのは列の待ち（≥900ms）の後で、押す時の位置は押す係が測り直す（動いている途中を狙わない）
+          try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }); } catch (_) {}
+          try { _auditStepP("search_scroll_smooth", "6回待っても画面外 → 人の速さで送ってから押す"); } catch (_) {}
         }
       } catch (_) {}
       if (_audit) {
