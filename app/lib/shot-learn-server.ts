@@ -889,14 +889,23 @@ export async function learnFromWeakShots(
     try {
       const { buildHumanLearnBundle, compactBundle } = await import("./human-learn-brain");
       const since2 = new Date(Date.now() - LEARN_PERIODS.historyMs).toISOString();
-      const all: Array<Record<string, unknown>> = [];
-      for (let i = 0; i < 10_000; i += 1000) {
-        const r = await supabase.from("human_motion_learn").select("*")
-          .gte("created_at", since2).order("created_at", { ascending: false }).range(i, i + 999);
-        if (r.error) throw new Error(String(r.error.message).slice(0, 120));
-        all.push(...((r.data ?? []) as Array<Record<string, unknown>>));
-        if ((r.data ?? []).length < 1000) break;
-      }
+      /**
+       * ★ 2026-11-20 竹内さん「画像多すぎたらそこでデータくっているのではないか」:
+       *   旧は select("*") で表の写真（shot_b64）まで読み、新しい順 10,000行で切っていた
+       *   （自動の写真に押されて、今読んだ通常の写真が束に入らない）。→ 要る列だけ・読んだ写真と通常録画は別枠。
+       */
+      const { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR, BUNDLE_MOTION_COLS } = await import("./learn-rows-keep");
+      const { selectDroppingMissing } = await import("./supabase-safe-select");
+      const cols = [...BUNDLE_MOTION_COLS];
+      const kr = await readRowsKeepingLearned<Record<string, unknown>>({
+        maxRows: 10_000,
+        newest: (a, b) => selectDroppingMissing(cols, (csv) => supabase.from("human_motion_learn").select(csv)
+          .gte("created_at", since2).order("created_at", { ascending: false }).range(a, b)) as never,
+        olderKept: (edge, a, b) => selectDroppingMissing(cols, (csv) => supabase.from("human_motion_learn").select(csv)
+          .gte("created_at", since2).lt("created_at", edge).or(KEEP_OUTSIDE_CAP_OR).order("created_at", { ascending: false }).range(a, b)) as never,
+      });
+      if (kr.error) throw new Error(kr.error.slice(0, 120));
+      const all: Array<Record<string, unknown>> = kr.rows;
       const nowMs = Date.now();
       const { fetchLearnBundleSceneMeta } = await import("./learn-bundle-scene-meta");
       const sceneMetaAll = await fetchLearnBundleSceneMeta(supabase, "all");

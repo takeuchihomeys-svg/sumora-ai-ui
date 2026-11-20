@@ -22,6 +22,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { buildHumanLearnBundle, compactBundle, type MotionRow } from "@/app/lib/human-learn-brain";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
 const SELECT = [
@@ -57,21 +58,22 @@ export async function GET(req: NextRequest) {
   const logId = dry ? null : await startCronLog("human-learn-brain");
 
   // ① 読む（PostgREST は1回1000行までなので頁で読む）
-  const rows: MotionRow[] = [];
-  let error: string | null = null;
+  // ★ 2026-11-20: 上限の外に落ちる読んだ写真・通常録画は別枠で読む（learn-rows-keep）
   let hasShotOps = true;
-  for (let i = 0; i < 20_000; i += 1000) {
-    const r = await selectRows((cols) => supabase
-      .from("human_motion_learn")
-      .select(cols)
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .range(i, i + 999));
-    if (r.error) { error = r.error; break; }
-    hasShotOps = r.hasShotOps;
-    rows.push(...r.rows);
-    if (r.rows.length < 1000) break;
-  }
+  const page = async (build: (cols: string) => PromiseLike<{ data: unknown[] | null; error: { message: string; code?: string | null } | null }>) => {
+    const r = await selectRows(build);
+    if (!r.error) hasShotOps = r.hasShotOps;
+    return { data: r.error ? null : r.rows, error: r.error ? { message: r.error } : null };
+  };
+  const kr = await readRowsKeepingLearned<MotionRow>({
+    maxRows: 20_000,
+    newest: (a, b) => page((cols) => supabase.from("human_motion_learn").select(cols)
+      .gte("created_at", since).order("created_at", { ascending: false }).range(a, b)),
+    olderKept: (edge, a, b) => page((cols) => supabase.from("human_motion_learn").select(cols)
+      .gte("created_at", since).lt("created_at", edge).or(KEEP_OUTSIDE_CAP_OR).order("created_at", { ascending: false }).range(a, b)),
+  });
+  const rows: MotionRow[] = kr.rows;
+  let error: string | null = kr.error;
 
   if (error) {
     await finishCronLog(logId, false, { ok: false, error }, error);

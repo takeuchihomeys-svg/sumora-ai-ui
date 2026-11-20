@@ -132,7 +132,7 @@
    *   「所在地の小窓が失敗→区で代替」の理由（page:fallback_area）が消えて、統括が原因を追えなかった。
    *   → 回の始まり・終わり・代替の理由は残し、それ以外の古い段から落とす（全部が残す段なら先頭から）。
    */
-  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag))/;
+  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|post_send_cancel|clear_cancelled))/;
 
   /**
    * ★ 2026-11-20 (2.8.145) 手順書の決まりの確かめ（app/lib/auto-procedure-rules.ts の verify）に使う段。
@@ -141,7 +141,7 @@
    *   → 普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す（同じ種類が後にもある物から落とす）。
    *   ⚠ 決まりの verify に段を足したらここにも足す（checkRulesInCode が食い違いを止める）。
    */
-  var RULE_STEP = /^(fill_progress|page:(playbook_seen|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|flow_done_|flow_gap_|area_all_done|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one))/;
+  var RULE_STEP = /^(fill_progress|page:(playbook_seen|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|flow_done_|flow_gap_|area_all_done|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one|clear_one|post_send_wait))/;
 
   function _stepKey(s) { return String((s && s.k) || ""); }
 

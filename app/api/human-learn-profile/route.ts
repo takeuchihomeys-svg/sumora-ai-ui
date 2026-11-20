@@ -15,6 +15,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { buildLeaseOn, tryAcquireLease, releaseLease, buildDecision, supabaseLeaseDb } from "@/app/lib/build-lease";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
+import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
 import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild } from "@/app/lib/human-learn-profile-guard";
@@ -108,16 +109,20 @@ async function buildNow(scope: string, note?: (why: string) => void) {
    *   → 10000 に上げる（弱い強化の成果を本番 fresh でも消さない）。
    */
   const MAX_ROWS = 10_000;
-  for (let i = 0; i < MAX_ROWS; i += 1000) {
-    const sel = await selectDroppingMissing(
-      SELECT.split(", "),
-      (colsCsv) => fetchPage(colsCsv, i, i + 999),
-      { onDrop: (c, e) => { droppedCols.push(c); console.warn("[human-learn-profile] 列が無いので外します:", c, e?.message ?? ""); } },
-    );
-    if (sel.error) { try { note?.("select: " + sel.error.message); } catch (_) {} return null; }
-    rows.push(...((sel.data ?? []) as unknown[]));
-    if (!sel.data || sel.data.length < 1000) break;
-  }
+  // ★ 2026-11-20: 上限の外に落ちる読んだ写真・通常録画は別枠で読む（learn-rows-keep）
+  const onDrop = (c: string, e: { message?: string | null } | null) => { droppedCols.push(c); console.warn("[human-learn-profile] 列が無いので外します:", c, e?.message ?? ""); };
+  const kr = await readRowsKeepingLearned<{ created_at?: string | null }>({
+    maxRows: MAX_ROWS,
+    newest: (a, b) => selectDroppingMissing(SELECT.split(", "), (colsCsv) => fetchPage(colsCsv, a, b), { onDrop }) as never,
+    olderKept: (edge, a, b) => selectDroppingMissing(SELECT.split(", "), (colsCsv) => {
+      let q = supabase.from("human_motion_learn").select(colsCsv).gte("created_at", since).lt("created_at", edge).or(KEEP_OUTSIDE_CAP_OR);
+      if (scope && scope !== "all") q = q.eq("site", scope);
+      return q.order("created_at", { ascending: false }).range(a, b);
+    }, { onDrop }) as never,
+  });
+  if (kr.error) { try { note?.("select: " + kr.error); } catch (_) {} return null; }
+  rows.push(...kr.rows);
+  if (kr.capped) { try { note?.(`上限${MAX_ROWS}行の外から読んだ写真・通常録画を ${kr.kept}行 足した${kr.keptError ? `（失敗: ${kr.keptError}）` : ""}`); } catch (_) {} }
   if (!rows.length) { try { note?.("no_rows"); } catch (_) {} return null; }
   if (droppedCols.length) { try { note?.("dropped_cols: " + Array.from(new Set(droppedCols)).join(",")); } catch (_) {} }
   const { buildHumanLearnBundle, compactBundle } = await import("@/app/lib/human-learn-brain");
@@ -709,16 +714,16 @@ export async function GET(req: NextRequest) {
       const since = sinceIso(LEARN_PERIODS.historyMs);
       const rows: MotionRowLocal[] = [];
       // ★ 2026-11-20: 写真の文字列（shot_b64）まで全列を読んでいた（select("*")）→ 自動の作り直しと同じ列の一覧（SELECT）で読む
-      for (let i = 0; i < 10_000; i += 1000) {
-        const sel = await selectDroppingMissing(
-          SELECT.split(", "),
-          (colsCsv) => supabase.from("human_motion_learn").select(colsCsv)
-            .gte("created_at", since).order("created_at", { ascending: false }).range(i, i + 999),
-        );
-        if (sel.error) throw new Error(String(sel.error.message).slice(0, 160));
-        rows.push(...((sel.data ?? []) as MotionRowLocal[]));
-        if ((sel.data ?? []).length < 1000) break;
-      }
+      // ★ 2026-11-20: 上限の外に落ちる読んだ写真・通常録画は別枠で読む（learn-rows-keep）
+      const kr = await readRowsKeepingLearned<MotionRowLocal>({
+        maxRows: 10_000,
+        newest: (a, b) => selectDroppingMissing(SELECT.split(", "), (colsCsv) => supabase.from("human_motion_learn").select(colsCsv)
+          .gte("created_at", since).order("created_at", { ascending: false }).range(a, b)) as never,
+        olderKept: (edge, a, b) => selectDroppingMissing(SELECT.split(", "), (colsCsv) => supabase.from("human_motion_learn").select(colsCsv)
+          .gte("created_at", since).lt("created_at", edge).or(KEEP_OUTSIDE_CAP_OR).order("created_at", { ascending: false }).range(a, b)) as never,
+      });
+      if (kr.error) throw new Error(kr.error.slice(0, 160));
+      rows.push(...kr.rows);
       const now = new Date().toISOString();
       const { fetchLearnBundleSceneMeta } = await import("@/app/lib/learn-bundle-scene-meta");
       const sceneMeta = await fetchLearnBundleSceneMeta(supabase, "all", { forceFullAudit: true });

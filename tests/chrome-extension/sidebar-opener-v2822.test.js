@@ -57,7 +57,7 @@ ok("_SIDEBAR_OTHER_RE がある", !!reM);
 console.log("\n■ ② 3か所とも外側の箱から探さない");
 {
   ok("区の前に駅を外す時（station_open_before_ward）", /_sidebarOpenerEl\("沿線・駅絞り込み", _SIDEBAR_OTHER_RE\);[\s\S]{0,200}"station_open_before_ward"/.test(ps));
-  ok("駅の前に区を外す時（area_open_before_st）", /_sidebarOpenerEl\("所在地絞り込み", _SIDEBAR_OTHER_RE\);[\s\S]{0,120}"area_open_before_st"/.test(ps));
+  ok("駅の前に区を外す時（area_open_before_st）", /_sidebarOpenerEl\("所在地絞り込み", _SIDEBAR_OTHER_RE\);[\s\S]{0,260}"area_open_before_st"/.test(ps));
   ok("駅の入口（station_open）は内側を先に・旧の探し方は受け皿", /_sidebarOpenerEl\('沿線・駅絞り込み', _SIDEBAR_OTHER_RE\);[\s\S]{0,300}'station_open'\);[\s\S]{0,200}var clsTargets = \['click_menu', 'one_slide_search_box'\];/.test(ps));
   ok("文書の順で外側の箱を拾う旧の書き方が残っていない", !/document\.querySelectorAll\("div\.click_menu, div\.one_slide_search_box"\)\);\n\s*for \(var i = 0; i < divs\.length; i\+\+\) \{\n\s*if \(!isVisible\(divs\[i\]\)\) continue;\n\s*if \(\/(沿線・駅|所在地)絞り込み\//.test(ps));
 }

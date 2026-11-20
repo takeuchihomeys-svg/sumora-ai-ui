@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.147: 外しも入れる時と同じく1つずつ・外しは同時に1つだけ（押し合わない・詰まらない）**（竹内さん「外し方も入れるのと同じようにちゃんと１つずつおこなうように エラーの内容に気を付ける つまらないようにする 精度も上げるようにする」）
+- 本番DBで判明（#1558）: 送付後の外し（`_postSendClear`）は120秒で done を返しても**中の区の外しが走り続け**、次客の入力の外しと同じ所在地の小窓で押し合っていた（1区目の途中で一覧が消え7区とも `hidden_press`）。2周目は「所在地絞り込みが開かない→押し直す」（文字で探して押す形が先）。
+- 直した事（page-script.js）:
+  - 外しの持ち主（世代 `_clearGen`）: 外す係は始めた時の世代を持ち、世代が変わったら押すのをやめる（`clear_cancelled`）。送付後の外しは始める時に世代を取り、120秒で終わらない時は中の外しも止める。
+  - 次客の入力（`_doReset` の最初・round 0）は `_waitPostSendClearThen`: 送付後の外しが走っていれば終わるまで待つ（`post_send_wait`→`post_send_wait_done`）。60秒で終わらなければ止めて引き継ぐ（`post_send_cancel`）。必ず次へ進む（詰まらない）。
+  - 新 `_clearChecksOneByOne(pick, done, why, tag)`（区の `_clearWardsOneByOne` はこれの包み）: 前客の残チェック（間取り・ペット等・`_runUncheck`）も**まとめて積まず1つずつ** 送る→`_toggleCheckboxLikeHuman`→外れたか確かめる（`clear_one`／`_ok`／`_ng`／`_done`）。押す相手は選ぶ時と同じ `_labelForCheckbox`。
+  - 駅・沿線の外し（`_uncheckVisibleStationsLikeHuman`・`_uncheckVisibleLinesLikeHuman`）も小窓の一覧の中で送る（`_scrollIntoScrollParent`）。
+  - 区の外しの小窓は左の帯の学んだ開き方（`_sidebarOpenerEl`＋`_pressLearned`）を先に・無ければ文字で探す（`ward_clear_open` に方法を残す）。
+  - 印を `_PIN`・`KEEP_STEP`・`RULE_STEP` に。決まり `clear_one_by_one`・`clear_single_owner`（since 2.8.147）。manifest・`_AXLX_PAGE_VER`・`AUTO_RULES_REVIEWED_UP_TO` = 2.8.147。
+- 試験: 新 `clear-one-owner-v28147.test.js`（38・引き継いだら古い外しが押さない模擬・送付後の外しを待つ模擬）。ward-clear-one・continuous-human・sidebar-opener を新しい形に。全体 210本 ✗226→223（悪化0）。
+- 同日 別件（拡張の外・束）: 自動の写真が1日 2,000〜3,800行入り、束の材料（新しい順 10,000行）が 11/17 で切れて**読んだ写真の8割（4,684/5,870）が束に入っていなかった**（最新の束 source_rows=10000）。→ `app/lib/learn-rows-keep.ts`: 上限の外の読んだ写真・通常録画は別枠で必ず読む（profile・写真学習の後・毎晩の3か所）。写真学習の後の作り直しは `select("*")`（表の写真 shot_b64 まで）をやめて要る列だけ。
+- 次に確かめる事: 2.8.147 で前客の区がある自動を1回 → `post_send_wait`／`clear_one_done`／`ward_clear_one_done` の残り0。束を作り直した後の source_rows が 10000 を超え、learned が増えているか。
+
 ## 2026-11-20 **拡張 2.8.146: 前客の区を1つずつ外す（送る→押す→外れたか確かめる→次）・ページ上限で止めた理由を残す**（竹内さん「地域ちゃんと外せていなかった」「次へのところも２つ目で終わって3つ目にいかなかった」「前のお客さんの条件を逆算したらなにをはずすのか把握するの簡単なのになんでできないのか」）
 - 本番DBで判明（#1558・2.8.145・run sa_mwotvv7n_opqfujgk・前客 堺市7区→次客 駅3）:
   - 外す物は分かっていた（`leftover_ledger` 入れた控え 区:堺市堺区…美原区 の7区）。外せなかったのは**押し方**。

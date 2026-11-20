@@ -2735,7 +2735,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.146";
+  var _AXLX_PAGE_VER = "2.8.147";
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -2744,7 +2744,7 @@
     "order_human", "area_before_cond", "no_reset_button", "clear_per_panel", "no_hidden_press",
     "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
     "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
-    "one_cursor", "audit_keep_reason", "ward_detail_skip", "audit_rule_evidence", "ward_clear_one",
+    "one_cursor", "audit_keep_reason", "ward_detail_skip", "audit_rule_evidence", "ward_clear_one", "clear_one_by_one", "clear_single_owner",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -5460,7 +5460,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -7058,11 +7058,7 @@
       });
       if (!visLeft) return 0;
       try {
-        visLeft.hit.scrollIntoView({
-          behavior: Math.random() < 0.8 ? "smooth" : "auto",
-          block: Math.random() < 0.75 ? "center" : "nearest",
-          inline: "nearest",
-        });
+        _scrollIntoScrollParent(visLeft.hit);
       } catch (_) {}
       try { if (_audit) _auditStepP("station_scroll_clear", String(visLeft.cb.value || "").slice(0, 24)); } catch (_) {}
       _toggleCheckboxLikeHuman(visLeft.cb, false);
@@ -7071,13 +7067,8 @@
     var cb0 = cbs[0];
     var hit0 = _labelForCheckbox(cb0) || cb0;
     try {
-      if (hit0 && hit0.scrollIntoView) {
-        hit0.scrollIntoView({
-          behavior: Math.random() < 0.8 ? "smooth" : "auto",
-          block: Math.random() < 0.75 ? "center" : "nearest",
-          inline: "nearest",
-        });
-      }
+      // 小窓の中の一覧も送る（画面の見え方だけで止まらない・2.8.147）
+      if (hit0) _scrollIntoScrollParent(hit0);
     } catch (_) {}
     try { if (_audit) _auditStepP("station_scroll_clear", String(cb0.value || "").slice(0, 24) + " 残" + cbs.length); } catch (_) {}
     _toggleCheckboxLikeHuman(cb0, false);
@@ -7108,11 +7099,7 @@
       });
       if (!visLeft) return 0;
       try {
-        visLeft.hit.scrollIntoView({
-          behavior: Math.random() < 0.8 ? "smooth" : "auto",
-          block: Math.random() < 0.75 ? "center" : "nearest",
-          inline: "nearest",
-        });
+        _scrollIntoScrollParent(visLeft.hit);
       } catch (_) {}
       _toggleCheckboxLikeHuman(visLeft.cb, false);
       return 1;
@@ -7120,13 +7107,8 @@
     var cb0 = cbs[0];
     var hit0 = _labelForCheckbox(cb0) || cb0;
     try {
-      if (hit0 && hit0.scrollIntoView) {
-        hit0.scrollIntoView({
-          behavior: Math.random() < 0.8 ? "smooth" : "auto",
-          block: Math.random() < 0.75 ? "center" : "nearest",
-          inline: "nearest",
-        });
-      }
+      // 小窓の中の一覧も送る（画面の見え方だけで止まらない・2.8.147）
+      if (hit0) _scrollIntoScrollParent(hit0);
     } catch (_) {}
     _toggleCheckboxLikeHuman(cb0, false);
     return 1;
@@ -8058,6 +8040,44 @@
     else stepWard();
   }
   /**
+   * 外しの持ち主（世代）。外す係（区・駅）は始めた時の世代を持ち、世代が変わったら押すのをやめる。
+   * ★ 2026-11-20 (2.8.147) 竹内さん「外し方も入れるのと同じようにちゃんと１つずつ」「つまらないようにする」:
+   *   実測 #1558: 送付後の外しは 120秒で done を返しても中の区の外しが走り続け、次客の入力の外しと同じ小窓で押し合っていた
+   *   （1区目の途中で一覧が消え、7区とも hidden_press・外れず）。→ 外しは同時に1つだけ。引き継いだら古い外しは止める。
+   */
+  var _clearGen = 0;
+  function _clearGenStale(gen) { return gen != null && gen !== _clearGen; }
+  /**
+   * 次客の入力は、送付後の外しが終わるまで待ってから自分の外しを始める（順番に1つずつ）。
+   * 60秒で終わらなければ送付後の外しを止めて（世代を進めて）入力側で外す。待っている間も詰まらない（必ず next）。
+   */
+  function _waitPostSendClearThen(next) {
+    var running = false;
+    try { running = !!window.__axlxPostSendClearRunning; } catch (_) { running = false; }
+    if (!running) { _clearGen++; next(); return; }
+    var t0 = Date.now();
+    try { if (_audit) _auditStepP("post_send_wait", "送付後の外しが終わるまで待ってから外す（同じ小窓で押し合わない）"); } catch (_) {}
+    (function poll() {
+      if (_axHumanTookOver) return;
+      var still = false;
+      try { still = !!window.__axlxPostSendClearRunning; } catch (_) { still = false; }
+      if (!still) {
+        try { if (_audit) _auditStepP("post_send_wait_done", Math.round((Date.now() - t0) / 100) / 10 + "秒待った"); } catch (_) {}
+        _clearGen++;
+        next();
+        return;
+      }
+      if (Date.now() - t0 > 60000) {
+        _clearGen++;
+        try { window.__axlxPostSendClearRunning = false; } catch (_) {}
+        try { if (_audit) _auditStepP("post_send_cancel", "送付後の外しが60秒終わらない→止めて入力側で外す"); } catch (_) {}
+        next();
+        return;
+      }
+      setTimeout(poll, 300);
+    })();
+  }
+  /**
    * ★ 2026-11-19 竹内さん「入れたのを覚えていたら外せるので、完了したらちゃんと外すようにすれば問題ない。順番に行えば」→ 統括Pro 案B:
    *   送付が終わったお客さんの結果ページで、台帳（入れた控え）と画面の残りを突き合わせ、次のお客さんの開始時と同じ「外す」手順
    *   （場所なしの客＝駅・沿線→区・町の順・カーソル経由・進捗型）で外し、`post_send_clear` を監査に残す。
@@ -8076,7 +8096,9 @@
       try { done(r); } catch (_) {}
     };
     var guard = setTimeout(function () {
-      try { if (_audit) _auditStepP("post_send_clear", "120秒終わらず→次客へ進む（fail-open）"); } catch (_) {}
+      // done を返すだけでなく中の外しも止める（次客の外しと押し合わない）
+      if (_clearGen === window.__axlxPostSendGen) _clearGen++;
+      try { if (_audit) _auditStepP("post_send_clear", "120秒終わらず→中の外しも止めて次客へ進む（fail-open）"); } catch (_) {}
       fin({ ok: false, left: -1, why: "timeout120" });
     }, 120000);
     try {
@@ -8086,6 +8108,7 @@
       if (busy) { fin({ ok: true, left: null, skipped: "fill_running" }); return; }
       if (window.__axlxPostSendClearRunning) { fin({ ok: true, left: null, skipped: "already_running" }); return; }
       window.__axlxPostSendClearRunning = true;
+      window.__axlxPostSendGen = ++_clearGen;
       var ledger = null;
       try { ledger = _ledgerLoad(); } catch (_) { ledger = null; }
       var s = _scanLeftoverForm();
@@ -8202,10 +8225,15 @@
       if (_audit) _auditStepP("station_clear_before_ward", "駅残" + left0.st + "・沿線残" + left0.ln + "→沿線・駅で1つずつ外して確定してから" + _why + "へ");
     } catch (_) {}
     var phase = "open", openedAt = 0, reopenN = 0, confirmedAt = 0;
-    if (!prog) { prog = _leftoverProgressNew(left0.st + left0.ln, clk.tick()); prog.clk = clk; }
+    if (!prog) { prog = _leftoverProgressNew(left0.st + left0.ln, clk.tick()); prog.clk = clk; prog.gen = _clearGen; }
     var altClosed = !prog.alt, altWaitUntil = 0;
+    var stale = false;
+    var _staleStop = function () {
+      try { if (_audit) _auditStepP("clear_cancelled", "駅・沿線の外し（" + _why + "）: 別の外しに引き継いだので押すのをやめる"); } catch (_) {}
+    };
     waitForClick(
       function () {
+        if (_clearGenStale(prog.gen)) { stale = true; return true; }
         try { if (isClickQueueBusy()) return false; } catch (_) {}
         var scr = null;
         try { scr = _graspStationModalScreen(); } catch (_) { scr = { kind: "unknown" }; }
@@ -8279,12 +8307,14 @@
         return true;
       },
       function () {
+        if (stale) { _staleStop(); return; }
         var l2 = _leftNow();
         try { if (_audit) _auditStepP("station_clear_before_ward_done", (phase === "fail_open" ? "開けず" : "完了") + " 残 駅" + l2.st + "・沿線" + l2.ln); } catch (_) {}
         _next();
       },
       160, 450, 300,
       function () {
+        if (stale || _clearGenStale(prog.gen)) { _staleStop(); return; }
         var l3 = _leftNow();
         try { if (_audit) _auditStepP("station_clear_before_ward_timeout", "外し切れず phase=" + phase + " 残 駅" + l3.st + "・沿線" + l3.ln + "→" + _why + "へ（検索前の関所で再確認）"); } catch (_) {}
         _next();
@@ -8442,18 +8472,32 @@
    *     見えない区は直接押さず、理由を ward_hidden_diag に残して開き直しの係（_clearWardsBeforeStationThen）に任せる。
    */
   function _clearWardsOneByOne(done, why) {
+    _clearChecksOneByOne('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked', done, why, "ward_clear_one");
+  }
+  /**
+   * チェックを1つずつ外す（区・町・間取り・ペット共通）。入れる時と同じく 送る→カーソルで押す→外れたか確かめる→次。
+   * pick: 外す候補の selector か、候補の配列を返す関数。tag: 点検の印の頭（ward_clear_one／clear_one）。
+   * 外しの持ち主が替わったら（_clearGen）押すのをやめて done（詰まらせない・親の係が自分で止まる）。
+   */
+  function _clearChecksOneByOne(pick, done, why, tag) {
     var t0 = Date.now();
+    var gen = _clearGen;
+    var tg = tag || "clear_one";
     var tries = {};
     var okN = 0, ngN = 0, hidN = 0;
     var _left = function () {
-      try { return Array.prototype.slice.call(document.querySelectorAll('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked')); } catch (_) { return []; }
+      try {
+        var arr = typeof pick === "function" ? pick() : document.querySelectorAll(String(pick));
+        return Array.prototype.slice.call(arr || []).filter(function (c) { return c && c.isConnected !== false && c.checked; });
+      } catch (_) { return []; }
     };
     var finish = function (how) {
-      try { if (_audit) _auditStepP("ward_clear_one_done", how + " 外した" + okN + "・外れず" + ngN + "・見えず" + hidN + "・残" + _left().length + "（" + (why || "前客") + "）"); } catch (_) {}
+      try { if (_audit) _auditStepP(tg + "_done", how + " 外した" + okN + "・外れず" + ngN + "・見えず" + hidN + "・残" + _left().length + "（" + (why || "前客") + "）"); } catch (_) {}
       try { done(); } catch (_) {}
     };
     var step = function () {
       if (_axHumanTookOver) return;
+      if (_clearGenStale(gen)) { finish("引き継ぎで中止"); return; }
       if (Date.now() - t0 > 90000) { finish("時間切れ"); return; }
       var left = _left();
       if (!left.length) { finish("完了"); return; }
@@ -8463,25 +8507,31 @@
         if ((tries[k] || 0) >= 2) continue;
         var l = null;
         try { l = _labelForCheckbox(left[i]) || left[i]; } catch (_) { l = left[i]; }
-        if (!isVisible(l)) {
-          if (!tries[k]) { hidN++; try { _auditHiddenWard(left[i], l === left[i] ? null : l); } catch (_) {} }
+        // 小窓の中の場所（区・町・駅・沿線）は見えない時に押さない。左の帯の欄（間取り等）は今まで通り押す（押す係がカーソルを当てる）
+        if (!isVisible(l) && /city_code|town_code|station_id|route_id/.test(String(left[i].name || ""))) {
+          if (!tries[k]) {
+            hidN++;
+            if (/city_code|town_code/.test(String(left[i].name || ""))) { try { _auditHiddenWard(left[i], l === left[i] ? null : l); } catch (_) {} }
+            else { try { if (_audit) _auditStepP(tg + "_hidden", String(left[i].name || "") + ":" + String(left[i].value || "").slice(0, 16) + " 見えないので押さない"); } catch (_) {} }
+          }
           tries[k] = 2;
           continue;
         }
         cb = left[i]; lb = l; tries[k] = (tries[k] || 0) + 1;
         break;
       }
-      if (!cb) { finish(hidN ? "見えない区だけ残る" : "外れない区だけ残る"); return; }
+      if (!cb) { finish(hidN ? "見えない物だけ残る" : "外れない物だけ残る"); return; }
       var code = String(cb.value || "");
       var nm0 = String(lb.textContent || "").replace(/\s+/g, "").slice(0, 16);
       var cont = _scrollIntoScrollParent(lb);
-      try { if (_audit) _auditStepP("ward_clear_one", nm0 + "(" + code + ") " + (cont ? "一覧を送って" : "") + "見せてから外す"); } catch (_) {}
+      try { if (_audit) _auditStepP(tg, nm0 + "(" + code + ") " + (cont ? "一覧を送って" : "") + "見せてから外す"); } catch (_) {}
       var w0 = Date.now();
       (function waitShown() {
         var shown = false;
         try { shown = !!_visibleHitPoint(lb, null); } catch (_) { shown = true; }
         if (!shown && Date.now() - w0 < 1500) { setTimeout(waitShown, 120); return; }
-        if (!shown) { try { if (_audit) _auditStepP("ward_clear_one_offscreen", nm0 + " 送っても押す点が見えない"); } catch (_) {} }
+        if (!shown) { try { if (_audit) _auditStepP(tg + "_offscreen", nm0 + " 送っても押す点が見えない"); } catch (_) {} }
+        if (_clearGenStale(gen)) { finish("引き継ぎで中止"); return; }
         _toggleCheckboxLikeHuman(cb, false, null, null, { quick: okN > 0 });
         whenClickQueueIdle(function () {
           var p0 = Date.now();
@@ -8490,7 +8540,7 @@
             try { off = !cb.isConnected || !cb.checked; } catch (_) { off = true; }
             if (!off && Date.now() - p0 < 2500) { setTimeout(poll, 120); return; }
             if (off) okN++; else ngN++;
-            try { if (_audit) _auditStepP(off ? "ward_clear_one_ok" : "ward_clear_one_ng", nm0 + "(" + code + ")"); } catch (_) {}
+            try { if (_audit) _auditStepP(off ? tg + "_ok" : tg + "_ng", nm0 + "(" + code + ")"); } catch (_) {}
             setTimeout(step, _ln(380, 0.35, 220, 800));
           })();
         });
@@ -8527,7 +8577,11 @@
     var prefPressedAt = 0;
     var wardBackTried = 0;
     var clk = (progArg && progArg.clk) || _activeClock();
-    if (!prog) { prog = _leftoverProgressNew(cityLeft, clk.tick()); prog.clk = clk; }
+    if (!prog) { prog = _leftoverProgressNew(cityLeft, clk.tick()); prog.clk = clk; prog.gen = _clearGen; }
+    var stale = false;
+    var _staleStop = function () {
+      try { if (_audit) _auditStepP("clear_cancelled", "区・町の外し（" + _why + "）: 別の外しに引き継いだので押すのをやめる"); } catch (_) {}
+    };
     var altClosed = !prog.alt, altWaitUntil = 0;
     var hiddenLeftSeen = false;
     var oneBusy = false;
@@ -8567,6 +8621,7 @@
     };
     waitForClick(
       function () {
+        if (_clearGenStale(prog.gen)) { stale = true; return true; }
         try { if (isClickQueueBusy()) return false; } catch (_) {}
         var cityNow = _wardLeft();
         var cityVis = Array.prototype.slice.call(document.querySelectorAll("label.one_city, label.one_town")).filter(isVisible);
@@ -8617,12 +8672,21 @@
               try { if (_audit) _auditStepP("ward_clear_open_retry", "所在地絞り込みが開かない→押し直す"); } catch (_) {}
             }
             openedAt = clk.tick() || 1;
-            if (!clickByText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"])) {
-              try {
-                var _arOp = _sidebarOpenerEl("所在地絞り込み", _SIDEBAR_OTHER_RE);
-                if (_arOp) _pressLearned(_arOp, ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_before_st");
-              } catch (_) {}
-            }
+            /**
+             * ★ 2.8.147: 左の帯の学んだ開き方（カーソル）を先に使う（駅の外しと同じ順）。
+             *   実測 #1558: 文字で探して押す形だけが先で「所在地絞り込みが開かない→押し直す」のまま止まっていた。
+             */
+            var _arOpened = false;
+            try {
+              var _arOp = _sidebarOpenerEl("所在地絞り込み", _SIDEBAR_OTHER_RE);
+              if (_arOp) {
+                try { _markPanelOpened("area", "ward_clear_open"); } catch (_) {}
+                _pressLearned(_arOp, ["左の所在地絞り込み", "所在地絞り込み＋"], "area_open_before_st");
+                _arOpened = true;
+              }
+            } catch (_) {}
+            if (!_arOpened) clickByText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"]);
+            try { if (_audit) _auditStepP("ward_clear_open", (_arOpened ? "左の帯の所在地絞り込みをカーソルで押す" : "文字で探して押す") + "（" + _why + "）"); } catch (_) {}
             return false;
           }
           if (clk.tick() - openedAt > 14000) {
@@ -8734,6 +8798,7 @@
         return true;
       },
       function () {
+        if (stale) { _staleStop(); return; }
         _finish(phase === "fail_open" ? "開けず" : "完了");
       },
       // 1区ずつ確かめながら外すので、区が多い時（7区など）も途中で時間切れにしない
@@ -8741,6 +8806,7 @@
       450,
       300,
       function () {
+        if (stale || _clearGenStale(prog.gen)) { _staleStop(); return; }
         try { if (_audit) _auditStepP("ward_clear_before_station_timeout", "外し切れず phase=" + phase); } catch (_) {}
         _finish("時間切れ");
       },
@@ -10987,6 +11053,12 @@
        *   外し終えたら「きれいか」を確かめてから新条件へ進む（残りがあれば場所は専用の外し・チェック類は外しをやり直す）。
        */
       var _rr = Number(_resetRound) || 0;
+      // 送付後の外しが走っていれば終わるまで待つ（外しは同時に1つだけ・_waitPostSendClearThen）
+      if (_rr === 0 && !(callback && callback.__axPsWaited)) {
+        try { if (callback) callback.__axPsWaited = true; } catch (_) {}
+        _waitPostSendClearThen(function () { _doReset(callback, 0); });
+        return;
+      }
       var _cb0 = callback;
       try {
         if (_rr === 0) {
@@ -11167,71 +11239,35 @@
             _auditStepP("clear_checks", _toUncheck.length);
             _clearedAny = true;
             var _needPanelConfirm = false;
-            _toUncheck.forEach(function (cb, idx) {
-              var hit = null;
+            _toUncheck.forEach(function (cb) {
               try {
                 var nm = String((cb && cb.getAttribute && cb.getAttribute("name")) || "");
                 if (/eq_rm|city_code|town_code/.test(nm)) _needPanelConfirm = true;
-                if (cb.id) {
-                  var lb = document.querySelector('label[for="' + String(cb.id).replace(/"/g, "") + '"]');
-                  if (lb) hit = lb;
-                }
-                if (!hit) hit = (cb.closest && cb.closest("label")) || cb.parentElement || cb;
-              } catch (_) { hit = cb; }
-              var lo = idx < 8 ? 420 : 180;
-              var hi = idx < 8 ? 980 : 420;
-              enqueueHumanClick(hit, function () {
-                try {
-                  if (cb && cb.isConnected && cb.checked) {
-                    if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", cb);
-                    try { _noteClearMethod(_intentDomainOfName(nm, cb), "cursor_checkbox", String(cb.value || nm || "").slice(0, 24)); } catch (_) {}
-                    if (hit && hit !== cb && hit.isConnected) {
-                      try { hit.click(); } catch (_) {}
-                    }
-                    // label が外すのが遅れる事がある: すぐ input も押すと戻ってしまうので、少し待って残っていた時だけ
-                    var _isLabel = !!(hit && hit !== cb && String(hit.tagName || "").toUpperCase() === "LABEL");
-                    if (!_isLabel) {
-                      if (cb.checked) { try { cb.click(); } catch (_) {} }
-                    } else {
-                      /**
-                       * ★ 2.8.136: 旧は 320ms 後に残っていれば input を直接押していた（カーソルの押す動き無し）。
-                       *   サイトの反応が遅い時は外れた後に押して付け直す恐れもある（実測 run_mwofi2sn_jbec で同じ区を3回押した記録）。
-                       *   → 2回確かめてから、カーソルの押す動き付きで1回だけ押し直す。
-                       */
-                      setTimeout(function () {
-                        try {
-                          if (!(cb.isConnected && cb.checked)) return;
-                          setTimeout(function () {
-                            try {
-                              if (!(cb.isConnected && cb.checked)) return;
-                              try { _auditStepP("clear_retry_press", String(cb.value || nm || "").slice(0, 24) + " ラベルで外れず→カーソルで押し直し"); } catch (_) {}
-                              try { _tapIfCursorOn(hit); } catch (_) {}
-                              cb.click();
-                            } catch (_) {}
-                          }, _ln(450, 0.3, 300, 800));
-                        } catch (_) {}
-                      }, 320);
-                    }
-                  }
-                } catch (_) {}
-              }, lo, hi);
+              } catch (_) {}
             });
             /**
-             * ★ 2026-11-17 通常正本 PET→CONFIRM / WARD→CONFIRM:
-             *   絞り込み条件・所在地を開いて外したあと、確定してリストへが無いと条件が残る／録画にも出ない。
-             *   → パネルを開いた系を外したら必ず確定を押してからセレクト外しへ。
+             * ★ 2026-11-20 (2.8.147) 竹内さん「外し方も入れるのと同じようにちゃんと１つずつおこなうように」:
+             *   旧は残りを全部まとめて順番待ちに積み（押す相手は label[for] 優先）、外れたかを確かめずに次を押していた。
+             *   → 入れる時と同じく1つずつ: 送る→カーソルで押す（_toggleCheckboxLikeHuman・押す相手は _labelForCheckbox）→外れたか確かめる→次。
              */
-            whenClickQueueIdle(function () {
-              // ★ 根本: 場当たり必押ではなくパネル負債清算（開いていれば確定／閉じていれば何もしない）
-              if (_needPanelConfirm || _axPanelDebt) {
-                _settlePanelDebtThen("前客クリア後のパネル清算", function () {
-                  try { if (_audit) _auditStepP("clear_panel_confirm", "外し後に確定してリストへ（負債清算）"); } catch (_) {}
-                  _next();
-                });
-                return;
-              }
-              _next();
-            });
+            _clearChecksOneByOne(function () { return _toUncheck; }, function () {
+              /**
+               * ★ 2026-11-17 通常正本 PET→CONFIRM / WARD→CONFIRM:
+               *   絞り込み条件・所在地を開いて外したあと、確定してリストへが無いと条件が残る／録画にも出ない。
+               *   → パネルを開いた系を外したら必ず確定を押してからセレクト外しへ。
+               */
+              whenClickQueueIdle(function () {
+                // ★ 根本: 場当たり必押ではなくパネル負債清算（開いていれば確定／閉じていれば何もしない）
+                if (_needPanelConfirm || _axPanelDebt) {
+                  _settlePanelDebtThen("前客クリア後のパネル清算", function () {
+                    try { if (_audit) _auditStepP("clear_panel_confirm", "外し後に確定してリストへ（負債清算）"); } catch (_) {}
+                    _next();
+                  });
+                  return;
+                }
+                _next();
+              });
+            }, "前客の残チェック", "clear_one");
           };
           /**
            * ★ 2026-11-16 細分化: 外す前に該当パネルを開く（間取り／沿線駅／所在地）。

@@ -19,7 +19,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.146";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.147";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
@@ -292,6 +292,26 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "1区ずつ: 小窓の一覧を送って見せる→カーソルで押す→外れたか確かめる→次",
     file: "page-script.js",
     verify: { onlyIf: ["page:ward_clear_one"], mustHave: "page:ward_clear_one_done" },
+  },
+  {
+    id: "clear_one_by_one",
+    scene: "clear",
+    text: "前のお客さんの間取り・ペットなどのチェックも、入れる時と同じく1つずつ外す（まとめて積まない）。カーソルで押して外れたのを確かめてから次へ",
+    since: "2.8.147",
+    kb: null,
+    marker: "入れる時と同じく1つずつ: 送る→カーソルで押す",
+    file: "page-script.js",
+    verify: { onlyIf: ["page:clear_one"], mustHave: "page:clear_one_done" },
+  },
+  {
+    id: "clear_single_owner",
+    scene: "clear",
+    text: "外しは同時に1つだけ。送付後の外しが走っていれば、次のお客さんの入力は終わるまで待ってから外す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古い外しは押すのをやめる",
+    since: "2.8.147",
+    kb: null,
+    marker: "外しは同時に1つだけ。引き継いだら古い外しは止める",
+    file: "page-script.js",
+    verify: { onlyIf: ["page:post_send_wait"], mustHaveAny: ["page:post_send_wait_done", "page:post_send_cancel"] },
   },
 ];
 

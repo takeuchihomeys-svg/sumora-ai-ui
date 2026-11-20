@@ -54,14 +54,16 @@ function makeSandbox(wards) {
   const A = require(path.join(EXT, "search-audit.js"));
   const fnAt = ps.indexOf("function _scrollIntoScrollParent(el)");
   const fnEnd = ps.indexOf("function _clearWardsBeforeStationThen(", fnAt);
-  const src = ps.slice(fnAt, fnEnd);
+  // 2.8.147: 外しの持ち主（_clearGen）も一緒に読む
+  const genSrc = "var _clearGen = 0;\nfunction _clearGenStale(gen) { return gen != null && gen !== _clearGen; }\n";
+  const src = genSrc + ps.slice(fnAt, fnEnd);
 
   console.log("■ ① 1区ずつ（送る→押す→確かめる→次）");
   ok("_clearWardsOneByOne がある", fnAt > 0 && /function _clearWardsOneByOne\(done, why\)/.test(src));
   ok("押す相手は選ぶ時と同じ _labelForCheckbox", /_labelForCheckbox\(left\[i\]\)/.test(src));
   ok("小窓の一覧の中で送る（_scrollIntoScrollParent）", /var cont = _scrollIntoScrollParent\(lb\)/.test(src));
   ok("中でスクロールする箱を探して scrollBy", /overflowY[\s\S]{0,120}scrollHeight > p\.clientHeight[\s\S]{0,400}cont\.scrollBy\(/.test(src));
-  ok("押した後は外れたか確かめる（ok/ng の印）", /ward_clear_one_ok/.test(src) && /ward_clear_one_ng/.test(src));
+  ok("押した後は外れたか確かめる（ok/ng の印）", /tg \+ "_ok" : tg \+ "_ng"/.test(src) && /_clearChecksOneByOne\([^)]*"ward_clear_one"\)/.test(src));
   ok("checked を直に書かない", !/\.checked\s*=(?!=)/.test(src));
 
   {
@@ -109,7 +111,7 @@ function makeSandbox(wards) {
   ok("時間切れを延ばした（220回）", /\/\/ 1区ずつ確かめながら外すので[^\n]*\n\s*220,/.test(before));
 
   console.log("■ 点検記録の上限で落とさない");
-  ok("page 側 _PIN に ward_clear_one・ward_hidden_diag", /var _PIN = [^\n]*ward_clear_one\|ward_hidden_diag\)/.test(ps));
+  ok("page 側 _PIN に ward_clear_one・ward_hidden_diag", /var _PIN = [^\n]*ward_clear_one\|ward_hidden_diag[|)]/.test(ps));
   ok("RULE_STEP に ward_clear_one", A.RULE_STEP.test("page:ward_clear_one") && A.RULE_STEP.test("page:ward_clear_one_done"));
   ok("KEEP_STEP に ng・done・diag", A.KEEP_STEP.test("page:ward_clear_one_ng") && A.KEEP_STEP.test("page:ward_hidden_diag") && A.KEEP_STEP.test("page:ward_clear_one_done"));
 
@@ -123,8 +125,9 @@ function makeSandbox(wards) {
 
   console.log("■ 版");
   const man = JSON.parse(read("manifest.json"));
-  ok("manifest 2.8.146", man.version === "2.8.146");
-  ok("_AXLX_PAGE_VER 2.8.146", /_AXLX_PAGE_VER = "2\.8\.146"/.test(ps));
+  const verGe = (v) => { const [a, b, c] = String(v).split(".").map(Number); return a > 2 || (a === 2 && (b > 8 || (b === 8 && c >= 146))); };
+  ok("manifest 2.8.146 以上", verGe(man.version), man.version);
+  ok("_AXLX_PAGE_VER 2.8.146 以上", verGe((ps.match(/_AXLX_PAGE_VER = "([\d.]+)"/) || [])[1]));
   ok("決まり ward_clear_one を済みに", /_AXLX_RULES_DONE[\s\S]{0,4000}"ward_clear_one"/.test(ps));
 
   console.log(`\n${pass} passed, ${fail} failed`);
