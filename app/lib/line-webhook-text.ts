@@ -136,6 +136,9 @@ export function getDb() {
   );
 }
 
+/** 入れ直しの通で下書きを作る古さの上限（2時間・統括役 11/21） */
+export const REPLAY_DRAFT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
 // ── conversation 取得 or 作成（共通）────────────────────────────────────
 export async function ensureConversation(
   db: ReturnType<typeof getDb>,
@@ -586,7 +589,11 @@ export async function handleTextMessage(
 
   // after() B: draft_pending_at設定 + bg-async直接トリガー
   // skipDraftTrigger=true のとき（スタンプ・同一会話の重複イベント等）は登録しない
-  if (!skipDraftTrigger) {
+  // 2026-11-21 作業員M（統括役の指摘②）: 貯めた本文の入れ直し（atIso あり）で、2時間より古いお客様の通には下書きを作らない
+  //   （その後にスタッフが返している事が多い・古い通への下書きは今の会話に合わない）。新しい通は今まで通り作る
+  const replayTooOld = !!atIso && Date.now() - Date.parse(atIso) > REPLAY_DRAFT_MAX_AGE_MS;
+  if (replayTooOld) console.log(JSON.stringify({ tag: "line-webhook:replay-no-draft", conversationId: convId, at: atIso }));
+  if (!skipDraftTrigger && !replayTooOld) {
     after(async () => {
       try {
         const { data: conv } = await db
