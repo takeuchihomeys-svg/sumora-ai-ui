@@ -123,7 +123,7 @@ export function promiseClosedConversation(status: string | null, msgs: ReadonlyA
 }
 
 /** 同じ番（次のお客様の発言まで）の後ろの通で、条件の用紙（AIX の「ご希望のお部屋探しご条件」）か「ご入力ください」を送った＝お客様の入力待ちの約束（dfa8a68f の形） */
-function inputWaitTurn(ms: ReadonlyArray<PdMsg>, j: number): boolean {
+export function promiseInputWaitTurn(ms: ReadonlyArray<PdMsg>, j: number): boolean {
   for (let x = j + 1; x < ms.length && ms[x].sender !== "customer"; x++) {
     const t = String(ms[x].text ?? "").normalize("NFKC");
     if (/ご希望のお部屋探しご条件|ご入力(?:ください|下さい|の程|をお願い|頂けますと)/.test(t)) return true;
@@ -139,7 +139,7 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
   const byKind = new Map<PromiseKindName, { at: string; text: string }>();
   for (let j = 0; j < ms.length; j++) {
     const m = ms[j];
-    if (m.sender !== "staff" || m.is_aix_generated || inputWaitTurn(ms, j)) continue;
+    if (m.sender !== "staff" || m.is_aix_generated || promiseInputWaitTurn(ms, j)) continue;
     const k = promiseKindNameOf(String(m.text ?? ""));
     if (!k || !PROMISE_KIND_JUDGEABLE.has(k)) continue;
     // 種類ごとに一番新しい約束1つ（果たす前の言い直しは新しい方にまとまる・果たした後の新しい約束も新しい方を見る）
@@ -176,7 +176,7 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   let promise: { at: string; kind: PdKind; text: string } | null = null;
   for (let j = 0; j < ms.length; j++) {
     const m = ms[j];
-    if (m.sender !== "staff" || m.is_aix_generated || inputWaitTurn(ms, j)) continue;
+    if (m.sender !== "staff" || m.is_aix_generated || promiseInputWaitTurn(ms, j)) continue;
     const k = promiseDropKindOf(String(m.text ?? ""));
     if (k) promise = { at: m.created_at, kind: k, text: String(m.text ?? "") };
   }
