@@ -12,7 +12,7 @@ const Q001_MARK = "〇〇さんお待たせ致しました！！\n天王寺周�
 const weak = (markerText: string, markerAt = "2026-09-19T10:56:49.102Z") => ({ exhausted: true, strength: "weak" as const, markerText, markerAt, reason: "" });
 const up = (turn: string, mark = Q001_MARK, env: Record<string, string> = ON) => areaAllExhaustUpgrade(weak(mark), turn, env).strength;
 
-it("既定 off", () => { eq(exhaustedAreaAllStrongOn({}), false); eq(exhaustedPickupReadyOn({}), false); eq(up("もう少し探していただけますか？", Q001_MARK, {}), "weak"); });
+it("既定 on（11/21）・=off で止める", () => { eq(exhaustedAreaAllStrongOn({}), true); eq(exhaustedPickupReadyOn({}), true); eq(exhaustedAreaAllStrongOn({ EXHAUSTED_AREA_ALL_STRONG: "off" }), false); eq(exhaustedPickupReadyOn({ EXHAUSTED_PICKUP_READY: "off" }), false); eq(up("もう少し探していただけますか？", Q001_MARK, { EXHAUSTED_AREA_ALL_STRONG: "off" }), "weak"); });
 it("印の形（周辺全域から・沿線全域から・エリア全域から）", () => {
   eq(AREA_ALL_PICKED_RE.test(Q001_MARK.normalize("NFKC")), true);
   eq(AREA_ALL_PICKED_RE.test("御堂筋線沿線全域から1K以上のお部屋ピックアップさせて頂きました！！"), true);
