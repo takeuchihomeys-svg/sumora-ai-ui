@@ -1,6 +1,6 @@
 // app/lib/customer-image-record-server.ts — お客様の画像の記録（customer_image_records）を書く（サーバー専用・LLM なし）
 //   2026-11-21 作業員G。形は customer-image-record.ts（純関数）・読みは customer-image-link（受け取った時の書き起こしだけ）。
-//   呼ぶ所: line-webhook の画像の後処理（読み取りの後・ブレインと並べて）。既定 off（CUSTOMER_IMAGE_RECORD=on）。
+//   呼ぶ所: line-webhook の画像の後処理（読み取りの後・ブレインと並べて）。既定 on（CUSTOMER_IMAGE_RECORD=off で止める）。
 //   失敗してもお客様への返信・ブレインは止めない（記録だけ）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { linkCustomerImage, type SentForLink } from "@/app/lib/customer-image-link";
