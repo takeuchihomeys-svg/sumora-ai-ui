@@ -54,6 +54,11 @@ export async function GET(req: NextRequest) {
 
   // 2026-10-28 竹内さんの決定: 24時間を過ぎた AIX要対応を1日1回知らせ直す（AIX_OVERDUE_REMIND=on の時だけ・既定 off・app/lib/aix-overdue-remind.ts）
   const overdue = aixOverdueRemindEnabled() ? await sendOverdueRemindOnce().catch((e) => { console.warn("[staff-todo] overdue remind:", e); return null; }) : null;
+  // 2026-11-21 作業員L: 約束の取りこぼし（約束から72時間を過ぎて物件・確認の結果が届いていない）を1日1回。PROMISE_DROP_WATCH=on の時だけ送る（既定は朝の記録だけ）
+  const promiseDrop = await import("@/app/lib/promise-drop-watch-server")
+    .then(({ sendPromiseDropOnce }) => sendPromiseDropOnce(supabase, (t) => pushToHanbancyoGroupWithId(t)))
+    .catch((e) => { console.warn("[staff-todo] promise drop:", e); return null; });
+  if (promiseDrop) console.log(JSON.stringify({ tag: "staff-todo:promise-drop", ...promiseDrop }));
 
   const list = await loadStaffTodoList(supabase, Date.now(), { deadlineAtMs });
   // 2026-11-03 統括の計画をほかの仕組みに渡す（conductor-priority.ts・PLAN_AHEAD_CONSUMERS=on・既定 off）: 並びは変えず、

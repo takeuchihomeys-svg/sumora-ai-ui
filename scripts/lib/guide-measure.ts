@@ -14,8 +14,8 @@ import { MAIN_ROUTE, type RouteNodeId } from "../../app/lib/apply-route-map";
 export type GMsg = { sender: string; text: string | null; created_at: string; staff_writer?: string | null; is_aix_generated?: boolean | null };
 export type GAix = { aix_type: string | null; sent_at: string | null; created_at: string };
 export type GDecision = { created_at: string; stage: string | null };
-export type Outcome = "advanced" | "stuck" | "back" | "left";
-export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
+export type Outcome = "advanced" | "engaged" | "stuck" | "back" | "left";
+export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
 
 /** customer-state の段階 → 地図の駅（apply-route-map の STAGE_TO_NODE と同じ・searching は pickup に寄せる） */
 const STAGE_NODE: Record<string, RouteNodeId | null> = {
@@ -75,15 +75,18 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const hours = endAt ? (Date.parse(endAt) - Date.parse(m.created_at)) / 36e5 : null;
     const replied = hours != null && hours <= windowH;
     const after = replied ? stageAt(endAt!, true) : before;
-    const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back" : "stuck";
-    out.push({ conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replied ? classifyCustomerBurst(reply) : "silent", hours: hours == null ? null : Math.round(hours * 10) / 10, outcome });
+    const replyCat = replied ? classifyCustomerBurst(reply) : "silent";
+    // 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は、駅が変わらなくても関わりが続いている形＝「止まった」と分ける（engaged）
+    const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back"
+      : before === "proposing" && replyCat === "question" ? "engaged" : "stuck";
+    out.push({ conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome });
   }
   return out;
 }
 
 export const FEW = 5;
-export type Cell = { n: number; advanced: number; stuck: number; back: number; left: number; few: boolean };
-const cell = (): Cell => ({ n: 0, advanced: 0, stuck: 0, back: 0, left: 0, few: true });
+export type Cell = { n: number; advanced: number; engaged: number; stuck: number; back: number; left: number; few: boolean };
+const cell = (): Cell => ({ n: 0, advanced: 0, engaged: 0, stuck: 0, back: 0, left: 0, few: true });
 /** ② 型の表: 駅 × 一手 × 返事の前の気持ちの型 → 結果の数（数の少ない組は few） */
 export function guideTable(turns: ReadonlyArray<GuideTurn>): Map<string, Cell> {
   const m = new Map<string, Cell>();

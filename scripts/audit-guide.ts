@@ -31,11 +31,11 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
     turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions));
   }
   const by = (o: string) => turns.filter((t) => t.outcome === o).length;
-  const summary = `誘導の物差し（${days}日・会話 ${convs.length}・竹内さん本人の番 ${turns.length}・駅が分かる番 ${turns.filter((t) => t.before).length}）: ${(["advanced", "stuck", "back", "left"] as const).map((o) => `${OUTCOME_JA[o]} ${by(o)}`).join("・")}`;
+  const summary = `誘導の物差し（${days}日・会話 ${convs.length}・竹内さん本人の番 ${turns.length}・駅が分かる番 ${turns.filter((t) => t.before).length}）: ${(["advanced", "engaged", "stuck", "back", "left"] as const).map((o) => `${OUTCOME_JA[o]} ${by(o)}`).join("・")}`;
   console.log(summary);
   const tab = [...guideTable(turns).entries()].filter(([k]) => k.endsWith("|*")).sort((a, b) => b[1].n - a[1].n).slice(0, 25);
   console.log("\n## ② 型の表（駅 × 一手 → 結果・上位25・少ない＝5番未満）");
-  for (const [k, c] of tab) console.log(`${k.replace(/\|\*$/, "").padEnd(44)} n=${String(c.n).padStart(3)} 進んだ ${c.advanced} 止まった ${c.stuck} 戻った ${c.back} 離れた ${c.left}${c.few ? "（少ない）" : ""}`);
+  for (const [k, c] of tab) console.log(`${k.replace(/\|\*$/, "").padEnd(44)} n=${String(c.n).padStart(3)} 進んだ ${c.advanced} 質問が返った ${c.engaged} 止まった ${c.stuck} 戻った ${c.back} 離れた ${c.left}${c.few ? "（少ない）" : ""}`);
   console.log("\n## ③ 先読みの数え表（一手 → 次の返事の型）");
   for (const [k, r] of [...reactionTable(turns).entries()].sort((a, b) => Object.values(b[1]).reduce((x, y) => x + y, 0) - Object.values(a[1]).reduce((x, y) => x + y, 0)).slice(0, 15)) console.log(`${k.padEnd(30)} ${Object.entries(r).sort((a, b) => b[1] - a[1]).map(([x, n]) => `${x} ${n}`).join("・")}`);
   if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify(turns.map((t) => ({ ...t, conv: t.conv.slice(0, 6) })), null, 1));
