@@ -4,6 +4,11 @@
 
 ---
 
+## 2026-11-20 拡張の版をそろえる: page-script の `_AXLX_PAGE_VER` を 2.8.132 → 2.8.133（manifest と同じ）
+- 理由: テストが「ページの版＝manifest の版」を確かめており、版を上げた時にページ側を揃え忘れていた（2.8.119 のまま残っていた箇所も確認）。
+- 結果: 拡張のテスト（tests/chrome-extension・199本）で ✗ を含むファイルが 87 → 79。残りは版ではない古い期待値（✗ 237件）。1件ずつ「コードが正しいか／テストが古いか」を決めてから直す（未着手）。
+- 過去の学習の束の名前除去（履歴 158 行）も本日実施（控えはリポジトリの外）。
+
 ## 2026-11-20 **拡張 2.8.133: 束に手順書（`playbook`）を載せて拡張が保存（`axlx_learn_playbook`）・束から名前を外す（段階名は残す）**（竹内さん「手順書は束の中に載せる」「入力内容として外す」「反映の流れ」）
 - 変更: `background.js` に `axlx_learn_playbook` を追加（束の `playbook` をそのまま保存・無ければ null）。`manifest.json` を 2.8.133 に。
 - サーバー（`app/api/human-learn-profile/route.ts`）: 束を作る時に `stripCustomerNames`（`app/lib/bundle-privacy.ts`）で「今の客:段階 〈名前〉」の名前を外し（件数は足す）、`buildPlaybook`（`app/lib/action-playbook.ts`）で `playbook` を作って束に入れる。
