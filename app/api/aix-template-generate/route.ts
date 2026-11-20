@@ -2589,7 +2589,7 @@ ${text}
             conditions_snapshot: {
               source: "aix-template-generate",
               // 2026-11-15 作業員K: 訴求の記録（appeal-record.ts・APPEAL_RECORD=shadow の時だけ・文と判断は変えない）。竹内さんの送った文と同じ欄で比べる（scripts/audit-appeal-record.ts）
-              ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai" }) } : {}),
+              ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai", feeling: (() => { const fr = ((brainMeta as Record<string, unknown> | null)?.feeling_conductor as { read?: { state?: string | null; hesitation?: string | null; strength?: number | null } } | undefined)?.read; return fr?.state ? { main: fr.state, sub: fr.hesitation ?? null, strength: fr.strength ?? null } : null; })() }) } : {}),
               // 2026-11-15 作業員K: 訴求の計画を読む側の1つ目（締め・APPEAL_PLAN_READ=on の時だけ・文と判断は変えない）。締めの判断（recommend-cta）から作った計画の強さ・狙う返事と、書けた文の強さ・狙う返事が同じかを残す
               //   読む側の2つ目（2通目の判断）: ブレインの訴求の判断（second-appeal-judge）があれば、推す点（first・second の文から読んだ話題）と締めを計画に入れ、書けた文の点と比べる
               ...(appealPlanReadOn() && (recCta || secondJudge) ? (() => {

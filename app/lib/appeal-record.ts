@@ -91,7 +91,7 @@ export function appealAimOf(text: string): NextDest {
   return "none";
 }
 
-export function appealRecordFromText(text: string, o: { surface: AppealSurface; writer: AppealWriter; wants?: ReadonlyArray<WantLite> | null; propertyKey?: string | null; latent?: { id?: string | null; top?: string | null } | null }): AppealRecord {
+export function appealRecordFromText(text: string, o: { surface: AppealSurface; writer: AppealWriter; wants?: ReadonlyArray<WantLite> | null; propertyKey?: string | null; latent?: { id?: string | null; top?: string | null } | null; feeling?: { main?: string | null; sub?: string | null; strength?: number | null } | null }): AppealRecord {
   const t = nf(text);
   const points = appealPointsOf(t);
   const wants = (o.wants ?? []).filter((w) => w && w.key);
@@ -110,7 +110,8 @@ export function appealRecordFromText(text: string, o: { surface: AppealSurface; 
     whyNow: WHY_NOW.filter(([, re]) => re.test(t)).map(([k]) => k),
     strength: appealStrengthOf(t),
     aim: appealAimOf(t),
-    feeling: null,
+    // 2026-11-21 作業員K2（#142・#100）: 気持ちはブレインの meta（feeling_conductor.read＝FEELING_CONDUCTOR_TABLE の既定 shadow の記録）から入れる。無ければ null（文からは読まない）
+    feeling: o.feeling?.main ? { main: String(o.feeling.main), sub: o.feeling.sub ? String(o.feeling.sub) : null, strength: Number(o.feeling.strength ?? 0) } : null,
     latent: o.latent?.id ? { id: String(o.latent.id), top: String(o.latent.top ?? "") } : null,
   };
 }
