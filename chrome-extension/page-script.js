@@ -845,6 +845,16 @@
         }, _ln(900, 0.4, 500, 1500));
       });
     };
+    /**
+     * ★ 2026-11-20 竹内さん「ちゃんと人間が動くような動きに」:
+     *   選んだ値が違った時、旧はすぐ値を直接書き換えていた（一覧を開かずに値だけ変わる）。
+     *   → 人と同じくもう1回開いて選び直す。それでも違う時だけ今まで通り直す（_verifySel）。
+     */
+    var _verifyOrRetry = function () {
+      if (_selMatchesWant(el, target)) return _verifySel(el, target);
+      try { if (_audit) _auditStepP("sel_retry_human", (el.getAttribute("name") || "?") + " 違う値→もう1回開いて選び直す"); } catch (_) {}
+      return openThenChoose().then(function () { return _verifySel(el, target); }, function () { return _verifySel(el, target); });
+    };
     if (P && P.moveToEl) {
       try { P.ensure(); } catch (_) {}
       /**
@@ -869,12 +879,12 @@
       };
       return _move().then(function () {
         if (P.tap) { try { P.tap(); } catch (_) {} }
-        return openThenChoose().then(function () { return _verifySel(el, target); });
+        return openThenChoose().then(_verifyOrRetry);
       }, function () {
-        return openThenChoose().then(function () { return _verifySel(el, target); });
+        return openThenChoose().then(_verifyOrRetry);
       });
     }
-    return openThenChoose().then(function () { return _verifySel(el, target); });
+    return openThenChoose().then(_verifyOrRetry);
   }
   /**
    * 2026-11-11 竹内さん「ちゃんと画面確認しながら動く」:
@@ -1816,10 +1826,24 @@
      *   旧は学び無しの時 `simulateClick` 直押し → カーソルも位置も残らない（人間らしさの穴）。
      *   → **学びが無くても必ずカーソル移動してから押す**（aim 無し＝要素内の変則点）。
      */
+    /**
+     * ★ 2026-11-20 竹内さん「ちゃんと人間が動くような動きに」:
+     *   旧は順番待ちの外で押し、カーソルが動いている間は「忙しい」に数えなかった（次の段と重なる）。
+     *   待ちの繰り返しから呼ばれると、開閉するボタン（所在地絞り込み等）を続けて2回押して閉じる事もあった。
+     *   → 動き始めから押し終わりまで _pressBusy に数える。同じ要素は1.6秒の間は押し直さない（clickByText と同じ）。
+     */
+    var _nowP = Date.now();
+    if (_lastPressEl === el && _nowP - _lastPressAt < 1600) return true;
+    _lastPressEl = el;
+    _lastPressAt = _nowP;
+    _pressBusy++;
+    _pressBusyAt = _nowP;
+    var _pdone = function () { _pressBusy = Math.max(0, _pressBusy - 1); };
     try {
-      _humanPointerClick(el, function () { simulateClick(el); }, aim || null);
+      var _pp = _humanPointerClick(el, function () { simulateClick(el); }, aim || null);
+      if (_pp && typeof _pp.then === "function") _pp.then(_pdone, _pdone); else _pdone();
       return true;
-    } catch (_) {}
+    } catch (_) { _pdone(); }
     try { simulateClick(el); } catch (_) { try { el.click(); } catch (_) {} }
     return true;
   }
@@ -2463,6 +2487,8 @@
       try { _cur = String(el.options[el.selectedIndex] && el.options[el.selectedIndex].textContent || "").replace(/\s+/g, ""); } catch (_) {}
       if (_cur.indexOf(String(text)) >= 0) {
         _auditStepP('sel_already', name + ' は既に「' + _cur + '」');
+        // ★ 2026-11-20: 表示がそのまま欲しい値なら開き直さない（人は選び済みの欄を開いて同じ物を選ばない）
+        if (_cur === String(text).replace(/\s+/g, "")) return;
       }
     } catch (_) {}
     _enqueueWithEl(el, function () { return chooseSelectLikeHuman(el, text, { forceOpen: true, aim: _aim2 }); },
@@ -2685,7 +2711,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.131";
+  var _AXLX_PAGE_VER = "2.8.132";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3307,10 +3333,11 @@
     try {
       if (!el.__axOccScrolled && !_visibleHitPoint(el, null)) {
         el.__axOccScrolled = 1;
-        try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" }); } catch (_) {}
+        // 一瞬で飛ばさず人の速さで送る（2026-11-20）。送り終わるのを待ってから押し直す
+        try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }); } catch (_) {}
         try { if (_audit) _auditStepP("press_hidden_scroll", String(_opLabel(el)).slice(0, 40) + " 押す点が隠れている→見える所まで送ってから押す"); } catch (_) {}
         return new Promise(function (res) {
-          setTimeout(function () { res(_humanPointerClick(el, fallbackFn, aim, tgtAt)); }, 380 + Math.floor(Math.random() * 220));
+          setTimeout(function () { res(_humanPointerClick(el, fallbackFn, aim, tgtAt)); }, 560 + Math.floor(Math.random() * 360));
         });
       }
       el.__axOccScrolled = 0;
@@ -4233,7 +4260,10 @@
     //   タイマーも列も空に見えた**ため、呼び出し側（waitForClick など）が「済んだ」と誤判定し、
     //   次の段が迷いと重なって進んだ後、迷いが終わった側が次の列を起こさず止まっていた。
     //   いま処理中の1件（_clickBusyItem）も「忙しい」に数える。
-    return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem || _holdingPause;
+    // ★ 2026-11-20: 順番待ちの外の押し（clickByText・simulateClick＝小窓を開く・次へ・区のボタン）も「忙しい」に数える。
+    //   旧は見えず、押している最中に次の段が始まりカーソルが重なっていた。数が残っても8秒で忙しくないとする（止まらない）。
+    var _pressing = _pressBusy > 0 && Date.now() - _pressBusyAt < 8000;
+    return _clickQueueTimer !== null || _clickQueue.length > 0 || !!_clickBusyItem || _holdingPause || _pressing;
   }
   function whenClickQueueIdle(cb, pollMs) {
     if (_axHumanTookOver) return;
@@ -4811,6 +4841,7 @@
     _scrollIntoViewSoft(hit);
     var gap = _afterClickGapMs(hit);
     _pressBusy++;
+    _pressBusyAt = Date.now();
     var _done = function () {
       _pressBusy = Math.max(0, _pressBusy - 1);
       _lastPressGapMs = gap;
@@ -4831,6 +4862,28 @@
    *   といったズレになる。→ **押し終わるまで待つ**関数を用意する（最大 ms で諦める）。
    */
   var _pressBusy = 0;
+  var _pressBusyAt = 0;
+  /**
+   * 順番待ちの外でカーソルを動かして押す時の共通の入口。動き始めから押し終わりまで「忙しい」に数え、
+   * 押し終わりで解ける Promise を返す（続けて押す時は、前の押しが終わってから次を動かす）。
+   */
+  function _pressHumanTracked(el, fn, aim) {
+    _pressBusy++;
+    _pressBusyAt = Date.now();
+    var fin = false;
+    var done = function () { if (fin) return; fin = true; _pressBusy = Math.max(0, _pressBusy - 1); };
+    var p = null;
+    try { p = _humanPointerClick(el, fn, aim || null); } catch (_) {
+      try { fn(el); } catch (__) {}
+      done();
+      return Promise.resolve(false);
+    }
+    if (p && typeof p.then === "function") {
+      return p.then(function (v) { done(); return v; }, function () { done(); return false; });
+    }
+    done();
+    return Promise.resolve(true);
+  }
 
   // ────────────────────────────────────────────────────────────────────
   // waitForClick: 要素が出るまでリトライして、成功したら onDone を呼ぶ
@@ -6045,12 +6098,15 @@
     if (!el) return;
     if (_axPressing === el) { return; } // 同じ要素を押している最中（再試行で重ねない）
     _pressBusy++;
+    _pressBusyAt = Date.now();
     var _done = function () { _pressBusy = Math.max(0, _pressBusy - 1); };
     var press = function () {
-      el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
+      try { el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window})); } catch (_) {}
       setTimeout(function() {
-        el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
-        el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
+        try {
+          el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
+          el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
+        } catch (_) {}
         if (_axPressing === el) _axPressing = null;
         _done();
       }, humanRand(40, 90, { allowShort: true }));
@@ -6192,7 +6248,8 @@
           }
           // 直書き禁止: まだ合わなければ input.click をもう1回だけ
           try { cb.click(); } catch (_) {}
-          return _settleChk(240);
+          // ★ 2026-11-20: 2回目の後は長めに待つ（遅れて反映するサイトで3回目を重ねて元に戻さない）
+          return _settleChk(420);
         }).then(function (ok2) {
           if (ok2) return true;
           /**
@@ -6201,12 +6258,15 @@
            */
           if (typeof simulateClick === "function") {
             try { simulateClick(hit && hit.isConnected ? hit : cb); } catch (_) {}
-            return _settleChk(320);
+            return _settleChk(480);
           }
           return false;
         }).then(function () {
-          // ★ 土台: 効いたか検証（押したつもりで終わらせない）
-          try { _verifyCheckboxUnderstood(cb, wantOn, _domain); } catch (_) {}
+          /**
+           * ★ 土台: 効いたか検証（押したつもりで終わらせない）
+           * ★ 2026-11-20: ここでは見るだけ（押さない）。旧は4回目を押してすぐ読み、遅れて反映する所で元に戻していた
+           */
+          try { _verifyCheckboxUnderstood(cb, wantOn, _domain, true); } catch (_) {}
           return true;
         }, function () { return true; });
       } catch (_) {}
@@ -6308,13 +6368,17 @@
    * チェック欄: 押したあと want と now が一致したか。一致しなければ1回だけリトライして理解を確定。
    * @returns {boolean} 理解できた（効いた）
    */
-  function _verifyCheckboxUnderstood(cb, wantOn, domain) {
+  function _verifyCheckboxUnderstood(cb, wantOn, domain, lookOnly) {
     if (!cb) return false;
     var now = false;
     try { now = !!cb.checked; } catch (_) { return false; }
     if (now === !!wantOn) {
       _noteIntentUnderstood(domain || _intentDomainOfName(cb.name, cb), wantOn ? "select" : "clear", true, String(cb.value || cb.name || "").slice(0, 24));
       return true;
+    }
+    if (lookOnly) {
+      _noteIntentUnderstood(domain || _intentDomainOfName(cb.name, cb), wantOn ? "select" : "clear", false, "3手後も now=" + now + " want=" + wantOn + "（押し足さない）");
+      return false;
     }
     // もう1回だけ（理解できていない＝効いていない）
     try {
@@ -9358,9 +9422,10 @@
         if (!_inVNow()) {
           btn.__axSearchViewTries = (Number(btn.__axSearchViewTries) || 0) + 1;
           if (btn.__axSearchViewTries <= 6) {
-            try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (_) {}
+            // 一瞬で飛ばさず人の速さで送る（2026-11-20）。送り終わるのを待ってから見直す
+            try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }); } catch (_) {}
             try { _auditStepP("search_wait_view", "検索が画面の外 → 出てから押す（" + btn.__axSearchViewTries + "回目）"); } catch (_) {}
-            setTimeout(function () { _pressSearchBtn(btn); }, 300);
+            setTimeout(function () { _pressSearchBtn(btn); }, 520 + Math.floor(Math.random() * 380));
             return false;
           }
         } else {
@@ -9374,6 +9439,7 @@
         var _vh0 = window.innerHeight || 800;
         var _vw0 = window.innerWidth || 1200;
         if (_rr0.bottom < 0 || _rr0.top > _vh0 || _rr0.right < 0 || _rr0.left > _vw0) {
+          // ⚠ ここは直後に押すので instant のまま（smooth だと動いている途中の位置を狙う）。上の6回の待ちを抜けた時だけ通る
           try { btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (_) {
             try { btn.scrollIntoView(true); } catch (__) {}
           }
@@ -11998,11 +12064,8 @@
              *   → `_humanPointerClick` で**カーソルをその要素まで動かしてから**押す。
              *     ⚠ 失敗しても必ず押す（止まらない）。`simulateClick` はその中で使う。
              */
-            try {
-              _humanPointerClick(btnEl, function () { try { simulateClick(btnEl); } catch (_) {} });
-            } catch (_) {
-              try { simulateClick(btnEl); } catch (_) {}
-            }
+            // 動いている間も「忙しい」に数える（上の _pressBusy の確かめで、動いている途中に押し直さない・2026-11-20）
+            _pressHumanTracked(btnEl, function () { try { simulateClick(btnEl); } catch (_) {} });
             if (_audit) _auditStepP('ward_next_press', 'next_step_button2');
             console.log('[AX] clickNextStepBtn: Y確認→カーソル移動してクリック (試行=' + nextBtnAttempts + ')');
           } else if (!isY) {
@@ -12035,39 +12098,35 @@
            *   旧は checked→deselect を `wTarget.click()` 直押し（カーソル無し＝人間らしさの穴・トグル誤作動の温床）。
            *   → 外す時もカーソル移動してから押す。
            */
-          if (wInp && wInp.checked) {
-            try {
-              _humanPointerClick(wTarget, function () { try { wTarget.click(); } catch (_) {} });
-            } catch (_) {
-              try { wTarget.click(); } catch (_) {}
-            }
-            console.log('[AX] ensureWardButtonY: checked→カーソルでdeselect 待機');
-          }
-          setTimeout(function() {
-            /**
-             * ★ 2026-11-15 竹内さん「ちゃんと人間の動きでできるようにする」
-             *   ⚠ 旧は `simulateClick(wTarget)` を直に呼んでいた（カーソルは動かない）。
-             *   → カーソルを動かしてから押す（失敗しても必ず押す）。
-             *     ⚠ 押した直後の 400ms 待機は**そのまま**（Y確認の間）。
-             */
-            try {
-              _humanPointerClick(wTarget, function () { try { simulateClick(wTarget); } catch (_) {} });
-            } catch (_) {
-              try { simulateClick(wTarget); } catch (_) {}
-            }
-            console.log('[AX] ensureWardButtonY: カーソル移動→クリック→select 400ms待機');
+          /**
+           * ★ 2026-11-20 竹内さん「ちゃんと人間が動くような動きに」:
+           *   旧は外す押しのカーソルが動き始めてから 240〜400ms で選ぶ押しを始めていた（2つのカーソルの動きが重なる）。
+           *   → 外す押しが終わってから間を置いて選ぶ押しへ。選ぶ押しが終わってから Y を確かめる。
+           */
+          var _selectStep = function () {
             setTimeout(function() {
-              if (isWardButtonY()) {
-                console.log('[AX] ensureWardButtonY: Y確認 → callback');
-                callback();
-              } else {
-                waitForClick(isWardButtonY, callback, 15, 300, 240 + Math.floor(Math.random() * 160), function() {
-                  console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
-                  callback();
-                });
-              }
-            }, 320 + Math.floor(Math.random() * 200));
-          }, 240 + Math.floor(Math.random() * 160));
+              _pressHumanTracked(wTarget, function () { try { simulateClick(wTarget); } catch (_) {} }).then(function () {
+                console.log('[AX] ensureWardButtonY: カーソル移動→クリック→select 待機');
+                setTimeout(function() {
+                  if (isWardButtonY()) {
+                    console.log('[AX] ensureWardButtonY: Y確認 → callback');
+                    callback();
+                  } else {
+                    waitForClick(isWardButtonY, callback, 15, 300, 240 + Math.floor(Math.random() * 160), function() {
+                      console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
+                      callback();
+                    });
+                  }
+                }, 320 + Math.floor(Math.random() * 200));
+              });
+            }, 240 + Math.floor(Math.random() * 160));
+          };
+          if (wInp && wInp.checked) {
+            console.log('[AX] ensureWardButtonY: checked→カーソルでdeselect 待機');
+            _pressHumanTracked(wTarget, function () { try { wTarget.click(); } catch (_) {} }).then(_selectStep);
+          } else {
+            _selectStep();
+          }
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック

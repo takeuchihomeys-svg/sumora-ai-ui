@@ -818,7 +818,9 @@
         // 全件キャプチャ完了 → background.jsに渡す（Blobアップ→merge→LINE送信）
         if (!captured.length) {
           finalizeSend();
-          alert("PDFが1件も取得できませんでした");
+          // ★ 2026-11-20: 自動の回（onComplete あり）は alert を出さない。alert は人が OK を押すまでページを止め、次のお客さんへ進めなくなる
+          if (onComplete) console.warn("[AXLX itandi] PDFが1件も取得できませんでした → 0件として次へ");
+          else alert("PDFが1件も取得できませんでした");
           lineBtn.disabled    = false;
           lineBtn.textContent = lineOrig;
           if (onComplete) onComplete(false, 0); // バッチハング防止: axlx-batch-customer-done を確実に送る
@@ -870,7 +872,8 @@
           lineBtn.disabled    = false;
           if (chrome.runtime.lastError || !resp || !resp.ok) {
             var errMsg = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
-            alert("LINE送信エラー:\n" + errMsg);
+            if (onComplete) console.warn("[AXLX itandi] LINE送信エラー → 次へ: " + errMsg);
+            else alert("LINE送信エラー:\n" + errMsg);
             lineBtn.textContent = lineOrig;
             if (onComplete) onComplete(false, 0);
             return;

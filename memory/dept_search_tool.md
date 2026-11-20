@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.132: 2.8.131 の「まだ直していない」を片付ける（列の外の押し・選び直し・一瞬のスクロール・重ね押し・連続の止まり）**（竹内さん「改善して完了させる 自動モード完成するまで改善する テストして完全なものをつくる 統括proおねがい」）
+- ⚠ DB（Supabase）はまだ答えない（`/rest/v1`・`/auth/v1/health` が15秒で時間切れ・`/storage/v1/status` は200＝入口は生きていて Postgres が止まっている）。下はコードの経路の直しで、**回数は DB で確かめていない**。統括Pro も DB の事前点検で止まる。
+- **押しを1つずつ**: `_pressLearned`・`clickNextStepBtn`・`ensureWardButtonY`・`clickByText`・`simulateClick` の「列の外の押し」を `_pressBusy`（＋`_pressBusyAt`・8秒で忘れる）で数え、`isClickQueueBusy` が見る（見張り・次の段が押している最中に動かない）。新しい `_pressHumanTracked`（カーソルで押して終わるまで数える・失敗でも必ず戻す）。`ensureWardButtonY` は固定の時間を重ねず「外す→待つ→選ぶ→待つ→確かめ」を押し終わってから順に。同じ物を1.6秒以内に押し直さない（`_pressLearned`）。カーソルの動きは取り消されても Promise が返る（`pointer-ui.js` `moveTo` は cancelled で resolve(false)）ので止まらない。
+- **プルダウン**: `queueSelValText` は表示がそのまま欲しい値なら開き直さない。選んだ値が違った時は値を直接書き換える前に**もう1回開いて選び直す**（`sel_retry_human`）。それでも違う時だけ今まで通り（`sel_fix`）。
+- **スクロール**: 検索が画面外の時（`search_wait_view`）と押す点が隠れている時（`press_hidden_scroll`）を `instant`/`auto` → `smooth`（待ちを 520〜900ms・560〜920ms に）。直後に押す最後の保険の1か所だけ `instant` のまま（smooth だと動いている途中を狙う）。
+- **チェック欄**: `_toggleCheckboxLikeHuman` の最後の確かめ（`_verifyCheckboxUnderstood`）が4回目を押してすぐ読み、遅れて反映する所で元に戻していた → ここでは見るだけ（`lookOnly`・`toggle_fail` に「3手後も…押し足さない」）。2回目・3回目の後の待ちを 240→420・320→480ms。
+- **連続のお客さん**: `property-customers` の一覧の取得を3回まで取り直す（`_fetchCustomerListWithRetry`・2.5秒→6秒・1回25秒まで・4xx は取り直さない）。手動の一括・バッチ・スクレイプの3か所。一連ロック（`axlx_pipeline_job`）は検索が終わって送付へ入る時に `touchedAt` を付けて延ばす（最後の進みから12分・開始から30分で必ず切れる）。popup（`_axPipelineExpired`）と background（`_pipelineJobLive`・3か所）で同じ決まり。
+- **ITANDI**: 自動の回（onComplete あり）で「PDFが1件も取得できませんでした」「LINE送信エラー」を `alert` で出していた → 人が OK を押すまでページが止まり次のお客さんへ進めなかった。自動の回は console だけ（完了の合図は今まで通り）。終わりの合図（`axlx-batch-customer-done`）は全経路で出ているのを確かめた。
+- **まだ（次）**: `human_takeover` で一括全体が止まる件（竹内さんの決定 2.8.128 なので変えていない）。DB が戻ったら `sel_retry_human`・`toggle_fail`・`hidden_press`・`waiter_timeout` を数える。
+- テスト `human-serial-v2832.test.js`（32件・模型で押しの数・取り直し・ロックの切れ方を確かめる）。全199本を変えた5ファイルだけ HEAD に戻した控えと比べて新しく落ちたテスト0（前から落ちている物の ✗ も増えていない）。tsc 0。
+
+---
+
 ## 2026-11-20 04:00 **拡張 2.8.131: 機械的な押し方と、連続のお客さんが止まる・取り違える穴をまとめて塞ぐ**（竹内さん「ほかにも今弱い部分やバグ抜けている部分は徹底的に強化する ちゃんと人間が動くような動きになるように テストも繰り返して連続でお客さんちゃんと検索できるようにするように」）
 - ⚠ DB（Supabase）は 04:00 も答えない（15秒で時間切れ）。下はコードを読んで経路を確かめた物で、**起きた回数は DB で確かめていない**。DB が戻ったら下の段の名前で数える。
 - 作業員2人に読むだけの点検を頼んだ（機械的な押し方 31件・連続のお客さんの穴 19件）。影響が大きい物から直した。

@@ -3578,10 +3578,29 @@ var _aiAutoSearchMemo = {};   // "customerId|site" → 押した時刻
  *   検索開始〜物件送付完了まで **今のお客さんだけ**。次客の自動検索・切替検索は拒否する。
  */
 var AX_PIPELINE_TTL_MS = 12 * 60 * 1000;
-var _axPipelineJob = null; // { customerId, name, startedAt, site }
+/**
+ * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+ *   旧は開始から 12 分で必ず切れ、ページの多い客の送付中に次客が割り込めた。
+ *   → 進んでいる印（検索が終わって送付へ）が来たら時計を延ばす。ただし開始から 30 分で必ず切れる（止まったままを残さない）。
+ */
+var AX_PIPELINE_HARD_MS = 30 * 60 * 1000;
+var _axPipelineJob = null; // { customerId, name, startedAt, site, touchedAt? }
+function _axPipelineExpired(job) {
+  if (!job) return true;
+  var st = Number(job.startedAt || 0);
+  var last = Math.max(st, Number(job.touchedAt || 0));
+  var now = Date.now();
+  return (now - last > AX_PIPELINE_TTL_MS) || (now - st > AX_PIPELINE_HARD_MS);
+}
+function _axPipelineTouch(reason) {
+  if (!_axPipelineJob) return;
+  _axPipelineJob.touchedAt = Date.now();
+  try { chrome.storage.local.set({ axlx_pipeline_job: _axPipelineJob }); } catch (_) {}
+  console.log("[AX] 一連ロック延長（" + (reason || "progress") + "）: " + (_axPipelineJob.name || _axPipelineJob.customerId));
+}
 function _axPipelineActive() {
   if (!_axPipelineJob) return null;
-  if (Date.now() - Number(_axPipelineJob.startedAt || 0) > AX_PIPELINE_TTL_MS) {
+  if (_axPipelineExpired(_axPipelineJob)) {
     console.warn("[AX] 一連ロック TTL切れ → 解除（" + (_axPipelineJob.name || _axPipelineJob.customerId) + "）");
     _axPipelineJob = null;
     try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
@@ -3643,7 +3662,7 @@ function _axPipelineSyncFromStorage() {
           resolve(null);
           return;
         }
-        if (Date.now() - Number(job.startedAt || 0) > AX_PIPELINE_TTL_MS) {
+        if (_axPipelineExpired(job)) {
           _axPipelineJob = null;
           try { chrome.storage.local.remove("axlx_pipeline_job"); } catch (_) {}
           resolve(null);
@@ -6972,6 +6991,7 @@ document.addEventListener("DOMContentLoaded", () => {
             btn.disabled = false;
             try { _axPipelineClear("fill-done error"); } catch (_) {}
           } else if (_axPipelineActive()) {
+            try { _axPipelineTouch("search-done→送付"); } catch (_) {}
             btn.textContent = "📬 物件送付中...";
             btn.classList.add("searching");
             btn.disabled = true;

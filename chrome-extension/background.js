@@ -4047,7 +4047,7 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
         _watchStop = null;
         _watchSkipped = [];
         _busyRetried = new Set(); // 2.8.128 busy_other_customer のやり直し済みは一括ごとに作り直す
-        var _bulkRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+        var _bulkRes = await _fetchCustomerListWithRetry("https://sumora-ai-ui.vercel.app/api/property-customers", "manual-bulk");
         if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
         var _bulkAll = await _bulkRes.json();
         var _bulkTargets = _bulkIds
@@ -7089,7 +7089,7 @@ async function _runBatchSearch(command) {
   if (command.command_type === "property_scrape") {
     await _updateBatchCommand(command.id, { status: "running" });
     try {
-      var scrapeCustomersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
+      var scrapeCustomersRes = await _fetchCustomerListWithRetry(SUMORA_BATCH_API + "/api/property-customers", "scrape");
       if (!scrapeCustomersRes.ok) throw new Error("顧客データ取得失敗");
       var scrapeAllCustomers = await scrapeCustomersRes.json();
       var scrapeCustomer = Array.isArray(scrapeAllCustomers) && command.customer_ids && command.customer_ids.length > 0
@@ -7105,7 +7105,7 @@ async function _runBatchSearch(command) {
   }
 
   // ── 通常バッチ検索（既存処理）────────────────────────────────────────────
-  var customersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
+  var customersRes = await _fetchCustomerListWithRetry(SUMORA_BATCH_API + "/api/property-customers", "batch");
   if (!customersRes.ok) throw new Error("顧客データ取得失敗");
   var allCustomers = await customersRes.json();
 
@@ -7730,7 +7730,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
           _lockJob = _lk && _lk.axlx_pipeline_job;
         } catch (_) { _lockJob = null; }
         var _lockOther = !!(_lockJob && _lockJob.customerId && String(_lockJob.customerId) !== String(_cidStr)
-          && Date.now() - Number(_lockJob.startedAt || 0) < 12 * 60 * 1000);
+          && _pipelineJobLive(_lockJob));
         if (_lockOther) {
           _hd = (Date.now() - _waitT0) < (_H ? _H.OTHER_FILL_WAIT_MS : 10 * 60 * 1000) ? "wait" : "give_up";
           _pv = Object.assign({}, _pv, { fillCustomerId: _lockJob.customerId });
@@ -7859,7 +7859,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
           _busyJob = _bj && _bj.axlx_pipeline_job;
         } catch (_) { _busyJob = null; }
         if (_busyJob && _busyJob.customerId && String(_busyJob.customerId) !== String(_cidStr)
-            && Date.now() - Number(_busyJob.startedAt || 0) < 12 * 60 * 1000) {
+            && _pipelineJobLive(_busyJob)) {
           _auditStep(_runId, "pipeline_busy_other", "別客の一連が進行中→上書きせず見送り cid=" + String(_busyJob.customerId).slice(0, 8));
           _endFillDoneWaiter("realnetpro", _cidStr, "別客の一連が進行中");
           throw new Error("AXLX_OTHER_FILL_RUNNING: 別のお客さんの検索〜送付が進行中のため、上書きせず見送ります");
@@ -7985,7 +7985,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         _itBusyJob = _itBj && _itBj.axlx_pipeline_job;
       } catch (_) { _itBusyJob = null; }
       if (_itBusyJob && _itBusyJob.customerId && String(_itBusyJob.customerId) !== String(customer && customer.id)
-          && Date.now() - Number(_itBusyJob.startedAt || 0) < 12 * 60 * 1000) {
+          && _pipelineJobLive(_itBusyJob)) {
         throw new Error("AXLX_OTHER_FILL_RUNNING: 別のお客さんの検索〜送付が進行中のため、上書きせず見送ります");
       }
       console.warn("[batchAutofill] itandi: pipeline_busy（storage は空）→ 再送");
@@ -8209,6 +8209,43 @@ function _buildBatchConditions(c, isWide, opts) {
  * @param {string} site サイト名（印を出す時の文言用）
  * @returns {Promise<object|null>} 読み直した顧客（失敗時は元の物）
  */
+/**
+ * ★ 2026-11-20 竹内さん「連続でお客さんちゃんと検索できるように」:
+ *   顧客一覧（/api/property-customers）は1回失敗すると一括・バッチ全体が「顧客データ取得失敗」で止まっていた
+ *   （Vercel の起き上がり・DB が一瞬重い時）。→ 最大3回・間を空けて取り直す。待ちは1回 25 秒まで。
+ *   ⚠ 4xx（要求の誤り）は取り直さない。
+ */
+/** 一連ロック（axlx_pipeline_job）が生きているか。popup.js の _axPipelineExpired と同じ決まり（最後の進みから12分・開始から30分で必ず切れる） */
+function _pipelineJobLive(job) {
+  if (!job) return false;
+  var st = Number(job.startedAt || 0);
+  var last = Math.max(st, Number(job.touchedAt || 0));
+  var now = Date.now();
+  return now - last < 12 * 60 * 1000 && now - st < 30 * 60 * 1000;
+}
+
+async function _fetchCustomerListWithRetry(url, tag) {
+  var lastErr = null;
+  for (var _t = 1; _t <= 3; _t++) {
+    try {
+      var _opt = { cache: "no-store" };
+      try { if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) _opt.signal = AbortSignal.timeout(25000); } catch (_) {}
+      var r = await fetch(url, _opt);
+      if (r.ok) {
+        if (_t > 1) console.log("[customers] " + (tag || "") + " " + _t + "回目で取れました");
+        return r;
+      }
+      lastErr = new Error("顧客データ取得失敗（HTTP " + r.status + "）");
+      if (r.status >= 400 && r.status < 500) break;
+    } catch (e) {
+      lastErr = e;
+    }
+    console.warn("[customers] " + (tag || "") + " 顧客一覧の取得 " + _t + "回目失敗 → " + (_t < 3 ? "取り直します" : "あきらめます"), String(lastErr && lastErr.message || lastErr));
+    if (_t < 3) await new Promise(function (res) { setTimeout(res, _t === 1 ? 2500 : 6000); });
+  }
+  throw (lastErr instanceof Error) ? lastErr : new Error("顧客データ取得失敗");
+}
+
 async function _refreshCustomerBeforeSearch(c, site) {
   try {
     if (!c || c.id == null) return c;
