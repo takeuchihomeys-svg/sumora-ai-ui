@@ -40,7 +40,7 @@ export const DELIVERY_FIELDS: readonly DeliveryField[] = [
   { key: "fact_source", label: "答えに使う事実の出所（会話・資料・会社の事実）", value: (m) => { const a = asks(m).find((x) => FACT_BASES.has(String(x.basis)) && str(x.answer)); return a ? BASIS_JA[String(a.basis)] : null; },
     wiring: { compose: "c", writer: "c", aix1: "b", aix2: "b" }, why: "答えの値は本質の帯に出るが、出所（basis）は帯の文に書かれない＝書き手はどの事実で答えるかを知らない" },
   { key: "our_side", label: "こちら側の状態（もう送った・約束した・確かめ済み）", value: (m) => { const t = str(m.our_side_note, 400); return t ? t.split("\n").map((x) => x.trim()).filter(Boolean)[0] ?? null : null; },
-    wiring: { compose: "d", writer: "d", aix1: "b", aix2: "b" }, why: "OUR_SIDE_TO_COMPOSE が既定 off（on なら設計図の注記に届く）" },
+    wiring: { compose: true, writer: true, aix1: "b", aix2: "b" }, why: "設計図の注記で書き手に届く（11/21 から OUR_SIDE_TO_COMPOSE 既定 on・=off で止まる）。AIX の統括・2通目へは渡す配線が無い" },
   { key: "latent_feeling", label: "潜在の気持ち（どんな気持ちで）", value: (m) => str(obj(obj(m.latent_read)?.feeling)?.what, 30) ?? str(obj(obj(obj(m.turn_read)?.latent)?.feeling)?.what, 30) ?? str(obj(m.three_layer)?.worry, 40),
     wiring: { compose: true, writer: true, aix1: "b", aix2: "c" }, why: "設計図の注記（潜在・奥の心配）で届く。欄は BRAIN_SEVEN_FIELDS・TURN_READ=on の時だけ濃い。2通目の訴求の判断は latent_intent だけ読む" },
   { key: "latent_kind", label: "潜在の下の種類（審査・先に取られる・費用・入居日…）", value: (m) => { const w = str(obj(obj(m.latent_read)?.feeling)?.what, 60) ?? str(obj(m.three_layer)?.worry, 60) ?? str(obj(obj(m.customer_mindset)?.anxiety)?.target, 20); return w ? latentKindOf(w) : null; },
