@@ -4940,6 +4940,11 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown_at TIMESTAMPTZ
 --   last_brain_meta の中に置かない（log-aix-usage とブレインがそれぞれ丸ごと書き直す＝上書きしあう）。null 可・既定なし。戻す: ALTER TABLE conversations DROP COLUMN IF EXISTS ask_progress;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ask_progress JSONB;
 
+-- 2026-11-21 作業員M（台帳 #101・竹内さん 11/15「お客様ごとの全体の統括」・統括役の OK）: お客様ごとの計画（app/lib/customer-plan.ts）。
+--   番の部品（地図の駅・重点・狙い・次に送る物・開いている約束・要件・送った物・気持ち・探す条件）から、ブレインの番の後に1回だけ組んで書く。
+--   CUSTOMER_PLAN 既定 shadow（書くだけ・文と道は変えない）。null 可・既定なし。戻す: ALTER TABLE conversations DROP COLUMN IF EXISTS customer_plan;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS customer_plan JSONB;
+
 -- 2026-10-08 結果の台帳（計画 memory/plan_outcome_ledger.md・決まり app/lib/deal-outcome.ts・書くのは deal-outcome-server.ts／cron/outcome-ledger）
 --   deal_outcomes: 会話×案件（審査落ち・取り消しで切り替えたら次の案件）ごとに1行。結果（won/lost/switched/in_progress）と確かさ（confirmed/estimated）・各段階の時刻・決まった（落ちた）物件。
 --     推定の成約（auto-seiyaku）・推定の失注（申込前30日返事なし）は result_certainty=estimated。学習と実績の数字は confirmed だけ（竹内さんの決定 10/08）。
