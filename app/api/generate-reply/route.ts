@@ -16,6 +16,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase-server";
+import { recordKnowledgeUsage } from "@/app/lib/knowledge-usage";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
@@ -2304,7 +2305,8 @@ function incrementKnowledgeUsage(ids: string[]): void {
   // after(): レスポンス返却後もサーバーレス実行コンテキストが凍結される前に完了を保証
   after(async () => {
     try {
-      await supabase.rpc("increment_knowledge_used_count", { p_ids: ids });
+      // 2026-11-20 作業員H: KNOWLEDGE_USAGE_TABLE=on の時は小さな表 knowledge_usage に足す（毎晩書き戻す・app/lib/knowledge-usage.ts）
+      await recordKnowledgeUsage((fn, a) => supabase.rpc(fn, a), ids);
     } catch {
       // 使用回数更新の失敗は返信生成に影響させない
     }
