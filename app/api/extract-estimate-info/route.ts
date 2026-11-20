@@ -1,6 +1,7 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { NextRequest, NextResponse } from "next/server";
+import { firstJsonObject, estimateJsonFirstObjectOn } from "@/app/lib/example-db-guard";
 
 export interface ExtractedEstimate {
   propertyName: string;
@@ -183,7 +184,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "テキストブロックが見つかりませんでした" }, { status: 500 });
     }
     const raw = textBlock.type === "text" ? textBlock.text.trim() : "{}";
-    const match = raw.match(/\{[\s\S]*\}/);
+    // 2026-11-20 作業員L: 答えの JSON の後ろに余計な文字（2つ目の {…}・説明）が付くと、貪欲な正規表現が後ろまで拾い JSON.parse が落ちた（11/20 16:55 JST）。
+    //   最初の { から対応する } までを読む（example-db-guard.firstJsonObject・戻す ESTIMATE_JSON_FIRST_OBJECT=off）
+    const first = estimateJsonFirstObjectOn() ? firstJsonObject(raw) : null;
+    const match: string[] | null = first ? [first] : raw.match(/\{[\s\S]*\}/);
     if (!match) {
       console.error("[extract-estimate-info] JSON not found in response:", raw.slice(0, 500));
       return NextResponse.json({ error: "JSONを抽出できませんでした" }, { status: 500 });
