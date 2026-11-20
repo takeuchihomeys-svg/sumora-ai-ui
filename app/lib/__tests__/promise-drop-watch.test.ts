@@ -95,3 +95,46 @@ assert.equal(promiseFulfilledBy({ at: at(0), kind: "callback" }, ev), "n/a");
 assert.equal(promiseClosedConversation("applying", [], at(0)), true);
 assert.equal(promiseClosedConversation("proposing", [{ sender: "customer", text: "部屋決まりました", created_at: at(2) }], at(0)), true);
 console.log("promise-shared: ok");
+// 見積の約束を手打ちの文で果たした（作業員N の B1）
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [{ sender: "staff", text: "レオンコンフォート新梅田501号室最大限割引しました初期費用の御見積書となります！！", created_at: at(4), is_aix_generated: false }], aix: [], sent: [] }), { by: "staff_text", at: at(4) });
+assert.equal(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [{ sender: "staff", text: "御見積書作成させて頂きます！！", created_at: at(4), is_aix_generated: false }], aix: [], sent: [] }), null);
+console.log("promise-estimate-text: ok");
+// 作業員N の確かめで見つかった穴1〜3（11/21）
+import { promiseClausesOf, overduePromisesOf } from "../promise-drop-watch";
+// 穴1: 過去形の報告は約束でない
+assert.equal(promiseKindNameOf("お見積書をお送りさせて頂きました！！"), null);
+assert.equal(promiseDropKindOf("確認させて頂きましたところ募集中でした！！"), null);
+// 穴2: 条件つき（条件を送って頂いたら）は約束に数えない・同じ文の別の節の約束は残る
+assert.equal(promiseDropKindOf("ご希望のご条件お送り頂きますと、ご条件に合ったお部屋ピックアップさせて頂きます！！"), null);
+assert.equal(promiseDropKindOf("ご条件お送り頂きありがとうございます！！\n本町周辺全域からお部屋ピックアップさせて頂きます！！"), "pickup");
+{ const c = promiseClausesOf("確認させて頂きました！！明日ご連絡させて頂きます！！"); assert.ok(c.includes("明日ご連絡させて頂きます") && !c.includes("確認させて頂きました"), c); }
+// 穴3: 見積を確認の結果の AIX の文に同封した番
+assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "estimate" }, { msgs: [{ sender: "staff", text: "最大限割引しました御見積書同封させて頂きました", created_at: at(3), is_aix_generated: true }], aix: [], sent: [] }), { by: "aix_text", at: at(3) });
+// 統括の材料（overduePromisesOf）: 種類ごとに新しい方・期限を過ぎて果たしていない物だけ・事実だけ
+const od = overduePromisesOf({ status: "proposing", msgs: [
+  { sender: "staff", text: "本町周辺全域からお部屋ピックアップさせて頂きます！！", created_at: at(0), is_aix_generated: false },
+  { sender: "staff", text: "改めて本町・心斎橋周辺全域からピックアップさせて頂きます！！", created_at: at(10), is_aix_generated: false },
+  { sender: "staff", text: "御見積書作成させて頂きます！！", created_at: at(11), is_aix_generated: false },
+], aix: [{ aix_type: "estimate_sheet", sent_at: at(12), created_at: at(12) }], sent: [] }, T0 + 5 * 24 * H);
+assert.equal(od.length, 0); // 見積の AIX は pickup も果たした扱い（物件・見積の AIX の線）
+const od2 = overduePromisesOf({ status: "proposing", msgs: [
+  { sender: "staff", text: "本町周辺全域からお部屋ピックアップさせて頂きます！！", created_at: at(0), is_aix_generated: false },
+  { sender: "staff", text: "改めて本町・心斎橋周辺全域からピックアップさせて頂きます！！", created_at: at(10), is_aix_generated: false },
+], aix: [], sent: [] }, T0 + 5 * 24 * H);
+assert.equal(od2.length, 1);
+assert.equal(od2[0].kind, "pickup");
+assert.equal(od2[0].promisedAt, at(10));
+assert.equal(od2[0].dueBy, "default72h");
+assert.equal(promiseDropKindOf("〇〇さんのご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！"), null);
+// 同じ番の後ろの通で条件の入力をお願いした約束も、入力待ち（dfa8a68f の形）
+{
+  const turn = [
+    { sender: "customer", text: "この物件空いてますか", created_at: at(-1) },
+    { sender: "staff", text: "こちらは現在募集が埋まってしまったお部屋となります！！\n引き続きピックアップしてお送りさせて頂きますので、何卒よろしくお願い致します！！", created_at: at(0), is_aix_generated: false },
+    { sender: "staff", text: "ご希望のお部屋探しご条件）\n①ご入居時期", created_at: at(0.01), is_aix_generated: true },
+    { sender: "staff", text: "ご条件に合ったお部屋ピックアップさせて頂きます！！\nお手隙の際にご入力ください😌！！", created_at: at(0.02), is_aix_generated: false },
+  ];
+  assert.equal(promiseDropOf(base({ msgs: turn }), now29), null);
+  assert.equal(overduePromisesOf({ status: "proposing", msgs: turn, aix: [], sent: [] }, now29).length, 0);
+}
+console.log("promise-holes: ok");

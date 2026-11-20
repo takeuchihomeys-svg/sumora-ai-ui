@@ -33,8 +33,23 @@ export type PdInput = { conversationId: string; customerName: string | null; sta
 
 /** 約束の種類（こちらの手打ちの文の言葉で・作らない）。新着を随時は期日が無いので見張らない */
 export type PdKind = "pickup" | "check";
-export function promiseDropKindOf(text: string): PdKind | null {
+/**
+ * 約束を読む前に、約束でない節を落とす（2026-11-21 作業員N の B1 の確かめで見つかった穴）:
+ *   穴1 過去形の報告（「御見積書をお送りさせて頂きました」「確認させて頂きましたところ」）は約束でない
+ *   穴2 条件つき（「ご条件お送り頂きますと、ピックアップさせて頂きます」）は、お客様が条件を送るまで期限が始まらない＝約束に数えない
+ *   節は 。！!？?・改行 で切る（同じ節の中に条件の言葉があれば、その節だけ落とす）
+ */
+export function promiseClausesOf(text: string): string {
   const t = String(text ?? "").normalize("NFKC");
+  // 条件ヒアリングの用紙を送った直後の「ご条件に合ったお部屋ピックアップさせて頂きます！！お手隙の際にご入力ください」も条件つき（お客様の入力待ち・dfa8a68f）
+  if (/ご入力(?:ください|下さい|の程|をお願い|頂けますと)/.test(t)) return "";
+  return t.split(/(?<=[。！!？?\n])/).filter((c) =>
+    !/(?:頂き|いただき|致し|いたし)ました(?:[！!。？?\n]|ところ|$)/.test(c) &&
+    !/(?:頂き|いただき)ますと|(?:頂|いただ)ければ|(?:頂|いただ)けましたら|(?:頂|いただ)けますと|(?:下さ|くださ)いましたら/.test(c),
+  ).join("");
+}
+export function promiseDropKindOf(text: string): PdKind | null {
+  const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
   if (/ピックアップ(?:させて頂|して(?:お送り|送らせ)|出来次第お送り|でき次第お送り)|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)/.test(t)) return "pickup";
   if (/(?:募集状況|空き状況|空室状況)(?:を)?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
@@ -59,7 +74,7 @@ export const PROMISE_KIND_JUDGEABLE: ReadonlySet<PromiseKindName> = new Set<Prom
 export function promiseKindNameOf(text: string): PromiseKindName | null {
   const k = promiseDropKindOf(text);
   if (k) return k;
-  const t = String(text ?? "").normalize("NFKC");
+  const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
   if (/御?見積(?:書)?(?:を)?(?:作成|お作り)(?:して|させて頂)|御?見積(?:書)?(?:を)?お送りさせて頂/.test(t)) return "estimate";
   if (/内覧(?:の)?(?:候補日?|日程|ご日程|お日にち)(?:を)?(?:確認|お調べ|お送り)させて頂|ご案内(?:可能な)?(?:日時|お時間)(?:を)?確認させて頂/.test(t)) return "viewing_slot";
@@ -75,6 +90,7 @@ export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by:
   const d = promiseDueDay(scrubbed, atMs);
   return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + PROMISE_DROP_MIN_H * 3_600_000, by: "default72h" };
 }
+const ESTIMATE_SENT_RE = /(?:御見積書|お見積(?:もり|り)?書?)(?:と)?(?:なります|になります|お送りさせて頂きました|お送り致しました|送らせて頂きました|添付)/;
 export type PromiseEvidence = { msgs: ReadonlyArray<PdMsg>; aix: ReadonlyArray<PdAix>; sent: ReadonlyArray<PdSent> };
 /**
  * 果たした印（約束の後の最初の物）。pickup・check・estimate だけ判定し、他は "n/a"（判定なし）。果たしていなければ null。
@@ -90,6 +106,11 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName 
   for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && re.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
   if (promise.kind !== "estimate") for (const s of ev.sent) if (after(s.sent_at)) cands.push({ by: "sent_properties", at: s.sent_at as string });
   if (promise.kind === "check") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && CHECK_ANSWERED_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
+  // 2026-11-21 作業員N の B1 の数え（見積の約束2つが AIX 無しで「果たしていない」）: こちらの手打ちの文で御見積書を送った番も果たした
+  //   （「御見積書となります」「お見積りお送りさせて頂きました」。「作成させて頂きます」は約束なので数えない。画像だけの送付は中身が分からないので数えない）
+  if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && ESTIMATE_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
+  // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
+  if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
 }
 /** 見張らない会話か（申込以降・お客様が決めた・こちらが締めた）。約束の時刻より後の発言で見る */
@@ -99,6 +120,42 @@ export function promiseClosedConversation(status: string | null, msgs: ReadonlyA
   return msgs.some((m) => Date.parse(m.created_at) > t0 && (
     (m.sender === "customer" && STOPPED_RE.test(String(m.text ?? "").normalize("NFKC"))) ||
     (m.sender === "staff" && STAFF_CLOSED_RE.test(String(m.text ?? "").normalize("NFKC")))));
+}
+
+/** 同じ番（次のお客様の発言まで）の後ろの通で、条件の用紙（AIX の「ご希望のお部屋探しご条件」）か「ご入力ください」を送った＝お客様の入力待ちの約束（dfa8a68f の形） */
+function inputWaitTurn(ms: ReadonlyArray<PdMsg>, j: number): boolean {
+  for (let x = j + 1; x < ms.length && ms[x].sender !== "customer"; x++) {
+    const t = String(ms[x].text ?? "").normalize("NFKC");
+    if (/ご希望のお部屋探しご条件|ご入力(?:ください|下さい|の程|をお願い|頂けますと)/.test(t)) return true;
+  }
+  return false;
+}
+
+/** 1つの会話の、期限を過ぎて果たしていない約束（全部・同じ種類の言い直しは新しい方1つ）。事実だけ（作業員N の統括の材料 CONDUCTOR_OVERDUE_PROMISES 用） */
+export type OverduePromise = { kind: PromiseKindName; promisedAt: string; dueAt: string; dueBy: "words" | "default72h"; daysOver: number };
+export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix" | "sent">, nowMs: number, o: { maxDays?: number } = {}): OverduePromise[] {
+  const maxDays = o.maxDays ?? PROMISE_DROP_MAX_DAYS;
+  const ms = [...input.msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const byKind = new Map<PromiseKindName, { at: string; text: string }>();
+  for (let j = 0; j < ms.length; j++) {
+    const m = ms[j];
+    if (m.sender !== "staff" || m.is_aix_generated || inputWaitTurn(ms, j)) continue;
+    const k = promiseKindNameOf(String(m.text ?? ""));
+    if (!k || !PROMISE_KIND_JUDGEABLE.has(k)) continue;
+    // 種類ごとに一番新しい約束1つ（果たす前の言い直しは新しい方にまとまる・果たした後の新しい約束も新しい方を見る）
+    byKind.set(k, { at: m.created_at, text: String(m.text ?? "") });
+  }
+  const out: OverduePromise[] = [];
+  for (const [kind, p] of byKind) {
+    const t0 = Date.parse(p.at);
+    if ((nowMs - t0) / 864e5 > maxDays) continue;
+    const due = promiseDeadlineMs(p.text, t0);
+    if (nowMs < due.ms) continue;
+    if (promiseFulfilledBy({ at: p.at, kind }, { msgs: ms, aix: input.aix, sent: input.sent })) continue;
+    if (promiseClosedConversation(input.status, ms, p.at)) continue;
+    out.push({ kind, promisedAt: p.at, dueAt: new Date(due.ms).toISOString(), dueBy: due.by, daysOver: Math.floor((nowMs - due.ms) / 864e5) });
+  }
+  return out.sort((a, b) => a.promisedAt.localeCompare(b.promisedAt));
 }
 
 export type PromiseDrop = {
@@ -117,8 +174,9 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   const minH = o.minH ?? PROMISE_DROP_MIN_H, maxDays = o.maxDays ?? PROMISE_DROP_MAX_DAYS;
   const ms = [...input.msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   let promise: { at: string; kind: PdKind; text: string } | null = null;
-  for (const m of ms) {
-    if (m.sender !== "staff" || m.is_aix_generated) continue;
+  for (let j = 0; j < ms.length; j++) {
+    const m = ms[j];
+    if (m.sender !== "staff" || m.is_aix_generated || inputWaitTurn(ms, j)) continue;
     const k = promiseDropKindOf(String(m.text ?? ""));
     if (k) promise = { at: m.created_at, kind: k, text: String(m.text ?? "") };
   }
