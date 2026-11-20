@@ -25,7 +25,41 @@ export function examRefusalOf(text: string): string | null {
   const line = text.slice(i + EXAM_REFUSAL_TAG.length).split(/\r?\n/)[0].trim();
   return line || "理由なし";
 }
-export type BaseNowGate = { go: true; reserveNowUsd: number; why: string } | { go: false; why: string };
+/**
+ * 2026-11-21 作業員H（統括役の頼み・竹内さんの決め「1晩の上限は全員で $10」）: 積む時に、その晩に積んだ依頼の上限（cap・無ければ見込み）の合計を見て、
+ *   新しい依頼で超えるなら積まない。晩は「直近の JST 12時から」（夜の 22〜9時の試験は同じ晩に入る）。止める EXAM_NIGHT_CAP_USD=off（既定 10）
+ */
+export function nightCapUsd(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number | null {
+  const v = (env.EXAM_NIGHT_CAP_USD ?? "").trim().toLowerCase();
+  if (v === "off" || v === "0") return null;
+  const n = Number(v || "10");
+  return Number.isFinite(n) && n > 0 ? n : 10;
+}
+/** 晩の始まり（直近の JST 12:00・ms） */
+export function nightStartMs(nowMs: number): number {
+  const jst = nowMs + 9 * 3600_000;
+  const d = new Date(jst);
+  const noon = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12) - 9 * 3600_000;
+  return nowMs >= noon ? noon : noon - 86_400_000;
+}
+export type NightJob = { label: string; createdAt: string; usd: number };
+export function nightBudgetGate(jobs: ReadonlyArray<NightJob>, newUsd: number, nowMs: number, cap: number | null): { go: boolean; usedUsd: number; why: string } {
+  if (cap == null) return { go: true, usedUsd: 0, why: "晩の上限なし" };
+  const start = nightStartMs(nowMs);
+  const seen = new Set<string>();
+  let used = 0;
+  for (const j of jobs) {
+    const t = Date.parse(j.createdAt);
+    if (!Number.isFinite(t) || t < start || seen.has(j.label)) continue;
+    seen.add(j.label);
+    used += Math.max(0, Number(j.usd) || 0);
+  }
+  const after = used + Math.max(0, newUsd);
+  if (after > cap) return { go: false, usedUsd: used, why: `この晩（${new Date(start + 9 * 3600_000).toISOString().slice(5, 10)} 12時から）に積んだ依頼の上限の合計 $${used.toFixed(2)}＋この依頼 $${newUsd.toFixed(2)} ＞ 晩の上限 $${cap.toFixed(2)}（全員で）` };
+  return { go: true, usedUsd: used, why: `晩の合計 $${after.toFixed(2)} ≤ $${cap.toFixed(2)}` };
+}
+
+export type BaseNowGate ={ go: true; reserveNowUsd: number; why: string } | { go: false; why: string };
 /**
  * 前（main）を作る前の確かめ。capUsd＝この回の上限（無ければ確かめない）、spentUsd＝もう使った額、
  * baseRuns＝前を作る問題×回、nowProblems＝今の側の問題の数（今は少なくとも1問1回）。

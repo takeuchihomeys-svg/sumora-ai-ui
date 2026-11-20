@@ -62,7 +62,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom, parseAfterAixDraft, afterAixDraftArgv } from "./lib/exam-conductor-core";
-import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, effectivePriority, longWaiting, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
@@ -75,7 +75,7 @@ import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
-import { examRefusalOf } from "./lib/exam-cost-gate";
+import { examRefusalOf, nightBudgetGate, nightCapUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
@@ -217,7 +217,35 @@ function readJobs(): Array<ExamJob & { file: string }> {
     // 2026-11-18 作業員H: createdAt が数の依頼（手で書いた等）も ISO の文字に直して読む（並べ替えで係が落ちない・exam-conductor-core.createdAtIso）
     out.push({ ...(j as ExamJob), createdAt: createdAtIso((j as { createdAt?: unknown }).createdAt), file: join(ROOT, f) });
   }
+  // 2026-11-21 作業員H: 24時間以上待っている依頼は1回だけ知らせる（積んだ人と統括役へ・notify.jsonl）。順番は待った時間で priority が下がる（compareJobs・EXAM_JOB_AGING）
+  const now = Date.now();
+  for (const j of out) {
+    if (j.file.endsWith(".claimed") || !longWaiting(j, now) || longWaitNoted.has(j.label)) continue;
+    longWaitNoted.add(j.label);
+    const h = Math.round((now - Date.parse(j.createdAt)) / 3600_000);
+    const msg = `${j.label} が ${h}時間 待ち（priority ${j.priority ?? 5} → 待った分で ${effectivePriority(j, now)}）。急ぎなら --priority を下げて積み直すか、要らなければ withdrawn へ`;
+    for (const to of [...new Set([j.notify ?? cfg().notify?.[j.owner] ?? "", "main"])].filter(Boolean)) appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to, owner: j.owner, label: j.label, msg }) + "\n");
+    log(`  ⏳ 長い待ち: ${msg}`);
+  }
   return out.sort((a, b) => compareJobs(a, b));
+}
+const longWaitNoted = new Set<string>();
+/** 晩の上限を数える依頼: 列の待ち（.json・.claimed）と済み（done）。1本の額＝cap → 積んだ時の見込み（planUsd）→ 問題×回×$0.03。tsc・cmd は数えない */
+function nightJobsForBudget(): NightJob[] {
+  const out: NightJob[] = [];
+  const read = (dir: string) => {
+    let fs: string[] = []; try { fs = readdirSync(dir); } catch { return; }
+    for (const f of fs) {
+      if (!/\.json(\.claimed)?$/.test(f) || f === "config.json" || f === "scene-map.json" || f === "prod-env.json") continue;
+      let j: (ExamJob & { planUsd?: number }) | null = null; try { j = JSON.parse(readFileSync(join(dir, f), "utf8")); } catch { continue; }
+      if (!j || (j.runner && j.runner !== "brain-exam")) continue;
+      const n = String(j.only ?? "").split(",").filter(Boolean).length || 8;
+      const usd = j.capUsd ?? j.planUsd ?? n * Math.max(1, j.repeat ?? 1) * BRAIN_USD_PER_REP;
+      out.push({ label: j.label, createdAt: createdAtIso(j.createdAt as unknown), usd });
+    }
+  };
+  read(ROOT); read(DONE);
+  return out;
 }
 /**
  * 回数の計画（実際に流す時と、積む時の見込みの1行で同じ物を使う）。2026-11-06 統括役（P0 8805bd74・作業員9 の EXAM_FLAKY_REPS=1 の依頼が見込み3回分 $0.18 のまま出た）:
@@ -443,6 +471,13 @@ async function addJob(): Promise<void> {
       if (pf.go && pf.drop.length) { for (let k = ids.length - 1; k >= 0; k--) if (pf.drop.includes(ids[k])) ids.splice(k, 1); job.only = ids.join(","); if (job.guards) job.guards = job.guards.filter((g) => !pf.drop.includes(g)); log(`  外した: ${pf.drop.join(",")}（残り ${ids.length}問）`); }
       if (!pf.go && !flag("force")) throw new Error(`積まない（点検）: ${pf.blocks.join("／")}${pf.hints.length ? `。案: ${pf.hints.join("／")}` : ""}（それでも積む時は --force・点検を止める EXAM_ADD_PREFLIGHT=off）`);
       if (!pf.go) log(`  --force で点検を越えて積む: ${pf.blocks.join("／")}`);
+    }
+    // 2026-11-21 作業員H（1晩の上限は全員で $10・竹内さんの決め）: その晩に積んだ依頼の上限の合計で超えるなら積まない（EXAM_NIGHT_CAP_USD・既定 10・=off で止める）
+    (job as ExamJob & { planUsd?: number }).planUsd = Number(plan.cost.usd.toFixed(4));
+    if (job.runner === "brain-exam") {
+      const nb = nightBudgetGate(nightJobsForBudget(), job.capUsd ?? plan.cost.usd, Date.now(), nightCapUsd());
+      if (!nb.go && !flag("force")) throw new Error(`積まない（晩の上限）: ${nb.why}。統括役に知らせる・急ぎなら --force`);
+      log(`  晩の上限: ${nb.why}${!nb.go ? "（--force で越えて積む）" : ""}`);
     }
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
     try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
