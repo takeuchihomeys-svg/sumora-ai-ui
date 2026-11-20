@@ -1,4 +1,5 @@
 import { situationWriterNote, situationWriterNoteOn } from "@/app/lib/situation-now";
+import { ourItemsWriterNoteOn, ourItemsReplyNote } from "@/app/lib/situation-writer-aix";
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
@@ -5680,7 +5681,9 @@ async function handleGenerateReply(req: NextRequest) {
     const sentConfirmedWriterNote = ledgerActive && !isFollowUp && sentConfirmedNoteEnabled() ? buildSentConfirmedNote(ledger.entries, Date.now()) : "";
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote
       // 2026-11-18 作業員L（SITUATION_WRITER_NOTE・既定 off）: 今の状況の記録（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）を書き手にも事実で
-      + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "");
+      + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "")
+      // 2026-11-21 作業員K2（OUR_ITEMS_WRITER_NOTE・既定 off・situation-writer-aix.ts）: こちらが前に伝えた事（our_items・答えの有無）も書き手へ（言い直しの外れ: AI の下書きだけ 32/979）
+      + (!isFollowUp && ourItemsWriterNoteOn() ? ourItemsReplyNote((brainMeta as Record<string, unknown> | null)?.situation_now) : "");
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });
