@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-20 **拡張 2.8.134: 自動の押しに位置を付ける・自動のまとめ（mode=aix）が DB に届くようにする・学習の記録から客の名前を外す**（竹内さん「改善できる部分徹底的に改善する 統括proおねがい」）
+- 統括Pro「押した位置14%」の実測（12:38〜 の自動・run の `shot_ops`）: 印刷用PDF×12・確定してリストへ×2・検索・次ページ・include_common_fee・絞り込み条件＋ の **18回が位置なし**。
+  原因: `page-script.js` の `_noteClickForLearn` は名前だけ送り、記録側（`human-learn-record.js`）が `elementFromPoint`／name で要素を探していた（表示名では見つからない・中央の拡張小窓に当たると別の要素）。
+  → `_fireAt` が押した実座標を渡し（`_noteClickForLearn(el, undefined, { x: cx, y: cy })`）、要素の中の割合 `fx/fy`・`bw/bh/bt/shape` を送る。要素の外（±20%より外）は送らない。記録側は `fx/fy` があればそれを使う（無ければ今まで通り）。
+- 自動のまとめ（`human_motion_learn` の mode=aix・ops>0 の行）が **11/16（2.8.4）から 0件**。原因: 自動で押す `pointer-ui.js` はリアプロでは `content.js` が `<script>` で MAIN world に入れるので、記録側の `__axlxNoteAutoOp` が見えず `_autoOps` が空のままだった。
+  → 見えない時は `postMessage({ from: "axlx-note-auto-op", name, fx, fy })` で届け、記録側が受けて `_autoOps` に積む。20手で送る（今まで通り）＋頁を離れる時（pagehide）に 3手以上なら送る。
+- 学習の記録（`shot_ops`）に入っていた「今の客:段階 〈名前〉」の名前を外す（`axlx-rec-note-name` は段だけ）。点検の記録（`search_audits` の steps の name=）は変えていない。
+- 試験: `tests/chrome-extension/learn-xy-autosum-v28134.test.js`（12件 ✓）。拡張の試験 199本は変更の前後で結果が同じ（✗ を含むファイル 77・✗ 237件・どれも前からの物）。
+- ⚠ 拡張の再読込（2.8.134）のあと、自動で1回検索して DB で確かめる: 自動の押しの `x/y` が付くか・mode=aix の ops>0 の行が入るか・`shot_ops` に名前が無いか。
+- 統括の F32「終わりの合図（steps 非空45%）」の内訳（直近40件）: 空22件のうち **13件は古い拡張 2.5.91（`brain_staff`・別のスタッフの端末と見られる）**、9件は途中で止まった自動（abandoned・2.8.110〜2.8.126）。2.8.133 の検索は全部 steps あり。→ 古い端末の拡張を新しくするか、F32 の数え方を自動だけにするかは竹内さんに確認（未決）。
+
 ## 2026-11-20 拡張の版をそろえる: page-script の `_AXLX_PAGE_VER` を 2.8.132 → 2.8.133（manifest と同じ）
 - 理由: テストが「ページの版＝manifest の版」を確かめており、版を上げた時にページ側を揃え忘れていた（2.8.119 のまま残っていた箇所も確認）。
 - 結果: 拡張のテスト（tests/chrome-extension・199本）で ✗ を含むファイルが 87 → 79。残りは版ではない古い期待値（✗ 237件）。1件ずつ「コードが正しいか／テストが古いか」を決めてから直す（未着手）。

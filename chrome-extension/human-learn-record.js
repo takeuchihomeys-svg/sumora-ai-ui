@@ -958,7 +958,20 @@
             _opM.was = _wasM;
             _opM.now = !_wasM;
           }
-          try {
+          /**
+           * ★ 2026-11-20 (2.8.134): ページ側が押した要素の中の割合（fx/fy）を送ってきたら、それを使う。
+           *   elementFromPoint は中央の拡張小窓など別の要素に当たることがある（位置が抜ける・ずれる）。
+           */
+          var _fxIn = Number(e.data.fx), _fyIn = Number(e.data.fy);
+          if (e.data.fx != null && e.data.fy != null && Number.isFinite(_fxIn) && Number.isFinite(_fyIn)
+            && _fxIn >= 0 && _fxIn <= 1 && _fyIn >= 0 && _fyIn <= 1) {
+            _opM.x = Math.round(_fxIn * 100) / 100;
+            _opM.y = Math.round(_fyIn * 100) / 100;
+            if (Number.isFinite(Number(e.data.bw))) _opM.bw = Math.round(Number(e.data.bw));
+            if (Number.isFinite(Number(e.data.bh))) _opM.bh = Math.round(Number(e.data.bh));
+            if (typeof e.data.bt === "string" && e.data.bt) _opM.bt = e.data.bt.slice(0, 12);
+            if (typeof e.data.shape === "string" && e.data.shape) _opM.shape = e.data.shape.slice(0, 40);
+          } else try {
             var _elSyn = null;
             if (Number.isFinite(Number(e.data.clientX)) && Number.isFinite(Number(e.data.clientY)) && document.elementFromPoint) {
               _elSyn = document.elementFromPoint(Number(e.data.clientX), Number(e.data.clientY));
@@ -1813,6 +1826,45 @@
     } catch (_) { _autoSaving = false; }
   }
   try { window.__axlxNoteAutoOp = noteAutoOp; } catch (_) {}
+  /**
+   * ★ 2026-11-20 (2.8.134) 統括Pro「自動のまとめ（ops>0）が 11/16 から0件」:
+   *   自動で押す pointer-ui.js はページの世界（MAIN）に入るので `__axlxNoteAutoOp` が見えず、
+   *   `_autoOps` が空のまま＝ mode=aix のまとめ行が一度も送られていなかった。
+   *   → postMessage で受ける。要素は渡せないので、名前と要素の中の割合（0〜1）だけ受ける。
+   */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-note-auto-op") return;
+      var t = Date.now();
+      var gap = _autoLastAt ? Math.min(120000, t - _autoLastAt) : null;
+      _autoLastAt = t;
+      var fx = Number(e.data.fx), fy = Number(e.data.fy);
+      var okXY = e.data.fx != null && e.data.fy != null && Number.isFinite(fx) && Number.isFinite(fy)
+        && fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1;
+      _autoOps.push({
+        t: t, k: String(e.data.kind || "click").slice(0, 12),
+        f: typeof e.data.name === "string" && e.data.name ? e.data.name.slice(0, 40) : null,
+        gap: gap,
+        x: okXY ? Math.round(fx * 100) / 100 : null,
+        y: okXY ? Math.round(fy * 100) / 100 : null,
+        scroll: null,
+      });
+      if (_autoOps.length > 200) _autoOps.shift();
+      if (_autoOps.length >= 20 && !_autoSaving) {
+        _autoSaving = true;
+        flushAuto();
+      }
+    } catch (_) {}
+  });
+  /** 検索ボタンで頁が移ると 20手未満の残りが消えるので、離れる時に送る（3手未満は送らない） */
+  window.addEventListener("pagehide", function () {
+    try {
+      if (_autoOps.length >= 3 && !_autoSaving) {
+        _autoSaving = true;
+        flushAuto();
+      }
+    } catch (_) {}
+  });
 
   // ── モードを見る（学習は通常・スタッフの時だけ／写真はどのモードでも）──
   var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];

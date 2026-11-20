@@ -74,6 +74,8 @@ console.log("\n■ ⑤ 統括が決める順番（無料→有料）が実行側
     rows: 200, next: 40, points: 80, opens: 20, screens: 4, sequence: 6, gap_ms: 900,
     weak: [], mode_counts: { normal: 200 }, site_counts: { realpro: 200 }, with_ops: 30,
     site: "all", shot_rows: 190,
+    // 2026-11-20 竹内さん決定: 写真の課題は材料（読める未学習）がある時だけ出る
+    shot_gaps_normal: { total: 190, unlearnedBig: 20, unlearnedSmall: 0, learnedButEmpty: 0, learnedOk: 100, todo: 20 },
   };
   const r = superviseLearn({ ...base, stopped_scene: "検索を押す", scene_missing: 1, scene_missing_names: "次のページへ" });
   const tasks = r.meeting.learning_tasks || [];

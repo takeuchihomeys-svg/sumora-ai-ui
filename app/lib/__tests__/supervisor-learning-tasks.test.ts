@@ -55,8 +55,14 @@ console.log("\n■ ② 手本が無い場面は「人が1回やる」（推測�
 
 console.log("\n■ ③ 写真は「撮れているのに学べていない」時だけ・上限つき");
 {
-  // 写真 95%・操作 15% → 差が大きい＝写真から読む候補
-  const r = superviseLearn({ ...base, with_ops: 30, shot_rows: 190 });
+  // 2026-11-20 竹内さん決定: 材料（読める未学習の枚数 or 改善の欄）が無い時は出さない（比率だけで推測しない）
+  const r0 = superviseLearn({ ...base, with_ops: 30, shot_rows: 190 });
+  ok("  ⚠ 写真95%・操作15%の比率だけでは photo_learn を出さない", !tasksOf(r0).some((x) => x.kind === "photo_learn"), tasksOf(r0).map((x) => x.kind));
+  // 写真 95%・操作 15%＋読める未学習あり → 写真から読む
+  const r = superviseLearn({
+    ...base, with_ops: 30, shot_rows: 190,
+    shot_gaps_normal: { total: 190, unlearnedBig: 20, unlearnedSmall: 0, learnedButEmpty: 0, learnedOk: 100, todo: 20 },
+  });
   const t = tasksOf(r);
   const pl = t.find((x) => x.kind === "photo_learn");
   ok("photo_learn が出る", !!pl, t.map((x) => x.kind));

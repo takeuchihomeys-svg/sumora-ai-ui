@@ -863,6 +863,23 @@
   try {
     var _n = (typeof self !== "undefined" ? self : window).__axlxNoteAutoOp;
     if (typeof _n === "function") _n("tap", _tapEl, null);
+    else if (_tapEl) {
+      // ★ 2026-11-20 (2.8.134): MAIN world では見えない → 名前と要素の中の割合だけ postMessage で届ける
+      var _LLa = _learn();
+      var _nmA = (_LLa && _LLa.fieldName) ? _LLa.fieldName(_tapEl) : "";
+      var _pA = position();
+      var _rA = _tapEl.getBoundingClientRect ? _tapEl.getBoundingClientRect() : null;
+      var _fxA = null, _fyA = null;
+      if (_pA && _rA && _rA.width > 0 && _rA.height > 0) {
+        var _ax = (_pA.x - _rA.left) / _rA.width, _ay = (_pA.y - _rA.top) / _rA.height;
+        if (_ax >= 0 && _ax <= 1 && _ay >= 0 && _ay <= 1) { _fxA = _ax; _fyA = _ay; }
+      }
+      window.postMessage({
+        from: "axlx-note-auto-op", kind: "tap",
+        name: _nmA ? String(_nmA).slice(0, 40) : "",
+        fx: _fxA, fy: _fyA,
+      }, "*");
+    }
   } catch (_) {}
   /**
    * ★ 2026-11-15 竹内さん「プルダウンの場合で押す部分もちゃんと理解できていない」

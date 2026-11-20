@@ -455,7 +455,8 @@ export function ensureMeetingEvidenceGates(
   // ── learning_tasks が空／photo_learn 欠落なら ensure-gapless-learn ──
   const tasks = [...(meeting.learning_tasks || [])];
   const photoReachForTasks = photoReachFromGateCtx(ctx);
-  const learnedForTasks = ctx?.shotGapsNormal?.learnedOk ?? ctx?.shotGaps?.learnedOk ?? 0;
+  // 学べた数が分からない時は 0 にしない（「写真あり∧学べ0」と誤って photo_learn を出していた）
+  const learnedForTasks = ctx?.shotGapsNormal?.learnedOk ?? ctx?.shotGaps?.learnedOk ?? null;
   const needPhotoTask = photoReachForTasks > 0 && learnedForTasks === 0
     && !tasks.some((t) => t.kind === "photo_learn");
   const sealed = ensureGaplessLearnTasks({

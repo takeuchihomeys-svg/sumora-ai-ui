@@ -2711,7 +2711,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.133";
+  var _AXLX_PAGE_VER = "2.8.134";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -2920,9 +2920,10 @@
         );
       }
       try {
+        // ★ 2026-11-20 (2.8.134): 学習の記録（shot_ops）にお客さんの名前を入れない（段だけ残す）
         window.postMessage({
           from: "axlx-rec-note-name",
-          name: ("今の客:" + String(phase || "") + (name ? (" " + name) : "")).slice(0, 40),
+          name: ("今の客:" + String(phase || "")).slice(0, 40),
         }, "*");
       } catch (_) {}
     } catch (_) {}
@@ -3604,7 +3605,7 @@
           try { ret = fire(el); } catch (e) { console.error('[AX] クリック例外', e); }
           finally { _axFireDepth = Math.max(0, _axFireDepth - 1); _axFireEl = _prevFireEl; }
           // ★ 2026-11-16: カーソル経由の押しを必ず録画へ残す（押した位置%を上げる）
-          try { _noteClickForLearn(el); } catch (_) {}
+          try { _noteClickForLearn(el, undefined, { x: cx, y: cy }); } catch (_) {}
           /**
            * ★ 2026-11-17 統括Pro: 押した実座標を point_fields へ（synthetic）。
            *   pointer-ui.tap が要素外だと記録スキップするため、ここでも必ず渡す。
@@ -4586,7 +4587,7 @@
       try { if (typeof window.__axlxRecArmWas === "function") window.__axlxRecArmWas(c); } catch (_) {}
     } catch (_) {}
   }
-  function _noteClickForLearn(el, wasOpt) {
+  function _noteClickForLearn(el, wasOpt, pt) {
     try {
       if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", el);
     } catch (_) {}
@@ -4604,6 +4605,35 @@
       }
       var msg = { from: "axlx-rec-note-op", kind: "click", name: String(nm || "click").slice(0, 40), w: w };
       if (typeof wasOpt === "boolean") msg.was = wasOpt;
+      /**
+       * ★ 2026-11-20 (2.8.134) 統括Pro「押した位置14%」: 押した実座標を要素の中の割合で送る。
+       *   実測（run_mwofi2sn_jbec）: 印刷用PDF・確定してリストへ・検索・次ページなど 18回が位置なし。
+       *   旧は名前だけ送り、記録側は elementFromPoint／name で要素を探していた
+       *   （表示名では見つからない・中央の拡張小窓に当たると別の要素になる）。
+       *   ⚠ 要素の外（±20%より外）なら送らない（嘘の位置を入れない）。
+       */
+      try {
+        if (el && pt && Number.isFinite(Number(pt.x)) && Number.isFinite(Number(pt.y)) && el.getBoundingClientRect) {
+          var _r = el.getBoundingClientRect();
+          if (_r && _r.width > 0 && _r.height > 0) {
+            var _fx = (Number(pt.x) - _r.left) / _r.width;
+            var _fy = (Number(pt.y) - _r.top) / _r.height;
+            if (_fx >= -0.2 && _fx <= 1.2 && _fy >= -0.2 && _fy <= 1.2) {
+              msg.fx = Math.round(Math.max(0, Math.min(1, _fx)) * 100) / 100;
+              msg.fy = Math.round(Math.max(0, Math.min(1, _fy)) * 100) / 100;
+              msg.bw = Math.round(_r.width);
+              msg.bh = Math.round(_r.height);
+              var _tg = String(el.tagName || "").toLowerCase();
+              if (_tg) msg.bt = _tg.slice(0, 12);
+              var _cls = String((el.className && typeof el.className === "string") ? el.className : "").trim();
+              var _first = _cls ? _cls.split(/\s+/).filter(Boolean)[0] : "";
+              if (_first) msg.shape = (_tg ? _tg + "." : "") + String(_first).slice(0, 24);
+              msg.clientX = Number(pt.x);
+              msg.clientY = Number(pt.y);
+            }
+          }
+        }
+      } catch (_) {}
       window.postMessage(msg, "*");
     } catch (_) {}
   }
