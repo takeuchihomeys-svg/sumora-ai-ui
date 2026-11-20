@@ -2711,7 +2711,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.134";
+  var _AXLX_PAGE_VER = "2.8.135";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3770,6 +3770,7 @@
       keys: (opts && opts.keys) || null,
       lane: _lane,
       quick: !!(opts && opts.quick),
+      decide: !!(opts && opts.decide),
     });
     _scheduleClickDrain();
     return true;
@@ -3806,6 +3807,8 @@
       if (!el) return "other";
       var tag = String(el.tagName || "").toUpperCase();
       var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+      // ★ 2026-11-20 (2.8.135): リアプロの検索は div.go_search（DIV）。旧は「その他」扱いで 12% の 4〜9秒の迷いが乗っていた
+      if (/go_search|search_menu/.test(String(el.className || ""))) return "decide";
       if (tag === "SELECT" || tag === "LABEL") return "choose";
       if (tag === "INPUT" && (type === "checkbox" || type === "radio")) return "choose";
       if (tag === "BUTTON" || type === "submit" || type === "button") return "decide";
@@ -4005,6 +4008,8 @@
       // 区・select の「レーン」は迷い・停止を自分の混合（_wardGapPlan / _selGapPlan・最大約11秒）で持つ
       if (item && item.lane) return 0;
       if (item && item._pauseDone) return 0;
+      // ★ 2026-11-20 (2.8.135): 見えない内部の作業（確かめ等）と、見直し済みの決定（検索）では手を止めない（詰まりに見えていた）
+      if (item && (!item.el || item.decide)) return 0;
       if (_wardRunActive()) return 0;
     } catch (_) {}
     _opsSincePause++;
@@ -4085,7 +4090,7 @@
       return;
     }
     // 区・selectレーンの迷いは下の混合（_wardGapPlan / _selGapPlan）で決める（通常の _hesitateMs は使わない）
-    var hesitate = (_isWardItem || _isSelItem || _isPickItem) ? 0 : _hesitateMs(item.el);
+    var hesitate = (_isWardItem || _isSelItem || _isPickItem || !item.el || item.decide) ? 0 : _hesitateMs(item.el);
     /**
      * 区・selectレーン: 直前の操作があれば、「直前の操作の時刻＋通常の人の間隔（混合）」を押す時刻の目標にする。
      *   ・速い: カーソルは前の押下の直後から動き、着いたら目標時刻まで見てから押す（_humanPointerClick の tgtAt）
@@ -9356,6 +9361,21 @@
      */
     if (_axExpect && _axExpect.walk != null && !window._axPreSearchWalkSealed) {
       window._axPreSearchWalkSealed = true;
+      /**
+       * ★ 2026-11-20 (2.8.135) 竹内さん「外した後検索のところおすときも少し詰まっている」:
+       *   徒歩が合っている時も列に1件積んで待っていた（実測 #1544: 2回目の clickSearch→3回目まで 3.2秒）。
+       *   → 合っていればそのまま押す。ずれている時だけ直す。
+       */
+      var _walkOkNow = false;
+      try {
+        var _wm = _walkMinVal(), _ww = String(_axExpect.walk);
+        _walkOkNow = _walkTrText().indexOf("徒歩") >= 0 && (_wm === _ww || (!!_wm && _wm.indexOf(_ww) >= 0));
+      } catch (_) { _walkOkNow = false; }
+      if (_walkOkNow) {
+        try { _auditStepP("walk_seal_ok", "検索前 徒歩+分数 OK（待たずに押す）"); } catch (_) {}
+        setTimeout(clickSearch, _pd(120));
+        return;
+      }
       enqueueHumanAction(function () {
         // 検索直前は静かに直すだけ（一覧をまた開かない）
         return _resealWalkAfterMinutes(_axExpect.walk, { allowUi: false });
@@ -9529,7 +9549,7 @@
       var _queued = enqueueHumanClick(btn, function (el) {
         try { _armPropertyPathBeforeSearch("検索click直前"); } catch (_) {}
         try { el.click(); } catch (_) {}
-      }, _uiGapMin(), _uiGapMax(), null, { aim: _sAim, label: "click:検索", strictLo: true, sigma: 0.55 });
+      }, _uiGapMin(), _uiGapMax(), null, { aim: _sAim, label: "click:検索", strictLo: true, sigma: 0.55, decide: true });
       if (_queued) {
         whenClickQueueIdle(_finishSearchPress);
       } else {
@@ -10855,7 +10875,17 @@
          *   チェック本体が隠れている事があるので、label を狙う。
          */
         function _uncheckLeftoversThenRest() {
-          var _runUncheck = function () {
+          /**
+           * ★ 2026-11-20 (2.8.135) 竹内さん「次のお客さんにいくために外す部分…直接入力になってしまっている」:
+           *   実測 #1544: 間取り→絞り込み条件（ペット）→所在地 の箱を**先に全部開けて**からまとめて外していた。
+           *   後から開けた所在地の小窓が絞り込み条件を隠し、ペット相談は見えないまま
+           *   `hidden_press`（カーソル無しで押した）になっていた。所在地の＋も2回押して開くのに 4.7秒かかっていた。
+           *   → 箱ごとに「開ける→その中を1つずつ外す→確定」してから次の箱へ（人と同じ順）。
+           *   onlyRe: この段で外す欄の名前／skipRe: 前の段で扱った欄（残っても見えない時に直接押さない）。
+           */
+          var _clearedAny = false;
+          var _runUncheck = function (onlyRe, skipRe, after) {
+            var _next = typeof after === "function" ? after : _resetRest;
             var _toUncheck = [];
             /**
              * ★ 2026-11-20 竹内さん「所在地のところ直接入力…1つずつおすようにする」:
@@ -10865,6 +10895,8 @@
              */
             var _hiddenPlace = 0;
             checkboxNames.forEach(function (name) {
+              if (onlyRe && !onlyRe.test(name)) return;
+              if (skipRe && skipRe.test(name)) return;
               [].slice.call(document.querySelectorAll("input[name='" + name + "']:checked")).forEach(function (cb) {
                 if (/city_code|town_code|station_id|route_id/.test(name)) {
                   var _lb = null;
@@ -10878,14 +10910,15 @@
               try { _auditStepP("reset_skip_hidden_place", _hiddenPlace + "件（小窓を開いて外す係に任せる）"); } catch (_) {}
             }
             if (_toUncheck.length === 0) {
-              console.log("[AX] _doReset: 残チェックなし → セレクト等を外す");
+              console.log("[AX] _doReset: 残チェックなし → 次へ");
               _auditStepP("clear_checks", 0);
-              try { _noteClearMethod("place", "clean_no_clear", "残0"); } catch (_) {}
-              _resetRest();
+              if (!_clearedAny) { try { _noteClearMethod("place", "clean_no_clear", "残0"); } catch (_) {} }
+              _next();
               return;
             }
             console.log("[AX] _doReset: 残チェック " + _toUncheck.length + "件を1つずつ外す（リセットボタンは使わない）");
             _auditStepP("clear_checks", _toUncheck.length);
+            _clearedAny = true;
             var _needPanelConfirm = false;
             _toUncheck.forEach(function (cb, idx) {
               var hit = null;
@@ -10929,11 +10962,11 @@
               if (_needPanelConfirm || _axPanelDebt) {
                 _settlePanelDebtThen("前客クリア後のパネル清算", function () {
                   try { if (_audit) _auditStepP("clear_panel_confirm", "外し後に確定してリストへ（負債清算）"); } catch (_) {}
-                  _resetRest();
+                  _next();
                 });
                 return;
               }
-              _resetRest();
+              _next();
             });
           };
           /**
@@ -10942,22 +10975,28 @@
            */
           var _openThenUncheck = function () {
             var chain = Promise.resolve(true);
-            var _openIf = function (sel, name) {
+            /**
+             * ★ 2.8.135: 箱ごとの段（開ける→外す→確定→次の箱）。
+             *   ★ 2026-11-17: 駅・沿線は form直外ししない（駅画面経由）。ここでは開かない。
+             *   ペット(eq_rm)は通常録画どおり「絞り込み条件＋」を開いてから外す。
+             */
+            var _stage = function (sel, name, onlyRe) {
               chain = chain.then(function () {
                 var el = null;
                 try { el = document.querySelector(sel); } catch (_) { el = null; }
                 if (!el) return true;
-                return _ensureFieldVisible(el, name, 4000).then(function () { return true; }, function () { return false; });
+                try { _auditStepP("clear_stage", name + " を開けて外す"); } catch (_) {}
+                return _ensureFieldVisible(el, name, 4000).then(function () { return true; }, function () { return false; })
+                  .then(function () {
+                    return new Promise(function (resolve) { _runUncheck(onlyRe, null, function () { resolve(true); }); });
+                  });
               });
             };
-            _openIf('input[name="room_layout_id[]"]:checked', "room_layout_id[]");
-            /**
-             * ★ 2026-11-17: 駅・沿線は form直外ししない（駅画面経由）。ここでは開かない。
-             *   ペット(eq_rm)は通常録画どおり「絞り込み条件＋」を開いてから外す。
-             */
-            _openIf('input[name="eq_rm[]"]:checked', "eq_rm[]");
-            _openIf('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked', "city_code[]");
-            chain.then(_runUncheck, _runUncheck);
+            _stage('input[name="room_layout_id[]"]:checked', "room_layout_id[]", /^room_layout_id/);
+            _stage('input[name="eq_rm[]"]:checked', "eq_rm[]", /^eq_rm/);
+            _stage('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked', "city_code[]", /^(city_code|town_code)/);
+            var _rest = function () { _runUncheck(null, /^(room_layout_id|eq_rm|city_code|town_code)/, _resetRest); };
+            chain.then(_rest, _rest);
           };
           _openThenUncheck();
         }

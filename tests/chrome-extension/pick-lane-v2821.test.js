@@ -36,7 +36,7 @@ console.log("\n■ ② 選ぶレーン（駅・沿線・町字・間取り）");
   ok("区は今まで通り区レーン（選ぶレーンにしない）", /var _pickKind = _isWardLaneEl\(el\) \? null : _pickLaneKind\(el\);/.test(ps));
   ok("2つ目からだけ（同じ種類を7秒以内に押した直後）", /window\.__axlxPickLastKind === item\.pickKind && Date\.now\(\) - _pl < 7000/.test(ps));
   ok("押した時刻と種類を残す", /window\.__axlxPickLastAt = _tn; window\.__axlxPickLastKind = item\.pickKind;/.test(ps));
-  ok("通常の迷い（_hesitateMs）は足さない", /var hesitate = \(_isWardItem \|\| _isSelItem \|\| _isPickItem\) \? 0 : _hesitateMs\(item\.el\);/.test(ps));
+  ok("通常の迷い（_hesitateMs）は足さない", /var hesitate = \(_isWardItem \|\| _isSelItem \|\| _isPickItem[^)]*\) \? 0 : _hesitateMs\(item\.el\);/.test(ps));
   ok("押す前の待ちは小さく・押す時刻は「前の押下＋人の間隔」", /item\.gap = _ln\(110, 0\.45, 50, 260\);\n        if \(_pPlan\.kind === "fast"\) \{\n          _wardTgt = _pickRef \+ _pPlan\.ms;/.test(ps));
   ok("中央値＝束の人の間隔×欄ごとの比（無ければ1685）", /var base = Number\(window\.__axlxLearnGapMs\) > 0 \? Number\(window\.__axlxLearnGapMs\) : _PICK_HUMAN_GAP_FALLBACK;/.test(ps) && /var _PICK_HUMAN_GAP_FALLBACK = 1685;/.test(ps));
   ok("点検に pick_pace（束の値か既定か）を残す", /"pick_pace"/.test(ps) && /束の人の間隔/.test(ps));
