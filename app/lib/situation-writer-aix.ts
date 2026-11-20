@@ -24,6 +24,22 @@ export function ourItemsWriterLines(items: ReadonlyArray<SnOurItem> | null | und
   });
 }
 
+/**
+ * 2026-11-21 作業員K2: 返信の書き手（generate-reply）にも「こちらが前に伝えた事」を渡す（OUR_ITEMS_WRITER_NOTE=on・既定 off）。
+ *   L の situationWriterNote（SITUATION_WRITER_NOTE・既定 on）は時の言葉・内覧・開いている約束・確かめた結果だけで、our_items（前の通の項目）を渡していない。
+ *   数え（ai_reply_examples 30日 979番・前のこちらの塊と同じ文を下書きに書いた番）: AI の下書き 75・送った文 47・AI だけ（スタッフが直して消した）32。
+ *   AI だけの32の型: 探す・送る約束の言い直し 15（お客様の「かしこまりました」だけの番）／日程を答えてもらった後の「ご都合よろしいお日にち」の聞き直し／
+ *   確認の約束の言い直し 3／安心の一言（審査も柔軟にサポート）の言い直し 等。＝材料が届いていない（前に何を言い・お客様が答えたかを項目で持たない）。
+ */
+export function ourItemsWriterNoteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.OUR_ITEMS_WRITER_NOTE ?? "").trim().toLowerCase() === "on";
+}
+export function ourItemsReplyNote(sn: unknown): string {
+  if (!sn || typeof sn !== "object") return "";
+  const ours = ourItemsWriterLines((sn as SituationNow).our_items);
+  return ours.length ? `\n\n【こちらが前に伝えた事（記録・同じ事を言い直さず、続きを書く材料）】\n${ours.join("\n")}` : "";
+}
+
 /** 書き手に渡す塊（無ければ ""）。L の事実の塊＋こちらが前に伝えた事 */
 export function situationWriterNoteAix(sn: unknown, nowMs: number): string {
   if (!sn || typeof sn !== "object") return "";
