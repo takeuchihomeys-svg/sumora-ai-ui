@@ -12,7 +12,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-promise-kept.ts [--days=30] [--max-convs=400] [--out=<json>]
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { promiseKindNameOf, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
+import { promiseKindNameOf, promiseInputWaitTurn, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "../app/lib/test-conversations";
 
 const argv = process.argv.slice(2);
@@ -25,8 +25,12 @@ type Msg = PdMsg & { staff_writer?: string | null };
 /** 1会話の約束を並べて判定する（純関数）。同じ種類で果たす前の言い直しは新しい方にまとめる */
 export function promisesOf(conv: string, status: string | null, msgs: ReadonlyArray<Msg>, aix: ReadonlyArray<PdAix>, sent: ReadonlyArray<PdSent>, sinceMs: number, nowMs: number): PromiseRow[] {
   const raw: Array<{ at: string; kind: PromiseKindName; text: string; writer: string }> = [];
-  for (const m of msgs) {
+  const ordered = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  for (let j = 0; j < ordered.length; j++) {
+    const m = ordered[j];
     if (m.sender !== "staff" || m.is_aix_generated || Date.parse(m.created_at) < sinceMs) continue;
+    // 同じ番の後ろの通で条件の用紙・ご入力のお願いを送った約束は、お客様の入力待ち（作業員L の promiseInputWaitTurn・#435 と同じ）
+    if (promiseInputWaitTurn(ordered, j)) continue;
     const kind = promiseKindNameOf(String(m.text ?? ""));
     if (kind) raw.push({ at: m.created_at, kind, text: String(m.text ?? ""), writer: String(m.staff_writer ?? "unknown") || "unknown" });
   }
