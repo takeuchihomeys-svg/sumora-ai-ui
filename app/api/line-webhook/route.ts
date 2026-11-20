@@ -12,6 +12,7 @@ import { fileMessageText } from "@/app/lib/received-document";
 import { resolveEventTarget, groupConversationName, displayMemberCount, parseStaffUserIds, type LineTargetKind } from "@/app/lib/line-target";
 // 2026-09-27: お客様の文字の発言の処理は app/lib/line-webhook-text.ts へ移した（お客様役のテスト入口と同じ関数を通すため・中身は同じ）
 import { type AccountConfig, ACCOUNTS, fetchLineProfile, getDb, ensureConversation, updateProfileAsync, handleTextMessage, tryPromoteToApplying } from "@/app/lib/line-webhook-text";
+import { inboxPut, inboxDrain, replayAtOf, lineInboxOn, REPLAY_HEADER } from "@/app/lib/line-webhook-inbox";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 // 2026-09-13: 画像は読み取り（最大 IMAGE_READ_WAIT_MS）→ ブレイン（最大約90s・実行中に読み取りが終わった分の再分析1回）を直列にしたので 300 に
@@ -227,9 +228,10 @@ async function handleImageMessageSave(
   userId: string,
   lineMessageId: string,
   account: AccountConfig,
+  atIso?: string,
 ): Promise<{ convId: string; msgId: string } | "duplicate" | null> {
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = atIso ?? new Date().toISOString();
 
   const convId = await ensureConversation(db, userId, account, now);
   if (!convId) return null; // 失敗（LINEにリトライさせる）
@@ -310,9 +312,10 @@ async function handleFileMessageSave(
   lineMessageId: string,
   fileName: string | null,
   account: AccountConfig,
+  atIso?: string,
 ): Promise<{ convId: string; msgId: string } | "duplicate" | null> {
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = atIso ?? new Date().toISOString();
 
   const convId = await ensureConversation(db, userId, account, now);
   if (!convId) return null; // 失敗（LINEにリトライさせる）
@@ -672,6 +675,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (!matchedAccount) {
     console.warn("[line-webhook] 未知のdestination:", destination);
+    // 2026-11-21 作業員M: 400 は中継（relay）が LINE に 200 で返す＝本文はどこにも残らない。宛先の設定の誤りでも本文を失わないよう貯める
+    if (!req.headers.get(REPLAY_HEADER)) await inboxPut(rawBody, signature, `unknown_destination:${destination.slice(0, 40)}`, "webhook");
     return NextResponse.json({ error: "unknown destination" }, { status: 400 });
   }
 
@@ -699,12 +704,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // （LINEが1回のPOSTに複数eventを詰めて送った場合の多重bg-asyncトリガー対策）
   const draftTriggeredUserIds = new Set<string>();
 
+  // 2026-11-21 作業員M: 貯めた本文の入れ直し（line-webhook-inbox）は時刻を LINE の event.timestamp にし、ついでの入れ直しはしない
+  const isReplay = !!req.headers.get(REPLAY_HEADER);
+  // 2026-11-21 作業員M: 途中で投げた時（DB の止まり等）も、本文を捨てずに貯めて 500 にする
+  try {
   for (const ev of events) {
     const event = ev as {
       type: string;
       source?: { type?: string; userId?: string; groupId?: string; roomId?: string };
       // fileName / fileSize は LINE の file メッセージ（PDF 等）に付く
       message?: { type: string; id?: string; text?: string; quotedMessageId?: string; fileName?: string; fileSize?: number };
+      timestamp?: number;
       unsend?: { messageId?: string };
     };
 
@@ -892,14 +902,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const skipDraft = draftTriggeredUserIds.has(userId);
       draftTriggeredUserIds.add(userId);
       // sync-from-screeningより高速な直接経路で保存（line_message_idで重複防止）
-      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId, quotedMessageId, skipDraft);
+      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId, quotedMessageId, skipDraft, replayAtOf(event, isReplay));
       if (!ok) anyFailed = true;
       continue;
     } else if (msgType === "image") {
       const lineMessageId = event.message?.id;
       if (!lineMessageId) continue;
       // 即時保存（重複チェック込み）してから後処理キューに積む
-      const saved = await handleImageMessageSave(userId, lineMessageId, matchedAccount);
+      const saved = await handleImageMessageSave(userId, lineMessageId, matchedAccount, replayAtOf(event, isReplay));
       if (saved === null) {
         anyFailed = true; // 失敗 → LINEにリトライさせる
       } else if (saved !== "duplicate") {
@@ -912,7 +922,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const lineMessageId = event.message?.id;
       if (!lineMessageId) continue;
       const fileName = (event.message?.fileName ?? "").trim() || null;
-      const saved = await handleFileMessageSave(userId, lineMessageId, fileName, matchedAccount);
+      const saved = await handleFileMessageSave(userId, lineMessageId, fileName, matchedAccount, replayAtOf(event, isReplay));
       if (saved === null) {
         anyFailed = true; // 失敗 → LINEにリトライさせる
       } else if (saved !== "duplicate") {
@@ -922,7 +932,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // H4: スタンプは保存も通知もされず消えていた → テキスト経路で "[スタンプ]" として保存・通知
       // skipDraftTrigger=true: スタンプでai_draft生成は不要（連打で多重生成が起きるのを防ぐ）
       const lineMessageId = event.message?.id;
-      const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId, undefined, true);
+      const ok = await handleTextMessage(userId, "[スタンプ]", matchedAccount, lineMessageId, undefined, true, replayAtOf(event, isReplay));
       if (!ok) anyFailed = true;
       continue;
     } else {
@@ -947,6 +957,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
     // video / audio / file は現状スキップ
+  }
+  } catch (e) {
+    anyFailed = true;
+    console.error(JSON.stringify({ tag: "line-webhook:threw", error: e instanceof Error ? e.message : String(e) }));
   }
 
   // LINEへの200レスポンスを先に返し、画像fetch/uploadはレスポンス後に実行
@@ -997,7 +1011,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // 保存失敗時は500を返してLINEにリトライさせる（line_message_id UNIQUE制約で重複保存は防止済み）
   if (anyFailed) {
+    // 2026-11-21 作業員M（竹内さん「返信が来ているのにツールに反映されない」）: 500 だけだと LINE の再送が off の時に本文が消える。
+    //   生の本文と署名を Blob（private）に貯め、DB が戻った後の受け口の成功のついでに入れ直す（line-webhook-inbox.ts・入れ直しの失敗は Blob に残る）
+    if (!isReplay) await inboxPut(rawBody, signature, "save_failed", "webhook");
     return NextResponse.json({ error: "message save failed, will retry" }, { status: 500 });
+  }
+  // 成功した時のついでに、貯めてある本文を古い順に少しだけ入れ直す（新しい cron は足さない・入れ直しの時はしない）
+  if (!isReplay && lineInboxOn()) {
+    const target = `${req.nextUrl.origin}/api/line-webhook`;
+    after(async () => { const r = await inboxDrain(target, 3); if (r.done || r.kept || r.dropped) console.log(JSON.stringify({ tag: "line-inbox:drain", ...r })); });
   }
   return NextResponse.json({ ok: true });
 }
