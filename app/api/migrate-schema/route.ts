@@ -477,6 +477,40 @@ RETURNS void LANGUAGE sql AS $$
       last_used_at = NOW()
   WHERE id = ANY(p_ids);
 $$;
+-- knowledge_usage: ナレッジの使用回数を小さな表に足し、毎晩1回だけ ai_reply_knowledge に書き戻す（2026-11-20 作業員H・KNOWLEDGE_USAGE_TABLE・既定 off）
+--   ai_reply_knowledge は embedding と embedding_h を持つ大きな行・索引9本（HNSW を含む）＝生成のたびの +1 が行と索引を書き直し WAL・checkpoint を重くする
+--   （再起動から1時間半で 654回更新）。書き戻しは update-knowledge の cron の最初（used_count=0 の行を消す前）。app/lib/knowledge-usage.ts
+CREATE TABLE IF NOT EXISTS knowledge_usage (
+  knowledge_id UUID PRIMARY KEY,
+  used_delta INTEGER NOT NULL DEFAULT 0,
+  last_used_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE knowledge_usage DISABLE ROW LEVEL SECURITY;
+-- 同じ id が配列に2回あると ON CONFLICT が同じ行を2回触って落ちる → DISTINCT
+CREATE OR REPLACE FUNCTION increment_knowledge_usage(p_ids UUID[])
+RETURNS void LANGUAGE sql AS $$
+  INSERT INTO knowledge_usage (knowledge_id, used_delta, last_used_at, updated_at)
+  SELECT DISTINCT x, 1, now(), now() FROM unnest(p_ids) AS x WHERE x IS NOT NULL
+  ON CONFLICT (knowledge_id) DO UPDATE
+    SET used_delta = knowledge_usage.used_delta + 1, last_used_at = now(), updated_at = now();
+$$;
+-- 書き戻し: 足した分を消しながら（同じ1文で）ai_reply_knowledge に足す。戻した行の数を返す。消えたナレッジの分は捨てる
+CREATE OR REPLACE FUNCTION fold_knowledge_usage()
+RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE n integer;
+BEGIN
+  WITH d AS (DELETE FROM knowledge_usage RETURNING knowledge_id, used_delta, last_used_at),
+  u AS (
+    UPDATE ai_reply_knowledge k
+    SET used_count = COALESCE(k.used_count, 0) + d.used_delta,
+        last_used_at = GREATEST(COALESCE(k.last_used_at, d.last_used_at), d.last_used_at)
+    FROM d WHERE k.id = d.knowledge_id AND d.used_delta > 0
+    RETURNING k.id
+  )
+  SELECT count(*) INTO n FROM u;
+  RETURN n;
+END $$;
 
 -- テンプレート使用回数アトミックインクリメント（RMW競合を排除）
 CREATE OR REPLACE FUNCTION increment_template_use_count(p_id UUID)

@@ -16,6 +16,7 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 import { altPiiSignal, altPiiSignalReapply, altPiiSignalReapplyValues, altReapplyGateEnabled, maskInsteadEnabled, maskApplicationValuesForAlt, altPiiValuesRemain } from "@/app/lib/alt-pii-gate";
 import { buildSystemBlocks, systemStaticLength, splitSharedPrefix, llmMetaHeaderValue, LLM_META_HEADER_ACTION, LLM_META_HEADER_CONVERSATION, type SystemSpec, type SystemSpecBlocks, type SystemTtl } from "@/app/lib/aix-system-blocks";
 import { supabase } from "@/app/lib/supabase-server";
+import { recordKnowledgeUsage } from "@/app/lib/knowledge-usage";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
@@ -494,7 +495,8 @@ async function getPropertyKnowledge(conversationId?: string, customerContext?: s
   if (usedIds.length && !isTestConversation(conversationId)) {
     after(async () => {
       try {
-        await supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds });
+        // 2026-11-20 作業員H: KNOWLEDGE_USAGE_TABLE=on の時は小さな表 knowledge_usage に足す（毎晩書き戻す・app/lib/knowledge-usage.ts）
+        await recordKnowledgeUsage((fn, a) => supabase.rpc(fn, a), usedIds);
       } catch (e) {
         console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e);
       }
@@ -635,7 +637,8 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     if (allIds.length && !isTestConversation(conversationId)) {
       after(async () => {
         try {
-          await supabase.rpc("increment_knowledge_used_count", { p_ids: allIds });
+          // 2026-11-20 作業員H: KNOWLEDGE_USAGE_TABLE=on の時は小さな表 knowledge_usage に足す（毎晩書き戻す・app/lib/knowledge-usage.ts）
+          await recordKnowledgeUsage((fn, a) => supabase.rpc(fn, a), allIds);
         } catch (e) {
           console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e);
         }

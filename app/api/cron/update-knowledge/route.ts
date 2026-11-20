@@ -113,6 +113,13 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // 2026-11-20 作業員H: 小さな表（knowledge_usage）に足した使用回数を、used_count=0 の行を消す前に書き戻す（KNOWLEDGE_USAGE_TABLE・on・off に関係なく毎晩）
+    //   ⚠ 下の早めの return（☆つき例文が無い時）より前に置く
+    {
+      const { foldKnowledgeUsage } = await import("@/app/lib/knowledge-usage");
+      const f = await foldKnowledgeUsage((fn, args) => supabase.rpc(fn, args));
+      console.log(JSON.stringify({ tag: "update-knowledge:fold-usage", folded: f.folded, error: f.error }));
+    }
     // 未処理の☆つき例文を取得
     const { data: examples } = await supabase
       .from("ai_reply_examples")
