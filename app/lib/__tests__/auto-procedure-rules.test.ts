@@ -192,6 +192,22 @@ console.log("■ 手順書に決まりと1手ずつの細部が載る（作り�
   })());
 }
 
+console.log("■ 種類の平均の写しを、その欄の押す位置と取り違えない（束 2532 の実際の形）");
+{
+  const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
+  const pb = buildPlaybook({
+    scene_flows: [{ scene: "area", runs: 6, ops: 9, steps: ["所在地絞り込み＋", "city_code[]"], gap_ms: 1, variants: 1 }],
+    points: {
+      "city_code[]": copy, "所在地絞り込み": copy, "所在地を絞り込み": copy, "左の所在地絞り込み＋｜span": copy,
+      "左の所在地絞り込み＋｜div.one_slide_searc": { n: 1, w: "button", x: 0.42, y: 0.18 },
+    },
+  } as never);
+  const d = pb.scenes[0].detail;
+  ok("ボタンはその欄で測った位置（票1でも写しより先）", d[0].aim?.source === "field" && d[0].aim?.x === 0.42 && d[0].aim?.confidence === "thin", JSON.stringify(d[0].aim));
+  ok("測った物が無い欄は写しと書く（solid にしない）", d[1].aim?.source === "kind" && d[1].aim?.confidence === "thin", JSON.stringify(d[1].aim));
+  ok("写しの手は足りない所に出る", pb.gaps.some((g) => /種類の平均の写し/.test(g) && /区の欄/.test(g)), pb.gaps.join(" / "));
+}
+
 console.log("■ 反映の突き合わせ（DB の手順書 × コード × 自動が読んだ印）");
 {
   const pb = buildPlaybook({ scene_flows: [{ scene: "area", runs: 3, ops: 9, steps: ["所在地絞り込み＋"], gap_ms: 1, variants: 1 }], points: {} } as never);

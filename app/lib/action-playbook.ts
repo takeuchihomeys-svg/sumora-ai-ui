@@ -70,8 +70,11 @@ export type PlaybookStep = {
   step: string;
   /** 押す欄の名前（束の名前・飾りを落とした物） */
   field: string;
-  /** 学んだ押す位置（要素の中の割合）。学んでいなければ null */
-  aim: { x: number; y: number; n: number; confidence: "solid" | "thin" } | null;
+  /**
+   * 学んだ押す位置（要素の中の割合）。学んでいなければ null。
+   *   source=field: この欄で測った位置／kind: 種類（チェック・プルダウン等）の平均の写し（この欄の位置ではない）
+   */
+  aim: { x: number; y: number; n: number; confidence: "solid" | "thin"; source: "field" | "kind" } | null;
   /** 押すと開く物（人が確かめて学んだ物だけ）。無ければ null */
   opens: string | null;
 };
@@ -243,18 +246,31 @@ export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
   return { steps: out, fields, unknown, values_dropped };
 }
 
-type PosIndex = Map<string, { x: number; y: number; n: number }>;
+type PosIndex = Map<string, { x: number; y: number; n: number; source: "field" | "kind" }>;
 type OpenIndex = Map<string, string>;
 
-/** 束の points を「飾りを落とした欄の名前」で引けるようにする（同じ名前は票の多い方） */
+/** 同じ（票・x・y・種類）が何個の名前にあれば「種類の平均の写し」と見るか */
+export const PLAYBOOK_KIND_COPY_MIN = 3;
+
+/**
+ * 束の points を「飾りを落とした欄の名前」で引けるようにする。
+ *   実測（2026-11-20 束 2532）: city_code[]・所在地絞り込み・左の所在地絞り込み＋｜span が全部 n=1238 (0.5,0.5) checkbox。
+ *   ＝チェック欄の種類の平均が名前に写された物で、ボタン（所在地絞り込み＋）で測った位置ではない。
+ *   → 同じ値が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある物は source=kind。同じ欄はその欄で測った物（field）を先に、次に票の多い方。
+ */
 function indexPositions(points: BundleLike["points"]): PosIndex {
+  const entries = Object.entries(points ?? {}).filter(([, p]) => (Number(p?.n) || 0) >= 1 && typeof p?.x === "number" && typeof p?.y === "number");
+  const sig = (p: { n?: number; x?: unknown; y?: unknown; w?: unknown }) => `${p.n}|${p.x}|${p.y}|${String(p.w ?? "")}`;
+  const sigCount = new Map<string, number>();
+  for (const [, p] of entries) sigCount.set(sig(p), (sigCount.get(sig(p)) ?? 0) + 1);
   const m: PosIndex = new Map();
-  for (const [k, p] of Object.entries(points ?? {})) {
-    const n = Number(p?.n) || 0;
-    if (n < 1 || typeof p?.x !== "number" || typeof p?.y !== "number") continue;
+  for (const [k, p] of entries) {
+    const n = Number(p.n) || 0;
+    const source: "field" | "kind" = (sigCount.get(sig(p)) ?? 0) >= PLAYBOOK_KIND_COPY_MIN ? "kind" : "field";
     const key = cleanPlaybookName(k);
     const cur = m.get(key);
-    if (!cur || cur.n < n) m.set(key, { x: p.x, y: p.y, n });
+    const better = !cur || (cur.source === "kind" && source === "field") || (cur.source === source && cur.n < n);
+    if (better) m.set(key, { x: p.x as number, y: p.y as number, n, source });
   }
   return m;
 }
@@ -286,7 +302,7 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
     return {
       step,
       field,
-      aim: p ? { x: p.x, y: p.y, n: p.n, confidence: p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin" } : null,
+      aim: p ? { x: p.x, y: p.y, n: p.n, confidence: p.source === "field" && p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin", source: p.source } : null,
       opens: opn.get(field) ?? null,
     };
   });
@@ -365,6 +381,8 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   for (const s of scenes) {
     const noAim = s.detail.filter((d) => !d.aim).map((d) => d.step);
     if (noAim.length) gaps.push(`${s.label}：押す位置を学んでいない手 ${noAim.length}件（${noAim.slice(0, 4).join("・")}）`);
+    const kindAim = s.detail.filter((d) => d.aim?.source === "kind").map((d) => d.step);
+    if (kindAim.length) gaps.push(`${s.label}：押す位置が種類の平均の写しで、この欄で測っていない手 ${kindAim.length}件（${kindAim.slice(0, 4).join("・")}）`);
   }
 
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
