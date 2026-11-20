@@ -75,6 +75,7 @@ import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
+import { bisectPlan } from "./lib/exam-bisect";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
@@ -517,6 +518,32 @@ async function addJob(): Promise<void> {
   const f = join(ROOT, `${job.createdAt.replace(/[:.]/g, "-")}-${job.label}.json`);
   writeFileSync(f, JSON.stringify(job, null, 1));
   log(`足した: ${job.label}（${job.owner}・${job.switch}・${job.runner === "tsc" ? `tsc（${job.cwd}）` : job.runner === "cmd" ? `${job.cmds!.length}本の試験` : `${job.only || "rag"}・${job.repeat}回${job.flaky?.length ? `・揺れる ${job.flaky.join(",")}` : ""}`}）`);
+}
+
+/**
+ * 2026-11-21 作業員H（KB d57f27eb「組が悪化した時だけスイッチごとに分けて流し直す」・統括役の頼み）: --bisect=<済んだ依頼の label>
+ *   その依頼の env のスイッチを半分ずつ2本（<label>-bA・-bB）にし、悪化した問題（確かな悪化＋道の悪化）だけを同じ作業ツリー・段・回数で積む。
+ *   悪化が出た方にもう一度 --bisect をかければスイッチ1つまで絞れる。--priority・--cap-usd は付ければ上書き（無ければ元の依頼の物）
+ */
+function bisectJob(label: string): void {
+  ensureDirs();
+  const file = readdirSync(DONE).filter((f) => f.endsWith(`-${label}.json`)).sort().pop();
+  if (!file) throw new Error(`--bisect: 済んだ依頼 ${label} が done に無い`);
+  const job = JSON.parse(readFileSync(join(DONE, file), "utf8")) as ExamJob;
+  const res = readJson<{ worseSure?: Array<string | { id: string }>; pathWorse?: Array<string | { id: string }> }>(join(RES, `${label}.json`), {});
+  const idOf = (x: string | { id: string }) => (typeof x === "string" ? x.split(/[\s（(]/)[0] : x.id);
+  const worse = [...(res.worseSure ?? []), ...(res.pathWorse ?? [])].map(idOf).filter(Boolean);
+  const plan = bisectPlan({ label: job.label, env: job.env ?? {}, only: job.only }, worse);
+  if ("error" in plan) { log(`--bisect ${label}: 積まない（${plan.error}）`); return; }
+  const now = Date.now();
+  plan.children.forEach((c, k) => {
+    const nj: ExamJob = { ...job, id: `${job.id}-b${c.half}`, label: c.label, env: c.env, only: c.only, switch: `${job.switch}（${c.half}: ${c.switches.join(",")}）`, flaky: (job.flaky ?? []).filter((x) => c.only.split(",").includes(x)), guards: [], createdAt: new Date(now + k).toISOString(), tries: 0 };
+    if (arg("priority")) (nj as unknown as Record<string, unknown>).priority = Number(arg("priority"));
+    if (Number(arg("cap-usd")) > 0) nj.capUsd = Number(arg("cap-usd"));
+    delete (nj as { file?: string }).file;
+    writeFileSync(join(ROOT, `${nj.createdAt.replace(/[:.]/g, "-")}-${nj.label}.json`), JSON.stringify(nj, null, 1));
+    log(`足した（二分）: ${nj.label}・${c.switches.length}スイッチ（${c.switches.join(",")}）・悪化した ${c.only.split(",").length}問（${c.only}）`);
+  });
 }
 
 // ─── 流す・結果を読む ─────────────────────────────────────────────────────
@@ -1106,6 +1133,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("add")) { await addJob(); return; }
+  if (arg("bisect")) { bisectJob(arg("bisect")); return; }
   // 11/03 指揮役: 知らせの未配達の見張り。流す役は notify.jsonl に書くだけ（SendMessage を持たない）＝届けた人が --delivered で印を付ける。
   //   未配達＝results/notify.jsonl の行のうち、id（`${at}|${label}`）が results/delivered.jsonl に無い物。作業員1の再開時と指揮役の見回りで全部届ける
   if (flag("undelivered") || arg("delivered")) {
