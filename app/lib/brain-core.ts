@@ -299,6 +299,7 @@ import { brainInputKeyOf, decideInputKeyReuse } from "@/app/lib/brain-input-key"
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 // 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
+import { equipmentWishBrainLine } from "@/app/lib/equipment-question";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
@@ -3265,7 +3266,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
-    if (equipmentAnswer.question.wish) customerStateBlockText += "\n→ お客様の今の発言は設備の希望（質問の形ではない）。上の事実で、こちらが既に送った物件の中に希望に合う物件がある時は、新しい条件で探す番ではなく送った物件への問いの番（竹内さん 11/09「お送りしたお部屋でカウンターキッチン付のお部屋はこちらの1部屋・お気に召されましたらご案内」）。合う物件が無い・資料で分からない時だけ探す約束。";
+    // 2026-11-21 作業員K2（#132・q439）: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
+    if (equipmentAnswer.question.wish) customerStateBlockText += `\n${equipmentWishBrainLine(equipmentAnswer.plan)}`;
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
