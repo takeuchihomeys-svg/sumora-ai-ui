@@ -143,7 +143,7 @@ export async function ensureConversation(
   account: AccountConfig,
   now: string,
 ): Promise<string | null> {
-  const { data: convRows } = await db
+  const { data: convRows, error: selErr } = await db
     .from("conversations")
     .select("id, account")
     .eq("line_user_id", userId)
@@ -152,6 +152,13 @@ export async function ensureConversation(
 
   if (convRows && convRows.length > 0) {
     return convRows[0].id as string;
+  }
+  // 2026-11-21 作業員M（竹内さん「返信が来ているのにツールに反映されない」）: 問い合わせの失敗（DB が止まっている・時間切れ）を「会話が無い」と取り違えて作りに行かない。
+  //   旧: 失敗でも作りに行き、それも失敗して「conversation作成失敗: undefined」で本文を捨てていた（DB が戻った時に二重の会話を作る恐れもあった）。
+  //   失敗は null を返す＝受け口が本文を Blob に貯めて 500（line-webhook-inbox.ts）
+  if (selErr) {
+    console.error(JSON.stringify({ tag: "line-webhook:conversation-lookup-failed", account: account.key, error: String(selErr.message ?? selErr).slice(0, 200) }));
+    return null;
   }
 
   // 2026-09-21: userId は「宛先」。グループ（C…）・トークルーム（R…）なら、名前が取れる前から
@@ -179,7 +186,7 @@ export async function ensureConversation(
       .eq("account", account.key)
       .limit(1);
     if (retry && retry.length > 0) return retry[0].id as string;
-    console.error("[line-webhook] conversation作成失敗:", createErr?.message);
+    console.error("[line-webhook] conversation作成失敗:", createErr?.message ?? (createErr ? JSON.stringify(createErr).slice(0, 200) : "作った行が返らなかった"));
     return null;
   }
   return created.id as string;
@@ -297,9 +304,11 @@ export async function handleTextMessage(
   lineMessageId?: string,
   quotedMessageId?: string,
   skipDraftTrigger?: boolean,
+  /** 2026-11-21 作業員M: 貯めた本文の入れ直しの時は LINE の event.timestamp（line-webhook-inbox.replayAtOf）。普段は undefined＝今 */
+  atIso?: string,
 ): Promise<boolean> {
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = atIso ?? new Date().toISOString();
 
   const convId = await ensureConversation(db, userId, account, now);
   if (!convId) return false;
@@ -343,10 +352,14 @@ export async function handleTextMessage(
     });
   }
 
-  await db
-    .from("conversations")
-    .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
-    .eq("id", convId);
+  // 入れ直し（atIso あり）は、会話がそれより新しく動いていたら一覧の最後の文を古い文で上書きしない
+  {
+    const q = db
+      .from("conversations")
+      .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true, suggested_aix_meta: null })
+      .eq("id", convId);
+    await (atIso ? q.lt("updated_at", atIso) : q);
+  }
 
   // FIX: stale __SHOWN__ 残留対策 — 前サイクルでスタッフ閲覧済み（ai_draft='__SHOWN__'）のまま
   // 新着顧客メッセージが来ると、brain分析が失敗した場合に brain-sweep が「表示済み」と誤認して
