@@ -3589,6 +3589,42 @@ WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS
 ORDER BY image_url, sent_at DESC
 ON CONFLICT (image_url) DO NOTHING;
 
+-- customer_image_records: お客様の画像1枚 → 種類・物件・照合・関連（2026-11-21 作業員G・memory/image_understanding_map.md の E ②・統括役の承認）
+--   受け取った時に決定論で書く（LLM なし・app/lib/customer-image-record*.ts・CUSTOMER_IMAGE_RECORD=on の時だけ）。
+--   書き起こし・お客様の文そのもの・見積書の宛名は入れない（KB 33a30792）。書類は kind だけ。
+--   サーバーだけが読み書きする表＝RLS は入れたまま（10/21 の決まり・DISABLE を書かない）。サーバーは service role の鍵（serverSupabaseKey）
+CREATE TABLE IF NOT EXISTS customer_image_records (
+  message_id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  kind TEXT NOT NULL,
+  link_kind TEXT,
+  part TEXT,
+  property_name TEXT,
+  room_no TEXT,
+  name_via TEXT,
+  rent_yen INTEGER,
+  admin_yen INTEGER,
+  madori TEXT,
+  area_sqm NUMERIC,
+  station TEXT,
+  walk_min INTEGER,
+  age_years INTEGER,
+  certainty TEXT,
+  ours_kind TEXT,
+  ours_property_name TEXT,
+  ours_room_no TEXT,
+  relation TEXT,
+  estimate JSONB,
+  asks TEXT[],
+  unit_key TEXT,
+  read_version TEXT,
+  recorded_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_customer_image_records_conv ON customer_image_records(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_image_records_unit ON customer_image_records(unit_key) WHERE unit_key IS NOT NULL;
+ALTER TABLE customer_image_records ENABLE ROW LEVEL SECURITY;
+
 -- 物件送った表を「共有した／お客様に送った」「どの経路で送ったか」で読む（2026-09-24 竹内「どれ物件ピックアップで送ったか
 --   物件オススメで送ったかもわかる」）。source の値と意味は変えない（'vision'＝照合できなかった印のまま）。判定は app/lib/sent-delivery.ts
 --   delivery: 'shared'（グループに共有しただけ・source='line_group' の時だけ）| 'customer'（お客様に送った）。NULL＝古い行（source から導く）
