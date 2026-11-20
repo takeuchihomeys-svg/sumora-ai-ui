@@ -48,9 +48,14 @@ export async function GET(req: NextRequest) {
       try { realProbe = await runRealProbe(sb as never, 3); findings.push(...realProbeFindings(realProbe)); }
       catch (e) { findings.push({ rpc: "(本番に近い問い)", kind: "real_error", detail: e instanceof Error ? e.message : String(e) }); }
     }
+    // 2026-11-21 作業員L（統括役の頼み）: 約束の取りこぼしの見張りを営業時間の外のこの便で数える（新しい cron は足さない・RAG の結果とは別・失敗しても RAG の見張りは止めない）。
+    //   既定は記録だけ（cron_run_logs の promise-drop-watch）。送るのは PROMISE_DROP_WATCH=on の時に staff-todo-list の最初の便（app/lib/promise-drop-watch-server.ts）
+    let promiseDrops: { mode: string; count: number } | null = null;
+    try { const { recordPromiseDrops } = await import("@/app/lib/promise-drop-watch-server"); promiseDrops = await recordPromiseDrops(sb as never); }
+    catch (e) { console.warn("[rag-watch-daily] promise-drop-watch skipped:", e instanceof Error ? e.message : String(e)); }
     const summary = today.length === 0 ? "RAG の記録が0行（RAG_WATCH が off か、包みが入っていない）"
       : `RAG ${stats.length}種・${today.length}回・拾い上げ ${findings.length}件${findings.length ? `（${findings.map((f) => `${f.rpc}:${f.kind}`).join("・")}）` : ""}`;
-    const result = { summary, calls: today.length, stats, findings, real_probe: realProbe };
+    const result = { summary, calls: today.length, stats, findings, real_probe: realProbe, promise_drops: promiseDrops };
     await finishCronLog(logId, true, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
