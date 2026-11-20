@@ -33,7 +33,7 @@ async function main() {
   const n = { aix_images: targets.length, no_record: todo.length, attributed: 0, no_match: 0 };
   const byType: Record<string, number> = {};
   for (const [cid, list] of byConv) {
-    const { data: logs } = await sb.from("aix_usage_logs").select("aix_type, property_names, sent_at, created_at").eq("conversation_id", cid).gte("created_at", new Date(Date.parse(since) - 2 * 3600_000).toISOString()).limit(2000);
+    const { data: logs } = await sb.from("aix_usage_logs").select("aix_type, property_names, sent_at, created_at, generated_text").eq("conversation_id", cid).gte("created_at", new Date(Date.parse(since) - 2 * 3600_000).toISOString()).limit(2000);
     const L = (logs ?? []) as AixLogForAttr[];
     for (const m of list) {
       const t = Date.parse(m.created_at);
@@ -42,7 +42,16 @@ async function main() {
       const hit = type ? pickAixProperty(`aix:${type}`, t, L) : null;
       if (!hit) { n.no_match++; continue; }
       n.attributed++; byType[hit.aixType] = (byType[hit.aixType] ?? 0) + 1;
-      if (SHOW) console.log(`${cid.slice(0, 8)} ${m.created_at.slice(0, 16)} ${hit.aixType} → ${hit.name}${hit.room ? ` ${hit.room}` : ""}`);
+      if (SHOW) {
+        // 確かめ（目で読む）: AIX の本文に物件名が出ているか・画像の中身の読み（image_details）に何が書いてあるか
+        const log = near[0] as AixLogForAttr & { generated_text?: string | null };
+        const key = hit.name.normalize("NFKC").replace(/\s+/g, "").slice(0, 6);
+        const inText = (log.generated_text ?? "").normalize("NFKC").replace(/\s+/g, "").includes(key);
+        const { data: det } = await sb.from("image_details").select("kind, lines").eq("image_url", m.image_url).maybeSingle();
+        const d = det as { kind: string | null; lines: unknown } | null;
+        const dl = d ? JSON.stringify(d.lines ?? "").replace(/\s+/g, " ").slice(0, 90) : "（読みなし）";
+        console.log(`${cid.slice(0, 8)} ${m.created_at.slice(0, 16)} ${hit.aixType} → ${hit.name}${hit.room ? ` ${hit.room}` : ""}｜本文に名前 ${inText ? "あり" : "なし"}｜画像の読み ${d?.kind ?? "-"} ${dl}`);
+      }
       if (WRITE) {
         const channel = channelFromSource(`aix:${hit.aixType}`);
         const { error } = await sb.from("sent_image_properties").upsert({ image_url: m.image_url, conversation_id: cid, property_name: hit.name, room_no: hit.room, source: `aix_log:${hit.aixType}`, created_at: m.created_at, ...(channel ? { channel } : {}) }, { onConflict: "image_url", ignoreDuplicates: true });

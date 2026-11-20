@@ -16,7 +16,8 @@ export function sentImageAixAttributeOn(env: Env = typeof process !== "undefined
 }
 export const AIX_ATTRIBUTE_WINDOW_MS = 5 * 60_000;
 
-export type AixLogForAttr = { aix_type: string | null; property_names: string[] | null; sent_at: string | null; created_at: string };
+/** generated_text: AIX の本文（ある時は、物件名が本文に出ている時だけ結ぶ＝確かめられない結び先は作らない） */
+export type AixLogForAttr = { aix_type: string | null; property_names: string[] | null; sent_at: string | null; created_at: string; generated_text?: string | null };
 
 /** 物件名の欄の値が物件名の形か（説明文・箇条書きは外す） */
 export function looksLikePropertyName(s: string): boolean {
@@ -27,9 +28,14 @@ export function looksLikePropertyName(s: string): boolean {
 }
 /** 「エスタート御幣島 308号室」→ 名前と号室 */
 export function splitNameRoom(s: string): { name: string; room: string | null } {
-  const t = s.normalize("NFKC").trim();
+  // 「〇〇 0」「〇〇 0号室」（号室の無い物件の記録）は号室の欄を外す
+  const t = s.normalize("NFKC").trim().replace(/\s+0+\s*(?:号室?)?$/, "");
   const m = t.match(/^(.*?)\s*([0-9]{2,5}[A-Za-z]?)\s*号室?$/);
-  if (m && m[1].trim().length >= 2) return { name: m[1].trim(), room: m[2].replace(/^0+(?=\d)/, "") };
+  if (m && m[1].trim().length >= 2) {
+    const r = m[2].replace(/^0+(?=\d)/, "");
+    // 「00号室」（号室の無い物件の記録・60日で4件）は号室なし
+    return { name: m[1].trim(), room: /^0+$/.test(r) ? null : r };
+  }
   return { name: t, room: null };
 }
 
@@ -47,5 +53,11 @@ export function pickAixProperty(source: string, sentAtMs: number, logs: Readonly
   const names = (near[0].property_names ?? []).filter((n) => typeof n === "string" && n.trim());
   if (names.length !== 1 || !looksLikePropertyName(names[0])) return null;
   const nr = splitNameRoom(names[0]);
+  // 2026-11-21 60日の 197枚を目で読んだ時、AIX の本文に物件名が出ていない 7枚は結び先を確かめられなかった＝本文がある時は名前が出ている時だけ結ぶ
+  const body = near[0].generated_text;
+  if (typeof body === "string" && body.trim()) {
+    const key = nr.name.normalize("NFKC").replace(/s+/g, "").slice(0, 6);
+    if (!body.normalize("NFKC").replace(/s+/g, "").includes(key)) return null;
+  }
   return { ...nr, aixType: type };
 }

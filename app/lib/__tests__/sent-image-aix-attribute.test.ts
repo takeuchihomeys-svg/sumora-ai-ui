@@ -16,5 +16,9 @@ t("前後5分に AIX の記録が2件は結ばない", pickAixProperty("aix:prop
 t("種類が違う記録は結ばない", pickAixProperty("aix:property_check_result", at, [log("estimate_sheet", ["A 101号室"])]) === null);
 t("5分より離れた記録は使わない", pickAixProperty("aix:property_check_result", at, [log("property_check_result", ["A 101号室"], 400)]) === null);
 t("物件名の欄の説明文は結ばない（実物の形）", !looksLikePropertyName("- 物件資料の画像を送付（賃貸物件の詳細情報、間取り図、写真、地図を含む）") && pickAixProperty("aix:property_check_result", at, [log("property_check_result", ["- 物件資料の画像を送付（詳細情報）"])]) === null);
+t("「00号室」は号室なし", splitNameRoom("テストハイツ 00号室").room === null);
+const withBody = (body: string) => ({ ...log("property_check_result", ["テストハイツ 202号室"]), generated_text: body });
+t("AIX の本文に物件名が出ている → 結ぶ", pickAixProperty("aix:property_check_result", at, [withBody("テストハイツ202号室のお写真お送りさせて頂きます")]) !== null);
+t("AIX の本文に物件名が出ていない → 結ばない（確かめられない）", pickAixProperty("aix:property_check_result", at, [withBody("お部屋のお写真お送りさせて頂きます")]) === null);
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

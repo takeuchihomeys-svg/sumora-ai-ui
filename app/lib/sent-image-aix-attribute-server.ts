@@ -10,7 +10,7 @@ export async function attributeSentImageFromAixLog(db: SupabaseClient, opts: { i
   const { data: cur } = await db.from("sent_image_properties").select("property_name").eq("image_url", opts.imageUrl).maybeSingle();
   if ((cur as { property_name: string | null } | null)?.property_name) return "has_record";
   const t = Date.parse(opts.sentAt);
-  const { data: logs } = await db.from("aix_usage_logs").select("aix_type, property_names, sent_at, created_at").eq("conversation_id", opts.conversationId)
+  const { data: logs } = await db.from("aix_usage_logs").select("aix_type, property_names, sent_at, created_at, generated_text").eq("conversation_id", opts.conversationId)
     .gte("created_at", new Date(t - AIX_ATTRIBUTE_WINDOW_MS - 60 * 60_000).toISOString()).lte("created_at", new Date(t + AIX_ATTRIBUTE_WINDOW_MS + 60_000).toISOString()).limit(50);
   const hit = pickAixProperty(opts.source, t, (logs ?? []) as AixLogForAttr[]);
   if (!hit) return "no_match";
