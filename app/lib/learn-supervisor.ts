@@ -3630,7 +3630,8 @@ function buildMeeting(m: {
       const byOpsGap = shotPct != null && shotPct >= 50 && opsPct < 60;
       const improve = m.improveFromNormal;
       const hasImprove = !!(improve && Array.isArray(improve.fields) && improve.fields.length);
-      if (g || byOpsGap || hasImprove) {
+      // 2026-11-20 竹内さん決定: 材料（読める未学習の枚数 or 改善の欄）が無い時は photo_learn を出さない（比率だけで推測しない）
+      if (g || hasImprove) {
         const todo = g ? g.todo : Math.min(20, Math.max(1, Math.round((shotPct ?? 0) / 5)));
         const lim = photoLearnLimitFor({
           todo,
