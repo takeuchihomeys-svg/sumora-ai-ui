@@ -3270,6 +3270,11 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_stopped_scene: (typeof bundle.stopped_scene === "string" && bundle.stopped_scene) ? bundle.stopped_scene : null,
       axlx_learn_scene_missing: (typeof bundle.scene_missing === "number" && bundle.scene_missing > 0)
         ? { n: bundle.scene_missing, names: String(bundle.scene_missing_names || "") } : null,
+      /**
+       * 2026-11-20 竹内さん「手順書は束の中に載せる」: 束から作った手順書（場面の手順・押す位置・開く欄・次のページの件数）。
+       *   ⚠ 並べ替え・確かめの材料として使う（項目の増減はしない）。サーバーが作れなかった時は null。
+       */
+      axlx_learn_playbook: (bundle.playbook && typeof bundle.playbook === "object") ? bundle.playbook : null,
       /** 今どのサイトの学びを上のキーに入れたか（点検用） */
       axlx_learn_for_site: curSite,
       /** サイト別に何が学べているか（1行ずつ） */
