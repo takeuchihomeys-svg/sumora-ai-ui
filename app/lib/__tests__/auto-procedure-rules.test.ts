@@ -192,20 +192,36 @@ console.log("■ 手順書に決まりと1手ずつの細部が載る（作り�
   })());
 }
 
-console.log("■ 種類の平均の写しを、その欄の押す位置と取り違えない（束 2532 の実際の形）");
+console.log("■ 押す位置の出どころ（束 2532 の実際の形: 開くボタンとチェック欄が同じ別名の組）");
 {
-  const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
+  const chk = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
+  const rent = { n: 2248, w: "select", x: 0.38, y: 0.5 };
   const pb = buildPlaybook({
-    scene_flows: [{ scene: "area", runs: 6, ops: 9, steps: ["所在地絞り込み＋", "city_code[]"], gap_ms: 1, variants: 1 }],
+    scene_flows: [
+      { scene: "area", runs: 6, ops: 9, steps: ["所在地絞り込み＋", "city_code[]"], gap_ms: 1, variants: 1 },
+      { scene: "cond", runs: 5, ops: 9, steps: ["rental_cost2"], gap_ms: 1, variants: 1 },
+    ],
     points: {
-      "city_code[]": copy, "所在地絞り込み": copy, "所在地を絞り込み": copy, "左の所在地絞り込み＋｜span": copy,
+      "city_code[]": chk, "所在地絞り込み": chk, "所在地を絞り込み": chk, "左の所在地絞り込み＋｜span": chk,
       "左の所在地絞り込み＋｜div.one_slide_searc": { n: 1, w: "button", x: 0.42, y: 0.18 },
+      rental_cost2: rent, "賃料上限": rent, "上限賃料": rent,
     },
   } as never);
-  const d = pb.scenes[0].detail;
-  ok("ボタンはその欄で測った位置（票1でも写しより先）", d[0].aim?.source === "field" && d[0].aim?.x === 0.42 && d[0].aim?.confidence === "thin", JSON.stringify(d[0].aim));
-  ok("測った物が無い欄は写しと書く（solid にしない）", d[1].aim?.source === "kind" && d[1].aim?.confidence === "thin", JSON.stringify(d[1].aim));
-  ok("写しの手は足りない所に出る", pb.gaps.some((g) => /種類の平均の写し/.test(g) && /区の欄/.test(g)), pb.gaps.join(" / "));
+  const area = pb.scenes.find((s) => s.scene === "area")!.detail;
+  const cond = pb.scenes.find((s) => s.scene === "cond")!.detail;
+  ok("開くボタンはそのボタンで測った位置（票1でも写しより先）", area[0].aim?.source === "field" && area[0].aim?.x === 0.42 && area[0].aim?.confidence === "thin", JSON.stringify(area[0].aim));
+  ok("区のチェック欄は同じ欄の別名の値（測った値・solid）", area[1].aim?.source === "alias" && area[1].aim?.confidence === "solid", JSON.stringify(area[1].aim));
+  ok("賃料（上限）は別名に写っていても測った値（alias・solid）", cond[0].aim?.source === "alias" && cond[0].aim?.x === 0.38 && cond[0].aim?.confidence === "solid", JSON.stringify(cond[0].aim));
+  const mm = pb.positions.filter((p) => p.source === "mismatch").map((p) => p.field).sort();
+  ok("開くボタンの名前にチェック欄の位置が写った物は mismatch（3件）", mm.join(",") === ["左の所在地絞り込み＋｜span", "所在地を絞り込み", "所在地絞り込み"].sort().join(","), mm.join(","));
+  ok("数: alias 4（city_code・賃料3）・mismatch 3", pb.positions_alias === 4 && pb.positions_mismatch === 3, `${pb.positions_alias}/${pb.positions_mismatch}`);
+  ok("取り違えは足りない所に出る（別名の組の直し先つき）", pb.gaps.some((g) => /開くボタンに箱の中のチェック欄の位置/.test(g) && /field-name-aliases/.test(g)), pb.gaps.join(" / "));
+  ok("票が3回未満の手は足りない所に出る", pb.gaps.some((g) => /票が3回未満の手 1件（所在地絞り込みを開く）/.test(g)), pb.gaps.join(" / "));
+  const onlyCopy = buildPlaybook({
+    scene_flows: [{ scene: "area", runs: 6, ops: 9, steps: ["所在地絞り込み＋"], gap_ms: 1, variants: 1 }],
+    points: { "city_code[]": chk, "左の所在地絞り込み＋｜span": chk },
+  } as never);
+  ok("測ったボタンが無ければ取り違えの位置を使い、solid にしない", onlyCopy.scenes[0].detail[0].aim?.source === "mismatch" && onlyCopy.scenes[0].detail[0].aim?.confidence === "thin", JSON.stringify(onlyCopy.scenes[0].detail[0].aim));
 }
 
 console.log("■ 統括Pro でも同じ点検（テストを回し忘れても出る）");
@@ -235,14 +251,6 @@ console.log("■ 渡す時の作り直し（決まりを直してデプロイし
   ok("作り方が古ければ作り直す", refreshPlaybookIfStale(oldBuild as never).refreshed);
   ok("手順書が無ければ作る", refreshPlaybookIfStale(base as never).refreshed);
   ok("束が無ければ何もしない", !refreshPlaybookIfStale(null).refreshed);
-}
-
-console.log("■ 押す位置の一覧にも写しの印（一覧の確かな数を水増ししない）");
-{
-  const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };
-  const pb = buildPlaybook({ scene_flows: [], points: { a: copy, b: copy, c: copy, d: { n: 5, w: "button", x: 0.4, y: 0.2 } } } as never);
-  ok("写し3件・測った1件", pb.positions_kind === 3 && pb.positions.filter((p) => p.source === "field").length === 1);
-  ok("写しの数が足りない所に出る", pb.gaps.some((g) => /4件のうち 3件は種類の平均の写し/.test(g)), pb.gaps.join(" / "));
 }
 
 console.log("■ 反映の突き合わせ（DB の手順書 × コード × 自動が読んだ印）");

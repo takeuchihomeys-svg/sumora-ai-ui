@@ -26,9 +26,11 @@ export const PLAYBOOK_MAX_STEPS = 12;
 /**
  * 手順書の作り方の版（欄の名前・値の判定を変えたら上げる。版の印に入る）
  *   3（2026-11-20）: 1手ずつの細部（押す欄・押す位置・開く物）と、自動の決まり（auto-procedure-rules.ts）を載せる。
- *   4（2026-11-20）: 押す位置に source（その欄で測った／種類の平均の写し）と写しの数 positions_kind。
+ *   4（2026-11-20）: 押す位置に source を付けた（その欄で測った／写し）。
+ *   5（2026-11-20）: source を field／alias（同じ欄の別名へ写した測った値）／mismatch（開くボタンにチェック欄の位置が写った）の3つに。
+ *     4 では alias（賃料上限 等の正しい測り）まで「写し」にしていた。数は positions_alias／positions_mismatch。
  */
-export const PLAYBOOK_BUILD_V = 4;
+export const PLAYBOOK_BUILD_V = 5;
 /** 束がこれより古いと検査で「古い」と出す（束は夜に作り直す想定） */
 export const PLAYBOOK_STALE_MS = 36 * 60 * 60 * 1000;
 
@@ -71,11 +73,8 @@ export type PlaybookStep = {
   step: string;
   /** 押す欄の名前（束の名前・飾りを落とした物） */
   field: string;
-  /**
-   * 学んだ押す位置（要素の中の割合）。学んでいなければ null。
-   *   source=field: この欄で測った位置／kind: 種類（チェック・プルダウン等）の平均の写し（この欄の位置ではない）
-   */
-  aim: { x: number; y: number; n: number; confidence: "solid" | "thin"; source: "field" | "kind" } | null;
+  /** 学んだ押す位置（要素の中の割合）。学んでいなければ null。source は PositionSource（mismatch は solid にしない） */
+  aim: { x: number; y: number; n: number; confidence: "solid" | "thin"; source: PositionSource } | null;
   /** 押すと開く物（人が確かめて学んだ物だけ）。無ければ null */
   opens: string | null;
 };
@@ -124,8 +123,8 @@ export type PlaybookPosition = {
   x: number | null;
   y: number | null;
   confidence: "solid" | "thin";
-  /** field: この欄で測った位置／kind: 種類の平均の写し（同じ値が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある） */
-  source: "field" | "kind";
+  /** field: この名前で測った／alias: 同じ欄の別名へ写した測った値／mismatch: 開くボタンにチェック欄の位置が写った */
+  source: PositionSource;
 };
 
 /** 開く欄の1件（束の opens・押すと何が開くか） */
@@ -153,8 +152,10 @@ export type Playbook = {
   points: { solid: number; thin: number };
   /** 押す位置の一覧（欄ごと・票の多い順。学んだ物を全部載せる） */
   positions: PlaybookPosition[];
-  /** positions のうち種類の平均の写し（その欄で測っていない）の数 */
-  positions_kind: number;
+  /** positions のうち同じ欄の別名へ写した数（測った値そのもの） */
+  positions_alias: number;
+  /** positions のうち開くボタンにチェック欄の位置が写った数（そのまま使えない） */
+  positions_mismatch: number;
   /** 押すと開く欄の数（人が確かめて学んだ物だけ＝推測は数えない） */
   opens_known: number;
   /** 押すと開く欄の一覧（推測の印つき・全部載せる） */
@@ -251,43 +252,57 @@ export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
   return { steps: out, fields, unknown, values_dropped };
 }
 
-type PosIndex = Map<string, { x: number; y: number; n: number; source: "field" | "kind" }>;
+type PosIndex = Map<string, { x: number; y: number; n: number; source: PositionSource }>;
 type OpenIndex = Map<string, string>;
 
-/** 同じ（票・x・y・種類）が何個の名前にあれば「種類の平均の写し」と見るか */
-export const PLAYBOOK_KIND_COPY_MIN = 3;
-
 /**
- * 束の points を「飾りを落とした欄の名前」で引けるようにする。
+ * 押す位置の出どころ:
+ *   field    … この名前で測った位置（同じ値の名前が他に無い）
+ *   alias    … 同じ欄の別名へ写した位置（rental_cost2 ↔ 賃料上限 等・field-name-aliases.ts の展開）。測った値そのもの
+ *   mismatch … 開くボタン（〜絞り込み＋）に、箱の中のチェック欄の位置が写った物（押す物の形が違う＝そのまま使えない）
  *   実測（2026-11-20 束 2532）: city_code[]・所在地絞り込み・左の所在地絞り込み＋｜span が全部 n=1238 (0.5,0.5) checkbox。
- *   ＝チェック欄の種類の平均が名前に写された物で、ボタン（所在地絞り込み＋）で測った位置ではない。
- *   → 同じ値が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある物は source=kind。同じ欄はその欄で測った物（field）を先に、次に票の多い方。
+ *     FIELD_NAME_ALIASES で city_code[] と 所在地絞り込み（開くボタン）が同じ組になっているため。沿線・駅も同じ。
  */
+export type PositionSource = "field" | "alias" | "mismatch";
+const SOURCE_RANK: Record<PositionSource, number> = { field: 3, alias: 2, mismatch: 1 };
+
 function pointSignature(p: { n?: number; x?: unknown; y?: unknown; w?: unknown }): string {
   return `${p.n}|${p.x}|${p.y}|${String(p.w ?? "")}`;
 }
 
-/** 同じ（票・x・y・種類）が PLAYBOOK_KIND_COPY_MIN 個以上の名前にある＝種類の平均の写し、の印の集まり */
-function kindCopySignatures(points: BundleLike["points"]): Set<string> {
+/** 箱を開くボタンの名前か（〜絞り込み＋・〜絞り込み・〜を絞り込み） */
+function isOpenerName(name: string): boolean {
+  const n = cleanPlaybookName(name);
+  return /＋$|\+$|絞り込み$/.test(n);
+}
+
+/** 同じ値（票・x・y・種類）を持つ名前の数 */
+function signatureCounts(points: BundleLike["points"]): Map<string, number> {
   const count = new Map<string, number>();
   for (const p of Object.values(points ?? {})) {
     if (!p || (Number(p.n) || 0) < 1) continue;
     const s = pointSignature(p);
     count.set(s, (count.get(s) ?? 0) + 1);
   }
-  return new Set([...count].filter(([, c]) => c >= PLAYBOOK_KIND_COPY_MIN).map(([s]) => s));
+  return count;
+}
+
+function sourceOf(name: string, p: { n?: number; x?: unknown; y?: unknown; w?: unknown }, counts: Map<string, number>): PositionSource {
+  if ((counts.get(pointSignature(p)) ?? 0) < 2) return "field";
+  if (isOpenerName(name) && String(p.w ?? "") === "checkbox") return "mismatch";
+  return "alias";
 }
 
 function indexPositions(points: BundleLike["points"]): PosIndex {
   const entries = Object.entries(points ?? {}).filter(([, p]) => (Number(p?.n) || 0) >= 1 && typeof p?.x === "number" && typeof p?.y === "number");
-  const copies = kindCopySignatures(points);
+  const counts = signatureCounts(points);
   const m: PosIndex = new Map();
   for (const [k, p] of entries) {
     const n = Number(p.n) || 0;
-    const source: "field" | "kind" = copies.has(pointSignature(p)) ? "kind" : "field";
+    const source = sourceOf(k, p, counts);
     const key = cleanPlaybookName(k);
     const cur = m.get(key);
-    const better = !cur || (cur.source === "kind" && source === "field") || (cur.source === source && cur.n < n);
+    const better = !cur || SOURCE_RANK[source] > SOURCE_RANK[cur.source] || (cur.source === source && cur.n < n);
     if (better) m.set(key, { x: p.x as number, y: p.y as number, n, source });
   }
   return m;
@@ -320,7 +335,7 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
     return {
       step,
       field,
-      aim: p ? { x: p.x, y: p.y, n: p.n, confidence: p.source === "field" && p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin", source: p.source } : null,
+      aim: p ? { x: p.x, y: p.y, n: p.n, confidence: p.source !== "mismatch" && p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin", source: p.source } : null,
       opens: opn.get(field) ?? null,
     };
   });
@@ -352,7 +367,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
   // 押す位置: 束の points を欄ごとに全部載せる（票1以上・票の多い順）。数は solid/thin で数える
-  const copySigs = kindCopySignatures(bundle.points);
+  const sigCounts = signatureCounts(bundle.points);
   const positions: PlaybookPosition[] = Object.entries(bundle.points ?? {})
     .map(([field, p]) => {
       const n = Number(p?.n) || 0;
@@ -363,14 +378,15 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
         x: typeof p?.x === "number" && Number.isFinite(p.x) ? p.x : null,
         y: typeof p?.y === "number" && Number.isFinite(p.y) ? p.y : null,
         confidence: (n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin") as "solid" | "thin",
-        source: (copySigs.has(pointSignature(p ?? {})) ? "kind" : "field") as "field" | "kind",
+        source: sourceOf(field, p ?? {}, sigCounts),
       };
     })
     .filter((p) => p.n >= 1)
     .sort((a, b) => b.n - a.n);
   const solid = positions.filter((p) => p.confidence === "solid").length;
   const thin = positions.filter((p) => p.confidence === "thin").length;
-  const kindCopies = positions.filter((p) => p.source === "kind").length;
+  const aliasCopies = positions.filter((p) => p.source === "alias").length;
+  const mismatches = positions.filter((p) => p.source === "mismatch").length;
 
   // 開く欄: 人が確かめて学んだ物（n≥1 かつ推測でない）だけを「知っている」と数える。推測は別に数える
   const opens: PlaybookOpen[] = Object.entries(bundle.opens ?? {})
@@ -387,7 +403,10 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
 
   const gaps: string[] = [];
   if (!positions.length) gaps.push("押す位置が1つも無い（束の points が空）");
-  if (kindCopies) gaps.push(`押す位置 ${positions.length}件のうち ${kindCopies}件は種類の平均の写し（その欄で測っていない・確かな位置に数えない方がよい）`);
+  if (mismatches) {
+    const names = positions.filter((p) => p.source === "mismatch").map((p) => cleanPlaybookName(p.field)).slice(0, 4);
+    gaps.push(`押す位置 ${positions.length}件のうち ${mismatches}件は、開くボタンに箱の中のチェック欄の位置が写った物（${names.join("・")}）＝別名の組（field-name-aliases.ts）でボタンとチェック欄が同じ組になっている`);
+  }
   if (opens_guessed) gaps.push(`開く欄 ${opens_guessed}件は推測のまま（人が開いて確かめていない・数に入れない）`);
   if (next_n && !learned.has("next")) gaps.push(`次のページへ：束の next に ${next_n}件あるが、場面の手順（人が押した順）にはまだなっていない（整理の抜けの疑い）`);
   if (!scenes.length) gaps.push("場面の手順が1つも無い（まだ学んでいない）");
@@ -403,8 +422,10 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   for (const s of scenes) {
     const noAim = s.detail.filter((d) => !d.aim).map((d) => d.step);
     if (noAim.length) gaps.push(`${s.label}：押す位置を学んでいない手 ${noAim.length}件（${noAim.slice(0, 4).join("・")}）`);
-    const kindAim = s.detail.filter((d) => d.aim?.source === "kind").map((d) => d.step);
-    if (kindAim.length) gaps.push(`${s.label}：押す位置が種類の平均の写しで、この欄で測っていない手 ${kindAim.length}件（${kindAim.slice(0, 4).join("・")}）`);
+    const badAim = s.detail.filter((d) => d.aim?.source === "mismatch").map((d) => d.step);
+    if (badAim.length) gaps.push(`${s.label}：押す位置がボタンとチェック欄の取り違えの手 ${badAim.length}件（${badAim.slice(0, 4).join("・")}）`);
+    const thinAim = s.detail.filter((d) => d.aim && d.aim.source !== "mismatch" && d.aim.confidence === "thin").map((d) => d.step);
+    if (thinAim.length) gaps.push(`${s.label}：押す位置の票が3回未満の手 ${thinAim.length}件（${thinAim.slice(0, 4).join("・")}）`);
   }
 
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
@@ -427,7 +448,8 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     missing,
     points: { solid, thin },
     positions,
-    positions_kind: kindCopies,
+    positions_alias: aliasCopies,
+    positions_mismatch: mismatches,
     opens_known,
     opens,
     opens_guessed,
