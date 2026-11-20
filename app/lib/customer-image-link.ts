@@ -56,7 +56,8 @@ const ITEM_RES: Array<[keyof EstimateItems, RegExp]> = [
  *   既定 off（ESTIMATE_TABLE_PARSE=on）。取れなかった時だけ足す形で読む（今取れている行は変わらない）。
  */
 export function estimateTableParseOn(env: Env = envOf()): boolean {
-  return (env.ESTIMATE_TABLE_PARSE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0）。止める ESTIMATE_TABLE_PARSE=off
+  return (env.ESTIMATE_TABLE_PARSE ?? "").trim().toLowerCase() !== "off";
 }
 const TABLE_EXTRA: Partial<Record<keyof EstimateItems, string>> = {
   total: "(?:初期費用)?(?:詳細)?合計額",
