@@ -30,6 +30,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ai_reply_examples_line_hnsw ON ai_reply_
   USING hnsw (embedding vector_cosine_ops) WHERE entry_source = 'line_reply';
 -- 状態（conversation_state = ANY(filter_states)）の絞り込みは残る。段0 で状態ごとの割合が小さい（line_reply の 1割未満等）なら段3 へ
 
+-- ── 段1b（11/20 夜に当てた・段0 の結果）: 部分の索引を作っても計画は表の全部読みを選んだ（見積もり Seq 1,866 ＜ 索引 3,766・実際は Seq 71ms/1.87万ブロック ＞ 索引 9.6ms/978）。
+--   ベクトルの TOAST の読みが見積もりに入らないため。→ 2つの関数だけ seqscan・bitmapscan を止める（状態が少ない時は状態の btree の厳密な検索を計画が選ぶ）
+DO $$ BEGIN
+  PERFORM '[1,0]'::vector <=> '[0,1]'::vector;
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_bitmapscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_bitmapscan = off';
+END $$;
+--   測り（本番に近い問い 8個）: AIX 中央値 3.4ms・返信（proposing+hearing・24件）41ms・返信（first_reply・3件）1.3ms。厳密との重なり 返信 24/24・AIX 14.58/15
+-- ※ 段3 は要らなかった（状態が少ない時は計画が状態の btree を選ぶ＝厳密な検索になる）
 -- ── 段3（段0 の数で決める）: 状態で絞った行が少ない時は索引を使わない厳密な検索 ───────────────
 --   並びの式に + 0 を付けて索引を使わせない（状態と entry_source の btree で絞った行だけ距離を測る）。
 --   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_are_line_state ON ai_reply_examples (conversation_state) WHERE entry_source = 'line_reply' AND embedding IS NOT NULL;

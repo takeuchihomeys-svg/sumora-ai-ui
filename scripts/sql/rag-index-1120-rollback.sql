@@ -2,6 +2,11 @@
 -- 1文ずつ execute_sql で流す（CONCURRENTLY は transaction の中で動かない）。
 -- ⚠ migrate-schema に部分の索引を足した後に戻す時は、そのコミットも git revert する（しないと 0:10 の cron が作り直す）
 
+-- ── 段1b を戻す（関数の計画の設定・先に戻す） ──
+ALTER FUNCTION match_reply_examples(vector, integer, text[]) RESET enable_seqscan;
+ALTER FUNCTION match_reply_examples(vector, integer, text[]) RESET enable_bitmapscan;
+ALTER FUNCTION match_aix_reply_examples(vector, integer, text) RESET enable_seqscan;
+ALTER FUNCTION match_aix_reply_examples(vector, integer, text) RESET enable_bitmapscan;
 -- ── 段2 を戻す ──
 DROP INDEX CONCURRENTLY IF EXISTS ai_reply_examples_line_hnsw;
 -- ── 段1 を戻す ──
