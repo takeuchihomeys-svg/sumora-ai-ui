@@ -34,7 +34,8 @@ export function sentFactsDocLines(facts: unknown): string[] {
   return out;
 }
 export function focusDocDigestOn(env?: Env): boolean {
-  return (envOf(env).BRAIN_FOCUS_DOC_DIGEST ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・FOCUS_DOC_SENT_IMAGE と一緒に）。止める BRAIN_FOCUS_DOC_DIGEST=off
+  return (envOf(env).BRAIN_FOCUS_DOC_DIGEST ?? "").trim().toLowerCase() !== "off";
 }
 
 export type PickupCandidateRow = {
