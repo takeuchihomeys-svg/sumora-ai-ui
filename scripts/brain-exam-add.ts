@@ -28,6 +28,9 @@ import { loadTurnApplicationRecords } from "../app/lib/turn-application-gate-ser
 import { turnApplicationReason } from "../app/lib/turn-application-gate";
 import { gateCheckSpecs, writeGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 import { isTestConversation } from "../app/lib/test-conversations";
+import { pickSipRowsDesc } from "./lib/exam-ledger-sip";
+/** 2026-11-21 作業員H: 後から本番に足した送った資料の読みの行（G #448）。写しの上限の数えに入れない */
+const SIP_ADDED_PREFIXES = ["aix_log"];
 import { resolveReplyScene } from "../app/lib/reply-scene";
 import { subSceneOf } from "../app/lib/reply-subscene";
 import { APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
@@ -114,11 +117,14 @@ async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mas
   const out: Record<string, LedgerRow[]> = {};
   for (const [t, c] of Object.entries(LEDGER_TABLES)) {
     if (t === "sent_image_properties" && !examLedgerSipOn()) continue; // 既定 off（今までの問題の写しを変えない）
-    let q = sb.from(t).select("*").lte(c.time, at).order(c.time, { ascending: false }).limit(c.limit);
+    // 2026-11-21 作業員H: 送った資料の読みは、後から足した行（source=aix_log:*）で他の行が上限から押し出されないよう多めに読んで選ぶ（scripts/lib/exam-ledger-sip.ts）
+    const sipPick = t === "sent_image_properties";
+    let q = sb.from(t).select("*").lte(c.time, at).order(c.time, { ascending: false }).limit(sipPick ? c.limit * 3 : c.limit);
     q = c.byPc && pcId ? q.or(`conversation_id.eq.${conv},property_customer_id.eq.${pcId}`) : q.eq("conversation_id", conv);
     const { data, error } = await q;
     if (error) { console.warn(`  台帳 ${t}: ${error.message}`); continue; }
-    out[t] = ((data ?? []) as Array<Record<string, unknown>>).reverse().filter((r) => !applicationMaterialReason(JSON.stringify(r))).map((r) => {
+    const picked = sipPick ? pickSipRowsDesc((data ?? []) as Array<Record<string, unknown>>, c.limit, SIP_ADDED_PREFIXES, c.time) : ((data ?? []) as Array<Record<string, unknown>>);
+    out[t] = picked.slice().reverse().filter((r) => !applicationMaterialReason(JSON.stringify(r))).map((r) => {
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(r)) {
         if (c.drop.includes(k)) continue;

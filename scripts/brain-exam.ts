@@ -58,6 +58,7 @@ import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, ai
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
+import { filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
@@ -556,7 +557,10 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
   }
   // 2026-11-21 作業員K2（#132・q439）: 送った資料の読み（sent_image_properties）。EXAM_LEDGER_SIP=on・借りたテスト用の会話の時だけ入れる（YUMA は共有＝入れない）。
   //   id の列が無い＝控えは印だけ（片付けは会話ごと・deleteOwnLedger／purgeLeasedLedger）
-  const sipRows = (p.ledger?.sent_image_properties ?? []) as LedgerRow[];
+  // 2026-11-21 作業員H: EXAM_LEDGER_SIP_EXCLUDE=aix_log で後から足した行を除く（前だけ除く時は EXAM_LEDGER_SIP_BASE_EXCLUDE・scripts/lib/exam-ledger-sip.ts）
+  const sipFilt = filterSipRows((p.ledger?.sent_image_properties ?? []) as LedgerRow[], sipExcludePrefixes(process.env.EXAM_LEDGER_SIP_EXCLUDE));
+  if (sipFilt.dropped) console.log(`  送った資料の読み: ${sipFilt.dropped}行を除いた（EXAM_LEDGER_SIP_EXCLUDE=${process.env.EXAM_LEDGER_SIP_EXCLUDE}）`);
+  const sipRows = sipFilt.kept;
   if (sipRows.length && examLedgerSipOn() && isNoLineTestConversation(S().conv)) {
     const c = LEDGER_TABLES.sent_image_properties;
     const objs = sipRows.map((lr, k) => {
@@ -1168,6 +1172,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...((REPEAT_FLAKY || BASE_FLAKY) && REPEAT > 1 ? { repeatFlaky: true } : {}),
+    // 2026-11-21 作業員H: 送った資料の読みの写しの入れ方（入れた時だけ構成に足す＝今までの hash は変えない）。前の答えは前の除きで決まる
+    ...(String(process.env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on" ? { ledgerSip: true, ...(sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE?.trim() ? { sipExclude: sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE!.trim() } : {}) } : {}),
     // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
     ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
@@ -1374,7 +1380,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow() - reserveNowUsd)) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(sipBaseExcludeOf(process.env) ? { EXAM_LEDGER_SIP_EXCLUDE: sipBaseExcludeOf(process.env)! } : {}), ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow() - reserveNowUsd)) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
