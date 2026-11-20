@@ -15,8 +15,8 @@ function check(name, ok) {
   if (!ok) fail++;
 }
 
-check("manifest 2.8.135", manifest.version === "2.8.135");
-check("_AXLX_PAGE_VER 2.8.135", /_AXLX_PAGE_VER = "2\.8\.135"/.test(src));
+check("manifest 2.8.135 以降", /^2\.8\.(13[5-9]|1[4-9]\d)$/.test(manifest.version));
+check("_AXLX_PAGE_VER 2.8.135 以降", /_AXLX_PAGE_VER = "2\.8\.(13[5-9]|1[4-9]\d)"/.test(src));
 
 const unc = src.slice(src.indexOf("function _uncheckLeftoversThenRest"), src.indexOf("function _uncheckLeftoversThenRest") + 9000);
 check("① _runUncheck が段（onlyRe/skipRe/after）を受ける", /var _runUncheck = function \(onlyRe, skipRe, after\)/.test(unc));

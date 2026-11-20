@@ -380,6 +380,13 @@
         if (!s || !s.k) continue;
         pushPageStep(r, s.k, s.d, s.at || now());
       }
+      /**
+       * ★ 2026-11-20 (2.8.136) 実測 audit #1544: 120段のうち約45段が fill_progress で、検索の前後（一連の後半）が押し出されていた。
+       *   → 進捗の印は最後の1つだけ残す（前の fill_progress を消してから足す）。
+       */
+      for (var fp = r.steps.length - 1; fp >= 0; fp--) {
+        if (r.steps[fp] && r.steps[fp].k === "fill_progress") { r.steps.splice(fp, 1); break; }
+      }
       pushStep(r.steps, "fill_progress", "n=" + list.length, now());
       /**
        * ★ 2026-11-17 連携: 途中段を DB の started 行へも書く（fill-done が来なくても none にしない）。

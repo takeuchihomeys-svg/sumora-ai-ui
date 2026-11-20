@@ -72,10 +72,15 @@ console.log("\n■ ③ 押した直後の反映を待つ（押して外れるの
   const t = ps.split("function _toggleCheckboxLikeHuman(")[1].slice(0, 7000);
   ok("反映待ち（_settleChk）で判断する", /var _settleChk = function \(ms\)/.test(t));
   ok("1手ずつ: label.click → 待つ → input.click → 待つ → simulateClick → 待つ",
-    t.indexOf("hit.click()") < t.indexOf("_settleChk(240)") && t.indexOf("cb.click()") > t.indexOf("_settleChk(240)") && t.indexOf("simulateClick(hit") > t.indexOf("cb.click()"));
+    (function () {
+      // 2.8.136: 1回目の反映待ちは 240→600ms（数字は変わっても順番は同じ）
+      const m = t.match(/_settleChk\((240|600)\)\.then/);
+      const s = m ? m[0] : "_settleChk(240)";
+      return t.indexOf("hit.click()") < t.indexOf(s) && t.indexOf("cb.click()") > t.indexOf(s) && t.indexOf("simulateClick(hit") > t.indexOf("cb.click()");
+    })());
   ok("旧の「押してすぐ checked を読む」二重押しが消えている", !/if \(cb\.checked !== !!wantOn\) \{ try \{ cb\.click\(\); \} catch \(_\) \{\} \}\n/.test(t));
   ok("遅れて反映した時は点検に残す（toggle_late_ok）", /toggle_late_ok/.test(t));
-  ok("Promise を返す（押し終わるまで次の区へ進まない）", /return _settleChk\(240\)\.then\(function \(ok1\)/.test(t));
+  ok("Promise を返す（押し終わるまで次の区へ進まない）", /return _settleChk\((240|600)\)\.then\(function \(ok1\)/.test(t));
   // 模型: 反映が遅れるサイトでも、重ね押しせず1回で済む
   const state = { checked: false, clicks: 0 };
   const label = { click() { state.clicks++; setTimeout(() => { state.checked = !state.checked; }, 120); } };

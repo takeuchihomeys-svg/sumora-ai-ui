@@ -754,6 +754,24 @@
             }
           }, _lookMs);
           }; // _afterAim
+          /**
+           * ★ 2026-11-20 (2.8.136) 実測 run_mwofi2sn_jbec: 徒歩の欄を 0.6秒で2回押していた（列の押下＋ここの狙い直しの tap）。
+           *   人は欄を1回押して一覧を開く。カーソルが既に欄の上なら、狙い直し・2回目の tap はしない。
+           */
+          var _onSelAlready = false;
+          try {
+            if (P && P.position) {
+              var _cp = P.position(), _rr = el.getBoundingClientRect();
+              _onSelAlready = !!(_cp && _rr.width > 0 && _cp.x >= _rr.left - 2 && _cp.x <= _rr.right + 2 && _cp.y >= _rr.top - 2 && _cp.y <= _rr.bottom + 2);
+            }
+          } catch (_) { _onSelAlready = false; }
+          // 位置の学び（aim）が無い欄は今まで通りここで押さない（列の押下の1回だけ）
+          if (!(_aimSel && typeof _aimSel.x === "number")) _onSelAlready = false;
+          if (_onSelAlready) {
+            try { _auditStepP("sel_one_press", String((el.getAttribute && el.getAttribute("name")) || "?") + " カーソルが欄の上→押し直さない"); } catch (_) {}
+            _afterAim();
+            return;
+          }
           if (P && P.moveTo && _aimSel && typeof _aimSel.x === "number") {
             try {
               var _sr = el.getBoundingClientRect();
@@ -2711,7 +2729,7 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.135";
+  var _AXLX_PAGE_VER = "2.8.136";
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
    *   検索→送付→完了→次客→外し→次条件 の原子を1枚の地図として把握する。
@@ -3809,6 +3827,10 @@
       var type = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
       // ★ 2026-11-20 (2.8.135): リアプロの検索は div.go_search（DIV）。旧は「その他」扱いで 12% の 4〜9秒の迷いが乗っていた
       if (/go_search|search_menu/.test(String(el.className || ""))) return "decide";
+      if (tag !== "LABEL" && tag !== "INPUT" && tag !== "SELECT") {
+        var _tx = String(el.textContent || "").replace(/\s+/g, "");
+        if (_tx.length <= 20 && /^(確定してリストへ|この条件で絞り込む|検索|決定)$/.test(_tx)) return "decide";
+      }
       if (tag === "SELECT" || tag === "LABEL") return "choose";
       if (tag === "INPUT" && (type === "checkbox" || type === "radio")) return "choose";
       if (tag === "BUTTON" || type === "submit" || type === "button") return "decide";
@@ -6050,10 +6072,13 @@
       var _scrB = _graspStationModalScreen();
       _confBefore = { formLn: _scrB.formLn, formSt: _scrB.formSt, kind: _scrB.kind };
     } catch (_) { _confBefore = null; }
+    // ★ 2.8.136 実測 run_mwofi2sn_jbec: 確定の前に 14.45秒・6.92秒・4.89秒止まっていた（span＝「その他」の長い迷い＋手を止める）。
+    //   選び終えて確定するのは決定の押下 → 長い迷い・停止を入れない（decide）。
     var _confOpts = Object.assign({}, _uiGapOpts() || {}, {
       label: "確定してリストへ",
       keys: ["確定してリストへ", "この条件で絞り込む", "modal_confirm"],
       aim: _confAim || undefined,
+      decide: true,
     });
     enqueueHumanClick(conf, function (el) {
       try {
@@ -6203,6 +6228,18 @@
     return null;
   }
   /** 外す／選ぶ: label を狙い（checked=false 直書き禁止）＋aimでカーソル */
+  /** カーソルが el の上にある時だけ押す動き（tap）を見せる（押し直しの見た目・離れていたら何もしない） */
+  function _tapIfCursorOn(el) {
+    try {
+      var P = window.AxlxPointerUi;
+      if (!el || !P || !P.position || !P.tap || !el.getBoundingClientRect) return false;
+      var cp = P.position(), r = el.getBoundingClientRect();
+      if (!cp || !(r.width > 0)) return false;
+      if (cp.x < r.left - 2 || cp.x > r.right + 2 || cp.y < r.top - 2 || cp.y > r.bottom + 2) return false;
+      P.tap();
+      return true;
+    } catch (_) { return false; }
+  }
   function _toggleCheckboxLikeHuman(cb, wantOn, minGap, maxGap, flags) {
     if (!cb) return;
     var hit = _labelForCheckbox(cb) || cb;
@@ -6276,12 +6313,18 @@
           });
         };
         var _t0Toggle = Date.now();
-        return _settleChk(240).then(function (ok1) {
+        /**
+         * ★ 2.8.136: 1回目の反映待ちを 240→600ms（合えばすぐ進むので速い時は同じ）。
+         *   実測 run_mwofi2sn_jbec: 同じ区・間取りを0.1秒以内に重ねて押した記録（遅い反映に2回目を重ねていた）。
+         *   押し直す時はカーソルが欄の上なら押す動きを見せる。
+         */
+        return _settleChk(600).then(function (ok1) {
           if (ok1) {
             try { if (Date.now() - _t0Toggle > 60 && _audit) _auditStepP("toggle_late_ok", _domain + " 反映待ち" + (Date.now() - _t0Toggle) + "ms（重ね押ししない）"); } catch (_) {}
             return true;
           }
           // 直書き禁止: まだ合わなければ input.click をもう1回だけ
+          try { _tapIfCursorOn(hit); } catch (_) {}
           try { cb.click(); } catch (_) {}
           // ★ 2026-11-20: 2回目の後は長めに待つ（遅れて反映するサイトで3回目を重ねて元に戻さない）
           return _settleChk(420);
@@ -6292,6 +6335,7 @@
            *   native click で状態が変わらない時は simulateClick（リアプロ jQuery）を1回。
            */
           if (typeof simulateClick === "function") {
+            try { _tapIfCursorOn(hit); } catch (_) {}
             try { simulateClick(hit && hit.isConnected ? hit : cb); } catch (_) {}
             return _settleChk(480);
           }
@@ -10946,7 +10990,24 @@
                     if (!_isLabel) {
                       if (cb.checked) { try { cb.click(); } catch (_) {} }
                     } else {
-                      setTimeout(function () { try { if (cb.isConnected && cb.checked) cb.click(); } catch (_) {} }, 320);
+                      /**
+                       * ★ 2.8.136: 旧は 320ms 後に残っていれば input を直接押していた（カーソルの押す動き無し）。
+                       *   サイトの反応が遅い時は外れた後に押して付け直す恐れもある（実測 run_mwofi2sn_jbec で同じ区を3回押した記録）。
+                       *   → 2回確かめてから、カーソルの押す動き付きで1回だけ押し直す。
+                       */
+                      setTimeout(function () {
+                        try {
+                          if (!(cb.isConnected && cb.checked)) return;
+                          setTimeout(function () {
+                            try {
+                              if (!(cb.isConnected && cb.checked)) return;
+                              try { _auditStepP("clear_retry_press", String(cb.value || nm || "").slice(0, 24) + " ラベルで外れず→カーソルで押し直し"); } catch (_) {}
+                              try { _tapIfCursorOn(hit); } catch (_) {}
+                              cb.click();
+                            } catch (_) {}
+                          }, _ln(450, 0.3, 300, 800));
+                        } catch (_) {}
+                      }, 320);
                     }
                   }
                 } catch (_) {}
