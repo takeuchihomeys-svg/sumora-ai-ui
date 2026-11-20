@@ -71,9 +71,11 @@ const WHY_NOW: Array<[string, RegExp]> = [
 /** 強さ（next-move-types の段の言い方の形） */
 export function appealStrengthOf(text: string): NextStrength {
   const t = nf(text);
-  if (/抑え(?:ましょう|させて|る形|て頂|ておく)|お早めに|キャンセル料|お申込み?(?:頂|いただ)ければ/.test(t)) return "strong";
+  // 2026-11-21 作業員K2（#142・本物の2通目を読んだ直し・記録の物差しだけ）: 「押さえ」も抑えと同じ／「こちらのお部屋如何でしょうか」（物件への反応を聞く頭の一文）は内覧の誘いではない
+  if (/(?:抑え|押さえ)(?:ましょう|させて|る形|て頂|ておく)|お早めに|キャンセル料|お申込み?(?:頂|いただ)ければ/.test(t)) return "strong";
   if (/併せて|あわせて[^。！!]*ご案内|一緒にご案内/.test(t)) return "together";
-  if (/ご都合よろしいお日にち|ご内覧(?:如何|いかが)|ご案内させて頂きます|如何でしょうか|いかがでしょうか/.test(t)) return "invite";
+  const t2 = t.replace(/(?:こちらの)?お部屋(?:は)?(?:如何|いかが)でしょうか/g, "");
+  if (/ご都合よろしいお日にち|ご内覧(?:如何|いかが)|ご案内させて頂きます|如何でしょうか|いかがでしょうか/.test(t2)) return "invite";
   if (/お気に召されましたら|お気軽に|いつでも|ご査収/.test(t)) return "door";
   return "none";
 }
