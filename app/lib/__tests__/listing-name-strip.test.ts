@@ -10,9 +10,10 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 
 console.log("listing-name-strip");
-it("切替は既定 off", () => {
-  eq(listingNameStripEnabled({}), false);
+it("切替は既定 on（2026-11-20）・off で止める", () => {
+  eq(listingNameStripEnabled({}), true);
   eq(listingNameStripEnabled({ LISTING_NAME_STRIP: "on" }), true);
+  eq(listingNameStripEnabled({ LISTING_NAME_STRIP: "off" }), false);
   eq(maybeStripListingName("ACT正雀(イタンジ最新)", false), "ACT正雀(イタンジ最新)");
   eq(maybeStripListingName("ACT正雀(イタンジ最新)", true), "ACT正雀");
 });
