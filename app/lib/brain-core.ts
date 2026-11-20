@@ -1697,6 +1697,8 @@ function runViewingCancelIfPending(conversationId: string): void {
  *   本番（analyzeAndSaveBrainMeta）と試験（brain-exam）が同じ入口を通る＝試験で確かめた形がそのまま本番になる。
  *   読み直しの中では包みは動かない（opts.recheck がある）・AIX の統括の差し戻しの回し（analyzeAndSaveBrainMeta）はこの後に今まで通り。
  */
+/** 2026-11-21 作業員M: conversations.customer_plan の列がまだ無い DB では、計画の読み書きを止める（関数の実体ごと・migrate-schema の後に戻る） */
+let customerPlanColumnMissing = false;
 export async function analyzeConversation(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
   const meta = await analyzeConversationDeep(...args);
   // 2026-11-05 作業員5（KB 3701b532・0dbfbc97「後の役は決め直さない」）: 統括の順番の表の combine（何通・どの順・各通の受け持ち）。
@@ -1818,6 +1820,26 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-21 作業員M（台帳 #101・竹内さん 11/15「お客様ごとの全体の統括」・統括役の OK）: 番の部品からお客様ごとの計画を組み、
+  //   conversations.customer_plan に書く（CUSTOMER_PLAN 既定 shadow＝書くだけ・文と道は変えない・読み直しの中では書かない）。
+  //   列がまだ無い DB（migrate-schema の前）では、読みが失敗して何もしない（1つの関数の実体で1回だけ警告）
+  try {
+    const cp = await import("@/app/lib/customer-plan");
+    if (cp.customerPlanMode() !== "off" && !args[5]?.recheck && !customerPlanColumnMissing) {
+      const { data: cpRow, error: cpErr } = await supabase.from("conversations").select("customer_plan").eq("id", args[0]).maybeSingle();
+      if (cpErr) {
+        if (/customer_plan/.test(cpErr.message ?? "")) customerPlanColumnMissing = true;
+        console.warn(JSON.stringify({ tag: "customer-plan:read-failed", error: String(cpErr.message ?? "").slice(0, 160) }));
+      } else {
+        const plan = cp.buildCustomerPlan({ meta: meta as unknown as Record<string, unknown>, status: args[2] ?? null, prev: (cpRow as { customer_plan?: unknown } | null)?.customer_plan, nowIso: new Date().toISOString() });
+        if (plan) {
+          const { error: wErr } = await supabase.from("conversations").update({ customer_plan: plan }).eq("id", args[0]);
+          if (wErr) console.warn(JSON.stringify({ tag: "customer-plan:write-failed", error: String(wErr.message ?? "").slice(0, 160) }));
+          else if (plan.changed.length) console.log(JSON.stringify({ tag: "customer-plan", conversationId: args[0], changed: plan.changed }));
+        }
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "customer-plan:failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-13 作業員22（竹内さん「決めた事が書き手まで届いていない」・KB 2301dbf1・5cf2d736）: 欄ごと・下の欄ごとに書き手まで届いたかを記録だけ（DELIVERY_CHECK=shadow・既定 off）。
   //   書き手の注記（本質の帯＋設計図の注記）を generate-reply と同じ関数で作って突き合わせる。道・下書きは変えない
   try {
