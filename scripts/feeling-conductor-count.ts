@@ -77,6 +77,7 @@ async function main() {
   const rows = new Map<string, CountRow>(FEELING_ROWS.map((r) => [r.id, { id: r.id, read: r.read, n: 0, focus: [0, 0], push: [0, 0], next: [0, 0], ex: [] }]));
   const opens = new Map<string, OpenTally>(OPEN_ROWS.map((r) => [r.id, { id: r.id, read: r.read, n: 0, acts: {} }]));
   let tkTurns = 0, withRead = 0, decided = 0, made = 0, matched = 0;
+  const pairs: Record<string, number> = {}; // 2026-11-21 作業員K2: 表の重点 → 竹内さんの重点（前に開いた約束＝見積・確認の AIX が番の前にあるか）
   const states: Record<string, number> = {};
   for (const t of withStaff) {
     const t0 = Date.parse(t.customer_turn_at), t1 = Date.parse(t.customer_last_at ?? t.customer_turn_at);
@@ -98,6 +99,7 @@ async function main() {
     if (!d.rows.length) continue;
     decided++;
     const c = compareTurn(d, act);
+    { const open = before.some((x) => x.t === "estimate_sheet" || x.t === "property_check_result"); const k = `${d.focus ?? "-"} → ${c.tkFocus ?? "-"}${c.tkFocus === "promise_keep" ? `（前に見積・確認の AIX ${open ? "あり" : "なし"}）` : ""}`; pairs[k] = (pairs[k] ?? 0) + 1; }
     for (const id of d.rows) {
       const r = rows.get(id)!; r.n++;
       if (c.focus != null && d.focusFrom === id) { r.focus[1]++; if (c.focus) r.focus[0]++; }
@@ -123,6 +125,7 @@ async function main() {
     const verdict = o.n >= 5 && share >= 0.6 ? `案: 「${top[0][0]}」（${top[0][1]}/${o.n}）を表の行にする` : `問いの案（推奨: ${top[0] ? `${top[0][0]}（${top[0][1]}/${o.n}）` : "番が無い"}・型が見えない＝番 ${o.n}${o.n >= 5 ? `・一番多い一手でも ${Math.round(share * 100)}%` : "が5未満"}）`;
     L.push(`- ${o.read}（${o.id}）: 番 ${o.n}・${top.slice(0, 5).map(([k, v]) => `${k} ${v}`).join("／") || "-"} → ${verdict}`);
   }
+  L.push("", "## 表の重点 → 竹内さんの重点（行に当たった番）", "", ...Object.entries(pairs).sort((a, z) => z[1] - a[1]).map(([k, v]) => `- ${k}: ${v}`));
   L.push("", `重点の名前: ${Object.entries(FOCUS_LABEL).map(([k, v]) => `${k}=${v}`).join("・")}`);
   const md = L.join("\n");
   if (OUT) { writeFileSync(OUT, md); console.log(`書いた: ${OUT}`); }

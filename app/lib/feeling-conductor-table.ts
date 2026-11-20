@@ -22,7 +22,9 @@ type M = Record<string, unknown>;
 export type FeelingTableMode = "off" | "shadow" | "on";
 export function feelingTableMode(env: Env = typeof process !== "undefined" ? process.env : {}): FeelingTableMode {
   const v = String(env.FEELING_CONDUCTOR_TABLE ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-21 作業員K2（統括役の決め・#100）: 既定 shadow（meta.feeling_conductor に記録だけ・判断と文は変えない＝applyFeelingFocus 等は on の時だけ）。
+  //   60日の数えで表と竹内さんの一致 15/73・竹内さんの重点は「約束を果たす」が最多＝順番が悪いのか材料（開いている約束・今出せる結果・強さ）が無いのかを、本番の記録で分ける。止める =off
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
 /** 判断に使う（on の時だけ）。shadow は記録だけ */
 export const feelingTableOn = (env?: Env) => feelingTableMode(env) === "on";
@@ -200,14 +202,16 @@ export type FeelingDecision = {
   /** 「？」の行に当たった（決定が無い・竹内さんの番から埋める） */
   open: string[];
   /** 読みの要約（記録・数え用） */
-  read: { state: string | null; strength: number | null; hesitation: string | null; anxiety: string | null };
+  read: { state: string | null; strength: number | null; hesitation: string | null; anxiety: string | null;
+    /** 2026-11-21 作業員K2: 1週間後に「順番か材料か」を分ける材料（開いている約束・今出せる結果・強さの出所・刺さっていない） */
+    openPromise?: boolean; resultReady?: boolean; strengthFrom?: string | null; notHooked?: boolean };
 };
 
 export function decideFromFeeling(meta: M | null | undefined, sit: FeelingSituationInput = {}): FeelingDecision {
   const r = readFeeling(meta, sit);
   const hits = FEELING_ROWS.filter((row) => { try { return row.match(r); } catch { return false; } });
   const d: FeelingDecision = { rows: hits.map((h) => h.id), focus: null, focusFrom: null, push: null, pushFrom: null, combo: null, comboFrom: null, next: null, nextFrom: null, writer: {}, sources: [], open: [],
-    read: { state: r.state, strength: r.strength, hesitation: r.hesitation, anxiety: r.anxiety ? `${r.anxiety.target}:${r.anxiety.direction}` : null } };
+    read: { state: r.state, strength: r.strength, hesitation: r.hesitation, anxiety: r.anxiety ? `${r.anxiety.target}:${r.anxiety.direction}` : null, openPromise: r.openPromise, resultReady: r.resultReady, strengthFrom: r.strengthFrom, notHooked: r.notHooked } };
   let up = false;
   for (const h of hits) {
     if (h.focus && !d.focus) { d.focus = h.focus; d.focusFrom = h.id; }
@@ -229,8 +233,10 @@ export function decideFromFeeling(meta: M | null | undefined, sit: FeelingSituat
 
 /** digest の短い印 例 "taken_worry,time_close|f:propose|p:push|n:apply|?:" */
 export function feelingDigest(d: FeelingDecision | null | undefined): string | null {
-  if (!d || (!d.rows.length && !d.open.length)) return null;
-  return [d.rows.join(",") || "-", `f:${d.focus ?? "-"}`, `p:${d.push ?? "-"}`, `n:${d.next?.aix ?? d.next?.dest ?? "-"}`, `?:${d.open.join(",")}`].join("|").slice(0, 100);
+  if (!d) return null;
+  // 2026-11-21 作業員K2: 行に当たらない番も材料（m:開いている約束・今出せる結果・強さ）を残す＝竹内さんの番と並べて「順番か材料か」を数える（先頭に置いて切れないように）
+  const mat = `m:${d.read?.openPromise ? 1 : 0}${d.read?.resultReady ? 1 : 0}${d.read?.strength ?? "-"}${d.read?.notHooked ? 1 : 0}`;
+  return [mat, d.rows.join(",") || "-", `f:${d.focus ?? "-"}`, `p:${d.push ?? "-"}`, `n:${d.next?.aix ?? d.next?.dest ?? "-"}`, `?:${d.open.join(",")}`].join("|").slice(0, 100);
 }
 
 const decisionOf = (meta: unknown): FeelingDecision | null => {

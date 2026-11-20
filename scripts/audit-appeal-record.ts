@@ -88,7 +88,15 @@ type Pair = { kind: "star" | "naka"; writer: AppealWriter; staff: AppealRecord; 
     const best = cands[0] && cands[0].s >= LINK_MIN ? cands[0] : null;
     if (best) { linked++; sims.push(best.s); } else unlinked++;
     const g = genOf.get(String(m.line_message_id ?? "")) ?? (best ? String(best.g.generated_text) : undefined);
-    pairs.push({ kind: "naka", writer, staff, ai: g ? appealRecordFromText(g, { surface: "reply", writer: "ai", wants }) : null });
+    const aiRec = g ? appealRecordFromText(g, { surface: "reply", writer: "ai", wants }) : null;
+    pairs.push({ kind: "naka", writer, staff, ai: aiRec });
+    // 2026-11-21 作業員K2（#142・--show-naka）: 竹内さんの「お部屋の中でも」で強さか広さが AI とずれた番の締めの2文を並べる（伏せる・名前は〇〇さん）
+    if (process.argv.includes("--show-naka") && writer === "takeuchi" && aiRec && (aiRec.strength !== staff.strength || (staff.points.includes("spacious") && !aiRec.points.includes("spacious")))) {
+      const tail = (x: string) => (String(x).match(/[^。！!\n]*(?:ご案内|ご内覧|内覧|お申込|お申し込み|抑え|押さえ|お気軽|如何|ご都合)[^。！!\n]*/g) ?? ["（誘いの文なし）"]).join(" ／ ").replace(/[A-Za-z0-9_-]+さん|[^\s！!、。]{1,6}さん/g, "〇〇さん").slice(0, 120);
+      console.log(`[${String(m.conversation_id).slice(0, 8)} ${String(m.created_at).slice(0, 10)}] 強さ ${staff.strength}→AI ${aiRec.strength}・広さ 竹内${staff.points.includes("spacious") ? "○" : "-"}/AI${aiRec.points.includes("spacious") ? "○" : "-"}・希望に広さ${staff.why.some((x) => x.topic === "spacious") ? "○" : "-"}
+  竹内: ${tail(String(m.text))}
+  AI : ${tail(String(g))}`);
+    }
   }
 
   sims.sort((a, b) => a - b);
