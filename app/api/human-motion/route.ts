@@ -287,6 +287,11 @@ export async function POST(req: NextRequest) {
             return cs ? { cs } : {};
           })(),
           /**
+           * ★ 2026-11-20 竹内さん（手の形は今の値を残して本当の値を別に）: 拡張 2.8.140 の `csr` は
+           *   押した瞬間のページの CSS の cursor そのまま。上の cs と違い**補完しない**（無ければ無いまま）。
+           */
+          ...(typeof r.csr === "string" && /^[a-z-]{1,12}$/.test(r.csr) ? { csr: r.csr } : {}),
+          /**
            * ★ 2026-11-17 録画→改善: 何が開いたか（modal/options）も通す。
            *   拡張は送っていたが API で捨て → プルダウン理解の土台が欠ける。
            */

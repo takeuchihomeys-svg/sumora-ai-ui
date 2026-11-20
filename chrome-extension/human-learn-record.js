@@ -623,7 +623,27 @@
    *     後から来た記録の was/now・位置・形は、前の記録に無い時だけ移す（捨てない）。人の記録は畳まない。
    */
   var _PRESS_KIND = { click: 1, tap: 1 };
-  var _FOLD_KEYS = ["was", "now", "x", "y", "bw", "bh", "bt", "shape", "role", "cs", "w"];
+  var _FOLD_KEYS = ["was", "now", "x", "y", "bw", "bh", "bt", "shape", "role", "cs", "csr", "w"];
+  /**
+   * ページの CSS の cursor の値（決め打ちしない）。`url(...) 4 4, pointer` は最後の言葉。
+   *   ⚠ 見えるカーソルの間は pointer-ui.js が `html.axlx-one-cursor *{cursor:none}` を付けるので、外して読んで戻す。
+   */
+  function _rawCssCursor(el) {
+    try {
+      if (!el || typeof window === "undefined" || !window.getComputedStyle) return null;
+      var html = document.documentElement;
+      var on = !!(html && html.classList && html.classList.contains("axlx-one-cursor"));
+      var c = "";
+      if (on) html.classList.remove("axlx-one-cursor");
+      try { c = String(window.getComputedStyle(el).cursor || ""); } catch (_) { c = ""; }
+      if (on) html.classList.add("axlx-one-cursor");
+      c = c.toLowerCase();
+      var parts = c.split(",");
+      c = String(parts[parts.length - 1] || "").trim();
+      if (!/^[a-z-]+$/.test(c)) return null;
+      return c.slice(0, 12);
+    } catch (_) { return null; }
+  }
   function _opCore(f) {
     var s = String(f || "");
     var i = s.indexOf("｜");
@@ -813,7 +833,13 @@
       } catch (_) { cs = null; }
       // ★ 種類が押す系なのに cs が空なら pointer（APIが通す前提・手の形0を防ぐ）
       if (!cs && (kd === "checkbox" || kd === "radio" || kd === "button" || kd === "select" || kd === "link")) cs = "pointer";
-      var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null, cs: cs };
+      /**
+       * ★ 2.8.140 竹内さん（手の形は「今の値は残して本当の値を別に足す」）:
+       *   上の cs は押す系を pointer と決め打ち（統括の数字が使う・変えない）。
+       *   csr は押した瞬間のページの CSS の cursor そのまま（決め打ち・補完しない）。写真には OS のマウスが写らないので、これが手の形の実測。
+       */
+      var csr = _rawCssCursor(el);
+      var _opObj = { t: t, k: String(kind || "?").slice(0, 10), f: nmStr, w: kd, g: gap, el: el || null, by: (by === "human" || by === "auto") ? by : null, cs: cs, csr: csr };
       try {
         var _km = String(kind || "").toLowerCase();
         if (el && (_km === "click" || _km === "tap" || _km === "change")) {
@@ -1393,6 +1419,7 @@
         }
       }
       if (_csOut) row.cs = _csOut;
+      if (o.csr) row.csr = String(o.csr).slice(0, 12);
       if (typeof o.was === "boolean") row.was = o.was;
       if (typeof o.now === "boolean") row.now = o.now;
       if (typeof o.x === "number") row.x = o.x;
