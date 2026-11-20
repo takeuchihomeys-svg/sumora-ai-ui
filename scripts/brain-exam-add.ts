@@ -99,12 +99,21 @@ export const LEDGER_TABLES: Record<string, { time: string; times: string[]; date
   viewings: { time: "created_at", times: ["created_at"], dates: ["viewing_date"], limit: 10, drop: [] },
   viewing_history: { time: "created_at", times: ["created_at", "updated_at"], dates: ["scheduled_date", "actual_date"], limit: 10, drop: ["viewing_report", "viewing_report_at"] },
   sent_facts: { time: "created_at", times: ["created_at", "sent_at"], limit: 40, drop: [] },
+  // 2026-11-21 作業員K2（#132・q439）: 送った資料の読み（sent_image_properties.facts）。設備の答え（equipment-answer-server）・送った資料の事実は
+  //   この表を会話で引くのに、試験の会話へ写していなかった＝EQUIPMENT_WISH_LOOKUP の on/off が試験で1度も効かなかった（k1119-eqwish に brain:equipment-answer の行が0）。
+  //   id の列が無い表＝写しと片付けは会話ごと（借りたテスト用の会話だけ）。写す（作る）のも入れるのも EXAM_LEDGER_SIP=on の時だけ（既定 off＝今までと同じ）
+  sent_image_properties: { time: "created_at", times: ["created_at", "facts_read_at"], limit: 40, drop: [] },
 };
+/** 2026-11-21 送った資料の読み（sent_image_properties）を台帳に写す・入れるか（既定 off） */
+export function examLedgerSipOn(env: Record<string, string | undefined> = process.env): boolean { return String(env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on"; }
+/** id の列が無い表（片付けは会話ごと） */
+export const LEDGER_NO_ID = new Set(["sent_image_properties"]);
 /** 11/05 弱い所 301: id・*_id の欄と ISO 時刻・uuid の値は伏せない（scripts/lib/brain-exam-mask.ts maskLedgerDeep） */
 const maskDeep = (v: unknown, mask: (s: string) => string, key: string | null = null): unknown => maskLedgerDeep(v, mask, key);
 async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mask: (s: string) => string): Promise<Record<string, LedgerRow[]>> {
   const out: Record<string, LedgerRow[]> = {};
   for (const [t, c] of Object.entries(LEDGER_TABLES)) {
+    if (t === "sent_image_properties" && !examLedgerSipOn()) continue; // 既定 off（今までの問題の写しを変えない）
     let q = sb.from(t).select("*").lte(c.time, at).order(c.time, { ascending: false }).limit(c.limit);
     q = c.byPc && pcId ? q.or(`conversation_id.eq.${conv},property_customer_id.eq.${pcId}`) : q.eq("conversation_id", conv);
     const { data, error } = await q;

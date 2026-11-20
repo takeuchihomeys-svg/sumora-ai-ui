@@ -115,7 +115,8 @@ console.log("■ 10/08 遠い先（半年以上）は「2ヶ月前から」・�
   const prev = process.env.FAR_MOVE_IN_STALE_CONDITION;
   const q197 = () => farMoveInTurn({ customerTurn: [{ text: "みなみの中の物件や島之内等で良い物件ありますか？", at: now }], conditionMoveIn: "10月・11月（早い方が希望）", staffHistory: [], nowIso: now });
   process.env.FAR_MOVE_IN_STALE_CONDITION = "on"; t("q197: on なら入居の時期が先の番にしない", q197() === null);
-  delete process.env.FAR_MOVE_IN_STALE_CONDITION; t("q197: off（既定）なら今まで通り", q197() !== null);
+  process.env.FAR_MOVE_IN_STALE_CONDITION = "off"; t("q197: off なら今まで通り", q197() !== null);
+  delete process.env.FAR_MOVE_IN_STALE_CONDITION; t("q197: 既定（2026-11-21 から on）なら入居の時期が先の番にしない", q197() === null);
   if (prev != null) process.env.FAR_MOVE_IN_STALE_CONDITION = prev;
 }
 

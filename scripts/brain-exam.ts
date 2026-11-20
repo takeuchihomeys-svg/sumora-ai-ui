@@ -451,7 +451,8 @@ function saveOwnLedger() { try { mkdirSync(dirname(S().ledgerOwnFile), { recursi
 async function deleteOwnLedger() {
   for (const [t, ids] of Object.entries(S().ownLedger)) {
     if (!ids.length) continue;
-    const r = await sb.from(t).delete().in("id", ids);
+    // 2026-11-21 作業員K2: id の列が無い表（sent_image_properties）は借りた会話ごと消す（入れるのも借りた会話の時だけ）
+    const r = t === "sent_image_properties" ? await sb.from(t).delete().eq("conversation_id", S().conv) : await sb.from(t).delete().in("id", ids);
     if (r.error) console.error(`⛔ 台帳の写し ${t} を消せない（${ids.length}件・控え ${S().ledgerOwnFile}）: ${r.error.message}`);
     else { writeCount.ledgerDel += ids.length; S().ownLedger[t] = []; }
   }
@@ -470,6 +471,11 @@ async function purgeLeasedLedger(): Promise<Record<string, number>> {
     const r = await sb.from(t).delete().eq("conversation_id", S().conv).select("id");
     if (r.error) throw new Error(`借りた会話の台帳 ${t} を消せない: ${r.error.message}`);
     if ((r.data ?? []).length) out[t] = (r.data ?? []).length;
+  }
+  if (process.env.EXAM_LEDGER_SIP?.trim().toLowerCase() === "on") { // 2026-11-21 作業員K2: 送った資料の読み（id の列が無い）も借りた会話の分を消す（EXAM_LEDGER_SIP=on の時だけ＝既定は今までと同じ）
+    const r = await sb.from("sent_image_properties").delete().eq("conversation_id", S().conv).select("image_url");
+    if (r.error) throw new Error(`借りた会話の台帳 sent_image_properties を消せない: ${r.error.message}`);
+    if ((r.data ?? []).length) out.sent_image_properties = (r.data ?? []).length;
   }
   if (S().yumaPc) {
     for (const t of ["sent_properties", "property_pickups", "estimate_records"]) {
@@ -501,7 +507,7 @@ function sceneTimeOf(agoMin: number, ctxAgo: number[], times: string[], k: numbe
   return new Date(base + Math.min(k, 50) * 20).toISOString();
 }
 async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shiftDays: number): Promise<{ inserted: Record<string, number>; errors: string[] }> {
-  const { LEDGER_TABLES } = await import("./brain-exam-add");
+  const { LEDGER_TABLES, examLedgerSipOn } = await import("./brain-exam-add");
   const inserted: Record<string, number> = {}, errors: string[] = [];
   const ctxAgo = p.context.map((m) => m.ago);
   const atMs = Date.parse(p.at);
@@ -543,6 +549,21 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     S().ownLedger[t] = [...(S().ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
+  }
+  // 2026-11-21 作業員K2（#132・q439）: 送った資料の読み（sent_image_properties）。EXAM_LEDGER_SIP=on・借りたテスト用の会話の時だけ入れる（YUMA は共有＝入れない）。
+  //   id の列が無い＝控えは印だけ（片付けは会話ごと・deleteOwnLedger／purgeLeasedLedger）
+  const sipRows = (p.ledger?.sent_image_properties ?? []) as LedgerRow[];
+  if (sipRows.length && examLedgerSipOn() && isNoLineTestConversation(S().conv)) {
+    const c = LEDGER_TABLES.sent_image_properties;
+    const objs = sipRows.map((lr, k) => {
+      const o: Record<string, unknown> = { ...lr.row };
+      o.conversation_id = S().conv;
+      for (const col of c.times) { const v = o[col]; if (typeof v === "string") o[col] = col === c.time ? sceneTimeOf(lr.ago, ctxAgo, times, k) : sceneTimeOf(Math.round((atMs - Date.parse(v)) / 60_000), ctxAgo, times, k); }
+      return o;
+    });
+    const r = await sb.from("sent_image_properties").insert(objs).select("image_url");
+    if (r.error) errors.push(`sent_image_properties: ${r.error.message.slice(0, 120)}`);
+    else { const n = (r.data ?? []).length; S().ownLedger.sent_image_properties = ["(会話ごと)"]; saveOwnLedger(); writeCount.ledgerIns += n; inserted.sent_image_properties = n; }
   }
   return { inserted, errors };
 }
