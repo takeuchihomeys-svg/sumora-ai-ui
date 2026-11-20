@@ -5,7 +5,7 @@ import { appealRecordFromText } from "../appeal-record";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, extra ?? ""); } };
 
-t("スイッチ既定 off", !appealPlanReadOn({}) && appealPlanReadOn({ APPEAL_PLAN_READ: "on" }));
+t("スイッチ既定 on（2026-11-20）・off で止める", appealPlanReadOn({}) && appealPlanReadOn({ APPEAL_PLAN_READ: "on" }) && !appealPlanReadOn({ APPEAL_PLAN_READ: "off" }));
 t("締めの読み替え: 内覧 → 案内する×内覧", (() => { const x = ctaToStrengthAim({ kind: "viewing" }); return x.strength === "invite" && x.aim === "viewing"; })());
 t("締めの読み替え: 申込 → 強く押す×申込", (() => { const x = ctaToStrengthAim({ kind: "apply" }); return x.strength === "strong" && x.aim === "apply"; })());
 t("締めの読み替え: ご査収 → 扉だけ", (() => { const x = ctaToStrengthAim({ kind: "receipt" }); return x.strength === "door" && x.aim === "door"; })());
