@@ -130,11 +130,8 @@ import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
 import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
-<<<<<<< HEAD
 import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/second-block-receipt";
-=======
 import { situationWriterNoteAixOn, situationWriterNoteAix } from "@/app/lib/situation-writer-aix";
->>>>>>> bb9dfc64
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1453,19 +1450,17 @@ export async function POST(req: NextRequest) {
   // 物件オススメ（またはピックアップで推す物件が決まった）の直後の2通目か（形は second-message-scene が決める）
   const isRecSecond = !!(sentMessage ?? "").trim() && (actionType === "property_recommendation" || !!pickupPushLabel);
   if (pickupPushLabel) aixChainNote = buildAixChainNote(sentMessage, { recommendScene: true });
-<<<<<<< HEAD
   // 2026-11-21 作業員K2（SECOND_BLOCK_RECEIPT_SEEN・既定 off・second-block-receipt.ts）: 同じ送付の塊の前の AIX の通（ピックアップのお知らせ）で（11/21: ピックアップで推す物件が決まった時の作り直しの後に置く＝前に置くと作り直しで消えていた）
   //   もうご査収を言った事を書き手に渡す（2通目のご査収の重ね スタッフ 90%・竹内さん 53%・1通目＝🌟の通しか渡していなかった）
   if (secondBlockReceiptSeenOn()) {
     const brn = secondBlockReceiptNote((recentMessages ?? []) as Array<{ sender?: string; text?: string; isAix?: boolean; rawCreatedAt?: string }>, sentMessage);
     if (brn) { aixChainNote = `${aixChainNote ?? ""}${brn}`; console.log(JSON.stringify({ tag: "aix-template-generate:block-receipt-seen", actionType })); }
-=======
+  }
   // 2026-11-21 作業員K2（SITUATION_WRITER_NOTE_AIX・既定 off・situation-writer-aix.ts）: 今の状況の記録（L の situation_now）と「こちらが前に伝えた事」（our_items）を
   //   AIX の2通目の書き手にも渡す（今までは generate-reply だけ＝2通目は前に言った事を項目で持たず、同じ約束・同じ締めを言い直していた）
   if (situationWriterNoteAixOn()) {
     const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
     if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
->>>>>>> bb9dfc64
   }
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
