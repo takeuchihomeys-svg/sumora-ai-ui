@@ -149,8 +149,9 @@ export function deriveGateAsks(input: GateInput): OwnerAsk[] {
   }
   if (RE_COST.test(t)) {
     push("cost", "統括Pro の次手に費用が出る学習（写真の読み取り photo_learn／flash）が含まれています。どこまでやりますか",
-      ["まず --dry-run で枚数と費用を見せる", "統括が決めた枚数で実行する", "今は実行しない"], "まず --dry-run で枚数と費用を見せる",
-      "写真1枚ごとに費用が出る。枚数は統括が課題に応じて決めるが、実行の前に dry-run で確かめる決まり");
+      ["統括が決めた枚数で実行する（2枚の dry-run で読み方を確かめてから）", "まず --dry-run で枚数と費用を見せる", "今は実行しない"],
+      "統括が決めた枚数で実行する（2枚の dry-run で読み方を確かめてから）",
+      "2026-11-20 竹内さん「枚数も改善するためならどれだけ使ってもよい 統括pro判断するかたちとする」。dry-run は読み方の確かめ（2枚）で、枚数の許可待ちにしない");
   }
   for (const c of findContradictions(input)) {
     push("contradiction", `統括の言葉が食い違っています: ${c}。どちらを今の結論として扱いますか`,
