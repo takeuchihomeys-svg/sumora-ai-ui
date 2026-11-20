@@ -13,7 +13,13 @@ import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATI
 
 const MAX_CONVS = 300; // 朝 5:25（営業時間の外）に1回だけ。80 では古い約束（29日）の会話が入らなかった（11/21 の試し）
 
-export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now()): Promise<PromiseDrop[]> {
+// 2026-11-21 作業員H の注意: rag-watch-daily の maxDuration は 120秒で、H の本番に近い問いの測りが最悪 70〜80秒使う。
+//   こちらは 30秒の上限（budgetMs）を持ち、5会話ずつ並べて読み、時間が来たら途中で打ち切る（partial を記録に残す）。
+export const PROMISE_DROP_BUDGET_MS = 30_000;
+const BATCH = 5;
+
+export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o: { budgetMs?: number } = {}): Promise<PromiseDrop[] & { partial?: boolean; scanned?: number; total?: number }> {
+  const deadline = Date.now() + (o.budgetMs ?? PROMISE_DROP_BUDGET_MS);
   const since = new Date(nowMs - PROMISE_DROP_MAX_DAYS * 86_400_000).toISOString();
   const { data: hits, error } = await sb.from("messages").select("conversation_id, created_at")
     .eq("sender", "staff").eq("is_aix_generated", false).gte("created_at", since)
@@ -23,8 +29,9 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now()): 
   const internal = new Set<string>(STAFF_INTERNAL_CONVERSATION_IDS as readonly string[]);
   const convs = [...new Set(((hits ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))]
     .filter((c) => !isTestConversation(c) && !isNoLineTestConversation(c) && !internal.has(c)).slice(0, MAX_CONVS);
-  const out: PromiseDrop[] = [];
-  for (const c of convs) {
+  const out: PromiseDrop[] & { partial?: boolean; scanned?: number; total?: number } = [];
+  let scanned = 0;
+  const one = async (c: string) => {
     const [cv, m, a, s, i, p] = await Promise.all([
       sb.from("conversations").select("customer_name, call_name, status").eq("id", c).maybeSingle(),
       sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
@@ -41,7 +48,13 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now()): 
     };
     const d = promiseDropOf(input, nowMs);
     if (d) out.push(d);
+  };
+  for (let k = 0; k < convs.length; k += BATCH) {
+    if (Date.now() > deadline) { out.partial = true; break; }
+    await Promise.all(convs.slice(k, k + BATCH).map(one));
+    scanned = Math.min(convs.length, k + BATCH);
   }
+  out.scanned = scanned; out.total = convs.length;
   return out;
 }
 
@@ -55,7 +68,7 @@ export async function recordPromiseDrops(sb: SupabaseClient, nowMs = Date.now())
   await sb.from("hanbancyo_settings").upsert({ key: PROMISE_DROP_TEXT_KEY, value: JSON.stringify({ at: nowIso, text }) }, { onConflict: "key" });
   await sb.from("cron_run_logs").insert({
     cron_name: "promise-drop-watch", started_at: nowIso, finished_at: new Date().toISOString(), ok: true,
-    result_json: { mode, count: drops.length, rows: drops.map((d) => ({ conv: d.conversationId.slice(0, 8), kind: d.kind, days: d.days, spoke: d.customerSpokeAfter, dismissed: d.dismissedAfter, picks: d.readyPicksAfter })), text },
+    result_json: { mode, count: drops.length, partial: !!drops.partial, scanned: drops.scanned ?? null, total: drops.total ?? null, rows: drops.map((d) => ({ conv: d.conversationId.slice(0, 8), kind: d.kind, days: d.days, spoke: d.customerSpokeAfter, dismissed: d.dismissedAfter, picks: d.readyPicksAfter })), text },
   });
   console.log(JSON.stringify({ tag: "promise-drop-watch:record", mode, count: drops.length }));
   return { mode, count: drops.length };
