@@ -148,7 +148,7 @@ export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Readonly
 //   KB「次の一手を進める類の欄を足すと判断の道が引っ張られる」。→ ブレインには渡さず、道が決まった後の文の統括（compose-sentence-plan の
 //   受け渡しの表）と AIX の文（aix-second-brain-plan）だけに渡す。ブレインの meta に our_side_note（文の材料・記録）として残すだけ。
 //   切替: OUR_SIDE_TO_COMPOSE=on（既定 off）。道（返信か AIX か）は off と同じになるはず（変わったら配線の誤り）
-export const ourSideToComposeOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OUR_SIDE_TO_COMPOSE ?? "").trim().toLowerCase() === "on";
+export const ourSideToComposeOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OUR_SIDE_TO_COMPOSE ?? "").trim().toLowerCase() !== "off"; // 2026-11-21 作業員G: 既定 on（②の組 grp-reply-1121 で確かな悪化0）。止める =off
 /** 文の材料の短い塊（読み方の長い行は外し、状態の行だけ・900字まで） */
 export function ourSideComposeNote(o: { msgs: ReadonlyArray<OurSideMsg>; aix: ReadonlyArray<OurSideAix>; nowMs: number; intakeLine?: string | null }): string {
   const block = ourSideBlock({ msgs: o.msgs, aix: o.aix, nowMs: o.nowMs, withChecked: true });

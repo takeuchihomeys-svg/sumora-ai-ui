@@ -47,7 +47,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   IMAGE_READ_ROOMS: "off",
   LATENT_FIVE: "off",
   MATERIAL_ON_HAND: "off",
-  OUR_SIDE_TO_COMPOSE: "off",
+  OUR_SIDE_TO_COMPOSE: "on",
   OWN_PROPERTY_PORTAL_TITLE: "on",
   PROMISE_CLOSE_LINK: "on",
   PROMISE_READ_UNIFIED: "off",
