@@ -1157,6 +1157,9 @@ async function prepareMainBaseline(): Promise<boolean> {
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
     // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
     ...(judgeRubricOf() === "v2" ? { judgeRubric: "v2" } : {}),
+    // 2026-11-20 作業員H（作業員M の頼み・AIX の2通目の系統の前と今）: --after-aix-draft は「AIX の後の返信の下書き」を作る＝前の答えの形が違う。
+    //   付けた時だけ構成に足す（付けない回の置き場は変えない・付けた回は付けた前の答えとだけ比べる）
+    ...(AFTER_AIX_DRAFT ? { afterAixDraft: AFTER_AIX_DRAFT } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」・scripts/lib/exam-base-pin.ts）:
