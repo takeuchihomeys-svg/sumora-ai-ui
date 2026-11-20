@@ -1808,6 +1808,17 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (a) (meta as unknown as Record<string, unknown>).conductor_allocation = a;
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:allocation-failed", error: e instanceof Error ? e.message : String(e) })); }
+  let prevCustomerPlanForBrief: unknown = null;
+  // 2026-11-21 作業員M（台帳 #101 の (2)・統括役の OK）: 統括の指示書が前の番のお客様ごとの計画（conversations.customer_plan）を読む。
+  //   CONDUCTOR_BRIEF_PLAN=on の時だけ（既定 off）。指示書に plan の欄を足すだけ＝書き手の役目の対応表には入れない（文と道は変えない）
+  try {
+    const cp = await import("@/app/lib/customer-plan");
+    if (cp.conductorBriefPlanOn() && !args[5]?.recheck && !customerPlanColumnMissing) {
+      const { data: pr } = await supabase.from("conversations").select("customer_plan").eq("id", args[0]).maybeSingle();
+      // 前の計画は指示書を組んだ後に照らす（下の指示書の所で plan の欄にする・meta には残さない）
+      prevCustomerPlanForBrief = (pr as { customer_plan?: unknown } | null)?.customer_plan ?? null;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "customer-plan:brief-read-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（竹内さん「ブレインの統括の部分も具体的に判断できるように」）: 統括の指示書（型・配分・事実・足りない情報・照らし合わせ・疑いの印・確かさ）を記録だけ。
   //   CONDUCTOR_BRIEF=shadow の時だけ meta.conductor_brief を足す（既定 off＝何も足さない）。道は照らすために読むだけで変えない。疑いの印と確かさは判断の根拠のメモにも写す
   try {
@@ -1816,6 +1827,7 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
+      if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
       else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
     }

@@ -112,3 +112,45 @@ export function planChangedFields(prev: Partial<CustomerPlan>, cur: CustomerPlan
   };
   return KEYS.filter((k) => norm(k, prev[k]) !== norm(k, cur[k]));
 }
+
+// ── 読む側（2026-11-21 作業員M・台帳 #101 の (2)・統括役の OK）: 統括の指示書が前の番の計画を読む（既定 off）──────────
+/** CONDUCTOR_BRIEF_PLAN=on の時だけ、統括の指示書に前の計画の欄（plan）を足す（記録だけ・書き手の役目の対応表には入れない＝文は変えない） */
+export function conductorBriefPlanOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONDUCTOR_BRIEF_PLAN ?? "").trim().toLowerCase() === "on";
+}
+export type PlanBriefSection = {
+  mid_aim: string | null;
+  /** 中期の狙いが続いている時間（時間） */
+  aim_hours: number | null;
+  /** 前の計画の次に送る物と、この番の統括の次の一手が同じ行き先か（same／changed／unknown） */
+  next_vs_plan: "same" | "changed" | "unknown";
+  prev_next: { dest: string | null; push_strength: string | null };
+  /** 24時間以上開いている約束（promise_id） */
+  overdue_promises: string[];
+  /** 前の番から持ち越した、まだ答えていない要件の数 */
+  carried_open: number;
+  /** 気持ちが前の計画から動いたか（前の状態 → 今） */
+  feeling_moved: string | null;
+};
+/** 前の計画と今の番の meta から、指示書に足す欄を作る（純関数）。前の計画が無ければ null */
+export function planBriefSection(prev: unknown, meta: Record<string, unknown> | null | undefined, nowMs: number): PlanBriefSection | null {
+  const p = o(prev) as Partial<CustomerPlan> | null;
+  if (!p || p.v !== 1) return null;
+  const pa = o(p.aims), pn = o(p.next_send);
+  const nowNext = o(o(o(meta)?.conductor_brief)?.next);
+  const nowDest = s(nowNext?.dest, 30);
+  const prevDest = s(pn?.dest, 30);
+  const since = typeof pa?.since === "string" ? Date.parse(pa.since) : NaN;
+  const ms = o(o(meta)?.customer_mindset);
+  const nowState = s(ms?.state, 20);
+  const prevState = s(o(p.feeling)?.state, 20);
+  return {
+    mid_aim: s(pa?.mid_aim, 40),
+    aim_hours: Number.isFinite(since) ? Math.round((nowMs - since) / 36e5) : null,
+    next_vs_plan: !prevDest || !nowDest ? "unknown" : prevDest === nowDest ? "same" : "changed",
+    prev_next: { dest: prevDest, push_strength: s(pn?.push_strength, 20) },
+    overdue_promises: arr(p.promises_open).filter((x) => typeof o(x)?.due_h === "number" && (o(x)!.due_h as number) >= 24).map((x) => String(o(x)?.promise_id ?? "")).filter(Boolean).slice(0, 4),
+    carried_open: arr(o(p.asks)?.open).length,
+    feeling_moved: prevState && nowState && prevState !== nowState ? `${prevState}→${nowState}` : null,
+  };
+}
