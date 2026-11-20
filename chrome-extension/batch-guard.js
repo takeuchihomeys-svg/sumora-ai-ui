@@ -127,7 +127,45 @@
     return { action: "use", reason: "alive", front: p.vis === "hidden" };
   }
 
+  /**
+   * ★ 2.8.141 竹内さん「画面録画してい ここからも原因見つけて改善する」（run mwoppjwh_y6ev・search_audits 1545/1546）:
+   *   人が始めた自動検索（平田さん・trigger=single・08:24:28）の **7秒後**に 16時の自動便（auto_schedule）を拾い、
+   *   同じリアプロのタブで2本目が始まった。1本目は所在地を開いた所（08:24:42）で止まり6分後に idle_close、
+   *   2本目は記録0のまま running で残った。拾う側は人の自動検索を見ておらず、
+   *   一括側の「別のお客さんの入力中は待つ」より前に `_ensureRealproTab` が 0.7秒で答えないページを読み直す。
+   *
+   * 命令を拾ってよいか。openHumanRun＝開いている人の回（search_audits の single/local）／probe＝リアプロのタブの答え。
+   *   返り: 拾わない理由（文字）か null（拾ってよい）。⚠ 拾わないだけで命令は消さない（pending のまま次の見回りで拾う）。
+   */
+  var HUMAN_RUN_HOLD_MS = 20 * 60 * 1000;
+  function _humanRunLive(r, now) {
+    if (!r || r.finished || (r.trigger !== "single" && r.trigger !== "local")) return false;
+    var t = typeof now === "number" ? now : Date.now();
+    var s = Number(r.started_at) || 0;
+    // ⚠ 閉じ忘れの回で自動便が止まり続けないよう、始まって20分を過ぎた回は数えない
+    return !s || t - s < HUMAN_RUN_HOLD_MS;
+  }
+  function claimBlockedByHumanRun(openHumanRun, probe, now) {
+    if (_humanRunLive(openHumanRun, now)) return "human_run_open";
+    var p = probe || {};
+    if (p.pong && p.fillRunning) return "page_fill_running";
+    return null;
+  }
+
+  /**
+   * 「ページの入力の仕組みが応答しない」（page_script_dead）で読み直す前に、入力中の可能性を見る。
+   *   content.js は答えた（pong）のにページが 0.7秒で答えない＝ページが忙しいだけのことがある。
+   *   人の回が開いている間は読み直さない（読み直すと入力中の画面ごと消える）。
+   */
+  function holdReloadForBusyPage(probe, openHumanRun, now) {
+    var p = probe || {};
+    if (!p.pong || p.page !== false) return false;
+    return _humanRunLive(openHumanRun, now);
+  }
+
   var REASON_JA = {
+    human_run_open: "人が始めた自動検索が進行中",
+    page_fill_running: "ページで条件の入力が進行中",
     not_itandi_list: "ITANDI の検索の画面（賃貸の部屋の一覧）ではない（物件の詳細・ログインの画面等）",
     not_main_php: "検索の画面（main.php）ではない",
     no_url: "タブの場所が分からない",
@@ -266,6 +304,9 @@
     realproTabPlan: realproTabPlan,
     realproRecoverNav: realproRecoverNav,
     realproReady: realproReady,
+    claimBlockedByHumanRun: claimBlockedByHumanRun,
+    holdReloadForBusyPage: holdReloadForBusyPage,
+    HUMAN_RUN_HOLD_MS: HUMAN_RUN_HOLD_MS,
     reasonJa: reasonJa,
     locationGate: locationGate,
     failureNotice: failureNotice,

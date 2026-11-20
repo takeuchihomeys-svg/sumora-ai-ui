@@ -5217,6 +5217,21 @@ function _auditStep(runId, k, d) {
   try { if (_auditTracker && runId) _auditTracker.step(runId, k, d); } catch (_) {}
 }
 
+/** 開いている人の回（single/local）。site を渡すとそのサイトだけ（"realpro"/"itandi"）。無ければ null */
+function _openHumanRun(site) {
+  var hit = null;
+  try {
+    if (!_auditTracker || !_auditTracker._runs) return null;
+    _auditTracker._runs.forEach(function (r) {
+      if (!r || r.finished) return;
+      if (r.trigger !== "single" && r.trigger !== "local") return;
+      if (site && r.site && r.site !== site) return;
+      if (!hit || r.started_at > hit.started_at) hit = r;
+    });
+  } catch (_) {}
+  return hit;
+}
+
 /**
  * ★ 2026-11-19 (2.8.128) 竹内さん「連続検索として抜けている所を徹底的に」:
  *   個別（single/local）の点検は、最後の fill 進捗から6分で idle_close に閉じる。
@@ -6964,6 +6979,26 @@ async function _pollAndRunBatch() {
       console.log("[batch] 前のお客様からの間（あと " + Math.round((_nb - Date.now()) / 1000) + "秒）→ 次の見回りで拾う");
       return;
     }
+    /**
+     * ★ 2.8.141 実測（search_audits 1545/1546）: 人が始めた自動検索の7秒後に自動便を拾い、同じタブで2本が重なって両方止まった。
+     *   → 人の回が開いている間・ページで入力が進んでいる間は拾わない（pending のまま次の見回りで拾う）。
+     */
+    if (self.AxlxBatchGuard && self.AxlxBatchGuard.claimBlockedByHumanRun) {
+      var _humanRun = _openHumanRun(null);
+      var _rpProbe = null;
+      if (!_humanRun) {
+        try {
+          var _rpTab = self.AxlxBatchGuard.pickRealproTab(_tabsNow);
+          if (_rpTab && _rpTab.id != null) _rpProbe = await _probeRealproTab(_rpTab.id);
+        } catch (_) { _rpProbe = null; }
+      }
+      var _claimBlock = self.AxlxBatchGuard.claimBlockedByHumanRun(_humanRun, _rpProbe);
+      if (_claimBlock) {
+        console.log("[batch] " + self.AxlxBatchGuard.reasonJa(_claimBlock) + " → 今は指示を拾わない（pending のまま）"
+          + (_humanRun ? " customer=" + String(_humanRun.property_customer_id || "-").slice(0, 8) : ""));
+        return;
+      }
+    }
     // 2026-09-29 v2.5.40: 拾った拡張の版と PC を渡す（サーバーが claim した行に残す＝「どの版が拾った・見送ったか」を DB で見分ける。
     //   9/29 16:32 の午後の便の見送りは v2.5.38 より前の拡張だったが、版の記録が search_audits にしか無く後から推すしかなかった）
     var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending" + (_qs.length ? "?" + _qs.join("&") : ""), {
@@ -8451,6 +8486,28 @@ async function _ensureRealproTab(tab, auditRun, why, customerId) {
   if (plan.action === "use" && !why) {
     if (plan.front) await _bringRealproTabFront(tab, runId, probe.vis);
     return tab;
+  }
+  /**
+   * ★ 2.8.141（search_audits 1545）: content.js は答えたのにページが 0.7秒で答えない時は、入力中で忙しいだけのことがある。
+   *   旧はすぐ読み直した＝人の自動検索の入力中の画面ごと消し得た。→ 2回まで確かめ直し、それでも答えず人の回が進行中なら読み直さずに見送る。
+   */
+  if (!why && plan.reason === "page_script_dead" && probe.pong) {
+    for (var _rp = 0; _rp < 2; _rp++) {
+      await new Promise(function (r) { setTimeout(r, 1200); });
+      var _pr = await _probeRealproTab(tab.id);
+      var _pl = G ? G.realproTabPlan(_pr) : { action: _pr.pong ? "use" : "reload" };
+      if (_pl.action === "use") {
+        _auditStep(runId, "tab_check", "ページの答えが遅かっただけ（読み直さない）");
+        if (_pl.front) await _bringRealproTabFront(tab, runId, _pr.vis);
+        return tab;
+      }
+      probe = _pr;
+    }
+    if (G && G.holdReloadForBusyPage && G.holdReloadForBusyPage(probe, _openHumanRun("realpro"))) {
+      _auditStep(runId, "tab_reload_hold", "人の自動検索が進行中でページが忙しい → 読み直さずに見送る");
+      if (customerId != null) { try { _endFillDoneWaiter("realnetpro", String(customerId), "人の自動検索が進行中"); } catch (_) {} }
+      throw new Error("AXLX_OTHER_FILL_RUNNING: 人が始めた自動検索が進行中のため、ページを読み直さず見送ります");
+    }
   }
   var reason = why || plan.reason;
   /**
