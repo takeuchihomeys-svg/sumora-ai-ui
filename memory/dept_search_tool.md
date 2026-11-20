@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-20 **手順書の連携の穴を埋めた（書く経路・GET の作り直し・押す位置の出どころ・開くボタンの位置の上書き）**（竹内さん「ここの連携部分ちゃんとできるように 細かい部分ちゃんとできるように」）※拡張のコードは変えていない（2.8.137 のまま）
+- 書く経路: 束を insert する所は全部 `prepareBundleForWrite` を通す（weak-strengthen・human-learn-brain・improve-loop・tmp-reflect-bundle・merge-station-transit も）。API は引き継ぎ（carryLearnedShots）の**後**・insert の前。refresh=1 も同じ。関所: `learn-write-path-gate.test.ts` ①b（insert があって prepare が無いファイルで落ちる）。
+- 読む経路: GET `/api/human-learn-profile` は `refreshPlaybookIfStale` で、手順書が無い・作り方が古い・決まりの版がコードと違う時は**その場で作り直して渡す**（`playbook_refreshed`）。統括Pro の手順書の点検にコードの点検（`checkRulesInCode`・「コード:」）も入れた。
+- 手順書の作り方 5（`action-playbook.ts`）: 押す位置の出どころを **field（その名前で測った）／alias（同じ欄の別名の測った値）／mismatch（開くボタンにチェック欄の位置が写った物）** に分けた。4 の「種類の平均の写し」は賃料上限など正しい測りまで写し扱いだった。detail の solid は mismatch でなく n≥3 の時だけ。
+- ★ 実測で見つけた穴: `expandAliasPoints` が別名の組（`city_code[]` と `所在地絞り込み`／`左の所在地絞り込み＋｜span`、`route_id[]` と `沿線・駅絞り込み` 等）に、**票の多い方の位置を種類を見ずに上書き**していた。
+  DB の履歴: `左の所在地絞り込み＋｜span` は 11-17 まで button の測った位置（n=6 x0.55/y0.6 → n=3 → n=2 …）、**11-18 05:17 から city_code[] の写し（checkbox n=674→1238 x0.5/y0.5）**。拡張の `_aimByEl` は票を足して選ぶので、測ったボタン（n=1）より写し（n=1238）を使っていた＝人の押した所でなかった。
+  直し（`field-name-aliases.ts`）: チェック欄の位置を開くボタンの名前へ写さない・種類の違う測った値を上書きしない・既に写った物は `cleanOpenerCheckboxCopies` で書く直前（`prepareBundleForWrite`）に外す。DB の 3行を作り直した（押す位置 181→175・mismatch 6→0・控え `%TEMP%\axlx-playbook-backup-20261120-v6`、戻しは `attach-playbook.ts --restore=<dir>`）。
+- 手順書の今（realpro 2532・作り方 5）: 細部 13手のうち 9手は測った値（alias・solid）。**ボタンを押す 5手（所在地絞り込みを開く n1・確定してリストへ n2・沿線を開く n2・駅の設定へ n2・検索 n1）は票が3回未満**＝人の録画が要る。人の手本が無く決まりだけの場面: 前客の外し・ペット・お客さんの切り替え。
+- テスト: field-name-aliases 32・bundle-write-prepare 9・auto-procedure-rules 106・action-playbook 47・learn-write-path-gate 11・human-learn-brain 35。tsc 0。
+
 ## 2026-11-20 **拡張 2.8.137: 手順書を最優先に・直したら手順書も直る仕組み（決まりの正本・拡張へ渡す・読んだ印・反映の点検・統括Pro の先頭）**（竹内さん「改善したのは手順書にちゃんと反映されるようになっているのか」「手順書の重要度と優先度あげる」「改善したら手順書が改善されるように仕組みをちゃんとつくって強化する」）
 - 実測（DB・リアプロの最新の束 id 2532・作り方 2）: 手順書は人の録画の順番と押す位置だけで、**2.8.105〜2.8.136 で直した自動の決まりは0件**。前客の外し・ペットの場面も無い。
   さらに拡張は手順書をページへ**渡していなかった**（content.js の PUSH_KEYS・page-script の _LEARN_NEXT_KEYS に無い）＝自動は手順書を読んでいなかった。統括Pro も手順書を見ていなかった。
