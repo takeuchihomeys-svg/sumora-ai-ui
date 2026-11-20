@@ -5558,6 +5558,53 @@ CREATE INDEX IF NOT EXISTS conductor_turn_vectors_scene_idx ON conductor_turn_ve
 CREATE INDEX IF NOT EXISTS conductor_turn_vectors_writer_idx ON conductor_turn_vectors (writer);
 ALTER TABLE conductor_turn_vectors ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON conductor_turn_vectors FROM anon, authenticated;
+-- conductor_lessons: 試験の外れから作る統括の学び（2026-11-21 作業員H・KB 56691196「試験と連動して統括を鍛える」・欄は作業員L と合わせた）
+--   1行＝外れ1件（場面・駅・気持ち・竹内さんの一手・こちらの一手・答えが変わった段・原因の3つ・確認の順番・型となぜの1行）。
+--   正解は竹内さん本人の番だけ。試験の問題の会話は source_conv で読む側が外す（漏れの線）。読む口は match_conductor_lessons（作業員L の CONDUCTOR_LESSONS）
+CREATE TABLE IF NOT EXISTS conductor_lessons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source TEXT NOT NULL,
+  source_conv TEXT,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  scene TEXT, stage TEXT, mood TEXT,
+  expected_act TEXT NOT NULL,
+  got_act TEXT,
+  changed_stage TEXT,
+  miss_kind TEXT CHECK (miss_kind IN ('material_missing','scene_misread','reply_vs_aix')),
+  check_order TEXT,
+  lesson TEXT NOT NULL CHECK (char_length(lesson) <= 120),
+  situation_text TEXT NOT NULL,
+  embedding vector(1536) NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 1,
+  is_current BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS conductor_lessons_emb_idx ON conductor_lessons USING hnsw (embedding vector_cosine_ops) WHERE is_current;
+CREATE INDEX IF NOT EXISTS conductor_lessons_scene_idx ON conductor_lessons (scene, stage) WHERE is_current;
+ALTER TABLE conductor_lessons ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON conductor_lessons FROM anon, authenticated;
+CREATE OR REPLACE FUNCTION match_conductor_lessons(
+  query_embedding vector, match_count integer DEFAULT 3, p_scene text DEFAULT NULL, p_stage text DEFAULT NULL,
+  p_exclude_sources text[] DEFAULT '{}', p_exclude_convs text[] DEFAULT '{}')
+RETURNS TABLE(id uuid, source text, scene text, stage text, mood text, expected_act text, got_act text,
+  miss_kind text, check_order text, lesson text, similarity double precision)
+LANGUAGE sql STABLE SET search_path = public, extensions AS $$
+  WITH cand AS MATERIALIZED (
+    SELECT l.*, (1 - (l.embedding <=> query_embedding))::float AS sim
+    FROM conductor_lessons l
+    WHERE l.is_current
+      AND NOT (l.source = ANY(p_exclude_sources))
+      AND (l.source_conv IS NULL OR NOT (l.source_conv = ANY(p_exclude_convs)))
+    ORDER BY l.embedding <=> query_embedding
+    LIMIT GREATEST(match_count, 1) * 10)
+  SELECT id, source, scene, stage, mood, expected_act, got_act, miss_kind, check_order, lesson, sim
+  FROM cand WHERE sim >= 0.5
+  ORDER BY sim + CASE WHEN p_scene IS NOT NULL AND scene = p_scene THEN 0.05 ELSE 0 END
+               + CASE WHEN p_stage IS NOT NULL AND stage = p_stage THEN 0.05 ELSE 0 END DESC
+  LIMIT match_count
+$$;
+REVOKE ALL ON FUNCTION match_conductor_lessons(vector, integer, text, text, text[], text[]) FROM anon, authenticated;
 
 -- 近い番を引く（サーバーの鍵だけ）。既定は竹内さんの番だけ（p_writer='takeuchi'）・同じ会話／同じお客様を外す・距離の線は引数（既定 0.25・毎晩「線の中の件数」を数えて決め、統括役に知らせる）
 CREATE OR REPLACE FUNCTION match_conductor_turns(query_embedding vector(1536), p_exclude_conv TEXT, p_exclude_pc UUID, match_count INT DEFAULT 40, max_distance FLOAT DEFAULT 0.25, p_writer TEXT DEFAULT 'takeuchi')
