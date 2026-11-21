@@ -24,5 +24,9 @@ const cls3 = askTurnClass({ tc: null, turnAt: t0, moves: [{ at: s(60), aix: fals
 ok("番の分け（返信の要件に返信＝合う・手打ちの予定＝合う・記録なし）", cls1 === "合う" && cls2 === "合う" && cls3 === "記録なし", { cls1, cls2, cls3 });
 const d = askDailyCounts(["合う", "合う", "取りこぼし", "記録なし", "取り違え"]);
 ok("毎日の数（記録なしは分母に入れない）", d.n === 4 && d.合う === 2 && d.取りこぼし === 1 && d.取り違え === 1 && d.合う率 === 50, d);
+// 2cb0feb7 の型（伏せた形）: 了承の番・ブレインは返信・竹内さんは返信→57分後に AIX（前の番の確認＋ピックアップの約束の果たし）
+const prevT = ["かしこまりました！！ 〇〇の募集状況確認させて頂きます！！", "あわせて〇〇周辺から新たにピックアップしてお送りさせて頂きます！！"];
+const mv = [{ at: s(150), aix: false, text: "確認出来次第ご連絡させて頂きます" }, { at: s(57 * 60), aix: true }];
+ok("前の番の約束を果たす AIX は要件の外（2cb0feb7）", askTurnClass({ tc: "1:r1p0a0n0", turnAt: t0, moves: mv, kinds: ["property_check_result", "物件の束"], brainAction: null, prevStaffTexts: prevT }) === "合う" && askTurnClass({ tc: "1:r1p0a0n0", turnAt: t0, moves: mv, kinds: ["property_check_result"], brainAction: null }) === "取りこぼし");
 console.log(`ask-route-scene: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
