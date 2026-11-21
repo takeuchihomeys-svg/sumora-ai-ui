@@ -134,7 +134,13 @@ export type PtEventKind =
   // 2026-10-08: こちらがオススメした（🌟）・内覧の候補日を出した・内覧（待ち合わせ）が決まった
   | "recommended" | "viewing_offered" | "viewing_set"
   // 2026-10-14 取りこぼしの無い設計（37af1885）: AIX【物件確認した】の「別の部屋」＝聞かれた部屋の代わりに同じ建物で募集中の部屋を案内した
-  | "check_alternative";
+  | "check_alternative"
+  // 2026-11-22 作業員K2（#287 の③・PROPERTY_THREAD_PHOTO_SENT=on の時だけ）: こちらが室内写真を送った（AIX【物件確認した】の室内写真の型）
+  | "photo_sent";
+/** 2026-11-22 作業員K2: 物件ごとの記録に「室内写真を送った」を出すか（既定 off）。ブレインの材料が変わる＝on は試験①の組で */
+export function propertyThreadPhotoSentOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PROPERTY_THREAD_PHOTO_SENT ?? "").trim().toLowerCase() === "on";
+}
 export type PtEvent = { at: string; kind: PtEventKind; topic?: PtTopic; by: "quote" | "named" | "record" | "inferred"; text?: string };
 export type PtRoom = {
   key: string; ref: RoomRef; names: string[]; events: PtEvent[]; sentByUs: boolean;
@@ -286,6 +292,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       if (!r) return;
       const k = statusKindOf(String(sts[i] ?? ""));
       if (a.aix_type === "property_check_result" && k) push(r, { at: a.created_at, kind: k, by: "record" });
+      if (a.aix_type === "property_check_result" && a.check_pattern === "interior_photo" && propertyThreadPhotoSentOn()) push(r, { at: a.created_at, kind: "photo_sent", by: "record" });
       if (a.estimate_sent) push(r, { at: a.created_at, kind: "estimate", by: "record" });
       if (originOn) {
         if (a.aix_type === "property_recommendation") { r.sentByUs = true; push(r, { at: a.created_at, kind: "recommended", by: "record" }); }
@@ -535,7 +542,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       turnReferentText = turn.map((m) => String(m.text ?? "")).join("\n");
       const t0 = turn[0].created_at;
       const prevCustomer = [...msgs].reverse().find((m) => m.sender === "customer" && ms(m.created_at) < ms(t0));
-      const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_alternative", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "viewing_offered", "viewing_set"]);
+      const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_alternative", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "photo_sent", "viewing_offered", "viewing_set"]);
       const mentions: ReferentMention[] = [...staffTextMentions];
       // fix(review): 「別の部屋」の記録は代わりの部屋（募集中）と募集終了の部屋を同じ時刻に残す。主語の無い次の番（「そちら見に行けますか」）で
       //   募集終了の部屋が並んで候補になり「どちらのお部屋か」と聞き返していた → 同じ記録の募集終了の部屋は候補に入れない（名指しの番は別の道で読む）
@@ -615,6 +622,7 @@ const TOPIC_JA: Record<PtTopic, string> = { cost: "初期費用", discount: "礼
 const KIND_JA: Record<PtEventKind, string> = {
   sent: "こちらが資料を送った", customer_shared: "お客様が送ってきた", customer_ask: "お客様", check_available: "確認の結果 募集中",
   check_alternative: "確認の結果 別の部屋が募集中（聞かれた部屋の代わりにこちらが案内）",
+  photo_sent: "こちらが室内写真を送った",
   check_vacating: "確認の結果 退去予定", check_ended: "確認の結果 募集終了", estimate: "見積書を送った",
   staff_negotiating: "こちらが交渉中と伝えた", staff_checking: "こちらが確認中と伝えた", staff_result: "結果を伝えた",
   recommended: "こちらがオススメした（🌟）", viewing_offered: "内覧の候補日を出した", viewing_set: "内覧（待ち合わせ）が決まった",
