@@ -45,6 +45,24 @@ export function nearLeak(name: string, reqBody: string, rows: ReadonlyArray<Reco
   }
   return { leak: close + after > 0, close, after };
 }
+/**
+ * 2026-11-21 作業員H（統括役・bundle-1121 の p7 で止まった q453 の2本）: 距離 0.01 未満の番が「元の会話」の物かで分ける。
+ *   q453（初回の受け「よろしくお願いします！」）の近い番の 0.005 は別の会話（8b260f7e・09/12・元の番より前）の同じ形の受け
+ *   （状況の文「場面: ack 段階: 不明 直前のこちら: 返信 お客様: ありがとうございます！」がほぼ同じ）＝答えの漏れではなく、決まり文句の番どうしの近さ。
+ *   元の会話（oconv）の番か、会話が分からない番だけを漏れに数える（安全側）。元の番より後の番（after）は今まで通り全部数える
+ */
+export function nearLeakByOrigin(name: string, reqBody: string, rows: ReadonlyArray<Record<string, unknown>>, convOf: (sourceKey: string) => string | null | undefined, origConv: string | null | undefined): { leak: boolean; close: number; closeOther: number; after: number } {
+  const base = nearLeak(name, reqBody, rows);
+  if (!base.close || !origConv) return { ...base, closeOther: 0 };
+  let close = 0, closeOther = 0;
+  for (const r of rows) {
+    const d = typeof r.distance === "number" ? r.distance : Number(r.distance);
+    if (!(Number.isFinite(d) && d < LEAK_DISTANCE)) continue;
+    const c = convOf(String(r.source_key ?? ""));
+    if (c && c !== origConv) closeOther++; else close++;
+  }
+  return { leak: close + base.after > 0, close, closeOther, after: base.after };
+}
 export const LEAK_STOP_FILE = "leak-stop.json";
 
 export type NearHookDecision = { run: false; why: string } | { run: true; envPath: string; days: string[]; total: number };
