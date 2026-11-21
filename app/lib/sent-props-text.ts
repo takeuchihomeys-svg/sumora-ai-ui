@@ -76,7 +76,8 @@ type ImageRow = { property_name: string | null; room_no: string | null; created_
 // ── 2026-11-19 作業員L（毎朝の穴の割り当て 11/19「901号室の礼金（SUUMO との違い）」等）: 送った資料の画像の読み（sent_image_properties.facts）の中身 ──
 //   facts には家賃・管理費・敷金・礼金・間取り・面積・築年・駅・徒歩・現況が入っているのに、ブレインの【すでに送付済みの物件】には名前と号室しか渡っていなかった
 //   （材料はあるのに受け取っていない）。SENT_IMAGE_FACTS_TO_BRAIN=on（既定 off）の時だけ、送った物件の行に「送った資料の読み取り」として足す。
-export const sentImageFactsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_IMAGE_FACTS_TO_BRAIN ?? "").trim().toLowerCase() === "on";
+// 2026-11-21 作業員L: 試験 L1120-sipfacts-a/b で確かな悪化0（4/4問×2・合格1→2）→ 統括役の判断で既定 on（SENT_IMAGE_FACTS_TO_BRAIN=off で止まる）
+export const sentImageFactsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_IMAGE_FACTS_TO_BRAIN ?? "").trim().toLowerCase() !== "off";
 const yen = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? `${n.toLocaleString()}円` : null; };
 const mon = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? (n === 0 ? "0" : `${n}ヶ月`) : null; };
 /** facts → 短い1行（無い物は書かない・推測しない） */
