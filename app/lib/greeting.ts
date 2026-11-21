@@ -261,6 +261,8 @@ export function greetingContinuationSkipOn(env: Record<string, string | undefine
  *   画面から来る一覧（createdAt は表示の形・rawCreatedAt が ISO）を continuedSameDay の形にそろえて、続きの番かを返す。GREETING_CONTINUATION_SKIP=off で止まる
  */
 export function aixContinuationSkip(list: ReadonlyArray<{ sender?: string | null; text?: string | null; createdAt?: string | null; rawCreatedAt?: string | null }>, env: Record<string, string | undefined> = process.env): boolean {
+  // 2026-11-21 統括役の確かめ（試験の正解の竹内さんの文: 続きの番で翌日に返した8問のうち挨拶あり6）: 推奨の前提（実際の送り方）とずれる疑い＝竹内さんに数字で確かめ直すまで AIX は既定 off（AIX_GREETING_CONTINUATION_SKIP=on で入れる）
+  if ((env.AIX_GREETING_CONTINUATION_SKIP ?? "").trim().toLowerCase() !== "on") return false;
   if (!greetingContinuationSkipOn(env)) return false;
   return continuedSameDay(list.map((m) => ({ sender: m.sender === "customer" ? "customer" : "staff", text: m.text ?? "", createdAt: (m.rawCreatedAt ?? m.createdAt) ?? undefined })));
 }
