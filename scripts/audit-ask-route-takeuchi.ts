@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns } from "./lib/prod-yardstick-db";
-import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf, takeuchiShapeLabel, sceneShapeVerdict, staffScheduleInText, type SceneShapeVerdict } from "./lib/ask-route-of";
+import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf, takeuchiShapeLabel, sceneShapeVerdict, askTurnOutlier, type SceneShapeVerdict } from "./lib/ask-route-of";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -73,18 +73,9 @@ async function main() {
     const brainMix = mix ? `${mix.r ? "R" : ""}${mix.p ? "P" : ""}${mix.a ? (mix.a > 1 ? `A${mix.a}` : "A") : ""}` || "要件は触れないだけ" : "記録なし";
     const key = `${brainMix} → ${shape}${kinds.length >= 2 ? `（AIX ${kinds.length}種）` : ""}`;
     table.set(key, (table.get(key) ?? 0) + 1);
-    let o = outlierOf(mix, shape, kinds.length);
-    // 2026-11-18 夜の数えの読み: 要件に AIX が無くても、ブレインの最終の AIX が竹内さんの AIX と同じ束なら道は合う
-    //   （前の約束を果たす AIX＝お客様の今の要件の外。要件の帳面には席だけあって要件が無い＝seat_only）
-    if (o === "取りこぼし（AIX 側）" && t.brain_action && kinds.length && !aixKindMismatch(t.brain_action, kinds)) o = "合う（AIX は要件の外＝前の約束を果たす）";
-    // 2026-11-18 夜の数えを1通ずつ読んだ結果（お礼の番 5件のうち3件）: 了承・お礼の番の後、何時間も後に送った AIX は前の約束の果たし（確認の結果・ピックアップ）＝この番への答えではない。
-    //   1時間より後の最初の AIX で、それより前に AIX が無ければ番の外として数える（audit-combo-mismatch の「果たしの AIX は番の外」と同じ見方）
-    const firstAix = moves.find((m) => m.aix);
-    if (o === "取りこぼし（AIX 側）" && firstAix && firstAix.at - at > 60 * 60_000) o = "合う（AIX は1時間より後＝前の約束の果たし・番の外）";
+    // 2026-11-22 作業員M（#520）: 番の外れの決め方は ask-route-of.askTurnOutlier に1つにした（quality_daily の growth:ask:* と同じ数え方）
+    let o = askTurnOutlier({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves, kinds, brainAction: t.brain_action });
     if (/^記録なし$|^要件の記録なし$/.test(o) && t.customer_turn_at < "2026-10-09") o = "要件の記録なし（digest に要件の欄が無い頃・10/08 より前）";
-    if (o === "合う" && shape.includes("A") && aixKindMismatch(t.brain_action, kinds)) o = "AIX の種類が違う";
-    // 2026-11-21 夜 作業員M（#405）: 内覧の誘い・待ち合わせの AIX の番に、竹内さんが候補の日時（スタッフの予定）を手で打った＝AIX の中身を文で送った（KB 8ee13967）
-    if (o === "取り違え（AIX→返信）" && /^(?:viewing_invite|meeting_place)/.test(String(t.brain_action ?? "")) && moves.some((m) => !m.aix && staffScheduleInText(m.text))) o = "合う（竹内さんは AIX の中身＝予定を手で打った・8ee13967）";
     const sk = String(t.scene_key ?? "（場面なし）");
     if (kbScenes.includes(sk)) { const m = shapeByScene.get(sk) ?? new Map<string, number>(); const lab = takeuchiShapeLabel(at, moves, kinds); m.set(lab, (m.get(lab) ?? 0) + 1); shapeByScene.set(sk, m); }
     const srow = byScene.get(sk) ?? { n: 0, cells: new Map<string, number>() };
