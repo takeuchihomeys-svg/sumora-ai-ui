@@ -194,7 +194,7 @@ export const LINKAGE_MAP: readonly LinkageRow[] = [
   { id: "staff.task", stage: "staff", name: "line_tasks（物件確認・タスクの作り方）", producer: "line-tasks の作り方", key: "line_tasks", readers: ["スタッフ", "sent.task_result"], switches: [], readerSwitches: [], fill: T("line_tasks", 14, "result_note"), owner: "作業員H", layer: "細かさ", next: "同上" },
   { id: "staff.todo_cron", stage: "staff", name: "スタッフのやる事の一覧（staff-todo-list の cron）", producer: "app/api/cron/staff-todo-list", key: "cron_run_logs（staff-todo-list）", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: T("cron_run_logs", 7, undefined, { cron_name: "staff-todo-list" }) /* 2026-11-21 作業員M（#482）: 便ごとに1行書くようにした */, owner: "統括役", layer: "細かさ", next: "同上" },
   { id: "staff.ref_needs", stage: "staff", name: "人に回す段の注記（物件名・号室が要る：ref_needs_name/room）", producer: "CONDUCTOR_STAFF_CHECK", key: "meta.ref_resolve.needs", readers: ["スタッフ"], switches: ["CONDUCTOR_STAFF_CHECK"], readerSwitches: [], fill: M("ref_resolve"), owner: "作業員16", layer: "細かさ", next: "-" },
-  { id: "staff.condition_suggest", stage: "staff", name: "AIX ツールの画面の「条件の更新の案」", producer: "property-conditions の案", key: "条件の更新の案", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: { src: "none", why: "画面の表示（見た目は aix_feature_suggestions で案を出してから）" }, owner: "作業員K", layer: "細かさ", next: "-" },
+  { id: "staff.condition_suggest", stage: "staff", name: "AIX ツールの画面の「条件の更新の案」", producer: "property-conditions の案", key: "条件の更新の案", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->brain->condition_suggest") /* 2026-11-21 作業員M（#482）: 条件の書き込みの仲裁で止めた欄を見張りの行に印（画面に出すのは aix_feature_suggestions の案が通ってから） */, owner: "作業員K", layer: "細かさ", next: "-" },
 ];
 
 /** 地図の全部のスイッチの名前（作る側＋読む側・並べ替えて重なりなし） */
