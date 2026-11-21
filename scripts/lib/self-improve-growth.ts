@@ -80,7 +80,8 @@ export function pickupUnderstandingNow(exists: (p: string) => boolean): { n: num
   try {
     runTsx([script, "--days=1", "--sent", `--json=${out}`], 180_000);
     const j = JSON.parse(readFileSync(out, "utf8")) as { n?: number; fields?: Record<string, { filled: number; gap: number; none: number }> };
-    return j.fields ? { n: Number(j.n ?? 0), fields: j.fields } : null;
+    // 送った行が0の日は fields が空・n も0（作業員K2）＝その日は飛ばす
+    return j.fields && Number(j.n ?? 0) > 0 && Object.keys(j.fields).length ? { n: Number(j.n), fields: j.fields } : null;
   } catch { return null; } finally { try { rmSync(out); } catch { /* 無し */ } }
 }
 
