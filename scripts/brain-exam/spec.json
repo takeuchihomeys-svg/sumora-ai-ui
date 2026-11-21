@@ -85,6 +85,7 @@
  },
  {
   "id": "q003",
+  "greetingDecision": "continuation_skip",
   "type": "出し切り",
   "tags": [],
   "source": "10巡目の正解の表（竹内さんの番・本番のブレイン cost_explain → 竹内さん 2段:pickup）",
@@ -990,6 +991,7 @@
  },
  {
   "id": "q036",
+  "greetingDecision": "continuation_skip",
   "type": "不安→次の手",
   "tags": [],
   "source": "10巡目の正解の表（竹内さんの番・本番のブレイン property_check_result/条件:mgmt_guarantor → 竹内さん 2段:pickup）",
@@ -1955,6 +1957,7 @@
  },
  {
   "id": "q071",
+  "greetingDecision": "continuation_skip",
   "type": "お客様の事情",
   "tags": [],
   "source": "10巡目の正解の表（竹内さんの番・本番のブレイン 2段:pickup → 竹内さん 返信）",
@@ -5175,6 +5178,7 @@
   ],
   "why": "台帳に確認の約束が2つ（礼金の交渉・駐車場の空き）。竹内さんは翌朝、管理会社の答え（駐車場空き1台・礼金の減額）を AIX【物件確認した】で2つまとめて返した",
   "id": "q176",
+  "greetingDecision": "continuation_skip",
   "addedAt": "2026-10-20",
   "addedBy": "brain-exam-add --add-batch",
   "writer": "employee"
@@ -8334,6 +8338,7 @@
   "stage": "brain",
   "addedBy": "作業員4 575 1112",
   "id": "q423",
+  "greetingDecision": "continuation_skip",
   "addedAt": "2026-11-12"
  },
  {
@@ -8400,6 +8405,7 @@
   ],
   "why": "『ちなみに、グレイスカルムの見積書に関して』＝数通前にこちらが送った見積書の項目の持ち出し。竹内さんは管理会社に交渉した結果（必須・交渉は続ける）で答えた。交渉の結果はスタッフだけが知る事なので、AI の番は確認・交渉の約束（2段:check）。竹内さんの文は返信だったので返信も通す（言い切りは ng）",
   "id": "q419",
+  "greetingDecision": "continuation_skip",
   "addedAt": "2026-11-11"
  },
  {
