@@ -26,6 +26,7 @@ import { checkCountVerified } from "./check-count-verified";
 import { UNVERIFIED_JA, countGapsForLedger } from "./lib/count-verified";
 import { checkOffPath, isOffPathGap } from "./check-off-path";
 import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
+import { currentOwnerOf } from "./lib/live-owner";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -160,9 +161,9 @@ async function main() {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
       coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured }, { metric: "core:no_denominator", value: cl.noDenominator.length, n: cl.measured + cl.noDenominator.length });
-      if (cl.noDenominator.length) { lines.push(`### 芯: 記録に残らない（分母が無い・地図の行 ${cl.noDenominator.length}）`, ...cl.noDenominator.slice(0, 8).map((x) => `- ${x.id}｜${x.owner}｜${x.why.slice(0, 70)}`)); for (const x of cl.noDenominator.slice(0, 3)) coreFix.push(`記録に残らない（分母が無い）: ${x.id} → ${x.owner}`); }
-      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${w.owner}｜${w.why.slice(0, 70)}`));
-      for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${w.owner}`);
+      if (cl.noDenominator.length) { lines.push(`### 芯: 記録に残らない（分母が無い・地図の行 ${cl.noDenominator.length}）`, ...cl.noDenominator.slice(0, 8).map((x) => `- ${x.id}｜${currentOwnerOf(x.owner, x.id)}｜${x.why.slice(0, 70)}`)); for (const x of cl.noDenominator.slice(0, 3)) coreFix.push(`記録に残らない（分母が無い）: ${x.id} → ${currentOwnerOf(x.owner, x.id)}`); }
+      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${currentOwnerOf(w.owner, w.id)}｜${w.why.slice(0, 70)}`));
+      for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${currentOwnerOf(w.owner, w.id)}`);
     }
   }
 
@@ -171,8 +172,8 @@ async function main() {
     const cf = await checkFoundation().catch(() => null);
     if (cf) {
       coreRows.push({ metric: "core:foundation", value: cf.score, n: cf.n });
-      lines.push(`### 芯: 土台が無い（表 ${cf.tables.join("・")}・4列そろった ${cf.full}/${cf.n}＝${cf.score ?? "—"}%）`, ...cf.gaps.slice(0, 8).map((g) => `- ${g.name}（${g.owner}）: 欠け ${g.missing.join("・")}｜${g.detail.slice(0, 80)}`));
-      for (const g of cf.gaps.slice(0, 5)) coreFix.push(`土台が無い: ${g.name}（欠け ${g.missing.join("・")}）→ ${g.owner}`);
+      lines.push(`### 芯: 土台が無い（表 ${cf.tables.join("・")}・4列そろった ${cf.full}/${cf.n}＝${cf.score ?? "—"}%）`, ...cf.gaps.slice(0, 8).map((g) => `- ${g.name}（${currentOwnerOf(g.owner, g.id)}）: 欠け ${g.missing.join("・")}｜${g.detail.slice(0, 80)}`));
+      for (const g of cf.gaps.slice(0, 5)) coreFix.push(`土台が無い: ${g.name}（欠け ${g.missing.join("・")}）→ ${currentOwnerOf(g.owner, g.id)}`);
     }
     // 芯 ① の穴の型①「作ったのに回っていない」（check-stale・cron の最後の記録・毎日の数の最後の日・統括役 11/21 の5つの型）
     const st = await checkStale(sb, now).catch(() => null);
@@ -180,8 +181,8 @@ async function main() {
       const never = st.stale.filter((x) => x.kind === "cron_never");
       const rest = st.stale.filter((x) => x.kind !== "cron_never");
       coreRows.push({ metric: "core:stale", value: rest.length, n: st.crons + st.metrics }, { metric: "core:cron_no_log", value: never.length, n: st.crons });
-      lines.push(`### 芯: 作ったのに回っていない（止まっている・一度も無い ${rest.length}・cron の記録が一度も無い ${never.length}/${st.crons}）`, ...rest.slice(0, 10).map((x) => `- ${x.name}｜最後 ${x.last ?? "—"}｜${x.owner}｜${x.why.slice(0, 70)}`));
-      for (const x of rest.slice(0, 5)) coreFix.push(`作ったのに回っていない: ${x.name}（${x.why.slice(0, 40)}）→ ${x.owner}`);
+      lines.push(`### 芯: 作ったのに回っていない（止まっている・一度も無い ${rest.length}・cron の記録が一度も無い ${never.length}/${st.crons}）`, ...rest.slice(0, 10).map((x) => `- ${x.name}｜最後 ${x.last ?? "—"}｜${currentOwnerOf(x.owner)}｜${x.why.slice(0, 70)}`));
+      for (const x of rest.slice(0, 5)) coreFix.push(`作ったのに回っていない: ${x.name}（${x.why.slice(0, 40)}）→ ${currentOwnerOf(x.owner)}`);
     }
     // 穴の型③「読む窓が狭くて届かない」（check-windows・作業員N2 11/21）: 発言の本文を読む重い読み＝夜（JST 22〜9時）の回だけ（--only=core の2時間おきの夜の回で毎日1回以上入る）
     if (isNightJst(now)) {
@@ -189,7 +190,7 @@ async function main() {
       if (cw) {
         coreRows.push({ metric: "core:window_miss", value: cw.gaps.length, n: cw.misses.length }, ...cw.misses.map((m) => ({ metric: `core:window_miss:${m.id}`, value: m.rate, n: m.n })));
         lines.push(`### 芯: 読む窓が狭くて届かない（会話 ${cw.n}・窓 ${cw.misses.length}・穴 ${cw.gaps.length}・線 5% 以上かつ2会話）`, ...[...cw.misses].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0)).slice(0, 6).map((m) => `- ${isWindowGap(m) ? "穴" : "　"}｜${m.label}（${m.limit}）｜窓の外 ${m.outside}/${m.n}＝${m.rate ?? "—"}%`));
-        for (const m of cw.gaps) { coreFix.push(`読む窓が狭くて届かない: ${m.label}（${m.rate}%）→ ${m.stage}`); ledger.push({ title: `読む窓が狭くて届かない: ${m.label}（${m.limit}）`, owner: m.stage, next: `check-windows（穴の型③）: 窓の外 ${m.outside}/${m.n}（${m.rate}%）・${m.why}・場所 ${m.where}・会話 ${m.convs.slice(0, 5).join(",")}・窓を広げるか別読み・要約で補い、試験で悪化0を確かめる（台帳 #505）` }); }
+        for (const m of cw.gaps) { coreFix.push(`読む窓が狭くて届かない: ${m.label}（${m.rate}%）→ ${currentOwnerOf(m.stage)}`); ledger.push({ title: `読む窓が狭くて届かない: ${m.label}（${m.limit}）`, owner: m.stage, next: `check-windows（穴の型③）: 窓の外 ${m.outside}/${m.n}（${m.rate}%）・${m.why}・場所 ${m.where}・会話 ${m.convs.slice(0, 5).join(",")}・窓を広げるか別読み・要約で補い、試験で悪化0を確かめる（台帳 #505）` }); }
       }
     } else lines.push("### 芯: 読む窓が狭くて届かない（昼は回さない・夜の回で書く）");
     // 穴の型④「数え方の誤りで低く見える」（check-count-verified）: 数えの台本ごとに実物1件で照らした日の記録（quality_daily count_verified）
@@ -198,7 +199,7 @@ async function main() {
       coreRows.push({ metric: "core:count_unverified", value: cv.unverified.length, n: cv.units });
       const byKind = cv.unverified.reduce<Record<string, number>>((a, u) => ({ ...a, [u.kind]: (a[u.kind] ?? 0) + 1 }), {});
       lines.push(`### 芯: 数え方を実物で照らしていない（単位 ${cv.units}・穴 ${cv.unverified.length}＝${Object.entries(byKind).map(([k, n]) => `${UNVERIFIED_JA[k as keyof typeof UNVERIFIED_JA]} ${n}`).join("・") || "なし"}）`, ...cv.unverified.filter((u) => u.kind !== "never").slice(0, 6).map((u) => `- ${UNVERIFIED_JA[u.kind]}｜${u.key}｜${u.owner}`));
-      for (const u of cv.unverified.filter((x) => x.kind === "mismatch").slice(0, 3)) coreFix.push(`数え方のズレを直していない: ${u.key} → ${u.owner}`);
+      for (const u of cv.unverified.filter((x) => x.kind === "mismatch").slice(0, 3)) coreFix.push(`数え方のズレを直していない: ${u.key} → ${currentOwnerOf(u.owner)}`);
       ledger.push(...countGapsForLedger(cv.unverified));
     }
     // 穴の型⑤「主な道の外から来る物の割合」（check-off-path）: 分野ごと（物件オススメ・返信・送信・内覧・見積）
@@ -207,7 +208,7 @@ async function main() {
       const og = op.filter(isOffPathGap);
       coreRows.push({ metric: "core:off_path", value: og.length, n: op.length }, ...op.map((o) => ({ metric: `core:off_path:${o.id}`, value: o.rate, n: o.n })));
       lines.push(`### 芯: 主な道の外から来る物（分野 ${op.length}・穴 ${og.length}・線 10% 以上かつ3件）`, ...op.map((o) => `- ${isOffPathGap(o) ? "穴" : "　"}｜${o.label}｜${o.off}/${o.n}＝${o.rate ?? "—"}%｜${o.owner}`));
-      for (const o of og) { coreFix.push(`主な道の外から来る: ${o.label}（${o.rate}%）→ ${o.owner}`); ledger.push({ title: `主な道の外から来る: ${o.label}`, owner: o.owner, next: `check-off-path（穴の型⑤）: ${o.off}/${o.n}（${o.rate}%）・${o.why}${o.note ? `・${o.note}` : ""}・会話 ${o.convs.slice(0, 5).join(",")}・なぜ主な道を通らないかを実物で確かめる（台帳 #505）` }); }
+      for (const o of og) { coreFix.push(`主な道の外から来る: ${o.label}（${o.rate}%）→ ${currentOwnerOf(o.owner)}`); ledger.push({ title: `主な道の外から来る: ${o.label}`, owner: o.owner, next: `check-off-path（穴の型⑤）: ${o.off}/${o.n}（${o.rate}%）・${o.why}${o.note ? `・${o.note}` : ""}・会話 ${o.convs.slice(0, 5).join(",")}・なぜ主な道を通らないかを実物で確かめる（台帳 #505）` }); }
     }
     // 芯 ② 細分化が足りない（owner-feedback-check の not_subdivided・ファイルと設計知見の札だけ）: 数は穴の項目の合計（少ないほど良い）
     const sd = (await runChecks(["not_subdivided"], 1).catch(() => []))[0];
@@ -273,6 +274,7 @@ async function main() {
     lines.push(`- 返信と AIX の組の一致（竹内さん本人の番・14日）: ${cd.sameRate ?? "—"}%（${cd.n}番）${dc ? (dc === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
     if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
     lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
+    lines.push(`- 要件の帳面（14日・竹内さん本人の番・記録なしを除く ${cd.ask.n}）: 合う ${cd.ask.合う率 ?? "—"}%・取りこぼし ${cd.ask.取りこぼし}・重ね ${cd.ask.重ね}・取り違え ${cd.ask.取り違え}・種類違い ${cd.ask.種類違い}｜外れの会話 ${cd.ask.misses.slice(0, 8).map((x) => `${x.conv}（${x.cls}）`).join(",") || "—"}（作業員M・台帳 #520）`);
   }
   // 物件オススメが売上サポ（AIX ツール）を通っているか（作業員K2 の audit-appeal-vs-codes・台帳 #479・竹内さん 11/21「ここもちゃんと自己改善のところにいれる」・前の1日・書き手 all）
   const av = doMetrics ? appealViaToolNow(1, (x) => existsSyncPU(x)) : null;
@@ -358,7 +360,10 @@ async function main() {
       ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
-      ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n }))] : []),
+      ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n })),
+        // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）
+        { day, metric: "growth:ask:取りこぼし", scope: "takeuchi", value: cd.ask.取りこぼし, n: cd.ask.n }, { day, metric: "growth:ask:重ね", scope: "takeuchi", value: cd.ask.重ね, n: cd.ask.n },
+        { day, metric: "growth:ask:取り違え", scope: "takeuchi", value: cd.ask.取り違え, n: cd.ask.n }, { day, metric: "growth:ask:合う", scope: "takeuchi", value: cd.ask.合う率, n: cd.ask.n }] : []),
     ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));

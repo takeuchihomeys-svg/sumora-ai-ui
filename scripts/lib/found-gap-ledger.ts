@@ -3,15 +3,12 @@
 // check-stale・check-linkage と同じ形（題で重ねない・段は todo・work_item_events に assign を1行）。穴の型③〜⑤の点検（check-windows・check-count-verified・check-off-path）が使う。
 //   持ち主: 連携の地図の段の持ち主（owner-feedback-check の STAGE_OWNER）を先に・今動いている作業員に読み替え（作業員K → 作業員K2）・決まらない物は統括役
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { STAGE_OWNER } from "../owner-feedback-check";
+import { currentOwnerOf, LIVE_WORKERS } from "./live-owner";
+export { LIVE_WORKERS };
 
-export const LIVE_WORKERS = ["作業員K2", "作業員N", "作業員M", "作業員G", "作業員L", "作業員H"];
-
-/** 持ち主の決め（純関数）: 段（STAGE_OWNER の鍵）か、名前（「作業員L・作業員H」の形）から今動いている作業員を1人 */
-export function liveOwnerOf(ownerOrStage: string): string {
-  const byStage = STAGE_OWNER[ownerOrStage];
-  if (byStage) return byStage;
-  return ownerOrStage.split("・").map((o) => (o === "作業員K" ? "作業員K2" : o.trim())).find((o) => LIVE_WORKERS.includes(o)) ?? "統括役";
+/** 持ち主の決め（純関数）: 読み替えの表は scripts/lib/live-owner.ts の1か所（2026-11-22 統括役の頼み） */
+export function liveOwnerOf(ownerOrStage: string, id?: string | null): string {
+  return currentOwnerOf(ownerOrStage, id);
 }
 
 export type FoundGap = { title: string; owner: string; next: string; priority?: number; area?: string };

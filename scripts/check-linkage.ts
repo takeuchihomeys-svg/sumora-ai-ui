@@ -17,6 +17,7 @@ import { LINKAGE_MAP } from "../app/lib/linkage-map";
 import { runTsx, appealViaToolNow } from "./lib/self-improve-growth";
 import { existsSync } from "node:fs";
 import { inOriginMain } from "./check-foundation";
+import { currentOwnerOf } from "./lib/live-owner";
 
 export type LinkWeak = { kind: "not_delivered" | "delivered_unused"; id: string; label: string; rate: number | null; owner: string; why: string };
 
@@ -72,8 +73,8 @@ if (process.argv[1]?.endsWith("check-linkage.ts")) checkLinkage().then((r) => {
       const title = `記録に残らない（分母が無い）: 連携の地図 ${x.id}`;
       if (have.has(title)) continue;
       // 今動いている作業員（K2・N・M・G・L・H）を先に・作業員K は K2 に（統括役 11/21）・もういない作業員だけなら統括役が配り直す
-      const live = ["作業員K2", "作業員N", "作業員M", "作業員G", "作業員L", "作業員H"];
-      const owner = x.owner.split("・").map((o) => (o === "作業員K" ? "作業員K2" : o)).find((o) => live.includes(o)) ?? "統括役";
+      // 読み替えは scripts/lib/live-owner.ts の1か所（作業員K→K2・作業員1／4／7／25→L・ほかは段の持ち主か統括役・統括役 11/22）
+      const owner = currentOwnerOf(x.owner, x.id);
       const { data: ins } = await sb.from("work_items").insert({ title, origin: "found_gap", stage: "todo", area: "土台", owner, priority: 20, next_step: `check-linkage（穴の型②）: ${x.why.slice(0, 160)}・値のある番の数を数えられるように記録の欄か見張りをつなぐ（台帳 #505）` }).select("id").single();
       if (ins) { added++; await sb.from("work_item_events").insert({ item_id: (ins as { id: number }).id, to_stage: "todo", actor: "check-linkage", kind: "assign", note: `持ち主 ${owner}・#505 の子` }); }
     }
