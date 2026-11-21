@@ -3661,7 +3661,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     if (pw.pickupWhyToBrainOn()) {
       try {
         const since = new Date(Date.now() - 72 * 36e5).toISOString();
-        const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at")
+        const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at, summary_text, terms")
           .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
         let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
         // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
