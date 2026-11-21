@@ -1311,9 +1311,13 @@ export async function auditLearnFoundations(
       .from("learn_supervisor_log")
       .select("id", { count: "exact", head: true })
       .gte("created_at", sinceLog);
-    const { data: last2 } = await sb
+    // 2026-11-21 作業員G（#588 ②・LEARN_HISTORY_SLIM=on の時だけ）: F33・F35 は束の shots.learned だけを数える → 束を丸ごと読まない（5行＋12行）
+    const slimHist = (await import("./learn-bundle-preserve")).learnHistorySlimOn();
+    const histSel = slimHist ? "created_at,source_rows,learned:bundle->shots->learned" : "created_at,bundle,source_rows";
+    const histRow = (r: Record<string, unknown>) => (slimHist ? { ...r, bundle: { shots: { learned: r.learned } } } : r) as { created_at?: string; source_rows?: number; bundle?: unknown };
+    const { data: last2raw } = await sb
       .from("human_learn_profile")
-      .select("created_at,bundle,source_rows")
+      .select(histSel)
       .eq("scope", "all")
       .order("created_at", { ascending: false })
       .limit(5);
@@ -1330,7 +1334,8 @@ export async function auditLearnFoundations(
       }
       return solid;
     };
-    const solids = (last2 || []).map((r) => solidOf(r.bundle));
+    const last2 = ((last2raw || []) as unknown as Array<Record<string, unknown>>).map(histRow);
+    const solids = last2.map((r) => solidOf(r.bundle));
     const latestSolid = solids[0] ?? 0;
     const hadSolid = solids.some((n) => n >= 30);
     const wiped = latestSolid === 0 && hadSolid && solids.slice(1).some((n) => n >= 30);
@@ -1360,13 +1365,14 @@ export async function auditLearnFoundations(
      *   直近12件で solid≥30 → 直後 solid=0 が1回でもあれば「拒否ゲート未効／未デプロイ」。
      *   完了線: その連鎖0 かつ 最新 solid≥30（履歴に良い束がある時）。
      */
-    const { data: last12 } = await sb
+    const { data: last12raw } = await sb
       .from("human_learn_profile")
-      .select("bundle,created_at,source_rows")
+      .select(histSel)
       .eq("scope", "all")
       .order("created_at", { ascending: false })
       .limit(12);
-    const solidSeq = (last12 || []).map((r) => ({
+    const last12 = ((last12raw || []) as unknown as Array<Record<string, unknown>>).map(histRow);
+    const solidSeq = last12.map((r) => ({
       at: String(r.created_at || ""),
       rows: Number(r.source_rows) || 0,
       solid: solidOf(r.bundle),
