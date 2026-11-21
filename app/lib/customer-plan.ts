@@ -110,7 +110,9 @@ export function planChangedFields(prev: Partial<CustomerPlan>, cur: CustomerPlan
     if (k === "feeling" && v && typeof v === "object") return String((v as Record<string, unknown>).state ?? "");
     return JSON.stringify(v ?? null);
   };
-  return KEYS.filter((k) => norm(k, prev[k]) !== norm(k, cur[k]));
+  // 2026-11-21 作業員M（本番の確かめ）: 気持ちは両方に値がある時だけ動きとして数える（読めなかった番の null は動きにしない）
+  const feelBoth = !!(prev.feeling as { state?: unknown } | undefined)?.state && !!cur.feeling.state;
+  return KEYS.filter((k) => (k === "feeling" && !feelBoth ? false : norm(k, prev[k]) !== norm(k, cur[k])));
 }
 
 // ── 読む側（2026-11-21 作業員M・台帳 #101 の (2)・統括役の OK）: 統括の指示書が前の番の計画を読む（既定 off）──────────

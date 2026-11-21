@@ -35,6 +35,7 @@ t("変わった欄", p2.changed.includes("feeling") && p2.changed.includes("prom
 const p3 = buildCustomerPlan({ meta: { ...meta, ask_carry: { open: ["qold"], promised: ["qpro"] } }, prev: null, nowIso: "x" })!;
 t("持ち越した要件（ask_carry）が先", JSON.stringify(p3.asks) === JSON.stringify({ open: ["qold"], promised: ["qpro"] }), p3.asks);
 t("meta が無ければ null", buildCustomerPlan({ meta: null, nowIso: "x" }) === null);
+t("気持ちが読めなかった番（null）は動きにしない", !planChangedFields(p1, { ...p1, feeling: { state: null, prev_state: "刺さっている", moved: false } }).includes("feeling"));
 t("同じ計画なら変わった欄は無い", planChangedFields(p1, { ...p1, updated_at: "later", aims: { ...p1.aims, since: "other" } }).length === 0);
 // 読む側（CONDUCTOR_BRIEF_PLAN・既定 off）
 {
