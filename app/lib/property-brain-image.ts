@@ -34,12 +34,12 @@ const KEY_QUESTIONS: Record<ImageWantKey, string> = {
 };
 
 /**
- * 2026-11-21 作業員G（台帳 #477）: counter_kitchen を画像から読むか。既定 off（COUNTER_KITCHEN_IMAGE_READ=on）。
+ * 2026-11-21 作業員G（台帳 #477）: counter_kitchen を画像から読むか。既定 on（戻す: COUNTER_KITCHEN_IMAGE_READ=off・統括役 11/21: 判定には入らず image_facts に入るだけなので監査の行をためるため on）。
  *   off の時は counter_kitchen を問いから外す＝今までの問いと1文字も変わらない（前置きキャッシュも今のまま）。
  *   読んだ結果を判定に使うのは、目の監査（scripts/counter-kitchen-image-audit.ts）で誤り0を確かめてから
  */
 export function counterKitchenImageReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COUNTER_KITCHEN_IMAGE_READ ?? "").trim().toLowerCase() === "on";
+  return (env.COUNTER_KITCHEN_IMAGE_READ ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 読む項目の最終形（スイッチが off なら counter_kitchen を外す） */

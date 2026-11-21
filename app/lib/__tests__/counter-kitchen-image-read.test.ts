@@ -5,11 +5,12 @@ import { buildImageQuestion, counterKitchenImageReadOn, imageReadKeys, parseImag
 let failed = 0;
 function ok(name: string, cond: boolean) { if (!cond) { failed++; console.log("  ✗", name); } else console.log("  ✓", name); }
 
-ok("既定 off", counterKitchenImageReadOn({}) === false);
+ok("既定 on", counterKitchenImageReadOn({}) === true);
+ok("off で止める", counterKitchenImageReadOn({ COUNTER_KITCHEN_IMAGE_READ: "off" }) === false);
 ok("on", counterKitchenImageReadOn({ COUNTER_KITCHEN_IMAGE_READ: " ON " }) === true);
-ok("off の時は counter_kitchen を問いから外す", JSON.stringify(imageReadKeys(["storage", "counter_kitchen"], {})) === JSON.stringify(["storage"]));
-ok("on の時は残す", imageReadKeys(["storage", "counter_kitchen"], { COUNTER_KITCHEN_IMAGE_READ: "on" }).includes("counter_kitchen"));
-ok("off の時の問いは今までと同じ", buildImageQuestion(imageReadKeys(["storage", "counter_kitchen"], {})) === buildImageQuestion(["storage"]));
+ok("off の時は counter_kitchen を問いから外す", JSON.stringify(imageReadKeys(["storage", "counter_kitchen"], { COUNTER_KITCHEN_IMAGE_READ: "off" })) === JSON.stringify(["storage"]));
+ok("on の時は残す", imageReadKeys(["storage", "counter_kitchen"], {}).includes("counter_kitchen"));
+ok("off の時の問いは今までと同じ", buildImageQuestion(imageReadKeys(["storage", "counter_kitchen"], { COUNTER_KITCHEN_IMAGE_READ: "off" })) === buildImageQuestion(["storage"]));
 ok("問いに「カウンター」「対面」の書き込みを先に見る文", /「カウンター」「対面」と書いてあれば true/.test(buildImageQuestion(["counter_kitchen"])));
 ok("分からなければ null", parseImageFacts('{"counter_kitchen": null, "storage": true}', ["counter_kitchen", "storage"])?.counter_kitchen === null);
 ok("true を読む", parseImageFacts('{"counter_kitchen": true}', ["counter_kitchen"])?.counter_kitchen === true);
