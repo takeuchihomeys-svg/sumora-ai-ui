@@ -111,6 +111,18 @@ function kbIdsFor(q: string): string[] {
   } catch { return []; }
 }
 
+/** 連携の地図の段・指摘の型 → 持ち主（統括役の割り振り 11/21）。決まらない物は統括役 */
+export const STAGE_OWNER: Record<string, string> = {
+  in: "作業員L", read: "作業員L", sent: "作業員L", next: "作業員L", bridge: "作業員L",
+  writer: "作業員M", conductor: "作業員M", tool_cond: "作業員K2", tool_rank: "作業員K2", tool_api: "作業員K2", tool_react: "作業員K2",
+};
+export const KIND_OWNER: Partial<Record<PointerKind, string>> = { unread: "作業員G", left_off: "統括役", no_measure: "統括役", exam: "作業員H", link_broken: "作業員L" };
+export function gapOwnerOf(g: { kind: PointerKind; title: string }): string {
+  const st = g.title.match(/連携の地図の段 ([a-z_]+):/)?.[1];
+  if (st) return STAGE_OWNER[st] ?? "統括役";
+  return KIND_OWNER[g.kind] ?? "統括役";
+}
+
 async function writeResults(outs: CheckOut[], fromId: number | null) {
   const db = sb();
   const now = new Date().toISOString();
@@ -120,8 +132,10 @@ async function writeResults(outs: CheckOut[], fromId: number | null) {
   const added: Record<string, number[]> = {};
   for (const o of outs) for (const g of o.gaps) {
     if (have.has(g.title.replace(/[0-9]+/g, "#"))) continue;
-    const { data: ins } = await db.from("work_items").insert({ title: g.title, origin: "found_gap", stage: "todo", area: "指摘の点検", next_step: `指摘の型「${POINTER_KIND_JA[g.kind]}」の点検で見つけた: ${g.detail.slice(0, 300)}` }).select("id").single();
-    if (ins) { (added[o.kind] = added[o.kind] ?? []).push(ins.id); await db.from("work_item_events").insert({ item_id: ins.id, to_stage: "todo", actor: "owner-feedback-check", note: `指摘の型 ${o.kind} の点検で足した${fromId ? `（指摘 P${fromId}）` : ""}` }); }
+    // 2026-11-21 統括役: 持ち主・priority の空いた行を出さない（段・型から持ち主を決める・決まらない物は統括役へ）
+    const owner = gapOwnerOf(g);
+    const { data: ins } = await db.from("work_items").insert({ title: g.title, origin: "found_gap", stage: "todo", area: "指摘の点検", owner, priority: 10, next_step: `指摘の型「${POINTER_KIND_JA[g.kind]}」の点検で見つけた${fromId ? `（指摘 P${fromId}）` : ""}: ${g.detail.slice(0, 300)}` }).select("id").single();
+    if (ins) { (added[o.kind] = added[o.kind] ?? []).push(ins.id); await db.from("work_item_events").insert({ item_id: ins.id, to_stage: "todo", actor: "owner-feedback-check", kind: "assign", note: `指摘の型 ${o.kind} の点検で足した・持ち主 ${owner}${fromId ? `（指摘 P${fromId}）` : ""}` }); }
   }
   // その型の指摘の行に点検の記録
   for (const o of outs) {
