@@ -114,7 +114,7 @@ function kbIdsFor(q: string): string[] {
 /** 連携の地図の段・指摘の型 → 持ち主（統括役の割り振り 11/21）。決まらない物は統括役 */
 export const STAGE_OWNER: Record<string, string> = {
   in: "作業員L", read: "作業員L", sent: "作業員L", next: "作業員L", bridge: "作業員L",
-  writer: "作業員M", conductor: "作業員M", tool_cond: "作業員K2", tool_rank: "作業員K2", tool_api: "作業員K2", tool_react: "作業員K2",
+  writer: "作業員M", conductor: "作業員M", staff: "作業員M", check: "作業員H", tool_cond: "作業員K2", tool_rank: "作業員K2", tool_api: "作業員K2", tool_react: "作業員K2",
 };
 export const KIND_OWNER: Partial<Record<PointerKind, string>> = { unread: "作業員G", left_off: "統括役", no_measure: "統括役", exam: "作業員H", link_broken: "作業員L" };
 export function gapOwnerOf(g: { kind: PointerKind; title: string }): string {
