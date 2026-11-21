@@ -130,7 +130,9 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   // 2026-11-21 作業員L（#17 の残り「開いている約束 連携9」を読んだ・止めた判断）: 後の AIX・報告の手書きで約束を閉じる数え方を試したが、
   //   食い違い（ブレインは開いていると持っている）が 14 → 24 に増えた＝ブレインの材料（action-ledger）はその手掛かりでは閉じていない。今の数え方のまま。
   //   連携の9の内わけ: q454・q026（4行）は行動台帳の始まり（09/14）より前の番（下で測れない番にする）／q419（3行）は手書きの報告（「お待たせ致しました…お取り扱いできます」）で
-  //   action-ledger が確認の約束を閉じた＝数え方の誤り（ただし網で真似ると上のとおり他の番で食い違いが増える）／q045（2行）は 14日前の見積の約束が材料に出ていない＝要調べ（action-ledger の見積の約束の閉じ方）
+  //   action-ledger が確認の約束を閉じた＝数え方の誤り（ただし網で真似ると上のとおり他の番で食い違いが増える）／q045（2行）も数え方の誤り: 09/22 の見積の約束は5時間後に AIX で御見積書を送って果たしていた（会話の文）が、
+  //   行動台帳（09/14 開始・埋め戻しの時期）に done の行が無く、送った文は問題の写しの会話の窓（直近）の外。action-ledger は会話の文で閉じていた（材料は正しい）。
+  //   今の行動台帳は抜けていない（直近30日の見積の約束26件のうち、7日内に送った21件は全部 done の行がある・11/21 夜に数えた）。写しから測れないので直さない
   const open = [...fromFacts.open, ...textPromises.filter((t) => !fromFacts.open.some((o) => o.kind === t.kind))];
   const doubled = fromFacts.doubled;
   f.promise_in_ledger = textPromises.length ? (textPromises.every((t) => fromFacts.open.some((o) => o.kind === t.kind)) ? "held" : "link") : "none";
