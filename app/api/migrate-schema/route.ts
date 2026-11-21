@@ -504,7 +504,8 @@ CREATE OR REPLACE FUNCTION fold_knowledge_usage()
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE n integer;
 BEGIN
-  WITH d AS (DELETE FROM knowledge_usage RETURNING knowledge_id, used_delta, last_used_at),
+  -- 2026-11-22 作業員N2（台帳 #593）: WHERE の無い DELETE は Supabase の safeupdate で止まる（毎晩「DELETE requires a WHERE clause」）＝ WHERE true を付ける
+  WITH d AS (DELETE FROM knowledge_usage WHERE true RETURNING knowledge_id, used_delta, last_used_at),
   u AS (
     UPDATE ai_reply_knowledge k
     SET used_count = COALESCE(k.used_count, 0) + d.used_delta,
