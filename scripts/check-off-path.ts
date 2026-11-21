@@ -6,7 +6,7 @@
 //     返信 … スタッフが返した番のうち、下書き（generate-reply）が1度も無かった番（line_watch_turns・7日）
 //     送信 … スタッフの手の送信のうち、アプリを通らずに送った通（messages.sent_device_id が無い・AIX と LINE グループの発言は除く・7日）
 //     内覧 … 過ぎた決まった内覧の予定（calendar_events viewing・30日・ブレインの内覧調整のタスクと【時間確保】の候補は除く）のうち、内覧の記録（viewing_history）が無い会話
-//     見積 … 済みにした見積の予定（calendar_events estimate_sheet・30日）のうち、見積書ツールの記録（estimate_records・前3日〜後1日）が無い物
+//     見積 … 済みにした見積の予定（calendar_events estimate_sheet・30日）のうち、見積書ツールの記録（estimate_records・前3日〜後2日）が無い物
 //   テストの会話と申込以降の会話（今の status）は除く。会話は id の頭8字だけ出す。--write で穴（10% 以上・3件以上）を台帳へ
 // 実行: npx tsx --env-file=.env.local scripts/check-off-path.ts [--json] [--write]
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -95,11 +95,12 @@ export async function checkOffPath(sb: SupabaseClient, nowMs = Date.now()): Prom
   // 2026-11-21 実物で照らした（dbe2cf9c・b37b3859）: 同じ会話・同じ日に予定が2〜3本ある＝会話×日（JST）で1つに数える
   const ests = [...new Map(ests0.filter((e) => !paE.has(e.conversation_id)).map((e) => [`${e.conversation_id}|${new Date(Date.parse(e.start_at) + 9 * 3600e3).toISOString().slice(0, 10)}`, e])).values()];
   const er = await inChunks([...new Set(ests.map((e) => e.conversation_id))], async (c) => ((await sb.from("estimate_records").select("conversation_id, created_at").in("conversation_id", c).gte("created_at", new Date(nowMs - 34 * DAY).toISOString()).limit(5000)).data ?? []) as Array<{ conversation_id: string; created_at: string }>);
-  const eNo = eventsWithoutRecord(ests, er, 3 * DAY, DAY);
+  // 2026-11-22 作業員K2 の読み（台帳 #580・30日の28件）: 4会話（fc32c8・969f01・65c2df・bb8af8）は予定の 30〜33時間後に見積書の記録があった＝後ろの幅を1日→2日に
+  const eNo = eventsWithoutRecord(ests, er, 3 * DAY, 2 * DAY);
   // 同じ幅にスタッフの画像があった物（手で見積の画像を送った疑い）の数
   const imgs = await inChunks([...new Set(eNo.map((e) => e.conversation_id))], async (c) => ((await sb.from("messages").select("conversation_id, created_at").in("conversation_id", c).eq("sender", "staff").not("image_url", "is", null).gte("created_at", new Date(nowMs - 34 * DAY).toISOString()).limit(5000)).data ?? []) as Array<{ conversation_id: string; created_at: string }>);
-  const withImg = eNo.length - eventsWithoutRecord(eNo, imgs, 3 * DAY, DAY).length;
-  out.push({ id: "estimate.no_record", label: "済みにした見積の予定に見積書ツールの記録が無い", owner: "作業員K2", n: ests.length, off: eNo.length, rate: rateOf(eNo.length, ests.length), why: "calendar_events estimate_sheet（30日・済み）の前3日〜後1日に estimate_records が無い＝見積書ツール（AIX）を通らず、利益・広告料・初期費用の記録に載らない", convs: [...new Set(eNo.map((e) => e.conversation_id.slice(0, 8)))], note: `うち同じ幅にスタッフの画像あり ${withImg}（手で画像を送った疑い）` });
+  const withImg = eNo.length - eventsWithoutRecord(eNo, imgs, 3 * DAY, 2 * DAY).length;
+  out.push({ id: "estimate.no_record", label: "済みにした見積の予定に見積書ツールの記録が無い", owner: "作業員K2", n: ests.length, off: eNo.length, rate: rateOf(eNo.length, ests.length), why: "calendar_events estimate_sheet（30日・済み）の前3日〜後2日に estimate_records が無い（前3日〜後2日）＝見積書ツール（AIX）を通らず、利益・広告料・初期費用の記録に載らない", convs: [...new Set(eNo.map((e) => e.conversation_id.slice(0, 8)))], note: `うち同じ幅にスタッフの画像あり ${withImg}（手で画像を送った疑い）` });
   return out;
 }
 
