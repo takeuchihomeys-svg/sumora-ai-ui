@@ -100,3 +100,22 @@ t("提案中に質問が返る番は engaged（止まったと分ける）", () 
   assert.equal(guideTable([g]).get("proposing|reply:promise|*")?.engaged, 1);
 });
 console.log("guide-engaged ok");
+// 2026-11-21 作業員L（台帳 #414/#102）: 約束を待つお礼で窓が閉じた番を、果たした後の次の返事で測り直す（promiseWait・既定 false）
+t("約束の番の測り直し（promiseWait）", () => {
+  const msgs = [
+    { sender: "customer", text: "梅田周辺で探しています", created_at: at(0) },
+    { sender: "staff", text: "梅田周辺でピックアップしてお送りさせて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "ありがとうございます", created_at: at(2) },
+    { sender: "staff", text: "🌟物件のご紹介🌟", created_at: at(10), staff_writer: "takeuchi", is_aix_generated: true },
+    { sender: "customer", text: "2件目内覧したいです", created_at: at(12) },
+  ];
+  const ds = [{ created_at: at(0.5), stage: "proposing" }, { created_at: at(2.5), stage: "proposing" }, { created_at: at(12.5), stage: "viewing_arranging" }];
+  const aix = [{ aix_type: "property_send", sent_at: at(10), created_at: at(10) }];
+  const [off] = guideTurnsOf("c1", msgs, aix, ds);
+  assert.equal(off.outcome, "stuck"); assert.equal(off.promiseWait, undefined);
+  const [on] = guideTurnsOf("c1", msgs, aix, ds, 48, { promiseWait: true });
+  assert.equal(on.promiseWait, "fulfilled"); assert.equal(on.after, "viewing_arrange"); assert.equal(on.outcome, "advanced");
+  const [nf] = guideTurnsOf("c1", msgs, [], ds, 48, { promiseWait: true });
+  assert.equal(nf.promiseWait, "not_fulfilled"); assert.equal(nf.outcome, "left");
+});
+console.log("guide-promise-wait ok");
