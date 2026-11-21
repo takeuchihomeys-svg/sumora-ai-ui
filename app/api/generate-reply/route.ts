@@ -5699,6 +5699,13 @@ async function handleGenerateReply(req: NextRequest) {
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
       if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
+      // 2026-11-21 作業員L（台帳 #466・WRITER_HOOKED_PRESS／WRITER_LATENT_KIND・既定 off・writer-decided-lines.ts）: 書き手に届いていなかった欄（刺さった所・潜在の種類）を1行ずつ
+      if (!isFollowUp) {
+        const wd = await import("@/app/lib/writer-decided-lines");
+        const bm = (brainMeta ?? null) as unknown as Record<string, unknown> | null;
+        if (wd.writerHookedPressOn()) { const l = wd.writerHookedLine(bm); if (l) lines.push(l); }
+        if (wd.writerLatentKindOn()) { const { latentKindOf } = await import("@/app/lib/compose-sentence-plan"); const l = wd.writerLatentKindLine(bm, latentKindOf); if (l) lines.push(l); }
+      }
       // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
       void (async () => {
         try {

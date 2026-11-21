@@ -133,6 +133,7 @@ import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-
 import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/second-block-receipt";
 import { situationWriterNoteAixOn, situationWriterNoteAix } from "@/app/lib/situation-writer-aix";
 import { aixSecondFocusOn, aixSecondFocusLine } from "@/app/lib/aix-second-focus";
+import { aixSecondDecidedOn, aixSecondDecidedNote } from "@/app/lib/writer-decided-lines";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1459,14 +1460,20 @@ export async function POST(req: NextRequest) {
   }
   // 2026-11-21 作業員K2（SITUATION_WRITER_NOTE_AIX・既定 off・situation-writer-aix.ts）: 今の状況の記録（L の situation_now）と「こちらが前に伝えた事」（our_items）を
   //   AIX の2通目の書き手にも渡す（今までは generate-reply だけ＝2通目は前に言った事を項目で持たず、同じ約束・同じ締めを言い直していた）
-  if (situationWriterNoteAixOn()) {
-    const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
-    if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
-  }
   // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_FOCUS・既定 off・aix-second-focus.ts）: 統括の重点（返信の書き手には届いていた・2通目は配線なし）を2通目の書き手に1行
   if (aixSecondFocusOn()) {
     const fl = aixSecondFocusLine((brainMeta as Record<string, unknown> | null) ?? null);
     if (fl) { aixChainNote = `${aixChainNote ?? ""}${fl}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-focus", actionType })); }
+  }
+  // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_DECIDED・既定 off・writer-decided-lines.ts）: 2通目に届いていなかった欄（事実の出所・こちら側・刺さった所）を1塊で。
+  //   K2 と決めた: 置く順は L の塊が先・K2 の situation が後。SITUATION_WRITER_NOTE_AIX が on の時は「こちら側」を外す（中身が重なる）
+  if (aixSecondDecidedOn()) {
+    const dn = aixSecondDecidedNote((brainMeta as Record<string, unknown> | null) ?? null, { situationNoteOn: situationWriterNoteAixOn() });
+    if (dn) { aixChainNote = `${aixChainNote ?? ""}${dn}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-decided", actionType, len: dn.length })); }
+  }
+  if (situationWriterNoteAixOn()) {
+    const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
+    if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
   }
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
