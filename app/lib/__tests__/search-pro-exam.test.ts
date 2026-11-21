@@ -44,11 +44,11 @@ ok("前の形は つながり の read=0", readCountFromFoundationLines(EV_OLD) 
 ok("無ければ null", readCountFromFoundationLines([{ label: "なぜ100%でないか（統括Pro）", value: "read=0" }]) === null);
 
 console.log("PRO_CAUSE_NULL_STRICT");
-ok("既定 off", proCauseNullStrictOn({}) === false);
-ok("on", proCauseNullStrictOn({ PRO_CAUSE_NULL_STRICT: "on" }) === true);
+ok("既定 on", proCauseNullStrictOn({}) === true);
+ok("off で戻せる", proCauseNullStrictOn({ PRO_CAUSE_NULL_STRICT: "off" }) === false);
 {
   const prev = process.env.PRO_CAUSE_NULL_STRICT;
-  delete process.env.PRO_CAUSE_NULL_STRICT;
+  process.env.PRO_CAUSE_NULL_STRICT = "off";
   const off = causeSummaryFromEvidence(EV_NEW);
   ok("off の時は今まで通り（read=2 でも c_read0）", off.atom_ids.includes("c_read0"));
   process.env.PRO_CAUSE_NULL_STRICT = "on";
@@ -65,7 +65,9 @@ ok("on", proCauseNullStrictOn({ PRO_CAUSE_NULL_STRICT: "on" }) === true);
 console.log("判定と比べ");
 {
   const c = { id: "t1", log_id: 1, scope: "realpro", logged_at: "", frozen_at: "", evidence: EV_NEW };
+  process.env.PRO_CAUSE_NULL_STRICT = "off";
   const r = replayCase(c);
+  delete process.env.PRO_CAUSE_NULL_STRICT;
   const j = judgeCase({ id: "t1", source: "", note: "", atoms_none: ["c_read0"], f_all: ["F6"], needs_scores: true }, r);
   ok("off の時は c_read0 で外れ", !j.ok && j.misses.some((m) => /c_read0/.test(m)));
   const base = [{ id: "t1", ok: true, misses: [], replay: r }];
@@ -74,6 +76,20 @@ console.log("判定と比べ");
   ok("前は正しく今は違う＝悪くなった", cmp.worse.length === 1 && cmp.better.length === 0);
   const mj = misjudgeRow(now, 2);
   ok("search_pro_misjudge 1/1", mj.metric === "search_pro_misjudge" && mj.value === 1 && mj.n === 1);
+}
+
+console.log("PHOTO_LEARN_UNKNOWN_NULL（束に shot_gaps が無い時）");
+{
+  const c = { id: "t2", log_id: 2, scope: "realpro", logged_at: "", frozen_at: "", evidence: [], bundle: { shots: { in_storage: 3778 } } };
+  const on = replayCase(c);
+  ok("既定 on: 学べた数は分からない（null）", on.photo_learned === null);
+  ok("既定 on: flash未実行 と書かない", !/flash未実行/.test(on.photo_claim || ""));
+  process.env.PHOTO_LEARN_UNKNOWN_NULL = "off";
+  const off = replayCase(c);
+  delete process.env.PHOTO_LEARN_UNKNOWN_NULL;
+  ok("off: 今まで通り 0・flash未実行", off.photo_learned === 0 && /flash未実行/.test(off.photo_claim || ""));
+  const withGaps = replayCase({ ...c, bundle: { shots: { in_storage: 3778 }, shot_gaps_normal: { learnedOk: 996, todo: 209 } } });
+  ok("shot_gaps があれば数を使う", withGaps.photo_learned === 996);
 }
 
 console.log("quality_daily の行");

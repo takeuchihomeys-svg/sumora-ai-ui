@@ -228,6 +228,8 @@ export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
   matched: number;
   f49Line: string | null;
   f49Ok: boolean | null;
+  /** 2026-11-21 作業員G: 束に shot_gaps も shot_gaps_normal も無い（学べ済み・未読の数が分からない）。PHOTO_LEARN_UNKNOWN_NULL=off で常に false */
+  learnedUnknown: boolean;
 } {
   const src = (bundle?.source && typeof bundle.source === "object")
     ? (bundle.source as Record<string, unknown>)
@@ -304,7 +306,13 @@ export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
     matched,
     f49Line,
     f49Ok,
+    learnedUnknown: photoLearnUnknownNullOn() && !bundle?.shot_gaps_normal && !bundle?.shot_gaps,
   };
+}
+
+/** 2026-11-21 作業員G（統括Pro 段A）: 学べ済みの数が束に無い時に 0（flash未実行）と書かない。段Aで確かめて既定 on（戻す: PHOTO_LEARN_UNKNOWN_NULL=off） */
+export function photoLearnUnknownNullOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PHOTO_LEARN_UNKNOWN_NULL ?? "").trim().toLowerCase() !== "off";
 }
 
 /** --note 無しでも Pro に渡す事実メモ（F49・shots・到達枚数） */
@@ -386,6 +394,7 @@ export function ensureVisionPhotoReachEvidence(
     const vision_pro_link = buildVisionProLink({
       photoInStorage: pr.photoReach,
       learnedOk: pr.learnedOk,
+      learnedUnknown: pr.learnedUnknown,
       todo: pr.todo,
       photoKindsN: pr.photoKindsN,
       imageFields: pr.imageFields,

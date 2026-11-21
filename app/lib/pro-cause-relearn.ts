@@ -78,9 +78,9 @@ export type CauseRelearnInput = {
   thinkMissingN?: number | null;
 };
 
-/** 2026-11-21 作業員G: 材料に無い数を 0 と読まない（既定 off・PRO_CAUSE_NULL_STRICT=on）。段A（scripts/search-pro-exam.ts）で確かめる */
+/** 2026-11-21 作業員G: 材料に無い数を 0 と読まない。段A（scripts/search-pro-exam.ts）で 7/10→2/10・悪化0 を確かめて既定 on（戻す: PRO_CAUSE_NULL_STRICT=off） */
 export function proCauseNullStrictOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.PRO_CAUSE_NULL_STRICT ?? "").trim().toLowerCase() === "on";
+  return (env.PRO_CAUSE_NULL_STRICT ?? "").trim().toLowerCase() !== "off";
 }
 
 function n(v: unknown): number {
@@ -104,7 +104,7 @@ export function buildCauseRelearn(inp: CauseRelearnInput): CauseRelearnReport {
   const fails = inp.foundationFails || [];
   // 2026-11-21 作業員G（統括Pro 段A で見つけた）: Number(null) は 0 なので、材料に数が無い時も「読んだ数 0」「反映 0」として
   //   c_read0（拡張が束を読んでいない）・c_no_reflect_mark を作っていた（凍結10件のうち5件。read=2・read=14 の時も「読んでいない」）。
-  //   「数字の無い原因は作らない」の決まりどおり、無い数は -1（分からない）にする。既定 off（PRO_CAUSE_NULL_STRICT=on）
+  //   「数字の無い原因は作らない」の決まりどおり、無い数は -1（分からない）にする。既定 on（戻す: PRO_CAUSE_NULL_STRICT=off）
   const nn = proCauseNullStrictOn() ? (v: unknown) => (v == null || v === "" ? -1 : n(v)) : n;
   const missF = nn(inp.foundationMissingN);
   const todo = nn(inp.photoTodo);

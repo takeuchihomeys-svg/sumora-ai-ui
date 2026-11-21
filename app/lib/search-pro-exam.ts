@@ -14,6 +14,7 @@
  *   正解ラベルは scripts/search-pro-exam/truth.json（名前・文は入れない）。
  */
 import { causeRelearnFromEvidence, photoReachFromBundle } from "./learn-supervisor-pro";
+import { buildVisionProLink } from "./vision-pro-link";
 
 export type EvRow = { label?: string; value?: string; guessed?: boolean };
 
@@ -139,13 +140,21 @@ export type ProExamReplay = {
   foundation: ReturnType<typeof parseFoundationScore>;
   completion: number | null;
   photo_learned: number | null;
+  /** 写真の段（flashで読む等）の決定論の文（束の写しがある時） */
+  photo_claim: string | null;
 };
 
 export function replayCase(c: ProExamCase): ProExamReplay {
   const ev = c.evidence || [];
   let photo_learned: number | null = null;
+  let photo_claim: string | null = null;
   if (c.bundle) {
-    try { photo_learned = photoReachFromBundle(c.bundle).learnedOk; } catch { photo_learned = null; }
+    try {
+      const pr = photoReachFromBundle(c.bundle);
+      photo_learned = pr.learnedUnknown ? null : pr.learnedOk;
+      const link = buildVisionProLink({ photoInStorage: pr.photoReach, learnedOk: pr.learnedOk, learnedUnknown: pr.learnedUnknown, todo: pr.todo, photoKindsN: pr.photoKindsN, imageFields: pr.imageFields, withScreenPos: pr.withScreenPos, matched: pr.matched });
+      photo_claim = link.steps.map((s) => String(s.detail || "")).join("\n");
+    } catch { photo_learned = null; }
   }
   return {
     id: c.id,
@@ -153,6 +162,7 @@ export function replayCase(c: ProExamCase): ProExamReplay {
     foundation: parseFoundationScore(ev),
     completion: parseCompletion(ev),
     photo_learned,
+    photo_claim,
   };
 }
 
@@ -168,11 +178,12 @@ export function judgeCase(t: ProExamTruth, r: ProExamReplay): { ok: boolean; mis
   for (const f of t.f_none || []) if (r.cause.f_ids.includes(f)) misses.push(`${f} は原因ではない`);
   for (const a of t.atoms_all || []) if (!r.cause.atom_ids.includes(a)) misses.push(`原子 ${a} が無い`);
   for (const a of t.atoms_none || []) if (r.cause.atom_ids.includes(a)) misses.push(`原子 ${a} は誤り（材料の数と食い違う）`);
-  const text = r.cause.lines.join("\n");
+  const text = [...r.cause.lines, r.photo_claim || ""].join("\n");
   for (const pat of t.forbid || []) {
     if (new RegExp(pat).test(text)) misses.push(`出てはいけない言い方: ${pat}`);
   }
-  if (t.photo_learned_min != null && (r.photo_learned == null || r.photo_learned < t.photo_learned_min)) {
+  // 分からない（null）は誤りに数えない（作らないのが正しい）。0 と言い切った時だけ誤り
+  if (t.photo_learned_min != null && r.photo_learned != null && r.photo_learned < t.photo_learned_min) {
     misses.push(`写真の学べた数 ${r.photo_learned ?? "無し"}（正: ≥${t.photo_learned_min}）`);
   }
   if (t.needs_scores && (r.foundation.ok == null || r.completion == null)) misses.push("土台の数・完成度が読めない");
