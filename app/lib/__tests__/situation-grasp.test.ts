@@ -32,7 +32,7 @@ const prob = {
   pc: { rent_max: 70000, desired_area: "難波、日本橋", floor_plan: "1K" },
   ledger: {
     // 2026-11-21: 会話の外の行は材料と同じく 物件名|号室 で1つに数える（同じ建物をお客様に送っていれば号室なしの共有は出さない）
-    sent_properties: [{ row: { conversation_id: "c1", property_name: "Aハイツ" } }, { row: { conversation_id: "c1", property_name: "Bコート" } }, { row: { conversation_id: null, property_name: "Cビル" } }, { row: { conversation_id: null, property_name: "Cビル" } }, { row: { conversation_id: null, property_name: "Aハイツ" } }],
+    sent_properties: [{ row: { conversation_id: "c1", property_name: "Aハイツ" } }, { row: { conversation_id: "c1", property_name: "Bコート" } }, { row: { conversation_id: null, property_name: "Cビル", source: "line_group" } }, { row: { conversation_id: null, property_name: "Cビル", source: "line_group" } }, { row: { conversation_id: null, property_name: "Aハイツ", source: "line_group" } }],
     estimate_records: [{ row: {} }], aix_usage_logs: [],
     sent_facts: [{ row: { kind: "confirmation_promised", status: "promised", sent_at: iso(0) } }],
   },
