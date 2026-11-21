@@ -18,6 +18,7 @@ import { runChecks } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
+import { checkFoundation } from "./check-foundation";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
 
 const argv = process.argv.slice(2);
@@ -152,6 +153,21 @@ async function main() {
   }
 
   if (doCore) {
+    // 芯 ① 土台が無い（check-foundation・土台の表の4列: 決まり・物差し・本番の数字・担当の部品）
+    const cf = await checkFoundation().catch(() => null);
+    if (cf) {
+      coreRows.push({ metric: "core:foundation", value: cf.score, n: cf.n });
+      lines.push(`### 芯: 土台が無い（表 ${cf.tables.join("・")}・4列そろった ${cf.full}/${cf.n}＝${cf.score ?? "—"}%）`, ...cf.gaps.slice(0, 8).map((g) => `- ${g.name}（${g.owner}）: 欠け ${g.missing.join("・")}｜${g.detail.slice(0, 80)}`));
+      for (const g of cf.gaps.slice(0, 5)) coreFix.push(`土台が無い: ${g.name}（欠け ${g.missing.join("・")}）→ ${g.owner}`);
+    }
+    // 芯 ② 細分化が足りない（owner-feedback-check の not_subdivided・ファイルと設計知見の札だけ）: 数は穴の項目の合計（少ないほど良い）
+    const sd = (await runChecks(["not_subdivided"], 1).catch(() => []))[0];
+    if (sd) {
+      const items = sd.gaps.reduce((acc, g) => acc + Number((g.title.match(/(\d+)(?:行|欄)?\s*$/) ?? [])[1] ?? 0), 0); // 題の最後の数（行・欄の数）の合計
+      coreRows.push({ metric: "core:subdivide", value: items, n: sd.gaps.length });
+      lines.push(`### 芯: 細分化が足りない（項目 ${items}・${sd.gaps.length}種）`, ...sd.gaps.filter((g) => !g.title.startsWith("連携の地図の段")).map((g) => `- ${g.title}`), `- 連携の地図で値の来る所が決まっていない行: ${sd.gaps.filter((g) => g.title.startsWith("連携の地図の段")).reduce((x, g) => x + g.detail.split(",").length, 0)}`);
+      for (const g of sd.gaps.filter((g) => !g.title.startsWith("連携の地図の段"))) coreFix.push(`細分化が足りない: ${g.title} → 統括役が割り振る（決まりは持ち主の分野・欄は連携の地図の持ち主）`);
+    }
     // 芯 ④ 統括の判断（check-conductor・竹内さんの番・7日）: 外れを原因の3つに分け、試験の問題の候補（作業員H）と教訓（作業員L）へ
     const cc = await checkConductor(7).catch(() => null);
     if (cc) {

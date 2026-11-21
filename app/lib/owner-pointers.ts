@@ -6,10 +6,10 @@
 // 指摘1つを型（kinds）と分野（areas）に分け、その型の点検（scripts/owner-feedback-check.ts）を全分野で回し、見つけた穴を台帳（found_gap）へ・
 // 決まりを設計知見へ・外れる番を試験の問題の候補へつなぐ。ここは分け方と状態の進め方だけ（決まった語・LLM なし）。
 
-export const POINTER_KINDS = ["not_delivered", "unread", "link_broken", "not_subdivided", "no_measure", "no_rule", "left_off", "no_grasp", "exam", "process", "outage", "other"] as const;
+export const POINTER_KINDS = ["no_foundation", "not_delivered", "unread", "link_broken", "not_subdivided", "no_measure", "no_rule", "left_off", "no_grasp", "exam", "process", "outage", "other"] as const;
 export type PointerKind = typeof POINTER_KINDS[number];
 export const POINTER_KIND_JA: Record<PointerKind, string> = {
-  not_delivered: "材料が届いていない", unread: "読めていない（画像・物件）", link_broken: "連携が切れている", not_subdivided: "細分化が足りない",
+  no_foundation: "土台が無い", not_delivered: "材料が届いていない", unread: "読めていない（画像・物件）", link_broken: "連携が切れている", not_subdivided: "細分化が足りない",
   no_measure: "物差しが無い", no_rule: "決まりが無い", left_off: "作ったが off のまま", no_grasp: "把握が無い（状況の土台）",
   exam: "試験（効率・質・費用）", process: "回し方（拾い上げ・割り当て）", outage: "本番の故障（重い・取りこぼし）", other: "その他",
 };
@@ -20,6 +20,8 @@ export type PointerState = typeof POINTER_STATES[number];
 
 /** 型の語（先に当たった型を主にする＝並びが優先の順）。2026-11-21 の 90行の分けで決めた（memory/owner_feedback_types_1121.md） */
 const KIND_RES: Array<[PointerKind, RegExp]> = [
+  // 2026-11-21 芯① 土台が無い（竹内さん「足りていない土台を見つける」）: 土台が「無い・足りない・設立」の言い方だけ（「土台を細かく」は細分化）
+  ["no_foundation", /土台が(?:無い|ない|足りな|弱い)|足りていない土台|土台(?:を|も)?(?:設立|作る|つくる|入れ)|土台不足/],
   ["unread", /画像|物件名|物件把握|読み取|読めて|よみとれ|把握できる|物件確認した/],
   ["not_delivered", /材料|届いていない|届ける|事実の欄|足りない情報|INFO_FILL|自己申告|資料|会社の事実|こちら側の状態|帳面/],
   ["link_broken", /連携|つなが|つなぎ|受け渡し|届き方|→|渡した欄|LINK|統括と1組|NEXT_SEND|ASK_PROGRESS|2通目の書き手/],
