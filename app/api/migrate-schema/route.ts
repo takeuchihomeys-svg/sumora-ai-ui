@@ -3662,6 +3662,10 @@ CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_
 --   言葉は customer_image_records.part と同じ。null 可・既定なし（kind を読む今の側は変わらない）。戻す: ALTER TABLE image_details DROP COLUMN IF EXISTS part;
 ALTER TABLE image_details ADD COLUMN IF NOT EXISTS part TEXT;
 
+-- 2026-11-21 作業員K2（#469 の (a)・統括役の了承）: 送った物件のどの点が刺さったか（our-send-uptake の HOOK_POINTS の言葉: 家賃／広さ・間取り／駅・場所／新しさ／設備…）。
+--   お客様が物件の通を引用して返した時だけ line-webhook-text が書く（SENT_HOOK_POINTS=on）。null 可・既定なし。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_hook_points;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_hook_points TEXT[];
+
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
 --   対象: aix/・messages/・会話ID のフォルダ（送信用のアップロード）で p_days 日より古い物。

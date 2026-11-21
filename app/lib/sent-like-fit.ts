@@ -26,6 +26,8 @@ export type SentLikeProfile = {
   areaSqm: number | null;
   ageYears: number | null;
   walk: number | null;
+  /** 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_WEIGHT=on の時だけ入る）: 刺さった点。その軸（間取り・広さ／新しさ／駅）の点を2倍に（上限 max のまま） */
+  hookPoints?: string[];
 };
 
 export const SENT_LIKE_RULE = {
@@ -77,11 +79,14 @@ export function buildSentLikeProfile(items: ReadonlyArray<SentLikeItem>): SentLi
 export function sentLikePoints(p: SentLikeProfile | null | undefined, c: { floorPlan?: string | null; areaSqm?: number | null; buildingAge?: number | null; walkMinutes?: number | null }, rule = SENT_LIKE_RULE): { points: number; reasons: string[] } {
   if (!p) return { points: 0, reasons: [] };
   let pts = 0; const reasons: string[] = [];
+  // 2026-11-21 作業員K2: 刺さった点の軸は2倍（hookPoints が無い時は今と同じ）
+  const hk = new Set(p.hookPoints ?? []);
+  const w = (pt: string) => (hk.has(pt) ? 2 : 1);
   const plan = planTokenOf(c.floorPlan);
-  if (plan && p.plans.includes(plan)) { pts += rule.plan; reasons.push(`送ってきた・刺さった物件と同じ間取り（${plan}）`); }
-  if (p.areaSqm != null && c.areaSqm != null && c.areaSqm >= p.areaSqm * rule.areaRatio) { pts += rule.area; reasons.push("送ってきた・刺さった物件くらいの広さ"); }
-  if (p.ageYears != null && c.buildingAge != null && c.buildingAge <= p.ageYears + rule.ageSlack) { pts += rule.age; reasons.push("送ってきた・刺さった物件くらいの新しさ"); }
-  if (p.walk != null && c.walkMinutes != null && c.walkMinutes <= p.walk + rule.walkSlack) { pts += rule.walk; reasons.push("送ってきた・刺さった物件くらいの駅の近さ"); }
+  if (plan && p.plans.includes(plan)) { pts += rule.plan * w("広さ・間取り"); reasons.push(`送ってきた・刺さった物件と同じ間取り（${plan}）`); }
+  if (p.areaSqm != null && c.areaSqm != null && c.areaSqm >= p.areaSqm * rule.areaRatio) { pts += rule.area * w("広さ・間取り"); reasons.push("送ってきた・刺さった物件くらいの広さ"); }
+  if (p.ageYears != null && c.buildingAge != null && c.buildingAge <= p.ageYears + rule.ageSlack) { pts += rule.age * w("新しさ"); reasons.push("送ってきた・刺さった物件くらいの新しさ"); }
+  if (p.walk != null && c.walkMinutes != null && c.walkMinutes <= p.walk + rule.walkSlack) { pts += rule.walk * w("駅・場所"); reasons.push("送ってきた・刺さった物件くらいの駅の近さ"); }
   if (p.n < 2) pts = Math.round(pts / 2);
   return { points: Math.min(rule.max, pts), reasons };
 }
