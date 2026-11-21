@@ -150,6 +150,18 @@ export async function recordSentImageProperty(opts: {
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }
       item = read.items[0];
       out.read = "deepseek";
+      // 2026-11-22 作業員G（#509）: 1件の資料の画像で家賃・間取り・築年のうち2つ以上が空＝欄の少ない答え（DeepSeek がまれに返す）なら、
+      //   同じ問いで1回だけ読み直して埋まった欄の多い方を使う。既定 off（SENT_IMAGE_READ_RETRY_THIN=on）
+      if (read.items.length === 1) {
+        const { sentReadRetryThinOn, isThinRead, pickRicher } = await import("@/app/lib/sent-read-retry");
+        if (sentReadRetryThinOn() && isThinRead(read.items[0])) {
+          const { readPropertyImage } = await import("@/app/lib/property-image-read");
+          const again = await readPropertyImage(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS }).catch(() => null);
+          const pick = pickRicher(read.items[0], again?.isProperty && again.items.length === 1 ? again.items[0] : null);
+          console.log(JSON.stringify({ tag: "sent-image-read:retry-thin", conversationId, used: pick.used, retryTokens: again?.usage ?? null }));
+          if (pick.used === "retry") { item = pick.item; read.items[0] = pick.item; }
+        }
+      }
       // 2026-10-14 竹内さん「物件名はシリーズ名＋地名…化けは正しい地名に直す（候補が1つの時だけ）」:
       //   読んだ名前を地名の表・物件名の帳簿・化けの癖の表で直す（property-name-fix.ts）。迷う時はそのまま（下の照合で寄らなければ vision＝確かではない印）
       try {
