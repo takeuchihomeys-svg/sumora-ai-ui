@@ -21,7 +21,7 @@ export type ComposePlanWatch = {
   digest: string | null;
   rows: Array<{ rank: string; role: string; part: string | null; how: string | null; next: string | null; from: string | null }>;
   /** roles: 指示書の欄を役目ごとに書き手へ渡した注記（compose-brief-roles.briefRolesNote・設計図の注記の中に入る物を別に控える・2026-11-21 作業員M #483） */
-  note: { plan: { fp: string; len: number; head: string } | null; contract: { fp: string; len: number; head: string } | null; roles?: { fp: string; len: number; head: string } | null };
+  note: { plan: { fp: string; len: number; head: string } | null; contract: { fp: string; len: number; head: string } | null; roles?: { fp: string; len: number; head: string } | null; situation?: { fp: string; len: number; head: string } | null };
   leaks: Array<{ key: string; missing: number }>;
   delivery: { rate: string; subRate: string } | null;
   subs: string[];
@@ -31,14 +31,14 @@ export type ComposePlanWatch = {
 const cut = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
 const noteOf = (s: string | null | undefined) => (s && s.trim() ? { fp: fingerprint(s), len: s.length, head: s.slice(0, 200) } : null);
 export function composePlanWatchOf(o: {
-  digest?: string | null; rows?: ReadonlyArray<PlanRowLite> | null; planNote?: string | null; contractNote?: string | null; rolesNote?: string | null;
+  digest?: string | null; rows?: ReadonlyArray<PlanRowLite> | null; planNote?: string | null; contractNote?: string | null; rolesNote?: string | null; situationNote?: string | null;
   leaks?: ReadonlyArray<{ key: string; missing: ReadonlyArray<string> }> | null; delivery?: { rate: string; subRate: string } | null; subs?: ReadonlyArray<string> | null;
   carried?: ReadonlyArray<{ key: string; n: number; missing: number; toks: ReadonlyArray<string> }> | null;
 }): ComposePlanWatch {
   return {
     digest: cut(o.digest, 200),
     rows: (o.rows ?? []).slice(0, 8).map((r) => ({ rank: r.rank, role: r.role, part: cut(r.part, 40), how: cut(r.how, 40), next: cut(r.next, 30), from: cut(r.from, 20) })),
-    note: { plan: noteOf(o.planNote), contract: noteOf(o.contractNote), ...(o.rolesNote !== undefined ? { roles: noteOf(o.rolesNote) } : {}) },
+    note: { plan: noteOf(o.planNote), contract: noteOf(o.contractNote), ...(o.rolesNote !== undefined ? { roles: noteOf(o.rolesNote) } : {}), ...(o.situationNote !== undefined ? { situation: noteOf(o.situationNote) } : {}) },
     leaks: (o.leaks ?? []).map((l) => ({ key: l.key, missing: l.missing.length })),
     delivery: o.delivery ?? null,
     subs: [...(o.subs ?? [])].slice(0, 40),
