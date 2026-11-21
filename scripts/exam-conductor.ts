@@ -113,7 +113,16 @@ function prodExamEnv(j?: { prodEnv?: boolean; env?: Record<string, string> }, no
   return readProdEnvCache(PROD_ENV_FILE)?.env ?? {};
 }
 /** 依頼の env の下敷き（本番の組＋係の examEnv） */
-const jobBaseEnv = (j?: { prodEnv?: boolean; env?: Record<string, string> }) => ({ ...prodExamEnv(j), ...configExamEnv() });
+const jobBaseEnv = (j?: { prodEnv?: boolean; env?: Record<string, string>; label?: string }) => {
+  const pe = prodExamEnv(j);
+  // 2026-11-21 作業員H（#475 試験の前と今の構成の一致）: 下敷きを依頼ごとのファイルに書き、brain-exam が前の既定にも入れる（EXAM_UNDERLAY_FILE）。
+  //   依頼の途中で本番の組を読み直しても同じ依頼は同じ下敷き（ファイルがあれば書き直さない）。止める: EXAM_UNDERLAY_BASE=off（brain-exam の側）
+  let uf: Record<string, string> = {};
+  if (Object.keys(pe).length && j?.label) {
+    try { ensureDirs(); const p = join(RES, `${j.label}.underlay.json`); if (!existsSync(p)) writeFileSync(p, JSON.stringify({ at: new Date().toISOString(), env: pe })); uf = { EXAM_UNDERLAY_FILE: p }; } catch { /* 書けなければ今まで通り */ }
+  }
+  return { ...pe, ...configExamEnv(), ...uf };
+};
 /** 控えが無いか3時間より古ければ読み直す（読めなければ前の控えのまま） */
 async function ensureProdEnv(maxAgeMs = 3 * 3600_000): Promise<void> {
   const age = prodEnvCacheAgeMs(PROD_ENV_FILE);

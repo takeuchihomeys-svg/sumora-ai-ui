@@ -114,6 +114,31 @@ export function readDotenvLocal(root = "."): Record<string, string> {
   try { return parseDotenv(readFileSync(f, "utf8")); } catch { return {}; }
 }
 
+/**
+ * 2026-11-21 作業員H（#475 土台が無い: 試験の前と今の構成の一致）: 係が依頼の env の下に敷いた本番のスイッチの組（下敷き）を、前の「既定」にも入れる。
+ *   今まで前は .env.local の既定・今は下敷き（約60個）＋依頼の env で回り、前と今の違いが2つ重なっていた（11/15 からの依頼119本・q439/q450 の二分の両方の半分の外れ）。
+ *   係は依頼ごとに下敷きをファイルに書き、EXAM_UNDERLAY_FILE で渡す（{ env: {...} } か平らな {...}）。無い・読めない時は {}＝今まで通り。止める: EXAM_UNDERLAY_BASE=off
+ */
+export function underlayOf(env: Record<string, string | undefined>, read: (f: string) => string = (f) => readFileSync(f, "utf8")): Record<string, string> {
+  if (String(env.EXAM_UNDERLAY_BASE ?? "").trim().toLowerCase() === "off") return {};
+  const f = String(env.EXAM_UNDERLAY_FILE ?? "").trim();
+  if (!f) return {};
+  try {
+    const j = JSON.parse(read(f)) as Record<string, unknown>;
+    const m = (j && typeof j.env === "object" && j.env ? j.env : j) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(m).filter(([k, v]) => typeof v === "string" && /^[A-Z][A-Z0-9_]*$/.test(k))) as Record<string, string>;
+  } catch { return {}; }
+}
+/** 前の既定＝.env.local に下敷きを重ねた物（下敷きが無ければ .env.local のまま） */
+export function baseDotenvOf(env: Record<string, string | undefined>, root = "."): Record<string, string> {
+  return { ...readDotenvLocal(root), ...underlayOf(env) };
+}
+/** 指紋を前の既定（baseDotenvOf）に対して取る＝前と今の違いが依頼の env だけになる */
+export function examEnvFingerprintVsBase(env: Record<string, string | undefined> = process.env, root = "."): EnvFingerprint {
+  if (String(env.EXAM_ENV_FP ?? "").trim().toLowerCase() === "off") return EMPTY_ENV_FP;
+  return envFingerprintOf(env, baseDotenvOf(env, root), appReaders(root));
+}
+
 /** 対象の名前か（外す名前でない・コードが読むかスイッチの形） */
 export function isFpName(name: string, readers: Map<string, EnvReader>): boolean {
   if (FP_EXCLUDE_RE.test(name)) return false;

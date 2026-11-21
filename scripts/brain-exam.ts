@@ -65,7 +65,7 @@ import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_
 import { atomicWriteJson } from "./lib/exam-shared-file";
 import { examRefusalLine, baseNowGate, nightStartMs } from "./lib/exam-cost-gate";
 import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
-import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
+import { examEnvFingerprintVsBase, defaultEnvOf, baseDotenvOf, underlayOf, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
@@ -251,7 +251,9 @@ const REPLAY_ARG = args.find((a) => a === "--replay" || a.startsWith("--replay="
 const CASSETTE_MODE = process.env.LLM_CASSETTE?.trim() ? process.env.LLM_CASSETTE.trim() : REPLAY_ARG ? (REPLAY_ARG === "--replay=strict" ? "strict" : "replay") : flag("no-record") ? "off" : "record";
 // 2026-10-21 スイッチの指紋（scripts/lib/exam-env-fp.ts・既定＝.env.local と違うスイッチだけ）。録音の鍵・結果（meta.json）に入れる。
 //   前（main）の答えは既定のスイッチで回す（指紋の名前を .env.local の値に戻して子に渡す）＝on の回と本番の構成を比べる。止める: EXAM_ENV_FP=off
-const ENV_FP = examEnvFingerprint(process.env);
+// 2026-11-21 作業員H（#475）: 指紋と前の既定は「.env.local＋係の下敷き（EXAM_UNDERLAY_FILE）」に対して＝前と今の違いが依頼の env だけ
+const ENV_FP = examEnvFingerprintVsBase(process.env);
+const UNDERLAY_N = Object.keys(underlayOf(process.env)).length;
 // 2026-10-15 ① 前（main の版）の使い回し
 const BASELINE_MAIN = /^main(?:@|$)/.test(arg("baseline"));
 // 10/08 竹内さん: 出し切りの正解は search-exhausted（出し切ったら AIX 全力サポート）が入るまで「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ。
@@ -1177,7 +1179,8 @@ async function prepareMainBaseline(): Promise<boolean> {
   if (!/^[\w./-]+$/.test(ref)) throw new Error(`--baseline=main@<ref> の ref が読めない: ${ref}`);
   let commit = execFileSync("git", ["rev-parse", "--verify", `${resolveMainRef(ref)}^{commit}`]).toString().trim();
   // 2026-10-21 main＝本番の構成: 既定と違うスイッチ（ENV_FP）を .env.local の値に戻した環境で構成を出し・子を回す
-  const mainEnv = defaultEnvOf(process.env, ENV_FP, readDotenvLocal());
+  const mainEnv = defaultEnvOf(process.env, ENV_FP, baseDotenvOf(process.env));
+  if (UNDERLAY_N) console.log(`  前（main）も本番の下敷き ${UNDERLAY_N}個で回す（EXAM_UNDERLAY_FILE・前と今の違いは依頼の env だけ）`);
   if (ENV_FP.hash) console.log(`  前（main）は既定のスイッチで回す（今の回だけ: ${ENV_FP.text}）`);
   const cfg = B.examConfig(mainEnv, {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
