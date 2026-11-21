@@ -75,7 +75,12 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const convId = (p as { conv?: string }).conv ?? null;
   const sentRows = L.sent_properties ?? [];
   const dbSent = sentRows.filter((r) => !convId || r.row.conversation_id === convId).length;
-  const dbOutside = sentRows.filter((r) => convId && !r.row.conversation_id).length;
+  // 2026-11-21 作業員L（台帳 #17 ⑤）: 材料（sent-props-text.buildSentProps）は共有の行を 物件名|号室 で1つにまとめ、号室の無い共有の行は
+  //   同じ建物をお客様に送っていれば出さない（決まりどおり）。行の数で比べると食い違い36番のうち多くが「同じ物件の重複」だったので、材料と同じ数え方で数える
+  const nm = (r: { row: Row }) => String(r.row.property_name ?? "").trim();
+  const ownNames = new Set(sentRows.filter((r) => convId && r.row.conversation_id === convId).map(nm));
+  const dbOutside = new Set(sentRows.filter((r) => convId && !r.row.conversation_id && nm(r) && !(!String(r.row.room_no ?? "").trim() && ownNames.has(nm(r))))
+    .map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`)).size;
   const sentHead = [...b.keys()].find((k) => k.startsWith("すでに送付済みの物件"));
   const sentBlockFull = user.match(/【すでに送付済みの物件（(\d+)件）】/);
   const pSent = sentBlockFull ? Number(sentBlockFull[1]) : null;
