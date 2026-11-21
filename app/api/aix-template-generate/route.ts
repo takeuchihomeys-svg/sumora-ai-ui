@@ -48,7 +48,7 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
-import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
+import { stripWaited, dailyGreetingRequired, aixContinuationSkip } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
 // 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
 import { isWaitedAllowed, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
@@ -2679,7 +2679,9 @@ ${text}
       if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:emoji-repeat-fixed", changes: dr.changes })); text = dr.text; }
     }
     // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
-    if (greetSentToday) {
+    // 2026-11-21 作業員L（確認事項 a56a67ab「続きの番は省く」）: 会話の続きの番は、2通目がその日最初の会話文でも挨拶を付けない（付いていれば外す）
+    const contSkip2 = aixContinuationSkip((recentMessages ?? []) as Array<{ sender?: string; text?: string | null; createdAt?: string | null; rawCreatedAt?: string | null }>);
+    if (greetSentToday || contSkip2) {
       const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action === "removed") {
         console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-removed", actionType, conversationId }));
