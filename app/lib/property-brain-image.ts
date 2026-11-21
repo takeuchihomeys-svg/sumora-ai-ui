@@ -53,8 +53,22 @@ export const PROPERTY_BRAIN_IMAGE_SYSTEM =
   "数値（家賃・面積・徒歩分数）は読まないでください。判断できない項目は null にしてください。" +
   "出力は JSON オブジェクト1つだけ（説明文なし）。キーは指示された物だけ、値は true / false / null。";
 
-export function buildImageQuestion(keys: ImageWantKey[]): string {
-  return `次の項目を画像から判断して JSON で返してください:\n${keys.map((k) => "- " + KEY_QUESTIONS[k]).join("\n")}`;
+/**
+ * 2026-11-21 作業員G（統括役「壁付けをほとんど分からないと答える件は、問いの直しを1案」）: counter_kitchen の問いの2案目。
+ *   1案目は壁付けの図 9件中 8件を「分からない」と答えた（誤り0）。図のキッチンの向き・壁との接し方の手がかりを足す。
+ *   目の監査（scripts/image-audit.ts・topic counter_kitchen_v2）で22件 誤り0 を確かめて既定は2案目（1案目に戻す: COUNTER_KITCHEN_Q=v1）
+ */
+export const COUNTER_KITCHEN_QUESTION_V2 =
+  "counter_kitchen: キッチンがカウンターキッチン（対面式・部屋の方を向いたカウンター付き）か。手がかり: " +
+  "①図や資料に「カウンター」「対面」と書いてあれば true。" +
+  "②キッチン（流し・コンロの記号）が居室（洋室・LDK）の方を向き、手前にカウンターがあって居室を見渡せる形なら true。" +
+  "③キッチンが玄関から居室へ続く廊下に置かれ、流し・コンロが壁に沿って一列に並ぶ（1K・1R の廊下のキッチン）、または流し・コンロが壁に向いて並び部屋に背を向ける形なら false。" +
+  "④図が小さい・キッチンが写っていない・どちらとも言えない時だけ null";
+
+export function buildImageQuestion(keys: ImageWantKey[], env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  // 2026-11-21 目の監査で2案目は22件 誤り0 → 既定を2案目に（戻す: COUNTER_KITCHEN_Q=v1）
+  const v2 = (env.COUNTER_KITCHEN_Q ?? "").trim().toLowerCase() !== "v1";
+  return `次の項目を画像から判断して JSON で返してください:\n${keys.map((k) => "- " + (k === "counter_kitchen" && v2 ? COUNTER_KITCHEN_QUESTION_V2 : KEY_QUESTIONS[k])).join("\n")}`;
 }
 
 /** 応答から JSON を取り出す（前後に文が付いても・失敗なら null） */

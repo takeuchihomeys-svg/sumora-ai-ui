@@ -20,7 +20,7 @@ const args = process.argv.slice(2);
 const arg = (k: string) => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? null;
 
 const root = resolve(dirname(resolve(execSync("git rev-parse --git-common-dir", { encoding: "utf8" }).trim())));
-const DIR = join(root, ".claude", "exam-cache", "image-audit", "counter_kitchen");
+const DIR = join(root, ".claude", "exam-cache", "image-audit", arg("topic") ?? "counter_kitchen");
 const READS = join(DIR, "reads.json");
 
 async function readMany() {
