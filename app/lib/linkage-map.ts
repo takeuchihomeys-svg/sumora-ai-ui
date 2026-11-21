@@ -77,6 +77,8 @@ export type LinkageRow = {
 
 const M = (path: string): FillSpec => ({ src: "meta", path });
 const T = (table: string, days: number, col?: string, where?: Record<string, string>): FillSpec => ({ src: "table", table, days, col, where });
+/** 2026-11-21 作業員L（統括役の決め・K2 の WATCH_REOPEN_ON_NEW_CUSTOMER）: 見張りの行で読み直した印（verdict_detail.reopened）のある行は前の日・先週との比べから外す */
+const REOPEN_OUT: Record<string, string> = { "verdict_detail->reopened": "isnull:" };
 
 export const LINKAGE_MAP: readonly LinkageRow[] = [
   // ① お客様の通・画像
@@ -133,8 +135,8 @@ export const LINKAGE_MAP: readonly LinkageRow[] = [
   { id: "conductor.aims", stage: "conductor", name: "この番の目的・中期の狙い・仕込み", producer: "brain（BRAIN_TURN_AIMS）・turn-aims-after（TURN_AIMS_AFTER）", key: "meta.turn_aims", readers: ["conductor.compose_plan"], switches: ["BRAIN_TURN_AIMS"], readerSwitches: ["BRAIN_COMPOSE_BLUEPRINT"], fill: M("turn_aims"), owner: "作業員7", layer: "連携", next: "全体の統括（お客様ごとの計画）に束ねる" },
   { id: "conductor.our_side", stage: "conductor", name: "こちら側の帳面（開いている約束・送った物件・見積・内覧）を文へ", producer: "conductor-our-side（OUR_SIDE_TO_COMPOSE）", key: "meta.our_side_note", readers: ["conductor.compose_plan"], switches: ["OUR_SIDE_TO_COMPOSE"], readerSwitches: ["COMPOSE_SENTENCE_PLAN"], fill: M("our_side_note"), owner: "作業員4", layer: "連携", next: "試験で on" },
   { id: "conductor.aix_desk", stage: "conductor", name: "AIX の統括（どのボタン×ピッカー・差し戻し）", producer: "aix-commander（AIX_DESK_COMMAND）", key: "meta.aix_desk", readers: ["read.brain", "writer.aix_first"], switches: ["AIX_DESK_COMMAND"], readerSwitches: [], fill: M("aix_desk"), owner: "作業員1・作業員I", layer: "連携", next: "-" , decided: "next_send" },
-  { id: "conductor.compose_plan", stage: "conductor", name: "文の統括の1文ずつの設計図（役目・何を・どうやって）", producer: "compose-sentence-plan（COMPOSE_SENTENCE_PLAN）", key: "書き手の注記: 設計図", readers: ["writer.reply"], switches: ["COMPOSE_SENTENCE_PLAN"], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->reply->compose_plan") /* 2026-11-21 作業員M（#483）: WATCH_COMPOSE_PLAN（11/21 から既定 on・=off で止める）の控え */, owner: "作業員10", layer: "連携", next: "書き手で使われたかの印", decided: "writer_roles" },
-  { id: "conductor.compose_roles", stage: "conductor", name: "指示書の欄を文の役目ごとに書き手へ", producer: "compose-brief-roles（COMPOSE_BRIEF_ROLES）", key: "書き手の注記: 役目ごと", readers: ["writer.reply"], switches: ["COMPOSE_BRIEF_ROLES"], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->reply->compose_plan->note->roles") /* 2026-11-21 作業員M（#483）: 役目ごとの注記の控え（WATCH_COMPOSE_PLAN・既定 on） */, owner: "作業員22", layer: "連携", next: "CONDUCTOR_BRIEF と一緒に試験", decided: "writer_roles" },
+  { id: "conductor.compose_plan", stage: "conductor", name: "文の統括の1文ずつの設計図（役目・何を・どうやって）", producer: "compose-sentence-plan（COMPOSE_SENTENCE_PLAN）", key: "書き手の注記: 設計図", readers: ["writer.reply"], switches: ["COMPOSE_SENTENCE_PLAN"], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->reply->compose_plan", REOPEN_OUT) /* 2026-11-21 作業員M（#483）: WATCH_COMPOSE_PLAN（11/21 から既定 on・=off で止める）の控え */, owner: "作業員10", layer: "連携", next: "書き手で使われたかの印", decided: "writer_roles" },
+  { id: "conductor.compose_roles", stage: "conductor", name: "指示書の欄を文の役目ごとに書き手へ", producer: "compose-brief-roles（COMPOSE_BRIEF_ROLES）", key: "書き手の注記: 役目ごと", readers: ["writer.reply"], switches: ["COMPOSE_BRIEF_ROLES"], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->reply->compose_plan->note->roles", REOPEN_OUT) /* 2026-11-21 作業員M（#483）: 役目ごとの注記の控え（WATCH_COMPOSE_PLAN・既定 on） */, owner: "作業員22", layer: "連携", next: "CONDUCTOR_BRIEF と一緒に試験", decided: "writer_roles" },
   { id: "conductor.delivery", stage: "conductor", name: "決めた事が書き手まで届いたかの記録", producer: "delivery-check（DELIVERY_CHECK）", key: "meta.delivery_check", readers: ["next.measure"], switches: ["DELIVERY_CHECK"], readerSwitches: [], fill: M("delivery_check"), owner: "作業員22", layer: "連携", next: "shadow を本番で（記録だけ）" },
 
   // ④ RAG
@@ -195,7 +197,7 @@ export const LINKAGE_MAP: readonly LinkageRow[] = [
   { id: "staff.task", stage: "staff", name: "line_tasks（物件確認・タスクの作り方）", producer: "line-tasks の作り方", key: "line_tasks", readers: ["スタッフ", "sent.task_result"], switches: [], readerSwitches: [], fill: T("line_tasks", 14, "result_note"), owner: "作業員H", layer: "細かさ", next: "同上" },
   { id: "staff.todo_cron", stage: "staff", name: "スタッフのやる事の一覧（staff-todo-list の cron）", producer: "app/api/cron/staff-todo-list", key: "cron_run_logs（staff-todo-list）", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: T("cron_run_logs", 7, undefined, { cron_name: "staff-todo-list" }) /* 2026-11-21 作業員M（#482）: 便ごとに1行書くようにした */, owner: "統括役", layer: "細かさ", next: "同上" },
   { id: "staff.ref_needs", stage: "staff", name: "人に回す段の注記（物件名・号室が要る：ref_needs_name/room）", producer: "CONDUCTOR_STAFF_CHECK", key: "meta.ref_resolve.needs", readers: ["スタッフ"], switches: ["CONDUCTOR_STAFF_CHECK"], readerSwitches: [], fill: M("ref_resolve"), owner: "作業員16", layer: "細かさ", next: "-" },
-  { id: "staff.condition_suggest", stage: "staff", name: "AIX ツールの画面の「条件の更新の案」", producer: "property-conditions の案", key: "条件の更新の案", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->brain->condition_suggest") /* 2026-11-21 作業員M（#482）: 条件の書き込みの仲裁で止めた欄を見張りの行に印（画面に出すのは aix_feature_suggestions の案が通ってから） */, owner: "作業員K", layer: "細かさ", next: "-" },
+  { id: "staff.condition_suggest", stage: "staff", name: "AIX ツールの画面の「条件の更新の案」", producer: "property-conditions の案", key: "条件の更新の案", readers: ["スタッフ"], switches: [], readerSwitches: [], fill: T("line_watch_turns", 7, "materials->brain->condition_suggest", REOPEN_OUT) /* 2026-11-21 作業員M（#482）: 条件の書き込みの仲裁で止めた欄を見張りの行に印（画面に出すのは aix_feature_suggestions の案が通ってから） */, owner: "作業員K", layer: "細かさ", next: "-" },
 ];
 
 /** 地図の全部のスイッチの名前（作る側＋読む側・並べ替えて重なりなし） */
