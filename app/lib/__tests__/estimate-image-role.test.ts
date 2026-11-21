@@ -37,6 +37,8 @@ test("会話が無ければ書かない・最大10", () => {
 });
 
 test("行は kind=estimate・lines は空（既存の見積書の行と同じ形）", () => {
-  const rows = estimateRoleRows([own("a")], CONV);
+  const rows = estimateRoleRows([own("a")], CONV, { IMAGE_DETAIL_PART: "off" });
   assert.deepEqual(rows, [{ image_url: own("a"), conversation_id: CONV, kind: "estimate", lines: [], model: "role:aix-estimate" }]);
+  // 2026-11-22 作業員K2: IMAGE_DETAIL_PART が既定 on＝部分 cost も入る
+  assert.deepEqual(estimateRoleRows([own("a")], CONV, {}), [{ image_url: own("a"), conversation_id: CONV, kind: "estimate", lines: [], model: "role:aix-estimate", part: "cost" }]);
 });
