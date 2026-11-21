@@ -16,6 +16,7 @@ import { pointersForExam } from "../app/lib/owner-pointers-server";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 import { runChecks } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
+import { checkLinkage } from "./check-linkage";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
 
 const argv = process.argv.slice(2);
@@ -84,8 +85,8 @@ async function main() {
   //   policy … 新しい指摘を台帳に入れた時（work-items.ts --add --origin=owner_request の後）／candidates … 試験の1本が終わった時（H の recordPointerExam の後）／
   //   metrics … 見張りの判定が付いた時（その日の quality_daily を足し直す）。--only の時は毎朝の1枚（md）は書かない
   const only = arg("only", "");
-  if (only && !["policy", "candidates", "metrics"].includes(only)) throw new Error(`--only は policy・candidates・metrics のどれか: ${only}`);
-  const doPolicy = !only || only === "policy", doMetrics = !only || only === "metrics", doChecks = !only, doCandidates = !only || only === "candidates";
+  if (only && !["policy", "candidates", "metrics", "core"].includes(only)) throw new Error(`--only は policy・candidates・metrics・core のどれか: ${only}`);
+  const doPolicy = !only || only === "policy", doMetrics = !only || only === "metrics", doChecks = !only, doCandidates = !only || only === "candidates", doCore = !only || only === "core";
   const lines: string[] = [`# 自己改善の統括 毎朝の1枚（${day} の分・${new Date(now + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ")} JST に作った・LLM なし）`, ""];
 
   // 1 方針
@@ -135,6 +136,19 @@ async function main() {
     } else lines.push(`- ${POINTER_KIND_JA[o.kind]}: 穴 ${o.gaps.length}${o.gaps.length ? `（${o.gaps.slice(0, 3).map((g) => g.title).join("／")}）` : ""}${o.note ? `｜今ある点検 ${o.note}` : ""}`);
   }
 
+  // 2 外れ: 自己改善の芯の4つの点検（竹内さん 11/21「土台・細分化・連携・統括の判断を自己改善の仕組で特に強化」・memory/self_improve_cycle_1121.md）
+  //   ③ 連携が弱い（check-linkage）。①土台・②細分化・④統括の判断は順に足す。--only=core で2時間おきに軽く回す（統括役の見回り）
+  const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  const coreFix: string[] = [];
+  if (doCore) {
+    const cl = await checkLinkage().catch(() => null);
+    if (cl) {
+      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured });
+      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${w.owner}｜${w.why.slice(0, 70)}`));
+      for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${w.owner}`);
+    }
+  }
+
   // 2 外れ: 伸びしろの3つ（竹内さん 11/21「伸びしろの部分は自己改善で改善されるようになっているのか」）
   const { data: qd2 } = await sb.from("quality_daily").select("day,metric,scope,value").in("day", [prevDay, prevWeek]).like("metric", "growth:%").limit(500);
   const prev2 = (metric: string, d: string) => ((qd2 ?? []) as Array<{ day: string; metric: string; value: number | null }>).find((r) => r.day === d && r.metric === metric)?.value ?? null;
@@ -156,6 +170,7 @@ async function main() {
     lines.push(`- ${r.label}: ${r.value ?? "—"}%（${r.n ?? "—"}番）｜前の日 ${prev2(r.metric, prevDay) ?? "—"}・前の週 ${prev2(r.metric, prevWeek) ?? "—"}${d ? (d === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
+  if (only === "core" && coreFix.length) lines.push("### 直しの候補（芯）", ...coreFix.map((x) => `- ${x}`));
   if (only === "metrics" && growthFix.length) lines.push("### 直しの候補（伸びしろが下がった・上がらない）", ...growthFix.map((x) => `- ${x}`));
   if (Object.keys(ed.features).length) lines.push(`- ピックアップの直しの中身（竹内さん）: ${Object.entries(ed.features).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・")}`);
 
@@ -167,7 +182,7 @@ async function main() {
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
 
   // 3 組む
-  const gaps = [...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
+  const gaps = [...coreFix.map((x) => `芯: ${x}`), ...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
   const examPtr = await pointersForExam(sb).catch(() => []);
   const { data: passed } = await sb.from("work_items").select("id,switch_name,priority,owner").eq("stage", "passed").order("priority", { ascending: true, nullsFirst: false }).limit(10);
   const { data: testing } = await sb.from("work_items").select("id,switch_name,priority,owner").eq("stage", "testing").not("switch_name", "is", null).order("priority", { ascending: true, nullsFirst: false }).limit(10);
@@ -197,8 +212,9 @@ async function main() {
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
-    ].filter((r) => (doMetrics || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
-     .filter((r) => !only || only === "metrics" ? true : false)
+      ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
+     .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
     await sb.from("cron_run_logs").insert({ cron_name: "self-improve", started_at: new Date(now).toISOString(), finished_at: new Date().toISOString(), ok: true, result_json: { day, only: only || null, focus, match: mMain, gaps: gaps.length, exam: { runs: runs.length, cost, worse: worse.length }, file: out } });
