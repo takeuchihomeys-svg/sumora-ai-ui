@@ -17,6 +17,8 @@
 // スイッチ CUSTOMER_PLAN（既定 shadow＝ブレインの後に conversations.customer_plan に書くだけ／off＝何もしない）。
 // テスト: app/lib/__tests__/customer-plan.test.ts
 
+import { stationOf } from "./route-record";
+
 type Env = Record<string, string | undefined>;
 export type CustomerPlanMode = "off" | "shadow";
 export function customerPlanMode(env: Env = typeof process !== "undefined" ? process.env : {}): CustomerPlanMode {
@@ -27,7 +29,8 @@ export type CustomerPlan = {
   v: 1;
   updated_at: string;
   seen_customer_at: string | null;
-  station: { status: string | null; checkpoint_stage: string | null };
+  /** 地図の駅（node＝apply-route-map の駅の id に寄せた1つの語・#467）。status・checkpoint_stage は元の語のまま残す */
+  station: { node: string | null; node_from: string | null; branch: string | null; status: string | null; checkpoint_stage: string | null };
   focus: string | null;
   aims: { state: string | null; turn_aim: string | null; mid_aim: string | null; plant: string | null; since: string | null };
   next_send: { dest: string | null; push_strength: string | null; timing: string | null; link_kind: string | null; link_refs: Array<Record<string, string>> };
@@ -62,7 +65,10 @@ export function buildCustomerPlan(i: { meta: Record<string, unknown> | null | un
   const m = i.meta;
   if (!m) return null;
   const prev = o(i.prev) as Partial<CustomerPlan> | null;
-  const ta = o(m.turn_aims);
+  // 2026-11-21 作業員M（#467）: ブレインの出力の turn_aims（BRAIN_TURN_AIMS・off）が無ければ、道の後の状態の表の狙い（meta.turn_aims_after・APPLY_ROUTE_RECORD）
+  const ta = o(m.turn_aims) ?? o(m.turn_aims_after);
+  const ar = o(m.apply_route);
+  const st = stationOf({ applyRouteNode: s(ar?.node, 30), status: s(i.status, 30), checkpointStage: s(m.checkpoint_stage, 30) });
   const brief = o(m.conductor_brief);
   const bn = o(brief?.next);
   const link = o(m.next_send_link);
@@ -82,7 +88,7 @@ export function buildCustomerPlan(i: { meta: Record<string, unknown> | null | un
     v: 1,
     updated_at: i.nowIso,
     seen_customer_at: s(m.analyzed_msg_ts, 40),
-    station: { status: s(i.status, 30), checkpoint_stage: s(m.checkpoint_stage, 30) },
+    station: { node: st.node, node_from: st.from, branch: s(ar?.branch, 30), status: s(i.status, 30), checkpoint_stage: s(m.checkpoint_stage, 30) },
     focus: s(o(m.conductor_focus)?.focus, 30),
     aims: { state: s(ta?.state, 30), turn_aim: s(ta?.turnAim, 40) ?? s(ta?.turn_aim, 40), mid_aim: midAim, plant: s(ta?.plant, 40), since },
     next_send: {
