@@ -5717,6 +5717,8 @@ async function handleGenerateReply(req: NextRequest) {
           const sv = ds.subValuesOf(meta0);
           noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
             digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
+            // 2026-11-21 作業員M（#483）: 役目ごとの注記を別に控える（連携の地図 conductor.compose_roles の値の来る所）
+            rolesNote: composeSentencePlan?.rowsV2 ? (briefRolesNote(composeSentencePlan.rowsV2, brainMeta) || null) : null,
             leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
           }) as unknown as Record<string, unknown>);
         } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
