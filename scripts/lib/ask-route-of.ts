@@ -51,3 +51,31 @@ export function ledgerClassOf(outlier: string): "取りこぼし" | "重ね" | "
   if (outlier.startsWith("AIX の種類")) return "種類違い";
   return "取り違え";
 }
+
+/**
+ * 2026-11-21 作業員M（台帳 #503・統括役の頼み・親 KB 6bb471bd「どの部分を返信で答え、どの部分を AIX で送るかを要件ごとに把握する」）:
+ *   場面ごとに竹内さんの送り方の形を数え、過半数の形があれば設計知見の案（P2）、割れたら推奨つきの確認案にする（決まった計算・LLM なし）。
+ */
+export type SceneShapeVerdict =
+  | { kind: "kb"; scene: string; n: number; top: string; share: number; second: string | null }
+  | { kind: "ask"; scene: string; n: number; top: string; share: number; second: string | null; secondShare: number }
+  | { kind: "few"; scene: string; n: number };
+/** 竹内さんの番の送り方の形（R＝返信・A＝AIX の種類・1時間より後の AIX は「後で」）。例 "R"・"R→A:property_send"・"R→後でA:property_check_result" */
+export function takeuchiShapeLabel(turnAt: number, moves: ReadonlyArray<{ at: number; aix: boolean }>, kinds: readonly string[]): string {
+  const shape = sendShape(moves);
+  const firstAix = moves.find((m) => m.aix);
+  const later = !!firstAix && firstAix.at - turnAt > 60 * 60_000;
+  const k = kinds.length ? kinds.slice(0, 2).join("+") : "?";
+  let firstA = true;
+  return shape.split("").map((c) => { if (c === "R") return "R"; if (firstA) { firstA = false; return `${later ? "後で" : ""}A:${k}`; } return "A"; }).join("→");
+}
+export function sceneShapeVerdict(scene: string, counts: ReadonlyMap<string, number>, o: { minN?: number; majority?: number } = {}): SceneShapeVerdict {
+  const n = [...counts.values()].reduce((a, b) => a + b, 0);
+  if (n < (o.minN ?? 5)) return { kind: "few", scene, n };
+  const sorted = [...counts].sort((a, b) => b[1] - a[1]);
+  const [top, tn] = sorted[0];
+  const [second, sn] = sorted[1] ?? [null, 0];
+  const share = tn / n;
+  if (share > (o.majority ?? 0.5)) return { kind: "kb", scene, n, top, share, second };
+  return { kind: "ask", scene, n, top, share, second, secondShare: sn / n };
+}
