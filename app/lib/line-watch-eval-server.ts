@@ -210,6 +210,12 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     const { scene, window: w, patch } = ev;
     let j = ev.judgement;
     if (mg?.filled.length) { j = { ...j, detail: { ...j.detail, merged_from: { id: dupRow!.id, cols: mg.filled } } }; patch.verdict_detail = j.detail; }
+    // 2026-11-21 統括役の決め（WATCH_REOPEN_ON_NEW_CUSTOMER=on の時）: 版は上げず、読み直した行の詳細に「読み直した印」（前の判定の時刻・理由）を残す。
+    //   作業員L の連携の地図の数えは、この印のある行を前の日との比べから外す
+    if (reopenOn && reopen.needsReopen(t0 as { customer_last_at?: string | null; evaluated_at?: string | null }) && patch.verdict_detail) {
+      j = { ...j, detail: { ...j.detail, reopened: { prev_evaluated_at: t0.evaluated_at, reason: "customer_after_final" } } as typeof j.detail };
+      patch.verdict_detail = j.detail;
+    }
     const realId = dupOf.get(t.id);
     if (realId != null) {
       // 重複行: 数えない（na・duplicate_of）。窓が閉じたかは元の判定のまま（閉じていれば毎晩読み直さない）
