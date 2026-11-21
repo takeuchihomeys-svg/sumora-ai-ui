@@ -91,7 +91,8 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   f.sent_props_dated = dbSent === 0 ? "none" : !sentLines.length ? "link" : sentLines.filter((l) => /<md>|\d+日前|\d+月\d+日/.test(l)).length >= sentLines.length * 0.8 ? "held" : "base";
   // 見積
   const dbEst = (L.estimate_records ?? []).length;
-  const pEst = !!(block(b, "御見積書 送付済み") ?? block(b, "送付済み御見積書の費用情報"));
+  // 2026-11-21 作業員L: BRAIN_ESTIMATE_RECORDS（11/21 から既定 on）の塊【送った御見積書（記録・新しい順）】も「持っていた」に数える（前は古い2つの見出しだけで、連携の漏れに数えていた）
+  const pEst = !!(block(b, "御見積書 送付済み") ?? block(b, "送付済み御見積書の費用情報") ?? block(b, "送った御見積書"));
   f.estimate = dbEst ? (pEst ? "held" : "link") : pEst ? "conflict" : "none";
   // 確かめた結果
   const dbChk = (L.aix_usage_logs ?? []).filter((a) => a.row.aix_type === "property_check_result").length;
