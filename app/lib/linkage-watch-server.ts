@@ -49,7 +49,8 @@ export async function runLinkageWatch(sb: SupabaseClient, o: { metaLimit?: numbe
     if (r.fill.src !== "table") continue;
     const f = r.fill;
     const since = new Date(nowMs - f.days * 86_400_000).toISOString();
-    const timeCol = f.table === "cron_run_logs" ? "started_at" : "created_at";
+    // 2026-11-22 作業員M: sent_properties には created_at が無い（sent_at）＝read.sent_full・bridge.* の数えが列の誤りで落ちていた
+    const timeCol = f.table === "cron_run_logs" ? "started_at" : f.table === "sent_properties" ? "sent_at" : "created_at";
     // 2026-11-21 作業員L: where の値 "isnull:" は「その列（json の道も可）が空」（見張りの読み直しの印 verdict_detail->reopened のある行を外す・統括役の決め）
     const base = () => { let q = sb.from(f.table).select("*", { count: "exact", head: true }).gte(timeCol, since); for (const [k, v] of Object.entries(f.where ?? {})) q = v.startsWith("like:") ? q.like(k, v.slice(5)) : v === "isnull:" ? q.is(k, null) : q.eq(k, v); return q; };
     const all = await base();
