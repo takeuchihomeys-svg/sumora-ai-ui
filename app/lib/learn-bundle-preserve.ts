@@ -65,6 +65,25 @@ function scopesToSearch(scope: string): string[] {
 
 type HistRow = { bundle: unknown; created_at?: string };
 
+/**
+ * 2026-11-21 作業員G（台帳 #588・②）: 引き継ぎで前の束を丸ごと（bundle 列）読んでいた（束の作り直し1回で 31MB）。
+ *   引き継ぎが使うのは shots・foundation_audit・scene_flows の3つだけなので、その3つだけを読む（中身の決め方は変えない）。
+ *   既定 off（LEARN_HISTORY_SLIM=on）
+ */
+export function learnHistorySlimOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LEARN_HISTORY_SLIM ?? "").trim().toLowerCase() === "on";
+}
+export const HISTORY_SLIM_SELECT = "created_at,shots:bundle->shots,foundation_audit:bundle->foundation_audit,scene_flows:bundle->scene_flows";
+function historySelect(): string { return learnHistorySlimOn() ? HISTORY_SLIM_SELECT : "bundle,created_at"; }
+/** 細く読んだ行を、引き継ぎが読む形（bundle の中の3つ）に戻す（純関数） */
+export function toHistRow(r: unknown): HistRow {
+  const o = (r ?? {}) as Record<string, unknown>;
+  if ("bundle" in o) return o as HistRow;
+  const bundle: Record<string, unknown> = {};
+  for (const k of ["shots", "foundation_audit", "scene_flows"]) if (o[k] != null) bundle[k] = o[k];
+  return { bundle, created_at: typeof o.created_at === "string" ? o.created_at : undefined };
+}
+
 async function loadHistoryRows(
   sb: SupabaseClient,
   scope: string,
@@ -72,12 +91,12 @@ async function loadHistoryRows(
 ): Promise<{ rows: HistRow[]; error: string | null }> {
   const { data, error } = await sb
     .from("human_learn_profile")
-    .select("bundle,created_at")
+    .select(historySelect())
     .eq("scope", scope)
     .order("created_at", { ascending: false })
     .limit(lookback);
   if (error) return { rows: [], error: String(error.message || "history_read").slice(0, 120) };
-  return { rows: (data || []) as HistRow[], error: null };
+  return { rows: ((data || []) as unknown[]).map(toHistRow), error: null };
 }
 
 /** 窓内に無くても solid≥min の最新1件を拾う（lookback 溢れ対策） */
@@ -89,14 +108,14 @@ async function loadBestSolidRow(
 ): Promise<{ row: HistRow | null; error: string | null }> {
   const { data, error } = await sb
     .from("human_learn_profile")
-    .select("bundle,created_at")
+    .select(historySelect())
     .eq("scope", scope)
     .order("created_at", { ascending: false })
     .limit(scan);
   if (error) return { row: null, error: String(error.message || "best_solid_read").slice(0, 120) };
   let best: HistRow | null = null;
   let bestSolid = 0;
-  for (const row of data || []) {
+  for (const row of ((data || []) as unknown[]).map(toHistRow)) {
     const s = countLearnedSolid(row.bundle).solid;
     if (s >= minSolid && s > bestSolid) {
       bestSolid = s;
