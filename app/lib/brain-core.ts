@@ -3947,7 +3947,8 @@ ${sh}`;
   try {
     const stl = await import("@/app/lib/situation-timeline");
     if (stl.situationTimelineOn() && conversationId) {
-      const { data: cal } = await supabase.from("calendar_events").select("title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: false }).limit(40); // 2026-11-21 作業員L（台帳 #289）: 古い順で40件に切ると、40件を超えた会話は先の予定（これからの内覧・連絡日）が落ちる。新しい順で取る（buildTimeline が時刻で並べ直す）。60日で40件ちょうどの会話が1つある
+      // 2026-11-22 作業員L（台帳 #590）: TIMELINE_VIEWING_HOLD=on の時だけ notes（時間確保の印）も読む
+      const { data: cal } = await supabase.from("calendar_events").select(stl.timelineViewingHoldOn() ? "title, event_type, start_at, end_at, all_day, is_done, notes" : "title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: false }).limit(40); // 2026-11-21 作業員L（台帳 #289）: 古い順で40件に切ると、40件を超えた会話は先の予定（これからの内覧・連絡日）が落ちる。新しい順で取る（buildTimeline が時刻で並べ直す）。60日で40件ちょうどの会話が1つある
       let custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
       // 2026-11-21 作業員L（SITUATION_TIMELINE_WIDE・既定 off）: 窓の外で言った時の言葉（入居の時期など）も帳面に（お客様の発言 40通を1回読む・失敗は今の窓のまま）
       if (stl.situationTimelineWideOn()) {
