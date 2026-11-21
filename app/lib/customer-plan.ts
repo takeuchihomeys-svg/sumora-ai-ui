@@ -70,7 +70,8 @@ export function buildCustomerPlan(i: { meta: Record<string, unknown> | null | un
   const led = o(m.ask_ledger);
   const carry = o(m.ask_carry);
   const ms = o(m.customer_mindset);
-  const midAim = s(ta?.mid_aim, 40);
+  // 2026-11-21 作業員M（#465 の調べ）: meta.turn_aims は brain-turn-aims.normalizeTurnAims の形＝turnAim・midAim（キャメル）。前は mid_aim（スネーク）だけ読み、on にしても空だった（読み違い）。両方読む
+  const midAim = s(ta?.midAim, 40) ?? s(ta?.mid_aim, 40);
   const prevAims = o(prev?.aims);
   const since = midAim && prevAims && prevAims.mid_aim === midAim && typeof prevAims.since === "string" ? prevAims.since : midAim ? i.nowIso : null;
   // 前の番から持ち越した物（ask_carry）が無ければ、この番の要件のうち行き先がある物（ブレインの直後＝まだ送っていない）
@@ -83,7 +84,7 @@ export function buildCustomerPlan(i: { meta: Record<string, unknown> | null | un
     seen_customer_at: s(m.analyzed_msg_ts, 40),
     station: { status: s(i.status, 30), checkpoint_stage: s(m.checkpoint_stage, 30) },
     focus: s(o(m.conductor_focus)?.focus, 30),
-    aims: { state: s(ta?.state, 30), turn_aim: s(ta?.turn_aim, 40), mid_aim: midAim, plant: s(ta?.plant, 40), since },
+    aims: { state: s(ta?.state, 30), turn_aim: s(ta?.turnAim, 40) ?? s(ta?.turn_aim, 40), mid_aim: midAim, plant: s(ta?.plant, 40), since },
     next_send: {
       dest: s(bn?.dest, 30), push_strength: s(bn?.strength, 20), timing: s(bn?.timing, 30),
       link_kind: s(link?.kind, 30), link_refs: arr(link?.refs).slice(0, 4).map((r) => Object.fromEntries(Object.entries(o(r) ?? {}).map(([k, v]) => [k, String(v).slice(0, 80)]))),
