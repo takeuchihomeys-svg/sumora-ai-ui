@@ -79,3 +79,13 @@ export function sceneShapeVerdict(scene: string, counts: ReadonlyMap<string, num
   if (share > (o.majority ?? 0.5)) return { kind: "kb", scene, n, top, share, second };
   return { kind: "ask", scene, n, top, share, second, secondShare: sn / n };
 }
+
+/**
+ * 2026-11-21 夜 作業員M（台帳 #405・内覧の誘いでブレインは AIX・竹内さんは返信）: 竹内さんが内覧の候補の日時（スタッフの予定）を手で打った返信は、AIX の中身を文で送った番
+ *   （KB 8ee13967「人の文に AIX の中身（スタッフの予定）があれば、その番は AIX の番」）。aix-content-gate の網はこの日時の並びを拾わない（11/21 に確かめた）ので、ここで見る。
+ *   例（伏せた形）「弊社直近ですと 本日18:00〜18:30 明日 12:00〜16:00 ご案内可能です！！」
+ */
+export const STAFF_SCHEDULE_RE = /(?:本日|明日|明後日|\d{1,2}\/\d{1,2}\s*[(（][^)）]{1,3}[)）])\s*\d{1,2}:\d{2}\s*[〜~～-]\s*\d{1,2}:\d{2}|ご案内(?:可能|出来|できます)/;
+export function staffScheduleInText(text: string | null | undefined): boolean {
+  return STAFF_SCHEDULE_RE.test(String(text ?? "").normalize("NFKC"));
+}
