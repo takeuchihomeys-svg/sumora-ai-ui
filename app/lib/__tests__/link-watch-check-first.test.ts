@@ -52,7 +52,7 @@ it("③ LINK_WATCH_REACTION_STRICT: 「一旦無しで通して貰ってもい�
     eq(reactionTokensOf("肥後橋は外してください"), [{ kind: "exclude", token: "肥後橋" }]);
   } finally { delete process.env.LINK_WATCH_REACTION_STRICT; }
 });
-it("④ LINK_WATCH_SECOND_WIDE: 開いただけの記録（本文なし）の10分後に答えを送った番は切れにしない（10/23 実物の型）", () => {
+it("④ LINK_WATCH_SECOND_WIDE（既定 on）: 開いただけの記録（本文なし）の10分後に答えを送った番は切れにしない（10/23 実物の型）", () => {
   const inp = () => base({
     messages: [
       { sender: "customer", text: "こちらのお部屋空いてますか？ https://suumo.jp/chintai/x/", created_at: iso(0) },
@@ -62,9 +62,9 @@ it("④ LINK_WATCH_SECOND_WIDE: 開いただけの記録（本文なし）の10�
     aixLogs: [{ aix_type: "property_check_result", check_pattern: "available", sent_at: null, created_at: iso(2), generated_text: null }],
   });
   const brk = () => of(watchConversation(inp(), W), "brain_second").map((v) => v.breakType ?? "ok");
-  delete process.env.LINK_WATCH_SECOND_WIDE;
+  process.env.LINK_WATCH_SECOND_WIDE = "off"; // 11/21 既定 on・止める =off
   const off = brk();
-  process.env.LINK_WATCH_SECOND_WIDE = "on";
+  delete process.env.LINK_WATCH_SECOND_WIDE;
   try {
     const on = brk();
     eq(on.includes("second_lacks_promise"), false);
