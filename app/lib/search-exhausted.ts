@@ -97,11 +97,13 @@ export function effectiveExhaustStrength(strength: "strong" | "weak" | null | un
 //   後の規則（rule:search_exhausted の上書き）には使わない＝材料だけ（判断はブレイン・P0 9eb6aa9c）。10/09 の広い weak の印付けの失敗（4日 43番）を繰り返さないよう狭く。
 //   既定 off（入れる EXHAUSTED_AREA_ALL_STRONG=on）。
 export function exhaustedAreaAllStrongOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.EXHAUSTED_AREA_ALL_STRONG ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・EXHAUSTED_PICKUP_READY と一緒に）。止める EXHAUSTED_AREA_ALL_STRONG=off
+  return (env.EXHAUSTED_AREA_ALL_STRONG ?? "").trim().toLowerCase() !== "off";
 }
 /** 出し切りの判定に「送れる候補があるか」（売上サポの今送れる候補）を渡すか。既定 off（入れる EXHAUSTED_PICKUP_READY=on）＝今まで brain-core は null を渡していた */
 export function exhaustedPickupReadyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.EXHAUSTED_PICKUP_READY ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・EXHAUSTED_AREA_ALL_STRONG と一緒に）。止める EXHAUSTED_PICKUP_READY=off
+  return (env.EXHAUSTED_PICKUP_READY ?? "").trim().toLowerCase() !== "off";
 }
 /** エリア全域から束で送った報告（「天王寺周辺全域から…ピックアップさせて頂きました」「御堂筋線沿線全域から…」） */
 export const AREA_ALL_PICKED_RE = /(?:周辺|沿線|エリア)(?:の)?全域から[^。\n]{0,60}?ピックアップ(?:させて|して)(?:頂|いただ)きました/;

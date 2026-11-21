@@ -6,7 +6,7 @@ const t = (name: string, ok: boolean, extra: unknown = "") => { if (ok) { pass++
 // 実物の形（数字・見出しだけ。物件名・会社名・宛名は作り物）
 const table = ["概算見積書", "テスト様", "物件名: テストレジデンス", "初期費用詳細内訳", "項目名 | 金額", "賃料(当月)| 106,000円", "管理費・共益費(当月)| 15,000円", "敷金 | 0円", "礼金 | 0円", "仲介会社関連費用 | 96,800円", "鍵作業費用(税込) | 0円", "家賃保証(2年)| 17,080円", "初期費用詳細合計額: 135,780円", "テスト不動産"].join("\n");
 const plain = ["御見積書", "株式会社テスト不動産", "敷金 0", "礼金 70,000", "仲介手数料 77,000", "保証会社 35,000", "合計 250,000"].join("\n");
-t("既定 off", !estimateTableParseOn({}) && estimateTableParseOn({ ESTIMATE_TABLE_PARSE: "on" }));
+t("既定 on（11/21）・=off で止める", estimateTableParseOn({}) && !estimateTableParseOn({ ESTIMATE_TABLE_PARSE: "off" }));
 process.env.ESTIMATE_TABLE_PARSE = "off";
 t("off: 表の形は今まで通り取れない", estimateFactsFromTranscript(table) === null);
 const p0 = JSON.stringify(estimateFactsFromTranscript(plain));

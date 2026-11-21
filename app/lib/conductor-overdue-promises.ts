@@ -10,7 +10,7 @@ import type { OverduePromise } from "./promise-drop-watch";
 
 type Env = Record<string, string | undefined>;
 export const conductorOverduePromisesOn = (env: Env = typeof process !== "undefined" ? process.env : {}) =>
-  (env.CONDUCTOR_OVERDUE_PROMISES ?? "").trim().toLowerCase() === "on";
+  (env.CONDUCTOR_OVERDUE_PROMISES ?? "").trim().toLowerCase() !== "off"; // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0）。止める =off
 
 /** 入口の統括で待つ上限（1会話分の読み・これを超えたら何も足さない） */
 export const OVERDUE_PROMISES_TIMEOUT_MS = 1500;

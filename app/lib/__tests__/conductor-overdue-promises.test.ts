@@ -6,7 +6,7 @@ import { overduePromisesOf } from "../promise-drop-watch";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
-t("既定 off", !conductorOverduePromisesOn({}) && conductorOverduePromisesOn({ CONDUCTOR_OVERDUE_PROMISES: "on" }) && !conductorOverduePromisesOn({ CONDUCTOR_OVERDUE_PROMISES: "shadow" }));
+t("既定 on（11/21）・=off で止める", conductorOverduePromisesOn({}) && conductorOverduePromisesOn({ CONDUCTOR_OVERDUE_PROMISES: "on" }) && !conductorOverduePromisesOn({ CONDUCTOR_OVERDUE_PROMISES: "off" }));
 t("無ければ空", overduePromisesLine([]) === "");
 
 const line = overduePromisesLine([

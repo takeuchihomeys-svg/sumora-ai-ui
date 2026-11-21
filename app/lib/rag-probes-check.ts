@@ -15,7 +15,7 @@ export const RAG_PROBES_FUNCS = ["match_design_thinking", "match_conversation_ch
 /** HNSW の関数（定義に hnsw.ef_search が付いているか） */
 export const RAG_HNSW_FUNCS = ["match_reply_knowledge", "match_reply_examples", "match_aix_reply_examples"] as const;
 /** extensions を search_path に要る関数（11/15・11/18 に public だけに戻って毎回0件になっていた match_takeuchi_compose 等） */
-export const RAG_SEARCH_PATH_FUNCS = ["match_takeuchi_compose", "match_conductor_focus", "match_conductor_turns"] as const;
+export const RAG_SEARCH_PATH_FUNCS = ["match_takeuchi_compose", "match_conductor_focus", "match_conductor_turns", "match_conductor_lessons"] as const; // 11/21 作業員H: conductor_lessons
 /** 必要な probes（索引の lists の最大＝ai_reply_examples・system_design_thinking の 100 以上で全区画＝厳密） */
 export const RAG_PROBES_MIN = 100;
 export const RAG_PROBES_MISSING_TAG = "RAG_PROBES_MISSING:";

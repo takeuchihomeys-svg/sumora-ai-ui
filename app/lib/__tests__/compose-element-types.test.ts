@@ -140,12 +140,13 @@ t("型ごとの「どうやって」の足し（COMPOSE_HOW_BY_TYPE・既定 off
 });
 import { propertyNameRule, propertyNameNote, composeNamePropertyRuleOn } from "../compose-order-table";
 t("物件名を出す線（COMPOSE_NAME_PROPERTY_RULE・既定 off）: お客様が言った時だけ・続き／束の中は出さない・同じ物件の部屋の比べは例外", () => {
-  assert.equal(composeNamePropertyRuleOn({}), false);
+  assert.equal(composeNamePropertyRuleOn({}), true); // 2026-11-21 既定 on
+  assert.equal(composeNamePropertyRuleOn({ COMPOSE_NAME_PROPERTY_RULE: "off" }), false);
   assert.equal(propertyNameRule({ property: "サンライト阿倍野8 202号室", customerText: "サンライト阿倍野8の202は子ども不可ですか？", recentStaffTexts: [] })?.say, true);
   assert.equal(propertyNameRule({ property: "エスリード中之島クロスゲート302号室", customerText: "最短でも入居可能日は11月中旬でしょうか？", recentStaffTexts: ["エスリード中之島クロスゲート302号室、現在募集中のお部屋となります！！"] })?.say, false);
   assert.equal(propertyNameRule({ property: "CRESTTAPP野田", customerText: "早めの引越しがいいので2階にしようかな？って思ってるんですけど虫関係で少し悩んでて", recentStaffTexts: ["2階は虫が入る可能性御座います"] })?.say, true);
   assert.equal(propertyNameRule({ property: null, customerText: "x", recentStaffTexts: [] }), null);
   assert.match(propertyNameNote({ property: "〇〇マンション 101号室", customerText: "初期費用いくらですか", recentStaffTexts: [] }, { COMPOSE_NAME_PROPERTY_RULE: "on" }), /文に書かない/);
-  assert.equal(propertyNameNote({ property: "〇〇", customerText: "", recentStaffTexts: [] }, {}), "");
+  assert.equal(propertyNameNote({ property: "〇〇", customerText: "", recentStaffTexts: [] }, { COMPOSE_NAME_PROPERTY_RULE: "off" }), "");
 });
 console.log(`compose-element-types: ${n} pass`);

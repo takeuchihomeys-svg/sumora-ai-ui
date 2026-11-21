@@ -22,7 +22,8 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const _s1: Same<FocusLocal, FocusReal> = true; const _s2: Same<NDLocal, NDReal> = true; const _s3: Same<NSLocal, NSReal> = true; void _s1; void _s2; void _s3;
 t("型の名前が conductor-focus・next-move-types と同じ", () => { assert.equal(FOCUS_KINDS.length, 7); assert.equal(NEXT_DEST.length, 10); assert.equal(NEXT_STRENGTH.length, 5); });
 t("既定 off・shadow は判断に使わない", () => {
-  assert.equal(feelingTableMode({}), "off");
+  assert.equal(feelingTableMode({}), "shadow"); // 2026-11-21 既定 shadow
+  assert.equal(feelingTableMode({ FEELING_CONDUCTOR_TABLE: "off" }), "off");
   assert.equal(feelingTableMode({ FEELING_CONDUCTOR_TABLE: "shadow" }), "shadow");
   const meta = { ...mind("先に取られる不安"), feeling_conductor: decideFromFeeling(mind("先に取られる不安")) };
   withEnv(null, () => { assert.deepEqual(feelingPriorityCues(meta), {}); assert.equal(feelingNextStrength(meta), null); assert.equal(feelingNextSend(meta), null); assert.equal(feelingBriefSection(meta), null); });
@@ -80,7 +81,7 @@ t("「？」の行（興味が薄い・不満・家族に相談）は判断を�
   const d = decideFromFeeling(mind("興味が薄い"));
   assert.deepEqual(d.rows, []); assert.deepEqual(d.open, ["low_interest"]); assert.equal(d.focus, null);
   assert.deepEqual(decideFromFeeling(mind("迷い", { hesitation: "家族・同居人に相談" })).open, ["decider_elsewhere"]);
-  assert.equal(feelingDigest(d), "-|f:-|p:-|n:-|?:low_interest");
+  assert.equal(feelingDigest(d)?.replace(/^m:[^|]*[|]/, ""), "-|f:-|p:-|n:-|?:low_interest");
 });
 t("on: 重点を表の重点に（元は focus_brain）", () => {
   const meta: Record<string, unknown> = { ...mind("先に取られる不安"), conductor_focus: { focus: "answer", why: "x" } };

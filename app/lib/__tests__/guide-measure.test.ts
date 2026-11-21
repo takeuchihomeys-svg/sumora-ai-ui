@@ -43,7 +43,8 @@ console.log(`${n} tests ok`);
 
 import { estimateRecordsBlock, estimateRecordsBlockOn } from "../estimate-records-block";
 t("送った御見積書の記録: 新しい順・同じ物件の出し直しは前の金額も・名前の無い行は落とす", () => {
-  assert.equal(estimateRecordsBlockOn({}), false);
+  assert.equal(estimateRecordsBlockOn({}), true); // 2026-11-21 既定 on
+  assert.equal(estimateRecordsBlockOn({ BRAIN_ESTIMATE_RECORDS: "off" }), false);
   const b = estimateRecordsBlock([
     { property_name: "Aマンション", room_no: "101号室", initial_cost_yen: 180000, created_at: "2026-11-10T03:00:00Z" },
     { property_name: "Aマンション", room_no: "101", initial_cost_yen: 220000, created_at: "2026-11-08T03:00:00Z" },

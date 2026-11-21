@@ -8,7 +8,8 @@ import { writerFromText } from "./staff-writer";
 
 type Env = Record<string, string | undefined>;
 export function exampleWriterRecordedOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.EXAMPLE_WRITER_RECORDED ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（②の組 grp-reply-1121 で確かな悪化0）。止める EXAMPLE_WRITER_RECORDED=off
+  return (env.EXAMPLE_WRITER_RECORDED ?? "").trim().toLowerCase() !== "off";
 }
 export type RecordedWriter = "takeuchi" | "employee";
 /** 並べ替えの足し: 記録の書き手があればそれで（竹内 +0.12・従業員 −0.12）、無ければ文の推定（今と同じ値） */

@@ -9,7 +9,7 @@ const suumo2 = "[画像] 【物件の画面（ポータル）】 20:56 suumo.jp 
 const suumo3 = "[画像] 【物件の画面（ポータル）】 セイバリーレイン(1LDK/1階/42.06m²)の賃貸住宅情報 2/20 玄関(SB) 洋室 6帖";
 const homes = "[画像] 【物件の画面（ポータル）】 13:01 賃貸アパート シエーナ魚崎 9万円／管理費等5,000円 敷 無 礼 無 初期費用の目安を確認する";
 const ours = ["[画像] 【物件の資料】", "物件名：アイボリーフロント雑賀WEST", "号室名：803（8階部分）"].join("\n");
-t("既定 off", !ownPropertyPortalTitleOn({}) && ownPropertyPortalTitleOn({ OWN_PROPERTY_PORTAL_TITLE: "on" }));
+t("既定 on（11/21）・=off で止める", ownPropertyPortalTitleOn({}) && !ownPropertyPortalTitleOn({ OWN_PROPERTY_PORTAL_TITLE: "off" }));
 t("SUUMO の見出し（画面の文字が前にある）", portalTitleName(suumo1) === "ザ・タワー大阪", portalTitleName(suumo1));
 t("SUUMO の見出し（店名の続き）", portalTitleName(suumo2) === "第二福井マンション", portalTitleName(suumo2));
 t("SUUMO の見出し（先頭）", portalTitleName(suumo3) === "セイバリーレイン", portalTitleName(suumo3));

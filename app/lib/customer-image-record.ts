@@ -4,14 +4,15 @@
 //   お客様の画像の読み（種類・物件・照合・関連・聞いている事）は、ブレインが動く度に customer-image-link で作り直していて、どこにも残っていなかった。
 //   画像ごとに1行で残し、物件ごとの記録（property-thread の「お客様が送ってきた」・KB 2dab3589）と監査がそれを読めるようにする。
 //   入れない物（KB 33a30792・個人情報）: 書き起こし・お客様の文そのもの・見積書の宛名。書類（本人確認・収入・契約）は種類だけ。
-//   既定 off（CUSTOMER_IMAGE_RECORD=on で書く）。記録だけで、ブレインの判断・返信は変えない。
+//   2026-11-21 から既定 on（CUSTOMER_IMAGE_RECORD=off で止める）。記録だけで、ブレインの判断・返信は変えない。
 import type { ImageLink } from "./customer-image-link";
 import { savedImageKind } from "./image-label";
 import { propertyKey } from "./property-key";
 
 type Env = Record<string, string | undefined>;
 export function customerImageRecordOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CUSTOMER_IMAGE_RECORD ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G（統括役の決め・記録だけなので試験なし）: 既定 on。止める CUSTOMER_IMAGE_RECORD=off
+  return (env.CUSTOMER_IMAGE_RECORD ?? "").trim().toLowerCase() !== "off";
 }
 export const CUSTOMER_IMAGE_RECORD_VERSION = "g1121-1";
 

@@ -13,7 +13,7 @@
 // 実行（重い読み＝22〜8時だけ・統括役に知らせてから）: npx tsx --env-file=<鍵のある .env> scripts/audit-ours-next-table.ts [--days=30] [--out=<json>] [--show=0]
 import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { splitOurPartsFine, OUR_PART_KINDS, type OurPart } from "../app/lib/our-part-types";
+import { splitOurPartsFine, OUR_PART_KINDS, conditionKeysOf, type OurPart } from "../app/lib/our-part-types";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { isMaterialOnlyText } from "../app/lib/daily-greeting";
 import { maskPII } from "../app/lib/pii-mask";
@@ -71,6 +71,10 @@ export function repeatsOf(o: { prev: { keys: Set<string>; texts: string[] }; nex
   const same = [...o.next.keys].filter((k) => o.prev.keys.has(k) && k !== "fact.answer");
   for (const k of same) {
     if (k.startsWith("question.") && o.custText && !/[?？]|でしょうか|ですか/.test(o.custText)) out.push(`答え済みの聞き直し:${k}`);
+    // 11/21 本物の番を読んだ分け: お客様が新しい条件・物件（URL・画像・条件の語）を足した番の同じ型の約束は「新しい依頼への約束」（竹内さんも同じ）＝言い直しに数えない
+    else if (k.startsWith("promise.") && o.custText && (/https?:\/\/|\[画像\]|【物件の画面/.test(o.custText) || conditionKeysOf(o.custText).length > 0)) continue;
+    // 催促（いつ・まだ）への同じ約束の言い直し＝果たす番（AIX で送る）か、目安を伝える番
+    else if (k.startsWith("promise.") && o.custText && /いつ|まだ|どう(?:なり|でしょう)|進捗|頂けますか|いただけますか/.test(o.custText)) out.push(`催促への約束の言い直し:${k}`);
     else out.push(`同じ型:${k}`);
   }
   const A = o.prev.texts.flatMap(sents).map(tri), B = o.next.texts.flatMap(sents).map(tri);
@@ -92,7 +96,7 @@ async function main() {
   for (const m of msgs) { if (isTestConversation(m.conversation_id)) continue; (byConv.get(m.conversation_id) ?? byConv.set(m.conversation_id, []).get(m.conversation_id)!).push(m); }
   type Cell = { n: number; rep: number; types: Record<string, number> };
   const table: Record<string, Record<string, Record<string, Cell>>> = {}; // writer → row → link
-  const examples: Array<{ writer: string; link: string; reps: string[]; prev: string; next: string }> = [];
+  const examples: Array<{ writer: string; link: string; reps: string[]; prev: string; cust?: string | null; nextAix?: boolean; next: string }> = [];
   let turns = 0;
   for (const list of byConv.values()) {
     const cut = list.findIndex((m) => m.sender !== "customer" && /【お申込者様記入欄】/.test(m.text ?? ""));
@@ -130,7 +134,7 @@ async function main() {
             const mine = reps.filter((r) => r === "同じ文" || (row === "receipt" && r === "ご査収の重ね") || (row === "greet" && r === "挨拶の重ね") || r.split(":")[1]?.startsWith(`${row}.`));
             if (mine.length) { c.rep++; for (const r of mine) c.types[r.replace(/:([a-z_]+)\..*$/, ":$1")] = (c.types[r.replace(/:([a-z_]+)\..*$/, ":$1")] ?? 0) + 1; }
           }
-          if (reps.length && examples.length < 400) examples.push({ writer, link, reps, prev: maskPII(prevTexts.join(" ／ ")).replace(/\s+/g, " ").slice(0, 140), next: maskPII(handTexts.join(" ／ ")).replace(/\s+/g, " ").slice(0, 140) });
+          if (reps.length && examples.length < 1500) examples.push({ writer, link, reps, prev: maskPII(prevTexts.join(" ／ ")).replace(/\s+/g, " ").slice(0, 140), cust: custText == null ? null : maskPII(custText).replace(/\s+/g, " ").slice(0, 100), nextAix: b.msgs.some((m) => m.is_aix_generated), next: maskPII(handTexts.join(" ／ ")).replace(/\s+/g, " ").slice(0, 140) });
         }
       }
       prev = b; cust = null;

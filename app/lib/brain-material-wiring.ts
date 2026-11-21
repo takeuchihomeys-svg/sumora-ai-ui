@@ -18,7 +18,8 @@ export function pickupCandidatesListOn(env?: Env): boolean {
 }
 /** 2026-11-21 作業員L: 資料の要点の材料に、こちらが送った資料の画像の読み取り（image_details の行・sent_image_properties.facts の敷金礼金）を足す（既定 off） */
 export function focusDocSentImageOn(env?: Env): boolean {
-  return (envOf(env).FOCUS_DOC_SENT_IMAGE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・BRAIN_FOCUS_DOC_DIGEST と一緒に）。止める FOCUS_DOC_SENT_IMAGE=off
+  return (envOf(env).FOCUS_DOC_SENT_IMAGE ?? "").trim().toLowerCase() !== "off";
 }
 /** 送った資料の読み取り（sent_image_properties.facts）から、資料の行の形（「敷金: 1ヶ月」「礼金: 0円」）を作る。単位が決まらない欄（*_unit=unclear）は作らない */
 export function sentFactsDocLines(facts: unknown): string[] {
@@ -34,7 +35,8 @@ export function sentFactsDocLines(facts: unknown): string[] {
   return out;
 }
 export function focusDocDigestOn(env?: Env): boolean {
-  return (envOf(env).BRAIN_FOCUS_DOC_DIGEST ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・FOCUS_DOC_SENT_IMAGE と一緒に）。止める BRAIN_FOCUS_DOC_DIGEST=off
+  return (envOf(env).BRAIN_FOCUS_DOC_DIGEST ?? "").trim().toLowerCase() !== "off";
 }
 
 export type PickupCandidateRow = {

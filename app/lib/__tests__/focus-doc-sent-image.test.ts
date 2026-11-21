@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { focusDocSentImageOn, sentFactsDocLines } from "../brain-material-wiring";
 import { routeContractTerm } from "../contract-terms-question";
 
-assert.equal(focusDocSentImageOn({}), false);
-assert.equal(focusDocSentImageOn({ FOCUS_DOC_SENT_IMAGE: "on" }), true);
+assert.equal(focusDocSentImageOn({}), true); // 2026-11-21 既定 on
+assert.equal(focusDocSentImageOn({ FOCUS_DOC_SENT_IMAGE: "off" }), false);
 
 // 送った資料の読み取りの形（sent_image_properties.facts）→ 資料の行の形
 assert.deepEqual(sentFactsDocLines({ deposit_months: 0, key_money_months: 1, rent: 65000 }), ["敷金: なし", "礼金: 1ヶ月"]);

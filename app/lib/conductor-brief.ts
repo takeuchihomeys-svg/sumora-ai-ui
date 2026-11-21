@@ -83,6 +83,8 @@ export type ConductorBrief = {
   aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
   /** 2026-11-19 作業員M: 前のどの通のどの項目を受けて次を送るか・つながりの種類・なぜ（meta.next_send_link・NEXT_SEND_LINK=shadow の時だけ・名前は situation_now の item_id・promise_id・ask_id・sent_id） */
   next_link?: { kind: string; refs: Array<Record<string, string>>; why: string };
+  /** 2026-11-21 作業員M: 前の番のお客様ごとの計画を照らした欄（CONDUCTOR_BRIEF_PLAN=on の時だけ・brain-core が指示書を組んだ後に足す・書き手には渡さない） */
+  plan?: import("./customer-plan").PlanBriefSection;
   /** 2026-11-19 作業員M: 前の番でまだ答えていない要件・約束して結果がまだの要件（meta.ask_carry・ASK_PROGRESS_READ=on の時だけ・id は askIdOf） */
   carry_asks?: { open: string[]; promised: string[] };
   /** 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ） */
