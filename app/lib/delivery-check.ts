@@ -30,7 +30,7 @@ const BASIS_JA: Record<string, string> = { conversation: "会話", material: "�
 
 export const DELIVERY_FIELDS: readonly DeliveryField[] = [
   { key: "focus", label: "重点と理由", value: (m) => { const c = obj(m.conductor_focus); return str(c?.focus, 20) ? `${str(c!.focus, 20)}${str(c?.why, 40) ? `＝${str(c?.why, 40)}` : ""}` : null; },
-    wiring: { compose: true, writer: true, aix1: "b", aix2: "b" }, why: "文の統括の注記（統括の重点）で書き手に届く。AIX の統括・2通目へは渡す配線が無い" },
+    wiring: { compose: true, writer: true, aix1: "b", aix2: "d" }, why: "文の統括の注記（統括の重点）で書き手に届く。AIX の2通目へは AIX_SECOND_FOCUS=on の時だけ（11/21・既定 off）。AIX の統括へは渡す配線が無い" },
   { key: "focus_sub", label: "重点の下の種類（作業員5 の focus_sub）", value: (m) => str(obj(m.conductor_focus)?.focus_sub, 20),
     wiring: { compose: "a", writer: "a", aix1: "a", aix2: "a" }, why: "欄が作業員5 の CONDUCTOR_FOCUS_SUB でこれから足される（今の main に無い）" },
   { key: "promise", label: "約束（この番の確かめる・送る約束の中身）", value: (m) => { const p = asks(m).find((a) => a.route === "promise" && str(a.answer)); return p ? str(p.answer, 60) : null; },
@@ -38,7 +38,7 @@ export const DELIVERY_FIELDS: readonly DeliveryField[] = [
   { key: "asks", label: "依頼ごとの道と答え", value: (m) => { const a = asks(m)[0]; return a ? str(a.quote, 30) : null; },
     wiring: { compose: true, writer: true, aix1: "b", aix2: true }, why: "本質の帯で書き手に届く・2通目はこの AIX で受ける依頼だけ（buildBrainBundleNote）" },
   { key: "fact_source", label: "答えに使う事実の出所（会話・資料・会社の事実）", value: (m) => { const a = asks(m).find((x) => FACT_BASES.has(String(x.basis)) && str(x.answer)); return a ? BASIS_JA[String(a.basis)] : null; },
-    wiring: { compose: "c", writer: "c", aix1: "b", aix2: "b" }, why: "答えの値は本質の帯に出るが、出所（basis）は帯の文に書かれない＝書き手はどの事実で答えるかを知らない" },
+    wiring: { compose: "d", writer: "d", aix1: "b", aix2: "b" }, why: "答えの値は本質の帯に出る。出所（basis）は COMPOSE_DECIDED=on の時だけ帯の依頼の行の後ろに［出所: …］で付く（既定 off・11/21 の確かめで c→d に直した）" },
   { key: "our_side", label: "こちら側の状態（もう送った・約束した・確かめ済み）", value: (m) => { const t = str(m.our_side_note, 400); return t ? t.split("\n").map((x) => x.trim()).filter(Boolean)[0] ?? null : null; },
     wiring: { compose: true, writer: true, aix1: "b", aix2: "b" }, why: "設計図の注記で書き手に届く（11/21 から OUR_SIDE_TO_COMPOSE 既定 on・=off で止まる）。AIX の統括・2通目へは渡す配線が無い" },
   { key: "latent_feeling", label: "潜在の気持ち（どんな気持ちで）", value: (m) => str(obj(obj(m.latent_read)?.feeling)?.what, 30) ?? str(obj(obj(obj(m.turn_read)?.latent)?.feeling)?.what, 30) ?? str(obj(m.three_layer)?.worry, 40),

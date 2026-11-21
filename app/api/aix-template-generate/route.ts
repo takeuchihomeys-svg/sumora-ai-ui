@@ -132,6 +132,7 @@ import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-bluepri
 import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
 import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/second-block-receipt";
 import { situationWriterNoteAixOn, situationWriterNoteAix } from "@/app/lib/situation-writer-aix";
+import { aixSecondFocusOn, aixSecondFocusLine } from "@/app/lib/aix-second-focus";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1461,6 +1462,11 @@ export async function POST(req: NextRequest) {
   if (situationWriterNoteAixOn()) {
     const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
     if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
+  }
+  // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_FOCUS・既定 off・aix-second-focus.ts）: 統括の重点（返信の書き手には届いていた・2通目は配線なし）を2通目の書き手に1行
+  if (aixSecondFocusOn()) {
+    const fl = aixSecondFocusLine((brainMeta as Record<string, unknown> | null) ?? null);
+    if (fl) { aixChainNote = `${aixChainNote ?? ""}${fl}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-focus", actionType })); }
   }
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
