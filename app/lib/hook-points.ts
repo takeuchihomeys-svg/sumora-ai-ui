@@ -6,14 +6,15 @@
 //   読み方: 作業員16 の our-send-uptake（splitOurSend → readUptake の刺さりの網）をそのまま使う（新しい網を作らない）。網は候補の網で、決めるのはブレイン（P0 9eb6aa9c）。
 //   ここでの使い方は判定の「像」の比べの軸の重みだけ（条件より弱い・加点だけ・上限は sent-like-fit の SENT_LIKE_RULE.max のまま）。
 // ■ スイッチ
-//   SENT_HOOK_POINTS=on … 引用の返信の時に sent_properties.customer_hook_points に残す（既定 off。列は migrate-schema・DDL の後に on）
+//   SENT_HOOK_POINTS … 引用の返信の時に sent_properties.customer_hook_points に残す（11/21 から既定 on・=off で止まる）
 //   SENT_HOOK_WEIGHT=on … 🌟の像の比べ（STAR_SENT_LIKE=on の時）で、刺さった点の軸の点を2倍にする（既定 off）
 // テスト: app/lib/__tests__/hook-points.test.ts
 import { splitOurSend, readUptake, HOOK_POINTS, type HookPoint } from "@/app/lib/our-send-uptake";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
-export const sentHookRecordOn = (env: Env = envOf()) => String(env.SENT_HOOK_POINTS ?? "").trim().toLowerCase() === "on";
+// 2026-11-21 統括役の決め（列を本番に当て・775eb95be が main 5de23bfd7 で READY の後）: 記録だけなので既定 on（=off で止まる）
+export const sentHookRecordOn = (env: Env = envOf()) => String(env.SENT_HOOK_POINTS ?? "").trim().toLowerCase() !== "off";
 export const sentHookWeightOn = (env: Env = envOf()) => String(env.SENT_HOOK_WEIGHT ?? "").trim().toLowerCase() === "on";
 
 /** 引用先のこちらの文とお客様の返信 → 刺さった点（無ければ []）。刺さらなかった・断りの時は [] */
