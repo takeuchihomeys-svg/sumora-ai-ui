@@ -119,6 +119,11 @@ export async function GET(req: NextRequest) {
       const { foldKnowledgeUsage } = await import("@/app/lib/knowledge-usage");
       const f = await foldKnowledgeUsage((fn, args) => supabase.rpc(fn, args));
       console.log(JSON.stringify({ tag: "update-knowledge:fold-usage", folded: f.folded, error: f.error }));
+      // 2026-11-21 作業員H（統括役）: 畳んだ件数を cron_run_logs にも残す（ログは流れて消える・毎朝の確かめで件数を数える）。書けなくても本筋は止めない
+      try {
+        const at = new Date().toISOString();
+        await supabase.from("cron_run_logs").insert({ cron_name: "update-knowledge:fold-usage", started_at: at, finished_at: at, ok: !f.error, result_json: { folded: f.folded }, ...(f.error ? { error_message: String(f.error).slice(0, 500) } : {}) });
+      } catch { /* 記録だけ */ }
     }
     // 未処理の☆つき例文を取得
     const { data: examples } = await supabase
