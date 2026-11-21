@@ -1,5 +1,5 @@
 // 2026-11-13 作業員7b: 竹内さんの実送信から組を読む（scripts/lib/combo-of-moves.ts）。形は 12240（挨拶の返信→10秒後に AIX【条件ヒアリング】）・11408（AIX→4分後に AIX）等
-import { takeuchiCombo, assignAixKinds } from "../combo-of-moves";
+import { takeuchiCombo, assignAixKinds, comboMatches } from "../combo-of-moves";
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { if (c) pass++; else { fail++; console.error("NG", n); } };
 const t0 = Date.parse("2026-11-08T04:00:00Z"), s = (sec: number) => t0 + sec * 1000;
@@ -21,5 +21,8 @@ ok("種類が付いていなければ今まで通り", takeuchiCombo(t0, [{ at: 
   const ms = assignAixKinds([{ at: s(60), aix: true, writer: "takeuchi" }, { at: s(70), aix: false, writer: "takeuchi" }], [{ at: s(30), aixType: "property_send" }, { at: s(9999), aixType: "estimate_sheet" }]);
   ok("AIX の通に近い記録の種類を付ける（返信の通には付けない）", ms[0].aixKind === "property_send" && ms[1].aixKind === undefined);
 }
+ok("組の一致: 同じ組", comboMatches("aix_then_reply", "aix_then_reply"));
+ok("組の一致: 2段と返信だけは、竹内さんの AIX が48時間以内に後で来た時だけ同じ", comboMatches("promise_then_aix_later", "reply_only", { laterAixWithinMs: 20 * 3_600_000 }) && !comboMatches("promise_then_aix_later", "reply_only", {}) && !comboMatches("promise_then_aix_later", "reply_only", { laterAixWithinMs: 60 * 3_600_000 }));
+ok("組の一致: 逆向き（返信だけ→2段）や他の組は違う", !comboMatches("reply_only", "promise_then_aix_later", { laterAixWithinMs: 1 }) && !comboMatches("aix_only", "aix_then_reply") && !comboMatches(null, "reply_only"));
 console.log(`combo-of-moves: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
