@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readWatchTurns, readDecisionSources, aixFamily } from "./prod-yardstick-db";
 import { pickSendCombo } from "../../app/lib/send-combo-table";
 import { takeuchiCombo, assignAixKinds, type StaffMove } from "./combo-of-moves";
-import { tcMix, aixBundleFamily } from "./ask-route-of";
+import { tcMix, aixBundleFamily, askTurnClass, askDailyCounts, type AskTurnClass } from "./ask-route-of";
 import { loadTurnApplicationRecords } from "../../app/lib/turn-application-gate-server";
 import { turnApplicationReason, type TurnApplicationRecords } from "../../app/lib/turn-application-gate";
 
@@ -50,6 +50,8 @@ export type ComboDaily = {
   examples: { aixToReply: string[]; replyToAix: string[]; secondAixMiss: string[]; comboMiss: string[] };
   /** 2026-11-21 作業員M の頼み（台帳 #407）: 組が外れた番の一覧（本文なし） */
   misses: Array<{ conv: string; at: string; brain: string; takeuchi: string; kind: "AIX→返信" | "返信→AIX" | "2つ目の取りこぼし" | "その他" }>;
+  /** 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（ask-route-of.askTurnClass・audit-ask-route-takeuchi と同じ数え方）の数と、外れた会話（頭8字） */
+  ask: ReturnType<typeof askDailyCounts> & { misses: Array<{ conv: string; cls: AskTurnClass }> };
 };
 
 /** span 日（既定7日・竹内さん本人の番は1日に数番しか無い＝1日では数が揺れる）の窓で、day まで（day を含む）を数える */
@@ -79,7 +81,8 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const { data } = await sb.from("brain_decision_logs").select("id, digest").in("id", ids.slice(i, i + 200));
     for (const r of (data ?? []) as Array<{ id: string; digest: { tc?: string } | null }>) tcOf.set(r.id, r.digest?.tc ?? null);
   }
-  const out: ComboDaily & { span: number } = { day, span, n: 0, same: 0, sameRate: null, aixToReply: 0, aixToReplyByKind: {}, replyToAix: 0, secondAixMiss: 0, examples: { aixToReply: [], replyToAix: [], secondAixMiss: [], comboMiss: [] }, misses: [] };
+  const out: ComboDaily & { span: number } = { day, span, n: 0, same: 0, sameRate: null, aixToReply: 0, aixToReplyByKind: {}, replyToAix: 0, secondAixMiss: 0, examples: { aixToReply: [], replyToAix: [], secondAixMiss: [], comboMiss: [] }, misses: [], ask: { ...askDailyCounts([]), misses: [] } };
+  const askClasses: AskTurnClass[] = [];
   const push = (k: keyof ComboDaily["examples"], c: string) => { if (out.examples[k].length < 10) out.examples[k].push(c.slice(0, 8)); };
   // 申込以降は会話ごとの申込の記録でも外す（窓より前の申込の案内を拾う・審査落ち→切り替えの戻しは gate の例外のまま。作業員M・11/21 615499ba）
   const gate = new Map<string, TurnApplicationRecords>();
@@ -119,7 +122,12 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const kinds = [...new Set((t.staff_aix ?? []).map((a) => aixBundleFamily(String(a.aix_type ?? ""))).filter(Boolean))];
     const mix = tcMix(t.decision_id ? tcOf.get(t.decision_id) : null);
     if (kinds.length >= 2 && (!mix || mix.a <= 1)) { out.secondAixMiss++; push("secondAixMiss", t.conversation_id); }
+    // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（同じ番・同じ手＝次のお客様の発言で切った moves）
+    const cls = askTurnClass({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves: moves.map((m) => ({ at: m.at, aix: m.aix, text: m.text })), kinds, brainAction: t.brain_action });
+    askClasses.push(cls);
+    if (cls !== "合う" && cls !== "記録なし" && out.ask.misses.length < 20) out.ask.misses.push({ conv: t.conversation_id.slice(0, 8), cls });
   }
+  out.ask = { ...askDailyCounts(askClasses), misses: out.ask.misses };
   out.sameRate = out.n ? Math.round((out.same / out.n) * 1000) / 10 : null;
   return out;
 }
