@@ -596,16 +596,25 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let saved = false;
   if (wipeBlocked) {
     try {
+      // 2026-11-21 作業員G（#588・②・LEARN_HISTORY_SLIM=on の時だけ）: 20行の束を丸ごと読まず、shots だけで探して、返す1行だけ丸ごと読む
+      const { countLearnedSolid, learnHistorySlimOn } = await import("@/app/lib/learn-bundle-preserve");
+      const slim = learnHistorySlimOn();
       const prev = await supabase
         .from("human_learn_profile")
-        .select("bundle")
+        .select(slim ? "id,shots:bundle->shots" : "bundle")
         .eq("scope", scope)
         .order("created_at", { ascending: false })
         .limit(20);
-      const { countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
-      for (const row of prev.data || []) {
-        if (countLearnedSolid(row.bundle).solid >= 30) {
-          const keep = row.bundle as typeof bundle;
+      for (const row0 of (prev.data || []) as Array<{ id?: number; bundle?: unknown; shots?: unknown }>) {
+        const probe = slim ? { shots: row0.shots } : row0.bundle;
+        if (countLearnedSolid(probe).solid >= 30) {
+          let full: unknown = row0.bundle;
+          if (slim) {
+            const one = await supabase.from("human_learn_profile").select("bundle").eq("id", row0.id as number).maybeSingle();
+            full = (one.data as { bundle?: unknown } | null)?.bundle;
+            if (!full) continue;
+          }
+          const keep = full as typeof bundle;
           (keep as unknown as Record<string, unknown>).wipe_blocked = true;
           (keep as unknown as Record<string, unknown>).wipe_block_why = "履歴の学習を消す書き込みを拒否";
           return keep;
