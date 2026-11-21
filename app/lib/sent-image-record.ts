@@ -91,6 +91,39 @@ export async function recordSentImageProperty(opts: {
       item = { propertyName: prev.property_name, roomNumber: prev.room_no ?? "" };
       out.read = "reused";
     } else {
+      // 2026-11-21 作業員G（#461 案2）: こちらが手で送った見積書・御請求書は、受け取り時の書き起こし（messages.text）の「物件名：」で
+      //   会話の既知の物件名と照合できた時だけ記録する（LLM なし・DeepSeek に出さない＝金額・宛名の載る書類を外に出さない）。
+      //   照合できなければ記録しない。物件を送った記録（sent_properties）にはしない（見積は物件の送付ではない）。既定 off（ESTIMATE_SENT_RECORD=on）
+      {
+        const { estimateSentRecordOn, isEstimateImageText, parseEstimatePropertyRef } = await import("@/app/lib/sent-estimate-ref");
+        if (estimateSentRecordOn()) {
+          const { data: mrow } = await supabase.from("messages").select("text")
+            .eq("conversation_id", conversationId).eq("sender", "staff").like("image_url", `%${imageUrl}%`).limit(1).maybeSingle();
+          const mtext = (mrow as { text: string | null } | null)?.text ?? null;
+          if (isEstimateImageText(mtext)) {
+            const ref = parseEstimatePropertyRef(mtext);
+            let pcId0 = opts.propertyCustomerId ?? null;
+            if (!pcId0) {
+              const { data: conv0 } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+              pcId0 = (conv0 as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+            }
+            const hit = ref ? resolveReadProperty({ propertyName: ref.propertyName, roomNumber: ref.roomNo ?? "" }, await knownPropertyNames(conversationId, pcId0)) : null;
+            out.read = "not_property";
+            if (hit) {
+              out.matched = true;
+              out.propertyName = hit.propertyName;
+              out.roomNo = hit.roomNumber || null;
+              await supabase.from("sent_image_properties").upsert(
+                { image_url: imageUrl, conversation_id: conversationId, property_name: hit.propertyName, room_no: out.roomNo, source: "estimate_text", ...(channel ? { channel } : {}) },
+                { onConflict: "image_url", ignoreDuplicates: true },
+              );
+              out.sentProperties = "skipped";
+            }
+            console.log(JSON.stringify({ tag: "sent-image-record:estimate-text", conversationId, read: !!ref, matched: !!hit }));
+            return out;
+          }
+        }
+      }
       // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
       //   読み取りは DeepSeek（property_image_read）。申込中の会話で送った画像は読まない（送った直後に呼ばれる＝今の時刻で見る・読めなければ読まない）
       const { loadDeepseekCutoff, isAfterCutoff } = await import("@/app/lib/post-apply");

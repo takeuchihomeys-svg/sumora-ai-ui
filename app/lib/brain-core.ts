@@ -94,6 +94,7 @@ import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEn
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
 import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
+import { screenshotSpeakerTag } from "@/app/lib/chat-screenshot-speaker";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
@@ -2238,7 +2239,9 @@ async function analyzeConversationCore(
       const bodyText = isApplicationPayload(m.text ?? "")
         ? (m.sender === "staff" ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER)
         : (m.text ?? "（画像/添付）");
-      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}`;
+      // 2026-11-21 作業員G（#468・番16493）: お客様のやり取りのスクショは話し手の札（他社→お客様・家族とのやり取り）を付ける。既定 off（BRAIN_SCREENSHOT_SPEAKER=on）
+      const speakerTag = screenshotSpeakerTag(m.sender, m.text);
+      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}${speakerTag}`;
     };
   // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: AIX の物件の画像の束は1行にまとめる（brain-msg-window.collapseAixImageBursts）
   const historyRev = [...typedMessages].reverse();

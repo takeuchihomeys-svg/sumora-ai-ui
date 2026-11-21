@@ -269,6 +269,7 @@ import {
   SEE_MORE_LISTINGS_PREFIX, customerAsksMoreListings,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
+import { imageUnitLabel } from "@/app/lib/chat-screenshot-speaker";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
 // 2026-09-18 竹内: 社内への確認・報告になっている文は下書きとして保存しない（入力欄にも自動返信にも出さない）
 import { isNotACustomerReply } from "@/app/lib/meta-narration";
@@ -2026,7 +2027,9 @@ ${conditionKeepShapeLine("⑤", isFirstEverReply)}
   //   分割相槌骨格を誘導していた。通単位（MSG_SEP / customerMessageUnits）でのみ分割する
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文の通には「お客様の発言ではない」見出しを付け、写っている条件を質問・希望として扱わない注意を添える
   //   （SNS 広告のスクショの「ペット可」から「ペット飼育の可否確認させて頂きます」と聞かれていないことに答えた）
-  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "") : u);
+  // 2026-11-21 作業員G（#468）: やり取りのスクショは話し手（他社→お客様・家族とのやり取り）と「中の問いはこちらへの質問ではない」を見出しに
+  //   （SCREENSHOT_SPEAKER_NOTE・既定 off＝今の見出しのまま）
+  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "") : u);
   const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits).map(labelImageUnit);
   const hasImageTextUnit = customerMsgLines.some(isImageTextUnit);
   const imageTextNote = hasImageTextUnit
@@ -3429,7 +3432,7 @@ async function handleGenerateReply(req: NextRequest) {
   //   旧「【スクショ内容】」は発言でないことを伝えておらず、SNS 広告の「ペット可」を質問と読んで「ペット飼育の可否確認」を書いた
   if (!isTemplateOptimize && /\[画像\] /.test(message)) {
     message = message.split(MSG_SEP).map((u) => /^\s*\[画像\] /.test(u)
-      ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
+      ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
       : u).join(MSG_SEP);
   }
   // お客様が書いた言葉だけ（意図の判定用。画像の読み取り文の通は除く）。物件の特定（URL・スクショ）には message を使う
