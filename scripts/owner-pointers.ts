@@ -20,10 +20,15 @@ async function backfill() {
   for (const r of rows) by[r.kinds[0]] = (by[r.kinds[0]] ?? 0) + 1;
   console.log(`埋める ${rows.length}行（${since} 以降の owner_request）・主の型 ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${POINTER_KIND_JA[k as PointerKind]} ${n}`).join("・")}`);
   if (flag("dry")) return;
-  for (let i = 0; i < rows.length; i += 50) {
-    const { error: e2 } = await sb().from("owner_pointers").upsert(rows.slice(i, i + 50), { onConflict: "source,source_ref", ignoreDuplicates: true });
+  // 一意の索引は部分索引（source_ref が null でない行だけ）なので PostgREST の onConflict に使えない＝先に入っている source_ref を読んで外す
+  const { data: have } = await sb().from("owner_pointers").select("source_ref").eq("source", "work_item").limit(5000);
+  const seen = new Set(((have ?? []) as Array<{ source_ref: string }>).map((r) => r.source_ref));
+  const fresh = rows.filter((r) => !seen.has(r.source_ref));
+  for (let i = 0; i < fresh.length; i += 50) {
+    const { error: e2 } = await sb().from("owner_pointers").insert(fresh.slice(i, i + 50));
     if (e2) throw new Error(e2.message);
   }
+  console.log(`新しく ${fresh.length}行・もう入っていた ${rows.length - fresh.length}行`);
   const { count } = await sb().from("owner_pointers").select("id", { count: "exact", head: true });
   console.log(`入れた（表の行 ${count}）`);
 }
