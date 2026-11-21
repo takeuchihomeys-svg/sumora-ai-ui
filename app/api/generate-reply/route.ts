@@ -270,6 +270,7 @@ import {
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { imageUnitLabel } from "@/app/lib/chat-screenshot-speaker";
+import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
 // 2026-09-18 竹内: 社内への確認・報告になっている文は下書きとして保存しない（入力欄にも自動返信にも出さない）
 import { isNotACustomerReply } from "@/app/lib/meta-narration";
@@ -8109,7 +8110,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要
                   // 2026-09-09 Fable5: 中身はトレーラー送出前に組み立てた tpoDebug（substance / turnPair / finalCheckCodes / draftHead 等）と同一
                   // 2026-09-12 竹内方針A: suggested_aix（resolveReplyAix の出力）を同梱 → 自動経路・手動経路とも画面で同じ AIX ボタンを出す（JSONB・migrate-schema 更新不要）
-                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null, fact_grounding: factGrounding } })
+                  // 2026-11-21 作業員G（台帳 #373・本番エラー c40e1625 の残り）: ai_draft_check にも JSON で壊れる文字（絵文字の片割れ・\u0000・NaN）の守り。
+                  //   11/19〜11/20 に「ai_draft_check save error: … Empty or invalid json」が4回（generate-reply 3・generate-pending-drafts 1）。
+                  //   save-reply-example（L・b09e1748b）・判断（92b401036）と同じ sanitizeJsonForDb。直した欄はログに出す。止める DB_JSON_SANITIZE_DRAFT_CHECK=off
+                  .update({ ai_draft_check: (() => {
+                    const raw = { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null, fact_grounding: factGrounding };
+                    if ((process.env.DB_JSON_SANITIZE_DRAFT_CHECK ?? "").trim().toLowerCase() === "off") return raw;
+                    const safe = sanitizeJsonForDb(raw);
+                    if (safe.fixed) console.warn(JSON.stringify({ tag: "db-json-sanitize", where: "ai_draft_check", conversationId, paths: safe.fix.paths.slice(0, 5) }));
+                    return safe.value;
+                  })() })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {
                     if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);
