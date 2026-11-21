@@ -2,7 +2,7 @@
 //   その時の形（Vercel・Supabase のログ）: 12秒に関数の呼び出し 約130回・DB へ GET 452件（版だけの確認も束の全体を読む）・PATCH 302件（全部 同じ1行 id=1556 の read_count）
 // 実行: npx tsx app/lib/__tests__/human-learn-profile-guard.test.ts
 import { readFileSync } from "node:fs";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS, holdDaytimeRebuild } from "../human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, learnBuildAfterOn } from "../human-learn-profile-guard";
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
@@ -49,6 +49,17 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("?fresh=1 は強制 → 昼でも作る", holdDaytimeRebuild({ ...base, hour: 10, forceFresh: true }) === false);
     ok("戻す HUMAN_LEARN_DAYTIME_REBUILD=on → 昼も作る（旧の動き）", holdDaytimeRebuild({ ...base, hour: 10, env: { HUMAN_LEARN_DAYTIME_REBUILD: "on" } }) === false);
     ok("境界: 9時ちょうどは昼（保留）・22時ちょうどは夜（作る）", holdDaytimeRebuild({ ...base, hour: 9 }) === true && holdDaytimeRebuild({ ...base, hour: 22 }) === false);
+  }
+  {
+    // 2026-11-21 作業員G: 11/20 22時台の時間切れ（作り直しの要求が 60秒で切れた）→ 古い束がある時は応答の後で作り直す
+    ok("LEARN_BUILD_AFTER は既定 on", learnBuildAfterOn({}) === true && learnBuildAfterOn({ LEARN_BUILD_AFTER: "off" }) === false);
+    ok("古い束あり・普通の要求 → 応答の後で作る", buildInAfter({ hasBundle: true, forceFresh: false, env: {} }) === true);
+    ok("束が無い → その場で作る（空で返さない）", buildInAfter({ hasBundle: false, forceFresh: false, env: {} }) === false);
+    ok("?fresh=1 → その場で作る（cron・手動は作った束を受け取る）", buildInAfter({ hasBundle: true, forceFresh: true, env: {} }) === false);
+    ok("LEARN_BUILD_AFTER=off → 今まで通りその場で作る", buildInAfter({ hasBundle: true, forceFresh: false, env: { LEARN_BUILD_AFTER: "off" } }) === false);
+    const src = readFileSync("app/api/human-learn-profile/route.ts", "utf8");
+    ok("route: 作り直しを after へ回す道がある", src.includes("buildInAfter({ hasBundle: !!row, forceFresh })") && src.includes("human-learn-profile:build-after"));
+    ok("route: maxDuration 300", src.includes("export const maxDuration = 300;"));
   }
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exitCode = 1;
