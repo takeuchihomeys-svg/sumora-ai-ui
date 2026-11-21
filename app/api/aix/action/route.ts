@@ -83,7 +83,7 @@ import { extractPropertyLabels, confirmTopicForCheckPattern, extractViewingAppoi
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
 import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
 // 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」: 漢字/ひらがなの混ぜ方
-import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
+import { stripWaited, dailyGreetingRequired, aixContinuationSkip } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 import { holdReasonFromRecent } from "@/app/lib/customer-circumstances";
@@ -2315,7 +2315,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
           && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_two_person" && check_pattern !== "mgmt_occupant" && check_pattern !== "mgmt_company");
       // 必ず付ける形（aixDailyRequired）では今日の会話文で決め、挨拶は「お世話になっております」（初回は「ご連絡頂きありがとうございます」・夜にこちらから届ける連絡は夜分の文＝buildGreeting のまま）
       const dailyPhrase = aixDailyRequired && !aixTalkedToday ? (greetingPhrase || "お世話になっております！！") : greetingPhrase;
-      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: aixTalkedToday, greetingPhrase: addGreetingHere ? dailyPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
+      // 2026-11-21 作業員L（確認事項 a56a67ab「続きの番は省く」・返信の greeting.ts と同じ決まり）: 会話の続きの番は、その日最初の会話文でも挨拶を付けない（付いていれば外す）
+      const contSkip = aixContinuationSkip((Array.isArray(recent_messages) ? recent_messages : []) as Array<{ sender?: string; text?: string | null; createdAt?: string | null; rawCreatedAt?: string | null }>);
+      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: aixTalkedToday || contSkip, greetingPhrase: addGreetingHere ? dailyPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action !== "none") {
         console.log(JSON.stringify({ tag: "aix:daily-greeting", action: currentAction, conversationId, result: daily.action, staffMessagedToday }));
         sendCleaned = daily.text;
