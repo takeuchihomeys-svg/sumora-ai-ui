@@ -9,6 +9,8 @@
 //   外れに数えず「超えた候補」に並べる（竹内さんの承認の後に正解へ）。原則の見方は呼ぶ側が principleOk で渡す（無ければ普通の外れ）。
 //   KB: a62a4164③（本番の記録を試験に）・2acd77de（竹内さんの番）・e9d2303e（決定論を先に）
 
+import { aixFamilyOneOn } from "../../app/lib/aix-family";
+
 export type YardTurn = {
   scene: string | null;
   /** ブレインの道の系統（返信／確認／見積／物件／内覧…）＝ audit-prod-as-exam の aixFamily */
@@ -127,7 +129,8 @@ const TWO_STAGE_UNDONE_RE = /two_stage_promise\([a-z_]+\)[^|]*\+two_choice_narro
 export function brainFrames(brainFamily: string, decisionSource?: string | null): BrainFrames {
   const k = twoStageKindOf(decisionSource);
   if (k && brainFamily !== "返信" && yardstickTwoStageUndoneOn() && TWO_STAGE_UNDONE_RE.test(String(decisionSource ?? ""))) return { now: brainFamily, later: null };
-  if (k) return { now: "返信", later: TWO_STAGE_LATER[k] ?? (brainFamily !== "返信" ? brainFamily : null) };
+  // 2026-11-22 作業員K2（AIX_FAMILY_ONE=on の時）: 系統の名前を見張りと同じに（見積→費用）
+  if (k) { const lt = TWO_STAGE_LATER[k]; return { now: "返信", later: (lt && aixFamilyOneOn() && lt === "見積" ? "費用" : lt) ?? (brainFamily !== "返信" ? brainFamily : null) }; }
   return { now: brainFamily, later: null };
 }
 export type StaffMoveLite = { at: number; family: string };
