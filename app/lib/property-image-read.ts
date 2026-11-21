@@ -54,10 +54,14 @@ export const PROPERTY_IMAGE_MAX_TOKENS = 8000;
 //   今の読みは間取りと㎡だけで、お客様の「リビング何帖ですか」に資料から答えられなかった。IMAGE_READ_ROOMS=on（既定 off）の時だけ指示に1項目足す
 //   （off の時は指示の文が1文字も変わらない＝キャッシュも今のまま）。保存先は sent_image_properties.facts.rooms（jsonb の中・列は足さない）
 export const imageReadRoomsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.IMAGE_READ_ROOMS ?? "").trim().toLowerCase() === "on";
-export const PROPERTY_IMAGE_ROOMS_LINE = `\n- rooms: 間取り図に書かれた部屋ごとの帖数（例 [{"name":"LDK","jo":10.5},{"name":"洋室","jo":6}]。name は LDK・DK・K・洋室・和室・寝室のどれか、jo は帖の数字）。書かれていなければ []`;
+export const PROPERTY_IMAGE_ROOMS_LINE = `\n- rooms: 間取り図に書かれた部屋ごとの帖数（例 [{"name":"LDK","jo":10.5},{"name":"洋室","jo":6}]。name は LDK・DK・K・洋室・和室・寝室のどれか、jo は帖の数字）。図に帖の数字が書かれている部屋だけ入れる（数字の無い K・玄関などは入れない・広さから推測しない）。書かれていなければ []`;
 /** 物件の画像を読む指示（IMAGE_READ_ROOMS=on の時だけ部屋ごとの帖数の1行を足す） */
 export function propertyImagePrompt(env?: Record<string, string | undefined>): string {
-  let p = imageReadRoomsOn(env) ? PROPERTY_IMAGE_PROMPT.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : PROPERTY_IMAGE_PROMPT;
+  // 2026-11-21 作業員L（YUMA の読みの試し）: 説明の1行だけでは JSON の形に rooms が無く、DeepSeek が rooms を返さなかった（2枚とも欄なし）。
+  //   on の時は JSON の形の items にも "rooms":[] を足す（off は1文字も変わらない）
+  let p = imageReadRoomsOn(env)
+    ? PROPERTY_IMAGE_PROMPT.replace(`"vacancy_date":""}]`, `"vacancy_date":"","rooms":[]}]`).replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`)
+    : PROPERTY_IMAGE_PROMPT;
   if (imageReadStatusStrictOn(env)) p = p.replace("\n- vacancy_date:", `${PROPERTY_IMAGE_STATUS_STRICT_LINE}\n- vacancy_date:`);
   return p;
 }
