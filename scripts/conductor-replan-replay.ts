@@ -19,7 +19,11 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
     const F = await import("../app/lib/conductor-focus");
     const { maskPII } = await import("../app/lib/pii-mask");
     const { customerNameTokens, maskCustomerNames } = await import("../app/lib/compose-name-mask");
-    const { maskContactBits } = await import("../app/lib/conductor-turn-vectors");
+    const { maskContactBits, APPLY_DOCS_RE } = await import("../app/lib/conductor-turn-vectors");
+    // 2026-11-21 作業員M（台帳 #396・統括役の決め「本番の会話を読む台本は申込の門を通す・既定は門あり」）: conductor-our-side-replay と同じ門（申込以降の切れ目・申込の書類の通）
+    const { loadDeepseekCutoff, NO_CUTOFF } = await import("../app/lib/post-apply");
+    const { applicationMaterialReason } = await import("../app/lib/test-pii-guard");
+    let gated = 0;
     h.assertYuma(YUMA_CONVERSATION_ID, "立て直しの解き直し");
     const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
     const rows = readFileSync(arg("list"), "utf8").trim().split(";").map((x) => { const [c, fa, sa, at, bits] = x.split("|"); return { c, fa, sa, at, f: bits[0] === "1", l: bits[1] === "1", tk: bits[2] === "1" }; }).slice(0, Number(arg("max", "120")));
@@ -45,7 +49,10 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
       ]);
       const tokens = customerNameTokens([(conv as { customer_name?: string | null } | null)?.customer_name ?? null]);
       const mask = (t: string) => maskContactBits(maskPII(maskCustomerNames(t, tokens)));
-      const all = (msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string }>;
+      const cut = await loadDeepseekCutoff(sb as never, r.c);
+      if (cut === null) { gated++; continue; } // 申込中・読めない時は渡さない（ISO＝その時刻より後だけ渡す・NO_CUTOFF＝全部）
+      const all = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).filter((m) => cut === NO_CUTOFF || Date.parse(m.created_at) > Date.parse(String(cut)));
+      if (all.some((m) => APPLY_DOCS_RE.test(m.text ?? "") || applicationMaterialReason(m.text ?? ""))) { gated++; continue; }
       const lastStaff = [...all].reverse().find((m) => m.sender !== "customer" && m.created_at < r.fa && (m.text ?? "").trim());
       const cust = all.filter((m) => m.sender === "customer" && m.created_at >= r.fa);
       const first = cust.filter((m) => m.created_at < r.sa).map((m) => mask(m.text ?? "")).join("\n");
@@ -57,6 +64,7 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
       const chosen = same ? r.f : r.l;
       out.push({ c: r.c.slice(0, 8), fa: r.fa, f: r.f, l: r.l, tk: r.tk, focusFirst: a.focus, focusFull: b.focus, same, now_ok: r.l === r.tk, b_ok: chosen === r.tk, first_ok: r.f === r.tk });
     }
+    console.log(`申込の門で渡さなかった番: ${gated}`);
     const ok = out.filter((x) => !x.fail);
     const n = ok.length, nowOk = ok.filter((x) => x.now_ok).length, bOk = ok.filter((x) => x.b_ok).length;
     const fixedNow = ok.filter((x) => !x.first_ok && x.now_ok).length, brokenNow = ok.filter((x) => x.first_ok && !x.now_ok).length;
