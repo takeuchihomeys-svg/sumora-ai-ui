@@ -17,6 +17,12 @@ import { JST_OFFSET_MS, WEEKDAYS_JA, jstDayStartMs } from "./jst-date";
 
 const DAY = 86_400_000;
 type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-21 作業員L（台帳 #7・scripts/audit-timeline-coverage.ts の本番の数え: 24時間の10会話で、時の言葉10のうち記録に入ったのは2。
+ *   入らなかった8は全部ブレインが読む窓（直近20通）より前に言った言葉＝「11月上旬」「10月中」「11月末」など入居の時期が抜けていた。窓の中の言葉は 2/2）:
+ *   時系列の帳面だけ、お客様の発言を窓の外まで（直近40通・1回の軽い読み）読む。SITUATION_TIMELINE_WIDE=on の時だけ（既定 off）
+ */
+export const situationTimelineWideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_TIMELINE_WIDE ?? "").trim().toLowerCase() === "on";
 export const situationTimelineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_TIMELINE ?? "on").trim().toLowerCase() !== "off";
 // 2026-11-15 作業員L: 試験 L1115-sitm-off → L1115-sitm-tlonly（16問・3回の過半数・DeepSeek）で悪くなった問題 0・最終の道 35/45→38/48・本質の道 25/45→30/48 ＝既定 on（戻す =off）
 
