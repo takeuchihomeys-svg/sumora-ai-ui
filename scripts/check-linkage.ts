@@ -14,7 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLinkageWatch } from "../app/lib/linkage-watch-server";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
-import { runTsx } from "./lib/self-improve-growth";
+import { runTsx, appealViaToolNow } from "./lib/self-improve-growth";
+import { existsSync } from "node:fs";
+import { inOriginMain } from "./check-foundation";
 
 export type LinkWeak = { kind: "not_delivered" | "delivered_unused"; id: string; label: string; rate: number | null; owner: string; why: string };
 
@@ -45,7 +47,14 @@ export async function checkLinkage() {
   const out = join(tmpdir(), `writer-linkage-cl-${process.pid}.json`);
   try { runTsx(["scripts/audit-writer-linkage.ts", "--hours=24", "--max=60", `--json=${out}`], 180_000); fields = (JSON.parse(readFileSync(out, "utf8")).fields ?? []); } catch { /* 読めなければ地図だけ */ } finally { try { rmSync(out); } catch { /* 無し */ } }
   const owners = new Map(LINKAGE_MAP.map((r) => [r.id, r.owner ?? "-"]));
-  return weakLinksOf(rep.results, fields, (id) => owners.get(id) ?? "-");
+  const r = weakLinksOf(rep.results, fields, (id) => owners.get(id) ?? "-");
+  // 物件オススメ → 売上サポ（AIX ツール）の連携（作業員K2 の発見・台帳 #479・竹内さん 11/21）: 通っていない物件は AIX がその物件を理解できない。7日で 90% に届かなければ弱い所
+  const av = appealViaToolNow(7, (x) => existsSync(x) || inOriginMain(x));
+  if (av && av.rate != null && av.rate < 90) {
+    r.weak.push({ kind: "not_delivered", id: "appeal.via_tool", label: "物件オススメ→売上サポ（AIX ツール）", rate: av.rate, owner: "作業員K2", why: `オススメの物件のうち売上サポに同じ建物の行がある ${av.matched}/${av.n}（7日）・台帳 #479` });
+    r.weak.sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
+  }
+  return r;
 }
 
 if (process.argv[1]?.endsWith("check-linkage.ts")) checkLinkage().then((r) => {

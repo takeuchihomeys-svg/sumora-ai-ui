@@ -32,15 +32,17 @@ export function rulesFor(rows: ReadonlyArray<{ title: string; insight: string | 
   return rows.filter((r) => ((r.tags ?? []).includes(scene.tag) || (scene.titleRe ? scene.titleRe.test(r.title) : false)) && term.test(`${r.title} ${(r.insight ?? "").slice(0, 200)}`)).length;
 }
 
-async function main() {
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
+export type SceneGridRow = { id: string; name: string; owner: string; measure: "場面ごと" | "全体だけ" | "無い"; cells: Record<string, number>; all: number };
+/** 土台×場面の表を作る（設計知見の現行 P0〜P2 を1回読む・LLM なし）。foundation-fill（土台の埋まり）と self-improve からも呼ぶ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function sceneGrid(sb: any): Promise<{ scenes: string[]; grid: SceneGridRow[] }> {
   const { data, error } = await sb.from("system_design_thinking").select("id,title,insight,tags,priority").eq("is_current", true).lte("priority", 2).limit(5000);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as Array<{ id: string; title: string; insight: string | null; tags: string[] | null; priority: number | null }>;
   // 2026-11-21 統括役の決め: 場面の札が無い P0/P1 の決まり（全部の場面に効く）は別の列「全場面」に数える（場面の札を後から付けると KB の札が増えて崩れるため）
   const sceneMatch = (r: { title: string; tags: string[] | null }) => SCENES.some((sk) => (r.tags ?? []).includes(KB_SCENES[sk].tag) || ((KB_SCENES[sk] as { titleRe: RegExp | null }).titleRe?.test(r.title) ?? false));
   const allSceneRows = rows.filter((r) => (r.priority ?? 9) <= 1 && !sceneMatch(r));
-  const grid: Array<{ id: string; name: string; owner: string; measure: "場面ごと" | "全体だけ" | "無い"; cells: Record<string, number>; all: number }> = [];
+  const grid: SceneGridRow[] = [];
   for (const f of FOUNDATION_N) {
     const term = FOUNDATION_TERMS[f.id];
     const ms = f.measures.filter((m) => existsSync(m) || inOriginMain(m));
@@ -50,6 +52,12 @@ async function main() {
     const all = term ? allSceneRows.filter((r) => term.test(`${r.title} ${(r.insight ?? "").slice(0, 200)}`)).length : 0;
     grid.push({ id: f.id, name: f.name, owner: f.owner, measure, cells, all });
   }
+  return { scenes: SCENES, grid };
+}
+
+async function main() {
+  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
+  const { grid } = await sceneGrid(sb);
   if (process.argv.includes("--json")) { console.log(JSON.stringify({ scenes: SCENES, grid })); return; }
   console.log(`| 土台 | 物差し | 全場面（P0/P1） | ${SCENES.map((s) => KB_SCENES[s].tag.replace("場面:", "")).join(" | ")} | 決まりの無い場面 |`);
   console.log(`|---|---|---|${SCENES.map(() => "---").join("|")}|---|`);

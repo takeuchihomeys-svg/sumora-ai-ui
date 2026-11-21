@@ -104,3 +104,18 @@ export async function pointersOfItems(sb: SupabaseClient, items: number[]): Prom
   }
   return out;
 }
+
+/** 物件オススメが売上サポ（AIX ツール）を通っているか（作業員K2 の scripts/audit-appeal-vs-codes.ts --json・台帳 #479・竹内さん 11/21「ここもちゃんと自己改善のところにいれる」）
+ *  rate＝matched÷n（オススメの文のうち売上サポに同じ建物の行がある割合・%）・textOnly＝推しどころごとの「文に書いたのに AIX の札に無い数」。台本が無い・失敗は null */
+export function appealViaToolNow(days: number, scriptExists: (p: string) => boolean): { n: number; matched: number; rate: number | null; textOnly: Record<string, number> } | null {
+  const p = "scripts/audit-appeal-vs-codes.ts";
+  if (!scriptExists(p)) return null;
+  const out = join(tmpdir(), `appeal-vs-codes-${process.pid}-${days}.json`);
+  try {
+    runTsx([p, `--days=${days}`, "--writer=all", `--json=${out}`], 180_000);
+    const j = JSON.parse(readFileSync(out, "utf8")) as { n: number; matched: number; points?: Record<string, { both: number; text_only: number; code_only: number }> };
+    const textOnly: Record<string, number> = {};
+    for (const [k, v] of Object.entries(j.points ?? {})) if (v.text_only) textOnly[k] = v.text_only;
+    return { n: j.n, matched: j.matched, rate: j.n ? Math.round((j.matched / j.n) * 1000) / 10 : null, textOnly };
+  } catch { return null; } finally { try { rmSync(out); } catch { /* 無し */ } }
+}

@@ -18,9 +18,25 @@ import { loadTurnApplicationRecords } from "../../app/lib/turn-application-gate-
 import { turnApplicationReason, type TurnApplicationRecords } from "../../app/lib/turn-application-gate";
 
 /** 作業員M の comboMatches（scripts/lib/combo-of-moves.ts・枝 combo-fit-1121 8a893f3f5）と同じ決まり。main に入ったら import に替える */
-export function comboMatchesLocal(brain: string | null | undefined, takeuchi: string | null | undefined, o: { laterAixWithinMs?: number | null } = {}): boolean {
+// 2026-11-21 作業員M（2cb0feb7 の型）: 前の番でこちらが約束した事を果たす AIX は、この番の組に数えない（combo-of-moves の aixFulfilsPrevPromise・comboWithoutPrevFulfil の写し）
+const PREV_PROMISE_OF_LOCAL: ReadonlyArray<[RegExp, RegExp]> = [
+  [/^property_check_result/, /募集状況(?:を)?確認|空き(?:状況)?(?:を)?確認|確認させて頂きます|確認出来次第|確認でき次第/],
+  [/^(?:property_send|property_recommendation)/, /ピックアップ(?:して|させて)|お送りさせて頂きます|お探し(?:して|させて)|新着(?:で|が)/],
+  [/^estimate_sheet/, /御?見積(?:書)?(?:を)?(?:作成|お作り|お送り)/],
+];
+export function aixFulfilsPrevPromiseLocal(aixKind: string | null | undefined, prevStaffTexts: readonly string[]): boolean {
+  const row = PREV_PROMISE_OF_LOCAL.find(([kr]) => kr.test(String(aixKind ?? "")));
+  return !!row && prevStaffTexts.some((t) => row[1].test(String(t ?? "")));
+}
+export function comboWithoutPrevFulfilLocal(takeuchi: string | null | undefined): string | null {
+  if (takeuchi === "promise_then_aix_later" || takeuchi === "reply_then_aix_quick") return "reply_only";
+  if (takeuchi === "reply_only" || takeuchi === "reply_reply") return takeuchi;
+  return null;
+}
+export function comboMatchesLocal(brain: string | null | undefined, takeuchi: string | null | undefined, o: { laterAixWithinMs?: number | null; laterAixFulfilsPrev?: boolean } = {}): boolean {
   if (!brain || !takeuchi) return false;
   if (brain === takeuchi) return true;
+  if (o.laterAixFulfilsPrev) { const own = comboWithoutPrevFulfilLocal(takeuchi); if (own && own === brain) return true; }
   // 2段の1通目＝約束の返信。竹内さんの AIX が次の発言の後に来た番（48時間以内）は同じ組
   if (brain === "promise_then_aix_later" && takeuchi === "reply_only" && o.laterAixWithinMs != null && o.laterAixWithinMs <= 48 * 3_600_000) return true;
   return false;
@@ -76,7 +92,8 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const moves: Array<StaffMove & { text: string }> = [];
     for (const m of all.filter((x) => x.at > at)) { if (m.customer || m.at - at >= 86_400_000) break; moves.push(m); }
     if (!moves.length || !moves.every((m) => m.writer === "takeuchi")) continue; // 竹内さん本人の番だけ
-    const tc = takeuchiCombo(at, assignAixKinds(moves, (t.staff_aix ?? []).filter((a) => a.at && a.aix_type).map((a) => ({ at: Date.parse(String(a.at)), aixType: String(a.aix_type) }))));
+    const kinded = assignAixKinds(moves, (t.staff_aix ?? []).filter((a) => a.at && a.aix_type).map((a) => ({ at: Date.parse(String(a.at)), aixType: String(a.aix_type) })));
+    const tc = takeuchiCombo(at, kinded);
     if (!tc) continue;
     out.n++;
     const ds = t.decision_id ? src.get(String(t.decision_id)) ?? "" : "";
@@ -89,7 +106,9 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     } });
     const bc = bp?.combo ?? (route === "aix" ? "aix_only" : route === "two_stage" ? "promise_then_aix_later" : "reply_only");
     const laterAix = all.find((m) => m.aix && !m.customer && m.writer === "takeuchi" && m.at > at && m.at - at <= 48 * 3_600_000);
-    const matched = comboMatchesLocal(bc, tc, { laterAixWithinMs: laterAix ? laterAix.at - at : null });
+    const prevStaffTexts = all.filter((m) => !m.customer && m.at < at && at - m.at <= 86_400_000).map((m) => m.text);
+    const firstAixKind = kinded.find((m) => m.aix)?.aixKind ?? null;
+    const matched = comboMatchesLocal(bc, tc, { laterAixWithinMs: laterAix ? laterAix.at - at : null, laterAixFulfilsPrev: aixFulfilsPrevPromiseLocal(firstAixKind, prevStaffTexts) });
     if (matched) out.same++; else push("comboMiss", t.conversation_id);
     const sentAix = moves.some((m) => m.aix);
     const kindsM = [...new Set((t.staff_aix ?? []).map((a) => aixBundleFamily(String(a.aix_type ?? ""))).filter(Boolean))];

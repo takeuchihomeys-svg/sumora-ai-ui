@@ -20,7 +20,9 @@ import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
 import { comboDaily } from "./lib/combo-daily";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow } from "./lib/self-improve-growth";
+import { foundationFill } from "./foundation-fill";
+import { fillNotShrinking } from "./lib/foundation-fill";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 
@@ -227,6 +229,45 @@ async function main() {
     if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
     lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
   }
+  // 物件オススメが売上サポ（AIX ツール）を通っているか（作業員K2 の audit-appeal-vs-codes・台帳 #479・竹内さん 11/21「ここもちゃんと自己改善のところにいれる」・前の1日・書き手 all）
+  const av = doMetrics ? appealViaToolNow(1, (x) => existsSyncPU(x)) : null;
+  const avRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  if (av) {
+    avRows.push({ metric: "growth:pickup_via_tool", value: av.rate, n: av.n }, ...Object.entries(av.textOnly).map(([k, v]) => ({ metric: `growth:appeal_text_only:${k}`, value: v, n: av.n })));
+    // 書く日は前の日（jstDay(now-1日)）＝比べる前の日はその前の日
+    const { data: qv } = await sb.from("quality_daily").select("value").eq("day", jstDay(now - 2 * 86_400_000)).eq("metric", "growth:pickup_via_tool").eq("scope", "all").limit(1);
+    const pv = ((qv ?? []) as Array<{ value: number | null }>)[0]?.value ?? null;
+    const notUp = av.rate != null && av.n > 0 && av.rate < 100 && pv != null && av.rate <= pv;
+    lines.push(`- 物件オススメが売上サポを通った割合（前の1日・書き手 all）: ${av.rate ?? "—"}%（${av.matched}/${av.n}）｜前の日 ${pv ?? "—"}${notUp ? "｜上がっていない" : ""}｜文に書いたのに AIX の札に無い: ${Object.entries(av.textOnly).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k} ${v}`).join("・") || "—"}`);
+    if (notUp) growthFix.push(`物件オススメが売上サポ（AIX ツール）を通った割合が前の日から上がらない（${av.rate}%・前の日 ${pv}%）→ 作業員K2・台帳 #479`);
+  }
+  // 画像の種類×欄の埋まり（作業員G の scripts/image-field-fill-daily.ts・台帳 #509・前の日 JST を --write で quality_daily へ・新しい cron は足さない）
+  //   台本が手元に無い（main に入る前）の日は飛ばす。90% に届かない欄を直しの候補に
+  if (doMetrics && existsSyncPU("scripts/image-field-fill-daily.ts")) {
+    const imgDay = jstDay(now - 86_400_000);
+    try { runTsx(["scripts/image-field-fill-daily.ts", ...(flag("write") ? ["--write"] : []), `--day=${imgDay}`], 180_000); } catch { lines.push("- 画像の欄の埋まり: 台本が失敗（作業員G・台帳 #509）"); }
+    const { data: qi } = await sb.from("quality_daily").select("metric,value,n").eq("day", imgDay).like("metric", "image_fill:%").limit(500);
+    const low = ((qi ?? []) as Array<{ metric: string; value: number | null; n: number | null }>).filter((r) => r.value != null && r.value < 0.9).sort((a, b) => Number(a.value) - Number(b.value));
+    lines.push(`- 画像の欄の埋まり（${imgDay}・${(qi ?? []).length}欄）: 90% に届かない ${low.length}${low.length ? `（${low.slice(0, 6).map((r) => `${r.metric.replace("image_fill:", "")} ${Math.round(Number(r.value) * 100)}%`).join("・")}）` : ""}`);
+    if (low.length) growthFix.push(`画像の欄の埋まりが 90% に届かない ${low.length}欄（${low.slice(0, 3).map((r) => `${r.metric.replace("image_fill:", "")} ${Math.round(Number(r.value) * 100)}%`).join("・")}）→ 作業員G・台帳 #509`);
+  }
+  // 土台の埋まり（竹内さん 11/21「土台足りていない部分あればちゃんといれていき、細部までもととのえていく」・土台の統括＝作業員N・scripts/foundation-fill.ts）
+  const ff = doMetrics ? await foundationFill(sb).catch(() => null) : null;
+  const fillRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  if (ff) {
+    const T = ff.totals;
+    fillRows.push({ metric: "found:full", value: T.full, n: T.n }, { metric: "found:scene_rule_gap", value: T.sceneGap, n: T.sceneCells }, { metric: "found:scene_rule_gap_strict", value: T.sceneStrict, n: T.sceneCells }, { metric: "found:no_measure", value: T.noMeasure, n: T.n }, { metric: "found:correct_rate", value: T.correctRate, n: T.correctMeasured });
+    const { data: qf } = await sb.from("quality_daily").select("metric,value").eq("day", jstDay(now - 86_400_000)).like("metric", "found:%").limit(50);
+    const pv = (m: string) => ((qf ?? []) as Array<{ metric: string; value: number | null }>).find((r) => r.metric === m)?.value ?? null;
+    const own = (f: (typeof ff.fill)[number]) => f.cells[0]?.owner ?? "統括役";
+    lines.push(`### 土台の埋まり（欄が全部そろった ${T.full}/${T.n}・場面の決まりの空き ${T.sceneGap}/${T.sceneCells}・物差しの無い土台 ${T.noMeasure}（${T.noMeasureNames.join("・") || "—"}）・正しさ ${T.correctRate ?? "—"}%）`,
+      ...ff.fill.filter((f) => f.depth !== "—").map((f) => `- ${f.name}（${own(f)}）: 細かさの段 ${f.depth}・正しさ ${f.correctOk}/${f.correctMeasured}${f.emptyScenes.length ? `・決まりの無い場面 ${f.emptyScenes.length}` : ""}`));
+    for (const x of fillNotShrinking(T, { full: pv("found:full"), sceneGap: pv("found:scene_rule_gap"), noMeasure: pv("found:no_measure") }, {
+      sceneGap: ff.fill.filter((f) => f.cells.some((c) => c.col === "scene_rules" && !c.filled)).map(own),
+      noMeasure: ff.fill.filter((f) => f.cells.some((c) => c.col === "measures" && !c.filled)).map(own),
+      notFull: ff.fill.filter((f) => f.cells.some((c) => !c.filled)).map(own),
+    })) growthFix.push(`土台の埋まり: ${x}・表 memory/foundation_fill.md`);
+  }
   if (only === "metrics" && growthFix.length) lines.push("### 直しの候補（伸びしろが下がった・上がらない）", ...growthFix.map((x) => `- ${x}`));
   if (Object.keys(ed.features).length) lines.push(`- ピックアップの直しの中身（竹内さん）: ${Object.entries(ed.features).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・")}`);
 
@@ -270,6 +311,8 @@ async function main() {
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n }))] : []),
     ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))

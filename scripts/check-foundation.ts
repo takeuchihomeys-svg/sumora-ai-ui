@@ -42,7 +42,9 @@ export async function checkFoundation() {
     switchKnown: (s) => s in LINKAGE_SWITCH_DEFAULTS || codeText.includes(s),
   });
   const full = rows.length - gaps.length;
-  return { n: rows.length, full, score: rows.length ? Math.round((full / rows.length) * 1000) / 10 : null, gaps, tables: ["N", ...(existsSync(FOUNDATION_TABLE_DIR) ? readdirSync(FOUNDATION_TABLE_DIR).filter((x) => x.endsWith(".json")) : [])] };
+  // 2026-11-21 土台の埋まりの表（foundation-fill）が同じ行と数の有無を使う
+  const metricsSeen = rows.map((r) => r.metric).filter((m): m is string => !!m && seen.has(m));
+  return { rows, metricsSeen, n: rows.length, full, score: rows.length ? Math.round((full / rows.length) * 1000) / 10 : null, gaps, tables: ["N", ...(existsSync(FOUNDATION_TABLE_DIR) ? readdirSync(FOUNDATION_TABLE_DIR).filter((x) => x.endsWith(".json")) : [])] };
 }
 
 if (process.argv[1]?.endsWith("check-foundation.ts")) checkFoundation().then((r) => {
