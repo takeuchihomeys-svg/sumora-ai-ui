@@ -81,8 +81,16 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   //   同じ建物をお客様に送っていれば出さない（決まりどおり）。行の数で比べると食い違い36番のうち多くが「同じ物件の重複」だったので、材料と同じ数え方で数える
   const nm = (r: { row: Row }) => String(r.row.property_name ?? "").trim();
   const ownNames = new Set(sentRows.filter((r) => convId && r.row.conversation_id === convId).map(nm));
-  const dbOutside = new Set(sentRows.filter((r) => convId && !r.row.conversation_id && nm(r) && !(!String(r.row.room_no ?? "").trim() && ownNames.has(nm(r))))
-    .map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`)).size;
+  // 2026-11-21 作業員L（#17 の残り28を読んだ）: brain-core は共有のみ（source=line_group）を「新しい順に20行」取ってから1つにまとめる。
+  //   全部の行で数えると、20行の外の古い共有まで「材料に無い」に数えていた（q060: 27物件 → 新しい20行では11物件＝材料の11行と一致）。取り方も同じにする
+  const outsideRows = sentRows.filter((r) => convId && !r.row.conversation_id && r.row.source === "line_group")
+    .sort((a, b) => String(b.row.sent_at ?? "").localeCompare(String(a.row.sent_at ?? ""))).slice(0, 20);
+  //   お客様に送った物の名前は、材料と同じく property_customer_id で結んだ行（line_group 以外）も入れる。同じ 物件名|号室 を送っていれば共有は出ない
+  const ownRows = sentRows.filter((r) => r.row.source !== "line_group" && (r.row.conversation_id === convId || !!r.row.property_customer_id));
+  for (const r of ownRows) ownNames.add(nm(r));
+  const ownKeys = new Set(ownRows.map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`));
+  const dbOutside = new Set(outsideRows.filter((r) => nm(r) && !(!String(r.row.room_no ?? "").trim() && ownNames.has(nm(r))))
+    .map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`).filter((k) => !ownKeys.has(k))).size;
   const sentHead = [...b.keys()].find((k) => k.startsWith("すでに送付済みの物件"));
   const sentBlockFull = user.match(/【すでに送付済みの物件（(\d+)件）】/);
   const pSent = sentBlockFull ? Number(sentBlockFull[1]) : null;
@@ -97,7 +105,9 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const sentLines = sb.split(/\r?\n/).slice(1).filter((l) => l.trim().startsWith("・") || l.trim().startsWith("-") || /号室/.test(l));
   f.sent_props_dated = dbSent === 0 ? "none" : !sentLines.length ? "link" : sentLines.filter((l) => /<md>|\d+日前|\d+月\d+日/.test(l)).length >= sentLines.length * 0.8 ? "held" : "base";
   // 見積
-  const dbEst = (L.estimate_records ?? []).length;
+  // 2026-11-21 作業員L（#17 の残り「食い違い13」を読んだ）: 【御見積書 送付済み】は aix_usage_logs.estimate_sent=true の行から出る（材料の決まり）。
+  //   estimate_records（09/23 に始まった）だけを DB の証拠にすると、見積を同封した AIX（物件確認した＋見積など）の番を「食い違い」に数えていた
+  const dbEst = (L.estimate_records ?? []).length + (L.aix_usage_logs ?? []).filter((a) => a.row.estimate_sent === true).length;
   // 2026-11-21 作業員L: BRAIN_ESTIMATE_RECORDS（11/21 から既定 on）の塊【送った御見積書（記録・新しい順）】も「持っていた」に数える（前は古い2つの見出しだけで、連携の漏れに数えていた）
   const pEst = !!(block(b, "御見積書 送付済み") ?? block(b, "送付済み御見積書の費用情報") ?? block(b, "送った御見積書"));
   f.estimate = dbEst ? (pEst ? "held" : "link") : pEst ? "conflict" : "none";
