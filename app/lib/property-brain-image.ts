@@ -28,7 +28,24 @@ const KEY_QUESTIONS: Record<ImageWantKey, string> = {
   storage: "storage: 収納（クローゼット・押入・WIC）があるか",
   south_facing: "south_facing: 方位記号や記載から南向きと分かるか（分からなければ null）",
   floor_2_plus: "floor_2_plus: 部屋が2階以上と分かるか（1階なら false・分からなければ null）",
+  // 2026-11-21 作業員G（台帳 #477）: 問いは1つ。sheet-v8 の kitchen は「壁付け」と読んだのに間取り図に「カウンター」と書いてある物があった（166151）ので、
+  //   書き込みの文字を先に見させる。写真だけで決めさせない（9/29 の決まり: コンロの有無は写真で両向きに読み違えた）。分からなければ null
+  counter_kitchen: "counter_kitchen: キッチンがカウンターキッチン（対面式・部屋の方を向いたカウンター付き）か。間取り図や資料に「カウンター」「対面」と書いてあれば true、キッチンが壁に向かって付いている（壁付け）と図ではっきり分かれば false、図が小さい・キッチンの向きが読めない時は null",
 };
+
+/**
+ * 2026-11-21 作業員G（台帳 #477）: counter_kitchen を画像から読むか。既定 on（戻す: COUNTER_KITCHEN_IMAGE_READ=off・統括役 11/21: 判定には入らず image_facts に入るだけなので監査の行をためるため on）。
+ *   off の時は counter_kitchen を問いから外す＝今までの問いと1文字も変わらない（前置きキャッシュも今のまま）。
+ *   読んだ結果を判定に使うのは、目の監査（scripts/counter-kitchen-image-audit.ts）で誤り0を確かめてから
+ */
+export function counterKitchenImageReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COUNTER_KITCHEN_IMAGE_READ ?? "").trim().toLowerCase() !== "off";
+}
+
+/** 読む項目の最終形（スイッチが off なら counter_kitchen を外す） */
+export function imageReadKeys(keys: ImageWantKey[], env?: Record<string, string | undefined>): ImageWantKey[] {
+  return counterKitchenImageReadOn(env) ? keys : keys.filter((k) => k !== "counter_kitchen");
+}
 
 /** system は固定（DeepSeek の自動前置きキャッシュが効く）。お客様の情報は入れない */
 export const PROPERTY_BRAIN_IMAGE_SYSTEM =
@@ -64,7 +81,8 @@ export type ImageReadResult = { facts: ImageFacts | null; ms: number; model: str
  * 1枚読む。失敗は facts=null（呼び出し側は判定を変えない）。
  * 費用は llm_usage_logs に action="property_brain_image" で残す（recordAltUsage・記録の失敗で本処理を止めない）。
  */
-export async function readFloorPlanFacts(imageUrl: string, keys: ImageWantKey[], opts?: { timeoutMs?: number }): Promise<ImageReadResult> {
+export async function readFloorPlanFacts(imageUrl: string, keysIn: ImageWantKey[], opts?: { timeoutMs?: number }): Promise<ImageReadResult> {
+  const keys = imageReadKeys(keysIn);
   const startedAt = Date.now();
   const model = (process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
   if (!/^https?:\/\//.test(imageUrl) || keys.length === 0) return { facts: null, ms: 0, model };
