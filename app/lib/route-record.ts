@@ -9,6 +9,7 @@
 import { ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
 import { SUBSTATES, DEPTH_JA, type Substate, type Plant } from "./apply-route-substate";
 import type { PlantFact } from "./next-move-detail";
+import { SUBSTATE_PHRASING, type SubstatePhrasing } from "./route-substate-phrasing";
 
 type Env = Record<string, string | undefined>;
 export function applyRouteRecordOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -62,11 +63,16 @@ export const PLANT_TO_FACT: Readonly<Record<Plant, PlantFact | null>> = {
  *   （proposing_liked_one 29%・cost_over_budget 43%・brought_vacancy は仕込み 29%）＝使わない。⚠ 198通は表を作った元の番（甘く出る）・夜に別の番で測り直す
  *   ROUTE_SUBSTATE_ALLOW=<id,id> で置き換える（"all" で全部）
  */
-export const SUBSTATE_ALLOW_DEFAULT: readonly string[] = ["proposing_considering", "apply_screening_worry", "apply_intent"];
+// 2026-11-21 夜 作業員M（DeepSeek の割り当て l1・竹内さんの番 500・測る半分 270番で測り直し）: 当たり（網が言ったうち正しい割合）が7割以上の状態だけ。
+//   1版の網: proposing_considering 75%・apply_intent 100%・cost_installment 100%（apply_screening_worry は 31%＝198通の数えより大きく下がったので外す）
+//   2版の網（ROUTE_SUBSTATE_NET_V2=on）: hearing_many_conditions 98%（46番）・proposing_considering 90%・viewing_dates 71%・cost_installment 100%・apply_intent 100%
+//   （brought_vacancy 61%・apply_screening_worry 57%・proposing_liked_one 43%・cost_over_budget 33%・proposing_detail_question 29% は外す）
+export const SUBSTATE_ALLOW_DEFAULT: readonly string[] = ["proposing_considering", "apply_intent", "cost_installment"];
+export const SUBSTATE_ALLOW_DEFAULT_V2: readonly string[] = ["hearing_many_conditions", "proposing_considering", "viewing_dates", "cost_installment", "apply_intent"];
 export function substateUsable(s: Pick<Substate, "id" | "few">, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   const allowRaw = (env.ROUTE_SUBSTATE_ALLOW ?? "").trim();
   if (allowRaw.toLowerCase() !== "all") {
-    const allow = allowRaw ? allowRaw.split(",").map((x) => x.trim()).filter(Boolean) : SUBSTATE_ALLOW_DEFAULT;
+    const allow = allowRaw ? allowRaw.split(",").map((x) => x.trim()).filter(Boolean) : (env.ROUTE_SUBSTATE_NET_V2 ?? "").trim().toLowerCase() === "on" ? SUBSTATE_ALLOW_DEFAULT_V2 : SUBSTATE_ALLOW_DEFAULT;
     if (!allow.includes(s.id)) return false;
   }
   const deny = new Set((env.ROUTE_SUBSTATE_DENY ?? "").split(",").map((x) => x.trim()).filter(Boolean));
@@ -79,6 +85,8 @@ export type RouteBriefSection = {
   substate: { id: string; label: string; n: number; few: boolean; at_match: boolean; usable: boolean } | null;
   turn_aim: string | null; mid_aim: string | null; long_aim: string | null;
   plants: PlantFact[]; depth: 1 | 2 | 3 | null; depth_why: string | null;
+  /** 2026-11-21 夜（#467 の (3)）: 竹内さんのその状態の言い回しの型と潜在の4つ（route-substate-phrasing・使える状態の時だけ） */
+  phrasing?: SubstatePhrasing | null;
 };
 const o2 = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const s2 = (v: unknown, n: number): string | null => (typeof v === "string" && v.trim() ? Array.from(v.trim()).slice(0, n).join("") : null);
@@ -100,6 +108,7 @@ export function routeBriefSection(meta: Record<string, unknown> | null | undefin
     plants: use ? use.plants.map((p) => PLANT_TO_FACT[p]).filter((x): x is PlantFact => !!x) : [],
     depth: use ? use.depth : null,
     depth_why: use ? `${DEPTH_JA[use.depth]}（${use.depthWhy.slice(0, 40)}）` : null,
+    phrasing: use ? SUBSTATE_PHRASING[use.id] ?? null : null,
   };
 }
 /** 書き手（AIX の2通目は作業員L の AIX_SECOND_DECIDED の塊から呼ぶ想定）へ渡す1塊・値のまま・状態が使えない番は空 */
