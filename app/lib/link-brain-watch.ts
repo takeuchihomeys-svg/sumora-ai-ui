@@ -281,8 +281,8 @@ const brainSecond: Reader = {
       if (log?.aix_type !== "property_check_result") continue;
       // 2026-10-28 調べ（④の切れ＝10/23 未来穂さん）: AIX の記録が「開いただけ」（sent_at・本文なし・07:59）で、実際の送信（答え「celeste東中島 504号室、
       //   現在募集中」）は10分後の 08:09 だった＝5分の窓の外で「2通目に約束の中身が無い」と数えていた。本文の無い記録の時は30分まで見る
-      //   （LINK_WATCH_SECOND_WIDE=on の時だけ・既定 off）
-      const wide = (process.env.LINK_WATCH_SECOND_WIDE ?? "").toLowerCase() === "on" && !log?.generated_text && !log?.sent_at;
+      //   （LINK_WATCH_SECOND_WIDE・2026-11-21 統括役の決めで既定 on＝止める =off。毎晩の見張りの数えを広げるだけで外へ何も送らない＝試験しない）
+      const wide = (process.env.LINK_WATCH_SECOND_WIDE ?? "").trim().toLowerCase() !== "off" && !log?.generated_text && !log?.sent_at;
       const follow = input.messages.filter((m) => m.sender !== "customer" && ms(m.created_at) >= at - 60_000 && ms(m.created_at) <= at + (wide ? 30 : 5) * 60_000).map((m) => m.text ?? "").join("\n");
       const body = `${log?.generated_text ?? ""}\n${follow}`;
       const ok = words.some((x) => body.includes(x));

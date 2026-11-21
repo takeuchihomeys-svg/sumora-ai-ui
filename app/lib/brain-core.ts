@@ -94,6 +94,7 @@ import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEn
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
 import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
+import { screenshotSpeakerTag } from "@/app/lib/chat-screenshot-speaker";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
@@ -507,6 +508,8 @@ export type SuggestedAixMeta = {
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
   cancel_wide_shadow?: boolean;
+  /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state */
+  material_marks?: Record<string, number>;
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
@@ -2236,7 +2239,9 @@ async function analyzeConversationCore(
       const bodyText = isApplicationPayload(m.text ?? "")
         ? (m.sender === "staff" ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER)
         : (m.text ?? "（画像/添付）");
-      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}`;
+      // 2026-11-21 作業員G（#468・番16493）: お客様のやり取りのスクショは話し手の札（他社→お客様・家族とのやり取り）を付ける。既定 off（BRAIN_SCREENSHOT_SPEAKER=on）
+      const speakerTag = screenshotSpeakerTag(m.sender, m.text);
+      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}${speakerTag}`;
     };
   // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: AIX の物件の画像の束は1行にまとめる（brain-msg-window.collapseAixImageBursts）
   const historyRev = [...typedMessages].reverse();
@@ -3308,7 +3313,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
-    // 2026-11-21 作業員K2（#132・q439）: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
+    // 2026-11-21 竹内さんの決定で1行を「探す約束の返信→次は AIX（2段:pickup）・資料の答えは事実だけ」に直した（equipment-question.equipmentWishBrainLine）。以下は前の経緯: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
     if (equipmentAnswer.question.wish) customerStateBlockText += `\n${equipmentWishBrainLine(equipmentAnswer.plan)}`;
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
@@ -3595,10 +3600,12 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   // 2026-10-13 竹内さん「確認の約束への了承の返事（受けだけか待ちの形の1文か）はブレインに任せる」: 答えでなく竹内さんの使い分けの材料を渡し、
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
+  // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
+  const materialMarks: Record<string, number> = {};
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
-      if (ackLine) customerStateBlockText += `\n\n${ackLine}`;
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -3669,7 +3676,17 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         const since = new Date(Date.now() - 72 * 36e5).toISOString();
         const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at")
           .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
-        const items = pw.pickupWhyOf((pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[], { nowMs: Date.now() });
+        let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
+        // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
+        const sj = await import("@/app/lib/sip-judge");
+        if (sj.sipJudgeOn() && pcResult.data) {
+          const { data: sipRows } = await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
+            .eq("conversation_id", conversationId).not("facts", "is", null).gte("created_at", since).order("created_at", { ascending: false }).limit(20);
+          const have = new Set(whyRows.map((r) => String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, "")));
+          const extra = sj.judgeSips(((sipRows ?? []) as import("@/app/lib/sip-judge").SipLike[]).filter((r) => !have.has(String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, ""))), pcResult.data as import("@/app/lib/property-brain").CustomerLike, 3);
+          whyRows = [...whyRows, ...extra.map((j) => ({ property_name: j.property_name, room_no: j.room_no, recommended: 0, score: j.score, reason_codes: j.reason_codes, sent_at: ((sipRows ?? []) as Array<{ property_name: string | null; created_at: string }>).find((r) => r.property_name === j.property_name)?.created_at ?? new Date().toISOString() }))];
+        }
+        const items = pw.pickupWhyOf(whyRows, { nowMs: Date.now() });
         const line = pw.pickupWhyLine(items);
         if (line) customerStateBlockText += `\n${line}`;
         console.log(JSON.stringify({ tag: "brain:pickup-why", conversationId, rows: (pwRows ?? []).length, items: items.length, chars: line.length }));
@@ -3701,7 +3718,7 @@ ${sh}`;
   }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
-    if (nf) customerStateBlockText += `\n${nf}`;
+    if (nf) { customerStateBlockText += `\n${nf}`; materialMarks.now_fulfillable = nf.length; }
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
@@ -3849,7 +3866,7 @@ ${sh}`;
         const asc = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.created_at }));
         const marks = SF.staleStrategyMarks({ cs: opts.strategy.closing_strategy, csAt: opts.strategy.strategy_msg_ts ?? null, messages: asc, knownNames: sentProps.map((p) => p.property_name ?? "").filter(Boolean) });
         const sl = SF.staleStrategyLine(marks);
-        if (sl) customerStateBlockText += `\n\n${sl}`;
+        if (sl) { customerStateBlockText += `\n\n${sl}`; materialMarks.topic_state = marks.length; }
         console.log(JSON.stringify({ tag: "brain:strategy-stale", conversationId, marks: marks.map((m) => `${m.kind}:${m.name ?? "-"}`) }));
       }
     } catch (e) { console.warn("[brain-core] strategy-stale skipped:", e instanceof Error ? e.message : String(e)); }
@@ -3929,7 +3946,15 @@ ${sh}`;
     const stl = await import("@/app/lib/situation-timeline");
     if (stl.situationTimelineOn() && conversationId) {
       const { data: cal } = await supabase.from("calendar_events").select("title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: true }).limit(40);
-      const custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      let custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      // 2026-11-21 作業員L（SITUATION_TIMELINE_WIDE・既定 off）: 窓の外で言った時の言葉（入居の時期など）も帳面に（お客様の発言 40通を1回読む・失敗は今の窓のまま）
+      if (stl.situationTimelineWideOn()) {
+        try {
+          const { data: wide } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer").order("created_at", { ascending: false }).limit(40);
+          const w = ((wide ?? []) as Array<{ text: string | null; created_at: string }>).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+          if (w.length > custMsgs.length) custMsgs = w;
+        } catch { /* 今の窓のまま */ }
+      }
       situationTimelineRec = stl.buildTimeline({ customerMsgs: custMsgs, calendar: (cal ?? []) as never, nowMs: Date.now() });
       const tb = stl.timelineBlock(situationTimelineRec, Date.now());
       if (tb) customerStateBlockText += tb;
@@ -6956,6 +6981,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
+      // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）

@@ -269,6 +269,7 @@ import {
   SEE_MORE_LISTINGS_PREFIX, customerAsksMoreListings,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
+import { imageUnitLabel } from "@/app/lib/chat-screenshot-speaker";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
 // 2026-09-18 竹内: 社内への確認・報告になっている文は下書きとして保存しない（入力欄にも自動返信にも出さない）
 import { isNotACustomerReply } from "@/app/lib/meta-narration";
@@ -2026,7 +2027,9 @@ ${conditionKeepShapeLine("⑤", isFirstEverReply)}
   //   分割相槌骨格を誘導していた。通単位（MSG_SEP / customerMessageUnits）でのみ分割する
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文の通には「お客様の発言ではない」見出しを付け、写っている条件を質問・希望として扱わない注意を添える
   //   （SNS 広告のスクショの「ペット可」から「ペット飼育の可否確認させて頂きます」と聞かれていないことに答えた）
-  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "") : u);
+  // 2026-11-21 作業員G（#468）: やり取りのスクショは話し手（他社→お客様・家族とのやり取り）と「中の問いはこちらへの質問ではない」を見出しに
+  //   （SCREENSHOT_SPEAKER_NOTE・既定 off＝今の見出しのまま）
+  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "") : u);
   const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits).map(labelImageUnit);
   const hasImageTextUnit = customerMsgLines.some(isImageTextUnit);
   const imageTextNote = hasImageTextUnit
@@ -3429,7 +3432,7 @@ async function handleGenerateReply(req: NextRequest) {
   //   旧「【スクショ内容】」は発言でないことを伝えておらず、SNS 広告の「ペット可」を質問と読んで「ペット飼育の可否確認」を書いた
   if (!isTemplateOptimize && /\[画像\] /.test(message)) {
     message = message.split(MSG_SEP).map((u) => /^\s*\[画像\] /.test(u)
-      ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
+      ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
       : u).join(MSG_SEP);
   }
   // お客様が書いた言葉だけ（意図の判定用。画像の読み取り文の通は除く）。物件の特定（URL・スクショ）には message を使う
@@ -5712,12 +5715,14 @@ async function handleGenerateReply(req: NextRequest) {
           const w = await import("@/app/lib/compose-plan-watch");
           if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
           const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
-          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const [{ handoffLeaks, handoffCarried }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
           const d = dc.deliveryCheckOf(meta0);
           const sv = ds.subValuesOf(meta0);
           noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
             digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
-            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+            // 2026-11-21 作業員M（#483）: 役目ごとの注記を別に控える（連携の地図 conductor.compose_roles の値の来る所）
+            rolesNote: composeSentencePlan?.rowsV2 ? (briefRolesNote(composeSentencePlan.rowsV2, brainMeta) || null) : null,
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], carried: handoffCarried(meta0, composeSentencePlan?.note ?? ""), delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
           }) as unknown as Record<string, unknown>);
         } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
       })();

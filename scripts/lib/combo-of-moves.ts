@@ -40,3 +40,47 @@ export function takeuchiCombo(turnAt: number, moves: readonly StaffMove[]): Send
   if (b && b.aix && b.at - a.at <= 10 * 60_000) return "aix_then_aix";
   return "aix_only";
 }
+
+/**
+ * 2026-11-21 作業員M（台帳 #407・統括役の頼み・作業員N の組の一致の毎日の数 11/19 まで14日・竹内さん本人の番 31・外れ 17）:
+ *   外れ 17 を軽く読んだら 11 は数え方の側だった（表に足りない組は無かった）:
+ *     ① 2段（約束の返信→後で AIX）を竹内さんの「返信だけ」と数えた 4（9faff2ec×2・6c9dd6b7×2）: 竹内さんの AIX はお客様の次の発言の後（約24時間以内）に来ていた＝
+ *        takeuchiCombo はお客様の次の発言で切るので、2段の1通目しか見えない → laterAixWithinMs の間に竹内さんの AIX があれば同じ組と数える
+ *     ② ブレインの組の手がかりに AIX の種類・条件ヒアリング・問いの数が入っていなかった 6（物件を送る 3・見積書 1・条件ヒアリング 1・2つの問い 1）＝
+ *        本番の comboCuesFromMeta は aixKind・hearing・multiTopics を入れる（数える側の pickSendCombo の手がかりを本番にそろえる＝作業員N の combo-daily）
+ *     ③ 同じ物件確認した の AIX が2分空いて続いた 1（a8c55dde）＝種類が付けば束になる（assignAixKinds の記録の時刻の窓）
+ *   残り 6 は返信か AIX かの判断の外れ（台帳 #405 の線・今夜）: 615499ba 申込へ→返信／2d7548d5 結果が手元なのに2段／2cb0feb7・0330a81a・a8c55dde 10:59 返信→AIX／65c2df5b
+ */
+/**
+ * 2026-11-21 作業員M（台帳 #405 の入口の表・2cb0feb7 の型・統括役の頼み）: 前の番でこちらが約束した事を果たす AIX は、この番の組に数えない。
+ *   例 2cb0feb7: こちら「募集状況確認させて頂きます」「ピックアップしてお送りさせて頂きます」→お客様「ご協力ありがとうございます」→竹内さん「確認出来次第ご連絡」→1時間後に AIX【物件確認した】【物件を送る】
+ *   ＝この番の竹内さんの手は返信だけ。後の AIX は前の番の約束の果たし（この番の判断ではない）。
+ *   判定は語の網（前の番のこちらの通の約束の語 × AIX の種類の仲間）。数え方だけで本番の動きは変えない。
+ */
+const PREV_PROMISE_OF: ReadonlyArray<[RegExp, RegExp]> = [
+  [/^property_check_result/, /募集状況(?:を)?確認|空き(?:状況)?(?:を)?確認|確認させて頂きます|確認出来次第|確認でき次第/],
+  [/^(?:property_send|property_recommendation)/, /ピックアップ(?:して|させて)|お送りさせて頂きます|お探し(?:して|させて)|新着(?:で|が)/],
+  [/^estimate_sheet/, /御?見積(?:書)?(?:を)?(?:作成|お作り|お送り)/],
+];
+/** この番の後の AIX（種類）が、番より前のこちらの通（prevStaffTexts）の約束を果たす物か */
+export function aixFulfilsPrevPromise(aixKind: string | null | undefined, prevStaffTexts: readonly string[]): boolean {
+  const k = String(aixKind ?? "");
+  const row = PREV_PROMISE_OF.find(([kr]) => kr.test(k));
+  if (!row) return false;
+  return prevStaffTexts.some((t) => row[1].test(String(t ?? "")));
+}
+/** 竹内さんの組から「前の番の約束を果たす AIX」を除いた組（この番の手だけ）。除くと返信が無い組は null（この番の手が無い） */
+export function comboWithoutPrevFulfil(takeuchi: SendCombo | null | undefined): SendCombo | null {
+  if (takeuchi === "promise_then_aix_later" || takeuchi === "reply_then_aix_quick") return "reply_only";
+  if (takeuchi === "reply_only" || takeuchi === "reply_reply") return takeuchi;
+  return null;
+}
+export function comboMatches(brain: SendCombo | null | undefined, takeuchi: SendCombo | null | undefined, o: { laterAixWithinMs?: number | null; laterAixFulfilsPrev?: boolean } = {}): boolean {
+  if (!brain || !takeuchi) return false;
+  if (brain === takeuchi) return true;
+  // 竹内さんの AIX が前の番の約束を果たす物なら、この番の組はその AIX を除いた物で比べる（除いて手が無ければ比べない＝一致にしない）
+  if (o.laterAixFulfilsPrev) { const own = comboWithoutPrevFulfil(takeuchi); if (own && own === brain) return true; }
+  // 2段の1通目＝約束の返信。竹内さんの AIX が次の発言の後に来た番は同じ組（約束を果たした先が見えている時だけ）
+  if (brain === "promise_then_aix_later" && takeuchi === "reply_only" && o.laterAixWithinMs != null && o.laterAixWithinMs <= 48 * 3_600_000) return true;
+  return false;
+}

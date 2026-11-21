@@ -43,20 +43,38 @@ export function candsFromImageRecords(rows: ReadonlyArray<ImageRecordRow>): Name
     .map((r) => ({ name: r.property_name, room: r.room_no && r.room_no.trim() ? r.room_no : null, via: `image_record:${r.name_via ?? "?"}` }));
 }
 
+/**
+ * 2026-11-21 作業員K2（台帳 #471）: お客様の文が、こちらが前に送った物件の名前をそのまま出している時の候補（4文字以上の名前・号室は文に同じ号室がある時だけ）。
+ *   30日の物件名が空の物件確認した 21番では、お客様の文が送った物件を1件だけ名指ししていた番が 1（画像・URL の持ち込みの候補とは別）。
+ */
+export function candsFromNamedOurs(customerTexts: ReadonlyArray<string | null | undefined>, ours: ReadonlyArray<{ property_name: string | null; room_no: string | null }>): NameCand[] {
+  const text = customerTexts.map((t) => String(t ?? "")).join("\n").normalize("NFKC").replace(/[\s　]/g, "");
+  const out: NameCand[] = [];
+  for (const o of ours) {
+    const n = String(o.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, "");
+    if (n.length < 4 || !text.includes(n)) continue;
+    const r = roomKey(o.room_no);
+    out.push({ name: o.property_name, room: r && new RegExp(`${r}(?:号室|号)`).test(text) ? o.room_no : null, via: "customer_named_ours" });
+  }
+  return out;
+}
+
 // ── DB の口（サーバーで使う・72時間のお客様の持ち込み） ──────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
 export async function loadCheckNameFill(sb: SupabaseClient, conversationId: string, atIso: string, hours = 72): Promise<{ name: string; room: string | null; via: string } | null> {
   const at = Date.parse(atIso);
   const from = new Date(at - hours * 36e5).toISOString(), to = new Date(at).toISOString();
-  const [mq, iq] = await Promise.all([
+  const [mq, iq, sq] = await Promise.all([
     sb.from("messages").select("sender, text, image_type, created_at").eq("conversation_id", conversationId).gte("created_at", from).lte("created_at", to).order("created_at").limit(300),
     sb.from("customer_image_records").select("property_name, room_no, certainty, kind, ours_kind, name_via").eq("conversation_id", conversationId).gte("created_at", from).lte("created_at", to).limit(50),
+    sb.from("sent_properties").select("property_name, room_no").eq("conversation_id", conversationId).lte("sent_at", to).order("sent_at", { ascending: false }).limit(60),
   ]);
   const { collectCustomerSentProperties } = await import("./customer-sent-property");
   const { items } = collectCustomerSentProperties((mq.data ?? []) as never, { limit: 10 });
   const cands: NameCand[] = [
     ...items.map((x) => ({ name: x.name, room: null, via: `customer_sent:${x.source}` })),
     ...candsFromImageRecords((iq.data ?? []) as ImageRecordRow[]),
+    ...candsFromNamedOurs(((mq.data ?? []) as Array<{ sender: string; text: string | null }>).filter((m) => m.sender === "customer").map((m) => m.text), (sq.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>),
   ];
   return resolveCheckPropertyName(cands);
 }

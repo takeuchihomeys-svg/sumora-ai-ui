@@ -14,7 +14,8 @@
 // ⚠ 入れるのは欄の名前・操作の種類・時刻・位置の割合だけ。入力した中身は入れない。
 //
 // 実行: ?dry=1 で記録しない／?days=30 で期間を変える
-export const maxDuration = 60;
+// 2026-11-21 作業員G: 11/20 22時台に束の作り直し（>60秒）で時間切れ → 300秒（Vercel の既定の上限）
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";

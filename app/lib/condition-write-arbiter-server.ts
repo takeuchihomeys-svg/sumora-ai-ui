@@ -30,6 +30,14 @@ export async function applyConditionWriteArbiter(
       current: args.current, updates: args.updates, history: rows, messageAtOf: (id) => at.get(id),
     });
     if (r.skipped.length) {
+      // 2026-11-21 作業員M（台帳 #482・統括役の決め: 新しい表は作らず今ある記録に印・記録だけなので既定 on）: 止めた欄＝条件の更新の案を見張りの行
+      //   （line_watch_turns.materials.brain.condition_suggest）に残す＝連携の地図 staff.condition_suggest の値の来る所。値は条件の語を30字まで（名前・連絡先の欄は条件に無い）
+      if (args.convId) {
+        try {
+          const { noteWatchMaterials } = await import("@/app/lib/line-watch-materials-server");
+          noteWatchMaterials(args.convId, "brain", "condition_suggest", { mode, writer: args.writer, fields: r.skipped.slice(0, 8).map((x) => ({ field: x.field, against: x.against?.writer ?? null, proposed: String(args.updates[x.field] ?? "").slice(0, 30) })) });
+        } catch { /* 記録の失敗で本処理を止めない */ }
+      }
       // 止めた欄＝「条件の更新の案」（画面に出すのは aix_feature_suggestions の案が通ってから）
       console.log(JSON.stringify({
         tag: mode === "on" ? "condition-arbiter:skip" : "condition-arbiter:shadow", convId: args.convId ?? null, customerId: args.customerId, writer: args.writer,

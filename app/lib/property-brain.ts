@@ -126,7 +126,9 @@ export type FloorPlanWant = {
 };
 
 /** 画像（間取り図）でしか分からない希望。true/false/null（読めない） */
-export type ImageWantKey = "bath_toilet_separate" | "separate_washstand" | "storage" | "south_facing" | "floor_2_plus";
+/** counter_kitchen: 2026-11-21 作業員G（竹内さん「カウンターキッチンを画像から読み取るようにして判定する」・台帳 #477・K2 と置き場をそろえた）。
+ *   読むのは COUNTER_KITCHEN_IMAGE_READ=on の時だけ（property-brain-image.ts）。判定に使うのは目の監査で誤り0を確かめてから */
+export type ImageWantKey = "bath_toilet_separate" | "separate_washstand" | "storage" | "south_facing" | "floor_2_plus" | "counter_kitchen";
 export type ImageFacts = Partial<Record<ImageWantKey, boolean | null>>;
 
 export type CustomerLike = {
@@ -1908,6 +1910,7 @@ export function computeAdYen(f: PropertyFacts): number | null {
 /** 画像（間取り図）で確かめる希望 → 資料の設備欄のキー（設備欄で決まった物は画像で二重に数えない） */
 const IMAGE_TO_EQUIP: Partial<Record<ImageWantKey, EquipKey>> = {
   bath_toilet_separate: "bath_toilet", separate_washstand: "washbasin", south_facing: "south", floor_2_plus: "floor2",
+  counter_kitchen: "counter_kitchen",
 };
 
 /**

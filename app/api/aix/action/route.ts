@@ -180,6 +180,7 @@ import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-for
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
 import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote , pickupSendForm1028On, pickupSendFormNote } from "@/app/lib/pickup-focus";
 import { pickupLine1121On, pickupInviteNote1121, pickupInviteRule1121, stripDatedInviteLines, searchedConditionsAddendum1121 } from "@/app/lib/pickup-line-1121";
+import { equipWishPickupOn, latestEquipWishTopics, equipWishPickupNote } from "@/app/lib/equip-wish-pickup";
 import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
 import { estimateImageRoleOn, estimateRoleUrls, estimateRoleRows } from "@/app/lib/estimate-image-role";
 
@@ -3953,6 +3954,8 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           // 2026-10-28 PICKUP_SEND_FORM_1028（既定 off）: 竹内さんの型・お客様の言葉で答える・お詫びの前置きを入れない
           pickupSendForm1028On() ? pickupSendFormNote({ recentCustomerTexts: (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null) }) : "",
           pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(conditionsInfo, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
+          // 2026-11-21 作業員K2（EQUIP_WISH_PICKUP・既定 off）: お客様が直前に言った設備の希望を②の軸に（約束の後のピックアップ・app/lib/equip-wish-pickup.ts）
+          equipWishPickupOn() ? equipWishPickupNote(latestEquipWishTopics((Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null))) : "",
           keywordRule.trim(),
           sendNowBlock,
           threadsBlock,
@@ -4307,6 +4310,8 @@ ${aixPropertySendRules}
         // 2026-10-28 owner-fb:1015-pickup-focus（PICKUP_FOCUS_ONE・既定 off）: ②の条件はエリア＋一番のこだわり1つまで（下書き 2.9 区切り → 竹内さん 1.3）
         pickupSendForm1028On() ? pickupSendFormNote({ recentCustomerTexts: (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null) }) : "",
         pickupFocusOneEnabled() ? pickupFocusNote(pickupFocusCandidates(typeof customer_conditions === "string" ? customer_conditions : null, (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-10).map((m) => m?.text ?? null))) : "",
+        // 2026-11-21 作業員K2（EQUIP_WISH_PICKUP・既定 off）: お客様が直前に言った設備の希望を②の軸に（約束の後のピックアップ・app/lib/equip-wish-pickup.ts）
+        equipWishPickupOn() ? equipWishPickupNote(latestEquipWishTopics((Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null))) : "",
       ].filter(Boolean).join("\n\n");
       const sendDynamic = [
         sendContextBlock,

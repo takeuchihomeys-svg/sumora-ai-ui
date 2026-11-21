@@ -8,8 +8,8 @@ import { PLAN_KEYS } from "./lib/exam-plan-keys";
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 
-t("既定 off（WATCH_COMPOSE_PLAN・MATERIAL_ON_HAND）", () => {
-  assert.equal(watchComposePlanOn({}), false); assert.equal(watchComposePlanOn({ WATCH_COMPOSE_PLAN: "on" }), true);
+t("既定（WATCH_COMPOSE_PLAN は 11/21 から on・MATERIAL_ON_HAND は off）", () => {
+  assert.equal(watchComposePlanOn({}), true); assert.equal(watchComposePlanOn({ WATCH_COMPOSE_PLAN: "off" }), false);
   assert.equal(materialOnHandMode({}), "off"); assert.equal(materialOnHandMode({ MATERIAL_ON_HAND: "shadow" }), "shadow");
 });
 

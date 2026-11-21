@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/check-name-fill.test.ts
 // 2026-11-21 作業員K2: 物件名が空の物件確認した を、お客様の持ち込みが1件に決まる時だけ埋める（CHECK_NAME_FILL・既定 off）
 import assert from "node:assert/strict";
-import { checkNameFillOn, resolveCheckPropertyName, candsFromImageRecords, filledLabel } from "../check-name-fill";
+import { checkNameFillOn, resolveCheckPropertyName, candsFromImageRecords, candsFromNamedOurs, filledLabel } from "../check-name-fill";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -26,5 +26,13 @@ t("customer_image_records は G の線だけ（確かさ・種類・こちらが
   ];
   const c = candsFromImageRecords(rows);
   assert.equal(c.length, 1); assert.equal(c[0].name, "物件A"); assert.equal(c[0].room, null);
+});
+t("お客様の文が送った物件を名指し（#471）: 号室は文に同じ号室がある時だけ・短い名前は使わない", () => {
+  const ours = [{ property_name: "グランパレス本町", room_no: "1203" }, { property_name: "物件B", room_no: "101" }, { property_name: "ルミエール梅田", room_no: "502" }];
+  const c = candsFromNamedOurs(["グランパレス本町の1203号室はまだ空いてますか"], ours);
+  assert.equal(c.length, 1); assert.equal(c[0].room, "1203");
+  assert.equal(candsFromNamedOurs(["グランパレス本町って駐車場ありますか"], ours)[0].room, null);
+  assert.equal(candsFromNamedOurs(["物件Bはどうですか"], ours).length, 0);
+  assert.equal(resolveCheckPropertyName(candsFromNamedOurs(["グランパレス本町とルミエール梅田で迷ってます"], ours)), null);
 });
 console.log(`${n} ok`);

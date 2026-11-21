@@ -31,7 +31,8 @@ import { thinkAsSupervisor, supervisorMaterialText } from "@/app/lib/learn-super
 
 export const dynamic = "force-dynamic";
 /** ⚠ LLM の思考に 29.6秒かかる（実測）。既定の10秒では切れる。 */
-export const maxDuration = 60;
+// 2026-11-21 作業員G: 11/20 22時台に束の作り直し（>60秒）で時間切れ → 300秒（Vercel の既定の上限）
+export const maxDuration = 300;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

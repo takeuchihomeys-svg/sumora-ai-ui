@@ -29,6 +29,22 @@ export const LEARN_BUILD_MIN_GAP_MS = 5 * 60_000;
  *   ⚠ 束が1件も無い時は作る（拡張が「何も無い」で止まらないように）。?fresh=1 は強制なので作る。
  *   戻す: HUMAN_LEARN_DAYTIME_REBUILD=on（昼も古い束を作り直す＝旧の動き）
  */
+/**
+ * 2026-11-21 作業員G（竹内さん「拡張ツールの部分ちゃんと API 連携できているのか」）:
+ *   11/20 22:01〜22:51 JST に拡張の GET（kix1）が 60秒の時間切れで計12回（ログで見えた分・統括役の数え 16:05〜23:05 で37回）。
+ *   全部「印を取って作り直す側」（build-lease の decision=build）で、作り直しが 60秒を超えて途中で切れていた（他の要求は serve_old で返っていた）。
+ *   → 古い束がある時は、印を取った要求も**古い束をすぐ返し、作り直しは応答の後（after）**で行う（拡張は待たない・失敗しても束は返る）。
+ *   束が無い時・?fresh=1 は今まで通りその場で作る。既定 on（戻す: LEARN_BUILD_AFTER=off）
+ */
+export function learnBuildAfterOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LEARN_BUILD_AFTER ?? "").trim().toLowerCase() !== "off";
+}
+
+/** 応答の後に作り直すか（古い束があり・強制でない時だけ） */
+export function buildInAfter(o: { hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
+  return learnBuildAfterOn(o.env) && o.hasBundle && !o.forceFresh;
+}
+
 export function holdDaytimeRebuild(o: { hour: number; hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
   const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
   if ((env.HUMAN_LEARN_DAYTIME_REBUILD ?? "").trim().toLowerCase() === "on") return false;
