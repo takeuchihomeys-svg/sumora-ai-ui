@@ -4,7 +4,9 @@
 //   見積の予定（calendar_events.event_type=estimate_sheet・is_done）のうち、予定の前3日〜後2日に
 //   見積を送った印（estimate_records の行・見積書の AIX・AIX の同封の印 estimate_sent）が1つも無い物を、会話ごとに数える。
 //   申込以降の会話（conversations.status が applying 以降）とテストの会話は外す。同じ会話・同じ時刻の重複も数える。会話は頭8字だけ。
-// 実行: npx tsx --env-file=.env.local scripts/audit-estimate-done-unsent.ts [--days=30] [--show]
+// 実行: npx tsx --env-file=.env.local scripts/audit-estimate-done-unsent.ts [--days=30] [--show] [--json | --json=<ファイル>]
+//   --json: 標準出力に1行の JSON だけ {days, done, unsent, unsent_convs, dup, convs:[頭8字]}（毎朝の1枚・N2 の quality_daily growth:estimate:*）／--json=<道>: その道に書く（画面は今のまま）
+import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { duplicateEstimateEventIds } from "../app/lib/estimate-event-guard";
@@ -34,6 +36,10 @@ const POST = new Set(["applying", "contract", "won", "screening", "approved", "c
     if (!(rec.count ?? 0) && !(aix.count ?? 0)) { unsent++; unsentConvs.add(r.conversation_id!); }
   }
   const dups = duplicateEstimateEventIds(rows.map((r) => ({ ...r, is_done: false })));
+  const out = { days, done, unsent, unsent_convs: unsentConvs.size, dup: dups.length, convs: [...unsentConvs].map((c) => c.slice(0, 8)) };
+  const jsonArg = process.argv.find((a) => a === "--json" || a.startsWith("--json="));
+  if (jsonArg === "--json") { console.log(JSON.stringify(out)); return; }
+  if (jsonArg) writeFileSync(jsonArg.slice(7), JSON.stringify(out, null, 2));
   console.log(`見積の予定（${days}日・申込以降とテストを外す）: 済み ${done}・済みなのに見積を送っていない ${unsent}（${unsentConvs.size}会話）・同じ会話・同じ時刻の重複 ${dups.length}`);
   if (process.argv.includes("--show")) console.log("  会話:", [...unsentConvs].map((c) => c.slice(0, 8)).join("・"));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】…連絡漏れが多い」: お客様への約束の行（notes 先頭【必ず】）は時刻が過ぎても
     //   自動で完了にしない。履行した送信（物件送付・御見積書送付・確認結果の報告）が完了にする（app/lib/sent-facts.ts syncPromiseCalendar）
-    // 2026-11-22 作業員K2（台帳 #580・ESTIMATE_EVENT_GUARD=on の時だけ・app/lib/estimate-event-guard.ts）: 見積の予定は時刻で済みにしない
+    // 2026-11-22 作業員K2（台帳 #580・ESTIMATE_EVENT_GUARD 既定 on・=off で止まる・app/lib/estimate-event-guard.ts）: 見積の予定は時刻で済みにしない
     //   （済みは見積書を送った時＝save-reply-example の見積書送付の消込・sent-facts の約束の消込）
     const { estimateEventGuardOn, duplicateEstimateEventIds } = await import("@/app/lib/estimate-event-guard");
     const guardOn = estimateEventGuardOn();

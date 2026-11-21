@@ -1,4 +1,4 @@
-// app/lib/estimate-event-guard.ts — 見積の予定（calendar_events.event_type=estimate_sheet）を、時刻では済みにせず、同じ会話・同じ時刻の重複は1つにする（純関数・既定 off）
+// app/lib/estimate-event-guard.ts — 見積の予定（calendar_events.event_type=estimate_sheet）を、時刻では済みにせず、同じ会話・同じ時刻の重複は1つにする（純関数・既定 on・=off で止まる）
 //
 // 2026-11-22 作業員K2（台帳 #580・#596・統括役の頼み）。
 //   30日で「見積を送っていないのに見積の予定が済み」の会話が 10（申込以降を外して 9・今日まで見積を送っていない・8会話はこちらが御見積書の作成を約束していた）。
@@ -11,7 +11,8 @@
 // テスト: app/lib/__tests__/estimate-event-guard.test.ts（9会話の形を伏せて）
 type Env = Record<string, string | undefined>;
 export function estimateEventGuardOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return String(env.ESTIMATE_EVENT_GUARD ?? "").trim().toLowerCase() === "on";
+  // 2026-11-22 統括役: 既定 on（LLM なし・お客様に送る物は変わらない・見積の約束を落とす穴を塞ぐ）。戻す: ESTIMATE_EVENT_GUARD=off
+  return String(env.ESTIMATE_EVENT_GUARD ?? "").trim().toLowerCase() !== "off";
 }
 export const DUP_WINDOW_MS = 10 * 60_000;
 export type EstimateEventRow = { id: string | number; conversation_id: string | null; start_at: string; created_at?: string | null; notes?: string | null; is_done?: boolean | null; event_type?: string | null };
