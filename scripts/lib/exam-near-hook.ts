@@ -109,3 +109,14 @@ export function ownerBaseDue(lastDay: string | null | undefined, nowMs: number, 
   const min = j.getUTCHours() * 60 + j.getUTCMinutes();
   return { due: min >= 90 && lastDay !== day, day };
 }
+
+/** 2026-11-21 作業員N（統括役の確かめ: quality_daily に growth:*・core:* が1行も無い）: 毎朝の1枚（scripts/self-improve.ts --write）を流す時か（純関数）。
+ *  self-improve は手元のファイル・git・子の台本を読むので Vercel の cron では回せない＝流す役（exam-conductor）から1日1回。
+ *  時間は JST 6:30〜8:59（営業時間の前）。その間に流せなかった日は 22時以降に取り返す（9〜22時は重い読みをしない）。止める EXAM_SELF_IMPROVE_DAILY=off */
+export function selfImproveDue(lastDay: string | null | undefined, nowMs: number, env: Record<string, string | undefined> = {}): { due: boolean; day: string } {
+  const j = new Date(nowMs + 9 * 3_600_000);
+  const day = j.toISOString().slice(0, 10);
+  if ((env.EXAM_SELF_IMPROVE_DAILY ?? "").trim().toLowerCase() === "off") return { due: false, day };
+  const min = j.getUTCHours() * 60 + j.getUTCMinutes();
+  return { due: lastDay !== day && ((min >= 390 && min < 540) || min >= 1320), day };
+}

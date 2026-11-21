@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pendingCounts, decideNearResolve, isExamJob, ownerBaseDue, nearLeakByOrigin } from "../exam-near-hook";
+import { pendingCounts, decideNearResolve, isExamJob, ownerBaseDue, nearLeakByOrigin, selfImproveDue } from "../exam-near-hook";
 
 let passed = 0, failed = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -58,6 +58,16 @@ t("EXAM_NEAR_RESOLVE_HOOK=off で止まる", (() => { const d = decideNearResolv
   t("会話が分からない番は漏れ（安全側）", nearLeakByOrigin("match_conductor_focus", body, rows, conv({}), "orig").leak);
   t("元の番より後の番は会話に関係なく漏れ", nearLeakByOrigin("match_conductor_focus", body, [{ source_key: "msg:c", distance: 0.3, turn_at: "2026-10-16T00:00:00Z" }], conv({ "msg:c": "other" }), "orig").leak);
   t("元の会話が分からない頼みは今まで通り", nearLeakByOrigin("match_conductor_focus", body, rows, conv({ "msg:a": "other" }), null).leak);
+}
+{
+  // 2026-11-21 作業員N: 毎朝の1枚は JST 6:30〜8:59 と 22時以降だけ・1日1回
+  const at = (hm: string) => Date.parse(`2026-11-22T${hm}:00+09:00`);
+  t("6:29 はまだ", !selfImproveDue(null, at("06:29")).due);
+  t("6:30 は流す", selfImproveDue("2026-11-21", at("06:30")).due);
+  t("9:00 は流さない（営業時間）", !selfImproveDue("2026-11-21", at("09:00")).due);
+  t("22:00 は取り返す", selfImproveDue("2026-11-21", at("22:00")).due);
+  t("同じ日は繰り返さない", !selfImproveDue("2026-11-22", at("07:00")).due);
+  t("off で止まる", !selfImproveDue(null, at("07:00"), { EXAM_SELF_IMPROVE_DAILY: "off" }).due);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

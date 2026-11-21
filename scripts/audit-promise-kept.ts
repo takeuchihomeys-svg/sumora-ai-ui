@@ -19,11 +19,18 @@ const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 
 export type KeptState = "in_time" | "late" | "overdue" | "pending" | "n/a";
-export type PromiseRow = { conv: string; at: string; kind: PromiseKindName; writer: string; deadlineBy: "words" | "default72h"; state: KeptState; by: string | null };
+export type PromiseRow = { conv: string; at: string; kind: PromiseKindName; writer: string; deadlineBy: "words" | "default72h"; state: KeptState; by: string | null; scene: string };
+/** 2026-11-21 台帳 #495: 約束の通を、その前24時間の一番近い見張りの番（お客様の番）に結んで場面を付ける（純関数）。数が足りる3場面は名前で・ほかは「少数」・番が無ければ「番なし」 */
+export const MAIN_SCENES = new Set(["返信:条件提示", "返信:質問", "AIX:property_check_result"]);
+export function sceneOfPromise(atMs: number, turns: ReadonlyArray<{ at: number; scene: string | null }>): string {
+  const t = turns.filter((x) => x.at <= atMs && atMs - x.at <= 86_400_000).sort((a, b) => b.at - a.at)[0];
+  if (!t) return "番なし";
+  return t.scene && MAIN_SCENES.has(t.scene) ? t.scene : "少数";
+}
 type Msg = PdMsg & { staff_writer?: string | null };
 
 /** 1会話の約束を並べて判定する（純関数）。同じ種類で果たす前の言い直しは新しい方にまとめる */
-export function promisesOf(conv: string, status: string | null, msgs: ReadonlyArray<Msg>, aix: ReadonlyArray<PdAix>, sent: ReadonlyArray<PdSent>, sinceMs: number, nowMs: number): PromiseRow[] {
+export function promisesOf(conv: string, status: string | null, msgs: ReadonlyArray<Msg>, aix: ReadonlyArray<PdAix>, sent: ReadonlyArray<PdSent>, sinceMs: number, nowMs: number, turns: ReadonlyArray<{ at: number; scene: string | null }> = []): PromiseRow[] {
   const raw: Array<{ at: string; kind: PromiseKindName; text: string; writer: string }> = [];
   const ordered = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (let j = 0; j < ordered.length; j++) {
@@ -56,7 +63,7 @@ export function promisesOf(conv: string, status: string | null, msgs: ReadonlyAr
     if (f === "n/a") state = "n/a";
     else if (f) state = Date.parse(f.at) <= dl.ms ? "in_time" : "late";
     else state = nowMs > dl.ms ? "overdue" : "pending";
-    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null });
+    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null, scene: sceneOfPromise(Date.parse(p.at), turns) });
   }
   return out;
 }
@@ -82,6 +89,8 @@ async function main() {
   const convs = [...convSet].filter((c) => !isTestConversation(c) && !isNoLineTestConversation(c) && !internal.has(c)).slice(0, maxConvs);
   const rows: PromiseRow[] = [];
   const one = async (c: string) => {
+    const { data: wt } = await sb.from("line_watch_turns").select("customer_turn_at,scene_key").eq("conversation_id", c).gte("customer_turn_at", new Date(sinceMs - 86_400_000).toISOString()).limit(1000);
+    const turns = ((wt ?? []) as Array<{ customer_turn_at: string; scene_key: string | null }>).map((x) => ({ at: Date.parse(x.customer_turn_at), scene: x.scene_key }));
     const [cv, m, a] = await Promise.all([
       sb.from("conversations").select("status, line_user_id").eq("id", c).maybeSingle(),
       sb.from("messages").select("sender, text, created_at, is_aix_generated, staff_writer").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1500),
@@ -93,7 +102,7 @@ async function main() {
     const s = await sb.from("sent_properties").select("sent_at")
       .or(pcIds.length ? `conversation_id.eq.${c},${pcIds.map((id) => `property_customer_id.eq.${id}`).join(",")}` : `conversation_id.eq.${c}`)
       .or("source.is.null,source.neq.line_group").gte("sent_at", since).limit(400);
-    rows.push(...promisesOf(c, conv?.status ?? null, (m.data ?? []) as Msg[], (a.data ?? []) as PdAix[], (s.data ?? []) as PdSent[], sinceMs, nowMs));
+    rows.push(...promisesOf(c, conv?.status ?? null, (m.data ?? []) as Msg[], (a.data ?? []) as PdAix[], (s.data ?? []) as PdSent[], sinceMs, nowMs, turns));
   };
   for (let k = 0; k < convs.length; k += 4) await Promise.all(convs.slice(k, k + 4).map(one));
 
@@ -108,6 +117,7 @@ async function main() {
   for (const w of ["takeuchi", "employee", "unknown"]) line(`書き手 ${w}`, rows.filter((r) => r.writer === w));
   for (const k of ["pickup", "check", "estimate", "viewing_slot", "callback", "other"] as const) line(`種類 ${k}`, rows.filter((r) => r.kind === k));
   for (const b of ["words", "default72h"] as const) line(`期限 ${b}`, rows.filter((r) => r.deadlineBy === b && r.state !== "n/a"));
+  for (const sc of [...MAIN_SCENES, "少数", "番なし"]) line(`場面 ${sc}`, rows.filter((r) => r.scene === sc));
   const over = rows.filter((r) => r.state === "overdue").sort((a, b) => a.at.localeCompare(b.at));
   console.log(`期限を過ぎて果たしていない約束の例（会話の頭8字・種類・書き手）: ${over.slice(0, 15).map((r) => `${r.conv}:${r.kind}:${r.writer}`).join(" ")}`);
   const out = arg("out");
