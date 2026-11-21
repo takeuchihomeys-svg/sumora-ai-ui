@@ -123,7 +123,8 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const mix = tcMix(t.decision_id ? tcOf.get(t.decision_id) : null);
     if (kinds.length >= 2 && (!mix || mix.a <= 1)) { out.secondAixMiss++; push("secondAixMiss", t.conversation_id); }
     // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（同じ番・同じ手＝次のお客様の発言で切った moves）
-    const cls = askTurnClass({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves: moves.map((m) => ({ at: m.at, aix: m.aix, text: m.text })), kinds, brainAction: t.brain_action });
+    // 2026-11-22 作業員M の照らし（2cb0feb7）: 前の番の約束を果たす AIX は要件の外＝組の数えと同じ prevStaffTexts を渡す
+    const cls = askTurnClass({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves: moves.map((m) => ({ at: m.at, aix: m.aix, text: m.text })), kinds, brainAction: t.brain_action, prevStaffTexts });
     askClasses.push(cls);
     if (cls !== "合う" && cls !== "記録なし" && out.ask.misses.length < 20) out.ask.misses.push({ conv: t.conversation_id.slice(0, 8), cls });
   }
