@@ -21,12 +21,12 @@
 // 個人情報: 会話は maskPII と名前の置き換え（〇〇さん）を通す。台帳には欄の名前と数・番の id だけ（お客様の文・名前は入れない）。YUMA・テストの会話は外す
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
 
 // 読み込んだだけで鍵を要らないように、使う時に作る（テストは tallyMarks だけを読む）
-let sbc: ReturnType<typeof createClient> | null = null;
+let sbc: SupabaseClient | null = null;
 const db = () => (sbc ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""));
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const PHASE = arg("phase", "build");
