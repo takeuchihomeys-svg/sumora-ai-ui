@@ -13,6 +13,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { addFoundGaps } from "./lib/found-gap-ledger";
 import { isPostApplyStatus } from "../app/lib/llm-alt-provider";
+import { isConfirmedViewingEvent } from "../app/lib/viewing-confirmed";
 
 export type OffPath = { id: string; label: string; owner: string; n: number; off: number; rate: number | null; why: string; convs: string[]; note?: string };
 const DAY = 86_400_000;
@@ -28,12 +29,8 @@ export function eventsWithoutRecord<E extends { conversation_id: string; start_a
   return events.filter((e) => { const t = Date.parse(e.start_at); return !(by.get(e.conversation_id) ?? []).some((x) => x >= t - beforeMs && x <= t + afterMs); });
 }
 
-/** 決まった内覧の予定か（純関数）: ブレインの「内覧調整」のタスク（終日・題の終わりが内覧調整）と、候補の【時間確保】は内覧ではない */
-export function isConfirmedViewingEvent(e: { all_day?: boolean | null; title?: string | null; notes?: string | null }): boolean {
-  if (e.all_day && /内覧調整\s*$/.test(e.title ?? "")) return false;
-  if ((e.notes ?? "").trimStart().startsWith("【時間確保】")) return false;
-  return true;
-}
+/** 決まった内覧の予定か（共通の部品 app/lib/viewing-confirmed.ts・2026-11-21 ここから移した） */
+export { isConfirmedViewingEvent };
 
 async function inChunks<T>(ids: string[], f: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
   const out: T[] = [];

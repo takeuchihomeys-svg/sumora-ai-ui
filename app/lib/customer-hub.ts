@@ -28,6 +28,7 @@ import { RETURN_PATTERN_SHORT, type ReapplyInfo } from "./reapply-customer";
 import { pickupReadyAt, type LinkPickup, type LinkMemoItem } from "./link-brain-watch";
 import { isPreApplyForNudge } from "./apply-stage-nudge";
 import { judgeParallelSecond } from "./post-apply";
+import { isConfirmedViewingEvent, viewingConfirmedOnlyOn } from "./viewing-confirmed";
 import { PARALLEL_STATUSES, PARALLEL_2ND_LABEL } from "./parallel-second";
 import { maskPII } from "./pii-mask";
 
@@ -218,7 +219,8 @@ export function buildCustomerHub(input: HubInput): CustomerHub {
         pickerKey: promiseCheckPatternOf(notes), object: null, promisedAt: e.created_at, dueAt: e.start_at, overdue: ms(e.start_at) + DAY < now });
       schedule.push({ kind: "promise", at: e.start_at, label: (e.title ?? "約束").slice(0, 40), done: !!e.is_done, source: "calendar" });
     } else {
-      schedule.push({ kind: e.event_type === "viewing" ? "viewing" : "other", at: e.start_at, label: (e.title ?? e.event_type ?? "予定").slice(0, 40), done: !!e.is_done, source: "calendar" });
+      // 2026-11-21 作業員N2（VIEWING_CONFIRMED_ONLY=on・既定 off）: ブレインの「内覧調整」の終日タスク・【時間確保】の候補は内覧の予定にしない（司令塔の「今日の内覧」の元）
+      schedule.push({ kind: e.event_type === "viewing" && (!viewingConfirmedOnlyOn() || isConfirmedViewingEvent(e)) ? "viewing" : "other", at: e.start_at, label: (e.title ?? e.event_type ?? "予定").slice(0, 40), done: !!e.is_done, source: "calendar" });
     }
   }
   for (const v of state?.viewings ?? []) schedule.push({ kind: "viewing", at: `${v.ymd}T${v.time ?? "00:00"}:00+09:00`, label: `内覧 ${v.name ?? "（物件名なし）"}・${v.status}`, done: v.status === "done" || v.status === "cancelled", source: "customer_state" });
@@ -369,7 +371,8 @@ export function hubContradictions(hub: CustomerHub, input: HubInput): HubContrad
     if (open) out.push({ type: "open_after_closed", detail: `段階=${stage} 開いている ${open}` });
   }
 
-  const calViewings = input.calendarEvents.filter((e) => e.event_type === "viewing" && !e.is_done && !/^\s*【時間確保】/.test(e.notes ?? "") && ms(e.start_at) >= now - 12 * H);
+  // 2026-11-21 作業員N2（VIEWING_CONFIRMED_ONLY=on・既定 off）: ブレインの「内覧調整」の終日タスクは内覧ではない＝状態と食い違いにしない
+  const calViewings = input.calendarEvents.filter((e) => e.event_type === "viewing" && !e.is_done && !/^\s*【時間確保】/.test(e.notes ?? "") && (!viewingConfirmedOnlyOn() || isConfirmedViewingEvent(e)) && ms(e.start_at) >= now - 12 * H);
   const stateYmds = new Set(upcomingViewings.map((v) => v.at.slice(0, 10)));
   for (const e of calViewings) {
     const ymd = jstYmdOf(ms(e.start_at));

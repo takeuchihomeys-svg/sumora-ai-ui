@@ -8576,15 +8576,19 @@ async function analyzeAndSaveBrainMetaInner(
           try {
             const todayStartUTC = new Date(`${todayJst}T00:00:00+09:00`).toISOString();
             const todayEndUTC = new Date(`${todayJst}T23:59:59+09:00`).toISOString();
+            // 2026-11-21 作業員N2（VIEWING_CONFIRMED_ONLY・既定 off）: 今日の viewing の予定には、ブレイン自身が viewing_invite の判断で置く
+            //   「内覧調整」の終日タスクと候補の【時間確保】も入る＝内覧の誘いを決めただけの会話が今日の内覧としてホットになっていた。on の時は決まった内覧だけ
+            const vco = await import("@/app/lib/viewing-confirmed");
             const { data: calToday } = await supabase
               .from("calendar_events")
-              .select("id")
+              .select("id, all_day, title, notes")
               .eq("conversation_id", conversationId)
               .eq("event_type", "viewing")
               .gte("start_at", todayStartUTC)
               .lte("start_at", todayEndUTC)
-              .limit(1);
-            if ((calToday?.length ?? 0) > 0) isHot = true;
+              .limit(vco.viewingConfirmedOnlyOn() ? 20 : 1);
+            const calRows = (calToday ?? []) as Array<{ all_day: boolean | null; title: string | null; notes: string | null }>;
+            if ((vco.viewingConfirmedOnlyOn() ? calRows.filter((e) => vco.isConfirmedViewingEvent(e)) : calRows).length > 0) isHot = true;
           } catch {
             // calendar_events が取得できなくても処理を続行
           }
