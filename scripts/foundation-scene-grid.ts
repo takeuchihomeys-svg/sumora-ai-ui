@@ -20,11 +20,12 @@ export const FOUNDATION_TERMS: Record<string, RegExp> = {
   "n.appeal": /訴求|推す点|刺さ|オススメポイント|一押し/,
   "n.chrono": /時系列|いつ言った|日付|日をまたい|先ほど|鮮度/,
   "n.promise": /約束|期限|出来次第|果たし/,
-  "n.asks": /要件|依頼ごと|一つ一つ|答え漏れ|複数の依頼/,
+  // 2026-11-21 作業員M: 要件は「確認事項・依頼ごと・約束が複数・要件ごと・turn_contract・asks」の語でも書かれている（網が狭かった）
+  "n.asks": /要件|依頼ごと|一つ一つ|答え漏れ|複数の依頼|確認事項|約束が複数|要件ごと|turn_contract|asks/,
   "n.link": /つなぎ|誘導|次への|締め|誘い/,
 };
 /** 場面で分けて数える物差しの台本（それ以外は全体だけ） */
-export const SCENE_SPLIT = new Set(["scripts/audit-off-pattern.ts", "scripts/tsunagi-census.ts", "scripts/audit-guide.ts"]);
+export const SCENE_SPLIT = new Set(["scripts/audit-off-pattern.ts", "scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-ask-route-takeuchi.ts"]); // audit-ask-route-takeuchi は 11/18 から場面ごと（作業員M）
 
 /** 1つの土台×場面の決まりの数（純関数） */
 export function rulesFor(rows: ReadonlyArray<{ title: string; insight: string | null; tags: string[] | null }>, term: RegExp, scene: { tag: string; titleRe: RegExp | null }): number {
