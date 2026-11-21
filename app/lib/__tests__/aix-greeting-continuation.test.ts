@@ -9,7 +9,8 @@ const cont = [
   { sender: "staff", text: "お部屋お送りさせて頂きます！！", rawCreatedAt: "2026-11-20T12:00:00Z" },
   { sender: "customer", text: "ありがとうございます、ここ気になります", rawCreatedAt: "2026-11-20T12:30:00Z" },
 ];
-assert.equal(aixContinuationSkip(cont, {}), false); // 既定 off（確かめ直しの間）
+assert.equal(aixContinuationSkip(cont, {}), true); // 既定 on（竹内さん 11/21 改めて決定）
+assert.equal(aixContinuationSkip(cont, { AIX_GREETING_CONTINUATION_SKIP: "off" }), false);
 const ON = { AIX_GREETING_CONTINUATION_SKIP: "on" };
 assert.equal(aixContinuationSkip(cont, ON), true);
 assert.equal(aixContinuationSkip(cont, { ...ON, GREETING_CONTINUATION_SKIP: "off" }), false);
