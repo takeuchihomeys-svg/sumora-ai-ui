@@ -10,6 +10,7 @@ import { autoStarAppliedEnabled, firstAppliedAtByConversation, starEligibleByApp
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
 import { withCronLog } from "@/app/lib/cron-log-wrap";
 
+import { autoStarBulkChunk, chunksOf } from "@/app/lib/cron-time-budget";
 export const maxDuration = 300;
 
 // 成果連動☆自動付与バッチ
@@ -146,15 +147,18 @@ async function handleGET(req: NextRequest) {
   // 超過分（MAX_ANALYZE_PER_RUN 以降）: DB直接バルク更新（HTTP直列ループを排除してタイムアウト防止）
   const bulkIds = sortedExamples.slice(MAX_ANALYZE_PER_RUN).map((e) => e.id as string);
   if (bulkIds.length > 0) {
-    const { error: bulkErr } = await supabase
-      .from("ai_reply_examples")
-      .update({ is_starred: true })
-      .in("id", bulkIds);
-    if (bulkErr) {
-      console.error("[auto-star-winners] bulk update error:", bulkErr.message);
-      failed += bulkIds.length;
-    } else {
-      starred += bulkIds.length;
+    // 2026-11-22 作業員N2（台帳 #591・AUTO_STAR_BULK_CHUNK=<n>・既定なし＝1文）: 11/21 に46行の1文が statement timeout（HNSW 索引3本）→ n 行ずつに分け、通った分は☆に数える
+    for (const ids of chunksOf(bulkIds, autoStarBulkChunk())) {
+      const { error: bulkErr } = await supabase
+        .from("ai_reply_examples")
+        .update({ is_starred: true })
+        .in("id", ids);
+      if (bulkErr) {
+        console.error("[auto-star-winners] bulk update error:", bulkErr.message, ids.length);
+        failed += ids.length;
+      } else {
+        starred += ids.length;
+      }
     }
   }
 

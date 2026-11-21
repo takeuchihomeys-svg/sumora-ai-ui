@@ -9,6 +9,7 @@ import { isUsableExampleText } from "@/app/lib/example-hygiene";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { updateKnowledgeBudgetOn, UPDATE_KNOWLEDGE_BUDGET, canStartWithin } from "@/app/lib/cron-time-budget";
 
 export const maxDuration = 60;
 
@@ -113,6 +114,10 @@ async function handleGET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  // 2026-11-22 作業員N2（台帳 #592・UPDATE_KNOWLEDGE_TIME_BUDGET=on・既定 off）: 60秒で毎晩切れ、後ろの片付けが 8/18 から回っていない → 時間の残りで次を始めるか決める
+  const startMs = Date.now();
+  const budgetOn = updateKnowledgeBudgetOn();
+  let stoppedEarly = false;
   try {
     // 2026-11-20 作業員H: 小さな表（knowledge_usage）に足した使用回数を、used_count=0 の行を消す前に書き戻す（KNOWLEDGE_USAGE_TABLE・on・off に関係なく毎晩）
     //   ⚠ 下の早めの return（☆つき例文が無い時）より前に置く
@@ -165,6 +170,7 @@ async function handleGET(req: NextRequest) {
 
     let totalAdded = 0;
     for (let i = 0; i < toProcess.length; i += 3) {
+      if (budgetOn && !canStartWithin(startMs, Date.now(), UPDATE_KNOWLEDGE_BUDGET.nextChunkUntilMs)) { stoppedEarly = true; break; }
       const chunk = toProcess.slice(i, i + 3);
       const results = await Promise.all(
         chunk.map((ex) => analyzeOneTracked(
@@ -178,7 +184,7 @@ async function handleGET(req: NextRequest) {
     }
 
     // 処理後に自動クリーンアップ
-    const cleanup = toProcess.length > 0 ? await runKnowledgeCleanup() : null;
+    const cleanup = toProcess.length > 0 && (!budgetOn || canStartWithin(startMs, Date.now(), UPDATE_KNOWLEDGE_BUDGET.cleanupUntilMs)) ? await runKnowledgeCleanup() : null;
 
     // 未使用エントリ自動削除
     // 差分学習・修正対比・importance>=9 は削除しない（最重要知識）
@@ -235,6 +241,7 @@ async function handleGET(req: NextRequest) {
       cleanup,
       unused_deleted: unusedDeletedCount,
       apply_log_expired: ttlExpiredCount,
+      ...(budgetOn ? { time_budget: { stopped_early: stoppedEarly, elapsed_ms: Date.now() - startMs } } : {}),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
