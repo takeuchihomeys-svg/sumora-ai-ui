@@ -7,12 +7,13 @@
 //   数え（11/21・14日・こちらが送った 478枚）: kind が property 339・estimate 8・行なし 131。室内・間取り図の区別はどこにも無かった。
 //   ⚠ 先に行を作らない: 物件の画像に kind=property・lines 空の行を先に書くと、送った後の読み取り（ensureImageDetail）が「読み済み」と見て資料を読まなくなる。
 //     見積書（estimate-image-role.ts）だけは lines が要らないので先に書いてよい。物件の画像の部分は、読み取りが行を書く時に一緒に入れる。
-// スイッチ IMAGE_DETAIL_PART=on（既定 off）。off の時は part を書かない（列は null のまま・今と同じ）。
+// スイッチ IMAGE_DETAIL_PART（2026-11-22 から既定 on・=off で止める）。off の時は part を書かない（列は null のまま）。
 export type ImagePart = "listing" | "interior" | "floor_plan" | "exterior" | "cost";
 export const IMAGE_PARTS: readonly ImagePart[] = ["listing", "interior", "floor_plan", "exterior", "cost"];
 
 export function imageDetailPartOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.IMAGE_DETAIL_PART ?? "").trim().toLowerCase() === "on";
+  // 2026-11-22 作業員K2（統括役の決め）: 既定 on（記録だけ・読む側は無い＝試験しない種類）。止める IMAGE_DETAIL_PART=off
+  return (env.IMAGE_DETAIL_PART ?? "").trim().toLowerCase() !== "off";
 }
 
 /**
