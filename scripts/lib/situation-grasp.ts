@@ -23,6 +23,8 @@ export const FIELD_LABEL: Record<GraspField, string> = {
 
 type Ctx = { s: string; t: string; aix?: boolean; ago?: number };
 type Row = Record<string, unknown>;
+/** 行動台帳（sent_facts）の最初の行の created_at（これより前の番の問題の写しには行が無い） */
+export const SENT_FACTS_START = "2026-09-14T05:42:20Z";
 export type ProblemLike = {
   id: string; at?: string; source?: string; context?: Ctx[];
   pc?: Record<string, unknown> | null;
@@ -75,7 +77,12 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const convId = (p as { conv?: string }).conv ?? null;
   const sentRows = L.sent_properties ?? [];
   const dbSent = sentRows.filter((r) => !convId || r.row.conversation_id === convId).length;
-  const dbOutside = sentRows.filter((r) => convId && !r.row.conversation_id).length;
+  // 2026-11-21 作業員L（台帳 #17 ⑤）: 材料（sent-props-text.buildSentProps）は共有の行を 物件名|号室 で1つにまとめ、号室の無い共有の行は
+  //   同じ建物をお客様に送っていれば出さない（決まりどおり）。行の数で比べると食い違い36番のうち多くが「同じ物件の重複」だったので、材料と同じ数え方で数える
+  const nm = (r: { row: Row }) => String(r.row.property_name ?? "").trim();
+  const ownNames = new Set(sentRows.filter((r) => convId && r.row.conversation_id === convId).map(nm));
+  const dbOutside = new Set(sentRows.filter((r) => convId && !r.row.conversation_id && nm(r) && !(!String(r.row.room_no ?? "").trim() && ownNames.has(nm(r))))
+    .map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`)).size;
   const sentHead = [...b.keys()].find((k) => k.startsWith("すでに送付済みの物件"));
   const sentBlockFull = user.match(/【すでに送付済みの物件（(\d+)件）】/);
   const pSent = sentBlockFull ? Number(sentBlockFull[1]) : null;
@@ -113,6 +120,9 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const open = [...fromFacts.open, ...textPromises.filter((t) => !fromFacts.open.some((o) => o.kind === t.kind))];
   const doubled = fromFacts.doubled;
   f.promise_in_ledger = textPromises.length ? (textPromises.every((t) => fromFacts.open.some((o) => o.kind === t.kind)) ? "held" : "link") : "none";
+  // 2026-11-21 作業員L（台帳 #17）: 行動台帳（sent_facts）は 2026-09-14 05:42Z に始まり、それより前の番の問題の写しは行が0。
+  //   「連携の漏れ 21」のうち読んだ8問は全部この前の番だった＝測れない番。行が0で台帳の始まりより前の番は「関係なし」にする
+  if (f.promise_in_ledger === "link" && !(L.sent_facts ?? []).length && p.at && p.at < SENT_FACTS_START) { f.promise_in_ledger = "none"; detail.promise_in_ledger = "行動台帳の始まり（09/14）より前の番＝測れない"; }
   const pOpen = block(b, "まだ果たしていないこちらの約束");
   f.open_promise = open.length ? (pOpen ? "held" : "link") : pOpen ? "conflict" : "none";
   if (f.open_promise !== "none") detail.open_promise = `DB ${open.map((o) => o.kind).join("・") || "無し"}・持っていた ${pOpen ? "あり" : "なし"}`;
