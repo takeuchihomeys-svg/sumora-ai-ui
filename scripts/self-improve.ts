@@ -17,6 +17,7 @@ import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 import { runChecks } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { checkLinkage } from "./check-linkage";
+import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
 
 const argv = process.argv.slice(2);
@@ -29,10 +30,11 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
 
 /** 1 方針（純関数）: 指摘の型・分野の重み（7日以内は2倍・主の型は1.5倍） */
-export function focusOf(rows: Array<{ kinds: string[]; areas: string[]; said_at: string }>, nowMs: number) {
+export function focusOf(rows: Array<{ kinds: string[]; areas: string[]; said_at: string; source?: string | null }>, nowMs: number) {
   const kw: Record<string, number> = {}, aw: Record<string, number> = {};
   for (const r of rows) {
-    const w = nowMs - Date.parse(r.said_at) <= 7 * 86_400_000 ? 2 : 1;
+    // 竹内さんの言葉そのまま（chat・work_item）を重く・設計知見から埋めた決定（meeting）は 0.5倍（統括役 11/21）
+    const w = (nowMs - Date.parse(r.said_at) <= 7 * 86_400_000 ? 2 : 1) * (r.source === "meeting" ? 0.5 : 1);
     (r.kinds ?? []).forEach((k, i) => { if (k !== "other") kw[k] = (kw[k] ?? 0) + w * (i === 0 ? 1.5 : 1); });
     for (const a of r.areas ?? []) if (a !== "other") aw[a] = (aw[a] ?? 0) + w;
   }
@@ -90,8 +92,8 @@ async function main() {
   const lines: string[] = [`# 自己改善の統括 毎朝の1枚（${day} の分・${new Date(now + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ")} JST に作った・LLM なし）`, ""];
 
   // 1 方針
-  const { data: ptr } = await sb.from("owner_pointers").select("id,kinds,areas,said_at,state,quote,kb_draft").neq("state", "closed").limit(2000);
-  const pointers = (ptr ?? []) as Array<{ id: number; kinds: string[]; areas: string[]; said_at: string; state: string; quote: string; kb_draft: string | null }>;
+  const { data: ptr } = await sb.from("owner_pointers").select("id,kinds,areas,said_at,state,quote,kb_draft,source").neq("state", "closed").limit(2000);
+  const pointers = (ptr ?? []) as Array<{ id: number; kinds: string[]; areas: string[]; said_at: string; state: string; quote: string; kb_draft: string | null; source: string | null }>;
   const focus = focusOf(pointers, now);
   if (doPolicy) lines.push("## 1. 方針（竹内さんの指摘から・閉じていない " + pointers.length + "行）",
     `- 重点の型: ${focus.kinds.map((x) => `${POINTER_KIND_JA[x.k as PointerKind] ?? x.k}（${x.w}）`).join("・") || "なし"}`,
@@ -146,6 +148,18 @@ async function main() {
       coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured });
       lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${w.owner}｜${w.why.slice(0, 70)}`));
       for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${w.owner}`);
+    }
+  }
+
+  if (doCore) {
+    // 芯 ④ 統括の判断（check-conductor・竹内さんの番・7日）: 外れを原因の3つに分け、試験の問題の候補（作業員H）と教訓（作業員L）へ
+    const cc = await checkConductor(7).catch(() => null);
+    if (cc) {
+      coreRows.push({ metric: "core:conductor", value: cc.score, n: cc.n });
+      coreRows.push({ metric: "core:conductor_aix", value: cc.aixScore, n: cc.aixTurns }, { metric: "core:conductor_sway", value: cc.swayRate, n: cc.n });
+      lines.push(`### 芯: 統括の判断（竹内さんの番 7日 ${cc.n}・送る直前の判断で道の一致 ${cc.score ?? "—"}%・AIX の番 ${cc.aixTurns} で ${cc.aixScore ?? "—"}%・揺れ ${cc.swayRate ?? "—"}%）`, `- 外れの種類: ${JSON.stringify(cc.byType)}`, `- 原因: ${Object.entries(cc.byCause).map(([k, n]) => `${CAUSE_JA[k as Cause]} ${n}`).join("・") || "なし"}`, ...Object.entries(cc.ids).map(([k, xs]) => `- 試験の問題の候補（${k}）: 見張りの番 ${xs.slice(0, 8).join(",")}`));
+      const top = Object.entries(cc.byCause).sort((x, y) => y[1] - x[1])[0];
+      if (top) coreFix.push(`統括の判断: 外れの原因で一番多いのは「${CAUSE_JA[top[0] as Cause]}」${top[1]}番 → 問題の候補を作業員H（brain-exam-add）・教訓を作業員L（conductor_lessons）へ`);
     }
   }
 
