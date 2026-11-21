@@ -3660,6 +3660,22 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       }
     } catch (e) { console.warn("[brain-core] last-turn-review skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-21 作業員K2（台帳 #469・物件選び → LINE の穴）: 72時間以内に送った物件を「なぜ選んだか」（判定の札の合う点・気になる点）を材料の1行で
+  //   （app/lib/pickup-why-line.ts・PICKUP_WHY_TO_BRAIN=on の時だけ・既定 off＝読まない）。1会話の軽い読み（送った行 20行）
+  if (conversationId && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    const pw = await import("@/app/lib/pickup-why-line");
+    if (pw.pickupWhyToBrainOn()) {
+      try {
+        const since = new Date(Date.now() - 72 * 36e5).toISOString();
+        const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at")
+          .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
+        const items = pw.pickupWhyOf((pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[], { nowMs: Date.now() });
+        const line = pw.pickupWhyLine(items);
+        if (line) customerStateBlockText += `\n${line}`;
+        console.log(JSON.stringify({ tag: "brain:pickup-why", conversationId, rows: (pwRows ?? []).length, items: items.length, chars: line.length }));
+      } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why", conversationId, error: String(e).slice(0, 160) })); }
+    }
+  }
   // 2026-10-29 統括の②状況のまとめ「今すぐ果たせる物」（situation-summary.ts・SITUATION_NOW_FULFILLABLE=on・既定 off）: 記録から1行。どう返すかはブレイン
   // 2026-11-13 作業員C（統括役の頼み①・app/lib/staff-hand-material.ts）: スタッフの手元にある物（送れる候補・作業中のタスク・開いている約束）を1行で（BRAIN_STAFF_HAND=on・既定 off）
   if (staffHandMaterialOn() && !isPostApplyStatus(convStatus)) {
