@@ -1,4 +1,4 @@
-// 2026-11-22 作業員H（統括役の頼み・昨夜 COMPOSE_ 抜きの名前で3本積んで効いていなかった）: 試験の依頼の env の名前の突き合わせ。
+// 2026-11-21 作業員H（統括役の頼み・昨夜 COMPOSE_ 抜きの名前で3本積んで効いていなかった）: 試験の依頼の env の名前の突き合わせ。
 //   積む時に必ず通す。スイッチの名前（試験の道具の EXAM_・LLM_ 等を除く）が、その作業ツリーの app/ のコードで読まれていなければ積まない。
 //   近い名前（同じ尾・頭を足した・引いた）を出して、正しい名前で積み直せるようにする。止める: --allow-unread-env（理由を書く時だけ）
 import { NON_SWITCH_ENV } from "./exam-bisect";
@@ -40,7 +40,7 @@ export function checkEnvNames(env: Record<string, string>, readNames: ReadonlySe
 }
 
 /**
- * 2026-11-22 作業員H（K2 の突き合わせの表 11/21・統括役）: 前提のスイッチ。左が on でも右が無いと何も変わらない（コードの線を読んで K2 が確かめた物）。
+ * 2026-11-21 作業員H（K2 の突き合わせの表 11/21・統括役）: 前提のスイッチ。左が on でも右が無いと何も変わらない（コードの線を読んで K2 が確かめた物）。
  *   足す時は、読む行（ファイル:行）を why に書く
  */
 export const SWITCH_PREREQ: Record<string, { needs: Record<string, string>; why: string }> = {

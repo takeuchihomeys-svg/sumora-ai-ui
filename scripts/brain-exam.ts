@@ -59,6 +59,7 @@ import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { examSipImageUrl, filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
+import { filledRowsOf } from "./lib/exam-filled";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
@@ -237,7 +238,7 @@ function selectInChild(): { ok: true; picked: string[]; kbNow: Record<string, st
 let kbLinksForReport: Record<string, KbLink[]> = {};
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return existsSync(STAGE_BY_TYPE_FILE) ? JSON.parse(readFileSync(STAGE_BY_TYPE_FILE, "utf8")) as Record<string, string> : {}; } catch { return {}; } })();
-// 2026-11-22 作業員H（1晩1本・統括役）: --draft-ids=<id,…> の問題は下書きまで（他は --stage のまま）＝文の組の問題もブレインの答えを同じ回で使い回す
+// 2026-11-21 作業員H（1晩1本・統括役）: --draft-ids=<id,…> の問題は下書きまで（他は --stage のまま）＝文の組の問題もブレインの答えを同じ回で使い回す
 const DRAFT_IDS = new Set(arg("draft-ids").split(",").map((x) => x.trim()).filter(Boolean));
 function stageOf(p: { type: string; tags?: string[] } & { stage?: string; id?: string }): "brain" | "draft" {
   if (p.id && DRAFT_IDS.has(p.id)) return "draft";
@@ -363,6 +364,8 @@ type ResultRow = {
   score: ProblemScore; error?: string;
   /** 2026-11-06 弱い所 305: --after-aix-draft の時の指定（none／hint）・送った AIX・渡した指定 */
   afterAix?: { mode: string; sentAix: string | null; hint: string; aixMsgs: number };
+  /** 2026-11-21 作業員H: 連携の地図の行のうち、この回の meta で材料が埋まった行の id（scripts/lib/exam-filled.ts・当たる問題だけ積む） */
+  filled?: string[];
   /** 10/09: LLM が最初に出した答え（決まりで直される前）と、その道 */
   raw?: Record<string, unknown> | null; essence?: Verdict | null;
   /** 10/09: 判断の出どころ（決まり・補正・信号）。brain-core の meta にある物だけ */
@@ -1181,7 +1184,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...((REPEAT_FLAKY || BASE_FLAKY) && REPEAT > 1 ? { repeatFlaky: true } : {}),
-    // 2026-11-22 作業員H: 下書きまで回す問題（--draft-ids）は問題ごとに段が変わる＝入れた時だけ構成に足す（前の答えを段の違う物と取り違えない）
+    // 2026-11-21 作業員H: 下書きまで回す問題（--draft-ids）は問題ごとに段が変わる＝入れた時だけ構成に足す（前の答えを段の違う物と取り違えない）
     ...(DRAFT_IDS.size ? { draftIds: B.sha([...DRAFT_IDS].sort().join(",")).slice(0, 10) } : {}),
     // 2026-11-21 作業員H: 送った資料の読みの写しの入れ方（入れた時だけ構成に足す＝今までの hash は変えない）。前の答えは前の除きで決まる
     ...(String(process.env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on" ? { ledgerSip: true, ...(sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE?.trim() ? { sipExclude: sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE!.trim() } : {}) } : {}),
@@ -2052,6 +2055,8 @@ async function main() {
       mark("brain"); // 通の写し＋ブレイン（2層なら両方）＋その間の決まった待ち
       if (!meta) throw new Error("ブレインが null");
       row.brain = planOf(meta);
+      // 2026-11-21 作業員H（当たる問題だけ積む・2段目の記録の口）: 連携の地図の行のうち、この回の meta で材料が埋まった行の id（LLM なし）
+      row.filled = filledRowsOf(meta);
       row.trace = { ...(row.trace ?? {}), zc: (meta.llm_raw as { zc?: unknown } | undefined)?.zc ?? null, ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
       const rawOut = S().rawBrainOutputs[S().rawBrainOutputs.length - 1];
       row.raw = rawPlanOf(rawOut);

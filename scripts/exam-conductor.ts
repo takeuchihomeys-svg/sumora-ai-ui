@@ -137,7 +137,7 @@ export type ExamJob = {
   /** 2026-11-15 作業員I: 本番のスイッチの組を env の下敷きに入れる（--prod-env） */ prodEnv?: boolean;
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** 2026-11-20: brain-exam の --after-aix-draft（none／hint・AIX の後の返信の下書き・前と今の両方に付く） */ afterAixDraft?: "none" | "hint";
-  /** 2026-11-22 作業員H（1晩1本）: 下書きまで回す問題（他はブレインまで）＝文の組の問題もブレインの答えを同じ回で使い回す */ draftIds?: string;
+  /** 2026-11-21 作業員H（1晩1本）: 下書きまで回す問題（他はブレインまで）＝文の組の問題もブレインの答えを同じ回で使い回す */ draftIds?: string;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
   /** 2026-11-04 (a)(b): 小さいほど先（既定 5）・1本の時間の上限（分・既定 EXAM_JOB_MAX_MIN=40） */ priority?: number; maxMin?: number;
@@ -339,7 +339,7 @@ async function addJob(): Promise<void> {
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
-  // 2026-11-22 作業員H（統括役）: env の名前の突き合わせ（コードが読まない名前なら積まない・scripts/lib/exam-env-check.ts）。
+  // 2026-11-21 作業員H（統括役）: env の名前の突き合わせ（コードが読まない名前なら積まない・scripts/lib/exam-env-check.ts）。
   //   runner=cmd の --cmd の中の --switch=NAME=値（exam-aix-text 等）も同じに見る
   const cmdSwitches = Object.fromEntries(argsOf("cmd").flatMap((c) => [...c.matchAll(/--switch=([A-Za-z_][A-Za-z0-9_]*)=(\S*)/g)].map((m) => [m[1], m[2]])));
   if (Object.keys(env).length || Object.keys(cmdSwitches).length) {
@@ -363,7 +363,7 @@ async function addJob(): Promise<void> {
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   // 2026-11-20 作業員H（作業員M の頼み）: --after-aix-draft=<none|hint> を brain-exam に渡す（AIX の2通目の系統の前と今を比べる）。違う値は積まない
   { const ad = parseAfterAixDraft(arg("after-aix-draft")); if ("error" in ad) throw new Error(ad.error); if (ad.value) (base as Record<string, unknown>).afterAixDraft = ad.value; }
-  // 2026-11-22 作業員H（1晩1本）: --draft-ids=<id,…> 下書きまで回す問題（--only の中・他はブレインまで）
+  // 2026-11-21 作業員H（1晩1本）: --draft-ids=<id,…> 下書きまで回す問題（--only の中・他はブレインまで）
   if (arg("draft-ids")) (base as Record<string, unknown>).draftIds = arg("draft-ids").split(",").map((x) => x.trim()).filter(Boolean).join(",");
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
   let job: ExamJob;
