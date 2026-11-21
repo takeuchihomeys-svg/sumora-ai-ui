@@ -30,7 +30,7 @@ import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
-import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue } from "./lib/exam-near-hook";
+import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue, selfImproveDue } from "./lib/exam-near-hook";
 import { pathCheck, composePlanMarkers } from "./lib/exam-path-check";
 import { markersOf } from "./lib/exam-miss-stage";
 import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
@@ -1253,6 +1253,18 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/owner-base-nightly.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
           const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
           log(`取りこぼしの網（owner-base-nightly）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
+        }
+        // 2026-11-21 作業員N（統括役の確かめ: quality_daily に growth:*・core:*・found:* が1行も無かった＝毎朝の1枚を流す所が無かった）:
+        //   self-improve --write（全部・LLM なし）を JST 6:30〜8:59 に1日1回（流せなかった日は 22時以降）。失敗しても試験は止めない
+        const siFile = join(MARKS, "self-improve-last.json");
+        const si = selfImproveDue(readJson<{ day?: string } | null>(siFile, null)?.day ?? null, Date.now(), process.env);
+        if (si.due) {
+          mkdirSync(MARKS, { recursive: true });
+          writeFileSync(siFile, JSON.stringify({ day: si.day, at: new Date().toISOString() })); // 先に印＝失敗しても同じ日に繰り返さない
+          const t0 = Date.now();
+          const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/self-improve.ts", "--write"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 25 * 60_000 });
+          const first = String(r.stdout ?? "").trim().split(/\r?\n/).find((x) => x.startsWith("書いた:")) ?? "";
+          log(`毎朝の1枚（self-improve --write）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${first.slice(0, 160)}`);
         }
       }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);
