@@ -40,6 +40,7 @@ import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } f
 import type { InfoCell } from "./info-fill-map";
 import type { OpenItem } from "./exchange-ledger";
 import { feelingNextStrength, feelingBriefSection } from "./feeling-conductor-table";
+import { routeToBriefOn, routeBriefSection, type RouteBriefSection } from "./route-record";
 
 type Env = Record<string, string | undefined>;
 export type BriefMode = "off" | "shadow";
@@ -79,8 +80,10 @@ export type ConductorBrief = {
   combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan"; priority?: string | null }>;
   /** 次の一手の番ごとの中身（何を・いつ・どの形で・next-move-concrete・NEXT_MOVE_CONCRETE=on の時だけ） */
   next_concrete?: Missing<ConcreteNext>;
-  next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
-  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
+  next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; plants_route?: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
+  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string>; keyPointFrom?: "route"; midFrom?: "route" };
+  /** 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ）: 申込までの地図の駅・駅の中の状態・目的・中期・長期・仕込み・先読みの深さ（道を決めた後・route-record.routeBriefSection） */
+  route?: RouteBriefSection;
   /** 2026-11-19 作業員M: 前のどの通のどの項目を受けて次を送るか・つながりの種類・なぜ（meta.next_send_link・NEXT_SEND_LINK=shadow の時だけ・名前は situation_now の item_id・promise_id・ask_id・sent_id） */
   next_link?: { kind: string; refs: Array<Record<string, string>>; why: string };
   /** 2026-11-21 作業員M: 前の番のお客様ごとの計画を照らした欄（CONDUCTOR_BRIEF_PLAN=on の時だけ・brain-core が指示書を組んだ後に足す・書き手には渡さない） */
@@ -208,6 +211,22 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   //   中期（次の2〜3番でどこへ）: 作業員7 の turn_aims.midAim → judge_next.dest（decided-subfields の aim.mid と同じ取り先）
   //   2026-11-21 作業員M（#467）: 道の後の状態の表の狙い（meta.turn_aims_after・APPLY_ROUTE_RECORD=on の時だけある）も取り先に足す
   aim.mid = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30) ?? str(obj(m.judge_next)?.dest, 20) ?? BRIEF_NONE;
+  // 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ）: 地図の駅の中の状態（駅と合って使ってよい時だけ）で、空いている欄だけ埋める（上書きしない）。
+  //   要点 ← 状態の目的／中期 ← 状態の中期（judge_next.dest より先: dest は行き先の語だけで中身が無い・turn_aims の中期は上書きしない）／仕込み ← 状態の仕込み（next に無い物だけ足し plants_route に印）
+  let route: RouteBriefSection | undefined;
+  if (routeToBriefOn()) {
+    const r = routeBriefSection(m);
+    if (r) {
+      route = r;
+      if (aim.keyPoint === BRIEF_NONE && r.turn_aim) { aim.keyPoint = r.turn_aim; aim.keyPointFrom = "route"; const i = notYet.indexOf("key_point"); if (i >= 0) notYet.splice(i, 1); }
+      const midFromAims = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30);
+      if (!midFromAims && r.mid_aim) { aim.mid = r.mid_aim.slice(0, 30); aim.midFrom = "route"; }
+      if (next !== BRIEF_NONE && r.plants.length) {
+        const add = r.plants.filter((p) => !next.plants.includes(p));
+        if (add.length) { next.plants = [...next.plants, ...add]; next.plants_route = add; }
+      }
+    }
+  }
   if (aim.mid === BRIEF_NONE) notYet.push("mid");
 
   // ⑩ 疑いの印（下の役の答えを事実と突き合わせる・決め直さない）
@@ -222,7 +241,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const next_link = nlRec && typeof nlRec.kind === "string" ? { kind: nlRec.kind, refs: (Array.isArray(nlRec.refs) ? nlRec.refs : []).slice(0, 4) as Array<Record<string, string>>, why: String(nlRec.why ?? "").slice(0, 80) } : undefined;
   const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown } | null;
   const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[] } : undefined;
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), decided, doubts, sure, notYet };
+  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), ...(route ? { route } : {}), decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
@@ -241,6 +260,8 @@ export const BRIEF_SECTION_SUBS: Readonly<Record<string, readonly string[]>> = {
   aim: ["aim.turn", "aim.mid"],
   // 2026-11-15 作業員I: 気持ち・状況の表の判断 → 重点（頭・つなぎ）・強さ（締め・つなぎ）・組（AIX）・次に送る物（つなぎ・AIX 2通目）。役目は feeling-conductor-table.FEELING_TO_ROLES と同じ欄
   feeling: ["focus.kind", "hook.degree", "priority.combo", "aim.mid"],
+  // 2026-11-21 作業員M（台帳 #467 の (1)）: 地図の今の状態（目的→締め・AIX 1通目／中期→つなぎ・AIX 2通目／仕込み→つなぎ）。ROUTE_TO_BRIEF=on の番だけある
+  route: ["aim.turn", "aim.mid", "aim.plant"],
 };
 /** 役目 → 渡す指示書の欄の名前（下の欄の役目の和）。alloc・doubts・sure・decided は統括の中だけ（書き手へは渡さない） */
 export function briefSectionsForRole(role: SubRole): string[] {

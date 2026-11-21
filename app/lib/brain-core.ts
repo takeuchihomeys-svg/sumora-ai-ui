@@ -141,7 +141,7 @@ import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
 import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
-import { deriveTurnAimsAfter } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
+import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
@@ -513,7 +513,7 @@ export type SuggestedAixMeta = {
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 地図の駅・分かれ道・次の一手（記録だけ） */
-  apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[] };
+  apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[]; substate?: string | null };
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 道の後の状態の表の狙い（turn-aims-after と同じ・記録だけ） */
   turn_aims_after?: import("@/app/lib/brain-turn-aims").TurnAims;
   main_point?: string;
@@ -6937,7 +6937,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
       // 2026-11-21 作業員M（台帳 #467・APPLY_ROUTE_RECORD=on の時だけ）: 地図の駅と、道を決めた後の状態の表の狙い（turn-aims-after と同じ純関数・記録だけ）。
       //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
-      ...(applyRouteLocRec ? { apply_route: applyRouteLocRec } : {}),
+      //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
+      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
