@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { imageDetailPartOn, partOfAixImage } from "@/app/lib/image-detail-part";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { flagOn } from "@/app/lib/brain-attention";
 import { supabase } from "@/app/lib/supabase-server";
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, reply_based_on_customer_at, allow_stale, send_id } = await req.json() as {
+  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, check_pattern, reply_based_on_customer_at, allow_stale, send_id } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -94,6 +95,8 @@ export async function POST(req: NextRequest) {
      * 画像から読み取った物件を sent_image_properties に source="aix:<種類>" で記録するのに使う。
      */
     aix_type?: string;
+    /** 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART）: AIX【物件確認した】の確認の型（interior_photo なら送った画像は室内）。無くてもよい */
+    check_pattern?: string;
     /**
      * 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 画面の入力欄の文を作り始めた時点のお客様の最新の発言の時刻（stale-reply.ts nextComposerBase）。
      * これより後にお客様の発言が届いていたら送らずに 409 stale_reply を返す（画面が「このまま送る／作り直す」を出す）。無い呼び出しは見ない。
@@ -375,7 +378,8 @@ export async function POST(req: NextRequest) {
         const sentAtIso = new Date().toISOString();
         const [rec] = await Promise.all([
           recordSentImageProperty({ imageUrl: image_url, conversationId: conversation_id, source: src }),
-          ensureImageDetail(image_url, conversation_id).catch((e) => {
+          // 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART=on の時だけ・既定 off）: AIX の種類と確認の型から画像の部分（listing／interior／cost）を読み取りに渡す（行を書く時に一緒に入れる）
+          ensureImageDetail(image_url, conversation_id, imageDetailPartOn() ? { part: partOfAixImage({ aixType: origin === "aix" ? aix_type : null, checkPattern: typeof check_pattern === "string" ? check_pattern : null }) } : undefined).catch((e) => {
             console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
             return null;
           }),
