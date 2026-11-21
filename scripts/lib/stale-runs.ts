@@ -25,6 +25,11 @@ export function cronNameOf(path: string): string | null {
   return m ? m[1] : null;
 }
 
+/** 点検の期待から外す cron（わざと止めている物・理由つき）。2026-11-21 統括役の確かめ */
+export const STALE_CRON_SKIP: Record<string, string> = {
+  "keep-warm": "既定オフ（KEEP_WARM=on の時だけ動き、off の時は記録の前に返す）。9/19 から off＝止まっているのは決めどおり",
+};
+
 export function staleCronsOf(crons: ReadonlyArray<{ path: string; schedule: string }>, lastByName: ReadonlyMap<string, string | null>, nowMs: number, ownerOf: (name: string) => string = () => "統括役"): Stale[] {
   const byName = new Map<string, number>();
   for (const c of crons) {
@@ -34,6 +39,7 @@ export function staleCronsOf(crons: ReadonlyArray<{ path: string; schedule: stri
   }
   const out: Stale[] = [];
   for (const [name, h] of byName) {
+    if (STALE_CRON_SKIP[name]) continue;
     const grace = h <= 24 ? 26 : h <= 168 ? 8 * 24 : 33 * 24;
     if (!lastByName.has(name)) continue; // 読めなかった名前は判定しない（呼ぶ側が読めた名前だけ渡す）
     const last = lastByName.get(name) ?? null;

@@ -22,5 +22,6 @@ const m = staleMetricsOf([{ metric: "x", owner: "N" }, { metric: "y", owner: "N"
 t("x は2日の余裕の中", !m.some((r) => r.name === "x"), m);
 t("y は止まっている", m.some((r) => r.name === "y" && r.kind === "metric_stale"), m);
 t("z は一度も無い（持ち主つき）", m.some((r) => r.name === "z" && r.kind === "metric_never" && r.owner === "K2"), m);
+t("keep-warm は期待から外す", staleCronsOf([{ path: "/api/cron/keep-warm", schedule: "*/10 * * * *" }], new Map([["keep-warm", "2026-09-19T06:30:00Z"]]), now).length === 0);
 console.log(`stale-runs: ${pass} 通過・${fail} 失敗`);
 if (fail) process.exit(1);
