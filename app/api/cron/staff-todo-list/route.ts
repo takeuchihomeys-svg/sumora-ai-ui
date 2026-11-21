@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
   const text = post.text;
   // 2026-11-21 作業員M（台帳 #482・連携の地図 staff.todo_cron／staff.overdue の値の来る所）: 便ごとに cron_run_logs へ1行（記録だけ・送る中身は変えない）。
   //   overdue_sent は期日を過ぎた要対応の知らせ直しを送った便だけ入る（AIX_OVERDUE_REMIND=on の時）＝staff.overdue の埋まりの割合
-  const logRun = (r: Record<string, unknown>) => supabase.from("cron_run_logs").insert({ cron_name: "staff-todo-list", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), ok: r.ok !== false, result_json: { ...r, ...(overdue?.sent ? { overdue_sent: overdue.count } : {}), ...(promiseDrop ? { promise_drop: true } : {}) } }).then(() => undefined, () => undefined);
+  const logRun = (r: Record<string, unknown>) => supabase.from("cron_run_logs").insert({ cron_name: "staff-todo-list", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), ok: r.ok !== false, result_json: { ...r, ...(overdue?.sent ? { overdue_sent: overdue.count } : {}), ...(promiseDrop?.sent ? { promise_drop_sent: true } : {}) /* 2026-11-21 作業員L: 送った便だけ（{ sent:false } も真になっていた） */ } }).then(() => undefined, () => undefined);
   if (!text) { await logRun({ ok: true, sent: false, reason: "no items", open: list.openCount }); return NextResponse.json({ ok: true, skipped: true, reason: "no items", stale, overdue }); }
 
   // LINE の text は 5000字まで（超えると送信が 400 で落ちる）。長い時は組み立てが④⑤を1人1行に詰め、それでも長ければ入るだけ出して残りを次の便に回す。それでも長ければ後ろを切る

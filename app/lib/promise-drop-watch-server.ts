@@ -11,12 +11,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { promiseDropOf, buildPromiseDropPost, promiseDropDue, promiseDropWatchMode, PROMISE_DROP_KEY, PROMISE_DROP_TEXT_KEY, PROMISE_DROP_MAX_DAYS, type PromiseDrop, type PdInput, overduePromisesOf, type OverduePromise } from "./promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "./test-conversations";
 
+/** 見えない字（書式の字・異体字の選び）を除いた名前（空なら null） */
+export function visibleName(v: string | null | undefined): string | null {
+  const t = String(v ?? "").replace(/[p{Cf}︀-️​-‍⁠s]/gu, "").trim();
+  return t || null;
+}
 const MAX_CONVS = 300; // 朝 5:25（営業時間の外）に1回だけ。80 では古い約束（29日）の会話が入らなかった（11/21 の試し）
 
 // 2026-11-21 作業員H の注意: rag-watch-daily の maxDuration は 120秒で、H の本番に近い問いの測りが最悪 70〜80秒使う。
 //   こちらは 30秒の上限（budgetMs）を持ち、5会話ずつ並べて読み、時間が来たら途中で打ち切る（partial を記録に残す）。
 export const PROMISE_DROP_BUDGET_MS = 30_000;
-const BATCH = 5;
+const BATCH = 8; // 11/21: 5 では本番の朝に 30秒で 75/88 まで（打ち切り）
 
 /** 1つの会話の材料（会話・発言・AIX・要対応・候補・お客様に届いた送付）。見張りと統括の材料（overduePromisesFor）で同じ読み */
 export async function loadPdInput(sb: SupabaseClient, c: string, since: string): Promise<PdInput> {
@@ -33,7 +38,8 @@ export async function loadPdInput(sb: SupabaseClient, c: string, since: string):
   const pcIds = ((pcs ?? []) as Array<{ id: string }>).map((x) => x.id);
   const s = await sb.from("sent_properties").select("sent_at").or(pcIds.length ? `conversation_id.eq.${c},${pcIds.map((id) => `property_customer_id.eq.${id}`).join(",")}` : `conversation_id.eq.${c}`).or("source.is.null,source.neq.line_group").gte("sent_at", since).limit(300);
   return {
-    conversationId: c, customerName: conv?.call_name || conv?.customer_name || null, status: conv?.status ?? null,
+    // 2026-11-21: 呼び名が見えない字だけ（「︎︎さん」と出た）の時はお客様の名前に
+    conversationId: c, customerName: visibleName(conv?.call_name) || visibleName(conv?.customer_name) || null, status: conv?.status ?? null,
     msgs: (m.data ?? []) as PdInput["msgs"], aix: (a.data ?? []) as PdInput["aix"], sent: (s.data ?? []) as PdInput["sent"],
     items: (i.data ?? []) as PdInput["items"], picks: (p.data ?? []) as PdInput["picks"],
   };
@@ -48,8 +54,12 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o
     .order("created_at", { ascending: false }).limit(2000);
   if (error) throw new Error(`promise-drop: ${error.message}`);
   const internal = new Set<string>(STAFF_INTERNAL_CONVERSATION_IDS as readonly string[]);
-  const convs = [...new Set(((hits ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))]
-    .filter((c) => !isTestConversation(c) && !isNoLineTestConversation(c) && !internal.has(c)).slice(0, MAX_CONVS);
+  // 2026-11-21 作業員L（台帳 #435 の確かめ: 11/21 朝の本番は 30秒で 75/88 会話の所で打ち切り＝一番古い約束の会話（例 6e77895d・44fd59ab）が読まれず漏れた）:
+  //   会話の並びを「一番新しい約束の言葉が古い順」にする（72時間を過ぎた約束の会話から先に読む・新しい約束の会話は期限の前で出ないので後でよい）
+  const latest = new Map<string, string>();
+  for (const r of (hits ?? []) as Array<{ conversation_id: string; created_at: string }>) if (!latest.has(r.conversation_id)) latest.set(r.conversation_id, r.created_at);
+  const convs = [...latest.keys()].filter((c) => !isTestConversation(c) && !isNoLineTestConversation(c) && !internal.has(c))
+    .sort((a, b) => latest.get(a)!.localeCompare(latest.get(b)!)).slice(0, MAX_CONVS);
   const out: PromiseDrop[] & { partial?: boolean; scanned?: number; total?: number } = [];
   let scanned = 0;
   const one = async (c: string) => {
