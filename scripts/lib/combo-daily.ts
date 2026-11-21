@@ -21,6 +21,8 @@ export type ComboDaily = {
   day: string; n: number; same: number; sameRate: number | null;
   aixToReply: number; aixToReplyByKind: Record<string, number>; replyToAix: number; secondAixMiss: number;
   examples: { aixToReply: string[]; replyToAix: string[]; secondAixMiss: string[]; comboMiss: string[] };
+  /** 2026-11-21 作業員M の頼み（台帳 #407）: 組が外れた番の一覧（本文なし） */
+  misses: Array<{ conv: string; at: string; brain: string; takeuchi: string; kind: "AIX→返信" | "返信→AIX" | "2つ目の取りこぼし" | "その他" }>;
 };
 
 /** span 日（既定7日・竹内さん本人の番は1日に数番しか無い＝1日では数が揺れる）の窓で、day まで（day を含む）を数える */
@@ -50,7 +52,7 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const { data } = await sb.from("brain_decision_logs").select("id, digest").in("id", ids.slice(i, i + 200));
     for (const r of (data ?? []) as Array<{ id: string; digest: { tc?: string } | null }>) tcOf.set(r.id, r.digest?.tc ?? null);
   }
-  const out: ComboDaily & { span: number } = { day, span, n: 0, same: 0, sameRate: null, aixToReply: 0, aixToReplyByKind: {}, replyToAix: 0, secondAixMiss: 0, examples: { aixToReply: [], replyToAix: [], secondAixMiss: [], comboMiss: [] } };
+  const out: ComboDaily & { span: number } = { day, span, n: 0, same: 0, sameRate: null, aixToReply: 0, aixToReplyByKind: {}, replyToAix: 0, secondAixMiss: 0, examples: { aixToReply: [], replyToAix: [], secondAixMiss: [], comboMiss: [] }, misses: [] };
   const push = (k: keyof ComboDaily["examples"], c: string) => { if (out.examples[k].length < 10) out.examples[k].push(c.slice(0, 8)); };
   for (const t of turns) {
     const at = Date.parse(t.customer_turn_at);
@@ -68,6 +70,9 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const bc = bp?.combo ?? (route === "aix" ? "aix_only" : route === "two_stage" ? "promise_then_aix_later" : "reply_only");
     if (bc === tc) out.same++; else push("comboMiss", t.conversation_id);
     const sentAix = moves.some((m) => m.aix);
+    const kindsM = [...new Set((t.staff_aix ?? []).map((a) => aixBundleFamily(String(a.aix_type ?? ""))).filter(Boolean))];
+    const mixM = tcMix(t.decision_id ? tcOf.get(t.decision_id) : null);
+    if (bc !== tc) out.misses.push({ conv: t.conversation_id.slice(0, 8), at: t.customer_turn_at, brain: String(bc), takeuchi: String(tc), kind: route === "aix" && !sentAix ? "AIX→返信" : route === "reply" && sentAix ? "返信→AIX" : kindsM.length >= 2 && (!mixM || mixM.a <= 1) ? "2つ目の取りこぼし" : "その他" });
     if (route === "aix" && !sentAix) { out.aixToReply++; const k = aixBundleFamily(String(t.brain_action ?? "?")); out.aixToReplyByKind[k] = (out.aixToReplyByKind[k] ?? 0) + 1; push("aixToReply", t.conversation_id); }
     if (route === "reply" && sentAix) { out.replyToAix++; push("replyToAix", t.conversation_id); }
     const kinds = [...new Set((t.staff_aix ?? []).map((a) => aixBundleFamily(String(a.aix_type ?? ""))).filter(Boolean))];
