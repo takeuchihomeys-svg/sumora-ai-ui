@@ -120,3 +120,24 @@ export function appealViaToolNow(days: number, scriptExists: (p: string) => bool
     return { n: j.n, matched: j.matched, rate: j.n ? Math.round((j.matched / j.n) * 1000) / 10 : null, textOnly };
   } catch { return null; } finally { try { rmSync(out); } catch { /* 無し */ } }
 }
+
+/** 台本の出力から、--json の1行（{ で始まる最後の行）を読む（純関数） */
+export function lastJsonLine<T>(stdout: string): T | null {
+  const line = stdout.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.startsWith("{")).pop();
+  if (!line) return null;
+  try { return JSON.parse(line) as T; } catch { return null; }
+}
+
+/**
+ * 済みなのに見積を送っていない見積の予定・同じ会話・同じ時刻の重複（作業員K2 の scripts/audit-estimate-done-unsent.ts --days=30 --json・台帳 #580・#596・ESTIMATE_EVENT_GUARD）。
+ * 2026-11-22 作業員N2（統括役の中継）: on の前は 送っていない 18（9会話）・重複 15。台本が無い・失敗・--json が読めない時は null
+ */
+export function estimateDoneUnsentNow(scriptExists: (p: string) => boolean): { done: number; unsent: number; unsentConvs: number; dup: number; convs: string[] } | null {
+  const p = "scripts/audit-estimate-done-unsent.ts";
+  if (!scriptExists(p)) return null;
+  try {
+    const j = lastJsonLine<{ done?: number; unsent?: number; unsent_convs?: number; dup?: number; convs?: string[] }>(runTsx([p, "--days=30", "--json"], 240_000));
+    if (!j || typeof j.unsent !== "number" || typeof j.dup !== "number") return null;
+    return { done: Number(j.done ?? 0), unsent: j.unsent, unsentConvs: Number(j.unsent_convs ?? 0), dup: j.dup, convs: (j.convs ?? []).map((c) => String(c).slice(0, 8)) };
+  } catch { return null; }
+}

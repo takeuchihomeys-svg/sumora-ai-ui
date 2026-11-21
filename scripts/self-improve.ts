@@ -30,7 +30,7 @@ import { currentOwnerOf } from "./lib/live-owner";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow } from "./lib/self-improve-growth";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 
@@ -287,6 +287,18 @@ async function main() {
     const notUp = av.rate != null && av.n > 0 && av.rate < 100 && pv != null && av.rate <= pv;
     lines.push(`- 物件オススメが売上サポを通った割合（前の1日・書き手 all）: ${av.rate ?? "—"}%（${av.matched}/${av.n}）｜前の日 ${pv ?? "—"}${notUp ? "｜上がっていない" : ""}｜文に書いたのに AIX の札に無い: ${Object.entries(av.textOnly).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k} ${v}`).join("・") || "—"}`);
     if (notUp) growthFix.push(`物件オススメが売上サポ（AIX ツール）を通った割合が前の日から上がらない（${av.rate}%・前の日 ${pv}%）→ 作業員K2・台帳 #479`);
+  }
+  // 済みなのに見積を送っていない見積の予定・同じ会話・同じ時刻の重複（作業員K2 の audit-estimate-done-unsent・台帳 #580・#596・ESTIMATE_EVENT_GUARD の確かめ・2026-11-22 統括役の中継）
+  //   書く日は前の日（avRows と同じ）。前の日より増えた日は直しの候補へ（作業員K2・台帳 #580）。on の前は 18（9会話）・15
+  const ed2 = doMetrics ? estimateDoneUnsentNow((x) => existsSyncPU(x)) : null;
+  if (ed2) {
+    avRows.push({ metric: "growth:estimate:done_unsent", value: ed2.unsent, n: ed2.done }, { metric: "growth:estimate:dup", value: ed2.dup, n: ed2.done });
+    const { data: qe } = await sb.from("quality_daily").select("metric, value").eq("day", jstDay(now - 2 * 86_400_000)).in("metric", ["growth:estimate:done_unsent", "growth:estimate:dup"]).eq("scope", "all").limit(2);
+    const pe = (m: string) => ((qe ?? []) as Array<{ metric: string; value: number | null }>).find((r) => r.metric === m)?.value ?? null;
+    const pu = pe("growth:estimate:done_unsent"), pd = pe("growth:estimate:dup");
+    lines.push(`- 見積の予定（30日）: 済みなのに見積を送っていない ${ed2.unsent}（${ed2.unsentConvs}会話・済み ${ed2.done}）｜前の日 ${pu ?? "—"}・同じ会話・同じ時刻の重複 ${ed2.dup}｜前の日 ${pd ?? "—"}｜会話 ${ed2.convs.slice(0, 6).join(",") || "—"}`);
+    if (pu != null && ed2.unsent > pu) growthFix.push(`済みなのに見積を送っていない見積の予定が前の日より増えた（${pu}→${ed2.unsent}）→ 作業員K2・台帳 #580`);
+    if (pd != null && ed2.dup > pd) growthFix.push(`同じ会話・同じ時刻の見積の予定の重複が前の日より増えた（${pd}→${ed2.dup}）→ 作業員K2・台帳 #580`);
   }
   // 画像の種類×欄の埋まり（作業員G の scripts/image-field-fill-daily.ts・台帳 #509・前の日 JST を --write で quality_daily へ・新しい cron は足さない）
   //   台本が手元に無い（main に入る前）の日は飛ばす。90% に届かない欄を直しの候補に

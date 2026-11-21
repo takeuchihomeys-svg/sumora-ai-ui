@@ -26,6 +26,7 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "growth:appeal_text_only": { script: "scripts/audit-appeal-vs-codes.ts", owner: "作業員K2" },
   "growth:combo": { script: "scripts/lib/combo-daily.ts", owner: "作業員M" },
   "growth:ask": { script: "scripts/lib/ask-route-of.ts", owner: "作業員M" },
+  "growth:estimate": { script: "scripts/audit-estimate-done-unsent.ts", owner: "作業員K2" },
   "core:linkage": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:no_denominator": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:foundation": { script: "scripts/check-foundation.ts", owner: "作業員N" },

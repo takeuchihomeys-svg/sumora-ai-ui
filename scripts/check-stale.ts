@@ -21,6 +21,7 @@ export function expectedMetrics(): Array<{ metric: string; owner: string }> {
     ...FOUNDATION_N.filter((r) => r.metric).map((r) => ({ metric: r.metric!, owner: r.owner.split("・")[0] })),
   ];
   if (has("scripts/audit-appeal-vs-codes.ts")) out.push({ metric: "growth:pickup_via_tool", owner: "作業員K2" });
+  if (has("scripts/audit-estimate-done-unsent.ts")) out.push({ metric: "growth:estimate:done_unsent", owner: "作業員K2" }, { metric: "growth:estimate:dup", owner: "作業員K2" });
   if (has("scripts/image-field-fill-daily.ts")) out.push({ metric: "image_fill:%", owner: "作業員G" });
   return [...new Map(out.map((x) => [x.metric, x])).values()];
 }
