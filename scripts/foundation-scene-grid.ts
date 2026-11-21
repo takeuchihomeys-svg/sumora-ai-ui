@@ -36,22 +36,26 @@ async function main() {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
   const { data, error } = await sb.from("system_design_thinking").select("id,title,insight,tags,priority").eq("is_current", true).lte("priority", 2).limit(5000);
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Array<{ id: string; title: string; insight: string | null; tags: string[] | null }>;
-  const grid: Array<{ id: string; name: string; owner: string; measure: "場面ごと" | "全体だけ" | "無い"; cells: Record<string, number> }> = [];
+  const rows = (data ?? []) as Array<{ id: string; title: string; insight: string | null; tags: string[] | null; priority: number | null }>;
+  // 2026-11-21 統括役の決め: 場面の札が無い P0/P1 の決まり（全部の場面に効く）は別の列「全場面」に数える（場面の札を後から付けると KB の札が増えて崩れるため）
+  const sceneMatch = (r: { title: string; tags: string[] | null }) => SCENES.some((sk) => (r.tags ?? []).includes(KB_SCENES[sk].tag) || ((KB_SCENES[sk] as { titleRe: RegExp | null }).titleRe?.test(r.title) ?? false));
+  const allSceneRows = rows.filter((r) => (r.priority ?? 9) <= 1 && !sceneMatch(r));
+  const grid: Array<{ id: string; name: string; owner: string; measure: "場面ごと" | "全体だけ" | "無い"; cells: Record<string, number>; all: number }> = [];
   for (const f of FOUNDATION_N) {
     const term = FOUNDATION_TERMS[f.id];
     const ms = f.measures.filter((m) => existsSync(m) || inOriginMain(m));
     const measure = ms.some((m) => SCENE_SPLIT.has(m)) ? "場面ごと" : ms.length ? "全体だけ" : "無い";
     const cells: Record<string, number> = {};
     for (const s of SCENES) cells[s] = term ? rulesFor(rows, term, KB_SCENES[s] as { tag: string; titleRe: RegExp | null }) : 0;
-    grid.push({ id: f.id, name: f.name, owner: f.owner, measure, cells });
+    const all = term ? allSceneRows.filter((r) => term.test(`${r.title} ${(r.insight ?? "").slice(0, 200)}`)).length : 0;
+    grid.push({ id: f.id, name: f.name, owner: f.owner, measure, cells, all });
   }
   if (process.argv.includes("--json")) { console.log(JSON.stringify({ scenes: SCENES, grid })); return; }
-  console.log(`| 土台 | 物差し | ${SCENES.map((s) => KB_SCENES[s].tag.replace("場面:", "")).join(" | ")} | 決まりの無い場面 |`);
-  console.log(`|---|---|${SCENES.map(() => "---").join("|")}|---|`);
+  console.log(`| 土台 | 物差し | 全場面（P0/P1） | ${SCENES.map((s) => KB_SCENES[s].tag.replace("場面:", "")).join(" | ")} | 決まりの無い場面 |`);
+  console.log(`|---|---|---|${SCENES.map(() => "---").join("|")}|---|`);
   for (const g of grid) {
     const none = SCENES.filter((s) => !g.cells[s]);
-    console.log(`| ${g.name}（${g.owner}） | ${g.measure} | ${SCENES.map((s) => String(g.cells[s] || "—")).join(" | ")} | ${none.length} |`);
+    console.log(`| ${g.name}（${g.owner}） | ${g.measure} | ${g.all || "—"} | ${SCENES.map((s) => String(g.cells[s] || (g.all ? "全" : "—"))).join(" | ")} | ${none.length}${none.length && g.all ? "（全場面の決まりあり）" : ""} |`);
   }
   if (process.argv.includes("--write")) {
     const { data: open } = await sb.from("work_items").select("title").eq("origin", "found_gap").not("stage", "in", "(done,dropped)").limit(3000);
@@ -60,7 +64,7 @@ async function main() {
     for (const g of grid) {
       const none = SCENES.filter((s) => !g.cells[s]).map((s) => KB_SCENES[s].tag.replace("場面:", ""));
       const items: string[] = [];
-      if (none.length) items.push(`土台「${g.name}」の場面ごとの決まりが無い（${none.join("・")}）`);
+      if (none.length) items.push(`土台「${g.name}」の場面ごとの決まりが無い（${none.join("・")}）${g.all ? "・全場面の決まりはある" : ""}`);
       if (g.measure !== "場面ごと") items.push(`土台「${g.name}」の物差しが${g.measure === "無い" ? "無い" : "場面で分かれていない（全体だけ）"}`);
       for (const title of items) {
         if (have.has(title)) continue;
