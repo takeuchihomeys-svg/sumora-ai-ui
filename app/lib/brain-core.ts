@@ -507,7 +507,7 @@ export type SuggestedAixMeta = {
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
   cancel_wide_shadow?: boolean;
-  /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state・aims_after */
+  /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state */
   material_marks?: Record<string, number>;
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
@@ -6960,8 +6960,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
-      // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ）と、書き手の受け渡しで道の後の目的が作られる番の印（turn-aims-after と同じ計算・記録だけ）
-      material_marks: await (async () => { try { const ta = await import("@/app/lib/turn-aims-after"); const route: "reply" | "aix" = finalAix ? "aix" : "reply"; const d = ta.deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); const mm = { ...materialMarks, ...(d ? { aims_after: 1 } : {}) }; return Object.keys(mm).length ? mm : undefined; } catch { return Object.keys(materialMarks).length ? { ...materialMarks } : undefined; } })(),
+      // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
