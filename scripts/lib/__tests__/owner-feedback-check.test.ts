@@ -1,6 +1,6 @@
 // scripts/lib/__tests__/owner-feedback-check.test.ts — 指摘の型の点検の純関数（2026-11-21 作業員N）
 //   実行: npx tsx scripts/lib/__tests__/owner-feedback-check.test.ts
-import { multiMeaningKeys } from "../../owner-feedback-check";
+import { multiMeaningKeys, gapOwnerOf } from "../../owner-feedback-check";
 import { weakLinksOf } from "../../check-linkage";
 import { missOf } from "../../check-conductor";
 
@@ -28,6 +28,11 @@ t("ブレイン返信・竹内さん AIX＝AIX の番を返信", missOf("differe
 t("ブレイン AIX・竹内さん返信＝読み違い", missOf("different", "aix", "estimate_sheet", { staff_aix: [] })?.type === "aix_not_reply");
 t("返信どうしで事実の食い違い＝材料", missOf("different", "auto_reply", null, { reason: "fact_conflict" })?.cause === "material");
 t("一致は外れにしない", missOf("same", "aix", "x", {}) === null);
+
+t("段から持ち主", gapOwnerOf({ kind: "not_subdivided", title: "連携の地図の段 tool_rank: 値の来る所が決まっていない行 1" }) === "作業員K2" && gapOwnerOf({ kind: "not_subdivided", title: "連携の地図の段 read: 値の来る所が決まっていない行 15" }) === "作業員L");
+t("check は H・staff は M（統括役の決め 11/21）", gapOwnerOf({ kind: "not_subdivided", title: "連携の地図の段 check: 値の来る所が決まっていない行 1" }) === "作業員H" && gapOwnerOf({ kind: "not_subdivided", title: "連携の地図の段 staff: 値の来る所が決まっていない行 3" }) === "作業員M");
+t("決まらない段は統括役", gapOwnerOf({ kind: "not_subdivided", title: "連携の地図の段 zzz: 値の来る所が決まっていない行 1" }) === "統括役");
+t("型から持ち主", gapOwnerOf({ kind: "unread", title: "読めていない" }) === "作業員G" && gapOwnerOf({ kind: "other", title: "x" }) === "統括役");
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
