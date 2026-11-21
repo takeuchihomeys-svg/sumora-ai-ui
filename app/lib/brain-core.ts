@@ -505,6 +505,8 @@ export type SuggestedAixMeta = {
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
   cancel_wide_shadow?: boolean;
+  /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
+  conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
   situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
@@ -3833,6 +3835,8 @@ ${sh}`;
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
+  // 2026-11-21 作業員L（KB 56691196・CONDUCTOR_LESSONS・既定 shadow）: 入口の統括が読んだ近い場面の学び（記録と最終の印に使う）
+  let lessonsRec: import("@/app/lib/conductor-lessons").LessonRow[] | null = null;
   // 返す前に最大4秒だけ待つ（待ち始めは meta を組む時・conductor_intake と conductor_focus で同じ待ちを使う）
   let intakeDoneMemo: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
   const intakeDoneGet = () => (intakeP ? (intakeDoneMemo ??= Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) : null);
@@ -3840,6 +3844,8 @@ ${sh}`;
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
     intakeP = import("@/app/lib/conductor-intake-server").then(async ({ runConductorIntake }) => {
+      // 2026-11-21 作業員L（統括役の注意）: 学びの読み（埋め込み＋RPC・最大1.5秒）は入口の他の読みと並べて先に始める（carryLine は順に待つ＝直列で延ばさない）
+      const lessonsP: Promise<{ mode: string; rows: import("@/app/lib/conductor-lessons").LessonRow[] } | null> = (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const mode = cl.conductorLessonsMode(); if (mode === "off") return null; const { loadConductorLessonsWithin } = await import("@/app/lib/conductor-lessons-server"); return { mode, rows: await loadConductorLessonsWithin(supabase, { conversationId, customerTurn: unrepliedTurn.text ?? "", stage: null }) }; } catch { return null; } })();
       // 2026-11-05 作業員5（KB P0 575a7cd5 ④）: CONDUCTOR_FOCUS=shadow の時だけ、竹内さんの近い過去の番の重点を先に引いて入口の統括に添える（1.5秒まで・無ければ添えない）
       let nearFocus: import("@/app/lib/conductor-focus").NearFocus | null = null;
       const { conductorFocusMode } = await import("@/app/lib/conductor-focus");
@@ -3863,7 +3869,10 @@ ${sh}`;
           // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
           await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })(),
           // 2026-11-21 作業員N（信頼の土台 #55 B1・作業員L の #435 と同じ線）: 期限を過ぎて果たしていないこちらの約束（事実だけ・既定 off CONDUCTOR_OVERDUE_PROMISES=on・1会話分の読みを最大1.5秒待つ）
-          await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
+          await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })(),
+          // 2026-11-21 作業員L（KB 56691196「試験と連動して統括を鍛える」・統括役の決め）: 場面と近さで当たった学び（型・竹内さんの一手・なぜ）を最大3行。
+          //   CONDUCTOR_LESSONS=shadow（既定）は読んで記録だけ（材料に渡さない）・on は入口の統括の材料に・off は読まない。試験の問題の元の会話は外す（conductor-lessons-server）
+          await (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const got = await lessonsP; if (!got) return ""; const { mode, rows } = got; lessonsRec = rows; console.log(JSON.stringify({ tag: "brain:conductor-lessons", conversationId, mode, ids: cl.lessonsDigest(rows) })); return mode === "on" ? cl.lessonsMaterialLine(rows) : ""; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -6942,6 +6951,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }), factsForConductor), ["judge_examples", "knowledge"]))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
       conductor_intake: intakeDoneGet() ? ((await intakeDoneGet()) ?? undefined) : undefined,
+      // 2026-11-21 作業員L（CONDUCTOR_LESSONS）: 読んだ学びの id と、最終の一手（AIX の種類か返信）が同じ場面の学びで前に外した一手と同じ時の印（記録だけ・文も道も変えない）
+      conductor_lessons: lessonsRec ? await (async () => { const cl = await import("@/app/lib/conductor-lessons"); return { mode: cl.conductorLessonsMode(), ids: (lessonsRec ?? []).map((r) => String(r.id).slice(0, 8)), mark: cl.sameMissMark(cl.brainActCodes({ reply_mode: finalAix ? "aix" : "auto_reply", action: finalAix ?? "" }), lessonsRec ?? []) }; })() : undefined,
       // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
       conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,
       brain_depth: depthRec ?? undefined,
