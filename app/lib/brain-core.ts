@@ -143,6 +143,7 @@ import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
 import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
 import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
+import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
@@ -3072,7 +3073,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const promiseTrack = trackPromises((promiseRows.length ? promiseRows : [...typedMessages].reverse()).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated })));
   // 慣れた事は速く: 台帳に未対応の約束がある番は慣れた番にしない（お礼だけに見えて前の約束の答えを待っている番・設計書 7-4 の危なさ）
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
-  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
+  // 2026-11-21 作業員M（台帳 #405・BRAIN_FULFIL_TURN・既定 off＝空文字）: 了承だけの番に、直前のその場で果たせる約束（物件探し・見積書・資料の送付）があれば事実の1塊（fulfil-turn.ts）
+  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply })) + fulfilTurnBrainText({ customerText: unrepliedTurn.text, open: promiseTrack.open });
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
   //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 on（11/06 q174-guard 悪化0）・止める BRAIN_OTHER_CANDIDATES_READ=off（app/lib/other-candidates-read.ts）
