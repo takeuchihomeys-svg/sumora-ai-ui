@@ -287,6 +287,20 @@ async function resolvePropertyReference(
     .update({ customer_reaction: rejected ? "rejected" : "interested" })
     .eq("id", hit.id);
   if (reactErr) console.warn("[resolvePropertyReference] customer_reaction:", reactErr.message);
+
+  // 5. 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_POINTS=on の時だけ・既定 off）: どの点が刺さったか（家賃・広さ・間取り・駅・新しさ…）を残す。
+  //   別の update にする（列がまだ無い時も customer_reaction の記録を壊さない）
+  if (!rejected) {
+    const hp = await import("@/app/lib/hook-points");
+    if (hp.sentHookRecordOn()) {
+      const points = hp.hookPointsOf(qText, replyText);
+      if (points.length) {
+        const { error: hookErr } = await db.from("sent_properties").update({ customer_hook_points: points }).eq("id", hit.id);
+        if (hookErr) console.warn("[resolvePropertyReference] customer_hook_points:", hookErr.message);
+        console.log(JSON.stringify({ tag: "webhook:hook-points", convId, points }));
+      }
+    }
+  }
 }
 
 // ── 流入元判定（conversations.acquisition_source）────────────────────────────
