@@ -57,3 +57,24 @@ export function sentFillMetrics(rows: ReadonlyArray<SentRow>): FillMetric[] {
   }
   return out;
 }
+
+/**
+ * 2026-11-22 作業員G（台帳 #587）: カウンターキッチンの文字の札（property_pickups.equipment.facts.counter_kitchen）と
+ *   画像の読み（image_facts.counter_kitchen）の食い違いを数える。食い違った行は目の監査（scripts/image-audit.ts --topic=counter_kitchen_v2）に回す。
+ *   image_mismatch:counter_kitchen:<型>  型 = text_ok_image_ng（文字は有る・画像は無い）／text_ng_image_ok／image_only_ok（文字に無く画像だけ有る＝図だけで読んだ例）／
+ *   image_only_ng／agree（両方同じ）。n＝画像で読んだ行の数
+ */
+export type CounterKitchenRow = { id: number; text: string | null; image: boolean | null };
+export function counterKitchenAgreement(rows: ReadonlyArray<CounterKitchenRow>): { metrics: FillMetric[]; mismatchIds: number[]; imageOnlyIds: number[] } {
+  const read = rows.filter((r) => r.image === true || r.image === false);
+  const count: Record<string, number> = { agree: 0, text_ok_image_ng: 0, text_ng_image_ok: 0, image_only_ok: 0, image_only_ng: 0 };
+  const mismatchIds: number[] = [], imageOnlyIds: number[] = [];
+  for (const r of read) {
+    const t = r.text === "ok" ? true : r.text === "ng" ? false : null;
+    if (t === null) { count[r.image ? "image_only_ok" : "image_only_ng"]++; if (r.image) imageOnlyIds.push(r.id); }
+    else if (t === r.image) count.agree++;
+    else { count[t ? "text_ok_image_ng" : "text_ng_image_ok"]++; mismatchIds.push(r.id); }
+  }
+  const metrics = read.length ? Object.entries(count).map(([k, v]) => ({ metric: `image_mismatch:counter_kitchen:${k}`, value: v, n: read.length })) : [];
+  return { metrics, mismatchIds, imageOnlyIds };
+}
