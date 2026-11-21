@@ -507,6 +507,8 @@ export type SuggestedAixMeta = {
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
   cancel_wide_shadow?: boolean;
+  /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state */
+  material_marks?: Record<string, number>;
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
@@ -3595,10 +3597,12 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   // 2026-10-13 竹内さん「確認の約束への了承の返事（受けだけか待ちの形の1文か）はブレインに任せる」: 答えでなく竹内さんの使い分けの材料を渡し、
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
+  // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
+  const materialMarks: Record<string, number> = {};
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
-      if (ackLine) customerStateBlockText += `\n\n${ackLine}`;
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -3701,7 +3705,7 @@ ${sh}`;
   }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
-    if (nf) customerStateBlockText += `\n${nf}`;
+    if (nf) { customerStateBlockText += `\n${nf}`; materialMarks.now_fulfillable = nf.length; }
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
@@ -3849,7 +3853,7 @@ ${sh}`;
         const asc = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.created_at }));
         const marks = SF.staleStrategyMarks({ cs: opts.strategy.closing_strategy, csAt: opts.strategy.strategy_msg_ts ?? null, messages: asc, knownNames: sentProps.map((p) => p.property_name ?? "").filter(Boolean) });
         const sl = SF.staleStrategyLine(marks);
-        if (sl) customerStateBlockText += `\n\n${sl}`;
+        if (sl) { customerStateBlockText += `\n\n${sl}`; materialMarks.topic_state = marks.length; }
         console.log(JSON.stringify({ tag: "brain:strategy-stale", conversationId, marks: marks.map((m) => `${m.kind}:${m.name ?? "-"}`) }));
       }
     } catch (e) { console.warn("[brain-core] strategy-stale skipped:", e instanceof Error ? e.message : String(e)); }
@@ -6956,6 +6960,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
+      // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
