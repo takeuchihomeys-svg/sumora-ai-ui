@@ -15,7 +15,7 @@ export type GMsg = { sender: string; text: string | null; created_at: string; st
 export type GAix = { aix_type: string | null; sent_at: string | null; created_at: string };
 export type GDecision = { created_at: string; stage: string | null };
 export type Outcome = "advanced" | "engaged" | "stuck" | "back" | "left";
-export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
+export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）・内覧待ち（viewingWait の時）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
 
 /** customer-state の段階 → 地図の駅（apply-route-map の STAGE_TO_NODE と同じ・searching は pickup に寄せる） */
 const STAGE_NODE: Record<string, RouteNodeId | null> = {
@@ -49,6 +49,8 @@ export type GuideTurn = {
   promiseWait?: "fulfilled" | "not_fulfilled";
   /** promiseWait=fulfilled の時: 約束から果たした AIX までの時間（時間・小数1桁） */
   fulfilH?: number;
+  /** promiseWait=fulfilled の時: 果たした AIX の種類（property_send・property_recommendation・property_check_result・estimate_sheet・mgmt_*） */
+  fulfilType?: string;
 };
 
 /** 約束を果たしたと見る AIX（物件・確かめた結果・見積） */
@@ -60,7 +62,11 @@ export const PROMISE_FULFIL_H = 72;
  * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
  *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
  */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean } = {}): GuideTurn[] {
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean } = {}): GuideTurn[] {
+  // 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後（viewing_scheduled）に留まって返事が来る番は、内覧の日まで駅が進まないだけ＝止まりではない
+  //   （「物件確認した の後に止まった」7番のうち3番がこれ）。opts.viewingWait（既定 false＝今と同じ）の時だけ engaged に数える
+  const keep = (before: RouteNodeId | null, after: RouteNodeId | null, reply: ReactionCat) =>
+    (before === "proposing" && reply === "question") || (!!opts.viewingWait && before === "viewing_scheduled" && after === "viewing_scheduled" && reply !== "silent");
   const ms = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const ds = [...decisions].filter((d) => d.stage).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const stageAt = (iso: string, after: boolean) => {
@@ -90,14 +96,14 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const replyCat = replied ? classifyCustomerBurst(reply) : "silent";
     // 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は、駅が変わらなくても関わりが続いている形＝「止まった」と分ける（engaged）
     const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back"
-      : before === "proposing" && replyCat === "question" ? "engaged" : "stuck";
+      : keep(before, after, replyCat) ? "engaged" : "stuck";
     const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
     if (opts.promiseWait && act === "reply:promise" && replied && replyCat === "thanks") {
       const t0 = Date.parse(m.created_at);
       const ful = aix.map((a) => ({ type: a.aix_type ?? "", at: a.sent_at ?? a.created_at })).filter((a) => FULFIL_AIX.test(a.type) && Date.parse(a.at) > t0 && Date.parse(a.at) - t0 <= PROMISE_FULFIL_H * 36e5).sort((a, b) => a.at.localeCompare(b.at))[0];
       if (!ful) { row.promiseWait = "not_fulfilled"; row.outcome = "left"; }
       else {
-        row.promiseWait = "fulfilled"; row.fulfilH = Math.round((Date.parse(ful.at) - t0) / 36e5 * 10) / 10;
+        row.promiseWait = "fulfilled"; row.fulfilH = Math.round((Date.parse(ful.at) - t0) / 36e5 * 10) / 10; row.fulfilType = ful.type;
         const nx = ms.find((x) => x.sender === "customer" && x.created_at > ful.at);
         const h2 = nx ? (Date.parse(nx.created_at) - Date.parse(ful.at)) / 36e5 : null;
         if (!nx || h2 == null || h2 > windowH) { row.outcome = "left"; row.reply = "silent"; }
@@ -105,7 +111,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
           const burst: string[] = []; for (let j = ms.indexOf(nx); j < ms.length && ms[j].sender === "customer"; j++) burst.push(String(ms[j].text ?? ""));
           const a2 = stageAt(nx.created_at, true), r2 = classifyCustomerBurst(burst);
           row.after = a2; row.reply = r2;
-          row.outcome = idx(a2) > idx(before) ? "advanced" : idx(a2) < idx(before) && idx(a2) >= 0 ? "back" : before === "proposing" && r2 === "question" ? "engaged" : "stuck";
+          row.outcome = idx(a2) > idx(before) ? "advanced" : idx(a2) < idx(before) && idx(a2) >= 0 ? "back" : keep(before, a2, r2) ? "engaged" : "stuck";
         }
       }
     }

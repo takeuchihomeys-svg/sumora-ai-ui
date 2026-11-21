@@ -386,6 +386,23 @@ export async function POST(req: NextRequest) {
             return null;
           }),
         ]);
+        // 2026-11-22 作業員G（#509 ③）: 物件の読みの値（facts）の空の欄を、同じ画像の書き写しの読み（image_details.lines）から埋める（上書きしない・LLM なし）。既定 off（SENT_FACTS_FROM_DETAIL=on）
+        try {
+          const { sentFactsFromDetailOn, factsPatchFromDetail } = await import("@/app/lib/sent-facts-from-detail");
+          if (sentFactsFromDetailOn()) {
+            const { supabase: sbF } = await import("@/app/lib/supabase-server");
+            const [{ data: sipRow }, { data: det }] = await Promise.all([
+              sbF.from("sent_image_properties").select("facts").eq("image_url", image_url).maybeSingle(),
+              sbF.from("image_details").select("lines").eq("image_url", image_url).eq("kind", "property").limit(1).maybeSingle(),
+            ]);
+            const cur = (sipRow as { facts: Record<string, unknown> | null } | null);
+            const lines = (det as { lines: string[] | null } | null)?.lines ?? null;
+            if (cur && lines?.length) {
+              const patch = factsPatchFromDetail(cur.facts, lines);
+              if (Object.keys(patch).length) await sbF.from("sent_image_properties").update({ facts: { ...(cur.facts ?? {}), ...patch } }).eq("image_url", image_url);
+            }
+          }
+        } catch (e) { console.warn("[send-line-message] 値の埋め直し失敗:", e instanceof Error ? e.message : e); }
         // 2026-11-21 作業員G（#448）: AIX で送った画像で物件が読み取れなかった（室内写真など）時は、同じ時の AIX の記録の物件名（1件だけの時）に結ぶ。
         //   AIX の記録（log-aix-usage）は送信の後に書かれることがあるので少し待つ。既定 off（SENT_IMAGE_AIX_ATTRIBUTE=on）
         // 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART=on の時だけ・画面は変えない＝統括役の決め 11/22）: 【物件確認した】の室内写真の部分（interior）を、
