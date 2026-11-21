@@ -5712,12 +5712,12 @@ async function handleGenerateReply(req: NextRequest) {
           const w = await import("@/app/lib/compose-plan-watch");
           if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
           const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
-          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const [{ handoffLeaks, handoffCarried }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
           const d = dc.deliveryCheckOf(meta0);
           const sv = ds.subValuesOf(meta0);
           noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
             digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
-            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], carried: handoffCarried(meta0, composeSentencePlan?.note ?? ""), delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
           }) as unknown as Record<string, unknown>);
         } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
       })();

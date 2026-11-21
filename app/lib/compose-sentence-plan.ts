@@ -857,6 +857,30 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
 };
 const nz = (t: string) => t.normalize("NFKC").replace(/\s+/g, "");
 /** ブレインに値があるのに設計図の注記に出ない欄（AIX の主の番・注記が空の番は数えない） */
+/** 値の語（単位つきの数か、漢字・カタカナの2字以上の語・最大4つ）。下書きに入ったかを後で見るための控え（文は写さない） */
+export function valueTokens(v: string): string[] {
+  const t = String(v ?? "").normalize("NFKC");
+  const nums = (t.match(/\d[\d,.]*\s*(?:円|万円|帖|㎡|m2|ヶ月|か月|分|日|時)/g) ?? []).map((x) => x.replace(/[,\s]/g, ""));
+  if (nums.length) return nums.slice(0, 4);
+  const words = (t.match(/[\p{Script=Han}\p{Script=Katakana}ー]{2,}/gu) ?? []).filter((w) => !/^(?:確認|ご連絡|連絡|お部屋|物件|こちら|させて)$/.test(w));
+  return words.slice(0, 4);
+}
+/**
+ * 2026-11-21 作業員L（台帳 #466「統括が渡した欄が書き手に届き、文に入った割合を欄ごとに数える」）: 設計図が運ぶ欄（carried=plan）ごとに、
+ *   値の数・書き手の注記に入らなかった数・値の語（下書きに入ったかを後で見る控え・文は写さない）。handoffLeaks は漏れた欄しか残さず分母が無かった
+ */
+export function handoffCarried(meta: unknown, note: string): Array<{ key: string; n: number; missing: number; toks: string[] }> {
+  const m = obj(meta) ?? {};
+  const nn = nz(note ?? "");
+  const out: Array<{ key: string; n: number; missing: number; toks: string[] }> = [];
+  for (const fd of HANDOFF_FIELDS) {
+    if (fd.carried !== "plan") continue;
+    const vals = fd.values(m);
+    if (!vals.length) continue;
+    out.push({ key: fd.key, n: vals.length, missing: nn ? vals.filter((v) => !nn.includes(nz(v))).length : vals.length, toks: [...new Set(vals.flatMap(valueTokens))].slice(0, 6) });
+  }
+  return out;
+}
 export function handoffLeaks(meta: unknown, note: string): Array<{ key: string; label: string; missing: string[] }> {
   const m = obj(meta) ?? {};
   if (!note.trim()) return [];

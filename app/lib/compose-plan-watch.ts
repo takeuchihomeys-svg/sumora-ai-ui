@@ -23,12 +23,15 @@ export type ComposePlanWatch = {
   leaks: Array<{ key: string; missing: number }>;
   delivery: { rate: string; subRate: string } | null;
   subs: string[];
+  /** 2026-11-21 作業員L（#466）: 設計図が運ぶ欄ごとの 値の数・注記に入らなかった数・値の語（文は写さない） */
+  carried?: Array<{ key: string; n: number; missing: number; toks: string[] }>;
 };
 const cut = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
 const noteOf = (s: string | null | undefined) => (s && s.trim() ? { fp: fingerprint(s), len: s.length, head: s.slice(0, 200) } : null);
 export function composePlanWatchOf(o: {
   digest?: string | null; rows?: ReadonlyArray<PlanRowLite> | null; planNote?: string | null; contractNote?: string | null;
   leaks?: ReadonlyArray<{ key: string; missing: ReadonlyArray<string> }> | null; delivery?: { rate: string; subRate: string } | null; subs?: ReadonlyArray<string> | null;
+  carried?: ReadonlyArray<{ key: string; n: number; missing: number; toks: ReadonlyArray<string> }> | null;
 }): ComposePlanWatch {
   return {
     digest: cut(o.digest, 200),
@@ -37,5 +40,6 @@ export function composePlanWatchOf(o: {
     leaks: (o.leaks ?? []).map((l) => ({ key: l.key, missing: l.missing.length })),
     delivery: o.delivery ?? null,
     subs: [...(o.subs ?? [])].slice(0, 40),
+    ...(o.carried?.length ? { carried: o.carried.slice(0, 40).map((c) => ({ key: c.key, n: c.n, missing: c.missing, toks: c.toks.slice(0, 6).map((t) => t.slice(0, 12)) })) } : {}),
   };
 }
