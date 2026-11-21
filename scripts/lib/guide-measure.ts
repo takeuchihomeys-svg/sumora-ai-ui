@@ -47,6 +47,8 @@ export type GuideTurn = {
   mood: ReactionCat; reply: ReactionCat; hours: number | null; outcome: Outcome;
   /** promiseWait の時だけ: 約束の番を「果たした後の次の返事」で測り直した（fulfilled＝果たした・not_fulfilled＝72時間で果たさず） */
   promiseWait?: "fulfilled" | "not_fulfilled";
+  /** promiseWait=fulfilled の時: 約束から果たした AIX までの時間（時間・小数1桁） */
+  fulfilH?: number;
 };
 
 /** 約束を果たしたと見る AIX（物件・確かめた結果・見積） */
@@ -95,7 +97,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
       const ful = aix.map((a) => ({ type: a.aix_type ?? "", at: a.sent_at ?? a.created_at })).filter((a) => FULFIL_AIX.test(a.type) && Date.parse(a.at) > t0 && Date.parse(a.at) - t0 <= PROMISE_FULFIL_H * 36e5).sort((a, b) => a.at.localeCompare(b.at))[0];
       if (!ful) { row.promiseWait = "not_fulfilled"; row.outcome = "left"; }
       else {
-        row.promiseWait = "fulfilled";
+        row.promiseWait = "fulfilled"; row.fulfilH = Math.round((Date.parse(ful.at) - t0) / 36e5 * 10) / 10;
         const nx = ms.find((x) => x.sender === "customer" && x.created_at > ful.at);
         const h2 = nx ? (Date.parse(nx.created_at) - Date.parse(ful.at)) / 36e5 : null;
         if (!nx || h2 == null || h2 > windowH) { row.outcome = "left"; row.reply = "silent"; }
