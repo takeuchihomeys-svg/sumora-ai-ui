@@ -31,7 +31,15 @@ export const STALE_CRON_SKIP: Record<string, string> = {
   "keep-warm": "既定オフ（KEEP_WARM=on の時だけ動き、off の時は記録の前に返す）。9/19 から off＝止まっているのは決めどおり",
 };
 
-export function staleCronsOf(crons: ReadonlyArray<{ path: string; schedule: string }>, lastByName: ReadonlyMap<string, string | null>, nowMs: number, ownerOf: (name: string) => string = () => "統括役"): Stale[] {
+/**
+ * 記録（withCronLog）を足した時刻（本番に入った時刻）。これより後に予定の1周＋余裕が過ぎるまでは「一度も無い」にしない（まだ予定の時刻が来ていない）。
+ * 2026-11-22 作業員N2（統括役の頼み・台帳 #552）: 31本に記録を足した a3cf01173 が本番に入ったのは 11/21 23:16 JST（Vercel の本番 50987a567・最初の記録は takeuchi-anatomy 23:30）。
+ *   11/22 7:30 JST の時点で、予定の時刻が来た14本は全部記録があり、記録の無い18本はどれもまだ予定の時刻が来ていなかった（週1・月曜・JST 10時以降など）
+ */
+export const CRON_LOG_WRAP_SINCE_ISO = "2026-11-21T14:16:00Z";
+
+export function staleCronsOf(crons: ReadonlyArray<{ path: string; schedule: string }>, lastByName: ReadonlyMap<string, string | null>, nowMs: number, ownerOf: (name: string) => string = () => "統括役", wrapSinceIso: string = CRON_LOG_WRAP_SINCE_ISO): Stale[] {
+  const wrapSinceMs = Date.parse(wrapSinceIso);
   const byName = new Map<string, number>();
   for (const c of crons) {
     const n = cronNameOf(c.path), h = cronPeriodHours(c.schedule);
@@ -44,6 +52,8 @@ export function staleCronsOf(crons: ReadonlyArray<{ path: string; schedule: stri
     const grace = h <= 24 ? 26 : h <= 168 ? 8 * 24 : 33 * 24;
     if (!lastByName.has(name)) continue; // 読めなかった名前は判定しない（呼ぶ側が読めた名前だけ渡す）
     const last = lastByName.get(name) ?? null;
+    // 記録を足してから予定の1周＋余裕が過ぎていない＝まだ予定の時刻が来ていないかもしれない（一度も無いと決めない）
+    if (!last && Number.isFinite(wrapSinceMs) && (nowMs - wrapSinceMs) / 3_600_000 <= grace) continue;
     if (!last) { out.push({ kind: "cron_never", name, last: null, expectHours: h, owner: ownerOf(name), why: `予定はあるのに cron_run_logs に1度も無い（cron-logger を通していない か 回っていない）` }); continue; }
     const age = (nowMs - Date.parse(last)) / 3_600_000;
     if (age > grace) out.push({ kind: "cron_stale", name, last, expectHours: h, owner: ownerOf(name), why: `${Math.round(age)}時間 書かれていない（${h}時間ごとの予定・線 ${grace}時間）` });
