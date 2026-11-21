@@ -138,3 +138,8 @@ export function formatQuotedContextBlock(q: QuotedContext | null): string {
 お客様の発言「${q.customerText.replace(/\n/g, " ").slice(0, 120)}」は、${who}が送った${what}への引用返信です。
 ${q.propertyLabel ? `「こちら」「この物件」「〇階」は ${q.propertyLabel}（と同じ建物）を指す。会話の他の物件（以前に紹介した物件・号室）と取り違えないこと。` : "「こちら」「この物件」は引用先の内容を指す。会話の他の物件と取り違えないこと。"}${others ? `\n\n${others}` : ""}${detail ? `\n\n${detail}` : ""}`;
 }
+
+/** 2026-11-21 作業員G（#461 ①）: 引用された画像の物件を引用の時点で読む。既定 off（QUOTED_IMAGE_PROPERTY_READ=on） */
+export function quotedImagePropertyReadOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.QUOTED_IMAGE_PROPERTY_READ ?? "").trim().toLowerCase() === "on";
+}
