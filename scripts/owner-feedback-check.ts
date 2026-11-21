@@ -47,11 +47,36 @@ async function checkUnmeasured(): Promise<CheckOut> {
   return { kind: "no_measure", ran: "scripts/ の台本の中のスイッチの名前", gaps: un.length ? [{ kind: "no_measure", title: `物差しが無いスイッチ ${un.length}個（scripts/ の台本に名前が出ない）`, detail: un.slice(0, 40).join(",") }] : [] };
 }
 
-function checkSubdivide(): CheckOut {
+/** 細分化が足りない（純関数の部分）: 1つの欄に複数の意味（同じ key を複数の行が使う・読む側が4つ以上）*/
+export function multiMeaningKeys(rows: ReadonlyArray<{ id: string; key: string; readers: readonly string[] }>, minReaders = 4): Array<{ key: string; ids: string[]; readers: number }> {
+  const byKey = new Map<string, { ids: string[]; readers: Set<string> }>();
+  for (const r of rows) {
+    const k = String(r.key ?? "").trim(); if (!k) continue;
+    const v = byKey.get(k) ?? { ids: [], readers: new Set<string>() };
+    v.ids.push(r.id); for (const x of r.readers ?? []) v.readers.add(x); byKey.set(k, v);
+  }
+  return [...byKey].filter(([, v]) => v.ids.length > 1 || v.readers.size >= minReaders).map(([key, v]) => ({ key, ids: v.ids, readers: v.readers.size })).sort((a, b) => b.ids.length - a.ids.length || b.readers - a.readers);
+}
+
+/**
+ * 2026-11-21 芯② 細分化が足りない（統括役の頼み）: 今ある分（連携の地図の fill.src=none）に3つを足す
+ *   a 場面や状態で分かれていない決まり … 設計知見の P0/P1 の現行の行で、札に「場面:」が1つも無い物
+ *   b 1つの欄に複数の意味 … 連携の地図で同じ key を複数の行が使う・読む側が4つ以上の欄
+ *   c 網に当たらない番が多い分け方 … 作業員M の申込までの地図の外れ（62/198 等）は M の台本の出力を読む（まだ置き場が無い＝note で出す）
+ */
+async function checkSubdivide(): Promise<CheckOut> {
   const rows = LINKAGE_MAP.filter((r) => r.fill?.src === "none");
   const byStage: Record<string, string[]> = {};
   for (const r of rows) (byStage[r.stage] = byStage[r.stage] ?? []).push(r.id);
-  return { kind: "not_subdivided", ran: "連携の地図の fill.src=none の行", gaps: Object.entries(byStage).map(([st, ids]) => ({ kind: "not_subdivided" as const, title: `連携の地図の段 ${st}: 値の来る所が決まっていない行 ${ids.length}`, detail: ids.join(",") })) };
+  const gaps: Gap[] = Object.entries(byStage).map(([st, ids]) => ({ kind: "not_subdivided" as const, title: `連携の地図の段 ${st}: 値の来る所が決まっていない行 ${ids.length}`, detail: ids.join(",") }));
+  const { data: kb } = await sb().from("system_design_thinking").select("id,title,tags,priority").eq("is_current", true).lte("priority", 1).limit(3000);
+  const noScene = ((kb ?? []) as Array<{ id: string; title: string; tags: string[] | null; priority: number | null }>).filter((r) => !(r.tags ?? []).some((t) => t.startsWith("場面:")) && !(r.tags ?? []).includes("Chrome拡張")
+    // 返信・AIX の決まりだけ（場面で分かれるべき物）。考え方・回し方の原則は場面に分けない
+    && ((r.tags ?? []).some((t) => /^(?:AIX|line-reply|generate-reply|返信|内覧|見積書|申込|TPO)$/.test(t)) || /返信|AIX|内覧|見積|申込/.test(r.title)));
+  if (noScene.length) gaps.push({ kind: "not_subdivided", title: `場面で分かれていない返信・AIX の決まり（P0/P1・札「場面:」なし）${noScene.length}行`, detail: noScene.slice(0, 20).map((r) => r.id.slice(0, 8)).join(",") });
+  const mm = multiMeaningKeys(LINKAGE_MAP.map((r) => ({ id: r.id, key: String(r.key ?? ""), readers: r.readers ?? [] })));
+  if (mm.length) gaps.push({ kind: "not_subdivided", title: `1つの欄に複数の意味の候補（同じ欄を複数の行が使う・読む側4つ以上）${mm.length}欄`, detail: mm.slice(0, 12).map((m) => `${m.key}（行 ${m.ids.length}・読む側 ${m.readers}）`).join("／") });
+  return { kind: "not_subdivided", ran: "連携の地図（fill.src=none・同じ欄の複数の意味）・設計知見 P0/P1 の場面の札", gaps, note: "網に当たらない番の多い分け方（作業員M の地図の外れ）は M の台本の出力の置き場ができたら読む" };
 }
 
 async function checkLeftOff(): Promise<CheckOut> {
@@ -71,7 +96,7 @@ export async function runChecks(kinds: PointerKind[], days: number): Promise<Che
   for (const k of kinds) {
     if (k === "unread") out.push(await checkUnreadOut(days));
     else if (k === "no_measure") out.push(await checkUnmeasured());
-    else if (k === "not_subdivided") out.push(checkSubdivide());
+    else if (k === "not_subdivided") out.push(await checkSubdivide());
     else if (k === "left_off") out.push(await checkLeftOff());
     else out.push({ kind: k, ran: "今ある点検", gaps: [], note: EXISTING[k] ?? "点検なし（other）" });
   }

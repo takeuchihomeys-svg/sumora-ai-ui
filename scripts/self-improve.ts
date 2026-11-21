@@ -16,7 +16,13 @@ import { pointersForExam } from "../app/lib/owner-pointers-server";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 import { runChecks } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
+import { checkLinkage } from "./check-linkage";
+import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
+import { checkFoundation } from "./check-foundation";
+import { comboDaily } from "./lib/combo-daily";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow } from "./lib/self-improve-growth";
+import { existsSync as existsSyncPU } from "node:fs";
+import { inOriginMain } from "./check-foundation";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -28,10 +34,11 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
 
 /** 1 方針（純関数）: 指摘の型・分野の重み（7日以内は2倍・主の型は1.5倍） */
-export function focusOf(rows: Array<{ kinds: string[]; areas: string[]; said_at: string }>, nowMs: number) {
+export function focusOf(rows: Array<{ kinds: string[]; areas: string[]; said_at: string; source?: string | null }>, nowMs: number) {
   const kw: Record<string, number> = {}, aw: Record<string, number> = {};
   for (const r of rows) {
-    const w = nowMs - Date.parse(r.said_at) <= 7 * 86_400_000 ? 2 : 1;
+    // 竹内さんの言葉そのまま（chat・work_item）を重く・設計知見から埋めた決定（meeting）は 0.5倍（統括役 11/21）
+    const w = (nowMs - Date.parse(r.said_at) <= 7 * 86_400_000 ? 2 : 1) * (r.source === "meeting" ? 0.5 : 1);
     (r.kinds ?? []).forEach((k, i) => { if (k !== "other") kw[k] = (kw[k] ?? 0) + w * (i === 0 ? 1.5 : 1); });
     for (const a of r.areas ?? []) if (a !== "other") aw[a] = (aw[a] ?? 0) + w;
   }
@@ -84,13 +91,13 @@ async function main() {
   //   policy … 新しい指摘を台帳に入れた時（work-items.ts --add --origin=owner_request の後）／candidates … 試験の1本が終わった時（H の recordPointerExam の後）／
   //   metrics … 見張りの判定が付いた時（その日の quality_daily を足し直す）。--only の時は毎朝の1枚（md）は書かない
   const only = arg("only", "");
-  if (only && !["policy", "candidates", "metrics"].includes(only)) throw new Error(`--only は policy・candidates・metrics のどれか: ${only}`);
-  const doPolicy = !only || only === "policy", doMetrics = !only || only === "metrics", doChecks = !only, doCandidates = !only || only === "candidates";
+  if (only && !["policy", "candidates", "metrics", "core"].includes(only)) throw new Error(`--only は policy・candidates・metrics・core のどれか: ${only}`);
+  const doPolicy = !only || only === "policy", doMetrics = !only || only === "metrics", doChecks = !only, doCandidates = !only || only === "candidates", doCore = !only || only === "core";
   const lines: string[] = [`# 自己改善の統括 毎朝の1枚（${day} の分・${new Date(now + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ")} JST に作った・LLM なし）`, ""];
 
   // 1 方針
-  const { data: ptr } = await sb.from("owner_pointers").select("id,kinds,areas,said_at,state,quote,kb_draft").neq("state", "closed").limit(2000);
-  const pointers = (ptr ?? []) as Array<{ id: number; kinds: string[]; areas: string[]; said_at: string; state: string; quote: string; kb_draft: string | null }>;
+  const { data: ptr } = await sb.from("owner_pointers").select("id,kinds,areas,said_at,state,quote,kb_draft,source").neq("state", "closed").limit(2000);
+  const pointers = (ptr ?? []) as Array<{ id: number; kinds: string[]; areas: string[]; said_at: string; state: string; quote: string; kb_draft: string | null; source: string | null }>;
   const focus = focusOf(pointers, now);
   if (doPolicy) lines.push("## 1. 方針（竹内さんの指摘から・閉じていない " + pointers.length + "行）",
     `- 重点の型: ${focus.kinds.map((x) => `${POINTER_KIND_JA[x.k as PointerKind] ?? x.k}（${x.w}）`).join("・") || "なし"}`,
@@ -135,6 +142,46 @@ async function main() {
     } else lines.push(`- ${POINTER_KIND_JA[o.kind]}: 穴 ${o.gaps.length}${o.gaps.length ? `（${o.gaps.slice(0, 3).map((g) => g.title).join("／")}）` : ""}${o.note ? `｜今ある点検 ${o.note}` : ""}`);
   }
 
+  // 2 外れ: 自己改善の芯の4つの点検（竹内さん 11/21「土台・細分化・連携・統括の判断を自己改善の仕組で特に強化」・memory/self_improve_cycle_1121.md）
+  //   ③ 連携が弱い（check-linkage）。①土台・②細分化・④統括の判断は順に足す。--only=core で2時間おきに軽く回す（統括役の見回り）
+  const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  const coreFix: string[] = [];
+  if (doCore) {
+    const cl = await checkLinkage().catch(() => null);
+    if (cl) {
+      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured });
+      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${w.owner}｜${w.why.slice(0, 70)}`));
+      for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${w.owner}`);
+    }
+  }
+
+  if (doCore) {
+    // 芯 ① 土台が無い（check-foundation・土台の表の4列: 決まり・物差し・本番の数字・担当の部品）
+    const cf = await checkFoundation().catch(() => null);
+    if (cf) {
+      coreRows.push({ metric: "core:foundation", value: cf.score, n: cf.n });
+      lines.push(`### 芯: 土台が無い（表 ${cf.tables.join("・")}・4列そろった ${cf.full}/${cf.n}＝${cf.score ?? "—"}%）`, ...cf.gaps.slice(0, 8).map((g) => `- ${g.name}（${g.owner}）: 欠け ${g.missing.join("・")}｜${g.detail.slice(0, 80)}`));
+      for (const g of cf.gaps.slice(0, 5)) coreFix.push(`土台が無い: ${g.name}（欠け ${g.missing.join("・")}）→ ${g.owner}`);
+    }
+    // 芯 ② 細分化が足りない（owner-feedback-check の not_subdivided・ファイルと設計知見の札だけ）: 数は穴の項目の合計（少ないほど良い）
+    const sd = (await runChecks(["not_subdivided"], 1).catch(() => []))[0];
+    if (sd) {
+      const items = sd.gaps.reduce((acc, g) => acc + Number((g.title.match(/(\d+)(?:行|欄)?\s*$/) ?? [])[1] ?? 0), 0); // 題の最後の数（行・欄の数）の合計
+      coreRows.push({ metric: "core:subdivide", value: items, n: sd.gaps.length });
+      lines.push(`### 芯: 細分化が足りない（項目 ${items}・${sd.gaps.length}種）`, ...sd.gaps.filter((g) => !g.title.startsWith("連携の地図の段")).map((g) => `- ${g.title}`), `- 連携の地図で値の来る所が決まっていない行: ${sd.gaps.filter((g) => g.title.startsWith("連携の地図の段")).reduce((x, g) => x + g.detail.split(",").length, 0)}`);
+      for (const g of sd.gaps.filter((g) => !g.title.startsWith("連携の地図の段"))) coreFix.push(`細分化が足りない: ${g.title} → 統括役が割り振る（決まりは持ち主の分野・欄は連携の地図の持ち主）`);
+    }
+    // 芯 ④ 統括の判断（check-conductor・竹内さんの番・7日）: 外れを原因の3つに分け、試験の問題の候補（作業員H）と教訓（作業員L）へ
+    const cc = await checkConductor(7).catch(() => null);
+    if (cc) {
+      coreRows.push({ metric: "core:conductor", value: cc.score, n: cc.n });
+      coreRows.push({ metric: "core:conductor_aix", value: cc.aixScore, n: cc.aixTurns }, { metric: "core:conductor_sway", value: cc.swayRate, n: cc.n });
+      lines.push(`### 芯: 統括の判断（竹内さんの番 7日 ${cc.n}・送る直前の判断で道の一致 ${cc.score ?? "—"}%・AIX の番 ${cc.aixTurns} で ${cc.aixScore ?? "—"}%・揺れ ${cc.swayRate ?? "—"}%）`, `- 外れの種類: ${JSON.stringify(cc.byType)}`, `- 原因: ${Object.entries(cc.byCause).map(([k, n]) => `${CAUSE_JA[k as Cause]} ${n}`).join("・") || "なし"}`, ...Object.entries(cc.ids).map(([k, xs]) => `- 試験の問題の候補（${k}）: 見張りの番 ${xs.slice(0, 8).join(",")}`));
+      const top = Object.entries(cc.byCause).sort((x, y) => y[1] - x[1])[0];
+      if (top) coreFix.push(`統括の判断: 外れの原因で一番多いのは「${CAUSE_JA[top[0] as Cause]}」${top[1]}番 → 問題の候補を作業員H（brain-exam-add）・教訓を作業員L（conductor_lessons）へ`);
+    }
+  }
+
   // 2 外れ: 伸びしろの3つ（竹内さん 11/21「伸びしろの部分は自己改善で改善されるようになっているのか」）
   const { data: qd2 } = await sb.from("quality_daily").select("day,metric,scope,value").in("day", [prevDay, prevWeek]).like("metric", "growth:%").limit(500);
   const prev2 = (metric: string, d: string) => ((qd2 ?? []) as Array<{ day: string; metric: string; value: number | null }>).find((r) => r.day === d && r.metric === metric)?.value ?? null;
@@ -156,6 +203,30 @@ async function main() {
     lines.push(`- ${r.label}: ${r.value ?? "—"}%（${r.n ?? "—"}番）｜前の日 ${prev2(r.metric, prevDay) ?? "—"}・前の週 ${prev2(r.metric, prevWeek) ?? "—"}${d ? (d === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
+  if (only === "core" && coreFix.length) lines.push("### 直しの候補（芯）", ...coreFix.map((x) => `- ${x}`));
+  // ピックアップで送る物件の「物件の理解」の欄（作業員K2 の頼み・台帳 #469・送った行のうち埋まっている割合と、元はあるのに空の数）
+  const pu = doMetrics ? pickupUnderstandingNow((x) => existsSyncPU(x) || inOriginMain(x)) : null;
+  const puRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  if (pu) {
+    const low: string[] = [];
+    for (const [k, f] of Object.entries(pu.fields)) {
+      const tot = f.filled + f.gap + f.none;
+      const rate = tot ? Math.round((f.filled / tot) * 1000) / 10 : null;
+      puRows.push({ metric: `growth:pickup_field:${k}`, value: rate, n: tot }, { metric: `growth:pickup_field_gap:${k}`, value: f.gap, n: tot });
+      if (rate != null && rate < 90) low.push(`${k} ${rate}%（元はあるのに空 ${f.gap}）`);
+    }
+    lines.push(`- ピックアップの物件の理解（前の日・送った ${pu.n}行）: 90% に届かない欄 ${low.join("・") || "なし"}`);
+    if (low.length) growthFix.push(`ピックアップの物件の理解の欄が低い: ${low.slice(0, 3).join("・")} → 作業員K2・台帳 #469`);
+  }
+  // 返信と AIX の組（作業員M の頼み・台帳 #405・#32 の物差し・竹内さん本人の番は少ないので14日の窓）
+  const cd = doMetrics ? await comboDaily(sb, day, 14).catch(() => null) : null;
+  if (cd) {
+    growthRows.push({ metric: "growth:combo:組の一致", value: cd.sameRate, n: cd.n, key: "first_move", higherIsBetter: true, label: `返信と AIX の組の一致（竹内さん本人の番・14日）` });
+    const dc = needsFix(cd.sameRate, prev2("growth:combo:組の一致", prevDay), prev2("growth:combo:組の一致", prevWeek), cd.n, 3, true);
+    lines.push(`- 返信と AIX の組の一致（竹内さん本人の番・14日）: ${cd.sameRate ?? "—"}%（${cd.n}番）${dc ? (dc === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
+    if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
+    lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
+  }
   if (only === "metrics" && growthFix.length) lines.push("### 直しの候補（伸びしろが下がった・上がらない）", ...growthFix.map((x) => `- ${x}`));
   if (Object.keys(ed.features).length) lines.push(`- ピックアップの直しの中身（竹内さん）: ${Object.entries(ed.features).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・")}`);
 
@@ -167,7 +238,7 @@ async function main() {
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
 
   // 3 組む
-  const gaps = [...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
+  const gaps = [...coreFix.map((x) => `芯: ${x}`), ...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
   const examPtr = await pointersForExam(sb).catch(() => []);
   const { data: passed } = await sb.from("work_items").select("id,switch_name,priority,owner").eq("stage", "passed").order("priority", { ascending: true, nullsFirst: false }).limit(10);
   const { data: testing } = await sb.from("work_items").select("id,switch_name,priority,owner").eq("stage", "testing").not("switch_name", "is", null).order("priority", { ascending: true, nullsFirst: false }).limit(10);
@@ -197,8 +268,11 @@ async function main() {
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
-    ].filter((r) => (doMetrics || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
-     .filter((r) => !only || only === "metrics" ? true : false)
+      ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n }))] : []),
+    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
+     .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
     await sb.from("cron_run_logs").insert({ cron_name: "self-improve", started_at: new Date(now).toISOString(), finished_at: new Date().toISOString(), ok: true, result_json: { day, only: only || null, focus, match: mMain, gaps: gaps.length, exam: { runs: runs.length, cost, worse: worse.length }, file: out } });

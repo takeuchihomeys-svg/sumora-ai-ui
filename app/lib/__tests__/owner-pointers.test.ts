@@ -13,6 +13,7 @@ t("土台を具体的に＝細分化（主）", pointerKindsOf("土台の部分�
 t("試験の効率＝試験", pointerKindsOf("試験いまもっと効率よく出来る方法はあるのか").includes("exam"));
 t("LINE が重い＝故障", pointerKindsOf("またLINEと繋がりにくかったり重いときがある 原因見つけて改善する").includes("outage"));
 t("当たらなければ other", pointerKindsOf("Aでおねがい")[0] === "other");
+t("足りていない土台＝土台が無い", pointerKindsOf("この仕組み化に足りていない土台があれば設立する")[0] === "no_foundation" && pointerKindsOf("土台の部分もちゃんと具体的に")[0] === "not_subdivided");
 t("built_off の行は off のままを足す", pointerKindsOf("Aでおねがい", { builtOff: true }).includes("left_off"));
 t("型の名前は表の CHECK と同じ", pointerKindsOf("画像 連携 細分化 物差し 決まり 既定 off 把握 試験 拾い上げ 重い 材料").every((k) => (POINTER_KINDS as readonly string[]).includes(k)));
 
