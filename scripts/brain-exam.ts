@@ -237,7 +237,10 @@ function selectInChild(): { ok: true; picked: string[]; kbNow: Record<string, st
 let kbLinksForReport: Record<string, KbLink[]> = {};
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return existsSync(STAGE_BY_TYPE_FILE) ? JSON.parse(readFileSync(STAGE_BY_TYPE_FILE, "utf8")) as Record<string, string> : {}; } catch { return {}; } })();
-function stageOf(p: { type: string; tags?: string[] } & { stage?: string }): "brain" | "draft" {
+// 2026-11-22 作業員H（1晩1本・統括役）: --draft-ids=<id,…> の問題は下書きまで（他は --stage のまま）＝文の組の問題もブレインの答えを同じ回で使い回す
+const DRAFT_IDS = new Set(arg("draft-ids").split(",").map((x) => x.trim()).filter(Boolean));
+function stageOf(p: { type: string; tags?: string[] } & { stage?: string; id?: string }): "brain" | "draft" {
+  if (p.id && DRAFT_IDS.has(p.id)) return "draft";
   if (STAGE !== "auto") return STAGE;
   const s = p.stage ?? STAGE_BY_TYPE[p.type] ?? (p.tags ?? []).map((t) => STAGE_BY_TYPE[t]).find(Boolean) ?? STAGE_BY_TYPE["*"];
   return s === "draft" ? "draft" : "brain";
@@ -1178,6 +1181,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...((REPEAT_FLAKY || BASE_FLAKY) && REPEAT > 1 ? { repeatFlaky: true } : {}),
+    // 2026-11-22 作業員H: 下書きまで回す問題（--draft-ids）は問題ごとに段が変わる＝入れた時だけ構成に足す（前の答えを段の違う物と取り違えない）
+    ...(DRAFT_IDS.size ? { draftIds: B.sha([...DRAFT_IDS].sort().join(",")).slice(0, 10) } : {}),
     // 2026-11-21 作業員H: 送った資料の読みの写しの入れ方（入れた時だけ構成に足す＝今までの hash は変えない）。前の答えは前の除きで決まる
     ...(String(process.env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on" ? { ledgerSip: true, ...(sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE?.trim() ? { sipExclude: sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE!.trim() } : {}) } : {}),
     // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
