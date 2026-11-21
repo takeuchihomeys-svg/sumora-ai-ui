@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 import { watchAixMatchRates, WATCH_MATCH_MIN, WATCH_MATCH_MIN_N } from "@/app/lib/watch-aix-match";
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 30;
 
@@ -218,7 +219,7 @@ export async function POST(req: NextRequest) {
 }
 
 // GET: Vercel CronはGETでリクエストするため、認証チェック後POSTへ委譲
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -226,3 +227,6 @@ export async function GET(req: NextRequest) {
   }
   return POST(req);
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-reply-readiness", handleGET);

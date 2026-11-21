@@ -7,11 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { conductorReflectionOn, sceneStats, weakScenes, weekKey, weaknessRow, questionRow, replyQualityDelta, replyQualityWeaknessRow, type WatchRow } from "@/app/lib/conductor-reflection";
 import { loadReplyQualityStats } from "@/app/lib/conductor-reflection-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const h = new Date(Date.now() + 9 * 3600_000).getUTCHours();
@@ -57,3 +58,6 @@ export async function GET(req: NextRequest) {
   } catch (e) { rqError = e instanceof Error ? e.message : String(e); }
   return NextResponse.json({ ok: true, write, week, turns: rows.length, scenes: stats.slice(0, 12), weak: weak.map((s) => s.scene), wrote, asked, replyQuality, rqWrote, rqError });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("conductor-reflection", handleGET);

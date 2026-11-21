@@ -6,11 +6,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runTakeuchiComposeExamples } from "@/app/lib/takeuchi-compose-examples-server";
 import { decideBatchRunFromEnv } from "@/app/lib/batch-daytime-guard";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -30,3 +31,6 @@ export async function GET(req: NextRequest) {
   console.log(JSON.stringify({ tag: "cron:takeuchi-compose-examples", ok: report.ok, error: report.error ?? null, read: report.read ?? null, rows: report.rows ?? null, stale: report.stale ?? null, staleLeft: report.staleLeft ?? null, writerGap: report.writerGap ?? null, next: report.next ?? null, stats: report.stats ?? null, failed: report.failed ?? null }));
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("takeuchi-compose-examples", handleGET);

@@ -4,6 +4,7 @@ import { jstParts } from "@/app/lib/jst-date";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";
 import { todoDailyBriefMergeEnabled } from "@/app/lib/staff-todo-list";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
@@ -226,7 +227,7 @@ async function pushLineMessage(
 
 // ── Route handler ─────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -598,3 +599,6 @@ export async function GET(req: NextRequest) {
     hannou: hannou?.length ?? 0, saiyuusen: saiyuusen?.length ?? 0, bukkenDashi: bukkenDashi?.length ?? 0,
   });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("daily-brief", handleGET);

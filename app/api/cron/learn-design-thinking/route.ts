@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 120;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (secret !== process.env.CRON_SECRET && secret !== process.env.INTERNAL_API_SECRET) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -135,3 +136,6 @@ system_design_thinkingに記録すべき設計知見を抽出してください�
   console.log(`[learn-design-thinking] inserted ${inserted.length}件:`, inserted);
   return NextResponse.json({ inserted: inserted.length, titles: inserted });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("learn-design-thinking", handleGET);

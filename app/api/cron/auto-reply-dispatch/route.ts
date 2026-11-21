@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { canAutoReply, resolveAutoSendAt, type AutoReplyInput } from "@/app/lib/auto-reply-policy";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 // 2026-09-18 竹内「文の生成とかは返信の下書き通りになるよね」:
 //   画面の入力欄に出ているのと**まったく同じ文**を送るため、画面と同じ整形関数を通す
 import { draftToSendableText } from "@/app/lib/draft-text";
@@ -64,7 +65,7 @@ function metaOf(meta: unknown): { replyMode: string | null; action: string | nul
   return { replyMode, action, twoStage };
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization") ?? "";
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -194,3 +195,6 @@ export async function GET(req: NextRequest) {
   if (Object.keys(skipped).length) console.log(JSON.stringify({ tag: "auto-reply:skipped", skipped }));
   return NextResponse.json({ ok: true, checked: convs.length, scheduled, skipped });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-reply-dispatch", handleGET, { hourly: true }); // 高頻度＝失敗の時と毎時0分の回だけ書く

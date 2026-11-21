@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { outcomeApplyBasisEnabled } from "@/app/lib/application-reach";
@@ -135,7 +136,7 @@ async function run() {
   return NextResponse.json({ ok: true, ...metrics });
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -148,3 +149,6 @@ export async function POST(req: NextRequest) {
   }
   return run();
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("calc-ai-attribution", handleGET);

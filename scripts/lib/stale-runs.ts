@@ -27,6 +27,7 @@ export function cronNameOf(path: string): string | null {
 
 /** 点検の期待から外す cron（わざと止めている物・理由つき）。2026-11-21 統括役の確かめ */
 export const STALE_CRON_SKIP: Record<string, string> = {
+  "aix-analyze-diffs": "DEPRECATED 2026-08-20（analyze-diffs の Step6 に移した）。11/21 に vercel.json から外した（統括役の決め・route は POST だけで GET の cron では 405 だった）",
   "keep-warm": "既定オフ（KEEP_WARM=on の時だけ動き、off の時は記録の前に返す）。9/19 から off＝止まっているのは決めどおり",
 };
 

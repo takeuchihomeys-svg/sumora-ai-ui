@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
@@ -105,7 +106,7 @@ ${sentReply}
   } catch (e) { return { inserted: 0, ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -241,3 +242,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("update-knowledge", handleGET);
