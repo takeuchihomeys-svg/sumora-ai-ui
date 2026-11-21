@@ -5,7 +5,7 @@
 //     物件オススメ … 売上サポ（AIX ツール）を通らなかったオススメ（作業員K2 の growth:pickup_via_tool を流用＝100−通った%・quality_daily の最新の日）
 //     返信 … スタッフが返した番のうち、下書き（generate-reply）が1度も無かった番（line_watch_turns・7日）
 //     送信 … スタッフの手の送信のうち、アプリを通らずに送った通（messages.sent_device_id が無い・AIX と LINE グループの発言は除く・7日）
-//     内覧 … 過ぎた内覧の予定（calendar_events viewing・30日）のうち、内覧の記録（viewing_history）が無い会話
+//     内覧 … 過ぎた決まった内覧の予定（calendar_events viewing・30日・ブレインの内覧調整のタスクと【時間確保】の候補は除く）のうち、内覧の記録（viewing_history）が無い会話
 //     見積 … 済みにした見積の予定（calendar_events estimate_sheet・30日）のうち、見積書ツールの記録（estimate_records・前3日〜後1日）が無い物
 //   テストの会話と申込以降の会話（今の status）は除く。会話は id の頭8字だけ出す。--write で穴（10% 以上・3件以上）を台帳へ
 // 実行: npx tsx --env-file=.env.local scripts/check-off-path.ts [--json] [--write]
@@ -26,6 +26,13 @@ export function eventsWithoutRecord<E extends { conversation_id: string; start_a
   const by = new Map<string, number[]>();
   for (const r of records) by.set(r.conversation_id, [...(by.get(r.conversation_id) ?? []), Date.parse(r.created_at)]);
   return events.filter((e) => { const t = Date.parse(e.start_at); return !(by.get(e.conversation_id) ?? []).some((x) => x >= t - beforeMs && x <= t + afterMs); });
+}
+
+/** 決まった内覧の予定か（純関数）: ブレインの「内覧調整」のタスク（終日・題の終わりが内覧調整）と、候補の【時間確保】は内覧ではない */
+export function isConfirmedViewingEvent(e: { all_day?: boolean | null; title?: string | null; notes?: string | null }): boolean {
+  if (e.all_day && /内覧調整\s*$/.test(e.title ?? "")) return false;
+  if ((e.notes ?? "").trimStart().startsWith("【時間確保】")) return false;
+  return true;
 }
 
 async function inChunks<T>(ids: string[], f: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
@@ -68,8 +75,12 @@ export async function checkOffPath(sb: SupabaseClient, nowMs = Date.now()): Prom
   out.push({ id: "send.outside_app", label: "スタッフの手の送信がアプリを通っていない", owner: "作業員M", n: sends.length, off: outside.length, rate: rateOf(outside.length, sends.length), why: "messages（7日・staff・AIX でない・LINE グループの発言を除く）の sent_device_id が無い通＝書き手・端末が分からず、書き手の数え・学習から外れる", convs: [...new Set(outside.map((m) => m.conversation_id.slice(0, 8)))] });
 
   // 内覧: 内覧の記録が無い
-  const { data: vev } = await sb.from("calendar_events").select("conversation_id, start_at").eq("event_type", "viewing").gte("start_at", d30).lt("start_at", nowIso).limit(2000);
-  const views0 = ((vev ?? []) as Array<{ conversation_id: string; start_at: string }>).filter((e) => !isTest(e.conversation_id));
+  //   2026-11-21 作業員N2（台帳 #579・無い8会話を1件ずつ）: 8会話とも、カレンダーにあったのはブレインの「内覧調整」のタスク
+  //   （brain-core createCalendarEventFromBrainAction・終日 10:00・物件（未確定））と候補の【時間確保】だけで、待ち合わせ（meeting_place）・内覧の挨拶（greeting_viewing）は0。
+  //   会話も「内覧できますか」の問い・「まだ内覧しない方が」・他社で内見 など＝内覧は無かった（記録の道の外れは0）。数えが調整のタスクを内覧に数えて 30.8% と高く見えた
+  //   ＝決まった内覧の予定（isConfirmedViewingEvent）だけを数える（直すと 17会話で記録無し 0）
+  const { data: vev } = await sb.from("calendar_events").select("conversation_id, start_at, all_day, title, notes").eq("event_type", "viewing").gte("start_at", d30).lt("start_at", nowIso).limit(2000);
+  const views0 = ((vev ?? []) as Array<{ conversation_id: string; start_at: string; all_day: boolean | null; title: string | null; notes: string | null }>).filter((e) => !isTest(e.conversation_id) && isConfirmedViewingEvent(e));
   const paV = await postApplySet(sb, views0.map((e) => e.conversation_id));
   const views = views0.filter((e) => !paV.has(e.conversation_id));
   const vh = await inChunks([...new Set(views.map((e) => e.conversation_id))], async (c) => ((await sb.from("viewing_history").select("conversation_id, created_at").in("conversation_id", c).limit(5000)).data ?? []) as Array<{ conversation_id: string; created_at: string }>);

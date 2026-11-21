@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { windowMissOf, isWindowGap, READ_WINDOWS, type WinCase } from "../read-windows";
 import { unitOf, unitsOf, unverifiedOf, familyOf, countGapsForLedger } from "../count-verified";
 import { liveOwnerOf } from "../found-gap-ledger";
-import { eventsWithoutRecord, isOffPathGap } from "../../check-off-path";
+import { eventsWithoutRecord, isOffPathGap, isConfirmedViewingEvent } from "../../check-off-path";
 
 const DAY = 86_400_000;
 const now = Date.parse("2026-11-21T03:00:00Z");
@@ -64,6 +64,11 @@ const rec = [{ conversation_id: "a", created_at: "2026-11-09T05:00:00Z" }, { con
 assert.deepEqual(eventsWithoutRecord(ev, rec, 3 * DAY, DAY).map((e) => e.conversation_id), ["b"], "幅の外の記録は数えない");
 assert.equal(isOffPathGap({ id: "x", label: "x", owner: "x", n: 100, off: 2, rate: 2, why: "", convs: [] }), false);
 assert.equal(isOffPathGap({ id: "x", label: "x", owner: "x", n: 20, off: 3, rate: 15, why: "", convs: [] }), true);
+
+// 内覧: ブレインの内覧調整のタスクと時間確保の候補は内覧に数えない（台帳 #579）
+assert.equal(isConfirmedViewingEvent({ all_day: true, title: "山田 内覧調整", notes: "件数: 1件\n物件: （未確定）（現地）" }), false);
+assert.equal(isConfirmedViewingEvent({ all_day: false, title: "【確保】内覧", notes: "【時間確保】\n候補: 明日 15:30" }), false);
+assert.equal(isConfirmedViewingEvent({ all_day: false, title: "山田 内覧 物件A", notes: "住所: x" }), true);
 
 // 持ち主
 assert.equal(liveOwnerOf("read"), "作業員L");
