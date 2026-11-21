@@ -7,7 +7,7 @@
 //     ⚠ 198通は状態の表を作った元の番（同じ番で測る＝甘く出る）。本当の当たりは --turns=<別の番の json>（11/04 以降の番）か夜の DB の数えで見る。
 //   出す物: 状態ごとの 網の当たり数・誘導先の一致（表の lead に挙がった先に入る割合／一番多い先と同じ割合）・仕込みの一致（表の仕込みの語が竹内さんの文にある割合）・使う/外すの案
 //   本文は出さない（数と id の頭8字だけ）。
-// 実行: npx tsx scripts/audit-route-substate-takeuchi.ts [--in=<roles json>] [--min-n=4] [--min-lead=0.5] [--out=<json>]
+// 実行: npx tsx scripts/audit-route-substate-takeuchi.ts [--labels=<majority json> --gists=<gists json>] [--in=<roles json>] [--min-n=4] [--min-lead=0.5] [--out=<json>]
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { matchSubstateOf } from "../app/lib/turn-aims-after";
@@ -31,7 +31,31 @@ export const PLANT_CUE: Readonly<Record<Plant, RegExp>> = {
   cost: /割引|初期費用|お安く|抑えられ/, screening: /審査|保証会社/, timing: /入居日|30日|ご入居(?:の)?時期|入居可能/, ask_send: /お送り(?:頂|いただ)|送って(?:頂|いただ)/,
 };
 
+/** 作る半分と測る半分（id の頭の16進の偶奇・決まった分け方）。網の直しは tune の番だけ見て作り、measure の番で当たりを出す */
+export const halfOf = (id: string): "tune" | "measure" => (parseInt(id.replace(/[^0-9a-f]/gi, "").slice(-2) || "0", 16) % 2 === 0 ? "tune" : "measure");
+
+/** --labels=<majority json>（route-substate-label.ts）がある時: 網の当たり（状態ごとの 網が言った数・そのうち正しい・正解の数・網が拾えた）を半分ごとに */
+function netVsLabels(labelsPath: string, turnsPath: string) {
+  const labels = JSON.parse(readFileSync(labelsPath, "utf8")) as Record<string, string>;
+  const gists = JSON.parse(readFileSync(turnsPath, "utf8")) as Record<string, string>; // {id: お客様の今の連投（伏せ済み）}（夜に label の台本と同じ材料から作る）
+  for (const half of ["tune", "measure"] as const) {
+    const st = new Map<string, { said: number; right: number; truth: number; got: number }>();
+    const g = (k: string) => st.get(k) ?? st.set(k, { said: 0, right: 0, truth: 0, got: 0 }).get(k)!;
+    let n = 0;
+    for (const [id, truth] of Object.entries(labels)) {
+      if (halfOf(id) !== half || gists[id] === undefined) continue;
+      n++;
+      const net = matchSubstateOf(gists[id])?.id ?? "none";
+      if (net !== "none") { g(net).said++; if (net === truth) g(net).right++; }
+      if (truth !== "none") { g(truth).truth++; if (net === truth) g(truth).got++; }
+    }
+    console.log(`\n# ${half} の半分 ${n}番: 状態\t網が言った\tそのうち正しい\t正解の数\t網が拾えた`);
+    for (const s of SUBSTATES) { const x = st.get(s.id); if (x) console.log(`${s.id}\t${x.said}\t${x.right}（${x.said ? Math.round((x.right / x.said) * 100) : 0}%）\t${x.truth}\t${x.got}（${x.truth ? Math.round((x.got / x.truth) * 100) : 0}%）`); }
+  }
+}
+
 function main() {
+  if (arg("labels")) { netVsLabels(arg("labels"), arg("gists")); return; }
   const inPath = arg("in", join(CACHE, "anatomy-roles", "roles-r1.json"));
   const rows = JSON.parse(readFileSync(inPath, "utf8")) as Row[];
   const minN = Number(arg("min-n", "4")) || 4;
