@@ -25,7 +25,7 @@
 //   combine に優先度の表の組（priority）を並べる・next に何を（offer）・いつ（when）・どの形で（form）・aim に中期（mid）
 //   型（check_order_type）が無い番は check-order-wire.checkOrderRecord をこの中で作る（CHECK_ORDER_TABLE が off でも指示書の欄が埋まる・meta には書かない）
 //   文の統括と書き手には briefForRole で役目ごとに要る欄だけ（decided-subfields の下の欄×役目の表から引く・BRIEF_SECTION_SUBS）
-import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, checkOrderById } from "./check-order";
+import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, TYPE_INTENT, checkOrderById } from "./check-order";
 import { checkOrderRecord } from "./check-order-wire";
 import { priorityTableRecord, PRIORITY_ROWS, type PriorityRecord } from "./priority-table";
 import { nextMoveConcreteOn, concreteNextMove, type ConcreteNext } from "./next-move-concrete";
@@ -43,6 +43,24 @@ import { feelingNextStrength, feelingBriefSection } from "./feeling-conductor-ta
 import { routeToBriefOn, routeBriefSection, type RouteBriefSection } from "./route-record";
 
 type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-21 作業員M（台帳 #465・統括の細かい理解）: 本番の指示書 11番（11/21 の24時間）で空だった欄を、もう持っている型の表から埋める（BRIEF_FILL_FROM_TYPE・既定 off）。
+ *   空の数: 要点 aim.keyPoint 11/11・中期 aim.mid 10/11・優先 order 8/11・型 type 4/11・次の一手 next 4/11。
+ *   ① 要点: 判断の根拠（BRAIN_JUDGE_BASIS・既定 off）からしか取っていなかった → 型の表 TYPE_INTENT の keyPoint（竹内さんの198通）を取り先に足す
+ *   ② 中期: turn_aims・turn_aims_after・judge_next.dest が無い番 → 次の一手の行き先（型の表 NEXT_MOVE_OF_TYPE＝judge_next.dest と同じ語）
+ *   ③ 型: 型の候補が空の4番のうち1番は内覧の話（手がかり topic:viewing）なのに問いの形でないので T7 に入らなかった → 内覧の話だけは T7
+ *      （残り3番は「開いている約束がある時のその他の通」＝型の表に行が無い。どの型にするかは竹内さんの番を数えてから＝今は埋めない）
+ *   埋めるのは空いている欄だけ（上書きしない）。道は変えない（指示書は道を決めた後に組む）。指示書の欄は書き手に届くので既定 off で試験の後に on。
+ */
+export function briefFillFromTypeOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRIEF_FILL_FROM_TYPE ?? "").trim().toLowerCase() === "on";
+}
+/** 型の候補が空の番の型（内覧の話だけ T7・それ以外は null） */
+export function briefTypeFallbackOf(cues: unknown): string | null {
+  const c = Array.isArray(cues) ? cues.map(String) : [];
+  return c.includes("topic:viewing") ? "T7_viewing" : null;
+}
+
 export type BriefMode = "off" | "shadow";
 export function conductorBriefMode(env: Env = typeof process !== "undefined" ? process.env : {}): BriefMode {
   // 2026-11-18 作業員M（統括役の決定・作業員I の引き継ぎ）: 試験 i1115-brief-on2・i1115-brief-rowsv2b（q057,q041,q326,q158・draft）で確かな悪化0＝既定 on（作る＝記録）。止める CONDUCTOR_BRIEF=off
@@ -81,7 +99,7 @@ export type ConductorBrief = {
   /** 次の一手の番ごとの中身（何を・いつ・どの形で・next-move-concrete・NEXT_MOVE_CONCRETE=on の時だけ） */
   next_concrete?: Missing<ConcreteNext>;
   next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; plants_route?: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
-  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string>; keyPointFrom?: "route"; midFrom?: "route" };
+  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string>; keyPointFrom?: "route" | "type_table"; midFrom?: "route" | "type_table" };
   /** 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ）: 申込までの地図の駅・駅の中の状態・目的・中期・長期・仕込み・先読みの深さ（道を決めた後・route-record.routeBriefSection） */
   route?: RouteBriefSection;
   /** 2026-11-19 作業員M: 前のどの通のどの項目を受けて次を送るか・つながりの種類・なぜ（meta.next_send_link・NEXT_SEND_LINK=shadow の時だけ・名前は situation_now の item_id・promise_id・ask_id・sent_id） */
@@ -156,7 +174,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   //   型が meta に無い番（CHECK_ORDER_TABLE が off）は、ここで同じ関数で作る（meta には書かない・指示書の中だけ）
   const metaType = typeof m.check_order_type === "string" ? m.check_order_type : null;
   const coRec = obj(m.check_order) ? null : (() => { try { return checkOrderRecord(m, typeof m.check_order_scene === "string" ? m.check_order_scene : null); } catch { return null; } })();
-  const typeId = metaType ?? coRec?.type ?? null;
+  const typeFallback = !metaType && !coRec?.type && briefFillFromTypeOn() ? briefTypeFallbackOf(obj(m.check_order)?.cues ?? coRec?.cues) : null;
+  const typeId = metaType ?? coRec?.type ?? typeFallback;
   const t = typeId ? checkOrderById(typeId) : null;
   const type: ConductorBrief["type"] = t ? { id: t.id, check: [...t.check], why: t.why.slice(0, 80), depth: `${CHECK_DEPTH[t.id]?.base ?? "?"}${CHECK_DEPTH[t.id]?.via ? `+${CHECK_DEPTH[t.id]!.via}` : ""}`, from: metaType ? "meta" : "brief" } : BRIEF_NONE;
   if (type === BRIEF_NONE) notYet.push("type");
@@ -226,6 +245,12 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
         if (add.length) { next.plants = [...next.plants, ...add]; next.plants_route = add; }
       }
     }
+  }
+  // 2026-11-21 作業員M（#465・BRIEF_FILL_FROM_TYPE=on の時だけ）: まだ空の要点・中期を型の表から（地図の状態の後＝状態の方が細かい）
+  if (briefFillFromTypeOn() && t) {
+    const kp = TYPE_INTENT[t.id]?.keyPoint;
+    if (aim.keyPoint === BRIEF_NONE && kp) { aim.keyPoint = kp.slice(0, 50); aim.keyPointFrom = "type_table"; const i = notYet.indexOf("key_point"); if (i >= 0) notYet.splice(i, 1); }
+    if (aim.mid === BRIEF_NONE && next !== BRIEF_NONE && next.dest) { aim.mid = next.dest; aim.midFrom = "type_table"; }
   }
   if (aim.mid === BRIEF_NONE) notYet.push("mid");
 
