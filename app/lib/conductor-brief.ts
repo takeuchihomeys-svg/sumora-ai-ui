@@ -206,7 +206,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const aim: ConductorBrief["aim"] = jbPurpose ? { purpose: jbPurpose, purposeFrom: "judge_basis", keyPoint: keyPoint ?? BRIEF_NONE } : t ? { purpose: t.priority[0] ?? null, purposeFrom: "type_table", keyPoint: keyPoint ?? BRIEF_NONE } : { purpose: null, purposeFrom: null, keyPoint: keyPoint ?? BRIEF_NONE };
   if (aim.keyPoint === BRIEF_NONE) notYet.push("key_point");
   //   中期（次の2〜3番でどこへ）: 作業員7 の turn_aims.midAim → judge_next.dest（decided-subfields の aim.mid と同じ取り先）
-  aim.mid = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.judge_next)?.dest, 20) ?? BRIEF_NONE;
+  //   2026-11-21 作業員M（#467）: 道の後の状態の表の狙い（meta.turn_aims_after・APPLY_ROUTE_RECORD=on の時だけある）も取り先に足す
+  aim.mid = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30) ?? str(obj(m.judge_next)?.dest, 20) ?? BRIEF_NONE;
   if (aim.mid === BRIEF_NONE) notYet.push("mid");
 
   // ⑩ 疑いの印（下の役の答えを事実と突き合わせる・決め直さない）
