@@ -47,6 +47,30 @@ export function appealVsCodes(text: string, codes: ReadonlyArray<string>, factsO
 }
 const key = (s: string | null | undefined) => String(s ?? "").normalize("NFKC").replace(/[\s　・･\-‐ー－【】()（）🌟]/g, "").toLowerCase();
 
+/** 建物名の鍵（旧名の括弧・【】の飾り・号室・空白・記号を外す） */
+export function buildingKey(s: string | null | undefined): string {
+  return String(s ?? "").normalize("NFKC").replace(/【[^】]*】/g, "").replace(/[（(]旧[:：][^)）]*[)）]?/g, "").replace(/\s*[0-9A-Za-z]{1,5}\s*号室?\s*$/, "")
+    .replace(/[\s　・･\-‐ー－()（）🌟]/g, "").toLowerCase();
+}
+export function roomKey(s: string | null | undefined): string {
+  return String(s ?? "").normalize("NFKC").replace(/号室?/g, "").replace(/[^0-9A-Za-z]/g, "").replace(/^0+(?=\d)/, "").toUpperCase();
+}
+/** 名前（「建物 号室」か文）→ 一番合う売上サポの行（建物が合い、号室が分かれば号室も合う行。送った行を先に）。決まらなければ null */
+export type PickRow = { property_name: string | null; room_no: string | null; reason_codes: string[] | null; status?: string | null; sent_at?: string | null };
+export function matchPickupRow<R extends PickRow>(name: string, rows: ReadonlyArray<R>): R | null {
+  const n = String(name ?? "").normalize("NFKC");
+  const room = roomKey((n.match(/([0-9A-Za-z]{1,5})\s*号室/) ?? [])[1] ?? "");
+  const nb = buildingKey(n);
+  const hits = rows.filter((r) => {
+    const b = buildingKey(r.property_name);
+    if (b.length < 3) return false;
+    const bOk = nb.includes(b) || (nb.length >= 3 && b.includes(nb));
+    return bOk && (!room || !roomKey(r.room_no) || roomKey(r.room_no) === room);
+  });
+  if (!hits.length) return null;
+  return [...hits].sort((a, b) => Number(b.status === "sent") - Number(a.status === "sent"))[0];
+}
+
 if (require.main === module) (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   let days = Number(arg("days", "7")) || 7;
@@ -72,13 +96,12 @@ if (require.main === module) (async () => {
   for (const l of logs) {
     const m = msgs.get(l.line_message_id);
     if (!m || (writer !== "all" && m.staff_writer !== writer) || !m.text) continue;
-    const names = (l.property_names ?? []).map(key).filter((x) => x.length >= 3);
-    const { data: pr } = await sb.from("property_pickups").select("property_name, room_no, reason_codes, equipment, sent_at").eq("conversation_id", l.conversation_id).eq("status", "sent")
-      .gte("sent_at", new Date(Date.parse(l.sent_at) - 3 * 864e5).toISOString()).lte("sent_at", new Date(Date.parse(l.sent_at) + 36e5).toISOString()).limit(30);
-    const rows = ((pr ?? []) as Array<{ property_name: string | null; reason_codes: string[] | null; equipment: { facts?: Record<string, { s?: string }> } | null }>).filter((r) => {
-      const k = key(r.property_name);
-      return names.length ? names.some((x) => x.includes(k) || k.includes(x)) : key(m.text).includes(k) && k.length >= 3;
-    });
+    // 2026-11-21 合わせ方の直し: 送った行だけ・3日だけ → 14日の行（送った行を先に）・建物名（旧名・【】・号室を外す）と号室（先頭の0を外す）で合わせる
+    const { data: pr } = await sb.from("property_pickups").select("property_name, room_no, reason_codes, equipment, status, sent_at, created_at").eq("conversation_id", l.conversation_id)
+      .gte("created_at", new Date(Date.parse(l.sent_at) - 14 * 864e5).toISOString()).lte("created_at", new Date(Date.parse(l.sent_at) + 36e5).toISOString()).limit(80);
+    const cand = (pr ?? []) as Array<PickRow & { equipment: { facts?: Record<string, { s?: string }> } | null }>;
+    const targets = (l.property_names ?? []).length ? (l.property_names ?? []) : [m.text];
+    const rows = [...new Set(targets.map((n) => matchPickupRow(n, cand)).filter((x): x is NonNullable<typeof x> => !!x))] as typeof cand;
     if (!rows.length) { noRow++; continue; }
     n++;
     const codes = [...new Set(rows.flatMap((r) => r.reason_codes ?? []))];
