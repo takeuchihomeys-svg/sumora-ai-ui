@@ -3936,7 +3936,15 @@ ${sh}`;
     const stl = await import("@/app/lib/situation-timeline");
     if (stl.situationTimelineOn() && conversationId) {
       const { data: cal } = await supabase.from("calendar_events").select("title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: true }).limit(40);
-      const custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      let custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      // 2026-11-21 作業員L（SITUATION_TIMELINE_WIDE・既定 off）: 窓の外で言った時の言葉（入居の時期など）も帳面に（お客様の発言 40通を1回読む・失敗は今の窓のまま）
+      if (stl.situationTimelineWideOn()) {
+        try {
+          const { data: wide } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer").order("created_at", { ascending: false }).limit(40);
+          const w = ((wide ?? []) as Array<{ text: string | null; created_at: string }>).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+          if (w.length > custMsgs.length) custMsgs = w;
+        } catch { /* 今の窓のまま */ }
+      }
       situationTimelineRec = stl.buildTimeline({ customerMsgs: custMsgs, calendar: (cal ?? []) as never, nowMs: Date.now() });
       const tb = stl.timelineBlock(situationTimelineRec, Date.now());
       if (tb) customerStateBlockText += tb;
