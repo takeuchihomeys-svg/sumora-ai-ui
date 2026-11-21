@@ -25,7 +25,9 @@ import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { maskPII } from "../app/lib/pii-mask";
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
+// 読み込んだだけで鍵を要らないように、使う時に作る（テストは tallyMarks だけを読む）
+let sbc: ReturnType<typeof createClient> | null = null;
+const db = () => (sbc ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""));
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const PHASE = arg("phase", "build");
 export const MARK_KINDS = ["none_stage", "coarse", "not_reached", "unused"] as const;
@@ -56,7 +58,7 @@ async function build() {
   if (!out) throw new Error("--out=<scratchpad のフォルダ> が要る（伏せた会話が入る紙を倉庫の外に置く）");
   mkdirSync(out, { recursive: true });
   const since = new Date(Date.now() - days * 86400_000).toISOString();
-  const { data: turns, error } = await sb.from("line_watch_turns").select("id, conversation_id, customer_turn_at, staff_first_at, staff_texts, staff_aix, draft_first, scene_key, verdict, brain_action, brain_reply_mode, materials")
+  const { data: turns, error } = await db().from("line_watch_turns").select("id, conversation_id, customer_turn_at, staff_first_at, staff_texts, staff_aix, draft_first, scene_key, verdict, brain_action, brain_reply_mode, materials")
     .gte("customer_turn_at", since).not("staff_first_at", "is", null).order("customer_turn_at", { ascending: false }).limit(n * 8);
   if (error) throw new Error(error.message);
   const sheets: string[] = []; const marks: SheetMarks[] = [];
@@ -64,12 +66,12 @@ async function build() {
     if (marks.length >= n) break;
     if (isTestConversation(t.conversation_id)) continue;
     // 竹内さん本人が答えた番だけ（その番の後の最初のこちらの手打ちの通の書き手）
-    const { data: first } = await sb.from("messages").select("staff_writer, text, created_at").eq("conversation_id", t.conversation_id).neq("sender", "customer").gt("created_at", t.customer_turn_at).order("created_at").limit(4);
+    const { data: first } = await db().from("messages").select("staff_writer, text, created_at").eq("conversation_id", t.conversation_id).neq("sender", "customer").gt("created_at", t.customer_turn_at).order("created_at").limit(4);
     const tk = ((first ?? []) as Array<{ staff_writer: string | null; text: string | null }>).filter((x) => x.text);
     if (!tk.length || tk[0].staff_writer !== "takeuchi") continue;
-    const { data: ctx } = await sb.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", t.conversation_id).lte("created_at", t.customer_turn_at).order("created_at", { ascending: false }).limit(8);
+    const { data: ctx } = await db().from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", t.conversation_id).lte("created_at", t.customer_turn_at).order("created_at", { ascending: false }).limit(8);
     if (((ctx ?? []) as Array<{ text: string | null }>).some((m) => /【お申込者様記入欄】/.test(m.text ?? ""))) continue; // 申込以降は対象外
-    const { data: bd } = await sb.from("brain_decision_logs").select("digest, created_at").eq("conversation_id", t.conversation_id).lte("created_at", t.staff_first_at).order("created_at", { ascending: false }).limit(1);
+    const { data: bd } = await db().from("brain_decision_logs").select("digest, created_at").eq("conversation_id", t.conversation_id).lte("created_at", t.staff_first_at).order("created_at", { ascending: false }).limit(1);
     const dg = ((bd ?? [])[0] as { digest?: Record<string, unknown> } | undefined)?.digest ?? {};
     const mat = (t.materials ?? {}) as { brain?: { blocks?: unknown }; reply?: { fetched?: unknown; spec?: unknown } };
     const L: string[] = [];
@@ -98,12 +100,12 @@ async function apply() {
   for (const r of rows) {
     console.log(`${KIND_JA[r.kind]}｜${r.field}｜${r.n}回（番 ${r.turns.join(",")}）`);
     if (dry) continue;
-    const { data: cur } = await sb.from("brain_weaknesses").select("id, occurrences, evidence").eq("key", r.key).maybeSingle();
+    const { data: cur } = await db().from("brain_weaknesses").select("id, occurrences, evidence").eq("key", r.key).maybeSingle();
     const ev = { source: "read-check（#441・Claude が読む細かさの点検）", kind: r.kind, field: r.field, turns: r.turns.slice(0, 20) };
-    if (cur) await sb.from("brain_weaknesses").update({ occurrences: Number((cur as { occurrences?: number }).occurrences ?? 0) + r.n, last_seen: now, updated_at: now, evidence: { ...(((cur as { evidence?: Record<string, unknown> }).evidence) ?? {}), ...ev } }).eq("id", (cur as { id: number }).id);
-    else await sb.from("brain_weaknesses").insert({ key: r.key, title: `読みの細かさの点検: ${KIND_JA[r.kind]}（${r.field}）`, area: "brain", symptom: `Claude の読みと並べて ${KIND_JA[r.kind]}（${r.field}）が ${r.n}回`, status: "open", occurrences: r.n, first_seen: now, last_seen: now, evidence: ev });
+    if (cur) await db().from("brain_weaknesses").update({ occurrences: Number((cur as { occurrences?: number }).occurrences ?? 0) + r.n, last_seen: now, updated_at: now, evidence: { ...(((cur as { evidence?: Record<string, unknown> }).evidence) ?? {}), ...ev } }).eq("id", (cur as { id: number }).id);
+    else await db().from("brain_weaknesses").insert({ key: r.key, title: `読みの細かさの点検: ${KIND_JA[r.kind]}（${r.field}）`, area: "brain", symptom: `Claude の読みと並べて ${KIND_JA[r.kind]}（${r.field}）が ${r.n}回`, status: "open", occurrences: r.n, first_seen: now, last_seen: now, evidence: ev });
   }
   console.log(`${dry ? "（下見）" : ""}弱い所の台帳へ ${rows.length}行`);
 }
 
-if (process.argv[1]?.includes("read-check-sheet")) (PHASE === "apply" ? apply() : build()).catch((e) => { console.error(e); process.exit(1); });
+if (/read-check-sheet.ts$/.test(process.argv[1] ?? "") && !/__tests__/.test(process.argv[1] ?? "")) (PHASE === "apply" ? apply() : build()).catch((e) => { console.error(e); process.exit(1); });
