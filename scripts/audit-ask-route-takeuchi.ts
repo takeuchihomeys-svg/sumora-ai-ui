@@ -14,13 +14,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns } from "./lib/prod-yardstick-db";
-import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf } from "./lib/ask-route-of";
+import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf, takeuchiShapeLabel, sceneShapeVerdict, type SceneShapeVerdict } from "./lib/ask-route-of";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const jstHour = (new Date().getUTCHours() + 9) % 24;
-if (jstHour >= 9 && jstHour < 22) { console.error("営業時間（JST 9〜22時）は流さない"); process.exit(1); }
 const days = Number(arg("days", "60")) || 60;
+// 2026-11-21 作業員M（#503・統括役の頼み「3日分で動きだけ確かめる」）: 3日以内の軽い読みだけ昼も流してよい（30日以上は夜）
+if (jstHour >= 9 && jstHour < 22 && days > 3) { console.error("営業時間（JST 9〜22時）は3日まで（--days=3）"); process.exit(1); }
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const POST_APPLY_RE = /記入欄】|・氏名、フリガナ|申込(?:み)?(?:用)?フォーマット|お申込に必要なご情報|ご本人確認書類として|審査(?:結果|が通|通過しました)|ご契約(?:書|手続)/;
 
@@ -55,6 +56,9 @@ async function main() {
   // 2026-11-18 統括役の割り当て（W46 の当たりの低い場面）: 場面（line_watch_turns.scene_key）ごとに、帳面の3つ×原因の3つで数える
   const byScene = new Map<string, { n: number; cells: Map<string, number> }>();
   const focus = arg("scenes", "返信:条件提示,返信:短い了承・お礼,AIX:estimate_sheet").split(",").filter(Boolean);
+  // 2026-11-21 作業員M（台帳 #503）: 要件の場面の決まりの元。場面ごとの竹内さんの送り方の形（親 KB 6bb471bd）
+  const kbScenes = arg("kb-scenes", "返信:検討中・一時保留,返信:条件提示,返信:持ち込み物件,AIX:property_send").split(",").filter(Boolean);
+  const shapeByScene = new Map<string, Map<string, number>>();
   for (const t of turns) {
     const at = Date.parse(t.customer_turn_at);
     const all = msgs.get(t.conversation_id) ?? [];
@@ -80,6 +84,7 @@ async function main() {
     if (/^記録なし$|^要件の記録なし$/.test(o) && t.customer_turn_at < "2026-10-09") o = "要件の記録なし（digest に要件の欄が無い頃・10/08 より前）";
     if (o === "合う" && shape.includes("A") && aixKindMismatch(t.brain_action, kinds)) o = "AIX の種類が違う";
     const sk = String(t.scene_key ?? "（場面なし）");
+    if (kbScenes.includes(sk)) { const m = shapeByScene.get(sk) ?? new Map<string, number>(); const lab = takeuchiShapeLabel(at, moves, kinds); m.set(lab, (m.get(lab) ?? 0) + 1); shapeByScene.set(sk, m); }
     const srow = byScene.get(sk) ?? { n: 0, cells: new Map<string, number>() };
     srow.n++;
     const cell = `${ledgerClassOf(o)}／${causeOf(o)}`;
@@ -108,6 +113,32 @@ async function main() {
     if (!xs.length) continue;
     console.log(`  ★${sk} の ${k}: ${xs.length}`);
     for (const r of xs.slice(0, 3)) console.log(`    · ${r.at} ${r.conv} ブレイン ${r.brain} ／ 竹内さん ${r.staff}`);
+  }
+  // 2026-11-21 作業員M（台帳 #503）: 場面ごとに過半数の形→設計知見の案（P2・kb-insert の JSON の形）／割れたら推奨つきの確認案（竹内さんへ）。DB には書かない
+  console.log("\n## 要件の場面の決まりの案（親 KB 6bb471bd・竹内さん本人の番の送り方の形）");
+  const verdicts: SceneShapeVerdict[] = kbScenes.map((sk) => sceneShapeVerdict(sk, shapeByScene.get(sk) ?? new Map(), { minN: Number(arg("min-n", "5")) || 5 }));
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  for (const v of verdicts) {
+    const all = [...(shapeByScene.get(v.scene) ?? new Map())].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・");
+    if (v.kind === "few") console.log(`- ${v.scene}: ${v.n}番（少ない＝決めない）${all ? `・${all}` : ""}`);
+    else if (v.kind === "kb") console.log(`- ${v.scene}: ${v.n}番・過半数 ${v.top}（${pct(v.share)}）→ 設計知見の案（P2）・${all}`);
+    else console.log(`- ${v.scene}: ${v.n}番・割れた（${v.top} ${pct(v.share)}／${v.second} ${pct(v.secondShare)}）→ 竹内さんへの確認案（推奨 ${v.top}）・${all}`);
+  }
+  if (arg("kb-draft")) {
+    const tagOf = (sk: string) => (/検討/.test(sk) ? "場面:検討中" : /条件/.test(sk) ? "場面:条件" : /持ち込み/.test(sk) ? "場面:持ち込み" : /property_send/.test(sk) ? "場面:物件を送る" : "場面:その他");
+    const kb = verdicts.filter((v): v is Extract<SceneShapeVerdict, { kind: "kb" }> => v.kind === "kb").map((v) => ({
+      title: `要件の場面の形（${v.scene}）: 竹内さん本人は ${v.top} が過半数（${pct(v.share)}・${v.n}番・直近 ${days}日）`,
+      category: "ai_design", priority: 2, tags: ["要件", tagOf(v.scene), "AIX", "line-reply"],
+      insight: `場面 ${v.scene} で、竹内さん本人の番の送り方の形は ${v.top} が ${pct(v.share)}（${v.n}番）。次は ${v.second ?? "なし"}。R＝返信・A:種類＝AIX・後で＝1時間より後。要件ごとの割り振り（ask-ledger・ask-route）の場面の既定にする案。`,
+      rationale: `親 6bb471bd（竹内さん 11/15「どの部分を返信で答え、どの部分を AIX で送るかを要件ごとに把握」）の場面ごとの決まり。必須にしてよいのは過半数が守っている形だけ（CLAUDE.md の「実送信で線を引く」）。数え: scripts/audit-ask-route-takeuchi.ts --days=${days}`,
+      context: `${new Date().toISOString().slice(0, 10)} 作業員M（台帳 #503）の自動の案。登録の前に統括役が読む`, applied_to: "scripts/audit-ask-route-takeuchi.ts・app/lib/ask-ledger.ts",
+    }));
+    const asks = verdicts.filter((v): v is Extract<SceneShapeVerdict, { kind: "ask" }> => v.kind === "ask").map((v) => ({
+      scene: v.scene, n: v.n, question: `場面 ${v.scene} の時、返信と AIX の送り方は「${v.top}」と「${v.second}」のどちらを基本にしますか`,
+      options: [{ shape: v.top, share: pct(v.share), recommended: true }, { shape: v.second, share: pct(v.secondShare), recommended: false }],
+    }));
+    writeFileSync(arg("kb-draft"), JSON.stringify({ parent: "6bb471bd", days, kb, asks, few: verdicts.filter((v) => v.kind === "few") }, null, 1));
+    console.log(`  → ${arg("kb-draft")}（設計知見の案 ${kb.length}・確認案 ${asks.length}・少ない ${verdicts.filter((v) => v.kind === "few").length}）`);
   }
   if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ days, takeuchi, table: Object.fromEntries(table), outliers: Object.fromEntries(outliers) }, null, 1));
 }
