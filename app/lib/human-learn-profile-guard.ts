@@ -40,6 +40,27 @@ export function learnBuildAfterOn(env: Record<string, string | undefined> = type
   return (env.LEARN_BUILD_AFTER ?? "").trim().toLowerCase() !== "off";
 }
 
+/**
+ * 2026-11-21 作業員G（台帳 #588・測り: all の作り直しは1本だけなら 35.6秒・本番の 22時台は realpro・itandi・all が同時に走って 130〜200秒）:
+ *   作り直しの印（build_leases）を束の種類ごとではなく全部で1本にして、同時に走らせず順番に作る。
+ *   応答の後の作り直しは、印が他で使われていれば LANE_WAIT_STEP_MS ごとに取り直し、LANE_WAIT_MAX_MS を超えたら諦める（古い束のまま・次の呼び出しで作る）。
+ *   既定 off（LEARN_BUILD_ONE_LANE=on）
+ */
+export function learnBuildOneLaneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LEARN_BUILD_ONE_LANE ?? "").trim().toLowerCase() === "on";
+}
+export const LANE_WAIT_STEP_MS = 15_000;
+/** 応答の後の待ちの上限（maxDuration 300秒の中で、待ち＋1本の作り直し 約35〜60秒が収まる） */
+export const LANE_WAIT_MAX_MS = 150_000;
+export function buildLeaseKey(scope: string, env?: Record<string, string | undefined>): string {
+  return learnBuildOneLaneOn(env) ? "human-learn-profile:lane" : `human-learn-profile:${scope}`;
+}
+/** 印が取れなかった時に、次に待つ ms（待たない時は null）。waited は今までに待った ms */
+export function laneNextWait(o: { lease: string; inAfter: boolean; waitedMs: number; env?: Record<string, string | undefined> }): number | null {
+  if (!learnBuildOneLaneOn(o.env) || !o.inAfter || o.lease !== "held") return null;
+  return o.waitedMs + LANE_WAIT_STEP_MS <= LANE_WAIT_MAX_MS ? LANE_WAIT_STEP_MS : null;
+}
+
 /** 応答の後に作り直すか（古い束があり・強制でない時だけ） */
 export function buildInAfter(o: { hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
   return learnBuildAfterOn(o.env) && o.hasBundle && !o.forceFresh;
