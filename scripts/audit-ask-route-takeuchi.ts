@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { readWatchTurns } from "./lib/prod-yardstick-db";
-import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf, takeuchiShapeLabel, sceneShapeVerdict, type SceneShapeVerdict } from "./lib/ask-route-of";
+import { tcMix, sendShape, outlierOf, aixBundleFamily as fam, causeOf, aixKindMismatch, ledgerClassOf, takeuchiShapeLabel, sceneShapeVerdict, staffScheduleInText, type SceneShapeVerdict } from "./lib/ask-route-of";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -83,6 +83,8 @@ async function main() {
     if (o === "取りこぼし（AIX 側）" && firstAix && firstAix.at - at > 60 * 60_000) o = "合う（AIX は1時間より後＝前の約束の果たし・番の外）";
     if (/^記録なし$|^要件の記録なし$/.test(o) && t.customer_turn_at < "2026-10-09") o = "要件の記録なし（digest に要件の欄が無い頃・10/08 より前）";
     if (o === "合う" && shape.includes("A") && aixKindMismatch(t.brain_action, kinds)) o = "AIX の種類が違う";
+    // 2026-11-21 夜 作業員M（#405）: 内覧の誘い・待ち合わせの AIX の番に、竹内さんが候補の日時（スタッフの予定）を手で打った＝AIX の中身を文で送った（KB 8ee13967）
+    if (o === "取り違え（AIX→返信）" && /^(?:viewing_invite|meeting_place)/.test(String(t.brain_action ?? "")) && moves.some((m) => !m.aix && staffScheduleInText(m.text))) o = "合う（竹内さんは AIX の中身＝予定を手で打った・8ee13967）";
     const sk = String(t.scene_key ?? "（場面なし）");
     if (kbScenes.includes(sk)) { const m = shapeByScene.get(sk) ?? new Map<string, number>(); const lab = takeuchiShapeLabel(at, moves, kinds); m.set(lab, (m.get(lab) ?? 0) + 1); shapeByScene.set(sk, m); }
     const srow = byScene.get(sk) ?? { n: 0, cells: new Map<string, number>() };

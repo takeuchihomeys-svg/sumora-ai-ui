@@ -40,7 +40,7 @@ t("駅と合わない状態は記録だけ（使わない）", rsx.substate?.at_
 const rsf = routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_no_view_doubt" } }, { ROUTE_SUBSTATE_ALLOW: "all" })!;
 t("例が少ない状態は ROUTE_SUBSTATE_FEW=on の時だけ", rsf.substate?.usable === false && routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_no_view_doubt" } }, { ROUTE_SUBSTATE_FEW: "on", ROUTE_SUBSTATE_ALLOW: "all" })!.substate?.usable === true);
 t("ROUTE_SUBSTATE_DENY で外す", routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_dates" } }, { ROUTE_SUBSTATE_DENY: "x,viewing_dates", ROUTE_SUBSTATE_ALLOW: "all" })!.substate?.usable === false);
-t("既定は当たる状態だけ（198通の数え）", routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_dates" } }, {})!.substate?.usable === false && routeBriefSection({ apply_route: { node: "apply_prep", substate: "apply_intent" } }, {})!.substate?.usable === true && routeBriefSection({ apply_route: { node: "proposing", branch: "screening_concern", substate: "apply_screening_worry" } }, {})!.substate?.usable === true);
+t("既定は当たる状態だけ（11/21 夜の測る半分・2版の網は別の既定）", routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_dates" } }, {})!.substate?.usable === false && routeBriefSection({ apply_route: { node: "apply_prep", substate: "apply_intent" } }, {})!.substate?.usable === true && routeBriefSection({ apply_route: { node: "proposing", branch: "screening_concern", substate: "apply_screening_worry" } }, {})!.substate?.usable === false && routeBriefSection({ apply_route: { node: "hearing", substate: "hearing_many_conditions" } }, { ROUTE_SUBSTATE_NET_V2: "on" })!.substate?.usable === true && routeBriefSection({ apply_route: { node: "hearing", substate: "hearing_many_conditions" } }, {})!.substate?.usable === false);
 t("ROUTE_SUBSTATE_ALLOW で置き換える", routeBriefSection({ apply_route: { node: "viewing_arrange", substate: "viewing_dates" } }, { ROUTE_SUBSTATE_ALLOW: "viewing_dates" })!.substate?.usable === true && routeBriefSection({ apply_route: { node: "apply_prep", substate: "apply_intent" } }, { ROUTE_SUBSTATE_ALLOW: "viewing_dates" })!.substate?.usable === false);
 t("apply_route が無ければ null", routeBriefSection({}) === null && routeBriefSection(null) === null);
 t("書き手への塊（使える時だけ）", routeAimNoteForWriter({ route: rs }).includes("日時を決める") && routeAimNoteForWriter({ route: rsx }) === "" && routeAimNoteForWriter(null) === "");
@@ -59,5 +59,6 @@ t("役目の対応: route は締め・つなぎ・AIX の2通目に渡る", brie
 t("ブレインの層の要約には route を入れない", (conductorBriefDigest(bOn) ?? "") === (conductorBriefDigest(bOff) ?? "").replace(/未:\d+/, `未:${bOn.notYet.length}`));
 t("書き手の1行に地図の状態が出る（on の時だけ）", (briefLineForRole({ conductor_brief: bOn }, "bridge") ?? "").includes("地図の状態: 内覧の日時") && !(briefLineForRole({ conductor_brief: bOff }, "bridge") ?? "").includes("地図の状態"), briefLineForRole({ conductor_brief: bOn }, "bridge"));
 
+t("使える状態には言い回しの型と潜在の4つ（11/21 夜の割り当て）", (rs.phrasing?.point_how.length ?? 0) > 0 && (rs.phrasing?.want.length ?? 0) > 0 && rsx.phrasing === null, rs.phrasing);
 console.log(`\nroute-record: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
