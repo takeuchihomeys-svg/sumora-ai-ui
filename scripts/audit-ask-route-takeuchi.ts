@@ -74,7 +74,7 @@ async function main() {
     const key = `${brainMix} → ${shape}${kinds.length >= 2 ? `（AIX ${kinds.length}種）` : ""}`;
     table.set(key, (table.get(key) ?? 0) + 1);
     // 2026-11-22 作業員M（#520）: 番の外れの決め方は ask-route-of.askTurnOutlier に1つにした（quality_daily の growth:ask:* と同じ数え方）
-    let o = askTurnOutlier({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves, kinds, brainAction: t.brain_action });
+    let o = askTurnOutlier({ tc: t.decision_id ? tcOf.get(t.decision_id) : null, turnAt: at, moves, kinds, brainAction: t.brain_action, prevStaffTexts: all.filter((m) => !m.customer && m.at < at && at - m.at <= 86_400_000).map((m) => m.text) });
     if (/^記録なし$|^要件の記録なし$/.test(o) && t.customer_turn_at < "2026-10-09") o = "要件の記録なし（digest に要件の欄が無い頃・10/08 より前）";
     const sk = String(t.scene_key ?? "（場面なし）");
     if (kbScenes.includes(sk)) { const m = shapeByScene.get(sk) ?? new Map<string, number>(); const lab = takeuchiShapeLabel(at, moves, kinds); m.set(lab, (m.get(lab) ?? 0) + 1); shapeByScene.set(sk, m); }

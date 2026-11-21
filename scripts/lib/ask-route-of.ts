@@ -1,4 +1,5 @@
 // scripts/lib/ask-route-of.ts — 要件→行き先の型の純関数（scripts/audit-ask-route-takeuchi.ts が使う・テスト scripts/test-audit-ask-route.ts）・作業員M 2026-11-15
+import { aixFulfilsPrevPromise } from "./combo-of-moves";
 /** 要件の route の内訳（digest.tc "n:r1p0a1n0[:c][:w|:o]"） */
 export function tcMix(tc: string | null | undefined): { r: number; p: number; a: number; n: number } | null {
   const m = /^(\d+):r(\d+)p(\d+)a(\d+)n(\d+)/.exec(String(tc ?? ""));
@@ -105,6 +106,8 @@ export type AskTurnInput = {
   /** 竹内さんの AIX の種類（束ねた後・重なりなし） */
   kinds: readonly string[];
   brainAction: string | null | undefined;
+  /** 番より前（24時間）のこちらの通の本文（前の番の約束を果たす AIX を見分ける・combo-of-moves.aixFulfilsPrevPromise と同じ）。無ければ見ない */
+  prevStaffTexts?: readonly string[];
 };
 export type AskTurnClass = "取りこぼし" | "重ね" | "取り違え" | "合う" | "記録なし" | "種類違い";
 export function askTurnOutlier(i: AskTurnInput): string {
@@ -114,6 +117,8 @@ export function askTurnOutlier(i: AskTurnInput): string {
   if (o === "取りこぼし（AIX 側）" && i.brainAction && i.kinds.length && !aixKindMismatch(i.brainAction, i.kinds)) o = "合う（AIX は要件の外＝前の約束を果たす）";
   const firstAix = i.moves.find((m) => m.aix);
   if (o === "取りこぼし（AIX 側）" && firstAix && firstAix.at - i.turnAt > 60 * 60_000) o = "合う（AIX は1時間より後＝前の約束の果たし・番の外）";
+  // 2026-11-22 作業員M（count-verified で 2cb0feb7 を照らした時のズレ）: 1時間以内でも、前の番でこちらが約束した事を果たす AIX は要件の外（組の数え 3a117a6c9 と同じ見方）
+  if (o === "取りこぼし（AIX 側）" && i.prevStaffTexts?.length && i.kinds.some((k) => aixFulfilsPrevPromise(k === "物件の束" ? "property_send" : k, i.prevStaffTexts!))) o = "合う（AIX は前の番の約束の果たし＝要件の外）";
   if (o === "合う" && shape.includes("A") && aixKindMismatch(i.brainAction, i.kinds)) o = "AIX の種類が違う";
   if (o === "取り違え（AIX→返信）" && /^(?:viewing_invite|meeting_place)/.test(String(i.brainAction ?? "")) && i.moves.some((m) => !m.aix && staffScheduleInText(m.text))) o = "合う（竹内さんは AIX の中身＝予定を手で打った・8ee13967）";
   return o;
