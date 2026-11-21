@@ -25,6 +25,13 @@ export async function GET(req: NextRequest) {
   try {
     const r = await evaluateLineWatchTurns(supabase, { dry, days });
     console.log(JSON.stringify({ tag: "cron:line-watch-eval", dry, read: r.read, judged: r.judged, pending: r.pending, updated: r.updated, failed: r.failed, orphans: r.orphans }));
+    // 2026-11-21 作業員N（自己改善の統括・台帳 #473）: 判定が付いた後に、その日の返信の一致を quality_daily に足し直す（QUALITY_DAILY_FROM_EVAL・既定 on・=off で止める・失敗しても見張りは止めない）
+    if (!dry) {
+      try {
+        const q = await import("@/app/lib/quality-daily-server");
+        if (q.qualityDailyFromEvalOn()) console.log(JSON.stringify({ tag: "cron:line-watch-eval:quality-daily", rows: await q.refreshReplyMatchDays(supabase, 3) }));
+      } catch (e) { console.warn("[line-watch-eval] quality_daily skipped:", e instanceof Error ? e.message : String(e)); }
+    }
     await finishCronLog(logId, r.ok, r as unknown as Record<string, unknown>, r.errors[0]);
     return NextResponse.json(r, { status: r.ok ? 200 : 500 });
   } catch (e) {

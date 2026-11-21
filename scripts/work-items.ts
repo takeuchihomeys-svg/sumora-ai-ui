@@ -77,6 +77,22 @@ async function cmdAdd() {
   if (error) throw new Error(error.message);
   await sb().from("work_item_events").insert({ item_id: data.id, from_stage: null, to_stage: stage, actor: arg("actor", "session"), note: arg("note") || "足した" });
   console.log(`足した #${data.id}`);
+  // 2026-11-21 作業員N（竹内さん「次の朝ではなく、そのまま連携することはできないのか」・台帳 #472 #473）: 竹内さんの指示を入れた時は、その場で
+  //   指摘の帳面（owner_pointers）に1行足し、その型の点検（owner-feedback-check --from）と自己改善の統括の方針（self-improve --only=policy）を1回流す。
+  //   止める: --no-pointer（点検だけ止めるのは --no-check）。どちらも LLM なし・軽い読み
+  if (row.origin === "owner_request" && !flag("no-pointer")) {
+    try {
+      const { addPointerForWorkItem } = await import("../app/lib/owner-pointers-server");
+      const pid = await addPointerForWorkItem(sb(), data.id);
+      console.log(pid ? `指摘の帳面に足した P${pid}` : "指摘の帳面には足せなかった");
+      if (pid && !flag("no-check")) {
+        const { runTsx } = await import("./lib/self-improve-growth");
+        for (const args of [["scripts/owner-feedback-check.ts", `--from=${pid}`, "--days=1", "--write"], ["scripts/self-improve.ts", "--only=policy", "--write"]]) {
+          try { console.log(runTsx(args, 240_000).split("\n").slice(0, 12).join("\n")); } catch (e) { console.log(`流せなかった（${args[0]}）: ${e instanceof Error ? e.message.slice(0, 120) : e}`); }
+        }
+      }
+    } catch (e) { console.log(`指摘の帳面の口で止まった: ${e instanceof Error ? e.message : e}`); }
+  }
 }
 
 async function cmdStage() {

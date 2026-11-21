@@ -13,7 +13,7 @@ export const POINTER_KIND_JA: Record<PointerKind, string> = {
   no_measure: "物差しが無い", no_rule: "決まりが無い", left_off: "作ったが off のまま", no_grasp: "把握が無い（状況の土台）",
   exam: "試験（効率・質・費用）", process: "回し方（拾い上げ・割り当て）", outage: "本番の故障（重い・取りこぼし）", other: "その他",
 };
-export const POINTER_AREAS = ["reply", "aix1", "aix2", "property_pick", "image", "route_map", "foundation", "exam", "promise", "conductor", "other"] as const;
+export const POINTER_AREAS = ["reply", "aix1", "aix2", "property_pick", "image", "route_map", "foundation", "exam", "promise", "conductor", "search", "other"] as const;
 export type PointerArea = typeof POINTER_AREAS[number];
 export const POINTER_STATES = ["received", "checked", "fixing", "exam_passed", "on", "ready", "closed"] as const;
 export type PointerState = typeof POINTER_STATES[number];
@@ -40,7 +40,9 @@ export function pointerKindsOf(text: string, o: { builtOff?: boolean } = {}): Po
   return out.length ? out : ["other"];
 }
 
+// 2026-11-21 作業員G の頼み（統括役の決め）: 物件検索・拡張・統括Pro・物件検索の学習の発言は search に分ける（統括 conductor より先に見る）
 const AREA_RES: Array<[PointerArea, RegExp]> = [
+  ["search", /拡張|統括Pro|統括 ?pro|物件検索|自動モード|通常モード|リアプロ|itandi|ITANDI|レインズ|録画|プルダウン|photo_learn/i],
   ["aix2", /2通目|二通目/], ["aix1", /AIX/], ["image", /画像|写真/], ["property_pick", /物件選び|物件出し|ピックアップ|オススメ|訴求/],
   ["route_map", /地図|駅/], ["exam", /試験/], ["promise", /約束/], ["conductor", /統括/], ["foundation", /土台/], ["reply", /返信|文の|書き手|下書き/],
 ];

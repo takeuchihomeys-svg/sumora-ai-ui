@@ -19,6 +19,7 @@ t("型の名前は表の CHECK と同じ", pointerKindsOf("画像 連携 細分�
 t("分野: 2通目と AIX", pointerAreasOf("2通目の訴求の細かいずれ").includes("aix2"));
 t("分野: 画像", pointerAreasOf("画像から物件名も把握する").includes("image"));
 t("分野: 無ければ other", pointerAreasOf("Aでおねがい")[0] === "other");
+t("分野: 拡張・統括Pro は search", pointerAreasOf("統括Proが脳として弱点をすぐ把握")[0] === "search" && pointerAreasOf("自動モードの録画で弱い所")[0] === "search");
 
 t("状態は前にだけ進む", canAdvance("received", "checked") && !canAdvance("on", "fixing") && canAdvance("exam_passed", "closed"));
 

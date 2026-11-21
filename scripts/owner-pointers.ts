@@ -45,8 +45,27 @@ async function list() {
   for (const r of rows.slice(0, Number(arg("top", "20")) || 20)) console.log(`- P${r.id} [${r.state}] ${String(r.said_at).slice(5, 10)} ${(r.kinds ?? []).join(",")}｜${String(r.quote).slice(0, 60)}｜台帳 ${(r.work_item_ids ?? []).map((x: number) => "#" + x).join(" ")}`);
 }
 
+/** 型と分野の決まりが変わった時に、台帳から来た行の kinds・areas だけを分け直す（状態・つなぎは触らない） */
+async function reclassify() {
+  const { data: ps, error } = await sb().from("owner_pointers").select("id,source_ref,kinds,areas").eq("source", "work_item").limit(5000);
+  if (error) throw new Error(error.message);
+  const ids = ((ps ?? []) as Array<{ source_ref: string }>).map((p) => Number(p.source_ref)).filter(Boolean);
+  const { data: ws } = await sb().from("work_items").select("id,title,requested_quote,requested_at,created_at,stage,kb_ids,switch_name").in("id", ids).limit(5000);
+  const byId = new Map(((ws ?? []) as WorkItemLite[]).map((w) => [String(w.id), w]));
+  let changed = 0;
+  for (const p of (ps ?? []) as Array<{ id: number; source_ref: string; kinds: string[]; areas: string[] }>) {
+    const w = byId.get(p.source_ref); if (!w) continue;
+    const r = pointerFromWorkItem(w);
+    if (JSON.stringify(r.kinds) === JSON.stringify(p.kinds) && JSON.stringify(r.areas) === JSON.stringify(p.areas)) continue;
+    if (!flag("dry")) await sb().from("owner_pointers").update({ kinds: r.kinds, areas: r.areas, updated_at: new Date().toISOString() }).eq("id", p.id);
+    changed++;
+  }
+  console.log(`分け直した ${changed}行${flag("dry") ? "（--dry・書いていない）" : ""}`);
+}
+
 (async () => {
-  if (flag("backfill")) await backfill();
+  if (flag("reclassify")) await reclassify();
+  else if (flag("backfill")) await backfill();
   else if (flag("list")) await list();
   else console.log("使い方: --list [--state=] ／ --backfill [--since=] [--dry]");
 })().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

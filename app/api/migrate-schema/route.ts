@@ -6041,10 +6041,13 @@ CREATE TABLE IF NOT EXISTS owner_pointers (
   closed_at TIMESTAMPTZ,
   CONSTRAINT owner_pointers_state_chk CHECK (state IN ('received', 'checked', 'fixing', 'exam_passed', 'on', 'ready', 'closed')),
   CONSTRAINT owner_pointers_kinds_chk CHECK (kinds <@ ARRAY['not_delivered', 'unread', 'link_broken', 'not_subdivided', 'no_measure', 'no_rule', 'left_off', 'no_grasp', 'exam', 'process', 'outage', 'other']::TEXT[]),
-  CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'other']::TEXT[]),
+  CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'search', 'other']::TEXT[]),
   CONSTRAINT owner_pointers_source_chk CHECK (source IS NULL OR source IN ('work_item', 'chat', 'screenshot', 'meeting'))
 );
 CREATE INDEX IF NOT EXISTS idx_owner_pointers_state ON owner_pointers(state, said_at DESC);
+-- 2026-11-21 作業員N（作業員G の頼み・統括役の決め）: 分野に search（物件検索・拡張・統括Pro）を足す。もう作った表は CHECK を作り直す
+ALTER TABLE owner_pointers DROP CONSTRAINT IF EXISTS owner_pointers_areas_chk;
+ALTER TABLE owner_pointers ADD CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'search', 'other']::TEXT[]);
 CREATE INDEX IF NOT EXISTS idx_owner_pointers_kinds ON owner_pointers USING GIN (kinds);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_pointers_source ON owner_pointers(source, source_ref) WHERE source_ref IS NOT NULL;
 ALTER TABLE owner_pointers ENABLE ROW LEVEL SECURITY;

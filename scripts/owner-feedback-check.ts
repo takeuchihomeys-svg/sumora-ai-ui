@@ -12,7 +12,7 @@
 //   実行: npx tsx --env-file=.env.local scripts/owner-feedback-check.ts [--all | --types=unread,no_measure] [--from=<id>] [--days=3] [--write]
 import { createClient } from "@supabase/supabase-js";
 import { readdirSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { runTsx } from "./lib/self-improve-growth";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
 import { POINTER_KIND_JA, POINTER_KINDS, type PointerKind } from "../app/lib/owner-pointers";
 import { checkUnread } from "./check-unread";
@@ -81,7 +81,7 @@ export async function runChecks(kinds: PointerKind[], days: number): Promise<Che
 /** 設計知見を引く（kb.ts・LLM なし）。P0/P1 の行の id8 を返す */
 function kbIdsFor(q: string): string[] {
   try {
-    const outp = execFileSync(process.execPath, ["--import", "tsx", "scripts/kb.ts", `--q=${q.slice(0, 120)}`, "--max-p=1", "--limit=3"], { encoding: "utf8", timeout: 90_000, env: process.env });
+    const outp = runTsx(["scripts/kb.ts", `--q=${q.slice(0, 120)}`, "--max-p=1", "--limit=3"], 90_000);
     return [...new Set([...outp.matchAll(/・([0-9a-f]{8})］/g)].map((m) => m[1]))].slice(0, 5);
   } catch { return []; }
 }

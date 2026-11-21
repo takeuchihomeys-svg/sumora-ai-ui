@@ -5,7 +5,20 @@
 //   recordPointerExam … 夜の全部の部が終わった後に1回（label の一覧）。その行の exam_qids が全部 compared に入り、どれも worseSure に無い時だけ exam_passed へ。
 //                        揺れ（flaky）だけの時は進めず events に残す。二分の子（-bA/-bB）の結果は呼ぶ側で外して渡す
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canAdvance, type PointerState } from "./owner-pointers";
+import { canAdvance, pointerFromWorkItem, type PointerState, type WorkItemLite } from "./owner-pointers";
+
+/** 竹内さんの新しい指示を台帳に入れた時（work-items.ts --add --origin=owner_request）に、その場で指摘の行を1つ足す。もうあれば何もしない（source_ref=台帳の id） */
+export async function addPointerForWorkItem(sb: SupabaseClient, workItemId: number): Promise<number | null> {
+  const { data: have } = await sb.from("owner_pointers").select("id").eq("source", "work_item").eq("source_ref", String(workItemId)).maybeSingle();
+  if (have) return (have as { id: number }).id;
+  const { data: w, error } = await sb.from("work_items").select("id,title,requested_quote,requested_at,created_at,stage,kb_ids,switch_name").eq("id", workItemId).single();
+  if (error || !w) return null;
+  const row = pointerFromWorkItem(w as WorkItemLite);
+  const { data: ins, error: e2 } = await sb.from("owner_pointers").insert(row).select("id").single();
+  if (e2 || !ins) return null;
+  await sb.from("owner_pointer_events").insert({ pointer_id: (ins as { id: number }).id, kind: "link", to_state: row.state, actor: "work-items --add", detail: { work_item_id: workItemId, kinds: row.kinds } });
+  return (ins as { id: number }).id;
+}
 
 export type PointerExamRow = { id: number; kinds: string[]; exam_qids: string[]; said_at: string };
 
