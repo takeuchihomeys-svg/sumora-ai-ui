@@ -184,3 +184,42 @@ CREATE INDEX IF NOT EXISTS idx_customer_image_records_unit ON customer_image_rec
 
 ## G. 試験と既定 on の候補（統括役が組に入れる）
 - OWN_PROPERTY_PORTAL_TITLE=on（CUSTOMER_IMAGE_LINK は既定 on のまま）: q096,q174,q179,q325,q326,q330,q359,q419（取り出しが変わる8問）。ブレインの組。
+
+
+---
+
+## H. 種類ごとの表（読む欄・届く先・物差し・正しさの監査）— 2026-11-21 夜 作業員G（#430・#505 土台を細部まで）
+
+略: ピック＝物件出し・ピックアップの判定（property-brain・🌟）／2通目＝AIX の後の返信・訴求／ブレイン＝brain-core の材料。
+物差し＝毎日の数。2026-11-21 から `scripts/image-field-fill-daily.ts --write` が種類×欄の埋まりを quality_daily に書く（`image_fill:customer:<kind>:<欄>`・`image_fill:sent:<経路>:<欄>`・LLM なし）。
+
+### お客様が送る画像（受け取り時に Vision 1回・見出し＋書き起こし）
+| 種類 | 読む欄 | 届く先 | 物差し | 正しさの監査 |
+|---|---|---|---|---|
+| ポータルの画面 | 物件名・号室・家賃・管理費・敷礼・間取り・面積・駅徒歩・築年 | ブレイン（customer-image-link・own-property）・🌟 | image_fill:customer:property_screen:* | 60日 92枚を1回（名前 14%→見出しの直し）。深い読み（#461 ② 9f403d16f・off）は未監査 |
+| 物件の資料（送り返し・他社） | 物件名・号室・現況・家賃・間取り・築年・こちらの物か | ブレイン・🌟 | image_fill:customer:property_material:* | 21枚を1回（名前 76%・築年 3→13/21）。深い読みは未監査 |
+| SNS・広告 | 家賃・間取り・駅（好みの手本） | ブレイン・🌟の好み・AIX の要望（TASTE_WANTS・off） | image_fill:customer:property_ad:* | 18枚を1回（名前 6%＝無いのが普通） |
+| 物件の写真 | どの物件か・好みの特徴 | ブレイン | image_fill:customer:property_photo:* | 28枚を1回（名前 11%） |
+| 間取り図（資料の中） | 有無（バストイレ別・独立洗面・収納・南向き・2階以上・カウンターキッチン） | ピック（applyImageFacts）・カウンターキッチンは image_facts だけ | 無し | カウンターキッチン: sheet-v8 の壁付けで 6件中1件誤り。新しい読み（055dffadf・on）を目で監査中（誤り0を20件で判定へ） |
+| 見積書 | 会社・物件名・号室・内訳・総額（宛名は伏せる） | ブレイン・estimate | 無し | 10枚中、内訳が取れない3枚を読んだ |
+| やり取りのスクショ | 種類・話し手（他社→お客様／家族・知人） | 返信の見出し（SCREENSHOT_SPEAKER_NOTE・off）・ブレイン（BRAIN_SCREENSHOT_SPEAKER・off） | 無し | 90日の5件を目で（誤り0）。試験は番16493 |
+| 書類 | 種類だけ | 申込の手続き | 無し | 400日の当て直しで取り違え 0 |
+| 物件以外 | 種類だけ | ブレイン | 無し | 未着手 |
+| 種類不明 | 推測しない | ブレイン | 無し | 判断の一致 7/9 |
+
+### こちらが送る画像（送った後に DeepSeek 1回・sent_image_properties）
+| 種類 | 読む欄 | 届く先 | 物差し | 正しさの監査 |
+|---|---|---|---|---|
+| 物件資料（AIX） | 物件名・号室・家賃・管理費・敷礼・間取り・面積・駅徒歩・築年・現況 | ブレイン・2通目（facts は SENT_IMAGE_FACTS_TO_BRAIN・off）・引用の読み | image_fill:sent:(pickup・recommendation・check):* | 20枚を目で（名前・号室 0/20 誤り・値 3・現況の作り事 2→status strict） |
+| 部屋ごとの帖数 | LDK・洋室の帖数 | 2通目・ピック | 無し | IMAGE_READ_ROOMS=off（作業員L） |
+| 室内写真（AIX・手） | どの物件か | 引用の読み・ブレイン | image_fill:sent:*:property_name | AIX は #448（on）。手の束は案3（ae04c66d8・off）。2件以上の AIX は案4（提案 9970e3f6）。未監査 |
+| 見積書（AIX・手） | 物件名・号室・総額 | 引用の読み・estimate | 無し | 手で送った物は案2（924faa8d1・off）。未監査 |
+| 引用された画像 | 物件名 | ブレイン・返信 | 無し | #461 ①（19c9ee444・off・試験 q157・q163） |
+| 待ち合わせの地図 | 住所（番地まで） | 内覧の AIX | 無し | 14日 4/4 |
+
+11/20（JST）の実数（初回・dry）: こちらの画像 47枚。pickup 27枚は全欄 100%／recommendation 7枚は間取り・築年・現況 43%・家賃 71%／check 6枚は値の欄 67%。お客様の画像の記録は 11/21 から（11/20 は 0枚）。
+
+### 穴（台帳 #505 の子）
+1. 物差し: 種類×欄の埋まりを毎日 → `scripts/image-field-fill-daily.ts`（11/21 作った・夜の便で --write）
+2. 監査: 監査の台本を種類を問わず使える形に・目で見た誤り0の件数を台帳に残す（カウンターキッチンの台本 `scripts/counter-kitchen-image-audit.ts` を広げる・11/21 夜の後）
+3. 届き: 2通目・ピックへの off の部品（SENT_IMAGE_FACTS_TO_BRAIN・IMAGE_READ_ROOMS・カウンターキッチン）は試験・監査の待ち
