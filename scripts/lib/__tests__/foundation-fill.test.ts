@@ -35,5 +35,7 @@ t("物差しの無い 1（B）", tot.noMeasure === 1 && tot.noMeasureNames[0] ==
 const ns = fillNotShrinking({ full: 1, n: 3, sceneGap: 2, noMeasure: 1 }, { full: 1, sceneGap: 2, noMeasure: 2 }, { sceneGap: ["作業員K2"], noMeasure: ["作業員K2"], notFull: ["作業員K2", "作業員G"] });
 t("空きが減らない・そろいが増えない を出す（物差しは減った）", ns.length === 2 && ns[0].includes("場面の決まりの空き") && ns[1].includes("そろった"), ns);
 t("前の日が無ければ出さない", fillNotShrinking({ full: 1, n: 3, sceneGap: 2, noMeasure: 1 }, { full: null, sceneGap: null, noMeasure: null }, { sceneGap: [], noMeasure: [], notFull: [] }).length === 0);
+const alias = foundationFillOf([{ id: "k.x", name: "X", owner: "物件出し", rules: ["z"], measures: [], metric: null, parts: [] }], [], null, { metricSeen: () => false, switchDefault: () => null });
+t("物件出し は作業員K2 に付け替える", alias[0].cells.every((c) => c.owner === "作業員K2"), alias[0].cells.map((c) => c.owner));
 console.log(`foundation-fill: ${pass} 通過・${fail} 失敗`);
 if (fail) process.exit(1);

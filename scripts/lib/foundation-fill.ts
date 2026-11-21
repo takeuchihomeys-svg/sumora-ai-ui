@@ -26,7 +26,9 @@ export const SITUATION_CANDIDATES: Record<string, string[]> = {
 /** 実送信で形が割れると確かめた場面→状況（確かめた物だけ足す・今は無い） */
 export const SITUATION_CONFIRMED: Record<string, Record<string, string[]>> = {};
 
-const first = (owner: string) => owner.split("・")[0] || "統括役";
+/** 土台の表の持ち主が作業員の名前でない時の付け替え（統括役 11/21: 「物件出し」は作業員K2） */
+export const OWNER_ALIAS: Record<string, string> = { "物件出し": "作業員K2" };
+const first = (owner: string) => { const o = owner.split("・")[0] || "統括役"; return OWNER_ALIAS[o] ?? o; };
 
 export function foundationFillOf(
   rows: ReadonlyArray<FoundationRow>,
