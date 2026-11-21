@@ -17,11 +17,11 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
 export const APPEAL_POINTS: Array<{ key: string; label: string; text: RegExp; code: RegExp; facts?: string[] }> = [
   { key: "initial_cost", label: "初期費用・敷礼0", text: /敷金.{0,3}礼金.{0,3}(?:0|ゼロ|なし|無し)|敷礼(?:0|ゼロ|なし)|初期費用(?:を|が)?(?:抑え|安)/, code: /^(?:ZERO_ZERO_MATCH|INITIAL_COST_.*OK|DEPOSIT_ZERO|KEY_MONEY_ZERO)/ },
   { key: "free_rent", label: "フリーレント", text: /フリーレント/, code: /^FREE_RENT/ },
-  { key: "walk", label: "駅近・徒歩", text: /駅(?:近|チカ)|徒歩\s*[0-9０-９]{1,2}\s*分/, code: /^(?:WALK_OK|WALK_.*OK|STATION_)/ },
+  { key: "walk", label: "駅近・徒歩", text: process.argv.includes("--strict") ? /駅(?:近|チカ)|駅から(?:近|すぐ)|好立地/ : /駅(?:近|チカ)|徒歩\s*[0-9０-９]{1,2}\s*分/, code: /^(?:WALK_OK|WALK_.*OK|STATION_)/ },
   { key: "age", label: "築浅・新築", text: /築浅|新築|築[0-9０-９]{1,2}年|新しい/, code: /^(?:BUILDING_AGE_OK|BUILDING_AGE_TEXT_OK|NEW_BUILD)/ },
-  { key: "size", label: "広さ・帖数", text: /広[いさめ々]|㎡|平米|[0-9０-９.]+\s*帖|[0-9０-９.]+\s*畳/, code: /^(?:SQM_OK|SQM_.*OK|ROOM_JO_OK|LDK_JO_OK)/ },
+  { key: "size", label: "広さ・帖数", text: process.argv.includes("--strict") ? /広[いさめ々]|ゆとり/ : /広[いさめ々]|㎡|平米|[0-9０-９.]+\s*帖|[0-9０-９.]+\s*畳/, code: /^(?:SQM_OK|SQM_.*OK|ROOM_JO_OK|LDK_JO_OK)/ },
   { key: "rent", label: "家賃", text: /家賃|お家賃|賃料/, code: /^RENT_OK/ },
-  { key: "move_in", label: "入居時期", text: /即入居|入居可能|ご入居頂け|ご入居いただけ/, code: /^MOVE_IN_OK/ },
+  { key: "move_in", label: "入居時期", text: process.argv.includes("--strict") ? /即入居|すぐ(?:に)?(?:ご)?入居/ : /即入居|入居可能|ご入居頂け|ご入居いただけ/, code: /^MOVE_IN_OK/ },
   { key: "renovated", label: "リノベ・室内きれい", text: /リノベ|リフォーム|室内(?:綺麗|きれい)|綺麗なお部屋/, code: /RENOVATED/ },
   { key: "autolock", label: "オートロック", text: /オートロック/, code: /^EQUIP_AUTOLOCK.*OK/, facts: ["autolock"] },
   { key: "delivery_box", label: "宅配ボックス", text: /宅配/, code: /^EQUIP_DELIVERY_BOX.*OK/, facts: ["delivery_box"] },
@@ -100,7 +100,7 @@ if (require.main === module) (async () => {
     const m = msgs.get(l.line_message_id);
     if (!m || (writer !== "all" && m.staff_writer !== writer) || !m.text) continue;
     // 2026-11-21 合わせ方の直し: 送った行だけ・3日だけ → 14日の行（送った行を先に）・建物名（旧名・【】・号室を外す）と号室（先頭の0を外す）で合わせる
-    const { data: pr } = await sb.from("property_pickups").select("property_name, room_no, reason_codes, equipment, status, sent_at, created_at").eq("conversation_id", l.conversation_id)
+    const { data: pr } = await sb.from("property_pickups").select("property_name, room_no, reason_codes, equipment, status, sent_at, created_at, summary_text, terms").eq("conversation_id", l.conversation_id)
       .gte("created_at", new Date(Date.parse(l.sent_at) - 14 * 864e5).toISOString()).lte("created_at", new Date(Date.parse(l.sent_at) + 36e5).toISOString()).limit(80);
     const cand = (pr ?? []) as Array<PickRow & { equipment: { facts?: Record<string, { s?: string }> } | null }>;
     const targets = (l.property_names ?? []).length ? (l.property_names ?? []) : [m.text];
@@ -123,6 +123,14 @@ if (require.main === module) (async () => {
     const codes = [...new Set(rows.flatMap((r) => r.reason_codes ?? []))];
     const factsOk = new Set(rows.flatMap((r) => Object.entries(r.equipment?.facts ?? {}).filter(([, v]) => v?.s === "ok").map(([k]) => k)));
     for (const [k, v] of Object.entries(appealVsCodes(m.text, codes, factsOk))) if (v) t[k][v]++;
+    // --calib: 「言っていない良い点」の線を引くための1件ごとの値（物件の事実と、竹内さんがその点を書いたか）
+    if (process.argv.includes("--calib")) {
+      const r0 = rows[0] as unknown as { summary_text?: string | null; terms?: { moveIn?: { kind?: string } | null } | null };
+      const f = (await import("../app/lib/property-brain")).parsePropertyFacts(String(r0.summary_text ?? ""));
+      const tx = String(m.text).normalize("NFKC");
+      const w = (key: string) => APPEAL_POINTS.find((p) => p.key === key)!.text.test(tx);
+      console.log("CALIB " + JSON.stringify({ plan: f.floorPlan, area: f.areaSqm, walk: f.walkMinutes, dep: f.depositMonths, key: f.keyMoneyMonths, age: f.buildingAge, moveIn: r0.terms?.moveIn?.kind ?? null, wSize: w("size"), wWalk: w("walk"), wMove: w("move_in"), wCost: w("initial_cost"), wAge: w("age") }));
+    }
   }
   console.log(`${writer === "takeuchi" ? "竹内さん" : `書き手 ${writer} `}の${type === "all" ? "物件オススメ・ピックアップ" : type}の文 × 売上サポの札（${days}日）: 合わせた ${n}件（うち画像の読みから ${viaSip}）・札の行が見つからない ${noRow}件`);
   console.log("  推しどころ             両方 ／ 文だけ（札に無い）／ 札だけ（書かない）");

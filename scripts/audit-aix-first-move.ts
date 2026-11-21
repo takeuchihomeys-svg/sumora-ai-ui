@@ -33,6 +33,7 @@ type M = { sender: string; text: string | null; created_at: string; is_aix_gener
   const presses = ((us ?? []) as U[]).filter((u) => !skip.has(u.conversation_id) && (fam === "all" || famOf(u.aix_type) === fam));
   const byConv = new Map<string, U[]>(); for (const u of presses) byConv.set(u.conversation_id, [...(byConv.get(u.conversation_id) ?? []), u]);
   const rows: Array<Record<string, unknown>> = [];
+  let skippedOwnTurn = 0;
   for (const [c, list] of byConv) {
     const from = new Date(Date.parse(list[0].sent_at ?? list[0].created_at) - 864e5).toISOString();
     const [mq, bq] = await Promise.all([
@@ -54,6 +55,8 @@ type M = { sender: string; text: string | null; created_at: string; is_aix_gener
       const before = ms.filter((m) => Date.parse(m.created_at) <= bt);
       let i = before.length - 1; const burst: string[] = [];
       while (i >= 0 && before[i].sender === "customer") { burst.unshift(String(before[i].text ?? "")); i--; }
+      // 2026-11-21 夜: 判断がこちらの通の後に作られた番（お客様の束が無い＝自分の約束の後の判断）は最初の一手に数えない（30日で 14番がこの形だった）
+      if (!burst.length) { skippedOwnTurn++; continue; }
       const lastStaff = [...before].reverse().find((m) => m.sender === "staff");
       rows.push({
         conv: c.slice(0, 6), at: new Date(at).toISOString().slice(0, 16), pressed: u.aix_type, cp: u.check_pattern, kind,
@@ -65,7 +68,7 @@ type M = { sender: string; text: string | null; created_at: string; is_aix_gener
     }
   }
   const tally = new Map<string, number>(); for (const r of rows) { const k = `${famOf(String(r.pressed))}|${r.kind}`; tally.set(k, (tally.get(k) ?? 0) + 1); }
-  console.log(`AIX の最初の一手（${days}日・書き手 ${writer}・系統 ${fam}）: ${rows.length}番`);
+  console.log(`AIX の最初の一手（${days}日・書き手 ${writer}・系統 ${fam}）: ${rows.length}番（こちらの通の後の判断で外した ${skippedOwnTurn}）`);
   for (const [k, n] of [...tally].sort()) console.log(`  ${k}: ${n}`);
   for (const r of rows.filter((x) => x.kind !== "同じ")) console.log(JSON.stringify(r));
   if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify(rows, null, 2));

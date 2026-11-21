@@ -38,9 +38,18 @@ export function promiseRestates(draft: string, priorOurTexts: ReadonlyArray<stri
 }
 
 const TOPIC_JA: Record<PromiseTopic, string> = { pickup: "物件のピックアップ", vacancy: "募集状況の確認", estimate: "御見積書", viewing: "内覧のご案内", mgmt: "管理会社への確認", screening: "審査", contact: "確認できた時のご連絡" };
-/** 書き手への注記（restate だけ・無ければ ""） */
+/**
+ * 注記に出す約束の中身（2026-11-21 夜 実物に当てた結果・scripts/audit-promise-restate.ts 30日 338番）:
+ *   下書きが言い直した 47番のうち、送った文（竹内さんたち）も同じ中身を言い直した 31番・AI だけ 16番。中身ごとに
+ *   確認できた時のご連絡（contact）: AI だけ 9・両方 2／管理会社（mgmt）: AI だけ 2・両方 0／審査（screening）: AI だけ 1・両方 0
+ *   ピックアップ（pickup）: AI だけ 4・両方 15／内覧（viewing）: AI だけ 5・両方 11／募集状況（vacancy）: AI だけ 0・両方 4
+ *   → ピックアップ・内覧・募集状況の約束は竹内さんたちも言い直す方が多い（言い直しを止めると外れる）ので注記に出さない。
+ *     確認できた時のご連絡・管理会社・審査だけ（AI だけ 12・両方 2＝拾った物の 86% が AI だけ）。
+ */
+export const RESTATE_NOTE_TOPICS: ReadonlySet<PromiseTopic> = new Set<PromiseTopic>(["contact", "mgmt", "screening"]);
+/** 書き手への注記（restate だけ・RESTATE_NOTE_TOPICS の中身だけ・無ければ ""） */
 export function promiseRestateNote(hits: ReadonlyArray<RestateHit>): string {
-  const xs = [...new Set(hits.filter((h) => h.kind === "restate").map((h) => TOPIC_JA[h.topic]))];
+  const xs = [...new Set(hits.filter((h) => h.kind === "restate" && RESTATE_NOTE_TOPICS.has(h.topic)).map((h) => TOPIC_JA[h.topic]))];
   if (!xs.length) return "";
   return `【前にした約束（言い直さない）】${xs.join("・")}は前の通でもう約束している。この番は同じ約束を書き直さない（お客様が進み具合を聞いた時・新しい条件や物件を足した時だけ言い直す）。`;
 }
