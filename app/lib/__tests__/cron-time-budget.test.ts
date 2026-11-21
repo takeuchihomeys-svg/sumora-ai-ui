@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/cron-time-budget.test.ts
 // 2026-11-22 作業員N2（台帳 #591・#592）: cron の時間の残り・一括更新の小分け
 import assert from "node:assert/strict";
-import { updateKnowledgeBudgetOn, canStartWithin, UPDATE_KNOWLEDGE_BUDGET, autoStarBulkChunk, chunksOf } from "../cron-time-budget";
+import { updateKnowledgeBudgetOn, canStartWithin, UPDATE_KNOWLEDGE_BUDGET, autoStarBulkChunk, chunksOf, updateKnowledgeUnusedMarkOn } from "../cron-time-budget";
 
 assert.equal(updateKnowledgeBudgetOn({}), false, "既定 off");
 assert.equal(updateKnowledgeBudgetOn({ UPDATE_KNOWLEDGE_TIME_BUDGET: "on" }), true);
@@ -17,4 +17,6 @@ const ids = Array.from({ length: 46 }, (_, i) => `id${i}`);
 assert.deepEqual(chunksOf(ids, 10).map((c) => c.length), [10, 10, 10, 10, 6]);
 assert.deepEqual(chunksOf(ids, null).map((c) => c.length), [46], "off は今まで通り1文");
 assert.deepEqual(chunksOf([], 10), []);
+assert.equal(updateKnowledgeUnusedMarkOn({}), false, "印も既定 off");
+assert.equal(updateKnowledgeUnusedMarkOn({ UPDATE_KNOWLEDGE_UNUSED_MARK: "on" }), true);
 console.log("cron-time-budget: ok");

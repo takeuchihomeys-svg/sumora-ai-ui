@@ -9,6 +9,9 @@
 type Env = Record<string, string | undefined>;
 
 export const updateKnowledgeBudgetOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.UPDATE_KNOWLEDGE_TIME_BUDGET ?? "").trim().toLowerCase() === "on";
+/** 2026-11-22 統括役の決め: 未使用の知識の行を消さずに印（hypothesis_status=rejected・rejection_reason=unused_30d／unused_90d）を付ける（既定 off・UPDATE_KNOWLEDGE_UNUSED_MARK=on）。
+ *  UPDATE_KNOWLEDGE_TIME_BUDGET はこれを on にしてから on にする（片付けが届くと、止まっていた 3,646行を一度に消してしまうため） */
+export const updateKnowledgeUnusedMarkOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.UPDATE_KNOWLEDGE_UNUSED_MARK ?? "").trim().toLowerCase() === "on";
 /** 次の組を始めてよい最後の時刻（始めてからの ms）と、掃除を始めてよい最後の時刻 */
 export const UPDATE_KNOWLEDGE_BUDGET = { nextChunkUntilMs: 25_000, cleanupUntilMs: 40_000 } as const;
 
