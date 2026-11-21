@@ -292,6 +292,19 @@ export async function POST(req: NextRequest) {
     //   2026-10-08 続き: 物件送付・見積書・内覧調整・待ち合わせも（aixPropertyNamesForLog・画面から名前が来た時はそちらが正）
     const recNames = !(Array.isArray(property_names) && property_names.length > 0)
       ? aixPropertyNamesForLog({ aixType: aix_type, text: typeof generated_text === "string" ? generated_text : null, meetingPropertyName: meeting_property_name ?? null, sentPropertyNames: Array.isArray(properties_sent_names) ? properties_sent_names : null }) : [];
+    // 2026-11-21 作業員K2（app/lib/check-name-fill.ts・CHECK_NAME_FILL=on の時だけ・既定 off）: 物件名が空の物件確認した を、
+    //   直前 72時間にお客様が送ってきた物件が1件に決まる時だけ埋める（2件以上・決まらない時は空のまま）
+    let checkFilled: string[] = [];
+    if (aix_type === "property_check_result" && conversation_id && !(Array.isArray(property_names) && property_names.length > 0) && recNames.length === 0) {
+      const cf = await import("@/app/lib/check-name-fill");
+      if (cf.checkNameFillOn()) {
+        try {
+          const r = await cf.loadCheckNameFill(supabase, conversation_id, sent_at ?? new Date().toISOString());
+          if (r) checkFilled = [cf.filledLabel(r)];
+          console.log(JSON.stringify({ tag: "aix-log:check-name-fill", conversationId: conversation_id, checkPattern: check_pattern ?? null, filled: !!r, via: r?.via ?? null }));
+        } catch (e) { console.warn("[log-aix-usage] check-name-fill:", e instanceof Error ? e.message : String(e)); }
+      }
+    }
     const logRowInsert = {
       conversation_id,
       aix_type,
@@ -316,9 +329,12 @@ export async function POST(req: NextRequest) {
       property_names: Array.isArray(property_names) && property_names.length > 0
         ? property_names.map((n) => String(n ?? "").slice(0, 100))
         : recNames.length > 0 ? recNames.map((n) => n.slice(0, 100))
+        : checkFilled.length > 0 ? checkFilled.map((n) => n.slice(0, 100))
         : null,
       prop_statuses: Array.isArray(prop_statuses) && prop_statuses.length > 0
         ? prop_statuses.map((s) => String(s ?? "").slice(0, 40))
+        // CHECK_NAME_FILL で名前を埋めた時は、募集中／物件なかった の結果を同じ位置に（他のピッカーの結果は入れない）
+        : checkFilled.length > 0 && (check_pattern === "available" || check_pattern === "unavailable") ? [check_pattern]
         : null,
       // M2: 御見積書を同封したか（estimate_sheet 以外のAIX＝物件確認したの見積書同封も「送付済み」として残す）。
       // generate-reply の estimatePromised 判定が aix_type='estimate_sheet' しか見ておらず、

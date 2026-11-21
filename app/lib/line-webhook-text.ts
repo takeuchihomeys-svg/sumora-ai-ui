@@ -288,7 +288,7 @@ async function resolvePropertyReference(
     .eq("id", hit.id);
   if (reactErr) console.warn("[resolvePropertyReference] customer_reaction:", reactErr.message);
 
-  // 5. 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_POINTS=on の時だけ・既定 off）: どの点が刺さったか（家賃・広さ・間取り・駅・新しさ…）を残す。
+  // 5. 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_POINTS 既定 on・=off で止まる）: どの点が刺さったか（家賃・広さ・間取り・駅・新しさ…）を残す。
   //   別の update にする（列がまだ無い時も customer_reaction の記録を壊さない）
   if (!rejected) {
     const hp = await import("@/app/lib/hook-points");
