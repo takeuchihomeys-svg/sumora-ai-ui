@@ -19,6 +19,7 @@ import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-co
 import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
+import { checkStale } from "./check-stale";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -164,6 +165,15 @@ async function main() {
       coreRows.push({ metric: "core:foundation", value: cf.score, n: cf.n });
       lines.push(`### 芯: 土台が無い（表 ${cf.tables.join("・")}・4列そろった ${cf.full}/${cf.n}＝${cf.score ?? "—"}%）`, ...cf.gaps.slice(0, 8).map((g) => `- ${g.name}（${g.owner}）: 欠け ${g.missing.join("・")}｜${g.detail.slice(0, 80)}`));
       for (const g of cf.gaps.slice(0, 5)) coreFix.push(`土台が無い: ${g.name}（欠け ${g.missing.join("・")}）→ ${g.owner}`);
+    }
+    // 芯 ① の穴の型①「作ったのに回っていない」（check-stale・cron の最後の記録・毎日の数の最後の日・統括役 11/21 の5つの型）
+    const st = await checkStale(sb, now).catch(() => null);
+    if (st) {
+      const never = st.stale.filter((x) => x.kind === "cron_never");
+      const rest = st.stale.filter((x) => x.kind !== "cron_never");
+      coreRows.push({ metric: "core:stale", value: rest.length, n: st.crons + st.metrics }, { metric: "core:cron_no_log", value: never.length, n: st.crons });
+      lines.push(`### 芯: 作ったのに回っていない（止まっている・一度も無い ${rest.length}・cron の記録が一度も無い ${never.length}/${st.crons}）`, ...rest.slice(0, 10).map((x) => `- ${x.name}｜最後 ${x.last ?? "—"}｜${x.owner}｜${x.why.slice(0, 70)}`));
+      for (const x of rest.slice(0, 5)) coreFix.push(`作ったのに回っていない: ${x.name}（${x.why.slice(0, 40)}）→ ${x.owner}`);
     }
     // 芯 ② 細分化が足りない（owner-feedback-check の not_subdivided・ファイルと設計知見の札だけ）: 数は穴の項目の合計（少ないほど良い）
     const sd = (await runChecks(["not_subdivided"], 1).catch(() => []))[0];
