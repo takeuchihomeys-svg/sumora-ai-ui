@@ -1,6 +1,6 @@
 // やり取りのスクショの話し手（2026-11-21 作業員G・台帳 #468）。実物は名前・番号を伏せて写した
 // 実行: npx tsx app/lib/__tests__/chat-screenshot-speaker.test.ts
-import { imageUnitLabel, isChatScreenshotUnit, questionsInScreenshot, readScreenshotSpeaker, screenshotSpeakerNoteOn } from "../chat-screenshot-speaker";
+import { imageUnitLabel, isChatScreenshotUnit, questionsInScreenshot, readScreenshotSpeaker, screenshotSpeakerNoteOn, screenshotSpeakerTag } from "../chat-screenshot-speaker";
 import { IMAGE_TEXT_LABEL, isImageTextUnit } from "../reply-context";
 
 let failed = 0;
@@ -35,5 +35,12 @@ ok("on: 見出しの後も画像の通と分かる（isImageTextUnit）", isImag
 ok("on: 家族のやり取りの見出し", /家族・知人/.test(imageUnitLabel(FAMILY, IMAGE_TEXT_LABEL, ON)));
 ok("on: 分からない時は今の見出し", imageUnitLabel(WORK, IMAGE_TEXT_LABEL, ON) === IMAGE_TEXT_LABEL);
 ok("on: 物件の画像は今の見出し", imageUnitLabel("[画像] 【物件の資料】\n賃料 6万円", IMAGE_TEXT_LABEL, ON) === IMAGE_TEXT_LABEL);
+
+// ブレインの会話の行の札（BRAIN_SCREENSHOT_SPEAKER・既定 off）
+const BON = { BRAIN_SCREENSHOT_SPEAKER: "on" };
+ok("ブレインの札: 既定 off は空", screenshotSpeakerTag("customer", CANCEL, {}) === "");
+ok("ブレインの札: on・他社→お客様", /他社／管理会社→お客様/.test(screenshotSpeakerTag("customer", CANCEL, BON)));
+ok("ブレインの札: スタッフの行には付けない", screenshotSpeakerTag("staff", CANCEL, BON) === "");
+ok("ブレインの札: 分からない時は空", screenshotSpeakerTag("customer", WORK, BON) === "");
 
 if (failed) { console.log(`FAIL ${failed}`); process.exit(1); } else console.log("全 PASS");

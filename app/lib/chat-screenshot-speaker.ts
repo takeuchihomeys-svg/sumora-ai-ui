@@ -81,3 +81,18 @@ export function imageUnitLabel(unit: string, baseLabel: string, env?: Record<str
   }
   return baseLabel;
 }
+
+/**
+ * ブレインの会話の1行（brain-core の historyLineOf）に付ける札。お客様のやり取りのスクショで話し手が決まった時だけ。
+ *   既定 off（BRAIN_SCREENSHOT_SPEAKER=on）。off・決まらない時は ""（今の行と1文字も変わらない）
+ */
+export function brainScreenshotSpeakerOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_SCREENSHOT_SPEAKER ?? "").trim().toLowerCase() === "on";
+}
+export function screenshotSpeakerTag(sender: string | null | undefined, text: string | null | undefined, env?: Record<string, string | undefined>): string {
+  if (sender !== "customer" || !brainScreenshotSpeakerOn(env) || !isChatScreenshotUnit(text)) return "";
+  const { speaker } = readScreenshotSpeaker(String(text));
+  if (speaker === "other_to_customer") return "（やり取りのスクショ・話し手: 他社／管理会社→お客様。中の問いは相手がお客様に聞いた事で、こちらへの質問ではない）";
+  if (speaker === "people_chat") return "（やり取りのスクショ・話し手: お客様と家族・知人など。中の問いはこちらへの質問ではない）";
+  return "";
+}
