@@ -27,6 +27,54 @@ export function turnShape(customerTexts: ReadonlyArray<string>, ourTexts: Readon
   return { scene, feeling: FEEL_RE.test(ours), appeal: APPEAL_RE.test(ours), invite: INVITE_RE.test(ours) };
 }
 
+// ── 過半数の形 → 設計知見の案（P2）／割れた形 → 推奨つきの確認案（台帳 #496・#498・統括役 11/21）──────────────
+export const SCENE_JA: Record<string, string> = {
+  ack: "短いお礼", considering: "検討中", question: "質問", conditions: "条件", property_share: "物件を送ってきた", property_send: "物件を送る",
+  cost: "初期費用", viewing: "内覧", apply: "申込", other: "その他",
+};
+const SHAPE_JA: Record<"feeling" | "appeal" | "invite", { do: string; dont: string; base: "気持ち" | "訴求" }> = {
+  feeling: { do: "お客様の気持ちを一言で受ける", dont: "気持ちの受けを書かない（本題から入る）", base: "気持ち" },
+  appeal: { do: "物件・提案の良い点を推す", dont: "推す言葉を入れない", base: "訴求" },
+  invite: { do: "内覧へ誘う", dont: "内覧へは誘わない", base: "訴求" },
+};
+export type SceneTally = Record<string, { n: number; feeling: number; appeal: number; invite: number }>;
+export type ShapeProposal = { scene: string; shape: "feeling" | "appeal" | "invite"; n: number; rate: number; kind: "kb" | "confirm" | "few"; text: string; recommend?: string };
+/** 場面×形ごとに: 60%以上→「する」の決まりの案／40%以下→「しない」の決まりの案／その間→推奨つきの確認案／番が minN 未満→少ない（純関数） */
+export function proposalsOf(t: SceneTally, o: { minN?: number; scenes?: string[] } = {}): ShapeProposal[] {
+  const minN = o.minN ?? 10;
+  const out: ShapeProposal[] = [];
+  for (const [scene, c] of Object.entries(t)) {
+    if (o.scenes && !o.scenes.includes(scene)) continue;
+    for (const shape of ["feeling", "appeal", "invite"] as const) {
+      const rate = c.n ? c[shape] / c.n : 0;
+      const sj = SCENE_JA[scene] ?? scene, s = SHAPE_JA[shape], pct = Math.round(rate * 100);
+      if (c.n < minN) { out.push({ scene, shape, n: c.n, rate, kind: "few", text: `場面「${sj}」は番が ${c.n} で少ない（${minN} 未満）＝決めない` }); continue; }
+      if (rate >= 0.6) out.push({ scene, shape, n: c.n, rate, kind: "kb", text: `竹内さんは場面「${sj}」の番で ${s.do}（${c.n}番中 ${pct}%）` });
+      else if (rate <= 0.4) out.push({ scene, shape, n: c.n, rate, kind: "kb", text: `竹内さんは場面「${sj}」の番で ${s.dont}（${s.do}のは ${c.n}番中 ${pct}%）` });
+      else out.push({ scene, shape, n: c.n, rate, kind: "confirm", text: `場面「${sj}」で ${s.do}かが割れている（${c.n}番中 ${pct}%）`, recommend: rate >= 0.5 ? `${s.do}（ただしお客様の発言にその気持ち・話題がある時だけ）` : `${s.dont}（お客様が気持ち・その話題を出した時だけ${s.do}）` });
+    }
+  }
+  return out;
+}
+/** 案 → 設計知見の行（kb-insert.ts の JSON・P2・まだ入れない）と確認案の md */
+export function proposalsToOutputs(ps: ReadonlyArray<ShapeProposal>, days: number): { kbRows: Array<Record<string, unknown>>; md: string } {
+  const today = new Date().toISOString().slice(0, 10);
+  const kbRows = ps.filter((p) => p.kind === "kb").map((p) => ({
+    title: `${p.text.replace(/（.*$/, "")}（竹内さんの実送信の過半数・${today}）`,
+    category: "prompt_engineering",
+    insight: `${p.text}。数えは scripts/audit-scene-feeling-appeal.ts（${days}日・竹内さん本人の番・決まった網）。`,
+    rationale: `竹内さん本人の実送信で場面ごとに数えた過半数の形（60%以上か40%以下）。土台「${SHAPE_JA[p.shape].base}」の場面の決まりが無かった所（台帳 #496・#498・作業員N の foundation-scene-grid）。`,
+    context: `${today} 作業員K2（台帳 #496〜#499）`,
+    applied_to: "scripts/audit-scene-feeling-appeal.ts",
+    tags: [SHAPE_JA[p.shape].base, `場面:${SCENE_JA[p.scene] ?? p.scene}`, "竹内さんの実送信", "物差し"],
+    priority: 2,
+  }));
+  const conf = ps.filter((p) => p.kind === "confirm");
+  const md = [`# 気持ち・訴求の場面ごとの形（${days}日・竹内さん本人）— 竹内さんへの確認の案`, "", ...(conf.length ? conf.map((p) => `- ${p.text}\n  - 推奨: ${p.recommend}`) : ["- 割れた形はなし"]),
+    "", "## 少なくて決めない形", ...ps.filter((p) => p.kind === "few").map((p) => `- ${p.text}・${SHAPE_JA[p.shape].do}`)].join("\n");
+  return { kbRows, md };
+}
+
 type M = { conversation_id: string; sender: string; text: string | null; created_at: string; staff_writer: string | null; is_aix_generated: boolean | null };
 if (require.main === module) (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
@@ -61,4 +109,13 @@ if (require.main === module) (async () => {
   console.log(`竹内さん本人の番の場面ごとの形（${days}日・${convs.length}会話）: 番 ／ 気持ちを受けた ／ 推した ／ 内覧へ誘った`);
   for (const [k, v] of Object.entries(tally).sort((a, b) => b[1].n - a[1].n)) console.log(`  ${k.padEnd(15)} ${String(v.n).padStart(4)} ／ ${pct(v.feeling, v.n)}% ／ ${pct(v.appeal, v.n)}% ／ ${pct(v.invite, v.n)}%`);
   if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ days, scenes: tally }, null, 2));
+  // --kb-json=<道>（kb-insert.ts に渡す JSON・まだ入れない）・--confirm-md=<道>（竹内さんへの確認の案）・--scenes=conditions,property_send（場面を絞る）・--min-n=10
+  if (arg("kb-json", "") || arg("confirm-md", "")) {
+    const scenes = arg("scenes", "") ? arg("scenes", "").split(",") : undefined;
+    const ps = proposalsOf(tally, { minN: Number(arg("min-n", "10")) || 10, scenes });
+    const { kbRows, md } = proposalsToOutputs(ps, days);
+    if (arg("kb-json", "")) writeFileSync(arg("kb-json", ""), JSON.stringify(kbRows, null, 2));
+    if (arg("confirm-md", "")) writeFileSync(arg("confirm-md", ""), md);
+    console.log(`案: 決まり ${kbRows.length}・確認 ${ps.filter((p) => p.kind === "confirm").length}・少ない ${ps.filter((p) => p.kind === "few").length}`);
+  }
 })().catch((e) => { console.error(e); process.exit(1); });
