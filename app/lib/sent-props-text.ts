@@ -88,7 +88,9 @@ export function sentImageFactsLine(f: Record<string, unknown> | null | undefined
     f.deposit_months != null ? `敷金${mon(f.deposit_months)}` : yen(f.deposit_yen) ? `敷金${yen(f.deposit_yen)}` : "",
     f.key_money_months != null ? `礼金${mon(f.key_money_months)}` : f.key_money_yen != null ? `礼金${Number(f.key_money_yen) === 0 ? "0" : yen(f.key_money_yen) ?? ""}` : "",
     typeof f.floor_plan === "string" && f.floor_plan ? f.floor_plan : "",
-    Array.isArray(f.rooms) && f.rooms.length ? (f.rooms as Array<{ name?: unknown; jo?: unknown }>).map((r) => `${r.name}${r.jo}帖`).join("・") : "",
+    // 2026-11-21 作業員L: rooms_facts（IMAGE_ROOMS_TO_FACTS）がある時は決まった並びの1行（リビング→居室の広い順→K）
+    typeof (f.rooms_facts as { label?: unknown } | undefined)?.label === "string" && (f.rooms_facts as { label: string }).label ? (f.rooms_facts as { label: string }).label
+      : Array.isArray(f.rooms) && f.rooms.length ? (f.rooms as Array<{ name?: unknown; jo?: unknown }>).map((r) => `${r.name}${r.jo}帖`).join("・") : "",
     Number(f.area_sqm) > 0 ? `${f.area_sqm}㎡` : "",
     typeof f.building_age === "number" || typeof f.built_ym === "string" ? `築${f.built_ym ?? `${f.building_age}年`}` : "",
     typeof f.station === "string" && f.station ? `${f.station}${Number(f.walk_minutes) > 0 ? `徒歩${f.walk_minutes}分` : ""}` : "",

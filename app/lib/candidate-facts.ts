@@ -13,6 +13,7 @@
 //   ・どこから埋めたかを src に残す（ext / text / pickup / sent / star_text）。数える時に出どころで分けられる。
 //   ・「記載なし」は null（0 にしない）。敷礼の「なし」だけが 0。
 //   ・facts_v=2 が太くした後の印（古い行は facts_v 無し）。
+import { imageRoomsToFactsOn, roomsFactsOf, type RoomsFacts } from "./image-read-rooms";
 
 export const FACTS_VERSION = 2;
 
@@ -402,7 +403,7 @@ export type ImageReadItemLike = {
   /** 2026-11-19 作業員L: 部屋ごとの帖数（IMAGE_READ_ROOMS=on の読み） */
   rooms?: Array<{ name: string; jo: number }> | null;
 };
-export type ImageFacts = ParsedFacts & { station?: string | null; walk_minutes?: number | null; status?: string | null; vacancy_date?: string | null; read_items?: number; rooms?: Array<{ name: string; jo: number }> };
+export type ImageFacts = ParsedFacts & { rooms_facts?: RoomsFacts; station?: string | null; walk_minutes?: number | null; status?: string | null; vacancy_date?: string | null; read_items?: number; rooms?: Array<{ name: string; jo: number }> };
 
 /**
  * 2026-09-25 竹内「候補の記憶を太くする」: お客様に送った画像1枚の読み取り（DeepSeek）→ 候補の値（sent_image_properties.facts）。
@@ -449,6 +450,8 @@ export function factsFromImageRead(item: ImageReadItemLike, now: Date | string =
   if (item.status) out.status = item.status;
   if (item.vacancyDate) out.vacancy_date = item.vacancyDate;
   if (Array.isArray(item.rooms) && item.rooms.length) out.rooms = item.rooms.slice(0, 8);
+  // 2026-11-21 作業員L（#427・IMAGE_ROOMS_TO_FACTS・既定 off）: 部屋を決まった並びにし、リビングの帖数・居室の一番広い帖数・居室の数・1行を事実の欄に
+  if (out.rooms && imageRoomsToFactsOn()) { const rf = roomsFactsOf(out.rooms, item.floorPlan ?? null); if (rf) out.rooms_facts = rf; }
   return out;
 }
 
