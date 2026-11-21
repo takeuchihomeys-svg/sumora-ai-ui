@@ -179,7 +179,6 @@ import { buildAixContractNote, keepAllQuestionsRule , applyWording1028On, applyP
 import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
 import { aixBroughtMaterialEnabled, loadBroughtPrefillFor } from "@/app/lib/aix-brought-prefill-server";
 import { pickupFocusOneEnabled, pickupFocusCandidates, pickupFocusNote , pickupSendForm1028On, pickupSendFormNote } from "@/app/lib/pickup-focus";
-import { pickupLine1121On, pickupInviteNote1121, pickupInviteRule1121, stripDatedInviteLines, searchedConditionsAddendum1121 } from "@/app/lib/pickup-line-1121";
 import { equipWishPickupOn, latestEquipWishTopics, equipWishPickupNote } from "@/app/lib/equip-wish-pickup";
 import { broughtMaterialLine, checkResultFormMaterial, aixCheckFormMaterialEnabled } from "@/app/lib/aix-brought-prefill";
 import { estimateImageRoleOn, estimateRoleUrls, estimateRoleRows } from "@/app/lib/estimate-image-role";
@@ -3689,9 +3688,7 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
       // 内覧提案トグル: 明示的に true が届いた場合のみ内覧誘導を含める（デフォルト＝省略）
       // 内覧誘導・内覧日時は「内覧へ」ボタン（viewing_invite）で別途送る運用のため、物件送付には原則含めない
       const skipViewingInvite = body.include_viewing_invite !== true;
-      // 2026-11-21 作業員K2（PICKUP_LINE_1121・既定 off・app/lib/pickup-line-1121.ts）: 切り替えが on でない時も、日時を書かない誘いの1行（竹内さんの形 17/36）は入れる
-      const pickupLine1121 = pickupLine1121On();
-      const skipViewingInviteNote = skipViewingInvite && pickupLine1121 ? pickupInviteNote1121() : skipViewingInvite
+      const skipViewingInviteNote = skipViewingInvite
         ? `\n\n【最重要・内覧提案の省略】今回は内覧提案ブロック（「お気に召されましたらご案内〜」等の内覧誘導文・内覧日時の記載）は一切含めないこと。JSON出力の場合は "invite" と "calendar" を必ず空文字にする。物件紹介のみで締めること。`
         : "";
 
@@ -3927,7 +3924,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
-        const inviteRule = skipViewingInvite && pickupLine1121 ? pickupInviteRule1121(name) : skipViewingInvite
+        const inviteRule = skipViewingInvite
           ? "【内覧誘導】今回は内覧の誘い（「お気に召されましたらご案内」「ご都合よろしいお日にち」）・内覧日時を一切書かない（内覧は AIX【内覧日調整】で送る）"
           : `【内覧誘導】④の後に「${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」を1文${calendarData ? `、続けて「直近ですと\n${calendarData}\nご案内可能です！！」` : ""}`;
         // 送り方（モード）ごとの②の言い方。新着は「新着で…」か会話に合わせて「現在募集が出ているお部屋で…」（慶次の実送信）
@@ -4021,8 +4018,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
         const stale = stripUnanchoredThanksLines(psmText, freshCustomerTexts(psmThreadMsgs));
         if (stale.removed.length > 0) { psmText = stale.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, staleThanksRemoved: stale.removed.map((r) => r.slice(0, 40)) })); }
         if (skipViewingInvite) {
-          // PICKUP_LINE_1121=on の時は日時の入った誘いの行だけ落とす（日時の無い竹内さんの誘いの1行は残す）
-          const s = pickupLine1121 ? stripDatedInviteLines(psmText) : stripViewingInviteLines(psmText);
+          const s = stripViewingInviteLines(psmText);
           if (s.removed > 0) { psmText = s.text; console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, inviteLinesRemoved: s.removed })); }
         }
         // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない（会話を合わせる経路も同じ出口を通す）
@@ -4303,7 +4299,7 @@ ${aixPropertySendRules}
           ? `【挨拶文（出力例中の「[お客様への挨拶]」はこの選び方で書くこと）】\n${waitedChoice}`
           : greetingLine ? `【挨拶文（出力例中の「[お客様への挨拶]」は必ずこの形式に置き換えること）】\n${greetingLine}` : "",
         openingLine ? `【①挨拶行の実値（構成①「[挨拶行]」に使うこと）】\n${openingLine}` : "",
-        conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}${searchedConditionsNote ? (pickupLine1121 ? searchedConditionsAddendum1121() : "\n※【今回実際に検索した条件】がある時は、②のエリア・家賃・間取りはそちらに合わせる（検索した条件は今回の事実＝でっち上げではない）") : ""}` : "",
+        conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}${searchedConditionsNote ? "\n※【今回実際に検索した条件】がある時は、②のエリア・家賃・間取りはそちらに合わせる（検索した条件は今回の事実＝でっち上げではない）" : ""}` : "",
         newArrivalCountStr ? `【新着件数（「[新着件数]」に使うこと）】${newArrivalCountStr}` : "",
         // 2026-10-28 owner-fb:1015-pickup-focus（PICKUP_FOCUS_ONE・既定 off）: ②の条件はエリア＋一番のこだわり1つまで（下書き 2.9 区切り → 竹内さん 1.3）
         pickupSendForm1028On() ? pickupSendFormNote({ recentCustomerTexts: (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []).filter((m) => m?.sender === "customer").slice(-6).map((m) => m?.text ?? null) }) : "",
@@ -4344,7 +4340,7 @@ ${aixPropertySendRules}
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
         // 2026-10-02 ⑫: JSON として読めない時に生の出力を文にしない（読める部品だけ拾う・app/lib/aix-json-parts.ts）
         const sj = joinAixJsonParts(rawSendText, ["intro", "pickup", "expanded", "vacating", "invite", "calendar", "closing"]
-          .filter(k => !(skipViewingInvite && (k === "calendar" || (k === "invite" && !pickupLine1121)))));
+          .filter(k => !(skipViewingInvite && (k === "invite" || k === "calendar"))));
         if (sj.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action: currentAction, failed: sj.failed }));
         message_text = sj.text;
         const propertySendComponents: Record<string, string> | null = sj.salvaged ? null : sj.parts;
