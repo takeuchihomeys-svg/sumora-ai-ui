@@ -2613,7 +2613,7 @@ async function analyzeConversationCore(
     customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
     imageRows: (sentImagePropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["imageRows"], // 2026-11-19: facts を足す select は型の読み取りが通らない＝unknown を通す
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
-    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）
+    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・11/21 から既定 on・=off で止まる）
   });
   // 2026-10-24 q053 型（P0「材料が届いていない」）: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日を送った物件の行に載せる
   //   （BRAIN_SENT_SHEET_VACANCY=on の時だけ・既定 off＝今と同じ）。読めなかった時は載せないだけ（判断は変えない）

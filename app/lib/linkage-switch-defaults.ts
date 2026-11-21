@@ -54,7 +54,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   PROMISE_READ_UNIFIED: "off",
   REF_RESOLVE: "on",
   SECOND_MSG_MATERIALS: "on",
-  SENT_IMAGE_FACTS_TO_BRAIN: "off",
+  SENT_IMAGE_FACTS_TO_BRAIN: "on",
   SENT_PROPS_FULL: "count",
   SITUATION_NOW_FULFILLABLE: "on",
   SITUATION_WRITER_NOTE: "on",
