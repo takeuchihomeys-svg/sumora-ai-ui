@@ -134,6 +134,7 @@ import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/seco
 import { situationWriterNoteAixOn, situationWriterNoteAix } from "@/app/lib/situation-writer-aix";
 import { aixSecondFocusOn, aixSecondFocusLine } from "@/app/lib/aix-second-focus";
 import { aixSecondDecidedOn, aixSecondDecidedNote } from "@/app/lib/writer-decided-lines";
+import { routeAimNoteForWriter } from "@/app/lib/route-record";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1468,7 +1469,9 @@ export async function POST(req: NextRequest) {
   // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_DECIDED・既定 off・writer-decided-lines.ts）: 2通目に届いていなかった欄（事実の出所・こちら側・刺さった所）を1塊で。
   //   K2 と決めた: 置く順は L の塊が先・K2 の situation が後。SITUATION_WRITER_NOTE_AIX が on の時は「こちら側」を外す（中身が重なる）
   if (aixSecondDecidedOn()) {
-    const dn = aixSecondDecidedNote((brainMeta as Record<string, unknown> | null) ?? null, { situationNoteOn: situationWriterNoteAixOn() });
+    // 2026-11-21 作業員M の地図の今の状態（ROUTE_TO_BRIEF・指示書の route の欄）も同じ塊の後ろに（M と決めた置き場・状態が使える番だけ文字が入る）
+    const dn = aixSecondDecidedNote((brainMeta as Record<string, unknown> | null) ?? null, { situationNoteOn: situationWriterNoteAixOn() })
+      + routeAimNoteForWriter((brainMeta as Record<string, unknown> | null)?.conductor_brief ?? null);
     if (dn) { aixChainNote = `${aixChainNote ?? ""}${dn}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-decided", actionType, len: dn.length })); }
   }
   if (situationWriterNoteAixOn()) {
