@@ -119,3 +119,15 @@ t("約束の番の測り直し（promiseWait）", () => {
   assert.equal(nf.promiseWait, "not_fulfilled"); assert.equal(nf.outcome, "left");
 });
 console.log("guide-promise-wait ok");
+// 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後に留まる番（viewingWait・既定 false）
+t("内覧待ちは止まりに数えない（viewingWait）", () => {
+  const msgs = [
+    { sender: "customer", text: "当日は駐車場ありますか？", created_at: at(0) },
+    { sender: "staff", text: "確認させて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "持ち物はありますか？", created_at: at(2) },
+  ];
+  const ds = [{ created_at: at(0.5), stage: "viewing_scheduled" }, { created_at: at(2.5), stage: "viewing_scheduled" }];
+  assert.equal(guideTurnsOf("c1", msgs, [], ds)[0].outcome, "stuck");
+  assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { viewingWait: true })[0].outcome, "engaged");
+});
+console.log("guide-viewing-wait ok");

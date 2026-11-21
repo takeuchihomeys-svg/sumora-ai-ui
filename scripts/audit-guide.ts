@@ -28,7 +28,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
       sb.from("brain_decision_logs").select("created_at, digest").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
     ]);
     const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
-    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait") })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
+    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait"), viewingWait: process.argv.includes("--viewing-wait") })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
   }
   const by = (o: string) => turns.filter((t) => t.outcome === o).length;
   const summary = `誘導の物差し（${days}日・会話 ${convs.length}・竹内さん本人の番 ${turns.length}・駅が分かる番 ${turns.filter((t) => t.before).length}）: ${(["advanced", "engaged", "stuck", "back", "left"] as const).map((o) => `${OUTCOME_JA[o]} ${by(o)}`).join("・")}`;
