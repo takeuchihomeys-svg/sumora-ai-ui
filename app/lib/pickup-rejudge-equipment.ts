@@ -35,7 +35,7 @@ export function needsEquipRejudge(equipment: unknown, wants: ReadonlyArray<Equip
   return false;
 }
 
-type PendRow = { id: number; batch_id: string; pdf_text: string | null; reason_codes: string[] | null; equipment: unknown; status: string | null; sent_at: string | null };
+type PendRow = { id: number; batch_id: string; pdf_text: string | null; reason_codes: string[] | null; equipment: unknown; status: string | null; sent_at: string | null; image_facts?: unknown };
 /** 1人のお客様の送る前の候補を付け直す（書いた行の数を返す）。失敗は飲み込んで 0 */
 export async function rejudgePendingEquipment(sb: SupabaseClient, propertyCustomerId: string, opts: { days?: number; maxRows?: number } = {}): Promise<{ checked: number; rejudged: number }> {
   try {
@@ -43,10 +43,14 @@ export async function rejudgePendingEquipment(sb: SupabaseClient, propertyCustom
     if (!pc) return { checked: 0, rejudged: 0 };
     const wants = parseEquipmentWants(pc as CustomerConditionsLike).wants;
     const since = new Date(Date.now() - (opts.days ?? 14) * 864e5).toISOString();
-    const { data: rows } = await sb.from("property_pickups").select("id, batch_id, pdf_text, reason_codes, equipment, status, sent_at")
+    const { data: rows } = await sb.from("property_pickups").select("id, batch_id, pdf_text, reason_codes, equipment, status, sent_at, image_facts")
       .eq("property_customer_id", propertyCustomerId).gte("created_at", since).limit(opts.maxRows ?? 200);
     const all = (rows ?? []) as PendRow[];
-    const stale = all.filter((r) => r.status === "pending" && !r.sent_at && needsEquipRejudge(r.equipment, wants));
+    // 2026-11-21 作業員K2（COUNTER_KITCHEN_IMAGE_JUDGE=on の時だけ・counter-kitchen-image-judge.ts）: カウンターキッチンが記載なしの札の行に、作業員G の画像の読みが入っていれば付け直す
+    const ck = await import("./counter-kitchen-image-judge");
+    const ckOn = ck.counterKitchenImageJudgeOn();
+    const ckPending = (r: PendRow) => ckOn && ck.counterKitchenImageValue(r.image_facts) != null && (r.reason_codes ?? []).some((c) => /^EQUIP_COUNTER_KITCHEN_.*UNLISTED$/.test(c));
+    const stale = all.filter((r) => r.status === "pending" && !r.sent_at && ((pickupRejudgeOn() && needsEquipRejudge(r.equipment, wants)) || ckPending(r)));
     if (!stale.length) return { checked: all.length, rejudged: 0 };
     const { buildBatchEquipment } = await import("./pickup-equipment");
     const { applyEquipmentMatch } = await import("./property-brain");
@@ -61,7 +65,8 @@ export async function rejudgePendingEquipment(sb: SupabaseClient, propertyCustom
       for (const r of stale.filter((x) => x.batch_id === b)) {
         const e = byId.get(r.id);
         if (!e) continue;
-        const j = applyEquipmentMatch({ reasonCodes: r.reason_codes ?? [] }, e.match, prefW);
+        const match = (ckOn ? ck.applyCounterKitchenImage(e.match, ck.counterKitchenImageValue(r.image_facts)) : null) ?? e.match;
+        const j = applyEquipmentMatch({ reasonCodes: r.reason_codes ?? [] }, match, prefW);
         const { error } = await sb.from("property_pickups").update({
           score: j.score, verdict: j.verdict, reason_codes: j.reasonCodes, reasons_ja: j.reasonsJa,
           equipment: { ...(e.saved as unknown as Record<string, unknown>), rejudgedAt: new Date().toISOString(), rejudgedBy: "pickup-rejudge-equipment" },

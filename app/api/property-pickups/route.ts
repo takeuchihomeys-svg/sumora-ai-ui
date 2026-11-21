@@ -115,7 +115,9 @@ export async function GET(req: NextRequest) {
     //   送る前の候補だけ設備の照合を付け直してから詳細を返す（app/lib/pickup-rejudge-equipment.ts・決定論・送った行は触らない）
     if (pcid) {
       const rj = await import("@/app/lib/pickup-rejudge-equipment");
-      if (rj.pickupRejudgeOn()) await rj.rejudgePendingEquipment(supabase, pcid);
+      // 2026-11-21: カウンターキッチンの画像の読みを受ける時（COUNTER_KITCHEN_IMAGE_JUDGE=on）も同じ付け直しを通す
+      const ckj = await import("@/app/lib/counter-kitchen-image-judge");
+      if (rj.pickupRejudgeOn() || ckj.counterKitchenImageJudgeOn()) await rj.rejudgePendingEquipment(supabase, pcid);
     }
     return NextResponse.json(await buildDetail(pcid, conv, nBatches, hours));
   }
