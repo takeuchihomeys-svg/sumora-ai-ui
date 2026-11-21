@@ -1,12 +1,12 @@
 // 統括の next_send のつながり（作業員M 2026-11-19）・要件の帳面の読む側（ASK_PROGRESS_READ）
 // 実行: npx tsx app/lib/__tests__/next-send-link.test.ts
 import { nextSendLinkMode, nextSendLinkOf, nextSendLinkDigest } from "../next-send-link";
-import { buildAskLedger, nextAskProgress, askProgressReadOn, askProgressNote, askProgressBand, askCarryFrom } from "../ask-ledger";
+import { buildAskLedger, nextAskProgress, askProgressReadOn, askProgressAixNoteOn, askProgressNote, askProgressBand, askCarryFrom } from "../ask-ledger";
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
 t("NEXT_SEND_LINK 既定 shadow（11/19）", nextSendLinkMode({}) === "shadow" && nextSendLinkMode({ NEXT_SEND_LINK: "off" }) === "off");
-t("ASK_PROGRESS_READ 既定 off", askProgressReadOn({}) === false && askProgressReadOn({ ASK_PROGRESS_READ: "on" }) === true);
+t("ASK_PROGRESS_READ 既定 on（記録だけ・=off で止める）・2通目の注記は ASK_PROGRESS_AIX_NOTE（既定 off）", askProgressReadOn({}) === true && askProgressReadOn({ ASK_PROGRESS_READ: "off" }) === false && askProgressAixNoteOn({}) === false && askProgressAixNoteOn({ ASK_PROGRESS_AIX_NOTE: "on" }) === true);
 const sn = (o: Record<string, unknown>) => ({ v: 1, ...o });
 // 約束を果たす
 {
