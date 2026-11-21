@@ -94,6 +94,18 @@ async function findLatestQuotedPair(conversationId: string): Promise<QuotedPair 
   return { customerText: target.text ?? "", customerAt: target.created_at ?? null, quoted: q, others };
 }
 
+export { quotedImagePropertyReadOn } from "@/app/lib/quoted-note";
+import { quotedImagePropertyReadOn } from "@/app/lib/quoted-note";
+/** その時刻の前後5分の AIX の種類（1件だけの時） */
+async function aixTypeNear(conversationId: string, atIso: string | null): Promise<string | null> {
+  if (!atIso) return null;
+  const t = Date.parse(atIso);
+  const { data } = await supabase.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", conversationId)
+    .gte("created_at", new Date(t - 65 * 60_000).toISOString()).lte("created_at", new Date(t + 6 * 60_000).toISOString()).limit(50);
+  const near = ((data ?? []) as Array<{ aix_type: string | null; sent_at: string | null; created_at: string }>).filter((l) => Math.abs(Date.parse(l.sent_at ?? l.created_at) - t) <= 5 * 60_000);
+  return near.length === 1 ? near[0].aix_type : null;
+}
+
 /** 「[画像]」「[動画]」だけ＝中身がまだ分かっていない画像 */
 function isImagePlaceholder(text: string | null): boolean {
   return !text || /^\s*\[(?:画像|動画)\]\s*$/.test(text);
@@ -116,6 +128,29 @@ export async function ensureQuotedImageDetail(conversationId: string): Promise<b
     //   （判定は ensureImageDetail の中・引用先を送った時刻で見る）
     const { ensureImageDetail } = await import("@/app/lib/image-detail-store");
     const d = await ensureImageDetail(quoted.image_url, conversationId, { sentAt: quoted.created_at ?? null });
+    // 2026-11-21 作業員G（#461 ①・竹内さん「お客さんが反応したのはちゃんと読みとる」）: 引用された画像が「どの物件か」の記録が無い時は、
+    //   引用された時点でその画像の物件名・号室を読んで記録する（recordSentImageProperty＝DeepSeek 1回・会話で前に送った物件名と照合できた時だけ記録）。
+    //   読めない・照合できない時は AIX の記録の候補（その時の AIX の物件名が1件だけ＝#448 の線）。それでも分からなければ何も作らない（「分からない」のまま渡る）。
+    //   60日でお客様がこちらの画像を引用した 102通のうち 23通はまだ物件の記録が無い。申込中の会話・書類の番は読まない（recordSentImageProperty の中の線）。
+    //   既定 off（QUOTED_IMAGE_PROPERTY_READ=on）
+    if (quotedImagePropertyReadOn()) {
+      const labels = await propertyLabelsForImages(conversationId, [quoted.image_url]);
+      if (!labels.get(quoted.image_url)) {
+        const { recordSentImageProperty } = await import("@/app/lib/sent-image-record");
+        const r = await recordSentImageProperty({ imageUrl: quoted.image_url, conversationId, source: "quoted_read", sentAt: quoted.created_at ?? null }).catch(() => null);
+        let via: string = r?.matched ? "read" : "none";
+        if (!r?.matched) {
+          const { attributeSentImageFromAixLog } = await import("@/app/lib/sent-image-aix-attribute-server");
+          const { data: row } = await supabase.from("messages").select("is_aix_generated").eq("conversation_id", conversationId).eq("image_url", quoted.image_url).limit(1).maybeSingle();
+          const aixType = (row as { is_aix_generated?: boolean | null } | null)?.is_aix_generated ? await aixTypeNear(conversationId, quoted.created_at ?? null) : null;
+          if (aixType) {
+            const a = await attributeSentImageFromAixLog(supabase, { imageUrl: quoted.image_url, conversationId, source: `aix:${aixType}`, sentAt: quoted.created_at ?? new Date().toISOString() }, { force: true }).catch(() => "no_match" as const);
+            if (a === "attributed") via = "aix_log";
+          }
+        }
+        console.log(JSON.stringify({ tag: "quoted-image:property-read", conversationId, via }));
+      }
+    }
     return !!d;
   } catch (e) {
     console.warn("[quoted-context] ensure detail failed:", e instanceof Error ? e.message : e);
