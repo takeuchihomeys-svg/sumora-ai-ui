@@ -111,6 +111,12 @@ export async function GET(req: NextRequest) {
     const hoursRaw = Number(req.nextUrl.searchParams.get("hours") ?? "");
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(24 * 30, hoursRaw) : null;
     if (!pcid && !conv) return NextResponse.json({ ok: false, error: "pcid か conv が要ります" }, { status: 400 });
+    // 2026-11-21 作業員K2（台帳 #476・PICKUP_REJUDGE_ON_COND=on の時だけ・既定 off）: お客様の条件（設備の希望）が判定の後に変わっていたら、
+    //   送る前の候補だけ設備の照合を付け直してから詳細を返す（app/lib/pickup-rejudge-equipment.ts・決定論・送った行は触らない）
+    if (pcid) {
+      const rj = await import("@/app/lib/pickup-rejudge-equipment");
+      if (rj.pickupRejudgeOn()) await rj.rejudgePendingEquipment(supabase, pcid);
+    }
     return NextResponse.json(await buildDetail(pcid, conv, nBatches, hours));
   }
 
