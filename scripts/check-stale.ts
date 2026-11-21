@@ -17,7 +17,7 @@ const has = (p: string) => existsSync(p) || inOriginMain(p);
 /** 期待する毎日の数（末尾 % は前方一致） */
 export function expectedMetrics(): Array<{ metric: string; owner: string }> {
   const out: Array<{ metric: string; owner: string }> = [
-    ...["reply_match", "aix_first_match", "core:linkage", "core:foundation", "core:subdivide", "core:conductor", "core:window_miss", "core:count_unverified", "core:off_path", "growth:first_move:%", "growth:combo:組の一致", "found:full"].map((metric) => ({ metric, owner: "作業員N" })),
+    ...["reply_match", "aix_first_match", "core:linkage", "core:foundation", "core:subdivide", "core:conductor", "core:window_miss", "core:count_unverified", "core:off_path", "core:conductor_lessons", "core:lessons_read", "growth:first_move:%", "growth:combo:組の一致", "found:full"].map((metric) => ({ metric, owner: "作業員N" })),
     ...FOUNDATION_N.filter((r) => r.metric).map((r) => ({ metric: r.metric!, owner: r.owner.split("・")[0] })),
   ];
   if (has("scripts/audit-appeal-vs-codes.ts")) out.push({ metric: "growth:pickup_via_tool", owner: "作業員K2" });

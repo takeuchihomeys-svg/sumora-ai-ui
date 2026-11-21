@@ -27,6 +27,7 @@ import { UNVERIFIED_JA, countGapsForLedger } from "./lib/count-verified";
 import { checkOffPath, isOffPathGap } from "./check-off-path";
 import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
+import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -225,6 +226,13 @@ async function main() {
       coreRows.push({ metric: "core:conductor_aix", value: cc.aixScore, n: cc.aixTurns }, { metric: "core:conductor_sway", value: cc.swayRate, n: cc.n });
       lines.push(`### 芯: 統括の判断（竹内さんの番 7日 ${cc.n}・送る直前の判断で道の一致 ${cc.score ?? "—"}%・AIX の番 ${cc.aixTurns} で ${cc.aixScore ?? "—"}%・揺れ ${cc.swayRate ?? "—"}%）`, `- 外れの種類: ${JSON.stringify(cc.byType)}`, `- 原因: ${Object.entries(cc.byCause).map(([k, n]) => `${CAUSE_JA[k as Cause]} ${n}`).join("・") || "なし"}`, ...Object.entries(cc.ids).map(([k, xs]) => `- 試験の問題の候補（${k}）: 見張りの番 ${xs.slice(0, 8).join(",")}`));
       const top = Object.entries(cc.byCause).sort((x, y) => y[1] - x[1])[0];
+      // 2026-11-22 作業員N2（統括役・#433 の D）: 統括の学び（conductor_lessons の今の行の数）と、それを読んだ番（7日の brain_decision_logs で digest に ls がある番）。今は 0 行＝0 を書く（回っていると分かるように）
+      const lc = await sb.from("conductor_lessons").select("id", { count: "exact", head: true }).eq("is_current", true);
+      const lr = await sb.from("brain_decision_logs").select("id", { count: "exact", head: true }).gte("created_at", new Date(now - 7 * 86_400_000).toISOString()).not("digest->ls", "is", null);
+      const lrAll = await sb.from("brain_decision_logs").select("id", { count: "exact", head: true }).gte("created_at", new Date(now - 7 * 86_400_000).toISOString());
+      if (!lc.error) coreRows.push({ metric: "core:conductor_lessons", value: lc.count ?? 0, n: lc.count ?? 0 });
+      if (!lr.error) coreRows.push({ metric: "core:lessons_read", value: lr.count ?? 0, n: lrAll.count ?? null });
+      lines.push(`- 統括の学び: conductor_lessons の今の行 ${lc.error ? "読めない" : lc.count ?? 0}・読んだ番（7日・digest の ls）${lr.error ? "読めない" : `${lr.count ?? 0}/${lrAll.count ?? "—"}`}（#433）`);
       if (top) coreFix.push(`統括の判断: 外れの原因で一番多いのは「${CAUSE_JA[top[0] as Cause]}」${top[1]}番 → 問題の候補を作業員H（brain-exam-add）・教訓を作業員L（conductor_lessons）へ`);
     }
   }
@@ -299,6 +307,12 @@ async function main() {
     lines.push(`- 見積の予定（30日）: 済みなのに見積を送っていない ${ed2.unsent}（${ed2.unsentConvs}会話・済み ${ed2.done}）｜前の日 ${pu ?? "—"}・同じ会話・同じ時刻の重複 ${ed2.dup}｜前の日 ${pd ?? "—"}｜会話 ${ed2.convs.slice(0, 6).join(",") || "—"}`);
     if (pu != null && ed2.unsent > pu) growthFix.push(`済みなのに見積を送っていない見積の予定が前の日より増えた（${pu}→${ed2.unsent}）→ 作業員K2・台帳 #580`);
     if (pd != null && ed2.dup > pd) growthFix.push(`同じ会話・同じ時刻の見積の予定の重複が前の日より増えた（${pd}→${ed2.dup}）→ 作業員K2・台帳 #580`);
+  }
+  // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
+  if (doMetrics) {
+    const { data: qs } = await sb.from("quality_daily").select("day, metric, value").like("metric", "search_%").eq("scope", "all").gte("day", jstDay(now - 9 * 86_400_000)).limit(1000);
+    const sp = superviseProLine((qs ?? []) as QdRow[]);
+    if (sp.line) { lines.push(sp.line); growthFix.push(...sp.fixes); }
   }
   // 画像の種類×欄の埋まり（作業員G の scripts/image-field-fill-daily.ts・台帳 #509・前の日 JST を --write で quality_daily へ・新しい cron は足さない）
   //   台本が手元に無い（main に入る前）の日は飛ばす。90% に届かない欄を直しの候補に
