@@ -13,6 +13,7 @@ import {
   type AutoSearchPlan, type AutoSearchState,
 } from "@/app/lib/auto-search-plan";
 import { loadStateInputs } from "@/app/lib/auto-search-plan-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
@@ -41,7 +42,7 @@ export const maxDuration = 60;
 
 type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null; rp_update_days?: number | null; itandi_update_days?: number | null };
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const mode = (req.nextUrl.searchParams.get("mode") === "pm" ? "pm" : "am") as AutoSearchMode;
   const dryRun = req.nextUrl.searchParams.get("dry_run") === "1";
   const limit = Number(req.nextUrl.searchParams.get("limit") ?? MAX_TARGETS_PER_RUN);
@@ -269,3 +270,6 @@ export async function GET(req: NextRequest) {
   console.log("[auto-property-search]", JSON.stringify({ mode, jstDate, targets: targets.length, queued: queued.length, skipped: skipped.length }));
   return NextResponse.json(summary);
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-property-search", handleGET);

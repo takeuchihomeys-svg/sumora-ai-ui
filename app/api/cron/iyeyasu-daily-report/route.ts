@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 30;
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -68,3 +69,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, today: todayCount, total: totalCount });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("iyeyasu-daily-report", handleGET);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { cronRetryKey, linePushIdem, sendIdempotencyOn } from "@/app/lib/send-idempotency";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 // 2026-10-23 送信の二重防止: 内覧の行の id ＋知らせの種類（cheer / pre / post）から決まる鍵（X-Line-Retry-Key）。
 //   LINE の返事が10秒で切れると旗を戻して次の回（30分ごと）にもう一度送る → 前に届いていれば LINE は送らずに 409（届いている扱い）
@@ -48,7 +49,7 @@ async function sendGroupMessage(cfg: { targetId: string; token: string }, text: 
   return pushOnce(cfg, { type: "text", text }, retryKey, "text");
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -204,3 +205,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, announced });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("viewing-announce", handleGET);

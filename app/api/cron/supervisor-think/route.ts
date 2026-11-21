@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { thinkAsSupervisor, supervisorMaterialText } from "@/app/lib/learn-supervisor-llm";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const dynamic = "force-dynamic";
 /** ⚠ LLM の思考に 29.6秒かかる（実測）。既定の10秒では切れる。 */
@@ -60,7 +61,7 @@ type Bundle = {
   human_ops?: number; auto_ops?: number; same_runs?: number;
 };
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401, headers: CORS });
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const scope = (req.nextUrl.searchParams.get("scope") || "realpro").slice(0, 20);
@@ -149,3 +150,6 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("supervisor-think", handleGET);

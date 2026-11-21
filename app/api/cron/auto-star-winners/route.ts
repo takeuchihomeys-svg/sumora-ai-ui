@@ -8,6 +8,7 @@ import { learningWindow, isRecent } from "@/app/lib/learning-window";
 // 2026-10-08 竹内さん「自動的にする」: 申込に届いた会話にも☆（申込の時刻より前の返信だけ・AUTO_STAR_APPLIED=off で旧）
 import { autoStarAppliedEnabled, firstAppliedAtByConversation, starEligibleByApply } from "@/app/lib/auto-star-applied";
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 300;
 
@@ -15,7 +16,7 @@ export const maxDuration = 300;
 // closed_won になった会話の AI 返信を自動☆ → analyzeAndSaveKnowledge + analyzeDiff が起動
 // 毎日1回（vercel.json cron）
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -161,3 +162,6 @@ export async function GET(req: NextRequest) {
   console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} skipped=${skipped}(品質未達) convs=${convIds.length}`);
   return NextResponse.json({ ok: true, starred, analyzed, failed, skipped, total: examples?.length ?? 0, convs: convIds.length });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-star-winners", handleGET);

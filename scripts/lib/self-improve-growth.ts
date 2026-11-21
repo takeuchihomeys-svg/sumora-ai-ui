@@ -30,7 +30,8 @@ export async function aixEditOfDay(sb: SupabaseClient, s0: string, e0: string) {
     const { data: m } = await sb.from("messages").select("line_message_id,text,staff_writer").in("line_message_id", ids.slice(i, i + 100));
     for (const x of (m ?? []) as Array<{ line_message_id: string; text: string | null; staff_writer: string | null }>) msgs.set(x.line_message_id, x);
   }
-  const byType: Record<string, { n: number; edited: number; withAi: number }> = {};
+  // 2026-11-21 作業員N: 押されなかった種類も n=0 で返す（毎日の数が「回っていない」と見えないように・check-stale）
+  const byType: Record<string, { n: number; edited: number; withAi: number }> = Object.fromEntries([...FIRST_MOVE_GROUPS.map(([g]) => g), "ピックアップ"].map((g) => [g, { n: 0, edited: 0, withAi: 0 }]));
   const features: Record<string, number> = {};
   for (const r of rows) {
     const m = msgs.get(r.line_message_id);

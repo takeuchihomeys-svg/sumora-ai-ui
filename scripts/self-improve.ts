@@ -198,7 +198,8 @@ async function main() {
   const { data: qd2 } = await sb.from("quality_daily").select("day,metric,scope,value").in("day", [prevDay, prevWeek]).like("metric", "growth:%").limit(500);
   const prev2 = (metric: string, d: string) => ((qd2 ?? []) as Array<{ day: string; metric: string; value: number | null }>).find((r) => r.day === d && r.metric === metric)?.value ?? null;
   const growthRows: Array<{ metric: string; value: number | null; n: number | null; key: "first_move" | "aix_edit" | "writer_link"; higherIsBetter: boolean; label: string }> = [];
-  for (const [g, c] of Object.entries(mMain.byGroup)) if (c.n) growthRows.push({ metric: `growth:first_move:${g}`, value: c.rate, n: c.n, key: "first_move", higherIsBetter: true, label: `AIX の最初の一手の一致（${g}・竹内さんの番）` });
+  // 2026-11-21: 番が0の日も n=0・値なしで書く（回っていると分かるように・check-stale）
+  for (const [g, c] of Object.entries(mMain.byGroup)) growthRows.push({ metric: `growth:first_move:${g}`, value: c.rate, n: c.n, key: "first_move", higherIsBetter: true, label: `AIX の最初の一手の一致（${g}・竹内さんの番）` });
   const ed = doMetrics ? await aixEditOfDay(sb, mMain.s0, mMain.e0) : { byType: {} as Record<string, { n: number; edited: number; withAi: number }>, features: {} as Record<string, number> };
   for (const [g, c] of Object.entries(ed.byType)) growthRows.push({ metric: `growth:aix_edit:${g}`, value: c.n ? Math.round((c.edited / c.n) * 1000) / 10 : null, n: c.n, key: "aix_edit", higherIsBetter: false, label: `AIX の文を竹内さんが直した割合（${g}・AI の元の文あり ${c.withAi}）` });
   const wl = doMetrics ? writerLinkageNow() : null;

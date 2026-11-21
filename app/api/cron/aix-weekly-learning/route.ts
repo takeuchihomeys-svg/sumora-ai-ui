@@ -26,6 +26,7 @@ function getSupabase(): any {
 }
 
 import { aixLearnBranchesEnabled, aixBelongsTo } from "@/app/lib/aix-branch-match";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 const AIX_ACTIONS = [
   "property_recommendation","property_send","viewing_invite","meeting_place",
@@ -593,10 +594,13 @@ export async function POST(req: NextRequest) {
 
 // GET: Vercel Cron は GET でリクエストするため、認証チェック後 POST へ委譲する
 // （GETエクスポートがないと毎週 405 Method Not Allowed で一度も実行されない — corpus2skill と同じ罠）
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return POST(req);
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("aix-weekly-learning", handleGET);

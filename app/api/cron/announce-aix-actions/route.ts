@@ -13,10 +13,11 @@ import { supabase } from "@/app/lib/supabase-server";
 import { buildAixActionList, pushToHanbancyoGroup, dismissStaleAixActionItems, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-items";
 import { staffTodoListEnabled } from "@/app/lib/staff-todo-list";
 import { jstDayStartMs } from "@/app/lib/jst-date";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -54,3 +55,6 @@ export async function GET(req: NextRequest) {
   }
   return NextResponse.json({ ok: sent, pending: pending?.length ?? 0, done_today: doneToday?.length ?? 0 });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("announce-aix-actions", handleGET);

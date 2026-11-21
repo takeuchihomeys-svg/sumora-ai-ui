@@ -9,6 +9,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { learningWindow } from "@/app/lib/learning-window";
 // 2026-10-08 竹内さん（学習の重み①）: 失注した会話は弱い参考のまま・悪い見本（負の正解）には使わない＝「避けるべき対応パターン」を知識に入れない。LOST_AS_NEGATIVE=on で旧
 import { lostAsNegativeEnabled } from "@/app/lib/application-reach";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 const LOSERS_JOB = "auto-analyze-losers";
 
@@ -219,7 +220,7 @@ ${transcript}
 }
 
 // GET: Vercel cron から呼ばれる（Authorization: Bearer <CRON_SECRET> を自動付与）
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -237,3 +238,6 @@ export async function POST(req: NextRequest) {
   }
   return run();
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-analyze-losers", handleGET);
