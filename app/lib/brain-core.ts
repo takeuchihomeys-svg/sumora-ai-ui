@@ -3844,6 +3844,8 @@ ${sh}`;
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
     intakeP = import("@/app/lib/conductor-intake-server").then(async ({ runConductorIntake }) => {
+      // 2026-11-21 作業員L（統括役の注意）: 学びの読み（埋め込み＋RPC・最大1.5秒）は入口の他の読みと並べて先に始める（carryLine は順に待つ＝直列で延ばさない）
+      const lessonsP: Promise<{ mode: string; rows: import("@/app/lib/conductor-lessons").LessonRow[] } | null> = (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const mode = cl.conductorLessonsMode(); if (mode === "off") return null; const { loadConductorLessonsWithin } = await import("@/app/lib/conductor-lessons-server"); return { mode, rows: await loadConductorLessonsWithin(supabase, { conversationId, customerTurn: unrepliedTurn.text ?? "", stage: null }) }; } catch { return null; } })();
       // 2026-11-05 作業員5（KB P0 575a7cd5 ④）: CONDUCTOR_FOCUS=shadow の時だけ、竹内さんの近い過去の番の重点を先に引いて入口の統括に添える（1.5秒まで・無ければ添えない）
       let nearFocus: import("@/app/lib/conductor-focus").NearFocus | null = null;
       const { conductorFocusMode } = await import("@/app/lib/conductor-focus");
@@ -3870,7 +3872,7 @@ ${sh}`;
           await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })(),
           // 2026-11-21 作業員L（KB 56691196「試験と連動して統括を鍛える」・統括役の決め）: 場面と近さで当たった学び（型・竹内さんの一手・なぜ）を最大3行。
           //   CONDUCTOR_LESSONS=shadow（既定）は読んで記録だけ（材料に渡さない）・on は入口の統括の材料に・off は読まない。試験の問題の元の会話は外す（conductor-lessons-server）
-          await (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const mode = cl.conductorLessonsMode(); if (mode === "off") return ""; const { loadConductorLessonsWithin } = await import("@/app/lib/conductor-lessons-server"); const rows = await loadConductorLessonsWithin(supabase, { conversationId, customerTurn: unrepliedTurn.text ?? "", stage: null }); lessonsRec = rows; console.log(JSON.stringify({ tag: "brain:conductor-lessons", conversationId, mode, ids: cl.lessonsDigest(rows) })); return mode === "on" ? cl.lessonsMaterialLine(rows) : ""; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
+          await (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const got = await lessonsP; if (!got) return ""; const { mode, rows } = got; lessonsRec = rows; console.log(JSON.stringify({ tag: "brain:conductor-lessons", conversationId, mode, ids: cl.lessonsDigest(rows) })); return mode === "on" ? cl.lessonsMaterialLine(rows) : ""; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }

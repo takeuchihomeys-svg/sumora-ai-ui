@@ -16,7 +16,22 @@ export function lessonsExcludeConvs(conversationId: string | null | undefined, e
   return [...new Set([String(conversationId ?? "").trim(), ex].filter(Boolean))];
 }
 
+// 2026-11-21 統括役の注意: 入口の統括の carryLine は順に待つ（直列）ので、学びの行が0件の間は埋め込みも RPC も呼ばない。
+//   現行の行の数は 60秒取り置く（数えは head の count 1回・索引 conductor_lessons_scene_idx の部分索引の上）
+const COUNT_TTL_MS = 60_000;
+let countMemo: { at: number; n: number } | null = null;
+export async function currentLessonCount(sb: SupabaseClient, nowMs = Date.now()): Promise<number> {
+  if (countMemo && nowMs - countMemo.at < COUNT_TTL_MS) return countMemo.n;
+  const { count, error } = await sb.from("conductor_lessons").select("id", { count: "exact", head: true }).eq("is_current", true);
+  const n = error ? 0 : (count ?? 0);
+  countMemo = { at: nowMs, n };
+  return n;
+}
+/** テスト用: 取り置きを捨てる */
+export function resetLessonCountMemo(): void { countMemo = null; }
+
 export async function loadConductorLessons(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null }): Promise<LessonRow[]> {
+  if ((await currentLessonCount(sb)) === 0) return [];
   const text = turnSituationText({ scene: null, stage: o.stage ?? null, customerMasked: String(o.customerTurn ?? ""), lastStaffKind: null });
   const { embedTexts } = await import("./design-knowledge-rag-server");
   const emb = (await embedTexts([text])).vectors[0];
