@@ -19,13 +19,14 @@ t("off・カウンターキッチンの質問は今まで通り読まない（�
   const ans = (verdict: EquipVerdict) => [{ topic: "counter_kitchen" as const, verdict, detail: null, basis: [] }] as unknown as EquipPropertyAnswer["answers"];
   const prop = (name: string, verdict: EquipVerdict): EquipPropertyAnswer => ({ name, roomNo: "101", by: "same_batch", answers: ans(verdict), materialRead: true });
   const unknown5 = equipmentWishBrainLine(equipAnswerPlan(["A", "B", "C", "D", "E"].map((n) => prop(n, "unknown"))));
-  t("q439 型（全部分からない）: 探す約束にしない・送った物件の中で確かめる番", /探す約束にしない/.test(unknown5) && /1件特にオススメ/.test(unknown5) && !/探す約束でよい/.test(unknown5), unknown5);
+  // 2026-11-21 竹内さんの決定: 設備の希望の番はどれも「探す約束の返信→次は AIX（2段:pickup）」。資料の答えは事実として添えるだけ
+  t("q439 型（全部分からない）: 探す約束の返信→次は AIX", /探す約束を返信/.test(unknown5) && /2段:pickup/.test(unknown5) && /分からない/.test(unknown5) && !/探す約束にしない/.test(unknown5), unknown5);
   const oneYes = equipmentWishBrainLine(equipAnswerPlan([prop("A", "unknown"), prop("B", "yes")]));
-  t("1件が資料で有る: その物件の名前つきで送った物件から答える番", /B 101/.test(oneYes) && /送った物件から答えて勧める番/.test(oneYes), oneYes);
+  t("1件が資料で有る: それでも探す約束（名前は手がかりとして添える）", /B 101/.test(oneYes) && /当てはまる部屋があっても同じ/.test(oneYes) && !/送った物件から答えて勧める番/.test(oneYes), oneYes);
   const allNo = equipmentWishBrainLine(equipAnswerPlan([prop("A", "no"), prop("B", "no")]));
-  t("全部が資料に無い: 探す約束でよい", /探す約束でよい/.test(allNo), allNo);
+  t("全部が資料に無い: 探す約束", /探す約束を返信/.test(allNo) && /無いと書いてある/.test(allNo), allNo);
   const mixed = equipmentWishBrainLine(equipAnswerPlan([prop("A", "no"), prop("B", "unknown")]));
-  t("無いと分からないが混ざる: 探す約束にしない", /探す約束にしない/.test(mixed), mixed);
+  t("無いと分からないが混ざる: 探す約束", /探す約束を返信/.test(mixed) && !/探す約束にしない/.test(mixed), mixed);
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

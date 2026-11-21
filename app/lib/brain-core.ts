@@ -3302,7 +3302,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
-    // 2026-11-21 作業員K2（#132・q439）: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
+    // 2026-11-21 竹内さんの決定で1行を「探す約束の返信→次は AIX（2段:pickup）・資料の答えは事実だけ」に直した（equipment-question.equipmentWishBrainLine）。以下は前の経緯: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
     if (equipmentAnswer.question.wish) customerStateBlockText += `\n${equipmentWishBrainLine(equipmentAnswer.plan)}`;
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
