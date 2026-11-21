@@ -90,7 +90,8 @@ const PROMISE_TAIL = /(?:させて|致し|いたし)(?:頂き|いただき)?ま�
 export const ourPartsPromiseWideOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.OUR_PARTS_PROMISE_WIDE ?? "").trim().toLowerCase() === "on";
 export const PROMISE_WIDE_PARTS: Record<string, PartSpec> = {
   "promise.negotiate": { kind: "promise", label: "交渉する", purpose: "条件・日程を管理会社と交渉して結果を伝える", expect: "fulfil", dueHours: 2 * H, re: /交渉/ },
-  "promise.call": { kind: "promise", label: "電話する", purpose: "電話で確かめる・話す", expect: "fulfil", dueHours: H, re: /お?電話(?:を)?(?:お?かけ|お?掛け|させて|致し|いたし)|折り返し/ },
+  "promise.call": { kind: "promise", label: "電話する", purpose: "電話で確かめる・話す", expect: "fulfil", dueHours: H, re: /^(?!.*(?:担当者|管理会社|オーナー)(?:さん|様)?より)(?!.*の程).*(?:お?電話(?:を)?(?:お?かけ|お?掛け)(?:続け)?(?:させて|致し|いたし)|お?電話(?:を)?(?:させて|致し|いたし)|折り返し(?:お電話|ご連絡)(?:させて|致し|いたし))/ },
+  // ↑ 30日の全件の目の確かめ（11/21）: 「改めて明日お電話おかけの程よろしく…」（お客様へのお願い）・「管理会社担当者より…お電話おかけいたします」（先方が掛ける）を外す
 };
 const GREET_WIDE = /^(?:\S{0,12}さん[、,]\s*)(?:お世話になっております|はじめまして)/;
 
