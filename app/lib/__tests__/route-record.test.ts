@@ -7,7 +7,7 @@ export {};
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean, extra?: unknown) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`, extra ?? ""); } };
 
-t("既定 off・on で動く", !applyRouteRecordOn({}) && applyRouteRecordOn({ APPLY_ROUTE_RECORD: "on" }) && !applyRouteRecordOn({ APPLY_ROUTE_RECORD: "shadow" }));
+t("既定 on・=off で止まる", applyRouteRecordOn({}) && applyRouteRecordOn({ APPLY_ROUTE_RECORD: "on" }) && !applyRouteRecordOn({ APPLY_ROUTE_RECORD: "off" }) && !applyRouteRecordOn({ APPLY_ROUTE_RECORD: " OFF " }));
 t("ブレインの駅が正", JSON.stringify(stationOf({ applyRouteNode: "viewed", status: "proposing" })) === JSON.stringify({ node: "viewed", from: "apply_route" }));
 t("駅が無ければ状態の語から", JSON.stringify(stationOf({ status: "viewing" })) === JSON.stringify({ node: "viewing_arrange", from: "status" }));
 t("状態が寄せられなければ checkpoint_stage", JSON.stringify(stationOf({ status: "zzz", checkpointStage: "estimate" })) === JSON.stringify({ node: "estimate", from: "checkpoint_stage" }));

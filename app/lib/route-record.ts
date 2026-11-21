@@ -4,13 +4,14 @@
 //   見つけた切れ: apply-route-map の駅（12）・分かれ道（15）は毎番求めてブレインの材料とログに出すだけで、meta に残っていなかった。
 //   そのうえ「今どの段か」の語が3系統で別々（conversations.status・meta.checkpoint_stage・conductor-focus の段）。
 //   → APPLY_ROUTE_RECORD=on の時だけ meta.apply_route（駅・分かれ道・次の一手）に残し、段の語は地図の駅の id に寄せる（stationOf）。
-// スイッチ APPLY_ROUTE_RECORD（既定 off）。記録だけ＝プロンプトと道は変えない。
+// スイッチ APPLY_ROUTE_RECORD（既定 on・2026-11-21 統括役の了承・=off で止める）。記録だけ＝プロンプトと道は変えない。
 // テスト: app/lib/__tests__/route-record.test.ts
 import { ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
 
 type Env = Record<string, string | undefined>;
 export function applyRouteRecordOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.APPLY_ROUTE_RECORD ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 統括役の了承: 記録だけ（プロンプト・道・文は変えない）なので試験なしで既定 on。=off で止める
+  return (env.APPLY_ROUTE_RECORD ?? "").trim().toLowerCase() !== "off";
 }
 
 /**
