@@ -119,7 +119,10 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   f.promise_kind = open.length && pOpen ? (open.some((o) => KIND_WORD[o.kind]?.test(pOpen)) ? "held" : "conflict") : "none";
   const pDue = /（[^）]{0,12}(?:時間前|日前)）|期限|期日|中央値/.test(block(b, "🤝 お客様との約束") ?? "") || /時間前|日前/.test(pOpen ?? "");
   f.promise_due = open.length ? (pDue ? "held" : "base") : "none";
-  f.double_promise = doubled ? "base" : "none"; // 重ねた約束は DB の側の印（ブレインの材料に「重ねた」は無い＝土台）
+  // 2026-11-21 作業員L（台帳 #288）: 重ねた約束は竹内さん本人も 30日で15回している形（「引き続きピックアップさせて頂きます」）＝外れではない。
+  //   把握漏れ（土台）に数えず「関係なし」にする（数は detail に残す）
+  f.double_promise = "none";
+  if (doubled) detail.double_promise = `重ねた約束 ${doubled}（竹内さんもする形・漏れに数えない）`;
   // 最新の条件
   const pc = p.pc ?? {};
   const rent = Number(pc.rent_max ?? 0);
