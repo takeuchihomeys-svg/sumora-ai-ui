@@ -197,4 +197,4 @@ async function handleGET(req: NextRequest) {
 }
 
 // 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
-export const GET = withCronLog("auto-reply-dispatch", handleGET);
+export const GET = withCronLog("auto-reply-dispatch", handleGET, { hourly: true }); // 高頻度＝失敗の時と毎時0分の回だけ書く

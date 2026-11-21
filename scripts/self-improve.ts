@@ -152,7 +152,8 @@ async function main() {
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
-      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured });
+      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured }, { metric: "core:no_denominator", value: cl.noDenominator.length, n: cl.measured + cl.noDenominator.length });
+      if (cl.noDenominator.length) { lines.push(`### 芯: 記録に残らない（分母が無い・地図の行 ${cl.noDenominator.length}）`, ...cl.noDenominator.slice(0, 8).map((x) => `- ${x.id}｜${x.owner}｜${x.why.slice(0, 70)}`)); for (const x of cl.noDenominator.slice(0, 3)) coreFix.push(`記録に残らない（分母が無い）: ${x.id} → ${x.owner}`); }
       lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${w.owner}｜${w.why.slice(0, 70)}`));
       for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${w.owner}`);
     }
