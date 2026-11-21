@@ -1608,6 +1608,14 @@ export async function POST(req: NextRequest) {
             const wants = customerWants({ conditions: p as never, messages: msgs });
             const ap = buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null });
             fit = savedReadFitLines(ap);
+            // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポの行が無い物件も、読みを判定に通した札（合う点・合わない点）を
+            //   2通目の行に持たせる（締めの刺さり具合 appealFromPickup が読む・見積書の ESTIMATE_SIP_APPEAL と同じ道）
+            const sj = await import("@/app/lib/sip-judge");
+            if (sj.sipJudgeOn() && p && materialRow) {
+              const j = sj.judgeSip({ property_name: hit.property_name, room_no: hit.room_no, facts: hit.facts as unknown as Record<string, unknown> }, p as never);
+              if (j) Object.assign(materialRow as unknown as Record<string, unknown>, { reason_codes: j.reason_codes, verdict: j.verdict, score: j.score });
+              console.log(JSON.stringify({ tag: "aix-template-generate:sip-judge", judged: !!j, codes: j?.reason_codes.length ?? 0 }));
+            }
             if (appealPlanReadOn()) { appealPlanFactCands = ap.points.map((x) => ({ topic: x.key, from: "facts" as const })); appealPlanWants = wants; }
           } catch { /* 希望が読めない時は事実だけ */ }
           savedReadExtra = [...conv.extraLines, ...fit];

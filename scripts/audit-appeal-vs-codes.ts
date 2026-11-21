@@ -10,6 +10,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
+import { judgeSip } from "../app/lib/sip-judge";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 /** 推しどころ: 文の語 ／ 札の族（正の札だけ） */
@@ -92,7 +93,9 @@ if (require.main === module) (async () => {
     for (const x of (m ?? []) as Array<{ line_message_id: string; text: string | null; staff_writer: string | null }>) msgs.set(x.line_message_id, x);
   }
   const t: Record<string, PointTally> = Object.fromEntries(APPEAL_POINTS.map((p) => [p.key, { both: 0, textOnly: 0, codeOnly: 0 }]));
-  let n = 0, noRow = 0;
+  let n = 0, noRow = 0, viaSip = 0;
+  // --sip: 売上サポに行が無い物件は、画像の読み（sent_image_properties.facts）を判定に通した札で数える（台帳 #511・SIP_JUDGE と同じ道）
+  const useSip = process.argv.includes("--sip");
   for (const l of logs) {
     const m = msgs.get(l.line_message_id);
     if (!m || (writer !== "all" && m.staff_writer !== writer) || !m.text) continue;
@@ -102,16 +105,29 @@ if (require.main === module) (async () => {
     const cand = (pr ?? []) as Array<PickRow & { equipment: { facts?: Record<string, { s?: string }> } | null }>;
     const targets = (l.property_names ?? []).length ? (l.property_names ?? []) : [m.text];
     const rows = [...new Set(targets.map((n) => matchPickupRow(n, cand)).filter((x): x is NonNullable<typeof x> => !!x))] as typeof cand;
+    if (!rows.length && useSip) {
+      const { data: sp } = await sb.from("sent_image_properties").select("property_name, room_no, facts, created_at").eq("conversation_id", l.conversation_id).not("facts", "is", null)
+        .gte("created_at", new Date(Date.parse(l.sent_at) - 14 * 864e5).toISOString()).lte("created_at", new Date(Date.parse(l.sent_at) + 36e5).toISOString()).limit(60);
+      const sipCand = ((sp ?? []) as Array<{ property_name: string | null; room_no: string | null; facts: Record<string, unknown> | null }>).map((r) => ({ ...r, reason_codes: null as string[] | null }));
+      const hit = targets.map((x) => matchPickupRow(x, sipCand)).find(Boolean);
+      if (hit) {
+        const { data: cv } = await sb.from("conversations").select("property_customer_id").eq("id", l.conversation_id).maybeSingle();
+        const pcId = (cv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+        const { data: pc } = pcId ? await sb.from("property_customers").select("rent_min, rent_max, floor_plan, walk_minutes, building_age, initial_cost_limit, pet, move_in_time, floor_area_min, preferences, ng_points, other_requests, additional_conditions").eq("id", pcId).maybeSingle() : { data: null };
+        const j = judgeSip(hit, (pc ?? null) as never);
+        if (j) { rows.push({ property_name: j.property_name, room_no: j.room_no, reason_codes: j.reason_codes, equipment: null } as never); viaSip++; }
+      }
+    }
     if (!rows.length) { noRow++; continue; }
     n++;
     const codes = [...new Set(rows.flatMap((r) => r.reason_codes ?? []))];
     const factsOk = new Set(rows.flatMap((r) => Object.entries(r.equipment?.facts ?? {}).filter(([, v]) => v?.s === "ok").map(([k]) => k)));
     for (const [k, v] of Object.entries(appealVsCodes(m.text, codes, factsOk))) if (v) t[k][v]++;
   }
-  console.log(`${writer === "takeuchi" ? "竹内さん" : `書き手 ${writer} `}の${type === "all" ? "物件オススメ・ピックアップ" : type}の文 × 売上サポの札（${days}日）: 合わせた ${n}件・札の行が見つからない ${noRow}件`);
+  console.log(`${writer === "takeuchi" ? "竹内さん" : `書き手 ${writer} `}の${type === "all" ? "物件オススメ・ピックアップ" : type}の文 × 売上サポの札（${days}日）: 合わせた ${n}件（うち画像の読みから ${viaSip}）・札の行が見つからない ${noRow}件`);
   console.log("  推しどころ             両方 ／ 文だけ（札に無い）／ 札だけ（書かない）");
   for (const p of APPEAL_POINTS) { const c = t[p.key]; if (c.both + c.textOnly + c.codeOnly) console.log(`  ${p.label.padEnd(14)} ${c.both} ／ ${c.textOnly} ／ ${c.codeOnly}`); }
   // 毎朝の数（作業員N・self-improve）の形: n＝書き手の文の数・matched＝売上サポの行に合わせられた数（＝売上サポを通った物件）・点ごとに both／text_only／code_only
-  if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ days, type, writer, n: n + noRow, matched: n,
+  if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ days, type, writer, n: n + noRow, matched: n, matched_sip: viaSip,
     points: Object.fromEntries(Object.entries(t).map(([k, c]) => [k, { both: c.both, text_only: c.textOnly, code_only: c.codeOnly }])) }, null, 2));
 })().catch((e) => { console.error(e); process.exit(1); });

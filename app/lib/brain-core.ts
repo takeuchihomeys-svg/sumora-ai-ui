@@ -3663,7 +3663,17 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         const since = new Date(Date.now() - 72 * 36e5).toISOString();
         const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at")
           .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
-        const items = pw.pickupWhyOf((pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[], { nowMs: Date.now() });
+        let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
+        // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
+        const sj = await import("@/app/lib/sip-judge");
+        if (sj.sipJudgeOn() && pcResult.data) {
+          const { data: sipRows } = await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
+            .eq("conversation_id", conversationId).not("facts", "is", null).gte("created_at", since).order("created_at", { ascending: false }).limit(20);
+          const have = new Set(whyRows.map((r) => String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, "")));
+          const extra = sj.judgeSips(((sipRows ?? []) as import("@/app/lib/sip-judge").SipLike[]).filter((r) => !have.has(String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, ""))), pcResult.data as import("@/app/lib/property-brain").CustomerLike, 3);
+          whyRows = [...whyRows, ...extra.map((j) => ({ property_name: j.property_name, room_no: j.room_no, recommended: 0, score: j.score, reason_codes: j.reason_codes, sent_at: ((sipRows ?? []) as Array<{ property_name: string | null; created_at: string }>).find((r) => r.property_name === j.property_name)?.created_at ?? new Date().toISOString() }))];
+        }
+        const items = pw.pickupWhyOf(whyRows, { nowMs: Date.now() });
         const line = pw.pickupWhyLine(items);
         if (line) customerStateBlockText += `\n${line}`;
         console.log(JSON.stringify({ tag: "brain:pickup-why", conversationId, rows: (pwRows ?? []).length, items: items.length, chars: line.length }));
