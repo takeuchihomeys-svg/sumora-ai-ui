@@ -17,11 +17,22 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
   const day = arg("day") ?? jstDay(Date.now() - 864e5);
   const from = new Date(Date.parse(`${day}T00:00:00+09:00`)).toISOString();
   const to = new Date(Date.parse(`${day}T00:00:00+09:00`) + 864e5).toISOString();
-  const [{ data: cust, error: e1 }, { data: sent, error: e2 }] = await Promise.all([
+  const [{ data: cust, error: e1 }, { data: sent0, error: e2 }] = await Promise.all([
     supabase.from("customer_image_records").select("kind, property_name, room_no, rent_yen, madori, area_sqm, station, walk_min, age_years").gte("created_at", from).lt("created_at", to).limit(2000),
-    supabase.from("sent_image_properties").select("channel, source, property_name, room_no, facts").gte("created_at", from).lt("created_at", to).limit(5000),
+    supabase.from("sent_image_properties").select("image_url, channel, source, property_name, room_no, facts").gte("created_at", from).lt("created_at", to).limit(5000),
   ]);
   if (e1 || e2) throw new Error((e1 ?? e2)!.message);
+  let sent = sent0;
+  // 2026-11-22 作業員G（#509）: 見積書の画像（image_details.kind=estimate）はこちらの画像の欄の埋まりから除く（間取り・築年が無いのが正しい）
+  {
+    const urls = ((sent ?? []) as Array<{ image_url?: string }>).map((r) => r.image_url).filter((u): u is string => !!u);
+    const est = new Set<string>();
+    for (let i = 0; i < urls.length; i += 100) {
+      const { data: d } = await supabase.from("image_details").select("image_url").eq("kind", "estimate").in("image_url", urls.slice(i, i + 100));
+      for (const r of (d ?? []) as Array<{ image_url: string }>) est.add(r.image_url);
+    }
+    if (est.size) { sent = ((sent ?? []) as Array<{ image_url?: string }>).filter((r) => !est.has(r.image_url ?? "")) as typeof sent; console.log(`見積書の画像 ${est.size}枚を除いた`); }
+  }
   // 2026-11-22 作業員G（#587）: カウンターキッチンの文字の札と画像の読みの食い違い（画像で読んだ行だけ）
   const { data: pk, error: e3 } = await supabase.from("property_pickups").select("id, ck_text:equipment->facts->counter_kitchen->>s, ck_image:image_facts->counter_kitchen")
     .gte("created_at", from).lt("created_at", to).not("image_facts->counter_kitchen", "is", null).limit(2000);
