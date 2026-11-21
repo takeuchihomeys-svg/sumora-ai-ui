@@ -364,6 +364,33 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+    // 2026-11-21 作業員G（統括役の OK）: AIX【物件オススメ】で物件1件を送ったのに送った物件の記録（sent_properties）に行が無い時は1行足す
+    //   （写真1枚の🌟送信は画像から物件が読めず、どこからも書かれていなかった・7日で4件）。値は入れない・同じ物件の行があれば足さない・
+    //   テストの会話・試験の行・予約（まだ送っていない）は足さない。既定 off（RECOMMENDATION_SENT_RECORD=on）
+    if (conversation_id && scheduled !== true && !isTestConversation(conversation_id)) {
+      waitUntil((async () => {
+        try {
+          const { recommendationSentRecordOn, recommendationSentRow } = await import("@/app/lib/recommendation-sent-record");
+          if (!recommendationSentRecordOn()) return;
+          const row = recommendationSentRow({ aixType: aix_type, propertyNames: Array.isArray(property_names) ? property_names : null, lineMessageId: line_message_id ?? null });
+          if (!row) return;
+          const { isSameProperty } = await import("@/app/lib/sent-property-record");
+          const { data: existing } = await supabase.from("sent_properties").select("property_name, room_no")
+            .eq("conversation_id", conversation_id).order("sent_at", { ascending: false }).limit(300);
+          const dup = ((existing ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
+            .some((r) => isSameProperty({ property_name: r.property_name ?? "", room_no: r.room_no ?? "" }, { property_name: row.propertyName, room_no: row.roomNo }));
+          if (dup) return;
+          const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversation_id).maybeSingle();
+          const { error: insErr } = await supabase.from("sent_properties").insert({
+            conversation_id, property_customer_id: (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
+            property_name: row.propertyName, room_no: row.roomNo, source: "aix:property_recommendation", delivery: "customer", channel: "recommendation",
+            ...(typeof sent_at === "string" && sent_at ? { sent_at } : {}),
+          });
+          console.log(JSON.stringify({ tag: "recommendation-sent-record", conversation_id, inserted: !insErr, error: insErr?.message?.slice(0, 120) ?? null }));
+        } catch (e) { console.warn("[log-aix-usage] オススメの送った記録の失敗:", e instanceof Error ? e.message : e); }
+      })());
+    }
+
     // 2026-11-15 作業員M（継ぎ目②・ASK_PROGRESS=on の時だけ・既定 off）: 送った AIX を要件の帳面に当てて conversations.ask_progress に書く（予約送信はまだ送っていないので書かない）
     if (conversation_id && scheduled !== true) {
       waitUntil((async () => {

@@ -42,5 +42,10 @@ export async function recordCustomerImages(db: SupabaseClient, messageIds: Reado
   const { error: upErr } = await db.from("customer_image_records").upsert(rows, { onConflict: "message_id" });
   if (upErr) { console.warn(JSON.stringify({ tag: "customer-image-record:failed", error: upErr.message.slice(0, 160) })); return 0; }
   console.log(JSON.stringify({ tag: "customer-image-record", rows: rows.length, kinds: rows.map((r) => r.link_kind) }));
+  // 2026-11-21 作業員G（#461 ②）: 物件の画像で空の欄があれば DeepSeek で深く読んで埋める。既定 off（CUSTOMER_IMAGE_DEEP_READ=on）
+  try {
+    const { deepReadCustomerImages } = await import("@/app/lib/customer-image-deep-read-server");
+    await deepReadCustomerImages(db, rows.map((r) => r.message_id));
+  } catch (e) { console.warn("[customer-image-record] 深い読みの失敗:", e instanceof Error ? e.message : e); }
   return rows.length;
 }

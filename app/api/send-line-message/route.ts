@@ -424,6 +424,30 @@ export async function POST(req: NextRequest) {
       }
     });
   }
+  // 2026-11-21 作業員G（#461 案3）: 手でまとめて送った束の、文字の無い室内写真を同じ束の資料の物件に結ぶ（LLM なし・sent-batch-photo.ts）。
+  //   1枚ずつの読み（上の after・最大80秒）が終わるのを待ってから、束の記録を読んで物件がちょうど1つの時だけ結ぶ。既定 off（SENT_BATCH_PHOTO_ATTRIBUTE=on）
+  if (batchImages.length >= 2 && conversation_id && origin !== "aix") {
+    after(async () => {
+      try {
+        const { sentBatchPhotoAttributeOn, batchPhotoAttribution } = await import("@/app/lib/sent-batch-photo");
+        if (!sentBatchPhotoAttributeOn()) return;
+        await new Promise((r) => setTimeout(r, 90_000));
+        const { supabase: sbB } = await import("@/app/lib/supabase-server");
+        const { data } = await sbB.from("sent_image_properties").select("image_url, property_name, room_no").in("image_url", batchImages);
+        const byUrl = new Map(((data ?? []) as Array<{ image_url: string; property_name: string | null; room_no: string | null }>).map((r) => [r.image_url, r]));
+        const links = batchPhotoAttribution(batchImages.map((u) => ({ url: u, propertyName: byUrl.get(u)?.property_name ?? null, roomNo: byUrl.get(u)?.room_no ?? null })));
+        for (const l of links) {
+          await sbB.from("sent_image_properties").upsert(
+            { image_url: l.url, conversation_id, property_name: l.propertyName, room_no: l.roomNo, source: "batch_sheet", channel: "staff_image" },
+            { onConflict: "image_url", ignoreDuplicates: true },
+          );
+        }
+        console.log(JSON.stringify({ tag: "sent-batch-photo", conversationId: conversation_id, images: batchImages.length, linked: links.length }));
+      } catch (e) {
+        console.warn("[send-line-message] 束の写真の物件結び失敗:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
   // 2026-11-05 作業員1（案3'・竹内さんの決まり「読み取りは必ず DeepSeek」の中で）: この会話で前に読めなかった送付の画像（72時間・最大3枚）を DeepSeek で読み直して
   //   送った物件の記録を埋める（今回送った画像は上で読むので外す）。LINE には何も送らない。止める SENT_IMAGE_REREAD=off
   if (sentImageList.length > 0 && conversation_id) {
