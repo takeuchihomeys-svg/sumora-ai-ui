@@ -21,11 +21,17 @@ export async function GET(req: NextRequest) {
 
     // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】…連絡漏れが多い」: お客様への約束の行（notes 先頭【必ず】）は時刻が過ぎても
     //   自動で完了にしない。履行した送信（物件送付・御見積書送付・確認結果の報告）が完了にする（app/lib/sent-facts.ts syncPromiseCalendar）
-    const { data, error } = await supabase
+    // 2026-11-22 作業員K2（台帳 #580・ESTIMATE_EVENT_GUARD=on の時だけ・app/lib/estimate-event-guard.ts）: 見積の予定は時刻で済みにしない
+    //   （済みは見積書を送った時＝save-reply-example の見積書送付の消込・sent-facts の約束の消込）
+    const { estimateEventGuardOn, duplicateEstimateEventIds } = await import("@/app/lib/estimate-event-guard");
+    const guardOn = estimateEventGuardOn();
+    let q = supabase
       .from("calendar_events")
       .update({ is_done: true })
       .eq("is_done", false)
-      .lt("start_at", now)
+      .lt("start_at", now);
+    if (guardOn) q = q.neq("event_type", "estimate_sheet");
+    const { data, error } = await q
       //   内覧の行は手書きの【必ず】があっても従来どおり時刻で完了（内覧は終わる。批評（Fable5）の指摘）
       .or("notes.is.null,notes.not.like.【必ず】%,event_type.eq.viewing")
       .select("id, title, event_type");
@@ -36,7 +42,17 @@ export async function GET(req: NextRequest) {
     }
 
     const updated = (data ?? []).length;
-    const result = { updated, completedAt: now };
+    // ② 同じ会話・同じ時刻（10分以内）の開いている見積の予定は1つにする（【必ず】の行を残す）
+    let dupClosed = 0;
+    if (guardOn) {
+      try {
+        const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+        const { data: openEst } = await supabase.from("calendar_events").select("id, conversation_id, start_at, created_at, notes, is_done, event_type").eq("event_type", "estimate_sheet").eq("is_done", false).gte("start_at", since).limit(2000);
+        const ids = duplicateEstimateEventIds((openEst ?? []) as never);
+        if (ids.length) { const r = await supabase.from("calendar_events").update({ is_done: true }).in("id", ids as never[]).eq("is_done", false).select("id"); dupClosed = (r.data ?? []).length; }
+      } catch (e) { console.warn("[calendar-auto-complete] estimate dedupe skipped:", e instanceof Error ? e.message : String(e)); }
+    }
+    const result = { updated, dupClosed, estimateGuard: guardOn, completedAt: now };
     await finishCronLog(runLogId, true, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
