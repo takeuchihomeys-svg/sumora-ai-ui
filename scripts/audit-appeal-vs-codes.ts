@@ -111,5 +111,7 @@ if (require.main === module) (async () => {
   console.log(`${writer === "takeuchi" ? "竹内さん" : `書き手 ${writer} `}の${type === "all" ? "物件オススメ・ピックアップ" : type}の文 × 売上サポの札（${days}日）: 合わせた ${n}件・札の行が見つからない ${noRow}件`);
   console.log("  推しどころ             両方 ／ 文だけ（札に無い）／ 札だけ（書かない）");
   for (const p of APPEAL_POINTS) { const c = t[p.key]; if (c.both + c.textOnly + c.codeOnly) console.log(`  ${p.label.padEnd(14)} ${c.both} ／ ${c.textOnly} ／ ${c.codeOnly}`); }
-  if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ days, type, n, noRow, points: t }, null, 2));
+  // 毎朝の数（作業員N・self-improve）の形: n＝書き手の文の数・matched＝売上サポの行に合わせられた数（＝売上サポを通った物件）・点ごとに both／text_only／code_only
+  if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ days, type, writer, n: n + noRow, matched: n,
+    points: Object.fromEntries(Object.entries(t).map(([k, c]) => [k, { both: c.both, text_only: c.textOnly, code_only: c.codeOnly }])) }, null, 2));
 })().catch((e) => { console.error(e); process.exit(1); });
