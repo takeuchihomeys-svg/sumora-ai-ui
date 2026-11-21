@@ -20,6 +20,12 @@ import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
 import { checkStale } from "./check-stale";
+import { checkWindows, isNightJst } from "./check-windows";
+import { isWindowGap } from "./lib/read-windows";
+import { checkCountVerified } from "./check-count-verified";
+import { UNVERIFIED_JA, countGapsForLedger } from "./lib/count-verified";
+import { checkOffPath, isOffPathGap } from "./check-off-path";
+import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -149,6 +155,7 @@ async function main() {
   //   ③ 連携が弱い（check-linkage）。①土台・②細分化・④統括の判断は順に足す。--only=core で2時間おきに軽く回す（統括役の見回り）
   const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
   const coreFix: string[] = [];
+  const ledger: FoundGap[] = []; // 穴の型③〜⑤の穴（--write の時に台帳へ・題で重ねない）
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
@@ -175,6 +182,32 @@ async function main() {
       coreRows.push({ metric: "core:stale", value: rest.length, n: st.crons + st.metrics }, { metric: "core:cron_no_log", value: never.length, n: st.crons });
       lines.push(`### 芯: 作ったのに回っていない（止まっている・一度も無い ${rest.length}・cron の記録が一度も無い ${never.length}/${st.crons}）`, ...rest.slice(0, 10).map((x) => `- ${x.name}｜最後 ${x.last ?? "—"}｜${x.owner}｜${x.why.slice(0, 70)}`));
       for (const x of rest.slice(0, 5)) coreFix.push(`作ったのに回っていない: ${x.name}（${x.why.slice(0, 40)}）→ ${x.owner}`);
+    }
+    // 穴の型③「読む窓が狭くて届かない」（check-windows・作業員N2 11/21）: 発言の本文を読む重い読み＝夜（JST 22〜9時）の回だけ（--only=core の2時間おきの夜の回で毎日1回以上入る）
+    if (isNightJst(now)) {
+      const cw = await checkWindows(sb, { hours: 72, max: 40 }).catch(() => null);
+      if (cw) {
+        coreRows.push({ metric: "core:window_miss", value: cw.gaps.length, n: cw.misses.length }, ...cw.misses.map((m) => ({ metric: `core:window_miss:${m.id}`, value: m.rate, n: m.n })));
+        lines.push(`### 芯: 読む窓が狭くて届かない（会話 ${cw.n}・窓 ${cw.misses.length}・穴 ${cw.gaps.length}・線 5% 以上かつ2会話）`, ...[...cw.misses].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0)).slice(0, 6).map((m) => `- ${isWindowGap(m) ? "穴" : "　"}｜${m.label}（${m.limit}）｜窓の外 ${m.outside}/${m.n}＝${m.rate ?? "—"}%`));
+        for (const m of cw.gaps) { coreFix.push(`読む窓が狭くて届かない: ${m.label}（${m.rate}%）→ ${m.stage}`); ledger.push({ title: `読む窓が狭くて届かない: ${m.label}（${m.limit}）`, owner: m.stage, next: `check-windows（穴の型③）: 窓の外 ${m.outside}/${m.n}（${m.rate}%）・${m.why}・場所 ${m.where}・会話 ${m.convs.slice(0, 5).join(",")}・窓を広げるか別読み・要約で補い、試験で悪化0を確かめる（台帳 #505）` }); }
+      }
+    } else lines.push("### 芯: 読む窓が狭くて届かない（昼は回さない・夜の回で書く）");
+    // 穴の型④「数え方の誤りで低く見える」（check-count-verified）: 数えの台本ごとに実物1件で照らした日の記録（quality_daily count_verified）
+    const cv = await checkCountVerified(sb, now).catch(() => null);
+    if (cv) {
+      coreRows.push({ metric: "core:count_unverified", value: cv.unverified.length, n: cv.units });
+      const byKind = cv.unverified.reduce<Record<string, number>>((a, u) => ({ ...a, [u.kind]: (a[u.kind] ?? 0) + 1 }), {});
+      lines.push(`### 芯: 数え方を実物で照らしていない（単位 ${cv.units}・穴 ${cv.unverified.length}＝${Object.entries(byKind).map(([k, n]) => `${UNVERIFIED_JA[k as keyof typeof UNVERIFIED_JA]} ${n}`).join("・") || "なし"}）`, ...cv.unverified.filter((u) => u.kind !== "never").slice(0, 6).map((u) => `- ${UNVERIFIED_JA[u.kind]}｜${u.key}｜${u.owner}`));
+      for (const u of cv.unverified.filter((x) => x.kind === "mismatch").slice(0, 3)) coreFix.push(`数え方のズレを直していない: ${u.key} → ${u.owner}`);
+      ledger.push(...countGapsForLedger(cv.unverified));
+    }
+    // 穴の型⑤「主な道の外から来る物の割合」（check-off-path）: 分野ごと（物件オススメ・返信・送信・内覧・見積）
+    const op = await checkOffPath(sb, now).catch(() => null);
+    if (op) {
+      const og = op.filter(isOffPathGap);
+      coreRows.push({ metric: "core:off_path", value: og.length, n: op.length }, ...op.map((o) => ({ metric: `core:off_path:${o.id}`, value: o.rate, n: o.n })));
+      lines.push(`### 芯: 主な道の外から来る物（分野 ${op.length}・穴 ${og.length}・線 10% 以上かつ3件）`, ...op.map((o) => `- ${isOffPathGap(o) ? "穴" : "　"}｜${o.label}｜${o.off}/${o.n}＝${o.rate ?? "—"}%｜${o.owner}`));
+      for (const o of og) { coreFix.push(`主な道の外から来る: ${o.label}（${o.rate}%）→ ${o.owner}`); ledger.push({ title: `主な道の外から来る: ${o.label}`, owner: o.owner, next: `check-off-path（穴の型⑤）: ${o.off}/${o.n}（${o.rate}%）・${o.why}${o.note ? `・${o.note}` : ""}・会話 ${o.convs.slice(0, 5).join(",")}・なぜ主な道を通らないかを実物で確かめる（台帳 #505）` }); }
     }
     // 芯 ② 細分化が足りない（owner-feedback-check の not_subdivided・ファイルと設計知見の札だけ）: 数は穴の項目の合計（少ないほど良い）
     const sd = (await runChecks(["not_subdivided"], 1).catch(() => []))[0];
@@ -330,6 +363,7 @@ async function main() {
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
+    if (ledger.length) { const added = await addFoundGaps(sb, ledger, "self-improve").catch(() => []); if (added.length) console.log(`台帳に足した（穴の型③〜⑤）${added.length}行: #${added.join("・#")}`); }
     await sb.from("cron_run_logs").insert({ cron_name: "self-improve", started_at: new Date(now).toISOString(), finished_at: new Date().toISOString(), ok: true, result_json: { day, only: only || null, focus, match: mMain, gaps: gaps.length, exam: { runs: runs.length, cost, worse: worse.length }, file: out } });
     console.log(`書いた: ${only ? `--only=${only}` : out}・quality_daily ${rows.length}行・cron_run_logs`);
   }

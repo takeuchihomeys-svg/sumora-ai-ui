@@ -19,7 +19,7 @@ export function inOriginMain(p: string): boolean {
 
 export const FOUNDATION_TABLE_DIR = "C:/Users/竹内 悠馬/sumora-ai-ui/memory/foundation_tables";
 
-function otherTables(): FoundationRow[] {
+export function otherTables(): FoundationRow[] {
   if (!existsSync(FOUNDATION_TABLE_DIR)) return [];
   const out: FoundationRow[] = [];
   for (const f of readdirSync(FOUNDATION_TABLE_DIR).filter((x) => x.endsWith(".json"))) {
