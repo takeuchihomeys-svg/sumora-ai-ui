@@ -8,8 +8,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { FOUNDATION_N, foundationGapsOf, type FoundationRow } from "./lib/foundation-table";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
+
+/** origin/main にその道のファイルがあるか（git cat-file・手元の git だけ・費用0） */
+export function inOriginMain(p: string): boolean {
+  try { execFileSync("git", ["cat-file", "-e", `origin/main:${p.replace(/^\.\//, "")}`], { stdio: "ignore", timeout: 10_000 }); return true; } catch { return false; }
+}
 
 export const FOUNDATION_TABLE_DIR = "C:/Users/竹内 悠馬/sumora-ai-ui/memory/foundation_tables";
 
@@ -30,7 +36,8 @@ export async function checkFoundation() {
   const seen = new Set(((data ?? []) as Array<{ metric: string }>).map((r) => r.metric));
   const codeText = (() => { try { return readdirSync("app/lib").filter((f) => f.endsWith(".ts")).map((f) => readFileSync(join("app/lib", f), "utf8")).join("\n"); } catch { return ""; } })();
   const gaps = foundationGapsOf(rows, {
-    scriptExists: (p) => existsSync(p),
+    // 2026-11-21 統括役: 作業ツリーが古いと台本を見落とす＝今の作業ツリーか origin/main のどちらかにあれば、ある事にする
+    scriptExists: (p) => existsSync(p) || inOriginMain(p),
     metricSeen: (m) => seen.has(m),
     switchKnown: (s) => s in LINKAGE_SWITCH_DEFAULTS || codeText.includes(s),
   });
