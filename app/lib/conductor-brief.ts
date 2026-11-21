@@ -107,7 +107,7 @@ export type ConductorBrief = {
   /** 2026-11-21 作業員M: 前の番のお客様ごとの計画を照らした欄（CONDUCTOR_BRIEF_PLAN=on の時だけ・brain-core が指示書を組んだ後に足す・書き手には渡さない） */
   plan?: import("./customer-plan").PlanBriefSection;
   /** 2026-11-19 作業員M: 前の番でまだ答えていない要件・約束して結果がまだの要件（meta.ask_carry・ASK_PROGRESS_READ=on の時だけ・id は askIdOf） */
-  carry_asks?: { open: string[]; promised: string[] };
+  carry_asks?: { open: string[]; promised: string[]; quotes?: Array<{ ask_id: string; quote: string; state: string }> };
   /** 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ） */
   feeling?: ReturnType<typeof feelingBriefSection>;
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
@@ -264,8 +264,10 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const feeling = feelingBriefSection(m);
   const nlRec = obj(m.next_send_link) as { kind?: unknown; refs?: unknown; why?: unknown } | null;
   const next_link = nlRec && typeof nlRec.kind === "string" ? { kind: nlRec.kind, refs: (Array.isArray(nlRec.refs) ? nlRec.refs : []).slice(0, 4) as Array<Record<string, string>>, why: String(nlRec.why ?? "").slice(0, 80) } : undefined;
-  const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown } | null;
-  const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[] } : undefined;
+  const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown; items?: unknown } | null;
+  // 2026-11-22 作業員M（台帳 #595）: 書き手に渡す時に要件の言葉が要るので、ask_carry.items の引用（お客様の要件の言葉・40字まで）も持つ（記録だけ・渡すのは BRIEF_CARRY_TO_WRITER=on の時）
+  const caQuotes = Array.isArray(caRec?.items) ? (caRec!.items as Array<Record<string, unknown>>).filter((x) => x && typeof x.ask_id === "string" && typeof x.quote === "string").slice(0, 6).map((x) => ({ ask_id: String(x.ask_id), quote: Array.from(String(x.quote)).slice(0, 40).join(""), state: String(x.state ?? "") })) : [];
+  const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[], ...(caQuotes.length ? { quotes: caQuotes } : {}) } : undefined;
   return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), ...(route ? { route } : {}), decided, doubts, sure, notYet };
 }
 
@@ -289,8 +291,17 @@ export const BRIEF_SECTION_SUBS: Readonly<Record<string, readonly string[]>> = {
   route: ["aim.turn", "aim.mid", "aim.plant"],
 };
 /** 役目 → 渡す指示書の欄の名前（下の欄の役目の和）。alloc・doubts・sure・decided は統括の中だけ（書き手へは渡さない） */
-export function briefSectionsForRole(role: SubRole): string[] {
-  return Object.entries(BRIEF_SECTION_SUBS).filter(([, subs]) => subs.some((sub) => SUB_FIELDS.find((f) => f.sub === sub)?.roles.includes(role))).map(([k]) => k);
+/**
+ * 2026-11-22 作業員M（台帳 #595・統括役の決め (b)）: 前の番でまだ答えていない要件・約束して結果がまだの要件（carry_asks・ASK_PROGRESS_READ は既定 on の記録）を書き手へ。
+ *   BRIEF_CARRY_TO_WRITER=on の時だけ（既定 off）。渡す役目は 頭（主の要件の先）と つなぎ（約束の続き）＝our.open_promise と同じ役目
+ */
+export function briefCarryToWriterOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRIEF_CARRY_TO_WRITER ?? "").trim().toLowerCase() === "on";
+}
+const CARRY_SUBS: readonly string[] = ["our.open_promise"];
+export function briefSectionsForRole(role: SubRole, env?: Env): string[] {
+  const subsOf: Record<string, readonly string[]> = briefCarryToWriterOn(env) ? { ...BRIEF_SECTION_SUBS, carry_asks: CARRY_SUBS } : BRIEF_SECTION_SUBS;
+  return Object.entries(subsOf).filter(([, subs]) => subs.some((sub) => SUB_FIELDS.find((f) => f.sub === sub)?.roles.includes(role))).map(([k]) => k);
 }
 /** 役目ごとに要る欄だけの指示書（未の欄は渡さない） */
 export function briefForRole(b: ConductorBrief | null | undefined, role: SubRole): Record<string, unknown> {
