@@ -100,6 +100,15 @@ export async function recordSentImageProperty(opts: {
         console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "sent-image-record", conversationId }));
         return out;
       }
+      // 2026-11-21 作業員G: 会話の状態が申込に変わる前でも、前後10分のこちらの文で書類（契約・請求・重説・内定通知 等）の番と判る画像は読まない（sent-image-doc-guard.ts・SENT_IMAGE_DOC_GUARD=off で止める）
+      {
+        const { sentImageIsDocTurn } = await import("@/app/lib/sent-image-doc-guard");
+        const g = await sentImageIsDocTurn(supabase, conversationId, opts.sentAt ?? null, { aix: source.startsWith("aix:") ? true : source === "staff_image" ? false : null, imageUrl });
+        if (g.doc) {
+          console.log(JSON.stringify({ tag: "sent-image-doc-guard:skip", route: "sent-image-record", conversationId, hit: g.hit }));
+          return out;
+        }
+      }
       // 2026-09-29 API 費用: 推論なし・温度0（property-image-read.ts 末尾の注記）。同じ画像を ensureImageDetail が物件名で
       //   売上サポの行に結ぶ時もこの1回の読み取りを待つだけ（sharedPropertyImageRead＝同じ URL は1回）
       const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS, conversationId });

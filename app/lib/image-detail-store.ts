@@ -177,6 +177,12 @@ export async function ensureImageDetail(
       console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "image-detail", conversationId }));
       return null;
     }
+    // 2026-11-21 作業員G: 前後10分のこちらの文で書類の番と判る画像は読まない（sent-image-doc-guard.ts・SENT_IMAGE_DOC_GUARD=off で止める）
+    if (conversationId) {
+      const { sentImageIsDocTurn } = await import("@/app/lib/sent-image-doc-guard");
+      const g = await sentImageIsDocTurn(supabase, conversationId, opts?.sentAt ?? null, { imageUrl });
+      if (g.doc) { console.log(JSON.stringify({ tag: "sent-image-doc-guard:skip", route: "image-detail", conversationId, hit: g.hit })); return null; }
+    }
     // 2026-09-29 竹内「昨日かなり DeepSeek で API 費用を使った。更に節約できないか」:
     //   送る画像の大半は売上サポの行（property_pickups）の資料で、その行は読み取り済みの image_lines か PDF の文字層を持っている。
     //   9/28 は送った 67枚のうち 37回が 25秒の時間切れ＝費用だけ払って材料が残っていなかった。
