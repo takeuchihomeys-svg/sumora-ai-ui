@@ -15,6 +15,7 @@
 //   種類（癖）: 質問の答えの抜け・受け止めの抜け・物件ごとの答えの抜け・約束の抜け・道の取り違え・AIXの種類の取り違え・言ってはいけない事・先に答える外れ・決まりが本質を上書き・触れない所に触れた
 import type { AnswerRoute, ContractAsk, TurnContract } from "../../app/lib/turn-contract";
 import { topicKey } from "../../app/lib/aix-catalog";
+import { goldTextForScoring } from "./exam-greeting-decision";
 
 // ─── 正解の型 ────────────────────────────────────────────────────────
 export type ReceiveKind = "thanks" | "apology" | "care" | "anxiety" | "agree";
@@ -291,7 +292,8 @@ function receiveAsk(id: string, quote: string, k: ReceiveKind, finalText: string
 }
 
 export function deriveGold(spec: SpecRow, prob: ProblemRow): GoldParts {
-  const finalText = maskGoldText(prob.staffText);
+  // 2026-11-21: 印（greetingDecision）のある問題は冒頭の挨拶の行を外した正解で（作業員L・H と決めた）
+  const finalText = maskGoldText(goldTextForScoring(prob.id, prob.staffText).text);
   const asks: GoldAsk[] = [];
   const pending: string[] = [];
   let n = 0;

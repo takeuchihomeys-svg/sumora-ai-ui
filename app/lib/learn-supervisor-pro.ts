@@ -22,7 +22,7 @@ import type { SupervisorProBrainPull } from "./learn-supervisor-pro-rag";
 import { buildProThinkCapability } from "./pro-think-capability";
 import { buildAcquireGraspReport } from "./property-acquire-grasp";
 import { buildImproveConstruct } from "./pro-improve-construct";
-import { buildCauseRelearn } from "./pro-cause-relearn";
+import { buildCauseRelearn, proCauseNullStrictOn } from "./pro-cause-relearn";
 import { buildKbProLink } from "./kb-pro-link";
 import { buildLearnCompleteChain } from "./learn-complete-chain";
 import { materialsDays, logMemoryDays, LEARN_PERIODS, DAY_MS } from "./learn-periods";
@@ -228,6 +228,8 @@ export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
   matched: number;
   f49Line: string | null;
   f49Ok: boolean | null;
+  /** 2026-11-21 作業員G: 束に shot_gaps も shot_gaps_normal も無い（学べ済み・未読の数が分からない）。PHOTO_LEARN_UNKNOWN_NULL=off で常に false */
+  learnedUnknown: boolean;
 } {
   const src = (bundle?.source && typeof bundle.source === "object")
     ? (bundle.source as Record<string, unknown>)
@@ -304,7 +306,13 @@ export function photoReachFromBundle(bundle?: Record<string, unknown> | null): {
     matched,
     f49Line,
     f49Ok,
+    learnedUnknown: photoLearnUnknownNullOn() && !bundle?.shot_gaps_normal && !bundle?.shot_gaps,
   };
+}
+
+/** 2026-11-21 作業員G（統括Pro 段A）: 学べ済みの数が束に無い時に 0（flash未実行）と書かない。段Aで確かめて既定 on（戻す: PHOTO_LEARN_UNKNOWN_NULL=off） */
+export function photoLearnUnknownNullOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.PHOTO_LEARN_UNKNOWN_NULL ?? "").trim().toLowerCase() !== "off";
 }
 
 /** --note 無しでも Pro に渡す事実メモ（F49・shots・到達枚数） */
@@ -386,6 +394,7 @@ export function ensureVisionPhotoReachEvidence(
     const vision_pro_link = buildVisionProLink({
       photoInStorage: pr.photoReach,
       learnedOk: pr.learnedOk,
+      learnedUnknown: pr.learnedUnknown,
       todo: pr.todo,
       photoKindsN: pr.photoKindsN,
       imageFields: pr.imageFields,
@@ -535,10 +544,24 @@ export function ensureProThinkEvidence(
 }
 
 /**
- * 原因思考・再学習・土台/連携抜けを Pro 材料に載せる（竹内さん 2026-11-18）。
+ * 決定論の行（「土台 F55_…」「土台 F38_…」→ 前の形の「学習完成・つながり」）の read=N（無ければ null）。
+ * 「（統括Pro）」の付いた LLM の文の行は読まない（前の判断の言い回しが数として戻ってくるのを避ける）。
  */
-export function ensureCauseRelearnEvidence(
-  adv: SupervisorAdvice,
+export function readCountFromFoundationLines(ev: Array<{ label?: string; value?: string }>): number | null {
+  for (const re of [/^土台 F55_/, /^土台 F38_/, /^学習完成・つながり$/]) {
+    const row = ev.find((e) => re.test(String(e?.label || "")));
+    const m = row ? /(?:^|[\s（(])read=(\d+)/.exec(String(row.value || "")) : null;
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+/**
+ * 2026-11-21 作業員G（統括Pro 段A）: 根拠の行から原因の再学習（決定論）を組む部分だけを外に出した。
+ *   ensureCauseRelearnEvidence と同じ計算（中身は動かしていない）。凍結した問題集の再生（search-pro-exam）と quality_daily の原因の型の数で使う。
+ */
+export function causeRelearnFromEvidence(
+  ev: Array<{ label?: string; value?: string; guessed?: boolean }>,
   hint?: {
     auditStatus?: string | null;
     auditExt?: string | null;
@@ -562,14 +585,7 @@ export function ensureCauseRelearnEvidence(
     sentGrasped?: boolean | null;
     thinkMissingN?: number | null;
   } | null,
-): SupervisorAdvice {
-  const meeting = {
-    ...(adv.meeting || { today: [] as string[], agenda: [], questions: [], evidence: [] as Array<{ label: string; value: string; guessed?: boolean }> }),
-  };
-  const ev = [...(meeting.evidence || [])];
-  if (ev.some((e) => /原因→改善の再学習/.test(String(e.label || "")))) {
-    return adv;
-  }
+): ReturnType<typeof buildCauseRelearn> {
   const joined = ev.map((e) => `${e.label} ${e.value}`).join("\n");
   const failFromEv: Array<{ id: string; line?: string; next?: string }> = [];
   for (const e of ev) {
@@ -584,7 +600,7 @@ export function ensureCauseRelearnEvidence(
     acquireStarted: /press_start|PDF押し/.test(joined) ? true : false,
     stepText: joined,
   });
-  const report = buildCauseRelearn({
+  return buildCauseRelearn({
     auditStatus: hint?.auditStatus || (/status=started|abandoned|監査.*started/.test(joined) ? "started" : null),
     auditExt: hint?.auditExt || null,
     filledNull: hint?.filledNull ?? (/filled[=: ]*null|filledNull/.test(joined) ? true : null),
@@ -597,7 +613,10 @@ export function ensureCauseRelearnEvidence(
       : failFromEv.slice(0, 10),
     foundationMissingN: hint?.foundationMissingN
       ?? (/土台欠\s*(\d+)/.exec(joined)?.[1] ? Number(/土台欠\s*(\d+)/.exec(joined)![1]) : null),
-    readCount: hint?.readCount ?? (/read_count[=: ]*0/.test(joined) ? 0 : /read_count[=: ]*[1-9]/.test(joined) ? 2 : null),
+    // 2026-11-21 作業員G（PRO_CAUSE_NULL_STRICT=on の時）: 今の根拠の行は「土台 F55/F38 … read=N」の形。文の中の「read_count=0」
+    //   （前の Pro の思考骨格の言い回しが根拠に残った物）より、土台の行の数を先に読む（read=14 なのに「読んでいない」になっていた）
+    readCount: hint?.readCount ?? ((proCauseNullStrictOn() ? readCountFromFoundationLines(ev) : null)
+      ?? (/read_count[=: ]*0/.test(joined) ? 0 : /read_count[=: ]*[1-9]/.test(joined) ? 2 : null)),
     autoAfter: hint?.autoAfter ?? (/新束のあとの自動走行 0|auto_after[=: ]*false|自動走行 0件/.test(joined) ? false : null),
     reflectOk: hint?.reflectOk ?? (/reflect_ok=0|learn_reflect_ok.*0/.test(joined) ? 0 : null),
     linkPipelineOk: hint?.linkPipelineOk ?? (/連携一連.*✗|止: 3\.|F32.*✗/.test(joined) ? false : null),
@@ -610,6 +629,23 @@ export function ensureCauseRelearnEvidence(
     sentGrasped: hint?.sentGrasped ?? acq.sent_grasped,
     thinkMissingN: hint?.thinkMissingN ?? (/思考欠(\d+)/.exec(joined)?.[1] ? Number(/思考欠(\d+)/.exec(joined)![1]) : /足りない(\d+)/.exec(joined)?.[1] ? Number(/足りない(\d+)/.exec(joined)![1]) : null),
   });
+}
+
+/**
+ * 原因思考・再学習・土台/連携抜けを Pro 材料に載せる（竹内さん 2026-11-18）。
+ */
+export function ensureCauseRelearnEvidence(
+  adv: SupervisorAdvice,
+  hint?: Parameters<typeof causeRelearnFromEvidence>[1],
+): SupervisorAdvice {
+  const meeting = {
+    ...(adv.meeting || { today: [] as string[], agenda: [], questions: [], evidence: [] as Array<{ label: string; value: string; guessed?: boolean }> }),
+  };
+  const ev = [...(meeting.evidence || [])];
+  if (ev.some((e) => /原因→改善の再学習/.test(String(e.label || "")))) {
+    return adv;
+  }
+  const report = causeRelearnFromEvidence(ev, hint);
   ev.unshift({
     label: "人間のように原因を考える",
     value: report.think_like_human.join(" → "),

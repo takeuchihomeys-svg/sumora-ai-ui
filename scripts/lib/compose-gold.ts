@@ -9,6 +9,7 @@ import { resolveReplyScene } from "../../app/lib/reply-scene";
 import { buildComposeBrief, closingOfText } from "../../app/lib/compose-brief";
 import { headWordOf, type HeadWord } from "../../app/lib/compose-head";
 import { composeAsksFactsOn, asksFactsOf } from "../../app/lib/compose-asks-facts";
+import { goldTextForScoring } from "./exam-greeting-decision";
 
 export type Root = "A" | "B" | "C" | "D";
 export const ELEMENTS = ["主の役目", "頭", "つなぎ", "押さえ", "信頼", "潜在", "締め", "事実", "事実（中身）", "事実（話題だけ）"] as const;
@@ -103,7 +104,8 @@ export function evalGoldTurn(g: TakeuchiGold, b: Record<string, unknown>, p: Pro
   // 2026-11-15 作業員H（統括役の頼み・事実 0/39 の調べ）: 上の「事実」は竹内さんの「どの部分」（話題・何について＝「2階の虫」「初期費用の分割払い」）の語を、
   //   設計図の事実の欄（答えの中身＝「7階以上は虫が入る可能性が低い」「クレジットカード払いのみ分割対応可」）に探していた＝話題と答えを比べる物差しの誤り（a）。
   //   「事実（中身）」は設計図の答えの中身の語（数字・単位つきの値と2文字以上の語）が竹内さんの実際の文に半分以上あるかで数える（中身が竹内さんの言った事と合うか）
-  const fr = factContentRatio(factText, String(p.staffText ?? ""));
+  // 2026-11-21: 印（greetingDecision）のある問題は冒頭の挨拶の行を外した正解で比べる（作業員L・H と決めた）
+  const fr = factContentRatio(factText, goldTextForScoring(p.id, String(p.staffText ?? "")).text);
   const factHit2 = fr.n > 0 && fr.ratio >= FACT_CONTENT_MIN;
   push("事実（中身）", !!g.part, factHit2, !!factText, `竹内=${g.part} 中身の重なり=${fr.n ? Math.round(fr.ratio * 100) + "%" : "空"}`, false);
   // 「事実」は話題が合う か 中身が竹内さんの文と重なる のどちらかで当たり（11/15 から・前の話題だけの数えは「事実（話題だけ）」）

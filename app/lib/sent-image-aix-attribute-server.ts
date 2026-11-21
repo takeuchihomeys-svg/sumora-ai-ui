@@ -5,8 +5,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { channelFromSource } from "@/app/lib/sent-delivery";
 import { pickAixProperty, sentImageAixAttributeOn, AIX_ATTRIBUTE_WINDOW_MS, type AixLogForAttr } from "@/app/lib/sent-image-aix-attribute";
 
-export async function attributeSentImageFromAixLog(db: SupabaseClient, opts: { imageUrl: string; conversationId: string; source: string; sentAt: string }): Promise<"attributed" | "has_record" | "no_match" | "off"> {
-  if (!sentImageAixAttributeOn()) return "off";
+export async function attributeSentImageFromAixLog(db: SupabaseClient, opts: { imageUrl: string; conversationId: string; source: string; sentAt: string }, o2?: { force?: boolean }): Promise<"attributed" | "has_record" | "no_match" | "off"> {
+  // force: 引用された時の読み（QUOTED_IMAGE_PROPERTY_READ）から呼ぶ時は、そちらのスイッチで決める
+  if (!o2?.force && !sentImageAixAttributeOn()) return "off";
   const { data: cur } = await db.from("sent_image_properties").select("property_name").eq("image_url", opts.imageUrl).maybeSingle();
   if ((cur as { property_name: string | null } | null)?.property_name) return "has_record";
   const t = Date.parse(opts.sentAt);
