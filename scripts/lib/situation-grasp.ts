@@ -23,6 +23,8 @@ export const FIELD_LABEL: Record<GraspField, string> = {
 
 type Ctx = { s: string; t: string; aix?: boolean; ago?: number };
 type Row = Record<string, unknown>;
+/** 行動台帳（sent_facts）の最初の行の created_at（これより前の番の問題の写しには行が無い） */
+export const SENT_FACTS_START = "2026-09-14T05:42:20Z";
 export type ProblemLike = {
   id: string; at?: string; source?: string; context?: Ctx[];
   pc?: Record<string, unknown> | null;
@@ -118,6 +120,9 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const open = [...fromFacts.open, ...textPromises.filter((t) => !fromFacts.open.some((o) => o.kind === t.kind))];
   const doubled = fromFacts.doubled;
   f.promise_in_ledger = textPromises.length ? (textPromises.every((t) => fromFacts.open.some((o) => o.kind === t.kind)) ? "held" : "link") : "none";
+  // 2026-11-21 作業員L（台帳 #17）: 行動台帳（sent_facts）は 2026-09-14 05:42Z に始まり、それより前の番の問題の写しは行が0。
+  //   「連携の漏れ 21」のうち読んだ8問は全部この前の番だった＝測れない番。行が0で台帳の始まりより前の番は「関係なし」にする
+  if (f.promise_in_ledger === "link" && !(L.sent_facts ?? []).length && p.at && p.at < SENT_FACTS_START) { f.promise_in_ledger = "none"; detail.promise_in_ledger = "行動台帳の始まり（09/14）より前の番＝測れない"; }
   const pOpen = block(b, "まだ果たしていないこちらの約束");
   f.open_promise = open.length ? (pOpen ? "held" : "link") : pOpen ? "conflict" : "none";
   if (f.open_promise !== "none") detail.open_promise = `DB ${open.map((o) => o.kind).join("・") || "無し"}・持っていた ${pOpen ? "あり" : "なし"}`;
