@@ -6008,6 +6008,95 @@ ALTER TABLE work_item_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_item_events FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE work_item_events_id_seq FROM anon, authenticated;
 
+-- 2026-11-21 竹内さん「この俺の指摘のようなのをちゃんと理解して自己改善していく仕組みを作って」「この指摘の部分もちゃんとデータベースを作って強化していく。
+--   設計知見と協力して自己改善していける仕組みを作る。それと試験の部分とも連携する仕組みを作る」（統括役の頼み・作業員N・台帳 #472）:
+--   owner_pointers … 竹内さんの指摘1つ＝1行。型（kinds）で分け、その型の点検を全分野で回した日時と見つけた穴の数、つないだ台帳・設計知見・試験の問題を持つ。
+--     型: not_delivered 届いていない／unread 読めていない／link_broken 連携が切れている／not_subdivided 細分化が足りない／no_measure 物差しが無い／
+--         no_rule 決まりが無い／left_off off のまま／no_grasp 把握が無い／exam 試験／process 回し方／outage 本番の故障／other
+--     状態: received 受けた → checked 点検済み → fixing 直し中 → exam_passed 試験で悪化0 → on → ready → closed
+--     quote は竹内さんの言葉だけ（お客様の文・名前は入れない）。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。
+--   owner_pointer_events … 状態の変わりと点検の記録（何を回して何が見つかったか）。
+--   戻す: DROP TABLE IF EXISTS owner_pointer_events; DROP TABLE IF EXISTS owner_pointers;
+CREATE TABLE IF NOT EXISTS owner_pointers (
+  id BIGSERIAL PRIMARY KEY,
+  said_at TIMESTAMPTZ NOT NULL,
+  quote TEXT NOT NULL,
+  kinds TEXT[] NOT NULL DEFAULT '{}',
+  areas TEXT[] NOT NULL DEFAULT '{}',
+  state TEXT NOT NULL DEFAULT 'received',
+  work_item_ids BIGINT[] NOT NULL DEFAULT '{}',
+  kb_ids TEXT[] NOT NULL DEFAULT '{}',
+  owner_question_ids UUID[] NOT NULL DEFAULT '{}',
+  kb_draft TEXT,
+  learned_kb_id TEXT,
+  checked_at TIMESTAMPTZ,
+  checked_gaps INT,
+  check_detail JSONB,
+  exam_qids TEXT[] NOT NULL DEFAULT '{}',
+  exam_candidates JSONB NOT NULL DEFAULT '[]',
+  source TEXT,
+  source_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  CONSTRAINT owner_pointers_state_chk CHECK (state IN ('received', 'checked', 'fixing', 'exam_passed', 'on', 'ready', 'closed')),
+  CONSTRAINT owner_pointers_kinds_chk CHECK (kinds <@ ARRAY['not_delivered', 'unread', 'link_broken', 'not_subdivided', 'no_measure', 'no_rule', 'left_off', 'no_grasp', 'exam', 'process', 'outage', 'other']::TEXT[]),
+  CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'other']::TEXT[]),
+  CONSTRAINT owner_pointers_source_chk CHECK (source IS NULL OR source IN ('work_item', 'chat', 'screenshot', 'meeting'))
+);
+CREATE INDEX IF NOT EXISTS idx_owner_pointers_state ON owner_pointers(state, said_at DESC);
+CREATE INDEX IF NOT EXISTS idx_owner_pointers_kinds ON owner_pointers USING GIN (kinds);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_pointers_source ON owner_pointers(source, source_ref) WHERE source_ref IS NOT NULL;
+ALTER TABLE owner_pointers ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON owner_pointers FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE owner_pointers_id_seq FROM anon, authenticated;
+CREATE TABLE IF NOT EXISTS owner_pointer_events (
+  id BIGSERIAL PRIMARY KEY,
+  pointer_id BIGINT NOT NULL REFERENCES owner_pointers(id) ON DELETE CASCADE,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  kind TEXT NOT NULL,
+  from_state TEXT,
+  to_state TEXT,
+  actor TEXT,
+  detail JSONB,
+  note TEXT,
+  CONSTRAINT owner_pointer_events_kind_chk CHECK (kind IN ('state', 'check', 'kb', 'exam', 'link'))
+);
+CREATE INDEX IF NOT EXISTS idx_owner_pointer_events_pointer ON owner_pointer_events(pointer_id, at DESC);
+-- 2026-11-21 作業員N（自己改善の統括の土台・統括役の点検表 ④⑤）:
+--   work_items.owner_question_uuid … owner_questions.id は UUID なのに、work_items.owner_question_id は BIGINT で結べなかった。新しい列で結ぶ（古い列は使わない）
+--   work_item_events.kind … stage（段の変わり）／assign（作業員に渡した）／return（返ってきた）／note（経過）。割り振りの記録を同じ表で持つ
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS owner_question_uuid UUID;
+ALTER TABLE work_item_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'stage';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_item_events_kind_chk') THEN
+    ALTER TABLE work_item_events ADD CONSTRAINT work_item_events_kind_chk CHECK (kind IN ('stage', 'assign', 'return', 'note'));
+  END IF;
+END $$;
+-- 2026-11-21 作業員N（自己改善の統括の土台 ①・台帳 #473）: quality_daily … 毎日の質の数を1つの表に（物差しの名前 × 範囲 × 日で1行）。
+--   毎朝の1枚（scripts/self-improve.ts）が書き、前の日・前の週と比べて上がった・下がったを出す。数だけ（お客様の文・名前は入れない）。
+--   範囲: takeuchi（竹内さんの番）・all（全体）・draft（下書き）・employee。戻す: DROP TABLE IF EXISTS quality_daily;
+CREATE TABLE IF NOT EXISTS quality_daily (
+  id BIGSERIAL PRIMARY KEY,
+  day DATE NOT NULL,
+  metric TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'all',
+  value NUMERIC,
+  n INT,
+  source TEXT,
+  detail JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT quality_daily_scope_chk CHECK (scope IN ('takeuchi', 'all', 'draft', 'employee')),
+  CONSTRAINT quality_daily_uniq UNIQUE (day, metric, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_quality_daily_metric ON quality_daily(metric, day DESC);
+ALTER TABLE quality_daily ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON quality_daily FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE quality_daily_id_seq FROM anon, authenticated;
+ALTER TABLE owner_pointer_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON owner_pointer_events FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE owner_pointer_events_id_seq FROM anon, authenticated;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
