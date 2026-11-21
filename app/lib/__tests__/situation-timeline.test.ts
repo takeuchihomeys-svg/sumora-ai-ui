@@ -159,3 +159,24 @@ t("送った資料の読み（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）: 礼金�
   assert.equal(off[0].sheet_facts, undefined);
 });
 console.log("sip-facts ok");
+// 2026-11-22 作業員L（台帳 #590）: 候補の【時間確保】（時刻あり）を内覧の予定と分ける（TIMELINE_VIEWING_HOLD・既定 off）
+import { timelineViewingHoldOn } from "../situation-timeline";
+t("時間確保は内覧の候補（TIMELINE_VIEWING_HOLD）", () => {
+  const now = Date.parse("2026-11-22T00:00:00Z");
+  const cal = [
+    { title: "内覧", event_type: "viewing", start_at: "2026-11-24T05:00:00Z", all_day: false, is_done: false, notes: "【時間確保】\n11/24 14時〜" },
+    { title: "内覧", event_type: "viewing", start_at: "2026-11-25T06:00:00Z", all_day: false, is_done: false, notes: "物件: Aハイツ 101" },
+    { title: "電話", event_type: "phone", start_at: "2026-11-23T03:00:00Z", all_day: false, is_done: false, notes: "【時間確保】" },
+  ];
+  assert.equal(timelineViewingHoldOn({}), false);
+  // off: 今と同じ（時刻のある予定は全部内覧）
+  const off = buildTimeline({ customerMsgs: [], calendar: cal, nowMs: now, env: {} });
+  assert.equal(off.viewings.length, 3); assert.equal(off.holds, undefined);
+  assert.equal(readCalendarEvents(cal, {}).filter((c) => c.kind === "hold").length, 0);
+  // on: 内覧の時間確保だけを候補に（電話の予定は event_type が viewing でないので今のまま）
+  const on = buildTimeline({ customerMsgs: [], calendar: cal, nowMs: now, env: { TIMELINE_VIEWING_HOLD: "on" } });
+  assert.equal(on.viewings.length, 2); assert.equal(on.holds?.length, 1);
+  const block = timelineBlock(on, now);
+  assert.match(block, /内覧の候補の時間確保/); assert.match(block, /11\/24.*14:00（候補）/);
+});
+console.log("timeline-hold ok");
