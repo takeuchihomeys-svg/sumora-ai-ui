@@ -56,7 +56,7 @@ export const PROPERTY_BRAIN_IMAGE_SYSTEM =
 /**
  * 2026-11-21 作業員G（統括役「壁付けをほとんど分からないと答える件は、問いの直しを1案」）: counter_kitchen の問いの2案目。
  *   1案目は壁付けの図 9件中 8件を「分からない」と答えた（誤り0）。図のキッチンの向き・壁との接し方の手がかりを足す。
- *   既定は1案目のまま（COUNTER_KITCHEN_Q=v2 の時だけ2案目）。監査（scripts/image-audit.ts）で同じ9件を読み比べてから決める
+ *   目の監査（scripts/image-audit.ts・topic counter_kitchen_v2）で22件 誤り0 を確かめて既定は2案目（1案目に戻す: COUNTER_KITCHEN_Q=v1）
  */
 export const COUNTER_KITCHEN_QUESTION_V2 =
   "counter_kitchen: キッチンがカウンターキッチン（対面式・部屋の方を向いたカウンター付き）か。手がかり: " +
@@ -66,7 +66,8 @@ export const COUNTER_KITCHEN_QUESTION_V2 =
   "④図が小さい・キッチンが写っていない・どちらとも言えない時だけ null";
 
 export function buildImageQuestion(keys: ImageWantKey[], env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
-  const v2 = (env.COUNTER_KITCHEN_Q ?? "").trim().toLowerCase() === "v2";
+  // 2026-11-21 目の監査で2案目は22件 誤り0 → 既定を2案目に（戻す: COUNTER_KITCHEN_Q=v1）
+  const v2 = (env.COUNTER_KITCHEN_Q ?? "").trim().toLowerCase() !== "v1";
   return `次の項目を画像から判断して JSON で返してください:\n${keys.map((k) => "- " + (k === "counter_kitchen" && v2 ? COUNTER_KITCHEN_QUESTION_V2 : KEY_QUESTIONS[k])).join("\n")}`;
 }
 

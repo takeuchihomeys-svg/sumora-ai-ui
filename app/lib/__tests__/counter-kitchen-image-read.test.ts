@@ -16,4 +16,7 @@ ok("分からなければ null", parseImageFacts('{"counter_kitchen": null, "sto
 ok("true を読む", parseImageFacts('{"counter_kitchen": true}', ["counter_kitchen"])?.counter_kitchen === true);
 ok("1つも取れなければ失敗（null）", parseImageFacts('{"counter_kitchen": "たぶん"}', ["counter_kitchen"]) === null);
 
+ok("既定は2案目（廊下の一列のキッチンは false の手がかり）", /廊下/.test(buildImageQuestion(["counter_kitchen"], {})));
+ok("COUNTER_KITCHEN_Q=v1 で1案目に戻す", !/廊下/.test(buildImageQuestion(["counter_kitchen"], { COUNTER_KITCHEN_Q: "v1" })));
+
 if (failed) { console.log(`FAIL ${failed}`); process.exit(1); } else console.log("全 PASS");
