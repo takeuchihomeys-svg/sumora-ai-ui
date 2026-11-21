@@ -50,7 +50,8 @@ export async function runLinkageWatch(sb: SupabaseClient, o: { metaLimit?: numbe
     const f = r.fill;
     const since = new Date(nowMs - f.days * 86_400_000).toISOString();
     const timeCol = f.table === "cron_run_logs" ? "started_at" : "created_at";
-    const base = () => { let q = sb.from(f.table).select("*", { count: "exact", head: true }).gte(timeCol, since); for (const [k, v] of Object.entries(f.where ?? {})) q = v.startsWith("like:") ? q.like(k, v.slice(5)) : q.eq(k, v); return q; };
+    // 2026-11-21 作業員L: where の値 "isnull:" は「その列（json の道も可）が空」（見張りの読み直しの印 verdict_detail->reopened のある行を外す・統括役の決め）
+    const base = () => { let q = sb.from(f.table).select("*", { count: "exact", head: true }).gte(timeCol, since); for (const [k, v] of Object.entries(f.where ?? {})) q = v.startsWith("like:") ? q.like(k, v.slice(5)) : v === "isnull:" ? q.is(k, null) : q.eq(k, v); return q; };
     const all = await base();
     if (all.error) { notes.push(`${r.id}（${f.table}）: ${all.error.message}`); fills[r.id] = undefined; continue; }
     const n = all.count ?? 0;
