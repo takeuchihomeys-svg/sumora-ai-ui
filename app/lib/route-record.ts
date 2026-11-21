@@ -55,7 +55,20 @@ export const PLANT_TO_FACT: Readonly<Record<Plant, PlantFact | null>> = {
  * 状態を使ってよいか（#467 の (2) の「当たる状態だけ使う線」）。既定は全部の状態（few を除く）。
  *   ROUTE_SUBSTATE_DENY=<id,id>（22時以降の竹内さんの実送信の数えで外れた状態を外す）・few（例が4未満）は ROUTE_SUBSTATE_FEW=on の時だけ使う
  */
+/**
+ * 当たる状態の既定（2026-11-21 作業員M・scripts/audit-route-substate-takeuchi.ts・竹内さんの198通・網の当たり 62/198）:
+ *   proposing_considering 網16・誘導先が表の先に入る 100% ／ apply_screening_worry 網13・69%・仕込み 77% ／ apply_intent 網4・100%。
+ *   ほかは網の当たりが4未満（hearing_many_conditions・proposing_detail_question・apply_timing は網に型が無く 0）か、誘導先の一致が5割未満
+ *   （proposing_liked_one 29%・cost_over_budget 43%・brought_vacancy は仕込み 29%）＝使わない。⚠ 198通は表を作った元の番（甘く出る）・夜に別の番で測り直す
+ *   ROUTE_SUBSTATE_ALLOW=<id,id> で置き換える（"all" で全部）
+ */
+export const SUBSTATE_ALLOW_DEFAULT: readonly string[] = ["proposing_considering", "apply_screening_worry", "apply_intent"];
 export function substateUsable(s: Pick<Substate, "id" | "few">, env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  const allowRaw = (env.ROUTE_SUBSTATE_ALLOW ?? "").trim();
+  if (allowRaw.toLowerCase() !== "all") {
+    const allow = allowRaw ? allowRaw.split(",").map((x) => x.trim()).filter(Boolean) : SUBSTATE_ALLOW_DEFAULT;
+    if (!allow.includes(s.id)) return false;
+  }
   const deny = new Set((env.ROUTE_SUBSTATE_DENY ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   if (deny.has(s.id)) return false;
   if (s.few && (env.ROUTE_SUBSTATE_FEW ?? "").trim().toLowerCase() !== "on") return false;
