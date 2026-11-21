@@ -14,7 +14,10 @@ import { unfavorableFactsOf, hideVerdictOf, reaskedKeysOf, type HideVerdict } fr
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 
-type Turn = { id: number; conversation_id: string; customer_turn_at: string; draft_first: string | null; staff_texts: Array<{ at?: string; text?: string }> | null };
+type Turn = { id: number; conversation_id: string; customer_turn_at: string; draft_first: string | null; staff_texts: Array<{ at?: string; text?: string }> | null; scene_key: string | null };
+/** 2026-11-21 台帳 #495: 場面の列（数が足りる3場面だけ名前で・ほかは「少数」） */
+const MAIN_SCENES = new Set(["返信:条件提示", "返信:質問", "AIX:property_check_result"]);
+const sceneOf = (k: string | null) => (k && MAIN_SCENES.has(k) ? k : "少数");
 type Msg = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer: string | null };
 
 async function main() {
@@ -24,7 +27,7 @@ async function main() {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const turns: Turn[] = [];
   for (let from = 0; ; from += 500) {
-    const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,draft_first,staff_texts")
+    const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,draft_first,staff_texts,scene_key")
       .gte("customer_turn_at", since).not("draft_first", "is", null).order("id").range(from, from + 499);
     if (error) throw new Error(error.message);
     turns.push(...((data ?? []) as Turn[]));
@@ -41,6 +44,8 @@ async function main() {
     draft: { asked: 0, reask: 0, keys: {}, ids: [] }, takeuchi: { asked: 0, reask: 0, keys: {}, ids: [] }, employee: { asked: 0, reask: 0, keys: {}, ids: [] }, unknown: { asked: 0, reask: 0, keys: {}, ids: [] },
   };
   let b4Turns = 0;
+  const byScene: Record<string, { b4: number; hid: number; told: number; asked: number; reask: number }> = {};
+  const sc = (t: Turn) => (byScene[sceneOf(t.scene_key)] = byScene[sceneOf(t.scene_key)] ?? { b4: 0, hid: 0, told: 0, asked: 0, reask: 0 });
   const qRe = /[?？]|でしょうか|ますか|ですか/;
   for (const [conv, ts] of byConv) {
     const tMin = Math.min(...ts.map((t) => Date.parse(t.customer_turn_at))) - 30 * 86_400_000;
@@ -64,13 +69,13 @@ async function main() {
       };
       const replies: Array<[Who, string]> = [["draft", String(t.draft_first ?? "")]];
       if (sends.length) { const w = writerOf(sends[0]); replies.push([w === "takeuchi" || w === "employee" ? w : "unknown", sends.map((s) => s.text).join("\n")]); }
-      if (facts.length) b4Turns++;
+      if (facts.length) { b4Turns++; sc(t).b4++; }
       for (const [who, text] of replies) {
-        if (facts.length) { const v = hideVerdictOf(text, facts); b4[who][v]++; if (v === "hid" && b4Hid[who].length < 12) b4Hid[who].push(t.id); }
+        if (facts.length) { const v = hideVerdictOf(text, facts); b4[who][v]++; if (v === "hid" && b4Hid[who].length < 12) b4Hid[who].push(t.id); if (who !== "draft") { if (v === "hid") sc(t).hid++; if (v === "told") sc(t).told++; } }
         if (qRe.test(text)) {
-          b5[who].asked++;
+          b5[who].asked++; if (who !== "draft") sc(t).asked++;
           const ks = reaskedKeysOf(text, custPrior);
-          if (ks.length) { b5[who].reask++; for (const k of ks) b5[who].keys[k] = (b5[who].keys[k] ?? 0) + 1; if (b5[who].ids.length < 12) b5[who].ids.push(t.id); }
+          if (ks.length) { b5[who].reask++; if (who !== "draft") sc(t).reask++; for (const k of ks) b5[who].keys[k] = (b5[who].keys[k] ?? 0) + 1; if (b5[who].ids.length < 12) b5[who].ids.push(t.id); }
         }
       }
     }
@@ -87,8 +92,10 @@ async function main() {
     const r = b5[w];
     if (r.asked) console.log(`- ${w}: 問いのある返信 ${r.asked}｜聞き直し ${r.reask}（${pct(r.reask, r.asked)}）・鍵 ${JSON.stringify(r.keys)}｜例 ${r.ids.join(",")}`);
   }
+  console.log("場面ごと（実送信・竹内さんと従業員）");
+  for (const [k, v] of Object.entries(byScene)) console.log(`- ${k}: 不利な結果のある番 ${v.b4}（触れた ${v.told}・伏せて誘った ${v.hid}）｜問いのある返信 ${v.asked}（聞き直し ${v.reask}）`);
   const out = arg("out");
-  if (out) writeFileSync(out, JSON.stringify({ days, turns: use.length, b4Turns, b4, b4Hid, b5 }, null, 1));
+  if (out) writeFileSync(out, JSON.stringify({ days, turns: use.length, b4Turns, b4, b4Hid, b5, byScene }, null, 1));
 }
 
 if (process.argv[1]?.endsWith("audit-trust-b4b5.ts")) main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });
