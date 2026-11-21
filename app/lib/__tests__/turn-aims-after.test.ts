@@ -29,7 +29,10 @@ t("受け渡しに出る", handoffNote(buildHandoff({ to: "compose", meta: m }))
 // 配線（道を決める所には渡さない＝generate-reply の受け渡しだけ）
 const route = readFileSync("app/api/generate-reply/route.ts", "utf8");
 t("generate-reply の受け渡しに配線", route.includes('meta: metaWithTurnAimsAfter(brainMeta as unknown as Record<string, unknown>, customerMsgUnits.join("\\n") || (message ?? ""))'));
-t("brain-core には渡していない", !readFileSync("app/lib/brain-core.ts", "utf8").includes("turn-aims-after"));
+// 2026-11-21 作業員M（#467）: brain-core は判断が終わった後の meta の記録（apply_route・turn_aims_after）にだけ使う＝ブレインの材料・出力の欄には渡さない
+{ const bc = readFileSync("app/lib/brain-core.ts", "utf8").split("\n");
+  const uses = bc.filter((l) => /deriveTurnAimsAfter\(|matchSubstateOf\(|metaWithTurnAimsAfter/.test(l));
+  t("brain-core には渡していない（記録の行だけ）", !bc.some((l) => l.includes("metaWithTurnAimsAfter")) && uses.length > 0 && uses.every((l) => l.includes("applyRouteLocRec ?")), uses.map((l) => l.trim().slice(0, 60))); }
 
 console.log(`turn-aims-after: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

@@ -29,13 +29,18 @@ const MATCH: Array<[Substate["id"], RegExp]> = [
   ["brought_vacancy", /https?:\/\/|空いて(?:ます|い)|募集(?:中|して)/],
 ];
 
+/** お客様の今の連投の言葉で当たる細かい状態（道に関係なく・当たらなければ null）。2026-11-21 作業員M（#467）: 統括の指示書（route-record.routeBriefSection）と同じ網を使うため外に出した */
+export function matchSubstateOf(customerText: string | null | undefined): Substate | null {
+  const t = String(customerText ?? "").normalize("NFKC");
+  if (!t.trim() || SUBSTATE_SKIP_MOVE_IN_RE.test(t)) return null; // 一般の手続きの問い（最短・最速の入居）は作らない（q065）
+  const hit = MATCH.find(([, re]) => re.test(t));
+  return (hit ? SUBSTATES.find((x) => x.id === hit[0]) : undefined) ?? null;
+}
+
 /** 道が決まった後の目的・中期・仕込み・深さ（返信の番だけ・当たらなければ null） */
 export function deriveTurnAimsAfter(i: { customerText: string | null | undefined; route: "reply" | "aix"; env?: Env }): TurnAims | null {
   if (!turnAimsAfterOn(i.env) || i.route !== "reply") return null;
-  const t = String(i.customerText ?? "").normalize("NFKC");
-  if (!t.trim() || SUBSTATE_SKIP_MOVE_IN_RE.test(t)) return null; // 一般の手続きの問い（最短・最速の入居）は作らない（q065）
-  const hit = MATCH.find(([, re]) => re.test(t));
-  const s = hit ? SUBSTATES.find((x) => x.id === hit[0]) : undefined;
+  const s = matchSubstateOf(i.customerText);
   if (!s) return null;
   const plant = s.plants.map((p) => PLANT_JA[p]).join("・").slice(0, 30);
   return {

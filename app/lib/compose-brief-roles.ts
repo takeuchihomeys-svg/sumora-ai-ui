@@ -66,7 +66,9 @@ function sectionLine(k: string, v: unknown): string | null {
     case "next_concrete": { const s = o && Array.isArray(o.steps) ? (o.steps as unknown[]).map(obj).filter((x): x is Record<string, unknown> => !!x) : []; return s.length ? `次の一手の具体: ${s.slice(0, 2).map((x) => `${cut(x.item, 24)}（${cut(obj(x.when)?.word ?? obj(x.when)?.at, 10)}）`).join("・")}` : null; }
     // 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ指示書にある）
     case "feeling": return o ? `気持ち・状況の表: ${[o.focus ? `重点 ${cut(o.focus, 14)}` : "", o.push ? `一手の強さ ${cut(o.push, 6)}` : "", o.combo ? `組 ${cut(o.combo, 40)}` : "", o.next ? `次に送る物 ${cut(o.next, 20)}` : "", o.tool ? `AIX ツール ${cut(o.tool, 60)}` : ""].filter(Boolean).join("・")}` : null;
-    case "aim": return o ? `目的: ${cut(o.purpose ?? "-", 20)}${o.mid && o.mid !== BRIEF_NONE ? `・中期: ${cut(o.mid, 20)}` : ""}` : null;
+    // 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ指示書にある）: 地図の今の状態（駅と合って使ってよい状態の時だけ・値のまま）
+    case "route": { const sb = obj(o?.substate); return o && sb?.usable ? `地図の状態: ${cut(sb.label, 20)}${o.node ? `（駅 ${cut(o.node, 20)}）` : ""}${o.turn_aim ? `・目的 ${cut(o.turn_aim, 24)}` : ""}${o.mid_aim ? `・中期 ${cut(o.mid_aim, 30)}` : ""}${o.depth ? `・先読み ${String(o.depth)}` : ""}` : null; }
+    case "aim": return o ? `目的:${cut(o.purpose ?? "-", 20)}${o.mid && o.mid !== BRIEF_NONE ? `・中期: ${cut(o.mid, 20)}` : ""}` : null;
     default: return null;
   }
 }
