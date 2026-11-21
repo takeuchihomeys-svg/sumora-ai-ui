@@ -3658,6 +3658,9 @@ CREATE TABLE IF NOT EXISTS image_details (
   read_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
+-- 2026-11-22 作業員K2（#287 画像の記録の①・統括役の了承）: こちらが送った画像の部分（listing 資料／interior 室内／floor_plan 間取り図／exterior 外観／cost 費用・見積）。
+--   言葉は customer_image_records.part と同じ。null 可・既定なし（kind を読む今の側は変わらない）。戻す: ALTER TABLE image_details DROP COLUMN IF EXISTS part;
+ALTER TABLE image_details ADD COLUMN IF NOT EXISTS part TEXT;
 
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
