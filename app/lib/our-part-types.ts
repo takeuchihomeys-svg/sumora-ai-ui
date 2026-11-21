@@ -81,26 +81,41 @@ export type OurPart = { key: string; kind: OurPartKind; label: string; purpose: 
 
 const isQuestion = (s: string) => /[?？]|でしょうか|ございますか|(?:頂|いただ)けますか|お聞かせ|教えて/.test(s);
 const PROMISE_TAIL = /(?:させて|致し|いたし)(?:頂き|いただき)?ます/;
+/**
+ * 2026-11-21 作業員L（台帳 #56）: 本番の meta.situation_now.our_items を読むと
+ *   「管理会社担当者さんから…交渉させていただきます」が内覧の扉に、「再度明日お電話かけさせていただきます」が答え・受けに入り、
+ *   約束（こちらが果たす物）に数えていなかった。「〇〇さん、はじめまして😊！」も読点のため挨拶として飛ばせず部分に入っていた。
+ *   OUR_PARTS_PROMISE_WIDE=on（既定 off）の時だけ、約束の網に 交渉・電話 を足し、読点つきの挨拶を飛ばす（off は今と同じ）
+ */
+export const ourPartsPromiseWideOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.OUR_PARTS_PROMISE_WIDE ?? "").trim().toLowerCase() === "on";
+export const PROMISE_WIDE_PARTS: Record<string, PartSpec> = {
+  "promise.negotiate": { kind: "promise", label: "交渉する", purpose: "条件・日程を管理会社と交渉して結果を伝える", expect: "fulfil", dueHours: 2 * H, re: /交渉/ },
+  "promise.call": { kind: "promise", label: "電話する", purpose: "電話で確かめる・話す", expect: "fulfil", dueHours: H, re: /お?電話(?:を)?(?:お?かけ|お?掛け|させて|致し|いたし)|折り返し/ },
+};
+const GREET_WIDE = /^(?:\S{0,12}さん[、,]\s*)(?:お世話になっております|はじめまして)/;
 
 /** こちらの1通（文字）を細かい部分に分ける（網・本番の判断はブレイン）。AIX の1通は aixPart で別に作る */
-export function splitOurPartsFine(text: string, at: string): OurPart[] {
+export function splitOurPartsFine(text: string, at: string, env?: Record<string, string | undefined>): OurPart[] {
+  const wide = ourPartsPromiseWideOn(env);
+  const parts: Record<string, PartSpec> = wide ? { ...PROMISE_WIDE_PARTS, ...OUR_PARTS } : OUR_PARTS;
   const sents = String(text ?? "").split(/(?<=[！!。？?])\s*|\n+/).map((s) => s.trim()).filter((s) => s.length >= 4);
   const out: OurPart[] = [];
   const seen = new Set<string>();
   for (const s of sents) {
     if (/^(?:\S{0,12}さん)?(?:お世話になっております|はじめまして)|^何卒よろしく|^お手隙の際に|^かしこまりました|^はい[😊！!]*$/.test(s) && s.length < 30) continue;
+    if (wide && GREET_WIDE.test(s) && s.length < 30) continue;
     let key: string | null = null;
     const q = isQuestion(s);
     const order: OurPartKind[] = q ? ["proposal", "question"] : PROMISE_TAIL.test(s) ? ["promise", "invite", "proposal", "property", "fact"] : ["property", "proposal", "invite", "fact"];
     for (const k of order) {
-      key = Object.keys(OUR_PARTS).find((kk) => OUR_PARTS[kk].kind === k && OUR_PARTS[kk].re.test(s)) ?? null;
+      key = Object.keys(parts).find((kk) => parts[kk].kind === k && parts[kk].re.test(s)) ?? null;
       if (key) break;
     }
     if (!key && q) key = "question.property_wish";
     if (!key && !/^(?:\S{0,12}さん)?(?:お世話|はじめまして|この度|何卒|お手隙|かしこまり|はい|ありがとう|お部屋探しを担当)/.test(s)) key = "fact.answer";
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    const sp = OUR_PARTS[key];
+    const sp = parts[key];
     out.push({ key, kind: sp.kind, label: sp.label, purpose: sp.purpose, expect: sp.expect, dueHours: sp.dueHours, text: s.slice(0, 80), at });
   }
   return out;
