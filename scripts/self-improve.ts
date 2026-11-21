@@ -20,7 +20,9 @@ import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
 import { comboDaily } from "./lib/combo-daily";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow } from "./lib/self-improve-growth";
+import { existsSync as existsSyncPU } from "node:fs";
+import { inOriginMain } from "./check-foundation";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -202,6 +204,20 @@ async function main() {
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
   if (only === "core" && coreFix.length) lines.push("### 直しの候補（芯）", ...coreFix.map((x) => `- ${x}`));
+  // ピックアップで送る物件の「物件の理解」の欄（作業員K2 の頼み・台帳 #469・送った行のうち埋まっている割合と、元はあるのに空の数）
+  const pu = doMetrics ? pickupUnderstandingNow((x) => existsSyncPU(x) || inOriginMain(x)) : null;
+  const puRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  if (pu) {
+    const low: string[] = [];
+    for (const [k, f] of Object.entries(pu.fields)) {
+      const tot = f.filled + f.gap + f.none;
+      const rate = tot ? Math.round((f.filled / tot) * 1000) / 10 : null;
+      puRows.push({ metric: `growth:pickup_field:${k}`, value: rate, n: tot }, { metric: `growth:pickup_field_gap:${k}`, value: f.gap, n: tot });
+      if (rate != null && rate < 90) low.push(`${k} ${rate}%（元はあるのに空 ${f.gap}）`);
+    }
+    lines.push(`- ピックアップの物件の理解（前の日・送った ${pu.n}行）: 90% に届かない欄 ${low.join("・") || "なし"}`);
+    if (low.length) growthFix.push(`ピックアップの物件の理解の欄が低い: ${low.slice(0, 3).join("・")} → 作業員K2・台帳 #469`);
+  }
   // 返信と AIX の組（作業員M の頼み・台帳 #405・#32 の物差し・竹内さん本人の番は少ないので14日の窓）
   const cd = doMetrics ? await comboDaily(sb, day, 14).catch(() => null) : null;
   if (cd) {
@@ -253,6 +269,7 @@ async function main() {
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n }))] : []),
     ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))

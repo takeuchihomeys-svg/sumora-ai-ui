@@ -68,6 +68,22 @@ export function writerLinkageNow(): { n: number; briefRate: number | null; deliv
   } catch { return null; } finally { try { rmSync(out); } catch { /* 無ければよい */ } }
 }
 
+/**
+ * 4 ピックアップで送る物件の「物件の理解」の欄の埋まり方（作業員K2 の scripts/audit-pickup-understanding.ts --days=1 --sent --json・2026-11-21 K2 の頼み）。
+ *   JSON の形（K2 と決めた）: { n: 送った行, fields: { <鍵>: { filled: 埋まっている, gap: 元はあるのに空, none: 元も無い } } }
+ *   台本がまだ無い（main に入っていない）時は null（何もしない）
+ */
+export function pickupUnderstandingNow(exists: (p: string) => boolean): { n: number; fields: Record<string, { filled: number; gap: number; none: number }> } | null {
+  const script = "scripts/audit-pickup-understanding.ts";
+  if (!exists(script)) return null;
+  const out = join(tmpdir(), `pickup-understanding-${process.pid}.json`);
+  try {
+    runTsx([script, "--days=1", "--sent", `--json=${out}`], 180_000);
+    const j = JSON.parse(readFileSync(out, "utf8")) as { n?: number; fields?: Record<string, { filled: number; gap: number; none: number }> };
+    return j.fields ? { n: Number(j.n ?? 0), fields: j.fields } : null;
+  } catch { return null; } finally { try { rmSync(out); } catch { /* 無し */ } }
+}
+
 /** 下がった・上がらない（純関数）: 前の日より下がった、または前の週より上がっていない時に候補（数が少ない日は見ない） */
 export function needsFix(v: number | null, prevDay: number | null, prevWeek: number | null, n: number | null, minN = 3, higherIsBetter = true): "down" | "flat" | null {
   if (v == null || (n != null && n < minN)) return null;
