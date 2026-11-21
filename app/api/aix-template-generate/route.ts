@@ -1298,7 +1298,8 @@ export async function POST(req: NextRequest) {
   let askProgressNoteText = "";
   try {
     const al = await import("@/app/lib/ask-ledger");
-    if (al.askProgressReadOn() && conversationId && !isStaleMeta) {
+    // 2026-11-22 作業員M: 2通目の文を変える注記は ASK_PROGRESS_AIX_NOTE（既定 off）に分けた（ASK_PROGRESS_READ は記録だけで既定 on）
+    if (al.askProgressAixNoteOn() && conversationId && !isStaleMeta) {
       const led = al.askLedgerOf(brainMeta);
       if (led) {
         const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", conversationId).maybeSingle();
