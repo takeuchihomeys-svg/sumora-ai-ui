@@ -129,6 +129,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // 2026-11-21 作業員G（統括Pro 段A）: 物件検索の毎日の質の数を quality_daily に（LLM なし・最新の統括Pro の根拠の行から・scope ごとに1行読むだけ）。
+    //   LLM が答えなくても書く。失敗しても cron は止めない。
+    if (!dry) {
+      try {
+        const { writeLatestSearchQuality } = await import("@/app/lib/search-quality-daily");
+        (out as Record<string, unknown>).quality_daily = await writeLatestSearchQuality();
+      } catch (e) {
+        (out as Record<string, unknown>).quality_daily_error = String((e as Error)?.message || e).slice(0, 120);
+      }
+    }
+
     return NextResponse.json(out, { headers: CORS });
   } catch (e) {
     return NextResponse.json(
