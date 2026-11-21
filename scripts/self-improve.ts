@@ -19,6 +19,7 @@ import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-co
 import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
+import { comboDaily } from "./lib/combo-daily";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems } from "./lib/self-improve-growth";
 
 const argv = process.argv.slice(2);
@@ -201,6 +202,15 @@ async function main() {
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
   if (only === "core" && coreFix.length) lines.push("### 直しの候補（芯）", ...coreFix.map((x) => `- ${x}`));
+  // 返信と AIX の組（作業員M の頼み・台帳 #405・#32 の物差し・竹内さん本人の番は少ないので14日の窓）
+  const cd = doMetrics ? await comboDaily(sb, day, 14).catch(() => null) : null;
+  if (cd) {
+    growthRows.push({ metric: "growth:combo:組の一致", value: cd.sameRate, n: cd.n, key: "first_move", higherIsBetter: true, label: `返信と AIX の組の一致（竹内さん本人の番・14日）` });
+    const dc = needsFix(cd.sameRate, prev2("growth:combo:組の一致", prevDay), prev2("growth:combo:組の一致", prevWeek), cd.n, 3, true);
+    lines.push(`- 返信と AIX の組の一致（竹内さん本人の番・14日）: ${cd.sameRate ?? "—"}%（${cd.n}番）${dc ? (dc === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
+    if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
+    lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
+  }
   if (only === "metrics" && growthFix.length) lines.push("### 直しの候補（伸びしろが下がった・上がらない）", ...growthFix.map((x) => `- ${x}`));
   if (Object.keys(ed.features).length) lines.push(`- ピックアップの直しの中身（竹内さん）: ${Object.entries(ed.features).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("・")}`);
 
@@ -243,6 +253,7 @@ async function main() {
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n }))] : []),
     ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
