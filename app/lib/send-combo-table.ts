@@ -58,8 +58,8 @@ const always = () => true;
 export const SEND_COMBO_ROWS: readonly ComboRow[] = [
   { type: "T11_first_contact_hearing", when: "初回", match: (c) => !!c.firstContact || !!c.hearing, route: "aix", combo: "reply_then_aix_quick", order: "挨拶＋問いや不安への答えの返信 → 数秒〜1分半後に AIX【条件ヒアリング】 → フォームの案内の返信（決まった文・FIRST_HEARING_SEQUENCE）", gap: "秒",
     why: "挨拶と問いへの答えで信頼を作ってからフォーム＝いきなりフォームだと機械的に見える（作業員4 の見極め 6会話中5・本番 12306 は返信を落とした外れ）", purpose: "信頼を作ってから聞く", missing: "エリア・家賃・間取り・入居時期・初期費用の予算", keyPoint: "機械的に見せずに条件をそろえる（問いには先に答える）", count: "11/13 作業員7b 本番の見張り60日の AIX【条件ヒアリング】24番: フォームの前に返信 22・返信→フォーム→返信 19・案内の型 13（久しぶりの探し直し 12306 も同じ形）／6会話中5（作業員4）・11/12 監査 120日（グループを外した 704番）: 初回83番で RA 3・RAR 9（返信＋2分以内の AIX は 6組・間隔の中央 30秒・AIX はほぼ条件ヒアリング）" },
-  { type: "T10_result_ready", when: "結果が手元・悪い知らせ", match: (c) => !!c.resultReady && !!c.badNews, route: "aix", combo: "aix_then_reply", order: "AIX【物件確認した】（募集終了・申込が入っていた）→ 返信で代わりの物件・次の手", gap: "分",
-    why: "悪い知らせは事実で先に（AIX の決まった形）・次の手は後の返信で（関係が縮まないように）", purpose: "事実を正確に伝えてから次の手で関係をつなぐ", missing: "代わりに合う物件・お客様の気持ち（がっかり）", keyPoint: "悪い知らせを事実で先に・代わりの物件を後に（関係を縮めない）", count: "悪い知らせだけは未数え（AR 全体は 11/12 監査 120日で 56番）" },
+  { type: "T10_result_ready", when: "結果が手元・悪い知らせ", match: (c) => !!c.resultReady && !!c.badNews, route: "aix", combo: "aix_then_aix", order: "AIX【物件確認した】（募集終了・申込が入っていた）→ 数分後に AIX【物件を送る】（代わりの物件）", gap: "分",
+    why: "悪い知らせは事実で先に（AIX の決まった形）・次の手は後の返信で（関係が縮まないように）", purpose: "事実を正確に伝えてから次の手で関係をつなぐ", missing: "代わりに合う物件・お客様の気持ち（がっかり）", keyPoint: "悪い知らせを事実で先に・代わりの物件を後に（関係を縮めない）", count: "11/22 作業員M（scripts/audit-combo-unknown-rows.ts・竹内さん本人の番 120日）: 最初の AIX が物件確認した unavailable の 8番＝AIX→AIX 4・AIX だけ 2・2段 1・AIX→返信 1（代わりの物件は返信でなく AIX【物件を送る】で送る＝11/22 に組を aix_then_reply から直した）。比べ: 空いていた 10番＝AIX→返信 4・AIX→AIX 3" },
   { type: "T10_result_ready", when: "結果が手元（空いていた・見積ができた）", match: (c) => !!c.resultReady, route: "aix", combo: "aix_then_reply", order: "AIX（結果・見積書）→ 返信で内覧・申込への誘い", gap: "分",
     why: "結果（事実・金額）は AIX で正確に・誘いは返信で人の言葉で（竹内さん AR 79番＝返信2通以上の番の中で一番多い組）", purpose: "結果を渡して次の段へ進める", missing: "お客様がその結果で決めるか（内覧・申込の意思）", keyPoint: "数字・事実は AIX で正確に、誘いは返信で人の言葉で", count: "200日 AR 79・11/12 監査 120日 AR 56（決める合図 6/24・費用 11/70・物件が届いた 8/80・AIX は見積書が多い）" },
   // 2026-11-13 作業員7b: 条件ヒアリングの番は型の id に関わらず（久しぶりの探し直し 12306 も）同じ組（上の T11 の行と同じ中身・型の id が無い時の受け）
@@ -67,7 +67,7 @@ export const SEND_COMBO_ROWS: readonly ComboRow[] = [
     why: "挨拶と問いへの答えで信頼を作ってからフォーム＝いきなりフォームだと機械的に見える", purpose: "信頼を作ってから聞く", missing: "エリア・家賃・間取り・入居時期・初期費用の予算", keyPoint: "機械的に見せずに条件をそろえる（問いには先に答える）", count: "本番の見張り60日の AIX【条件ヒアリング】24番: 返信→フォーム→返信 19・フォームの前に返信 22" },
   // 2026-11-13 作業員7b（弱い所 aix:skip-result-and-two-msg-order の 11408）: 約束が2つ開いていて（募集状況の確認＋ピックアップ）、了承だけの番は、竹内さんは約束した順に AIX で果たす
   { type: "*", when: "約束が2つ開いている（確認＋ピックアップ）・結果が手元", match: (c) => !!c.twoOpenPromises && !!c.resultReady, route: "aix", combo: "aix_then_aix", order: "AIX【物件確認した】（確認の結果・募集終了など）→ 数分後に AIX【物件を送る】（約束したピックアップ）", gap: "分",
-    why: "お客様が先に頼んだ確認の答えを先に（後回しにすると聞いた事への答えが抜ける）・代わりの物件はその後（feedback_promise_order_split の順: 物件の募集確認→結果 AIX→…）", purpose: "約束を1つも落とさずに順に果たす", missing: "確認の結果（スタッフだけが知る）", keyPoint: "1通に詰めない・先の約束から", count: "11408（1番）・竹内さんの同じ形の番は未数え（(a) で数える）" },
+    why: "お客様が先に頼んだ確認の答えを先に（後回しにすると聞いた事への答えが抜ける）・代わりの物件はその後（feedback_promise_order_split の順: 物件の募集確認→結果 AIX→…）", purpose: "約束を1つも落とさずに順に果たす", missing: "確認の結果（スタッフだけが知る）", keyPoint: "1通に詰めない・先の約束から", count: "11/22 作業員M（同じ台本・前48時間に確認とピックアップの両方を約束した番 32）: 返信だけ 14・AIX→返信 5・2段 5・AIX だけ 3・返信→すぐ AIX 2・AIX→AIX 2（結果が手元かは数えに入れていない＝この行の組 AIX→AIX は少数・行の当たる番を結果が手元の番に絞って数え直すまで今のまま）" },
   // 2026-11-13 作業員C（組の違いの14日の監査 scripts/audit-combo-mismatch.ts・竹内さん本人の番）: 物件を送る AIX（何件も）の後、竹内さんは返信で一押し1件を言う
   //   実送信の形「お送りさせて頂きましたお部屋の中でも特に〇〇が特にオススメのお部屋となります！！」＋理由（敷金礼金なし・駐車場代込で月〇 等）。複数送った時だけ（1件のオススメには言わない）
   { type: "*", when: "物件を送る AIX（何件も）", match: (c) => c.aixKind === "property_send", route: "aix", combo: "aix_then_reply", order: "AIX【物件を送る】（何件も）→ 返信で一押し1件（お送りさせて頂きましたお部屋の中でも特に〇〇がオススメ＋理由）", gap: "分",
