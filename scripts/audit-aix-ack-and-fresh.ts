@@ -24,10 +24,11 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
   // ② 届き方
   const { data: us } = await sb.from("aix_usage_logs").select("conversation_id, aix_type, sent_at").gte("sent_at", since).not("aix_type", "is", null).limit(3000);
   const presses = ((us ?? []) as Array<{ conversation_id: string; aix_type: string; sent_at: string }>).filter((u) => !isTestConversation(u.conversation_id) && !isNoLineTestConversation(u.conversation_id));
-  const fresh: Record<string, { n: number; fresh: number }> = {};
+  const fresh: Record<string, { n: number; fresh: number; no_decision?: number }> = {};
   const byConv = new Map<string, typeof presses>(); for (const p of presses) byConv.set(p.conversation_id, [...(byConv.get(p.conversation_id) ?? []), p]);
   for (const [c, list] of byConv) {
-    const from = new Date(Date.parse(list.map((p) => p.sent_at).sort()[0]) - 2 * 864e5).toISOString();
+    // 2026-11-22 K2（#582 の実物の照らし）: 2日では、最後のお客様の発言が6日前の番（b37b3859・11/14→11/20 に押した）で判断を読めず「古い」に数えていた＝30日に
+    const from = new Date(Date.parse(list.map((p) => p.sent_at).sort()[0]) - 30 * 864e5).toISOString();
     const [mq, bq] = await Promise.all([
       sb.from("messages").select("created_at").eq("conversation_id", c).eq("sender", "customer").gte("created_at", from).order("created_at").limit(2000),
       sb.from("brain_decision_logs").select("created_at, analyzed_msg_ts").eq("conversation_id", c).gte("created_at", from).order("created_at").limit(2000),
@@ -40,7 +41,9 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
       const d = [...decs].reverse().find((x) => Date.parse(x.created_at) <= at);
       const ok = !!d?.analyzed_msg_ts && (lastCust == null || Date.parse(d.analyzed_msg_ts) >= lastCust - 5000);
       const fam = aixFamilyOf(p.aix_type);
-      const c2 = (fresh[fam] ??= { n: 0, fresh: 0 }); c2.n++; if (ok) c2.fresh++;
+      const c2 = (fresh[fam] ??= { n: 0, fresh: 0, no_decision: 0 }); c2.n++; if (ok) c2.fresh++;
+      // 判断の行が1つも無い番（お客様の発言も無い会話で押した等）は「古い」と分けて数える（40f0db25 の形）
+      if (!d) c2.no_decision = (c2.no_decision ?? 0) + 1;
     }
   }
   console.log(`① AIX【確認します】をブレインが勧めた（${days}日）: ${ackRows.length}・代表確認の決まり ${daihyo}・それ以外（外れ） ${ackRows.length - daihyo}`);

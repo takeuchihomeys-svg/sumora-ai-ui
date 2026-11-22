@@ -31,21 +31,22 @@ export async function aixEditOfDay(sb: SupabaseClient, s0: string, e0: string) {
     for (const x of (m ?? []) as Array<{ line_message_id: string; text: string | null; staff_writer: string | null }>) msgs.set(x.line_message_id, x);
   }
   // 2026-11-21 作業員N: 押されなかった種類も n=0 で返す（毎日の数が「回っていない」と見えないように・check-stale）
-  const byType: Record<string, { n: number; edited: number; withAi: number }> = Object.fromEntries([...FIRST_MOVE_GROUPS.map(([g]) => g), "ピックアップ"].map((g) => [g, { n: 0, edited: 0, withAi: 0 }]));
+  const byType: Record<string, { n: number; edited: number; withAi: number }> = Object.fromEntries([...FIRST_MOVE_GROUPS.map(([g]) => g), "ピックアップ", "オススメ"].map((g) => [g, { n: 0, edited: 0, withAi: 0 }]));
   const features: Record<string, number> = {};
   for (const r of rows) {
     const m = msgs.get(r.line_message_id);
     if (!m || m.staff_writer !== "takeuchi") continue; // 正解は竹内さん本人の番（KB 41dadfe6）
     const g = groupOf(r.aix_type) === "物件" && r.aix_type === "property_send" ? "ピックアップ" : groupOf(r.aix_type);
-    const t = (byType[g] = byType[g] ?? { n: 0, edited: 0, withAi: 0 });
-    t.n++;
+    // 2026-11-22 作業員K2（台帳 #543・土台 k2.recommend_text の growth:aix_edit:オススメ）: 物件オススメ（property_recommendation）は「物件」に数えたまま、別の行「オススメ」にも数える（物件の続きの数は変えない）
+    const ts = [(byType[g] = byType[g] ?? { n: 0, edited: 0, withAi: 0 }), ...(r.aix_type === "property_recommendation" ? [byType["オススメ"]] : [])];
+    for (const t of ts) t.n++;
     const c = cs.filter((x) => x.conversation_id === r.conversation_id && x.action_type === r.aix_type && Math.abs(Date.parse(x.created_at) - Date.parse(r.sent_at)) <= 600_000)[0];
     if (c?.original_text) {
-      t.withAi++;
+      for (const t of ts) t.withAi++;
       const ks = editKinds(c.original_text, m.text ?? "");
-      if (!(ks.length === 1 && (ks[0] === "同じ" || ks[0] === "名前だけ"))) t.edited++;
+      if (!(ks.length === 1 && (ks[0] === "同じ" || ks[0] === "名前だけ"))) for (const t of ts) t.edited++;
       if (g === "ピックアップ") for (const f of pickupEditFeatures(c.original_text, m.text ?? "")) features[f] = (features[f] ?? 0) + 1;
-    } else if (r.was_edited) t.edited++;
+    } else if (r.was_edited) for (const t of ts) t.edited++;
   }
   return { byType, features };
 }
