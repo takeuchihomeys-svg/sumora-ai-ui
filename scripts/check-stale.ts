@@ -22,6 +22,11 @@ export function expectedMetrics(): Array<{ metric: string; owner: string }> {
   ];
   if (has("scripts/audit-appeal-vs-codes.ts")) out.push({ metric: "growth:pickup_via_tool", owner: "作業員K2" });
   if (has("scripts/image-field-fill-daily.ts")) out.push({ metric: "image_fill:%", owner: "作業員G" });
+  // 2026-11-22 作業員K2（#479）: 番が来た時だけ書く記録（カウンターキッチンの画像の読み・刺さった点）の「来た番→書いた数」を毎日。
+  //   0行が番の来ない0か、来たのに書いていない0かを分ける（scripts/audit-event-write-gaps.ts --json・N2 の毎朝の1枚が growth:event_write:% に書く）
+  if (has("scripts/audit-event-write-gaps.ts")) out.push({ metric: "growth:event_write:%", owner: "作業員K2" });
+  if (has("scripts/audit-pickup-ready-daily.ts")) out.push({ metric: "growth:pickup_ready:%", owner: "作業員K2" });
+  if (has("scripts/audit-pickup-select-link.ts")) out.push({ metric: "growth:pickup_select:%", owner: "作業員K2" });
   return [...new Map(out.map((x) => [x.metric, x])).values()];
 }
 
