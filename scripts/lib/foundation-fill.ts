@@ -97,3 +97,17 @@ export function fillNotShrinking(now: { full: number; n: number; sceneGap: numbe
   if (now.full < now.n && prev.full != null && now.full <= prev.full) out.push(`欄が全部そろった土台 ${now.full}/${now.n}（前の日 ${prev.full}）が増えていない → ${[...new Set(owners.notFull)].slice(0, 6).join("・")}`);
   return out;
 }
+
+/** 2026-11-23 作業員N（台帳 #505・作業員P の #610 の木と名前を揃える）: 土台の葉。鍵は found:<土台id>:<場面>:<欄>（場面は KB_SCENES の鍵・場面の無い欄は all）。
+ *  P の木では別の根として持ち、scene と cause が同じ葉に「関わる土台の葉」として並べる（数は足さず参照だけ）。書き手の選び方（writer_select）は土台に無いので all。
+ *  cause: 決まりが無い→misread（場面や決まりの読み違い）・部品が無い→material（材料が届いていない）・物差し／毎日の数が無い→measure（測れていない） */
+export type FoundationLeaf = { key: string; foundation: string; scene: string; col: FillCol; filled: boolean; owner: string; cause: "misread" | "material" | "measure"; writer_select: "all" };
+const CAUSE_OF: Record<FillCol, FoundationLeaf["cause"]> = { rules: "misread", scene_rules: "misread", parts: "material", measures: "measure", metric: "measure", scene_measure: "measure" };
+export function foundationLeavesOf(fill: ReadonlyArray<FillRow>, scenes: ReadonlyArray<string>): FoundationLeaf[] {
+  const out: FoundationLeaf[] = [];
+  for (const f of fill) for (const c of f.cells) {
+    const per = c.col === "scene_rules" ? scenes.map((s) => ({ s, filled: !f.emptyScenes.includes(s) })) : [{ s: "all", filled: c.filled }];
+    for (const p of per) out.push({ key: `found:${f.id}:${p.s}:${c.col}`, foundation: f.id, scene: p.s, col: c.col, filled: p.filled, owner: c.owner, cause: CAUSE_OF[c.col], writer_select: "all" });
+  }
+  return out;
+}
