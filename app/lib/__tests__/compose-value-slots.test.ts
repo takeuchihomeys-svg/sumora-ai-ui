@@ -60,9 +60,10 @@ t("締めの決め表", () => {
 });
 
 t("既定 off は何も足さない・on で1行", () => {
-  assert.equal(composeValueSlotsOn({}), false);
+  assert.equal(composeValueSlotsOn({}), true); // 2026-11-21 既定 on
+  assert.equal(composeValueSlotsOn({ COMPOSE_VALUE_SLOTS: "off" }), false);
   assert.equal(composeClosingTableOn({}), false);
-  assert.equal(valueSlotsNote({ appeal: appealValuePlan({ materialText: MAT }) }, {}), "");
+  assert.equal(valueSlotsNote({ appeal: appealValuePlan({ materialText: MAT }) }, { COMPOSE_VALUE_SLOTS: "off" }), "");
   assert.equal(closingNote(decideClosing(base), {}), "");
   assert.match(valueSlotsNote({ appeal: appealValuePlan({ materialText: MAT }) }, { COMPOSE_VALUE_SLOTS: "on" }), /推す値.*1文目: 敷金礼金なし/);
   assert.match(closingNote(decideClosing(base), { COMPOSE_CLOSING_TABLE: "on" }), /^- 締め: 内覧の誘い/);

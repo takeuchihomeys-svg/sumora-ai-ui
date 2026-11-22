@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { imageDetailPartOn, partOfAixImage } from "@/app/lib/image-detail-part";
 import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { flagOn } from "@/app/lib/brain-attention";
 import { supabase } from "@/app/lib/supabase-server";
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
 
-  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, reply_based_on_customer_at, allow_stale, send_id } = await req.json() as {
+  const { line_user_id, message, image_url, image_urls, account, conversation_id, origin, call_button, aix_type, check_pattern, reply_based_on_customer_at, allow_stale, send_id } = await req.json() as {
     line_user_id?: string;
     message?: string;
     image_url?: string;
@@ -94,6 +95,8 @@ export async function POST(req: NextRequest) {
      * 画像から読み取った物件を sent_image_properties に source="aix:<種類>" で記録するのに使う。
      */
     aix_type?: string;
+    /** 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART）: AIX【物件確認した】の確認の型（interior_photo なら送った画像は室内）。無くてもよい */
+    check_pattern?: string;
     /**
      * 2026-10-20 竹内さん（設計知見 P1 54ec8c71・すれ違い）: 画面の入力欄の文を作り始めた時点のお客様の最新の発言の時刻（stale-reply.ts nextComposerBase）。
      * これより後にお客様の発言が届いていたら送らずに 409 stale_reply を返す（画面が「このまま送る／作り直す」を出す）。無い呼び出しは見ない。
@@ -372,15 +375,93 @@ export async function POST(req: NextRequest) {
         // 2026-09-22 竹内「やる」: 物件名・号室の読み取りは recordSentImageProperty の1回だけ
         //   （旧は extract-property-info と ここの2か所で同じ画像を DeepSeek で読んでいた）。
         //   資料の中身の読み取り（ensureImageDetail）とは並べて動かす。どちらかが失敗してももう一方は残る
-        await Promise.all([
+        const sentAtIso = new Date().toISOString();
+        // 画面が確認の型を送った時だけ使う（画面は今 check_pattern を送っていない＝下の送った後の付け直しが主）
+        const partCheckPattern: string | null = typeof check_pattern === "string" ? check_pattern : null;
+        const [rec] = await Promise.all([
           recordSentImageProperty({ imageUrl: image_url, conversationId: conversation_id, source: src }),
-          ensureImageDetail(image_url, conversation_id).catch((e) => {
+          // 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART=on の時だけ・既定 off）: AIX の種類と確認の型から画像の部分（listing／interior／cost）を読み取りに渡す（行を書く時に一緒に入れる）
+          ensureImageDetail(image_url, conversation_id, imageDetailPartOn() ? { part: partOfAixImage({ aixType: origin === "aix" ? aix_type : null, checkPattern: partCheckPattern }) } : undefined).catch((e) => {
             console.warn("[send-line-message] 資料の中身の読み取り失敗:", e instanceof Error ? e.message : e);
             return null;
           }),
         ]);
+        // 2026-11-22 作業員G（#509 ③）: 物件の読みの値（facts）の空の欄を、同じ画像の書き写しの読み（image_details.lines）から埋める（上書きしない・LLM なし）。既定 off（SENT_FACTS_FROM_DETAIL=on）
+        try {
+          const { sentFactsFromDetailOn, factsPatchFromDetail } = await import("@/app/lib/sent-facts-from-detail");
+          if (sentFactsFromDetailOn()) {
+            const { supabase: sbF } = await import("@/app/lib/supabase-server");
+            const [{ data: sipRow }, { data: det }] = await Promise.all([
+              sbF.from("sent_image_properties").select("facts").eq("image_url", image_url).maybeSingle(),
+              sbF.from("image_details").select("lines").eq("image_url", image_url).eq("kind", "property").limit(1).maybeSingle(),
+            ]);
+            const cur = (sipRow as { facts: Record<string, unknown> | null } | null);
+            const lines = (det as { lines: string[] | null } | null)?.lines ?? null;
+            if (cur && lines?.length) {
+              const patch = factsPatchFromDetail(cur.facts, lines);
+              if (Object.keys(patch).length) await sbF.from("sent_image_properties").update({ facts: { ...(cur.facts ?? {}), ...patch } }).eq("image_url", image_url);
+            }
+          }
+        } catch (e) { console.warn("[send-line-message] 値の埋め直し失敗:", e instanceof Error ? e.message : e); }
+        // 2026-11-21 作業員G（#448）: AIX で送った画像で物件が読み取れなかった（室内写真など）時は、同じ時の AIX の記録の物件名（1件だけの時）に結ぶ。
+        //   AIX の記録（log-aix-usage）は送信の後に書かれることがあるので少し待つ。既定 off（SENT_IMAGE_AIX_ATTRIBUTE=on）
+        // 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART=on の時だけ・画面は変えない＝統括役の決め 11/22）: 【物件確認した】の室内写真の部分（interior）を、
+        //   送った後に同じ会話の AIX の記録（aix_usage_logs.check_pattern）から付け直す。生成の記録（aix_generate_log）は室内写真の型では書かれない（route が先に返す）＝AIX の記録を読む。
+        //   AIX の記録は送信の後に書かれることがある＝G の #448 と同じく少し待つ。読み取りの行（kind=property・part 空）がある時だけ書く（先に行を作らない）
+        //   下の G の待ち（最大30秒）と並べて走らせる（読み取り80秒＋待ち30秒＜ maxDuration 120 を崩さない）
+        const partFix = (async () => { if (imageDetailPartOn() && !partCheckPattern && origin === "aix" && aix_type === "property_check_result") {
+          const { supabase: sbPart } = await import("@/app/lib/supabase-server");
+          for (const waitMs of [10_000, 20_000]) {
+            await new Promise((r) => setTimeout(r, waitMs));
+            const { data: ul } = await sbPart.from("aix_usage_logs").select("check_pattern").eq("conversation_id", conversation_id).eq("aix_type", "property_check_result")
+              .gte("created_at", new Date(Date.parse(sentAtIso) - 10 * 60_000).toISOString()).order("created_at", { ascending: false }).limit(1);
+            const cp = ((ul ?? []) as Array<{ check_pattern?: string | null }>)[0]?.check_pattern ?? null;
+            if (!cp) continue;
+            const pt = partOfAixImage({ aixType: "property_check_result", checkPattern: cp });
+            if (pt) await sbPart.from("image_details").update({ part: pt }).eq("image_url", image_url).eq("kind", "property").is("part", null);
+            break;
+          }
+        } })().catch((e) => console.warn("[send-line-message] 画像の部分の付け直し失敗:", e instanceof Error ? e.message : e));
+        if (!rec.matched && src.startsWith("aix:")) {
+          const { attributeSentImageFromAixLog } = await import("@/app/lib/sent-image-aix-attribute-server");
+          const { sentImageAixAttributeOn } = await import("@/app/lib/sent-image-aix-attribute");
+          if (sentImageAixAttributeOn()) {
+            const { supabase } = await import("@/app/lib/supabase-server");
+            // 読み取り（最大80秒）＋待ち30秒＜ maxDuration 120・間に合わない物は夜の backfill-sent-image-aix-attribute で埋める
+            for (const waitMs of [10_000, 20_000]) {
+              await new Promise((r) => setTimeout(r, waitMs));
+              const res = await attributeSentImageFromAixLog(supabase, { imageUrl: image_url, conversationId: conversation_id, source: src, sentAt: sentAtIso });
+              if (res !== "no_match") break;
+            }
+          }
+        }
+        await partFix;
       } catch (e) {
         console.warn("[send-line-message] 画像の物件読み取り失敗:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
+  // 2026-11-21 作業員G（#461 案3）: 手でまとめて送った束の、文字の無い室内写真を同じ束の資料の物件に結ぶ（LLM なし・sent-batch-photo.ts）。
+  //   1枚ずつの読み（上の after・最大80秒）が終わるのを待ってから、束の記録を読んで物件がちょうど1つの時だけ結ぶ。既定 off（SENT_BATCH_PHOTO_ATTRIBUTE=on）
+  if (batchImages.length >= 2 && conversation_id && origin !== "aix") {
+    after(async () => {
+      try {
+        const { sentBatchPhotoAttributeOn, batchPhotoAttribution } = await import("@/app/lib/sent-batch-photo");
+        if (!sentBatchPhotoAttributeOn()) return;
+        await new Promise((r) => setTimeout(r, 90_000));
+        const { supabase: sbB } = await import("@/app/lib/supabase-server");
+        const { data } = await sbB.from("sent_image_properties").select("image_url, property_name, room_no").in("image_url", batchImages);
+        const byUrl = new Map(((data ?? []) as Array<{ image_url: string; property_name: string | null; room_no: string | null }>).map((r) => [r.image_url, r]));
+        const links = batchPhotoAttribution(batchImages.map((u) => ({ url: u, propertyName: byUrl.get(u)?.property_name ?? null, roomNo: byUrl.get(u)?.room_no ?? null })));
+        for (const l of links) {
+          await sbB.from("sent_image_properties").upsert(
+            { image_url: l.url, conversation_id, property_name: l.propertyName, room_no: l.roomNo, source: "batch_sheet", channel: "staff_image" },
+            { onConflict: "image_url", ignoreDuplicates: true },
+          );
+        }
+        console.log(JSON.stringify({ tag: "sent-batch-photo", conversationId: conversation_id, images: batchImages.length, linked: links.length }));
+      } catch (e) {
+        console.warn("[send-line-message] 束の写真の物件結び失敗:", e instanceof Error ? e.message : e);
       }
     });
   }

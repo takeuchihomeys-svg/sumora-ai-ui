@@ -92,6 +92,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (meta.cancel_wide_shadow === true) (out as Record<string, unknown>).cxw = 1;
   // 2026-11-15 作業員L: 今の状況の記録の数（BRAIN_SITUATION_NOW=on の番だけ）
   { const sn = situationNowDigest(meta.situation_now); if (sn) (out as Record<string, unknown>).sn = sn; }
+  // 2026-11-21 作業員L: 読んだ学びの id（ls）と同じ型の外れの印（lsm）（CONDUCTOR_LESSONS）
+  { const cl = meta.conductor_lessons as { ids?: string[]; mark?: string[] } | undefined; if (cl?.ids?.length) (out as Record<string, unknown>).ls = cl.ids.join(","); if (cl?.mark?.length) (out as Record<string, unknown>).lsm = cl.mark.join(","); }
   return out;
 }
 

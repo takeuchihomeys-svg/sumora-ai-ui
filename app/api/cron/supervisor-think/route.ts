@@ -28,10 +28,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { thinkAsSupervisor, supervisorMaterialText } from "@/app/lib/learn-supervisor-llm";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const dynamic = "force-dynamic";
 /** ⚠ LLM の思考に 29.6秒かかる（実測）。既定の10秒では切れる。 */
-export const maxDuration = 60;
+// 2026-11-21 作業員G: 11/20 22時台に束の作り直し（>60秒）で時間切れ → 300秒（Vercel の既定の上限）
+export const maxDuration = 300;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -59,7 +61,7 @@ type Bundle = {
   human_ops?: number; auto_ops?: number; same_runs?: number;
 };
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401, headers: CORS });
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const scope = (req.nextUrl.searchParams.get("scope") || "realpro").slice(0, 20);
@@ -129,6 +131,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // 2026-11-21 作業員G（統括Pro 段A）: 物件検索の毎日の質の数を quality_daily に（LLM なし・最新の統括Pro の根拠の行から・scope ごとに1行読むだけ）。
+    //   LLM が答えなくても書く。失敗しても cron は止めない。
+    if (!dry) {
+      try {
+        const { writeLatestSearchQuality } = await import("@/app/lib/search-quality-daily");
+        (out as Record<string, unknown>).quality_daily = await writeLatestSearchQuality();
+      } catch (e) {
+        (out as Record<string, unknown>).quality_daily_error = String((e as Error)?.message || e).slice(0, 120);
+      }
+    }
+
     return NextResponse.json(out, { headers: CORS });
   } catch (e) {
     return NextResponse.json(
@@ -137,3 +150,6 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("supervisor-think", handleGET);

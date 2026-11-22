@@ -23,6 +23,8 @@ export const FIELD_LABEL: Record<GraspField, string> = {
 
 type Ctx = { s: string; t: string; aix?: boolean; ago?: number };
 type Row = Record<string, unknown>;
+/** 行動台帳（sent_facts）の最初の行の created_at（これより前の番の問題の写しには行が無い） */
+export const SENT_FACTS_START = "2026-09-14T05:42:20Z";
 export type ProblemLike = {
   id: string; at?: string; source?: string; context?: Ctx[];
   pc?: Record<string, unknown> | null;
@@ -75,7 +77,20 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const convId = (p as { conv?: string }).conv ?? null;
   const sentRows = L.sent_properties ?? [];
   const dbSent = sentRows.filter((r) => !convId || r.row.conversation_id === convId).length;
-  const dbOutside = sentRows.filter((r) => convId && !r.row.conversation_id).length;
+  // 2026-11-21 作業員L（台帳 #17 ⑤）: 材料（sent-props-text.buildSentProps）は共有の行を 物件名|号室 で1つにまとめ、号室の無い共有の行は
+  //   同じ建物をお客様に送っていれば出さない（決まりどおり）。行の数で比べると食い違い36番のうち多くが「同じ物件の重複」だったので、材料と同じ数え方で数える
+  const nm = (r: { row: Row }) => String(r.row.property_name ?? "").trim();
+  const ownNames = new Set(sentRows.filter((r) => convId && r.row.conversation_id === convId).map(nm));
+  // 2026-11-21 作業員L（#17 の残り28を読んだ）: brain-core は共有のみ（source=line_group）を「新しい順に20行」取ってから1つにまとめる。
+  //   全部の行で数えると、20行の外の古い共有まで「材料に無い」に数えていた（q060: 27物件 → 新しい20行では11物件＝材料の11行と一致）。取り方も同じにする
+  const outsideRows = sentRows.filter((r) => convId && !r.row.conversation_id && r.row.source === "line_group")
+    .sort((a, b) => String(b.row.sent_at ?? "").localeCompare(String(a.row.sent_at ?? ""))).slice(0, 20);
+  //   お客様に送った物の名前は、材料と同じく property_customer_id で結んだ行（line_group 以外）も入れる。同じ 物件名|号室 を送っていれば共有は出ない
+  const ownRows = sentRows.filter((r) => r.row.source !== "line_group" && (r.row.conversation_id === convId || !!r.row.property_customer_id));
+  for (const r of ownRows) ownNames.add(nm(r));
+  const ownKeys = new Set(ownRows.map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`));
+  const dbOutside = new Set(outsideRows.filter((r) => nm(r) && !(!String(r.row.room_no ?? "").trim() && ownNames.has(nm(r))))
+    .map((r) => `${nm(r)}|${String(r.row.room_no ?? "").trim()}`).filter((k) => !ownKeys.has(k))).size;
   const sentHead = [...b.keys()].find((k) => k.startsWith("すでに送付済みの物件"));
   const sentBlockFull = user.match(/【すでに送付済みの物件（(\d+)件）】/);
   const pSent = sentBlockFull ? Number(sentBlockFull[1]) : null;
@@ -90,8 +105,11 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const sentLines = sb.split(/\r?\n/).slice(1).filter((l) => l.trim().startsWith("・") || l.trim().startsWith("-") || /号室/.test(l));
   f.sent_props_dated = dbSent === 0 ? "none" : !sentLines.length ? "link" : sentLines.filter((l) => /<md>|\d+日前|\d+月\d+日/.test(l)).length >= sentLines.length * 0.8 ? "held" : "base";
   // 見積
-  const dbEst = (L.estimate_records ?? []).length;
-  const pEst = !!(block(b, "御見積書 送付済み") ?? block(b, "送付済み御見積書の費用情報"));
+  // 2026-11-21 作業員L（#17 の残り「食い違い13」を読んだ）: 【御見積書 送付済み】は aix_usage_logs.estimate_sent=true の行から出る（材料の決まり）。
+  //   estimate_records（09/23 に始まった）だけを DB の証拠にすると、見積を同封した AIX（物件確認した＋見積など）の番を「食い違い」に数えていた
+  const dbEst = (L.estimate_records ?? []).length + (L.aix_usage_logs ?? []).filter((a) => a.row.estimate_sent === true).length;
+  // 2026-11-21 作業員L: BRAIN_ESTIMATE_RECORDS（11/21 から既定 on）の塊【送った御見積書（記録・新しい順）】も「持っていた」に数える（前は古い2つの見出しだけで、連携の漏れに数えていた）
+  const pEst = !!(block(b, "御見積書 送付済み") ?? block(b, "送付済み御見積書の費用情報") ?? block(b, "送った御見積書"));
   f.estimate = dbEst ? (pEst ? "held" : "link") : pEst ? "conflict" : "none";
   // 確かめた結果
   const dbChk = (L.aix_usage_logs ?? []).filter((a) => a.row.aix_type === "property_check_result").length;
@@ -109,16 +127,30 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
     if (/見積[^。\n]{0,24}(?:作成|お送りさせて頂きます|出来次第)/.test(c.t)) k.push("estimate_declared");
     return k.map((kind) => ({ kind, ago: c.ago ?? 0 }));
   });
+  // 2026-11-21 作業員L（#17 の残り「開いている約束 連携9」を読んだ・止めた判断）: 後の AIX・報告の手書きで約束を閉じる数え方を試したが、
+  //   食い違い（ブレインは開いていると持っている）が 14 → 24 に増えた＝ブレインの材料（action-ledger）はその手掛かりでは閉じていない。今の数え方のまま。
+  //   連携の9の内わけ: q454・q026（4行）は行動台帳の始まり（09/14）より前の番（下で測れない番にする）／q419（3行）は手書きの報告（「お待たせ致しました…お取り扱いできます」）で
+  //   action-ledger が確認の約束を閉じた＝数え方の誤り（ただし網で真似ると上のとおり他の番で食い違いが増える）／q045（2行）も数え方の誤り: 09/22 の見積の約束は5時間後に AIX で御見積書を送って果たしていた（会話の文）が、
+  //   行動台帳（09/14 開始・埋め戻しの時期）に done の行が無く、送った文は問題の写しの会話の窓（直近）の外。action-ledger は会話の文で閉じていた（材料は正しい）。
+  //   今の行動台帳は抜けていない（直近30日の見積の約束26件のうち、7日内に送った21件は全部 done の行がある・11/21 夜に数えた）。写しから測れないので直さない
   const open = [...fromFacts.open, ...textPromises.filter((t) => !fromFacts.open.some((o) => o.kind === t.kind))];
   const doubled = fromFacts.doubled;
   f.promise_in_ledger = textPromises.length ? (textPromises.every((t) => fromFacts.open.some((o) => o.kind === t.kind)) ? "held" : "link") : "none";
+  // 2026-11-21 作業員L（台帳 #17）: 行動台帳（sent_facts）は 2026-09-14 05:42Z に始まり、それより前の番の問題の写しは行が0。
+  //   「連携の漏れ 21」のうち読んだ8問は全部この前の番だった＝測れない番。行が0で台帳の始まりより前の番は「関係なし」にする
+  if (f.promise_in_ledger === "link" && !(L.sent_facts ?? []).length && p.at && p.at < SENT_FACTS_START) { f.promise_in_ledger = "none"; detail.promise_in_ledger = "行動台帳の始まり（09/14）より前の番＝測れない"; }
   const pOpen = block(b, "まだ果たしていないこちらの約束");
   f.open_promise = open.length ? (pOpen ? "held" : "link") : pOpen ? "conflict" : "none";
+  // 2026-11-21 作業員L: 行動台帳の始まり（09/14）より前の番は、写しに sent_facts が無く会話の文からだけ約束を拾っている＝材料の塊（行動台帳から作る）と比べられない（q454・q026）
+  if (f.open_promise === "link" && !(L.sent_facts ?? []).length && p.at && p.at < SENT_FACTS_START) f.open_promise = "none";
   if (f.open_promise !== "none") detail.open_promise = `DB ${open.map((o) => o.kind).join("・") || "無し"}・持っていた ${pOpen ? "あり" : "なし"}`;
   f.promise_kind = open.length && pOpen ? (open.some((o) => KIND_WORD[o.kind]?.test(pOpen)) ? "held" : "conflict") : "none";
   const pDue = /（[^）]{0,12}(?:時間前|日前)）|期限|期日|中央値/.test(block(b, "🤝 お客様との約束") ?? "") || /時間前|日前/.test(pOpen ?? "");
   f.promise_due = open.length ? (pDue ? "held" : "base") : "none";
-  f.double_promise = doubled ? "base" : "none"; // 重ねた約束は DB の側の印（ブレインの材料に「重ねた」は無い＝土台）
+  // 2026-11-21 作業員L（台帳 #288）: 重ねた約束は竹内さん本人も 30日で15回している形（「引き続きピックアップさせて頂きます」）＝外れではない。
+  //   把握漏れ（土台）に数えず「関係なし」にする（数は detail に残す）
+  f.double_promise = "none";
+  if (doubled) detail.double_promise = `重ねた約束 ${doubled}（竹内さんもする形・漏れに数えない）`;
   // 最新の条件
   const pc = p.pc ?? {};
   const rent = Number(pc.rent_max ?? 0);
@@ -132,9 +164,18 @@ export function graspOfTurn(p: ProblemLike, user: string): GraspRow {
   const ctx = p.context ?? [];
   const lastOur = [...ctx].reverse().find((c) => c.s === "staff" && c.t && !/^\[画像\]$/.test(c.t.trim()));
   // 名前は伏せ字（お客様）に替わるので、〇〇さん・お客様を外して比べる
-  const unname = (x: string) => squash(x.replace(/[^\s、。！!？?]{1,12}?さん|お客様/g, ""));
+  // 2026-11-21 作業員L（#17 の残り「直前のこちらの通 連携16」を読んだ）: 材料では日付・時刻が <md>・<hm> に、さんの無い呼びかけ（「YUMA」）も伏せ字に替わる。
+  //   両方から日付・時刻・伏せ字・行頭の呼びかけを外して比べる（q017・q052・q116 は数え方の誤りだった）
+  const unname = (x: string) => squash(x.replace(/[^\s、。！!？?]{1,12}?さん|お客様/g, "")
+    .replace(/<md>|<hm>|\d{1,2}\s*\/\s*\d{1,2}(?:\s*[（(][^）)]{1,3}[）)])?|\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}月\d{1,2}日(?:\s*[（(][^）)]{1,3}[）)])?|[（(][月火水木金土日][）)]/g, "")
+    .replace(/^[A-Za-z0-9ぁ-んァ-ヶー一-龠]{1,12}(?=お世話になっております)/, ""));
   const head = lastOur ? unname(lastOur.t).slice(0, 12) : "";
-  f.last_our = head ? (unname(user).includes(head) ? "held" : "link") : "none";
+  // 2026-11-21 作業員L: 頭12字だけで比べると、伏せ字の替え方（〇〇さんの外し方）で頭がずれて「無い」に数えていた（q175・q047: 本文は 8字ずつで 3/4・8/9 一致）。
+  //   頭が無くても、本文を8字ずつに切って6割以上が材料にあれば「持っていた」とする
+  const uAll = unname(user); const bodyAll = lastOur ? unname(lastOur.t) : "";
+  let hit8 = 0, n8 = 0; for (let k = 0; k + 8 <= bodyAll.length; k += 8) { n8++; if (uAll.includes(bodyAll.slice(k, k + 8))) hit8++; }
+  f.last_our = head ? (uAll.includes(head) || (n8 >= 2 && hit8 / n8 >= 0.6) ? "held" : "link") : "none";
+  if (f.last_our === "link") detail.last_our = `頭12字「${head}」・8字ずつの一致 ${hit8}/${n8}`;
   // お客様が送ってきた物件・画像（返していないお客様の通）
   let lastOurIdx = -1; ctx.forEach((c, i) => { if (c.s === "staff") lastOurIdx = i; });
   const unreplied = ctx.slice(lastOurIdx + 1).filter((c) => c.s === "customer");

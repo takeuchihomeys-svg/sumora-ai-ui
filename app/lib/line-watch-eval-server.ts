@@ -130,11 +130,19 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     res.errors.push("judge_version の列が無い（2段目の SQL を流す前）→ 版なしで判定");
     [recent, backlog] = await read(false);
   }
+  // 2026-11-21 作業員K2（台帳 #313・WATCH_REOPEN_ON_NEW_CUSTOMER=on の時だけ・既定 off・watch-reopen.ts）: 判定の後に同じ番にお客様の発言が足された行（直近の customer_last_at）も読む
+  const reopen = await import("@/app/lib/watch-reopen");
+  const reopenOn = reopen.watchReopenOn();
+  let reopened: TurnRow[] = [];
+  if (reopenOn) {
+    try { reopened = (await readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(hasVersionCol)).gte("customer_last_at", iso(nowMs - (opt.days ?? 4) * DAY)).lt("customer_turn_at", iso(nowMs - (opt.days ?? 4) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000)).filter(reopen.needsReopen); }
+    catch (e) { res.errors.push(`reopen: ${e instanceof Error ? e.message : String(e)}`); }
+  }
   const byId = new Map<number, TurnRow>();
-  for (const r of [...recent, ...backlog]) byId.set(r.id, r);
+  for (const r of [...recent, ...backlog, ...reopened]) byId.set(r.id, r);
   const turns = [...byId.values()].filter((t) => {
     if (opt.skipBackfill && (t.verdict_detail as Record<string, unknown> | null)?.backfill) { res.skippedFinal++; return false; }
-    const done = !opt.reevalFinal && t.judge_version === JUDGE_VERSION && t.verdict_detail?.final === true && !!t.evaluated_at;
+    const done = !opt.reevalFinal && t.judge_version === JUDGE_VERSION && t.verdict_detail?.final === true && !!t.evaluated_at && !(reopenOn && reopen.needsReopen(t as { customer_last_at?: string | null; evaluated_at?: string | null }));
     if (done) res.skippedFinal++;
     return !done;
   });
@@ -202,6 +210,12 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     const { scene, window: w, patch } = ev;
     let j = ev.judgement;
     if (mg?.filled.length) { j = { ...j, detail: { ...j.detail, merged_from: { id: dupRow!.id, cols: mg.filled } } }; patch.verdict_detail = j.detail; }
+    // 2026-11-21 統括役の決め（WATCH_REOPEN_ON_NEW_CUSTOMER=on の時）: 版は上げず、読み直した行の詳細に「読み直した印」（前の判定の時刻・理由）を残す。
+    //   作業員L の連携の地図の数えは、この印のある行を前の日との比べから外す
+    if (reopenOn && reopen.needsReopen(t0 as { customer_last_at?: string | null; evaluated_at?: string | null }) && patch.verdict_detail) {
+      j = { ...j, detail: { ...j.detail, reopened: { prev_evaluated_at: t0.evaluated_at, reason: "customer_after_final" } } as typeof j.detail };
+      patch.verdict_detail = j.detail;
+    }
     const realId = dupOf.get(t.id);
     if (realId != null) {
       // 重複行: 数えない（na・duplicate_of）。窓が閉じたかは元の判定のまま（閉じていれば毎晩読み直さない）

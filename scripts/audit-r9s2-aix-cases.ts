@@ -21,6 +21,8 @@ const PER = Number(arg("per", "12"));
 const OUT = arg("out", "scripts/.replay-out/r9s2-aix-cases.json");
 // 2026-10-22 試験の AIX の文の段（scripts/exam-aix-text-build.ts）: --fixed＝固定の文の経路（会話を合わせるを押していない）も番にする・会話を合わせるは押した通り
 const FIXED = process.argv.includes("--fixed");
+// 2026-11-21 作業員K2（EQUIP_WISH_PICKUP の問題作り）: --ids=<aix_usage_logs.id,...> の押下だけを番にする（狙った番から問題を作る・他の関所はそのまま）
+const IDS = new Set(arg("ids", "").split(",").map((x) => x.trim()).filter(Boolean));
 const cm = (p: { conversation_match: boolean | null }) => (FIXED ? p.conversation_match === true : true);
 const ms = (s: string) => Date.parse(s);
 
@@ -122,6 +124,7 @@ function estimateFromSent(s: string): { property_name: string; room_number: stri
   for (const p of [...presses].reverse()) { // 新しい順
     if (!want[p.aix_type]) continue;
     if (isTestConversation(p.conversation_id)) continue;
+    if (IDS.size && !IDS.has(p.id)) continue;
     if ((perAction[p.aix_type] ?? 0) >= PER) continue;
     const pt = ms(p.created_at);
     if (appliedAt.has(p.conversation_id) && appliedAt.get(p.conversation_id)! <= pt && p.aix_type !== "application_push") { bump(p.aix_type, "申込以降"); continue; }

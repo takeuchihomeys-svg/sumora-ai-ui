@@ -29,7 +29,14 @@ export async function loadSentLikeProfile(sb: SupabaseClient, propertyCustomerId
       }
     }
     const p = buildSentLikeProfile(items);
-    console.log(JSON.stringify({ tag: "star:sent-like", propertyCustomerId, items: items.length, plans: p?.plans ?? null }));
+    // 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_WEIGHT=on の時だけ・既定 off＝列を読まない）: 刺さった点を像に足す（その軸の点を2倍）
+    const hp = await import("./hook-points");
+    if (p && hp.sentHookWeightOn()) {
+      const { data: hrows } = await sb.from("sent_properties").select("customer_hook_points").eq("property_customer_id", propertyCustomerId).eq("customer_reaction", "interested").limit(20);
+      const pts = [...new Set(((hrows ?? []) as Array<{ customer_hook_points: unknown }>).flatMap((r) => hp.normalizeHookPoints(r.customer_hook_points)))];
+      if (pts.length) p.hookPoints = pts;
+    }
+    console.log(JSON.stringify({ tag: "star:sent-like", propertyCustomerId, items: items.length, plans: p?.plans ?? null, hookPoints: p?.hookPoints ?? null }));
     return p;
   } catch (e) {
     console.warn("[sent-like]", e instanceof Error ? e.message : e);

@@ -10,10 +10,11 @@
 //   ?dry=1 は読むだけ（登録・通知・取り下げなし）。戻す VIEWING_MORNING_GREETING=off
 import { NextRequest, NextResponse } from "next/server";
 import { runViewingMorningGreeting } from "@/app/lib/viewing-morning-greeting-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 120;
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -29,3 +30,6 @@ export async function GET(req: NextRequest) {
     whys: r.rows.reduce<Record<string, number>>((a, x) => { a[x.why] = (a[x.why] ?? 0) + 1; return a; }, {}),
   });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("viewing-morning-greeting", handleGET);

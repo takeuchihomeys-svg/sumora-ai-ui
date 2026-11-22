@@ -11,7 +11,7 @@
 //   書く場所は questions.json の q.snap（問題の印 hash には入れない＝今までの取り置き・結果はそのまま）。使うのは exam-aix-text.ts --snap の時だけ。
 //   入口は isTestModeAllowed かつテスト専用の会話の時だけ写しを読む（app/lib/exam-test-snapshot.ts）。
 //   個人の値: 条件の文字・自由記述は maskPII を通し、piiValueSignal が残れば写さない。
-// 実行: npx tsx --env-file=.env.local scripts/exam-aix-text-snap.ts [--only=<id,…>] [--dry]
+// 実行: npx tsx --env-file=.env.local scripts/exam-aix-text-snap.ts [--only=<id,…>] [--dry] [--situation-now（その番の situation_now を組み直して入れる・写しの問題の組で）]
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import { maskPII } from "../app/lib/pii-mask";
 import { piiValueSignal } from "../app/lib/test-pii-guard";
 import type { AixQuestion } from "./lib/exam-aix-text";
 import { manYen } from "../app/lib/man-yen";
+import { rebuildSituationNowAt } from "./lib/exam-situation-now";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -139,7 +140,17 @@ async function snapOf(q: AixQuestion): Promise<AixQuestionSnap | null> {
   if (meta) {
     for (const k of ["closing_strategy", "reply_direction", "current_property", "future_timeline"]) if (typeof meta[k] === "string") { const c = clean(meta[k]); if (c) meta[k] = c; else delete meta[k]; }
     snap.testBrainMeta = meta;
-    const age = (cutMs - Date.parse(String((bd?.[0] as { created_at?: string }).created_at))) / 3600_000;
+    // 2026-11-21 作業員K2（--situation-now・統括役の最優先・H の勧め (a)）: その番の時刻で切った台帳から meta.situation_now を純関数で組み直して入れる
+    //   （scripts/lib/exam-situation-now.ts・本番の記録と 39番で tw/tv/se/ch 100%・oi/ou 97%・po 87% 一致＝scripts/check-exam-situation-now.ts）。
+    //   書き手に渡す our_items の中身・約束の対象は clean を通す（個人の値があれば空に）。ブレインの判断の記録がある番だけ（無い番に meta を作ると入口の読みが変わる）。
+    //   既定の写しは変えない＝別の問題の組（--qfile=<写し>）に付けて使う
+    if (process.argv.includes("--situation-now")) {
+      const sn = await rebuildSituationNowAt(sb, conv, cut) as unknown as Record<string, unknown> & { our_items?: Array<{ text: string; label: string }>; promises_open?: Array<{ object: string | null }> };
+      for (const it of sn.our_items ?? []) it.text = clean(it.text) ?? "";
+      for (const p of sn.promises_open ?? []) p.object = p.object ? clean(p.object) : null;
+      (snap.testBrainMeta as Record<string, unknown>).situation_now = sn;
+    }
+    const age =(cutMs - Date.parse(String((bd?.[0] as { created_at?: string }).created_at))) / 3600_000;
     if (age > 24) notes.push(`ブレインの判断は ${Math.round(age)} 時間前の物`);
   } else notes.push("ブレインの判断の記録なし");
   return snap;

@@ -54,9 +54,25 @@ export const PROPERTY_IMAGE_MAX_TOKENS = 8000;
 //   今の読みは間取りと㎡だけで、お客様の「リビング何帖ですか」に資料から答えられなかった。IMAGE_READ_ROOMS=on（既定 off）の時だけ指示に1項目足す
 //   （off の時は指示の文が1文字も変わらない＝キャッシュも今のまま）。保存先は sent_image_properties.facts.rooms（jsonb の中・列は足さない）
 export const imageReadRoomsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.IMAGE_READ_ROOMS ?? "").trim().toLowerCase() === "on";
-export const PROPERTY_IMAGE_ROOMS_LINE = `\n- rooms: 間取り図に書かれた部屋ごとの帖数（例 [{"name":"LDK","jo":10.5},{"name":"洋室","jo":6}]。name は LDK・DK・K・洋室・和室・寝室のどれか、jo は帖の数字）。書かれていなければ []`;
+export const PROPERTY_IMAGE_ROOMS_LINE = `\n- rooms: 間取り図に書かれた部屋ごとの帖数（例 [{"name":"LDK","jo":10.5},{"name":"洋室","jo":6}]。name は LDK・DK・K・洋室・和室・寝室のどれか、jo は帖の数字）。図に帖の数字が書かれている部屋だけ入れる（数字の無い K・玄関などは入れない・広さから推測しない）。書かれていなければ []`;
 /** 物件の画像を読む指示（IMAGE_READ_ROOMS=on の時だけ部屋ごとの帖数の1行を足す） */
-export function propertyImagePrompt(env?: Record<string, string | undefined>): string { return imageReadRoomsOn(env) ? PROPERTY_IMAGE_PROMPT.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : PROPERTY_IMAGE_PROMPT; }
+export function propertyImagePrompt(env?: Record<string, string | undefined>): string {
+  // 2026-11-21 作業員L（YUMA の読みの試し）: 説明の1行だけでは JSON の形に rooms が無く、DeepSeek が rooms を返さなかった（2枚とも欄なし）。
+  //   on の時は JSON の形の items にも "rooms":[] を足す（off は1文字も変わらない）
+  let p = imageReadRoomsOn(env)
+    ? PROPERTY_IMAGE_PROMPT.replace(`"vacancy_date":""}]`, `"vacancy_date":"","rooms":[]}]`).replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`)
+    : PROPERTY_IMAGE_PROMPT;
+  if (imageReadStatusStrictOn(env)) p = p.replace("\n- vacancy_date:", `${PROPERTY_IMAGE_STATUS_STRICT_LINE}\n- vacancy_date:`);
+  return p;
+}
+/**
+ * 2026-11-21 作業員G（統括役の頼み・読みの誤り）: 記録のある送った資料 20枚を目で比べると、現況の欄が無い資料で status を「募集中（open）」と作った 2枚
+ *   （入居予定日・内覧時期だけの資料／リフォーム完了の文だけの資料）と、現況が「空室・即入」なのに備考の「解約予定」の日付から「退去予定」と読んだ 1枚があった。
+ *   現況の欄の値を優先し、現況・入居時期の欄が無い時は空にする（作らない）。既定 on（IMAGE_READ_STATUS_STRICT=off で旧の指示）
+ */
+export const imageReadStatusStrictOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.IMAGE_READ_STATUS_STRICT ?? "").trim().toLowerCase() !== "off";
+export const PROPERTY_IMAGE_STATUS_STRICT_LINE = `\n- status の決め方: 「現況」「現況/入居時期」「募集状況」の欄に書いてある値で決める（例: 現況が「空室」なら備考に解約予定の日付があっても "open"）。` +
+  `その欄が無い資料は "" にする（入居予定日・内覧時期・リフォーム済みなどの文から推測しない）。資料に書いていない欄は全部 null か "" のまま`;
 export const PROPERTY_IMAGE_PROMPT =`この画像から物件情報を読み取ってください。JSONのみ返答（説明文・コードブロック・前置き一切不要）：
 {"items":[{"property_name":"","room_number":"","rent":null,"admin_fee":null,"deposit":null,"key_money":null,"floor_plan":"","area_sqm":null,"station":"","walk_minutes":null,"built":"","ad":"","status":"","vacancy_date":""}],"is_property":true}
 - items: 画像に出ている物件を全部。1件だけなら1つ、一覧なら全部

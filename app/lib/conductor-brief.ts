@@ -25,7 +25,7 @@
 //   combine に優先度の表の組（priority）を並べる・next に何を（offer）・いつ（when）・どの形で（form）・aim に中期（mid）
 //   型（check_order_type）が無い番は check-order-wire.checkOrderRecord をこの中で作る（CHECK_ORDER_TABLE が off でも指示書の欄が埋まる・meta には書かない）
 //   文の統括と書き手には briefForRole で役目ごとに要る欄だけ（decided-subfields の下の欄×役目の表から引く・BRIEF_SECTION_SUBS）
-import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, checkOrderById } from "./check-order";
+import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, TYPE_INTENT, checkOrderById } from "./check-order";
 import { checkOrderRecord } from "./check-order-wire";
 import { priorityTableRecord, PRIORITY_ROWS, type PriorityRecord } from "./priority-table";
 import { nextMoveConcreteOn, concreteNextMove, type ConcreteNext } from "./next-move-concrete";
@@ -40,8 +40,27 @@ import { briefDoubts, briefSure, type BriefDoubt, type Sure, type SureCueKey } f
 import type { InfoCell } from "./info-fill-map";
 import type { OpenItem } from "./exchange-ledger";
 import { feelingNextStrength, feelingBriefSection } from "./feeling-conductor-table";
+import { routeToBriefOn, routeBriefSection, type RouteBriefSection } from "./route-record";
 
 type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-21 作業員M（台帳 #465・統括の細かい理解）: 本番の指示書 11番（11/21 の24時間）で空だった欄を、もう持っている型の表から埋める（BRIEF_FILL_FROM_TYPE・既定 off）。
+ *   空の数: 要点 aim.keyPoint 11/11・中期 aim.mid 10/11・優先 order 8/11・型 type 4/11・次の一手 next 4/11。
+ *   ① 要点: 判断の根拠（BRAIN_JUDGE_BASIS・既定 off）からしか取っていなかった → 型の表 TYPE_INTENT の keyPoint（竹内さんの198通）を取り先に足す
+ *   ② 中期: turn_aims・turn_aims_after・judge_next.dest が無い番 → 次の一手の行き先（型の表 NEXT_MOVE_OF_TYPE＝judge_next.dest と同じ語）
+ *   ③ 型: 型の候補が空の4番のうち1番は内覧の話（手がかり topic:viewing）なのに問いの形でないので T7 に入らなかった → 内覧の話だけは T7
+ *      （残り3番は「開いている約束がある時のその他の通」＝型の表に行が無い。どの型にするかは竹内さんの番を数えてから＝今は埋めない）
+ *   埋めるのは空いている欄だけ（上書きしない）。道は変えない（指示書は道を決めた後に組む）。指示書の欄は書き手に届くので既定 off で試験の後に on。
+ */
+export function briefFillFromTypeOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRIEF_FILL_FROM_TYPE ?? "").trim().toLowerCase() === "on";
+}
+/** 型の候補が空の番の型（内覧の話だけ T7・それ以外は null） */
+export function briefTypeFallbackOf(cues: unknown): string | null {
+  const c = Array.isArray(cues) ? cues.map(String) : [];
+  return c.includes("topic:viewing") ? "T7_viewing" : null;
+}
+
 export type BriefMode = "off" | "shadow";
 export function conductorBriefMode(env: Env = typeof process !== "undefined" ? process.env : {}): BriefMode {
   // 2026-11-18 作業員M（統括役の決定・作業員I の引き継ぎ）: 試験 i1115-brief-on2・i1115-brief-rowsv2b（q057,q041,q326,q158・draft）で確かな悪化0＝既定 on（作る＝記録）。止める CONDUCTOR_BRIEF=off
@@ -79,12 +98,16 @@ export type ConductorBrief = {
   combine: Missing<{ combo: string; order: string; gap: string; why: string; from: "send_combo_table" | "two_message_plan"; priority?: string | null }>;
   /** 次の一手の番ごとの中身（何を・いつ・どの形で・next-move-concrete・NEXT_MOVE_CONCRETE=on の時だけ） */
   next_concrete?: Missing<ConcreteNext>;
-  next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
-  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string> };
+  next: Missing<{ dest: string; strength: string; strength_from?: string; timing: string; offer: Offer | null; plants: PlantFact[]; plants_route?: PlantFact[]; when: When | null; form?: "reply" | "aix" | "combo" | null; from: "next_move_detail" | "type_table" }>;
+  aim: { purpose: string | null; purposeFrom: "judge_basis" | "type_table" | null; keyPoint: Missing<string>; mid?: Missing<string>; keyPointFrom?: "route" | "type_table"; midFrom?: "route" | "type_table" };
+  /** 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ）: 申込までの地図の駅・駅の中の状態・目的・中期・長期・仕込み・先読みの深さ（道を決めた後・route-record.routeBriefSection） */
+  route?: RouteBriefSection;
   /** 2026-11-19 作業員M: 前のどの通のどの項目を受けて次を送るか・つながりの種類・なぜ（meta.next_send_link・NEXT_SEND_LINK=shadow の時だけ・名前は situation_now の item_id・promise_id・ask_id・sent_id） */
   next_link?: { kind: string; refs: Array<Record<string, string>>; why: string };
+  /** 2026-11-21 作業員M: 前の番のお客様ごとの計画を照らした欄（CONDUCTOR_BRIEF_PLAN=on の時だけ・brain-core が指示書を組んだ後に足す・書き手には渡さない） */
+  plan?: import("./customer-plan").PlanBriefSection;
   /** 2026-11-19 作業員M: 前の番でまだ答えていない要件・約束して結果がまだの要件（meta.ask_carry・ASK_PROGRESS_READ=on の時だけ・id は askIdOf） */
-  carry_asks?: { open: string[]; promised: string[] };
+  carry_asks?: { open: string[]; promised: string[]; quotes?: Array<{ ask_id: string; quote: string; state: string }> };
   /** 2026-11-15 作業員I: 気持ち・状況の表の判断（FEELING_CONDUCTOR_TABLE=on の時だけ） */
   feeling?: ReturnType<typeof feelingBriefSection>;
   /** 統括が決めた事の1つの置き場（重点・約束・段階・誘導先・継続の約束・こちら側の状態・依頼ごとの道と答え／conductor-decided.ts） */
@@ -151,7 +174,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   //   型が meta に無い番（CHECK_ORDER_TABLE が off）は、ここで同じ関数で作る（meta には書かない・指示書の中だけ）
   const metaType = typeof m.check_order_type === "string" ? m.check_order_type : null;
   const coRec = obj(m.check_order) ? null : (() => { try { return checkOrderRecord(m, typeof m.check_order_scene === "string" ? m.check_order_scene : null); } catch { return null; } })();
-  const typeId = metaType ?? coRec?.type ?? null;
+  const typeFallback = !metaType && !coRec?.type && briefFillFromTypeOn() ? briefTypeFallbackOf(obj(m.check_order)?.cues ?? coRec?.cues) : null;
+  const typeId = metaType ?? coRec?.type ?? typeFallback;
   const t = typeId ? checkOrderById(typeId) : null;
   const type: ConductorBrief["type"] = t ? { id: t.id, check: [...t.check], why: t.why.slice(0, 80), depth: `${CHECK_DEPTH[t.id]?.base ?? "?"}${CHECK_DEPTH[t.id]?.via ? `+${CHECK_DEPTH[t.id]!.via}` : ""}`, from: metaType ? "meta" : "brief" } : BRIEF_NONE;
   if (type === BRIEF_NONE) notYet.push("type");
@@ -204,7 +228,30 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const aim: ConductorBrief["aim"] = jbPurpose ? { purpose: jbPurpose, purposeFrom: "judge_basis", keyPoint: keyPoint ?? BRIEF_NONE } : t ? { purpose: t.priority[0] ?? null, purposeFrom: "type_table", keyPoint: keyPoint ?? BRIEF_NONE } : { purpose: null, purposeFrom: null, keyPoint: keyPoint ?? BRIEF_NONE };
   if (aim.keyPoint === BRIEF_NONE) notYet.push("key_point");
   //   中期（次の2〜3番でどこへ）: 作業員7 の turn_aims.midAim → judge_next.dest（decided-subfields の aim.mid と同じ取り先）
-  aim.mid = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.judge_next)?.dest, 20) ?? BRIEF_NONE;
+  //   2026-11-21 作業員M（#467）: 道の後の状態の表の狙い（meta.turn_aims_after・APPLY_ROUTE_RECORD=on の時だけある）も取り先に足す
+  aim.mid = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30) ?? str(obj(m.judge_next)?.dest, 20) ?? BRIEF_NONE;
+  // 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ）: 地図の駅の中の状態（駅と合って使ってよい時だけ）で、空いている欄だけ埋める（上書きしない）。
+  //   要点 ← 状態の目的／中期 ← 状態の中期（judge_next.dest より先: dest は行き先の語だけで中身が無い・turn_aims の中期は上書きしない）／仕込み ← 状態の仕込み（next に無い物だけ足し plants_route に印）
+  let route: RouteBriefSection | undefined;
+  if (routeToBriefOn()) {
+    const r = routeBriefSection(m);
+    if (r) {
+      route = r;
+      if (aim.keyPoint === BRIEF_NONE && r.turn_aim) { aim.keyPoint = r.turn_aim; aim.keyPointFrom = "route"; const i = notYet.indexOf("key_point"); if (i >= 0) notYet.splice(i, 1); }
+      const midFromAims = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30);
+      if (!midFromAims && r.mid_aim) { aim.mid = r.mid_aim.slice(0, 30); aim.midFrom = "route"; }
+      if (next !== BRIEF_NONE && r.plants.length) {
+        const add = r.plants.filter((p) => !next.plants.includes(p));
+        if (add.length) { next.plants = [...next.plants, ...add]; next.plants_route = add; }
+      }
+    }
+  }
+  // 2026-11-21 作業員M（#465・BRIEF_FILL_FROM_TYPE=on の時だけ）: まだ空の要点・中期を型の表から（地図の状態の後＝状態の方が細かい）
+  if (briefFillFromTypeOn() && t) {
+    const kp = TYPE_INTENT[t.id]?.keyPoint;
+    if (aim.keyPoint === BRIEF_NONE && kp) { aim.keyPoint = kp.slice(0, 50); aim.keyPointFrom = "type_table"; const i = notYet.indexOf("key_point"); if (i >= 0) notYet.splice(i, 1); }
+    if (aim.mid === BRIEF_NONE && next !== BRIEF_NONE && next.dest) { aim.mid = next.dest; aim.midFrom = "type_table"; }
+  }
   if (aim.mid === BRIEF_NONE) notYet.push("mid");
 
   // ⑩ 疑いの印（下の役の答えを事実と突き合わせる・決め直さない）
@@ -217,9 +264,11 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const feeling = feelingBriefSection(m);
   const nlRec = obj(m.next_send_link) as { kind?: unknown; refs?: unknown; why?: unknown } | null;
   const next_link = nlRec && typeof nlRec.kind === "string" ? { kind: nlRec.kind, refs: (Array.isArray(nlRec.refs) ? nlRec.refs : []).slice(0, 4) as Array<Record<string, string>>, why: String(nlRec.why ?? "").slice(0, 80) } : undefined;
-  const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown } | null;
-  const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[] } : undefined;
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), decided, doubts, sure, notYet };
+  const caRec = obj(m.ask_carry) as { open?: unknown; promised?: unknown; items?: unknown } | null;
+  // 2026-11-22 作業員M（台帳 #595）: 書き手に渡す時に要件の言葉が要るので、ask_carry.items の引用（お客様の要件の言葉・40字まで）も持つ（記録だけ・渡すのは BRIEF_CARRY_TO_WRITER=on の時）
+  const caQuotes = Array.isArray(caRec?.items) ? (caRec!.items as Array<Record<string, unknown>>).filter((x) => x && typeof x.ask_id === "string" && typeof x.quote === "string").slice(0, 6).map((x) => ({ ask_id: String(x.ask_id), quote: Array.from(String(x.quote)).slice(0, 40).join(""), state: String(x.state ?? "") })) : [];
+  const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[], ...(caQuotes.length ? { quotes: caQuotes } : {}) } : undefined;
+  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), ...(route ? { route } : {}), decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
@@ -238,10 +287,21 @@ export const BRIEF_SECTION_SUBS: Readonly<Record<string, readonly string[]>> = {
   aim: ["aim.turn", "aim.mid"],
   // 2026-11-15 作業員I: 気持ち・状況の表の判断 → 重点（頭・つなぎ）・強さ（締め・つなぎ）・組（AIX）・次に送る物（つなぎ・AIX 2通目）。役目は feeling-conductor-table.FEELING_TO_ROLES と同じ欄
   feeling: ["focus.kind", "hook.degree", "priority.combo", "aim.mid"],
+  // 2026-11-21 作業員M（台帳 #467 の (1)）: 地図の今の状態（目的→締め・AIX 1通目／中期→つなぎ・AIX 2通目／仕込み→つなぎ）。ROUTE_TO_BRIEF=on の番だけある
+  route: ["aim.turn", "aim.mid", "aim.plant"],
 };
 /** 役目 → 渡す指示書の欄の名前（下の欄の役目の和）。alloc・doubts・sure・decided は統括の中だけ（書き手へは渡さない） */
-export function briefSectionsForRole(role: SubRole): string[] {
-  return Object.entries(BRIEF_SECTION_SUBS).filter(([, subs]) => subs.some((sub) => SUB_FIELDS.find((f) => f.sub === sub)?.roles.includes(role))).map(([k]) => k);
+/**
+ * 2026-11-22 作業員M（台帳 #595・統括役の決め (b)）: 前の番でまだ答えていない要件・約束して結果がまだの要件（carry_asks・ASK_PROGRESS_READ は既定 on の記録）を書き手へ。
+ *   BRIEF_CARRY_TO_WRITER=on の時だけ（既定 off）。渡す役目は 頭（主の要件の先）と つなぎ（約束の続き）＝our.open_promise と同じ役目
+ */
+export function briefCarryToWriterOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRIEF_CARRY_TO_WRITER ?? "").trim().toLowerCase() === "on";
+}
+const CARRY_SUBS: readonly string[] = ["our.open_promise"];
+export function briefSectionsForRole(role: SubRole, env?: Env): string[] {
+  const subsOf: Record<string, readonly string[]> = briefCarryToWriterOn(env) ? { ...BRIEF_SECTION_SUBS, carry_asks: CARRY_SUBS } : BRIEF_SECTION_SUBS;
+  return Object.entries(subsOf).filter(([, subs]) => subs.some((sub) => SUB_FIELDS.find((f) => f.sub === sub)?.roles.includes(role))).map(([k]) => k);
 }
 /** 役目ごとに要る欄だけの指示書（未の欄は渡さない） */
 export function briefForRole(b: ConductorBrief | null | undefined, role: SubRole): Record<string, unknown> {

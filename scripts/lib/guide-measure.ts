@@ -14,8 +14,8 @@ import { MAIN_ROUTE, type RouteNodeId } from "../../app/lib/apply-route-map";
 export type GMsg = { sender: string; text: string | null; created_at: string; staff_writer?: string | null; is_aix_generated?: boolean | null };
 export type GAix = { aix_type: string | null; sent_at: string | null; created_at: string };
 export type GDecision = { created_at: string; stage: string | null };
-export type Outcome = "advanced" | "stuck" | "back" | "left";
-export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
+export type Outcome = "advanced" | "engaged" | "stuck" | "back" | "left";
+export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）・内覧待ち（viewingWait の時）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
 
 /** customer-state の段階 → 地図の駅（apply-route-map の STAGE_TO_NODE と同じ・searching は pickup に寄せる） */
 const STAGE_NODE: Record<string, RouteNodeId | null> = {
@@ -45,10 +45,28 @@ export function closeKindOf(text: string): string {
 export type GuideTurn = {
   conv: string; at: string; act: string; actKind: "aix" | "reply"; before: RouteNodeId | null; after: RouteNodeId | null;
   mood: ReactionCat; reply: ReactionCat; hours: number | null; outcome: Outcome;
+  /** promiseWait の時だけ: 約束の番を「果たした後の次の返事」で測り直した（fulfilled＝果たした・not_fulfilled＝72時間で果たさず） */
+  promiseWait?: "fulfilled" | "not_fulfilled";
+  /** promiseWait=fulfilled の時: 約束から果たした AIX までの時間（時間・小数1桁） */
+  fulfilH?: number;
+  /** promiseWait=fulfilled の時: 果たした AIX の種類（property_send・property_recommendation・property_check_result・estimate_sheet・mgmt_*） */
+  fulfilType?: string;
 };
 
-/** 1つの会話（古い順の messages・AIX の記録・判断の記録）→ 竹内さん本人の番ごとの誘導の記録 */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48): GuideTurn[] {
+/** 約束を果たしたと見る AIX（物件・確かめた結果・見積） */
+const FULFIL_AIX = /^(?:property_send|property_recommendation|property_check_result|estimate_sheet|mgmt_)/;
+export const PROMISE_FULFIL_H = 72;
+
+/**
+ * 1つの会話（古い順の messages・AIX の記録・判断の記録）→ 竹内さん本人の番ごとの誘導の記録
+ * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
+ *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
+ */
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean } = {}): GuideTurn[] {
+  // 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後（viewing_scheduled）に留まって返事が来る番は、内覧の日まで駅が進まないだけ＝止まりではない
+  //   （「物件確認した の後に止まった」7番のうち3番がこれ）。opts.viewingWait（既定 false＝今と同じ）の時だけ engaged に数える
+  const keep = (before: RouteNodeId | null, after: RouteNodeId | null, reply: ReactionCat) =>
+    (before === "proposing" && reply === "question") || (!!opts.viewingWait && before === "viewing_scheduled" && after === "viewing_scheduled" && reply !== "silent");
   const ms = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const ds = [...decisions].filter((d) => d.stage).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const stageAt = (iso: string, after: boolean) => {
@@ -75,15 +93,36 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const hours = endAt ? (Date.parse(endAt) - Date.parse(m.created_at)) / 36e5 : null;
     const replied = hours != null && hours <= windowH;
     const after = replied ? stageAt(endAt!, true) : before;
-    const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back" : "stuck";
-    out.push({ conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replied ? classifyCustomerBurst(reply) : "silent", hours: hours == null ? null : Math.round(hours * 10) / 10, outcome });
+    const replyCat = replied ? classifyCustomerBurst(reply) : "silent";
+    // 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は、駅が変わらなくても関わりが続いている形＝「止まった」と分ける（engaged）
+    const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back"
+      : keep(before, after, replyCat) ? "engaged" : "stuck";
+    const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
+    if (opts.promiseWait && act === "reply:promise" && replied && replyCat === "thanks") {
+      const t0 = Date.parse(m.created_at);
+      const ful = aix.map((a) => ({ type: a.aix_type ?? "", at: a.sent_at ?? a.created_at })).filter((a) => FULFIL_AIX.test(a.type) && Date.parse(a.at) > t0 && Date.parse(a.at) - t0 <= PROMISE_FULFIL_H * 36e5).sort((a, b) => a.at.localeCompare(b.at))[0];
+      if (!ful) { row.promiseWait = "not_fulfilled"; row.outcome = "left"; }
+      else {
+        row.promiseWait = "fulfilled"; row.fulfilH = Math.round((Date.parse(ful.at) - t0) / 36e5 * 10) / 10; row.fulfilType = ful.type;
+        const nx = ms.find((x) => x.sender === "customer" && x.created_at > ful.at);
+        const h2 = nx ? (Date.parse(nx.created_at) - Date.parse(ful.at)) / 36e5 : null;
+        if (!nx || h2 == null || h2 > windowH) { row.outcome = "left"; row.reply = "silent"; }
+        else {
+          const burst: string[] = []; for (let j = ms.indexOf(nx); j < ms.length && ms[j].sender === "customer"; j++) burst.push(String(ms[j].text ?? ""));
+          const a2 = stageAt(nx.created_at, true), r2 = classifyCustomerBurst(burst);
+          row.after = a2; row.reply = r2;
+          row.outcome = idx(a2) > idx(before) ? "advanced" : idx(a2) < idx(before) && idx(a2) >= 0 ? "back" : keep(before, a2, r2) ? "engaged" : "stuck";
+        }
+      }
+    }
+    out.push(row);
   }
   return out;
 }
 
 export const FEW = 5;
-export type Cell = { n: number; advanced: number; stuck: number; back: number; left: number; few: boolean };
-const cell = (): Cell => ({ n: 0, advanced: 0, stuck: 0, back: 0, left: 0, few: true });
+export type Cell = { n: number; advanced: number; engaged: number; stuck: number; back: number; left: number; few: boolean };
+const cell = (): Cell => ({ n: 0, advanced: 0, engaged: 0, stuck: 0, back: 0, left: 0, few: true });
 /** ② 型の表: 駅 × 一手 × 返事の前の気持ちの型 → 結果の数（数の少ない組は few） */
 export function guideTable(turns: ReadonlyArray<GuideTurn>): Map<string, Cell> {
   const m = new Map<string, Cell>();

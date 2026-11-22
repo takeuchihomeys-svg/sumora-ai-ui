@@ -30,6 +30,10 @@ export const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pat
   "judge_basis_rec", "material_clash",
   // 2026-11-15 作業員L: 今の状況の記録（BRAIN_SITUATION_TIMELINE）
   "situation_now",
+  // 2026-11-21 作業員L: 材料の1行を足した印（material_marks）
+  "material_marks",
+  // 2026-11-21 作業員L: 入口の統括が読んだ学び（CONDUCTOR_LESSONS）
+  "conductor_lessons",
   // 2026-11-15 作業員M: 要件の帳面（ASK_LEDGER=shadow|on・要件の id・何通目・取りこぼし／重ね／取り違え）と返信と AIX の組（SEND_COMBO_TABLE=shadow）。scripts/ask-ledger-score.ts が答案から読む
   "ask_ledger", "send_combo",
   // 2026-11-19 作業員M: 前の番のまだの要件（ASK_PROGRESS_READ）と統括の next_send のつながり（NEXT_SEND_LINK=shadow）

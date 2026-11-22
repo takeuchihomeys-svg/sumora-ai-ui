@@ -10,6 +10,7 @@
 // ward_codes は未投入のため参照しない。
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
@@ -92,7 +93,7 @@ function classifyToken(
   return "unknown";
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   // Vercel Cron 認証
   const auth = req.headers.get("authorization");
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -181,3 +182,6 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("classify-area-modes", handleGET);

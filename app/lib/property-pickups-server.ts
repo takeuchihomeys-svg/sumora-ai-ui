@@ -26,7 +26,8 @@ import { readPropertyImageDetail, readPropertyImageDetailByTranscript, propertyI
 const readSheetImage = (url: string, timeoutMs: number, conversationId: string | null) => (propertyImageDetailEnabled() ? readPropertyImageDetail(url, { timeoutMs }) : readPropertyImageDetailByTranscript(url, { timeoutMs, conversationId }));
 // 2026-09-29 資料の中身は文字層があれば文字層から（画像の推論の出力が費用の 96%）・同じ物件は 7日以内の行から写す
 import { detailSourceFor, readPropertyDetailFromText, reusableLinesByPdfUrl, planDetailSource, detailModelLabel, type TextDetailResult } from "@/app/lib/property-detail-source";
-import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
+import type { ImageWantKey } from "@/app/lib/property-brain";
+import { readFloorPlanFacts, counterKitchenImageReadOn } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
 import { recentDuplicateIndexes, RECENT_DUP_WINDOW_MS, type RecentPickupRow } from "@/app/lib/pickup-recent-dup";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
@@ -451,7 +452,16 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     await Promise.allSettled(targets.map(async ({ it, i }) => {
       const url = (it.agentImageUrl ?? it.pageImageUrl) ?? null;
       // 設備欄で ○/× が決まった希望（バストイレ別・独立洗面・南向き・2階以上）は画像で読み直さない（judgeProperty の imageChecks）
-      const wants = it.judgment ? it.judgment.imageChecks : (profile?.imageWants ?? []);
+      const wants0 = it.judgment ? it.judgment.imageChecks : (profile?.imageWants ?? []);
+      // 2026-11-21 作業員G（台帳 #477・竹内さん「カウンターキッチンを画像から読み取るようにして判定する」）:
+      //   お客様がカウンターキッチンを希望していて、資料の文字では分からない（equipment.match が unlisted）行だけ、同じ1回の読みに counter_kitchen を足す。
+      //   60日で希望154行のうち127行が文字では分からない（文字層にカウンター・対面の語は 0/127）。結果は image_facts.counter_kitchen に入るだけで、
+      //   判定（applyImageFacts は imageChecks しか見ない）には入らない＝目の監査で誤り0を確かめてから K2 が EQUIP_WISH_IMAGE で使う。
+      //   既定 off（COUNTER_KITCHEN_IMAGE_READ=on・off の時は問いも1文字も変わらない）。出すのは物件の資料の画像だけ
+      const wantCounter = counterKitchenImageReadOn()
+        && (it.equipment?.match ?? []).some((m) => m.key === "counter_kitchen" && m.result === "unlisted")
+        && !wants0.includes("counter_kitchen");
+      const wants: ImageWantKey[] = wantCounter ? [...wants0, "counter_kitchen"] : wants0;
       // 2026-09-29 検証の反証: 写しは**文字層が無い行だけ**（planDetailSource・文字層がある行は毎回文字層で読む＝$0.001 で正確・新しい）
       const plan = planDetailSource(it.pdfText, !!url, it.pdfUrl ? reusable.get(it.pdfUrl) ?? null : null);
       let source: string = plan.source;

@@ -57,7 +57,7 @@ const OWN_EST = (name: string) => `[画像] 【見積書・初期費用の明細
   ok("③ 文がまだ無い＝連投の続きを待つ", /待つ/.test(w.route.text));
 }
 {
-  delete process.env.CUSTOMER_IMAGE_ROUTE_1115;
+  process.env.CUSTOMER_IMAGE_ROUTE_1115 = "off"; // 2026-11-20 既定 on になった＝off は明示
   const off = linkCustomerImage({ text: OTHER_SITE, at: "2026-11-12T05:00:00Z", customerWords: "", sent: SENT });
   ok("off なら前の行き先（送った物件への反応）", off.relation === "reaction_to_ours");
   const turns = linkTurnImages([{ text: TASTE, created_at: "2026-11-07T05:23:00Z" }, { text: "こんな感じのお部屋が希望です", created_at: "2026-11-07T05:24:00Z" }], SENT);

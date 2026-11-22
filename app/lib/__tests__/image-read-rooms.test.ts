@@ -16,8 +16,8 @@ const { LEDGER_ITEMS_SYSTEM, ledgerItemsSystem } = await import("../image-read-l
 
 // 既定 off: 指示の文は今と1文字も変わらない（キャッシュも今のまま）
 assert.equal(imageReadRoomsOn({}), false);
-assert.equal(propertyImagePrompt({}), PROPERTY_IMAGE_PROMPT);
-assert.equal(ledgerItemsSystem({}), LEDGER_ITEMS_SYSTEM);
+assert.equal(propertyImagePrompt({ IMAGE_READ_STATUS_STRICT: "off" }), PROPERTY_IMAGE_PROMPT); // 11/21 現況の指示（既定 on）を外すと元の指示
+assert.equal(ledgerItemsSystem({ IMAGE_READ_STATUS_STRICT: "off" }), LEDGER_ITEMS_SYSTEM);
 
 // on: 画像の読みと書き写しの読みの両方に rooms の1行が is_property の前に入る
 for (const p of [propertyImagePrompt({ IMAGE_READ_ROOMS: "on" }), ledgerItemsSystem({ IMAGE_READ_ROOMS: "on" })]) {

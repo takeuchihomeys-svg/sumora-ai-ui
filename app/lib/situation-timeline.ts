@@ -14,9 +14,16 @@
 //   ③ timelineBlock: ①②を1つの材料の塊【時系列の帳面】にする（事実だけ・道の言葉は書かない）。
 // 置き方: BRAIN_SITUATION_TIMELINE（11/15 から既定 on・戻す =off）の時に brain-core が材料に足す。
 import { JST_OFFSET_MS, WEEKDAYS_JA, jstDayStartMs } from "./jst-date";
+import { isConfirmedViewingEvent } from "./viewing-confirmed";
 
 const DAY = 86_400_000;
 type Env = Record<string, string | undefined>;
+/**
+ * 2026-11-21 作業員L（台帳 #7・scripts/audit-timeline-coverage.ts の本番の数え: 24時間の10会話で、時の言葉10のうち記録に入ったのは2。
+ *   入らなかった8は全部ブレインが読む窓（直近20通）より前に言った言葉＝「11月上旬」「10月中」「11月末」など入居の時期が抜けていた。窓の中の言葉は 2/2）:
+ *   時系列の帳面だけ、お客様の発言を窓の外まで（直近40通・1回の軽い読み）読む。SITUATION_TIMELINE_WIDE=on の時だけ（既定 off）
+ */
+export const situationTimelineWideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_TIMELINE_WIDE ?? "").trim().toLowerCase() === "on";
 export const situationTimelineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_SITUATION_TIMELINE ?? "on").trim().toLowerCase() !== "off";
 // 2026-11-15 作業員L: 試験 L1115-sitm-off → L1115-sitm-tlonly（16問・3回の過半数・DeepSeek）で悪くなった問題 0・最終の道 35/45→38/48・本質の道 25/45→30/48 ＝既定 on（戻す =off）
 
@@ -78,31 +85,40 @@ export function resolveTimeWords(text: string | null | undefined, atMs: number):
 }
 
 export type CalendarRow = { title?: string | null; event_type?: string | null; start_at?: string | null; end_at?: string | null; all_day?: boolean | null; is_done?: boolean | null; notes?: string | null };
-export type CalendarRead = { kind: "viewing" | "promise"; atMs: number; hasTime: boolean; done: boolean; type: string; title: string };
+export type CalendarRead = { kind: "viewing" | "promise" | "hold"; atMs: number; hasTime: boolean; done: boolean; type: string; title: string };
+/**
+ * 2026-11-22 作業員L（台帳 #590・作業員N2 の見つけ）: 時刻のある内覧の予定のうち、候補の【時間確保】（viewing-hold・本番30日で23件・13会話）は
+ *   まだ決まっていない候補なのに「内覧の予定」として帳面に出ていた。TIMELINE_VIEWING_HOLD=on（既定 off）の時だけ、
+ *   viewing-confirmed.isConfirmedViewingEvent で決まっていない時刻つきの内覧の予定を kind "hold"（内覧の候補の時間確保）に分ける。off は今と同じ
+ */
+export const timelineViewingHoldOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.TIMELINE_VIEWING_HOLD ?? "").trim().toLowerCase() === "on";
 /** 竹内さんの決まり（11/15）: 時刻がある予定は内覧の予定（event_type を問わない）・終日の予定は約束と連絡の予定 */
-export function readCalendarEvents(rows: ReadonlyArray<CalendarRow>): CalendarRead[] {
+export function readCalendarEvents(rows: ReadonlyArray<CalendarRow>, env?: Env): CalendarRead[] {
+  const holdOn = timelineViewingHoldOn(env);
   return rows.flatMap((r) => {
     const at = Date.parse(String(r.start_at ?? ""));
     if (!Number.isFinite(at)) return [];
     const hasTime = r.all_day === false;
     // 題の中のお客様の名前（〇〇さん）は材料に出さない（種類と時刻だけ）
     const title = String(r.title ?? "").replace(/\S{0,12}さん/g, "").replace(/\s+/g, " ").trim().slice(0, 30);
-    return [{ kind: hasTime ? "viewing" : "promise", atMs: at, hasTime, done: r.is_done === true, type: String(r.event_type ?? "other"), title } as CalendarRead];
+    const hold = holdOn && hasTime && (r.event_type == null || r.event_type === "viewing") && !isConfirmedViewingEvent(r);
+    return [{ kind: hold ? "hold" : hasTime ? "viewing" : "promise", atMs: at, hasTime, done: r.is_done === true, type: String(r.event_type ?? "other"), title } as CalendarRead];
   }).sort((a, b) => a.atMs - b.atMs);
 }
 
 const TYPE_JA: Record<string, string> = { viewing: "内覧", property_send: "物件の送付", follow_up: "追いかけの連絡", estimate_sheet: "御見積書", application: "申込", phone: "電話", photo: "写真", other: "その他" };
 const hm = (ms: number) => { const d = new Date(ms + JST_OFFSET_MS); return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
 
-export type TimelineInput = { customerMsgs: ReadonlyArray<{ text: string | null; atMs: number }>; calendar: ReadonlyArray<CalendarRow>; nowMs: number };
-export type TimelineRecord = { words: Array<TimeWord & { saidAtMs: number }>; viewings: CalendarRead[]; promises: CalendarRead[] };
+export type TimelineInput = { customerMsgs: ReadonlyArray<{ text: string | null; atMs: number }>; calendar: ReadonlyArray<CalendarRow>; nowMs: number; env?: Env };
+export type TimelineRecord = { words: Array<TimeWord & { saidAtMs: number }>; viewings: CalendarRead[]; promises: CalendarRead[]; holds?: CalendarRead[] };
 export function buildTimeline(i: TimelineInput): TimelineRecord {
   // 2026-11-15 試験 q092 で直した: 「ここは最短11月中旬でしょうか？」は物件の入居日を聞いている問い＝お客様の予定ではない。
   //   問いの文（？・か で終わる）の日付は帳面に入れない（お客様が自分の予定として言った文だけ）
   const statements = (t: string | null) => String(t ?? "").split(/(?<=[。！!？?\n])/).filter((s) => s.trim() && !/[？?]\s*$|(?:でしょうか|ですか|ますか|か)\s*[。]?\s*$/.test(s.trim())).join("");
   const words = i.customerMsgs.flatMap((m) => resolveTimeWords(statements(m.text), m.atMs).map((w) => ({ ...w, saidAtMs: m.atMs })));
-  const cal = readCalendarEvents(i.calendar);
-  return { words: words.slice(-8), viewings: cal.filter((c) => c.kind === "viewing"), promises: cal.filter((c) => c.kind === "promise") };
+  const cal = readCalendarEvents(i.calendar, i.env);
+  const holds = cal.filter((c) => c.kind === "hold");
+  return { words: words.slice(-8), viewings: cal.filter((c) => c.kind === "viewing"), promises: cal.filter((c) => c.kind === "promise"), ...(holds.length ? { holds } : {}) };
 }
 /** 材料の塊（事実だけ・空なら空文字） */
 export function timelineBlock(rec: TimelineRecord, nowMs: number): string {
@@ -116,6 +132,11 @@ export function timelineBlock(rec: TimelineRecord, nowMs: number): string {
     lines.push("・内覧の予定（カレンダーの時刻がある予定）:");
     for (const v of vFuture) lines.push(`  - ${mdLabel(v.atMs)} ${hm(v.atMs)}（これから・${TYPE_JA[v.type] ?? v.type}${v.title ? `・${v.title}` : ""}）`);
     for (const v of vPast) lines.push(`  - ${mdLabel(v.atMs)} ${hm(v.atMs)}（${v.done ? "済み" : "過ぎた・済みの印なし"}・${TYPE_JA[v.type] ?? v.type}）`);
+  }
+  const hFuture = (rec.holds ?? []).filter((h) => h.atMs >= jstDayStartMs(nowMs) && !h.done);
+  if (hFuture.length) {
+    lines.push("・内覧の候補の時間確保（候補日時を送って枠を押さえただけ・まだ決まっていない）:");
+    for (const h of hFuture) lines.push(`  - ${mdLabel(h.atMs)} ${hm(h.atMs)}（候補）`);
   }
   const pOpen = rec.promises.filter((p) => !p.done).slice(-5);
   if (pOpen.length) {

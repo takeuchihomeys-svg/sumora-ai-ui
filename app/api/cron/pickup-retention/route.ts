@@ -6,11 +6,12 @@
 // 選び方と消さない物は app/lib/pickup-retention.ts（純関数・テストあり）と app/lib/pickup-retention-server.ts。
 import { NextRequest, NextResponse } from "next/server";
 import { runPickupRetention } from "@/app/lib/pickup-retention-server";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -20,3 +21,6 @@ export async function GET(req: NextRequest) {
   const report = await runPickupRetention({ dry, measure: dry && sp.get("measure") === "1" });
   return NextResponse.json(report, { status: report.ok ? 200 : 500 });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("pickup-retention", handleGET);

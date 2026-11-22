@@ -15,6 +15,7 @@
 import { createHash } from "node:crypto";
 import { coreOf, dice } from "../../app/lib/text-diff-types";
 import { shiftDatesInText } from "./scenario-date-shift";
+import { aixPairForScoring } from "./exam-greeting-decision";
 
 export type AixTextKind = "aix" | "tpl" | "second";
 export const KIND_JA: Record<AixTextKind, string> = { aix: "1通目（AIX の本文）", tpl: "この会話に合った文", second: "2通目（この会話に合った文）" };
@@ -172,6 +173,8 @@ export function lcsRatio<T>(a: T[], b: T[]): number {
 
 // ─── 採点 ─────────────────────────────────────────────────────────────
 export type AixScore = {
+  /** 2026-11-21: 続きの番で冒頭の挨拶の行を外して比べた */
+  greeting_stripped?: true;
   score: number; pass: boolean;
   content: number; structure: number; similarity: number;
   /** 竹内さんの文にあって生成に無い（入力で作れる物だけ） */
@@ -189,7 +192,9 @@ export type AixScore = {
 export const PASS_RULE = "中身 ≥ 0.75・作り事なし・スタッフだけが知る事の外れなし・形 ≥ 0.5（LLM の判定があれば「同じ要件」）";
 
 export function scoreAixText(q: Pick<AixQuestion, "gold" | "inputText" | "body">, genRaw: string): AixScore {
-  const gen = N(genRaw).trim(), gold = N(q.gold).trim();
+  // 2026-11-21 作業員L（竹内さんの決定「続きの番は挨拶を省く」・作業員H と決めた）: 本文の会話が続きの番の時は、正解と生成の両方から冒頭の挨拶の行を外して比べる（決定による変化を悪化と数えない）
+  const gp = aixPairForScoring(q.body, String(q.gold ?? ""), String(genRaw ?? ""));
+  const gen = N(gp.gen).trim(), gold = N(gp.gold).trim();
   const input = N(q.inputText);
   const inFacts = factsOf(input), inDigits = input.replace(/,/g, "");
   const inSquash = squash(input);
@@ -236,7 +241,7 @@ export function scoreAixText(q: Pick<AixQuestion, "gold" | "inputText" | "body">
   const similarity = gen && gold ? dice(coreOf(gold), coreOf(gen)) : 0;
   const pass = !!gen && content >= 0.75 && !fabricated.length && !staffOnly.length && structure >= 0.5;
   const score = gen ? Math.round(100 * (0.35 * content + 0.15 * structure + 0.2 * similarity + 0.15 * (fabricated.length ? 0 : 1) + 0.15 * (staffOnly.length ? 0 : 1))) : 0;
-  return { score, pass, content, structure, similarity, missing, fabricated, staffOnly, unreachable, goldSections, genSections };
+  return { score, pass, content, structure, similarity, missing, fabricated, staffOnly, unreachable, goldSections, genSections, ...(gp.stripped ? { greeting_stripped: true } : {}) };
 }
 
 /** LLM の判定が要るか（lazy）: 決まった物差しでは合格だが近さが低い（言い換えか要件の抜けか分からない）／中身が足りないが事実の抜けは無い */

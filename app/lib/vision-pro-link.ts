@@ -71,6 +71,11 @@ export type VisionProLinkInput = {
   hasPhotoLearnTask?: boolean | null;
   /** Pro まとめ済みか（未実行は null） */
   usedPro?: boolean | null;
+  /**
+   * 2026-11-21 作業員G（統括Pro 段A・4108/4110）: 束に shot_gaps / shot_gaps_normal が無い＝学べ済みの数が分からない。
+   *   0 と読んで「写真はあるが学べ済み0（flash未実行）」と書いていた（実際は flash を実行済み）。true の時は「分からない」と書く
+   */
+  learnedUnknown?: boolean | null;
   flashModel?: string | null;
   proModel?: string | null;
 };
@@ -132,7 +137,9 @@ export function buildVisionProLink(opt: VisionProLinkInput = {}): VisionProLink 
         ? `学べ済み ${learned}枚（model=${flashModel}）`
         : (todo > 0
           ? `未学習 ${todo}枚が残る → photo_learn（flash）が要る`
-          : (photo > 0 ? "写真はあるが学べ済み0（flash未実行）" : "読む対象なし")),
+          : opt.learnedUnknown && photo > 0
+            ? "学べ済みの数が束に無い（shot_gaps 無し・分からない）→ 束を作り直して数える"
+            : (photo > 0 ? "写真はあるが学べ済み0（flash未実行）" : "読む対象なし")),
       role: "flash",
     },
     {

@@ -18,7 +18,7 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild } from "@/app/lib/human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 
@@ -27,8 +27,10 @@ export const dynamic = "force-dynamic";
  * ★ 2026-11-15 竹内さん「vercelで動かす形の方が良いのかな？」（main 側の決定を取り込み・2026-11-19 統合）
  *   `maxDuration` が未設定だと Vercel の既定（10秒）で切られる。統括に DeepSeek V4 Pro で考えさせると実測 29.6秒かかる
  *   → 既存の他の LLM API と同じ **60秒**。足りない時は LLM の判断を諦めて決定論を使う（`thinkAsSupervisor` が null を返す＝止まらない）。
+ * ★ 2026-11-21 作業員G: 夜の束の作り直しが 60秒を超えて切れていた（11/20 22時台に拡張の GET 12回・cron も）→ 300秒（Vercel の既定の上限）。
+ *   拡張の呼び出しは古い束をすぐ返し、作り直しは応答の後（buildInAfter）なので、拡張が300秒待つ事は無い
  */
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -594,16 +596,25 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   let saved = false;
   if (wipeBlocked) {
     try {
+      // 2026-11-21 作業員G（#588・②・LEARN_HISTORY_SLIM=on の時だけ）: 20行の束を丸ごと読まず、shots だけで探して、返す1行だけ丸ごと読む
+      const { countLearnedSolid, learnHistorySlimOn } = await import("@/app/lib/learn-bundle-preserve");
+      const slim = learnHistorySlimOn();
       const prev = await supabase
         .from("human_learn_profile")
-        .select("bundle")
+        .select(slim ? "id,shots:bundle->shots" : "bundle")
         .eq("scope", scope)
         .order("created_at", { ascending: false })
         .limit(20);
-      const { countLearnedSolid } = await import("@/app/lib/learn-bundle-preserve");
-      for (const row of prev.data || []) {
-        if (countLearnedSolid(row.bundle).solid >= 30) {
-          const keep = row.bundle as typeof bundle;
+      for (const row0 of (prev.data || []) as Array<{ id?: number; bundle?: unknown; shots?: unknown }>) {
+        const probe = slim ? { shots: row0.shots } : row0.bundle;
+        if (countLearnedSolid(probe).solid >= 30) {
+          let full: unknown = row0.bundle;
+          if (slim) {
+            const one = await supabase.from("human_learn_profile").select("bundle").eq("id", row0.id as number).maybeSingle();
+            full = (one.data as { bundle?: unknown } | null)?.bundle;
+            if (!full) continue;
+          }
+          const keep = full as typeof bundle;
           (keep as unknown as Record<string, unknown>).wipe_blocked = true;
           (keep as unknown as Record<string, unknown>).wipe_block_why = "履歴の学習を消す書き込みを拒否";
           return keep;
@@ -965,17 +976,35 @@ export async function GET(req: NextRequest) {
       //   coalesce はその箱の中だけ → 作り直しは DB の印（build_leases・期限つき）で全体の中で1本だけ。
       //   取れない（他の箱が作っている）・印が書けない（DB が重い）時は作らずに古い束を返す（束が無ければ空で返し、拡張は次の呼び出しで受け取る）。
       //   作り直しに失敗した時も下で古い束を返す。表が無い（migrate の前）時だけ今まで通り。止める: BUILD_LEASE=off（app/lib/build-lease.ts）
-      const fresh = await coalesce(`build:${scope}`, guard && !forceFresh, async () => {
+      const runBuild = (inAfter = false) => coalesce(`build:${scope}`, guard && !forceFresh, async () => {
         if (!buildLeaseOn()) return buildNow(scope, (m) => { why = m; });
         const leaseDb = supabaseLeaseDb(supabase as never);
-        const key = `human-learn-profile:${scope}`, holder = `${process.env.VERCEL_REGION ?? "local"}:${Math.random().toString(36).slice(2, 10)}`;
-        const lease = await tryAcquireLease(leaseDb, key, holder, (maxDuration + 30) * 1000);
+        // 2026-11-21 作業員G（#588・LEARN_BUILD_ONE_LANE=on の時だけ）: 印を全部で1本に・応答の後なら上限つきで順番を待つ
+        const key = buildLeaseKey(scope), holder = `${process.env.VERCEL_REGION ?? "local"}:${Math.random().toString(36).slice(2, 10)}`;
+        let lease = await tryAcquireLease(leaseDb, key, holder, (maxDuration + 30) * 1000);
+        let waitedMs = 0;
+        for (let w = laneNextWait({ lease, inAfter, waitedMs }); w != null; w = laneNextWait({ lease, inAfter, waitedMs })) {
+          await new Promise((r) => setTimeout(r, w));
+          waitedMs += w;
+          lease = await tryAcquireLease(leaseDb, key, holder, (maxDuration + 30) * 1000);
+        }
         const d = buildDecision(lease, !!row);
-        console.log(JSON.stringify({ tag: "human-learn-profile:build-lease", scope, lease, decision: d }));
+        console.log(JSON.stringify({ tag: "human-learn-profile:build-lease", scope, lease, decision: d, ...(waitedMs ? { waitedMs, lane: key } : {}) }));
         if (d !== "build") { why = lease === "held" ? "building_elsewhere" : "build_lease_unavailable"; return null; }
         try { return await buildNow(scope, (m) => { why = m; }); }
         finally { if (lease === "acquired") await releaseLease(leaseDb, key, holder); }
       });
+      // 2026-11-21 作業員G: 古い束がある時は作り直しを応答の後へ（拡張は古い束をすぐ受け取る・下の row を返す）。LEARN_BUILD_AFTER=off で今まで通り
+      const later = buildInAfter({ hasBundle: !!row, forceFresh });
+      if (later) {
+        why = "rebuild_after_response";
+        after(async () => {
+          const t0 = Date.now();
+          try { const b = await runBuild(true); console.log(JSON.stringify({ tag: "human-learn-profile:build-after", scope, built: !!b, ms: Date.now() - t0 })); }
+          catch (e) { console.warn("[human-learn-profile] 応答の後の作り直しに失敗:", e instanceof Error ? e.message : String(e)); }
+        });
+      }
+      const fresh = later ? null : await runBuild();
       if (fresh) {
         /**
          * ★ 2026-11-16 連携ボトルネック（read_count=0が続く）:

@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { flagOn } from "@/app/lib/brain-attention";
 import { loadBrainTargets } from "@/app/lib/brain-attention-server";
 import { todoSonotaMergeEnabled } from "@/app/lib/staff-todo-list";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
@@ -13,7 +14,7 @@ function getJSTHour(): number {
 const COOLDOWN_KEY = "announce_sonota_last_sent_at";
 const COOLDOWN_MS = 3 * 60 * 60 * 1000; // 3時間（10:00/14:00/19:00の3回ガード）
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -216,3 +217,6 @@ export async function GET(req: NextRequest) {
     skipped_7day: convs.length - sorted.length,
   });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("announce-sonota", handleGET);

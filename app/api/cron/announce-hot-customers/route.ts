@@ -5,6 +5,7 @@ import { flagOn, TARGET_TIER_RANK } from "@/app/lib/brain-attention";
 import { loadBrainTargets, loadScreeningList, syncBrainHotDrops, type BrainTarget, type HotDropRow, type ScreeningRow } from "@/app/lib/brain-attention-server";
 import { formatTargetList, withScheduleAt } from "@/app/lib/target-list-format";
 import { todoTargetMergeEnabled } from "@/app/lib/staff-todo-list";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 
@@ -33,7 +34,7 @@ const MOTIVATIONS = [
   "鈴木なら絶対全部いける💪",
 ];
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -408,3 +409,6 @@ async function announceBrainTargets(cfg: { token: string; targetId: string; suzu
   for (const t of targets) byTier[t.tier] = (byTier[t.tier] ?? 0) + 1;
   return NextResponse.json({ ok: true, mode: "brain", sent: top.length + rest.length, byTier, screening: screening.length, hotDropped: dropped.map((d) => ({ name: d.customerName, reason: d.reason })) });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("announce-hot-customers", handleGET);

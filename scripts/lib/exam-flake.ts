@@ -204,3 +204,44 @@ export function importLegacyRows(rows: Array<RowLike & { id: string; rep: number
   }
   return n;
 }
+
+/**
+ * 2026-11-21 作業員H（竹内さん「試験はなぜそんなにお金がかかるのか」・統括役の頼み・試験の無駄は最優先）:
+ *   直近7日の試験の回の 51% が揺れる問題の重ね回し（2〜4回目）。確かな悪化は「前（main）が過半数で○ → 今が過半数で✕」なので、
+ *   前が過半数で✕（合格も道も）の問題は、今を何回回しても悪化にならない＝2回目以降は悪化の見落としに効かない。1回だけにする。
+ *   前の答えが無い・前が○の問題は今まで通り（重ね回しで確かめる）。止める EXAM_SKIP_NO_REGRESSION=off
+ */
+export function skipNoRegressionOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_SKIP_NO_REGRESSION ?? "").trim().toLowerCase() !== "off";
+}
+export type BaseRowLite = { error?: unknown; score?: { pass?: boolean; path?: boolean } | null; path?: { ok?: boolean } | null; pathStrict?: boolean };
+/** 前の回（main）の答えから、この問題で悪化が起こりえないか（前が合格も道も過半数で✕）。前の答えが無ければ false（言い切らない） */
+export function noRegressionPossible(baseRows: ReadonlyArray<BaseRowLite>): boolean {
+  const rs = baseRows.filter((r) => !r.error);
+  if (!rs.length) return false;
+  const half = rs.length / 2;
+  const pass = rs.filter((r) => r.score?.pass).length;
+  const path = rs.filter((r) => r.path?.ok ?? r.score?.path).length;
+  const strict = rs.filter((r) => (r.pathStrict ?? (r.path?.ok ?? r.score?.path))).length;
+  return pass <= half && path <= half && strict <= half;
+}
+
+/**
+ * 2026-11-21 作業員H（統括役の OK・KB c6bb716c「前と違った問題だけ回数を足す」に戻す）: 揺れる問題を最初から全部の回で回していた（直近7日の回の 51% が重ね回し）。
+ *   今の最初の2回が、どちらも前（main）の過半数と同じ（合格も道も）なら、3回目からは回さない。違う回があれば今まで通り最後まで。
+ *   直近7日の答案 197本に当てて: 回 6% 減・確かな悪化と道の悪化の見落とし 0（1回で止める形は 19% 減だが道の悪化を1件見落とした＝取らない）。
+ *   止める EXAM_REPS_ONLY_IF_DIFFER=off
+ */
+export function repsOnlyIfDifferOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_REPS_ONLY_IF_DIFFER ?? "").trim().toLowerCase() !== "off";
+}
+export type PassPath = { pass: boolean; path: boolean };
+export function passPathOf(r: BaseRowLite): PassPath { return { pass: !!r.score?.pass, path: !!(r.path?.ok ?? r.score?.path) }; }
+/** 今の最初の2回が、どちらも前の過半数と同じか（前の答えが無い・2回に満たない時は false＝回す） */
+export function firstTwoSameAsBase(cur: ReadonlyArray<PassPath>, baseRows: ReadonlyArray<BaseRowLite>): boolean {
+  const bs = baseRows.filter((r) => !r.error);
+  if (!bs.length || cur.length < 2) return false;
+  const bPass = bs.filter((r) => r.score?.pass).length * 2 > bs.length;
+  const bPath = bs.filter((r) => r.path?.ok ?? r.score?.path).length * 2 > bs.length;
+  return cur.slice(0, 2).every((x) => x.pass === bPass && x.path === bPath);
+}

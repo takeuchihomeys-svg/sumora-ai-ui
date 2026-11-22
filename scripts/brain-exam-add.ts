@@ -28,6 +28,9 @@ import { loadTurnApplicationRecords } from "../app/lib/turn-application-gate-ser
 import { turnApplicationReason } from "../app/lib/turn-application-gate";
 import { gateCheckSpecs, writeGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 import { isTestConversation } from "../app/lib/test-conversations";
+import { pickSipRowsDesc } from "./lib/exam-ledger-sip";
+/** 2026-11-21 作業員H: 後から本番に足した送った資料の読みの行（G #448）。写しの上限の数えに入れない */
+const SIP_ADDED_PREFIXES = ["aix_log"];
 import { resolveReplyScene } from "../app/lib/reply-scene";
 import { subSceneOf } from "../app/lib/reply-subscene";
 import { APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
@@ -54,6 +57,8 @@ export type ExamSpec = {
   acceptWhen?: { searchExhausted?: string[]; /** 10/09: 全力サポートが正解の時の依頼（答え方は aix＝AIX の文で応える） */ searchExhaustedAsks?: ExamAsk[]; note?: string };
   /** 10/13 レビュー（重要3）: 厳しい採点の正解（物件の AIX の種類まで分ける。無ければ accept）。brain-exam-score.judgePath の strict で当てる */
   acceptStrict?: string[];
+  /** 2026-11-21 作業員H（#450）: 正解が従業員の番（竹内さんの番が見つからない）＝合否の数えに入れない（brain-exam の --include-employee の時だけ回す） */
+  writer?: "employee";
   /** 10/09: 日付をずらさない（月の家賃の計算など、ずらすと月の言い方と食い違う問題） */
   noDateShift?: boolean;
   /** 2026-10-09 主語の抜け: 今の番の物件の正解（竹内さんの返事が指した建物）。ブレインの current_property と照らす（brain-exam-score.judgeCurrentProperty） */
@@ -99,17 +104,29 @@ export const LEDGER_TABLES: Record<string, { time: string; times: string[]; date
   viewings: { time: "created_at", times: ["created_at"], dates: ["viewing_date"], limit: 10, drop: [] },
   viewing_history: { time: "created_at", times: ["created_at", "updated_at"], dates: ["scheduled_date", "actual_date"], limit: 10, drop: ["viewing_report", "viewing_report_at"] },
   sent_facts: { time: "created_at", times: ["created_at", "sent_at"], limit: 40, drop: [] },
+  // 2026-11-21 作業員K2（#132・q439）: 送った資料の読み（sent_image_properties.facts）。設備の答え（equipment-answer-server）・送った資料の事実は
+  //   この表を会話で引くのに、試験の会話へ写していなかった＝EQUIPMENT_WISH_LOOKUP の on/off が試験で1度も効かなかった（k1119-eqwish に brain:equipment-answer の行が0）。
+  //   id の列が無い表＝写しと片付けは会話ごと（借りたテスト用の会話だけ）。写す（作る）のも入れるのも EXAM_LEDGER_SIP=on の時だけ（既定 off＝今までと同じ）
+  sent_image_properties: { time: "created_at", times: ["created_at", "facts_read_at"], limit: 40, drop: [] },
 };
+/** 2026-11-21 送った資料の読み（sent_image_properties）を台帳に写す・入れるか（既定 off） */
+export function examLedgerSipOn(env: Record<string, string | undefined> = process.env): boolean { return String(env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on"; }
+/** id の列が無い表（片付けは会話ごと） */
+export const LEDGER_NO_ID = new Set(["sent_image_properties"]);
 /** 11/05 弱い所 301: id・*_id の欄と ISO 時刻・uuid の値は伏せない（scripts/lib/brain-exam-mask.ts maskLedgerDeep） */
 const maskDeep = (v: unknown, mask: (s: string) => string, key: string | null = null): unknown => maskLedgerDeep(v, mask, key);
 async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mask: (s: string) => string): Promise<Record<string, LedgerRow[]>> {
   const out: Record<string, LedgerRow[]> = {};
   for (const [t, c] of Object.entries(LEDGER_TABLES)) {
-    let q = sb.from(t).select("*").lte(c.time, at).order(c.time, { ascending: false }).limit(c.limit);
+    if (t === "sent_image_properties" && !examLedgerSipOn()) continue; // 既定 off（今までの問題の写しを変えない）
+    // 2026-11-21 作業員H: 送った資料の読みは、後から足した行（source=aix_log:*）で他の行が上限から押し出されないよう多めに読んで選ぶ（scripts/lib/exam-ledger-sip.ts）
+    const sipPick = t === "sent_image_properties";
+    let q = sb.from(t).select("*").lte(c.time, at).order(c.time, { ascending: false }).limit(sipPick ? c.limit * 3 : c.limit);
     q = c.byPc && pcId ? q.or(`conversation_id.eq.${conv},property_customer_id.eq.${pcId}`) : q.eq("conversation_id", conv);
     const { data, error } = await q;
     if (error) { console.warn(`  台帳 ${t}: ${error.message}`); continue; }
-    out[t] = ((data ?? []) as Array<Record<string, unknown>>).reverse().filter((r) => !applicationMaterialReason(JSON.stringify(r))).map((r) => {
+    const picked = sipPick ? pickSipRowsDesc((data ?? []) as Array<Record<string, unknown>>, c.limit, SIP_ADDED_PREFIXES, c.time) : ((data ?? []) as Array<Record<string, unknown>>);
+    out[t] = picked.slice().reverse().filter((r) => !applicationMaterialReason(JSON.stringify(r))).map((r) => {
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(r)) {
         if (c.drop.includes(k)) continue;

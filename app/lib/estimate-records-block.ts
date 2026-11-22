@@ -9,7 +9,7 @@
 import { jstMD } from "./jst-date";
 
 type Env = Record<string, string | undefined>;
-export const estimateRecordsBlockOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_ESTIMATE_RECORDS ?? "").trim().toLowerCase() === "on";
+export const estimateRecordsBlockOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.BRAIN_ESTIMATE_RECORDS ?? "").trim().toLowerCase() !== "off"; // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0・q159 を守りに入れて）。止める =off
 export type EstimateRow = { property_name?: string | null; room_no?: string | null; initial_cost_yen?: number | string | null; created_at?: string | null };
 
 export function estimateRecordsBlock(rows: ReadonlyArray<EstimateRow>, max = 6): string {

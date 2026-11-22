@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
@@ -8,6 +9,7 @@ import { isUsableExampleText } from "@/app/lib/example-hygiene";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { updateKnowledgeBudgetOn, UPDATE_KNOWLEDGE_BUDGET, canStartWithin, updateKnowledgeUnusedMarkOn } from "@/app/lib/cron-time-budget";
 
 export const maxDuration = 60;
 
@@ -105,13 +107,17 @@ ${sentReply}
   } catch (e) { return { inserted: 0, ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  // 2026-11-22 作業員N2（台帳 #592・UPDATE_KNOWLEDGE_TIME_BUDGET=on・既定 off）: 60秒で毎晩切れ、後ろの片付けが 8/18 から回っていない → 時間の残りで次を始めるか決める
+  const startMs = Date.now();
+  const budgetOn = updateKnowledgeBudgetOn();
+  let stoppedEarly = false;
   try {
     // 2026-11-20 作業員H: 小さな表（knowledge_usage）に足した使用回数を、used_count=0 の行を消す前に書き戻す（KNOWLEDGE_USAGE_TABLE・on・off に関係なく毎晩）
     //   ⚠ 下の早めの return（☆つき例文が無い時）より前に置く
@@ -119,6 +125,11 @@ export async function GET(req: NextRequest) {
       const { foldKnowledgeUsage } = await import("@/app/lib/knowledge-usage");
       const f = await foldKnowledgeUsage((fn, args) => supabase.rpc(fn, args));
       console.log(JSON.stringify({ tag: "update-knowledge:fold-usage", folded: f.folded, error: f.error }));
+      // 2026-11-21 作業員H（統括役）: 畳んだ件数を cron_run_logs にも残す（ログは流れて消える・毎朝の確かめで件数を数える）。書けなくても本筋は止めない
+      try {
+        const at = new Date().toISOString();
+        await supabase.from("cron_run_logs").insert({ cron_name: "update-knowledge:fold-usage", started_at: at, finished_at: at, ok: !f.error, result_json: { folded: f.folded }, ...(f.error ? { error_message: String(f.error).slice(0, 500) } : {}) });
+      } catch { /* 記録だけ */ }
     }
     // 未処理の☆つき例文を取得
     const { data: examples } = await supabase
@@ -159,6 +170,7 @@ export async function GET(req: NextRequest) {
 
     let totalAdded = 0;
     for (let i = 0; i < toProcess.length; i += 3) {
+      if (budgetOn && !canStartWithin(startMs, Date.now(), UPDATE_KNOWLEDGE_BUDGET.nextChunkUntilMs)) { stoppedEarly = true; break; }
       const chunk = toProcess.slice(i, i + 3);
       const results = await Promise.all(
         chunk.map((ex) => analyzeOneTracked(
@@ -172,27 +184,41 @@ export async function GET(req: NextRequest) {
     }
 
     // 処理後に自動クリーンアップ
-    const cleanup = toProcess.length > 0 ? await runKnowledgeCleanup() : null;
+    const cleanup = toProcess.length > 0 && (!budgetOn || canStartWithin(startMs, Date.now(), UPDATE_KNOWLEDGE_BUDGET.cleanupUntilMs)) ? await runKnowledgeCleanup() : null;
 
     // 未使用エントリ自動削除
     // 差分学習・修正対比・importance>=9 は削除しない（最重要知識）
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
-    // importance<=6（style・低品質フレーズ）: 30日未使用で削除
-    const { data: lowDeleted } = await supabase
-      .from("ai_reply_knowledge").delete()
-      .eq("used_count", 0).lte("importance", 6)
-      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
-      .lt("created_at", thirtyDaysAgo).select("id");
+    // 2026-11-22 作業員N2（統括役の決め・UPDATE_KNOWLEDGE_UNUSED_MARK=on・既定 off）: 消さずに印（hypothesis_status=rejected・rejection_reason=unused_30d／unused_90d）を付ける。
+    //   印の付いた行は match_reply_knowledge などの読みから外れる（analyze-diffs の stale decay と同じ印）。戻す時は rejection_reason で選んで hypothesis に戻せる。
+    //   確かめ済み（confirmed）と既に印のある行は触らない。8/18 から止まっていた分（3,646行）を一度に消すのは戻せない＝竹内さんに聞くまで物理削除は on にしない
+    const markOn = updateKnowledgeUnusedMarkOn();
+    const unusedRows = async (imp: { lte?: number; eq?: number }, beforeIso: string, reason: string): Promise<Array<{ id: string }> | null> => {
+      if (markOn) {
+        let q = supabase.from("ai_reply_knowledge").update({ hypothesis_status: "rejected", rejection_reason: reason });
+        q = imp.lte != null ? q.lte("importance", imp.lte) : q.eq("importance", imp.eq ?? 7);
+        const { data } = await q.eq("used_count", 0)
+          .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+          .not("hypothesis_status", "in", "(confirmed,rejected)")
+          .lt("created_at", beforeIso).select("id");
+        return (data ?? null) as Array<{ id: string }> | null;
+      }
+      let d = supabase.from("ai_reply_knowledge").delete();
+      d = imp.lte != null ? d.lte("importance", imp.lte) : d.eq("importance", imp.eq ?? 7);
+      const { data } = await d.eq("used_count", 0)
+        .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+        .lt("created_at", beforeIso).select("id");
+      return (data ?? null) as Array<{ id: string }> | null;
+    };
 
-    // importance=7（通常パターン・フレーズ）: 90日未使用で削除
+    // importance<=6（style・低品質フレーズ）: 30日未使用で削除（mark=on は印）
+    const lowDeleted = await unusedRows({ lte: 6 }, thirtyDaysAgo, "unused_30d");
+
+    // importance=7（通常パターン・フレーズ）: 90日未使用で削除（mark=on は印）
     // importance=8 は analyze-diffs の stale decay（lte("importance", 8)）に委任（F09 統一）
-    const { data: midDeleted } = await supabase
-      .from("ai_reply_knowledge").delete()
-      .eq("used_count", 0).eq("importance", 7)
-      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
-      .lt("created_at", ninetyDaysAgo).select("id");
+    const midDeleted = await unusedRows({ eq: 7 }, ninetyDaysAgo, "unused_90d");
 
     const unusedDeletedCount = (lowDeleted?.length ?? 0) + (midDeleted?.length ?? 0);
 
@@ -227,8 +253,10 @@ export async function GET(req: NextRequest) {
       remaining: unprocessed.length - toProcess.length,
       knowledge_entries_added: totalAdded,
       cleanup,
-      unused_deleted: unusedDeletedCount,
+      unused_deleted: markOn ? 0 : unusedDeletedCount,
+      ...(markOn ? { unused_marked: unusedDeletedCount } : {}),
       apply_log_expired: ttlExpiredCount,
+      ...(budgetOn ? { time_budget: { stopped_early: stoppedEarly, elapsed_ms: Date.now() - startMs } } : {}),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -236,3 +264,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("update-knowledge", handleGET);

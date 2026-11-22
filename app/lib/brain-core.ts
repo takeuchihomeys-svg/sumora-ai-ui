@@ -94,6 +94,7 @@ import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEn
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
 import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
+import { screenshotSpeakerTag } from "@/app/lib/chat-screenshot-speaker";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
@@ -140,6 +141,9 @@ import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
+import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
+import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
+import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
@@ -299,10 +303,11 @@ import { brainInputKeyOf, decideInputKeyReuse } from "@/app/lib/brain-input-key"
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 // 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
+import { equipmentWishBrainLine } from "@/app/lib/equipment-question";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { alignProcedureAsks, alignProcedurePriorities, procedureGeneralAskReplyOn } from "@/app/lib/procedure-ask-align"; // 2026-11-10 作業員1 型2 q374
-import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocDigestNote, threadDocTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
+import { pickupCandidatesListOn, pickupCandidatesMaterialLine, focusDocDigestOn, focusDocSentImageOn, focusDocDigestNote, threadDocTarget, FOCUS_DOC_TOPICS, type PickupCandidateRow } from "@/app/lib/brain-material-wiring"; // 2026-11-11 作業員1 A1
 import { APPLY_INFO_OR_FILTER, readApplyInfoState, applyInfoBrainLine, applyIntentFormStateOn, isApplyIntentTurn, type ApplyInfoMsg } from "@/app/lib/apply-info-state"; // 2026-11-11 作業員3 A2
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote, procedureMoveInBrainLine, procedurePointsToProperty, procedureUnknownPointsOnlyOn } from "@/app/lib/procedure-question";
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
@@ -504,11 +509,19 @@ export type SuggestedAixMeta = {
   material_clash?: import("@/app/lib/material-clash").MaterialClash;
   /** 2026-11-18 作業員L: 申込の段で広げたキャンセルの網だけに当たった（COMPANY_FACT_CANCEL_WIDE=shadow・記録だけ） */
   cancel_wide_shadow?: boolean;
+  /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state */
+  material_marks?: Record<string, number>;
+  /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
+  conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
   situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
+  /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 地図の駅・分かれ道・次の一手（記録だけ） */
+  apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[]; substate?: string | null };
+  /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 道の後の状態の表の狙い（turn-aims-after と同じ・記録だけ） */
+  turn_aims_after?: import("@/app/lib/brain-turn-aims").TurnAims;
   main_point?: string;
   flow_signals?: string[];
   /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
@@ -1696,6 +1709,8 @@ function runViewingCancelIfPending(conversationId: string): void {
  *   本番（analyzeAndSaveBrainMeta）と試験（brain-exam）が同じ入口を通る＝試験で確かめた形がそのまま本番になる。
  *   読み直しの中では包みは動かない（opts.recheck がある）・AIX の統括の差し戻しの回し（analyzeAndSaveBrainMeta）はこの後に今まで通り。
  */
+/** 2026-11-21 作業員M: conversations.customer_plan の列がまだ無い DB では、計画の読み書きを止める（関数の実体ごと・migrate-schema の後に戻る） */
+let customerPlanColumnMissing = false;
 export async function analyzeConversation(...args: Parameters<typeof analyzeConversationCore>): ReturnType<typeof analyzeConversationCore> {
   const meta = await analyzeConversationDeep(...args);
   // 2026-11-05 作業員5（KB 3701b532・0dbfbc97「後の役は決め直さない」）: 統括の順番の表の combine（何通・どの順・各通の受け持ち）。
@@ -1805,6 +1820,17 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       if (a) (meta as unknown as Record<string, unknown>).conductor_allocation = a;
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:allocation-failed", error: e instanceof Error ? e.message : String(e) })); }
+  let prevCustomerPlanForBrief: unknown = null;
+  // 2026-11-21 作業員M（台帳 #101 の (2)・統括役の OK）: 統括の指示書が前の番のお客様ごとの計画（conversations.customer_plan）を読む。
+  //   CONDUCTOR_BRIEF_PLAN=on の時だけ（既定 off）。指示書に plan の欄を足すだけ＝書き手の役目の対応表には入れない（文と道は変えない）
+  try {
+    const cp = await import("@/app/lib/customer-plan");
+    if (cp.conductorBriefPlanOn() && !args[5]?.recheck && !customerPlanColumnMissing) {
+      const { data: pr } = await supabase.from("conversations").select("customer_plan").eq("id", args[0]).maybeSingle();
+      // 前の計画は指示書を組んだ後に照らす（下の指示書の所で plan の欄にする・meta には残さない）
+      prevCustomerPlanForBrief = (pr as { customer_plan?: unknown } | null)?.customer_plan ?? null;
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "customer-plan:brief-read-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-12 作業員22（竹内さん「ブレインの統括の部分も具体的に判断できるように」）: 統括の指示書（型・配分・事実・足りない情報・照らし合わせ・疑いの印・確かさ）を記録だけ。
   //   CONDUCTOR_BRIEF=shadow の時だけ meta.conductor_brief を足す（既定 off＝何も足さない）。道は照らすために読むだけで変えない。疑いの印と確かさは判断の根拠のメモにも写す
   try {
@@ -1813,10 +1839,31 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
+      if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
       else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "conductor:brief-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-21 作業員M（台帳 #101・竹内さん 11/15「お客様ごとの全体の統括」・統括役の OK）: 番の部品からお客様ごとの計画を組み、
+  //   conversations.customer_plan に書く（CUSTOMER_PLAN 既定 shadow＝書くだけ・文と道は変えない・読み直しの中では書かない）。
+  //   列がまだ無い DB（migrate-schema の前）では、読みが失敗して何もしない（1つの関数の実体で1回だけ警告）
+  try {
+    const cp = await import("@/app/lib/customer-plan");
+    if (cp.customerPlanMode() !== "off" && !args[5]?.recheck && !customerPlanColumnMissing) {
+      const { data: cpRow, error: cpErr } = await supabase.from("conversations").select("customer_plan").eq("id", args[0]).maybeSingle();
+      if (cpErr) {
+        if (/customer_plan/.test(cpErr.message ?? "")) customerPlanColumnMissing = true;
+        console.warn(JSON.stringify({ tag: "customer-plan:read-failed", error: String(cpErr.message ?? "").slice(0, 160) }));
+      } else {
+        const plan = cp.buildCustomerPlan({ meta: meta as unknown as Record<string, unknown>, status: args[2] ?? null, prev: (cpRow as { customer_plan?: unknown } | null)?.customer_plan, nowIso: new Date().toISOString() });
+        if (plan) {
+          const { error: wErr } = await supabase.from("conversations").update({ customer_plan: plan }).eq("id", args[0]);
+          if (wErr) console.warn(JSON.stringify({ tag: "customer-plan:write-failed", error: String(wErr.message ?? "").slice(0, 160) }));
+          else if (plan.changed.length) console.log(JSON.stringify({ tag: "customer-plan", conversationId: args[0], changed: plan.changed }));
+        }
+      }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "customer-plan:failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-13 作業員22（竹内さん「決めた事が書き手まで届いていない」・KB 2301dbf1・5cf2d736）: 欄ごと・下の欄ごとに書き手まで届いたかを記録だけ（DELIVERY_CHECK=shadow・既定 off）。
   //   書き手の注記（本質の帯＋設計図の注記）を generate-reply と同じ関数で作って突き合わせる。道・下書きは変えない
   try {
@@ -2193,7 +2240,9 @@ async function analyzeConversationCore(
       const bodyText = isApplicationPayload(m.text ?? "")
         ? (m.sender === "staff" ? APPLICATION_FORMAT_SENT_PLACEHOLDER : APPLICATION_FORM_PLACEHOLDER)
         : (m.text ?? "（画像/添付）");
-      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}`;
+      // 2026-11-21 作業員G（#468・番16493）: お客様のやり取りのスクショは話し手の札（他社→お客様・家族とのやり取り）を付ける。既定 off（BRAIN_SCREENSHOT_SPEAKER=on）
+      const speakerTag = screenshotSpeakerTag(m.sender, m.text);
+      return `[${senderLabel} ${dateLabel}] ${quoteTag}${bodyText}${imageTag}${speakerTag}`;
     };
   // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: AIX の物件の画像の束は1行にまとめる（brain-msg-window.collapseAixImageBursts）
   const historyRev = [...typedMessages].reverse();
@@ -2565,7 +2614,7 @@ async function analyzeConversationCore(
     customerRows: (sentPropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["customerRows"],
     imageRows: (sentImagePropsResult.data ?? []) as unknown as Parameters<typeof buildSentProps>[0]["imageRows"], // 2026-11-19: facts を足す select は型の読み取りが通らない＝unknown を通す
     sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
-    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）
+    imageFacts: sentImageFactsOn(), // 2026-11-19 作業員L（SENT_IMAGE_FACTS_TO_BRAIN・11/21 から既定 on・=off で止まる）
   });
   // 2026-10-24 q053 型（P0「材料が届いていない」）: 送った資料の読み取りの現況・退去予定・入居可能日・内覧可能日を送った物件の行に載せる
   //   （BRAIN_SENT_SHEET_VACANCY=on の時だけ・既定 off＝今と同じ）。読めなかった時は載せないだけ（判断は変えない）
@@ -3024,7 +3073,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const promiseTrack = trackPromises((promiseRows.length ? promiseRows : [...typedMessages].reverse()).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated })));
   // 慣れた事は速く: 台帳に未対応の約束がある番は慣れた番にしない（お礼だけに見えて前の約束の答えを待っている番・設計書 7-4 の危なさ）
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
-  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply }));
+  // 2026-11-21 作業員M（台帳 #405・BRAIN_FULFIL_TURN・既定 off＝空文字）: 了承だけの番に、直前のその場で果たせる約束（物件探し・見積書・資料の送付）があれば事実の1塊（fulfil-turn.ts）
+  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply })) + fulfilTurnBrainText({ customerText: unrepliedTurn.text, open: promiseTrack.open });
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
   //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 on（11/06 q174-guard 悪化0）・止める BRAIN_OTHER_CANDIDATES_READ=off（app/lib/other-candidates-read.ts）
@@ -3265,7 +3315,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (equipmentAnswer?.note) {
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
-    if (equipmentAnswer.question.wish) customerStateBlockText += "\n→ お客様の今の発言は設備の希望（質問の形ではない）。上の事実で、こちらが既に送った物件の中に希望に合う物件がある時は、新しい条件で探す番ではなく送った物件への問いの番（竹内さん 11/09「お送りしたお部屋でカウンターキッチン付のお部屋はこちらの1部屋・お気に召されましたらご案内」）。合う物件が無い・資料で分からない時だけ探す約束。";
+    // 2026-11-21 竹内さんの決定で1行を「探す約束の返信→次は AIX（2段:pickup）・資料の答えは事実だけ」に直した（equipment-question.equipmentWishBrainLine）。以下は前の経緯: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
+    if (equipmentAnswer.question.wish) customerStateBlockText += `\n${equipmentWishBrainLine(equipmentAnswer.plan)}`;
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
@@ -3375,10 +3426,13 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   }
   if (docDigestTarget) {
     try {
-      const [{ loadContractMaterial }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
+      const [{ loadContractMaterial, sentImageUrlFor }, { routeContractTerm }] = await Promise.all([import("@/app/lib/contract-terms-answer-server"), import("@/app/lib/contract-terms-question")]);
       const fr = docDigestTarget;
+      // 2026-11-21 作業員L（#428 の訳ログ: 11/20 夜の試験で資料の行が空の 11/12 が no_material）: 対象の部屋に、こちらが送った資料の画像があれば
+      //   その画像の読み取り（image_details の行）も資料に入れる（答えの道 contract-terms と同じ読み）。FOCUS_DOC_SENT_IMAGE=on の時だけ（既定 off）
+      const docImageUrl = focusDocSentImageOn() ? await sentImageUrlFor({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null }).catch(() => null) : null;
       const { material } = await Promise.race([
-        loadContractMaterial({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null }),
+        loadContractMaterial({ conversationId, name: fr.name, roomNo: fr.roomNo ?? null, imageUrl: docImageUrl, withSentFacts: focusDocSentImageOn() }),
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 6_000)),
       ]);
       const topics = fr.roomNo ? FOCUS_DOC_TOPICS : FOCUS_DOC_TOPICS.filter((t) => t === "parking"); // 号室が分からない時は建物の項目だけ（contract-terms と同じ線）
@@ -3548,10 +3602,12 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   }
   // 2026-10-13 竹内さん「確認の約束への了承の返事（受けだけか待ちの形の1文か）はブレインに任せる」: 答えでなく竹内さんの使い分けの材料を渡し、
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
+  // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
+  const materialMarks: Record<string, number> = {};
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
-      if (ackLine) customerStateBlockText += `\n\n${ackLine}`;
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -3613,6 +3669,32 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
       }
     } catch (e) { console.warn("[brain-core] last-turn-review skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-11-21 作業員K2（台帳 #469・物件選び → LINE の穴）: 72時間以内に送った物件を「なぜ選んだか」（判定の札の合う点・気になる点）を材料の1行で
+  //   （app/lib/pickup-why-line.ts・PICKUP_WHY_TO_BRAIN=on の時だけ・既定 off＝読まない）。1会話の軽い読み（送った行 20行）
+  if (conversationId && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus)) {
+    const pw = await import("@/app/lib/pickup-why-line");
+    if (pw.pickupWhyToBrainOn()) {
+      try {
+        const since = new Date(Date.now() - 72 * 36e5).toISOString();
+        const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at, summary_text, terms")
+          .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
+        let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
+        // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
+        const sj = await import("@/app/lib/sip-judge");
+        if (sj.sipJudgeOn() && pcResult.data) {
+          const { data: sipRows } = await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
+            .eq("conversation_id", conversationId).not("facts", "is", null).gte("created_at", since).order("created_at", { ascending: false }).limit(20);
+          const have = new Set(whyRows.map((r) => String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, "")));
+          const extra = sj.judgeSips(((sipRows ?? []) as import("@/app/lib/sip-judge").SipLike[]).filter((r) => !have.has(String(r.property_name ?? "").normalize("NFKC").replace(/[\s　]/g, ""))), pcResult.data as import("@/app/lib/property-brain").CustomerLike, 3);
+          whyRows = [...whyRows, ...extra.map((j) => ({ property_name: j.property_name, room_no: j.room_no, recommended: 0, score: j.score, reason_codes: j.reason_codes, sent_at: ((sipRows ?? []) as Array<{ property_name: string | null; created_at: string }>).find((r) => r.property_name === j.property_name)?.created_at ?? new Date().toISOString() }))];
+        }
+        const items = pw.pickupWhyOf(whyRows, { nowMs: Date.now() });
+        const line = pw.pickupWhyLine(items);
+        if (line) customerStateBlockText += `\n${line}`;
+        console.log(JSON.stringify({ tag: "brain:pickup-why", conversationId, rows: (pwRows ?? []).length, items: items.length, chars: line.length }));
+      } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why", conversationId, error: String(e).slice(0, 160) })); }
+    }
+  }
   // 2026-10-29 統括の②状況のまとめ「今すぐ果たせる物」（situation-summary.ts・SITUATION_NOW_FULFILLABLE=on・既定 off）: 記録から1行。どう返すかはブレイン
   // 2026-11-13 作業員C（統括役の頼み①・app/lib/staff-hand-material.ts）: スタッフの手元にある物（送れる候補・作業中のタスク・開いている約束）を1行で（BRAIN_STAFF_HAND=on・既定 off）
   if (staffHandMaterialOn() && !isPostApplyStatus(convStatus)) {
@@ -3638,7 +3720,7 @@ ${sh}`;
   }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
-    if (nf) customerStateBlockText += `\n${nf}`;
+    if (nf) { customerStateBlockText += `\n${nf}`; materialMarks.now_fulfillable = nf.length; }
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
@@ -3786,7 +3868,7 @@ ${sh}`;
         const asc = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.created_at }));
         const marks = SF.staleStrategyMarks({ cs: opts.strategy.closing_strategy, csAt: opts.strategy.strategy_msg_ts ?? null, messages: asc, knownNames: sentProps.map((p) => p.property_name ?? "").filter(Boolean) });
         const sl = SF.staleStrategyLine(marks);
-        if (sl) customerStateBlockText += `\n\n${sl}`;
+        if (sl) { customerStateBlockText += `\n\n${sl}`; materialMarks.topic_state = marks.length; }
         console.log(JSON.stringify({ tag: "brain:strategy-stale", conversationId, marks: marks.map((m) => `${m.kind}:${m.name ?? "-"}`) }));
       }
     } catch (e) { console.warn("[brain-core] strategy-stale skipped:", e instanceof Error ? e.message : String(e)); }
@@ -3794,6 +3876,8 @@ ${sh}`;
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
+  // 2026-11-21 作業員L（KB 56691196・CONDUCTOR_LESSONS・既定 shadow）: 入口の統括が読んだ近い場面の学び（記録と最終の印に使う）
+  let lessonsRec: import("@/app/lib/conductor-lessons").LessonRow[] | null = null;
   // 返す前に最大4秒だけ待つ（待ち始めは meta を組む時・conductor_intake と conductor_focus で同じ待ちを使う）
   let intakeDoneMemo: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
   const intakeDoneGet = () => (intakeP ? (intakeDoneMemo ??= Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) : null);
@@ -3801,6 +3885,8 @@ ${sh}`;
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
     intakeP = import("@/app/lib/conductor-intake-server").then(async ({ runConductorIntake }) => {
+      // 2026-11-21 作業員L（統括役の注意）: 学びの読み（埋め込み＋RPC・最大1.5秒）は入口の他の読みと並べて先に始める（carryLine は順に待つ＝直列で延ばさない）
+      const lessonsP: Promise<{ mode: string; rows: import("@/app/lib/conductor-lessons").LessonRow[] } | null> = (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const mode = cl.conductorLessonsMode(); if (mode === "off") return null; const { loadConductorLessonsWithin } = await import("@/app/lib/conductor-lessons-server"); return { mode, rows: await loadConductorLessonsWithin(supabase, { conversationId, customerTurn: unrepliedTurn.text ?? "", stage: null }) }; } catch { return null; } })();
       // 2026-11-05 作業員5（KB P0 575a7cd5 ④）: CONDUCTOR_FOCUS=shadow の時だけ、竹内さんの近い過去の番の重点を先に引いて入口の統括に添える（1.5秒まで・無ければ添えない）
       let nearFocus: import("@/app/lib/conductor-focus").NearFocus | null = null;
       const { conductorFocusMode } = await import("@/app/lib/conductor-focus");
@@ -3822,7 +3908,12 @@ ${sh}`;
         // 2026-11-12 作業員4（CONDUCTOR_INTAKE_STAFF_REFRESH・既定 off・LLM なし）: 前のお客様の番の後にこちらがした事（AIX・約束・前の読みのやる事が果たされたか）を「前の番」の行に足す
         carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null), await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
           // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
-          await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
+          await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })(),
+          // 2026-11-21 作業員N（信頼の土台 #55 B1・作業員L の #435 と同じ線）: 期限を過ぎて果たしていないこちらの約束（事実だけ・既定 off CONDUCTOR_OVERDUE_PROMISES=on・1会話分の読みを最大1.5秒待つ）
+          await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })(),
+          // 2026-11-21 作業員L（KB 56691196「試験と連動して統括を鍛える」・統括役の決め）: 場面と近さで当たった学び（型・竹内さんの一手・なぜ）を最大3行。
+          //   CONDUCTOR_LESSONS=shadow（既定）は読んで記録だけ（材料に渡さない）・on は入口の統括の材料に・off は読まない。試験の問題の元の会話は外す（conductor-lessons-server）
+          await (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const got = await lessonsP; if (!got) return ""; const { mode, rows } = got; lessonsRec = rows; console.log(JSON.stringify({ tag: "brain:conductor-lessons", conversationId, mode, ids: cl.lessonsDigest(rows) })); return mode === "on" ? cl.lessonsMaterialLine(rows) : ""; } catch { return ""; } })()].filter(Boolean).join("／"), ruleMeta: "", nearFocus,
       });
     }).catch(() => null);
   }
@@ -3856,8 +3947,17 @@ ${sh}`;
   try {
     const stl = await import("@/app/lib/situation-timeline");
     if (stl.situationTimelineOn() && conversationId) {
-      const { data: cal } = await supabase.from("calendar_events").select("title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: true }).limit(40);
-      const custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      // 2026-11-22 作業員L（台帳 #590）: TIMELINE_VIEWING_HOLD=on の時だけ notes（時間確保の印）も読む
+      const { data: cal } = await supabase.from("calendar_events").select(stl.timelineViewingHoldOn() ? "title, event_type, start_at, end_at, all_day, is_done, notes" : "title, event_type, start_at, end_at, all_day, is_done").eq("conversation_id", conversationId).gte("start_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("start_at", { ascending: false }).limit(40); // 2026-11-21 作業員L（台帳 #289）: 古い順で40件に切ると、40件を超えた会話は先の予定（これからの内覧・連絡日）が落ちる。新しい順で取る（buildTimeline が時刻で並べ直す）。60日で40件ちょうどの会話が1つある
+      let custMsgs = typedMessages.filter((mm) => mm.sender === "customer").slice(0, 40).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+      // 2026-11-21 作業員L（SITUATION_TIMELINE_WIDE・既定 off）: 窓の外で言った時の言葉（入居の時期など）も帳面に（お客様の発言 40通を1回読む・失敗は今の窓のまま）
+      if (stl.situationTimelineWideOn()) {
+        try {
+          const { data: wide } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer").order("created_at", { ascending: false }).limit(40);
+          const w = ((wide ?? []) as Array<{ text: string | null; created_at: string }>).reverse().map((mm) => ({ text: mm.text, atMs: Date.parse(mm.created_at) })).filter((x) => Number.isFinite(x.atMs));
+          if (w.length > custMsgs.length) custMsgs = w;
+        } catch { /* 今の窓のまま */ }
+      }
       situationTimelineRec = stl.buildTimeline({ customerMsgs: custMsgs, calendar: (cal ?? []) as never, nowMs: Date.now() });
       const tb = stl.timelineBlock(situationTimelineRec, Date.now());
       if (tb) customerStateBlockText += tb;
@@ -4116,6 +4216,9 @@ ${sh}`;
     } catch (e) { console.warn("[brain-core] info-fill skipped:", e instanceof Error ? e.message : String(e)); }
   }
   let applyRouteText = "";
+  // 2026-11-21 作業員M（台帳 #467・竹内さん「地図の部分も細かく」）: 地図の駅・分かれ道は毎番求めてログに出すだけで meta に残っていなかった（連携の切れ）。
+  //   APPLY_ROUTE_RECORD=on の時だけ meta.apply_route に残す（記録だけ・プロンプトは1文字も変えない）。お客様ごとの計画・指示書が段の語を1つにして読む
+  let applyRouteLocRec: { node: string | null; branch: string | null; next: string | null; next_aix: string[] } | null = null;
   if (applyRouteMapEnabled()) {
     try {
       const oldestAR = [...typedMessages].reverse();
@@ -4142,6 +4245,7 @@ ${sh}`;
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
+      if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
   }
   viewingsText += viewingReportText;
@@ -6880,10 +6984,17 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_conflicts: materialConflictsRec?.kinds.length ? [...materialConflictsRec.kinds] : undefined,
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
+      // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),
       // 2026-11-12 作業員7（BRAIN_TURN_AIMS・既定 off）: この番の目的・中期の狙い・仕込み・先読みの深さ（道を決めた後の書き終えた後のメモ・道は変えない）
       turn_aims: BRAIN_TURN_AIMS_ON ? (normalizeTurnAims((parsed as { turn_aims?: unknown }).turn_aims) ?? undefined) : undefined,
+      // 2026-11-21 作業員M（台帳 #467・APPLY_ROUTE_RECORD=on の時だけ）: 地図の駅と、道を決めた後の状態の表の狙い（turn-aims-after と同じ純関数・記録だけ）。
+      //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
+      //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
+      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
+      ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
       flow_signals: flowSignalsRec?.kinds.length ? [...flowSignalsRec.kinds] : undefined,
@@ -6901,6 +7012,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }), factsForConductor), ["judge_examples", "knowledge"]))(normalizeNeed((parsed as { need?: unknown }).need)) : undefined,
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
       conductor_intake: intakeDoneGet() ? ((await intakeDoneGet()) ?? undefined) : undefined,
+      // 2026-11-21 作業員L（CONDUCTOR_LESSONS）: 読んだ学びの id と、最終の一手（AIX の種類か返信）が同じ場面の学びで前に外した一手と同じ時の印（記録だけ・文も道も変えない）
+      conductor_lessons: lessonsRec ? await (async () => { const cl = await import("@/app/lib/conductor-lessons"); return { mode: cl.conductorLessonsMode(), ids: (lessonsRec ?? []).map((r) => String(r.id).slice(0, 8)), mark: cl.sameMissMark(cl.brainActCodes({ reply_mode: finalAix ? "aix" : "auto_reply", action: finalAix ?? "" }), lessonsRec ?? []) }; })() : undefined,
       // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
       conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,
       brain_depth: depthRec ?? undefined,
@@ -8466,15 +8579,19 @@ async function analyzeAndSaveBrainMetaInner(
           try {
             const todayStartUTC = new Date(`${todayJst}T00:00:00+09:00`).toISOString();
             const todayEndUTC = new Date(`${todayJst}T23:59:59+09:00`).toISOString();
+            // 2026-11-21 作業員N2（VIEWING_CONFIRMED_ONLY・既定 off）: 今日の viewing の予定には、ブレイン自身が viewing_invite の判断で置く
+            //   「内覧調整」の終日タスクと候補の【時間確保】も入る＝内覧の誘いを決めただけの会話が今日の内覧としてホットになっていた。on の時は決まった内覧だけ
+            const vco = await import("@/app/lib/viewing-confirmed");
             const { data: calToday } = await supabase
               .from("calendar_events")
-              .select("id")
+              .select("id, all_day, title, notes")
               .eq("conversation_id", conversationId)
               .eq("event_type", "viewing")
               .gte("start_at", todayStartUTC)
               .lte("start_at", todayEndUTC)
-              .limit(1);
-            if ((calToday?.length ?? 0) > 0) isHot = true;
+              .limit(vco.viewingConfirmedOnlyOn() ? 20 : 1);
+            const calRows = (calToday ?? []) as Array<{ all_day: boolean | null; title: string | null; notes: string | null }>;
+            if ((vco.viewingConfirmedOnlyOn() ? calRows.filter((e) => vco.isConfirmedViewingEvent(e)) : calRows).length > 0) isHot = true;
           } catch {
             // calendar_events が取得できなくても処理を続行
           }

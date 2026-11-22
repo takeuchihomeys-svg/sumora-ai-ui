@@ -14,6 +14,7 @@
 // ⚠ 読むのは**こちらが送った画像だけ**。お客様の画像は line-webhook が既に Vision で書き起こしており、
 //   身分証が写っている事がある（設計知見「画像は伏せようがない」）。この関数を customer の画像に使わない。
 import { supabase } from "@/app/lib/supabase-server";
+import { imageDetailPartOn, partForDetail, type ImagePart } from "./image-detail-part";
 import { readPropertyImageDetail, readPropertyImageDetailByTranscript, sentImageDetailMode, sharedPropertyImageRead, SENT_IMAGE_READ_TIMEOUT_MS, type ImageKind, type DetailResult } from "@/app/lib/property-image-read";
 import { pickupRowDetailPlan, readPropertyDetailFromText, detailModelLabel, pickupRowForProperty, PICKUP_LINK_MAX_AGE_DAYS } from "@/app/lib/property-detail-source";
 import { loadDeepseekCutoff, isAfterCutoff } from "@/app/lib/post-apply";
@@ -165,7 +166,8 @@ export async function ensureImageDetail(
   imageUrl: string,
   conversationId: string | null,
   /** sentAt: その画像を送った時刻（省略時は今＝送った直後の読み取り） */
-  opts?: { timeoutMs?: number; sentAt?: string | null },
+  /** part: 送った時に分かっている画像の部分（image-detail-part・IMAGE_DETAIL_PART=on の時だけ書く） */
+  opts?: { timeoutMs?: number; sentAt?: string | null; part?: ImagePart | null },
 ): Promise<ImageDetail | null> {
   if (!imageUrl) return null;
   try {
@@ -176,6 +178,12 @@ export async function ensureImageDetail(
     if (conversationId && !isAfterCutoff(opts?.sentAt ?? new Date().toISOString(), await loadDeepseekCutoff(supabase, conversationId))) {
       console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "image-detail", conversationId }));
       return null;
+    }
+    // 2026-11-21 作業員G: 前後10分のこちらの文で書類の番と判る画像は読まない（sent-image-doc-guard.ts・SENT_IMAGE_DOC_GUARD=off で止める）
+    if (conversationId) {
+      const { sentImageIsDocTurn } = await import("@/app/lib/sent-image-doc-guard");
+      const g = await sentImageIsDocTurn(supabase, conversationId, opts?.sentAt ?? null, { imageUrl });
+      if (g.doc) { console.log(JSON.stringify({ tag: "sent-image-doc-guard:skip", route: "image-detail", conversationId, hit: g.hit })); return null; }
     }
     // 2026-09-29 竹内「昨日かなり DeepSeek で API 費用を使った。更に節約できないか」:
     //   送る画像の大半は売上サポの行（property_pickups）の資料で、その行は読み取り済みの image_lines か PDF の文字層を持っている。
@@ -205,7 +213,9 @@ export async function ensureImageDetail(
     }
     // model 列に出所を付ける（pickup_lines／pickup_text:…／image:…・detailModelLabel）
     const { error } = await supabase.from("image_details").upsert(
-      { image_url: imageUrl, conversation_id: conversationId, kind: read.kind, lines: read.lines, model: detailModelLabel(imageSource, process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash") },
+      { image_url: imageUrl, conversation_id: conversationId, kind: read.kind, lines: read.lines, model: detailModelLabel(imageSource, process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash"),
+        // 2026-11-22 作業員K2（#287・IMAGE_DETAIL_PART=on の時だけ）: 画像の部分（listing／interior／floor_plan／exterior／cost）。off は列に触れない
+        ...(imageDetailPartOn() ? (() => { const pt = partForDetail(read.kind, opts?.part ?? null); return pt ? { part: pt } : {}; })() : {}) },
       { onConflict: "image_url" },
     );
     console.log(JSON.stringify({

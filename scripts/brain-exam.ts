@@ -58,18 +58,20 @@ import { brainPathCode, judgePath, problemScore, primaryAskIndex, rateByType, ai
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
+import { examSipImageUrl, filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
+import { filledRowsOf } from "./lib/exam-filled";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { atomicWriteJson } from "./lib/exam-shared-file";
-import { examRefusalLine, baseNowGate } from "./lib/exam-cost-gate";
+import { examRefusalLine, baseNowGate, nightStartMs } from "./lib/exam-cost-gate";
 import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
-import { examEnvFingerprint, defaultEnvOf, readDotenvLocal, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
+import { examEnvFingerprintVsBase, defaultEnvOf, baseDotenvOf, underlayOf, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
 import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
-import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
+import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, skipNoRegressionOn, noRegressionPossible, repsOnlyIfDifferOn, firstTwoSameAsBase, passPathOf, type PassPath, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
@@ -77,10 +79,10 @@ import { examPickupNameLateOn, splitPickupNames } from "./lib/exam-pickup-copy";
 import { examRealGapsOn, gapSceneTimesByDay } from "./lib/exam-scene-times";
 import { planFromMeta, planMessages, afterAixReplyBrief, afterAixDraftHint, type PlanAsk } from "../app/lib/two-message-plan";
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
-import { isNoLineTestConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
+import { isNoLineTestConversation, isTestOnlyConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
 import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
-import { decideBasePin, defaultOnFromSubjects, touchesExam, type NightlyRecord } from "./lib/exam-base-pin";
+import { decideBasePin, defaultOnFromSubjects, touchesExam, nightPinUpdate, type NightlyRecord } from "./lib/exam-base-pin";
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
 import { overBudget, capUsdOf } from "./lib/exam-plan";
@@ -118,7 +120,16 @@ function loadProblems(): ExamProblem[] {
     const n = publishProblems(r.problems.filter((p) => specIds.has(p.id) && !stale.has(p.id)) as unknown as Array<Record<string, unknown>>);
     if (n) console.log(`問題: 共有の置き場に ${n}問を置いた（他の作業ツリーが作り直さない）`);
   } catch (e) { console.warn("問題を共有の置き場に置けない:", String(e)); }
-  return (problemsCache = r.problems);
+  // 2026-11-21 作業員H（41dadfe6・従業員の番の問題を spec から外した）: 手元の problems.json に spec に無い問題が残っていても回さない（作業ツリーごとの古い写し）
+  const inSpec = new Set(spec.map((s) => String(s.id)));
+  const outOfSpec = r.problems.filter((p) => !inSpec.has(p.id)).map((p) => p.id);
+  if (outOfSpec.length) console.log(`問題: spec に無い ${outOfSpec.length}問（${outOfSpec.slice(0, 8).join(",")}${outOfSpec.length > 8 ? "…" : ""}）は回さない（外した問題・古い写し）`);
+  // 2026-11-21 作業員H（#450・統括役）: 正解が従業員の番の問題（spec の writer:"employee"）は合否の数えに入れない＝--include-employee の時だけ回す（依頼の --only に入っていても数えない）。
+  //   竹内さんの番が見つかったら差し替え、竹内さんの答え（owner_questions）で正解を決め直す
+  const employeeIds = new Set(spec.filter((s) => s.writer === "employee").map((s) => String(s.id)));
+  const skipEmployee = r.problems.filter((p) => inSpec.has(p.id) && employeeIds.has(p.id) && !process.argv.includes("--include-employee")).map((p) => p.id);
+  if (skipEmployee.length) console.log(`問題: 正解が従業員の番の ${skipEmployee.length}問（${skipEmployee.join(",")}）は数えない（writer:employee・回す時は --include-employee）`);
+  return (problemsCache = r.problems.filter((p) => inSpec.has(p.id) && !skipEmployee.includes(p.id)));
 }
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
@@ -227,7 +238,10 @@ function selectInChild(): { ok: true; picked: string[]; kbNow: Record<string, st
 let kbLinksForReport: Record<string, KbLink[]> = {};
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return existsSync(STAGE_BY_TYPE_FILE) ? JSON.parse(readFileSync(STAGE_BY_TYPE_FILE, "utf8")) as Record<string, string> : {}; } catch { return {}; } })();
-function stageOf(p: { type: string; tags?: string[] } & { stage?: string }): "brain" | "draft" {
+// 2026-11-21 作業員H（1晩1本・統括役）: --draft-ids=<id,…> の問題は下書きまで（他は --stage のまま）＝文の組の問題もブレインの答えを同じ回で使い回す
+const DRAFT_IDS = new Set(arg("draft-ids").split(",").map((x) => x.trim()).filter(Boolean));
+function stageOf(p: { type: string; tags?: string[] } & { stage?: string; id?: string }): "brain" | "draft" {
+  if (p.id && DRAFT_IDS.has(p.id)) return "draft";
   if (STAGE !== "auto") return STAGE;
   const s = p.stage ?? STAGE_BY_TYPE[p.type] ?? (p.tags ?? []).map((t) => STAGE_BY_TYPE[t]).find(Boolean) ?? STAGE_BY_TYPE["*"];
   return s === "draft" ? "draft" : "brain";
@@ -237,7 +251,9 @@ const REPLAY_ARG = args.find((a) => a === "--replay" || a.startsWith("--replay="
 const CASSETTE_MODE = process.env.LLM_CASSETTE?.trim() ? process.env.LLM_CASSETTE.trim() : REPLAY_ARG ? (REPLAY_ARG === "--replay=strict" ? "strict" : "replay") : flag("no-record") ? "off" : "record";
 // 2026-10-21 スイッチの指紋（scripts/lib/exam-env-fp.ts・既定＝.env.local と違うスイッチだけ）。録音の鍵・結果（meta.json）に入れる。
 //   前（main）の答えは既定のスイッチで回す（指紋の名前を .env.local の値に戻して子に渡す）＝on の回と本番の構成を比べる。止める: EXAM_ENV_FP=off
-const ENV_FP = examEnvFingerprint(process.env);
+// 2026-11-21 作業員H（#475）: 指紋と前の既定は「.env.local＋係の下敷き（EXAM_UNDERLAY_FILE）」に対して＝前と今の違いが依頼の env だけ
+const ENV_FP = examEnvFingerprintVsBase(process.env);
+const UNDERLAY_N = Object.keys(underlayOf(process.env)).length;
 // 2026-10-15 ① 前（main の版）の使い回し
 const BASELINE_MAIN = /^main(?:@|$)/.test(arg("baseline"));
 // 10/08 竹内さん: 出し切りの正解は search-exhausted（出し切ったら AIX 全力サポート）が入るまで「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ。
@@ -350,6 +366,8 @@ type ResultRow = {
   score: ProblemScore; error?: string;
   /** 2026-11-06 弱い所 305: --after-aix-draft の時の指定（none／hint）・送った AIX・渡した指定 */
   afterAix?: { mode: string; sentAix: string | null; hint: string; aixMsgs: number };
+  /** 2026-11-21 作業員H: 連携の地図の行のうち、この回の meta で材料が埋まった行の id（scripts/lib/exam-filled.ts・当たる問題だけ積む） */
+  filled?: string[];
   /** 10/09: LLM が最初に出した答え（決まりで直される前）と、その道 */
   raw?: Record<string, unknown> | null; essence?: Verdict | null;
   /** 10/09: 判断の出どころ（決まり・補正・信号）。brain-core の meta にある物だけ */
@@ -451,7 +469,8 @@ function saveOwnLedger() { try { mkdirSync(dirname(S().ledgerOwnFile), { recursi
 async function deleteOwnLedger() {
   for (const [t, ids] of Object.entries(S().ownLedger)) {
     if (!ids.length) continue;
-    const r = await sb.from(t).delete().in("id", ids);
+    // 2026-11-21 作業員K2: id の列が無い表（sent_image_properties）は借りた会話ごと消す（入れるのも借りた会話の時だけ）
+    const r = t === "sent_image_properties" ? await sb.from(t).delete().eq("conversation_id", S().conv) : await sb.from(t).delete().in("id", ids);
     if (r.error) console.error(`⛔ 台帳の写し ${t} を消せない（${ids.length}件・控え ${S().ledgerOwnFile}）: ${r.error.message}`);
     else { writeCount.ledgerDel += ids.length; S().ownLedger[t] = []; }
   }
@@ -470,6 +489,11 @@ async function purgeLeasedLedger(): Promise<Record<string, number>> {
     const r = await sb.from(t).delete().eq("conversation_id", S().conv).select("id");
     if (r.error) throw new Error(`借りた会話の台帳 ${t} を消せない: ${r.error.message}`);
     if ((r.data ?? []).length) out[t] = (r.data ?? []).length;
+  }
+  if (process.env.EXAM_LEDGER_SIP?.trim().toLowerCase() === "on") { // 2026-11-21 作業員K2: 送った資料の読み（id の列が無い）も借りた会話の分を消す（EXAM_LEDGER_SIP=on の時だけ＝既定は今までと同じ）
+    const r = await sb.from("sent_image_properties").delete().eq("conversation_id", S().conv).select("image_url");
+    if (r.error) throw new Error(`借りた会話の台帳 sent_image_properties を消せない: ${r.error.message}`);
+    if ((r.data ?? []).length) out.sent_image_properties = (r.data ?? []).length;
   }
   if (S().yumaPc) {
     for (const t of ["sent_properties", "property_pickups", "estimate_records"]) {
@@ -501,7 +525,7 @@ function sceneTimeOf(agoMin: number, ctxAgo: number[], times: string[], k: numbe
   return new Date(base + Math.min(k, 50) * 20).toISOString();
 }
 async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shiftDays: number): Promise<{ inserted: Record<string, number>; errors: string[] }> {
-  const { LEDGER_TABLES } = await import("./brain-exam-add");
+  const { LEDGER_TABLES, examLedgerSipOn } = await import("./brain-exam-add");
   const inserted: Record<string, number> = {}, errors: string[] = [];
   const ctxAgo = p.context.map((m) => m.ago);
   const atMs = Date.parse(p.at);
@@ -543,6 +567,25 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     S().ownLedger[t] = [...(S().ownLedger[t] ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length;
     if (t === "aix_usage_logs") objs.forEach((x, i) => { if (x.oldId != null && ids[i]) aixIdMap.set(String(x.oldId), ids[i]); });
     inserted[t] = ids.length;
+  }
+  // 2026-11-21 作業員K2（#132・q439）: 送った資料の読み（sent_image_properties）。EXAM_LEDGER_SIP=on・借りたテスト用の会話の時だけ入れる（YUMA は共有＝入れない）。
+  //   id の列が無い＝控えは印だけ（片付けは会話ごと・deleteOwnLedger／purgeLeasedLedger）
+  // 2026-11-21 作業員H: EXAM_LEDGER_SIP_EXCLUDE=aix_log で後から足した行を除く（前だけ除く時は EXAM_LEDGER_SIP_BASE_EXCLUDE・scripts/lib/exam-ledger-sip.ts）
+  const sipFilt = filterSipRows((p.ledger?.sent_image_properties ?? []) as LedgerRow[], sipExcludePrefixes(process.env.EXAM_LEDGER_SIP_EXCLUDE));
+  if (sipFilt.dropped) console.log(`  送った資料の読み: ${sipFilt.dropped}行を除いた（EXAM_LEDGER_SIP_EXCLUDE=${process.env.EXAM_LEDGER_SIP_EXCLUDE}）`);
+  const sipRows = sipFilt.kept;
+  if (sipRows.length && examLedgerSipOn() && isNoLineTestConversation(S().conv)) {
+    const c = LEDGER_TABLES.sent_image_properties;
+    const objs = sipRows.map((lr, k) => {
+      const o: Record<string, unknown> = { ...lr.row };
+      o.conversation_id = S().conv;
+      o.image_url = examSipImageUrl(o.image_url, S().conv); // 2026-11-21 作業員H（K2 と揃え）: image_url は主キー＝本番の元の行とぶつからない印を付ける
+      for (const col of c.times) { const v = o[col]; if (typeof v === "string") o[col] = col === c.time ? sceneTimeOf(lr.ago, ctxAgo, times, k) : sceneTimeOf(Math.round((atMs - Date.parse(v)) / 60_000), ctxAgo, times, k); }
+      return o;
+    });
+    const r = await sb.from("sent_image_properties").insert(objs).select("image_url");
+    if (r.error) errors.push(`sent_image_properties: ${r.error.message.slice(0, 120)}`);
+    else { const n = (r.data ?? []).length; S().ownLedger.sent_image_properties = ["(会話ごと)"]; saveOwnLedger(); writeCount.ledgerIns += n; inserted.sent_image_properties = n; }
   }
   return { inserted, errors };
 }
@@ -1136,13 +1179,18 @@ async function prepareMainBaseline(): Promise<boolean> {
   if (!/^[\w./-]+$/.test(ref)) throw new Error(`--baseline=main@<ref> の ref が読めない: ${ref}`);
   let commit = execFileSync("git", ["rev-parse", "--verify", `${resolveMainRef(ref)}^{commit}`]).toString().trim();
   // 2026-10-21 main＝本番の構成: 既定と違うスイッチ（ENV_FP）を .env.local の値に戻した環境で構成を出し・子を回す
-  const mainEnv = defaultEnvOf(process.env, ENV_FP, readDotenvLocal());
+  const mainEnv = defaultEnvOf(process.env, ENV_FP, baseDotenvOf(process.env));
+  if (UNDERLAY_N) console.log(`  前（main）も本番の下敷き ${UNDERLAY_N}個で回す（EXAM_UNDERLAY_FILE・前と今の違いは依頼の env だけ）`);
   if (ENV_FP.hash) console.log(`  前（main）は既定のスイッチで回す（今の回だけ: ${ENV_FP.text}）`);
   const cfg = B.examConfig(mainEnv, {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...((REPEAT_FLAKY || BASE_FLAKY) && REPEAT > 1 ? { repeatFlaky: true } : {}),
+    // 2026-11-21 作業員H: 下書きまで回す問題（--draft-ids）は問題ごとに段が変わる＝入れた時だけ構成に足す（前の答えを段の違う物と取り違えない）
+    ...(DRAFT_IDS.size ? { draftIds: B.sha([...DRAFT_IDS].sort().join(",")).slice(0, 10) } : {}),
+    // 2026-11-21 作業員H: 送った資料の読みの写しの入れ方（入れた時だけ構成に足す＝今までの hash は変えない）。前の答えは前の除きで決まる
+    ...(String(process.env.EXAM_LEDGER_SIP ?? "").trim().toLowerCase() === "on" ? { ledgerSip: true, ...(sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE?.trim() ? { sipExclude: sipBaseExcludeOf(process.env) ?? process.env.EXAM_LEDGER_SIP_EXCLUDE!.trim() } : {}) } : {}),
     // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
     ...(JUDGE_ORDER !== "as-is" ? { judgePrefix: JUDGE_ORDER } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
     // 2026-10-17 試験のブレインの口も入れた時だけ（判定を省く・判定のモデル）
@@ -1160,6 +1208,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-20 作業員H（作業員M の頼み・AIX の2通目の系統の前と今）: --after-aix-draft は「AIX の後の返信の下書き」を作る＝前の答えの形が違う。
     //   付けた時だけ構成に足す（付けない回の置き場は変えない・付けた回は付けた前の答えとだけ比べる）
     ...(AFTER_AIX_DRAFT ? { afterAixDraft: AFTER_AIX_DRAFT } : {}),
+    // 2026-11-21 作業員H: 回の始めに借りた会話の前の分析を空に戻す回は、戻していない前の答えと比べない（構成に足す＝前を作り直す）
+    ...(process.env.EXAM_RESET_BRAIN_STATE !== "off" ? { brainState: "reset" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-11-05 作業員8（統括役の了承の 1「前の答えを本番の commit ごとに1回だけ作って使い回す（夜に1回）」・scripts/lib/exam-base-pin.ts）:
@@ -1347,7 +1397,7 @@ async function prepareMainBaseline(): Promise<boolean> {
         atomicWriteJson(pinsFile, pins);
         if (mode === "run") console.log(`  前の main の答えの控え: ${mine.size}/${ids.length}問（${[...mine].map(([id, s]) => `${id}←${s.dir ?? "?"}`).slice(0, 6).join(" ")}${mine.size > 6 ? " …" : ""}）＝要求が同じ段は前の答えを使う（呼ばない）`);
       }
-      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow() - reserveNowUsd)) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
+      const childEnv: NodeJS.ProcessEnv = { ...(mainEnv as NodeJS.ProcessEnv), LLM_CASSETTE_ENV_FP: "-", REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1", ...(sipBaseExcludeOf(process.env) ? { EXAM_LEDGER_SIP_EXCLUDE: sipBaseExcludeOf(process.env)! } : {}), ...(MAX_USD !== null ? { EXAM_MAX_USD: String(Math.max(0.01, MAX_USD - spentUsdNow() - reserveNowUsd)) } : {}), ...((process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() ? { EXAM_DB_SNAPSHOT_DAY: process.env.EXAM_DB_SNAPSHOT_DAY } : {}), ...(pinsFile ? { BRAIN_EXAM_MAIN_PINS_FILE: pinsFile } : {}), ...(mode === "plan" ? { EXAM_INPUT_DIFF: "plan" } : {}) };
       // main の作業ツリーは1つ＝1人ずつ（版の違う担当が checkout を取り合わない）
       // 2026-10-21 確かめる人: 待つのは上限まで（EXAM_MAIN_WT_WAIT_MIN・既定 120分）。持ち主が生きたまま止まっていても永遠には待たない。
       //   上限を過ぎても奪わない（生きている持ち主の作業ツリーを checkout -f で壊す）→ この回は作らずに進む（その問題は前との比べに入らない）
@@ -1484,6 +1534,15 @@ async function prepareMainBaseline(): Promise<boolean> {
   // 2026-11-07: 残り（時間の予算などで今は回さない問題）があっても、作れた問題だけで控えを書く（problems に入らない問題は昼の依頼が今の main で前を作る＝decideBasePin の missing）
   if (flag("baseline-only") && ref === "main" && !pinnedNightly && /^night-base-/.test(LABEL) && picked.some((p) => now.has(p.id))) {
     try { atomicWriteJson(nightlyFile, { commit, at: new Date().toISOString(), cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) } satisfies NightlyRecord, true); console.log(`  夜の基準の控えを書いた: ${commit.slice(0, 7)}（${nightlyFile}）`); } catch (e) { console.warn(`  ⚠ 夜の基準の控えを書けない: ${String(e).slice(0, 120)}`); }
+  }
+  // 2026-11-21 作業員H（KB c257f9e7「前は commit ごとに1回」・統括役の OK）: 前を今の main（か固定した commit）で作った依頼は、この構成の「この晩の前の commit」を控える。
+  //   後の依頼は decideBasePin がその commit に固定し、悪化に見えた問題だけ今の main で確かめ直す。夜の基準の依頼（night-base-*）は上で書く。止める EXAM_BASELINE_PIN_ANY=off
+  if (ref === "main" && !/^night-base-/.test(LABEL) && process.env.EXAM_BASELINE_NIGHTLY !== "off" && process.env.EXAM_BASELINE_PIN_ANY !== "off") {
+    try {
+      const cur = existsSync(nightlyFile) ? (JSON.parse(readFileSync(nightlyFile, "utf8")) as NightlyRecord) : null;
+      const up = nightPinUpdate(cur, { commit, cfg: ch, snapDay: (process.env.EXAM_DB_SNAPSHOT_DAY ?? "").trim() || snapshotDay(Date.now()), problems: picked.filter((p) => now.has(p.id)).map((p) => p.id) }, Date.now(), nightStartMs(Date.now()));
+      if (up) { atomicWriteJson(nightlyFile, up, true); console.log(`  この晩の前の commit を控えた: ${commit.slice(0, 7)}・${up.problems.length}問（構成 ${ch}・後の依頼はこの commit に固定）`); }
+    } catch (e) { console.warn(`  ⚠ この晩の前の commit を控えられない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
   }
   const missing = picked.filter((p) => !now.has(p.id)).length;
   console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
@@ -1743,8 +1802,14 @@ async function main() {
   const doneSigs = new Map<string, string[]>();
   // 2026-11-11 作業員8: 過半数の印（exam-flake.majoritySigOfRow）。過半数が決まった問題の残りの回を呼ばない（--repeat-flaky／--reps-file の時だけ＝取り置きは回が揃わなくても使える形）
   const doneMaj = new Map<string, string[]>();
-  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) { doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]); doneMaj.set(r.id, [...(doneMaj.get(r.id) ?? []), majoritySigOfRow(r)]); }
-  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0 };
+  const donePP = new Map<string, PassPath[]>(); // 2026-11-21 作業員H: 回ごとの合格と道（最初の2回が前と同じなら3回目から回さない）
+  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) { donePP.set(r.id, [...(donePP.get(r.id) ?? []), passPathOf(r as never)]); doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]); doneMaj.set(r.id, [...(doneMaj.get(r.id) ?? []), majoritySigOfRow(r)]); }
+  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0, noRegression: 0, sameAsBase: 0 };
+  // 2026-11-21 作業員H: 前（main）が合格も道も過半数で✕の問題は、今を重ねて回しても悪化にならない＝2回目以降を回さない（exam-flake.noRegressionPossible・EXAM_SKIP_NO_REGRESSION=off で止める）
+  const baseRowsById = new Map<string, ResultRow[]>();
+  if ((skipNoRegressionOn() || repsOnlyIfDifferOn()) && !IS_BASELINE_CHILD && BASELINE && BASELINE !== "main") for (const r of readResults(BASELINE)) baseRowsById.set(r.id, [...(baseRowsById.get(r.id) ?? []), r]);
+  const noRegCache = new Map<string, boolean>();
+  const noRegressionFor = (id: string) => { let v = noRegCache.get(id); if (v === undefined) { v = noRegressionPossible((baseRowsById.get(id) ?? []) as never); noRegCache.set(id, v); } return v; };
   const EARLY_STOP = majorityEarlyStopOn() && (REPEAT_FLAKY || !!REPS_OF) && REPEAT > 1;
   if (REPEAT_FLAKY && REPEAT > 1) {
     const c = { flaky: 0, stable: 0, unknown: 0 } as Record<string, number>;
@@ -1841,6 +1906,9 @@ async function main() {
     if (REPS_OF) { if (rep > Math.max(1, REPS_OF[p.id] ?? 1)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; } }
     else if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
     // 2026-11-11 作業員8: 済んだ回で過半数が決まった（同じ過半数の印が回の数の半分より多い）→ 残りの回は過半数を変えられない＝呼ばない（止める EXAM_MAJORITY_EARLY_STOP=off）
+    if (rep > 1 && skipNoRegressionOn() && baseRowsById.size && noRegressionFor(p.id)) { skippedReps.n++; skippedReps.noRegression++; continue; }
+    // 2026-11-21 作業員H（KB c6bb716c に戻す）: 最初の2回がどちらも前の過半数と同じなら3回目から回さない（EXAM_REPS_ONLY_IF_DIFFER=off で止める）
+    if (rep > 2 && repsOnlyIfDifferOn() && baseRowsById.size && firstTwoSameAsBase(donePP.get(p.id) ?? [], (baseRowsById.get(p.id) ?? []) as never)) { skippedReps.n++; skippedReps.sameAsBase++; continue; }
     if (EARLY_STOP && rep > 1 && majoritySettled(doneMaj.get(p.id) ?? [], REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[p.id] ?? 1)) : REPEAT)) { skippedReps.n++; skippedReps.settled++; continue; }
     const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
@@ -1879,6 +1947,14 @@ async function main() {
       if (!reuse) await writePc(S().yumaPc, p.pc);
       else if ((await verifyPc(S().yumaPc, pcPatchOf(p.pc))).length) await writePc(S().yumaPc, p.pc); // 前の回のブレインの書き戻し（要約等）がある時だけ写し直す
       else writeCount.pcSkip++;
+      // 2026-11-21 作業員H（統括役の OK・回が独立していなかった）: 借りた会話の brain_strategy（【前回の全体分析】）と conversation_direction は試験が戻しておらず、
+      //   前の回（前の問題の別の会話のことも）のブレインが書いた値を次の回が読んでいた（録音の比べ: 同じ問題の回で要求の頭から 4〜8% の所が違い、
+      //   後ろが毎回キャッシュに当たらない・q332 は回ごとに別の戦略の文）。問題の写しにこの2つの値は無い＝回の始めに空に戻し、どの回も同じ所から始める。
+      //   止める EXAM_RESET_BRAIN_STATE=off（YUMA とテスト専用の会話だけ）
+      if (process.env.EXAM_RESET_BRAIN_STATE !== "off" && (S().conv === YUMA || isTestOnlyConversation(S().conv))) {
+        const rs = await sb.from("conversations").update({ brain_strategy: null, conversation_direction: null }).eq("id", S().conv);
+        if (rs.error) console.warn(`  ⚠ 借りた会話の前の分析を戻せない（${rs.error.message}）`);
+      }
       // 10/09 ③ 読み直して確かめる（前の実行の要約の書き戻しが遅れて来ると混ざる）
       await new Promise((r) => setTimeout(r, 800));
       let mism = await verifyPc(S().yumaPc, pcPatchOf(p.pc));
@@ -1982,6 +2058,8 @@ async function main() {
       mark("brain"); // 通の写し＋ブレイン（2層なら両方）＋その間の決まった待ち
       if (!meta) throw new Error("ブレインが null");
       row.brain = planOf(meta);
+      // 2026-11-21 作業員H（当たる問題だけ積む・2段目の記録の口）: 連携の地図の行のうち、この回の meta で材料が埋まった行の id（LLM なし）
+      row.filled = filledRowsOf(meta);
       row.trace = { ...(row.trace ?? {}), zc: (meta.llm_raw as { zc?: unknown } | undefined)?.zc ?? null, ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
       const rawOut = S().rawBrainOutputs[S().rawBrainOutputs.length - 1];
       row.raw = rawPlanOf(rawOut);
@@ -2134,6 +2212,7 @@ async function main() {
     appendFileSync(OUT, JSON.stringify(row) + "\n");
     if (!row.error) {
       doneSigs.set(p.id, [...(doneSigs.get(p.id) ?? []), sigOfRow(row)]);
+      if (!row.error) donePP.set(p.id, [...(donePP.get(p.id) ?? []), passPathOf(row as never)]);
       doneMaj.set(p.id, [...(doneMaj.get(p.id) ?? []), majoritySigOfRow(row)]);
       // 揺れの記録（共有）。録音の再生だけで出た回は前の答えの写し＝independent=false（安定の証拠に数えない）
       if (flakeEnabled()) {
@@ -2184,7 +2263,7 @@ async function main() {
   }
   if ((REPEAT_FLAKY || REPS_OF) && REPEAT > 1) {
     flakeSkip = skippedReps;
-    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}${skippedReps.settled ? `・過半数が決まった ${skippedReps.settled}` : ""}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
+    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}${skippedReps.settled ? `・過半数が決まった ${skippedReps.settled}` : ""}${skippedReps.noRegression ? `・前が✕で悪化になりえない ${skippedReps.noRegression}` : ""}${skippedReps.sameAsBase ? `・最初の2回が前と同じ ${skippedReps.sameAsBase}` : ""}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
   }
   await loadKbLinksForReport();
   const s = summarize(LABEL, BASELINE || null);

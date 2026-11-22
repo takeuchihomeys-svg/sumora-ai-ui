@@ -19,7 +19,7 @@
 // 戻す: IMAGE_READ_LEDGER=off（AIX は台帳を作らない・送った後は今まで通り読む）
 import { createHash } from "node:crypto";
 import { supabase } from "@/app/lib/supabase-server";
-import { PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_PROMPT, PROPERTY_IMAGE_ROOMS_LINE, imageReadRoomsOn, parseReadResult, parseTranscript, type ReadResult, type ReadItem, type ImageKind } from "@/app/lib/property-image-read";
+import { PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_PROMPT, PROPERTY_IMAGE_ROOMS_LINE, imageReadRoomsOn, imageReadStatusStrictOn, PROPERTY_IMAGE_STATUS_STRICT_LINE, parseReadResult, parseTranscript, type ReadResult, type ReadItem, type ImageKind } from "@/app/lib/property-image-read";
 import { JA_KANJI_INSTRUCTION, jaKanji } from "@/app/lib/ja-kanji";
 import { parseLedgerFacts, trimTranscriptRepetition, type LedgerFacts } from "@/app/lib/recommend-fact-guard";
 export { trimTranscriptRepetition };
@@ -69,7 +69,12 @@ export const LEDGER_ITEMS_SYSTEM = PROPERTY_IMAGE_PROMPT
   + `\n${JA_KANJI_INSTRUCTION}`;
 
 /** 2026-11-19 作業員L: IMAGE_READ_ROOMS=on の時だけ部屋ごとの帖数の1行を足す（off は LEDGER_ITEMS_SYSTEM のまま） */
-export function ledgerItemsSystem(env?: Record<string, string | undefined>): string { return imageReadRoomsOn(env) ? LEDGER_ITEMS_SYSTEM.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : LEDGER_ITEMS_SYSTEM; }
+export function ledgerItemsSystem(env?: Record<string, string | undefined>): string {
+  let p = imageReadRoomsOn(env) ? LEDGER_ITEMS_SYSTEM.replace("\n- is_property:", `${PROPERTY_IMAGE_ROOMS_LINE}\n- is_property:`) : LEDGER_ITEMS_SYSTEM;
+  // 2026-11-21 作業員G: 現況の欄を優先・欄が無ければ空（property-image-read の IMAGE_READ_STATUS_STRICT と同じ）
+  if (imageReadStatusStrictOn(env)) p = p.replace("\n- vacancy_date:", `${PROPERTY_IMAGE_STATUS_STRICT_LINE}\n- vacancy_date:`);
+  return p;
+}
 
 export const LEDGER_TRANSCRIBE_MAX_TOKENS = 3000;
 export const LEDGER_ITEMS_MAX_TOKENS = 2000;

@@ -333,6 +333,20 @@ const VERDICT_JA: Record<EquipVerdict, string> = {
 const roomLabel = (p: { name: string; roomNo: string | null }) => `${p.name}${p.roomNo ? ` ${p.roomNo}号室` : ""}`;
 
 /**
+ * 2026-11-21 作業員K2（#132・q439・EQUIPMENT_WISH_LOOKUP=on の時だけ使う）: 設備の希望の番にブレインへ渡す1行。
+ *   2026-11-21 竹内さんの決定（統括役経由）: 設備の希望（例 カウンターキッチン）を言われた番は「その条件で探す約束を返信でし、次は AIX から送る（2段:pickup）」。
+ *     送った資料の中に当てはまる部屋があっても同じ。
+ *   → e6d264f8 の3つの分け（①資料で有る物件がある→送った物件から答える番／③分からない→探す約束にしない・送った物件の中で確かめて送る番）は
+ *     この決定と食い違うので外した。資料の答え（有る・全部無い・分からない）は事実として添えるだけで、道は変えない（探す時の手がかり）。
+ */
+export function equipmentWishBrainLine(plan: EquipAnswerPlan): string {
+  const fits = plan.properties.filter((p) => p.answers.length > 0 && p.answers.every((a) => a.verdict === "yes"));
+  const allNo = plan.properties.length > 0 && plan.properties.every((p) => p.answers.length > 0 && p.answers.every((a) => a.verdict === "no"));
+  const fact = fits.length ? `送った物件の資料で希望の設備が有る: ${fits.map((p) => `${p.name}${p.roomNo ? ` ${p.roomNo}` : ""}`).join("・")}` : allNo ? "送った物件の資料には全部、希望の設備が無いと書いてある" : "送った物件の資料の文字では有るか分からない";
+  return `→ お客様の今の発言は設備の希望（質問の形ではない・こちらが既に物件を送った後）。竹内さんの決定（11/21）: 設備の希望を言われた番は、その条件で探す約束を返信でし、次は AIX から送る（2段:pickup）。送った物件の中に当てはまる部屋があっても同じ。資料の答え（${fact}）は探す時の手がかりで、道は変えない。`;
+}
+
+/**
  * ブレイン・返信生成へ渡す材料（毎回変わる所に置く＝キャッシュの前置きは変えない）。
  * 本文に書いてよい事・書いてはいけない事と、確かめた後の AIX を添える（文面を決めるのは生成）。
  */

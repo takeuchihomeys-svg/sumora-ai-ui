@@ -1,4 +1,5 @@
 import { situationWriterNote, situationWriterNoteOn } from "@/app/lib/situation-now";
+import { ourItemsWriterNoteOn, ourItemsReplyNote } from "@/app/lib/situation-writer-aix";
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
@@ -268,6 +269,8 @@ import {
   SEE_MORE_LISTINGS_PREFIX, customerAsksMoreListings,
 } from "@/app/lib/reply-context";
 import { insertInitialCostSave, resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
+import { imageUnitLabel } from "@/app/lib/chat-screenshot-speaker";
+import { sanitizeJsonForDb } from "@/app/lib/db-json-sanitize";
 import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-commitment";
 // 2026-09-18 竹内: 社内への確認・報告になっている文は下書きとして保存しない（入力欄にも自動返信にも出さない）
 import { isNotACustomerReply } from "@/app/lib/meta-narration";
@@ -391,7 +394,8 @@ import { exemplarNoteFor, warmExemplarTable } from "@/app/lib/takeuchi-exemplar-
 import { patternCatalogNoteFor } from "@/app/lib/sentence-pattern-catalog-server";
 import { composeElementsNoteFor } from "@/app/lib/compose-elements-server";
 import { exemplarOn } from "@/app/lib/takeuchi-exemplar";
-import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext } from "@/app/lib/compose-sentence-plan";
+import { composeSentencePlanOn, readTurnUnderstanding, readSevenFields, buildSentencePlan, sentencePlanNote, sentencePlanDigest, readComposeContext, latentKindOf } from "@/app/lib/compose-sentence-plan";
+import { writerHookedPressOn, writerLatentKindOn, writerHookedLine, writerLatentKindLine } from "@/app/lib/writer-decided-lines";
 import { replyDirectionWithKeep, replyDirectionWithNoViewing } from "@/app/lib/reply-direction-keep";
 import type { AppealDecision } from "@/app/lib/tsunagi-one-place";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -2024,7 +2028,9 @@ ${conditionKeepShapeLine("⑤", isFirstEverReply)}
   //   分割相槌骨格を誘導していた。通単位（MSG_SEP / customerMessageUnits）でのみ分割する
   // 2026-09-14 竹内（Hina 事例）: 画像の読み取り文の通には「お客様の発言ではない」見出しを付け、写っている条件を質問・希望として扱わない注意を添える
   //   （SNS 広告のスクショの「ペット可」から「ペット飼育の可否確認させて頂きます」と聞かれていないことに答えた）
-  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "") : u);
+  // 2026-11-21 作業員G（#468）: やり取りのスクショは話し手（他社→お客様・家族とのやり取り）と「中の問いはこちらへの質問ではない」を見出しに
+  //   （SCREENSHOT_SPEAKER_NOTE・既定 off＝今の見出しのまま）
+  const labelImageUnit = (u: string) => (/^\s*\[画像\] /.test(u) ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "") : u);
   const customerMsgLines = splitMessageUnits(customerMessage, customerMessageUnits).map(labelImageUnit);
   const hasImageTextUnit = customerMsgLines.some(isImageTextUnit);
   const imageTextNote = hasImageTextUnit
@@ -3427,7 +3433,7 @@ async function handleGenerateReply(req: NextRequest) {
   //   旧「【スクショ内容】」は発言でないことを伝えておらず、SNS 広告の「ペット可」を質問と読んで「ペット飼育の可否確認」を書いた
   if (!isTemplateOptimize && /\[画像\] /.test(message)) {
     message = message.split(MSG_SEP).map((u) => /^\s*\[画像\] /.test(u)
-      ? IMAGE_TEXT_LABEL + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
+      ? imageUnitLabel(u, IMAGE_TEXT_LABEL) + u.replace(/^\s*\[画像\] /, "").replace(/\d{1,2}:\d{2}\s*(?:5G|4G|LTE)?|1分で完了[^\n]*|お問い合わせ\(無料\)/g, "").trim()
       : u).join(MSG_SEP);
   }
   // お客様が書いた言葉だけ（意図の判定用。画像の読み取り文の通は除く）。物件の特定（URL・スクショ）には message を使う
@@ -5680,7 +5686,9 @@ async function handleGenerateReply(req: NextRequest) {
     const sentConfirmedWriterNote = ledgerActive && !isFollowUp && sentConfirmedNoteEnabled() ? buildSentConfirmedNote(ledger.entries, Date.now()) : "";
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote
       // 2026-11-18 作業員L（SITUATION_WRITER_NOTE・既定 off）: 今の状況の記録（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）を書き手にも事実で
-      + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "");
+      + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "")
+      // 2026-11-21 作業員K2（OUR_ITEMS_WRITER_NOTE・既定 off・situation-writer-aix.ts）: こちらが前に伝えた事（our_items・答えの有無）も書き手へ（言い直しの外れ: AI の下書きだけ 32/979）
+      + (!isFollowUp && ourItemsWriterNoteOn() ? ourItemsReplyNote((brainMeta as Record<string, unknown> | null)?.situation_now) : "");
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });
@@ -5696,18 +5704,28 @@ async function handleGenerateReply(req: NextRequest) {
       if (composeConductor?.note) lines.push(composeConductor.note.trim());
       if (composeSentencePlan?.note) lines.push(composeSentencePlan.note.trim());
       if (composeRun?.note) lines.push(composeRun.note.trim());
+      // 2026-11-21 作業員L（台帳 #466・WRITER_HOOKED_PRESS／WRITER_LATENT_KIND・既定 off・writer-decided-lines.ts）: 書き手に届いていなかった欄（刺さった所・潜在の種類）を1行ずつ
+      if (!isFollowUp) {
+        const bm = (brainMeta ?? null) as unknown as Record<string, unknown> | null;
+        if (writerHookedPressOn()) { const l = writerHookedLine(bm); if (l) lines.push(l); }
+        if (writerLatentKindOn()) { const l = writerLatentKindLine(bm, latentKindOf); if (l) lines.push(l); }
+      }
       // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
       void (async () => {
         try {
           const w = await import("@/app/lib/compose-plan-watch");
           if (!w.watchComposePlanOn() || !conversationId || isFollowUp || isTemplateOptimize) return;
           const meta0 = (brainMeta ?? {}) as unknown as Record<string, unknown>;
-          const [{ handoffLeaks }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
+          const [{ handoffLeaks, handoffCarried }, dc, ds] = await Promise.all([import("@/app/lib/compose-sentence-plan"), import("@/app/lib/delivery-check"), import("@/app/lib/decided-subfields")]);
           const d = dc.deliveryCheckOf(meta0);
           const sv = ds.subValuesOf(meta0);
           noteWatchMaterials(conversationId, "reply", "compose_plan", w.composePlanWatchOf({
             digest: composeSentencePlan?.digest ?? null, rows: composeSentencePlan?.plan.rows ?? null, planNote: composeSentencePlan?.note ?? null, contractNote: tcNote || null,
-            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
+            // 2026-11-21 作業員M（#483）: 役目ごとの注記を別に控える（連携の地図 conductor.compose_roles の値の来る所）
+            rolesNote: composeSentencePlan?.rowsV2 ? (briefRolesNote(composeSentencePlan.rowsV2, brainMeta) || null) : null,
+            // 2026-11-22 作業員M（連携の地図 writer.situation の値の来る所）: 今の状況の記録の書き手への注記（SITUATION_WRITER_NOTE=on の時だけ中身がある）
+            situationNote: situationWriterNoteOn() ? (situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) || null) : null,
+            leaks: composeSentencePlan?.note ? handoffLeaks(meta0, composeSentencePlan.note) : [], carried: handoffCarried(meta0, composeSentencePlan?.note ?? ""), delivery: { rate: d.rate, subRate: d.subRate }, subs: Object.keys(sv).filter((k) => sv[k]),
           }) as unknown as Record<string, unknown>);
         } catch (e) { console.warn(JSON.stringify({ tag: "watch:compose-plan-failed", error: e instanceof Error ? e.message : String(e) })); }
       })();
@@ -8096,7 +8114,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要
                   // 2026-09-09 Fable5: 中身はトレーラー送出前に組み立てた tpoDebug（substance / turnPair / finalCheckCodes / draftHead 等）と同一
                   // 2026-09-12 竹内方針A: suggested_aix（resolveReplyAix の出力）を同梱 → 自動経路・手動経路とも画面で同じ AIX ボタンを出す（JSONB・migrate-schema 更新不要）
-                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null, fact_grounding: factGrounding } })
+                  // 2026-11-21 作業員G（台帳 #373・本番エラー c40e1625 の残り）: ai_draft_check にも JSON で壊れる文字（絵文字の片割れ・\u0000・NaN）の守り。
+                  //   11/19〜11/20 に「ai_draft_check save error: … Empty or invalid json」が4回（generate-reply 3・generate-pending-drafts 1）。
+                  //   save-reply-example（L・b09e1748b）・判断（92b401036）と同じ sanitizeJsonForDb。直した欄はログに出す。止める DB_JSON_SANITIZE_DRAFT_CHECK=off
+                  .update({ ai_draft_check: (() => {
+                    const raw = { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null, fact_grounding: factGrounding };
+                    if ((process.env.DB_JSON_SANITIZE_DRAFT_CHECK ?? "").trim().toLowerCase() === "off") return raw;
+                    const safe = sanitizeJsonForDb(raw);
+                    if (safe.fixed) console.warn(JSON.stringify({ tag: "db-json-sanitize", where: "ai_draft_check", conversationId, paths: safe.fix.paths.slice(0, 5) }));
+                    return safe.value;
+                  })() })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {
                     if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);

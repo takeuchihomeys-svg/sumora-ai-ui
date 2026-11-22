@@ -77,9 +77,14 @@ export function promiseStuckRowsOf(
     if (before !== want) continue;
     const t0 = Date.parse(m.created_at);
     // その時に送れる候補（two-stage.freshPickupReady と同じ線: 3日以内・期限切れでない・その時まだ送っていない）
+    // 2026-11-21 統括役の決め: 約束が条件の言い直しを受けた新しい探しの約束（全域から・以内・含めて・絞る）なら、直前のお客様の束より前に作られた候補は
+    //   古い条件の候補＝③（約束でなく物件を送る番）に数えない
+    let custStart = i; while (custStart > 0 && ms[custStart - 1].sender === "customer") custStart--;
+    const restateAt = RESTATE_RE.test(text.normalize("NFKC")) && custStart < i ? Date.parse(ms[custStart].created_at) : null;
     const pendingAtPromise = picks.filter((p) => {
       const c = Date.parse(p.created_at);
       if (!(c <= t0) || t0 - c > 3 * 86_400_000) return false;
+      if (restateAt != null && c < restateAt) return false;
       if (p.expired_at && Date.parse(p.expired_at) <= t0) return false;
       if (p.sent_at && Date.parse(p.sent_at) <= t0) return false;
       return true;
@@ -127,6 +132,7 @@ export function promiseStuckRowsOf(
   }
   return out;
 }
+const RESTATE_RE = /全域から|以内|含めて|に絞らせ|絞らせて|条件に含め|ご条件で/;
 const kindIsSend = (k: PromiseKind) => k === "pickup" || k === "new_arrival";
 
 /** 分けの数え（分け × 約束の種類） */

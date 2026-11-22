@@ -8,7 +8,7 @@
 //   書類（本人確認書類・収入証明書・契約書）は種類だけ（中身は保存されていない）＝ここでも種類だけ。見積書は名前を伏せてから数字だけ取る。
 //   書き起こしの全文はブレインに渡さない（取った値と短い一言だけ）。
 // 【決めるのはブレイン】ここは候補の網と事実の並びだけ（P0 9eb6aa9c）。行き先は竹内さんの決まり（KB の id）を「材料」として添える。決まりの無い型は「決まっていない」と書く。
-// 既定 off（CUSTOMER_IMAGE_LINK=on で入る）。
+// 2026-11-20 から既定 on（CUSTOMER_IMAGE_LINK=off で止める）。
 
 import { savedImageKind, imageKindGroup, stripImageLabel, maskEstimateAddressee, IMAGE_KIND_LABEL, type ImageKind } from "./image-label";
 import { factsFromPropertyText, type CustomerSentFacts } from "./customer-sent-property";
@@ -18,7 +18,8 @@ import { savedPersonalDocumentLabel } from "./personal-document-guard";
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 export function customerImageLinkOn(env: Env = envOf()): boolean {
-  return (env.CUSTOMER_IMAGE_LINK ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2（統括役の決め）: 既定 on（試験 k1119-imgroute-a・ROUTE_1115 と一緒に on・9問×2回で確かな悪化0・本質 3/16→5/16）。止める CUSTOMER_IMAGE_LINK=off
+  return (env.CUSTOMER_IMAGE_LINK ?? "").trim().toLowerCase() !== "off";
 }
 
 // ── 種類 ─────────────────────────────────────────────────────────
@@ -49,6 +50,26 @@ const ITEM_RES: Array<[keyof EstimateItems, RegExp]> = [
   ["rent", /(?<![前割月分])(?:家賃|賃料)\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*)/],
   ["admin", /(?:共益費|管理費)\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*)/],
 ];
+/**
+ * 2026-11-21 作業員G（画像の把握の表 C5-b）: 他社の見積書の書き起こしが表の形（「敷金 | 0円」「家賃保証(2年)| 17,080円」「初期費用詳細合計額: 135,780円」）で、
+ *   見出しと値の間の「|」と、言い方の違う見出し（仲介会社関連費用・家賃保証・〜合計額）で内訳が取れていなかった（60日の【見積書】10枚のうち 1枚）。
+ *   既定 off（ESTIMATE_TABLE_PARSE=on）。取れなかった時だけ足す形で読む（今取れている行は変わらない）。
+ */
+export function estimateTableParseOn(env: Env = envOf()): boolean {
+  // 2026-11-21 作業員G: 既定 on（①の組 grp-brain-1121 で確かな悪化0）。止める ESTIMATE_TABLE_PARSE=off
+  return (env.ESTIMATE_TABLE_PARSE ?? "").trim().toLowerCase() !== "off";
+}
+const TABLE_EXTRA: Partial<Record<keyof EstimateItems, string>> = {
+  total: "(?:初期費用)?(?:詳細)?合計額",
+  brokerage: "仲介(?:会社関連)?(?:手数料|費用)",
+  guarantee: "家賃保証(?:\\([^)]{0,8}\\))?",
+};
+function tableItemRe(k: keyof EstimateItems, re: RegExp): RegExp {
+  // 元の見出し（キャプチャの前まで）＋言い方の違う見出し、区切りに「|」も許す
+  const head = re.source.replace(/\\s\*\[:：\]\?\\s\*\[¥￥\]\?\\s\*\(.*$/, "");
+  const alt = TABLE_EXTRA[k];
+  return new RegExp(`(?:${head}${alt ? `|${alt}` : ""})\\s*[:：|｜]\\s*[¥￥]?\\s*([0-9][0-9,]*|[-ー－なし無し]+)`);
+}
 export const ESTIMATE_ITEM_LABEL: Record<keyof EstimateItems, string> = { deposit: "敷金", key_money: "礼金", brokerage: "仲介手数料", guarantee: "保証会社", key_change: "鍵交換", insurance: "火災保険", prorated: "日割家賃", advance_rent: "前家賃", rent: "家賃", admin: "管理費", total: "総額" };
 /** 宛名・人の名前を伏せる（「〇〇 様」・「様」だけの行の前の行の頭の語）。数字だけ取る前に必ず通す */
 export const maskEstimateNames = maskEstimateAddressee;
@@ -58,8 +79,9 @@ export function estimateFactsFromTranscript(raw: string): EstimateFacts | null {
   const t = maskEstimateNames(String(raw ?? "").normalize("NFKC"));
   if (!ESTIMATE_DOC_RE.test(t)) return null;
   const items: EstimateItems = {};
+  const tableOn = estimateTableParseOn();
   for (const [k, re] of ITEM_RES) {
-    const m = t.match(re);
+    const m = t.match(re) ?? (tableOn ? t.match(tableItemRe(k, re)) : null);
     if (!m) continue;
     const v = /^[-ー－なし無し]+$/.test(m[1]) ? 0 : Number(m[1].replace(/,/g, ""));
     if (Number.isFinite(v) && v >= 0 && v <= 3_000_000) items[k] = v;
@@ -266,7 +288,8 @@ export function buildImageLinkBlock(links: ReadonlyArray<ImageLink>): string {
 //   ② 好みの手本の画像: 好みを条件に足して約束の返信 → 物件の AIX（特徴は image-taste-wants で AIX ツールの要望の欄へ）
 //   ③ こちらの見積書の送り返し: 文も一緒に来る。質問があれば答える返信・無ければ内覧の誘い。その物件が退去予定なら申込に誘導（AIX【申込へ】）
 export function imageRoute1115On(env: Env = envOf()): boolean {
-  return (env.CUSTOMER_IMAGE_ROUTE_1115 ?? "").trim().toLowerCase() === "on";
+  // 2026-11-20 作業員K2: 既定 on（k1119-imgroute-a で悪化0）。好みの手本を要望の欄に書くのは CUSTOMER_IMAGE_TASTE_WANTS=on の時だけ（既定 off のまま）。止める CUSTOMER_IMAGE_ROUTE_1115=off
+  return (env.CUSTOMER_IMAGE_ROUTE_1115 ?? "").trim().toLowerCase() !== "off";
 }
 function sameName(a: string, b: string): boolean {
   const n = (x: string) => x.normalize("NFKC").replace(/\s+/g, "");

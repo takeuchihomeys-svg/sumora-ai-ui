@@ -30,7 +30,7 @@ import { rmdirSync, unlinkSync, existsSync, mkdirSync, readdirSync, readFileSync
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { examCacheRoot } from "./lib/llm-cassette";
-import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue } from "./lib/exam-near-hook";
+import { pendingCounts, decideNearResolve, LEAK_STOP_FILE, isExamJob, ownerBaseDue, selfImproveDue } from "./lib/exam-near-hook";
 import { pathCheck, composePlanMarkers } from "./lib/exam-path-check";
 import { markersOf } from "./lib/exam-miss-stage";
 import { CONDUCTOR_LINKS } from "../app/lib/conductor-linkage";
@@ -62,7 +62,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
 }
 import { pcState } from "./lib/exam-pc-state";
 import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom, parseAfterAixDraft, afterAixDraftArgv } from "./lib/exam-conductor-core";
-import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
+import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, effectivePriority, longWaiting, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
@@ -75,7 +75,10 @@ import { bizLanes } from "./lib/exam-plan";
 import { seqRegressions, examSeqScoreOn, wantSeqOf as wantSeqOfProblem } from "./lib/send-seq-score"; // 11/13 作業員7b: 並びの悪化（EXAM_SEQ_SCORE・既定 off）
 import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, specMissingIds, runBaseCheck, BRAIN_USD_PER_REP, DRAFT_USD_PER_REP, pathRegressions, type CmpLite, type PathRowLite } from "./lib/exam-plan";
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
-import { examRefusalOf } from "./lib/exam-cost-gate";
+import { bisectPlan } from "./lib/exam-bisect";
+import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
+import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
+import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
@@ -110,7 +113,16 @@ function prodExamEnv(j?: { prodEnv?: boolean; env?: Record<string, string> }, no
   return readProdEnvCache(PROD_ENV_FILE)?.env ?? {};
 }
 /** 依頼の env の下敷き（本番の組＋係の examEnv） */
-const jobBaseEnv = (j?: { prodEnv?: boolean; env?: Record<string, string> }) => ({ ...prodExamEnv(j), ...configExamEnv() });
+const jobBaseEnv = (j?: { prodEnv?: boolean; env?: Record<string, string>; label?: string }) => {
+  const pe = prodExamEnv(j);
+  // 2026-11-21 作業員H（#475 試験の前と今の構成の一致）: 下敷きを依頼ごとのファイルに書き、brain-exam が前の既定にも入れる（EXAM_UNDERLAY_FILE）。
+  //   依頼の途中で本番の組を読み直しても同じ依頼は同じ下敷き（ファイルがあれば書き直さない）。止める: EXAM_UNDERLAY_BASE=off（brain-exam の側）
+  let uf: Record<string, string> = {};
+  if (Object.keys(pe).length && j?.label) {
+    try { ensureDirs(); const p = join(RES, `${j.label}.underlay.json`); if (!existsSync(p)) writeFileSync(p, JSON.stringify({ at: new Date().toISOString(), env: pe })); uf = { EXAM_UNDERLAY_FILE: p }; } catch { /* 書けなければ今まで通り */ }
+  }
+  return { ...pe, ...configExamEnv(), ...uf };
+};
 /** 控えが無いか3時間より古ければ読み直す（読めなければ前の控えのまま） */
 async function ensureProdEnv(maxAgeMs = 3 * 3600_000): Promise<void> {
   const age = prodEnvCacheAgeMs(PROD_ENV_FILE);
@@ -134,6 +146,7 @@ export type ExamJob = {
   /** 2026-11-15 作業員I: 本番のスイッチの組を env の下敷きに入れる（--prod-env） */ prodEnv?: boolean;
   /** --pick=rag の時 brain-exam --select=rag に任せる（④） */ selectRag?: boolean;
   /** 2026-11-20: brain-exam の --after-aix-draft（none／hint・AIX の後の返信の下書き・前と今の両方に付く） */ afterAixDraft?: "none" | "hint";
+  /** 2026-11-21 作業員H（1晩1本）: 下書きまで回す問題（他はブレインまで）＝文の組の問題もブレインの答えを同じ回で使い回す */ draftIds?: string;
   /** brain-exam 以外の試験（"cmd"）。cmds はそれぞれ npx tsx --env-file=.env.local の後ろに付ける */ runner?: "brain-exam" | "cmd" | "tsc" | "tsc-remote"; cmds?: string[];
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
   /** 2026-11-04 (a)(b): 小さいほど先（既定 5）・1本の時間の上限（分・既定 EXAM_JOB_MAX_MIN=40） */ priority?: number; maxMin?: number;
@@ -217,7 +230,38 @@ function readJobs(): Array<ExamJob & { file: string }> {
     // 2026-11-18 作業員H: createdAt が数の依頼（手で書いた等）も ISO の文字に直して読む（並べ替えで係が落ちない・exam-conductor-core.createdAtIso）
     out.push({ ...(j as ExamJob), createdAt: createdAtIso((j as { createdAt?: unknown }).createdAt), file: join(ROOT, f) });
   }
+  // 2026-11-21 作業員H: 24時間以上待っている依頼は1回だけ知らせる（積んだ人と統括役へ・notify.jsonl）。順番は待った時間で priority が下がる（compareJobs・EXAM_JOB_AGING）
+  const now = Date.now();
+  for (const j of out) {
+    if (j.file.endsWith(".claimed") || !longWaiting(j, now) || longWaitNoted.has(j.label)) continue;
+    longWaitNoted.add(j.label);
+    const h = Math.round((now - Date.parse(j.createdAt)) / 3600_000);
+    const msg = `${j.label} が ${h}時間 待ち（priority ${j.priority ?? 5} → 待った分で ${effectivePriority(j, now)}）。急ぎなら --priority を下げて積み直すか、要らなければ withdrawn へ`;
+    for (const to of [...new Set([j.notify ?? cfg().notify?.[j.owner] ?? "", "main"])].filter(Boolean)) appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to, owner: j.owner, label: j.label, msg }) + "\n");
+    log(`  ⏳ 長い待ち: ${msg}`);
+  }
   return out.sort((a, b) => compareJobs(a, b));
+}
+const longWaitNoted = new Set<string>();
+/** 晩の上限を数える依頼: 列の待ち（.json・.claimed）と済み（done）。tsc・cmd は数えない。
+ *  2026-11-21 作業員H: 済んだ依頼は結果の実際の費用（results/<label>.json の usd）・流れている／待っている依頼は見込み（planUsd → cap → 問題×回×$0.03）。
+ *  旧は cap の合計で数え、実際 約 $2 の晩が $19.80 と数えられた（exam-cost-gate.budgetUsdOf） */
+function nightJobsForBudget(): NightJob[] {
+  const out: NightJob[] = [];
+  const read = (dir: string, done: boolean) => {
+    let fs: string[] = []; try { fs = readdirSync(dir); } catch { return; }
+    for (const f of fs) {
+      if (!/\.json(\.claimed)?$/.test(f) || f === "config.json" || f === "scene-map.json" || f === "prod-env.json") continue;
+      let j: (ExamJob & { planUsd?: number }) | null = null; try { j = JSON.parse(readFileSync(join(dir, f), "utf8")); } catch { continue; }
+      if (!j || (j.runner && j.runner !== "brain-exam")) continue;
+      const n = String(j.only ?? "").split(",").filter(Boolean).length || 8;
+      const res = done ? readJson<{ usd?: string | number }>(join(RES, `${j.label}.json`), {}) : {};
+      const usd = budgetUsdOf({ state: done ? "done" : f.endsWith(".claimed") ? "running" : "queued", resultUsd: res.usd ?? null, planUsd: j.planUsd ?? null, capUsd: j.capUsd ?? null, problems: n, repeat: j.repeat, unitUsd: BRAIN_USD_PER_REP });
+      out.push({ label: j.label, createdAt: createdAtIso(j.createdAt as unknown), usd });
+    }
+  };
+  read(ROOT, false); read(DONE, true);
+  return out;
 }
 /**
  * 回数の計画（実際に流す時と、積む時の見込みの1行で同じ物を使う）。2026-11-06 統括役（P0 8805bd74・作業員9 の EXAM_FLAKY_REPS=1 の依頼が見込み3回分 $0.18 のまま出た）:
@@ -304,6 +348,22 @@ async function addJob(): Promise<void> {
   const env = Object.fromEntries(arg("env").split(",").filter(Boolean).map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
   const cwd = arg("cwd", process.cwd());
   const label = arg("label") || `job-${Date.now()}`;
+  // 2026-11-21 作業員H（統括役）: env の名前の突き合わせ（コードが読まない名前なら積まない・scripts/lib/exam-env-check.ts）。
+  //   runner=cmd の --cmd の中の --switch=NAME=値（exam-aix-text 等）も同じに見る
+  const cmdSwitches = Object.fromEntries(argsOf("cmd").flatMap((c) => [...c.matchAll(/--switch=([A-Za-z_][A-Za-z0-9_]*)=(\S*)/g)].map((m) => [m[1], m[2]])));
+  if (Object.keys(env).length || Object.keys(cmdSwitches).length) {
+    const c = checkEnvNames({ ...env, ...cmdSwitches }, appReaders(cwd));
+    if (c.unread.length) {
+      if (!flag("allow-unread-env")) throw new Error(formatUnread(c, cwd));
+      console.warn(`⚠ ${formatUnread(c, cwd)}（--allow-unread-env で積む）`);
+    }
+    // 前提のスイッチ（K2 の突き合わせの表 11/21）が欠けていれば積まない・本番の既定と同じ値は差が出ない（知らせるだけ）
+    const all = { ...env, ...cmdSwitches }, dot = readDotenvLocal(cwd);
+    const miss = missingPrereqs(all, dot);
+    if (miss.length && !flag("allow-unread-env")) throw new Error(`前提のスイッチが無い: ${miss.map((m) => `${m.name} は ${m.need} が要る（${m.why}）`).join("／")}（どうしても積む時は --allow-unread-env）`);
+    const same = sameAsDefault(all, appReaders(cwd), dot);
+    if (same.length) console.warn(`⚠ 本番の既定と同じ値＝差が出ない名前: ${same.join(",")}（外すか、off にして確かめる）`);
+  }
   // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
   //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
   const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
@@ -312,6 +372,8 @@ async function addJob(): Promise<void> {
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   // 2026-11-20 作業員H（作業員M の頼み）: --after-aix-draft=<none|hint> を brain-exam に渡す（AIX の2通目の系統の前と今を比べる）。違う値は積まない
   { const ad = parseAfterAixDraft(arg("after-aix-draft")); if ("error" in ad) throw new Error(ad.error); if (ad.value) (base as Record<string, unknown>).afterAixDraft = ad.value; }
+  // 2026-11-21 作業員H（1晩1本）: --draft-ids=<id,…> 下書きまで回す問題（--only の中・他はブレインまで）
+  if (arg("draft-ids")) (base as Record<string, unknown>).draftIds = arg("draft-ids").split(",").map((x) => x.trim()).filter(Boolean).join(",");
   if (arg("max-min")) (base as Record<string, unknown>).maxMin = Number(arg("max-min"));
   let job: ExamJob;
   // 11/03 指揮役: 手元の tsc は使わない＝--runner=tsc も tsc-remote として足す（手元の tsc は --runner=tsc-local の時だけ）
@@ -444,6 +506,13 @@ async function addJob(): Promise<void> {
       if (!pf.go && !flag("force")) throw new Error(`積まない（点検）: ${pf.blocks.join("／")}${pf.hints.length ? `。案: ${pf.hints.join("／")}` : ""}（それでも積む時は --force・点検を止める EXAM_ADD_PREFLIGHT=off）`);
       if (!pf.go) log(`  --force で点検を越えて積む: ${pf.blocks.join("／")}`);
     }
+    // 2026-11-21 作業員H（1晩の上限は全員で $10・竹内さんの決め）: その晩に積んだ依頼の上限の合計で超えるなら積まない（EXAM_NIGHT_CAP_USD・既定 10・=off で止める）
+    (job as ExamJob & { planUsd?: number }).planUsd = Number(plan.cost.usd.toFixed(4));
+    if (job.runner === "brain-exam") {
+      const nb = nightBudgetGate(nightJobsForBudget(), plan.cost.usd, Date.now(), nightCapUsd()); // 2026-11-21: この依頼も見込みで数える（cap ではない）
+      if (!nb.go && !flag("force")) throw new Error(`積まない（晩の上限）: ${nb.why}。統括役に知らせる・急ぎなら --force`);
+      log(`  晩の上限: ${nb.why}${!nb.go ? "（--force で越えて積む）" : ""}`);
+    }
     const sug = kindSuggest({ kind, switchName: base.switch, label }); if (sug) log(`  （${sug}）`);
     try { appendFileSync(join(examCacheRoot(), "exam-plans.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, route: plan.route, ids: plan.ids, usd: Number(plan.cost.usd.toFixed(4)), stage: plan.stage, claude: plan.claude.ids, gate: plan.gate }) + "\n"); } catch { /* 記録できなくても積む */ }
     if (plan.route === "yardstick") {
@@ -470,7 +539,7 @@ async function addJob(): Promise<void> {
   })();
   if (parts.length > 1) {
     parts.forEach((ids, k) => {
-      const pj: ExamJob = { ...job, id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
+      const pj: ExamJob = { ...job, ...(partPlanUsd((job as ExamJob & { planUsd?: number }).planUsd, ids.length, parts.flat().length) != null ? { planUsd: partPlanUsd((job as ExamJob & { planUsd?: number }).planUsd, ids.length, parts.flat().length) } : {}), id: `${job.id}-${k + 1}`, label: `${job.label}-p${k + 1}`, only: ids.join(","), flaky: (job.flaky ?? []).filter((x) => ids.includes(x)), createdAt: new Date(Date.parse(job.createdAt) + k).toISOString() };
       writeFileSync(join(ROOT, `${pj.createdAt.replace(/[:.]/g, "-")}-${pj.label}.json`), JSON.stringify(pj, null, 1));
     });
     log(`足した: ${job.label} を ${parts.length}本に分けた（12問まで・時間の見積もりで: ${parts.map((x, k) => `${job.label}-p${k + 1}=${x.length}問`).join("・")}）`);
@@ -479,6 +548,32 @@ async function addJob(): Promise<void> {
   const f = join(ROOT, `${job.createdAt.replace(/[:.]/g, "-")}-${job.label}.json`);
   writeFileSync(f, JSON.stringify(job, null, 1));
   log(`足した: ${job.label}（${job.owner}・${job.switch}・${job.runner === "tsc" ? `tsc（${job.cwd}）` : job.runner === "cmd" ? `${job.cmds!.length}本の試験` : `${job.only || "rag"}・${job.repeat}回${job.flaky?.length ? `・揺れる ${job.flaky.join(",")}` : ""}`}）`);
+}
+
+/**
+ * 2026-11-21 作業員H（KB d57f27eb「組が悪化した時だけスイッチごとに分けて流し直す」・統括役の頼み）: --bisect=<済んだ依頼の label>
+ *   その依頼の env のスイッチを半分ずつ2本（<label>-bA・-bB）にし、悪化した問題（確かな悪化＋道の悪化）だけを同じ作業ツリー・段・回数で積む。
+ *   悪化が出た方にもう一度 --bisect をかければスイッチ1つまで絞れる。--priority・--cap-usd は付ければ上書き（無ければ元の依頼の物）
+ */
+function bisectJob(label: string): void {
+  ensureDirs();
+  const file = readdirSync(DONE).filter((f) => f.endsWith(`-${label}.json`)).sort().pop();
+  if (!file) throw new Error(`--bisect: 済んだ依頼 ${label} が done に無い`);
+  const job = JSON.parse(readFileSync(join(DONE, file), "utf8")) as ExamJob;
+  const res = readJson<{ worseSure?: Array<string | { id: string }>; pathWorse?: Array<string | { id: string }> }>(join(RES, `${label}.json`), {});
+  const idOf = (x: string | { id: string }) => (typeof x === "string" ? x.split(/[\s（(]/)[0] : x.id);
+  const worse = [...(res.worseSure ?? []), ...(res.pathWorse ?? [])].map(idOf).filter(Boolean);
+  const plan = bisectPlan({ label: job.label, env: job.env ?? {}, only: job.only }, worse);
+  if ("error" in plan) { log(`--bisect ${label}: 積まない（${plan.error}）`); return; }
+  const now = Date.now();
+  plan.children.forEach((c, k) => {
+    const nj: ExamJob = { ...job, id: `${job.id}-b${c.half}`, label: c.label, env: c.env, only: c.only, switch: `${job.switch}（${c.half}: ${c.switches.join(",")}）`, flaky: (job.flaky ?? []).filter((x) => c.only.split(",").includes(x)), guards: [], createdAt: new Date(now + k).toISOString(), tries: 0 };
+    if (arg("priority")) (nj as unknown as Record<string, unknown>).priority = Number(arg("priority"));
+    if (Number(arg("cap-usd")) > 0) nj.capUsd = Number(arg("cap-usd"));
+    delete (nj as { file?: string }).file;
+    writeFileSync(join(ROOT, `${nj.createdAt.replace(/[:.]/g, "-")}-${nj.label}.json`), JSON.stringify(nj, null, 1));
+    log(`足した（二分）: ${nj.label}・${c.switches.length}スイッチ（${c.switches.join(",")}）・悪化した ${c.only.split(",").length}問（${c.only}）`);
+  });
 }
 
 // ─── 流す・結果を読む ─────────────────────────────────────────────────────
@@ -810,7 +905,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
         appendFileSync(outFile, `\n=== ${at()} npx tsx --env-file=.env.local ${c} ===\n`);
         const before = statSync(outFile).size;
         // 2026-11-05 作業員4の頼み: --qfile="C:/Users/竹内 悠馬/…" が空白で切れていた（ci-v1L・ci-v3L）＝引用符を含む塊は1つの引数に（exam-plan.splitCmdArgs）
-        const r = runTsx(j.cwd, splitCmdArgs(c), { ...jobBaseEnv(j), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
+        const r = runTsx(j.cwd, splitCmdArgs(c), { ...jobBaseEnv(j), ...j.env, ...(j.capUsd ? { EXAM_MAX_USD: String(j.capUsd), EXAM_RUN_CAP_USD: String(j.capUsd) } : {}), ...(businessHoursLane() ? { EXAM_CONCURRENCY: String(businessHoursLane()) } : {}) }, outFile); cur = r.child;
         codes.push(await r.done);
         const tail = readFileSync(outFile).subarray(before).toString("utf8");
         const m = tail.match(/空きメモリ\s*\d+MB\s*<\s*\d+MB（--force で流す）/);
@@ -843,6 +938,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     if (ids.length) argv.push(`--only=${j.only}`, `--reps-file=${repsFile}`);
     if (j.selectRag) argv.push("--select=rag", ...(j.selectN ? [`--select-n=${j.selectN}`] : []));
     argv.push(...afterAixDraftArgv(j));
+    if (j.draftIds) { const mine = new Set(String(j.only || "").split(",").filter(Boolean)); const ids = j.draftIds.split(",").filter((x) => !mine.size || mine.has(x)); if (ids.length) argv.push(`--draft-ids=${ids.join(",")}`); }
     // 2026-11-04 (b): 依頼の作業ツリーの brain-exam.ts が止める印を見ない（origin/main より古い）時は上限を延ばす（EXAM_JOB_OLD_MAX_MIN・既定 120分）。依頼の行と結果にも出す
     const behind = (() => { try { return Number(execFileSync("git", ["-C", j.cwd, "rev-list", "--count", "HEAD..origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim()); } catch { return null; } })();
     const guard = staleExamGuard((() => { try { return readFileSync(join(j.cwd, "scripts", "brain-exam.ts"), "utf8"); } catch { return ""; } })(), Number.isFinite(behind as number) ? behind : null,
@@ -1068,6 +1164,7 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
 // 直に流された時だけ動く（テストが関所の関数だけ読む時は動かない）
 if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
   if (flag("add")) { await addJob(); return; }
+  if (arg("bisect")) { bisectJob(arg("bisect")); return; }
   // 11/03 指揮役: 知らせの未配達の見張り。流す役は notify.jsonl に書くだけ（SendMessage を持たない）＝届けた人が --delivered で印を付ける。
   //   未配達＝results/notify.jsonl の行のうち、id（`${at}|${label}`）が results/delivered.jsonl に無い物。作業員1の再開時と指揮役の見回りで全部届ける
   if (flag("undelivered") || arg("delivered")) {
@@ -1165,6 +1262,18 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/owner-base-nightly.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
           const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
           log(`取りこぼしの網（owner-base-nightly）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
+        }
+        // 2026-11-21 作業員N（統括役の確かめ: quality_daily に growth:*・core:*・found:* が1行も無かった＝毎朝の1枚を流す所が無かった）:
+        //   self-improve --write（全部・LLM なし）を JST 6:30〜8:59 に1日1回（流せなかった日は 22時以降）。失敗しても試験は止めない
+        const siFile = join(MARKS, "self-improve-last.json");
+        const si = selfImproveDue(readJson<{ day?: string } | null>(siFile, null)?.day ?? null, Date.now(), process.env);
+        if (si.due) {
+          mkdirSync(MARKS, { recursive: true });
+          writeFileSync(siFile, JSON.stringify({ day: si.day, at: new Date().toISOString() })); // 先に印＝失敗しても同じ日に繰り返さない
+          const t0 = Date.now();
+          const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/self-improve.ts", "--write"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 25 * 60_000 });
+          const first = String(r.stdout ?? "").trim().split(/\r?\n/).find((x) => x.startsWith("書いた:")) ?? "";
+          log(`毎朝の1枚（self-improve --write）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${first.slice(0, 160)}`);
         }
       }
       const isRemoteJob = (x: ExamJob) => x.runner === "tsc-remote" || (x.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") || (x.runner === "cmd" && !!x.readOnly);

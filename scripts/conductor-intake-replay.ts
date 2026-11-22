@@ -23,7 +23,11 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
     h.assertYuma(YUMA_CONVERSATION_ID, "入口の統括の再生の試験");
     const rows: Array<Record<string, unknown>> = [];
     let n = 0, hit = 0, aixN = 0, aixHit = 0, replyN = 0, replyHit = 0, failed = 0;
+    // 2026-11-21 作業員M（台帳 #396・既定は申込の門あり）: 問題の写しに申込の書類・個人の値が混ざっていたら渡さない（作った側の門に加えて渡す前にもう1回）
+    const { applicationMaterialReason } = await import("../app/lib/test-pii-guard");
+    let gated = 0;
     for (const it of q.items.slice(0, limit)) {
+      if ([it.customer, it.lastStaff, it.ledgerBlock].some((x) => applicationMaterialReason(x ?? ""))) { gated++; continue; }
       const r = await runConductorIntake({ conversationId: YUMA_CONVERSATION_ID, turnAt: null, customerTurn: it.customer, lastStaff: it.lastStaff, ledgerBlock: it.ledgerBlock ?? "", carryLine: "", ruleMeta: "" }).catch(() => null);
       const a = r?.answer ?? null;
       if (!a) { failed++; rows.push({ id: it.id, gold: it.gold, answer: null }); continue; }
@@ -36,6 +40,6 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
     const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
     const out = join(dirname(qfile), `results-${label}.json`);
     writeFileSync(out, JSON.stringify({ label, at: new Date().toISOString(), prefixVersion: (await import("../app/lib/conductor-intake")).intakePrefixVersion(), n, hit, aixN, aixHit, replyN, replyHit, failed, rows }, null, 1));
-    console.log(`# 入口の統括の再生の試験 ${label}: 返信か AIX かの見分け ${hit}/${n}（${pct(hit, n)}）・AIX の番 ${aixHit}/${aixN}（${pct(aixHit, aixN)}）・返信の番 ${replyHit}/${replyN}（${pct(replyHit, replyN)}）・読めなかった ${failed} → ${out}`);
+    console.log(`# 入口の統括の再生の試験 ${label}（申込の門で渡さなかった ${gated}）: 返信か AIX かの見分け ${hit}/${n}（${pct(hit, n)}）・AIX の番 ${aixHit}/${aixN}（${pct(aixHit, aixN)}）・返信の番 ${replyHit}/${replyN}（${pct(replyHit, replyN)}）・読めなかった ${failed} → ${out}`);
   } finally { await h.finish(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

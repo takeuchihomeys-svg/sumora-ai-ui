@@ -3,7 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pendingCounts, decideNearResolve, isExamJob, ownerBaseDue } from "../exam-near-hook";
+import { pendingCounts, decideNearResolve, isExamJob, ownerBaseDue, nearLeakByOrigin, selfImproveDue } from "../exam-near-hook";
 
 let passed = 0, failed = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -45,6 +45,29 @@ t("EXAM_NEAR_RESOLVE_HOOK=off で止まる", (() => { const d = decideNearResolv
   t("同じ日に2回は流さない", !ownerBaseDue("2026-11-12", at("2026-11-12T10:00:00")).due);
   t("係が 1:30 に止まっていても、その日のうちに立ち上がれば流す", ownerBaseDue("2026-11-11", at("2026-11-12T09:00:00")).due);
   t("EXAM_OWNER_BASE_NIGHTLY=off で流さない", !ownerBaseDue(null, at("2026-11-12T02:00:00"), { EXAM_OWNER_BASE_NIGHTLY: "off" }).due);
+}
+
+{
+  // 2026-11-21 作業員H: q453 の2本（別の会話の決まり文句の受けが 0.005）は漏れでない・元の会話の番は漏れ
+  const body = JSON.stringify({ p_before: "2026-10-15T09:31:23.524Z", p_exclude_conv: "orig" });
+  const rows = [{ source_key: "msg:a", distance: 0.005, turn_at: "2026-09-12T07:15:29Z" }, { source_key: "msg:b", distance: 0.2, turn_at: "2026-09-01T00:00:00Z" }];
+  const conv = (m: Record<string, string>) => (k: string) => m[k];
+  const other = nearLeakByOrigin("match_conductor_focus", body, rows, conv({ "msg:a": "other" }), "orig");
+  t("別の会話の 0.01 未満は漏れに数えない", !other.leak && other.closeOther === 1 && other.close === 0);
+  t("元の会話の 0.01 未満は漏れ", nearLeakByOrigin("match_conductor_focus", body, rows, conv({ "msg:a": "orig" }), "orig").leak);
+  t("会話が分からない番は漏れ（安全側）", nearLeakByOrigin("match_conductor_focus", body, rows, conv({}), "orig").leak);
+  t("元の番より後の番は会話に関係なく漏れ", nearLeakByOrigin("match_conductor_focus", body, [{ source_key: "msg:c", distance: 0.3, turn_at: "2026-10-16T00:00:00Z" }], conv({ "msg:c": "other" }), "orig").leak);
+  t("元の会話が分からない頼みは今まで通り", nearLeakByOrigin("match_conductor_focus", body, rows, conv({ "msg:a": "other" }), null).leak);
+}
+{
+  // 2026-11-21 作業員N: 毎朝の1枚は JST 6:30〜8:59 と 22時以降だけ・1日1回
+  const at = (hm: string) => Date.parse(`2026-11-22T${hm}:00+09:00`);
+  t("6:29 はまだ", !selfImproveDue(null, at("06:29")).due);
+  t("6:30 は流す", selfImproveDue("2026-11-21", at("06:30")).due);
+  t("9:00 は流さない（営業時間）", !selfImproveDue("2026-11-21", at("09:00")).due);
+  t("22:00 は取り返す", selfImproveDue("2026-11-21", at("22:00")).due);
+  t("同じ日は繰り返さない", !selfImproveDue("2026-11-22", at("07:00")).due);
+  t("off で止まる", !selfImproveDue(null, at("07:00"), { EXAM_SELF_IMPROVE_DAILY: "off" }).due);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

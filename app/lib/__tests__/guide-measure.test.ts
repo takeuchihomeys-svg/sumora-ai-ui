@@ -43,7 +43,8 @@ console.log(`${n} tests ok`);
 
 import { estimateRecordsBlock, estimateRecordsBlockOn } from "../estimate-records-block";
 t("送った御見積書の記録: 新しい順・同じ物件の出し直しは前の金額も・名前の無い行は落とす", () => {
-  assert.equal(estimateRecordsBlockOn({}), false);
+  assert.equal(estimateRecordsBlockOn({}), true); // 2026-11-21 既定 on
+  assert.equal(estimateRecordsBlockOn({ BRAIN_ESTIMATE_RECORDS: "off" }), false);
   const b = estimateRecordsBlock([
     { property_name: "Aマンション", room_no: "101号室", initial_cost_yen: 180000, created_at: "2026-11-10T03:00:00Z" },
     { property_name: "Aマンション", room_no: "101", initial_cost_yen: 220000, created_at: "2026-11-08T03:00:00Z" },
@@ -84,3 +85,49 @@ t("キャンセルの網の shadow: 既定 shadow・申込の段で広げた網�
   assert.equal(cancelWideOnlyHit("キャンセル料はかかりますか", true), false); // 今の網に当たる＝記録しない
 });
 console.log("cancel-shadow ok");
+// 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は「止まった」でなく engaged
+t("提案中に質問が返る番は engaged（止まったと分ける）", () => {
+  const msgs = [
+    { sender: "customer", text: "他にもありますか", created_at: at(1) },
+    { sender: "staff", text: "ご条件でピックアップしてお送りさせて頂きます！！", created_at: at(2), staff_writer: "takeuchi", is_aix_generated: false },
+    { sender: "customer", text: "この部屋は駐車場ありますか？", created_at: at(5) },
+  ];
+  const ds = [{ created_at: at(1.5), stage: "proposing" }, { created_at: at(5.5), stage: "proposing" }];
+  const [g] = guideTurnsOf("c1", msgs, [], ds);
+  assert.equal(g.outcome, "engaged");
+  const [s] = guideTurnsOf("c2", [...msgs.slice(0, 2), { sender: "customer", text: "了解です", created_at: at(5) }], [], ds);
+  assert.equal(s.outcome, "stuck");
+  assert.equal(guideTable([g]).get("proposing|reply:promise|*")?.engaged, 1);
+});
+console.log("guide-engaged ok");
+// 2026-11-21 作業員L（台帳 #414/#102）: 約束を待つお礼で窓が閉じた番を、果たした後の次の返事で測り直す（promiseWait・既定 false）
+t("約束の番の測り直し（promiseWait）", () => {
+  const msgs = [
+    { sender: "customer", text: "梅田周辺で探しています", created_at: at(0) },
+    { sender: "staff", text: "梅田周辺でピックアップしてお送りさせて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "ありがとうございます", created_at: at(2) },
+    { sender: "staff", text: "🌟物件のご紹介🌟", created_at: at(10), staff_writer: "takeuchi", is_aix_generated: true },
+    { sender: "customer", text: "2件目内覧したいです", created_at: at(12) },
+  ];
+  const ds = [{ created_at: at(0.5), stage: "proposing" }, { created_at: at(2.5), stage: "proposing" }, { created_at: at(12.5), stage: "viewing_arranging" }];
+  const aix = [{ aix_type: "property_send", sent_at: at(10), created_at: at(10) }];
+  const [off] = guideTurnsOf("c1", msgs, aix, ds);
+  assert.equal(off.outcome, "stuck"); assert.equal(off.promiseWait, undefined);
+  const [on] = guideTurnsOf("c1", msgs, aix, ds, 48, { promiseWait: true });
+  assert.equal(on.promiseWait, "fulfilled"); assert.equal(on.after, "viewing_arrange"); assert.equal(on.outcome, "advanced");
+  const [nf] = guideTurnsOf("c1", msgs, [], ds, 48, { promiseWait: true });
+  assert.equal(nf.promiseWait, "not_fulfilled"); assert.equal(nf.outcome, "left");
+});
+console.log("guide-promise-wait ok");
+// 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後に留まる番（viewingWait・既定 false）
+t("内覧待ちは止まりに数えない（viewingWait）", () => {
+  const msgs = [
+    { sender: "customer", text: "当日は駐車場ありますか？", created_at: at(0) },
+    { sender: "staff", text: "確認させて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "持ち物はありますか？", created_at: at(2) },
+  ];
+  const ds = [{ created_at: at(0.5), stage: "viewing_scheduled" }, { created_at: at(2.5), stage: "viewing_scheduled" }];
+  assert.equal(guideTurnsOf("c1", msgs, [], ds)[0].outcome, "stuck");
+  assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { viewingWait: true })[0].outcome, "engaged");
+});
+console.log("guide-viewing-wait ok");

@@ -31,7 +31,8 @@ const prob = {
   context: [{ s: "staff", t: "お客様、確認出来次第ご連絡させて頂きます😊！" }, { s: "customer", t: "来週から動けます。ありがとうございます" }],
   pc: { rent_max: 70000, desired_area: "難波、日本橋", floor_plan: "1K" },
   ledger: {
-    sent_properties: [{ row: { conversation_id: "c1" } }, { row: { conversation_id: "c1" } }, { row: { conversation_id: null } }],
+    // 2026-11-21: 会話の外の行は材料と同じく 物件名|号室 で1つに数える（同じ建物をお客様に送っていれば号室なしの共有は出さない）
+    sent_properties: [{ row: { conversation_id: "c1", property_name: "Aハイツ" } }, { row: { conversation_id: "c1", property_name: "Bコート" } }, { row: { conversation_id: null, property_name: "Cビル", source: "line_group" } }, { row: { conversation_id: null, property_name: "Cビル", source: "line_group" } }, { row: { conversation_id: null, property_name: "Aハイツ", source: "line_group" } }],
     estimate_records: [{ row: {} }], aix_usage_logs: [],
     sent_facts: [{ row: { kind: "confirmation_promised", status: "promised", sent_at: iso(0) } }],
   },
@@ -40,7 +41,7 @@ t("1つの番: 持っていた・連携の切れ（見積・会話の外の送�
   const g = graspOfTurn(prob as never, user);
   assert.equal(g.takeuchi, true);
   assert.equal(g.f.sent_props, "held");
-  assert.equal(g.f.sent_outside, "link");
+  assert.equal(g.f.sent_outside, "link"); assert.match(String(g.detail.sent_outside), /共有のみ 1行/);
   assert.equal(g.f.sent_props_dated, "held");
   assert.equal(g.f.estimate, "link");
   assert.equal(g.f.open_promise, "held");

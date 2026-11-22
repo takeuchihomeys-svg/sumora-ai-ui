@@ -68,7 +68,10 @@ const DIR = join(process.cwd(), "..", "..", "exam-cache", "conductor-focus");
     };
     const rows: Array<Record<string, unknown>> = [];
     let n = 0, a = 0, b = 0, nearHit = 0, fail = 0;
+    // 2026-11-21 作業員M（台帳 #396・既定は申込の門あり）: 状況の文 v2 に申込の書類・個人の値が混ざっていたら渡さない（conductor-focus-build の APPLY_DOCS_RE に加えて渡す前にもう1回）
+    const { applicationMaterialReason } = await import("../app/lib/test-pii-guard");
     for (const t of pick) {
+      if (applicationMaterialReason(t.v2)) { fail++; continue; }
       const i = turns.indexOf(t);
       const prev = turns.slice(0, i).filter((p) => p.at < t.at && p.conv !== t.conv && (!t.pc || p.pc !== t.pc));
       const sf = F.sceneMajorityFocus(prev.filter((p) => p.scene === t.scene).map((p) => p.focus as never));

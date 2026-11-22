@@ -48,7 +48,7 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
-import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
+import { stripWaited, dailyGreetingRequired, aixContinuationSkip } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
 // 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
 import { isWaitedAllowed, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
@@ -130,6 +130,11 @@ import { secondKnowledgeOn, secondKnowledgeLines } from "@/app/lib/second-appeal
 import { aixFirstBlueprintOn, aixFirstBlueprint, AIX_FIRST_FIXED_BLOCK } from "@/app/lib/aix-first-blueprint";
 import { blueprintNote as composeBlueprintNote } from "@/app/lib/compose-blueprint";
 import { estimateSipAppealOn, estimateSipAppeal } from "@/app/lib/estimate-sent-image-appeal";
+import { secondBlockReceiptSeenOn, secondBlockReceiptNote } from "@/app/lib/second-block-receipt";
+import { situationWriterNoteAixOn, situationWriterNoteAix } from "@/app/lib/situation-writer-aix";
+import { aixSecondFocusOn, aixSecondFocusLine } from "@/app/lib/aix-second-focus";
+import { aixSecondDecidedOn, aixSecondDecidedNote } from "@/app/lib/writer-decided-lines";
+import { routeAimNoteForWriter } from "@/app/lib/route-record";
 import { secondAppealJudgeOn, secondFormScene, appealJudgePrompt, parseAppealJudge, judgedAppealNote, appealJudgeSystem, secondAppealCountBySceneOn, equipmentRichOf, countAppeals, overAppealCount, closingCandidatesOf, type AppealJudge } from "@/app/lib/second-appeal-judge";
 import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
@@ -1293,7 +1298,8 @@ export async function POST(req: NextRequest) {
   let askProgressNoteText = "";
   try {
     const al = await import("@/app/lib/ask-ledger");
-    if (al.askProgressReadOn() && conversationId && !isStaleMeta) {
+    // 2026-11-22 作業員M: 2通目の文を変える注記は ASK_PROGRESS_AIX_NOTE（既定 off）に分けた（ASK_PROGRESS_READ は記録だけで既定 on）
+    if (al.askProgressAixNoteOn() && conversationId && !isStaleMeta) {
       const led = al.askLedgerOf(brainMeta);
       if (led) {
         const { data: apRow } = await supabase.from("conversations").select("ask_progress").eq("id", conversationId).maybeSingle();
@@ -1448,6 +1454,31 @@ export async function POST(req: NextRequest) {
   // 物件オススメ（またはピックアップで推す物件が決まった）の直後の2通目か（形は second-message-scene が決める）
   const isRecSecond = !!(sentMessage ?? "").trim() && (actionType === "property_recommendation" || !!pickupPushLabel);
   if (pickupPushLabel) aixChainNote = buildAixChainNote(sentMessage, { recommendScene: true });
+  // 2026-11-21 作業員K2（SECOND_BLOCK_RECEIPT_SEEN・既定 off・second-block-receipt.ts）: 同じ送付の塊の前の AIX の通（ピックアップのお知らせ）で（11/21: ピックアップで推す物件が決まった時の作り直しの後に置く＝前に置くと作り直しで消えていた）
+  //   もうご査収を言った事を書き手に渡す（2通目のご査収の重ね スタッフ 90%・竹内さん 53%・1通目＝🌟の通しか渡していなかった）
+  if (secondBlockReceiptSeenOn()) {
+    const brn = secondBlockReceiptNote((recentMessages ?? []) as Array<{ sender?: string; text?: string; isAix?: boolean; rawCreatedAt?: string }>, sentMessage);
+    if (brn) { aixChainNote = `${aixChainNote ?? ""}${brn}`; console.log(JSON.stringify({ tag: "aix-template-generate:block-receipt-seen", actionType })); }
+  }
+  // 2026-11-21 作業員K2（SITUATION_WRITER_NOTE_AIX・既定 off・situation-writer-aix.ts）: 今の状況の記録（L の situation_now）と「こちらが前に伝えた事」（our_items）を
+  //   AIX の2通目の書き手にも渡す（今までは generate-reply だけ＝2通目は前に言った事を項目で持たず、同じ約束・同じ締めを言い直していた）
+  // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_FOCUS・既定 off・aix-second-focus.ts）: 統括の重点（返信の書き手には届いていた・2通目は配線なし）を2通目の書き手に1行
+  if (aixSecondFocusOn()) {
+    const fl = aixSecondFocusLine((brainMeta as Record<string, unknown> | null) ?? null);
+    if (fl) { aixChainNote = `${aixChainNote ?? ""}${fl}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-focus", actionType })); }
+  }
+  // 2026-11-21 作業員L（台帳 #466・AIX_SECOND_DECIDED・既定 off・writer-decided-lines.ts）: 2通目に届いていなかった欄（事実の出所・こちら側・刺さった所）を1塊で。
+  //   K2 と決めた: 置く順は L の塊が先・K2 の situation が後。SITUATION_WRITER_NOTE_AIX が on の時は「こちら側」を外す（中身が重なる）
+  if (aixSecondDecidedOn()) {
+    // 2026-11-21 作業員M の地図の今の状態（ROUTE_TO_BRIEF・指示書の route の欄）も同じ塊の後ろに（M と決めた置き場・状態が使える番だけ文字が入る）
+    const dn = aixSecondDecidedNote((brainMeta as Record<string, unknown> | null) ?? null, { situationNoteOn: situationWriterNoteAixOn() })
+      + routeAimNoteForWriter((brainMeta as Record<string, unknown> | null)?.conductor_brief ?? null);
+    if (dn) { aixChainNote = `${aixChainNote ?? ""}${dn}`; console.log(JSON.stringify({ tag: "aix-template-generate:second-decided", actionType, len: dn.length })); }
+  }
+  if (situationWriterNoteAixOn()) {
+    const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
+    if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
+  }
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
   let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };
@@ -1594,6 +1625,14 @@ export async function POST(req: NextRequest) {
             const wants = customerWants({ conditions: p as never, messages: msgs });
             const ap = buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null });
             fit = savedReadFitLines(ap);
+            // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポの行が無い物件も、読みを判定に通した札（合う点・合わない点）を
+            //   2通目の行に持たせる（締めの刺さり具合 appealFromPickup が読む・見積書の ESTIMATE_SIP_APPEAL と同じ道）
+            const sj = await import("@/app/lib/sip-judge");
+            if (sj.sipJudgeOn() && p && materialRow) {
+              const j = sj.judgeSip({ property_name: hit.property_name, room_no: hit.room_no, facts: hit.facts as unknown as Record<string, unknown> }, p as never);
+              if (j) Object.assign(materialRow as unknown as Record<string, unknown>, { reason_codes: j.reason_codes, verdict: j.verdict, score: j.score });
+              console.log(JSON.stringify({ tag: "aix-template-generate:sip-judge", judged: !!j, codes: j?.reason_codes.length ?? 0 }));
+            }
             if (appealPlanReadOn()) { appealPlanFactCands = ap.points.map((x) => ({ topic: x.key, from: "facts" as const })); appealPlanWants = wants; }
           } catch { /* 希望が読めない時は事実だけ */ }
           savedReadExtra = [...conv.extraLines, ...fit];
@@ -2582,7 +2621,7 @@ ${text}
             conditions_snapshot: {
               source: "aix-template-generate",
               // 2026-11-15 作業員K: 訴求の記録（appeal-record.ts・APPEAL_RECORD=shadow の時だけ・文と判断は変えない）。竹内さんの送った文と同じ欄で比べる（scripts/audit-appeal-record.ts）
-              ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai" }) } : {}),
+              ...(appealRecordMode() === "shadow" ? { appeal_record: appealRecordFromText(text, { surface: "aix_second", writer: "ai", feeling: (() => { const fr = ((brainMeta as Record<string, unknown> | null)?.feeling_conductor as { read?: { state?: string | null; hesitation?: string | null; strength?: number | null } } | undefined)?.read; return fr?.state ? { main: fr.state, sub: fr.hesitation ?? null, strength: fr.strength ?? null } : null; })() }) } : {}),
               // 2026-11-15 作業員K: 訴求の計画を読む側の1つ目（締め・APPEAL_PLAN_READ=on の時だけ・文と判断は変えない）。締めの判断（recommend-cta）から作った計画の強さ・狙う返事と、書けた文の強さ・狙う返事が同じかを残す
               //   読む側の2つ目（2通目の判断）: ブレインの訴求の判断（second-appeal-judge）があれば、推す点（first・second の文から読んだ話題）と締めを計画に入れ、書けた文の点と比べる
               ...(appealPlanReadOn() && (recCta || secondJudge) ? (() => {
@@ -2649,7 +2688,9 @@ ${text}
       if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:emoji-repeat-fixed", changes: dr.changes })); text = dr.text; }
     }
     // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
-    if (greetSentToday) {
+    // 2026-11-21 作業員L（確認事項 a56a67ab「続きの番は省く」）: 会話の続きの番は、2通目がその日最初の会話文でも挨拶を付けない（付いていれば外す）
+    const contSkip2 = aixContinuationSkip((recentMessages ?? []) as Array<{ sender?: string; text?: string | null; createdAt?: string | null; rawCreatedAt?: string | null }>);
+    if (greetSentToday || contSkip2) {
       const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action === "removed") {
         console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-removed", actionType, conversationId }));

@@ -8,14 +8,16 @@ import { learningWindow, isRecent } from "@/app/lib/learning-window";
 // 2026-10-08 竹内さん「自動的にする」: 申込に届いた会話にも☆（申込の時刻より前の返信だけ・AUTO_STAR_APPLIED=off で旧）
 import { autoStarAppliedEnabled, firstAppliedAtByConversation, starEligibleByApply } from "@/app/lib/auto-star-applied";
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
+import { autoStarBulkChunk, chunksOf } from "@/app/lib/cron-time-budget";
 export const maxDuration = 300;
 
 // 成果連動☆自動付与バッチ
 // closed_won になった会話の AI 返信を自動☆ → analyzeAndSaveKnowledge + analyzeDiff が起動
 // 毎日1回（vercel.json cron）
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -145,15 +147,18 @@ export async function GET(req: NextRequest) {
   // 超過分（MAX_ANALYZE_PER_RUN 以降）: DB直接バルク更新（HTTP直列ループを排除してタイムアウト防止）
   const bulkIds = sortedExamples.slice(MAX_ANALYZE_PER_RUN).map((e) => e.id as string);
   if (bulkIds.length > 0) {
-    const { error: bulkErr } = await supabase
-      .from("ai_reply_examples")
-      .update({ is_starred: true })
-      .in("id", bulkIds);
-    if (bulkErr) {
-      console.error("[auto-star-winners] bulk update error:", bulkErr.message);
-      failed += bulkIds.length;
-    } else {
-      starred += bulkIds.length;
+    // 2026-11-22 作業員N2（台帳 #591・AUTO_STAR_BULK_CHUNK=<n>・既定なし＝1文）: 11/21 に46行の1文が statement timeout（HNSW 索引3本）→ n 行ずつに分け、通った分は☆に数える
+    for (const ids of chunksOf(bulkIds, autoStarBulkChunk())) {
+      const { error: bulkErr } = await supabase
+        .from("ai_reply_examples")
+        .update({ is_starred: true })
+        .in("id", ids);
+      if (bulkErr) {
+        console.error("[auto-star-winners] bulk update error:", bulkErr.message, ids.length);
+        failed += ids.length;
+      } else {
+        starred += ids.length;
+      }
     }
   }
 
@@ -161,3 +166,6 @@ export async function GET(req: NextRequest) {
   console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} skipped=${skipped}(品質未達) convs=${convIds.length}`);
   return NextResponse.json({ ok: true, starred, analyzed, failed, skipped, total: examples?.length ?? 0, convs: convIds.length });
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("auto-star-winners", handleGET);

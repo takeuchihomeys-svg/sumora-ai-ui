@@ -60,7 +60,8 @@ t("表の版の切り替え（既定 off＝1版のまま・on で2版＋無い�
   assert.ok(!/鈴木|〇〇さん/.test(raw));
 });
 t("手本の書き手（記録）: 既定 off・前後5分の sure の手打ちだけ・無ければ文の推定", () => {
-  assert.equal(exampleWriterRecordedOn({}), false);
+  assert.equal(exampleWriterRecordedOn({}), true); // 2026-11-21 既定 on
+  assert.equal(exampleWriterRecordedOn({ EXAMPLE_WRITER_RECORDED: "off" }), false);
   const ms = [
     { created_at: "2026-11-01T01:00:00Z", staff_writer: "employee", staff_writer_confidence: "likely" },
     { created_at: "2026-11-01T01:02:00Z", staff_writer: "takeuchi", staff_writer_confidence: "sure", is_aix_generated: true },

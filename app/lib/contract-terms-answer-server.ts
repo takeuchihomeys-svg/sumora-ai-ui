@@ -35,7 +35,19 @@ export function contractTermsAnswerEnabled(): boolean {
 }
 
 /** 対象の物件の資料（売上サポの行＋送った画像の読み取り） */
-export async function loadContractMaterial(o: { conversationId: string; name: string; roomNo: string | null; imageUrl?: string | null }): Promise<{ material: ContractMaterial; source: ContractTermsMaterial["source"] }> {
+/**
+ * 2026-11-21 作業員L（FOCUS_DOC_SENT_IMAGE・既定 off）: 対象の部屋にこちらが送った資料の画像（sent_image_properties の一番新しい1枚）の URL。
+ *   号室が分かる時は号室が合う物だけ。無ければ null
+ */
+export async function sentImageUrlFor(o: { conversationId: string; name: string; roomNo: string | null }): Promise<string | null> {
+  const rn = roomNorm(o.roomNo);
+  const { data } = await supabase.from("sent_image_properties").select("image_url, room_no").eq("conversation_id", o.conversationId).eq("property_name", o.name)
+    .order("created_at", { ascending: false }).limit(10);
+  const row = ((data ?? []) as Array<{ image_url: string | null; room_no: string | null }>).find((r) => r.image_url && (!rn || roomNorm(r.room_no) === rn));
+  return row?.image_url ?? null;
+}
+
+export async function loadContractMaterial(o: { conversationId: string; name: string; roomNo: string | null; imageUrl?: string | null; withSentFacts?: boolean }): Promise<{ material: ContractMaterial; source: ContractTermsMaterial["source"] }> {
   const rn = roomNorm(o.roomNo);
   const { data: picks } = await supabase.from("property_pickups")
     .select("room_no, pdf_text, image_lines, terms, created_at")
@@ -50,6 +62,16 @@ export async function loadContractMaterial(o: { conversationId: string; name: st
     detLines = (row?.lines ?? []).map((l) => String(l));
   }
   const lines = [...(pick?.image_lines ?? []), ...detLines.filter((l) => !(pick?.image_lines ?? []).includes(l))];
+  // 2026-11-21 作業員L（FOCUS_DOC_SENT_IMAGE・既定 off・呼ぶ側が withSentFacts を渡した時だけ）: 送った資料の読み取りの敷金・礼金を資料の行の形で足す（同じ項目が既にあれば足さない）
+  if (o.withSentFacts) {
+    try {
+      const { sentFactsDocLines } = await import("@/app/lib/brain-material-wiring");
+      const q = supabase.from("sent_image_properties").select("facts, room_no").eq("conversation_id", o.conversationId);
+      const { data: sip } = await (o.imageUrl ? q.eq("image_url", o.imageUrl) : q.eq("property_name", o.name)).order("created_at", { ascending: false }).limit(10);
+      const r = ((sip ?? []) as Array<{ facts: unknown; room_no: string | null }>).find((x) => x.facts && (o.imageUrl || !rn || roomNorm(x.room_no) === rn));
+      for (const l of sentFactsDocLines(r?.facts)) if (!lines.some((x) => String(x ?? "").startsWith(l.slice(0, 3)))) lines.push(l);
+    } catch { /* 読めなければ今まで通り */ }
+  }
   const source: ContractTermsMaterial["source"] = pick && detLines.length ? "both" : pick ? "pickup" : detLines.length ? "image_details" : "none";
   // 2026-10-14 読み取りの「単位不明」の印（reading-gate-server が sent_image_properties.facts に付ける）を材料に渡す（DEPOSIT_UNIT_UNCLEAR=off）
   let unitUnclear: ContractMaterial["unitUnclear"] = null;

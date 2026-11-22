@@ -77,7 +77,7 @@ t("約束の種類", promiseKindOf("お送り頂きました新大阪グラン�
   const msgs = [{ sender: "staff", text: "BLANCOSTA SQUARE 204号室現在募集中となります！！\n10月中旬退去予定のため、11月中旬ごろご入居可能なお部屋となります！！", created_at: "2026-10-01T09:00:00Z", is_aix_generated: true }];
   const aix = [{ aix_type: "property_check_result", check_pattern: "available", created_at: "2026-10-01T09:00:00Z", property_names: ["BLANCOSTA SQUARE 204"], prop_statuses: ["vacating"], estimate_sent: true }];
   const n = ourSideComposeNote({ msgs, aix, nowMs: nowQ, intakeLine: "【入口の統括の読み（11/12・参考・決めるのはブレイン）】主「内見はできないのか」・重点=answer・やる事: 本文で答える「退去前で室内不可と答える」" });
-  t("compose: 既定 off", !ourSideToComposeOn({}) && ourSideToComposeOn({ OUR_SIDE_TO_COMPOSE: "on" }));
+  t("compose: 既定 on（11/21）・=off で止める", ourSideToComposeOn({}) && !ourSideToComposeOn({ OUR_SIDE_TO_COMPOSE: "off" }));
   t("compose: 状態の行だけ（読み方の長い行は入れない）・退去予定の文の材料・入口の読み", n.includes("BLANCOSTA SQUARE 204＝退去予定") && n.includes("室内を今は内覧できない") && n.includes("・入口の統括の読み: 主「内見はできないのか」") && !n.includes("読み方"), n);
   const ctx = readComposeContext({ our_side_note: n });
   const cl = composeContextLines(ctx);

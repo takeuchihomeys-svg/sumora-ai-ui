@@ -76,7 +76,8 @@ type ImageRow = { property_name: string | null; room_no: string | null; created_
 // ── 2026-11-19 作業員L（毎朝の穴の割り当て 11/19「901号室の礼金（SUUMO との違い）」等）: 送った資料の画像の読み（sent_image_properties.facts）の中身 ──
 //   facts には家賃・管理費・敷金・礼金・間取り・面積・築年・駅・徒歩・現況が入っているのに、ブレインの【すでに送付済みの物件】には名前と号室しか渡っていなかった
 //   （材料はあるのに受け取っていない）。SENT_IMAGE_FACTS_TO_BRAIN=on（既定 off）の時だけ、送った物件の行に「送った資料の読み取り」として足す。
-export const sentImageFactsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_IMAGE_FACTS_TO_BRAIN ?? "").trim().toLowerCase() === "on";
+// 2026-11-21 作業員L: 試験 L1120-sipfacts-a/b で確かな悪化0（4/4問×2・合格1→2）→ 統括役の判断で既定 on（SENT_IMAGE_FACTS_TO_BRAIN=off で止まる）
+export const sentImageFactsOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.SENT_IMAGE_FACTS_TO_BRAIN ?? "").trim().toLowerCase() !== "off";
 const yen = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? `${n.toLocaleString()}円` : null; };
 const mon = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? (n === 0 ? "0" : `${n}ヶ月`) : null; };
 /** facts → 短い1行（無い物は書かない・推測しない） */
@@ -88,7 +89,9 @@ export function sentImageFactsLine(f: Record<string, unknown> | null | undefined
     f.deposit_months != null ? `敷金${mon(f.deposit_months)}` : yen(f.deposit_yen) ? `敷金${yen(f.deposit_yen)}` : "",
     f.key_money_months != null ? `礼金${mon(f.key_money_months)}` : f.key_money_yen != null ? `礼金${Number(f.key_money_yen) === 0 ? "0" : yen(f.key_money_yen) ?? ""}` : "",
     typeof f.floor_plan === "string" && f.floor_plan ? f.floor_plan : "",
-    Array.isArray(f.rooms) && f.rooms.length ? (f.rooms as Array<{ name?: unknown; jo?: unknown }>).map((r) => `${r.name}${r.jo}帖`).join("・") : "",
+    // 2026-11-21 作業員L: rooms_facts（IMAGE_ROOMS_TO_FACTS）がある時は決まった並びの1行（リビング→居室の広い順→K）
+    typeof (f.rooms_facts as { label?: unknown } | undefined)?.label === "string" && (f.rooms_facts as { label: string }).label ? (f.rooms_facts as { label: string }).label
+      : Array.isArray(f.rooms) && f.rooms.length ? (f.rooms as Array<{ name?: unknown; jo?: unknown }>).map((r) => `${r.name}${r.jo}帖`).join("・") : "",
     Number(f.area_sqm) > 0 ? `${f.area_sqm}㎡` : "",
     typeof f.building_age === "number" || typeof f.built_ym === "string" ? `築${f.built_ym ?? `${f.building_age}年`}` : "",
     typeof f.station === "string" && f.station ? `${f.station}${Number(f.walk_minutes) > 0 ? `徒歩${f.walk_minutes}分` : ""}` : "",

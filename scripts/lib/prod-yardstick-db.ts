@@ -2,6 +2,7 @@
 //   2026-11-05 作業員8（統括役の了承の 2・3）。1000行ずつの頁で読む（点検表 3）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../../app/lib/test-conversations";
+import { aixFamilyOf, aixFamilyOneOn } from "../../app/lib/aix-family";
 import { staffFirstMove, aixLogsFromWatch, staffMoveExclusion, ackSceneOf } from "../../app/lib/staff-first-move";
 import { yardstickAixLogFillOn, fillStaffAix, mergeFillFrames, applyStaffAixState, type AixLogLite } from "./prod-yardstick";
 import { yardstickDriftComboOn, driftStaffFamily } from "./prod-yardstick";
@@ -11,6 +12,8 @@ import { countByScene, sceneDrift, beyondCandidates, yardstickTwoFramesOn, brain
 export function aixFamily(k: string | null | undefined): string {
   const s = String(k ?? "");
   if (!s) return "返信";
+  // 2026-11-22 作業員K2（台帳 #313・AIX_FAMILY_ONE=on の時だけ）: 見張りと同じ系統の名前（app/lib/aix-family.ts）で数える
+  if (aixFamilyOneOn()) return aixFamilyOf(s);
   if (/property_check|acknowledge_check/.test(s)) return "確認";
   if (/estimate|cost_/.test(s)) return "見積";
   if (/property_send|property_recommend|new_arrival/.test(s)) return "物件";

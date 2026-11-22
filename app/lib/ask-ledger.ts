@@ -342,8 +342,13 @@ export function askProgressOf(ledger: AskLedger | null | undefined, raw: unknown
 
 // ── 読む側（2026-11-19 作業員M・統括役の割り振り: AIX の2通目・画面の帯・統括の指示書）────────────
 /** 読む側の既定 off（ASK_PROGRESS_READ=on の時だけ ask_progress を読んで渡す）。書く側 ASK_PROGRESS とは別（書いて貯めてから読む側を試験する） */
+// 2026-11-22 統括役の決め（記録だけのスイッチは試験なしで既定 on）: meta.ask_carry と統括の指示書の carry_asks を作る（ブレインのプロンプト・書き手は変わらない）＝既定 on・=off で止める。
+//   AIX の2通目の注記（askProgressNote）は文を変えるので別のスイッチ ASK_PROGRESS_AIX_NOTE（既定 off・試験の後に on）に分けた
 export function askProgressReadOn(env: Env = envOf()): boolean {
-  return (env.ASK_PROGRESS_READ ?? "").trim().toLowerCase() === "on";
+  return (env.ASK_PROGRESS_READ ?? "").trim().toLowerCase() !== "off";
+}
+export function askProgressAixNoteOn(env: Env = envOf()): boolean {
+  return (env.ASK_PROGRESS_AIX_NOTE ?? "").trim().toLowerCase() === "on";
 }
 const quoteOf = (led: AskLedger, id: string) => led.items.find((e) => e.id === id)?.quote ?? id;
 const SLOT_JA: Record<PlanSlot, string> = { reply: "返信", aix: "AIX", aix_template: "AIX の続きの通" };

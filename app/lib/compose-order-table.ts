@@ -299,7 +299,8 @@ export function trustRepeatCount(drafts: ReadonlyArray<string>): Array<{ key: st
 //   → 線: お客様が自分で物件名を出した時だけ文に入れる。こちらが前に出した物件の続き・束の中の話では出さない
 //   例外（q064 型）: 同じ物件の中の部屋（階・号室）を比べている番は物件名を出してよい（竹内さん「CRESTTAPP野田は24時間換気…」）
 export function composeNamePropertyRuleOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.COMPOSE_NAME_PROPERTY_RULE ?? "").trim().toLowerCase() === "on";
+  // 2026-11-21 作業員G: 既定 on（②の組 grp-reply-1121 で確かな悪化0）。止める COMPOSE_NAME_PROPERTY_RULE=off
+  return (env.COMPOSE_NAME_PROPERTY_RULE ?? "").trim().toLowerCase() !== "off";
 }
 export function propertyNameRule(o: { property: string | null; customerText: string; recentStaffTexts: ReadonlyArray<string> }): { say: boolean; why: string } | null {
   const p = (o.property ?? "").replace(/お客様NO\s*/, "").trim();

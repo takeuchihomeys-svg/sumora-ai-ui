@@ -8,11 +8,12 @@ import { opsAnomalyWatchMode, opsAnomalyBalanceLive } from "@/app/lib/ops-anomal
 import { opsAdminClient, runOpsAnomalyWatch } from "@/app/lib/ops-anomaly-server";
 import { switchFingerprint } from "@/app/lib/switch-fingerprint";
 import { brainVersionOf } from "@/app/lib/brain-decision-ledger";
+import { withCronLog } from "@/app/lib/cron-log-wrap";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const mode = opsAnomalyWatchMode();
@@ -37,3 +38,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, ver, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }
+
+// 2026-11-21 作業員N: cron_run_logs に記録を残す（記録だけ・動きは変えない・止める CRON_LOG_WRAP=off）
+export const GET = withCronLog("ops-anomaly", handleGET, { hourly: true }); // 高頻度＝失敗の時と毎時0分の回だけ書く

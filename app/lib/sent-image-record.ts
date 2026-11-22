@@ -91,6 +91,39 @@ export async function recordSentImageProperty(opts: {
       item = { propertyName: prev.property_name, roomNumber: prev.room_no ?? "" };
       out.read = "reused";
     } else {
+      // 2026-11-21 作業員G（#461 案2）: こちらが手で送った見積書・御請求書は、受け取り時の書き起こし（messages.text）の「物件名：」で
+      //   会話の既知の物件名と照合できた時だけ記録する（LLM なし・DeepSeek に出さない＝金額・宛名の載る書類を外に出さない）。
+      //   照合できなければ記録しない。物件を送った記録（sent_properties）にはしない（見積は物件の送付ではない）。既定 off（ESTIMATE_SENT_RECORD=on）
+      {
+        const { estimateSentRecordOn, isEstimateImageText, parseEstimatePropertyRef } = await import("@/app/lib/sent-estimate-ref");
+        if (estimateSentRecordOn()) {
+          const { data: mrow } = await supabase.from("messages").select("text")
+            .eq("conversation_id", conversationId).eq("sender", "staff").like("image_url", `%${imageUrl}%`).limit(1).maybeSingle();
+          const mtext = (mrow as { text: string | null } | null)?.text ?? null;
+          if (isEstimateImageText(mtext)) {
+            const ref = parseEstimatePropertyRef(mtext);
+            let pcId0 = opts.propertyCustomerId ?? null;
+            if (!pcId0) {
+              const { data: conv0 } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+              pcId0 = (conv0 as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+            }
+            const hit = ref ? resolveReadProperty({ propertyName: ref.propertyName, roomNumber: ref.roomNo ?? "" }, await knownPropertyNames(conversationId, pcId0)) : null;
+            out.read = "not_property";
+            if (hit) {
+              out.matched = true;
+              out.propertyName = hit.propertyName;
+              out.roomNo = hit.roomNumber || null;
+              await supabase.from("sent_image_properties").upsert(
+                { image_url: imageUrl, conversation_id: conversationId, property_name: hit.propertyName, room_no: out.roomNo, source: "estimate_text", ...(channel ? { channel } : {}) },
+                { onConflict: "image_url", ignoreDuplicates: true },
+              );
+              out.sentProperties = "skipped";
+            }
+            console.log(JSON.stringify({ tag: "sent-image-record:estimate-text", conversationId, read: !!ref, matched: !!hit }));
+            return out;
+          }
+        }
+      }
       // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
       //   読み取りは DeepSeek（property_image_read）。申込中の会話で送った画像は読まない（送った直後に呼ばれる＝今の時刻で見る・読めなければ読まない）
       const { loadDeepseekCutoff, isAfterCutoff } = await import("@/app/lib/post-apply");
@@ -100,6 +133,15 @@ export async function recordSentImageProperty(opts: {
         console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "sent-image-record", conversationId }));
         return out;
       }
+      // 2026-11-21 作業員G: 会話の状態が申込に変わる前でも、前後10分のこちらの文で書類（契約・請求・重説・内定通知 等）の番と判る画像は読まない（sent-image-doc-guard.ts・SENT_IMAGE_DOC_GUARD=off で止める）
+      {
+        const { sentImageIsDocTurn } = await import("@/app/lib/sent-image-doc-guard");
+        const g = await sentImageIsDocTurn(supabase, conversationId, opts.sentAt ?? null, { aix: source.startsWith("aix:") ? true : source === "staff_image" ? false : null, imageUrl });
+        if (g.doc) {
+          console.log(JSON.stringify({ tag: "sent-image-doc-guard:skip", route: "sent-image-record", conversationId, hit: g.hit }));
+          return out;
+        }
+      }
       // 2026-09-29 API 費用: 推論なし・温度0（property-image-read.ts 末尾の注記）。同じ画像を ensureImageDetail が物件名で
       //   売上サポの行に結ぶ時もこの1回の読み取りを待つだけ（sharedPropertyImageRead＝同じ URL は1回）
       const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS, conversationId });
@@ -108,6 +150,18 @@ export async function recordSentImageProperty(opts: {
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }
       item = read.items[0];
       out.read = "deepseek";
+      // 2026-11-22 作業員G（#509）: 1件の資料の画像で家賃・間取り・築年のうち2つ以上が空＝欄の少ない答え（DeepSeek がまれに返す）なら、
+      //   同じ問いで1回だけ読み直して埋まった欄の多い方を使う。既定 off（SENT_IMAGE_READ_RETRY_THIN=on）
+      if (read.items.length === 1) {
+        const { sentReadRetryThinOn, isThinRead, pickRicher } = await import("@/app/lib/sent-read-retry");
+        if (sentReadRetryThinOn() && isThinRead(read.items[0])) {
+          const { readPropertyImage } = await import("@/app/lib/property-image-read");
+          const again = await readPropertyImage(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS }).catch(() => null);
+          const pick = pickRicher(read.items[0], again?.isProperty && again.items.length === 1 ? again.items[0] : null);
+          console.log(JSON.stringify({ tag: "sent-image-read:retry-thin", conversationId, used: pick.used, retryTokens: again?.usage ?? null }));
+          if (pick.used === "retry") { item = pick.item; read.items[0] = pick.item; }
+        }
+      }
       // 2026-10-14 竹内さん「物件名はシリーズ名＋地名…化けは正しい地名に直す（候補が1つの時だけ）」:
       //   読んだ名前を地名の表・物件名の帳簿・化けの癖の表で直す（property-name-fix.ts）。迷う時はそのまま（下の照合で寄らなければ vision＝確かではない印）
       try {

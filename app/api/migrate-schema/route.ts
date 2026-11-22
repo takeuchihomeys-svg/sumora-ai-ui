@@ -425,6 +425,10 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS embedding vector(1536);
 -- 2026-11-18 作業員H（竹内さん「LINE が重い」・Disk IO の使い切り）: ivfflat＋probes=100 は毎回索引を全部読んでいた → HNSW に替えた（scripts/sql/rag-index-1118.sql・戻す rag-index-1118-rollback.sql）
 CREATE INDEX IF NOT EXISTS ai_reply_examples_embedding_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops);
 DROP INDEX IF EXISTS idx_ai_reply_examples_embedding;
+-- 2026-11-20 作業員H: 本番に近い問いで測ると、手本の2つの関数は全体の HNSW を使わず表を全部読んでいた（Seq Scan・1.66万ブロック・2.5〜2.9秒・昼は8秒の打ち切り）。
+--   絞り込み（entry_source）と同じ条件の部分の HNSW にすると計画が索引を選ぶ（scripts/sql/rag-index-1120.sql・戻す rag-index-1120-rollback.sql）
+CREATE INDEX IF NOT EXISTS ai_reply_examples_aix_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops) WHERE entry_source IN ('aix_template', 'aix_action', 'aix_property');
+CREATE INDEX IF NOT EXISTS ai_reply_examples_line_hnsw ON ai_reply_examples USING hnsw (embedding vector_cosine_ops) WHERE entry_source = 'line_reply';
 
 -- タスク管理テーブル（物件確認・物件出し依頼）
 CREATE TABLE IF NOT EXISTS line_tasks (
@@ -500,7 +504,8 @@ CREATE OR REPLACE FUNCTION fold_knowledge_usage()
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE n integer;
 BEGIN
-  WITH d AS (DELETE FROM knowledge_usage RETURNING knowledge_id, used_delta, last_used_at),
+  -- 2026-11-22 作業員N2（台帳 #593）: WHERE の無い DELETE は Supabase の safeupdate で止まる（毎晩「DELETE requires a WHERE clause」）＝ WHERE true を付ける
+  WITH d AS (DELETE FROM knowledge_usage WHERE true RETURNING knowledge_id, used_delta, last_used_at),
   u AS (
     UPDATE ai_reply_knowledge k
     SET used_count = COALESCE(k.used_count, 0) + d.used_delta,
@@ -968,7 +973,13 @@ BEGIN
     WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
     ELSE hypothesis_status
   END
-  WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5;
+  WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1384,7 +1395,13 @@ BEGIN
     ELSE hypothesis_status
   END
   WHERE id = ANY(ARRAY_CAT(COALESCE(p_correct_ids, ARRAY[]::UUID[]), COALESCE(p_wrong_ids, ARRAY[]::UUID[])))
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1485,7 +1502,13 @@ BEGIN
     ELSE hypothesis_status
   END
   WHERE id = ANY(ARRAY_CAT(COALESCE(p_correct_ids, ARRAY[]::UUID[]), COALESCE(p_wrong_ids, ARRAY[]::UUID[])))
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -1576,7 +1599,13 @@ BEGIN
       COALESCE(p_correct_pairs, '[]'::jsonb) || COALESCE(p_wrong_pairs, '[]'::jsonb)
     ) AS elem
   )
-    AND apply_count >= 5;
+    AND apply_count >= 5
+    -- 2026-11-20 作業員H: 値が変わる行だけ書く（同じ値の書き直しも行を丸ごと新しく書き、索引9本に足していた・WAL）
+    AND hypothesis_status IS DISTINCT FROM (CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END);
 END;
 $$;
 
@@ -3394,6 +3423,12 @@ DO $$ BEGIN
   EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET hnsw.iterative_scan = relaxed_order';
   EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.ef_search = 100';
   EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET hnsw.iterative_scan = relaxed_order';
+  -- 2026-11-20 作業員H: 手本の2つは計画が表の全部読み（Seq Scan・ベクトルの TOAST の読みを見積もりに入れない）を選んでいた → この2つの関数だけ
+  --   seqscan・bitmapscan を止める（状態が多い時は部分の HNSW・少ない時は状態の btree の厳密な検索を計画が選ぶ・本番に近い問いで 2.5〜2.9秒 → 1〜41ms・厳密との重なり 24/24・14.6/15）
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET enable_bitmapscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_seqscan = off';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET enable_bitmapscan = off';
   EXECUTE 'ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100';
   EXECUTE 'ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100';
 END $$;
@@ -3555,6 +3590,42 @@ WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS
 ORDER BY image_url, sent_at DESC
 ON CONFLICT (image_url) DO NOTHING;
 
+-- customer_image_records: お客様の画像1枚 → 種類・物件・照合・関連（2026-11-21 作業員G・memory/image_understanding_map.md の E ②・統括役の承認）
+--   受け取った時に決定論で書く（LLM なし・app/lib/customer-image-record*.ts・CUSTOMER_IMAGE_RECORD=on の時だけ）。
+--   書き起こし・お客様の文そのもの・見積書の宛名は入れない（KB 33a30792）。書類は kind だけ。
+--   サーバーだけが読み書きする表＝RLS は入れたまま（10/21 の決まり・DISABLE を書かない）。サーバーは service role の鍵（serverSupabaseKey）
+CREATE TABLE IF NOT EXISTS customer_image_records (
+  message_id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  kind TEXT NOT NULL,
+  link_kind TEXT,
+  part TEXT,
+  property_name TEXT,
+  room_no TEXT,
+  name_via TEXT,
+  rent_yen INTEGER,
+  admin_yen INTEGER,
+  madori TEXT,
+  area_sqm NUMERIC,
+  station TEXT,
+  walk_min INTEGER,
+  age_years INTEGER,
+  certainty TEXT,
+  ours_kind TEXT,
+  ours_property_name TEXT,
+  ours_room_no TEXT,
+  relation TEXT,
+  estimate JSONB,
+  asks TEXT[],
+  unit_key TEXT,
+  read_version TEXT,
+  recorded_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_customer_image_records_conv ON customer_image_records(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_image_records_unit ON customer_image_records(unit_key) WHERE unit_key IS NOT NULL;
+ALTER TABLE customer_image_records ENABLE ROW LEVEL SECURITY;
+
 -- 物件送った表を「共有した／お客様に送った」「どの経路で送ったか」で読む（2026-09-24 竹内「どれ物件ピックアップで送ったか
 --   物件オススメで送ったかもわかる」）。source の値と意味は変えない（'vision'＝照合できなかった印のまま）。判定は app/lib/sent-delivery.ts
 --   delivery: 'shared'（グループに共有しただけ・source='line_group' の時だけ）| 'customer'（お客様に送った）。NULL＝古い行（source から導く）
@@ -3588,6 +3659,13 @@ CREATE TABLE IF NOT EXISTS image_details (
   read_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_image_details_conv ON image_details(conversation_id);
+-- 2026-11-22 作業員K2（#287 画像の記録の①・統括役の了承）: こちらが送った画像の部分（listing 資料／interior 室内／floor_plan 間取り図／exterior 外観／cost 費用・見積）。
+--   言葉は customer_image_records.part と同じ。null 可・既定なし（kind を読む今の側は変わらない）。戻す: ALTER TABLE image_details DROP COLUMN IF EXISTS part;
+ALTER TABLE image_details ADD COLUMN IF NOT EXISTS part TEXT;
+
+-- 2026-11-21 作業員K2（#469 の (a)・統括役の了承）: 送った物件のどの点が刺さったか（our-send-uptake の HOOK_POINTS の言葉: 家賃／広さ・間取り／駅・場所／新しさ／設備…）。
+--   お客様が物件の通を引用して返した時だけ line-webhook-text が書く（SENT_HOOK_POINTS=on）。null 可・既定なし。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_hook_points;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_hook_points TEXT[];
 
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
@@ -4930,6 +5008,11 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown_at TIMESTAMPTZ
 --   last_brain_meta の中に置かない（log-aix-usage とブレインがそれぞれ丸ごと書き直す＝上書きしあう）。null 可・既定なし。戻す: ALTER TABLE conversations DROP COLUMN IF EXISTS ask_progress;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ask_progress JSONB;
 
+-- 2026-11-21 作業員M（台帳 #101・竹内さん 11/15「お客様ごとの全体の統括」・統括役の OK）: お客様ごとの計画（app/lib/customer-plan.ts）。
+--   番の部品（地図の駅・重点・狙い・次に送る物・開いている約束・要件・送った物・気持ち・探す条件）から、ブレインの番の後に1回だけ組んで書く。
+--   CUSTOMER_PLAN 既定 shadow（書くだけ・文と道は変えない）。null 可・既定なし。戻す: ALTER TABLE conversations DROP COLUMN IF EXISTS customer_plan;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS customer_plan JSONB;
+
 -- 2026-10-08 結果の台帳（計画 memory/plan_outcome_ledger.md・決まり app/lib/deal-outcome.ts・書くのは deal-outcome-server.ts／cron/outcome-ledger）
 --   deal_outcomes: 会話×案件（審査落ち・取り消しで切り替えたら次の案件）ごとに1行。結果（won/lost/switched/in_progress）と確かさ（confirmed/estimated）・各段階の時刻・決まった（落ちた）物件。
 --     推定の成約（auto-seiyaku）・推定の失注（申込前30日返事なし）は result_certainty=estimated。学習と実績の数字は confirmed だけ（竹内さんの決定 10/08）。
@@ -5483,6 +5566,53 @@ CREATE INDEX IF NOT EXISTS conductor_turn_vectors_scene_idx ON conductor_turn_ve
 CREATE INDEX IF NOT EXISTS conductor_turn_vectors_writer_idx ON conductor_turn_vectors (writer);
 ALTER TABLE conductor_turn_vectors ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON conductor_turn_vectors FROM anon, authenticated;
+-- conductor_lessons: 試験の外れから作る統括の学び（2026-11-21 作業員H・KB 56691196「試験と連動して統括を鍛える」・欄は作業員L と合わせた）
+--   1行＝外れ1件（場面・駅・気持ち・竹内さんの一手・こちらの一手・答えが変わった段・原因の3つ・確認の順番・型となぜの1行）。
+--   正解は竹内さん本人の番だけ。試験の問題の会話は source_conv で読む側が外す（漏れの線）。読む口は match_conductor_lessons（作業員L の CONDUCTOR_LESSONS）
+CREATE TABLE IF NOT EXISTS conductor_lessons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source TEXT NOT NULL,
+  source_conv TEXT,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  scene TEXT, stage TEXT, mood TEXT,
+  expected_act TEXT NOT NULL,
+  got_act TEXT,
+  changed_stage TEXT,
+  miss_kind TEXT CHECK (miss_kind IN ('material_missing','scene_misread','reply_vs_aix')),
+  check_order TEXT,
+  lesson TEXT NOT NULL CHECK (char_length(lesson) <= 120),
+  situation_text TEXT NOT NULL,
+  embedding vector(1536) NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 1,
+  is_current BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS conductor_lessons_emb_idx ON conductor_lessons USING hnsw (embedding vector_cosine_ops) WHERE is_current;
+CREATE INDEX IF NOT EXISTS conductor_lessons_scene_idx ON conductor_lessons (scene, stage) WHERE is_current;
+ALTER TABLE conductor_lessons ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON conductor_lessons FROM anon, authenticated;
+CREATE OR REPLACE FUNCTION match_conductor_lessons(
+  query_embedding vector, match_count integer DEFAULT 3, p_scene text DEFAULT NULL, p_stage text DEFAULT NULL,
+  p_exclude_sources text[] DEFAULT '{}', p_exclude_convs text[] DEFAULT '{}')
+RETURNS TABLE(id uuid, source text, scene text, stage text, mood text, expected_act text, got_act text,
+  miss_kind text, check_order text, lesson text, similarity double precision)
+LANGUAGE sql STABLE SET search_path = public, extensions AS $$
+  WITH cand AS MATERIALIZED (
+    SELECT l.*, (1 - (l.embedding <=> query_embedding))::float AS sim
+    FROM conductor_lessons l
+    WHERE l.is_current
+      AND NOT (l.source = ANY(p_exclude_sources))
+      AND (l.source_conv IS NULL OR NOT (l.source_conv = ANY(p_exclude_convs)))
+    ORDER BY l.embedding <=> query_embedding
+    LIMIT GREATEST(match_count, 1) * 10)
+  SELECT id, source, scene, stage, mood, expected_act, got_act, miss_kind, check_order, lesson, sim
+  FROM cand WHERE sim >= 0.5
+  ORDER BY sim + CASE WHEN p_scene IS NOT NULL AND scene = p_scene THEN 0.05 ELSE 0 END
+               + CASE WHEN p_stage IS NOT NULL AND stage = p_stage THEN 0.05 ELSE 0 END DESC
+  LIMIT match_count
+$$;
+REVOKE ALL ON FUNCTION match_conductor_lessons(vector, integer, text, text, text[], text[]) FROM anon, authenticated;
 
 -- 近い番を引く（サーバーの鍵だけ）。既定は竹内さんの番だけ（p_writer='takeuchi'）・同じ会話／同じお客様を外す・距離の線は引数（既定 0.25・毎晩「線の中の件数」を数えて決め、統括役に知らせる）
 CREATE OR REPLACE FUNCTION match_conductor_turns(query_embedding vector(1536), p_exclude_conv TEXT, p_exclude_pc UUID, match_count INT DEFAULT 40, max_distance FLOAT DEFAULT 0.25, p_writer TEXT DEFAULT 'takeuchi')
@@ -5878,6 +6008,101 @@ CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(item_id
 ALTER TABLE work_item_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_item_events FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE work_item_events_id_seq FROM anon, authenticated;
+
+-- 2026-11-21 竹内さん「この俺の指摘のようなのをちゃんと理解して自己改善していく仕組みを作って」「この指摘の部分もちゃんとデータベースを作って強化していく。
+--   設計知見と協力して自己改善していける仕組みを作る。それと試験の部分とも連携する仕組みを作る」（統括役の頼み・作業員N・台帳 #472）:
+--   owner_pointers … 竹内さんの指摘1つ＝1行。型（kinds）で分け、その型の点検を全分野で回した日時と見つけた穴の数、つないだ台帳・設計知見・試験の問題を持つ。
+--     型: not_delivered 届いていない／unread 読めていない／link_broken 連携が切れている／not_subdivided 細分化が足りない／no_measure 物差しが無い／
+--         no_rule 決まりが無い／left_off off のまま／no_grasp 把握が無い／exam 試験／process 回し方／outage 本番の故障／other
+--     状態: received 受けた → checked 点検済み → fixing 直し中 → exam_passed 試験で悪化0 → on → ready → closed
+--     quote は竹内さんの言葉だけ（お客様の文・名前は入れない）。書くのはサーバーの鍵だけ（RLS 有効・ポリシーなし）。
+--   owner_pointer_events … 状態の変わりと点検の記録（何を回して何が見つかったか）。
+--   戻す: DROP TABLE IF EXISTS owner_pointer_events; DROP TABLE IF EXISTS owner_pointers;
+CREATE TABLE IF NOT EXISTS owner_pointers (
+  id BIGSERIAL PRIMARY KEY,
+  said_at TIMESTAMPTZ NOT NULL,
+  quote TEXT NOT NULL,
+  kinds TEXT[] NOT NULL DEFAULT '{}',
+  areas TEXT[] NOT NULL DEFAULT '{}',
+  state TEXT NOT NULL DEFAULT 'received',
+  work_item_ids BIGINT[] NOT NULL DEFAULT '{}',
+  kb_ids TEXT[] NOT NULL DEFAULT '{}',
+  owner_question_ids UUID[] NOT NULL DEFAULT '{}',
+  kb_draft TEXT,
+  learned_kb_id TEXT,
+  checked_at TIMESTAMPTZ,
+  checked_gaps INT,
+  check_detail JSONB,
+  exam_qids TEXT[] NOT NULL DEFAULT '{}',
+  exam_candidates JSONB NOT NULL DEFAULT '[]',
+  source TEXT,
+  source_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  CONSTRAINT owner_pointers_state_chk CHECK (state IN ('received', 'checked', 'fixing', 'exam_passed', 'on', 'ready', 'closed')),
+  CONSTRAINT owner_pointers_kinds_chk CHECK (kinds <@ ARRAY['no_foundation', 'not_delivered', 'unread', 'link_broken', 'not_subdivided', 'no_measure', 'no_rule', 'left_off', 'no_grasp', 'exam', 'process', 'outage', 'other']::TEXT[]),
+  CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'search', 'other']::TEXT[]),
+  CONSTRAINT owner_pointers_source_chk CHECK (source IS NULL OR source IN ('work_item', 'chat', 'screenshot', 'meeting'))
+);
+CREATE INDEX IF NOT EXISTS idx_owner_pointers_state ON owner_pointers(state, said_at DESC);
+-- 2026-11-21 作業員N（作業員G の頼み・統括役の決め）: 分野に search（物件検索・拡張・統括Pro）を足す。もう作った表は CHECK を作り直す
+ALTER TABLE owner_pointers DROP CONSTRAINT IF EXISTS owner_pointers_areas_chk;
+ALTER TABLE owner_pointers ADD CONSTRAINT owner_pointers_areas_chk CHECK (areas <@ ARRAY['reply', 'aix1', 'aix2', 'property_pick', 'image', 'route_map', 'foundation', 'exam', 'promise', 'conductor', 'search', 'other']::TEXT[]);
+-- 2026-11-21 作業員N（芯① 土台が無い・統括役の頼み）: 型に no_foundation を足す。もう作った表は CHECK を作り直す
+ALTER TABLE owner_pointers DROP CONSTRAINT IF EXISTS owner_pointers_kinds_chk;
+ALTER TABLE owner_pointers ADD CONSTRAINT owner_pointers_kinds_chk CHECK (kinds <@ ARRAY['no_foundation', 'not_delivered', 'unread', 'link_broken', 'not_subdivided', 'no_measure', 'no_rule', 'left_off', 'no_grasp', 'exam', 'process', 'outage', 'other']::TEXT[]);
+CREATE INDEX IF NOT EXISTS idx_owner_pointers_kinds ON owner_pointers USING GIN (kinds);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_pointers_source ON owner_pointers(source, source_ref) WHERE source_ref IS NOT NULL;
+ALTER TABLE owner_pointers ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON owner_pointers FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE owner_pointers_id_seq FROM anon, authenticated;
+CREATE TABLE IF NOT EXISTS owner_pointer_events (
+  id BIGSERIAL PRIMARY KEY,
+  pointer_id BIGINT NOT NULL REFERENCES owner_pointers(id) ON DELETE CASCADE,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  kind TEXT NOT NULL,
+  from_state TEXT,
+  to_state TEXT,
+  actor TEXT,
+  detail JSONB,
+  note TEXT,
+  CONSTRAINT owner_pointer_events_kind_chk CHECK (kind IN ('state', 'check', 'kb', 'exam', 'link'))
+);
+CREATE INDEX IF NOT EXISTS idx_owner_pointer_events_pointer ON owner_pointer_events(pointer_id, at DESC);
+-- 2026-11-21 作業員N（自己改善の統括の土台・統括役の点検表 ④⑤）:
+--   work_items.owner_question_uuid … owner_questions.id は UUID なのに、work_items.owner_question_id は BIGINT で結べなかった。新しい列で結ぶ（古い列は使わない）
+--   work_item_events.kind … stage（段の変わり）／assign（作業員に渡した）／return（返ってきた）／note（経過）。割り振りの記録を同じ表で持つ
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS owner_question_uuid UUID;
+ALTER TABLE work_item_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'stage';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_item_events_kind_chk') THEN
+    ALTER TABLE work_item_events ADD CONSTRAINT work_item_events_kind_chk CHECK (kind IN ('stage', 'assign', 'return', 'note'));
+  END IF;
+END $$;
+-- 2026-11-21 作業員N（自己改善の統括の土台 ①・台帳 #473）: quality_daily … 毎日の質の数を1つの表に（物差しの名前 × 範囲 × 日で1行）。
+--   毎朝の1枚（scripts/self-improve.ts）が書き、前の日・前の週と比べて上がった・下がったを出す。数だけ（お客様の文・名前は入れない）。
+--   範囲: takeuchi（竹内さんの番）・all（全体）・draft（下書き）・employee。戻す: DROP TABLE IF EXISTS quality_daily;
+CREATE TABLE IF NOT EXISTS quality_daily (
+  id BIGSERIAL PRIMARY KEY,
+  day DATE NOT NULL,
+  metric TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'all',
+  value NUMERIC,
+  n INT,
+  source TEXT,
+  detail JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT quality_daily_scope_chk CHECK (scope IN ('takeuchi', 'all', 'draft', 'employee')),
+  CONSTRAINT quality_daily_uniq UNIQUE (day, metric, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_quality_daily_metric ON quality_daily(metric, day DESC);
+ALTER TABLE quality_daily ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON quality_daily FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE quality_daily_id_seq FROM anon, authenticated;
+ALTER TABLE owner_pointer_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON owner_pointer_events FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE owner_pointer_events_id_seq FROM anon, authenticated;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

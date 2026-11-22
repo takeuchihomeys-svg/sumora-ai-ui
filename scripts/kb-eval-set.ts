@@ -13,6 +13,9 @@ import type { KbScene } from "../app/lib/design-knowledge-rag";
 export type KbEvalQ = { q: string; gold: string[]; scene?: KbScene; ho?: boolean };
 
 export const KB_EVAL: KbEvalQ[] = [
+  // 2026-11-21 作業員L: 続きの番の挨拶（確認事項 a56a67ab・4ea97ead）
+  { q: "会話の続きの番でその日最初の返事にお世話になっておりますを付けるか", gold: ["4ea97ead"] },
+  { q: "AIX の2通目の挨拶は日をまたいだ続きの会話でも付けるか", gold: ["4ea97ead"] },
   // ── P0 絶対・最優先 ──
   { q: "AIXと返信の分け方", gold: ["ca55d42b"] },
   { q: "管理会社に確認して分かった事を返信の下書きに書いてしまった", gold: ["ca55d42b", "64697760"] },

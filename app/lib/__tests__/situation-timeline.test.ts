@@ -148,7 +148,8 @@ t("書き手への今の状況の塊（SITUATION_WRITER_NOTE・既定 off・事�
 console.log("writer-note ok");
 import { sentImageFactsLine, sentImageFactsOn, buildSentProps as bsp2 } from "../sent-props-text";
 t("送った資料の読み（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）: 礼金・敷金・間取り・面積を送った物件の行へ（11/19 の 901号室の礼金）", () => {
-  assert.equal(sentImageFactsOn({}), false);
+  assert.equal(sentImageFactsOn({}), true); // 2026-11-21 既定 on
+  assert.equal(sentImageFactsOn({ SENT_IMAGE_FACTS_TO_BRAIN: "off" }), false);
   assert.equal(sentImageFactsLine({ rent: 98000, admin_fee_yen: 10000, deposit_months: 0, key_money_months: 1, floor_plan: "1LDK", area_sqm: 36.2, station: "中崎町", walk_minutes: 3 }), "家賃98,000円・管理費10,000円・敷金0・礼金1ヶ月・1LDK・36.2㎡・中崎町徒歩3分");
   assert.equal(sentImageFactsLine({}), null);
   const ps = bsp2({ customerRows: [{ property_name: "Aタワー", room_no: "901", sent_at: "2026-11-16T06:39:00Z" }] as never, imageRows: [{ property_name: "Aタワー", room_no: "901", created_at: "2026-11-16T06:39:43Z", source: "x", facts: { key_money_months: 1, floor_plan: "1LDK" } }], sharedRows: [], imageFacts: true });
@@ -158,3 +159,24 @@ t("送った資料の読み（SENT_IMAGE_FACTS_TO_BRAIN・既定 off）: 礼金�
   assert.equal(off[0].sheet_facts, undefined);
 });
 console.log("sip-facts ok");
+// 2026-11-22 作業員L（台帳 #590）: 候補の【時間確保】（時刻あり）を内覧の予定と分ける（TIMELINE_VIEWING_HOLD・既定 off）
+import { timelineViewingHoldOn } from "../situation-timeline";
+t("時間確保は内覧の候補（TIMELINE_VIEWING_HOLD）", () => {
+  const now = Date.parse("2026-11-22T00:00:00Z");
+  const cal = [
+    { title: "内覧", event_type: "viewing", start_at: "2026-11-24T05:00:00Z", all_day: false, is_done: false, notes: "【時間確保】\n11/24 14時〜" },
+    { title: "内覧", event_type: "viewing", start_at: "2026-11-25T06:00:00Z", all_day: false, is_done: false, notes: "物件: Aハイツ 101" },
+    { title: "電話", event_type: "phone", start_at: "2026-11-23T03:00:00Z", all_day: false, is_done: false, notes: "【時間確保】" },
+  ];
+  assert.equal(timelineViewingHoldOn({}), false);
+  // off: 今と同じ（時刻のある予定は全部内覧）
+  const off = buildTimeline({ customerMsgs: [], calendar: cal, nowMs: now, env: {} });
+  assert.equal(off.viewings.length, 3); assert.equal(off.holds, undefined);
+  assert.equal(readCalendarEvents(cal, {}).filter((c) => c.kind === "hold").length, 0);
+  // on: 内覧の時間確保だけを候補に（電話の予定は event_type が viewing でないので今のまま）
+  const on = buildTimeline({ customerMsgs: [], calendar: cal, nowMs: now, env: { TIMELINE_VIEWING_HOLD: "on" } });
+  assert.equal(on.viewings.length, 2); assert.equal(on.holds?.length, 1);
+  const block = timelineBlock(on, now);
+  assert.match(block, /内覧の候補の時間確保/); assert.match(block, /11\/24.*14:00（候補）/);
+});
+console.log("timeline-hold ok");

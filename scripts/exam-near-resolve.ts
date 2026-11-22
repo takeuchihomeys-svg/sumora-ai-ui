@@ -17,7 +17,7 @@ import { examCacheRoot } from "./lib/llm-cassette";
 import { reduceKeyedBody, nearestSummaryOf, afterCutoff, keyedKey } from "./lib/exam-frozen-input";
 import { followupUrls } from "./lib/exam-near-followups";
 import { loadCards, CARDS_FILE, RAG_DIR } from "./lib/exam-rag-store";
-import { nearLeak, LEAK_STOP_FILE, isUnsafeNearRequest } from "./lib/exam-near-hook";
+import { nearLeak, nearLeakByOrigin, LEAK_DISTANCE, LEAK_STOP_FILE, isUnsafeNearRequest } from "./lib/exam-near-hook";
 import { YUMA_CONVERSATION_ID, NO_LINE_TEST_CONVERSATION_IDS } from "../app/lib/test-conversations";
 const TEST_CONV_IDS = [YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS];
 const stalePendingAllowed = () => (process.env.EXAM_NEAR_STALE_PENDING ?? "").trim().toLowerCase() === "allow";
@@ -36,7 +36,7 @@ if (!url || !key) { console.error("NEXT_PUBLIC_SUPABASE_URL と SUPABASE_SERVICE
 const HEADERS = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" };
 
 /** 1つの読みを鍵で読み、欄を絞って控える。書いた行の配列（絞った後）を返す。読めなければ null */
-async function resolveOne(day: string, fileName: string, req: { name: string; url: string; method: string; body: string }, root: string): Promise<Array<Record<string, unknown>> | null> {
+async function resolveOne(day: string, fileName: string, req: { name: string; url: string; method: string; body: string; oconv?: string | null }, root: string): Promise<Array<Record<string, unknown>> | null> {
   const res = await fetch(req.url, { method: req.method, headers: HEADERS, ...(req.method.toUpperCase() === "POST" ? { body: req.body } : {}) });
   if (!res.ok) { console.warn(`  読めない ${req.name}: ${res.status}`); return null; }
   const raw = await res.text();
@@ -55,7 +55,15 @@ async function resolveOne(day: string, fileName: string, req: { name: string; ur
   //   （11/10 17:26Z に古い作業ツリーの試験の頼みから q367 の答えの番そのもの〔距離 8e-7〕が控えに入った）。止める: EXAM_NEAR_LEAK_GUARD=off
   if ((process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
     let rowsOut: Array<Record<string, unknown>> = []; try { rowsOut = JSON.parse(reduced) as Array<Record<string, unknown>>; } catch { /* */ }
-    const lk = nearLeak(req.name, req.body, rowsOut);
+    let lk: { leak: boolean; close: number; after: number; closeOther?: number } = nearLeak(req.name, req.body, rowsOut);
+    // 2026-11-21 作業員H: 距離 0.01 未満の番が元の会話の物か（別の会話の決まり文句の番は漏れに数えない・exam-near-hook.nearLeakByOrigin）
+    if (lk.close && req.oconv) {
+      const keys = rowsOut.filter((r) => Number(r.distance) < LEAK_DISTANCE).map((r) => String(r.source_key ?? "")).filter(Boolean);
+      const { data: cv } = await createClient(url, key).from("conductor_turn_vectors").select("source_key, conversation_id").in("source_key", keys);
+      const convBy = new Map(((cv ?? []) as Array<{ source_key: string; conversation_id: string | null }>).map((x) => [x.source_key, x.conversation_id]));
+      lk = nearLeakByOrigin(req.name, req.body, rowsOut, (k) => convBy.get(k), req.oconv);
+      if (!lk.leak && lk.closeOther) console.log(`  近いが別の会話: ${req.name} ${fileName}（距離 0.01 未満 ${lk.closeOther}本は元の会話でない＝決まり文句の番・漏れに数えない）`);
+    }
     if (lk.leak) {
       const stop = join(examCacheRoot(), "exam-queue", LEAK_STOP_FILE);
       let cur: { at?: string; hits?: unknown[] } = {}; try { cur = JSON.parse(readFileSync(stop, "utf8")); } catch { /* 初めて */ }

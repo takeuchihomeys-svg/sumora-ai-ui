@@ -292,6 +292,19 @@ export async function POST(req: NextRequest) {
     //   2026-10-08 続き: 物件送付・見積書・内覧調整・待ち合わせも（aixPropertyNamesForLog・画面から名前が来た時はそちらが正）
     const recNames = !(Array.isArray(property_names) && property_names.length > 0)
       ? aixPropertyNamesForLog({ aixType: aix_type, text: typeof generated_text === "string" ? generated_text : null, meetingPropertyName: meeting_property_name ?? null, sentPropertyNames: Array.isArray(properties_sent_names) ? properties_sent_names : null }) : [];
+    // 2026-11-21 作業員K2（app/lib/check-name-fill.ts・CHECK_NAME_FILL=on の時だけ・既定 off）: 物件名が空の物件確認した を、
+    //   直前 72時間にお客様が送ってきた物件が1件に決まる時だけ埋める（2件以上・決まらない時は空のまま）
+    let checkFilled: string[] = [];
+    if (aix_type === "property_check_result" && conversation_id && !(Array.isArray(property_names) && property_names.length > 0) && recNames.length === 0) {
+      const cf = await import("@/app/lib/check-name-fill");
+      if (cf.checkNameFillOn()) {
+        try {
+          const r = await cf.loadCheckNameFill(supabase, conversation_id, sent_at ?? new Date().toISOString());
+          if (r) checkFilled = [cf.filledLabel(r)];
+          console.log(JSON.stringify({ tag: "aix-log:check-name-fill", conversationId: conversation_id, checkPattern: check_pattern ?? null, filled: !!r, via: r?.via ?? null }));
+        } catch (e) { console.warn("[log-aix-usage] check-name-fill:", e instanceof Error ? e.message : String(e)); }
+      }
+    }
     const logRowInsert = {
       conversation_id,
       aix_type,
@@ -316,9 +329,12 @@ export async function POST(req: NextRequest) {
       property_names: Array.isArray(property_names) && property_names.length > 0
         ? property_names.map((n) => String(n ?? "").slice(0, 100))
         : recNames.length > 0 ? recNames.map((n) => n.slice(0, 100))
+        : checkFilled.length > 0 ? checkFilled.map((n) => n.slice(0, 100))
         : null,
       prop_statuses: Array.isArray(prop_statuses) && prop_statuses.length > 0
         ? prop_statuses.map((s) => String(s ?? "").slice(0, 40))
+        // CHECK_NAME_FILL で名前を埋めた時は、募集中／物件なかった の結果を同じ位置に（他のピッカーの結果は入れない）
+        : checkFilled.length > 0 && (check_pattern === "available" || check_pattern === "unavailable") ? [check_pattern]
         : null,
       // M2: 御見積書を同封したか（estimate_sheet 以外のAIX＝物件確認したの見積書同封も「送付済み」として残す）。
       // generate-reply の estimatePromised 判定が aix_type='estimate_sheet' しか見ておらず、
@@ -347,6 +363,33 @@ export async function POST(req: NextRequest) {
     }
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    // 2026-11-21 作業員G（統括役の OK）: AIX【物件オススメ】で物件1件を送ったのに送った物件の記録（sent_properties）に行が無い時は1行足す
+    //   （写真1枚の🌟送信は画像から物件が読めず、どこからも書かれていなかった・7日で4件）。値は入れない・同じ物件の行があれば足さない・
+    //   テストの会話・試験の行・予約（まだ送っていない）は足さない。既定 off（RECOMMENDATION_SENT_RECORD=on）
+    if (conversation_id && scheduled !== true && !isTestConversation(conversation_id)) {
+      waitUntil((async () => {
+        try {
+          const { recommendationSentRecordOn, recommendationSentRow } = await import("@/app/lib/recommendation-sent-record");
+          if (!recommendationSentRecordOn()) return;
+          const row = recommendationSentRow({ aixType: aix_type, propertyNames: Array.isArray(property_names) ? property_names : null, lineMessageId: line_message_id ?? null });
+          if (!row) return;
+          const { isSameProperty } = await import("@/app/lib/sent-property-record");
+          const { data: existing } = await supabase.from("sent_properties").select("property_name, room_no")
+            .eq("conversation_id", conversation_id).order("sent_at", { ascending: false }).limit(300);
+          const dup = ((existing ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
+            .some((r) => isSameProperty({ property_name: r.property_name ?? "", room_no: r.room_no ?? "" }, { property_name: row.propertyName, room_no: row.roomNo }));
+          if (dup) return;
+          const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversation_id).maybeSingle();
+          const { error: insErr } = await supabase.from("sent_properties").insert({
+            conversation_id, property_customer_id: (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null,
+            property_name: row.propertyName, room_no: row.roomNo, source: "aix:property_recommendation", delivery: "customer", channel: "recommendation",
+            ...(typeof sent_at === "string" && sent_at ? { sent_at } : {}),
+          });
+          console.log(JSON.stringify({ tag: "recommendation-sent-record", conversation_id, inserted: !insErr, error: insErr?.message?.slice(0, 120) ?? null }));
+        } catch (e) { console.warn("[log-aix-usage] オススメの送った記録の失敗:", e instanceof Error ? e.message : e); }
+      })());
+    }
 
     // 2026-11-15 作業員M（継ぎ目②・ASK_PROGRESS=on の時だけ・既定 off）: 送った AIX を要件の帳面に当てて conversations.ask_progress に書く（予約送信はまだ送っていないので書かない）
     if (conversation_id && scheduled !== true) {
