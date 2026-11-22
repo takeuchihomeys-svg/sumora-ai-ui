@@ -77,6 +77,7 @@ import { planExam, kindSuggest, readExamResult, splitCmdArgs, needsBaseIds, spec
 import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-problems-store";
 import { bisectPlan } from "./lib/exam-bisect";
 import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
+import { syncExamWorktree } from "./lib/exam-worktree-sync";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -887,6 +888,13 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
   if (j.runner === "tsc" && process.env.EXAM_TSC_LOCAL !== "on") return runTscRemoteJob(j); // 古い依頼の tsc も手元でなく Vercel の上で（EXAM_TSC_LOCAL=on の時だけ手元）
   if (j.runner === "tsc") return runTscJob(j);
   if (j.runner === "tsc-remote") return runTscRemoteJob(j);
+  // 2026-11-22 作業員H（統括役・前と今のコードの版の一致）: 試験の依頼を流す前に係の試験の作業ツリーを origin/main に合わせる（scripts/lib/exam-worktree-sync.ts）。
+  //   未コミットの変更があって合わせられない時は流さずに止めて知らせる（30分後に見直す）
+  {
+    const sy = syncExamWorktree(j.cwd);
+    if (sy.line) log(`  ${sy.line}`);
+    if (!sy.ok) { requeueJob({ ...j, notBefore: new Date(Date.now() + 30 * 60_000).toISOString() }); const msg = `${j.label} を流す前に止めた: ${sy.line}`; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j.owner, label: j.label, msg }) + "\n"); log(`  📣 知らせる: to=main ${msg}`); return; }
+  }
   const outFile = join(RES, `${j.label}.out.log`);
   const at = () => new Date().toISOString();
   // 本番の見張り（5分ごと・2026-11-14 作業員F が2分から延ばした・EXAM_PROD_WATCH_MS）: 悪ければ止めて片付け・順番待ちに戻す
@@ -966,7 +974,8 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     // ① 早めの打ち切り（30秒ごと）
     let early: { stop: string; why: string; base: string } | null = null;
     const rowsFile = join(resultsDirOf(j.cwd), `${j.label}.jsonl`);
-    const earlyOn = process.env.EXAM_STOP_EARLY !== "off" && ids.length > 0;
+    // 2026-11-22 作業員H（統括役）: 依頼の env の EXAM_STOP_EARLY=off も読む（今までは係の env だけ＝依頼に付けても係の打ち切りが止まらなかった・ess-1122-*）
+    const earlyOn = (j.env?.EXAM_STOP_EARLY ?? process.env.EXAM_STOP_EARLY) !== "off" && ids.length > 0;
     const ew = earlyOn ? setInterval(() => {
       if (early || stopped) return;
       const bl = baseLabelOf(j.cwd, j.label); if (!bl) return;

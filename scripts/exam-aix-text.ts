@@ -360,11 +360,18 @@ async function main() {
   if (vsArg) {
     const vsFile = existsSync(vsArg) ? vsArg : (readdirSync(RES_DIR).filter((f) => f.startsWith(`${vsArg}-`) && f.endsWith(".json")).sort().pop() ?? "");
     if (vsFile) {
-      const vr = (JSON.parse(readFileSync(existsSync(vsArg) ? vsArg : join(RES_DIR, vsFile), "utf8")) as { rows: Row[] }).rows.filter((r) => !r.err);
+      const vj = JSON.parse(readFileSync(existsSync(vsArg) ? vsArg : join(RES_DIR, vsFile), "utf8")) as { rows: Row[]; meta?: { head?: string } };
+      // 2026-11-22 作業員H（統括役・前と今のコードの版の一致）: 比べる前の回が別のコードの版なら比べない（11/22 の aixt の分割は昨夜の off の回と比べて、両方の半分で ceb5e834 が落ちて見えた）。
+      //   同じ回の中で off と on を続けて流す時だけ比べる。どうしても比べる時は --vs-any-head
+      const nowHead = git(["rev-parse", "HEAD"]);
+      if (vj.meta?.head && nowHead && vj.meta.head !== nowHead && !process.argv.includes("--vs-any-head")) { console.log(`  --vs=${vsArg}: 前の回のコードの版（${vj.meta.head.slice(0, 9)}）が今（${nowHead.slice(0, 9)}）と違う＝比べない（同じ回の中で off と on を続けて流す・どうしても比べる時は --vs-any-head）`); }
+      else {
+      const vr = vj.rows.filter((r) => !r.err);
       const vs = summarize(vr.filter((r) => rows.some((x) => x.id === r.id && x.hash === r.hash && !x.err)));
       const d = compareRows(vr, rows);
       console.log(`  ${vsArg} と比べ: 前 合格 ${vs.pass}/${vs.n}・${vs.mean.toFixed(1)}点 → 今 合格 ${sum.pass}/${sum.n}・${sum.mean.toFixed(1)}点・良くなった ${d.filter((x) => x.flip === "fail→pass").length}・悪くなった ${d.filter((x) => x.flip === "pass→fail").length}`);
       for (const x of d.filter((y) => y.flip || Math.abs(y.after - y.before) >= 10)) console.log(`    ${x.id}: ${x.before}→${x.after}点${x.flip ? `（${x.flip}）` : ""}`);
+      }
     } else console.log(`  --vs=${vsArg}: 結果が見つからない`);
   }
   if (base && !isMainRun && !SNAP) {
