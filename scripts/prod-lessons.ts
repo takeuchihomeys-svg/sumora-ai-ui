@@ -6,13 +6,16 @@
 //   ③ 学びの下書き（scripts/lib/exam-lessons.ts と同じ形）を exam-cache/prod-lessons/<日付>.json に置く。conductor_lessons には書かない
 //      （統括役が試験の下書きと一緒に見て書く・案 E）
 //   ④ --llm の時だけ、lesson（型となぜの1行）を DeepSeek（flash）で足す。夜（JST 22時〜翌8時）だけ・LLM_TEST_MODE=deepseek-all で起動（手順書 memory/test_protocol_brain.md）
+//   2026-11-22 統括役の頼み: ①場面（line_watch_turns.scene_key）を渡す ②竹内さんの返信とこちらの下書き（draft_last）の要点を伏せて両方渡す
+//     ③ DeepSeek は本番と同じ口（vision-alt-provider.callDeepSeek）で呼び、本番と同じ費用の記録（llm-usage-recorder.recordAltUsage）に1行ずつ残す
+//     （初版は api.deepseek.com を直に叩き llm_usage_logs に残らなかった＝費用の記録の穴）
 // 実行: npx tsx --env-file=.env.local scripts/prod-lessons.ts [--days=7] [--max=40] [--llm]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { checkConductor, type MissType } from "./check-conductor";
-import { prodLessonDraft, dedupeDrafts, isNightJst, type ProdCause, type ProdMissTurn } from "./lib/prod-lessons";
-import { lessonPrompt, cleanLesson, type LessonDraft } from "./lib/exam-lessons";
+import { prodLessonDraft, dedupeDrafts, isNightJst, prodLessonPrompt, keepProdLesson, type ProdCause, type ProdMissTurn } from "./lib/prod-lessons";
+import { cleanLesson, type LessonDraft } from "./lib/exam-lessons";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { maskExamText, addressNamesOf } from "../app/lib/text-mask-names";
 import { loadTurnApplicationRecords } from "../app/lib/turn-application-gate-server";
@@ -22,7 +25,7 @@ const args = process.argv.slice(2);
 const arg = (k: string, d: string) => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "7")) || 7, MAX = Number(arg("max", "40")) || 40, LLM = args.includes("--llm");
 
-type W = { id: number; conversation_id: string; customer_turn_at: string; staff_first_at: string | null; brain_reply_mode: string | null; brain_action: string | null;
+type W = { id: number; conversation_id: string; customer_turn_at: string; staff_first_at: string | null; brain_reply_mode: string | null; brain_action: string | null; scene_key: string | null; draft_last: string | null;
   verdict_detail: { staff_writer?: string; staff_aix?: string[] | null; reason?: string; facts?: { staffOnly?: string[]; conflict?: string[] } | null } | null };
 type Msg = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer: string | null };
 
@@ -40,10 +43,11 @@ async function main() {
     const ids = [...typeOf.keys()].slice(0, MAX);
     console.log(`芯④の外れ（${DAYS}日・竹内さんの番 ${cc.n}・外れ ${typeOf.size}）→ 読む ${ids.length}`);
     if (!ids.length) return;
-    const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,staff_first_at,brain_reply_mode,brain_action,verdict_detail").in("id", ids);
+    const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,staff_first_at,brain_reply_mode,brain_action,scene_key,draft_last,verdict_detail").in("id", ids);
     if (error) throw new Error(error.message);
     const gate = new Map<string, Awaited<ReturnType<typeof loadTurnApplicationRecords>>>();
     const drafts: LessonDraft[] = [];
+    const heads = new Map<string, { scene: string | null; staff: string | null; draft: string | null }>();
     let gated = 0, notTakeuchi = 0;
     for (const w of (data ?? []) as W[]) {
       if (!gate.has(w.conversation_id)) gate.set(w.conversation_id, await loadTurnApplicationRecords(sb, w.conversation_id));
@@ -68,11 +72,12 @@ async function main() {
         watchId: w.id, conv: w.conversation_id, at: w.customer_turn_at, type, cause: causeOf(type, w.verdict_detail),
         staffWriter: w.verdict_detail?.staff_writer ?? null, staffAix: (w.verdict_detail?.staff_aix ?? []).filter(Boolean) as string[],
         brainMode: w.brain_reply_mode, brainAction: w.brain_action,
-        stage: typeof dg.sg === "string" ? dg.sg : null, scene: null, mood: null,
+        stage: typeof dg.sg === "string" ? dg.sg : null, scene: w.scene_key ?? null, mood: null,
         customerMasked: mask(cust.join("\n")).slice(0, 300), staffHeadMasked: staff ? mask(staff.text).replace(/\s+/g, " ").slice(0, 120) : null,
+        draftHeadMasked: w.draft_last ? mask(w.draft_last).replace(/\s+/g, " ").slice(0, 120) : null,
       };
       const d = prodLessonDraft(t);
-      if (d) drafts.push(d);
+      if (d) { drafts.push(d); heads.set(d.dedupe_key, { scene: t.scene, staff: t.staffHeadMasked, draft: t.draftHeadMasked ?? null }); }
     }
     const out = dedupeDrafts(drafts);
     console.log(`下書き ${out.length}（申込の門で外した ${gated}・竹内さん以外 ${notTakeuchi}）${LLM ? "・lesson を DeepSeek で足す" : "・lesson なし（--llm は夜）"}`);
@@ -80,16 +85,16 @@ async function main() {
     for (const d of out) {
       let lesson: string | null = null;
       if (LLM) {
-        const key = String(process.env.DEEPSEEK_API_KEY ?? "").trim();
-        const { DEEPSEEK_MODEL_FLASH } = await import("../app/lib/deepseek-models");
-        try {
-          const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-            body: JSON.stringify({ model: String(process.env.LESSON_MODEL ?? DEEPSEEK_MODEL_FLASH).trim(), max_tokens: 400, temperature: 0, thinking: { type: "disabled" }, messages: [{ role: "user", content: lessonPrompt(d) }] }),
-            signal: AbortSignal.timeout(60_000),
-          });
-          if (res.ok) lesson = cleanLesson(String(((await res.json()) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? ""));
-        } catch { lesson = null; }
+        const hd = heads.get(d.dedupe_key) ?? { scene: d.scene, staff: null, draft: null };
+        const [{ callDeepSeek }, { DEEPSEEK_FLASH_MODEL }, { recordAltUsage }] = await Promise.all([import("../app/lib/vision-alt-provider"), import("../app/lib/llm-alt-provider"), import("../app/lib/llm-usage-recorder")]);
+        const t0 = Date.now();
+        const res = await callDeepSeek(null, prodLessonPrompt(d, { sceneJa: hd.scene, staffHead: hd.staff, draftHead: hd.draft }), { model: String(process.env.LESSON_MODEL ?? DEEPSEEK_FLASH_MODEL).trim(), maxTokens: 400, timeoutMs: 60_000, thinking: false, temperature: 0 }).catch(() => null);
+        if (res) {
+          lesson = keepProdLesson(cleanLesson(res.text));
+          recordAltUsage({ model: res.model, action: "prod_lesson", conversationId: null,
+            usage: { input_tokens: Math.max(0, res.usage.input - res.usage.cacheHit), output_tokens: res.usage.output, cache_read_input_tokens: res.usage.cacheHit },
+            status: 200, errorType: lesson ? null : "dropped", durationMs: Date.now() - t0, sysHead: "【本番の外れの学び】prod-lessons", sysKeyFull: null, maxTokens: 400 });
+        }
       }
       withLesson.push({ ...d, lesson });
       console.log(`- ${d.source}｜${d.stage ?? "-"}｜竹内 ${d.expected_act} ／ こちら ${d.got_act ?? "-"}｜${d.miss_kind ?? "要確認"}｜${lesson ?? "（lesson なし）"}`);

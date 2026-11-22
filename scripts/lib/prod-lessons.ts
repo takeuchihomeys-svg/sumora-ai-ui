@@ -21,6 +21,8 @@ export type ProdMissTurn = {
   customerMasked: string;
   /** 竹内さんの返信の要点（伏せ済み・短く・無ければ null） */
   staffHeadMasked: string | null;
+  /** こちらの下書きの要点（line_watch_turns.draft_last・伏せ済み・無ければ null）2026-11-22 統括役の頼み② */
+  draftHeadMasked?: string | null;
 };
 
 const CAUSE_JA: Record<ProdCause, MissCause> = { aix_turn_as_reply: "AIX の番を返信にした", misread: "場面・決まりの読み違い", material: "材料が届いていない" };
@@ -45,7 +47,7 @@ export function prodLessonDraft(t: ProdMissTurn): LessonDraft | null {
     situation_text: turnSituationText({ scene: t.scene, stage: t.stage, customerMasked: t.customerMasked, lastStaffKind: null }),
     seed: {
       type: t.type,
-      why: t.staffHeadMasked ? `竹内さんの返信の要点（伏せ済み）: ${t.staffHeadMasked.slice(0, 120)}` : null,
+      why: [t.staffHeadMasked ? `竹内さんの返信（伏せ済み）: ${t.staffHeadMasked.slice(0, 120)}` : null, t.draftHeadMasked ? `こちらの下書き（伏せ済み）: ${t.draftHeadMasked.slice(0, 120)}` : null].filter(Boolean).join("／") || null,
       cause: CAUSE_JA[t.cause],
       stageNote: `本番の見張りの番 ${t.watchId}（${t.type}）`,
     },
@@ -63,4 +65,28 @@ export function dedupeDrafts(ds: ReadonlyArray<LessonDraft>): LessonDraft[] {
 export function isNightJst(nowMs = Date.now()): boolean {
   const h = (new Date(nowMs).getUTCHours() + 9) % 24;
   return h >= 22 || h < 8;
+}
+
+/**
+ * 本番の外れの lesson の問い（2026-11-22 統括役の頼み: ①場面を渡す ②竹内さんの返信とこちらの下書きの要点を両方渡し「何が違ったか」を書かせる）。
+ *   11/22 夜の初版（exam-lessons.lessonPrompt をそのまま使った）は場面が「不明」で、16件中12件が空の一般論・意味の通らない物だった。
+ *   文はどちらも伏せ済み・120字まで。名前・物件名・金額は書かせない
+ */
+export function prodLessonPrompt(d: LessonDraft, o: { sceneJa: string | null; staffHead: string | null; draftHead: string | null }): string {
+  return [
+    "あなたは不動産仲介の LINE 返信の統括を鍛える係です。本番で、竹内さん（正解）とこちら（AI）の一手が食い違った1番があります。",
+    "次に同じ場面で統括が読むべき『型となぜ』を、日本語80字以内の1行で書いてください。形は『〜の場面で〜の時は〜（なぜ: 〜）』。",
+    "お客様やスタッフの名前・物件名・金額は書かない。場面が分からない一般論（「不明な場面では確認を」等）は書かない。差が読めない時は『差が読めない』とだけ返す。1行だけを返す。",
+    `場面: ${o.sceneJa ?? "（記録なし）"}・申込までの駅: ${d.stage ?? "不明"}`,
+    `竹内さんの一手: ${d.expected_act}・こちらの一手: ${d.got_act ?? "不明"}・原因の見立て: ${d.seed.cause}`,
+    `竹内さんの返信（伏せ済み）: ${(o.staffHead ?? "（なし＝返信を送っていない）").slice(0, 120)}`,
+    `こちらの下書き（伏せ済み）: ${(o.draftHead ?? "（なし）").slice(0, 120)}`,
+    "まず両方の違い（何を言った・言わなかった・どちらで送った）を読み、その違いを生んだ型を書く。",
+  ].join("\n");
+}
+/** 返ってきた1行の確かめ: 「差が読めない」・場面の無い一般論は捨てる */
+export function keepProdLesson(s: string | null): string | null {
+  if (!s) return null;
+  if (/差が読めない|不明な場面|場面が不明/.test(s)) return null;
+  return s;
 }
