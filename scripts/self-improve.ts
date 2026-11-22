@@ -9,8 +9,9 @@
 //   5 学ぶ: 方針は毎回 owner_pointers から作る＝竹内さんの新しい指摘が入れば次の朝に自動で変わる
 // 実行: npx tsx --env-file=.env.local scripts/self-improve.ts [--day=2026-11-20] [--write] [--out=<md>]
 import { createClient } from "@supabase/supabase-js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { POINTER_KIND_JA, type PointerKind } from "../app/lib/owner-pointers";
 import { pointersForExam } from "../app/lib/owner-pointers-server";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
@@ -28,10 +29,11 @@ import { checkOffPath, isOffPathGap } from "./check-off-path";
 import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
+import { flexMetricsOf, trustMetricsOf, type OffPatternJson, type PromiseKeptRow } from "./lib/flex-daily";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow } from "./lib/self-improve-growth";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow, lastJsonLine } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 
@@ -308,6 +310,43 @@ async function main() {
     if (pu != null && ed2.unsent > pu) growthFix.push(`済みなのに見積を送っていない見積の予定が前の日より増えた（${pu}→${ed2.unsent}）→ 作業員K2・台帳 #580`);
     if (pd != null && ed2.dup > pd) growthFix.push(`同じ会話・同じ時刻の見積の予定の重複が前の日より増えた（${pd}→${ed2.dup}）→ 作業員K2・台帳 #580`);
   }
+  // 土台「臨機応変」の本番の数（台帳 #512・#158・2026-11-22 作業員N2）: audit-off-pattern（30日・竹内さん本人の番）を夜の回だけ流す（DB を読むので 22〜9時）
+  const flexRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  if (doMetrics && isNightJst(now) && existsSyncPU("scripts/audit-off-pattern.ts")) {
+    const fo = join(tmpdir(), `off-pattern-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-off-pattern.ts", "--days=30", `--out=${fo}`], 240_000);
+      const fm = flexMetricsOf(JSON.parse(readFileSync(fo, "utf8")) as OffPatternJson);
+      flexRows.push({ metric: "growth:flex:off_rate", value: fm.offRate, n: fm.turns }, { metric: "growth:flex:off_match", value: fm.offMatch, n: fm.off }, { metric: "growth:flex:normal_match", value: fm.normalMatch, n: fm.turns - fm.off });
+      lines.push(`- 臨機応変（30日・竹内さん本人の番 ${fm.turns}）: 型外の番 ${fm.off}（${fm.offRate ?? "—"}%）・型外の一致 ${fm.offMatch ?? "—"}%・普段の一致 ${fm.normalMatch ?? "—"}%（台帳 #512）`);
+      if (fm.offMatch != null && fm.normalMatch != null && fm.off >= 5 && fm.offMatch + 15 < fm.normalMatch) growthFix.push(`臨機応変: 型外の番の一致（${fm.offMatch}%）が普段（${fm.normalMatch}%）より15点以上低い＝決まりに無理に当てている疑い → 作業員N2・台帳 #158`);
+    } catch { lines.push("- 臨機応変: audit-off-pattern が失敗（台帳 #512）"); } finally { try { rmSync(fo); } catch { /* 無し */ } }
+  }
+  // 土台「信頼」の本番の数（台帳 #514・#55 の B1・2026-11-22 作業員N2）: audit-promise-kept（30日）を夜の回だけ（会話ごとに読むので 22〜9時）
+  if (doMetrics && isNightJst(now) && existsSyncPU("scripts/audit-promise-kept.ts")) {
+    const to = join(tmpdir(), `promise-kept-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-promise-kept.ts", "--days=30", `--out=${to}`], 300_000);
+      const tm = trustMetricsOf(((JSON.parse(readFileSync(to, "utf8")) as { rows?: PromiseKeptRow[] }).rows ?? []));
+      flexRows.push({ metric: "growth:trust:promise_kept", value: tm.rate, n: tm.judged }, { metric: "growth:trust:promise_kept_takeuchi", value: tm.tkRate, n: tm.tkJudged });
+      lines.push(`- 信頼（30日・約束を期限内に果たした割合）: ${tm.rate ?? "—"}%（${tm.inTime}/${tm.judged}・期限切れ ${tm.overdue}）・竹内さん本人 ${tm.tkRate ?? "—"}%（${tm.tkJudged}）（台帳 #514）`);
+    } catch { lines.push("- 信頼: audit-promise-kept が失敗（台帳 #514）"); } finally { try { rmSync(to); } catch { /* 無し */ } }
+  }
+  // AIX の土台の数（作業員K2・台帳 #541・#546・#537・2026-11-22 K2 の頼み・軽い読み）: 最初のピックアップの揃い・AIX の鮮度・受けの返し
+  if (doMetrics) {
+    const pr = existsSyncPU("scripts/audit-pickup-ready-daily.ts") ? (() => { try { return lastJsonLine<{ n?: number; ready?: number; rate?: number | null }>(runTsx(["scripts/audit-pickup-ready-daily.ts", "--days=7", "--json"], 180_000)); } catch { return null; } })() : null;
+    if (pr && typeof pr.n === "number") { avRows.push({ metric: "growth:pickup_ready:最初", value: pr.rate ?? null, n: pr.n }); lines.push(`- 最初のピックアップが揃っていた割合（7日）: ${pr.rate ?? "—"}%（${pr.ready ?? 0}/${pr.n}）（作業員K2・台帳 #541）`); }
+    if (existsSyncPU("scripts/audit-aix-ack-and-fresh.ts")) {
+      const ao = join(tmpdir(), `aix-ack-fresh-${process.pid}.json`);
+      try {
+        runTsx(["scripts/audit-aix-ack-and-fresh.ts", "--days=7", `--json=${ao}`], 180_000);
+        const aj = JSON.parse(readFileSync(ao, "utf8")) as { ack?: { total?: number; other?: number }; fresh?: Record<string, { n: number; fresh: number }> };
+        for (const [k, v] of Object.entries(aj.fresh ?? {})) avRows.push({ metric: `growth:aix_fresh:${k}`, value: v.n ? Math.round((v.fresh / v.n) * 1000) / 10 : null, n: v.n });
+        if (aj.ack) avRows.push({ metric: "growth:aix_ack:other", value: Number(aj.ack.other ?? 0), n: Number(aj.ack.total ?? 0) });
+        lines.push(`- AIX の鮮度（7日）: ${Object.entries(aj.fresh ?? {}).map(([k, v]) => `${k} ${v.fresh}/${v.n}`).join("・") || "—"}｜受けの返しのうち代表以外 ${aj.ack?.other ?? "—"}/${aj.ack?.total ?? "—"}（作業員K2・台帳 #546・#537）`);
+      } catch { lines.push("- AIX の鮮度・受けの返し: audit-aix-ack-and-fresh が失敗（作業員K2）"); } finally { try { rmSync(ao); } catch { /* 無し */ } }
+    }
+  }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
     const { data: qs } = await sb.from("quality_daily").select("day, metric, value").like("metric", "search_%").eq("scope", "all").gte("day", jstDay(now - 9 * 86_400_000)).limit(1000);
@@ -385,6 +424,7 @@ async function main() {
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...flexRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "takeuchi", value: r.value, n: r.n })),
       ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n })),
         // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）

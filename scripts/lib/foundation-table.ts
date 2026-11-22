@@ -6,8 +6,8 @@
 export type FoundationRow = { id: string; name: string; owner: string; rules: string[]; measures: string[]; metric: string | null; parts: string[]; note?: string };
 
 export const FOUNDATION_N: FoundationRow[] = [
-  { id: "n.flex", name: "臨機応変", owner: "作業員N", rules: ["3c744786", "ecd7b961"], measures: ["scripts/audit-off-pattern.ts"], metric: null, parts: [], note: "統括の行き先の3行の部品が無い（12/05 の数え直しの後）" },
-  { id: "n.trust", name: "信頼", owner: "作業員N・作業員L", rules: ["d71352cd", "aa21438c", "45110555"], measures: ["scripts/audit-promise-kept.ts", "scripts/audit-trust-b4b5.ts", "scripts/audit-trust-repeat.ts"], metric: null, parts: ["CONDUCTOR_OVERDUE_PROMISES", "PROMISE_DROP_WATCH"] },
+  { id: "n.flex", name: "臨機応変", owner: "作業員N", rules: ["3c744786", "ecd7b961"], measures: ["scripts/audit-off-pattern.ts"], metric: "growth:flex:off_rate", parts: [], note: "統括の行き先の3行の部品が無い（12/05 の数え直しの後）" },
+  { id: "n.trust", name: "信頼", owner: "作業員N・作業員L", rules: ["d71352cd", "aa21438c", "45110555"], measures: ["scripts/audit-promise-kept.ts", "scripts/audit-trust-b4b5.ts", "scripts/audit-trust-repeat.ts"], metric: "growth:trust:promise_kept", parts: ["CONDUCTOR_OVERDUE_PROMISES", "PROMISE_DROP_WATCH"] },
   { id: "n.feeling", name: "気持ち", owner: "作業員K2・作業員L", rules: ["c3b40411", "5cb0dd4c"], measures: [], metric: null, parts: ["LATENT_FIVE", "BRAIN_CONCERN_SUBTOPIC"], note: "当たりの物差しは正解付け（#236）待ち" },
   { id: "n.appeal", name: "訴求", owner: "作業員K2", rules: [], measures: ["scripts/audit-appeal-points.ts", "scripts/audit-aix-edit-diff.ts"], metric: "growth:aix_edit:ピックアップ", parts: ["SECOND_APPEAL_COUNT_BY_SCENE", "APPEAL_RECORD"], note: "竹内さんの選び A（11/18）の KB の id を足す" },
   { id: "n.chrono", name: "時系列", owner: "作業員L", rules: ["b8dac051", "27aa2736"], measures: [], metric: null, parts: ["TIME_FACTS", "STALE_DAY_DRAFT_CLEAR"], note: "取り違えの台本 audit-chrono-mixup は未作成" },
