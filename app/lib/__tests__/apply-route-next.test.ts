@@ -1,6 +1,6 @@
 // 申込までの地図の次の一手を番で選び直す（APPLY_ROUTE_NEXT_BY_TURN）と、番ごとの駅の記録（ROUTE_DIGEST）（作業員R 2026-11-23・台帳 #608）
 // 実行: npx tsx app/lib/__tests__/apply-route-next.test.ts
-import { applyRouteNextByTurnOn, refineRouteNextStep, withRefinedNext, daysUntilYmd, ROUTE_ORDER, routeDigestOn, routeDigestOf } from "../apply-route-next";
+import { applyRouteNextByTurnOn, refineRouteNextStep, withRefinedNext, daysUntilYmd, ROUTE_ORDER, routeDigestOn, routeDigestOf, lapsedViewingBranchOn, lapsedViewingOpens } from "../apply-route-next";
 import { MAIN_ROUTE, locateApplyRoute, applyRouteBrainTextIfEnabled, ROUTE_NODES, type ApplyRouteSignals } from "../apply-route-map";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
 export {};
@@ -82,6 +82,20 @@ console.log("■ ROUTE_DIGEST（番ごとの駅の記録）");
   const on = brainDecisionDigestExtra(meta as Record<string, unknown>, {}) as Record<string, unknown>;
   t("off の digest に ar が無い", !("ar" in off));
   t("on の digest に ar・ほかの欄は同じ", on.ar === "proposing|considering|proposing_considering|v1" && JSON.stringify({ ...on, ar: undefined }) === JSON.stringify({ ...off, ar: undefined }));
+}
+console.log("■ 内覧が流れた（VIEWING_LAPSED_BRANCH・#621）");
+{
+  const LON = { VIEWING_LAPSED_BRANCH: "on" };
+  const s = base({ stage: "viewed", routeType: "ack_other", viewingUnconfirmed: true });
+  t("既定 off", !lapsedViewingBranchOn({}) && lapsedViewingBranchOn(LON));
+  const off = applyRouteBrainTextIfEnabled(s, {});
+  t("off は内覧後のまま（申込で抑える）・文は今と同じ", off.loc?.branch === null && off.loc?.next?.aix[0] === "application_push" && off.text === applyRouteBrainTextIfEnabled({ ...s, viewingUnconfirmed: undefined }, {}).text);
+  const on = applyRouteBrainTextIfEnabled(s, LON);
+  t("on は分かれ道 内覧が流れた・AIX の候補なし・戻り方は内覧調整", on.loc?.branch === "viewing_lapsed" && on.loc?.node === "viewed" && on.loc?.next?.aix.length === 0 && on.loc?.wayBack?.to === "viewing_arrange" && on.text.includes("内覧が流れた"));
+  t("実施済み（未確認でない）は開かない", applyRouteBrainTextIfEnabled({ ...s, viewingUnconfirmed: false }, LON).loc?.branch === null);
+  t("ほかの分かれ道（延期）が強い", applyRouteBrainTextIfEnabled({ ...s, routeType: "postpone_cancel" }, LON).loc?.branch === "postponed");
+  t("内覧後でない駅は開かない", !lapsedViewingOpens({ node: "proposing", branch: null }, { viewingUnconfirmed: true }, LON));
+  t("on の文も600字以内", on.text.length <= 600);
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

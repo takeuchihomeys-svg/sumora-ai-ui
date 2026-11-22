@@ -81,6 +81,18 @@ export function refineRouteNextStep(loc: Pick<ApplyRouteLocation, "node" | "bran
   return null;
 }
 
+// ── 内覧が流れた（#621・VIEWING_LAPSED_BRANCH・既定 off）──
+//   customer-state は内覧の日が過ぎて内覧後のお礼の無い時、段を「内覧後（実施は未確認）」にする（日が過ぎた後に内覧予定のまま残る事は無い・11/23 に 8590144d・c16e9f4a で確かめた）。
+//   地図の内覧後の一手は「気に入ったお部屋は申込で抑える」で、内覧した前提。実施の記録が無い時は先に内覧できたか・ご感想を伺い、まだなら日程を再調整する。
+//   ほかの分かれ道（延期・見送り・審査 等）が開いている時はそちらが強い（開かない）。
+//   数（竹内さん本人の番 60日・申込以降を外す）: 実施は未確認の番は 2（1番は延期の分かれ道・1番は答えだけで止まった）＝例が少ない。on は試験の後。
+export function lapsedViewingBranchOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.VIEWING_LAPSED_BRANCH ?? "").trim().toLowerCase() === "on";
+}
+export function lapsedViewingOpens(loc: Pick<ApplyRouteLocation, "node" | "branch">, s: { viewingUnconfirmed?: boolean | null }, env?: Env): boolean {
+  return lapsedViewingBranchOn(env) && loc.node === "viewed" && !loc.branch && s.viewingUnconfirmed === true;
+}
+
 /** 位置はそのまま、次の一手だけ選び直した位置（off の時・選び直さない番はそのまま返す） */
 export function withRefinedNext(loc: ApplyRouteLocation, s: RouteNextSignals, env?: Env): ApplyRouteLocation {
   if (!applyRouteNextByTurnOn(env)) return loc;

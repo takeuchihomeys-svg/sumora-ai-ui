@@ -25,6 +25,8 @@ import { matchSubstateOf } from "../app/lib/turn-aims-after";
 import { SUBSTATES } from "../app/lib/apply-route-substate";
 import { TEST_CONVERSATION_IDS } from "../app/lib/test-conversations";
 import { withRefinedNext } from "../app/lib/apply-route-next";
+import { farMoveInTurn } from "../app/lib/contact-promise";
+const FAR_MOVE_IN = process.argv.includes("--far-move-in");
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
@@ -48,7 +50,7 @@ function cutAt(input: CustomerStateInput, t: number): CustomerStateInput {
 }
 
 /** T（直前のお客様の連投の最後＋1秒）の地図の位置（audit-apply-route-map と同じ当て方） */
-function locateAt(input: CustomerStateInput, T: number, envV2: boolean): { loc: ApplyRouteLocation; loc2: ApplyRouteLocation; rt: string | null; turnText: string; sub1: string | null; sub2: string | null } {
+function locateAt(input: CustomerStateInput, T: number, envV2: boolean): { loc: ApplyRouteLocation; loc2: ApplyRouteLocation; rt: string | null; detail: string | null; turnText: string; sub1: string | null; sub2: string | null } {
   const cut = cutAt(input, T);
   const ledger = buildActionLedger({ recentAixRows: cut.aixRows, messages: cut.messages.map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.createdAt, isAix: m.isAix, lineMessageId: m.lineMessageId })), lineTasks: cut.lineTasks, recordedFacts: cut.recordedFacts, now: T });
   const state = resolveCustomerState({ ...cut, ledger });
@@ -68,16 +70,23 @@ function locateAt(input: CustomerStateInput, T: number, envV2: boolean): { loc: 
   });
   const hold = holdFirstReason(validCircumstances(extractCircumstances(cut.messages.filter((m) => m.sender === "customer").map((m) => ({ text: m.text, createdAt: m.createdAt })), turnStart), T), T);
   const rt = routeTypeOf({ customerText: turnText, prevStaffText: prevStaff, ackOnly: !img && isAckOnlyTurn(turnText) });
-  const loc = locateApplyRoute({ stage: state.stage, searching: state.searching, ledger: ledger.facts, routeType: rt, sceneId: scene?.scene ?? null, customerTurnText: turnText, recentStaffTexts: recentStaff, holdReason: hold, lastStaffAtIfStaffLast: null, nowMs: T });
+  // 2026-11-23 #623（--far-move-in）: 入居時期が先を本番と同じ線（contact-promise.farMoveInTurn）で開く。条件の入居時期（property_customers.move_in_time）は
+  //   今の値しか無く後から直した値が混ざるので渡さない（お客様の連投の言葉だけ＝本番より少し狭い）。月の言い方は番の時刻で読む
+  const farMoveIn = FAR_MOVE_IN ? !!farMoveInTurn({
+    customerTurn: cut.messages.slice(ts).filter((m) => m.sender === "customer").map((m) => ({ text: m.text, at: m.createdAt })),
+    conditionMoveIn: null, nowIso: new Date(T).toISOString(),
+    staffHistory: cut.messages.slice(0, ts).filter((m) => m.sender !== "customer").reverse().map((m) => ({ text: m.text, at: m.createdAt })),
+  }) : undefined;
+  const loc = locateApplyRoute({ stage: state.stage, searching: state.searching, ledger: ledger.facts, routeType: rt, sceneId: scene?.scene ?? null, customerTurnText: turnText, recentStaffTexts: recentStaff, holdReason: hold, lastStaffAtIfStaffLast: null, nowMs: T, ...(farMoveIn !== undefined ? { farMoveIn } : {}) });
   void envV2;
   // 2026-11-23 #608: APPLY_ROUTE_NEXT_BY_TURN=on の時の次の一手（位置は同じ）
   const loc2 = withRefinedNext(loc, { routeType: rt, upcomingViewingYmd: state.upcomingViewing?.ymd ?? null, nowMs: T }, { APPLY_ROUTE_NEXT_BY_TURN: "on" });
-  return { loc, loc2, rt, turnText, sub1: matchSubstateOf(turnText, {})?.id ?? null, sub2: matchSubstateOf(turnText, { ROUTE_SUBSTATE_NET_V2: "on" })?.id ?? null };
+  return { loc, loc2, rt, detail: state.stageDetail ?? null, turnText, sub1: matchSubstateOf(turnText, {})?.id ?? null, sub2: matchSubstateOf(turnText, { ROUTE_SUBSTATE_NET_V2: "on" })?.id ?? null };
 }
 
 type Row = {
   conv: string; at: string; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
-  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; rt: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[];
+  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[];
 };
 
 (async () => {
@@ -121,7 +130,7 @@ type Row = {
       const atOk = (s: typeof s1) => (s ? s.at === r.loc.node || s.at === r.loc.branch : null);
       rows.push({
         conv: c.slice(0, 8), at: t.at, reached, node: r.loc.node, branch: r.loc.branch, digestNode: t.before, act: t.act,
-        dir: actDirection(r.loc.node, t.act), agree: routeAgreement(r.loc, t.act), agree2: routeAgreement(r.loc2, t.act), rule2: r.loc2.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, rt: r.rt, outcome: t.outcome, after: t.after,
+        dir: actDirection(r.loc.node, t.act), agree: routeAgreement(r.loc, t.act), agree2: routeAgreement(r.loc2, t.act), rule2: r.loc2.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, rt: r.rt, detail: r.detail, outcome: t.outcome, after: t.after,
         sub1: r.sub1, sub2: r.sub2, subAt1: atOk(s1), subAt2: atOk(s2), nextAix: r.loc.next?.aix ?? [],
       });
     }
