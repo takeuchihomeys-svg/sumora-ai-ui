@@ -614,39 +614,20 @@ async function readShotFieldsCore(
       const dsKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
       const model = shotLearnModel(process.env);
       if (dsKey) {
-        const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` },
-          body: JSON.stringify({
-            model,
-            max_tokens: Math.max(12000, Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000),
-            reasoning_effort: (process.env.SHOT_LEARN_EFFORT ?? "low").trim(),
-            messages: [
-              { role: "system", content: SHOT_LEARN_PROMPT },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: note },
-                  { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
-                ],
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(180_000),
+        // 2026-11-23 作業員G（台帳 #599）: callDeepSeek を通す（費用の記録が残る）。system・中身・最大トークン・推論の強さ・時間は今と同じ。
+        //   ⚠ 失敗の理由は細かく分けられなくなる（HTTP の番号・空の答え・時間切れは callDeepSeek の [deepseek] のログに出る）
+        const { callDeepSeek } = await import("@/app/lib/vision-alt-provider");
+        const ds = await callDeepSeek(SHOT_LEARN_PROMPT, [
+          { type: "text", text: note },
+          { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
+        ], {
+          apiKey: dsKey, model,
+          maxTokens: Math.max(12000, Number(process.env.SHOT_LEARN_MAX_TOKENS) || 12000),
+          effort: (process.env.SHOT_LEARN_EFFORT ?? "low").trim(),
+          timeoutMs: 180_000,
         });
-        if (!res.ok) {
-          const t = await res.text().catch(() => "");
-          return { sl: null, why: `deepseek_http_${res.status}:` + String(t).slice(0, 100) };
-        }
-        const j = await res.json() as {
-          choices?: Array<{ message?: { content?: string; reasoning_content?: string }; finish_reason?: string }>;
-        };
-        const text = String(j.choices?.[0]?.message?.content ?? "").trim();
-        const finish = String(j.choices?.[0]?.finish_reason ?? "");
-        if (!text) {
-          const rn = String(j.choices?.[0]?.message?.reasoning_content ?? "").length;
-          return { sl: null, why: `deepseek_empty(finish=${finish}・推論${rn}字)` + (finish === "length" ? ":max_tokens不足" : "") };
-        }
+        if (!ds) return { sl: null, why: "deepseek_failed（HTTP・空の答え・時間切れのどれか・[deepseek] のログを見る）" };
+        const text = ds.text;
         const parsed = parseShotLearn(text);
         if (!parsed.fields.length && parsed.screen === "other") return { sl: null, why: "no_fields:" + text.slice(0, 80) };
         return { sl: parsed, why: null };
