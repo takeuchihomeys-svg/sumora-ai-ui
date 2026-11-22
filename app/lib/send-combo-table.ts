@@ -58,9 +58,10 @@ const always = () => true;
 export const SEND_COMBO_ROWS: readonly ComboRow[] = [
   { type: "T11_first_contact_hearing", when: "初回", match: (c) => !!c.firstContact || !!c.hearing, route: "aix", combo: "reply_then_aix_quick", order: "挨拶＋問いや不安への答えの返信 → 数秒〜1分半後に AIX【条件ヒアリング】 → フォームの案内の返信（決まった文・FIRST_HEARING_SEQUENCE）", gap: "秒",
     why: "挨拶と問いへの答えで信頼を作ってからフォーム＝いきなりフォームだと機械的に見える（作業員4 の見極め 6会話中5・本番 12306 は返信を落とした外れ）", purpose: "信頼を作ってから聞く", missing: "エリア・家賃・間取り・入居時期・初期費用の予算", keyPoint: "機械的に見せずに条件をそろえる（問いには先に答える）", count: "11/13 作業員7b 本番の見張り60日の AIX【条件ヒアリング】24番: フォームの前に返信 22・返信→フォーム→返信 19・案内の型 13（久しぶりの探し直し 12306 も同じ形）／6会話中5（作業員4）・11/12 監査 120日（グループを外した 704番）: 初回83番で RA 3・RAR 9（返信＋2分以内の AIX は 6組・間隔の中央 30秒・AIX はほぼ条件ヒアリング）" },
-  { type: "T10_result_ready", when: "結果が手元・悪い知らせ", match: (c) => !!c.resultReady && !!c.badNews, route: "aix", combo: "aix_then_aix", order: "AIX【物件確認した】（募集終了・申込が入っていた）→ 数分後に AIX【物件を送る】（代わりの物件）", gap: "分",
+  // 2026-11-22 作業員M: 型の id に関わらず（物件確認した の結果を送る番は check_order_type が T10 で無い事が多い）・悪い知らせの手がかり（COMBO_BAD_NEWS_CUE）で当たる
+  { type: "*", when: "結果が手元・悪い知らせ", match: (c) => !!c.resultReady && !!c.badNews, route: "aix", combo: "aix_then_aix", order: "AIX【物件確認した】（募集終了・申込が入っていた）→ 数分後に AIX【物件を送る】（代わりの物件）", gap: "分",
     why: "悪い知らせは事実で先に（AIX の決まった形）・次の手は後の返信で（関係が縮まないように）", purpose: "事実を正確に伝えてから次の手で関係をつなぐ", missing: "代わりに合う物件・お客様の気持ち（がっかり）", keyPoint: "悪い知らせを事実で先に・代わりの物件を後に（関係を縮めない）", count: "11/22 作業員M（scripts/audit-combo-unknown-rows.ts・竹内さん本人の番 120日）: 最初の AIX が物件確認した unavailable の 8番＝AIX→AIX 4・AIX だけ 2・2段 1・AIX→返信 1（代わりの物件は返信でなく AIX【物件を送る】で送る＝11/22 に組を aix_then_reply から直した）。比べ: 空いていた 10番＝AIX→返信 4・AIX→AIX 3" },
-  { type: "T10_result_ready", when: "結果が手元（空いていた・見積ができた）", match: (c) => !!c.resultReady, route: "aix", combo: "aix_then_reply", order: "AIX（結果・見積書）→ 返信で内覧・申込への誘い", gap: "分",
+  { type: "T10_result_ready", when: "結果が手元（空いていた・見積ができた）", match: (c) => !!c.resultReady && !c.badNews, route: "aix", combo: "aix_then_reply", order: "AIX（結果・見積書）→ 返信で内覧・申込への誘い", gap: "分",
     why: "結果（事実・金額）は AIX で正確に・誘いは返信で人の言葉で（竹内さん AR 79番＝返信2通以上の番の中で一番多い組）", purpose: "結果を渡して次の段へ進める", missing: "お客様がその結果で決めるか（内覧・申込の意思）", keyPoint: "数字・事実は AIX で正確に、誘いは返信で人の言葉で", count: "200日 AR 79・11/12 監査 120日 AR 56（決める合図 6/24・費用 11/70・物件が届いた 8/80・AIX は見積書が多い）" },
   // 2026-11-13 作業員7b: 条件ヒアリングの番は型の id に関わらず（久しぶりの探し直し 12306 も）同じ組（上の T11 の行と同じ中身・型の id が無い時の受け）
   { type: "*", when: "条件ヒアリング（初回・探し直し）", match: (c) => !!c.hearing, route: "aix", combo: "reply_then_aix_quick", order: "挨拶＋問いや不安への答えの返信 → 数秒後に AIX【条件ヒアリング】 → フォームの案内の返信（決まった文）", gap: "秒",
@@ -123,7 +124,15 @@ export function sendComboDigest(p: SendComboPick | null, type: string | null | u
  *   resultReady: 今すぐ果たせる（now_vs_later.ready_now）か型が T10 ／ twoOpenPromises: 行動台帳でまだ果たしていない約束が2つ以上（ピックアップ・見積・確認）／
  *   multiTopics: turn_contract の問いが2つ以上 ／ hearing: 道の AIX が条件ヒアリング ／ aixKind: 道の AIX の種類
  */
-export function comboCuesFromMeta(meta: Record<string, unknown> | null | undefined): ComboCues {
+/**
+ * 2026-11-22 作業員M（統括役「作ったのに回っていない」型）: badNews の手がかりはどこからも立っていなかった＝悪い知らせの行（11/22 に竹内さんの数えで AIX→AIX に直した）が当たらない。
+ *   ブレインが決めた AIX が【物件確認した】で、ピッカー（meta.check_pattern）が unavailable（募集終了・申込あり）の時だけ立てる。結果が手元（resultReady）も一緒に立てる。
+ *   COMBO_BAD_NEWS_CUE=on の時だけ（既定 off・組の表 SEND_COMBO_TABLE は既定 off＝本番の道と文は変わらない）
+ */
+export function comboBadNewsCueOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.COMBO_BAD_NEWS_CUE ?? "").trim().toLowerCase() === "on";
+}
+export function comboCuesFromMeta(meta: Record<string, unknown> | null | undefined, env?: Record<string, string | undefined>): ComboCues {
   const m = meta ?? {};
   const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
   const route = routeOfMeta(m);
@@ -132,10 +141,12 @@ export function comboCuesFromMeta(meta: Record<string, unknown> | null | undefin
   const open = [facts.pickupPromisedUnfulfilled, facts.estimatePromisedUnfulfilled, facts.confirmationPromisedUnfulfilled].filter((x) => x === true).length;
   const ready = obj(m.now_vs_later)?.ready_now;
   const asks = (obj(m.turn_contract)?.asks ?? []) as Array<{ kind?: unknown }>;
+  const badNews = comboBadNewsCueOn(env) && aixKind === "property_check_result" && String(m.check_pattern ?? "") === "unavailable";
   return {
+    ...(badNews ? { badNews: true } : {}),
     firstContact: m.check_order_type === "T11_first_contact_hearing",
     hearing: aixKind === "condition_hearing",
-    resultReady: m.check_order_type === "T10_result_ready" || (Array.isArray(ready) && ready.length > 0),
+    resultReady: badNews || m.check_order_type === "T10_result_ready" || (Array.isArray(ready) && ready.length > 0),
     twoOpenPromises: open >= 2,
     openPromise: open >= 1,
     multiTopics: Array.isArray(asks) && asks.filter((a) => a?.kind === "question").length >= 2,

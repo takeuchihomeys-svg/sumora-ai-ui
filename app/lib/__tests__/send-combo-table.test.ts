@@ -1,6 +1,6 @@
 // app/lib/__tests__/send-combo-table.test.ts — 返信と AIX の組と順番の型（SEND_COMBO_TABLE）
 //   実行: npx tsx app/lib/__tests__/send-combo-table.test.ts
-import { pickSendCombo, routeOfMeta, sendComboRecord, sendComboMode, sendComboDigest, SEND_COMBO_ROWS } from "../send-combo-table";
+import { pickSendCombo, routeOfMeta, sendComboRecord, sendComboMode, sendComboDigest, SEND_COMBO_ROWS , comboCuesFromMeta, comboBadNewsCueOn } from "../send-combo-table";
 
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean) => { if (ok) pass++; else { fail++; console.error(`NG ${n}`); } };
@@ -34,5 +34,11 @@ t("約束2つ・結果が手元 → AIX→AIX（確認の結果が先）", pickS
 t("約束が1つなら AIX→AIX にしない", pickSendCombo({ type: null, route: "aix", cues: { resultReady: true } })?.combo !== "aix_then_aix");
 t("持ち込みの未確認 → 約束→後で AIX（0f475703）", /0f475703/.test(pickSendCombo({ type: null, route: "two_stage", cues: { broughtUnchecked: true } })?.why ?? ""));
 t("手がかりが無ければ今まで通り", pickSendCombo({ type: null, route: "aix", cues: {} })?.combo === "aix_only" && pickSendCombo({ type: null, route: "two_stage", cues: {} })?.combo === "promise_then_aix_later");
+// 2026-11-22 作業員M: 悪い知らせの手がかり（COMBO_BAD_NEWS_CUE・既定 off）。8番の形（伏せた形）: ブレインの AIX は物件確認した・ピッカーは募集終了
+{ const m = { reply_mode: "aix", action: "property_check_result", check_pattern: "unavailable" };
+  const off = comboCuesFromMeta(m, {}), on = comboCuesFromMeta(m, { COMBO_BAD_NEWS_CUE: "on" });
+  t("悪い知らせの手がかり: 既定 off は立たない・on で立つ（結果が手元も）", !comboBadNewsCueOn({}) && !off.badNews && on.badNews === true && on.resultReady === true);
+  t("on: 悪い知らせの行に当たる（AIX→AIX・代わりの物件）", pickSendCombo({ type: null, route: "aix", cues: on })?.combo === "aix_then_aix");
+  t("空いていた（available）は立たない", !comboCuesFromMeta({ ...m, check_pattern: "available" }, { COMBO_BAD_NEWS_CUE: "on" }).badNews); }
 console.log(`send-combo-table: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
