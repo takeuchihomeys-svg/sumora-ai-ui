@@ -400,7 +400,7 @@ async function main() {
     fillRows.push({ metric: "found:full", value: T.full, n: T.n }, { metric: "found:scene_rule_gap", value: T.sceneGap, n: T.sceneCells }, { metric: "found:scene_rule_gap_strict", value: T.sceneStrict, n: T.sceneCells }, { metric: "found:no_measure", value: T.noMeasure, n: T.n }, { metric: "found:correct_rate", value: T.correctRate, n: T.correctMeasured });
     const { data: qf } = await sb.from("quality_daily").select("metric,value").eq("day", jstDay(now - 86_400_000)).like("metric", "found:%").limit(50);
     const pv = (m: string) => ((qf ?? []) as Array<{ metric: string; value: number | null }>).find((r) => r.metric === m)?.value ?? null;
-    const own = (f: (typeof ff.fill)[number]) => f.cells[0]?.owner ?? "統括役";
+    const own = (f: (typeof ff.fill)[number]) => currentOwnerOf(f.cells[0]?.owner ?? "統括役");
     lines.push(`### 土台の埋まり（欄が全部そろった ${T.full}/${T.n}・場面の決まりの空き ${T.sceneGap}/${T.sceneCells}・物差しの無い土台 ${T.noMeasure}（${T.noMeasureNames.join("・") || "—"}）・正しさ ${T.correctRate ?? "—"}%）`,
       ...ff.fill.filter((f) => f.depth !== "—").map((f) => `- ${f.name}（${own(f)}）: 細かさの段 ${f.depth}・正しさ ${f.correctOk}/${f.correctMeasured}${f.emptyScenes.length ? `・決まりの無い場面 ${f.emptyScenes.length}` : ""}`));
     for (const x of fillNotShrinking(T, { full: pv("found:full"), sceneGap: pv("found:scene_rule_gap"), noMeasure: pv("found:no_measure") }, {
@@ -430,8 +430,8 @@ async function main() {
     `### ① 直しの候補（点検の穴・${gaps.length}）`, ...gaps.slice(0, 10).map((g) => `- ${g}`),
     `### ② 今夜の試験の候補`,
     `- 指摘の直し中で問題のある行: ${examPtr.length ? examPtr.map((p) => `P${p.id}（${p.exam_qids.join(",")}）`).join("・") : "なし"}`,
-    `- 試験中のスイッチ: ${((testing ?? []) as Array<{ id: number; switch_name: string; owner: string | null }>).map((r) => `#${r.id} ${r.switch_name}（${r.owner ?? "-"}）`).join("・") || "なし"}`,
-    `### ③ on の候補（悪化0 済み）`, ...((passed ?? []) as Array<{ id: number; switch_name: string | null; owner: string | null }>).map((r) => `- #${r.id} ${r.switch_name ?? "-"}（${r.owner ?? "-"}）`),
+    `- 試験中のスイッチ: ${((testing ?? []) as Array<{ id: number; switch_name: string; owner: string | null }>).map((r) => `#${r.id} ${r.switch_name}（${currentOwnerOf(r.owner)}）`).join("・") || "なし"}`,
+    `### ③ on の候補（悪化0 済み）`, ...((passed ?? []) as Array<{ id: number; switch_name: string | null; owner: string | null }>).map((r) => `- #${r.id} ${r.switch_name ?? "-"}（${currentOwnerOf(r.owner)}）`),
     `### ④ 竹内さんへの確認（open ${((oq ?? []) as unknown[]).length}件の上位・KB の下書き ${drafts.length}）`,
     ...((oq ?? []) as Array<{ topic: string; question: string; recommended: string | null }>).map((q) => `- ${q.topic}: ${q.question.slice(0, 60)}${q.recommended ? `（推奨: ${q.recommended.slice(0, 40)}）` : ""}`),
     ...drafts.slice(0, 5).map((p) => `- 下書き P${p.id}: ${String(p.kb_draft).slice(0, 80)}`), "",
