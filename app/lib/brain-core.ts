@@ -5961,6 +5961,19 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           finalAix = twoStageRes.direct;
           sceneSignalCheckPattern = null;
         }
+        // 2026-11-23 作業員K2（台帳 #469・COMBINED_PROMISE_CHECK_FIRST・既定 off・combined-promise-check-first.ts）: 確認＋見積の約束の後、お客様が2件以上の物件を
+        //   送ってきていた番は 見積書送る でなく 物件確認した（見積を同封して募集中のお部屋を報告）を先に（120日の竹内さん 7/9・17208）
+        if (finalAix === "estimate_sheet") {
+          const cpc = await import("@/app/lib/combined-promise-check-first");
+          if (cpc.combinedPromiseCheckFirstOn()) {
+            const to = cpc.combinedPromiseCheckFirst(finalAix, messagesOldestFirst, Date.now());
+            if (to) {
+              console.log(JSON.stringify({ tag: "brain:combined-promise-check-first", conversationId, from: finalAix, to }));
+              finalAix = to;
+              decisionSource = `${decisionSource ?? "rule:answerable_direct"}+combined_check_first`;
+            }
+          }
+        }
       }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
