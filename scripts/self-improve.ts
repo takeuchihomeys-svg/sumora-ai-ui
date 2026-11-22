@@ -329,7 +329,9 @@ async function main() {
     try {
       runTsx(["scripts/audit-promise-kept.ts", "--days=30", `--out=${to}`], 300_000);
       const tm = trustMetricsOf(((JSON.parse(readFileSync(to, "utf8")) as { rows?: PromiseKeptRow[] }).rows ?? []));
-      flexRows.push({ metric: "growth:trust:promise_kept", value: tm.rate, n: tm.judged }, { metric: "growth:trust:promise_kept_takeuchi", value: tm.tkRate, n: tm.tkJudged });
+      // 全体の数は scope=all（書き手を問わない）・竹内さん本人の数だけ scope=takeuchi（11/22 夜の確かめで全体が takeuchi に入っていたのを直した）
+      foundRows.push({ metric: "growth:trust:promise_kept", value: tm.rate, n: tm.judged });
+      flexRows.push({ metric: "growth:trust:promise_kept_takeuchi", value: tm.tkRate, n: tm.tkJudged });
       // 2026-11-22 作業員L の名前（台帳 #519・土台の表 n.promise の metric）: in_time ÷（in_time＋late＋overdue）＝上の promise_kept と同じ数（scope=all）
       foundRows.push({ metric: "foundation:promise:kept_in_time", value: tm.rate, n: tm.judged });
       lines.push(`- 信頼（30日・約束を期限内に果たした割合）: ${tm.rate ?? "—"}%（${tm.inTime}/${tm.judged}・期限切れ ${tm.overdue}）・竹内さん本人 ${tm.tkRate ?? "—"}%（${tm.tkJudged}）（台帳 #514）`);
