@@ -5149,6 +5149,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText) && !(routeFix1020("viewing_check_vacancy") && viewingCheckAlsoVacancy(lastStaffText))) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
       }
       promiseAltAction = promiseAix.alt ?? null;
+      // 2026-11-23 作業員K2（台帳 #469・CHECK_PROMISE_ESTIMATE_ALT・既定 off・check-promise-estimate-alt.ts）: 募集状況の確認の約束を果たす番は、空いていれば竹内さんは見積書送る で果たす（結果はスタッフだけが知る）＝2つ目に並べる
+      if (!promiseAltAction) {
+        const cpe = await import("@/app/lib/check-promise-estimate-alt");
+        if (cpe.checkPromiseEstimateAltOn()) {
+          const lst = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
+          const alt = cpe.checkPromiseEstimateAlt({ promiseKind: promiseAix.kind, promiseAction: finalAix ?? null, currentAlt: promiseAltAction, propertyInPlay: estimatePropertyInPlay, lastStaffText: lst?.text ?? null });
+          if (alt) { promiseAltAction = alt; console.log(JSON.stringify({ tag: "brain:check-promise-estimate-alt", conversationId })); }
+        }
+      }
       // 2026-10-22 竹内さんの答え: 新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）＝ブレインが物件の AIX を選んでいればそれを先に
       if (promiseAix.kind === "pickup" && linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival") {
         const nb = newArrivalPickByBrain(promiseAix, llmAixRawC);
