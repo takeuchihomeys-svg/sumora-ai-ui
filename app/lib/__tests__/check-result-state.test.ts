@@ -11,12 +11,17 @@ const t = (min: number, status: string, result: string | null, type = "property_
 ok("タスクが無い → none", checkResultState([], now).state === "none" && checkResultStateText(checkResultState([], now)) === "");
 const p = checkResultState([t(30, "pending", null)], now);
 ok("開いていて結果なし → pending・30分", p.state === "pending" && p.openSinceMin === 30);
-ok("pending の1行は AIX【物件確認した】の番と書く", /AIX【物件確認した】/.test(checkResultStateText(p)) && /返信で結果を作らない/.test(checkResultStateText(p)));
+ok("pending の1行は AIX で届く（物件確認した／空いていれば見積書送る）と書く", /物件確認した／部屋が空いていれば見積書送る/.test(checkResultStateText(p)) && /返信で結果を作らない/.test(checkResultStateText(p)));
 ok("結果あり → on_hand", checkResultState([t(60, "done", "available")], now).state === "on_hand");
 ok("新しいタスクが開いていれば古い結果より pending", checkResultState([t(200, "done", "taken"), t(10, "pending", null)], now).state === "pending");
 ok("新しいタスクに結果があれば on_hand", checkResultState([t(200, "pending", null), t(10, "done", "available")], now).state === "on_hand");
 ok("物件送付のタスクは見ない", checkResultState([t(5, "pending", null, "property_send")], now).state === "none");
-ok("完了で結果なし（AIX 以外で閉じた）→ none（作らない）", checkResultState([t(5, "done", null)], now).state === "none");
+ok("完了で結果なし → done_no_record（確認は済んでいる・記録が無い）", checkResultState([t(5, "completed", null)], now).state === "done_no_record");
+// 会話 65c2df5b・番 12578 の形（古い開いたまま・取り消しと、新しい完了で結果なし）
+const g = checkResultState([t(3000, "pending", null), t(2990, "cancelled", null), t(2900, "completed", null)], now);
+ok("古い開いたまま＋新しい完了（結果なし）→ done_no_record", g.state === "done_no_record" && /済んでいる/.test(checkResultStateText(g)));
+ok("新しい開いたまま＋古い完了（結果なし）→ pending", checkResultState([t(3000, "completed", null), t(20, "pending", null)], now).state === "pending");
+ok("一番新しいのが取り消し → none", checkResultState([t(10, "cancelled", null)], now).state === "none");
 ok("既定 off", checkResultStateOn({}) === false && checkResultStateOn({ CHECK_RESULT_STATE: "on" }) === true);
 
 if (failed) { console.log(`FAIL ${failed}`); process.exit(1); } else console.log("全 PASS");
