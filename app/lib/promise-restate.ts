@@ -11,7 +11,7 @@
 // 使い方（これから）: 書き手への注記（言い直さない約束の中身）か、最終チェックの印。出口で本文を消すのは監査で誤削除0を確かめてから。
 // ■ スイッチ PROMISE_RESTATE_MARK: 既定 off（何もしない）／on（呼ぶ側が印・注記に使う）
 // テスト: app/lib/__tests__/promise-restate.test.ts（実物の言い回しを伏せた形）
-import { topicRepeats, type PromiseTopic } from "@/app/lib/draft-repeat";
+import { topicRepeats, promiseTopics, splitSentencesJa, type PromiseTopic } from "@/app/lib/draft-repeat";
 
 type Env = Record<string, string | undefined>;
 export function promiseRestateMarkOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -47,6 +47,22 @@ const TOPIC_JA: Record<PromiseTopic, string> = { pickup: "物件のピックア�
  *     確認できた時のご連絡・管理会社・審査だけ（AI だけ 12・両方 2＝拾った物の 86% が AI だけ）。
  */
 export const RESTATE_NOTE_TOPICS: ReadonlySet<PromiseTopic> = new Set<PromiseTopic>(["contact", "mgmt", "screening"]);
+/**
+ * 書く前の注記（下書きが無い所で使う・generate-reply の書き手への材料）。2026-11-23 作業員K2（台帳 #442）。
+ *   前のこちらの通（新しい順）に RESTATE_NOTE_TOPICS の約束があり、お客様のこの番が催促でも新しい条件でもない時だけ、
+ *   promiseRestateNote と同じ注記を返す。別の事を確かめる新しい約束まで止めないよう、注記に一言足す。
+ *   見込み（30日 338番の当て・40fbbf6fc）: AI だけが言い直した 12番（確認できた時のご連絡 9・管理会社 2・審査 1）が対象。
+ *   竹内さんたちも言い直した 2番は、この注記で外れうる側。
+ */
+export function promiseRestatePreNote(priorOurTexts: ReadonlyArray<string>, customerTurn: ReadonlyArray<string>): string {
+  const cust = customerTurn.join("\n").normalize("NFKC");
+  if (!cust.trim() || REMINDER_RE.test(cust) || NEW_SCOPE_RE.test(cust)) return "";
+  const topics = new Set<PromiseTopic>();
+  for (const p of priorOurTexts) for (const s of splitSentencesJa(p)) for (const t of promiseTopics(s)) if (RESTATE_NOTE_TOPICS.has(t)) topics.add(t);
+  if (!topics.size) return "";
+  const xs = [...topics].map((t) => TOPIC_JA[t]);
+  return `【前にした約束（言い直さない）】${xs.join("・")}は前の通でもう約束している。この番は同じ約束を書き直さない（お客様が進み具合を聞いた時・新しい条件や物件を足した時だけ言い直す）。別の事を確かめる新しい約束は書いてよい。`;
+}
 /** 書き手への注記（restate だけ・RESTATE_NOTE_TOPICS の中身だけ・無ければ ""） */
 export function promiseRestateNote(hits: ReadonlyArray<RestateHit>): string {
   const xs = [...new Set(hits.filter((h) => h.kind === "restate" && RESTATE_NOTE_TOPICS.has(h.topic)).map((h) => TOPIC_JA[h.topic]))];
