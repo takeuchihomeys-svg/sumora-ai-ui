@@ -11,6 +11,7 @@
 //   数: core:conductor = 竹内さんの番の一手（道）の一致の割合（%）。
 // 実行: npx tsx --env-file=.env.local scripts/check-conductor.ts [--days=7] [--json]
 import { createClient } from "@supabase/supabase-js";
+import { deviceWriterOfWindow, type DeviceWriterMsg } from "../app/lib/staff-writer";
 
 export type MissType = "reply_not_aix" | "aix_not_reply" | "aix_kind" | "reply_content";
 export type Cause = "aix_turn_as_reply" | "misread" | "material";
@@ -32,29 +33,52 @@ export function missOf(verdict: string, brainMode: string | null, brainAction: s
 export async function checkConductor(days = 7) {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,staff_first_at,verdict,brain_reply_mode,brain_action,verdict_detail").gte("customer_turn_at", since).not("verdict", "is", null).neq("verdict", "na").limit(3000);
+  const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,customer_last_at,staff_first_at,verdict,brain_reply_mode,brain_action,verdict_detail").gte("customer_turn_at", since).not("verdict", "is", null).neq("verdict", "na").limit(3000);
   if (error) throw new Error(error.message);
-  type W = { id: number; conversation_id: string; customer_turn_at: string; staff_first_at: string | null; verdict: string; brain_reply_mode: string | null; brain_action: string | null; verdict_detail: Vd | null };
-  const rows = ((data ?? []) as W[]).filter((r) => r.verdict_detail?.staff_writer === "takeuchi");
+  type W = { id: number; conversation_id: string; customer_turn_at: string; customer_last_at?: string | null; staff_first_at: string | null; verdict: string; brain_reply_mode: string | null; brain_action: string | null; verdict_detail: Vd | null };
+  const all = (data ?? []) as W[];
+  const rows = all.filter((r) => r.verdict_detail?.staff_writer === "takeuchi");
+  // 2026-11-23 作業員A（N2・統括役の決め: 2週間は今の数と並べて毎朝の1枚へ）: 端末の記録（messages.staff_writer）で竹内さん本人と決まる番でも数える＝*Device の欄。
+  //   今の数（score・aixScore）は文の癖の印（verdict_detail.staff_writer）のまま＝変えない。癖の印は AIX のテンプレートの文（竹内さんの表記）で従業員の AIX の番も竹内さんと読む
+  //   （60日の AIX の番 193 のうち 93 が端末では従業員）。番の窓は番の最後のお客様の発言の後〜次のお客様の発言（無ければ24時間）
+  const devOf = new Map<number, string | null>();
   // 2026-11-21 統括役の決め: 比べるブレインは「送る直前の判断」＝brain_decision_logs のこちらの最初の送信より前の最新（K2 の audit-aix-first-move と同じ）。
   //   見張りの番のブレイン（line_watch_turns.brain_*）と食い違う割合は、分析し直しで判断が変わる番＝統括の揺れの物差し（sway）として別に出す
   const byConv = new Map<string, W[]>();
-  for (const r of rows) byConv.set(r.conversation_id, [...(byConv.get(r.conversation_id) ?? []), r]);
+  for (const r of all) byConv.set(r.conversation_id, [...(byConv.get(r.conversation_id) ?? []), r]);
   const decOf = new Map<number, { mode: string | null; action: string | null } | null>();
   for (const [c, ws] of byConv) {
     const lo = new Date(Math.min(...ws.map((w) => Date.parse(w.customer_turn_at))) - 86_400_000).toISOString();
     const { data: bs } = await sb.from("brain_decision_logs").select("created_at,suggested_action,suggested_reply_mode").eq("conversation_id", c).gte("created_at", lo).order("created_at").limit(2000);
     const list = (bs ?? []) as Array<{ created_at: string; suggested_action: string | null; suggested_reply_mode: string | null }>;
+    const { data: ms } = await sb.from("messages").select("sender,created_at,staff_writer,staff_writer_source").eq("conversation_id", c).gte("created_at", lo).order("created_at").limit(5000);
+    const msgs = (ms ?? []) as DeviceWriterMsg[];
     for (const w of ws) {
       const until = Date.parse(w.staff_first_at ?? w.customer_turn_at) + 1000;
       const d = [...list].reverse().find((x) => Date.parse(x.created_at) <= until && Date.parse(x.created_at) >= Date.parse(w.customer_turn_at) - 60_000);
       decOf.set(w.id, d ? { mode: d.suggested_reply_mode, action: d.suggested_action } : null);
+      const from = w.customer_last_at ?? w.customer_turn_at;
+      const next = msgs.find((m) => m.sender === "customer" && Date.parse(m.created_at) > Date.parse(from) + 1000);
+      const to = next ? new Date(Date.parse(next.created_at) - 1).toISOString() : new Date(Date.parse(from) + 86_400_000).toISOString();
+      devOf.set(w.id, deviceWriterOfWindow(msgs, from, to)?.writer ?? null);
     }
   }
   const fam = (t: string | null | undefined) => (t === "property_send" || t === "property_recommendation" ? "property" : String(t ?? ""));
   const byType: Record<string, number> = {}, byCause: Record<string, number> = {};
   const ids: Record<string, number[]> = {};
   let n = 0, pathOk = 0, aixTurns = 0, aixOk = 0, sway = 0;
+  // 端末で竹内さん本人の番（同じ決まりで道と AIX の番の一致だけ数える）
+  let nD = 0, pathOkD = 0, aixTurnsD = 0, aixOkD = 0;
+  for (const r of all) {
+    if (devOf.get(r.id) !== "takeuchi") continue;
+    const d = decOf.get(r.id); if (!d) continue;
+    nD++;
+    const decAix = d.mode === "aix" ? fam(d.action) : "";
+    const staffAix = (r.verdict_detail?.staff_aix ?? []).filter(Boolean).map(fam);
+    let miss = false;
+    if (staffAix.length) { aixTurnsD++; miss = !decAix || decAix !== staffAix[0]; if (!miss) aixOkD++; } else if (decAix) miss = true;
+    if (!miss) pathOkD++;
+  }
   for (const r of rows) {
     const d = decOf.get(r.id);
     if (!d) continue; // 直前の判断が無い番は数えない
@@ -77,7 +101,8 @@ export async function checkConductor(days = 7) {
     (ids[m.type] = ids[m.type] ?? []).push(r.id);
   }
   const pct = (x: number, y: number) => (y ? Math.round((x / y) * 1000) / 10 : null);
-  return { days, n, score: pct(pathOk, n), aixTurns, aixScore: pct(aixOk, aixTurns), swayRate: pct(sway, n), byType, byCause, ids };
+  return { days, n, score: pct(pathOk, n), aixTurns, aixScore: pct(aixOk, aixTurns), swayRate: pct(sway, n), byType, byCause, ids,
+    nDevice: nD, scoreDevice: pct(pathOkD, nD), aixTurnsDevice: aixTurnsD, aixScoreDevice: pct(aixOkD, aixTurnsD) };
 }
 
 if (process.argv[1]?.endsWith("check-conductor.ts")) {
@@ -85,6 +110,7 @@ if (process.argv[1]?.endsWith("check-conductor.ts")) {
   checkConductor(days).then((r) => {
     if (process.argv.includes("--json")) { console.log(JSON.stringify(r)); return; }
     console.log(`統括の判断（${r.days}日・竹内さんの番 ${r.n}・送る直前の判断で道の一致 ${r.score ?? "—"}%・AIX を送った番 ${r.aixTurns} で ${r.aixScore ?? "—"}%・見張りのブレインと直前の判断の食い違い（揺れ）${r.swayRate ?? "—"}%）`);
+    console.log(`- 端末の記録で竹内さん本人の番（*Device）: ${r.nDevice} 番で道の一致 ${r.scoreDevice ?? "—"}%・AIX を送った番 ${r.aixTurnsDevice} で ${r.aixScoreDevice ?? "—"}%`);
     console.log(`- 外れの種類: ${JSON.stringify(r.byType)}`);
     console.log(`- 原因: ${Object.entries(r.byCause).map(([k, n]) => `${CAUSE_JA[k as Cause]} ${n}`).join("・") || "なし"}`);
     for (const [k, xs] of Object.entries(r.ids)) console.log(`- 試験の問題の候補（${k}）: 見張りの番 ${xs.slice(0, 10).join(",")}`);

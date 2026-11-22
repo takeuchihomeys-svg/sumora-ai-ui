@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/promise-restate.test.ts
 // 2026-11-21 作業員K2（台帳 #442）: 約束の言い直しの見分け（PROMISE_RESTATE_MARK・既定 off）。言い回しは竹内さんたちの実送信の形（名前・物件は伏せた）
 import assert from "node:assert/strict";
-import { promiseRestates, promiseRestateNote, promiseRestateMarkOn } from "../promise-restate";
+import { promiseRestates, promiseRestateNote, promiseRestateMarkOn, promiseRestatePreNote } from "../promise-restate";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -30,5 +30,20 @@ t("確認できた時のご連絡の言い直しは注記に出す（30日 AI �
   const h = promiseRestates("ありがとうございます！！確認出来次第ご連絡させて頂きます😌！！", prior2, ["ありがとうございます！"]);
   assert.ok(h.some((x) => x.kind === "restate" && x.topic === "contact"), JSON.stringify(h));
   assert.ok(promiseRestateNote(h).includes("確認できた時のご連絡"));
+});
+// 2026-11-23（書く前の注記・下書きが無い所）
+const priorMgmt = ["かしこまりました！！管理会社に確認させて頂き、確認出来次第ご連絡させて頂きます！！"];
+t("書く前: 前に確認のご連絡の約束・お礼だけの番＝注記を出す", () => {
+  const note = promiseRestatePreNote(priorMgmt, ["ありがとうございます！よろしくお願いします"]);
+  assert.ok(note.includes("確認できた時のご連絡") && note.includes("管理会社への確認"), note);
+  assert.ok(note.includes("別の事を確かめる新しい約束は書いてよい"));
+});
+t("書く前: 催促・新しい条件の番は出さない", () => {
+  assert.equal(promiseRestatePreNote(priorMgmt, ["その後どうなりましたか？"]), "");
+  assert.equal(promiseRestatePreNote(priorMgmt, ["駐車場も空いてるか知りたいです"]), "");
+});
+t("書く前: ピックアップの約束だけ・お客様の文が空なら出さない", () => {
+  assert.equal(promiseRestatePreNote(prior, ["ありがとうございます"]), "");
+  assert.equal(promiseRestatePreNote(priorMgmt, []), "");
 });
 console.log(`${n} ok`);

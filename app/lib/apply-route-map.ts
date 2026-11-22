@@ -21,6 +21,7 @@ import type { RouteType } from "./brain-route-type";
 import type { SceneId } from "./aix-scene-evidence";
 import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
 import { latestRankMention } from "./parallel-second";
+import { withRefinedNext } from "./apply-route-next";
 
 const N = (s: string | null | undefined) => String(s ?? "").normalize("NFKC");
 
@@ -202,6 +203,8 @@ export type ApplyRouteSignals = {
   farMoveIn?: boolean | null;
   /** 最後の発言がこちら（スタッフ・AIX）の時、その時刻（お客様が最後なら null） */
   lastStaffAtIfStaffLast?: string | null;
+  /** 2026-11-23 作業員R（#608）: 一番近い内覧の日（customer-state の upcomingViewing.ymd）。APPLY_ROUTE_NEXT_BY_TURN=on の時だけ次の一手の選び直しに使う（位置は変えない） */
+  upcomingViewingYmd?: string | null;
   nowMs?: number;
 };
 
@@ -322,6 +325,7 @@ export function buildApplyRouteBrainText(loc: ApplyRouteLocation): string {
 /** brain-core から呼ぶ入口。off の時は必ず空文字（プロンプトを変えない） */
 export function applyRouteBrainTextIfEnabled(s: ApplyRouteSignals, env?: Record<string, string | undefined>): { text: string; loc: ApplyRouteLocation | null } {
   if (!applyRouteMapEnabled(env)) return { text: "", loc: null };
-  const loc = locateApplyRoute(s);
+  // 2026-11-23 作業員R（#608）: APPLY_ROUTE_NEXT_BY_TURN=on（既定 off）の時だけ、次の一手の候補を番の型・内覧の日で選び直す（apply-route-next.ts・off は同じ物を返す）
+  const loc = withRefinedNext(locateApplyRoute(s), { routeType: s.routeType ?? null, upcomingViewingYmd: s.upcomingViewingYmd ?? null, nowMs: s.nowMs }, env);
   return { text: buildApplyRouteBrainText(loc), loc };
 }

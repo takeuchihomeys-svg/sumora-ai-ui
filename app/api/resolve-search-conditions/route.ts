@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { callDeepSeek } from "@/app/lib/vision-alt-provider";
 
 // ── 市区名 → リアプロ city_code（popup-maps.js の WARD_CODE_MAP と同期）──────
 const WARD_CODE_MAP: Record<string, string> = {
@@ -172,33 +173,14 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return [];
   try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(20_000),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 300,
-        // systemに静的指示を分離 → DeepSeekの自動プレフィックスキャッシュが効く
-        messages: [
-          {
-            role: "system",
-            content: "あなたは大阪府の鉄道路線に詳しいアシスタントです。指定された駅から電車で到達できる大阪府内の駅をJSON配列で返してください。駅名には「駅」を付けず、実在する正式名のみ使用。出力はJSON配列のみ: [\"駅名1\", \"駅名2\", ...]",
-          },
-          {
-            role: "user",
-            content: `「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を10〜20駅列挙してください。`,
-          },
-        ],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    // 2026-11-23 作業員G（台帳 #599）: callDeepSeek を通す（費用の記録が残る・system と中身・時間・温度は今と同じ）
+    // systemに静的指示を分離 → DeepSeekの自動プレフィックスキャッシュが効く
+    const ds = await callDeepSeek(
+      "あなたは大阪府の鉄道路線に詳しいアシスタントです。指定された駅から電車で到達できる大阪府内の駅をJSON配列で返してください。駅名には「駅」を付けず、実在する正式名のみ使用。出力はJSON配列のみ: [\"駅名1\", \"駅名2\", ...]",
+      `「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を10〜20駅列挙してください。`,
+      { apiKey, model: "deepseek-chat", maxTokens: 300, timeoutMs: 20_000, effort: "", temperature: 0 });
+    if (!ds) return [];
+    const raw = ds.text;
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]) as unknown[];
@@ -236,38 +218,19 @@ async function resolveTokenWithDeepSeek(token: string): Promise<TokenResolution 
   if (!apiKey) return null;
   try {
     const wardNames = Object.keys(WARD_CODE_MAP).join("、");
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(20_000),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 300,
-        // systemに静的指示＋wardNamesリストを分離 → DeepSeekの自動プレフィックスキャッシュが効く
-        // （wardNamesは毎回同じ静的リストのため、systemに置くとキャッシュヒット率が高い）
-        messages: [
-          {
-            role: "system",
-            content: `あなたは大阪府の地名・駅名に詳しいアシスタントです。入力されたテキストが大阪府の駅名または市区名のどちらに対応するかをJSONで返してください。
+    // 2026-11-23 作業員G（#599）: callDeepSeek を通す（system と中身・時間・温度は今と同じ）
+    // systemに静的指示＋wardNamesリストを分離 → DeepSeekの自動プレフィックスキャッシュが効く
+    // （wardNamesは毎回同じ静的リストのため、systemに置くとキャッシュヒット率が高い）
+    const ds = await callDeepSeek(
+      `あなたは大阪府の地名・駅名に詳しいアシスタントです。入力されたテキストが大阪府の駅名または市区名のどちらに対応するかをJSONで返してください。
 駅名の場合: {"type":"station","names":["駅名1","駅名2"]}
 市区名の場合: {"type":"ward","names":["大阪市◯◯区","△△市"]}
 どちらでもない場合: {"type":"unknown"}
 ルール: 駅名には「駅」を付けない。実在する正式名のみ使用。市区名は以下のリストにある名前のみ使用: ${wardNames}`,
-          },
-          {
-            role: "user",
-            content: `「${token}」はどの駅名または市区名に対応しますか？JSONのみ返してください。`,
-          },
-        ],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const raw = (data.choices[0]?.message?.content ?? "").trim();
+      `「${token}」はどの駅名または市区名に対応しますか？JSONのみ返してください。`,
+      { apiKey, model: "deepseek-chat", maxTokens: 300, timeoutMs: 20_000, effort: "", temperature: 0 });
+    if (!ds) return null;
+    const raw = ds.text;
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as { type?: unknown; names?: unknown };

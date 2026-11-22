@@ -9,6 +9,7 @@ import { readRelativeArea, readRideAsks, extLines, type AreaPlan } from "@/app/l
 import { customerAreaPlan } from "@/app/lib/area-want";
 import { desiredKeys, loadSearchKnowledge } from "@/app/lib/property-search-knowledge-server";
 import { cityAllWards, isCityNameNotStation } from "@/app/lib/city-all-wards";
+import { callDeepSeek } from "@/app/lib/vision-alt-provider";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -335,22 +336,12 @@ async function resolveNearbyWithDeepSeek(
     const contextNote = lineContext ? `\n\n参考（路線・駅の順序情報）:\n${lineContext}` : "";
     // タイムアウト: Chrome拡張の15秒枠内に収めるため9秒に制限
     // (Claude NL抽出~3秒 + DeepSeek~9秒 + バッファ3秒 = 15秒以内)
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(9_000),
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 300,
-        messages: [{ role: "user", content:
-          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。${whitelist}${contextNote}\nJSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
-        }],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    // 2026-11-23 作業員G（台帳 #599）: 直の fetch をやめて callDeepSeek を通す（費用の記録が残る）。中身・時間・温度は今と同じ（推論の指定は送らない＝effort ""）
+    const ds = await callDeepSeek(null,
+      `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。${whitelist}${contextNote}\nJSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
+      { apiKey, model: "deepseek-chat", maxTokens: 300, timeoutMs: 9_000, effort: "", temperature: 0 });
+    if (!ds) return [];
+    const raw = ds.text;
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]) as unknown[];
@@ -385,20 +376,12 @@ async function resolveNearbyByBicycle(
     const stationWhitelist = knownStations.length > 0
       ? `\n駅名は必ず以下のリスト内のみ使用してください:\n[${knownStations.slice(0, 300).join(", ")}]`
       : "";
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(9_000), // Chrome拡張15秒枠内に収めるため9秒
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 300,
-        messages: [{ role: "user", content:
-          `大阪府で「${baseStation}駅」から自転車で${minutes}分以内に行ける大阪府内の駅・エリアを列挙してください。\n自転車移動のため路線ではなく距離・時間で判断してください。${stationWhitelist}\nJSONのみ: {"stations":["駅名（駅なし）"],"wards":["大阪市〇〇区"]}\n駅名5〜15件・区名3〜8件程度。架空の駅・区は含めないこと。` }],
-      }),
-    });
-    if (!res.ok) return { stations: [], wards: [] };
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const text = (data.choices?.[0]?.message?.content ?? "").trim();
+    // 2026-11-23 作業員G（#599）: callDeepSeek を通す（中身・時間は今と同じ・温度の指定なしも同じ）
+    const ds = await callDeepSeek(null,
+      `大阪府で「${baseStation}駅」から自転車で${minutes}分以内に行ける大阪府内の駅・エリアを列挙してください。\n自転車移動のため路線ではなく距離・時間で判断してください。${stationWhitelist}\nJSONのみ: {"stations":["駅名（駅なし）"],"wards":["大阪市〇〇区"]}\n駅名5〜15件・区名3〜8件程度。架空の駅・区は含めないこと。`,
+      { apiKey, model: "deepseek-chat", maxTokens: 300, timeoutMs: 9_000, effort: "" });
+    if (!ds) return { stations: [], wards: [] };
+    const text = ds.text;
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { stations: [], wards: [] };
     const parsed = JSON.parse(match[0]) as { stations?: unknown[]; wards?: unknown[] };
@@ -463,22 +446,12 @@ async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfer
     const lineWhitelist = knownLines.length > 0
       ? `\n必ず以下のリスト内の路線名のみ返してください:\n[${knownLines.join(", ")}]`
       : "\n大阪府内の路線のみ対象。";
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000), // Chrome拡張15秒枠内に収めるため8秒
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 200,
-        messages: [{ role: "user", content:
-          `大阪府で「${baseStation}駅」から${condition}で行ける路線名を列挙してください。${lineWhitelist}\nJSONの配列形式のみで返してください: ["路線名1", "路線名2", ...]\n10路線程度。`,
-        }],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    // 2026-11-23 作業員G（#599）: callDeepSeek を通す（中身・時間・温度は今と同じ）
+    const ds = await callDeepSeek(null,
+      `大阪府で「${baseStation}駅」から${condition}で行ける路線名を列挙してください。${lineWhitelist}\nJSONの配列形式のみで返してください: ["路線名1", "路線名2", ...]\n10路線程度。`,
+      { apiKey, model: "deepseek-chat", maxTokens: 200, timeoutMs: 8_000, effort: "", temperature: 0 });
+    if (!ds) return [];
+    const raw = ds.text;
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]) as unknown[];
@@ -497,27 +470,15 @@ async function normalizeAreaWithDeepSeek(desired_area: string): Promise<string |
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return null;
   try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(8_000),
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 100,
-        messages: [{ role: "user", content:
-          `大阪府の不動産検索用エリア入力を正規化してください。\n` +
-          `ひらがな・略称・口語表現を正式な駅名または行政地名に変換し、スペースまたは「・」区切りで出力してください。\n` +
-          `変換できない部分（通勤時間等）はそのまま保持してください。\n` +
-          `変換例: "なんば"→"難波", "天六"→"天神橋筋六丁目", "うめだ"→"梅田", "てんのうじ"→"天王寺"\n` +
-          `テキストのみ出力（説明不要）。\n\nエリア: "${desired_area}"`,
-        }],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const text = (data.choices[0]?.message?.content ?? "").trim();
-    return text || null;
+    // 2026-11-23 作業員G（#599）: callDeepSeek を通す（中身・時間・温度は今と同じ）
+    const ds = await callDeepSeek(null,
+      `大阪府の不動産検索用エリア入力を正規化してください。\n` +
+      `ひらがな・略称・口語表現を正式な駅名または行政地名に変換し、スペースまたは「・」区切りで出力してください。\n` +
+      `変換できない部分（通勤時間等）はそのまま保持してください。\n` +
+      `変換例: "なんば"→"難波", "天六"→"天神橋筋六丁目", "うめだ"→"梅田", "てんのうじ"→"天王寺"\n` +
+      `テキストのみ出力（説明不要）。\n\nエリア: "${desired_area}"`,
+      { apiKey, model: "deepseek-chat", maxTokens: 100, timeoutMs: 8_000, effort: "", temperature: 0 });
+    return ds?.text || null;
   } catch (e) {
     console.warn("[resolve-area] DeepSeek normalize error:", e instanceof Error ? e.message : e);
     return null;
