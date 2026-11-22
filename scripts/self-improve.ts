@@ -342,6 +342,14 @@ async function main() {
     if (ps && typeof ps.n === "number") { avRows.push({ metric: "growth:pickup_select:理由あり", value: ps.rate ?? null, n: ps.n }); lines.push(`- ピックアップを選んだ理由が結び付いた割合（7日）: ${ps.rate ?? "—"}%（${ps.why ?? 0}/${ps.n}・ピックアップの行が無い ${ps.no_pickup_row ?? "—"}）（作業員K2）`); }
     const cn = jsonOf<{ total?: number; empty?: number; filled_rate?: number | null }>("scripts/audit-check-name-fill.ts");
     if (cn && typeof cn.total === "number") { avRows.push({ metric: "growth:check_name:埋まり", value: cn.filled_rate ?? null, n: cn.total }); lines.push(`- 物件確認の名前の埋まり（7日）: ${cn.filled_rate ?? "—"}%（空 ${cn.empty ?? 0}/${cn.total}）（作業員K2）`); }
+    // 2026-11-22 K2 の頼みの3本目: 番が来た時だけ書く記録（カウンターキッチンの画像の読み・刺さった点）が「番が来ていない0」か「来たのに書いていない0」か（on にした時刻より後の番だけ）
+    const ew = jsonOf<{ ck?: { came?: number; wrote?: number }; hook?: { came?: number; wrote?: number } }>("scripts/audit-event-write-gaps.ts");
+    if (ew && (ew.ck || ew.hook)) {
+      avRows.push({ metric: "growth:event_write:ck_came", value: Number(ew.ck?.came ?? 0), n: null }, { metric: "growth:event_write:ck_wrote", value: Number(ew.ck?.wrote ?? 0), n: Number(ew.ck?.came ?? 0) },
+        { metric: "growth:event_write:hook_came", value: Number(ew.hook?.came ?? 0), n: null }, { metric: "growth:event_write:hook_wrote", value: Number(ew.hook?.wrote ?? 0), n: Number(ew.hook?.came ?? 0) });
+      lines.push(`- 番が来た時だけ書く記録（7日）: カウンターキッチン 来た ${ew.ck?.came ?? 0}・書いた ${ew.ck?.wrote ?? 0}｜刺さった点 来た ${ew.hook?.came ?? 0}・書いた ${ew.hook?.wrote ?? 0}（作業員K2）`);
+      if ((ew.ck?.came ?? 0) > (ew.ck?.wrote ?? 0) || (ew.hook?.came ?? 0) > (ew.hook?.wrote ?? 0)) growthFix.push(`番が来たのに書いていない記録がある（カウンターキッチン ${ew.ck?.wrote ?? 0}/${ew.ck?.came ?? 0}・刺さった点 ${ew.hook?.wrote ?? 0}/${ew.hook?.came ?? 0}）→ 作業員K2`);
+    }
     if (existsSyncPU("scripts/audit-aix-ack-and-fresh.ts")) {
       const ao = join(tmpdir(), `aix-ack-fresh-${process.pid}.json`);
       try {
