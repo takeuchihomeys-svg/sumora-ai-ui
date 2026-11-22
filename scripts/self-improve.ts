@@ -226,6 +226,13 @@ async function main() {
     if (cc) {
       coreRows.push({ metric: "core:conductor", value: cc.score, n: cc.n });
       coreRows.push({ metric: "core:conductor_aix", value: cc.aixScore, n: cc.aixTurns }, { metric: "core:conductor_sway", value: cc.swayRate, n: cc.n });
+      // 2026-11-23 統括役の決め（作業員A の照らし）: 竹内さんの番を端末の記録（messages.staff_writer）で選び直した数を、今の数（文の癖で選ぶ）と並べる（2週間並べて実物で確かめてから既定の切り替えを竹内さんに聞く）。
+      //   欄は作業員A が checkConductor に足す（scoreDevice・nDevice・aixScoreDevice・aixTurnsDevice）。まだ無い版では出さない
+      const dv = cc as unknown as { scoreDevice?: number | null; nDevice?: number | null; aixScoreDevice?: number | null; aixTurnsDevice?: number | null };
+      if (dv.nDevice != null || dv.aixTurnsDevice != null) {
+        coreRows.push({ metric: "core:conductor_device", value: dv.scoreDevice ?? null, n: dv.nDevice ?? null }, { metric: "core:conductor_aix_device", value: dv.aixScoreDevice ?? null, n: dv.aixTurnsDevice ?? null });
+        lines.push(`- 端末の記録で竹内さんの番を選んだ時: 道の一致 ${dv.scoreDevice ?? "—"}%（${dv.nDevice ?? "—"}番）・AIX の番 ${dv.aixScoreDevice ?? "—"}%（${dv.aixTurnsDevice ?? "—"}番）｜今の数（文の癖）: ${cc.score ?? "—"}%（${cc.n}番）・AIX ${cc.aixScore ?? "—"}%（${cc.aixTurns}番）（作業員A・2週間並べる）`);
+      }
       lines.push(`### 芯: 統括の判断（竹内さんの番 7日 ${cc.n}・送る直前の判断で道の一致 ${cc.score ?? "—"}%・AIX の番 ${cc.aixTurns} で ${cc.aixScore ?? "—"}%・揺れ ${cc.swayRate ?? "—"}%）`, `- 外れの種類: ${JSON.stringify(cc.byType)}`, `- 原因: ${Object.entries(cc.byCause).map(([k, n]) => `${CAUSE_JA[k as Cause]} ${n}`).join("・") || "なし"}`, ...Object.entries(cc.ids).map(([k, xs]) => `- 試験の問題の候補（${k}）: 見張りの番 ${xs.slice(0, 8).join(",")}`));
       const top = Object.entries(cc.byCause).sort((x, y) => y[1] - x[1])[0];
       // 2026-11-22 作業員N2（統括役・#433 の D）: 統括の学び（conductor_lessons の今の行の数）と、それを読んだ番（7日の brain_decision_logs で digest に ls がある番）。今は 0 行＝0 を書く（回っていると分かるように）

@@ -97,7 +97,7 @@ async function readImage(mode: CropPlan["mode"], dataUrl: string, extraUrl?: str
   // 温度 0（2026-09-25 正解表: 既定のままだと同じ資料で水回り・部屋の関係の読みが回ごとに入れ替わった）
   // 2026-09-25 竹内「読み取り必ず DeepSeek で」: 答えない・崩れた時は**同じ前置き・推論なしのまま1回だけ**読み直す（callDeepSeekRead・キャッシュが当たる）。
   //   Claude には倒さない。2回とも駄目なら image=null（呼び出し側が「読み取れなかった」の印・🔍 で読み直せる＝保存しない）
-  const read = await callDeepSeekRead(null, content, { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS }, (t) => parseSheetImageFacts(t));
+  const read = await callDeepSeekRead(null, content, { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS, action: "sheet_read" }, (t) => parseSheetImageFacts(t));
   for (const a of read.attempts) {
     usage.push({ model: a.res?.model ?? "deepseek-flash", input: a.res?.usage.input ?? 0, output: a.res?.usage.output ?? 0, cacheHit: a.res?.usage.cacheHit ?? 0, ms: a.ms, retry: a.retry, ok: a.ok, section });
   }
@@ -113,7 +113,7 @@ async function readImage(mode: CropPlan["mode"], dataUrl: string, extraUrl?: str
   //   推論なし・温度0 で同じ物を送り直しても同じ答えになるので、ここだけ推論 low を残す。llm_usage_logs 14日: 推論 low の読み直し 6回・空の返事 0回・中央 44秒。
   //   空・崩れても1回目の答え（f1）を使う＝ Claude には倒さない。sys_head は「読み直し・推論」で失敗の読み直しと分ける
   const t1 = Date.now();
-  const r2 = await callDeepSeek(null, content, { effort: "low", maxTokens: SHEET_RETRY_MAX_TOKENS, timeoutMs: RETRY_TIMEOUT_MS });
+  const r2 = await callDeepSeek(null, content, { effort: "low", maxTokens: SHEET_RETRY_MAX_TOKENS, timeoutMs: RETRY_TIMEOUT_MS, action: "sheet_read_retry" });
   const f2 = r2 ? parseSheetImageFacts(r2.text) : null;
   usage.push({ model: r2?.model ?? "deepseek-flash", input: r2?.usage.input ?? 0, output: r2?.usage.output ?? 0, cacheHit: r2?.usage.cacheHit ?? 0, ms: Date.now() - t1, retry: true, think: true, ok: !!f2, section });
   if (f2 && f2.fp_ok) return { image: f2, usage };
@@ -247,7 +247,7 @@ export async function judgeWantsByText(text: SheetTextFacts, image: SheetImageFa
   };
   // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」: 固定の頭（WANTS_JUDGE_HEAD）が先頭・物件の事実と希望は後ろ（テストで見張る）。
   //   温度 0 を足した（旧は既定の温度で、同じ事実×同じ希望でも答えが揺れうる）。答えない・崩れた時は同じ文で1回だけ読み直す。Claude には倒さない
-  const read = await callDeepSeekRead(null, buildWantsJudgePrompt(JSON.stringify(facts), wantsToText(wants)), { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: 30_000 }, (t) => parseWantsJudgeReply(t, wants));
+  const read = await callDeepSeekRead(null, buildWantsJudgePrompt(JSON.stringify(facts), wantsToText(wants)), { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: 30_000, action: "sheet_wants_judge" }, (t) => parseWantsJudgeReply(t, wants));
   const usage: SheetUsage[] = read.attempts.map((a) => ({ model: a.res?.model ?? "deepseek-flash", input: a.res?.usage.input ?? 0, output: a.res?.usage.output ?? 0, cacheHit: a.res?.usage.cacheHit ?? 0, ms: a.ms, retry: a.retry, ok: a.ok, section: "wants_text" }));
   return { checks: read.value ?? [], usage, failed: read.failed };
 }

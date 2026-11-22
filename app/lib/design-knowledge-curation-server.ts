@@ -54,7 +54,7 @@ export async function judgeSimilarPairs(pairs: CandidatePair[], opts: { max?: nu
   for (const p of pairs.slice(0, opts.max ?? 120)) {
     if (retired.has(p.a.id) || retired.has(p.b.id)) continue;
     calls++;
-    const res = await callDeepSeek(SIMILAR_SYSTEM, similarPrompt(p.a, p.b), { thinking: false, temperature: 0, maxTokens: 120, timeoutMs: 30_000 });
+    const res = await callDeepSeek(SIMILAR_SYSTEM, similarPrompt(p.a, p.b), { thinking: false, temperature: 0, maxTokens: 120, timeoutMs: 30_000, action: "kb_curate_similar" });
     const j = res ? parseSimilar(res.text) : null;
     if (!j) { failed++; review.push({ kind: "similar", ids: [p.a.id, p.b.id], relation: "unknown", note: `似ている（近さ/本文 ${p.body.toFixed(2)}・題 ${p.title.toFixed(2)}）・判定なし` }); continue; }
     const plan = planFromRelation(p.a, p.b, j.relation, j.reason, p.body, p.src ?? (p.title === 0 ? "embedding" : "lexical"));
