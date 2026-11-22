@@ -15,6 +15,6 @@ ok("確かな欄の数は丸ごと読んだ時と同じ", countLearnedSolid(slim
 ok("丸ごと読んだ行はそのまま", toHistRow({ bundle: full, created_at: "x" }).bundle === full);
 ok("無い欄は足さない", Object.keys(toHistRow({ created_at: "x", shots }).bundle as object).length === 1);
 ok("読む欄は3つと時刻だけ", /shots:bundle->shots/.test(HISTORY_SLIM_SELECT) && !/\bbundle,/.test(HISTORY_SLIM_SELECT));
-ok("既定 off", learnHistorySlimOn({}) === false && learnHistorySlimOn({ LEARN_HISTORY_SLIM: "on" }) === true);
+ok("既定 on", learnHistorySlimOn({}) === true && learnHistorySlimOn({ LEARN_HISTORY_SLIM: "off" }) === false);
 
 if (failed) { console.log(`FAIL ${failed}`); process.exit(1); } else console.log("全 PASS");

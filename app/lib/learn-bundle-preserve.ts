@@ -68,10 +68,11 @@ type HistRow = { bundle: unknown; created_at?: string };
 /**
  * 2026-11-21 作業員G（台帳 #588・②）: 引き継ぎで前の束を丸ごと（bundle 列）読んでいた（束の作り直し1回で 31MB）。
  *   引き継ぎが使うのは shots・foundation_audit・scene_flows の3つだけなので、その3つだけを読む（中身の決め方は変えない）。
- *   既定 off（LEARN_HISTORY_SLIM=on）
+ *   既定 on（11/22・止める LEARN_HISTORY_SLIM=off）
  */
 export function learnHistorySlimOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LEARN_HISTORY_SLIM ?? "").trim().toLowerCase() === "on";
+  // 2026-11-22 土台の点検の on/off で全 F の差 0 を確かめて既定 on（止める: LEARN_HISTORY_SLIM=off）
+  return (env.LEARN_HISTORY_SLIM ?? "").trim().toLowerCase() !== "off";
 }
 export const HISTORY_SLIM_SELECT = "created_at,shots:bundle->shots,foundation_audit:bundle->foundation_audit,scene_flows:bundle->scene_flows";
 function historySelect(): string { return learnHistorySlimOn() ? HISTORY_SLIM_SELECT : "bundle,created_at"; }
