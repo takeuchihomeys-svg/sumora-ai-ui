@@ -148,3 +148,18 @@ t("返事が続く番は束の後の判断（burstAfter）", () => {
   assert.equal(on.after, "apply_prep"); assert.equal(on.outcome, "advanced");
 });
 console.log("guide-burst-after ok");
+// 2026-11-23 作業員L（作業員R の見つけ）: cp の時代の判断は sgOnly で数えない
+import { decisionOfDigest } from "../../../scripts/lib/guide-measure";
+t("cp から取った駅は sgOnly で外す", () => {
+  assert.deepEqual(decisionOfDigest("x", { sg: "proposing", cp: "proposing" }), { created_at: "x", stage: "proposing", from: "sg" });
+  assert.deepEqual(decisionOfDigest("x", { cp: "viewing" }), { created_at: "x", stage: "viewing", from: "cp" });
+  const msgs = [
+    { sender: "customer", text: "この部屋どうですか", created_at: at(0) },
+    { sender: "staff", text: "確認させて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "ありがとうございます", created_at: at(2) },
+  ];
+  const ds = [decisionOfDigest(at(0.5), { cp: "proposing" }), decisionOfDigest(at(2.5), { cp: "proposing" })];
+  assert.equal(guideTurnsOf("c1", msgs, [], ds).length, 1);
+  assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { sgOnly: true }).length, 0);
+});
+console.log("guide-sg-only ok");

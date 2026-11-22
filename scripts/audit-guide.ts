@@ -6,7 +6,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-guide.ts [--days=60] [--max-conv=400] [--json=<出力>] [--write（cron_run_logs に guide-measure の1行）]
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { guideTurnsOf, guideTable, reactionTable, OUTCOME_JA, type GMsg, type GAix, type GDecision, type GuideTurn } from "./lib/guide-measure";
+import { guideTurnsOf, guideTable, reactionTable, OUTCOME_JA, type GMsg, type GAix, type GDecision, type GuideTurn , decisionOfDigest } from "./lib/guide-measure";
 import { NO_LINE_TEST_CONVERSATION_IDS, STAFF_INTERNAL_CONVERSATION_IDS, YUMA_CONVERSATION_ID } from "../app/lib/test-conversations";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -27,8 +27,8 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", since).limit(500),
       sb.from("brain_decision_logs").select("created_at, digest").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
     ]);
-    const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
-    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait"), viewingWait: process.argv.includes("--viewing-wait"), burstAfter: process.argv.includes("--burst-after") })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
+    const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => decisionOfDigest(x.created_at, x.digest));
+    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait"), viewingWait: process.argv.includes("--viewing-wait"), burstAfter: process.argv.includes("--burst-after"), sgOnly: process.argv.includes("--sg-only") })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
   }
   const by = (o: string) => turns.filter((t) => t.outcome === o).length;
   const summary = `誘導の物差し（${days}日・会話 ${convs.length}・竹内さん本人の番 ${turns.length}・駅が分かる番 ${turns.filter((t) => t.before).length}）: ${(["advanced", "engaged", "stuck", "back", "left"] as const).map((o) => `${OUTCOME_JA[o]} ${by(o)}`).join("・")}`;

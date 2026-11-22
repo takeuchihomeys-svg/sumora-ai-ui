@@ -13,7 +13,13 @@ import { MAIN_ROUTE, type RouteNodeId } from "../../app/lib/apply-route-map";
 
 export type GMsg = { sender: string; text: string | null; created_at: string; staff_writer?: string | null; is_aix_generated?: boolean | null };
 export type GAix = { aix_type: string | null; sent_at: string | null; created_at: string };
-export type GDecision = { created_at: string; stage: string | null };
+/** from: 駅をどの欄から取ったか（sg＝customer_stage_now・11/03 05:41Z から／cp＝ブレインの5段・それより前）。2026-11-23 作業員R の見つけ: cp は駅の中の進み（提案中→見積→内覧予定）が見えない */
+export type GDecision = { created_at: string; stage: string | null; from?: "sg" | "cp" | null };
+/** digest → 判断の行（sg が無ければ cp・どちらから取ったかの印つき） */
+export function decisionOfDigest(createdAt: string, digest: { sg?: string | null; cp?: string | null } | null | undefined): GDecision {
+  const sg = digest?.sg ?? null, cp = digest?.cp ?? null;
+  return { created_at: createdAt, stage: sg ?? cp ?? null, from: sg ? "sg" : cp ? "cp" : null };
+}
 export type Outcome = "advanced" | "engaged" | "stuck" | "back" | "left";
 export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）・内覧待ち（viewingWait の時）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
 
@@ -62,7 +68,9 @@ export const PROMISE_FULFIL_H = 72;
  * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
  *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
  */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean } = {}): GuideTurn[] {
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean; sgOnly?: boolean } = {}): GuideTurn[] {
+  // 2026-11-23 作業員L（作業員R の見つけ・台帳 #102・#414）: opts.sgOnly（既定 false＝今と同じ）の時は、cp から駅を取った判断を使わない
+  //   （11/03 より前は sg が無く、cp の5段では駅の中で進んでも「止まった」に数えられる）。直前の判断が cp だけの番は数えない
   // 2026-11-23 作業員L（台帳 #102・統括役の頼み）: 返事の後の駅は「返事の始まりの後の最初の判断」で取っていた。お客様が続けて質問し同じ流れで
   //   次の段へ進んだ番（11/23 に読んだ c024b7: 確認の結果の後に質問が続き、その日のうちに申込へ）は、最初の判断の駅が古く「止まった」に見えた。
   //   opts.burstAfter（既定 false＝今と同じ）の時は、返事の束の後の次のこちらの通の直前の、一番新しい判断の駅で見る（無ければ今のまま）
@@ -84,7 +92,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
   const keep = (before: RouteNodeId | null, after: RouteNodeId | null, reply: ReactionCat) =>
     (before === "proposing" && reply === "question") || (!!opts.viewingWait && before === "viewing_scheduled" && after === "viewing_scheduled" && reply !== "silent");
   const ms = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const ds = [...decisions].filter((d) => d.stage).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const ds = [...decisions].filter((d) => d.stage && !(opts.sgOnly && d.from === "cp")).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const stageAt = (iso: string, after: boolean) => {
     const t = Date.parse(iso);
     const d = after ? ds.find((x) => Date.parse(x.created_at) >= t) : [...ds].reverse().find((x) => Date.parse(x.created_at) <= t);
@@ -105,6 +113,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const act = aixHere?.aix_type ? `aix:${aixHere.aix_type}` : `reply:${closeKindOf(ours.join("\n"))}`;
     const before = stageAt(m.created_at, false);
     if (before && POST_APPLY.has(before)) continue; // 申込以降は外す
+    if (opts.sgOnly && !before) continue; // sg の駅が無い番は数えない（cp の時代）
     const reply: string[] = []; for (let j = k; j < ms.length && ms[j].sender === "customer"; j++) reply.push(String(ms[j].text ?? ""));
     const hours = endAt ? (Date.parse(endAt) - Date.parse(m.created_at)) / 36e5 : null;
     const replied = hours != null && hours <= windowH;
