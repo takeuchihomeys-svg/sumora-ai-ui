@@ -28,8 +28,14 @@ export const FOUNDATION_TERMS: Record<string, RegExp> = {
 export const SCENE_SPLIT = new Set(["scripts/audit-off-pattern.ts", "scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-ask-route-takeuchi.ts", "scripts/audit-promise-kept.ts", "scripts/audit-time-reply-scene.ts"]); // 2026-11-22 作業員L（#501・#502）: 約束の期限内（#495 から場面ごと）・時の言葉への返し方（場面ごと） // audit-ask-route-takeuchi は 11/18 から場面ごと（作業員M）
 
 /** 1つの土台×場面の決まりの数（純関数） */
+/** 2026-11-23 作業員N（穴の型④ 数え方の誤りで低く見える）: 場面の札の表記ゆれ（KB の現行に 場面:物件オススメ 9・場面:検討 3 ほか）を正しい札に読み替える（純関数） */
+export const SCENE_TAG_ALIAS: Record<string, string> = {
+  "場面:物件オススメ": "場面:物件を送る", "場面:物件": "場面:物件を送る", "場面:検討": "場面:検討中", "場面:条件変更": "場面:条件",
+  "場面:見積": "場面:初期費用", "場面:費用": "場面:初期費用", "場面:お礼": "場面:短いお礼", "場面:審査": "場面:申込", "場面:手続き": "場面:申込", "場面:持ち込み": "場面:物件を送ってきた",
+};
+export const normTags = (tags: string[] | null | undefined): string[] => (tags ?? []).map((t) => SCENE_TAG_ALIAS[t] ?? t);
 export function rulesFor(rows: ReadonlyArray<{ title: string; insight: string | null; tags: string[] | null }>, term: RegExp, scene: { tag: string; titleRe: RegExp | null }): number {
-  return rows.filter((r) => ((r.tags ?? []).includes(scene.tag) || (scene.titleRe ? scene.titleRe.test(r.title) : false)) && term.test(`${r.title} ${(r.insight ?? "").slice(0, 200)}`)).length;
+  return rows.filter((r) => (normTags(r.tags).includes(scene.tag) || (scene.titleRe ? scene.titleRe.test(r.title) : false)) && term.test(`${r.title} ${(r.insight ?? "").slice(0, 200)}`)).length;
 }
 
 export type SceneGridRow = { id: string; name: string; owner: string; measure: "場面ごと" | "全体だけ" | "無い"; cells: Record<string, number>; all: number };
@@ -40,7 +46,7 @@ export async function sceneGrid(sb: any): Promise<{ scenes: string[]; grid: Scen
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as Array<{ id: string; title: string; insight: string | null; tags: string[] | null; priority: number | null }>;
   // 2026-11-21 統括役の決め: 場面の札が無い P0/P1 の決まり（全部の場面に効く）は別の列「全場面」に数える（場面の札を後から付けると KB の札が増えて崩れるため）
-  const sceneMatch = (r: { title: string; tags: string[] | null }) => SCENES.some((sk) => (r.tags ?? []).includes(KB_SCENES[sk].tag) || ((KB_SCENES[sk] as { titleRe: RegExp | null }).titleRe?.test(r.title) ?? false));
+  const sceneMatch = (r: { title: string; tags: string[] | null }) => SCENES.some((sk) => normTags(r.tags).includes(KB_SCENES[sk].tag) || ((KB_SCENES[sk] as { titleRe: RegExp | null }).titleRe?.test(r.title) ?? false));
   const allSceneRows = rows.filter((r) => (r.priority ?? 9) <= 1 && !sceneMatch(r));
   const grid: SceneGridRow[] = [];
   for (const f of FOUNDATION_N) {

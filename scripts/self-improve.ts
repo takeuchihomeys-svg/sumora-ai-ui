@@ -403,9 +403,11 @@ async function main() {
   }
   // 土台の埋まり（竹内さん 11/21「土台足りていない部分あればちゃんといれていき、細部までもととのえていく」・土台の統括＝作業員N・scripts/foundation-fill.ts）
   const ff = doMetrics ? await foundationFill(sb).catch(() => null) : null;
-  const fillRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  const fillRows: Array<{ metric: string; value: number | null; n: number | null; detail?: Record<string, unknown> }> = [];
   if (ff) {
     const T = ff.totals;
+    // 土台の葉（作業員P の #610 の地図が読む・found:<土台id>:<場面>:<欄>・value 1=埋まっている/0=空き・detail に持ち主と原因）
+    for (const l of ff.leaves) fillRows.push({ metric: l.key, value: l.filled ? 1 : 0, n: null, detail: { owner: l.owner, cause: l.cause, writer_select: l.writer_select } });
     fillRows.push({ metric: "found:full", value: T.full, n: T.n }, { metric: "found:scene_rule_gap", value: T.sceneGap, n: T.sceneCells }, { metric: "found:scene_rule_gap_strict", value: T.sceneStrict, n: T.sceneCells }, { metric: "found:no_measure", value: T.noMeasure, n: T.n }, { metric: "found:correct_rate", value: T.correctRate, n: T.correctMeasured });
     const { data: qf } = await sb.from("quality_daily").select("metric,value").eq("day", jstDay(now - 86_400_000)).like("metric", "found:%").limit(50);
     const pv = (m: string) => ((qf ?? []) as Array<{ metric: string; value: number | null }>).find((r) => r.metric === m)?.value ?? null;
@@ -461,7 +463,7 @@ async function main() {
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
-      ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n, ...(r.detail ? { detail: r.detail } : {}) })),
       ...flexRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "takeuchi", value: r.value, n: r.n })),
       ...foundRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
