@@ -64,13 +64,14 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
   {
     // 2026-11-21 作業員G（#588）: 作り直しの印を全部で1本に（LEARN_BUILD_ONE_LANE=on）
     const ON = { LEARN_BUILD_ONE_LANE: "on" };
-    ok("既定は束の種類ごとの印", buildLeaseKey("all", {}) === "human-learn-profile:all");
+    ok("既定は全部で1本の印", buildLeaseKey("all", {}) === buildLeaseKey("realpro", {}));
+    ok("off で束の種類ごとの印", buildLeaseKey("all", { LEARN_BUILD_ONE_LANE: "off" }) === "human-learn-profile:all");
     ok("on: 全部で1本の印", buildLeaseKey("all", ON) === buildLeaseKey("realpro", ON));
     ok("on・応答の後・他が作っている → 待つ", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: ON }) === 15000);
     ok("上限を超えたら諦める", laneNextWait({ lease: "held", inAfter: true, waitedMs: LANE_WAIT_MAX_MS, env: ON }) === null);
     ok("応答の前（拡張が待っている）は待たない", laneNextWait({ lease: "held", inAfter: false, waitedMs: 0, env: ON }) === null);
     ok("取れたら待たない", laneNextWait({ lease: "acquired", inAfter: true, waitedMs: 0, env: ON }) === null);
-    ok("off は待たない", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: {} }) === null);
+    ok("off は待たない", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: { LEARN_BUILD_ONE_LANE: "off" } }) === null);
   }
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exitCode = 1;
