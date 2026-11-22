@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
 import { pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
 import { watchAixRecordV2On } from "./aix-record";
+import { watchWriterDeviceFirstOn } from "./staff-writer";
 import { evalWatchTurn } from "./line-watch-turn-eval";
 import { watchPostApplyScopeEnabled, findDuplicateTurns, mergeCapture, findCaptureStalls, captureStallLine, watchStallCheckEnabled, type PostApplyTimeline, type CaptureStall } from "./line-watch-scope";
 import {
@@ -157,7 +158,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   for (let i = 0; i < convIds.length; i += 50) {
     const chunk = convIds.slice(i, i + 50);
     // 2026-10-07: お礼・了承の番の読むべき範囲（こちらの直前の返事・72時間以内）を決めるため、番の4日前から読む（窓の判定は番より後だけを見るので変わらない）
-    msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", iso(P(since) - 4 * DAY)).order("created_at").order("id").range(f, t)));
+    msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select(watchWriterDeviceFirstOn() /* 2026-11-23 作業員A: 端末の書き手（既定 off） */ ? "conversation_id, sender, created_at, text, is_aix_generated, staff_writer, staff_writer_source" : "conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", iso(P(since) - 4 * DAY)).order("created_at").order("id").range(f, t)));
     presses.push(...await readAll<Press>((f, t) => sb.from("aix_usage_logs").select(watchAixRecordV2On() ? "conversation_id, aix_type, check_pattern, created_at, sent_at, picker_choices, prop_statuses, suggested_action, was_edited, send_mode, estimate_sent, line_message_id" : "conversation_id, aix_type, check_pattern, created_at").in("conversation_id", chunk).gte("created_at", since).not("aix_type", "is", null).order("created_at").order("id").range(f, t)));
     decisions.push(...await readAll<Decision>((f, t) => sb.from("brain_decision_logs").select("id, conversation_id, created_at, analyzed_msg_ts, intent:digest->>intent").in("conversation_id", chunk).gte("created_at", since).order("created_at").order("id").range(f, t)));
     const cv = await sb.from("conversations").select("id, property_customer_id").in("id", chunk);
