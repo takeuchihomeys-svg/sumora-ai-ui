@@ -19,5 +19,5 @@ const rows = [
 const s = summarizePromises(promiseStatesOf(rows), now);
 assert.deepEqual(s, { open: 2, overdue: 1, madeWindow: 2, keptWindow: 1 });
 const m = promiseMetricRows(s);
-assert.deepEqual(m.map((r) => `${r.metric}=${r.value}/${r.n}`), ["found:promise:open=2/2", "found:promise:overdue_rate=50/2", "found:promise:kept_72h=50/2"]);
+assert.deepEqual(m.map((r) => `${r.metric}=${r.value}/${r.n}`), ["foundation:promise:open=2/2", "foundation:promise:overdue_rate=50/2", "foundation:promise:kept_72h=50/2"]);
 console.log("promise-ledger-metrics: ok");

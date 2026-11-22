@@ -4,8 +4,8 @@
 //   約束 … status=promised で PROMISE_OF_DONE にある種類（確認・物件のピックアップ・見積）
 //   閉じた … detail.closed_by がある（promise-close-link が結んだ）か、後に同じ種類の done の行がある
 //   期日 … promise-drop-watch.promiseDeadlineMs（文の期限の言葉・無ければ72時間・「出来次第」は期限にしない）
-//   数の名前（作業員N と相談・既定は found）: found:promise:open（開いている約束の数）・found:promise:overdue_rate（開いている約束のうち期日超えの %）
-//     ・found:promise:kept_72h（72〜144時間前にした約束のうち、72時間の内に閉じた %）
+//   数の名前（作業員N と決めた: foundation:promise:*・found: は作業員P の地図の土台の葉の形なので使わない）: foundation:promise:open（開いている約束の数）・foundation:promise:overdue_rate（開いている約束のうち期日超えの %）
+//     ・foundation:promise:kept_72h（72〜144時間前にした約束のうち、72時間の内に閉じた %）
 import { PROMISE_OF_DONE } from "../../app/lib/promise-close-link";
 import { promiseDeadlineMs } from "../../app/lib/promise-drop-watch";
 
@@ -46,8 +46,8 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
 /** quality_daily に書ける行（作業員N2 が書く） */
 export function promiseMetricRows(s: PromiseLedgerSummary): Array<{ metric: string; scope: string; value: number | null; n: number; detail: Record<string, unknown> }> {
   return [
-    { metric: "found:promise:open", scope: "all", value: s.open, n: s.open, detail: {} },
-    { metric: "found:promise:overdue_rate", scope: "all", value: pct(s.overdue, s.open), n: s.open, detail: { overdue: s.overdue } },
-    { metric: "found:promise:kept_72h", scope: "all", value: pct(s.keptWindow, s.madeWindow), n: s.madeWindow, detail: { kept: s.keptWindow } },
+    { metric: "foundation:promise:open", scope: "all", value: s.open, n: s.open, detail: {} },
+    { metric: "foundation:promise:overdue_rate", scope: "all", value: pct(s.overdue, s.open), n: s.open, detail: { overdue: s.overdue } },
+    { metric: "foundation:promise:kept_72h", scope: "all", value: pct(s.keptWindow, s.madeWindow), n: s.madeWindow, detail: { kept: s.keptWindow } },
   ];
 }
