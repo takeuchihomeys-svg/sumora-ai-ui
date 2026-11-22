@@ -11,13 +11,13 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-writer-linkage.ts [--hours=24] [--max=60] [--json=<出力>]
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { briefUptake, tokensOfValue } from "../app/lib/compose-brief-uptake";
+import { briefUptake } from "../app/lib/compose-brief-uptake";
+import { inDraftOf, metricRowsOf } from "./lib/writer-field-metrics";
 import { deliveryOfTurn, DELIVERY_FIELDS } from "../app/lib/delivery-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const squash = (s: string) => s.normalize("NFKC").replace(/[\s、。・「」（）()／/：:→＝！!？?]/g, "");
 const sw = (k: string) => (process.env[k] ?? (LINKAGE_SWITCH_DEFAULTS as Record<string, string>)[k] ?? "off").trim().toLowerCase();
 
 type Row = { id: string; ai_draft_shown: string | null; ai_draft_shown_at: string | null; brain_analyzed_at: string | null; last_brain_meta: Record<string, unknown> | null };
@@ -45,20 +45,21 @@ type Row = { id: string; ai_draft_shown: string | null; ai_draft_shown_at: strin
   console.log(`\n## 決めた事（delivery-check の欄）: 値のある番 → ①書き手の注記に届いた → ②下書きに入った ／ AIX の2通目の配線`);
   const table: Array<Record<string, unknown>> = [];
   for (const f of DELIVERY_FIELDS) {
-    let val = 0, writerOk = 0, inDraft = 0; const whyNo: Record<string, number> = {};
+    let val = 0, writerOk = 0, inDraft = 0, inDraftN = 0; const whyNo: Record<string, number> = {};
     for (const r of rows) {
       const m = r.last_brain_meta!; const v = f.value(m);
       if (!v) continue;
       val++;
       const d = deliveryOfTurn(m)[f.key];
       if (d?.writer === "ok") writerOk++; else whyNo[String(d?.writer)] = (whyNo[String(d?.writer)] ?? 0) + 1;
-      // ②は値の語（作業員I の tokensOfValue: 単位つきの数か、漢字・カタカナの語 最大4つ）のどれかが下書きにあるか（指示の文は言い換えられるので頭12字の一致では測らない）
-      const toks = tokensOfValue(v).map(squash).filter((x) => x.length >= 2); const dr = squash(r.ai_draft_shown ?? "");
-      if (toks.some((x) => dr.includes(x))) inDraft++;
+      // ②下書きに入ったか（2026-11-23 作業員L #466: 欄ごとの見方は scripts/lib/writer-field-metrics.ts・数えない値は分母から外す）
+      const hit = inDraftOf(f.key, String(v), r.ai_draft_shown ?? "");
+      if (hit !== null) { inDraftN++; if (hit) inDraft++; }
+
     }
     const aix2 = f.wiring.aix2 === true ? "届く" : `届かない(${f.wiring.aix2})`;
-    table.push({ key: f.key, label: f.label, val, writerOk, inDraft, whyNo, aix2 });
-    console.log(`${f.key.padEnd(15)} 値 ${String(val).padStart(2)} → ①届いた ${writerOk}${Object.keys(whyNo).length ? `（届かない: ${Object.entries(whyNo).map(([k, n]) => `${k}=${n}`).join("・")}）` : ""} → ②下書き ${inDraft} ／ 2通目 ${aix2}`);
+    table.push({ key: f.key, label: f.label, val, writerOk, inDraft, inDraftN, whyNo, aix2 });
+    console.log(`${f.key.padEnd(15)} 値 ${String(val).padStart(2)} → ①届いた ${writerOk}${Object.keys(whyNo).length ? `（届かない: ${Object.entries(whyNo).map(([k, n]) => `${k}=${n}`).join("・")}）` : ""} → ②下書き ${inDraft}/${inDraftN} ／ 2通目 ${aix2}`);
   }
 
   // ③ 今の状況・計画・教訓（配線とスイッチ・値のある番の数）
@@ -71,5 +72,7 @@ type Row = { id: string; ai_draft_shown: string | null; ai_draft_shown_at: strin
   console.log(`situation_now      値 ${sn.length}（答えの無い前の項目 ${ouOpen}・開いている約束 ${poOpen}）→ ①返信: SITUATION_WRITER_NOTE=${sw("SITUATION_WRITER_NOTE")}・2通目: SITUATION_WRITER_NOTE_AIX=${sw("SITUATION_WRITER_NOTE_AIX")} → ②語の網なし（測れない）`);
   console.log(`customer_plan      値 ${plan}（指示書の plan の欄・CONDUCTOR_BRIEF_PLAN=${sw("CONDUCTOR_BRIEF_PLAN")}）→ ①書き手の役目の表に入れていない（b）`);
   console.log(`conductor_lessons  値 ${lessons}（CONDUCTOR_LESSONS=${sw("CONDUCTOR_LESSONS")}・学びの行が0の間は読まない）→ ①書き手へは配線しない設計（統括の材料だけ）`);
+  // 2026-11-23 作業員L（#466）: quality_daily に書ける行（作業員N2・P が書く・名前は scripts/lib/writer-field-metrics.ts）
+  if (arg("metrics", "")) writeFileSync(arg("metrics", ""), JSON.stringify(metricRowsOf({ fields: table as never, brief: Object.fromEntries(up), hours }), null, 1));
   if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ hours, n: rows.length, brief: Object.fromEntries(up), fields: table, situation: { n: sn.length, ouOpen, poOpen }, plan, lessons }, null, 1));
 })().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); });
