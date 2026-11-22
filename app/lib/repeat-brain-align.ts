@@ -256,8 +256,31 @@ export function ackConfirmAixPathOn(env: Env = process.env): boolean {
   // 2026-11-15 作業員D: 11/15 試験で悪化0・既定 on（止める ACK_CONFIRM_AIX_PATH=off）
   return (env.ACK_CONFIRM_AIX_PATH ?? "on").trim().toLowerCase() !== "off";
 }
-/** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""） */
+// ── 2026-11-23 作業員A（竹内さん 11/23「AIX の番の判断なんでこんなに弱いのか」・台帳「AIX の番の判断を、土台と連携の切れ目から」）──
+//   ピックアップの約束への了承だけの番で、材料どうしが食い違っていた:
+//     ackAfterPickupTurnLine（10/21 A2・KB 2d0f33cf「お礼には返信せず AIX」）＝物件の AIX ／ この ackFormMaterialLine ＝「ack_form に receive_only か wait_line を入れる」
+//     （しかも並べた竹内さんの数「探すの約束が言い切り→待ちの形の1文 7・受けだけ 0」は竹内さんが返信した番だけで数えた物＝AIX を先に送った番が入っていない）。
+//   ACK_CONFIRM_AIX_PATH の「道は AIX のまま」の1行は確認・見積の約束だけで、ピックアップは外していた（10/14 決定 C の頃の線。決定 C は 10/21 A2 で改められた）。
+//   竹内さん本人の番 60日（scripts/audit-aix-turn-judgment.ts・申込以降を外す・端末の記録で竹内さんの番だけ）: お礼・了承 × 前のこちらのピックアップの約束 48番 →
+//     竹内さんが AIX を先に送った 27（物件 18・物件確認した 9）・返信だけ 11・返信→後で AIX 5・中身の手打ち 5。ブレインが返信にして外れた 8（物件 6・物件確認した 2）。
+//   直し: ピックアップの約束への了承だけの番にも「道は約束を果たす物件の AIX のまま・ack_form は道を変えない」の1行を足す（決まりの食い違いを材料の側で解く・答えの規則は足さない）。
+//   既定 off（ACK_PICKUP_AIX_PATH=on で入る）。決定 C に戻している時（ACK_AFTER_PROMISE_REPLY=on）は足さない。
+//   作業員M の BRAIN_FULFIL_TURN（同じ番に物件探しの約束の1塊を足す）が on の時は足さない（同じ材料を2つ並べない・11/23 M と決めた）。
+export function ackPickupAixPathOn(env: Env = process.env): boolean {
+  return (env.ACK_PICKUP_AIX_PATH ?? "").trim().toLowerCase() === "on";
+}
+function ackPickupAixPathLine(f: AckFormFacts, env: Env): string {
+  if (!ackPickupAixPathOn(env) || f.family !== "探す") return "";
+  if ((env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() === "on") return ""; // 決定 C（返信で締める）に戻している時
+  if ((env.BRAIN_FULFIL_TURN ?? "").trim().toLowerCase() === "on") return ""; // 作業員M の1塊と重ねない
+  if (!f.pendingNow || f.scheduledLater || f.closesAfter) return "";
+  return "→ 道（竹内さんの決定 10/21 A2・KB 2d0f33cf・★ピックアップの約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす物件の AIX（【物件ピックアップした】property_send／1件なら【物件オススメ】property_recommendation）のまま（aix の欄は空にしない）。"
+    + "上の ack_form と竹内さんの数は、竹内さんが返信した時の形（受けだけ・待ちの形）で、道は変えない（60日の竹内さん本人の番: この形の番 48 のうち AIX を先に送った 27・返信だけ 11）。";
+}
+
+/** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""）。2026-11-23 ACK_PICKUP_AIX_PATH=on の時はピックアップの約束にも */
 export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {
+  if (f && f.customer === "了承だけ" && f.family === "探す" && !f.conditional) return ackPickupAixPathLine(f, env);
   if (!f || !ackConfirmAixPathOn(env) || f.customer !== "了承だけ" || f.family !== "確認・連絡・見積・審査" || f.conditional) return "";
   if (!f.pendingNow || f.scheduledLater || f.closesAfter) return ""; // 11/15 q111: 先の日にちの報告・締めの後の挨拶には付けない
   const t = f.topics ?? [];

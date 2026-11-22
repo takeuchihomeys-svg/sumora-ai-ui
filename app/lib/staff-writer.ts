@@ -129,6 +129,31 @@ export function toTakeuchiNotation(text: string): string {
     .replace(/下さい/g, "ください");
 }
 
+/**
+ * 2026-11-23 作業員A（竹内さん 11/23「AIX の番の判断なんでこんなに弱いのか」・統括の判断の芯④の数え方の穴）:
+ *   見張りの番の書き手（verdict_detail.staff_writer）は文の癖（staffWriterOfBurst）だけで決めていた。
+ *   AIX のテンプレートの文は竹内さんの表記（頂・致し）で作るので、従業員が押した AIX の番も「竹内さん」と読まれていた。
+ *   60日で、癖が takeuchi と読んだ AIX の番 193 のうち 93（48%）は、最初の送信の端末が employee（返信の番は 274 のうち 124）。
+ *   messages.staff_writer（端末 device・グループの発言者 group_speaker・60日の通の 93%）が入っているなら、そちらを先に使う。
+ *   番の送信が全部同じ書き手の時だけ決める（竹内さんと従業員が混ざる番・記録の無い番は null＝今までどおり癖に任せる）。
+ *   既定 off（WATCH_WRITER_DEVICE_FIRST=on で入る）＝off の時は見張りの印も毎朝の数も1文字も変わらない。
+ */
+export type DeviceWriterMsg = { sender: string; created_at: string; staff_writer?: string | null; staff_writer_source?: string | null };
+export function watchWriterDeviceFirstOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.WATCH_WRITER_DEVICE_FIRST ?? "").trim().toLowerCase() === "on";
+}
+/** 番の窓（fromIso より後〜toIso まで）のこちらの送信の端末の書き手。全部同じ書き手の時だけ返す（純関数） */
+export function deviceWriterOfWindow(msgs: ReadonlyArray<DeviceWriterMsg>, fromIso: string, toIso: string | null): { writer: StaffWriter; confidence: WriterConfidence; source: string } | null {
+  const lo = Date.parse(fromIso), hi = toIso ? Date.parse(toIso) : Infinity;
+  const staff = msgs.filter((m) => m.sender !== "customer" && Date.parse(m.created_at) > lo && Date.parse(m.created_at) <= hi);
+  if (!staff.length) return null;
+  const sure = staff.filter((m) => (m.staff_writer === "takeuchi" || m.staff_writer === "employee") && (m.staff_writer_source === "device" || m.staff_writer_source === "group_speaker"));
+  if (sure.length !== staff.length) return null; // 記録の無い通がある＝決めない
+  const ws = new Set(sure.map((m) => m.staff_writer));
+  if (ws.size !== 1) return null; // 竹内さんと従業員が混ざる番
+  return { writer: [...ws][0] as StaffWriter, confidence: "sure", source: sure.some((m) => m.staff_writer_source === "device") ? "device" : "group_speaker" };
+}
+
 /** 書き手で分けるのを止める（旧に戻す）: STAFF_WRITER_SPLIT=off */
 export function staffWriterSplitEnabled(): boolean {
   return (process.env.STAFF_WRITER_SPLIT ?? "on").toLowerCase() !== "off";

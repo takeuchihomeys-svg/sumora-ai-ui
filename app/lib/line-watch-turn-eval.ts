@@ -3,7 +3,7 @@
 //   毎晩の cron（line-watch-eval-server.evaluateLineWatchTurns）と、過去の番の埋め戻し（line-watch-backfill・scripts/line-watch-backfill.ts）が
 //   同じ関数を通す（二重に作らない・2026-10-08 竹内さんの決定 10/08 の1「見張りの判定を過去1〜3ヶ月分埋める」）。
 //   中身は 2026-10-08 まで evaluateLineWatchTurns の中にあった処理をそのまま移した物（並び・規則は1文字も変えていない）。
-import { staffWriterOfBurst, staffWriterSplitEnabled } from "./staff-writer";
+import { staffWriterOfBurst, staffWriterSplitEnabled, watchWriterDeviceFirstOn, deviceWriterOfWindow, type DeviceWriterMsg } from "./staff-writer";
 import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Judgement, type StaffWindow, type JudgeDraftSrc } from "./line-watch-judge";
 import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf, type SceneKey } from "./line-watch-turn";
@@ -64,7 +64,10 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   // 読むべき範囲の外の行為は前と同じく draft_first まで見る（uran. の見張り・スタッフが返さなかった番の数え方は変えない）
   const topicOut = outOfTopicActs(cleanDraft(t.draft_last).text ?? cleanDraft(t.draft_first).text, resolveAckTopicScope(upto));
   // 2026-10-08 返事を書いた人（直した所の表記→無ければ送った文全体の「確か」だけ）。STAFF_WRITER_SPLIT=off で渡さない
-  const staffWriter = staffWriterSplitEnabled() ? staffWriterOfBurst(cleanDraft(pick.draft).text, w.texts.filter((x) => x.burst).map((x) => x.text).join("\n")) : null;
+  // 2026-11-23 作業員A（WATCH_WRITER_DEVICE_FIRST=on の時だけ・既定 off）: 端末の記録（messages.staff_writer）で番の送信が全部同じ書き手なら、そちらを先に
+  //   （AIX の文は竹内さんの表記で作るので、癖だけでは従業員の AIX の番も竹内さんと読む・60日の AIX の番 193 のうち 93 が端末では従業員）
+  const deviceWriter = staffWriterSplitEnabled() && watchWriterDeviceFirstOn() ? deviceWriterOfWindow(ctx.msgs as ReadonlyArray<DeviceWriterMsg>, w.customerLastAt, w.endAt) : null;
+  const staffWriter = staffWriterSplitEnabled() ? (deviceWriter ?? staffWriterOfBurst(cleanDraft(pick.draft).text, w.texts.filter((x) => x.burst).map((x) => x.text).join("\n"))) : null;
   const j = judgeTurn({
     customerText, // 2026-11-11 M4（物差し）: 内覧の当日の段取りの番か
     draft: pick.draft, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
