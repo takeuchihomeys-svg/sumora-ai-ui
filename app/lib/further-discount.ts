@@ -22,9 +22,28 @@ const COST_WORD_RE = /初期費用|費用|見積|礼金|敷金|割引|値段|金
 const RENT_ONLY_RE = /家賃|賃料/;
 
 /** お客様が今の番で初期費用を更に安くできないか聞いたか */
+// 2026-11-23 作業員K2（台帳 #469・作業員A の種類違い 13898）: 話し言葉の割引の依頼（「もぉ少し初期費用安くできたりしませんか？」）を拾えず、
+//   確認します（代表確認）にならずに ack_to_check で物件確認した になっていた（竹内さんは 確認します→代表確認（初期費用））。
+//   小さい「ぉ」の伸ばし（もぉ・もーう）を「もう」にそろえ、「〜できたりしませんか／〜できませんか」の問いの形を足す。既定 off（FURTHER_DISCOUNT_COLLOQUIAL=on）
+export function furtherDiscountColloquialOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return String(env.FURTHER_DISCOUNT_COLLOQUIAL ?? "").trim().toLowerCase() === "on";
+}
+const COLLOQUIAL_ASK_RE = /安く(?:でき|出来|なっ|なり)たり(?:しませんか|しないですか|しないかな|しませんかね)|安く(?:でき|出来)(?:ませんか|ないですか|ないかな)|安くなら(?:ないですか|ないかな)/;
+/** 話し言葉の割引の依頼（FURTHER_DISCOUNT_COLLOQUIAL=on の時だけ使う・純関数） */
+export function colloquialDiscountAsk(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC").replace(/も[ぉー〜]+(?:う)?少し/g, "もう少し");
+  return COLLOQUIAL_ASK_RE.test(t) || /もう少し(?:初期費用|費用|金額)?[^\n。]{0,8}安く/.test(t);
+}
 export function customerAsksFurtherDiscount(turnText: string | null | undefined): boolean {
   const t = String(turnText ?? "").normalize("NFKC");
-  if (!DISCOUNT_ASK_RE.test(t) && !(askWideEnabled() && DISCOUNT_ASK_WIDE_RE.test(t))) return false;
+  if (furtherDiscountColloquialOn() && colloquialDiscountAsk(t) && !DISCOUNT_ASK_RE.test(t)) {
+    // 話し言葉の形だけで拾った時も、下の除外（家賃だけ・理由を問う・安いお部屋を探す依頼・物件を指さない願い）は同じに通す
+    return customerAsksFurtherDiscountCore(t, true);
+  }
+  return customerAsksFurtherDiscountCore(t, false);
+}
+function customerAsksFurtherDiscountCore(t: string, colloquialHit: boolean): boolean {
+  if (!colloquialHit && !DISCOUNT_ASK_RE.test(t) && !(askWideEnabled() && DISCOUNT_ASK_WIDE_RE.test(t))) return false;
   if (RENT_ONLY_RE.test(t) && !COST_WORD_RE.test(t)) return false;
   // 他社の見積と比べての不審（安すぎる理由）は 初期費用を説明 の領分・分割の話は返信（カード払い）
   if (/なぜ|なんで|理由|大丈夫(?:です|でしょう)か/.test(t) && !/もう少し|これ以上|更に|さらに/.test(t)) return false;
