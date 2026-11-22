@@ -68,6 +68,8 @@ function sectionLine(k: string, v: unknown): string | null {
     case "feeling": return o ? `気持ち・状況の表: ${[o.focus ? `重点 ${cut(o.focus, 14)}` : "", o.push ? `一手の強さ ${cut(o.push, 6)}` : "", o.combo ? `組 ${cut(o.combo, 40)}` : "", o.next ? `次に送る物 ${cut(o.next, 20)}` : "", o.tool ? `AIX ツール ${cut(o.tool, 60)}` : ""].filter(Boolean).join("・")}` : null;
     // 2026-11-21 作業員M（台帳 #467 の (1)・ROUTE_TO_BRIEF=on の時だけ指示書にある）: 地図の今の状態（駅と合って使ってよい状態の時だけ・値のまま）
     case "route": { const sb = obj(o?.substate); return o && sb?.usable ? `地図の状態: ${cut(sb.label, 20)}${o.node ? `（駅 ${cut(o.node, 20)}）` : ""}${o.turn_aim ? `・目的 ${cut(o.turn_aim, 24)}` : ""}${o.mid_aim ? `・中期 ${cut(o.mid_aim, 30)}` : ""}${o.depth ? `・先読み ${String(o.depth)}` : ""}` : null; }
+    // 2026-11-22 作業員M（台帳 #595・BRIEF_CARRY_TO_WRITER=on の時だけ指示書の欄が渡る）: 前の番でまだ答えていない要件／約束して結果がまだの要件（お客様の言葉のまま）
+    case "carry_asks": { const q = o && Array.isArray(o.quotes) ? (o.quotes as unknown[]).map(obj).filter((x): x is Record<string, unknown> => !!x) : []; const op = q.filter((x) => x.state === "open").slice(0, 3); const pr = q.filter((x) => x.state === "promised").slice(0, 3); return op.length || pr.length ? `前の番の続き: ${op.length ? `まだ答えていない要件 ${op.map((x) => `「${cut(x.quote, 24)}」`).join("・")}` : ""}${op.length && pr.length ? "／" : ""}${pr.length ? `約束して結果がまだ ${pr.map((x) => `「${cut(x.quote, 24)}」`).join("・")}` : ""}` : null; }
     case "aim": return o ? `目的:${cut(o.purpose ?? "-", 20)}${o.mid && o.mid !== BRIEF_NONE ? `・中期: ${cut(o.mid, 20)}` : ""}` : null;
     default: return null;
   }
