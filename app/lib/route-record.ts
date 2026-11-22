@@ -27,7 +27,22 @@ const STATUS_TO_NODE: Record<string, RouteNodeId> = {
   estimate: "estimate", estimating: "estimate", viewing: "viewing_arrange", viewing_arrange: "viewing_arrange",
   viewing_scheduled: "viewing_scheduled", viewed: "viewed", apply_prep: "apply_prep", applying: "applying", application: "applying", screening: "applying",
   contract: "won", closed_won: "won", won: "won",
+  // 2026-11-23 作業員M（台帳 #620）: customer-state の段の語（判断の記録 digest.sg＝meta.customer_stage_now）も同じ表で駅に寄せる（apply-route-map の STAGE_TO_NODE と同じ写し方）
+  first: "inquiry", viewing_arranging: "viewing_arrange", estimate_sent: "estimate",
 };
+/**
+ * 2026-11-23 作業員M（台帳 #620・作業員R の数え 104/192＝54%）: 地図の駅と「段の語」が同じ所を指すか。語の系統が違う（digest.sg は customer-state の語・地図は駅の id）ので、
+ *   生の文字列で比べると searching・viewing_arranging・estimate_sent・first が全部「違う」に数えられる。ここで寄せてから比べる。
+ *   searching（物件検索中）は地図が台帳で 条件ヒアリング／ピックアップ／提案中 に分ける（apply-route-map.resolveRouteNode）＝この3つはどれでも同じ駅と数える。
+ */
+export const SEARCHING_NODES: readonly RouteNodeId[] = ["hearing", "pickup", "proposing"];
+export function sameStation(node: string | null | undefined, stageWord: string | null | undefined): boolean | null {
+  const w = String(stageWord ?? "").trim();
+  if (!node || !w) return null;
+  if (w === "searching") return (SEARCHING_NODES as readonly string[]).includes(node);
+  const n = STATUS_TO_NODE[w];
+  return n ? n === node : node === w;
+}
 export function stationOf(i: { applyRouteNode?: string | null; status?: string | null; checkpointStage?: string | null }): { node: RouteNodeId | null; from: "apply_route" | "status" | "checkpoint_stage" | null } {
   const isNode = (v: string | null | undefined): v is RouteNodeId => !!v && Object.prototype.hasOwnProperty.call(ROUTE_NODES, v);
   if (isNode(i.applyRouteNode)) return { node: i.applyRouteNode, from: "apply_route" };
