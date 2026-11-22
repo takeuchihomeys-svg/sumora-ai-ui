@@ -901,6 +901,8 @@
   }
   setInterval(function () {
     if (document.hidden) return;
+    // 2026-11-22: 案内OFFの時は回さない（リアプロ案内と同じ）
+    if (typeof guideOn !== "undefined" && !guideOn) return;
     if (!_dirty && Date.now() - _lastTickAt < 1500) return;
     tick();
   }, 400);

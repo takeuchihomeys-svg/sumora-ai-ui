@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-11-22 **拡張 2.8.154: 録画OFFでも重い主因＝操作のたび captureVisibleTab を止める**（竹内さん「いまPCじたいがかなり重いのと録画モード押していない時でも、かなり重たい。何が原因となるのか、ほかにも重い部分を解決するように徹底的に調査と改善する」）
+- **主因（コードで確定）**: `human-learn-record.js` の `shouldShoot` が常に true → 通常モードでも click/change/keydown/wheel のたびに `captureVisibleTab`（最短400ms）。「⏺ 録画」は連続撮影のUIだが、裏の常時撮影は止まっていなかった。診断 `axlx_human_shot_diag` も毎操作で storage 書き。
+- **直し**: 写真は (1)「⏺ 録画」中（`axlx_rec_mode.on`）または (2) 自動（aix/ai）の時だけ。通常・録画OFFは撮らない（操作の欄名・順番・位置の記録は残る・軽い）。診断 storage は5秒に1回。`axlx_rec_mode` を KEYS に入れて ON/OFF で見張りを付け外し。
+- **ほか**: realpro-guide / itandi-guide の 400ms tick を案内OFF時は回さない。MutationObserver どうしの反応し合いは v2.5.72 の `own-mutation.js` で既に対策済み（今回はそのまま）。
+- テスト: `shot-gate-v28154.test.js`（15件）。次に確かめる事: 2.8.154 再読込 → 通常・録画OFFで操作してもコンソールに「画面の写真: 止めました」／Task Manager で Chrome が軽くなるか／⏺ 録画ONで写真が残るか。
+
 ## 2026-11-22 **拡張 2.8.153: ヘッダー ∨ で小窓がちゃんと折りたたまれる（構造を分けた）**（竹内さん「ここおしたらちゃんと折りたたまれるように 構造考えておりたたまれるようにする」・通常モードでリアプロが重い／押せない件の続き）
 - 画面: AIXLINX 小窓ヘッダー右の ∨（#collapse-btn）。旧は白い箱回避のため「一覧に戻るだけ・縮めない」になっており、∨ の見た目と合わず・小窓がリアプロを塞ぎ続けた。
 - 構造: **親（underbar）**が窓サイズの正本 → `collapse` で wrap を隠しミニボタン（AIX LINX）を出す。**子（popup）**は `setMiniMode(true)` しない（中身を消さない＝白い箱の原因を再発させない）。開き直しはミニボタン → `doExpand` → `repaint`。

@@ -722,6 +722,8 @@
   }
   setInterval(function () {
     if (document.hidden) return;
+    // 2026-11-22: 案内OFFの時は回さない（旧は 400ms ごとに空回りしてPCを軽くしていた）
+    if (!guideOn) return;
     if (!_dirty && Date.now() - _lastTickAt < 1500) return;
     tick();
   }, 400);

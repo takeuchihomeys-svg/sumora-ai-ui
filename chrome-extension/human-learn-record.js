@@ -169,6 +169,7 @@
   var _orderLive = [];
   var watching = false;
   var _shooting = false;
+  var _diagWriteAt = 0;
   var detach = null;
   var timer = null;
   var _shotPending = false;
@@ -232,11 +233,29 @@
     void st;
     return true;
   }
-  /** 写真を撮るモードか（＝どのモードでも撮る。止める設定がある時だけ止める） */
+  /**
+   * 写真を撮るか（captureVisibleTab＝PCが重くなる主因）。
+   *
+   * ★ 2026-11-22 竹内さん「録画モード押していない時でもかなり重たい」:
+   *   旧は通常でも操作のたび（click/change/keydown/wheel）に必ず撮っていた。
+   *   「⏺ 録画」ボタンは連続撮影だけのつもりでも、裏では常時撮影が動いていた。
+   * → 撮る条件を分ける:
+   *   ・自動（aix/ai）… 画面の写真が学習材料なので撮る
+   *   ・通常 … 「⏺ 録画」中（axlx_rec_mode.on）だけ撮る
+   *   ・axlxShotOff … 明示オフなら撮らない
+   * 操作の記録（欄名・順番・位置）は写真と別で残る（軽い）。
+   */
+  var _shotAllow = false;
   function shouldShoot(st) {
     var s = st || {};
     try { if (s.axlxShotOff === true) return false; } catch (_) {}
-    return true;
+    try { if (window.__axlxShotOff === true) return false; } catch (_) {}
+    if (_isAutoModeSt(s)) return true;
+    try {
+      var rm = s.axlx_rec_mode;
+      if (rm && rm.on === true) return true;
+    } catch (_) {}
+    return false;
   }
 
   /** 覚えている最中の印（同じページで二重に見張らない・他の部品からも分かる） */
@@ -1779,10 +1798,9 @@
        *   ⚠ 原因: `watching`（人の動きを見張っている印）が false だと撮らない作りだった。
        *     `watching` は「人の動きを覚える」ための印で、**写真とは別の話**。
        *     見張りが止まる（モード切替・ページの作り直し・ライブラリ待ち）と**写真も止まった**。
-       *   → **写真は `watching` に関係なく撮る**（モード・見張りの状態に依存しない）。
-       *     止める設定は `axlxShotOff` だけ（人が明示的に切った時）。
+       *   → 撮るかは `_shotAllow`（apply＝録画中 or 自動）。通常で録画OFFなら撮らない（2026-11-22）。
        */
-      try { if (!shouldShoot({ axlxShotOff: (window.__axlxShotOff === true) })) { diag(false, "shot_off"); return; } } catch (_) {}
+      if (!_shotAllow) return;
       var now = Date.now();
       /**
        * 2026-11-11 竹内さん「写真撮ってるかな？」→ 0枚のまま。
@@ -1807,20 +1825,19 @@
         _autoShotSigAt = now;
       }
       /**
-       * 2026-11-14 竹内さん「今録画しているのから自動モードで地域。ちゃんと動きとカーソルの動きは
-       *   理解しているか。ボタン押されているのか」→ **DBで判明**:
-       *     操作 450件・欄20種類・順番6件・マウス490回と**全部取れた**（var 宣言の順を直した効果）。
-       *     だが **写真が0枚**（v2.7.58 では撮れていた）。＝ 私が `start()` の構造を変えて壊した。
-       *   → **撮らなかった理由を残す**（`axlx_human_shot_diag.skip`）。推測で直さず理由を見る。
+       * 診断の storage 書きは5秒に1回まで（毎クリック書いていると storage も重い・2026-11-22）。
        */
       try {
-        chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
-          var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
-          d.try_at = Date.now();
-          d.state = { pending: _shotPending, last: _shotLast, count: _shotCount, shooting: _shooting, watching: watching, site: site };
-          var o = {}; o.axlx_human_shot_diag = d;
-          try { chrome.storage.local.set(o); } catch (_) {}
-        });
+        if (!_diagWriteAt || now - _diagWriteAt >= 5000) {
+          _diagWriteAt = now;
+          chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
+            var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
+            d.try_at = Date.now();
+            d.state = { pending: _shotPending, last: _shotLast, count: _shotCount, shooting: _shooting, watching: watching, site: site, allow: _shotAllow };
+            var o = {}; o.axlx_human_shot_diag = d;
+            try { chrome.storage.local.set(o); } catch (_) {}
+          });
+        }
       } catch (_) {}
       _shotLast = now;
       _shotCount++;
@@ -2017,23 +2034,19 @@
     } catch (_) {}
   });
 
-  // ── モードを見る（学習は通常・スタッフの時だけ／写真はどのモードでも）──
-  var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff"];
+  // ── モードを見る（操作の記録は常時／写真は録画中 or 自動だけ・2026-11-22）──
+  var KEYS = ["staffMode", "staffModeAt", "aixMode", "autoModeAt", "aiMode", "axlxShotOff", "axlx_rec_mode"];
   // var _shooting = false;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function apply(st) {
     _shotAuto = _isAutoModeSt(st);
     if (shouldLearn(st)) { startWatching(); ensureBadge(); }
     else { stopWatching(); removeBadge(); }
-    /**
-     * 2026-11-11 竹内さん「写真ちゃんと送られたかな？」→ 0枚。
-     *   写真は学習（onOp）の中から撮っていたので、**自動・AIX では一度も撮られなかった**。
-     *   → 写真は**どのモードでも**撮る（自前の見張り）。学習とは別にする。
-     */
-    if (shouldShoot(st)) startShooting();
+    _shotAllow = shouldShoot(st);
+    if (_shotAllow) startShooting();
     else stopShooting();
   }
 
-  /** 写真を撮る見張り（モードに関係なく動く。人も拡張も押したら撮る） */
+  /** 写真を撮る見張り（録画中 or 自動の時だけ。人も拡張も押したら撮る） */
   function startShooting() {
     if (_shooting) return;
     _shooting = true;
@@ -2073,7 +2086,7 @@
           document.removeEventListener("keydown", h, true);
         } catch (_) {}
       };
-      console.log("[AX] 画面の写真: どのモードでも撮ります（" + site + "）");
+      console.log("[AX] 画面の写真: 録画中または自動の時に撮ります（" + site + "）");
       // 起動直後に1枚（「撮れるか」を確かめられるように）
       try { setTimeout(function () { shootAfter("startup", null, null); }, 1500); } catch (_) {}
     } catch (_) {}
@@ -2084,14 +2097,19 @@
     _shooting = false;
     try { if (_shootDetach) _shootDetach(); } catch (_) {}
     _shootDetach = null;
+    try { console.log("[AX] 画面の写真: 止めました（通常・録画OFF）"); } catch (_) {}
   }
-  /** 写真の通り道を残す（どこで止まるか分かるように） */
+  /** 写真の通り道を残す（5秒に1回まで・毎操作は書かない） */
   function _noteShotDiag(why) {
     try {
+      var now = Date.now();
+      if (_diagWriteAt && now - _diagWriteAt < 5000) return;
+      _diagWriteAt = now;
       chrome.storage.local.get(["axlx_human_shot_diag"], function (r) {
         var d = (r && r.axlx_human_shot_diag) || { tried: 0, ok: 0 };
         d.last_why = why;
         d.last_why_at = Date.now();
+        d.allow = _shotAllow;
         try { chrome.storage.local.set({ axlx_human_shot_diag: d }); } catch (_) {}
       });
     } catch (_) {}
@@ -2100,7 +2118,7 @@
     chrome.storage.local.get(KEYS, function (r) { apply(r || {}); });
     chrome.storage.onChanged.addListener(function (ch, area) {
       if (area !== "local" || !ch) return;
-      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch) && !("axlxShotOff" in ch)) return;
+      if (!("staffMode" in ch) && !("aixMode" in ch) && !("autoModeAt" in ch) && !("aiMode" in ch) && !("axlxShotOff" in ch) && !("axlx_rec_mode" in ch)) return;
       chrome.storage.local.get(KEYS, function (r) { apply(r || {}); });
     });
   } catch (_) {}
