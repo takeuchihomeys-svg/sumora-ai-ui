@@ -26,3 +26,13 @@ assert.equal(dedupeDrafts([d, { ...d, source: "prod:watch2" }]).length, 1);
 assert.equal(isNightJst(Date.parse("2026-11-21T14:00:00Z")), true);
 assert.equal(isNightJst(Date.parse("2026-11-21T03:00:00Z")), false);
 console.log("prod-lessons: ok");
+// 2026-11-22 統括役の頼み: 場面と両方の要点を問いに渡す・一般論は捨てる
+import { prodLessonPrompt, keepProdLesson } from "../prod-lessons";
+const dp = prodLessonDraft({ ...base, scene: "返信:条件提示", staffHeadMasked: "物件確認させて頂きます", draftHeadMasked: "かしこまりました" })!;
+assert.equal(dp.scene, "返信:条件提示"); assert.match(String(dp.seed.why), /竹内さんの返信.*こちらの下書き/);
+const pr = prodLessonPrompt(dp, { sceneJa: "返信:条件提示", staffHead: "物件確認させて頂きます", draftHead: "かしこまりました" });
+assert.match(pr, /場面: 返信:条件提示/); assert.match(pr, /竹内さんの返信（伏せ済み）: 物件確認/); assert.match(pr, /こちらの下書き（伏せ済み）: かしこまりました/);
+assert.equal(keepProdLesson("不明な場面ではまず確認を返す（なぜ: 誤案内を防ぐ）"), null);
+assert.equal(keepProdLesson("差が読めない"), null);
+assert.equal(keepProdLesson("条件提示の場面で物件の確認を頼まれた時は AIX の確認を先に（なぜ: 結果は人が知る事）"), "条件提示の場面で物件の確認を頼まれた時は AIX の確認を先に（なぜ: 結果は人が知る事）");
+console.log("prod-lessons-prompt: ok");
