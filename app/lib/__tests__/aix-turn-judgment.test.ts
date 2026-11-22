@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/aix-turn-judgment.test.ts（全 PASS で exit 0）
 import { aixBundle, turnClassOf, aixKindOfTurn, brainRouteOf, judgeTurn } from "../aix-turn-judgment";
 import { deviceWriterOfWindow, watchWriterDeviceFirstOn } from "../staff-writer";
-import { ackFormFacts, ackFormMaterialLine, ackConfirmAixPathLine } from "../repeat-brain-align";
+import { ackFormFacts, ackFormMaterialLine, ackConfirmAixPathLine, ackFormAixShareLine } from "../repeat-brain-align";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
@@ -54,6 +54,14 @@ it("on でも約束の後に締め（お気軽に）がある番は足さない�
 it("確認の約束の行（ACK_CONFIRM_AIX_PATH）は今のまま", () => {
   const g = ackFormFacts([{ sender: "staff", text: "募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！", created_at: "2026-11-09T07:00:00Z" }, { sender: "customer", text: "ありがとうございます", created_at: "2026-11-09T07:52:00Z" }]);
   eq(ackConfirmAixPathLine(g, {}).includes("property_check_result"), true);
+});
+
+console.log("repeat-brain-align ACK_FORM_COUNT_WITH_AIX");
+it("off（既定）: 材料の行は今と同じ（AIX を入れた数の行が無い）", () => { eq(ackFormAixShareLine(f!, {}), ""); eq(ackFormMaterialLine(f, {}).includes("AIX を送った番も入れた数"), false); });
+it("on: ピックアップの約束の番は 68 → AIX 46 の行が、返信の形の数より先に入る", () => { const x = ackFormMaterialLine(f, { ACK_FORM_COUNT_WITH_AIX: "on" }); eq(x.includes("ピックアップの約束だけの番 68 → 最初の一手が約束を果たす AIX 46"), true); eq(x.indexOf("AIX 46") < x.indexOf("待ちの形の1文 7"), true); });
+it("on: 確認の約束の番は 21 → AIX 14", () => {
+  const g = ackFormFacts([{ sender: "staff", text: "募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！", created_at: "2026-11-09T07:00:00Z" }, { sender: "customer", text: "ありがとうございます", created_at: "2026-11-09T07:52:00Z" }]);
+  eq(ackFormMaterialLine(g, { ACK_FORM_COUNT_WITH_AIX: "on" }).includes("確認の約束だけの番 21"), true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
