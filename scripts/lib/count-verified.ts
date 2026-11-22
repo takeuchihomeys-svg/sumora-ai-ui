@@ -35,6 +35,8 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "growth:pickup_select": { script: "scripts/audit-pickup-select-link.ts", owner: "作業員K2" },
   "growth:check_name": { script: "scripts/audit-check-name-fill.ts", owner: "作業員K2" },
   "growth:event_write": { script: "scripts/audit-event-write-gaps.ts", owner: "作業員K2" },
+  "foundation:chrono": { script: "scripts/audit-timeline-coverage.ts", owner: "作業員L" },
+  "foundation:promise": { script: "scripts/audit-promise-kept.ts", owner: "作業員L" },
   "core:linkage": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:no_denominator": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:foundation": { script: "scripts/check-foundation.ts", owner: "作業員N" },

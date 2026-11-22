@@ -312,6 +312,7 @@ async function main() {
   }
   // 土台「臨機応変」の本番の数（台帳 #512・#158・2026-11-22 作業員N2）: audit-off-pattern（30日・竹内さん本人の番）を夜の回だけ流す（DB を読むので 22〜9時）
   const flexRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
+  const foundRows: Array<{ metric: string; value: number | null; n: number | null }> = []; // 土台の表の本番の数（scope=all・作った日）
   if (doMetrics && isNightJst(now) && existsSyncPU("scripts/audit-off-pattern.ts")) {
     const fo = join(tmpdir(), `off-pattern-${process.pid}.json`);
     try {
@@ -329,6 +330,8 @@ async function main() {
       runTsx(["scripts/audit-promise-kept.ts", "--days=30", `--out=${to}`], 300_000);
       const tm = trustMetricsOf(((JSON.parse(readFileSync(to, "utf8")) as { rows?: PromiseKeptRow[] }).rows ?? []));
       flexRows.push({ metric: "growth:trust:promise_kept", value: tm.rate, n: tm.judged }, { metric: "growth:trust:promise_kept_takeuchi", value: tm.tkRate, n: tm.tkJudged });
+      // 2026-11-22 作業員L の名前（台帳 #519・土台の表 n.promise の metric）: in_time ÷（in_time＋late＋overdue）＝上の promise_kept と同じ数（scope=all）
+      foundRows.push({ metric: "foundation:promise:kept_in_time", value: tm.rate, n: tm.judged });
       lines.push(`- 信頼（30日・約束を期限内に果たした割合）: ${tm.rate ?? "—"}%（${tm.inTime}/${tm.judged}・期限切れ ${tm.overdue}）・竹内さん本人 ${tm.tkRate ?? "—"}%（${tm.tkJudged}）（台帳 #514）`);
     } catch { lines.push("- 信頼: audit-promise-kept が失敗（台帳 #514）"); } finally { try { rmSync(to); } catch { /* 無し */ } }
   }
@@ -360,6 +363,18 @@ async function main() {
         lines.push(`- AIX の鮮度（7日）: ${Object.entries(aj.fresh ?? {}).map(([k, v]) => `${k} ${v.fresh}/${v.n}`).join("・") || "—"}｜受けの返しのうち代表以外 ${aj.ack?.other ?? "—"}/${aj.ack?.total ?? "—"}（作業員K2・台帳 #546・#537）`);
       } catch { lines.push("- AIX の鮮度・受けの返し: audit-aix-ack-and-fresh が失敗（作業員K2）"); } finally { try { rmSync(ao); } catch { /* 無し */ } }
     }
+  }
+  // 土台「時系列」の本番の数（作業員L・台帳 #518・土台の表 n.chrono の metric）: audit-timeline-coverage --json=（24時間・軽い読み）。--json の無い古い台本の日は飛ばす
+  if (doMetrics && existsSyncPU("scripts/audit-timeline-coverage.ts") && readFileSync("scripts/audit-timeline-coverage.ts", "utf8").includes("foundation:chrono:timeline_reach")) {
+    const tlo = join(tmpdir(), `timeline-coverage-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-timeline-coverage.ts", "--hours=24", "--max=60", `--json=${tlo}`], 180_000);
+      const tj = JSON.parse(readFileSync(tlo, "utf8")) as { metric?: string; value?: number | null; n?: number | null };
+      if (tj.metric === "foundation:chrono:timeline_reach") {
+        foundRows.push({ metric: tj.metric, value: tj.value ?? null, n: tj.n ?? null });
+        lines.push(`- 時系列: 時の言葉が帳面に届いた割合（24時間）${tj.value ?? "—"}%（${tj.n ?? 0}語）（作業員L・台帳 #518）`);
+      }
+    } catch { lines.push("- 時系列: audit-timeline-coverage が失敗（作業員L・台帳 #518）"); } finally { try { rmSync(tlo); } catch { /* 無し */ } }
   }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
@@ -439,6 +454,7 @@ async function main() {
       ...puRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...flexRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "takeuchi", value: r.value, n: r.n })),
+      ...foundRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n })),
         // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）
