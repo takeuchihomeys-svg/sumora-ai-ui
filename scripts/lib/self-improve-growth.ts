@@ -142,3 +142,13 @@ export function estimateDoneUnsentNow(scriptExists: (p: string) => boolean): { d
     return { done: Number(j.done ?? 0), unsent: j.unsent, unsentConvs: Number(j.unsent_convs ?? 0), dup: j.dup, convs: (j.convs ?? []).map((c) => String(c).slice(0, 8)) };
   } catch { return null; }
 }
+
+/**
+ * 統括→書き手の欄ごとの届き・下書きに入った割合（作業員L の audit-writer-linkage --metrics=・台帳 #466・作業員P の地図 #610 の葉・2026-11-23 作業員N2）。
+ *   行の形は L の scripts/lib/writer-field-metrics.ts（writer_link:field:<欄>:delivered／:in_draft・writer_link:brief:<欄>:in_draft・value %・n）。
+ *   L の行の scope は "reply" だが、quality_daily の scope は takeuchi・all・draft・employee だけ（決まりの制約）＝下書きの数なので "draft" に読み替える（純関数）
+ */
+export function writerMetricRowsForQd(rows: ReadonlyArray<{ metric: string; scope?: string; value: number | null; n: number | null; detail?: Record<string, unknown> }>): Array<{ metric: string; scope: string; value: number | null; n: number | null; detail?: Record<string, unknown> }> {
+  const ok = new Set(["takeuchi", "all", "draft", "employee"]);
+  return rows.filter((r) => typeof r.metric === "string" && r.metric.startsWith("writer_link:")).map((r) => ({ metric: r.metric, scope: r.scope && ok.has(r.scope) ? r.scope : "draft", value: r.value ?? null, n: r.n ?? null, ...(r.detail ? { detail: r.detail } : {}) }));
+}

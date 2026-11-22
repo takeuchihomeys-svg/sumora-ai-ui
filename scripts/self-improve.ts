@@ -33,7 +33,7 @@ import { flexMetricsOf, trustMetricsOf, type OffPatternJson, type PromiseKeptRow
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
-import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow, lastJsonLine } from "./lib/self-improve-growth";
+import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow, lastJsonLine, writerMetricRowsForQd } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 
@@ -385,6 +385,18 @@ async function main() {
       }
     } catch { lines.push("- 時系列: audit-timeline-coverage が失敗（作業員L・台帳 #518）"); } finally { try { rmSync(tlo); } catch { /* 無し */ } }
   }
+  // 統括→書き手の欄ごとの数（作業員L・台帳 #466・作業員P の地図 #610 の葉・2026-11-23 統括役の頼み）: audit-writer-linkage --hours=72 --max=60 --metrics=（読むだけ・判断の60番まで）
+  //   --metrics の無い古い台本（L の 60b98dfb2 が main に入る前）の日は飛ばす。既定の数（growth:writer_link:*）は変えない
+  const wmRows: Array<{ metric: string; scope: string; value: number | null; n: number | null; detail?: Record<string, unknown> }> = [];
+  if (doMetrics && existsSyncPU("scripts/audit-writer-linkage.ts") && readFileSync("scripts/audit-writer-linkage.ts", "utf8").includes("metricRowsOf")) {
+    const wmo = join(tmpdir(), `writer-metrics-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-writer-linkage.ts", "--hours=72", "--max=60", `--metrics=${wmo}`], 240_000);
+      wmRows.push(...writerMetricRowsForQd(JSON.parse(readFileSync(wmo, "utf8")) as Array<{ metric: string; scope?: string; value: number | null; n: number | null; detail?: Record<string, unknown> }>));
+      const low = wmRows.filter((r) => r.metric.endsWith(":in_draft") && r.value != null && r.value < 50 && (r.n ?? 0) >= 3).map((r) => `${r.metric.replace("writer_link:", "")} ${r.value}%（${r.n}）`);
+      lines.push(`- 統括→書き手の欄（72時間）: ${wmRows.length}行・下書きに入ったのが半分より少ない欄 ${low.slice(0, 6).join("・") || "なし"}（作業員L・台帳 #466）`);
+    } catch { lines.push("- 統括→書き手の欄: audit-writer-linkage --metrics が失敗（作業員L・台帳 #466）"); } finally { try { rmSync(wmo); } catch { /* 無し */ } }
+  }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
     const { data: qs } = await sb.from("quality_daily").select("day, metric, value").like("metric", "search_%").eq("scope", "all").gte("day", jstDay(now - 9 * 86_400_000)).limit(1000);
@@ -464,6 +476,7 @@ async function main() {
       ...fillRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...flexRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "takeuchi", value: r.value, n: r.n })),
       ...foundRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...wmRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: r.scope, value: r.value, n: r.n, ...(r.detail ? { detail: r.detail } : {}) })),
       ...avRows.map((r) => ({ day: jstDay(now - 86_400_000), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       ...(cd ? [{ day, metric: "growth:combo:AIX→返信の外れ", scope: "takeuchi", value: cd.aixToReply, n: cd.n }, { day, metric: "growth:combo:返信→AIX の外れ", scope: "takeuchi", value: cd.replyToAix, n: cd.n }, { day, metric: "growth:combo:2つ目の AIX の取りこぼし", scope: "takeuchi", value: cd.secondAixMiss, n: cd.n }, ...Object.entries(cd.aixToReplyByKind).map(([k, v]) => ({ day, metric: `growth:combo:AIX→返信の外れ:${k}`, scope: "takeuchi", value: v, n: cd.n })),
         // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）
