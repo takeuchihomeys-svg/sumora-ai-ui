@@ -45,7 +45,14 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
   const ck = counterKitchenAgreement(((pk ?? []) as Array<{ id: number; ck_text: string | null; ck_image: unknown }>)
     .map((r) => ({ id: r.id, text: r.ck_text, image: r.ck_image === true ? true : r.ck_image === false ? false : null })));
   if (ck.mismatchIds.length || ck.imageOnlyIds.length) console.log(`カウンターキッチン: 食い違い ${ck.mismatchIds.join(",") || "—"}・図だけで有る ${ck.imageOnlyIds.join(",") || "—"}（目の監査へ: scripts/counter-kitchen-image-audit.ts --topic=counter_kitchen_v2 --ids=…）`);
-  const metrics = [...customerFillMetrics((cust ?? []) as CustomerRow[]), ...sentFillMetrics((sent ?? []) as SentRow[]), ...ck.metrics];
+  // 2026-11-23 作業員G（台帳 #477・届きの数）: カウンターキッチンを希望して文字の札では分からない（unlisted）行のうち、画像の読みが付いた割合
+  //   image_reach:counter_kitchen … value＝読みが付いた割合・n＝希望して unlisted の行（希望が無い日は書かない）
+  const { data: want, error: e4 } = await supabase.from("property_pickups").select("id, ck_image:image_facts->counter_kitchen")
+    .gte("created_at", from).lt("created_at", to).contains("equipment", { match: [{ key: "counter_kitchen", result: "unlisted" }] }).limit(2000);
+  if (e4) throw new Error(e4.message);
+  const wantRows = (want ?? []) as Array<{ id: number; ck_image: unknown }>;
+  const reach = wantRows.length ? [{ metric: "image_reach:counter_kitchen", value: Math.round((wantRows.filter((r) => r.ck_image === true || r.ck_image === false).length / wantRows.length) * 1000) / 1000, n: wantRows.length }] : [];
+  const metrics = [...customerFillMetrics((cust ?? []) as CustomerRow[]), ...sentFillMetrics((sent ?? []) as SentRow[]), ...ck.metrics, ...reach];
   console.log(`${day}（JST）: お客様の画像 ${(cust ?? []).length}枚・こちらの画像 ${(sent ?? []).length}枚 → 物差し ${metrics.length}行`);
   for (const m of metrics) console.log(`  ${m.metric}  ${(m.value * 100).toFixed(0)}%  n=${m.n}`);
   if (write && metrics.length) {
