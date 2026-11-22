@@ -20,7 +20,7 @@
            🧠 ブレイン … 独立の ON/OFF（storage brainMode）。3つのモードのどれとも組み合わせられる
            ドロップダウン … 通常／スタッフ（自動化を無視・2時間で自動OFF）／AIX連動（storage staffMode・staffModeAt・aixMode）
            組み合わせごとの動き・帯・バッジは mode-core.js の1か所（behavior / banner / badge）。
-           右の「∨」（#collapse-btn）はモードとは別物: サイドパネルでは「お客さん一覧に戻る」、下のバーでは「折りたたむ」 -->
+           右の「∨」（#collapse-btn）はモードとは別物: ページ上の小窓では「折りたたむ」、サイドパネルでは「お客さん一覧に戻る」 -->
       <div class="mode-group">
         <!-- 2026-11-11 竹内さん「でていない。ブレインの左側にわかりやすいようにだす」:
              画面の録画の許可（<all_urls>）が**未許可の時だけ**、ブレインのすぐ左に**オレンジのボタン**を出す。
@@ -41,11 +41,11 @@
           <option value="ai">AIX（選んだお客さん）</option>
         </select>
       </div>
-      <!-- サイドパネル: お客さん一覧に戻る／下のバー: 一覧に戻る（※もう縮めない）
-           2026-11-13 竹内さん「この赤枠のところを押したら展開される部分。ここのところちゃんと改善する」:
-             旧はこの∨で 100px に縮めていて、押すと**中身が消えて白い箱**になっていた（二度と開かない）。
-             → 押すと「開いたまま お客さん一覧に戻る」にした（縮めない）。 -->
-      <button class="icon-btn" id="collapse-btn" title="お客さん一覧に戻る（縮めません）">
+      <!-- ページ上の小窓: 折りたたむ（親 underbar がミニボタンに）／サイドパネル: お客さん一覧に戻る
+           2026-11-22 竹内さん「ここおしたらちゃんと折りたたまれるように」:
+             ⚠ 白い箱の原因は「親で縮める＋子で mini-mode で中身を消す」の同時実行。
+             → 折りたたみは親だけ。子は中身を消さない。開き直しはミニボタン。 -->
+      <button class="icon-btn" id="collapse-btn" title="折りたたむ（ミニボタンになります）／サイドパネルでは一覧に戻る">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="6 9 12 15 18 9"/>
         </svg>

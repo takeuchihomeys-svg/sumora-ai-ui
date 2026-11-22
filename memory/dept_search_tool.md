@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-22 **拡張 2.8.153: ヘッダー ∨ で小窓がちゃんと折りたたまれる（構造を分けた）**（竹内さん「ここおしたらちゃんと折りたたまれるように 構造考えておりたたまれるようにする」・通常モードでリアプロが重い／押せない件の続き）
+- 画面: AIXLINX 小窓ヘッダー右の ∨（#collapse-btn）。旧は白い箱回避のため「一覧に戻るだけ・縮めない」になっており、∨ の見た目と合わず・小窓がリアプロを塞ぎ続けた。
+- 構造: **親（underbar）**が窓サイズの正本 → `collapse` で wrap を隠しミニボタン（AIX LINX）を出す。**子（popup）**は `setMiniMode(true)` しない（中身を消さない＝白い箱の原因を再発させない）。開き直しはミニボタン → `doExpand` → `repaint`。
+- もう1つの原因: underbar が iframe 作成時に `ignoreNextCollapse=true` のまま残っており、人が ∨ を押した**1回目だけ無視**されていた（popup は起動時 collapse を送らなくなっていたのにガードだけ残っていた）。廃止。
+- サイドパネル（親が無い）: ∨ は今まで通りお客さん一覧に戻る。
+- テスト: `collapse-fold-v28153.test.js`・`collapse-btn-no-blank-v2718.test.js` を新構造に合わせて更新。次に確かめる事: 拡張 2.8.153 再読込 → ∨ 1回でミニボタンになるか・ミニボタンで中身が白くなく開くか・折りたたんだあとリアプロの賃料が押せるか。
+
 ## 2026-11-20 **拡張 2.8.152: 2.8.151 の残り2つを直す＋自動か手動かを押し1回ごとの by で判断する**（竹内さん「直していないものちゃんと改善する また自動か手動かもちゃんと判断するようにする 統括proおねがい」）
 - ① 印刷用PDF（`a.print`）など位置が付かなかった拡張の押し: `pointer-ui.js` の `tap()` が見えるカーソルの位置を `{clientX, clientY, synthetic:true}` で `__axlxRecNoteOp` に渡す → `_recNoteOp(kind, el, ev)` が `_pushOp` へ。`_pushPoint` は拡張の押しの位置を `_pendingPointXY` に控え、直後の `btn.click()`（座標0,0）にも同じ位置を付ける。
 - ② 自動の押しが `axlx_human_points`（見えるカーソルが「人の位置」として狙う鍵）に入っていた: `_pushPoint` は by:"auto" を `_liveAutoPoints`（ページの中だけ）へ分け、`_savePoints` は人の押しだけ。`save()` の POINTS_KEY2 へ移す時も `by:"auto"` を飛ばす。`pointer-ui.js` の `_pointsFor` も `by:"auto"` を返さない（旧版が積んだ物も無視）。

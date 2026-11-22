@@ -7049,35 +7049,31 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /**
-   * 2026-11-13 竹内さん「この赤枠のところ（∨）を押したら展開される部分。
-   *   ここのところちゃんと改善するようにする。ここが展開のところ」
-   *   竹内さん「開いた状態から閉じた状態にするときに白くなるバグが起きるし、展開することができなくなる」
+   * 2026-11-22 竹内さん「ここおしたらちゃんと折りたたまれるように 構造考えておりたたまれるようにする」
+   *   （画面: ヘッダー右の ∨。リアプロの上に浮かぶ小窓＝underbar）
    *
-   * ⚠ 原因はこのボタンだった。旧は押すと
-   *     ① `setMiniMode(true)` … **この画面（popup）の中身を全部隠す**（CSS の body.mini-mode）
-   *     ② `notifyParent("collapse")` … 親（underbar）が wrap を 100px に縮める
-   *   の2つを同时にやっていた。→ 中身が消えて**白い箱**になり、開き直しても
-   *   中の描画が戻らず**二度と展開できない**ように見えていた。
+   * ★ 構造（役割を分ける・白い箱を再発させない）:
+   *   ・**親（underbar）**が窓の大きさの正本 → collapse で wrap を隠し、ミニボタン（AIX LINX）を出す
+   *   ・**子（この popup）**は中身を消さない → setMiniMode(true) は呼ばない（旧の白い箱の原因）
+   *   ・開き直しはミニボタン → 親が doExpand → repaint で中身を描き直す（既存）
    *
-   * → **押したら「開いたまま一覧に戻る」**にする。
-   *   ⚠ 縮めない（setMiniMode も notifyParent("collapse") も呼ばない）。
-   *     縮めたい時は、親のバーのドラッグや別の手段で行う。
-   *   ＝ このボタンは「いまの画面から**お客さん一覧に戻る**」ボタンとして動く。
+   * ⚠ 2026-11-13 の一時しのぎ「一覧に戻るだけ・縮めない」は、∨ の見た目と合わず・小窓がリアプロを塞ぎ続けた。
+   *   白い箱の本当の原因は「縮める＋中身を mini-mode で消す」の同時実行。縮めるのは親だけにする。
+   *
+   *   ・underbar（ページに浮かぶ）: ∨ → 折りたたむ（親へ collapse）
+   *   ・サイドパネル: ∨ → お客さん一覧に戻る（親が無いので折りたたみはできない）
    */
   document.getElementById("collapse-btn").addEventListener("click", () => {
     try {
       if (isUnderbar) {
-        // 中身を隠さない・縮めない（白い箱にしない）
         setMiniMode(false);
-        showView("view-list");
-        // 親に「開いたまま」を伝える（縮めさせない）
-        notifyParent("expand");
+        notifyParent("collapse");
       } else {
         showView("view-list");
       }
     } catch (e) {
-      console.warn("[AX] 一覧に戻れません:", e);
-      try { showView("view-list"); } catch (_) {}
+      console.warn("[AX] 折りたたみ／一覧に戻れません:", e);
+      try { if (!isUnderbar) showView("view-list"); } catch (_) {}
     }
   });
 

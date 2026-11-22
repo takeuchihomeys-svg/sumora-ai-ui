@@ -135,7 +135,11 @@
       wrap.title = "🔄 ページをリロードしてパネルを復活";
       return null;
     }
-    ignoreNextCollapse = true; // popup.js初期化時のcollapseを無視
+    /**
+     * 2026-11-22: 旧は起動時に「次の collapse を1回無視」していた。
+     *   popup は起動時に collapse を送らなくなったのに、人が ∨ を押した**1回目**だけ無視されていた
+     *   （「押しても折りたたまれない」）。起動時の無視は不要なので付けない。
+     */
     iframe = document.createElement("iframe");
     iframe.src = popupUrl;
     Object.assign(iframe.style, {
@@ -322,8 +326,6 @@
    *   ・初めて（記録が無い）時だけ、検索中なら縮めて起動（今までの配慮を残す）
    *   ・一度でも人が開いたら、次からは**必ず開いたまま**
    */
-  // popup.jsの初期collapseを無視するフラグ（iframe作成・展開時に都度セット）
-  let ignoreNextCollapse = false;
   /**
    * 2026-11-13: 起動時の処理（旧はここで「検索中なら縮める」を毎回決め直していた）。
    *   今は**人の状態（wasExpanded）に従うだけ**。検索中かどうかで勝手に縮めない。
@@ -559,8 +561,7 @@
     if (!e.data || e.data.from !== "aixlinx-underbar") return;
     const a = e.data.action;
     if (a === "collapse") {
-      // popup.js初期化時のcollapseは無視（前回展開状態を維持するため）
-      if (ignoreNextCollapse) { ignoreNextCollapse = false; return; }
+      // 人が ∨ を押した折りたたみ（親が wrap を隠してミニボタンにする）
       setSize(false);
     }
     if (a === "expand") doExpand();
