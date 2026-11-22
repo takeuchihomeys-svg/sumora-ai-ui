@@ -89,13 +89,14 @@ export function withRefinedNext(loc: ApplyRouteLocation, s: RouteNextSignals, en
   return { ...loc, next: r.next, evidence: [...loc.evidence, `次の一手を番で選び直し:${r.rule}`] };
 }
 
-// ── 番ごとの駅の記録（brain_decision_logs.digest.ar・ROUTE_DIGEST・既定 off）──
+// ── 番ごとの駅の記録（brain_decision_logs.digest.ar・ROUTE_DIGEST・11/23 から既定 on・=off で止める）──
 //   見つけた穴: meta.apply_route は conversations.last_brain_meta にしか無く毎番上書き＝番ごとの駅の履歴が無く、「駅が進んだか」を本番の記録で測れない
 //   （作業員L の誘導の物差しは digest.sg＝customer-state の段で測っていて、地図の駅（作り直し）と一致は 54%・段の記録が無い番 27%）。
 //   digest に "node|branch|substate|網の版" の短い1語を残す（記録だけ）。digest の欄のうち次の番のブレインが読むのは名前の決まった項目だけ
 //   （brain-core FreshDigestRow・lastTurnReview の sg）で ar は読まれない＝ブレインの材料に戻らない（作業員M の注意・KB c5fd146d）。
 export function routeDigestOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.ROUTE_DIGEST ?? "").trim().toLowerCase() === "on";
+  // 2026-11-23 統括役の決め: 記録だけ（次の番のブレインは読まない・テストで確かめた）なので既定 on。止める ROUTE_DIGEST=off
+  return (env.ROUTE_DIGEST ?? "").trim().toLowerCase() !== "off";
 }
 /** meta.apply_route → "proposing|considering|proposing_considering|v1"（無ければ null） */
 export function routeDigestOf(meta: Record<string, unknown> | null | undefined, env: Env = typeof process !== "undefined" ? process.env : {}): string | null {

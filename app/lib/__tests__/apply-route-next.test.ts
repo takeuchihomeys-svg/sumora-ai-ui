@@ -75,11 +75,11 @@ console.log("■ on の文と根拠");
 console.log("■ ROUTE_DIGEST（番ごとの駅の記録）");
 {
   const meta = { apply_route: { node: "proposing", branch: "considering", next: "x", next_aix: [], substate: "proposing_considering" } };
-  t("既定 off", !routeDigestOn({}) && routeDigestOn({ ROUTE_DIGEST: "on" }));
+  t("既定 on（=off で止める）", routeDigestOn({}) && routeDigestOn({ ROUTE_DIGEST: "on" }) && !routeDigestOn({ ROUTE_DIGEST: "off" }));
   t("1語の形", routeDigestOf(meta, {}) === "proposing|considering|proposing_considering|v1" && routeDigestOf(meta, { ROUTE_SUBSTATE_NET_V2: "on" })?.endsWith("|v2") === true);
   t("駅が無ければ null", routeDigestOf({ apply_route: { node: null, branch: null } }, {}) === null && routeDigestOf({}, {}) === null);
-  const off = brainDecisionDigestExtra(meta as Record<string, unknown>, {}) as Record<string, unknown>;
-  const on = brainDecisionDigestExtra(meta as Record<string, unknown>, { ROUTE_DIGEST: "on" }) as Record<string, unknown>;
+  const off = brainDecisionDigestExtra(meta as Record<string, unknown>, { ROUTE_DIGEST: "off" }) as Record<string, unknown>;
+  const on = brainDecisionDigestExtra(meta as Record<string, unknown>, {}) as Record<string, unknown>;
   t("off の digest に ar が無い", !("ar" in off));
   t("on の digest に ar・ほかの欄は同じ", on.ar === "proposing|considering|proposing_considering|v1" && JSON.stringify({ ...on, ar: undefined }) === JSON.stringify({ ...off, ar: undefined }));
 }

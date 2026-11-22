@@ -95,7 +95,7 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   { const sn = situationNowDigest(meta.situation_now); if (sn) (out as Record<string, unknown>).sn = sn; }
   // 2026-11-21 作業員L: 読んだ学びの id（ls）と同じ型の外れの印（lsm）（CONDUCTOR_LESSONS）
   { const cl = meta.conductor_lessons as { ids?: string[]; mark?: string[] } | undefined; if (cl?.ids?.length) (out as Record<string, unknown>).ls = cl.ids.join(","); if (cl?.mark?.length) (out as Record<string, unknown>).lsm = cl.mark.join(","); }
-  // 2026-11-23 作業員R（#608）: 番ごとの申込までの地図の駅（ar＝"node|branch|substate|網の版"・ROUTE_DIGEST=on の時だけ・記録だけ）。次の番のブレインは名前の決まった欄しか読まない＝材料に戻らない
+  // 2026-11-23 作業員R（#608）: 番ごとの申込までの地図の駅（ar＝"node|branch|substate|網の版"・既定 on・ROUTE_DIGEST=off で止める・記録だけ）。次の番のブレインは名前の決まった欄しか読まない＝材料に戻らない
   if (routeDigestOn(env)) { const ar = routeDigestOf(meta, env); if (ar) (out as Record<string, unknown>).ar = ar; }
   return out;
 }
