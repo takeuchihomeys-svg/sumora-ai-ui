@@ -142,6 +142,15 @@ type Row = {
   console.log(`   分かれ道: ${cnt(rows.map((r) => (r.branch ? ROUTE_BRANCHES[r.branch as keyof typeof ROUTE_BRANCHES].name : "なし")))}`);
   const both = rows.filter((r) => r.node && r.digestNode);
   console.log(`   地図の駅（作り直し）と判断の記録の段（digest.sg）が同じ: ${both.filter((r) => r.node === r.digestNode || (r.node === "hearing" && r.digestNode === "pickup")).length}/${both.length}（${pct(both.filter((r) => r.node === r.digestNode || (r.node === "hearing" && r.digestNode === "pickup")).length, both.length)}）・段の記録が無い番 ${rows.filter((r) => !r.digestNode).length}`);
+  {
+    // 2026-11-23 #620 の原因: digest.sg は 11/03 05:41Z から。それより前の判断の記録は cp（ブレインの5段 hearing/proposing/viewing/applying/contract）だけで、
+    //   guide-measure は sg が無いと cp で駅を出す＝ピックアップ・気に入った・見積が全部 proposing、内覧調整・予定・後が全部 viewing_arrange になる（数え方）。時代で分けて比べる
+    const SG_FROM = "2026-11-03T05:42";
+    const CP5: Record<string, string> = { inquiry: "hearing", hearing: "hearing", pickup: "proposing", proposing: "proposing", interested: "proposing", estimate: "proposing", viewing_arrange: "viewing", viewing_scheduled: "viewing", viewed: "viewing", apply_prep: "applying", applying: "applying" };
+    const sameSt = (x: Row) => x.node === x.digestNode || (x.digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(x.node ?? ""));
+    const bt = rows.filter((x) => x.node && x.digestNode), sgE = bt.filter((x) => x.at >= SG_FROM), cpE = bt.filter((x) => x.at < SG_FROM);
+    console.log(`   時代で分けた一致: sg の時代（11/03〜）${sgE.filter(sameSt).length}/${sgE.length}・cp の時代（〜11/03・5段に寄せて）${cpE.filter((x) => CP5[x.node!] === CP5[x.digestNode!]).length}/${cpE.length}（駅のままだと ${cpE.filter(sameSt).length}）`);
+  }
   console.log(`\n## B 地図の次の一手の候補 vs 竹内さんの一手: ${cnt(rows.map((r) => r.agree))}`);
   const good = (r: Row) => ["aix_match", "promise_match", "reply_match", "reply_invite"].includes(r.agree);
   console.log(`   合う側（aix_match・promise_match・reply_match・reply_invite）: ${rows.filter(good).length}/${N}（${pct(rows.filter(good).length, N)}）`);
