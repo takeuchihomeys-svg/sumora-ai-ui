@@ -4,6 +4,9 @@
 import { aixBundle, turnClassOf, aixKindOfTurn, brainRouteOf, judgeTurn } from "../aix-turn-judgment";
 import { deviceWriterOfWindow, watchWriterDeviceFirstOn } from "../staff-writer";
 import { ackFormFacts, ackFormMaterialLine, ackConfirmAixPathLine, ackFormAixShareLine } from "../repeat-brain-align";
+import { applyRule6OpenPromise, rule6OpenPromiseOn, RULE6_OPEN_PROMISE_EDIT } from "../brain-prompt-rules-1112";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
@@ -63,6 +66,17 @@ it("on: 確認の約束の番は 21 → AIX 14", () => {
   const g = ackFormFacts([{ sender: "staff", text: "募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！", created_at: "2026-11-09T07:00:00Z" }, { sender: "customer", text: "ありがとうございます", created_at: "2026-11-09T07:52:00Z" }]);
   eq(ackFormMaterialLine(g, { ACK_FORM_COUNT_WITH_AIX: "on" }).includes("確認の約束だけの番 21"), true);
 });
+
+console.log("brain-prompt-rules-1112 BRAIN_RULE6_OPEN_PROMISE");
+{
+  const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
+  it("旧の⑥の太字の1文が brain-core に一字一句ある（差し替えが当たる）", () => eq(src.includes(RULE6_OPEN_PROMISE_EDIT.from), true));
+  it("brain-core は旧の⑥を applyRule6OpenPromise に通している", () => eq(/RULE6_FACTS : applyRule6OpenPromise\("ルール⑥/.test(src), true));
+  const sample = `ルール⑥（感謝・了承への返し方）: … ${RULE6_OPEN_PROMISE_EDIT.from}。成約会話の…`;
+  it("off（既定）: 1文字も変わらない", () => { eq(applyRule6OpenPromise(sample, {}), sample); eq(rule6OpenPromiseOn({}), false); });
+  it("on: 約束が開いている番は約束を果たす AIX のまま・開いていない番は null", () => { const x = applyRule6OpenPromise(sample, { BRAIN_RULE6_OPEN_PROMISE: "on" }); eq(x.includes("約束を果たす AIX のままにする"), true); eq(x.includes("開いていない番は aix フィールドを null"), true); eq(x.includes(RULE6_OPEN_PROMISE_EDIT.from), false); });
+  it("on でも元の文が無い（BRAIN_RULES_678_FACTS=on の⑥）時は何もしない", () => eq(applyRule6OpenPromise("ルール⑥（感謝・了承だけの番・事実の材料）", { BRAIN_RULE6_OPEN_PROMISE: "on" }), "ルール⑥（感謝・了承だけの番・事実の材料）"));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
