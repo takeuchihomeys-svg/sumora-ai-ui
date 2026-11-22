@@ -62,7 +62,23 @@ export const PROMISE_FULFIL_H = 72;
  * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
  *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
  */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean } = {}): GuideTurn[] {
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean } = {}): GuideTurn[] {
+  // 2026-11-23 作業員L（台帳 #102・統括役の頼み）: 返事の後の駅は「返事の始まりの後の最初の判断」で取っていた。お客様が続けて質問し同じ流れで
+  //   次の段へ進んだ番（11/23 に読んだ c024b7: 確認の結果の後に質問が続き、その日のうちに申込へ）は、最初の判断の駅が古く「止まった」に見えた。
+  //   opts.burstAfter（既定 false＝今と同じ）の時は、返事の束の後の次のこちらの通の直前の、一番新しい判断の駅で見る（無ければ今のまま）
+  const stageBefore = (iso: string, fromIso: string) => {
+    const t = Date.parse(iso), t0 = Date.parse(fromIso);
+    const d = [...ds].reverse().find((x) => { const xt = Date.parse(x.created_at); return xt <= t && xt >= t0; });
+    return d ? nodeOfStage(d.stage) : null;
+  };
+  const afterOf = (replyStartIdx: number): RouteNodeId | null => {
+    const first = stageAt(ms[replyStartIdx].created_at, true);
+    if (!opts.burstAfter) return first;
+    let j = replyStartIdx; while (j < ms.length && ms[j].sender === "customer") j++;
+    // 束の後の次のこちらの通（無ければ最後のお客様の通の 30分後まで）
+    const until = j < ms.length ? ms[j].created_at : new Date(Date.parse(ms[j - 1].created_at) + 30 * 60_000).toISOString();
+    return stageBefore(until, ms[replyStartIdx].created_at) ?? first;
+  };
   // 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後（viewing_scheduled）に留まって返事が来る番は、内覧の日まで駅が進まないだけ＝止まりではない
   //   （「物件確認した の後に止まった」7番のうち3番がこれ）。opts.viewingWait（既定 false＝今と同じ）の時だけ engaged に数える
   const keep = (before: RouteNodeId | null, after: RouteNodeId | null, reply: ReactionCat) =>
@@ -92,7 +108,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const reply: string[] = []; for (let j = k; j < ms.length && ms[j].sender === "customer"; j++) reply.push(String(ms[j].text ?? ""));
     const hours = endAt ? (Date.parse(endAt) - Date.parse(m.created_at)) / 36e5 : null;
     const replied = hours != null && hours <= windowH;
-    const after = replied ? stageAt(endAt!, true) : before;
+    const after = replied ? afterOf(k) : before;
     const replyCat = replied ? classifyCustomerBurst(reply) : "silent";
     // 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は、駅が変わらなくても関わりが続いている形＝「止まった」と分ける（engaged）
     const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back"
@@ -109,7 +125,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
         if (!nx || h2 == null || h2 > windowH) { row.outcome = "left"; row.reply = "silent"; }
         else {
           const burst: string[] = []; for (let j = ms.indexOf(nx); j < ms.length && ms[j].sender === "customer"; j++) burst.push(String(ms[j].text ?? ""));
-          const a2 = stageAt(nx.created_at, true), r2 = classifyCustomerBurst(burst);
+          const a2 = afterOf(ms.indexOf(nx)), r2 = classifyCustomerBurst(burst);
           row.after = a2; row.reply = r2;
           row.outcome = idx(a2) > idx(before) ? "advanced" : idx(a2) < idx(before) && idx(a2) >= 0 ? "back" : keep(before, a2, r2) ? "engaged" : "stuck";
         }

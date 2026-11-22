@@ -131,3 +131,20 @@ t("内覧待ちは止まりに数えない（viewingWait）", () => {
   assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { viewingWait: true })[0].outcome, "engaged");
 });
 console.log("guide-viewing-wait ok");
+// 2026-11-23 作業員L（台帳 #102）: 返事の束の後の判断で見る（burstAfter・既定 false）
+t("返事が続く番は束の後の判断（burstAfter）", () => {
+  const msgs = [
+    { sender: "customer", text: "この2件どうですか", created_at: at(0) },
+    { sender: "staff", text: "募集状況確認させて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
+    { sender: "customer", text: "最短入居日どのくらいですか", created_at: at(2) },
+    { sender: "customer", text: "申し込みたいです", created_at: at(2.5) },
+    { sender: "staff", text: "かしこまりました！！", created_at: at(3), staff_writer: "takeuchi" },
+  ];
+  // 返事の始まりの直後の判断は提案中のまま・束の終わり（次のこちらの通の前）の判断は申込の準備
+  const ds = [{ created_at: at(0.5), stage: "proposing" }, { created_at: at(2.1), stage: "proposing" }, { created_at: at(2.7), stage: "apply_prep" }];
+  const [off] = guideTurnsOf("c1", msgs, [], ds);
+  assert.equal(off.after, "proposing");
+  const [on] = guideTurnsOf("c1", msgs, [], ds, 48, { burstAfter: true });
+  assert.equal(on.after, "apply_prep"); assert.equal(on.outcome, "advanced");
+});
+console.log("guide-burst-after ok");
