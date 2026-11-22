@@ -1,6 +1,6 @@
 // scripts/audit-timeline-coverage.ts — お客様の言った日時が絶対の日付に直されて今の状況の記録に入っているかを数える（読むだけ・LLM なし・軽い読み）
 // 2026-11-21 作業員L（台帳 #7）。読む物: 直近 --hours 時間に判断した会話（最大 --max）の suggested_aix_meta と、その判断より前のお客様の発言 40通。
-// 実行: npx tsx --env-file=.env.local scripts/audit-timeline-coverage.ts [--hours=24] [--max=60]
+// 実行: npx tsx --env-file=.env.local scripts/audit-timeline-coverage.ts [--hours=24] [--max=60] [--json=<出力>]
 import { createClient } from "@supabase/supabase-js";
 import { timelineCoverageOf, summarizeTimeline, type TlResult } from "./lib/timeline-coverage";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
@@ -27,6 +27,8 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
     res.push(timelineCoverageOf({ conv: r.id, msgs, recWords: tl ? (tl.words ?? []) : null, nowMs: Date.parse(r.brain_analyzed_at), windowStartMs }));
   }
   const s = summarizeTimeline(res);
+  // 2026-11-22 作業員L（台帳 #518）: 本番の数（foundation:chrono:timeline_reach＝時の言葉が絶対の日付で記録に入った割合）を作業員N2 が quality_daily に書くための JSON
+  if (arg("json", "")) { (await import("node:fs")).writeFileSync(arg("json", ""), JSON.stringify({ hours, metric: "foundation:chrono:timeline_reach", value: s.expected ? Math.round((1000 * s.hit) / s.expected) / 10 : null, n: s.expected, ...s })); }
   const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : "-");
   console.log(`時系列の帳面の入り方（${hours}時間・判断した会話 ${s.turns}・お客様の時の言葉がある会話 ${s.withWords}）`);
   console.log(`記録が無い（situation_now／timeline が無い）: ${s.noRecord} 会話`);
