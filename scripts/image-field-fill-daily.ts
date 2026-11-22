@@ -26,12 +26,17 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
   // 2026-11-22 作業員G（#509）: 見積書の画像（image_details.kind=estimate）はこちらの画像の欄の埋まりから除く（間取り・築年が無いのが正しい）
   {
     const urls = ((sent ?? []) as Array<{ image_url?: string }>).map((r) => r.image_url).filter((u): u is string => !!u);
-    const est = new Set<string>();
+    const est = new Set<string>(), prop = new Set<string>();
     for (let i = 0; i < urls.length; i += 100) {
-      const { data: d } = await supabase.from("image_details").select("image_url").eq("kind", "estimate").in("image_url", urls.slice(i, i + 100));
-      for (const r of (d ?? []) as Array<{ image_url: string }>) est.add(r.image_url);
+      const { data: d } = await supabase.from("image_details").select("image_url, kind").in("kind", ["estimate", "property"]).in("image_url", urls.slice(i, i + 100));
+      for (const r of (d ?? []) as Array<{ image_url: string; kind: string }>) (r.kind === "estimate" ? est : prop).add(r.image_url);
     }
-    if (est.size) { sent = ((sent ?? []) as Array<{ image_url?: string }>).filter((r) => !est.has(r.image_url ?? "")) as typeof sent; console.log(`見積書の画像 ${est.size}枚を除いた`); }
+    // 2026-11-23 作業員G（統括役 案1）: 写真など＝書き写しの読みが物件の資料として無く、値（facts）も1つも無い画像も「元が無い」として除く
+    const rows = (sent ?? []) as Array<{ image_url?: string; facts?: unknown }>;
+    const isPhoto = (r: { image_url?: string; facts?: unknown }) => !prop.has(r.image_url ?? "") && (r.facts == null || (typeof r.facts === "object" && Object.keys(r.facts as object).filter((k) => !["src", "model"].includes(k)).length === 0));
+    const photoN = rows.filter((r) => !est.has(r.image_url ?? "") && isPhoto(r)).length;
+    sent = rows.filter((r) => !est.has(r.image_url ?? "") && !isPhoto(r)) as typeof sent;
+    if (est.size || photoN) console.log(`見積書の画像 ${est.size}枚・写真など（読みも値も無い）${photoN}枚を除いた`);
   }
   // 2026-11-22 作業員G（#587）: カウンターキッチンの文字の札と画像の読みの食い違い（画像で読んだ行だけ）
   const { data: pk, error: e3 } = await supabase.from("property_pickups").select("id, ck_text:equipment->facts->counter_kitchen->>s, ck_image:image_facts->counter_kitchen")
