@@ -397,6 +397,18 @@ async function main() {
       lines.push(`- 統括→書き手の欄（72時間）: ${wmRows.length}行・下書きに入ったのが半分より少ない欄 ${low.slice(0, 6).join("・") || "なし"}（作業員L・台帳 #466）`);
     } catch { lines.push("- 統括→書き手の欄: audit-writer-linkage --metrics が失敗（作業員L・台帳 #466）"); } finally { try { rmSync(wmo); } catch { /* 無し */ } }
   }
+  // 時系列の帳面の届き方（作業員L・台帳 #7・作業員P の地図 #610 の葉・2026-11-23 統括役の頼み）: audit-timeline-delivery --hours=72 --max=80 --metrics=（読むだけ）
+  //   writer_link:timeline:<欄>:to_brain／:to_writer。--metrics の無い古い台本（L の bea219c08 が main に入る前）の日は飛ばす。scope は draft（be8c8cfe0 と同じ読み替え）
+  if (doMetrics && existsSyncPU("scripts/audit-timeline-delivery.ts") && readFileSync("scripts/audit-timeline-delivery.ts", "utf8").includes("--metrics")) {
+    const tdo = join(tmpdir(), `timeline-delivery-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-timeline-delivery.ts", "--hours=72", "--max=80", `--metrics=${tdo}`], 240_000);
+      const tdRows = writerMetricRowsForQd(JSON.parse(readFileSync(tdo, "utf8")) as Array<{ metric: string; scope?: string; value: number | null; n: number | null; detail?: Record<string, unknown> }>);
+      wmRows.push(...tdRows);
+      const low = tdRows.filter((r) => r.value != null && r.value < 50 && (r.n ?? 0) >= 3).map((r) => `${r.metric.replace("writer_link:timeline:", "")} ${r.value}%（${r.n}）`);
+      lines.push(`- 時系列の帳面の届き方（72時間）: ${tdRows.length}行・半分より少ない所 ${low.slice(0, 6).join("・") || "なし"}（作業員L・台帳 #7）`);
+    } catch { lines.push("- 時系列の帳面の届き方: audit-timeline-delivery --metrics が失敗（作業員L・台帳 #7）"); } finally { try { rmSync(tdo); } catch { /* 無し */ } }
+  }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
     const { data: qs } = await sb.from("quality_daily").select("day, metric, value").like("metric", "search_%").eq("scope", "all").gte("day", jstDay(now - 9 * 86_400_000)).limit(1000);
