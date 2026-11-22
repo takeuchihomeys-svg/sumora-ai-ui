@@ -46,21 +46,20 @@ async function main() {
     const drafts = buildLessonDrafts(LABEL, rows, spec.map((p) => ({ ...p, customer: custOf.get(p.id) ?? "" })), takeuchi);
     console.log(`学びの下書き ${drafts.length}件（外れ・竹内さんの番だけ・問題 ${ids.length}・竹内さんの番 ${takeuchi.size}）${WRITE ? "" : "（書かない: --write と CONDUCTOR_LESSONS_BUILD=on の時だけ書く）"}`);
     if (!drafts.length) return;
-    const key = String(process.env.DEEPSEEK_API_KEY ?? "").trim();
-    const { DEEPSEEK_MODEL_FLASH } = await import("../app/lib/deepseek-models");
-    const model = String(process.env.LESSON_MODEL ?? DEEPSEEK_MODEL_FLASH).trim();
+    // 2026-11-23 作業員H（統括役・L の bd3736e2a と同じ形）: api.deepseek.com を直に叩いていて llm_usage_logs に残らなかった（費用の記録の穴）
+    //   → 本番と同じ口（vision-alt-provider.callDeepSeek・推論なし）で呼び、本番と同じ費用の記録（llm-usage-recorder.recordAltUsage）に1行ずつ残す
+    const [{ callDeepSeek }, { DEEPSEEK_FLASH_MODEL }, { recordAltUsage }] = await Promise.all([import("../app/lib/vision-alt-provider"), import("../app/lib/llm-alt-provider"), import("../app/lib/llm-usage-recorder")]);
+    const model = String(process.env.LESSON_MODEL ?? DEEPSEEK_FLASH_MODEL).trim();
     const { embedTexts } = await import("../app/lib/design-knowledge-rag-server");
     for (const d of drafts) {
       let lesson: string | null = null;
-      if (key) {
-        try {
-          const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-            body: JSON.stringify({ model, max_tokens: 400, temperature: 0, thinking: { type: "disabled" }, messages: [{ role: "user", content: lessonPrompt(d) }] }), // 推論に使い切って中身が空にならないように
-            signal: AbortSignal.timeout(60_000),
-          });
-          if (res.ok) lesson = cleanLesson(String(((await res.json()) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? ""));
-        } catch { lesson = null; }
+      const t0 = Date.now();
+      const res = await callDeepSeek(null, lessonPrompt(d), { model, maxTokens: 400, timeoutMs: 60_000, thinking: false, temperature: 0 }).catch(() => null);
+      if (res) {
+        lesson = cleanLesson(res.text);
+        recordAltUsage({ model: res.model, action: "exam_lesson", conversationId: null,
+          usage: { input_tokens: Math.max(0, res.usage.input - res.usage.cacheHit), output_tokens: res.usage.output, cache_read_input_tokens: res.usage.cacheHit },
+          status: 200, errorType: lesson ? null : "dropped", durationMs: Date.now() - t0, sysHead: "【試験の外れの学び】exam-lessons", sysKeyFull: null, maxTokens: 400 });
       }
       console.log(`- ${d.source}｜${d.scene ?? "-"}｜竹内 ${d.expected_act} ／ こちら ${d.got_act ?? "-"}｜段 ${d.changed_stage ?? "-"}｜${d.miss_kind ?? "要確認"}｜${lesson ?? "（学びの文を作れない）"}`);
       if (!WRITE || !lesson) continue;
