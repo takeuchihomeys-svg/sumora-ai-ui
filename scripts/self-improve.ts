@@ -336,6 +336,12 @@ async function main() {
   if (doMetrics) {
     const pr = existsSyncPU("scripts/audit-pickup-ready-daily.ts") ? (() => { try { return lastJsonLine<{ n?: number; ready?: number; rate?: number | null }>(runTsx(["scripts/audit-pickup-ready-daily.ts", "--days=7", "--json"], 180_000)); } catch { return null; } })() : null;
     if (pr && typeof pr.n === "number") { avRows.push({ metric: "growth:pickup_ready:最初", value: pr.rate ?? null, n: pr.n }); lines.push(`- 最初のピックアップが揃っていた割合（7日）: ${pr.rate ?? "—"}%（${pr.ready ?? 0}/${pr.n}）（作業員K2・台帳 #541）`); }
+    // 2026-11-22 K2 の頼みの2本目（台帳 #541 系・軽い読み・台本が手元に無い日は飛ばす）: ピックアップを選んだ理由の結び付け・物件確認の名前の埋まり
+    const jsonOf = <T,>(script: string): T | null => (existsSyncPU(script) ? (() => { try { return lastJsonLine<T>(runTsx([script, "--days=7", "--json"], 180_000)); } catch { return null; } })() : null);
+    const ps = jsonOf<{ n?: number; why?: number; rate?: number | null; no_pickup_row?: number }>("scripts/audit-pickup-select-link.ts");
+    if (ps && typeof ps.n === "number") { avRows.push({ metric: "growth:pickup_select:理由あり", value: ps.rate ?? null, n: ps.n }); lines.push(`- ピックアップを選んだ理由が結び付いた割合（7日）: ${ps.rate ?? "—"}%（${ps.why ?? 0}/${ps.n}・ピックアップの行が無い ${ps.no_pickup_row ?? "—"}）（作業員K2）`); }
+    const cn = jsonOf<{ total?: number; empty?: number; filled_rate?: number | null }>("scripts/audit-check-name-fill.ts");
+    if (cn && typeof cn.total === "number") { avRows.push({ metric: "growth:check_name:埋まり", value: cn.filled_rate ?? null, n: cn.total }); lines.push(`- 物件確認の名前の埋まり（7日）: ${cn.filled_rate ?? "—"}%（空 ${cn.empty ?? 0}/${cn.total}）（作業員K2）`); }
     if (existsSyncPU("scripts/audit-aix-ack-and-fresh.ts")) {
       const ao = join(tmpdir(), `aix-ack-fresh-${process.pid}.json`);
       try {

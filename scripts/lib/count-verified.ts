@@ -32,6 +32,8 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "growth:pickup_ready": { script: "scripts/audit-pickup-ready-daily.ts", owner: "作業員K2" },
   "growth:aix_fresh": { script: "scripts/audit-aix-ack-and-fresh.ts", owner: "作業員K2" },
   "growth:aix_ack": { script: "scripts/audit-aix-ack-and-fresh.ts", owner: "作業員K2" },
+  "growth:pickup_select": { script: "scripts/audit-pickup-select-link.ts", owner: "作業員K2" },
+  "growth:check_name": { script: "scripts/audit-check-name-fill.ts", owner: "作業員K2" },
   "core:linkage": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:no_denominator": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:foundation": { script: "scripts/check-foundation.ts", owner: "作業員N" },
