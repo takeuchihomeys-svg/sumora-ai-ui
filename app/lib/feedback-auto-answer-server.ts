@@ -46,7 +46,7 @@ export async function runFeedbackAutoAnswer(sb: SupabaseClient, opts: { dry?: bo
       const basisRows: KbBasisRow[] = hits.map((h) => ({ id: h.row.id, title: h.row.title, insight: h.row.insight, priority: prio.get(h.row.id) ?? null }))
         .filter((r) => r.priority === 0 || r.priority === 1);
       if (!basisRows.length) { out.notAnswerable++; continue; }
-      const res = await callDeepSeek(AUTO_ANSWER_SYSTEM, autoAnswerPrompt(q.question ?? "", basisRows, mask), { thinking: false, temperature: 0, maxTokens: 400, timeoutMs: 45_000 });
+      const res = await callDeepSeek(AUTO_ANSWER_SYSTEM, autoAnswerPrompt(q.question ?? "", basisRows, mask), { thinking: false, temperature: 0, maxTokens: 400, timeoutMs: 45_000, action: "feedback_auto_answer" });
       out.calls++;
       if (!res) { out.failed++; continue; }
       out.usd += altUsageUsd({ model: res.model, input_uncached: res.usage.cacheMiss + res.usage.cacheHit > 0 ? res.usage.cacheMiss : res.usage.input, cache_read: res.usage.cacheHit, output_tokens: res.usage.output, created_at: new Date().toISOString() });

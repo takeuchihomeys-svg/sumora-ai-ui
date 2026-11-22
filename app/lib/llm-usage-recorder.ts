@@ -592,7 +592,74 @@ function lazyAltRecorder(): AltRecorder | null {
 }
 
 /** 別クラウドの呼び出しを llm_usage_logs に1行残す（記録が使えない時は何もしない） */
-export function recordAltUsage(input: {
+export type AltUsageInput = {
+  model: string;
+  action: string | null;
+  conversationId: string | null;
+  usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
+  status: number;
+  errorType: string | null;
+  durationMs: number;
+  sysHead: string | null;
+  sysKeyFull: string | null;
+  maxTokens: number | null;
+  stream?: boolean;
+};
+
+// ── 2026-11-23 作業員N2（統括役の決め・台帳 #601）: vision-alt-provider.callDeepSeek の中の記録（既定 on・止める DEEPSEEK_AUTO_USAGE=off）──
+//   callDeepSeek は usage を返すだけで、呼ぶ側が recordAltUsage しないと llm_usage_logs に残らなかった（記録しない呼ぶ側が app に4か所・台本に数本）。
+//   中で記録すると、もう記録している呼ぶ側（約26か所）と二重になる → 中の記録は少し待って（AUTO_USAGE_HOLD_MS）から書き、その間に呼ぶ側が同じ番の
+//   recordAltUsage（出力の数・キャッシュに当たった数が同じ）を呼んだら中の記録は捨てる＝呼ぶ側の名札（action・会話）の行が1行だけ残る。
+//   呼ぶ側の記録が先に来た時のために、呼ぶ側の鍵も同じ時間だけ覚えておく（来ていれば中の記録は書かない）。
+//   照合に入力の数を使わないのは、呼ぶ側ごとに input_tokens の入れ方が違う（cacheMiss・input−cacheHit・input）ため。出力とキャッシュに当たった数は全部同じ入れ方
+export const AUTO_USAGE_HOLD_MS = 3000;
+export const deepseekAutoUsageOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.DEEPSEEK_AUTO_USAGE ?? "on").trim().toLowerCase() !== "off";
+/** 中の記録と呼ぶ側の記録を照らす鍵（純関数）: 出力の数｜キャッシュに当たった数 */
+export function autoUsageKey(u: { output_tokens?: number; cache_read_input_tokens?: number }): string {
+  return `${Math.round(Number(u.output_tokens) || 0)}|${Math.round(Number(u.cache_read_input_tokens) || 0)}`;
+}
+type PendingAuto = { key: string; timer: ReturnType<typeof setTimeout>; done: () => void };
+const pendingAuto: PendingAuto[] = [];
+const recentManual: Array<{ key: string; at: number }> = [];
+/** 呼ぶ側の記録が来たら、同じ鍵の中の記録を1つ取り消す（取り消したら true）。取り消す物が無ければ鍵を覚えておく */
+export function cancelPendingAutoUsage(u: { output_tokens?: number; cache_read_input_tokens?: number }, nowMs = Date.now()): boolean {
+  const k = autoUsageKey(u);
+  const i = pendingAuto.findIndex((e) => e.key === k);
+  if (i < 0) {
+    while (recentManual.length && nowMs - recentManual[0].at > AUTO_USAGE_HOLD_MS) recentManual.shift();
+    recentManual.push({ key: k, at: nowMs });
+    return false;
+  }
+  const [e] = pendingAuto.splice(i, 1);
+  clearTimeout(e.timer);
+  e.done();
+  return true;
+}
+/** callDeepSeek の中の記録（少し待ってから書く・呼ぶ側が同じ番を記録したら書かない）。書き込みの口は引数で差し替えられる（テスト） */
+export function recordAltUsageAuto(input: AltUsageInput, o: { holdMs?: number; write?: (x: AltUsageInput) => void; nowMs?: number } = {}): void {
+  if (!deepseekAutoUsageOn()) return;
+  const holdMs = o.holdMs ?? AUTO_USAGE_HOLD_MS, write = o.write ?? writeAltUsage, nowMs = o.nowMs ?? Date.now();
+  const key = autoUsageKey(input.usage);
+  const j = recentManual.findIndex((m) => m.key === key && nowMs - m.at <= holdMs);
+  if (j >= 0) { recentManual.splice(j, 1); return; } // 呼ぶ側がもう書いた
+  let done = () => {};
+  const p = new Promise<void>((resolve) => { done = resolve; });
+  const entry: PendingAuto = { key, done: () => done(), timer: setTimeout(() => {
+    const i = pendingAuto.indexOf(entry);
+    if (i >= 0) pendingAuto.splice(i, 1);
+    write(input);
+    done();
+  }, holdMs) };
+  pendingAuto.push(entry);
+  if (!o.write) { try { (altRecorder ?? (altRecorder = lazyAltRecorder()))?.keepAlive(p); } catch { /* 記録の失敗で本来の応答を止めない */ } }
+}
+/** 呼ぶ側の記録（今までの口）。同じ番の中の記録が待っていれば、それを取り消してからこちらを書く */
+export function recordAltUsage(input: AltUsageInput): void {
+  cancelPendingAutoUsage(input.usage);
+  writeAltUsage(input);
+}
+
+function writeAltUsage(input: {
   model: string;
   action: string | null;
   conversationId: string | null;

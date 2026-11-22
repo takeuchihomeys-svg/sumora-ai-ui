@@ -114,8 +114,11 @@ export type VisionAltResult = {
 export async function callDeepSeek(
   system: string | null,
   content: string | Array<Record<string, unknown>>,
-  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean; temperature?: number },
+  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean; temperature?: number;
+    /** 2026-11-23 作業員N2（#601）: 中の記録の名札（無ければ "deepseek:auto"）・会話。record=false で中の記録をしない */
+    action?: string; conversationId?: string | null; record?: boolean },
 ): Promise<VisionAltResult | null> {
+  const t0 = Date.now();
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
   const effort = (opts?.effort ?? VISION_ALT_EFFORT_DEFAULT).trim();
@@ -146,12 +149,19 @@ export async function callDeepSeek(
       usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
     };
     const text = String(j.choices?.[0]?.message?.content ?? "").trim();
+    const usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0, cacheMiss: j.usage?.prompt_cache_miss_tokens ?? 0 };
+    // 2026-11-23 作業員N2（#601・統括役の決め・既定 on）: 中で記録する（呼ぶ側が同じ番を記録したら、そちらだけが残る＝llm-usage-recorder.recordAltUsageAuto）。
+    //   空の返事も払っているので記録する（呼ぶ側は null を受けて記録できなかった）
+    if (opts?.record !== false) {
+      void import("./llm-usage-recorder").then(({ recordAltUsageAuto }) => recordAltUsageAuto({
+        model, action: opts?.action ?? "deepseek:auto", conversationId: opts?.conversationId ?? null,
+        usage: { input_tokens: usage.cacheMiss || Math.max(0, usage.input - usage.cacheHit), output_tokens: usage.output, cache_read_input_tokens: usage.cacheHit },
+        status: res.status, errorType: text ? null : "empty", durationMs: Date.now() - t0,
+        sysHead: system ? system.slice(0, 400) : null, sysKeyFull: null, maxTokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
+      })).catch(() => {});
+    }
     if (!text) return null;
-    return {
-      text,
-      usage: { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0, cacheMiss: j.usage?.prompt_cache_miss_tokens ?? 0 },
-      model,
-    };
+    return { text, usage, model };
   } catch (e) {
     console.warn("[deepseek] 失敗:", e instanceof Error ? e.message : String(e));
     return null;
@@ -186,7 +196,7 @@ export type DeepSeekReadOutcome<T> = {
 export async function callDeepSeekRead<T>(
   system: string | null,
   content: string | Array<Record<string, unknown>>,
-  opts: { maxTokens: number; timeoutMs: number; apiKey?: string; model?: string },
+  opts: { maxTokens: number; timeoutMs: number; apiKey?: string; model?: string; action?: string; conversationId?: string | null; record?: boolean },
   parse: (text: string) => T | null,
   retry?: { retryIf?: (elapsedMs: number) => boolean; retryTimeoutMs?: (elapsedMs: number) => number },
 ): Promise<DeepSeekReadOutcome<T>> {
@@ -194,6 +204,7 @@ export async function callDeepSeekRead<T>(
   //   読み直しも同じ設定（送る形を変えると前置きキャッシュの先頭一致が外れる）
   const call = (timeoutMs: number) => callDeepSeek(system, content, {
     apiKey: opts.apiKey, model: opts.model, maxTokens: opts.maxTokens, timeoutMs, thinking: false, temperature: 0,
+    action: opts.action, conversationId: opts.conversationId, record: opts.record,
   });
   const attempts: DeepSeekReadAttempt[] = [];
   const t0 = Date.now();
