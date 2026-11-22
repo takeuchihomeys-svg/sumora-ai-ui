@@ -102,6 +102,7 @@ import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { staffHandMaterialOn, staffHandLine } from "@/app/lib/staff-hand-material";
 import { buildCheckResultsText } from "@/app/lib/task-result-from-aix";
+import { checkResultState, checkResultStateOn, checkResultStateText } from "@/app/lib/check-result-state";
 import { guarantorDocsOn, guarantorDocsAsked, guarantorDocsLine, type GuarantorDocRow } from "@/app/lib/guarantor-docs-line";
 import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
@@ -3180,7 +3181,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const openTasks = allTasks.filter((t) => t.status === "pending").slice(0, 5);
   const taskLabel: Record<string, string> = { property_check: "物件確認（空室確認）", property_send: "物件送付" };
   // 2026-11-15 作業員H: 段の組み立ては task-result-from-aix.buildCheckResultsText に移した（文字は同じ・AIX から結果を付ける TASK_RESULT_FROM_AIX のテストで同じ関数を通す）
-  const checkResultsText = buildCheckResultsText(allTasks);
+  // 2026-11-23 作業員G（台帳 #615）: 空室確認の結果が手元にあるか（on_hand／pending＝スタッフが確かめている／none）を1行足す。既定 off（CHECK_RESULT_STATE=on）・off の時は文が変わらない
+  const checkResultsText = buildCheckResultsText(allTasks)
+    + (checkResultStateOn() ? checkResultStateText(checkResultState(allTasks)) : "");
   // M1: AIX「物件確認した」でスタッフが入力した物件別の空き状況（aix_usage_logs.property_names / prop_statuses）。
   // line_tasks 由来の checkResultsText は「タスク単位の代表1値」しか持たないため、
   // 「3件確認して1件だけ空室」のような物件粒度の確定事実はここでしか供給できない。
