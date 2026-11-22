@@ -45,6 +45,14 @@ export function tokensOfValue(v: string): string[] {
 }
 
 export type UptakeItem = { section: string; key: string; label: string; any: string[]; re?: RegExp; used: boolean };
+/** 約束の what（決まった語）→ 下書きの言い方の網（2026-11-22 作業員L） */
+const PROMISE_WHAT_RE: ReadonlyArray<readonly [RegExp, RegExp]> = [
+  [/^確認/, /確認(?:させて|致し|いたし|出来次第|でき次第)/],
+  [/見積/, /御?見積/],
+  [/物件を送る|送る/, /お送り(?:させて|致し|いたし|出来次第|でき次第)|送らせて|ピックアップ/],
+  [/^探す|探/, /ピックアップ|お探し|探させて/],
+  [/連絡/, /ご連絡(?:させて|致し|いたし)/],
+];
 const INVITE_RE: Record<string, RegExp> = { viewing: /ご案内|ご内覧|内覧|ご都合|お日にち/, apply: /お申込|申込|抑え|押さえ/, estimate: /御見積|見積/ };
 
 /** ② 指示書の欄ごとの「入るべき物」と下書きが入れたか */
@@ -61,7 +69,10 @@ export function briefUptake(brief: ConductorBrief | null | undefined, draft: str
   //   2026-11-15 監査（竹内さんの文 291番）: 数の無い値（答えの方針の文「受け止めて締める」等）まで求めると 53/141 を誤って付けた＝数の値だけにした
   if (brief.facts !== BRIEF_NONE) arr(brief.facts).map(obj).forEach((f, k) => { const v = s(f?.value); if (f && s(f.certainty) !== "needs_check" && /\d[\d,.]*\s*(?:円|万円|帖|㎡|m2|ヶ月|か月|分)/.test(v.normalize("NFKC"))) push("facts", `f${k + 1}`, `事実「${v.slice(0, 24)}」`, tokensOfValue(v)); });
   // 開いている約束（信頼・頭）: 果たす番の約束の中身
-  if (brief.open !== BRIEF_NONE) arr(brief.open).map(obj).forEach((o, k) => { if (o && /promise/.test(s(o.kind))) push("open", `o${k + 1}`, `約束「${s(o.what).slice(0, 24)}」`, tokensOfValue(s(o.what))); });
+  // 2026-11-22 作業員L（毎朝の1枚「指示書の欄が下書きに入った割合 0%（6番）」を読んだ）: 約束の what は「確認する」「物件を送る」「探す」「見積を出す」の
+  //   決まった語で、tokensOfValue は「確認」「物件」を外すため「確認する」「物件を送る」の6字のまま比べていた。下書きは「確認させて頂き…確認出来次第ご連絡」
+  //   「ピックアップ出来次第お送り」と約束をそのまま書いていた（直近48時間の10番を目で読んだ・全部入っていた）＝数え方の誤り。決まった語は言い方の網で見る
+  if (brief.open !== BRIEF_NONE) arr(brief.open).map(obj).forEach((o, k) => { if (o && /promise/.test(s(o.kind))) { const w = s(o.what); push("open", `o${k + 1}`, `約束「${w.slice(0, 24)}」`, tokensOfValue(w), PROMISE_WHAT_RE.find(([re]) => re.test(w))?.[1]); } });
   // 次の一手の具体（つなぎ・締め）: いつの言葉（明日一番に・営業時間外の頭＝q136 の形）。お客様の言った時期は「その時期の言葉で結ぶ」
   const nc = obj((brief as unknown as O).next_concrete);
   arr(nc?.steps).map(obj).slice(0, 1).forEach((st) => {
