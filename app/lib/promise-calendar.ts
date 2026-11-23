@@ -272,13 +272,29 @@ function confirmObjectOfNotes(notes: string | null | undefined): string | null {
  */
 const CONFIRM_ANSWERED_BY_PROPERTY_RE = /募集状況|空室|空き|番手/;
 const CONFIRM_ANSWERED_BY_ESTIMATE_RE = /募集状況|空室|空き|番手|初期費用|割引/;
+// ─── 2026-11-23 作業員L（台帳 #652・カレンダーの【必ず】の閉じ忘れ・14日の数え）───
+//   PROMISE_CALENDAR_CLOSE_WIDE=on（既定 off・カレンダーはスタッフも見る画面＝on の前に竹内さんに確かめる）の時だけ、閉じ方を2つ広げる:
+//   ①要件の言い換え: 確認の約束「保証会社」と、報告の要件「審査」を同じ物として結ぶ（7f73dc32: 「保証会社の確認」の行が「審査」の報告で閉じなかった）
+//   ②物件名のある「初期費用・割引の確認」の約束は、その物件の「募集に出ていない／別のお部屋」の報告で閉じる（dbe2cf9c）。
+//     報告に物件名が無い・名前が合わない時は閉じない（別の物件の行を閉じない）。物件名の無い御見積書の約束を閉じる今の決まりと同じ向き
+type Env = Record<string, string | undefined>;
+export const promiseCalendarCloseWideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CALENDAR_CLOSE_WIDE ?? "").trim().toLowerCase() === "on";
+const CONFIRM_SYNONYMS: ReadonlyArray<ReadonlyArray<string>> = [["保証会社", "審査"]];
+const synonymMatch = (a: string, b: string) => CONFIRM_SYNONYMS.some((g) => g.some((x) => a.includes(x)) && g.some((x) => b.includes(x)));
 /** 約束の要件と報告の要件が同じか（相手だけの要件＝管理会社・確認事項は何にでも当たる） */
-function confirmObjectMatches(rowObj: string | null, doneObj: string | null | undefined): boolean {
+function confirmObjectMatches(rowObj: string | null, doneObj: string | null | undefined, wide = false): boolean {
   const d = (doneObj ?? "").trim();
   if (isConfirmPartyObject(rowObj) || isConfirmPartyObject(d)) return true;
   const r = rowObj as string;
-  return r.includes(d) || d.includes(r);
+  return r.includes(d) || d.includes(r) || (wide && !!d && synonymMatch(r, d));
 }
+/** 行の見出しの（物件名） */
+function propertyOfHeadline(notes: string | null | undefined): string | null {
+  const m = headlineOf(notes).match(/（([^）]+)）s*$/);
+  return m ? m[1].trim() : null;
+}
+const normName = (s: string) => s.normalize("NFKC").replace(/s+/g, "").toLowerCase();
+const sameProperty = (a: string, b: string) => { const x = normName(a), y = normName(b); return !!x && !!y && (x.includes(y) || y.includes(x)); };
 
 /**
  * 履行した送信で完了にする約束の行の id（決定論）。
@@ -292,9 +308,11 @@ function confirmObjectMatches(rowObj: string | null, doneObj: string | null | un
  *   別物件の送付で閉じていた（相手の語を照合に使わない・条件の確認は送付で閉じない）
  */
 export function planPromiseCompletion(
-  done: ReadonlyArray<{ kind: LedgerKind; object?: string | null; checkPattern?: string | null }>,
+  done: ReadonlyArray<{ kind: LedgerKind; object?: string | null; checkPattern?: string | null; propertyNames?: ReadonlyArray<string> | null }>,
   existingOpen: ReadonlyArray<{ id: number; event_type: string | null; notes: string | null; is_done?: boolean | null }>,
+  env?: Env,
 ): number[] {
+  const wide = promiseCalendarCloseWideOn(env);
   const ids = new Set<number>();
   // 連絡の日の約束（【連絡日 …】）は contact-promise.planContactPromiseSync が閉じる（物件の送付・連絡の日の連絡）
   const open = existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes) && !!r.event_type && !isContactPromiseNotes(r.notes));
@@ -305,11 +323,16 @@ export function planPromiseCompletion(
     for (const r of open) {
       const isConfirm = r.event_type === PROMISE_SPEC.confirmation_promised.eventType;
       const obj = isConfirm ? confirmObjectOfNotes(r.notes) : null;
+      // 2026-11-23 ②（PROMISE_CALENDAR_CLOSE_WIDE=on の時だけ）: 物件名のある初期費用・割引の確認は、その物件の募集終了・別のお部屋の報告で閉じる
+      if (wide && isConfirm && obj && /初期費用|割引/.test(obj) && d.kind === "confirmation_reported" && (d.checkPattern === "unavailable" || d.checkPattern === "alternative")) {
+        const prop = propertyOfHeadline(r.notes);
+        if (prop && (d.propertyNames ?? []).some((n) => sameProperty(prop, n))) { ids.add(r.id); continue; }
+      }
       if (k && r.event_type === PROMISE_SPEC[k].eventType) {
         if (k === "confirmation_promised") {
           // AIX の check_pattern があればそれが報告の要件（本文の先頭語より確か）。無ければ報告の要件で照合
           const doneObjs: Array<string | null> = patternTopics.length ? patternTopics : [d.object ?? null];
-          if (!doneObjs.some((o) => confirmObjectMatches(obj, o))) continue;
+          if (!doneObjs.some((o) => confirmObjectMatches(obj, o, wide))) continue;
         }
         ids.add(r.id);
         continue;
