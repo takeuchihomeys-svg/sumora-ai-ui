@@ -649,3 +649,30 @@ export function missBreakdownOf(nodes: readonly MapNode[]): { real: number; deci
   const total = Object.values(by).reduce((s, v) => s + v, 0);
   return { real: total - [...SET_ASIDE_MISS].reduce((s, k) => s + aside(k), 0), decided: aside("decided"), minority: aside("minority"), split: aside("split"), timed: aside("timed"), fixed_since: aside("fixed_since") };
 }
+
+// ── 2026-11-23 作業員N2 の頼み（KB 0f38f47f・穴を台帳へ自動で・統括に届いているか）──
+/** 葉の持ち主の表（11/23 統括役が決めた穴の持ち主 #640〜#643・作業員の持ち場から）。上から順に、葉の鍵の中に段の値が含まれれば当たる。当たらなければ根の持ち主 */
+export const LEAF_OWNER_RULES: Array<{ match: string; owner: string; why: string }> = [
+  { match: "kind=zenryoku_support", owner: "作業員N2", why: "手打ちの網（aix-should-be）・数え方の持ち場（#641）" },
+  { match: "scene=property_send", owner: "作業員L", why: "統括の学び（conductor_lessons）の持ち場（#642）" },
+  { match: "kind=viewing_invite", owner: "作業員P", why: "#643" },
+  { match: "kind=property", owner: "作業員A", why: "AIX の番の判断（物件）の持ち場（#627・#640）" },
+  { match: "kind=property_check_result", owner: "作業員A", why: "#627 の部品" },
+  { match: "kind=estimate_sheet", owner: "作業員A", why: "#627 の部品" },
+  { match: "station=", owner: "作業員A", why: "申込までの地図の台本の持ち主（11/23 統括役）" },
+];
+/** 葉の持ち主の案（純関数） */
+export function ownerOfLeaf(key: string, rootOwner: string): { owner: string; why: string } {
+  const r = LEAF_OWNER_RULES.find((x) => key.includes(x.match));
+  return r ? { owner: r.owner, why: r.why } : { owner: rootOwner, why: "根の持ち主" };
+}
+/**
+ * 穴の葉が統括に届いているか（純関数）: 今の統括の学び（conductor_lessons.is_current）の葉の印（leaf_keys）が、穴の葉かその上か下を指していれば届いている。
+ *   根の名前が違っても（文の癖の版の葉で書いた学び）付け替えて比べる。印の付いた学びが1つも無ければ「未確認」（印を付ける仕組み exam-leaf.ts --lessons はまだ既定で回していない）
+ */
+export function leafReachOf(holeKey: string, lessonLeafKeys: ReadonlyArray<string>, rebaseFrom: ReadonlyArray<string> = []): "届いている" | "届いていない" | "未確認" {
+  if (!lessonLeafKeys.length) return "未確認";
+  const root = holeKey.split("/")[0];
+  const keys = lessonLeafKeys.map((k) => { const r = [root, ...rebaseFrom].find((x) => k === x || k.startsWith(`${x}/`)); return r ? rebaseKey(k, r, root) : k; });
+  return keys.some((k) => covers(k, holeKey) || covers(holeKey, k)) ? "届いている" : "届いていない";
+}
