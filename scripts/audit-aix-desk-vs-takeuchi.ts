@@ -67,12 +67,19 @@ const btn = (k: string | null | undefined) => aixBundle(k);
         form = `sb:${ad.sb}`; deskSays = "返信";
         verdict = tk === "返信" && brainBtn !== "返信" ? "指揮官が正しい" : tk !== "返信" && tk === brainBtn ? "ブレインが正しい" : tk !== "返信" ? "どちらも外れ" : "どちらも";
       } else continue;
-      rows.push({ conv: c.slice(0, 8), at: d.created_at.slice(0, 16), form, brain: brainBtn, desk: deskSays, deskPick: ad.pick ?? ad.sb, takeuchi: tk, laterAix: tk === "返信" && laterAix ? Math.round((Date.parse(laterAix.created_at) - at) / 6e4) : null, verdict });
+      // 2026-11-23 作業員A（N2 の照らし②）: 竹内さんの【物件確認した】の中身が確認＋見積の束（AIX の文に御見積）で、ブレインか指揮官が【見積書送る】だった番は
+      //   ボタンで比べる決まりのまま外れに数え、「近い外れ」の印だけ付ける（判定は変えない）
+      const estBtn = btn("estimate_sheet"), chkBtn = btn("property_check_result");
+      const bundleText = win.filter((m) => m.is_aix_generated).map((m) => String(m.text ?? "")).join("\n");
+      const nearMiss = tk === chkBtn && /御?見積/.test(bundleText) && (brainBtn === estBtn || deskSays === estBtn) && String(verdict).includes("外れ") ? "確認＋見積の束" : null;
+      rows.push({ conv: c.slice(0, 8), at: d.created_at.slice(0, 16), form, brain: brainBtn, desk: deskSays, deskPick: ad.pick ?? ad.sb, takeuchi: tk, laterAix: tk === "返信" && laterAix ? Math.round((Date.parse(laterAix.created_at) - at) / 6e4) : null, verdict, ...(nearMiss ? { nearMiss } : {}) });
     }
   }
   const t: Record<string, Record<string, number>> = {};
   for (const r of rows) { const k = String(r.form); (t[k] = t[k] ?? {})[String(r.verdict)] = (t[k][String(r.verdict)] ?? 0) + 1; }
   console.log(`指揮官（digest.ad）とブレインと竹内さん本人の一手（${days}日・端末の記録・送る直前の判断・申込以降を外す）: ${rows.length}番`);
   for (const [k, o] of Object.entries(t)) console.log(`  ${k}: ${JSON.stringify(o)}`);
+  const nearN = rows.filter((r) => r.nearMiss).length;
+  if (nearN) console.log(`  うち近い外れ（竹内さんの物件確認した が確認＋見積の束・ブレインか指揮官は見積書）: ${nearN}`);
   for (const r of rows) console.log(JSON.stringify(r));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -48,7 +48,8 @@ type Row = { id: string; ai_draft_shown: string | null; ai_draft_shown_at: strin
     let val = 0, writerOk = 0, inDraft = 0, inDraftN = 0; const whyNo: Record<string, number> = {};
     for (const r of rows) {
       const m = r.last_brain_meta!; const v = f.value(m);
-      if (!v) continue;
+      // 2026-11-23 作業員L（台帳 #583 の照らし・82c4d3e8）: 近い番の読みが時間切れの時、値は "timeout" の文字＝値ではない（値のある番に数えない）
+      if (!v || /^(?:timeout|none|null|-)$/i.test(String(v).trim())) continue;
       val++;
       const d = deliveryOfTurn(m)[f.key];
       if (d?.writer === "ok") writerOk++; else whyNo[String(d?.writer)] = (whyNo[String(d?.writer)] ?? 0) + 1;
@@ -71,7 +72,7 @@ type Row = { id: string; ai_draft_shown: string | null; ai_draft_shown_at: strin
   console.log(`\n## 今の状況・計画・教訓`);
   console.log(`situation_now      値 ${sn.length}（答えの無い前の項目 ${ouOpen}・開いている約束 ${poOpen}）→ ①返信: SITUATION_WRITER_NOTE=${sw("SITUATION_WRITER_NOTE")}・2通目: SITUATION_WRITER_NOTE_AIX=${sw("SITUATION_WRITER_NOTE_AIX")} → ②語の網なし（測れない）`);
   console.log(`customer_plan      値 ${plan}（指示書の plan の欄・CONDUCTOR_BRIEF_PLAN=${sw("CONDUCTOR_BRIEF_PLAN")}）→ ①書き手の役目の表に入れていない（b）`);
-  console.log(`conductor_lessons  値 ${lessons}（CONDUCTOR_LESSONS=${sw("CONDUCTOR_LESSONS")}・学びの行が0の間は読まない）→ ①書き手へは配線しない設計（統括の材料だけ）`);
+  console.log(`conductor_lessons  値 ${lessons}（CONDUCTOR_LESSONS=${process.env.CONDUCTOR_LESSONS?.trim() || "shadow（既定）"}・学びの行が少ない間は読まない）→ ①書き手へは配線しない設計（統括の材料だけ）`);
   // 2026-11-23 作業員L（#466）: quality_daily に書ける行（作業員N2・P が書く・名前は scripts/lib/writer-field-metrics.ts）
   if (arg("metrics", "")) writeFileSync(arg("metrics", ""), JSON.stringify(metricRowsOf({ fields: table as never, brief: Object.fromEntries(up), hours }), null, 1));
   if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify({ hours, n: rows.length, brief: Object.fromEntries(up), fields: table, situation: { n: sn.length, ouOpen, poOpen }, plan, lessons }, null, 1));

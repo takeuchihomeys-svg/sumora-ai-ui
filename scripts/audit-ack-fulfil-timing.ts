@@ -14,6 +14,9 @@ import { deviceWriterOfWindow, type DeviceWriterMsg } from "../app/lib/staff-wri
 import { NO_LINE_TEST_CONVERSATION_IDS, STAFF_INTERNAL_CONVERSATION_IDS, YUMA_CONVERSATION_ID } from "../app/lib/test-conversations";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
+const SELF_CHECK_AS_ACK = process.argv.includes("--self-check-as-ack");
+/** お客様自身の確認の言い方（こちらへの依頼ではない） */
+const CUSTOMER_SELF_CHECK_RE = /(?:確認|拝見|検討)(?:させて(?:い|頂)ただ?きます|させて頂きます|します|致します|いたします)[！!。.〜~]*|(?:見て|見させて)(?:み|いただき|頂き)ます[！!。.〜~]*/g;
 type M = DeviceWriterMsg & { conversation_id: string; text: string | null; is_aix_generated: boolean | null };
 const BUCKETS = [["≤30分", 30], ["30分〜2時間", 120], ["2〜6時間", 360], ["6〜24時間", 1440]] as const;
 const bucketOf = (min: number) => BUCKETS.find(([, hi]) => min <= hi)?.[0] ?? "24時間より後";
@@ -46,7 +49,10 @@ const bucketOf = (min: number) => BUCKETS.find(([, hi]) => min <= hi)?.[0] ?? "2
       if (Date.parse(ms[i].created_at) < Date.parse(since)) continue;
       let j = i; const burst: string[] = [];
       while (j >= 0 && ms[j].sender === "customer") { burst.unshift(String(ms[j].text ?? "")); j--; }
-      if (j < 0 || !isAckOnlyTurn(burst)) continue;
+      // 2026-11-23 作業員A（N2 の照らし①・82c4d3e8 11/22）: お客様自身の確認（「確認させていただきます」「見てみます」）だけを足したお礼は、
+      //   こちらへの問い・依頼が無い＝了承の番として数える（--self-check-as-ack の時だけ・既定は今の数え方のまま＝KB b385e315 の数を変えない）
+      const ackHere = isAckOnlyTurn(burst) || (SELF_CHECK_AS_ACK && isAckOnlyTurn(burst.map((b) => b.replace(CUSTOMER_SELF_CHECK_RE, "")).filter((b) => b.trim())));
+      if (j < 0 || !ackHere) continue;
       const at = Date.parse(ms[i].created_at);
       const prevStaff = ms.slice(0, j + 1).filter((m) => m.sender !== "customer" && at - Date.parse(m.created_at) <= 864e5).map((m) => String(m.text ?? ""));
       const kinds = (["property_send", "property_check_result", "estimate_sheet"] as const).filter((k) => aixFulfilsPrevPromise(k, prevStaff));

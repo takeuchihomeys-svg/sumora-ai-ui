@@ -320,11 +320,24 @@ async function main() {
     if (low.length) growthFix.push(`ピックアップの物件の理解の欄が低い: ${low.slice(0, 3).join("・")} → 作業員K2・台帳 #469`);
   }
   // 返信と AIX の組（作業員M の頼み・台帳 #405・#32 の物差し・竹内さん本人の番は少ないので14日の窓）
-  const cd = doMetrics ? await comboDaily(sb, day, 14).catch(() => null) : null;
+  // 2026-11-23 作業員A（台帳 #624・統括役の決め）: 本当の一致（combo_net）の印の元: 試験の問題（竹内さんの決定で正解を改めた番）と、P の地図の割れ・少数側の印（夜の地図が書いた時だけ・無ければ空）
+  const netOpts = (() => {
+    const read = (p: string) => { try { return existsSyncPU(p) ? JSON.parse(readFileSync(p, "utf8")) : null; } catch { return null; } };
+    const spec = read("scripts/brain-exam/spec.json");
+    const sides = read(process.env.COMBO_NET_SIDES_FILE ?? "scripts/.replay-out/aix-turn-sides.json");
+    return { spec: Array.isArray(spec) ? spec : [], sides: Array.isArray(sides) ? sides : [] };
+  })();
+  const cd = doMetrics ? await comboDaily(sb, day, 14, netOpts).catch(() => null) : null;
   if (cd) {
     growthRows.push({ metric: "growth:combo:組の一致", value: cd.sameRate, n: cd.n, key: "first_move", higherIsBetter: true, label: `返信と AIX の組の一致（竹内さん本人の番・14日）` });
     const dc = needsFix(cd.sameRate, prev2("growth:combo:組の一致", prevDay), prev2("growth:combo:組の一致", prevWeek), cd.n, 3, true);
     lines.push(`- 返信と AIX の組の一致（竹内さん本人の番・14日）: ${cd.sameRate ?? "—"}%（${cd.n}番）${dc ? (dc === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
+    // 2026-11-23 作業員A（#624）: 本当の一致（combo_net・今の数は変えずに並べる・竹内さんに出す数は2週間並べてから切り替えを聞く）
+    if (cd.net) {
+      const x = cd.net;
+      growthRows.push({ metric: "growth:combo:本当の一致", value: x.rate, n: x.n, key: "first_move", higherIsBetter: true, label: "返信と AIX の組の本当の一致（端末で竹内さん本人・2段の一致を一致に・決定／割れ／少数側／時刻で送る物を外す・14日）" });
+      lines.push(`  - 本当の一致（combo_net）: ${x.rate ?? "—"}%（${x.same}/${x.n}・2段の一致 ${x.twoStageFirst}・外した 端末でない ${x.excluded.writer}／決定 ${x.excluded.decided}／割れ ${x.excluded.split}／少数側 ${x.excluded.minority}／時刻 ${x.excluded.timed}・本当の外れ ${x.real.length}${x.real.length ? `（${x.real.slice(0, 5).map((r) => r.conv).join("・")}）` : ""}）`);
+    }
     if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
     lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
     lines.push(`- 要件の帳面（14日・竹内さん本人の番・記録なしを除く ${cd.ask.n}）: 合う ${cd.ask.合う率 ?? "—"}%・取りこぼし ${cd.ask.取りこぼし}・重ね ${cd.ask.重ね}・取り違え ${cd.ask.取り違え}・種類違い ${cd.ask.種類違い}｜外れの会話 ${cd.ask.misses.slice(0, 8).map((x) => `${x.conv}（${x.cls}）`).join(",") || "—"}（作業員M・台帳 #520）`);
