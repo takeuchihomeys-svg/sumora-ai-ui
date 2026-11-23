@@ -531,3 +531,40 @@ export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; bur
     ctx.ackPlusCheck ? "確認の約束が開いている×お客様が了承に少し足した" : null].filter((x): x is string => !!x);
   return { id: r.id, shapes, move, brain, isMiss: !(r.v === "一致" || r.v === "返信一致"), kindOnly: r.v === "種類違い", namedShapes };
 }
+
+// ── 2026-11-23 統括役: 毎朝の1枚に出す地図の行を、竹内さんが読む形（短い日本語・数と理由）に ──
+export const KIND_JA: Record<string, string> = {
+  property: "物件", property_check_result: "物件確認した", estimate_sheet: "見積書", viewing_invite: "内覧の誘い", greeting_viewing: "内覧当日のご挨拶",
+  meeting_place: "待ち合わせ場所", zenryoku_support: "全力サポート", condition_hearing: "条件の聞き取り", phone_call: "電話", acknowledge_check: "確認の了承", application_push: "申込の後押し", other: "その他",
+};
+export const SCENE_JA: Record<string, string> = {
+  ack: "お礼・了承", question: "質問", conditions: "条件", considering: "検討中", property_share: "お客様が物件を送ってきた", property_send: "物件を送る場面",
+  viewing: "内覧", cost: "費用", apply: "申込", other: "その他",
+};
+const MISS_SHORT: Record<string, string> = { reply_not_aix: "AIX の番を返信にした", aix_kind: "AIX の種類違い", order: "先後", push_missed: "地図は AIX・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX" };
+export const STATION_JA: Record<string, string> = {
+  inquiry: "問い合わせ", hearing: "聞き取り", proposing: "提案中", viewing_arrange: "内覧の調整", viewing_scheduled: "内覧の予定あり", viewed: "内覧済み", interested: "気に入った",
+  estimate: "見積", pickup: "ピックアップ", apply_prep: "申込の準備", brought_property: "お客様の持ち込み", condition_change: "条件の変更", screening_concern: "審査の心配", move_in_later: "入居は先",
+  considering: "検討中", other_agent_viewing: "他社で内覧", postponed: "延期", new_arrival_wait: "新着待ち", competing_estimate: "他社の見積", negotiation: "交渉", rank_offered: "順位を出した",
+};
+const CAUSE_SHORT: Record<string, string> = { material: "材料が届いていない", misread: "読み違い", aix_turn_as_reply: "判断の誤り", counting: "数え方" };
+/** 葉の鍵を短い日本語に（純関数）: 物件 › お礼・了承 › AIX の番を返信にした › 判断の誤り */
+export function leafJa(key: string): string {
+  return key.split("/").slice(1).map((seg) => {
+    const [d, v = ""] = seg.split("=");
+    if (d === "kind") return KIND_JA[v] ?? v;
+    if (d === "scene") return SCENE_JA[v] ?? v;
+    if (d === "miss") return MISS_SHORT[v] ?? MAP_MISS_JA[v as MapMiss] ?? v;
+    if (d === "cause") return CAUSE_SHORT[v] ?? v;
+    if (d === "station") return v.startsWith("分:") ? `分かれ道「${STATION_JA[v.slice(2)] ?? v.slice(2)}」` : `駅「${STATION_JA[v] ?? v}」`;
+    return v;
+  }).join(" › ");
+}
+/** 外れの内訳（純関数）: 外れの型ごとの番の数（miss の段の n の合計）。分けて外す型と本当の外れ */
+export function missBreakdownOf(nodes: readonly MapNode[]): { real: number; decided: number; minority: number; split: number; timed: number; fixed_since: number } {
+  const by: Record<string, number> = {};
+  for (const x of nodes) if (x.dim === "miss" && x.val && x.val !== "ok") by[x.val] = (by[x.val] ?? 0) + x.n;
+  const aside = (k: string) => by[k] ?? 0;
+  const total = Object.values(by).reduce((s, v) => s + v, 0);
+  return { real: total - [...SET_ASIDE_MISS].reduce((s, k) => s + aside(k), 0), decided: aside("decided"), minority: aside("minority"), split: aside("split"), timed: aside("timed"), fixed_since: aside("fixed_since") };
+}

@@ -3,9 +3,13 @@
 //   重い読み（60日の AIX の番の木）は夜（JST 22〜9時）だけ・1日1回（今日の行があれば作らない）。昼は前に作った木を読むだけ（営業時間は全件読みしない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
+import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node:fs";
+import { join as joinMM } from "node:path";
+import { tmpdir as tmpdirMM } from "node:os";
+import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -29,8 +33,8 @@ export async function loadForecastItems(sb: SupabaseClient): Promise<ItemRow[]> 
 }
 /** 見込みの無い P0/P1 の作業（done・dropped を除く）。priority 0/1 を P0/P1 とみる */
 export async function loadUnforecastTop(sb: SupabaseClient) {
-  const { data } = await sb.from("work_items").select("id,title,owner,stage,priority").in("priority", [0, 1]).is("forecast_metric", null).not("stage", "in", "(done,dropped)").limit(300);
-  return (data ?? []) as Array<{ id: number; title: string; owner: string | null; stage: string; priority: number }>;
+  const { data } = await sb.from("work_items").select("id,title,owner,stage,priority,forecast_basis").in("priority", [0, 1]).is("forecast_metric", null).not("stage", "in", "(done,dropped)").limit(300);
+  return (data ?? []) as Array<{ id: number; title: string; owner: string | null; stage: string; priority: number; forecast_basis: string | null }>;
 }
 
 /** 主の根を先に（同じ数の版が2つある時・11/23 統括役「主は端末の版」） */
@@ -86,9 +90,21 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 }
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
+/** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
+export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts" };
+/** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
+export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
+  const script = def.builder ? JSON_SOURCES[def.builder] : null;
+  if (!script || !existsSyncMM(script)) return null;
+  const out = joinMM(tmpdirMM(), `map-${def.builder}-${process.pid}-${Date.now()}.json`);
+  runTsxMM([script, `--days=${days}`, `--json=${out}`], 20 * 60_000);
+  return existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown[]) : null;
+}
+
 /** 根1つの木を作る（台帳の読みで作れる根だけ＝conductor_aix）。値は出所のスクリプトと同じ数え方 */
-export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
+export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number; days?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
   if (def.builder !== "conductor_aix") return null;
+  if (o.days) def = { ...def, windowDays: o.days };
   // 同じ窓の読みは1回だけ（文の癖の版と端末の版で checkConductor を2回回さない＝夜の重い読みを増やさない）
   const ck = `${def.windowDays}:${o.sinceMs ?? ""}`;
   if (!ccCache.has(ck)) ccCache.set(ck, checkConductor(def.windowDays, o.sinceMs));
@@ -199,7 +215,8 @@ export async function forecastCheck(sb: SupabaseClient, items: ItemRow[], o: { n
       value = t?.value ?? null; n = t?.n ?? null;
       if (t) hint = gapCauseHintOf(t.nodes, it.forecast_leaf ?? def.metric);
     } else {
-      const q = await latestQd(sb, it.forecast_metric, def?.qdScope ?? "all", jstDay(start! + 7 * 86_400_000));
+      // json から作る根（端末の版・申込までの地図）は数が quality_daily の map:<根>:value にある
+      const q = (await latestQd(sb, it.forecast_metric, def?.qdScope ?? "all", jstDay(start! + 7 * 86_400_000))) ?? (await latestQd(sb, `map:${it.forecast_metric}:value`, "all", jstDay(start! + 7 * 86_400_000)));
       value = q?.value ?? null; n = q?.n ?? null;
     }
     const verdict = forecastVerdictOf(it.forecast_low, it.forecast_high, value, n);
@@ -226,29 +243,42 @@ export const leafLine = (r: RankedLeaf) => `${r.rank}. ${r.key.split("/").slice(
  *   要確認: 子を足して親に戻らない（数え方の誤り）・穴（作業の無い大きな葉）・見込みの外れ・見込みの無い P0/P1。
  *   quality_daily: map:<根>:value / :sum_mismatch / :holes / :hold / :rank<1..5>（detail に葉の鍵と次の一手）・forecast:items / :due / :checked / :in_band / :no_forecast_p01
  */
-export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean } = {}) {
+export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean; force?: boolean; days?: number; roots?: string[] } = {}) {
   const now = o.now ?? Date.now(), day = jstDay(now), night = o.night ?? isNightJst(now);
   const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string }> = [];
   const items = await loadForecastItems(sb);
   const { data: fq } = await sb.from("quality_daily").select("metric,value,detail").like("metric", "found:%:%:%").gte("day", jstDay(now - 3 * 86_400_000)).limit(800);
   const foundRows = ((fq ?? []) as Array<{ metric: string; value: number | null; detail?: { cause?: string } | null }>).map((r) => ({ ...r, value: num(r.value) }));
-  for (const def of rootsInOrder()) {
+  for (const def of rootsInOrder().filter((r) => !o.roots || o.roots.includes(r.metric))) {
     const its = def.dims.length ? itemsForRoot(items, def) : items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
     if (def.prefix) {
       const qs = await latestQdPrefix(sb, def.metric, def.qdScope, now);
-      lines.push(`- ${def.label}［${def.metric}*・${def.qdScope}］: ${qs.length ? qs.slice(0, 12).map((q) => `${q.metric.slice(def.metric.length)} ${q.value ?? "—"}（n ${q.n ?? "—"}）`).join("・") : "数がまだ無い"}`);
+      // 束の根は数があるものだけ1行（竹内さんの1枚は短く）
+      if (qs.length) lines.push(`- ${def.label}: ${qs.slice(0, 6).map((q) => `${q.metric.slice(def.metric.length)} ${q.value ?? "—"}`).join("・")}${qs.length > 6 ? ` ほか${qs.length - 6}` : ""}`);
       continue;
     }
     if (!def.builder) {
       const q = await latestQd(sb, def.metric, def.qdScope);
-      if (q || its.length || def.writerSelect === "device") lines.push(`- ${def.label}［${def.metric}・${def.writerSelect}］: 今 ${q?.value ?? "—"}（n ${q?.n ?? "—"}・${q?.day ?? "数が無い"}）・作業 ${its.length}${its.length ? `（${its.map((i) => `#${i.id}`).join(",")}）` : ""}・子の割り方はまだ（${def.owner}）`);
+      if (q) lines.push(`- ${def.label}: 今 ${q.value ?? "—"}（${q.n ?? "—"}番・${q.day}）${its.some((i) => i.forecast_low != null) ? `・見込み ${its.filter((i) => i.forecast_low != null).map((i) => `${i.forecast_low}〜${i.forecast_high}`).join("／")}` : ""}`);
       continue;
     }
     let nodes: MapNode[] = [], built = false, value: number | null = null, n: number | null = null;
     const prev = await readLatestTree(sb, def.metric, def.writerSelect);
-    if (night && prev.day !== day && def.builder === "conductor_aix") {
-      const t = await buildRootTree(def);
-      if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+    // 夜（JST 22〜9時）に1日1回だけ作る（今日の木があれば作らない・force は空流しの確かめ用）。昼は前の木を読むだけ（60日の重い読みをしない）
+    if (night && (prev.day !== day || o.force)) {
+      if (def.builder === "conductor_aix") {
+        const t = await buildRootTree(def, { days: o.days });
+        if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+      } else if (def.builder && JSON_SOURCES[def.builder] && (process.env.MAP_JSON_ROOTS ?? "on").toLowerCase() !== "off") {
+        // 11/23 統括役: json から作る根（端末の版＝作業員A・申込までの地図＝作業員R）も出所の台本を夜に回して毎晩作る
+        try {
+          const rows = runJsonSource(def, o.days ?? def.windowDays);
+          const spec = def.builder === "aix_turn_device" && existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+          const t = rows?.length ? await buildTreeFromJson(sb, def, rows, { spec }) : null;
+          if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+          else lines.push(`- ${def.label}: 出所の台本の行が無い（${JSON_SOURCES[def.builder]}）`);
+        } catch (e) { lines.push(`- ${def.label}: 出所の台本が止まった（${e instanceof Error ? e.message.slice(0, 80) : e}）`); }
+      }
     }
     // json から作る根（端末の版・申込までの地図）は work-items.ts --map-build で作った木を読む（出所の台本が main に入ったら夜に作る）
     if (!built) { nodes = nodesFromRows(prev.rows); value = nodes[0]?.value ?? null; n = nodes[0]?.n ?? null; }
@@ -257,10 +287,25 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     const ranked = rankLeaves(nodes, its, { examByLeaf, writerSelect: def.writerSelect });
     const bad = sumMismatches(nodes);
     const hs = holesOf(ranked, nodes).filter((h) => !h.hold);
-    lines.push(`### 地図: ${def.label}［${def.metric}・書き手の選び方 ${def.writerSelect}・${built ? "今夜作った" : `前の木 ${prev.day}`}${def.primary ? "・主" : def.compare ? `・並べて見る相手 ${def.compare}` : ""}］`,
-      `- 今 ${value ?? "—"}%（n ${n ?? "—"}）・葉 ${leavesOf(nodes).length}・外れのある葉 ${ranked.length}・穴 ${hs.length}・判断保留 ${ranked.filter((r) => r.hold).length}・子の合計の食い違い ${bad.length}`,
-      ...its.filter((i) => i.forecast_low != null).map((i) => `- 見込み #${i.id}: ${i.forecast_before ?? "—"} → ${i.forecast_low}〜${i.forecast_high}${(i.forecast_exam as { phase?: string } | null)?.phase ? `［${(i.forecast_exam as { phase?: string }).phase}］` : ""}（${String(i.forecast_basis ?? "").slice(0, 60)}）`),
-      `- 次の一手（伸びしろの順・上位5）:`, ...ranked.slice(0, 5).map((r) => `  ${leafLine(r)}`));
+    // 11/23 統括役: 竹内さんが読む形（短い日本語・数と理由）。主でない版（並べて見る用）は1行だけ
+    const top = nodes[0];
+    if (def.compare && !def.primary) {
+      lines.push(`- 並べて見る（${def.label.replace(/（.*$/, "")}・${def.writerSelect === "style" ? "文の癖で選んだ番" : "端末の記録で選んだ番"}）: ${value ?? "—"}%（${top.n}番中 ${top.ok}番）`);
+    } else {
+      const mb = missBreakdownOf(nodes);
+      const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : ""].filter(Boolean);
+      // 見込みは作業ごとに1行（部品に割った作業も元の作業として1回だけ）
+      const uniq = [...new Map(its.filter((i) => i.forecast_low != null).map((i) => [i.id, i])).values()].sort((a, b) => (b.forecast_high ?? 0) - (a.forecast_high ?? 0));
+      const STAGE_JA: Record<string, string> = { todo: "まだ", building: "作っている", built_off: "作った（off）", testing: "試験中", passed: "試験を通った", on: "本番 on", waiting_owner: "竹内さん待ち", blocked: "止まっている" };
+      const rng = (i: ForecastItem) => (i.forecast_low === i.forecast_high ? `${i.forecast_low}%` : `${i.forecast_low}〜${i.forecast_high}%`);
+      lines.push(`### ${def.label.replace(/（.*$/, "")}${def.primary ? "（主の数）" : ""}`,
+        `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
+        ...uniq.slice(0, 4).map((i) => `- 見込み${(i.forecast_exam as { phase?: string } | null)?.phase ? `（${(i.forecast_exam as { phase?: string }).phase}）` : ""} #${i.id}（${STAGE_JA[i.stage] ?? i.stage}）: ${i.forecast_before ?? "—"}% → ${rng(i)}${i.blocker ? `・止まり: ${String(i.blocker).slice(0, 30)}` : ""}`),
+        ...ranked.slice(0, 3).map((r, k) => { const it = r.items.length ? its.find((x) => x.id === r.items[0]) ?? null : null; // 葉に近い作業が先頭（rankLeaves の並び）
+          return `- 次の一手 ${k + 1}: ${leafJa(r.key)}（外れ ${r.misses}${r.hold ? "・数が少ない" : ""}）→ ${r.hole || !it ? "作業がまだ無い所（持ち主を決める）" : `#${it.id}（${STAGE_JA[it.stage] ?? it.stage}${it.blocker ? `・止まり: ${String(it.blocker).slice(0, 20)}` : ""}）`}`; }),
+        ...(hs.length ? [`- 作業がまだ無い所: ${hs.slice(0, 4).map((h) => `${leafJa(h.key)}（${h.misses}）`).join("・")}`] : []),
+        ...(bad.length ? [`- ⚠ 数え方の点検: 子を足して親に戻らない所 ${bad.length}（数え方の誤り）`] : []));
+    }
     for (const b of bad) fix.push(`地図の数え方の誤り: ${b.key} の子の合計 n ${b.childN}/${b.n}・外れ ${b.childMisses}/${b.misses} → ${def.owner}`);
     // 並べて見る用の版（主でない compare 付き）の穴は台帳に足さない（主の版と重なる）
     for (const h of def.compare && !def.primary ? [] : hs.slice(0, 3)) {
@@ -278,8 +323,10 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
   const fc = await forecastCheck(sb, items, { now, write: o.write, night });
   const no = await loadUnforecastTop(sb);
   const withF = items.filter((i) => i.forecast_metric && !["dropped"].includes(i.stage));
-  lines.push(`### 見込みの突き合わせ（見込みあり ${withF.length}・7/14日の頃 ${fc.due}・突き合わせ済み ${fc.checked}・幅の中 ${fc.inBand}）`, ...fc.lines,
-    `- 見込みの無い P0/P1 の作業 ${no.length}: ${no.slice(0, 12).map((x) => `#${x.id}（${x.owner ?? "-"}）`).join("・")}`);
+  const noWhy = no.filter((x) => !String(x.forecast_basis ?? "").startsWith("見込みを付けない理由"));
+  lines.push(`### 見込みと実測の突き合わせ`,
+    `- 見込みのある作業 ${withF.length}・本番に入って7日/14日の頃 ${fc.due}・突き合わせ済み ${fc.checked}（うち見込みの幅の中 ${fc.inBand}）`, ...fc.lines,
+    `- 見込みの無い大事な作業（P0/P1）${no.length}: 理由が書いてある ${no.length - noWhy.length}・理由も無い ${noWhy.length}${noWhy.length ? `（${noWhy.slice(0, 8).map((x) => `#${x.id}`).join("・")}）` : ""}`);
   fix.push(...fc.fix);
   qd.push({ day, metric: "forecast:items", scope: "all", value: withF.length, n: withF.length },
     { day, metric: "forecast:due", scope: "all", value: fc.due, n: withF.length },
