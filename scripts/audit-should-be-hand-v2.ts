@@ -9,7 +9,7 @@ import { shouldBeAixOf, type ShouldBeAix } from "../app/lib/aix-should-be";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const show = process.argv.includes("--show");
-const OFF = {}, ON = { AIX_SHOULD_BE_HAND_V2: "on" };
+const OFF = { AIX_SHOULD_BE_HAND_V2: "off" }, ON = {};
 const lab = (s: ShouldBeAix | null) => (s ? `${s.key}:${s.strength}` : "なし");
 
 (async () => {

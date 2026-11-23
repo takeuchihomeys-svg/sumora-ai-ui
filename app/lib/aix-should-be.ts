@@ -26,14 +26,14 @@ export type ShouldBeAix = {
 export type ShouldBeMode = "hand" | "aix";
 
 /**
- * 2026-11-23 作業員N2（台帳 #641・統括役の頼み）: 手打ちの網の2版（既定 off・AIX_SHOULD_BE_HAND_V2=on）
+ * 2026-11-23 作業員N2（台帳 #641・統括役の頼み）: 手打ちの網の2版（2026-11-23 既定 on・止める AIX_SHOULD_BE_HAND_V2=off）
  *   ① 全力サポート: 「出次第／入り次第…お送り」だけの文は約束の続きの一文（返信の番）＝strong にしない。strong は探した結果の報告
  *      （ご希望のお部屋が募集に出ていない・見つかりませんでした）がある時だけ。60日の全力サポートの外れ 4/5 は全部この一文で strong になっていた
  *   ② 申込の状況: 「〇人審査中・〇番手でのお申込」（スタッフだけが知る申込の状況）は物件確認した（申込状況）の strong。今は「募集中の結果」の weak（作業員A の 6059）
  *   使う所: 見張りの採点（line-watch-judge の applyAixMapping はボタンで比べる＝どちらもボタンは変わらない）・意味の学び（strong の手打ちをお手本の候補に）・audit-aix-turn-judgment（strong の手打ちを AIX の番に）
  */
 export function shouldBeHandV2On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.AIX_SHOULD_BE_HAND_V2 ?? "").trim().toLowerCase() === "on";
+  return (env.AIX_SHOULD_BE_HAND_V2 ?? "").trim().toLowerCase() !== "off"; // 2026-11-23 既定 on（60日の見張りの番で一致の変化 0・1通ずつ 30文を目で確かめた・統括役の OK・止める =off）
 }
 /** 申込の状況の答え（〇人審査中・〇番手でのお申込・〇人待ち） */
 export const APPLY_STATUS_ANSWER_RE = /[0-9０-９一二三四五]\s*(?:人|名|組)(?:が|の方が)?(?:審査中|お申し?込み?中|申込中|お待ち|待ち)|[0-9０-９一二三四五]\s*番手(?:以降)?(?:で|に|と)?(?:の)?(?:お申し?込み?|ご案内|受付|なり)/;

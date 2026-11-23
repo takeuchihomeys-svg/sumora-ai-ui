@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { shouldBeAixOf, shouldBeHandV2On } from "../aix-should-be";
 
-const ON = { AIX_SHOULD_BE_HAND_V2: "on" }, OFF = {};
+const ON = {}, OFF = { AIX_SHOULD_BE_HAND_V2: "off" };
 const promiseOnly = "はい😊！！\n引き続き新着でオススメできるお部屋募集に出次第お送りさせていただきます！！\n何卒よろしくお願い致します😌！！";
 const condAck = "かしこまりました！！\n初期費用も出来る限り抑えられるお部屋を中心に、新着のお部屋募集状況を随時確認させて頂きオススメできるお部屋が新たに募集が出次第お送りさせて頂きます！！";
 const searched = "現在ご希望のご条件で探させて頂きましたが、ご満足頂けるお部屋が募集に出ていない状況となります！！新着で出次第すぐにお送りさせて頂きます！！";
@@ -11,7 +11,7 @@ const apply = "13階のお部屋現在1人審査中となります！その為2�
 const screening = "管理会社に確認させていただきましたが、まだ一番手お申込みの方での審査中とのご返事でした！！";
 const planOnly = "本日お時間頂きありがとうございました！！903号室2番手でお申込みと同時並行でおすすめできる物件が出次第お送りさせて頂きます！";
 
-assert.equal(shouldBeHandV2On(OFF), false, "既定 off");
+assert.equal(shouldBeHandV2On({}), true, "既定 on"); assert.equal(shouldBeHandV2On(OFF), false, "=off で止まる");
 // off は今まで通り
 assert.equal(shouldBeAixOf(promiseOnly, { mode: "hand", env: OFF })?.strength, "strong");
 assert.equal(shouldBeAixOf(apply, { mode: "hand", env: OFF })?.key, "property_check_result/available");
