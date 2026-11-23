@@ -1,13 +1,14 @@
 // 統括の受け持ち表（scripts/lib/conductor-duty.ts）
 // 実行: npx tsx scripts/lib/__tests__/conductor-duty.test.ts（全 PASS で exit 0）
-import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd, dutyGapPrefix, type DutyRow } from "../conductor-duty";
+import { DUTY_PENDING_ROWS, CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd, dutyGapPrefix, type DutyRow } from "../conductor-duty";
 import { LINKAGE_MAP } from "../../../app/lib/linkage-map";
 
 let pass = 0, fail = 0;
 const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else { fail++; console.error(`✗ ${name}`, d); } };
 
 const known = new Set(LINKAGE_MAP.map((r) => r.id));
-ok("表の行はどれも連携の地図にある", CONDUCTOR_DUTY.every((r) => [...r.have, ...r.use, ...r.reflect].every((x) => known.has(x))), CONDUCTOR_DUTY.flatMap((r) => [...r.have, ...r.use, ...r.reflect]).filter((x) => !known.has(x)));
+ok("表の行はどれも連携の地図にある（足してもらう予定の行を除く）", CONDUCTOR_DUTY.every((r) => [...r.have, ...r.use, ...r.reflect].every((x) => known.has(x) || DUTY_PENDING_ROWS.has(x))), CONDUCTOR_DUTY.flatMap((r) => [...r.have, ...r.use, ...r.reflect]).filter((x) => !known.has(x)));
+ok("決めに行くは申込予測の行が入るまで持つが未確認", conductorDutyOf(CONDUCTOR_DUTY.filter((r) => r.id === "n.closing"), known, { cut: new Set(), off: new Set(), unmeasured: new Set() })[0].stages.have.state === "未確認");
 const T: DutyRow[] = [
   { id: "a", name: "A", owner: "作業員A", have: ["r1"], use: ["c1"], reflect: ["w1"] },
   { id: "b", name: "B", owner: "作業員L", have: ["r1"], use: ["c2"], reflect: ["w1"], parts: ["X_ON"] },

@@ -7,6 +7,8 @@
 //     反映＝決めた事が指示書の役目・書き手・AIX に渡った（conductor.compose_*・writer.*・conductor.delivery の行）
 //   段の状態は連携の地図の見張り（cron_run_logs の linkage-watch・作業員L）の最新: 全部つながっている＝済・切れ／親が off＝欠け・測れない行がある・行が無い＝未確認
 //   ⚠ 土台 → 連携の地図の行の対応は 11/23 の作業員A の案（行の名前と作り手から当てた）。持ち主が確かめて直す
+/** 連携の地図にまだ行が無い（足してもらう予定の）行。入るまでその段は「未確認」（11/23 統括役の決め: 申込予測 apply-readiness は作業員L が行を足す） */
+export const DUTY_PENDING_ROWS: ReadonlySet<string> = new Set(["read.apply_readiness"]);
 export type DutyStage = "have" | "use" | "reflect";
 export const DUTY_JA: Record<DutyStage, string> = { have: "持つ", use: "使う", reflect: "反映" };
 export type DutyRow = { id: string; name: string; owner: string; have: string[]; use: string[]; reflect: string[]; parts?: string[] };
@@ -15,7 +17,7 @@ export const CONDUCTOR_DUTY: readonly DutyRow[] = [
   { id: "n.chrono", name: "時系列", owner: "作業員L", have: ["read.timeline"], use: ["conductor.brief"], reflect: ["writer.situation"] },
   { id: "route.path", name: "道筋（申込までの地図）", owner: "作業員A", have: ["read.route_map", "read.route_substate"], use: ["conductor.aims"], reflect: ["conductor.compose_roles"], parts: ["ROUTE_TO_BRIEF", "ROUTE_PATH_TO_BRIEF", "BRAIN_TURN_AIMS"] },
   { id: "route.now", name: "今どこ", owner: "作業員A", have: ["read.situation_now", "read.route_map"], use: ["next.situation_grasp"], reflect: ["conductor.brief"] },
-  { id: "n.closing", name: "決めに行く", owner: "作業員M", have: ["read.mindset", "read.route_map", "read.situation_now"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
+  { id: "n.closing", name: "決めに行く", owner: "作業員M", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
   { id: "n.flex", name: "臨機応変", owner: "作業員N", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
   { id: "n.trust", name: "信頼", owner: "作業員N・作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
   { id: "n.feeling", name: "気持ち", owner: "作業員K2・作業員L", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
