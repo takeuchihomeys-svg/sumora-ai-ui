@@ -1,6 +1,6 @@
 // 申込までの地図の駅を残す口と段の語の寄せ（作業員M 2026-11-21・台帳 #467）
 // 実行: npx tsx app/lib/__tests__/route-record.test.ts
-import { applyRouteRecordOn, stationOf } from "../route-record";
+import { applyRouteRecordOn, stationOf, sameStation } from "../route-record";
 import { ROUTE_NODES } from "../apply-route-map";
 import { buildCustomerPlan } from "../customer-plan";
 import { routeToBriefOn, routeBriefSection, routeAimNoteForWriter, PLANT_TO_FACT } from "../route-record";
@@ -60,5 +60,8 @@ t("ブレインの層の要約には route を入れない", (conductorBriefDige
 t("書き手の1行に地図の状態が出る（on の時だけ）", (briefLineForRole({ conductor_brief: bOn }, "bridge") ?? "").includes("地図の状態: 内覧の日時") && !(briefLineForRole({ conductor_brief: bOff }, "bridge") ?? "").includes("地図の状態"), briefLineForRole({ conductor_brief: bOn }, "bridge"));
 
 t("使える状態には言い回しの型と潜在の4つ（11/21 夜の割り当て）", (rs.phrasing?.point_how.length ?? 0) > 0 && (rs.phrasing?.want.length ?? 0) > 0 && rsx.phrasing === null, rs.phrasing);
+// #620: 段の語（digest.sg）と地図の駅を寄せてから比べる
+t("段の語を駅に寄せる（customer-state の語）", stationOf({ checkpointStage: "viewing_arranging" }).node === "viewing_arrange" && stationOf({ checkpointStage: "estimate_sent" }).node === "estimate" && stationOf({ checkpointStage: "first" }).node === "inquiry");
+t("同じ駅か: 寄せて比べる・物件検索中は3つの駅のどれでも", sameStation("viewing_arrange", "viewing_arranging") === true && sameStation("estimate", "estimate_sent") === true && sameStation("pickup", "searching") === true && sameStation("hearing", "searching") === true && sameStation("viewed", "searching") === false && sameStation("proposing", "interested") === false && sameStation(null, "x") === null && sameStation("x", null) === null);
 console.log(`\nroute-record: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
