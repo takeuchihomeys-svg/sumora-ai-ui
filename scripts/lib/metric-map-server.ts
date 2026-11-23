@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, BROUGHT_SHAPE_RE, fixedSinceOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -49,25 +49,33 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     // 少数側の形は返信の番も含めた竹内さん本人の全部の番で数える＝場面は全部の番の分を読む（200番ほど・id で引く軽い読み）
     const ids = [...new Set(rs.map((r) => r.id))];
     const scene = new Map<number, string | null>();
-    const turnAt = new Map<number, { conv: string; at: number }>();
+    const turnAt = new Map<number, { conv: string; at: number; last: number }>();
     for (let i = 0; i < ids.length; i += 200) {
-      const { data, error } = await sb.from("line_watch_turns").select("id,scene_key,conversation_id,customer_turn_at").in("id", ids.slice(i, i + 200));
+      const { data, error } = await sb.from("line_watch_turns").select("id,scene_key,conversation_id,customer_turn_at,customer_last_at").in("id", ids.slice(i, i + 200));
       if (error) throw new Error(`line_watch_turns: ${error.message}`);
-      for (const r of (data ?? []) as Array<{ id: number; scene_key: string | null; conversation_id: string; customer_turn_at: string }>) { scene.set(r.id, r.scene_key); turnAt.set(r.id, { conv: r.conversation_id, at: Date.parse(r.customer_turn_at) }); }
+      for (const r of (data ?? []) as Array<{ id: number; scene_key: string | null; conversation_id: string; customer_turn_at: string; customer_last_at: string | null }>) { scene.set(r.id, r.scene_key); turnAt.set(r.id, { conv: r.conversation_id, at: Date.parse(r.customer_turn_at), last: Date.parse(r.customer_last_at ?? r.customer_turn_at) }); }
     }
     // 前24時間にお客様が物件を送ってきた番（少数側の名前の付いた形・作業員A と同じ網）: 会話ごとにお客様の発言だけを窓で読む（本文は印を見るだけ・出さない）
     const brought = new Set<number>();
-    const byConvT = new Map<string, Array<{ id: number; at: number }>>();
-    for (const [id, x] of turnAt) byConvT.set(x.conv, [...(byConvT.get(x.conv) ?? []), { id, at: x.at }]);
+    const burstText = new Map<number, string>(); // 番の最後のお客様の発言までの連投（作業員A の shapes.ts と同じ切り方・本文は形の印を見るだけ・出さない）
+    const byConvT = new Map<string, Array<{ id: number; at: number; last: number }>>();
+    for (const [id, x] of turnAt) byConvT.set(x.conv, [...(byConvT.get(x.conv) ?? []), { id, at: x.at, last: x.last }]);
     for (const [c, ts] of byConvT) {
-      const lo = new Date(Math.min(...ts.map((t) => t.at)) - 86_400_000).toISOString(), hi = new Date(Math.max(...ts.map((t) => t.at)) + 1000).toISOString();
-      const { data } = await sb.from("messages").select("text,created_at,image_url").eq("conversation_id", c).eq("sender", "customer").gte("created_at", lo).lte("created_at", hi).limit(2000);
-      const ms = ((data ?? []) as Array<{ text: string | null; created_at: string; image_url: string | null }>).filter((m) => BROUGHT_SHAPE_RE.test(String(m.text ?? "")) || !!m.image_url).map((m) => Date.parse(m.created_at));
-      for (const t of ts) if (ms.some((at) => at <= t.at + 1000 && t.at - at <= 86_400_000)) brought.add(t.id);
+      const lo = new Date(Math.min(...ts.map((t) => t.at)) - 86_400_000).toISOString(), hi = new Date(Math.max(...ts.map((t) => t.last)) + 1000).toISOString();
+      const { data } = await sb.from("messages").select("sender,text,created_at,image_url").eq("conversation_id", c).gte("created_at", lo).lte("created_at", hi).order("created_at").limit(3000);
+      const all = (data ?? []) as Array<{ sender: string; text: string | null; created_at: string; image_url: string | null }>;
+      const marks = all.filter((m) => m.sender === "customer" && (BROUGHT_SHAPE_RE.test(String(m.text ?? "")) || !!m.image_url)).map((m) => Date.parse(m.created_at));
+      for (const t of ts) {
+        if (marks.some((at) => at <= t.at + 1000 && t.at - at <= 86_400_000)) brought.add(t.id);
+        const upto = all.filter((m) => Date.parse(m.created_at) <= t.last + 1000);
+        const burst: string[] = [];
+        for (let k = upto.length - 1; k >= 0 && upto[k].sender === "customer"; k--) burst.unshift(String(upto[k].text ?? ""));
+        burstText.set(t.id, burst.join("\n"));
+      }
     }
     // 竹内さんの決定で正解を改めた番（作業員A の案）は外れと別に数える
     decided = o.spec ? decidedTurnIdsOf(rs as unknown as Array<{ id: number; conv: string; at: string }>, o.spec) : new Map();
-    sides = sideOf(rs.map((r) => deviceMoveRowOf(r, scene.get(r.id) ?? null, { brought24h: brought.has(r.id) })).filter((m) => !decided.has(m.id)));
+    sides = sideOf(rs.map((r) => deviceMoveRowOf(r, scene.get(r.id) ?? null, { brought24h: brought.has(r.id), ackPlusCheck: ackPlusCheckPromiseOf(burstText.get(r.id) ?? "", (r as { prevPromise?: string[] }).prevPromise ?? []) })).filter((m) => !decided.has(m.id)));
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));

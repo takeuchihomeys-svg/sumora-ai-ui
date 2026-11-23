@@ -10,6 +10,8 @@
 // 置き場: 木の1日分は metric_map_nodes（scripts/lib/metric-map-server.ts が書く）・見込みは work_items.forecast_*・要点は quality_daily の map:* / forecast:*。
 // 葉の鍵: <根の数の名前>/<段>=<値>/… 例 core:conductor_aix_60d/kind=estimate_sheet/scene=cost/miss=reply_not_aix/cause=material
 
+import { isAckOnlyTurn } from "./ack-topic-scope";
+
 export type WriterSelect = "style" | "device" | "all";
 export type MapDim = "kind" | "scene" | "miss" | "cause" | "station";
 /** 原因の4つ（CLAUDE.md 絶対的な考え方の3つ＋数え方の誤り） */
@@ -53,6 +55,15 @@ export function fixedSinceOf(rows: ReadonlyArray<{ id: number; at: string }>, ta
 export const TIMED_AIX_KINDS = new Set(["greeting_viewing"]);
 /** お客様が物件を送ってきた印（K2 の COMBINED_PROMISE_CHECK_FIRST・作業員A の数え方と同じ網: URL・物件名・画像） */
 export const BROUGHT_SHAPE_RE = /https?:\/\/|物件名|^\[画像\]/;
+/**
+ * 名前の付いた形「確認の約束が開いている×お客様が了承に少し足した」（純関数・11/23 統括役の決め・作業員A の scratchpad/a1/shapes.ts と同じ5つ）:
+ *   こちらの直前24時間に確認の約束（prevPromise に property_check_result）・連投の文が了承だけではない（isAckOnlyTurn=false）・問いなし・合わせて80字以内・お礼か了承の語がある
+ */
+export function ackPlusCheckPromiseOf(burstText: string, prevPromise: readonly string[]): boolean {
+  const t = String(burstText ?? "");
+  return prevPromise.includes("property_check_result") && !isAckOnlyTurn(t) && !/[?？]|ですか|ますか|でしょうか/.test(t) && t.length <= 80
+    && /ありがと|よろしく|宜しく|わかりました|分かりました|了解|承知|かしこまり|お願い/.test(t);
+}
 export const DIM_JA: Record<MapDim, string> = { kind: "AIX の種類", scene: "場面", miss: "外れの型", cause: "原因", station: "駅" };
 
 export type MapRootDef = {
@@ -507,7 +518,7 @@ export function minorityOfV1(rows: readonly MoveRow[], minN = MINORITY_MIN_N): M
   return out;
 }
 /** 端末の版の番の形・竹内さんの一手・ブレインの一手（純関数）。形＝場面 × 開いている約束（前の24時間のこちらの約束）× お客様の連投の型。一手は「返信が先（返信・2段）」か「AIX:<種類>」 */
-export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; burst?: string | null; route?: string | null }, sceneKey: string | null, ctx: { brought24h?: boolean } = {}): MoveRow {
+export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; burst?: string | null; route?: string | null }, sceneKey: string | null, ctx: { brought24h?: boolean; ackPlusCheck?: boolean } = {}): MoveRow {
   const scene = sceneOfWatchKey(sceneKey, r.tk ?? null);
   const pp = [...(r.prevPromise ?? [])].sort().join("+") || "なし";
   // 形は「場面 × 開いている約束の種類 × 連投の型」→「場面 × 約束の種類」まで。場面だけ・約束の有無だけの粗い形には下りない
@@ -516,6 +527,7 @@ export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; bur
   const move = r.cls === "reply" || r.cls === "two_stage" ? "reply_first" : `aix:${r.tk ?? "?"}`;
   const brain = r.route === "aix" ? `aix:${r.bk ?? "?"}` : "reply_first";
   // 11/23 統括役の決め（作業員A が実物で数えた形）: 前24時間にお客様が物件を送ってきた番・お客様の問い × 物件の約束が開いている番
-  const namedShapes = [ctx.brought24h ? "前24時間にお客様が物件を送ってきた" : null, r.burst === "question" && (r.prevPromise ?? []).includes("property") ? "お客様の問い×物件の約束が開いている" : null].filter((x): x is string => !!x);
+  const namedShapes = [ctx.brought24h ? "前24時間にお客様が物件を送ってきた" : null, r.burst === "question" && (r.prevPromise ?? []).includes("property") ? "お客様の問い×物件の約束が開いている" : null,
+    ctx.ackPlusCheck ? "確認の約束が開いている×お客様が了承に少し足した" : null].filter((x): x is string => !!x);
   return { id: r.id, shapes, move, brain, isMiss: !(r.v === "一致" || r.v === "返信一致"), kindOnly: r.v === "種類違い", namedShapes };
 }

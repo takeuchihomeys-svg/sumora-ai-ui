@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -104,6 +104,11 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   const short = Array.from({ length: 6 }, (_, i) => mk(i, "reply_first", "reply_first")).concat([mk(99, "aix:x", "reply_first", true)]);
   t("n 不足: どの形も 10 に届かない（5 以上）→ 印だけ", sideOf(short).get(99)?.side === "n_short" && minorityOf(short).size === 0);
 }
+
+// ── 11/23（6回目）名前の付いた形「確認の約束が開いている×お客様が了承に少し足した」 ──
+t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property_check_result"])
+  && !ackPlusCheckPromiseOf("ありがとうございます", ["property_check_result"]) && !ackPlusCheckPromiseOf("ありがとうございます、何時ごろになりますか", ["property_check_result"])
+  && !ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property"]));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
