@@ -3564,15 +3564,13 @@ function setupAreaModeSelector(c, siteKey) {
   }
 }
 
-// ── 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする。
-//    もともとあったの。新着で条件きたりしたらそれもAIXで対応できる形とする」──
-// AIXモード（mode-core の "ai"）の時、**お客さんを選んだら自動で検索を押す**（手で押すのとまったく同じ道を通る）。
-//  ・画面を開いて条件の読み直し（fetchFreshCustomer → preloadAdjForm）が終わってから押す（古い条件で押さない）
-//  ・同じお客様×サイトで続けては押さない（同じ一覧を二重に検索しない・AIX_RESEARCH_GAP_MS）
-//  ・AIXモードでない・スタッフモード・案内の一時停止中は押さない
-//  ・押した合図（fill-done）から先は今まで通り（ブレインなら判定、bulk-dl が1件ずつ印刷用PDFを押して送る）
+// ── 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」──
+// ★ 2026-11-22 竹内さん「ここでボタン押してから検索するようにする。このページに移行した瞬間に途中で検索はじまってしまう」:
+//   条件画面（ピンポイント／広げて＋🔍ボタン）を開いただけでは検索しない。
+//   **🔍 ボタンを人が押してから**検索する（自動便・一括の `dataset.automated` クリックは別道・そのまま）。
+//   AIXモードの「選んだお客さん」は、押したあとの送付（印刷用PDFの自動押し）までを担う。
 var AIX_RESEARCH_GAP_MS = 10 * 60 * 1000;
-var _aiAutoSearchMemo = {};   // "customerId|site" → 押した時刻
+var _aiAutoSearchMemo = {};   // "customerId|site" → 押した時刻（二重開始の見張り用・自動クリックはしない）
 /**
  * ★ 2026-11-16 竹内さん「お客さん検索中物件おくって完了するまで一連が完了するまで新しいお客さんがはいらず1つずつ」:
  *   検索開始〜物件送付完了まで **今のお客さんだけ**。次客の自動検索・切替検索は拒否する。
@@ -3676,50 +3674,43 @@ function _axPipelineSyncFromStorage() {
     }
   });
 }
+/**
+ * ★ 2026-11-22（2.8.159 竹内さん「スタッフモードの部分も…ボタン押さなくても自動で…検索はじまってしまう。ここまちゃんとボタン押して検索はじまるようにする」）:
+ *   ・AIX／スタッフとも条件画面は**ボタン待ち**（開いただけ・選んだだけでは検索しない）
+ *   ・人が🔍を押したあと: スタッフは選んだ客だけ入力〜物件送付まで自動（autoSend）。AIX も従来どおり
+ *   ・自動便・一括の dataset.automated は別道（ここでは触らない）
+ */
 function _maybeAiCustomerAutoSearch(btn, customer, site) {
   try {
-    if (!_aiCustomerModeOn || _staffModeOn) return false;
+    var _waitBtn = !!_aiCustomerModeOn || !!_staffModeOn;
+    if (!_waitBtn) return false;
     if (!btn || !customer || !customer.id) return false;
-    if (btn.style.display === "none") return false;      // 検索ボタンが無い画面（一覧など）
-    if (btn.dataset.automated) return false;             // 自動の一括の回はそちらの道に任せる
-    // 別客の一連（検索→送付）が終わるまで次客を入れない
+    if (btn.style.display === "none") return false;
+    if (btn.dataset.automated) return false;
     if (_axPipelineBlocks(customer.id)) {
       var _busy = _axPipelineActive();
-      console.warn("[AX] 一連未完了のため次客の自動検索を拒否: 進行中=" + (_busy && (_busy.name || _busy.customerId)) + " / 次=" + (customer.customer_name || customer.id));
+      console.warn("[AX] 一連未完了のため次客の検索を拒否: 進行中=" + (_busy && (_busy.name || _busy.customerId)) + " / 次=" + (customer.customer_name || customer.id));
       try {
-        var _uw = document.getElementById("unknown-warn");
-        if (_uw) {
-          _uw.style.display = "block";
-          _uw.textContent = "⏳ " + ((_busy && _busy.name) || "前のお客さん") + " の検索〜送付が終わるまで次のお客さんに進みません";
+        var _uwBusy = document.getElementById("unknown-warn");
+        if (_uwBusy) {
+          _uwBusy.style.display = "block";
+          _uwBusy.textContent = "⏳ " + ((_busy && _busy.name) || "前のお客さん") + " の検索〜送付が終わるまで次のお客さんに進みません";
         }
       } catch (_) {}
       return false;
     }
-    var key = String(customer.id) + "|" + String(site || "realpro");
-    var now = Date.now();
-    var last = Number(_aiAutoSearchMemo[key] || 0);
-    if (last && now - last < AIX_RESEARCH_GAP_MS) {
-      console.log("[AX] AIXモード: 同じお客様を続けて検索しない（" + Math.round((AIX_RESEARCH_GAP_MS - (now - last)) / 1000) + "秒待ち）");
-      return false;
-    }
-    _aiAutoSearchMemo[key] = now;
-    // 人が押すのと同じ間（0.9〜2.6秒）を置いてから押す
-    var H = (typeof self !== "undefined" && self.AxlxHumanWait) || null;
-    var gap = H && H.logNormalDelay ? H.logNormalDelay(1500, 0.35) : (900 + Math.floor(Math.random() * 1700));
-    if (gap > 4000) gap = 4000;
-    console.log("[AX] AIXモード: 選んだお客様（" + (customer.customer_name || customer.id) + "）を " + Math.round(gap) + "ms 後に自動で検索します（" + site + "）");
-    setTimeout(function () {
-      if (!_aiCustomerModeOn) return;                    // 途中でモードが変わったら押さない
-      if (selectedCustomer && String(selectedCustomer.id) !== String(customer.id)) return; // 別のお客様に切り替わった
-      if (_axPipelineBlocks(customer.id)) return;        // 待ちの間に別客が始まっていたら押さない
-      try {
-        btn.dataset.ai_customer = "1";                   // 点検で「AIXモードの自動」と分かる印
-        btn.click();
-      } catch (e) { console.warn("[AX] AIXモードの自動検索でエラー:", e && e.message); }
-    }, gap);
-    return true;
+    var _modeJa = _staffModeOn ? "スタッフ" : "AIX";
+    console.log("[AX] " + _modeJa + "モード: 条件画面を開きました（" + (customer.customer_name || customer.id) + " / " + (site || "realpro") + "）。🔍ボタンを押してから検索します");
+    try {
+      var _uw = document.getElementById("unknown-warn");
+      if (_uw && (!_uw.textContent || _uw.style.display === "none" || /ボタンを押して/.test(_uw.textContent))) {
+        _uw.style.display = "block";
+        _uw.textContent = "🔍 条件を確認したら「自動検索」ボタンを押してください（開いただけでは検索しません）";
+      }
+    } catch (_) {}
+    return false;
   } catch (e) {
-    console.warn("[AX] AIXモードの自動検索を始められません:", e && e.message);
+    console.warn("[AX] 選んだ客の自動検索案内に失敗:", e && e.message);
     return false;
   }
 }
@@ -4917,9 +4908,9 @@ function openInstructions(siteKey) {
         preloadAdjForm(selectedCustomer);
         wireAdjSaveBtn(selectedCustomer);
         setupAreaModeSelector(selectedCustomer, "itandi");
-        // 2026-11-11: AIXモードなら、選んだお客様を自動で検索する（itandi）
+        // AIX／スタッフとも条件画面はボタン待ち案内（押してから検索）
         const _itBtn = document.getElementById("autofill-btn");
-        if (_aiCustomerModeOn && _itBtn) _maybeAiCustomerAutoSearch(_itBtn, selectedCustomer, "itandi");
+        if ((_aiCustomerModeOn || _staffModeOn) && _itBtn) _maybeAiCustomerAutoSearch(_itBtn, selectedCustomer, "itandi");
       });
     });
     autofillBtn.style.display = "block";
@@ -5478,9 +5469,8 @@ function openInstructions(siteKey) {
         preloadAdjForm(c0);
         wireAdjSaveBtn(c0);
         setupAreaModeSelector(c0, "realpro");
-        // 2026-11-11 竹内さん「AIXの場合選択したお客さんが自動検索できるようにする」:
-        //   条件の読み直しが終わってから検索を押す（古い条件で押さない）。autofillBtn.onclick をそのまま使う＝手で押すのと同じ道
-        if (_aiCustomerModeOn) _maybeAiCustomerAutoSearch(autofillBtn, c0, "realpro");
+        // AIX／スタッフとも条件画面はボタン待ち（押したあとスタッフは送付まで自動）
+        if (_aiCustomerModeOn || _staffModeOn) _maybeAiCustomerAutoSearch(autofillBtn, c0, "realpro");
       });
     });
 
@@ -5489,6 +5479,17 @@ function openInstructions(siteKey) {
       const _auditCtx_rp = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得（点検の文脈は click に直接渡る）
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
+      // AIX: 条件画面はボタン押しで開始（開いただけでは動かない）。点検用の印
+      if (_aiCustomerModeOn && !isAutomated) {
+        try { autofillBtn.dataset.ai_customer = "1"; } catch (_) {}
+      }
+      try {
+        var _uwClr = document.getElementById("unknown-warn");
+        if (_uwClr && /ボタンを押して/.test(String(_uwClr.textContent || ""))) {
+          _uwClr.style.display = "none";
+          _uwClr.textContent = "";
+        }
+      } catch (_) {}
       const isAutoSendAll = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode = autofillBtn.dataset.area_mode_locked || null; // await前に取得（非同期後は dataset が削除済み）
       // 2026-09-27 自動便の指定（午後の便＝更新順・1ページ）。await 前に取得（旧は popup の経路で page-script に届かなかった）
@@ -5969,6 +5970,17 @@ function openInstructions(siteKey) {
           ...primary_route_ids,
           ...route_ids.filter((r) => !_pr.has(r)),
         );
+      }
+      // ★ 2026-11-22: 駅名はあるのに route_ids 空で送ると page-script が station_no_route で止まる
+      //   （area_plan が路線を空で上書きする等）。駅→沿線地図で補完する。
+      if ((_lockedMode || currentAreaMode) === "station" && realpro_station_names.length && route_ids.length === 0) {
+        realpro_station_names.forEach((st) => {
+          (getHubLines(st) || []).forEach((l) => {
+            const id = lineNameToRouteId(l);
+            if (id && !route_ids.includes(id)) route_ids.push(id);
+          });
+        });
+        console.log("[AX] 駅名から沿線を補完:", route_ids.length + "本", route_ids.slice(0, 12));
       }
       console.log('[AX] autofill送信:', {
         area_mode:       _lockedMode || currentAreaMode,
@@ -6571,11 +6583,15 @@ function _modeState() {
   return core ? (core.effectiveState || core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: false, staffExpired: false };
 }
 
-/** 2026-11-10 v2.5.94: 今「自動」モードか（通常／スタッフ／自動 の自動）。案内を OFF にして拡張が動く側 */
+/**
+ * 2026-11-10 v2.5.94: 案内を OFF にして拡張が動く側か。
+ * ★ 2026-11-22: 自動・AIX・スタッフ（選んだ客の自動検索〜送付）も true（再開印・案内OFF）。
+ */
 function _isAutoModeNow() {
   var core = self.AxlxModeCore;
   if (!core) return false;
-  return _modeState().mode === core.AUTO_MODE;
+  var m = _modeState().mode;
+  return m === core.AUTO_MODE || m === core.AI_MODE || m === "staff";
 }
 
 function _modeBadge() {
@@ -6744,6 +6760,12 @@ document.addEventListener("DOMContentLoaded", () => {
           } else {
             el.textContent = "✅ 学習反映: 束を読みました（solid " + sol + "・read " + rd + "・" + (r.skipped || "取得") + "）";
           }
+          // ★ 2.8.183: 更新直後の強制取込も同じ帯で分かるようにする
+          try {
+            if (r && r.ok && r.link === "needs_auto") {
+              el.textContent = "⚠ 新束取込済・自動未確認（solid " + sol + "・read " + rd + "）→ 自動1回で反映完了";
+            }
+          } catch (_) {}
         }
       } catch (_) {}
     });

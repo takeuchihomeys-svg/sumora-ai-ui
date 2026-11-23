@@ -154,6 +154,1117 @@
    * 選んだ沿線 ∩ 地図の沿線 = その駅を押すべき本数の期待値。
    * selectedLineNames が空なら地図の全沿線数（十三なら3）。
    */
+
+  /* ==== restored guideLike / flow_series (2.8.155–187 from transcript) ==== */
+function _applyGuideLikeStationGrasp(cond) {
+    if (!cond) return false;
+    var primary = Array.isArray(cond.primary_stations) ? cond.primary_stations.map(function (s) {
+      return String(s || "").replace(/駅$/, "").trim();
+    }).filter(Boolean) : [];
+    var names = Array.isArray(cond.station_names) ? cond.station_names.slice() : [];
+    var changed = false;
+    if (primary.length && names.length) {
+      var pset = {};
+      primary.forEach(function (p) { pset[p] = true; });
+      var head = [], rest = [];
+      names.forEach(function (n) {
+        var c = String(n || "").replace(/駅$/, "").trim();
+        if (pset[c] || pset[n]) head.push(n); else rest.push(n);
+      });
+      primary.forEach(function (p) {
+        if (!head.some(function (h) { return String(h).replace(/駅$/, "").trim() === p; })) head.unshift(p);
+      });
+      cond.station_names = head.concat(rest);
+      changed = true;
+    }
+    var preferIds = Array.isArray(cond.primary_route_ids) ? cond.primary_route_ids.map(String).filter(Boolean) : [];
+    if (!preferIds.length && primary.length && _lineStationMap()) {
+      primary.forEach(function (st) {
+        (_mapLinesOfStation(st) || []).forEach(function (ln) {
+          var id = _lineNameToRouteIdLocal(ln);
+          if (id && preferIds.indexOf(id) < 0) preferIds.push(id);
+        });
+      });
+    }
+    if (preferIds.length) {
+      var cur = Array.isArray(cond.route_ids) ? cond.route_ids.map(String) : [];
+      var pset2 = {};
+      preferIds.forEach(function (id) { pset2[id] = true; });
+      var ordered = preferIds.slice();
+      cur.forEach(function (id) { if (!pset2[id]) ordered.push(id); });
+      cond.route_ids = ordered;
+      cond.primary_route_ids = preferIds.slice();
+      changed = true;
+    }
+    if ((!cond.route_ids || !cond.route_ids.length) && (cond.station_names || []).length) {
+      if (_fillRouteIdsFromStationMap(cond) > 0) changed = true;
+    }
+    if (changed) {
+      try {
+        if (_audit) _auditStepP(
+          "station_grasp_like_guide",
+          "指定駅" + primary.length + " 沿線" + ((cond.primary_route_ids || []).length) + "/" + ((cond.route_ids || []).length)
+            + (primary.length ? (" 先=" + primary.slice(0, 4).join("・")) : "")
+        );
+      } catch (_) {}
+    }
+    return changed;
+  }
+
+function _guideLikeFormGrasp(cond) {
+    var Plan = window.AxlxRealproGuidePlan;
+    if (!Plan || typeof Plan.buildPlan !== "function" || !cond) {
+      try { if (_audit) _auditStepP("guide_plan_miss", "手順表が page に無い"); } catch (_) {}
+      return null;
+    }
+    var steps = [];
+    try { steps = Plan.buildPlan(cond) || []; } catch (_) { steps = []; }
+    var pending = [];
+    for (var i = 0; i < steps.length; i++) {
+      var s = steps[i] || {};
+      try {
+        if (s.kind === "select" && s.name) {
+          var el = document.querySelector('select[name="' + s.name + '"]');
+          if (el && String(el.value) !== String(s.value)) pending.push((s.hint || s.name) + "");
+        } else if (s.kind === "text" && s.name) {
+          var inp = document.querySelector('input[name="' + s.name + '"]');
+          if (inp && String(inp.value || "").trim() !== String(s.value || "").trim()) pending.push((s.hint || s.name) + "");
+        } else if (s.kind === "check" && s.name) {
+          var cbs = document.querySelectorAll('input[name="' + s.name + '"]');
+          var ok = false;
+          for (var j = 0; j < cbs.length; j++) {
+            if (s.value == null || String(cbs[j].value) === String(s.value)) {
+              if (!!cbs[j].checked === !!s.want) { ok = true; break; }
+            }
+          }
+          if (cbs.length && !ok) pending.push((s.label || s.name).slice(0, 24));
+        } else if (s.kind === "check_text" && s.text) {
+          // 文言一致のチェックは画面依存・件数だけ
+          pending.push("文:" + String(s.text).slice(0, 12));
+        } else if (s.kind === "pick_station" || s.kind === "pick_city" || s.kind === "pick_route") {
+          pending.push(s.kind);
+        }
+      } catch (_) {}
+    }
+    try {
+      if (_audit) {
+        _auditStepP(
+          "guide_plan_linked",
+          "手順" + steps.length + " 未了≈" + pending.length
+            + (pending.length ? (" 先=" + pending.slice(0, 4).join("・")) : " 揃い"),
+        );
+      }
+    } catch (_) {}
+    return { steps: steps.length, pending: pending };
+  }
+
+function _guideLikeDiffGrasp(cond) {
+    var Plan = window.AxlxRealproGuidePlan;
+    var miss = [], extra = [];
+    var stepsN = 0;
+    if (!Plan || typeof Plan.buildPlan !== "function" || !cond) {
+      return { ok: false, steps: 0, miss: ["guide_plan_miss"], extra: [], summary: "手順表なし" };
+    }
+    var steps = [];
+    try { steps = Plan.buildPlan(cond) || []; } catch (_) { steps = []; }
+    if (!Array.isArray(steps)) steps = [];
+    stepsN = Number(steps.length) || 0;
+    var planCheckWant = {}; // name -> set of values that should be checked
+    for (var i = 0; i < steps.length; i++) {
+      var s = steps[i] || {};
+      try {
+        if (s.kind === "select" && s.name) {
+          var el = document.querySelector('select[name="' + s.name + '"]');
+          if (el && String(el.value) !== String(s.value)) miss.push("選:" + (s.hint || s.name));
+        } else if (s.kind === "text" && s.name) {
+          var inp = document.querySelector('input[name="' + s.name + '"]');
+          if (inp && String(inp.value || "").trim() !== String(s.value || "").trim()) miss.push("文:" + (s.hint || s.name));
+        } else if (s.kind === "check" && s.name) {
+          if (!planCheckWant[s.name]) planCheckWant[s.name] = {};
+          if (s.value != null) planCheckWant[s.name][String(s.value)] = !!s.want;
+          var cbs = document.querySelectorAll('input[name="' + s.name + '"]');
+          var ok = false;
+          for (var j = 0; j < cbs.length; j++) {
+            if (s.value == null || String(cbs[j].value) === String(s.value)) {
+              if (!!cbs[j].checked === !!s.want) { ok = true; break; }
+            }
+          }
+          if (cbs.length && !ok) {
+            if (s.want) miss.push("入:" + String(s.label || s.name).slice(0, 20));
+            else extra.push("外:" + String(s.label || s.name).slice(0, 20));
+          }
+        }
+      } catch (_) {}
+    }
+    // 間取り: 欲しい全部＋余分0
+    try {
+      var wantL = [];
+      if (cond.floor_plan && Plan.floorPlanValues) {
+        wantL = Plan.floorPlanValues(cond.floor_plan, !!cond.is_wide).map(String);
+      } else if (_axExpect && _axExpect.layoutVals) {
+        wantL = _axExpect.layoutVals.map(String);
+      }
+      if (wantL.length) {
+        var lr = _layoutWantReport(wantL);
+        lr.missing.forEach(function (v) { miss.push("間取入:" + v); });
+        lr.extras.forEach(function (v) { extra.push("間取外:" + v); });
+      }
+    } catch (_) {}
+    // 区: 足りない＋余計
+    try {
+      if (cond.city_codes && cond.city_codes.length) {
+        var wr = isAllWantedWardsChosen(cond.city_codes);
+        wr.missing.forEach(function (c) { miss.push("区入:" + c); });
+        wr.stale.forEach(function (c) { extra.push("区外:" + c); });
+      } else {
+        var wN = 0;
+        try { wN = document.querySelectorAll('input[name="city_code[]"]:checked').length; } catch (_) {}
+        if (wN > 0 && (_axWantPlaceMode(cond) === "station" || _axWantPlaceMode(cond) === "route")) {
+          extra.push("区残" + wN);
+        }
+      }
+    } catch (_) {}
+    // 駅: 指定（primary）優先で足りない／余計は form の want 外
+    try {
+      var wantSt = _primaryStationNames(cond);
+      if (!wantSt.length) wantSt = (cond.station_names || []).map(function (n) {
+        return String(n || "").replace(/駅$/, "").trim();
+      }).filter(Boolean).slice(0, 12);
+      if (wantSt.length) {
+        var stOk = _countWantStationsChecked(wantSt);
+        if (stOk < 1) miss.push("駅入:指定0");
+        var allSt = [];
+        try {
+          Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]:checked')).forEach(function (inp) {
+            var lab = null;
+            try { lab = _labelForCheckbox(inp) || inp.parentElement; } catch (_) { lab = inp.parentElement; }
+            var t = String((lab && lab.textContent) || "").replace(/\s+/g, "").replace(/駅$/, "");
+            if (t) allSt.push(t);
+          });
+        } catch (_) {}
+        allSt.forEach(function (t) {
+          if (!wantSt.some(function (w) { return _stationNameMatch(t, w); })) {
+            // 通勤圏の他駅は want に含まれることが多い → station_names 全体でも見る
+            var allWant = (cond.station_names || []).map(function (n) {
+              return String(n || "").replace(/駅$/, "").trim();
+            });
+            if (!allWant.some(function (w) { return _stationNameMatch(t, w); })) extra.push("駅外:" + t.slice(0, 10));
+          }
+        });
+      } else {
+        var stN = 0;
+        try { stN = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) {}
+        if (stN > 0 && _axWantPlaceMode(cond) === "area") extra.push("駅残" + stN);
+      }
+    } catch (_) {}
+    // ペット
+    try {
+      var wantPet = !!cond.pet_ok;
+      var petN = 0;
+      try { petN = document.querySelectorAll('input[name="eq_rm[]"]:checked').length; } catch (_) {}
+      if (wantPet && petN < 1) miss.push("入:ペット");
+      if (!wantPet && petN > 0) extra.push("外:ペット" + petN);
+    } catch (_) {}
+    /**
+     * ★ 2.8.216 竹内さん「所在地と沿線駅は並行しない・どちらか」:
+     *   画面に区と駅が同時 checked → XOR 違反（入れる把握の抜け）。
+     */
+    try {
+      var _mixWd = 0, _mixSt = 0;
+      try { _mixWd = document.querySelectorAll('input[name="city_code[]"]:checked').length
+        + document.querySelectorAll('input[name="town_code[]"]:checked').length; } catch (_) {}
+      try { _mixSt = document.querySelectorAll('input[name="station_id[]"]:checked').length
+        + document.querySelectorAll('input[name="route_id[]"]:checked').length; } catch (_) {}
+      if (_mixWd > 0 && _mixSt > 0) {
+        extra.push("混在XOR違反区" + _mixWd + "駅" + _mixSt);
+        try { if (_audit) _auditStepP("place_xor_violation", "区" + _mixWd + "・駅" + _mixSt + "（どちらか一方にする）"); } catch (_) {}
+      }
+    } catch (_) {}
+    var summary = "手順" + (Number(stepsN) || 0)
+      + " 入忘れ" + miss.length + (miss.length ? "(" + miss.slice(0, 3).join("・") + ")" : "")
+      + " 外忘れ" + extra.length + (extra.length ? "(" + extra.slice(0, 3).join("・") + ")" : "");
+    return {
+      ok: miss.length === 0 && extra.length === 0,
+      steps: Number(stepsN) || 0,
+      miss: miss,
+      extra: extra,
+      summary: summary,
+    };
+  }
+
+/**
+   * ★ 2.8.209 竹内さん「入れるときと同じように細かく理解／外す部分も徹底強化」:
+   *   入れる側は guide_phase_one で「駅入:梅田」等を1つずつ言う。外す側は件数だけ（残:区・町）で粗かった。
+   *   → 外す前も DOM×台帳の**名前付き残り**を1つずつ guide_phase_one に残す（未配線だった _guideLikeClearGrasp を使う）。
+   */
+  function _guideLikeClearGrasp(cond) {
+    var d = null;
+    try { d = _guideLikeDiffGrasp(cond); } catch (_) { d = { ok: false, miss: [], extra: [], summary: "手順表なし" }; }
+    var named = [];
+    try {
+      if (typeof _listLeftoverNamedItems === "function") {
+        var led0 = null;
+        try { led0 = window.__axlxPrevLedger || (typeof _ledgerLoad === "function" ? _ledgerLoad() : null); } catch (_) { led0 = null; }
+        named = _listLeftoverNamedItems(led0) || [];
+      }
+    } catch (_) { named = []; }
+    var focus = [];
+    try {
+      (d && d.extra ? d.extra : []).forEach(function (x) { if (x) focus.push(String(x)); });
+      named.forEach(function (x) { if (x && focus.indexOf(x) < 0) focus.push(x); });
+    } catch (_) {}
+    try {
+      if (_audit) {
+        _auditStepP(
+          "guide_clear_grasp",
+          "外す前把握 名前付き" + focus.length
+            + (focus.length ? " " + focus.slice(0, 8).join("・") : " なし")
+            + "／入忘れは後で" + ((d && d.miss) ? d.miss.length : 0),
+        );
+      }
+    } catch (_) {}
+    for (var i = 0; i < focus.length && i < 12; i++) {
+      try {
+        if (_audit) _auditStepP("guide_phase_one", "外す前 " + (i + 1) + "/" + focus.length + " " + String(focus[i]).slice(0, 40));
+      } catch (_) {}
+    }
+    try {
+      if (_audit) {
+        _auditStepP(
+          focus.length ? "guide_clear_detail" : "guide_clear_clean",
+          focus.length
+            ? ("外す対象" + focus.length + "を1つずつ把握")
+            : "外す前きれい（残0）",
+        );
+      }
+    } catch (_) {}
+    /** ★ 2.8.210: 外す前の段を一連の順番として理解する */
+    try {
+      _noteFlowSeriesAt(
+        "before_clear",
+        focus.length ? ("名" + focus.length) : "残0",
+      );
+    } catch (_) {}
+    return { ok: focus.length === 0, diff: d, focus: focus, named: named };
+  }
+
+function _guideLikeFillGate(cond, then) {
+    var done = typeof then === "function" ? then : function () {};
+    /** ★ 2.8.216: 検索前に場所XOR把握があるか（無ければ理解抜け） */
+    try {
+      var _xorOk = "";
+      try { _xorOk = String(window.__axlxPlaceXor || window.__axlxPlaceXorPlan || ""); } catch (_) {}
+      if (!_xorOk) {
+        try { if (_audit) _auditStepP("place_xor_miss", "検索前に場所XOR把握が無い（どちらか一方を言えなかった）"); } catch (_) {}
+      } else {
+        try {
+          if (_audit) _auditStepP("place_xor_gate", "検索前XOR=" + String(window.__axlxPlaceXorLabel || _xorOk) + "（並行しない）");
+        } catch (_) {}
+      }
+    } catch (_) {}
+    var d0 = null;
+    try { d0 = _guideLikeDiffGrasp(cond); } catch (_) { d0 = null; }
+    if (!d0) { done(); return; }
+    try {
+      if (_audit) _auditStepP("guide_fill_gate", d0.summary + (d0.ok ? " →OK" : " →直す"));
+    } catch (_) {}
+    if (d0.ok) { done(); return; }
+    // 1回だけ: 間取りの余分・不足、ペット、区の stale は既存関数で直す
+    try {
+      if (d0.miss.some(function (m) { return /^間取入:/.test(m); }) || d0.extra.some(function (m) { return /^間取外:/.test(m); })) {
+        var wantL = (_axExpect && _axExpect.layoutVals) ? _axExpect.layoutVals.map(String) : [];
+        if (wantL.length) setCheckboxes("room_layout_id[]", wantL);
+      }
+    } catch (_) {}
+    try {
+      if (d0.extra.some(function (m) { return m === "外:ペット" || /^外:ペット/.test(m); })) {
+        Array.prototype.slice.call(document.querySelectorAll('input[name="eq_rm[]"]:checked')).forEach(function (cb) {
+          try { _toggleCheckboxLikeHuman(cb, false); } catch (_) {}
+        });
+      }
+    } catch (_) {}
+    try {
+      whenClickQueueIdle(function () {
+        var d1 = null;
+        try { d1 = _guideLikeDiffGrasp(cond); } catch (_) { d1 = d0; }
+        try {
+          if (_audit) {
+            _auditStepP(
+              (d1 && d1.ok) ? "guide_fill_fixed" : "guide_fill_still_gap",
+              (d1 && d1.summary) || "再測失敗",
+            );
+          }
+        } catch (_) {}
+        done();
+      });
+    } catch (_) { done(); }
+  }
+
+function _phaseFocusItems(phase, d) {
+    var all = [];
+    try {
+      // ★ 2026-11-22 次客: 外し直後は「入忘れ」はまだ当然（新条件未入れ）→ 外忘れだけ見る
+      if (phase === "after_clear") all = (d && d.extra) ? d.extra.slice() : [];
+      else if (phase === "after_confirm") all = (d && d.miss) ? d.miss.slice() : []; // 入れた＝入忘れが無いこと
+      else if (phase === "after_search") all = [];
+      else all = (d.miss || []).concat(d.extra || []);
+    } catch (_) { all = []; }
+    var re = /./;
+    if (phase === "after_station") re = /駅/;
+    else if (phase === "after_area") re = /区|町/;
+    else if (phase === "after_place") re = /駅|区|町|場所/;
+    else if (phase === "after_confirm") re = /駅入|区入|町|入:|間取入/;
+    else if (phase === "after_clear") re = /外:|駅残|区残|間取外|線残|ペット/;
+    var out = [], seen = {};
+    for (var i = 0; i < all.length; i++) {
+      var m = String(all[i] || "");
+      if (!m || !re.test(m) || seen[m]) continue;
+      seen[m] = true;
+      out.push(m);
+    }
+    return out;
+  }
+
+function _guideLikePhaseCheck(phase, cond, then) {
+    var done = typeof then === "function" ? then : function () {};
+    var ph = String(phase || "after_place").slice(0, 24);
+    /**
+     * ★ 2026-11-22 audit#1585: `window.__axlxFillCond` が未設定で常に guide_plan_miss →
+     *   1つずつ確認がスキップされていた。正本は `_fillCondForStamp`（fillRealpro が置く）。
+     */
+    var _cond = cond || null;
+    try {
+      if (!_cond && typeof _fillCondForStamp !== "undefined" && _fillCondForStamp) _cond = _fillCondForStamp;
+    } catch (_) {}
+    try {
+      if (!_cond && window.__axlxFillCond) _cond = window.__axlxFillCond;
+    } catch (_) {}
+    var d0 = null;
+    try { d0 = _guideLikeDiffGrasp(_cond); } catch (_) { d0 = null; }
+    if (!d0) {
+      try { if (_audit) _auditStepP("guide_phase_" + ph, "手順表なし→スキップ"); } catch (_) {}
+      done({ ok: true, skipped: true, phase: ph });
+      return;
+    }
+    if (d0.miss.length === 1 && d0.miss[0] === "guide_plan_miss") {
+      /**
+       * ★ 2026-11-22: 手順表が page に無い時も、画面の今（_axExpect／DOM）で1つずつ見てから進む。
+       *   旧は印だけ付けて return → 把握せず次へ（止まらないが連携が空）。
+       */
+      try {
+        if (_audit) _auditStepP("guide_phase_" + ph, "guide_plan_miss→画面で1つずつ");
+      } catch (_) {}
+      var _screenFocus = [];
+      try {
+        if (ph === "after_place" || ph === "before_search" || ph === "after_area") {
+          var wN = 0, tN = 0, stN = 0;
+          try { wN = document.querySelectorAll('input[name="city_code[]"]:checked').length; } catch (_) {}
+          try { tN = document.querySelectorAll('input[name="town_code[]"]:checked').length; } catch (_) {}
+          try { stN = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) {}
+          if (wN) _screenFocus.push("区" + wN); else _screenFocus.push("区0");
+          if (tN) _screenFocus.push("町" + tN);
+          if (stN) _screenFocus.push("駅" + stN); else _screenFocus.push("駅0");
+        }
+        if (ph === "before_search" || ph === "after_place") {
+          var layN = 0;
+          try { layN = document.querySelectorAll('input[name="room_layout_id[]"]:checked').length; } catch (_) {}
+          _screenFocus.push("間取" + layN);
+        }
+      } catch (_) {}
+      for (var _si = 0; _si < _screenFocus.length && _si < 8; _si++) {
+        try {
+          if (_audit) _auditStepP("guide_phase_one", (_si + 1) + "/" + _screenFocus.length + " " + _screenFocus[_si]);
+        } catch (_) {}
+      }
+      try {
+        if (_audit) _auditStepP("guide_phase_ok", ph + " 画面把握 " + _screenFocus.join("・"));
+      } catch (_) {}
+      try { _noteFlowSeriesAt(ph, "画面把握"); } catch (_) {}
+      /** ★ 2.8.231: 画面フォールバック照合も task_now/done/next に落とす */
+      try {
+        if (typeof window.__axlxLinkGuidePhaseToTask === "function") {
+          window.__axlxLinkGuidePhaseToTask(ph, _screenFocus, "screen");
+        }
+      } catch (_) {}
+      done({ ok: true, phase: ph, diff: d0, focus: _screenFocus, screenFallback: true });
+      return;
+    }
+    var focus0 = _phaseFocusItems(ph, d0);
+    try {
+      if (_audit) {
+        _auditStepP(
+          "guide_phase_" + ph,
+          d0.summary + " 注目" + focus0.length + (focus0.length ? "(" + focus0.slice(0, 3).join("・") + ")" : " 揃い"),
+        );
+      }
+    } catch (_) {}
+    // 1つずつ確認の印（最大8）
+    for (var i = 0; i < focus0.length && i < 8; i++) {
+      try {
+        if (_audit) _auditStepP("guide_phase_one", (i + 1) + "/" + focus0.length + " " + String(focus0[i]).slice(0, 40));
+      } catch (_) {}
+    }
+    var triedFix = false;
+    try {
+      if (ph === "after_station" && focus0.some(function (m) { return /駅入/.test(m); }) && _cond && (_cond.station_names || []).length) {
+        triedFix = true;
+        try { selectStationsByName(_cond.station_names); } catch (_) {}
+      }
+    } catch (_) { triedFix = false; }
+    function finish() {
+      var d1 = null;
+      try { d1 = _guideLikeDiffGrasp(_cond); } catch (_) { d1 = d0; }
+      var focus1 = _phaseFocusItems(ph, d1 || d0);
+      var fatal = false;
+      try {
+        if (ph === "after_station") {
+          var stN = 0;
+          try { stN = document.querySelectorAll('input[name="station_id[]"]:checked').length; } catch (_) {}
+          if (stN < 1 && (_cond && (_cond.station_names || []).length > 0)) fatal = true;
+        }
+        if (ph === "after_area") {
+          var wN = 0;
+          try { wN = document.querySelectorAll('input[name="city_code[]"]:checked').length; } catch (_) {}
+          if (wN < 1 && _cond && (_cond.city_codes || []).length > 0) fatal = true;
+        }
+      } catch (_) {}
+      try {
+        if (_audit) {
+          _auditStepP(
+            fatal ? "guide_phase_block" : (focus1.length ? "guide_phase_gap" : "guide_phase_ok"),
+            ph + " " + ((d1 && d1.summary) || "") + (fatal ? " 致命" : "") + (focus1.length ? " 残" + focus1.slice(0, 3).join("・") : " 揃い"),
+          );
+        }
+      } catch (_) {}
+      try {
+        if (!fatal && focus1.length === 0 && /^(after_station|after_area|after_place|before_search)$/.test(ph)) {
+          _noteFlowSeriesAt(ph, "揃い");
+        }
+      } catch (_) {}
+      /** ★ 2.8.231: 手順表×画面の段完了 → 1タスク把握（いま／完了／次）へ連携 */
+      try {
+        if (typeof window.__axlxLinkGuidePhaseToTask === "function") {
+          window.__axlxLinkGuidePhaseToTask(
+            ph,
+            focus0.length ? focus0 : focus1,
+            fatal ? "block" : (focus1.length ? "gap" : "ok"),
+          );
+        }
+      } catch (_) {}
+      done({ ok: !fatal && focus1.length === 0, phase: ph, diff: d1, focus: focus1, fatal: fatal });
+    }
+    if (triedFix) {
+      try {
+        whenClickQueueIdle(function () { setTimeout(finish, 350 + Math.floor(Math.random() * 250)); });
+      } catch (_) { setTimeout(finish, 400); }
+    } else {
+      finish();
+    }
+  }
+
+function _guideLikeAfterClearCheck(cond, then) {
+    var done = typeof then === "function" ? then : function () {};
+    var leftoverItems = [];
+    var named = [];
+    try {
+      var s = _scanLeftoverForm();
+      var mode = "none";
+      try { mode = _axWantPlaceMode(cond); } catch (_) {}
+      /** ★ 2.8.208: 台帳なしだと閉じた駅・区が「きれい」になり、所在地だけ外して完了扱いになる */
+      var led = null;
+      try { led = window.__axlxPrevLedger || (typeof _ledgerLoad === "function" ? _ledgerLoad() : null); } catch (_) { led = null; }
+      var p = _planLeftover(s, mode, led);
+      /** ★ 2.8.209: 件数の「残:区・町」だけでなく、入れる側と同じく名前付きで1つずつ */
+      try {
+        if (typeof _listLeftoverNamedItems === "function") named = _listLeftoverNamedItems(led) || [];
+      } catch (_) { named = []; }
+      try {
+        if (_audit) {
+          _auditStepP(
+            "guide_phase_after_clear",
+            (p.dirty || named.length ? "残あり " : "きれい ")
+              + String(p.summary || "").slice(0, 50)
+              + (named.length ? " 名" + named.length + "[" + named.slice(0, 6).join("・") + "]" : ""),
+          );
+        }
+      } catch (_) {}
+      named.forEach(function (n) { leftoverItems.push(n); });
+      if (!named.length) {
+        if (p.clearStations) leftoverItems.push("残:駅・沿線");
+        if (p.clearWards) leftoverItems.push("残:区・町");
+        if (p.boxes && p.boxes.length) {
+          p.boxes.slice(0, 6).forEach(function (b) { leftoverItems.push("残箱:" + String(b).slice(0, 16)); });
+        }
+      }
+    } catch (_) {}
+    var d0 = null;
+    try { d0 = _guideLikeDiffGrasp(cond); } catch (_) { d0 = null; }
+    var focus0 = _phaseFocusItems("after_clear", d0 || { miss: [], extra: [] });
+    var allOne = leftoverItems.concat(focus0);
+    var seen = {};
+    var uniq = [];
+    for (var i = 0; i < allOne.length; i++) {
+      var m = String(allOne[i] || "");
+      if (!m || seen[m]) continue;
+      seen[m] = true;
+      uniq.push(m);
+    }
+    for (var j = 0; j < uniq.length && j < 12; j++) {
+      try {
+        if (_audit) _auditStepP("guide_phase_one", "外し後 " + (j + 1) + "/" + uniq.length + " " + String(uniq[j]).slice(0, 40));
+      } catch (_) {}
+    }
+    var dirty = uniq.length > 0;
+    /** ★ 2.8.231: 外し後の手順×画面照合 → task 把握へ */
+    try {
+      if (typeof window.__axlxLinkGuidePhaseToTask === "function") {
+        window.__axlxLinkGuidePhaseToTask("after_clear", uniq, dirty ? "gap" : "ok");
+      }
+    } catch (_) {}
+    try {
+      if (_audit) {
+        _auditStepP(
+          dirty ? "guide_phase_gap" : "guide_phase_ok",
+          "after_clear " + (dirty ? ("外し忘れ注目" + uniq.length + "(" + uniq.slice(0, 3).join("・") + ")") : "外し忘れ0・次客の入れへ"),
+        );
+      }
+    } catch (_) {}
+    try { if (!dirty) _noteFlowSeriesAt("after_clear", "外し忘れ0"); } catch (_) {}
+    // 外し後の致命は _cleanStartGate が止める。ここは1つずつの把握を強化する（進みは止めない）
+    done({ ok: !dirty, phase: "after_clear", focus: uniq, dirty: dirty, named: named });
+  }
+
+function _guideLikeAfterConfirmCheck(kind, cond, then) {
+    var done = typeof then === "function" ? then : function () {};
+    var k = String(kind || "other").slice(0, 12);
+    var closed = false;
+    var stillOpen = [];
+    try {
+      var confLeft = null;
+      try { confLeft = _findByText(["確定してリストへ", "この条件で絞り込む"]); } catch (_) { confLeft = null; }
+      if (confLeft && isVisible(confLeft)) stillOpen.push("残:確定してリストへ");
+      var stV = 0, cityV = 0;
+      try {
+        stV = Array.prototype.slice.call(document.querySelectorAll("label.one_station, .one_station")).filter(isVisible).length;
+      } catch (_) {}
+      try {
+        cityV = Array.prototype.slice.call(document.querySelectorAll("label.one_city, label.one_town")).filter(isVisible).length;
+      } catch (_) {}
+      if (k === "station" && stV > 0) stillOpen.push("残:駅モーダル可視" + stV);
+      if (k === "area" && cityV > 0 && confLeft && isVisible(confLeft)) stillOpen.push("残:地域モーダル可視" + cityV);
+      closed = stillOpen.length === 0;
+    } catch (_) { closed = false; stillOpen.push("判定失敗"); }
+    try {
+      if (_audit) {
+        _auditStepP(
+          closed ? "guide_phase_after_confirm" : "guide_phase_confirm_open",
+          (closed ? "確定→閉じた " : "確定後も開いたまま ") + k + (stillOpen.length ? " " + stillOpen.slice(0, 3).join("・") : " 揃い"),
+        );
+      }
+    } catch (_) {}
+    for (var i = 0; i < stillOpen.length && i < 6; i++) {
+      try { if (_audit) _auditStepP("guide_phase_one", "確定後 " + (i + 1) + "/" + stillOpen.length + " " + stillOpen[i]); } catch (_) {}
+    }
+    // 閉じたあと「入れた」を手順表×画面で1つずつ（駅入・区入の抜け）
+    _guideLikePhaseCheck("after_confirm", cond, function (r) {
+      done({
+        ok: closed && !(r && r.fatal) && (!r || !r.focus || r.focus.length === 0),
+        closed: closed,
+        stillOpen: stillOpen,
+        phase: "after_confirm",
+        kind: k,
+        enter: r || null,
+      });
+    });
+  }
+
+/**
+   * ★ 2.8.210 竹内さん「拡張ツール側が順番ちゃんと徹底的に理解する」:
+   *   旧 _noteFlowSeriesAt は到達印だけ残し、何番目か・前段を飛ばしたかを見ていなかった。
+   *   → 手順書の flow_series（無ければフォールバック）を読み、順番理解・抜け検知を必ず残す。
+   */
+  var _AX_FLOW_SERIES_FALLBACK = [
+    { id: "before_clear", label: "外す前の名前付き把握" },
+    { id: "clear_then_fill", label: "外し完了→新条件の入れへ" },
+    { id: "after_clear", label: "前客の外し完了→入れへ" },
+    { id: "after_confirm", label: "確定してリストへ（入れた把握）" },
+    { id: "after_station", label: "駅の設定完了" },
+    { id: "after_area", label: "地域の設定完了" },
+    { id: "after_place", label: "場所全体のあと" },
+    { id: "before_search", label: "検索前の照合" },
+    { id: "after_search", label: "検索押下の把握（並べ替えの前）" },
+    { id: "sort_ad", label: "①並べ替え→②AD→③高→低" },
+    { id: "list", label: "一覧・印刷用PDF（並べ替え後）" },
+    { id: "next", label: "次ページ" },
+    { id: "handoff", label: "客完了→次客へ" },
+  ];
+  function _flowSeriesList() {
+    try {
+      var pb = (typeof window !== "undefined") ? window.__axlxLearnPlaybook : null;
+      var series = pb && Array.isArray(pb.flow_series) ? pb.flow_series : null;
+      if (series && series.length >= 5) {
+        var hasBefore = false;
+        for (var i = 0; i < series.length; i++) {
+          if (series[i] && series[i].id === "before_clear") { hasBefore = true; break; }
+        }
+        // 古い手順書に before_clear が無い時は先頭に足して理解する（拡張側が順番を補う）
+        if (!hasBefore) {
+          return [{ id: "before_clear", label: "外す前の名前付き把握" }].concat(series);
+        }
+        return series;
+      }
+    } catch (_) {}
+    return _AX_FLOW_SERIES_FALLBACK;
+  }
+  function _flowSeriesReached() {
+    try {
+      if (!window.__axlxFlowSeriesReached || !Array.isArray(window.__axlxFlowSeriesReached)) {
+        window.__axlxFlowSeriesReached = [];
+      }
+      return window.__axlxFlowSeriesReached;
+    } catch (_) { return []; }
+  }
+  function _flowSeriesResetReached(why) {
+    try {
+      window.__axlxFlowSeriesReached = [];
+      if (_audit) _auditStepP("flow_series_reset", String(why || "次客").slice(0, 40));
+    } catch (_) {}
+  }
+  /** 客開始時: 手順書の一連を読み「何番まで・何順か」を言葉にする（動く前に理解） */
+  function _graspFlowSeriesOrder(why) {
+    var series = _flowSeriesList();
+    var ids = [];
+    for (var i = 0; i < series.length; i++) {
+      if (series[i] && series[i].id) ids.push(String(series[i].id));
+    }
+    try {
+      if (_audit) {
+        _auditStepP(
+          "flow_series_plan",
+          "順番理解 " + ids.length + "段"
+            + (ids.length ? " [" + ids.slice(0, 8).join("→") + (ids.length > 8 ? "…" : "") + "]" : "")
+            + (why ? " " + String(why).slice(0, 28) : ""),
+        );
+      }
+    } catch (_) {}
+    try {
+      console.log("[AX] 一連の順番を理解: " + ids.join(" → "));
+    } catch (_) {}
+    return { n: ids.length, ids: ids };
+  }
+  /**
+   * 段に到達した印。前段を飛ばしていれば flow_series_gap（抜け）を残す。
+   *   並列になりうる after_station / after_area は after_confirm か after_clear のあとなら可。
+   */
+  function _noteFlowSeriesAt(phaseId, detail) {
+    var id = String(phaseId || "").slice(0, 24);
+    if (!id) return;
+    var series = _flowSeriesList();
+    var label = id;
+    var idx = -1;
+    for (var i = 0; i < series.length; i++) {
+      if (series[i] && series[i].id === id) {
+        label = String(series[i].label || id).slice(0, 40);
+        idx = i;
+        break;
+      }
+    }
+    var reached = _flowSeriesReached();
+    var ord = (idx >= 0 ? (idx + 1) + "/" + series.length : "?/" + series.length);
+    // 前段抜け検知（strict な直線。駅/地域は after_clear 以降なら可）
+    var gap = null;
+    if (idx > 0) {
+      var prevId = String((series[idx - 1] && series[idx - 1].id) || "");
+      var altOk = false;
+      if (id === "after_station" || id === "after_area" || id === "after_place") {
+        altOk = reached.indexOf("after_clear") >= 0 || reached.indexOf("after_confirm") >= 0 || reached.indexOf("before_clear") >= 0;
+      }
+      if (id === "after_confirm") {
+        altOk = reached.indexOf("after_clear") >= 0 || reached.indexOf("before_clear") >= 0;
+      }
+      if (id === "clear_then_fill") {
+        altOk = reached.indexOf("before_clear") >= 0;
+        if (!altOk) gap = "抜け:before_clear→clear_then_fill";
+      } else if (id === "after_clear") {
+        altOk = reached.indexOf("before_clear") >= 0 || reached.indexOf("clear_then_fill") >= 0;
+        if (!altOk) gap = "抜け:before_clear→after_clear";
+      } else if (prevId && reached.indexOf(prevId) < 0 && !altOk) {
+        // 直前が未到達でも、もっと前の必須（before_clear）が無ければ必ず言う
+        if (reached.indexOf("before_clear") < 0 && idx > 0) gap = "抜け:before_clear（今=" + id + "）";
+        else if (!altOk) gap = "抜け:" + prevId + "→" + id;
+      }
+    }
+    try {
+      if (_audit) {
+        _auditStepP(
+          "flow_series_order",
+          ord + " " + id + " " + label + (detail ? " " + String(detail).slice(0, 36) : ""),
+        );
+        if (gap) _auditStepP("flow_series_gap", gap);
+        _auditStepP("flow_series_at", id + " " + label + (detail ? " " + String(detail).slice(0, 48) : ""));
+        _auditStepP(gap ? "flow_series_skip" : "flow_series_ok", id + (gap ? " " + gap : ""));
+      }
+    } catch (_) {}
+    try {
+      if (reached.indexOf(id) < 0) reached.push(id);
+    } catch (_) {}
+    try { _noteFlowPhase(id, !gap, "flow_series:" + id + (gap ? ":" + gap : "")); } catch (_) {}
+  }
+  /** 指定段まで（含む）到達しているか。無ければ gap 印＋ false */
+  function _requireFlowSeriesUpTo(phaseId, why) {
+    var id = String(phaseId || "").slice(0, 24);
+    var reached = _flowSeriesReached();
+    var ok = reached.indexOf(id) >= 0;
+    if (!ok) {
+      try {
+        if (_audit) {
+          _auditStepP(
+            "flow_series_gap",
+            "関所未達:" + id + " 到達=[" + reached.slice(0, 8).join(",") + "]"
+              + (why ? " " + String(why).slice(0, 28) : ""),
+          );
+        }
+      } catch (_) {}
+    }
+    return ok;
+  }
+
+  /**
+   * ★ 2.8.195 竹内さん「お客さんで検索したことちゃんと把握／手順書＋画面照会」:
+   *   押下意図の印（click直前）＋画面の結果証拠（並べ替え／棟戸／印刷用PDF）を1つずつ照合。
+   *   客番号を把握に紐づけ、質の高い検索→並べ替え本線の土台にする。
+   */
+  function _screenSearchResultEvidence() {
+    var out = { sortHead: false, rowsHint: false, pdf: 0, estateUrl: false, brief: "" };
+    try {
+      out.estateUrl = /method=estate|display=building/i.test(String(location.href || ""));
+    } catch (_) {}
+    try {
+      var els = document.querySelectorAll("a,button,div,span,td,th,li,label");
+      for (var i = 0; i < els.length && i < 900; i++) {
+        var el = els[i];
+        try {
+          if (!(el.offsetParent || (el.getClientRects && el.getClientRects().length))) continue;
+          var t = String(el.textContent || "").replace(/[\s\u3000]+/g, "");
+          // ★ 2.8.197: 完全一致だけでなく短い含む一致（並び替えに戻る／埋もれ対策）
+          if (t === "並べ替え" || t === "並び替え" || t === "並び替えに戻る" || t === "並べ替えに戻る") out.sortHead = true;
+          else if (t.length <= 24 && /並[べび]替え/.test(t)) out.sortHead = true;
+          if (/^\d+棟\d+戸$/.test(t) || /\d+棟\s*\d+戸/.test(t)) out.rowsHint = true;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      out.pdf = document.querySelectorAll("a.print, a[href*='print'], a[href*='Print']").length;
+      if (out.pdf > 0) out.rowsHint = true;
+    } catch (_) {}
+    out.brief = "head=" + (out.sortHead ? "Y" : "N")
+      + " rows=" + (out.rowsHint ? "Y" : "N")
+      + " pdf=" + out.pdf
+      + " url=" + (out.estateUrl ? "Y" : "N");
+    return out;
+  }
+  function _playbookExpectsAfterSearch() {
+    try {
+      var pb = (typeof window !== "undefined") ? window.__axlxLearnPlaybook : null;
+      var series = pb && Array.isArray(pb.flow_series) ? pb.flow_series : null;
+      if (!series) return { ok: false, why: "no_playbook" };
+      for (var i = 0; i < series.length; i++) {
+        if (series[i] && series[i].id === "after_search") {
+          return { ok: true, why: "flow_series", label: String(series[i].label || "after_search").slice(0, 40) };
+        }
+      }
+      // 場面 list があれば検索後一覧がある前提
+      var scenes = Array.isArray(pb.scenes) ? pb.scenes : [];
+      for (var j = 0; j < scenes.length; j++) {
+        var n = String((scenes[j] && (scenes[j].scene || scenes[j].name || scenes[j].id)) || "").toLowerCase();
+        if (n === "list" || n === "一覧") return { ok: true, why: "scene_list", label: "list" };
+      }
+      return { ok: false, why: "no_after_search_in_pb" };
+    } catch (_) { return { ok: false, why: "pb_err" }; }
+  }
+  var _searchScreenVerifyTimer = null;
+  var _searchScreenVerifyGen = 0;
+  function _verifyCustomerSearchScreenGrasp(seedWhy) {
+    var myGen = ++_searchScreenVerifyGen;
+    var cid = null;
+    try { cid = _fillCustomerId || window._axFillRunningCustomerId || null; } catch (_) { cid = null; }
+    var tries = 0;
+    var maxTries = 8;
+    /** ★ 2.8.207: 旧一覧の証拠で screenOk にしない（押下直後〜AJAX更新前の誤検知） */
+    var baselineBrief = null;
+    var baselinePdf = null;
+    var baselineHref = null;
+    try { baselineHref = String(location.href || ""); } catch (_) { baselineHref = ""; }
+    var tick = function () {
+      if (myGen !== _searchScreenVerifyGen) return;
+      tries++;
+      var ev = _screenSearchResultEvidence();
+      var pb = _playbookExpectsAfterSearch();
+      var hrefNow = "";
+      try { hrefNow = String(location.href || ""); } catch (_) { hrefNow = ""; }
+      if (tries === 1) {
+        baselineBrief = ev.brief;
+        baselinePdf = ev.pdf;
+        try {
+          if (_audit) {
+            _auditStepP(
+              "search_customer_grasp_baseline",
+              "客=" + String(cid || "-").slice(0, 8) + " 基準=" + ev.brief + " " + String(seedWhy || "").slice(0, 20),
+            );
+          }
+        } catch (_) {}
+        setTimeout(tick, 500);
+        return;
+      }
+      var changed = (baselineBrief != null && ev.brief !== baselineBrief)
+        || (baselinePdf != null && ev.pdf !== baselinePdf)
+        || (baselineHref && hrefNow && hrefNow !== baselineHref)
+        || /reload_resume/i.test(String(seedWhy || ""));
+      var evidence = !!(ev.sortHead || (ev.rowsHint && ev.pdf > 0) || (ev.estateUrl && ev.pdf > 0));
+      // 変化が無くても試行が進めば一覧証拠でOK（新ページで基準＝結果そのものの時）
+      var okScreen = evidence && (changed || tries >= 3);
+      try {
+        if (_audit) {
+          _auditStepP(
+            okScreen ? "search_customer_grasp_ok" : "search_customer_grasp_wait",
+            "客=" + String(cid || "-").slice(0, 8)
+              + " 画面=" + ev.brief
+              + " 変化=" + (changed ? "Y" : "N")
+              + " 手順=" + (pb.ok ? pb.why : ("欠:" + pb.why))
+              + " try=" + tries
+              + " " + String(seedWhy || "").slice(0, 20),
+          );
+        }
+      } catch (_) {}
+      if (okScreen) {
+        try { _noteFlowAtom("search_customer_grasp", true, ev.brief); } catch (_) {}
+        try {
+          if (_audit) {
+            _auditStepP("guide_phase_after_search_screen", "画面照会OK " + ev.brief);
+            _auditStepP("guide_phase_ok", "after_search_screen 客検索把握");
+          }
+        } catch (_) {}
+        var payload = {
+          at: Date.now(),
+          why: "screen:" + String(seedWhy || "verify").slice(0, 28),
+          pageVer: _AXLX_PAGE_VER,
+          customerId: cid,
+          screen: ev,
+          playbook: pb,
+        };
+        try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(payload)); } catch (_) {}
+        try {
+          if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
+            chrome.storage.session.set({ axlx_search_grasped: payload });
+          }
+        } catch (_) {}
+        try {
+          window.postMessage({
+            from: "axlx-search-grasped",
+            ts: payload.at,
+            why: payload.why,
+            pageVer: _AXLX_PAGE_VER,
+            customerId: cid,
+            screenOk: true,
+            screenBrief: ev.brief,
+          }, "*");
+          window.postMessage({
+            from: "axlx-guide-live-flush",
+            steps: [
+              { at: Date.now(), k: "search_customer_grasp_ok", d: String(payload.why).slice(0, 50) + " " + ev.brief },
+              { at: Date.now(), k: "guide_phase_after_search_screen", d: ev.brief },
+              { at: Date.now(), k: "guide_phase_ok", d: "after_search_screen" },
+            ],
+            customerId: cid,
+            why: payload.why,
+          }, "*");
+        } catch (_) {}
+        return;
+      }
+      if (tries < maxTries) {
+        setTimeout(tick, tries < 3 ? 500 : 900);
+      } else {
+        try { _noteFlowAtom("search_customer_grasp", false, ev.brief || "timeout"); } catch (_) {}
+        try {
+          if (_audit) _auditStepP("search_customer_grasp_gap", "画面証拠なし " + (ev.brief || "") + " pb=" + (pb.why || ""));
+        } catch (_) {}
+      }
+    };
+    if (_searchScreenVerifyTimer) { try { clearTimeout(_searchScreenVerifyTimer); } catch (_) {} }
+    _searchScreenVerifyTimer = setTimeout(tick, 400);
+  }
+function _guideLikeAfterSearchGrasp(why) {
+    var cid = null;
+    try { cid = _fillCustomerId || window._axFillRunningCustomerId || null; } catch (_) { cid = null; }
+    var pbExpect = _playbookExpectsAfterSearch();
+    var whyS = String(why || "search");
+    /**
+     * ★ 2.8.207 竹内さん「検索ボタン押したと確認されてから1秒以上空けて並べ替え」:
+     *   click「直前」はリロード生存の意図印だけ。ここで after_search 完了／画面照合OKにすると
+     *   旧一覧の証拠で並べ替えが検索前〜押す瞬間に走る（誤った完了→次へ）。
+     */
+    var isIntentOnly = /直前|intent|armed_only/i.test(whyS);
+    var isConfirmed = /search_press_ok|press_ok|reload_resume|fill.done|human_search/i.test(whyS);
+    try {
+      if (_audit) {
+        _auditStepP(
+          "guide_detail_ledger",
+          "next=list/search_to_sort/sort 客=" + String(cid || "-").slice(0, 8)
+            + " 手順after_search=" + (pbExpect.ok ? "Y" : "N")
+            + (isIntentOnly ? " 意図のみ" : ""),
+        );
+      }
+    } catch (_) {}
+    try {
+      if (_audit) {
+        _auditStepP(
+          "search_customer_grasp_intent",
+          "客=" + String(cid || "-").slice(0, 8) + " why=" + whyS.slice(0, 28)
+            + " pb=" + (pbExpect.ok ? pbExpect.why : ("欠:" + pbExpect.why))
+            + (isIntentOnly ? " intent_only" : ""),
+        );
+      }
+    } catch (_) {}
+
+    if (isIntentOnly && !isConfirmed) {
+      var _intentPayload = {
+        at: Date.now(),
+        why: whyS.slice(0, 48),
+        pageVer: _AXLX_PAGE_VER,
+        customerId: cid,
+        playbookOk: !!pbExpect.ok,
+        confirmed: false,
+        intent: true,
+      };
+      try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_intentPayload)); } catch (_) {}
+      try {
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
+          chrome.storage.session.set({ axlx_search_grasped: _intentPayload });
+        }
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-search-grasped",
+          ts: _intentPayload.at,
+          why: _intentPayload.why,
+          pageVer: _AXLX_PAGE_VER,
+          customerId: cid,
+          screenOk: false,
+          intent: true,
+          confirmed: false,
+        }, "*");
+        window.postMessage({
+          from: "axlx-guide-live-flush",
+          steps: [
+            { at: Date.now(), k: "search_grasp_intent_only", d: "click直前・完了扱いにしない 客=" + String(cid || "-").slice(0, 8) },
+            { at: Date.now(), k: "search_customer_grasp_intent", d: "客=" + String(cid || "-").slice(0, 8) + " intent_only" },
+          ],
+          customerId: cid,
+          why: _intentPayload.why,
+        }, "*");
+      } catch (_) {}
+      // 直前では画面照合しない（旧一覧の並べ替え見出し＝誤った screenOk）
+      return;
+    }
+
+    try { _noteFlowSeriesAt("after_search", whyS.slice(0, 40)); } catch (_) {}
+    try {
+      if (_audit) {
+        _auditStepP(
+          "guide_phase_after_search",
+          "検索を押した把握(客=" + String(cid || "-").slice(0, 8) + ") → 一覧でAD "
+            + whyS.slice(0, 36),
+        );
+        _auditStepP("guide_phase_one", "1/1 検索押下済→list場面へ 客=" + String(cid || "-").slice(0, 8));
+        _auditStepP("guide_phase_ok", "after_search 検索把握OK");
+      }
+    } catch (_) {}
+    /** ★ 2.8.231: 検索把握 → task_now/done/next（次=並べ替え） */
+    try {
+      if (typeof window.__axlxLinkGuidePhaseToTask === "function") {
+        window.__axlxLinkGuidePhaseToTask("after_search", ["検索押下済"], "ok");
+      }
+    } catch (_) {}
+    try { _noteFlowPhase("search", true, "guide_after_search"); } catch (_) {}
+    try { _noteFlowAtom("search_press", true, whyS.slice(0, 40)); } catch (_) {}
+    try {
+      if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "並べ替え（AD→高→低）";
+    } catch (_) {}
+    try { _graspNextCustomerAndMove("after_search"); } catch (_) {}
+    try { _graspCustomerLoopPhase("search", "after_search"); } catch (_) {}
+    /**
+     * ★ 2026-11-22 audit#1585: MAIN から chrome.storage は書けない／書いても非同期でリロードに負ける。
+     *   sessionStorage は同タブ遷移でも残る → リロード後 Case C / AD関所の同期バックアップ。
+     */
+    var _graspPayload = {
+      at: Date.now(),
+      why: whyS.slice(0, 48),
+      pageVer: _AXLX_PAGE_VER,
+      customerId: cid,
+      playbookOk: !!pbExpect.ok,
+      confirmed: true,
+      intent: false,
+    };
+    try {
+      sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_graspPayload));
+    } catch (_) {}
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
+        chrome.storage.session.set({ axlx_search_grasped: _graspPayload });
+      }
+    } catch (_) {}
+    try {
+      window.postMessage({
+        from: "axlx-search-grasped",
+        ts: _graspPayload.at,
+        why: _graspPayload.why,
+        pageVer: _AXLX_PAGE_VER,
+        customerId: cid,
+        screenOk: false,
+        intent: false,
+        confirmed: true,
+      }, "*");
+      // ★ 2026-11-22: リロード前に after_search 印を content→監査へ即載せ（5段待ちで消える穴）
+      try {
+        window.postMessage({
+          from: "axlx-guide-live-flush",
+          steps: [
+            { at: Date.now(), k: "guide_phase_after_search", d: "検索を押した把握→list 客=" + String(cid || "-").slice(0, 8) + " " + String(_graspPayload.why || "").slice(0, 28) },
+            { at: Date.now(), k: "flow_series_at", d: "after_search " + String(_graspPayload.why || "").slice(0, 40) },
+            { at: Date.now(), k: "flow_series_ok", d: "after_search" },
+            { at: Date.now(), k: "guide_phase_ok", d: "after_search 検索把握OK" },
+            { at: Date.now(), k: "search_customer_grasp_confirmed", d: "客=" + String(cid || "-").slice(0, 8) },
+          ],
+          customerId: cid,
+          why: _graspPayload.why,
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+    // ★ 2.8.195/207: 押下確認のあとだけ画面照合（旧一覧での誤 screenOk を止める）
+    try { _verifyCustomerSearchScreenGrasp(why); } catch (_) {}
+  }
+
+function _guideLikeStationSkip(why) {
+    try {
+      if (_audit) {
+        _auditStepP("guide_phase_station_skip", String(why || "駅なし経路").slice(0, 60));
+        _auditStepP("guide_phase_ok", "after_station skip");
+      }
+    } catch (_) {}
+    try { _noteFlowSeriesAt("after_station", "skip:" + String(why || "").slice(0, 24)); } catch (_) {}
+  }
+
+function _guideLikeAreaSkip(why) {
+    try {
+      if (_audit) {
+        _auditStepP("guide_phase_area_skip", String(why || "地域なし経路").slice(0, 60));
+        _auditStepP("guide_phase_ok", "after_area skip");
+      }
+    } catch (_) {}
+    try { _noteFlowSeriesAt("after_area", "skip:" + String(why || "").slice(0, 24)); } catch (_) {}
+  }
+  /* ==== end restored guideLike ==== */
+
   function _mapExpectHitsForStation(stationName, selectedLineNames) {
     var mapLines = _mapLinesOfStation(stationName);
     if (!mapLines.length) return 0;
@@ -2676,7 +3787,10 @@
         var _gp = r.axlx_learn_gaps || null;
         var _gms = _gp ? Number(_gp.median_ms) : 0;
         var _gn = _gp ? Number(_gp.samples) : 0;
+        var _floor = _gp ? Number(_gp.floor_ms) : 0;
         window.__axlxLearnGapMs = (_gms > 0 && _gn >= 10) ? Math.max(800, Math.min(3000, _gms)) : null;
+        // ★ 2026-11-23: 人間らしさ改善ループが書いた floor_ms（通常 p10 寄せ・硬下限）
+        window.__axlxLearnGapFloor = (_floor >= 900 && _floor <= 1800) ? _floor : null;
       }
       var n = nx ? Object.keys(nx).length : 0;
       var sqn = (sq && Array.isArray(sq.sequence)) ? sq.sequence.length : 0;
@@ -2724,6 +3838,11 @@
           _learnCacheSave(d);
           _applyLearnStoragePayload(d);
           try {
+            if (d.axlx_customer_think && d.axlx_customer_think.think) {
+              window.__axlxCustomerThink = d.axlx_customer_think.think;
+            }
+          } catch (_) {}
+          try {
             var _nowN = (d.axlx_learn_screen && typeof d.axlx_learn_screen === "object") ? Object.keys(d.axlx_learn_screen).length : 0;
             if (_audit && _wasEmpty && _nowN > 0) _auditStepP("learn_screen_late", "画面位置が後から届いた screen=" + _nowN);
           } catch (_) {}
@@ -2736,7 +3855,8 @@
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.154";
+  var _AXLX_PAGE_VER = "2.8.232";
+  try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -2746,6 +3866,41 @@
     "pet_confirm", "confirm_decide", "search_decide", "walk_presearch", "hidden_work_no_pause",
     "select_one_press", "checkbox_settle", "ward_pace", "pick_pace", "playbook_read", "audit_one_progress",
     "one_cursor", "audit_keep_reason", "ward_detail_skip", "audit_rule_evidence", "ward_clear_one", "clear_one_by_one", "clear_single_owner",
+      "guide_phase_checkpoints",
+    "flow_series_grasp",
+    "flow_series_order_gate",
+    "ad_sort_hover",
+    "station_grasp_like_guide",
+    "search_armed_kick_sort",
+    "search_to_sort_cursor",
+    "search_confirm_then_wait_sort",
+    "false_complete_next_gate",
+    "clear_then_fill_gate",
+    "one_task_complete_before_next",
+    "loop_sort_grasp_and_cursor_keep",
+    "now_action_clear_then_fill",
+    "task_grasp_now_done_next",
+    "clear_method_api_grasp_transition",
+    "task_api_refresh_before_next",
+    "guide_phase_task_link",
+    "task_change_api_every",
+    "clear_detail_grasp",
+    "list_modal_not_sidebar",
+    "sort_gate_main_insurance",
+    "sort_legacy_claude_path",
+    "search_customer_screen_grasp",
+    "search_grasp_reload_resume",
+    "sort_head_buried_find",
+    "sort_head_aim_toori_fallback",
+    "next_customer_move_one_by_one",
+    "samekind_clear_before_fill",
+    "customer_loop_one_by_one",
+    "post_send_clear_grasp",
+    "guide_plan_link",
+    "guide_clear_fill_gate",
+    "guide_list_next_flow",
+    "continuous_customer_loop",
+    "place_xor_grasp",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -2789,6 +3944,15 @@
       hands += Array.isArray(sc.detail) ? sc.detail.length : (Array.isArray(sc.steps) ? sc.steps.length : 0);
     }
     var _short = function (a) { return a.length ? (a.slice(0, 2).join(",") + (a.length > 2 ? ",+" + (a.length - 2) : "")) : "-"; };
+    var flowN = 0;
+    var flowHasBefore = false;
+    try {
+      var fl = Array.isArray(pb.flow_series) ? pb.flow_series : [];
+      flowN = fl.length;
+      for (var fi = 0; fi < fl.length; fi++) {
+        if (fl[fi] && fl[fi].id === "before_clear") flowHasBefore = true;
+      }
+    } catch (_) {}
     _auditStepP(
       "playbook_seen",
       "v=" + String(pb.version || "-").slice(0, 8) +
@@ -2796,8 +3960,11 @@
         " 決まり=" + have + "/" + ids.length +
         " 無い=" + _short(lack) +
         " 手順書に無い=" + _short(extra) +
-        " 場面=" + pb.scenes.length + " 手=" + hands,
+        " 場面=" + pb.scenes.length + " 手=" + hands +
+        " 一連=" + flowN + (flowHasBefore ? " before_clear=Y" : " before_clear=N"),
     );
+    /** ★ 2.8.210: 手順書を読んだ時点で一連の順番も理解する */
+    try { _graspFlowSeriesOrder("playbook_seen"); } catch (_) {}
   }
   /**
    * ★ 2026-11-17 統括Pro徹底「全流れ地図の土台／ボタン・外し・細分化強化の仕組み」:
@@ -2813,8 +3980,20 @@
     "btn_grasp",        // どのボタンを押したか理解
     "search",           // 検索押下
     "fill_done",        // 入力一連完了
+    "after_search_rows", // 検索後一覧行が見える
+    "sort_wait",        // 検索後1秒〜人間待ち
+    "sort_gate",        // 並べ替え関所（本線/待ち/再分類）
+    "sort_reclassify",  // 誤モーダル→一覧として本線続行
+    "search_press",     // 検索ボタン押下の意図把握
+    "search_customer_grasp", // お客さん検索を画面で照合した把握
+    "sort_cursor",      // 並べ替えへカーソル開始
+    "sort_menu",        // 並べ替えメニュー操作
+    "sort_insurance",   // 保険（本線5回待ち後の1回だけ・常用しない）
+    "sort_legacy",      // Claude時代どおり検索後→直接並べ替え（把握で止めない）
     "ready_next",       // 次客へ渡してよい
     "next_clear",       // 次客前の外し
+    "send_or_pdf",      // ★ 2.8.204 連続客: 送付
+    "post_send_clear",  // ★ 2.8.204 連続客: 送付後外し
   ];
   function _noteFlowAtom(atom, ok, detail) {
     try {
@@ -2849,9 +4028,292 @@
           String(method || "") + (detail ? (" " + String(detail).slice(0, 50)) : ""),
         );
       }
+      /**
+       * ★ 2.8.229: 外し方を理解した印（選ぶ済と同型の外す済）＋意図理解に残す
+       */
+      try {
+        if (k === "layout" || k === "ward" || k === "station" || k === "place") {
+          _noteIntentUnderstood(k, "clear", true, String(method || "").slice(0, 24));
+        }
+      } catch (_) {}
       _noteFlowAtom("place_clear", true, k + ":" + method);
       _noteFlowAtom("next_clear", true, k + ":" + method);
     } catch (_) {}
+  }
+  function _getLearnPlaybook() {
+    try {
+      var pb = window.__axlxLearnPlaybook;
+      if (pb && typeof pb === "object") return pb;
+    } catch (_) {}
+    return null;
+  }
+  /**
+   * ★ 2.8.229 竹内さん「次タスク移行で拡張がAPIで把握／外し方の理解力」:
+   *   検索の search_grasp と同型。human-learn-profile 由来の手順書（API束）から
+   *   外し方（extra_guides.clear・flow_series before_clear）を読んで把握する。
+   */
+  function _graspClearMethodFromPlaybook(why) {
+    try { if (typeof _loadLearnNext === "function") _loadLearnNext(true); } catch (_) {}
+    var pb = _getLearnPlaybook();
+    var steps = [];
+    var rules = [];
+    try {
+      var extras = pb && Array.isArray(pb.extra_guides) ? pb.extra_guides : [];
+      for (var i = 0; i < extras.length; i++) {
+        if (extras[i] && extras[i].id === "clear") {
+          steps = Array.isArray(extras[i].steps) ? extras[i].steps.slice() : [];
+          rules = Array.isArray(extras[i].rules) ? extras[i].rules.map(String) : [];
+          break;
+        }
+      }
+    } catch (_) { steps = []; rules = []; }
+    var hasBefore = false;
+    var hasCtf = false;
+    try {
+      var fl = pb && Array.isArray(pb.flow_series) ? pb.flow_series : [];
+      for (var j = 0; j < fl.length; j++) {
+        var fid = fl[j] && fl[j].id ? String(fl[j].id) : "";
+        if (fid === "before_clear") hasBefore = true;
+        if (fid === "clear_then_fill") hasCtf = true;
+      }
+    } catch (_) {}
+    var ok = !!(pb && (steps.length > 0 || hasBefore));
+    try {
+      window.__axlxClearMethodPlan = {
+        at: Date.now(),
+        fromApi: !!pb,
+        stepsN: steps.length,
+        rules: rules.slice(0, 8),
+        flowHasBefore: hasBefore,
+        flowHasCtf: hasCtf,
+        why: String(why || "").slice(0, 40),
+      };
+      if (!window.__axlxClearMethodUnderstood) window.__axlxClearMethodUnderstood = {};
+      if (ok) {
+        window.__axlxClearMethodUnderstood.plan = {
+          method: steps.length ? ("playbook_clear_" + steps.length + "steps") : "flow_before_clear",
+          at: Date.now(),
+          d: String(why || "api").slice(0, 40),
+        };
+      }
+    } catch (_) {}
+    try {
+      if (_audit) {
+        _auditStepP(
+          ok ? "clear_method_api_grasp" : "clear_method_api_miss",
+          (ok ? "API手順書で外し方把握" : "外し方手順書なし") +
+            " 手=" + steps.length +
+            (rules.length ? (" 決まり=" + rules.slice(0, 4).join(",")) : "") +
+            " before_clear=" + (hasBefore ? "Y" : "N") +
+            " ctf=" + (hasCtf ? "Y" : "N") +
+            " " + String(why || "").slice(0, 18),
+        );
+        for (var si = 0; si < steps.length && si < 5; si++) {
+          _auditStepP(
+            "guide_phase_one",
+            "外し方" + (si + 1) + "/" + steps.length + " " + String(steps[si]).slice(0, 36),
+          );
+        }
+      }
+    } catch (_) {}
+    return { ok: ok, steps: steps, rules: rules, hasBefore: hasBefore, hasCtf: hasCtf };
+  }
+  /** ★ 2.8.229: 外し方理解台帳（ボタン理解台帳と同型） */
+  function _auditClearMethodLedger(where) {
+    try {
+      var m = window.__axlxClearMethodUnderstood || {};
+      var keys = Object.keys(m);
+      var parts = [];
+      for (var i = 0; i < keys.length && parts.length < 8; i++) {
+        var k = keys[i];
+        var row = m[k];
+        parts.push(k + "=" + String((row && row.method) || "?").slice(0, 18));
+      }
+      var major = ["layout", "ward", "station", "place"];
+      var have = 0;
+      for (var n = 0; n < major.length; n++) {
+        if (m[major[n]] && m[major[n]].method) have++;
+      }
+      var thin = keys.length === 0 || (keys.length === 1 && !!m.plan && have === 0);
+      if (_audit) {
+        _auditStepP(
+          "clear_method_ledger",
+          String(where || "clear") + " 把握=" + keys.length +
+            (parts.length ? " [" + parts.join(",") + "]" : " 外し方=未") +
+            " 主要=" + have + "/4",
+        );
+        _auditStepP(
+          thin ? "clear_method_gap" : "clear_method_ok",
+          thin
+            ? ("外し方理解が薄い " + String(where || "").slice(0, 24))
+            : ("外し方理解あり " + have + "種"),
+        );
+      }
+      return { n: keys.length, have: have, thin: thin };
+    } catch (_) {
+      return { n: 0, have: 0, thin: true };
+    }
+  }
+  /**
+   * ★ 2.8.229: 次タスク移行を検索把握と同型で永続（API手順書×いま段×外し方）。
+   *   session + postMessage → bulk-dl／次の動きが把握してから進む。
+   */
+  function _persistTaskTransitionGrasped(phase, why, extra) {
+    try {
+      var cid = null;
+      try { cid = _fillCustomerId || window._axFillRunningCustomerId || null; } catch (_) { cid = null; }
+      var pb = _getLearnPlaybook();
+      var task = {};
+      try { task = window.__axlxTaskGrasp || {}; } catch (_) { task = {}; }
+      var clears = {};
+      try { clears = window.__axlxClearMethodUnderstood || {}; } catch (_) { clears = {}; }
+      var payload = {
+        at: Date.now(),
+        phase: String(phase || "").slice(0, 24),
+        why: String(why || "").slice(0, 48),
+        pageVer: _AXLX_PAGE_VER,
+        customerId: cid,
+        playbookOk: !!(pb && (pb.version || pb.rules_v)),
+        playbookV: pb ? String(pb.version || "").slice(0, 8) : "",
+        rulesV: pb ? String(pb.rules_v || "").slice(0, 8) : "",
+        taskNow: task.now || null,
+        taskDone: task.done || null,
+        taskNext: task.next || null,
+        clearMethods: Object.keys(clears).slice(0, 6),
+        confirmed: true,
+      };
+      if (extra && typeof extra === "object") {
+        for (var ek in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, ek)) payload[ek] = extra[ek];
+        }
+      }
+      try { sessionStorage.setItem("axlx_task_grasped_sync", JSON.stringify(payload)); } catch (_) {}
+      try {
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
+          chrome.storage.session.set({ axlx_task_grasped: payload });
+        }
+      } catch (_) {}
+      if (_audit) {
+        _auditStepP(
+          "task_transition_grasp",
+          "段=" + payload.phase +
+            " API版=" + (payload.playbookV || "-") +
+            " 外し方=" + (payload.clearMethods.length ? payload.clearMethods.join(",") : "未") +
+            " 次=" + String(payload.taskNext || "-").slice(0, 18) +
+            " " + String(why || "").slice(0, 14),
+        );
+      }
+      try {
+        window.postMessage({
+          from: "axlx-task-grasped",
+          phase: payload.phase,
+          ts: payload.at,
+          why: payload.why,
+          pageVer: _AXLX_PAGE_VER,
+          customerId: cid,
+          playbookOk: payload.playbookOk,
+          confirmed: true,
+          currentAction: payload.taskNow || payload.phase,
+          nextMove: payload.taskNext,
+          clearMethods: payload.clearMethods,
+        }, "*");
+        window.postMessage({
+          from: "axlx-guide-live-flush",
+          steps: [
+            { at: Date.now(), k: "task_transition_grasp", d: String(payload.phase + " " + (why || "")).slice(0, 80) },
+            { at: Date.now(), k: "next_move_grasp", d: "次の動き=" + String(payload.taskNext || payload.phase).slice(0, 40) },
+          ],
+          customerId: cid,
+          why: payload.why,
+        }, "*");
+      } catch (_) {}
+      return payload;
+    } catch (_) { return null; }
+  }
+  /** 外し→次タスク前の一連把握（API外し方＋台帳＋永続） */
+  function _graspBeforeNextTask(phase, why) {
+    var api = null;
+    try { api = _graspClearMethodFromPlaybook(why || phase); } catch (_) { api = { ok: false }; }
+    var led = null;
+    try { led = _auditClearMethodLedger(String(phase || "next") + "前"); } catch (_) { led = { thin: true }; }
+    try {
+      _persistTaskTransitionGrasped(phase, why || phase, {
+        apiOk: !!(api && api.ok),
+        clearThin: !!(led && led.thin),
+      });
+    } catch (_) {}
+    return { api: api, ledger: led };
+  }
+  /**
+   * ★ 2.8.230 竹内さん「次のタスクいくとき拡張がAPIを検索のように／弱いタスク強化」:
+   * ★ 2.8.232 竹内さん「タスク変わるたびに拡張API／次につながる」:
+   *   旧: 手順書が手元にあれば API を飛ばして把握だけ → 切替ごとにAPIが動かない抜け。
+   *   新: タスク段が変わるたびに必ず human-learn-profile 取込経路を通す（BGゲートが新鮮なら skipped）。
+   *   幹段（外し→入れ・入れ開始・次客）は force、他は soft。把握弱くても印付きで次へ。
+   */
+  function _graspBeforeNextTaskThen(phase, why, then) {
+    var done = typeof then === "function" ? then : function () {};
+    var ph = String(phase || "next").slice(0, 24);
+    var wy = String(why || ph).slice(0, 40);
+    var forceMajor = /^(clear_then_fill|clear|fill_start|handoff|leftover)/.test(ph);
+    var finish = function (r) {
+      try {
+        var ok = !!(r && r.api && r.api.ok);
+        if (_audit) {
+          _auditStepP(
+            ok ? "task_transition_gate" : "task_transition_gate_weak",
+            (ok ? "API把握OK→次へ " : "API把握弱→印付きで次へ ") + ph + " " + wy.slice(0, 16),
+          );
+        }
+      } catch (_) {}
+      try { done(r || null); } catch (_) {}
+    };
+    var runGrasp = function () {
+      var r = null;
+      try { r = _graspBeforeNextTask(ph, wy); } catch (_) { r = { api: { ok: false } }; }
+      finish(r);
+    };
+    try {
+      if (_audit) {
+        _auditStepP(
+          "task_api_refresh",
+          "タスク切替ごとにAPI " + ph + (forceMajor ? " force" : " soft") + " " + wy.slice(0, 12),
+        );
+      }
+    } catch (_) {}
+    try {
+      _requestLearnRefresh(!!forceMajor).then(function (res) {
+        try {
+          if (_audit) {
+            _auditStepP(
+              "task_api_refresh_res",
+              res === "timeout" ? "timeout"
+                : !res ? "結果なし"
+                  : (res.ok === false ? ("失敗 " + String(res.error || "").slice(0, 24))
+                    : (res.skipped ? ("取らず " + String(res.skipped).slice(0, 20))
+                      : ("取込" + (res.ver ? " 版" + String(res.ver).slice(0, 8) : "")))),
+            );
+          }
+        } catch (_) {}
+        return _loadLearnNextAsync(true);
+      }, function () { return false; }).then(runGrasp, runGrasp);
+    } catch (_) {
+      runGrasp();
+    }
+  }
+  try { window.__axlxGraspBeforeNextTaskThen = _graspBeforeNextTaskThen; } catch (_) {}
+  /** 直近の task_grasped が同段で確認済みか（検索の recent(search_grasped) 同型） */
+  function _recentTaskTransitionGrasped(phase, maxAgeMs) {
+    try {
+      var raw = sessionStorage.getItem("axlx_task_grasped_sync");
+      if (!raw) return false;
+      var g = JSON.parse(raw);
+      if (!g || !g.confirmed) return false;
+      var age = Date.now() - Number(g.at || 0);
+      if (!(age >= 0 && age < (maxAgeMs || 15 * 60 * 1000))) return false;
+      if (phase && g.phase && String(g.phase) !== String(phase)) return false;
+      return true;
+    } catch (_) { return false; }
   }
   /**
    * 全流れ地図台帳: 幹6段＋細分化原子＋ボタン理解＋外し方＋沿線駅地図＋今客。
@@ -2969,7 +4431,356 @@
     }
   }
   /**
+   * ★ 2.8.219: 段→次の動き（人が読める言葉）。1つ把握してから次へ（竹内さん）。
+   */
+  function _phaseNextJa(ph) {
+    var m = {
+      switch: "客切替を把握",
+      place: "場所を外す／入れる",
+      conditions: "条件を1つずつ入れる",
+      search: "検索を押す",
+      fill_done: "一連完了を確認",
+      ready_next: "次客へ渡す",
+      next_clear: "前客の選択を1つずつ外す",
+      handoff: "次客へ切り替える",
+      list_done: "物件取得完了→外す",
+      clear: "前客の選択を1つずつ外す",
+      fill: "新しいお客さんの条件を1つずつ入れる",
+      sort: "並べ替え（AD→高→低）",
+      list: "物件を1つずつ取得",
+    };
+    return m[String(ph || "")] || String(ph || "次の段");
+  }
+  /**
+   * ★ 2.8.227: パネル「いまの行動」へ配信。外している最中→外す／入れ中→新しい客の条件。
+   */
+  function _publishNowAction(phase, why) {
+    try {
+      var ph = String(phase || "").slice(0, 16);
+      var actionJa =
+        ph === "clear" ? "外している最中"
+          : ph === "fill" ? "新しい条件を入れている最中"
+            : ph === "search" ? "検索を押す最中"
+              : ph === "sort" ? "並べ替え最中"
+                : ph === "list" ? "物件取得最中"
+                  : _phaseNextJa(ph);
+      var nextJa =
+        ph === "clear" ? "新しいお客さんの条件を1つずつ入れる"
+          : ph === "fill" ? "検索を押す"
+            : ph === "search" ? "並べ替え（AD→高→低）"
+              : ph === "sort" ? "物件を1つずつ取得"
+                : _phaseNextJa((_AX_CUSTOMER_LOOP.filter(function (r) { return r.id === ph; })[0] || {}).next || "");
+      try {
+        if (window.__axlxNowCustomer) {
+          window.__axlxNowCustomer.currentAction = actionJa;
+          window.__axlxNowCustomer.nextMove = nextJa;
+          window.__axlxNowCustomer.loopPhase = ph;
+        }
+      } catch (_) {}
+      if (_audit) {
+        _auditStepP("now_action", actionJa + (why ? (" " + String(why).slice(0, 28)) : ""));
+        _auditStepP("next_move_grasp", "次の動き=" + nextJa + " now_action");
+      }
+      window.postMessage({
+        from: "axlx-now-action",
+        phase: ph,
+        currentAction: actionJa,
+        nextMove: nextJa,
+        why: String(why || "").slice(0, 40),
+      }, "*");
+    } catch (_) {}
+  }
+  /**
+   * ★ 2.8.228 竹内さん「1つ1つのタスク／いま行っている／完了した／次何が必要をちゃんと把握」:
+   *   外すも入れるも同じ型で task_now → task_done → task_next を残す（間取り含む）。
+   *   完了していないのに次へ進まない土台（one_task と併用）。
+   */
+  function _publishTaskGrasp(opt) {
+    try {
+      var o = opt || {};
+      var nowT = o.now != null ? String(o.now).slice(0, 40) : "";
+      var doneT = o.done != null ? String(o.done).slice(0, 40) : "";
+      var nextT = o.next != null ? String(o.next).slice(0, 40) : "";
+      var kind = String(o.kind || "").slice(0, 12);
+      try {
+        window.__axlxTaskGrasp = {
+          now: nowT || null,
+          done: doneT || null,
+          next: nextT || null,
+          kind: kind || null,
+          at: Date.now(),
+        };
+        if (window.__axlxNowCustomer) {
+          if (nowT) window.__axlxNowCustomer.currentAction = nowT;
+          if (nextT) window.__axlxNowCustomer.nextMove = nextT;
+          if (doneT) window.__axlxNowCustomer.lastDone = doneT;
+        }
+      } catch (_) {}
+      if (_audit) {
+        if (nowT) {
+          _auditStepP("task_now", (kind ? kind + " " : "") + nowT);
+          _auditStepP("guide_phase_one", "いま=" + nowT);
+        }
+        if (doneT) {
+          _auditStepP("task_done", (kind ? kind + " " : "") + doneT);
+          _auditStepP("one_task_done", doneT);
+        }
+        if (nextT) {
+          _auditStepP("task_next", (kind ? kind + " " : "") + nextT);
+          _auditStepP("next_move_grasp", "次の動き=" + nextT + " task_grasp");
+        }
+      }
+      try {
+        window.postMessage({
+          from: "axlx-task-grasp",
+          now: nowT || null,
+          done: doneT || null,
+          next: nextT || null,
+          kind: kind || null,
+        }, "*");
+      } catch (_) {}
+      if (kind === "clear" && nowT) {
+        try { _publishNowAction("clear", nowT); } catch (_) {}
+      } else if (kind === "fill" && nowT) {
+        try { _publishNowAction("fill", nowT); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+  try { window.__axlxPublishTaskGrasp = _publishTaskGrasp; } catch (_) {}
+  /**
+   * ★ 2.8.231 竹内さん「1つ1つのタスク把握と次／手順書＋画面照会の連携」:
+   *   guide_phase（手順表×画面）の照合結果を task_now/done/next に必ず落とす。
+   *   DB実測: guide_phase=80 あるのに task_*=0（連携抜け）。
+   */
+  function _linkGuidePhaseToTask(ph, focusItems, outcome) {
+    try {
+      var phase = String(ph || "").slice(0, 24);
+      var nextBy = {
+        after_place: "条件を1つずつ入れる",
+        after_area: "駅 or 条件へ",
+        after_station: "場所のあと→条件",
+        before_search: "検索を押す",
+        after_confirm: "次の場所作業",
+        after_clear: "新条件を1つずつ入れる",
+        after_search: "並べ替え（AD→高→低）",
+        list_start: "並べ替えor物件取得",
+        before_next: "次ページを押す",
+        after_next: "一覧照合→物件取得",
+        handoff: "前客の選択を1つずつ外す",
+      };
+      var doneBy = {
+        after_place: "場所の手順×画面照合完了",
+        after_area: "所在地照合完了",
+        after_station: "駅照合完了",
+        before_search: "検索前照合完了",
+        after_confirm: "確定後照合完了",
+        after_clear: "外し後照合完了",
+        after_search: "検索押下の把握完了",
+        list_start: "一覧の手順×画面照合完了",
+        before_next: "次ページ前照合完了",
+        after_next: "次ページ到着照合完了",
+        handoff: "客一覧完了の照合完了",
+      };
+      var nextT = nextBy[phase] || ("次のタスク(" + phase + ")");
+      var doneT = doneBy[phase] || (phase + "照合完了");
+      var foc = Array.isArray(focusItems) ? focusItems : [];
+      var pub = typeof _publishTaskGrasp === "function" ? _publishTaskGrasp : window.__axlxPublishTaskGrasp;
+      if (typeof pub !== "function") return;
+      for (var i = 0; i < foc.length && i < 6; i++) {
+        try {
+          pub({
+            now: "照合:" + String(foc[i]).slice(0, 28),
+            done: null,
+            next: nextT,
+            kind: "guide",
+          });
+        } catch (_) {}
+      }
+      var oc = String(outcome || "").slice(0, 12);
+      if (oc === "ok" || oc === "screen" || oc === "gap" || !foc.length) {
+        pub({
+          now: null,
+          done: doneT + (oc === "gap" ? "(残あり)" : ""),
+          next: nextT,
+          kind: "guide",
+        });
+      }
+      try {
+        if (_audit) {
+          _auditStepP(
+            "guide_task_link",
+            phase + "→task " + (foc.length ? "注目" + foc.length : "揃い") + " 次=" + String(nextT).slice(0, 20),
+          );
+        }
+      } catch (_) {}
+      /**
+       * ★ 2.8.232: 手順照合→タスク印のあと、切替APIで次につながる（薄い時だけAPIの抜けを止める）
+       */
+      try {
+        var thenFn = typeof _graspBeforeNextTaskThen === "function"
+          ? _graspBeforeNextTaskThen
+          : window.__axlxGraspBeforeNextTaskThen;
+        if (typeof thenFn === "function" && !/^(block)$/.test(String(outcome || ""))) {
+          thenFn(phase, "guide_task_link→次", function () {});
+        }
+      } catch (_) {}
+    } catch (_) {}
+  }
+  try { window.__axlxLinkGuidePhaseToTask = _linkGuidePhaseToTask; } catch (_) {}
+  /** 外す対象の名前（間取:2LDK／区:浪速区 等） */
+  function _clearItemLabel(cb) {
+    var nm = "";
+    var tx = "";
+    var val = "";
+    try { nm = String((cb && cb.getAttribute && cb.getAttribute("name")) || (cb && cb.name) || ""); } catch (_) { nm = ""; }
+    try { val = String((cb && cb.value) || ""); } catch (_) { val = ""; }
+    try {
+      var lb = typeof _labelForCheckbox === "function" ? _labelForCheckbox(cb) : null;
+      tx = String((lb && lb.textContent) || val || "").replace(/\s+/g, "").slice(0, 16);
+    } catch (_) { tx = val.slice(0, 16); }
+    if (/room_layout/.test(nm)) return "間取外:" + (tx || val || "?");
+    if (/city_code|town_code/.test(nm)) return "区外:" + (tx || val || "?");
+    if (/eq_rm/.test(nm)) return "ペット外:" + (tx || val || "?");
+    if (/station_id/.test(nm)) return "駅外:" + (tx || val || "?");
+    if (/route_id/.test(nm)) return "線外:" + (tx || val || "?");
+    return "外す:" + (tx || val || nm.slice(0, 12) || "?");
+  }
+  /**
+   * ★ 2.8.221 竹内さん「物件取得完了→外す→入れ→検索→並び替え→取得→次客を1つずつ理解」:
+   *   一連ループの今どこ／次どこ／いま誰／次客誰を印に残す（手順書×画面照会の土台）。
+   */
+  var _AX_CUSTOMER_LOOP = [
+    { id: "list_done", label: "物件取得完了", next: "clear" },
+    { id: "clear", label: "前客の選択を外す", next: "fill" },
+    { id: "fill", label: "新しい客の条件を入れる", next: "search" },
+    { id: "search", label: "検索する", next: "sort" },
+    { id: "sort", label: "並べ替え", next: "list" },
+    { id: "list", label: "物件取得", next: "list_done" },
+    { id: "handoff", label: "次客へ渡す", next: "clear" },
+  ];
+  function _graspCustomerLoopPhase(phaseId, why) {
+    try {
+      var id = String(phaseId || "").slice(0, 16);
+      var row = null;
+      var idx = -1;
+      for (var i = 0; i < _AX_CUSTOMER_LOOP.length; i++) {
+        if (_AX_CUSTOMER_LOOP[i].id === id) { row = _AX_CUSTOMER_LOOP[i]; idx = i; break; }
+      }
+      if (!row) row = { id: id || "?", label: id || "不明", next: "fill" };
+      var nextId = String(row.next || "fill");
+      var nextLabel = _phaseNextJa(nextId);
+      for (var j = 0; j < _AX_CUSTOMER_LOOP.length; j++) {
+        if (_AX_CUSTOMER_LOOP[j].id === nextId) { nextLabel = _AX_CUSTOMER_LOOP[j].label; break; }
+      }
+      var now = window.__axlxNowCustomer || {};
+      var curName = now.name || null;
+      try {
+        if (!curName && window.__axlxBulkCurrentName) curName = String(window.__axlxBulkCurrentName).slice(0, 24);
+        if (!curName && _fillCondForStamp && _fillCondForStamp.customer_name) {
+          curName = String(_fillCondForStamp.customer_name).slice(0, 24);
+        }
+      } catch (_) {}
+      var nextName = now.nextName || null;
+      try {
+        if (!nextName && window.__axlxBulkNextName) nextName = String(window.__axlxBulkNextName).slice(0, 24);
+      } catch (_) {}
+      var cid = now.id || _fillCustomerId || null;
+      /**
+       * ★ 2.8.226: ループタスク一覧を印に残す（完了して次へ＝一覧の何番目かを理解）。
+       *   done=今段まで／todo=次段以降。並べ替え(sort)も必ず一覧に入る。
+       */
+      var doneIds = [];
+      var todoIds = [];
+      try {
+        for (var ti = 0; ti < _AX_CUSTOMER_LOOP.length; ti++) {
+          var tid = _AX_CUSTOMER_LOOP[ti].id;
+          if (idx >= 0 && ti < idx) doneIds.push(tid);
+          else if (idx >= 0 && ti === idx) doneIds.push(tid + "*");
+          else todoIds.push(tid);
+        }
+      } catch (_) {}
+      try {
+        window.__axlxLoopTasks = {
+          now: row.id,
+          next: nextId,
+          done: doneIds.slice(),
+          todo: todoIds.slice(),
+          at: Date.now(),
+          why: String(why || "").slice(0, 40),
+        };
+        if (window.__axlxNowCustomer) {
+          window.__axlxNowCustomer.nextMove = nextLabel;
+          window.__axlxNowCustomer.loopPhase = row.id;
+        }
+      } catch (_) {}
+      if (_audit) {
+        _auditStepP(
+          "loop_phase_grasp",
+          "いま段=" + row.label + " →次段=" + nextLabel
+            + (why ? (" " + String(why).slice(0, 20)) : ""),
+        );
+        _auditStepP(
+          "loop_who_grasp",
+          "いま客=" + (curName || (cid ? String(cid).slice(0, 8) : "-"))
+            + " 次客=" + (nextName || "（一括末or未取得）"),
+        );
+        _auditStepP(
+          "loop_task_list",
+          "完了=[" + doneIds.join(",") + "] 次=[" + todoIds.slice(0, 4).join(",") + (todoIds.length > 4 ? ",…" : "") + "]",
+        );
+        _auditStepP("next_move_grasp", "次の動き=" + nextLabel + " loop:" + row.id);
+        _auditStepP("guide_phase_one", "1/3 いま客=" + String(curName || cid || "-").slice(0, 18));
+        _auditStepP("guide_phase_one", "2/3 いま段=" + String(row.label).slice(0, 22));
+        _auditStepP("guide_phase_one", "3/3 次=" + String(nextLabel).slice(0, 22));
+        if (row.id === "sort") {
+          try { _noteFlowSeriesAt("sort_ad", "並べ替え段把握 " + String(why || "").slice(0, 24)); } catch (_eS) {}
+          try { _auditStepP("one_task_done", "並べ替えタスク把握→次は物件取得"); } catch (_eS2) {}
+        }
+        if (row.id === "list") {
+          try { _noteFlowSeriesAt("list", "一覧段把握 " + String(why || "").slice(0, 24)); } catch (_eL) {}
+        }
+      }
+      try {
+        window.__axlxLoopPhase = { id: row.id, label: row.label, next: nextId, nextLabel: nextLabel, at: Date.now() };
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-loop-grasp",
+          phase: row.id,
+          label: row.label,
+          next: nextId,
+          nextLabel: nextLabel,
+          currentName: curName,
+          nextName: nextName,
+          why: String(why || "").slice(0, 40),
+          done: doneIds,
+          todo: todoIds,
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  function _condOneLabel(name) {
+    var n = String(name || "");
+    var m = {
+      rental_cost1: "賃料下限",
+      rental_cost2: "賃料上限",
+      update_date: "更新日",
+      structured_date: "築年数",
+      square_meter_l: "面積下限",
+      square_meter_h: "面積上限",
+      transportation_id: "徒歩",
+      "room_layout_id[]": "間取り",
+      "station_id[]": "駅",
+      "city_code[]": "区・市",
+      "敷金・礼金なし": "敷金礼金なし",
+    };
+    if (m[n]) return m[n];
+    if (/^rental_cost/i.test(n)) return "賃料";
+    return n.slice(0, 16) || "条件";
+  }
+  /**
    * ★ 今どのお客さんを検索しているか／完了までの段を常に把握する台帳。
+   * ★ 2.8.219: 次の動きも台帳に載せ、次客名があれば一緒に把握する。
    */
   function _noteNowCustomer(phase, detail) {
     try {
@@ -2987,6 +4798,11 @@
         if (flow[ph] && flow[ph].ok) doneParts.push(ph);
         else gapParts.push(ph);
       }
+      var nextMove = gapParts.length ? _phaseNextJa(gapParts[0]) : "一連完了";
+      var nextName = null;
+      try {
+        if (window.__axlxBulkNextName) nextName = String(window.__axlxBulkNextName).slice(0, 24);
+      } catch (_) {}
       window.__axlxNowCustomer = {
         id: id ? String(id) : null,
         name: name,
@@ -2994,6 +4810,8 @@
         at: Date.now(),
         done: doneParts.slice(),
         gap: gapParts.slice(),
+        nextMove: nextMove,
+        nextName: nextName,
       };
       if (_audit) {
         _auditStepP(
@@ -3003,6 +4821,8 @@
             (name ? (" name=" + name) : "") +
             " 完了=[" + doneParts.join(",") + "]" +
             (gapParts.length ? (" 未=[" + gapParts.join(",") + "]") : "") +
+            " 次動=" + nextMove +
+            (nextName ? (" 次客=" + nextName) : "") +
             (detail ? (" " + String(detail).slice(0, 40)) : ""),
         );
       }
@@ -3015,6 +4835,84 @@
       } catch (_) {}
     } catch (_) {}
   }
+  /**
+   * ★ 2.8.219 竹内さん「次のお客さんを把握／次の動きを把握／1つずつ把握してから次へ」:
+   *   fill開始・客切替で、いまの客・次客・次の動きを印に残してから進む。
+   */
+  function _graspNextCustomerAndMove(why) {
+    try {
+      var now = window.__axlxNowCustomer || {};
+      var curName = now.name || null;
+      try {
+        if (!curName && window.__axlxBulkCurrentName) curName = String(window.__axlxBulkCurrentName).slice(0, 24);
+        if (!curName && _fillCondForStamp && _fillCondForStamp.customer_name) {
+          curName = String(_fillCondForStamp.customer_name).slice(0, 24);
+        }
+      } catch (_) {}
+      var nextName = now.nextName || null;
+      try {
+        if (!nextName && window.__axlxBulkNextName) nextName = String(window.__axlxBulkNextName).slice(0, 24);
+      } catch (_) {}
+      var nextMove = now.nextMove || null;
+      try {
+        if (!nextMove && window.__axlxBulkNextMove) nextMove = String(window.__axlxBulkNextMove).slice(0, 40);
+      } catch (_) {}
+      if (!nextMove) nextMove = _phaseNextJa((now.gap && now.gap[0]) || "place");
+      var cid = now.id || _fillCustomerId || null;
+      if (_audit) {
+        _auditStepP(
+          "next_customer_grasp",
+          "いま=" + (curName || (cid ? String(cid).slice(0, 8) : "-")) +
+            " 次客=" + (nextName || "（一括末or未取得）") +
+            " " + String(why || "").slice(0, 24),
+        );
+        _auditStepP("next_move_grasp", "次の動き=" + nextMove + " " + String(why || "").slice(0, 24));
+        _auditStepP("guide_phase_one", "1/2 客把握 いま=" + String(curName || cid || "-").slice(0, 20));
+        _auditStepP("guide_phase_one", "2/2 次の動き=" + String(nextMove).slice(0, 28));
+      }
+      try {
+        window.postMessage({
+          from: "axlx-next-grasp",
+          currentName: curName,
+          nextName: nextName,
+          nextMove: nextMove,
+          why: String(why || "").slice(0, 40),
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  /** ★ 2.8.219/221: 一括パネルからいま客・次客・次の動きを受け取り、すぐ把握印を残す */
+  try {
+    window.addEventListener("message", function (e) {
+      try {
+        if (!e || !e.data || e.data.from !== "axlx-bulk-next") return;
+        window.__axlxBulkNextName = String(e.data.nextName || "").slice(0, 24);
+        window.__axlxBulkCurrentName = String(e.data.currentName || "").slice(0, 24);
+        window.__axlxBulkNextMove = String(e.data.nextMove || "").slice(0, 40);
+        try {
+          if (window.__axlxNowCustomer) {
+            if (window.__axlxBulkNextName) window.__axlxNowCustomer.nextName = window.__axlxBulkNextName;
+            if (window.__axlxBulkCurrentName && !window.__axlxNowCustomer.name) {
+              window.__axlxNowCustomer.name = window.__axlxBulkCurrentName;
+            }
+            if (window.__axlxBulkNextMove) window.__axlxNowCustomer.nextMove = window.__axlxBulkNextMove;
+          }
+        } catch (_) {}
+        try { _graspNextCustomerAndMove("bulk_grasp"); } catch (_) {}
+        /**
+         * ★ 2.8.224: 取得完了→次は外す（旧は fill と誤把握＝ループ上の外す把握抜け）
+         *   bulk-dl の nextMove=前客を外す と揃える。list_done→clear。
+         */
+        try { _graspCustomerLoopPhase("list_done", "bulk_done→外す"); } catch (_) {}
+        try {
+          if (_audit && /外す/.test(String(window.__axlxBulkNextMove || e.data.nextMove || ""))) {
+            _auditStepP("next_move_grasp", "次の動き=前客の選択を1つずつ外す bulk_done");
+            _graspCustomerLoopPhase("clear", "bulk_done_clear");
+          }
+        } catch (_) {}
+      } catch (_) {}
+    });
+  } catch (_) {}
   function _ensureLearnReflectedForFill() {
     return new Promise(function (resolve) {
       try { if (_audit) _auditStepP("learn_reflect_gate", "取込開始 page=" + _AXLX_PAGE_VER); } catch (_) {}
@@ -3155,6 +5053,11 @@
        */
       if (!allowShort && !strict && hi >= 250 && floor < 900) floor = 900;
       if (!allowShort && !strict && lo >= 150 && floor < 900) floor = 900;
+      // ★ 2026-11-23: 改善ループが書いた __axlxLearnGapFloor（通常 p10 寄せ）を硬下限に反映
+      if (!allowShort && !strict) {
+        var _lf = Number(window.__axlxLearnGapFloor);
+        if (_lf >= 900 && _lf <= 1800 && floor < _lf) floor = _lf;
+      }
       if (strict && floor < 1000) floor = Math.max(floor, Math.min(lo, 1000));
       var ceil = hi * 2.4;
       var out = Math.min(ceil, Math.max(floor, v));
@@ -3313,13 +5216,28 @@
    */
   function _resetHumanPointerForRun() {
     try {
+      /**
+       * ★ 2.8.226 竹内さん「マウスが途中でとぎれて中心から出てやり直す」:
+       *   並べ替え飛行中キャンセル→条件入れ開始で scatter すると、途中の位置から中心付近へ飛ぶ。
+       *   見えるカーソルが既にあれば**今の位置を引き継ぐ**（客開始の散らしは見えない時だけ）。
+       */
+      var _P0 = window.AxlxPointerUi;
+      try {
+        if (_P0 && typeof _P0.visiblePosition === "function") {
+          var _cur = _P0.visiblePosition();
+          if (_cur && _cur.x > 8 && _cur.y > 8) {
+            _pointer = { x: _cur.x, y: _cur.y };
+            try { if (_audit) _auditStepP("cursor_resume", "今の位置から続行 x=" + Math.round(_cur.x) + " y=" + Math.round(_cur.y)); } catch (_e0) {}
+            return;
+          }
+        }
+      } catch (_e1) {}
       var vw = (typeof window !== "undefined" && window.innerWidth) ? window.innerWidth : 1200;
       var vh = (typeof window !== "undefined" && window.innerHeight) ? window.innerHeight : 800;
       _pointer = {
         x: 60 + Math.random() * Math.max(120, vw * 0.72),
         y: 60 + Math.random() * Math.max(100, vh * 0.62),
       };
-      var _P0 = window.AxlxPointerUi;
       if (_P0 && _P0.scatter) _P0.scatter(_pointer.x, _pointer.y);
     } catch (_) {}
   }
@@ -4102,16 +6020,39 @@
     return { kind: "pause", ms: _ln(7500, 0.15, 6000, 10000) };
   }
   function _wardGapPlan() {
+    /**
+     * ★ 2026-11-23 人間らしさ改善（F59→周回）:
+     *   旧: 迷い・停止が長すぎて 1押下畳みの human帯が23%（許可≥50）。短間隔は1.8%で足りている。
+     *   → 束の間隔がある時は **human帯（700〜2000）を主**、長停止は稀。
+     */
+    var base = Number(window.__axlxLearnGapMs) > 0 ? Number(window.__axlxLearnGapMs) : 0;
+    var floor = Number(window.__axlxLearnGapFloor) >= 900 ? Number(window.__axlxLearnGapFloor) : 900;
     var r = Math.random();
-    if (r < 0.50) return { kind: "fast", ms: _wardPaceMs() };
-    if (r < 0.94) return { kind: "hesitate", ms: _ln(3500, 0.4, 1500, 6500) };
-    return { kind: "pause", ms: _ln(8500, 0.13, 7000, 10500) };
+    if (base >= 1000) {
+      var bandHi = 1950;
+      var bandMed = Math.max(floor, Math.min(1600, base));
+      if (r < 0.62) return { kind: "fast", ms: Math.max(floor, _ln(bandMed * 0.95, 0.28, Math.max(floor, 750), bandHi)) };
+      if (r < 0.92) return { kind: "hesitate", ms: _ln(2200, 0.28, 1600, 3200) };
+      return { kind: "pause", ms: _ln(4800, 0.2, 3600, 7200) };
+    }
+    if (r < 0.55) return { kind: "fast", ms: Math.max(floor, _wardPaceMs()) };
+    if (r < 0.94) return { kind: "hesitate", ms: _ln(2400, 0.35, 1500, 4000) };
+    return { kind: "pause", ms: _ln(5500, 0.15, 4000, 8000) };
   }
   function _selGapPlan() {
+    var base = Number(window.__axlxLearnGapMs) > 0 ? Number(window.__axlxLearnGapMs) : 0;
+    var floor = Number(window.__axlxLearnGapFloor) >= 900 ? Number(window.__axlxLearnGapFloor) : 900;
     var r = Math.random();
-    if (r < 0.85) return { kind: "fast", ms: _ln(2100, 0.3, 1100, 3600) };
-    if (r < 0.97) return { kind: "hesitate", ms: _ln(4500, 0.3, 3200, 7500) };
-    return { kind: "pause", ms: _ln(8500, 0.13, 7000, 11000) };
+    if (base >= 1000) {
+      var bandHi2 = 1950;
+      var bandMed2 = Math.max(floor, Math.min(1600, base));
+      if (r < 0.60) return { kind: "fast", ms: Math.max(floor, _ln(bandMed2 * 0.9, 0.28, Math.max(floor, 750), bandHi2)) };
+      if (r < 0.92) return { kind: "hesitate", ms: _ln(2400, 0.28, 1700, 3400) };
+      return { kind: "pause", ms: _ln(5000, 0.2, 3800, 7500) };
+    }
+    if (r < 0.62) return { kind: "fast", ms: Math.max(floor, _ln(1400, 0.3, Math.max(floor, 750), 1950)) };
+    if (r < 0.94) return { kind: "hesitate", ms: _ln(2400, 0.3, 1700, 3400) };
+    return { kind: "pause", ms: _ln(5000, 0.18, 3800, 7500) };
   }
   /** 区を押している最中か（直近の区クリックから 20 秒以内） */
   function _wardRunActive() {
@@ -4406,18 +6347,82 @@
   function _runBasicOneByOne(queue, done) {
     var q = Array.isArray(queue) ? queue.slice() : [];
     var i = 0;
+    var total = q.length;
+    var _fillStartGrasped = false;
     function step() {
       if (i >= q.length) {
-        whenClickQueueIdle(function () { try { if (typeof done === "function") done(); } catch (_) {} });
+        whenClickQueueIdle(function () {
+          try {
+            _publishTaskGrasp({
+              now: null,
+              done: "条件" + total + "欄入れ完了",
+              next: "検索を押す",
+              kind: "fill",
+            });
+          } catch (_) {}
+          /** ★ 2.8.230: 条件入れ完了→検索もAPI次タスク把握 */
+          try {
+            _graspBeforeNextTaskThen("fill_done", "条件入れ完了→検索", function () {
+              try { if (typeof done === "function") done(); } catch (_) {}
+            });
+          } catch (_) {
+            try { if (typeof done === "function") done(); } catch (_e) {}
+          }
+        });
+        return;
+      }
+      /**
+       * ★ 2.8.230: 条件入れの先頭だけ、検索前の束取込と同型でAPI把握してから1欄目へ
+       */
+      if (!_fillStartGrasped) {
+        _fillStartGrasped = true;
+        _graspBeforeNextTaskThen("fill_start", "条件入れ開始", function () {
+          step();
+        });
         return;
       }
       var item = q[i++];
+      var label = _condOneLabel((item && (item.name || item.label)) || ("#" + i));
+      var nextFill = "";
+      try {
+        if (i < q.length) {
+          nextFill = "次に入れる:" + _condOneLabel((q[i] && (q[i].name || q[i].label)) || ("#" + (i + 1)));
+        } else {
+          nextFill = "条件入れ完了→検索";
+        }
+      } catch (_) { nextFill = "次の条件 or 検索"; }
+      /**
+       * ★ 2.8.219: 家賃など条件は1つ把握してから動かす（同時に次欄へ飛ばない）。
+       * ★ 2.8.228: task_now/done/next で外すと同型に把握（間取り含む）。
+       */
+      try {
+        if (_audit) {
+          _auditStepP("cond_one_grasp", i + "/" + total + " " + label);
+          _auditStepP("guide_phase_one", "条件 " + i + "/" + total + " " + label + "を入れる");
+          _auditStepP("next_move_grasp", "次の動き=条件1つ:" + label);
+        }
+        _publishTaskGrasp({
+          now: "入れる:" + label + "（" + i + "/" + total + "）",
+          done: null,
+          next: nextFill,
+          kind: "fill",
+        });
+      } catch (_) {}
       /**
        * ★ 2026-11-16: run が Promise を返す場合（ペットで絞り込み条件を開く等）は待つ。
        *   旧は即 whenClickQueueIdle → 開く前に次の欄へ進んでいた。
        */
       var afterRun = function () {
         whenClickQueueIdle(function () {
+          try {
+            if (_audit) _auditStepP("cond_one_ok", i + "/" + total + " " + label);
+            _publishTaskGrasp({
+              now: null,
+              done: "入れ完了:" + label,
+              next: nextFill,
+              kind: "fill",
+            });
+          } catch (_) {}
           /**
            * ★ 2026-11-18 竹内さん「家賃・更新日の前後も通常モードの人間のように」:
            *   旧は 項目どうしに 0.45〜1.35s（＋12%で+0.7〜1.9s）を足していた。select は次の欄までの間隔を
@@ -4466,6 +6471,8 @@
     try { _noteFlowPhase("place", true, why || "場所確定"); } catch (_) {}
     try { _noteFlowAtom("place_select", true, why || "場所確定"); } catch (_) {}
     try { _noteNowCustomer("place", why || "場所確定"); } catch (_) {}
+    /** ★ 2.8.230: 場所完了→条件入れの次タスクもAPI把握（弱い段の強化） */
+    try { _graspBeforeNextTaskThen("place_done", why || "場所確定→条件", function () {}); } catch (_) {}
   }
   function _markConditionsReady(why) {
     _axConditionsReady = true;
@@ -4474,6 +6481,8 @@
     try { _noteFlowAtom("conditions", true, why || "条件そろった"); } catch (_) {}
     try { _noteNowCustomer("conditions", why || "条件そろった"); } catch (_) {}
     try { _emitFillProgressHeartbeat("conditions_ready"); } catch (_) {}
+    /** ★ 2.8.230: 条件完了→検索の次タスクもAPI把握 */
+    try { _graspBeforeNextTaskThen("conditions_done", why || "条件そろった→検索", function () {}); } catch (_) {}
   }
   /**
    * ★ 2026-11-18 HONOKA根本: 欲しい間取りの hit/miss を1か所で測る（関所・検索前・把握の正本）。
@@ -4508,11 +6517,25 @@
    */
   function _armPropertyPathBeforeSearch(why) {
     try {
-      window.postMessage({
-        from: "axlx-search-armed",
+      /**
+       * ★ 2026-11-22 audit#1585: 検索 click → 即リロードで chrome.storage.session.set が間に合わず
+       *   Case C 不発（after_search/sort 印0・一覧で止まる）。sessionStorage は同期で残る。
+       */
+      var _armPayload = {
         customerId: _fillCustomerId || null,
         ts: Date.now(),
         why: String(why || "search").slice(0, 48),
+        pageVer: _AXLX_PAGE_VER,
+        armed_why: String(why || "search_armed").slice(0, 48),
+      };
+      try {
+        sessionStorage.setItem("axlx_pending_auto_send_sync", JSON.stringify(_armPayload));
+      } catch (_) {}
+      window.postMessage({
+        from: "axlx-search-armed",
+        customerId: _armPayload.customerId,
+        ts: _armPayload.ts,
+        why: _armPayload.why,
         pageVer: _AXLX_PAGE_VER,
       }, "*");
       try { if (_audit) _auditStepP("search_armed", "物件取得のリロード生存印 " + String(why || "").slice(0, 40)); } catch (_) {}
@@ -4574,6 +6597,47 @@
       var ready = _flowReadyForNext();
       if (ready) {
         _noteFlowPhase("ready_next", true, "一連完了→次客へ渡してよい");
+        try {
+          window.__axlxDesignatedNeedReady = false;
+          if (_audit) _auditStepP("designated_done", "cid=" + String(window.__axlxDesignatedCid || "").slice(0, 8) + " ready_next");
+        } catch (_) {}
+        /** ★ 2.8.201: 一連完了時に初めて「前客」番号・場所モードを残す（途中上書き禁止） */
+        try {
+          var _doneCid = _fillCustomerId || window._axFillRunningCustomerId || window.__axlxDesignatedCid || null;
+          if (_doneCid) _lastFilledCidSave(_doneCid);
+          var _doneWant = "none";
+          try { _doneWant = _axWantPlaceMode(window.__axlxFillCond || _fillCondForStamp || null) || "none"; } catch (_) {}
+          try {
+            if (window.sessionStorage) window.sessionStorage.setItem("axlx_last_want_mode", String(_doneWant));
+          } catch (_) {}
+        } catch (_) {}
+        /**
+         * ★ 2.8.221: 完了→次客の連携を明示把握（いま誰が終わった／次は誰／次の動き=外す）
+         * ★ 2.8.222: loop_advance で「客完了→次へ」を明示（BG series_done と同型・再利用）
+         */
+        try {
+          if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "前客の選択を1つずつ外す";
+        } catch (_) {}
+        try { _noteNowCustomer("ready_next", "一連完了→次客へ"); } catch (_) {}
+        try { _graspNextCustomerAndMove("ready_next"); } catch (_) {}
+        try { _graspCustomerLoopPhase("handoff", "ready_next"); } catch (_) {}
+        /** ★ 2.8.230: 次客へ渡す前にAPI束で次タスク把握（検索把握と同型の弱い段） */
+        try { _graspBeforeNextTaskThen("handoff", "ready_next→次客外し", function () {}); } catch (_) {}
+        try {
+          var _advNow = window.__axlxNowCustomer || {};
+          var _advCur = String(_advNow.name || window.__axlxBulkCurrentName || "").slice(0, 16) || "-";
+          var _advNxt = String(_advNow.nextName || window.__axlxBulkNextName || "").slice(0, 16);
+          if (_audit) {
+            _auditStepP(
+              "loop_advance",
+              (_advNxt
+                ? ("客完了→次へ いま=" + _advCur + " 次=" + _advNxt)
+                : ("客完了・一括末 いま=" + _advCur)
+              ).slice(0, 120),
+            );
+          }
+        } catch (_) {}
+        try { _noteFlowSeriesAt("handoff", "一連完了→次客"); } catch (_) {}
       } else if (gapParts.length) {
         _noteFlowPhase("ready_next", false, "未=" + gapParts.join(","));
       }
@@ -4603,9 +6667,13 @@
    *     前客のチェックを全部「人が選んだ」と誤認して**残していた**。
    */
   function _shouldForceClearPrevPlace() {
+    /**
+     * ★ 2.8.227 竹内さん「1つのお客さんの検索でループ／外している最中なら外すと出す」:
+     *   旧は `_axAutoPicking` だけで常に true → 初回客・同一客でも毎回「前客を全部外す」経路に入りループに見えた。
+     *   → 旗 `__axlxForceClearAllPlace` が立った時だけ（客切替・残あり・送付後ギャップ）。
+     */
     try {
       if (window.__axlxForceClearAllPlace) return true;
-      if (window._axAutoPicking) return true;
     } catch (_) {}
     return false;
   }
@@ -4624,11 +6692,21 @@
      *   条件投入・検索は清算後だけ。
      */
     _settlePanelDebtThen("場所のあと・パネル清算:" + String(why || ""), function () {
+      // ★ 2026-11-22: 場所全体のあとでも手順表×画面を1つずつ確認
+      _guideLikePhaseCheck("after_place", (typeof _fillCondForStamp !== "undefined" ? _fillCondForStamp : null) || window.__axlxFillCond || null, function () {
       _markPlaceReady(why || "場所のあと");
       var q = null;
       try { q = window.__axDeferredBasicQueue; window.__axDeferredBasicQueue = null; } catch (_) { q = null; }
       function _goSearchAfterBasic() {
         _settlePanelDebtThen("条件後・検索前清算", function () {
+          var _fillCond0 = (typeof _fillCondForStamp !== "undefined" ? _fillCondForStamp : null) || window.__axlxFillCond || null;
+          /**
+           * ★ 2.8.211 竹内さん「入れるところと外すところに抜けがないか」:
+           *   _guideLikeFillGate は定義だけ・未呼出だった（外す側の clear grasp と同じ穴）。
+           *   → 検索前に手順表×画面で入忘れ・外し忘れを1回直してから before_search へ。
+           */
+          _guideLikeFillGate(_fillCond0, function () {
+          _guideLikePhaseCheck("before_search", _fillCond0, function () {
           /**
            * ★ 2026-11-18: conditions_ready の前に間取り全 hit を強制確認。
            *   1つ欠けていれば1回だけ入れ直し → それでも欠けても印を残してから検索へ（関所が止める）。
@@ -4674,7 +6752,9 @@
             }
           } catch (_) {}
           _afterLayoutGrasp();
-        });
+          }); // before_search
+          }); // fill_gate
+        }); // 条件後・検索前清算
       }
       if (q && q.length) {
         try { if (_audit) _auditStepP("basic_after_place", (why || "場所のあと") + " → 条件を1つずつ" + q.length + "件"); } catch (_) {}
@@ -4682,7 +6762,8 @@
         return;
       }
       _goSearchAfterBasic();
-    });
+      }); // after_place
+    }); // 場所のあと・パネル清算
   }
   /**
    * ★ 2026-11-16: page-script（MAIN）から録画（content）へ click を渡す。
@@ -4829,6 +6910,13 @@
         var _kt = e.target;
         if (!_kt || !_kt.closest || !_kt.closest("input, select, textarea")) return;
         if (_kt.closest('[id^="aixlinx-"], [id^="axlx"], [data-axlx-shape]')) return;
+        /**
+         * ★ 2.8.200 DB#1597: keydown:room_layout_id[] で human_takeover → 検索前に停止。
+         *   間取り・区・駅等は checkbox/radio。人の「引き取り」は pointerdown（クリック）で足りる。
+         *   checkbox への keydown（Space トグル余波など）は人と見なさない。
+         */
+        var _kTyp = String(_kt.type || "").toLowerCase();
+        if (_kTyp === "checkbox" || _kTyp === "radio") return;
       } else if (!_isHumanTakeoverTarget(e.target)) return;
       _axHumanTookOver = true;
       var what = "";
@@ -4839,6 +6927,12 @@
       try { clearClickQueue(); } catch (_) {}
       try { if (_audit) _auditStepP("human_takeover", e.type + ":" + what + "（人の操作を優先して自動を止めた）"); } catch (_) {}
       try { _noteFlowPhase("human_takeover", false, e.type + ":" + what); } catch (_) {}
+      try {
+        if (window.__axlxDesignatedNeedReady) {
+          _auditStepP("designated_incomplete", "人が引き取った→指定客未完了 cid=" + String(window.__axlxDesignatedCid || "").slice(0, 8));
+          window.__axlxDesignatedNeedReady = false;
+        }
+      } catch (_) {}
       console.warn("[AX] 人が操作したので自動入力を止めます:", e.type, what);
       // gate: 人が物件を選ぶので bulk-dl の全ページ自動送信を構えない
       notifyDone("human_takeover: 人が操作したので自動入力を止めました（" + e.type + ":" + what + "）", "human_takeover");
@@ -5378,6 +7472,12 @@
           clear_method_station: "駅の外し方",
           clear_method_ward: "所在地の外し方",
           clear_method_layout: "間取りの外し方",
+          task_transition_grasp: "次タスク移行把握",
+          task_transition_gate: "次タスク関所OK",
+          task_transition_gate_weak: "次タスク関所弱",
+          task_api_refresh: "次タスク前API取込",
+          task_api_refresh_res: "次タスクAPI結果",
+          guide_task_link: "手順照合→タスク把握",
         };
         var _nm = _STEP_JA[String(k)] || null;
         if (_nm) {
@@ -5472,6 +7572,12 @@
           clear_method_station: "駅の外し方",
           clear_method_ward: "所在地の外し方",
           clear_method_layout: "間取りの外し方",
+          task_transition_grasp: "次タスク移行把握",
+          task_transition_gate: "次タスク関所OK",
+          task_transition_gate_weak: "次タスク関所弱",
+          task_api_refresh: "次タスク前API取込",
+          task_api_refresh_res: "次タスクAPI結果",
+          guide_task_link: "手順照合→タスク把握",
         };
         var _nm2 = _STEP_JA2[String(k)] || null;
         if (_nm2) {
@@ -5487,7 +7593,7 @@
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -5520,7 +7626,7 @@
        *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
        */
       var _pinFlush = _PIN.test(String(k));
-      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|cursor_one|cursor_two|cursor_old/.test(String(k));
+      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|cursor_one|cursor_two|cursor_old|guide_phase_|flow_series_|search_armed|guide_phase_after_search|guide_detail_ledger|guide_phase_one|guide_phase_ok/.test(String(k));
       if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;
@@ -5805,6 +7911,22 @@
     if (_doneNotified) return;
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+    /**
+     * ★ 2.8.201: 途中停止でも「この客を入れた」印を残す（次客の leftover が前客を正しく見る）。
+     *   旧は fill 開始時に保存→外し判定が壊れていた。完了時（成功・失敗・門）に移した。
+     */
+    try {
+      var _ndCid = _fillCustomerId || window.__axlxDesignatedCid || null;
+      if (_ndCid) _lastFilledCidSave(_ndCid);
+      var _ndWant = "none";
+      try { _ndWant = _axWantPlaceMode(window.__axlxFillCond || _fillCondForStamp || null) || "none"; } catch (_) {}
+      try {
+        if (window.sessionStorage) window.sessionStorage.setItem("axlx_last_want_mode", String(_ndWant));
+      } catch (_) {}
+      try {
+        window.postMessage({ from: "axlx-set-last-customer", cid: _ndCid, want: _ndWant }, "*");
+      } catch (_) {}
+    } catch (_) {}
     /**
      * ★ 2026-11-17 F45: fill完了を「理解」して台帳に残す。
      *   エラー／門止めは fill_done 未完了。成功時だけ次客へ渡してよいかを測る。
@@ -7631,6 +9753,11 @@
    *     ③外した後にもう一度読み、残りがあれば場所は専用の外しで／チェック類は全体をやり直す（_cleanStartGate）
    *   ⚠ 入力に入る前に必ず「きれいな状態」を確かめてから進む（前客が止まった・人が触った後でも同じ）。
    */
+  /**
+   * ★ 2.8.215 竹内さん「入れるときと同じ発想で所在地絞り込みと沿線　駅絞り込みが並行して入っていることはないので、ここはどちらかになる」:
+   *   返す値は常に1つ（area|station|route|none）。所在地と沿線・駅を同時に「入れたい」とはしない。
+   *   前客の残りが混在していても、今回入れる側（want）はどちらか一方。
+   */
   function _axWantPlaceMode(c) {
     c = c || {};
     var hasWard = !!((c.city_codes && c.city_codes.length > 0) || c.detail_ward);
@@ -7652,6 +9779,63 @@
     if (hasSt) return "station";
     if (hasRt) return "route";
     return "none";
+  }
+  /**
+   * ★ 2.8.209: 外す把握を入れる並みに細かくする（件数ではなくラベル名）。
+   *   画面の checked ＋ 台帳 names（小窓が閉じて DOM から消えた控え）を名前付き配列で返す。
+   */
+  function _listLeftoverNamedItems(ledger) {
+    var out = [];
+    var seen = {};
+    var add = function (tag) {
+      var t = String(tag || "").replace(/\s+/g, "").slice(0, 28);
+      if (!t || seen[t]) return;
+      seen[t] = true;
+      out.push(t);
+    };
+    var pushName = function (name, prefix) {
+      try {
+        (_checkedLabelTexts(name) || []).forEach(function (t) {
+          if (t) add(prefix + ":" + String(t).slice(0, 16));
+        });
+      } catch (_) {}
+    };
+    pushName("city_code[]", "区残");
+    pushName("town_code[]", "町残");
+    pushName("station_id[]", "駅残");
+    pushName("route_id[]", "線残");
+    pushName("room_layout_id[]", "間取残");
+    pushName("eq_rm[]", "絞込残");
+    pushName("structured_type[]", "構造残");
+    try {
+      var _sh = _findShikireiCheckbox();
+      if (_sh && _sh.checked) add("敷礼なし残");
+    } catch (_) {}
+    ["rental_cost1", "rental_cost2", "transportation_id", "structured_date", "square_meter_l", "square_meter_h", "update_date"].forEach(function (n) {
+      try {
+        var el = document.querySelector("select[name='" + n + "']");
+        if (el && el.selectedIndex > 0) add("選残:" + n);
+      } catch (_) {}
+    });
+    ["required_time", "keyword", "free_word", "freeword", "building_name", "search_word"].forEach(function (n) {
+      try {
+        var el = document.querySelector("input[name='" + n + "']");
+        if (el && el.value) add("文残:" + n);
+      } catch (_) {}
+    });
+    try {
+      if (ledger && ledger.names && ledger.names.length) {
+        ledger.names.slice(0, 24).forEach(function (nm) {
+          var s = String(nm || "");
+          if (!s) return;
+          // 台帳は「駅:梅田」形式。画面に同名が無ければ控えとして残す
+          var bare = s.replace(/^(駅|区|線|町):/, "");
+          var already = out.some(function (x) { return x.indexOf(bare) >= 0; });
+          if (!already) add("控え:" + s.slice(0, 20));
+        });
+      }
+    } catch (_) {}
+    return out.slice(0, 40);
   }
   function _scanLeftoverForm() {
     var q = function (sel) { try { return document.querySelectorAll(sel).length; } catch (_) { return 0; } };
@@ -7813,6 +9997,7 @@
     var memOnlyWd = placeWd === 0 && memWd > 0;
     if (memOnlySt) placeSt = memSt;
     if (memOnlyWd) placeWd = memWd;
+    /** prev=前客の残り（混在あり得る）。want=今回入れる側（常に地域 XOR 駅・並行しない） */
     var prev = placeSt > 0 && placeWd > 0 ? "混在" : placeSt > 0 ? "駅" : placeWd > 0 ? "地域" : "なし";
     var want = wantWd ? "地域" : wantSt ? "駅" : "なし";
     var boxes = [];
@@ -7820,18 +10005,61 @@
     if (s.structured > 0) boxes.push("構造" + s.structured);
     if (s.pet > 0) boxes.push("絞込" + s.pet);
     if (s.shikirei) boxes.push("敷礼なし");
+    /**
+     * ★ 2.8.220 竹内さん「外すのもちゃんとできていない／次の動きへの移行が弱い」:
+     *   旧は同種（駅→駅・地域→地域）を「入れ直しで」dirtyにせず外しを飛ばしていた。
+     *   実測: leftover_scan が「前客なし」や「同種の場所は入れ直し」のまま clean_no_clear →
+     *   clear_then_fill_ok=0。台帳に駅18件あっても同種だと memOnly が無効で小窓を開かない穴。
+     *   → 同種でも先に外す（人がやる順）。入れ直しだけでは前客の余分が残る。
+     */
     var plan = {
       prev: prev,
       want: want,
+      /** 入れる側は所在地／沿線駅のどちらか一方（XOR） */
+      placeXor: wantWd ? "area" : wantSt ? "station" : "none",
       transition: prev + "→" + want,
-      clearStations: placeSt > 0 && !wantSt,
-      clearWards: placeWd > 0 && !wantWd,
+      /** 画面/台帳に残があれば種別を問わず外す（同種含む） */
+      clearStations: placeSt > 0,
+      clearWards: placeWd > 0,
       sameKindPlace: (placeSt > 0 && wantSt) || (placeWd > 0 && wantWd),
-      memOnlyStations: memOnlySt && !wantSt,
-      memOnlyWards: memOnlyWd && !wantWd,
+      /** 画面0でも台帳にあれば小窓を開く（同種でも有効） */
+      memOnlyStations: memOnlySt,
+      memOnlyWards: memOnlyWd,
+      sameKindMustClear: false,
       boxes: boxes,
       soft: (s.selects || []).concat(s.texts || []),
     };
+    if (plan.sameKindPlace && (placeSt > 0 || placeWd > 0)) {
+      plan.sameKindMustClear = true;
+    }
+    /**
+     * ★ 2.8.201: 前客が駅客（はる等）→指定客が地域のとき、画面checked=0でも駅小窓を開いて外す。
+     * ★ 2.8.214: 前客が地域→駅客のときも同様に区・町を強制外し（customer_think clearWd=Y が
+     *   leftover_scan の印だけで _planLeftover に届かず「駅だけ外して終わる」穴）。
+     * ★ 2.8.220: 同種切替でも画面残0のとき小窓を開いて確かめる（偽きれい防止）。
+     */
+    try {
+      if (window.__axlxForceClearStations && wantWd) {
+        plan.clearStations = true;
+        plan.memOnlyStations = plan.memOnlyStations || placeSt === 0;
+      }
+      if (window.__axlxForceClearWards && wantSt) {
+        plan.clearWards = true;
+        plan.memOnlyWards = plan.memOnlyWards || placeWd === 0;
+      }
+      if (window.__axlxForceClearSameKindStations && wantSt) {
+        plan.clearStations = true;
+        plan.memOnlyStations = plan.memOnlyStations || placeSt === 0;
+        plan.sameKindMustClear = true;
+        plan.sameKindPlace = true;
+      }
+      if (window.__axlxForceClearSameKindWards && wantWd) {
+        plan.clearWards = true;
+        plan.memOnlyWards = plan.memOnlyWards || placeWd === 0;
+        plan.sameKindMustClear = true;
+        plan.sameKindPlace = true;
+      }
+    } catch (_) {}
     plan.dirty = plan.clearStations || plan.clearWards || boxes.length > 0;
     var parts = [];
     if (placeSt > 0) parts.push(memOnlySt ? "駅・沿線(覚えのみ)" + memSt : "駅" + (s.stations || 0) + "・沿線" + (s.lines || 0));
@@ -7841,11 +10069,19 @@
     var out = [];
     if (plan.clearStations) out.push("駅・沿線");
     if (plan.clearWards) out.push("区・町");
-    if (plan.sameKindPlace) out.push("同種の場所は入れ直しで");
+    if (plan.sameKindMustClear) out.push("同種でも先に外す");
+    else if (plan.sameKindPlace) out.push("同種の場所");
     boxes.forEach(function (b) { out.push(b); });
     var named = "";
     try { if (ledger && ledger.names && ledger.names.length) named = " 入れた控え[" + ledger.names.slice(0, 12).join("・") + "]"; } catch (_) {}
-    plan.summary = "前客" + plan.transition + " 残[" + (parts.join("・") || "なし") + "] 外す[" + (out.join("・") || "なし") + "]" + named;
+    plan.summary = "前客" + plan.transition + " 残[" + (parts.join("・") || "なし") + "] 外す[" + (out.join("・") || "なし") + "]"
+      + " 入れる側=" + (wantWd ? "所在地だけ" : wantSt ? "沿線・駅だけ" : "場所なし") + "（並行しない）" + named;
+    try {
+      if (window.__axlxForceClearStations && wantWd) plan.summary += " ／駅残確認必須(前客→指定客の地域)";
+      if (window.__axlxForceClearWards && wantSt) plan.summary += " ／区町残確認必須(前客→指定客の駅)";
+      if (window.__axlxForceClearSameKindStations && wantSt) plan.summary += " ／同種駅でも先に外す";
+      if (window.__axlxForceClearSameKindWards && wantWd) plan.summary += " ／同種区でも先に外す";
+    } catch (_) {}
     return plan;
   }
   /**
@@ -8006,15 +10242,56 @@
     var p = _planLeftover(s, mode, ledger);
     try { if (_audit) _auditStepP(round ? "leftover_rescan" : "leftover_after_clear", p.summary + (round ? "（やり直し" + round + "回目）" : "")); } catch (_) {}
     if (!p.dirty) {
-      try { if (_audit) _auditStepP("leftover_clean", "きれい確認OK（" + p.transition + (p.sameKindPlace ? "・同種の場所は入れ直し" : "") + "）"); } catch (_) {}
-      try { if (!p.sameKindPlace) { window.__axlxPrevLedger = null; _ledgerClear(); } } catch (_) {}
-      go();
-      return;
+      /** ★ 2.8.214: force 区外しが立っているのに dirty=false＝偽きれい。強制で区外しへ */
+      var _forceWd = false;
+      var _forceSameSt = false;
+      var _forceSameWd = false;
+      try { _forceWd = !!window.__axlxForceClearWards && mode === "station"; } catch (_) { _forceWd = false; }
+      try {
+        _forceSameSt = !!window.__axlxForceClearSameKindStations && mode === "station";
+        _forceSameWd = !!window.__axlxForceClearSameKindWards && mode === "area";
+      } catch (_) {}
+      if (_forceWd) {
+        p.clearWards = true;
+        p.dirty = true;
+        p.memOnlyWards = true;
+        try { if (_audit) _auditStepP("leftover_force_wards", "画面残0でも前客地域→駅のため区・町を開いて外す"); } catch (_) {}
+      } else if (_forceSameSt) {
+        /** ★ 2.8.220: 同種駅切替で画面残0でも小窓を開いて確かめる */
+        p.clearStations = true;
+        p.dirty = true;
+        p.memOnlyStations = true;
+        p.sameKindMustClear = true;
+        try { if (_audit) _auditStepP("leftover_force_same_stations", "画面残0でも同種駅切替→駅・沿線を開いて外す"); } catch (_) {}
+      } else if (_forceSameWd) {
+        p.clearWards = true;
+        p.dirty = true;
+        p.memOnlyWards = true;
+        p.sameKindMustClear = true;
+        try { if (_audit) _auditStepP("leftover_force_same_wards", "画面残0でも同種地域切替→区・町を開いて外す"); } catch (_) {}
+      } else {
+        try {
+          if (_audit) {
+            _auditStepP(
+              "leftover_clean",
+              "きれい確認OK（" + p.transition + (p.sameKindMustClear ? "・同種でも外し済" : "") + "）",
+            );
+          }
+        } catch (_) {}
+        try { window.__axlxPrevLedger = null; _ledgerClear(); } catch (_) {}
+        go();
+        return;
+      }
     }
     if (p.memOnlyStations) {
       try {
         window.__axlxLedgerForceOpenSt = true;
         if (_audit) _auditStepP("leftover_ledger_open", "画面には見えないが前客が駅・沿線を入れた控えあり→沿線・駅を開いて確かめて外す");
+      } catch (_) {}
+    }
+    if (p.memOnlyWards || (p.clearWards && (s.wards || 0) + (s.towns || 0) === 0)) {
+      try {
+        if (_audit) _auditStepP("leftover_force_open_wards", "区・町が画面に見えない→所在地を開いて外す");
       } catch (_) {}
     }
     var kinds = [];
@@ -8067,6 +10344,7 @@
       go();
     };
     var stepWard = function () {
+      try { window.__axlxForceClearWards = false; } catch (_) {}
       if (p.clearWards) _clearWardsBeforeStationThen(afterPlace, "前客の区・町を最初に外す");
       else afterPlace();
     };
@@ -8147,33 +10425,103 @@
       try { ledger = _ledgerLoad(); } catch (_) { ledger = null; }
       var s = _scanLeftoverForm();
       var p = _planLeftover(s, "none", ledger);
+      /**
+       * ★ 2.8.214: 結果ページは DOM checked=0 でも台帳に駅/区があれば外す（偽残0で駅だけ終わる穴）。
+       */
+      try {
+        var mem = (ledger && ledger.n) || {};
+        if (((mem.stations || 0) + (mem.lines || 0)) > 0) {
+          p.clearStations = true;
+          p.memOnlyStations = p.memOnlyStations || ((s.stations || 0) + (s.lines || 0) === 0);
+          p.dirty = true;
+        }
+        if (((mem.wards || 0) + (mem.towns || 0)) > 0) {
+          p.clearWards = true;
+          p.memOnlyWards = p.memOnlyWards || ((s.wards || 0) + (s.towns || 0) === 0);
+          p.dirty = true;
+        }
+      } catch (_) {}
       try { if (_audit) _auditStepP("post_send_clear", "開始 " + p.summary); } catch (_) {}
+      /**
+       * ★ 2.8.223: 送付後外しも「いま外す／何を外す」を把握してから動く（客完了→次への外し把握の穴）
+       */
+      try {
+        if (_audit) {
+          _auditStepP("guide_clear_grasp", ("送付後外し把握 " + String(p.summary || "").slice(0, 70)).slice(0, 120));
+          _auditStepP("next_move_grasp", "次の動き=前客の選択を1つずつ外す post_send");
+        }
+      } catch (_) {}
+      try { _graspCustomerLoopPhase("clear", "post_send_clear"); } catch (_) {}
       var placeN = function (x) { return (x.stations || 0) + (x.lines || 0) + (x.wards || 0) + (x.towns || 0); };
+      var memPlaceN = function () {
+        try {
+          var m = (ledger && ledger.n) || {};
+          return (m.stations || 0) + (m.lines || 0) + (m.wards || 0) + (m.towns || 0);
+        } catch (_) { return 0; }
+      };
       if (!p.clearStations && !p.clearWards) {
+        var _memLeft = memPlaceN();
+        if (_memLeft > 0) {
+          try { if (_audit) _auditStepP("post_send_clear", "DOM残0だが台帳場所" + _memLeft + "→偽きれい拒否"); } catch (_) {}
+          fin({ ok: false, left: _memLeft, why: "ledger_place_unverified" });
+          return;
+        }
         try { if (_audit) _auditStepP("post_send_clear", "場所の残りなし→外す物なし"); } catch (_) {}
+        try { _noteFlowAtom("post_send_clear", true, "残り0"); } catch (_) {}
         try { _ledgerClear(); window.__axlxPrevLedger = null; } catch (_) {}
         fin({ ok: true, left: 0 });
         return;
       }
       if (p.memOnlyStations) { try { window.__axlxLedgerForceOpenSt = true; } catch (_) {} }
+      var _didWard = false;
+      var _didSt = false;
       var after = function () {
         if (finished) return;
         try { window.__axlxLedgerForceOpenSt = false; } catch (_) {}
         var s2 = null;
         try { s2 = _scanLeftoverForm(); } catch (_) { s2 = {}; }
         var left = placeN(s2);
+        /** 駅だけ外して区を試していない＝未完了（台帳に区がある時） */
+        var memWd = 0;
+        try { memWd = (((ledger && ledger.n) || {}).wards || 0) + (((ledger && ledger.n) || {}).towns || 0); } catch (_) { memWd = 0; }
+        if (!_didWard && (p.clearWards || memWd > 0)) {
+          _didWard = true;
+          try { if (_audit) _auditStepP("post_send_clear", "駅後に区・町を必ず外す（駅だけで終わらせない）"); } catch (_) {}
+          _clearWardsBeforeStationThen(after, "送付後の外し・区必須");
+          return;
+        }
         try { if (_audit) _auditStepP("post_send_clear", (left === 0 ? "完了 " : "残りあり ") + _leftoverStuckText(s2, left === 0 ? "外し完了" : String(window.__axlxLeftoverWhy || "外し切れず"))); } catch (_) {}
+        try { _noteFlowAtom("post_send_clear", left === 0, left === 0 ? "外し完了" : ("残=" + left)); } catch (_) {}
+        try {
+          if (_audit) {
+            _auditStepP(
+              "guide_clear_grasp",
+              left === 0
+                ? "送付後外しきれい確認OK"
+                : ("送付後外し残=" + left + "→次客で再外す"),
+            );
+            if (left > 0) {
+              _auditStepP("next_move_grasp", "次の動き=前客の選択を1つずつ外す post_send残");
+              try { window.__axlxForceClearAllPlace = true; } catch (_) {}
+              try { window.__axlxPostSendClearGap = true; } catch (_) {}
+            }
+          }
+        } catch (_) {}
         if (left === 0) { try { _ledgerClear(); window.__axlxPrevLedger = null; } catch (_) {} }
         fin({ ok: left === 0, left: left, why: left ? String(window.__axlxLeftoverWhy || "") : "" });
       };
       var stepWard = function () {
-        if (p.clearWards) _clearWardsBeforeStationThen(after, "送付後の外し");
-        else after();
+        if (p.clearWards) {
+          _didWard = true;
+          _clearWardsBeforeStationThen(after, "送付後の外し");
+        } else after();
       };
       var run = function () {
         try {
-          if (p.clearStations) _clearStationsBeforeWardThen(stepWard, "送付後の外し");
-          else stepWard();
+          if (p.clearStations) {
+            _didSt = true;
+            _clearStationsBeforeWardThen(stepWard, "送付後の外し");
+          } else stepWard();
         } catch (e) { fin({ ok: false, left: -1, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
       };
       // 結果ページは検索条件が畳まれているので、次客の _doReset と同じく先に「検索条件を表示」を押して開く
@@ -8244,7 +10592,12 @@
     };
     var left0 = _leftNow();
     var _forceOpenSt = false;
-    try { _forceOpenSt = !!window.__axlxLedgerForceOpenSt && _round === 0; window.__axlxLedgerForceOpenSt = false; } catch (_) {}
+    try {
+      // ★ 2.8.201: 前客→指定客の地域でも、checked=0でスキップせず沿線・駅を開いて確かめる
+      _forceOpenSt = (!!window.__axlxLedgerForceOpenSt || !!window.__axlxForceClearStations) && _round === 0;
+      window.__axlxLedgerForceOpenSt = false;
+      if (_round === 0) window.__axlxForceClearStations = false;
+    } catch (_) {}
     if (!left0.st && !left0.ln && !_forceOpenSt) { try { nextFn(); } catch (_) {} return; }
     try {
       window.__axlxNeedClearStation = true;
@@ -8527,7 +10880,26 @@
       } catch (_) { return []; }
     };
     var finish = function (how) {
-      try { if (_audit) _auditStepP(tg + "_done", how + " 外した" + okN + "・外れず" + ngN + "・見えず" + hidN + "・残" + _left().length + "（" + (why || "前客") + "）"); } catch (_) {}
+      var leftN = 0;
+      try { leftN = _left().length; } catch (_) { leftN = 0; }
+      try { if (_audit) _auditStepP(tg + "_done", how + " 外した" + okN + "・外れず" + ngN + "・見えず" + hidN + "・残" + leftN + "（" + (why || "前客") + "）"); } catch (_) {}
+      /**
+       * ★ 2.8.228: この箱の外し完了を把握してから次（別の箱 or 新条件入れ）へ。
+       */
+      try {
+        var doneMsg = (how === "完了" || leftN === 0)
+          ? ("外し完了:" + String(why || tg).slice(0, 20) + "×" + okN)
+          : ("外し途中終了:" + String(how).slice(0, 16));
+        var nextMsg = leftN > 0
+          ? ("残" + leftN + "を別経路で外す")
+          : "次の箱の外し or 新しい条件を入れる";
+        _publishTaskGrasp({
+          now: null,
+          done: doneMsg,
+          next: nextMsg,
+          kind: "clear",
+        });
+      } catch (_) {}
       try { done(); } catch (_) {}
     };
     var step = function () {
@@ -8558,6 +10930,25 @@
       if (!cb) { finish(hidN ? "見えない物だけ残る" : "外れない物だけ残る"); return; }
       var code = String(cb.value || "");
       var nm0 = String(lb.textContent || "").replace(/\s+/g, "").slice(0, 16);
+      var itemLabel = "";
+      try { itemLabel = _clearItemLabel(cb); } catch (_) { itemLabel = nm0 || code; }
+      var nextLabel = "";
+      try {
+        var rest = left.filter(function (c) { return c !== cb && c && c.checked; });
+        if (rest.length) nextLabel = _clearItemLabel(rest[0]);
+        else nextLabel = "この箱の外し完了→次へ";
+      } catch (_) { nextLabel = "次の外す or 入れ"; }
+      /**
+       * ★ 2.8.228: 間取りも含め「いま外す1つ」を把握してから押す（入れる時の cond_one と同型）。
+       */
+      try {
+        _publishTaskGrasp({
+          now: itemLabel + "（残" + left.length + "）",
+          done: null,
+          next: nextLabel,
+          kind: "clear",
+        });
+      } catch (_) {}
       var cont = _scrollIntoScrollParent(lb);
       try { if (_audit) _auditStepP(tg, nm0 + "(" + code + ") " + (cont ? "一覧を送って" : "") + "見せてから外す"); } catch (_) {}
       var w0 = Date.now();
@@ -8576,6 +10967,16 @@
             if (!off && Date.now() - p0 < 2500) { setTimeout(poll, 120); return; }
             if (off) okN++; else ngN++;
             try { if (_audit) _auditStepP(off ? tg + "_ok" : tg + "_ng", nm0 + "(" + code + ")"); } catch (_) {}
+            try {
+              if (off) {
+                _publishTaskGrasp({
+                  now: null,
+                  done: itemLabel,
+                  next: nextLabel,
+                  kind: "clear",
+                });
+              }
+            } catch (_) {}
             setTimeout(step, _ln(380, 0.35, 220, 800));
           })();
         });
@@ -9886,6 +12287,7 @@
               : "検索押下",
           );
           try { _auditStepP("search_press_ok", "検索を押した"); } catch (_) {}
+          try { _guideLikeAfterSearchGrasp("search_press_ok"); } catch (_) {}
           try { _noteNowCustomer("search", "検索押下"); } catch (_) {}
         } catch (_) {}
         notifyDone();
@@ -9894,8 +12296,13 @@
        * ★ 2026-11-18: click 直前にリロード生存印（同期 postMessage）。
        *   click → 即遷移だと whenClickQueueIdle→notifyDone が消える／Case C 不発の根を塞ぐ。
        */
+      /**
+       * ★ 2026-11-22 audit#1585: arm/grasp を同期 sessionStorage に書いてから click。
+       *   click 即遷移でも Case C が読める。audit 印も click 前に積む（flush 負け対策）。
+       */
       var _queued = enqueueHumanClick(btn, function (el) {
         try { _armPropertyPathBeforeSearch("検索click直前"); } catch (_) {}
+        try { _guideLikeAfterSearchGrasp("search_click_直前"); } catch (_) {}
         try { el.click(); } catch (_) {}
       }, _uiGapMin(), _uiGapMax(), null, { aim: _sAim, label: "click:検索", strictLo: true, sigma: 0.55, decide: true });
       if (_queued) {
@@ -9904,6 +12311,7 @@
         // キューに積めない時も直接clickせず、カーソル着いてから押す
         var _pr = _humanPointerClick(btn, function () {
           try { _armPropertyPathBeforeSearch("検索click直前(直)"); } catch (_) {}
+          try { _guideLikeAfterSearchGrasp("search_click_直前(直)"); } catch (_) {}
           try { btn.click(); } catch (_) {}
         }, _sAim);
         if (_pr && typeof _pr.then === "function") _pr.then(_finishSearchPress, _finishSearchPress);
@@ -10629,6 +13037,25 @@
      * ★ 2026-11-16 連続客: **先に前客を閉じる**（点検リセットの前）。
      *   旧は先に _auditReset すると、supersede の fill-done に次客の空点検が載る。
      */
+    /**
+     * ★ 2.8.201: 指定客ロック中に別客の fill が来たら、入力フラグが落ちていても断る。
+     */
+    try {
+      var _desNeedF = !!window.__axlxDesignatedNeedReady;
+      var _desCidF = String(window.__axlxDesignatedCid || "");
+      var _newCidPre = _fillCustomerId || null;
+      if (_desNeedF && _desCidF && _newCidPre && String(_desCidF) !== String(_newCidPre)) {
+        console.warn("[AX] 指定客完了前 → fillRealpro で別客を断る des=" + _desCidF.slice(0, 8) + " next=" + String(_newCidPre).slice(0, 8));
+        try { if (_audit) _auditStepP("designated_hold", "指定客未完了→fill断る des=" + _desCidF.slice(0, 8)); } catch (_) {}
+        try {
+          window.postMessage({
+            from: "aixlinx-fill-done", gate: true, gateKind: "busy_other_customer", customerId: _newCidPre,
+            error: "busy_other_customer: 指定お客さんの一連が完了するまで、このお客さんは始めませんでした（上書きしない）",
+          }, "*");
+        } catch (_) {}
+        return;
+      }
+    } catch (_) {}
     if (window._axFillRunning) {
       var _runCid = window._axFillRunningCustomerId || null;
       var _newCid = _fillCustomerId || null;
@@ -10670,6 +13097,22 @@
     _axHumanTookOver = false;
     _axFillStartedAt = Date.now();
     try { window.__axlxFillTouchAt = _axFillStartedAt; } catch (_) {}
+    /**
+     * ★ 2.8.200: fill 開始時に手順書を storage から再読込（旧版のまま走る穴を塞ぐ）。
+     *   DB#1597: 束は a7feb30c/57c9b30a なのに playbook_seen は旧 rv=4c266b56。
+     */
+    try { _loadLearnNext(true); } catch (_) {}
+    /**
+     * ★ 2.8.201: 指定客ロック — ready_next まで「この客を完了させる」印。
+     *   別客の依頼は busy_other で断り、途中停止しても次客へ勝手に進まない土台。
+     */
+    try {
+      window.__axlxDesignatedCid = String(_fillCustomerId || "");
+      window.__axlxDesignatedNeedReady = !!window.__axlxDesignatedCid;
+      if (_audit && window.__axlxDesignatedCid) {
+        _auditStepP("designated_lock", "cid=" + window.__axlxDesignatedCid.slice(0, 8) + " 完了(ready_next)までこの客を優先");
+      }
+    } catch (_) {}
     window._axFillRunning = true;
     try { window.__axlxFillGen = (Number(window.__axlxFillGen) || 0) + 1; } catch (_) {}
     try { _axPanelDebt = null; } catch (_) {} // ★ 客ごとにパネル負債をリセット（根本仕組み）
@@ -10681,6 +13124,19 @@
     try {
       var _prevCid = _lastFilledCidLoad() || window._axFillRunningCustomerId || null;
       var _nextCid = _fillCustomerId || null;
+      /**
+       * ★ 2.8.201 穴: 旧は fill 開始直後に _lastFilledCidSave(次客) しており、
+       *   leftover_scan の「前客≠今客」が常に偽→はる（駅）残を外さず止まっていた。
+       *   → 外し確認用に前客を先に残し、今客の保存は ready_next / fill_done 側へ寄せる土台。
+       */
+      try {
+        window.__axlxSwitchPrevCid = _prevCid ? String(_prevCid) : "";
+        window.__axlxSwitchPrevWant = "";
+        try {
+          var _pw = window.sessionStorage && window.sessionStorage.getItem("axlx_last_want_mode");
+          if (_pw) window.__axlxSwitchPrevWant = String(_pw);
+        } catch (_) {}
+      } catch (_) {}
       window.__axlxBtnUnderstood = {};
       /** ★ F45: 客ごとに流れ完了台帳をリセット（前客の完了印を持ち越さない） */
       window.__axlxFlowUnderstood = {};
@@ -10693,10 +13149,35 @@
       if (_prevCid && _nextCid && String(_prevCid) !== String(_nextCid)) {
         try { _noteFlowAtom("switch", true, "前客→次客"); } catch (_) {}
       }
-      _lastFilledCidSave(_nextCid);
+      // 今客の番号は一連完了（ready_next）まで「前客」として残す。途中で上書きしない。
       try {
         _fillCondForStamp = cond || null;
+        try { window.__axlxFillCond = cond || null; } catch (_) {}
         _noteNowCustomer("fill_start", "検索開始");
+        try { _graspNextCustomerAndMove("fill_start"); } catch (_) {}
+        /**
+         * ★ 2.8.227: 外すが要るならいま段=clear（外している最中）。要らなければ fill。
+         *   旧は常に fill → 外し中なのに「検索中／入れ」表示でループに見えた。
+         */
+        try {
+          var _willClear = false;
+          try {
+            var _pCid = String(window.__axlxSwitchPrevCid || "");
+            var _nCid = String(_fillCustomerId || "");
+            if (_pCid && _nCid && _pCid !== _nCid) _willClear = true;
+            if (window.__axlxPostSendClearGap) _willClear = true;
+            if (window.__axlxForceClearAllPlace) _willClear = true;
+          } catch (_) {}
+          if (_willClear) {
+            _graspCustomerLoopPhase("clear", "fill_start_need_clear");
+            _publishNowAction("clear", "fill_start");
+          } else {
+            _graspCustomerLoopPhase("fill", "fill_start");
+            _publishNowAction("fill", "fill_start");
+          }
+        } catch (_) {
+          try { _graspCustomerLoopPhase("fill", "fill_start"); } catch (_e2) {}
+        }
         _auditFlowLearnReflect("fill_start");
         _auditFullFlowMapLedger("fill_start");
       } catch (_) {}
@@ -10726,9 +13207,35 @@
      */
     try {
       window._axAutoPicking = true;
-      window.__axlxForceClearAllPlace = true; // 続き客: 前客の地域/駅を全部やりなおす
+      /**
+       * ★ 2.8.223: 送付後外しギャップがある時は必ず強制外す＋把握印（客完了→次への外し）
+       */
+      try {
+        if (window.__axlxPostSendClearGap) {
+          if (_audit) _auditStepP("post_send_clear_gap", "前客送付後外し未完→この客で強制外す");
+          if (_audit) _auditStepP("next_move_grasp", "次の動き=前客の選択を1つずつ外す fill_start_gap");
+          try { _graspCustomerLoopPhase("clear", "post_send_gap"); } catch (_) {}
+          window.__axlxPostSendClearGap = false;
+          window.__axlxForceClearAllPlace = true;
+        }
+      } catch (_) {}
+      /**
+       * ★ 2.8.227: 客が変わった時だけ「前客を全部外す」。同一客・初回きれいなら立てない（1客ループ防止）。
+       */
+      try {
+        var _swPrev = String(window.__axlxSwitchPrevCid || "");
+        var _swNext = String(_fillCustomerId || "");
+        var _switchedCust = !!(!_swPrev || !_swNext ? false : _swPrev !== _swNext);
+        if (_switchedCust) {
+          window.__axlxForceClearAllPlace = true;
+          try { if (_audit) _auditStepP("place_redo", "客切替: 前の地域/駅を外してから新しい条件を選ぶ"); } catch (_ePr) {}
+          try { _publishNowAction("clear", "客切替→外す"); } catch (_ePa) {}
+        } else if (!window.__axlxForceClearAllPlace) {
+          try { if (_audit) _auditStepP("place_keep", "同一客or初回→全部外しループしない"); } catch (_ePk) {}
+          try { _publishNowAction("fill", "新しい条件を入れる"); } catch (_ePf) {}
+        }
+      } catch (_) {}
       _resetAutoPicked();
-      try { if (_audit) _auditStepP("place_redo", "続き客: 前の地域/駅を外してから新しい条件を選ぶ"); } catch (_) {}
     } catch (_) {}
     window._axStDiagDone = false; // 診断ログフラグをリセット（次回fill時に再診断できるようにする）
     // 2026-11-10 v2.6.16 竹内さん（画像）「この住居の住居検索ボタンから2枚目の物件一覧にうつる」:
@@ -10809,9 +13316,23 @@
     _axConditionsReady = false; // ★ 間取り・敷礼まで終わる前に25秒保険で検索しない
     _stationPickSeen = false; // ★ 次客でも駅の「最初の1つを探す間」を入れる
     try {
-      window.__axlxForceClearAllPlace = true;
-      window.__axlxNeedClearWard = true;
-      window.__axlxNeedClearStation = true;
+      /**
+       * ★ 2.8.227: NeedClear も客切替・ForceClear 時だけ。毎回 true だと1客検索で外しループに見える。
+       */
+      var _needForcePlace = !!window.__axlxForceClearAllPlace;
+      try {
+        var _p0 = String(window.__axlxSwitchPrevCid || "");
+        var _n0 = String(_fillCustomerId || "");
+        if (_p0 && _n0 && _p0 !== _n0) _needForcePlace = true;
+      } catch (_) {}
+      if (_needForcePlace) {
+        window.__axlxForceClearAllPlace = true;
+        window.__axlxNeedClearWard = true;
+        window.__axlxNeedClearStation = true;
+      } else {
+        window.__axlxNeedClearWard = false;
+        window.__axlxNeedClearStation = false;
+      }
       // 続き客: 沿線・駅の「全部外し→入れ直し」は客ごとに1回だけ（ポーリングで繰り返し外さない）
       window.__axlxLineForceClearedOnce = false;
       window.__axlxStationForceClearedOnce = false;
@@ -11034,6 +13555,19 @@
     // 検索の点検: popup が載せた run_id（ブレインの時だけ）。無ければ記録しない
     _auditReset(cond && cond._audit_run_id);
     _auditStepP('fill_start', cond && cond.area_mode);
+    /**
+     * ★ 2.8.216: 入れ開始時点で「どちらか一方」を先に把握（外す前の計画）。
+     *   後の _axApplyPlaceXor が最終印 place_xor。ここで計画が無いと理解が遅れる。
+     */
+    try {
+      var _xorPlan0 = _axWantPlaceMode(cond);
+      var _xorLab0 = _xorPlan0 === "area" ? "所在地絞り込みだけ"
+        : _xorPlan0 === "station" ? "沿線・駅絞り込みだけ（駅）"
+        : _xorPlan0 === "route" ? "沿線・駅絞り込みだけ（沿線）"
+        : "場所なし";
+      _auditStepP("place_xor_plan", _xorLab0 + "（並行しない・入れる側の計画）area_mode=" + String((cond && cond.area_mode) || "auto"));
+      try { window.__axlxPlaceXorPlan = _xorPlan0; } catch (_) {}
+    } catch (_) {}
     _auditStepP('vis', document.visibilityState);
     /**
      * ★ 2026-11-17 統括Pro「強化は実装済だが反映一連が止まる」実測:
@@ -11070,6 +13604,7 @@
     // 2026-09-27 v2.5.32 入力を始めた合図（content.js → background）。一括検索はこれが来なければタブを読み直して1回だけやり直す
     try { window.postMessage({ from: 'aixlinx-fill-started', customerId: _fillCustomerId || null, runId: _fillRunId || null }, '*'); } catch (_) {}
     _fillCondForStamp = cond || null; // 2026-11-10 検索の印（誰の一覧か）を notifyDone で書く時に使う
+    try { window.__axlxFillCond = cond || null; } catch (_) {}
     if (!cond) { notifyDone(); return; }
 
     /**
@@ -11099,7 +13634,147 @@
         if (_rr === 0) {
           var _preS = _scanLeftoverForm();
           var _preP = _planLeftover(_preS, _axWantPlaceMode(cond), window.__axlxPrevLedger || null);
+          /**
+           * ★ 2.8.201 竹内さん「はるさんの条件が食い込んで止まっている／指定客が完了するまで」:
+           *   前客が駅客（はる=弁天町駅など）→指定客が地域（区）のとき、画面の checked が0でも
+           *   閉じた小窓に駅が残ることがある。前客番号が違う＋地域モードなら駅外しを必須にする。
+           */
+          try {
+            var _wantM0 = _axWantPlaceMode(cond);
+            var _prevC0 = "";
+            try { _prevC0 = String(window.__axlxSwitchPrevCid || _lastFilledCidLoad() || ""); } catch (_) { _prevC0 = _lastFilledCidLoad() || ""; }
+            var _curC0 = _fillCustomerId || window._axFillRunningCustomerId || null;
+            var _prevWant0 = "";
+            try { _prevWant0 = String(window.__axlxSwitchPrevWant || ""); } catch (_) {}
+            window.__axlxForceClearStations = false;
+            window.__axlxForceClearWards = false;
+            window.__axlxForceClearSameKindStations = false;
+            window.__axlxForceClearSameKindWards = false;
+            var _cidSwitched = !!(!_prevC0 || !_curC0 ? false : String(_prevC0) !== String(_curC0));
+            // 前客cid違い／前客が駅モード → 地域の指定客は駅小窓を開いて外す（はる食い込み穴）
+            var _needStClear =
+              _wantM0 === "area" &&
+              (
+                _cidSwitched ||
+                _prevWant0 === "station"
+              );
+            // ★ 2.8.214: 前客が地域 → 駅客は区・町を強制外し（印だけで終わらせない）
+            var _needWdClear =
+              _wantM0 === "station" &&
+              (
+                _cidSwitched ||
+                _prevWant0 === "area" ||
+                _prevWant0 === "ward"
+              );
+            /**
+             * ★ 2.8.220: 同種切替（駅→駅／地域→地域）でも先に外す。
+             *   画面残0＋台帳空でも、前客wantが同種なら小窓を開いて確かめる（偽きれい＝次移行が弱い穴）。
+             */
+            var _ledN0 = null;
+            try { _ledN0 = (window.__axlxPrevLedger && window.__axlxPrevLedger.n) || null; } catch (_) { _ledN0 = null; }
+            var _needSameSt =
+              _wantM0 === "station" &&
+              _cidSwitched &&
+              (
+                _prevWant0 === "station" ||
+                _prevWant0 === "route" ||
+                ((_ledN0 && ((_ledN0.stations || 0) + (_ledN0.lines || 0)) > 0)) ||
+                ((_preS.stations || 0) + (_preS.lines || 0) > 0)
+              );
+            var _needSameWd =
+              _wantM0 === "area" &&
+              _cidSwitched &&
+              (
+                _prevWant0 === "area" ||
+                _prevWant0 === "ward" ||
+                ((_ledN0 && ((_ledN0.wards || 0) + (_ledN0.towns || 0)) > 0)) ||
+                ((_preS.wards || 0) + (_preS.towns || 0) > 0)
+              );
+            /** ★ 2.8.202: background の客ごと思考（axlx_customer_think）も合流 */
+            try {
+              var _ct = window.__axlxCustomerThink;
+              if (_ct && _ct.forceClearStations && _wantM0 === "area") _needStClear = true;
+              if (_ct && _ct.forceClearWards && _wantM0 === "station") _needWdClear = true;
+              if (_ct && _ct.forceClearSameKindStations && _wantM0 === "station") _needSameSt = true;
+              if (_ct && _ct.forceClearSameKindWards && _wantM0 === "area") _needSameWd = true;
+              if (_ct && _audit) _auditStepP("customer_think_apply", String(_ct.summary || "").slice(0, 160));
+            } catch (_) {}
+            if (_needStClear || _needWdClear || _needSameSt || _needSameWd) {
+              if (_needStClear) {
+                window.__axlxForceClearStations = true;
+                window.__axlxLedgerForceOpenSt = true;
+              }
+              if (_needWdClear) {
+                window.__axlxForceClearWards = true;
+              }
+              if (_needSameSt) {
+                window.__axlxForceClearSameKindStations = true;
+                window.__axlxLedgerForceOpenSt = true;
+                window.__axlxNeedClearStation = true;
+              }
+              if (_needSameWd) {
+                window.__axlxForceClearSameKindWards = true;
+              }
+              _preP = _planLeftover(_preS, _wantM0, window.__axlxPrevLedger || null);
+              try {
+                if (_audit) {
+                  _auditStepP(
+                    "force_clear_place",
+                    "st=" + (_needStClear ? "Y" : "N") + " wd=" + (_needWdClear ? "Y" : "N")
+                      + " sameSt=" + (_needSameSt ? "Y" : "N") + " sameWd=" + (_needSameWd ? "Y" : "N")
+                      + " " + String(_preP.summary || "").slice(0, 70),
+                  );
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
           if (_audit) _auditStepP("leftover_scan", _preP.summary);
+          /**
+           * ★ 2.8.224: ループ上「いま外す段」を明示（leftover 開始＝clear 把握の入口）
+           * ★ 2.8.227: dirtyならいまの行動=外している最中。きれいなら入れへ。
+           */
+          try {
+            if (_preP && _preP.dirty) {
+              _graspCustomerLoopPhase("clear", "leftover_scan");
+              _publishNowAction("clear", "leftover_dirty");
+            } else {
+              _graspCustomerLoopPhase("fill", "leftover_clean");
+              _publishNowAction("fill", "leftover_clean");
+            }
+          } catch (_) {}
+          try {
+            if (_audit) {
+              _auditStepP(
+                "next_move_grasp",
+                "次の動き=" +
+                  ((_preP && _preP.dirty) ? "前客の選択を1つずつ外す" : "外す物なし→入れへ") +
+                  " leftover_scan",
+              );
+            }
+          } catch (_) {}
+          /**
+           * ★ 2.8.210: 次客の外しに入る前に一連の順番を読み直す（何番目から何番目かを理解）。
+           */
+          try { _flowSeriesResetReached("次客外し開始"); } catch (_) {}
+          try { _graspFlowSeriesOrder("外し前"); } catch (_) {}
+          /**
+           * ★ 2.8.209: 外す前に入れると同じ細かさで残りを1つずつ名前で把握（旧は関数だけあって未呼出）。
+           */
+          try { _guideLikeClearGrasp(cond); } catch (_) {}
+          /**
+           * ★ 2.8.229: 外し開始時にAPI手順書の外し方を把握＋次タスク移行を永続（検索把握と同型）
+           * ★ 2.8.230: 手順書薄い時はAPI束取込してから把握（検索前の束取込と同型・Then）
+           */
+          try {
+            if (_preP && _preP.dirty) {
+              _graspBeforeNextTaskThen("clear", "leftover_dirty外し開始", function () {});
+            } else {
+              _graspBeforeNextTaskThen("fill", "leftover_clean→入れ", function () {
+                try { _graspClearMethodFromPlaybook("leftover_clean"); } catch (_) {}
+                try { _auditClearMethodLedger("leftover_clean"); } catch (_) {}
+              });
+            }
+          } catch (_) {}
         }
       } catch (_) {}
       callback = function () {
@@ -11135,6 +13810,30 @@
       setTimeout(function() {
       // 検索条件を表示のキューが終わってからモーダル処理へ（enqueue と setTimeout の競合を防ぐ）
       whenClickQueueIdle(function() {
+
+      /**
+       * ★ 2.8.220: フォーム展開後に残りを再読み（展開前の「前客なし」偽きれいを潰す）。
+       *   leftover_scan は畳まれた結果画面で残0になりやすく、外しを飛ばして次へ進む穴だった。
+       */
+      try {
+        if (_rr === 0) {
+          var _postS = _scanLeftoverForm();
+          var _postP = _planLeftover(_postS, _axWantPlaceMode(cond), window.__axlxPrevLedger || null);
+          if (_audit) _auditStepP("leftover_rescan_after_form", _postP.summary);
+          if (_postP.clearStations) {
+            window.__axlxNeedClearStation = true;
+            window.__axlxPlaceClearPhase = window.__axlxPlaceClearPhase || "start";
+            window.__axlxLedgerForceOpenSt = true;
+          }
+          if (_postP.clearWards) {
+            window.__axlxForceClearWards = !!window.__axlxForceClearWards || _postP.memOnlyWards || _postP.sameKindMustClear;
+            if (_postP.sameKindMustClear) window.__axlxForceClearSameKindWards = true;
+          }
+          if (_postP.sameKindMustClear && _postP.clearStations) {
+            window.__axlxForceClearSameKindStations = true;
+          }
+        }
+      } catch (_) {}
 
       // Step1: 開いているモーダルを先に閉じる
       /**
@@ -11315,20 +14014,48 @@
              *   ★ 2026-11-17: 駅・沿線は form直外ししない（駅画面経由）。ここでは開かない。
              *   ペット(eq_rm)は通常録画どおり「絞り込み条件＋」を開いてから外す。
              */
-            var _stage = function (sel, name, onlyRe) {
+            var _stage = function (sel, name, onlyRe, stageJa) {
               chain = chain.then(function () {
                 var el = null;
                 try { el = document.querySelector(sel); } catch (_) { el = null; }
                 if (!el) return true;
                 try { _auditStepP("clear_stage", name + " を開けて外す"); } catch (_) {}
+                /**
+                 * ★ 2.8.228: 間取り等の箱を開ける時点で「いま外す箱／次」を把握（入れる時と同型）。
+                 */
+                try {
+                  _publishTaskGrasp({
+                    now: String(stageJa || name) + "を1つずつ外す",
+                    done: null,
+                    next: String(stageJa || name) + "外し完了→次の箱",
+                    kind: "clear",
+                  });
+                  _graspCustomerLoopPhase("clear", "clear_stage:" + String(name || "").slice(0, 20));
+                  /** ★ 2.8.229: 箱を開ける前にAPIの外し方を把握（検索把握と同型） */
+                  if (String(name || "").indexOf("room_layout") >= 0) {
+                    try { _graspClearMethodFromPlaybook("clear_stage:間取り"); } catch (_) {}
+                  }
+                } catch (_) {}
                 return _ensureFieldVisible(el, name, 4000).then(function () { return true; }, function () { return false; })
                   .then(function () {
-                    return new Promise(function (resolve) { _runUncheck(onlyRe, null, function () { resolve(true); }); });
+                    return new Promise(function (resolve) {
+                      _runUncheck(onlyRe, null, function () {
+                        try {
+                          _publishTaskGrasp({
+                            now: null,
+                            done: String(stageJa || name) + "外し完了",
+                            next: "次の箱の外し or 新しい条件を入れる",
+                            kind: "clear",
+                          });
+                        } catch (_) {}
+                        resolve(true);
+                      });
+                    });
                   });
               });
             };
-            _stage('input[name="room_layout_id[]"]:checked', "room_layout_id[]", /^room_layout_id/);
-            _stage('input[name="eq_rm[]"]:checked', "eq_rm[]", /^eq_rm/);
+            _stage('input[name="room_layout_id[]"]:checked', "room_layout_id[]", /^room_layout_id/, "間取り");
+            _stage('input[name="eq_rm[]"]:checked', "eq_rm[]", /^eq_rm/, "ペット");
             // 区・町はまとめて積まず、1区ずつ「送る→押す→外れたか確かめる」（_clearWardsOneByOne・#1558）
             chain = chain.then(function () {
               var el = null;
@@ -11410,9 +14137,108 @@
             whenClickQueueIdle(function () {
               console.log("[AX] 前客の条件を外し完了 → 新条件の入力開始");
               _auditStepP("clear_done", null);
+              /**
+               * ★ 2.8.208 竹内さん「所在地だけ外して終わった」:
+               *   after_clear 関所が未配線だった。外し後に台帳×画面を見てから入れへ進む。
+               *   残りがあれば印を残し、きれいでなければもう一度外し（_doReset redo）へ。
+               */
               var _look = _ln(650, 0.4, 380, 1300);
               if (Math.random() < 0.10) _look += 900 + Math.floor(Math.random() * 1700);
-              setTimeout(callback, _look);
+              try {
+                _guideLikeAfterClearCheck(cond, function (r) {
+                  var dirty = !!(r && r.dirty);
+                  /**
+                   * ★ 2.8.210: 外す前把握が無いまま入れへ進まない（順番関所）
+                   * ★ 2.8.225: 「関所で補完」だけで次へ進まない。未達なら把握し直し→まだ未達なら再外し／止め印。
+                   *   竹内さん「1つずつちゃんとタスク完了してから次に移る」
+                   */
+                  var _beforeOk = false;
+                  try {
+                    _beforeOk = !!_requireFlowSeriesUpTo("before_clear", "clear_then_fill前");
+                    if (!_beforeOk) {
+                      try { if (_audit) _auditStepP("one_task_gate_block", "before_clear未達→外す前把握してから次へ"); } catch (_) {}
+                      try { _guideLikeClearGrasp(cond); } catch (_) {}
+                      _beforeOk = !!_requireFlowSeriesUpTo("before_clear", "clear_then_fill再関所");
+                    }
+                  } catch (_) { _beforeOk = false; }
+                  if (!_beforeOk) {
+                    try { if (_audit) _auditStepP("one_task_incomplete", "before_clear未完了のまま次へ進まない"); } catch (_) {}
+                    if (dirty && typeof _cb0 === "function" && _rr < 2) {
+                      try { _auditStepP("clear_then_fill_redo", "関所未達+dirty → _doReset再実行"); } catch (_) {}
+                      setTimeout(function () { try { _doReset(_cb0, _rr + 1); } catch (_) { setTimeout(callback, _look); } }, _look);
+                      return;
+                    }
+                    /** 残0でも before_clear が無い＝把握抜け。印だけ残して入れへは進むが偽完了にしない */
+                    try {
+                      if (_audit) {
+                        _auditStepP("clear_then_fill_gap", "before_clear未達（残0）→把握抜け・入れは続行");
+                        _auditStepP("one_task_gate_gap", "before_clear再関所も未達");
+                      }
+                    } catch (_) {}
+                  }
+                  try {
+                    _auditStepP(
+                      dirty ? "clear_then_fill_gap" : (_beforeOk ? "clear_then_fill_ok" : "clear_then_fill_gap"),
+                      dirty
+                        ? ("外し後まだ残→入れ前に再外し " + String((r && r.focus && r.focus[0]) || "").slice(0, 40))
+                        : (_beforeOk ? "外し完了→新条件の入れへ" : "外し完了だが before_clear 関所弱"),
+                    );
+                  } catch (_) {}
+                  /**
+                   * ★ 2.8.220: 外し→次の動き（入れ）の移行を明示把握（ここが弱いと「外したのに次に進めない」）。
+                   * ★ 2.8.225: before_clear未達のまま clear_then_fill／after_clear を完了扱いにしない。
+                   */
+                  if (!dirty && _beforeOk) {
+                    try { _noteFlowSeriesAt("clear_then_fill", "外し完了→入れ"); } catch (_) {}
+                    try { _noteFlowSeriesAt("after_clear", "外し忘れ0"); } catch (_) {}
+                    try {
+                      if (window.__axlxNowCustomer) {
+                        window.__axlxNowCustomer.nextMove = "新条件を1つずつ入れる";
+                      }
+                    } catch (_) {}
+                    try { _graspNextCustomerAndMove("clear_then_fill"); } catch (_) {}
+                    try { _graspCustomerLoopPhase("fill", "clear_then_fill→入れ"); } catch (_) {}
+                    try { _publishNowAction("fill", "外し完了→新しい条件"); } catch (_) {}
+                    /**
+                     * ★ 2.8.229: 外し完了→入れ移行をAPI手順書×外し方台帳で把握してから次へ
+                     * ★ 2.8.230: Then関所＝手順書薄い時API取込→把握→印→入れ（search_grasp_gate 同型）
+                     */
+                    try {
+                      _publishTaskGrasp({
+                        now: null,
+                        done: "外しタスク完了",
+                        next: "新条件を1つずつ入れる",
+                        kind: "clear",
+                      });
+                    } catch (_) {}
+                    try {
+                      if (_audit) {
+                        _auditStepP("next_move_grasp", "次の動き=新条件を1つずつ入れる clear_then_fill");
+                        _auditStepP("one_task_done", "外しタスク完了→入れへ");
+                      }
+                    } catch (_) {}
+                    _graspBeforeNextTaskThen("clear_then_fill", "外し完了→入れ", function () {
+                      setTimeout(callback, _look);
+                    });
+                    return;
+                  }
+                  if (dirty && typeof _cb0 === "function" && _rr < 2) {
+                    try { _auditStepP("clear_then_fill_redo", "after_clear dirty → _doReset再実行"); } catch (_) {}
+                    setTimeout(function () { try { _doReset(_cb0, _rr + 1); } catch (_) { setTimeout(callback, _look); } }, _look);
+                    return;
+                  }
+                  setTimeout(callback, _look);
+                });
+              } catch (_) {
+                try {
+                  if (_audit) _auditStepP("clear_then_fill_ok", "外し完了→新条件の入れへ（after_clear例外時も移行）");
+                  _noteFlowSeriesAt("clear_then_fill", "例外時補完");
+                  _graspNextCustomerAndMove("clear_then_fill_fallback");
+                } catch (_e2) {}
+                _graspBeforeNextTaskThen("clear_then_fill", "例外時補完", function () {
+                  setTimeout(callback, _look);
+                });
+              }
             });
             return;
           }
@@ -11637,16 +14463,62 @@
     }
     var locationMode = decideLocationMode(cond);
     /**
+     * ★ 2.8.215 竹内さん「入れるときと同じ発想で所在地絞り込みと沿線　駅絞り込みが並行して入っていることはないので、ここはどちらかになる」:
+     *   入れる側は常に XOR（所在地 OR 沿線・駅）。両方を並行で入れない。
+     *   area_mode=auto でも負けた軸を消して把握を1本にする（resolve が両方埋めても入れは片方）。
+     *   前客の残りが混在している場合の外しは、上で立てた clear 印のまま（入れる側の把握とは別）。
+     */
+    (function _axApplyPlaceXor() {
+      var beforeSt = !!(cond.station_names && cond.station_names.length);
+      var beforeRt = !!(cond.route_ids && cond.route_ids.length);
+      var beforeWd = !!((cond.city_codes && cond.city_codes.length) || cond.detail_ward);
+      if (locationMode === "area") {
+        cond.station_names = [];
+        cond.route_ids = [];
+      } else if (locationMode === "station" || locationMode === "route") {
+        cond.city_codes = [];
+        cond.detail_ward = null;
+        cond.detail_area = null;
+      }
+      var label = locationMode === "area" ? "所在地絞り込みだけ"
+        : locationMode === "station" ? "沿線・駅絞り込みだけ（駅）"
+        : locationMode === "route" ? "沿線・駅絞り込みだけ（沿線）"
+        : "場所なし";
+      var drop = [];
+      if (locationMode === "area" && (beforeSt || beforeRt)) drop.push("沿線・駅は入れない");
+      if ((locationMode === "station" || locationMode === "route") && beforeWd) drop.push("所在地は入れない");
+      try {
+        window.__axlxPlaceXor = locationMode;
+        window.__axlxPlaceXorLabel = label;
+      } catch (_) {}
+      try {
+        if (_audit) {
+          _audit.area_path = locationMode;
+          _auditStepP("place_xor", label + "（並行しない・どちらか一方）"
+            + (drop.length ? "／" + drop.join("・") : "")
+            + " area_mode=" + String(cond.area_mode || "auto"));
+          _auditStepP("location", locationMode);
+        }
+      } catch (_) {}
+      console.log("[AX] 場所XOR把握: " + label, {
+        locationMode: locationMode, area_mode: cond.area_mode, drop: drop,
+        before: { st: beforeSt, rt: beforeRt, wd: beforeWd },
+      });
+    })();
+    // 入れる軸を XOR 後の cond に合わせる（負けた軸で fill しない）
+    hasStation = !!(cond.station_names && cond.station_names.length);
+    hasRoutes = !!(cond.route_ids && cond.route_ids.length);
+    hasCities = !!(cond.city_codes && cond.city_codes.length);
+    /**
      * 2026-11-14: `locationMode` が確定したので、**ここで `hasModalWard` を正しく直す**。
      *   ⚠ 上で暫定で決めた値（`area_mode` ベース）を、確定した `locationMode` で上書きする。
      *     駅・沿線で入れる場合は地域モーダルを使わない（リアプロはAND条件になり結果が出なくなる）。
      */
     hasModalWard = !!(cond.detail_ward) || (hasCities && locationMode === "area");
-    if (_audit) { _audit.area_path = locationMode; _auditStepP('location', locationMode); }
     console.log("[AX] 場所モード判定: " + locationMode + " / 地域モーダル: " + (hasModalWard ? "使う" : "使わない"),
       { area_mode: cond.area_mode, station_names: cond.station_names, route_ids: cond.route_ids,
         hasStation: hasStation, hasRoutes: hasRoutes,
-        cities: cond.city_codes, ward: cond.detail_ward });
+        cities: cond.city_codes, ward: cond.detail_ward, placeXor: (typeof window !== "undefined" ? window.__axlxPlaceXorLabel : "") });
 
     // ── 基本条件（1項目ずつ 80〜200ms 間隔で順次入力 — 人間らしさ）──────────
     /**
@@ -12307,9 +15179,11 @@
 
     // 沿線・駅なし（locationMode: area または none）
     if (locationMode === "area" || locationMode === "none") {
+      try { _guideLikeStationSkip("locationMode:" + locationMode); } catch (_) {}
       // ★ 2026-11-19: 前客の駅・沿線が残っていれば、所在地へ入る前に沿線・駅で1つずつ外して確定する（駅と地域を混ぜない）
       _clearStationsBeforeWardThen(function () {
       if (locationMode === "none") {
+        try { _guideLikeAreaSkip("locationMode:none"); } catch (_) {}
         // area_mode抹消等で場所条件が空になった場合 → 全件検索せず中止（fallbackSearchWithoutAreaと同方針）
         if (_hadAreaBeforeSuppress) {
           var errNone = "area_mode=" + (cond.area_mode || "auto") +
@@ -12385,7 +15259,19 @@
                 return;
               }
               try { if (_audit) _auditStepP("area_all_done", (why || "所在地") + " → 全部押したあと次へ（試行" + tries + "）"); } catch (_) {}
-              _runDeferredBasicThenSearch(why);
+              // ★ 2026-11-22: 確定してリストへ→閉じた把握 → 入れた1つずつ → after_area
+              _guideLikeAfterConfirmCheck("area", cond, function () {
+                _guideLikePhaseCheck("after_area", cond, function (r) {
+                  if (r && r.fatal) {
+                    var em = "手順表×画面: 地域入れた後も区0（全件検索防止のため中止）";
+                    try { if (_audit) _auditStepP("guide_phase_block", "after_area 区0"); } catch (_) {}
+                    showWarnToast(em);
+                    notifyDone(em);
+                    return;
+                  }
+                  _runDeferredBasicThenSearch(why);
+                });
+              });
             }
             setTimeout(waitModalGone, 350 + Math.floor(Math.random() * 250));
           });
@@ -12410,7 +15296,16 @@
                 // 1つ以上実際にチェックされた場合のみ検索（全件検索防止）
                 var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
                 if (applied > 0) {
-                  _runDeferredBasicThenSearch('所在地フォールバック');
+                  // ★ 2026-11-22: フォールバックでも確定閉じ→入れた→after_area を飛ばさない
+                  _guideLikeAfterConfirmCheck("area", cond, function () {
+                    _guideLikePhaseCheck("after_area", cond, function (r) {
+                      if (r && r.fatal) {
+                        var em0 = "手順表×画面: 所在地フォールバック後も区0（全件検索防止）";
+                        showWarnToast(em0); notifyDone(em0); return;
+                      }
+                      _runDeferredBasicThenSearch('所在地フォールバック');
+                    });
+                  });
                 } else {
                   var em = '所在地フォールバック失敗: city_codeチェック未反映（全件検索防止のため中止）: ' + msg;
                   showWarnToast(em);
@@ -12441,7 +15336,15 @@
                 if (_audit) _auditStepP('area_force_search', applied + '区で検索へ（' + String(why).slice(0, 60) + '）');
                 if (applied > 0) {
                   console.warn('[AX] 地域は完全でないが ' + applied + '区入っている → 条件→検索へ進む');
-                  _runDeferredBasicThenSearch('区が1つ以上');
+                  _guideLikeAfterConfirmCheck("area", cond, function () {
+                    _guideLikePhaseCheck("after_area", cond, function (r) {
+                      if (r && r.fatal) {
+                        var em0 = "手順表×画面: 区が1つ以上経路でも区0（全件検索防止）";
+                        showWarnToast(em0); notifyDone(em0); return;
+                      }
+                      _runDeferredBasicThenSearch('区が1つ以上');
+                    });
+                  });
                 } else {
                   var em = '地域が1区も入らず中止（全件検索防止）: ' + String(why).slice(0, 120);
                   showWarnToast(em);
@@ -13195,7 +16098,15 @@
           whenClickQueueIdle(function () {
             var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
             if (applied > 0) {
-              _runDeferredBasicThenSearch("直接区チェック後");
+              _guideLikeAfterConfirmCheck("area", cond, function () {
+                _guideLikePhaseCheck("after_area", cond, function (r) {
+                  if (r && r.fatal) {
+                    var em0 = "手順表×画面: 直接区チェック後も区0（全件検索防止）";
+                    showWarnToast(em0); notifyDone(em0); return;
+                  }
+                  _runDeferredBasicThenSearch("直接区チェック後");
+                });
+              });
             } else {
               var em = "直接区チェック後も区が0（全件検索防止のため中止）";
               try { _auditStepP("area_direct_zero", em); } catch (_) {}
@@ -13286,10 +16197,21 @@
       }
       return clickByText(['×とじる', '× とじる', 'とじる']);
     }
-    /** 駅モーダル閉じたあと: キュー消化 → 条件1つずつ → 検索（通常と同じ順） */
+    /** 駅モーダル閉じたあと: 確定閉じ把握 → 入れた1つずつ → after_station → 条件 → 検索 */
     function _afterStationThenBasicSearch(why) {
       whenClickQueueIdle(function () {
-        _runDeferredBasicThenSearch(why || "駅確定後");
+        _guideLikeAfterConfirmCheck("station", cond, function () {
+          _guideLikePhaseCheck("after_station", cond, function (r) {
+            if (r && r.fatal) {
+              var em = "手順表×画面: 駅入れた後も駅0（全件検索防止のため中止）";
+              try { if (_audit) _auditStepP("guide_phase_block", "after_station 駅0"); } catch (_) {}
+              showWarnToast(em);
+              notifyDone(em);
+              return;
+            }
+            _runDeferredBasicThenSearch(why || "駅確定後");
+          });
+        });
       });
     }
 
@@ -14153,6 +17075,25 @@
     // （旧実装で _fwPoll/_fwScanRows がクリックすると background.js と二重クリックになるため廃止）
   });
 
+  /**
+   * ★ 2.8.196: 検索 click → リロードで画面照合タイマーが死ぬ抜けを塞ぐ。
+   *   sync に意図把握だけ残っている時、新ページで画面照会を再開する。
+   */
+  try {
+    setTimeout(function () {
+      try {
+        var raw = sessionStorage.getItem("axlx_search_grasped_sync");
+        if (!raw) return;
+        var g = JSON.parse(raw);
+        if (!g || !g.at || Date.now() - Number(g.at) > 15 * 60 * 1000) return;
+        var hasScreen = !!(g.screenOk || (g.screen && (g.screen.sortHead || g.screen.rowsHint || g.screen.pdf > 0)));
+        if (hasScreen) return;
+        try { if (_audit) _auditStepP("search_grasp_reload_resume", "客=" + String(g.customerId || "-").slice(0, 8) + " why=" + String(g.why || "").slice(0, 24)); } catch (_) {}
+        _verifyCustomerSearchScreenGrasp("reload_resume:" + String(g.why || "sync").slice(0, 20));
+      } catch (_) {}
+    }, 700);
+  } catch (_) {}
+
   // 2026-09-27 v2.5.32 content.js の「page-script は生きているか」に答える（一括検索の前のタブの確かめ）
   /**
    * ★ 2026-11-17 次客乗り換え: pong に fillRunning／客ID／世代を載せる。
@@ -14212,6 +17153,36 @@
     } catch (_) {}
   });
 
+  /** ★ 2.8.192: bulk-dl の並べ替え一連原子を流れ地図へ合流（手順書×画面の細部） */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e.data || e.data.from !== "axlx-bulk-flow-atom") return;
+      _noteFlowAtom(e.data.atom, !!e.data.ok, e.data.detail || "");
+    } catch (_) {}
+  });
+
+  /**
+   * ★ 2.8.226: bulk-dl の並べ替え／一覧をループ段として把握（page 世界の _graspCustomerLoopPhase へ）。
+   *   旧は sort が _AX_CUSTOMER_LOOP に居ても bulk から呼ばれず、次の動き＝並べ替えがループ印に残らなかった。
+   */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e.data || e.data.from !== "axlx-loop-phase-req") return;
+      var ph = String(e.data.phase || "").slice(0, 16);
+      var wh = String(e.data.why || "bulk").slice(0, 40);
+      if (ph === "sort") {
+        try {
+          if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "並べ替え（AD→高→低）";
+        } catch (_eN) {}
+        try { _graspNextCustomerAndMove("sort_req"); } catch (_eG) {}
+      }
+      _graspCustomerLoopPhase(ph, wh);
+      if (ph === "sort" && e.data.done) {
+        try { _auditStepP("one_task_done", "並べ替え完了→物件取得へ"); } catch (_eD) {}
+      }
+    } catch (_) {}
+  });
+
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill") return;
     /**
@@ -14240,6 +17211,24 @@
         try { notifyDone("stuck_superseded: 前のお客さんの入力が3分以上進まず、次のお客さんに移りました"); } catch (_) {}
         try { _forceFillClearSafe("stuck_superseded", null); } catch (_) {}
         _otherCust = false;
+      }
+      /**
+       * ★ 2.8.201: 指定客ロック中は、入力フラグが一時的に落ちていても別客を始めない
+       *   （ready_next 前に別束が割り込む穴を塞ぐ）。
+       */
+      var _desNeed = false, _desCid = "";
+      try {
+        _desNeed = !!window.__axlxDesignatedNeedReady;
+        _desCid = String(window.__axlxDesignatedCid || "");
+      } catch (_) {}
+      if (_desNeed && _desCid && _incCid && String(_desCid) !== String(_incCid || "")) {
+        console.warn("[AX] 指定客完了前 → 別客を断る des=" + _desCid.slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8));
+        try { if (_audit) _auditStepP("designated_hold", "指定客未完了→別客断る des=" + _desCid.slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8)); } catch (_) {}
+        window.postMessage({
+          from: "aixlinx-fill-done", gate: true, gateKind: "busy_other_customer", customerId: _incCid,
+          error: "busy_other_customer: 指定お客さんの一連が完了するまで、このお客さんは始めませんでした（上書きしない）",
+        }, "*");
+        return;
       }
       if (_otherCust) {
         console.warn("[AX] 前のお客さんの入力中 → 次のお客さんは始めません run=" + String(_runCidNow || "-").slice(0, 8) + " next=" + String(_incCid || "-").slice(0, 8));

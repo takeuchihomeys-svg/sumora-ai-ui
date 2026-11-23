@@ -245,10 +245,37 @@
     zIndex:   "4",
     display:  "none",
   });
+  resizeHandle.title = "ドラッグでパネルを延ばす（右下）";
   resizeHandle.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20">
     <path d="M20 8L20 20L8 20Z" fill="rgba(21,101,192,0.18)"/>
     <line x1="8"  y1="20" x2="20" y2="8"  stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
     <line x1="13" y1="20" x2="20" y2="13" stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>`;
+
+  /**
+   * 2026-11-22 竹内さん「中の部分見れなくなるときあるから右上にカーソル合わせて拡張ツール延ばせるようする」
+   *   統括Pro: F53詰まり『中央に拡張小窓が重なり一覧の一部が見えない（5回）』→ 右上コーナーで延ばす。
+   *   右下は既にある。右上は上方向にも広げられる（下端固定・top を動かす）。
+   */
+  const resizeNeHandle = document.createElement("div");
+  resizeNeHandle.id = "axlx-resize-ne";
+  Object.assign(resizeNeHandle.style, {
+    position: "absolute",
+    top:      "0",
+    right:    "0",
+    width:    "28px",
+    height:   "28px",
+    cursor:   "ne-resize",
+    zIndex:   "5",
+    display:  "none",
+  });
+  resizeNeHandle.title = "ドラッグでパネルを延ばす（右上）";
+  resizeNeHandle.innerHTML = `<svg width="28" height="28" viewBox="0 0 28 28">
+    <path d="M28 0L28 12L16 0Z" fill="rgba(255,255,255,0.22)"/>
+    <line x1="10" y1="2" x2="26" y2="2" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="26" y1="2" x2="26" y2="18" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="14" y1="4" x2="24" y2="4" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="24" y1="4" x2="24" y2="14" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
   </svg>`;
 
   // ── ミニ用オーバーレイ（常にAIXLINXアイコンを表示してiframe未ロードでも白くならない）──
@@ -269,6 +296,7 @@
   wrap.appendChild(dragBar);
   // iframeはここでは追加しない（ensureIframe()で遅延追加）
   wrap.appendChild(resizeHandle);
+  wrap.appendChild(resizeNeHandle);
   wrap.appendChild(miniOverlay);
   document.body.appendChild(wrap);
 
@@ -402,9 +430,10 @@
       clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
-      dragBar.style.display       = "flex";
-      resizeHandle.style.display  = "block";
-      miniOverlay.style.display   = "none";
+      dragBar.style.display        = "flex";
+      resizeHandle.style.display   = "block";
+      resizeNeHandle.style.display = "block";
+      miniOverlay.style.display    = "none";
       /**
        * 2026-11-13 竹内さん「閉じた状態から展開することができなくなる」:
        *   ⚠ 旧は `visibility` を戻すだけで、**display を戻していなかった**。
@@ -442,7 +471,7 @@
   }
 
   // ── ドラッグ & リサイズ（一元管理）──────────────────────────────
-  let dragAction = null; // "move" | "resize"
+  let dragAction = null; // "move" | "resize" | "resize-ne"
   let startCX = 0, startCY = 0;
   let startWX = 0, startWY = 0;
   let startPW = panelW, startPH = panelH;
@@ -463,8 +492,13 @@
   }
 
   miniOverlay.addEventListener("mousedown",  (e) => onDragStart(e, "move"));
-  dragBar.addEventListener("mousedown",      (e) => onDragStart(e, "move"));
+  dragBar.addEventListener("mousedown",      (e) => {
+    // 右上ハンドル上は移動ではなくリサイズ（ドラッグバーと重なるため）
+    if (e.target === resizeNeHandle || (resizeNeHandle && resizeNeHandle.contains(e.target))) return;
+    onDragStart(e, "move");
+  });
   resizeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize"));
+  resizeNeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize-ne"));
 
   // ダブルクリックでサイズをデフォルトにリセット
   dragBar.addEventListener("dblclick", () => {
@@ -494,6 +528,27 @@
     if (dragAction === "move") {
       wrap.style.setProperty("left", Math.max(0, startWX + dx) + "px", "important");
       wrap.style.setProperty("top",  Math.max(0, startWY + dy) + "px", "important");
+    } else if (dragAction === "resize-ne") {
+      /**
+       * 右上: 右へ幅・上へ高さ（下端固定）。中身が見えるように延ばせる。
+       */
+      const minHRead = Math.min(MIN_H, Math.max(240, window.innerHeight - BOTTOM_GAP - DRAG_H - 10));
+      const maxW = Math.max(MIN_W, window.innerWidth - 20);
+      panelW = Math.min(Math.max(MIN_W, startPW + dx), maxW);
+      const bottomEdge = startWY + startPH + DRAG_H;
+      let newH = startPH - dy;
+      let newTop = bottomEdge - newH - DRAG_H;
+      if (newTop < 0) {
+        newTop = 0;
+        newH = Math.max(minHRead, bottomEdge - DRAG_H);
+      }
+      const maxH = window.innerHeight - newTop - BOTTOM_GAP - DRAG_H;
+      panelH = Math.min(Math.max(minHRead, newH), Math.max(minHRead, maxH));
+      newTop = Math.max(0, bottomEdge - panelH - DRAG_H);
+      wrap.style.setProperty("top", newTop + "px", "important");
+      wrap.style.setProperty("width",  panelW + "px", "important");
+      wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
+      posY = newTop;
     } else {
       const curTop = parseInt(wrap.style.top) || posY;
       const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;

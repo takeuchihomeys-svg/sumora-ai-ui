@@ -108,8 +108,9 @@
       //   ウェブの AIXツールの一括検索（automation_commands.payload.source="web_brain"）を受け取るか（pending?brain=1）。
       //   ブレインの PC だけ。🧠×スタッフは受け取らない（スタッフは自動化を無視する＝claimCommands と同じ線・別のブレインの PC が拾う）
       claimBrainCommands: b && !staff,
-      // 2026-11-11: AIX（選んだお客さんを自動で検索）はブレイン OFF でも動かす（人が選んだお客さんの検索なので判定は要らない）
-      aiCustomerSearch: aiMode,
+      // 2026-11-11: AIX（選んだお客さんを自動で検索）はブレイン OFF でも動かす
+      // ★ 2026-11-22: スタッフも「選んだお客さんだけ」検索〜送付を完走（一括・自動便は claim* で閉じたまま）
+      aiCustomerSearch: aiMode || staff,
       // 2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」:
       //   検索の1回ごとに「入れようとした条件・実際に入った値・結果」を /api/search-audits に送るか（search-audit.js）。
       //   ブレインの時だけ（スタッフ×ブレインの手の検索も含む）。ブレイン OFF は送らない（サーバーも brain!==true なら何もしない）
@@ -145,8 +146,8 @@
     var b = !!brain;
     if (mode === "staff") {
       return b
-        ? { cls: "brain-staff", text: "🧠 ブレイン × スタッフモード — 自動化は停止中（手動のみ・2時間で自動OFF）。手で送る物件もブレインが判定しAIXツールに記録します（物件は外しません）。ウェブの一括検索は拾いません（別のブレインのPCが拾う）" }
-        : { cls: "staff", text: "スタッフモード中 — 自動化は停止しています（手動操作のみ・2時間で自動OFF）" };
+        ? { cls: "brain-staff", text: "🧠 ブレイン × スタッフ — 選んだお客さんを自動で検索〜記録まで完走します（2時間で自動OFF）。★物件出し★へはAIXツール解析後に1回知らせます（他の自動と同じ）。一括・自動便・他PCの指示は拾いません。物件は外しません" }
+        : { cls: "staff", text: "スタッフモード — 選んだお客さんだけ自動で検索〜物件送付まで完走します（2時間で自動OFF）。一括・自動便は受け取りません" };
     }
     if (mode === "ai") {
       return b
@@ -266,8 +267,22 @@
   function effectiveBehavior(mode, brain) {
     var b = behavior(mode, brain);
     if (!GUIDE_ONLY) return b;
-    // 自動モード（aix）・AIXモード（ai）を選んでいる時だけ開く
+    // 自動モード（aix）・AIXモード（ai）を選んでいる時だけ一括・自動便まで開く
     if (mode === AUTO_MODE || mode === AI_MODE) return b;
+    /**
+     * ★ 2026-11-22 竹内さん「スタッフモードは選択したお客さんをAIXのように検索して物件ダウンロードまで完了」:
+     *   スタッフは **選んだお客さんだけ** aiCustomerSearch＋autoSend を開く。
+     *   一括・自動便・web_brain は閉じたまま（他のお客さんが勝手に動かない）。
+     */
+    if (mode === "staff") {
+      var s = {};
+      for (var ks in b) s[ks] = b[ks];
+      s.claimCommands = false; s.claimAix = false; s.runAutoSchedule = false; s.claimBrainCommands = false;
+      s.aiCustomerSearch = true;
+      s.autoSend = true;
+      s.guideOnly = false;
+      return s;
+    }
     var o = {};
     for (var k in b) o[k] = b[k];
     o.claimCommands = false; o.claimAix = false; o.autoSend = false; o.runAutoSchedule = false; o.claimBrainCommands = false;

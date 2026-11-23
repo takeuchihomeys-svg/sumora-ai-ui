@@ -11,7 +11,9 @@
 //     ① marker: 拡張のコードに必ずある文字（テストで「コードに入っているか」を確かめる）
 //     ② verify: 自動の点検記録（search_audits.steps）で「守れたか」を確かめる形（決定論）
 //     ③ 拡張の page-script.js の `_AXLX_RULES_DONE` と id を揃える（テストで食い違いを止める）
-//   ⚠ 決まりを足す・変える時: ここ → page-script.js の `_AXLX_RULES_DONE` → テストの順に直す。
+//   ⚠ 決まりを足す・変える時: ここ → page-script.js の `_AXLX_RULES_DONE` →（bulk-dl なら目印も）→ テストの順に直す。
+//   ⚠ 重要な自動の動き（AD並び替えなど）を直したら、必ずここに1件載せる。載せないと
+//     checkRulesInCode／auto-procedure-rules.test／統括Pro の手順書反映が落ちる（抜け防止）。
 //   ⚠ 統括（Pro）の判断は入れない。ここは決まりの一覧と、数えて確かめるだけ。
 
 /**
@@ -19,10 +21,10 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.154";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.232";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
-export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "press";
+export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
 
 export const RULE_SCENE_JA: Record<RuleScene, string> = {
   switch: "お客さんの切り替え",
@@ -31,6 +33,7 @@ export const RULE_SCENE_JA: Record<RuleScene, string> = {
   cond: "条件（賃料・間取り・徒歩など）",
   pet: "絞り込み条件（ペット）",
   search: "検索を押す",
+  list: "検索結果（物件の取得・並び替え）",
   press: "押し方（全部の場面）",
 };
 
@@ -84,7 +87,7 @@ export type AutoRule = {
   /** 拡張のコードに必ずある文字（反映の確かめ） */
   marker: string;
   /** marker があるファイル（chrome-extension/ の下） */
-  file: "page-script.js" | "search-audit.js";
+  file: "page-script.js" | "search-audit.js" | "bulk-dl.js" | "background.js";
   /** 点検記録で確かめる形（無ければ「コードにあるか」だけ） */
   verify?: RuleVerify;
 };
@@ -313,6 +316,620 @@ export const AUTO_RULES: AutoRule[] = [
     file: "page-script.js",
     verify: { onlyIf: ["page:post_send_wait"], mustHaveAny: ["page:post_send_wait_done", "page:post_send_cancel"] },
   },
+  {
+    id: "search_to_sort_cursor",
+    scene: "list",
+    text: "検索を押した把握をトリガーに、1秒以降の人間ランダム待ちのあと並べ替えへカーソル移動する。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
+    since: "2.8.191",
+    kb: "92413949",
+    marker: "_scheduleSortCursorAfterSearch",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:search_to_sort", "dl:sort_cursor_wait", "dl:after_search"],
+      mustHaveAny: ["dl:sort_cursor_go", "dl:sort_menu", "dl:sort_head"],
+    },
+  },
+  {
+    id: "search_confirm_then_wait_sort",
+    scene: "list",
+    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_confirmed／screenOk）が取れてから。確認時刻から合計1秒以上空けて sort_cursor へ。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
+    since: "2.8.207",
+    kb: null,
+    marker: "_isSearchConfirmGrasp",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_cursor_go", "dl:sort_menu", "dl:search_to_sort"],
+      mustHaveAny: [
+        "page:search_press_ok",
+        "page:search_customer_grasp_confirmed",
+        "page:guide_phase_after_search",
+        "dl:search_grasp_confirmed",
+        "dl:search_customer_screen_ok",
+        "dl:sort_cursor_wait",
+        "dl:search_confirm_gap",
+      ],
+    },
+  },
+  {
+    id: "false_complete_next_gate",
+    scene: "list",
+    text: "把握→次へは『意図』と『完了』を分ける。click直前・armedは意図のみ（search_grasp_intent_only）。after_search完了・guide_phase_ok・screenOkは押下確認後だけ。誤った完了印で次段（並べ替え）に移らない",
+    since: "2.8.207",
+    kb: null,
+    marker: "search_grasp_intent_only",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:search_grasp_intent_only"],
+      mustHaveAny: [
+        "page:search_press_ok",
+        "page:search_customer_grasp_confirmed",
+        "page:guide_phase_after_search",
+        "dl:search_grasp_confirmed",
+        "dl:sort_gate_need_confirm",
+      ],
+    },
+  },
+  {
+    id: "list_modal_not_sidebar",
+    scene: "list",
+    text: "条件モーダル判定は one_station/one_line/one_city とモーダル固有見出しだけ。左サイド常時の「所在地」単体でモーダル中と誤らない",
+    since: "2.8.192",
+    kb: "92413949",
+    marker: "_hasSortHeadVisible",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_cursor_wait", "dl:after_search"],
+      mustHaveAny: ["dl:sort_gate_main", "dl:sort_gate_reclassify", "dl:sort_cursor_go", "dl:sort_menu"],
+    },
+  },
+  {
+    id: "sort_gate_main_insurance",
+    scene: "list",
+    text: "並べ替えへは関所で細分化: sort_gate_check→main|reclassify|wait_modal|wait_fill|wait_rows。誤検知は再分類で本線続行。保険(sort_cursor_insurance)は本線が5回待っても進まない時の1回だけ",
+    since: "2.8.193",
+    kb: "92413949",
+    marker: "_gateSortCursorReady",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_gate_check", "dl:sort_cursor_wait", "dl:after_search"],
+      mustHaveAny: ["dl:sort_gate_main", "dl:sort_gate_reclassify", "dl:sort_cursor_go", "dl:sort_menu"],
+    },
+  },
+  {
+    id: "search_customer_screen_grasp",
+    scene: "list",
+    text: "お客さんで検索したことを手順書×画面で把握する: 押下確認後に基準画面を取り、変化または試行進みで search_customer_grasp_ok。click直前では画面照合しない（旧一覧の誤screenOk禁止）。客番号を把握に紐づけ、確認後に並べ替え本線へ",
+    since: "2.8.195",
+    kb: "92413949",
+    marker: "_verifyCustomerSearchScreenGrasp",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:guide_phase_after_search", "page:search_customer_grasp_intent", "dl:after_search"],
+      mustHaveAny: ["page:search_customer_grasp_ok", "page:guide_phase_after_search_screen", "dl:search_customer_screen_ok", "dl:sort_cursor_go", "dl:sort_menu"],
+    },
+  },
+  {
+    id: "search_grasp_reload_resume",
+    scene: "list",
+    text: "検索click→リロードで画面照合タイマーが死んでも、新ページで sync 意図把握を読み reload_resume で画面照会を再開。Case C でも一覧証拠があれば search_customer_screen_ok に昇格",
+    since: "2.8.196",
+    kb: "92413949",
+    marker: "reload_resume",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:search_grasp_reload_resume", "dl:after_search", "page:search_customer_grasp_intent"],
+      mustHaveAny: ["page:search_customer_grasp_ok", "dl:search_customer_screen_ok", "dl:sort_cursor_go", "dl:sort_menu"],
+    },
+  },
+  {
+    id: "sort_head_buried_find",
+    scene: "list",
+    text: "検索把握後の並べ替えで『並べ替え』が見つからない（sort_no_head）を防ぐ。巨大main_table文言に埋もれても含む一致＋最短要素で見出しを掴み、失敗時は見出しが見えるなら再試行してから物件取得へ進む",
+    since: "2.8.197",
+    kb: "92413949",
+    marker: "_findSortHeadEl",
+    file: "bulk-dl.js",
+    verify: {
+      // 途中の sort_no_head 再試行印は残るので mustNot は付けない。完了は head_hover/done/hilo
+      onlyIf: ["dl:sort_menu", "dl:sort_cursor_go", "dl:after_search"],
+      mustHaveAny: ["dl:sort_head_hover", "dl:sort_done", "dl:sort_hilo", "dl:sort_retry_before_pdf", "dl:flow_atom_ok_sort_menu"],
+    },
+  },
+  {
+    id: "sort_head_aim_toori_fallback",
+    scene: "list",
+    text: "並べ替え見出しaim: 短い『並べ替え』学習が無い時は束の棟戸｜div.under 座標を①見出しの保険に使う（③高→低の別名にはしない・330797cb）。旧falseHeadがunderを全除外しsort_head_aim_warm=0→sort_no_headでPDFへ飛んでいた。印: sort_head_aim_warm→sort_head_aim_hit/scroll→sort_head_hover",
+    since: "2.8.218",
+    kb: "330797cb",
+    marker: "_pickSortHeadAimFromPoints",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_menu", "dl:sort_aim_warm", "dl:sort_no_head"],
+      mustHaveAny: ["dl:sort_head_aim_warm", "dl:sort_head_aim_hit", "dl:sort_head_hover", "dl:sort_done"],
+    },
+  },
+  {
+    id: "sort_legacy_claude_path",
+    scene: "list",
+    text: "Claude時代は検索後に把握ゲート無しでAD並べ替えへ入れていた。2.8.177の『把握なし→ADしない』が回帰の本因。afterSearch/fromSortCursor/行ありarmedは把握印が無くても並べ替えへ。把握は印として残し止めない。並べ替え中断はone_*ラベルのみ",
+    since: "2.8.194",
+    kb: "92413949",
+    marker: "legacy_claude_path",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:search_to_sort", "dl:after_search", "dl:sort_cursor_go"],
+      mustHaveAny: ["dl:search_grasp_gate", "dl:sort_menu", "dl:sort_head", "dl:sort_hilo", "dl:flow_atom_ok_sort_legacy"],
+      mustNot: ["dl:sort_blocked"],
+    },
+  },
+  {
+    id: "search_armed_kick_sort",
+    scene: "list",
+    text: "検索を押したら必ず armed（AJAXでも）。並べ替え kick は検索確認後だけ（armed直後の旧一覧ではしない）。pending/sync があればこの一覧だけ自動ON。止まって「0件選択中」にしない",
+    since: "2.8.190",
+    kb: "92413949",
+    marker: "_kickSortAfterSearch",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:search_armed", "dl:search_to_sort", "page:search_armed"],
+      mustHaveAny: ["dl:search_to_sort", "dl:sort_menu", "dl:sort_hilo", "dl:sort_done"],
+    },
+  },
+  {
+    id: "ad_sort_hover",
+    scene: "list",
+    text: "検索把握のあと物件取得の前に必ずAD並べ替え: ①「並べ替え」へカーソル（クリックしない）②メニュー内の「AD」へカーソル（クリックしない・一覧のAD列は禁止）③AD右のspan.sort_detail「高→低」だけクリック。URL直禁止。カーソルはforceOneCursorで1本。印: sort_head_hover→sort_ad_hover→sort_hilo/sort_done",
+    since: "2.8.169",
+    kb: "42310121",
+    marker: "findSortDetailByRec",
+    file: "bulk-dl.js",
+    // リトライで途中の sort_no_* が残っても、最後に高→低まで行けば守れた
+    verify: {
+      onlyIf: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_no_head", "dl:sort_no_ad", "dl:sort_no_hilo", "dl:sort_ad_wrong", "dl:sort_menu", "dl:sort_failed", "dl:sort_done"],
+      mustHave: "dl:sort_hilo",
+      mustNot: ["dl:sort_failed", "dl:sort_ad_wrong"],
+    },
+  },
+  {
+    id: "station_grasp_like_guide",
+    scene: "area",
+    text: "自動・AIXでも通常案内と同じく、指定駅（primary_stations）と指定沿線（primary_route_ids）を先にそろえてから沿線→駅を選ぶ。案内だけが光って自動が弱い状態にしない",
+    since: "2.8.161",
+    kb: "fd2ac6ad",
+    marker: "_applyGuideLikeStationGrasp",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:station_grasp_like_guide", "page:station_route_from_map"],
+      mustHaveAny: ["page:station_grasp_like_guide", "page:station_route_from_map"],
+      mustNot: ["page:station_no_route"],
+    },
+  },
+  {
+    id: "guide_plan_link",
+    scene: "area",
+    text: "通常の光る把握と同じ手順表（realpro-guide-plan）を自動の page にも載せ、未了欄と指定駅の次手を同じ土台で読む。学習位置が薄い時でも条件→手順表→画面の今で把握する",
+    since: "2.8.162",
+    kb: "8cc85478",
+    marker: "_guideLikeFormGrasp",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:guide_plan_linked", "page:guide_plan_miss"],
+      mustHave: "page:guide_plan_linked",
+      mustNot: ["page:guide_plan_miss"],
+    },
+  },
+  {
+    id: "guide_clear_fill_gate",
+    scene: "clear",
+    text: "外す時も入れる時も、手順表×画面照合で入れ忘れ・外し忘れを言葉にする。同種の場所（駅→駅）でも続き客は前客を外す。検索前に1回直してから conditions_ready",
+    since: "2.8.163",
+    kb: "ad1e1176",
+    marker: "_guideLikeClearGrasp",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:guide_clear_grasp", "page:guide_fill_gate"],
+      mustHaveAny: ["page:guide_clear_grasp", "page:guide_fill_gate"],
+    },
+  },
+  {
+    id: "guide_list_next_flow",
+    scene: "list",
+    text: "一覧・次ページも手順書の list/next 場面と画面（行・次ボタン・AD順）を照合してから進む。条件モーダル（駅・沿線・所在地）中は並べ替え／送付しない（照合NGで止める）。AD後も次ページへ。客完了時 handoff を残し、次客の切替で list_handoff_seen として読む",
+    since: "2.8.170",
+    kb: "b3b5e14c",
+    marker: "_guideLikeListFlowGrasp",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "page:list_handoff_seen", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
+      mustHaveAny: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "page:list_handoff_seen", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
+    },
+  },
+  {
+    id: "guide_phase_checkpoints",
+    scene: "area",
+    text: "手順表×画面照合を外し完了直後（after_clear・外忘れだけ）・確定してリストへ閉じた後（after_confirm・入れた1つずつ）・駅後・地域後・場所後・検索前・検索押下後（after_search→AD並び替え前）で1つずつ行う。次客は外し→きれい確認→外し忘れ1つずつ→新条件。抜けは guide_phase_one。駅0・区0は次へ進まない。検索把握なしではAD並び替えしない",
+    since: "2.8.177",
+    kb: "530bb1f3",
+    marker: "_guideLikeAfterConfirmCheck",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:guide_phase_after_clear", "page:guide_phase_after_confirm", "page:guide_phase_after_station", "page:guide_phase_after_area", "page:guide_phase_after_place", "page:guide_phase_before_search", "page:guide_phase_after_search", "page:guide_phase_one", "page:guide_phase_ok", "page:guide_phase_gap", "page:guide_phase_block", "dl:search_grasp_gate", "dl:sort_blocked"],
+      mustHaveAny: ["page:guide_phase_after_clear", "page:guide_phase_after_confirm", "page:guide_phase_after_station", "page:guide_phase_after_area", "page:guide_phase_after_place", "page:guide_phase_before_search", "page:guide_phase_after_search", "page:guide_phase_one", "page:guide_phase_ok", "dl:search_grasp_gate"],
+    },
+  },
+  {
+    id: "flow_series_grasp",
+    scene: "press",
+    text: "手順書の一連の流れ（flow_series: 外し→確定→場所→検索→一覧→次→次客）を段ごとに把握する。各段で page:flow_series_at を残し、場面の並びだけ見て流れ完了としない。検索把握なしでは一覧ADへ進まない",
+    since: "2.8.182",
+    kb: "38ed0d15",
+    marker: "_noteFlowSeriesAt",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:flow_series_at", "page:flow_series_ok", "page:flow_series_gap"],
+      mustHaveAny: ["page:flow_series_at", "page:flow_series_ok"],
+    },
+  },
+  {
+    id: "flow_series_order_gate",
+    scene: "clear",
+    text: "拡張が一連の順番を徹底理解する。客開始で flow_series_plan（何段・何順）を残し、各段で flow_series_order（N/M）を言う。前段抜けは flow_series_gap。before_clear 無しで after_clear／入れへ進まない（_requireFlowSeriesUpTo）",
+    since: "2.8.210",
+    kb: "d45560bf",
+    marker: "_graspFlowSeriesOrder",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:flow_series_plan", "page:flow_series_order", "page:flow_series_gap", "page:leftover_scan"],
+      mustHaveAny: ["page:flow_series_plan", "page:flow_series_order", "page:flow_series_at"],
+    },
+  },
+  {
+    id: "continuous_customer_loop",
+    scene: "switch",
+    text: "連続客は外す→客ごと思考→入れる→検索→送付→送付後外し→次客可を1人ずつ完了してから次へ。失敗でも customer_think／post_send_clear／handoff_loop の印を残す（測れない穴を作らない）",
+    since: "2.8.205",
+    kb: "0a5b99dd",
+    marker: "_refreshCustomerThink",
+    file: "background.js",
+    verify: {
+      onlyIf: ["customer_think", "post_send_clear", "handoff_loop", "handoff_atom_post_send", "series_done"],
+      mustHaveAny: ["customer_think", "post_send_clear", "handoff_loop", "series_done"],
+    },
+  },
+  {
+    id: "clear_then_fill_gate",
+    scene: "clear",
+    text: "連続客で所在地だけ外して終わらない。clear_doneのあと guide_phase_after_clear（台帳×画面）→ clear_then_fill_ok で新条件の入れへ。残りがあれば clear_then_fill_gap→外し再実行。外し完了後は next_move_grasp（新条件を1つずつ入れる）で次へ移行する。所在地外しだけで fill に進まない／完了扱いにしない",
+    since: "2.8.208",
+    kb: "98581439",
+    marker: "clear_then_fill_ok",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:clear_done", "page:guide_phase_after_clear", "page:switch_grasp"],
+      mustHaveAny: ["page:clear_then_fill_ok", "page:clear_then_fill_gap", "page:fill_start", "page:leftover_clean", "page:next_move_grasp"],
+    },
+  },
+  {
+    id: "one_task_complete_before_next",
+    scene: "clear",
+    text: "1つずつタスク完了してから次へ。before_clear未達でclear_then_fillに進まない（印だけ補完禁止）。未達ならguide_clearで把握し直し→再関所。dirtyなら再外し。完了時one_task_done。未完了はone_task_incomplete／one_task_gate_block",
+    since: "2.8.225",
+    kb: "6a1a665b",
+    marker: "one_task_gate_block",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:one_task_gate_block",
+        "page:one_task_done",
+        "page:one_task_incomplete",
+        "page:clear_then_fill_ok",
+        "page:flow_series_gap",
+        "page:flow_series_order",
+      ],
+      mustHaveAny: [
+        "page:one_task_done",
+        "page:one_task_gate_block",
+        "page:one_task_incomplete",
+        "page:clear_then_fill_ok",
+        "page:clear_then_fill_gap",
+        "page:flow_series_order",
+      ],
+    },
+  },
+  {
+    id: "samekind_clear_before_fill",
+    scene: "clear",
+    text: "同種（駅→駅・地域→地域）でも先に外す。入れ直しだけで飛ばさない。台帳のみ残も memOnly で小窓を開く。フォーム展開後 leftover_rescan_after_form。前客cid違いの同種は ForceClearSameKind。要約は『同種でも先に外す』",
+    since: "2.8.220",
+    kb: "6fa718ba",
+    marker: "sameKindMustClear",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:leftover_scan", "page:force_clear_place", "page:leftover_rescan_after_form"],
+      mustHaveAny: [
+        "page:leftover_scan",
+        "page:leftover_rescan_after_form",
+        "page:leftover_force_same_stations",
+        "page:leftover_force_same_wards",
+        "page:force_clear_place",
+        "page:clear_then_fill_ok",
+      ],
+    },
+  },
+  {
+    id: "next_customer_move_one_by_one",
+    scene: "search",
+    text: "次のお客さんと次の動きを把握してから進む。fill開始で next_customer_grasp／next_move_grasp／guide_phase_one。家賃など条件は _runBasicOneByOne で cond_one_grasp→1欄→cond_one_ok（同時に次欄へ飛ばない）。外しも名前付き1つずつ（clear_detail_grasp・3f4749d9）",
+    since: "2.8.219",
+    kb: "3f4749d9",
+    marker: "_graspNextCustomerAndMove",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:fill_start", "page:now_customer", "page:cond_one_grasp", "page:next_customer_grasp"],
+      mustHaveAny: ["page:next_customer_grasp", "page:next_move_grasp", "page:cond_one_ok", "page:guide_phase_one"],
+    },
+  },
+  {
+    id: "customer_loop_one_by_one",
+    scene: "search",
+    text: "物件取得完了→外す→新条件入れ→検索→並び替え→物件取得→次客を1段ずつ理解する。loop_phase_grasp／loop_who_grasp／loop_task_list／loop_advanceでいま客・次客・いま段・次段・タスク一覧・完了→次へを残す。並べ替えもループ段。BG一括もseries_done後にloop_advance。手順書flow_seriesにclear_then_fillを含む",
+    since: "2.8.222",
+    kb: "62c86c80",
+    marker: "_graspCustomerLoopPhase",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:loop_phase_grasp", "page:loop_who_grasp", "page:loop_task_list", "page:loop_advance", "page:next_customer_grasp", "page:flow_done_ready_next", "dl:handoff_grasp", "dl:loop_phase_req"],
+      mustHaveAny: [
+        "page:loop_phase_grasp",
+        "page:loop_who_grasp",
+        "page:loop_task_list",
+        "page:loop_advance",
+        "page:next_customer_grasp",
+        "page:next_move_grasp",
+        "page:flow_series_at",
+        "dl:loop_handoff_grasp",
+        "dl:loop_phase_req",
+        "loop_advance",
+      ],
+    },
+  },
+  {
+    id: "loop_sort_grasp_and_cursor_keep",
+    scene: "list",
+    text: "並べ替えはループの1タスク。sort開始でloop_phase_grasp(sort)／next_move／sort_ad。完了でlist段。飛行中cancelは今座標を残し中心からやり直さない（cursor_resume／pointer_cancel）。完了してから次タスクへ",
+    since: "2.8.226",
+    kb: "6c008add",
+    marker: "axlx-loop-phase-req",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_menu", "dl:loop_phase_req", "page:loop_phase_grasp", "dl:sort_done", "dl:sort_abort", "page:cursor_resume", "dl:pointer_cancel"],
+      mustHaveAny: [
+        "dl:loop_phase_req",
+        "page:loop_phase_grasp",
+        "page:loop_task_list",
+        "page:next_move_grasp",
+        "dl:sort_done",
+        "page:one_task_done",
+        "dl:pointer_cancel",
+        "page:cursor_resume",
+      ],
+    },
+  },
+  {
+    id: "now_action_clear_then_fill",
+    scene: "clear",
+    text: "いまの行動をパネルに出す。外している最中なら『外す』、終わったら『新しい条件を入れる』。同一客・初回きれいでForceClear全部外しループを回さない（place_keep）。客切替・残・送付後ギャップの時だけ外す",
+    since: "2.8.227",
+    kb: "f1ceec94",
+    marker: "_publishNowAction",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:now_action", "page:place_keep", "page:place_redo", "page:leftover_scan"],
+      mustHaveAny: [
+        "page:now_action",
+        "page:place_keep",
+        "page:place_redo",
+        "page:next_move_grasp",
+        "page:loop_phase_grasp",
+      ],
+    },
+  },
+  {
+    id: "task_grasp_now_done_next",
+    scene: "clear",
+    text: "1つ1つのタスクで『いま行っている／完了した／次に必要な動き』を把握する。外す（間取り含む）も入れるも task_now→task_done→task_next。箱ごと（間取り→ペット→区）に完了してから次へ。完了していないのに次へ進まない（one_task と併用）",
+    since: "2.8.228",
+    kb: "e7082bae",
+    marker: "_publishTaskGrasp",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:task_now",
+        "page:task_done",
+        "page:task_next",
+        "page:clear_one",
+        "page:clear_stage",
+        "page:cond_one_grasp",
+        "page:one_task_done",
+      ],
+      mustHaveAny: [
+        "page:task_now",
+        "page:task_done",
+        "page:task_next",
+        "page:one_task_done",
+        "page:next_move_grasp",
+        "page:now_action",
+        "page:clear_one_done",
+        "page:cond_one_ok",
+      ],
+    },
+  },
+  {
+    id: "clear_method_api_grasp_transition",
+    scene: "clear",
+    text: "次タスクへ移る前に、API手順書（human-learn-profile束の外し方・flow_series）で外し方を把握する。検索のsearch_graspと同型で session＋axlx-task-grasped に残す。clear_method_ledgerで外し方理解を測り、薄い時はclear_method_gap。外し完了→入れはtask_transition_graspを残してから進む",
+    since: "2.8.229",
+    kb: "3c9d1894",
+    marker: "_graspClearMethodFromPlaybook",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:clear_method_api_grasp",
+        "page:clear_method_api_miss",
+        "page:clear_method_ledger",
+        "page:task_transition_grasp",
+        "page:leftover_scan",
+        "page:clear_then_fill_ok",
+        "dl:task_transition_grasp",
+      ],
+      mustHaveAny: [
+        "page:clear_method_api_grasp",
+        "page:clear_method_ledger",
+        "page:clear_method_ok",
+        "page:clear_method_gap",
+        "page:task_transition_grasp",
+        "page:next_move_grasp",
+        "dl:task_transition_grasp",
+      ],
+    },
+  },
+  {
+    id: "task_api_refresh_before_next",
+    scene: "clear",
+    text: "次のタスクへ行く前に、手順書が薄い・無い時は human-learn-profile をAPI取込してから把握する（検索前の束取込と同型）。_graspBeforeNextTaskThen が関所。外し→入れは取込→把握→task_transition_gate を残してから進む。場所完了・条件完了・入れ開始／完了・次客渡しも弱い段として同じAPI把握を行う。把握弱くても印付きで進む（search_grasp_infer 同型）",
+    since: "2.8.230",
+    kb: "64f4da9d",
+    marker: "_graspBeforeNextTaskThen",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:task_api_refresh",
+        "page:task_transition_gate",
+        "page:task_transition_gate_weak",
+        "page:task_transition_grasp",
+        "page:clear_then_fill_ok",
+        "page:fill_start",
+        "page:place_ready",
+        "page:conditions_ready",
+      ],
+      mustHaveAny: [
+        "page:task_transition_gate",
+        "page:task_transition_gate_weak",
+        "page:task_api_refresh",
+        "page:task_transition_grasp",
+        "page:next_move_grasp",
+        "page:clear_method_api_grasp",
+        "page:clear_method_ledger",
+      ],
+    },
+  },
+  {
+    id: "guide_phase_task_link",
+    scene: "search",
+    text: "手順書×画面照会（guide_phase）の各段完了を、必ず task_now／task_done／task_next に落とす。照合だけの印で止めない。場所後・所在地・駅・検索前・外し後・検索後・一覧（list_start/before_next/after_next/handoff）で guide_task_link を残し、次にすることを同時に把握する",
+    since: "2.8.231",
+    kb: "0b023093",
+    marker: "_linkGuidePhaseToTask",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:guide_phase_ok",
+        "page:guide_phase_after_place",
+        "page:guide_phase_before_search",
+        "page:guide_phase_after_search",
+        "page:guide_phase_after_clear",
+        "dl:list_flow_grasp",
+        "page:guide_task_link",
+        "dl:guide_task_link",
+      ],
+      mustHaveAny: [
+        "page:guide_task_link",
+        "page:task_now",
+        "page:task_done",
+        "page:task_next",
+        "page:next_move_grasp",
+        "dl:guide_task_link",
+        "dl:list_flow_grasp",
+      ],
+    },
+  },
+  {
+    id: "task_change_api_every",
+    scene: "clear",
+    text: "タスク段が変わるたびに拡張は human-learn-profile API取込経路を必ず通す（手元に手順書があっても飛ばさない）。BGゲートが新鮮なら skipped でも印 task_api_refresh を残す。幹段（clear_then_fill・fill_start・handoff・clear）は force、他は soft。取込後に把握→task_transition_gate→次へ。手順照合(guide_task_link)のあとも同じThenで次につながる",
+    since: "2.8.232",
+    kb: "c87e11d3",
+    marker: "_graspBeforeNextTaskThen",
+    file: "page-script.js",
+    verify: {
+      onlyIf: [
+        "page:task_api_refresh",
+        "page:task_api_refresh_res",
+        "page:task_transition_gate",
+        "page:task_transition_gate_weak",
+        "page:guide_task_link",
+        "page:clear_then_fill_ok",
+        "page:place_ready",
+        "page:fill_start",
+      ],
+      mustHaveAny: [
+        "page:task_api_refresh",
+        "page:task_api_refresh_res",
+        "page:task_transition_gate",
+        "page:task_transition_gate_weak",
+        "page:task_transition_grasp",
+        "page:next_move_grasp",
+      ],
+    },
+  },
+  {
+    id: "post_send_clear_grasp",
+    scene: "clear",
+    text: "客完了→次へで送付後外しを実行し把握する。post_send_clear開始でguide_clear_grasp／loop_phase。skippedを外しOKと偽らない。未完了はpost_send_clear_gap＋次客で強制外す。取得完了はlist_done→clear（fillと誤らない）。leftover_scan開始でもclear段を把握",
+    since: "2.8.224",
+    kb: "366a97cd",
+    marker: "__axlxPostSendClearP",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["post_send_clear", "page:post_send_clear", "page:guide_clear_grasp", "page:loop_phase_grasp", "page:leftover_scan"],
+      mustHaveAny: [
+        "post_send_clear",
+        "page:post_send_clear",
+        "page:guide_clear_grasp",
+        "page:next_move_grasp",
+        "page:loop_phase_grasp",
+        "post_send_clear_gap",
+        "handoff_atom_post_send",
+        "dl:loop_handoff_grasp",
+      ],
+    },
+  },
+  {
+    id: "clear_detail_grasp",
+    scene: "clear",
+    text: "外すも入れると同じ細かさで理解する。外す前に台帳×画面の残りを名前付きで1つずつ言う（guide_clear_grasp／guide_phase_one）。件数の「残:区・町」だけで終わらない。外し後も名前付きで残0を確かめてから入れへ",
+    since: "2.8.209",
+    kb: null,
+    marker: "_listLeftoverNamedItems",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan"],
+      mustHaveAny: ["page:guide_clear_grasp", "page:guide_clear_detail", "page:guide_phase_one", "page:guide_clear_clean"],
+    },
+  },
+  {
+    id: "place_xor_grasp",
+    scene: "area",
+    text: "所在地絞り込みと沿線・駅絞り込みは並行して入れない（どちらか一方）。fill開始で place_xor_plan、決定後 place_xor で1本把握し負け軸を消す。検索前 place_xor_gate。混在は place_xor_violation／関所エラー",
+    since: "2.8.215",
+    kb: "55b31a4a",
+    marker: "_axApplyPlaceXor",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:place_xor", "page:place_xor_plan", "page:location", "page:place_mixed", "page:place_xor_gate"],
+      mustHaveAny: ["page:place_xor", "page:place_xor_plan", "page:location"],
+    },
+  },
 ];
 
 /** FNV-1a（32bit）の16進（版の印・暗号ではない） */
@@ -338,10 +955,29 @@ export type RuleJudge = {
  * コード（拡張のファイルの中身）と決まりの一覧の食い違いを数える（純関数）。
  *   テストと、統括Pro に渡す反映の点検（playbook-reflect-server）が同じ物を使う＝テストを回し忘れても統括Pro で出る。
  */
-export function checkRulesInCode(files: { pageScript: string; searchAudit: string; manifestJson: string }, rules: ReadonlyArray<AutoRule> = AUTO_RULES): string[] {
+export function checkRulesInCode(files: {
+  pageScript: string;
+  searchAudit: string;
+  manifestJson: string;
+  /** bulk-dl.js（AD並び替えなど一覧側の決まり）。無いと bulk-dl の決まりは飛ばす */
+  bulkDl?: string;
+  /** background.js（連続客・客ごと思考など）。無いと background の決まりは飛ばす */
+  background?: string;
+}, rules: ReadonlyArray<AutoRule> = AUTO_RULES): string[] {
   const issues: string[] = [];
   for (const r of rules) {
-    const src = r.file === "page-script.js" ? files.pageScript : files.searchAudit;
+    const src = r.file === "page-script.js" ? files.pageScript
+      : r.file === "search-audit.js" ? files.searchAudit
+      : r.file === "background.js" ? (files.background ?? "")
+      : (files.bulkDl ?? "");
+    if (r.file === "bulk-dl.js" && !files.bulkDl) {
+      issues.push(`決まり ${r.id} は bulk-dl.js の目印が要るが、点検にファイルが渡っていない`);
+      continue;
+    }
+    if (r.file === "background.js" && !files.background) {
+      issues.push(`決まり ${r.id} は background.js の目印が要るが、点検にファイルが渡っていない`);
+      continue;
+    }
     if (!src.includes(r.marker)) issues.push(`決まり ${r.id} の目印が ${r.file} に無い（直しが消えた／一覧が古い）`);
   }
   // 確かめに使う段が点検記録の上限で落ちないか（search-audit.js の KEEP_STEP／RULE_STEP）

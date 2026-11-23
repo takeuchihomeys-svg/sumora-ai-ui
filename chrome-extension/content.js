@@ -70,6 +70,19 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       pm.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(pm);
     } catch (_) { /* 地図無しでも DOM 同名全押しで動く */ }
+    /**
+     * ★ 2026-11-22 竹内さん「通常は把握が強い／自動はまばら。通常のように連携」:
+     *   通常の光る把握は realpro-guide-plan（手順表）＋画面の今を毎ティック読む土台。
+     *   旧は案内だけが手順表を持ち、自動（page-script）は別経路 → 把握がまばら。
+     *   → 同じ手順表を page に注入し、自動も同じ stationStepAction／primary 判断を使う。
+     */
+    try {
+      const gp = document.createElement("script");
+      gp.src = chrome.runtime.getURL("realpro-guide-plan.js");
+      gp.async = false;
+      gp.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(gp);
+    } catch (_) { /* 手順表無しでも primary 補完で動く */ }
     const s = document.createElement("script");
     s.async = false;
     s.src = chrome.runtime.getURL("page-script.js");
@@ -378,24 +391,59 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
 }
 
 /**
+ * ★ 2026-11-22: page-script が検索把握印を即監査へ載せる（リロードで消える穴）。
+ */
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "axlx-guide-live-flush") return;
+  try {
+    var steps = Array.isArray(e.data.steps) ? e.data.steps : [];
+    for (var i = 0; i < steps.length; i++) {
+      var st = steps[i] || {};
+      chrome.runtime.sendMessage({
+        type: "axlx-audit-live-step",
+        k: "page:" + String(st.k || "").slice(0, 40),
+        d: st.d == null ? null : String(st.d).slice(0, 80),
+        customerId: e.data.customerId != null ? String(e.data.customerId) : (_pendingFillCustomerId || null),
+        site: "realpro",
+      }, function () { void chrome.runtime.lastError; });
+    }
+    try {
+      sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify({
+        at: Date.now(), why: String(e.data.why || "search").slice(0, 48),
+      }));
+    } catch (_) {}
+  } catch (_) {}
+});
+
+/**
  * ★ 2026-11-18: 検索 click 直前のリロード生存印（page-script → content）。
  *   bulk-dl も同メッセージを聞くが、content 側でも必ず session に書く（二重でも上書きで安全）。
+ * ★ 2026-11-22: sessionStorage 同期印も書く（chrome.storage 非同期負け対策）。
  */
 window.addEventListener("message", function (e) {
   if (e.source !== window || !e.data || e.data.from !== "axlx-search-armed") return;
   try {
     var _cid = e.data.customerId || _pendingFillCustomerId || null;
-    chrome.storage.session.set({
-      axlx_pending_auto_send: {
-        customerId: _cid,
-        customerName: null,
-        conditions: null,
-        ts: Date.now(),
-        armed_why: String(e.data.why || "search_armed").slice(0, 48),
-        pageVer: e.data.pageVer || null,
-      },
-    });
+    var _flag = {
+      customerId: _cid,
+      customerName: null,
+      conditions: null,
+      ts: Date.now(),
+      armed_why: String(e.data.why || "search_armed").slice(0, 48),
+      pageVer: e.data.pageVer || null,
+    };
+    try { sessionStorage.setItem("axlx_pending_auto_send_sync", JSON.stringify(_flag)); } catch (_) {}
+    chrome.storage.session.set({ axlx_pending_auto_send: _flag });
     try { chrome.storage.session.remove("axlx_fill_busy"); } catch (_) {}
+    try {
+      chrome.runtime.sendMessage({
+        type: "axlx-audit-live-step",
+        k: "page:search_armed",
+        d: String(e.data.why || "search_armed").slice(0, 48),
+        customerId: _cid != null ? String(_cid) : null,
+        site: "realpro",
+      }, function () { void chrome.runtime.lastError; });
+    } catch (_) {}
   } catch (_) {}
 });
 
@@ -515,6 +563,8 @@ window.addEventListener("message", function (e) {
     "axlx_learn_motion", "axlx_motion_plan",
     // ★ 2026-11-20 v2.8.137: 手順書（場面の手順・1手ずつの細部・自動の決まり）もページへ（自動が読んだ印を点検記録に残す）
     "axlx_learn_playbook",
+    // ★ 2.8.202: 客ごとの思考（決定論）を MAIN へ
+    "axlx_customer_think",
     "axlx_learn_gaps",
   ];
   function pushAll() {
@@ -577,6 +627,14 @@ window.addEventListener("message", function (e) {
           flow: !!e.data.flow,
         }, function () { void chrome.runtime.lastError; });
       } catch (_) {}
+    } else if (e.data.from === "axlx-set-last-customer") {
+      /** ★ 2.8.202: 前客番号・場所モードを background の客ごと思考へ渡す */
+      try {
+        var _lc = {};
+        if (e.data.cid) _lc.axlx_last_filled_cid_mirror = String(e.data.cid);
+        if (e.data.want != null) _lc.axlx_last_want_mode = String(e.data.want);
+        chrome.storage.local.set(_lc, function () { void chrome.runtime.lastError; });
+      } catch (_) {}
     }
   });
   try {
@@ -597,5 +655,62 @@ window.addEventListener("message", function (e) {
   } catch (_) {}
   setTimeout(pushAll, 300);
   setTimeout(pushAll, 1500);
+  /**
+   * ★ 2026-11-22 2.8.183: リアプロページを開いただけで、未取込／手順書欠なら裏で束を取る。
+   *   ポップアップを開かなくても新束へ寄せる（3分に1回まで）。
+   */
+  (function bootLearnIfNeeded() {
+    var BOOT_KEY = "axlx_learn_boot_refresh_at";
+    var BOOT_GAP_MS = 3 * 60 * 1000;
+    function maybe() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+        chrome.storage.local.get([
+          "axlx_learn_needs_auto", "axlx_learn_ver", "axlx_learn_screen", "axlx_learn_link",
+          "axlx_learn_next", "axlx_learn_points", "axlx_learn_playbook", "axlx_learn_after_update",
+          BOOT_KEY,
+        ], function (st) {
+          try {
+            if (chrome.runtime && chrome.runtime.lastError) return;
+            st = st || {};
+            var last = Number(st[BOOT_KEY]) || 0;
+            if (Date.now() - last < BOOT_GAP_MS) return;
+            var need = !!(st.axlx_learn_after_update || st.axlx_learn_needs_auto || !st.axlx_learn_playbook);
+            if (!need) {
+              var pb = st.axlx_learn_playbook;
+              if (pb && typeof pb === "object") {
+                var bv = Number(pb.build_v) || 0;
+                var fs = pb.flow_series;
+                if (bv >= 7 && (!Array.isArray(fs) || fs.length < 5)) need = true;
+                if (bv > 0 && bv < 7) need = true;
+              }
+            }
+            if (!need) return;
+            var patch = {};
+            patch[BOOT_KEY] = Date.now();
+            chrome.storage.local.set(patch, function () {
+              try {
+                chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (res) {
+                  void chrome.runtime.lastError;
+                  pushAll();
+                  try {
+                    if (res && res.ok) {
+                      console.log(
+                        "[AX] ページ起動で学習束を取込:",
+                        res.skipped || "ok",
+                        "read=" + (res.server_read_count != null ? res.server_read_count : "?"),
+                        "needs_auto=" + !!res.needs_auto,
+                      );
+                    }
+                  } catch (_) {}
+                });
+              } catch (_) {}
+            });
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }
+    setTimeout(maybe, 1200);
+  })();
 })();
 

@@ -4,6 +4,684 @@
 
 ---
 
+## 2026-11-24 **タスク切替ごとに必ずAPI経路（2.8.232）**（竹内さん・統括pro）
+- **問い**: タスク流れ／切替ごとに拡張API／次につながるのか
+- **答え（調査）**: 231以前は手順書が手元にあると `_graspBeforeNextTaskThen` が API を飛ばしていた＝切替ごとにAPIは動いていなかった。DBも ≥230=0・task_api×タスク切替の印なし（未実証）
+- **統括Pro生**: 「何が完了しているかを理解していない」「完了→次客の穴」／F55反映未確認
+- **改善 2.8.232**: Thenは毎回 `_requestLearnRefresh`（幹段force・他soft）→把握→gate→次／guide_task_link後もThen／決まり `task_change_api_every`／KB `c87e11d3`／手順書 rules_v=`ea1674ad`（58件・read=0）
+- **テスト**: 232=12 / 231=17 / 230=21 / rules=158
+- **次（人）**: **2.8.232** 再読込→自動1回→各段で `task_api_refresh`（取込or取らず）＋`task_transition_gate`＋`task_next`。実証まで未反映
+
+## 2026-11-24 **手順書×画面照会→task把握の連携抜けを塞ぐ（2.8.231）**（竹内さん・統括pro）
+- **問い**: 1つ1つのタスク把握と次にすることが本当にできているか／手順書＋画面照会との連携
+- **DB実測（直近50・読むだけ）**: `task_now/done/next=0`・`≥2.8.228=0`・`guide_phase=80`・`guide_one=11`・`screen=24`・手順/画面あり∧タスクなし=11行。最新は2.8.225で next_move のみ
+- **統括Pro生**: 「何が完了しているかを理解していない」「完了してから次のお客さんに移れない穴」
+- **抜け**: guide_phase は動くが `_publishTaskGrasp` に落ちていなかった（並列で未連携）
+- **改善 2.8.231**: `_linkGuidePhaseToTask`（after_place/area/station/before_search/after_clear/after_search）／bulk list_flow→`axlx-task-grasp`／印 `guide_task_link`／決まり `guide_phase_task_link`／KB `0b023093`／手順書 rules_v=`0576e81e`（57件・read=0）
+- **テスト**: guide-task-link 17/17・230=21・rules 157/157
+- **次（人）**: 拡張 **2.8.231** 再読込→自動1回→印 `guide_task_link`・`task_now`・`task_done`・`task_next` が guide_phase と同回に揃うこと。実証まで未反映
+
+## 2026-11-24 **次タスク＝検索と同型API取込関所＋弱い段強化（2.8.230）**（竹内さん・統括pro）
+- **竹内さん**: 次のタスクいくとき拡張がAPIを検索のように／タスク弱い部分強化／徹底調査改善／統括pro徹底
+- **突き合わせ**: 検索は `search_grasp_gate`＋束取込。229はキャッシュ手順書の同期把握のみ（関所なし・弱い段未配線）
+- **統括Pro生**: 「何が完了しているかを理解していない」「完了してから次のお客さんに移れない穴」／F55 自動反映未確認
+- **改善 2.8.230**: `_graspBeforeNextTaskThen`（手順書薄い→`_requestLearnRefresh`→把握→`task_transition_gate`）／clear_then_fill は Then後に入れ／弱い段: place_done・conditions_done・fill_start・fill_done・handoff・leftover／決まり `task_api_refresh_before_next`／KB `64f4da9d`／手順書 rules_v=`aeabf3f5`（56件・read=0）
+- **テスト**: task-api-230 21/21・clear-method-229 22/22・auto-procedure-rules 156/156
+- **次（人）**: 拡張 **2.8.230** 再読込→連続2客→印 `task_api_refresh`（薄い時）・`task_transition_gate`・`task_transition_grasp`・`clear_method_api_grasp`。実証まで未反映
+
+## 2026-11-24 **次タスク移行＝API外し方把握＋検索と同型永続（2.8.229）**（竹内さん・統括pro）
+- **竹内さん**: 弱い次タスク移行で拡張がAPI把握／随時把握／検索のように動けば抜け減る／外し方理解力を上げる／統括pro徹底
+- **DB実測**: clear_method散発6・task_transition=0・流れ地図に「外し=未」多い・search_graspは2（検索側は永続あり）・layout_done_clear/外す済=0
+- **統括Pro生**: 「何が完了しているかを理解していない」「完了してから次のお客さんに移れない穴」
+- **改善 2.8.229**: `_graspClearMethodFromPlaybook`（API束 extra_guides.clear）／`clear_method_ledger`／`_persistTaskTransitionGrasped`（search_grasped同型）／`_graspBeforeNextTask`（leftover外し開始・clear_then_fill）／bulk `axlx-task-grasped`／決まり `clear_method_api_grasp_transition`／KB `3c9d1894`／手順書 rules_v=`bfe939cd`（55件・read=0）
+- **テスト**: clear-method-api 22/22・task-grasp 19・one-task 18・auto-procedure-rules 155
+- **次（人）**: **2.8.230** へ継承（再読込は230）
+
+## 2026-11-23 **外す・入れる1タスク把握（いま／完了／次）＋間取り1つずつ（2.8.228）**（竹内さん・統括pro）
+- **竹内さん**: 外す把握／外す完了→次客条件入れを1つずつ完了して次へ／いま・完了・次の理解／間取りも入れる時のように1つずつ外す／統括pro・設計知見
+- **DB実測（直近50）**: `task_now/done/next=0`・`clear_one=0`・`one_task=0`・`now_action=0`・`clear_then_fill=0`。間取り印はあるが1件外す把握が無い。統括Pro議題「何が完了しているかを理解していない」
+- **協力KB**: 3f4749d9・cb75455b・59098b73・18aeea1d／統括生: 完了理解の抜け・完了→次客の穴
+- **改善 2.8.228**: `_publishTaskGrasp`（task_now→task_done→task_next）／外す1件ごと（間取外:名）／箱ごと（間取り→ペット→区）完了印／入れる側も同型／パネル taskNow／決まり `task_grasp_now_done_next`／KB `e7082bae`／手順書 rules_v=`fe04ad0b`（54件・read=0）
+- **テスト**: task-grasp 19/19・now-action 13/13・one-task 18/18・bulk-panel・auto-procedure-rules 154/154
+- **次（人）**: 拡張 **2.8.228** 再読込→連続2客（間取りが違う）→印に `task_now`（間取外:…）・`task_done`・`task_next`・`clear_stage`・`one_task_done`。実証まで未反映
+
+## 2026-11-23 **いまの行動=外す最中／1客全部外しループ禁止（2.8.227）**（竹内さん）
+- **竹内さん**: 1客検索でループの可能性／いまの行動に外している最中なら外す→新しい客の作業へ
+- **DB実測**: single でも `same_customer forceClear=Y`＋`leftover_scan` が毎回（#1597/#1595/#1590）
+- **根**: ①`_axAutoPicking`だけで`_shouldForceClearPrevPlace=true` ②fill開始で毎回`ForceClearAllPlace`/`NeedClear*=true` ③パネル now が常に「検索中」で外す最中が分からない
+- **改善 2.8.227**: 客切替・ギャップ時だけForceClear／`place_keep`／`_publishNowAction`（外している最中→次は入れ）／パネル format が now に行動／clear後は fill 段。決まり `now_action_clear_then_fill`／手順書 `0ee3227a`（53件）
+- **次（人）**: **2.8.227** 再読込→1客自動→印 `place_keep`（初回）or `place_redo`（切替）・`now_action`・パネル「外している最中」。実証まで未反映
+
+## 2026-11-23 **ループ次の動き・並べ替え把握・マウス中心やり直し禁止（2.8.226）**（竹内さん・統括pro）
+- **竹内さん**: 次の動きをループで把握か／並べ替えもループか／完了→次タスクが一覧に入るか／マウス途中切れ→中心やり直し／把握＋完了実行強化／自動反映までテスト／統括pro徹底
+- **DB実測（直近60）**: `next_move_grasp=0`・`loop_phase_grasp=0`・`loop_advance=0`・`dl:sort_*`あり・`sort_abort`（halt_press_next／autofill）。#1606(225)はsteps空
+- **抜け**: ①sortは`_AX_CUSTOMER_LOOP`にあるが bulk から `_graspCustomerLoopPhase("sort")` 未呼出 ②タスク一覧印なし ③cancelMoveが座標固定せず次が中心付近から再開／fill開始scatterで飛ぶ
+- **改善 2.8.226**: `axlx-loop-phase-req`（sort開始→list完了）／`loop_task_list`＋`next_move_grasp`／cancelMove+飛行中cancelで今座標保持＋`_release`／見えるカーソル時scatter禁止=`cursor_resume`／決まり `loop_sort_grasp_and_cursor_keep`／KB `6c008add`／手順書 rules_v=`6a96f82a`（52件）
+- **テスト**: loop-sort-cursor-keep 18/18・one-task 18/18・evidence 35/35
+- **次（人）**: 拡張 **2.8.226** 再読込→束取込→自動1回（連続2客＋並べ替え）→印に `loop_phase_grasp`（sort）・`loop_task_list`・`dl:loop_phase_req`・中断時`pointer_cancel`／`cursor_resume`。実証まで未反映
+
+## 2026-11-23 **1つずつタスク完了してから次へ（2.8.225）**（竹内さん・統括pro）
+- **竹内さん**: 徹底テスト／1つずつちゃんとタスク完了してから次に移るか／統括pro・設計知見と協力
+- **DB実測（直近100・改善前〜未読込）**: `one_task_=0`・`clear_then_fill_ok=0`・`before_clear=0`・`loop_advance=0`・`post_send_clear=3`・`flow_series_=6`。拡張版は最大 **2.8.216**（225未到達）
+- **抜け**: `_requireFlowSeriesUpTo("before_clear")` 未達でも『関所で補完』で `_beforeOk=true` 扱いにし入れへ＝タスク未完了のまま次へ。未達のまま `clear_then_fill`／`after_clear` を完了印にしていた
+- **改善 2.8.225**: 印だけ補完廃止→`one_task_gate_block`→`_guideLikeClearGrasp`→再関所。dirtyなら redo。完了時のみ `one_task_done`＋一連段。決まり `one_task_complete_before_next`／KEEP+RULE+PIN／KB `6a1a665b`／手順書 rules_v=`82c96d57`（51件・verifyから偽 `page:before_clear` 除去）
+- **テスト**: `one-task-complete-before-next-v28225` 18/18・`playbook-rule-evidence` 35/35
+- **統括Pro生**: コードでは潰した／本番実証0・拡張最大2.8.216・read新束後自動=0→**未実証**。次手=再読込225→束取込→自動1回→`one_task_*`/`clear_then_fill_ok`
+- **次（人）**: 拡張 **2.8.225** 再読込→束→連続2客→印に `one_task_done` または `one_task_gate_block`／`clear_then_fill_ok`。費用 photo_learn は実証後に統括判断（owner_questions RLSで費用確認は書けず）
+
+## 2026-11-23 **ループ外す把握チェーン抜け潰し（2.8.224）**（竹内さん・統括pro）
+- **竹内さん**: 外す把握の流れになったか／ループ上の抜け徹底確認／統括Pro
+- **徹底確認の抜け**: ①bulk取得完了を`fill`と誤把握 ②`list_done`未呼出 ③`leftover_scan`開始でclear段なし
+- **改善**: list_done→clear／leftoverでclear+next_move／223の送付後外し把握と接続。手順書 `b270470f`・KB `366a97cd`
+- **チェーン（コード）**: 取得完了(list_done)→外す(clear)→leftover→clear_then_fill→送付後post_send→series_done next=外す
+- **次（人）**: **2.8.224** 再読込→連続2客→印に `loop_phase_grasp`（list_done/clear）・`leftover_scan`・`guide_clear`。実証まで未反映
+
+## 2026-11-23 **客完了→次へ外し把握・偽OK禁止（2.8.223）**（竹内さん・統括pro）
+- **竹内さん**: 客終わった→次へでちゃんと外すか／把握できているか／一連テスト／弱い所は通常録画から学習／統括Pro
+- **DB実測**: 直近50件 `post_send_clear=3`・`clear_then_fill_ok=0`・`next_move_grasp=0`・`series_done=3`・`leftover_scan=16`
+- **根**: ①`skipped`を外しOKと偽る ②送付後外しに guide_clear 把握が無い ③未完了でも次客強制外しの印が無い
+- **改善 2.8.223**: skipped→_psOk false／`post_send_clear_gap`＋ForceClear注入／post_sendでguide_clear+loop clear／fill_startでギャップ把握／決まり `post_send_clear_grasp`
+- **通常録画学習**: audit-normal-mode 14日・駅場面390回（外す＝駅設定へ→外す→沿線戻る）。merge-station-transit は束に既あり（置き換えず）
+- **手順書**: rules_v=`f0403a6e`・決まり50・read=0／KB `cdcf9cf3`
+- **統括Pro生**: 外していない（3/50）。把握できていない（next_move=0）。2.8.223はコード入ったが実証0。almost∧read=0→**未実証**
+- **次（人）**: 拡張 **2.8.223** 再読込→束→連続2客→`post_send_clear`＋`guide_clear_grasp`／ギャップ時`post_send_clear_gap`。費用のかかる外しphoto_learnは実証後に統括判断
+
+## 2026-11-23 **ループ完了→次客・全客自動連携（2.8.222）**（竹内さん・統括pro）
+- **竹内さん**: ループ理解／他部位再利用／全客自動検索／把握／完了→次へ／抜け・連携徹底調査→改善／設計知見＋統括Pro
+- **DB実測（改善前）**: 細原子「ループ完了→次へ」=0／いま客・次客把握19・次客可22。`series_done` だけでは次誰・次段が測れない
+- **抜け（連携）**:
+  1. BG 一括・キューは `series_done` のみで `loop_advance` 無し
+  2. パネル把握が客完了直後に「次=外す」へ更新されない
+  3. キュー scrape に次客メタ未渡し
+  4. KEEP_STEP に loop 印が無く溢れたら落ちる恐れ
+  5. 台帳が `who_grasp`/`loop_advance` を採点しない（→採点追加済）
+- **改善 2.8.222**: scrape `loopMeta`／series_done 後 `loop_advance`+who+next_move／一括・キュー `_publishBulkGrasp(nextMove)`／page ready_next 同型印／KEEP+RULE／`formatLoopAdvance`／決まり `customer_loop_one_by_one` since 222／KB `62c86c80`
+- **再利用**: 手動一括・キュー一括・page ready_next・台帳強化の4経路で同文言
+- **手順書**: attach 済 rules_v=`ca6ac88c`・決まり49・read=0（関所）
+- **統括Pro生**: loop_advance を次手に据える（コードあり・読まれていない・実証0）。完了→次へ=0 が全客自動の最優先の穴。verdict=almost だが F55 read=0 → **未実証**として扱う
+- **次（人）**: 拡張 **2.8.222** 再読込→束取得（版 ca6ac88c）→連続2客以上→印に `loop_advance`／`loop_who_grasp`／パネル「次は外す」。`loop_advance≥1`・read≥1まで反映済みと言わない
+
+## 2026-11-23 **一連ループ把握・いま/次客・手順書×画面（2.8.221）**（竹内さん・統括pro）
+- **竹内さん**: 手順書不足か把握力弱いか／1つ1つ状況把握→次何／取得完了→外す→入れ→検索→並び替え→取得→外す…／いま誰・次誰／完了→次の連携を手順書＋画面照会／徹底改善＋統括Pro
+- **DB実測**: 最新でも `next_customer_grasp=0`・`loop`印なし。`list_flow_grasp` が「手順list無」。`guide_phase` に「手順undefined」。手順書は決まり48だが自動が読んだ版は古い（23/23）
+- **根**: ①手順書 `flow_series` に `clear_then_fill` 無し ②いま/次客把握が fill_start 以外で薄い ③`_pbListNext` が scenes だけ見て flow_series の list を無視 ④`buildPlan` 非配列で手順undefined
+- **改善 2.8.221**: `_graspCustomerLoopPhase`（loop_phase/who）／ready_next・after_search・clear・bulk・handoff で把握／PLAYBOOK_BUILD_V=13＋clear_then_fill／`_pbListNext` が flow_series も見る／決まり `customer_loop_one_by_one`
+- **次（人）**: 拡張 **2.8.221** 再読込→連続2客→印に `loop_phase_grasp`／`loop_who_grasp`／`next_customer_grasp`／`clear_then_fill_ok`／`dl:loop_handoff_grasp`。手順書版一致・read≥1まで反映済みと言わない
+
+## 2026-11-23 **外し不能・次移行弱いのボトルネック潰し（2.8.220）**（竹内さん・統括pro）
+- **竹内さん**: 「今外すのもちゃんとできていない／もともと外すをある程度理解できていたのになぜ／ボトルネック／次の動きに移行する部分がかなり弱い／原因調査徹底→改善→自己改善」
+- **DB実測**: 直近監査で `clear_then_fill_ok=0` が続く。`leftover_scan` が「前客なし」「同種の場所は入れ直し」→ `clean_no_clear`／`leftover_clean`。#1571 台帳駅18でも同種は入れ直し文言。#1558 は区7残＋post_send 120s fail-open
+- **ボトルネック（根）**:
+  1. 同種（駅→駅／地域→地域）を dirty にせず外しを飛ばす設計
+  2. `memOnlyStations/Wards` が `!wantSt/!wantWd` で同種だと無効→小窓を開かない
+  3. `leftover_scan` がフォーム展開**前**で残0＝偽きれい
+  4. 外し→入れの移行印（`clear_then_fill`→`next_move_grasp`）が弱い
+- **改善 2.8.220**: `_planLeftover` は残があれば同種でも外す（`sameKindMustClear`）／memOnly同種有効／展開後 `leftover_rescan_after_form`／cid違い同種で `ForceClearSameKind*`／`clear_then_fill_ok` 後に一連段＋`next_move_grasp`／決まり `samekind_clear_before_fill`／KB `6fa718ba`／手順書 rules_v `8ffd38e7`（read=0）
+- **テスト**: `clear-samekind-transition-v28220`・leftover-gate・auto-procedure-rules 通過
+- **次（人）**: 拡張 **2.8.220** 再読込→連続2客（同種駅or同種区）→印に `同種でも先に外す`／`leftover_rescan_after_form`／`clear_then_fill_ok`／`next_move_grasp`（clear_then_fill）が出るか。read≥1・版一致まで反映済みと言わない
+
+## 2026-11-23 **一括パネルに誰・件数・次客・把握（2.8.217）**（竹内さん・統括pro）
+- **要望**: 一括時に①誰を検索②合計何件③次の客④把握できているかを右枠に表示
+- **現状**: 「一括11件」等の件数だけで客名・次客・把握が見えない
+- **強化**: `_publishBulkGrasp`（BG→session+タブ）／枠に **いま／つぎ／把握** 3行／`bulk-panel-grasp` 純関数＋テスト／手動一括・キュー一括の両方で配信
+- **表示例**: いま=`てんさんを検索中（3/11）`／つぎ=`次は やまださん`／把握=`一括11人 ✓把握／いまてん／次やまだ`
+- **次（人）**: 拡張 **2.8.217** 再読込→一括開始→枠に客名・N/合計・次客・✓把握が出るか
+
+## 2026-11-23 **XOR把握テスト周回→自動反映（2.8.216）**（竹内さん・統括pro徹底）
+- **周回**: テスト→弱い所→強化→手順書反映→再テスト
+- **弱点**: place_xor 専用テスト無し／fill開始で計画印無し／検索前XOR関所無し／客思にXOR文言無し／混在をdiff把握で見ていない
+- **強化 2.8.216**: `app/lib/place-xor.ts`＋`place-xor-grasp.test`／`place_xor_plan`（fill開始）／`place_xor_gate`・`place_xor_miss`／混在=`place_xor_violation`／客思 `xor=所在地だけ|沿線・駅だけ（並行しない）`
+- **テスト**: place-xor・customer-think・continuous-clear-fill・auto-procedure-rules 全通過
+- **手順書**: attach 済（決まり45・版 `a84320b2`・read=0）
+- **統括Pro生**: 次の1手＝拡張再読込→束（read≥1・版a84320b2）→自動1回→`place_xor_plan/place_xor/place_xor_gate`＋F55。read=0のまま改善済みと言わない
+- **次（人）**: 拡張 **2.8.216** 再読込→束→自動1回→上記3印
+
+## 2026-11-23 **所在地／沿線駅は並行しない・どちらか一方（2.8.215）**（竹内さん・統括pro）
+- **竹内さん**: 「入れるときと同じ発想で所在地絞り込みと沿線　駅絞り込みが並行して入っていることはないので、ここはどちらかになる。ここの部分ちゃんと把握する」
+- **実測**: 入れる経路は locationMode で分岐済／関所は混在エラー済。だが **把握印が弱く**、area_mode=auto では負け軸が cond に残り理解が揺れる。直近監査に `location`/`place_xor` がほぼ無い（途中止まり or 間引き）
+- **強化 2.8.215**: `_axApplyPlaceXor`（決定後に負け軸を消す）／印 `place_xor`（所在地だけ／沿線・駅だけ）／`_planLeftover` の入れる側を XOR 明示／決まり `place_xor_grasp`／KB【決定】`55b31a4a`
+- **手順書**: attach-playbook 適用済（決まり45・版 `203c7d7c`・read=0に戻した）
+- **統括Pro生**: 理解力の弱さの正体＝XORの決まりが手順書・束・拡張に届いていない（コードは入った）。届ければ自動が守れる
+- **次（人）**: → **2.8.216** へ継承（下の節）
+
+## 2026-11-23 **駅だけ外して終わる＋自動未反映（2.8.214）**（竹内さん・統括pro）
+- **DB実測**: 最新自動は **2.8.211**（212/213未到達）。#1602 `customer_think clearWd=Y` なのに `post_send_clear:ok=true 残=0`→handoff「stamp済」で偽完了。`clear_then_fill` 印0
+- **根①外し**: `forceClearWards` が leftover_scan の印だけで `_planLeftover`／`_cleanStartGate` に届かず、DOM残0の偽きれいで駅だけ外して入れへ
+- **根②反映**: 拡張再読込してもタブの MAIN page-script が旧版のまま／手順書旧版のまま押し始め
+- **改善 2.8.214**: `__axlxForceClearWards`＋plan反映／送付後は台帳場所を偽残0にしない・駅後に区必須／handoff印を正直に／一括開始で page版合わせ＋束強制取込
+- **次（人）**: chrome **2.8.214** 再読込→リアプロ自動更新（または一括開始で自動再読込）→連続2客→印に `force_clear_place wd=Y`・`clear_then_fill_ok`・`handoff_atom_post_send` が「OK」か「未完了」の正直な文
+
+## 2026-11-23 **拡張パネル簡素化・いま／つぎ（2.8.213）**（竹内さん・統括pro）
+- **要望**: 今やっていること／次やることをわかりやすく。ボタンは「物件送る」以外いらない。旧「売上番長に送る」→**物件送る**
+- **変更**: 右パネルを「いま／つぎ」2段＋主CTA「物件送る」のみ。全選択・一括DL・結合・自動押し・プレビュー・画像・キャッシュはUIから外す。自動中のみ「自動を止める」、確認中のみ「見た→次へ」
+- **次（人）**: 拡張 **2.8.213** 再読込→リアプロ再読込→パネルにいま／つぎ／物件送るだけが出るか確認
+
+## 2026-11-23 **次客・次の動き把握＋条件1つずつ（2.8.219）**（竹内さん・統括pro・設計知見）
+- **要望**: 次客を把握／次の動きを把握／1つずつ把握してから次へ／家賃など条件1つずつ／外しも1つずつ
+- **改善**: `_graspNextCustomerAndMove`(fill_start)→`next_customer_grasp`/`next_move_grasp`/`guide_phase_one`。`_runBasicOneByOne`で`cond_one_grasp`→1欄→`cond_one_ok`。パネルに「次の動き」。決まり `next_customer_move_one_by_one`・KB **18aeea1d**・手順書 rules_v=87a35654。協力 3f4749d9・3fdb5f80・59098b73
+- **テスト**: `next-customer-move-one-v28219` OK／`auto-procedure-rules` 147pass／`bulk-panel-grasp` OK
+- **統括Pro生**: 議題1は実装済み・未実証。次は再読込≥2.8.219→自動1回で playbook_seen 版一致＋`next_customer_grasp`/`cond_one_ok`
+- **次（人）**: chrome **2.8.219** 再読込→束→自動1回（連続2客）→監査に次客把握・条件1つずつの印
+
+## 2026-11-23 **並べ替えがとぶ根＝見出しaim全落ち（2.8.218）**（竹内さん・統括pro・設計知見）
+- **根因（DB＋束）**: 見出し学習キーは全部『大阪N棟N戸並べ替え｜div.under／main_table』。旧 `falseHead` が棟戸｜under を**全除外**→`sort_head_aim_warm=0`→文言0→`sort_no_head`連発→`sort_failed:continue`で**PDFへ飛ぶ**。③高→低 aim だけ暖まっていた
+- **改善 2.8.218**: `_pickSortHeadAimFromPoints`(short→toori_under→toori_table)／TreeWalker葉／aim画面内scroll再探索／診断 `aim=` `under=`。決まり `sort_head_aim_toori_fallback`・`AUTO_RULES_REVIEWED_UP_TO=2.8.218`・手順書 attach。棟戸は①DOM表記保険・③別名にしない（330797cb）／KB **89218bd4**
+- **テスト**: `sort-head-aim-toori-v28218` OK／`sort-fail-continue`・`sort-head-buried`・`auto-procedure-rules` 146pass
+- **統括Pro生**: 根因はコード改善済み。次は反映実証。read=0のまま「到達」と言わない（矛盾関所→未実証扱い）
+- **次（人）**: chrome **2.8.218** 再読込→束→自動1回→`sort_head_aim_warm`(toori_under)→`sort_head_hover`→`sort_hilo`／PDFへ飛ばない
+
+## 2026-11-23 **検索後並べ替え再確認（統括Pro・DB）**（竹内さん）
+- **なぜできないか（DB）**: #1600(2.8.206)・#1595(2.8.196) とも検索後 `sort_menu:start` → `sort_aim_warm`(高→低)は出るが **`sort_no_head` 連発**（見えていた=ナビだけ）→ `sort_failed` → `sort_abort`。`sort_done`/`sort_ad_hover`/`sort_hilo`=0
+- **ちゃんとできるか**: コード上の直しは **2.8.212**（見出しDOM強化＋`sort_head_scroll`）。ただし直近30件で ≥2.8.212 の並べ替え監査は **#1604(2.8.216) steps=0 のみ＝未検証**。再読込→自動1回の印確認が先
+- **統括Pro生（保存済）**: 止まり＝見出し未定着のまま押す／最短＝≥2.8.212再読込→自動1回→`sort_done`確認。⚠ Proが「束read_count=0」と言いつつ同束は「拡張が読んだ5回」→矛盾のまま。⚠ Proが「見出し（高→低）」と混同→①見出し≠③高→低
+- **次（人）**: chrome **≥2.8.212**（今は2.8.218）再読込→束→自動1回→ `sort_head_hover`/`sort_done` が出て `sort_no_head` が消えるか
+
+## 2026-11-23 **並べ替えできない＝sort_no_head（2.8.212）**（竹内さん・統括pro）
+- **DB実測**: #1600/#1595 とも `sort_aim_warm`（高→低 0.15,0.47）は出るが **①見出しで止まる** → `sort_no_head` 連発→`sort_abort`。`sort_done`/`sort_ad_hover` 0。#1602(2.8.211)は started・steps0（まだ検索中）
+- **押す場所理解**: ③高→低＝理解済（aim+手順書+span.sort_detail）。②ADメニュー＝コード・手順書理解済（未到達）。①並べ替え見出し＝短い「並べ替え」が DOM で取れず sort_no_head。束の「大阪N棟N戸並べ替え」は **③の誤認キー**（330797cb・別名にしない）／DOM上①の最後手段には使う
+- **診断の罠**: `_visibleWords` 旧≤12字 → ナビだけに見え「見出し無し」と誤読し得た
+- **改善 2.8.212**: 短い見出し優先→棟戸は最後手段／main_table 最短子／誤認除外の `sort_head_aim_warm`／見出し `scrollIntoView center`／診断に棟戸・並べ替え文言
+- **統括Pro生**: 止まり＝別名一致不足＋画面内定着＋2.8.212未反映（押す場所の理解不足ではない）。⚠ Proの「棟戸を別名複製」は 330797cb と矛盾 → **別名複製はしない**（DOM探索強化＋再読込）
+- **次（人）**: 拡張 **2.8.212** 再読込→束→自動1回→ `sort_head_hover`/`sort_head_scroll` → `sort_ad_hover` → `sort_hilo` → abort無し
+
+## 2026-11-23 **連続客・外す＋入れる抜け点検（2.8.211）**（竹内さん・統括pro）
+- **テストで発見**: `_guideLikeFillGate` が**定義のみ未呼出**（外す側 clear grasp と同じ穴）
+- **直し**: 検索前 `_guideLikeFillGate` → `before_search` → conditions_ready。外す側は既に 2.8.209〜210 で配線済
+- **テスト**: continuous-clear-fill-no-gap／sequence／order-gate／rules144
+- **次（人）**: 拡張 **2.8.211** 再読込→連続2客→ `guide_clear_*`＋`guide_fill_gate`＋`clear_then_fill_ok`＋`flow_series_order`
+
+## 2026-11-23 **拡張が一連の順番を徹底理解（2.8.210）**（竹内さん・統括pro）
+- **穴**: `_noteFlowSeriesAt` は到達印のみ・何番目か／前段抜けを見ていなかった
+- **強化**: `flow_series_plan`（開始時に全順を読む）／`flow_series_order`（N/M）／抜けは `flow_series_gap`／`before_clear` 関所（`_requireFlowSeriesUpTo`）／古い手順書でも before_clear を拡張が補う／決まり `flow_series_order_gate`
+- **次（人）**: 拡張 **2.8.210** 再読込→連続2客→印に `flow_series_plan`・`flow_series_order 1/N before_clear`・抜け無し
+
+## 2026-11-23 **連続外し・手順書段順の徹底確認（build_v12）**（竹内さん・統括pro）
+- **確認**: 配線順 leftover_scan→clear_grasp→clear_done→after_clear→clear_then_fill／flow_series に **before_clear** 追加（旧は after_clear からで外す前が抜け）／擬似連続監査印順OK
+- **テスト**: continuous-clear-sequence OK／action-playbook 56/0／rules 143/0／clear-detail OK
+- **DB直近**: 2.8.209 実行前の記録が多く、`clear_then_fill`・名前付き phase_one は未実証 → **再読込→連続2客**が関所
+- **次（人）**: 拡張2.8.209再読込→束（build≥12・before_clear）→連続2客→印順確認
+
+## 2026-11-23 **外すも入れる並みに細かく理解（2.8.209）**（竹内さん・統括pro）
+- **問い**: 入れる時と同じ細かさで外すを理解しているか → **否**（件数「残:区・町」＋`_guideLikeClearGrasp` 未配線）
+- **強化**: `_listLeftoverNamedItems`（区残:名・駅残:名…＋台帳控え）／外す前 `guide_clear_grasp`＋`guide_phase_one`／外し後も名前付き／手順書 clear ①〜⑤・build_v11／決まり `clear_detail_grasp`
+- **次（人）**: 拡張 **2.8.209** 再読込→連続2客→印に `guide_clear_grasp`・`外す前 1/N 区残:…`・`clear_then_fill_ok`
+
+## 2026-11-23 **連続客・所在地だけ外して止まった（2.8.208）**（竹内さん・統括pro）
+- **症状**: 新客へ連続移行時、所在地だけ外して終わり・新条件を入れない
+- **根（DB+コード）**: ①本番手順書 **場面1=stationのみ**（area/cond/search/list 欠・gaps明記）②`_guideLikeAfterClearCheck` が**未配線** ③after_clear が台帳なしで「きれい」誤判定しうる ④直近自動は 2.8.206／旧手順書読込・playbook_seen欠
+- **改善**: clear_done→after_clear（台帳×画面）→`clear_then_fill_ok/gap`（残りなら再外し）／手順書 **build_v10** で薄い場面注入（**場面5**）／決まり `clear_then_fill_gate`
+- **テスト**: playbook-search-extra-guides・auto-procedure-rules **142/142**
+- **attach**: rules 42・rv 546e1da4・場面5・read=0
+- **次（人）**: 拡張 **2.8.208** 再読込→束→連続2客自動→ `clear_then_fill_ok`＋新客の fill/条件印
+
+## 2026-11-23 **検索確認→≥1秒→並べ替え（2.8.207）**（竹内さん・統括pro）
+- **症状**: 自動で並べ替えが検索前／押す瞬間に走る可能性。把握→次へが弱い・誤った完了がボトルネック
+- **根（コード）**: ①`search_click_直前` を after_search 完了扱いにしていた ②旧一覧の証拠で screenOk ③armed 直後 kick＋把握印捏造（`sort_cursor:why`）④待ちがスケジュール時刻基準
+- **改善 2.8.207**: 意図のみと押下確認を分離／確認後だけ画面照合（基準→変化）／確認ゲート＋確認時刻から合計≥1秒待ち／Case A は afterSearch 専用道
+- **決まり**: `search_confirm_then_wait_sort` / `false_complete_next_gate`
+- **仕組み**: `scripts/audit-search-sort-gap.ts`（search_audits の confirm→sort_go ギャップ集計）
+- **次（人）**: 拡張 2.8.207 再読込 → 自動1回 → 監査で `search_grasp_intent_only` のあとに `search_press_ok`／`sort_cursor_wait`（elapsed≥1000）を確認
+- **手順書**: attach-playbook 適用済（rules_v=cfe8de4d・41件・read=0に戻した）→ 再読込＋自動1回が関所
+
+## 2026-11-23 **なぜ新束未読か→仕組み化（2.8.206／F63）**（竹内さん・統括pro）
+- **原因（DB+コード）**: `attach-playbook` が手順書だけ PATCH し **`generated_at` 据え置き** → 拡張版確認が `same_version` でスキップ → read=0・旧 `playbook_seen`。Chrome 再読込も無し（最新自動 **2.8.199**）
+- **手順書抜け**: あり（`continuous_customer_loop` 等）。内容は 2.8.205 で attach 済（39・e0b8837b）。**届かない抜け**が残っていた
+- **仕組み**: ①rules_v変化／attachで `generated_at` 上げ＋`read_count=0` ②light が `playbook_rules_v` ③拡張がずれで強制取込 ④**F63** 関所（DB=コード∧seen rv=コード∧read≥1）⑤pending スタンプ
+- **版 2.8.206**／次（人）: 再読込→自動1回→ F63・playbook_seen=e0b8837b
+
+## 2026-11-23 **抜け徹底調査（統括pro）**（竹内さん）
+- **コード穴**: F58 **21/21・配線0**。手順書コード39=DB39（rv e0b8837b）揃い
+- **本番DB実測**: 最新自動は **2.8.199 のみ**（≥2.8.203／205 ゼロ＝v203+=0）。連続切替3件とも **TH=N**（customer_think未到達は版未読込）。playbook_seen 旧 **4c266b56**。read=0・新束後自動=0
+- **本番の弱い印（旧版上）**: ad_sort_hover 未達1・search_decide 長押し1・F57欠=一覧/AD高低・human_takeover で連続中断あり
+- **無料で塞いだ抜け**: `supervisor-pro.ts` の owner_questions が SERVICE_ROLE 空で `supabaseKey required` → ANON フォールバック（.env に SERVICE_ROLE 名が無い実測）
+- **統括Pro生**: 止まりはコード穴ではなく『拡張が新束を読んでいない』一点。photo_learn は反映実証まで後回し。矛盾: almost と read=0 同時 → 未実証扱い推奨
+- **次（人）**: ≥2.8.205 再読込→束→自動1回→ F55＋版一致＋customer_think
+
+## 2026-11-23 **テスト→手順書穴→土台改善（2.8.205）**（竹内さん・統括pro徹底）
+- **測った**: F58 初回落ち（continuous_customer_loop の背景点検欠け）→直して **21/21**。手順書コード↔束は attach で揃えたが、**自動が読んだ版は旧のまま**（再読込待ち）
+- **無料で塞いだ穴**: ①`attach-playbook --apply`（控え Desktop）②weak-find の `ext_version` 列誤り（連続客0件誤測）③`customer_think` 失敗でも stamp ④決まり `continuous_customer_loop`＋RULE_STEP／KEEP_STEP ⑤checkRulesInCode に background.js
+- **版 2.8.205**／決まり **39**・rv **e0b8837b**
+- **統括Pro生**: 手順書反映の止まり＝拡張読込0＋自動旧版。次は再読込→束→自動1回で playbook_seen=現行。customer_think0 は反映後に効果確認
+- **次（人）**: chrome 再読込 **≥2.8.205**→束取得→自動1回（触らない）→ playbook_seen rv=e0b8837b・customer_think・post_send_clear
+
+## 2026-11-23 **連続客の穴を土台化・細分化してとことん強化（2.8.204）**（竹内さん・統括pro）
+- **方針**: 穴＝送付後外し印0＋細原子未計測 → 土台を作り細分化して強化（推測で課題を増やさない）
+- **土台**: **F61** を配線だけでなく DB計測完了線に（leftover∧post_send∧ready）／新設 **F62** 連続客12細原子の弱0回を名指し
+- **台帳強化**: `planHandoffStrengthen`／`countFineAtomsAcrossAudits`／監査集計 `continuous` → 統括 evidence「連続客ループ（細分化）」必須／axes `foundation_f61/f62`・`continuous_loop`
+- **拡張**: 流れ地図に `send_or_pdf`・`post_send_clear`／bg が `handoff_atom_*` stamp／page post_send で flow_atom
+- **F60**: `continuous_handoff` 弱所面を追加／`scripts/handoff-loop-strengthen.ts`
+- **版 2.8.204**／統括Pro: 営業時間でも軽量で F61/F62・連続客細分化を axes に載せる（search_audits 40行）
+- **DB実測（強化計画）**: runs40 leftover14・post_send1・ready21／弱0回=客ごと思考・指定客ロック／次手無料=customer_think stamp
+- **次（人）**: 再読込 **≥2.8.204**→束→連続2客→F61/F62再測
+
+## 2026-11-23 **連続客ループ（外す→入れる→検索→送付→外す→次）徹底調査＋改善（2.8.203）**（竹内さん・統括pro）
+- **DB実測**: 直近25監査で **post_send_clear=0**（送付後外しの印が監査に残っていない）。leftover／ready_next 経路はコードにあるが、印が閉じ済み run に書けず消えていた
+- **穴**: `_postSendClearRealpro` が `_auditOpenRunId` 頼み → scrape 完了後に open が無いと stamp 失敗。見送り（off／no_tab）でも印なし
+- **改善 2.8.203**:
+  1. `_postSendClearRealpro(customerId, auditRunId)` 明示渡し＋見送り／失敗でも必ず `post_send_clear` stamp
+  2. 送付後に `handoff_loop`＋`series_done`／fill失敗時も欠段を stamp（次客 leftover に任せる）
+  3. 台帳 `handoff-loop-ledger` → F58必須／土台 **F61**／統括 handoff に送付後外し・連続客ループ印
+- **次（人）**: chrome 再読込 **≥2.8.203**→連続2客（駅→地域または地域→駅）自動（触らない）→監査に `leftover_scan`・`post_send_clear`・`handoff_loop`・`ready_next`
+
+## 2026-11-23 **客ごと思考＋改善検証完了線（2.8.202）**（竹内さん・統括pro徹底）
+- **統括Pro生**: 客ごと統括Pro(LLM)は『まず1客で効果測定』。今は read=0 のため先に再読込→自動1回。改善テスト完了線＝F55（read≥1∧新束後自動≥1∧reflect|aim）＋手順書版一致
+- **実装（費用0）**: `thinkCustomerSearch`（場所・前客外し・版ずれ）→ API `/api/customer-search-think`＋拡張写し。fill直前 `_refreshCustomerThink`→監査 `customer_think`→page `customer_think_apply`。`judgeImproveVerified` で改善検証
+- **F58**: customer_search_think 必須化。版 **2.8.202**
+- **次（人）**: 再読込2.8.202→束→自動1回→監査に customer_think／改善検証は read+版一致。LLM客ごとは効果出てから
+
+## 2026-11-23 **陽さん停止？／新客時のAPI思考**（竹内さん・統括pro徹底）
+- **DB**: 陽香/陽子/陽菜は直近120監査 **HIT0**。直近停止は **#1597 y.Ino** `human_takeover:keydown:room_layout_id[]`（2.8.199）。human_takeover → 一括HOLD（次客に進まない）
+- **統括Pro生**: 『陽さんになって止まった』は誤認。真因は Ino の room_layout keydown。新客時は pending claim→束learnRefresh→resolve-search（未知のみ）→motion-plan。**統括Proは客ごとには呼ばない**（設計通り）。欠けは read=0・手順書旧版のまま思考
+- **私の要約**: 画面が次客（陽）に見えても監査が無い＝その客の入力は始まっていない可能性大。API「思考」は条件解決＋動き計画＋束の統括メモ読みで、客ごとにProを回してはいない
+- **次**: 2.8.201再読込→束→自動1回（触らない）。pending指示が溜まっているなら再読込後に拾えるか確認
+
+## 2026-11-23 **はるさん条件食い込み→指定客完了まで（2.8.201）**（竹内さん・統括pro）
+- **症状**: はるさん（駅・弁天町 `7e9394b5`）の条件が次の指定客（地域モード）に食い込んで止まる感覚。指定客が完了するまでちゃんとやる
+- **DB**: #1597 Ino は `human_takeover:keydown:room_layout` で検索前停止・`leftover_scan`「前客なし」。はる=`area_mode:station`。**穴**: fill開始直後に `_lastFilledCidSave(次客)` しており前客≠今客が常に偽
+- **統括Pro生**（--save）: 「はる食い込みは2.8.201でコード修正済み。止まっているのは本番再走が無いこと／read=0。次は再読込≥2.8.201→束→指定客1回→ready_next確認」
+- **改善 2.8.201**:
+  1. 前客は `__axlxSwitchPrevCid`／`axlx_last_want_mode` で外し前に固定。cid保存は **notifyDone／ready_next**（開始時上書き禁止）
+  2. 前客違い or 前客station → want=area なら駅外し必須（ForceClear＋LedgerForceOpen）
+  3. `designated_lock`→`ready_next`で`designated_done`／別客は busy_other／人が引き取ったら `designated_incomplete`
+- **F58**: 19/19・版2.8.201
+- **次（人）**: chrome 再読込 **2.8.201**→束取得（playbook rv=57c9b30a）→**指定客1人**自動（触らない）→監査: leftoverに駅残確認・`designated_done`・`ready_next`
+
+## 2026-11-23 **自動1回の結果：途中停止／並べ替え／PDF**（竹内さん・統括pro）
+- **DB#1597**（2.8.199）: `human_takeover:keydown:room_layout_id[]` で**検索前に停止** → 並べ替え・PDF印=0。人間らしさ motion moves=0。playbook_seen は旧 `rv=4c266b56`（束は `57c9b30a`）
+- **DB#1595**（2.8.196・前回一覧到達）: `sort_no_head`×3→並べ替えせず `auto_pdf_start`（sent=0）
+- **統括Pro生**: 議題は『新束のあと自動が旧版手順書で止まった』に集約。次は再読込→束取得で playbook_seen 版確認→自動1回
+- **改善 2.8.200**: ①checkbox/radio の keydown は human_takeover にしない ②fill開始で手順書再読込 `_loadLearnNext(true)` ③並べ替え前に案内パネル退避＋一覧 scrollIntoView
+- **次**: chrome 再読込 **2.8.200**→束取得（playbook_seen rv=57c9b30a）→自動1回（操作触らない）→印: sort_head_hover／sort_hilo／auto_pdf・human_takeover無し
+
+## 2026-11-23 **足りない仕組みの有無→仕組み台帳強化**（竹内さん「足りていない仕組みはあるのか／足りない部分強化／統括pro」）
+- **統括Pro生**: 「今足りていない仕組みは『playbook_seen版関所』と『新束後自動1回（F6/F55）』。**仕組み自体はコードにあり**、止まっているのは人の手と版ずれ」
+- **強化**: F60 に **仕組み台帳**（mech.exists／blocked=human|cost|code）。`playbook_seen` は印ありだけでは不足→**rv＝コード決まり版**一致が完了線。実測: 仕組み無し**0**／人待ち8／費用2／先頭人待ち=`auto_after_bundle`／seen=`rv=4c266b56 ≠ 57c9b30a`
+- **次**: 拡張再読込≥2.8.199→束取得→自動1回（人）。費用側は引き続き photo_learn／weak-strengthen
+
+## 2026-11-23 **人間比・徹底強化ループ（画像学習＋テスト繰返し）**（竹内さん「人間と比べて弱い部分徹底改善／統括pro／画像学習とテスト繰返し」）
+- **ルート**: `scripts/strengthen-vs-human-loop.ts --yes-cost`＝①F60弱所横断→②F59 human-like-improve（gaps＋photo）→③weak-strengthen（欄1つずつ）→④F58→⑤F60再測。stdio inheritで途中ログを隠さない
+- **1周実測**: photo **50+26=76枚**読めた・束反映 ok（id 2663→2667）／weak-strengthen ok／**F58=19/19**／再測 **未達9/11** 先頭P0=`auto_after_bundle`（新束後の自動がまだ無いので位置52.8%・近さ66・human帯23.4%は据え置き）
+- **手順書**: `attach-playbook --apply` → realpro version=`a7feb30c`・押す位置183
+- **次（人の手・必須）**: chrome://extensions **再読込≥2.8.199**→ポップアップで束取得→**自動1回**→`npx tsx --env-file=.env.local scripts/weak-find.ts`。未達が残ればまた `--yes-cost` で周回
+
+## 2026-11-23 **弱所横断の土台 F60（見つけて強化ルート）**（竹内さん「弱い部分ほか／仕組みの土台／統括pro」）
+- **仕組み**: `scripts/weak-find.ts` → 手順書反映・新束後自動・近さ畳み・自動位置/カーソル・F57・F58・thin・AD を横断洗い出し→P0/P1/P2で強化スクリプトへ振り分け。土台 **F59**（人間らしさスタンプ）・**F60**（弱所横断）を foundation-audit／統括Pro axes に追加。F58 **19/19**
+- **本番スキャン**: 未達9/11・先頭P0=`auto_after_bundle`（新束後自動なし）→`playbook_reflect`（旧版23決まり）→AD・位置52.8%・human帯23%・近さ66・F57欠段・thin93
+- **次**: 拡張2.8.199再読込→自動1回→`weak-find.ts`再測。以降は弱い所を探す時はまず F60
+
+## 2026-11-23 **手順書の抜け点検→強化（PDF🧠未分類・再attach）**（竹内さん「手順書ちゃんと改善／抜けテスト／統括pro」）
+- **DB**: realpro#2663 は build_v9・決まり38・rules_v一致。ただし checkPlaybook に「検索結果：未分類1件」＝`印刷用PDF🧠88通す`。直近自動は古い手順書（23決まり・playbook_seen欠）のまま＝**新束後の自動がまだ無い**
+- **強化**: `cleanPlaybookName` で `🧠N通す` 除去／list固定ガイド後に PDF 未分類を落とす。テスト強化（PDF🧠→未分類0）。`attach-playbook --apply` → realpro version=`dc4082dd`・**checkPlaybook_issues=[]**
+- **F58**: 18/18。**次**: 拡張2.8.199再読込→束取得→自動1回で `playbook_seen` が新版・AD①②③が出ること
+
+## 2026-11-23 **テスト→課題→改善周回（測り方の誤りを直す・2.8.199）**（竹内さん「テストして課題見つけて改善繰り返す」）
+- **課題（DB）**: 生 gapsFromOps は短間隔28.5%に見えるが、1押下畳みは短間隔≈1.8%。束 `human_like.point_pct=5%` は過去通常の監査で動かない。直近自動の位置≈52.8%。畳み human帯23%は `_wardGapPlan` の長停止過多＋中央値2525が帯外。
+- **改善**: 計画正本＝**1押下畳み**／位置＝**直近自動**。`median_ms` は帯内1400へ寄せ。`_wardGapPlan`/`_selGapPlan` を human帯主に。`humanRand`←`__axlxLearnGapFloor`。版 **2.8.199**。F58 **18/18**
+- **実行**: gaps+photo newest51＋sequence26 → 束反映 ok。**次は拡張再読込（2.8.199）→束取得→自動1回→`--plan-only`**
+
+## 2026-11-23 **人間らしさ未達の改善仕組み（F59・2.8.198）**（竹内さん「改善する仕組み／画像学習OK／費用OK／統括pro」）
+- **仕組み**: 測る→束に人の間隔 `gaps`（median/floor）→photo_learn（位置＋連続）→反映→拡張再読込→自動→再測。`scripts/human-like-improve.ts --yes-cost`
+- **拡張 2.8.198**: `_wardGapPlan`/`_selGapPlan` が `__axlxLearnGapMs`＋`floor_ms` で human帯寄せ。F58 **18/18**
+- **本番実行**: gaps 反映 ok／photo newest 54枚＋sequence 26枚前後。次は再読込→自動1回→`--plan-only` 再測
+
+## 2026-11-23 **人間らしさ本番調査＋統括Pro**（竹内さん「いちど調査／統括pro徹底」）
+- **正本48h（gapsFromOps）**: 近さ**50点・未達**／短間隔自動28.5%（≤12%要）／human帯21.5%（≥50%要）／p50 1825 vs 通常2265
+- **旧script全g**: 近さ16点（change込みで歪む）→ `scripts/human-nearness.ts` を正本に修正
+- **直近自動80行**: judgeHumanLikePass=**合格**（カーソル73.8%・位置52.5%・直書き0）／**束** point_pct=**5%**・cursor69% → 矛盾は標本窓の違い（統括もそのまま指摘）
+- **統括Pro**: verdict=almost／次手=再読込→自動1回→（位置は photo_learn）→再測。人間として不可のまま
+
+## 2026-11-23 **人間らしさをテスト仕組みに入れる（F58 16/16）**（竹内さん「ちゃんと人間のようになっているのかもテスト／仕組みに」）
+- **追加**: `judgeHumanLikePass`（直書き0・選ぶ欄打ち込み0・カーソル/位置≥50%）／`human-nearness.test`（機械連打は不合格・人間帯は短間隔≤12%）／`human-like-wiring`（logNormal・一息・F58組込）
+- **F58必須**: `human_like_audit`・`human_nearness`・`human_like_wiring`（13→**16本**）。配線スキャンに human-wait/logNormal/一息 欠落検知
+- **確認**: `npx tsx scripts/ext-test-improve-loop.ts` → **16/16 PASS・抜け0**
+- **本番の近さ実測**（別）: `npx tsx --env-file=.env.local scripts/human-nearness.ts`（F29許可線）。コード合格 ≠ 本番自動が人間帯に入った証明
+
+## 2026-11-23 **テスト部隊強化＋build_v9確認（F58 13/13）**（竹内さん「テストして確認したかな／テスト部隊の強化」）
+- **正直な欠**: 前回は単体だけ回して F58 必須に未組込・area差し替えで `auto_procedure_rules` が4落ちる穴を見逃していた。
+- **部隊強化**: F58 に `playbook_search_extra_guides`／`playbook_build_v9_wiring`／`action_playbook` を必須追加（10→13本）。`flow-series` の PLAYBOOK_BUILD_V=7 固定ピンを ≥7 に緩和。area は aim を消さず「開く／確定」だけ足す形に修正。
+- **確認**: `npx tsx scripts/ext-test-improve-loop.ts` → **13/13 PASS・抜け0・版2.8.197**。束 re-attach（realpro version=d2def181）。
+- **次**: 拡張再読込→自動1回で `playbook_seen`＋F57段印（本番監査）。コード配線テスト完了 ≠ 本番1回の実証
+
+## 2026-11-23 **手順書弱い所の洗い出し＋検索理解（build_v9）**（竹内さん「ほかに弱い部分／検索理解／統括pro徹底」）
+- **DB実測（realpro 束）**: list=AD①②③④済み。search=「検索を押す」1手だけ。area=「区の欄」1手・確定なし。next=未分類（最初前1234次最後）。switch/clear/pet=場面なし。
+- **検索理解（コード）**: `search_customer_screen_grasp`／`search_grasp_reload_resume`／`after_search`→`sort_ad` の決まりは載っている。監査 #1595 は把握・sort印ありだが `playbook_seen` 無し・F57 未完（確定後・場所後・検索前欠）。#1590 は after_search あり・並べ替えAD欠。
+- **強化（build_v9）**: search に把握①②③固定／area に確定してリストへ固定／clear・switch・pet を `extra_guides`／pager 欄名を「次のページへ」に対応。`attach-playbook --apply` で束更新。
+- **テスト**: `playbook-search-extra-guides`／`playbook-ad-sort-clear`／`action-playbook`。使い方: 拡張再読込→自動1回→`playbook_seen` の build/版が新しく、search 手順に①②③が出ること
+
+## 2026-11-22 **拡張 2.8.194: 回帰＝2.8.177把握ゲートがClaude時代の並べ替えを壊した**（竹内さん「昔はできていた／なぜできなくなった」・統括Pro）
+- **回帰の本因**: **2.8.177** で「検索把握なし → ADしない」（`sort_blocked:search_ungrasped`）。Claude時代は `autoPressPdfs` → 直接 `_sortByAdLikeHuman`。把握印の生存失敗・モーダル文言誤検知と重なり、検索後で止まった。
+- **直したこと**:
+  1. `afterSearch` / `fromSortCursor` → **`legacy_claude_path` で直接並べ替え**（把握は印だけ・止めない）
+  2. 一覧証拠ありなら ungrasped でも並べ替えへ
+  3. 並べ替え中断は `_isCondModalLabelsOpen`（one_*）のみ
+- **版**: **2.8.194**。テスト: `sort-legacy-claude-v28194`。印: `dl:search_grasp_gate=legacy_claude_path` → `dl:sort_menu`
+
+## 2026-11-23 **手順書にAD並べ替えをわかりやすく載せる（build_v8）**（竹内さん「テスト／ADが手順書に／流れ理解／弱い強化」・統括Pro）
+- **実測**: 束 playbook build_v=6・決まり23件。`ad_sort_hover` が手順書に無く、list 場面は「印刷用PDFを押す」だけ → 並べ替えが抜けて見える。
+- **強化**: PLAYBOOK_BUILD_V=8／flow_series に `sort_ad`（①並べ替え→②AD→③高→低）／list に `PLAYBOOK_LIST_AD_SORT_STEPS` 固定載／`ad_sort_hover` 文を番号付きで明確化／`attach-playbook --apply` で束更新。
+- **テスト**: F58 10/10 PASS（`playbook-ad-sort-clear` 含む）。流れ: 検索把握 → sort_ad → list/PDF → 次 → handoff
+
+## 2026-11-22 **拡張 2.8.197: 並べ替え見出し埋もれ（sort_no_head→PDF飛ばし）**（竹内さん画面・統括Pro徹底）
+- **DB実測 #1595（2.8.196・23:49）**: `sort_cursor_go`→`sort_menu`→`sort_aim_warm`→**`sort_no_head`×3**→`sort_failed continue`→`auto_pdf_start`。検索把握・カーソルは動いたが**並べ替えせず物件取得**していた。`head=N`／見えていた候補はナビのみ。
+- **本因**: 「並べ替え」が `div.main_table` 巨大文言（束 points: 大阪N棟N戸並べ替え）に埋もれ、完全一致／短い loose で落ちる。
+- **直し**: `_findSortHeadEl`（含む一致＋最短・表ルート除外・並び替えに戻る）／失敗時見出しが見えれば `sort_retry_before_pdf`／版 **2.8.197**。テスト `sort-head-buried-v28197`。
+- **使い方**: chrome://extensions **再読込**→自動1回→印: `sort_head_hover` または `sort_done`／`sort_no_head` が消えること
+
+## 2026-11-22 **F58 拡張テスト→抜け→改善ループ**（竹内さん「テストも土台／改善したらテスト／抜け見つかれば改善」・統括Pro）
+- **仕組み**: `scripts/ext-test-improve-loop.ts`（必須8本＋配線スキャン）→ スタンプ `memory/ext_test_improve_loop_last.json` → 土台 **F58_ext_test_improve_loop**
+- **無料直し `--fix`**: `AUTO_RULES_REVIEWED_UP_TO` を manifest に合わせる／marker がある欠 id を `_AXLX_RULES_DONE` に足す
+- **初回で見つけた抜け**: 見直し版 2.8.185→2.8.196／DONE 欠 `guide_plan_link`・`guide_clear_fill_gate`・`guide_list_next_flow`／版ピン `sort-legacy` を ≥ に緩和 → **8/8 PASS**
+- **使い方**: 拡張を直したら必ず `npx tsx scripts/ext-test-improve-loop.ts`（抜けあれば `--fix` して再実行）
+
+## 2026-11-22 **拡張 2.8.196: 客検索把握の抜け＝リロードで画面照合が死ぬ**（竹内さん「抜けないのかテスト」・統括Pro）
+- **テストで見つけた抜け**: click直前に `_verifyCustomerSearchScreenGrasp` を始めるが、検索で**ページ再読込**するとタイマーが消え `search_customer_grasp_ok` が付かない。
+- **直し**: ①新ページで sync 意図だけ残っていたら `reload_resume` で画面照会再開 ②Case C で一覧証拠があれば `screenOk` 昇格＋`dl:search_customer_screen_ok` ③手順書指摘で `page:search_grasp_reload_resume` を `KEEP_STEP`/`RULE_STEP` に追加（上限で落ちない）
+- **版**: **2.8.196**。テスト: `search-customer-grasp-gaps-v28196` PASS（10抜け＋証拠表＋RULE_STEP）。再読込→自動1回→ `search_grasp_reload_resume` または `search_customer_grasp_ok`／`dl:search_customer_screen_ok`
+- **統括Pro**: コードでは塞いだ／自動1回の実証が無いので「塞がったとは言えない」。次手＝再読込2.8.196→自動1回→印確認
+
+## 2026-11-22 **拡張 2.8.195: お客さん検索を手順書×画面で把握**（竹内さん「検索したことちゃんと把握／質高く」・統括Pro細部）
+- **狙い**: 検索ボタン押下の意図＋画面証拠（並べ替え／棟戸／印刷用PDF）＋手順書 after_search を客番号付きで照合。把握OKなら並べ替え本線へ kick。
+- **印**: `search_customer_grasp_intent` → `search_customer_grasp_ok` / `guide_phase_after_search_screen` → `dl:search_customer_screen_ok` → sort
+- **回帰の整理**: 2.8.177 の「把握なし→AD停止」が Claude 時代の検索後並べ替えを壊した。194で一覧証拠なら本線続行、195で把握の質（客×画面×手順書）を強化。
+- **版**: **2.8.195**。テスト: `search-customer-screen-grasp-v28195`。再読込→自動1回→上記印＋`dl:sort_menu`
+
+## 2026-11-22 **拡張 2.8.193: 強制は保険のみ・関所細分化が本線**（竹内さん「強制は保険として」・統括Pro）
+- **方針**: 並べ替えへは `_gateSortCursorReady` で1つずつ。`main` / `reclassify`（誤検知→本線）/ `wait_modal|fill|rows`。`sort_cursor_insurance` は本線が5回待っても進まない時の**1回だけ**。
+- **版**: **2.8.193**。テスト: `sort-gate-insurance-v28193`。印: `dl:sort_gate_check` → `sort_gate_main|reclassify` → `sort_cursor_go`（保険時のみ `sort_cursor_insurance`）
+
+## 2026-11-22 **拡張 2.8.192: サイド「所在地」誤検知で並べ替え待ちが永遠 defer**（竹内さん画面「1.1秒後に…」のまま・統括Pro徹底）
+- **画面実測**: 枠に「1.1秒後に並べ替えへカーソル移動」が出たままカーソルが動かない。一覧＋「並べ替え」見出しは見えている。
+- **本因（手順書×画面の細部抜け）**: `_isCondModalOpen` の文言フォールバックが左サイド常時の「所在地」に反応 → 条件モーダル中と誤判定 → `sort_cursor` が defer し続ける。待ち予約の印だけで並べ替え完了とみなす穴もあった（`dl:sort_` が `sort_cursor_wait` にも当たる）。
+- **直したこと**:
+  1. モーダル判定から「所在地」「市区郡」単体を削除。`one_*`＋モーダル固有見出し＋`this_window_close` だけ
+  2. 並べ替え見出しあり＋defer3回 → `sort_cursor_force`／`fromSortCursor` 時は `sort_modal_override`
+  3. 流れ地図原子: `after_search_rows` → `sort_wait` → `sort_cursor` → `sort_menu`（bulk→page 合流）
+  4. F57: `sort` 完了は `sort_menu|sort_hilo|…` のみ（`sort_cursor_wait` だけでは incomplete）
+- **版**: **2.8.192**。テスト: `sort-modal-sidebar-v28192` / guide-screen-grasp。使い方: **再読込**→自動1回→ `dl:sort_cursor_go` / `dl:sort_menu`（待ちだけで止まらない）
+
+## 2026-11-22 **拡張 2.8.191: 検索押下→1秒以降の人間待ち→並べ替えへカーソル**（竹内さん「検索したところでとまる」・統括Pro）
+- **DB実測 #1588（2.8.189）**: `dl:after_search` / `dl:search_to_sort case_c_sync` まで付いたが **`dl:sort_*` が0**。finish=`idle_close: fill-doneが6分届かず`。画面は一覧＋「0件選択中」＝検索後に並べ替えカーソルが始まっていない。
+- **本因**: `_maybeAutoPressOnLoad` が「見る間」の**前に** `_autoPdfSig` を立て、見る間が `_newFillSince` でキャンセルされると **再試行不能**（以降 `sig === _autoPdfSig` で return）。Case C の zeroCheck も `_autoPdfSig` があると諦める。
+- **直したこと**:
+  1. `_scheduleSortCursorAfterSearch`: 検索把握＝トリガー → **1.0〜3.5秒の人間ランダム待ち** → `_autoPdfSig` を外して `autoPressPdfs({ fromSortCursor })` → `dl:sort_menu`（並べ替えへカーソル）
+  2. afterSearch / Case C は長い「見る間」道ではなくこの専用道へ
+  3. 見る間キャンセル・押し失敗時に `_autoPdfSig` をクリア／次入力開始で予約破棄
+- **版**: **2.8.191**。テスト: `sort-cursor-after-search-v28191`。`search-audit.js` に `dl:after_search` / `dl:search_armed` を RULE_STEP 追加（手順書確かめが落ちない）。使い方: **必ず再読込**→自動1回→点検に `dl:sort_cursor_wait` / `dl:sort_cursor_go` / `dl:sort_menu`（`sort_*`）
+
+## 2026-11-22 **拡張 2.8.190: 検索後一覧で止まる（並び替えに移らない）**（竹内さん画面・統括Pro徹底）
+- **現象**: 検索後に一覧（36棟46戸）・「並び替え」見えるのに止まる。枠は「0件選択中」「並び替えに戻る」。自動検索は「次は明日」＝検索段は終わった扱い。
+- **DB**: 最新監査は依然 #1585（2.8.187）。**2.8.189 の本番監査が無い**＝再読込未了か監査未到達。#1582は `search_armed` までで after_search/sort=0（同じ型）。
+- **根本（細部）**:
+  1. `search-armed` が `_autofillInitiated` の時だけ `_autoSendArmed` → **AJAX結果更新では Case C 不発＋armed無し**で一覧停止
+  2. Case C / `_maybeAutoPressOnLoad` は `_autoModeOn` 必須 → 検索後に自動OFFだと武装しても押さない
+  3. inject が行を見ても sync/armed からの並び替え kick が無かった
+- **直し**:
+  1. search-armed で **必ず armed**＋0.4/1.5/3.5秒 poll で `_kickSortAfterSearch`
+  2. pending/sync があれば `_forceAutoForPending`（この一覧だけ自動ON）
+  3. inject で行＋armed/sync → kick（`dl:search_to_sort`）
+  4. Case C でも force auto
+- **版**: **2.8.190**。テスト: `sort-kick-after-search-v28190`。使い方: **必ず再読込**→自動1回→点検に `dl:search_armed` / `dl:search_to_sort` / `dl:sort_*`
+
+## 2026-11-22 **拡張 2.8.189: 手順書×画面を1つずつ把握・止まらず並び替え**（竹内さん「ちゃんと1つずつ把握／連携／とまらない／統括Pro徹底」）
+- **DB実測 #1585**: `guide_phase_after_place/before_search` が **guide_plan_miss**（`__axlxFillCond` 未設定）→ 1つずつ確認が空回り。検索後は click→リロードで after_search 印が flush 前に消え、Case C 不発で並び替えに入らない。
+- **直し（連携の穴を塞ぐ）**:
+  1. `_fillCondForStamp`／`__axlxFillCond` を fillRealpro でセット。phase チェックが条件を読む
+  2. guide_plan_miss 時も **画面DOMで1つずつ**（区・駅・間取）見て `guide_phase_ok`＋flow_series → **止まらず次へ**
+  3. after_search / guide / flow を PIN 即flush＋`axlx-guide-live-flush`（content→bg `page:` live）
+  4. Case C が `dl:after_search`＋`search_to_sort`（188の sync印維持）
+  5. F57: after_search に `dl:/page:`、場所後・検索前は guide_plan_miss だけを完了にしない
+- **版**: **2.8.189**。テスト: `guide-one-by-one-v28189` / F57 unit。使い方: 再読込→自動1回→点検に `guide_phase_one`・`guide_phase_ok`・`page:guide_phase_after_search`・`dl:search_to_sort`・`dl:sort_*`
+- **改善完了線**: コード配線だけでは NO。**2.8.189 再読込後の自動1回で F57 必須段＋sort 印**が必要。
+- **統括Pro確認（同日）**: 「2.8.189は実証済みではない」「F57検索後・並び替えは完了と言えない」。抜け=再読込→自動1回未実行＋`_AXLX_RULES_DONE` に `ad_sort_hover`/`station_grasp_like_guide` 欠（→ 同版で RULES_DONE に追加済）。DB最新はまだ 2.8.187（#1585）止まり。
+
+## 2026-11-22 **拡張 2.8.188: 検索後並び替え不発（audit#1585）**（竹内さん「検索したところで止まって並び替えで来ていない／統括Pro」）
+- **DB実測 #1585（2.8.187・brain_staff）**: `search_cursor` / `cursor_aim click:検索` まで。`search_armed`・`after_search`・`search_to_sort`・`sort_*` が **0**。status=`started`。画面は一覧＋「並び替えに戻る」＝検索遷移は済んでいる。
+- **根本**: 検索 click → 即リロードで `chrome.storage.session.set`（非同期）が間に合わず、`axlx_pending_auto_send` / `axlx_search_grasped` が消える → **Case C 不発** → AD並び替えに入らない。MAIN の audit 印も flush 前にページが死ぬ。
+- **直し**:
+  1. page-script: `_armPropertyPathBeforeSearch` / `_guideLikeAfterSearchGrasp` が **sessionStorage 同期印**（`axlx_pending_auto_send_sync` / `axlx_search_grasped_sync`）を click 前に書く
+  2. bulk-dl: search-armed / grasped 受信時も sync を書く。Case C は sync を **0.7秒**で起動（chrome.storage 控えは 2.5秒）。AD関所も sync を先読み
+  3. 入力開始時に sync を消す（前客の印で誤押ししない）
+- **版**: **2.8.188**。使い方: `chrome://extensions` 再読込 → 自動1回 → 点検に `search_armed` / `dl:search_to_sort` / `dl:sort_*`（Case C なら `case_c_sync`）
+- **統括Pro生**: 「監査1585 … after_search/sort が無い＝検索後の『結果画面で止まって並び替えへ進む』段…」。次手に photo_learn を含むが、今回の穴は **印の生存（storage）** なのでコードで先に塞いだ（費用学習は後）。
+
+## 2026-11-22 **拡張 2.8.187: page-script.js 復旧**（竹内さん「ちゃんと復旧／統括Pro」）
+- **事故**: PowerShell 文字化け修復のあと `git checkout HEAD -- page-script.js` で未コミット 2.8.155〜186 の手順書照会本体が **2.8.154** に消えた。OneDrive 1.0MB版は文字化けで構文壊れ。858/890KB 復元UIは開いたファイル競合で当てにくかった。
+- **復旧**: きれいな 2.8.154 を土台に、transcript 抽出の `_guideLike*` / `_noteFlowSeriesAt` を挿入し、駅・地域・場所・検索前・検索把握・スキップ印を再配線。版 **2.8.187**。構文OK・日本語OK（`確定してリストへ`/`手順表`）。
+- **テスト全通**: `guide-flow-grasp-v28177` / `guide-phase-checkpoints-v28171` / `flow-series-v28182` / `guide-screen-f57-v28187` / `list-sort-live-audit-v28186`
+- **次**: `chrome://extensions` で **2.8.187** 再読込 → 自動1回 → 点検に `guide_phase_*` / `dl:search_to_sort` / `dl:list_flow_grasp` / `dl:sort_*`
+
+## 2026-11-22 **F57: 手順書×画面照会を細部まで改善する仕組み**（竹内さん「なぜ細部までできていなかった／仕組みをつくれ」・統括Pro）
+- **なぜ細部まで改善できていなかったか（原因）**:
+  1. 完了の定義が「コードを入れた／検索まで印あり」で止まり、**一覧・並べ替えの本番監査印**を完了線にしていなかった
+  2. 段ごとの完了線付き土台が無く、統括も「課題欄 photo_learn」軸に寄りやすかった
+  3. 印が消える穴（staff早期クローズ・live未配線）を測る関所が無かった（186で塞いだが検証仕組みが後追い）
+- **仕組み（F57・設計知見P1登録済）**:
+  - 純関数 `app/lib/guide-screen-grasp.ts` … 段ごと need＋`improve_complete`（コード配線だけでは完了にしない）
+  - 土台 **F57_guide_screen_grasp** … 統括 KEY / Pro axes
+  - 点検 `npx tsx --env-file=.env.local scripts/check-guide-screen-grasp.ts`（未完は exit 2）
+  - bulk-dl: next_flow ライブ（186の `_liveDlStep` 維持）
+- **DB実測 #1584**: F57=6/9 欠=一覧・検索→並べ替え・並べ替え
+- **page-script 復旧**: 上の **2.8.187** で手順書照会本体を戻した（bulk-dl / background / F57 は当初から残存）。
+- **版**: **2.8.187**。テスト: `guide-screen-f57-v28187.test.js`
+
+## 2026-11-22 **拡張 2.8.186: 一覧・並べ替えの手順書×画面照会＋改善の仕組み**（竹内さん「弱い部分も強化／録画連続／改善の仕組み」・統括Pro）
+- **DB実測 #1584（2.8.184・brain_staff）**: 検索まで `guide_phase`/`flow_series` あり。`list_flow`/`sort_*`/`search_to_sort` なし・末尾 `human_search_done`。
+- **根本（改善の仕組み穴）**:
+  1. スタッフは検索後も AD→PDF があるのに、fill-done 早期クローズ止めが **自動/AIXだけ**（`_autoModeChosen`）→ staff は監査が閉じて印が残らない
+  2. bulk-dl の `window._axlxAuditStep` は**未定義**。並べ替え印は timings→batch-done 依存 → 途中停止で印0
+  3. 一覧照合が並べ替え**後**だけ → 赤丸③で止まると `list_flow` も0
+- **直し**:
+  1. `_staffModeChosen`＋`_keepAuditOpenAfterFill`（スタッフでも監査を開けたまま）
+  2. `_liveDlStep` → `axlx-audit-live-step`（`dl:search_to_sort`/`dl:sort_*`/`dl:list_flow_*` を即載せ）
+  3. 並べ替え**前**に `list_start` 照合
+  4. 通常録画 `run_mwrlhyj3_pqnn` を連続順で photo_learn（検索→高→低まで）→ **12/12読めた・欄366・束作り直し済**
+- **版**: **2.8.186**。テスト: `list-sort-live-audit-v28186.test.js`。使い方: 再読込→スタッフor自動1回→点検に `dl:search_to_sort`／`dl:list_flow_grasp`／`dl:sort_*`（途中停止でも残る）。
+- **⚠ 統括との食い違い**: 統括は「改善一連 自動で使う✓／効果確認✗」と「F55 新束後自動=0」を同時に出す。今回のコード穴（staff早期クローズ・live印）は直した。**実証は 2.8.186 再読込＋自動1回の監査印**が必要。
+
+## 2026-11-22 **拡張 2.8.185: 検索後並べ替え（AD→高→低）で止まるを強化**（竹内さん画像赤丸×3・統括Pro）
+- **DB実測 audit#1584（2.8.184・brain_staff）**: `guide_phase_after_search`／`flow_series_ok`／`fill_done` まであり＝**検索完了は把握済み**。一方 `dl:sort_*` が0・末尾が `human_search_done`→finish。画面は並べ替え開・ADホバー・右に高→低が見える＝**②のあと③で止まった／点検が早期終了**。
+- **束位置**: `左の高→低｜span.sort_detail` x≈0.15 y≈0.47 あり（学習済み）。並べ替え巨大 `main_table` 汚染あり。
+- **直し**:
+  1. 自動モード中は fill-done で `human_search_done` と閉じない（並び替え印を残す）
+  2. `search_to_sort` 印（検索完了→並べ替えへ移る）
+  3. 高→低を文言ゆれ＋最大~2.8秒ポーリング（AD再ホバー）＋学習 aim 近傍
+  4. `span.sort_detail`／短い AD・高→低は listChrome 除外
+- **版**: **2.8.185**。テスト: `ad-sort-hilo-v28185.test.js`。使い方: 再読込→自動1回→点検に `dl:search_to_sort`／`dl:sort_hilo`。
+
+## 2026-11-22 **拡張 2.8.184: `__tests__` で再読込不能を修正**（竹内さん「更新押したらバグ」）
+- **原因**: 2.8.183 で `chrome-extension/__tests__/` を追加。Chrome は `_` 始まりのファイル／フォルダをシステム予約として拒否 → 「Cannot load extension with file or directory name _tests_」「マニフェストを読み込めませんでした」。
+- **直し**: テストを `tests/chrome-extension/learn-refresh-gate-v28183.test.js` へ移し、拡張フォルダから `__tests__` を削除。ゲートに「拡張直下に禁止の _* が無い」検査を追加。2.8.183 の反映高速化ロジックは**戻さない**（バグはテスト配置だけ）。
+- **版**: **2.8.184**。使い方: chrome://extensions → 再読み込み（エラー無し・版 2.8.184）。
+
+## 2026-11-22 **拡張 2.8.183: 束・手順書をすぐ反映（ポップアップ不要）**（竹内さん「ここまでしなければ反映されないのか／すぐ反映できるように」）
+- **穴**: 改善→DB手順書は揃うのに、反映が「再読込→ポップアップ学習再取得→自動1回」に寄り、人手の関所が長い。コード再読込は Chrome 制約で必須だが、束取込はポップアップ依存が強かった。
+- **直し**:
+  1. `learn-refresh-gate.js` … 更新直後／needs_auto／手順書欠／build_v旧／flow_series欠で force
+  2. `onInstalled(update|install)` … 再読込直後に束を強制取込（`axlx_learn_after_update`）
+  3. 自動／AIX 切替瞬間にも強制取込
+  4. リアプロ `content.js` ページ起動で未取込なら裏取込（3分スロットル）
+  5. autofill 前 `_learnRefreshForAutofill` が上記ゲートを使う
+- **版**: **2.8.183→184**（`__tests__` 配置バグ修正）。テスト: `tests/chrome-extension/learn-refresh-gate-v28183.test.js`（拡張フォルダ外）。
+- **使い方**: chrome://extensions で再読込 →（ポップアップ無しで可）リアプロを開くか自動を選ぶ → 自動1回で `playbook_seen` が新版になること。
+- **残る人手**: コード再読込（Chrome）＋反映確認の自動1回（取った≠使った）。
+
+## 2026-11-22 **拡張 2.8.182: 手順書に一連の流れ（flow_series）**（竹内さん「流れのように把握／抜けないか／統括Pro」）
+- **抜け実測**: 最新束は場面 area→cond→station→search→list→next は並ぶが **flow/series キー無し**。監査#1583は流れ印0。拡張が読んだ手順書は旧版05c7b441（23決まり）でコード29と不揃い。
+- **仕組み**: `PLAYBOOK_BUILD_V=7`・`flow_series`（外し→確定→場所→検索→一覧→次→次客）。拡張 `_noteFlowSeriesAt` → `page:flow_series_at/ok`。決まり `flow_series_grasp`。attach-playbook 済。
+- **版**: **2.8.182**。再読込→学習再取得→自動1回で印確認。
+
+## 2026-11-22 **拡張 2.8.181: ブレイン手押しPDFがAIXに残らない**（竹内さん「衛星さんでおくっているのにAIXに無い」）
+- **DB実測**: 「衛星」顧客は無し。読みが同じ **永成**（`d4160e87`）が該当。audit#1583 `brain_normal` 2.8.179・08:49。録画に印刷用PDF多数なのに **08:48以降 pickups=0 / sent=0**。祐香は deferred でDBにあり・完了 announced（AIX側には載っている）。
+- **穴**: (1)送る合図が `downloads` 完了→`axlx-pdf-captured` 依存 (2)search-stamp incomplete 等で手押しが confirm 止まり (3)busy 中の自動押しを捨てる。
+- **直し**: 印刷用PDFクリックで武装→900ms後に `sendOnePdfNow`（捕捉と二重にならない）。brain/auto は guard 通過。待ち行列は手押し・自動共通（上限12）。版 **2.8.181**。
+- **使い方**: 拡張再読込→永成を選んでブレインON→印刷用PDFを1件→AIXの条件画面で pending が増えるか確認。
+
+## 2026-11-22 **拡張 2.8.180: 通常録画確認／メタ操作除去／輪0誤表示**（竹内さん「通常モードで録画した／確認して改善／統括Pro」）
+- **DB実測 `run_mwrlhyj3_pqnn`（2.8.179・08:48–08:50Z）**: 166行。本物操作 975／メタ汚染 315（`未完了:fill_done`・`今の客:fill_done_gap`・流れ台帳）。ラベル: `確定してリストへ`36・区多数・`左の検索`2・`左の高→低`1・`印刷用PDF`390。
+- **画面「学習0・操作覚えていない」**: DB空ではない。検索後リロードで `axlx_ops_diag.ring` が0に戻るだけ。文言を「輪は0（読み直しリセット）／直前はDBに保存」に変更。
+- **直し**: `_recNoteName` が `未完了:/完了済:/今の客:/流れ台帳/流れ地図/弱:` を輪に載せない。shot-learn 前半24＋後半20＝44枚（欄1114・読めず0）→束作り直し→`attach-playbook`。版 **2.8.180**。
+- **⚠ 統括との食い違い**: 統括はUI0を「新束後自動=0／拡張が読んだ0」軸で説明しがち。今回の画面文言の直接原因は **輪リセット**（別軸）。F6/F55は自動反映の話として並走。
+
+## 2026-11-22 **拡張 2.8.179: 通常PDF連打がAIX未反映に見える＋AD録画学習**（竹内さん「検索後AD→物件取得を学習／通常で送ってもAIXに無いことがある」）
+- **統括Pro**: AD学習は押した位置0%不足→通常画像学習。AIX未反映は新束後自動=0と名指し（私の要約: 今回の手押し経路とは別軸）。
+- **DB**: 08:32通常録画に `左の高→低｜span.sort_detail`＋連続`印刷用PDF`（learn未）。07:50分は既学習。祐香pickupsは deferred でDBには入っている。
+- **AIX未反映の実コード穴**: 通常手押しで `_pdfBusy` 中の2件目以降を**捨てる**→押したのに送られない。brain-skip も画面に理由が薄い。
+- **直し**: 通常は `_pdfQueue` に載せて消化。失敗理由を nudge（brain-skip／未選択／guard）。版 **2.8.179**。shot-learn 08:30–08:40 適用。
+
+## 2026-11-22 **拡張 2.8.178: 検索結果で止まる＝検索把握がリロードで消えていた**（竹内さん「検索結果でとまる／検索した把握できてない？／原因」）
+- **本番 audit#1582（2.8.177・永成）**: `search_armed`/`search_cursor` まであり。`search_press_ok`・`guide_phase_after_search`・`fill_done`・`dl:sort_*`・`list_flow` **全部無し**。status=started のまま。画面は一覧・0件選択中。
+- **根本**: after_search を `_finishSearchPress`（click後）に置いていた → 検索で**ページ再読込**するとコールバックが死に、`axlx_search_grasped` が残らない。統括Proは list/armed・小窓覆いも指摘（並行要因）。今回の印の抜けは**検索把握の生存経路**が主因。
+- **直し**: click **直前**に `_guideLikeAfterSearchGrasp`。Case C で `search_grasp_gate=case_c` 立て直し。版 **2.8.178**。
+
+## 2026-11-22 **拡張 2.8.177: 確定してリストへ／入れた／検索把握→AD／外すを手順書×画面で1つずつ**（竹内さん「地域や駅は確定してリストへ後に把握／入れた1つずつ／検索押してからAD／外すも同じ」）
+- **穴**: after_station/area はあるが「確定してリストへで閉じた」把握が薄い。検索押下の把握印が無く AD 並び替えが検索前に飛び得た。外しは after_clear 済みだが流れ全体の関所が弱い。
+- **直し**: `_guideLikeAfterConfirmCheck`（閉じた＋入れた miss 1つずつ）→ after_station/area。`_guideLikeAfterSearchGrasp`（session `axlx_search_grasped`＋postMessage）→ bulk-dl は検索把握なしで AD しない（`search_grasp_gate`／`sort_blocked:search_ungrasped`）。入力開始で grasp 消す。決まり `guide_phase_checkpoints` since **2.8.177**。
+- **抜け点検（統括Pro＋DB）**: コード関所は入ったが**自動反映は未実証**（直近監査は 2.8.175 まで・手順書読込版が古い 05c7b441）。地域フォールバック3経路が `after_confirm` を飛ばしていた → 同版で塞いだ。場所なし経路は確定モーダル無しのため after_confirm 非経由（仕様）。
+- 版: **2.8.177**。テスト: `guide-flow-grasp-v28177.test.js`。使い方: 再読込→学習再取得→自動1回。点検に `guide_phase_after_confirm` / `guide_phase_after_search` / `dl:search_grasp_gate` / `guide_phase_after_clear`。
+
+## 2026-11-22 **通常録画→画像学習: 検索後 AD 高→低の順番を束へ**（竹内さん「録画で検索→AD高い順／画像学習／自動反映」）
+- **本番**: 07:50UTC 祐希通常録画。`click:左の高→低｜span.sort_detail` ＋ point_fields x≈0.26 y≈0.33 stage=result。その後印刷用PDF。未学習だった。
+- **学習**: dry-run 2枚OK → 本番 6枚・欄157・読めない0。束作り直し。`attach-playbook` → realpro **ac8ce6cd**・決まり29・ad_sort/list_flow あり。
+- **反映**: 拡張 **2.8.176** 再読込 → ポップアップで学習再取得 → 自動1回 → F55（reflect/aim）。並べ替えは list のみ（駅モーダル中は止める）。
+
+## 2026-11-22 **拡張 2.8.176: 駅中並べ替えの根本＝モーダル検知が body 先頭8000字で切れていた**（竹内さん「まだ駅選択で並び替え／なぜこの動き／根本改善」）
+- **統括Pro**: 自動未反映ではなく場面誤認。駅モーダル中は sort 除外を先に定義してよい。
+- **根本**: `_isCondModalOpen` が `body.innerText.slice(0,8000)` に「駅の設定」が無いと null。一覧が長いと裏の一覧文言が8000字を埋め、**開いている駅モーダルが見えない判定** → 並べ替え開始。変な学習データが主因ではない。
+- **直し**: 可視 `label.one_station|one_line|one_city` を正本（dept_dom_db と同じ）。文言は見える短い見出しだけ。並べ替え直前に可視ラベルで再止め。autofill 開始で `_autoSendArmed=false`（前客武装の残りを消す）。
+- 版: **2.8.176**。テスト: `cond-modal-vis-v28176.test.js`。使い方: 再読込→学習再取得→自動1回。駅モーダル中に並べ替えへ飛ばないこと。
+
+## 2026-11-22 **拡張 2.8.175: 途中並べ替え＝把握穴＋飛行中カーソル＋手順書欠け**（竹内さん「まだ途中で並べ替え／一連のあとと把握？／自動反映？」）
+- **統括Pro**: 『自動モード未反映』は否定。真因は『検索後一覧だと把握できていない』＋駅モーダルが閉じ切れていない。
+- **本番DB（audit #1578・ext 2.8.173）**: 並べ替え印なし。駅入力中に `human_takeover`。`playbook_seen v=05c7b441` で **手順書に無い=ad_sort_hover 等**。最新 all 束 #2635 は rules=23 で ad_sort/list_flow 欠け → `attach-playbook --apply` で **a7c258a2・29決まり**に直し。
+- **コード穴**: `_abortAdSort` は世代上げだけ → 飛行中 `moveTo` が並べ替えへ着地し得た。→ `cancelMove`＋`alive` 関所（hover/press/step）。
+- 版: **2.8.175**。テスト: `sort-cancel-inflight-v28175.test.js`。使い方: 再読込→**学習再取得**（手順書 a7c258a2）→自動1回。駅中に並べ替えへ飛ばないこと。
+
+## 2026-11-22 **拡張 2.8.174: 右上コーナーでパネルを延ばせる**（竹内さん「中の部分見れなくなるときあるから右上にカーソル合わせて拡張ツール延ばせるようする」）
+- **統括Pro**: F53詰まり『中央に拡張小窓が重なり一覧の一部が見えない（5回）』と一致。右上コーナーリサイズを推奨。
+- **直し**: `underbar.js` に `#axlx-resize-ne`（ne-resize）。ドラッグで幅＋上方向の高さ（下端固定）。右下（se）は従来どおり。
+- 版: **2.8.174**。テスト: `resize-ne-v28174.test.js`。使い方: 拡張再読込 → 展開したパネルの右上角をドラッグして延ばす。
+
+## 2026-11-22 **拡張 2.8.173: 次客＝外し完了直後に外し忘れを1つずつ照合**（竹内さん「次客に検索／外す・入れる・画面照会の把握強化」）
+- **統括Pro**: 外す・入れる・画面照合は『まだ弱い』。土台欠 continuous_switch 系／手順書版ずれ／F44 handoff。関所コードはあるが外し→入れのつなぎの1つずつ印が薄い。
+- **直し**: `_guideLikeAfterClearCheck`（after_clear）＝きれい確認のあと外忘れだけ1件ずつ印 → 新条件へ。決まり `guide_phase_checkpoints` since 2.8.173。
+- 版: **2.8.173**。kb `530bb1f3`。使い方: 再読込→学習再取得→連続2客で `guide_phase_after_clear` / `guide_phase_one` / `leftover_clean` を確認。
+
+## 2026-11-22 **拡張 2.8.172: 地域フォールバック経路でも after_area 照合**（統括Pro細部確認「抜けは無いか」）
+- **穴**: 所在地フォールバック／区が1つ以上／直接区チェック後が `_runDeferredBasicThenSearch` 直呼びで `after_area` を飛ばしていた（`after_place` には入るが地域直後の1つずつ印が欠ける）。
+- **直し**: 3経路とも `_guideLikePhaseCheck("after_area")` を通す。DB手順書版はコードと一致（ebb73a4c・29件）だが、直近自動は古い版（05c7b441）を読んでいた → **再読込＋学習再取得**が必須。
+- 版: **2.8.172**。
+
+## 2026-11-22 **拡張 2.8.171: 駅後・地域後も手順表×画面を1つずつ照合**（竹内さん「手順書と画面照会を有効活用／駅・地域のあと確認／抜けなく」）
+- **穴**: 照合は開始時＋検索前の2回だけ。駅完了直後・地域完了直後が無く、入れた直後の抜けを見落とす（統括Pro名指し）。
+- **直し**: `_guideLikePhaseCheck`（after_station / after_area / after_place / before_search）。抜けは `guide_phase_one` で1件ずつ。駅0・区0は `guide_phase_block` で次へ進まない。決まり `guide_phase_checkpoints` since 2.8.171。
+- 版: **2.8.171→172**。テスト: `guide-phase-checkpoints-v28171.test.js`。kb `0ff1198e`。
+- 使い方: 再読み込み → 学習再取得。点検に `page:guide_phase_after_station` / `after_area` / `guide_phase_one` と手順書版一致。
+
+## 2026-11-22 **拡張 2.8.170: 駅選択中に並べ替えへ飛ばない**（竹内さん「駅の選択中にカーソルが変な位置／並べ替えは検索後／手順票×画面照合」）
+- **穴**: ①並べ替えホバー中は `_autoPdfRun` がまだ null → 条件入力開始で PDF 押しだけ止まり、カーソルは並べ替えへ飛び続けた。②手順表照合は miss を記録するだけで送付を止めなかった。③裏に一覧行が残ると駅モーダル中でも list 扱い。
+- **直し**: `_isCondModalOpen`（station/line/area）／`_abortAdSort`（世代切れ）を autofill 開始で実行／autoPress・sort・`_maybeAutoPressOnLoad` をモーダル中ブロック／照合 miss（条件モーダル・行0）で `list_flow_block` し送付しない。
+- 版: **2.8.170**。テスト: `sort-not-during-station-v28170.test.js`。決まり `guide_list_next_flow` since 2.8.170／kb `b3b5e14c`。統括Pro `--save` 済。
+- 使い方: 再読み込み → 学習再取得。駅選択中は並べ替えに行かないこと。
+
+## 2026-11-22 **拡張 2.8.169: カーソル1本化＋ADは並べ替えメニューから把握**（竹内さん「直接入力・マウス2つ／ADいきなり違う場所／人間のように1つずつ」）
+- **穴**: ①OSカーソル＋見えるカーソルで2本／②ADをページ全体・一覧列から掴み場所が違う／③`findSortDetailByRec` がページ全体の sort_detail を掴み得た。
+- **直し**: `forceOneCursor`（余分削除＋OS隠す）を押し前・AD前・監査時に／ADは `isListChrome` 除外＋メニュー近傍のみ（全体 `byTextLoose("AD")` 廃止）／高→低は **AD近傍**の `span.sort_detail` のみ／印 `sort_ad_wrong`。
+- 版: **2.8.169**。テスト: `human-cursor-ad-v28169.test.js`。決まり `ad_sort_hover` since 2.8.169／kb `42310121`。
+- 使い方: chrome://extensions → 再読み込み → ポップアップで学習再取得。条件押し前・AD並び替えでカーソルは1本。ADは一覧列ではなく並べ替えメニューから。
+- 手順書: `attach-playbook --apply`（2026-11-22・控え Temp\axlx-playbook-backup-28169）。決まり版をコード側に揃え。
+
+## 2026-11-22 **拡張 2.8.168: 同じ建物・2㎡以内は最安だけダウンロード**（竹内さん「同じ建物だったら２㎡以内は家賃低だけ／大量ダブり防止」）
+- **穴**: `room-dedupe` は平米**完全一致**だけ。スタッフモードは `_applyCheapestPerLayout` を丸ごとスキップ → スタッフ×自動で同棟のほぼ同間取りを何十件も押していた（スクショ「自動 49件目」）。
+- **直し**: 面積差 **≤2㎡**（売上サポ `pickup-dedupe` と同じ線・数珠つなぎしない）。自動押しは `forAuto:true` でスタッフでも絞る。手選びは外さない。印 `auto_cheapest_skip`（≤2㎡）。
+- 版: **2.8.168**。テスト: `room-dedupe.test.js`・`room-dedupe-2sqm-v28168.test.js`。KB `86ae3d8a`。統括Pro `--save` 済。
+
+## 2026-11-22 **2.8.167 / サーバー: スタッフ×ブレインも★物件出し★へは解析後のみ**（竹内さん「スタッフモードでブレイン選択時、ここのラインに送らない／ほかの自動と同じでAIXツール解析後に送る」）
+- **DB実測**: 直近 AYAKA♡. の pickups（~04:44）は `group_notice=null`＝検索のたびに★物件出し★へ即送。同客の 02:17 は `deferred`（ブレイン経路）。
+- **穴**: `groupNoticePlan` が `staffMode=true` ならブレインONでも即送（`reason=staff_mode`）。他の自動（通常/AIX×ブレイン）は deferred。
+- **直し**: ブレインON（スタッフ含む）→ deferred。スタッフ×ブレインOFFだけ即送。帯文も「解析後に1回」。本番は **merge-pdfs デプロイ**が効く（拡張帯は再読込）。
+- 版: 拡張帯 **2.8.167**。テスト: `pickup-group-announce.test.ts`。KB `2a55f1d4`。統括Pro `--save` 済（方針一致・実装済みを次手に再掲＝矛盾あり）。
+
+## 2026-11-22 **拡張 2.8.166: 一覧・次ページ・次客も手順表×画面照合**（竹内さん「手順書／人間の動き／AD後次ページ／弱い把握も同連携／一連と次客の精度」）
+- **穴**: 手順書に list/next 場面はあるが、bulk-dl が押す前・次へ前・到着後・客完了で照合していなかった。AD→次ページの経路はあるが「意図して把握」が弱かった。
+- **直し**: `_guideLikeListFlowGrasp(phase)`（list_start / before_next / after_next / handoff）＝手順書 scenes×画面（行・次ボタン・AD順）。AD後・非AD開始で list_start → 次へ前 before_next → 到着後 after_next → 客完了 handoff → 次客切替で `list_handoff_seen`。印 `dl:list_flow_grasp` / `dl:next_flow_grasp` / `dl:handoff_grasp` / `page:list_handoff_seen`。決まり `guide_list_next_flow` since 2.8.166。
+- **人間の動き（AD）**: 2.8.164–165 のまま（並べ替えホバー→ADホバー→`span.sort_detail` 高→低クリック・URL禁止）。AD後は list_start 照合してから押す。
+- 版: **2.8.166**。テスト: `guide-list-next-flow-v28166.test.js`／`auto-procedure-rules` 128。KB `bdd977f3`。attach-playbook 済（realpro #2632）。
+- 次: **拡張再読込** → 学習再取得 → 自動1回（可能なら2ページ以上）→ 点検に上記4印＋`dl:sort_hilo`（`rec:sort_detail`）＋`playbook_seen` 版一致。
+
+## 2026-11-22 **拡張 2.8.165: AD並び替え＝直近録画の span.sort_detail を把握して押す**（竹内さん「ちゃんと録画から把握／直近の録画見たら把握できる」）
+- **DB録画（通常・2.8.154・02:49）**: click `左の高→低｜span.sort_detail` @x≈0.15 y≈0.47。ホバー（並べ替え／AD）は click に残らない。古い行は `div.main_table`（並べ替え文言入り）に粗く付くだけ。
+- **直し**: `findSortDetailByRec` で `span.sort_detail` を最優先／`byTextLoose` で短い「並べ替え」／カーソル動線は 2.8.164 のまま。決まり `ad_sort_hover` since 2.8.165・marker `findSortDetailByRec`。
+- 版: **2.8.165**。テスト: `ad-sort-from-rec-v28165.test.js`。
+- 次: 再読込 → 自動1回 → 点検 `dl:sort_hilo` が `rec:sort_detail:高→低`。
+
+## 2026-11-22 **拡張 2.8.164: AD並び替え＝並べ替えからカーソル移動（直接URL禁止）**（竹内さん「詰まっている／並び替えからカーソルで人間の動き／直接入力しない」）
+- **穴（DB）**: `dl:ad_sort:menu` → `failed_continue`（2.8.154）。ホバーが `clientX:1,clientY:1`・「AD」を一覧の列見出しと取り違え得る。
+- **直し**: `findNear`（並べ替えの下のAD／ADの右の高→低）／カーソル移動＋要素中央座標／URL直書き禁止。印 `sort_menu`/`sort_hilo`/`sort_failed`。決まり `ad_sort_hover` since 2.8.164。
+- 版: **2.8.164**。テスト: `ad-sort-cursor-path-v28164.test.js`。
+- 次: 再読込 → 検索後に並べ替え→AD→高→低のカーソル動線 → 点検に `dl:sort_hilo`。
+
+## 2026-11-22 **拡張 2.8.163: 外す・入れるも手順表×画面照合（入れ忘れ・外し忘れ関所）**（竹内さん「外すときもこの仕組みで理解／入れ忘れ外し忘れをなくす」）
+- **穴**: 同種の場所（駅→駅）は `clearStations=false` で入れ直し任せ → 前客の駅が残り得る。外す経路は leftover のみで手順表照合が無かった。
+- **直し**: `_guideLikeDiffGrasp`（入忘れ miss／外忘れ extra）→ 外す前 `guide_clear_grasp`／検索前 `guide_fill_gate`（1回直す）。`_planLeftover` は ForceClear 時に同種でも外す。決まり `guide_clear_fill_gate`（kb=`ad1e1176`）。
+- 版: **2.8.163**。テスト: `guide-clear-fill-gate-v28163.test.js`。KB `ad1e1176`。attach-playbook 済み。統括Pro `--save` 済（verdict=almost）。
+- 次: **拡張再読込** → 学習再取得 → 自動1回 → 点検に `guide_clear_grasp`・`guide_fill_gate`・`playbook_seen` 版=コード版。
+
+## 2026-11-22 **拡張 2.8.162: 通常の光る把握＝手順表土台を自動にも連携**（竹内さん「通常は把握が強い／自動はまばら。通常のように連携」）
+- **なぜ通常が強いか**: 光る案内は `realpro-guide-plan`（条件→手順表）＋画面の今を毎ティック読む。DBの学習位置に頼らない。
+- **なぜ自動がまばらかったか**: 自動は aim／学習位置＋独自の押し順。手順表は案内だけが持ち、page-script と分断されていた。
+- **直し**: content が `realpro-guide-plan.js` を page に注入。`_guideLikeFormGrasp`（未了欄）／`primaryPending`（指定駅・沿線だけ先）／`stationStepAction` 突き合わせ。決まり `guide_plan_link`。
+- 版: **2.8.162**。テスト: `guide-plan-link-v28162.test.js`。
+- 次: 再読込 → 自動1回 → 点検に `guide_plan_linked`・`station_primary_only`（指定あり時）。
+
+## 2026-11-22 **拡張 2.8.161: 自動・AIXも通常案内と同じ指定駅把握**（竹内さん「通常モードだと駅ちゃんと把握して光っているのに、自動モードやAIXモードなどでは駅を把握する部分弱い」）
+- **原因**: 通常／スタッフ案内（realpro-guide）は `primary_stations`／`primary_route_ids` を先に光らせる。自動の page-script はこれを読んでいなかった → 通勤圏の大量駅・全沿線に流れて指定駅まで届かない／選び順が案内と違う。
+- **直し**: `_applyGuideLikeStationGrasp`（指定駅・指定沿線を先頭にそろえる・空なら地図で沿線補完）を `fillRealpro` 入口で実行。駅押しも primary 先。決まり `station_grasp_like_guide`（手順書）。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.161**。
+- テスト: `station-grasp-like-guide-v28161.test.js`・`auto-procedure-rules.test.ts`。
+- 次: 再読込 → 自動／AIX／スタッフで🔍 → 点検に `station_grasp_like_guide`（または `station_route_from_map`）→ 指定駅が先に選ばれる。`attach-playbook` で手順書作り直し。
+
+## 2026-11-22 **拡張 2.8.160: 駅名はあるのに沿線0本で止まる抜け（玉造・今里・鶴橋・布施）**（竹内さん「ここもなんで駅選択できていないのか、駅の部分なんでここ」）
+- **DB実測**（brain_staff・2.8.158）: `station_names=["玉造","今里","鶴橋","布施"]` なのに `route_ids=[]` → `station_no_route` → 「沿線が決まっていません…沿線0本」で中止。地図には4駅とも沿線あり（STATION_LINE_MAP載）。
+- **直し**: page-script が止める前に `_fillRouteIdsFromStationMap`（駅→沿線ID）。popup も送信前に駅名から `getHubLines` で補完。地図0本（地域名誤読）の時だけ従来どおり止める。
+- 版: **2.8.160**。テスト: `station-route-from-map-v28160.test.js`。
+- 次: 再読込 → 同じ客で🔍 → 点検に `station_route_from_map` → 沿線・駅が選ばれる。
+
+## 2026-11-22 **拡張 2.8.159: スタッフも条件画面は🔍ボタン押してから検索**（竹内さん「スタッフモードの部分も…ボタン押さなくても自動で…検索はじまってしまう。ここまちゃんとボタン押して検索はじまるようにする」）
+- **症状**: スタッフでお客さん選択 → 条件画面で「検索中…」になり、🔍を押す前に検索開始（2.8.156 の btn.click）。
+- **直し**: `_maybeAiCustomerAutoSearch` は AIX／スタッフとも案内だけ（`btn.click` しない）。押したあとの送付自動（staff autoSend・bulk-dl）は残す。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.159**。
+- テスト: `staff-btn-gate-v28159.test.js`・`staff-selected-auto`・`adj-btn-gate` 更新。
+- 次: 2.8.159 再読込 → スタッフ → 客選択 → 条件画面で止まっている → 🔍押してから検索〜送付。
+
+## 2026-11-22 **拡張 2.8.158: AD並び替えを手順書の決まりに載せる＋抜け防止**（竹内さん「手順書へ乗せる／このような抜けの内容にちゃんと重要なことあれば手順書更新されるようにする」）
+- **決まり**: `ad_sort_hover`（scene=`list`・since 2.8.158・kb=`a92f482d`）。文: 並べ替えホバー→ADホバー→高→低クリック。
+- **正本**: `AUTO_RULES` ＋ `_AXLX_RULES_DONE` ＋ `bulk-dl.js` 目印。`checkRulesInCode` が `bulk-dl.js` も見る。点検段 `dl:sort_*` を `KEEP_STEP`/`RULE_STEP` に。
+- **抜け防止**: 版だけ上げて決まりを見直さない・AD目印が消えた・bulk-dl を点検に渡さない → テスト／統括Pro の手順書反映が落ちる。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.158**。
+- 次: 拡張再読込 → `attach-playbook` で DB 手順書作り直し（決まり版が変わる）→ 自動1回 → `dl:sort_hilo` と `ad_sort_hover`。
+
+## 2026-11-22 **拡張 2.8.157: AD並び替え＝ホバー展開→高→低クリック（録画どおり）**（竹内さん「並べ替えにマウスを置くとクリックせず下展開→ADに置くと右の2つ→高→低をクリック。直近録画で学習」）
+- **理解（正本）**: ①並べ替えにマウスを置くだけ（クリックしない）②ADにマウスを置くだけ（右に低→高／高→低）③高→低へ移してクリック。押すのは③だけ。
+- **旧の穴**: (1) 並べ替えを**クリック**していた (2) 閉メニューに `key=ad&odr=desc` リンクが無いと並べ替え自体をスキップ (3) 既ソート判定が `key=ad&odr=desc` だけで、録画の `ad=odr_desc` を見ていなかった。
+- **直し**: `_sortOnce` は並べ替え／ADをホバーのみ・高→低だけ press。`findHiToLo` は文字＋href。`_isAdDesc` に `ad=odr_desc`。リンク有無に依存せずメニュー操作を必ず試す。
+- 版: **2.8.157**（続く 2.8.158 で手順書へ）。テスト: `ad-sort-hover-v28157.test.js`・`ad-sort-keeps-conditions`・`sort-fail-continue` 更新。
+
+## 2026-11-22 **拡張 2.8.156: スタッフ＝選んだお客さんだけ AIX のように検索〜物件送付まで完走**（竹内さん「スタッフモードの場合は選択したお客さんを自動検索できるまで完了させる…選択したお客さんをAIXモードのように検索して物件ダウンロードまで完了するようにする」）
+- **形**: スタッフモードでお客さんを選ぶ → 条件読み直し後に🔍を自動クリック → 入力・検索 → 印刷用PDFを1件ずつ押して送付まで。**選んだ客だけ**（一連ロック）。一括・自動便・web_brain は今まで通り受け取らない。
+- **AIX（2.8.155）との違い**: AIXは条件画面でボタン待ち。スタッフは選んだ瞬間に自動開始。
+- **実装**: mode-core `aiCustomerSearch`/`effectiveBehavior`（staff は autoSend 開・claim* 閉）／realpro・itandi guide の `autoModeOf` と bulk-dl `_readAutoMode` がスタッフ true／autoPress の `_staffModeOn` 止めを外す／popup `_maybeAiCustomerAutoSearch` がスタッフで `btn.click()`。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.156**。
+- テスト: `staff-selected-auto-v28156.test.js`（23件）・mode-core / mode-gate / adj-btn-gate を更新。
+- 次に確かめる事: 2.8.156 再読込 → モード「スタッフ」→ お客さん1人選択 → 自動で検索〜送付完了／他客の一括が動かないこと。
+
+## 2026-11-22 **拡張 2.8.155: 条件画面は🔍ボタン押してから検索（開いただけでは始めない）**（竹内さん「ここでボタン押してから検索するようにする。ここの部分から検索行う場合ボタン押してからにする。そうじゃないと今途中で検索はじまってしまう。このページに移行した瞬間に」）
+- **症状**: お客さんを選んで条件画面（ピンポイント／広げて＋🔍ボタン）に移った瞬間、AIXが自動で `btn.click()` し「⏳ 検索中...」になり、条件確認前・ページ移行の途中で検索が始まっていた。
+- **直し**: `_maybeAiCustomerAutoSearch` は案内だけ（「🔍 条件を確認したらボタンを押してください」）。`btn.click()` しない。検索開始は (1) 人が🔍を押す (2) 自動便・一括の `dataset.automated` クリック、だけ。
+- AIXモード自体は残す（押したあとの印刷用PDF自動押し・新着受け取りなど）。自動便の道は変更なし。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.155**。
+- テスト: `adj-btn-gate-v28155.test.js`（12件）・`ai-customer-mode-v2634.test.js` ④⑤を新形に更新。
+- 次に確かめる事: 拡張 2.8.155 再読込 → お客さん選択 → 条件画面で検索が始まらない → 🔍押してから検索開始。
+
 ## 2026-11-22 **拡張 2.8.154: 録画OFFでも重い主因＝操作のたび captureVisibleTab を止める**（竹内さん「いまPCじたいがかなり重いのと録画モード押していない時でも、かなり重たい。何が原因となるのか、ほかにも重い部分を解決するように徹底的に調査と改善する」）
 - **主因（コードで確定）**: `human-learn-record.js` の `shouldShoot` が常に true → 通常モードでも click/change/keydown/wheel のたびに `captureVisibleTab`（最短400ms）。「⏺ 録画」は連続撮影のUIだが、裏の常時撮影は止まっていなかった。診断 `axlx_human_shot_diag` も毎操作で storage 書き。
 - **直し**: 写真は (1)「⏺ 録画」中（`axlx_rec_mode.on`）または (2) 自動（aix/ai）の時だけ。通常・録画OFFは撮らない（操作の欄名・順番・位置の記録は残る・軽い）。診断 storage は5秒に1回。`axlx_rec_mode` を KEYS に入れて ON/OFF で見張りを付け外し。

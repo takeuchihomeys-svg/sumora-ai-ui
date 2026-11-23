@@ -1000,6 +1000,12 @@
     try {
       var nmStr = name ? String(name).slice(0, 30) : null;
       if (!nmStr) return;
+      /**
+       * ★ 2026-11-22 通常録画 run_mwrlhyj3 実測:
+       *   「未完了:fill_done」「今の客:fill_done_gap」「流れ台帳」「流れ地図」が数十回混ざり、
+       *   本物の操作（確定・検索・高→低・印刷用PDF）が濁る。学習の輪には載せない。
+       */
+      if (/^(未完了:|完了済:|今の客:|流れ台帳|流れ地図|弱:)/.test(nmStr)) return;
       var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
       if (last && last.f === nmStr && t - Number(last.t || 0) < 120) return;
