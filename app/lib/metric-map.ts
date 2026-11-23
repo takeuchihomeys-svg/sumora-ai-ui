@@ -619,7 +619,7 @@ export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; bur
 
 // ── 2026-11-23 統括役: 毎朝の1枚に出す地図の行を、竹内さんが読む形（短い日本語・数と理由）に ──
 export const KIND_JA: Record<string, string> = {
-  "application_push": "申込の後押し", "application_push/push": "申込の後押し", hand: "手打ちで決めに行った", phone_call: "電話（審査の相談）", "phone_call/default": "電話（審査の相談）",
+  "application_push": "申込の後押し", "application_push/push": "申込の後押し", pickup: "探す約束", check: "確認の約束", estimate: "見積の約束", hand: "手打ちで決めに行った", phone_call: "電話（審査の相談）", "phone_call/default": "電話（審査の相談）",
   property: "物件", property_check_result: "物件確認した", estimate_sheet: "見積書", viewing_invite: "内覧の誘い", greeting_viewing: "内覧当日のご挨拶",
   meeting_place: "待ち合わせ場所", zenryoku_support: "全力サポート", condition_hearing: "条件の聞き取り", acknowledge_check: "確認の了承", other: "その他",
 };
