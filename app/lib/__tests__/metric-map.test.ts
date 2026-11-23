@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -51,6 +51,27 @@ t("試験の結果を葉に戻す（前→後・悪くなった・良くなっ�
 t("試験の順番の案: 伸びしろの大きい葉の問題を先に", examOrderByMap(["qa", "qb"], new Map([["qa", `${R}/kind=property_check_result`], ["qb", `${R}/kind=estimate_sheet`]]), ranked)[0] === "qb");
 t("関わる土台の空き（同じ場面・all・value 0 だけ）", JSON.stringify(relatedFoundationOf(`${R}/kind=estimate_sheet/scene=cost`, [{ metric: "found:n.chrono:cost:scene_rules", value: 0 }, { metric: "found:n.chrono:viewing:scene_rules", value: 0 }, { metric: "found:n.link:all:rules", value: 0, detail: { cause: "measure" } }, { metric: "found:n.trust:all:parts", value: 0 }, { metric: "found:n.flex:cost:rules", value: 1 }])) === JSON.stringify(["found:n.chrono:cost:scene_rules", "found:n.trust:all:parts"]));
 t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) && !covers(`${R}/kind=a`, `${R}/kind=ab`));
+
+// ── 11/23（2回目）端末の版・申込までの地図・根の付け替え ──
+{
+  const D = "aix_turn:match_60d_device";
+  t("根の付け替え", rebaseKey(`${R}/kind=a/scene=b`, R, D) === `${D}/kind=a/scene=b` && rebaseKey("x/kind=a", R, D) === "x/kind=a");
+  t("端末の原因: 先後は読み違い・種類違いは mk があれば材料", deviceCauseOf({ id: 1, cls: "two_stage", tk: "property", v: "先後" }) === "misread" && deviceCauseOf({ id: 2, cls: "aix_first", tk: "property", v: "種類違い", mat: { mk: ["estimate_amount"] } }) === "material");
+  t("端末の原因: 前の約束の果たしは数え方・手元に無い物件は材料・あれば判断", deviceCauseOf({ id: 3, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevFulfil: true }) === "counting"
+    && deviceCauseOf({ id: 4, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 0, pp: false } }) === "material" && deviceCauseOf({ id: 5, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 3 } }) === "aix_turn_as_reply" && deviceCauseOf({ id: 6, cls: "aix_first", tk: "property", v: "一致" }) === null);
+  const dt = deviceTurnsOf([{ id: 1, cls: "aix_first", tk: "property", v: "一致" }, { id: 2, cls: "reply", tk: null, v: "返信一致" }, { id: 3, cls: "two_stage", tk: "estimate_sheet", v: "先後" }], new Map([[1, "返信:了承"], [3, null]]));
+  t("端末の番: 返信の番は外す・場面は scene_key・先後は order", dt.length === 2 && dt[0].scene === "ack" && dt[1].miss === "order" && dt[1].scene === "cost");
+  const rt = routeTurnsOf([{ conv: "a", at: "1", node: "pickup", branch: null, agree: "promise_match", dir: "promise" }, { conv: "a", at: "2", node: "pickup", branch: null, agree: "push_missed", dir: "promise" }, { conv: "b", at: "3", node: "hearing", branch: "viewing_lapsed", agree: "pushed_off_map", dir: "forward", nextAix: [] }]);
+  const rtree = buildTree(rt, { metric: "route:next_match_60d", label: "r", dims: ["station", "miss", "cause"] });
+  t("申込までの地図: 駅 → 外れの型 → 原因・子の合計が戻る", rt[0].miss === "ok" && rt[1].cause === "counting" && rt[2].station === "分:viewing_lapsed" && rt[2].cause === "material" && sumMismatches(rtree).length === 0 && rtree[0].n === 3 && rtree[0].misses === 2);
+  t("申込までの地図の原因: other_aix は状態の食い違いで材料", routeCauseOf({ conv: "c", at: "4", node: "x", branch: null, agree: "other_aix", dir: null, subAt1: false }) === "material");
+  const base = { title: "", stage: "testing", owner: null, priority: 1, switch_name: null, switch_default: null, next_step: null, blocker: null, forecast_writer_select: "device", forecast_before: 54.9, forecast_low: 66.7, forecast_high: 73.5 };
+  const its = itemsForRoot([{ ...base, id: 627, forecast_metric: D, forecast_leaf: D, forecast_exam: { parts: [{ leaf: `${R}/kind=property/scene=ack`, fixes: 8 }] } }, { ...base, id: 612, forecast_metric: R, forecast_leaf: `${R}/kind=property` }, { ...base, id: 9, forecast_metric: "other", forecast_leaf: "other" }] as Array<ForecastItem & { forecast_exam?: unknown }>, { metric: D, rebaseFrom: [R] });
+  t("根の作業: 部品は葉ごとの作業（fixes）・別の根の葉は付け替え・関係ない作業は外す", its.length === 2 && its[0].forecast_leaf === `${D}/kind=property/scene=ack` && its[0].fixes === 8 && its[1].forecast_leaf === `${D}/kind=property`);
+  const dtree = buildTree(Array.from({ length: 10 }, (_, i) => ({ id: i, kind: "property", scene: "ack", miss: "reply_not_aix" as const, cause: "material" as const })), { metric: D, label: "d", dims: ["kind", "scene", "miss", "cause"] });
+  const rk = rankLeaves(dtree, its);
+  t("部品の直る見込み＝fixes ÷ 部品の葉の外れ", rk[0].fixShare === 0.8 && rk[0].items.includes(627));
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

@@ -4,7 +4,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
 import {
-  MAP_ROOTS, rootOf, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
+  MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -32,7 +33,30 @@ export async function loadUnforecastTop(sb: SupabaseClient) {
   return (data ?? []) as Array<{ id: number; title: string; owner: string | null; stage: string; priority: number }>;
 }
 
-/** 根1つの木を作る（builder のある根だけ）。値は出所のスクリプトと同じ数え方 */
+/** 主の根を先に（同じ数の版が2つある時・11/23 統括役「主は端末の版」） */
+export const rootsInOrder = (roots: readonly MapRootDef[] = MAP_ROOTS) => [...roots].sort((a, b) => Number(!!b.primary) - Number(!!a.primary));
+
+/** 出所の台本の json から木を作る（端末の版＝作業員A の audit-aix-turn-judgment・申込までの地図＝作業員R の audit-route-progress-takeuchi）。
+ *  台本は夜だけの重い読み＝ここは json を読むだけ。端末の版の場面は見張りの scene_key を番の id で引く（100番ほどの軽い読み） */
+export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, rows: unknown[]): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
+  let turns: MapTurn[] = [];
+  if (def.builder === "aix_turn_device") {
+    const rs = rows as DeviceTurnRow[];
+    const ids = [...new Set(rs.filter((r) => r.cls !== "reply").map((r) => r.id))];
+    const scene = new Map<number, string | null>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await sb.from("line_watch_turns").select("id,scene_key").in("id", ids.slice(i, i + 200));
+      if (error) throw new Error(`line_watch_turns: ${error.message}`);
+      for (const r of (data ?? []) as Array<{ id: number; scene_key: string | null }>) scene.set(r.id, r.scene_key);
+    }
+    turns = deviceTurnsOf(rs, scene);
+  } else if (def.builder === "route_next") turns = routeTurnsOf(rows as RouteTurnRow[]);
+  else return null;
+  const nodes = buildTree(turns, def);
+  return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0 };
+}
+
+/** 根1つの木を作る（台帳の読みで作れる根だけ＝conductor_aix）。値は出所のスクリプトと同じ数え方 */
 export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
   if (def.builder !== "conductor_aix") return null;
   const cc = await checkConductor(def.windowDays, o.sinceMs);
@@ -41,11 +65,13 @@ export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number } = {
   return { nodes, value: cc.aixScore, n: cc.aixTurns };
 }
 
-/** 試験の問題の数を葉ごとに（exam_leaf_links） */
+/** 試験の問題の数を葉ごとに（exam_leaf_links）。付け替え元の根（端末の版は文の癖の版）に当てた問題も、葉の鍵を付け替えて数える */
 export async function examCountByLeaf(sb: SupabaseClient, root: string): Promise<Map<string, number>> {
-  const { data } = await sb.from("exam_leaf_links").select("leaf_key").eq("root_metric", root).limit(3000);
+  const def = rootOf(root);
+  const roots = [root, ...(def?.rebaseFrom ?? [])];
+  const { data } = await sb.from("exam_leaf_links").select("root_metric,leaf_key").in("root_metric", roots).limit(5000);
   const m = new Map<string, number>();
-  for (const r of (data ?? []) as Array<{ leaf_key: string }>) m.set(r.leaf_key, (m.get(r.leaf_key) ?? 0) + 1);
+  for (const r of (data ?? []) as Array<{ root_metric: string; leaf_key: string }>) { const k = rebaseKey(r.leaf_key, r.root_metric, root); m.set(k, (m.get(k) ?? 0) + 1); }
   return m;
 }
 
@@ -131,7 +157,7 @@ export async function forecastCheck(sb: SupabaseClient, items: ItemRow[], o: { n
     const writer = (it.forecast_writer_select ?? def?.writerSelect ?? "style") as WriterSelect;
     if (def && writer !== def.writerSelect) { out.lines.push(`- #${it.id}: 書き手の選び方が違う（見込み ${writer}・数 ${def.writerSelect}）→ 突き合わせない`); continue; }
     let value: number | null = null, n: number | null = null, hint: MapCause | null = null;
-    if (def?.builder) {
+    if (def?.builder === "conductor_aix") {
       if (!o.night) { out.lines.push(`- #${it.id}: ${due.join("・")}日の突き合わせは夜に回す（重い読み）`); continue; }
       const t = await buildRootTree(def, { sinceMs: start! });
       value = t?.value ?? null; n = t?.n ?? null;
@@ -170,8 +196,8 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
   const items = await loadForecastItems(sb);
   const { data: fq } = await sb.from("quality_daily").select("metric,value,detail").like("metric", "found:%:%:%").gte("day", jstDay(now - 3 * 86_400_000)).limit(800);
   const foundRows = ((fq ?? []) as Array<{ metric: string; value: number | null; detail?: { cause?: string } | null }>).map((r) => ({ ...r, value: num(r.value) }));
-  for (const def of MAP_ROOTS) {
-    const its = items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
+  for (const def of rootsInOrder()) {
+    const its = def.dims.length ? itemsForRoot(items, def) : items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
     if (def.prefix) {
       const qs = await latestQdPrefix(sb, def.metric, def.qdScope, now);
       lines.push(`- ${def.label}［${def.metric}*・${def.qdScope}］: ${qs.length ? qs.slice(0, 12).map((q) => `${q.metric.slice(def.metric.length)} ${q.value ?? "—"}（n ${q.n ?? "—"}）`).join("・") : "数がまだ無い"}`);
@@ -184,21 +210,24 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     }
     let nodes: MapNode[] = [], built = false, value: number | null = null, n: number | null = null;
     const prev = await readLatestTree(sb, def.metric, def.writerSelect);
-    if (night && prev.day !== day) {
+    if (night && prev.day !== day && def.builder === "conductor_aix") {
       const t = await buildRootTree(def);
       if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
-    } else { nodes = nodesFromRows(prev.rows); value = nodes[0]?.value ?? null; n = nodes[0]?.n ?? null; }
-    if (!nodes.length) { lines.push(`- ${def.label}: 木がまだ無い（夜に作る）`); continue; }
+    }
+    // json から作る根（端末の版・申込までの地図）は work-items.ts --map-build で作った木を読む（出所の台本が main に入ったら夜に作る）
+    if (!built) { nodes = nodesFromRows(prev.rows); value = nodes[0]?.value ?? null; n = nodes[0]?.n ?? null; }
+    if (!nodes.length) { lines.push(`- ${def.label}: 木がまだ無い（${def.builder === "conductor_aix" ? "夜に作る" : "work-items.ts --map-build で出所の json から作る"}）`); continue; }
     const examByLeaf = await examCountByLeaf(sb, def.metric);
     const ranked = rankLeaves(nodes, its, { examByLeaf, writerSelect: def.writerSelect });
     const bad = sumMismatches(nodes);
-    const hs = ranked.filter((r) => r.hole && !r.hold);
-    lines.push(`### 地図: ${def.label}［${def.metric}・書き手の選び方 ${def.writerSelect}・${built ? "今夜作った" : `前の木 ${prev.day}`}］`,
+    const hs = holesOf(ranked, nodes).filter((h) => !h.hold);
+    lines.push(`### 地図: ${def.label}［${def.metric}・書き手の選び方 ${def.writerSelect}・${built ? "今夜作った" : `前の木 ${prev.day}`}${def.primary ? "・主" : def.compare ? `・並べて見る相手 ${def.compare}` : ""}］`,
       `- 今 ${value ?? "—"}%（n ${n ?? "—"}）・葉 ${leavesOf(nodes).length}・外れのある葉 ${ranked.length}・穴 ${hs.length}・判断保留 ${ranked.filter((r) => r.hold).length}・子の合計の食い違い ${bad.length}`,
       ...its.filter((i) => i.forecast_low != null).map((i) => `- 見込み #${i.id}: ${i.forecast_before ?? "—"} → ${i.forecast_low}〜${i.forecast_high}${(i.forecast_exam as { phase?: string } | null)?.phase ? `［${(i.forecast_exam as { phase?: string }).phase}］` : ""}（${String(i.forecast_basis ?? "").slice(0, 60)}）`),
       `- 次の一手（伸びしろの順・上位5）:`, ...ranked.slice(0, 5).map((r) => `  ${leafLine(r)}`));
     for (const b of bad) fix.push(`地図の数え方の誤り: ${b.key} の子の合計 n ${b.childN}/${b.n}・外れ ${b.childMisses}/${b.misses} → ${def.owner}`);
-    for (const h of hs.slice(0, 3)) {
+    // 並べて見る用の版（主でない compare 付き）の穴は台帳に足さない（主の版と重なる）
+    for (const h of def.compare && !def.primary ? [] : hs.slice(0, 3)) {
       fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い）→ 統括役が持ち主を決める`);
       holes.push({ title: `地図の穴: ${h.key}`, owner: def.owner, next: `外れ ${h.misses}/${h.n}・作業も見込みも無い葉（台帳 #610 の地図）→ 外れの番を実物で読み、原因の4つで直しを作る` });
     }
@@ -224,4 +253,4 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
   return { lines, fix, qd, holes };
 }
 
-export { MAP_ROOTS, rootOf, rankLeaves, sumMismatches };
+export { MAP_ROOTS, rootOf, rankLeaves, sumMismatches, leavesOf, holesOf, covers };

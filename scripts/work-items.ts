@@ -210,9 +210,10 @@ async function cmdMap() {
   }
   const top = Number(arg("top", "8")) || 8;
   const items = await m.loadForecastItems(db);
-  const roots = m.MAP_ROOTS.filter((r) => !arg("metric") || r.metric === arg("metric"));
+  const { itemsForRoot } = await import("../app/lib/metric-map");
+  const roots = m.rootsInOrder().filter((r) => !arg("metric") || r.metric === arg("metric"));
   for (const def of roots) {
-    const its = items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
+    const its = def.dims.length ? itemsForRoot(items, def) : items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
     if (def.prefix) {
       const qs = await m.latestQdPrefix(db, def.metric, def.qdScope);
       console.log(`\n■ ${def.label}（${def.metric}* の束・scope ${def.qdScope}・出所 ${def.source}）`);
@@ -221,7 +222,7 @@ async function cmdMap() {
       continue;
     }
     const q = await m.latestQd(db, def.metric, def.qdScope);
-    console.log(`\n■ ${def.label}`);
+    console.log(`\n■ ${def.label}${def.primary ? "【主】" : def.compare ? `【並べて見る・主は ${def.compare}】` : ""}`);
     console.log(`  数の名前 ${def.metric}・書き手の選び方 ${def.writerSelect}・窓 ${def.windowDays}日・出所 ${def.source}・持ち主 ${def.owner}`);
     console.log(`  今の値（quality_daily の最新）: ${q ? `${q.value ?? "—"}（n ${q.n ?? "—"}・${q.day}）` : "まだ書かれていない"}`);
     console.log(`  動かす作業 ${its.length}:`);
@@ -230,7 +231,7 @@ async function cmdMap() {
     if (!def.builder) { console.log("  子の割り方: まだ（MAP_ROOTS に builder を足すと木になる）"); continue; }
     let nodes;
     let note: string;
-    if (flag("live")) {
+    if (flag("live") && def.builder === "conductor_aix") {
       if (!m.isNightJst() && !flag("force")) throw new Error("--live は重い読み（60日）＝夜（JST 22〜9時）だけ。昼は前の木を読む（--live を外す）");
       const t = await m.buildRootTree(def); nodes = t?.nodes ?? []; note = "今作った";
     } else { const p = await m.readLatestTree(db, def.metric, def.writerSelect); nodes = m.nodesFromRows(p.rows); note = p.day ? `${p.day} に作った木` : "木がまだ無い（夜に self-improve か --live）"; }
@@ -245,8 +246,48 @@ async function cmdMap() {
     }
     console.log(`  次の一手（伸びしろ＝外れ × 直る見込み ÷ 費用・n<5 は判断保留で 0.3倍・止まりは 0.5倍）:`);
     for (const r of ranked.slice(0, top)) console.log(`   ${m.leafLine(r)}`);
-    const hs = ranked.filter((r) => r.hole && !r.hold);
+    const hs = m.holesOf(ranked, nodes).filter((h) => !h.hold);
     console.log(`  穴（作業も見込みも無い・外れ ${3} 以上）${hs.length}: ${hs.slice(0, 8).map((h) => `${h.key.split("/").slice(1).join(" › ")}（${h.misses}）`).join("・") || "なし"}`);
+  }
+}
+
+// --map-build=<根> --json=<出所の台本の json> [--write]   出所の台本（夜の重い読み）の json から木を作る（端末の版＝作業員A の audit-aix-turn-judgment.ts・
+//   申込までの地図＝作業員R の audit-route-progress-takeuchi.ts）。読むのは json と、端末の版の場面の見張りの scene_key（番の id で引く・軽い）だけ＝昼でも回せる
+async function cmdMapBuild() {
+  const m = await import("./lib/metric-map-server");
+  const { itemsForRoot } = await import("../app/lib/metric-map");
+  const def = m.MAP_ROOTS.find((r) => r.metric === arg("map-build"));
+  if (!def || (def.builder !== "aix_turn_device" && def.builder !== "route_next")) throw new Error(`--map-build=<根>（aix_turn_device か route_next の根: ${m.MAP_ROOTS.filter((r) => r.builder === "aix_turn_device" || r.builder === "route_next").map((r) => r.metric).join("・")}）`);
+  if (!arg("json")) throw new Error("--json=<出所の台本の json> が要る");
+  const db = sb();
+  const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as unknown[];
+  const t = await m.buildTreeFromJson(db, def, rows);
+  if (!t || !t.nodes.length) throw new Error("木が作れない（行が無い）");
+  const items = itemsForRoot(await m.loadForecastItems(db), def);
+  const examByLeaf = await m.examCountByLeaf(db, def.metric);
+  const ranked = m.rankLeaves(t.nodes, items, { examByLeaf, writerSelect: def.writerSelect });
+  const bad = m.sumMismatches(t.nodes);
+  console.log(`■ ${def.label}: 根 ${t.value}%（n ${t.n}・外れ ${t.nodes[0].misses}）・葉 ${m.leavesOf(t.nodes).length}・外れのある葉 ${ranked.length}・穴 ${m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length}・判断保留 ${ranked.filter((r) => r.hold).length}・子の合計の食い違い ${bad.length}`);
+  for (const x of t.nodes.filter((x) => x.depth === 1)) console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）`);
+  for (const r of ranked.slice(0, Number(arg("top", "10")) || 10)) console.log(`   ${m.leafLine(r)}`);
+  const hl = m.holesOf(ranked, t.nodes);
+  console.log(`  穴（作業も見込みも無い・葉か場面の段で外れ 3 以上）${hl.length}: ${hl.map((h) => `${h.key.split("/").slice(1).join(" › ")}（外れ ${h.misses}/${h.n}${h.hold ? "・判断保留" : ""}）`).join("・") || "なし"}`);
+  const scenes = t.nodes.filter((x) => x.dim === "scene" || (x.dim === "station" && x.depth === 1));
+  const noP = scenes.filter((x) => x.misses > 0 && ![...examByLeaf].some(([k]) => m.covers(x.key, k)));
+  console.log(`  試験の問題: ${scenes[0]?.dim === "station" ? "駅" : "種類×場面"}の段 ${scenes.length} のうち 外れがあって問題0 ${noP.length}: ${noP.sort((a, b) => b.misses - a.misses).map((x) => `${x.key.split("/").slice(1).join(" › ")}（${x.misses}）`).join("・") || "なし"}`);
+  if (flag("write")) {
+    const day = m.jstDay(Date.now());
+    const w = await m.writeTree(db, day, def, t.nodes, ranked);
+    const qd = [
+      { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop() } },
+      { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: t.nodes.length },
+      { day, metric: `map:${def.metric}:holes`, scope: "all", value: m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length, n: ranked.length },
+      { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },
+      ...ranked.slice(0, 5).map((r) => ({ day, metric: `map:${def.metric}:rank${r.rank}`, scope: "all", value: r.score, n: r.n, detail: { leaf: r.key, misses: r.misses, gain: r.gain, items: r.items, next: r.nextStep, hold: r.hold, hole: r.hole, writer_select: def.writerSelect } })),
+    ];
+    const { error } = await db.from("quality_daily").upsert(qd.map((x) => ({ ...x, source: "scripts/work-items.ts --map-build（#610）" })), { onConflict: "day,metric,scope" });
+    if (error) throw new Error(error.message);
+    console.log(`書いた: metric_map_nodes ${w}行・quality_daily ${qd.length}行（${day}）`);
   }
 }
 
@@ -281,6 +322,7 @@ async function cmdNoForecast() {
 
 async function main() {
   if (arg("forecast") && /^\d+$/.test(arg("forecast"))) return cmdForecast();
+  if (arg("map-build")) return cmdMapBuild();
   if (flag("map")) return cmdMap();
   if (flag("forecast-check")) return cmdForecastCheck();
   if (arg("forecast-cause")) return cmdForecastCause();

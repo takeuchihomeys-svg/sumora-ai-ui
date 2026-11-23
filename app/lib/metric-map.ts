@@ -11,22 +11,30 @@
 // 葉の鍵: <根の数の名前>/<段>=<値>/… 例 core:conductor_aix_60d/kind=estimate_sheet/scene=cost/miss=reply_not_aix/cause=material
 
 export type WriterSelect = "style" | "device" | "all";
-export type MapDim = "kind" | "scene" | "miss" | "cause";
+export type MapDim = "kind" | "scene" | "miss" | "cause" | "station";
 /** 原因の4つ（CLAUDE.md 絶対的な考え方の3つ＋数え方の誤り） */
 export type MapCause = "material" | "misread" | "aix_turn_as_reply" | "counting";
 export const MAP_CAUSE_JA: Record<MapCause, string> = {
   material: "材料が届いていない", misread: "場面や決まりの読み違い", aix_turn_as_reply: "返信か AIX かの判断の誤り（AIX の番を返信に）", counting: "数え方の誤り",
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind";
-export const MAP_MISS_JA: Record<MapMiss, string> = { ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い" };
-export const DIM_JA: Record<MapDim, string> = { kind: "AIX の種類", scene: "場面", miss: "外れの型", cause: "原因" };
+// 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map";
+export const MAP_MISS_JA: Record<MapMiss, string> = {
+  ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
+  push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
+};
+export const DIM_JA: Record<MapDim, string> = { kind: "AIX の種類", scene: "場面", miss: "外れの型", cause: "原因", station: "駅" };
 
 export type MapRootDef = {
   metric: string; label: string; writerSelect: WriterSelect; windowDays: number;
   dims: MapDim[];
   /** 子の割り方を作る道具（無い根は数だけ並べる＝割り方はまだ） */
-  builder: "conductor_aix" | null;
+  builder: "conductor_aix" | "aix_turn_device" | "route_next" | null;
+  /** 主の根（同じ数の版が2つある時に先に出す・順位の元）。compare は並べて見る相手の根 */
+  primary?: boolean; compare?: string;
+  /** 作業の葉・試験の問題の葉が別の根の名前で書かれている時の、その根（端末の版は文の癖の版の葉の鍵で作業と試験の問題を受ける） */
+  rebaseFrom?: string[];
   /** 数の出所（数え方を勝手に作らない） */
   source: string; owner: string;
   /** quality_daily の範囲（scope） */
@@ -36,7 +44,8 @@ export type MapRootDef = {
 };
 /** 根の表（数の名前と割り方）。数え方は出所のスクリプトと同じ物だけを置く */
 export const MAP_ROOTS: MapRootDef[] = [
-  { metric: "core:conductor_aix_60d", label: "AIX の番の一致（竹内さんの番・60日・送る直前の判断）", writerSelect: "style", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "conductor_aix",
+  // 2026-11-23 統括役（2回目）: 主は端末の版（下の aix_turn:match_60d_device）。文の癖の版は「並べて見る」用
+  { metric: "core:conductor_aix_60d", label: "AIX の番の一致（文の癖で選んだ竹内さんの番・60日・送る直前の判断・並べて見る用）", writerSelect: "style", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "conductor_aix", compare: "aix_turn:match_60d_device",
     source: "scripts/check-conductor.ts --days=60 の aixScore（core:conductor_aix の 60日版・11/23 の 44.8%＝43/96）", owner: "作業員A", qdScope: "all" },
   { metric: "core:conductor_aix_device", label: "AIX の番の一致（端末の記録で選んだ竹内さんの番）", writerSelect: "device", windowDays: 60, dims: [], builder: null,
     source: "作業員N2 が書く予定（core:conductor_aix_device）", owner: "作業員N2", qdScope: "all" },
@@ -47,10 +56,13 @@ export const MAP_ROOTS: MapRootDef[] = [
   { metric: "reply_match", label: "返信の一致（竹内さんの番・1日）", writerSelect: "style", windowDays: 1, dims: [], builder: null,
     source: "self-improve measureDay（line_watch_turns の verdict）", owner: "作業員N", qdScope: "takeuchi" },
   // 2026-11-23 作業員R（台帳 #608）: 申込までの地図の候補と竹内さんの一手の一致（60日・申込以降を外した 84会話 262番で 151＝58%）。quality_daily にはまだ書かれていない（R が書く名前をここに合わせる）
-  { metric: "route:next_match_60d", label: "申込までの地図 › 候補と竹内さんの一手の一致（60日）", writerSelect: "all", windowDays: 60, dims: [], builder: null,
+  //   11/23（2回目）: 駅 → 外れの型 → 原因 に割った（R の json の agree・route_next）。R の台本が main に入るまでは json から作った木を読む
+  { metric: "route:next_match_60d", label: "申込までの地図 › 候補と竹内さんの一手の一致（60日）", writerSelect: "all", windowDays: 60, dims: ["station", "miss", "cause"], builder: "route_next",
     source: "scripts/audit-route-progress-takeuchi.ts（作業員R・0c4f04c5d・messages.staff_writer=takeuchi）", owner: "作業員R", qdScope: "takeuchi" },
   // 2026-11-23 作業員A（a-aix-1123・9b02a11eb）: 端末の記録で選んだ竹内さん本人の AIX の番（60日・2段・手打ちも数える別の数え方）102番中 56＝54.9%。style の 44.8% と混ぜない
-  { metric: "aix_turn:match_60d_device", label: "AIX の番の一致（端末の記録・2段と手打ちも数える・60日）", writerSelect: "device", windowDays: 60, dims: [], builder: null,
+  //   11/23（2回目）: 主の根。種類 → 場面 → 外れの型 → 原因 に割った（aix_turn_device・A の json の行＋見張りの scene_key）
+  { metric: "aix_turn:match_60d_device", label: "AIX の番の一致（端末の記録で選んだ竹内さんの番・2段と手打ちも数える・60日・主）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "aix_turn_device",
+    primary: true, compare: "core:conductor_aix_60d", rebaseFrom: ["core:conductor_aix_60d"],
     source: "scripts/audit-aix-turn-judgment.ts（作業員A・枝 a-aix-1123）", owner: "作業員A", qdScope: "takeuchi" },
   // 2026-11-23 作業員N2: 作業員L の統括→書き手の欄ごとの届き方（#466・#7）。欄の名前は前方一致でまとめて並べる（scope=draft）
   { metric: "writer_link:", label: "統括 → 書き手の届き方（欄ごと・72時間）", writerSelect: "all", windowDays: 3, dims: [], builder: null, prefix: true,
@@ -72,7 +84,7 @@ export const MAP_ROOTS: MapRootDef[] = [
 export const rootOf = (metric: string) => MAP_ROOTS.find((r) => r.metric === metric) ?? null;
 
 /** 1番（純）: 木に入れる単位 */
-export type MapTurn = { id: number; kind: string; scene: string; miss: MapMiss; cause: MapCause | null };
+export type MapTurn = { id: number | string; kind: string; scene: string; miss: MapMiss; cause: MapCause | null; station?: string };
 
 /** 見張りの scene_key（返信:条件提示・AIX:estimate_sheet など）を KB_SCENES の鍵に（純関数）。AIX: で始まる鍵はブレインの一手から来た物＝AIX の種類で場面に寄せる */
 export function sceneOfWatchKey(sceneKey: string | null | undefined, aixKind?: string | null): string {
@@ -147,6 +159,8 @@ export type ForecastItem = {
   next_step: string | null; blocker: string | null;
   forecast_metric: string | null; forecast_leaf: string | null; forecast_writer_select: string | null;
   forecast_before: number | null; forecast_low: number | null; forecast_high: number | null;
+  /** 部品（forecast_exam.parts）から作った作業: その葉で直る番の数（直る見込み＝fixes ÷ 部品の葉の外れ） */
+  fixes?: number | null;
 };
 /** 作業1つが直せる見込み（外れの番のうち直る割合・純関数）。幅の真ん中で見る。幅が無い・前が無いは null */
 export function fixShareOf(it: Pick<ForecastItem, "forecast_before" | "forecast_low" | "forecast_high">): number | null {
@@ -158,7 +172,7 @@ export function fixShareOf(it: Pick<ForecastItem, "forecast_before" | "forecast_
 export const MIN_N = 5; // n がこれ未満の葉は判断保留（順位で過大に扱わない）
 export const HOLE_MISSES = 3; // 作業の無い葉で外れがこれ以上なら穴
 export type RankedLeaf = MapNode & {
-  hold: boolean; hole: boolean; items: number[]; fixShare: number; gain: number; cost: number; score: number; rank: number;
+  hold: boolean; hole: boolean; /** 穴を知らせる鍵（葉そのものか、外れを足すと線を越える場面・駅の段）*/ holeKey: string | null; items: number[]; fixShare: number; gain: number; cost: number; score: number; rank: number;
   nextStep: string; blocker: string | null; examProblems: number;
 };
 const DONE = new Set(["done", "dropped"]);
@@ -168,15 +182,22 @@ export function rankLeaves(nodes: readonly MapNode[], items: readonly ForecastIt
   const live = items.filter((it) => !DONE.has(it.stage) && (!o.writerSelect || !it.forecast_writer_select || it.forecast_writer_select === o.writerSelect || it.forecast_writer_select === "all"));
   const costOf = (stage: string) => (stage === "passed" || stage === "on" ? 0.5 : stage === "testing" || stage === "built_off" ? 1 : stage === "building" ? 1.5 : 2);
   const ranked = leaves.map((l) => {
-    const its = live.filter((it) => { const at = it.forecast_leaf ?? it.forecast_metric; return !!at && covers(at, l.key); }).sort((a, b) => (fixShareOf(b) ?? 0) - (fixShareOf(a) ?? 0));
-    const shares = its.map(fixShareOf).filter((x): x is number => x != null);
+    const its = live.filter((it) => { const at = it.forecast_leaf ?? it.forecast_metric; return !!at && covers(at, l.key); })
+      // 11/23（2回目）: 葉に近い（段の深い）作業を先に＝次の一手はその葉の持ち主の作業。同じ深さは直る見込みの大きい順
+      .sort((a, b) => String(b.forecast_leaf ?? "").split("/").length - String(a.forecast_leaf ?? "").split("/").length || (fixShareOf(b) ?? 0) - (fixShareOf(a) ?? 0));
+    const partShare = (it: ForecastItem) => { if (it.fixes == null) return null; const at = nodes.find((x) => x.key === it.forecast_leaf); return at && at.misses ? Math.min(1, it.fixes / at.misses) : null; };
+    const shares = its.map((it) => partShare(it) ?? fixShareOf(it)).filter((x): x is number => x != null);
     const fixShare = shares.length ? Math.max(...shares) : 0.5;
     // 判断保留: 原因の葉の n は外れの数そのもの＝割合の重みは場面の段（種類×場面）の n で見る。外れが 2 以下か、場面の段の n が MIN_N 未満
-    const sceneAnc = nodes.find((x) => x.dim === "scene" && covers(x.key, l.key)) ?? l;
+    const sceneAnc = nodes.find((x) => (x.dim === "scene" || x.dim === "station") && covers(x.key, l.key)) ?? l;
     const hold = l.misses < HOLE_MISSES || sceneAnc.n < MIN_N;
     // 根だけに付いた見込み（数全体の見込み）は葉の担当にならない＝種類より下に付いた作業が無ければ穴（11/23 統括役「担当も見込みも無い大きな葉は穴」）
     const specific = its.filter((it) => String(it.forecast_leaf ?? "").includes("/"));
-    const hole = !specific.length && l.misses >= HOLE_MISSES;
+    // 11/23（2回目）: 葉が細かく割れて1葉の外れが線に届かない時は、場面（駅）の段の外れの合計で見る（穴は場面の鍵で知らせる＝同じ場面の葉を重ねて数えない）
+    const kindAnc = nodes.find((x) => x.depth === 1 && covers(x.key, l.key)) ?? l;
+    const holeAt = [l, sceneAnc, kindAnc].find((x) => x.misses >= HOLE_MISSES) ?? null;
+    const hole = !specific.length && !!holeAt;
+    const holeKey = hole && holeAt ? holeAt.key : null;
     const best = specific[0] ?? its[0] ?? null;
     const cost = best ? costOf(best.stage) : 2;
     const blocker = its.find((it) => it.blocker || it.stage === "blocked" || it.stage === "waiting_owner")?.blocker ?? (its.some((it) => it.stage === "waiting_owner") ? "竹内さん待ち" : its.some((it) => it.stage === "blocked") ? "止まっている" : null);
@@ -187,7 +208,7 @@ export function rankLeaves(nodes: readonly MapNode[], items: readonly ForecastIt
     const nextStep = hole ? `穴: 作業も見込みも無い（外れ ${l.misses}）→ 統括役が持ち主を決め、外れの番を実物で読む`
       : best ? `#${best.id}${best.switch_name ? ` ${best.switch_name}` : ""}（${best.stage}）: ${String(best.next_step ?? "次の一手が書かれていない").slice(0, 70)}`
       : `外れ ${l.misses}（穴の線 ${HOLE_MISSES} 未満）→ 次の夜に増えるか見る`;
-    return { ...l, hold, hole, items: its.map((it) => it.id), fixShare: Math.round(fixShare * 100) / 100, gain, cost, score, rank: 0, nextStep, blocker, examProblems };
+    return { ...l, hold, hole, holeKey, items: its.map((it) => it.id), fixShare: Math.round(fixShare * 100) / 100, gain, cost, score, rank: 0, nextStep, blocker, examProblems };
   });
   ranked.sort((a, b) => b.score - a.score || b.misses - a.misses);
   ranked.forEach((r, i) => { r.rank = i + 1; });
@@ -261,4 +282,90 @@ export function relatedFoundationOf(leafKey: string, rows: ReadonlyArray<{ metri
     if (r.detail?.cause && !["material", "misread"].includes(r.detail.cause)) return false;
     return m[2] === "all" || (scene != null && m[2] === scene);
   }).map((r) => r.metric);
+}
+
+// ── 2026-11-23 統括役（2回目）: 端末の版の木・申込までの地図の木・根の付け替え ──
+/** 葉の鍵の根を付け替える（純関数）。from の根で書かれた葉を to の根の葉に */
+export const rebaseKey = (key: string, from: string, to: string) => (key === from ? to : key.startsWith(`${from}/`) ? `${to}${key.slice(from.length)}` : key);
+
+/** 根の作業の一覧（純関数）: 付け替え元の根の作業も、葉の鍵を付け替えて受ける。forecast_exam.parts は部品ごとの作業にする（fixes 付き） */
+export function itemsForRoot<T extends ForecastItem>(items: readonly T[], def: Pick<MapRootDef, "metric" | "rebaseFrom">): T[] {
+  const roots = [def.metric, ...(def.rebaseFrom ?? [])];
+  const rootOfKey = (k: string | null | undefined) => roots.find((r) => k === r || String(k ?? "").startsWith(`${r}/`)) ?? null;
+  const out: T[] = [];
+  for (const it of items) {
+    const leaf = it.forecast_leaf ?? it.forecast_metric;
+    const r = rootOfKey(leaf) ?? (roots.includes(String(it.forecast_metric)) ? String(it.forecast_metric) : null);
+    if (!r) continue;
+    const parts = (((it as { forecast_exam?: unknown }).forecast_exam ?? null) as { parts?: Array<{ leaf: string; fixes: number }> } | null)?.parts ?? [];
+    if (parts.length) {
+      for (const p of parts) { const pr = rootOfKey(p.leaf); if (pr) out.push({ ...it, forecast_leaf: rebaseKey(p.leaf, pr, def.metric), fixes: p.fixes }); }
+      continue;
+    }
+    const lr = rootOfKey(leaf);
+    out.push({ ...it, forecast_leaf: lr ? rebaseKey(String(leaf), lr, def.metric) : def.metric });
+  }
+  return out;
+}
+
+/** 作業員A の audit-aix-turn-judgment.ts の json の1行（使う欄だけ） */
+export type DeviceTurnRow = {
+  id: number; cls: string; tk: string | null; v: string; bk?: string | null; prevFulfil?: boolean;
+  mat?: { pend?: number; pp?: boolean; checked?: number; taskResult?: number; mk?: string[] | null; mks?: boolean } | null;
+};
+/**
+ * 端末の版の外れの原因（純関数・仮の決め方＝外れの番を実物で読んで直す）:
+ *   先後 → 読み違い（2段の決まり）。種類違い → 足りない材料の印（digest.mk / mks）があれば材料・無ければ読み違い。
+ *   AIX の番を返信: 前の番の約束を果たす AIX（prevFulfil）＝この番の判断と数えてよいか揺れる → 数え方／
+ *     その種類の手元の材料が判断の時点に無い（物件＝送れる候補 0 かつ pp なし・物件確認＝確認の結果 0・見積書＝mk に見積の額）か mk がある → 材料／ほかは返信か AIX かの判断の誤り
+ */
+export function deviceCauseOf(r: DeviceTurnRow): MapCause | null {
+  if (r.v === "一致" || r.v === "返信一致") return null;
+  const m = r.mat ?? {};
+  const mk = (m.mk ?? []).length > 0 || m.mks === true;
+  if (r.v === "先後") return "misread";
+  if (r.v === "種類違い") return mk ? "material" : "misread";
+  if (r.prevFulfil) return "counting";
+  const k = r.tk ?? "";
+  const noHand = k === "property" ? (m.pend ?? 0) === 0 && !m.pp : k === "property_check_result" ? (m.checked ?? 0) === 0 && (m.taskResult ?? 0) === 0 : k === "estimate_sheet" ? (m.mk ?? []).includes("estimate_amount") : false;
+  return noHand || mk ? "material" : "aix_turn_as_reply";
+}
+const DEVICE_MISS: Record<string, MapMiss> = { 一致: "ok", AIXの番を返信: "reply_not_aix", 種類違い: "aix_kind", 先後: "order" };
+/** A の json の行を木の番に（純関数）。AIX の番（cls が reply 以外）だけ・場面は見張りの scene_key（id で引いた物） */
+export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: ReadonlyMap<number, string | null>): MapTurn[] {
+  return rows.filter((r) => r.cls !== "reply").map((r) => {
+    const kind = r.tk && r.tk !== "?" ? r.tk : "other";
+    return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: DEVICE_MISS[r.v] ?? "aix_kind", cause: deviceCauseOf(r) };
+  });
+}
+
+/** 作業員R の audit-route-progress-takeuchi.ts の json の1行（使う欄だけ） */
+export type RouteTurnRow = { conv: string; at: string; node: string | null; branch: string | null; agree: string; dir: string | null; subAt1?: boolean | null; nextAix?: string[] };
+export const ROUTE_GOOD = new Set(["aix_match", "promise_match", "reply_match", "reply_invite"]);
+/**
+ * 申込までの地図の外れの原因（純関数・仮の決め方）:
+ *   push_missed（地図は AIX・竹内さんは返信）: 竹内さんの一手が約束（dir=promise＝2段の先の返信）なら数え方・ほかは駅の読み違い
+ *   other_aix: 駅の中の状態が地図の駅と食い違う（subAt1=false）なら材料・ほかは読み違い
+ *   pushed_off_map（地図は返信・竹内さんは AIX）: 地図に AIX の候補が1つも無ければ材料・あれば返信か AIX かの判断の誤り
+ */
+export function routeCauseOf(r: RouteTurnRow): MapCause | null {
+  if (ROUTE_GOOD.has(r.agree)) return null;
+  if (r.agree === "push_missed") return r.dir === "promise" ? "counting" : "misread";
+  if (r.agree === "other_aix") return r.subAt1 === false ? "material" : "misread";
+  if (r.agree === "pushed_off_map") return (r.nextAix ?? []).length ? "aix_turn_as_reply" : "material";
+  return "counting";
+}
+/** R の json の行を木の番に（純関数）。駅は分かれ道があれば「分:<分かれ道>」 */
+export function routeTurnsOf(rows: readonly RouteTurnRow[]): MapTurn[] {
+  return rows.filter((r) => r.agree !== "no_next").map((r, i) => ({
+    id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"),
+    miss: ROUTE_GOOD.has(r.agree) ? "ok" : r.agree in MAP_MISS_JA ? (r.agree as MapMiss) : "other_aix", cause: routeCauseOf(r),
+  }));
+}
+
+/** 穴の一覧（純関数）: 穴の鍵（葉か場面・種類の段）ごとに1つ。外れは作業の無い葉の外れの合計（作業のある葉の外れは入れない）。段の n が MIN_N 未満の穴は判断保留の印 */
+export function holesOf(ranked: readonly RankedLeaf[], nodes: readonly MapNode[]): Array<{ key: string; n: number; misses: number; hold: boolean; leaves: number }> {
+  const by = new Map<string, { leaves: number; misses: number }>();
+  for (const r of ranked) if (r.hole && r.holeKey) { const o = by.get(r.holeKey) ?? { leaves: 0, misses: 0 }; o.leaves++; o.misses += r.misses; by.set(r.holeKey, o); }
+  return [...by].map(([key, o]) => { const x = nodes.find((y) => y.key === key); return { key, n: x?.n ?? 0, misses: o.misses, hold: (x?.n ?? 0) < MIN_N, leaves: o.leaves }; }).sort((a, b) => b.misses - a.misses);
 }
