@@ -115,7 +115,7 @@ t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", 
 
 // ── 11/23 #658 決めに行く番 ──
 {
-  t("決めに行く AIX: 申込の後押しと審査の相談の電話だけ（確定・申込書は入れない）", isClosingAix("application_push/push") && isClosingAix("application_push") && !isClosingAix("application_push/format") && !isClosingAix("application_push/confirm") && isClosingAix("phone_call", "審査って通りますか") && !isClosingAix("phone_call", "電話できますか"));
+  t("決めに行く AIX: 申込の後押しと審査の相談の電話だけ（確定・申込書は入れない）", isClosingAix("application_push/push") && !isClosingAix("application_push") && !isClosingAix("application_push/format") && !isClosingAix("application_push/confirm") && isClosingAix("phone_call", "審査って通りますか") && !isClosingAix("phone_call", "電話できますか"));
   t("手打ちの決めに行く文", CLOSE_TEXT_RE.test("先にお申込みでお部屋を抑えて頂けますと安心です") && CLOSE_TEXT_RE.test("審査に出してみませんか") && !CLOSE_TEXT_RE.test("申込書をお送りします"));
   t("見逃し・早すぎ", closingVerdictOf(true, false) === "missed" && closingVerdictOf(false, true) === "early" && closingVerdictOf(true, true) === "both");
   t("統括の材料の欠け", JSON.stringify(graspGapsOf({ emo: "前向き", sig: null, timeline: "", prop: "A", concern: null, cp: "viewing", op: "x", intent: "decision" })) === JSON.stringify(["sig", "timeline", "concern"]));
