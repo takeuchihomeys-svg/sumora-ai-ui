@@ -25,6 +25,7 @@ const isTest = (c: string) => isTestConversation(c) || isNoLineTestConversation(
   let n = 0, why = 0, noRow = 0, noRowSip = 0, noCodes = 0; const missing: string[] = [];
   // 2026-11-23 作業員A（#647 の確かめ）: 欠けの番の多くは申込以降の会話（画像は DeepSeek で読まない線・申込以降は対象外）。
   //   今の rate はそのまま（毎朝の1枚の値を変えない）で、申込の前の番だけの数（n_pre・why_pre・rate_pre）を並べて出す（turn-application-gate の門）
+  let noRowSipByUrl = 0;
   let nPre = 0, whyPre = 0; const gateCache = new Map<string, Awaited<ReturnType<typeof loadTurnApplicationRecords>>>();
   for (const l of (logs ?? []) as Array<{ conversation_id: string | null; sent_at: string }>) {
     if (!l.conversation_id || isTest(l.conversation_id)) continue;
@@ -40,6 +41,12 @@ const isTest = (c: string) => isTestConversation(c) || isNoLineTestConversation(
       // 売上サポを通らずに画像で送った番（sent_image_properties がある＝SIP_JUDGE が判定に通せる側）
       const { count } = await sb.from("sent_image_properties").select("conversation_id", { count: "exact", head: true }).eq("conversation_id", l.conversation_id).gte("created_at", new Date(Date.parse(l.sent_at) - 2 * 36e5).toISOString()).lte("created_at", b);
       if ((count ?? 0) > 0) noRowSip++;
+      // 2026-11-23 作業員A（#647 の確かめ・0177e9ed）: 前に送った同じ画像を送り直すと、読みの行は前の時刻のまま（読み直さない）＝時刻の窓では見つからない。
+      //   送った通の image_url で引いた数を別に出す（今の no_pickup_row_with_images は変えない）
+      const { data: sentImgs } = await sb.from("messages").select("image_url").eq("conversation_id", l.conversation_id).neq("sender", "customer").not("image_url", "is", null)
+        .gte("created_at", new Date(Date.parse(l.sent_at) - 5 * 60e3).toISOString()).lte("created_at", new Date(Date.parse(l.sent_at) + 5 * 60e3).toISOString()).limit(40);
+      const urls = [...new Set(((sentImgs ?? []) as Array<{ image_url: string | null }>).flatMap((m) => String(m.image_url ?? "").split(/[,\s]+/).filter(Boolean)))];
+      if (urls.length) { const { count: byUrl } = await sb.from("sent_image_properties").select("image_url", { count: "exact", head: true }).in("image_url", urls); if ((byUrl ?? 0) > 0) noRowSipByUrl++; }
       continue;
     }
     if (rows.some((r) => Array.isArray(r.reason_codes) && r.reason_codes.length > 0)) { why++; if (pre) whyPre++; }
@@ -49,11 +56,12 @@ const isTest = (c: string) => isTestConversation(c) || isNoLineTestConversation(
   // 刺さった点は送った日ではなく引用の返事の日に付く＝送ったのが前でも数える（送った物件の行は 30日 前まで見る）
   const hookRows = ((hooks ?? []) as Array<{ conversation_id: string | null }>).filter((h) => h.conversation_id && !isTest(h.conversation_id));
   const out = { days, n, why, rate: n ? Math.round((why / n) * 1000) / 10 : null, no_pickup_row: noRow, no_pickup_row_with_images: noRowSip, no_codes: noCodes, hook_rows: hookRows.length, hook_convs: new Set(hookRows.map((h) => h.conversation_id)).size, convs: [...new Set(missing)],
-    n_pre: nPre, why_pre: whyPre, rate_pre: nPre ? Math.round((whyPre / nPre) * 1000) / 10 : null };
+    no_pickup_row_with_images_by_url: noRowSipByUrl, n_pre: nPre, why_pre: whyPre, rate_pre: nPre ? Math.round((whyPre / nPre) * 1000) / 10 : null };
   const jsonArg = process.argv.find((x) => x === "--json" || x.startsWith("--json="));
   if (jsonArg === "--json") { console.log(JSON.stringify(out)); return; }
   if (jsonArg) writeFileSync(jsonArg.slice(7), JSON.stringify(out, null, 2));
   console.log(`物件ピックアップ（${days}日・テストを外す）: ${n}番・選んだ理由（札つきの売上サポの記録）あり ${why}（${out.rate ?? "-"}%）・記録なし ${noRow}（うち画像の読みあり ${noRowSip}）・札なし ${noCodes}／刺さった点の付いた送った物件 ${out.hook_rows}（${out.hook_convs}会話）`);
+  console.log(`  記録なしの番で、送った画像の URL で読みの行が見つかる番: ${noRowSipByUrl}（時刻の窓では ${noRowSip}）`);
   console.log(`  申込の前の番だけ（申込以降は対象外）: ${nPre}番・理由あり ${whyPre}（${out.rate_pre ?? "-"}%）`);
   if (process.argv.includes("--show") && out.convs.length) console.log("  理由の無い番:", out.convs.join("・"));
 })().catch((e) => { console.error(e); process.exit(1); });
