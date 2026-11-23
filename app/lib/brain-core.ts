@@ -88,7 +88,7 @@ import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDe
 import { concernSubtopicOn, concernDetail } from "@/app/lib/concern-subtopic";
 import { materialFetchOn } from "@/app/lib/material-fetch";
 import { brainDeepCheckEnabled } from "@/app/lib/brain-deep-check";
-import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
+import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0, applyRule6OpenPromise } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -1566,7 +1566,7 @@ ${BRAIN_ENTRY_TRIM_ON ? "ルール②（費用質問なし）: 顧客が聞い�
 
 ${BRAIN_RAIHAN_SLOT_ON ? "ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客への「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止。コード側でも強制されるがLLM出力でも必ず含めること）。" : "ルール⑤（来阪表現禁止・常時）: 「来阪」は返信側の固定の決まりで常に止めている。avoid_topics には入れない（枠はこの番の話題に使う）。"}
 
-${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : "ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。"}
+${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : applyRule6OpenPromise("ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。") /* 2026-11-23 作業員A: BRAIN_RULE6_OPEN_PROMISE（既定 off） */}
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : applyPromptRules1113("ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。")}
 
