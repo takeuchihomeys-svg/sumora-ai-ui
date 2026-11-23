@@ -30,7 +30,7 @@ for (const label of labels) {
   const on = arg("switches") ? arg("switches").split(",").map((s) => s.trim()).filter(Boolean) : onSwitchesOfMeta(meta);
   const rows: ReachRow[] = readFileSync(join(dir, `${label}.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => {
     const r = JSON.parse(l) as { id: string; brain?: { material_marks?: Record<string, number> | null } | null; ledger?: { inserted?: Record<string, number> } | null };
-    return { id: r.id, marks: r.brain?.material_marks ?? null, ledger: r.ledger?.inserted ?? null };
+    return { id: r.id, marks: r.brain?.material_marks ?? null, ledger: r.ledger?.inserted ?? null, metaKeys: Object.entries((r.brain ?? {}) as Record<string, unknown>).filter(([, v]) => v != null && v !== "").map(([k]) => k) };
   });
   const reach = switchReachOf(on, rows, headHas(meta?.head ?? null));
   out.push({ label, head: meta?.head ?? null, problems: new Set(rows.map((r) => r.id)).size, reach });
