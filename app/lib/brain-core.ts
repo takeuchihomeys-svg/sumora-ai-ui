@@ -190,7 +190,7 @@ import { trackPromises, buildPromiseBrainNote } from "@/app/lib/promise-tracker"
 import { customerSceneOf } from "@/app/lib/sent-shape";
 import { isShortAckOnly as isShortAckReply } from "@/app/lib/previous-send-note";
 // 2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」
-import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
+import { detectApplyReadiness, buildApplyReadinessBrainNote, applyReadinessWideOn, applyReadinessMessages, APPLY_WINDOW_DAYS } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
 // 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文（AIX【確認します】の出力）をブレインの材料にしない
@@ -3052,8 +3052,16 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   ※ **本文への指示ではなく AIX の判断材料**として渡す。
   //     本文で内覧の候補日時を書くのは final-check が弾く（内覧の打診は AIX【内覧日調整】の仕事）ので、
   //     「申込が近いのに内覧が抜けている」場面で流れを作れるのはブレインだけ（AIX の要否・種類はブレインが決める）。
+  // 2026-11-23 作業員L: APPLY_READINESS_WIDE=on（既定 off）の時だけ、窓の外の7日の通も読んで測る（窓の外に出た御見積書・内覧の合図を落とさない）
+  let applyReadinessWide: Array<{ sender: string; text: string | null; createdAt: string }> | null = null;
+  if (applyReadinessWideOn() && conversationId) {
+    try {
+      const { data: wm } = await supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - APPLY_WINDOW_DAYS * 86_400_000).toISOString()).order("created_at").limit(400);
+      applyReadinessWide = ((wm ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
+    } catch { applyReadinessWide = null; }
+  }
   const applyReadiness = detectApplyReadiness(
-    typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })),
+    applyReadinessMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })), applyReadinessWide),
     Date.now(),
   );
   const applyReadinessText = buildApplyReadinessBrainNote(applyReadiness);

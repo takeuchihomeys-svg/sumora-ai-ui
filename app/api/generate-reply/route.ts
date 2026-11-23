@@ -308,7 +308,7 @@ import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/condition-expansion";
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
 import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, CUSTOMER_FOUND_PROPERTY_VOCAB, type PremiseFacts } from "@/app/lib/example-premise";
-import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
+import { detectApplyReadiness, buildApplyReadinessNote, applyReadinessWideOn, applyReadinessMessages, APPLY_WINDOW_DAYS } from "@/app/lib/apply-readiness";
 import { appealTimingEnabled, buildAppealInput, resolveAppealTiming, buildAppealReplyNote } from "@/app/lib/appeal-timing";
 import { holdSoftReplyNote } from "@/app/lib/hold-soft-next";
 import { vacatingMoveInPromptLine, vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
@@ -6323,8 +6323,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた純関数。
     // hot の時だけ非空。文面は作らず「合図と次の一手の向き」だけを渡す。
     //   ※ 既存の purchase_signal_level は事後の追認だった（peak の8割が申込の後）ので、それとは別に持つ。
+    // 2026-11-23 作業員L: 書き手の側も、画面から来た直近の通（recentMessages）だけで測っていた＝ブレインと同じ窓の形。
+    //   APPLY_READINESS_WIDE=on（既定 off・ブレインと同じスイッチ）の時だけ、会話の直近7日の通を1回読み、多ければそちらで測る
+    let applyReadinessWide: Array<{ sender: string; text: string | null; createdAt: string }> | null = null;
+    if (applyReadinessWideOn() && conversationId) {
+      try {
+        const { data: wm } = await supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - APPLY_WINDOW_DAYS * 86_400_000).toISOString()).order("created_at").limit(400);
+        applyReadinessWide = ((wm ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
+      } catch { applyReadinessWide = null; }
+    }
     const applyReadiness = detectApplyReadiness(
-      recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })),
+      applyReadinessMessages(recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })), applyReadinessWide),
       Date.now(),
     );
     // 2026-10-07 竹内（R・チンシャン）訴求のタイミング: 場面×お客様の反応×部屋の状況から 申込（お部屋を抑える）／内覧／入れない を材料で渡す
