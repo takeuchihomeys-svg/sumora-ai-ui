@@ -3,6 +3,10 @@
 //   重い読み（60日の AIX の番の木）は夜（JST 22〜9時）だけ・1日1回（今日の行があれば作らない）。昼は前に作った木を読むだけ（営業時間は全件読みしない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
+import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node:fs";
+import { join as joinMM } from "node:path";
+import { tmpdir as tmpdirMM } from "node:os";
+import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
@@ -86,9 +90,21 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 }
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
+/** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
+export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts" };
+/** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
+export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
+  const script = def.builder ? JSON_SOURCES[def.builder] : null;
+  if (!script || !existsSyncMM(script)) return null;
+  const out = joinMM(tmpdirMM(), `map-${def.builder}-${process.pid}-${Date.now()}.json`);
+  runTsxMM([script, `--days=${days}`, `--json=${out}`], 20 * 60_000);
+  return existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown[]) : null;
+}
+
 /** 根1つの木を作る（台帳の読みで作れる根だけ＝conductor_aix）。値は出所のスクリプトと同じ数え方 */
-export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
+export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number; days?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
   if (def.builder !== "conductor_aix") return null;
+  if (o.days) def = { ...def, windowDays: o.days };
   // 同じ窓の読みは1回だけ（文の癖の版と端末の版で checkConductor を2回回さない＝夜の重い読みを増やさない）
   const ck = `${def.windowDays}:${o.sinceMs ?? ""}`;
   if (!ccCache.has(ck)) ccCache.set(ck, checkConductor(def.windowDays, o.sinceMs));
@@ -227,13 +243,13 @@ export const leafLine = (r: RankedLeaf) => `${r.rank}. ${r.key.split("/").slice(
  *   要確認: 子を足して親に戻らない（数え方の誤り）・穴（作業の無い大きな葉）・見込みの外れ・見込みの無い P0/P1。
  *   quality_daily: map:<根>:value / :sum_mismatch / :holes / :hold / :rank<1..5>（detail に葉の鍵と次の一手）・forecast:items / :due / :checked / :in_band / :no_forecast_p01
  */
-export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean } = {}) {
+export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean; force?: boolean; days?: number; roots?: string[] } = {}) {
   const now = o.now ?? Date.now(), day = jstDay(now), night = o.night ?? isNightJst(now);
   const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string }> = [];
   const items = await loadForecastItems(sb);
   const { data: fq } = await sb.from("quality_daily").select("metric,value,detail").like("metric", "found:%:%:%").gte("day", jstDay(now - 3 * 86_400_000)).limit(800);
   const foundRows = ((fq ?? []) as Array<{ metric: string; value: number | null; detail?: { cause?: string } | null }>).map((r) => ({ ...r, value: num(r.value) }));
-  for (const def of rootsInOrder()) {
+  for (const def of rootsInOrder().filter((r) => !o.roots || o.roots.includes(r.metric))) {
     const its = def.dims.length ? itemsForRoot(items, def) : items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
     if (def.prefix) {
       const qs = await latestQdPrefix(sb, def.metric, def.qdScope, now);
@@ -248,9 +264,21 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     }
     let nodes: MapNode[] = [], built = false, value: number | null = null, n: number | null = null;
     const prev = await readLatestTree(sb, def.metric, def.writerSelect);
-    if (night && prev.day !== day && def.builder === "conductor_aix") {
-      const t = await buildRootTree(def);
-      if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+    // 夜（JST 22〜9時）に1日1回だけ作る（今日の木があれば作らない・force は空流しの確かめ用）。昼は前の木を読むだけ（60日の重い読みをしない）
+    if (night && (prev.day !== day || o.force)) {
+      if (def.builder === "conductor_aix") {
+        const t = await buildRootTree(def, { days: o.days });
+        if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+      } else if (def.builder && JSON_SOURCES[def.builder] && (process.env.MAP_JSON_ROOTS ?? "on").toLowerCase() !== "off") {
+        // 11/23 統括役: json から作る根（端末の版＝作業員A・申込までの地図＝作業員R）も出所の台本を夜に回して毎晩作る
+        try {
+          const rows = runJsonSource(def, o.days ?? def.windowDays);
+          const spec = def.builder === "aix_turn_device" && existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+          const t = rows?.length ? await buildTreeFromJson(sb, def, rows, { spec }) : null;
+          if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
+          else lines.push(`- ${def.label}: 出所の台本の行が無い（${JSON_SOURCES[def.builder]}）`);
+        } catch (e) { lines.push(`- ${def.label}: 出所の台本が止まった（${e instanceof Error ? e.message.slice(0, 80) : e}）`); }
+      }
     }
     // json から作る根（端末の版・申込までの地図）は work-items.ts --map-build で作った木を読む（出所の台本が main に入ったら夜に作る）
     if (!built) { nodes = nodesFromRows(prev.rows); value = nodes[0]?.value ?? null; n = nodes[0]?.n ?? null; }
