@@ -258,6 +258,11 @@ async function main() {
         mapQd.push(...mp.qd);
         ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
       }
+      // 2026-11-23 統括役の決め: 試験の学び（conductor_lessons）に地図の葉の印（leaf_keys）を毎晩付ける＝「統括に届いているか」の学びの道（LLM なし・止める EXAM_LEAF_LESSONS=off）
+      if (flag("write") && (process.env.EXAM_LEAF_LESSONS ?? "on").toLowerCase() !== "off") {
+        try { const o = runTsx(["scripts/exam-leaf.ts", "--lessons", "--write"], 180_000); lines.push(`- 学びの葉の印: ${o.trim().split("\n").pop() ?? ""}`); }
+        catch (e) { lines.push(`- 学びの葉の印: 止まった（${e instanceof Error ? e.message.slice(0, 80) : e}）`); }
+      }
       // 2026-11-23 作業員N2（竹内さんの決定 KB 0f38f47f）: 週に1回（JST の月曜の回）、開いている地図の穴の行のうち統括に届いていない物を統括役に出す（読むだけ・軽い読み）
       if (isHoleReachDay(now)) {
         const sel = async (cols: string): Promise<{ data: unknown[] | null; error: { message: string } | null }> => (await sb.from("work_items").select(cols).eq("origin", "found_gap").like("title", "地図の穴:%").not("stage", "in", "(done,dropped)").limit(500)) as unknown as { data: unknown[] | null; error: { message: string } | null };
