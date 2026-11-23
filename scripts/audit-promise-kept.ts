@@ -11,6 +11,9 @@
 // 出すのは数と会話の頭8字だけ（お客様の文・名前は出さない）。DB を読むので 22時〜8時に1本だけ流す。
 // 実行: npx tsx --env-file=.env.local scripts/audit-promise-kept.ts [--days=30] [--max-convs=400] [--out=<json>]
 import { createClient } from "@supabase/supabase-js";
+import { confirmObjectOf } from "../app/lib/action-ledger";
+// 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT（既定 on・=off で止める）と同じく、確認の約束を要件の合う答えでだけ果たした扱い
+const CHECK_OBJECT_OF = process.argv.includes("--check-object") || (process.env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() !== "off" ? (t: string) => confirmObjectOf(t) : undefined; // 既定 on（見張りと同じ・止める PROMISE_DROP_CHECK_OBJECT=off）
 import { writeFileSync } from "node:fs";
 import { promiseKindNameOf, promiseInputWaitTurn, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "../app/lib/test-conversations";
@@ -47,7 +50,7 @@ export function promisesOf(conv: string, status: string | null, msgs: ReadonlyAr
   for (const p of raw) {
     const prev = [...kept].reverse().find((k) => k.kind === p.kind);
     if (prev) {
-      const f = promiseFulfilledBy({ at: prev.at, kind: prev.kind }, ev);
+      const f = promiseFulfilledBy({ at: prev.at, kind: prev.kind, text: prev.text }, ev, { checkObjectOf: CHECK_OBJECT_OF });
       const fAt = f && f !== "n/a" ? Date.parse(f.at) : null;
       // 前の同じ種類の約束が、この言い直しより前に果たされていなければ言い直し＝1つにまとめる（判定なしの種類も同じ）
       if (fAt == null || fAt > Date.parse(p.at)) { kept.splice(kept.indexOf(prev), 1); }
@@ -58,7 +61,7 @@ export function promisesOf(conv: string, status: string | null, msgs: ReadonlyAr
   for (const p of kept) {
     if (promiseClosedConversation(status, msgs, p.at)) continue;
     const dl = promiseDeadlineMs(p.text, Date.parse(p.at));
-    const f = promiseFulfilledBy({ at: p.at, kind: p.kind }, ev);
+    const f = promiseFulfilledBy({ at: p.at, kind: p.kind, text: p.text }, ev, { checkObjectOf: CHECK_OBJECT_OF });
     let state: KeptState;
     if (f === "n/a") state = "n/a";
     else if (f) state = Date.parse(f.at) <= dl.ms ? "in_time" : "late";
