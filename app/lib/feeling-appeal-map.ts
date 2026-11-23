@@ -13,11 +13,18 @@ export const FEEL_RE = /ですよね|お気持ち|ご不安|ご心配|不安な|
 export const APPEAL_RE = /オススメ|おすすめ|お勧め|お得|初期費用(?:を|も)?抑え|審査(?:通過|が通り)|人気|すぐに?埋まり|早め|お早め|🌟|一押し|特に/;
 export const INVITE_RE = /ご案内させて|ご内覧|内覧(?:頂|いただ|のご案内)|お気に召され/;
 
-export type AppealKind = "invite" | "appeal" | "none";
+/** 推すと誘うの両方（both）を1つの形に（11/23 作業員N2 の照らし 12838: 推す＋誘うの文を「誘う」だけにしていた） */
+export type AppealKind = "both" | "invite" | "appeal" | "none";
+/** これから送る・探す約束の文（「オススメできるお部屋をピックアップしてお送りさせて頂きます」）＝推す文ではない（11/23 N2 の照らし: 約束の文を「推す」に数えていた） */
+export const PROMISE_SEND_RE = /(?:お送り|送らせ|お探し|探させ|探して|ピックアップ)(?:させて)?(?:頂|いただ)?(?:き|け)ます|お送りします|お探しします/;
 export function feelingOf(text: string): boolean { return FEEL_RE.test(String(text ?? "").normalize("NFKC")); }
 export function appealOf(text: string): AppealKind {
   const t = String(text ?? "").normalize("NFKC");
-  return INVITE_RE.test(t) ? "invite" : APPEAL_RE.test(t) ? "appeal" : "none";
+  // 文ごとに見て、送る・探す約束の文は推す文から外す（誘うは文ごとに外さない）
+  const sents = t.split(/[。！!？?\n]+/).filter((s) => s.trim());
+  const push = sents.some((s) => APPEAL_RE.test(s) && !PROMISE_SEND_RE.test(s));
+  const invite = INVITE_RE.test(t);
+  return push && invite ? "both" : invite ? "invite" : push ? "appeal" : "none";
 }
 /** 気持ちの外れの型（純関数） */
 export function feelingMissOf(takeuchi: boolean, ai: boolean): "ok" | "feel_missed" | "feel_extra" {

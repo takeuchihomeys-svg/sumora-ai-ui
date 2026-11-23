@@ -180,5 +180,8 @@ t("今どこの地図の番（L の形）", (() => { const x = jsonTurnsOf({ roo
   t("物件の理解の木: 子の合計が戻る", sumMismatches(tree).length === 0 && tree[0].n === 3 && tree[0].ok === 1);
 }
 
+t("訴求の網（N2 の照らし 12838）: 推す＋誘うは both・送る約束の文は推すにしない", appealOf("こちらのお部屋如何でしょうか。かなりオススメ出来るお部屋です。お気に召されましたらご案内させて頂きます") === "both"
+  && appealOf("オススメできるお部屋を新たにピックアップしてお送りさせて頂きます。全力でサポートします") === "none" && appealMissOf("both", "invite") === "appeal_other");
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
