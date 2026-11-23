@@ -72,7 +72,7 @@ assert.equal(isConfirmedViewingEvent({ all_day: false, title: "山田 内覧 物
 
 // 持ち主
 assert.equal(liveOwnerOf("read"), "作業員L");
-assert.equal(liveOwnerOf("tool_rank"), "作業員K2");
-assert.equal(liveOwnerOf("作業員K・作業員L"), "作業員K2");
+assert.equal(liveOwnerOf("tool_rank"), "作業員P"); // 2026-11-23 4人体制（K2→P）
+assert.equal(liveOwnerOf("作業員K・作業員L"), "作業員P");
 assert.equal(liveOwnerOf("作業員Z"), "統括役");
 console.log("foundation-holes-345: ok");
