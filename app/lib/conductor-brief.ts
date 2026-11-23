@@ -240,6 +240,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
       if (aim.keyPoint === BRIEF_NONE && r.turn_aim) { aim.keyPoint = r.turn_aim; aim.keyPointFrom = "route"; const i = notYet.indexOf("key_point"); if (i >= 0) notYet.splice(i, 1); }
       const midFromAims = str(obj(m.turn_aims)?.midAim, 30) ?? str(obj(m.turn_aims_after)?.midAim, 30);
       if (!midFromAims && r.mid_aim) { aim.mid = r.mid_aim.slice(0, 30); aim.midFrom = "route"; }
+      // 2026-11-23 作業員A（KB 2d1c4c74・ROUTE_PATH_TO_BRIEF=on の時だけ path がある）: 中期がまだ空なら道筋の中期（次の1〜2駅・分かれ道なら本線へ戻る）で埋める（上書きしない）
+      else if (!midFromAims && aim.mid === BRIEF_NONE && r.path?.mid) { aim.mid = r.path.mid.slice(0, 30); aim.midFrom = "route"; }
       if (next !== BRIEF_NONE && r.plants.length) {
         const add = r.plants.filter((p) => !next.plants.includes(p));
         if (add.length) { next.plants = [...next.plants, ...add]; next.plants_route = add; }

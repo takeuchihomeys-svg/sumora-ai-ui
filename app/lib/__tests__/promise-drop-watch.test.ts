@@ -179,3 +179,40 @@ assert.equal(promiseDropKindOf("募集状況と初期費用確認させて頂き
 // お客様の送付待ちの案内（36bb96d9 の形）は約束でない
 assert.equal(promiseKindNameOf("SUUMO 、HOMES などでお気に召されましたお部屋の募集状況も確認させていただきますので、気になるお部屋もお気軽にお送り下さい😌！"), null);
 console.log("promise-holes-1123: ok");
+
+// 2026-11-23 作業員L（#655 の続き・PROMISE_DROP_CHECK_OBJECT の中身）: 確認の約束を要件の合う答えでだけ果たした扱い（checkObjectOf を渡した時だけ）
+import { narrowCheckObject, promiseDropCheckObjectOn } from "../promise-drop-watch";
+{
+  // 要件の読み（テスト用の小さな表・本番は action-ledger.confirmObjectOf）
+  const objOf = (t: string) => /保証会社/.test(t) ? "保証会社" : /審査/.test(t) ? "審査" : /初期費用/.test(t) ? "初期費用" : /募集状況/.test(t) ? "募集状況" : /ペット/.test(t) ? "ペット" : null;
+  assert.equal(promiseDropCheckObjectOn({}), true);
+  assert.equal(promiseDropCheckObjectOn({ PROMISE_DROP_CHECK_OBJECT: "off" }), false);
+  assert.equal(promiseDropCheckObjectOn({ PROMISE_DROP_CHECK_OBJECT: "on" }), true);
+  assert.equal(narrowCheckObject("募集状況確認させて頂きます", objOf), null); // 募集状況は今まで通り
+  assert.equal(narrowCheckObject("保証会社確認させて頂きます", objOf), "保証会社");
+  const p0 = "2026-11-10T10:08:00Z", ms = (h: number) => new Date(Date.parse(p0) + h * 36e5).toISOString();
+  const promise = { at: p0, kind: "check" as const, text: "管理会社に保証会社確認させて頂きます！！" };
+  // 7f73dc32 の形: 物件の送付だけ → 今までは果たした・絞ると果たしていない
+  const evSend = { msgs: [], aix: [{ aix_type: "property_send", sent_at: ms(20), created_at: ms(20) }], sent: [{ sent_at: ms(20) }] };
+  assert.ok(promiseFulfilledBy(promise, evSend));
+  assert.equal(promiseFulfilledBy(promise, evSend, { checkObjectOf: objOf }), null);
+  // 「審査は〇〇保証となります」の答え（言い換え）→ 果たした
+  const evAns = { msgs: [{ sender: "staff", text: "管理会社に確認しましたところ、審査は〇〇保証となります！！", created_at: ms(30), is_aix_generated: false }], aix: [], sent: [] };
+  assert.equal((promiseFulfilledBy(promise, evAns, { checkObjectOf: objOf }) as { by: string }).by, "staff_text:object");
+  // 同じ要件の約束の言い直し（まだ確認していない）は果たしていない
+  const evRe = { msgs: [{ sender: "staff", text: "引き続き保証会社確認させて頂きます！！", created_at: ms(30), is_aix_generated: false }], aix: [], sent: [] };
+  assert.equal(promiseFulfilledBy(promise, evRe, { checkObjectOf: objOf }), null);
+  // 初期費用の確認は御見積書の AIX で果たした
+  const cost = { at: p0, kind: "check" as const, text: "〇〇の初期費用確認させて頂きます" };
+  assert.ok(promiseFulfilledBy(cost, { msgs: [], aix: [{ aix_type: "estimate_sheet", sent_at: ms(5), created_at: ms(5) }], sent: [] }, { checkObjectOf: objOf }));
+  // 渡さない時は今まで通り（既定 off）
+  assert.ok(promiseFulfilledBy({ ...promise }, evSend, {}));
+}
+// fecda03f の形: 「交渉させて頂きましたが…とのご返事でした」は約束でない・「今回はやめておきます」は止めた印
+assert.equal(promiseKindNameOf("管理会社に交渉させて頂きましたが、すでにお申し込みが入っており家賃の減額は考えていないとのご返事でした。"), null);
+assert.equal(promiseClosedConversation(null, [{ sender: "customer", text: "こちらの都合で別の家探すことになったので今回はやめておきます", created_at: "2026-11-12T11:56:00Z" }], "2026-11-12T10:33:00Z"), true);
+// 331b0338 の形: お客様の希望・選び待ちの条件つきは約束でない
+assert.equal(promiseKindNameOf("1ヶ月以降のご入居をご希望の場合は管理会社に交渉させていただきます！！"), null);
+assert.equal(promiseKindNameOf("お気に召されましたお部屋12月中旬でのご入居可能か交渉させていただきます！！"), null);
+assert.equal(promiseKindNameOf("12月中旬のご入居で管理会社に交渉させていただきます！！"), "check");
+console.log("promise-check-object: ok");

@@ -124,13 +124,39 @@ t("内覧待ちは止まりに数えない（viewingWait）", () => {
   const msgs = [
     { sender: "customer", text: "当日は駐車場ありますか？", created_at: at(0) },
     { sender: "staff", text: "確認させて頂きます！", created_at: at(1), staff_writer: "takeuchi" },
-    { sender: "customer", text: "持ち物はありますか？", created_at: at(2) },
+    { sender: "customer", text: "当日よろしくお願いします", created_at: at(2) }, // 11/23: 聞き返し（質問）は駅を問わず engaged になったので、内覧待ちの確かめはお礼の返事で
   ];
   const ds = [{ created_at: at(0.5), stage: "viewing_scheduled" }, { created_at: at(2.5), stage: "viewing_scheduled" }];
   assert.equal(guideTurnsOf("c1", msgs, [], ds)[0].outcome, "stuck");
   assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { viewingWait: true })[0].outcome, "engaged");
 });
 console.log("guide-viewing-wait ok");
+// 2026-11-23 作業員L（#583 の照らし・82c4d3e8・統括役の決め）: ①物件を送ってきた番の駅は見張りの scene_key で読む ②聞き返し（質問）は駅を問わず engaged
+t("物件を送ってきた番の駅・聞き返しは engaged", () => {
+  const msgs = [
+    { sender: "customer", text: "[画像]", created_at: at(0) },
+    { sender: "customer", text: "こちらも見積もりお願いしたいです", created_at: at(0.1) },
+    { sender: "staff", text: "〇〇の募集状況と初期費用確認させて頂きます！！", created_at: at(0.3), staff_writer: "takeuchi" },
+    { sender: "customer", text: "大体見積もりいつ頃ご連絡いただけそうですか？", created_at: at(0.5) },
+  ];
+  const ds = [{ created_at: at(0.2), stage: "searching" }, { created_at: at(0.6), stage: "searching" }];
+  const [plain] = guideTurnsOf("c1", msgs, [], ds);
+  assert.equal(plain.station, "pickup"); assert.equal(plain.outcome, "engaged");
+  const [g] = guideTurnsOf("c1", msgs, [], ds, 48, { sceneOf: (from, to) => (from <= at(0.1) && to >= at(0.3) ? "返信:持ち込み物件" : null) });
+  assert.equal(g.station, "brought_property"); assert.equal(g.before, "pickup");
+  assert.equal(guideTable([g]).get("brought_property|reply:promise|*")?.engaged, 1);
+});
+t("見張りの番が無い時は物件の画面の見出しで読む", () => {
+  const msgs = [
+    { sender: "customer", text: "[画像] 【物件の画面（ポータル）】 suumo", created_at: at(0) },
+    { sender: "staff", text: "募集状況確認させて頂きます！！", created_at: at(0.3), staff_writer: "takeuchi" },
+    { sender: "customer", text: "ありがとうございます", created_at: at(0.5) },
+  ];
+  const ds = [{ created_at: at(0.2), stage: "searching" }];
+  assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { sceneOf: () => null })[0].station, "brought_property");
+  assert.equal(guideTurnsOf("c1", msgs, [], ds)[0].station, "brought_property");
+});
+console.log("guide-brought ok");
 // 2026-11-23 作業員L（台帳 #102）: 返事の束の後の判断で見る（burstAfter・既定 false）
 t("返事が続く番は束の後の判断（burstAfter）", () => {
   const msgs = [

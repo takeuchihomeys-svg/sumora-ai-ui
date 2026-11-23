@@ -30,7 +30,7 @@ type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
 export async function syncPromiseCalendar(o: { conversationId: string; entries: ReadonlyArray<FactLike>; sentAt: string; /** 送った本文（【必ず】の物件名をブレイン基準にする時の安全の線に使う） */ text?: string | null }): Promise<void> {
   try {
     // checkPattern: AIX【確認した（条件・交渉）】の種類（入居時期・保証会社…）。どの約束を閉じるかは本文の先頭語よりこちらが確か（𝒮❦ 事例）
-    const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null, checkPattern: e.detail?.checkPattern ?? null }));
+    const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null, checkPattern: e.detail?.checkPattern ?? null, propertyNames: e.detail?.propertyNames ?? null })); // 2026-11-23 作業員L（#652）: 物件名は PROMISE_CALENDAR_CLOSE_WIDE=on の時だけ使う
     const hasPromise = o.entries.some((e) => e.status === "promised");
     if (done.length === 0 && !hasPromise) return;
     const { data: open } = await supabase.from("calendar_events").select("id, event_type, notes, is_done")

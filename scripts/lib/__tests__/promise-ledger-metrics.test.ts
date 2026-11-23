@@ -68,3 +68,18 @@ console.log("promise-ledger-metrics wide-close: ok");
   assert.deepEqual(summarizePromises(promiseStatesOf(r2), now), { open: 1, overdue: 1, madeWindow: 1, keptWindow: 0 });
 }
 console.log("promise-ledger-metrics dueText: ok");
+// 2026-11-23 作業員L（台帳 #655）: 確認の約束は要件の合う確認の報告でだけ閉じる（confirmObject・既定 false＝今と同じ）。7f73dc32・2cb0feb7 の形
+{
+  const r = [
+    { conversation_id: "k", kind: "confirmation_promised", status: "promised", sent_at: iso(100), evidence: "確認させて頂きます", detail: { object: "退去" } },
+    { conversation_id: "k", kind: "confirmation_reported", status: "done", sent_at: iso(90), detail: { object: "入居時期" } },
+    { conversation_id: "m", kind: "confirmation_promised", status: "promised", sent_at: iso(100), evidence: "確認させて頂きます", detail: { object: "保証会社" } },
+    { conversation_id: "m", kind: "confirmation_reported", status: "done", sent_at: iso(90), detail: { object: "保証会社" } },
+    { conversation_id: "n", kind: "confirmation_promised", status: "promised", sent_at: iso(100), evidence: "確認させて頂きます", detail: { object: null } },
+    { conversation_id: "n", kind: "confirmation_reported", status: "done", sent_at: iso(90), detail: { object: "募集状況" } },
+  ];
+  const closed = (o: { confirmObject?: boolean }) => promiseStatesOf(r, o).map((p) => `${p.conv}:${p.closedAt ? "閉" : "開"}`).sort().join(" ");
+  assert.equal(closed({}), "k:閉 m:閉 n:閉");
+  assert.equal(closed({ confirmObject: true }), "k:開 m:閉 n:閉"); // 退去 ← 入居時期 は閉じない・要件が合う／要件の無い約束は閉じる
+}
+console.log("promise-ledger-metrics confirm-object: ok");

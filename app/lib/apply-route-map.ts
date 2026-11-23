@@ -22,6 +22,7 @@ import type { SceneId } from "./aix-scene-evidence";
 import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
 import { latestRankMention } from "./parallel-second";
 import { withRefinedNext, lapsedViewingOpens } from "./apply-route-next";
+import { applyRoutePathLineOn, routePathBrainLine, routePathOf } from "./route-path";
 
 const N = (s: string | null | undefined) => String(s ?? "").normalize("NFKC");
 
@@ -326,7 +327,9 @@ export function buildApplyRouteBrainText(loc: ApplyRouteLocation): string {
     const br = ROUTE_BRANCHES[loc.branch];
     parts.push(`分かれ道: ${br.name}（${br.meaning}）／本線への戻り方: ${br.wayBack.how}${br.wayBack.to ? `（→${nodeName(br.wayBack.to)}）` : ""}`);
   }
-  if (loc.next) parts.push(`申込へ向けた次の一手の候補: ${loc.next.label}${loc.next.aix.length ? `（合う AIX: ${loc.next.aix.join("・")}）` : ""}`);
+  // 2026-11-23 作業員A（KB 2d1c4c74「地図は道筋」・APPLY_ROUTE_PATH_LINE=on の時だけ・既定 off＝今の1行のまま）: 次の一手の候補の1行を、道筋の言い方（本線の次の駅・その先・そこへ向かう一手の例）に替える
+  if (applyRoutePathLineOn()) { const pl = routePathBrainLine(routePathOf(loc), loc.next?.label ?? null, loc.next?.aix ?? []); if (pl) parts.push(pl); }
+  else if (loc.next) parts.push(`申込へ向けた次の一手の候補: ${loc.next.label}${loc.next.aix.length ? `（合う AIX: ${loc.next.aix.join("・")}）` : ""}`);
   parts.push("※位置は網。どう返すか・AIX にするかはあなたが会話を読んで決める。");
   let text = parts.join("\n");
   if (text.length > APPLY_ROUTE_TEXT_MAX) text = text.slice(0, APPLY_ROUTE_TEXT_MAX - 1) + "…";

@@ -6,7 +6,8 @@
 //   → APPLY_ROUTE_RECORD=on の時だけ meta.apply_route（駅・分かれ道・次の一手）に残し、段の語は地図の駅の id に寄せる（stationOf）。
 // スイッチ APPLY_ROUTE_RECORD（既定 on・2026-11-21 統括役の了承・=off で止める）。記録だけ＝プロンプトと道は変えない。
 // テスト: app/lib/__tests__/route-record.test.ts
-import { ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
+import { ROUTE_NODES, ROUTE_BRANCHES, type RouteNodeId } from "./apply-route-map";
+import { routePathToBriefOn, routePathOf, routePathCheck, type RoutePath, type PathVerdict } from "./route-path";
 import { SUBSTATES, DEPTH_JA, type Substate, type Plant } from "./apply-route-substate";
 import type { PlantFact } from "./next-move-detail";
 import { SUBSTATE_PHRASING, type SubstatePhrasing } from "./route-substate-phrasing";
@@ -127,6 +128,9 @@ export type RouteBriefSection = {
   plants: PlantFact[]; depth: 1 | 2 | 3 | null; depth_why: string | null;
   /** 2026-11-21 夜（#467 の (3)）: 竹内さんのその状態の言い回しの型と潜在の4つ（route-substate-phrasing・使える状態の時だけ） */
   phrasing?: SubstatePhrasing | null;
+  /** 2026-11-23 作業員A（KB 2d1c4c74・ROUTE_PATH_TO_BRIEF=on の時だけ）: 道筋（今の駅・申込までの残り・戻り方・中期・長期）と、ブレインの一手が道の上にあるかの印（印だけ・道は決め直さない） */
+  path?: RoutePath | null;
+  path_check?: { verdict: PathVerdict; why: string } | null;
 };
 const o2 = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const s2 = (v: unknown, n: number): string | null => (typeof v === "string" && v.trim() ? Array.from(v.trim()).slice(0, n).join("") : null);
@@ -139,8 +143,14 @@ export function routeBriefSection(meta: Record<string, unknown> | null | undefin
   const atMatch = !!sub && substateAtMatch(sub, node, branch, env);
   const usable = !!sub && atMatch && substateUsable(sub, env);
   const use = usable ? sub : null;
+  // 2026-11-23 作業員A（KB 2d1c4c74）: 道筋の形（ROUTE_PATH_TO_BRIEF=on）の時は、次の一手（next）を統括の欄に入れない（記録は meta.apply_route に残る）
+  const pathOn = routePathToBriefOn(env);
+  const path = pathOn ? routePathOf({ node, branch, wayBack: branch ? (ROUTE_BRANCHES as Record<string, { wayBack?: { to: string | null; how: string } }>)[branch]?.wayBack ?? null : null }) : null;
+  const m0 = o2(meta) ?? {};
+  const brainAix = String(m0.reply_mode ?? "") === "aix" && typeof m0.action === "string" && m0.action.trim() ? m0.action : null;
   return {
-    node, branch, next: s2(ar.next, 40),
+    ...(pathOn ? { path, path_check: routePathCheck(brainAix, path) } : {}),
+    node, branch, next: pathOn ? null : s2(ar.next, 40),
     substate: sub ? { id: sub.id, label: sub.label, n: sub.n, few: !!sub.few, at_match: atMatch, usable } : null,
     turn_aim: use ? use.turnAim.slice(0, 30) : null,
     mid_aim: use && use.midAim !== "—" ? use.midAim.slice(0, 40) : null,

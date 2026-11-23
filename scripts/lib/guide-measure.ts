@@ -21,7 +21,7 @@ export function decisionOfDigest(createdAt: string, digest: { sg?: string | null
   return { created_at: createdAt, stage: sg ?? cp ?? null, from: sg ? "sg" : cp ? "cp" : null };
 }
 export type Outcome = "advanced" | "engaged" | "stuck" | "back" | "left";
-export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（提案中）・内覧待ち（viewingWait の時）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
+export const OUTCOME_JA: Record<Outcome, string> = { advanced: "進んだ", engaged: "質問が返った（駅を問わず・11/23 から）・内覧待ち（viewingWait の時）", stuck: "止まった", back: "戻った", left: "離れた（48時間返事なし）" };
 
 /** customer-state の段階 → 地図の駅（apply-route-map の STAGE_TO_NODE と同じ・searching は pickup に寄せる） */
 const STAGE_NODE: Record<string, RouteNodeId | null> = {
@@ -51,6 +51,8 @@ export function closeKindOf(text: string): string {
 export type GuideTurn = {
   conv: string; at: string; act: string; actKind: "aix" | "reply"; before: RouteNodeId | null; after: RouteNodeId | null;
   mood: ReactionCat; reply: ReactionCat; hours: number | null; outcome: Outcome;
+  /** 型の表の駅（2026-11-23 作業員L・#583 の照らし）: お客様が物件を送ってきた番は "brought_property"（見張りの scene_key で読む）・他は before */
+  station?: string | null;
   /** promiseWait の時だけ: 約束の番を「果たした後の次の返事」で測り直した（fulfilled＝果たした・not_fulfilled＝72時間で果たさず） */
   promiseWait?: "fulfilled" | "not_fulfilled";
   /** promiseWait=fulfilled の時: 約束から果たした AIX までの時間（時間・小数1桁） */
@@ -65,13 +67,19 @@ export type GuideTurn = {
 /** 約束を果たしたと見る AIX（物件・確かめた結果・見積） */
 const FULFIL_AIX = /^(?:property_send|property_recommendation|property_check_result|estimate_sheet|mgmt_)/;
 export const PROMISE_FULFIL_H = 72;
+/** お客様が物件を送ってきた番の見張りの場面（line_watch_turns.scene_key） */
+/** 見張りの番が無い時の、お客様が物件を送ってきた印（画像の見出し・物件サイトの URL） */
+export const BROUGHT_TEXT_RE = /【物件の画面|【物件の資料|https?:\/\/(?:[a-z]+\.)?(?:suumo\.jp|homes\.co\.jp|athome\.co\.jp|chintai\.net|realestate\.yahoo)/;
+/** 物件を送ってきた番を読む窓（送信の前 30分のお客様の通） */
+export const BROUGHT_RECENT_MS = 30 * 60_000;
+export const BROUGHT_SCENE_RE = /^返信:持ち込み物件$|^AIX:property_check_result$|^AIX:acknowledge_check$/;
 
 /**
  * 1つの会話（古い順の messages・AIX の記録・判断の記録）→ 竹内さん本人の番ごとの誘導の記録
  * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
  *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
  */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean; sgOnly?: boolean; firstMoveH?: number } = {}): GuideTurn[] {
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean; sgOnly?: boolean; firstMoveH?: number; sceneOf?: (fromIso: string, toIso: string) => string | null } = {}): GuideTurn[] {
   // 2026-11-23 作業員L（作業員R の見つけ・台帳 #102・#414）: opts.sgOnly（既定 false＝今と同じ）の時は、cp から駅を取った判断を使わない
   //   （11/03 より前は sg が無く、cp の5段では駅の中で進んでも「止まった」に数えられる）。直前の判断が cp だけの番は数えない
   // 2026-11-23 作業員L（台帳 #102・統括役の頼み）: 返事の後の駅は「返事の始まりの後の最初の判断」で取っていた。お客様が続けて質問し同じ流れで
@@ -92,8 +100,10 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
   };
   // 2026-11-22 作業員L（台帳 #102）: 内覧が決まった後（viewing_scheduled）に留まって返事が来る番は、内覧の日まで駅が進まないだけ＝止まりではない
   //   （「物件確認した の後に止まった」7番のうち3番がこれ）。opts.viewingWait（既定 false＝今と同じ）の時だけ engaged に数える
+  // 2026-11-23 作業員L（台帳 #583 の照らし・82c4d3e8・統括役の決め）: お客様の聞き返し（質問）は、駅が提案中でなくても関わりが続いている形＝engaged
+  //   （旧は提案中だけ。物件を送ってきた番の「見積はいつ頃ですか」が stuck に数えられていた）
   const keep = (before: RouteNodeId | null, after: RouteNodeId | null, reply: ReactionCat) =>
-    (before === "proposing" && reply === "question") || (!!opts.viewingWait && before === "viewing_scheduled" && after === "viewing_scheduled" && reply !== "silent");
+    reply === "question" || (!!opts.viewingWait && before === "viewing_scheduled" && after === "viewing_scheduled" && reply !== "silent");
   const ms = [...msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const ds = [...decisions].filter((d) => d.stage && !(opts.sgOnly && d.from === "cp")).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const stageAt = (iso: string, after: boolean) => {
@@ -133,7 +143,16 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     // 2026-11-21 作業員L（#414 の掘り・統括役の決め）: 物件提案中に送った物件へ質問が返る番は、駅が変わらなくても関わりが続いている形＝「止まった」と分ける（engaged）
     const outcome: Outcome = !replied ? "left" : idx(after) > idx(before) ? "advanced" : idx(after) < idx(before) && idx(after) >= 0 ? "back"
       : keep(before, after, replyCat) ? "engaged" : "stuck";
-    const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
+    // 2026-11-23 作業員L（#583 の照らし・統括役の決め）: お客様が物件を送ってきた番は、見張りの scene_key（持ち込み物件・property_check_result）を先に見て駅を「物件を送ってきた」に
+    //   （旧は判断の sg=searching から pickup と読み、物件の募集状況と見積の確認の番が探す番に混ざった）。呼ぶ側が sceneOf を渡さない時は今まで通り before
+    //   見るのは送信の前 30分のお客様の通だけ（82c4d3e8: お客様の束が前日の質問から続いていて、前日の見張りの番「返信:質問」を拾っていた）
+    const recentFrom = Date.parse(m.created_at) - BROUGHT_RECENT_MS;
+    let ri = i; while (ri > 0 && ms[ri - 1].sender === "customer" && Date.parse(ms[ri - 1].created_at) >= recentFrom) ri--;
+    const recentCust = ms.slice(ri, i).map((x) => String(x.text ?? ""));
+    const sceneKey = opts.sceneOf && ri < i ? opts.sceneOf(ms[ri].created_at, m.created_at) : null;
+    //   見張りの番が無い番（82c4d3e8 の 11/22 05:26: 見張りの番は次のお客様の通から始まっていた）は、お客様の通の物件の画面の見出し・物件サイトの URL で読む
+    const station = (sceneKey && BROUGHT_SCENE_RE.test(sceneKey)) || (!sceneKey && BROUGHT_TEXT_RE.test(recentCust.join("\n"))) ? "brought_property" : before;
+    const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, station, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
     if (laterAix?.aix_type) { row.laterAix = laterAix.aix_type; row.laterAixH = Math.round((Date.parse(laterAix.sent_at ?? laterAix.created_at) - Date.parse(m.created_at)) / 36e5 * 10) / 10; }
     if (opts.promiseWait && act === "reply:promise" && replied && replyCat === "thanks") {
       const t0 = Date.parse(m.created_at);
@@ -164,7 +183,8 @@ const cell = (): Cell => ({ n: 0, advanced: 0, engaged: 0, stuck: 0, back: 0, le
 export function guideTable(turns: ReadonlyArray<GuideTurn>): Map<string, Cell> {
   const m = new Map<string, Cell>();
   for (const t of turns) {
-    for (const key of [`${t.before ?? "?"}|${t.act}|*`, `${t.before ?? "?"}|${t.act}|${t.mood}`]) {
+    const st = t.station ?? t.before;
+    for (const key of [`${st ?? "?"}|${t.act}|*`, `${st ?? "?"}|${t.act}|${t.mood}`]) {
       const c = m.get(key) ?? cell(); c.n++; c[t.outcome]++; c.few = c.n < FEW; m.set(key, c);
     }
   }

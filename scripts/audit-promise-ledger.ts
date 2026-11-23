@@ -27,7 +27,8 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
   const internal = new Set<string>(STAFF_INTERNAL_CONVERSATION_IDS as readonly string[]);
   const kept = rows.filter((r) => !isTestConversation(r.conversation_id) && !isNoLineTestConversation(r.conversation_id) && !internal.has(r.conversation_id));
   const nowMs = Date.now();
-  let states: PromiseState[] = promiseStatesOf(kept);
+  // 2026-11-23 作業員L（台帳 #655）: --confirm-object で確認の約束を要件の合う報告でだけ閉じる（既定は今と同じ）
+  let states: PromiseState[] = promiseStatesOf(kept, { confirmObject: process.argv.includes("--confirm-object") });
   if (process.argv.includes("--wide-close")) {
     const firstAt = new Map<string, string>();
     for (const p of states) if (!p.closedAt && (!firstAt.has(p.conv) || p.at < firstAt.get(p.conv)!)) firstAt.set(p.conv, p.at);
