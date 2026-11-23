@@ -9,7 +9,7 @@ import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -83,6 +83,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
+  } else if (def.builder === "closing" || def.builder === "closing_early") {
+    turns = closingTurnsOf(rows as Array<{ id: number; takeuchiClose: boolean; brainClose: boolean; closeHow: string | null; brainAct: string | null; level: string | null; gaps: string[] }>, def.builder);
   } else if (def.builder === "route_progress") {
     turns = routeProgressTurnsOf(rows as Array<RouteTurnRow & { outcome?: string | null; after?: string | null }>);
   } else if (def.builder === "route_next") {
@@ -98,7 +100,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
-export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts" };
+export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
+  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts" };
 const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
 /** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
 export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
@@ -312,7 +315,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       const rng = (i: ForecastItem) => (i.forecast_low === i.forecast_high ? `${i.forecast_low}%` : `${i.forecast_low}〜${i.forecast_high}%`);
       lines.push(`### ${def.label.replace(/（.*$/, "")}${def.primary ? "（主の数）" : ""}`,
         def.okLabel
-          ? `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が${def.okLabel}）。進まなかった ${top.misses}番`
+          ? (top.n ? `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が${def.okLabel}）。${def.missLabel ?? "進まなかった"} ${top.misses}番` : `- まだ数が無い（番が0・出所 ${def.source.split("（")[0]} を夜に回す）`)
           : `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
         ...uniq.slice(0, 4).map((i) => `- 見込み${(i.forecast_exam as { phase?: string } | null)?.phase ? `（${(i.forecast_exam as { phase?: string }).phase}）` : ""} #${i.id}（${STAGE_JA[i.stage] ?? i.stage}）: ${i.forecast_before ?? "—"}% → ${rng(i)}${i.blocker ? `・止まり: ${String(i.blocker).slice(0, 30)}` : ""}`),
         ...ranked.slice(0, 3).map((r, k) => { const it = r.items.length ? its.find((x) => x.id === r.items[0]) ?? null : null; // 葉に近い作業が先頭（rankLeaves の並び）
