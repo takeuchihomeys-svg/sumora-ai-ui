@@ -22,13 +22,17 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
   const convs = [...new Set(((tk ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))].filter((c) => !skip.has(c)).slice(0, maxConv);
   const turns: GuideTurn[] = [];
   for (const c of convs) {
-    const [m, a, d] = await Promise.all([
+    const [m, a, d, w] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, staff_writer, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(2000),
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", since).limit(500),
       sb.from("brain_decision_logs").select("created_at, digest").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
+      // 2026-11-23 作業員L（#583 の照らし）: 見張りの番の場面（物件を送ってきた番の駅を読む）
+      sb.from("line_watch_turns").select("customer_turn_at, scene_key").eq("conversation_id", c).gte("customer_turn_at", since).limit(1000),
     ]);
+    const scenes = ((w.data ?? []) as Array<{ customer_turn_at: string; scene_key: string | null }>).map((x) => ({ t: Date.parse(x.customer_turn_at), k: x.scene_key }));
+    const sceneOf = (fromIso: string, toIso: string) => { const f = Date.parse(fromIso) - 60_000, t = Date.parse(toIso); return scenes.find((x) => x.t >= f && x.t <= t)?.k ?? null; };
     const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => decisionOfDigest(x.created_at, x.digest));
-    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait"), viewingWait: process.argv.includes("--viewing-wait"), burstAfter: process.argv.includes("--burst-after"), sgOnly: process.argv.includes("--sg-only") })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
+    turns.push(...guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: process.argv.includes("--promise-wait"), viewingWait: process.argv.includes("--viewing-wait"), burstAfter: process.argv.includes("--burst-after"), sgOnly: process.argv.includes("--sg-only"), sceneOf })); // 2026-11-21 L: --promise-wait で約束の番を果たした後の返事で測り直す
   }
   const by = (o: string) => turns.filter((t) => t.outcome === o).length;
   const summary = `誘導の物差し（${days}日・会話 ${convs.length}・竹内さん本人の番 ${turns.length}・駅が分かる番 ${turns.filter((t) => t.before).length}）: ${(["advanced", "engaged", "stuck", "back", "left"] as const).map((o) => `${OUTCOME_JA[o]} ${by(o)}`).join("・")}`;
