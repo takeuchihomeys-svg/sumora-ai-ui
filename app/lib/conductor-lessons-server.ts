@@ -30,10 +30,11 @@ export async function currentLessonCount(sb: SupabaseClient, nowMs = Date.now())
 /** テスト用: 取り置きを捨てる */
 export function resetLessonCountMemo(): void { countMemo = null; }
 
-export async function loadConductorLessons(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null }): Promise<LessonRow[]> {
+export async function loadConductorLessons(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null; scene?: string | null; lastStaffKind?: string | null }): Promise<LessonRow[]> {
   // 2026-11-23 作業員L（統括役の決め C）: 行が少ない間（本番 10 未満・試験は 1 から）は読まない
   if ((await currentLessonCount(sb)) < lessonsMinRows()) return [];
-  const text = turnSituationText({ scene: null, stage: o.stage ?? null, customerMasked: String(o.customerTurn ?? ""), lastStaffKind: null });
+  // 2026-11-23 作業員L（統括役の決め）: 入口で分かる場面・駅・直前のこちらの一手も問いの文に入れる（学びの行の situation_text と同じ形・場面が「不明」だけで引いて全部の番に当たっていた）
+  const text = turnSituationText({ scene: o.scene ?? null, stage: o.stage ?? null, customerMasked: String(o.customerTurn ?? ""), lastStaffKind: o.lastStaffKind ?? null });
   const { embedTexts } = await import("./design-knowledge-rag-server");
   const t0 = Date.now();
   const e = await embedTexts([text]);
@@ -47,7 +48,7 @@ export async function loadConductorLessons(sb: SupabaseClient, o: { conversation
   } catch { /* 記録の失敗で読みを止めない */ }
   if (!emb) return [];
   const { data, error } = await sb.rpc("match_conductor_lessons", {
-    query_embedding: JSON.stringify(emb), match_count: LESSONS_TOP + 3, p_scene: null, p_stage: o.stage ?? null,
+    query_embedding: JSON.stringify(emb), match_count: LESSONS_TOP + 3, p_scene: o.scene ?? null, p_stage: o.stage ?? null,
     p_exclude_sources: excludeSourcesFor(o.conversationId), p_exclude_convs: lessonsExcludeConvs(o.conversationId),
   });
   if (error) throw new Error(`match_conductor_lessons: ${error.message}`);
@@ -55,7 +56,7 @@ export async function loadConductorLessons(sb: SupabaseClient, o: { conversation
 }
 
 /** 時間の上限つき（失敗・遅い時は空） */
-export async function loadConductorLessonsWithin(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null }, ms = LESSONS_TIMEOUT_MS): Promise<LessonRow[]> {
+export async function loadConductorLessonsWithin(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null; scene?: string | null; lastStaffKind?: string | null }, ms = LESSONS_TIMEOUT_MS): Promise<LessonRow[]> {
   try {
     return await Promise.race([loadConductorLessons(sb, o), new Promise<LessonRow[]>((r) => setTimeout(() => r([]), ms))]);
   } catch (e) { console.warn("[conductor-lessons] skipped:", e instanceof Error ? e.message : String(e)); return []; }
