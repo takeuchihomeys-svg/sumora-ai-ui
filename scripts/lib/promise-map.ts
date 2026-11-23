@@ -31,7 +31,7 @@ export type PromiseMapTurn = { id: string; kind: string; scene: string; miss: Pr
 export function promiseMapTurns(rows: ReadonlyArray<PromiseMapRow>, evOf: (r: PromiseMapRow) => PromiseEvidence | undefined, o: { writer?: string } = {}): PromiseMapTurn[] {
   const w = o.writer ?? "takeuchi";
   return rows.filter((r) => r.writer === w && (r.state === "in_time" || r.state === "late" || r.state === "overdue")).map((r) => {
-    const miss: PromiseMapMiss = r.state === "in_time" ? "ok" : r.state;
+    const miss: PromiseMapMiss = r.state === "in_time" ? "ok" : r.state === "late" ? "late" : "overdue";
     return { id: `${r.conv}@${r.at}`, kind: r.kind, scene: r.scene || "other", miss, cause: miss === "ok" ? null : promiseMissCause(r, evOf(r)) };
   });
 }
