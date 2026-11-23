@@ -2,6 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
 import { conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
+import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -148,6 +149,22 @@ t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", 
 }
 
 t("届いているか: 材料の行が測れなかった時は未確認", conductorReachOf("aix_turn:match_60d_device/kind=estimate_sheet", [], [], { cut: new Set(), off: new Set(), at: "x", unmeasured: new Set(["read.estimate_records"]) }).reach === "未確認");
+
+// ── 11/23 気持ち・訴求の場面ごと（K2 の残り）──
+{
+  t("気持ち・訴求の網", feelingOf("ご不安ですよね") && !feelingOf("承知しました") && appealOf("ぜひご内覧ください") === "invite" && appealOf("こちらオススメです") === "appeal" && appealOf("承知しました") === "none");
+  t("気持ちの外れの型", feelingMissOf(true, false) === "feel_missed" && feelingMissOf(false, true) === "feel_extra" && feelingMissOf(true, true) === "ok");
+  t("訴求の外れの型", appealMissOf("invite", "none") === "appeal_missed" && appealMissOf("none", "appeal") === "appeal_extra" && appealMissOf("invite", "appeal") === "appeal_other" && appealMissOf("none", "none") === "ok");
+  const rows = [
+    { id: 1, conv: "a", at: "x", scene: "ack", tkFeel: true, aiFeel: false, tkAppeal: "none" as const, aiAppeal: "none" as const, empty: ["aiSummary"] },
+    { id: 2, conv: "a", at: "x", scene: "ack", tkFeel: false, aiFeel: false, tkAppeal: "invite" as const, aiAppeal: "appeal" as const, empty: [] },
+  ];
+  const ft = feelingAppealTurnsOf(rows, "feeling"), at2 = feelingAppealTurnsOf(rows, "appeal");
+  const tree = buildTree(ft as MapTurn[], { metric: "feeling:by_scene", label: "f", dims: ["scene", "miss", "cause"] });
+  t("気持ちの木: 場面 → 外れの型 → 原因（材料の空は材料）", ft[0].miss === "feel_missed" && ft[0].cause === "material" && ft[1].miss === "ok" && at2[1].miss === "appeal_other" && at2[1].cause === "misread" && sumMismatches(tree).length === 0 && tree[0].n === 2);
+  const s = feelingAppealSummaryOf(rows);
+  t("場面ごとの数え", s.ack.n === 2 && s.ack.feelMissed === 1 && s.ack.appealOther === 1 && s.ack.feelOk === 1);
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

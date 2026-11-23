@@ -3,6 +3,7 @@
 //   重い読み（60日の AIX の番の木）は夜（JST 22〜9時）だけ・1日1回（今日の行があれば作らない）。昼は前に作った木を読むだけ（営業時間は全件読みしない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
+import { feelingAppealTurnsOf, type FeelingAppealRow } from "../../app/lib/feeling-appeal-map";
 import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node:fs";
 import { join as joinMM } from "node:path";
 import { tmpdir as tmpdirMM } from "node:os";
@@ -83,6 +84,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
+  } else if (def.builder === "feeling_scene" || def.builder === "appeal_scene") {
+    turns = feelingAppealTurnsOf(rows as FeelingAppealRow[], def.builder === "feeling_scene" ? "feeling" : "appeal") as MapTurn[];
   } else if (def.builder === "promise_map") {
     turns = promiseMapTurnsOf(rows);
   } else if (def.builder === "closing" || def.builder === "closing_early") {
@@ -103,7 +106,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
 export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
-  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts" };
+  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts",
+  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts" };
 /** 出力の欄の名前が --json でない台本（作業員L の約束の地図は --out） */
 const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out" };
 const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）

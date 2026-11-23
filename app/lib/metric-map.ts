@@ -23,7 +23,8 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
 export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
-  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue";
+  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue"
+  | "feel_missed" | "feel_extra" | "appeal_missed" | "appeal_extra" | "appeal_other";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
@@ -36,6 +37,8 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   viewing_wait: "内覧の日待ち（続く・内覧の日がまだ来ていない・直す所ではない）",
   close_missed: "見逃し（竹内さんは決めに行った・ブレインは待った）", close_early: "早すぎ（ブレインは決めに行った・竹内さんは待った）",
   late: "遅れて果たした（約束）", overdue: "期限を過ぎて果たしていない（約束）",
+  feel_missed: "気持ちの見逃し（竹内さんは受けた・AI は受けない）", feel_extra: "気持ちの言い過ぎ（AI だけ受けた）",
+  appeal_missed: "訴求の見逃し（竹内さんは推した・誘った・AI は無い）", appeal_extra: "訴求の言い過ぎ（AI だけ推した・誘った）", appeal_other: "推すと誘うの違い",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
 export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait"]);
@@ -97,7 +100,7 @@ export type MapRootDef = {
   metric: string; label: string; writerSelect: WriterSelect; windowDays: number;
   dims: MapDim[];
   /** 子の割り方を作る道具（無い根は数だけ並べる＝割り方はまだ） */
-  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | "promise_map" | null;
+  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | "promise_map" | "feeling_scene" | "appeal_scene" | null;
   /** 一致（ok）の言い方（毎朝の1枚）: 既定は「竹内さんと同じ一手」 */
   okLabel?: string;
   /** 外れの言い方（okLabel と組・既定は「進まなかった」） */
@@ -167,6 +170,11 @@ export const MAP_ROOTS: MapRootDef[] = [
   //   木は L の scripts/audit-promise-map.ts --out の turns をそのまま受ける（枝 l1123-promise-map・main に入るまでは台本が無い＝前の木を読む）
   { metric: "promise:kept_true", label: "約束 › 竹内さん本人の約束を期限の内に果たした割合（60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "promise_map",
     primary: true, okLabel: "期限の内に果たした", missLabel: "遅れた・果たしていない", source: "scripts/audit-promise-map.ts（作業員L・scripts/lib/promise-map.ts）", owner: "作業員L", qdScope: "takeuchi" },
+  // 2026-11-23 統括役（前の作業員K2 の残り）: 土台「気持ち」「訴求」の場面ごと＝竹内さん本人の手打ちの返信 と その番の AI の下書きを K2 の網で比べる（scripts/audit-feeling-appeal-takeuchi.ts）
+  { metric: "feeling:by_scene", label: "気持ち › 竹内さんの返信と AI の下書きで気持ちの受けが同じ割合（場面ごと・60日・端末の記録）", writerSelect: "device", windowDays: 60, dims: ["scene", "miss", "cause"], builder: "feeling_scene",
+    primary: true, okLabel: "気持ちの受けが竹内さんと同じ", missLabel: "見逃し・言い過ぎ", source: "scripts/audit-feeling-appeal-takeuchi.ts（作業員P・app/lib/feeling-appeal-map.ts・網は K2 の audit-scene-feeling-appeal）", owner: "作業員P", qdScope: "takeuchi" },
+  { metric: "appeal:by_scene", label: "訴求 › 竹内さんの返信と AI の下書きで訴求（推す・内覧へ誘う・無し）が同じ割合（場面ごと・60日・端末の記録）", writerSelect: "device", windowDays: 60, dims: ["scene", "miss", "cause"], builder: "appeal_scene",
+    primary: true, okLabel: "訴求が竹内さんと同じ", missLabel: "見逃し・言い過ぎ・推すと誘うの違い", source: "scripts/audit-feeling-appeal-takeuchi.ts（作業員P）", owner: "作業員P", qdScope: "takeuchi" },
   // 2026-11-23 作業員A（#479）: 物件ピックアップで選んだ理由が付いた割合（7日 14/30＝46.7%・前 40.6%）。欠け16の葉: 画像送りで判定の札にする所が無い 10（SIP_JUDGE 既定 off の側）・手で選んで資料も画像の読みも無い 4・条件の欄が空 1・売上サポの「送った」の印が無い（連携の切れ目）1
   { metric: "growth:pickup_select:", label: "物件ピックアップ › 選んだ理由が付いた割合（7日・欄ごと）", writerSelect: "all", windowDays: 7, dims: [], builder: null, prefix: true, source: "scripts/audit-pickup-select-link.ts（作業員A・growth:pickup_select:理由あり）", owner: "作業員A", qdScope: "all" },
   // 2026-11-23 作業員A（#662 統括の受け持ち表・scripts/lib/conductor-duty.ts）: 土台ごとに 持つ／使う／反映 が連携の地図でつながっている数（毎朝の芯）
