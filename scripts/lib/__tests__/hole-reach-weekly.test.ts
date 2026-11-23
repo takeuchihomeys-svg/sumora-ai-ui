@@ -27,3 +27,26 @@ assert.equal(leafReachOf("aix_turn:match_60d_device/kind=property/scene=ack", []
 assert.equal(leafReachOf("aix_turn:match_60d_device/kind=property/scene=ack", ["aix_turn:match_60d_device/kind=property"]), "届いている");
 assert.equal(leafReachOf("aix_turn:match_60d_device/kind=property/scene=ack", ["aix_turn:match_60d_device/kind=estimate_sheet"]), "届いていない");
 console.log("hole-reach-weekly: ok");
+
+// 2026-11-23 案b: 弱い駅の穴と1回の上限
+import { weakStationHolesOf, holesMaxNew } from "../hole-reach-weekly";
+{
+  const R = "route:progress_60d";
+  const nodes = [
+    { key: R, parent: null, depth: 0, dim: null, val: null, n: 60, ok: 20, misses: 40, value: 33 },
+    { key: `${R}/station=proposing`, parent: R, depth: 1, dim: "station", val: "proposing", n: 20, ok: 5, misses: 15, value: 25 },
+    { key: `${R}/station=proposing/miss=stuck`, parent: `${R}/station=proposing`, depth: 2, dim: "miss", val: "stuck", n: 7, ok: 0, misses: 7, value: 0 },
+    { key: `${R}/station=proposing/miss=left`, parent: `${R}/station=proposing`, depth: 2, dim: "miss", val: "left", n: 5, ok: 0, misses: 5, value: 0 },
+    { key: `${R}/station=hearing`, parent: R, depth: 1, dim: "station", val: "hearing", n: 12, ok: 6, misses: 6, value: 50 },
+    { key: `${R}/station=hearing/miss=stuck`, parent: `${R}/station=hearing`, depth: 2, dim: "miss", val: "stuck", n: 3, ok: 0, misses: 3, value: 0 },
+    { key: `${R}/station=pickup`, parent: R, depth: 1, dim: "station", val: "pickup", n: 8, ok: 0, misses: 8, value: 0 },
+  ];
+  const w = weakStationHolesOf(nodes, new Map([["hearing", { n: 11, value: 60 }]]));
+  assert.deepEqual(w.map((x) => x.station), ["proposing", "hearing"], "止まり＋離れが過半数の駅・前の週より下がった駅・n10 未満は外す");
+  assert.match(w[0].reasons[0], /止まり＋離れが過半数（12\/20）/);
+  assert.match(w[1].reasons[0], /前の週より下がった（60%→50%）/);
+  assert.equal(holesMaxNew(Date.parse("2026-11-23T21:30:00Z"), {}), 5, "初めての夜（11/24 06:30 JST の回）は5行");
+  assert.equal(holesMaxNew(Date.parse("2026-11-25T21:30:00Z"), {}), 0, "翌晩から上限なし");
+  assert.equal(holesMaxNew(Date.parse("2026-11-25T21:30:00Z"), { MAP_HOLES_MAX_NEW: "3" }), 3);
+  console.log("weak-station-holes: ok");
+}

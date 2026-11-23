@@ -37,7 +37,7 @@ import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, G
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 import { mapDaily, type QdOut } from "./lib/metric-map-server";
-import { isHoleReachDay, holesNotReached, type HoleRow } from "./lib/hole-reach-weekly";
+import { isHoleReachDay, holesNotReached, holesMaxNew, type HoleRow } from "./lib/hole-reach-weekly";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -256,7 +256,14 @@ async function main() {
         lines.push("### 芯: 数ごとの地図と見込みの突き合わせ（#610）", ...mp.lines);
         coreFix.push(...mp.fix.slice(0, 8));
         mapQd.push(...mp.qd);
-        ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
+        // 2026-11-23 統括役: 1回に新しく足す地図の穴は上限まで（外れの多い順・初めての夜は5行・翌晩から残り＝holesMaxNew）。題で重ねる物は先に外して数える
+        const maxNew = holesMaxNew(now);
+        const { data: openHoles } = await sb.from("work_items").select("title").eq("origin", "found_gap").like("title", "地図の穴:%").not("stage", "in", "(done,dropped)").limit(2000);
+        const openT = new Set(((openHoles ?? []) as Array<{ title: string }>).map((x) => x.title));
+        const newHoles = mp.holes.filter((h) => !openT.has(h.title)).sort((a, b) => b.misses - a.misses);
+        const takeHoles = maxNew > 0 ? newHoles.slice(0, maxNew) : newHoles;
+        if (takeHoles.length < newHoles.length) lines.push(`- 地図の穴: 新しい穴 ${newHoles.length}のうち今回は外れの多い ${takeHoles.length}行だけ台帳へ（残りは次の回・MAP_HOLES_MAX_NEW）`);
+        ledger.push(...takeHoles.map(({ misses: _m, ...h }) => ({ ...h, owner: currentOwnerOf(h.owner) })));
       }
       // 2026-11-23 統括役の決め: 試験の学び（conductor_lessons）に地図の葉の印（leaf_keys）を毎晩付ける＝「統括に届いているか」の学びの道（LLM なし・止める EXAM_LEAF_LESSONS=off）
       if (flag("write") && (process.env.EXAM_LEAF_LESSONS ?? "on").toLowerCase() !== "off") {

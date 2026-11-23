@@ -7,6 +7,7 @@ import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node
 import { join as joinMM } from "node:path";
 import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
+import { weakStationHolesOf } from "./hole-reach-weekly";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf, ownerOfLeaf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
@@ -266,7 +267,7 @@ export const leafLine = (r: RankedLeaf) => `${r.rank}. ${r.key.split("/").slice(
  */
 export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean; force?: boolean; days?: number; roots?: string[]; env?: Record<string, string | undefined> } = {}) {
   const now = o.now ?? Date.now(), day = jstDay(now), night = o.night ?? isNightJst(now);
-  const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string; reach: "未確認" | "届いている" | "届いていない" }> = [];
+  const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string; reach: "未確認" | "届いている" | "届いていない"; misses: number }> = [];
   // 2026-11-23 作業員N2（KB 0f38f47f）: 統括の学びの葉の印（現行の conductor_lessons.leaf_keys・軽い読み）＝穴が統括に届いているかの元
   //   2026-11-23 作業員P の holeReachOf（学びの葉の印・葉の材料の行が連携の地図の見張りでつながっているか＝2つの道）。読みは cache に1回だけ
   const reachCache: { lessons?: string[]; linkage?: LinkageStatus | null } = {};
@@ -337,12 +338,24 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     // 2026-11-23 作業員N2（竹内さんの決定 KB 0f38f47f・統括役の頼み・作業員P と揃えた）: 上位3つの線を外し、本当の外れが3以上の穴を全部台帳へ（題で重ねない・--write の時だけ）。
     //   持ち主は葉の持ち主の案（ownerOfLeaf）・統括に届いているか（leafReachOf・conductor_lessons の現行の leaf_keys）を必ず付ける。止める: MAP_HOLES_ALL=off（前の上位3つ・根の持ち主）
     const holesAll = (o.env ?? process.env).MAP_HOLES_ALL?.trim().toLowerCase() !== "off";
-    for (const h of def.compare && !def.primary ? [] : holesAll ? hs.filter((x) => x.misses >= 3) : hs.slice(0, 3)) {
+    // 2026-11-23 統括役の決め（案b）: 申込までの地図の進みの根は、作業員A の弱い駅の線（n10以上・前の週より5pt下がった／止まり＋離れが過半数）も穴の理由にする。
+    //   弱い駅は駅の鍵で1つの穴（その駅の下の葉の穴は出さない）。前の週の進みは A の数 route:station:<駅>:progress（scope takeuchi・7日前）
+    let weak: Array<{ key: string; n: number; misses: number; reasons: string[] }> = [];
+    if (holesAll && def.builder === "route_progress" && !(def.compare && !def.primary)) {
+      const { data: pq } = await sb.from("quality_daily").select("metric,value,n").like("metric", "route:station:%:progress").eq("scope", "takeuchi").eq("day", jstDay(now - 7 * 86_400_000)).limit(300);
+      const prev = new Map(((pq ?? []) as Array<{ metric: string; value: number | null; n: number | null }>).map((r) => [r.metric.replace(/^route:station:/, "").replace(/:progress$/, ""), { n: r.n ?? 0, value: num(r.value) }]));
+      weak = weakStationHolesOf(nodes, prev);
+    }
+    const holeList: Array<{ key: string; n: number; misses: number; reasons?: string[] }> = [
+      ...weak,
+      ...(def.compare && !def.primary ? [] : holesAll ? hs.filter((x) => x.misses >= 3) : hs.slice(0, 3)).filter((h) => !weak.some((w) => h.key === w.key || h.key.startsWith(`${w.key}/`))),
+    ];
+    for (const h of holeList) {
       const own = holesAll ? ownerOfLeaf(h.key, def.owner) : { owner: def.owner, why: "根の持ち主" };
       const rr = await holeReachOf(sb, h.key, reachCache).catch(() => ({ reach: "未確認" as const, via: null, cutRows: [] as string[] }));
       const reach = rr.reach;
       fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い・統括に届いているか ${reach}${rr.cutRows?.length ? `・切れている材料 ${rr.cutRows.slice(0, 3).join("・")}` : ""}）→ 持ち主の案 ${own.owner}（${own.why}）`);
-      holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, next: `外れ ${h.misses}/${h.n}・作業も見込みも無い葉（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
+      holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, misses: h.misses, next: `外れ ${h.misses}/${h.n}・${h.reasons?.length ? `弱い駅（${h.reasons.join("・")}）` : "作業も見込みも無い葉"}（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
     }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
     qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },

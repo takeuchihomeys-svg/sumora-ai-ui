@@ -26,3 +26,32 @@ export function holesNotReached(rows: ReadonlyArray<HoleRow>): Array<HoleRow & {
     .filter((r) => r.reach !== "届いている")
     .sort((a, b) => String(a.owner ?? "").localeCompare(String(b.owner ?? "")) || a.id - b.id);
 }
+
+/**
+ * 2026-11-23 統括役の決め（案b・作業員A の弱い駅の台帳を地図の穴に一本化）: 申込までの地図の進みの根（route:progress_60d）で、駅の段の「弱い駅」を穴の理由にする（純関数）。
+ *   線は A の weakStationsOf と同じ: n ≥ 10 で ①前の週の進み（quality_daily の route:station:<駅>:progress・7日前）より 5pt 以上下がった ②止まり＋離れが過半数。
+ *   弱い駅は駅の鍵で1つの穴にまとめる（その駅の下の葉の穴は出さない＝同じ駅を2回足さない）
+ */
+export type StationNodeLite = { key: string; parent: string | null; depth: number; dim: string | null; val: string | null; n: number; ok: number; misses: number; value: number | null };
+export function weakStationHolesOf(nodes: ReadonlyArray<StationNodeLite>, prev: ReadonlyMap<string, { n: number; value: number | null }>, o: { minN?: number; drop?: number } = {}): Array<{ key: string; station: string; n: number; misses: number; reasons: string[] }> {
+  const minN = o.minN ?? 10, drop = o.drop ?? 5;
+  const out: Array<{ key: string; station: string; n: number; misses: number; reasons: string[] }> = [];
+  for (const s of nodes.filter((x) => x.dim === "station" && x.val)) {
+    if (s.n < minN) continue;
+    const kids = nodes.filter((x) => x.parent === s.key && x.dim === "miss");
+    const stuckLeft = kids.filter((x) => x.val === "stuck" || x.val === "left").reduce((a, x) => a + x.n, 0);
+    const reasons: string[] = [];
+    const p = prev.get(String(s.val));
+    if (p && p.n >= minN && p.value != null && s.value != null && p.value - s.value >= drop) reasons.push(`進みが前の週より下がった（${p.value}%→${s.value}%）`);
+    if (stuckLeft * 2 > s.n) reasons.push(`止まり＋離れが過半数（${stuckLeft}/${s.n}）`);
+    if (reasons.length) out.push({ key: s.key, station: String(s.val), n: s.n, misses: s.misses, reasons });
+  }
+  return out.sort((a, b) => b.misses - a.misses);
+}
+
+/** 1回に新しく足す穴の数の上限（統括役 11/23: 初めての夜は上位5行・翌晩から残り）。MAP_HOLES_MAX_NEW で変える（0＝上限なし） */
+export function holesMaxNew(nowMs: number, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): number {
+  const v = env.MAP_HOLES_MAX_NEW;
+  if (v != null && v.trim() !== "" && Number.isFinite(Number(v))) return Math.max(0, Number(v));
+  return new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10) <= "2026-11-24" ? 5 : 0;
+}
