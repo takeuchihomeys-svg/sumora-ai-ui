@@ -1,5 +1,6 @@
 // 申込までの地図の次の一手を番で選び直す（APPLY_ROUTE_NEXT_BY_TURN）と、番ごとの駅の記録（ROUTE_DIGEST）（作業員R 2026-11-23・台帳 #608）
 // 実行: npx tsx app/lib/__tests__/apply-route-next.test.ts
+import { greetingSentTodayOf } from "../apply-route-next";
 import { applyRouteNextByTurnOn, refineRouteNextStep, withRefinedNext, daysUntilYmd, ROUTE_ORDER, routeDigestOn, routeDigestOf, lapsedViewingBranchOn, lapsedViewingOpens } from "../apply-route-next";
 import { MAIN_ROUTE, locateApplyRoute, applyRouteBrainTextIfEnabled, ROUTE_NODES, type ApplyRouteSignals } from "../apply-route-map";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
@@ -56,6 +57,22 @@ console.log("■ ④ 内覧予定の当日のご挨拶は内覧の日だけ");
   t("日が過ぎた→感想・再調整", refineRouteNextStep(loc, { routeType: "ack_other", upcomingViewingYmd: "2026-10-18", nowMs: NOW })?.rule === "viewing_passed");
   t("当日の連絡（着いた）は日が先でも今の表", refineRouteNextStep(loc, { routeType: "arrived", upcomingViewingYmd: "2026-10-25", nowMs: NOW }) === null);
   t("日が分からない→今の表のまま", refineRouteNextStep(loc, { routeType: "other_question", upcomingViewingYmd: null, nowMs: NOW }) === null);
+  // 2026-11-23 作業員A: 段取りの後のお礼（APPLY_ROUTE_ACK_SETUP_NOT_TODAY・既定 off）
+  const AS = { APPLY_ROUTE_ACK_SETUP_NOT_TODAY: "on" };
+  const ack = (ymd: string, env?: Record<string, string>) => refineRouteNextStep(loc, { routeType: "ack_after_viewing_setup", upcomingViewingYmd: ymd, nowMs: NOW }, env);
+  t("段取りの後のお礼は既定 off で今の表のまま（3日前でも）", ack("2026-10-23") === null && ack("2026-10-23", {}) === null);
+  t("on: 2日以上前の段取りの後のお礼→受けだけ（AIX なし）", ack("2026-10-23", AS)?.rule === "ack_setup_not_today" && ack("2026-10-22", AS)?.next.aix.length === 0);
+  t("on でも前日・当日・日が過ぎた・日が分からない番は今の表のまま", ack("2026-10-21", AS) === null && ack("2026-10-20", AS) === null && ack("2026-10-18", AS) === null && refineRouteNextStep(loc, { routeType: "ack_after_viewing_setup", upcomingViewingYmd: null, nowMs: NOW }, AS) === null);
+  t("on でも段取りの後のお礼でない番は④のまま", refineRouteNextStep(loc, { routeType: "other_question", upcomingViewingYmd: "2026-10-25", nowMs: NOW }, AS)?.rule === "viewing_not_today");
+  // ② 当日のご挨拶をもう送った（APPLY_ROUTE_GREETING_SENT_SKIP・既定 off）
+  const GS = { APPLY_ROUTE_GREETING_SENT_SKIP: "on" };
+  const today = (env?: Record<string, string>, sent = true, rt: string = "other_question") => refineRouteNextStep(loc, { routeType: rt as never, upcomingViewingYmd: "2026-10-20", greetingSentToday: sent, nowMs: NOW }, env);
+  t("② 既定 off: 送った後の当日の問いも今の表のまま", today() === null && today({}) === null);
+  t("② on: 今日もうご挨拶を送った当日の問い→ご挨拶を外す", today(GS)?.rule === "greeting_sent_today" && today(GS)?.next.aix.length === 0);
+  t("② on でも送っていない・着いた連絡は今の表のまま", today(GS, false) === null && today(GS, true, "arrived") === null);
+  t("② 送ったかの読み（JST の今日の greeting_viewing だけ）", greetingSentTodayOf([{ aix_type: "greeting_viewing", sent_at: "2026-10-19T23:30:00Z" }], NOW) && !greetingSentTodayOf([{ aix_type: "greeting_viewing", sent_at: "2026-10-19T14:00:00Z" }], NOW) && !greetingSentTodayOf([{ aix_type: "meeting_place", sent_at: "2026-10-20T01:00:00Z" }], NOW) && !greetingSentTodayOf([{ aix_type: "greeting_viewing", sent_at: "2026-10-20T05:00:00Z" }], NOW));
+  t("withRefinedNext: APPLY_ROUTE_NEXT_BY_TURN が off なら細かいスイッチだけ on でも変えない", withRefinedNext(loc, { routeType: "ack_after_viewing_setup", upcomingViewingYmd: "2026-10-23", nowMs: NOW }, AS) === loc
+    && withRefinedNext(loc, { routeType: "ack_after_viewing_setup", upcomingViewingYmd: "2026-10-23", nowMs: NOW }, { ...ON, ...AS }).evidence.includes("次の一手を番で選び直し:ack_setup_not_today"));
 }
 console.log("■ ⑤ 答えが先は入れない（監査で止めた・竹内さんは問いの番でも次の一手を置く）");
 {
