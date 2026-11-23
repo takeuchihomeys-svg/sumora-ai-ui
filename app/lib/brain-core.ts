@@ -5150,6 +5150,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText) && !(routeFix1020("viewing_check_vacancy") && viewingCheckAlsoVacancy(lastStaffText))) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
       }
       promiseAltAction = promiseAix.alt ?? null;
+      // 2026-11-23 作業員K2（台帳 #469・CHECK_PROMISE_ESTIMATE_ALT・既定 off・check-promise-estimate-alt.ts）: 募集状況の確認の約束を果たす番は、空いていれば竹内さんは見積書送る で果たす（結果はスタッフだけが知る）＝2つ目に並べる
+      if (!promiseAltAction) {
+        const cpe = await import("@/app/lib/check-promise-estimate-alt");
+        if (cpe.checkPromiseEstimateAltOn()) {
+          const lst = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
+          const alt = cpe.checkPromiseEstimateAlt({ promiseKind: promiseAix.kind, promiseAction: finalAix ?? null, currentAlt: promiseAltAction, propertyInPlay: estimatePropertyInPlay, lastStaffText: lst?.text ?? null });
+          if (alt) { promiseAltAction = alt; console.log(JSON.stringify({ tag: "brain:check-promise-estimate-alt", conversationId })); }
+        }
+      }
       // 2026-10-22 竹内さんの答え: 新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）＝ブレインが物件の AIX を選んでいればそれを先に
       if (promiseAix.kind === "pickup" && linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival") {
         const nb = newArrivalPickByBrain(promiseAix, llmAixRawC);
@@ -5952,6 +5961,19 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
             : `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise\(|\)$/g, "")})`;
           finalAix = twoStageRes.direct;
           sceneSignalCheckPattern = null;
+        }
+        // 2026-11-23 作業員K2（台帳 #469・COMBINED_PROMISE_CHECK_FIRST・既定 off・combined-promise-check-first.ts）: 確認＋見積の約束の後、お客様が2件以上の物件を
+        //   送ってきていた番は 見積書送る でなく 物件確認した（見積を同封して募集中のお部屋を報告）を先に（120日の竹内さん 7/9・17208）
+        if (finalAix === "estimate_sheet") {
+          const cpc = await import("@/app/lib/combined-promise-check-first");
+          if (cpc.combinedPromiseCheckFirstOn()) {
+            const to = cpc.combinedPromiseCheckFirst(finalAix, messagesOldestFirst, Date.now());
+            if (to) {
+              console.log(JSON.stringify({ tag: "brain:combined-promise-check-first", conversationId, from: finalAix, to }));
+              finalAix = to;
+              decisionSource = `${decisionSource ?? "rule:answerable_direct"}+combined_check_first`;
+            }
+          }
         }
       }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）
