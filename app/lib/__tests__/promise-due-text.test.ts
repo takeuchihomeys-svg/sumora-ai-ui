@@ -5,8 +5,8 @@ import { promiseDueTextOf, promiseDueFromText, promisePeriodDeadlineMs, ledgerPr
 
 const said = Date.parse("2026-11-18T01:45:00Z"); // JST 11/18 10:45
 const day = (ms: number) => new Date(ms - 1 + 9 * 36e5).toISOString().slice(0, 10); // 期日は その日の JST 24時
-assert.equal(ledgerPromiseDueTextEnabled({}), false);
-assert.equal(ledgerPromiseDueTextEnabled({ LEDGER_PROMISE_DUE_TEXT: "on" }), true);
+assert.equal(ledgerPromiseDueTextEnabled({}), true);
+assert.equal(ledgerPromiseDueTextEnabled({ LEDGER_PROMISE_DUE_TEXT: "off" }), false);
 
 // e4bb495d の形: 型に当たった文は「お探しさせて頂きます」だけだが、同じ通に「12月17日に…ピックアップしお送り」がある → 12/17
 const e4 = "〇〇さん、はじめまして😊！！\nお部屋探しを担当させて頂きます〇〇と申します！！\n審査のご不安についても、独立系の保証会社を中心にお部屋をお探しさせて頂きます😌！！\nお部屋を抑えられるのはお申込みから1ヶ月となりますので、2月のご入居でしたら12月17日頃から本格的にお部屋探しを進めて参ります！！\n12月17日に〇〇周辺から10万以内・広めの1LDKのお部屋をピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！";
@@ -50,14 +50,14 @@ assert.equal(promisePeriodDeadlineMs("1月末ごろのお引越しに向けピ�
 assert.equal(promiseDueFromText(promiseDueTextOf("12月初旬のご入居に間に合うよう、〇〇周辺全域から2DKのお部屋を至急ピックアップしてお送りさせて頂きます！！", "pickup_declared")!, said).by, "default72h");
 console.log("promise-due-text: ok");
 
-// 台帳の口: 既定 off は dueText を書かない／on で約束の行に足す（sentence は変えない）
+// 台帳の口: off は dueText を書かない／既定（on）で約束の行に足す（sentence は変えない）
 import { classifyStaffTextForLedger } from "../action-ledger";
 {
-  delete process.env.LEDGER_PROMISE_DUE_TEXT;
+  process.env.LEDGER_PROMISE_DUE_TEXT = "off";
   const off = classifyStaffTextForLedger(e4, new Date(said).toISOString());
   assert.equal(off?.kind, "pickup_declared");
   assert.equal(off?.detail.dueText, undefined);
-  process.env.LEDGER_PROMISE_DUE_TEXT = "on";
+  delete process.env.LEDGER_PROMISE_DUE_TEXT;
   const on = classifyStaffTextForLedger(e4, new Date(said).toISOString());
   assert.equal(on?.detail.sentence, off?.detail.sentence);
   assert.ok(String(on?.detail.dueText).includes("12月17日に"));

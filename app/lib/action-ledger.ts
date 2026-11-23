@@ -809,7 +809,7 @@ export function annotatePromiseRecord<T extends LedgerEntry | null>(e: T): T {
 /** スタッフ本文1通 → 台帳エントリ（本文 regex＝confidence 1）。時制で promised / done を分ける */
 export function classifyStaffTextForLedger(text: string, at: string | null): LedgerEntry | null {
   const e = annotatePromiseRecord(classifyStaffTextForLedgerRaw(text, at));
-  // 2026-11-23 作業員L（found_gap）: 約束の行に期日を読む文（dueText）。既定 off（LEDGER_PROMISE_DUE_TEXT=on で書く）
+  // 2026-11-23 作業員L（found_gap）: 約束の行に期日を読む文（dueText）。既定 on（止める LEDGER_PROMISE_DUE_TEXT=off）
   if (e && e.status === 'promised' && e.detail.dueText == null && ledgerPromiseDueTextEnabled()) {
     const d = promiseDueTextOf(text, e.kind);
     if (d) e.detail.dueText = d;

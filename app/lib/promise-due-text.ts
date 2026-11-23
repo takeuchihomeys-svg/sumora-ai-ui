@@ -5,13 +5,14 @@
 //   期日を「72時間」と誤っていた（行動台帳の期日超えに、まだ期日の前の約束が入った）。
 //   → 1通の中で、その種類の約束の言葉がある文を全部、文の終わりまで（切らずに・合わせて 300字まで）取る＝detail.dueText。
 //     期日は dueText から読む（promise-drop-watch.promiseDeadlineMs に、「〇月中旬」「〇月末」等の時期の言葉を足す）。
-// 切替 LEDGER_PROMISE_DUE_TEXT: 既定 off（台帳に dueText を書かない＝数も今と同じ）／on＝約束の行に dueText を足す（sentence は変えない）。
+// 切替 LEDGER_PROMISE_DUE_TEXT: 既定 on（2026-11-23 統括役の決め・14日 139行で期日が変わるのは期日の前の2件だけ・新しく期日超え0）＝約束の行に dueText を足す（sentence は変えない）／off＝書かない。
+//   dueText を読むのは行動台帳の数（scripts/lib/promise-ledger-metrics）だけ（ブレイン・書き手・カレンダー・AIX の材料は sentence 等の名前の決まった欄だけを読む・grep で確かめた）
 // テスト: app/lib/__tests__/promise-due-text.test.ts
 import { promiseDeadlineMs } from "./promise-drop-watch";
 
 type Env = Record<string, string | undefined>;
 export function ledgerPromiseDueTextEnabled(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.LEDGER_PROMISE_DUE_TEXT ?? "").trim().toLowerCase() === "on";
+  return (env.LEDGER_PROMISE_DUE_TEXT ?? "").trim().toLowerCase() !== "off";
 }
 
 export const DUE_TEXT_MAX = 300;
