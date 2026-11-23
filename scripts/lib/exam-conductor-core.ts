@@ -94,7 +94,9 @@ export function splitWorse(cur: RowLite[], base: RowLite[], flaky: ReadonlySet<s
     const y = b.get(id);
     if (!y || !(y.p * 2 > y.n) || x.p * 2 > x.n) continue;
     const gap = (y.p / y.n) * x.n - x.p;
-    const why = `合格 前 ${y.p}/${y.n} → 今 ${x.p}/${x.n}`;
+    // 2026-11-23 作業員N2（11/22 夜の確かな悪化9本のうち q094・q408・q446 は前も今も1回ずつ）: 分け方は変えず、1回ずつの比べには印だけ付ける（印を消す EXAM_WORSE_SINGLE_MARK=off）
+    const single = y.n === 1 && x.n === 1 && (process.env.EXAM_WORSE_SINGLE_MARK ?? "").trim().toLowerCase() !== "off";
+    const why = `合格 前 ${y.p}/${y.n} → 今 ${x.p}/${x.n}${single ? "（前も今も1回ずつ＝--repeat=3 で確かめる）" : ""}`;
     // 2026-11-15 作業員I（統括役の穴4: q091・q179・q021 等が悪化と出て良い直しを止める）: 揺れる問題で、道が前も今も全部の回で同じ＝違うのは判定（要点・依頼）の合否だけ
     //   → 揺れの範囲の差に入れる（道の確かな悪化は道の物差し pathRegressions で別に見る）。止める EXAM_WORSE_PATH_SAME=off
     if (flaky.has(id) && gap >= 2 && pathSameOn() && samePathAll(id, cur, base)) { flake.push({ id, why: `${why}（道は前も今も同じ・判定の揺れ）` }); continue; }

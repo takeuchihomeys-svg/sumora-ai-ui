@@ -22,7 +22,10 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
 const flag = (k: string) => argv.includes(`--${k}`);
 const sb = () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
 
-export type Gap = { kind: PointerKind; title: string; detail: string };
+/** rows … その穴のまとまりが表す行の数（地図の行・設計知見の行・欄・台帳の行）。無ければ1行と数える（2026-11-23 作業員N2・統括役「まとまりの数は残し、行の数を並べる」） */
+export type Gap = { kind: PointerKind; title: string; detail: string; rows?: number };
+/** 穴のまとまりが表す行の数の合計（check_gaps:<型> はまとまりの数・check_gaps_rows:<型> はこの数） */
+export const gapRowsOf = (gaps: ReadonlyArray<{ rows?: number }>): number => gaps.reduce((a, g) => a + (typeof g.rows === "number" && g.rows >= 0 ? g.rows : 1), 0);
 type CheckOut = { kind: PointerKind; ran: string; gaps: Gap[]; note?: string };
 
 const EXISTING: Partial<Record<PointerKind, string>> = {
@@ -68,21 +71,21 @@ async function checkSubdivide(): Promise<CheckOut> {
   const rows = LINKAGE_MAP.filter((r) => r.fill?.src === "none");
   const byStage: Record<string, string[]> = {};
   for (const r of rows) (byStage[r.stage] = byStage[r.stage] ?? []).push(r.id);
-  const gaps: Gap[] = Object.entries(byStage).map(([st, ids]) => ({ kind: "not_subdivided" as const, title: `連携の地図の段 ${st}: 値の来る所が決まっていない行 ${ids.length}`, detail: ids.join(",") }));
+  const gaps: Gap[] = Object.entries(byStage).map(([st, ids]) => ({ kind: "not_subdivided" as const, title: `連携の地図の段 ${st}: 値の来る所が決まっていない行 ${ids.length}`, detail: ids.join(","), rows: ids.length }));
   const { data: kb } = await sb().from("system_design_thinking").select("id,title,tags,priority").eq("is_current", true).lte("priority", 1).limit(3000);
   const noScene = ((kb ?? []) as Array<{ id: string; title: string; tags: string[] | null; priority: number | null }>).filter((r) => !(r.tags ?? []).some((t) => t.startsWith("場面:")) && !(r.tags ?? []).includes("Chrome拡張")
     // 返信・AIX の決まりだけ（場面で分かれるべき物）。考え方・回し方の原則は場面に分けない
     && ((r.tags ?? []).some((t) => /^(?:AIX|line-reply|generate-reply|返信|内覧|見積書|申込|TPO)$/.test(t)) || /返信|AIX|内覧|見積|申込/.test(r.title)));
-  if (noScene.length) gaps.push({ kind: "not_subdivided", title: `場面で分かれていない返信・AIX の決まり（P0/P1・札「場面:」なし）${noScene.length}行`, detail: noScene.slice(0, 20).map((r) => r.id.slice(0, 8)).join(",") });
+  if (noScene.length) gaps.push({ kind: "not_subdivided", title: `場面で分かれていない返信・AIX の決まり（P0/P1・札「場面:」なし）${noScene.length}行`, detail: noScene.slice(0, 20).map((r) => r.id.slice(0, 8)).join(","), rows: noScene.length });
   const mm = multiMeaningKeys(LINKAGE_MAP.map((r) => ({ id: r.id, key: String(r.key ?? ""), readers: r.readers ?? [] })));
-  if (mm.length) gaps.push({ kind: "not_subdivided", title: `1つの欄に複数の意味の候補（同じ欄を複数の行が使う・読む側4つ以上）${mm.length}欄`, detail: mm.slice(0, 12).map((m) => `${m.key}（行 ${m.ids.length}・読む側 ${m.readers}）`).join("／") });
+  if (mm.length) gaps.push({ kind: "not_subdivided", title: `1つの欄に複数の意味の候補（同じ欄を複数の行が使う・読む側4つ以上）${mm.length}欄`, detail: mm.slice(0, 12).map((m) => `${m.key}（行 ${m.ids.length}・読む側 ${m.readers}）`).join("／"), rows: mm.length });
   return { kind: "not_subdivided", ran: "連携の地図（fill.src=none・同じ欄の複数の意味）・設計知見 P0/P1 の場面の札", gaps, note: "網に当たらない番の多い分け方（作業員M の地図の外れ）は M の台本の出力の置き場ができたら読む" };
 }
 
 async function checkLeftOff(): Promise<CheckOut> {
   const { data } = await sb().from("work_items").select("id,switch_name,updated_at").eq("stage", "built_off").limit(3000);
   const old = ((data ?? []) as Array<{ id: number; switch_name: string | null; updated_at: string }>).filter((r) => Date.now() - Date.parse(r.updated_at) >= 7 * 86_400_000);
-  return { kind: "left_off", ran: "台帳の built_off のまま7日以上", gaps: old.length ? [{ kind: "left_off", title: `作った（off）のまま7日以上 ${old.length}行`, detail: old.slice(0, 40).map((r) => `#${r.id}${r.switch_name ? ":" + r.switch_name : ""}`).join(",") }] : [] };
+  return { kind: "left_off", ran: "台帳の built_off のまま7日以上", gaps: old.length ? [{ kind: "left_off", title: `作った（off）のまま7日以上 ${old.length}行`, detail: old.slice(0, 40).map((r) => `#${r.id}${r.switch_name ? ":" + r.switch_name : ""}`).join(","), rows: old.length }] : [] };
 }
 
 async function checkUnreadOut(days: number): Promise<CheckOut> {
@@ -166,7 +169,7 @@ async function main() {
   const outs = await runChecks(kinds, days);
   console.log(`指摘の型の点検（${kinds.length}型・${days}日${pointer ? `・指摘 P${pointer.id}` : ""}）`);
   for (const o of outs) {
-    console.log(`- ${POINTER_KIND_JA[o.kind]}（${o.kind}）: ${o.ran}｜穴 ${o.gaps.length}${o.note ? `｜${o.note}` : ""}`);
+    console.log(`- ${POINTER_KIND_JA[o.kind]}（${o.kind}）: ${o.ran}｜穴 ${o.gaps.length}（行 ${gapRowsOf(o.gaps)}）${o.note ? `｜${o.note}` : ""}`);
     for (const g of o.gaps) console.log(`    ・${g.title}｜${g.detail.slice(0, 160)}`);
   }
   if (pointer) {

@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { POINTER_KIND_JA, type PointerKind } from "../app/lib/owner-pointers";
 import { pointersForExam } from "../app/lib/owner-pointers-server";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
-import { runChecks } from "./owner-feedback-check";
+import { runChecks, gapRowsOf } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
@@ -533,6 +533,8 @@ async function main() {
       { day, metric: "aix_first_match", scope: "takeuchi", value: mMain.firstTk.rate, n: mMain.firstTk.n }, { day, metric: "aix_first_match", scope: "all", value: mMain.firstAll.rate, n: mMain.firstAll.n },
       { day, metric: "exam_cost_usd", scope: "all", value: cost, n: runs.length }, { day, metric: "exam_worse_runs", scope: "all", value: worse.length, n: runs.length },
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
+      // 2026-11-23 作業員N2（統括役の頼み）: 穴のまとまりの数（上）は残し、まとまりが表す行の数を並べる（not_subdivided の 8 は地図の7行＋設計知見 89行＋欄4つ）
+      ...outs.map((o) => ({ day, metric: `check_gaps_rows:${o.kind}`, scope: "all", value: gapRowsOf(o.gaps), n: o.gaps.length })),
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
@@ -546,7 +548,7 @@ async function main() {
         // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）
         { day, metric: "growth:ask:取りこぼし", scope: "takeuchi", value: cd.ask.取りこぼし, n: cd.ask.n }, { day, metric: "growth:ask:重ね", scope: "takeuchi", value: cd.ask.重ね, n: cd.ask.n },
         { day, metric: "growth:ask:取り違え", scope: "takeuchi", value: cd.ask.取り違え, n: cd.ask.n }, { day, metric: "growth:ask:合う", scope: "takeuchi", value: cd.ask.合う率, n: cd.ask.n }] : []),
-    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
+    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps(?:_rows)?:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
