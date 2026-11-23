@@ -38,6 +38,7 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "foundation:chrono": { script: "scripts/audit-timeline-coverage.ts", owner: "作業員L" },
   "writer_link:field": { script: "scripts/audit-writer-linkage.ts", owner: "作業員L" },
   "writer_link:brief": { script: "scripts/audit-writer-linkage.ts", owner: "作業員L" },
+  "writer_link:timeline": { script: "scripts/audit-timeline-delivery.ts", owner: "作業員L" },
   "foundation:promise": { script: "scripts/audit-promise-kept.ts", owner: "作業員L" },
   "core:linkage": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:no_denominator": { script: "scripts/check-linkage.ts", owner: "作業員N" },
