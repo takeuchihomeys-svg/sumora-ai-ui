@@ -31,6 +31,7 @@ import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
 import { flexMetricsOf, trustMetricsOf, routeSgMatchRowsOf, tsunagiRowsOf, type OffPatternJson, type PromiseKeptRow, type RouteProgressRow, type TsunagiCensusJson } from "./lib/flex-daily";
 import { stationStatsOf, stationMetricRowsOf, weakStationsOf, stationGapsToAdd, type RouteStationRow } from "../app/lib/route-station-trust";
+import { misreadMetricRowsOf, type MisreadRow } from "../app/lib/route-station-misread";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -460,6 +461,12 @@ async function main() {
       flexRows.push(...rr);
       // 2026-11-23 作業員A（竹内さん 11/23・#650／#653・決定 2d1c4c74「地図は道筋・一手を決めるのはブレイン」・置き場と名前は N2・P と決めた）:
       //   駅ごとの 地図の一致（:map・並べて見るだけ）と、竹内さん本人の一手の後の進み（:progress＝進んだ＋分かれ道から本線に戻った）。弱い駅は進みで見て台帳へ（同じ駅の行が開いていれば足さない）
+      // 2026-11-23 作業員A（竹内さん 11/23・P0・#657「いまどこなのか現状把握」）: 「今どこ」の読み違いの型ごとの数（route:station_misread:<型>・同じ json）
+      try {
+        const mr = misreadMetricRowsOf(rpoRows as unknown as MisreadRow[]);
+        flexRows.push(...mr);
+        lines.push(`  - 「今どこ」の読み違い（決まった線・#657）: ${mr[0].value ?? "—"}%（${mr[0].n}番）・${mr.slice(1).filter((x) => (x.value ?? 0) > 0).map((x) => `${x.metric.replace("route:station_misread:", "")} ${x.value}`).join("・") || "型ごとに 0"}（作業員A）`);
+      } catch (e) { lines.push(`  - 「今どこ」の読み違い: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
       let stationLine = "";
       try {
         const ss = stationStatsOf(rpoRows as unknown as RouteStationRow[]);
