@@ -18,6 +18,9 @@ import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 import { runChecks, gapRowsOf } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { checkLinkage } from "./check-linkage";
+import { loadLinkStatus } from "./audit-conductor-duty";
+import { LINKAGE_MAP } from "../app/lib/linkage-map";
+import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd } from "./lib/conductor-duty";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
 import { checkStale } from "./check-stale";
@@ -172,6 +175,17 @@ async function main() {
       lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${currentOwnerOf(w.owner, w.id)}｜${w.why.slice(0, 70)}`));
       for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${currentOwnerOf(w.owner, w.id)}`);
     }
+    // 2026-11-23 作業員A（竹内さん 11/23・P0・#662「統括は全部管理して細かく細分化して反映できるように」）: 統括の受け持ち（土台ごとに 持つ／使う／反映）。
+    //   段の状態は連携の地図の見張りの最新（無ければ今回す）。欠けのある土台は台帳へ（同じ土台の行が開いていれば足さない・--write の時だけ）
+    try {
+      const st = await loadLinkStatus(sb);
+      const dr = conductorDutyOf(CONDUCTOR_DUTY, new Set(LINKAGE_MAP.map((r) => r.id)), st);
+      const ds = conductorDutySummary(dr);
+      coreRows.push({ metric: "core:conductor_duty:have", value: ds.have, n: ds.n }, { metric: "core:conductor_duty:use", value: ds.use, n: ds.n }, { metric: "core:conductor_duty:reflect", value: ds.reflect, n: ds.n });
+      lines.push(`- ${ds.line}（作業員A・#662）`);
+      const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
+      for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
+    } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
   }
 
   if (doCore) {
