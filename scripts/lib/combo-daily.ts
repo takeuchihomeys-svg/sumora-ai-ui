@@ -16,6 +16,7 @@ import { takeuchiCombo, assignAixKinds, type StaffMove } from "./combo-of-moves"
 import { tcMix, aixBundleFamily, askTurnClass, askDailyCounts, type AskTurnClass } from "./ask-route-of";
 import { loadTurnApplicationRecords } from "../../app/lib/turn-application-gate-server";
 import { turnApplicationReason, type TurnApplicationRecords } from "../../app/lib/turn-application-gate";
+import { comboNetOf, comboNetMarkOf, type ComboNet, type ComboNetTurn } from "./combo-net";
 
 /** 作業員M の comboMatches（scripts/lib/combo-of-moves.ts・枝 combo-fit-1121 8a893f3f5）と同じ決まり。main に入ったら import に替える */
 // 2026-11-21 作業員M（2cb0feb7 の型）: 前の番でこちらが約束した事を果たす AIX は、この番の組に数えない（combo-of-moves の aixFulfilsPrevPromise・comboWithoutPrevFulfil の写し）
@@ -52,23 +53,25 @@ export type ComboDaily = {
   misses: Array<{ conv: string; at: string; brain: string; takeuchi: string; kind: "AIX→返信" | "返信→AIX" | "2つ目の取りこぼし" | "その他" }>;
   /** 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（ask-route-of.askTurnClass・audit-ask-route-takeuchi と同じ数え方）の数と、外れた会話（頭8字） */
   ask: ReturnType<typeof askDailyCounts> & { misses: Array<{ conv: string; cls: AskTurnClass }> };
+  /** 2026-11-23 作業員A（台帳 #624・統括役の決め）: 本当の一致（combo_net・scripts/lib/combo-net.ts）。今の same／sameRate は変えずに並べる */
+  net?: ComboNet;
 };
 
 /** span 日（既定7日・竹内さん本人の番は1日に数番しか無い＝1日では数が揺れる）の窓で、day まで（day を含む）を数える */
-export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Promise<ComboDaily & { span: number }> {
+export async function comboDaily(sb: SupabaseClient, day: string, span = 7, opts: { spec?: ReadonlyArray<{ conv?: string; at?: string; why?: string; tags?: unknown }>; sides?: ReadonlyArray<{ conv: string; at: string; side: string }> } = {}): Promise<ComboDaily & { span: number }> {
   const e0ms = Date.parse(new Date(`${day}T00:00:00+09:00`).toISOString()) + 86_400_000;
   const s0 = new Date(e0ms - span * 86_400_000).toISOString();
   const turns = (await readWatchTurns(sb, s0)).filter((t) => Date.parse(t.customer_turn_at) < e0ms);
   const convs = [...new Set(turns.map((t) => t.conversation_id))];
-  const msgs = new Map<string, Array<StaffMove & { text: string }>>();
+  const msgs = new Map<string, Array<StaffMove & { text: string; src?: string | null }>>();
   const until = new Date(e0ms + 86_400_000).toISOString();
   for (let i = 0; i < convs.length; i += 50) {
     for (let j = 0; ; j += 1000) {
-      const { data, error } = await sb.from("messages").select("conversation_id, created_at, sender, staff_writer, is_aix_generated, text").in("conversation_id", convs.slice(i, i + 50)).gte("created_at", s0).lt("created_at", until).order("created_at", { ascending: true }).range(j, j + 999);
+      const { data, error } = await sb.from("messages").select("conversation_id, created_at, sender, staff_writer, staff_writer_source, is_aix_generated, text").in("conversation_id", convs.slice(i, i + 50)).gte("created_at", s0).lt("created_at", until).order("created_at", { ascending: true }).range(j, j + 999);
       if (error) throw new Error(error.message);
       for (const r of (data ?? []) as Array<Record<string, unknown>>) {
         const a = msgs.get(r.conversation_id as string) ?? [];
-        a.push({ at: Date.parse(r.created_at as string), aix: !!r.is_aix_generated, writer: (r.staff_writer as string | null) ?? null, customer: r.sender === "customer", text: String(r.text ?? "") });
+        a.push({ at: Date.parse(r.created_at as string), aix: !!r.is_aix_generated, writer: (r.staff_writer as string | null) ?? null, customer: r.sender === "customer", text: String(r.text ?? ""), src: (r.staff_writer_source as string | null) ?? null });
         msgs.set(r.conversation_id as string, a);
       }
       if ((data ?? []).length < 1000) break;
@@ -83,6 +86,7 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
   }
   const out: ComboDaily & { span: number } = { day, span, n: 0, same: 0, sameRate: null, aixToReply: 0, aixToReplyByKind: {}, replyToAix: 0, secondAixMiss: 0, examples: { aixToReply: [], replyToAix: [], secondAixMiss: [], comboMiss: [] }, misses: [], ask: { ...askDailyCounts([]), misses: [] } };
   const askClasses: AskTurnClass[] = [];
+  const netTurns: ComboNetTurn[] = [];
   const push = (k: keyof ComboDaily["examples"], c: string) => { if (out.examples[k].length < 10) out.examples[k].push(c.slice(0, 8)); };
   // 申込以降は会話ごとの申込の記録でも外す（窓より前の申込の案内を拾う・審査落ち→切り替えの戻しは gate の例外のまま。作業員M・11/21 615499ba）
   const gate = new Map<string, TurnApplicationRecords>();
@@ -92,7 +96,7 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     if (all.some((m) => !m.customer && m.at <= at + 86_400_000 && POST_APPLY_RE.test(m.text))) continue; // 申込以降
     if (!gate.has(t.conversation_id)) gate.set(t.conversation_id, await loadTurnApplicationRecords(sb, t.conversation_id));
     if (turnApplicationReason(gate.get(t.conversation_id), new Date(at + 86_400_000).toISOString())) continue;
-    const moves: Array<StaffMove & { text: string }> = [];
+    const moves: Array<StaffMove & { text: string; src?: string | null }> = [];
     for (const m of all.filter((x) => x.at > at)) { if (m.customer || m.at - at >= 86_400_000) break; moves.push(m); }
     if (!moves.length || !moves.every((m) => m.writer === "takeuchi")) continue; // 竹内さん本人の番だけ
     const kinded = assignAixKinds(moves, (t.staff_aix ?? []).filter((a) => a.at && a.aix_type).map((a) => ({ at: Date.parse(String(a.at)), aixType: String(a.aix_type) })));
@@ -113,6 +117,8 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
     const firstAixKind = kinded.find((m) => m.aix)?.aixKind ?? null;
     const matched = comboMatchesLocal(bc, tc, { laterAixWithinMs: laterAix ? laterAix.at - at : null, laterAixFulfilsPrev: aixFulfilsPrevPromiseLocal(firstAixKind, prevStaffTexts) });
     if (matched) out.same++; else push("comboMiss", t.conversation_id);
+    netTurns.push({ conv: t.conversation_id.slice(0, 8), at: t.customer_turn_at, matched, brain: String(bc), takeuchi: String(tc), device: moves.every((m) => m.src === "device"), firstAixKind,
+      mark: matched ? null : comboNetMarkOf({ conv: t.conversation_id, at: t.customer_turn_at }, opts.spec ?? [], opts.sides ?? []) });
     const sentAix = moves.some((m) => m.aix);
     const kindsM = [...new Set((t.staff_aix ?? []).map((a) => aixBundleFamily(String(a.aix_type ?? ""))).filter(Boolean))];
     const mixM = tcMix(t.decision_id ? tcOf.get(t.decision_id) : null);
@@ -130,5 +136,6 @@ export async function comboDaily(sb: SupabaseClient, day: string, span = 7): Pro
   }
   out.ask = { ...askDailyCounts(askClasses), misses: out.ask.misses };
   out.sameRate = out.n ? Math.round((out.same / out.n) * 1000) / 10 : null;
+  out.net = comboNetOf(netTurns);
   return out;
 }
