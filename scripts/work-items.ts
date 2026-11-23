@@ -8,6 +8,7 @@
 //     --stage=<id> <新しい段> [--note=...] [--actor=作業員M] [--exam=<label> --result=<要約>] [--commit=<hash>]
 //     --done-check                                                  見張り（on なのに READY の印が無い・built_off のまま7日・testing のまま3日・passed のまま3日）
 //     --import=<json> [--dry]                                        scripts/unfinished-inventory.ts --json-out の行を一括で（switch_name か work_log_task が同じ行は更新）
+//     --forecast=<id> --metric= --low= --high= ／ --map ／ --forecast-check ／ --forecast-cause ／ --no-forecast  見込み・数ごとの地図（台帳 #610・下の cmdForecast の上に説明）
 //   お客様の文・名前は入れない。費用 0（LLM なし）。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
@@ -165,12 +166,130 @@ async function cmdImport() {
   if (dry) for (const r of rows.slice(0, Number(arg("top", "10")) || 10)) console.log(`  p${r.priority} [${r.stage}] ${r.area} ${r.owner ?? ""}: ${String(r.title).slice(0, 80)}`);
 }
 
+// ── 見込み（2026-11-23 作業員P・台帳 #610・竹内さん「この予測と今の部分と次の部分を把握するように連携するように」）──
+//   --forecast=<id> --metric=<quality_daily の metric> --low= --high= [--before= --before-n= --basis= --leaf=<地図の葉の鍵> --writer=style|device|all --window=<日> --start-at=<本番に入った時>]
+//   --map [--metric=<根>] [--top=8] [--live]     数ごとの地図（今の値・動かす作業・見込み・次の一手の順位・穴・止まり）。--live は木を今作る（重い読み・夜だけ）
+//   --forecast-check [--write]                   本番に入って 7日・14日経った作業の実測と見込みの突き合わせ（自己改善の芯も毎日回す）
+//   --forecast-cause=<id> <material|misread|aix_turn_as_reply|counting> --note=...   外れの原因を4つのどれかに記録
+//   --no-forecast                                 見込みの無い P0/P1 の作業
+async function cmdForecast() {
+  const id = Number(arg("forecast"));
+  const metric = arg("metric");
+  if (!id || !metric) throw new Error("--forecast=<id> --metric=<quality_daily の metric> --low= --high= が要る");
+  const { rootOf } = await import("../app/lib/metric-map");
+  const def = rootOf(metric);
+  const n = (k: string) => (arg(k) === "" ? null : Number(arg(k)));
+  const patch: Record<string, unknown> = {
+    forecast_metric: metric, forecast_low: n("low"), forecast_high: n("high"), forecast_before: n("before"), forecast_before_n: n("before-n"), forecast_basis: arg("basis") || null,
+    forecast_leaf: arg("leaf") || metric, forecast_writer_select: arg("writer") || def?.writerSelect || "style", forecast_window_days: n("window") ?? def?.windowDays ?? null,
+    forecast_at: new Date().toISOString(), forecast_verdict: "pending", updated_at: new Date().toISOString(),
+  };
+  if (arg("start-at")) patch.forecast_start_at = arg("start-at");
+  if (patch.forecast_low != null && patch.forecast_high != null && Number(patch.forecast_low) > Number(patch.forecast_high)) throw new Error("--low は --high 以下");
+  if (!def) console.log(`注意: ${metric} は地図の根の表（app/lib/metric-map.ts MAP_ROOTS）に無い＝数え方の出所を basis に書く`);
+  if (flag("dry")) { console.log(JSON.stringify({ id, ...patch })); return; }
+  const db = sb();
+  const { error } = await db.from("work_items").update(patch).eq("id", id);
+  if (error) throw new Error(error.message);
+  await db.from("work_item_events").insert({ item_id: id, kind: "note", actor: arg("actor", "session"), note: `見込み: ${metric} ${patch.forecast_before ?? "—"} → ${patch.forecast_low}〜${patch.forecast_high}（${patch.forecast_writer_select}）` });
+  console.log(`#${id}: 見込みを付けた（${metric}・${patch.forecast_before ?? "—"} → ${patch.forecast_low}〜${patch.forecast_high}・葉 ${patch.forecast_leaf}）`);
+}
+
+async function cmdMap() {
+  const m = await import("./lib/metric-map-server");
+  const { MAP_CAUSE_JA } = await import("../app/lib/metric-map");
+  const db = sb();
+  if (flag("write")) {
+    // 毎朝の芯 ⑤ と同じ物を今流す（夜だけ木を作る・metric_map_nodes と quality_daily の map:* / forecast:* を書く）
+    const r = await m.mapDaily(db, { write: true, night: m.isNightJst() });
+    for (const l of r.lines) console.log(l);
+    for (const f of r.fix) console.log(`要確認: ${f}`);
+    if (r.qd.length) { const { error } = await db.from("quality_daily").upsert(r.qd.map((x) => ({ ...x, source: "scripts/work-items.ts --map --write（#610）" })), { onConflict: "day,metric,scope" }); if (error) throw new Error(error.message); }
+    console.log(`書いた: quality_daily ${r.qd.length}行`);
+    return;
+  }
+  const top = Number(arg("top", "8")) || 8;
+  const items = await m.loadForecastItems(db);
+  const roots = m.MAP_ROOTS.filter((r) => !arg("metric") || r.metric === arg("metric"));
+  for (const def of roots) {
+    const its = items.filter((it) => it.forecast_metric === def.metric || (it.forecast_leaf ?? "").split("/")[0] === def.metric);
+    if (def.prefix) {
+      const qs = await m.latestQdPrefix(db, def.metric, def.qdScope);
+      console.log(`\n■ ${def.label}（${def.metric}* の束・scope ${def.qdScope}・出所 ${def.source}）`);
+      for (const q of qs) console.log(`   - ${q.metric}: ${q.value ?? "—"}（n ${q.n ?? "—"}・${q.day}）`);
+      if (!qs.length) console.log("   数がまだ無い（入り始めは持ち主のコミットが main に入ってから）");
+      continue;
+    }
+    const q = await m.latestQd(db, def.metric, def.qdScope);
+    console.log(`\n■ ${def.label}`);
+    console.log(`  数の名前 ${def.metric}・書き手の選び方 ${def.writerSelect}・窓 ${def.windowDays}日・出所 ${def.source}・持ち主 ${def.owner}`);
+    console.log(`  今の値（quality_daily の最新）: ${q ? `${q.value ?? "—"}（n ${q.n ?? "—"}・${q.day}）` : "まだ書かれていない"}`);
+    console.log(`  動かす作業 ${its.length}:`);
+    for (const it of its) console.log(`   - #${it.id} [${STAGE_JA[it.stage as Stage] ?? it.stage}] ${it.switch_name ?? ""} ${String(it.title).slice(0, 50)}｜見込み ${it.forecast_before ?? "—"} → ${it.forecast_low ?? "—"}〜${it.forecast_high ?? "—"}${it.forecast_leaf && it.forecast_leaf !== def.metric ? `｜葉 ${it.forecast_leaf.split("/").slice(1).join(" › ")}` : ""}${it.forecast_verdict && it.forecast_verdict !== "pending" ? `｜突き合わせ ${it.forecast_verdict}` : ""}${it.forecast_gap_cause ? `（${MAP_CAUSE_JA[it.forecast_gap_cause as keyof typeof MAP_CAUSE_JA]}）` : ""}${(it.forecast_exam as { phase?: string } | null)?.phase ? `［${(it.forecast_exam as { phase?: string }).phase}］` : ""}${it.blocker ? `｜止まり: ${it.blocker}` : ""}`);
+    for (const it of its) for (const p of ((it.forecast_exam as { parts?: Array<{ leaf: string; fixes: number; switches?: string[]; exam?: { before_ok: number; after_ok: number; n: number; worse: number } }> } | null)?.parts ?? [])) console.log(`       部品 ${p.leaf.split("/").slice(1).join(" › ")}: 直る見込み ${p.fixes}番${p.switches?.length ? `（${p.switches.join("・")}）` : ""}${p.exam ? `・試験 ${p.exam.before_ok}→${p.exam.after_ok}/${p.exam.n}${p.exam.worse ? `・悪化 ${p.exam.worse}` : ""}` : "・試験まだ"}`);
+    if (!def.builder) { console.log("  子の割り方: まだ（MAP_ROOTS に builder を足すと木になる）"); continue; }
+    let nodes;
+    let note: string;
+    if (flag("live")) {
+      if (!m.isNightJst() && !flag("force")) throw new Error("--live は重い読み（60日）＝夜（JST 22〜9時）だけ。昼は前の木を読む（--live を外す）");
+      const t = await m.buildRootTree(def); nodes = t?.nodes ?? []; note = "今作った";
+    } else { const p = await m.readLatestTree(db, def.metric, def.writerSelect); nodes = m.nodesFromRows(p.rows); note = p.day ? `${p.day} に作った木` : "木がまだ無い（夜に self-improve か --live）"; }
+    if (!nodes.length) { console.log(`  木: ${note}`); continue; }
+    const examByLeaf = await m.examCountByLeaf(db, def.metric);
+    const ranked = m.rankLeaves(nodes, its, { examByLeaf, writerSelect: def.writerSelect });
+    const bad = m.sumMismatches(nodes);
+    console.log(`  木（${note}）: 根 ${nodes[0].value}%（n ${nodes[0].n}・外れ ${nodes[0].misses}）・子の合計の食い違い ${bad.length}${bad.length ? `（${bad.slice(0, 3).map((b) => b.key).join("・")}）` : "（全部の親で子の合計が戻る）"}`);
+    for (const x of nodes.filter((x) => x.depth === 1)) {
+      console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）${examByLeaf.size ? `・試験の問題 ${[...examByLeaf].filter(([k]) => k === x.key || k.startsWith(`${x.key}/`)).reduce((s, [, c]) => s + c, 0)}` : ""}`);
+      for (const y of nodes.filter((y) => y.parent === x.key && y.misses > 0).slice(0, 3)) console.log(`   │   └ ${y.label}: ${y.value}%（n ${y.n}・外れ ${y.misses}）`);
+    }
+    console.log(`  次の一手（伸びしろ＝外れ × 直る見込み ÷ 費用・n<5 は判断保留で 0.3倍・止まりは 0.5倍）:`);
+    for (const r of ranked.slice(0, top)) console.log(`   ${m.leafLine(r)}`);
+    const hs = ranked.filter((r) => r.hole && !r.hold);
+    console.log(`  穴（作業も見込みも無い・外れ ${3} 以上）${hs.length}: ${hs.slice(0, 8).map((h) => `${h.key.split("/").slice(1).join(" › ")}（${h.misses}）`).join("・") || "なし"}`);
+  }
+}
+
+async function cmdForecastCheck() {
+  const m = await import("./lib/metric-map-server");
+  const db = sb();
+  const items = await m.loadForecastItems(db);
+  const r = await m.forecastCheck(db, items, { write: flag("write"), night: m.isNightJst() || flag("force") });
+  console.log(`見込みの突き合わせ: 見込みあり ${items.filter((i) => i.forecast_metric).length}・7/14日の頃 ${r.due}・突き合わせ済み ${r.checked}・幅の中 ${r.inBand}`);
+  for (const l of r.lines) console.log(l);
+  for (const f of r.fix) console.log(`要確認: ${f}`);
+}
+
+async function cmdForecastCause() {
+  const id = Number(arg("forecast-cause"));
+  const cause = argv.find((a) => !a.startsWith("--")) ?? "";
+  if (!id || !["material", "misread", "aix_turn_as_reply", "counting"].includes(cause)) throw new Error("--forecast-cause=<id> <material|misread|aix_turn_as_reply|counting> --note=...");
+  if (!arg("note")) throw new Error("--note= に、なぜその原因かを書く（実物の番の id など）");
+  const db = sb();
+  const { error } = await db.from("work_items").update({ forecast_gap_cause: cause, forecast_gap_note: arg("note"), updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
+  await db.from("work_item_events").insert({ item_id: id, kind: "note", actor: arg("actor", "session"), note: `見込みの外れの原因: ${cause}・${arg("note")}` });
+  console.log(`#${id}: 外れの原因 ${cause}`);
+}
+
+async function cmdNoForecast() {
+  const m = await import("./lib/metric-map-server");
+  const rows = await m.loadUnforecastTop(sb());
+  console.log(`見込みの無い P0/P1 の作業 ${rows.length}`);
+  for (const r of rows) console.log(`- #${r.id} p${r.priority} [${STAGE_JA[r.stage as Stage] ?? r.stage}] ${r.owner ?? ""}: ${String(r.title).slice(0, 80)}`);
+}
+
 async function main() {
+  if (arg("forecast") && /^\d+$/.test(arg("forecast"))) return cmdForecast();
+  if (flag("map")) return cmdMap();
+  if (flag("forecast-check")) return cmdForecastCheck();
+  if (arg("forecast-cause")) return cmdForecastCause();
+  if (flag("no-forecast")) return cmdNoForecast();
   if (flag("list")) return cmdList();
   if (flag("add")) return cmdAdd();
   if (arg("stage") && /^\d+$/.test(arg("stage"))) return cmdStage();
   if (flag("done-check")) return cmdDoneCheck();
   if (arg("import")) return cmdImport();
-  console.log("使い方: --list ／ --add --title=... ／ --stage=<id> <新しい段> --note=... ／ --done-check ／ --import=<json> [--dry]");
+  console.log("使い方: --list ／ --add --title=... ／ --stage=<id> <新しい段> --note=... ／ --done-check ／ --import=<json> [--dry] ／ --forecast=<id> --metric= --low= --high= ／ --map [--metric=] ／ --forecast-check [--write] ／ --forecast-cause=<id> <原因> --note= ／ --no-forecast");
 }
 if (require.main === module) main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

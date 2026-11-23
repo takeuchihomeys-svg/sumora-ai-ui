@@ -36,6 +36,7 @@ import { fillNotShrinking } from "./lib/foundation-fill";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow, lastJsonLine } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
+import { mapDaily, type QdOut } from "./lib/metric-map-server";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -160,6 +161,7 @@ async function main() {
   const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
   const coreFix: string[] = [];
   const ledger: FoundGap[] = []; // 穴の型③〜⑤の穴（--write の時に台帳へ・題で重ねない）
+  const mapQd: QdOut[] = []; // 芯 ⑤ 数ごとの地図（map:* / forecast:*・detail 付きで別に書く）
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
@@ -236,6 +238,18 @@ async function main() {
       if (!lr.error) coreRows.push({ metric: "core:lessons_read", value: lr.count ?? 0, n: lrAll.count ?? null });
       lines.push(`- 統括の学び: conductor_lessons の今の行 ${lc.error ? "読めない" : lc.count ?? 0}・読んだ番（7日・digest の ls）${lr.error ? "読めない" : `${lr.count ?? 0}/${lrAll.count ?? "—"}`}（#433）`);
       if (top) coreFix.push(`統括の判断: 外れの原因で一番多いのは「${CAUSE_JA[top[0] as Cause]}」${top[1]}番 → 問題の候補を作業員H（brain-exam-add）・教訓を作業員L（conductor_lessons）へ`);
+    }
+    // 芯 ⑤ 数ごとの地図と見込みの突き合わせ（2026-11-23 作業員P・台帳 #610・竹内さん「この予測と今の部分と次の部分を把握するように連携するように」）:
+    //   木（数 → AIX の種類 → 場面 → 外れの型 → 原因）は夜に1日1回だけ作る（60日の重い読み）・昼は前の木を読む。葉の順位＝次の一手・穴・子の合計の食い違い・見込みの外れを要確認へ。
+    //   止める: SELF_IMPROVE_MAP=off
+    if ((process.env.SELF_IMPROVE_MAP ?? "on").toLowerCase() !== "off") {
+      const mp = await mapDaily(sb, { now, write: flag("write"), night: isNightJst(now) }).catch((e) => { lines.push(`### 芯: 数ごとの地図（止まった: ${e instanceof Error ? e.message.slice(0, 120) : e}）`); return null; });
+      if (mp) {
+        lines.push("### 芯: 数ごとの地図と見込みの突き合わせ（#610）", ...mp.lines);
+        coreFix.push(...mp.fix.slice(0, 8));
+        mapQd.push(...mp.qd);
+        ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
+      }
     }
   }
 
@@ -466,6 +480,7 @@ async function main() {
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
+    if (mapQd.length) { const { error } = await sb.from("quality_daily").upsert(mapQd.map((r) => ({ ...r, source: "scripts/self-improve.ts（芯 ⑤ 地図・#610）" })), { onConflict: "day,metric,scope" }); if (error) console.log(`quality_daily（地図）: ${error.message}`); }
     if (ledger.length) { const added = await addFoundGaps(sb, ledger, "self-improve").catch(() => []); if (added.length) console.log(`台帳に足した（穴の型③〜⑤）${added.length}行: #${added.join("・#")}`); }
     await sb.from("cron_run_logs").insert({ cron_name: "self-improve", started_at: new Date(now).toISOString(), finished_at: new Date().toISOString(), ok: true, result_json: { day, only: only || null, focus, match: mMain, gaps: gaps.length, exam: { runs: runs.length, cost, worse: worse.length }, file: out } });
     console.log(`書いた: ${only ? `--only=${only}` : out}・quality_daily ${rows.length}行・cron_run_logs`);

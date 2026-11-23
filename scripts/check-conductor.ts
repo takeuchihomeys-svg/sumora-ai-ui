@@ -29,12 +29,23 @@ export function missOf(verdict: string, brainMode: string | null, brainAction: s
   return { type: "reply_content", cause: material ? "material" : "misread" };
 }
 
-export async function checkConductor(days = 7) {
+/** AIX の番1番（地図の木の元・台帳 #610）。kind は竹内さんの最初の AIX の種類（property 系はまとめる） */
+export type ConductorAixTurn = { id: number; kind: string; sceneKey: string | null; decAix: string | null; miss: "ok" | "reply_not_aix" | "aix_kind"; cause: "material" | "misread" | "aix_turn_as_reply" | "counting" | null };
+/** AIX の番の外れの原因（純関数・地図の木の原因の段）: 竹内さんの最初の一手が返信で AIX が 2分より後＝2段の約束を「AIX の番」と数えた（数え方の誤り・作業員A の audit-aix-turn-judgment の ①）／
+ *  スタッフだけの事実・事実の食い違い＝材料が届いていない／ほかは型どおり（返信にした＝判断の誤り・種類違い＝読み違い） */
+export function aixTurnCauseOf(type: "reply_not_aix" | "aix_kind", vd: Vd, staffFirstAt: number | null, firstAixAt: number | null): "material" | "misread" | "aix_turn_as_reply" | "counting" {
+  if (type === "reply_not_aix" && staffFirstAt != null && firstAixAt != null && firstAixAt - staffFirstAt > 120_000) return "counting";
+  if (vd.reason === "fact_conflict" || (vd.facts?.staffOnly ?? []).length > 0 || (vd.facts?.conflict ?? []).length > 0) return "material";
+  return type === "reply_not_aix" ? "aix_turn_as_reply" : "misread";
+}
+
+/** @param sinceMs 指定すると days の代わりにその時刻から（見込みの突き合わせ: 本番に入った後の番だけで数える） */
+export async function checkConductor(days = 7, sinceMs?: number) {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,staff_first_at,verdict,brain_reply_mode,brain_action,verdict_detail").gte("customer_turn_at", since).not("verdict", "is", null).neq("verdict", "na").limit(3000);
+  const since = new Date(sinceMs ?? Date.now() - days * 86_400_000).toISOString();
+  const { data, error } = await sb.from("line_watch_turns").select("id,conversation_id,customer_turn_at,staff_first_at,verdict,brain_reply_mode,brain_action,verdict_detail,scene_key,staff_aix").gte("customer_turn_at", since).not("verdict", "is", null).neq("verdict", "na").limit(3000);
   if (error) throw new Error(error.message);
-  type W = { id: number; conversation_id: string; customer_turn_at: string; staff_first_at: string | null; verdict: string; brain_reply_mode: string | null; brain_action: string | null; verdict_detail: Vd | null };
+  type W = { id: number; conversation_id: string; customer_turn_at: string; staff_first_at: string | null; verdict: string; brain_reply_mode: string | null; brain_action: string | null; verdict_detail: Vd | null; scene_key?: string | null; staff_aix?: Array<{ at?: string; aix_type?: string }> | null };
   const rows = ((data ?? []) as W[]).filter((r) => r.verdict_detail?.staff_writer === "takeuchi");
   // 2026-11-21 統括役の決め: 比べるブレインは「送る直前の判断」＝brain_decision_logs のこちらの最初の送信より前の最新（K2 の audit-aix-first-move と同じ）。
   //   見張りの番のブレイン（line_watch_turns.brain_*）と食い違う割合は、分析し直しで判断が変わる番＝統括の揺れの物差し（sway）として別に出す
@@ -55,6 +66,8 @@ export async function checkConductor(days = 7) {
   const byType: Record<string, number> = {}, byCause: Record<string, number> = {};
   const ids: Record<string, number[]> = {};
   let n = 0, pathOk = 0, aixTurns = 0, aixOk = 0, sway = 0;
+  // 2026-11-23 作業員P（台帳 #610・数ごとの地図の木）: AIX の番を1番ずつ返す（数は上と同じ数え方・木は app/lib/metric-map.ts の buildTree）
+  const turns: ConductorAixTurn[] = [];
   for (const r of rows) {
     const d = decOf.get(r.id);
     if (!d) continue; // 直前の判断が無い番は数えない
@@ -65,7 +78,13 @@ export async function checkConductor(days = 7) {
     const vd = r.verdict_detail ?? {};
     const staffAix = (vd.staff_aix ?? []).filter(Boolean).map(fam);
     let m: { type: MissType; cause: Cause } | null = null;
-    if (staffAix.length) { aixTurns++; m = !decAix ? { type: "reply_not_aix", cause: "aix_turn_as_reply" } : decAix !== staffAix[0] ? { type: "aix_kind", cause: "misread" } : null; if (!m) aixOk++; }
+    if (staffAix.length) {
+      aixTurns++; m = !decAix ? { type: "reply_not_aix", cause: "aix_turn_as_reply" } : decAix !== staffAix[0] ? { type: "aix_kind", cause: "misread" } : null; if (!m) aixOk++;
+      const ats = (r.staff_aix ?? []).map((a) => Date.parse(String(a.at ?? ""))).filter(Number.isFinite);
+      const mt = m ? (m.type as "reply_not_aix" | "aix_kind") : null;
+      turns.push({ id: r.id, kind: staffAix[0], sceneKey: r.scene_key ?? null, decAix: decAix || null, miss: mt ?? "ok",
+        cause: mt ? aixTurnCauseOf(mt, vd, r.staff_first_at ? Date.parse(r.staff_first_at) : null, ats.length ? Math.min(...ats) : null) : null });
+    }
     else if (decAix) m = { type: "aix_not_reply", cause: "misread" };
     if (!m) pathOk++;
     if (!m && !(r.verdict === "same" || r.verdict === "same_meaning")) {
@@ -77,7 +96,7 @@ export async function checkConductor(days = 7) {
     (ids[m.type] = ids[m.type] ?? []).push(r.id);
   }
   const pct = (x: number, y: number) => (y ? Math.round((x / y) * 1000) / 10 : null);
-  return { days, n, score: pct(pathOk, n), aixTurns, aixScore: pct(aixOk, aixTurns), swayRate: pct(sway, n), byType, byCause, ids };
+  return { days, n, score: pct(pathOk, n), aixTurns, aixScore: pct(aixOk, aixTurns), swayRate: pct(sway, n), byType, byCause, ids, turns };
 }
 
 if (process.argv[1]?.endsWith("check-conductor.ts")) {
