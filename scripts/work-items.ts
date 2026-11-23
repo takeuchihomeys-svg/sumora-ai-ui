@@ -257,7 +257,7 @@ async function cmdMapBuild() {
   const m = await import("./lib/metric-map-server");
   const { itemsForRoot } = await import("../app/lib/metric-map");
   const def = m.MAP_ROOTS.find((r) => r.metric === arg("map-build"));
-  if (!def || (def.builder !== "aix_turn_device" && def.builder !== "route_next")) throw new Error(`--map-build=<根>（aix_turn_device か route_next の根: ${m.MAP_ROOTS.filter((r) => r.builder === "aix_turn_device" || r.builder === "route_next").map((r) => r.metric).join("・")}）`);
+  if (!def || !(def.builder && m.JSON_SOURCES[def.builder])) throw new Error(`--map-build=<根>（json から作る根: ${m.MAP_ROOTS.filter((r) => r.builder && m.JSON_SOURCES[r.builder]).map((r) => r.metric).join("・")}）`);
   if (!arg("json")) throw new Error("--json=<出所の台本の json> が要る");
   const db = sb();
   const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as unknown[];
@@ -285,7 +285,7 @@ async function cmdMapBuild() {
     console.log(`  n 不足（外れのまま・見張りで数え続ける）: ${nShort.length}（${nShort.map(([id, v]) => `${id}＝n ${v.n}`).join("・") || "なし"}）`);
     console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN - fixedN - splitN}（うち n 不足 ${nShort.length}）・決定で改めた ${decN}・竹内さんの少数側 ${minN}・割れ ${splitN}・時刻で送る物 ${timedN}・直しが入る前の番 ${fixedN}（n ${t.n}）`);
   }
-  if (def.builder === "route_next") {
+  if (def.builder === "route_next" || def.builder === "route_progress") {
     const { stationTableOf, leafJa } = await import("../app/lib/metric-map");
     const tb = stationTableOf(t.nodes);
     const sum = tb.reduce((a, x) => ({ n: a.n + x.n, ok: a.ok + x.ok, aside: a.aside + x.aside, real: a.real + x.real }), { n: 0, ok: 0, aside: 0, real: 0 });

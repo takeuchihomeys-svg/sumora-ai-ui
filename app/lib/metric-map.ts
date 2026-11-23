@@ -21,7 +21,8 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split";
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
+  | "stuck" | "left" | "back" | "engaged" | "branch_stay";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
@@ -30,6 +31,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   timed: "時刻で送る物（番の判断の外・例 当日のご挨拶は了承への返しでなく日にちで送る・外れの順位に入れない）",
   fixed_since: "直しが入った日より前の番（今のコードでは直っている・どの直しかは FIXED_SINCE・外れの順位に入れない）",
   split: "割れ（同じ形の番で竹内さん本人の一手が半分前後に割れる・どちらにも決めない・外れの順位に入れない）",
+  stuck: "止まった（次のお客様の発言で駅が進まない）", left: "離れた（返事が来ない）", back: "戻った（申込から遠い駅へ）", engaged: "やり取りは続くが駅は同じ", branch_stay: "分かれ道から本線に戻れない",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
 export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split"]);
@@ -70,7 +72,9 @@ export type MapRootDef = {
   metric: string; label: string; writerSelect: WriterSelect; windowDays: number;
   dims: MapDim[];
   /** 子の割り方を作る道具（無い根は数だけ並べる＝割り方はまだ） */
-  builder: "conductor_aix" | "aix_turn_device" | "route_next" | null;
+  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | null;
+  /** 一致（ok）の言い方（毎朝の1枚）: 既定は「竹内さんと同じ一手」 */
+  okLabel?: string;
   /** 主の根（同じ数の版が2つある時に先に出す・順位の元）。compare は並べて見る相手の根 */
   primary?: boolean; compare?: string;
   /** 作業の葉・試験の問題の葉が別の根の名前で書かれている時の、その根（端末の版は文の癖の版の葉の鍵で作業と試験の問題を受ける） */
@@ -98,8 +102,12 @@ export const MAP_ROOTS: MapRootDef[] = [
   { metric: "reply_match", label: "返信の一致（竹内さんの番・1日）", writerSelect: "style", windowDays: 1, dims: [], builder: null,
     source: "self-improve measureDay（line_watch_turns の verdict）", owner: "作業員N", qdScope: "takeuchi" },
   // 2026-11-23 作業員R（台帳 #608）: 申込までの地図の候補と竹内さんの一手の一致（60日・申込以降を外した 84会話 262番で 151＝58%）。quality_daily にはまだ書かれていない（R が書く名前をここに合わせる）
-  //   11/23（2回目）: 駅 → 外れの型 → 原因 に割った（R の json の agree・route_next）。R の台本が main に入るまでは json から作った木を読む
-  { metric: "route:next_match_60d", label: "申込までの地図 › 候補と竹内さんの一手の一致（60日）", writerSelect: "all", windowDays: 60, dims: ["station", "miss", "cause"], builder: "route_next",
+  // 11/23 竹内さんの決定（KB 2d1c4c74・地図は道筋・一手はブレイン）: 申込までの地図の主の見方は「一手の後に駅が申込に近づいたか・分かれ道から本線に戻れたか」の進み。一致の数は並べて見る側へ
+  //   今の数は送った一手（竹内さん本人）の後の進み（R の json の outcome・after）。ブレインの一手と竹内さんの一手が同じ番の進みは作業員A の route:station:<駅>:progress_brain_same が揃ってから
+  { metric: "route:progress_60d", label: "申込までの地図 › 一手の後に駅が申込に近づいた・分かれ道から本線に戻れた割合（60日）", writerSelect: "all", windowDays: 60, dims: ["station", "miss"], builder: "route_progress",
+    primary: true, compare: "route:next_match_60d", okLabel: "申込に近づいた（分かれ道は本線に戻れた）", source: "scripts/audit-route-progress-takeuchi.ts の outcome・after（作業員A が持ち主・11/23 統括役）", owner: "作業員A", qdScope: "takeuchi" },
+  //   11/23（2回目）: 駅 → 外れの型 → 原因 に割った（R の json の agree・route_next）。11/23 竹内さんの決定で並べて見る側
+  { metric: "route:next_match_60d", label: "申込までの地図 › 候補と竹内さんの一手の一致（60日・並べて見る用）", writerSelect: "all", windowDays: 60, dims: ["station", "miss", "cause"], builder: "route_next", compare: "route:progress_60d",
     source: "scripts/audit-route-progress-takeuchi.ts（作業員R・0c4f04c5d・messages.staff_writer=takeuchi）", owner: "作業員R", qdScope: "takeuchi" },
   // 2026-11-23 作業員A（a-aix-1123・9b02a11eb）: 端末の記録で選んだ竹内さん本人の AIX の番（60日・2段・手打ちも数える別の数え方）102番中 56＝54.9%。style の 44.8% と混ぜない
   //   11/23（2回目）: 主の根。種類 → 場面 → 外れの型 → 原因 に割った（aix_turn_device・A の json の行＋見張りの scene_key）
@@ -446,6 +454,15 @@ export function decidedRouteIdxOf(rows: ReadonlyArray<{ conv: string; at: string
     if (hit && !out.has(hit.i)) out.set(hit.i, p.id);
   }
   return out;
+}
+/** R の json の行を進みの木の番に（純関数）: 本線の番は advanced が進んだ・分かれ道の番は番の後に本線の駅（after）へ戻れたら進んだ。決定で改めた番は外す側（decided） */
+export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null }>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
+  return rows.map((r, i) => ({ r, i })).filter(({ r }) => r.agree !== "no_next").map(({ r, i }) => {
+    const station = r.branch ? `分:${r.branch}` : String(r.node ?? "other");
+    const ok = r.branch ? !!r.after || r.outcome === "advanced" : r.outcome === "advanced";
+    const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : r.branch ? "branch_stay" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.outcome === "engaged" ? "engaged" : "stuck";
+    return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null };
+  });
 }
 /** 駅ごとの本当の一致の表（純関数）: 駅（分かれ道）ごとに n・一致・分けて外した・本当の外れ */
 export function stationTableOf(nodes: readonly MapNode[]): Array<{ key: string; n: number; ok: number; aside: number; real: number }> {
