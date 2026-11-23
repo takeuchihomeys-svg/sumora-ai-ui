@@ -423,11 +423,22 @@ export function routeCauseOf(r: RouteTurnRow): MapCause | null {
   return "counting";
 }
 /** R の json の行を木の番に（純関数）。駅は分かれ道があれば「分:<分かれ道>」 */
-export function routeTurnsOf(rows: readonly RouteTurnRow[]): MapTurn[] {
-  return rows.filter((r) => r.agree !== "no_next").map((r, i) => ({
-    id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"),
-    miss: ROUTE_GOOD.has(r.agree) ? "ok" : r.agree in MAP_MISS_JA ? (r.agree as MapMiss) : "other_aix", cause: routeCauseOf(r),
-  }));
+export function routeTurnsOf(rows: readonly RouteTurnRow[], decided: ReadonlySet<number> = new Set()): MapTurn[] {
+  // decided は rows の並びの番号（11/23 作業員A: 竹内さんの決定で正解を改めた番は外れと別に数える＝端末の版と同じ）
+  return rows.map((r, i) => ({ r, i })).filter(({ r }) => r.agree !== "no_next").map(({ r, i }) => {
+    const good = ROUTE_GOOD.has(r.agree);
+    return {
+      id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"),
+      miss: good ? "ok" : decided.has(i) ? "decided" : r.agree in MAP_MISS_JA ? (r.agree as MapMiss) : "other_aix", cause: good || decided.has(i) ? null : routeCauseOf(r),
+    };
+  });
+}
+/** 駅ごとの本当の一致の表（純関数）: 駅（分かれ道）ごとに n・一致・分けて外した・本当の外れ */
+export function stationTableOf(nodes: readonly MapNode[]): Array<{ key: string; n: number; ok: number; aside: number; real: number }> {
+  return nodes.filter((x) => x.dim === "station").map((s) => {
+    const aside = nodes.filter((x) => x.parent === s.key && x.dim === "miss" && SET_ASIDE_MISS.has(x.val as MapMiss)).reduce((a, x) => a + x.n, 0);
+    return { key: s.key, n: s.n, ok: s.ok, aside, real: s.misses - aside };
+  }).sort((a, b) => b.real - a.real);
 }
 
 /** 穴の一覧（純関数）: 穴の鍵（葉か場面・種類の段）ごとに1つ。外れは作業の無い葉の外れの合計（作業のある葉の外れは入れない）。段の n が MIN_N 未満の穴は判断保留の印 */

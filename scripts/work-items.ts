@@ -263,7 +263,7 @@ async function cmdMapBuild() {
   const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as unknown[];
   // 竹内さんの決定で正解を改めた番（作業員A の案）: 試験の問題（scripts/brain-exam/spec.json の why・tags）と会話・時刻 ±2分で突き合わせ、外れと別に数える
   const specPath = arg("spec", "scripts/brain-exam/spec.json");
-  const spec = def.builder === "aix_turn_device" && existsSync(specPath) ? (JSON.parse(readFileSync(specPath, "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+  const spec = existsSync(specPath) ? (JSON.parse(readFileSync(specPath, "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
   const t = await m.buildTreeFromJson(db, def, rows, { spec });
   if (!t || !t.nodes.length) throw new Error("木が作れない（行が無い）");
   const items = itemsForRoot(await m.loadForecastItems(db), def);
@@ -284,6 +284,13 @@ async function cmdMapBuild() {
     console.log(`  割れ（どちらにも決めない）: ${splitN}（${[...t.sides].filter(([, v]) => v.side === "split").map(([id, v]) => `${id}＝${v.shape} で ${v.majority}/${v.n}`).join("・") || "なし"}）`);
     console.log(`  n 不足（外れのまま・見張りで数え続ける）: ${nShort.length}（${nShort.map(([id, v]) => `${id}＝n ${v.n}`).join("・") || "なし"}）`);
     console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN - fixedN - splitN}（うち n 不足 ${nShort.length}）・決定で改めた ${decN}・竹内さんの少数側 ${minN}・割れ ${splitN}・時刻で送る物 ${timedN}・直しが入る前の番 ${fixedN}（n ${t.n}）`);
+  }
+  if (def.builder === "route_next") {
+    const { stationTableOf, leafJa } = await import("../app/lib/metric-map");
+    const tb = stationTableOf(t.nodes);
+    const sum = tb.reduce((a, x) => ({ n: a.n + x.n, ok: a.ok + x.ok, aside: a.aside + x.aside, real: a.real + x.real }), { n: 0, ok: 0, aside: 0, real: 0 });
+    console.log(`  駅ごとの本当の一致（一致／分けて外した番を除いた数）: 全体 ${sum.ok}/${sum.n - sum.aside}（分けて外した ${sum.aside}・本当の外れ ${sum.real}）`);
+    for (const x of tb) console.log(`   ${leafJa(x.key)}: ${x.ok}/${x.n - x.aside}${x.aside ? `（分けて外した ${x.aside}）` : ""}・本当の外れ ${x.real}`);
   }
   for (const x of t.nodes.filter((x) => x.depth === 1)) console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）`);
   for (const r of ranked.slice(0, Number(arg("top", "10")) || 10)) console.log(`   ${m.leafLine(r)}`);

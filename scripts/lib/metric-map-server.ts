@@ -83,7 +83,12 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
-  } else if (def.builder === "route_next") turns = routeTurnsOf(rows as RouteTurnRow[]);
+  } else if (def.builder === "route_next") {
+    const rr = rows as RouteTurnRow[];
+    const dm = o.spec ? decidedTurnIdsOf(rr.map((r, i) => ({ id: i, conv: r.conv, at: r.at })), o.spec) : new Map<number, string>();
+    decided = dm;
+    turns = routeTurnsOf(rr, new Set(dm.keys()));
+  }
   else return null;
   const nodes = buildTree(turns, def);
   return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0, decided, minority, fixed, sides };
@@ -273,7 +278,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
         // 11/23 統括役: json から作る根（端末の版＝作業員A・申込までの地図＝作業員R）も出所の台本を夜に回して毎晩作る
         try {
           const rows = runJsonSource(def, o.days ?? def.windowDays);
-          const spec = def.builder === "aix_turn_device" && existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+          const spec = existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
           const t = rows?.length ? await buildTreeFromJson(sb, def, rows, { spec }) : null;
           if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
           else lines.push(`- ${def.label}: 出所の台本の行が無い（${JSON_SOURCES[def.builder]}）`);
