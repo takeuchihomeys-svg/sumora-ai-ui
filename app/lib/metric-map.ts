@@ -19,15 +19,20 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority";
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
   decided: "竹内さんの決定で正解を改めた番（実送信と今の正解が割れる・外れの順位に入れない）",
   minority: "竹内さんの少数側（同じ形の番で竹内さん本人の別の一手が過半数・ブレインは多い方を選んだ・外れの順位に入れない）",
+  timed: "時刻で送る物（番の判断の外・例 当日のご挨拶は了承への返しでなく日にちで送る・外れの順位に入れない）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
-export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority"]);
+export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed"]);
+/** 時刻で送る AIX の種類（11/23 統括役の決め・作業員A の 7444: 内覧の当日のご挨拶は約24時間後の当日の朝に手打ち＝了承への返しではない） */
+export const TIMED_AIX_KINDS = new Set(["greeting_viewing"]);
+/** お客様が物件を送ってきた印（K2 の COMBINED_PROMISE_CHECK_FIRST・作業員A の数え方と同じ網: URL・物件名・画像） */
+export const BROUGHT_SHAPE_RE = /https?:\/\/|物件名|^\[画像\]/;
 export const DIM_JA: Record<MapDim, string> = { kind: "AIX の種類", scene: "場面", miss: "外れの型", cause: "原因", station: "駅" };
 
 export type MapRootDef = {
@@ -348,6 +353,7 @@ export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: Read
     const kind = r.tk && r.tk !== "?" ? r.tk : "other";
     const miss = DEVICE_MISS[r.v] ?? "aix_kind";
     if (miss !== "ok" && decided.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
+    if (miss !== "ok" && TIMED_AIX_KINDS.has(kind)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "timed" as const, cause: null };
     if (miss !== "ok" && minority.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "minority" as const, cause: null };
     return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss, cause: deviceCauseOf(r) };
   });
@@ -401,7 +407,9 @@ export function holesOf(ranked: readonly RankedLeaf[], nodes: readonly MapNode[]
 //   ブレインは多い方の一手を選んだ外れの番＝「竹内さんの少数側」。順位と穴から外して別に数える（直すとかえって多い方を外す）。
 export const MINORITY_MIN_N = 10;
 /** shapes は細かい形から粗い形へ（n が minN に届く一番細かい形で数える）。kindOnly は種類違いの外れ（AIX の種類だけを比べる＝同じ形の AIX が先の番の中で過半数を見る） */
-export type MoveRow = { id: number; shapes: string[]; move: string; brain: string; isMiss: boolean; kindOnly?: boolean };
+export type MoveRow = { id: number; shapes: string[]; move: string; brain: string; isMiss: boolean; kindOnly?: boolean;
+  /** 名前の付いた形（統括役が決めた形・作業員A が実物で数えた形）: 細かい形の段とは別に、1つずつ同じ線（n・過半数）で見る */
+  namedShapes?: string[] };
 /** 少数側の番（純関数）: 形ごとの竹内さんの一手の過半数（> 50%・n ≥ minN）と、ブレインの一手が過半数で竹内さんが違う外れの番 */
 export function minorityOf(rows: readonly MoveRow[], minN = MINORITY_MIN_N): Map<number, { shape: string; majority: string; share: number; n: number }> {
   const out = new Map<number, { shape: string; majority: string; share: number; n: number }>();
@@ -416,11 +424,20 @@ export function minorityOf(rows: readonly MoveRow[], minN = MINORITY_MIN_N): Map
       if (k * 2 > pool.length && r.move !== maj && r.brain === maj) out.set(r.id, { shape: r.kindOnly ? `${shape}（AIX が先の番の中）` : shape, majority: maj, share: Math.round((k / pool.length) * 100) / 100, n: pool.length });
       break; // 届いた一番細かい形で決める（粗い形へは下りない）
     }
+    if (out.has(r.id)) continue;
+    for (const shape of r.namedShapes ?? []) {
+      const pool = rows.filter((x) => (x.namedShapes ?? []).includes(shape) && (!r.kindOnly || x.move.startsWith("aix:")));
+      if (pool.length < minN) continue;
+      const c: Record<string, number> = {};
+      for (const x of pool) c[x.move] = (c[x.move] ?? 0) + 1;
+      const [maj, k] = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+      if (k * 2 > pool.length && r.move !== maj && r.brain === maj) { out.set(r.id, { shape: r.kindOnly ? `${shape}（AIX が先の番の中）` : shape, majority: maj, share: Math.round((k / pool.length) * 100) / 100, n: pool.length }); break; }
+    }
   }
   return out;
 }
 /** 端末の版の番の形・竹内さんの一手・ブレインの一手（純関数）。形＝場面 × 開いている約束（前の24時間のこちらの約束）× お客様の連投の型。一手は「返信が先（返信・2段）」か「AIX:<種類>」 */
-export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; burst?: string | null; route?: string | null }, sceneKey: string | null): MoveRow {
+export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; burst?: string | null; route?: string | null }, sceneKey: string | null, ctx: { brought24h?: boolean } = {}): MoveRow {
   const scene = sceneOfWatchKey(sceneKey, r.tk ?? null);
   const pp = [...(r.prevPromise ?? [])].sort().join("+") || "なし";
   // 形は「場面 × 開いている約束の種類 × 連投の型」→「場面 × 約束の種類」まで。場面だけ・約束の有無だけの粗い形には下りない
@@ -428,5 +445,7 @@ export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; bur
   const shapes = [`${scene}|約束:${pp}|${r.burst ?? "other"}`, `${scene}|約束:${pp}`];
   const move = r.cls === "reply" || r.cls === "two_stage" ? "reply_first" : `aix:${r.tk ?? "?"}`;
   const brain = r.route === "aix" ? `aix:${r.bk ?? "?"}` : "reply_first";
-  return { id: r.id, shapes, move, brain, isMiss: !(r.v === "一致" || r.v === "返信一致"), kindOnly: r.v === "種類違い" };
+  // 11/23 統括役の決め（作業員A が実物で数えた形）: 前24時間にお客様が物件を送ってきた番・お客様の問い × 物件の約束が開いている番
+  const namedShapes = [ctx.brought24h ? "前24時間にお客様が物件を送ってきた" : null, r.burst === "question" && (r.prevPromise ?? []).includes("property") ? "お客様の問い×物件の約束が開いている" : null].filter((x): x is string => !!x);
+  return { id: r.id, shapes, move, brain, isMiss: !(r.v === "一致" || r.v === "返信一致"), kindOnly: r.v === "種類違い", namedShapes };
 }

@@ -273,10 +273,11 @@ async function cmdMapBuild() {
   console.log(`■ ${def.label}: 根 ${t.value}%（n ${t.n}・外れ ${t.nodes[0].misses}）・葉 ${m.leavesOf(t.nodes).length}・外れのある葉 ${ranked.length}・穴 ${m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length}・判断保留 ${ranked.filter((r) => r.hold).length}・子の合計の食い違い ${bad.length}`);
   const decN = t.nodes.filter((x) => x.dim === "miss" && x.val === "decided").reduce((s, x) => s + x.n, 0);
   const minN = t.nodes.filter((x) => x.dim === "miss" && x.val === "minority").reduce((s, x) => s + x.n, 0);
+  const timedN = t.nodes.filter((x) => x.dim === "miss" && x.val === "timed").reduce((s, x) => s + x.n, 0);
   if (spec) console.log(`  竹内さんの決定で正解を改めた番: 外れに数えていた ${decN}（${[...t.decided].map(([id, q]) => `${id}=${q}`).join("・") || "なし"}）`);
   if (def.builder === "aix_turn_device") {
     console.log(`  竹内さんの少数側（同じ形で竹内さん本人の別の一手が過半数・n ${10} 以上・ブレインは多い方）: ${minN}（${[...t.minority].map(([id, x]) => `${id}＝${x.shape} で ${x.majority} ${Math.round(x.share * 100)}%/${x.n}`).join("・") || "なし"}）`);
-    console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN}・決定で改めた ${decN}・竹内さんの少数側 ${minN}（n ${t.n}）`);
+    console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN}・決定で改めた ${decN}・竹内さんの少数側 ${minN}・時刻で送る物 ${timedN}（n ${t.n}）`);
   }
   for (const x of t.nodes.filter((x) => x.depth === 1)) console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）`);
   for (const r of ranked.slice(0, Number(arg("top", "10")) || 10)) console.log(`   ${m.leafLine(r)}`);
@@ -293,7 +294,8 @@ async function cmdMapBuild() {
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: t.nodes.length },
       { day, metric: `map:${def.metric}:decided`, scope: "all", value: decN, n: t.n, detail: { turns: Object.fromEntries(t.decided) } },
       { day, metric: `map:${def.metric}:minority`, scope: "all", value: minN, n: t.n, detail: { turns: Object.fromEntries(t.minority) } },
-      { day, metric: `map:${def.metric}:misses_net`, scope: "all", value: t.nodes[0].misses - decN - minN, n: t.n, detail: { ok: t.nodes[0].ok, decided: decN, minority: minN } },
+      { day, metric: `map:${def.metric}:timed`, scope: "all", value: timedN, n: t.n },
+      { day, metric: `map:${def.metric}:misses_net`, scope: "all", value: t.nodes[0].misses - decN - minN - timedN, n: t.n, detail: { ok: t.nodes[0].ok, decided: decN, minority: minN, timed: timedN } },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length, n: ranked.length },
       { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },
       ...ranked.slice(0, 5).map((r) => ({ day, metric: `map:${def.metric}:rank${r.rank}`, scope: "all", value: r.score, n: r.n, detail: { leaf: r.key, misses: r.misses, gain: r.gain, items: r.items, next: r.nextStep, hold: r.hold, hole: r.hole, writer_select: def.writerSelect } })),

@@ -84,5 +84,16 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   t("少数側: 過半数（半分より多い）が無い形は数えない", !minorityOf(half.slice(0, 10).concat([mk(99, "aix:b", "reply_first", true)])).has(99));
 }
 
+// ── 11/23（4回目）名前の付いた形・時刻で送る物 ──
+{
+  const nm = (id: number, move: string, brain: string, isMiss = false) => ({ id, shapes: [`s${id}`], namedShapes: ["前24時間にお客様が物件を送ってきた"], move, brain, isMiss });
+  const rows = [...Array.from({ length: 9 }, (_, i) => nm(i, "aix:property_check_result", "aix:property_check_result")), { ...nm(50, "aix:estimate_sheet", "aix:property_check_result", true), kindOnly: true }];
+  t("名前の付いた形: 細かい形で n が足りない時も同じ線で少数側", minorityOf(rows).has(50) && minorityOf(rows).get(50)!.shape.startsWith("前24時間"));
+  const tt = deviceTurnsOf([{ id: 7444, cls: "hand_aix", tk: "greeting_viewing", v: "AIXの番を返信" }, { id: 7445, cls: "aix_first", tk: "greeting_viewing", v: "一致" }], new Map());
+  t("時刻で送る物: 当日のご挨拶の外れは timed（一致はそのまま）", tt[0].miss === "timed" && tt[0].cause === null && tt[1].miss === "ok");
+  const tree = buildTree(tt, { metric: "d", label: "d", dims: ["kind", "scene", "miss", "cause"] });
+  t("時刻で送る物は順位に入れない", rankLeaves(tree, []).length === 0);
+}
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
