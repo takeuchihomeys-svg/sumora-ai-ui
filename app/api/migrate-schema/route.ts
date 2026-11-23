@@ -6140,6 +6140,16 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_work_items_forecast_metric ON work_items(forecast_metric) WHERE forecast_metric IS NOT NULL;
+-- 2026-11-23 作業員N2（竹内さんの決定 KB 0f38f47f・統括役の頼み・名前は作業員P と揃えた）:
+--   work_items.conductor_reach … 地図の穴（自動で足した行）が統括に届いているか（未確認／届いている／届いていない）。決め方は metric-map.leafReachOf
+--   （conductor_lessons の現行の leaf_keys が穴の葉か上か下を指すか）。self-improve が穴を足す時に付け、週に1回 届いていない物を統括役に出す。
+--   戻す: ALTER TABLE work_items DROP CONSTRAINT IF EXISTS work_items_conductor_reach_chk; ALTER TABLE work_items DROP COLUMN IF EXISTS conductor_reach;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS conductor_reach TEXT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_items_conductor_reach_chk') THEN
+    ALTER TABLE work_items ADD CONSTRAINT work_items_conductor_reach_chk CHECK (conductor_reach IS NULL OR conductor_reach IN ('未確認', '届いている', '届いていない'));
+  END IF;
+END $$;
 -- metric_map_nodes … 数ごとの地図（木）の1日分。根（数の名前）× 書き手の選び方 × 葉の鍵（<根>/<段>=<値>/…）で1行。
 --   葉には伸びしろ・順位・動かす作業（work_items の id）・次の一手・止まっている理由・判断保留（n が小さい）・穴（作業の無い大きな葉）を持つ。数だけ（お客様の文・名前は入れない）。
 --   戻す: DROP TABLE IF EXISTS metric_map_nodes;
