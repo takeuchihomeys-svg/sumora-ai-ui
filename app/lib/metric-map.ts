@@ -459,7 +459,10 @@ export function decidedRouteIdxOf(rows: ReadonlyArray<{ conv: string; at: string
 export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null }>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
   return rows.map((r, i) => ({ r, i })).filter(({ r }) => r.agree !== "no_next").map(({ r, i }) => {
     const station = r.branch ? `分:${r.branch}` : String(r.node ?? "other");
-    const ok = r.branch ? !!r.after || r.outcome === "advanced" : r.outcome === "advanced";
+    // 分かれ道の番: 作業員A の afterBranch（竹内さんの一手の後のお客様の返事で地図を当て直した分かれ道・閉じたら null）があれば null＝本線に戻れた。
+    //   欄が無い番（返事が無い・前の json）は駅が進んだか（advanced）だけで見る（前の仮の数え方 after は分かれ道の番でもほぼ入っていて高すぎた）
+    const ab = (r as { afterBranch?: string | null }).afterBranch;
+    const ok = r.branch ? ("afterBranch" in r ? ab === null : r.outcome === "advanced") : r.outcome === "advanced";
     const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : r.branch ? "branch_stay" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.outcome === "engaged" ? "engaged" : "stuck";
     return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null };
   });
