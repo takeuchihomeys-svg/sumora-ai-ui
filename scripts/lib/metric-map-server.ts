@@ -112,7 +112,9 @@ export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/
   feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts", situation_check: "scripts/audit-situation-check.ts" };
 /** 出力の欄の名前が --json でない台本（作業員L の約束の地図は --out） */
 const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out", situation_check: "out" };
-const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
+const jsonCache = new Map<string, unknown[] | null>();
+/** 台本の結果の行以外の数（作業員L の今どこの地図の unmeasured＝測れなかった竹内さん本人の番の数・takeuchi_turns＝竹内さん本人の番の数。番の数で、turns の欄×番とは数え方が違う） */
+export const jsonMeta = new Map<string, { unmeasured?: number; takeuchi_turns?: number }>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
 /** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
 export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
   const script = def.builder ? JSON_SOURCES[def.builder] : null;
@@ -124,6 +126,7 @@ export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
   const raw = existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown) : null;
   // 約束の地図の json は { root, turns, nodes, table }＝turns を行に
   const rows = raw == null ? null : Array.isArray(raw) ? raw : (((raw as { turns?: unknown[] }).turns) ?? null);
+  if (raw && !Array.isArray(raw)) { const m = raw as { unmeasured?: number; takeuchi_turns?: number }; if (m.unmeasured != null || m.takeuchi_turns != null) jsonMeta.set(script, { unmeasured: m.unmeasured, takeuchi_turns: m.takeuchi_turns }); }
   jsonCache.set(ck, rows);
   return rows;
 }
@@ -342,6 +345,12 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       holes.push({ title: `地図の穴: ${h.key}`, owner: def.owner, next: `外れ ${h.misses}/${h.n}・作業も見込みも無い葉（台帳 #610 の地図）→ 外れの番を実物で読み、原因の4つで直しを作る` });
     }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
+    // 測れなかった番（台本が数を出す根だけ）: 割合の分母に入っていない番を並べて出す
+    const meta = def.builder && JSON_SOURCES[def.builder] ? jsonMeta.get(JSON_SOURCES[def.builder]) : undefined;
+    if (meta?.unmeasured != null) {
+      lines.push(`- 測れなかった番（判断の記録に今の状況が無い・割合に入れていない）: ${meta.unmeasured}${meta.takeuchi_turns != null ? `/${meta.takeuchi_turns}番` : "番"}`);
+      qd.push({ day, metric: `map:${def.metric}:unmeasured`, scope: "all", value: meta.unmeasured, n: meta.takeuchi_turns ?? null });
+    }
     qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: nodes.length },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: hs.length, n: ranked.length },
