@@ -31,7 +31,16 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   ACK_CONFIRM_AIX_PATH: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（道の1行の有無は見えない）" },
   ACK_PICKUP_AIX_PATH: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（ピックアップの道の1行の有無は見えない）" },
   ACK_FORM_COUNT_WITH_AIX: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（数の1行の有無は見えない）" },
-  BRAIN_RULE6_OPEN_PROMISE: { promptAll: true },
+  // 2026-11-23 作業員A（統括役の頼み・N2 の数え: 昨夜 $3.82 のうち $3.42 が「効いたか分からない」回）: 今夜流すスイッチに記録だけの印（off では付かない・on でも動きは変えない）
+  BRAIN_RULE6_OPEN_PROMISE: { mark: "rule6_open", markSince: "5351dc589", partial: "差し替えた⑥が指示文に入ったか（全問に同じ文＝効き目は答えの比べ）" },
+  BRAIN_CLOSED_THANKS_NO_REPLY: { mark: "d1103_n15", markSince: "5351dc589" },
+  BRAIN_LAYOUT_ASK_TEMPORARY: { mark: "d1103_n17", markSince: "5351dc589" },
+  BRAIN_FAR_OTHER_FIRST: { mark: "d1103_n19", markSince: "5351dc589" },
+  BRAIN_FULFIL_TURN: { mark: "fulfil_turn", markSince: "5351dc589" },
+  BRAIN_MESSAGE_PLAN: { metaKey: "message_plan" },
+  OUR_PARTS_PROMISE_WIDE: { mark: "our_parts_wide", markSince: "5351dc589", partial: "交渉する・電話する の項目が状況の our_items に入った番まで" },
+  INFO_FILL_MAP: { mark: "info_fill", markSince: "5351dc589" },
+  EQUIPMENT_WISH_LOOKUP: { mark: "equip_wish", markSince: "5351dc589" },
   // 2026-11-23 作業員A（統括役の頼み・#662 の「持つ」が欠けた土台の部品）
   TURN_READ: { metaKey: "turn_read" },
   LATENT_FIVE: { metaKey: "latent_five" },

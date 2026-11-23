@@ -88,7 +88,7 @@ import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDe
 import { concernSubtopicOn, concernDetail } from "@/app/lib/concern-subtopic";
 import { materialFetchOn } from "@/app/lib/material-fetch";
 import { brainDeepCheckEnabled } from "@/app/lib/brain-deep-check";
-import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0, applyRule6OpenPromise } from "@/app/lib/brain-prompt-rules-1112";
+import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0, applyRule6OpenPromise, rule6OpenPromiseOn } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -3086,7 +3086,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 慣れた事は速く: 台帳に未対応の約束がある番は慣れた番にしない（お礼だけに見えて前の約束の答えを待っている番・設計書 7-4 の危なさ）
   if (fastSlow?.level === "easy" && promiseTrack.open.length > 0) fastSlow = { ...fastSlow, level: "normal", reasons: [`未対応の約束${promiseTrack.open.length}`] };
   // 2026-11-21 作業員M（台帳 #405・BRAIN_FULFIL_TURN・既定 off＝空文字）: 了承だけの番に、直前のその場で果たせる約束（物件探し・見積書・資料の送付）があれば事実の1塊（fulfil-turn.ts）
-  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply })) + fulfilTurnBrainText({ customerText: unrepliedTurn.text, open: promiseTrack.open });
+  // 2026-11-23 作業員A（#648 の点検の印・統括役の頼み）: BRAIN_FULFIL_TURN で1塊を足した番だけ字数を material_marks.fulfil_turn に（記録だけ・off は空文字＝付かない）
+  const fulfilTurnText = fulfilTurnBrainText({ customerText: unrepliedTurn.text, open: promiseTrack.open });
+  const fulfilMarkLen = fulfilTurnText.length;
+  const promiseBrainText = buildPromiseBrainNote(promiseTrack,customerSceneOf(unrepliedTurn.text, { isConditionForm: isConditionFormMessage, isShortAck: isShortAckReply })) + fulfilTurnText;
   if (promiseTrack.open.some((p) => p.status === "遅れ" || p.status === "遅れ気味")) console.log(JSON.stringify({ tag: "brain:promise-overdue", conversationId, open: promiseTrack.open.map((p) => ({ kind: p.kind, status: p.status, h: Math.round(p.elapsedH) })) }));
   // 2026-11-06 作業員1（弱い所 61・q174）: 物件を送った後の「良さそう・一旦見てみたい＋他にも候補があれば」を内覧の依頼と読まない手本（竹内さん 3/3 がピックアップの約束・内覧 0）。
   //   上の「もう少し見てみたい」の材料が拾わない言い方だけ（重ねない）。既定 on（11/06 q174-guard 悪化0）・止める BRAIN_OTHER_CANDIDATES_READ=off（app/lib/other-candidates-read.ts）
@@ -3288,6 +3291,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
   // 2026-11-23 作業員A（#648 の点検の印）: 照らし合わせの残りをブレインに足した時の字数（下の material_marks.exchange・記録だけ・off の時は付かない）
   let exchangeMarkLen = 0;
+  let equipWishMarkLen = 0; // 2026-11-23 作業員A（#648）: EQUIPMENT_WISH_LOOKUP で希望の1行を足した番の字数（material_marks.equip_wish・記録だけ）
   // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
   try {
     const el = await import("@/app/lib/exchange-ledger");
@@ -3332,7 +3336,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     // 2026-11-18 作業員H（EQUIPMENT_WISH_LOOKUP・既定 off・q439）: 希望の言い方で読んだ番は、何のための事実かを1行（決めるのはブレイン）
     // 2026-11-21 竹内さんの決定で1行を「探す約束の返信→次は AIX（2段:pickup）・資料の答えは事実だけ」に直した（equipment-question.equipmentWishBrainLine）。以下は前の経緯: 前の1行は「資料で分からない時は探す約束」へ押していた → 送った物件の資料の答え（有る／全部無い／分からない）で3つに分けた1行（equipmentWishBrainLine）
-    if (equipmentAnswer.question.wish) customerStateBlockText += `\n${equipmentWishBrainLine(equipmentAnswer.plan)}`;
+    if (equipmentAnswer.question.wish) { const wl = equipmentWishBrainLine(equipmentAnswer.plan); customerStateBlockText += `\n${wl}`; equipWishMarkLen = wl.length; }
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
@@ -3620,6 +3624,9 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
+  if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
+  if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
   if (exchangeMarkLen) materialMarks.exchange = exchangeMarkLen; // 2026-11-23 作業員A: CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on で1行を足した番だけ（動きは変えない）
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
@@ -3845,6 +3852,8 @@ ${sh}`;
       ];
       decisions1103 = (["n15", "n17", "n19", "n21", "n20"] as const).filter((_, i) => !!dl[i]);
       if (decisions1103.length) (await import("@/app/lib/aix-commander")).noteDecisions1103(conversationId, decisions1103); // 作業員1の AIX の統括（No.21 の相談のきっかけ）が受け取る
+      // 2026-11-23 作業員A（#648 の点検の印・記録だけ）: No.15・17・19 の1行を足した番だけ字数を material_marks.d1103_n15/n17/n19 に（off の時は空文字＝付かない）
+      (["n15", "n17", "n19"] as const).forEach((k, i) => { if (dl[i]) materialMarks[`d1103_${k}`] = dl[i].length; });
       if (decisions1103.length) { customerStateBlockText += "\n\n" + dl.filter(Boolean).join("\n"); console.log(JSON.stringify({ tag: "brain:decisions-1103", conversationId, hit: decisions1103 })); }
     } catch (e) { console.warn("[brain-core] decisions-1103 skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -4238,7 +4247,7 @@ ${sh}`;
           screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
         });
         const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
-        if (lineIF && infoFillMapOn()) customerStateBlockText += `\n\n${lineIF}`;
+        if (lineIF && infoFillMapOn()) { customerStateBlockText += `\n\n${lineIF}`; materialMarks.info_fill = lineIF.length; } // 2026-11-23 作業員A（#648・記録だけ）
         if (briefOnNow) briefInputs.info = { node: nodeIF ?? null, cells: cellsIF };
         if (infoFillMapOn()) console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
       }
@@ -4560,6 +4569,9 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const el = await import("@/app/lib/exchange-ledger");
       const exchange = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.now() });
       situationNowRec = sn.buildSituationNow({ timeline: situationTimelineRec, facts: (recordedFacts ?? []) as never, aix: aixLogs as never, exchange, clash: materialClashRec, nowMs: Date.now() });
+      // 2026-11-23 作業員A（#648 の点検の印・記録だけ）: OUR_PARTS_PROMISE_WIDE=on で足した約束の網（交渉する・電話する）に当たった項目の数（off の時は付かない）
+      const opw = await import("@/app/lib/our-part-types");
+      if (opw.ourPartsPromiseWideOn()) { const wideLabels = new Set(Object.values(opw.PROMISE_WIDE_PARTS).map((p) => p.label)); const nWide = (situationNowRec?.our_items ?? []).filter((o) => wideLabels.has(o.label)).length; if (nWide) materialMarks.our_parts_wide = nWide; }
       console.log(JSON.stringify({ tag: "brain:situation-now", conversationId, ...sn.situationNowDigest(situationNowRec) }));
     }
   } catch (e) { console.warn("[brain-core] situation-now skipped:", e instanceof Error ? e.message : String(e)); }
