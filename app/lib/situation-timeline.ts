@@ -15,6 +15,7 @@
 // 置き方: BRAIN_SITUATION_TIMELINE（11/15 から既定 on・戻す =off）の時に brain-core が材料に足す。
 import { JST_OFFSET_MS, WEEKDAYS_JA, jstDayStartMs } from "./jst-date";
 import { isConfirmedViewingEvent } from "./viewing-confirmed";
+import { PROMISE_OF_DONE } from "./promise-close-link";
 
 const DAY = 86_400_000;
 type Env = Record<string, string | undefined>;
@@ -119,6 +120,37 @@ export function buildTimeline(i: TimelineInput): TimelineRecord {
   const cal = readCalendarEvents(i.calendar, i.env);
   const holds = cal.filter((c) => c.kind === "hold");
   return { words: words.slice(-8), viewings: cal.filter((c) => c.kind === "viewing"), promises: cal.filter((c) => c.kind === "promise"), ...(holds.length ? { holds } : {}) };
+}
+// ─── 2026-11-23 作業員L（台帳 #649・#583 の照らしで見つけた・82c4d3e8）───
+//   帳面の約束はカレンダーの終日の予定だけから作る。カレンダーは同じ見出しの【必ず】の行が開いている間は新しい約束の行を作らない
+//   （promise-calendar.planPromiseInsert＝同じ約束をまとめる）ので、前の約束の行が後で閉じると、言い直した新しい約束の行がどこにも無い。
+//   14日（11/23）: 開いている約束のある帳面 23 のうち 7 で帳面の約束が行動台帳（sent_facts の開いている約束・situation_now.promises_open）より少ない（同じ種類の2件目が落ちる）。
+//   → TIMELINE_PROMISES_FROM_FACTS=on（既定 off・帳面はブレインと書き手の材料なので on は試験の後）の時だけ、行動台帳の開いている約束のうち
+//     カレンダーに同じ種類・同じ時刻（前後10分）の行が無い物を、帳面の約束に足す（終日・済みの印なし・題は「行動台帳の約束」）
+export const timelinePromisesFromFactsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.TIMELINE_PROMISES_FROM_FACTS ?? "").trim().toLowerCase() === "on";
+export type FactLikeRow = { kind: string; status: string; sent_at: string; detail?: { closed_by?: unknown } | null };
+/** 行動台帳の開いている約束（situation-now.promises_open と同じ線: 約束の行で closed_by が無く、後に同じ種類の済みが無い物） */
+export function openFactPromises(facts: ReadonlyArray<FactLikeRow>): Array<{ kind: string; atMs: number }> {
+  const doneOf = (k: string) => Object.entries(PROMISE_OF_DONE).find(([, p]) => p === k)?.[0];
+  return facts.filter((f) => f.status === "promised" && doneOf(f.kind) && !f.detail?.closed_by)
+    .filter((f) => !facts.some((d) => d.status === "done" && d.kind === doneOf(f.kind) && d.sent_at > f.sent_at))
+    .map((f) => ({ kind: f.kind, atMs: Date.parse(f.sent_at) })).filter((x) => Number.isFinite(x.atMs));
+}
+/** 約束の種類 → カレンダーの event_type（promise-calendar の行の種類） */
+const FACT_EVENT_TYPE: Record<string, string> = { pickup_declared: "property_send", confirmation_promised: "follow_up", estimate_declared: "estimate_sheet" };
+export const FACT_MATCH_MS = 10 * 60_000;
+/** 帳面の約束に、カレンダーに無い行動台帳の開いている約束を足した写し（足す物が無ければ同じ物） */
+export function addFactPromises(rec: TimelineRecord, open: ReadonlyArray<{ kind: string; atMs: number }>): TimelineRecord {
+  const add: CalendarRead[] = [];
+  for (const p of open) {
+    const type = FACT_EVENT_TYPE[p.kind] ?? "other";
+    // この約束の行がカレンダーにある（同じ種類・同じ時刻・済みでも）か、同じ種類の開いている行がある（期日の日に置いた行・まとめた行）なら足さない
+    //   （14日の試し: 期日の日に置いた行を時刻で結べず、開いている行があるのに足して帳面が台帳より多くなった 4会話）
+    if (rec.promises.some((c) => c.type === type && (Math.abs(c.atMs - p.atMs) <= FACT_MATCH_MS || !c.done))) continue;
+    if (add.some((c) => c.type === type && Math.abs(c.atMs - p.atMs) <= FACT_MATCH_MS)) continue;
+    add.push({ kind: "promise", atMs: p.atMs, hasTime: false, done: false, type, title: "行動台帳の約束" });
+  }
+  return add.length ? { ...rec, promises: [...rec.promises, ...add].sort((a, b) => a.atMs - b.atMs) } : rec;
 }
 /** 材料の塊（事実だけ・空なら空文字） */
 export function timelineBlock(rec: TimelineRecord, nowMs: number): string {
