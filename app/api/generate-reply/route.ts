@@ -1,5 +1,6 @@
 import { situationWriterNote, situationWriterNoteOn } from "@/app/lib/situation-now";
 import { ourItemsWriterNoteOn, ourItemsReplyNote } from "@/app/lib/situation-writer-aix";
+import { promiseRestateMarkOn, promiseRestatePreNote } from "@/app/lib/promise-restate";
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { buildScreeningHistoryNote } from "@/app/lib/guarantor-companies";
 import { enforceCallName } from "@/app/lib/call-name-guard";
@@ -5688,7 +5689,21 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-11-18 作業員L（SITUATION_WRITER_NOTE・既定 off）: 今の状況の記録（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）を書き手にも事実で
       + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "")
       // 2026-11-21 作業員K2（OUR_ITEMS_WRITER_NOTE・既定 off・situation-writer-aix.ts）: こちらが前に伝えた事（our_items・答えの有無）も書き手へ（言い直しの外れ: AI の下書きだけ 32/979）
-      + (!isFollowUp && ourItemsWriterNoteOn() ? ourItemsReplyNote((brainMeta as Record<string, unknown> | null)?.situation_now) : "");
+      + (!isFollowUp && ourItemsWriterNoteOn() ? ourItemsReplyNote((brainMeta as Record<string, unknown> | null)?.situation_now) : "")
+      // 2026-11-23 作業員K2（台帳 #442・PROMISE_RESTATE_MARK・既定 off・promise-restate.ts）: 前の通でした約束（確認できた時のご連絡・管理会社・審査）を、
+      //   お客様が催促でも新しい条件でもない番に言い直さないよう書き手へ（30日 338番で AI だけが言い直した 12番が対象）
+      + (!isFollowUp && !isTemplateOptimize && promiseRestateMarkOn() ? (() => {
+        const ms = recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "" }));
+        const lastStaff = ms.map((m) => m.sender !== "customer").lastIndexOf(true);
+        const cust = ms.slice(lastStaff + 1).filter((m) => m.sender === "customer").map((m) => m.text);
+        if (message && !cust.some((t) => t.includes(message.trim()))) cust.push(message);
+        const prior = ms.filter((m) => m.sender !== "customer" && m.text.trim()).map((m) => m.text).reverse().slice(0, 8);
+        const note = promiseRestatePreNote(prior, cust);
+        if (note) console.log(JSON.stringify({ tag: "writer:promise-restate-note", conversationId, chars: note.length }));
+        return note ? `
+
+${note}` : "";
+      })() : "");
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });

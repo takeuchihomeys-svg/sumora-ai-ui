@@ -88,7 +88,7 @@ import { sorryDeclineReadOn, readSorryDecline, pickSorryDeclineExamples, sorryDe
 import { concernSubtopicOn, concernDetail } from "@/app/lib/concern-subtopic";
 import { materialFetchOn } from "@/app/lib/material-fetch";
 import { brainDeepCheckEnabled } from "@/app/lib/brain-deep-check";
-import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0 } from "@/app/lib/brain-prompt-rules-1112";
+import { applyPromptRules1112, applyPromptRules1113, promptRules1113Enabled, applyReplyModeP0, applyRule6OpenPromise } from "@/app/lib/brain-prompt-rules-1112";
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
@@ -102,6 +102,7 @@ import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { staffHandMaterialOn, staffHandLine } from "@/app/lib/staff-hand-material";
 import { buildCheckResultsText } from "@/app/lib/task-result-from-aix";
+import { checkResultState, checkResultStateOn, checkResultStateText } from "@/app/lib/check-result-state";
 import { guarantorDocsOn, guarantorDocsAsked, guarantorDocsLine, type GuarantorDocRow } from "@/app/lib/guarantor-docs-line";
 import { brainAixFollowsContractOn, alignAixToContract, replyPlanAfterFollow, type ContractAskLite } from "@/app/lib/aix-follows-contract";
 import { askPartsSplitOn, partsAllNow, type AskPart } from "@/app/lib/ask-parts";
@@ -1565,7 +1566,7 @@ ${BRAIN_ENTRY_TRIM_ON ? "ルール②（費用質問なし）: 顧客が聞い�
 
 ${BRAIN_RAIHAN_SLOT_ON ? "ルール⑤（来阪表現禁止・常時）: avoid_topics には必ず「来阪」を含める。顧客が大阪在住か否かを問わず常時適用する（大阪以外在住の顧客への「来阪ください」は失礼であり、スモラのブランドルール上絶対禁止。コード側でも強制されるがLLM出力でも必ず含めること）。" : "ルール⑤（来阪表現禁止・常時）: 「来阪」は返信側の固定の決まりで常に止めている。avoid_topics には入れない（枠はこの番の話題に使う）。"}
 
-${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : "ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。"}
+${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : applyRule6OpenPromise("ルール⑥（感謝・了承への返し方）: 顧客の最新メッセージが感謝・了承のみ（「ありがとうございます」「よろしくお願いします」「わかりました」「了解」「承知」「かしこまりました」等、60字未満かつ質問・要望・懸念を含まない）の場合 → reply_direction を「感謝を1行で受け取り、既に完了した・または今から実行する具体アクションを1つだけ添える（合計50〜130字）。中身のない進捗テンプレ・条件の再ヒアリングで埋めない」にする。**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**。成約会話の実データでは感謝返しへの物件提案・見積提案は68%含まれており悪反応は1.6%のみ — 物件提案そのものは禁じない。禁じるべきは「予告だけで実体のない進捗テンプレ（急いで進めております等）」「条件の再ヒアリング（予算・間取りの再質問）」「検討依頼の繰り返し」。avoid_topics にこれらを追加する。直前スタッフ発言に既に「ご検討ください」がある場合は特に厳守（繰り返しはしつこさになる）。迷った時: メッセージに質問・要求が1つでもあればこのルールを適用しない。") /* 2026-11-23 作業員A: BRAIN_RULE6_OPEN_PROMISE（既定 off） */}
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : applyPromptRules1113("ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。")}
 
@@ -3180,7 +3181,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const openTasks = allTasks.filter((t) => t.status === "pending").slice(0, 5);
   const taskLabel: Record<string, string> = { property_check: "物件確認（空室確認）", property_send: "物件送付" };
   // 2026-11-15 作業員H: 段の組み立ては task-result-from-aix.buildCheckResultsText に移した（文字は同じ・AIX から結果を付ける TASK_RESULT_FROM_AIX のテストで同じ関数を通す）
-  const checkResultsText = buildCheckResultsText(allTasks);
+  // 2026-11-23 作業員G（台帳 #615）: 空室確認の結果が手元にあるか（on_hand／pending＝スタッフが確かめている／none）を1行足す。既定 off（CHECK_RESULT_STATE=on）・off の時は文が変わらない
+  const checkResultsText = buildCheckResultsText(allTasks)
+    + (checkResultStateOn() ? checkResultStateText(checkResultState(allTasks)) : "");
   // M1: AIX「物件確認した」でスタッフが入力した物件別の空き状況（aix_usage_logs.property_names / prop_statuses）。
   // line_tasks 由来の checkResultsText は「タスク単位の代表1値」しか持たないため、
   // 「3件確認して1件だけ空室」のような物件粒度の確定事実はここでしか供給できない。
@@ -4241,6 +4244,8 @@ ${sh}`;
         holdReason: holdReasonAR,
         farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
+        upcomingViewingYmd: customerState?.upcomingViewing?.ymd ?? null, // 2026-11-23 作業員R（#608）: APPLY_ROUTE_NEXT_BY_TURN=on の時だけ読む
+        viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
@@ -5149,6 +5154,15 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText) && !(routeFix1020("viewing_check_vacancy") && viewingCheckAlsoVacancy(lastStaffText))) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
       }
       promiseAltAction = promiseAix.alt ?? null;
+      // 2026-11-23 作業員K2（台帳 #469・CHECK_PROMISE_ESTIMATE_ALT・既定 off・check-promise-estimate-alt.ts）: 募集状況の確認の約束を果たす番は、空いていれば竹内さんは見積書送る で果たす（結果はスタッフだけが知る）＝2つ目に並べる
+      if (!promiseAltAction) {
+        const cpe = await import("@/app/lib/check-promise-estimate-alt");
+        if (cpe.checkPromiseEstimateAltOn()) {
+          const lst = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""));
+          const alt = cpe.checkPromiseEstimateAlt({ promiseKind: promiseAix.kind, promiseAction: finalAix ?? null, currentAlt: promiseAltAction, propertyInPlay: estimatePropertyInPlay, lastStaffText: lst?.text ?? null });
+          if (alt) { promiseAltAction = alt; console.log(JSON.stringify({ tag: "brain:check-promise-estimate-alt", conversationId })); }
+        }
+      }
       // 2026-10-22 竹内さんの答え: 新着の約束はブレインが状況で選ぶ（1件ならオススメ・複数ならピックアップ）＝ブレインが物件の AIX を選んでいればそれを先に
       if (promiseAix.kind === "pickup" && linkPromiseNewArrivalRecEnabled() && brainLedger.facts.pickupPromisedKind === "new_arrival") {
         const nb = newArrivalPickByBrain(promiseAix, llmAixRawC);
@@ -5951,6 +5965,19 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
             : `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise\(|\)$/g, "")})`;
           finalAix = twoStageRes.direct;
           sceneSignalCheckPattern = null;
+        }
+        // 2026-11-23 作業員K2（台帳 #469・COMBINED_PROMISE_CHECK_FIRST・既定 off・combined-promise-check-first.ts）: 確認＋見積の約束の後、お客様が2件以上の物件を
+        //   送ってきていた番は 見積書送る でなく 物件確認した（見積を同封して募集中のお部屋を報告）を先に（120日の竹内さん 7/9・17208）
+        if (finalAix === "estimate_sheet") {
+          const cpc = await import("@/app/lib/combined-promise-check-first");
+          if (cpc.combinedPromiseCheckFirstOn()) {
+            const to = cpc.combinedPromiseCheckFirst(finalAix, messagesOldestFirst, Date.now());
+            if (to) {
+              console.log(JSON.stringify({ tag: "brain:combined-promise-check-first", conversationId, from: finalAix, to }));
+              finalAix = to;
+              decisionSource = `${decisionSource ?? "rule:answerable_direct"}+combined_check_first`;
+            }
+          }
         }
       }
       if (checkAfterResult) twoStage = null; // ⑤b: 結果は AIX で直接（約束の返信にしない）

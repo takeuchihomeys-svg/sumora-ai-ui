@@ -29,7 +29,7 @@ export function deepseekTieBreaker(o: { onUsage?: (u: { input: number; output: n
   return async (q) => {
     const { callDeepSeekRead } = await import("@/app/lib/vision-alt-provider");
     const p = tieBreakPrompt(q);
-    const r = await callDeepSeekRead(p.system, p.user, { maxTokens: 80, timeoutMs: 20_000 }, (t) => parseTieBreak(t, q.candidates.length));
+    const r = await callDeepSeekRead(p.system, p.user, { maxTokens: 80, timeoutMs: 20_000, action: "link_conductor_tiebreak" }, (t) => parseTieBreak(t, q.candidates.length));
     for (const a of r.attempts) if (a.res) o.onUsage?.({ input: a.res.usage.input, output: a.res.usage.output, cacheHit: a.res.usage.cacheHit ?? 0 });
     return r.value;
   };

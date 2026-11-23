@@ -26,12 +26,17 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
   // 2026-11-22 作業員G（#509）: 見積書の画像（image_details.kind=estimate）はこちらの画像の欄の埋まりから除く（間取り・築年が無いのが正しい）
   {
     const urls = ((sent ?? []) as Array<{ image_url?: string }>).map((r) => r.image_url).filter((u): u is string => !!u);
-    const est = new Set<string>();
+    const est = new Set<string>(), prop = new Set<string>();
     for (let i = 0; i < urls.length; i += 100) {
-      const { data: d } = await supabase.from("image_details").select("image_url").eq("kind", "estimate").in("image_url", urls.slice(i, i + 100));
-      for (const r of (d ?? []) as Array<{ image_url: string }>) est.add(r.image_url);
+      const { data: d } = await supabase.from("image_details").select("image_url, kind").in("kind", ["estimate", "property"]).in("image_url", urls.slice(i, i + 100));
+      for (const r of (d ?? []) as Array<{ image_url: string; kind: string }>) (r.kind === "estimate" ? est : prop).add(r.image_url);
     }
-    if (est.size) { sent = ((sent ?? []) as Array<{ image_url?: string }>).filter((r) => !est.has(r.image_url ?? "")) as typeof sent; console.log(`見積書の画像 ${est.size}枚を除いた`); }
+    // 2026-11-23 作業員G（統括役 案1）: 写真など＝書き写しの読みが物件の資料として無く、値（facts）も1つも無い画像も「元が無い」として除く
+    const rows = (sent ?? []) as Array<{ image_url?: string; facts?: unknown }>;
+    const isPhoto = (r: { image_url?: string; facts?: unknown }) => !prop.has(r.image_url ?? "") && (r.facts == null || (typeof r.facts === "object" && Object.keys(r.facts as object).filter((k) => !["src", "model"].includes(k)).length === 0));
+    const photoN = rows.filter((r) => !est.has(r.image_url ?? "") && isPhoto(r)).length;
+    sent = rows.filter((r) => !est.has(r.image_url ?? "") && !isPhoto(r)) as typeof sent;
+    if (est.size || photoN) console.log(`見積書の画像 ${est.size}枚・写真など（読みも値も無い）${photoN}枚を除いた`);
   }
   // 2026-11-22 作業員G（#587）: カウンターキッチンの文字の札と画像の読みの食い違い（画像で読んだ行だけ）
   const { data: pk, error: e3 } = await supabase.from("property_pickups").select("id, ck_text:equipment->facts->counter_kitchen->>s, ck_image:image_facts->counter_kitchen")
@@ -40,7 +45,14 @@ const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 
   const ck = counterKitchenAgreement(((pk ?? []) as Array<{ id: number; ck_text: string | null; ck_image: unknown }>)
     .map((r) => ({ id: r.id, text: r.ck_text, image: r.ck_image === true ? true : r.ck_image === false ? false : null })));
   if (ck.mismatchIds.length || ck.imageOnlyIds.length) console.log(`カウンターキッチン: 食い違い ${ck.mismatchIds.join(",") || "—"}・図だけで有る ${ck.imageOnlyIds.join(",") || "—"}（目の監査へ: scripts/counter-kitchen-image-audit.ts --topic=counter_kitchen_v2 --ids=…）`);
-  const metrics = [...customerFillMetrics((cust ?? []) as CustomerRow[]), ...sentFillMetrics((sent ?? []) as SentRow[]), ...ck.metrics];
+  // 2026-11-23 作業員G（台帳 #477・届きの数）: カウンターキッチンを希望して文字の札では分からない（unlisted）行のうち、画像の読みが付いた割合
+  //   image_reach:counter_kitchen … value＝読みが付いた割合・n＝希望して unlisted の行（希望が無い日は書かない）
+  const { data: want, error: e4 } = await supabase.from("property_pickups").select("id, ck_image:image_facts->counter_kitchen")
+    .gte("created_at", from).lt("created_at", to).contains("equipment", { match: [{ key: "counter_kitchen", result: "unlisted" }] }).limit(2000);
+  if (e4) throw new Error(e4.message);
+  const wantRows = (want ?? []) as Array<{ id: number; ck_image: unknown }>;
+  const reach = wantRows.length ? [{ metric: "image_reach:counter_kitchen", value: Math.round((wantRows.filter((r) => r.ck_image === true || r.ck_image === false).length / wantRows.length) * 1000) / 1000, n: wantRows.length }] : [];
+  const metrics = [...customerFillMetrics((cust ?? []) as CustomerRow[]), ...sentFillMetrics((sent ?? []) as SentRow[]), ...ck.metrics, ...reach];
   console.log(`${day}（JST）: お客様の画像 ${(cust ?? []).length}枚・こちらの画像 ${(sent ?? []).length}枚 → 物差し ${metrics.length}行`);
   for (const m of metrics) console.log(`  ${m.metric}  ${(m.value * 100).toFixed(0)}%  n=${m.n}`);
   if (write && metrics.length) {

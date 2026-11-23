@@ -13,6 +13,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import type { GMsg, GAix, GDecision } from "./lib/guide-measure";
+import { decisionOfDigest } from "./lib/guide-measure";
 import { promiseStuckRowsOf, digSummary, PROMISE_KIND_JA, type GSent, type GPick, type PromiseDigRow } from "./lib/promise-stuck-dig";
 import { NO_LINE_TEST_CONVERSATION_IDS, STAFF_INTERNAL_CONVERSATION_IDS, YUMA_CONVERSATION_ID } from "../app/lib/test-conversations";
 
@@ -41,7 +42,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
       sb.from("sent_properties").select("sent_at").eq("conversation_id", c).gte("sent_at", since).limit(500),
       sb.from("property_pickups").select("created_at, expired_at, sent_at, status").eq("conversation_id", c).gte("created_at", sinceWide).limit(500),
     ]);
-    const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
+    const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => decisionOfDigest(x.created_at, x.digest));
     const got = promiseStuckRowsOf(c, msgs, (a.data ?? []) as GAix[], decisions, (s.data ?? []) as GSent[], (p.data ?? []) as GPick[]);
     rows.push(...got);
     if (process.argv.includes("--show-staff")) for (const r of got) {

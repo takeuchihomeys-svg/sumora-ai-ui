@@ -47,8 +47,10 @@ export const MAP_ROOTS: MapRootDef[] = [
   // 2026-11-23 統括役（2回目）: 主は端末の版（下の aix_turn:match_60d_device）。文の癖の版は「並べて見る」用
   { metric: "core:conductor_aix_60d", label: "AIX の番の一致（文の癖で選んだ竹内さんの番・60日・送る直前の判断・並べて見る用）", writerSelect: "style", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "conductor_aix", compare: "aix_turn:match_60d_device",
     source: "scripts/check-conductor.ts --days=60 の aixScore（core:conductor_aix の 60日版・11/23 の 44.8%＝43/96）", owner: "作業員A", qdScope: "all" },
-  { metric: "core:conductor_aix_device", label: "AIX の番の一致（端末の記録で選んだ竹内さんの番）", writerSelect: "device", windowDays: 60, dims: [], builder: null,
-    source: "作業員N2 が書く予定（core:conductor_aix_device）", owner: "作業員N2", qdScope: "all" },
+  // 11/23（2回目・統括役）: 作業員A の端末の欄（check-conductor の devOf・*Device）で毎晩作れる端末の版。2段・手打ちは数えない（A の audit-aix-turn-judgment の 56/102 とは数え方が違う＝混ぜない）
+  { metric: "core:conductor_aix_device", label: "AIX の番の一致（端末の記録で選んだ竹内さんの番・check-conductor の *Device・60日・毎晩）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "conductor_aix",
+    compare: "aix_turn:match_60d_device", rebaseFrom: ["aix_turn:match_60d_device", "core:conductor_aix_60d"],
+    source: "scripts/check-conductor.ts --days=60 の aixScoreDevice（作業員A の devOf・turnsDevice）", owner: "作業員A", qdScope: "all" },
   { metric: "core:conductor_aix", label: "AIX の番の一致（7日・毎朝の芯）", writerSelect: "style", windowDays: 7, dims: [], builder: null,
     source: "scripts/check-conductor.ts（self-improve の芯 ④）", owner: "作業員N", qdScope: "all" },
   { metric: "growth:combo:組の一致", label: "返信と AIX の組の一致（竹内さん本人の番・14日）", writerSelect: "style", windowDays: 14, dims: [], builder: null,
@@ -80,6 +82,10 @@ export const MAP_ROOTS: MapRootDef[] = [
   { metric: "search_found_critical:realpro", label: "物件検索 › 統括Pro の質 › 重要欠の数（realpro・0 に向かう）", writerSelect: "all", windowDays: 1, dims: [], builder: null, source: "cron/supervisor-think", owner: "作業員G", qdScope: "all" },
   { metric: "search_pro_completion:realpro", label: "物件検索 › 統括Pro の質 › 自動モード完成度（realpro・/100）", writerSelect: "all", windowDays: 1, dims: [], builder: null, source: "cron/supervisor-think", owner: "作業員G", qdScope: "all" },
   { metric: "search_pro_misjudge", label: "物件検索 › 統括Pro の質 › 判定の外れ（段A 凍結10件・0 が良い）", writerSelect: "all", windowDays: 1, dims: [], builder: null, source: "search-pro-exam", owner: "作業員G", qdScope: "all" },
+  // 2026-11-23 作業員N2 の名前の候補（統括役経由）: 前方一致の束で並べる（書くのは N2・名前が決まったらここを合わせる。範囲は仮）
+  { metric: "route:sg_match:", label: "申込までの地図 › 地図の駅と判断の記録の段の一致（駅ごと）", writerSelect: "all", windowDays: 60, dims: [], builder: null, prefix: true, source: "作業員N2 の候補（route:sg_match:<駅>）", owner: "作業員N2", qdScope: "takeuchi" },
+  { metric: "foundation:link:", label: "土台 › 連携（作った部品が本番に届いているか・欄ごと）", writerSelect: "all", windowDays: 3, dims: [], builder: null, prefix: true, source: "作業員N2 の候補（foundation:link:*）", owner: "作業員N2", qdScope: "all" },
+  { metric: "foundation:promise:", label: "土台 › 約束（開いている約束の読み・欄ごと）", writerSelect: "all", windowDays: 3, dims: [], builder: null, prefix: true, source: "作業員N2 の候補（foundation:promise:*）", owner: "作業員N2", qdScope: "all" },
 ];
 export const rootOf = (metric: string) => MAP_ROOTS.find((r) => r.metric === metric) ?? null;
 

@@ -256,8 +256,31 @@ export function ackConfirmAixPathOn(env: Env = process.env): boolean {
   // 2026-11-15 作業員D: 11/15 試験で悪化0・既定 on（止める ACK_CONFIRM_AIX_PATH=off）
   return (env.ACK_CONFIRM_AIX_PATH ?? "on").trim().toLowerCase() !== "off";
 }
-/** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""） */
+// ── 2026-11-23 作業員A（竹内さん 11/23「AIX の番の判断なんでこんなに弱いのか」・台帳「AIX の番の判断を、土台と連携の切れ目から」）──
+//   ピックアップの約束への了承だけの番で、材料どうしが食い違っていた:
+//     ackAfterPickupTurnLine（10/21 A2・KB 2d0f33cf「お礼には返信せず AIX」）＝物件の AIX ／ この ackFormMaterialLine ＝「ack_form に receive_only か wait_line を入れる」
+//     （しかも並べた竹内さんの数「探すの約束が言い切り→待ちの形の1文 7・受けだけ 0」は竹内さんが返信した番だけで数えた物＝AIX を先に送った番が入っていない）。
+//   ACK_CONFIRM_AIX_PATH の「道は AIX のまま」の1行は確認・見積の約束だけで、ピックアップは外していた（10/14 決定 C の頃の線。決定 C は 10/21 A2 で改められた）。
+//   竹内さん本人の番 60日（scripts/audit-aix-turn-judgment.ts・申込以降を外す・端末の記録で竹内さんの番だけ）: お礼・了承 × 前のこちらのピックアップの約束 48番 →
+//     竹内さんが AIX を先に送った 27（物件 18・物件確認した 9）・返信だけ 11・返信→後で AIX 5・中身の手打ち 5。ブレインが返信にして外れた 8（物件 6・物件確認した 2）。
+//   直し: ピックアップの約束への了承だけの番にも「道は約束を果たす物件の AIX のまま・ack_form は道を変えない」の1行を足す（決まりの食い違いを材料の側で解く・答えの規則は足さない）。
+//   既定 off（ACK_PICKUP_AIX_PATH=on で入る）。決定 C に戻している時（ACK_AFTER_PROMISE_REPLY=on）は足さない。
+//   作業員M の BRAIN_FULFIL_TURN（同じ番に物件探しの約束の1塊を足す）が on の時は足さない（同じ材料を2つ並べない・11/23 M と決めた）。
+export function ackPickupAixPathOn(env: Env = process.env): boolean {
+  return (env.ACK_PICKUP_AIX_PATH ?? "").trim().toLowerCase() === "on";
+}
+function ackPickupAixPathLine(f: AckFormFacts, env: Env): string {
+  if (!ackPickupAixPathOn(env) || f.family !== "探す") return "";
+  if ((env.ACK_AFTER_PROMISE_REPLY ?? "").trim().toLowerCase() === "on") return ""; // 決定 C（返信で締める）に戻している時
+  if ((env.BRAIN_FULFIL_TURN ?? "").trim().toLowerCase() === "on") return ""; // 作業員M の1塊と重ねない
+  if (!f.pendingNow || f.scheduledLater || f.closesAfter) return "";
+  return "→ 道（竹内さんの決定 10/21 A2・KB 2d0f33cf・★ピックアップの約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす物件の AIX（【物件ピックアップした】property_send／1件なら【物件オススメ】property_recommendation）のまま（aix の欄は空にしない）。"
+    + "上の ack_form と竹内さんの数は、竹内さんが返信した時の形（受けだけ・待ちの形）で、道は変えない（60日の竹内さん本人の番: この形の番 48 のうち AIX を先に送った 27・返信だけ 11）。";
+}
+
+/** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""）。2026-11-23 ACK_PICKUP_AIX_PATH=on の時はピックアップの約束にも */
 export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {
+  if (f && f.customer === "了承だけ" && f.family === "探す" && !f.conditional) return ackPickupAixPathLine(f, env);
   if (!f || !ackConfirmAixPathOn(env) || f.customer !== "了承だけ" || f.family !== "確認・連絡・見積・審査" || f.conditional) return "";
   if (!f.pendingNow || f.scheduledLater || f.closesAfter) return ""; // 11/15 q111: 先の日にちの報告・締めの後の挨拶には付けない
   const t = f.topics ?? [];
@@ -267,11 +290,27 @@ export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process
   return `→ 道（竹内さんの決定 C 10/14・★約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす AIX（入口は${aix}）のまま（aix の欄は空にしない）。何を一緒に送るか（お送り頂いた物件の御見積書等）は今までどおり会話と決まりで決める＝この行で狭めない。「結果がまだ手元に無い」は返信にする理由にならない＝結果を確かめてから送るのは AIX を押すスタッフ（スタッフだけが知る情報は AIX）。上の受けだけ／待ちの形の数は手打ちの文の形で、道を変えない（ack_form は形として入れる）。`;
 }
 /** ブレインのプロンプトに入れる材料の1行（答えは書かない）。お客様の発言に中身が多い番は出さない */
+// ── 2026-11-23 作業員A（統括役の頼み a・台帳 #612 の続き）: 下の「竹内さんの実送信」の数は、竹内さんが返信した番だけの形の数（受けだけ・待ちの形）。
+//   AIX を先に送った番が入っていない＝道を決める材料に見えると、AIX の番を返信へ倒す（選び方の偏り）。
+//   AIX を送った番も入れた数（scripts/audit-ack-fulfil-timing.ts・90日・申込以降を外す・端末の記録で竹内さん本人の番 141）を先に1行で並べる:
+//     ピックアップの約束だけ 68 → 最初の一手が約束を果たす AIX 46（30分以内は 7・30分〜2時間 10・2〜6時間 16・6〜24時間 13）・返信 22
+//     確認の約束だけ 21 → AIX 14（30分以内 9）・返信 7
+//     全部 141 → AIX 87（62%・30分以内は 22）・返信 54
+//   既定 off（ACK_FORM_COUNT_WITH_AIX=on で入る）＝off の時は材料の行は1文字も変わらない。道の1行（ACK_PICKUP_AIX_PATH・ACK_CONFIRM_AIX_PATH）とは別のスイッチ（数だけ・答えは書かない）
+export function ackFormCountWithAixOn(env: Env = process.env): boolean {
+  return (env.ACK_FORM_COUNT_WITH_AIX ?? "").trim().toLowerCase() === "on";
+}
+export function ackFormAixShareLine(f: AckFormFacts, env: Env = process.env): string {
+  if (!ackFormCountWithAixOn(env)) return "";
+  const fam = f.family === "探す" ? "ピックアップの約束だけの番 68 → 最初の一手が約束を果たす AIX 46・返信 22" : "確認の約束だけの番 21 → 最初の一手が約束を果たす AIX 14・返信 7";
+  return `竹内さん本人の最初の一手（90日・約束が開いているお礼・了承だけの番・AIX を送った番も入れた数）: ${fam}（全部 141 → AIX 87・返信 54。AIX は30分より後が多い）。下の受けだけ・待ちの形の数は、竹内さんが返信した番の中の形。
+`;
+}
 export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.env): string {
   if (!f || !ackFormBrainEnabled(env) || f.customer === "その他の中身") return "";
   const ago = f.minutes == null ? "" : f.minutes < 60 ? `・${f.minutes}分前` : `・約${Math.round(f.minutes / 60)}時間前`;
   return `【前の約束への了承（材料・turn_contract の ack_form を決める）】前のこちらの約束「${f.promise}」（${f.family}・${f.form}${ago}）／お客様の今の発言: ${f.customer}。
-竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
+${ackFormAixShareLine(f, env)}竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
 → ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。${(() => { const x = ackConfirmAixPathLine(f, env); return x ? `
 ${x}` : ""; })()}`;
 }

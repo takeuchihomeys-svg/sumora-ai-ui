@@ -102,35 +102,21 @@ export async function thinkAsSupervisor(
   const budget = Math.max(10000, Math.min(90000, opt.budgetMs ?? 60000));
   const t0 = Date.now();
   try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        max_tokens: opt.maxTokens ?? DEEPSEEK_MAX_TOKENS_THINK,
-        messages: [
-          { role: "system", content: SUPERVISOR_THINK_PROMPT },
-          { role: "user", content: "材料:\n" + String(material ?? "").slice(0, 6000) },
-        ],
-      }),
-      signal: AbortSignal.timeout(budget),
-    });
-    if (!res.ok) return null;
-    const j = (await res.json()) as {
-      model?: string;
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    // ⚠ 推論モデルは推論にトークンを使うので、`content` が空なら**諦める**（決定論を使う）
-    const text = String(j.choices?.[0]?.message?.content ?? "").trim();
+    // 2026-11-23 作業員G（台帳 #599）: callDeepSeek を通す（費用の記録が残る・system・中身・最大トークン・時間は今と同じ・推論の指定は送らない）
+    const { callDeepSeek } = await import("./vision-alt-provider");
+    const ds = await callDeepSeek(SUPERVISOR_THINK_PROMPT, "材料:\n" + String(material ?? "").slice(0, 6000),
+      { apiKey: key, model, maxTokens: opt.maxTokens ?? DEEPSEEK_MAX_TOKENS_THINK, timeoutMs: budget, effort: "" });
+    // ⚠ 推論モデルは推論にトークンを使うので、`content` が空なら**諦める**（決定論を使う）＝callDeepSeek は空なら null
+    if (!ds) return null;
+    const text = ds.text;
     if (!text) return null;
     const parsed = parseSupervisorThink(text);
     if (!parsed) return null;
     return {
       ...parsed,
-      model: String(j.model ?? model),
+      model: ds.model,
       ms: Date.now() - t0,
-      usage: j.usage ? { input: Number(j.usage.prompt_tokens) || 0, output: Number(j.usage.completion_tokens) || 0 } : null,
+      usage: { input: ds.usage.input, output: ds.usage.output },
     };
   } catch {
     return null;

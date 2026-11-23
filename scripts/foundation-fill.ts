@@ -11,7 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { checkFoundation } from "./check-foundation";
 import { sceneGrid } from "./foundation-scene-grid";
-import { foundationFillOf, fillTotalsOf, FILL_COL_JA, SITUATION_CANDIDATES, type FillRow } from "./lib/foundation-fill";
+import { foundationFillOf, fillTotalsOf, foundationLeavesOf, FILL_COL_JA, SITUATION_CANDIDATES, type FillRow } from "./lib/foundation-fill";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
 import { KB_SCENES } from "../app/lib/design-knowledge-rag";
 
@@ -27,7 +27,8 @@ export async function foundationFill(sb: any) {
     metricSeen: (m) => seen.has(m),
     switchDefault: (s) => { const d = LINKAGE_SWITCH_DEFAULTS[s]; return d && d !== "なし" && d !== "?" ? d : null; },
   });
-  return { fill, totals: fillTotalsOf(fill, grid), grid, tables: cf.tables };
+  // 葉（作業員P の #610 の木とつなぐ・found:<土台id>:<場面>:<欄>）
+  return { fill, totals: fillTotalsOf(fill, grid), grid, tables: cf.tables, leaves: foundationLeavesOf(fill, grid?.scenes ?? []) };
 }
 
 const mark = (filled: boolean, correct: boolean | null) => (!filled ? "✗" : correct === true ? "✓正" : correct === false ? "✓誤" : "✓?");
@@ -79,7 +80,7 @@ export async function addFillGaps(sb: any, fill: FillRow[]): Promise<number> {
 if (process.argv[1]?.endsWith("foundation-fill.ts")) (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
   const r = await foundationFill(sb);
-  if (process.argv.includes("--json")) { console.log(JSON.stringify({ totals: r.totals, fill: r.fill })); return; }
+  if (process.argv.includes("--json")) { console.log(JSON.stringify({ totals: r.totals, fill: r.fill, leaves: r.leaves })); return; }
   const md = fillMarkdown(r, new Date().toISOString());
   if (process.argv.includes("--md")) writeFileSync(FOUNDATION_FILL_MD, md);
   console.log(md);

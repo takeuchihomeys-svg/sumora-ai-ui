@@ -56,13 +56,20 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
   return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0 };
 }
 
+const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** 根1つの木を作る（台帳の読みで作れる根だけ＝conductor_aix）。値は出所のスクリプトと同じ数え方 */
 export async function buildRootTree(def: MapRootDef, o: { sinceMs?: number } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
   if (def.builder !== "conductor_aix") return null;
-  const cc = await checkConductor(def.windowDays, o.sinceMs);
-  const turns: MapTurn[] = cc.turns.map((t) => ({ id: t.id, kind: t.kind || "other", scene: sceneOfWatchKey(t.sceneKey, t.kind), miss: t.miss, cause: t.cause as MapCause | null }));
+  // 同じ窓の読みは1回だけ（文の癖の版と端末の版で checkConductor を2回回さない＝夜の重い読みを増やさない）
+  const ck = `${def.windowDays}:${o.sinceMs ?? ""}`;
+  if (!ccCache.has(ck)) ccCache.set(ck, checkConductor(def.windowDays, o.sinceMs));
+  const cc = await ccCache.get(ck)!;
+  // 端末の版（writerSelect=device）は作業員A の devOf で選んだ番（turnsDevice・aixScoreDevice）
+  const dev = def.writerSelect === "device";
+  const src = dev ? cc.turnsDevice : cc.turns;
+  const turns: MapTurn[] = src.map((t) => ({ id: t.id, kind: t.kind || "other", scene: sceneOfWatchKey(t.sceneKey, t.kind), miss: t.miss, cause: t.cause as MapCause | null }));
   const nodes = buildTree(turns, def);
-  return { nodes, value: cc.aixScore, n: cc.aixTurns };
+  return { nodes, value: dev ? cc.aixScoreDevice : cc.aixScore, n: dev ? cc.aixTurnsDevice : cc.aixTurns };
 }
 
 /** 試験の問題の数を葉ごとに（exam_leaf_links）。付け替え元の根（端末の版は文の癖の版）に当てた問題も、葉の鍵を付け替えて数える */

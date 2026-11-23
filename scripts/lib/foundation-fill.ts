@@ -45,8 +45,9 @@ export function foundationFillOf(
     cells.push({ col: "rules", filled: !miss.has("rules"), correct: null, owner: own,
       next: miss.has("rules") ? "竹内さんの実送信で過半数の形を数える → KB 案（P2）／割れたら推奨つきの確認案" : "守り率（竹内さんの実送信の何%が守っているか）を数える台本を作る",
       detail: r.rules.length ? `KB ${r.rules.join(",")}` : "決まり（KB）が無い" });
-    cells.push({ col: "measures", filled: !miss.has("measures"), correct: miss.has("measures") ? false : (r.metric ? o.metricSeen(r.metric) : false), owner: own,
-      next: miss.has("measures") ? "物差しの台本を作る（読むだけ・費用0）" : (r.metric && o.metricSeen(r.metric) ? null : "台本の数を本番で毎日出す"),
+    const seenAny = [r.metric, ...(r.metricAlt ?? [])].some((m) => !!m && o.metricSeen(m));
+    cells.push({ col: "measures", filled: !miss.has("measures"), correct: miss.has("measures") ? false : seenAny, owner: own,
+      next: miss.has("measures") ? "物差しの台本を作る（読むだけ・費用0）" : (seenAny ? null : "台本の数を本番で毎日出す"),
       detail: r.measures.join("・") || "台本が無い" });
     cells.push({ col: "metric", filled: !miss.has("metric"), correct: !miss.has("metric"), owner: own,
       next: miss.has("metric") ? (miss.has("measures") ? "物差しの後に quality_daily へ" : "台本の数を quality_daily に毎日書く（毎朝の1枚から呼ぶ）") : null,
@@ -95,5 +96,19 @@ export function fillNotShrinking(now: { full: number; n: number; sceneGap: numbe
   if (now.sceneGap > 0 && prev.sceneGap != null && now.sceneGap >= prev.sceneGap) out.push(`場面の決まりの空き ${now.sceneGap}（前の日 ${prev.sceneGap}）が減っていない → ${[...new Set(owners.sceneGap)].join("・")}`);
   if (now.noMeasure > 0 && prev.noMeasure != null && now.noMeasure >= prev.noMeasure) out.push(`物差しの無い土台 ${now.noMeasure}（前の日 ${prev.noMeasure}）が減っていない → ${[...new Set(owners.noMeasure)].join("・")}`);
   if (now.full < now.n && prev.full != null && now.full <= prev.full) out.push(`欄が全部そろった土台 ${now.full}/${now.n}（前の日 ${prev.full}）が増えていない → ${[...new Set(owners.notFull)].slice(0, 6).join("・")}`);
+  return out;
+}
+
+/** 2026-11-23 作業員N（台帳 #505・作業員P の #610 の木と名前を揃える）: 土台の葉。鍵は found:<土台id>:<場面>:<欄>（場面は KB_SCENES の鍵・場面の無い欄は all）。
+ *  P の木では別の根として持ち、scene と cause が同じ葉に「関わる土台の葉」として並べる（数は足さず参照だけ）。書き手の選び方（writer_select）は土台に無いので all。
+ *  cause: 決まりが無い→misread（場面や決まりの読み違い）・部品が無い→material（材料が届いていない）・物差し／毎日の数が無い→measure（測れていない） */
+export type FoundationLeaf = { key: string; foundation: string; scene: string; col: FillCol; filled: boolean; owner: string; cause: "misread" | "material" | "measure"; writer_select: "all" };
+const CAUSE_OF: Record<FillCol, FoundationLeaf["cause"]> = { rules: "misread", scene_rules: "misread", parts: "material", measures: "measure", metric: "measure", scene_measure: "measure" };
+export function foundationLeavesOf(fill: ReadonlyArray<FillRow>, scenes: ReadonlyArray<string>): FoundationLeaf[] {
+  const out: FoundationLeaf[] = [];
+  for (const f of fill) for (const c of f.cells) {
+    const per = c.col === "scene_rules" ? scenes.map((s) => ({ s, filled: !f.emptyScenes.includes(s) })) : [{ s: "all", filled: c.filled }];
+    for (const p of per) out.push({ key: `found:${f.id}:${p.s}:${c.col}`, foundation: f.id, scene: p.s, col: c.col, filled: p.filled, owner: c.owner, cause: CAUSE_OF[c.col], writer_select: "all" });
+  }
   return out;
 }

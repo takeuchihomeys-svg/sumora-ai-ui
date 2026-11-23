@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { ITANDI_LINE_MAP, REINS_LINE_MAP } from "@/app/lib/station-line-maps"; // 正本 popup-maps.js の写し（station-line-maps.test.ts でずれを見張る）
+import { callDeepSeek as callDeepSeekApi } from "@/app/lib/vision-alt-provider";
 
 export const maxDuration = 60;
 
@@ -92,19 +93,8 @@ async function callDeepSeek(token: string, lineStations: LineStation[]): Promise
 
   try {
     const stationList = lineStations.map((s) => `${s.station_name}（${s.line_name}）`).join("\n");
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(15_000),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 64,
-        messages: [{
-          role: "user",
-          content: `以下は登録済みの大阪府の駅名一覧です。
+    // 2026-11-23 作業員G（台帳 #599）: callDeepSeek を通す（費用の記録が残る・中身・時間・温度は今と同じ）
+    const ds = await callDeepSeekApi(null, `以下は登録済みの大阪府の駅名一覧です。
 「${token}」が指す駅を一覧の中から1つだけ選んでください。
 一覧にない場合は「該当なし」と答えてください。
 絶対に一覧にない駅名を作らないでください。
@@ -113,13 +103,9 @@ async function callDeepSeek(token: string, lineStations: LineStation[]): Promise
 ${stationList}
 
 回答形式：駅名のみ（例：梅田）または「該当なし」`,
-        }],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const raw = (data.choices[0]?.message?.content ?? "").trim();
+      { apiKey, model: "deepseek-chat", maxTokens: 64, timeoutMs: 15_000, effort: "", temperature: 0 });
+    if (!ds) return null;
+    const raw = ds.text;
     if (!raw || raw.includes("該当なし")) return null; // 該当なし → Claudeにフォールバック
 
     // 「梅田（阪急電鉄神戸線）」のような回答でも駅名部分だけ取り出す
@@ -158,32 +144,17 @@ async function callDeepSeekLegacy(token: string): Promise<ResolvedToken | null> 
   if (!apiKey) return null;
 
   try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(15_000),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        max_tokens: 512,
-        messages: [{
-          role: "user",
-          content: `大阪府の「${token}」は駅名ですか、地名ですか？確信がなければ"unknown"にしてください。
+    // 2026-11-23 作業員G（#599）: callDeepSeek を通す（中身・時間・温度は今と同じ）
+    const ds = await callDeepSeekApi(null, `大阪府の「${token}」は駅名ですか、地名ですか？確信がなければ"unknown"にしてください。
 JSONのみ返してください（説明不要）:
 {"type":"station"または"region"または"unknown","ward":"大阪市〇〇区など または null","realpro_lines":["リアプロ内部路線名"],"itandi_lines":["itandi正式路線名"],"reins_line":"REINS路線名またはnull"}
 
 リアプロ内部路線名の例：「${PROMPT_EXAMPLE_REALPRO.join("」「")}」
 itandi正式路線名の例：「${PROMPT_EXAMPLE_REALPRO.map((l) => [ITANDI_LINE_MAP[l]].flat()[0]).join("」「")}」
 REINS路線名の例：「${PROMPT_EXAMPLE_REALPRO.map((l) => REINS_LINE_MAP[l]).join("」「")}」`,
-        }],
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    const text = data.choices[0]?.message?.content ?? "";
+      { apiKey, model: "deepseek-chat", maxTokens: 512, timeoutMs: 15_000, effort: "", temperature: 0 });
+    if (!ds) return null;
+    const text = ds.text;
     const match = text.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as Partial<ResolvedToken>;

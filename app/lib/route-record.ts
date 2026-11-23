@@ -27,7 +27,22 @@ const STATUS_TO_NODE: Record<string, RouteNodeId> = {
   estimate: "estimate", estimating: "estimate", viewing: "viewing_arrange", viewing_arrange: "viewing_arrange",
   viewing_scheduled: "viewing_scheduled", viewed: "viewed", apply_prep: "apply_prep", applying: "applying", application: "applying", screening: "applying",
   contract: "won", closed_won: "won", won: "won",
+  // 2026-11-23 作業員M（台帳 #620）: customer-state の段の語（判断の記録 digest.sg＝meta.customer_stage_now）も同じ表で駅に寄せる（apply-route-map の STAGE_TO_NODE と同じ写し方）
+  first: "inquiry", viewing_arranging: "viewing_arrange", estimate_sent: "estimate",
 };
+/**
+ * 2026-11-23 作業員M（台帳 #620・作業員R の数え 104/192＝54%）: 地図の駅と「段の語」が同じ所を指すか。語の系統が違う（digest.sg は customer-state の語・地図は駅の id）ので、
+ *   生の文字列で比べると searching・viewing_arranging・estimate_sent・first が全部「違う」に数えられる。ここで寄せてから比べる。
+ *   searching（物件検索中）は地図が台帳で 条件ヒアリング／ピックアップ／提案中 に分ける（apply-route-map.resolveRouteNode）＝この3つはどれでも同じ駅と数える。
+ */
+export const SEARCHING_NODES: readonly RouteNodeId[] = ["hearing", "pickup", "proposing"];
+export function sameStation(node: string | null | undefined, stageWord: string | null | undefined): boolean | null {
+  const w = String(stageWord ?? "").trim();
+  if (!node || !w) return null;
+  if (w === "searching") return (SEARCHING_NODES as readonly string[]).includes(node);
+  const n = STATUS_TO_NODE[w];
+  return n ? n === node : node === w;
+}
 export function stationOf(i: { applyRouteNode?: string | null; status?: string | null; checkpointStage?: string | null }): { node: RouteNodeId | null; from: "apply_route" | "status" | "checkpoint_stage" | null } {
   const isNode = (v: string | null | undefined): v is RouteNodeId => !!v && Object.prototype.hasOwnProperty.call(ROUTE_NODES, v);
   if (isNode(i.applyRouteNode)) return { node: i.applyRouteNode, from: "apply_route" };
@@ -80,6 +95,31 @@ export function substateUsable(s: Pick<Substate, "id" | "few">, env: Env = typeo
   if (s.few && (env.ROUTE_SUBSTATE_FEW ?? "").trim().toLowerCase() !== "on") return false;
   return true;
 }
+/**
+ * 2026-11-23 作業員M（台帳 #619・作業員R の数え: 竹内さん本人の番 262・状態の at と地図の駅の食い違い 1版 48/96・2版 34/102）:
+ *   状態の at は1つの駅か分かれ道だけで、同じ状態が隣の駅でも出る（検討します＝提案中・気に入った・見積の後／条件が多い＝問い合わせ・ピックアップ）。
+ *   分かれ道が開いていない番は地図が親の駅に居る＝at が分かれ道の状態は、その分かれ道が開く駅でも合うと数える。
+ *   R の json（r-route60f）に当てると食い違い 2版 34→14・1版 48→37（同じ番で決めた表＝甘く出る・夜に別の番で測り直す）。ROUTE_SUBSTATE_ALSO_AT=on の時だけ（既定 off）
+ */
+export const SUBSTATE_ALSO_AT: Readonly<Record<string, readonly string[]>> = {
+  hearing_many_conditions: ["inquiry", "pickup"],
+  proposing_considering: ["proposing", "interested", "estimate"],
+  proposing_liked_one: ["proposing"],
+  proposing_mismatch: ["proposing", "pickup"],
+  brought_vacancy: ["pickup", "proposing"],
+  viewing_dates: ["viewing_scheduled"],
+  proposing_detail_question: ["estimate", "interested"],
+  cost_over_budget: ["proposing", "interested"],
+  cost_installment: ["proposing", "interested"],
+};
+export function substateAlsoAtOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ROUTE_SUBSTATE_ALSO_AT ?? "").trim().toLowerCase() === "on";
+}
+/** 状態が地図の今の位置と合うか（at の駅か分かれ道・ROUTE_SUBSTATE_ALSO_AT=on なら隣の駅も） */
+export function substateAtMatch(sub: Pick<Substate, "id" | "at">, node: string | null, branch: string | null, env?: Env): boolean {
+  if (sub.at === node || sub.at === branch) return true;
+  return substateAlsoAtOn(env) && !!node && (SUBSTATE_ALSO_AT[sub.id] ?? []).includes(node);
+}
 export type RouteBriefSection = {
   node: string | null; branch: string | null; next: string | null;
   substate: { id: string; label: string; n: number; few: boolean; at_match: boolean; usable: boolean } | null;
@@ -96,7 +136,7 @@ export function routeBriefSection(meta: Record<string, unknown> | null | undefin
   if (!ar) return null;
   const node = s2(ar.node, 30), branch = s2(ar.branch, 30);
   const sub = typeof ar.substate === "string" ? SUBSTATES.find((x) => x.id === ar.substate) ?? null : null;
-  const atMatch = !!sub && (sub.at === node || sub.at === branch);
+  const atMatch = !!sub && substateAtMatch(sub, node, branch, env);
   const usable = !!sub && atMatch && substateUsable(sub, env);
   const use = usable ? sub : null;
   return {

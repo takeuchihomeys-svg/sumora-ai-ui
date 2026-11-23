@@ -21,6 +21,7 @@ import type { RouteType } from "./brain-route-type";
 import type { SceneId } from "./aix-scene-evidence";
 import { isOtherAgentViewingApplyQuestion, isOtherAgentViewingPlan } from "./other-agent-viewing";
 import { latestRankMention } from "./parallel-second";
+import { withRefinedNext, lapsedViewingOpens } from "./apply-route-next";
 
 const N = (s: string | null | undefined) => String(s ?? "").normalize("NFKC");
 
@@ -86,7 +87,9 @@ export const MAIN_ROUTE: readonly RouteNodeId[] = ["inquiry", "hearing", "pickup
 export type RouteBranchId =
   | "brought_property" | "other_agent_viewing" | "competing_estimate" | "screening_concern" | "condition_change"
   | "negotiation" | "cannot_come_soon" | "move_in_later" | "rank_waiting" | "rank_offered" | "considering" | "new_arrival_wait"
-  | "silent" | "postponed" | "declined";
+  | "silent" | "postponed" | "declined"
+  /** 2026-11-23 作業員R（#621）: 内覧が流れた（VIEWING_LAPSED_BRANCH=on の時だけ開く・apply-route-next.lapsedViewingBranchOn） */
+  | "viewing_lapsed";
 
 export type RouteBranch = {
   id: RouteBranchId;
@@ -149,6 +152,11 @@ export const ROUTE_BRANCHES: Record<RouteBranchId, RouteBranch> = {
   declined: { id: "declined", name: "見送り・他社決定", meaning: "他で決まった・もう大丈夫", aim: ["断りを受け止める"],
     next: { label: "受け止めて関係をつなぐ（押さない）", aix: [] },
     wayBack: { to: "hearing", how: "また探す時に条件の確認から" } },
+  // 2026-11-23 作業員R（#621）: customer-state は内覧の日が過ぎて内覧後のお礼が無い時に「内覧後（実施は未確認）」にする。駅の内覧後の一手（申込で抑える）は
+  //   内覧した前提なので、実施の記録が無い時は先に内覧できたかを伺う。VIEWING_LAPSED_BRANCH=on（既定 off）の時だけ開く
+  viewing_lapsed: { id: "viewing_lapsed", name: "内覧が流れた（実施の記録なし）", meaning: "内覧の日が過ぎたが、内覧した記録（内覧後のお礼）が無い", aim: ["関係をつなぐ", "申込へ誘う"],
+    next: { label: "ご内覧頂けたかとご感想を伺い、まだなら日程を再調整する（気に入って頂けていればお申込みで抑える）", aix: [] },
+    wayBack: { to: "viewing_arrange", how: "日程の再調整で内覧調整へ／内覧済みで気に入って頂けていれば申込準備へ" } },
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -202,6 +210,10 @@ export type ApplyRouteSignals = {
   farMoveIn?: boolean | null;
   /** 最後の発言がこちら（スタッフ・AIX）の時、その時刻（お客様が最後なら null） */
   lastStaffAtIfStaffLast?: string | null;
+  /** 2026-11-23 作業員R（#608）: 一番近い内覧の日（customer-state の upcomingViewing.ymd）。APPLY_ROUTE_NEXT_BY_TURN=on の時だけ次の一手の選び直しに使う（位置は変えない） */
+  upcomingViewingYmd?: string | null;
+  /** 2026-11-23 作業員R（#621）: 内覧後でも実施の記録が無い（customer-state の stageDetail「実施は未確認」）。VIEWING_LAPSED_BRANCH=on の時だけ使う */
+  viewingUnconfirmed?: boolean | null;
   nowMs?: number;
 };
 
@@ -319,9 +331,17 @@ export function buildApplyRouteBrainText(loc: ApplyRouteLocation): string {
   return text;
 }
 
+/** 2026-11-23 作業員R（#621）: 内覧が流れた（実施の記録なし）の分かれ道を開いた位置（VIEWING_LAPSED_BRANCH=on・開く線は apply-route-next.lapsedViewingOpens・off はそのまま返す） */
+export function withLapsedViewing(loc: ApplyRouteLocation, s: { viewingUnconfirmed?: boolean | null }, env?: Record<string, string | undefined>): ApplyRouteLocation {
+  if (!lapsedViewingOpens(loc, s, env)) return loc;
+  const br = ROUTE_BRANCHES.viewing_lapsed;
+  return { ...loc, branch: br.id, next: br.next, wayBack: br.wayBack, aim: br.aim, evidence: [...loc.evidence, "内覧後・実施の記録なし"] };
+}
+
 /** brain-core から呼ぶ入口。off の時は必ず空文字（プロンプトを変えない） */
 export function applyRouteBrainTextIfEnabled(s: ApplyRouteSignals, env?: Record<string, string | undefined>): { text: string; loc: ApplyRouteLocation | null } {
   if (!applyRouteMapEnabled(env)) return { text: "", loc: null };
-  const loc = locateApplyRoute(s);
+  // 2026-11-23 作業員R（#608）: APPLY_ROUTE_NEXT_BY_TURN=on（既定 off）の時だけ、次の一手の候補を番の型・内覧の日で選び直す（apply-route-next.ts・off は同じ物を返す）
+  const loc = withRefinedNext(withLapsedViewing(locateApplyRoute(s), { viewingUnconfirmed: s.viewingUnconfirmed ?? null }, env), { routeType: s.routeType ?? null, upcomingViewingYmd: s.upcomingViewingYmd ?? null, nowMs: s.nowMs }, env);
   return { text: buildApplyRouteBrainText(loc), loc };
 }

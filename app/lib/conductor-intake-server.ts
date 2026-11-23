@@ -97,7 +97,7 @@ export async function runConductorIntake(o: {
     if (pii) skippedDs = `pii:${pii}`;
     else {
       const { callDeepSeek } = await import("./vision-alt-provider");
-      dsP = callDeepSeek(prefix, user, { maxTokens, thinking: false, temperature: 0, timeoutMs: o.timeoutMs ?? 8_000 })
+      dsP = callDeepSeek(prefix, user, { maxTokens, thinking: false, temperature: 0, timeoutMs: o.timeoutMs ?? 8_000, action: "conductor_intake" })
         .then((res) => withNear(parseIntake(res?.text ?? "")))
         .catch(() => null);
     }
