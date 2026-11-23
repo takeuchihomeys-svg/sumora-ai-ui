@@ -15,7 +15,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
-  compareProExam, judgeCase, misjudgeRow, replayCase, stripDerived,
+  compareProExam, judgeCase, misjudgeRow, replayCase, stripDerived, judgeStageB, proTextFromEvidence, type StageBTruth,
   type ProExamCase, type ProExamResult, type ProExamTruth,
 } from "../app/lib/search-pro-exam";
 
@@ -101,4 +101,24 @@ async function run() {
   process.exit(worseN > 0 ? 1 : 0);
 }
 
-(flag("freeze") ? freeze() : run()).catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(2); });
+/**
+ * 段B の下ごしらえ（11/23 作業員G・LLM なし）: 凍結した根拠の行の中の統括Pro の文（元の答え）に段B の判定を当てる。
+ *   元の誤判定を拾えれば、夜に作り直した文に同じ判定を当てる物差しとして使える。
+ *   npx tsx scripts/search-pro-exam.ts --stage-b-dry
+ */
+async function stageBDry() {
+  if (!existsSync(CASES)) throw new Error(`問題集が無い: ${CASES}`);
+  const cases = JSON.parse(readFileSync(CASES, "utf8")) as ProExamCase[];
+  const truth = new Map((JSON.parse(readFileSync(TRUTH, "utf8")) as StageBTruth[]).map((t) => [t.id, t]));
+  let judged = 0, bad = 0;
+  for (const c of cases) {
+    const t = truth.get(c.id); if (!t) continue;
+    const r = judgeStageB(t, proTextFromEvidence(c.evidence));
+    if (!r.judged) continue;
+    judged++; if (!r.ok) bad++;
+    console.log(`${r.ok ? "✓" : "✗"} ${c.id}  言ってはいけない言い方: ${r.forbidHits.join(" ／ ") || "—"}${r.expectMissing.length ? `・足りない: ${r.expectMissing.join(" ／ ")}` : ""}`);
+  }
+  console.log(`段B（元の統括Pro の文）: 判定した ${judged}件・誤りを言っていた ${bad}件`);
+}
+
+(flag("freeze") ? freeze() : flag("stage-b-dry") ? stageBDry() : run()).catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(2); });

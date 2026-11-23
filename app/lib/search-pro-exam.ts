@@ -245,3 +245,24 @@ export function misjudgeRow(results: ProExamResult[], stageBOnly: number): Searc
     detail: { bad: bad.map((r) => ({ id: r.id, misses: r.misses.slice(0, 4) })), stage_b_only: stageBOnly },
   };
 }
+
+// ─── 段B の下ごしらえ（2026-11-23 作業員G・台帳 #474・LLM なしの部分）───────────────
+//   段B は夜に統括Pro（LLM）の文を作り直して、正解の「言ってはいけない誤り」を言っていないかを決まった計算で見る。
+//   ここは判定の純関数だけ。凍結した根拠の行の中の統括Pro の文（ラベルに「統括Pro」を含む行）に当てると、
+//   元の誤判定を拾えるか（＝判定の物差しが効くか）を費用0で確かめられる。
+
+/** 統括Pro（LLM）が書いた文の行だけをつなぐ（ラベルに「統括Pro」を含む行） */
+export function proTextFromEvidence(ev: ReadonlyArray<EvRow>): string {
+  return ev.filter((e) => /統括Pro/.test(String(e?.label ?? ""))).map((e) => `${e.label}: ${e.value ?? ""}`).join("\n");
+}
+
+export type StageBTruth = { id: string; b_forbid?: string[]; b_expect?: string[] };
+
+/** 段B の判定: 言ってはいけない言い方（b_forbid）が無く、言うべき事（b_expect）が全部ある時 ok */
+export function judgeStageB(t: StageBTruth, text: string): { ok: boolean; forbidHits: string[]; expectMissing: string[]; judged: boolean } {
+  const forbid = t.b_forbid ?? [], expect = t.b_expect ?? [];
+  if (!forbid.length && !expect.length) return { ok: true, forbidHits: [], expectMissing: [], judged: false };
+  const forbidHits = forbid.filter((p) => new RegExp(p).test(text));
+  const expectMissing = expect.filter((p) => !new RegExp(p).test(text));
+  return { ok: forbidHits.length === 0 && expectMissing.length === 0, forbidHits, expectMissing, judged: true };
+}
