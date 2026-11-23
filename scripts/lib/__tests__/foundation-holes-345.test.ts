@@ -40,7 +40,7 @@ assert.equal(unitOf("reply_match", "scripts/self-improve.ts")!.key, "scripts/sel
 assert.equal(unitOf("reply_match", "line-watch-eval")!.key, "app/api/cron/line-watch-eval/route.ts");
 assert.equal(unitOf("found:scene_rule_gap", "scripts/self-improve.ts")!.key, "scripts/foundation-fill.ts");
 assert.equal(unitOf("check_gaps:unread", "scripts/self-improve.ts")!.key, "scripts/owner-feedback-check.ts");
-assert.equal(unitOf("image_fill:sent:check:rent", "scripts/image-field-fill-daily.ts")!.owner, "作業員G");
+assert.equal(unitOf("image_fill:sent:check:rent", "scripts/image-field-fill-daily.ts")!.owner, "作業員L"); // 2026-11-23 読む時に今の作業員へ（G→L）
 const units = unitsOf([{ metric: "image_fill:a", source: "scripts/image-field-fill-daily.ts" }, { metric: "image_fill:b", source: "scripts/image-field-fill-daily.ts" }, { metric: "reply_match", source: "scripts/self-improve.ts" }, { metric: "count_verified", source: "x" }], [{ script: "scripts/audit-x.ts", owner: "作業員L", metric: "x:y" }]);
 assert.equal(units.length, 3, "count_verified の行は単位にしない");
 assert.equal(units.find((u) => u.key === "scripts/image-field-fill-daily.ts")!.metrics.length, 2);
@@ -55,7 +55,7 @@ assert.equal(unverifiedOf(units, [{ scope: "scripts/audit-x.ts", day: "2026-11-0
 assert.equal(unverifiedOf(units, [], lc, "2026-11-21").every((u) => u.kind === "never"), true);
 
 const lg = countGapsForLedger([...unverifiedOf(units, [], lc, "2026-11-21"), ...uv]);
-assert.equal(lg.filter((x) => x.title.endsWith("の数えの台本")).length, 3, "一度も照らしていない物は持ち主ごとに1行（G・N・L）");
+assert.equal(lg.filter((x) => x.title.endsWith("の数えの台本")).length, 2, "一度も照らしていない物は持ち主ごとに1行（G→L・N→N2・L＝L と N2 の2行・2026-11-23 読む時に今の作業員へ）");
 assert.equal(lg.find((x) => x.title.endsWith("scripts/audit-x.ts"))!.priority, 10, "ズレは先に");
 
 // ⑤ 主な道の外
