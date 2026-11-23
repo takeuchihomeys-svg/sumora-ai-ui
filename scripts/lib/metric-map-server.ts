@@ -3,14 +3,21 @@
 //   重い読み（60日の AIX の番の木）は夜（JST 22〜9時）だけ・1日1回（今日の行があれば作らない）。昼は前に作った木を読むだけ（営業時間は全件読みしない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
+import { feelingAppealTurnsOf, type FeelingAppealRow } from "../../app/lib/feeling-appeal-map";
+import { pickupUnderstandTurnsOf, type PickupUnderstandRow } from "../../app/lib/pickup-understand-map";
 import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node:fs";
 import { join as joinMM } from "node:path";
 import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
 import { weakStationHolesOf } from "./hole-reach-weekly";
 import {
+<<<<<<< HEAD
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf, ownerOfLeaf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+=======
+  MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, jsonTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+>>>>>>> 9c48e7a2f
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -84,6 +91,12 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
+  } else if (def.builder === "feeling_scene" || def.builder === "appeal_scene") {
+    turns = feelingAppealTurnsOf(rows as FeelingAppealRow[], def.builder === "feeling_scene" ? "feeling" : "appeal") as MapTurn[];
+  } else if (def.builder === "pickup_understand") {
+    turns = pickupUnderstandTurnsOf(rows as PickupUnderstandRow[]) as MapTurn[];
+  } else if (def.builder === "situation_check") {
+    turns = jsonTurnsOf(rows, ["under", "over"], "under");
   } else if (def.builder === "promise_map") {
     turns = promiseMapTurnsOf(rows);
   } else if (def.builder === "closing" || def.builder === "closing_early") {
@@ -104,10 +117,14 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
 export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
-  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts" };
+  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts",
+  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts", situation_check: "scripts/audit-situation-check.ts",
+  pickup_understand: "scripts/audit-pickup-understand-takeuchi.ts" };
 /** 出力の欄の名前が --json でない台本（作業員L の約束の地図は --out） */
-const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out" };
-const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
+const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out", situation_check: "out" };
+const jsonCache = new Map<string, unknown[] | null>();
+/** 台本の結果の行以外の数（作業員L の今どこの地図の unmeasured＝測れなかった竹内さん本人の番の数・takeuchi_turns＝竹内さん本人の番の数。番の数で、turns の欄×番とは数え方が違う） */
+export const jsonMeta = new Map<string, { unmeasured?: number; takeuchi_turns?: number }>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
 /** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
 export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
   const script = def.builder ? JSON_SOURCES[def.builder] : null;
@@ -119,6 +136,7 @@ export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
   const raw = existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown) : null;
   // 約束の地図の json は { root, turns, nodes, table }＝turns を行に
   const rows = raw == null ? null : Array.isArray(raw) ? raw : (((raw as { turns?: unknown[] }).turns) ?? null);
+  if (raw && !Array.isArray(raw)) { const m = raw as { unmeasured?: number; takeuchi_turns?: number }; if (m.unmeasured != null || m.takeuchi_turns != null) jsonMeta.set(script, { unmeasured: m.unmeasured, takeuchi_turns: m.takeuchi_turns }); }
   jsonCache.set(ck, rows);
   return rows;
 }
@@ -358,6 +376,12 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, misses: h.misses, next: `外れ ${h.misses}/${h.n}・${h.reasons?.length ? `弱い駅（${h.reasons.join("・")}）` : "作業も見込みも無い葉"}（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
     }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
+    // 測れなかった番（台本が数を出す根だけ）: 割合の分母に入っていない番を並べて出す
+    const meta = def.builder && JSON_SOURCES[def.builder] ? jsonMeta.get(JSON_SOURCES[def.builder]) : undefined;
+    if (meta?.unmeasured != null) {
+      lines.push(`- 測れなかった番（判断の記録に今の状況が無い・割合に入れていない）: ${meta.unmeasured}${meta.takeuchi_turns != null ? `/${meta.takeuchi_turns}番` : "番"}`);
+      qd.push({ day, metric: `map:${def.metric}:unmeasured`, scope: "all", value: meta.unmeasured, n: meta.takeuchi_turns ?? null });
+    }
     qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: nodes.length },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: hs.length, n: ranked.length },
