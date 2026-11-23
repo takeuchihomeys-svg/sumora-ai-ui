@@ -10,7 +10,7 @@ import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, jsonTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -86,6 +86,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
   } else if (def.builder === "feeling_scene" || def.builder === "appeal_scene") {
     turns = feelingAppealTurnsOf(rows as FeelingAppealRow[], def.builder === "feeling_scene" ? "feeling" : "appeal") as MapTurn[];
+  } else if (def.builder === "situation_check") {
+    turns = jsonTurnsOf(rows, ["under", "over"], "under");
   } else if (def.builder === "promise_map") {
     turns = promiseMapTurnsOf(rows);
   } else if (def.builder === "closing" || def.builder === "closing_early") {
@@ -107,9 +109,9 @@ const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
 export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
   closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts",
-  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts" };
+  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts", situation_check: "scripts/audit-situation-check.ts" };
 /** 出力の欄の名前が --json でない台本（作業員L の約束の地図は --out） */
-const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out" };
+const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out", situation_check: "out" };
 const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
 /** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
 export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {

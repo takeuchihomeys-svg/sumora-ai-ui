@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
 let pass = 0, fail = 0;
@@ -165,6 +165,8 @@ t("届いているか: 材料の行が測れなかった時は未確認", conduc
   const s = feelingAppealSummaryOf(rows);
   t("場面ごとの数え", s.ack.n === 2 && s.ack.feelMissed === 1 && s.ack.appealOther === 1 && s.ack.feelOk === 1);
 }
+
+t("今どこの地図の番（L の形）", (() => { const x = jsonTurnsOf({ root: "situation:match", turns: [{ id: 1, kind: "po", scene: "ack", miss: "ok" }, { id: 2, kind: "tv", scene: "viewing", miss: "over", cause: "counting" }, { id: 3, kind: "po", scene: "ack", miss: "???" }] }, ["under", "over"], "under"); return x[0].cause === null && x[1].miss === "over" && x[1].cause === "counting" && x[2].miss === "under"; })());
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
