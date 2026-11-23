@@ -31,6 +31,13 @@ ok("指示文が全問に入るスイッチは確かめられない（材料の�
 ok("対応表に無いスイッチは確かめられない", st(switchReachOf(["FOO_BAR"], now), "FOO_BAR") === "unknown");
 ok("CHECK_RESULT_STATE: 空室確認のタスクが写しに0行＝効いていない", st(switchReachOf(["CHECK_RESULT_STATE"], night), "CHECK_RESULT_STATE") === "no_material");
 ok("了承の細かいスイッチは印が材料の行まで（部分の注）", !!switchReachOf(["ACK_PICKUP_AIX_PATH"], night)[0].note);
+{
+  const rows = [{ id: "q1", metaKeys: ["turn_read", "reply_mode"] }, { id: "q2", metaKeys: ["reply_mode"] }];
+  const r = switchReachOf(["TURN_READ", "LATENT_FIVE"], rows);
+  ok("結果の欄で見る印（TURN_READ は turn_read の欄・LATENT_FIVE は欄が無ければ効いていない）", st(r, "TURN_READ") === "reached" && r[0].hit.join(",") === "q1" && st(r, "LATENT_FIVE") === "not_reached");
+  ok("照らし合わせの印は入る前の版なら確かめられない", st(switchReachOf(["CONDUCTOR_EXCHANGE_LEDGER_BRAIN"], rows, () => false), "CONDUCTOR_EXCHANGE_LEDGER_BRAIN") === "mark_after_head"
+    && st(switchReachOf(["CONDUCTOR_EXCHANGE_LEDGER_BRAIN"], [{ id: "q1", marks: { exchange: 80 } }]), "CONDUCTOR_EXCHANGE_LEDGER_BRAIN") === "reached");
+}
 ok("メタの on のスイッチだけ", onSwitchesOfMeta({ envFp: { pairs: { A: "on", B: "off", C: " ON " } } }).join(",") === "A,C" && onSwitchesOfMeta(null).length === 0);
 
 console.log(`exam-switch-reach: PASS ${pass} / FAIL ${fail}`);

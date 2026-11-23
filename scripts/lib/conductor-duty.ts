@@ -17,13 +17,13 @@ export const CONDUCTOR_DUTY: readonly DutyRow[] = [
   { id: "n.chrono", name: "時系列", owner: "作業員L", have: ["read.timeline"], use: ["conductor.brief"], reflect: ["writer.situation"] },
   { id: "route.path", name: "道筋（申込までの地図）", owner: "作業員A", have: ["read.route_map", "read.route_substate"], use: ["conductor.aims"], reflect: ["conductor.compose_roles"], parts: ["ROUTE_TO_BRIEF", "ROUTE_PATH_TO_BRIEF", "BRAIN_TURN_AIMS"] },
   { id: "route.now", name: "今どこ", owner: "作業員A", have: ["read.situation_now", "read.route_map"], use: ["next.situation_grasp"], reflect: ["conductor.brief"] },
-  { id: "n.closing", name: "決めに行く", owner: "作業員M", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
-  { id: "n.flex", name: "臨機応変", owner: "作業員N", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
-  { id: "n.trust", name: "信頼", owner: "作業員N・作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
-  { id: "n.feeling", name: "気持ち", owner: "作業員K2・作業員L", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
-  { id: "n.appeal", name: "訴求", owner: "作業員K2", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"] },
-  { id: "n.asks", name: "要件", owner: "作業員M", have: ["read.turn_read"], use: ["conductor.brief"], reflect: ["conductor.delivery"] },
-  { id: "n.link", name: "つなぎ", owner: "作業員H・作業員L", have: ["read.uptake"], use: ["conductor.combo"], reflect: ["writer.reply"] },
+  { id: "n.closing", name: "決めに行く", owner: "作業員P", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
+  { id: "n.flex", name: "臨機応変", owner: "作業員N2", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
+  { id: "n.trust", name: "信頼", owner: "作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
+  { id: "n.feeling", name: "気持ち", owner: "作業員P", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
+  { id: "n.appeal", name: "訴求", owner: "作業員P", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"] },
+  { id: "n.asks", name: "要件", owner: "作業員A", have: ["read.turn_read"], use: ["conductor.brief"], reflect: ["conductor.delivery"] },
+  { id: "n.link", name: "つなぎ", owner: "作業員L", have: ["read.uptake"], use: ["conductor.combo"], reflect: ["writer.reply"] },
   { id: "n.lessons", name: "統括の学び", owner: "作業員L", have: ["rag.near_focus"], use: ["conductor.near"], reflect: ["conductor.brief"], parts: ["CONDUCTOR_LESSONS"] },
 ];
 

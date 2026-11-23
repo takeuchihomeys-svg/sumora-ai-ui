@@ -13,6 +13,9 @@ import type { KbScene } from "../app/lib/design-knowledge-rag";
 export type KbEvalQ = { q: string; gold: string[]; scene?: KbScene; ho?: boolean };
 
 export const KB_EVAL: KbEvalQ[] = [
+  // 2026-11-23 作業員A: 統括の受け持ち表（#662・342a326e・89672025）
+  { q: "統括が土台を持っているのに文まで届いているかはどう確かめる", gold: ["342a326e"] },
+  { q: "下書きに文の設計図が入っている番が少ないのは部品が off だからか", gold: ["89672025"], ho: true },
   // 2026-11-23 作業員A: 申込までの地図の今どこの読み違い（3907f365）・進みの数え方の落とし穴（54d1370e）・地図は道筋（2d1c4c74）
   { q: "見積書を送った後なのに地図がまだ提案中になっているのをどう見つける", gold: ["3907f365"] },
   { q: "内覧予定の駅がいつも止まった扱いで弱い駅に上がってくる", gold: ["54d1370e"] },

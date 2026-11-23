@@ -112,7 +112,7 @@ export function emptyPlanStats(metas: ReadonlyArray<Record<string, unknown>>): {
 // ── 届いたかの確かめ（DELIVERY_CHECK=shadow・既定 off）: 欄ごと・下の欄ごとに書き手まで届いたか ─────────────
 import { SUB_FIELDS } from "./decided-subfields";
 type Env = Record<string, string | undefined>;
-export const deliveryCheckMode = (env: Env = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" => { const v = (env.DELIVERY_CHECK ?? "").trim().toLowerCase(); return v === "shadow" || v === "on" ? "shadow" : "off"; };
+export const deliveryCheckMode = (env: Env = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" => { const v = (env.DELIVERY_CHECK ?? "shadow").trim().toLowerCase(); return v === "off" ? "off" : "shadow"; }; // 2026-11-23 作業員A（統括役の決め・11/21「記録だけのスイッチは既定 on」）: 既定 shadow（記録だけ）・止める DELIVERY_CHECK=off
 /** 下の欄の親の欄 → 届き方の表（DELIVERY_FIELDS）のどの欄で書き手まで届いたかを見るか */
 export const SUB_PARENT: Readonly<Record<string, string>> = {
   focus: "focus", fact: "asks", latent: "latent_feeling", near: "near", our_side: "our_side", hooked: "hooked", aim: "aim",

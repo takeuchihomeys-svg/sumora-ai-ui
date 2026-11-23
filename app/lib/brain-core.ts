@@ -3286,13 +3286,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
+  // 2026-11-23 作業員A（#648 の点検の印）: 照らし合わせの残りをブレインに足した時の字数（下の material_marks.exchange・記録だけ・off の時は付かない）
+  let exchangeMarkLen = 0;
   // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
   try {
     const el = await import("@/app/lib/exchange-ledger");
     if (el.exchangeLedgerBrainOn()) {
       const turnAtEL = typedMessages[0]?.created_at ?? null;
       const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
-      if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
+      if (lineEL) { exchangeMarkLen = lineEL.length; customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
     }
   } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
@@ -3618,6 +3620,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (exchangeMarkLen) materialMarks.exchange = exchangeMarkLen; // 2026-11-23 作業員A: CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on で1行を足した番だけ（動きは変えない）
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
