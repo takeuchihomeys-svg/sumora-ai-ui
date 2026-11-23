@@ -25,6 +25,19 @@ export type ShouldBeAix = {
 };
 export type ShouldBeMode = "hand" | "aix";
 
+/**
+ * 2026-11-23 作業員N2（台帳 #641・統括役の頼み）: 手打ちの網の2版（既定 off・AIX_SHOULD_BE_HAND_V2=on）
+ *   ① 全力サポート: 「出次第／入り次第…お送り」だけの文は約束の続きの一文（返信の番）＝strong にしない。strong は探した結果の報告
+ *      （ご希望のお部屋が募集に出ていない・見つかりませんでした）がある時だけ。60日の全力サポートの外れ 4/5 は全部この一文で strong になっていた
+ *   ② 申込の状況: 「〇人審査中・〇番手でのお申込」（スタッフだけが知る申込の状況）は物件確認した（申込状況）の strong。今は「募集中の結果」の weak（作業員A の 6059）
+ *   使う所: 見張りの採点（line-watch-judge の applyAixMapping はボタンで比べる＝どちらもボタンは変わらない）・意味の学び（strong の手打ちをお手本の候補に）・audit-aix-turn-judgment（strong の手打ちを AIX の番に）
+ */
+export function shouldBeHandV2On(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.AIX_SHOULD_BE_HAND_V2 ?? "").trim().toLowerCase() === "on";
+}
+/** 申込の状況の答え（〇人審査中・〇番手でのお申込・〇人待ち） */
+export const APPLY_STATUS_ANSWER_RE = /[0-9０-９一二三四五]\s*(?:人|名|組)(?:が|の方が)?(?:審査中|お申し?込み?中|申込中|お待ち|待ち)|[0-9０-９一二三四五]\s*番手(?:以降)?(?:で|に|と)?(?:の)?(?:お申し?込み?|ご案内|受付|なり)/;
+
 const N = (s: string) => String(s ?? "").normalize("NFKC");
 /** 約束だけ（結果を言っていない）＝AIX ではなく約束の返信 */
 const PROMISE_RE = /確認させて(?:頂|いただ)きます|確認(?:出来|でき)次第|お調べ(?:致|いた)します|お問い合わせ(?:致|いた)します|作成し(?:て)?お送りさせて(?:頂|いただ)きます|ピックアップし(?:て)?お送りさせて(?:頂|いただ)きます|(?:出来|でき)次第(?:ご連絡|お送り)/;
@@ -38,7 +51,7 @@ const NEW_LISTING_RE = /新着[^\n。]{0,30}(?:お部屋|物件)(?:が)?募集�
 type Hit = { key: string; strength: "strong" | "weak"; why: string };
 
 /** 物件確認した（結果・条件）のピッカー。結果の報告の形がある時だけ */
-function checkResultHits(t: string, mode: ShouldBeMode): Hit[] {
+function checkResultHits(t: string, mode: ShouldBeMode, v2 = false): Hit[] {
   const out: Hit[] = [];
   const report = CONFIRM_REPORT_RE.test(t) || /お待たせ(?:致し|いたし)ました/.test(t) || /管理会社(?:様|担当者?)?(?:に|へ)(?:確認|問い合わせ)/.test(t);
   const ends = RESULT_END_RE.test(t);
@@ -67,6 +80,16 @@ function checkResultHits(t: string, mode: ShouldBeMode): Hit[] {
   // 入居日と退去日は1つに（入居できる日を伝える＝mgmt_move_in）
   const mi = out.findIndex((o) => o.key.endsWith("/mgmt_move_in"));
   if (mi >= 0) for (let i = out.length - 1; i >= 0; i--) if (out[i].key.endsWith("/vacate_date")) out.splice(i, 1);
+  // 2026-11-23 作業員N2（AIX_SHOULD_BE_HAND_V2・台帳 #641）: 申込の状況の答え（〇人審査中・〇番手でのお申込）は、結果の言い切りか報告の形がある時だけ
+  //   物件確認した（申込状況）の strong。募集中の結果（available）より先に置く。他のはっきりした確認の結果（審査・交渉・専任など）がある文では添える中身（weak）にとどめる
+  //   （申込の案内の中の「2番手でお申込みと同時並行で…」のような約束の文は言い切りが無いので当てない）
+  if (v2 && APPLY_STATUS_ANSWER_RE.test(t) && (report || ends)) {
+    const AS = "property_check_result/mgmt_application_status";
+    for (let i = out.length - 1; i >= 0; i--) if (out[i].key === AS || out[i].key === "property_check_result/available") out.splice(i, 1);
+    const otherSure = out.some((o) => o.strength === "strong" && !o.key.endsWith("/interior_photo"));
+    if (otherSure) out.push({ key: AS, strength: "weak", why: "申込の状況（番手・審査中）" });
+    else out.unshift({ key: AS, strength: "strong", why: "申込の状況（番手・審査中）" });
+  }
   return out;
 }
 
@@ -74,8 +97,9 @@ function checkResultHits(t: string, mode: ShouldBeMode): Hit[] {
  * 文 → 本来の AIX（無ければ null）。mode="hand" は手打ちの文（AIX の定型の形でなくてよいが、約束・聞き返しだけは当てない）、
  *   mode="aix" は AIX の送信の文（押したボタンを見ずに中身だけで読む）。
  */
-export function shouldBeAixOf(textIn: string | null | undefined, o: { mode?: ShouldBeMode } = {}): ShouldBeAix | null {
+export function shouldBeAixOf(textIn: string | null | undefined, o: { mode?: ShouldBeMode; env?: Record<string, string | undefined> } = {}): ShouldBeAix | null {
   const mode = o.mode ?? "hand";
+  const v2 = shouldBeHandV2On(o.env);
   const t = N(textIn ?? "").trim();
   if (t.replace(/\s/g, "").length < (mode === "aix" ? 12 : 20)) return null;
   const hits: Hit[] = [];
@@ -127,10 +151,10 @@ export function shouldBeAixOf(textIn: string | null | undefined, o: { mode?: Sho
   }
 
   // ── 確認の結果・条件 ──
-  for (const h of checkResultHits(t, mode)) add(h.key, h.strength, h.why);
+  for (const h of checkResultHits(t, mode, v2)) add(h.key, h.strength, h.why);
   if (!recForm && !hits.some((h) => h.key.startsWith("estimate_sheet")) && /御見積書(?:と(?:なり|併せ)|(?:を)?同封|お送り)/.test(t)) add("estimate_sheet/single", "weak", "御見積書の送付");
   // 引き続き探す（確認の結果・物件の束の後に添える事が多い＝他の中身があれば弱い）
-  if (/(?:ご満足|ご希望)[^\n。]{0,20}(?:物件|お部屋)(?:が)?(?:募集に)?出て(?:い)?ない|見つかるまで[^\n。]{0,20}(?:全力で)?サポート|出次第(?:すぐに)?[^\n。]{0,20}お送り/.test(t) && !sendForm && !recForm && !/ピックアップし(?:て)?お送り|はじめまして|担当させて(?:頂|いただ)きます/.test(t)) add("zenryoku_support", !hits.length && /出て(?:い)?ない|見つかりませんでした|出次第|入り次第/.test(t) ? "strong" : "weak", "引き続き探す（全力サポート）");
+  if (/(?:ご満足|ご希望)[^\n。]{0,20}(?:物件|お部屋)(?:が)?(?:募集に)?出て(?:い)?ない|見つかるまで[^\n。]{0,20}(?:全力で)?サポート|出次第(?:すぐに)?[^\n。]{0,20}お送り/.test(t) && !sendForm && !recForm && !/ピックアップし(?:て)?お送り|はじめまして|担当させて(?:頂|いただ)きます/.test(t)) add("zenryoku_support", !hits.length && (v2 ? /出て(?:い)?ない|出ておりません|見つかりませんでした|見つかっておりません/ : /出て(?:い)?ない|見つかりませんでした|出次第|入り次第/).test(t) ? "strong" : "weak", "引き続き探す（全力サポート）");
   // 保証会社: 物件の保証会社の確認結果（号室・物件・確認）は mgmt_guarantor・一般の説明は guarantor_info
   if (/保証会社(?:は|が)[^\n。]{1,20}(?:となります|です)/.test(t) && !hits.some((h) => h.key.endsWith("/mgmt_guarantor"))) {
     add(/号室|の保証会社が|確認/.test(t) ? "property_check_result/mgmt_guarantor" : "guarantor_info", "weak", "保証会社の種類");
