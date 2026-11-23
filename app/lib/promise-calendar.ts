@@ -10,6 +10,7 @@
 //   → 一次証拠（送信時の記録）から決定論で作る。印は手入力の型（【時間確保】と同じ notes 先頭）に合わせる。
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
+import { promiseDueFromText } from "./promise-due-text";
 import { aixNewPickers1020Enabled } from "./aix-new-pickers";
 import { aixOccupantPickerEnabled, OCCUPANT_CONFIRM_TOPIC } from "./aix-occupant-picker";
 import { isConfirmPartyObject, confirmTopicsForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
@@ -113,6 +114,27 @@ export function promiseStartAt(sentAt: string, sentence: string | null | undefin
   return new Date(`${ymd}T${pad2(TOMORROW_PROMISE_HOUR)}:00:00+09:00`).toISOString();
 }
 
+/**
+ * 2026-11-23 作業員L（統括役の頼み・e4bb495d・ac34b364）: カレンダーの【今日中】が、約束の文の日付（「12月17日に…お送り」「12月中旬ごろになりましたら…再開」）を
+ *   読めずに約束した日を期日にしていた（行動台帳の dueText＝約束の言葉のある文を全部・文の終わりまで、からは 12/17・12/20 と読める）。
+ *   CALENDAR_PROMISE_DUE_TEXT=on（既定 off）の時だけ、行動台帳と同じ promise-due-text で dueText から期日を読み、約束した日より後の日なら
+ *   【今日中】を付けずにその日の朝（TOMORROW_PROMISE_HOUR の10時）に置く。読めない・同じ日の時は今まで通り
+ */
+type CalEnv = Record<string, string | undefined>;
+export const calendarPromiseDueTextOn = (env: CalEnv = typeof process !== "undefined" ? process.env : {}) => (env.CALENDAR_PROMISE_DUE_TEXT ?? "").trim().toLowerCase() === "on";
+const jstYmdOf = (ms: number) => { const d = new Date(ms + 9 * 3_600_000); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+/** dueText から読んだ期日が約束した日より後なら、その日の朝の start_at（でなければ null） */
+export function promiseLaterDueStartAt(sentAt: string, dueText: string | null | undefined): string | null {
+  if (!dueText) return null;
+  const at = Date.parse(sentAt);
+  if (!Number.isFinite(at)) return null;
+  const d = promiseDueFromText(dueText, at);
+  if (d.by === "default72h") return null;
+  const dueYmd = jstYmdOf(d.ms - 1);
+  if (dueYmd <= jstYmdOf(at)) return null;
+  return new Date(`${dueYmd}T${pad2(TOMORROW_PROMISE_HOUR)}:00:00+09:00`).toISOString();
+}
+
 export type PromiseEventRow = {
   title: string; event_type: string; customer_name: string | null; conversation_id: string;
   start_at: string; all_day: boolean; notes: string;
@@ -126,8 +148,9 @@ export type PromiseEventRow = {
  */
 export function promiseEventRows(
   entries: ReadonlyArray<Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">>,
-  o: { customerName: string | null | undefined; conversationId: string; sentAt: string },
+  o: { customerName: string | null | undefined; conversationId: string; sentAt: string; env?: CalEnv },
 ): PromiseEventRow[] {
+  const dueTextOn = calendarPromiseDueTextOn(o.env);
   const name = (o.customerName ?? "").trim();
   const out: PromiseEventRow[] = [];
   for (const e of entries) {
@@ -149,9 +172,10 @@ export function promiseEventRows(
     const label = head.slice(PROMISE_MUST_MARK.length).replace(/【[^】]*待ち】$/, "");
     // 物件を送れば決まる約束（ピックアップ・御見積書）は今日中のタスク。カレンダーで一目で分かるよう頭に印を付ける
     //   2026-10-01: 待ちの約束と、日付の語（明日・週明け）がある約束には付けない（明日の約束に【今日中】が付いていた 𝑛𝑎 id 919）
-    const today = TODAY_KINDS.has(e.kind) && !waiting && timing !== "date" ? TODAY_MARK : "";
+    const laterDue = dueTextOn && !waiting ? promiseLaterDueStartAt(o.sentAt, e.detail?.dueText) : null;
+    const today = TODAY_KINDS.has(e.kind) && !waiting && timing !== "date" && !laterDue ? TODAY_MARK : "";
     // 「明日確認してご連絡」と約束した分は翌日の午前中に置く（営業時間外の約束が当日の夜に埋もれない）。待ちの約束は約束した時のまま
-    const startAt = waiting ? o.sentAt : promiseStartAt(o.sentAt, sentence);
+    const startAt = waiting ? o.sentAt : laterDue ?? promiseStartAt(o.sentAt, sentence);
     out.push({
       title: `${today}${name ? `${name} ${label}` : label}`,
       event_type: PROMISE_SPEC[e.kind].eventType,
