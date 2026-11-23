@@ -125,6 +125,8 @@ async function main() {
       insight: `場面 ${v.scene} で、竹内さん本人の番の送り方の形は ${v.top} が ${pct(v.share)}（${v.n}番）。次は ${v.second ?? "なし"}。R＝返信・A:種類＝AIX・後で＝1時間より後。要件ごとの割り振り（ask-ledger・ask-route）の場面の既定にする案。`,
       rationale: `親 6bb471bd（竹内さん 11/15「どの部分を返信で答え、どの部分を AIX で送るかを要件ごとに把握」）の場面ごとの決まり。必須にしてよいのは過半数が守っている形だけ（CLAUDE.md の「実送信で線を引く」）。数え: scripts/audit-ask-route-takeuchi.ts --days=${days}`,
       context: `${new Date().toISOString().slice(0, 10)} 作業員M（台帳 #503）の自動の案。登録の前に統括役が読む`, applied_to: "scripts/audit-ask-route-takeuchi.ts・app/lib/ask-ledger.ts",
+      // 2026-11-23 作業員N2: 案の目印。kb-insert はこれがあると --approved 無しでは入れない（11/21 に読む前の案が現行で入った穴）
+      draft: "audit-ask-route-takeuchi --kb-draft",
     }));
     const asks = verdicts.filter((v): v is Extract<SceneShapeVerdict, { kind: "ask" }> => v.kind === "ask").map((v) => ({
       scene: v.scene, n: v.n, question: `場面 ${v.scene} の時、返信と AIX の送り方は「${v.top}」と「${v.second}」のどちらを基本にしますか`,
