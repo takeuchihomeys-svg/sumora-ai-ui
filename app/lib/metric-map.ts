@@ -169,6 +169,8 @@ export const MAP_ROOTS: MapRootDef[] = [
     primary: true, okLabel: "期限の内に果たした", missLabel: "遅れた・果たしていない", source: "scripts/audit-promise-map.ts（作業員L・scripts/lib/promise-map.ts）", owner: "作業員L", qdScope: "takeuchi" },
   // 2026-11-23 作業員A（#479）: 物件ピックアップで選んだ理由が付いた割合（7日 14/30＝46.7%・前 40.6%）。欠け16の葉: 画像送りで判定の札にする所が無い 10（SIP_JUDGE 既定 off の側）・手で選んで資料も画像の読みも無い 4・条件の欄が空 1・売上サポの「送った」の印が無い（連携の切れ目）1
   { metric: "growth:pickup_select:", label: "物件ピックアップ › 選んだ理由が付いた割合（7日・欄ごと）", writerSelect: "all", windowDays: 7, dims: [], builder: null, prefix: true, source: "scripts/audit-pickup-select-link.ts（作業員A・growth:pickup_select:理由あり）", owner: "作業員A", qdScope: "all" },
+  // 2026-11-23 作業員A（#662 統括の受け持ち表・scripts/lib/conductor-duty.ts）: 土台ごとに 持つ／使う／反映 が連携の地図でつながっている数（毎朝の芯）
+  { metric: "core:conductor_duty:", label: "統括の受け持ち › 土台ごとに持つ・使う・反映がつながっている数（have／use／reflect）", writerSelect: "all", windowDays: 1, dims: [], builder: null, prefix: true, source: "scripts/lib/conductor-duty.ts（作業員A・#662）", owner: "作業員A", qdScope: "all" },
   // 2026-11-23 作業員N2 の名前の候補（統括役経由）: 前方一致の束で並べる（書くのは N2・名前が決まったらここを合わせる。範囲は仮）
   { metric: "route:sg_match:", label: "申込までの地図 › 地図の駅と判断の記録の段の一致（駅ごと）", writerSelect: "all", windowDays: 60, dims: [], builder: null, prefix: true, source: "作業員N2 の候補（route:sg_match:<駅>）", owner: "作業員N2", qdScope: "takeuchi" },
   { metric: "foundation:link:", label: "土台 › 連携（作った部品が本番に届いているか・欄ごと）", writerSelect: "all", windowDays: 3, dims: [], builder: null, prefix: true, source: "作業員N2 の候補（foundation:link:*）", owner: "作業員N2", qdScope: "all" },
@@ -694,7 +696,8 @@ export const LEAF_MATERIAL_ROWS: Array<{ match: string; rows: string[] }> = [
   { match: "kind=zenryoku_support", rows: ["read.situation_now", "read.mindset"] },
   { match: "scene=ack", rows: ["read.promise_read", "read.ack_confirm"] },
   { match: "station=", rows: ["read.route_map", "read.route_substate"] },
-  { match: "kind=application_push", rows: ["read.route_map", "read.situation_now"] },
+  { match: "kind=application_push", rows: ["read.mindset", "read.route_map", "read.situation_now"] }, // 作業員A の統括の受け持ち表（#662・決めに行く＝持つ read.mindset）と揃えた
+  { match: "kind=hand", rows: ["read.mindset", "read.route_map"] },
 ];
 export function materialRowsOfLeaf(key: string): string[] {
   return [...new Set(LEAF_MATERIAL_ROWS.filter((x) => key.includes(x.match)).flatMap((x) => x.rows))];
