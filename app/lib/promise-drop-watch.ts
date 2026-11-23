@@ -37,6 +37,7 @@ export type PdKind = "pickup" | "check";
  * 約束を読む前に、約束でない節を落とす（2026-11-21 作業員N の B1 の確かめで見つかった穴）:
  *   穴1 過去形の報告（「御見積書をお送りさせて頂きました」「確認させて頂きましたところ」）は約束でない
  *   穴2 条件つき（「ご条件お送り頂きますと、ピックアップさせて頂きます」）は、お客様が条件を送るまで期限が始まらない＝約束に数えない
+ *   穴4（2026-11-23 作業員L・#638）: 時期の条件つき（「12月中旬ごろになりましたら本格的にお部屋探し再開させていただきます」）もその時期まで始まらない
  *   節は 。！!？?・改行 で切る（同じ節の中に条件の言葉があれば、その節だけ落とす）
  */
 export function promiseClausesOf(text: string): string {
@@ -45,14 +46,18 @@ export function promiseClausesOf(text: string): string {
   if (/ご入力(?:ください|下さい|の程|をお願い|頂けますと)/.test(t)) return "";
   return t.split(/(?<=[。！!？?\n])/).filter((c) =>
     !/(?:頂き|いただき|致し|いたし)ました(?:[！!。？?\n]|ところ|$)/.test(c) &&
-    !/(?:頂き|いただき)ますと|(?:頂|いただ)ければ|(?:頂|いただ)けましたら|(?:頂|いただ)けますと|(?:下さ|くださ)いましたら/.test(c),
+    !/(?:頂き|いただき)ますと|(?:頂|いただ)ければ|(?:頂|いただ)けましたら|(?:頂|いただ)けますと|(?:下さ|くださ)いましたら|(?:に|ごろに|頃に)?なりましたら/.test(c),
   ).join("");
 }
 export function promiseDropKindOf(text: string): PdKind | null {
   const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
-  if (/ピックアップ(?:させて頂|して(?:お送り|送らせ)|出来次第お送り|でき次第お送り)|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)/.test(t)) return "pickup";
+  // 2026-11-23 作業員L（台帳 #638・行動台帳の本当に未履行8件のうち3件が見張りに出なかった）: ひらがなの「させていただき」・
+  //   「ピックアップしお送り」（「して」でなく「し」）・「お部屋探し再開させて頂きます」も約束（7ec16043・a59bedf9・ac34b364 の形）
+  if (/ピックアップ(?:させて(?:頂|いただ)|し(?:て)?(?:お送り|送らせ)|出来次第お送り|でき次第お送り)|お部屋(?:を)?(?:新たに)?(?:探|お探し)して(?:お送り|送らせ)|お部屋探し(?:を)?再開させて(?:頂|いただ)/.test(t)) return "pickup";
+  //   ひらがなの確認は「…させていただきます」か「…させていただき、…次第／ご連絡」だけ（「管理会社に確認させていただき〇〇が採用されており」は結果の報告・ac34b364 の 11/18 の通）
   if (/(?:募集状況|空き状況|空室状況)(?:を)?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
+  if (/(?:(?:募集状況|空き状況|空室状況)(?:を)?(?:確認|お調べ)|管理会社(?:に|へ)(?:確認|交渉))させていただ(?:きます|き[、,]?[^。！!？?\n]*(?:次第|ご連絡|お送り|ご報告))/.test(t)) return "check";
   return null;
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
@@ -81,6 +86,15 @@ export function promiseKindNameOf(text: string): PromiseKindName | null {
   if (/(?:折り返し|改めて)(?:お電話|ご連絡のお電話)させて頂|お電話させて頂/.test(t)) return "callback";
   if (/させて頂きます/.test(t) && /(?:確認|お調べ|お送り|ご連絡)/.test(t)) return "other";
   return null;
+}
+/**
+ * 1通の中の約束の文（節）だけ（2026-11-23 作業員L・台帳 #639）: 通の全文から期日を読むと、同じ通の別の文の日付の言葉（入居時期など）を
+ *   期日に取る（e4bb495d: 11/18 の「お探しさせて頂きます」の期日を 12/17 と読み、見張りに出なかった）。行動台帳（約束の文だけで読む）と同じ読み方にする。
+ *   約束の言葉のある節が無ければ全文（今と同じ）
+ */
+export function promiseSentenceOf(text: string): string {
+  const cs = promiseClausesOf(text).split(/(?<=[。！!？?\n])/).filter((c) => promiseKindNameOf(c));
+  return cs.length ? cs.join("") : String(text ?? "");
 }
 /** 期限: 約束の文の期限の言葉（promise-due.promiseDueDay・「明日」「本日中」「週明け」「〇日までに」）ならその日の終わり（JST 24時）、無ければ 72時間 */
 export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by: "words" | "default72h" } {
@@ -153,7 +167,7 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
   for (const [kind, p] of byKind) {
     const t0 = Date.parse(p.at);
     if ((nowMs - t0) / 864e5 > maxDays) continue;
-    const due = promiseDeadlineMs(p.text, t0);
+    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0);
     if (nowMs < due.ms) continue;
     if (promiseFulfilledBy({ at: p.at, kind }, { msgs: ms, aix: input.aix, sent: input.sent })) continue;
     if (promiseClosedConversation(input.status, ms, p.at)) continue;
@@ -188,7 +202,7 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   const t0 = Date.parse(promise.at);
   const ageH = (nowMs - t0) / 36e5;
   // 期限（作業員N の B1 と同じ）: 文の期限の言葉の日の終わり／無ければ 72時間。minH を渡された時はそれを使う（テスト）
-  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promise.text, t0).ms;
+  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0).ms;
   if (!(nowMs >= due) || ageH > maxDays * 24) return null;
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
   if (promiseFulfilledBy({ at: promise.at, kind: promise.kind }, { msgs: ms, aix: input.aix, sent: input.sent })) return null;
