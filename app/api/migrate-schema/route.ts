@@ -1325,6 +1325,8 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_start_at ON calendar_events(start
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar_events ALTER COLUMN conversation_id TYPE TEXT USING conversation_id::TEXT;
 ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS is_done BOOLEAN NOT NULL DEFAULT FALSE;
+-- 2026-11-23 作業員L（#663）: 済みにした時刻（済み＝今・戻し＝null・app/lib/calendar-done-at.ts）。試験の組み直しがその番の時刻の済み／開いたを読む
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS done_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_calendar_events_pending ON calendar_events(start_at) WHERE is_done = false;
 
 -- calendar_event_deletions: 自動で消したカレンダーの予定の控え（2026-09-30 竹内: お客様が決まった内覧を取りやめた時に予定を自動で消す）

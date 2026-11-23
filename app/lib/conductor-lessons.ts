@@ -64,10 +64,21 @@ export function excludeSourcesFor(conversationId: string | null | undefined): st
 }
 
 /** 上位 N 件（同じ学びの文は1つに） */
-export function pickLessons(rows: ReadonlyArray<LessonRow>, conversationId: string | null | undefined, top = LESSONS_TOP): LessonRow[] {
+/**
+ * 2026-11-23 作業員L（統括役の決め・明日の夜の組の前の確かめで見つけた穴）: 似ている度合いの下限が無く、どの番でも学びが上位3つまで読まれていた
+ *   （試験の問題14問で、効く問題も守りも漏れの線も 0.51〜0.61 でほぼ同じに当たった）。本番も試験も同じ下限（既定 0.62・CONDUCTOR_LESSONS_MIN_SIM で変える）。
+ *   似ている度合いの無い行（RPC を通らない読み）は今まで通り残す
+ */
+export const LESSONS_MIN_SIM_DEFAULT = 0.62;
+export function lessonsMinSim(env: Env = typeof process !== "undefined" ? process.env : {}): number {
+  const v = Number((env.CONDUCTOR_LESSONS_MIN_SIM ?? "").trim());
+  return (env.CONDUCTOR_LESSONS_MIN_SIM ?? "").trim() !== "" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : LESSONS_MIN_SIM_DEFAULT;
+}
+export function pickLessons(rows: ReadonlyArray<LessonRow>, conversationId: string | null | undefined, top = LESSONS_TOP, minSim = lessonsMinSim()): LessonRow[] {
   const seen = new Set<string>();
   const out: LessonRow[] = [];
   for (const r of excludeOwnConversation(rows, conversationId)) {
+    if (typeof r.similarity === "number" && r.similarity < minSim) continue;
     const k = clip(r.lesson, LESSON_MAX_CHARS);
     if (!k || seen.has(k)) continue;
     seen.add(k); out.push(r);

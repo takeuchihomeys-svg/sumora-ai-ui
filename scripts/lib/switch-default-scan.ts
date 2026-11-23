@@ -14,7 +14,9 @@ export function defaultOfSnippet(snip: string, name: string): string {
   const given = dflt ? dflt[1].trim().toLowerCase() : null;
   if (given) return given;
   // ?? "" か ?? 無し: 比べ方で決める（最初に出た比べ方を見る）
-  const s = after.slice(0, 220);
+  // 2026-11-23 作業員L: 比べ方は同じ行のを先に見る（次の行の別のスイッチの !== "off" を拾い、SITUATION_TIMELINE_WIDE の既定 off を on と読んでいた）
+  const s0 = after.slice(0, 220), line0 = s0.split(/\r?\n/)[0];
+  const s = /===|!==|\.includes\(/.test(line0) ? line0 : s0;
   const m1 = s.match(/===\s*["']off["']\s*\?\s*["']off["']\s*:\s*["']([a-z0-9_]+)["']/);
   if (m1) return m1[1];
   const m2 = s.match(/===\s*["']([a-z0-9_]+)["']\s*\?\s*["']([a-z0-9_]+)["']\s*:\s*["']([a-z0-9_]+)["']/);

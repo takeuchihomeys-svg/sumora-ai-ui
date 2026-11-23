@@ -7,6 +7,7 @@
 //     既存の最新の未完了行に物件名を上書きし「9/10 15:00 メゾン加美北 予定」のような誤った記録を作っていた
 //   → 送った時（一番よく知っている所）に構造化して1回書く。行動台帳（action-ledger）は記録を一次証拠にし、本文の読み直しは記録前の古いメッセージだけ
 import { supabase } from "@/app/lib/supabase-server";
+import { calendarDonePatch } from "@/app/lib/calendar-done-at";
 import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, confirmTopicForCheckPattern, fillConfirmObjectFromCustomer, isConfirmPartyObject, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】と入れて、お客さん名と要件を入れる（AIX と合わせて）」
 import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
@@ -38,7 +39,7 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
     const openRows = (open ?? []) as Array<{ id: number; event_type: string | null; notes: string | null; is_done: boolean | null }>;
     const closeIds = planPromiseCompletion(done, openRows);
     if (closeIds.length > 0) {
-      const { error } = await supabase.from("calendar_events").update({ is_done: true }).in("id", closeIds);
+      const { error } = await supabase.from("calendar_events").update(calendarDonePatch(true)).in("id", closeIds);
       if (error) console.warn("[sent-facts] promise calendar close failed:", error.message);
     }
     let inserted: string[] = [];
@@ -73,7 +74,7 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
           inserted = rows.map((r) => r.title);
           // 先に立っていたブレインの推測の行（[Brain AIX]・同種・未完了）は、お客様に実際に約束した行に置き換える（推測より事実）
           const types = [...new Set(rows.map((r) => r.event_type))];
-          const { error: e2 } = await supabase.from("calendar_events").update({ is_done: true })
+          const { error: e2 } = await supabase.from("calendar_events").update(calendarDonePatch(true))
             .eq("conversation_id", o.conversationId).eq("is_done", false).in("event_type", types).like("notes", "[Brain AIX]%");
           if (e2) console.warn("[sent-facts] brain row supersede failed:", e2.message);
         }

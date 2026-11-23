@@ -1,6 +1,7 @@
 // app/lib/viewing-done-after-greeting-server.ts — #5 の DB の所（viewing-done-after-greeting.ts の決め方で済みにする）
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "./supabase-server";
+import { calendarDonePatch } from "./calendar-done-at";
 import { screeningAdminSupabaseKey } from "./supabase-server-key";
 import { screeningTaskIdFor, isValidSyncKey } from "./screening-calendar-sync";
 import { pickViewingEventsDoneAfterGreeting, type ViewingEventRow } from "./viewing-done-after-greeting";
@@ -12,7 +13,7 @@ export async function markViewingDoneAfterGreeting(conversationId: string, nowMs
   if (error) return { done: [], screening: 0, error: error.message };
   const ids = pickViewingEventsDoneAfterGreeting((data ?? []) as ViewingEventRow[], nowMs);
   if (!ids.length) return { done: [], screening: 0 };
-  const { error: upErr } = await supabase.from("calendar_events").update({ is_done: true }).in("id", ids);
+  const { error: upErr } = await supabase.from("calendar_events").update(calendarDonePatch(true)).in("id", ids);
   if (upErr) return { done: [], screening: 0, error: upErr.message };
   // 申込ツールのカレンダーの行（この予定から入れた dt_sumora_cal_<id>）も済みに。鍵が無い環境・行が無い時は何もしない
   let screening = 0;

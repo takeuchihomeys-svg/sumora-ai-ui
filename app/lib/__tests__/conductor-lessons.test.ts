@@ -57,3 +57,16 @@ assert.equal(lessonsMinRows({ LLM_TEST_MODE: "deepseek-all" }), 1);
 assert.equal(lessonsMinRows({ CONDUCTOR_LESSONS_MIN_ROWS: "3" }), 3);
 assert.equal(lessonsMinRows({ CONDUCTOR_LESSONS_MIN_ROWS: "0" }), 10);
 console.log("conductor-lessons B・C: ok");
+
+// 2026-11-23 作業員L（統括役の決め）: 似ている度合いの下限（既定 0.62・CONDUCTOR_LESSONS_MIN_SIM）
+import { lessonsMinSim, LESSONS_MIN_SIM_DEFAULT } from "../conductor-lessons";
+{
+  assert.equal(lessonsMinSim({}), LESSONS_MIN_SIM_DEFAULT);
+  assert.equal(LESSONS_MIN_SIM_DEFAULT, 0.62);
+  assert.equal(lessonsMinSim({ CONDUCTOR_LESSONS_MIN_SIM: "0.5" }), 0.5);
+  assert.equal(lessonsMinSim({ CONDUCTOR_LESSONS_MIN_SIM: "2" }), 0.62);
+  const mk = (id: string, sim: number | null, lesson: string) => ({ id, source: "lesson:x", lesson, similarity: sim }) as unknown as LessonRow;
+  const picked = pickLessons([mk("a", 0.7, "型A"), mk("b", 0.6, "型B"), mk("c", null, "型C")], "conv-x", 3, 0.62);
+  assert.deepEqual(picked.map((r) => r.id), ["a", "c"]); // 0.6 は読まない・似ている度合いの無い行は残す
+}
+console.log("conductor-lessons min-sim: ok");

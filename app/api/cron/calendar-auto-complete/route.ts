@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { calendarDonePatch } from "@/app/lib/calendar-done-at";
 
 export const maxDuration = 60;
 
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
     const guardOn = estimateEventGuardOn();
     let q = supabase
       .from("calendar_events")
-      .update({ is_done: true })
+      .update(calendarDonePatch(true))
       .eq("is_done", false)
       .lt("start_at", now);
     if (guardOn) q = q.neq("event_type", "estimate_sheet");
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
         const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
         const { data: openEst } = await supabase.from("calendar_events").select("id, conversation_id, start_at, created_at, notes, is_done, event_type").eq("event_type", "estimate_sheet").eq("is_done", false).gte("start_at", since).limit(2000);
         const ids = duplicateEstimateEventIds((openEst ?? []) as never);
-        if (ids.length) { const r = await supabase.from("calendar_events").update({ is_done: true }).in("id", ids as never[]).eq("is_done", false).select("id"); dupClosed = (r.data ?? []).length; }
+        if (ids.length) { const r = await supabase.from("calendar_events").update(calendarDonePatch(true)).in("id", ids as never[]).eq("is_done", false).select("id"); dupClosed = (r.data ?? []).length; }
       } catch (e) { console.warn("[calendar-auto-complete] estimate dedupe skipped:", e instanceof Error ? e.message : String(e)); }
     }
     const result = { updated, dupClosed, estimateGuard: guardOn, completedAt: now };

@@ -3,6 +3,7 @@
 //   決まりは contact-promise.ts（純関数）。ここは DB の読み書きだけ。戻す: CONTACT_PROMISE_CALENDAR=off
 //   申込ツール（screening-admin）のカレンダーへの連動は内覧の予定だけの決まり（screening-calendar-sync.shouldSyncViewingToScreening）なので、ここでは入れない（竹内さんに確認中）
 import { supabase } from "@/app/lib/supabase-server";
+import { calendarDonePatch } from "@/app/lib/calendar-done-at";
 import { parseContactPromise, contactEventRow, planContactPromiseSync, CONTACT_DATE_MARK_RE } from "@/app/lib/contact-promise";
 
 export function contactPromiseCalendarOn(): boolean {
@@ -24,7 +25,7 @@ export async function syncContactPromiseCalendar(o: { conversationId: string; te
     if (!promise && open.length === 0) return;
     const plan = planContactPromiseSync({ open, promise, sentAt: o.sentAt, delivered: o.delivered });
     if (plan.closeIds.length > 0) {
-      const { error: e1 } = await supabase.from("calendar_events").update({ is_done: true }).in("id", plan.closeIds);
+      const { error: e1 } = await supabase.from("calendar_events").update(calendarDonePatch(true)).in("id", plan.closeIds);
       if (e1) console.warn("[contact-promise] close failed:", e1.message);
     }
     let inserted: string | null = null;
