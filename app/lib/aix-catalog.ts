@@ -24,6 +24,7 @@ import { AIX_LEARNED } from "./aix-catalog-learned";
 import { aixOccupantPickerEnabled, OCCUPANT_CHECK_PATTERN } from "./aix-occupant-picker";
 import { holdFloorPickerForBrain, HOLD_CHECK_PATTERN, FLOOR_CHECK_PATTERN } from "./aix-hold-floor-picker";
 import { learnedLine, meaningfulWriteContains, type LearnedMeaning } from "./aix-meaning-learn";
+import { aixCatalogMapEnabled, catalogMapIntro, mapRowFor, mapHeadLine } from "./aix-catalog-map"; // 2026-11-12 作業員21: BRAIN_AIX_CATALOG_MAP=on の時だけ各ボタンの頭の行を表から作る（既定 off）
 
 export type CatalogEntry = {
   /** 一覧の鍵: "ボタン" か "ボタン/ピッカーの値"（例 property_check_result/unavailable） */
@@ -478,6 +479,8 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
   const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene && !fullForUncertain ? `場面「${scene}」に関係する物` : fullForUncertain ? "場面の読みが弱いので全部" : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];
+  const mapOn = aixCatalogMapEnabled(envNow);
+  if (mapOn) lines.push(catalogMapIntro());
   if (learnedOn) lines.push("（各行の「竹内さんの文の中身」「次」は竹内さんの送信から学んだ意味。従業員の押下は基準にしない。お手本が少ない物は定義で判断）");
   const outside: string[] = [];
   for (const [k, es0] of byBtn) {
@@ -490,6 +493,10 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     const es = allButtons ? es0.filter(inScene) : es0;
     // 2026-10-20 新しいボタン「物件について」は送る情報が別（募集一覧で見た号室・間取り・家賃）
     const btnInfo = btn === PROPERTY_INFO_BUTTON ? "募集一覧で見た建物の募集中の号室・間取り・家賃（AI なしで一覧）" : bk?.staffOnly;
+    const mr = mapOn && btn !== PROPERTY_INFO_BUTTON ? mapRowFor(t, btn) : null;
+    const mh = mr ? mapHeadLine(mr) : null;
+    if (mh) lines.push(`- ${t}【${btn}】 送る情報: ${mh.info}｜${mh.line}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
+    else
     lines.push(`- ${t}【${btn}】 送る情報: ${btnInfo || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
     const low = lowPressNote(t);
     if (low) lines.push(`    ・${low}`);

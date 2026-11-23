@@ -45,8 +45,9 @@ export function foundationFillOf(
     cells.push({ col: "rules", filled: !miss.has("rules"), correct: null, owner: own,
       next: miss.has("rules") ? "竹内さんの実送信で過半数の形を数える → KB 案（P2）／割れたら推奨つきの確認案" : "守り率（竹内さんの実送信の何%が守っているか）を数える台本を作る",
       detail: r.rules.length ? `KB ${r.rules.join(",")}` : "決まり（KB）が無い" });
-    cells.push({ col: "measures", filled: !miss.has("measures"), correct: miss.has("measures") ? false : (r.metric ? o.metricSeen(r.metric) : false), owner: own,
-      next: miss.has("measures") ? "物差しの台本を作る（読むだけ・費用0）" : (r.metric && o.metricSeen(r.metric) ? null : "台本の数を本番で毎日出す"),
+    const seenAny = [r.metric, ...(r.metricAlt ?? [])].some((m) => !!m && o.metricSeen(m));
+    cells.push({ col: "measures", filled: !miss.has("measures"), correct: miss.has("measures") ? false : seenAny, owner: own,
+      next: miss.has("measures") ? "物差しの台本を作る（読むだけ・費用0）" : (seenAny ? null : "台本の数を本番で毎日出す"),
       detail: r.measures.join("・") || "台本が無い" });
     cells.push({ col: "metric", filled: !miss.has("metric"), correct: !miss.has("metric"), owner: own,
       next: miss.has("metric") ? (miss.has("measures") ? "物差しの後に quality_daily へ" : "台本の数を quality_daily に毎日書く（毎朝の1枚から呼ぶ）") : null,

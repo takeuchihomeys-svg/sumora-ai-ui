@@ -86,6 +86,8 @@ export function applyReplyModeP0(text: string, env: Record<string, string | unde
 //   ⑦ ネガの文脈（695）: 古い決め打ちは「直前のスタッフ発言の『募集終了』『申し訳』」でも物件・見積・申込を止めていた。
 //      竹内さんの決定 5cb4bd2f（申込が入っていた・募集終了の報告の次は代わりの物件＝営業マンの思考）と逆。お客様自身のネガの気持ちの時だけにする。
 //      ⑥（お礼は aix:null）は竹内さんの数（約束が開いているお礼の番 857: 何も送らない 84%・約束を果たす AIX 2.7%・KB 120721d0）と合うので触らない。
+//      ↑ 2026-11-23 作業員A: この数は30分の窓だけ・文の癖の書き手で数えた物（120721d0 は b385e315 で退役）。24時間の窓・端末の記録で竹内さん本人の番 141 では
+//        最初の一手は約束を果たす AIX 87（62%・30分より後が 75%）。⑥の約束が開いている番の直しは下の BRAIN_RULE6_OPEN_PROMISE（既定 off）
 //      ⑧（強く1件を推した直後の了承は再推奨しない）は今の決定と食い違わないので触らない。
 //   差し替えは元の文が一字一句ある時だけ（無ければ何もしない）
 // 2026-11-13 作業員A: 11/13 束の試験で悪化0・既定 on（止める BRAIN_PROMPT_RULES_1113=off）
@@ -109,4 +111,25 @@ export function applyPromptRules1113(text: string, env: Record<string, string | 
   let out = text;
   for (const e of PROMPT_RULE_EDITS_1113) if (out.includes(e.from)) out = out.replace(e.from, () => e.to);
   return out;
+}
+
+// ── 2026-11-23 作業員A（統括役の頼み・台帳 #612 の続き）: ルール⑥（お礼・了承だけの番は aix を null）と、約束が開いているお礼の番の竹内さんの数の食い違い ──
+//   本番は BRAIN_RULES_678_FACTS が off（既定）＝旧の⑥「**aix フィールドは null にする（…感謝返し場面でスタッフがAIXボタンを押す必要はない）**」が太字で生きている。
+//   同じ番に ackAfterPickupTurnLine（10/21 A2・KB 2d0f33cf「お礼には返信せず約束を果たす AIX」）が入る＝決まり同士の食い違い。
+//   竹内さん本人の番（scripts/audit-ack-fulfil-timing.ts・90日・端末の記録・24時間の窓・KB b385e315）: 約束が開いているお礼・了承だけの番 141 の最初の一手は
+//   約束を果たす AIX 87（62%・30分より後が 75%）・返信 54。60日の外れの一番太い型（お礼 × 前のピックアップの約束で竹内さんは AIX・ブレインは返信）8番はどれもこの⑥が入った番。
+//   直し: 太字の1文を「約束が開いていない番は null・開いている番は約束を果たす AIX のまま」に替える（約束の無いお礼は今のまま null）。
+//   既定 off（BRAIN_RULE6_OPEN_PROMISE=on で入る）＝off の時は指示文は1文字も変わらない。ACK_PICKUP_AIX_PATH・ACK_FORM_COUNT_WITH_AIX と同じ①の組で別の行に流す。
+//   差し替えは元の文が一字一句ある時だけ（BRAIN_RULES_678_FACTS=on の時は旧の⑥が無いので何もしない）
+export function rule6OpenPromiseOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_RULE6_OPEN_PROMISE ?? "").trim().toLowerCase() === "on";
+}
+export const RULE6_OPEN_PROMISE_EDIT: PromptRuleEdit = {
+  id: "rule6_open_promise_aix",
+  from: "**aix フィールドは null にする（直前と同じAIXアクションを繰り返さない・感謝返し場面でスタッフがAIXボタンを押す必要はない）**",
+  to: "**こちらの約束（ピックアップ・確認・見積）が開いていない番は aix フィールドを null にする（直前と同じAIXアクションを繰り返さない）。直前にこちらが約束してまだ果たしていない番（【まだ果たしていないこちらの約束】・ピックアップ／確認／見積の約束の直後のお礼）は、aix を約束を果たす AIX のままにする（竹内さん本人の最初の一手は約束を果たす AIX が 62%・30分より後に送る事が多い・竹内さんの決定 10/21 A2）**",
+};
+export function applyRule6OpenPromise(text: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if (!rule6OpenPromiseOn(env) || !text.includes(RULE6_OPEN_PROMISE_EDIT.from)) return text;
+  return text.replace(RULE6_OPEN_PROMISE_EDIT.from, () => RULE6_OPEN_PROMISE_EDIT.to);
 }

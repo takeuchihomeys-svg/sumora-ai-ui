@@ -1,7 +1,7 @@
 // scripts/lib/__tests__/foundation-fill.test.ts — 土台の埋まりの表（npx tsx で回す）
 import { foundationFillOf, fillTotalsOf, fillNotShrinking, foundationLeavesOf } from "../foundation-fill";
 import { normTags } from "../../foundation-scene-grid";
-import type { FoundationRow } from "../foundation-table";
+import { foundationGapsOf, type FoundationRow } from "../foundation-table";
 let pass = 0, fail = 0;
 const t = (n: string, ok: boolean, info?: unknown) => { if (ok) pass++; else { fail++; console.log(`  NG ${n} → ${JSON.stringify(info)}`); } };
 
@@ -44,5 +44,9 @@ t("場面の無い欄は all", leaves.some((l) => l.key === "found:n.b:all:measu
 t("部品は material", leaves.some((l) => l.key === "found:n.a:all:parts" && l.cause === "material" && l.filled));
 t("書き手の選び方は all", leaves.every((l) => l.writer_select === "all"));
 t("札の表記ゆれを読み替える", normTags(["場面:物件オススメ", "場面:検討", "汎用"]).join() === "場面:物件を送る,場面:検討中,汎用");
+const altRow: FoundationRow = { id: "n.x", name: "X", owner: "作業員L", rules: ["r"], measures: ["s.ts"], metric: "main:none", parts: ["SW_ON"], metricAlt: ["alt:seen"] };
+const altGaps = foundationGapsOf([altRow], { scriptExists: () => true, metricSeen: (m) => m === "alt:seen", switchKnown: () => true });
+t("代わりの数が入っていれば本番の数字あり", altGaps.length === 0, altGaps);
+t("代わりも無ければ欠け", foundationGapsOf([altRow], { scriptExists: () => true, metricSeen: () => false, switchKnown: () => true })[0]?.missing.includes("metric"));
 console.log(`foundation-fill: ${pass} 通過・${fail} 失敗`);
 if (fail) process.exit(1);
