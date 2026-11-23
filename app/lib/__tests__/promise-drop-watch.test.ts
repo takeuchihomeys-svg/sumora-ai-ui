@@ -141,3 +141,30 @@ import { promiseInputWaitTurn } from "../promise-drop-watch";
 assert.equal(typeof promiseInputWaitTurn, "function");
 assert.deepEqual(promiseFulfilledBy({ at: at(0), kind: "pickup" }, { msgs: [{ sender: "staff", text: "はい！！ こちら新着で出たAさんにオススメ出来るお部屋となります😊！！", created_at: at(30), is_aix_generated: false }], aix: [], sent: [] }), { by: "staff_text", at: at(30) });
 console.log("promise-holes: ok");
+
+// 2026-11-23 作業員L（台帳 #638 言い回し・#639 期日）: 行動台帳の本当に未履行8件のうち見張りに出なかった形（こちらの文は伏せて・名前は〇〇）
+import { promiseSentenceOf } from "../promise-drop-watch";
+assert.equal(promiseDropKindOf("〇〇さん お世話になっております！！\n管理会社本日お休みでしたので翌営業日に空き状況確認させていただきます！！"), "check"); // 7ec16043
+assert.equal(promiseDropKindOf("明日中に現在募集に出ているご条件に合ったお部屋ピックアップしお送りさせていただきます！！"), "pickup"); // a59bedf9
+assert.equal(promiseDropKindOf("ご条件に合ったお部屋をピックアップしお送りさせて頂きます！！"), "pickup");
+assert.equal(promiseDropKindOf("お部屋探し再開させていただきます！！"), "pickup");
+assert.equal(promiseDropKindOf("管理会社に確認させていただき、確認出来次第ご連絡させていただきます！！"), "check");
+// 誤って拾わない: ひらがなの「確認させていただき」の後に結果が続く報告・時期の条件つき（「〇〇ごろになりましたら…再開」・ac34b364）・「ピックアップしております」
+assert.equal(promiseDropKindOf("管理会社に確認させていただき〇〇保証と△△の2社が保証会社として採用されており、お申し込み内容で振り分けされる形となります！！"), null);
+assert.equal(promiseDropKindOf("1月末ごろのお引越しに向け12月中旬ごろになりましたら本格的にお部屋探し再開させていただきます！！"), null);
+assert.equal(promiseDropKindOf("只今ピックアップしております！！"), null);
+// 期日は約束の文から（同じ通の別の文の日付・「本日」は期日にしない）
+{
+  const t = "ご入居は1月30日のご予定ですね！！\nお送り頂いた6件の物件、全て募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！";
+  assert.equal(promiseDeadlineMs(t, said).by, "words");
+  assert.deepEqual(promiseDeadlineMs(promiseSentenceOf(t), said), { ms: said + 72 * H, by: "default72h" });
+  // 約束の文そのものに日付がある時はその日（e4bb495d の形: 「12月17日に…ピックアップしお送り」）
+  const e4 = "〇〇さん、はじめまして😊！！\nお部屋探しを担当させて頂きます〇〇と申します！！\n2月のご入居でしたら12月17日頃から本格的にお部屋探しを進めて参ります！！\n12月17日に〇〇周辺から10万以内・広めの1LDKのお部屋をピックアップしお送りさせて頂きます！！";
+  assert.equal(new Date(promiseDeadlineMs(promiseSentenceOf(e4), said).ms).toISOString().slice(0, 10), "2026-12-17");
+  // 約束の言葉の節が無ければ全文（今と同じ）
+  assert.equal(promiseSentenceOf("ご査収ください"), "ご査収ください");
+  // 見張り: 約束の文に期日が無ければ 72時間で出る（同じ通の入居の日付で先に延ばさない）
+  const d = promiseDropOf(base({ msgs: [{ sender: "staff", text: t, created_at: new Date(said).toISOString(), is_aix_generated: false }] }), said + 80 * H);
+  assert.equal(d?.kind, "check");
+}
+console.log("promise-holes-1123: ok");

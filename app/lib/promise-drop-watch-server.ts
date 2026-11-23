@@ -50,8 +50,8 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o
   const since = new Date(nowMs - PROMISE_DROP_MAX_DAYS * 86_400_000).toISOString();
   const { data: hits, error } = await sb.from("messages").select("conversation_id, created_at")
     .eq("sender", "staff").eq("is_aix_generated", false).gte("created_at", since)
-    .or("text.ilike.%ピックアップ%,text.ilike.%確認させて頂き%")
-    .order("created_at", { ascending: false }).limit(2000);
+    .or("text.ilike.%ピックアップ%,text.ilike.%確認させて頂き%,text.ilike.%確認させていただき%,text.ilike.%探し再開させて%")
+    .order("created_at", { ascending: false }).limit(2000); // 2026-11-23 作業員L（台帳 #638）: ひらがなの「確認させていただき」・「お部屋探し再開させて」も拾う
   if (error) throw new Error(`promise-drop: ${error.message}`);
   const internal = new Set<string>(STAFF_INTERNAL_CONVERSATION_IDS as readonly string[]);
   // 2026-11-21 作業員L（台帳 #435 の確かめ: 11/21 朝の本番は 30秒で 75/88 会話の所で打ち切り＝一番古い約束の会話（例 6e77895d・44fd59ab）が読まれず漏れた）:

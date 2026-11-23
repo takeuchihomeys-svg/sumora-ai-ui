@@ -6104,6 +6104,118 @@ ALTER TABLE owner_pointer_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON owner_pointer_events FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE owner_pointer_events_id_seq FROM anon, authenticated;
 
+-- 2026-11-23 作業員P（竹内さん「この予測と今の部分と次の部分を把握するように連携するように」・台帳 #610）: 見込み・今・次を1つにつなぐ。
+--   work_items.forecast_* … 作業1件の見込み（動かす数＝quality_daily の metric と同じ名前・書き手の選び方・地図の葉・前の値・幅・根拠）。
+--   measured_* / forecast_checks … 本番に入って 7日・14日の実測（同じ数え方・同じ書き手の選び方）。forecast_gap_cause … 外れの原因の4つ（材料／読み違い／返信か AIX かの判断／数え方）。
+--   forecast_exam … 試験での見込みの確かめ（葉ごとの前→後の○）。scripts/work-items.ts --forecast / --map / --forecast-check・自己改善の芯（self-improve）が読む。
+--   戻す: ALTER TABLE work_items DROP COLUMN forecast_metric, ...（列を落とす）
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_metric TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_writer_select TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_leaf TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_window_days INT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_before NUMERIC;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_before_n INT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_low NUMERIC;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_high NUMERIC;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_basis TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_at TIMESTAMPTZ;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_start_at TIMESTAMPTZ;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS measured_after NUMERIC;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS measured_n INT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS measured_at TIMESTAMPTZ;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_checks JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_verdict TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_gap_cause TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_gap_note TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS forecast_exam JSONB;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_items_forecast_writer_chk') THEN
+    ALTER TABLE work_items ADD CONSTRAINT work_items_forecast_writer_chk CHECK (forecast_writer_select IS NULL OR forecast_writer_select IN ('style', 'device', 'all'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_items_forecast_verdict_chk') THEN
+    ALTER TABLE work_items ADD CONSTRAINT work_items_forecast_verdict_chk CHECK (forecast_verdict IS NULL OR forecast_verdict IN ('pending', 'in', 'below', 'above'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'work_items_forecast_gap_cause_chk') THEN
+    ALTER TABLE work_items ADD CONSTRAINT work_items_forecast_gap_cause_chk CHECK (forecast_gap_cause IS NULL OR forecast_gap_cause IN ('material', 'misread', 'aix_turn_as_reply', 'counting'));
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_work_items_forecast_metric ON work_items(forecast_metric) WHERE forecast_metric IS NOT NULL;
+-- metric_map_nodes … 数ごとの地図（木）の1日分。根（数の名前）× 書き手の選び方 × 葉の鍵（<根>/<段>=<値>/…）で1行。
+--   葉には伸びしろ・順位・動かす作業（work_items の id）・次の一手・止まっている理由・判断保留（n が小さい）・穴（作業の無い大きな葉）を持つ。数だけ（お客様の文・名前は入れない）。
+--   戻す: DROP TABLE IF EXISTS metric_map_nodes;
+CREATE TABLE IF NOT EXISTS metric_map_nodes (
+  id BIGSERIAL PRIMARY KEY,
+  day DATE NOT NULL,
+  root_metric TEXT NOT NULL,
+  writer_select TEXT NOT NULL DEFAULT 'style',
+  window_days INT,
+  node_key TEXT NOT NULL,
+  parent_key TEXT,
+  depth INT NOT NULL DEFAULT 0,
+  dim TEXT,
+  val TEXT,
+  label TEXT,
+  n INT NOT NULL DEFAULT 0,
+  ok INT NOT NULL DEFAULT 0,
+  misses INT NOT NULL DEFAULT 0,
+  value NUMERIC,
+  is_leaf BOOLEAN NOT NULL DEFAULT false,
+  hold BOOLEAN NOT NULL DEFAULT false,
+  hole BOOLEAN NOT NULL DEFAULT false,
+  gain NUMERIC,
+  score NUMERIC,
+  rank INT,
+  item_ids BIGINT[] NOT NULL DEFAULT '{}',
+  next_step TEXT,
+  blocker TEXT,
+  exam_problems INT,
+  detail JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT metric_map_nodes_writer_chk CHECK (writer_select IN ('style', 'device', 'all')),
+  CONSTRAINT metric_map_nodes_uniq UNIQUE (day, root_metric, writer_select, node_key)
+);
+CREATE INDEX IF NOT EXISTS idx_metric_map_nodes_root ON metric_map_nodes(root_metric, writer_select, day DESC);
+ALTER TABLE metric_map_nodes ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON metric_map_nodes FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE metric_map_nodes_id_seq FROM anon, authenticated;
+-- exam_leaf_links … 試験の問題（brain-exam の spec.json の id 等）を地図の葉に当てる表。当たらない問題・問題が0の葉は scripts/exam-leaf.ts が一覧に出す。
+-- exam_leaf_results … 試験の結果を葉に戻す（試験の1本 × 葉で 前→後 の○）。本番の実測の前の「試験での見込みの確かめ」。
+--   戻す: DROP TABLE IF EXISTS exam_leaf_results; DROP TABLE IF EXISTS exam_leaf_links;
+CREATE TABLE IF NOT EXISTS exam_leaf_links (
+  id BIGSERIAL PRIMARY KEY,
+  problem_id TEXT NOT NULL,
+  exam_set TEXT NOT NULL DEFAULT 'brain-exam',
+  root_metric TEXT NOT NULL,
+  leaf_key TEXT NOT NULL,
+  how TEXT,
+  tagged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT exam_leaf_links_uniq UNIQUE (problem_id, exam_set, root_metric)
+);
+CREATE INDEX IF NOT EXISTS idx_exam_leaf_links_leaf ON exam_leaf_links(root_metric, leaf_key);
+ALTER TABLE exam_leaf_links ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON exam_leaf_links FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE exam_leaf_links_id_seq FROM anon, authenticated;
+CREATE TABLE IF NOT EXISTS exam_leaf_results (
+  id BIGSERIAL PRIMARY KEY,
+  run_label TEXT NOT NULL,
+  before_label TEXT,
+  root_metric TEXT NOT NULL,
+  leaf_key TEXT NOT NULL,
+  n_problems INT NOT NULL DEFAULT 0,
+  before_ok INT,
+  after_ok INT,
+  worse TEXT[] NOT NULL DEFAULT '{}',
+  better TEXT[] NOT NULL DEFAULT '{}',
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT exam_leaf_results_uniq UNIQUE (run_label, root_metric, leaf_key)
+);
+CREATE INDEX IF NOT EXISTS idx_exam_leaf_results_leaf ON exam_leaf_results(root_metric, leaf_key, at DESC);
+ALTER TABLE exam_leaf_results ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON exam_leaf_results FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE exam_leaf_results_id_seq FROM anon, authenticated;
+-- conductor_lessons.leaf_keys … 試験の学び（exam-lessons・conductor_lessons）に地図の葉の印（同じ葉の学びを地図から引く・形だけ・書くのは exam-leaf.ts --lessons）
+ALTER TABLE conductor_lessons ADD COLUMN IF NOT EXISTS leaf_keys TEXT[] NOT NULL DEFAULT '{}';
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
