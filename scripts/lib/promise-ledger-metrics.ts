@@ -7,9 +7,10 @@
 //   数の名前（作業員N と決めた: foundation:promise:*・found: は作業員P の地図の土台の葉の形なので使わない）: foundation:promise:open（開いている約束の数）・foundation:promise:overdue_rate（開いている約束のうち期日超えの %）
 //     ・foundation:promise:kept_72h（72〜144時間前にした約束のうち、72時間の内に閉じた %）
 import { PROMISE_OF_DONE } from "../../app/lib/promise-close-link";
+import { promiseDueFromText } from "../../app/lib/promise-due-text";
 import { promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PdMsg, type PdSent, type PromiseKindName } from "../../app/lib/promise-drop-watch";
 
-export type FactRow = { conversation_id: string; kind: string; status: string; sent_at: string; evidence?: string | null; detail?: { closed_by?: unknown; sentence?: string } | null };
+export type FactRow = { conversation_id: string; kind: string; status: string; sent_at: string; evidence?: string | null; detail?: { closed_by?: unknown; sentence?: string; dueText?: string | null } | null };
 const DONE_OF: Record<string, string> = Object.fromEntries(Object.entries(PROMISE_OF_DONE).map(([done, p]) => [p, done]));
 const H = 36e5;
 
@@ -26,7 +27,9 @@ export function promiseStatesOf(rows: ReadonlyArray<FactRow>): PromiseState[] {
       const done = sorted.find((d) => d.status === "done" && d.kind === DONE_OF[p.kind] && d.sent_at > p.sent_at);
       const closedAt = p.detail?.closed_by ? (done?.sent_at ?? p.sent_at) : done?.sent_at ?? null;
       const text = String(p.detail?.sentence ?? p.evidence ?? "");
-      out.push({ conv, kind: p.kind, at: p.sent_at, closedAt, deadlineMs: promiseDeadlineMs(text, Date.parse(p.sent_at)).ms, text, evidence: String(p.evidence ?? "") });
+      // 期日を読む文（dueText・LEDGER_PROMISE_DUE_TEXT=on の行だけ）があればそちらで（「12月17日に…」「12月中旬ごろになりましたら」を落とさない・2026-11-23 作業員L）
+      const dl = p.detail?.dueText ? promiseDueFromText(p.detail.dueText, Date.parse(p.sent_at)).ms : promiseDeadlineMs(text, Date.parse(p.sent_at)).ms;
+      out.push({ conv, kind: p.kind, at: p.sent_at, closedAt, deadlineMs: dl, text, evidence: String(p.evidence ?? "") });
     }
   }
   return out;

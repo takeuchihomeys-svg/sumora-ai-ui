@@ -9,6 +9,7 @@
 //   ※ aix 行の ±3分にあるスタッフ発言は本文 regex を当てない（estimate_sheet 本文の「🌟割引」「[画像]」を物件送付と誤カウントしない）
 //   依存方向: action-ledger → reply-context（runtime）。reply-context 側は `import type` のみ（循環 import による TDZ を構造的に回避）
 // ─────────────────────────────────────────────────────────────────────────────
+import { promiseDueTextOf, ledgerPromiseDueTextEnabled } from './promise-due-text';
 import { isNotPropertyName } from "./not-property-words";
 import {
   analyzeSubstance, classifyCustomerResponse,
@@ -79,6 +80,11 @@ export interface LedgerEntry {
     object?: string | null;
     /** confirmation_promised: 約束した文そのもの（カレンダーの【必ず】の行に「何を確認するか」を残す。2026-09-16 𝒮❦ 事例） */
     sentence?: string | null;
+    /**
+     * pickup_declared / confirmation_promised / estimate_declared: 期日を読むための文（2026-11-23 作業員L・found_gap・LEDGER_PROMISE_DUE_TEXT=on の時だけ）。
+     *   その種類の約束の言葉がある文を全部、文の終わりまで（300字まで）。sentence（80字・型に当たった1文）は変えない（promise-due-text.ts）
+     */
+    dueText?: string | null;
     /**
      * pickup_declared: 「お客様に合うお部屋の募集を随時確認して出次第お送りします」型（探し続ける宣言）。
      * 2026-09-17 竹内（慶次事例）: この約束を果たすのは 物件ピックアップ（複数）か 物件オススメ（1件）。
@@ -802,7 +808,13 @@ export function annotatePromiseRecord<T extends LedgerEntry | null>(e: T): T {
 }
 /** スタッフ本文1通 → 台帳エントリ（本文 regex＝confidence 1）。時制で promised / done を分ける */
 export function classifyStaffTextForLedger(text: string, at: string | null): LedgerEntry | null {
-  return annotatePromiseRecord(classifyStaffTextForLedgerRaw(text, at));
+  const e = annotatePromiseRecord(classifyStaffTextForLedgerRaw(text, at));
+  // 2026-11-23 作業員L（found_gap）: 約束の行に期日を読む文（dueText）。既定 off（LEDGER_PROMISE_DUE_TEXT=on で書く）
+  if (e && e.status === 'promised' && e.detail.dueText == null && ledgerPromiseDueTextEnabled()) {
+    const d = promiseDueTextOf(text, e.kind);
+    if (d) e.detail.dueText = d;
+  }
+  return e;
 }
 function classifyStaffTextForLedgerRaw(text: string, at: string | null): LedgerEntry | null {
   const t = (text ?? '').trim();

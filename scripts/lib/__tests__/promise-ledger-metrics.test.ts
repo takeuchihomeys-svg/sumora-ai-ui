@@ -60,3 +60,11 @@ assert.equal(wideCloseOf(st("w10", "pickup_declared", 100, "ピックアップ�
   assert.deepEqual(summarizePromises(w.states, now), { open: 2, overdue: 1, madeWindow: 3, keptWindow: 1 });
 }
 console.log("promise-ledger-metrics wide-close: ok");
+// 期日を読む文（dueText）がある行はそちらで期日を読む（2026-11-23 作業員L・found_gap）
+{
+  const r = [{ conversation_id: "z", kind: "pickup_declared", status: "promised", sent_at: iso(120), evidence: "お探しさせて頂きます", detail: { sentence: "お部屋をお探しさせて頂きます", dueText: "お部屋をお探しさせて頂きます 12月31日に〇〇周辺のお部屋をピックアップしお送りさせて頂きます" } }];
+  assert.deepEqual(summarizePromises(promiseStatesOf(r), now), { open: 1, overdue: 0, madeWindow: 1, keptWindow: 0 });
+  const r2 = [{ ...r[0], detail: { sentence: "お部屋をお探しさせて頂きます" } }];
+  assert.deepEqual(summarizePromises(promiseStatesOf(r2), now), { open: 1, overdue: 1, madeWindow: 1, keptWindow: 0 });
+}
+console.log("promise-ledger-metrics dueText: ok");
