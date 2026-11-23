@@ -29,3 +29,54 @@ export function overduePromisesLine(list: ReadonlyArray<OverduePromise>): string
     `${KIND_JA[p.kind] ?? p.kind}（${jstDay(p.promisedAt)}に約束・期限 ${jstDay(p.dueAt)}${p.dueBy === "words" ? "（約束の文の期限）" : "（72時間）"}・${p.daysOver <= 0 ? "今日過ぎた" : `${p.daysOver}日過ぎ`}・まだ果たした記録なし）`);
   return `期限を過ぎたこちらの約束: ${parts.join("／")}`;
 }
+
+// ─── 2026-11-23 作業員L（台帳 #659・竹内さん #662「統括は全部管理して細かく反映」の「使う」の段）───
+//   入口の統括の材料に渡した期日超えの約束が、その番で使われたかを判断の記録（digest の op）に短く残す（記録だけ・次の番のブレインは読まない）。
+//   op＝"<件数>|<種類を+で>|<その番の一手が約束を果たす一手か 1/0>"（例 "2|pickup+check|1"）。止める OVERDUE_PROMISES_DIGEST=off
+export const overduePromisesDigestOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OVERDUE_PROMISES_DIGEST ?? "").trim().toLowerCase() !== "off";
+/** 約束の種類ごとに、果たす一手（AIX の種類） */
+const FULFIL_ACT: Record<string, RegExp> = {
+  pickup: /^(?:property_send|property_recommendation|property_search|pickup)/,
+  check: /^(?:property_check_result|acknowledge_check|mgmt_)/,
+  estimate: /^estimate/,
+};
+/** その番の一手（ブレインの AIX の種類・返信なら null）が、渡した期日超えの約束のどれかを果たす一手か */
+export function fulfilsOverduePromise(list: ReadonlyArray<Pick<OverduePromise, "kind">>, finalAix: string | null | undefined): boolean {
+  const a = String(finalAix ?? "").trim();
+  if (!a) return false;
+  return list.some((p) => FULFIL_ACT[p.kind]?.test(a) ?? false);
+}
+export type OverduePromisesRec = { n: number; kinds: string[]; fulfil: boolean };
+/** meta に残す形（無い・0件は null） */
+export function overduePromisesRecOf(list: ReadonlyArray<Pick<OverduePromise, "kind">> | null | undefined, finalAix: string | null | undefined): OverduePromisesRec | null {
+  if (!list || !list.length) return null;
+  return { n: list.length, kinds: [...new Set(list.map((p) => p.kind))].sort(), fulfil: fulfilsOverduePromise(list, finalAix) };
+}
+/** digest の op（形の違う物は null） */
+export function overduePromisesDigest(rec: unknown): string | null {
+  const r = rec as Partial<OverduePromisesRec> | null | undefined;
+  if (!r || typeof r.n !== "number" || r.n <= 0 || !Array.isArray(r.kinds)) return null;
+  return `${r.n}|${r.kinds.join("+")}|${r.fulfil ? 1 : 0}`;
+}
+/** digest の op を読む（物差し用・形が違えば null） */
+export function parseOverduePromisesDigest(op: unknown): OverduePromisesRec | null {
+  const m = String(op ?? "").match(/^(\d+)\|([a-z_+]*)\|([01])$/);
+  return m ? { n: Number(m[1]), kinds: m[2] ? m[2].split("+") : [], fulfil: m[3] === "1" } : null;
+}
+
+/**
+ * 物差し（読むだけ・作業員A の統括の受け持ち表の「使う・反映する」の列）: 判断の記録の op を集めて、期日超えの約束を渡した番のうち、その番の一手が約束を果たす一手だった割合。
+ *   use_rate＝果たす一手の番 / 渡した番。種類ごとにも（同じ番に2種類あれば両方に数える）
+ */
+export type OverdueUseSummary = { given: number; fulfil: number; useRate: number | null; byKind: Record<string, { given: number; fulfil: number }> };
+export function overdueUseSummary(ops: ReadonlyArray<unknown>): OverdueUseSummary {
+  const byKind: Record<string, { given: number; fulfil: number }> = {};
+  let given = 0, fulfil = 0;
+  for (const o of ops) {
+    const r = parseOverduePromisesDigest(o);
+    if (!r) continue;
+    given++; if (r.fulfil) fulfil++;
+    for (const k of r.kinds) { const c = (byKind[k] ??= { given: 0, fulfil: 0 }); c.given++; if (r.fulfil) c.fulfil++; }
+  }
+  return { given, fulfil, useRate: given ? Math.round((fulfil / given) * 1000) / 10 : null, byKind };
+}

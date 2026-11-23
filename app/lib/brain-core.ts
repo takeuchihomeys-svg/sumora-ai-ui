@@ -190,7 +190,7 @@ import { trackPromises, buildPromiseBrainNote } from "@/app/lib/promise-tracker"
 import { customerSceneOf } from "@/app/lib/sent-shape";
 import { isShortAckOnly as isShortAckReply } from "@/app/lib/previous-send-note";
 // 2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」
-import { detectApplyReadiness, buildApplyReadinessBrainNote } from "@/app/lib/apply-readiness";
+import { detectApplyReadiness, buildApplyReadinessBrainNote, applyReadinessWideOn, applyReadinessMessages, APPLY_WINDOW_DAYS } from "@/app/lib/apply-readiness";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 // 2026-09-11 データ衛生: 正解例として使えるかの唯一の判定（生成失敗文・テスト送信を除外）
 // 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文（AIX【確認します】の出力）をブレインの材料にしない
@@ -515,6 +515,8 @@ export type SuggestedAixMeta = {
   material_marks?: Record<string, number>;
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
+  /** 2026-11-23 作業員L（台帳 #659）: 入口の統括の材料に渡した期日超えの約束の数・種類・その番の一手が果たす一手か（記録だけ・digest の op） */
+  overdue_promises?: { n: number; kinds: string[]; fulfil: boolean };
   /** 2026-11-15 作業員L: 今の状況の記録（統括役 OK の欄の案・まず時系列の段）。BRAIN_SITUATION_TIMELINE=on の時だけ */
   situation_now?: import("@/app/lib/situation-now").SituationNow | { timeline: { words: Array<{ word: string; said: string; from: string | null; to: string | null; label: string }>; viewings: Array<{ at: string; type: string; done: boolean }>; promises: Array<{ at: string; type: string }> } };
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
@@ -3050,8 +3052,16 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   ※ **本文への指示ではなく AIX の判断材料**として渡す。
   //     本文で内覧の候補日時を書くのは final-check が弾く（内覧の打診は AIX【内覧日調整】の仕事）ので、
   //     「申込が近いのに内覧が抜けている」場面で流れを作れるのはブレインだけ（AIX の要否・種類はブレインが決める）。
+  // 2026-11-23 作業員L: APPLY_READINESS_WIDE=on（既定 off）の時だけ、窓の外の7日の通も読んで測る（窓の外に出た御見積書・内覧の合図を落とさない）
+  let applyReadinessWide: Array<{ sender: string; text: string | null; createdAt: string }> | null = null;
+  if (applyReadinessWideOn() && conversationId) {
+    try {
+      const { data: wm } = await supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - APPLY_WINDOW_DAYS * 86_400_000).toISOString()).order("created_at").limit(400);
+      applyReadinessWide = ((wm ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
+    } catch { applyReadinessWide = null; }
+  }
   const applyReadiness = detectApplyReadiness(
-    typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })),
+    applyReadinessMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })), applyReadinessWide),
     Date.now(),
   );
   const applyReadinessText = buildApplyReadinessBrainNote(applyReadiness);
@@ -3276,13 +3286,15 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
+  // 2026-11-23 作業員A（#648 の点検の印）: 照らし合わせの残りをブレインに足した時の字数（下の material_marks.exchange・記録だけ・off の時は付かない）
+  let exchangeMarkLen = 0;
   // 2026-11-12 作業員4: やり取りの照らし合わせの残り（事実の一覧・道の言葉なし）をブレインにも。道に触る所なので入口とは別スイッチ（既定 off CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on）。毎回変わる並び（3）
   try {
     const el = await import("@/app/lib/exchange-ledger");
     if (el.exchangeLedgerBrainOn()) {
       const turnAtEL = typedMessages[0]?.created_at ?? null;
       const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
-      if (lineEL) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
+      if (lineEL) { exchangeMarkLen = lineEL.length; customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
     }
   } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
@@ -3608,6 +3620,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (exchangeMarkLen) materialMarks.exchange = exchangeMarkLen; // 2026-11-23 作業員A: CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on で1行を足した番だけ（動きは変えない）
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
@@ -3889,6 +3902,8 @@ ${sh}`;
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
   // 2026-11-21 作業員L（KB 56691196・CONDUCTOR_LESSONS・既定 shadow）: 入口の統括が読んだ近い場面の学び（記録と最終の印に使う）
   let lessonsRec: import("@/app/lib/conductor-lessons").LessonRow[] | null = null;
+  // 2026-11-23 作業員L（台帳 #659）: 入口の統括の材料に渡した期日超えの約束（記録の op に使う・次の番は読まない）
+  let overduePromisesUsed: import("@/app/lib/promise-drop-watch").OverduePromise[] | null = null;
   // 返す前に最大4秒だけ待つ（待ち始めは meta を組む時・conductor_intake と conductor_focus で同じ待ちを使う）
   let intakeDoneMemo: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
   const intakeDoneGet = () => (intakeP ? (intakeDoneMemo ??= Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 4_000))])) : null);
@@ -3921,7 +3936,7 @@ ${sh}`;
           // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
           await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })(),
           // 2026-11-21 作業員N（信頼の土台 #55 B1・作業員L の #435 と同じ線）: 期限を過ぎて果たしていないこちらの約束（事実だけ・既定 off CONDUCTOR_OVERDUE_PROMISES=on・1会話分の読みを最大1.5秒待つ）
-          await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })(),
+          await (async () => { try { const co = await import("@/app/lib/conductor-overdue-promises"); if (!co.conductorOverduePromisesOn()) return ""; const pd = await import("@/app/lib/promise-drop-watch-server"); const list = await Promise.race([pd.overduePromisesFor(supabase, conversationId, turnAt0 ? Date.parse(turnAt0) + 1 : Date.now()), new Promise<null>((r) => setTimeout(() => r(null), co.OVERDUE_PROMISES_TIMEOUT_MS))]); if (list) overduePromisesUsed = list; const line = list ? co.overduePromisesLine(list) : ""; console.log(JSON.stringify({ tag: "brain:overdue-promises", conversationId, n: list ? list.length : null, timedOut: !list })); return line; } catch { return ""; } })(),
           // 2026-11-21 作業員L（KB 56691196「試験と連動して統括を鍛える」・統括役の決め）: 場面と近さで当たった学び（型・竹内さんの一手・なぜ）を最大3行。
           //   CONDUCTOR_LESSONS=shadow（既定）は読んで記録だけ（材料に渡さない）・on は入口の統括の材料に・off は読まない。試験の問題の元の会話は外す（conductor-lessons-server）
           // 2026-11-23 作業員L（統括役の決め B）: shadow（記録だけ）は待たない＝読み終わった物だけ後で記録（meta を組む時に読み終わっていれば残る・遅れ0）。on と試験は今まで通り待つ
@@ -7052,6 +7067,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-04 入口の最初の読みの記録（shadow・最大4秒だけ待つ）→ digest.ci
       conductor_intake: intakeDoneGet() ? ((await intakeDoneGet()) ?? undefined) : undefined,
       // 2026-11-21 作業員L（CONDUCTOR_LESSONS）: 読んだ学びの id と、最終の一手（AIX の種類か返信）が同じ場面の学びで前に外した一手と同じ時の印（記録だけ・文も道も変えない）
+      // 2026-11-23 作業員L（台帳 #659）: 期日超えの約束を統括の材料に渡した番の記録（digest の op・次の番のブレインは読まない）
+      overdue_promises: overduePromisesUsed ? await (async () => { const co = await import("@/app/lib/conductor-overdue-promises"); return co.overduePromisesRecOf(overduePromisesUsed, finalAix ?? null) ?? undefined; })() : undefined,
       conductor_lessons: lessonsRec ? await (async () => { const cl = await import("@/app/lib/conductor-lessons"); return { mode: cl.conductorLessonsMode(), ids: (lessonsRec ?? []).map((r) => String(r.id).slice(0, 8)), mark: cl.sameMissMark(cl.brainActCodes({ reply_mode: finalAix ? "aix" : "auto_reply", action: finalAix ?? "" }), lessonsRec ?? []) }; })() : undefined,
       // 2026-11-05 作業員5（KB P0 575a7cd5）: 入口の統括の重点（表・背景・重点・理由・近い番）を meta.conductor_focus に（CONDUCTOR_FOCUS=shadow の時だけ・記録と深い読み直しの材料・判断は変えない）
       conductor_focus: intakeDoneGet() ? await (async () => { const { conductorFocusMode, conductorFocusMeta } = await import("@/app/lib/conductor-focus"); if (conductorFocusMode() === "off") return undefined; return (conductorFocusMeta((await intakeDoneGet())?.answer?.focus_read ?? null) ?? undefined) as { focus: string; why?: string | null } | undefined; })() : undefined,

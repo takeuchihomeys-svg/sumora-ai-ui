@@ -299,5 +299,18 @@ it("空配列・空文字・null テキストで落ちない", () => {
   expect(detectApplyReadiness([{ sender: "staff", text: "   ", createdAt: d(1) }], NOW).windowCount).toBe(0);
 });
 
+// 2026-11-23 作業員L: 窓の外の7日の通も読んで測る（APPLY_READINESS_WIDE・既定 off）
+import { applyReadinessWideOn, applyReadinessMessages } from "../apply-readiness";
+it("APPLY_READINESS_WIDE は既定 off・on で入る", () => {
+  expect(applyReadinessWideOn({})).toBe(false);
+  expect(applyReadinessWideOn({ APPLY_READINESS_WIDE: "on" })).toBe(true);
+});
+it("7日の通が窓より多い時だけそちらで測る（読めない・少ない時は窓のまま）", () => {
+  const w: ApplyMsg[] = [{ sender: "customer", text: "a", createdAt: "2026-11-23T00:00:00Z" }];
+  const wide: ApplyMsg[] = [...w, { sender: "staff", text: "御見積書となります", createdAt: "2026-11-20T00:00:00Z" }];
+  expect(applyReadinessMessages(w, wide)).toBe(wide);
+  expect(applyReadinessMessages(w, null)).toBe(w);
+  expect(applyReadinessMessages(wide, w)).toBe(wide);
+});
 console.log(`\n${failed === 0 ? "✅ 全 PASS" : "❌ 失敗あり"}  ${passed} passed / ${failed} failed`);
 if (failed) { failures.forEach((f) => console.log(`  - ${f}`)); process.exit(1); }

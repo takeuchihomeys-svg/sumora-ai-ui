@@ -102,6 +102,18 @@ const MIN_MESSAGES = 4;
  * 申込になりそうか。**文は作らない**（度合いと根拠だけ）。
  * messages は順不同でよい。createdAt が無い発言は窓の判定に使わない。
  */
+/**
+ * 2026-11-23 作業員L（統括役の頼み・連携の地図 read.apply_readiness が 24%）: ブレインは窓（BRAIN_MSG_WINDOW・既定20通）の通だけで申込の近さを測っていて、
+ *   7日の内の前の合図（御見積書を送った・内覧の希望・割引を伝えた）が窓の外に出ると hot にならなかった（7日の見張りの番で、ブレインの塊が空の 129番のうち
+ *   7日の通で測り直すと hot が 27番）。APPLY_READINESS_WIDE=on（既定 off）の時だけ、ブレインが会話の直近 APPLY_WINDOW_DAYS 日の通を1回読み、それで測る
+ */
+export function applyReadinessWideOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.APPLY_READINESS_WIDE ?? "").trim().toLowerCase() === "on";
+}
+/** 窓の通と、7日の通（読めた時だけ）の多い方 */
+export function applyReadinessMessages(windowMsgs: ReadonlyArray<ApplyMsg>, wideMsgs: ReadonlyArray<ApplyMsg> | null | undefined): ReadonlyArray<ApplyMsg> {
+  return wideMsgs && wideMsgs.length > windowMsgs.length ? wideMsgs : windowMsgs;
+}
 export function detectApplyReadiness(
   messages: ReadonlyArray<ApplyMsg>,
   nowMs: number = Date.now(),

@@ -1,7 +1,9 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
+import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
+import { pickupUnderstandTurnsOf, pickupUnderstandSummaryOf } from "../pickup-understand-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -145,6 +147,37 @@ t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", 
     && conductorReachOf(`${D}/kind=meeting_place`, [], [R], null).reach === "未確認");
   const pm = promiseMapTurnsOf({ root: "promise:kept_true", turns: [{ id: 1, kind: "pickup", scene: "ack", miss: "ok" }, { id: 2, kind: "check", scene: "question", miss: "overdue", cause: "judgment" }] });
   t("約束の地図の番", pm.length === 2 && pm[0].cause === null && pm[1].miss === "overdue" && pm[1].cause === "judgment");
+}
+
+t("届いているか: 材料の行が測れなかった時は未確認", conductorReachOf("aix_turn:match_60d_device/kind=estimate_sheet", [], [], { cut: new Set(), off: new Set(), at: "x", unmeasured: new Set(["read.estimate_records"]) }).reach === "未確認");
+
+// ── 11/23 気持ち・訴求の場面ごと（K2 の残り）──
+{
+  t("気持ち・訴求の網", feelingOf("ご不安ですよね") && !feelingOf("承知しました") && appealOf("ぜひご内覧ください") === "invite" && appealOf("こちらオススメです") === "appeal" && appealOf("承知しました") === "none");
+  t("気持ちの外れの型", feelingMissOf(true, false) === "feel_missed" && feelingMissOf(false, true) === "feel_extra" && feelingMissOf(true, true) === "ok");
+  t("訴求の外れの型", appealMissOf("invite", "none") === "appeal_missed" && appealMissOf("none", "appeal") === "appeal_extra" && appealMissOf("invite", "appeal") === "appeal_other" && appealMissOf("none", "none") === "ok");
+  const rows = [
+    { id: 1, conv: "a", at: "x", scene: "ack", tkFeel: true, aiFeel: false, tkAppeal: "none" as const, aiAppeal: "none" as const, empty: ["aiSummary"] },
+    { id: 2, conv: "a", at: "x", scene: "ack", tkFeel: false, aiFeel: false, tkAppeal: "invite" as const, aiAppeal: "appeal" as const, empty: [] },
+  ];
+  const ft = feelingAppealTurnsOf(rows, "feeling"), at2 = feelingAppealTurnsOf(rows, "appeal");
+  const tree = buildTree(ft as MapTurn[], { metric: "feeling:by_scene", label: "f", dims: ["scene", "miss", "cause"] });
+  t("気持ちの木: 場面 → 外れの型 → 原因（材料の空は材料）", ft[0].miss === "feel_missed" && ft[0].cause === "material" && ft[1].miss === "ok" && at2[1].miss === "appeal_other" && at2[1].cause === "misread" && sumMismatches(tree).length === 0 && tree[0].n === 2);
+  const s = feelingAppealSummaryOf(rows);
+  t("場面ごとの数え", s.ack.n === 2 && s.ack.feelMissed === 1 && s.ack.appealOther === 1 && s.ack.feelOk === 1);
+}
+
+t("今どこの地図の番（L の形）", (() => { const x = jsonTurnsOf({ root: "situation:match", turns: [{ id: 1, kind: "po", scene: "ack", miss: "ok" }, { id: 2, kind: "tv", scene: "viewing", miss: "over", cause: "counting" }, { id: 3, kind: "po", scene: "ack", miss: "???" }] }, ["under", "over"], "under"); return x[0].cause === null && x[1].miss === "over" && x[1].cause === "counting" && x[2].miss === "under"; })());
+
+// ── 11/23 #479 物件の理解の土台 ──
+{
+  const rows = [{ id: "p1", conv: "a", at: "x", states: { rent: "filled" as const, area: "gap" as const, stove: "none" as const, fit: "filled" as const } }];
+  const tt = pickupUnderstandTurnsOf(rows);
+  t("物件の理解: 欄ごとに1番・fit（選んだ理由と重なる）は数えない", tt.length === 3 && tt.find((x) => x.scene === "area")!.miss === "field_gap" && tt.find((x) => x.scene === "stove")!.kind === "equip" && tt.find((x) => x.scene === "stove")!.miss === "field_none");
+  const s = pickupUnderstandSummaryOf(rows);
+  t("物件の理解の群ごとの数え", s.facts.n === 2 && s.facts.filled === 1 && s.facts.gap === 1 && s.equip.none === 1);
+  const tree = buildTree(tt as MapTurn[], { metric: "pickup:understand", label: "p", dims: ["kind", "scene", "miss"] });
+  t("物件の理解の木: 子の合計が戻る", sumMismatches(tree).length === 0 && tree[0].n === 3 && tree[0].ok === 1);
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);

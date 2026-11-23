@@ -14,6 +14,8 @@ export type SwitchReachDef = {
   needs?: string[];
   /** 指示文の差し替えなど全問に入る（印では見られない） */
   promptAll?: boolean;
+  /** 2026-11-23: 結果の brain（meta）にこの欄があれば効いた（material_marks に印が無い部品・TURN_READ の turn_read・LATENT_FIVE の latent_five） */
+  metaKey?: string;
   /** 印は同じ材料の1行の有無まで（細かい行の有無は見えない） */
   partial?: string;
 };
@@ -30,9 +32,14 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   ACK_PICKUP_AIX_PATH: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（ピックアップの道の1行の有無は見えない）" },
   ACK_FORM_COUNT_WITH_AIX: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（数の1行の有無は見えない）" },
   BRAIN_RULE6_OPEN_PROMISE: { promptAll: true },
+  // 2026-11-23 作業員A（統括役の頼み・#662 の「持つ」が欠けた土台の部品）
+  TURN_READ: { metaKey: "turn_read" },
+  LATENT_FIVE: { metaKey: "latent_five" },
+  CONDUCTOR_EXCHANGE_LEDGER_BRAIN: { mark: "exchange", markSince: "474e7fe63" },
+  DELIVERY_CHECK: { metaKey: "delivery_check" },
 };
 
-export type ReachRow = { id: string; marks?: Record<string, number> | null; ledger?: Record<string, number> | null };
+export type ReachRow = { id: string; marks?: Record<string, number> | null; ledger?: Record<string, number> | null; /** 結果の brain（meta）に値のある欄の名前 */ metaKeys?: readonly string[] | null };
 export type ReachStatus = "reached" | "not_reached" | "no_material" | "mark_after_head" | "prompt_all" | "unknown";
 export const REACH_JA: Record<ReachStatus, string> = {
   reached: "効いた（印が立った問題あり）",
@@ -46,9 +53,10 @@ export type SwitchReach = { sw: string; status: ReachStatus; problems: number; h
 
 /** on にしたスイッチごとの届き（rows は問題ごとに1行に寄せた物でよい・同じ id の回は OR で寄せる） */
 export function switchReachOf(onSwitches: readonly string[], rows: readonly ReachRow[], headHas: (commit: string) => boolean = () => true, table: Record<string, SwitchReachDef> = SWITCH_REACH): SwitchReach[] {
-  const byId = new Map<string, { marks: Record<string, number>; ledger: Record<string, number> }>();
+  const byId = new Map<string, { marks: Record<string, number>; ledger: Record<string, number>; metaKeys: Set<string> }>();
   for (const r of rows) {
-    const cur = byId.get(r.id) ?? { marks: {}, ledger: {} };
+    const cur = byId.get(r.id) ?? { marks: {}, ledger: {}, metaKeys: new Set<string>() };
+    for (const k of r.metaKeys ?? []) cur.metaKeys.add(k);
     for (const [k, v] of Object.entries(r.marks ?? {})) cur.marks[k] = Math.max(cur.marks[k] ?? 0, Number(v) || 0);
     for (const [k, v] of Object.entries(r.ledger ?? {})) cur.ledger[k] = Math.max(cur.ledger[k] ?? 0, Number(v) || 0);
     byId.set(r.id, cur);
@@ -61,6 +69,7 @@ export function switchReachOf(onSwitches: readonly string[], rows: readonly Reac
     const withMaterial = d.needs?.length ? ids.filter((id) => d.needs!.some((t) => (byId.get(id)!.ledger[t] ?? 0) > 0)) : ids;
     if (d.needs?.length && withMaterial.length === 0) return { ...base, status: "no_material", withMaterial, note: `要る材料: ${d.needs.join("・")}` };
     if (d.promptAll) return { ...base, status: "prompt_all", withMaterial };
+    if (d.metaKey && !d.mark) { const hit = ids.filter((id) => byId.get(id)!.metaKeys.has(d.metaKey!)); return { ...base, status: hit.length ? "reached" : "not_reached", hit, withMaterial, note: `印は結果の ${d.metaKey} の欄` }; }
     if (!d.mark) return { ...base, status: "reached", withMaterial, note: "材料はある（印は無い）" };
     if (d.markSince && !headHas(d.markSince)) return { ...base, status: "mark_after_head", withMaterial, note: `印 ${d.mark} は ${d.markSince} から` };
     const hit = ids.filter((id) => (byId.get(id)!.marks[d.mark!] ?? 0) > 0);

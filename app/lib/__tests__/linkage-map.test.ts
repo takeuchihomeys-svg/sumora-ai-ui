@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { LINKAGE_MAP, STAGES, rowStatus, switchStateOf, metaFills, summaryLine, formatLinkageMd, mapSwitchNames, nonEmptyAt, type LinkageRow } from "../linkage-map";
 import { LINKAGE_SWITCH_DEFAULTS } from "../linkage-switch-defaults";
+import { compactResult } from "../linkage-watch-server";
 import { defaultOfSnippet, scanSwitchDefaults } from "../../../scripts/lib/switch-default-scan";
 import { buildDefaultsFile } from "../../../scripts/linkage-switch-defaults";
 import { readFileSync } from "node:fs";
@@ -65,4 +66,17 @@ t("要約の1行（先週からの増減）と md（切れている行が一番�
   assert.ok(md.indexOf("## 切れている行") < md.indexOf("## ① お客様の通・画像"));
   assert.match(md, /\| 切れている \| ② ブレインの読み \|/);
 });
+// 2026-11-23 作業員L: 見張りの記録に測れなかった行（unknown）の名前と理由が残る（読む側が「つながっている」と見ないように）
+{
+  const rep = { at: "t", prevBroken: null, switches: {}, summary: "s", notes: [], results: [
+    { id: "a", status: "connected", why: "ok", fill: 1, fillN: 3, offSwitches: [], offReaders: [] },
+    { id: "b", status: "unknown", why: "本番の記録を読めなかった", fill: null, fillN: null, offSwitches: [], offReaders: [] },
+    { id: "c", status: "broken", why: "読む側が無い", fill: null, fillN: null, offSwitches: [], offReaders: [] },
+  ] } as never;
+  const c = compactResult(rep);
+  assert.equal(c.unknown, 1);
+  assert.deepEqual(c.unmeasured, [{ id: "b", why: "本番の記録を読めなかった" }]);
+  assert.deepEqual(c.cut.map((x) => x.id), ["c"]);
+  console.log("linkage-watch unmeasured ok");
+}
 console.log(`${n} tests ok`);
