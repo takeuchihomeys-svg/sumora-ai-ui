@@ -154,7 +154,13 @@ it("スイッチ: 既定 on（2026-10-22 試験 p12-arm-on で悪化なし）・
 });
 it("brain-core: off の時プロンプトは同じ（applyRouteText は '' で始まり、on の分岐の中でだけ代入・差し込みは user の毎回変わる並びだけ）", () => {
   const src = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8").replace(/\r\n/g, "\n");
-  ok(src.includes('let applyRouteText = "";\n  if (applyRouteMapEnabled()) {'), "初期値と分岐");
+  // 2026-11-23 作業員M: 11/21 の APPLY_ROUTE_RECORD（記録だけ）で初期化と分岐の間に注記と applyRouteLocRec の宣言が入った＝間はコメントとその宣言だけを許す
+  {
+    const head = 'let applyRouteText = "";';
+    const i = src.indexOf(head), j = src.indexOf("if (applyRouteMapEnabled()) {", i);
+    const between = i >= 0 && j > i ? src.slice(i + head.length, j).split("\n").map((l) => l.trim()).filter(Boolean) : null;
+    ok(!!between && between.every((l) => l.startsWith("//") || l.startsWith("let applyRouteLocRec")), "初期値と分岐（間は記録の宣言とコメントだけ）");
+  }
   const assigns = src.match(/applyRouteText\s*=[^=]/g) ?? [];
   eq(assigns.length, 2, "代入は初期化と分岐の中の2つ");
   const uses = src.match(/\$\{applyRouteText\}/g) ?? [];
