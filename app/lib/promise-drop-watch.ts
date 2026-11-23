@@ -56,7 +56,26 @@ export function promiseClausesOf(text: string): string {
     !/(?:お気に召され|気になる|気に入られ)[^。！!？?\n]*(?:お部屋|物件)[^。！!？?\n]*(?:お送り|ご連絡)(?:下さい|ください)/.test(c),
   ).join("");
 }
-export function promiseDropKindOf(text: string): PdKind | null {
+// ─── 2026-11-23 作業員L（竹内さん 11/23 P0「約束の部分もぬけや足りない土台がないか細部まで」・scripts/audit-promise-kinds.ts の14日）───
+//   約束の形の節 333 のうち 47% が種類の網（見張り・行動台帳・連絡日・待ち合わせ）のどれにも入らなかった。中身は申込以降・説明・内覧当日・気持ちの言葉が大半で、
+//   種類の網の候補は 28 節: 「（大きめの・広めの）お部屋（を）探させて頂きます」「追加でお部屋お送りさせて頂きます」（探す 11）・
+//   「募集状况（况の字）確認」「内覧可能なお部屋も確認」「〜か交渉させて頂きます」「管理会社にご連絡／お伝えさせて頂きます」「分かり次第ご連絡させて」（確認 10）・
+//   「お電話かけさせて頂きます」「再度〇時ごろにご連絡させて頂きます」（電話 6）・「（ご内覧）時間調整させて頂きます」（内覧 2）。
+//   探すの候補は記録（sent_facts）もカレンダーも無く、331b0338 は 11/10 の約束のあと13日物件が出ていない（見張りにも統括の材料にも出ない本当の抜け）。
+//   PROMISE_KIND_WIDE（既定 off・=on で使う）: 見張り（promiseDropOf・overduePromisesOf＝統括の材料）と B1 の種類の網にこの型を足す。
+//   行動台帳・カレンダーの【必ず】（スタッフの画面）には足さない（竹内さんに確認する案）。テスト: app/lib/__tests__/promise-kind-wide.test.ts
+export const promiseKindWideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_KIND_WIDE ?? "").trim().toLowerCase() === "on";
+export type PromiseWideKind = "pickup" | "check" | "callback" | "viewing_slot";
+/** 種類の網の候補（今の網が拾わない言い回し）。節（promiseClausesOf の後）で読む。null は候補なし */
+export function promiseWideKindOf(clause: string): PromiseWideKind | null {
+  const t = String(clause ?? "").normalize("NFKC").replace(/况/g, "況");
+  if (/(?:お部屋|物件)[^。！!？?\n]{0,4}?(?:を|も)?(?:含めて)?(?:お?探させて|お探しさせて)(?:頂|いただ)きます|(?:追加で|中心に)[^。！!？?\n]{0,10}(?:お部屋|物件)?(?:を)?お送りさせて(?:頂|いただ)きます/.test(t)) return "pickup";
+  if (/(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)させて(?:頂|いただ)|内覧可能[^。！!？?\n]{0,12}確認させて(?:頂|いただ)|か(?:を)?交渉させて(?:頂|いただ)|(?:よう|ように)交渉させて(?:頂|いただ)|管理会[^。！!？?\n]{0,6}(?:に|へ)?(?:ご連絡|お伝え|交渉)させて(?:頂|いただ)|(?:分かり|わかり|繋がり|つながり)次第[^。！!？?\n]{0,16}ご連絡させて/.test(t)) return "check";
+  if (/お電話(?:を)?(?:かけ|にて)[^。！!？?\n]{0,12}させて(?:頂|いただ)|再度[^。！!？?\n]{0,12}(?:ご連絡|お電話)させて(?:頂|いただ)/.test(t)) return "callback";
+  if (/(?:ご内覧|内覧|ご案内)(?:の)?(?:お?時間|日程|日時)(?:を)?調整させて(?:頂|いただ)|時間調整させて(?:頂|いただ)/.test(t)) return "viewing_slot";
+  return null;
+}
+export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
   const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
   // 2026-11-23 作業員L（台帳 #638・行動台帳の本当に未履行8件のうち3件が見張りに出なかった）: ひらがなの「させていただき」・
@@ -66,6 +85,7 @@ export function promiseDropKindOf(text: string): PdKind | null {
   // 2026-11-23 作業員L（#638 の続き・作業員N2 の見つけ 82c4d3e8）: 「募集状況と初期費用確認させて頂きます」のように対象と動きの間に短い語（12字まで・節の中）が入る形も確認の約束
   if (/(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
   if (/(?:(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)|管理会社(?:に|へ)(?:確認|交渉))させていただ(?:きます|き[、,]?[^。！!？?\n]*(?:次第|ご連絡|お送り|ご報告))/.test(t)) return "check";
+  if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w === "pickup" || w === "check") return w; }
   return null;
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
@@ -84,8 +104,8 @@ export const PROMISE_KIND_NAMES = ["pickup", "check", "estimate", "viewing_slot"
 export type PromiseKindName = typeof PROMISE_KIND_NAMES[number];
 export const PROMISE_KIND_JUDGEABLE: ReadonlySet<PromiseKindName> = new Set<PromiseKindName>(["pickup", "check", "estimate"]);
 /** こちらの手打ちの文の約束の種類（約束でなければ null）。新着を随時は期日が無いので null */
-export function promiseKindNameOf(text: string): PromiseKindName | null {
-  const k = promiseDropKindOf(text);
+export function promiseKindNameOf(text: string, env?: Env): PromiseKindName | null {
+  const k = promiseDropKindOf(text, env);
   if (k) return k;
   const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
@@ -93,6 +113,7 @@ export function promiseKindNameOf(text: string): PromiseKindName | null {
   if (/御?見積(?:書)?(?:を)?(?:作成|お作り)(?:して|させて頂)|御?見積(?:書)?(?:を)?お送りさせて頂|御?見積(?:書)?(?:と|も)?(?:あわせて|併せて|合わせて)[^。！!？?\n]{0,6}?(?:ご連絡|お送り)させて(?:頂|いただ)/.test(t)) return "estimate";
   if (/内覧(?:の)?(?:候補日?|日程|ご日程|お日にち)(?:を)?(?:確認|お調べ|お送り)させて頂|ご案内(?:可能な)?(?:日時|お時間)(?:を)?確認させて頂/.test(t)) return "viewing_slot";
   if (/(?:折り返し|改めて)(?:お電話|ご連絡のお電話)させて頂|お電話させて頂/.test(t)) return "callback";
+  if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w) return w; }
   if (/させて頂きます/.test(t) && /(?:確認|お調べ|お送り|ご連絡)/.test(t)) return "other";
   return null;
 }
