@@ -29,6 +29,7 @@ import { turnApplicationReason } from "../app/lib/turn-application-gate";
 import { gateCheckSpecs, writeGateExcluded, readGateExcluded } from "./lib/exam-application-gate";
 import { isTestConversation } from "../app/lib/test-conversations";
 import { pickSipRowsDesc } from "./lib/exam-ledger-sip";
+import { examLedgerCheckTasksOn, pickCheckTaskRows } from "./lib/exam-ledger-check-tasks";
 /** 2026-11-21 作業員H: 後から本番に足した送った資料の読みの行（G #448）。写しの上限の数えに入れない */
 const SIP_ADDED_PREFIXES = ["aix_log"];
 import { resolveReplyScene } from "../app/lib/reply-scene";
@@ -135,6 +136,12 @@ async function ledgerSnapshot(conv: string, pcId: string | null, at: string, mas
       }
       return { ago: Math.round((ms(at) - ms(String(r[c.time]))) / 60_000), row };
     });
+  }
+  // 2026-11-23 作業員A: 空室確認のタスク（line_tasks の property_check だけ・番の時点に巻き戻す・自由文と本名は写さない）。EXAM_LEDGER_CHECK_TASKS=on の時だけ（既定 off＝今までの写しと同じ）
+  if (examLedgerCheckTasksOn()) {
+    const { data, error } = await sb.from("line_tasks").select("id, task_type, status, created_at, resolved_at, completed_at, result").eq("conversation_id", conv).eq("task_type", "property_check").lte("created_at", at).order("created_at", { ascending: false }).limit(30);
+    if (error) console.warn(`  台帳 line_tasks: ${error.message}`);
+    else out.line_tasks = pickCheckTaskRows((data ?? []) as Array<Record<string, unknown>>, at, (s) => !!applicationMaterialReason(s));
   }
   return out;
 }
