@@ -101,6 +101,7 @@ import { RT_IGNORE_TEST, shouldIgnoreTestRealtime, shouldIgnoreTestRealtimeForCo
 /** 会話画面の紐付け（linkedEntryOf）に使う物件顧客の列（一覧の読み込み・テスト専用の会話を選んだ時の読み直しで同じ） */
 const PC_LINK_COLUMNS = "id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days";
 import { brainPickFromMetas } from "./lib/brain-property-display";
+import { calendarDonePatch } from "./lib/calendar-done-at";
 import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
 // 2026-10-23 送信の返事が来ず、同じ印での確かめも返事が無い（届いたか分からない）→ UncertainSendError（send-idempotency.ts）
@@ -6333,7 +6334,7 @@ export default function Home() {
         .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
         .lt("start_at", new Date(`${when.ymd}T00:00:00+09:00`).toISOString());
       const staleIds = ((olderAuto ?? []) as Array<{ id: number; notes: string | null }>).filter((e) => /^件数:\s*\d+件\n物件:\s*（未確定）/.test(e.notes ?? "")).map((e) => e.id);
-      if (staleIds.length > 0) await supabase.from("calendar_events").update({ is_done: true }).in("id", staleIds);
+      if (staleIds.length > 0) await supabase.from("calendar_events").update(calendarDonePatch(true)).in("id", staleIds);
       // 2026-09-16 竹内（カイナ事例）「決定したら確保しているそのお客さんの候補時間他のは消える」:
       //   内覧が決まった（待ち合わせを送った）ので、このお客様の残りの「時間確保」は消す。決まった日時の確保は上で本当の内覧に書き換え済み
       const { data: holds } = await supabase.from("calendar_events")

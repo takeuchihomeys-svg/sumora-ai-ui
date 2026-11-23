@@ -2,6 +2,7 @@
 import { screeningAdminSupabaseKey } from "@/app/lib/supabase-server-key";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
+import { calendarDonePatch } from "@/app/lib/calendar-done-at";
 // 2026-09-29 API 費用の調査: 送信後の学習（Sonnet 165回・Haiku 206回／7日）が llm_usage_logs で名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
@@ -1064,7 +1065,7 @@ async function markCalendarEventsDone(
 ): Promise<void> {
   const { error } = await supabase
     .from("calendar_events")
-    .update({ is_done: true })
+    .update(calendarDonePatch(true))
     .eq("conversation_id", conversationId)
     .eq("event_type", eventType)
     .eq("is_done", false);

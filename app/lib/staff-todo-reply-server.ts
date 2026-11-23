@@ -5,6 +5,7 @@
 //     aix_action_items … AIX 要対応の行なら status=done・done_by=staff_group（AIX要対応の他の画面・朝の報告とも揃う）
 //     calendar_events  … お客様への約束の行なら is_done=true（カレンダー・朝の報告とも揃う）
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { calendarDonePatch } from "@/app/lib/calendar-done-at";
 import { numberTodoItems, TODO_MARK_VIA_NONE, type TodoList } from "@/app/lib/staff-todo-list";
 import {
   parseTodoReply, pickTodoSnapshot, ambiguousTodoNumbers, resolveTodoReply, renderTodoReplyAck, TODO_SNAPSHOT_KEEP,
@@ -76,7 +77,7 @@ export async function markTodoItemsDone(sb: SupabaseClient, items: ReadonlyArray
     if (r.error) console.warn("[staff-todo] aix done:", r.error.message);
   }
   if (promiseIds.length) {
-    const r = await sb.from("calendar_events").update({ is_done: true }).in("id", promiseIds).eq("is_done", false);
+    const r = await sb.from("calendar_events").update(calendarDonePatch(true)).in("id", promiseIds).eq("is_done", false);
     if (r.error) console.warn("[staff-todo] promise done:", r.error.message);
   }
   return { unrecorded };
