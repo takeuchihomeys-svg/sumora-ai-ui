@@ -12,6 +12,7 @@ import { judgeBasisRecDigest, type JudgeBasis } from "./brain-judge-basis";
 import { materialClashDigest } from "./material-clash";
 import { situationNowDigest } from "./situation-now";
 import { routeDigestOn, routeDigestOf } from "./apply-route-next";
+import { parseActionLedgerDigest } from "./action-ledger-digest";
 
 /** 2026-11-11 作業員1（A1 ③）: 自己申告の鍵の印を digest に残すか（記録だけ・既定 off） */
 export function materialSideShadowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -97,6 +98,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   { const cl = meta.conductor_lessons as { ids?: string[]; mark?: string[] } | undefined; if (cl?.ids?.length) (out as Record<string, unknown>).ls = cl.ids.join(","); if (cl?.mark?.length) (out as Record<string, unknown>).lsm = cl.mark.join(","); }
   // 2026-11-23 作業員R（#608）: 番ごとの申込までの地図の駅（ar＝"node|branch|substate|網の版"・既定 on・ROUTE_DIGEST=off で止める・記録だけ）。次の番のブレインは名前の決まった欄しか読まない＝材料に戻らない
   if (routeDigestOn(env)) { const ar = routeDigestOf(meta, env); if (ar) (out as Record<string, unknown>).ar = ar; }
+  // 2026-11-23 作業員N2（台帳 #566・連携の地図 next.ledger の分母）: 行動台帳の行の数（meta.action_ledger_counts＝action-ledger-digest の1語）を ld に。記録だけ・形の違う物は入れない
+  if (parseActionLedgerDigest(meta.action_ledger_counts)) (out as Record<string, unknown>).ld = String(meta.action_ledger_counts).trim();
   return out;
 }
 

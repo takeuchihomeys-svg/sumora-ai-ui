@@ -116,7 +116,9 @@ export async function callDeepSeek(
   content: string | Array<Record<string, unknown>>,
   opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean; temperature?: number;
     /** 2026-11-23 作業員N2（#601）: 中の記録の名札（無ければ "deepseek:auto"）・会話。record=false で中の記録をしない */
-    action?: string; conversationId?: string | null; record?: boolean },
+    action?: string; conversationId?: string | null; record?: boolean;
+    /** 2026-11-23 作業員N2（#601 の二重の記録）: 渡すと中の記録をすぐ待ちに入れず、この口に渡す（callDeepSeekRead が読み直しの後でまとめて待ちに入れる） */
+    onAutoUsage?: (x: AutoUsageInputLite) => void },
 ): Promise<VisionAltResult | null> {
   const t0 = Date.now();
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
@@ -153,12 +155,14 @@ export async function callDeepSeek(
     // 2026-11-23 作業員N2（#601・統括役の決め・既定 on）: 中で記録する（呼ぶ側が同じ番を記録したら、そちらだけが残る＝llm-usage-recorder.recordAltUsageAuto）。
     //   空の返事も払っているので記録する（呼ぶ側は null を受けて記録できなかった）
     if (opts?.record !== false) {
-      void import("./llm-usage-recorder").then(({ recordAltUsageAuto }) => recordAltUsageAuto({
+      const rec: AutoUsageInputLite = {
         model, action: opts?.action ?? "deepseek:auto", conversationId: opts?.conversationId ?? null,
         usage: { input_tokens: usage.cacheMiss || Math.max(0, usage.input - usage.cacheHit), output_tokens: usage.output, cache_read_input_tokens: usage.cacheHit },
         status: res.status, errorType: text ? null : "empty", durationMs: Date.now() - t0,
         sysHead: system ? system.slice(0, 400) : null, sysKeyFull: null, maxTokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
-      })).catch(() => {});
+      };
+      if (opts?.onAutoUsage) opts.onAutoUsage(rec);
+      else queueAutoUsage(rec);
     }
     if (!text) return null;
     return { text, usage, model };
@@ -166,6 +170,16 @@ export async function callDeepSeek(
     console.warn("[deepseek] 失敗:", e instanceof Error ? e.message : String(e));
     return null;
   }
+}
+
+/** 中の記録の1行（llm-usage-recorder の AltUsageInput と同じ形・ここで import すると重いので形だけ） */
+export type AutoUsageInputLite = {
+  model: string; action: string | null; conversationId: string | null;
+  usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number };
+  status: number; errorType: string | null; durationMs: number; sysHead: string | null; sysKeyFull: string | null; maxTokens: number | null;
+};
+function queueAutoUsage(rec: AutoUsageInputLite): void {
+  void import("./llm-usage-recorder").then(({ recordAltUsageAuto }) => recordAltUsageAuto(rec)).catch(() => {});
 }
 
 /** 物件の判断・読み取りで DeepSeek が2回とも答えなかった時の印（札・要確認の文言。Claude で埋めない） */
@@ -204,23 +218,27 @@ export async function callDeepSeekRead<T>(
   //   読み直しも同じ設定（送る形を変えると前置きキャッシュの先頭一致が外れる）
   const call = (timeoutMs: number) => callDeepSeek(system, content, {
     apiKey: opts.apiKey, model: opts.model, maxTokens: opts.maxTokens, timeoutMs, thinking: false, temperature: 0,
-    action: opts.action, conversationId: opts.conversationId, record: opts.record,
+    action: opts.action, conversationId: opts.conversationId, record: opts.record, onAutoUsage: (x) => held.push(x),
   });
+  // 2026-11-23 作業員N2（#601 の二重の記録）: 中の記録は読み直しが済んでから待ちに入れる（呼ぶ側は返った後に attempts を1行ずつ記録する＝
+  //   1回目の中の記録を先に待ちに入れると、読み直しの間に3秒の待ちが切れて二重になっていた・11/23 の search_audit の週のまとめ）
+  const held: AutoUsageInputLite[] = [];
+  const done = <R,>(r: R): R => { for (const x of held.splice(0)) queueAutoUsage(x); return r; };
   const attempts: DeepSeekReadAttempt[] = [];
   const t0 = Date.now();
   const r1 = await call(opts.timeoutMs);
   const v1 = r1 ? safeParse(parse, r1.text) : null;
   attempts.push({ res: r1, ok: v1 != null, ms: Date.now() - t0, retry: false });
-  if (v1 != null) return { value: v1, res: r1, attempts, failed: false };
+  if (v1 != null) return done({ value: v1, res: r1, attempts, failed: false });
   // 鍵が無い時は読み直しても同じ（fetch も出ない）
-  if (!(opts.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim()) return { value: null, res: r1, attempts, failed: true };
+  if (!(opts.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim()) return done({ value: null, res: r1, attempts, failed: true });
   const elapsed = Date.now() - t0;
-  if (retry?.retryIf && !retry.retryIf(elapsed)) return { value: null, res: r1, attempts, failed: true };
+  if (retry?.retryIf && !retry.retryIf(elapsed)) return done({ value: null, res: r1, attempts, failed: true });
   const t1 = Date.now();
   const r2 = await call(Math.max(1_000, retry?.retryTimeoutMs ? retry.retryTimeoutMs(elapsed) : opts.timeoutMs));
   const v2 = r2 ? safeParse(parse, r2.text) : null;
   attempts.push({ res: r2, ok: v2 != null, ms: Date.now() - t1, retry: true });
-  return { value: v2, res: r2 ?? r1, attempts, failed: v2 == null };
+  return done({ value: v2, res: r2 ?? r1, attempts, failed: v2 == null });
 }
 
 function safeParse<T>(parse: (text: string) => T | null, text: string): T | null {

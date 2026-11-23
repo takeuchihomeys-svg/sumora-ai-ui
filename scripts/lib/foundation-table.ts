@@ -17,7 +17,7 @@ export const FOUNDATION_N: FoundationRow[] = [
   // 2026-11-22 作業員L（台帳 #502・#519）: audit-promise-kept は 11/21 #495 から場面ごとに数えている（SCENE_SPLIT へ）。本番の数は作業員N2 が quality_daily に
   { id: "n.promise", name: "約束", owner: "作業員L", rules: ["2b1e0044", "22c7e985", "19e34124", "5649fbee"], measures: ["scripts/audit-promise-kept.ts", "scripts/audit-promise-ledger.ts"], metric: "foundation:promise:kept_in_time", parts: ["CONDUCTOR_OVERDUE_PROMISES", "PROMISE_DROP_WATCH", "COND_PICKUP_SENT_FIRST"], metricAlt: ["foundation:promise:kept_72h", "foundation:promise:overdue_rate", "foundation:promise:open"] },
   { id: "n.asks", name: "要件", owner: "作業員M", rules: ["ca55d42b", "aa21438c"], measures: ["scripts/ask-ledger-score.ts", "scripts/audit-ask-route-takeuchi.ts"], metric: "growth:ask:合う", parts: ["ASK_LEDGER", "ASK_PROGRESS"], note: "本番の meta.ask_ledger を数える台本は未作成" },
-  { id: "n.link", name: "つなぎ", owner: "作業員H・作業員L", rules: ["82d5dd50", "69491851", "59b45146"], measures: ["scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-link-brain.ts"], metric: null, parts: ["NEXT_SEND_LINK", "TSUNAGI_ONE_PLACE"] },
+  { id: "n.link", name: "つなぎ", owner: "作業員H・作業員L", rules: ["82d5dd50", "69491851", "59b45146"], measures: ["scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-link-brain.ts"], metric: "foundation:link:tsunagi_rate", /* 2026-11-23 作業員N2: 毎朝の1枚が tsunagi-census --days=30 から書く（scope takeuchi） */ parts: ["NEXT_SEND_LINK", "TSUNAGI_ONE_PLACE"] },
 ];
 
 export type FoundationGap = { id: string; name: string; owner: string; missing: Array<"rules" | "measures" | "metric" | "parts">; detail: string };

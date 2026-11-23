@@ -65,6 +65,7 @@ export function proposalsToOutputs(ps: ReadonlyArray<ShapeProposal>, days: numbe
     insight: `${p.text}。数えは scripts/audit-scene-feeling-appeal.ts（${days}日・竹内さん本人の番・決まった網）。`,
     rationale: `竹内さん本人の実送信で場面ごとに数えた過半数の形（60%以上か40%以下）。土台「${SHAPE_JA[p.shape].base}」の場面の決まりが無かった所（台帳 #496・#498・作業員N の foundation-scene-grid）。`,
     context: `${today} 作業員K2（台帳 #496〜#499）`,
+    draft: "audit-scene-feeling-appeal --kb-json", // 2026-11-23 作業員N2: 案の目印（kb-insert は --approved 無しでは入れない）
     applied_to: "scripts/audit-scene-feeling-appeal.ts",
     tags: [SHAPE_JA[p.shape].base, `場面:${SCENE_JA[p.scene] ?? p.scene}`, "竹内さんの実送信", "物差し"],
     priority: 2,

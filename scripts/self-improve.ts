@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { POINTER_KIND_JA, type PointerKind } from "../app/lib/owner-pointers";
 import { pointersForExam } from "../app/lib/owner-pointers-server";
 import { LINKAGE_SWITCH_DEFAULTS } from "../app/lib/linkage-switch-defaults";
-import { runChecks } from "./owner-feedback-check";
+import { runChecks, gapRowsOf } from "./owner-feedback-check";
 import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-conversations";
 import { checkLinkage } from "./check-linkage";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
@@ -29,13 +29,14 @@ import { checkOffPath, isOffPathGap } from "./check-off-path";
 import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
-import { flexMetricsOf, trustMetricsOf, type OffPatternJson, type PromiseKeptRow } from "./lib/flex-daily";
+import { flexMetricsOf, trustMetricsOf, routeSgMatchRowsOf, tsunagiRowsOf, type OffPatternJson, type PromiseKeptRow, type RouteProgressRow, type TsunagiCensusJson } from "./lib/flex-daily";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
 import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, GROWTH_OWNERS, pointersOfItems, pickupUnderstandingNow, runTsx, appealViaToolNow, estimateDoneUnsentNow, lastJsonLine, writerMetricRowsForQd } from "./lib/self-improve-growth";
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
+import { mapDaily, type QdOut } from "./lib/metric-map-server";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -160,6 +161,7 @@ async function main() {
   const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
   const coreFix: string[] = [];
   const ledger: FoundGap[] = []; // 穴の型③〜⑤の穴（--write の時に台帳へ・題で重ねない）
+  const mapQd: QdOut[] = []; // 芯 ⑤ 数ごとの地図（map:* / forecast:*・detail 付きで別に書く）
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
@@ -243,6 +245,18 @@ async function main() {
       if (!lr.error) coreRows.push({ metric: "core:lessons_read", value: lr.count ?? 0, n: lrAll.count ?? null });
       lines.push(`- 統括の学び: conductor_lessons の今の行 ${lc.error ? "読めない" : lc.count ?? 0}・読んだ番（7日・digest の ls）${lr.error ? "読めない" : `${lr.count ?? 0}/${lrAll.count ?? "—"}`}（#433）`);
       if (top) coreFix.push(`統括の判断: 外れの原因で一番多いのは「${CAUSE_JA[top[0] as Cause]}」${top[1]}番 → 問題の候補を作業員H（brain-exam-add）・教訓を作業員L（conductor_lessons）へ`);
+    }
+    // 芯 ⑤ 数ごとの地図と見込みの突き合わせ（2026-11-23 作業員P・台帳 #610・竹内さん「この予測と今の部分と次の部分を把握するように連携するように」）:
+    //   木（数 → AIX の種類 → 場面 → 外れの型 → 原因）は夜に1日1回だけ作る（60日の重い読み）・昼は前の木を読む。葉の順位＝次の一手・穴・子の合計の食い違い・見込みの外れを要確認へ。
+    //   止める: SELF_IMPROVE_MAP=off
+    if ((process.env.SELF_IMPROVE_MAP ?? "on").toLowerCase() !== "off") {
+      const mp = await mapDaily(sb, { now, write: flag("write"), night: isNightJst(now) }).catch((e) => { lines.push(`### 芯: 数ごとの地図（止まった: ${e instanceof Error ? e.message.slice(0, 120) : e}）`); return null; });
+      if (mp) {
+        lines.push("### 芯: 数ごとの地図と見込みの突き合わせ（#610）", ...mp.lines);
+        coreFix.push(...mp.fix.slice(0, 8));
+        mapQd.push(...mp.qd);
+        ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
+      }
     }
   }
 
@@ -409,6 +423,42 @@ async function main() {
       lines.push(`- 時系列の帳面の届き方（72時間）: ${tdRows.length}行・半分より少ない所 ${low.slice(0, 6).join("・") || "なし"}（作業員L・台帳 #7）`);
     } catch { lines.push("- 時系列の帳面の届き方: audit-timeline-delivery --metrics が失敗（作業員L・台帳 #7）"); } finally { try { rmSync(tdo); } catch { /* 無し */ } }
   }
+  // 行動台帳の約束（作業員L・台帳 #519・作業員N の土台の表 n.promise・2026-11-23 統括役の頼み）: audit-promise-ledger --days=14 --metrics=（sent_facts の約束と済みの行だけ・軽い読み）
+  //   foundation:promise:open（開いている約束の数）・foundation:promise:overdue_rate（うち期日超えの %）・foundation:promise:kept_72h（72時間の内に閉じた %）。行の scope は all のまま
+  if (doMetrics && existsSyncPU("scripts/audit-promise-ledger.ts") && readFileSync("scripts/audit-promise-ledger.ts", "utf8").includes("--metrics")) {
+    const plo = join(tmpdir(), `promise-ledger-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-promise-ledger.ts", "--days=14", `--metrics=${plo}`], 180_000);
+      const pl = (JSON.parse(readFileSync(plo, "utf8")) as Array<{ metric: string; scope?: string; value: number | null; n: number | null; detail?: Record<string, unknown> }>).filter((r) => typeof r.metric === "string" && r.metric.startsWith("foundation:promise:"));
+      for (const r of pl) foundRows.push({ metric: r.metric, value: r.value ?? null, n: r.n ?? null });
+      const g = (m: string) => pl.find((r) => r.metric === m);
+      lines.push(`- 行動台帳の約束（14日）: 開いている ${g("foundation:promise:open")?.value ?? "—"}・うち期日超え ${g("foundation:promise:overdue_rate")?.value ?? "—"}%・72時間の内に閉じた ${g("foundation:promise:kept_72h")?.value ?? "—"}%（${g("foundation:promise:kept_72h")?.n ?? "—"}）（作業員L・台帳 #519）`);
+    } catch { lines.push("- 行動台帳の約束: audit-promise-ledger --metrics が失敗（作業員L・台帳 #519）"); } finally { try { rmSync(plo); } catch { /* 無し */ } }
+  }
+  // 申込までの地図の駅ごとの一致（作業員R の audit-route-progress-takeuchi・作業員P の地図 route:sg_match・2026-11-23 統括役の頼み）: 会話ごとに customer-state を読む重い台本なので
+  //   夜の回（22〜9時）だけ。sg の時代（11/03 05:42Z〜）の番しか数えないので --days=21 で足りる（60日でも同じ番）・会話は 150 まで。scope は takeuchi
+  if (doMetrics && isNightJst(now) && existsSyncPU("scripts/audit-route-progress-takeuchi.ts")) {
+    const rpo = join(tmpdir(), `route-progress-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-route-progress-takeuchi.ts", "--days=21", "--max-conv=150", `--json=${rpo}`], 420_000);
+      const rr = routeSgMatchRowsOf(JSON.parse(readFileSync(rpo, "utf8")) as RouteProgressRow[]);
+      flexRows.push(...rr);
+      const all = rr[0];
+      const low = rr.slice(1).filter((r) => r.n >= 5 && r.value != null && r.value < 50).map((r) => `${r.metric.replace("route:sg_match:", "")} ${r.value}%（${r.n}）`);
+      lines.push(`- 申込までの地図の駅と判断の記録の段の一致（sg の時代・21日）: ${all?.value ?? "—"}%（${all?.n ?? 0}番）・半分より低い駅 ${low.slice(0, 6).join("・") || "なし"}（作業員R・M・#620）`);
+    } catch { lines.push("- 申込までの地図の駅ごとの一致: audit-route-progress-takeuchi が失敗（作業員R）"); } finally { try { rmSync(rpo); } catch { /* 無し */ } }
+  }
+  // 土台「つなぎ」の本番の数（作業員H の tsunagi-census・土台の表 n.link・2026-11-23 統括役の頼み）: 竹内さん本人の送信（takeuchi_compose_examples・30日で絞る・--brain は使わない＝軽い読み）
+  if (doMetrics && existsSyncPU("scripts/tsunagi-census.ts")) {
+    const tso = join(tmpdir(), `tsunagi-census-${process.pid}.json`);
+    try {
+      runTsx(["scripts/tsunagi-census.ts", "--days=30", `--json=${tso}`], 180_000);
+      const tr = tsunagiRowsOf(JSON.parse(readFileSync(tso, "utf8")) as TsunagiCensusJson);
+      flexRows.push(...tr);
+      const top = tr.filter((r) => r.metric.startsWith("foundation:link:kind:") && !r.metric.endsWith(":none")).sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 4).map((r) => `${r.metric.replace("foundation:link:kind:", "")} ${r.value}%`);
+      lines.push(`- つなぎ（30日・竹内さん本人の送信 ${tr[0]?.n ?? 0}通）: つなぎの入った通 ${tr[0]?.value ?? "—"}%｜多い型 ${top.join("・") || "—"}（作業員H）`);
+    } catch { lines.push("- つなぎ: tsunagi-census が失敗（作業員H）"); } finally { try { rmSync(tso); } catch { /* 無し */ } }
+  }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
     const { data: qs } = await sb.from("quality_daily").select("day, metric, value").like("metric", "search_%").eq("scope", "all").gte("day", jstDay(now - 9 * 86_400_000)).limit(1000);
@@ -483,6 +533,8 @@ async function main() {
       { day, metric: "aix_first_match", scope: "takeuchi", value: mMain.firstTk.rate, n: mMain.firstTk.n }, { day, metric: "aix_first_match", scope: "all", value: mMain.firstAll.rate, n: mMain.firstAll.n },
       { day, metric: "exam_cost_usd", scope: "all", value: cost, n: runs.length }, { day, metric: "exam_worse_runs", scope: "all", value: worse.length, n: runs.length },
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
+      // 2026-11-23 作業員N2（統括役の頼み）: 穴のまとまりの数（上）は残し、まとまりが表す行の数を並べる（not_subdivided の 8 は地図の7行＋設計知見 89行＋欄4つ）
+      ...outs.map((o) => ({ day, metric: `check_gaps_rows:${o.kind}`, scope: "all", value: gapRowsOf(o.gaps), n: o.gaps.length })),
       ...growthRows.map((r) => ({ day, metric: r.metric, scope: r.key === "writer_link" ? "all" : "takeuchi", value: r.value, n: r.n })),
       ...Object.entries(ed.features).map(([k, n]) => ({ day, metric: `growth:pickup_edit_feature:${k}`, scope: "takeuchi", value: n, n: null })),
       ...coreRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
@@ -496,10 +548,11 @@ async function main() {
         // 2026-11-22 作業員N2（作業員M の頼み・台帳 #520）: 要件の帳面の分け（combo-daily の同じ番・14日・記録なしは分母外）。合うは合う率（%）
         { day, metric: "growth:ask:取りこぼし", scope: "takeuchi", value: cd.ask.取りこぼし, n: cd.ask.n }, { day, metric: "growth:ask:重ね", scope: "takeuchi", value: cd.ask.重ね, n: cd.ask.n },
         { day, metric: "growth:ask:取り違え", scope: "takeuchi", value: cd.ask.取り違え, n: cd.ask.n }, { day, metric: "growth:ask:合う", scope: "takeuchi", value: cd.ask.合う率, n: cd.ask.n }] : []),
-    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
+    ].filter((r) => (r.metric.startsWith("core:") ? doCore : true) && (doMetrics || r.metric.startsWith("core:") || !/^(?:reply_match|aix_first_match|growth:)/.test(r.metric)) && (doChecks || !/^check_gaps(?:_rows)?:/.test(r.metric)) && (!only || only === "metrics" || !/^exam_/.test(r.metric) || doCandidates))
      .filter((r) => !only || only === "metrics" || (only === "core" && r.metric.startsWith("core:")))
      .map((r) => ({ ...r, source: only ? `scripts/self-improve.ts --only=${only}` : "scripts/self-improve.ts" }));
     if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(`quality_daily: ${error.message}`); }
+    if (mapQd.length) { const { error } = await sb.from("quality_daily").upsert(mapQd.map((r) => ({ ...r, source: "scripts/self-improve.ts（芯 ⑤ 地図・#610）" })), { onConflict: "day,metric,scope" }); if (error) console.log(`quality_daily（地図）: ${error.message}`); }
     if (ledger.length) { const added = await addFoundGaps(sb, ledger, "self-improve").catch(() => []); if (added.length) console.log(`台帳に足した（穴の型③〜⑤）${added.length}行: #${added.join("・#")}`); }
     await sb.from("cron_run_logs").insert({ cron_name: "self-improve", started_at: new Date(now).toISOString(), finished_at: new Date().toISOString(), ok: true, result_json: { day, only: only || null, focus, match: mMain, gaps: gaps.length, exam: { runs: runs.length, cost, worse: worse.length }, file: out } });
     console.log(`書いた: ${only ? `--only=${only}` : out}・quality_daily ${rows.length}行・cron_run_logs`);

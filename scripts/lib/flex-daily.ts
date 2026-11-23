@@ -30,3 +30,36 @@ export function trustMetricsOf(rows: ReadonlyArray<PromiseKeptRow>): { judged: n
   const inTime = all.filter((r) => r.state === "in_time").length;
   return { judged: all.length, inTime, rate: pct(inTime, all.length), tkJudged: tk.length, tkRate: pct(tk.filter((r) => r.state === "in_time").length, tk.length), overdue: all.filter((r) => r.state === "overdue").length };
 }
+
+/**
+ * 申込までの地図の駅ごとの一致（作業員R の scripts/audit-route-progress-takeuchi.ts --json の行・作業員P の地図 route:sg_match・2026-11-23 作業員N2）
+ *   地図の駅（作り直し・node）と判断の記録の段（digest.sg・digestNode）が同じ番の割合（%）。sg の時代（11/03 05:42Z 以降）の番だけ
+ *   （それより前は cp の5段しか無く、駅のままだと数え方で外れる＝R・M の #620）。同じの決め方は台本の sameSt と同じ（記録が pickup の時は hearing・pickup・proposing を同じに数える）
+ *   route:sg_match（全体）・route:sg_match:<駅の id>（駅ごと・n は番の数）。scope は takeuchi（竹内さん本人の番）
+ */
+export const ROUTE_SG_FROM = "2026-11-03T05:42";
+export type RouteProgressRow = { at: string; node: string | null; digestNode: string | null };
+export function routeSgMatchRowsOf(rows: ReadonlyArray<RouteProgressRow>): Array<{ metric: string; value: number | null; n: number }> {
+  const same = (x: RouteProgressRow) => x.node === x.digestNode || (x.digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(x.node ?? ""));
+  const sg = rows.filter((x) => x.node && x.digestNode && x.at >= ROUTE_SG_FROM);
+  const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+  const out = [{ metric: "route:sg_match", value: pct(sg.filter(same).length, sg.length), n: sg.length }];
+  const by = new Map<string, RouteProgressRow[]>();
+  for (const x of sg) by.set(x.node!, [...(by.get(x.node!) ?? []), x]);
+  for (const [k, xs] of [...by].sort((a, b) => b[1].length - a[1].length)) out.push({ metric: `route:sg_match:${k}`, value: pct(xs.filter(same).length, xs.length), n: xs.length });
+  return out;
+}
+
+/**
+ * 土台「つなぎ」の本番の数（作業員H の scripts/tsunagi-census.ts --json の by.全体.全体・2026-11-23 作業員N2）: 竹内さん本人の送信の
+ *   foundation:link:tsunagi_rate … つなぎ（申込・内覧・見積・物件を送ってもらう・質問・次の連絡・続ける）の入った通の割合（%）
+ *   foundation:link:kind:<型> … 型ごとの割合（%・none を含む）。n は通の数。scope は takeuchi
+ */
+export type TsunagiCensusJson = { days?: number; n?: number; by?: Record<string, Record<string, Record<string, number>>> };
+export function tsunagiRowsOf(j: TsunagiCensusJson): Array<{ metric: string; value: number | null; n: number }> {
+  const c = j.by?.["全体"]?.["全体"];
+  if (!c || !c.n) return [];
+  const pct = (a: number) => Math.round((a / c.n) * 1000) / 10;
+  const kinds = Object.keys(c).filter((k) => k !== "n");
+  return [{ metric: "foundation:link:tsunagi_rate", value: pct(c.n - (c.none ?? 0)), n: c.n }, ...kinds.map((k) => ({ metric: `foundation:link:kind:${k}`, value: pct(c[k] ?? 0), n: c.n }))];
+}
