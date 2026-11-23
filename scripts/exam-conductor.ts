@@ -1279,6 +1279,9 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
         if (si.due) {
           mkdirSync(MARKS, { recursive: true });
           writeFileSync(siFile, JSON.stringify({ day: si.day, at: new Date().toISOString() })); // 先に印＝失敗しても同じ日に繰り返さない
+          // 2026-11-23 作業員N2（統括役の確かめ）: 毎朝の1枚も試験の依頼と同じく、流す前に係の作業ツリーを origin/main に合わせる（今までは試験の依頼の前だけ＝
+          //   夜の SumoraExamNight の checkout の後に main へ入った台本は、次の夜まで毎朝の1枚に届かなかった）。合わせられなくても毎朝の1枚は今のまま流す（止めない）
+          { const sy = syncExamWorktree(process.cwd()); if (sy.line) log(`  毎朝の1枚の前: ${sy.line}`); }
           const t0 = Date.now();
           const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/self-improve.ts", "--write"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 25 * 60_000 });
           const first = String(r.stdout ?? "").trim().split(/\r?\n/).find((x) => x.startsWith("書いた:")) ?? "";
