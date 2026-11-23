@@ -9,7 +9,7 @@ import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -83,7 +83,16 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
-  } else if (def.builder === "route_next") turns = routeTurnsOf(rows as RouteTurnRow[]);
+  } else if (def.builder === "closing" || def.builder === "closing_early") {
+    turns = closingTurnsOf(rows as Array<{ id: number; takeuchiClose: boolean; brainClose: boolean; closeHow: string | null; brainAct: string | null; level: string | null; gaps: string[] }>, def.builder);
+  } else if (def.builder === "route_progress") {
+    turns = routeProgressTurnsOf(rows as Array<RouteTurnRow & { outcome?: string | null; after?: string | null }>);
+  } else if (def.builder === "route_next") {
+    const rr = rows as RouteTurnRow[];
+    const dm = o.spec ? decidedRouteIdxOf(rr, o.spec) : new Map<number, string>();
+    decided = dm;
+    turns = routeTurnsOf(rr, new Set(dm.keys()));
+  }
   else return null;
   const nodes = buildTree(turns, def);
   return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0, decided, minority, fixed, sides };
@@ -91,14 +100,20 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
-export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts" };
+export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
+  closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts" };
+const jsonCache = new Map<string, unknown[] | null>(); // 同じ台本・同じ窓は1晩に1回だけ回す（一致の木と進みの木は同じ json）
 /** 出所の台本を回して json を読む（台本は営業時間には自分で窓を絞る＝昼の空流しは軽い）。止める: MAP_JSON_ROOTS=off */
 export function runJsonSource(def: MapRootDef, days: number): unknown[] | null {
   const script = def.builder ? JSON_SOURCES[def.builder] : null;
   if (!script || !existsSyncMM(script)) return null;
+  const ck = `${script}:${days}`;
+  if (jsonCache.has(ck)) return jsonCache.get(ck) ?? null;
   const out = joinMM(tmpdirMM(), `map-${def.builder}-${process.pid}-${Date.now()}.json`);
   runTsxMM([script, `--days=${days}`, `--json=${out}`], 20 * 60_000);
-  return existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown[]) : null;
+  const rows = existsSyncMM(out) ? (JSON.parse(readFileSyncMM(out, "utf8")) as unknown[]) : null;
+  jsonCache.set(ck, rows);
+  return rows;
 }
 
 /** 根1つの木を作る（台帳の読みで作れる根だけ＝conductor_aix）。値は出所のスクリプトと同じ数え方 */
@@ -273,7 +288,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
         // 11/23 統括役: json から作る根（端末の版＝作業員A・申込までの地図＝作業員R）も出所の台本を夜に回して毎晩作る
         try {
           const rows = runJsonSource(def, o.days ?? def.windowDays);
-          const spec = def.builder === "aix_turn_device" && existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+          const spec = existsSyncMM("scripts/brain-exam/spec.json") ? (JSON.parse(readFileSyncMM("scripts/brain-exam/spec.json", "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
           const t = rows?.length ? await buildTreeFromJson(sb, def, rows, { spec }) : null;
           if (t) { nodes = t.nodes; value = t.value; n = t.n; built = true; }
           else lines.push(`- ${def.label}: 出所の台本の行が無い（${JSON_SOURCES[def.builder]}）`);
@@ -290,7 +305,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     // 11/23 統括役: 竹内さんが読む形（短い日本語・数と理由）。主でない版（並べて見る用）は1行だけ
     const top = nodes[0];
     if (def.compare && !def.primary) {
-      lines.push(`- 並べて見る（${def.label.replace(/（.*$/, "")}・${def.writerSelect === "style" ? "文の癖で選んだ番" : "端末の記録で選んだ番"}）: ${value ?? "—"}%（${top.n}番中 ${top.ok}番）`);
+      lines.push(`- 並べて見る（${def.label.replace(/（.*$/, "")}${def.writerSelect === "style" ? "・文の癖で選んだ番" : def.writerSelect === "device" ? "・端末の記録で選んだ番" : ""}）: ${value ?? "—"}%（${top.n}番中 ${top.ok}番）`);
     } else {
       const mb = missBreakdownOf(nodes);
       const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : ""].filter(Boolean);
@@ -299,7 +314,9 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       const STAGE_JA: Record<string, string> = { todo: "まだ", building: "作っている", built_off: "作った（off）", testing: "試験中", passed: "試験を通った", on: "本番 on", waiting_owner: "竹内さん待ち", blocked: "止まっている" };
       const rng = (i: ForecastItem) => (i.forecast_low === i.forecast_high ? `${i.forecast_low}%` : `${i.forecast_low}〜${i.forecast_high}%`);
       lines.push(`### ${def.label.replace(/（.*$/, "")}${def.primary ? "（主の数）" : ""}`,
-        `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
+        def.okLabel
+          ? (top.n ? `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が${def.okLabel}）。${def.missLabel ?? "進まなかった"} ${top.misses}番` : `- まだ数が無い（番が0・出所 ${def.source.split("（")[0]} を夜に回す）`)
+          : `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
         ...uniq.slice(0, 4).map((i) => `- 見込み${(i.forecast_exam as { phase?: string } | null)?.phase ? `（${(i.forecast_exam as { phase?: string }).phase}）` : ""} #${i.id}（${STAGE_JA[i.stage] ?? i.stage}）: ${i.forecast_before ?? "—"}% → ${rng(i)}${i.blocker ? `・止まり: ${String(i.blocker).slice(0, 30)}` : ""}`),
         ...ranked.slice(0, 3).map((r, k) => { const it = r.items.length ? its.find((x) => x.id === r.items[0]) ?? null : null; // 葉に近い作業が先頭（rankLeaves の並び）
           return `- 次の一手 ${k + 1}: ${leafJa(r.key)}（外れ ${r.misses}${r.hold ? "・数が少ない" : ""}）→ ${r.hole || !it ? "作業がまだ無い所（持ち主を決める）" : `#${it.id}（${STAGE_JA[it.stage] ?? it.stage}${it.blocker ? `・止まり: ${String(it.blocker).slice(0, 20)}` : ""}）`}`; }),
