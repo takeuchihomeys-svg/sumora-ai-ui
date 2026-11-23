@@ -312,6 +312,18 @@ function confirmObjectMatches(rowObj: string | null, doneObj: string | null | un
   const r = rowObj as string;
   return r.includes(d) || d.includes(r) || (wide && !!d && synonymMatch(r, d));
 }
+/**
+ * 2026-11-23 作業員L（台帳 #655・数え方の直し）: 確認の約束の要件（sent_facts.detail.object）を、確認の報告（object・AIX の check_pattern）が答えたか。
+ *   カレンダーの閉じ方（planPromiseCompletion）と同じ照らし（AIX の check_pattern の要件が先・相手だけの要件は何にでも当たる・要件の無い約束は何にでも当たる）。
+ *   行動台帳の数（promise-ledger-metrics の --confirm-object）が使う
+ */
+export function confirmReportAnswers(promiseObj: string | null | undefined, report: { object?: string | null; checkPattern?: string | null }, wide = false): boolean {
+  const p = (promiseObj ?? "").trim();
+  if (!p) return true;
+  const topics = confirmTopicsForCheckPattern(report.checkPattern ?? null);
+  const doneObjs: Array<string | null> = topics.length ? topics : [report.object ?? null];
+  return doneObjs.some((o) => confirmObjectMatches(p, o, wide));
+}
 /** 行の見出しの（物件名） */
 function propertyOfHeadline(notes: string | null | undefined): string | null {
   const m = headlineOf(notes).match(/（([^）]+)）s*$/);
