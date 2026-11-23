@@ -13,6 +13,11 @@ import type { KbScene } from "../app/lib/design-knowledge-rag";
 export type KbEvalQ = { q: string; gold: string[]; scene?: KbScene; ho?: boolean };
 
 export const KB_EVAL: KbEvalQ[] = [
+  // 2026-11-23 作業員A: 効く問題の当て確かめ（92413152）・物差しの最初の一手（f43a38b7）
+  { q: "見張りで効くと見込んだ番を試験に足す前に何を確かめる", gold: ["92413152"] },
+  { q: "スイッチを on にしても試験の答えが off と同じだった問題はなぜ", gold: ["92413152"], ho: true },
+  { q: "誘導の物差しで内覧の何日も前のお礼の番が当日のご挨拶の番と数えられる", gold: ["f43a38b7"] },
+  { q: "guide-measure の act に時刻で送った AIX が入る", gold: ["f43a38b7", "594a9d98"], ho: true },
   // 2026-11-21 作業員L: 続きの番の挨拶（確認事項 a56a67ab・4ea97ead）
   { q: "会話の続きの番でその日最初の返事にお世話になっておりますを付けるか", gold: ["4ea97ead"] },
   { q: "AIX の2通目の挨拶は日をまたいだ続きの会話でも付けるか", gold: ["4ea97ead"] },
