@@ -30,6 +30,8 @@ import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
 import { flexMetricsOf, trustMetricsOf, routeSgMatchRowsOf, tsunagiRowsOf, type OffPatternJson, type PromiseKeptRow, type RouteProgressRow, type TsunagiCensusJson } from "./lib/flex-daily";
+import { stationStatsOf, stationMetricRowsOf, weakStationsOf, stationGapsToAdd, type RouteStationRow } from "../app/lib/route-station-trust";
+import { misreadMetricRowsOf, type MisreadRow } from "../app/lib/route-station-misread";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -454,11 +456,33 @@ async function main() {
     const rpo = join(tmpdir(), `route-progress-${process.pid}.json`);
     try {
       runTsx(["scripts/audit-route-progress-takeuchi.ts", "--days=21", "--max-conv=150", `--json=${rpo}`], 420_000);
-      const rr = routeSgMatchRowsOf(JSON.parse(readFileSync(rpo, "utf8")) as RouteProgressRow[]);
+      const rpoRows = JSON.parse(readFileSync(rpo, "utf8")) as RouteProgressRow[];
+      const rr = routeSgMatchRowsOf(rpoRows);
       flexRows.push(...rr);
+      // 2026-11-23 作業員A（竹内さん 11/23・#650／#653・決定 2d1c4c74「地図は道筋・一手を決めるのはブレイン」・置き場と名前は N2・P と決めた）:
+      //   駅ごとの 地図の一致（:map・並べて見るだけ）と、竹内さん本人の一手の後の進み（:progress＝進んだ＋分かれ道から本線に戻った）。弱い駅は進みで見て台帳へ（同じ駅の行が開いていれば足さない）
+      // 2026-11-23 作業員A（竹内さん 11/23・P0・#657「いまどこなのか現状把握」）: 「今どこ」の読み違いの型ごとの数（route:station_misread:<型>・同じ json）
+      try {
+        const mr = misreadMetricRowsOf(rpoRows as unknown as MisreadRow[]);
+        flexRows.push(...mr);
+        lines.push(`  - 「今どこ」の読み違い（決まった線・#657）: ${mr[0].value ?? "—"}%（${mr[0].n}番）・${mr.slice(1).filter((x) => (x.value ?? 0) > 0).map((x) => `${x.metric.replace("route:station_misread:", "")} ${x.value}`).join("・") || "型ごとに 0"}（作業員A）`);
+      } catch (e) { lines.push(`  - 「今どこ」の読み違い: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+      let stationLine = "";
+      try {
+        const ss = stationStatsOf(rpoRows as unknown as RouteStationRow[]);
+        flexRows.push(...stationMetricRowsOf(ss));
+        const { data: prevRows } = await sb.from("quality_daily").select("metric, value, n").like("metric", "route:station:%:progress").eq("scope", "takeuchi").eq("day", jstDay(now - 7 * 864e5)).limit(200);
+        const prev = ((prevRows ?? []) as Array<{ metric: string; value: number | null; n: number | null }>).map((r) => ({ station: r.metric.replace(/^route:station:/, "").replace(/:progress$/, ""), n: r.n ?? 0, progressRate: r.value }));
+        const weak = weakStationsOf(ss, prev);
+        const { data: openGaps } = await sb.from("work_items").select("title").like("title", "申込までの地図の駅 %").not("stage", "in", "(done,dropped)").limit(500);
+        // N2 の照らし②: 前の週の :progress がまだ無い初回は台帳に足さない（一覧に出すだけ・前の週と比べられる2回目から足す）
+        if (prev.length) for (const g of stationGapsToAdd(weak, ((openGaps ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "ブレイン" });
+        stationLine = `  - 駅ごとの進み（竹内さん本人の一手の後に申込へ近づいた番）: ${ss.filter((s) => s.n >= 10).map((s) => `${s.station} ${s.progressRate}%（${s.n}）`).join("・") || "n10 以上の駅なし"}｜弱い駅 ${weak.map((w) => w.station).join("・") || "なし"}${prev.length ? "" : "（前の週の数が無い＝台帳には足さない）"}（作業員A・#650）`;
+      } catch (e) { stationLine = `  - 駅ごとの進み: 失敗（${String(e).slice(0, 60)}・作業員A）`; }
       const all = rr[0];
       const low = rr.slice(1).filter((r) => r.n >= 5 && r.value != null && r.value < 50).map((r) => `${r.metric.replace("route:sg_match:", "")} ${r.value}%（${r.n}）`);
       lines.push(`- 申込までの地図の駅と判断の記録の段の一致（sg の時代・21日）: ${all?.value ?? "—"}%（${all?.n ?? 0}番）・半分より低い駅 ${low.slice(0, 6).join("・") || "なし"}（作業員R・M・#620）`);
+      if (stationLine) lines.push(stationLine); // N2 の照らし③: 親の行の後に
     } catch { lines.push("- 申込までの地図の駅ごとの一致: audit-route-progress-takeuchi が失敗（作業員R）"); } finally { try { rmSync(rpo); } catch { /* 無し */ } }
   }
   // 土台「つなぎ」の本番の数（作業員H の tsunagi-census・土台の表 n.link・2026-11-23 統括役の頼み）: 竹内さん本人の送信（takeuchi_compose_examples・30日で絞る・--brain は使わない＝軽い読み）

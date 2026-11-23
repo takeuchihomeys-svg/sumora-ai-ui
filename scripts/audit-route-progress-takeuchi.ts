@@ -26,6 +26,8 @@ import { SUBSTATES } from "../app/lib/apply-route-substate";
 import { TEST_CONVERSATION_IDS } from "../app/lib/test-conversations";
 import { withRefinedNext, greetingSentTodayOf } from "../app/lib/apply-route-next";
 import { farMoveInTurn } from "../app/lib/contact-promise";
+import { loadTurnApplicationRecords } from "../app/lib/turn-application-gate-server";
+import { turnApplicationReason } from "../app/lib/turn-application-gate";
 const FAR_MOVE_IN = process.argv.includes("--far-move-in");
 // 2026-11-23 作業員A: --first-move（既定なし＝今と同じ）＝竹内さんの一手を「最初の通から2時間以内の AIX」に限る（guide-measure の firstMoveH）。後で時刻で送った AIX は laterAix に分ける
 const FIRST_MOVE = process.argv.includes("--first-move");
@@ -90,9 +92,21 @@ function locateAt(input: CustomerStateInput, T: number, envV2: boolean): { loc: 
   return { loc, loc2, loc3, loc4, rt, detail: state.stageDetail ?? null, turnText, sub1: matchSubstateOf(turnText, {})?.id ?? null, sub2: matchSubstateOf(turnText, { ROUTE_SUBSTATE_NET_V2: "on" })?.id ?? null };
 }
 
+/** 2026-11-23 作業員A（#657）: 番の前の30日に送った AIX の種類ごとの一番新しい時刻（送った時＝sent_at が無ければ created_at） */
+function sentBeforeOf(aix: ReadonlyArray<GAix>, T: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const x of aix) {
+    const at = x.sent_at ?? x.created_at; const k = String(x.aix_type ?? "").split("/")[0];
+    if (!k || !at) continue; const t = Date.parse(at);
+    if (!(t < T && T - t <= 30 * 86_400_000)) continue;
+    if (!out[k] || out[k] < at) out[k] = at;
+  }
+  return out;
+}
+
 type Row = {
   conv: string; at: string; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
-  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[];
+  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null; sentBefore?: Record<string, string>;
 };
 
 (async () => {
@@ -115,18 +129,23 @@ type Row = {
   const rows: Row[] = [];
   let convDone = 0, cutPost = 0, failed = 0;
   for (const c of convs) {
-    const [m, a, d, deals] = await Promise.all([
+    const [m, a, d, deals, a30] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, staff_writer, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(2000),
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", since).limit(500),
       sb.from("brain_decision_logs").select("created_at, digest").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
       sb.from("deal_outcomes").select("applied_at, screening_at").eq("conversation_id", c),
+      // 2026-11-23 作業員A（#657）: 「今どこ」の読み違いの元＝番の前の30日に送った AIX（窓の始めより前も読む・guideTurnsOf には渡さない）
+      sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", new Date(Date.parse(since) - 30 * 86_400_000).toISOString()).limit(1000),
     ]);
     const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
     const turns = guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: true, viewingWait: true, ...(FIRST_MOVE ? { firstMoveH: 2 } : {}) });
     const appliedAts = ((deals.data ?? []) as Array<{ applied_at: string | null; screening_at: string | null }>).map((x) => x.applied_at ?? x.screening_at).filter((x): x is string => !!x).map((x) => Date.parse(x)).sort((x, y) => x - y);
     const firstApplied = appliedAts[0] ?? Infinity;
     const reached = appliedAts.length > 0;
-    const pre = turns.filter((t) => Date.parse(t.at) < firstApplied);
+    // 2026-11-23 作業員A（R の台本の持ち主・統括役の決め・q038／8590144d）: 申込の記録で引く門（記入済みの申込フォーム・証明書類・書類の印の通・成約の記録）も通す。
+    //   旧は deal_outcomes の applied_at／screening_at だけで、申込の書類が先に届いた会話（8590144d は 9/24 01:27 にフォーム）の後の番を数えていた
+    const gateRec = await loadTurnApplicationRecords(sb as never, c);
+    const pre = turns.filter((t) => Date.parse(t.at) < firstApplied && !turnApplicationReason(gateRec, t.at));
     cutPost += turns.length - pre.length;
     if (!pre.length) continue;
     let input: CustomerStateInput | null = null;
@@ -140,6 +159,18 @@ type Row = {
       const T = Date.parse(lastCust.createdAt) + 1000;
       let r: ReturnType<typeof locateAt>;
       try { r = locateAt(input, T, false); } catch { continue; }
+      // 2026-11-23 作業員A（P の地図の進み・route:progress_60d と毎朝の route:station:<駅>:progress）: 分かれ道の番は、竹内さんの一手の後の
+      //   お客様の返事（48時間以内・連投の最後）の時点で地図をもう一度当て、分かれ道が閉じたか（afterBranch＝その時の分かれ道・閉じたら null）を残す。
+      //   返事が無い番・分かれ道でない番は欄を付けない（undefined）＝「本線に戻った」と数えない
+      let afterBranch: string | null | undefined;
+      if (r.loc.branch) {
+        const nx = input.messages.find((x) => x.sender === "customer" && Date.parse(x.createdAt) > tAt && Date.parse(x.createdAt) - tAt <= 48 * 3600_000);
+        if (nx) {
+          let k = input.messages.indexOf(nx);
+          while (k + 1 < input.messages.length && input.messages[k + 1].sender === "customer") k++;
+          try { afterBranch = locateAt(input, Date.parse(input.messages[k].createdAt) + 1000, false).loc.branch ?? null; } catch { afterBranch = undefined; }
+        }
+      }
       const s1 = r.sub1 ? SUBSTATES.find((x) => x.id === r.sub1) : null, s2 = r.sub2 ? SUBSTATES.find((x) => x.id === r.sub2) : null;
       const atOk = (s: typeof s1) => (s ? s.at === r.loc.node || s.at === r.loc.branch : null);
       rows.push({
@@ -147,6 +178,8 @@ type Row = {
         dir: actDirection(r.loc.node, t.act), agree: routeAgreement(r.loc, t.act), agree2: routeAgreement(r.loc2, t.act), rule2: r.loc2.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null,
         agree3: routeAgreement(r.loc3, t.act), rule3: r.loc3.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, agree4: routeAgreement(r.loc4, t.act), rule4: r.loc4.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, laterAix: t.laterAix ? `${t.laterAix}@${t.laterAixH}h` : null, rt: r.rt, detail: r.detail, outcome: t.outcome, after: t.after,
         sub1: r.sub1, sub2: r.sub2, subAt1: atOk(s1), subAt2: atOk(s2), nextAix: r.loc.next?.aix ?? [],
+        ...(afterBranch !== undefined ? { afterBranch } : {}),
+        sentBefore: sentBeforeOf(((a30.data ?? []) as GAix[]), T),
       });
     }
   }
