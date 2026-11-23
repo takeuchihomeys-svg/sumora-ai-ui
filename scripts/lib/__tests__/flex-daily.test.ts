@@ -23,3 +23,25 @@ assert.equal(t.tkJudged, 2);
 assert.equal(t.tkRate, 50);
 assert.equal(t.overdue, 1);
 console.log("trust-daily: ok");
+
+// 2026-11-23 作業員N2: 申込までの地図の駅ごとの一致（sg の時代だけ）・つなぎの割合
+import { routeSgMatchRowsOf, tsunagiRowsOf } from "../flex-daily";
+{
+  const rs = routeSgMatchRowsOf([
+    { at: "2026-11-01T00:00", node: "viewing_arrange", digestNode: "proposing" }, // cp の時代＝外す
+    { at: "2026-11-10T00:00", node: "hearing", digestNode: "pickup" }, // 同じに数える
+    { at: "2026-11-10T00:00", node: "hearing", digestNode: "hearing" },
+    { at: "2026-11-11T00:00", node: "estimate", digestNode: "viewing_arrange" },
+    { at: "2026-11-12T00:00", node: null, digestNode: "pickup" }, // 駅なし＝外す
+  ]);
+  const g = (m: string) => rs.find((r) => r.metric === m);
+  assert.equal(g("route:sg_match")?.n, 3);
+  assert.equal(g("route:sg_match")?.value, 66.7);
+  assert.equal(g("route:sg_match:hearing")?.value, 100);
+  assert.equal(g("route:sg_match:estimate")?.value, 0);
+  const ts = tsunagiRowsOf({ n: 10, by: { 全体: { 全体: { n: 10, apply: 1, viewing: 3, none: 6 } } } });
+  assert.equal(ts.find((r) => r.metric === "foundation:link:tsunagi_rate")?.value, 40);
+  assert.equal(ts.find((r) => r.metric === "foundation:link:kind:none")?.value, 60);
+  assert.equal(tsunagiRowsOf({}).length, 0);
+  console.log("route-sg-match・tsunagi-daily: ok");
+}

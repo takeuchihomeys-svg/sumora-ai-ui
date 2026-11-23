@@ -29,7 +29,7 @@ import { checkOffPath, isOffPathGap } from "./check-off-path";
 import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
-import { flexMetricsOf, trustMetricsOf, type OffPatternJson, type PromiseKeptRow } from "./lib/flex-daily";
+import { flexMetricsOf, trustMetricsOf, routeSgMatchRowsOf, tsunagiRowsOf, type OffPatternJson, type PromiseKeptRow, type RouteProgressRow, type TsunagiCensusJson } from "./lib/flex-daily";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
 import { fillNotShrinking } from "./lib/foundation-fill";
@@ -408,6 +408,42 @@ async function main() {
       const low = tdRows.filter((r) => r.value != null && r.value < 50 && (r.n ?? 0) >= 3).map((r) => `${r.metric.replace("writer_link:timeline:", "")} ${r.value}%（${r.n}）`);
       lines.push(`- 時系列の帳面の届き方（72時間）: ${tdRows.length}行・半分より少ない所 ${low.slice(0, 6).join("・") || "なし"}（作業員L・台帳 #7）`);
     } catch { lines.push("- 時系列の帳面の届き方: audit-timeline-delivery --metrics が失敗（作業員L・台帳 #7）"); } finally { try { rmSync(tdo); } catch { /* 無し */ } }
+  }
+  // 行動台帳の約束（作業員L・台帳 #519・作業員N の土台の表 n.promise・2026-11-23 統括役の頼み）: audit-promise-ledger --days=14 --metrics=（sent_facts の約束と済みの行だけ・軽い読み）
+  //   foundation:promise:open（開いている約束の数）・foundation:promise:overdue_rate（うち期日超えの %）・foundation:promise:kept_72h（72時間の内に閉じた %）。行の scope は all のまま
+  if (doMetrics && existsSyncPU("scripts/audit-promise-ledger.ts") && readFileSync("scripts/audit-promise-ledger.ts", "utf8").includes("--metrics")) {
+    const plo = join(tmpdir(), `promise-ledger-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-promise-ledger.ts", "--days=14", `--metrics=${plo}`], 180_000);
+      const pl = (JSON.parse(readFileSync(plo, "utf8")) as Array<{ metric: string; scope?: string; value: number | null; n: number | null; detail?: Record<string, unknown> }>).filter((r) => typeof r.metric === "string" && r.metric.startsWith("foundation:promise:"));
+      for (const r of pl) foundRows.push({ metric: r.metric, value: r.value ?? null, n: r.n ?? null });
+      const g = (m: string) => pl.find((r) => r.metric === m);
+      lines.push(`- 行動台帳の約束（14日）: 開いている ${g("foundation:promise:open")?.value ?? "—"}・うち期日超え ${g("foundation:promise:overdue_rate")?.value ?? "—"}%・72時間の内に閉じた ${g("foundation:promise:kept_72h")?.value ?? "—"}%（${g("foundation:promise:kept_72h")?.n ?? "—"}）（作業員L・台帳 #519）`);
+    } catch { lines.push("- 行動台帳の約束: audit-promise-ledger --metrics が失敗（作業員L・台帳 #519）"); } finally { try { rmSync(plo); } catch { /* 無し */ } }
+  }
+  // 申込までの地図の駅ごとの一致（作業員R の audit-route-progress-takeuchi・作業員P の地図 route:sg_match・2026-11-23 統括役の頼み）: 会話ごとに customer-state を読む重い台本なので
+  //   夜の回（22〜9時）だけ。sg の時代（11/03 05:42Z〜）の番しか数えないので --days=21 で足りる（60日でも同じ番）・会話は 150 まで。scope は takeuchi
+  if (doMetrics && isNightJst(now) && existsSyncPU("scripts/audit-route-progress-takeuchi.ts")) {
+    const rpo = join(tmpdir(), `route-progress-${process.pid}.json`);
+    try {
+      runTsx(["scripts/audit-route-progress-takeuchi.ts", "--days=21", "--max-conv=150", `--json=${rpo}`], 420_000);
+      const rr = routeSgMatchRowsOf(JSON.parse(readFileSync(rpo, "utf8")) as RouteProgressRow[]);
+      flexRows.push(...rr);
+      const all = rr[0];
+      const low = rr.slice(1).filter((r) => r.n >= 5 && r.value != null && r.value < 50).map((r) => `${r.metric.replace("route:sg_match:", "")} ${r.value}%（${r.n}）`);
+      lines.push(`- 申込までの地図の駅と判断の記録の段の一致（sg の時代・21日）: ${all?.value ?? "—"}%（${all?.n ?? 0}番）・半分より低い駅 ${low.slice(0, 6).join("・") || "なし"}（作業員R・M・#620）`);
+    } catch { lines.push("- 申込までの地図の駅ごとの一致: audit-route-progress-takeuchi が失敗（作業員R）"); } finally { try { rmSync(rpo); } catch { /* 無し */ } }
+  }
+  // 土台「つなぎ」の本番の数（作業員H の tsunagi-census・土台の表 n.link・2026-11-23 統括役の頼み）: 竹内さん本人の送信（takeuchi_compose_examples・30日で絞る・--brain は使わない＝軽い読み）
+  if (doMetrics && existsSyncPU("scripts/tsunagi-census.ts")) {
+    const tso = join(tmpdir(), `tsunagi-census-${process.pid}.json`);
+    try {
+      runTsx(["scripts/tsunagi-census.ts", "--days=30", `--json=${tso}`], 180_000);
+      const tr = tsunagiRowsOf(JSON.parse(readFileSync(tso, "utf8")) as TsunagiCensusJson);
+      flexRows.push(...tr);
+      const top = tr.filter((r) => r.metric.startsWith("foundation:link:kind:") && !r.metric.endsWith(":none")).sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 4).map((r) => `${r.metric.replace("foundation:link:kind:", "")} ${r.value}%`);
+      lines.push(`- つなぎ（30日・竹内さん本人の送信 ${tr[0]?.n ?? 0}通）: つなぎの入った通 ${tr[0]?.value ?? "—"}%｜多い型 ${top.join("・") || "—"}（作業員H）`);
+    } catch { lines.push("- つなぎ: tsunagi-census が失敗（作業員H）"); } finally { try { rmSync(tso); } catch { /* 無し */ } }
   }
   // 統括Pro の数（作業員G・台帳 #474・supervisor-think の cron が毎晩 quality_daily に書く・2026-11-22 G の頼み）: 最新の日を前の日・前の週と比べる1行。下がった・増えた日は直しの候補（作業員G）
   if (doMetrics) {
