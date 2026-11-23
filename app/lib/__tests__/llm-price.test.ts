@@ -32,5 +32,7 @@ eq("混雑時間（平日 UTC 01-04・06-10）", [isDeepseekPeakAt("2026-09-29T0
 eq("混雑時は2倍", round(altUsageUsd({ model: "deepseek-flash", input_uncached: 1e6, created_at: "2026-09-29T02:00:00Z" })), 0.3);
 eq("上限の計算は常に2倍", round(altUsageUsd({ model: "deepseek-flash", output_tokens: 1e6, created_at: "2026-09-27T02:00:00Z" }, { alwaysPeak: true })), 1.2);
 eq("Claude は別クラウドの表では 0", altUsageUsd({ model: "claude-sonnet-5", input_uncached: 1e6 }), 0);
+// 2026-11-23 作業員L: 統括の学びの埋め込み（text-embedding-3-small・$0.02/100万・混雑の倍なし）
+eq("埋め込み small 100万トークン", round(altUsageUsd({ model: "text-embedding-3-small", input_uncached: 1e6, created_at: "2026-09-29T02:00:00Z" })), 0.02);
 console.log(failed ? `\n${failed} failed` : "\nall passed");
 process.exit(failed ? 1 : 0);
