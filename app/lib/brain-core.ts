@@ -3694,7 +3694,14 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         }
         const items = pw.pickupWhyOf(whyRows, { nowMs: Date.now() });
         const line = pw.pickupWhyLine(items);
-        if (line) customerStateBlockText += `\n${line}`;
+        if (line) {
+          customerStateBlockText += `\n${line}`;
+          // 2026-11-23 作業員A（統括役の決め）: 試験で「この1行が入ったか」を見られるよう、字数だけを記録の印に（動きは変えない・中身は写さない）。
+          //   昨夜の ess-1122r-pickupwhy-p1/p2 は結果に印が無く、SIP_JUDGE が1度も効いていない事を見落としていた。pickup_why_sip は画像の読みから足した物件の数
+          materialMarks.pickup_why = line.length;
+          const fromSip = whyRows.length - (pwRows ?? []).length;
+          if (fromSip > 0) materialMarks.pickup_why_sip = fromSip;
+        }
         console.log(JSON.stringify({ tag: "brain:pickup-why", conversationId, rows: (pwRows ?? []).length, items: items.length, chars: line.length }));
       } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why", conversationId, error: String(e).slice(0, 160) })); }
     }
