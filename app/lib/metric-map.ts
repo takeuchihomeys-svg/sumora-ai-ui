@@ -433,6 +433,20 @@ export function routeTurnsOf(rows: readonly RouteTurnRow[], decided: ReadonlySet
     };
   });
 }
+/**
+ * 申込までの地図の「決定で改めた番」（純関数・11/23 作業員A の当て方）: R の json の at は竹内さんの最初の通の時刻、問題の at はお客様の最後の通の時刻
+ *   → 同じ会話で、問題の at より後の一番最初の番に1つだけ当てる（24時間以内）。±2分では当たらない
+ */
+export function decidedRouteIdxOf(rows: ReadonlyArray<{ conv: string; at: string }>, spec: ReadonlyArray<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const p of spec) {
+    if (!p.conv || !p.at || !/竹内さんの決定/.test(`${p.why ?? ""} ${JSON.stringify(p.tags ?? [])}`)) continue;
+    const t = Date.parse(p.at);
+    const hit = rows.map((r, i) => ({ i, d: Date.parse(r.at) - t, c: r.conv.slice(0, 8) })).filter((x) => x.c === String(p.conv).slice(0, 8) && x.d >= 0 && x.d <= 86_400_000).sort((a, b) => a.d - b.d)[0];
+    if (hit && !out.has(hit.i)) out.set(hit.i, p.id);
+  }
+  return out;
+}
 /** 駅ごとの本当の一致の表（純関数）: 駅（分かれ道）ごとに n・一致・分けて外した・本当の外れ */
 export function stationTableOf(nodes: readonly MapNode[]): Array<{ key: string; n: number; ok: number; aside: number; real: number }> {
   return nodes.filter((x) => x.dim === "station").map((s) => {
