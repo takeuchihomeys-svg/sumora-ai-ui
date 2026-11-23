@@ -111,7 +111,12 @@ async function cmdResult() {
   }
   for (const it of items) {
     // 試験前の見込みの積み上げ（forecast_exam.parts: 葉ごとの直る番の数）は、部品の葉で当てる＝端末の数の見込みでも、文の癖の木の葉で試験の問題に当たる（11/23 統括役）
-    const fe = (it.forecast_exam ?? null) as { phase?: string; parts?: Array<{ leaf: string; fixes: number; exam?: unknown }> } | null;
+    const fe = (it.forecast_exam ?? null) as { phase?: string; parts?: Array<{ leaf: string; fixes: number; exam?: unknown }>; split_watch?: { problems?: string[] } } | null;
+    // 11/23 統括役の決め: 割れの番（竹内さんご自身が割れている所）は的ではない。試験で○×が変わったら「割れを動かした」として別に数える（見込みの○には入れない）
+    const sw = (fe?.split_watch?.problems ?? []).filter((q) => a.has(q));
+    const splitMoved = sw.filter((q) => before && b.has(q) && b.get(q) !== a.get(q));
+    if (sw.length) console.log(`  作業 #${it.id} の割れの番（的ではない）: 問題 ${sw.length}・割れを動かした ${splitMoved.length}${splitMoved.length ? `（${splitMoved.map((q) => `${q} ${b.get(q) ? "○→×" : "×→○"}`).join("・")}）→ 要確認（割れを片方に決めていないか）` : ""}`);
+    if (fe && sw.length && flag("write")) (fe as Record<string, unknown>).split_moved = { label: after, before: before || null, n: sw.length, moved: splitMoved, at: new Date().toISOString() };
     if (fe?.parts?.length) {
       const parts = fe.parts.map((p) => {
         const h = [...by].filter(([k]) => covers(p.leaf, k) || covers(k, p.leaf));
