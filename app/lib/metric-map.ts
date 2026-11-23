@@ -15,14 +15,15 @@ import { isAckOnlyTurn } from "./ack-topic-scope";
 export type WriterSelect = "style" | "device" | "all";
 export type MapDim = "kind" | "scene" | "miss" | "cause" | "station";
 /** 原因の4つ（CLAUDE.md 絶対的な考え方の3つ＋数え方の誤り） */
-export type MapCause = "material" | "misread" | "aix_turn_as_reply" | "counting";
+export type MapCause = "material" | "misread" | "aix_turn_as_reply" | "counting" | "judgment";
 export const MAP_CAUSE_JA: Record<MapCause, string> = {
   material: "材料が届いていない", misread: "場面や決まりの読み違い", aix_turn_as_reply: "返信か AIX かの判断の誤り（AIX の番を返信に）", counting: "数え方の誤り",
+  judgment: "判断の誤り（材料は届いていたのに果たされない・約束の分野＝作業員L）",
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
 export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
-  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early";
+  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
@@ -34,6 +35,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   stuck: "止まった（次のお客様の発言で駅が進まない）", left: "離れた（返事が来ない）", back: "戻った（申込から遠い駅へ）", engaged: "やり取りは続くが駅は同じ", branch_stay: "分かれ道から本線に戻れない",
   viewing_wait: "内覧の日待ち（続く・内覧の日がまだ来ていない・直す所ではない）",
   close_missed: "見逃し（竹内さんは決めに行った・ブレインは待った）", close_early: "早すぎ（ブレインは決めに行った・竹内さんは待った）",
+  late: "遅れて果たした（約束）", overdue: "期限を過ぎて果たしていない（約束）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
 export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait"]);
@@ -95,7 +97,7 @@ export type MapRootDef = {
   metric: string; label: string; writerSelect: WriterSelect; windowDays: number;
   dims: MapDim[];
   /** 子の割り方を作る道具（無い根は数だけ並べる＝割り方はまだ） */
-  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | null;
+  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | "promise_map" | null;
   /** 一致（ok）の言い方（毎朝の1枚）: 既定は「竹内さんと同じ一手」 */
   okLabel?: string;
   /** 外れの言い方（okLabel と組・既定は「進まなかった」） */
@@ -161,6 +163,10 @@ export const MAP_ROOTS: MapRootDef[] = [
     primary: true, compare: "route:closing_early", okLabel: "ブレインも決めに行った", missLabel: "見逃し（竹内さんは決めに行った・ブレインは待った）", source: "scripts/audit-closing-takeuchi.ts（作業員P・#658・app/lib/closing-chance.ts）", owner: "作業員P", qdScope: "takeuchi" },
   { metric: "route:closing_early", label: "決めに行く › ブレインが決めに行った番で竹内さんも決めに行った割合（早すぎの裏・60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "closing_early",
     compare: "route:closing", source: "scripts/audit-closing-takeuchi.ts", owner: "作業員P", qdScope: "takeuchi" },
+  // 2026-11-23 作業員L（約束の分野・KB 0f38f47f「申込までの地図の型をほかの分野にも」）: 竹内さん本人の約束のうち期限の内に果たした割合（pickup/check/estimate・期限前は外す）。
+  //   木は L の scripts/audit-promise-map.ts --out の turns をそのまま受ける（枝 l1123-promise-map・main に入るまでは台本が無い＝前の木を読む）
+  { metric: "promise:kept_true", label: "約束 › 竹内さん本人の約束を期限の内に果たした割合（60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "promise_map",
+    primary: true, okLabel: "期限の内に果たした", missLabel: "遅れた・果たしていない", source: "scripts/audit-promise-map.ts（作業員L・scripts/lib/promise-map.ts）", owner: "作業員L", qdScope: "takeuchi" },
   // 2026-11-23 作業員A（#479）: 物件ピックアップで選んだ理由が付いた割合（7日 14/30＝46.7%・前 40.6%）。欠け16の葉: 画像送りで判定の札にする所が無い 10（SIP_JUDGE 既定 off の側）・手で選んで資料も画像の読みも無い 4・条件の欄が空 1・売上サポの「送った」の印が無い（連携の切れ目）1
   { metric: "growth:pickup_select:", label: "物件ピックアップ › 選んだ理由が付いた割合（7日・欄ごと）", writerSelect: "all", windowDays: 7, dims: [], builder: null, prefix: true, source: "scripts/audit-pickup-select-link.ts（作業員A・growth:pickup_select:理由あり）", owner: "作業員A", qdScope: "all" },
   // 2026-11-23 作業員N2 の名前の候補（統括役経由）: 前方一致の束で並べる（書くのは N2・名前が決まったらここを合わせる。範囲は仮）
@@ -675,4 +681,43 @@ export function leafReachOf(holeKey: string, lessonLeafKeys: ReadonlyArray<strin
   const root = holeKey.split("/")[0];
   const keys = lessonLeafKeys.map((k) => { const r = [root, ...rebaseFrom].find((x) => k === x || k.startsWith(`${x}/`)); return r ? rebaseKey(k, r, root) : k; });
   return keys.some((k) => covers(k, holeKey) || covers(holeKey, k)) ? "届いている" : "届いていない";
+}
+
+// ── 2026-11-23 統括役の決め: 統括に届いているかを「学び」と「材料」の2つの道で（どちらかで届いていれば届いている）──
+/** 葉の材料が統括ブレインの入力に届く道（app/lib/linkage-map.ts の LINKAGE_MAP の行 id）。上から順に、葉の鍵に段の値が含まれれば当たる（重ねて足す） */
+export const LEAF_MATERIAL_ROWS: Array<{ match: string; rows: string[] }> = [
+  { match: "kind=property_check_result", rows: ["read.staff_hand", "read.on_hand", "read.now_fulfillable", "read.promise_read"] },
+  { match: "kind=property", rows: ["read.on_hand", "read.staff_hand", "read.sent_full", "read.situation_now"] },
+  { match: "kind=estimate_sheet", rows: ["read.estimate_records", "read.on_hand"] },
+  { match: "kind=viewing_invite", rows: ["read.timeline", "read.situation_now"] },
+  { match: "kind=greeting_viewing", rows: ["read.timeline"] },
+  { match: "kind=zenryoku_support", rows: ["read.situation_now", "read.mindset"] },
+  { match: "scene=ack", rows: ["read.promise_read", "read.ack_confirm"] },
+  { match: "station=", rows: ["read.route_map", "read.route_substate"] },
+  { match: "kind=application_push", rows: ["read.route_map", "read.situation_now"] },
+];
+export function materialRowsOfLeaf(key: string): string[] {
+  return [...new Set(LEAF_MATERIAL_ROWS.filter((x) => key.includes(x.match)).flatMap((x) => x.rows))];
+}
+/** 連携の地図の見張りの最新（cron_run_logs の linkage-watch の result_json の cut＝切れている・空が多い・off＝親が off） */
+export type LinkageStatus = { cut: ReadonlySet<string>; off: ReadonlySet<string>; at: string | null };
+/**
+ * 統括に届いているか（純関数）: ①学びの道＝今の統括の学びの葉の印が葉かその上下を指す ②材料の道＝葉の材料の行（LEAF_MATERIAL_ROWS）が連携の地図で全部つながっている（切れ・空が多い・親が off が1つも無い）。
+ *   どちらかで届いていれば「届いている」。どちらの道も測れない（学びの印が無く・材料の行も見張りの結果も無い）なら「未確認」。ほかは「届いていない」（切れている行を返す）
+ */
+export function conductorReachOf(holeKey: string, lessonLeafKeys: ReadonlyArray<string>, rebaseFrom: ReadonlyArray<string>, linkage: LinkageStatus | null): { reach: "届いている" | "届いていない" | "未確認"; via: "学び" | "材料" | null; cutRows: string[] } {
+  const viaLesson = leafReachOf(holeKey, lessonLeafKeys, rebaseFrom);
+  if (viaLesson === "届いている") return { reach: "届いている", via: "学び", cutRows: [] };
+  const rows = materialRowsOfLeaf(holeKey);
+  if (linkage && rows.length) {
+    const cut = rows.filter((r) => linkage.cut.has(r) || linkage.off.has(r));
+    if (!cut.length) return { reach: "届いている", via: "材料", cutRows: [] };
+    return { reach: "届いていない", via: null, cutRows: cut };
+  }
+  return { reach: viaLesson === "届いていない" ? "届いていない" : "未確認", via: null, cutRows: [] };
+}
+/** 約束の地図（作業員L の audit-promise-map.ts --out の json）の番をそのまま木の番に（純関数） */
+export function promiseMapTurnsOf(j: unknown): MapTurn[] {
+  const turns = (Array.isArray(j) ? j : ((j ?? {}) as { turns?: unknown[] }).turns ?? []) as Array<{ id: number | string; kind?: string; scene?: string; miss?: string; cause?: string | null }>;
+  return turns.map((t) => ({ id: t.id, kind: String(t.kind ?? "other"), scene: String(t.scene ?? "other"), miss: (t.miss === "ok" || t.miss === "late" || t.miss === "overdue" ? t.miss : "overdue") as MapMiss, cause: t.miss === "ok" ? null : ((t.cause ?? "misread") as MapCause) }));
 }
