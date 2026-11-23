@@ -19,10 +19,11 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map";
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
+  decided: "竹内さんの決定で正解を改めた番（実送信と今の正解が割れる・外れの順位に入れない）",
 };
 export const DIM_JA: Record<MapDim, string> = { kind: "AIX の種類", scene: "場面", miss: "外れの型", cause: "原因", station: "駅" };
 
@@ -184,7 +185,8 @@ export type RankedLeaf = MapNode & {
 const DONE = new Set(["done", "dropped"]);
 /** 葉の順位（純関数）: 伸びしろ＝外れ × 直せる見込み（作業の見込み・無ければ 0.5 の仮）・費用＝作る段の遠さ・止まっていれば半分・n が小さいと 0.3倍 */
 export function rankLeaves(nodes: readonly MapNode[], items: readonly ForecastItem[], o: { examByLeaf?: Map<string, number>; writerSelect?: WriterSelect } = {}): RankedLeaf[] {
-  const leaves = leavesOf(nodes).filter((l) => l.misses > 0);
+  // 11/23 作業員A の案: 竹内さんの決定で正解を改めた番（miss=decided）は外れの順位・穴に入れない（別に数える）
+  const leaves = leavesOf(nodes).filter((l) => l.misses > 0 && !l.key.includes("/miss=decided"));
   const live = items.filter((it) => !DONE.has(it.stage) && (!o.writerSelect || !it.forecast_writer_select || it.forecast_writer_select === o.writerSelect || it.forecast_writer_select === "all"));
   const costOf = (stage: string) => (stage === "passed" || stage === "on" ? 0.5 : stage === "testing" || stage === "built_off" ? 1 : stage === "building" ? 1.5 : 2);
   const ranked = leaves.map((l) => {
@@ -338,11 +340,25 @@ export function deviceCauseOf(r: DeviceTurnRow): MapCause | null {
 }
 const DEVICE_MISS: Record<string, MapMiss> = { 一致: "ok", AIXの番を返信: "reply_not_aix", 種類違い: "aix_kind", 先後: "order" };
 /** A の json の行を木の番に（純関数）。AIX の番（cls が reply 以外）だけ・場面は見張りの scene_key（id で引いた物） */
-export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: ReadonlyMap<number, string | null>): MapTurn[] {
+export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: ReadonlyMap<number, string | null>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
   return rows.filter((r) => r.cls !== "reply").map((r) => {
     const kind = r.tk && r.tk !== "?" ? r.tk : "other";
-    return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: DEVICE_MISS[r.v] ?? "aix_kind", cause: deviceCauseOf(r) };
+    const miss = DEVICE_MISS[r.v] ?? "aix_kind";
+    if (miss !== "ok" && decided.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
+    return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss, cause: deviceCauseOf(r) };
   });
+}
+
+/** 竹内さんの決定で正解を改めた問題の番（純関数・作業員A の案 11/23）: 試験の問題（why か tags に「竹内さんの決定」）と、番を会話（頭8字）・時刻 ±2分で突き合わせる */
+export function decidedTurnIdsOf(rows: ReadonlyArray<{ id: number; conv: string; at: string }>, spec: ReadonlyArray<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>): Map<number, string> {
+  const dec = spec.filter((p) => p.conv && p.at && /竹内さんの決定/.test(`${p.why ?? ""} ${JSON.stringify(p.tags ?? [])}`));
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    const t = Date.parse(r.at.length <= 16 ? `${r.at}:00Z` : r.at);
+    const p = dec.find((q) => String(q.conv).slice(0, 8) === r.conv.slice(0, 8) && Math.abs(Date.parse(String(q.at)) - t) <= 120_000);
+    if (p) out.set(r.id, p.id);
+  }
+  return out;
 }
 
 /** 作業員R の audit-route-progress-takeuchi.ts の json の1行（使う欄だけ） */

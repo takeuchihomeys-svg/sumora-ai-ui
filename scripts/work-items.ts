@@ -11,7 +11,7 @@
 //     --forecast=<id> --metric= --low= --high= ／ --map ／ --forecast-check ／ --forecast-cause ／ --no-forecast  見込み・数ごとの地図（台帳 #610・下の cmdForecast の上に説明）
 //   お客様の文・名前は入れない。費用 0（LLM なし）。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 export const STAGES = ["todo", "building", "built_off", "testing", "passed", "on", "done", "blocked", "waiting_owner", "dropped"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -261,13 +261,18 @@ async function cmdMapBuild() {
   if (!arg("json")) throw new Error("--json=<出所の台本の json> が要る");
   const db = sb();
   const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as unknown[];
-  const t = await m.buildTreeFromJson(db, def, rows);
+  // 竹内さんの決定で正解を改めた番（作業員A の案）: 試験の問題（scripts/brain-exam/spec.json の why・tags）と会話・時刻 ±2分で突き合わせ、外れと別に数える
+  const specPath = arg("spec", "scripts/brain-exam/spec.json");
+  const spec = def.builder === "aix_turn_device" && existsSync(specPath) ? (JSON.parse(readFileSync(specPath, "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+  const t = await m.buildTreeFromJson(db, def, rows, { spec });
   if (!t || !t.nodes.length) throw new Error("木が作れない（行が無い）");
   const items = itemsForRoot(await m.loadForecastItems(db), def);
   const examByLeaf = await m.examCountByLeaf(db, def.metric);
   const ranked = m.rankLeaves(t.nodes, items, { examByLeaf, writerSelect: def.writerSelect });
   const bad = m.sumMismatches(t.nodes);
   console.log(`■ ${def.label}: 根 ${t.value}%（n ${t.n}・外れ ${t.nodes[0].misses}）・葉 ${m.leavesOf(t.nodes).length}・外れのある葉 ${ranked.length}・穴 ${m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length}・判断保留 ${ranked.filter((r) => r.hold).length}・子の合計の食い違い ${bad.length}`);
+  const decN = t.nodes.filter((x) => x.dim === "miss" && x.val === "decided").reduce((s, x) => s + x.n, 0);
+  if (spec) console.log(`  竹内さんの決定で正解を改めた番: 外れに数えていた ${decN}（${[...t.decided].map(([id, q]) => `${id}=${q}`).join("・") || "なし"}）＝実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN}・決定で改めた ${decN}`);
   for (const x of t.nodes.filter((x) => x.depth === 1)) console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）`);
   for (const r of ranked.slice(0, Number(arg("top", "10")) || 10)) console.log(`   ${m.leafLine(r)}`);
   const hl = m.holesOf(ranked, t.nodes);
@@ -281,6 +286,7 @@ async function cmdMapBuild() {
     const qd = [
       { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop() } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: t.nodes.length },
+      { day, metric: `map:${def.metric}:decided`, scope: "all", value: decN, n: t.n, detail: { turns: Object.fromEntries(t.decided) } },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length, n: ranked.length },
       { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },
       ...ranked.slice(0, 5).map((r) => ({ day, metric: `map:${def.metric}:rank${r.rank}`, scope: "all", value: r.score, n: r.n, detail: { leaf: r.key, misses: r.misses, gain: r.gain, items: r.items, next: r.nextStep, hold: r.hold, hole: r.hole, writer_select: def.writerSelect } })),

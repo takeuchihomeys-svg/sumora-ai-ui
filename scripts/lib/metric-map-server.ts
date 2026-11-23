@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -38,7 +38,8 @@ export const rootsInOrder = (roots: readonly MapRootDef[] = MAP_ROOTS) => [...ro
 
 /** 出所の台本の json から木を作る（端末の版＝作業員A の audit-aix-turn-judgment・申込までの地図＝作業員R の audit-route-progress-takeuchi）。
  *  台本は夜だけの重い読み＝ここは json を読むだけ。端末の版の場面は見張りの scene_key を番の id で引く（100番ほどの軽い読み） */
-export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, rows: unknown[]): Promise<{ nodes: MapNode[]; value: number | null; n: number } | null> {
+export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, rows: unknown[], o: { spec?: Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }> } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number; decided: Map<number, string> } | null> {
+  let decided = new Map<number, string>();
   let turns: MapTurn[] = [];
   if (def.builder === "aix_turn_device") {
     const rs = rows as DeviceTurnRow[];
@@ -49,11 +50,13 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
       if (error) throw new Error(`line_watch_turns: ${error.message}`);
       for (const r of (data ?? []) as Array<{ id: number; scene_key: string | null }>) scene.set(r.id, r.scene_key);
     }
-    turns = deviceTurnsOf(rs, scene);
+    // 竹内さんの決定で正解を改めた番（作業員A の案）は外れと別に数える
+    decided = o.spec ? decidedTurnIdsOf(rs as unknown as Array<{ id: number; conv: string; at: string }>, o.spec) : new Map();
+    turns = deviceTurnsOf(rs, scene, new Set(decided.keys()));
   } else if (def.builder === "route_next") turns = routeTurnsOf(rows as RouteTurnRow[]);
   else return null;
   const nodes = buildTree(turns, def);
-  return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0 };
+  return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0, decided };
 }
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
