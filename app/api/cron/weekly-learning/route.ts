@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase-server";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
@@ -18,6 +18,7 @@ import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer"
 // 2026-10-08 竹内さんの決定の2: 学習の窓 7日→30日（新しい7日×2・前の23日×1・LEARNING_WINDOW_30D=off で旧）
 import { learningWindow, pickRecentFirst, recencyTag, windowCountsLabel, weightingInstruction, isRecent, type LearningWindow } from "@/app/lib/learning-window";
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
+import { cullInBatches } from "@/app/lib/batched-cull";
 
 /** 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」: 直した所の表記が従業員の差分に印を付ける（STAFF_WRITER_SPLIT=off で付けない） */
 function writerTagOf(draft: string | null, sent: string | null): string {
@@ -56,6 +57,9 @@ const DEDUP_LIMIT = 200;        // chunk=4: 重複排除のhypothesis上位件�
 // FIX(Fable5 #3): 一度も適用されないまま45日経過した仮説は importance に関係なく却下する
 // （never-applied backlog: 全hypothesisの約47%が未適用のまま毎週dedup/矛盾チェックのコストだけ消費していた）
 const NEVER_APPLIED_CULL_DAYS = 45;
+// 2026-11-23 作業員N2（台帳 #656）: 一括の UPDATE が statement timeout になる＝少しずつ消す（1回の行の数・時間の上限）
+const NEVER_APPLIED_CULL_BATCH = 100;
+const NEVER_APPLIED_CULL_BUDGET_MS = 60_000;
 
 // FIX(Fable5 #3): Stage B / Stage D の自動昇格を一時停止する（診断完了までのフリーズ）。
 // 背景: 適用済みhypothesisの正答率が約60%（コイン投げ水準）であり、この品質のまま
@@ -937,18 +941,37 @@ async function runChunk3(): Promise<Record<string, unknown>> {
   // 検索レイヤーが45日拾わなかった仮説が今後適用される見込みは薄く、
   // 残すと毎週の dedup・矛盾チェックのコストだけを消費し続ける。
   // ID列挙を経由せずフィルタ付きUPDATEで一括処理（対象は数千件規模になりうる）。
+  // 2026-11-23 作業員N2（台帳 #656）: 一括の UPDATE は 10/05 から毎週 statement timeout（対象 4,405行・hypothesis_status は索引の列＝HOT にならず、
+  //   1行ごとに全部の索引〈HNSW の embedding_h を含む〉へ新しい行を足す＝重い）→ 失敗で全部が戻り、毎週たまる一方だった。
+  //   古い順に id を少しずつ選んで消す（id は1回だけ選び NEVER_APPLIED_CULL_BATCH 行ずつ・時間の上限まで・残りは次の週・選ぶ問い合わせは表を1回なめる＝EXPLAIN は Seq Scan 1回）。止める: WEEKLY_CULL_BATCHED=off（前の一括）
   const cullCutoff = new Date(Date.now() - NEVER_APPLIED_CULL_DAYS * 86400000).toISOString();
-  const { data: culledRows, error: cullErr } = await supabase
-    .from("ai_reply_knowledge")
-    .update({ hypothesis_status: "rejected", rejection_reason: "auto_never_applied_45d" })
-    .eq("hypothesis_status", "hypothesis")
-    .eq("apply_count", 0)
-    .lt("created_at", cullCutoff)
-    .select("id");
-  if (cullErr) {
-    console.error("[weekly-learning] Stage A never-applied cull失敗:", cullErr.message);
+  if ((process.env.WEEKLY_CULL_BATCHED ?? "").trim().toLowerCase() === "off") {
+    const { data: culledRows, error: cullErr } = await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected", rejection_reason: "auto_never_applied_45d" })
+      .eq("hypothesis_status", "hypothesis")
+      .eq("apply_count", 0)
+      .lt("created_at", cullCutoff)
+      .select("id");
+    if (cullErr) console.error("[weekly-learning] Stage A never-applied cull失敗:", cullErr.message);
+    else autoRejected += (culledRows ?? []).length;
   } else {
-    autoRejected += (culledRows ?? []).length;
+    const r = await cullInBatches({
+      pick: async (limit) => {
+        const { data, error } = await supabase.from("ai_reply_knowledge").select("id").eq("hypothesis_status", "hypothesis").eq("apply_count", 0).lt("created_at", cullCutoff).order("created_at", { ascending: true }).limit(limit);
+        if (error) throw new Error(error.message);
+        return ((data ?? []) as Array<{ id: string }>).map((x) => x.id);
+      },
+      reject: async (ids) => {
+        // 選んだ後に適用された行は消さない（同じ条件をもう一度付ける）
+        const { data, error } = await supabase.from("ai_reply_knowledge").update({ hypothesis_status: "rejected", rejection_reason: "auto_never_applied_45d" }).in("id", ids).eq("hypothesis_status", "hypothesis").eq("apply_count", 0).select("id");
+        if (error) throw new Error(error.message);
+        return (data ?? []).length;
+      },
+    }, { batch: NEVER_APPLIED_CULL_BATCH, budgetMs: NEVER_APPLIED_CULL_BUDGET_MS });
+    autoRejected += r.rejected;
+    if (r.error) console.error(`[weekly-learning] Stage A never-applied cull失敗（${r.rejected}件は済み・${r.batches}回目で止まった）:`, r.error);
+    else console.log(`[weekly-learning] Stage A never-applied cull: ${r.rejected}件（${r.batches}回${r.more ? "・残りは次の週" : ""}）`);
   }
 
   // Stage A: 自動却下（content短すぎ ≤ 20文字）
