@@ -27,7 +27,12 @@ const now = [
 const r2 = switchReachOf(["PICKUP_WHY_TO_BRAIN", "SIP_JUDGE"], now);
 ok("印が立った問題＝効いた", st(r2, "PICKUP_WHY_TO_BRAIN") === "reached" && r2[0].hit.join(",") === "q364,q334" && st(r2, "SIP_JUDGE") === "reached" && r2[1].hit.join(",") === "q334");
 ok("材料はあるのに印0＝効いていない", st(switchReachOf(["SIP_JUDGE"], [{ id: "q1", marks: {}, ledger: { sent_image_properties: 3 } }]), "SIP_JUDGE") === "not_reached");
-ok("指示文が全問に入るスイッチは確かめられない（材料の要件が無ければ）", st(switchReachOf(["BRAIN_RULE6_OPEN_PROMISE"], now), "BRAIN_RULE6_OPEN_PROMISE") === "prompt_all");
+ok("⑥の差し替えは指示文に入った印 rule6_open で見る（印が無ければ効いていない）", st(switchReachOf(["BRAIN_RULE6_OPEN_PROMISE"], [{ id: "q1", marks: { rule6_open: 1 } }]), "BRAIN_RULE6_OPEN_PROMISE") === "reached" && st(switchReachOf(["BRAIN_RULE6_OPEN_PROMISE"], [{ id: "q1", marks: {} }]), "BRAIN_RULE6_OPEN_PROMISE") === "not_reached");
+{
+  const tonight = ["ACK_PICKUP_AIX_PATH", "BRAIN_RULE6_OPEN_PROMISE", "ACK_FORM_COUNT_WITH_AIX", "BRAIN_CLOSED_THANKS_NO_REPLY", "BRAIN_FAR_OTHER_FIRST", "BRAIN_FULFIL_TURN", "BRAIN_LAYOUT_ASK_TEMPORARY", "BRAIN_MESSAGE_PLAN", "OUR_PARTS_PROMISE_WIDE", "INFO_FILL_MAP", "EQUIPMENT_WISH_LOOKUP"];
+  ok("11/23 今夜流すスイッチは全部対応表にある（対応表に無い＝確かめられない回を出さない）", tonight.every((sw) => st(switchReachOf([sw], [{ id: "q1" }]), sw) !== "unknown"));
+  ok("q197 の6つは印で見る（No.15 の1行が立った問題）", st(switchReachOf(["BRAIN_CLOSED_THANKS_NO_REPLY"], [{ id: "q197", marks: { d1103_n15: 90 } }, { id: "q065", marks: {} }]), "BRAIN_CLOSED_THANKS_NO_REPLY") === "reached" && st(switchReachOf(["BRAIN_MESSAGE_PLAN"], [{ id: "q197", metaKeys: ["message_plan"] }]), "BRAIN_MESSAGE_PLAN") === "reached");
+}
 ok("対応表に無いスイッチは確かめられない", st(switchReachOf(["FOO_BAR"], now), "FOO_BAR") === "unknown");
 ok("CHECK_RESULT_STATE: 空室確認のタスクが写しに0行＝効いていない", st(switchReachOf(["CHECK_RESULT_STATE"], night), "CHECK_RESULT_STATE") === "no_material");
 ok("了承の細かいスイッチは印が材料の行まで（部分の注）", !!switchReachOf(["ACK_PICKUP_AIX_PATH"], night)[0].note);
