@@ -216,3 +216,17 @@ assert.equal(promiseKindNameOf("1ヶ月以降のご入居をご希望の場合�
 assert.equal(promiseKindNameOf("お気に召されましたお部屋12月中旬でのご入居可能か交渉させていただきます！！"), null);
 assert.equal(promiseKindNameOf("12月中旬のご入居で管理会社に交渉させていただきます！！"), "check");
 console.log("promise-check-object: ok");
+// #660: 期日の無い約束（新着で出次第）は見張り・統括の材料の期日超えにしない。「ピックアップ出来次第」は期日あり
+import { promiseOpenEnded } from "../promise-drop-watch";
+{
+  assert.equal(promiseOpenEnded("オススメできるお部屋を新着で募集で次第お送りさせていただきます！！"), true);
+  assert.equal(promiseOpenEnded("新着が出次第お送りさせて頂きます！！"), true);
+  assert.equal(promiseOpenEnded("オススメできるお部屋のピックアップ出来次第お送りさせて頂きます！！"), false);
+  assert.equal(promiseOpenEnded("確認出来次第ご連絡させて頂きます！！"), false);
+  const t0 = "2026-11-19T08:29:00Z";
+  const input = base({ msgs: [{ sender: "staff", text: "ご条件に合ったお部屋ピックアップさせて頂きます！！新着で募集で次第お送りさせていただきます！！", created_at: t0, is_aix_generated: false }] });
+  const later = Date.parse(t0) + 100 * 36e5;
+  assert.deepEqual(overduePromisesOf(input, later), []);
+  assert.equal(promiseDropOf(input, later), null);
+}
+console.log("promise-open-ended: ok");

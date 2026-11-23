@@ -15,16 +15,23 @@ import { confirmObjectOf } from "../app/lib/action-ledger";
 // 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT（既定 on・=off で止める）と同じく、確認の約束を要件の合う答えでだけ果たした扱い
 const CHECK_OBJECT_OF = process.argv.includes("--check-object") || (process.env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() !== "off" ? (t: string) => confirmObjectOf(t) : undefined; // 既定 on（見張りと同じ・止める PROMISE_DROP_CHECK_OBJECT=off）
 import { writeFileSync } from "node:fs";
-import { promiseKindNameOf, promiseInputWaitTurn, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
+import { promiseOpenEnded, promiseKindNameOf, promiseInputWaitTurn, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "../app/lib/test-conversations";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 
 export type KeptState = "in_time" | "late" | "overdue" | "pending" | "n/a";
-export type PromiseRow = { conv: string; at: string; kind: PromiseKindName; writer: string; deadlineBy: "words" | "default72h"; state: KeptState; by: string | null; scene: string };
+export type PromiseRow = { conv: string; at: string; kind: PromiseKindName; writer: string; deadlineBy: "words" | "default72h" | "open_ended"; state: KeptState; by: string | null; scene: string;
+  /** 2026-11-23 作業員L（台帳 #661）: 結んだ見張りの番の scene_key そのまま（場面の「少数」は表示だけの束ね・地図は sceneOfWatchKey で P と同じ細かさに寄せる）。番が無ければ null */
+  sceneKey: string | null };
 /** 2026-11-21 台帳 #495: 約束の通を、その前24時間の一番近い見張りの番（お客様の番）に結んで場面を付ける（純関数）。数が足りる3場面は名前で・ほかは「少数」・番が無ければ「番なし」 */
 export const MAIN_SCENES = new Set(["返信:条件提示", "返信:質問", "AIX:property_check_result"]);
+/** 2026-11-23 #661: 約束の通に結んだ見張りの番の scene_key（番が無ければ null） */
+export function sceneKeyOfPromise(atMs: number, turns: ReadonlyArray<{ at: number; scene: string | null }>): string | null {
+  const t = turns.filter((x) => x.at <= atMs && atMs - x.at <= 86_400_000).sort((a, b) => b.at - a.at)[0];
+  return t?.scene ?? null;
+}
 export function sceneOfPromise(atMs: number, turns: ReadonlyArray<{ at: number; scene: string | null }>): string {
   const t = turns.filter((x) => x.at <= atMs && atMs - x.at <= 86_400_000).sort((a, b) => b.at - a.at)[0];
   if (!t) return "番なし";
@@ -60,13 +67,15 @@ export function promisesOf(conv: string, status: string | null, msgs: ReadonlyAr
   const out: PromiseRow[] = [];
   for (const p of kept) {
     if (promiseClosedConversation(status, msgs, p.at)) continue;
-    const dl = promiseDeadlineMs(p.text, Date.parse(p.at));
+    // 2026-11-23 作業員L（台帳 #660）: 期日の無い約束（新着で出次第）は、果たしていれば期限内・まだなら期限前（期日超えにしない）
+    const openEnded = promiseOpenEnded(p.text);
+    const dl = openEnded ? { ms: Number.POSITIVE_INFINITY, by: "open_ended" as const } : promiseDeadlineMs(p.text, Date.parse(p.at));
     const f = promiseFulfilledBy({ at: p.at, kind: p.kind, text: p.text }, ev, { checkObjectOf: CHECK_OBJECT_OF });
     let state: KeptState;
     if (f === "n/a") state = "n/a";
     else if (f) state = Date.parse(f.at) <= dl.ms ? "in_time" : "late";
     else state = nowMs > dl.ms ? "overdue" : "pending";
-    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null, scene: sceneOfPromise(Date.parse(p.at), turns) });
+    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null, scene: sceneOfPromise(Date.parse(p.at), turns), sceneKey: sceneKeyOfPromise(Date.parse(p.at), turns) });
   }
   return out;
 }

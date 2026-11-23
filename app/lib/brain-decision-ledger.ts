@@ -3,6 +3,7 @@
 //   列: building_key・room_no（判断した物件＝current_property を建物の鍵と号室に）・scene_key（ブレインの材料を絞る場面＝reply-scene）・brain_version（デプロイのコミット）
 //   digest: tc（2択の表示）・pp（ピックアップの約束が残っている）・cp（会話の実態の段階）・cs（締めの戦略の頭 60字）
 //   ※ scene_key は brain-scene の場面（reply-scene の ack/question/conditions…）。見張り（line_watch_turns.scene_key）の「AIX:〇〇／返信:〇〇」とは別の分け方
+import { overduePromisesDigest, overduePromisesDigestOn } from "./conductor-overdue-promises";
 import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
@@ -100,6 +101,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   if (routeDigestOn(env)) { const ar = routeDigestOf(meta, env); if (ar) (out as Record<string, unknown>).ar = ar; }
   // 2026-11-23 作業員N2（台帳 #566・連携の地図 next.ledger の分母）: 行動台帳の行の数（meta.action_ledger_counts＝action-ledger-digest の1語）を ld に。記録だけ・形の違う物は入れない
   if (parseActionLedgerDigest(meta.action_ledger_counts)) (out as Record<string, unknown>).ld = String(meta.action_ledger_counts).trim();
+  // 2026-11-23 作業員L（台帳 #659）: 統括の材料に渡した期日超えの約束の数・種類・その番の一手が果たす一手か（op・記録だけ・止める OVERDUE_PROMISES_DIGEST=off）
+  if (overduePromisesDigestOn(env)) { const op = overduePromisesDigest(meta.overdue_promises); if (op) (out as Record<string, unknown>).op = op; }
   return out;
 }
 

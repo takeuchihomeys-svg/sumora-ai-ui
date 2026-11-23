@@ -49,7 +49,8 @@ export function promiseStatesOf(rows: ReadonlyArray<FactRow>, o: { confirmObject
 //   ・「新着で募集に出次第」は期日の無い約束（開いたまま・期日超えに数えない）。「出来次第」は期日の言葉でないだけで期日はある（72時間）
 export const WIDE_CHECK_REPORT_RE = /お待たせ(?:致し|いたし)ました|確認(?:が)?(?:出来|でき)ました|許可を(?:いただき|頂き)|繋がら(?:ない|ず)|つながら(?:ない|ず)/;
 export const WIDE_NOT_LISTED_RE = /募集に出ていない|募集(?:が)?(?:終了|停止)(?:して|となって|になって|しており|でした)|募集中のお部屋(?:は)?ございませんでした/;
-export const WIDE_OPEN_ENDED_RE = /(?:新着|募集)[^。！!？?\n]{0,8}(?:出|で)次第/;
+export { PROMISE_OPEN_ENDED_RE as WIDE_OPEN_ENDED_RE } from "../../app/lib/promise-drop-watch"; // 2026-11-23 #660: 見張り・B1 と同じ決め方（1か所に）
+import { PROMISE_OPEN_ENDED_RE as WIDE_OPEN_ENDED_RE } from "../../app/lib/promise-drop-watch";
 /** 約束の文そのものを「後の発言」に数えないための間（sent_facts の時刻と発言の時刻の差） */
 const SELF_GAP_MS = 60_000;
 const WATCH_KIND: Record<string, PromiseKindName> = { confirmation_promised: "check", pickup_declared: "pickup", estimate_declared: "estimate" };
