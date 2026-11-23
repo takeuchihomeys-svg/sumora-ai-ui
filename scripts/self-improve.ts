@@ -30,7 +30,7 @@ import { addFoundGaps, type FoundGap } from "./lib/found-gap-ledger";
 import { currentOwnerOf } from "./lib/live-owner";
 import { superviseProLine, type QdRow } from "./lib/supervise-pro-line";
 import { flexMetricsOf, trustMetricsOf, routeSgMatchRowsOf, tsunagiRowsOf, type OffPatternJson, type PromiseKeptRow, type RouteProgressRow, type TsunagiCensusJson } from "./lib/flex-daily";
-import { stationStatsOf, stationMetricRowsOf, weakStationsOf, stationGapsToAdd, type RouteStationRow } from "../app/lib/route-station-trust";
+import { stationStatsOf, stationMetricRowsOf, weakStationsOf, type RouteStationRow } from "../app/lib/route-station-trust";
 import { misreadMetricRowsOf, type MisreadRow } from "../app/lib/route-station-misread";
 import { comboDaily } from "./lib/combo-daily";
 import { foundationFill } from "./foundation-fill";
@@ -474,10 +474,8 @@ async function main() {
         const { data: prevRows } = await sb.from("quality_daily").select("metric, value, n").like("metric", "route:station:%:progress").eq("scope", "takeuchi").eq("day", jstDay(now - 7 * 864e5)).limit(200);
         const prev = ((prevRows ?? []) as Array<{ metric: string; value: number | null; n: number | null }>).map((r) => ({ station: r.metric.replace(/^route:station:/, "").replace(/:progress$/, ""), n: r.n ?? 0, progressRate: r.value }));
         const weak = weakStationsOf(ss, prev);
-        const { data: openGaps } = await sb.from("work_items").select("title").like("title", "申込までの地図の駅 %").not("stage", "in", "(done,dropped)").limit(500);
-        // N2 の照らし②: 前の週の :progress がまだ無い初回は台帳に足さない（一覧に出すだけ・前の週と比べられる2回目から足す）
-        if (prev.length) for (const g of stationGapsToAdd(weak, ((openGaps ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "ブレイン" });
-        stationLine = `  - 駅ごとの進み（竹内さん本人の一手の後に申込へ近づいた番）: ${ss.filter((s) => s.n >= 10).map((s) => `${s.station} ${s.progressRate}%（${s.n}）`).join("・") || "n10 以上の駅なし"}｜弱い駅 ${weak.map((w) => w.station).join("・") || "なし"}${prev.length ? "" : "（前の週の数が無い＝台帳には足さない）"}（作業員A・#650）`;
+        // 2026-11-23 統括役の決め: 弱い駅を台帳に足すのは N2 の「地図の穴」の自動の台帳に一本化（同じ駅が2回上がるため）。ここは数と一覧だけ（線は N2 が穴の理由に取り込む）
+        stationLine = `  - 駅ごとの進み（竹内さん本人の一手の後に申込へ近づいた番）: ${ss.filter((s) => s.n >= 10).map((s) => `${s.station} ${s.progressRate}%（${s.n}）`).join("・") || "n10 以上の駅なし"}｜弱い駅 ${weak.map((w) => w.station).join("・") || "なし"}（台帳へは N2 の地図の穴から・作業員A・#650）`;
       } catch (e) { stationLine = `  - 駅ごとの進み: 失敗（${String(e).slice(0, 60)}・作業員A）`; }
       const all = rr[0];
       const low = rr.slice(1).filter((r) => r.n >= 5 && r.value != null && r.value < 50).map((r) => `${r.metric.replace("route:sg_match:", "")} ${r.value}%（${r.n}）`);
