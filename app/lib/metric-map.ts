@@ -24,7 +24,7 @@ export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
 export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
   | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue"
-  | "feel_missed" | "feel_extra" | "appeal_missed" | "appeal_extra" | "appeal_other" | "under" | "over";
+  | "feel_missed" | "feel_extra" | "appeal_missed" | "appeal_extra" | "appeal_other" | "under" | "over" | "field_gap" | "field_none";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
@@ -40,6 +40,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   feel_missed: "気持ちの見逃し（竹内さんは受けた・AI は受けない）", feel_extra: "気持ちの言い過ぎ（AI だけ受けた）",
   appeal_missed: "訴求の見逃し（竹内さんは推した・誘った・AI は無い）", appeal_extra: "訴求の言い過ぎ（AI だけ推した・誘った）", appeal_other: "推すと誘うの違い",
   under: "拾い落とし（ブレインの帳面が実物より少ない）", over: "古い・閉じたのを知らない（ブレインの帳面が実物より多い）",
+  field_gap: "届いていない（資料・画像には有るのに AIX の欄が空）", field_none: "読めていない（資料にも画像の読みにも無い）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
 export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait"]);
@@ -101,7 +102,7 @@ export type MapRootDef = {
   metric: string; label: string; writerSelect: WriterSelect; windowDays: number;
   dims: MapDim[];
   /** 子の割り方を作る道具（無い根は数だけ並べる＝割り方はまだ） */
-  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | "promise_map" | "feeling_scene" | "appeal_scene" | "situation_check" | null;
+  builder: "conductor_aix" | "aix_turn_device" | "route_next" | "route_progress" | "closing" | "closing_early" | "promise_map" | "feeling_scene" | "appeal_scene" | "situation_check" | "pickup_understand" | null;
   /** 一致（ok）の言い方（毎朝の1枚）: 既定は「竹内さんと同じ一手」 */
   okLabel?: string;
   /** 外れの言い方（okLabel と組・既定は「進まなかった」） */
@@ -171,6 +172,10 @@ export const MAP_ROOTS: MapRootDef[] = [
   //   木は L の scripts/audit-promise-map.ts --out の turns をそのまま受ける（枝 l1123-promise-map・main に入るまでは台本が無い＝前の木を読む）
   { metric: "promise:kept_true", label: "約束 › 竹内さん本人の約束を期限の内に果たした割合（60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "promise_map",
     primary: true, okLabel: "期限の内に果たした", missLabel: "遅れた・果たしていない", source: "scripts/audit-promise-map.ts（作業員L・scripts/lib/promise-map.ts）", owner: "作業員L", qdScope: "takeuchi" },
+  // 2026-11-23 統括役（台帳 #479・前の作業員K2 の分）: AIX ツールが物件を理解する土台＝竹内さん本人のピックアップで送った物件ごとに AIX の材料の欄が揃っている割合（欄×件）。
+  //   「なぜ選んだか」は作業員A の growth:pickup_select（重ねない）。出所は scripts/audit-pickup-understand-takeuchi.ts（欄の埋まり方は K2 の audit-pickup-understanding の fieldStates）
+  { metric: "pickup:understand", label: "物件の理解 › 竹内さんが送ったピックアップの物件で AIX の欄が揃っている割合（欄×件・60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss"], builder: "pickup_understand",
+    primary: true, okLabel: "揃っている", missLabel: "届いていない・読めていない", source: "scripts/audit-pickup-understand-takeuchi.ts（作業員P・app/lib/pickup-understand-map.ts）", owner: "作業員P", qdScope: "takeuchi" },
   // 2026-11-23 作業員L（台帳 #17・現状把握）: 竹内さん本人の番で、ブレインが持っていた今の状況の数（開いている約束 po・帳面の内覧の予定 tv）が実物と合う割合。
   //   L の scripts/audit-situation-check.ts --out の turns をそのまま受ける（約束の地図と同じ形・枝 l1123-promise-map・main に入るまでは前の木を読む）
   { metric: "situation:match", label: "今どこ › ブレインが持っていた今の状況の数が実物と合う割合（竹内さん本人の番・60日）", writerSelect: "device", windowDays: 60, dims: ["kind", "scene", "miss", "cause"], builder: "situation_check",
@@ -634,7 +639,8 @@ export function deviceMoveRowOf(r: DeviceTurnRow & { prevPromise?: string[]; bur
 
 // ── 2026-11-23 統括役: 毎朝の1枚に出す地図の行を、竹内さんが読む形（短い日本語・数と理由）に ──
 export const KIND_JA: Record<string, string> = {
-  "application_push": "申込の後押し", "application_push/push": "申込の後押し", pickup: "探す約束", check: "確認の約束", estimate: "見積の約束", po: "開いている約束の数", tv: "帳面の内覧の予定の数", hand: "手打ちで決めに行った", phone_call: "電話（審査の相談）", "phone_call/default": "電話（審査の相談）",
+  "application_push": "申込の後押し", "application_push/push": "申込の後押し", pickup: "探す約束", check: "確認の約束", estimate: "見積の約束", po: "開いている約束の数", tv: "帳面の内覧の予定の数",
+  facts: "物件の事実", points: "合う点・合わない点", equip: "設備", hand: "手打ちで決めに行った", phone_call: "電話（審査の相談）", "phone_call/default": "電話（審査の相談）",
   property: "物件", property_check_result: "物件確認した", estimate_sheet: "見積書", viewing_invite: "内覧の誘い", greeting_viewing: "内覧当日のご挨拶",
   meeting_place: "待ち合わせ場所", zenryoku_support: "全力サポート", condition_hearing: "条件の聞き取り", acknowledge_check: "確認の了承", other: "その他",
 };
@@ -642,6 +648,8 @@ export const SCENE_JA: Record<string, string> = {
   ack: "お礼・了承", question: "質問", conditions: "条件", considering: "検討中", property_share: "お客様が物件を送ってきた", property_send: "物件を送る場面",
   viewing: "内覧", cost: "費用", apply: "申込", other: "その他",
   hot: "申込予測 高い", warm: "申込予測 中", cold: "申込予測 低い", none: "申込予測 判定なし",
+  name: "名前", room: "号室", rent: "家賃", admin: "管理費", plan: "間取り", area: "広さ", walk: "駅徒歩", age: "築年", vacancy: "空き・入居時期", initial_cost: "初期費用",
+  reasons: "推す点・合わない点", equip: "設備", counter_kitchen: "カウンターキッチンの有無", stove: "コンロ",
 };
 const MISS_SHORT: Record<string, string> = { reply_not_aix: "AIX の番を返信にした", aix_kind: "AIX の種類違い", order: "先後", push_missed: "地図は AIX・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX" };
 export const STATION_JA: Record<string, string> = {

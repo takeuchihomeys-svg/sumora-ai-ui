@@ -3,6 +3,7 @@
 import { jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
+import { pickupUnderstandTurnsOf, pickupUnderstandSummaryOf } from "../pickup-understand-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -167,6 +168,17 @@ t("届いているか: 材料の行が測れなかった時は未確認", conduc
 }
 
 t("今どこの地図の番（L の形）", (() => { const x = jsonTurnsOf({ root: "situation:match", turns: [{ id: 1, kind: "po", scene: "ack", miss: "ok" }, { id: 2, kind: "tv", scene: "viewing", miss: "over", cause: "counting" }, { id: 3, kind: "po", scene: "ack", miss: "???" }] }, ["under", "over"], "under"); return x[0].cause === null && x[1].miss === "over" && x[1].cause === "counting" && x[2].miss === "under"; })());
+
+// ── 11/23 #479 物件の理解の土台 ──
+{
+  const rows = [{ id: "p1", conv: "a", at: "x", states: { rent: "filled" as const, area: "gap" as const, stove: "none" as const, fit: "filled" as const } }];
+  const tt = pickupUnderstandTurnsOf(rows);
+  t("物件の理解: 欄ごとに1番・fit（選んだ理由と重なる）は数えない", tt.length === 3 && tt.find((x) => x.scene === "area")!.miss === "field_gap" && tt.find((x) => x.scene === "stove")!.kind === "equip" && tt.find((x) => x.scene === "stove")!.miss === "field_none");
+  const s = pickupUnderstandSummaryOf(rows);
+  t("物件の理解の群ごとの数え", s.facts.n === 2 && s.facts.filled === 1 && s.facts.gap === 1 && s.equip.none === 1);
+  const tree = buildTree(tt as MapTurn[], { metric: "pickup:understand", label: "p", dims: ["kind", "scene", "miss"] });
+  t("物件の理解の木: 子の合計が戻る", sumMismatches(tree).length === 0 && tree[0].n === 3 && tree[0].ok === 1);
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

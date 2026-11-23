@@ -4,6 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
 import { feelingAppealTurnsOf, type FeelingAppealRow } from "../../app/lib/feeling-appeal-map";
+import { pickupUnderstandTurnsOf, type PickupUnderstandRow } from "../../app/lib/pickup-understand-map";
 import { readFileSync as readFileSyncMM, existsSync as existsSyncMM } from "node:fs";
 import { join as joinMM } from "node:path";
 import { tmpdir as tmpdirMM } from "node:os";
@@ -86,6 +87,8 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
   } else if (def.builder === "feeling_scene" || def.builder === "appeal_scene") {
     turns = feelingAppealTurnsOf(rows as FeelingAppealRow[], def.builder === "feeling_scene" ? "feeling" : "appeal") as MapTurn[];
+  } else if (def.builder === "pickup_understand") {
+    turns = pickupUnderstandTurnsOf(rows as PickupUnderstandRow[]) as MapTurn[];
   } else if (def.builder === "situation_check") {
     turns = jsonTurnsOf(rows, ["under", "over"], "under");
   } else if (def.builder === "promise_map") {
@@ -109,7 +112,8 @@ const ccCache = new Map<string, ReturnType<typeof checkConductor>>();
 /** json から作る根の出所の台本（どちらも読むだけ・LLM なし・main にある）。夜だけ・1日1回 */
 export const JSON_SOURCES: Record<string, string> = { aix_turn_device: "scripts/audit-aix-turn-judgment.ts", route_next: "scripts/audit-route-progress-takeuchi.ts", route_progress: "scripts/audit-route-progress-takeuchi.ts",
   closing: "scripts/audit-closing-takeuchi.ts", closing_early: "scripts/audit-closing-takeuchi.ts", promise_map: "scripts/audit-promise-map.ts",
-  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts", situation_check: "scripts/audit-situation-check.ts" };
+  feeling_scene: "scripts/audit-feeling-appeal-takeuchi.ts", appeal_scene: "scripts/audit-feeling-appeal-takeuchi.ts", situation_check: "scripts/audit-situation-check.ts",
+  pickup_understand: "scripts/audit-pickup-understand-takeuchi.ts" };
 /** 出力の欄の名前が --json でない台本（作業員L の約束の地図は --out） */
 const JSON_OUT_FLAG: Record<string, string> = { promise_map: "out", situation_check: "out" };
 const jsonCache = new Map<string, unknown[] | null>();
