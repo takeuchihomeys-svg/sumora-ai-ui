@@ -292,6 +292,17 @@ async function cmdMapBuild() {
   const scenes = t.nodes.filter((x) => x.dim === "scene" || (x.dim === "station" && x.depth === 1));
   const noP = scenes.filter((x) => x.misses > 0 && ![...examByLeaf].some(([k]) => m.covers(x.key, k)));
   console.log(`  試験の問題: ${scenes[0]?.dim === "station" ? "駅" : "種類×場面"}の段 ${scenes.length} のうち 外れがあって問題0 ${noP.length}: ${noP.sort((a, b) => b.misses - a.misses).map((x) => `${x.key.split("/").slice(1).join(" › ")}（${x.misses}）`).join("・") || "なし"}`);
+  if (flag("write") && def.builder === "aix_turn_device") {
+    // 11/23 作業員A（#624 組の物差しの本当の一致）: 割れ・少数側・n 不足の番ごとの印をファイルに（会話の頭8字・時刻・印）。読み先は COMBO_NET_SIDES_FILE か既定の scripts/.replay-out/aix-turn-sides.json
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    const out = arg("sides-out") || process.env.COMBO_NET_SIDES_FILE || "scripts/.replay-out/aix-turn-sides.json";
+    const byId = new Map((rows as Array<{ id: number; conv: string; at: string }>).map((r) => [r.id, r]));
+    const sides = [...t.sides].map(([id, v]) => ({ conv: byId.get(id)?.conv ?? "", at: byId.get(id)?.at ?? "", side: v.side, shape: v.shape, id })).filter((x) => x.conv && x.at);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify(sides, null, 1));
+    console.log(`書いた: 番ごとの印 ${sides.length}行（割れ ${sides.filter((x) => x.side === "split").length}・少数側 ${sides.filter((x) => x.side === "minority").length}・n 不足 ${sides.filter((x) => x.side === "n_short").length}）→ ${out}`);
+  }
   if (flag("write")) {
     const day = m.jstDay(Date.now());
     const w = await m.writeTree(db, day, def, t.nodes, ranked);
