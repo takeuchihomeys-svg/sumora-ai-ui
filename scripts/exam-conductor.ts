@@ -78,6 +78,7 @@ import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-proble
 import { bisectPlan } from "./lib/exam-bisect";
 import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
 import { syncExamWorktree } from "./lib/exam-worktree-sync";
+import { preflightReachOf, preflightLines, readPriorLedger } from "./lib/exam-preflight-reach";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -452,6 +453,14 @@ async function addJob(): Promise<void> {
       if (line) log(`  ${line}`);
       const blk = overlapBlocks(hits);
       if (blk.length && !flag("force")) throw new Error(`積まない: 同じスイッチ（${base.switch}）・同じ問題 ${[...new Set(blk.map((h) => h.id))].join(",")} の依頼がある（${[...new Set(blk.map((h) => `${h.owner} ${h.label}・${h.state}`))].join("／")}）。結果を待つか、それでも積む時は --force`);
+    }
+    // 2026-11-23 作業員N2（台帳 #462・作業員A の #648 を積む前に）: on にするスイッチの要る材料が、積む問題の前の回の写しで0行なら警告（既定は警告だけ・止める EXAM_PREFLIGHT_REACH=off）
+    if ((process.env.EXAM_PREFLIGHT_REACH ?? "").trim().toLowerCase() !== "off") {
+      try {
+        const onSw = Object.entries(env as Record<string, string>).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
+        const pr = preflightReachOf(onSw, ids, readPriorLedger(join(cwd, "scripts", "brain-exam", "results"), new Set(ids)));
+        for (const l of preflightLines(pr, { repeat: Number(arg("repeat", "2")) || 2 })) log(`  ${l}`);
+      } catch { /* 点検の失敗で積むのは止めない */ }
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
