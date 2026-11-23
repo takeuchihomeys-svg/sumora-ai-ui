@@ -180,3 +180,30 @@ t("時間確保は内覧の候補（TIMELINE_VIEWING_HOLD）", () => {
   assert.match(block, /内覧の候補の時間確保/); assert.match(block, /11\/24.*14:00（候補）/);
 });
 console.log("timeline-hold ok");
+
+// 2026-11-23 作業員L（台帳 #649・82c4d3e8 の形）: カレンダーが同じ見出しの行をまとめて、言い直した2件目の約束が帳面から落ちる → 行動台帳から足す（既定 off）
+import { addFactPromises, openFactPromises, timelinePromisesFromFactsOn } from "../situation-timeline";
+{
+  assert.equal(timelinePromisesFromFactsOn({}), false);
+  assert.equal(timelinePromisesFromFactsOn({ TIMELINE_PROMISES_FROM_FACTS: "on" }), true);
+  const t1 = "2026-11-21T06:19:42.029Z", t2 = "2026-11-22T06:41:36.589Z";
+  // カレンダー: 11/21 の物件ピックアップ送付の行（後で済み）だけ。11/22 の言い直しの約束の行は作られなかった
+  const rec = buildTimeline({ customerMsgs: [], calendar: [{ title: "【今日中】〇〇 物件ピックアップ送付", event_type: "property_send", start_at: t1, all_day: true, is_done: true }], nowMs: Date.parse("2026-11-23T03:00:00Z") });
+  const facts = [
+    { kind: "pickup_declared", status: "promised", sent_at: t1 },
+    { kind: "pickup_declared", status: "promised", sent_at: t2 },
+  ];
+  const open = openFactPromises(facts);
+  assert.equal(open.length, 2);
+  const merged = addFactPromises(rec, open);
+  // 11/21 の約束はカレンダーに同じ種類・同じ時刻の行がある（済みの印もそのまま）→足さない。11/22 の約束だけ足す
+  assert.equal(merged.promises.length, 2);
+  assert.deepEqual(merged.promises.map((p) => [new Date(p.atMs).toISOString().slice(0, 10), p.done, p.title === "行動台帳の約束"]), [["2026-11-21", true, false], ["2026-11-22", false, true]]);
+  assert.match(timelineBlock(merged, Date.parse("2026-11-23T03:00:00Z")), /11\/22（日）（物件の送付・行動台帳の約束・日が過ぎている）/);
+  // 閉じた約束（closed_by・後に同じ種類の済み）は足さない
+  assert.equal(openFactPromises([{ kind: "pickup_declared", status: "promised", sent_at: t2, detail: { closed_by: "x" } }]).length, 0);
+  assert.equal(openFactPromises([{ kind: "pickup_declared", status: "promised", sent_at: t1 }, { kind: "properties_sent", status: "done", sent_at: t2 }]).length, 0);
+  // 足す物が無ければ同じ物
+  assert.equal(addFactPromises(rec, [{ kind: "pickup_declared", atMs: Date.parse(t1) + 60_000 }]), rec);
+}
+console.log("timeline-facts ok");

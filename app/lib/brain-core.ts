@@ -3960,6 +3960,8 @@ ${sh}`;
         } catch { /* 今の窓のまま */ }
       }
       situationTimelineRec = stl.buildTimeline({ customerMsgs: custMsgs, calendar: (cal ?? []) as never, nowMs: Date.now() });
+      // 2026-11-23 作業員L（台帳 #649）: TIMELINE_PROMISES_FROM_FACTS=on（既定 off）の時だけ、カレンダーに行の無い行動台帳の開いている約束も帳面に（同じ種類の2件目が落ちていた）
+      if (stl.timelinePromisesFromFactsOn()) situationTimelineRec = stl.addFactPromises(situationTimelineRec, stl.openFactPromises((recordedFacts ?? []) as never));
       const tb = stl.timelineBlock(situationTimelineRec, Date.now());
       if (tb) customerStateBlockText += tb;
       console.log(JSON.stringify({ tag: "brain:situation-timeline", conversationId, words: situationTimelineRec.words.length, viewings: situationTimelineRec.viewings.length, promises: situationTimelineRec.promises.length }));
