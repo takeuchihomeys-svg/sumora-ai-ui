@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -71,6 +71,17 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   const dtree = buildTree(Array.from({ length: 10 }, (_, i) => ({ id: i, kind: "property", scene: "ack", miss: "reply_not_aix" as const, cause: "material" as const })), { metric: D, label: "d", dims: ["kind", "scene", "miss", "cause"] });
   const rk = rankLeaves(dtree, its);
   t("部品の直る見込み＝fixes ÷ 部品の葉の外れ", rk[0].fixShare === 0.8 && rk[0].items.includes(627));
+}
+
+// ── 11/23（3回目）竹内さんの少数側 ──
+{
+  const mk = (id: number, move: string, brain: string, isMiss = false, shape = "ack|約束:なし|thanks") => ({ id, shapes: [shape, "ack|約束:なし"], move, brain, isMiss });
+  const rows = [...Array.from({ length: 9 }, (_, i) => mk(i, "reply_first", "reply_first")), mk(100, "aix:greeting_viewing", "reply_first", true), mk(101, "aix:property", "aix:greeting_viewing", true)];
+  const m = minorityOf(rows);
+  t("少数側: 過半数の一手をブレインが選んだ外れだけ（n 10 以上）", m.has(100) && !m.has(101) && m.get(100)!.majority === "reply_first" && m.get(100)!.n === 11);
+  t("少数側: n が 10 に届かない形は数えない", minorityOf(rows.slice(0, 8).concat([mk(100, "aix:x", "reply_first", true)])).size === 0);
+  const half = [...Array.from({ length: 5 }, (_, i) => mk(i, "reply_first", "reply_first")), ...Array.from({ length: 5 }, (_, i) => mk(10 + i, "aix:a", "aix:a")), mk(99, "aix:a", "reply_first", true)];
+  t("少数側: 過半数（半分より多い）が無い形は数えない", !minorityOf(half.slice(0, 10).concat([mk(99, "aix:b", "reply_first", true)])).has(99));
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);
