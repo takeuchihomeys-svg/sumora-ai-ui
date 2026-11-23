@@ -10,6 +10,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { promiseDropOf, buildPromiseDropPost, promiseDropDue, promiseDropWatchMode, PROMISE_DROP_KEY, PROMISE_DROP_TEXT_KEY, PROMISE_DROP_MAX_DAYS, type PromiseDrop, type PdInput, overduePromisesOf, type OverduePromise } from "./promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "./test-conversations";
+import { promiseDropCheckObjectOn, type CheckObjectOf } from "./promise-drop-watch";
+/** 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT（既定 on・=off で止める）の時、確認の約束の要件を読む口（action-ledger.confirmObjectOf）を渡す */
+export async function checkObjectOfIfOn(): Promise<CheckObjectOf | undefined> {
+  if (!promiseDropCheckObjectOn()) return undefined;
+  const { confirmObjectOf } = await import("./action-ledger");
+  return (t: string) => confirmObjectOf(t);
+}
 
 /** 見えない字（書式の字・異体字の選び）を除いた名前（空なら null） */
 export function visibleName(v: string | null | undefined): string | null {
@@ -62,9 +69,10 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o
     .sort((a, b) => latest.get(a)!.localeCompare(latest.get(b)!)).slice(0, MAX_CONVS);
   const out: PromiseDrop[] & { partial?: boolean; scanned?: number; total?: number } = [];
   let scanned = 0;
+  const checkObjectOf = await checkObjectOfIfOn();
   const one = async (c: string) => {
     const input = await loadPdInput(sb, c, since);
-    const d = promiseDropOf(input, nowMs);
+    const d = promiseDropOf(input, nowMs, { checkObjectOf });
     if (d) out.push(d);
   };
   for (let k = 0; k < convs.length; k += BATCH) {
@@ -83,7 +91,7 @@ export async function loadPromiseDrops(sb: SupabaseClient, nowMs = Date.now(), o
 export async function overduePromisesFor(sb: SupabaseClient, conversationId: string, nowMs = Date.now()): Promise<OverduePromise[]> {
   const since = new Date(nowMs - PROMISE_DROP_MAX_DAYS * 86_400_000).toISOString();
   const input = await loadPdInput(sb, conversationId, since);
-  return overduePromisesOf(input, nowMs);
+  return overduePromisesOf(input, nowMs, { checkObjectOf: await checkObjectOfIfOn() });
 }
 
 /** 朝に1回: 数えて cron_run_logs に残し、文を控える（off は何もしない）。LINE には出さない */

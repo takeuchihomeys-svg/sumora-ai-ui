@@ -8,15 +8,18 @@
 //     ・foundation:promise:kept_72h（72〜144時間前にした約束のうち、72時間の内に閉じた %）
 import { PROMISE_OF_DONE } from "../../app/lib/promise-close-link";
 import { promiseDueFromText } from "../../app/lib/promise-due-text";
+import { confirmReportAnswers } from "../../app/lib/promise-calendar";
 import { promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PdMsg, type PdSent, type PromiseKindName } from "../../app/lib/promise-drop-watch";
 
-export type FactRow = { conversation_id: string; kind: string; status: string; sent_at: string; evidence?: string | null; detail?: { closed_by?: unknown; sentence?: string; dueText?: string | null } | null };
+export type FactRow = { conversation_id: string; kind: string; status: string; sent_at: string; evidence?: string | null; detail?: { closed_by?: unknown; sentence?: string; dueText?: string | null; object?: string | null; checkPattern?: string | null } | null };
 const DONE_OF: Record<string, string> = Object.fromEntries(Object.entries(PROMISE_OF_DONE).map(([done, p]) => [p, done]));
 const H = 36e5;
 
 export type PromiseState = { conv: string; kind: string; at: string; closedAt: string | null; deadlineMs: number; text?: string; evidence?: string; closedBy?: string; excluded?: boolean };
 /** 会話ごとの行 → 約束ごとの状態 */
-export function promiseStatesOf(rows: ReadonlyArray<FactRow>): PromiseState[] {
+// 2026-11-23 作業員L（台帳 #655）: 確認の約束を「後の確認の報告なら要件を問わず」閉じていた（7f73dc32「内覧可否」← 募集状況の報告・2cb0feb7「退去」← 入居時期の報告）。
+//   o.confirmObject（既定 false＝今と同じ）の時は、確認の約束は要件の合う確認の報告でだけ閉じる（カレンダーと同じ照らし・promise-calendar.confirmReportAnswers）
+export function promiseStatesOf(rows: ReadonlyArray<FactRow>, o: { confirmObject?: boolean } = {}): PromiseState[] {
   const byConv = new Map<string, FactRow[]>();
   for (const r of rows) byConv.set(r.conversation_id, [...(byConv.get(r.conversation_id) ?? []), r]);
   const out: PromiseState[] = [];
@@ -24,7 +27,8 @@ export function promiseStatesOf(rows: ReadonlyArray<FactRow>): PromiseState[] {
     const sorted = [...rs].sort((a, b) => a.sent_at.localeCompare(b.sent_at));
     for (const p of sorted) {
       if (p.status !== "promised" || !DONE_OF[p.kind]) continue;
-      const done = sorted.find((d) => d.status === "done" && d.kind === DONE_OF[p.kind] && d.sent_at > p.sent_at);
+      const done = sorted.find((d) => d.status === "done" && d.kind === DONE_OF[p.kind] && d.sent_at > p.sent_at
+        && (!o.confirmObject || p.kind !== "confirmation_promised" || confirmReportAnswers(p.detail?.object, { object: d.detail?.object ?? null, checkPattern: d.detail?.checkPattern ?? null })));
       const closedAt = p.detail?.closed_by ? (done?.sent_at ?? p.sent_at) : done?.sent_at ?? null;
       const text = String(p.detail?.sentence ?? p.evidence ?? "");
       // 期日を読む文（dueText・LEDGER_PROMISE_DUE_TEXT=on の行だけ）があればそちらで（「12月17日に…」「12月中旬ごろになりましたら」を落とさない・2026-11-23 作業員L）

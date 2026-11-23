@@ -58,7 +58,10 @@ export function promisePeriodDeadlineMs(text: string, atMs: number): number | nu
 }
 
 /** dueText からの期日（日付・「明日」等の言葉 → 時期の言葉 → 72時間の順） */
+/** 入居・引越しの日付（「12/13のご入居に間に合うよう」・43e1cbb5）は約束の期日でないので、期日を読む前に外す */
+export const MOVE_IN_DATE_RE = /(?<![0-9])(?:1[0-2]|0?[1-9])\s*[\/月]\s*(?:3[01]|[12][0-9]|0?[1-9])\s*日?\s*(?:\([^)]*\))?\s*(?:頃|ごろ)?\s*(?:の|に|から)?\s*(?:ご入居|お引越し|お引っ越し|入居|引越し)/g;
 export function promiseDueFromText(dueText: string, atMs: number): { ms: number; by: "words" | "period" | "default72h" } {
+  dueText = String(dueText ?? "").normalize("NFKC").replace(MOVE_IN_DATE_RE, "");
   const d = promiseDeadlineMs(dueText, atMs);
   if (d.by === "words") return d;
   const p = promisePeriodDeadlineMs(dueText, atMs);

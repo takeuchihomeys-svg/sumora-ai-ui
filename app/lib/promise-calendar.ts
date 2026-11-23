@@ -10,6 +10,7 @@
 //   → 一次証拠（送信時の記録）から決定論で作る。印は手入力の型（【時間確保】と同じ notes 先頭）に合わせる。
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
+import { promiseDueFromText } from "./promise-due-text";
 import { aixNewPickers1020Enabled } from "./aix-new-pickers";
 import { aixOccupantPickerEnabled, OCCUPANT_CONFIRM_TOPIC } from "./aix-occupant-picker";
 import { isConfirmPartyObject, confirmTopicsForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
@@ -113,6 +114,27 @@ export function promiseStartAt(sentAt: string, sentence: string | null | undefin
   return new Date(`${ymd}T${pad2(TOMORROW_PROMISE_HOUR)}:00:00+09:00`).toISOString();
 }
 
+/**
+ * 2026-11-23 作業員L（統括役の頼み・e4bb495d・ac34b364）: カレンダーの【今日中】が、約束の文の日付（「12月17日に…お送り」「12月中旬ごろになりましたら…再開」）を
+ *   読めずに約束した日を期日にしていた（行動台帳の dueText＝約束の言葉のある文を全部・文の終わりまで、からは 12/17・12/20 と読める）。
+ *   CALENDAR_PROMISE_DUE_TEXT=on（既定 off）の時だけ、行動台帳と同じ promise-due-text で dueText から期日を読み、約束した日より後の日なら
+ *   【今日中】を付けずにその日の朝（TOMORROW_PROMISE_HOUR の10時）に置く。読めない・同じ日の時は今まで通り
+ */
+type CalEnv = Record<string, string | undefined>;
+export const calendarPromiseDueTextOn = (env: CalEnv = typeof process !== "undefined" ? process.env : {}) => (env.CALENDAR_PROMISE_DUE_TEXT ?? "").trim().toLowerCase() === "on";
+const jstYmdOf = (ms: number) => { const d = new Date(ms + 9 * 3_600_000); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+/** dueText から読んだ期日が約束した日より後なら、その日の朝の start_at（でなければ null） */
+export function promiseLaterDueStartAt(sentAt: string, dueText: string | null | undefined): string | null {
+  if (!dueText) return null;
+  const at = Date.parse(sentAt);
+  if (!Number.isFinite(at)) return null;
+  const d = promiseDueFromText(dueText, at);
+  if (d.by === "default72h") return null;
+  const dueYmd = jstYmdOf(d.ms - 1);
+  if (dueYmd <= jstYmdOf(at)) return null;
+  return new Date(`${dueYmd}T${pad2(TOMORROW_PROMISE_HOUR)}:00:00+09:00`).toISOString();
+}
+
 export type PromiseEventRow = {
   title: string; event_type: string; customer_name: string | null; conversation_id: string;
   start_at: string; all_day: boolean; notes: string;
@@ -126,8 +148,9 @@ export type PromiseEventRow = {
  */
 export function promiseEventRows(
   entries: ReadonlyArray<Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">>,
-  o: { customerName: string | null | undefined; conversationId: string; sentAt: string },
+  o: { customerName: string | null | undefined; conversationId: string; sentAt: string; env?: CalEnv },
 ): PromiseEventRow[] {
+  const dueTextOn = calendarPromiseDueTextOn(o.env);
   const name = (o.customerName ?? "").trim();
   const out: PromiseEventRow[] = [];
   for (const e of entries) {
@@ -149,9 +172,10 @@ export function promiseEventRows(
     const label = head.slice(PROMISE_MUST_MARK.length).replace(/【[^】]*待ち】$/, "");
     // 物件を送れば決まる約束（ピックアップ・御見積書）は今日中のタスク。カレンダーで一目で分かるよう頭に印を付ける
     //   2026-10-01: 待ちの約束と、日付の語（明日・週明け）がある約束には付けない（明日の約束に【今日中】が付いていた 𝑛𝑎 id 919）
-    const today = TODAY_KINDS.has(e.kind) && !waiting && timing !== "date" ? TODAY_MARK : "";
+    const laterDue = dueTextOn && !waiting ? promiseLaterDueStartAt(o.sentAt, e.detail?.dueText) : null;
+    const today = TODAY_KINDS.has(e.kind) && !waiting && timing !== "date" && !laterDue ? TODAY_MARK : "";
     // 「明日確認してご連絡」と約束した分は翌日の午前中に置く（営業時間外の約束が当日の夜に埋もれない）。待ちの約束は約束した時のまま
-    const startAt = waiting ? o.sentAt : promiseStartAt(o.sentAt, sentence);
+    const startAt = waiting ? o.sentAt : laterDue ?? promiseStartAt(o.sentAt, sentence);
     out.push({
       title: `${today}${name ? `${name} ${label}` : label}`,
       event_type: PROMISE_SPEC[e.kind].eventType,
@@ -272,13 +296,41 @@ function confirmObjectOfNotes(notes: string | null | undefined): string | null {
  */
 const CONFIRM_ANSWERED_BY_PROPERTY_RE = /募集状況|空室|空き|番手/;
 const CONFIRM_ANSWERED_BY_ESTIMATE_RE = /募集状況|空室|空き|番手|初期費用|割引/;
+// ─── 2026-11-23 作業員L（台帳 #652・カレンダーの【必ず】の閉じ忘れ・14日の数え）───
+//   PROMISE_CALENDAR_CLOSE_WIDE=on（既定 off・カレンダーはスタッフも見る画面＝on の前に竹内さんに確かめる）の時だけ、閉じ方を2つ広げる:
+//   ①要件の言い換え: 確認の約束「保証会社」と、報告の要件「審査」を同じ物として結ぶ（7f73dc32: 「保証会社の確認」の行が「審査」の報告で閉じなかった）
+//   ②物件名のある「初期費用・割引の確認」の約束は、その物件の「募集に出ていない／別のお部屋」の報告で閉じる（dbe2cf9c）。
+//     報告に物件名が無い・名前が合わない時は閉じない（別の物件の行を閉じない）。物件名の無い御見積書の約束を閉じる今の決まりと同じ向き
+type Env = Record<string, string | undefined>;
+export const promiseCalendarCloseWideOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CALENDAR_CLOSE_WIDE ?? "").trim().toLowerCase() === "on";
+const CONFIRM_SYNONYMS: ReadonlyArray<ReadonlyArray<string>> = [["保証会社", "審査"]];
+const synonymMatch = (a: string, b: string) => CONFIRM_SYNONYMS.some((g) => g.some((x) => a.includes(x)) && g.some((x) => b.includes(x)));
 /** 約束の要件と報告の要件が同じか（相手だけの要件＝管理会社・確認事項は何にでも当たる） */
-function confirmObjectMatches(rowObj: string | null, doneObj: string | null | undefined): boolean {
+function confirmObjectMatches(rowObj: string | null, doneObj: string | null | undefined, wide = false): boolean {
   const d = (doneObj ?? "").trim();
   if (isConfirmPartyObject(rowObj) || isConfirmPartyObject(d)) return true;
   const r = rowObj as string;
-  return r.includes(d) || d.includes(r);
+  return r.includes(d) || d.includes(r) || (wide && !!d && synonymMatch(r, d));
 }
+/**
+ * 2026-11-23 作業員L（台帳 #655・数え方の直し）: 確認の約束の要件（sent_facts.detail.object）を、確認の報告（object・AIX の check_pattern）が答えたか。
+ *   カレンダーの閉じ方（planPromiseCompletion）と同じ照らし（AIX の check_pattern の要件が先・相手だけの要件は何にでも当たる・要件の無い約束は何にでも当たる）。
+ *   行動台帳の数（promise-ledger-metrics の --confirm-object）が使う
+ */
+export function confirmReportAnswers(promiseObj: string | null | undefined, report: { object?: string | null; checkPattern?: string | null }, wide = false): boolean {
+  const p = (promiseObj ?? "").trim();
+  if (!p) return true;
+  const topics = confirmTopicsForCheckPattern(report.checkPattern ?? null);
+  const doneObjs: Array<string | null> = topics.length ? topics : [report.object ?? null];
+  return doneObjs.some((o) => confirmObjectMatches(p, o, wide));
+}
+/** 行の見出しの（物件名） */
+function propertyOfHeadline(notes: string | null | undefined): string | null {
+  const m = headlineOf(notes).match(/（([^）]+)）s*$/);
+  return m ? m[1].trim() : null;
+}
+const normName = (s: string) => s.normalize("NFKC").replace(/s+/g, "").toLowerCase();
+const sameProperty = (a: string, b: string) => { const x = normName(a), y = normName(b); return !!x && !!y && (x.includes(y) || y.includes(x)); };
 
 /**
  * 履行した送信で完了にする約束の行の id（決定論）。
@@ -292,9 +344,11 @@ function confirmObjectMatches(rowObj: string | null, doneObj: string | null | un
  *   別物件の送付で閉じていた（相手の語を照合に使わない・条件の確認は送付で閉じない）
  */
 export function planPromiseCompletion(
-  done: ReadonlyArray<{ kind: LedgerKind; object?: string | null; checkPattern?: string | null }>,
+  done: ReadonlyArray<{ kind: LedgerKind; object?: string | null; checkPattern?: string | null; propertyNames?: ReadonlyArray<string> | null }>,
   existingOpen: ReadonlyArray<{ id: number; event_type: string | null; notes: string | null; is_done?: boolean | null }>,
+  env?: Env,
 ): number[] {
+  const wide = promiseCalendarCloseWideOn(env);
   const ids = new Set<number>();
   // 連絡の日の約束（【連絡日 …】）は contact-promise.planContactPromiseSync が閉じる（物件の送付・連絡の日の連絡）
   const open = existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes) && !!r.event_type && !isContactPromiseNotes(r.notes));
@@ -305,11 +359,16 @@ export function planPromiseCompletion(
     for (const r of open) {
       const isConfirm = r.event_type === PROMISE_SPEC.confirmation_promised.eventType;
       const obj = isConfirm ? confirmObjectOfNotes(r.notes) : null;
+      // 2026-11-23 ②（PROMISE_CALENDAR_CLOSE_WIDE=on の時だけ）: 物件名のある初期費用・割引の確認は、その物件の募集終了・別のお部屋の報告で閉じる
+      if (wide && isConfirm && obj && /初期費用|割引/.test(obj) && d.kind === "confirmation_reported" && (d.checkPattern === "unavailable" || d.checkPattern === "alternative")) {
+        const prop = propertyOfHeadline(r.notes);
+        if (prop && (d.propertyNames ?? []).some((n) => sameProperty(prop, n))) { ids.add(r.id); continue; }
+      }
       if (k && r.event_type === PROMISE_SPEC[k].eventType) {
         if (k === "confirmation_promised") {
           // AIX の check_pattern があればそれが報告の要件（本文の先頭語より確か）。無ければ報告の要件で照合
           const doneObjs: Array<string | null> = patternTopics.length ? patternTopics : [d.object ?? null];
-          if (!doneObjs.some((o) => confirmObjectMatches(obj, o))) continue;
+          if (!doneObjs.some((o) => confirmObjectMatches(obj, o, wide))) continue;
         }
         ids.add(r.id);
         continue;
