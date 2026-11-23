@@ -212,6 +212,8 @@ export type ApplyRouteSignals = {
   lastStaffAtIfStaffLast?: string | null;
   /** 2026-11-23 作業員R（#608）: 一番近い内覧の日（customer-state の upcomingViewing.ymd）。APPLY_ROUTE_NEXT_BY_TURN=on の時だけ次の一手の選び直しに使う（位置は変えない） */
   upcomingViewingYmd?: string | null;
+  /** 2026-11-23 作業員A: 今日（JST）もう AIX【当日のご挨拶】を送った。APPLY_ROUTE_GREETING_SENT_SKIP=on の時だけ使う */
+  greetingSentToday?: boolean | null;
   /** 2026-11-23 作業員R（#621）: 内覧後でも実施の記録が無い（customer-state の stageDetail「実施は未確認」）。VIEWING_LAPSED_BRANCH=on の時だけ使う */
   viewingUnconfirmed?: boolean | null;
   nowMs?: number;
@@ -342,6 +344,6 @@ export function withLapsedViewing(loc: ApplyRouteLocation, s: { viewingUnconfirm
 export function applyRouteBrainTextIfEnabled(s: ApplyRouteSignals, env?: Record<string, string | undefined>): { text: string; loc: ApplyRouteLocation | null } {
   if (!applyRouteMapEnabled(env)) return { text: "", loc: null };
   // 2026-11-23 作業員R（#608）: APPLY_ROUTE_NEXT_BY_TURN=on（既定 off）の時だけ、次の一手の候補を番の型・内覧の日で選び直す（apply-route-next.ts・off は同じ物を返す）
-  const loc = withRefinedNext(withLapsedViewing(locateApplyRoute(s), { viewingUnconfirmed: s.viewingUnconfirmed ?? null }, env), { routeType: s.routeType ?? null, upcomingViewingYmd: s.upcomingViewingYmd ?? null, nowMs: s.nowMs }, env);
+  const loc = withRefinedNext(withLapsedViewing(locateApplyRoute(s), { viewingUnconfirmed: s.viewingUnconfirmed ?? null }, env), { routeType: s.routeType ?? null, upcomingViewingYmd: s.upcomingViewingYmd ?? null, greetingSentToday: s.greetingSentToday ?? null, nowMs: s.nowMs }, env);
   return { text: buildApplyRouteBrainText(loc), loc };
 }

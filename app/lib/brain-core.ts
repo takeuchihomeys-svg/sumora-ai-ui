@@ -142,6 +142,7 @@ import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
+import { greetingSentTodayOf } from "@/app/lib/apply-route-next";
 import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
 import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
@@ -4245,6 +4246,7 @@ ${sh}`;
         farMoveIn: !!farMoveInEarly,
         lastStaffAtIfStaffLast: lastMsgAR && lastMsgAR.sender !== "customer" ? lastMsgAR.created_at : null,
         upcomingViewingYmd: customerState?.upcomingViewing?.ymd ?? null, // 2026-11-23 作業員R（#608）: APPLY_ROUTE_NEXT_BY_TURN=on の時だけ読む
+        greetingSentToday: greetingSentTodayOf(aixLogs, Date.now()), // 2026-11-23 作業員A: APPLY_ROUTE_GREETING_SENT_SKIP=on の時だけ読む（off は文が変わらない）
         viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
