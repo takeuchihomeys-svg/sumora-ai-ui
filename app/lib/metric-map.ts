@@ -22,7 +22,7 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
 export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
-  | "stuck" | "left" | "back" | "engaged" | "branch_stay";
+  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
@@ -32,9 +32,22 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   fixed_since: "直しが入った日より前の番（今のコードでは直っている・どの直しかは FIXED_SINCE・外れの順位に入れない）",
   split: "割れ（同じ形の番で竹内さん本人の一手が半分前後に割れる・どちらにも決めない・外れの順位に入れない）",
   stuck: "止まった（次のお客様の発言で駅が進まない）", left: "離れた（返事が来ない）", back: "戻った（申込から遠い駅へ）", engaged: "やり取りは続くが駅は同じ", branch_stay: "分かれ道から本線に戻れない",
+  viewing_wait: "内覧の日待ち（続く・内覧の日がまだ来ていない・直す所ではない）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
-export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split"]);
+export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait"]);
+/** 本線の駅（app/lib/apply-route-map.ts の MAIN_ROUTE と同じ・作業員A の route-station-trust と同じ） */
+export const MAIN_STATIONS = new Set(["inquiry", "hearing", "pickup", "proposing", "interested", "estimate", "viewing_arrange", "viewing_scheduled", "viewed", "apply_prep", "applying"]);
+/** 内覧の日がまだ来ていない番か（純関数・作業員A の route-station-trust の viewingNotYet と同じ: 番の detail の「M/D」が番の日（JST）以後） */
+export function viewingNotYetOf(at: string | null | undefined, detail: string | null | undefined): boolean {
+  const m = String(detail ?? "").match(/(\d{1,2})\/(\d{1,2})/);
+  const t = Date.parse(String(at ?? ""));
+  if (!m || !Number.isFinite(t)) return false;
+  const j = new Date(t + 9 * 3600e3);
+  const y = j.getUTCFullYear(), mo = Number(m[1]), d = Number(m[2]);
+  const yy = mo < j.getUTCMonth() + 1 - 6 ? y + 1 : y;
+  return Date.UTC(yy, mo - 1, d) >= Date.UTC(y, j.getUTCMonth(), j.getUTCDate());
+}
 /**
  * 直しが入った日の表（11/23 統括役・作業員L の案）: 作業員が分かる物（スイッチの既定 on の日・コミットの日）だけ。分からない物は載せない。
  *   ids は「その直しで今は直っている」と作業員が実物で確かめた番だけ（直しの名前だけで番を推し量らない）。since より前の番だけ印を付ける
@@ -456,14 +469,17 @@ export function decidedRouteIdxOf(rows: ReadonlyArray<{ conv: string; at: string
   return out;
 }
 /** R の json の行を進みの木の番に（純関数）: 本線の番は advanced が進んだ・分かれ道の番は番の後に本線の駅（after）へ戻れたら進んだ。決定で改めた番は外す側（decided） */
-export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null }>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
+export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null; detail?: string | null }>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
   return rows.map((r, i) => ({ r, i })).filter(({ r }) => r.agree !== "no_next").map(({ r, i }) => {
     const station = r.branch ? `分:${r.branch}` : String(r.node ?? "other");
     // 分かれ道の番: 作業員A の afterBranch（竹内さんの一手の後のお客様の返事で地図を当て直した分かれ道・閉じたら null）があれば null＝本線に戻れた。
     //   欄が無い番（返事が無い・前の json）は駅が進んだか（advanced）だけで見る（前の仮の数え方 after は分かれ道の番でもほぼ入っていて高すぎた）
     const ab = (r as { afterBranch?: string | null }).afterBranch;
-    const ok = r.branch ? ("afterBranch" in r ? ab === null : r.outcome === "advanced") : r.outcome === "advanced";
-    const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : r.branch ? "branch_stay" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.outcome === "engaged" ? "engaged" : "stuck";
+    //   11/23 作業員A と揃えた（route-station-trust の stationStatsOf）: 進んだ＝advanced か、分かれ道の番で afterBranch が null かつ番の後の駅が本線の駅
+    const ok = r.outcome === "advanced" || (!!r.branch && ab === null && "afterBranch" in r && !!r.after && MAIN_STATIONS.has(String(r.after)));
+    // 内覧の予定ありの駅で内覧の日がまだ来ていない止まりは「内覧の日待ち（続く）」（N2 の照らし①・A と同じ）＝直す所ではない
+    const wait = r.outcome === "stuck" && r.node === "viewing_scheduled" && !r.branch && viewingNotYetOf(r.at, r.detail);
+    const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : wait ? "viewing_wait" : r.outcome === "engaged" ? "engaged" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.branch ? "branch_stay" : "stuck";
     return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null };
   });
 }
