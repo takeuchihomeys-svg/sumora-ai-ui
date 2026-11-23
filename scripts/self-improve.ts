@@ -37,6 +37,7 @@ import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, G
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 import { mapDaily, type QdOut } from "./lib/metric-map-server";
+import { isHoleReachDay, holesNotReached, type HoleRow } from "./lib/hole-reach-weekly";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -256,6 +257,15 @@ async function main() {
         coreFix.push(...mp.fix.slice(0, 8));
         mapQd.push(...mp.qd);
         ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
+      }
+      // 2026-11-23 作業員N2（竹内さんの決定 KB 0f38f47f）: 週に1回（JST の月曜の回）、開いている地図の穴の行のうち統括に届いていない物を統括役に出す（読むだけ・軽い読み）
+      if (isHoleReachDay(now)) {
+        const sel = async (cols: string): Promise<{ data: unknown[] | null; error: { message: string } | null }> => (await sb.from("work_items").select(cols).eq("origin", "found_gap").like("title", "地図の穴:%").not("stage", "in", "(done,dropped)").limit(500)) as unknown as { data: unknown[] | null; error: { message: string } | null };
+        let hq = await sel("id,title,owner,stage,next_step,conductor_reach");
+        if (hq.error && /conductor_reach/.test(hq.error.message)) hq = await sel("id,title,owner,stage,next_step");
+        const nr = holesNotReached((hq.data ?? []) as unknown as HoleRow[]);
+        lines.push(`### 芯: 地図の穴で統括に届いていない物（週1回・${nr.length}行）`, ...nr.slice(0, 20).map((r) => `- #${r.id} ${r.title.replace(/^地図の穴: /, "")}（${r.owner ?? "統括役"}・${r.reach}）`));
+        if (nr.length) coreFix.push(`地図の穴で統括に届いていない ${nr.length}行（${nr.slice(0, 5).map((r) => `#${r.id}`).join("・")}）→ 統括役が持ち主と統括の学び（conductor_lessons の leaf_keys）を決める`);
       }
     }
   }

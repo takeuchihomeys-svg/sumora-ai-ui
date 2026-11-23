@@ -8,7 +8,7 @@ import { join as joinMM } from "node:path";
 import { tmpdir as tmpdirMM } from "node:os";
 import { runTsx as runTsxMM } from "./self-improve-growth";
 import {
-  MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
+  MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf, ownerOfLeaf, leafReachOf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
@@ -258,9 +258,11 @@ export const leafLine = (r: RankedLeaf) => `${r.rank}. ${r.key.split("/").slice(
  *   要確認: 子を足して親に戻らない（数え方の誤り）・穴（作業の無い大きな葉）・見込みの外れ・見込みの無い P0/P1。
  *   quality_daily: map:<根>:value / :sum_mismatch / :holes / :hold / :rank<1..5>（detail に葉の鍵と次の一手）・forecast:items / :due / :checked / :in_band / :no_forecast_p01
  */
-export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean; force?: boolean; days?: number; roots?: string[] } = {}) {
+export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: boolean; night?: boolean; force?: boolean; days?: number; roots?: string[]; env?: Record<string, string | undefined> } = {}) {
   const now = o.now ?? Date.now(), day = jstDay(now), night = o.night ?? isNightJst(now);
-  const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string }> = [];
+  const lines: string[] = [], fix: string[] = [], qd: QdOut[] = [], holes: Array<{ title: string; owner: string; next: string; reach: "未確認" | "届いている" | "届いていない" }> = [];
+  // 2026-11-23 作業員N2（KB 0f38f47f）: 統括の学びの葉の印（現行の conductor_lessons.leaf_keys・軽い読み）＝穴が統括に届いているかの元
+  const lessonLeafKeys = await (async () => { try { const { data } = await sb.from("conductor_lessons").select("leaf_keys").eq("is_current", true).not("leaf_keys", "is", null).limit(2000); return ((data ?? []) as Array<{ leaf_keys: string[] | null }>).flatMap((r) => r.leaf_keys ?? []); } catch { return [] as string[]; } })();
   const items = await loadForecastItems(sb);
   const { data: fq } = await sb.from("quality_daily").select("metric,value,detail").like("metric", "found:%:%:%").gte("day", jstDay(now - 3 * 86_400_000)).limit(800);
   const foundRows = ((fq ?? []) as Array<{ metric: string; value: number | null; detail?: { cause?: string } | null }>).map((r) => ({ ...r, value: num(r.value) }));
@@ -325,9 +327,14 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
     }
     for (const b of bad) fix.push(`地図の数え方の誤り: ${b.key} の子の合計 n ${b.childN}/${b.n}・外れ ${b.childMisses}/${b.misses} → ${def.owner}`);
     // 並べて見る用の版（主でない compare 付き）の穴は台帳に足さない（主の版と重なる）
-    for (const h of def.compare && !def.primary ? [] : hs.slice(0, 3)) {
-      fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い）→ 統括役が持ち主を決める`);
-      holes.push({ title: `地図の穴: ${h.key}`, owner: def.owner, next: `外れ ${h.misses}/${h.n}・作業も見込みも無い葉（台帳 #610 の地図）→ 外れの番を実物で読み、原因の4つで直しを作る` });
+    // 2026-11-23 作業員N2（竹内さんの決定 KB 0f38f47f・統括役の頼み・作業員P と揃えた）: 上位3つの線を外し、本当の外れが3以上の穴を全部台帳へ（題で重ねない・--write の時だけ）。
+    //   持ち主は葉の持ち主の案（ownerOfLeaf）・統括に届いているか（leafReachOf・conductor_lessons の現行の leaf_keys）を必ず付ける。止める: MAP_HOLES_ALL=off（前の上位3つ・根の持ち主）
+    const holesAll = (o.env ?? process.env).MAP_HOLES_ALL?.trim().toLowerCase() !== "off";
+    for (const h of def.compare && !def.primary ? [] : holesAll ? hs.filter((x) => x.misses >= 3) : hs.slice(0, 3)) {
+      const own = holesAll ? ownerOfLeaf(h.key, def.owner) : { owner: def.owner, why: "根の持ち主" };
+      const reach = leafReachOf(h.key, lessonLeafKeys, def.rebaseFrom ?? []);
+      fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い・統括に届いているか ${reach}）→ 持ち主の案 ${own.owner}（${own.why}）`);
+      holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, next: `外れ ${h.misses}/${h.n}・作業も見込みも無い葉（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
     }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
     qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },
