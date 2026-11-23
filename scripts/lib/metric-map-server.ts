@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkConductor } from "../check-conductor";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf,
-  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, minorityOf, deviceMoveRowOf, BROUGHT_SHAPE_RE, fixedSinceOf, type DeviceTurnRow, type RouteTurnRow,
+  itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, sideOf, deviceMoveRowOf, type SideMark, BROUGHT_SHAPE_RE, fixedSinceOf, type DeviceTurnRow, type RouteTurnRow,
   MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
@@ -38,10 +38,11 @@ export const rootsInOrder = (roots: readonly MapRootDef[] = MAP_ROOTS) => [...ro
 
 /** 出所の台本の json から木を作る（端末の版＝作業員A の audit-aix-turn-judgment・申込までの地図＝作業員R の audit-route-progress-takeuchi）。
  *  台本は夜だけの重い読み＝ここは json を読むだけ。端末の版の場面は見張りの scene_key を番の id で引く（100番ほどの軽い読み） */
-export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, rows: unknown[], o: { spec?: Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }> } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number; decided: Map<number, string>; minority: Map<number, { shape: string; majority: string; share: number; n: number }>; fixed: Map<number, string> } | null> {
+export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, rows: unknown[], o: { spec?: Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }> } = {}): Promise<{ nodes: MapNode[]; value: number | null; n: number; decided: Map<number, string>; minority: Map<number, { shape: string; majority: string; share: number; n: number }>; fixed: Map<number, string>; sides: Map<number, SideMark> } | null> {
   let decided = new Map<number, string>();
   let minority = new Map<number, { shape: string; majority: string; share: number; n: number }>();
   let fixed = new Map<number, string>();
+  let sides = new Map<number, SideMark>();
   let turns: MapTurn[] = [];
   if (def.builder === "aix_turn_device") {
     const rs = rows as DeviceTurnRow[];
@@ -66,13 +67,14 @@ export async function buildTreeFromJson(sb: SupabaseClient, def: MapRootDef, row
     }
     // 竹内さんの決定で正解を改めた番（作業員A の案）は外れと別に数える
     decided = o.spec ? decidedTurnIdsOf(rs as unknown as Array<{ id: number; conv: string; at: string }>, o.spec) : new Map();
-    minority = minorityOf(rs.map((r) => deviceMoveRowOf(r, scene.get(r.id) ?? null, { brought24h: brought.has(r.id) })).filter((m) => !decided.has(m.id)));
+    sides = sideOf(rs.map((r) => deviceMoveRowOf(r, scene.get(r.id) ?? null, { brought24h: brought.has(r.id) })).filter((m) => !decided.has(m.id)));
+    minority = new Map([...sides].filter(([, v]) => v.side === "minority").map(([k, v]) => [k, { shape: v.shape, majority: v.majority, share: v.share, n: v.n }]));
     fixed = fixedSinceOf(rs as unknown as Array<{ id: number; at: string }>);
-    turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()));
+    turns = deviceTurnsOf(rs, scene, new Set(decided.keys()), new Set(minority.keys()), new Set(fixed.keys()), new Set([...sides].filter(([, v]) => v.side === "split").map(([k]) => k)));
   } else if (def.builder === "route_next") turns = routeTurnsOf(rows as RouteTurnRow[]);
   else return null;
   const nodes = buildTree(turns, def);
-  return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0, decided, minority, fixed };
+  return { nodes, value: nodes[0]?.value ?? null, n: nodes[0]?.n ?? 0, decided, minority, fixed, sides };
 }
 
 const ccCache = new Map<string, ReturnType<typeof checkConductor>>();

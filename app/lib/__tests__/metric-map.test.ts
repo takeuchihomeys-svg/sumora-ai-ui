@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -93,6 +93,16 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   t("時刻で送る物: 当日のご挨拶の外れは timed（一致はそのまま）", tt[0].miss === "timed" && tt[0].cause === null && tt[1].miss === "ok");
   const tree = buildTree(tt, { metric: "d", label: "d", dims: ["kind", "scene", "miss", "cause"] });
   t("時刻で送る物は順位に入れない", rankLeaves(tree, []).length === 0);
+}
+
+// ── 11/23（5回目）割れ・n 不足 ──
+{
+  const mk = (id: number, move: string, brain: string, isMiss = false) => ({ id, shapes: ["ack|約束:property_check_result|other"], move, brain, isMiss });
+  const split = [...Array.from({ length: 4 }, (_, i) => mk(i, "aix:property_check_result", "aix:property_check_result")), ...Array.from({ length: 4 }, (_, i) => mk(10 + i, "reply_first", "reply_first")), mk(20, "aix:property", "aix:property"), mk(99, "aix:property_check_result", "reply_first", true)];
+  const s = sideOf(split);
+  t("割れ: 過半数が無く上位2つで8割以上・ブレインはその片方", s.get(99)?.side === "split");
+  const short = Array.from({ length: 6 }, (_, i) => mk(i, "reply_first", "reply_first")).concat([mk(99, "aix:x", "reply_first", true)]);
+  t("n 不足: どの形も 10 に届かない（5 以上）→ 印だけ", sideOf(short).get(99)?.side === "n_short" && minorityOf(short).size === 0);
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);
