@@ -7,7 +7,7 @@
 //   原因の4つ（P の地図と同じ鍵）: material＝約束が統括・ブレインに届いていない（行動台帳に約束の行が無い）／misread＝約束の種類を読み違えた（台帳と見張りの種類が違う）／
 //     counting＝数え方（カレンダーの【必ず】は済み・台帳は閉じた＝こちらが見えていない果たし方）／judgment＝材料は届いていたのに果たされなかった（統括が拾えなかった）
 export type PromiseMapState = "in_time" | "late" | "overdue" | "pending" | "n/a";
-export type PromiseMapRow = { conv: string; at: string; kind: string; writer: string; state: PromiseMapState; by?: string | null; scene?: string | null };
+export type PromiseMapRow = { conv: string; at: string; kind: string; writer: string; state: PromiseMapState; by?: string | null; scene?: string | null; sceneKey?: string | null };
 export type PromiseMapMiss = "ok" | "late" | "overdue";
 export type PromiseMapCause = "material" | "misread" | "counting" | "judgment";
 export const PROMISE_MAP_ROOT = "promise:kept_true";

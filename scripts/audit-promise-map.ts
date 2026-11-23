@@ -26,7 +26,7 @@ const KIND_WORD: Record<string, RegExp> = { pickup: /ピックアップ|物件(?
   }
   const raw = JSON.parse(readFileSync(jsonPath, "utf8")) as PromiseMapRow[] | { rows?: PromiseMapRow[] };
   // 場面は P の地図と同じ鍵（sceneOfWatchKey: conditions・question・ack・considering・property_share・viewing・cost・apply・other）。B1 の「少数」は other
-  const rows = (Array.isArray(raw) ? raw : raw.rows ?? []).map((r) => ({ ...r, scene: r.scene && r.scene !== "少数" ? sceneOfWatchKey(r.scene) : "other" }));
+  const rows = (Array.isArray(raw) ? raw : raw.rows ?? []).map((r) => ({ ...r, scene: r.sceneKey ? sceneOfWatchKey(r.sceneKey) : r.scene && r.scene !== "少数" && r.scene !== "番なし" ? sceneOfWatchKey(r.scene) : "other" })); // #661: B1 の sceneKey（見張りの scene_key そのまま）を先に
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   // 外れの番の印（行動台帳・カレンダー）
   const ev = new Map<string, PromiseEvidence>();

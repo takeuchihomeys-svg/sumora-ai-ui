@@ -113,6 +113,14 @@ export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by:
   const d = promiseDueDay(scrubbed, atMs);
   return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + PROMISE_DROP_MIN_H * 3_600_000, by: "default72h" };
 }
+/**
+ * 2026-11-23 作業員L（台帳 #660）: 「新着で募集で次第お送り」「新着が出次第」は期日の無い約束（外の出来事待ち）。行動台帳の --wide-close（promise-ledger-metrics）と同じ決め方で、
+ *   見張り（promiseDropOf・overduePromisesOf＝統括の材料）と B1 も期日超えに数えない。「ピックアップ出来次第」「確認出来次第」は期日の言葉が無いだけで、期日は72時間のまま
+ */
+export const PROMISE_OPEN_ENDED_RE = /(?:新着|募集)[^。！!？?\n]{0,8}(?:出|で)次第/;
+export function promiseOpenEnded(text: string | null | undefined): boolean {
+  return PROMISE_OPEN_ENDED_RE.test(promiseClausesOf(String(text ?? "")));
+}
 const PICKUP_SENT_RE = /新着で出(?:た|ました)?|オススメ出来るお部屋(?:と|に)なります|お部屋(?:を)?お送りさせて頂きました|(?:こちらの)?お部屋如何でしょうか/;
 const ESTIMATE_SENT_RE = /(?:御見積書|お見積(?:もり|り)?書?)(?:と)?(?:なります|になります|お送りさせて頂きました|お送り致しました|送らせて頂きました|添付)/;
 export type PromiseEvidence = { msgs: ReadonlyArray<PdMsg>; aix: ReadonlyArray<PdAix>; sent: ReadonlyArray<PdSent> };
@@ -210,6 +218,7 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
   for (const [kind, p] of byKind) {
     const t0 = Date.parse(p.at);
     if ((nowMs - t0) / 864e5 > maxDays) continue;
+    if (promiseOpenEnded(p.text)) continue; // #660: 期日の無い約束（新着で出次第）は期日超えにしない
     const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0);
     if (nowMs < due.ms) continue;
     if (promiseFulfilledBy({ at: p.at, kind, text: p.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) continue;
@@ -245,6 +254,7 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   const t0 = Date.parse(promise.at);
   const ageH = (nowMs - t0) / 36e5;
   // 期限（作業員N の B1 と同じ）: 文の期限の言葉の日の終わり／無ければ 72時間。minH を渡された時はそれを使う（テスト）
+  if (o.minH == null && promiseOpenEnded(promise.text)) return null; // #660: 期日の無い約束は見張りに出さない
   const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0).ms;
   if (!(nowMs >= due) || ageH > maxDays * 24) return null;
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
