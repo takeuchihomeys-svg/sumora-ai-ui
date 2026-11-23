@@ -92,9 +92,21 @@ function locateAt(input: CustomerStateInput, T: number, envV2: boolean): { loc: 
   return { loc, loc2, loc3, loc4, rt, detail: state.stageDetail ?? null, turnText, sub1: matchSubstateOf(turnText, {})?.id ?? null, sub2: matchSubstateOf(turnText, { ROUTE_SUBSTATE_NET_V2: "on" })?.id ?? null };
 }
 
+/** 2026-11-23 作業員A（#657）: 番の前の30日に送った AIX の種類ごとの一番新しい時刻（送った時＝sent_at が無ければ created_at） */
+function sentBeforeOf(aix: ReadonlyArray<GAix>, T: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const x of aix) {
+    const at = x.sent_at ?? x.created_at; const k = String(x.aix_type ?? "").split("/")[0];
+    if (!k || !at) continue; const t = Date.parse(at);
+    if (!(t < T && T - t <= 30 * 86_400_000)) continue;
+    if (!out[k] || out[k] < at) out[k] = at;
+  }
+  return out;
+}
+
 type Row = {
   conv: string; at: string; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
-  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null;
+  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null; sentBefore?: Record<string, string>;
 };
 
 (async () => {
@@ -117,11 +129,13 @@ type Row = {
   const rows: Row[] = [];
   let convDone = 0, cutPost = 0, failed = 0;
   for (const c of convs) {
-    const [m, a, d, deals] = await Promise.all([
+    const [m, a, d, deals, a30] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, staff_writer, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(2000),
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", since).limit(500),
       sb.from("brain_decision_logs").select("created_at, digest").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(1000),
       sb.from("deal_outcomes").select("applied_at, screening_at").eq("conversation_id", c),
+      // 2026-11-23 作業員A（#657）: 「今どこ」の読み違いの元＝番の前の30日に送った AIX（窓の始めより前も読む・guideTurnsOf には渡さない）
+      sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", new Date(Date.parse(since) - 30 * 86_400_000).toISOString()).limit(1000),
     ]);
     const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
     const turns = guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: true, viewingWait: true, ...(FIRST_MOVE ? { firstMoveH: 2 } : {}) });
@@ -165,6 +179,7 @@ type Row = {
         agree3: routeAgreement(r.loc3, t.act), rule3: r.loc3.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, agree4: routeAgreement(r.loc4, t.act), rule4: r.loc4.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, laterAix: t.laterAix ? `${t.laterAix}@${t.laterAixH}h` : null, rt: r.rt, detail: r.detail, outcome: t.outcome, after: t.after,
         sub1: r.sub1, sub2: r.sub2, subAt1: atOk(s1), subAt2: atOk(s2), nextAix: r.loc.next?.aix ?? [],
         ...(afterBranch !== undefined ? { afterBranch } : {}),
+        sentBefore: sentBeforeOf(((a30.data ?? []) as GAix[]), T),
       });
     }
   }

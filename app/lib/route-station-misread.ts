@@ -10,7 +10,8 @@
 //   viewing_passed … 駅が内覧予定のまま、内覧の日（detail の M/D）が番の日より前
 //   ・分かれ道が開いている番・お客様が条件を言い直した番（rt=condition_feedback・other_property）は戻りが正しいので数えない
 //   ・前の番から30日より後の送付は数えない（話が切れて探し直しの事がある）
-export type MisreadRow = { conv: string; at: string; node: string | null; branch: string | null; act: string; rt?: string | null; detail?: string | null };
+/** sentBefore: 番の前の30日に送った AIX の種類 → 一番新しい時刻（audit-route-progress の json・2026-11-23）。ある時はこれを「前の送付」として読む（無い時は前の番の act だけ） */
+export type MisreadRow = { conv: string; at: string; node: string | null; branch: string | null; act: string; rt?: string | null; detail?: string | null; sentBefore?: Record<string, string> | null };
 export type MisreadKind = "after_estimate" | "after_meeting_place" | "after_viewing_invite" | "viewing_passed";
 export const MISREAD_JA: Record<MisreadKind, string> = {
   after_estimate: "御見積書を送った後なのに見積より前の駅",
@@ -46,8 +47,14 @@ export function stationMisreadsOf(rows: ReadonlyArray<MisreadRow>): Array<{ conv
   for (const rs of byConv.values()) {
     const sorted = [...rs].sort((a, b) => a.at.localeCompare(b.at));
     const sent = new Map<MisreadKind, { floor: string; at: number }>();
+    let backAt = -Infinity;
     for (const r of sorted) {
       const t = Date.parse(r.at);
+      // 送付の記録（sentBefore）があれば足す（AIX が先の番の送付も見える）。条件の言い直しより前の送付は外す
+      for (const [k, iso] of Object.entries(r.sentBefore ?? {})) {
+        const f = SENT_FLOOR[k]; const st = Date.parse(iso);
+        if (f && st > backAt && (!sent.has(f.kind) || sent.get(f.kind)!.at < st)) sent.set(f.kind, { floor: f.floor, at: st });
+      }
       if (r.node === "viewing_scheduled" && !r.branch && viewingPassed(r)) out.push({ conv: r.conv, at: r.at, node: r.node, kind: "viewing_passed" });
       else if (!r.branch && !BACK_OK_RT.has(String(r.rt ?? ""))) {
         // 一番強い（駅の順が先の）送付から見る・当たった型を1つだけ
@@ -57,7 +64,7 @@ export function stationMisreadsOf(rows: ReadonlyArray<MisreadRow>): Array<{ conv
       const k = String(r.act).startsWith("aix:") ? String(r.act).slice(4).split("/")[0] : "";
       const f = SENT_FLOOR[k];
       if (f) sent.set(f.kind, { floor: f.floor, at: t });
-      if (BACK_OK_RT.has(String(r.rt ?? ""))) sent.clear(); // 条件の言い直しの後は探し直し＝前の送付は覚えない
+      if (BACK_OK_RT.has(String(r.rt ?? ""))) { sent.clear(); backAt = t; } // 条件の言い直しの後は探し直し＝前の送付は覚えない
     }
   }
   return out;

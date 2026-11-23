@@ -22,6 +22,11 @@ ok("待ち合わせ場所の後なのに内覧予定より前（見積と重な�
 ok("内覧の日が過ぎたのに内覧予定のまま", stationMisreadsOf([R({ node: "viewing_scheduled", at: "2026-10-29T03:00:00Z", detail: "10/28(水)17:00" })])[0]?.kind === "viewing_passed"
   && stationMisreadsOf([R({ node: "viewing_scheduled", at: "2026-10-27T03:00:00Z", detail: "10/28(水)17:00" })]).length === 0);
 ok("会話をまたいで覚えない", stationMisreadsOf([R({ act: "aix:estimate_sheet" }), R({ conv: "c2", at: "2026-10-11T03:00:00Z" })]).length === 0);
+ok("送付の記録（sentBefore）があれば、行に無い AIX の送付も前の送付として読む", stationMisreadsOf([R({ at: "2026-10-11T03:00:00Z", sentBefore: { estimate_sheet: "2026-10-10T05:00:00Z" } })])[0]?.kind === "after_estimate");
+ok("条件の言い直しより前の送付の記録は読まない", stationMisreadsOf([
+  R({ at: "2026-10-11T03:00:00Z", node: "pickup", rt: "condition_feedback", sentBefore: { estimate_sheet: "2026-10-10T05:00:00Z" } }),
+  R({ at: "2026-10-12T03:00:00Z", node: "proposing", sentBefore: { estimate_sheet: "2026-10-10T05:00:00Z" } }),
+]).length === 0);
 const mr = misreadMetricRowsOf([R({ act: "aix:estimate_sheet" }), R({ at: "2026-10-11T03:00:00Z" }), R({ at: "2026-10-12T03:00:00Z", node: "estimate" }), R({ conv: "c3" })]);
 ok("毎朝の1枚の行", mr[0].metric === "route:station_misread" && mr[0].value === 25 && mr[0].n === 4 && mr.find((x) => x.metric === "route:station_misread:after_estimate")?.value === 1);
 
