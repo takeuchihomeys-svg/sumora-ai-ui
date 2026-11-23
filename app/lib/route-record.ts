@@ -95,6 +95,31 @@ export function substateUsable(s: Pick<Substate, "id" | "few">, env: Env = typeo
   if (s.few && (env.ROUTE_SUBSTATE_FEW ?? "").trim().toLowerCase() !== "on") return false;
   return true;
 }
+/**
+ * 2026-11-23 作業員M（台帳 #619・作業員R の数え: 竹内さん本人の番 262・状態の at と地図の駅の食い違い 1版 48/96・2版 34/102）:
+ *   状態の at は1つの駅か分かれ道だけで、同じ状態が隣の駅でも出る（検討します＝提案中・気に入った・見積の後／条件が多い＝問い合わせ・ピックアップ）。
+ *   分かれ道が開いていない番は地図が親の駅に居る＝at が分かれ道の状態は、その分かれ道が開く駅でも合うと数える。
+ *   R の json（r-route60f）に当てると食い違い 2版 34→14・1版 48→37（同じ番で決めた表＝甘く出る・夜に別の番で測り直す）。ROUTE_SUBSTATE_ALSO_AT=on の時だけ（既定 off）
+ */
+export const SUBSTATE_ALSO_AT: Readonly<Record<string, readonly string[]>> = {
+  hearing_many_conditions: ["inquiry", "pickup"],
+  proposing_considering: ["proposing", "interested", "estimate"],
+  proposing_liked_one: ["proposing"],
+  proposing_mismatch: ["proposing", "pickup"],
+  brought_vacancy: ["pickup", "proposing"],
+  viewing_dates: ["viewing_scheduled"],
+  proposing_detail_question: ["estimate", "interested"],
+  cost_over_budget: ["proposing", "interested"],
+  cost_installment: ["proposing", "interested"],
+};
+export function substateAlsoAtOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ROUTE_SUBSTATE_ALSO_AT ?? "").trim().toLowerCase() === "on";
+}
+/** 状態が地図の今の位置と合うか（at の駅か分かれ道・ROUTE_SUBSTATE_ALSO_AT=on なら隣の駅も） */
+export function substateAtMatch(sub: Pick<Substate, "id" | "at">, node: string | null, branch: string | null, env?: Env): boolean {
+  if (sub.at === node || sub.at === branch) return true;
+  return substateAlsoAtOn(env) && !!node && (SUBSTATE_ALSO_AT[sub.id] ?? []).includes(node);
+}
 export type RouteBriefSection = {
   node: string | null; branch: string | null; next: string | null;
   substate: { id: string; label: string; n: number; few: boolean; at_match: boolean; usable: boolean } | null;
@@ -111,7 +136,7 @@ export function routeBriefSection(meta: Record<string, unknown> | null | undefin
   if (!ar) return null;
   const node = s2(ar.node, 30), branch = s2(ar.branch, 30);
   const sub = typeof ar.substate === "string" ? SUBSTATES.find((x) => x.id === ar.substate) ?? null : null;
-  const atMatch = !!sub && (sub.at === node || sub.at === branch);
+  const atMatch = !!sub && substateAtMatch(sub, node, branch, env);
   const usable = !!sub && atMatch && substateUsable(sub, env);
   const use = usable ? sub : null;
   return {

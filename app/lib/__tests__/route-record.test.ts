@@ -1,6 +1,6 @@
 // 申込までの地図の駅を残す口と段の語の寄せ（作業員M 2026-11-21・台帳 #467）
 // 実行: npx tsx app/lib/__tests__/route-record.test.ts
-import { applyRouteRecordOn, stationOf, sameStation } from "../route-record";
+import { applyRouteRecordOn, stationOf, sameStation, substateAtMatch, substateAlsoAtOn } from "../route-record";
 import { ROUTE_NODES } from "../apply-route-map";
 import { buildCustomerPlan } from "../customer-plan";
 import { routeToBriefOn, routeBriefSection, routeAimNoteForWriter, PLANT_TO_FACT } from "../route-record";
@@ -63,5 +63,10 @@ t("使える状態には言い回しの型と潜在の4つ（11/21 夜の割り�
 // #620: 段の語（digest.sg）と地図の駅を寄せてから比べる
 t("段の語を駅に寄せる（customer-state の語）", stationOf({ checkpointStage: "viewing_arranging" }).node === "viewing_arrange" && stationOf({ checkpointStage: "estimate_sent" }).node === "estimate" && stationOf({ checkpointStage: "first" }).node === "inquiry");
 t("同じ駅か: 寄せて比べる・物件検索中は3つの駅のどれでも", sameStation("viewing_arrange", "viewing_arranging") === true && sameStation("estimate", "estimate_sent") === true && sameStation("pickup", "searching") === true && sameStation("hearing", "searching") === true && sameStation("viewed", "searching") === false && sameStation("proposing", "interested") === false && sameStation(null, "x") === null && sameStation("x", null) === null);
+// #619: 状態の at と地図の駅（隣の駅も合う・ROUTE_SUBSTATE_ALSO_AT・既定 off）
+{ const cons = { id: "proposing_considering", at: "considering" as const };
+  t("既定 off: 分かれ道の状態は分かれ道の時だけ合う", !substateAlsoAtOn({}) && substateAtMatch(cons, "proposing", "considering", {}) && !substateAtMatch(cons, "proposing", null, {}));
+  t("on: 検討しますは 提案中・気に入った・見積の後の駅でも合う／内覧の駅では合わない", substateAtMatch(cons, "proposing", null, { ROUTE_SUBSTATE_ALSO_AT: "on" }) && substateAtMatch(cons, "estimate", null, { ROUTE_SUBSTATE_ALSO_AT: "on" }) && !substateAtMatch(cons, "viewed", null, { ROUTE_SUBSTATE_ALSO_AT: "on" }));
+  t("on: 条件が多いは 問い合わせ・ピックアップでも合う", substateAtMatch({ id: "hearing_many_conditions", at: "hearing" as const }, "inquiry", null, { ROUTE_SUBSTATE_ALSO_AT: "on" })); }
 console.log(`\nroute-record: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
