@@ -42,6 +42,7 @@ import { groupOf, FIRST_MOVE_GROUPS, aixEditOfDay, writerLinkageNow, needsFix, G
 import { existsSync as existsSyncPU } from "node:fs";
 import { inOriginMain } from "./check-foundation";
 import { mapDaily, type QdOut } from "./lib/metric-map-server";
+import { orderSheetLines } from "./lib/sheet-order";
 import { isHoleReachDay, holesNotReached, holesMaxNew, type HoleRow } from "./lib/hole-reach-weekly";
 
 const argv = process.argv.slice(2);
@@ -595,7 +596,9 @@ async function main() {
     `- 重点の型「${POINTER_KIND_JA[(kinds[0] ?? "other") as PointerKind] ?? "-"}」の穴から直す（竹内さんの指摘の重みが一番大きい）`,
     `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`);
 
-  const md = lines.join("\n") + "\n";
+  // 2026-11-23 作業員N2（台帳 #473・統括役の頼み）: 竹内さんが朝に読む順に並べ直す（中身は変えない・止める SELF_IMPROVE_SHEET_ORDER=off）
+  const sheet = (process.env.SELF_IMPROVE_SHEET_ORDER ?? "").trim().toLowerCase() === "off" ? lines : orderSheetLines(lines);
+  const md = sheet.join("\n") + "\n";
   const out = arg("out", `${MEMORY_DIR}/${day}.md`);
   if (flag("write")) {
     if (!only) { mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, md); }

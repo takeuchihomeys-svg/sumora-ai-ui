@@ -7,6 +7,7 @@
 //   単位: 台本1本（台本が変わったら照らし直し）。self-improve の中で数える物は「scripts/self-improve.ts#<metric の頭2つ>」（30日で照らし直し）
 //   穴: never（一度も照らしていない）・mismatch（最後に照らした時ズレ＝直していない）・changed（照らした後に台本が変わった）・old（# の単位で30日を超えた）
 
+import { currentOwnerOf } from "./live-owner";
 export type CountUnit = { key: string; script: string; owner: string; metrics: string[] };
 export type Verif = { scope: string; day: string; value: number | null };
 export type UnverifiedKind = "never" | "mismatch" | "changed" | "old";
@@ -61,7 +62,12 @@ const SOURCE_OWNER: Array<[RegExp, string]> = [[/image-/, "作業員G"], [/appea
 const LINE_WATCH_EVAL = "app/api/cron/line-watch-eval/route.ts";
 
 /** quality_daily の (metric, source) から数えの単位（純関数） */
+// 2026-11-23 作業員N2（統括役の頼み）: 表の名前（METRIC_SCRIPT・SOURCE_OWNER）は書き換えず、読む時に今いる作業員へ読み替える（live-owner.currentOwnerOf・過去の記録はそのまま）
 export function unitOf(metric: string, source: string | null): { key: string; script: string; owner: string } | null {
+  const u = unitOfRaw(metric, source);
+  return u ? { ...u, owner: currentOwnerOf(u.owner) } : null;
+}
+function unitOfRaw(metric: string, source: string | null): { key: string; script: string; owner: string } | null {
   const fam = familyOf(metric);
   const m = METRIC_SCRIPT[fam] ?? METRIC_SCRIPT[metric] ?? METRIC_SCRIPT[metric.split(":")[0]];
   if (m) return { key: m.script, ...m };
@@ -82,7 +88,7 @@ export function unitsOf(rows: ReadonlyArray<{ metric: string; source: string | n
     by.set(u.key, cur);
   };
   for (const r of rows) { if (r.metric === VERIFY_METRIC || r.metric.startsWith(`${VERIFY_METRIC}:`)) continue; const u = unitOf(r.metric, r.source); if (u) put(u, r.metric); }
-  for (const e of extra) put({ key: e.script, script: e.script, owner: e.owner }, e.metric);
+  for (const e of extra) put({ key: e.script, script: e.script, owner: currentOwnerOf(e.owner) }, e.metric);
   return [...by.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
