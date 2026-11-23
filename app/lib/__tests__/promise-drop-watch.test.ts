@@ -185,7 +185,8 @@ import { narrowCheckObject, promiseDropCheckObjectOn } from "../promise-drop-wat
 {
   // 要件の読み（テスト用の小さな表・本番は action-ledger.confirmObjectOf）
   const objOf = (t: string) => /保証会社/.test(t) ? "保証会社" : /審査/.test(t) ? "審査" : /初期費用/.test(t) ? "初期費用" : /募集状況/.test(t) ? "募集状況" : /ペット/.test(t) ? "ペット" : null;
-  assert.equal(promiseDropCheckObjectOn({}), false);
+  assert.equal(promiseDropCheckObjectOn({}), true);
+  assert.equal(promiseDropCheckObjectOn({ PROMISE_DROP_CHECK_OBJECT: "off" }), false);
   assert.equal(promiseDropCheckObjectOn({ PROMISE_DROP_CHECK_OBJECT: "on" }), true);
   assert.equal(narrowCheckObject("募集状況確認させて頂きます", objOf), null); // 募集状況は今まで通り
   assert.equal(narrowCheckObject("保証会社確認させて頂きます", objOf), "保証会社");

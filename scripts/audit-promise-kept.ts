@@ -12,8 +12,8 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-promise-kept.ts [--days=30] [--max-convs=400] [--out=<json>]
 import { createClient } from "@supabase/supabase-js";
 import { confirmObjectOf } from "../app/lib/action-ledger";
-// 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT=on か --check-object の時だけ、確認の約束を要件の合う答えでだけ果たした扱い
-const CHECK_OBJECT_OF = process.argv.includes("--check-object") || (process.env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() === "on" ? (t: string) => confirmObjectOf(t) : undefined;
+// 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT（既定 on・=off で止める）と同じく、確認の約束を要件の合う答えでだけ果たした扱い
+const CHECK_OBJECT_OF = process.argv.includes("--check-object") || (process.env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() !== "off" ? (t: string) => confirmObjectOf(t) : undefined; // 既定 on（見張りと同じ・止める PROMISE_DROP_CHECK_OBJECT=off）
 import { writeFileSync } from "node:fs";
 import { promiseKindNameOf, promiseInputWaitTurn, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, type PromiseKindName, type PdMsg, type PdAix, type PdSent } from "../app/lib/promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "../app/lib/test-conversations";

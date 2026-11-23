@@ -123,11 +123,11 @@ export type PromiseEvidence = { msgs: ReadonlyArray<PdMsg>; aix: ReadonlyArray<P
  */
 // ─── 2026-11-23 作業員L（台帳 #655 の続き・統括役の決め）───
 //   確認の約束は、物件の AIX・物件の送付・「管理会社より…」の手打ちの文なら要件を問わず果たした扱いだった（7f73dc32「保証会社の確認」が物件の送付で閉じた）。
-//   PROMISE_DROP_CHECK_OBJECT=on（既定 off）の時は、カレンダー（promise-calendar.planPromiseCompletion）と同じ照らしに寄せる:
+//   PROMISE_DROP_CHECK_OBJECT（既定 on・止める =off・2026-11-23 統括役の決め）の時は、カレンダー（promise-calendar.planPromiseCompletion）と同じ照らしに寄せる:
 //   ・約束の要件（呼ぶ側が渡す checkObjectOf＝action-ledger.confirmObjectOf）が募集状況・空室・番手・相手だけ（管理会社 等）・要件なしなら今まで通り
 //   ・ほかの要件（保証会社・入居時期・ペット・退去・駐車場・初期費用 …）は、その要件に答えたこちらの文（AIX でも手打ちでも・要件が合う・約束の言い直しでない）でだけ果たした。
 //     初期費用・割引の確認は御見積書（AIX・手打ちの送付）でも果たした。物件の送付・物件の AIX では閉じない
-export const promiseDropCheckObjectOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() === "on";
+export const promiseDropCheckObjectOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_DROP_CHECK_OBJECT ?? "").trim().toLowerCase() !== "off"; // 2026-11-23 統括役の決め: 既定 on（14日で悪化0・守り）。止める =off
 export type CheckObjectOf = (text: string) => string | null;
 const VACANCY_OBJ_RE = /募集状況|空室|空き|番手/;
 const PARTY_OBJ_RE = /^(?:管理会社|オーナー|大家|確認事項|確認結果)/;

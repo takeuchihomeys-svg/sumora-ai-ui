@@ -11,7 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { promiseDropOf, buildPromiseDropPost, promiseDropDue, promiseDropWatchMode, PROMISE_DROP_KEY, PROMISE_DROP_TEXT_KEY, PROMISE_DROP_MAX_DAYS, type PromiseDrop, type PdInput, overduePromisesOf, type OverduePromise } from "./promise-drop-watch";
 import { isTestConversation, isNoLineTestConversation, STAFF_INTERNAL_CONVERSATION_IDS } from "./test-conversations";
 import { promiseDropCheckObjectOn, type CheckObjectOf } from "./promise-drop-watch";
-/** 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT=on の時だけ、確認の約束の要件を読む口（action-ledger.confirmObjectOf）を渡す */
+/** 2026-11-23 作業員L（#655 の続き）: PROMISE_DROP_CHECK_OBJECT（既定 on・=off で止める）の時、確認の約束の要件を読む口（action-ledger.confirmObjectOf）を渡す */
 export async function checkObjectOfIfOn(): Promise<CheckObjectOf | undefined> {
   if (!promiseDropCheckObjectOn()) return undefined;
   const { confirmObjectOf } = await import("./action-ledger");
