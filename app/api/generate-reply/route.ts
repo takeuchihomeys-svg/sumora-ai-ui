@@ -5725,6 +5725,16 @@ ${note}` : "";
         if (writerHookedPressOn()) { const l = writerHookedLine(bm); if (l) lines.push(l); }
         if (writerLatentKindOn()) { const l = writerLatentKindLine(bm, latentKindOf); if (l) lines.push(l); }
       }
+      // 2026-11-23 作業員A（竹内さん 11/23 P0・#662 統括の受け持ち表）: 設計図（compose_plan）が作られなかった番の理由を控える（記録だけ・WATCH_COMPOSE_PLAN と同じ既定 on）。
+      //   7日の見張りの番で設計図があったのは下書き 128 のうち 9＝文の統括の欄（役目ごと・今の状況）が 4〜5% しか届かない元。どの条件で外れているかを数える
+      void (async () => {
+        try {
+          const w = await import("@/app/lib/compose-plan-watch");
+          if (!w.watchComposePlanOn() || !conversationId || composeSentencePlan) return;
+          const reason = !composeSentencePlanOn() ? "off" : isFollowUp ? "follow_up" : isTemplateOptimize ? "template" : postApplyConversation ? "post_apply" : !brainMeta ? "no_meta" : isCachedMeta ? "cached_meta" : !brainFreshForMessage ? "not_fresh" : "other";
+          noteWatchMaterials(conversationId, "reply", "compose_plan_skip", { at: new Date().toISOString(), reason, source: String((brainMeta as { source?: unknown } | null)?.source ?? ""), level: String((brainMeta as { enforcement_level?: unknown } | null)?.enforcement_level ?? "") } as unknown as Record<string, unknown>);
+        } catch { /* 記録だけ */ }
+      })();
       // 2026-11-13 作業員22（統括役・測りの土台）: 設計図・書き手の注記の指紋と先頭・受け渡しの漏れ・届いた数を見張りの行（line_watch_turns.materials.reply.compose_plan）に（WATCH_COMPOSE_PLAN=on・既定 off）
       void (async () => {
         try {
