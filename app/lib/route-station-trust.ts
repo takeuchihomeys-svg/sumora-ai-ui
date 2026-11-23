@@ -21,7 +21,19 @@ export function stationKeyOf(loc: { node?: string | null; branch?: string | null
 
 /** R の audit-route-progress-takeuchi の番ごとの行（使う欄だけ） */
 /** afterBranch: 番の後の分かれ道（R の json に欄がある時だけ・null＝分かれ道が閉じた）。欄が無い番は「本線に戻った」を数えない（後の駅だけでは分かれ道が閉じたか分からない） */
-export type RouteStationRow = { node: string | null; branch: string | null; agree: string; outcome: string; after: string | null; afterBranch?: string | null };
+export type RouteStationRow = { node: string | null; branch: string | null; agree: string; outcome: string; after: string | null; afterBranch?: string | null;
+  /** 番の時刻（ISO）と、R の json の detail（内覧の日「10/28(水)17:00」）。内覧予定の駅で内覧の日がまだ来ていないかを見る */
+  at?: string | null; detail?: string | null };
+/** 内覧の日（detail の M/D）が番の日（JST）以降か。読めなければ false（今まで通り止まりに数える） */
+export function viewingNotYet(r: Pick<RouteStationRow, "at" | "detail">): boolean {
+  const m = String(r.detail ?? "").match(/(\d{1,2})\/(\d{1,2})/);
+  const t = Date.parse(String(r.at ?? ""));
+  if (!m || !Number.isFinite(t)) return false;
+  const j = new Date(t + 9 * 3600e3);
+  const y = j.getUTCFullYear(), mo = Number(m[1]), d = Number(m[2]);
+  const yy = mo < j.getUTCMonth() + 1 - 6 ? y + 1 : y; // 年をまたぐ（12月の番で1月の内覧）
+  return Date.UTC(yy, mo - 1, d) >= Date.UTC(y, j.getUTCMonth(), j.getUTCDate());
+}
 export type StationStat = {
   station: string; n: number; map: number; mapRate: number | null;
   advanced: number; branch_return: number; engaged: number; stuck: number; back: number; left: number; progress: number; progressRate: number | null;
@@ -39,6 +51,8 @@ export function stationStatsOf(rows: ReadonlyArray<RouteStationRow>): StationSta
     if (r.outcome === "advanced") s.advanced++;
     else if (r.branch && r.afterBranch === null && r.after && MAIN_STATIONS.has(r.after)) s.branch_return++;
     else if (r.outcome === "engaged") s.engaged++;
+    // N2 の照らし①: 内覧予定の駅で内覧の日がまだ来ていない番は「止まった」でなく内覧の日待ち（続く）に数える（日が過ぎても動かない番だけ止まり）
+    else if (r.outcome === "stuck" && r.node === "viewing_scheduled" && !r.branch && viewingNotYet(r)) s.engaged++;
     else if (r.outcome === "stuck") s.stuck++;
     else if (r.outcome === "back") s.back++;
     else if (r.outcome === "left") s.left++;

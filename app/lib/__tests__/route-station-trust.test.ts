@@ -19,6 +19,14 @@ const scr = st.find((s) => s.station === "分:screening_concern")!;
 ok("分かれ道から本線の駅に戻った番は進みに数える（進んだと重ねない）", scr.branch_return === 6 && scr.progress === 6 && scr.stuck === 2 && scr.left === 4, scr);
 const mr = stationMetricRowsOf(st);
 ok("後の分かれ道の欄が無い番は本線に戻ったと数えない", stationStatsOf(rep(3, { node: "proposing", branch: "x", outcome: "stuck", after: "estimate" }))[0].branch_return === 0);
+{
+  const v = stationStatsOf([
+    R({ node: "viewing_scheduled", outcome: "stuck", at: "2026-10-20T04:18:00Z", detail: "10/28(水)17:00" }), // 内覧の日待ち
+    R({ node: "viewing_scheduled", outcome: "stuck", at: "2026-10-29T04:18:00Z", detail: "10/28(水)17:00" }), // 日が過ぎても動かない
+    R({ node: "viewing_scheduled", outcome: "stuck", at: "2026-10-20T04:18:00Z", detail: null }), // 日が読めない
+  ])[0];
+  ok("内覧予定: 内覧の日がまだの止まりは続くに・過ぎた番と読めない番は止まり", v.engaged === 1 && v.stuck === 2, v);
+}
 ok("毎朝の1枚の名前", mr.some((r) => r.metric === "route:station:estimate:progress" && r.value === 18.8 && r.n === 16) && mr.some((r) => r.metric === "route:station:分:screening_concern:map"));
 const weak = weakStationsOf(st, [{ station: "分:screening_concern", n: 12, progressRate: 70 }]);
 ok("弱い駅: 下がった駅（前の週 70%→50%）と、止まり＋離れが過半数ではない駅の区別", weak.some((w) => w.station === "分:screening_concern" && w.reasons.some((r) => r.includes("下がった"))) && !weak.some((w) => w.station === "estimate"), weak);
