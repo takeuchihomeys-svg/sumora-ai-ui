@@ -57,7 +57,7 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   const D = "aix_turn:match_60d_device";
   t("根の付け替え", rebaseKey(`${R}/kind=a/scene=b`, R, D) === `${D}/kind=a/scene=b` && rebaseKey("x/kind=a", R, D) === "x/kind=a");
   t("端末の原因: 先後は読み違い・種類違いは mk があれば材料", deviceCauseOf({ id: 1, cls: "two_stage", tk: "property", v: "先後" }) === "misread" && deviceCauseOf({ id: 2, cls: "aix_first", tk: "property", v: "種類違い", mat: { mk: ["estimate_amount"] } }) === "material");
-  t("端末の原因: 前の約束の果たしは数え方・手元に無い物件は材料・あれば判断", deviceCauseOf({ id: 3, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevFulfil: true }) === "counting"
+  t("端末の原因: 前の約束の果たしは数え方にしない（11/23 A）・手元に無い物件は材料・あれば判断", deviceCauseOf({ id: 3, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevFulfil: true, mat: { checked: 1 } }) === "aix_turn_as_reply"
     && deviceCauseOf({ id: 4, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 0, pp: false } }) === "material" && deviceCauseOf({ id: 5, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 3 } }) === "aix_turn_as_reply" && deviceCauseOf({ id: 6, cls: "aix_first", tk: "property", v: "一致" }) === null);
   const dt = deviceTurnsOf([{ id: 1, cls: "aix_first", tk: "property", v: "一致" }, { id: 2, cls: "reply", tk: null, v: "返信一致" }, { id: 3, cls: "two_stage", tk: "estimate_sheet", v: "先後" }], new Map([[1, "返信:了承"], [3, null]]));
   t("端末の番: 返信の番は外す・場面は scene_key・先後は order", dt.length === 2 && dt[0].scene === "ack" && dt[1].miss === "order" && dt[1].scene === "cost");

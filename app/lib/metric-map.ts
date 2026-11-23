@@ -19,16 +19,35 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed";
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
   push_missed: "地図は AIX で進める・竹内さんは返信", other_aix: "地図と違う AIX", pushed_off_map: "地図は返信・竹内さんは AIX で動かした",
   decided: "竹内さんの決定で正解を改めた番（実送信と今の正解が割れる・外れの順位に入れない）",
   minority: "竹内さんの少数側（同じ形の番で竹内さん本人の別の一手が過半数・ブレインは多い方を選んだ・外れの順位に入れない）",
   timed: "時刻で送る物（番の判断の外・例 当日のご挨拶は了承への返しでなく日にちで送る・外れの順位に入れない）",
+  fixed_since: "直しが入った日より前の番（今のコードでは直っている・どの直しかは FIXED_SINCE・外れの順位に入れない）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
-export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed"]);
+export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since"]);
+/**
+ * 直しが入った日の表（11/23 統括役・作業員L の案）: 作業員が分かる物（スイッチの既定 on の日・コミットの日）だけ。分からない物は載せない。
+ *   ids は「その直しで今は直っている」と作業員が実物で確かめた番だけ（直しの名前だけで番を推し量らない）。since より前の番だけ印を付ける
+ */
+export type FixedSince = { name: string; since: string; ids: number[]; by: string; how: string };
+export const FIXED_SINCE: FixedSince[] = [
+  { name: "pickup_unless_ack（学習ルールの重ね・返信の質 9〜10巡目）", since: "2026-10-08T04:44:36Z", ids: [3733], by: "作業員L", how: "コミット f137f7a44（10/08 13:44 JST）に pickup_unless_ack が初めて入った・3733（09/27）は今のコードでは直っている（L の確かめ）" },
+];
+/** 直しが入った日より前で、作業員が直っていると確かめた番（純関数） */
+export function fixedSinceOf(rows: ReadonlyArray<{ id: number; at: string }>, table: readonly FixedSince[] = FIXED_SINCE): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    const t = Date.parse(r.at.length <= 16 ? `${r.at}:00Z` : r.at);
+    const f = table.find((x) => x.ids.includes(r.id) && Number.isFinite(t) && t < Date.parse(x.since));
+    if (f) out.set(r.id, f.name);
+  }
+  return out;
+}
 /** 時刻で送る AIX の種類（11/23 統括役の決め・作業員A の 7444: 内覧の当日のご挨拶は約24時間後の当日の朝に手打ち＝了承への返しではない） */
 export const TIMED_AIX_KINDS = new Set(["greeting_viewing"]);
 /** お客様が物件を送ってきた印（K2 の COMBINED_PROMISE_CHECK_FIRST・作業員A の数え方と同じ網: URL・物件名・画像） */
@@ -341,18 +360,19 @@ export function deviceCauseOf(r: DeviceTurnRow): MapCause | null {
   const mk = (m.mk ?? []).length > 0 || m.mks === true;
   if (r.v === "先後") return "misread";
   if (r.v === "種類違い") return mk ? "material" : "misread";
-  if (r.prevFulfil) return "counting";
+  // 11/23 作業員A の読み直し: 前の約束を果たす AIX（prevFulfil）は竹内さんの決定 C でこの番の判断そのもの＝数え方で外す番ではない（前は counting にしていた）
   const k = r.tk ?? "";
   const noHand = k === "property" ? (m.pend ?? 0) === 0 && !m.pp : k === "property_check_result" ? (m.checked ?? 0) === 0 && (m.taskResult ?? 0) === 0 : k === "estimate_sheet" ? (m.mk ?? []).includes("estimate_amount") : false;
   return noHand || mk ? "material" : "aix_turn_as_reply";
 }
 const DEVICE_MISS: Record<string, MapMiss> = { 一致: "ok", AIXの番を返信: "reply_not_aix", 種類違い: "aix_kind", 先後: "order" };
 /** A の json の行を木の番に（純関数）。AIX の番（cls が reply 以外）だけ・場面は見張りの scene_key（id で引いた物） */
-export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: ReadonlyMap<number, string | null>, decided: ReadonlySet<number> = new Set(), minority: ReadonlySet<number> = new Set()): MapTurn[] {
+export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: ReadonlyMap<number, string | null>, decided: ReadonlySet<number> = new Set(), minority: ReadonlySet<number> = new Set(), fixedSince: ReadonlySet<number> = new Set()): MapTurn[] {
   return rows.filter((r) => r.cls !== "reply").map((r) => {
     const kind = r.tk && r.tk !== "?" ? r.tk : "other";
     const miss = DEVICE_MISS[r.v] ?? "aix_kind";
     if (miss !== "ok" && decided.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
+    if (miss !== "ok" && fixedSince.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "fixed_since" as const, cause: null };
     if (miss !== "ok" && TIMED_AIX_KINDS.has(kind)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "timed" as const, cause: null };
     if (miss !== "ok" && minority.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "minority" as const, cause: null };
     return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss, cause: deviceCauseOf(r) };
