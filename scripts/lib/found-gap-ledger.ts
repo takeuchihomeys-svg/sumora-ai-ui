@@ -11,7 +11,9 @@ export function liveOwnerOf(ownerOrStage: string, id?: string | null): string {
   return currentOwnerOf(ownerOrStage, id);
 }
 
-export type FoundGap = { title: string; owner: string; next: string; priority?: number; area?: string };
+export type FoundGap = { title: string; owner: string; next: string; priority?: number; area?: string;
+  /** 2026-11-23 作業員N2（KB 0f38f47f）: 統括に届いているか（地図の穴は必ず付ける・未確認／届いている／届いていない）。列が無い DB では付けずに入れる */
+  reach?: "未確認" | "届いている" | "届いていない" };
 
 export async function addFoundGaps(sb: SupabaseClient, gaps: ReadonlyArray<FoundGap>, actor: string): Promise<number[]> {
   if (!gaps.length) return [];
@@ -21,7 +23,10 @@ export async function addFoundGaps(sb: SupabaseClient, gaps: ReadonlyArray<Found
   for (const g of gaps) {
     if (have.has(g.title)) continue;
     const owner = liveOwnerOf(g.owner);
-    const { data: ins } = await sb.from("work_items").insert({ title: g.title, origin: "found_gap", stage: "todo", area: g.area ?? "土台", owner, priority: g.priority ?? 20, next_step: g.next.slice(0, 400) }).select("id").single();
+    const row = { title: g.title, origin: "found_gap", stage: "todo", area: g.area ?? "土台", owner, priority: g.priority ?? 20, next_step: g.next.slice(0, 400) };
+    let { data: ins, error } = await sb.from("work_items").insert(g.reach ? { ...row, conductor_reach: g.reach } : row).select("id").single();
+    // conductor_reach の列がまだ無い DB（migrate-schema の前）では、欄の値を次の一手の頭に書いて入れる
+    if (error && g.reach && /conductor_reach/.test(error.message)) ({ data: ins } = await sb.from("work_items").insert({ ...row, next_step: `［統括に届いているか: ${g.reach}］${g.next}`.slice(0, 400) }).select("id").single());
     if (ins) {
       const id = (ins as { id: number }).id;
       added.push(id);
