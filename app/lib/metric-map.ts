@@ -696,8 +696,8 @@ export const LEAF_MATERIAL_ROWS: Array<{ match: string; rows: string[] }> = [
   { match: "kind=zenryoku_support", rows: ["read.situation_now", "read.mindset"] },
   { match: "scene=ack", rows: ["read.promise_read", "read.ack_confirm"] },
   { match: "station=", rows: ["read.route_map", "read.route_substate"] },
-  { match: "kind=application_push", rows: ["read.mindset", "read.route_map", "read.situation_now"] }, // 作業員A の統括の受け持ち表（#662・決めに行く＝持つ read.mindset）と揃えた
-  { match: "kind=hand", rows: ["read.mindset", "read.route_map"] },
+  { match: "kind=application_push", rows: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"] }, // 作業員A の統括の受け持ち表（#662・決めに行く＝持つ read.mindset）と揃えた
+  { match: "kind=hand", rows: ["read.mindset", "read.route_map", "read.apply_readiness"] }, // read.apply_readiness は作業員L eacf9a183（申込予測の行）
 ];
 export function materialRowsOfLeaf(key: string): string[] {
   return [...new Set(LEAF_MATERIAL_ROWS.filter((x) => key.includes(x.match)).flatMap((x) => x.rows))];
