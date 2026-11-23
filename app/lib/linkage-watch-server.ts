@@ -80,6 +80,9 @@ export function compactResult(rep: Awaited<ReturnType<typeof runLinkageWatch>>) 
     summary: rep.summary, broken: count("broken"), parent_off: count("parent_off"), sparse: count("sparse"), connected: count("connected"), unknown: count("unknown"),
     cut: rep.results.filter((r) => r.status === "broken" || r.status === "sparse").map((r) => ({ id: r.id, s: r.status, why: r.why })),
     off: rep.results.filter((r) => r.status === "parent_off").map((r) => ({ id: r.id, sw: r.offSwitches })),
+    // 2026-11-23 作業員L（作業員P の見つけ・統括役の頼み）: 測れなかった行（status=unknown＝RAG の見張りが未接続・本番の記録を読めなかった・測り方の無い行）の名前と理由。
+    //   今までは数（unknown）だけで行の名前が残らず、読む側（P の conductorReachOf・N2 の台帳の conductor_reach）が cut／off に無い行を「つながっている」と見ていた
+    unmeasured: rep.results.filter((r) => r.status === "unknown").map((r) => ({ id: r.id, why: r.why })),
     notes: rep.notes.slice(0, 20),
   };
 }
