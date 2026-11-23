@@ -15,13 +15,16 @@ export const CLOSE_TEXT_RE = /(?:申込|申し込み|お申込み?)(?:で|を)?(
 /** 決めに行く AIX の種類（申込の後押し・審査の相談の電話）。application_push/confirm・format はお客様が決めた後の手順＝入れない */
 export function isClosingAix(aixType: string | null | undefined, customerText = ""): boolean {
   const t = String(aixType ?? "");
-  if (/^application_push(?:\/push)?$/.test(t)) return true;
+  // 11/23: staff_aix の aix_type には下の形が無い（application_push だけ）＝下の形が分かる時だけ push を決めに行くと数える（60日の申込の AIX は format 42・push 2＝下の形無しで数えると決めた後の申込書まで入る）
+  if (t === "application_push/push") return true;
   if (/^phone_call/.test(t) && /審査/.test(customerText)) return true;
   return false;
 }
 /** ブレインの送る直前の一手が決めに行く一手か（application_push の後押し・審査の相談の電話） */
 export function isBrainClosing(action: string | null | undefined, mode: string | null | undefined, customerText = ""): boolean {
   if (mode !== "aix") return false;
+  // ブレインの判断の記録には申込の AIX の下の形が無い（application_push だけ）。監査は申込以降の番を外すので、申込の前の application_push は後押し（決めに行く）と見る
+  if (action === "application_push") return true;
   return isClosingAix(action, customerText);
 }
 
@@ -44,6 +47,8 @@ export function graspGapsOf(digest: Record<string, unknown> | null | undefined):
 export type ClosingRow = {
   id: number; conv: string; at: string; takeuchiClose: boolean; closeHow: string | null; brainClose: boolean; brainAct: string | null;
   readiness: number | null; level: string | null; verdict: ClosingVerdict; applied14: boolean | null; gaps: string[];
+  /** 7日の窓の外（8〜28日前）にだけある申込予測の合図の鍵 */
+  wideHits?: string[];
 };
 /** 決めに行った（または行くべきだった）番の数え（純関数） */
 export function closingSummaryOf(rows: readonly ClosingRow[]) {
