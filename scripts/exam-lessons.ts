@@ -21,6 +21,8 @@ const RESULTS = join(ROOT_DIR, "scripts/brain-exam/results");
 
 async function main() {
   if (!LABEL) throw new Error("--label=<試験の依頼の label> が要る");
+  // 2026-11-23 作業員L（conductor_lessons が0行の調べ）: service の鍵が無いと supabase-server は公開キーに落ち、表の RLS で「書けない」の警告だけで0行のまま続いた → 書く時は先に止める
+  if (WRITE) { const { lessonWriteKeyProblem } = await import("./lib/conductor-lessons-write"); const p = lessonWriteKeyProblem(process.env); if (p) throw new Error(p); }
   const h = await setupLlmTest(`exam-lessons-${LABEL}`.slice(0, 60));
   try {
     const { supabase } = await import("../app/lib/supabase-server");

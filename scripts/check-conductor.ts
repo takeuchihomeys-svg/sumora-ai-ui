@@ -12,6 +12,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/check-conductor.ts [--days=7] [--json]
 import { createClient } from "@supabase/supabase-js";
 import { deviceWriterOfWindow, type DeviceWriterMsg } from "../app/lib/staff-writer";
+import { shouldBeAixOf } from "../app/lib/aix-should-be";
 
 export type MissType = "reply_not_aix" | "aix_not_reply" | "aix_kind" | "reply_content";
 export type Cause = "aix_turn_as_reply" | "misread" | "material";
@@ -34,8 +35,9 @@ export function missOf(verdict: string, brainMode: string | null, brainAction: s
 export type ConductorAixTurn = { id: number; kind: string; sceneKey: string | null; decAix: string | null; miss: "ok" | "reply_not_aix" | "aix_kind"; cause: "material" | "misread" | "aix_turn_as_reply" | "counting" | null };
 /** AIX の番の外れの原因（純関数・地図の木の原因の段）: 竹内さんの最初の一手が返信で AIX が 2分より後＝2段の約束を「AIX の番」と数えた（数え方の誤り・作業員A の audit-aix-turn-judgment の ①）／
  *  スタッフだけの事実・事実の食い違い＝材料が届いていない／ほかは型どおり（返信にした＝判断の誤り・種類違い＝読み違い） */
-export function aixTurnCauseOf(type: "reply_not_aix" | "aix_kind", vd: Vd, staffFirstAt: number | null, firstAixAt: number | null): "material" | "misread" | "aix_turn_as_reply" | "counting" {
-  if (type === "reply_not_aix" && staffFirstAt != null && firstAixAt != null && firstAixAt - staffFirstAt > 120_000) return "counting";
+/** @param handFirst 竹内さんの最初の一手が AIX の中身の手打ち（aix-should-be の strong）＝2段の約束の返信ではない（作業員A の audit-aix-turn-judgment の hand_aix と同じ決め・11/23 A の読み直しで「数え方」とした物件確認の番が全部判断だった） */
+export function aixTurnCauseOf(type: "reply_not_aix" | "aix_kind", vd: Vd, staffFirstAt: number | null, firstAixAt: number | null, handFirst = false): "material" | "misread" | "aix_turn_as_reply" | "counting" {
+  if (type === "reply_not_aix" && !handFirst && staffFirstAt != null && firstAixAt != null && firstAixAt - staffFirstAt > 120_000) return "counting";
   if (vd.reason === "fact_conflict" || (vd.facts?.staffOnly ?? []).length > 0 || (vd.facts?.conflict ?? []).length > 0) return "material";
   return type === "reply_not_aix" ? "aix_turn_as_reply" : "misread";
 }
@@ -58,12 +60,13 @@ export async function checkConductor(days = 7, sinceMs?: number) {
   const byConv = new Map<string, W[]>();
   for (const r of all) byConv.set(r.conversation_id, [...(byConv.get(r.conversation_id) ?? []), r]);
   const decOf = new Map<number, { mode: string | null; action: string | null } | null>();
+  const handFirstOf = new Map<number, boolean>();
   for (const [c, ws] of byConv) {
     const lo = new Date(Math.min(...ws.map((w) => Date.parse(w.customer_turn_at))) - 86_400_000).toISOString();
     const { data: bs } = await sb.from("brain_decision_logs").select("created_at,suggested_action,suggested_reply_mode").eq("conversation_id", c).gte("created_at", lo).order("created_at").limit(2000);
     const list = (bs ?? []) as Array<{ created_at: string; suggested_action: string | null; suggested_reply_mode: string | null }>;
-    const { data: ms } = await sb.from("messages").select("sender,created_at,staff_writer,staff_writer_source").eq("conversation_id", c).gte("created_at", lo).order("created_at").limit(5000);
-    const msgs = (ms ?? []) as DeviceWriterMsg[];
+    const { data: ms } = await sb.from("messages").select("sender,created_at,staff_writer,staff_writer_source,text,is_aix_generated").eq("conversation_id", c).gte("created_at", lo).order("created_at").limit(5000);
+    const msgs = (ms ?? []) as Array<DeviceWriterMsg & { text?: string | null; is_aix_generated?: boolean | null }>;
     for (const w of ws) {
       const until = Date.parse(w.staff_first_at ?? w.customer_turn_at) + 1000;
       const d = [...list].reverse().find((x) => Date.parse(x.created_at) <= until && Date.parse(x.created_at) >= Date.parse(w.customer_turn_at) - 60_000);
@@ -72,6 +75,9 @@ export async function checkConductor(days = 7, sinceMs?: number) {
       const next = msgs.find((m) => m.sender === "customer" && Date.parse(m.created_at) > Date.parse(from) + 1000);
       const to = next ? new Date(Date.parse(next.created_at) - 1).toISOString() : new Date(Date.parse(from) + 86_400_000).toISOString();
       devOf.set(w.id, deviceWriterOfWindow(msgs, from, to)?.writer ?? null);
+      // 竹内さんの最初の一手が AIX の中身の手打ちか（本文は印を見るだけ・出さない）
+      const first = msgs.find((m) => m.sender !== "customer" && Date.parse(m.created_at) > Date.parse(from) + 1000 && Date.parse(m.created_at) <= Date.parse(to));
+      handFirstOf.set(w.id, !!first && !first.is_aix_generated && shouldBeAixOf(first.text ?? "", { mode: "hand" })?.strength === "strong");
     }
   }
   const fam = (t: string | null | undefined) => (t === "property_send" || t === "property_recommendation" ? "property" : String(t ?? ""));
@@ -96,7 +102,7 @@ export async function checkConductor(days = 7, sinceMs?: number) {
       const mt = !decAix ? ("reply_not_aix" as const) : decAix !== staffAix[0] ? ("aix_kind" as const) : null;
       const ats = (r.staff_aix ?? []).map((x) => Date.parse(String(x.at ?? ""))).filter(Number.isFinite);
       turnsDevice.push({ id: r.id, kind: staffAix[0], sceneKey: r.scene_key ?? null, decAix: decAix || null, miss: mt ?? "ok",
-        cause: mt ? aixTurnCauseOf(mt, r.verdict_detail ?? {}, r.staff_first_at ? Date.parse(r.staff_first_at) : null, ats.length ? Math.min(...ats) : null) : null });
+        cause: mt ? aixTurnCauseOf(mt, r.verdict_detail ?? {}, r.staff_first_at ? Date.parse(r.staff_first_at) : null, ats.length ? Math.min(...ats) : null, handFirstOf.get(r.id) ?? false) : null });
     } else if (decAix) miss = true;
     if (!miss) pathOkD++;
   }
@@ -115,7 +121,7 @@ export async function checkConductor(days = 7, sinceMs?: number) {
       const ats = (r.staff_aix ?? []).map((a) => Date.parse(String(a.at ?? ""))).filter(Number.isFinite);
       const mt = m ? (m.type as "reply_not_aix" | "aix_kind") : null;
       turns.push({ id: r.id, kind: staffAix[0], sceneKey: r.scene_key ?? null, decAix: decAix || null, miss: mt ?? "ok",
-        cause: mt ? aixTurnCauseOf(mt, vd, r.staff_first_at ? Date.parse(r.staff_first_at) : null, ats.length ? Math.min(...ats) : null) : null });
+        cause: mt ? aixTurnCauseOf(mt, vd, r.staff_first_at ? Date.parse(r.staff_first_at) : null, ats.length ? Math.min(...ats) : null, handFirstOf.get(r.id) ?? false) : null });
     }
     else if (decAix) m = { type: "aix_not_reply", cause: "misread" };
     if (!m) pathOk++;

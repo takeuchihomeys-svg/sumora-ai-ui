@@ -16,6 +16,23 @@ export function conductorLessonsMode(env: Env = typeof process !== "undefined" ?
 }
 
 /** conductor_lessons の1行（欄の名前は作業員H とそろえた・11/21） */
+// ─── 2026-11-23 作業員L（統括役の決め B・C）───
+//   B: shadow（記録だけ）の読みは入口の材料の待ちから外す＝返信の作りを待たせない（読み終わった物だけ記録・遅れ0）。
+//      on（材料に渡す）は今まで通り待つ。試験（LLM_TEST_MODE が付いた時）は前後の差を測るため今まで通り待つ。戻す CONDUCTOR_LESSONS_SHADOW_NOWAIT=off
+//   C: 今の行が少ない間（既定 10 未満）は本番では読まない（埋め込みも RPC も呼ばない）。試験の側は 1行から読む（試験だけの上書き）。
+//      変える CONDUCTOR_LESSONS_MIN_ROWS=<数>（試験の係の依頼の env でも上書きできる）
+export function lessonsShadowNoWait(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  if ((env.CONDUCTOR_LESSONS_SHADOW_NOWAIT ?? "").trim().toLowerCase() === "off") return false;
+  return !(env.LLM_TEST_MODE ?? "").trim() && (env.LLM_TEST_FINAL_CLAUDE ?? "").trim() !== "1";
+}
+export const LESSONS_MIN_ROWS_PROD = 10;
+export function lessonsMinRows(env: Env = typeof process !== "undefined" ? process.env : {}): number {
+  const v = Number((env.CONDUCTOR_LESSONS_MIN_ROWS ?? "").trim());
+  if (Number.isFinite(v) && v >= 1 && (env.CONDUCTOR_LESSONS_MIN_ROWS ?? "").trim() !== "") return Math.floor(v);
+  const exam = !!(env.LLM_TEST_MODE ?? "").trim() || (env.LLM_TEST_FINAL_CLAUDE ?? "").trim() === "1";
+  return exam ? 1 : LESSONS_MIN_ROWS_PROD;
+}
+
 export type LessonRow = {
   id: string; source: string; source_conv?: string | null;
   scene?: string | null; stage?: string | null; mood?: string | null;

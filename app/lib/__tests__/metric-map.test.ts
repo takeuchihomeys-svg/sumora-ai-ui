@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -57,7 +57,7 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   const D = "aix_turn:match_60d_device";
   t("根の付け替え", rebaseKey(`${R}/kind=a/scene=b`, R, D) === `${D}/kind=a/scene=b` && rebaseKey("x/kind=a", R, D) === "x/kind=a");
   t("端末の原因: 先後は読み違い・種類違いは mk があれば材料", deviceCauseOf({ id: 1, cls: "two_stage", tk: "property", v: "先後" }) === "misread" && deviceCauseOf({ id: 2, cls: "aix_first", tk: "property", v: "種類違い", mat: { mk: ["estimate_amount"] } }) === "material");
-  t("端末の原因: 前の約束の果たしは数え方・手元に無い物件は材料・あれば判断", deviceCauseOf({ id: 3, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevFulfil: true }) === "counting"
+  t("端末の原因: 前の約束の果たしは数え方にしない（11/23 A）・手元に無い物件は材料・あれば判断", deviceCauseOf({ id: 3, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevFulfil: true, mat: { checked: 1 } }) === "aix_turn_as_reply"
     && deviceCauseOf({ id: 4, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 0, pp: false } }) === "material" && deviceCauseOf({ id: 5, cls: "aix_first", tk: "property", v: "AIXの番を返信", mat: { pend: 3 } }) === "aix_turn_as_reply" && deviceCauseOf({ id: 6, cls: "aix_first", tk: "property", v: "一致" }) === null);
   const dt = deviceTurnsOf([{ id: 1, cls: "aix_first", tk: "property", v: "一致" }, { id: 2, cls: "reply", tk: null, v: "返信一致" }, { id: 3, cls: "two_stage", tk: "estimate_sheet", v: "先後" }], new Map([[1, "返信:了承"], [3, null]]));
   t("端末の番: 返信の番は外す・場面は scene_key・先後は order", dt.length === 2 && dt[0].scene === "ack" && dt[1].miss === "order" && dt[1].scene === "cost");
@@ -94,6 +94,21 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   const tree = buildTree(tt, { metric: "d", label: "d", dims: ["kind", "scene", "miss", "cause"] });
   t("時刻で送る物は順位に入れない", rankLeaves(tree, []).length === 0);
 }
+
+// ── 11/23（5回目）割れ・n 不足 ──
+{
+  const mk = (id: number, move: string, brain: string, isMiss = false) => ({ id, shapes: ["ack|約束:property_check_result|other"], move, brain, isMiss });
+  const split = [...Array.from({ length: 4 }, (_, i) => mk(i, "aix:property_check_result", "aix:property_check_result")), ...Array.from({ length: 4 }, (_, i) => mk(10 + i, "reply_first", "reply_first")), mk(20, "aix:property", "aix:property"), mk(99, "aix:property_check_result", "reply_first", true)];
+  const s = sideOf(split);
+  t("割れ: 過半数が無く上位2つで8割以上・ブレインはその片方", s.get(99)?.side === "split");
+  const short = Array.from({ length: 6 }, (_, i) => mk(i, "reply_first", "reply_first")).concat([mk(99, "aix:x", "reply_first", true)]);
+  t("n 不足: どの形も 10 に届かない（5 以上）→ 印だけ", sideOf(short).get(99)?.side === "n_short" && minorityOf(short).size === 0);
+}
+
+// ── 11/23（6回目）名前の付いた形「確認の約束が開いている×お客様が了承に少し足した」 ──
+t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property_check_result"])
+  && !ackPlusCheckPromiseOf("ありがとうございます", ["property_check_result"]) && !ackPlusCheckPromiseOf("ありがとうございます、何時ごろになりますか", ["property_check_result"])
+  && !ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property"]));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

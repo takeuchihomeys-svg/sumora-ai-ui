@@ -167,4 +167,15 @@ assert.equal(promiseDropKindOf("只今ピックアップしております！！
   const d = promiseDropOf(base({ msgs: [{ sender: "staff", text: t, created_at: new Date(said).toISOString(), is_aix_generated: false }] }), said + 80 * H);
   assert.equal(d?.kind, "check");
 }
+// #638 の続き（作業員N2 の見つけ 82c4d3e8・11/22）: 対象と動きの間の短い語・「御見積書とあわせてご連絡」
+assert.equal(promiseDropKindOf("お送り頂いた物件の募集状況と初期費用確認させて頂きます！！"), "check");
+assert.equal(promiseDropKindOf("〇〇の募集状況と初期費用確認させていただきます！！"), "check");
+assert.equal(promiseKindNameOf("確認出来次第、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます！！"), "estimate");
+assert.equal(promiseKindNameOf("御見積書もあわせてお送りさせていただきます！！"), "estimate");
+// 誤って拾わない: 節をまたぐ・間が長い・過去形
+assert.equal(promiseDropKindOf("募集状況は以上となります！！\n管理会社の担当者様にもよろしくお伝えください"), null);
+assert.equal(promiseDropKindOf("募集状況につきましては先日お伝えした通り管理会社様からのご案内で確認させて頂きます"), null);
+assert.equal(promiseDropKindOf("募集状況と初期費用確認させて頂きました！！"), null);
+// お客様の送付待ちの案内（36bb96d9 の形）は約束でない
+assert.equal(promiseKindNameOf("SUUMO 、HOMES などでお気に召されましたお部屋の募集状況も確認させていただきますので、気になるお部屋もお気軽にお送り下さい😌！"), null);
 console.log("promise-holes-1123: ok");

@@ -19,6 +19,17 @@ const fake = (n: number) => ({
   assert.equal(rpcs, 0); // 0件の間は RPC を呼ばない
   resetLessonCountMemo();
   assert.equal(await currentLessonCount(fake(5), 100_000), 5);
+  // 2026-11-23 作業員L（統括役の決め C）: 本番は 10行未満なら読まない（5行で RPC を呼ばない・埋め込みも呼ばない）
+  {
+    const saved = { m: process.env.LLM_TEST_MODE, f: process.env.LLM_TEST_FINAL_CLAUDE, r: process.env.CONDUCTOR_LESSONS_MIN_ROWS };
+    delete process.env.LLM_TEST_MODE; delete process.env.LLM_TEST_FINAL_CLAUDE; delete process.env.CONDUCTOR_LESSONS_MIN_ROWS;
+    resetLessonCountMemo(); rpcs = 0;
+    assert.deepEqual(await loadConductorLessons(fake(5), { conversationId: "c1", customerTurn: "他にもありますか" }), []);
+    assert.equal(rpcs, 0);
+    if (saved.m !== undefined) process.env.LLM_TEST_MODE = saved.m;
+    if (saved.f !== undefined) process.env.LLM_TEST_FINAL_CLAUDE = saved.f;
+    if (saved.r !== undefined) process.env.CONDUCTOR_LESSONS_MIN_ROWS = saved.r;
+  }
   // 漏れの線: 今の会話と試験の問題の元の会話
   assert.deepEqual(lessonsExcludeConvs("conv-now", { BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV: "conv-src" }), ["conv-now", "conv-src"]);
   assert.deepEqual(lessonsExcludeConvs("conv-now", {}), ["conv-now"]);
