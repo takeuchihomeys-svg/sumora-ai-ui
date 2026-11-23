@@ -38,6 +38,7 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "foundation:chrono": { script: "scripts/audit-timeline-coverage.ts", owner: "作業員L" },
   "writer_link:field": { script: "scripts/audit-writer-linkage.ts", owner: "作業員L" },
   "writer_link:brief": { script: "scripts/audit-writer-linkage.ts", owner: "作業員L" },
+  "writer_link:timeline": { script: "scripts/audit-timeline-delivery.ts", owner: "作業員L" },
   "foundation:promise": { script: "scripts/audit-promise-kept.ts", owner: "作業員L" },
   "core:linkage": { script: "scripts/check-linkage.ts", owner: "作業員N" },
   "core:no_denominator": { script: "scripts/check-linkage.ts", owner: "作業員N" },
@@ -53,6 +54,7 @@ export const METRIC_SCRIPT: Record<string, { script: string; owner: string }> = 
   "core:off_path": { script: "scripts/check-off-path.ts", owner: "作業員N" },
   found: { script: "scripts/foundation-fill.ts", owner: "作業員N" },
   check_gaps: { script: "scripts/owner-feedback-check.ts", owner: "作業員N" },
+  check_gaps_rows: { script: "scripts/owner-feedback-check.ts", owner: "作業員N" }, // 2026-11-23 作業員N2: まとまりが表す行の数（同じ台本）
   "growth:writer_link": { script: "scripts/audit-writer-linkage.ts", owner: "作業員L" },
 };
 const SOURCE_OWNER: Array<[RegExp, string]> = [[/image-/, "作業員G"], [/appeal|aix-/, "作業員K2"], [/self-improve|check-|foundation/, "作業員N"]];

@@ -59,6 +59,7 @@ import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 import { examSipImageUrl, filterSipRows, sipBaseExcludeOf, sipExcludePrefixes } from "./lib/exam-ledger-sip";
+import { checkTaskInsertRows, examLedgerCheckTasksOn } from "./lib/exam-ledger-check-tasks";
 import { filledRowsOf } from "./lib/exam-filled";
 import { decideStageFromDiff, examVersionKey, examStageKeys, STAGE_KEY_VERSION } from "./lib/exam-scope";
 import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
@@ -495,6 +496,11 @@ async function purgeLeasedLedger(): Promise<Record<string, number>> {
     if (r.error) throw new Error(`借りた会話の台帳 sent_image_properties を消せない: ${r.error.message}`);
     if ((r.data ?? []).length) out.sent_image_properties = (r.data ?? []).length;
   }
+  if (examLedgerCheckTasksOn()) { // 2026-11-23 作業員A: 空室確認のタスクの写しも借りた会話の分を消す（EXAM_LEDGER_CHECK_TASKS=on の時だけ）
+    const r = await sb.from("line_tasks").delete().eq("conversation_id", S().conv).eq("task_type", "property_check").select("id");
+    if (r.error) throw new Error(`借りた会話の台帳 line_tasks を消せない: ${r.error.message}`);
+    if ((r.data ?? []).length) out.line_tasks = (r.data ?? []).length;
+  }
   if (S().yumaPc) {
     for (const t of ["sent_properties", "property_pickups", "estimate_records"]) {
       const r = await sb.from(t).delete().eq("property_customer_id", S().yumaPc).select("id");
@@ -586,6 +592,15 @@ async function insertLedger(p: ExamProblem, times: string[], yumaPc: string, shi
     const r = await sb.from("sent_image_properties").insert(objs).select("image_url");
     if (r.error) errors.push(`sent_image_properties: ${r.error.message.slice(0, 120)}`);
     else { const n = (r.data ?? []).length; S().ownLedger.sent_image_properties = ["(会話ごと)"]; saveOwnLedger(); writeCount.ledgerIns += n; inserted.sent_image_properties = n; }
+  }
+  // 2026-11-23 作業員A: 空室確認のタスク（CHECK_RESULT_STATE・台帳の「物件出しのタスク」が試験で none になる穴・scripts/lib/exam-ledger-check-tasks.ts）。
+  //   EXAM_LEDGER_CHECK_TASKS=on・借りたテスト用の会話の時だけ入れる（YUMA は共有＝入れない）。開いた行は担当者の一覧・朝の報告に出うる＝問題ごとに id で消す（deleteOwnLedger）
+  const ctRows = (p.ledger?.line_tasks ?? []) as LedgerRow[];
+  if (ctRows.length && examLedgerCheckTasksOn() && isNoLineTestConversation(S().conv)) {
+    const objs = checkTaskInsertRows(ctRows, S().conv, (ago, k) => sceneTimeOf(ago, ctxAgo, times, k), atMs);
+    const r = await sb.from("line_tasks").insert(objs).select("id");
+    if (r.error) errors.push(`line_tasks: ${r.error.message.slice(0, 120)}`);
+    else { const ids = ((r.data ?? []) as Array<{ id: string }>).map((x) => String(x.id)); S().ownLedger.line_tasks = [...(S().ownLedger.line_tasks ?? []), ...ids]; saveOwnLedger(); writeCount.ledgerIns += ids.length; inserted.line_tasks = ids.length; }
   }
   return { inserted, errors };
 }

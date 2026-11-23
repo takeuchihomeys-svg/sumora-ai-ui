@@ -6,7 +6,7 @@
 //   読み終わった後も pickLessons が source_conv・"prod:<頭8字>" で同じ会話の学びを外す（二重の線）。
 //   失敗・時間切れは空（今まで通り）。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pickLessons, excludeSourcesFor, LESSONS_TOP, type LessonRow } from "./conductor-lessons";
+import { pickLessons, excludeSourcesFor, LESSONS_TOP, lessonsMinRows, type LessonRow } from "./conductor-lessons";
 import { turnSituationText } from "./conductor-turn-vectors";
 
 export const LESSONS_TIMEOUT_MS = 1_500;
@@ -31,10 +31,20 @@ export async function currentLessonCount(sb: SupabaseClient, nowMs = Date.now())
 export function resetLessonCountMemo(): void { countMemo = null; }
 
 export async function loadConductorLessons(sb: SupabaseClient, o: { conversationId: string; customerTurn: string; stage?: string | null }): Promise<LessonRow[]> {
-  if ((await currentLessonCount(sb)) === 0) return [];
+  // 2026-11-23 作業員L（統括役の決め C）: 行が少ない間（本番 10 未満・試験は 1 から）は読まない
+  if ((await currentLessonCount(sb)) < lessonsMinRows()) return [];
   const text = turnSituationText({ scene: null, stage: o.stage ?? null, customerMasked: String(o.customerTurn ?? ""), lastStaffKind: null });
   const { embedTexts } = await import("./design-knowledge-rag-server");
-  const emb = (await embedTexts([text])).vectors[0];
+  const t0 = Date.now();
+  const e = await embedTexts([text]);
+  const emb = e.vectors[0];
+  // 2026-11-23 作業員L（統括役の決め）: 埋め込みの費用を llm_usage_logs に残す（action=conductor_lesson_embed・今までは残っていなかった）
+  try {
+    const { recordAltUsage } = await import("./llm-usage-recorder");
+    recordAltUsage({ model: "text-embedding-3-small", action: "conductor_lesson_embed", conversationId: o.conversationId || null,
+      usage: { input_tokens: e.tokens, output_tokens: 0, cache_read_input_tokens: 0 }, status: emb ? 200 : 0, errorType: emb ? null : "no_vector",
+      durationMs: Date.now() - t0, sysHead: "【統括の学びの埋め込み】conductor-lessons", sysKeyFull: null, maxTokens: null });
+  } catch { /* 記録の失敗で読みを止めない */ }
   if (!emb) return [];
   const { data, error } = await sb.rpc("match_conductor_lessons", {
     query_embedding: JSON.stringify(emb), match_count: LESSONS_TOP + 3, p_scene: null, p_stage: o.stage ?? null,

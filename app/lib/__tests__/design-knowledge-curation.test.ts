@@ -1,7 +1,7 @@
 // 2026-10-06 竹内「設計知見の更新や成長はツールを完成させるにあたってかなり重要」（⑯）: 設計知見の整理の決まりを固定する
 // 実行: npx tsx app/lib/__tests__/design-knowledge-curation.test.ts（自己完結・env 不要。全 OK で exit 0）
 import {
-  findDuplicates, findDecisionConflicts, decisionRow, similarPairs, parseSimilar, maskForLlm, looksMojibake, mojibakeFields, buildDigest, areasOf, pickKeeper,
+  findDuplicates, findDecisionConflicts, decisionRow, similarPairs, parseSimilar, maskForLlm, looksMojibake, mojibakeFields, isDraftKbRow, buildDigest, areasOf, pickKeeper,
   DECISIONS, type KbRow,
 } from "../design-knowledge-curation";
 
@@ -85,6 +85,14 @@ console.log("── ④ 分野ごとのまとめ");
   t("他の分野の行は入れない", !d.markdown.includes("見積書の割引") && d.ids.length === 1);
   t("竹内さんの決定の一覧を先頭に出す", /## 竹内さんの決定/.test(d.markdown) && d.markdown.includes("待ち合わせ場所＝内覧日が決まった時点で1件目"));
   t("分野は札と題の語で決まる", areasOf(row({ title: "初期費用の分割はカード払い", tags: [] })).includes("費用") && areasOf(row({ title: "x", tags: ["Chrome拡張"] })).includes("拡張"));
+}
+
+console.log("── 自動の案は現行で入れない（2026-11-23 穴 220c82f2・3670be9d）");
+{
+  t("context の「自動の案。登録の前に統括役が読む」は案", isDraftKbRow({ context: "2026-11-21 作業員M（台帳 #503）の自動の案。登録の前に統括役が読む" }));
+  t("了承の書き込みがあれば案ではない", !isDraftKbRow({ context: "2026-11-21 作業員M（台帳 #503）の自動の案。登録の前に統括役が読む（11/23 統括役が読んで登録の了承）" }));
+  t("JSON の draft の目印は案", isDraftKbRow({ draft: "作業員K2 #496", context: "2026-11-21 作業員K2" }));
+  t("ふつうの行は案ではない", !isDraftKbRow({ context: "2026-11-21 夜 作業員L（台帳 #500・統括役の頼み）" }) && !isDraftKbRow({ draft: false, context: null }));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

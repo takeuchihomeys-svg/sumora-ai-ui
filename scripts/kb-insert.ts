@@ -1,5 +1,6 @@
 // scripts/kb-insert.ts — 設計知見を1件 INSERT する（Supabase MCP が落ちている時の経路）
-// 実行: npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>
+// 実行: npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル> [--approved=<誰が・何を読んだ>]
+//   台本の「自動の案」（"draft" の目印・context の「自動の案」「登録の前に」）は --approved が無ければ入れず要確認に出すだけ（2026-11-23）
 //   JSON の形: { title, category, insight, rationale, context, applied_to, tags: string[], priority?: 0|1|2|3 }
 //   priority（段）: 0 絶対・最優先（札「絶対・最優先」と一緒・竹内さんが決める）／1 今の決まり（竹内さんの決定）／2 実装の知見／3 事例・経緯。無ければ推定
 //   category: architecture | prompt_engineering | data_model | ux | performance | ai_design
@@ -8,10 +9,13 @@ import * as fs from "fs";
 import { embedKbRows, neighborsOf } from "../app/lib/design-knowledge-rag-server";
 import { sceneTagsToAdd } from "./kb-scene-tag";
 import { inferPriority, normalizeTags, P0_TAG, PRIORITY_LABEL, planP0Insert, type KbPriority } from "../app/lib/design-knowledge-priority";
-import { mojibakeFields } from "../app/lib/design-knowledge-curation";
+import { mojibakeFields, isDraftKbRow } from "../app/lib/design-knowledge-curation";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
-const file = process.argv[2];
+const file = process.argv.slice(2).find((a) => !a.startsWith("--"));
+// 2026-11-23 作業員N2（穴 220c82f2・3670be9d）: 台本の「自動の案」（JSON の "draft" か context の「自動の案」「登録の前に」）は入れず要確認に出すだけ。
+//   統括役が読んで了承した時だけ --approved=<誰が・何を読んだ> で入れる（context に了承の書き込みを足す・"draft" は外す）
+const approved = process.argv.find((a) => a.startsWith("--approved="))?.slice(11).trim() ?? "";
 // 確かめ用: 既存の行の被りだけを出す（INSERT しない）: npx tsx --env-file=.env.local scripts/kb-insert.ts --overlaps-of=<id>
 const overlapsOf = process.argv.find((a) => a.startsWith("--overlaps-of="))?.slice(14);
 if (overlapsOf) {
@@ -24,9 +28,19 @@ if (overlapsOf) {
 
 async function main() {
   // 2026-09-20: 1セッションで複数の知見が出る事が多いので配列も受ける（1件の時は今まで通りオブジェクト）
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")) as Record<string, unknown> | Array<Record<string, unknown>>;
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const parsed = JSON.parse(fs.readFileSync(String(file), "utf8").replace(/^﻿/, "")) as Record<string, unknown> | Array<Record<string, unknown>>;
+  const all: Array<Record<string, unknown>> = Array.isArray(parsed) ? parsed : [parsed];
+  const held: Array<Record<string, unknown>> = approved ? [] : all.filter((r) => isDraftKbRow(r as { draft?: unknown; context?: string | null }));
+  const rows = all.filter((r) => !held.includes(r));
+  if (held.length) {
+    console.log(`===== 要確認（自動の案なので入れていない・${held.length}件）=====`);
+    for (const r of held) console.log(`  ・${String(r.title ?? "無題").slice(0, 90)}（${String(r.context ?? "").slice(0, 60)}）`);
+    console.log(`  → 統括役が読んで了承したら: npx tsx --env-file=.env.local scripts/kb-insert.ts ${file} --approved=<誰が・何を読んだ>`);
+  }
+  if (!rows.length) { console.log("入れる行なし（全部が要確認の案）"); return; }
   for (const row of rows) {
+    if (approved && isDraftKbRow(row as { draft?: unknown; context?: string | null })) row.context = `${String(row.context ?? "").trim()}（${new Date().toISOString().slice(0, 10)} ${approved} が読んで登録の了承）`;
+    delete row.draft;
     for (const k of ["title", "category", "insight", "rationale"]) {
       if (!row[k]) { console.error(`必須の項目がありません: ${k}（${String(row.title ?? "無題")}）`); process.exit(1); }
     }

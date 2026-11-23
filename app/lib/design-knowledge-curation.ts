@@ -195,6 +195,18 @@ export function looksMojibake(s: string | null | undefined): boolean {
   return t.length >= 8 && q / t.length >= 0.2;
 }
 /** 行のどの欄が文字化けしているか（無ければ空） */
+/**
+ * 2026-11-23 作業員N2（統括役の頼み・穴 220c82f2・3670be9d）: 台本が作った「自動の案」の行か。
+ *   11/21 夜、作業員M の audit-ask-route-takeuchi --kb-draft の案（context「自動の案。登録の前に統括役が読む」）が、読む前に kb-insert で
+ *   そのまま現行（is_current=true）に入った。案は現行で入れない（要確認に出すだけ）。入れてよいのは統括役が読んで了承した時だけ
+ *   （kb-insert --approved=<誰が・何を読んだ>）。目印: JSON の "draft"（台本が付ける）か、context の「自動の案」「登録の前に」（了承の書き込みが無い物）
+ */
+export function isDraftKbRow(r: { draft?: unknown; context?: string | null }): boolean {
+  if (r.draft !== undefined && r.draft !== null && r.draft !== false && r.draft !== "") return true;
+  const c = String(r.context ?? "");
+  return /自動の案|登録の前に/.test(c) && !/了承/.test(c);
+}
+
 export function mojibakeFields(r: { title?: string | null; insight?: string | null; rationale?: string | null; context?: string | null; applied_to?: string | null; tags?: string[] | null }): string[] {
   const out: string[] = [];
   for (const k of ["title", "insight", "rationale", "context", "applied_to"] as const) if (looksMojibake(r[k] ?? "")) out.push(k);

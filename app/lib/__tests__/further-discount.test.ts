@@ -1,7 +1,7 @@
 // 2026-10-08 竹内さん「物件を指さない『初期費用をもう少し抑えたいですね』は条件＝安いお部屋を探す形・このお部屋の費用を指す時だけ代表確認」（further-discount.ts）
 // お客様の発言は実物（scripts/audit-further-discount-target.ts・御見積書の後 365日）
 // 実行: npx tsx app/lib/__tests__/further-discount.test.ts
-import { customerAsksFurtherDiscount, furtherDiscountDaihyo } from "../further-discount";
+import { customerAsksFurtherDiscount, furtherDiscountDaihyo, colloquialDiscountAsk, furtherDiscountColloquialOn } from "../further-discount";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -65,6 +65,27 @@ it("044608b4 6/11: [画像] だけの後は持ち込みと数えない（自分�
   const recent = [{ sender: "staff", text: "お気に召されましたお部屋の初期費用お見積書もお送りさせていただきます😌！！", created_at: "2026-06-11T03:59:34Z" },
     { sender: "customer", text: "[画像]", created_at: "2026-06-11T08:53:52Z" }];
   eq(furtherDiscountDaihyo({ turnText: "こちらで契約させてもらえたらと思うのですが、内覧不要ですので、敷礼等お安くなりますか？", estimateSent: true, postApply: false, recent, env: {} }), true);
+});
+
+// 2026-11-23 作業員K2（#469・A の種類違い 13898）: 話し言葉の割引の依頼（FURTHER_DISCOUNT_COLLOQUIAL・既定 off）
+it("話し言葉: 既定 off では今まで通り拾わない・on で拾う", () => {
+  eq(furtherDiscountColloquialOn({}), false);
+  eq(colloquialDiscountAsk("もぉ少し初期費用安くできたりしませんか？"), true);
+  const prev = process.env.FURTHER_DISCOUNT_COLLOQUIAL;
+  delete process.env.FURTHER_DISCOUNT_COLLOQUIAL;
+  eq(customerAsksFurtherDiscount("もぉ少し初期費用安くできたりしませんか？"), false, "off");
+  process.env.FURTHER_DISCOUNT_COLLOQUIAL = "on";
+  try {
+    eq(customerAsksFurtherDiscount("もぉ少し初期費用安くできたりしませんか？"), true, "on");
+    eq(customerAsksFurtherDiscount("初期費用安く出来ないですか？"), true, "on 問いの形");
+    // 除外は同じに効く: 家賃だけ・安いお部屋を探す依頼
+    eq(customerAsksFurtherDiscount("もぉ少し家賃安くできたりしませんか？"), false, "家賃だけ");
+    eq(customerAsksFurtherDiscount("もう少し安くできたりするお部屋ありませんか？"), false, "安いお部屋を探す");
+  } finally { if (prev === undefined) delete process.env.FURTHER_DISCOUNT_COLLOQUIAL; else process.env.FURTHER_DISCOUNT_COLLOQUIAL = prev; }
+});
+it("話し言葉: 割引の依頼でない文は拾わない", () => {
+  eq(colloquialDiscountAsk("ありがとうございます！少し考えます"), false);
+  eq(colloquialDiscountAsk("内覧できたりしませんか？"), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

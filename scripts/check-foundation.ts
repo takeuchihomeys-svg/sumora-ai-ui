@@ -43,7 +43,7 @@ export async function checkFoundation() {
   });
   const full = rows.length - gaps.length;
   // 2026-11-21 土台の埋まりの表（foundation-fill）が同じ行と数の有無を使う
-  const metricsSeen = rows.map((r) => r.metric).filter((m): m is string => !!m && seen.has(m));
+  const metricsSeen = rows.flatMap((r) => [r.metric, ...(r.metricAlt ?? [])]).filter((m): m is string => !!m && seen.has(m));
   return { rows, metricsSeen, n: rows.length, full, score: rows.length ? Math.round((full / rows.length) * 1000) / 10 : null, gaps, tables: ["N", ...(existsSync(FOUNDATION_TABLE_DIR) ? readdirSync(FOUNDATION_TABLE_DIR).filter((x) => x.endsWith(".json")) : [])] };
 }
 

@@ -59,6 +59,9 @@ export type GuideTurn = {
   fulfilH?: number;
   /** promiseWait=fulfilled の時: 果たした AIX の種類（property_send・property_recommendation・property_check_result・estimate_sheet・mgmt_*） */
   fulfilType?: string;
+  /** opts.firstMoveH の時だけ: 一手の窓（firstMoveH 時間）より後・次のお客様の通より前に送った AIX の種類と、竹内さんの通からの時間（時間・小数1桁） */
+  laterAix?: string;
+  laterAixH?: number;
 };
 
 /** 約束を果たしたと見る AIX（物件・確かめた結果・見積） */
@@ -76,7 +79,7 @@ export const BROUGHT_SCENE_RE = /^返信:持ち込み物件$|^AIX:property_check
  * opts.promiseWait（2026-11-21 作業員L・台帳 #414/#102・既定 false＝今と同じ）: 約束の番（reply:promise）の直後の返事が「ありがとう」だけの時は
  *   約束を待つお礼で窓が閉じている（#414 の掘りで36番中14番）。果たした AIX（72時間以内）の後の最初のお客様の返事で駅と結果を測り直す。果たさなければ left（promiseWait=not_fulfilled）
  */
-export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean; sgOnly?: boolean; sceneOf?: (fromIso: string, toIso: string) => string | null } = {}): GuideTurn[] {
+export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: ReadonlyArray<GAix>, decisions: ReadonlyArray<GDecision>, windowH = 48, opts: { promiseWait?: boolean; viewingWait?: boolean; burstAfter?: boolean; sgOnly?: boolean; firstMoveH?: number; sceneOf?: (fromIso: string, toIso: string) => string | null } = {}): GuideTurn[] {
   // 2026-11-23 作業員L（作業員R の見つけ・台帳 #102・#414）: opts.sgOnly（既定 false＝今と同じ）の時は、cp から駅を取った判断を使わない
   //   （11/03 より前は sg が無く、cp の5段では駅の中で進んでも「止まった」に数えられる）。直前の判断が cp だけの番は数えない
   // 2026-11-23 作業員L（台帳 #102・統括役の頼み）: 返事の後の駅は「返事の始まりの後の最初の判断」で取っていた。お客様が続けて質問し同じ流れで
@@ -119,8 +122,16 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     // この番のこちらの通（次のお客様の通まで）と、同じ間の AIX
     let k = i; const ours: string[] = []; while (k < ms.length && ms[k].sender !== "customer") { if (!ms[k].is_aix_generated) ours.push(String(ms[k].text ?? "")); k++; }
     const endAt = k < ms.length ? ms[k].created_at : null;
-    const aixHere = aix.find((a) => { const at = a.sent_at ?? a.created_at; return at >= m.created_at && (!endAt || at < endAt); });
-    const act = aixHere?.aix_type ? `aix:${aixHere.aix_type}` : `reply:${closeKindOf(ours.join("\n"))}`;
+    const inTurn = (a: GAix) => { const at = a.sent_at ?? a.created_at; return at >= m.created_at && (!endAt || at < endAt); };
+    // 2026-11-23 作業員A（R の代わり）: opts.firstMoveH（既定なし＝今と同じ）の時は、番の一手の AIX を「竹内さんの通から firstMoveH 時間以内」に限る。
+    //   それより後（次のお客様の通の前）の AIX は laterAix に分ける＝内覧の日の朝に時刻で送った当日のご挨拶を、何日も前のお礼の番の一手と数えない
+    //   （申込までの地図の監査で、段取りの後のお礼 5番が「AIX【当日のご挨拶】」と数えられ、実物の最初の一手は5番とも手打ちの受けだけだった）
+    const inFirst = (a: GAix) => opts.firstMoveH == null || Date.parse(a.sent_at ?? a.created_at) - Date.parse(m.created_at) <= opts.firstMoveH * 36e5;
+    const aixHere = aix.find((a) => inTurn(a) && inFirst(a));
+    const laterAix = opts.firstMoveH == null ? undefined : aix.filter((a) => inTurn(a) && !inFirst(a)).sort((x, y) => (x.sent_at ?? x.created_at).localeCompare(y.sent_at ?? y.created_at))[0];
+    //   返信の締めの型も、firstMoveH の時は窓の中の手打ちの通だけで見る（何日も後の手打ちの「ご案内」の文で誘いと数えない）
+    const oursFirst = opts.firstMoveH == null ? ours : ms.slice(i, k).filter((x) => !x.is_aix_generated && Date.parse(x.created_at) - Date.parse(m.created_at) <= opts.firstMoveH! * 36e5).map((x) => String(x.text ?? ""));
+    const act = aixHere?.aix_type ? `aix:${aixHere.aix_type}` : `reply:${closeKindOf(oursFirst.join("\n"))}`;
     const before = stageAt(m.created_at, false);
     if (before && POST_APPLY.has(before)) continue; // 申込以降は外す
     if (opts.sgOnly && !before) continue; // sg の駅が無い番は数えない（cp の時代）
@@ -142,6 +153,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     //   見張りの番が無い番（82c4d3e8 の 11/22 05:26: 見張りの番は次のお客様の通から始まっていた）は、お客様の通の物件の画面の見出し・物件サイトの URL で読む
     const station = (sceneKey && BROUGHT_SCENE_RE.test(sceneKey)) || (!sceneKey && BROUGHT_TEXT_RE.test(recentCust.join("\n"))) ? "brought_property" : before;
     const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, station, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
+    if (laterAix?.aix_type) { row.laterAix = laterAix.aix_type; row.laterAixH = Math.round((Date.parse(laterAix.sent_at ?? laterAix.created_at) - Date.parse(m.created_at)) / 36e5 * 10) / 10; }
     if (opts.promiseWait && act === "reply:promise" && replied && replyCat === "thanks") {
       const t0 = Date.parse(m.created_at);
       const ful = aix.map((a) => ({ type: a.aix_type ?? "", at: a.sent_at ?? a.created_at })).filter((a) => FULFIL_AIX.test(a.type) && Date.parse(a.at) > t0 && Date.parse(a.at) - t0 <= PROMISE_FULFIL_H * 36e5).sort((a, b) => a.at.localeCompare(b.at))[0];

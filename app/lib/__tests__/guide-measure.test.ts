@@ -189,3 +189,26 @@ t("cp から取った駅は sgOnly で外す", () => {
   assert.equal(guideTurnsOf("c1", msgs, [], ds, 48, { sgOnly: true }).length, 0);
 });
 console.log("guide-sg-only ok");
+
+// 2026-11-23 作業員A: opts.firstMoveH（既定なし＝今と同じ）＝番の一手の AIX を竹内さんの通から firstMoveH 時間以内に限り、後の AIX は laterAix に分ける
+t("一手の窓（firstMoveH）: 何日も後に時刻で送った AIX を番の一手と数えない", () => {
+  const ms = [
+    { sender: "customer", text: "よろしくお願いします", created_at: at(0) },
+    { sender: "staff", text: "はい！！何卒よろしくお願い致します！！", created_at: at(1), staff_writer: "takeuchi", is_aix_generated: false },
+    { sender: "staff", text: "本日よろしくお願い致します", created_at: at(50), staff_writer: "takeuchi", is_aix_generated: true },
+    { sender: "customer", text: "はい", created_at: at(51) },
+  ];
+  const ax = [{ aix_type: "greeting_viewing", sent_at: at(50), created_at: at(50) }];
+  const ds = [{ created_at: at(0), stage: "viewing_scheduled", from: "sg" as const }];
+  const old = guideTurnsOf("c1", ms, ax, ds, 72);
+  assert.equal(old[0].act, "aix:greeting_viewing"); // 今の数え方（既定）
+  assert.equal(old[0].laterAix, undefined);
+  const fm = guideTurnsOf("c1", ms, ax, ds, 72, { firstMoveH: 2 });
+  assert.equal(fm[0].act.startsWith("reply:"), true);
+  assert.equal(fm[0].actKind, "reply");
+  assert.equal(fm[0].laterAix, "greeting_viewing");
+  assert.equal(fm[0].laterAixH, 49);
+  const quick = guideTurnsOf("c1", ms, [{ aix_type: "meeting_place", sent_at: at(2), created_at: at(2) }], ds, 72, { firstMoveH: 2 });
+  assert.equal(quick[0].act, "aix:meeting_place"); // 窓の中の AIX はそのまま一手
+});
+console.log("guide-first-move ok");

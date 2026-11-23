@@ -122,7 +122,14 @@ export function situationNowDigest(s: unknown): Record<string, number> | null {
 export const situationWriterNoteOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_WRITER_NOTE ?? "on").trim().toLowerCase() !== "off";
 // 2026-11-18 作業員L: 試験 L1118-wsit-off → L1118-wsit-on（10問・2回・下書きまで・DeepSeek）で悪くなった問題 0・下書きの道 14/20→15/20・下書きの合格 10/20→12/20・依頼 14/24→16/24 ＝既定 on（戻す =off）
 const STATUS_JA: Record<string, string> = { available: "募集中", open: "募集中", closed: "募集終了", ended: "募集終了", move_out_planned: "退去予定", applied: "申込あり", occupied: "入居中" };
-export function situationWriterNote(sn: unknown, nowMs: number): string {
+/**
+ * 2026-11-23 作業員L（台帳 #7・統括役の頼み）: 時系列の帳面の欄のうち、カレンダーの終日の予定（約束と連絡の日＝timeline.promises）は
+ *   ブレインの材料（timelineBlock）には出るが、書き手への注記（この関数）には出ていなかった（72時間で数えた・scripts/audit-timeline-delivery.ts）。
+ *   SITUATION_WRITER_TIMELINE_PROMISES=on（既定 off）の時だけ、今日以降の済みでない予定を3件まで足す（off は今と1文字も変わらない）
+ */
+export const situationWriterTimelinePromisesOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SITUATION_WRITER_TIMELINE_PROMISES ?? "").trim().toLowerCase() === "on";
+const TL_TYPE_JA: Record<string, string> = { property_send: "物件の送付", follow_up: "追いかけの連絡", estimate_sheet: "御見積書", phone: "電話", viewing: "内覧の調整", application: "申込", photo: "写真", other: "連絡" };
+export function situationWriterNote(sn: unknown, nowMs: number, env?: Env): string {
   if (!sn || typeof sn !== "object") return "";
   const s = sn as SituationNow;
   const lines: string[] = [];
@@ -130,6 +137,10 @@ export function situationWriterNote(sn: unknown, nowMs: number): string {
   for (const v of (s.timeline?.viewings ?? []).filter((x) => !x.done && Date.parse(x.at) >= nowMs - 12 * 36e5).slice(0, 3)) {
     const d = new Date(Date.parse(v.at) + 9 * 36e5);
     lines.push(`- これからの内覧の予定: ${jstMD(v.at)} ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`);
+  }
+  if (situationWriterTimelinePromisesOn(env)) {
+    const dayStart = Date.parse(new Date(nowMs + 9 * 36e5).toISOString().slice(0, 10) + "T00:00:00+09:00");
+    for (const p of (s.timeline?.promises ?? []).filter((x) => Date.parse(x.at) >= dayStart).slice(0, 3)) lines.push(`- カレンダーの約束と連絡の日: ${jstMD(p.at)}（${TL_TYPE_JA[p.type] ?? p.type}）`);
   }
   for (const p of (s.promises_open ?? []).slice(0, 3)) lines.push(`- 開いているこちらの約束: ${p.kind === "confirmation_promised" ? `確認${p.object ? `（${p.object}）` : ""}` : p.kind === "pickup_declared" ? "物件のピックアップ" : p.kind === "estimate_declared" ? "御見積書" : p.kind}・${jstMD(p.at)}にした約束（まだ果たしていない）`);
   for (const c of (s.checked ?? []).slice(-3)) if (c.props.length) lines.push(`- 確かめた結果（${jstMD(c.at)}にお送り済み）: ${c.props.slice(0, 3).join("・")}${c.result.length ? `＝${c.result.slice(0, 3).map((r) => STATUS_JA[r] ?? r).join("・")}` : ""}`);

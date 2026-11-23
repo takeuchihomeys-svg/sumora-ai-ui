@@ -290,11 +290,27 @@ export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process
   return `→ 道（竹内さんの決定 C 10/14・★約束の直後のお礼・了承）: この番は返信で締めず、約束を果たす AIX（入口は${aix}）のまま（aix の欄は空にしない）。何を一緒に送るか（お送り頂いた物件の御見積書等）は今までどおり会話と決まりで決める＝この行で狭めない。「結果がまだ手元に無い」は返信にする理由にならない＝結果を確かめてから送るのは AIX を押すスタッフ（スタッフだけが知る情報は AIX）。上の受けだけ／待ちの形の数は手打ちの文の形で、道を変えない（ack_form は形として入れる）。`;
 }
 /** ブレインのプロンプトに入れる材料の1行（答えは書かない）。お客様の発言に中身が多い番は出さない */
+// ── 2026-11-23 作業員A（統括役の頼み a・台帳 #612 の続き）: 下の「竹内さんの実送信」の数は、竹内さんが返信した番だけの形の数（受けだけ・待ちの形）。
+//   AIX を先に送った番が入っていない＝道を決める材料に見えると、AIX の番を返信へ倒す（選び方の偏り）。
+//   AIX を送った番も入れた数（scripts/audit-ack-fulfil-timing.ts・90日・申込以降を外す・端末の記録で竹内さん本人の番 141）を先に1行で並べる:
+//     ピックアップの約束だけ 68 → 最初の一手が約束を果たす AIX 46（30分以内は 7・30分〜2時間 10・2〜6時間 16・6〜24時間 13）・返信 22
+//     確認の約束だけ 21 → AIX 14（30分以内 9）・返信 7
+//     全部 141 → AIX 87（62%・30分以内は 22）・返信 54
+//   既定 off（ACK_FORM_COUNT_WITH_AIX=on で入る）＝off の時は材料の行は1文字も変わらない。道の1行（ACK_PICKUP_AIX_PATH・ACK_CONFIRM_AIX_PATH）とは別のスイッチ（数だけ・答えは書かない）
+export function ackFormCountWithAixOn(env: Env = process.env): boolean {
+  return (env.ACK_FORM_COUNT_WITH_AIX ?? "").trim().toLowerCase() === "on";
+}
+export function ackFormAixShareLine(f: AckFormFacts, env: Env = process.env): string {
+  if (!ackFormCountWithAixOn(env)) return "";
+  const fam = f.family === "探す" ? "ピックアップの約束だけの番 68 → 最初の一手が約束を果たす AIX 46・返信 22" : "確認の約束だけの番 21 → 最初の一手が約束を果たす AIX 14・返信 7";
+  return `竹内さん本人の最初の一手（90日・約束が開いているお礼・了承だけの番・AIX を送った番も入れた数）: ${fam}（全部 141 → AIX 87・返信 54。AIX は30分より後が多い）。下の受けだけ・待ちの形の数は、竹内さんが返信した番の中の形。
+`;
+}
 export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.env): string {
   if (!f || !ackFormBrainEnabled(env) || f.customer === "その他の中身") return "";
   const ago = f.minutes == null ? "" : f.minutes < 60 ? `・${f.minutes}分前` : `・約${Math.round(f.minutes / 60)}時間前`;
   return `【前の約束への了承（材料・turn_contract の ack_form を決める）】前のこちらの約束「${f.promise}」（${f.family}・${f.form}${ago}）／お客様の今の発言: ${f.customer}。
-竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
+${ackFormAixShareLine(f, env)}竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
 → ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。${(() => { const x = ackConfirmAixPathLine(f, env); return x ? `
 ${x}` : ""; })()}`;
 }

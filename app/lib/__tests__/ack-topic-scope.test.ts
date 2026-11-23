@@ -1,6 +1,6 @@
 // app/lib/__tests__/ack-topic-scope.test.ts — 2026-10-07 竹内（uran. 10/05）「どこを読み取る必要があるのか」の実物
 //   実行: npx tsx app/lib/__tests__/ack-topic-scope.test.ts
-import { resolveAckTopicScope, outOfTopicActs, buildAckTopicNote, isAckOnlyTurn, isStampOnlyTurn, isAckOnlyForTwoStage, type ScopeMsg } from "../ack-topic-scope";
+import { resolveAckTopicScope, outOfTopicActs, buildAckTopicNote, isAckOnlyTurn, isStampOnlyTurn, isAckOnlyForTwoStage, isApologyAckTurn, type ScopeMsg } from "../ack-topic-scope";
 import { judgeTurn, JUDGE_VERSION } from "../line-watch-judge";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -64,5 +64,12 @@ t("スタンプだけ", isStampOnlyTurn("[スタンプ]") && isStampOnlyTurn(" [
 t("スタンプ＋文字は違う", !isStampOnlyTurn("[スタンプ] ありがとうございます") && !isStampOnlyTurn("ス"));
 t("2段の見分け: off はスタンプをお礼と読まない", !isAckOnlyForTwoStage("[スタンプ]", {}));
 t("2段の見分け: on はスタンプをお礼と読む", isAckOnlyForTwoStage("[スタンプ]", { TWO_STAGE_STAMP_ACK: "on" }));
+// 2026-11-23 作業員L（#642・番 8438）: 謝り＋了承だけの番（TWO_STAGE_APOLOGY_ACK=on の時だけ・2段の見分けだけ）
+t("謝り＋了承: off は読まない", !isAckOnlyForTwoStage("申し訳ございません。 よろしくお願いいたします🥺", {}));
+t("謝り＋了承: on は読む", isAckOnlyForTwoStage("申し訳ございません。 よろしくお願いいたします🥺", { TWO_STAGE_APOLOGY_ACK: "on" }));
+t("謝り＋了承: すみません、ありがとうございます も読む", isApologyAckTurn("すみません、ありがとうございます🙏"));
+t("謝りだけは読まない", !isApologyAckTurn("申し訳ございません。") && !isAckOnlyForTwoStage("申し訳ございません。", { TWO_STAGE_APOLOGY_ACK: "on" }));
+t("謝り＋質問は読まない", !isApologyAckTurn("すみません、内覧いつですか？") && !isApologyAckTurn("申し訳ございません、やはり別の部屋も見たいです"));
+t("謝り＋了承でも isAckOnlyTurn は変えない", !isAckOnlyTurn("申し訳ございません。 よろしくお願いいたします🥺"));
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
