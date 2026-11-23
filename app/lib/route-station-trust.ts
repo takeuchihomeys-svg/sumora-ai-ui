@@ -1,17 +1,16 @@
-// app/lib/route-station-trust.ts — 申込までの地図の「駅ごとの信頼」（純関数・DB/LLM なし）
+// app/lib/route-station-trust.ts — 申込までの地図の駅ごとの数（一致と進み）と、弱い駅の見つけ方（純関数・DB/LLM なし）
 //
-// 2026-11-23 作業員A（竹内さん 11/23「申込までの地図ちゃんと統括と連携させる 弱い部分あれば強化するように仕組みとする 細部までこだわって徹底的に強化していく」・台帳 #650）:
-//   地図の次の一手とブレインの最終の道が違った番 188（60日）で、竹内さん本人の一手に近いのはブレイン 113・地図 25＝地図をそのまま統括に渡すと引っぱる。
-//   → 統括（ROUTE_TO_BRIEF の指示書）には「その駅で地図が竹内さん本人に近い所」だけ渡す。駅ごとに 地図の一致 と ブレインの一致 を比べ、
-//     地図が上回る・n が足りる駅だけ渡す（下回る駅は参考の印だけ）。地図が直って駅の一致が上がれば、その駅は自動で統括に届く。
-//   駅の名前は P の地図の木（route:next_match_60d）の葉と同じ（分かれ道があれば「分:<分かれ道>」・無ければ駅の id）。
-//   スイッチ ROUTE_TO_BRIEF_BY_TRUST（既定 off＝今の ROUTE_TO_BRIEF のまま）。駅ごとの数は毎朝の数（#653）が作る。
-type Env = Record<string, string | undefined>;
-export const ROUTE_TRUST_MIN_N = 10;
-
-export function routeToBriefByTrustOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.ROUTE_TO_BRIEF_BY_TRUST ?? "").trim().toLowerCase() === "on";
-}
+// 2026-11-23 作業員A（竹内さん 11/23「申込までの地図ちゃんと統括と連携させる 弱い部分あれば強化するように仕組みとする 細部までこだわって徹底的に強化していく」・台帳 #650）
+//   ⚠ 同じ日の竹内さんの決定（KB 2d1c4c74）で向きを直した: 番の一手を決めるのはブレイン・地図は道筋（今どの駅・申込までの残り・分かれ道からの戻り方・中期と長期）。
+//     1版の「駅ごとの信頼で地図の一手を統括に渡す（ROUTE_TO_BRIEF_BY_TRUST）」は取り下げた（地図は一手を上書きしない）。
+//   物差し（毎朝の1枚・作業員N2 と P の名前）:
+//     route:station:<駅>:map … 地図の次の一手の候補と竹内さん本人の一手の一致（R の routeAgreement の合う側・並べて見るだけ）
+//     route:station:<駅>:progress … 竹内さん本人の一手の後に申込へ近づいた番の割合（advanced＋分かれ道から本線の駅に戻った番）
+//   弱い駅（台帳に自動で足す）は進みで見る: n ≥ 10 で、前の週より進みが 5pt 以上下がった駅か、止まり＋離れが過半数の駅。
+//   駅の名前は P の地図の木（route:next_match_60d）の葉と同じ（分かれ道があれば「分:<分かれ道>」・無ければ駅の id）
+export const ROUTE_STATION_MIN_N = 10;
+const ROUTE_GOOD = new Set(["aix_match", "promise_match", "reply_match", "reply_invite"]);
+const MAIN_STATIONS = new Set(["inquiry", "hearing", "pickup", "proposing", "interested", "estimate", "viewing_arrange", "viewing_scheduled", "viewed", "apply_prep", "applying"]);
 
 /** 地図の位置 → 駅の名前（P の地図の葉と同じ） */
 export function stationKeyOf(loc: { node?: string | null; branch?: string | null } | null | undefined): string | null {
@@ -20,53 +19,64 @@ export function stationKeyOf(loc: { node?: string | null; branch?: string | null
   return loc.node ? String(loc.node) : null;
 }
 
-export type StationTurn = { station: string; mapMatch: boolean; brainMatch: boolean };
-export type StationStat = { station: string; n: number; map: number; brain: number; mapRate: number; brainRate: number };
+/** R の audit-route-progress-takeuchi の番ごとの行（使う欄だけ） */
+/** afterBranch: 番の後の分かれ道（R の json に欄がある時だけ・null＝分かれ道が閉じた）。欄が無い番は「本線に戻った」を数えない（後の駅だけでは分かれ道が閉じたか分からない） */
+export type RouteStationRow = { node: string | null; branch: string | null; agree: string; outcome: string; after: string | null; afterBranch?: string | null };
+export type StationStat = {
+  station: string; n: number; map: number; mapRate: number | null;
+  advanced: number; branch_return: number; engaged: number; stuck: number; back: number; left: number; progress: number; progressRate: number | null;
+};
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
 
-/** 番ごとの「地図の次の一手が竹内さん本人に合ったか」「ブレインの最終の道が合ったか」から駅ごとの数 */
-export function stationStatsOf(turns: ReadonlyArray<StationTurn>): StationStat[] {
-  const by = new Map<string, { n: number; map: number; brain: number }>();
-  for (const t of turns) { const o = by.get(t.station) ?? { n: 0, map: 0, brain: 0 }; o.n++; if (t.mapMatch) o.map++; if (t.brainMatch) o.brain++; by.set(t.station, o); }
-  return [...by].map(([station, o]) => ({ station, ...o, mapRate: Math.round((o.map / o.n) * 1000) / 10, brainRate: Math.round((o.brain / o.n) * 1000) / 10 })).sort((a, b) => b.n - a.n);
+/** 駅ごとの一致と進み（分かれ道の番は、後の駅が本線の駅なら「本線に戻った」・進んだ番と重ねない） */
+export function stationStatsOf(rows: ReadonlyArray<RouteStationRow>): StationStat[] {
+  const by = new Map<string, StationStat>();
+  for (const r of rows) {
+    const k = stationKeyOf(r); if (!k) continue;
+    const s = by.get(k) ?? { station: k, n: 0, map: 0, mapRate: null, advanced: 0, branch_return: 0, engaged: 0, stuck: 0, back: 0, left: 0, progress: 0, progressRate: null };
+    s.n++;
+    if (ROUTE_GOOD.has(r.agree)) s.map++;
+    if (r.outcome === "advanced") s.advanced++;
+    else if (r.branch && r.afterBranch === null && r.after && MAIN_STATIONS.has(r.after)) s.branch_return++;
+    else if (r.outcome === "engaged") s.engaged++;
+    else if (r.outcome === "stuck") s.stuck++;
+    else if (r.outcome === "back") s.back++;
+    else if (r.outcome === "left") s.left++;
+    by.set(k, s);
+  }
+  return [...by.values()].map((s) => ({ ...s, mapRate: pct(s.map, s.n), progress: s.advanced + s.branch_return, progressRate: pct(s.advanced + s.branch_return, s.n) })).sort((a, b) => b.n - a.n);
 }
 
-/** 統括に地図の次の一手を渡してよい駅（n ≥ minN かつ 地図の一致がブレインの一致を上回る） */
-export function trustedStationsOf(stats: ReadonlyArray<StationStat>, o: { minN?: number } = {}): Set<string> {
-  const minN = o.minN ?? ROUTE_TRUST_MIN_N;
-  return new Set(stats.filter((s) => s.n >= minN && s.map > s.brain).map((s) => s.station));
+/** 毎朝の1枚の行（route:station:<駅>:map・:progress・n が minN 未満の駅も出す＝並べて見る） */
+export function stationMetricRowsOf(stats: ReadonlyArray<StationStat>): Array<{ metric: string; value: number | null; n: number }> {
+  return stats.flatMap((s) => [
+    { metric: `route:station:${s.station}:map`, value: s.mapRate, n: s.n },
+    { metric: `route:station:${s.station}:progress`, value: s.progressRate, n: s.n },
+  ]);
 }
 
-/** この番の駅に地図の次の一手を統括へ渡すか（off の時は今まで通り true＝ROUTE_TO_BRIEF の判断のまま） */
-export function routeTrustAllows(station: string | null, trusted: ReadonlySet<string> | null | undefined, env?: Env): { allow: boolean; mark: "trusted" | "reference" | "off" } {
-  if (!routeToBriefByTrustOn(env)) return { allow: true, mark: "off" };
-  if (station && trusted?.has(station)) return { allow: true, mark: "trusted" };
-  return { allow: false, mark: "reference" };
-}
-
-export type WeakStation = { station: string; reasons: string[]; n: number; mapRate: number; brainRate: number };
-/**
- * 弱い駅（毎朝の自己改善）: n ≥ minN の駅のうち ①前の週より地図の一致が drop pt 以上下がった ②地図がブレインに負けている
- * （①②のどちらか）。前の週の数が無い駅は②だけで見る
- */
-export function weakStationsOf(now: ReadonlyArray<StationStat>, prev: ReadonlyArray<StationStat> = [], o: { minN?: number; drop?: number } = {}): WeakStation[] {
-  const minN = o.minN ?? ROUTE_TRUST_MIN_N, drop = o.drop ?? 5;
+export type WeakStation = { station: string; reasons: string[]; n: number; progressRate: number | null };
+/** 弱い駅: n ≥ minN で ①前の週より進みが drop pt 以上下がった ②止まり＋離れが過半数 */
+export function weakStationsOf(now: ReadonlyArray<StationStat>, prev: ReadonlyArray<{ station: string; n: number; progressRate: number | null }> = [], o: { minN?: number; drop?: number } = {}): WeakStation[] {
+  const minN = o.minN ?? ROUTE_STATION_MIN_N, drop = o.drop ?? 5;
   const pm = new Map(prev.map((p) => [p.station, p]));
   const out: WeakStation[] = [];
   for (const s of now) {
     if (s.n < minN) continue;
     const reasons: string[] = [];
     const p = pm.get(s.station);
-    if (p && p.n >= minN && p.mapRate - s.mapRate >= drop) reasons.push(`地図の一致が前の週より下がった（${p.mapRate}%→${s.mapRate}%）`);
-    if (s.map < s.brain) reasons.push(`地図がブレインに負けている（地図 ${s.mapRate}%・ブレイン ${s.brainRate}%）`);
-    if (reasons.length) out.push({ station: s.station, reasons, n: s.n, mapRate: s.mapRate, brainRate: s.brainRate });
+    if (p && p.n >= minN && p.progressRate != null && s.progressRate != null && p.progressRate - s.progressRate >= drop) reasons.push(`進みが前の週より下がった（${p.progressRate}%→${s.progressRate}%）`);
+    if ((s.stuck + s.left) * 2 > s.n) reasons.push(`止まり＋離れが過半数（${s.stuck + s.left}/${s.n}）`);
+    if (reasons.length) out.push({ station: s.station, reasons, n: s.n, progressRate: s.progressRate });
   }
-  return out.sort((a, b) => (a.mapRate - a.brainRate) - (b.mapRate - b.brainRate));
+  return out.sort((a, b) => (a.progressRate ?? 0) - (b.progressRate ?? 0));
 }
 
-/** 台帳の行の題（同じ駅の行は題の頭「申込までの地図の駅 <駅>:」で見分ける） */
+/** 台帳の行の題（同じ駅の行は題の頭で見分ける） */
 export const stationGapPrefix = (station: string) => `申込までの地図の駅 ${station}:`;
 /** 足す行（同じ駅の行が開いていれば足さない・持ち主の案つき） */
-export function stationGapsToAdd(weak: ReadonlyArray<WeakStation>, openTitles: ReadonlyArray<string>, ownerOf: (station: string) => string = () => "作業員A"): Array<{ station: string; title: string; owner: string }> {
+export function stationGapsToAdd(weak: ReadonlyArray<WeakStation>, openTitles: ReadonlyArray<string>, ownerOf: (station: string) => string = () => "作業員A"): Array<{ station: string; title: string; owner: string; next: string }> {
   return weak.filter((w) => !openTitles.some((t) => t.startsWith(stationGapPrefix(w.station))))
-    .map((w) => ({ station: w.station, title: `${stationGapPrefix(w.station)} ${w.reasons.join("・")}（n=${w.n}）`, owner: ownerOf(w.station) }));
+    .map((w) => ({ station: w.station, title: `${stationGapPrefix(w.station)} ${w.reasons.join("・")}（n=${w.n}・竹内さん本人の一手の後の進み）`, owner: ownerOf(w.station),
+      next: "駅の中の状態（ROUTE_SUBSTATE）とお客様の番の型で割り、止まった・離れた番の竹内さん本人の一手と地図の道筋（残りの駅・戻り方）を読む。過半数の形だけ既定 off で直す" }));
 }
