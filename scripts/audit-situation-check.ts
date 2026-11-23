@@ -1,7 +1,8 @@
 // scripts/audit-situation-check.ts — 現状把握の物差し（根 situation:match・台帳 #17）: 竹内さん本人の番で、ブレインが持っていた今の状況の数が実物と合っているか（読むだけ・LLM なし）
 // 2026-11-23 作業員L。決めは scripts/lib/situation-check.ts。会話の文は読まない（数と会話の頭8字だけ）
 // 実行: npx tsx --env-file=.env.local scripts/audit-situation-check.ts [--days=14] [--out=<json>]（14日を超えるのは夜だけ・JST 22〜9時）
-//   --out の json は { root, turns: [{ id, kind, scene, miss, cause }], nodes }（作業員P の地図の builder が turns を読める形）
+//   --out の json は { root, turns: [{ id, kind, scene, miss, cause }], nodes, unmeasured, takeuchi_turns }（作業員P の地図の builder が turns を読める形）
+//     unmeasured＝送る前の判断の記録に sn が無く測れなかった竹内さん本人の番の数（木にも割合の分母にも入れない・P の頼みで並べて出す）
 //   ⚠ 実物の約束の閉じ（closed_by）は今の値で見る（判断の後に閉じた印が付いた約束は「帳面が多い」に見える）＝ over の一部は数え方
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
@@ -49,5 +50,5 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
   }
   const bad = rows.filter((r) => r.got !== r.truth).slice(0, 20);
   console.log(`\n外れの例（会話の頭8字@番・欄・帳面→実物）: ${bad.map((r) => `${r.id}:${r.field}:${r.got}→${r.truth}`).join(" ")}`);
-  if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ root: "situation:match", turns: st, nodes }, null, 1));
+  if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ root: "situation:match", turns: st, nodes, unmeasured: noDigest, takeuchi_turns: turns.length }, null, 1));
 })().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); });
