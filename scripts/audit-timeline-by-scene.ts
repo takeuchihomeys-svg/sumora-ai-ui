@@ -10,7 +10,8 @@ const SCENE: Array<[string, RegExp]> = [
   ["物件を送ってきた", /^返信:持ち込み物件$|^AIX:property_check_result$|^AIX:acknowledge_check$/], ["物件を送る", /^AIX:property_send$|^AIX:property_recommendation$/],
 ];
 const FORMS: Array<[string, RegExp]> = [
-  ["前に言った事", /先日|以前|前回|先ほど|先程|お伝え(?:させて頂|させていただ|し)(?:いた|きました|ました)|お送りさせて(?:頂|いただ)きました|お話し(?:させて頂|させていただ)いた|(?:仰|おっしゃ)っていた|頂いていた|いただいていた|(?:頂|いただ)きました(?:ご条件|物件|お部屋)/],
+  ["前に言った事", /先日|以前|前回|先ほど|先程|お伝え(?:させて頂|させていただ|し)(?:いた|きました|ました)|お話し(?:させて頂|させていただ)いた|(?:仰|おっしゃ)っていた|頂いていた|いただいていた/],
+  // 2026-11-23 照らし（番 12795）: 「お送りさせて頂きましたお部屋の中でも」「お送り頂きました物件」は同じ番の中で今送った物・今もらった物を指す＝前に言った事でない（数えない）
   ["約束の日", /(?:明日|明朝|本日中|今日中|週明け|来週|(?:1[0-2]|0?[1-9])\s*[\/月]\s*(?:3[01]|[12]?[0-9])\s*日?|[月火水木金土日]曜)[^。！!？?\n]{0,20}(?:お送り|ご連絡|ピックアップ|確認|ご報告)させて/],
   ["内覧の日", /(?:(?:1[0-2]|0?[1-9])\s*[\/月]\s*(?:3[01]|[12]?[0-9])|明日|本日|[月火水木金土日]曜)[^。！!？?\n]{0,25}(?:ご案内|ご内覧|内覧)|ご内覧(?:の)?(?:日|際)|ご案内(?:の)?(?:日|際)/],
 ];
@@ -46,7 +47,11 @@ const FORMS: Array<[string, RegExp]> = [
     const o = (res[sc] ??= { n: 0, forms: {}, any: 0 });
     o.n++;
     let hit = false;
-    for (const [name, re] of FORMS) if (re.test(all)) { o.forms[name] = (o.forms[name] ?? 0) + 1; hit = true; }
+    for (const [name, re] of FORMS) if (re.test(all)) {
+      o.forms[name] = (o.forms[name] ?? 0) + 1; hit = true;
+      // --show: 実物で照らす用（会話の頭8字・番の id・当たった言葉だけ。こちらの文の前後は出さない）
+      if (process.argv.includes("--show")) console.log(`  [${sc}] ${t.conversation_id.slice(0, 8)} 番 ${t.id} ${name}: 「${all.match(re)![0].slice(0, 30)}」`);
+    }
     if (hit) o.any++;
   }
   console.log(`${days}日・番 ${turns.length}・書き手が引けない通 ${unk}`);
