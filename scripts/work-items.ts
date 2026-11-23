@@ -257,13 +257,13 @@ async function cmdMapBuild() {
   const m = await import("./lib/metric-map-server");
   const { itemsForRoot } = await import("../app/lib/metric-map");
   const def = m.MAP_ROOTS.find((r) => r.metric === arg("map-build"));
-  if (!def || (def.builder !== "aix_turn_device" && def.builder !== "route_next")) throw new Error(`--map-build=<根>（aix_turn_device か route_next の根: ${m.MAP_ROOTS.filter((r) => r.builder === "aix_turn_device" || r.builder === "route_next").map((r) => r.metric).join("・")}）`);
+  if (!def || !(def.builder && m.JSON_SOURCES[def.builder])) throw new Error(`--map-build=<根>（json から作る根: ${m.MAP_ROOTS.filter((r) => r.builder && m.JSON_SOURCES[r.builder]).map((r) => r.metric).join("・")}）`);
   if (!arg("json")) throw new Error("--json=<出所の台本の json> が要る");
   const db = sb();
   const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as unknown[];
   // 竹内さんの決定で正解を改めた番（作業員A の案）: 試験の問題（scripts/brain-exam/spec.json の why・tags）と会話・時刻 ±2分で突き合わせ、外れと別に数える
   const specPath = arg("spec", "scripts/brain-exam/spec.json");
-  const spec = def.builder === "aix_turn_device" && existsSync(specPath) ? (JSON.parse(readFileSync(specPath, "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
+  const spec = existsSync(specPath) ? (JSON.parse(readFileSync(specPath, "utf8")) as Array<{ id: string; conv?: string; at?: string; why?: string; tags?: unknown }>) : undefined;
   const t = await m.buildTreeFromJson(db, def, rows, { spec });
   if (!t || !t.nodes.length) throw new Error("木が作れない（行が無い）");
   const items = itemsForRoot(await m.loadForecastItems(db), def);
@@ -285,6 +285,13 @@ async function cmdMapBuild() {
     console.log(`  n 不足（外れのまま・見張りで数え続ける）: ${nShort.length}（${nShort.map(([id, v]) => `${id}＝n ${v.n}`).join("・") || "なし"}）`);
     console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN - fixedN - splitN}（うち n 不足 ${nShort.length}）・決定で改めた ${decN}・竹内さんの少数側 ${minN}・割れ ${splitN}・時刻で送る物 ${timedN}・直しが入る前の番 ${fixedN}（n ${t.n}）`);
   }
+  if (def.builder === "route_next" || def.builder === "route_progress") {
+    const { stationTableOf, leafJa } = await import("../app/lib/metric-map");
+    const tb = stationTableOf(t.nodes);
+    const sum = tb.reduce((a, x) => ({ n: a.n + x.n, ok: a.ok + x.ok, aside: a.aside + x.aside, real: a.real + x.real }), { n: 0, ok: 0, aside: 0, real: 0 });
+    console.log(`  駅ごとの本当の一致（一致／分けて外した番を除いた数）: 全体 ${sum.ok}/${sum.n - sum.aside}（分けて外した ${sum.aside}・本当の外れ ${sum.real}）`);
+    for (const x of tb) console.log(`   ${leafJa(x.key)}: ${x.ok}/${x.n - x.aside}${x.aside ? `（分けて外した ${x.aside}）` : ""}・本当の外れ ${x.real}`);
+  }
   for (const x of t.nodes.filter((x) => x.depth === 1)) console.log(`   ├ ${x.label}: ${x.value}%（n ${x.n}・外れ ${x.misses}）`);
   for (const r of ranked.slice(0, Number(arg("top", "10")) || 10)) console.log(`   ${m.leafLine(r)}`);
   const hl = m.holesOf(ranked, t.nodes);
@@ -292,6 +299,17 @@ async function cmdMapBuild() {
   const scenes = t.nodes.filter((x) => x.dim === "scene" || (x.dim === "station" && x.depth === 1));
   const noP = scenes.filter((x) => x.misses > 0 && ![...examByLeaf].some(([k]) => m.covers(x.key, k)));
   console.log(`  試験の問題: ${scenes[0]?.dim === "station" ? "駅" : "種類×場面"}の段 ${scenes.length} のうち 外れがあって問題0 ${noP.length}: ${noP.sort((a, b) => b.misses - a.misses).map((x) => `${x.key.split("/").slice(1).join(" › ")}（${x.misses}）`).join("・") || "なし"}`);
+  if (flag("write") && def.builder === "aix_turn_device") {
+    // 11/23 作業員A（#624 組の物差しの本当の一致）: 割れ・少数側・n 不足の番ごとの印をファイルに（会話の頭8字・時刻・印）。読み先は COMBO_NET_SIDES_FILE か既定の scripts/.replay-out/aix-turn-sides.json
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    const out = arg("sides-out") || process.env.COMBO_NET_SIDES_FILE || "scripts/.replay-out/aix-turn-sides.json";
+    const byId = new Map((rows as Array<{ id: number; conv: string; at: string }>).map((r) => [r.id, r]));
+    const sides = [...t.sides].map(([id, v]) => ({ conv: byId.get(id)?.conv ?? "", at: byId.get(id)?.at ?? "", side: v.side, shape: v.shape, id })).filter((x) => x.conv && x.at);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify(sides, null, 1));
+    console.log(`書いた: 番ごとの印 ${sides.length}行（割れ ${sides.filter((x) => x.side === "split").length}・少数側 ${sides.filter((x) => x.side === "minority").length}・n 不足 ${sides.filter((x) => x.side === "n_short").length}）→ ${out}`);
+  }
   if (flag("write")) {
     const day = m.jstDay(Date.now());
     const w = await m.writeTree(db, day, def, t.nodes, ranked);

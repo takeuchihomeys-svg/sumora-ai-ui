@@ -1,6 +1,7 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const R = "core:conductor_aix_60d";
@@ -109,6 +110,30 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
 t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property_check_result"])
   && !ackPlusCheckPromiseOf("ありがとうございます", ["property_check_result"]) && !ackPlusCheckPromiseOf("ありがとうございます、何時ごろになりますか", ["property_check_result"])
   && !ackPlusCheckPromiseOf("ありがとうございます、土曜なら午後も動けます", ["property"]));
+
+// ── 11/23 #658 決めに行く番 ──
+{
+  t("決めに行く AIX: 申込の後押しと審査の相談の電話だけ（確定・申込書は入れない）", isClosingAix("application_push/push") && isClosingAix("application_push") && !isClosingAix("application_push/format") && !isClosingAix("application_push/confirm") && isClosingAix("phone_call", "審査って通りますか") && !isClosingAix("phone_call", "電話できますか"));
+  t("手打ちの決めに行く文", CLOSE_TEXT_RE.test("先にお申込みでお部屋を抑えて頂けますと安心です") && CLOSE_TEXT_RE.test("審査に出してみませんか") && !CLOSE_TEXT_RE.test("申込書をお送りします"));
+  t("見逃し・早すぎ", closingVerdictOf(true, false) === "missed" && closingVerdictOf(false, true) === "early" && closingVerdictOf(true, true) === "both");
+  t("統括の材料の欠け", JSON.stringify(graspGapsOf({ emo: "前向き", sig: null, timeline: "", prop: "A", concern: null, cp: "viewing", op: "x", intent: "decision" })) === JSON.stringify(["sig", "timeline", "concern"]));
+  const rows = [
+    { id: 1, takeuchiClose: true, brainClose: true, closeHow: "aix:application_push/push", brainAct: "application_push/push", level: "hot", gaps: [], verdict: "both" as const, applied14: true, conv: "a", at: "x", readiness: 60 },
+    { id: 2, takeuchiClose: true, brainClose: false, closeHow: "hand", brainAct: "auto_reply", level: "warm", gaps: ["sig"], verdict: "missed" as const, applied14: false, conv: "a", at: "x", readiness: 35 },
+    { id: 3, takeuchiClose: false, brainClose: true, closeHow: null, brainAct: "application_push", level: "cold", gaps: [], verdict: "early" as const, applied14: null, conv: "b", at: "x", readiness: 10 },
+  ];
+  const s = closingSummaryOf(rows);
+  t("決めに行く番の数え（主＝竹内さんが決めに行った番でブレインも）", s.closeRate === 50 && s.brainPrecision === 50 && s.missed === 1 && s.early === 1 && s.afterTakeuchiClose.applied === 1 && s.gapCount.sig === 1);
+  const ct = closingTurnsOf(rows, "closing"), ce = closingTurnsOf(rows, "closing_early");
+  t("決めに行く番の木の番", ct.length === 2 && ct[1].miss === "close_missed" && ct[1].cause === "material" && ce.length === 2 && ce[1].miss === "close_early" && ce[1].cause === "misread");
+}
+
+// ── 11/23 N2 の頼み: 葉の持ち主・統括に届いているか ──
+{
+  const D = "aix_turn:match_60d_device";
+  t("葉の持ち主の案", ownerOfLeaf(`${D}/kind=zenryoku_support/scene=question`, "作業員A").owner === "作業員N2" && ownerOfLeaf(`${D}/kind=property/scene=property_send`, "作業員A").owner === "作業員L" && ownerOfLeaf(`${D}/kind=meeting_place`, "作業員A").why === "根の持ち主");
+  t("統括に届いているか", leafReachOf(`${D}/kind=property/scene=ack`, []) === "未確認" && leafReachOf(`${D}/kind=property/scene=ack`, [`${R}/kind=property/scene=ack`], [R]) === "届いている" && leafReachOf(`${D}/kind=property/scene=ack`, [`${R}/kind=estimate_sheet`], [R]) === "届いていない");
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
