@@ -259,6 +259,11 @@ async function main() {
         mapQd.push(...mp.qd);
         ledger.push(...mp.holes.map((h) => ({ ...h, owner: currentOwnerOf(h.owner) })));
       }
+      // 2026-11-23 統括役の決め: 試験の学び（conductor_lessons）に地図の葉の印（leaf_keys）を毎晩付ける＝「統括に届いているか」の学びの道（LLM なし・止める EXAM_LEAF_LESSONS=off）
+      if (flag("write") && (process.env.EXAM_LEAF_LESSONS ?? "on").toLowerCase() !== "off") {
+        try { const o = runTsx(["scripts/exam-leaf.ts", "--lessons", "--write"], 180_000); lines.push(`- 学びの葉の印: ${o.trim().split("\n").pop() ?? ""}`); }
+        catch (e) { lines.push(`- 学びの葉の印: 止まった（${e instanceof Error ? e.message.slice(0, 80) : e}）`); }
+      }
     }
   }
 

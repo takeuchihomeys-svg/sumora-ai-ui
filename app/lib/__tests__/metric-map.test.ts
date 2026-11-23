@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -127,6 +127,27 @@ t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", 
   const ct = closingTurnsOf(rows, "closing"), ce = closingTurnsOf(rows, "closing_early");
   t("決めに行く番の木の番", ct.length === 2 && ct[1].miss === "close_missed" && ct[1].cause === "material" && ce.length === 2 && ce[1].miss === "close_early" && ce[1].cause === "misread");
 }
+
+// ── 11/23 N2 の頼み: 葉の持ち主・統括に届いているか ──
+{
+  const D = "aix_turn:match_60d_device";
+  t("葉の持ち主の案", ownerOfLeaf(`${D}/kind=zenryoku_support/scene=question`, "作業員A").owner === "作業員N2" && ownerOfLeaf(`${D}/kind=property/scene=property_send`, "作業員A").owner === "作業員L" && ownerOfLeaf(`${D}/kind=meeting_place`, "作業員A").why === "根の持ち主");
+  t("統括に届いているか", leafReachOf(`${D}/kind=property/scene=ack`, []) === "未確認" && leafReachOf(`${D}/kind=property/scene=ack`, [`${R}/kind=property/scene=ack`], [R]) === "届いている" && leafReachOf(`${D}/kind=property/scene=ack`, [`${R}/kind=estimate_sheet`], [R]) === "届いていない");
+}
+
+// ── 11/23 統括に届いているか（学び・材料の2つの道）・約束の地図 ──
+{
+  const D = "aix_turn:match_60d_device";
+  const lk = { cut: new Set(["read.staff_hand"]), off: new Set<string>(), at: "x" };
+  t("届いているか: 学びの道", conductorReachOf(`${D}/kind=property/scene=ack`, [`${R}/kind=property`], [R], lk).via === "学び");
+  t("届いているか: 材料の道（全部つながっていれば届いている・切れがあれば届いていない）", conductorReachOf(`${D}/kind=estimate_sheet/scene=cost`, [], [R], lk).via === "材料"
+    && conductorReachOf(`${D}/kind=property/scene=question`, [], [R], lk).reach === "届いていない" && conductorReachOf(`${D}/kind=property/scene=question`, [], [R], lk).cutRows.includes("read.staff_hand")
+    && conductorReachOf(`${D}/kind=meeting_place`, [], [R], null).reach === "未確認");
+  const pm = promiseMapTurnsOf({ root: "promise:kept_true", turns: [{ id: 1, kind: "pickup", scene: "ack", miss: "ok" }, { id: 2, kind: "check", scene: "question", miss: "overdue", cause: "judgment" }] });
+  t("約束の地図の番", pm.length === 2 && pm[0].cause === null && pm[1].miss === "overdue" && pm[1].cause === "judgment");
+}
+
+t("届いているか: 材料の行が測れなかった時は未確認", conductorReachOf("aix_turn:match_60d_device/kind=estimate_sheet", [], [], { cut: new Set(), off: new Set(), at: "x", unmeasured: new Set(["read.estimate_records"]) }).reach === "未確認");
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
