@@ -147,5 +147,7 @@ t("確認の約束×了承に少し足した: 5つを全部満たす時だけ", 
   t("約束の地図の番", pm.length === 2 && pm[0].cause === null && pm[1].miss === "overdue" && pm[1].cause === "judgment");
 }
 
+t("届いているか: 材料の行が測れなかった時は未確認", conductorReachOf("aix_turn:match_60d_device/kind=estimate_sheet", [], [], { cut: new Set(), off: new Set(), at: "x", unmeasured: new Set(["read.estimate_records"]) }).reach === "未確認");
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

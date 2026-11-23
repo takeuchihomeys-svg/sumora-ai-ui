@@ -364,9 +364,10 @@ export { MAP_ROOTS, rootOf, rankLeaves, sumMismatches, leavesOf, holesOf, covers
 /** 連携の地図の見張りの最新（cron_run_logs・cron_name=linkage-watch・ok の最新1行）。無ければ null */
 export async function loadLinkageStatus(sb: SupabaseClient): Promise<LinkageStatus | null> {
   const { data } = await sb.from("cron_run_logs").select("started_at,result_json").eq("cron_name", "linkage-watch").eq("ok", true).order("started_at", { ascending: false }).limit(1);
-  const r = (data?.[0] ?? null) as { started_at: string; result_json: { cut?: Array<{ id: string }>; off?: Array<{ id: string }> } | null } | null;
+  const r = (data?.[0] ?? null) as { started_at: string; result_json: { cut?: Array<{ id: string }>; off?: Array<{ id: string }>; unmeasured?: Array<{ id: string }> } | null } | null;
   if (!r?.result_json) return null;
-  return { cut: new Set((r.result_json.cut ?? []).map((x) => x.id)), off: new Set((r.result_json.off ?? []).map((x) => x.id)), at: r.started_at };
+  return { cut: new Set((r.result_json.cut ?? []).map((x) => x.id)), off: new Set((r.result_json.off ?? []).map((x) => x.id)), at: r.started_at,
+    unmeasured: r.result_json.unmeasured ? new Set(r.result_json.unmeasured.map((x) => x.id)) : undefined };
 }
 /** 統括の学びの葉の印（conductor_lessons.is_current の leaf_keys を全部） */
 export async function loadLessonLeafKeys(sb: SupabaseClient): Promise<string[]> {

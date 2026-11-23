@@ -700,7 +700,9 @@ export function materialRowsOfLeaf(key: string): string[] {
   return [...new Set(LEAF_MATERIAL_ROWS.filter((x) => key.includes(x.match)).flatMap((x) => x.rows))];
 }
 /** 連携の地図の見張りの最新（cron_run_logs の linkage-watch の result_json の cut＝切れている・空が多い・off＝親が off） */
-export type LinkageStatus = { cut: ReadonlySet<string>; off: ReadonlySet<string>; at: string | null };
+export type LinkageStatus = { cut: ReadonlySet<string>; off: ReadonlySet<string>; at: string | null;
+  /** 測れなかった行（作業員L ce4e79dc1 の result_json.unmeasured・古い記録には無い＝無い時は今まで通り） */
+  unmeasured?: ReadonlySet<string> };
 /**
  * 統括に届いているか（純関数）: ①学びの道＝今の統括の学びの葉の印が葉かその上下を指す ②材料の道＝葉の材料の行（LEAF_MATERIAL_ROWS）が連携の地図で全部つながっている（切れ・空が多い・親が off が1つも無い）。
  *   どちらかで届いていれば「届いている」。どちらの道も測れない（学びの印が無く・材料の行も見張りの結果も無い）なら「未確認」。ほかは「届いていない」（切れている行を返す）
@@ -711,8 +713,10 @@ export function conductorReachOf(holeKey: string, lessonLeafKeys: ReadonlyArray<
   const rows = materialRowsOfLeaf(holeKey);
   if (linkage && rows.length) {
     const cut = rows.filter((r) => linkage.cut.has(r) || linkage.off.has(r));
-    if (!cut.length) return { reach: "届いている", via: "材料", cutRows: [] };
-    return { reach: "届いていない", via: null, cutRows: cut };
+    if (cut.length) return { reach: "届いていない", via: null, cutRows: cut };
+    // 材料の行に測れなかった行があれば「届いている」と言えない＝未確認（作業員L の案）
+    if (rows.some((r) => linkage.unmeasured?.has(r))) return { reach: "未確認", via: null, cutRows: [] };
+    return { reach: "届いている", via: "材料", cutRows: [] };
   }
   return { reach: viaLesson === "届いていない" ? "届いていない" : "未確認", via: null, cutRows: [] };
 }
