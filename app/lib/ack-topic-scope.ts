@@ -53,9 +53,31 @@ export function twoStageStampAckEnabled(env: Record<string, string | undefined> 
   return (env.TWO_STAGE_STAMP_ACK ?? "").trim().toLowerCase() === "on";
 }
 export function isStampOnlyTurn(text: string | null | undefined): boolean { return /^(?:\s*\[スタンプ\]\s*)+$/.test(String(text ?? "")); } // 11/05: 旧は書き込みで \ が抜けた /^s*[スタンプ]s*$/（1文字の集合）＝スタンプに当たらず on でも 0/3 だった
-/** 2段の見分けのお礼・了承（スタンプも入れる時だけ広げる） */
+/**
+ * 2026-11-23 作業員L（台帳 #642・地図の葉「物件 › 物件を送る場面」の番 8438）: ピックアップの約束の直後のお客様の
+ *   「申し訳ございません。よろしくお願いいたします🥺」を、了承の語に「申し訳ございません」が無いので了承だけの番と読めず、
+ *   2段（pickup_unless_ack）が約束の言い直しの返信に戻していた（竹内さんは黙って 6.6時間後に物件の AIX）。
+ *   同じ形（物件を送る場面・物件の約束が開いている・お礼）の番 n=11 で竹内さんの物件の AIX 9/11。
+ *   → 2段の見分けだけ、謝りの言葉（申し訳ございません／申し訳ありません／すみません／すいません）を「よろしく・お願い・ありがとう」等の了承の語と
+ *     並ぶ時だけ了承に数える（謝りだけ・謝り＋質問は数えない）。isAckOnlyTurn そのもの（他でも使う）は変えない。
+ *   既定 off（入れる TWO_STAGE_APOLOGY_ACK=on）。60日の数え（約束の直後の謝り＋了承だけの番の竹内さんの一手）は夜に。
+ */
+export function twoStageApologyAckEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_APOLOGY_ACK ?? "").trim().toLowerCase() === "on";
+}
+const APOLOGY_TOKEN_RE = /^(?:(?:大変|本当に|ほんとに)?(?:申し訳(?:ございません|ありません|ないです|ない)(?:でした)?|すみません(?:でした)?|すいません(?:でした)?))$/;
+/** 謝り＋了承だけの番（謝りの語と了承の語だけで、了承の語が1つ以上ある） */
+export function isApologyAckTurn(text: string | null | undefined): boolean {
+  const s = String(text ?? "").normalize("NFKC").trim();
+  if (!s || [...s].length > 40) return false;
+  if (/[?？]/.test(s) || /[\[［【]/.test(s)) return false;
+  const tokens = s.split(ACK_SPLIT_RE).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 4) return false;
+  return tokens.some((t) => APOLOGY_TOKEN_RE.test(t)) && tokens.some((t) => ACK_TOKEN_RE.test(t)) && tokens.every((t) => APOLOGY_TOKEN_RE.test(t) || ACK_TOKEN_RE.test(t));
+}
+/** 2段の見分けのお礼・了承（スタンプ・謝り＋了承も入れる時だけ広げる） */
 export function isAckOnlyForTwoStage(text: string | null | undefined, env?: Record<string, string | undefined>): boolean {
-  return isAckOnlyTurn(text) || (twoStageStampAckEnabled(env) && isStampOnlyTurn(text));
+  return isAckOnlyTurn(text) || (twoStageStampAckEnabled(env) && isStampOnlyTurn(text)) || (twoStageApologyAckEnabled(env) && isApologyAckTurn(text));
 }
 
 /** こちらが「これからする事」の宣言（範囲の中にあれば話題はまだ開いている＝約束の受けの番） */

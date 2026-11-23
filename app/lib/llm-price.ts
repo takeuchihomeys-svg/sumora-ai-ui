@@ -74,6 +74,8 @@ export const ALT_PRICES: ReadonlyArray<{ re: RegExp; label: string; price: AltPr
   { re: /deepseek-v4-pro|deepseek-pro/, label: "DeepSeek pro", price: { in: 0.66, read: 0.022, out: 1.98, peakDouble: true } },
   { re: /deepseek/, label: "DeepSeek flash", price: { in: 0.15, read: 0.003, out: 0.6, peakDouble: true } },
   { re: /^jev:|jev-/, label: "Jev", price: { in: 0.042, read: 0.042, out: 0, peakDouble: false } },
+  // 2026-11-23 作業員L（統括役の頼み・統括の学びの埋め込みを llm_usage_logs に残し始めた・action=conductor_lesson_embed）: OpenAI 公式 $0.02/100万（入力だけ・出力なし）
+  { re: /^text-embedding-3-small$/, label: "OpenAI 埋め込み small", price: { in: 0.02, read: 0.02, out: 0, peakDouble: false } },
 ];
 
 /** DeepSeek・Jev のモデル名（llm_usage_logs.model）→ 単価。知らない名前は null */

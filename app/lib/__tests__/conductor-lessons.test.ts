@@ -44,3 +44,16 @@ assert.deepEqual(brainActCodes({ reply_mode: "auto_reply", two_stage: "pickup" }
 assert.deepEqual(brainActCodes({ reply_mode: "auto_reply" }), ["返信"]);
 assert.deepEqual(sameMissMark(["AIX:property_send", "AIX:物件"], got, "conditions"), ["cccccccc"]);
 console.log("conductor-lessons: ok");
+
+// 2026-11-23 作業員L（統括役の決め B・C）: shadow は待たない（本番だけ）・行が少ない間は読まない（本番 10・試験 1）
+import { lessonsShadowNoWait, lessonsMinRows, LESSONS_MIN_ROWS_PROD } from "../conductor-lessons";
+assert.equal(lessonsShadowNoWait({}), true);
+assert.equal(lessonsShadowNoWait({ CONDUCTOR_LESSONS_SHADOW_NOWAIT: "off" }), false);
+assert.equal(lessonsShadowNoWait({ LLM_TEST_MODE: "deepseek-all" }), false); // 試験は今まで通り待つ（前後の差を測る）
+assert.equal(lessonsShadowNoWait({ LLM_TEST_FINAL_CLAUDE: "1" }), false);
+assert.equal(lessonsMinRows({}), LESSONS_MIN_ROWS_PROD);
+assert.equal(LESSONS_MIN_ROWS_PROD, 10);
+assert.equal(lessonsMinRows({ LLM_TEST_MODE: "deepseek-all" }), 1);
+assert.equal(lessonsMinRows({ CONDUCTOR_LESSONS_MIN_ROWS: "3" }), 3);
+assert.equal(lessonsMinRows({ CONDUCTOR_LESSONS_MIN_ROWS: "0" }), 10);
+console.log("conductor-lessons B・C: ok");
