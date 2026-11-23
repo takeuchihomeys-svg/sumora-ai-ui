@@ -13,6 +13,10 @@ import type { KbScene } from "../app/lib/design-knowledge-rag";
 export type KbEvalQ = { q: string; gold: string[]; scene?: KbScene; ho?: boolean };
 
 export const KB_EVAL: KbEvalQ[] = [
+  // 2026-11-23 作業員A: 申込までの地図の今どこの読み違い（3907f365）・進みの数え方の落とし穴（54d1370e）・地図は道筋（2d1c4c74）
+  { q: "見積書を送った後なのに地図がまだ提案中になっているのをどう見つける", gold: ["3907f365"] },
+  { q: "内覧予定の駅がいつも止まった扱いで弱い駅に上がってくる", gold: ["54d1370e"] },
+  { q: "地図の次の一手を統括に渡したらブレインが竹内さんから離れないか", gold: ["2d1c4c74"], ho: true },
   // 2026-11-23 作業員A: 効く問題の当て確かめ（92413152）・物差しの最初の一手（f43a38b7）
   { q: "見張りで効くと見込んだ番を試験に足す前に何を確かめる", gold: ["92413152"] },
   { q: "スイッチを on にしても試験の答えが off と同じだった問題はなぜ", gold: ["92413152"], ho: true },
