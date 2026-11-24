@@ -341,6 +341,7 @@ import { isAckOnlyTurn, applySelfRepeatExit } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
+import { composePlanGate } from "@/app/lib/compose-plan-reuse"; // 2026-11-24 作業員A（COMPOSE_PLAN_REUSE・既定 off）
 import { composeBlueprintOn, composeDigestLine, composeDropsDuplicate, type ComposeDuplicateNote } from "@/app/lib/compose-blueprint";
 import { sceneSkillsOn, ruleBookNote } from "@/app/lib/scene-skills";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
@@ -4541,7 +4542,9 @@ async function handleGenerateReply(req: NextRequest) {
       : [];
     // 2026-11-12 作業員23: 手本の表 takeuchi_exemplars を読んでおく（TAKEUCHI_EXEMPLAR=on・設計図 on の時だけ・10分の取り置き・1.5秒で諦める・表が無ければ注記なし＝今と同じ）
     if (exemplarOn() && composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation) { try { await warmExemplarTable(supabase); } catch { /* 表が無くても今と同じ */ } }
-    const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && brainLocalFresh
+    // 2026-11-24 作業員A（COMPOSE_PLAN_REUSE・既定 off＝今と同じ・app/lib/compose-plan-reuse.ts）: 判断を使い回した番でも前の判断の meta から設計図を作る（LLM は呼ばない）
+    const composePlanGateNow = composePlanGate({ fresh: brainFreshForMessage, cached: isCachedMeta, hasMeta: !!brainMeta });
+    const composeSentencePlan = composeSentencePlanOn() && !isFollowUp && !isTemplateOptimize && !postApplyConversation && brainMeta && composePlanGateNow.ok
       ? (() => {
           try {
             const u = readTurnUnderstanding(brainMeta), s7 = readSevenFields(brainMeta, { nextIntent: composeRun?.intent.next ?? null });
@@ -5730,6 +5733,8 @@ ${note}` : "";
       void (async () => {
         try {
           const w = await import("@/app/lib/compose-plan-watch");
+          // 2026-11-24 作業員A: 使い回して作った番は印だけ残す（cached＝同じ番の取り置き・stale＝前の発言の判断）
+          if (w.watchComposePlanOn() && conversationId && composeSentencePlan && composePlanGateNow.reused) { noteWatchMaterials(conversationId, "reply", "compose_plan_reuse", { at: new Date().toISOString(), reused: composePlanGateNow.reused } as unknown as Record<string, unknown>); return; }
           if (!w.watchComposePlanOn() || !conversationId || composeSentencePlan) return;
           const reason = !composeSentencePlanOn() ? "off" : isFollowUp ? "follow_up" : isTemplateOptimize ? "template" : postApplyConversation ? "post_apply" : !brainMeta ? "no_meta" : isCachedMeta ? "cached_meta" : !brainFreshForMessage ? "not_fresh" : "other";
           noteWatchMaterials(conversationId, "reply", "compose_plan_skip", { at: new Date().toISOString(), reason, source: String((brainMeta as { source?: unknown } | null)?.source ?? ""), level: String((brainMeta as { enforcement_level?: unknown } | null)?.enforcement_level ?? "") } as unknown as Record<string, unknown>);
