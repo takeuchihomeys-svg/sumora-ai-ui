@@ -43,6 +43,8 @@ export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen" | "openai";
 //   本番（Vercel・NODE_ENV=production）では isTestModeAllowed が false＝何もしない。本番の振り分け（予算で切り替える）は別の段（#670 の続き）
 export const OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 export const OPENAI_DEFAULT_MODEL = "gpt-6.2-sol";
+/** ブレインの出力の主な欄（11/24 の試験で DeepSeek・Sol がほぼ全部の答案で返した欄）。試験だけの言い添え EXAM_BRAIN_JSON_KEYS=on で使う */
+export const BRAIN_OUTPUT_KEYS: readonly string[] = ["reply_mode", "action", "aix", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "turn_contract", "reason"];
 /** ブレインの名札か（brain・brain_*。名前で Claude に固定した部品 *_claude は外す） */
 export function isBrainRouteName(name: string | null | undefined): boolean {
   const n = String(name ?? "");
@@ -623,7 +625,11 @@ export function toOpenAIBody(
     /** 思考の切り方。deepseek（既定）= thinking:{type:"disabled"}／qwen（DashScope）= enable_thinking:false */
     thinkingStyle?: "deepseek" | "qwen";
     /** 2026-11-24 #670: OpenAI（max_completion_tokens・temperature を送らない・思考は reasoning_effort） */
-    openai?: { reasoningEffort?: string | null } } = {},
+    openai?: { reasoningEffort?: string | null;
+      /** 2026-11-24 #670: OpenAI の自動キャッシュの束ね（係ごと・prompt_cache_key） */
+      cacheKey?: string | null;
+      /** 2026-11-24 #670（試験だけ・EXAM_BRAIN_JSON_KEYS=on）: 出力の欄の言い添え＋JSON モード（Luna が action だけの JSON を返した） */
+      jsonKeys?: readonly string[] | null } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -654,6 +660,11 @@ export function toOpenAIBody(
     : opts.thinkingStyle === "qwen" ? { enable_thinking: thinking.type === "enabled" }
     : { thinking };
   if (opts.openai) {
+    const keys = opts.openai.jsonKeys?.length ? opts.openai.jsonKeys : null;
+    if (keys) {
+      const note = `\n\n【出力の形（必須）】JSON オブジェクトを1つだけ出す。次の欄を全部入れる（分からない欄も空の値で入れる・欄を省かない）: ${keys.join(", ")}`;
+      if (messages[0]?.role === "system") messages[0].content += note; else messages.unshift({ role: "system", content: note.trim() });
+    }
     // 思考（reasoning）の分も max_completion_tokens に入る＝Anthropic の max_tokens の2倍を上限にする（思考で本文が空にならないように）
     const maxOut = Math.max(typeof body.max_tokens === "number" ? body.max_tokens : 4096, 4096) * 2;
     return {
@@ -661,7 +672,8 @@ export function toOpenAIBody(
       messages,
       max_completion_tokens: maxOut,
       ...(opts.openai.reasoningEffort ? { reasoning_effort: opts.openai.reasoningEffort } : {}),
-      ...(schemaNote ? { response_format: { type: "json_object" } } : {}),
+      ...(schemaNote || keys ? { response_format: { type: "json_object" } } : {}),
+      ...(opts.openai.cacheKey ? { prompt_cache_key: opts.openai.cacheKey } : {}),
       ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
   }
@@ -688,6 +700,8 @@ export function toOpenAIBody(
  *   → 移さないと「全部が新規入力」として記録され、**キャッシュが効いているか確かめられない**。
  */
 export function fromOpenAIResponse(json: {
+  /** 2026-11-24 #670: 相手の応答の id（OpenAI の chatcmpl-…）。あればそのまま返す（切り替えが効いたかを答案ごとに確かめる） */
+  id?: string;
   choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
   usage?: {
     prompt_tokens?: number; completion_tokens?: number;
@@ -704,7 +718,7 @@ export function fromOpenAIResponse(json: {
   // DeepSeek は prompt_tokens = 一致 + 不一致。新規入力は「不一致」の方（無ければ prompt_tokens − 命中）
   const uncached = u?.prompt_cache_miss_tokens ?? Math.max(0, (u?.prompt_tokens ?? 0) - cacheHit);
   return {
-    id: `alt_${Date.now().toString(36)}`,
+    id: typeof json.id === "string" && json.id ? json.id : `alt_${Date.now().toString(36)}`,
     type: "message",
     role: "assistant",
     model,
@@ -967,6 +981,8 @@ async function callOpenAICompatible(
   onUsage?: (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }, errorType: string | null) => void,
   // 2026-10-15 DeepSeek の障害の予備（readBusyGuard）。省略時は今までどおり（全体 90秒・最初の1文字は待たない）
   guard: AltBusyGuard = readBusyGuard({ DEEPSEEK_FALLBACK_CLAUDE: "off" }),
+  /** 2026-11-24 #670: OpenAI の prompt_cache_key（係ごと）と試験の欄の言い添えに使う名札 */
+  routeName: string | null = null,
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
   const allowStream = cfg.provider === "deepseek" || cfg.provider === "openai"; // 2026-11-24 #670: OpenAI の SSE も同じ形（include_usage）
@@ -976,7 +992,11 @@ async function callOpenAICompatible(
   const payload = toOpenAIBody(body, cfg.model, {
     disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape || cfg.provider === "openai",
     thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
-    ...(cfg.provider === "openai" ? { openai: { reasoningEffort: (process.env.EXAM_BRAIN_REASONING ?? process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null } } : {}),
+    ...(cfg.provider === "openai" ? { openai: {
+      reasoningEffort: (process.env.EXAM_BRAIN_REASONING ?? process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
+      cacheKey: routeName ? `sumora-${routeName}` : null,
+      jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
+    } } : {}),
   });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
@@ -1295,7 +1315,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       const res = target.provider === "bedrock"
         ? await callBedrock(target, body)
         // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける（切れた時も errorType 付きで1行）
-        : await callOpenAICompatible(target, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType), guard);
+        : await callOpenAICompatible(target, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType), guard, routeName);
       if (!res) {
         // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
         if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);

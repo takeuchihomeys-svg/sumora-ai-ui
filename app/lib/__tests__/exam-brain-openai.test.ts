@@ -56,4 +56,16 @@ t("単価: 公式の表（入力/キャッシュ/出力）", () => {
   assert.equal(Math.round(altUsageUsd({ model: "gpt-6.2-sol", input_uncached: 500_000, cache_read: 500_000, output_tokens: 100_000 }) * 100) / 100, 2.05);
 });
 
+t("係ごとの prompt_cache_key・試験の欄の言い添え（JSON モード）", () => {
+  const body = { model: "claude-x", max_tokens: 3000, system: "あなたはブレイン", messages: [{ role: "user", content: "判断して" }] };
+  const p = toOpenAIBody(body as never, "gpt-6-luna", { openai: { cacheKey: "sumora-brain_fresh", jsonKeys: ["reply_mode", "action"] } })!;
+  assert.equal(p.prompt_cache_key, "sumora-brain_fresh");
+  assert.deepEqual(p.response_format, { type: "json_object" });
+  assert.match((p.messages as Array<{ content: string }>)[0].content, /reply_mode, action/);
+  const q = toOpenAIBody(body as never, "gpt-6-luna", { openai: {} })!;
+  assert.equal(q.prompt_cache_key, undefined);
+  assert.equal(q.response_format, undefined);
+  assert.equal((q.messages as Array<{ content: string }>)[0].content, "あなたはブレイン");
+});
+
 console.log(`exam-brain-openai: ${n} ok`);
