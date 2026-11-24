@@ -12,9 +12,10 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   const ops: unknown[] = [];
   for (let from = 0; from < 20000; from += 1000) {
-    const { data, error } = await sb.from("brain_decision_logs").select("digest->op").gte("created_at", new Date(Date.now() - days * 864e5).toISOString()).not("digest->op", "is", null).range(from, from + 999);
+    const { data, error } = await sb.from("brain_decision_logs").select("op:digest->op, odp:digest->odp").gte("created_at", new Date(Date.now() - days * 864e5).toISOString()).or("digest->odp.not.is.null,digest->op.not.is.null").range(from, from + 999);
     if (error) throw new Error(error.message);
-    ops.push(...((data ?? []) as Array<{ op: unknown }>).map((r) => r.op));
+    // 2026-11-25 作業員L: 鍵は odp（前の版は op＝返信の書き出しと同じ鍵・形が違う物は parse で外れる）
+    ops.push(...((data ?? []) as Array<{ op: unknown; odp: unknown }>).map((r) => r.odp ?? r.op));
     if ((data ?? []).length < 1000) break;
   }
   const s = overdueUseSummary(ops);

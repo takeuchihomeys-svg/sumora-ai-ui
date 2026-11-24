@@ -102,7 +102,9 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   // 2026-11-23 作業員N2（台帳 #566・連携の地図 next.ledger の分母）: 行動台帳の行の数（meta.action_ledger_counts＝action-ledger-digest の1語）を ld に。記録だけ・形の違う物は入れない
   if (parseActionLedgerDigest(meta.action_ledger_counts)) (out as Record<string, unknown>).ld = String(meta.action_ledger_counts).trim();
   // 2026-11-23 作業員L（台帳 #659）: 統括の材料に渡した期日超えの約束の数・種類・その番の一手が果たす一手か（op・記録だけ・止める OVERDUE_PROMISES_DIGEST=off）
-  if (overduePromisesDigestOn(env)) { const op = overduePromisesDigest(meta.overdue_promises); if (op) (out as Record<string, unknown>).op = op; }
+  // 2026-11-25 作業員L（#664 の④・統括に渡ったかの印）: 鍵を op → odp に。op は返信の書き出し（brain-layers.toFreshDigest の reply_opener）と同じ鍵で、
+  //   期日超えの約束のある番は書き出しの記録を上書きしていた（7日で 1番）。記録だけ・判断は変えない。読む側（parseOverduePromisesDigest）は odp と前の op の形の両方を読む
+  if (overduePromisesDigestOn(env)) { const odp = overduePromisesDigest(meta.overdue_promises); if (odp) (out as Record<string, unknown>).odp = odp; }
   return out;
 }
 

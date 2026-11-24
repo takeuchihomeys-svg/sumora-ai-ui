@@ -24,9 +24,9 @@ assert.equal(overduePromisesDigest({ n: 0, kinds: [] }), null);
 assert.deepEqual(parseOverduePromisesDigest("2|check+pickup|1"), rec);
 assert.equal(parseOverduePromisesDigest("bad"), null);
 // 判断の記録の digest に op が入る（止めると入らない）
-assert.equal((brainDecisionDigestExtra({ overdue_promises: { n: 1, kinds: ["pickup"], fulfil: false } }, {}) as Record<string, unknown>).op, "1|pickup|0");
-assert.equal((brainDecisionDigestExtra({ overdue_promises: { n: 1, kinds: ["pickup"], fulfil: false } }, { OVERDUE_PROMISES_DIGEST: "off" }) as Record<string, unknown>).op, undefined);
-assert.equal((brainDecisionDigestExtra({}, {}) as Record<string, unknown>).op, undefined);
+assert.equal((brainDecisionDigestExtra({ overdue_promises: { n: 1, kinds: ["pickup"], fulfil: false } }, {}) as Record<string, unknown>).odp, "1|pickup|0");
+assert.equal((brainDecisionDigestExtra({ overdue_promises: { n: 1, kinds: ["pickup"], fulfil: false } }, { OVERDUE_PROMISES_DIGEST: "off" }) as Record<string, unknown>).odp, undefined);
+assert.equal((brainDecisionDigestExtra({}, {}) as Record<string, unknown>).odp, undefined);
 // 次の番のブレインは読まない: brain-core が前の番の meta（prevMeta）・digest から overdue_promises・op を読む所が無い
 const core = readFileSync(join(__dirname, "../brain-core.ts"), "utf8");
 assert.equal(/prevMeta[^\n]{0,80}overdue_promises|digest[^\n]{0,40}\.op\b|\bop:\s*parseOverduePromisesDigest/.test(core), false);
@@ -42,3 +42,6 @@ import { overdueUseSummary } from "../conductor-overdue-promises";
   assert.equal(overdueUseSummary([]).useRate, null);
 }
 console.log("overdue-use-summary: ok");
+// 2026-11-25 作業員L: 返信の書き出し（op）を上書きしない
+{ const d = brainDecisionDigestExtra({ overdue_promises: { n: 1, kinds: ["pickup"], fulfil: false } }, {}) as Record<string, unknown>; assert.equal(d.op, undefined, "op は返信の書き出しの鍵"); }
+console.log("overdue odp: ok");
