@@ -75,6 +75,19 @@ export function promiseWideKindOf(clause: string): PromiseWideKind | null {
   if (/(?:ご内覧|内覧|ご案内)(?:の)?(?:お?時間|日程|日時)(?:を)?調整させて(?:頂|いただ)|時間調整させて(?:頂|いただ)/.test(t)) return "viewing_slot";
   return null;
 }
+// ─── 2026-11-25 作業員L（台帳 #664 の①・統括役の了承）: 「その他」の残り 142 の言い回しから、種類が決まる物だけ足す網（PROMISE_KIND_WIDE2・既定 off）───
+//   探す: 「（ご入居可能な・初期費用抑えられる）お部屋（も）お送りさせて頂きます」「お部屋…出次第／随時お送りさせて」（お送り 24 の大半）
+//   確認: 「最終確認をさせて頂きます」「募集状況確認 翌営業日に…させていただきます」（間に語が入る形）・「（礼金の）減額交渉をさせて頂きます」
+//   見積: 「（最大限割引して）御見積書をご用意いたします」
+//   足さない: 「初期費用を最大限割引させて頂きます」だけの節（竹内さん本人 60日 77回のうち 68% が通の締めの位置・72時間以内に見積の AIX は 19%＝決まり文句）・ご連絡・共有（果たした判定が無い種類）
+export const promiseKindWide2On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_KIND_WIDE2 ?? "").trim().toLowerCase() === "on";
+export function promiseWide2KindOf(clause: string): "pickup" | "check" | "estimate" | null {
+  const t = String(clause ?? "").normalize("NFKC");
+  if (/御?見積(?:書|もり|り)?(?:を)?ご用意(?:いた|致|させて)/.test(t)) return "estimate";
+  if (/(?:最終確認|募集状況確認|空室確認)(?:を)?[^。！!？?\n]{0,16}?させて(?:頂|いただ)き|減額交渉(?:を)?させて(?:頂|いただ)き/.test(t)) return "check";
+  if (/(?:お部屋|物件)(?:も|を)?[^。！!？?\n]{0,16}?(?:次第|随時)?[^。！!？?\n]{0,6}?お送り(?:させて|さ)(?:頂|いただ)/.test(t) && !/(?:写真|動画|見積|資料|書類|QR)/.test(t)) return "pickup";
+  return null;
+}
 export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
   const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
@@ -86,6 +99,7 @@ export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
   if (/(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
   if (/(?:(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)|管理会社(?:に|へ)(?:確認|交渉))させていただ(?:きます|き[、,]?[^。！!？?\n]*(?:次第|ご連絡|お送り|ご報告))/.test(t)) return "check";
   if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w === "pickup" || w === "check") return w; }
+  if (promiseKindWide2On(env)) { const w2 = promiseWide2KindOf(t); if (w2 === "pickup" || w2 === "check") return w2; }
   return null;
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
@@ -114,6 +128,7 @@ export function promiseKindNameOf(text: string, env?: Env): PromiseKindName | nu
   if (/内覧(?:の)?(?:候補日?|日程|ご日程|お日にち)(?:を)?(?:確認|お調べ|お送り)させて頂|ご案内(?:可能な)?(?:日時|お時間)(?:を)?確認させて頂/.test(t)) return "viewing_slot";
   if (/(?:折り返し|改めて)(?:お電話|ご連絡のお電話)させて頂|お電話させて頂/.test(t)) return "callback";
   if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w) return w; }
+  if (promiseKindWide2On(env)) { const w2 = promiseWide2KindOf(t); if (w2) return w2; }
   if (/させて頂きます/.test(t) && /(?:確認|お調べ|お送り|ご連絡)/.test(t)) return "other";
   return null;
 }
