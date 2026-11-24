@@ -20,6 +20,8 @@ export type SwitchReachDef = {
   partial?: string;
 };
 export const SWITCH_REACH: Record<string, SwitchReachDef> = {
+  // 2026-11-25 作業員A（#688）: AIX ごとの状態の札をブレインの材料に入れた番（AIX_STATE_CARD=on）＝material_marks.aix_state_card（字数）
+  AIX_STATE_CARD: { mark: "aix_state_card" },
   // 2026-11-24 作業員L（統括役の頼み・7晩でよく出たスイッチ）: 文書の要点（brain-core の focusDocDigestOn の段）は、主のお部屋の資料（property_pickups.image_lines）と
   //   こちらが送った資料の画像の読み取り（sent_image_properties・FOCUS_DOC_SENT_IMAGE）が材料。どちらも0行の番は「focus-doc-digest-empty」で何も足さない
   BRAIN_FOCUS_DOC_DIGEST: { needs: ["property_pickups", "sent_image_properties"] },

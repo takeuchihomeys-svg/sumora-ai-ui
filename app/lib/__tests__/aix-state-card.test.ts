@@ -31,7 +31,13 @@ const gaps = cardGaps([
   { key: "a", when: "束を送った直後（1時間以内）", lines: "資料にある時は返信" },
   { key: "b", when: "退去予定の部屋の内覧" },
 ]);
-ok("土台の欠け: 札の欄に当たらない条件の言葉だけ", gaps.map((g) => g.word).sort().join(",") === "資料にある,退去予定", gaps);
+ok("土台の欠け: 札の欄に当たらない条件の言葉だけ", gaps.map((g) => g.word).sort().join(",") === "資料にある", gaps);
 ok("札は既定 shadow（記録だけ）・=off で止まる", aixStateCardMode({}) === "shadow" && aixStateCardMode({ AIX_STATE_CARD: "off" }) === "off" && aixStateCardMode({ AIX_STATE_CARD: "on" }) === "on");
+// 11/25 土台の欠けを足した欄
+const c2 = buildAixStateCard({ messages: [], aixRows: [{ aix_type: "property_send", created_at: iso(120), prop_statuses: ["vacating", "available"] } as never], viewingHistory: [], lineTasks: [], pickups: [{ created_at: iso(200), status: "pending" }, { created_at: iso(30), status: "pending" }, { created_at: iso(10), status: "sent" }] }, now);
+ok("送れる候補の数・最後の束より後の候補", c2.candidates.pending === 2 && c2.candidates.newSinceBundle === 1, c2.candidates);
+ok("退去予定の部屋", c2.vacating.rooms === 1);
+ok("ピックアップを渡さない時は候補は null", card.candidates.pending === null);
+ok("欠けの表: 新着・退去予定は札の欄に当たる", cardGaps([{ key: "x", when: "前に送った後の新着", lines: "退去予定（入居中）の部屋" }]).length === 0);
 console.log(`aix-state-card: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

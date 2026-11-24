@@ -3309,6 +3309,19 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
   const briefOnNow = conductorBriefMode() !== "off";
   const briefInputs: import("@/app/lib/conductor-brief").BriefInputs = {};
+  let aixCardMarkLen = 0; // 札を材料に入れた番の字数（下の material_marks.aix_state_card）
+  // 2026-11-25 作業員A（台帳 #688・竹内さん「AIX の判断の部分は土台が必要なら追加して細分化して強化」）: AIX ごとの状態の札（決まった計算・app/lib/aix-state-card.ts）。
+  //   AIX_STATE_CARD: 既定 shadow＝指示書の extra.aix_state_card に記録だけ（ブレインの入力は1字も変えない）／on＝札の1行をブレインの材料（お客様の状態の塊の後ろ）にも入れる／off＝作らない。申込以降は作らない
+  try {
+    const asc = await import("@/app/lib/aix-state-card");
+    const ascMode = asc.aixStateCardMode();
+    if (ascMode !== "off" && !isPostApplyStatus(convStatus)) {
+      const { data: pk } = await supabase.from("property_pickups").select("created_at, status").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(60);
+      const card = asc.buildAixStateCard({ pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+      if (briefOnNow) briefInputs.aixStateCard = card;
+      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   if (briefOnNow) {
     try {
       const el = await import("@/app/lib/exchange-ledger");
@@ -3629,6 +3642,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen; // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
@@ -4437,14 +4451,6 @@ ${history}`;
         seeMore: seeMoreBrainText, applyRoute: applyRouteText, applyReadiness: applyReadinessText, appealTiming: appealTimingText,
       }, { split: ["customerState"], marks: materialMarks }).map((x) => ({ ...x, g: maskBrain(x.g) }));
     } catch (e) { console.warn(JSON.stringify({ tag: "conductor:material-index-failed", error: e instanceof Error ? e.message : String(e) })); }
-  }
-  // 2026-11-25 作業員A（台帳 #688・竹内さん「AIX の判断の部分は土台が必要なら追加して細分化して強化」）: AIX ごとの状態の札（決まった計算）。
-  //   既定 shadow＝指示書の extra.aix_state_card に記録だけ（ブレインの入力は1字も変えない）。=off で作らない。申込以降は作らない
-  if (briefOnNow && !isPostApplyStatus(convStatus)) {
-    try {
-      const asc = await import("@/app/lib/aix-state-card");
-      if (asc.aixStateCardMode() !== "off") briefInputs.aixStateCard = asc.buildAixStateCard({ messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
-    } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
