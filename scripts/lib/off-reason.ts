@@ -137,6 +137,16 @@ export function jointOf(v: OffVerdict, ctx: JointCtx): JointVerdict {
       }
       if (r.stage === "conductor") return out(4, `統括の部品（${file.split("/").pop()}）`, `${r.key}（統括の判断の部品そのものが既定 off）`);
       if (STAGE_JOINT[r.stage]) return out(STAGE_JOINT[r.stage], `${r.stage} の部品（${file.split("/").pop()}）`, `${r.key}（統括より後の段で off）`);
+      // #675 の続き（11/24 夕）: 読む所から読む側を足した行（autoReadersOf・why は r.next）
+      const why = r.next.startsWith("読む側: ") ? r.next.slice(5) : "";
+      if (why) {
+        if (r.readers.some((x) => x.startsWith("conductor."))) return out(4, "統括は読む（既定で動く）・判断に使うかは試験で", `${r.key}: ${why}`);
+        if (r.readers.includes("read.brain")) return out(3, "統括の読む所なし（読む側 read.brain）", `${r.key}: ${why}（統括は判断の結果を通してだけ読む）`);
+        if (/欄 meta\./.test(why)) return out(3, "統括の読む所なし（ブレインの欄を統括が読まない）", `${r.key}: ${why}`);
+        const dj = r.readers.find((x) => x.startsWith("direct."));
+        if (dj) return out(3, `統括の読む所なし（統括を通らず ${JOINT_JA[Number(dj.slice(7)) as Joint]} が直に読む）`, `${r.key}: ${why}`);
+        return out(2, "読む側が無い", `${r.key}: ${why}`);
+      }
       return out(null, "未確認", `${r.key}: ブレインの材料の部品だが、統括が読むかは地図に無い（読む側が分からない）`);
     }
     if (mine && (r.stage === "in" || r.stage === "read")) {
@@ -157,7 +167,8 @@ export function jointOf(v: OffVerdict, ctx: JointCtx): JointVerdict {
         const offSw = cr?.switches.find((s) => ctx.defaults.get(s) === "off");
         if (cr && offSw) return out(3, `統括の ${c}（${offSw} が既定 off）`, `${at(p)} の読む側 ${c}（${at(c)}）の作る側 ${offSw} がコードの既定 off`);
       }
-      return out(null, "未確認", `${at(p)}: 統括の読む側（${cond.join("・")}）は既定で動く・④以降の確かめが無い`);
+      // #675 の続き（11/24 夕）: 統括の読む側が既定で動く＝③までは届く。止まりは④（判断に使うか）として数える（使うかは試験で）
+      return out(4, "統括は読む（既定で動く）・判断に使うかは試験で", `${at(p)}: 統括の読む側（${cond.join("・")}）は既定で動く・④の確かめは試験で`);
     }
     if (mine && r.stage === "conductor") return /既定 shadow/.test(v.why + (v.title ?? "")) ? out(4, "記録だけ（shadow）の統括の部品・on の判断待ち", `${at(p)}（題に「既定 shadow」）`) : out(4, `統括の部品 ${r.id}`, `${at(p)}（統括の判断の部品そのものが既定 off）`);
     if (mine && STAGE_JOINT[r.stage]) return out(STAGE_JOINT[r.stage], `${r.stage} の部品 ${r.id}`, `${at(p)}（統括より後の段で off）`);
@@ -219,4 +230,84 @@ export function chainPlaceOf(path: string): Joint | null {
   if (/conductor-|compose-/.test(p)) return 4;
   if (/brain-|situation|customer-state|turn-read|latent|exchange-ledger|promise-/.test(p)) return 1;
   return null;
+}
+
+// ── #675 の続き（2026-11-24 夕 作業員A・統括役の頼み）: 地図の外のブレインの材料の行に「統括が読むか」を足す（読むだけ・動きは変えない）──
+export type CodeFile = { path: string; text: string };
+export type AutoReaders = { readers: string[]; why: string };
+const isConductorFile = (p: string) => /\/conductor-[\w-]+\.ts$/.test(p);
+const condId = (p: string) => `conductor.${p.split("/").pop()!.replace(/^conductor-|\.ts$/g, "")}`;
+/**
+ * スイッチを読む所（file:line）から読む側を決める（証拠つき・決められない時は readers 空）。
+ *  1) 読む行か上の2行が meta の欄（`key:`）→ 統括の部品（conductor-*.ts）がその欄の名を読むか
+ *  2) 入口の関数（上の5行の export function／const）を呼ぶ所 → conductor-*.ts が呼ぶ＝統括が直に読む・brain-core が呼ぶ＝ブレインの入力
+ *  3) brain-core.ts の中の決まり（欄でない）→ ブレインの入力（read.brain）
+ */
+export function autoReadersOf(file: string, line: number, files: readonly CodeFile[]): AutoReaders {
+  const fl = files.find((x) => x.path === file);
+  if (!fl) return { readers: [], why: "ファイルが読めない" };
+  const ls = fl.text.split(/\r?\n/);
+  const conds = files.filter((x) => isConductorFile(x.path));
+  for (let j = line - 1; j >= Math.max(0, line - 3); j--) {
+    const m = ls[j]?.match(/^\s*([a-z][a-z0-9]*(?:_[a-z0-9]+)+):\s/);
+    if (!m) continue;
+    const key = m[1], re = new RegExp(`\\b${key}\\b`);
+    const hits = conds.map((c) => ({ c, k: c.text.split(/\r?\n/).findIndex((l) => re.test(l)) })).filter((h) => h.k >= 0);
+    if (hits.length) return { readers: hits.map((h) => condId(h.c.path)), why: `欄 meta.${key}（${file}:${j + 1}）を統括が読む: ${hits.map((h) => `${h.c.path}:${h.k + 1}`).join("・")}` };
+    return { readers: [], why: `欄 meta.${key}（${file}:${j + 1}）を読む統括の部品が無い（conductor-*.ts に名が0か所）` };
+  }
+  if (/brain-core\.ts$/.test(file)) return { readers: ["read.brain"], why: `brain-core の中の決まり（${file}:${line}・欄でない）＝ブレインの入力` };
+  return gateReaders(file, line, files, 5);
+}
+const GATE_RE = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^export\s+const\s+(\w+)/;
+const EXPORT_RE = /export\s+(?:async\s+)?(?:function|const)\s+(\w+)/;
+/** 読む行を囲む入口の関数（上へ 120 行までの一番近い export）→ 呼ぶ所。外から呼ばれなければ同じファイルの中で呼ぶ所の入口へ（depth 段まで） */
+function gateReaders(file: string, line: number, files: readonly CodeFile[], depth: number, seen = new Set<string>()): AutoReaders {
+  const fl = files.find((x) => x.path === file);
+  if (!fl) return { readers: [], why: "ファイルが読めない" };
+  const ls = fl.text.split(/\r?\n/);
+  let gate: string | null = null;
+  for (let j = line - 1; j >= Math.max(0, line - 120) && !gate; j--) { const m = ls[j]?.match(GATE_RE); if (m) gate = m[1] ?? m[2]; }
+  if (!gate) return { readers: [], why: `入口の関数が見つからない（${file}:${line}）` };
+  if (seen.has(`${file}#${gate}`)) return { readers: [], why: `入口 ${gate} がめぐる` };
+  seen.add(`${file}#${gate}`);
+  const gre = new RegExp(`\\b${gate}\\(`);
+  const callers = files
+    .filter((f) => f.path !== file && !/__tests__|(^|\/)scripts\//.test(f.path))
+    .map((f) => ({ f, k: f.text.split(/\r?\n/).findIndex((l) => gre.test(l) && !EXPORT_RE.test(l)) }))
+    .filter((h) => h.k >= 0);
+  const c = callers.filter((h) => isConductorFile(h.f.path));
+  if (c.length) return { readers: c.map((h) => condId(h.f.path)), why: `入口 ${gate} を統括の部品が呼ぶ: ${c.map((h) => `${h.f.path}:${h.k + 1}`).join("・")}` };
+  const b = callers.find((h) => /brain-core\.ts$/.test(h.f.path));
+  if (b) return { readers: ["read.brain"], why: `入口 ${gate} を brain-core が呼ぶ（${b.f.path}:${b.k + 1}）＝ブレインの入力` };
+  if (callers.length) {
+    // 外の呼ぶ所が統括でもブレインでもない: その呼ぶ所の場所（書き手・物差し等）を読む側にする（統括を通らない）
+    const pl = callers.map((h) => ({ h, j: chainPlaceOf(h.f.path) })).find((x) => x.j);
+    if (pl) return { readers: [`direct.${pl.j}`], why: `入口 ${gate} を ${pl.h.f.path}:${pl.h.k + 1} が直に呼ぶ（${JOINT_JA[pl.j!]}・統括を通らない）` };
+    if (depth > 1) for (const h of callers.slice(0, 4)) { const r = gateReaders(h.f.path, h.k + 1, files, depth - 1, seen); if (r.readers.length) return { readers: r.readers, why: `入口 ${gate} → ${h.f.path}:${h.k + 1} → ${r.why}` }; }
+    return { readers: [], why: `入口 ${gate} を呼ぶのは ${callers.slice(0, 3).map((h) => `${h.f.path}:${h.k + 1}`).join("・")}（統括の部品でもブレインでもない）` };
+  }
+  // 同じファイルの中で呼ぶ所 → その入口へ
+  const own = new RegExp(`(?:function|const)\s+${gate}\b`);
+  const inner = ls.findIndex((l, k) => k !== line - 1 && gre.test(l) && !own.test(l));
+  if (inner >= 0 && depth > 1) { const r = gateReaders(file, inner + 1, files, depth - 1, seen); return { readers: r.readers, why: `入口 ${gate} は同じファイルの ${file}:${inner + 1} から → ${r.why}` }; }
+  return { readers: [], why: `入口 ${gate} を呼ぶ所が無い` };
+}
+
+/** スイッチの無い行（コードの直し・物差しの穴）の鎖の場所を題の言葉で分ける（証拠＝当たった言葉・決められない物は null） */
+const TITLE_PLACE: Array<[Joint, RegExp]> = [
+  [8, /物差し|本番の数字|quality_daily|分母|監査|試験で確かめられない|数え方/],
+  [7, /記録に残らない|行動台帳|送った物の記録/],
+  [4, /統括|重点/],
+  [5, /返信で|下書き|AIX の文|2通目|次の返信|文と締め|ピックアップに/],
+  [1, /画像|写真|築年|時系列|約束|材料|把握|読み/],
+];
+export function titlePlaceOf(title: string): { place: Joint | null; word: string } {
+  for (const [j, re] of TITLE_PLACE) { const m = title.match(re); if (m) return { place: j, word: m[0] }; }
+  return { place: null, word: "" };
+}
+/** 読み込む所（import）の場所の多数（同数は鎖の前の方）。importers は読み込むファイルの場所の並び */
+export function majorityPlace(places: ReadonlyArray<Joint | null>): Joint | null {
+  const c = new Map<Joint, number>(); for (const p of places) if (p) c.set(p, (c.get(p) ?? 0) + 1);
+  return [...c.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? null;
 }
