@@ -80,6 +80,7 @@ import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./li
 import { syncExamWorktree } from "./lib/exam-worktree-sync";
 import { preflightReachOf, preflightLines, readPriorLedger, preflightGate, preflightGateMode } from "./lib/exam-preflight-reach";
 import { examNarrowOn, narrowProblems, baseMajorityOf } from "./lib/exam-narrow";
+import { roomOf, roomGateMode, ROOM_MIN_OK } from "./lib/exam-room";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -484,6 +485,18 @@ async function addJob(): Promise<void> {
             job.only = ids.join(",");
             log(`  問題の絞り: ${nr.drop.length}問を外した（材料0・off で当たり）・残り ${ids.length}問（--no-narrow で外さない）`);
           } else log(`  問題の絞り: しない（${nr.reason}）`);
+        }
+        // 2026-11-25 作業員L（台帳 #684・統括役の了承の設計）: 本番の照らし（直近14日）で、このスイッチが効く番に食い違い（余地）があるか。
+        //   EXAM_ROOM_GATE=warn（既定・記録だけ）／on（余地0なら積まない）／off。--force で越える
+        const roomMode = roomGateMode();
+        if (roomMode !== "off" && onSw.length) {
+          const { readRoomTurns } = await import("./lib/exam-room-db");
+          // 表は1本（exam-reach-rows の rowOf＝exam-select と同じ行・統括役の決め）
+          const { rowOfWith, tableOf } = await import("./lib/exam-reach-rows");
+          const rr = roomOf({ onSwitches: onSw, table: tableOf(onSw, rowOfWith({ cacheRoot: examCacheRoot() })), turns: await readRoomTurns(db() as never, new Date(Date.now() - 14 * 86_400_000).toISOString()) });
+          if (rr.decision === "unknown") log(`  （#684）本番の余地: 決めない（${rr.why}）`);
+          else if (rr.decision === "block" && roomMode === "on" && !flag("force")) { log(`  （#684）積まない: ${label}（${rr.why}）`); throw new Error(`積まない（#684）: 本番の直近14日で、このスイッチが効く番に食い違いが無い（${rr.why}）＝試験で良くなる余地が無い。--force で積む`); }
+          else log(`  （#684）本番の余地: ${rr.why}${rr.decision === "block" ? "・余地0（on なら止める）" : rr.decision === "defer" ? `・余地が小さい（${ROOM_MIN_OK} 未満）` : ""}（EXAM_ROOM_GATE=${roomMode}）`);
         }
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
     }

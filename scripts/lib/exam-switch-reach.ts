@@ -18,7 +18,14 @@ export type SwitchReachDef = {
   metaKey?: string;
   /** 印は同じ材料の1行の有無まで（細かい行の有無は見えない） */
   partial?: string;
+  /**
+   * 2026-11-25 作業員L（台帳 #684・統括役の決め「表は1本に」）: そのスイッチが直す番（本番の照らしの余地を数える所）。コードの条件で決まる物だけ・推して埋めない。
+   *   turn＝お客様の番の文で決まる（下の TURN_TESTS の名前・app/lib の同じ関数で判定）／scene＝照らしの場面（line_watch_turns.scene_key）のどれか
+   */
+  fixes?: { turn?: TurnTestId; scene?: readonly string[] };
 };
+/** 番の文の判定の名前（scripts/lib/exam-room.ts が app/lib/decisions-1103 の関数で判定する） */
+export type TurnTestId = "closed_thanks" | "layout_ask" | "far_other";
 export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   // 2026-11-25 作業員A（#688）: AIX ごとの状態の札をブレインの材料に入れた番（AIX_STATE_CARD=on）＝material_marks.aix_state_card（字数）
   AIX_STATE_CARD: { mark: "aix_state_card" },
@@ -44,9 +51,10 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   ACK_FORM_COUNT_WITH_AIX: { mark: "ack_confirm", partial: "了承の材料の行が出た番まで（数の1行の有無は見えない）" },
   // 2026-11-23 作業員A（統括役の頼み・N2 の数え: 昨夜 $3.82 のうち $3.42 が「効いたか分からない」回）: 今夜流すスイッチに記録だけの印（off では付かない・on でも動きは変えない）
   BRAIN_RULE6_OPEN_PROMISE: { mark: "rule6_open", markSince: "5351dc589", partial: "差し替えた⑥が指示文に入ったか（全問に同じ文＝効き目は答えの比べ）" },
-  BRAIN_CLOSED_THANKS_NO_REPLY: { mark: "d1103_n15", markSince: "5351dc589" },
-  BRAIN_LAYOUT_ASK_TEMPORARY: { mark: "d1103_n17", markSince: "5351dc589" },
-  BRAIN_FAR_OTHER_FIRST: { mark: "d1103_n19", markSince: "5351dc589" },
+  // fixes（2026-11-25 作業員L・#684）: decisions-1103 の closedThanksLine・layoutAskLine・farOtherFirstLine が1行を出す番だけ＝その番の文で決まる
+  BRAIN_CLOSED_THANKS_NO_REPLY: { mark: "d1103_n15", markSince: "5351dc589", fixes: { turn: "closed_thanks" } },
+  BRAIN_LAYOUT_ASK_TEMPORARY: { mark: "d1103_n17", markSince: "5351dc589", fixes: { turn: "layout_ask" } },
+  BRAIN_FAR_OTHER_FIRST: { mark: "d1103_n19", markSince: "5351dc589", fixes: { turn: "far_other" } },
   BRAIN_FULFIL_TURN: { mark: "fulfil_turn", markSince: "5351dc589" },
   BRAIN_MESSAGE_PLAN: { metaKey: "message_plan" },
   OUR_PARTS_PROMISE_WIDE: { mark: "our_parts_wide", markSince: "5351dc589", partial: "交渉する・電話する の項目が状況の our_items に入った番まで" },
@@ -62,6 +70,17 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   CONDUCTOR_EXCHANGE_LEDGER_BRAIN: { mark: "exchange", markSince: "474e7fe63" },
   DELIVERY_CHECK: { metaKey: "delivery_check" },
 };
+
+/**
+ * 2026-11-25 作業員L（統括役の決め・#683 と #684 の表を1本に）: 1つのスイッチの行を引く入口。
+ *   needs・mark・metaKey・fixes は上の表（コードで決まる物）。learned は作業員A の「前の on の回から覚えた問題」（exam-learned-reach）で、
+ *   置き場（A が決める）から読むまでは空で返す（＝覚えが無い＝絞らない）。
+ */
+export type ReachRowOf = SwitchReachDef & { sw: string; inTable: boolean; learned: ReadonlyMap<string, "none" | "hit" | "unknown"> };
+export function reachRowOf(sw: string, o: { table?: Record<string, SwitchReachDef>; learned?: (sw: string) => ReadonlyMap<string, "none" | "hit" | "unknown"> | null } = {}): ReachRowOf {
+  const def = (o.table ?? SWITCH_REACH)[sw];
+  return { ...(def ?? {}), sw, inTable: !!def, learned: o.learned?.(sw) ?? new Map() };
+}
 
 export type ReachRow = { id: string; marks?: Record<string, number> | null; ledger?: Record<string, number> | null; /** 結果の brain（meta）に値のある欄の名前 */ metaKeys?: readonly string[] | null };
 export type ReachStatus = "reached" | "not_reached" | "no_material" | "mark_after_head" | "prompt_all" | "unknown";
