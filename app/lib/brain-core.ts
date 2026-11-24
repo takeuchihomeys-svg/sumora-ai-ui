@@ -81,6 +81,7 @@ import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { checkOrderMode } from "@/app/lib/check-order";
 import { conductorBriefMode } from "@/app/lib/conductor-brief";
+import { conductorMaterialIndexOn, buildMaterialIndex } from "@/app/lib/conductor-material-index";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
@@ -1843,6 +1844,10 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
+      // 2026-11-24 作業員A（#675）: 材料の目録は指示書の extra.materials だけに置く（入力の写しに二重に残さない）
+      { const bi = mm.conductor_brief_inputs as Record<string, unknown> | undefined; if (bi && "materials" in bi) delete bi.materials; if (bi && "aixStateCard" in bi) delete bi.aixStateCard; }
+      // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 指示書に地図の欄（ROUTE_TO_BRIEF=on の時だけ）が入った番の印
+      if ((brief as { route?: unknown }).route) mm.material_marks = { ...((mm.material_marks as Record<string, number> | undefined) ?? {}), route_brief: 1 };
       if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
       else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
@@ -3304,6 +3309,19 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-12 作業員22: 統括の指示書（CONDUCTOR_BRIEF=shadow・既定 off）の入力。照らし合わせの残りと果たし済みの約束を集める（プロンプトには入れない・記録だけ）
   const briefOnNow = conductorBriefMode() !== "off";
   const briefInputs: import("@/app/lib/conductor-brief").BriefInputs = {};
+  let aixCardMarkLen = 0; // 札を材料に入れた番の字数（下の material_marks.aix_state_card）
+  // 2026-11-25 作業員A（台帳 #688・竹内さん「AIX の判断の部分は土台が必要なら追加して細分化して強化」）: AIX ごとの状態の札（決まった計算・app/lib/aix-state-card.ts）。
+  //   AIX_STATE_CARD: 既定 shadow＝指示書の extra.aix_state_card に記録だけ（ブレインの入力は1字も変えない）／on＝札の1行をブレインの材料（お客様の状態の塊の後ろ）にも入れる／off＝作らない。申込以降は作らない
+  try {
+    const asc = await import("@/app/lib/aix-state-card");
+    const ascMode = asc.aixStateCardMode();
+    if (ascMode !== "off" && !isPostApplyStatus(convStatus)) {
+      const { data: pk } = await supabase.from("property_pickups").select("created_at, status").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(60);
+      const card = asc.buildAixStateCard({ pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+      if (briefOnNow) briefInputs.aixStateCard = card;
+      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; }
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   if (briefOnNow) {
     try {
       const el = await import("@/app/lib/exchange-ledger");
@@ -3624,6 +3642,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen; // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
@@ -4284,7 +4303,10 @@ ${sh}`;
         viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
+      // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 道筋の言い方の1行（APPLY_ROUTE_PATH_LINE）・駅の中の状態（APPLY_ROUTE_SUBSTATE）が材料に入った番
+      { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
+      { const sub = applyRouteText.length - ar.text.length; if (sub > 0) materialMarks.route_substate = sub; }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
@@ -4416,6 +4438,20 @@ ${history}`;
   const maskNames = [opts?.customerName, ...knownNamesForMask, ...knownCallNamesForMask, ...partyAliasesForMask.filter((s) => s.length >= 3)];
   const partyShortNames = brainRoutesAlt ? [opts?.customerName, ...partyAliasesForMask] : [];
   const maskBrain = (s: string) => maskPII(maskHonorificNames(s, partyShortNames), maskNames);
+  // 2026-11-24 作業員A（#675・統括役の決め・CONDUCTOR_MATERIAL_INDEX 既定 on＝記録だけ・=off で止まる・指示書を作る番だけ）: 材料の目録。
+  //   上の見張り（brain:blocks）と同じ名前で、この番のブレインの入力に有った材料の名前・字数・要点（24字・名前は伏せる）を指示書の入力に。LLM の入力は1字も変えない
+  if (briefOnNow && conductorMaterialIndexOn() && !isPostApplyStatus(convStatus)) { // 申込以降は対象外（目録も抜けの印も作らない）
+    try {
+      briefInputs.materials = buildMaterialIndex({
+        prevMeta: prevMetaText, status: statusText, timing: timingText, flags: flagsText, aixHistory: aixHistoryText, ledger: ledgerText,
+        sceneEvidence: sceneEvidenceText, judgeExamples: judgeExamplesText, routeType: routeTypeText, cond: condText, profile: profileText,
+        aiSummary: aiSummaryNote, scheduled: scheduledText, tasks: tasksText, viewings: viewingsText, checkpoint: checkpointText,
+        ragKnowledge: ragKnowledgeText, sentProps: sentPropsText, propertySearch: propertySearchText, customerState: customerStateBlockText,
+        parallelSearch: parallelSearchBrainText, companyFacts: companyFactsText, sendReplyTiming: sendReplyTimingText, promise: promiseBrainText,
+        seeMore: seeMoreBrainText, applyRoute: applyRouteText, applyReadiness: applyReadinessText, appealTiming: appealTimingText,
+      }, { split: ["customerState"], marks: materialMarks }).map((x) => ({ ...x, g: maskBrain(x.g) }));
+    } catch (e) { console.warn(JSON.stringify({ tag: "conductor:material-index-failed", error: e instanceof Error ? e.message : String(e) })); }
+  }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({

@@ -202,6 +202,34 @@ async function main() {
       const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
       for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（統括役の決め・新しい cron は作らない）: 今どこの読み違い（判断の駅×その後の一手・7日・軽い読み）をここで数えて quality_daily に（--write の時だけ書く）
+    try { const { runMisreadMove } = await import("./audit-route-misread-move"); await runMisreadMove({ sb: sb as never, days: 7, write: process.argv.includes("--write"), quiet: true }); } catch (e) { lines.push(`- 今どこの読み違いの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-25 作業員A（台帳 #687・竹内さん「今どこかちゃんと把握して申込に向かって進んでいるのか・地図を細分化して強化」）: 駅ごとの物差しと一番弱い駅（軽い読み・
+    //   数は夜の scripts/audit-route-station-daily.ts --write が quality_daily に書いた最新の日の物＝ここは読むだけ）
+    try {
+      const { data: wq } = await sb.from("quality_daily").select("day,metric,value,n,source").like("metric", "route:weak_station:%").order("day", { ascending: false }).limit(9);
+      const w = ((wq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; source: string | null }>);
+      const d0 = w[0]?.day; const top = w.filter((x) => x.day === d0).sort((a, b) => a.metric.localeCompare(b.metric));
+      if (top.length) lines.push(`- 一番弱い駅（${d0}・竹内さん本人の番）: ${top.map((x) => `${x.metric.slice(-1)}. ${String(x.source ?? "").split("・").pop()}（弱さ ${x.value}・番 ${x.n}）`).join("　")}（#687・細分化は audit-route-station-daily）`);
+    } catch (e) { lines.push(`- 一番弱い駅: 読めない（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-25 作業員A（台帳 #688・竹内さん「なんで AIX の一致がこんなに弱いのか」・統括役の頼み）: スタッフが AIX を押した番でブレインが外した番を組ごとに（30日）。
+    //   ④ スタッフだけが知る番（ブレインが知りようのない番）は弱さの数から外して別に数える。quality_daily は --write の時だけ（aix_miss:*_30d）
+    try {
+      const { runAixMissCauses } = await import("./audit-aix-miss-causes");
+      const ms = await runAixMissCauses({ days: 30, write: process.argv.includes("--write"), quiet: true });
+      const g = (k: string) => ms.find((m) => m.metric === k);
+      const pairs = ms.filter((m) => m.metric.startsWith("aix_miss:pair:")).slice(0, 4).map((m) => `${m.metric.slice(14)} ${m.value}`).join("・");
+      const rva = ms.filter((m) => m.metric.startsWith("aix_miss:reply_vs_aix:")).slice(0, 3).map((m) => `${m.metric.slice(22)} ${m.value}`).join("・");
+      lines.push(`- AIX の外れ（30日・スタッフが押した番）: 弱さ ${g("aix_miss:weak_rate")?.value ?? "—"}%（${g("aix_miss:weak_rate")?.n ?? 0}番・④ スタッフだけが知る ${g("aix_miss:staff_only")?.value ?? 0}番は外す）・種類違いの組 ${pairs || "—"}・返信と取り違え ${rva || "—"}（#688・n≥10 の組だけ直しの候補）`);
+    } catch (e) { lines.push(`- AIX の外れの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（台帳 #608・統括役の頼み）: ブレインは地図をどこまで使えているか（地図の根2つ・今どこの読み違い・組の本当の一致の、最新の数と前の日からの変わり・軽い読み）
+    try {
+      const ms = ["map:route:progress_60d:value", "map:route:next_match_60d:value", "route:station_misread_move", "growth:combo:本当の一致"];
+      const { data: q } = await sb.from("quality_daily").select("day,metric,value,n").in("metric", ms).order("day", { ascending: false }).limit(60);
+      const rq = (q ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>;
+      const pick = (m: string) => { const r = rq.filter((x) => x.metric === m); const a = r[0], b = r[1]; if (!a) return `—`; const d = a.value != null && b?.value != null ? Math.round((a.value - b.value) * 10) / 10 : null; return `${a.value ?? "—"}%（${a.n ?? "—"}番${d != null ? `・前の日から ${d >= 0 ? "+" : ""}${d}` : ""}）`; };
+      lines.push(`- ブレインは地図をどこまで使えているか: 進み ${pick(ms[0])}・候補と一手の一致 ${pick(ms[1])}・今どこの読み違い ${pick(ms[2])}・組の本当の一致 ${pick(ms[3])}（作業員A・#608・次の直し #646／#650／#657／#624）`);
+    } catch (e) { lines.push(`- 地図の使い方の数: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・COMPOSE_PLAN_REUSE=shadow 既定）: 前の日の返信の番で、設計図が作られた番・使い回しで作れた番（shadow の印）・作られなかった番（軽い読み・日付で絞る）
     try {
       const from = new Date(Date.parse(dayStart)).toISOString(), to = new Date(Date.parse(dayStart) + 86_400_000).toISOString();

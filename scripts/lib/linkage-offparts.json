@@ -4,8 +4,10 @@
   "stage": "read",
   "name": "TURN_ELAPSED_TWO_CHOICE（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3547",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3549",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "TURN_ELAPSED_TWO_CHOICE"
   ],
@@ -16,7 +18,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3549・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.COMPOSE_DROP_DUPLICATES",
@@ -99,8 +101,10 @@
   "stage": "read",
   "name": "BRAIN_DEMOTE_SEARCH_EXHAUSTED（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3575",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3577",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_DEMOTE_SEARCH_EXHAUSTED"
   ],
@@ -111,7 +115,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3577・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.COMPOSE_REWRITE",
@@ -157,7 +161,9 @@
   "name": "BRAIN_TURN_AIMS（地図の外の off の部品・brain-turn-aims.ts）",
   "producer": "app/lib/brain-turn-aims.ts",
   "key": "app/lib/brain-turn-aims.ts:10",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_TURN_AIMS"
   ],
@@ -168,14 +174,14 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 turnAimsOn を brain-core が呼ぶ（app/lib/brain-core.ts:262）＝ブレインの入力"
  },
  {
   "id": "auto.SENT_CONFIRMED_NOTE",
   "stage": "writer",
   "name": "SENT_CONFIRMED_NOTE（地図の外の off の部品・route.ts）",
   "producer": "app/api/generate-reply/route.ts",
-  "key": "app/api/generate-reply/route.ts:5690",
+  "key": "app/api/generate-reply/route.ts:5695",
   "readers": [],
   "switches": [
    "SENT_CONFIRMED_NOTE"
@@ -233,7 +239,9 @@
   "name": "BRAIN_DEEP_RECHECK（地図の外の off の部品・brain-depth.ts）",
   "producer": "app/lib/brain-depth.ts",
   "key": "app/lib/brain-depth.ts:89",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_DEEP_RECHECK"
   ],
@@ -244,15 +252,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 deepRecheckOn を brain-core が呼ぶ（app/lib/brain-core.ts:1886）＝ブレインの入力"
  },
  {
   "id": "auto.VIEWING_CONFIRMED_ACK_WAIT",
   "stage": "read",
   "name": "VIEWING_CONFIRMED_ACK_WAIT（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3649",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3651",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "VIEWING_CONFIRMED_ACK_WAIT"
   ],
@@ -263,7 +273,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3651・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.AIX_SECOND_LINK",
@@ -347,7 +357,9 @@
   "name": "BRAIN_INPUT_KEY_STRICT（地図の外の off の部品・brain-input-key.ts）",
   "producer": "app/lib/brain-input-key.ts",
   "key": "app/lib/brain-input-key.ts:73",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_INPUT_KEY_STRICT"
   ],
@@ -358,7 +370,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 decideInputKeyReuse を brain-core が呼ぶ（app/lib/brain-core.ts:7907）＝ブレインの入力"
  },
  {
   "id": "auto.CONDUCTOR_ROSTER",
@@ -384,7 +396,7 @@
   "stage": "writer",
   "name": "SCENE_SKILLS（地図の外の off の部品・route.ts）",
   "producer": "app/api/generate-reply/route.ts",
-  "key": "app/api/generate-reply/route.ts:5931",
+  "key": "app/api/generate-reply/route.ts:5936",
   "readers": [],
   "switches": [
    "SCENE_SKILLS"
@@ -403,8 +415,10 @@
   "stage": "read",
   "name": "BRAIN_MATERIAL_FETCH（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:4037",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:4039",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_MATERIAL_FETCH"
   ],
@@ -415,7 +429,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:4039・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.COMPOSE_ORDER_TABLE",
@@ -442,7 +456,9 @@
   "name": "PROMISE_DUE_NOTE（地図の外の off の部品・promise-due.ts）",
   "producer": "app/lib/promise-due.ts",
   "key": "app/lib/promise-due.ts:12",
-  "readers": [],
+  "readers": [
+   "direct.1"
+  ],
   "switches": [
    "PROMISE_DUE_NOTE"
   ],
@@ -453,7 +469,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 promiseDueNoteEnabled を app/lib/promise-tracker.ts:180 が直に呼ぶ（①材料を作る・統括を通らない）"
  },
  {
   "id": "auto.BRAIN_OPENER_SCHEMA",
@@ -461,7 +477,9 @@
   "name": "BRAIN_OPENER_SCHEMA（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
   "key": "app/lib/brain-core.ts:1539",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_OPENER_SCHEMA"
   ],
@@ -472,7 +490,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:1539・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.AIX_CHECK_VALUE_PREFILL",
@@ -518,7 +536,9 @@
   "name": "BRAIN_FLOW_SIGNALS（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
   "key": "app/lib/brain-core.ts:276",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_FLOW_SIGNALS"
   ],
@@ -529,7 +549,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:276・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.RECOMMEND_SECOND_WISH_NG",
@@ -556,7 +576,9 @@
   "name": "ACK_AFTER_PROMISE_REPLY（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
   "key": "app/lib/brain-core.ts:1539",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "ACK_AFTER_PROMISE_REPLY"
   ],
@@ -567,7 +589,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:1539・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.ACK_CONFIRM_WAIT_LINE",
@@ -586,7 +608,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 confirmAckWaitLineEnabled は同じファイルの app/lib/repeat-brain-align.ts:67 から → 入口 confirmAckWaitLineEnabled がめぐる"
  },
  {
   "id": "auto.BRAIN_JUDGE_BASIS_NEXT",
@@ -594,7 +616,9 @@
   "name": "BRAIN_JUDGE_BASIS_NEXT（地図の外の off の部品・brain-judge-basis.ts）",
   "producer": "app/lib/brain-judge-basis.ts",
   "key": "app/lib/brain-judge-basis.ts:15",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_JUDGE_BASIS_NEXT"
   ],
@@ -605,15 +629,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 brainJudgeBasisNextOn は同じファイルの app/lib/brain-judge-basis.ts:67 から → 入口 brainJudgeBasisOutputItem を brain-core が呼ぶ（app/lib/brain-core.ts:374）＝ブレインの入力"
  },
  {
   "id": "auto.CHECK_ORDER_GUIDE",
   "stage": "read",
   "name": "CHECK_ORDER_GUIDE（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3760",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3762",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "CHECK_ORDER_GUIDE"
   ],
@@ -624,7 +650,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3762・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.LINK_WATCH_REACTION_STRICT",
@@ -651,7 +677,9 @@
   "name": "BRAIN_ROUTE_TYPE_MATERIAL（地図の外の off の部品・brain-route-type.ts）",
   "producer": "app/lib/brain-route-type.ts",
   "key": "app/lib/brain-route-type.ts:124",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_ROUTE_TYPE_MATERIAL"
   ],
@@ -662,7 +690,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 routeTypeMaterialEnabled を brain-core が呼ぶ（app/lib/brain-core.ts:3173）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_RULES_678_FACTS",
@@ -670,7 +698,9 @@
   "name": "BRAIN_RULES_678_FACTS（地図の外の off の部品・brain-rules-facts.ts）",
   "producer": "app/lib/brain-rules-facts.ts",
   "key": "app/lib/brain-rules-facts.ts:13",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_RULES_678_FACTS"
   ],
@@ -681,15 +711,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 rules678FactsEnabled を brain-core が呼ぶ（app/lib/brain-core.ts:247）＝ブレインの入力"
  },
  {
   "id": "auto.TASK_RESULT_TO_LEDGER",
   "stage": "read",
   "name": "TASK_RESULT_TO_LEDGER（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3023",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3025",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "TASK_RESULT_TO_LEDGER"
   ],
@@ -700,7 +732,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3025・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.CONDUCTOR_OUR_SIDE_BRAIN",
@@ -764,8 +796,10 @@
   "stage": "read",
   "name": "BRAIN_OUTCOME_LEARN（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:4131",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:4133",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_OUTCOME_LEARN"
   ],
@@ -776,7 +810,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:4133・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.COMPOSE_HOW_BY_TYPE",
@@ -841,7 +875,9 @@
   "name": "CONDUCTOR_EXCHANGE_LEDGER（地図の外の off の部品・exchange-ledger.ts）",
   "producer": "app/lib/exchange-ledger.ts",
   "key": "app/lib/exchange-ledger.ts:17",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "CONDUCTOR_EXCHANGE_LEDGER"
   ],
@@ -852,7 +888,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 exchangeLedgerOn を brain-core が呼ぶ（app/lib/brain-core.ts:3948）＝ブレインの入力"
  },
  {
   "id": "auto.PROMISE_DEADLINE_WORDS",
@@ -860,7 +896,9 @@
   "name": "PROMISE_DEADLINE_WORDS（地図の外の off の部品・promise-deadline-words.ts）",
   "producer": "app/lib/promise-deadline-words.ts",
   "key": "app/lib/promise-deadline-words.ts:144",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "PROMISE_DEADLINE_WORDS"
   ],
@@ -871,7 +909,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 promiseDeadlineWordsEnabled を brain-core が呼ぶ（app/lib/brain-core.ts:2581）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_MATERIAL_MISS_NOTE",
@@ -879,7 +917,9 @@
   "name": "BRAIN_MATERIAL_MISS_NOTE（地図の外の off の部品・brain-material-miss.ts）",
   "producer": "app/lib/brain-material-miss.ts",
   "key": "app/lib/brain-material-miss.ts:11",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_MATERIAL_MISS_NOTE"
   ],
@@ -890,15 +930,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 brainMaterialMissEnabled を brain-core が呼ぶ（app/lib/brain-core.ts:1946）＝ブレインの入力"
  },
  {
   "id": "auto.CONDITION_MOVE_IN_UNIFIED",
   "stage": "read",
   "name": "CONDITION_MOVE_IN_UNIFIED（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:9068",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:9073",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "CONDITION_MOVE_IN_UNIFIED"
   ],
@@ -909,7 +951,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:9073・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.LINE_WATCH_GEN_NOTE",
@@ -992,8 +1034,10 @@
   "stage": "read",
   "name": "FIRST_CONTACT_SELF_SEND_REPLY（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:6192",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:6197",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "FIRST_CONTACT_SELF_SEND_REPLY"
   ],
@@ -1004,7 +1048,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:6197・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.AIX_SECOND_BLUEPRINT",
@@ -1050,7 +1094,9 @@
   "name": "BRAIN_FAST_SLOW（地図の外の off の部品・brain-fast-slow.ts）",
   "producer": "app/lib/brain-fast-slow.ts",
   "key": "app/lib/brain-fast-slow.ts:33",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_FAST_SLOW"
   ],
@@ -1061,7 +1107,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 brainFastSlowEnabled を brain-core が呼ぶ（app/lib/brain-core.ts:2834）＝ブレインの入力"
  },
  {
   "id": "auto.LINK_HUB",
@@ -1182,8 +1228,10 @@
   "stage": "read",
   "name": "TIME_FACTS（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:2567",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:2569",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "TIME_FACTS"
   ],
@@ -1194,7 +1242,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:2569・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.EXAM_CLOUD",
@@ -1258,8 +1306,10 @@
   "stage": "read",
   "name": "BRAIN_REACTION_PREDICT（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:4120",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:4122",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_REACTION_PREDICT"
   ],
@@ -1270,7 +1320,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:4122・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.STAFF_TODO_INSTANT_NOTICE",
@@ -1327,7 +1377,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 aixMetaPatchEnabled を呼ぶのは app/api/log-aix-usage/route.ts:585（統括の部品でもブレインでもない）"
  },
  {
   "id": "auto.FINAL_CHECK_GATE",
@@ -1353,8 +1403,10 @@
   "stage": "read",
   "name": "CUSTOMER_FACT_LEDGER（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3791",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3793",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "CUSTOMER_FACT_LEDGER"
   ],
@@ -1365,14 +1417,14 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3793・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.FEELING_CONDUCTOR_TABLE",
   "stage": "read",
   "name": "FEELING_CONDUCTOR_TABLE（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:7153",
+  "key": "app/lib/brain-core.ts:7158",
   "readers": [],
   "switches": [
    "FEELING_CONDUCTOR_TABLE"
@@ -1384,7 +1436,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 欄 meta.feeling_situation_inputs（app/lib/brain-core.ts:7158）を読む統括の部品が無い（conductor-*.ts に名が0か所）"
  },
  {
   "id": "auto.CONDUCTOR_NEAR_ANATOMY",
@@ -1430,7 +1482,9 @@
   "name": "AIX_CONTRACT_SITUATION（地図の外の off の部品・aix-brain-contract.ts）",
   "producer": "app/lib/aix-brain-contract.ts",
   "key": "app/lib/aix-brain-contract.ts:128",
-  "readers": [],
+  "readers": [
+   "direct.5"
+  ],
   "switches": [
    "AIX_CONTRACT_SITUATION"
   ],
@@ -1441,7 +1495,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 aixContractSituationOn は同じファイルの app/lib/aix-brain-contract.ts:123 から → 入口 buildAixContractNote を app/api/aix/action/route.ts:2012 が直に呼ぶ（⑤書き手・AIX・ピッカーに渡す・統括を通らない）"
  },
  {
   "id": "auto.PICKUP_FOCUS_ONE",
@@ -1525,7 +1579,9 @@
   "name": "BRAIN_NULL_SIGNAL_FALLBACK（地図の外の off の部品・brain-keyword-rules.ts）",
   "producer": "app/lib/brain-keyword-rules.ts",
   "key": "app/lib/brain-keyword-rules.ts:140",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_NULL_SIGNAL_FALLBACK"
   ],
@@ -1536,7 +1592,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 adoptSignalAixOverBrainNull を brain-core が呼ぶ（app/lib/brain-core.ts:4995）＝ブレインの入力"
  },
  {
   "id": "auto.DECISION_SOURCE_UNLABELED",
@@ -1544,7 +1600,9 @@
   "name": "DECISION_SOURCE_UNLABELED（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
   "key": "app/lib/brain-core.ts:272",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "DECISION_SOURCE_UNLABELED"
   ],
@@ -1555,7 +1613,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:272・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.CONDUCTOR_TODOS",
@@ -1582,7 +1640,9 @@
   "name": "BRAIN_BOUNDARY_TRIGGER_RULES（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
   "key": "app/lib/brain-core.ts:1454",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_BOUNDARY_TRIGGER_RULES"
   ],
@@ -1593,7 +1653,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:1454・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.CONTRACT_TERMS_PET_CLEANING",
@@ -1601,7 +1661,9 @@
   "name": "CONTRACT_TERMS_PET_CLEANING（地図の外の off の部品・brain-deep-check-server.ts）",
   "producer": "app/lib/brain-deep-check-server.ts",
   "key": "app/lib/brain-deep-check-server.ts:47",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "CONTRACT_TERMS_PET_CLEANING"
   ],
@@ -1612,7 +1674,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 loadDeepCheckMaterial を brain-core が呼ぶ（app/lib/brain-core.ts:4777）＝ブレインの入力"
  },
  {
   "id": "auto.FC_BLUEPRINT_MARK",
@@ -1695,8 +1757,10 @@
   "stage": "read",
   "name": "INFO_FILL_MAP（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:4235",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:4237",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "INFO_FILL_MAP"
   ],
@@ -1707,7 +1771,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:4237・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRIEF_FILL_FROM_TYPE",
@@ -1752,8 +1816,10 @@
   "stage": "read",
   "name": "PICKUP_WHY_TO_BRAIN（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3700",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3702",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "PICKUP_WHY_TO_BRAIN"
   ],
@@ -1764,15 +1830,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3702・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_CLOSED_THANKS_NO_REPLY",
   "stage": "read",
   "name": "BRAIN_CLOSED_THANKS_NO_REPLY（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3847",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3849",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_CLOSED_THANKS_NO_REPLY"
   ],
@@ -1783,15 +1851,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3849・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_LAYOUT_ASK_TEMPORARY",
   "stage": "read",
   "name": "BRAIN_LAYOUT_ASK_TEMPORARY（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3848",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3850",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_LAYOUT_ASK_TEMPORARY"
   ],
@@ -1802,15 +1872,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3850・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_FAR_OTHER_FIRST",
   "stage": "read",
   "name": "BRAIN_FAR_OTHER_FIRST（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3849",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3851",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_FAR_OTHER_FIRST"
   ],
@@ -1821,15 +1893,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3851・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_GUARANTOR_WORDING",
   "stage": "read",
   "name": "BRAIN_GUARANTOR_WORDING（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:3851",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:3853",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_GUARANTOR_WORDING"
   ],
@@ -1840,7 +1914,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:3853・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.BRAIN_RECHECK",
@@ -1848,7 +1922,9 @@
   "name": "BRAIN_RECHECK（地図の外の off の部品・brain-recheck.ts）",
   "producer": "app/lib/brain-recheck.ts",
   "key": "app/lib/brain-recheck.ts:49",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_RECHECK"
   ],
@@ -1859,7 +1935,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 recheckMode を brain-core が呼ぶ（app/lib/brain-core.ts:8181）＝ブレインの入力"
  },
  {
   "id": "auto.COUNTER_KITCHEN_IMAGE_READ",
@@ -1878,15 +1954,17 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 counterKitchenImageReadOn を呼ぶのは app/lib/property-pickups-server.ts:461（統括の部品でもブレインでもない）"
  },
  {
   "id": "auto.VIEWING_CONFIRMED_ONLY",
   "stage": "read",
   "name": "VIEWING_CONFIRMED_ONLY（地図の外の off の部品・brain-core.ts）",
   "producer": "app/lib/brain-core.ts",
-  "key": "app/lib/brain-core.ts:8660",
-  "readers": [],
+  "key": "app/lib/brain-core.ts:8665",
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "VIEWING_CONFIRMED_ONLY"
   ],
@@ -1897,7 +1975,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: brain-core の中の決まり（app/lib/brain-core.ts:8665・欄でない）＝ブレインの入力"
  },
  {
   "id": "auto.TIMELINE_VIEWING_HOLD",
@@ -1905,7 +1983,9 @@
   "name": "TIMELINE_VIEWING_HOLD（地図の外の off の部品・situation-timeline.ts）",
   "producer": "app/lib/situation-timeline.ts",
   "key": "app/lib/situation-timeline.ts:95",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "TIMELINE_VIEWING_HOLD"
   ],
@@ -1916,7 +1996,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 timelineViewingHoldOn を brain-core が呼ぶ（app/lib/brain-core.ts:3989）＝ブレインの入力"
  },
  {
   "id": "auto.AUTO_STAR_BULK_CHUNK",
@@ -2011,7 +2091,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 ackPickupAixPathOn は同じファイルの app/lib/repeat-brain-align.ts:269 から → 入口 ackPickupAixPathOn がめぐる"
  },
  {
   "id": "auto.ACK_FORM_COUNT_WITH_AIX",
@@ -2030,7 +2110,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 ackFormCountWithAixOn は同じファイルの app/lib/repeat-brain-align.ts:300 から → 入口 ackFormCountWithAixOn がめぐる"
  },
  {
   "id": "auto.BRAIN_RULE6_OPEN_PROMISE",
@@ -2038,7 +2118,9 @@
   "name": "BRAIN_RULE6_OPEN_PROMISE（地図の外の off の部品・brain-prompt-rules-1112.ts）",
   "producer": "app/lib/brain-prompt-rules-1112.ts",
   "key": "app/lib/brain-prompt-rules-1112.ts:125",
-  "readers": [],
+  "readers": [
+   "read.brain"
+  ],
   "switches": [
    "BRAIN_RULE6_OPEN_PROMISE"
   ],
@@ -2049,7 +2131,7 @@
   },
   "owner": "-",
   "layer": "連携",
-  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+  "next": "読む側: 入口 rule6OpenPromiseOn を brain-core が呼ぶ（app/lib/brain-core.ts:3631）＝ブレインの入力"
  },
  {
   "id": "auto.SIP_JUDGE",
@@ -2094,7 +2176,7 @@
   "stage": "conductor",
   "name": "COMPOSE_PLAN_REUSE（地図の外の off の部品・compose-plan-reuse.ts）",
   "producer": "app/lib/compose-plan-reuse.ts",
-  "key": "app/lib/compose-plan-reuse.ts:14",
+  "key": "app/lib/compose-plan-reuse.ts:16",
   "readers": [],
   "switches": [
    "COMPOSE_PLAN_REUSE"

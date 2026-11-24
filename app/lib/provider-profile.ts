@@ -38,6 +38,8 @@ export type ProviderProfile = {
   notes: readonly ProfileNoteName[];
   /** 2026-11-24 文の形: 指示文の【竹内さんの近い番の組み立て】の「並び」から段の数と順を、お客様の通の後ろ（毎回変わる所）に足す */
   shapeHint?: boolean;
+  /** 2026-11-24 v3: その番の【⭐ 竹内さんの実際の返信例】の竹内さんの通の字数（中央・幅）を数字で渡す（手本の材料だけから・正解の文からは出さない） */
+  charsHint?: boolean;
 };
 
 export type ProfileNoteName = "gpt_note" | "len_hint";
@@ -77,6 +79,7 @@ export const PROVIDER_PROFILES: readonly ProviderProfile[] = [
   { version: "openai-writer-v2-note", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"] },
   { version: "openai-writer-v2-verb-high", provider: "openai", role: "writer", request: { ...OPENAI_REQ, verbosity: "high" }, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"] },
   { version: "openai-writer-v2-shape", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"], shapeHint: true },
+  { version: "openai-writer-v3-chars", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "medium" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"], charsHint: true },
   { version: "openai-conductor-v1", provider: "openai", role: "conductor", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
   { version: "openai-final_check-v1", provider: "openai", role: "final_check", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
   { version: "openai-light-v1", provider: "openai", role: "light", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
@@ -150,6 +153,7 @@ export type OpenAIRequestParts = {
   examplesFirst: boolean;
   verbosity: string | null;
   shapeHint: boolean;
+  charsHint: boolean;
 };
 /**
  * 表の行 → OpenAI の要求の部品（純関数）。考える深さは env（EXAM_*_REASONING・OPENAI_REASONING_EFFORT）が表より先（試験で深さを並べるため）
@@ -174,6 +178,7 @@ export function openaiRequestOf(p: ProviderProfile, o: { routeName: string | nul
     examplesFirst: p.cache.examplesFirst,
     verbosity: p.request.verbosity ?? null,
     shapeHint: !!p.shapeHint,
+    charsHint: !!p.charsHint,
   };
 }
 
@@ -211,6 +216,23 @@ export function shapeHintOf(userText: string): string | null {
   const parts = m[1].split(">").map((x) => x.trim()).filter(Boolean);
   if (!parts.length) return null;
   return `【文の形】竹内さんの近い番と同じ ${parts.length}つの段（${parts.join("→")}）で書く。段ごとに1〜2文、どの段も省かない（上の組み立ての各段の説明に合わせる）。`;
+}
+
+/** 書き手の指示文の【⭐ 〇〇の実際の返信例】の、こちら（竹内さん）の通の本文（純関数・例の形「[例N⭐]\nお客様: 「…」\n〇〇: 「…」」） */
+export function exampleRepliesOf(userText: string): string[] {
+  const out: string[] = [];
+  const re = /\[例\d+⭐?\]\n[^\n]*: 「[\s\S]*?」\n[^\n:]{1,12}: 「([\s\S]*?)」(?=\n\n|\n?$|\n【)/g;
+  for (const m of userText.matchAll(re)) out.push(m[1]);
+  return out;
+}
+const charLen = (t: string) => String(t ?? "").replace(/\s/g, "").length;
+/** 長さの目安（その番の実例の字数の中央と幅）。実例が無ければ null */
+export function charsHintOf(userText: string): string | null {
+  const ls = exampleRepliesOf(userText).map(charLen).filter((n) => n > 0).sort((a, b) => a - b);
+  if (!ls.length) return null;
+  const med = ls[Math.floor(ls.length / 2)];
+  const r10 = (n: number) => Math.max(10, Math.round(n / 10) * 10);
+  return `【長さの目安（この番）】竹内さんの似た場面の返信は 約${r10(med)}字（${r10(ls[0])}〜${r10(ls[ls.length - 1])}字）。同じくらいの長さで書く（短くまとめすぎない）。`;
 }
 
 /**

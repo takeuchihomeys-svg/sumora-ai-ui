@@ -27,6 +27,8 @@ export type SwitchReachDef = {
 /** 番の文の判定の名前（scripts/lib/exam-room.ts が app/lib/decisions-1103 の関数で判定する） */
 export type TurnTestId = "closed_thanks" | "layout_ask" | "far_other";
 export const SWITCH_REACH: Record<string, SwitchReachDef> = {
+  // 2026-11-25 作業員A（#688）: AIX ごとの状態の札をブレインの材料に入れた番（AIX_STATE_CARD=on）＝material_marks.aix_state_card（字数）
+  AIX_STATE_CARD: { mark: "aix_state_card" },
   // 2026-11-24 作業員L（統括役の頼み・7晩でよく出たスイッチ）: 文書の要点（brain-core の focusDocDigestOn の段）は、主のお部屋の資料（property_pickups.image_lines）と
   //   こちらが送った資料の画像の読み取り（sent_image_properties・FOCUS_DOC_SENT_IMAGE）が材料。どちらも0行の番は「focus-doc-digest-empty」で何も足さない
   BRAIN_FOCUS_DOC_DIGEST: { needs: ["property_pickups", "sent_image_properties"] },
@@ -57,6 +59,10 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   BRAIN_MESSAGE_PLAN: { metaKey: "message_plan" },
   OUR_PARTS_PROMISE_WIDE: { mark: "our_parts_wide", markSince: "5351dc589", partial: "交渉する・電話する の項目が状況の our_items に入った番まで" },
   INFO_FILL_MAP: { mark: "info_fill", markSince: "5351dc589" },
+  // 2026-11-24 作業員A（統括役の決め・地図を統括と連携）: 記録だけの印（off では付かない）
+  ROUTE_TO_BRIEF: { mark: "route_brief", markSince: "9ca8564e7", partial: "指示書に地図の欄が入った番まで（書き手に届いたかは下書きの段で見る）" },
+  APPLY_ROUTE_PATH_LINE: { mark: "route_path_line", markSince: "9ca8564e7" },
+  APPLY_ROUTE_SUBSTATE: { mark: "route_substate", markSince: "9ca8564e7" },
   EQUIPMENT_WISH_LOOKUP: { mark: "equip_wish", markSince: "5351dc589" },
   // 2026-11-23 作業員A（統括役の頼み・#662 の「持つ」が欠けた土台の部品）
   TURN_READ: { metaKey: "turn_read" },

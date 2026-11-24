@@ -47,7 +47,7 @@ export const FIX_HINT: Readonly<Record<string, string>> = {
   欄の欠け: "出力の形を json_schema（strict・欄を必須）にした版",
 };
 
-(async () => {
+if (/audit-provider-fit\.ts$/.test(String(process.argv[1] ?? ""))) (async () => {
   const labels = arg("labels").split(",").map((s) => s.trim()).filter(Boolean);
   const verOf = new Map(arg("version-of").split(",").filter(Boolean).map((kv) => kv.split("=") as [string, string]));
   const probs = new Map(((existsSync(join("scripts", "brain-exam", "problems.json")) ? JSON.parse(readFileSync(join("scripts", "brain-exam", "problems.json"), "utf8")) : []) as Problem[]).map((p) => [p.id, p]));

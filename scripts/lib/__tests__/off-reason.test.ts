@@ -1,6 +1,6 @@
 // 台帳の built_off の行の off の理由と継ぎ目（scripts/lib/off-reason.ts）
 // 実行: npx tsx scripts/lib/__tests__/off-reason.test.ts（全 PASS で exit 0）
-import { classifyOff, jointOf, blockRanking, defaultsFromCode, chainPlaceOf, groupByPart, type OffItem } from "../off-reason";
+import { classifyOff, jointOf, blockRanking, defaultsFromCode, chainPlaceOf, groupByPart, autoReadersOf, titlePlaceOf, majorityPlace, type OffItem } from "../off-reason";
 import type { LinkageRow } from "../../../app/lib/linkage-map";
 
 let pass = 0, fail = 0;
@@ -33,6 +33,19 @@ const d = defaultsFromCode('x(env.A_ON ?? "").trim() !== "off"; y(env.B_OFF ?? "
 ok("コードの既定を読む（!== off＝on・=== on＝off・無い物は無し）", d.get("A_ON") === "on" && d.get("B_OFF") === "off" && !d.has("C_NONE"));
 ok("鎖の場所はファイルで（compose＝④・書き手＝⑤・最終チェック＝⑥）", chainPlaceOf("app/lib/compose-head.ts") === 4 && chainPlaceOf("app/api/aix-template-generate/route.ts") === 5 && chainPlaceOf("app/lib/final-check.ts") === 6 && chainPlaceOf("app/lib/zzz.ts") === null);
 ok("部品ごとにまとめ、設計図を読む部品に印", groupByPart([va], map, []).some((g) => g.part === "read.x" && g.composePlan));
+
+// #675 の続き（11/24 夕）: 地図の外のブレインの材料の行の読む側
+const FS = [
+  { path: "app/lib/brain-x.ts", text: "export const xOn = () => (process.env.X_SW ?? \"\") === \"on\";\nfunction xLine() { return xOn() ? \"a\" : \"\"; }\nexport function xBlock() { return xLine(); }" },
+  { path: "app/lib/brain-core.ts", text: "const a = xBlock();\nconst meta = {\n  feel_inputs: process.env.F_SW === \"on\" ? 1 : undefined,\n  seen_note: process.env.S_SW === \"on\" ? 1 : undefined,\n};" },
+  { path: "app/lib/conductor-brief.ts", text: "const s = meta.seen_note;" },
+];
+ok("入口を同じファイルの中でたどり brain-core が呼ぶ＝ブレインの入力", autoReadersOf("app/lib/brain-x.ts", 1, FS).readers[0] === "read.brain", autoReadersOf("app/lib/brain-x.ts", 1, FS));
+ok("ブレインの欄を統括が読まない＝読む側なし", autoReadersOf("app/lib/brain-core.ts", 3, FS).readers.length === 0 && /feel_inputs/.test(autoReadersOf("app/lib/brain-core.ts", 3, FS).why));
+ok("ブレインの欄を統括が読む＝conductor.brief", autoReadersOf("app/lib/brain-core.ts", 4, FS).readers[0] === "conductor.brief");
+ok("題の言葉で場所（物差し＝⑧）", titlePlaceOf("土台「約束」の物差しが無い").place === 8);
+ok("題で決まらない時は null", titlePlaceOf("拡張の束の作り直し").place === null);
+ok("読み込む所の多数（同数は前の方）", majorityPlace([5, 1, 5, null]) === 5 && majorityPlace([5, 1]) === 1);
 
 console.log(`off-reason: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

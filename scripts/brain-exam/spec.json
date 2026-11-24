@@ -9331,5 +9331,86 @@
   "id": "q455",
   "addedAt": "2026-11-21",
   "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "id": "q456",
+  "type": "AIXの種類",
+  "tags": [
+   "約束の後の了承"
+  ],
+  "source": "本番の見張り（brain-exam-add --add）",
+  "conv": "c024b7b9-5a84-452c-8386-65699c229d08",
+  "at": "2026-10-15T22:12:44.095Z",
+  "accept": [
+   "AIX:物件"
+  ],
+  "mustNot": [
+   "返信"
+  ],
+  "asks": [
+   {
+    "q": "（ピックアップの約束の後の）お礼・了承",
+    "route": "aix",
+    "point": "約束したピックアップを AIX【物件ピックアップした】で送る"
+   }
+  ],
+  "ng": [],
+  "why": "ピックアップを約束した後のお礼・了承だけの番。竹内さんは先に返信せず、探した物件を AIX で送った（見張りの番 5426・11/23 作業員A の物件の外れ15番から・ACK_PICKUP_AIX_PATH／RULE6／COUNT が当たる）",
+  "addedAt": "2026-11-24",
+  "addedBy": "brain-exam-add"
+ },
+ {
+  "id": "q457",
+  "type": "AIXの種類",
+  "tags": [
+   "約束の後の了承"
+  ],
+  "source": "本番の見張り（brain-exam-add --add）",
+  "conv": "a869ac10-0a15-460b-802e-35103ed2cac4",
+  "at": "2026-10-05T02:03:18.039Z",
+  "accept": [
+   "AIX:物件"
+  ],
+  "mustNot": [
+   "返信"
+  ],
+  "asks": [
+   {
+    "q": "（ピックアップの約束の後の）お礼・了承",
+    "route": "aix",
+    "point": "約束したピックアップを AIX【物件ピックアップした】で送る"
+   }
+  ],
+  "ng": [],
+  "why": "ピックアップを約束した後のお礼・了承だけの番。竹内さんは先に返信せず、探した物件を AIX で送った（見張りの番 848・11/23 作業員A の見立て直しで ACK_PICKUP に当たる番）",
+  "addedAt": "2026-11-24",
+  "addedBy": "brain-exam-add"
+ },
+ {
+  "id": "q458",
+  "type": "AIXの種類",
+  "tags": [
+   "約束の後の了承"
+  ],
+  "source": "本番の見張り（brain-exam-add --add）",
+  "conv": "a260169b-7491-41fe-9c3a-fbd860326fca",
+  "at": "2026-10-06T02:13:53.113Z",
+  "accept": [
+   "AIX:property_check_result"
+  ],
+  "mustNot": [
+   "返信"
+  ],
+  "asks": [
+   {
+    "q": "（確認の約束の後の）お礼・了承",
+    "route": "aix",
+    "point": "確かめた結果を AIX【物件確認した】で送る"
+   }
+  ],
+  "ng": [],
+  "why": "確認を約束した後のお礼・了承だけの番。竹内さんは先に返信せず、確かめた結果を AIX【物件確認した】で送った（見張りの番 1092・RULE6 の物件確認した側の効く番）",
+  "addedAt": "2026-11-24",
+  "addedBy": "brain-exam-add"
  }
 ]

@@ -15,7 +15,7 @@ import { isTestConversation } from "../app/lib/test-conversations";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const DAYS = Number(arg("days", "30"));
+const DAYS0 = Number(arg("days", "30"));
 const LIST = process.argv.includes("--list");
 // 2026-10-29 担当の札の試し（scripts/aix-desk-eval.ts）の入力: 外れた番と、比べるための当たった番（--hits=N）を JSON に書く
 const JSON_OUT = arg("json");
@@ -48,7 +48,10 @@ type Row = {
   verdict_detail: Record<string, unknown> | null; decision_id: string | null;
 };
 
-(async () => {
+/** 2026-11-25 作業員A（台帳 #688・統括役の頼み）: 毎朝の self-improve から呼ぶ形（新しい cron は作らない）。write で quality_daily に組ごとの数を書く。quiet で画面に出さない */
+export async function runAixMissCauses(o: { days?: number; write?: boolean; quiet?: boolean } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
+  const DAYS = o.days ?? DAYS0;
+  const console = o.quiet ? { log: (..._a: unknown[]) => {}, warn: (..._a: unknown[]) => {} } : globalThis.console;
   const since = new Date(Date.now() - DAYS * 86400_000).toISOString();
   const rows: Row[] = [];
   for (let f = 0; ; f += 1000) {
@@ -159,5 +162,22 @@ JSON: ${JSON_OUT}（外れ ${out.length}・当たり ${hits.length}）`);
     console.log("\n## 番ごと");
     for (const o of out) console.log(`- #${o.t.id} ${o.t.customer_turn_at.slice(5, 16)} ${o.t.scene_key} ${o.cause} ブレイン=${ja(o.brain === "返信" ? null : o.brain)} スタッフ=${ja(o.staff)}（${o.why}）｜客: ${(custText.get(o.t.id) ?? "").replace(/\s+/g, " ").slice(0, 60)}`);
   }
-  process.exit(0);
-})();
+  // 2026-11-25 作業員A（#688）: 毎朝の数（組ごと・④ スタッフだけが知る番は弱さの数から外して別に）
+  const pressedN = pressedAll.length, staffOnly = out.filter((x) => x.cause.startsWith("④")).length;
+  const metrics: Array<{ metric: string; value: number | null; n: number }> = [
+    { metric: "aix_miss:weak_rate", value: pressedN - staffOnly > 0 ? Math.round(((out.length - staffOnly) / (pressedN - staffOnly)) * 1000) / 10 : null, n: pressedN - staffOnly },
+    { metric: "aix_miss:staff_only", value: staffOnly, n: pressedN },
+    ...causes.map((c) => ({ metric: `aix_miss:cause:${c.slice(0, 1)}`, value: out.filter((x) => x.cause === c).length, n: pressedN })),
+    ...tally(out.filter((x) => x.cause.startsWith("②")), (x) => x.why).slice(0, 12).map(([k, v]) => ({ metric: `aix_miss:pair:${k}`, value: v.length, n: pressedN })),
+    ...tally(out.filter((x) => x.cause.startsWith("①")), (x) => ja(x.staff)).slice(0, 12).map(([k, v]) => ({ metric: `aix_miss:reply_vs_aix:${k}`, value: v.length, n: pressedN })),
+  ];
+  if (o.write) {
+    const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const { error: e } = await sb.from("quality_daily").upsert(metrics.map((m) => ({ day, metric: `${m.metric}_${DAYS}d`, scope: "all", value: m.value, n: m.n, source: "scripts/audit-aix-miss-causes.ts（作業員A・#688）" })), { onConflict: "day,metric,scope" });
+    if (e) throw e;
+    console.log(`quality_daily に書いた: ${metrics.length}行（${day}・${DAYS}d）`);
+  }
+  return metrics;
+}
+// コマンドで流した時だけ（self-improve から import した時は流さない）
+if (process.argv[1] && /audit-aix-miss-causes\.ts$/.test(process.argv[1].replace(/\\/g, "/"))) runAixMissCauses({ write: process.argv.includes("--write") }).then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

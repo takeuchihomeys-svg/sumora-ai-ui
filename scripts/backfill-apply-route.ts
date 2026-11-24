@@ -45,7 +45,7 @@ if (!WRITE && !process.argv.includes("--dry")) { console.error("--dry か --writ
         ...input.aixRows.filter((a) => Date.parse(a.sent_at ?? a.created_at ?? "") > T).map((a) => String(a.aix_type ?? "aix")),
         ...input.sentProperties.filter((p) => Date.parse(p.sent_at ?? "") > T).map(() => "物件"),
       ])];
-      out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, sentAfter, apply_route: { node: loc.loc.node, branch: loc.loc.branch, next: loc.loc.next?.label?.slice(0, 40) ?? null, next_aix: (loc.loc.next?.aix ?? []).slice(0, 3), substate: loc.sub1, src: "backfill", at: new Date().toISOString(), basis: new Date(T).toISOString() } });
+      out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, sentAfter, apply_route: { node: loc.loc.node, branch: loc.loc.branch, next: loc.loc.next?.label?.slice(0, 40) ?? null, next_aix: (loc.loc.next?.aix ?? []).slice(0, 3), substate: loc.sub1, src: "backfill", at: new Date().toISOString(), basis: new Date(T).toISOString(), basis_mode: arg("basis") === "now" ? "now" : "last_burst" /* 11/24 夜 統括役: --basis=now で当てた印 */ } });
     } catch (e) { out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, apply_route: null, why: (e instanceof Error ? e.message : String(e)).slice(0, 80) }); }
   }
   const ok = out.filter((o) => o.apply_route);

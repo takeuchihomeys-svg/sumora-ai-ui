@@ -82,7 +82,7 @@ import { planFromMeta, planMessages, afterAixReplyBrief, afterAixDraftHint, type
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, isTestOnlyConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
-import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
+import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, examClockAnchorOn, CLOCK_ANCHOR_LAG_MS, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, nightPinUpdate, type NightlyRecord } from "./lib/exam-base-pin";
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
@@ -1227,7 +1227,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-05 作業員1: 通の時刻を元の間隔（EXAM_REAL_GAPS・既定 on）で置いた回は、90秒おきの前の答えと比べない（取り置きを作り直す）
     ...(examRealGapsOn(mainEnv as Record<string, string | undefined>) ? { sceneTimes: "gaps-day" } : {}),
     // 2026-11-05 作業員8: 時計の固定・DB の材料の写しの回は、今までの前の答えと比べない（取り置きを作り直す・入れた時だけ構成に足す）
-    ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: "frozen" } : {}),
+    // 2026-11-25 作業員A（#683）: ブレインを呼ぶ直前に時計を合わせ直す回（EXAM_CLOCK_ANCHOR・既定 on）は、合わせ直さない前の答えと比べない（構成に足す＝1回だけ作り直し）
+    ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: examClockAnchorOn(mainEnv as Record<string, string | undefined>) ? "frozen-anchor" : "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
     // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
     ...(judgeRubricOf() !== "v1" ? { judgeRubric: judgeRubricOf() } : {}),
@@ -1244,9 +1245,23 @@ async function prepareMainBaseline(): Promise<boolean> {
   let pinnedNightly: string | null = null;
   try { unlinkSync(`${RESULTS_DIR}/${LABEL}.pin.json`); } catch { /* 前の回の印を残さない */ }
   const nightlyFile = join(B.BASELINE_DIR, `nightly-base-${ch}.json`);
-  if (ref === "main" && !flag("baseline-only") && process.env.EXAM_BASELINE_NIGHTLY !== "off" && existsSync(nightlyFile)) {
+  // 2026-11-24 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の頼み c）: この構成にこの晩の控えが無ければ、別の構成のこの晩の控え（一番早い物）の commit に固定する。
+  //   11/21〜22 の晩も、構成の違う組が別々の main の版で前を作っていた（同じ晩・同じ問題の作り直し 50件・$3.5）。同じ版にそろうと、構成が違っても要求が同じ呼び出しは
+  //   前の答えの控え（EXAM_BASELINE_PIN_ANY_CFG）で呼ばずに済む。決め方（作業ツリーがその commit を含むか・確かめ直し）は今の decideBasePin のまま。止める: EXAM_BASELINE_PIN_CROSS_CFG=off
+  const nightlyPath = (() => {
+    if (process.env.EXAM_BASELINE_PIN_CROSS_CFG === "off") return nightlyFile;
+    const ns = nightStartMs(Date.now());
+    const atOf = (f: string) => { try { return Date.parse((JSON.parse(readFileSync(f, "utf8")) as { at?: string }).at ?? ""); } catch { return NaN; } };
+    const own = atOf(nightlyFile);
+    if (Number.isFinite(own) && own >= ns) return nightlyFile;
+    let names: string[] = []; try { names = readdirSync(B.BASELINE_DIR); } catch { /* */ }
+    const c = names.filter((f) => /^nightly-base-[0-9a-f]+\.json$/.test(f) && f !== basename(nightlyFile)).map((f) => ({ f: join(B.BASELINE_DIR, f), at: atOf(join(B.BASELINE_DIR, f)) })).filter((x) => Number.isFinite(x.at) && x.at >= ns).sort((a, z) => a.at - z.at)[0];
+    if (c) console.log(`  この構成にこの晩の前の控えが無い → 別の構成のこの晩の控え（${basename(c.f)}）の commit に合わせる（EXAM_BASELINE_PIN_CROSS_CFG）`);
+    return c ? c.f : nightlyFile;
+  })();
+  if (ref === "main" && !flag("baseline-only") && process.env.EXAM_BASELINE_NIGHTLY !== "off" && existsSync(nightlyPath)) {
     try {
-      const nb = JSON.parse(readFileSync(nightlyFile, "utf8")) as NightlyRecord;
+      const nb = JSON.parse(readFileSync(nightlyPath, "utf8")) as NightlyRecord;
       let hasNightly = false; try { execFileSync("git", ["merge-base", "--is-ancestor", nb.commit, "HEAD"], { stdio: "ignore" }); hasNightly = true; } catch { /* 含まない */ }
       const files = hasNightly ? execFileSync("git", ["diff", "--name-only", nb.commit, commit]).toString().split("\n").map((x) => x.trim()).filter(Boolean) : [];
       const touched = files.filter(touchesExam);
@@ -1301,7 +1316,14 @@ async function prepareMainBaseline(): Promise<boolean> {
     const keyOf = (b: { stageKeys?: { brain: string; draft: string } | null; commit?: string }) => (b.stageKeys ?? (b.commit ? examStageKeys(b.commit, stageMemo) : null))?.[rel] ?? null;
     for (const id of [...plan.run]) {
       const cands = sibs.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { return [{ ...(JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>), dir: n }]; } catch { return []; } });
-      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      let hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      // 2026-11-24 作業員A（統括役の頼み・既定 off）: 段の鍵が違っても、前の commit からの変更が「この構成で off のまま動かない所」だけ（scripts/lib/exam-offonly-key.ts・迷えば作り直す）なら持ち越す。
+      //   過去7晩に当てた数は scripts/audit-exam-offonly-key.ts。=on の時だけ: EXAM_BASELINE_OFFONLY_KEY=on
+      if (!hit && process.env.EXAM_BASELINE_OFFONLY_KEY === "on") {
+        const { offOnlyBetween } = await import("./lib/exam-offonly-key");
+        hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf: (b) => (b.commit && b.commit !== commit && offOnlyBetween(b.commit, commit, cfg.env, rel).safe ? sk[rel] : null), envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+        if (hit) console.log(`  前の main（${String(hit.commit).slice(0, 7)}）からの変更は off の所だけ → ${id} の前を持ち越す（EXAM_BASELINE_OFFONLY_KEY）`);
+      }
       if (!hit) continue;
       const { dir: from, ...rest } = hit;
       B.saveBaseline<ResultRow>(dir, { ...rest, ...(vk ? { versionKey: vk } : {}), stageKeys: rest.stageKeys ?? (rest.commit ? examStageKeys(rest.commit, stageMemo) : null), carriedFrom: from });
@@ -1402,11 +1424,20 @@ async function prepareMainBaseline(): Promise<boolean> {
     const pinsOf = (ids: string[]): Map<string, PinHit> => {
       const m = new Map<string, PinHit>();
       if (process.env.EXAM_BASELINE_PIN === "off" || INPUT_DIFF === "off" || CASSETTE_MODE === "off") return m;
-      const sibs = B.siblingDirs(C.listDirs(B.BASELINE_DIR), ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+      const allDirs = C.listDirs(B.BASELINE_DIR);
+      const sibs = B.siblingDirs(allDirs, ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+      // 2026-11-24 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の頼み c）: 同じ構成の置き場に無ければ、構成の違う置き場の前の答えも控えに使う。
+      //   控えは要求の印（pk＝本文・モデル・運び方）が同じ呼び出しにだけ当たる＝構成の違いで要求が変われば当たらず本当に呼ぶ（答えは変わらない）。
+      //   直近7晩の作り直し 608件・$44.8 のうち 412件・$29.4 が構成の違いで、控えが1つも当たっていなかった（scripts/audit-exam-baseline-reuse.ts）。止める: EXAM_BASELINE_PIN_ANY_CFG=off
+      const others = process.env.EXAM_BASELINE_PIN_ANY_CFG === "off" ? [] : allDirs.filter((n) => /^(?:v-[0-9a-f]+|[0-9a-f]{10})-[0-9a-f]{10}$/.test(n) && n !== basename(dir) && !sibs.includes(n) && !legacyDirs.some((d) => basename(d) === n));
+      let fromOther = 0;
       for (const id of ids) {
-        const hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), { hash: hashOf.get(id)!, alt: altOf.get(id) }, { maxAgeMs });
+        const want = { hash: hashOf.get(id)!, alt: altOf.get(id) };
+        let hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), want, { maxAgeMs });
+        if (!hit && others.length) { hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, others, id), want, { maxAgeMs }); if (hit) fromOther++; }
         if (hit) m.set(id, hit as unknown as PinHit);
       }
+      if (fromOther) console.log(`  前の答えの控えを構成の違う置き場から: ${fromOther}問（要求が同じ呼び出しだけ使う・EXAM_BASELINE_PIN_ANY_CFG）`);
       return m;
     };
     /** main の作業ツリーで子を1回回し、取れた問題を取り置く。plan＝下見（AI を呼ばない・入力が全部同じ問題だけ答案が出る）。取り置いた問題を返す（作業ツリーが空かない時は null） */
@@ -2009,6 +2040,12 @@ async function main() {
         examClock.setExamClockSigned(examClock.realNow() - target);
         console.log(`  時計: 元の番の経過 ${delayMin}分 を見せる（${p.id}#${rep}）`);
       }
+      // 2026-11-25 作業員A（台帳 #683・統括役の頼み「時計の漏れを止める」・試験の側だけ）: 仮の今は問題の初めに決めるが、ブレインを呼ぶまでに
+      //   通の写し・台帳の写し・確かめ（DB への書き込み）で数十秒〜数分かかり、その長さが回ごとに違う＝「N分前」「時間情報」の時刻が回ごとに変わり、
+      //   off（前の main の答え）の控えが当たらなかった（11/21〜 brain_full 1370組の主な出所が時計 216・時計を含む 876）。
+      //   ブレインを呼ぶ直前に、時計を「仮の今＋3分」（最後の通は仮の今＋2分まで）に合わせ直す＝回ごと・off と on で同じ時刻を見る。
+      //   時計の固定の回だけ（経過の再生 EXAM_REPLAY_ELAPSED・写しの使い回し --reuse-fixture は今まで通り）。止める: EXAM_CLOCK_ANCHOR=off
+      const anchorBrainClock = () => { if (frozen && !reuse && !(REPLAY_ELAPSED && typeof delayMin === "number") && examClockAnchorOn()) examClock.setExamClockSigned(examClock.realNow() - (frozen.nowMs + CLOCK_ANCHOR_LAG_MS)); };
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
       // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
@@ -2067,12 +2104,14 @@ async function main() {
         S().rawBrainOutputs = [];
         // 2026-11-11 作業員8: 2回目以降の回で全体の分析（m0）を使い回す案（EXAM_REUSE_LAYER1）は試して外した＝m0 の呼び出しが
         //   条件の行に ai_summary を書き、今回の層はそれを【顧客プロファイル】として先頭に読む。m0 を呼ばない回はプロファイルが消え、材料が変わった（q164 で確かめた）
+        anchorBrainClock();
         const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         const strategy = m0 ? extractStrategy(m0, "combined", 0, new Date().toISOString()) : null;
         await insertMsgs(burst, p.context.length);
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
           S().rawBrainOutputs = [];
+          anchorBrainClock();
           meta = await runBrainChecked({
             ...base, prevPhase: (m0?.checkpoint_stage as string | null) ?? null, prevAix: m0 && m0.reply_mode === "aix" ? (m0.action as string | null) ?? null : null,
             prevMeta: (m0 ?? undefined) as never, mode: strategy ? "incremental" : "full", layer: strategy ? "fresh" : "combined", strategy,
@@ -2085,6 +2124,7 @@ async function main() {
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
           S().rawBrainOutputs = [];
+          anchorBrainClock();
           meta = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         }
         if (LAYER === "prod") row.trace = { strategy: "なし（初回・前の会話が無い）" };
