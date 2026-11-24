@@ -138,6 +138,10 @@ export const MAP_ROOTS: MapRootDef[] = [
   //   今の数は送った一手（竹内さん本人）の後の進み（R の json の outcome・after）。ブレインの一手と竹内さんの一手が同じ番の進みは作業員A の route:station:<駅>:progress_brain_same が揃ってから
   { metric: "route:progress_60d", label: "申込までの地図 › 一手の後に駅が申込に近づいた・分かれ道から本線に戻れた割合（60日）", writerSelect: "all", windowDays: 60, dims: ["station", "miss"], builder: "route_progress",
     primary: true, compare: "route:next_match_60d", okLabel: "申込に近づいた（分かれ道は本線に戻れた）", source: "scripts/audit-route-progress-takeuchi.ts の outcome・after（作業員A が持ち主・11/23 統括役）", owner: "作業員A", qdScope: "takeuchi" },
+  // 2026-11-24 作業員A（台帳 #657・統括役の頼み）: 統括の判断の「今どこ」（digest.ar の駅）を、その後24時間の最初の AIX で照らした読み違いの割合（7日・毎日）。
+  //   型＝地図が手前／先／別の道・原因＝材料が無い／読み違い／数え方（app/lib/route-misread-move.ts）。route:progress_60d と並べて見る（道筋の土台＝今どこが合っているか）
+  { metric: "route:station_misread_move", label: "申込までの地図 › 統括の判断の今どこの読み違い（その後の一手で照らす・7日）", writerSelect: "all", windowDays: 7, dims: [], builder: null, compare: "route:progress_60d",
+    source: "scripts/audit-route-misread-move.ts（作業員A・brain_decision_logs.digest.ar × aix_usage_logs）", owner: "作業員A", qdScope: "all" },
   //   11/23（2回目）: 駅 → 外れの型 → 原因 に割った（R の json の agree・route_next）。11/23 竹内さんの決定で並べて見る側
   { metric: "route:next_match_60d", label: "申込までの地図 › 候補と竹内さんの一手の一致（60日・並べて見る用）", writerSelect: "all", windowDays: 60, dims: ["station", "miss", "cause"], builder: "route_next", compare: "route:progress_60d",
     source: "scripts/audit-route-progress-takeuchi.ts（作業員R・0c4f04c5d・messages.staff_writer=takeuchi）", owner: "作業員R", qdScope: "takeuchi" },

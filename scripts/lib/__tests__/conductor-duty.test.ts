@@ -8,7 +8,7 @@ const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else 
 
 const known = new Set(LINKAGE_MAP.map((r) => r.id));
 ok("表の行はどれも連携の地図にある（足してもらう予定の行を除く）", CONDUCTOR_DUTY.every((r) => [...r.have, ...r.use, ...r.reflect].every((x) => known.has(x) || DUTY_PENDING_ROWS.has(x))), CONDUCTOR_DUTY.flatMap((r) => [...r.have, ...r.use, ...r.reflect]).filter((x) => !known.has(x)));
-ok("決めに行くは申込予測の行が入るまで持つが未確認", conductorDutyOf(CONDUCTOR_DUTY.filter((r) => r.id === "n.closing"), known, { cut: new Set(), off: new Set(), unmeasured: new Set() })[0].stages.have.state === "未確認");
+ok("決めに行くの申込予測の行は地図に入った（11/24 作業員L）＝持つは未確認でない", known.has("read.apply_readiness") && conductorDutyOf(CONDUCTOR_DUTY.filter((r) => r.id === "n.closing"), known, { cut: new Set(), off: new Set(), unmeasured: new Set() })[0].stages.have.state !== "未確認");
 const T: DutyRow[] = [
   { id: "a", name: "A", owner: "作業員A", have: ["r1"], use: ["c1"], reflect: ["w1"] },
   { id: "b", name: "B", owner: "作業員L", have: ["r1"], use: ["c2"], reflect: ["w1"], parts: ["X_ON"] },

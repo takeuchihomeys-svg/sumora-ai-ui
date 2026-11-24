@@ -116,14 +116,16 @@ export function conductorViewOf(meta: Record<string, unknown> | null | undefined
 /** 地図の駅を判断の記録（last_brain_meta.apply_route）に残し始めた時（APPLY_ROUTE_RECORD・route-record.ts・11/21 既定 on） */
 export const APPLY_ROUTE_RECORD_SINCE = "2026-11-21T00:00:00Z";
 /** 駅・分かれ道の名前（申込までの地図の名前を読み手が渡す） */
-export type RouteNames = { node: (id: string) => string | null; branch: (id: string) => string | null };
+export type RouteNames = { node: (id: string) => string | null; branch: (id: string) => string | null;
+  /** 2026-11-24 #657: 読み違いの多い駅（route:station_misread_move の駅ごとの数から読み手が渡す・無ければ印を付けない） */
+  weak?: ReadonlySet<string> };
 /** 今の状況の1行（統括から）。判断が古い時は印だけ（推さない） */
 export function conductorSituationLine(v: ConductorView | null, atMs: number, names: RouteNames): string {
   if (!v) return "今: 統括の判断なし";
   if (v.stale) return `今: （統括の判断は ${v.analyzedTs ? md(v.analyzedTs) : "?"} の通まで・その後のお客様の通は未判断）`;
   const parts: string[] = [];
   const nn = v.node ? names.node(v.node) : null;
-  if (nn) parts.push(nn);
+  if (nn) parts.push(`${nn}${v.node && names.weak?.has(v.node) ? "（この駅は読み違いが多い・確かめて）" : ""}`);
   // 2026-11-24 #676: 地図の駅を判断の記録に残すのは 11/21 から（APPLY_ROUTE_RECORD）。それより前の判断のままの会話は駅が無い＝推さずにその印
   else if (!v.node && v.analyzedTs && v.analyzedTs < APPLY_ROUTE_RECORD_SINCE) parts.push(`駅なし（統括の判断は ${md(v.analyzedTs)}・地図の駅を残す前）`);
   const bn = v.branch ? names.branch(v.branch) : null;
