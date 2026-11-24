@@ -19,12 +19,18 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
+import { resolveRouteName, testDeepseekModelOverride, isBrainRouteName } from "../../app/lib/llm-alt-provider";
 import { examEnvFingerprint, readDotenvLocal } from "./exam-env-fp";
 import { currentLane } from "./exam-lane";
 
 /** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
 function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
+  // 2026-11-24 作業員L（#670）: 試験だけブレインを OpenAI に回す回（EXAM_BRAIN_PROVIDER=openai）は、ブレインの名札の鍵にモデルを足す（DeepSeek の録音を返さない）
+  if ((env.EXAM_BRAIN_PROVIDER ?? "").trim().toLowerCase() === "openai") {
+    let h = "";
+    if (!action && body) { try { const sys = (JSON.parse(body) as { system?: unknown }).system; h = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : ""; } catch { h = ""; } }
+    if (isBrainRouteName(resolveRouteName(action, h.slice(0, 200)))) return `openai:${(env.EXAM_BRAIN_MODEL ?? "").trim() || "gpt-6.2-sol"}:${(env.EXAM_BRAIN_REASONING ?? "").trim()}`;
+  }
   if (!(env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim()) return null;
   let head = "";
   if (!action && body) {
