@@ -14,7 +14,7 @@ import { SWITCH_REACH, type SwitchReachDef } from "./exam-switch-reach";
 export function examNarrowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.EXAM_NARROW ?? "").trim().toLowerCase() !== "off";
 }
-export type NarrowBase = ReadonlyMap<string, { pathOk: boolean; pass: boolean; /** 前の回のどれかで返信の下書きが出た */ hasDraft?: boolean }>;
+export type NarrowBase = ReadonlyMap<string, { pathOk: boolean; pass: boolean; /** 前の回のどれかで返信の下書きが出た */ hasDraft?: boolean; /** off の回数 */ n?: number; /** off で当たり（道も採点も）の回数 */ passN?: number }>;
 /**
  * 2026-11-24 作業員L（統括役の頼み①）: スイッチごとの「効く場面」（コードで条件が決まる物だけ・推して埋めない）。
  *   reply_draft＝返信の下書き（app/api/generate-reply の文の設計図 compose-sentence-plan・compose-value-slots の中だけで読まれる）。
@@ -26,17 +26,20 @@ export const SWITCH_SCENE: Readonly<Record<string, { where: "reply_draft"; why: 
   COMPOSE_LEAD_JUDGE_FIRST: { where: "reply_draft", why: "compose-sentence-plan（generate-reply だけ）" },
   COMPOSE_DEST_FROM_BRAIN: { where: "reply_draft", why: "compose-sentence-plan（generate-reply だけ）" },
 };
+export function examNarrowSteadyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_NARROW_STEADY ?? "").trim().toLowerCase() !== "off";
+}
 export function examNarrowSceneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.EXAM_NARROW_SCENE ?? "").trim().toLowerCase() !== "off";
 }
 export type NarrowResult = { applied: boolean; keep: string[]; drop: string[]; why: Record<string, string>; reason: string };
 
 /** 前の基準の答え（問題ごと）→ 過半数の道・合格（純関数） */
-export function baseMajorityOf(rows: ReadonlyArray<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }>): Map<string, { pathOk: boolean; pass: boolean }> {
+export function baseMajorityOf(rows: ReadonlyArray<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }>): Map<string, { pathOk: boolean; pass: boolean; hasDraft: boolean; n: number; passN: number }> {
   const by = new Map<string, Array<{ p: boolean; s: boolean; d: boolean }>>();
   for (const r of rows) { if (r.error) continue; by.set(r.id, [...(by.get(r.id) ?? []), { p: !!r.path?.ok, s: !!r.score?.pass, d: !!(r as { draft?: { text?: string | null } | null }).draft?.text }]); }
-  const out = new Map<string, { pathOk: boolean; pass: boolean; hasDraft: boolean }>();
-  for (const [id, xs] of by) out.set(id, { pathOk: xs.filter((x) => x.p).length * 2 > xs.length, pass: xs.filter((x) => x.s).length * 2 > xs.length, hasDraft: xs.some((x) => x.d) });
+  const out = new Map<string, { pathOk: boolean; pass: boolean; hasDraft: boolean; n: number; passN: number }>();
+  for (const [id, xs] of by) out.set(id, { pathOk: xs.filter((x) => x.p).length * 2 > xs.length, pass: xs.filter((x) => x.s).length * 2 > xs.length, hasDraft: xs.some((x) => x.d), n: xs.length, passN: xs.filter((x) => x.p && x.s).length });
   return out;
 }
 
@@ -49,6 +52,7 @@ export function narrowProblems(o: { ids: readonly string[]; onSwitches: readonly
   const unknownSw = o.onSwitches.filter((s) => !(table[s]?.needs?.length) && !scene?.[s]);
   if (unknownSw.length) return none(`材料・場面の表に無いスイッチ（${unknownSw.join(",")}）＝どの問題に効くか分からない`);
   const needs: string[] = [...new Set(o.onSwitches.flatMap((s) => table[s]?.needs ?? []))];
+  const steady = examNarrowSteadyOn();
   const replyDraftSw = o.onSwitches.some((s) => scene?.[s]?.where === "reply_draft");
   const keep: string[] = [], drop: string[] = [], why: Record<string, string> = {};
   for (const id of ids) {
@@ -59,6 +63,8 @@ export function narrowProblems(o: { ids: readonly string[]; onSwitches: readonly
     if (needs.length && !l) { keep.push(id); why[id] = "前の回が無い"; continue; }
     if (l && needs.some((t) => (l[t] ?? 0) > 0)) { keep.push(id); why[id] = "材料あり"; continue; }
     if (b && (!b.pathOk || !b.pass)) { keep.push(id); why[id] = "今の off で外れ"; continue; }
+    // 2026-11-24 作業員L（統括役の頼み）: 落とすのは off で2回以上・全部当たり（揺れていない）の問題だけ。揺れている問題は on の外れが揺れか効きか分けられない＝残す（EXAM_NARROW_STEADY=off で前の過半数に戻る）
+    if (steady && (!b || typeof b.n !== "number" || b.n < 2 || b.passN !== b.n)) { keep.push(id); why[id] = !b ? "前の答えが無い" : "off で揺れている・回数が足りない"; continue; }
     drop.push(id); why[id] = replyDraftSw && !needs.length ? "返信の下書きが出ない番・off で当たり" : "材料0・off で当たり";
   }
   if (!keep.length) return none("絞ると0問（積む前の関所が止める）");

@@ -23,6 +23,12 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   // 2026-11-24 作業員L（統括役の頼み・7晩でよく出たスイッチ）: 文書の要点（brain-core の focusDocDigestOn の段）は、主のお部屋の資料（property_pickups.image_lines）と
   //   こちらが送った資料の画像の読み取り（sent_image_properties・FOCUS_DOC_SENT_IMAGE）が材料。どちらも0行の番は「focus-doc-digest-empty」で何も足さない
   BRAIN_FOCUS_DOC_DIGEST: { needs: ["property_pickups", "sent_image_properties"] },
+  // 2026-11-24 作業員L（統括役の頼み・よく出るのに表に無い5つ）: コードで材料が決まるのは PROPERTY_THREAD_PHOTO_SENT だけ。
+  //   property-thread.ts の photo_sent は AIX の記録（brain-core が aix_usage_logs から引く aixLogs）の property_check_result・interior_photo の行からだけ作る＝aix_usage_logs が0行なら効かない。
+  //   入れない4つ（推して埋めない）: QUOTED_IMAGE_PROPERTY_READ＝その番のお客様がこちらの画像を引用した時（messages の引用・台帳の表でない）／
+  //   EQUIPMENT_WISH_LOOKUP＝お客様の文の言い方（detectEquipmentQuestion の wish）・対象はお客様の画像（messages）からも／SITUATION_TIMELINE_WIDE＝お客様の発言40通（毎番ある）／
+  //   INFO_FILL_MAP＝地図の駅の埋まり（毎番プロンプトに足す）
+  PROPERTY_THREAD_PHOTO_SENT: { needs: ["aix_usage_logs"] },
   PICKUP_WHY_TO_BRAIN: { mark: "pickup_why", markSince: "4b86a9d72", needs: ["property_pickups"] },
   SIP_JUDGE: { mark: "pickup_why_sip", markSince: "4b86a9d72", needs: ["sent_image_properties"] },
   EXAM_LEDGER_SIP: { needs: ["sent_image_properties"] },

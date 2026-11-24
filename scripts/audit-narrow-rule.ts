@@ -49,4 +49,4 @@ for (const f of readdirSync(R).filter((x) => x.endsWith(".base-merged.jsonl"))) 
     if (compareProblem(cur.filter((r) => r.id === id), b).cmp === "worse") { out.worse++; if (res.drop.includes(id)) out.missed.push(`${label}:${id}`); }
   }
 }
-console.log(JSON.stringify({ ...out, usd: +out.usd.toFixed(2), droppedUsd: +out.droppedUsd.toFixed(2) }, null, 1));
+console.log(JSON.stringify({ ...out, usd: +out.usd.toFixed(2), droppedUsd: +out.droppedUsd.toFixed(3) }, null, 1));
