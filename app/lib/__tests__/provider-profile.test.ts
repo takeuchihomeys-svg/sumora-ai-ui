@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { PROVIDER_PROFILES, DEFAULT_VERSIONS, profileFor, profileByVersion, profileRoleOf, openaiRequestOf, examProfileVersions, openaiProfileGate, moveExamplesFirst, shapeHintOf } from "../provider-profile";
+import { PROVIDER_PROFILES, DEFAULT_VERSIONS, profileFor, profileByVersion, profileRoleOf, openaiRequestOf, examProfileVersions, openaiProfileGate, moveExamplesFirst, shapeHintOf, exampleRepliesOf, charsHintOf } from "../provider-profile";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -96,6 +96,15 @@ t("v2: 詳しさ（verbosity）と文の形の版", () => {
   const u = ["前の文", "【竹内さんの近い番の組み立て（場面が同じ・文は写さない）】", "並び: greet > uke > close", "1. greet: …"].join(String.fromCharCode(10));
   assert.match(shapeHintOf(u) ?? "", /3つの段（greet→uke→close）/);
   assert.equal(shapeHintOf("並びなし"), null);
+});
+
+t("v3: その番の実例の竹内さんの通の字数（中央と幅）だけを渡す", () => {
+  const NL = String.fromCharCode(10);
+  const u = ["【⭐ 〇〇の実際の返信例】", "[例1⭐]", "お客様: 「お願いします」", "〇〇: 「" + "あ".repeat(60) + "」", "", "[例2⭐]", "お客様: 「はい」", "〇〇: 「" + "い".repeat(120) + "」", "", "[例3]", "お客様: 「何？」", "〇〇: 「" + "う".repeat(200) + "」", "", "【次の決まり】"].join(NL);
+  assert.deepEqual(exampleRepliesOf(u).map((x) => x.length), [60, 120, 200]);
+  assert.match(charsHintOf(u) ?? "", /約120字（60〜200字）/);
+  assert.equal(charsHintOf("例なし"), null);
+  assert.equal(openaiRequestOf(profileByVersion("openai-writer-v3-chars")!, { routeName: "reply_generate", env: {} }).charsHint, true);
 });
 
 console.log(`provider-profile: ${n} ok`);
