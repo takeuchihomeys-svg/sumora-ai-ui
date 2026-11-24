@@ -66,6 +66,8 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   t("端末の番: 返信の番は外す・場面は scene_key・先後は order", dt.length === 2 && dt[0].scene === "ack" && dt[1].miss === "order" && dt[1].scene === "cost");
   // 2026-11-25 作業員A: 先後でもブレインの下書きが同じ種類の約束なら「ブレインも2段の約束を書いていた」（分けて外す・本当の外れに入れない）
   const dt2 = deviceTurnsOf([{ id: 3, cls: "two_stage", tk: "property", v: "先後", bDraftPromise: true }, { id: 4, cls: "two_stage", tk: "property", v: "先後" }], new Map());
+  const dt3 = deviceTurnsOf([{ id: 5, cls: "aix_first", tk: "property", v: "AIXの番を返信", prevPromise: ["property"], minDecToAix: 158, burst: "thanks" }, { id: 6, cls: "aix_first", tk: "property", v: "AIXの番を返信", prevPromise: ["property"], minDecToAix: 9, burst: "thanks" }, { id: 7, cls: "aix_first", tk: "property", v: "AIXの番を返信", prevPromise: ["property"], minDecToAix: 120, burst: "question" }], new Map());
+  t("端末の番: ④スタッフだけが知る結果（前の約束・お礼・20分以上後）は staff_only・早い番と問いの番は外れのまま", dt3[0].miss === "staff_only" && dt3[1].miss === "reply_not_aix" && dt3[2].miss === "reply_not_aix" && SET_ASIDE_MISS.has("staff_only"));
   t("端末の番: 2段の約束を書いた先後は two_stage_draft・分けて外す", dt2[0].miss === "two_stage_draft" && dt2[0].cause === null && dt2[1].miss === "order" && SET_ASIDE_MISS.has("two_stage_draft"));
   const rt = routeTurnsOf([{ conv: "a", at: "1", node: "pickup", branch: null, agree: "promise_match", dir: "promise" }, { conv: "a", at: "2", node: "pickup", branch: null, agree: "push_missed", dir: "promise" }, { conv: "b", at: "3", node: "hearing", branch: "viewing_lapsed", agree: "pushed_off_map", dir: "forward", nextAix: [] }]);
   const rtree = buildTree(rt, { metric: "route:next_match_60d", label: "r", dims: ["station", "miss", "cause"] });
