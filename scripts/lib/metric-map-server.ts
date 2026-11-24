@@ -331,7 +331,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       lines.push(`- 並べて見る（${def.label.replace(/（.*$/, "")}${def.writerSelect === "style" ? "・文の癖で選んだ番" : def.writerSelect === "device" ? "・端末の記録で選んだ番" : ""}）: ${value ?? "—"}%（${top.n}番中 ${top.ok}番）`);
     } else {
       const mb = missBreakdownOf(nodes);
-      const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : ""].filter(Boolean);
+      const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : "", mb.two_stage_draft ? `ブレインも2段の約束を書いていた ${mb.two_stage_draft}` : ""].filter(Boolean);
       // 見込みは作業ごとに1行（部品に割った作業も元の作業として1回だけ）
       const uniq = [...new Map(its.filter((i) => i.forecast_low != null).map((i) => [i.id, i])).values()].sort((a, b) => (b.forecast_high ?? 0) - (a.forecast_high ?? 0));
       const STAGE_JA: Record<string, string> = { todo: "まだ", building: "作っている", built_off: "作った（off）", testing: "試験中", passed: "試験を通った", on: "本番 on", waiting_owner: "竹内さん待ち", blocked: "止まっている" };
@@ -340,6 +340,8 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
         def.okLabel
           ? (top.n ? `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が${def.okLabel}）。${def.missLabel ?? "進まなかった"} ${top.misses}番` : `- まだ数が無い（番が0・出所 ${def.source.split("（")[0]} を夜に回す）`)
           : `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
+        // 2026-11-25 作業員A（統括役の頼み）: 今の数え方は消さず、ブレインも2段の約束を書いていた番を合うに数えた一致を並べる
+        ...(mb.two_stage_draft && top.n ? [`- 並べて見る（ブレインも2段の約束を書いていた番を合うに数える）: ${Math.round(((top.ok + mb.two_stage_draft) / top.n) * 1000) / 10}%（${top.n}番中 ${top.ok + mb.two_stage_draft}番）`] : []),
         ...uniq.slice(0, 4).map((i) => `- 見込み${(i.forecast_exam as { phase?: string } | null)?.phase ? `（${(i.forecast_exam as { phase?: string }).phase}）` : ""} #${i.id}（${STAGE_JA[i.stage] ?? i.stage}）: ${i.forecast_before ?? "—"}% → ${rng(i)}${i.blocker ? `・止まり: ${String(i.blocker).slice(0, 30)}` : ""}`),
         ...ranked.slice(0, 3).map((r, k) => { const it = r.items.length ? its.find((x) => x.id === r.items[0]) ?? null : null; // 葉に近い作業が先頭（rankLeaves の並び）
           return `- 次の一手 ${k + 1}: ${leafJa(r.key)}（外れ ${r.misses}${r.hold ? "・数が少ない" : ""}）→ ${r.hole || !it ? "作業がまだ無い所（持ち主を決める）" : `#${it.id}（${STAGE_JA[it.stage] ?? it.stage}${it.blocker ? `・止まり: ${String(it.blocker).slice(0, 20)}` : ""}）`}`; }),
