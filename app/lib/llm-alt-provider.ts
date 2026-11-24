@@ -43,12 +43,45 @@ export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen" | "openai";
 //   本番（Vercel・NODE_ENV=production）では isTestModeAllowed が false＝何もしない。本番の振り分け（予算で切り替える）は別の段（#670 の続き）
 export const OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 export const OPENAI_DEFAULT_MODEL = "gpt-6.2-sol";
+/**
+ * 2026-11-24 #670（統括役の頼み・試験だけ・EXAM_WRITER_GPT_NOTE=on）: 書き手の GPT 用の言い添え。11/24 の書き手の比べ（同じ8問）で Luna・Sol は竹内さんの文の 0.74〜0.80倍に短く切り、
+ *   謝りを「全然大丈夫です」で受けた（q032・竹内さんの決まり KB 317c7a7c: 要望を言い直して謝った時は送ってくれた事への感謝で受ける・apology-ack の「とんでもございません」）
+ */
+export const WRITER_GPT_NOTE = [
+  "【書き方の補い】",
+  "① 文の長さは、手本の文や前にこちらが送った通と同じくらいにする。短くまとめすぎない（受け止め・お答え・お礼・次の一手を省かない）。",
+  "② お客様が要望を言い直して謝った時・恐縮している時は「全然大丈夫です」で受けない。「とんでもございません😊！！」か、送って頂いた事・ご連絡頂いた事へのお礼で受ける。",
+].join("\n");
+/**
+ * 2026-11-24 #670（統括役の頼み・試験だけ・EXAM_WRITER_LEN_HINT=on）: 長さの目安を数字で。竹内さんの返信（試験の問題の竹内さんの文 221通・返信／2段が正解の番）は
+ *   1通 77字（下から25%）〜120字（中央）〜199字（上から25%）。問題ごとの答えの長さは渡さない（全体の目安だけ）
+ */
+export const WRITER_LEN_HINT = "【長さの目安】竹内さんの返信は1通 およそ80〜200字（真ん中は120字ほど）。お客様の通が長い・答える事が多い時は長めに、短いお礼への返しは短くてよい。";
+/** 試験だけの書き手の言い添え（名前ごとに足す: EXAM_WRITER_GPT_NOTE=on・EXAM_WRITER_LEN_HINT=on）。無ければ null */
+export function writerExamNotes(env: EnvLike): string | null {
+  const on = (k: string) => (env[k] ?? "").trim().toLowerCase() === "on";
+  const parts = [on("EXAM_WRITER_GPT_NOTE") ? WRITER_GPT_NOTE : null, on("EXAM_WRITER_LEN_HINT") ? WRITER_LEN_HINT : null].filter((x): x is string => !!x);
+  return parts.length ? parts.join("\n") : null;
+}
 /** ブレインの出力の主な欄（11/24 の試験で DeepSeek・Sol がほぼ全部の答案で返した欄）。試験だけの言い添え EXAM_BRAIN_JSON_KEYS=on で使う */
 export const BRAIN_OUTPUT_KEYS: readonly string[] = ["reply_mode", "action", "aix", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "turn_contract", "reason"];
 /** ブレインの名札か（brain・brain_*。名前で Claude に固定した部品 *_claude は外す） */
 export function isBrainRouteName(name: string | null | undefined): boolean {
   const n = String(name ?? "");
   return (n === "brain" || n.startsWith("brain_")) && !n.endsWith("_claude");
+}
+/** 返信の書き手の名札か（reply_generate・書く役の flash） */
+export function isWriterRouteName(name: string | null | undefined): boolean {
+  const n = String(name ?? "");
+  return n === "reply_generate" || n === WRITER_FLASH_ACTION;
+}
+/** 2026-11-24 #670（統括役: Claude の費用は主に書き手）: 試験だけ、返信の書き手を回す相手（EXAM_WRITER_PROVIDER=openai・EXAM_WRITER_MODEL 既定 gpt-6.2-sol） */
+export function examWriterTarget(env: EnvLike): ProviderTarget | null {
+  if ((env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase() !== "openai") return null;
+  if (!isTestModeAllowed(env)) return null;
+  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) return null;
+  return { provider: "openai", endpoint: OPENAI_CHAT_ENDPOINT, apiKey, model: (env.EXAM_WRITER_MODEL ?? "").trim() || OPENAI_DEFAULT_MODEL };
 }
 /** 試験だけ: ブレインを回す相手（EXAM_BRAIN_PROVIDER=openai・テスト用の切り替えを効かせてよい環境だけ）。それ以外は null */
 export function examBrainTarget(env: EnvLike): ProviderTarget | null {
@@ -131,6 +164,8 @@ export type AltProviderConfig = {
   routes: Map<string, AltProviderConfig>;
   /** 2026-11-24 #670: 試験だけ、ブレインの名札を回す相手（examBrainTarget） */
   examBrain?: ProviderTarget | null;
+  /** 2026-11-24 #670: 試験だけ、返信の書き手の名札を回す相手（examWriterTarget） */
+  examWriter?: ProviderTarget | null;
 };
 
 /** 相手（provider）ごとの宛先・鍵・モデル。欠けていれば null */
@@ -316,7 +351,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   //   主の相手や null の判定は変えない＝ほかの名札の振り分けは1つも変わらない）
   for (const a of batchAltDefaultActions(env)) actions.add(a);
   const examBrain = testMode ? examBrainTarget(env) : null;
-  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes, ...(examBrain ? { examBrain } : {}) };
+  const examWriter = testMode ? examWriterTarget(env) : null;
+  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes, ...(examBrain ? { examBrain } : {}), ...(examWriter ? { examWriter } : {}) };
 }
 
 /** 参考（2026-09-19 の判断・readProviderTarget に移した）:
@@ -339,6 +375,7 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
   // 2026-11-24 #670: 試験だけ、ブレインの名札は EXAM_BRAIN_PROVIDER の相手（OpenAI）
   if (cfg.examBrain && isBrainRouteName(routeName)) return { ...cfg, ...cfg.examBrain, routes: new Map() };
+  if (cfg.examWriter && isWriterRouteName(routeName)) return { ...cfg, ...cfg.examWriter, routes: new Map() };
   const base0 = (routeName && cfg.routes?.get(routeName)) || cfg;
   // 2026-10-21 書く役の flash（writer-flash-scenes.ts・WRITER_FLASH_SCENES）: 名札 reply_generate_flash は同じ DeepSeek の鍵で flash のモデルに送る
   // 2026-10-22 AIX のブレイン（指揮官・実行役・aix-brain.ts）も DeepSeek の時は flash（伏せた材料だけ・申込以降／審査の事情は入口で Claude に固定）
@@ -406,6 +443,9 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (!cfg || !routeName) return false;
   // 2026-11-24 #670: 試験だけ、ブレインの名札を OpenAI に（examBrainTarget）
   if (cfg.examBrain && isBrainRouteName(routeName) && isTestModeAllowed(process.env)) return true;
+  if (cfg.examWriter && isWriterRouteName(routeName) && isTestModeAllowed(process.env)) return true;
+  // 2026-11-24 #670（統括役の許し・Claude $1 まで）: 試験だけ、返信の書き手を本番と同じ Claude で（EXAM_WRITER_PROVIDER=claude・LLM_TEST_ALLOW_CLAUDE に名札が要る）
+  if (isWriterRouteName(routeName) && (process.env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase() === "claude" && cfg.testMode && isTestModeAllowed(process.env)) return false;
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
@@ -629,7 +669,9 @@ export function toOpenAIBody(
       /** 2026-11-24 #670: OpenAI の自動キャッシュの束ね（係ごと・prompt_cache_key） */
       cacheKey?: string | null;
       /** 2026-11-24 #670（試験だけ・EXAM_BRAIN_JSON_KEYS=on）: 出力の欄の言い添え＋JSON モード（Luna が action だけの JSON を返した） */
-      jsonKeys?: readonly string[] | null } } = {},
+      jsonKeys?: readonly string[] | null;
+      /** 2026-11-24 #670（試験だけ・EXAM_WRITER_GPT_NOTE=on）: 書き手の GPT 用の言い添え（system の最後＝キャッシュの先頭は変えない） */
+      writerNote?: string | null } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -661,6 +703,7 @@ export function toOpenAIBody(
     : { thinking };
   if (opts.openai) {
     const keys = opts.openai.jsonKeys?.length ? opts.openai.jsonKeys : null;
+    if (opts.openai.writerNote) { if (messages[0]?.role === "system") messages[0].content += `\n\n${opts.openai.writerNote}`; else messages.unshift({ role: "system", content: opts.openai.writerNote }); }
     if (keys) {
       const note = `\n\n【出力の形（必須）】JSON オブジェクトを1つだけ出す。次の欄を全部入れる（分からない欄も空の値で入れる・欄を省かない）: ${keys.join(", ")}`;
       if (messages[0]?.role === "system") messages[0].content += note; else messages.unshift({ role: "system", content: note.trim() });
@@ -793,14 +836,16 @@ export function createSseConverter(model: string) {
       if (!data || data === "[DONE]") return [];
       let j: {
         choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-        usage?: { completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; prompt_tokens?: number };
+        usage?: { completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; prompt_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
       };
       try { j = JSON.parse(data); } catch { return []; }
       const res: string[] = [];
       if (j.usage) {
         out = j.usage.completion_tokens ?? out;
-        inCached = j.usage.prompt_cache_hit_tokens ?? inCached;
-        inUncached = j.usage.prompt_cache_miss_tokens ?? j.usage.prompt_tokens ?? inUncached;
+        // 2026-11-24 作業員L（#670）: OpenAI の1文字ずつの形は prompt_tokens_details.cached_tokens（DeepSeek の形が無い時だけ見る）。旧は命中を全部「新規」に数えていた（書き手の Sol の費用が約10倍に出た）
+        const hit = j.usage.prompt_cache_hit_tokens ?? j.usage.prompt_tokens_details?.cached_tokens;
+        inCached = hit ?? inCached;
+        inUncached = j.usage.prompt_cache_miss_tokens ?? (typeof j.usage.prompt_tokens === "number" ? Math.max(0, j.usage.prompt_tokens - (hit ?? 0)) : inUncached);
       }
       const c = j.choices?.[0];
       if (c?.finish_reason) { finish = c.finish_reason === "length" ? "max_tokens" : "end_turn"; gotFinish = true; }
@@ -875,6 +920,13 @@ export function readBusyGuard(env: EnvLike = process.env): AltBusyGuard {
     breakerFailures: intEnv(env.DEEPSEEK_BREAKER_FAILURES, 2, 1, 20),
     breakerCooldownMs: intEnv(env.DEEPSEEK_BREAKER_COOLDOWN_MS, 5 * 60_000, 10_000, 60 * 60_000),
   };
+}
+
+/** OpenAI 用の待ち時間（純関数）。未設定は渡された値のまま */
+export function openaiGuardOf(guard: AltBusyGuard, env: EnvLike = process.env): AltBusyGuard {
+  if (!guard.enabled) return guard;
+  const ft = String(env.OPENAI_FIRST_TOKEN_MS ?? "").trim(), to = String(env.OPENAI_TIMEOUT_MS ?? "").trim();
+  return { ...guard, firstTokenMs: ft ? intEnv(ft, guard.firstTokenMs, 3_000, 120_000) : guard.firstTokenMs, totalMs: to ? intEnv(to, guard.totalMs, 10_000, 180_000) : guard.totalMs };
 }
 
 /** 混雑・無応答による失敗（回路の遮断に数える物）。400 等の「送り方が悪い」失敗は数えない */
@@ -993,12 +1045,16 @@ async function callOpenAICompatible(
     disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape || cfg.provider === "openai",
     thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
     ...(cfg.provider === "openai" ? { openai: {
-      reasoningEffort: (process.env.EXAM_BRAIN_REASONING ?? process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
+      reasoningEffort: (isWriterRouteName(routeName) ? process.env.EXAM_WRITER_REASONING ?? process.env.EXAM_BRAIN_REASONING : process.env.EXAM_BRAIN_REASONING)?.trim() || (process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
       cacheKey: routeName ? `sumora-${routeName}` : null,
       jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
+      writerNote: cfg.testMode && isWriterRouteName(routeName) ? writerExamNotes(process.env) : null,
     } } : {}),
   });
   if (!payload) return null;
+  // 2026-11-24 作業員L（#670・統括役の頼み③）: OpenAI 用の待ち時間（最初の1文字・全体）。考える深さを上げると最初の1文字が遅く、DeepSeek 用の 15秒・60秒では Claude への戻りが増える。
+  //   OPENAI_FIRST_TOKEN_MS・OPENAI_TIMEOUT_MS（既定は未設定＝今まで通り DeepSeek と同じ値）
+  if (cfg.provider === "openai") guard = openaiGuardOf(guard, process.env);
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
     headers: cfg.provider === "deepseek" || cfg.provider === "qwen" || cfg.provider === "openai"

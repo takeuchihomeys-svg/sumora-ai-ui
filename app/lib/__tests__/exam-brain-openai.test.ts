@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/exam-brain-openai.test.ts
 // 2026-11-24 作業員L（台帳 #670）: 試験だけブレインを OpenAI に回す切り替え（EXAM_BRAIN_PROVIDER=openai）と OpenAI の本文・単価
 import assert from "node:assert/strict";
-import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT } from "../llm-alt-provider";
+import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT, createSseConverter, openaiGuardOf, WRITER_GPT_NOTE, writerExamNotes } from "../llm-alt-provider";
 import { altPriceOf, altUsageUsd } from "../llm-price";
 
 let n = 0;
@@ -66,6 +66,44 @@ t("係ごとの prompt_cache_key・試験の欄の言い添え（JSON モード�
   assert.equal(q.prompt_cache_key, undefined);
   assert.equal(q.response_format, undefined);
   assert.equal((q.messages as Array<{ content: string }>)[0].content, "あなたはブレイン");
+});
+
+t("1文字ずつの形: OpenAI の cached_tokens を命中に（新規＝入力−命中）", () => {
+  const c = createSseConverter("gpt-6.2-sol");
+  c.push(`data: ${JSON.stringify({ choices: [{ delta: { content: "はい" } }] })}`);
+  c.push(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 800 } } })}`);
+  const u = c.usage();
+  assert.equal(u.cache_read_input_tokens, 800);
+  assert.equal(u.input_tokens, 200);
+  const d = createSseConverter("deepseek-v4-pro");
+  d.push(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 1000, completion_tokens: 5, prompt_cache_hit_tokens: 600, prompt_cache_miss_tokens: 400 } })}`);
+  assert.deepEqual([d.usage().cache_read_input_tokens, d.usage().input_tokens], [600, 400]);
+});
+
+t("OpenAI 用の待ち時間（未設定は今まで通り）", () => {
+  const g = { enabled: true, firstTokenMs: 15_000, totalMs: 60_000, breakerFailures: 2, breakerCooldownMs: 300_000 };
+  assert.deepEqual(openaiGuardOf(g, {}), g);
+  const o = openaiGuardOf(g, { OPENAI_FIRST_TOKEN_MS: "45000", OPENAI_TIMEOUT_MS: "120000" });
+  assert.deepEqual([o.firstTokenMs, o.totalMs], [45_000, 120_000]);
+  assert.equal(openaiGuardOf({ ...g, enabled: false }, { OPENAI_FIRST_TOKEN_MS: "45000" }).firstTokenMs, 15_000);
+});
+
+t("書き手の GPT 用の言い添えは system の最後（先頭は変えない）", () => {
+  const body = { model: "claude-x", max_tokens: 3000, system: "あなたは書き手", messages: [{ role: "user", content: "書いて" }] };
+  const p = toOpenAIBody(body as never, "gpt-6-luna", { openai: { writerNote: WRITER_GPT_NOTE } })!;
+  const sys = (p.messages as Array<{ content: string }>)[0].content;
+  assert.ok(sys.startsWith("あなたは書き手"));
+  assert.match(sys, /全然大丈夫です/);
+  assert.match(sys, /短くまとめすぎない/);
+});
+
+t("試験の書き手の言い添えは名前ごとに（GPT_NOTE・LEN_HINT）", () => {
+  assert.equal(writerExamNotes({}), null);
+  assert.match(writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on" }) ?? "", /全然大丈夫です/);
+  assert.doesNotMatch(writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on" }) ?? "", /長さの目安/);
+  assert.match(writerExamNotes({ EXAM_WRITER_LEN_HINT: "on" }) ?? "", /80〜200字/);
+  const both = writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on", EXAM_WRITER_LEN_HINT: "on" }) ?? "";
+  assert.ok(both.indexOf("書き方の補い") < both.indexOf("長さの目安"));
 });
 
 console.log(`exam-brain-openai: ${n} ok`);
