@@ -85,6 +85,7 @@ import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, 
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
+import { worthGate, loadOffPass } from "./lib/exam-worth";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -502,6 +503,18 @@ async function addJob(): Promise<void> {
           log(`  使い方の表の版: ブレイン ${v.brain ?? "-"}・書き手 ${v.writer ?? "-"}`);
         }
       }
+    }
+    // 2026-11-24 夜 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の決め）: 積む前の値打ちの関所。効く問題（--eff=… があればそれ・無ければ積む問題の全部）が
+    //   今の off（off の基準の置き場の一番新しい答え）で全部過半数合格＝余地0（良くなりようがない）なら積まない。余地不明（off の答えが無い問題がある）は積む。
+    //   前の7晩: 余地0 の組 32組・$5.25・そこで見つかった確かな悪化 0（scripts/audit-exam-worth.ts）。越える: --force／止める: EXAM_WORTH_GATE=off
+    if (job.runner === "brain-exam" && ids.length && !job.dig && (process.env.EXAM_WORTH_GATE ?? "").trim().toLowerCase() !== "off") {
+      try {
+        const effArg = arg("eff").split(",").map((x) => x.trim()).filter(Boolean);
+        const eff = effArg.length ? effArg.filter((x) => ids.includes(x)) : ids.slice();
+        const wg = worthGate(eff, loadOffPass(join(examCacheRoot(), "brain-exam-baseline")));
+        log(`  値打ちの関所: ${wg.line}`);
+        if (wg.block && !flag("force")) throw new Error(`積まない（値打ち）: ${wg.line}。効く問題を --eff=q…（守りは外す）で示すか、悪化だけを見る組なら --force（止める EXAM_WORTH_GATE=off）`);
+      } catch (e) { if (String(e).includes("積まない")) throw e; /* 読めない時は止めない */ }
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
