@@ -20,7 +20,7 @@
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
 import { WRITER_FLASH_ACTION } from "./writer-flash-scenes";
-import { profileFor, openaiRequestOf, moveExamplesFirst, shapeHintOf } from "./provider-profile";
+import { profileFor, openaiRequestOf, moveExamplesFirst, shapeHintOf, charsHintOf } from "./provider-profile";
 import { AIX_BRAIN_ACTION } from "./aix-brain";
 import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, LLM_CUTOFF_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
@@ -676,7 +676,8 @@ export function toOpenAIBody(
       /** 2026-11-24 #670（表の版 v2）: 手本の文を system の先頭に固定 */
       examplesFirst?: boolean;
       verbosity?: string | null;
-      shapeHint?: boolean } } = {},
+      shapeHint?: boolean;
+      charsHint?: boolean } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -709,6 +710,7 @@ export function toOpenAIBody(
   if (opts.openai) {
     const keys = opts.openai.jsonKeys?.length ? opts.openai.jsonKeys : null;
     if (opts.openai.examplesFirst && messages[0]?.role === "system") messages[0].content = moveExamplesFirst(messages[0].content);
+    if (opts.openai.charsHint) { const lastUser = [...messages].reverse().find((m) => m.role === "user"); const h = lastUser ? charsHintOf(messages.filter((m) => m.role === "user").map((m) => m.content).join("\n")) : null; if (lastUser && h) lastUser.content += `\n\n${h}`; }
     if (opts.openai.shapeHint) { const lastUser = [...messages].reverse().find((m) => m.role === "user"); const h = lastUser ? shapeHintOf(messages.filter((m) => m.role === "user").map((m) => m.content).join("\n")) : null; if (lastUser && h) lastUser.content += `\n\n${h}`; }
     if (opts.openai.writerNote) { if (messages[0]?.role === "system") messages[0].content += `\n\n${opts.openai.writerNote}`; else messages.unshift({ role: "system", content: opts.openai.writerNote }); }
     if (keys) {
@@ -1068,6 +1070,7 @@ async function callOpenAICompatible(
       examplesFirst: parts.examplesFirst,
       verbosity: parts.verbosity,
       shapeHint: parts.shapeHint,
+      charsHint: parts.charsHint,
     } } : {}),
   });
   if (!payload) return null;
