@@ -18,8 +18,25 @@ const N = (s: string) => s.normalize("NFKC");
 const dayOf = (ms: number) => { const p = jstParts(ms); return Date.UTC(p.y, p.m - 1, p.d); };
 const DOW: Record<string, number> = { 日: 0, 月: 1, 火: 2, 水: 3, 木: 4, 金: 5, 土: 6 };
 
+/**
+ * 2026-11-25 作業員L（台帳 #664 の②・統括役の了承・既定 off）: 期限の言葉の広げ PROMISE_DUE_WIDE=on。
+ *   60日の種類の付いた約束 897 のうち、今の言葉で期限が読めるのは 24。残りの大半は「〜次第」（271）か時の言葉が無い＝言葉の取り出しの穴ではなく期限を言っていない。
+ *   取り出せる形だけ足す: 「翌営業日」（土日を飛ばした次の日・祝日は見ない）・月の無い「〇日に／〇日まで」（言った日以降の一番近いその日）。「至急・すぐに」は日が決まらないので足さない
+ */
+export const promiseDueWideOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_DUE_WIDE ?? "").trim().toLowerCase() === "on";
+function promiseDueDayWide(t: string, base: number): number | null {
+  if (/翌営業日/.test(t)) { let d = base + DAY; while ([0, 6].includes(new Date(d).getUTCDay())) d += DAY; return d; }
+  const dm = t.match(/(?<![0-9\/月])(3[01]|[12][0-9]|0?[1-9])\s*日\s*(?:に|まで|中|の(?:午前|午後|夕方))/);
+  if (dm) {
+    const b = new Date(base); const day = Number(dm[1]);
+    let d = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), day);
+    if (d < base) d = Date.UTC(b.getUTCFullYear(), b.getUTCMonth() + 1, day);
+    return d;
+  }
+  return null;
+}
 /** 約束の文の期限の日（JST の暦の日を UTC 0時で）。読めなければ null */
-export function promiseDueDay(sentence: string, saidAtMs: number): number | null {
+export function promiseDueDay(sentence: string, saidAtMs: number, env?: Record<string, string | undefined>): number | null {
   const t = N(sentence);
   const base = dayOf(saidAtMs);
   const md = t.match(/(?<![0-9])(1[0-2]|0?[1-9])\s*[\/月]\s*(3[01]|[12][0-9]|0?[1-9])\s*日?/);
@@ -41,6 +58,7 @@ export function promiseDueDay(sentence: string, saidAtMs: number): number | null
     if (w[1]) diff += diff === 0 ? 7 : (DOW[w[2]] > dowNow ? 7 : 0);
     return base + diff * DAY;
   }
+  if (promiseDueWideOn(env)) return promiseDueDayWide(t, base);
   return null;
 }
 
