@@ -28,7 +28,7 @@ const p2 = buildCustomerPlan({ meta: { checkpoint_stage: "viewed" }, status: nul
 t("駅が無い時は段の語から寄せる", p2.station.node === "viewed" && p2.station.node_from === "checkpoint_stage", p2.station);
 
 // ── #467 の (1): 地図 → 統括の指示書（ROUTE_TO_BRIEF）──
-t("ROUTE_TO_BRIEF は既定 off", !routeToBriefOn({}) && routeToBriefOn({ ROUTE_TO_BRIEF: "on" }));
+t("ROUTE_TO_BRIEF は既定 on（11/25）・=off で止まる", routeToBriefOn({}) && !routeToBriefOn({ ROUTE_TO_BRIEF: "off" }));
 t("仕込みの型→事実の id（ask_send は渡さない）", PLANT_TO_FACT.scarcity === "one_room_only" && PLANT_TO_FACT.hold_before_viewing === "hold_by_apply" && PLANT_TO_FACT.ask_send === null);
 const vd = matchSubstateOf("内覧は土曜日の午後でお願いします");
 t("網: 内覧の日時→viewing_dates", vd?.id === "viewing_dates", vd?.id);
@@ -46,7 +46,7 @@ t("apply_route が無ければ null", routeBriefSection({}) === null && routeBri
 t("書き手への塊（使える時だけ）", routeAimNoteForWriter({ route: rs }).includes("日時を決める") && routeAimNoteForWriter({ route: rsx }) === "" && routeAimNoteForWriter(null) === "");
 
 const bm = { apply_route: { node: "viewing_arrange", branch: null, next: "x", next_aix: [], substate: "viewing_dates" } };
-delete process.env.ROUTE_TO_BRIEF;
+process.env.ROUTE_TO_BRIEF = "off";
 const bOff = buildConductorBrief(bm);
 process.env.ROUTE_TO_BRIEF = "on"; process.env.ROUTE_SUBSTATE_ALLOW = "all";
 const bOn = buildConductorBrief(bm);

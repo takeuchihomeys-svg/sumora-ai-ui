@@ -61,7 +61,8 @@ export function stationOf(i: { applyRouteNode?: string | null; status?: string |
 //   埋めるのは空いている欄だけ（ブレイン・判断の根拠・型の表の値を上書きしない）。状態は地図の駅と合う時だけ使う（合わない時は記録だけ・at_match=false）。
 
 export function routeToBriefOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.ROUTE_TO_BRIEF ?? "").trim().toLowerCase() === "on";
+  // 2026-11-25 統括役の決め（試験 a-route-brief-1124 の3本で確かな悪化0・比べた 13/13問）: 既定 on・=off で止まる
+  return (env.ROUTE_TO_BRIEF ?? "on").trim().toLowerCase() !== "off";
 }
 /** 地図の仕込みの型 → 次の一手の先回りの事実の id（ask_send は事実でなくお願いなので渡さない） */
 export const PLANT_TO_FACT: Readonly<Record<Plant, PlantFact | null>> = {
