@@ -1233,9 +1233,23 @@ async function prepareMainBaseline(): Promise<boolean> {
   let pinnedNightly: string | null = null;
   try { unlinkSync(`${RESULTS_DIR}/${LABEL}.pin.json`); } catch { /* 前の回の印を残さない */ }
   const nightlyFile = join(B.BASELINE_DIR, `nightly-base-${ch}.json`);
-  if (ref === "main" && !flag("baseline-only") && process.env.EXAM_BASELINE_NIGHTLY !== "off" && existsSync(nightlyFile)) {
+  // 2026-11-24 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の頼み c）: この構成にこの晩の控えが無ければ、別の構成のこの晩の控え（一番早い物）の commit に固定する。
+  //   11/21〜22 の晩も、構成の違う組が別々の main の版で前を作っていた（同じ晩・同じ問題の作り直し 50件・$3.5）。同じ版にそろうと、構成が違っても要求が同じ呼び出しは
+  //   前の答えの控え（EXAM_BASELINE_PIN_ANY_CFG）で呼ばずに済む。決め方（作業ツリーがその commit を含むか・確かめ直し）は今の decideBasePin のまま。止める: EXAM_BASELINE_PIN_CROSS_CFG=off
+  const nightlyPath = (() => {
+    if (process.env.EXAM_BASELINE_PIN_CROSS_CFG === "off") return nightlyFile;
+    const ns = nightStartMs(Date.now());
+    const atOf = (f: string) => { try { return Date.parse((JSON.parse(readFileSync(f, "utf8")) as { at?: string }).at ?? ""); } catch { return NaN; } };
+    const own = atOf(nightlyFile);
+    if (Number.isFinite(own) && own >= ns) return nightlyFile;
+    let names: string[] = []; try { names = readdirSync(B.BASELINE_DIR); } catch { /* */ }
+    const c = names.filter((f) => /^nightly-base-[0-9a-f]+\.json$/.test(f) && f !== basename(nightlyFile)).map((f) => ({ f: join(B.BASELINE_DIR, f), at: atOf(join(B.BASELINE_DIR, f)) })).filter((x) => Number.isFinite(x.at) && x.at >= ns).sort((a, z) => a.at - z.at)[0];
+    if (c) console.log(`  この構成にこの晩の前の控えが無い → 別の構成のこの晩の控え（${basename(c.f)}）の commit に合わせる（EXAM_BASELINE_PIN_CROSS_CFG）`);
+    return c ? c.f : nightlyFile;
+  })();
+  if (ref === "main" && !flag("baseline-only") && process.env.EXAM_BASELINE_NIGHTLY !== "off" && existsSync(nightlyPath)) {
     try {
-      const nb = JSON.parse(readFileSync(nightlyFile, "utf8")) as NightlyRecord;
+      const nb = JSON.parse(readFileSync(nightlyPath, "utf8")) as NightlyRecord;
       let hasNightly = false; try { execFileSync("git", ["merge-base", "--is-ancestor", nb.commit, "HEAD"], { stdio: "ignore" }); hasNightly = true; } catch { /* 含まない */ }
       const files = hasNightly ? execFileSync("git", ["diff", "--name-only", nb.commit, commit]).toString().split("\n").map((x) => x.trim()).filter(Boolean) : [];
       const touched = files.filter(touchesExam);
@@ -1391,11 +1405,20 @@ async function prepareMainBaseline(): Promise<boolean> {
     const pinsOf = (ids: string[]): Map<string, PinHit> => {
       const m = new Map<string, PinHit>();
       if (process.env.EXAM_BASELINE_PIN === "off" || INPUT_DIFF === "off" || CASSETTE_MODE === "off") return m;
-      const sibs = B.siblingDirs(C.listDirs(B.BASELINE_DIR), ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+      const allDirs = C.listDirs(B.BASELINE_DIR);
+      const sibs = B.siblingDirs(allDirs, ch, basename(dir)).filter((n) => !legacyDirs.some((d) => basename(d) === n));
+      // 2026-11-24 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の頼み c）: 同じ構成の置き場に無ければ、構成の違う置き場の前の答えも控えに使う。
+      //   控えは要求の印（pk＝本文・モデル・運び方）が同じ呼び出しにだけ当たる＝構成の違いで要求が変われば当たらず本当に呼ぶ（答えは変わらない）。
+      //   直近7晩の作り直し 608件・$44.8 のうち 412件・$29.4 が構成の違いで、控えが1つも当たっていなかった（scripts/audit-exam-baseline-reuse.ts）。止める: EXAM_BASELINE_PIN_ANY_CFG=off
+      const others = process.env.EXAM_BASELINE_PIN_ANY_CFG === "off" ? [] : allDirs.filter((n) => /^(?:v-[0-9a-f]+|[0-9a-f]{10})-[0-9a-f]{10}$/.test(n) && n !== basename(dir) && !sibs.includes(n) && !legacyDirs.some((d) => basename(d) === n));
+      let fromOther = 0;
       for (const id of ids) {
-        const hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), { hash: hashOf.get(id)!, alt: altOf.get(id) }, { maxAgeMs });
+        const want = { hash: hashOf.get(id)!, alt: altOf.get(id) };
+        let hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, sibs, id), want, { maxAgeMs });
+        if (!hit && others.length) { hit = C.pickPrevMainRows(C.readSiblingFiles<import("./lib/brain-exam-baseline").BaselineFile<ResultRow>>(B.BASELINE_DIR, others, id), want, { maxAgeMs }); if (hit) fromOther++; }
         if (hit) m.set(id, hit as unknown as PinHit);
       }
+      if (fromOther) console.log(`  前の答えの控えを構成の違う置き場から: ${fromOther}問（要求が同じ呼び出しだけ使う・EXAM_BASELINE_PIN_ANY_CFG）`);
       return m;
     };
     /** main の作業ツリーで子を1回回し、取れた問題を取り置く。plan＝下見（AI を呼ばない・入力が全部同じ問題だけ答案が出る）。取り置いた問題を返す（作業ツリーが空かない時は null） */

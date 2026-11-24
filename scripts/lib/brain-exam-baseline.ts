@@ -9,6 +9,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { examCacheRoot } from "./llm-cassette";
 import { atomicWriteJson } from "./exam-shared-file";
+import { execFileSync } from "node:child_process";
+import { defaultOfSnippet } from "./switch-default-scan";
 
 /** 置き場（全部の作業ツリーで共有＝他の担当が回した main の「前」も使える）。<倉庫の根>/.claude/exam-cache/brain-exam-baseline（EXAM_CACHE_DIR で変える） */
 export const BASELINE_DIR = join(examCacheRoot(), "brain-exam-baseline");
@@ -177,4 +179,53 @@ export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...lega
 export function childArgs(args: string[], o: { resolvedStage?: string } = {}): string[] {
   return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|baseline-defer|baseline-limit|select|select-n|select-q|link-kb|report|input-diff|force)(?:=|$)/.test(a))
     .map((a) => (a === "--stage=diff" && o.resolvedStage ? `--stage=${o.resolvedStage}` : a));
+}
+
+/**
+ * 2026-11-24 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の頼み c: off の基準の使い回し）:
+ *   直近7晩の取り置き 652件・$47.6 のうち、構成（env）の違いで作り直したのが 412件・$29.4（scripts/audit-exam-baseline-reuse.ts）。
+ *   違いの中身は、片方の構成にだけ env が書いてあり、その値がコードの既定と同じ（係の設定 examEnv が乗った回と乗らない回）＝答えは同じ。
+ *   回数の違いは repeatSubsetCompatible と同じに扱う（相手の回数が自分以上）。段・判定の口・層などの args の違いは使わない。
+ *   defaults はスイッチ → コードの既定（小文字・読めない物は入れない＝片方に無いと同じとみなさない）。止める: EXAM_BASELINE_CFG_EQUIV=off
+ */
+export function configEquivalent(want: ExamConfig, have: ExamConfig, defaults: ReadonlyMap<string, string>): boolean {
+  const wr = Number(want.args.repeat ?? 1), hr = Number(have.args.repeat ?? 1);
+  if (!Number.isFinite(wr) || !Number.isFinite(hr) || hr < wr) return false;
+  const argsOf = (c: ExamConfig) => { const a = { ...c.args }; delete a.repeat; delete a.repeatFlaky; return JSON.stringify(Object.keys(a).sort().map((k) => [k, a[k]])); };
+  if (argsOf(want) !== argsOf(have)) return false;
+  const norm = (v: string | undefined) => (v ?? "").trim().toLowerCase();
+  for (const k of new Set([...Object.keys(want.env), ...Object.keys(have.env)])) {
+    const a = want.env[k], b = have.env[k];
+    if (a !== undefined && b !== undefined) { if (norm(a) !== norm(b)) return false; continue; }
+    const d = defaults.get(k);
+    if (d === undefined || d === "?") return false;
+    if (norm(a ?? b) !== d) return false;
+  }
+  return true;
+}
+/** 2つの構成で片方にだけある env の名前（既定を読む名前の一覧） */
+export function oneSidedEnvKeys(want: ExamConfig, have: ExamConfig): string[] {
+  return [...new Set([...Object.keys(want.env), ...Object.keys(have.env)])].filter((k) => (want.env[k] === undefined) !== (have.env[k] === undefined));
+}
+/**
+ * 2026-11-24 作業員A: main の commit のソース（app・lib）で、スイッチのコードの既定を読む（git grep・1回だけ・読めない物は "?"）。
+ *   置き場の版の鍵が同じ＝その commit とコードの中身が同じなので、既定もその commit で読めば合う
+ */
+export function defaultsAtCommit(commit: string, names: readonly string[], cwd?: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const ns = [...new Set(names)].filter((n) => /^[A-Z][A-Z0-9_]+$/.test(n));
+  if (!ns.length) return out;
+  let text = "";
+  try {
+    text = execFileSync("git", ["grep", "-h", "-A2", "-E", `\\.(${ns.join("|")})\\b`, commit, "--", "app", "lib"], { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  } catch { return out; }
+  for (const n of ns) {
+    const re = new RegExp(`\\.${n}\\b`, "g");
+    const votes = new Map<string, number>();
+    for (const m of text.matchAll(re)) { const d = defaultOfSnippet(text.slice(m.index!, m.index! + 260), n); votes.set(d, (votes.get(d) ?? 0) + 1); }
+    const known = [...votes.entries()].filter(([d]) => d !== "?");
+    // 読み方が割れている（別の既定が混じる）物は使わない＝同じとみなさない
+    if (known.length === 1) out.set(n, known[0][0]);
+  }
+  return out;
 }
