@@ -204,6 +204,14 @@ async function main() {
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・新しい cron は作らない）: 今どこの読み違い（判断の駅×その後の一手・7日・軽い読み）をここで数えて quality_daily に（--write の時だけ書く）
     try { const { runMisreadMove } = await import("./audit-route-misread-move"); await runMisreadMove({ sb: sb as never, days: 7, write: process.argv.includes("--write"), quiet: true }); } catch (e) { lines.push(`- 今どこの読み違いの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-25 作業員A（台帳 #687・竹内さん「今どこかちゃんと把握して申込に向かって進んでいるのか・地図を細分化して強化」）: 駅ごとの物差しと一番弱い駅（軽い読み・
+    //   数は夜の scripts/audit-route-station-daily.ts --write が quality_daily に書いた最新の日の物＝ここは読むだけ）
+    try {
+      const { data: wq } = await sb.from("quality_daily").select("day,metric,value,n,source").like("metric", "route:weak_station:%").order("day", { ascending: false }).limit(9);
+      const w = ((wq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; source: string | null }>);
+      const d0 = w[0]?.day; const top = w.filter((x) => x.day === d0).sort((a, b) => a.metric.localeCompare(b.metric));
+      if (top.length) lines.push(`- 一番弱い駅（${d0}・竹内さん本人の番）: ${top.map((x) => `${x.metric.slice(-1)}. ${String(x.source ?? "").split("・").pop()}（弱さ ${x.value}・番 ${x.n}）`).join("　")}（#687・細分化は audit-route-station-daily）`);
+    } catch (e) { lines.push(`- 一番弱い駅: 読めない（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-25 作業員A（台帳 #688・竹内さん「なんで AIX の一致がこんなに弱いのか」・統括役の頼み）: スタッフが AIX を押した番でブレインが外した番を組ごとに（30日）。
     //   ④ スタッフだけが知る番（ブレインが知りようのない番）は弱さの数から外して別に数える。quality_daily は --write の時だけ（aix_miss:*_30d）
     try {

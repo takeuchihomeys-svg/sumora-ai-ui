@@ -12,7 +12,7 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
 const POST = new Set(["applying", "application", "screening", "approved", "contract", "closed_won", "closed_lost"]);
 
 /** 2026-11-24 作業員A（統括役の決め）: 毎朝の self-improve から呼ぶ（新しい cron は作らない）。quiet の時は画面に出さず、書いた行を返す */
-export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; write?: boolean; quiet?: boolean; withReply?: boolean; withBackfill?: boolean } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
+export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; write?: boolean; quiet?: boolean; withReply?: boolean; withBackfill?: boolean; onOut?: (rows: Array<{ node: string | null; branch: string | null; kind: string }>) => void } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
   const days = o.days ?? 7;
   const console = o.quiet ? { log: (..._a: unknown[]) => {} } : globalThis.console;
   const sb = o.sb ?? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
@@ -67,6 +67,7 @@ export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; wr
     const v = misreadMoveOf({ node: ar.node, branch: ar.branch, moveAix: next?.aix ?? null, hoursAfter: hours, sentBefore: before });
     out.push({ src: r.src ?? "digest", conv: r.conversation_id.slice(0, 8), at: r.created_at, node: ar.node, branch: ar.branch, move: next ? `${next.by === "reply" ? "返信≈" : ""}${next.aix}` : null, hours, ...v });
   }
+  o.onOut?.(out.map((x) => ({ node: x.node, branch: x.branch, kind: x.kind })));
   viaReply = out.filter((o) => o.move?.startsWith("返信≈") && o.kind !== "unknown" && o.kind !== "timed").length;
   const nm = (n: string | null, b: string | null) => `${n ? (ROUTE_NODES as Record<string, { name: string }>)[n]?.name ?? n : "?"}${b ? `／分:${(ROUTE_BRANCHES as Record<string, { name: string }>)[b]?.name ?? b}` : ""}`;
   const cnt = (f: (o: Out) => boolean) => out.filter(f).length;
