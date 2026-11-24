@@ -75,6 +75,11 @@ export const ALT_PRICES: ReadonlyArray<{ re: RegExp; label: string; price: AltPr
   { re: /deepseek/, label: "DeepSeek flash", price: { in: 0.15, read: 0.003, out: 0.6, peakDouble: true } },
   { re: /^jev:|jev-/, label: "Jev", price: { in: 0.042, read: 0.042, out: 0, peakDouble: false } },
   // 2026-11-23 作業員L（統括役の頼み・統括の学びの埋め込みを llm_usage_logs に残し始めた・action=conductor_lesson_embed）: OpenAI 公式 $0.02/100万（入力だけ・出力なし）
+  // 2026-11-24 作業員L（#670）: OpenAI 公式（developers.openai.com/api/docs/pricing を 11/24 に引いた・Standard・272K 以下）。cached input を read に
+  { re: /^gpt-6\.2-astra/, label: "OpenAI GPT-6.2 Astra", price: { in: 8, read: 0.4, out: 40, peakDouble: false } },
+  { re: /^gpt-6\.2-sol/, label: "OpenAI GPT-6.2 Sol", price: { in: 2, read: 0.1, out: 10, peakDouble: false } },
+  { re: /^gpt-6\.1-terra/, label: "OpenAI GPT-6.1 Terra", price: { in: 1, read: 0.05, out: 5, peakDouble: false } },
+  { re: /^gpt-6-luna/, label: "OpenAI GPT-6 Luna", price: { in: 0.1, read: 0.01, out: 0.5, peakDouble: false } },
   { re: /^text-embedding-3-small$/, label: "OpenAI 埋め込み small", price: { in: 0.02, read: 0.02, out: 0, peakDouble: false } },
 ];
 

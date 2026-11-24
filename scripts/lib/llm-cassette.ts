@@ -19,12 +19,18 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { resolveRouteName, testDeepseekModelOverride } from "../../app/lib/llm-alt-provider";
+import { resolveRouteName, testDeepseekModelOverride, isBrainRouteName } from "../../app/lib/llm-alt-provider";
 import { examEnvFingerprint, readDotenvLocal } from "./exam-env-fp";
 import { currentLane } from "./exam-lane";
 
 /** 2026-10-18: LLM_TEST_DS_MODEL_BY_ACTION で替えた名札のモデル（無ければ null）。名札の無い返信生成は system の先頭で見分ける（llm-alt と同じ） */
 function actionModelOverride(env: Record<string, string | undefined>, action: string | null, body: string | null): string | null {
+  // 2026-11-24 作業員L（#670）: 試験だけブレインを OpenAI に回す回（EXAM_BRAIN_PROVIDER=openai）は、ブレインの名札の鍵にモデルを足す（DeepSeek の録音を返さない）
+  if ((env.EXAM_BRAIN_PROVIDER ?? "").trim().toLowerCase() === "openai") {
+    let h = "";
+    if (!action && body) { try { const sys = (JSON.parse(body) as { system?: unknown }).system; h = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : ""; } catch { h = ""; } }
+    if (isBrainRouteName(resolveRouteName(action, h.slice(0, 200)))) return `openai:${(env.EXAM_BRAIN_MODEL ?? "").trim() || "gpt-6.2-sol"}:${(env.EXAM_BRAIN_REASONING ?? "").trim()}`;
+  }
   if (!(env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim()) return null;
   let head = "";
   if (!action && body) {
@@ -290,7 +296,9 @@ export function setCassetteTag(tag: Record<string, string>): void {
 //   段ごとに効く: 1段目が同じなら main の答え → それを材料にした2段目の要求も同じなら main の答え …（最初に違った段から本当に呼ぶ）。
 //   全部の呼び出しが main の答えで済んだ回＝「入力が同じ」（答え・判定も main と同じ＝悪化・改善と数えない）。
 /** 1回の呼び出しの控え（pk＝要求の印・key＝録音の置き場の鍵・sha＝返した答えの本文の印・src＝どこから） */
-export type CallRef = { pk: string; key: string; sha: string; action: string | null; src: "pin" | "replay" | "record" | "miss" | "fail" };
+export type CallRef = { pk: string; key: string; sha: string; action: string | null; src: "pin" | "replay" | "record" | "miss" | "fail";
+  /** 2026-11-24 作業員L（#670・切り替えが効いたかの確かめ）: 応答のモデル名と id（読み切りの形だけ・1文字ずつの形は無い） */
+  respModel?: string | null; respId?: string | null };
 const callLog = new Map<string, CallRef[]>();
 const pinUsed = new Map<string, Set<number>>();
 let pins: Map<string, CallRef[]> | null = null;
@@ -455,6 +463,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
       const ref = logCall({ pk, key, sha: "", action, src: "record" });
       const done = clone.text().then(async (text) => {
         ref.sha = shaOfBody(text);
+        try { const rj = JSON.parse(text) as { model?: unknown; id?: unknown }; ref.respModel = typeof rj.model === "string" ? rj.model : null; ref.respId = typeof rj.id === "string" ? rj.id : null; } catch { /* 1文字ずつの形 */ }
         const usage = usageOfResponse(text, ct);
         const usd = await usdOfUsage(usage, at).catch(() => 0);
         bump(action, (t) => { t.real++; t.realUsd += usd; });
