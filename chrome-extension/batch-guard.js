@@ -87,13 +87,35 @@
     var p = probe || {};
     var url = typeof p.url === "string" ? p.url : "";
     var MAIN = "https://www.realnetpro.com/main.php";
-    if (!url || !REALPRO_MAIN_RE.test(url)) {
+    /**
+     * ★ 2.8.252 audit#1616: probe.url 空で常に裸 main.php へ navigate
+     *   → 検索結果（estate）も入力中もトップへ飛ばして「検索の画面でない」で止まった。
+     *   lastKnownUrl / fallbackUrl があればそれを優先。空でも navigate せず reload 待ちを返す。
+     */
+    if (!url) {
+      var alt = "";
+      try {
+        alt = String(p.lastKnownUrl || p.fallbackUrl || "").trim();
+      } catch (_) { alt = ""; }
+      if (alt && REALPRO_MAIN_RE.test(alt)) {
+        url = alt;
+      } else {
+        // URL空でも裸navigateしない（#1616）。main.php を update で開く soft reload
+        return { method: "reload", url: MAIN, keepSearch: false, soft: true, reason: "no_url_soft" };
+      }
+    }
+    if (!REALPRO_MAIN_RE.test(url)) {
       return { method: "navigate", url: MAIN, keepSearch: false };
     }
     var keepSearch = /[?&](?:method=estate|display=building)(?:&|=|$)/.test(url)
       || /[?&]method=estate/.test(url)
       || /[?&]display=building/.test(url);
     return { method: "reload", url: url, keepSearch: !!keepSearch };
+  }
+  /** switch 失敗が「通路切れ」系か（拡張再読込・SW休眠）。即ページ破壊せず再送が先 */
+  function isSwitchChannelError(why) {
+    var w = String(why || "");
+    return /message channel closed|Receiving end does not exist|Could not establish|The message port closed|Extension context invalidated|asynchronous response/i.test(w);
   }
 
   // ── v2.5.45 ITANDI のタブ（旧は itandibb.com の最初のタブをそのまま使っていた＝物件の詳細・ログインの画面でも入力を始めた）──
@@ -303,6 +325,7 @@
     itandiTabPlan: itandiTabPlan,
     realproTabPlan: realproTabPlan,
     realproRecoverNav: realproRecoverNav,
+    isSwitchChannelError: isSwitchChannelError,
     realproReady: realproReady,
     claimBlockedByHumanRun: claimBlockedByHumanRun,
     holdReloadForBusyPage: holdReloadForBusyPage,

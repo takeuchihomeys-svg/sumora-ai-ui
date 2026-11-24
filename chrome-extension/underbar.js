@@ -3,6 +3,47 @@
 // リアプロページにAIXLINX フローティングパネルを注入
 // 展開状態・位置・サイズをlocalStorageで保持（全タブ共有・ブラウザ再起動後も保持）
 (function () {
+  /**
+   * ★ 2.8.254: 既に wrap があるのに display:none（並べ替え tuck の残骸等）なら戻して終了。
+   *   旧は early return だけで、消えたまま永久に復活しなかった。
+   */
+  (function _healExistingWrap() {
+    try {
+      var w = document.getElementById("aixlinx-float-wrap");
+      if (!w) return;
+      if (w.getAttribute("data-axlx-sort-prev-display") != null) {
+        var prev = w.getAttribute("data-axlx-sort-prev-display");
+        w.style.setProperty("display", prev === "none" || prev === "" ? "flex" : (prev || "flex"), "important");
+        w.removeAttribute("data-axlx-sort-prev-display");
+      }
+      var cs = window.getComputedStyle ? window.getComputedStyle(w) : null;
+      var hidden = (w.style.display === "none") || (cs && cs.display === "none");
+      if (hidden && w.getAttribute("data-axlx-user-mini") !== "1") {
+        w.style.setProperty("display", "flex", "important");
+      }
+      /**
+       * ★ 2.8.258: 既存 wrap でも右ドックから離れていたら右へ戻す。
+       *   旧は early return で位置スナップが一度しか走らず、中央に残ったまま
+       *   「右ドックが消えた／物件送るが隠れる」状態が続いた。
+       */
+      if (!window.location.hostname.includes("reins.jp") && w.getAttribute("data-axlx-user-mini") !== "1") {
+        var ww = window.innerWidth || 1200;
+        var dockX = Math.max(10, ww - Math.max(420, parseInt(w.style.width, 10) || 660) - 20);
+        var curX = parseInt(w.style.left, 10);
+        if (!Number.isFinite(curX)) curX = w.getBoundingClientRect().left;
+        if (Math.abs(curX - dockX) > 120 || curX < ww * 0.35) {
+          w.style.setProperty("left", dockX + "px", "important");
+        }
+        // ★ 2.8.260: 既存 wrap の z-index も下げて物件送る枠を上に（旧 MAX のまま残る衝突）
+        try {
+          var zs = window.getComputedStyle ? window.getComputedStyle(w).zIndex : "";
+          if (String(zs) === "2147483647" || String(w.style.zIndex) === "2147483647") {
+            w.style.setProperty("z-index", "2147483645", "important");
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  })();
   if (document.getElementById("aixlinx-float-wrap")) return;
 
   // 2026-09-27 竹内「全て時間ランダムに」: 画面が落ち着くのを待つ固定の秒数（元より短くしない）。human-wait.js は manifest で先に読む。読めない時は元の値
@@ -33,12 +74,39 @@
   try { saved = JSON.parse(STORE.getItem(SK) || "{}"); } catch {}
 
   // デフォルト初期位置：レインズは中央寄り / リアプロは右寄り
-  const DEFAULT_X = isReins
-    ? Math.max(10, Math.round((window.innerWidth - INIT_W) / 2))
-    : Math.max(10, window.innerWidth - INIT_W - 20);
+  function _defaultDockX(w) {
+    var ww = Number(w) || window.innerWidth || 1200;
+    return isReins
+      ? Math.max(10, Math.round((ww - INIT_W) / 2))
+      : Math.max(10, ww - INIT_W - 20);
+  }
+  const DEFAULT_X = _defaultDockX(window.innerWidth);
   const DEFAULT_Y = 80;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
+  /**
+   * ★ 2.8.251 竹内さん「右側にあった拡張ツールの画面が消えている」:
+   *   保存位置が左へ寄りすぎ／画面外だと、右ドックが消えたように見える（一覧を覆う小窓だけ残る）。
+   *   リアプロは右端ドックが正本。左半分に居る・右端が見切れている保存値は右へ戻す。
+   */
+  (function _snapDockRightIfLost() {
+    if (isReins) return;
+    try {
+      var ww = window.innerWidth || 1200;
+      var dock = _defaultDockX(ww);
+      var tooLeft = Number(posX) < Math.round(ww * 0.35);
+      // ★ 2.8.254: 右端ドックから 120px 以上離れていれば「消えた／中央に被さった」とみなして戻す
+      var farFromDock = Math.abs(Number(posX) - dock) > 120;
+      var offRight = Number(posX) + Math.max(MIN_W, Number(saved.panelW) || INIT_W) > ww + 40;
+      var offScreen = Number(posX) < -20 || Number(posX) > ww - 80;
+      if (tooLeft || farFromDock || offRight || offScreen || saved.posX == null) {
+        posX = dock;
+        if (Number(posY) < 0 || Number(posY) > (window.innerHeight || 800)) posY = DEFAULT_Y;
+      }
+    } catch (_) {
+      posX = DEFAULT_X;
+    }
+  })();
   /**
    * 2026-11-12 竹内さん「たまにちいさくなって中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
    *   ⚠ 旧は保存された幅を**そのまま**使っていた。前回ドラッグで小さくした幅（300px など）が
@@ -92,7 +160,11 @@
   wrap.style.setProperty("left",     posX + "px", "important");
   wrap.style.setProperty("width",    MINI + "px", "important");
   wrap.style.setProperty("height",   MINI + "px", "important");
-  wrap.style.setProperty("z-index",  "2147483647", "important");
+  /**
+   * ★ 2.8.260: お客様パネルは 2147483645。物件送る枠(#axlx-bar)を上(…647)に出し、
+   *   右ドックに完全に隠れないようにする（旧は wrap が MAX で bar が常に下）。
+   */
+  wrap.style.setProperty("z-index",  "2147483645", "important");
 
   // ── ドラッグバー（展開時）─────────────────────────────────────────
   const dragBar = document.createElement("div");
@@ -426,6 +498,7 @@
     if (exp) {
       // ミニボタンを隠し、wrapをflexで復元
       miniBtnEl.style.display = "none";
+      try { wrap.removeAttribute("data-axlx-user-mini"); } catch (_) {}
       wrap.style.setProperty("display", "flex", "important");
       clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
       wrap.style.setProperty("width",  panelW + "px", "important");
@@ -452,6 +525,7 @@
     } else {
       // wrapをdisplay:none !importantで完全に隠す（itandi CSS上書き問題を完全回避）
       wrap.style.setProperty("display", "none", "important");
+      try { wrap.setAttribute("data-axlx-user-mini", "1"); } catch (_) {}
       // ミニボタンをwrapの現在位置に表示
       const curLeft = parseInt(wrap.style.left) || posX;
       const curTop  = parseInt(wrap.style.top)  || posY;
@@ -500,10 +574,14 @@
   resizeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize"));
   resizeNeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize-ne"));
 
-  // ダブルクリックでサイズをデフォルトにリセット
+  // ダブルクリックでサイズ＋位置を右ドックへリセット
   dragBar.addEventListener("dblclick", () => {
     panelW = INIT_W;
     panelH = 680;
+    posX = _defaultDockX(window.innerWidth);
+    posY = DEFAULT_Y;
+    wrap.style.setProperty("left", posX + "px", "important");
+    wrap.style.setProperty("top",  posY + "px", "important");
     clampHeight();
     wrap.style.setProperty("width",  panelW + "px", "important");
     wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");

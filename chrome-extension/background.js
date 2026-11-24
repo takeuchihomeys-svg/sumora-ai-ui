@@ -3471,6 +3471,24 @@ try {
     if (!msg) return;
     if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundleQueued(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
     /**
+     * ★ 2.8.238: 詰まり時にリアプロタブを前へ（画面照会で tab_hidden の最善次手）
+     */
+    if (msg.type === "axlx-stuck-focus-tab") {
+      (async function () {
+        try {
+          var tabs = await chrome.tabs.query({ url: ["*://www.realnetpro.com/*", "*://*.realnetpro.com/*"] });
+          var t = tabs && tabs[0];
+          if (!t || t.id == null) { try { sendResponse({ ok: false, error: "no_tab" }); } catch (_) {} return; }
+          try { await chrome.tabs.update(t.id, { active: true }); } catch (_) {}
+          try { if (t.windowId != null) await chrome.windows.update(t.windowId, { focused: true }); } catch (_) {}
+          try { sendResponse({ ok: true, tabId: t.id }); } catch (_) {}
+        } catch (e) {
+          try { sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 80) }); } catch (_) {}
+        }
+      })();
+      return true;
+    }
+    /**
      * ★ 2026-11-17: page-script が learn_reflect_ok を出したら即連動完了印。
      *   fill-done 前に反映できた回も needs_auto を下ろせる。
      */
@@ -4131,277 +4149,8 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
       sendResponse({ ok: false, error: "batch_running" });
       return true;
     }
-    _manualBulkAlive = true;
     sendResponse({ ok: true, started: true });
-    (async () => {
-      try {
-        // 前回バッチのストップ残留をクリア（即解決を防ぐ）
-        _batchShouldStop = false;
-        try { await chrome.storage.local.set({ batchStopRequested: false }); } catch(_) {}
-        // 2026-09-29 見張り: 前の回の「止める」は持ち越さない
-        _watchStop = null;
-        _watchSkipped = [];
-        _busyRetried = new Set(); // 2.8.128 busy_other_customer のやり直し済みは一括ごとに作り直す
-        /** ★ 2.8.214: 古い page-script のまま自動しない（再読込して版を合わせる）＋束も強制取込 */
-        try {
-          var _pf = await _ensureRealproPageFresh("manual_bulk");
-          console.log("[manual-bulk-search] page-fresh", _pf);
-        } catch (_) {}
-        try { await _refreshLearnedBundleQueued(true); } catch (_) {}
-        var _bulkRes = await _fetchCustomerListWithRetry("https://sumora-ai-ui.vercel.app/api/property-customers", "manual-bulk");
-        if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
-        var _bulkAll = await _bulkRes.json();
-        var _bulkTargets = _bulkIds
-          .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
-          .filter(Boolean);
-        console.log("[manual-bulk-search] ▶ site=" + _bulkSite + " mode=" + (_bulkIsWide ? "wide" : "pinpoint") + " 対象=" + _bulkTargets.length + "人");
-        /** ★ 2.8.217: 一括の誰・何件・次客を枠へ（把握） */
-        var _bulkNames = _bulkTargets.map(function (c) { return String((c && c.customer_name) || "?"); });
-        try {
-          await _publishBulkGrasp({
-            total: _bulkTargets.length,
-            index: 0,
-            currentName: "",
-            nextName: _bulkNames[0] || "",
-            names: _bulkNames,
-            waitingFor: "一括開始",
-          });
-        } catch (_) {}
-        /**
-         * 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
-         *   一括検索でお客様から次のお客様へ移る間。**長さの決まりは auto-run.js の1か所**（bulkCustomerGapMs）に寄せた
-         *   （background 側で一様乱数を書かない＝そろわない・2か所で別々に持たない）。8〜25秒・6回に1回ほど40〜95秒の一息。
-         */
-        var _bulkGapMs = function () {
-          try {
-            if (self.AxlxAutoRun && self.AxlxAutoRun.bulkCustomerGapMs) return self.AxlxAutoRun.bulkCustomerGapMs();
-          } catch (_) {}
-          var H = self.AxlxHumanWait;
-          return H && H.logNormalDelay ? H.logNormalDelay(14000, 0.45) : 14000;
-        };
-        for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
-          var _bc = _bulkTargets[_bi];
-          try {
-            var _g0 = (self.AxlxBulkPanelGrasp && self.AxlxBulkPanelGrasp.bulkGraspFromQueue)
-              ? self.AxlxBulkPanelGrasp.bulkGraspFromQueue(_bulkNames, _bi)
-              : { total: _bulkTargets.length, index: _bi + 1, currentName: _bulkNames[_bi], nextName: _bulkNames[_bi + 1] || "" };
-            _g0.currentId = _bc && _bc.id != null ? String(_bc.id) : "";
-            _g0.nextId = _bulkTargets[_bi + 1] && _bulkTargets[_bi + 1].id != null ? String(_bulkTargets[_bi + 1].id) : "";
-            _g0.names = _bulkNames;
-            /** ★ 2.8.222: 一括の各客開始時に「次の動き」を明示（1人目=入れ／2人目以降=外してから入れ） */
-            _g0.nextMove = _bi === 0 ? "条件を1つずつ入れる" : "前客を外してから入れる";
-            _g0.waitingFor = null;
-            await _publishBulkGrasp(_g0);
-          } catch (_) {}
-          // 2.8.125 案B: 最後のお客さんは送付後の外しを待たずに戻す（_scrapeAndSendRealpro が見る）
-          try { self._axlxLastCustomerId = (_bi === _bulkTargets.length - 1 && _bc && _bc.id != null) ? String(_bc.id) : null; } catch (_) {}
-          /**
-           * 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通なので休憩の間もいれるように。人間がおこなっているから」:
-           *   一括検索でも、働き続けたら休む（自動モードと同じ決まり）。
-           *   ・短い休憩 12〜30秒（作業20分以上で 8%）
-           *   ・長い休憩 60〜180秒（作業120分以上で 18%）
-           *   ・**90分続けて動いたら必ず休む**（この時は 60〜180秒・人と同じ「一区切り」）
-           *   休憩の後は数え直す。
-           */
-          if (self.AxlxHumanWait) {
-            var _worked = _manualBulkWorkedSince || Date.now();
-            if (!_manualBulkWorkedSince) _manualBulkWorkedSince = _worked;
-            var _restMs = 0, _restKind = null;
-            try {
-              if (self.AxlxAutoRun && self.AxlxAutoRun.continuousRestDue && self.AxlxAutoRun.continuousRestDue(_worked, Date.now())) {
-                _restMs = 60000 + Math.floor(Math.random() * 120000); // 90分続いた → 1〜3分
-                _restKind = "90分の一区切り";
-              } else if (self.AxlxHumanWait.restDue) {
-                var _rd = self.AxlxHumanWait.restDue(_worked, Date.now());
-                if (_rd.rest) { _restMs = _rd.ms; _restKind = _rd.kind === "long" ? "長め" : "短め"; }
-              }
-            } catch (_) {}
-            if (_restMs > 0) {
-              console.log("[manual-bulk-search] 休憩（" + _restKind + " " + Math.round(_restMs / 1000) + "秒）をはさみます");
-              /**
-               * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように」:
-               *   休憩の間は、リアプロ／ITANDI の画面の枠に「☕ 休憩中（あとN秒）」と出す（黙って止まらない）。
-               */
-              try {
-                var _tabsForNote = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
-                _tabsForNote.forEach(function (t) {
-                  try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "☕ 休憩中（" + _restKind + "）", untilMs: Date.now() + _restMs }, function () { void chrome.runtime.lastError; }); } catch (_) {}
-                });
-              } catch (_) {}
-              await new Promise(function (r) { setTimeout(r, _restMs); });
-              _manualBulkWorkedSince = Date.now(); // 休んだら数え直す
-              try {
-                var _tabsEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
-                _tabsEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
-              } catch (_) {}
-              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（休憩の後） → 中断"); break; }
-            }
-          }
-          // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
-          if (_bi > 0) {
-            var _gap = _bulkGapMs(_bi);
-            /**
-             * 2026-11-11 竹内さん「昼休みなら昼休みと人間のようにするかたちで」:
-             *   昼（JST 12:00〜13:00）に当たったら、その間は動かずに「🍱 昼休み（13:00まで）」と枠に出す。
-             *   昼休みの後は、次のお客様までの間も改めて取る。
-             */
-            var _lunchMs = 0;
-            try {
-              var _j = new Date(Date.now() + 9 * 3600 * 1000);
-              var _mins = _j.getUTCHours() * 60 + _j.getUTCMinutes();
-              if (_mins >= 12 * 60 && _mins < 13 * 60) _lunchMs = (13 * 60 - _mins) * 60 * 1000 - _j.getUTCSeconds() * 1000;
-            } catch (_) {}
-            if (_lunchMs > 0) {
-              console.log("[manual-bulk-search] 🍱 昼休み（13:00まで " + Math.round(_lunchMs / 60000) + "分）");
-              try {
-                var _tabsLunch = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
-                _tabsLunch.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "🍱 昼休み（13:00まで）", untilMs: Date.now() + _lunchMs }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
-              } catch (_) {}
-              await new Promise(function (r) { setTimeout(r, _lunchMs); });
-              _manualBulkWorkedSince = Date.now();
-              try {
-                var _tabsLunchEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
-                _tabsLunchEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
-              } catch (_) {}
-              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（昼休みの後） → 中断"); break; }
-            }
-            console.log("[manual-bulk-search] 次のお客様まで " + Math.round(_gap / 1000) + "秒（人の間）");
-            try {
-              var _tabsGap = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
-              _tabsGap.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "⏳ 次のお客様まで", untilMs: Date.now() + _gap }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
-            } catch (_) {}
-            await new Promise(function (r) { setTimeout(r, _gap); });
-            if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
-          }
-          // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたら、次のお客様から見送る（知らせはサーバーの1通だけ）
-          if (_watchSkipSite(_bc, _bulkSite)) continue;
-          console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
-          // 検索の点検: この1人の記録を始める（ブレインの時だけ）
-          var _bulkAudit = await _auditBegin({
-            site: _bulkSite, customer_id: _bc.id, customer: _bc, trigger: "bulk_manual",
-            is_wide: _bulkIsWide, area_mode: _bc.area_mode || null,
-          });
-          try {
-            // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
-            var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
-              ? _createFillDoneWaiter(_bulkSite, String(_bc.id), _fillDoneTimeoutMs(_bulkSite))
-              : null;
-            // 2026-09-25 竹内「更新日も拡張ツールと連動」: 一括検索も更新日で絞る（旧は渡しておらず、すべて表示で検索していた）。
-            //   決まりは個別検索（preloadAdjForm）と同じ: 手で決めた値 → 送った日と確認した日の新しい方から 1/3/7/14（初めては絞らない）
-            var _bulkRpDays = self.AxlxRpUpdateDays ? self.AxlxRpUpdateDays.effectiveRpUpdateDays(_bc, Date.now()) : null;
-            // 2026-11-10 手の一括でも ITANDI は ITANDI の手の指定（itandi_update_days）→ 無ければリアプロと同じ線で数える。
-            //   旧は ITANDI の回にもリアプロの手の指定をそのまま渡していた（DB_STRUCTURE.md の「混ざっている所 2」）
-            var _bulkItDays = null;
-            try {
-              if (self.AxlxRpUpdateDays && self.AxlxRpUpdateDays.effectiveRpUpdateDays) {
-                _bulkItDays = self.AxlxRpUpdateDays.effectiveRpUpdateDays(Object.assign({}, _bc, { rp_update_days: _bc.itandi_update_days }), Date.now());
-              }
-            } catch (_) { _bulkItDays = null; }
-            console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + (String(_bulkSite) === "itandi" ? "／ITANDI=" + (_bulkItDays ? _bulkItDays + "日以内" : "指定なし") : "") + " (" + _bc.customer_name + ")");
-            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays, itandi_update_days: _bulkItDays }, _bulkAudit);
-            // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
-            //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
-            //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
-            // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
-            // reins は bulk-dl.js 自動送信なし → ウェイターなしでスキップ
-            if (_bulkFillDone) {
-              var _bulkNextNm = _bulkNames[_bi + 1] || "";
-              await _scrapeAndSendRealpro(
-                _bulkFillDone,
-                String(_bc.id),
-                _bc.customer_name || null,
-                _bulkConds || {},
-                _bulkSite === "itandi" ? "itandi" : "リアプロ",
-                false,
-                _bulkAudit ? _bulkAudit.runId : null,
-                {
-                  currentName: _bc.customer_name || "",
-                  nextName: _bulkNextNm,
-                  index: _bi + 1,
-                  total: _bulkTargets.length,
-                }
-              );
-              /** ★ 2.8.222: 完了直後にパネル把握を「次は外す」へ更新（次客 autofill 前） */
-              try {
-                await _publishBulkGrasp({
-                  total: _bulkTargets.length,
-                  index: _bi + 1,
-                  currentName: _bc.customer_name || "",
-                  currentId: _bc && _bc.id != null ? String(_bc.id) : "",
-                  nextName: _bulkNextNm,
-                  nextId: _bulkTargets[_bi + 1] && _bulkTargets[_bi + 1].id != null ? String(_bulkTargets[_bi + 1].id) : "",
-                  names: _bulkNames,
-                  nextMove: _bulkNextNm ? "前客の選択を1つずつ外す" : "一括完了",
-                  waitingFor: _bulkNextNm ? "次客へ渡す" : "一括完了",
-                });
-              } catch (_) {}
-              /**
-               * 2026-11-11 竹内さん「ちゃんと自動検索のときのように人間の動き徹底されるか確認おねがい」→「（資料を見る間も）いれる」:
-               *   自動モード（bulk-dl.js の _lookAtDocThenGo）は送った後に 👀 資料を見る間（中央値3.5秒・1.8〜13秒・たまに長く）を置く。
-               *   一括検索（この経路）は送ったらすぐ次のお客様へ移っていたので、同じ間をここにも入れる（送った資料を人が見る形）。
-               */
-              var _lookMs = 3500;
-              try {
-                if (self.AxlxAutoRun && self.AxlxAutoRun.lookAtDocMs) _lookMs = self.AxlxAutoRun.lookAtDocMs();
-                else {
-                  var _H = self.AxlxHumanWait;
-                  if (_H && _H.logNormalDelay) _lookMs = _H.logNormalDelay(3500, 0.4);
-                }
-              } catch (_) { _lookMs = 3500; }
-              if (_lookMs < 1800) _lookMs = 1800;
-              if (_lookMs > 13000) _lookMs = 13000;
-              console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
-              await new Promise(function (r) { setTimeout(r, _lookMs); });
-              if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
-            }
-            // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
-            _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
-            // レインズは fill-done で閉じる（_auditOnFillDone）
-            if (_bulkAudit && _bulkSite !== "reins") _auditFinish(_bulkAudit.runId, {});
-          } catch (_be) {
-            // ★ 2.8.128 busy_other_customer（前のお客さんの入力中で断られた）: 一括は止めず、最後にもう1回だけやり直す（2回目も断られたらこの客だけ飛ばす）
-            var _bulkBd = null;
-            try {
-              _bulkBd = self.AxlxCustomerHandoff ? self.AxlxCustomerHandoff.busyRetryDecision(_be && _be.message, _bc && _bc.id, _busyRetried) : null;
-              if (_bulkBd === "retry") {
-                _bulkTargets.push(_bc);
-                if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_retry_queued", "前客の入力中で断られた→一括の最後にもう1回だけやり直す");
-              } else if (_bulkBd === "give_up") {
-                if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_give_up", "2回目も前客の入力中で断られた→このお客さんだけ飛ばす");
-              }
-            } catch (_) { _bulkBd = null; }
-            if (_bulkAudit) _auditFinish(_bulkAudit.runId, { error: _be });
-            if (_be && _be.message === "__BATCH_STOPPED__") {
-              console.log("[manual-bulk-search] ストップ要求 → 中断");
-              break;
-            }
-            console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
-            if (_bulkAudit) await _watchOnPassError(_bulkSite, _bc.id, null, _bulkAudit.runId, _be);
-            if (self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, _bulkSite, Date.now())) continue; // 知らせは見張りの1通だけ
-            // 例外スキップ時も必ず1件アナウンス（4人検索→4人分アナウンス要件）
-            // 2026-09-25 竹内（検索の点検）: 例外は「0件」ではない（検索できていない）→「⚠ 検索できなかった」に分ける
-            if (_bc.customer_name && _bulkBd !== "retry") {
-              var _bulkSiteLabel = _bulkSite === "itandi" ? "itandi" : _bulkSite === "reins" ? "レインズ" : "リアプロ";
-              fetch(SUMORA_BATCH_API + "/api/notify-group", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: (self.AxlxBatchGuard && self.AxlxBatchGuard.failureNotice({ customerName: _bc.customer_name, siteLabel: _bulkSiteLabel, error: _be })) || ("⚠【検索できなかった】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索ができませんでした（0件とは限りません）"), group_key: "pickup_group_id" })
-              }).catch(function() {});
-            }
-          }
-          if (_bi < _bulkTargets.length - 1) {
-            // 完了確認後のインターバル（6〜12秒）
-            await new Promise(function(r) { setTimeout(r, 6000 + Math.floor(Math.random() * 6000)); });
-          }
-        }
-        console.log("[manual-bulk-search] ✔ 完了");
-      } catch (_be2) {
-        console.error("[manual-bulk-search] エラー:", _be2.message || _be2);
-      } finally {
-        _manualBulkAlive = false;
-        try { await _publishBulkGrasp(null); } catch (_) {}
-      }
-    })();
+    _manualBulkRun({ site: _bulkSite, ids: _bulkIds, isWide: _bulkIsWide, startIndex: 0, resume: false, why: "popup" });
     return true;
   }
 
@@ -5027,6 +4776,14 @@ async function _sbHandleCommand(payload) {
     console.log("[SB-RT] 一括が動いている → スキップ (customerId=" + customerId + ")");
     return;
   }
+  // ★ 2.8.265: 手の一括の続きを待っている間（裏が立ち上がり直した直後）も受けない
+  try {
+    var _rtBq = await _bulkQueueLoad();
+    if (_rtBq && !_rtBq.done && _rtBq.beatAt && Date.now() - _rtBq.beatAt < 20 * 60000) {
+      console.log("[SB-RT] 手の一括の続きを待っている → スキップ (customerId=" + customerId + ")");
+      return;
+    }
+  } catch (_) {}
   // batchRunning ロックチェック（二重実行防止）
   var stLock = await chrome.storage.local.get("batchRunning");
   var lock = stLock.batchRunning;
@@ -5335,7 +5092,12 @@ function _auditPostIntended(auditRun, site, conds) {
 }
 
 function _auditStep(runId, k, d) {
-  try { if (_auditTracker && runId) _auditTracker.step(runId, k, d); } catch (_) {}
+  try {
+    if (_auditTracker && runId) {
+      _auditTracker.step(runId, k, d);
+      if (_auditTracker.flushSoon) _auditTracker.flushSoon(runId, 3000);
+    }
+  } catch (_) {}
 }
 
 /** 次の回が始まったら、同じサイトで開いたままの「人が押した検索」の回を区切りとして閉じる（6分の idle_close を待たない） */
@@ -5420,6 +5182,18 @@ async function _auditOnFillProgress(msg) {
       run = _auditTracker.findOpen(msg.customerId || null, msg.site || "realpro");
       if (run) _rid = run.run_id;
     }
+    /**
+     * ★ 2.8.265 DB 実測: 一括の回（bulk_manual）が steps 0 のまま started で残っていた（#1629 ほか 2.8.253 以降の全件）。
+     *   画面が裏の知らない番号を付けてくると、別の local の回を作って段がそちらへ流れ、DB の行には1段も届かなかった。
+     *   → 番号が知らない物でも、同じお客さん・サイトで開いている一括の回があればそこへ足す。
+     */
+    if (!run && _rid && msg.customerId != null) {
+      var _openBulk = _auditTracker.findOpen(msg.customerId, msg.site || "realpro");
+      if (_openBulk && _openBulk.trigger && _openBulk.trigger !== "single" && _openBulk.trigger !== "local") {
+        run = _openBulk;
+        _rid = _openBulk.run_id;
+      }
+    }
     if (!run) {
       var _hadPopupRunId = !!_rid;
       if (!_rid) _rid = "local_" + Date.now().toString(36);
@@ -5457,6 +5231,14 @@ async function _auditOnFillDone(msg, sender) {
      */
     var _rid = msg.runId || (msg.audit && msg.audit.run_id) || ("local_" + Date.now().toString(36));
     var run = _auditTracker.get(_rid);
+    // ★ 2.8.265: 知らない番号でも、同じお客さん・サイトで開いている一括の回があればそこへ足す（_auditOnFillProgress と同じ）
+    if (!run && msg.customerId != null) {
+      var _openBulkD = _auditTracker.findOpen(msg.customerId, msg.site || "realpro");
+      if (_openBulkD && _openBulkD.trigger && _openBulkD.trigger !== "single" && _openBulkD.trigger !== "local") {
+        run = _openBulkD;
+        _rid = _openBulkD.run_id;
+      }
+    }
     if (!run) {
       var st = await _auditState();
       if (!st.enabled) return;
@@ -6081,6 +5863,541 @@ function _notifyBatchProgress(customerId, site, sentCount) {
 var _batchLoopAlive = false;
 // 手動の一括（axlx-manual-bulk-search）が動いている間 true（Realtime・アラームが二重に始めない）
 var _manualBulkAlive = false;
+
+/**
+ * ★ 2.8.265 竹内さん「ここでとまった／なぜ次のお客さんのところに移らないのか／止まったら次に移る部分の把握」:
+ *   旧は一括のループがメッセージの受け手の中の使い捨ての関数で、メモリにしか無かった。
+ *   Chrome が裏（service worker）を止める／途中の await が返らないと、ループごと消えて次のお客さんへ進めなかった。
+ *   → ループを関数にして、どこまで進んだか（axlx_bulk_queue）を storage.session に残し、
+ *     止まった時は「済んだ客の次」から同じ関数でやり直せる形にした（_bulkKick・SW 起動時の再開・画面からの見張り）。
+ *   o: { site, ids, isWide, startIndex, resume, why }
+ */
+async function _manualBulkRun(o) {
+  var _bulkSite = o.site;
+  var _bulkIds = Array.isArray(o.ids) ? o.ids : [];
+  var _bulkIsWide = !!o.isWide;
+  var _startIndex = Math.max(0, Number(o.startIndex) || 0);
+  var _resume = !!o.resume;
+  var _myGen = ++_manualBulkGen;
+  _manualBulkAlive = true;
+  try {
+    if (!_resume) {
+      // 前回バッチのストップ残留をクリア（即解決を防ぐ）
+      _batchShouldStop = false;
+      try { await chrome.storage.local.set({ batchStopRequested: false }); } catch(_) {}
+    } else {
+      try {
+        var _stopSt = await chrome.storage.local.get("batchStopRequested");
+        if (_stopSt && _stopSt.batchStopRequested) { console.log("[manual-bulk-search] 再開しない（ストップ指示あり）"); _bulkQueueSave({ done: true, why: "stop_before_resume" }); return; }
+      } catch (_) {}
+    }
+    // 2026-09-29 見張り: 前の回の「止める」は持ち越さない
+    _watchStop = null;
+    _watchSkipped = [];
+    _busyRetried = new Set(); // 2.8.128 busy_other_customer のやり直し済みは一括ごとに作り直す
+    /** ★ 2.8.214: 古い page-script のまま自動しない（再読込して版を合わせる）＋束も強制取込 */
+    if (!_resume) try {
+      var _pf = await _ensureRealproPageFresh("manual_bulk");
+      console.log("[manual-bulk-search] page-fresh", _pf);
+    } catch (_) {}
+    try { await _refreshLearnedBundleQueued(true); } catch (_) {}
+    var _bulkRes = await _fetchCustomerListWithRetry("https://sumora-ai-ui.vercel.app/api/property-customers", "manual-bulk");
+    if (!_bulkRes.ok) throw new Error("顧客データ取得失敗");
+    var _bulkAll = await _bulkRes.json();
+    var _bulkTargets = _bulkIds
+      .map(function(id) { return _bulkAll.find(function(c) { return String(c.id) === String(id); }); })
+      .filter(Boolean);
+    _bulkQueueSave({ site: _bulkSite, ids: _bulkTargets.map(function (c) { return String(c.id); }), names: _bulkTargets.map(function (c) { return String((c && c.customer_name) || "?"); }), isWide: _bulkIsWide, index: _startIndex, stage: "pre", done: false, startedAt: Date.now(), sentCids: _resume && _bulkQueue && Array.isArray(_bulkQueue.sentCids) ? _bulkQueue.sentCids : [] });
+    console.log("[manual-bulk-search] ▶ " + (_resume ? "再開(" + (o.why || "") + ") " + (_startIndex + 1) + "人目から " : "") + "site=" + _bulkSite + " mode=" + (_bulkIsWide ? "wide" : "pinpoint") + " 対象=" + _bulkTargets.length + "人");
+    /** ★ 2.8.217: 一括の誰・何件・次客を枠へ（把握） */
+    var _bulkNames = _bulkTargets.map(function (c) { return String((c && c.customer_name) || "?"); });
+    if (!_resume) try {
+      await _withTimeout(_publishBulkGrasp({
+        total: _bulkTargets.length,
+        index: 0,
+        currentName: "",
+        nextName: _bulkNames[0] || "",
+        names: _bulkNames,
+        waitingFor: "一括開始",
+      }), 8000, "publish_start");
+    } catch (_) {}
+    /**
+     * 2026-11-11 竹内さん「また時間はランダム性をちゃんと徹底する人間のうごきを」:
+     *   一括検索でお客様から次のお客様へ移る間。**長さの決まりは auto-run.js の1か所**（bulkCustomerGapMs）に寄せた
+     *   （background 側で一様乱数を書かない＝そろわない・2か所で別々に持たない）。8〜25秒・6回に1回ほど40〜95秒の一息。
+     */
+    var _bulkGapMs = function () {
+      try {
+        if (self.AxlxAutoRun && self.AxlxAutoRun.bulkCustomerGapMs) return self.AxlxAutoRun.bulkCustomerGapMs();
+      } catch (_) {}
+      var H = self.AxlxHumanWait;
+      return H && H.logNormalDelay ? H.logNormalDelay(14000, 0.45) : 14000;
+    };
+    for (var _bi = _startIndex; _bi < _bulkTargets.length; _bi++) {
+      var _bc = _bulkTargets[_bi];
+      if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 新しいループに引き継いだ → 古いループは抜ける gen=" + _myGen); return; }
+      _bulkQueueSave({ ids: _bulkTargets.map(function (c) { return String(c.id); }), index: _bi, cid: String(_bc && _bc.id), stage: "pre" });
+      _bulkPhaseSet("publish_pre", 15000, { index: _bi, total: _bulkTargets.length, cid: String(_bc && _bc.id), name: String((_bc && _bc.customer_name) || ""), nextName: _bulkNames[_bi + 1] || "" });
+      try {
+        var _g0 = (self.AxlxBulkPanelGrasp && self.AxlxBulkPanelGrasp.bulkGraspFromQueue)
+          ? self.AxlxBulkPanelGrasp.bulkGraspFromQueue(_bulkNames, _bi)
+          : { total: _bulkTargets.length, index: _bi + 1, currentName: _bulkNames[_bi], nextName: _bulkNames[_bi + 1] || "" };
+        _g0.currentId = _bc && _bc.id != null ? String(_bc.id) : "";
+        _g0.nextId = _bulkTargets[_bi + 1] && _bulkTargets[_bi + 1].id != null ? String(_bulkTargets[_bi + 1].id) : "";
+        _g0.names = _bulkNames;
+        /** ★ 2.8.222: 一括の各客開始時に「次の動き」を明示（1人目=入れ／2人目以降=外してから入れ） */
+        _g0.nextMove = _bi === 0 ? "条件を1つずつ入れる" : "前客を外してから入れる";
+        _g0.waitingFor = null;
+        await _withTimeout(_publishBulkGrasp(_g0), 8000, "publish_pre");
+      } catch (_) {}
+      // 2.8.125 案B: 最後のお客さんは送付後の外しを待たずに戻す（_scrapeAndSendRealpro が見る）
+      try { self._axlxLastCustomerId = (_bi === _bulkTargets.length - 1 && _bc && _bc.id != null) ? String(_bc.id) : null; } catch (_) {}
+      /**
+       * 2026-11-11 竹内さん「休憩の間もちゃんといれる。90分働いたら休憩があるのが普通なので休憩の間もいれるように。人間がおこなっているから」:
+       *   一括検索でも、働き続けたら休む（自動モードと同じ決まり）。
+       *   ・短い休憩 12〜30秒（作業20分以上で 8%）
+       *   ・長い休憩 60〜180秒（作業120分以上で 18%）
+       *   ・**90分続けて動いたら必ず休む**（この時は 60〜180秒・人と同じ「一区切り」）
+       *   休憩の後は数え直す。
+       */
+      if (self.AxlxHumanWait) {
+        var _worked = _manualBulkWorkedSince || Date.now();
+        if (!_manualBulkWorkedSince) _manualBulkWorkedSince = _worked;
+        var _restMs = 0, _restKind = null;
+        try {
+          if (self.AxlxAutoRun && self.AxlxAutoRun.continuousRestDue && self.AxlxAutoRun.continuousRestDue(_worked, Date.now())) {
+            _restMs = 60000 + Math.floor(Math.random() * 120000); // 90分続いた → 1〜3分
+            _restKind = "90分の一区切り";
+          } else if (self.AxlxHumanWait.restDue) {
+            var _rd = self.AxlxHumanWait.restDue(_worked, Date.now());
+            if (_rd.rest) { _restMs = _rd.ms; _restKind = _rd.kind === "long" ? "長め" : "短め"; }
+          }
+        } catch (_) {}
+        if (_restMs > 0) {
+          console.log("[manual-bulk-search] 休憩（" + _restKind + " " + Math.round(_restMs / 1000) + "秒）をはさみます");
+          /**
+           * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように」:
+           *   休憩の間は、リアプロ／ITANDI の画面の枠に「☕ 休憩中（あとN秒）」と出す（黙って止まらない）。
+           */
+          try {
+            var _tabsForNote = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+            _tabsForNote.forEach(function (t) {
+              try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "☕ 休憩中（" + _restKind + "）", untilMs: Date.now() + _restMs }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+            });
+          } catch (_) {}
+          _bulkPhaseSet("rest", _restMs, {});
+          await new Promise(function (r) { setTimeout(r, _restMs); });
+          _manualBulkWorkedSince = Date.now(); // 休んだら数え直す
+          try {
+            var _tabsEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+            _tabsEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+          } catch (_) {}
+          if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（休憩の後） → 中断"); break; }
+        }
+      }
+      // 2人目からは「前のお客様の結果を見てから次を開く」間を置く
+      if (_bi > 0) {
+        var _gap = _bulkGapMs(_bi);
+        /**
+         * 2026-11-11 竹内さん「昼休みなら昼休みと人間のようにするかたちで」:
+         *   昼（JST 12:00〜13:00）に当たったら、その間は動かずに「🍱 昼休み（13:00まで）」と枠に出す。
+         *   昼休みの後は、次のお客様までの間も改めて取る。
+         */
+        var _lunchMs = 0;
+        try {
+          var _j = new Date(Date.now() + 9 * 3600 * 1000);
+          var _mins = _j.getUTCHours() * 60 + _j.getUTCMinutes();
+          if (_mins >= 12 * 60 && _mins < 13 * 60) _lunchMs = (13 * 60 - _mins) * 60 * 1000 - _j.getUTCSeconds() * 1000;
+        } catch (_) {}
+        if (_lunchMs > 0) {
+          console.log("[manual-bulk-search] 🍱 昼休み（13:00まで " + Math.round(_lunchMs / 60000) + "分）");
+          try {
+            var _tabsLunch = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+            _tabsLunch.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "🍱 昼休み（13:00まで）", untilMs: Date.now() + _lunchMs }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+          } catch (_) {}
+          _bulkPhaseSet("lunch", _lunchMs, {});
+          await new Promise(function (r) { setTimeout(r, _lunchMs); });
+          _manualBulkWorkedSince = Date.now();
+          try {
+            var _tabsLunchEnd = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+            _tabsLunchEnd.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note-clear" }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+          } catch (_) {}
+          if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（昼休みの後） → 中断"); break; }
+        }
+        console.log("[manual-bulk-search] 次のお客様まで " + Math.round(_gap / 1000) + "秒（人の間）");
+        try {
+          var _tabsGap = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] });
+          _tabsGap.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "⏳ 次のお客様まで", untilMs: Date.now() + _gap }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
+        } catch (_) {}
+        _bulkPhaseSet("gap", _gap, {});
+        await new Promise(function (r) { setTimeout(r, _gap); });
+        if (_myGen !== _manualBulkGen) return;
+        if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
+      }
+      // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたら、次のお客様から見送る（知らせはサーバーの1通だけ）
+      if (_watchSkipSite(_bc, _bulkSite)) continue;
+      console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
+      // 検索の点検: この1人の記録を始める（ブレインの時だけ）
+      _bulkQueueSave({ index: _bi, cid: String(_bc.id), stage: "running" });
+      var _bulkAudit = await _auditBegin({
+        site: _bulkSite, customer_id: _bc.id, customer: _bc, trigger: "bulk_manual",
+        is_wide: _bulkIsWide, area_mode: _bc.area_mode || null,
+      });
+      try {
+        // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
+        var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
+          ? _createFillDoneWaiter(_bulkSite, String(_bc.id), _fillDoneTimeoutMs(_bulkSite))
+          : null;
+        // 2026-09-25 竹内「更新日も拡張ツールと連動」: 一括検索も更新日で絞る（旧は渡しておらず、すべて表示で検索していた）。
+        //   決まりは個別検索（preloadAdjForm）と同じ: 手で決めた値 → 送った日と確認した日の新しい方から 1/3/7/14（初めては絞らない）
+        var _bulkRpDays = self.AxlxRpUpdateDays ? self.AxlxRpUpdateDays.effectiveRpUpdateDays(_bc, Date.now()) : null;
+        // 2026-11-10 手の一括でも ITANDI は ITANDI の手の指定（itandi_update_days）→ 無ければリアプロと同じ線で数える。
+        //   旧は ITANDI の回にもリアプロの手の指定をそのまま渡していた（DB_STRUCTURE.md の「混ざっている所 2」）
+        var _bulkItDays = null;
+        try {
+          if (self.AxlxRpUpdateDays && self.AxlxRpUpdateDays.effectiveRpUpdateDays) {
+            _bulkItDays = self.AxlxRpUpdateDays.effectiveRpUpdateDays(Object.assign({}, _bc, { rp_update_days: _bc.itandi_update_days }), Date.now());
+          }
+        } catch (_) { _bulkItDays = null; }
+        console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + (String(_bulkSite) === "itandi" ? "／ITANDI=" + (_bulkItDays ? _bulkItDays + "日以内" : "指定なし") : "") + " (" + _bc.customer_name + ")");
+        _bulkPhaseRunId = _bulkAudit ? _bulkAudit.runId : null;
+        _bulkPhaseSet("autofill", 300000, { runId: _bulkPhaseRunId });
+        var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays, itandi_update_days: _bulkItDays }, _bulkAudit);
+        // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
+        //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
+        //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
+        // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
+        // reins は bulk-dl.js 自動送信なし → ウェイターなしでスキップ
+        if (_bulkFillDone) {
+          var _bulkNextNm = _bulkNames[_bi + 1] || "";
+          await _scrapeAndSendRealpro(
+            _bulkFillDone,
+            String(_bc.id),
+            _bc.customer_name || null,
+            _bulkConds || {},
+            _bulkSite === "itandi" ? "itandi" : "リアプロ",
+            false,
+            _bulkAudit ? _bulkAudit.runId : null,
+            {
+              currentName: _bc.customer_name || "",
+              nextName: _bulkNextNm,
+              index: _bi + 1,
+              total: _bulkTargets.length,
+            }
+          );
+          _bulkQueueSave({ index: _bi, cid: String(_bc.id), stage: "done", sentCids: _bulkSentCidsWith(String(_bc.id)) });
+          if (_myGen !== _manualBulkGen) return;
+          _bulkPhaseSet("publish_done", 15000, {});
+          /** ★ 2.8.222: 完了直後にパネル把握を「次は外す」へ更新（次客 autofill 前） */
+          try {
+            await _withTimeout(_publishBulkGrasp({
+              total: _bulkTargets.length,
+              index: _bi + 1,
+              currentName: _bc.customer_name || "",
+              currentId: _bc && _bc.id != null ? String(_bc.id) : "",
+              nextName: _bulkNextNm,
+              nextId: _bulkTargets[_bi + 1] && _bulkTargets[_bi + 1].id != null ? String(_bulkTargets[_bi + 1].id) : "",
+              names: _bulkNames,
+              nextMove: _bulkNextNm ? "前客の選択を1つずつ外す" : "一括完了",
+              waitingFor: _bulkNextNm ? "次客へ渡す" : "一括完了",
+            }), 8000, "publish_done");
+          } catch (_) {}
+          /**
+           * 2026-11-11 竹内さん「ちゃんと自動検索のときのように人間の動き徹底されるか確認おねがい」→「（資料を見る間も）いれる」:
+           *   自動モード（bulk-dl.js の _lookAtDocThenGo）は送った後に 👀 資料を見る間（中央値3.5秒・1.8〜13秒・たまに長く）を置く。
+           *   一括検索（この経路）は送ったらすぐ次のお客様へ移っていたので、同じ間をここにも入れる（送った資料を人が見る形）。
+           */
+          var _lookMs = 3500;
+          try {
+            if (self.AxlxAutoRun && self.AxlxAutoRun.lookAtDocMs) _lookMs = self.AxlxAutoRun.lookAtDocMs();
+            else {
+              var _H = self.AxlxHumanWait;
+              if (_H && _H.logNormalDelay) _lookMs = _H.logNormalDelay(3500, 0.4);
+            }
+          } catch (_) { _lookMs = 3500; }
+          if (_lookMs < 1800) _lookMs = 1800;
+          if (_lookMs > 13000) _lookMs = 13000;
+          console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
+          _bulkPhaseSet("look", _lookMs, {});
+          await new Promise(function (r) { setTimeout(r, _lookMs); });
+          if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
+        }
+        // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
+        _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
+        // レインズは fill-done で閉じる（_auditOnFillDone）
+        if (_bulkAudit && _bulkSite !== "reins") _auditFinish(_bulkAudit.runId, {});
+      } catch (_be) {
+        // ★ 2.8.128 busy_other_customer（前のお客さんの入力中で断られた）: 一括は止めず、最後にもう1回だけやり直す（2回目も断られたらこの客だけ飛ばす）
+        var _bulkBd = null;
+        try {
+          _bulkBd = self.AxlxCustomerHandoff ? self.AxlxCustomerHandoff.busyRetryDecision(_be && _be.message, _bc && _bc.id, _busyRetried) : null;
+          if (_bulkBd === "retry") {
+            _bulkTargets.push(_bc);
+            if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_retry_queued", "前客の入力中で断られた→一括の最後にもう1回だけやり直す");
+          } else if (_bulkBd === "give_up") {
+            if (_bulkAudit) _auditStep(_bulkAudit.runId, "busy_give_up", "2回目も前客の入力中で断られた→このお客さんだけ飛ばす");
+          }
+        } catch (_) { _bulkBd = null; }
+        _bulkQueueSave({ index: _bi, cid: String(_bc.id), stage: "done" });
+        if (_bulkAudit) _auditFinish(_bulkAudit.runId, { error: _be });
+        if (_be && _be.message === "__BATCH_STOPPED__") {
+          console.log("[manual-bulk-search] ストップ要求 → 中断");
+          break;
+        }
+        console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
+        if (_bulkAudit) await _watchOnPassError(_bulkSite, _bc.id, null, _bulkAudit.runId, _be);
+        if (self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, _bulkSite, Date.now())) continue; // 知らせは見張りの1通だけ
+        // 例外スキップ時も必ず1件アナウンス（4人検索→4人分アナウンス要件）
+        // 2026-09-25 竹内（検索の点検）: 例外は「0件」ではない（検索できていない）→「⚠ 検索できなかった」に分ける
+        if (_bc.customer_name && _bulkBd !== "retry") {
+          var _bulkSiteLabel = _bulkSite === "itandi" ? "itandi" : _bulkSite === "reins" ? "レインズ" : "リアプロ";
+          fetch(SUMORA_BATCH_API + "/api/notify-group", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: (self.AxlxBatchGuard && self.AxlxBatchGuard.failureNotice({ customerName: _bc.customer_name, siteLabel: _bulkSiteLabel, error: _be })) || ("⚠【検索できなかった】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索ができませんでした（0件とは限りません）"), group_key: "pickup_group_id" })
+          }).catch(function() {});
+        }
+      }
+      if (_bi < _bulkTargets.length - 1) {
+        // 完了確認後のインターバル（6〜12秒）
+        var _ivMs = 6000 + Math.floor(Math.random() * 6000);
+        _bulkPhaseSet("interval", _ivMs, {});
+        await new Promise(function(r) { setTimeout(r, _ivMs); });
+      }
+    }
+    console.log("[manual-bulk-search] ✔ 完了");
+  } catch (_be2) {
+    console.error("[manual-bulk-search] エラー:", _be2.message || _be2);
+  } finally {
+    if (_myGen === _manualBulkGen) {
+      _manualBulkAlive = false;
+      _bulkPhase = null;
+      _bulkQueueSave({ done: true });
+      try { await _withTimeout(_publishBulkGrasp(null), 8000, "publish_end"); } catch (_) {}
+    }
+  }
+}
+
+/**
+ * ★ 2.8.265: 一括の「いまどの段か」と「どこまで済んだか」。
+ *   _bulkPhase … 段（publish_pre／rest／lunch／gap／autofill／wait_fill_done／wait_batch_done／post_send_clear／
+ *                release_lock／publish_done／look／interval）と、その段の上限（until）
+ *   axlx_bulk_queue（storage.session）… 対象の番号・いま何人目・その客の段（pre／running／done）。SW が止められても残る
+ */
+var _manualBulkGen = 0;
+var _bulkPhase = null;
+var _bulkPhaseRunId = null;
+var _bulkQueue = null;
+var _bulkKickAt = 0;
+var BULK_PHASE_GRACE_MS = 60000;
+// 上限を過ぎたら次へ進めてよい段（入力・送付の最中ではない段）。入力・送付の待ちは各自の時間切れ（20〜45分）に任せる
+var BULK_KICKABLE_PHASES = { publish_pre: 1, rest: 1, lunch: 1, gap: 1, publish_done: 1, look: 1, interval: 1, post_send_clear: 1, release_lock: 1 };
+var BULK_PHASE_JA = {
+  publish_pre: "次のお客さんの準備", rest: "休憩", lunch: "昼休み", gap: "次のお客さんまでの間",
+  autofill: "条件を入れる", wait_fill_done: "検索完了を待つ", wait_batch_done: "物件の送付を待つ",
+  post_send_clear: "送付後に前客の選択を外す", release_lock: "次客へ渡す", publish_done: "次客へ渡す",
+  look: "資料を見る間", interval: "次のお客さんまでの間",
+};
+
+function _withTimeout(p, ms, label) {
+  return Promise.race([
+    Promise.resolve(p),
+    new Promise(function (resolve) {
+      setTimeout(function () {
+        console.warn("[bulk] 待ちの上限で先へ進む: " + (label || "") + " " + ms + "ms");
+        resolve({ __timeout: true, label: label || null });
+      }, ms);
+    }),
+  ]);
+}
+
+function _bulkQueueSave(patch) {
+  try {
+    _bulkQueue = Object.assign({}, _bulkQueue || {}, patch || {}, { beatAt: Date.now() });
+    chrome.storage.session.set({ axlx_bulk_queue: _bulkQueue }).catch(function () {});
+  } catch (_) {}
+}
+/**
+ * ★ 2.8.266 竹内さん「ちゃんと外すして新しいお客さんの条件入れることができるようになっているか」:
+ *   裏は送付完了の後に一連の鍵（axlx_pipeline_job）を消すが、パネルの延長（_axPipelineTouch）が前客の鍵を丸ごと書き戻すと、
+ *   次の客は「前のお客さんの一連が進行中」と見て最大10分待ち、見送られていた（AXLX_OTHER_FILL_RUNNING）。
+ *   → この一括で送付完了まで済んだお客さん（sentCids）の鍵は古い鍵として外す。送付途中で切れた回は sentCids に入れない（上書きしない決まりは残す）。
+ */
+function _bulkSentCidsWith(cid) {
+  var a = (_bulkQueue && Array.isArray(_bulkQueue.sentCids)) ? _bulkQueue.sentCids.slice() : [];
+  if (cid && a.indexOf(String(cid)) < 0) a.push(String(cid));
+  return a.slice(-100);
+}
+/** 残っている鍵が、この一括で送付完了まで済んだ別のお客さんの物なら、その番号（外してよい）。違えば null */
+function _bulkStaleLockCid(lockJob, nextCid) {
+  try {
+    if (!lockJob || lockJob.customerId == null) return null;
+    var lc = String(lockJob.customerId);
+    if (nextCid != null && lc === String(nextCid)) return null;
+    var q = _bulkQueue;
+    if (!q || q.done || !Array.isArray(q.sentCids)) return null;
+    return q.sentCids.indexOf(lc) >= 0 ? lc : null;
+  } catch (_) { return null; }
+}
+async function _bulkQueueLoad() {
+  if (_bulkQueue) return _bulkQueue;
+  try {
+    var st = await chrome.storage.session.get("axlx_bulk_queue");
+    _bulkQueue = (st && st.axlx_bulk_queue) || null;
+  } catch (_) { _bulkQueue = null; }
+  return _bulkQueue;
+}
+
+function _bulkPhaseSet(phase, maxMs, extra) {
+  try {
+    var prev = _bulkPhase || {};
+    var p = Object.assign({
+      index: prev.index, total: prev.total, cid: prev.cid, name: prev.name, nextName: prev.nextName,
+    }, extra || {}, {
+      phase: String(phase),
+      at: Date.now(),
+      maxMs: Math.max(1000, Number(maxMs) || 60000),
+      gen: _manualBulkGen,
+      owner: _manualBulkAlive ? "manual" : (_batchLoopAlive ? "queue" : "other"),
+    });
+    p.until = p.at + p.maxMs;
+    delete p.runId;
+    _bulkPhase = p;
+    try { chrome.storage.session.set({ axlx_bulk_phase: p }).catch(function () {}); } catch (_) {}
+    if (_bulkQueue && !_bulkQueue.done) _bulkQueueSave({});
+    var rid = (extra && extra.runId) || _bulkPhaseRunId;
+    if (rid) {
+      _auditStep(rid, "bulk_phase", (String(phase) + " 上限" + Math.round(p.maxMs / 1000) + "秒 " + (p.index != null ? (p.index + 1) + "/" + (p.total || "?") : "")).slice(0, 80));
+      try { if (_auditTracker && _auditTracker.flush) _auditTracker.flush(rid); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+/** 段が上限＋1分を過ぎているか（入力・送付の最中は数えない） */
+function _bulkPhaseStuck(p) {
+  if (!p || !p.until) return false;
+  if (!BULK_KICKABLE_PHASES[p.phase]) return false;
+  return Date.now() - p.until > BULK_PHASE_GRACE_MS;
+}
+
+/**
+ * 止まった一括を「済んだ客の次」から続ける（同じ関数を新しい世代で回す・古いループは世代で抜ける）。
+ *   stage=done → 次の客から／pre（まだ入力を始めていない）→ その客から／running → 画面が送付完了を知らせた時だけ次の客から
+ */
+async function _bulkKick(why, opt) {
+  var o = opt || {};
+  if (Date.now() - _bulkKickAt < 20000) return { ok: false, reason: "recent_kick" };
+  var q = await _bulkQueueLoad();
+  if (!q || q.done || !Array.isArray(q.ids) || !q.ids.length) return { ok: false, reason: "no_queue" };
+  var idx = Number(q.index) || 0;
+  var start;
+  if (q.stage === "done") start = idx + 1;
+  else if (q.stage === "pre") start = idx;
+  else if (o.doneCid && q.cid && String(o.doneCid) === String(q.cid)) start = idx + 1;
+  // 送付後の外し・ロック解除の段＝その客の送付は済んでいる
+  else if (_bulkPhase && (_bulkPhase.phase === "post_send_clear" || _bulkPhase.phase === "release_lock") && q.cid && _bulkPhase.cid && String(_bulkPhase.cid) === String(q.cid)) start = idx + 1;
+  else return { ok: false, reason: "running_not_done", stage: q.stage, cid: q.cid || null };
+  _bulkKickAt = Date.now();
+  var msg = "一括が止まっていた（" + why + "・段=" + ((_bulkPhase && _bulkPhase.phase) || q.stage) + "）→ " + (start + 1) + "人目から続ける";
+  console.warn("[bulk] " + msg);
+  try { if (_bulkPhaseRunId) _auditStep(_bulkPhaseRunId, "bulk_kick", msg.slice(0, 80)); } catch (_) {}
+  if (start >= q.ids.length) {
+    _bulkQueueSave({ done: true, why: "kick_end" });
+    _manualBulkGen++;
+    _manualBulkAlive = false;
+    _bulkPhase = null;
+    try { await _withTimeout(_publishBulkGrasp(null), 8000, "publish_kick_end"); } catch (_) {}
+    return { ok: true, ended: true };
+  }
+  if (q.stage !== "done") _bulkQueueSave({ stage: "done" });
+  _manualBulkRun({ site: q.site, ids: q.ids, isWide: q.isWide, startIndex: start, resume: true, why: why });
+  return { ok: true, startIndex: start, total: q.ids.length };
+}
+
+/**
+ * ★ 2.8.265: 一括が動いている間は 20秒ごとに拡張の API を呼んで裏（service worker）を止めさせない。
+ *   旧は「次のお客様まで」の間（8〜95秒）・休憩（最大3分）に出来事が無く、Chrome が裏を止めるとループごと消えていた。
+ *   同じ見回りで「段が上限を過ぎて動かない」を見つけたら次へ進める。
+ */
+try {
+  setInterval(function () {
+    try {
+      if (!(_manualBulkAlive || _batchLoopAlive)) return;
+      try { chrome.runtime.getPlatformInfo(function () { void chrome.runtime.lastError; }); } catch (_) {}
+      if (_manualBulkAlive && _bulkQueue && !_bulkQueue.done) _bulkQueueSave({});
+      var p = _bulkPhase;
+      if (_manualBulkAlive && p && p.owner === "manual" && _bulkPhaseStuck(p)) {
+        _bulkKick("stuck:" + p.phase).catch(function () {});
+      }
+    } catch (_) {}
+  }, 20000);
+} catch (_) {}
+
+/**
+ * ★ 2.8.265: 裏が止められて立ち上がり直した時、一括の続きがあれば続ける。
+ *   入力・送付の最中（running）に止められた時は、画面の送付完了の知らせ（batch-done／axlx-bulk-kick）を待ってから次の客へ。
+ */
+try {
+  setTimeout(function () {
+    (async function () {
+      try {
+        if (_manualBulkAlive || _batchLoopAlive) return;
+        var q = await _bulkQueueLoad();
+        if (!q || q.done) return;
+        if (!q.beatAt || Date.now() - q.beatAt > 20 * 60000) { _bulkQueueSave({ done: true, why: "stale_on_start" }); return; }
+        if (q.stage === "running") {
+          console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける");
+          return;
+        }
+        await _bulkKick("sw_restart");
+      } catch (e) { console.warn("[bulk] 再開の確かめ失敗", e && e.message); }
+    })();
+  }, 3000);
+} catch (_) {}
+
+// 画面（bulk-dl の送付後の見張り）からの問い合わせ: いまどの段か／止まっていたら進める
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (!msg || (msg.type !== "axlx-bulk-status" && msg.type !== "axlx-bulk-kick")) return false;
+  (async function () {
+    try {
+      var q = await _bulkQueueLoad();
+      var p = _bulkPhase;
+      if (msg.type === "axlx-bulk-status") {
+        sendResponse({
+          ok: true,
+          alive: !!_manualBulkAlive,
+          queue: q ? { done: !!q.done, index: q.index, total: Array.isArray(q.ids) ? q.ids.length : 0, cid: q.cid || null, stage: q.stage || null, beatAt: q.beatAt || 0 } : null,
+          phase: p ? { phase: p.phase, ja: BULK_PHASE_JA[p.phase] || p.phase, at: p.at, until: p.until, cid: p.cid || null, index: p.index, total: p.total, nextName: p.nextName || "" } : null,
+          stuck: !!(p && _bulkPhaseStuck(p)),
+          now: Date.now(),
+        });
+        return;
+      }
+      // axlx-bulk-kick
+      var doneCid = msg.cid != null ? String(msg.cid) : null;
+      if (_manualBulkAlive && p && !_bulkPhaseStuck(p)) {
+        // 送付完了を待っている段で、その客の完了を画面が知らせ済み → 合図が届いていない。番号が合う待ちだけ解く
+        if (p.phase === "wait_batch_done" && doneCid && p.cid && String(p.cid) === doneCid) {
+          var hasWaiter = _batchCustomerDoneWaiters.some(function (w) { return w.customerId && String(w.customerId) === doneCid; });
+          if (hasWaiter) {
+            console.warn("[bulk] 画面は送付完了済み・裏はまだ待っていた → 待ちを解く cid=" + doneCid);
+            try { if (_bulkPhaseRunId) _auditStep(_bulkPhaseRunId, "bulk_done_resend", "画面の送付完了が裏に届いていなかった→待ちを解いた"); } catch (_) {}
+            _notifyBatchCustomerDone(doneCid, msg.propertyCount != null ? msg.propertyCount : null, null, "realnetpro", false);
+            sendResponse({ ok: true, resent: true });
+            return;
+          }
+        }
+        sendResponse({ ok: false, reason: "alive", phase: p.phase });
+        return;
+      }
+      var r = await _bulkKick(String(msg.why || "page_watch").slice(0, 40), { doneCid: doneCid });
+      sendResponse(r);
+    } catch (e) {
+      try { sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 80) }); } catch (_) {}
+    }
+  })();
+  return true;
+});
 var _batchWatch = null;
 var _watchSavedAt = 0;
 var _lockRefreshedAt = 0;
@@ -6804,6 +7121,35 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           if (_flowReady && _flowRid) {
             _auditStep(_flowRid, "series_done", "一連完了→次客へ渡してよい");
             _auditStep(_flowRid, "flow_handoff_ok", "完了理解台帳 ready_next");
+            /**
+             * ★ 2.8.235 竹内さん「一連と次客へ連続で／把握弱い所を改善」:
+             *   DB実測: series_done=4 なのに loop_advance=1。fill-done経路が series_done だけ残し、
+             *   いま客・次客・次の動き・ループ完了→次へ が欠ける抜けを塞ぐ。
+             */
+            try {
+              var _fn = String(msg.customerName || msg.customer_name || "").slice(0, 20);
+              var _fc = String(msg.customerId || "").slice(0, 8);
+              _auditStep(
+                _flowRid,
+                "loop_advance",
+                ("fill一連完了→次へ いま=" + (_fn || _fc || "-")).slice(0, 120),
+              );
+              _auditStep(
+                _flowRid,
+                "loop_who_grasp",
+                "いま客=" + (_fn || _fc || "-") + " 次客=（一括から取得） fill一連",
+              );
+              _auditStep(
+                _flowRid,
+                "next_customer_grasp",
+                "いま=" + (_fn || _fc || "-") + " fill一連→次客把握",
+              );
+              _auditStep(
+                _flowRid,
+                "next_move_grasp",
+                "次の動き=前客の選択を1つずつ外す（または物件取得続き） fill一連",
+              );
+            } catch (_) {}
           } else if (!msg.error && _flowRid) {
             _auditStep(_flowRid, "flow_handoff_gap", "fill-done成功だが ready_next 無し");
           }
@@ -6867,6 +7213,15 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // ★ 2026-11-16: 一連ロック解除（popup が次客を入れてよい合図）
     //   ⚠ fire-and-forget だと次客 switch より解除が遅れる → await は呼び出し側（_scrapeAndSendRealpro）でも行う
     try { _releasePipelineLock("batch-customer-done", msg.customerId || null); } catch (_) {}
+    /**
+     * ★ 2.8.265: 送付完了の合図が来た時、一括のループが裏で消えていた（SW が止められた）なら、
+     *   その客が控えの「いまの客」と同じ時だけ、次の客から続ける。
+     */
+    try {
+      if (!_manualBulkAlive && !_batchLoopAlive && msg.customerId != null) {
+        _bulkKick("batch_done_no_loop", { doneCid: String(msg.customerId) }).catch(function () {});
+      }
+    } catch (_) {}
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
   if (msg && msg.type === "axlx-batch-progress") {
@@ -7074,6 +7429,11 @@ chrome.alarms.onAlarm.addListener(async function(alarm) {
    *   → この SW で一括が生きている間はロックを延ばして終わる（SW が死んだ後の取り残しだけ上書きする）。
    */
   if (_manualBulkAlive) return;
+  // ★ 2.8.265: 裏が立ち上がり直した直後（手の一括の控えがまだ新しい＝続きを待っている）は、定時の一括を割り込ませない
+  try {
+    var _bq = await _bulkQueueLoad();
+    if (_bq && !_bq.done && _bq.beatAt && Date.now() - _bq.beatAt < 20 * 60000) return;
+  } catch (_) {}
   // 1時間まったく進んでいない一括は「生きている」と見なさない（待ちが全部切れても戻らない時の最後の逃げ道）
   var _loopStale = false;
   try { _loopStale = !!(_batchWatch && _batchWatch.lastProgressAt && Date.now() - _batchWatch.lastProgressAt > 60 * 60000); } catch (_) {}
@@ -8118,6 +8478,12 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         } catch (_) { _lockJob = null; }
         var _lockOther = !!(_lockJob && _lockJob.customerId && String(_lockJob.customerId) !== String(_cidStr)
           && _pipelineJobLive(_lockJob));
+        var _staleLockCid = _lockOther ? _bulkStaleLockCid(_lockJob, _cidStr) : null;
+        if (_staleLockCid) {
+          _auditStep(_runId, "stale_prev_lock_dropped", "前客 " + _staleLockCid.slice(0, 8) + " は送付完了済み→残っていた鍵を外して進む");
+          try { await _withTimeout(_releasePipelineLock("bulk_stale_prev_lock", _staleLockCid), 3000, "stale_prev_lock"); } catch (_) {}
+          _lockOther = false;
+        }
         if (_lockOther) {
           _hd = (Date.now() - _waitT0) < (_H ? _H.OTHER_FILL_WAIT_MS : 10 * 60 * 1000) ? "wait" : "give_up";
           _pv = Object.assign({}, _pv, { fillCustomerId: _lockJob.customerId });
@@ -8173,6 +8539,11 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     } catch (_) {}
     var _startTimeout = _G ? _G.FILL_START_TIMEOUT_MS : 25000;
     var _started = false;
+    var _lastKnownRealproUrl = "";
+    try {
+      var _t0 = await chrome.tabs.get(tab.id);
+      _lastKnownRealproUrl = String((_t0 && (_t0.url || _t0.pendingUrl)) || "");
+    } catch (_) { _lastKnownRealproUrl = ""; }
     for (var _attempt = 0; _attempt < 2 && !_started; _attempt++) {
       if (_attempt > 0) {
         /**
@@ -8181,6 +8552,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
          *   → 先に fillRunning を見て、同客なら reload せず続行／別客なら更新しない。
          */
         var _probeBeforeReload = await _probeRealproTab(tab.id);
+        if (_probeBeforeReload && _probeBeforeReload.url) _lastKnownRealproUrl = _probeBeforeReload.url;
         if (_probeBeforeReload.fillRunning) {
           if (_probeBeforeReload.fillCustomerId && String(_probeBeforeReload.fillCustomerId) === String(_cidStr)) {
             _auditStep(_runId, "fill_started_inferred", "同客fillRunning→読み直さず続行");
@@ -8203,9 +8575,27 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
             throw new Error("AXLX_OTHER_FILL_RUNNING: 別の入力（お客さん不明）が進行中のため、ページを更新せず見送ります");
           }
         }
-        // 1回だけやり直す: タブを開き直し・fill-done の待ちを数え直してから
-        tab = await _ensureRealproTab(tab, auditRun, _lastWhy && /^popup|Receiving end|Could not establish/.test(_lastWhy) ? "content_script_dead" : "page_script_dead", _cidStr);
-        _restartFillDoneWaiter("realnetpro", _cidStr);
+        /**
+         * ★ 2.8.252 audit#1616: message channel closed の直後に page_script_dead 扱いで
+         *   裸 main.php へ飛ばすと検索結果も入力中も消える。通路切れは再送が先。
+         */
+        if (_G && _G.isSwitchChannelError && _G.isSwitchChannelError(_lastWhy)) {
+          _auditStep(_runId, "switch_channel_retry", "通路切れ→ページ壊さず再送 " + String(_lastWhy || "").slice(0, 40));
+          await new Promise(function (r) { setTimeout(r, 900); });
+          _restartFillDoneWaiter("realnetpro", _cidStr);
+        } else {
+          // 1回だけやり直す: タブを開き直し・fill-done の待ちを数え直してから
+          tab = await _ensureRealproTab(
+            tab,
+            auditRun,
+            _lastWhy && /^popup|Receiving end|Could not establish|message channel|asynchronous response/i.test(_lastWhy)
+              ? "content_script_dead"
+              : "page_script_dead",
+            _cidStr,
+            _lastKnownRealproUrl,
+          );
+          _restartFillDoneWaiter("realnetpro", _cidStr);
+        }
       }
       // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
       try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }); } catch(_) {}
@@ -8803,10 +9193,14 @@ async function _bringRealproTabFront(tab, runId, vis) {
 }
 
 // 使える状態のリアプロのタブを返す（だめなら読み直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
-async function _ensureRealproTab(tab, auditRun, why, customerId) {
+async function _ensureRealproTab(tab, auditRun, why, customerId, lastKnownUrl) {
   var G = self.AxlxBatchGuard;
   var runId = auditRun && auditRun.runId;
   var probe = await _probeRealproTab(tab.id);
+  // ★ 2.8.252: probe.url 空のときは直前の main.php URL を引き継ぐ（#1616 no_url→裸遷移を止める）
+  if ((!probe.url || !/^https:\/\/(?:www\.)?realnetpro\.com\/main\.php/.test(probe.url)) && lastKnownUrl) {
+    probe.lastKnownUrl = String(lastKnownUrl);
+  }
   var plan = G ? G.realproTabPlan(probe) : { action: probe.pong ? "use" : "reload", reason: probe.pong ? "alive" : "content_script_dead" };
   if (plan.action === "use" && !why) {
     if (plan.front) await _bringRealproTabFront(tab, runId, probe.vis);
@@ -8840,23 +9234,31 @@ async function _ensureRealproTab(tab, auditRun, why, customerId) {
    *   旧は常に裸の main.php へ `tabs.update` → 検索中でもホーム（トピックス）へ戻って崩れた。
    *   DB実測 05:19 UTC: no_fill_start → tab_reload「ページの入力の仕組みが応答しない」→ トップ。
    *   → main.php* なら **同じ URL を reload**（method=estate 等を残す）。ログイン切れ等だけ裸へ。
+   * ★ 2.8.252 #1616: url空でも navigate せず reload（lastKnown優先）。
    */
+  if ((!probe.url || !probe.url.length) && lastKnownUrl) probe.lastKnownUrl = String(lastKnownUrl);
   var recover = G && G.realproRecoverNav
     ? G.realproRecoverNav(probe)
-    : { method: "navigate", url: "https://www.realnetpro.com/main.php", keepSearch: false };
+    : { method: "reload", url: lastKnownUrl || "https://www.realnetpro.com/main.php", keepSearch: false };
   var howJa = recover.method === "reload"
-    ? (recover.keepSearch ? "同じ検索画面を読み直し（トップへ戻さない）" : "同じ main.php を読み直し（トップへ飛ばさない）")
+    ? (recover.keepSearch
+      ? "同じ検索画面を読み直し（トップへ戻さない）"
+      : (recover.soft ? "URL不明→main.phpを読み直し（裸ナビしない）" : "同じ main.php を読み直し（トップへ飛ばさない）"))
     : "main.php へ移る";
-  console.warn("[batchAutofill] リアプロのタブを読み直します: " + reason + "／" + howJa + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
+  console.warn("[batchAutofill] リアプロのタブを読み直します: " + reason + "／" + howJa + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url || recover.url || "").slice(0, 80));
   _auditStep(runId, "tab_reload", (G ? G.reasonJa(reason) : reason) + "／" + howJa + (probe.err ? " / " + probe.err : ""));
   if (probe.gone) {
-    tab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: false });
+    tab = await chrome.tabs.create({ url: recover.url || "https://www.realnetpro.com/main.php", active: false });
   } else if (recover.method === "reload") {
     try {
-      await chrome.tabs.reload(tab.id);
+      if (recover.soft && recover.url && (!probe.url || !/^https:\/\/(?:www\.)?realnetpro\.com\/main\.php/.test(probe.url))) {
+        await chrome.tabs.update(tab.id, { url: recover.url });
+      } else {
+        await chrome.tabs.reload(tab.id);
+      }
     } catch (e) {
       console.warn("[batchAutofill] tabs.reload 失敗 → URL維持で update:", e && e.message);
-      await chrome.tabs.update(tab.id, { url: recover.url || String(probe.url) });
+      await chrome.tabs.update(tab.id, { url: recover.url || String(probe.url) || "https://www.realnetpro.com/main.php" });
     }
   } else {
     await chrome.tabs.update(tab.id, { url: recover.url || "https://www.realnetpro.com/main.php" });
@@ -9448,6 +9850,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   var _site = siteLabel || "リアプロ";
   var _siteKey = siteLabel === "itandi" ? "itandi" : "realnetpro";
   var _runId = auditRunId || null;
+  if (_manualBulkAlive) _bulkPhaseSet("wait_fill_done", _fillDoneTimeoutMs(_siteKey) + 60000, { cid: String(customerId) });
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
   if (fillDone && fillDone.stopped) {
@@ -9493,6 +9896,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   // ★ 2026-11-18 平田: 検索完了後は送付完走まで待つ。初期待ちは10分（bulk 起動・一覧待ち）。以降はハートビートでリセット。
   // ★ 2026-11-18: 送付待ち初期も最低20分（旧10分）
   var _batchWaitMs = fillDone && !fillDone.error ? Math.max(1200000, BATCH_IDLE_MS) : BATCH_IDLE_MS;
+  if (_manualBulkAlive) _bulkPhaseSet("wait_batch_done", _batchWaitMs, { cid: String(customerId) });
   var batchDone = await _createBatchCustomerDoneWaiter(customerId, _batchWaitMs, _siteKey);
   if (batchDone && batchDone.stopped) {
     try { await _releasePipelineLock("batch_stopped", customerId); } catch (_) {}
@@ -9572,6 +9976,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     try {
       if (!(batchDone && batchDone.timedOut && batchDone.sawProgress)) {
         _psIsLast = !!(self._axlxLastCustomerId && String(self._axlxLastCustomerId) === String(customerId));
+        if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 140000, { cid: String(customerId) });
         var _psP = _postSendClearRealpro(customerId, _runId);
         if (_psIsLast) {
           _psP.catch(function () {});
@@ -9667,14 +10072,15 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
             var _gapTabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
             var _gapTab = (_gapTabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_gapTabs || [])[0];
             if (_gapTab && _gapTab.id) {
-              await chrome.scripting.executeScript({
+              // ★ 2.8.265: タブが固まっていると executeScript が返らず次客へ進めなかった → 10秒で先へ
+              await _withTimeout(chrome.scripting.executeScript({
                 target: { tabId: _gapTab.id },
                 world: "MAIN",
                 func: function () {
                   try { window.__axlxForceClearAllPlace = true; } catch (_) {}
                   try { window.__axlxPostSendClearGap = true; } catch (_) {}
                 },
-              });
+              }), 10000, "force_clear_gap_flag");
             }
           } catch (_) {}
         }
@@ -9687,7 +10093,8 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     if (_holdSend) {
       console.warn("[scrapeAndCompare] 送付進捗あり batch_timeout → pipeline 維持（合図待ち）customer=" + customerId);
     } else {
-      await _releasePipelineLock(batchDone && batchDone.timedOut ? "batch_timeout" : "scrape_done", customerId);
+      if (_manualBulkAlive) _bulkPhaseSet("release_lock", 30000, { cid: String(customerId) });
+      await _withTimeout(_releasePipelineLock(batchDone && batchDone.timedOut ? "batch_timeout" : "scrape_done", customerId), 15000, "release_lock");
     }
   } catch (_) {}
   return _propCount;

@@ -407,10 +407,19 @@ window.addEventListener("message", function (e) {
         site: "realpro",
       }, function () { void chrome.runtime.lastError; });
     }
+    /**
+     * ★ 2.8.241: 旧は {at,why} だけで上書き → confirmed/screenOk/pressed/pageVer/cid が消える。
+     *   古い空データがボトルネックになる根。既存の完全な印は残し、flush印だけ足す。
+     */
     try {
-      sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify({
-        at: Date.now(), why: String(e.data.why || "search").slice(0, 48),
-      }));
+      var _prevG = null;
+      try { _prevG = JSON.parse(sessionStorage.getItem("axlx_search_grasped_sync") || "null"); } catch (_) { _prevG = null; }
+      if (_prevG && typeof _prevG === "object") {
+        _prevG.flushAt = Date.now();
+        _prevG.flushWhy = String(e.data.why || "").slice(0, 48);
+        sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_prevG));
+      }
+      // 完全な印が無い時は薄いオブジェクトを新規に書かない（古い空データ生成禁止）
     } catch (_) {}
   } catch (_) {}
 });

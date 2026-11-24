@@ -133,7 +133,7 @@
    *   → 回の始まり・終わり・代替の理由は残し、それ以外の古い段から落とす（全部が残す段なら先頭から）。
    */
   /** flow_series_plan / order / gap / reset / skip も flow_series_ で残す */
-  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|customer_think|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|loop_advance|loop_who_grasp|loop_task_list|dl:sort_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|page:(toggle_repress|toggle_direct|hidden_wait_|fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|search_customer_grasp_|search_grasp_|search_press_ok|leftover_|force_clear_place|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|clear_done|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_cancel|post_send_clear|clear_cancelled|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|guide_detail_ledger|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance))/;
+  var KEEP_STEP = /^(begin|bulk_kick|bulk_done_resend|fill_done|finish|result|human_search|search_override|customer_think|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|loop_advance|loop_who_grasp|loop_task_list|dl:sort_|dl:sort_head_|dl:sort_panel_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:search_press_wait|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|dl:next_move_premature_block|dl:list_page_one_only|dl:list_no_next_advance|dl:all_sent_|dl:loop_advance|dl:loop_who_grasp|dl:handoff_grasp|dl:stale_grasp_drop|dl:legacy_blocked_no_screen|dl:screen_ok_path|dl:armed_wait_screen|dl:list_wait_screen|dl:pipeline_silence_|dl:timeout_bridge_|dl:send_bar_|dl:estate_stuck_|dl:bulk_alive|dl:panel_snap_|dl:page_display_|dl:page_displayed_|dl:sort_gate_need_page|dl:page_nav_|dl:nav_timing|page:(stuck_recover_retry|stuck_best_act|stuck_shot_req|screen_task_grasp|screen_poll_|pipeline_silence_|pipeline_screen_|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|learn_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|toggle_repress|list_page_one_only|toggle_direct|hidden_wait_|fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|fee_skip|search_armed|search_customer_grasp_|search_grasp_reload_resume|search_grasp_|search_press_ok|leftover_|force_clear_place|station_clear_continue|station_clear_reopen_after|station_back_force_try|station_clear_cursor|station_clear_back|station_back_wrong|line_clear_after|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|clear_field_ng|clear_field_done|clear_one_grasp|clear_field_grasp|station_clear_one_grasp|line_clear_one_grasp|station_clear_one_ng|line_clear_one_ng|clear_done|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_cancel|post_send_clear|clear_cancelled|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|guide_detail_ledger|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance))/;
 
   /**
    * ★ 2026-11-20 (2.8.145) 手順書の決まりの確かめ（app/lib/auto-procedure-rules.ts の verify）に使う段。
@@ -142,7 +142,7 @@
    *   → 普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す（同じ種類が後にもある物から落とす）。
    *   ⚠ 決まりの verify に段を足したらここにも足す（checkRulesInCode が食い違いを止める）。
    */
-  var RULE_STEP = /^(fill_progress|customer_think|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|dl:sort_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|page:(playbook_seen|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|search_customer_grasp_|search_grasp_|search_press_ok|flow_done_|flow_gap_|area_all_done|place_ready|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one|clear_one|clear_done|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_wait|post_send_clear|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|fill_start|leftover_|force_clear_place)|loop_advance|loop_who_grasp|loop_task_list|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|dl:handoff_grasp|dl:task_transition_grasp|dl:guide_task_link|dl:list_flow_grasp)/;
+  var RULE_STEP = /^(fill_progress|bulk_phase|bulk_kick|bulk_done_resend|stale_prev_lock_dropped|customer_think|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|dl:sort_|dl:sort_head_|dl:sort_panel_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:search_press_wait|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|dl:next_move_premature_block|dl:list_page_one_only|dl:list_no_next_advance|dl:all_sent_|dl:loop_advance|dl:loop_who_grasp|dl:handoff_grasp|dl:stale_grasp_drop|dl:legacy_blocked_no_screen|dl:screen_ok_path|dl:armed_wait_screen|dl:list_wait_screen|dl:pipeline_silence_|dl:timeout_bridge_|dl:send_bar_|dl:estate_stuck_|dl:bulk_alive|dl:panel_snap_|dl:page_display_|dl:page_displayed_|dl:sort_gate_need_page|dl:page_nav_|dl:nav_timing|page:(stuck_recover_retry|stuck_best_act|stuck_shot_req|screen_task_grasp|screen_poll_|pipeline_silence_|pipeline_screen_|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|learn_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|playbook_seen|list_page_one_only|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|search_customer_grasp_|search_grasp_reload_resume|search_grasp_|search_press_ok|flow_done_|flow_gap_|area_all_done|place_ready|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one|clear_one|clear_field|station_clear_one|line_clear_one|clear_done|station_clear_continue|station_clear_reopen_after|station_back_force_try|station_clear_cursor|station_clear_back|station_back_wrong|line_clear_after|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_wait|post_send_clear|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|fill_start|leftover_|force_clear_place|fee_skip)|loop_advance|loop_who_grasp|loop_task_list|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|dl:handoff_grasp|dl:task_transition_grasp|dl:guide_task_link|dl:list_flow_grasp)/;
 
   function _stepKey(s) { return String((s && s.k) || ""); }
 
@@ -375,7 +375,7 @@
       if (ovr) pushStep(run.steps, "search_override", JSON.stringify(ovr).slice(0, 400), now());
       runs.set(id, run);
       if (ctx.post_started !== false) {
-        send({
+        run._startedP = send({
           phase: "started", brain: true, run_id: id, site: run.site, mode: run.mode, trigger: run.trigger,
           property_customer_id: run.property_customer_id, command_id: run.command_id, is_wide: run.is_wide,
           area_mode: run.area_mode, pass: run.pass, ext_version: o.extVersion || null,
@@ -461,17 +461,58 @@
         if (!r._progDbAt) r._progDbAt = 0;
         if (now() - r._progDbAt >= 3000) {
           r._progDbAt = now();
-          send({
-            phase: "progress",
-            brain: true,
-            run_id: r.run_id,
-            site: r.site,
-            mode: r.mode,
-            steps: r.steps.slice(-40),
-          });
+          sendProgress(r);
         }
       } catch (_) {}
       return r;
+    }
+
+    /**
+     * ★ 2.8.267 DB 実測 #1631（一括1人目・steps 0 のまま started）:
+     *   started と progress を同時に投げると、行ができる前に progress が着いて no_row で捨てられる。
+     *   → started の送信が終わってから progress を送る。
+     */
+    function sendProgress(r) {
+      var go = function () {
+        try { send({ phase: "progress", brain: true, run_id: r.run_id, site: r.site, mode: r.mode, steps: r.steps.slice(-40) }); } catch (_) {}
+      };
+      try {
+        if (r._startedP && typeof r._startedP.then === "function") { r._startedP.then(go, go); return; }
+      } catch (_) {}
+      go();
+    }
+
+    /**
+     * ★ 2.8.265: 今までの段を DB の started 行へすぐ書く（一括の段の切り替わり・止まる前の最後の段を残す）。1秒に1回まで。
+     */
+    function flush(id) {
+      var r = get(id);
+      if (!r || r.finished) return null;
+      try {
+        if (!r._flushAt) r._flushAt = 0;
+        if (now() - r._flushAt < 1000) { flushSoon(id, 1000); return r; }
+        r._flushAt = now();
+        sendProgress(r);
+      } catch (_) {}
+      return r;
+    }
+
+    /**
+     * ★ 2.8.267 DB 実測 #1631／#1633: 裏で足した段（前客の待ち・一覧／送付の dl: 段）は手元に溜まるだけで、
+     *   回が閉じられないと DB に1段も残らなかった（一覧で4分詰まった記録が0段）。
+     *   → 段を足したら delayMs 後にまとめて1回送る（同じ回の予約は1つだけ）。
+     */
+    function flushSoon(id, delayMs) {
+      var r = get(id);
+      if (!r || r.finished || r._soonT) return;
+      try {
+        r._soonT = setTimeout(function () {
+          r._soonT = null;
+          if (r.finished) return;
+          r._flushAt = 0;
+          flush(r.run_id);
+        }, delayMs == null ? 3000 : delayMs);
+      } catch (_) { r._soonT = null; }
     }
 
     function attachResult(id, result) {
@@ -508,7 +549,7 @@
       return send(body);
     }
 
-    return { begin: begin, get: get, findOpen: findOpen, step: step, openHumanSearchRuns: openHumanSearchRuns, attachFill: attachFill, attachProgress: attachProgress, attachResult: attachResult, finish: finish, _runs: runs };
+    return { begin: begin, get: get, findOpen: findOpen, step: step, openHumanSearchRuns: openHumanSearchRuns, attachFill: attachFill, attachProgress: attachProgress, flush: flush, flushSoon: flushSoon, attachResult: attachResult, finish: finish, _runs: runs };
   }
 
   return {

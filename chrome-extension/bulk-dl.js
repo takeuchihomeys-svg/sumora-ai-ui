@@ -139,6 +139,82 @@
     if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
   });
 
+  /**
+   * ★ 2.8.264 竹内さん「検索押してから結果表示までかなり遅い／その間にAD並び替えが走ってバグる」:
+   *   リアプロの検索はページごと移る。押してからサーバーが返すまで古い一覧が画面に残るので、
+   *   旧は「押して2.8秒たった・行がある」で古い一覧を結果と認め、並べ替えのリンクを押して検索を打ち消していた。
+   *   → 検索押下から20秒以内に beforeunload が来たら「移動中」。このページでは並べ替えを始めない。
+   *     （ダウンロードのリンクでも beforeunload は来るので、検索押下に紐づく時だけ・30秒で自然に解く）
+   */
+  var _AXLX_DOC_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  var _navPendingAt = 0;
+  var _navPendingLogAt = 0;
+  function _isNavPending() {
+    return !!(_navPendingAt && Date.now() - _navPendingAt < 30000);
+  }
+  window.addEventListener("beforeunload", function () {
+    try {
+      var b = null;
+      try { b = JSON.parse(sessionStorage.getItem("axlx_search_press_baseline") || "null"); } catch (_) { b = null; }
+      var pAt = Number(b && b.at) || 0;
+      if (!pAt || Date.now() - pAt >= 20000) return;
+      _navPendingAt = Date.now();
+      try { if (_sortCursorTimer) { clearTimeout(_sortCursorTimer); _sortCursorTimer = null; } } catch (_) {}
+      try { if (_screenOkWatchTimer) { clearTimeout(_screenOkWatchTimer); _screenOkWatchTimer = null; } } catch (_) {}
+      if (!_adSortInFlight) { try { _abortAdSort("nav_pending"); } catch (_) {} }
+      console.log("[AXLX bulk-dl] 検索の移動中（サーバー応答待ち）→ 古い一覧で並べ替えしない ms=" + (Date.now() - pAt));
+    } catch (_) {}
+  });
+
+  /**
+   * ★ 2.8.264: 「押してから結果が出るまで遅い」の内訳を次の1回で測る。
+   *   press→nav = 押してからリアプロへ問い合わせが出るまで（こちらの待ち）
+   *   server = リアプロの応答待ち / dom・load = ページの組み立て（こちらの拡張の重さも入る）
+   */
+  var _navTimingBase = null;
+  try { _navTimingBase = JSON.parse(sessionStorage.getItem("axlx_search_press_baseline") || "null"); } catch (_) { _navTimingBase = null; }
+  function _logNavTiming() {
+    try {
+      var b = _navTimingBase;
+      if (!b || !b.at || Date.now() - Number(b.at) > 180000) return;
+      var nav = performance.getEntriesByType ? performance.getEntriesByType("navigation")[0] : null;
+      if (!nav) return;
+      var t0 = performance.timeOrigin || 0;
+      var r = function (x) { return Math.round(x); };
+      var msg = "press→nav=" + r(t0 + nav.startTime - Number(b.at))
+        + " server=" + r(nav.responseStart - nav.requestStart)
+        + " dl=" + r(nav.responseEnd - nav.responseStart)
+        + " dom=" + r(nav.domContentLoadedEventEnd - nav.responseEnd)
+        + " load=" + r(nav.loadEventEnd - nav.responseEnd)
+        + " press→load=" + r(t0 + nav.loadEventEnd - Number(b.at));
+      console.log("[AXLX bulk-dl] nav_timing " + msg);
+      try { _liveDlStep("nav_timing", msg.slice(0, 140)); } catch (_) {}
+    } catch (_) {}
+  }
+  try {
+    if (_navTimingBase) {
+      if (document.readyState === "complete") setTimeout(_logNavTiming, 50);
+      else window.addEventListener("load", function () { setTimeout(_logNavTiming, 50); });
+    }
+  } catch (_) {}
+
+  /** ★ 2.8.264: body の先頭の文字だけ（textContent／innerText で一覧全文を作らない） */
+  function _bodyHeadText(max) {
+    try {
+      if (!document.body || !document.createTreeWalker) return "";
+      var tw = document.createTreeWalker(document.body, 4 /* SHOW_TEXT */, null);
+      var out = "", n;
+      while ((n = tw.nextNode())) {
+        var p = n.parentNode;
+        // 選択肢（「徒歩15分」「更新1日以内」等）は画面の条件ではないので読まない（旧 innerText と同じ扱い）
+        if (p && /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|OPTION|SELECT)$/.test(p.nodeName)) continue;
+        out += n.nodeValue + " ";
+        if (out.length >= max) break;
+      }
+      return out.slice(0, max);
+    } catch (_) { return ""; }
+  }
+
 
   // ── 2026-09-27 自動便（auto_schedule）の指定（background が storage に置く・chrome-extension/auto-run.js）──
   // 竹内「ITANDI もおねがい」: 午後の便＝1ページ・更新順／午前の便＝3ページ。お客様（とサイト）が合う時だけ使う（手動の検索は今までどおり）
@@ -524,6 +600,202 @@
       if (window._axlxAuditStep) window._axlxAuditStep(k, d == null ? null : String(d).slice(0, 80));
     } catch (_) {}
   }
+  /**
+   * ★ 2.8.250 竹内さん「一連で止まったら画面把握→強化」:
+   *   fill 沈黙は fill終了で外れる。一覧・並べ替え・送付で止まった時に
+   *   page-script へ照会→スクショ→最善次手→強化継続を依頼する（隔離世界→MAIN）。
+   */
+  var _pipelineSilenceTimer = null;
+  var _pipelineSilenceBusy = false;
+  var _pipelineSilenceTicks = 0;
+  var _pipelineStuckActAt = 0;
+  /** 120〜150秒のあいだ。page-script の AXLX_STUCK_IDLE_MS と同じ。 */
+  var AXLX_STUCK_IDLE_MS = 135000;
+  function _touchPipelineProgress(why) {
+    try {
+      window.__axlxPipelineTouchAt = Date.now();
+      window.__axlxPipelineTouchWhy = String(why || "touch").slice(0, 24);
+    } catch (_) {}
+  }
+  function _disarmPipelineSilence(why) {
+    try { if (_pipelineSilenceTimer) clearInterval(_pipelineSilenceTimer); } catch (_) {}
+    _pipelineSilenceTimer = null;
+    _pipelineSilenceBusy = false;
+    _pipelineSilenceTicks = 0;
+    try { _liveDlStep("pipeline_silence_off", String(why || "off").slice(0, 36)); } catch (_) {}
+  }
+  function _armPipelineSilence(why) {
+    if (!_autoModeOn) return;
+    if (_pipelineSilenceTimer) {
+      try { _liveDlStep("pipeline_silence_keep", String(why || "keep").slice(0, 36)); } catch (_) {}
+      return;
+    }
+    _pipelineSilenceTicks = 0;
+    _touchPipelineProgress("arm:" + String(why || "arm").slice(0, 12));
+    try { _liveDlStep("pipeline_silence_on", String(why || "list").slice(0, 36)); } catch (_) {}
+    _pipelineSilenceTimer = setInterval(function () {
+      if (_pipelineSilenceBusy) return;
+      if (!_autoModeOn) {
+        _disarmPipelineSilence("auto_off");
+        return;
+      }
+      var pipelineOn = false;
+      try {
+        pipelineOn = !!(_autoSendArmed || _autoPdfRun || _adSortInFlight
+          || (typeof _searchGraspedMem === "object" && _searchGraspedMem && _searchGraspedMem.at));
+      } catch (_) { pipelineOn = !!(_autoSendArmed || _autoPdfRun); }
+      if (!pipelineOn) return;
+      var touchAt = 0;
+      try { touchAt = Number(window.__axlxPipelineTouchAt) || 0; } catch (_) { touchAt = 0; }
+      var idleMs = touchAt ? (Date.now() - touchAt) : 999999;
+      /**
+       * ★ 2.8.269 竹内さん「止まったの120秒から150秒の間にした方が良い。処理もちゃんと1つずつ。混乱しないように統括」:
+       *   送付の間隔は実測 47〜81秒。12秒で撮影すると、送付の途中で画面コピーとPDF開きが重なる。
+       *   135秒空くまで撮影しない。1件の送付中・次のお客さんの入力中は、その処理が終わるまで始めない。
+       */
+      if (_pdfBusy || _isFillBusy()) return;
+      if (idleMs < AXLX_STUCK_IDLE_MS) return;
+      if (_pipelineStuckActAt && Date.now() - _pipelineStuckActAt < AXLX_STUCK_IDLE_MS) return;
+      _pipelineStuckActAt = Date.now();
+      _pipelineSilenceBusy = true;
+      _pipelineSilenceTicks++;
+      var idleS = Math.round(idleMs / 1000);
+      try {
+        _liveDlStep(
+          "pipeline_silence_tick",
+          "n=" + _pipelineSilenceTicks + " idle=" + idleS + "s " + String(why || "").slice(0, 16),
+        );
+      } catch (_) {}
+      /**
+       * ★ 2.8.255: 沈黙中に screenOk が無い＝検索後固着の本線。
+       *   DOM推論→並べ替え kick。それでも無進捗なら客完了へ（次客を止めない）。
+       */
+      try {
+        if (!_isSearchConfirmGrasp(_searchGraspedMem) && !_autoPdfRun && !_adSortInFlight) {
+          if (_inferScreenOkFromDom("silence_tick")) {
+            _liveDlStep("silence_task_advance", "dom_infer→sort");
+            setTimeout(function () {
+              try { _kickSortAfterSearch("silence_dom_infer"); } catch (_) {}
+              _pipelineSilenceBusy = false;
+            }, 300);
+            return;
+          }
+        }
+        if (
+          _pipelineSilenceTicks >= 2
+          && !_autoPdfRun
+          && !_adSortInFlight
+          && _autoSendArmed
+        ) {
+          var nSilence = 0;
+          try { nSilence = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { nSilence = 0; }
+          if (nSilence < 1) {
+            try { _liveDlStep("silence_task_advance", "no_rows→customer_done"); } catch (_) {}
+            try { _autoFinish("沈黙・押せる行無し→客完了"); } catch (_) {}
+            _pipelineSilenceBusy = false;
+            return;
+          }
+        }
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-pipeline-silence-tick",
+          why: String(why || "pipeline").slice(0, 36),
+          idleSec: idleS,
+          tick: _pipelineSilenceTicks,
+        }, "*");
+      } catch (_) {
+        _pipelineSilenceBusy = false;
+      }
+    }, 10000);
+  }
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-pipeline-silence-done") return;
+      _pipelineSilenceBusy = false;
+      try {
+        _liveDlStep(
+          "pipeline_silence_done",
+          "stuck=" + String(e.data.stuck || "?").slice(0, 14)
+            + " act=" + String(e.data.acted || "?").slice(0, 14)
+            + (e.data.recovered ? " recovered" : ""),
+        );
+      } catch (_) {}
+      if (e.data && e.data.recovered) _touchPipelineProgress("recovered");
+    } catch (_) {
+      _pipelineSilenceBusy = false;
+    }
+  });
+  /**
+   * ★ 2.8.256 竹内さん「時間かかったら録画→強化／止まったら次へつなぐ」:
+   *   page `_bridgeTimeoutRecordStrengthen` の次手を bulk が必ず実行する。
+   *   sort_or_press → DOM推論＋並べ替え kick／行0なら客完了。throttle 4秒。
+   */
+  var _timeoutBridgeBusy = false;
+  var _timeoutBridgeLastAt = 0;
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-timeout-bridge-next") return;
+      if (!_autoModeOn) return;
+      var nowBr = Date.now();
+      if (_timeoutBridgeBusy || (nowBr - _timeoutBridgeLastAt < 4000)) {
+        try { _liveDlStep("timeout_bridge_skip", "busy_or_throttle"); } catch (_) {}
+        return;
+      }
+      _timeoutBridgeBusy = true;
+      _timeoutBridgeLastAt = nowBr;
+      var nextBr = String(e.data.next || "sort_or_press").slice(0, 24);
+      try {
+        _liveDlStep(
+          "timeout_bridge_recv",
+          "next=" + nextBr
+            + " stuck=" + String(e.data.stuck || "?").slice(0, 14)
+            + " ph=" + String(e.data.phase || "").slice(0, 12),
+        );
+      } catch (_) {}
+      _touchPipelineProgress("timeout_bridge");
+      var finishBr = function () { _timeoutBridgeBusy = false; };
+      if (nextBr === "focus_tab") {
+        try {
+          chrome.runtime.sendMessage({ type: "axlx-stuck-focus-tab" }, function () {
+            void chrome.runtime.lastError;
+            finishBr();
+          });
+        } catch (_) { finishBr(); }
+        return;
+      }
+      if (nextBr === "clear_or_form") {
+        finishBr();
+        return;
+      }
+      try {
+        if (!_isSearchConfirmGrasp(_searchGraspedMem) && !_autoPdfRun && !_adSortInFlight) {
+          if (_inferScreenOkFromDom("timeout_bridge") || _autoSendArmed) {
+            try { _liveDlStep("timeout_bridge_kick", "sort"); } catch (_) {}
+            setTimeout(function () {
+              try { _kickSortAfterSearch("timeout_bridge"); } catch (_) {}
+              finishBr();
+            }, 280);
+            return;
+          }
+        }
+        if (_autoSendArmed && !_autoPdfRun && !_adSortInFlight) {
+          var nBr = 0;
+          try { nBr = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { nBr = 0; }
+          if (nBr < 1) {
+            try { _liveDlStep("timeout_bridge_kick", "customer_done"); } catch (_) {}
+            try { _autoFinish("timeout_bridge・押せる行無し→客完了"); } catch (_) {}
+            finishBr();
+            return;
+          }
+        }
+        try { _liveDlStep("timeout_bridge_kick", "keep_pipeline"); } catch (_) {}
+      } catch (_) {}
+      finishBr();
+    } catch (_) {
+      _timeoutBridgeBusy = false;
+    }
+  });
   function _ttake() {
     try {
       var raw = sessionStorage.getItem(AUDIT_T_KEY);
@@ -702,15 +974,28 @@
         try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
       };
       var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
-      var re = /並[べび]替え|並び順/;
+      var re = /並[べび]替え|並び順|並替/;
       /** 人が学んだ形: 大阪36棟46戸並べ替え（棟戸＋並べ替え） */
-      var reToori = /[0-9０-９]+棟[0-9０-９]+戸並[べび]替え/;
+      var reToori = /[0-9０-９]+棟[0-9０-９]+戸並[べび]?替え?/;
+      var reTooriOnly = /[0-9０-９]+棟[0-9０-９]+戸/;
       var cands = [];
       var pushCand = function (el, ntHint) {
         if (!el || !vis(el)) return;
         var nt = ntHint != null ? ntHint : norm(el.textContent);
-        if (!nt || !re.test(nt)) return;
-        if (nt.length > 80 && !reToori.test(nt.slice(0, 48))) return;
+        if (!nt) return;
+        /**
+         * ★ 2.8.259: 短い棟戸 under は並べ替えホバー先（束キー正本）。
+         *   文言に「並べ替え」が無くても候補にする（ナビだけ見える失敗の保険）。
+         */
+        var isUnderEarly = false;
+        try {
+          if (el.matches && el.matches("div.under, .under")) isUnderEarly = true;
+          else if (el.closest && el.closest("div.under, .under")) isUnderEarly = true;
+        } catch (_) {}
+        if (!re.test(nt)) {
+          if (!(isUnderEarly && reTooriOnly.test(nt) && nt.length <= 40)) return;
+        }
+        if (nt.length > 80 && !reToori.test(nt.slice(0, 48)) && !(isUnderEarly && reTooriOnly.test(nt.slice(0, 40)))) return;
         if (nt.length > 160) return;
         var isRootTable = false;
         var isUnder = false;
@@ -740,7 +1025,14 @@
             }
           } catch (_) {}
         }
-        cands.push({ el: el, len: nt.length, root: isRootTable, under: isUnder, toori: reToori.test(nt), nt: nt });
+        cands.push({
+          el: el,
+          len: nt.length,
+          root: isRootTable,
+          under: isUnder || isUnderEarly,
+          toori: reToori.test(nt) || reTooriOnly.test(nt),
+          nt: nt,
+        });
       };
       // A) 通常タグ走査
       var els = document.querySelectorAll("a,button,div,span,td,th,li,label,p");
@@ -748,16 +1040,30 @@
       // B) ★ 2.8.218: div.under を明示（束の学習セレクタ正本）
       try {
         var unders = document.querySelectorAll("div.under, .under");
-        for (var ui = 0; ui < unders.length; ui++) pushCand(unders[ui], null);
+        for (var ui = 0; ui < unders.length; ui++) {
+          var uEl = unders[ui];
+          pushCand(uEl, null);
+          // 巨大 textContent の under は最初の短い子葉だけヒントに
+          try {
+            var uKids = uEl.querySelectorAll("a,button,span,div,label,p");
+            for (var uk = 0; uk < uKids.length && uk < 40; uk++) {
+              var ukn = norm(uKids[uk].textContent);
+              if (ukn && ukn.length <= 40 && (re.test(ukn) || reTooriOnly.test(ukn))) {
+                pushCand(uKids[uk], ukn);
+              }
+            }
+          } catch (_) {}
+        }
       } catch (_) {}
-      // C) ★ 2.8.218: 葉テキスト（巨大 textContent に埋もれても短いノードを掴む）
+      // C) ★ 2.8.218/259: 葉テキスト（巨大 textContent に埋もれても短いノードを掴む）
       try {
         var tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
         var tn, leafN = 0;
-        while ((tn = tw.nextNode()) && leafN < 400) {
+        while ((tn = tw.nextNode()) && leafN < 800) {
           var raw = String(tn.nodeValue || "");
           var ntLeaf = norm(raw);
-          if (!ntLeaf || ntLeaf.length < 2 || ntLeaf.length > 48 || !re.test(ntLeaf)) continue;
+          if (!ntLeaf || ntLeaf.length < 2 || ntLeaf.length > 48) continue;
+          if (!re.test(ntLeaf) && !reTooriOnly.test(ntLeaf)) continue;
           leafN++;
           var par = tn.parentElement;
           if (par) pushCand(par, ntLeaf);
@@ -770,12 +1076,18 @@
       for (j = 0; j < cands.length; j++) {
         c = cands[j];
         if (c.root) continue;
-        if (c.len <= 24 && !c.toori) return c.el;
+        if (c.len <= 24 && !c.toori && /並[べび]替え|並び順|並替/.test(c.nt || "")) return c.el;
       }
       for (j = 0; j < cands.length; j++) {
         c = cands[j];
         if (c.root) continue;
-        if (c.len <= 24) return c.el;
+        if (c.len <= 24 && /並[べび]替え|並び順|並替/.test(c.nt || "")) return c.el;
+      }
+      // ①b ★ 2.8.259: 短い棟戸 under（束のホバー先）
+      for (j = 0; j < cands.length; j++) {
+        c = cands[j];
+        if (c.root) continue;
+        if (c.under && c.toori && c.len <= 40) return c.el;
       }
       // ② div.under の短い見出し（棟戸は後回し）
       for (j = 0; j < cands.length; j++) {
@@ -971,6 +1283,7 @@
   function _screenListNow() {
     var rows = 0, pdf = 0, next = false, adHi = false;
     var modal = _isCondModalOpen();
+    var onlyOne = false;
     try {
       rows = tracked.filter(function (t) {
         return t && t.btn && t.btn.isConnected && AxlxSendPairing && AxlxSendPairing.isHttpUrl(t.btn.href);
@@ -979,14 +1292,18 @@
     try {
       pdf = document.querySelectorAll("a.print, a[href*='print'], a[href*='Print']").length;
     } catch (_) { pdf = 0; }
-    try { next = !!(typeof _findNextPageEl === "function" && _findNextPageEl()); } catch (_) { next = false; }
+    try {
+      var pst = typeof _readPagerState === "function" ? _readPagerState() : null;
+      if (pst) onlyOne = !!pst.onlyOnePage;
+      next = !onlyOne && !!(typeof _findNextPageEl === "function" && _findNextPageEl());
+    } catch (_) { next = false; }
     try {
       var p = new URLSearchParams(location.search || "");
       adHi = (p.get("key") === "ad" && p.get("odr") === "desc")
         || p.get("ad") === "odr_desc"
         || /(?:^|[?&])ad=odr_desc(?:&|$)/.test(String(location.search || ""));
     } catch (_) { adHi = false; }
-    return { rows: rows, pdf: pdf, next: next, adHi: adHi, modal: modal };
+    return { rows: rows, pdf: pdf, next: next, adHi: adHi, modal: modal, onlyOnePage: onlyOne };
   }
   /**
    * @param {"list_start"|"before_next"|"after_next"|"handoff"} phase
@@ -1013,15 +1330,23 @@
         if (sc.adHi) bits.push("AD高"); else bits.push("AD未");
       }
       if (phase === "before_next") {
-        if (plan.next && !sc.next) miss.push("次ボタン画面に無し");
+        if (sc.onlyOnePage) {
+          bits.push("1ページのみ");
+          try { _liveDlStep("list_page_one_only", "1ページのみ把握・次ページ無し"); } catch (_) {}
+        } else if (plan.next && !sc.next) miss.push("次ボタン画面に無し");
         else if (sc.next) bits.push("次画面あり");
         if (sc.rows < 1 && sc.pdf < 1) bits.push("行0でも次へ試す可");
       }
       if (phase === "handoff") {
         bits.push("P" + (Number(_autoPdfPage) || 1));
         bits.push("累計" + (Number(_autoPdfTotalSent) || 0));
-        if (plan.next && sc.next) bits.push("次残あり→上限or完了");
+        if (sc.onlyOnePage) bits.push("1ページのみ完了");
+        else if (plan.next && sc.next) bits.push("次残あり→上限or完了");
         else bits.push("次無しor上限");
+      }
+      if (phase === "list_start" && sc.onlyOnePage) {
+        bits.push("1ページのみ");
+        try { _liveDlStep("list_page_one_only", "一覧開始・1ページのみ把握"); } catch (_) {}
       }
       var summary = String(phase) + " " + bits.join(" ")
         + (miss.length ? " 入忘れ" + miss.length + "(" + miss.slice(0, 3).join("・") + ")" : " 揃い");
@@ -1030,7 +1355,7 @@
       var result = { ok: miss.length === 0, miss: miss, summary: summary, screen: sc, plan: plan, phase: phase };
       /**
        * ★ 2.8.231: 一覧の手順表×画面照合 → task_now/done/next（page と同型）
-       *   DB実測: list_flow_grasp はあるが task_*=0 の抜けを止める。
+       * ★ 2.8.234: 1ページのみ／次無しなら「次ページを押す」を出さず、物件済→外すへ。
        */
       try {
         var _listNext = {
@@ -1047,6 +1372,15 @@
         };
         var _nt = _listNext[phase] || ("次(" + phase + ")");
         var _dt = _listDone[phase] || (phase + "照合完了");
+        if (phase === "before_next" && (sc.onlyOnePage || !sc.next)) {
+          _nt = "物件取得完了→外す";
+          _dt = sc.onlyOnePage ? "1ページのみ・物件見終わった" : "次ページ無し・物件見終わった";
+          try { _liveDlStep("list_no_next_advance", _dt); } catch (_) {}
+        }
+        if (phase === "list_start" && sc.onlyOnePage) {
+          // 一覧開始時はまだ物件取得中。次の最終は外すだが、いまは物件取得を続ける
+          if (!/物件/.test(_nt)) _nt = "物件を1つずつ取得";
+        }
         if (miss.length) {
           window.postMessage({
             from: "axlx-task-grasp",
@@ -1509,6 +1843,252 @@
    *   原因=_autoPdfSig を見る間の前に立て、キャンセル後も再試行できずカーソルが並べ替えへ行かない。
    */
   var _sortCursorScheduled = false;
+  /** ★ 2.8.247: 並べ替えホバー飛行中に kick が重なると「並べ替え」ループに見える */
+  var _adSortInFlight = false;
+  /**
+   * ★ 2.8.255: screenOk が来ないまま「送付中」で止まるのを解く。
+   *   画面に結果（estate＋印刷用PDF）があるのに page の変化検知が失敗すると
+   *   並べ替えも送付も次客も永久に動かない（竹内さん画像）。
+   */
+  var _screenOkWatchTimer = null;
+  /**
+   * ★ 2.8.263 竹内さん「検索押してページ表示されてから並べ替え／先に並べ替えがバグ」:
+   *   押下直前の基準（axlx_search_press_baseline）と比べ、結果ページが出てからだけ screenOk。
+   *   旧 dom_infer は estate+行ありだけで OK → 旧一覧のまま並べ替えが走り検索を邪魔した。
+   */
+  function _readSearchPressBaseline() {
+    try {
+      var raw = sessionStorage.getItem("axlx_search_press_baseline");
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) { return null; }
+  }
+  /**
+   * ★ 2.8.264: 結果ページの軽い目印（件数「○棟○戸」＋PDFの数＋先頭のPDFリンク）。
+   *   旧は700要素の textContent を毎回作っていた（親 div は一覧全文）→ 表示を遅らせ固まる根。
+   *   押下時の目印（axlx_search_press_sig）と同じ作り方で比べる。
+   */
+  function _localScreenEvidenceBrief() {
+    var out = { pdf: 0, count: "-", first: "", brief: "" };
+    try {
+      var head = _bodyHeadText(6000);
+      var m = head.match(/([0-9０-９,，]+)\s*棟\s*([0-9０-９,，]+)\s*戸/);
+      if (m) out.count = m[1] + "/" + m[2];
+    } catch (_) {}
+    try {
+      var links = document.querySelectorAll("a.print, a[href*='print'], a[href*='Print']");
+      out.pdf = links.length;
+      if (links[0]) out.first = String(links[0].getAttribute("href") || "").slice(-48);
+    } catch (_) {}
+    out.brief = "cnt=" + out.count + " pdf=" + out.pdf + " f=" + out.first;
+    return out;
+  }
+  function _readSearchPressSig() {
+    try { return sessionStorage.getItem("axlx_search_press_sig") || ""; } catch (_) { return ""; }
+  }
+  function _pressAtForPageGate() {
+    var base = _readSearchPressBaseline();
+    if (base && base.at) return Number(base.at) || 0;
+    try {
+      var sync = sessionStorage.getItem("axlx_pending_auto_send_sync");
+      if (sync) {
+        var p = JSON.parse(sync);
+        if (p && p.ts) return Number(p.ts) || 0;
+      }
+    } catch (_) {}
+    try {
+      if (_searchGraspedMem && (_searchGraspedMem.pressed || _searchGraspedMem.intent)
+        && _searchGraspedMem.at) {
+        return Number(_searchGraspedMem.at) || 0;
+      }
+    } catch (_) {}
+    return 0;
+  }
+  function _pageDisplayedAfterThisSearch(why) {
+    try {
+      if (_isNavPending()) {
+        if (Date.now() - _navPendingLogAt > 3000) {
+          _navPendingLogAt = Date.now();
+          try { _liveDlStep("page_nav_pending", "検索の移動中→古い一覧 " + String(why || "").slice(0, 24)); } catch (_) {}
+        }
+        return { ok: false, path: "nav_pending", why: "nav_pending" };
+      }
+      var pressAt = _pressAtForPageGate();
+      if (!pressAt) {
+        try { _liveDlStep("page_display_need_press", String(why || "").slice(0, 28)); } catch (_) {}
+        return { ok: false, path: "need_press", why: "no_press" };
+      }
+      var elapsed = Math.max(0, Date.now() - pressAt);
+      if (elapsed < 700) {
+        try { _liveDlStep("page_display_too_soon", "ms=" + elapsed); } catch (_) {}
+        return { ok: false, path: "too_soon", why: "ms=" + elapsed, elapsed: elapsed };
+      }
+      var n = 0;
+      try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
+      if (n < 1) {
+        try { if (typeof _rescanRows === "function") _rescanRows(); } catch (_) {}
+        try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
+      }
+      var look = false;
+      try { look = !!_looksLikeSearchResult(); } catch (_) { look = false; }
+      var estate = false;
+      try {
+        estate = /[?&]method=estate\b/.test(String(location.search || ""))
+          || /[?&]display=building\b/.test(String(location.search || ""));
+      } catch (_) { estate = false; }
+      if (!(n > 0 && (look || estate))) {
+        try { _liveDlStep("page_display_wait_rows", "n=" + n + " ms=" + elapsed); } catch (_) {}
+        return { ok: false, path: "wait_rows", why: "n=" + n, elapsed: elapsed };
+      }
+      /**
+       * ★ 2.8.264: 押した時のページか、移った先の新しいページかで分ける。
+       *   新しいページ … 読み込みが終わっていれば（readyState=complete）この検索の結果。
+       *   同じページ（AJAX）… 目印が変わった時だけ。変わらない時は6秒以上・移動なしの時だけ保険で認める。
+       */
+      var pressDoc = "";
+      try { pressDoc = sessionStorage.getItem("axlx_search_press_doc") || ""; } catch (_) { pressDoc = ""; }
+      var sameDoc = !pressDoc || pressDoc === _AXLX_DOC_ID;
+      var nowEv = _localScreenEvidenceBrief();
+      if (!sameDoc) {
+        if (document.readyState !== "complete") {
+          try { _liveDlStep("page_display_wait_load", "rs=" + document.readyState + " ms=" + elapsed); } catch (_) {}
+          return { ok: false, path: "wait_load", why: "loading", elapsed: elapsed, n: n };
+        }
+        try { _liveDlStep("page_displayed_ok", "new_doc n=" + n + " ms=" + elapsed + " " + nowEv.brief); } catch (_) {}
+        return { ok: true, path: "new_doc", why: "new_doc", elapsed: elapsed, brief: nowEv.brief, n: n };
+      }
+      var base = _readSearchPressBaseline();
+      var pressSig = _readSearchPressSig();
+      var changed = false;
+      try {
+        if (pressSig && nowEv.brief && pressSig !== nowEv.brief) changed = true;
+        if (base && base.href && String(location.href || "") !== String(base.href)) changed = true;
+        if (base && base.pdf != null && Number(base.pdf) !== Number(nowEv.pdf)) changed = true;
+      } catch (_) { changed = false; }
+      if (changed) {
+        try { _liveDlStep("page_displayed_ok", "changed n=" + n + " ms=" + elapsed + " " + nowEv.brief); } catch (_) {}
+        return { ok: true, path: "changed", why: "changed", elapsed: elapsed, brief: nowEv.brief, n: n };
+      }
+      if (elapsed >= 6000) {
+        try { _liveDlStep("page_displayed_ok", "settle n=" + n + " ms=" + elapsed + " " + nowEv.brief); } catch (_) {}
+        return { ok: true, path: "settle", why: "settle", elapsed: elapsed, brief: nowEv.brief, n: n };
+      }
+      try {
+        _liveDlStep(
+          "page_display_wait",
+          "ms=" + elapsed + " same n=" + n + " base=" + String(pressSig || "-").slice(0, 28),
+        );
+      } catch (_) {}
+      _nudge("⏳ 検索結果のページ表示を待っています");
+      return { ok: false, path: "wait_display", why: "same_brief", elapsed: elapsed, n: n };
+    } catch (_) {
+      return { ok: false, path: "err", why: "err" };
+    }
+  }
+  function _inferScreenOkFromDom(why) {
+    try {
+      if (_isSearchConfirmGrasp(_searchGraspedMem)) return true;
+      if (_isFillBusy && _isFillBusy()) return false;
+      var gate = _pageDisplayedAfterThisSearch(why || "dom_infer");
+      if (!gate.ok) return false;
+      var n = gate.n || 0;
+      _searchGraspedMem = {
+        at: Date.now(),
+        why: "screen:page_displayed:" + String(gate.path || why || "watch").slice(0, 20),
+        screenOk: true,
+        confirmed: true,
+        pressed: true,
+        customerId: (_autoRunCid || null),
+        pageDisplayed: true,
+        displayPath: String(gate.path || "").slice(0, 16),
+      };
+      try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_searchGraspedMem)); } catch (_) {}
+      try { chrome.storage.session.set({ axlx_search_grasped: _searchGraspedMem }); } catch (_) {}
+      // ★ 2.8.263: 押下基準は1回の検索で1回だけ使う（残すと次の客で古い一覧を結果と誤認する）
+      try { sessionStorage.removeItem("axlx_search_press_baseline"); } catch (_) {}
+      try { sessionStorage.removeItem("axlx_search_press_sig"); } catch (_) {}
+      try { sessionStorage.removeItem("axlx_search_press_doc"); } catch (_) {}
+      try { _liveDlStep("search_customer_screen_ok", "page_displayed n=" + n + " " + String(gate.path || "").slice(0, 16)); } catch (_) {}
+      try { _liveDlStep("search_results_ready", "page_displayed→AD可 n=" + n); } catch (_) {}
+      _autoSendArmed = true;
+      try { _forceAutoForPending("page_displayed"); } catch (_) {}
+      try { _touchPipelineProgress("dom_screen_ok"); } catch (_) {}
+      return true;
+    } catch (_) { return false; }
+  }
+  function _armScreenOkWatchdog(why) {
+    try { if (_screenOkWatchTimer) clearTimeout(_screenOkWatchTimer); } catch (_) {}
+    _screenOkWatchTimer = setTimeout(function () {
+      _screenOkWatchTimer = null;
+      try {
+        if (_isSearchConfirmGrasp(_searchGraspedMem)) return;
+        if (!_autoSendArmed && !_hasSearchPendingSync()) return;
+        if (_autoPdfRun || _adSortInFlight) return;
+        if (!_inferScreenOkFromDom(why || "watchdog")) {
+          _nudge("⏳ 検索結果のページ表示を待っています");
+          return;
+        }
+        console.warn("[AXLX bulk-dl] 結果ページ表示確認 → 並べ替えへ (" + why + ")");
+        _nudge("🔀 検索結果ページ表示済 → 並べ替えへ進みます");
+        setTimeout(function () {
+          try { _kickSortAfterSearch("page_displayed_watch"); } catch (_) {}
+        }, 200);
+      } catch (err) {
+        console.warn("[AXLX bulk-dl] screenOk watchdog 失敗", err && err.message);
+      }
+    }, 5500);
+  }
+  /**
+   * ★ 2.8.254: 並べ替え時に隠すのは案内パネルだけ（お客様パネル・物件送る枠は触らない）
+   *   旧 `[id^='aixlinx-']` は #aixlinx-float-wrap まで消し、戻さず消えたままになる。
+   */
+  function _tuckGuidesForSort() {
+    var sel = "#axlx-guide-panel, #axlx-guide-layer, #axlx-guide, #axlx-guide-root, #axlx-guide-overlay";
+    var list = document.querySelectorAll(sel);
+    var n = 0;
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var el = list[i];
+        if (!el || !el.style) continue;
+        // お客様パネル・物件送る枠は絶対に隠さない
+        var id = String(el.id || "");
+        if (id === "aixlinx-float-wrap" || id === "aixlinx-mini-btn" || id === "axlx-bar") continue;
+        if (!el.getAttribute("data-axlx-sort-prev-display")) {
+          el.setAttribute("data-axlx-sort-prev-display", String(el.style.display || ""));
+        }
+        el.style.display = "none";
+        n++;
+      } catch (_) {}
+    }
+    try { _liveDlStep("sort_guide_tuck", "n=" + n); } catch (_) {}
+    try { _tmark("sort_guide_tuck", "n=" + n); } catch (_) {}
+    return n;
+  }
+  function _restoreGuidesAfterSort() {
+    var list = document.querySelectorAll("[data-axlx-sort-prev-display]");
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var el = list[i];
+        var prev = el.getAttribute("data-axlx-sort-prev-display");
+        el.style.display = prev == null ? "" : prev;
+        el.removeAttribute("data-axlx-sort-prev-display");
+      } catch (_) {}
+    }
+    // 万一 float-wrap が display:none のままなら強制で戻す
+    try {
+      var wrap = document.getElementById("aixlinx-float-wrap");
+      if (wrap && wrap.style && wrap.style.display === "none" && wrap.getAttribute("data-axlx-user-mini") !== "1") {
+        wrap.style.display = "flex";
+      }
+    } catch (_) {}
+    try {
+      var bar = document.getElementById("axlx-bar");
+      if (bar && bar.style && bar.style.display === "none" && bar.getAttribute("data-axlx-force-hide") !== "1") {
+        // tracked が有る／検索結果画面なら再表示は updateBar に任せる
+        try { updateBar(); } catch (_) {}
+      }
+    } catch (_) {}
+    try { _liveDlStep("sort_guide_restore", "ok"); } catch (_) {}
+  }
   var _sortCursorTimer = null;
   var _sortCursorDeferN = 0;
   /** 保険（強制）使用回数。本線で動くのが正・保険は最後の1回だけ */
@@ -1524,15 +2104,37 @@
    * ★ 2.8.207 竹内さん「検索押したと確認 → そのあと1秒以上空けて並べ替え」:
    *   意図(intent/直前)だけでは未確認。press_ok / screen / confirmed だけ本線。
    */
+  /**
+   * ★ 2.8.240: AD並び替え可＝検索**結果**が画面に出た（screenOk）。
+   *   旧は search_press_ok / confirmed だけで true → 結果未反映なのに AD が走った。
+   */
   function _isSearchConfirmGrasp(g) {
     if (!g || !g.at) return false;
-    if (g.confirmed === false && g.intent && !g.screenOk) return false;
-    if (g.confirmed === true || g.screenOk) return true;
+    // ★ 2.8.241: 薄い／TTL切れ／旧版は使わない
+    try {
+      if (Date.now() - Number(g.at || 0) > 15 * 60 * 1000) return false;
+      if (
+        g.confirmed == null && g.screenOk == null && g.pressed == null
+        && !g.screen && !g.customerId && !g.pageVer
+      ) {
+        return false;
+      }
+    } catch (_) {}
+    if (g.intent === true && !g.screenOk) return false;
+    if (g.screenOk === true) return true;
     var w = String(g.why || "");
-    if (/直前|intent_only|sort_cursor:|armed_only|legacy_after_search|ungrasped_but_list/i.test(w) && !/press_ok|screen:|reload_resume/i.test(w)) {
+    if (/^screen:|after_search_screen|customer_screen|reload_resume/i.test(w)) return true;
+    /**
+     * ★ 2.8.244: armed_rows／sync_pending／list_visible は「武装・行あり」の印であり
+     *   screenOk ではない。旧は why だけで確認扱いにし AD へ進む＝240関所と衝突。
+     */
+    if (/直前|intent_only|sort_cursor:|armed_only|legacy_after_search|ungrasped_but_list|search_press_ok|press_ok|armed_rows|armed_list|sync_pending|pending_armed|list_visible/i.test(w)) {
       return false;
     }
-    return /search_press_ok|press_ok|screen:|reload_resume|fill.done|human_search|customer_screen|armed_rows|sync_pending/i.test(w);
+    if (g.pressed === true && !g.screenOk) return false;
+    if (g.confirmed === true && !g.screenOk) return false;
+    // human_search も画面照合が無い限り確認にしない（旧一覧の人検索誤認を止める）
+    return false;
   }
   function _msSinceSearchConfirm() {
     try {
@@ -1590,6 +2192,14 @@
         try { _liveDlStep("sort_gate_wait_rows", brief.slice(0, 40)); } catch (_) {}
         return { ok: false, path: "wait_rows", why: "rows0", brief: brief };
       }
+      /**
+       * ★ 2.8.259 DB#1600: rows>0 でも head=N のまま main に通すと
+       *   sort_no_head 連発→止まって見える。見出しが出るまで待つ。
+       */
+      if (rows > 0 && !sortHead) {
+        try { _liveDlStep("sort_gate_wait_head", brief.slice(0, 40)); } catch (_) {}
+        return { ok: false, path: "wait_head", why: "head0", brief: brief };
+      }
       try { _liveDlStep("sort_gate_main", brief.slice(0, 40)); } catch (_) {}
       return { ok: true, path: "main", why: "clear", brief: brief };
     }
@@ -1612,8 +2222,8 @@
   }
   function _goSortCursorNow(why, path) {
     try {
-      if (_autoPdfRun) {
-        try { _liveDlStep("sort_cursor_skip", "already_running"); } catch (_) {}
+      if (_autoPdfRun || _adSortInFlight) {
+        try { _liveDlStep("sort_cursor_skip", _adSortInFlight ? "ad_sort_inflight" : "already_running"); } catch (_) {}
         return { ok: false, reason: "running" };
       }
       _autoPdfSig = "";
@@ -1643,9 +2253,15 @@
       return { ok: false, reason: "err" };
     }
   }
+  var _pageWaitN = 0;
   function _scheduleSortCursorAfterSearch(why) {
     try {
       if (_sortCursorScheduled || _autoPdfRun) return false;
+      // ★ 2.8.264: 検索の移動中は行の読み直しもしない（死にゆく古い一覧を重く読まない）
+      if (_isNavPending()) {
+        try { _pageDisplayedAfterThisSearch(why || "schedule"); } catch (_) {}
+        return false;
+      }
       try { if (typeof _rescanRows === "function") _rescanRows(); } catch (_) {}
       var n = 0;
       try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
@@ -1653,7 +2269,7 @@
       if (n < 1 && !sync && !_autoSendArmed) return false;
       /**
        * ★ 2.8.207: 検索「確認」が無いと並べ替えスケジュールしない。
-       *   旧は sort_cursor:why で把握を捏造 → 検索前〜押す瞬間に並べ替えが走る根。
+       * ★ 2.8.263: 結果ページ表示前は並べ替えしない（先に並べ替え→検索ラグ／バグの根）。
        */
       var graspOk = _isSearchConfirmGrasp(_searchGraspedMem);
       if (!graspOk) {
@@ -1667,6 +2283,35 @@
             }
           }
         } catch (_) {}
+      }
+      if (!graspOk) {
+        var pageGate = _pageDisplayedAfterThisSearch(why || "schedule");
+        if (!pageGate.ok) {
+          _stampSortFlowAtom("sort_wait", false, "need_page_display:" + String(pageGate.path || "").slice(0, 16));
+          try { _liveDlStep("sort_gate_need_page", String(pageGate.path || "wait") + ":" + String(why || "").slice(0, 24)); } catch (_) {}
+          console.log("[AXLX bulk-dl][auto] 結果ページ表示前 → 並べ替え待ち (" + (pageGate.path || why) + ")");
+          /**
+           * ★ 2.8.264: 旧は0.9秒ごとに無限に読み直し（毎回ページ全体を走査）→ 固まりの一因。
+           *   60回（約1分）で打ち切り、後は沈黙見張り・新しいページの読み込みに任せる。
+           */
+          _pageWaitN++;
+          if (_pageWaitN > 60) {
+            if (_pageWaitN === 61) {
+              try { _liveDlStep("page_display_give_up", "n=60 " + String(pageGate.path || "").slice(0, 16)); } catch (_) {}
+              console.warn("[AXLX bulk-dl] 結果ページ表示待ちを打ち切り（約1分）→ 見張りに任せる");
+            }
+            return false;
+          }
+          if (!_sortCursorTimer && pageGate.path !== "nav_pending") {
+            _sortCursorTimer = setTimeout(function () {
+              _sortCursorTimer = null;
+              try { _scheduleSortCursorAfterSearch((why || "wait") + "_page"); } catch (_) {}
+            }, 900);
+          }
+          return false;
+        }
+        try { _inferScreenOkFromDom("schedule_page"); } catch (_) {}
+        graspOk = _isSearchConfirmGrasp(_searchGraspedMem);
       }
       if (!graspOk) {
         _stampSortFlowAtom("sort_wait", false, "need_search_confirm");
@@ -1688,6 +2333,7 @@
       _forceAutoForPending(why || "sort_cursor");
       if (!_autoModeOn) return false;
       _autoSendArmed = true;
+      try { _touchPipelineProgress("armed_sort"); _armPipelineSilence("after_search"); } catch (_) {}
       if (sync && sync.customerId) _autoRunCid = sync.customerId;
       try {
         chrome.storage.session.set({ axlx_search_grasped: _searchGraspedMem });
@@ -1759,6 +2405,19 @@
                 _goSortCursorNow("insurance", "insurance");
                 return;
               }
+              /**
+               * ★ 2.8.259: wait_head が続く＝見出しDOMが取れないページ。
+               *   永遠に defer せず、回復探索付きで1回だけ並べ替えを試す（保険）。
+               */
+              if (rowsI > 0 && String(gate.path || "") === "wait_head") {
+                _sortCursorInsuranceUsed = true;
+                _sortCursorDeferN = 0;
+                console.warn("[AXLX bulk-dl][auto] 見出し待ち5回 → 回復探索つきで1回だけ並べ替え");
+                try { _liveDlStep("sort_cursor_insurance", "wait_head5_recover"); } catch (_) {}
+                _stampSortFlowAtom("sort_insurance", true, "wait_head5");
+                _goSortCursorNow("insurance_head", "insurance");
+                return;
+              }
             }
             _sortCursorScheduled = false;
             setTimeout(function () {
@@ -1793,6 +2452,10 @@
   function _kickSortAfterSearch(why) {
     try {
       if (_pendingAutoSendDispatched || _autoPdfRun) return false;
+      if (_adSortInFlight) {
+        try { _liveDlStep("sort_skip_inflight", String(why || "kick").slice(0, 36)); } catch (_) {}
+        return false;
+      }
       return _scheduleSortCursorAfterSearch(why || "kick");
     } catch (err) {
       console.warn("[AXLX bulk-dl] kick失敗", err && err.message);
@@ -1968,10 +2631,25 @@
    *     検索した時の印（`AxlxSearchStamp`・案内で「検索」を押した時に残る）も見る。
    *     **全件（16338棟など）と分かる時は必ず false**（押さない）。
    */
+  /**
+   * ★ 2.8.264: 0.9秒ごと・見張りごとに呼ばれる。旧は body.textContent／innerText（innerText は
+   *   ページ全体の配置計算を強制）を毎回作り、表示中の新しいページの描画を止めていた。
+   *   → 先頭の文字だけを辿る＋同じURLなら1.5秒は前の答えを使う。
+   */
+  var _lsrCache = { at: 0, href: "", v: false };
   function _looksLikeSearchResult() {
+    var href = "";
+    try { href = String(location.href || ""); } catch (_) { href = ""; }
+    var now = Date.now();
+    if (now - _lsrCache.at < 1500 && _lsrCache.href === href) return _lsrCache.v;
+    var v = _looksLikeSearchResultRaw();
+    _lsrCache = { at: now, href: href, v: v };
+    return v;
+  }
+  function _looksLikeSearchResultRaw() {
     try {
       // ⓪ いちばん強い印: 全件の数が出ている一覧は「条件なし」と決めつける（押さない）
-      var _head = String(document.body ? document.body.textContent.slice(0, 3000) : "");
+      var _head = _bodyHeadText(3000);
       if (/全件/.test(_head) && !/条件/.test(_head)) return false;
 
       var p = new URLSearchParams(location.search);
@@ -1990,7 +2668,7 @@
       // ② 結果の上に出ている「効いている条件」の文字（畳まれた欄の値より確か）
       //    例: 「家賃 ～10.5万」「徒歩15分」「2LDK-3LDK」「更新1日内」「築20年以内」「〇〇区」
       try {
-        var _top = String(document.body ? document.body.innerText || document.body.textContent : "").slice(0, 2500);
+        var _top = _head.slice(0, 2500);
         var _cond = 0;
         if (/(家賃|賃料)\s*[:：]?\s*[^/\n]{0,14}(万|円|下限なし|上限なし)/.test(_top)) _cond++;
         if (/徒歩\s*[0-9]{1,3}\s*分/.test(_top)) _cond++;
@@ -2124,11 +2802,24 @@
       try { existing.remove(); } catch (_) {}
       existing = null;
     }
-    if (existing) return;
+    // ★ 2.8.261: 版表示が無い旧バーは作り直す（反映確認のため）
+    if (existing && !document.getElementById("axlx-bar-ver")) {
+      try { existing.remove(); } catch (_) {}
+      existing = null;
+    }
+    if (existing) {
+      try {
+        var _ve0 = document.getElementById("axlx-bar-ver");
+        var _mv0 = (chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().version : "";
+        if (_ve0 && _mv0) _ve0.textContent = "v" + _mv0;
+      } catch (_) {}
+      return;
+    }
     var bar = document.createElement("div");
     bar.id = "axlx-bar";
     bar.style.cssText = [
-      "position:fixed;top:50%;right:12px;transform:translateY(-50%);z-index:2147483646;",
+      // ★ 2.8.260: z-index を float-wrap(…645) より上(…647)に。右ドックに隠れない。
+      "position:fixed;top:50%;right:12px;transform:translateY(-50%);z-index:2147483647;",
       "background:#0f172a;",
       "color:#f8fafc;border-radius:16px;padding:14px 16px;",
       "font-size:13px;font-weight:600;",
@@ -2139,7 +2830,7 @@
     ].join("");
     bar.innerHTML = [
       '<div id="axlx-drag-handle" style="display:flex;align-items:center;justify-content:space-between;cursor:grab;padding:0 0 2px;user-select:none;" title="ドラッグで移動">',
-      '  <span style="font-size:11px;letter-spacing:0.08em;color:#93c5fd;font-weight:800;">AIXLINX</span>',
+      '  <span style="font-size:11px;letter-spacing:0.08em;color:#93c5fd;font-weight:800;">AIXLINX <span id="axlx-bar-ver" style="opacity:0.7;font-weight:700;"></span></span>',
       '  <span style="font-size:10px;opacity:0.45;letter-spacing:2px;">⠿</span>',
       "</div>",
       '<div style="background:rgba(15,23,42,0.35);border:1px solid rgba(148,163,184,0.2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">',
@@ -2168,6 +2859,13 @@
       '<div id="axlx-cache-out" style="display:none;"></div>',
     ].join("");
     document.body.appendChild(bar);
+    // ★ 2.8.261: 枠に拡張版を出し「反映されたか」を目で確認できるようにする
+    try {
+      var _verEl = document.getElementById("axlx-bar-ver");
+      var _mv = (chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().version : "";
+      if (_verEl) _verEl.textContent = _mv ? ("v" + _mv) : "";
+      try { _liveDlStep("bulk_alive", "v" + String(_mv || "?") + " estate_bar"); } catch (_) {}
+    } catch (_) {}
     // ── ドラッグ移動（ハンドル or パネル余白をつかんで移動。ボタン/入力上は除外）──
     (function () {
       var dragging = false, offX = 0, offY = 0;
@@ -2182,6 +2880,7 @@
         // translateX(-50%) を解除して left/top 直指定に切替
         bar.style.transform = "none";
         bar.removeAttribute("data-axlx-docked"); // v2.5.74: スタッフが動かした位置は自動で動かさない
+        try { bar.setAttribute("data-axlx-user-drag", "1"); } catch (_) {}
         bar.style.left = r.left + "px"; bar.style.top = r.top + "px";
         bar.style.right = "auto"; bar.style.bottom = "auto";
         e.preventDefault();
@@ -2290,7 +2989,23 @@
       }
       if (e.data.from === "axlx-now-action") {
         _bulkGraspState.currentAction = String(e.data.currentAction || "").slice(0, 28);
-        if (e.data.nextMove) _bulkGraspState.nextMove = String(e.data.nextMove).slice(0, 40);
+        if (e.data.nextMove) {
+          var nmA = String(e.data.nextMove).slice(0, 40);
+          /** ★ 2.8.233: 検索未確認の並べ替えをパネルでも拒否 */
+          if (/並べ替え|並び替え|AD→高/.test(nmA) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
+            nmA = "検索を押す";
+            try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
+          }
+          /** ★ 2.8.234: 1ページのみなのに次ページを押す → 外すへ */
+          try {
+            var _pA = typeof _readPagerState === "function" ? _readPagerState() : null;
+            if (/次ページ|次のページ|次頁/.test(nmA) && _pA && _pA.onlyOnePage) {
+              nmA = "物件取得完了→外す";
+              _liveDlStep("list_page_one_only", "パネル次=次ページ拒否・1ページのみ");
+            }
+          } catch (_) {}
+          _bulkGraspState.nextMove = nmA;
+        }
         _applyBulkGrasp(_bulkGraspState);
         return;
       }
@@ -2300,7 +3015,21 @@
           _bulkGraspState.currentAction = String(e.data.now).slice(0, 28);
         }
         if (e.data.done) _bulkGraspState.lastDone = String(e.data.done).slice(0, 28);
-        if (e.data.next) _bulkGraspState.nextMove = String(e.data.next).slice(0, 40);
+        if (e.data.next) {
+          var nmT = String(e.data.next).slice(0, 40);
+          if (/並べ替え|並び替え|AD→高/.test(nmT) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
+            nmT = "検索を押す";
+            try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
+          }
+          try {
+            var _pT = typeof _readPagerState === "function" ? _readPagerState() : null;
+            if (/次ページ|次のページ|次頁/.test(nmT) && _pT && _pT.onlyOnePage) {
+              nmT = "物件取得完了→外す";
+              _liveDlStep("list_page_one_only", "task次=次ページ拒否・1ページのみ");
+            }
+          } catch (_) {}
+          _bulkGraspState.nextMove = nmT;
+        }
         _applyBulkGrasp(_bulkGraspState);
         return;
       }
@@ -2309,7 +3038,21 @@
           _bulkGraspState.taskNow = String(e.data.currentAction).slice(0, 28);
           _bulkGraspState.currentAction = String(e.data.currentAction).slice(0, 28);
         }
-        if (e.data.nextMove) _bulkGraspState.nextMove = String(e.data.nextMove).slice(0, 40);
+        if (e.data.nextMove) {
+          var nmG = String(e.data.nextMove).slice(0, 40);
+          if (/並べ替え|並び替え|AD→高/.test(nmG) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
+            nmG = "検索を押す";
+            try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
+          }
+          try {
+            var _pG = typeof _readPagerState === "function" ? _readPagerState() : null;
+            if (/次ページ|次のページ|次頁/.test(nmG) && _pG && _pG.onlyOnePage) {
+              nmG = "物件取得完了→外す";
+              _liveDlStep("list_page_one_only", "grasped次=次ページ拒否・1ページのみ");
+            }
+          } catch (_) {}
+          _bulkGraspState.nextMove = nmG;
+        }
         if (e.data.phase) _bulkGraspState.loopPhase = String(e.data.phase).slice(0, 20);
         if (e.data.clearMethods) _bulkGraspState.clearMethods = e.data.clearMethods;
         _applyBulkGrasp(_bulkGraspState);
@@ -2702,7 +3445,8 @@
       /** ★ 2.8.226: ループ段=並べ替え／次の動きを page 側で把握（タスク一覧に sort が入る） */
       try { _requestLoopGrasp("sort", "sort_menu_start", false); } catch (_) {}
       console.log("[AXLX bulk-dl][auto] AD 高い順に並べ替えます（並べ替え→AD→高→低・URL直はしない）");
-      _nudge("🔀 検索完了を把握 → AD 高い順に並べ替えます");
+      // ★ 2.8.263: 「検索完了」は結果ページ表示後だけ。押下直後の文言にしない
+      _nudge("🔀 検索結果ページ表示済 → AD 高い順に並べ替えます");
       try {
         chrome.storage.session.set({
           axlx_ad_sort_pending: {
@@ -2837,19 +3581,41 @@
       };
       var finishGate = function (okGate, why) {
         try { _liveDlStep("search_grasp_gate", String(why || (okGate ? "ok" : "ng")).slice(0, 48)); } catch (_) {}
+        /**
+         * ★ 2.8.244: finishGate(true) でも screenOk 必須（一本化）。
+         *   旧の armed_rows／armed_list／list_visible／sync_pending／mem は
+         *   okGate=true で AD へ直進し、240/243 関所と衝突していた。
+         */
+        if (okGate && String(why || "") !== "continue_pages") {
+          if (!_isSearchConfirmGrasp(_searchGraspedMem)) {
+            try { _liveDlStep("legacy_blocked_no_screen", "finishGate:" + String(why || "ok").slice(0, 28)); } catch (_) {}
+            try { _liveDlStep("sort_blocked", "no_screen:" + String(why || "").slice(0, 24)); } catch (_) {}
+            console.warn("[AXLX bulk-dl][auto] 関所未達(" + why + ") → ADしない（screenOk必須）");
+            _nudge("⏳ 検索結果の表示を待ってから並べ替えます");
+            return { ok: false, reason: "search_ungrasped" };
+          }
+          return _beginAdSortLikeHuman();
+        }
         if (!okGate) {
           /**
-           * ★ 2.8.194: 昔は把握ゲートで止めず並べ替えていた。
-           *   一覧証拠があれば止めない（把握印は後から立てる）。止めは本物の入力中だけ。
+           * ★ 2.8.194: 一覧証拠があれば進めようとしていた。
+           * ★ 2.8.243/244: 旧一覧（前客の行）でも AD していた＝screenOk関所と衝突。
+           *   → 行があっても screenOk／確認把握が無ければ止め、結果待ちへ戻す。
            */
           var rn = rowNow();
           var head = false;
           try { head = !!_hasSortHeadVisible(); } catch (_) {}
-          if ((rn > 0 || head) && !_isFillBusy()) {
-            markGrasp("ungrasped_but_list:" + String(why || "").slice(0, 20));
-            try { _liveDlStep("search_grasp_infer", "list_over_gate:" + String(why || "").slice(0, 24)); } catch (_) {}
-            console.warn("[AXLX bulk-dl][auto] 把握印なしだが一覧あり → 昔どおり並べ替えへ (" + why + ")");
+          if ((rn > 0 || head) && !_isFillBusy() && _isSearchConfirmGrasp(_searchGraspedMem)) {
+            markGrasp("list_with_screen:" + String(why || "").slice(0, 20));
+            try { _liveDlStep("search_grasp_infer", "list_and_screen:" + String(why || "").slice(0, 24)); } catch (_) {}
             return _beginAdSortLikeHuman();
+          }
+          if ((rn > 0 || head) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
+            try { _liveDlStep("legacy_blocked_no_screen", "list_without_screenOk"); } catch (_) {}
+            try { _liveDlStep("sort_blocked", "list_without_screen:" + String(why || "").slice(0, 20)); } catch (_) {}
+            console.warn("[AXLX bulk-dl][auto] 一覧ありだが結果確認前 → ADしない (" + why + ")");
+            _nudge("⏳ 検索結果の表示を待ってから並べ替えます");
+            return { ok: false, reason: "search_ungrasped" };
           }
           console.warn("[AXLX bulk-dl][auto] 検索把握なし・一覧も無い → 待つ (" + why + ")");
           _nudge("⏳ 検索結果のあと並べ替えます");
@@ -2859,75 +3625,63 @@
         return _beginAdSortLikeHuman();
       };
       /**
-       * ★ 2.8.194 竹内さん「Claudeで並べ替えていた頃は検索後に行けていた」:
-       *   2.8.177 の「把握なし→ADしない」が本線を壊した。
-       *   afterSearch / fromSortCursor / 行ありarmed → **昔どおり直接並べ替え**（把握は印だけ）。
+       * ★ 2.8.240/243/248: legacy_claude_path（把握無しAD）は廃止済。
+       *   正本は screenOk → sort_screen_ok → hover並べ替え→AD→高→低のみ。
+       *   旧印 sort_legacy:claude_path は出さない（再発したら衝突）。
        */
       if (opt && opt.continuePages) return finishGate(true, "continue_pages");
       if (opt && (opt.afterSearch || opt.fromSortCursor)) {
-        /**
-         * ★ 2.8.207: fromSortCursor は schedule が確認＋≥1秒を済ませた本線。
-         *   確認印が無いのに legacy で進まない（検索前並べ替えの再発防止）。
-         */
         if (!_isSearchConfirmGrasp(_searchGraspedMem)) {
-          if (opt.fromSortCursor) {
-            try { _liveDlStep("sort_blocked", "from_cursor_no_confirm"); } catch (_) {}
-            return { ok: false, reason: "search_ungrasped" };
-          }
-          markGrasp("legacy_after_search", true);
+          try { _liveDlStep("search_grasp_gate", "legacy_blocked_no_screen"); } catch (_) {}
+          try { _liveDlStep("legacy_blocked_no_screen", opt.afterSearch ? "afterSearch" : "fromSortCursor"); } catch (_) {}
+          try { _liveDlStep("sort_blocked", "no_screen_ok"); } catch (_) {}
+          _nudge("⏳ 検索結果の表示を待ってから並べ替えます");
+          return { ok: false, reason: "search_ungrasped" };
         }
-        try { _liveDlStep("search_grasp_gate", "legacy_claude_path"); } catch (_) {}
-        _stampSortFlowAtom("sort_legacy", true, "claude_path");
+        try { _liveDlStep("search_grasp_gate", "screen_ok_path"); } catch (_) {}
+        _stampSortFlowAtom("sort_screen_ok", true, "screen_ok_path");
+        // ★ 2.8.248: 旧 sort_legacy 原子は刻まない（廃止の証拠＝この経路だけ）
         return _beginAdSortLikeHuman();
       }
-      if (_searchGraspedMem && recent(_searchGraspedMem)) return finishGate(true, "mem:" + (_searchGraspedMem.why || ""));
-      // ★ 武装＋行ありならモーダル誤検知で止めない（one_* 本物だけ別途 _sortByAd が止める）
-      if (_autoSendArmed && rowNow() > 0 && !_isFillBusy()) {
-        if (!_searchGraspedMem || !recent(_searchGraspedMem)) markGrasp("armed_rows");
-        return finishGate(true, "armed_rows");
+      /**
+       * ★ 2.8.249 統括Pro協力「一連・連携の古い残り徹底確認」:
+       *   正本は screenOk 把握だけ。武装・行あり・list_visible で markGrasp→finishGate(true)
+       *   していた旧は (1) 関所で落ちるだけなのに把握 why を汚す (2) 良い screenOk を上書きし得る。
+       *   → 確認把握が無い時は finishGate(false) で待つ。武装印は刻まない。
+       */
+      if (_searchGraspedMem && recent(_searchGraspedMem) && _isSearchConfirmGrasp(_searchGraspedMem)) {
+        return finishGate(true, "mem:" + (_searchGraspedMem.why || ""));
       }
-      if (_autoSendArmed && !_isFillBusy() && !_isCondModalLabelsOpen()) return finishGate(true, "armed_list");
+      if (_autoSendArmed && !_isFillBusy()) {
+        try { _liveDlStep("legacy_blocked_no_screen", "armed_wait_screen"); } catch (_) {}
+        try { _armScreenOkWatchdog("armed_wait"); } catch (_) {}
+        return finishGate(false, "armed_wait_screen");
+      }
       try {
         var _gSync0 = null;
-        var _pSync0 = null;
         try {
           var _gs0 = sessionStorage.getItem("axlx_search_grasped_sync");
           if (_gs0) _gSync0 = JSON.parse(_gs0);
         } catch (_) { _gSync0 = null; }
-        try {
-          var _ps0 = sessionStorage.getItem("axlx_pending_auto_send_sync");
-          if (_ps0) _pSync0 = JSON.parse(_ps0);
-        } catch (_) { _pSync0 = null; }
-        if (recent(_gSync0)) {
+        if (recent(_gSync0) && _isSearchConfirmGrasp(_gSync0)) {
           _searchGraspedMem = _gSync0;
           return finishGate(true, "sync_grasp");
         }
-        if (recent(_pSync0) && !_isFillBusy()) {
-          _searchGraspedMem = { at: Date.now(), why: "sync_pending_armed" };
-          try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_searchGraspedMem)); } catch (_) {}
-          return finishGate(true, "sync_pending");
-        }
-        chrome.storage.session.get(["axlx_search_grasped", "axlx_pending_auto_send"], function (r) {
+        chrome.storage.session.get(["axlx_search_grasped"], function (r) {
           var g = r && r.axlx_search_grasped;
-          var p = r && r.axlx_pending_auto_send;
-          if (recent(g)) {
+          if (recent(g) && _isSearchConfirmGrasp(g)) {
             _searchGraspedMem = g;
             finishGate(true, "session_grasp");
-            return;
-          }
-          if (recent(p) && !_isFillBusy()) {
-            _searchGraspedMem = { at: Date.now(), why: "pending_armed" };
-            try { chrome.storage.session.set({ axlx_search_grasped: _searchGraspedMem }); } catch (_) {}
-            finishGate(true, "pending_armed");
             return;
           }
           var rowN = rowNow();
           var head = false;
           try { head = !!_hasSortHeadVisible(); } catch (_) {}
           if ((rowN > 0 || head) && !_isFillBusy() && !(opt && opt.fromAutofill)) {
-            markGrasp("list_visible");
-            try { _tmark("search_grasped_infer", "list_visible"); } catch (_) {}
-            finishGate(true, "list_visible");
+            try { _liveDlStep("legacy_blocked_no_screen", "list_wait_screen"); } catch (_) {}
+            try { _tmark("search_wait_screen", "list_or_head_no_screenOk"); } catch (_) {}
+            try { _armScreenOkWatchdog("list_wait"); } catch (_) {}
+            finishGate(false, "list_wait_screen");
             return;
           }
           finishGate(false, "no_grasp");
@@ -3009,6 +3763,7 @@
      *   → ① **3回まで試す**（メニューが開くまでの時間が足りないだけの事が多い）
      *     ② それでも駄目なら**並びはそのままに続行**する（物件を落とさない方を優先）
      *        ⚠ ただし点検に「並べ替えできなかった」を必ず残す（黙って続けない）。
+     * ★ 2.8.247: 飛行中に再kickしない（並べ替えヘッダのホバーループを止める）
      */
     // ★ 2.8.194: 並べ替え中断は one_* ラベルのみ（文言誤検知で昔できた並べ替えを壊さない）
     var _m0 = _isCondModalLabelsOpen();
@@ -3018,6 +3773,30 @@
       try { _liveDlStep("sort_blocked", "before:" + (_m0 || "fill")); } catch (_) {}
       done(false); return;
     }
+    if (_adSortInFlight) {
+      try { _liveDlStep("sort_skip_inflight", "sortByAd_reentry"); } catch (_) {}
+      done(false); return;
+    }
+    _adSortInFlight = true;
+    try { _touchPipelineProgress("ad_sort"); _armPipelineSilence("ad_sort"); } catch (_) {}
+    var _finishSort = function (ok) {
+      _adSortInFlight = false;
+      try { _restoreGuidesAfterSort(); } catch (_) {}
+      // ★ 2.8.259: 並べ替え中に左へ退避したお客様パネルを戻す
+      try {
+        var _pwBack = document.getElementById("aixlinx-float-wrap");
+        if (_pwBack && _pwBack.getAttribute("data-axlx-sort-panel-left") != null) {
+          var _prevL = _pwBack.getAttribute("data-axlx-sort-panel-left");
+          _pwBack.style.setProperty("left", (parseInt(_prevL, 10) || 8) + "px", "important");
+          _pwBack.style.removeProperty("pointer-events");
+          _pwBack.removeAttribute("data-axlx-sort-panel-left");
+          try { _liveDlStep("sort_panel_restore", "left=" + _prevL); } catch (_) {}
+          try { _placeSendBarVisible(); } catch (_) {}
+        }
+      } catch (_) {}
+      try { if (ok) _touchPipelineProgress("ad_done"); } catch (_) {}
+      try { done(!!ok); } catch (_) {}
+    };
     var myGen = _sortGen;
     var _try = 0;
     var _maxTry = 3;
@@ -3027,18 +3806,18 @@
     var attempt = function () {
       if (!_alive()) {
         console.warn("[AXLX bulk-dl][sort] 世代切れ／条件画面 → 並べ替え中断");
-        done(false); return;
+        _finishSort(false); return;
       }
       _try++; _sortOnce(function (ok) {
-      if (!_alive()) { done(false); return; }
-      if (ok) { done(true); return; }
+      if (!_alive()) { _finishSort(false); return; }
+      if (ok) { _finishSort(true); return; }
       if (_try < _maxTry) {
         console.warn("[AXLX bulk-dl][sort] 失敗（" + _try + "/" + _maxTry + "）→ 少し待ってやり直します");
         setTimeout(function () { attempt(); }, 1500 + Math.floor(Math.random() * 1200));
         return;
       }
       console.warn("[AXLX bulk-dl][sort] " + _maxTry + "回試して並べ替えできません → **この並びのまま続行**（物件を落とさない）");
-      done(false);
+      _finishSort(false);
     }, _alive); };
     /**
      * ★ 2.8.185: 束の「左の高→低｜span.sort_detail」学習位置を暖めてから並べ替え開始。
@@ -3046,7 +3825,7 @@
      *   旧 falseHead が棟戸｜under を全除外 → sort_head_aim_warm が出ず sort_no_head で PDF へ飛んだ。
      */
     try {
-      chrome.storage.local.get(["axlx_learn_points"], function (st) {
+      chrome.storage.local.get(["axlx_learn_points", "axlx_learn_scene_flows"], function (st) {
         try {
           var pts = (st && st.axlx_learn_points) || {};
           var best = null;
@@ -3062,10 +3841,55 @@
             : null;
           if (best) {
             window.__axlxSortHiloAim = best;
+            try { _liveDlStep("sort_aim_warm", String(best.k || "").slice(0, 36) + " x=" + best.x + " y=" + best.y); } catch (_) {}
             try { _tmark("sort_aim_warm", String(best.k || "").slice(0, 36) + " x=" + best.x + " y=" + best.y); } catch (_) {}
+          }
+          if (!bestHead) {
+            // ★ 2.8.259: 束に見出しが無い時は DOM の under／表上端から aim を合成
+            try {
+              var _synEl = typeof _findSortHeadEl === "function" ? _findSortHeadEl() : null;
+              if (!_synEl) {
+                var _uAll = document.querySelectorAll("div.under, .under");
+                for (var _si = 0; _si < _uAll.length; _si++) {
+                  var _su = _uAll[_si];
+                  var _sn = String(_su.textContent || "").replace(/[\s\u3000]+/g, "");
+                  if (_sn && _sn.length <= 48 && /[0-9０-９]+棟[0-9０-９]+戸/.test(_sn)) {
+                    _synEl = _su; break;
+                  }
+                }
+              }
+              if (_synEl && _synEl.getBoundingClientRect) {
+                var _sr = _synEl.getBoundingClientRect();
+                var _iw = window.innerWidth || 1, _ih = window.innerHeight || 1;
+                bestHead = {
+                  x: Math.max(0.02, Math.min(0.98, (_sr.left + _sr.width * 0.5) / _iw)),
+                  y: Math.max(0.02, Math.min(0.98, (_sr.top + _sr.height * 0.5) / _ih)),
+                  k: String((_synEl.textContent || "").replace(/[\s\u3000]+/g, "")).slice(0, 28),
+                  src: "dom_synth",
+                };
+              } else {
+                var _mt = document.querySelector("div.main_table, .main_table, #result_list");
+                if (_mt && _mt.getBoundingClientRect) {
+                  var _mr = _mt.getBoundingClientRect();
+                  var _ih2 = window.innerHeight || 1;
+                  bestHead = {
+                    x: 0.12,
+                    y: Math.max(0.05, Math.min(0.5, (_mr.top - 24) / _ih2)),
+                    k: "table_above",
+                    src: "dom_table_above",
+                  };
+                }
+              }
+            } catch (_) {}
           }
           if (bestHead) {
             window.__axlxSortHeadAim = bestHead;
+            try {
+              _liveDlStep(
+                "sort_head_aim_warm",
+                String(bestHead.src || "") + ":" + String(bestHead.k || "").slice(0, 32) + " x=" + bestHead.x + " y=" + bestHead.y
+              );
+            } catch (_) {}
             try {
               _tmark(
                 "sort_head_aim_warm",
@@ -3073,8 +3897,43 @@
               );
             } catch (_) {}
           } else {
+            try { _liveDlStep("sort_head_aim_miss", "points_have_no_head"); } catch (_) {}
             try { _tmark("sort_head_aim_miss", "points_have_no_head"); } catch (_) {}
           }
+          /**
+           * ★ 2.8.247: 通常録画の scene_flows から並べ替え流れを把握（hoverはclickに残らない）。
+           *   高→低／並べ替え／AD が list|other|search 流れにあれば正本印を残す。
+           */
+          try {
+            var sflows = (st && st.axlx_learn_scene_flows) || window.__axlxLearnSceneFlows || null;
+            var flowHit = "";
+            if (Array.isArray(sflows)) {
+              for (var fi = 0; fi < sflows.length && !flowHit; fi++) {
+                var fl = sflows[fi];
+                var steps = (fl && (fl.steps || fl.ops || fl.labels)) || [];
+                var blob = "";
+                if (Array.isArray(steps)) {
+                  blob = steps.map(function (s) {
+                    if (typeof s === "string") return s;
+                    return String((s && (s.label || s.name || s.k || s.text)) || "");
+                  }).join("|");
+                } else {
+                  blob = JSON.stringify(fl || {}).slice(0, 400);
+                }
+                if (/高.?低|sort_detail|並べ替え|並び替え/.test(blob) && /AD|ＡＤ/.test(blob)) {
+                  flowHit = String((fl && (fl.scene || fl.id || "list")) || "list").slice(0, 20);
+                } else if (/高.?低|sort_detail/.test(blob)) {
+                  flowHit = String((fl && (fl.scene || fl.id || "hilo")) || "hilo").slice(0, 20);
+                }
+              }
+            }
+            if (flowHit) {
+              _tmark("sort_flow_from_rec", "scene=" + flowHit + " ①hover②AD③高→低");
+              window.__axlxSortFlowFromRec = { scene: flowHit, at: Date.now() };
+            } else {
+              _tmark("sort_flow_from_rec", "no_scene_hilo（pointsでaim）");
+            }
+          } catch (_) {}
         } catch (_) {}
         attempt();
       });
@@ -3117,8 +3976,9 @@
      *     ⚠ 物件名・家賃・お客様の情報は入れない（メニューの文字だけ）。
      */
     var _auditSort = function (k, detail) {
-      // ★ 2.8.186: timings＋ライブ監査（途中停止でも dl:sort_* が残る）
+      // ★ 2.8.186/247: ライブ＋session（途中停止でも dl:sort_* が残る）
       try { _liveDlStep(k, detail == null ? null : String(detail).slice(0, 60)); } catch (_) {}
+      try { _tmark(k, detail); } catch (_) {}
     };
     /**
      * その時画面に見えていた「短い文字」を集める（失敗の手がかり・最大6件）
@@ -3232,11 +4092,15 @@
           }
           var r = el.getBoundingClientRect();
           if (r.width < 2 || r.height < 2) continue;
-          // メニュー近傍だけ（一覧の遠い列は捨てる）・下方向は狭く（旧420→220）
+          /**
+           * ★ 2.8.247 竹内さん画像: ADはメニュー下部（更新日時〜管理会社の長い列）。
+           *   旧 below+220 だと AD が届かず sort_no_ad → 並べ替えへ戻りホバーループ。
+           *   → 下方向 560px・横 200（メニュー縦長を把握）。
+           */
           if (mode === "below") {
             if (r.top < ar.bottom - 4) continue;
-            if (r.top > ar.bottom + 220) continue;
-            if (Math.abs(r.left - ar.left) > 160) continue;
+            if (r.top > ar.bottom + 560) continue;
+            if (Math.abs(r.left - ar.left) > 200) continue;
           } else {
             if (r.left < ar.left - 20) continue;
             if (r.left > ar.right + 320) continue;
@@ -3290,6 +4154,42 @@
       var r = el.getBoundingClientRect();
       return { x: r.left + r.width * 0.55, y: r.top + r.height * 0.5 };
     };
+    /**
+     * ★ 2.8.247: 展開済みメニュー内の「AD」だけ（一覧AD列禁止）。
+     *   兄弟に「更新日時」「所在地」等がある親配下を優先＝通常の下展開メニューを把握。
+     */
+    var findAdInOpenMenu = function (sortHead) {
+      if (!sortHead) return null;
+      var ar = sortHead.getBoundingClientRect();
+      var MENU_HINTS = ["更新日時", "所在地", "物件名", "賃料", "敷金", "礼金", "専有面積", "間取り", "築年", "共益費", "管理会社"];
+      var ads = [];
+      var els = Array.prototype.slice.call(document.querySelectorAll("a,button,div,span,li,p,label,td"));
+      for (var j = 0; j < els.length; j++) {
+        var el = els[j];
+        if (!visible(el) || el === sortHead) continue;
+        if (isListChrome(el)) continue;
+        var nt = norm(el.textContent);
+        if (!(nt === "AD" || nt === "ＡＤ" || nt === "AD順")) continue;
+        var r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        if (r.top < ar.bottom - 4) continue;
+        if (r.top > ar.bottom + 560) continue;
+        if (Math.abs(r.left - ar.left) > 220) continue;
+        var score = Math.abs(r.left - ar.left) + Math.max(0, r.top - ar.bottom) * 0.2 + r.width * 0.05;
+        var sibBoost = 0;
+        try {
+          var par = el.parentElement;
+          var blob = par ? norm(par.textContent).slice(0, 400) : "";
+          for (var h = 0; h < MENU_HINTS.length; h++) {
+            if (blob.indexOf(norm(MENU_HINTS[h])) >= 0) sibBoost += 8;
+          }
+        } catch (_) {}
+        ads.push({ el: el, score: score - sibBoost });
+      }
+      if (!ads.length) return null;
+      ads.sort(function (a, b) { return a.score - b.score; });
+      return ads[0].el;
+    };
     /** 押さずに「カーソルをその上へ移す」（展開を待つだけ・click しない・座標は要素の真ん中） */
     var hover = function (el, cb) {
       var doneHover = typeof cb === "function" ? cb : function () {};
@@ -3303,9 +4203,14 @@
         if (!alive()) { doneHover(false); return; }
         try {
           var opts = { bubbles: true, cancelable: true, view: window, clientX: c.x, clientY: c.y };
-          ["mouseover", "mouseenter", "mousemove"].forEach(function (t) {
-            el.dispatchEvent(new MouseEvent(t, opts));
+          ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"].forEach(function (t) {
+            try { el.dispatchEvent(new MouseEvent(t, opts)); } catch (_) {}
           });
+        } catch (_) {}
+        // ★ 2.8.247: リアプロは jQuery hover の事が多い → あれば mouseenter も叩く（clickは絶対しない）
+        try {
+          var $ = window.jQuery || window.$;
+          if ($ && el) $(el).trigger("mouseenter").trigger("mouseover");
         } catch (_) {}
         doneHover(true);
       };
@@ -3329,10 +4234,21 @@
       } catch (_) {}
       fire();
     };
-    /** 押すのは「高→低」だけ（カーソルを移してから・URL直は禁止） */
+    /**
+     * 押すのは「高→低」だけ（カーソルを移してから・URL直は禁止）。
+     * ★ 2.8.247: 並べ替え見出し／メニュー内AD への click は禁止（ホバーループの根）。
+     */
     var press = function (el, cb) {
       if (!el) { cb(false); return; }
       if (!alive()) { cb(false); return; }
+      try {
+        var ntP = norm(el.textContent);
+        if (ntP === "並べ替え" || ntP === "並び替え" || ntP === "AD" || ntP === "ＡＤ" || ntP === "AD順") {
+          _auditSort("sort_forbid_click", "禁止click:" + ntP.slice(0, 12));
+          console.warn("[AXLX bulk-dl][sort] 並べ替え/AD は押さない（ホバーのみ）: " + ntP.slice(0, 20));
+          cb(false); return;
+        }
+      } catch (_) {}
       var go = function () {
         if (!alive()) { cb(false); return; }
         try { if (P && P.tap) P.tap(); } catch (_) {}
@@ -3444,6 +4360,36 @@
       };
       setTimeout(tick, 500);
     };
+    /**
+     * ★ 2.8.247: 並べ替えホバー後、下メニューに AD が出るまで待つ（固定1.4秒で諦めない）。
+     *   メニューが開いている間は見出しを連打ホバーしない（ループに見えるのを止める）。
+     */
+    var waitAdBelowHead = function (sortHead, cb) {
+      var tries = 0;
+      var maxTries = 10;
+      var tick = function () {
+        if (!alive()) { cb(null); return; }
+        var ad = findAdInOpenMenu(sortHead) || findNear(["AD", "ＡＤ", "AD順", "AD（広告費）"], sortHead, "below");
+        if (ad && !isListChrome(ad)) {
+          _auditSort("sort_menu_open", "ad_visible try=" + tries);
+          cb(ad); return;
+        }
+        var menuHint = findNear(["更新日時", "所在地", "物件名", "賃料"], sortHead, "below");
+        tries++;
+        if (tries >= maxTries) { cb(null); return; }
+        if (menuHint) {
+          // メニューは開いている → 見出し再ホバーせず待つだけ（ADが下にある）
+          _auditSort("sort_menu_wait_ad", "open try=" + tries);
+          setTimeout(tick, 280 + Math.floor(Math.random() * 120));
+          return;
+        }
+        // メニューが閉じた時だけ見出しを再ホバー
+        hover(sortHead, function () {
+          setTimeout(tick, 360 + Math.floor(Math.random() * 160));
+        });
+      };
+      setTimeout(tick, 450);
+    };
 
     // ① 「並べ替え」へカーソルを動かして置くだけ（クリックしない → 下に展開）
     // ★ 2.8.194: 中断は one_* だけ（文言誤検知で Claude 時代の並べ替えを壊さない）
@@ -3453,38 +4399,54 @@
     }
     /**
      * ★ 2.8.200 統括Pro/F53: 案内小窓が一覧右側を覆い並べ替え見出しが取れない。
-     *   探す前に拡張の案内パネルを一時的に避け、一覧を画面内へ。
+     *   探す前に案内パネルだけ一時的に避け、一覧を画面内へ。
+     * ★ 2.8.254 竹内さん画像「物件送る等の拡張が消える」:
+     *   旧セレクタ `[id^='aixlinx-']` が **#aixlinx-float-wrap（お客様パネル）** まで display:none し、
+     *   戻す処理が無かった＝右ドック／物件送る枠が消えたままになる。案内系だけ隠す。
      */
     try {
-      var _gHide = document.querySelectorAll("#axlx-guide-panel, #axlx-guide-layer, #axlx-guide, [id^='aixlinx-']");
-      for (var _gi = 0; _gi < _gHide.length; _gi++) {
-        try {
-          var _ge = _gHide[_gi];
-          if (!_ge || !_ge.style) continue;
-          if (!_ge.getAttribute("data-axlx-sort-prev-display")) {
-            _ge.setAttribute("data-axlx-sort-prev-display", String(_ge.style.display || ""));
-          }
-          _ge.style.display = "none";
-        } catch (_) {}
-      }
-      _auditSort("sort_guide_tuck", "n=" + _gHide.length);
+      _tuckGuidesForSort();
     } catch (_) {}
-    try {
-      var _tbl = document.querySelector("div.main_table, .main_table, #result_list, .result_list, table");
-      if (_tbl && _tbl.scrollIntoView) _tbl.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
-    } catch (_) {}
+    /**
+     * ★ 2.8.259 DB#1600 sort_no_head 連発「見えていた:ヘルプ/住居検索…」:
+     *   旧は見出し探索の前に main_table を scrollIntoView(start) しており、
+     *   表の上にある「並べ替え」を画面外／overflow 外へ追い出し、見出し0のまま止まっていた。
+     *   → 表スクロールは禁止。先に見出しを掴み、掴めたら見出しを中央へ。
+     */
     try { if (P && typeof P.forceOneCursor === "function") P.forceOneCursor(); } catch (_) {}
+    /** 右ドックが結果ツールバーを覆う時、探索中だけ左へ退避（復元は _finishSort） */
+    var _panelMovedForSort = false;
+    try {
+      var _pw = document.getElementById("aixlinx-float-wrap");
+      if (_pw && _pw.getAttribute("data-axlx-user-mini") !== "1") {
+        var _pr = _pw.getBoundingClientRect();
+        var _vw = window.innerWidth || 1200;
+        if (_pr.width > 180 && _pr.right > _vw - 100 && _pr.left > _vw * 0.4) {
+          if (!_pw.getAttribute("data-axlx-sort-panel-left")) {
+            _pw.setAttribute("data-axlx-sort-panel-left", String(parseInt(_pw.style.left, 10) || Math.round(_pr.left)));
+          }
+          _pw.style.setProperty("left", "8px", "important");
+          _pw.style.setProperty("pointer-events", "none", "important");
+          _panelMovedForSort = true;
+          _auditSort("sort_panel_clear", "dock→left for head");
+        }
+      }
+    } catch (_) {}
     /**
      * ★ 2.8.197: 完全一致 → 短い loose → _findSortHeadEl（含む・最短・表ルート除外）
      * ★ 2.8.212: 棟戸並べ替え loose → 学習 aim 保険
      * ★ 2.8.218: aim が画面外なら scroll→再探索。無いまま PDF へ飛ばないよう把握印を厚く。
+     * ★ 2.8.259: 見出し再探索（scroll0→panel退避後→aim）を1回の _sortOnce 内で尽くす。
      */
     var _headAim = null;
     try { _headAim = window.__axlxSortHeadAim || null; } catch (_) { _headAim = null; }
-    var sortHead = byText(["並び替え", "並べ替え", "並び順", "ソート", "並び替えに戻る", "並べ替えに戻る"])
-      || byTextLoose(["並べ替え", "並び替え", "並び順", "ソート", "並び替えに戻る", "並べ替えに戻る"], 28)
-      || byTextLoose(["並べ替え", "並び替え"], 48)
-      || (typeof _findSortHeadEl === "function" ? _findSortHeadEl() : null);
+    var _pickHead = function () {
+      return byText(["並び替え", "並べ替え", "並び順", "ソート", "並び替えに戻る", "並べ替えに戻る"])
+        || byTextLoose(["並べ替え", "並び替え", "並び順", "ソート", "並び替えに戻る", "並べ替えに戻る"], 28)
+        || byTextLoose(["並べ替え", "並び替え"], 48)
+        || (typeof _findSortHeadEl === "function" ? _findSortHeadEl() : null);
+    };
+    var sortHead = _pickHead();
     if (!sortHead && _headAim && typeof _findSortHeadByAim === "function") {
       try {
         sortHead = _findSortHeadByAim(_headAim);
@@ -3492,6 +4454,15 @@
           _auditSort("sort_head_aim_hit", String(_headAim.src || "") + ":" + String(_headAim.k || "").slice(0, 28));
         }
       } catch (_) {}
+    }
+    // 見出しが無い時: ページ上端へ戻して再探索（表スクロールの残骸を戻す）
+    if (!sortHead) {
+      try {
+        window.scrollTo(0, 0);
+        _auditSort("sort_head_scroll0", "recover");
+      } catch (_) {}
+      try { sortHead = _pickHead(); } catch (_) {}
+      if (sortHead) _auditSort("sort_head_recover", "after_scroll0");
     }
     // aim があるのに取れない＝画面外の可能性 → 文書座標へ寄せて再探索（とび防止）
     if (!sortHead && _headAim && typeof _headAim.y === "number") {
@@ -3506,9 +4477,31 @@
         _auditSort("sort_head_aim_scroll", "y=" + _headAim.y + "→" + _targetY + " src=" + String(_headAim.src || ""));
       } catch (_) {}
       try {
-        sortHead = (typeof _findSortHeadEl === "function" ? _findSortHeadEl() : null)
+        sortHead = _pickHead()
           || (typeof _findSortHeadByAim === "function" ? _findSortHeadByAim(_headAim) : null);
         if (sortHead) _auditSort("sort_head_aim_hit_after_scroll", String(_headAim.src || "").slice(0, 20));
+      } catch (_) {}
+    }
+    // ★ 2.8.259: 文言0でも aim 座標の elementFromPoint で掴む（最後の保険）
+    if (!sortHead && _headAim && typeof _headAim.x === "number" && typeof _headAim.y === "number") {
+      try {
+        var _axP = _headAim.x * (window.innerWidth || 1);
+        var _ayP = _headAim.y * (window.innerHeight || 1);
+        var _topP = document.elementFromPoint(_axP, _ayP);
+        var _walkP = _topP;
+        for (var _pd = 0; _walkP && _pd < 8; _pd++) {
+          var _pnt = norm(_walkP.textContent);
+          if (_pnt && _pnt.length <= 64 && (/並[べび]?替え?|並び順|棟.*戸/.test(_pnt))) {
+            sortHead = _walkP;
+            _auditSort("sort_head_point", "aim@" + Math.round(_axP) + "," + Math.round(_ayP));
+            break;
+          }
+          _walkP = _walkP.parentElement;
+        }
+        if (!sortHead && _topP) {
+          sortHead = _topP;
+          _auditSort("sort_head_point_raw", "el=" + String(_topP.tagName || "").slice(0, 8));
+        }
       } catch (_) {}
     }
     if (!sortHead) {
@@ -3518,9 +4511,14 @@
         _diag += " aim=" + (_headAim ? ("Y:" + String(_headAim.src || "?") + "@" + _headAim.x + "," + _headAim.y) : "N");
         var _uN = 0;
         try { _uN = document.querySelectorAll("div.under, .under").length; } catch (_) {}
-        _diag += " under=" + _uN;
+        _diag += " under=" + _uN + (_panelMovedForSort ? " panelCleared" : "");
       } catch (_) {}
       _auditSort("sort_no_head", _diag.slice(0, 80));
+      try {
+        if (typeof window.__axlxForceAuditStepsFlush === "function") {
+          window.__axlxForceAuditStepsFlush("sort_no_head");
+        }
+      } catch (_) {}
       done(false); return;
     }
     try {
@@ -3537,15 +4535,16 @@
         _auditSort("sort_head_scroll", "center");
       }
     } catch (_) {}
+    /**
+     * ★ 2.8.247 竹内さん「並べ替えは押さずカーソル→下展開→ADカーソル→右に高→低を押す／通常録画からも流れ学習」:
+     *   正本: ①hover並べ替え ②hover AD ③click 高→低のみ。clickループ禁止。
+     */
+    _auditSort("sort_flow_grasp", "①hover並べ替え→②hoverAD→③click高→低");
     console.log("[AXLX bulk-dl][sort] ① 並べ替えへカーソルを動かします（クリックしない・URL直しない）");
     hover(sortHead, function () {
       if (_isCondModalLabelsOpen() || _isFillBusy()) { _auditSort("sort_abort", "during_hover_head"); done(false); return; }
-      // メニュー展開を待つ（人間のように1つずつ）
-      step(1400, function () {
+      waitAdBelowHead(sortHead, function (adItem) {
         if (_isCondModalLabelsOpen() || _isFillBusy()) { _auditSort("sort_abort", "during_menu"); done(false); return; }
-        // ② 並べ替えの**下のメニュー内**の「AD」だけ（一覧の AD 列・ページ全体の AD は禁止）
-        var adItem = findNear(["AD", "ＡＤ", "AD順", "AD（広告費）"], sortHead, "below");
-        // ⚠ ページ全体の byTextLoose("AD") は一覧列を掴むので使わない
         if (!adItem) {
           console.warn("[AXLX bulk-dl][sort] AD の項目が見つかりません（メニューが開いていない・一覧列は使わない）");
           _auditSort("sort_no_ad", "menu_only 見えていた: " + _visibleWords());
@@ -3557,10 +4556,10 @@
           done(false); return;
         }
         _auditSort("sort_ad_hover", "menu:" + norm(adItem.textContent).slice(0, 18));
+        _auditSort("sort_ad_found", "dy=" + Math.round((adItem.getBoundingClientRect().top - sortHead.getBoundingClientRect().bottom)));
         console.log("[AXLX bulk-dl][sort] ② 並べ替えから AD へカーソルを動かします（クリックしない・一覧列禁止）");
         hover(adItem, function () {
           if (_isCondModalLabelsOpen() || _isFillBusy()) { _auditSort("sort_abort", "during_hover_ad"); done(false); return; }
-          // ★ 2.8.185: 右の「高→低」が出るまでポーリング（画像赤丸の位置・1回で諦めない）
           waitHiToLo(adItem, function (hiToLo) {
             if (_isCondModalLabelsOpen() || _isFillBusy()) { _auditSort("sort_abort", "during_hilo"); done(false); return; }
             if (!hiToLo) {
@@ -3571,7 +4570,8 @@
             var _hiloHow = (hiToLo.matches && hiToLo.matches("span.sort_detail, .sort_detail")) ? "rec:sort_detail" : "near";
             _auditSort("sort_hilo", _hiloHow + ":" + norm(hiToLo.textContent || hiToLo.getAttribute("href") || "").slice(0, 22));
             console.log("[AXLX bulk-dl][sort] ③ 高→低へカーソルを動かして押します（赤丸=AD右の高→低・URL直しない）");
-            press(hiToLo, function () {
+            press(hiToLo, function (okPress) {
+              if (!okPress) { done(false); return; }
               step(1200, function () { done(true); });
             });
           });
@@ -3596,8 +4596,47 @@
       try { _rescanRows(); } catch (_) {}
       cand = pick();
     }
+    /**
+     * ★ 2.8.248 竹内さん画像「送付済みで次もないのに止まる／改善仕組みが効いていない」:
+     *   図面PDFが全部「送付済み」表記になると print URL が無く cand=0。
+     *   旧は no-rows で return して客完了へ進まなかった＝ボトルネック。
+     *   → 画面の送付済みを数えて all_sent 扱いで _autoFinish（次頁無ければ客完了→外す）。
+     */
+    var _countSentOnScreen = function () {
+      var n = 0;
+      try {
+        var els = document.querySelectorAll("a,span,td,div,button");
+        for (var i = 0; i < els.length; i++) {
+          var t = String(els[i].textContent || "").replace(/\s+/g, "");
+          if (t === "送付済み" || t === "送付済") n++;
+        }
+      } catch (_) { n = 0; }
+      return n;
+    };
     if (!cand.length) {
-      // 行が0件の時は黙って止めない（理由を出す）
+      var sentVis0 = _countSentOnScreen();
+      var lookResult = false;
+      try { lookResult = !!_looksLikeSearchResult(); } catch (_) { lookResult = false; }
+      if (sentVis0 > 0 || lookResult) {
+        _nudge("👀 送る部屋がありません（画面送付済み " + sentVis0 + "・押せるPDF0）→ 次へ／客完了");
+        _tmark("auto_pdf_start", "all_sent_no_press sentVis=" + sentVis0);
+        try { _liveDlStep("all_sent_no_press", "sentVis=" + sentVis0 + "→客完了へ"); } catch (_) {}
+        try {
+          _graspAcquire("all_sent", true, "押せる行0・画面送付済" + sentVis0 + "＝失敗ではない→次頁/客完了");
+        } catch (_) {}
+        _autoPdfRun = {
+          total: 0,
+          done: 0,
+          index: 0,
+          skipped: Math.max(sentVis0, 1),
+          order: [],
+          customerId: _pickCustomerIdForAuto() || null,
+          startedAt: Date.now(),
+        };
+        try { _touchPipelineProgress("all_sent_no_press"); } catch (_) {}
+        _autoFinish("送付済みのみ・押せる行無し");
+        return { ok: true, all_sent: true, reason: "all_sent_no_press" };
+      }
       _nudge("⚠ 押せる行が見つかりません（条件を確かめてください）");
       _tmark("auto_pdf_start", "no-rows");
       return { ok: false, reason: "no-rows" };
@@ -3620,19 +4659,23 @@
       } catch (_) {}
       if (!list.length) {
         var skippedAll = (filtered.sent || 0) + (filtered.cheapest || 0);
-        _nudge(skippedAll
-          ? ("👀 このページは送る部屋がありません（送付済み " + (filtered.sent || 0) + "／同じ平米の高い部屋 " + (filtered.cheapest || 0) + "）→ 次へ")
+        var sentVis = 0;
+        try { sentVis = _countSentOnScreen(); } catch (_) { sentVis = 0; }
+        var skipN = Math.max(filtered.sent || 0, sentVis, skippedAll ? skippedAll : 0, 1);
+        _nudge(skippedAll || sentVis
+          ? ("👀 このページは送る部屋がありません（送付済み " + (filtered.sent || sentVis) + "／同じ平米の高い部屋 " + (filtered.cheapest || 0) + "）→ 次へ")
           : "⚠ 押せる行が見つかりません");
-        _tmark("auto_pdf_start", "all-filtered sent=" + (filtered.sent || 0) + " cheap=" + (filtered.cheapest || 0));
+        _tmark("auto_pdf_start", "all-filtered sent=" + (filtered.sent || 0) + " cheap=" + (filtered.cheapest || 0) + " vis=" + sentVis);
         try {
           _graspAcquire(
             "all_sent",
             true,
-            "送付済み" + (filtered.sent || 0) + "で送る部屋0＝失敗ではない→次頁/客完了へ"
+            "送付済み" + skipN + "で送る部屋0＝失敗ではない→次頁/客完了へ"
           );
         } catch (_) {}
-        // 全部送付済みなら次ページへ（既存の決まり）
-        _autoPdfRun = { total: 0, done: 0, index: 0, skipped: filtered.sent || 0, order: [] };
+        try { _liveDlStep("all_sent_page", "filtered0 skip=" + skipN); } catch (_) {}
+        // 全部送付済みなら次ページへ／無ければ客完了（_autoFinish 一本化）
+        _autoPdfRun = { total: 0, done: 0, index: 0, skipped: skipN, order: [], customerId: cid || null, startedAt: Date.now() };
         _autoFinish("このページは送る部屋が無い");
         return;
       }
@@ -3650,6 +4693,7 @@
         startedAt: _pressRunSince || Date.now(),
       };
       if (cid && !_autoRunCid) _autoRunCid = cid; // 終わりの合図は押し始めたお客さんの番号で送る（途中の選び直しに引きずられない）
+      try { _touchPipelineProgress("press_start"); _armPipelineSilence("press"); } catch (_) {}
       _tmark("auto_pdf_start", String(list.length) + "件（元" + cand.length + "・送付済除外" + (filtered.sent || 0) + "・最安絞り" + (filtered.cheapest || 0) + "）");
       try { _graspAcquire("press_start", true, "未送付" + list.length + "件を押す（送付済は把握済で除外）"); } catch (_) {}
       console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : "")
@@ -4019,6 +5063,7 @@
     } catch (_) {}
     // 人が押すのと同じ: 行までカーソルが動いて「印刷用PDF」を押す → 押した合図（axlx-pdf-captured）で1件送る
     _pressPrintPdf(item, function (pressed) {
+      try { if (pressed) _touchPipelineProgress("pdf_press"); } catch (_) {}
       if (!pressed) {
         _tallySkip("押せず");
         console.warn("[AXLX bulk-dl][auto] 印刷用PDFを押せませんでした（次へ）:", String(url).slice(0, 70));
@@ -4247,15 +5292,41 @@
         });
         return;
       }
-      // 上限未満なのに次ボタン無し → それでも手順表×画面で「次無し」を言葉にしてから終わる
+      // ★ 2.8.248: 次無し／1ページのみ → _sendBatchDone 一本化（旧は印だけ残して客完了が薄かった）
       _guideLikeListFlowGrasp("before_next", function (g) {
-        try { _liveDlStep("next_flow_grasp", (g && g.summary ? g.summary : "before_next_no_btn").slice(0, 60)); } catch (_) {}
+        try {
+          _liveDlStep(
+            "next_flow_grasp",
+            (g && g.summary ? g.summary : "before_next_no_btn").slice(0, 60),
+          );
+        } catch (_) {}
+        var onlyOne = false;
+        try {
+          var _pstEnd = typeof _readPagerState === "function" ? _readPagerState() : null;
+          onlyOne = !!( _pstEnd && _pstEnd.onlyOnePage);
+          if (onlyOne) {
+            _liveDlStep("list_page_one_only", "物件見終わった・1ページのみ→外す");
+          } else {
+            _liveDlStep("list_no_next_advance", "次ページ無し→客完了へ");
+          }
+        } catch (_) {}
+        if (allSkipped) {
+          try { _liveDlStep("all_sent_done", "次無し・送付済のみ→客完了→外す"); } catch (_) {}
+        }
+        _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件・P" + page + "/" + maxP + "・次無し→外す）");
+        _sendBatchDone(
+          _autoPdfTotalSent,
+          why + (onlyOne ? "・1ページのみ" : "・次ページ無し") + (allSkipped ? "・送付済のみ" : ""),
+          skipped,
+        );
       });
+      return;
     }
     /**
      * ★ 2026-11-20 (2.8.146) 竹内さん「次へのところも２つ目で終わって3つ目にいかなかった」:
      *   実測 #1556: 午後の便の命令は max_pages=2（PM_PLAN）。上限で止まったのに記録も画面も「P2 全部終わりました」で、
      *   上限で止めたのか次のページが無かったのか分からなかった。→ 止めた理由（上限・次のページの有無・上限の出どころ）を残して見せる。
+     * ★ 2.8.248: 上限到達なども _sendBatchDone 一本化（二重送信・series印抜けを廃止）
      */
     var _nextLeft = false;
     try { _nextLeft = !!(typeof _findNextPageEl === "function" && _findNextPageEl()); } catch (_) { _nextLeft = false; }
@@ -4271,20 +5342,7 @@
       _tmark("auto_page_stop", "P" + page + "/" + maxP + " 上限前に終わり" + (_nextLeft ? "（次のページあり・送った" + n + "件）" : "（次のページ無し）"));
     }
     _nudge("🤖 自動 " + why + "（累計 " + _autoPdfTotalSent + "件・P" + page + "/" + maxP + "）");
-    try {
-      chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
-        var cid = _doneCidFrom(r);
-        chrome.runtime.sendMessage({
-          type: "axlx-batch-customer-done",
-          customerId: cid,
-          propertyCount: _autoPdfTotalSent,
-          // 自動の1件ずつ送る流れでも、検索後の段（一覧を見る・次ページ・読み直し後の続き）を点検に残す
-          audit: _auditResult({ currentPage: page, sentCount: _autoPdfTotalSent, sentSkipped: skipped }, { auto_pdf: true }),
-          auto_pdf: { why: why, sent: _autoPdfTotalSent, skipped: skipped, pages: page, max_pages: maxP },
-        }, function () { void chrome.runtime.lastError; });
-        _autoRunCid = null; // 終わりの合図を送ったら番号の控えは捨てる（次のお客さんに持ち越さない）
-      });
-    } catch (_) {}
+    _sendBatchDone(_autoPdfTotalSent, why + "・P" + page + "/" + maxP, skipped);
   }
   /**
    * ★ 2026-11-14／2026-11-16: 次のページへ進んで押し直す（上限5ページ）。
@@ -4410,29 +5468,172 @@
     };
     setTimeout(function () { _waitRows(4); }, 2600 + Math.floor(Math.random() * 1400));
   }
+  /**
+   * ★ 2.8.235: 物件取得完了→次客へ の一連把握を必ず残す（loop_advance 欠を止める）
+   *   DB: series_done はあるが loop_advance／who／next_move が薄い。
+   */
+  function _stampSeriesToNextCustomer(why) {
+    try {
+      var bg = _bulkGraspState || {};
+      var cur = String(bg.currentName || "").slice(0, 16) || "-";
+      var nxt = String(bg.nextName || "").slice(0, 16);
+      var pos = "";
+      try {
+        if (bg.index != null && bg.total) pos = "（" + bg.index + "/" + bg.total + "）";
+      } catch (_) {}
+      var onePage = false;
+      try {
+        var pst = typeof _readPagerState === "function" ? _readPagerState() : null;
+        onePage = !!(pst && pst.onlyOnePage);
+      } catch (_) {}
+      if (onePage) {
+        try { _liveDlStep("list_page_one_only", "取得完了・1ページのみ→次客"); } catch (_) {}
+      }
+      try {
+        _liveDlStep(
+          "loop_advance",
+          (nxt
+            ? ("客完了→次へ" + pos + " いま=" + cur + " 次=" + nxt)
+            : ("客完了・一括末" + pos + " いま=" + cur)
+          ).slice(0, 100),
+        );
+      } catch (_) {}
+      try {
+        _liveDlStep("loop_who_grasp", "いま客=" + cur + " 次客=" + (nxt || "（末）"));
+      } catch (_) {}
+      try {
+        _liveDlStep("next_customer_grasp", "いま=" + cur + " 次客=" + (nxt || "（末）") + " " + String(why || "").slice(0, 20));
+      } catch (_) {}
+      try {
+        _liveDlStep("next_move_grasp", "次の動き=前客の選択を1つずつ外す " + String(why || "").slice(0, 20));
+      } catch (_) {}
+      try {
+        _liveDlStep("handoff_grasp", "取得完了→外す " + String(why || "").slice(0, 28));
+      } catch (_) {}
+      try {
+        if (_bulkGraspState) {
+          _bulkGraspState.nextMove = "前客の選択を1つずつ外す";
+          _bulkGraspState.lastDone = onePage ? "1ページのみ物件取得完了" : "物件取得完了";
+          _applyBulkGrasp(_bulkGraspState);
+        }
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-bulk-next",
+          currentName: String(bg.currentName || ""),
+          nextName: String(bg.nextName || ""),
+          nextMove: "前客の選択を1つずつ外す",
+        }, "*");
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-series-handoff",
+          why: String(why || "batch_done").slice(0, 40),
+          currentName: String(bg.currentName || ""),
+          nextName: String(bg.nextName || ""),
+          nextMove: "前客の選択を1つずつ外す",
+          onlyOnePage: onePage,
+          sent: Number(bg.sentCount) || null,
+        }, "*");
+      } catch (_) {}
+      try {
+        window.postMessage({
+          from: "axlx-task-grasp",
+          now: null,
+          done: onePage ? "1ページのみ・物件取得完了" : "物件取得完了",
+          next: "前客の選択を1つずつ外す",
+          kind: "handoff",
+        }, "*");
+      } catch (_) {}
+    } catch (_) {}
+  }
+  try { window.__axlxStampSeriesToNext = _stampSeriesToNextCustomer; } catch (_) {}
+
+  /**
+   * ★ 2.8.265 竹内さん「なぜ次のお客さんのところに移らないのか／止まったら次に移る部分の把握できていないのか／
+   *   画面照会して次に移る行動拡張ツールが指示出す形になっていないのか」:
+   *   旧は送付完了の合図を送ったら画面の見張りを外し、その後に裏（一括のループ）が次のお客さんへ進んだかを誰も見ていなかった。
+   *   → 合図の後も15秒ごとに裏へ「いまどの段か」を聞き、枠に出す。
+   *     裏のループが消えている／段が上限を過ぎて動かない／裏がまだ送付完了を待っている（合図が届いていない）時は、
+   *     裏へ「次へ進める」を指示する（axlx-bulk-kick）。次のお客さんが始まる・一括が終わる・30分で外す。
+   */
+  var _handoffWatch = null;
+  var HANDOFF_POLL_MS = 15000;
+  var HANDOFF_MAX_MS = 30 * 60000;
+  var HANDOFF_RESEND_AFTER_MS = 45000;
+  function _stopHandoffWatch(w, why) {
+    try { if (w && w.timer) clearInterval(w.timer); } catch (_) {}
+    if (_handoffWatch === w) _handoffWatch = null;
+    try { _liveDlStep("handoff_watch_end", String(why || "").slice(0, 40) + " 回=" + (w ? w.polls : 0), w && w.cid); } catch (_) {}
+    try { console.log("[AXLX bulk-dl] handoff_watch 終了: " + why); } catch (_) {}
+  }
+  function _handoffKick(w, reason) {
+    if (w.kicks >= 3) return;
+    w.kicks++;
+    try { _liveDlStep("handoff_kick", String(reason).slice(0, 60), w.cid); } catch (_) {}
+    try { console.warn("[AXLX bulk-dl] handoff_kick（裏へ次へ進めるよう指示）: " + reason); } catch (_) {}
+    try { _nudge("⏭ 次のお客さんへ進めます（" + String(reason).slice(0, 24) + "）"); } catch (_) {}
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-bulk-kick", cid: w.cid, why: "page_watch:" + reason, propertyCount: w.n }, function (res) {
+        void chrome.runtime.lastError;
+        try { _tmark("handoff_kick_res", res ? JSON.stringify(res).slice(0, 80) : "no_response", w.cid); } catch (_) {}
+      });
+    } catch (_) {}
+  }
+  function _handoffWatchTick(w) {
+    if (_handoffWatch !== w) { try { clearInterval(w.timer); } catch (_) {} return; }
+    w.polls++;
+    if (Date.now() - w.at > HANDOFF_MAX_MS) { _stopHandoffWatch(w, "timeout_30m"); return; }
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-bulk-status" }, function (r) {
+        void chrome.runtime.lastError;
+        if (_handoffWatch !== w) return;
+        if (!r || !r.ok) {
+          // 裏が寝ていた（この問い合わせで起きる）→ 次の回で見る
+          try { _tmark("handoff_watch_noreply", "poll=" + w.polls, w.cid); } catch (_) {}
+          return;
+        }
+        var q = r.queue, p = r.phase;
+        if (!q) { _stopHandoffWatch(w, "no_bulk"); return; }
+        if (q.done) { _stopHandoffWatch(w, "bulk_done"); return; }
+        if (w.cid && q.cid && String(q.cid) !== w.cid && q.stage === "running") { _stopHandoffWatch(w, "advanced"); return; }
+        var key = (r.alive ? "A" : "D") + ":" + (p ? p.phase : "-") + ":" + (q.cid || "") + ":" + (q.stage || "");
+        if (key !== w.lastKey) {
+          w.lastKey = key;
+          try { _liveDlStep("handoff_watch", ((r.alive ? "" : "裏ループ無し ") + (p ? p.ja : (q.stage || "?")) + " " + ((q.index != null ? q.index + 1 : "?") + "/" + (q.total || "?"))).slice(0, 60), w.cid); } catch (_) {}
+        }
+        if (p && r.alive) {
+          var left = p.until ? Math.max(0, Math.round((p.until - (r.now || Date.now())) / 1000)) : null;
+          try { _nudge("⏭ 次のお客さんへ: " + p.ja + (left != null ? "（上限まであと" + left + "秒）" : "")); } catch (_) {}
+        }
+        if (!r.alive) { _handoffKick(w, "裏の一括ループが消えていた"); return; }
+        if (r.stuck) { _handoffKick(w, "段が上限を過ぎて動かない:" + (p ? p.phase : "?")); return; }
+        if (!w.resent && p && p.phase === "wait_batch_done" && w.cid && p.cid && String(p.cid) === w.cid && Date.now() - w.at > HANDOFF_RESEND_AFTER_MS) {
+          w.resent = true;
+          _handoffKick(w, "裏が送付完了をまだ待っている（合図が届いていない）");
+        }
+      });
+    } catch (_) {}
+  }
+  function _armHandoffWatch(cid, n, why) {
+    try {
+      if (_handoffWatch) _stopHandoffWatch(_handoffWatch, "re_arm");
+      var w = { cid: cid ? String(cid) : null, n: n == null ? null : Number(n) || 0, at: Date.now(), polls: 0, kicks: 0, resent: false, lastKey: "", timer: null };
+      _handoffWatch = w;
+      w.timer = setInterval(function () { _handoffWatchTick(w); }, HANDOFF_POLL_MS);
+      try { _liveDlStep("handoff_watch_arm", (String(why || "") + " cid=" + String(w.cid || "?").slice(0, 8)).slice(0, 60), w.cid); } catch (_) {}
+      try { console.log("[AXLX bulk-dl] handoff_watch 開始（送付完了の後、裏が次のお客さんへ進むかを15秒ごとに確かめる） cid=" + w.cid); } catch (_) {}
+    } catch (_) {}
+  }
+
   /** 完了の合図だけ送る（`_autoFinish` と共通） */
   function _sendBatchDone(n, why, skipped) {
+    try { _disarmPipelineSilence("batch_done"); } catch (_) {}
     try {
       // 次のお客さんへの受け渡し: 一覧〜次ページの照合結果を残す
       _guideLikeListFlowGrasp("handoff", function (g) {
         try { _tmark("handoff_grasp", (g && g.summary ? g.summary : "handoff").slice(0, 60)); } catch (_) {}
-        /**
-         * ★ 2.8.221: 物件取得完了→次客へ。いま誰／次誰／次の動き=外す を MAIN へ渡す
-         */
-        try {
-          var _bg = _bulkGraspState || {};
-          window.postMessage({
-            from: "axlx-bulk-next",
-            currentName: String(_bg.currentName || ""),
-            nextName: String(_bg.nextName || ""),
-            nextMove: "前客の選択を1つずつ外す",
-          }, "*");
-          _tmark(
-            "loop_handoff_grasp",
-            "取得完了→外す いま=" + String(_bg.currentName || "-").slice(0, 12)
-              + " 次=" + String(_bg.nextName || "末").slice(0, 12),
-          );
-        } catch (_) {}
+        try { _stampSeriesToNextCustomer(why || "send_batch_done"); } catch (_) {}
       });
     } catch (_) {}
     try {
@@ -4446,6 +5647,7 @@
           auto_pdf: { why: why, sent: Number(n) || 0, skipped: Number(skipped) || 0, next_page: true },
         }, function () { void chrome.runtime.lastError; });
         _autoRunCid = null;
+        _armHandoffWatch(cid, Number(n) || 0, why || "batch_done");
       });
     } catch (_) {}
   }
@@ -4466,6 +5668,7 @@
         auto_pdf: { why: why, sent: Number(sentSoFar) || 0, skipped_run: true },
       }, function () { void chrome.runtime.lastError; });
       _tmark("auto_skip_done", why);
+      _armHandoffWatch(cid, sentSoFar, "skip_done:" + why);
     } catch (_) {}
   }
   function stopAutoPdfs() {
@@ -4845,14 +6048,152 @@
   //   リアプロの一括のボタンとは重ならない作りだが、画面の大きさ次第で重なる時は、重なったサイトの固定のボタンの上へ逃がす（bar-dock.js）。
   //   スタッフが動かした位置は変えない（動かす前の既定の位置か、逃がした位置の時だけ見直す）
   var _rpDockTimer = null;
+  /**
+   * ★ 2.8.262: お客様パネルが中央に居ると「右側のボックスが消えた」ように見える。
+   *   人がミニにした時以外は右ドックへ戻す（underbar の初回 heal だけでは足りない）。
+   */
+  function _snapCustomerPanelRight() {
+    try {
+      var w = document.getElementById("aixlinx-float-wrap");
+      if (!w) return false;
+      if (w.getAttribute("data-axlx-user-mini") === "1") return false;
+      if (w.getAttribute("data-axlx-sort-panel-left") != null) return false; // 並べ替え退避中は触らない
+      var mini = document.getElementById("aixlinx-mini-btn");
+      if (mini && mini.style && mini.style.display === "flex") return false;
+      var ww = window.innerWidth || 1200;
+      var pw = Math.max(420, parseInt(w.style.width, 10) || Math.round(w.getBoundingClientRect().width) || 660);
+      var dockX = Math.max(10, ww - pw - 20);
+      var curX = parseInt(w.style.left, 10);
+      if (!Number.isFinite(curX)) {
+        try { curX = Math.round(w.getBoundingClientRect().left); } catch (_) { curX = dockX; }
+      }
+      if (Math.abs(curX - dockX) > 80 || curX < ww * 0.4) {
+        w.style.setProperty("left", dockX + "px", "important");
+        w.style.setProperty("display", "flex", "important");
+        try { _liveDlStep("panel_snap_right", "left=" + dockX); } catch (_) {}
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+  /**
+   * ★ 2.8.258 竹内さん画像「物件送るボックスがまだ出ない」(v2.8.257):
+   *   お客様パネル #aixlinx-float-wrap は z-index が枠より上で右ドックに居ると、
+   *   右端の axlx-bar が完全に下に隠れ「消えた」ように見える。
+   * ★ 2.8.260 竹内さん画像(v2.8.259): パネルが広いと「左隣」でも重なり、z-index も wrap=MAX で
+   *   常に下。→ wrap を下げ・bar を上げ、左余白不足時は画面下へ退避。
+   */
+  function _placeSendBarVisible() {
+    var bar = document.getElementById("axlx-bar");
+    if (!bar) return;
+    var hidden = false;
+    try {
+      var cs = window.getComputedStyle ? window.getComputedStyle(bar) : null;
+      hidden = bar.style.display === "none" || (cs && cs.display === "none");
+    } catch (_) { hidden = bar.style.display === "none"; }
+    if (hidden) return;
+    // 枠がパネルに完全に隠れている／画面外なら、人ドラッグ印を捨てて位置を直す
+    try {
+      if (bar.getAttribute("data-axlx-user-drag") === "1") {
+        var brU = bar.getBoundingClientRect();
+        var wrapU = document.getElementById("aixlinx-float-wrap");
+        var wrU = wrapU ? wrapU.getBoundingClientRect() : null;
+        var offScreen = !brU || brU.width < 20 || brU.right < 8 || brU.left > (window.innerWidth || 0) - 8;
+        var buried = wrU && wrU.width > 180
+          && brU.left >= wrU.left - 4 && brU.right <= wrU.right + 4
+          && brU.top >= wrU.top - 4 && brU.bottom <= wrU.bottom + 4;
+        if (offScreen || buried) {
+          bar.removeAttribute("data-axlx-user-drag");
+          try { _liveDlStep("send_bar_undrag", buried ? "buried" : "offscreen"); } catch (_) {}
+        } else {
+          return;
+        }
+      }
+    } catch (_) {
+      if (bar.getAttribute("data-axlx-user-drag") === "1") return;
+    }
+    try {
+      bar.style.setProperty("z-index", "2147483647", "important");
+    } catch (_) {}
+    var wrap = null;
+    try { wrap = document.getElementById("aixlinx-float-wrap"); } catch (_) { wrap = null; }
+    // 既存 wrap が MAX z-index のままなら下げる（ぶつかり解消）
+    try {
+      if (wrap) {
+        var wz = window.getComputedStyle ? window.getComputedStyle(wrap).zIndex : "";
+        if (String(wz) === "2147483647" || String(wrap.style.zIndex) === "2147483647") {
+          wrap.style.setProperty("z-index", "2147483645", "important");
+          try { _liveDlStep("send_bar_zfix", "wrap→645"); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    var vw = window.innerWidth || 1200;
+    var vh = window.innerHeight || 800;
+    var barW = 280;
+    var barH = 200;
+    try {
+      var br0 = bar.getBoundingClientRect();
+      if (br0 && br0.width > 40) barW = Math.ceil(br0.width);
+      if (br0 && br0.height > 40) barH = Math.ceil(br0.height);
+    } catch (_) {}
+    if (wrap) {
+      var wr = null;
+      try { wr = wrap.getBoundingClientRect(); } catch (_) { wr = null; }
+      if (wr && wr.width > 180 && wr.height > 180) {
+        var coversRight = wr.right >= vw - 36 && wr.left < vw - 40;
+        var overlapsDefault = wr.right > vw - barW - 28 && wr.left < vw - 8;
+        if (coversRight || overlapsDefault) {
+          var roomLeft = wr.left >= barW + 24;
+          try {
+            bar.style.setProperty("transform", "none", "important");
+            bar.style.setProperty("right", "auto", "important");
+            if (roomLeft) {
+              var left = Math.max(8, Math.round(wr.left - barW - 12));
+              var top = Math.max(56, Math.min(Math.round(wr.top + 20), vh - barH - 24));
+              bar.style.setProperty("bottom", "auto", "important");
+              bar.style.setProperty("left", left + "px", "important");
+              bar.style.setProperty("top", top + "px", "important");
+              bar.setAttribute("data-axlx-docked", "beside-wrap");
+              try { _liveDlStep("send_bar_dock", "beside left=" + left); } catch (_) {}
+            } else {
+              // 左余白不足（パネルが広い）→ 画面下へ（wrap の BOTTOM_GAP 付近）
+              bar.style.setProperty("top", "auto", "important");
+              bar.style.setProperty("left", "12px", "important");
+              bar.style.setProperty("bottom", "16px", "important");
+              bar.setAttribute("data-axlx-docked", "bottom-left");
+              try { _liveDlStep("send_bar_dock", "bottom-left room0"); } catch (_) {}
+            }
+          } catch (_) {}
+          return;
+        }
+      }
+    }
+    // 右端の既定位置へ（beside / bottom から戻す／初回）
+    try {
+      var mode = bar.getAttribute("data-axlx-docked") || "";
+      if (mode === "beside-wrap" || mode === "bottom-left" || mode === "" || mode === "1") {
+        bar.style.setProperty("left", "auto", "important");
+        bar.style.setProperty("right", "12px", "important");
+        bar.style.setProperty("top", "50%", "important");
+        bar.style.setProperty("bottom", "auto", "important");
+        bar.style.setProperty("transform", "translateY(-50%)", "important");
+        bar.setAttribute("data-axlx-docked", "1");
+      }
+    } catch (_) {}
+  }
   function dockRpBar() {
     var D = (typeof self !== "undefined" ? self : window).AxlxBarDock;
     var bar = document.getElementById("axlx-bar");
-    if (!D || !bar || bar.style.display === "none") return;
-    var docked = bar.getAttribute("data-axlx-docked") === "1";
-    if (!docked && bar.style.top && bar.style.top !== "50%") return; // スタッフが動かした
+    if (!bar || bar.style.display === "none") return;
+    if (bar.getAttribute("data-axlx-user-drag") === "1") return; // スタッフが動かした
+    try { _placeSendBarVisible(); } catch (_) {}
+    var dockMode = bar.getAttribute("data-axlx-docked") || "";
+    if (dockMode === "beside-wrap" || dockMode === "bottom-left") return;
+    if (!D) return;
+    var docked = dockMode === "1";
+    if (!docked && bar.style.top && bar.style.top !== "50%") return;
     bar.style.top = "50%"; bar.style.transform = "translateY(-50%)";
-    if (D.applyTopAvoid(bar, 10)) bar.setAttribute("data-axlx-docked", "1"); else bar.removeAttribute("data-axlx-docked");
+    if (D.applyTopAvoid(bar, 10)) bar.setAttribute("data-axlx-docked", "1"); else bar.setAttribute("data-axlx-docked", "1");
   }
   function dockRpBarSoon() {
     if (_rpDockTimer) return;
@@ -4881,9 +6222,50 @@
   function updateBar() {
     ensureBar();
     var bar = document.getElementById("axlx-bar");
+    if (!bar) return;
     /** ★ 2.8.217: 一括把握中は一覧0件でも枠を出す（誰・何件・次客を見せる） */
-    var show = tracked.length > 0 || !!( _bulkGraspState && Number(_bulkGraspState.total) > 0 );
-    bar.style.display = show ? "flex" : "none";
+    /** ★ 2.8.254: 検索結果画面（estate）では常に「物件送る」枠を出す（消えたように見せない） */
+    /** ★ 2.8.258: display は !important（サイトCSS／残骸で消えない）＋パネルと重ならぬ位置へ */
+    var onEstate = false;
+    try {
+      onEstate = /[?&]method=estate\b/.test(String(location.search || ""))
+        || /[?&]display=building\b/.test(String(location.search || ""));
+    } catch (_) { onEstate = false; }
+    var show = tracked.length > 0
+      || !!( _bulkGraspState && Number(_bulkGraspState.total) > 0 )
+      || onEstate;
+    try {
+      if (show) {
+        bar.style.setProperty("display", "flex", "important");
+        bar.removeAttribute("data-axlx-force-hide");
+      } else {
+        bar.style.setProperty("display", "none", "important");
+      }
+    } catch (_) {
+      bar.style.display = show ? "flex" : "none";
+    }
+    if (show && tracked.length === 0 && onEstate) {
+      try {
+        var nowEl = document.getElementById("axlx-count");
+        if (nowEl && (!nowEl.textContent || /待機中|読み込み中/.test(nowEl.textContent))) {
+          nowEl.textContent = "一覧の物件を読み込み中…";
+        }
+      } catch (_) {}
+    }
+    if (show) {
+      try { _placeSendBarVisible(); } catch (_) {}
+      try {
+        var _sbAt = Number(window.__axlxSendBarShowAt) || 0;
+        if (Date.now() - _sbAt > 15000) {
+          window.__axlxSendBarShowAt = Date.now();
+          _liveDlStep(
+            "send_bar_show",
+            (onEstate ? "estate" : ("tracked=" + tracked.length))
+              + " dock=" + String(bar.getAttribute("data-axlx-docked") || "?"),
+          );
+        }
+      } catch (_) {}
+    }
     dockRpBarSoon();
     _paintPdfProgress();
     _startAutoRunNote(); // 2026-11-11: 次回の自動便の時刻を出す（1分ごとに描き直す）
@@ -5885,9 +7267,69 @@
     return r.width > 0 && r.height > 0;
   }
 
-  // 「次」テキストを持つ clickable な要素を返す
+  /**
+   * ★ 2.8.234 竹内さん「1ページだけの場合止まってしまう／1ページのみと把握して次へ」:
+   *   リアプロは 1ページでも「次」セルが出ることがある。数字が1つだけ＝1ページのみ。
+   *   次に onclick が無い／pager(現在以下)＝押せない次。把握印 list_page_one_only。
+   */
+  function _readPagerState() {
+    var nums = [];
+    var current = null;
+    var nextEl = null;
+    var nextOnclick = "";
+    var texts = [];
+    try {
+      var tds = document.querySelectorAll("td.pager");
+      for (var i = 0; i < tds.length; i++) {
+        var td = tds[i];
+        if (!_isElVisible(td)) continue;
+        var t = String(td.textContent || "").replace(/\s+/g, "").trim();
+        if (!t) continue;
+        texts.push(t);
+        if (/^\d+$/.test(t)) {
+          var n = parseInt(t, 10);
+          if (nums.indexOf(n) < 0) nums.push(n);
+          var oc = String(td.getAttribute("onclick") || "");
+          // 番号セルに onclick が無い＝いまのページ
+          if (!oc) current = n;
+        }
+        if (/^(次|次へ|次のページ)$/.test(t)) {
+          nextEl = td;
+          nextOnclick = String(td.getAttribute("onclick") || "");
+        }
+      }
+    } catch (_) {}
+    if (current == null && nums.length) current = nums[0];
+    var onlyOne = nums.length <= 1;
+    var usable = false;
+    if (nextEl && !_isDisabledEl(nextEl) && _isElVisible(nextEl) && !onlyOne) {
+      if (nextOnclick) {
+        var m = nextOnclick.match(/pager\s*\(\s*(\d+)/i);
+        if (m) usable = Number(m[1]) > (current || 1);
+        else usable = true;
+      }
+    }
+    if (onlyOne) usable = false;
+    return {
+      nums: nums,
+      current: current || 1,
+      onlyOnePage: onlyOne,
+      hasNextUsable: usable,
+      texts: texts.slice(0, 12),
+      nextOnclick: nextOnclick.slice(0, 40),
+    };
+  }
+  try { window.__axlxReadPagerState = _readPagerState; } catch (_) {}
+
+  // 「次」テキストを持つ clickable な要素を返す（1ページのみ／押せない次は null）
   function _findNextPageEl() {
     var NEXT_TEXTS = ["次", "次へ", "次のページ", ">", ">>"];
+
+    /** ★ 2.8.234: 1ページのみなら次は無い（見た目の「次」に騙されない・印は把握側で残す） */
+    try {
+      var pst0 = _readPagerState();
+      if (pst0.onlyOnePage) return null;
+    } catch (_) {}
 
     /**
      * 2026-11-14 竹内さん「実際のところから学習する」:
@@ -5911,7 +7353,19 @@
     for (var pi = 0; pi < pagerTds.length; pi++) {
       var pt = pagerTds[pi];
       if (NEXT_TEXTS.indexOf(pt.textContent.trim()) !== -1 && _isElVisible(pt) && !_isDisabledEl(pt)) {
-        console.log("[AXLX bulk-dl] _findNextPageEl: td.pager で次ボタン発見 onclick=" + (pt.getAttribute("onclick") || ""));
+        var poc = String(pt.getAttribute("onclick") || "");
+        /** ★ 2.8.234: onclick 無しの「次」は装飾＝最終ページ */
+        if (!poc) {
+          console.log("[AXLX bulk-dl] _findNextPageEl: 次にonclick無し → 最終ページ扱い");
+          continue;
+        }
+        var pm = poc.match(/pager\s*\(\s*(\d+)/i);
+        if (pm) {
+          var pst1 = null;
+          try { pst1 = _readPagerState(); } catch (_) { pst1 = null; }
+          if (pst1 && Number(pm[1]) <= (pst1.current || 1)) continue;
+        }
+        console.log("[AXLX bulk-dl] _findNextPageEl: td.pager で次ボタン発見 onclick=" + poc);
         return pt;
       }
     }
@@ -6746,17 +8200,56 @@
       _autoSendArmed = true;
       _autofillInProgress = false;
       _autofillInitiated = false;
+      /**
+       * ★ 2.8.263: 新しい検索を押したら旧 screenOk を捨てる。
+       *   残ったままだと旧一覧で「検索完了→並べ替え」が先に走り、実検索を邪魔する。
+       */
+      try {
+        _searchGraspedMem = {
+          at: Date.now(),
+          why: "search_armed_wait_page",
+          screenOk: false,
+          confirmed: false,
+          pressed: true,
+          intent: false,
+          customerId: _armCid || null,
+        };
+        try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_searchGraspedMem)); } catch (_) {}
+        try { chrome.storage.session.set({ axlx_search_grasped: _searchGraspedMem }); } catch (_) {}
+        _sortCursorScheduled = false;
+        if (_sortCursorTimer) { try { clearTimeout(_sortCursorTimer); } catch (_) {} _sortCursorTimer = null; }
+        try { _abortAdSort("search_armed_new"); } catch (_) {}
+        /**
+         * ★ 2.8.264: 押した時のページの印（同じページか／移った先か）と軽い目印を残す。
+         *   beforeunload がこの印より先に来ていれば移動中のまま（postMessage は click より後に届く事がある）。
+         */
+        _pageWaitN = 0;
+        try {
+          var _pb264 = _readSearchPressBaseline();
+          var _pAt264 = Number(_pb264 && _pb264.at) || Date.now();
+          if (_navPendingAt && _navPendingAt < _pAt264) _navPendingAt = 0;
+          if (!_isNavPending()) {
+            sessionStorage.setItem("axlx_search_press_doc", _AXLX_DOC_ID);
+            sessionStorage.setItem("axlx_search_press_sig", _localScreenEvidenceBrief().brief);
+          }
+        } catch (_) {}
+        try { _liveDlStep("search_press_wait_results", "armed→旧screenOk破棄・結果ページ待ち"); } catch (_) {}
+        _nudge("⏳ 検索結果のページ表示を待っています");
+      } catch (_) {}
       console.log("[AXLX bulk-dl] search-armed → pending保存＋armed（必ず／AJAX・リロード両対応）");
       try { _graspAcquire("armed", true, "search_armed→取得タイミングOK"); } catch (_) {}
       try { _liveDlStep("search_armed", String(e.data.why || "search").slice(0, 40)); } catch (_) {}
+      // ★ 2.8.255: armed直後から沈黙見張り（screenOk待ちで送付中固着を解く）
+      try { _touchPipelineProgress("search_armed"); _armPipelineSilence("search_armed"); } catch (_) {}
+      try { _armScreenOkWatchdog("search_armed"); } catch (_) {}
       setTimeout(inject, 80);
       /**
        * ★ 2.8.207: armed 直後の 400ms kick は旧一覧で並べ替えが走る根。
-       *   検索確認後だけ kick（確認ゲートは _schedule 側）。遅めの poll で一覧待ち。
+       * ★ 2.8.263: さらに早くても結果ページ未表示。最初の poll を 2.2秒以降に（表示待ち）。
        */
-      setTimeout(function () { try { _kickSortAfterSearch("armed_poll_after_confirm"); } catch (_) {} }, 1200);
-      setTimeout(function () { try { _kickSortAfterSearch("armed_poll2"); } catch (_) {} }, 2500);
-      setTimeout(function () { try { _kickSortAfterSearch("armed_poll3"); } catch (_) {} }, 4500);
+      setTimeout(function () { try { _kickSortAfterSearch("armed_poll_page"); } catch (_) {} }, 2200);
+      setTimeout(function () { try { _kickSortAfterSearch("armed_poll2"); } catch (_) {} }, 3800);
+      setTimeout(function () { try { _kickSortAfterSearch("armed_poll3"); } catch (_) {} }, 5500);
     } catch (err) {
       console.warn("[AXLX bulk-dl] search-armed 失敗", err && err.message);
     }
@@ -6767,52 +8260,74 @@
    *   page-script の `_guideLikeAfterSearchGrasp` が送る。AD並び替えの前段の印。
    * ★ 2.8.195: お客さん番号＋画面照会OKなら本線で並べ替えへ kick（質の高い把握）。
    */
+  /** ★ 2.8.241: page が古い把握印を捨てた → mem も捨てる */
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "axlx-search-grasped-clear") return;
+    try {
+      _searchGraspedMem = null;
+      try { sessionStorage.removeItem("axlx_search_grasped_sync"); } catch (_) {}
+      try { chrome.storage.session.remove("axlx_search_grasped"); } catch (_) {}
+      try { _liveDlStep("stale_grasp_drop", String(e.data.why || "clear").slice(0, 40)); } catch (_) {}
+    } catch (_) {}
+  });
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "axlx-search-grasped") return;
     try {
-      var _confirmed = e.data.confirmed === true
-        || !!e.data.screenOk
-        || /search_press_ok|press_ok|screen:|reload_resume/i.test(String(e.data.why || ""));
-      var _intentOnly = e.data.intent === true && !_confirmed && e.data.confirmed !== true;
+      var _screenOk = !!e.data.screenOk || /^screen:/i.test(String(e.data.why || ""));
+      var _pressedOnly = (e.data.pressed === true || /search_press_ok|press_ok/i.test(String(e.data.why || "")))
+        && !_screenOk;
+      var _intentOnly = e.data.intent === true && !_screenOk;
       _searchGraspedMem = {
         at: Number(e.data.ts) || Date.now(),
         why: String(e.data.why || "search").slice(0, 48),
         pageVer: e.data.pageVer || null,
         customerId: e.data.customerId || null,
-        screenOk: !!e.data.screenOk,
-        confirmed: _confirmed,
+        screenOk: _screenOk,
+        confirmed: _screenOk,
+        pressed: !!(e.data.pressed || _pressedOnly || _screenOk),
         intent: !!e.data.intent || _intentOnly,
       };
       try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_searchGraspedMem)); } catch (_) {}
       chrome.storage.session.set({ axlx_search_grasped: _searchGraspedMem });
-      try { _tmark("search_grasped", _searchGraspedMem.why + (_intentOnly ? ":intent" : ":confirm")); } catch (_) {}
+      try {
+        _tmark(
+          "search_grasped",
+          _searchGraspedMem.why
+            + (_intentOnly ? ":intent" : (_screenOk ? ":screen" : (_pressedOnly ? ":pressed" : ":other"))),
+        );
+      } catch (_) {}
       if (e.data.customerId) {
         try { _autoRunCid = e.data.customerId; } catch (_) {}
         try { _liveDlStep("search_customer_bound", String(e.data.customerId).slice(0, 12)); } catch (_) {}
       }
       if (_intentOnly) {
         try { _liveDlStep("search_grasp_intent_only", String(e.data.why || "intent").slice(0, 40)); } catch (_) {}
-        console.log("[AXLX bulk-dl] search-grasped 意図のみ → 並べ替えは検索確認後 (" + _searchGraspedMem.why + ")");
+        console.log("[AXLX bulk-dl] search-grasped 意図のみ → 並べ替えは結果確認後 (" + _searchGraspedMem.why + ")");
         return;
       }
-      if (e.data.screenOk || _confirmed) {
-        if (e.data.screenOk) {
-          try { _liveDlStep("search_customer_screen_ok", String(e.data.screenBrief || e.data.why || "").slice(0, 48)); } catch (_) {}
-          _stampSortFlowAtom("search_customer_grasp", true, String(e.data.screenBrief || "ok").slice(0, 40));
-        } else {
-          try { _liveDlStep("search_grasp_confirmed", String(e.data.why || "confirm").slice(0, 40)); } catch (_) {}
-          _stampSortFlowAtom("search_press_confirm", true, String(e.data.why || "ok").slice(0, 40));
-        }
-        _autoSendArmed = true;
-        try { _forceAutoForPending("search_confirm"); } catch (_) {}
-        // ★ 2.8.207: 即 kick せず schedule の「確認から≥1秒」待ちへ
-        setTimeout(function () {
-          try { _kickSortAfterSearch(e.data.screenOk ? "customer_screen_grasp" : "search_press_confirm"); } catch (_) {}
-        }, 50);
+      /**
+       * ★ 2.8.240: 押下だけでは AD しない。結果画面 OK のときだけ kick。
+       */
+      if (_pressedOnly) {
+        try { _liveDlStep("search_press_wait_results", String(e.data.why || "press").slice(0, 40)); } catch (_) {}
+        _stampSortFlowAtom("search_press_wait", true, String(e.data.why || "press").slice(0, 40));
+        console.log("[AXLX bulk-dl] search-grasped 押下済・結果待ち → ADしない (" + _searchGraspedMem.why + ")");
+        // ★ 2.8.255: 押下後も screenOk が来ない時用の見張り
+        try { _armScreenOkWatchdog("press_wait"); } catch (_) {}
+        try { _armPipelineSilence("press_wait"); } catch (_) {}
+        return;
       }
-      console.log("[AXLX bulk-dl] search-grasped → AD並び替え可 " + _searchGraspedMem.why
-        + (e.data.screenOk ? "（画面OK）" : "（確認）")
-        + (e.data.customerId ? (" 客=" + String(e.data.customerId).slice(0, 8)) : ""));
+      if (_screenOk) {
+        try { _liveDlStep("search_customer_screen_ok", String(e.data.screenBrief || e.data.why || "").slice(0, 48)); } catch (_) {}
+        _stampSortFlowAtom("search_customer_grasp", true, String(e.data.screenBrief || "ok").slice(0, 40));
+        _autoSendArmed = true;
+        try { _forceAutoForPending("search_results_ready"); } catch (_) {}
+        setTimeout(function () {
+          try { _kickSortAfterSearch("customer_screen_grasp"); } catch (_) {}
+        }, 50);
+        console.log("[AXLX bulk-dl] search-grasped → 結果OK → AD並び替え可 " + _searchGraspedMem.why
+          + (e.data.customerId ? (" 客=" + String(e.data.customerId).slice(0, 8)) : ""));
+      }
     } catch (err) {
       console.warn("[AXLX bulk-dl] search-grasped 失敗", err && err.message);
     }
@@ -6833,6 +8348,7 @@
     if (!_autofillInitiated) return;
     _autoSendArmed = true;
     _autofillInitiated = false;
+    try { _touchPipelineProgress("fill_done"); _armPipelineSilence("fill_done"); } catch (_) {}
     console.log("[AXLX bulk-dl] fill-done 受信 → 全ページ自動送信 armed");
     _treset(null); _tmark("armed", null);
     try { _graspAcquire("armed", true, "fill-done→物件取得のタイミング（送付済把握→PDF押し）"); } catch (_) {}
@@ -6933,8 +8449,92 @@
 
   function start() {
     ensureBar();
+    // ★ 2.8.254: 並べ替え tuck 残骸で消えたパネルを起動時に戻す
+    try { _restoreGuidesAfterSort(); } catch (_) {}
+    try { updateBar(); } catch (_) {}
     setTimeout(inject, 1200);
     obs.observe(document.body, { childList: true, subtree: true });
+    // 定期: float-wrap / 物件送る枠が消えたままなら戻す（tuck 漏れ・右ドック被り対策）
+    try {
+      setInterval(function () {
+        try {
+          if (document.querySelector("[data-axlx-sort-prev-display]")) _restoreGuidesAfterSort();
+        } catch (_) {}
+        try {
+          var w = document.getElementById("aixlinx-float-wrap");
+          var mini = document.getElementById("aixlinx-mini-btn");
+          var userMini = w && w.getAttribute("data-axlx-user-mini") === "1";
+          var miniOn = mini && mini.style && mini.style.display === "flex";
+          if (w && w.style && w.style.display === "none" && !userMini && !miniOn) {
+            w.style.setProperty("display", "flex", "important");
+          }
+        } catch (_) {}
+        try {
+          var onEst = /[?&]method=estate\b/.test(String(location.search || ""))
+            || /[?&]display=building\b/.test(String(location.search || ""));
+          if (onEst) {
+            try { _snapCustomerPanelRight(); } catch (_) {}
+            ensureBar();
+            updateBar();
+            try { _placeSendBarVisible(); } catch (_) {}
+            // 枠が DOM にあるか・見えているかを印に残す（steps=0 / 「出ていない」の切り分け）
+            try {
+              var _bChk = document.getElementById("axlx-bar");
+              if (!_bChk) {
+                try { _liveDlStep("send_bar_missing", "no_dom"); } catch (_) {}
+              } else {
+                var _br = _bChk.getBoundingClientRect();
+                var _csb = window.getComputedStyle ? window.getComputedStyle(_bChk) : null;
+                var _hid = (_csb && _csb.display === "none") || _bChk.style.display === "none"
+                  || _br.width < 20 || _br.height < 20
+                  || _br.right < 0 || _br.left > (window.innerWidth || 0);
+                if (_hid) {
+                  _bChk.style.setProperty("display", "flex", "important");
+                  _bChk.style.setProperty("z-index", "2147483647", "important");
+                  _bChk.style.setProperty("left", "12px", "important");
+                  _bChk.style.setProperty("right", "auto", "important");
+                  _bChk.style.setProperty("top", "auto", "important");
+                  _bChk.style.setProperty("bottom", "16px", "important");
+                  _bChk.style.setProperty("transform", "none", "important");
+                  _bChk.setAttribute("data-axlx-docked", "bottom-left");
+                  _bChk.removeAttribute("data-axlx-user-drag");
+                  try { _liveDlStep("send_bar_force", "was_hidden"); } catch (_) {}
+                }
+              }
+            } catch (_) {}
+            /**
+             * ★ 2.8.261 竹内さん「検索したところで止まる／改善が反映されない」:
+             *   estate に行があるのに並べ替えも送付も動いていない＝固着。
+             *   版印＋物件送る枠再表示＋並べ替え kick＋steps flush（steps=0 を止める）。
+             */
+            try {
+              var _nR = 0;
+              try { _nR = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { _nR = 0; }
+              var _busy = false;
+              try { _busy = !!(_isFillBusy() || _isCondModalOpen() || _adSortInFlight || _autoPdfRun); } catch (_) { _busy = false; }
+              if (_nR > 0 && !_busy) {
+                if (!window.__axlxEstateStuckAt) window.__axlxEstateStuckAt = Date.now();
+                if (Date.now() - Number(window.__axlxEstateStuckAt || 0) >= 4500) {
+                  window.__axlxEstateStuckAt = Date.now();
+                  var _mv2 = "";
+                  try { _mv2 = (chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().version : ""; } catch (_) {}
+                  try { _liveDlStep("estate_stuck_recover", "v" + _mv2 + " rows=" + _nR); } catch (_) {}
+                  try { _forceAutoForPending("estate_stuck"); } catch (_) {}
+                  try { _kickSortAfterSearch("estate_stuck_recover"); } catch (_) {}
+                  try {
+                    if (typeof window.__axlxForceAuditStepsFlush === "function") {
+                      window.__axlxForceAuditStepsFlush("estate_stuck");
+                    }
+                  } catch (_) {}
+                }
+              } else {
+                window.__axlxEstateStuckAt = 0;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }, 2000);
+    } catch (_) {}
 
     // Case D: ページリロード後の再開（ページ2以降）
     // 2026-11-10 竹内さん「古い一括のなくした方がよいかも。紛らわしくなる可能性あれば」:

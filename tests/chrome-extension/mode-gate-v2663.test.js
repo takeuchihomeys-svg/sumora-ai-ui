@@ -29,7 +29,10 @@ console.log("■ ① 通常モードでは自動の検索をしない（すべ�
   ok("通常モードは aiCustomerSearch が false", eff.aiCustomerSearch === false);
   ok("自動モード（aix）は開く", M.effectiveBehavior("aix", false).claimCommands === true && M.effectiveBehavior("aix", false).autoSend === true);
   ok("AIXモード（ai）も開く", M.effectiveBehavior("ai", false).claimCommands === true && M.effectiveBehavior("ai", false).aiCustomerSearch === true);
-  ok("スタッフモードは全部閉じる", M.effectiveBehavior("staff", true).claimCommands === false && M.effectiveBehavior("staff", true).autoSend === false);
+  ok("スタッフは一括を閉じ、選んだ客の自動は開く（2.8.156）",
+    M.effectiveBehavior("staff", true).claimCommands === false
+    && M.effectiveBehavior("staff", true).aiCustomerSearch === true
+    && M.effectiveBehavior("staff", true).autoSend === true);
 
   // popup の受け口（pendingPopupCmd・switch-customer・startGuideFor）がモードを見る
   ok("popup: 自動で押す関所 _isAutoModeAllowed がある", /function _isAutoModeAllowed\(\)/.test(pp));

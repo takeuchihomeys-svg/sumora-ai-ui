@@ -15,8 +15,8 @@ function ok(name, c, d) {
 
 console.log("\n■ 版");
 ok("manifest ≥2.8.232", mf.version >= "2.8.232", mf.version);
-ok("page ≥2.8.232", /_AXLX_PAGE_VER = "2\.8\.232"/.test(ps));
-ok("rules ≥2.8.232", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.232"/.test(rules));
+ok("page ≥2.8.232", /_AXLX_PAGE_VER = "2\.8\.(23[2-9]|2[4-9]\d|[3-9]\d{2})"/.test(ps) || /_AXLX_PAGE_VER = "2\.8\.232"/.test(ps) || (ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1] >= "2.8.232");
+ok("rules ≥2.8.232", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.(23[2-9]|2[4-9]\d|[3-9]\d{2})"/.test(rules) || (rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1] >= "2.8.232");
 
 console.log("\n■ 毎回API（薄い時スキップ禁止）");
 const thenBody = ps.match(/function _graspBeforeNextTaskThen\([\s\S]*?\n  function _recentTaskTransitionGrasped/);
