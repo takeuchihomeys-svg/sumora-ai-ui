@@ -204,6 +204,16 @@ async function main() {
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・新しい cron は作らない）: 今どこの読み違い（判断の駅×その後の一手・7日・軽い読み）をここで数えて quality_daily に（--write の時だけ書く）
     try { const { runMisreadMove } = await import("./audit-route-misread-move"); await runMisreadMove({ sb: sb as never, days: 7, write: process.argv.includes("--write"), quiet: true }); } catch (e) { lines.push(`- 今どこの読み違いの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-25 作業員A（台帳 #688・竹内さん「なんで AIX の一致がこんなに弱いのか」・統括役の頼み）: スタッフが AIX を押した番でブレインが外した番を組ごとに（30日）。
+    //   ④ スタッフだけが知る番（ブレインが知りようのない番）は弱さの数から外して別に数える。quality_daily は --write の時だけ（aix_miss:*_30d）
+    try {
+      const { runAixMissCauses } = await import("./audit-aix-miss-causes");
+      const ms = await runAixMissCauses({ days: 30, write: process.argv.includes("--write"), quiet: true });
+      const g = (k: string) => ms.find((m) => m.metric === k);
+      const pairs = ms.filter((m) => m.metric.startsWith("aix_miss:pair:")).slice(0, 4).map((m) => `${m.metric.slice(14)} ${m.value}`).join("・");
+      const rva = ms.filter((m) => m.metric.startsWith("aix_miss:reply_vs_aix:")).slice(0, 3).map((m) => `${m.metric.slice(22)} ${m.value}`).join("・");
+      lines.push(`- AIX の外れ（30日・スタッフが押した番）: 弱さ ${g("aix_miss:weak_rate")?.value ?? "—"}%（${g("aix_miss:weak_rate")?.n ?? 0}番・④ スタッフだけが知る ${g("aix_miss:staff_only")?.value ?? 0}番は外す）・種類違いの組 ${pairs || "—"}・返信と取り違え ${rva || "—"}（#688・n≥10 の組だけ直しの候補）`);
+    } catch (e) { lines.push(`- AIX の外れの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（台帳 #608・統括役の頼み）: ブレインは地図をどこまで使えているか（地図の根2つ・今どこの読み違い・組の本当の一致の、最新の数と前の日からの変わり・軽い読み）
     try {
       const ms = ["map:route:progress_60d:value", "map:route:next_match_60d:value", "route:station_misread_move", "growth:combo:本当の一致"];
