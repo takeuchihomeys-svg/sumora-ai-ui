@@ -128,6 +128,19 @@ async function upsertFacts(rows: FactRow[]): Promise<void> {
   } catch (e) { console.warn("[sent-facts] promise-close-link skipped:", e instanceof Error ? e.message : String(e)); }
 }
 
+// ─── 2026-11-24 作業員L（台帳 #672・竹内さん 11/23 P0「約束の部分もぬけや足りない土台がないか細部まで」・統括役の決め: 直しは既定 off）───
+//   スタッフが手で送った物件の画像（send-line-message の staff_image・物件名を照合できた物）は sent_properties にだけ残り、行動台帳（sent_facts）に
+//   物件の送付（properties_sent）が残らなかった（14日で 4件）。カレンダーの【必ず】物件ピックアップ送付は sent_facts の送付で閉じるので、送ったのに開いたまま
+//   （b253f423: 11/12 に手で送ったのに 11/10 の約束の行が開いたまま）。見張り（promise-drop-watch）は sent_properties を読むので果たした扱い＝2つが食い違っていた。
+//   SENT_IMAGE_FACT（既定 off・=on で使う）: 照合できた手の画像の送付を properties_sent（done・origin=staff_text・evidence=[画像]）で書き、約束の行を閉じる。
+//   照合できなかった画像（source=vision・室内写真・地図など）は書かない（物件の送付かが分からない）。AIX の画像は recordAixFacts が書くので触らない。
+//   テスト: app/lib/__tests__/sent-image-fact.test.ts
+export { sentImageFactOn, staffImageSentEntry } from "./sent-image-fact";
+export async function recordStaffImageSentFact(o: { conversationId: string; sentAt: string; entry: FactLike }): Promise<void> {
+  await upsertFacts([{ conversation_id: o.conversationId, sent_at: o.sentAt, origin: "staff_text", aix_type: null, kind: o.entry.kind, status: o.entry.status, line_message_id: null, detail: o.entry.detail, evidence: o.entry.evidence } as FactRow]);
+  await syncPromiseCalendar({ conversationId: o.conversationId, entries: [o.entry], sentAt: o.sentAt });
+}
+
 /** 手打ちの送信を1回分類して記録する（send-line-message・送信成功後）。待ち合わせの案内なら内覧の記録も書く */
 export async function recordStaffTextFacts(o: { conversationId: string; text: string; sentAt: string; lineMessageId?: string | null; viewingOnlyFrom?: string }): Promise<number> {
   const entries = classifyStaffTextFacts(o.text, o.sentAt).filter((e) => e.kind !== "media_sent");

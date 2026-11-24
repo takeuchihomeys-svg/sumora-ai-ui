@@ -422,6 +422,12 @@ export async function POST(req: NextRequest) {
             break;
           }
         } })().catch((e) => console.warn("[send-line-message] 画像の部分の付け直し失敗:", e instanceof Error ? e.message : e));
+        // 2026-11-24 作業員L（#672・SENT_IMAGE_FACT 既定 off）: 照合できた手の画像の送付を行動台帳の物件の送付に残し、約束の【必ず】の行を閉じる（app/lib/sent-facts.ts の説明）
+        try {
+          const sf = await import("@/app/lib/sent-facts");
+          const entry = sf.sentImageFactOn() ? sf.staffImageSentEntry({ source: src, matched: rec.matched, sentProperties: rec.sentProperties, propertyName: rec.propertyName, roomNo: rec.roomNo }) : null;
+          if (entry) await sf.recordStaffImageSentFact({ conversationId: conversation_id, sentAt: sentAtIso, entry });
+        } catch (e) { console.warn("[send-line-message] 手の画像の送付の記録失敗:", e instanceof Error ? e.message : e); }
         if (!rec.matched && src.startsWith("aix:")) {
           const { attributeSentImageFromAixLog } = await import("@/app/lib/sent-image-aix-attribute-server");
           const { sentImageAixAttributeOn } = await import("@/app/lib/sent-image-aix-attribute");
