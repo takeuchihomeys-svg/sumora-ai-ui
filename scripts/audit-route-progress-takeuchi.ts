@@ -74,7 +74,7 @@ type Row = {
     convs = [...new Set(((tk ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))].filter((c) => !skip.has(c)).slice(0, maxConv);
   }
   const rows: Row[] = [];
-  let convDone = 0, cutPost = 0, failed = 0;
+  let convDone = 0, cutPost = 0, failed = 0, timedSkip = 0;
   for (const c of convs) {
     const [m, a, d, deals, a30] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, staff_writer, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(2000),
@@ -106,6 +106,9 @@ type Row = {
       const tAt = Date.parse(t.at);
       const lastCust = [...input.messages].reverse().find((x) => x.sender === "customer" && Date.parse(x.createdAt) < tAt);
       if (!lastCust) continue;
+      // 2026-11-25 作業員A（#687・統括役の頼み「番の時刻が AIX の送信と重なる番を外す」）: 竹内さんの一手が、お客様の通の後の別の日に時刻で送った
+      //   AIX【当日のご挨拶】（内覧の日の朝に送る物）の番は、お客様の通への一手ではない（3db9db75 10/24: 一手の時刻＝ご挨拶の送信・お客様の通は前の日）＝外して別に数える。止める --keep-timed
+      { const jd = (ms: number) => Math.floor((ms + 9 * 3_600_000) / 86_400_000); if (!process.argv.includes("--keep-timed") && /greeting_viewing/.test(String(t.act ?? "")) && jd(tAt) !== jd(Date.parse(lastCust.createdAt))) { timedSkip++; continue; } }
       const T = Date.parse(lastCust.createdAt) + 1000;
       let r: ReturnType<typeof locateAt>;
       try { r = locateAt(input, T, false); } catch { continue; }
@@ -137,6 +140,7 @@ type Row = {
   const N = rows.length;
   const nm = (n: RouteNodeId | null) => (n ? ROUTE_NODES[n].name : "不明");
   console.log(`■ 申込までの地図 × 竹内さん本人の番（${days}日・会話 ${convs.length}→測った ${convDone}・読めない ${failed}・申込以降で外した番 ${cutPost}・番 ${N}・申込に届いた会話の番 ${rows.filter((r) => r.reached).length}）`);
+  console.log(`  別の日に時刻で送った当日のご挨拶の番（お客様の通への一手でない・外した）: ${timedSkip}（--keep-timed で入れる）`);
   console.log(`\n## A 位置: 地図の駅 ${cnt(rows.map((r) => nm(r.node)))}`);
   console.log(`   分かれ道: ${cnt(rows.map((r) => (r.branch ? ROUTE_BRANCHES[r.branch as keyof typeof ROUTE_BRANCHES].name : "なし")))}`);
   const both = rows.filter((r) => r.node && r.digestNode);
