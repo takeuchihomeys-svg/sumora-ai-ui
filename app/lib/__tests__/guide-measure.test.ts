@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/guide-measure.test.ts
 // 2026-11-18 作業員L: 誘導の物差し（竹内さん本人の番・一手の前と後の駅・進んだ／止まった／戻った／離れた）
 import assert from "node:assert/strict";
-import { guideTurnsOf, guideTable, reactionTable, closeKindOf, nodeOfStage } from "../../../scripts/lib/guide-measure";
+import { guideTurnsOf, guideTable, reactionTable, closeKindOf, nodeOfStage, outOfScopeAtOf } from "../../../scripts/lib/guide-measure";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -38,6 +38,12 @@ t("番ごと: 返事の後の駅で 進んだ・止まった・離れた（48時
   assert.deepEqual(reactionTable(r).get("reply:wait"), { silent: 1 });
   const applying = guideTurnsOf("c2", msgs.slice(0, 3), [], [{ created_at: at(0.5), stage: "applying" }]);
   assert.equal(applying.length, 0);
+});
+t("仮抑え・提携会社への引き継ぎの後は対象の外（2026-11-24）", () => {
+  const M = (sender: string, text: string, created_at: string) => ({ sender, text, created_at });
+  assert.equal(outOfScopeAtOf([M("customer", "仮抑えできますか", "2026-11-01T00:00:00Z"), M("staff", "無事お部屋募集でましたので仮抑えさせて頂きました！！", "2026-11-02T00:00:00Z")]), "2026-11-02T00:00:00Z");
+  assert.equal(outOfScopeAtOf([M("staff", "提携会社の担当者がご担当させて頂きます！！", "2026-11-03T00:00:00Z")]), "2026-11-03T00:00:00Z");
+  assert.equal(outOfScopeAtOf([M("staff", "お部屋の仮抑えをご希望でしたらお伝えください", "2026-11-03T00:00:00Z"), M("customer", "提携会社の方からご担当させて頂きます", "2026-11-04T00:00:00Z")]), null);
 });
 console.log(`${n} tests ok`);
 

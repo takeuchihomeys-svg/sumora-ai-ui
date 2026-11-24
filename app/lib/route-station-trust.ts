@@ -23,7 +23,9 @@ export function stationKeyOf(loc: { node?: string | null; branch?: string | null
 /** afterBranch: 番の後の分かれ道（R の json に欄がある時だけ・null＝分かれ道が閉じた）。欄が無い番は「本線に戻った」を数えない（後の駅だけでは分かれ道が閉じたか分からない） */
 export type RouteStationRow = { node: string | null; branch: string | null; agree: string; outcome: string; after: string | null; afterBranch?: string | null;
   /** 番の時刻（ISO）と、R の json の detail（内覧の日「10/28(水)17:00」）。内覧予定の駅で内覧の日がまだ来ていないかを見る */
-  at?: string | null; detail?: string | null };
+  at?: string | null; detail?: string | null;
+  /** 2026-11-24 作業員A（11/23 の弱い駅の実物読み・8c7360d8・a5209746）: R の json の promiseWait（not_fulfilled＝こちらの約束を72時間で果たしていない）。欄が無い番は今まで通り */
+  promiseWait?: string | null };
 /** 内覧の日（detail の M/D）が番の日（JST）以降か。読めなければ false（今まで通り止まりに数える） */
 export function viewingNotYet(r: Pick<RouteStationRow, "at" | "detail">): boolean {
   const m = String(r.detail ?? "").match(/(\d{1,2})\/(\d{1,2})/);
@@ -37,6 +39,8 @@ export function viewingNotYet(r: Pick<RouteStationRow, "at" | "detail">): boolea
 export type StationStat = {
   station: string; n: number; map: number; mapRate: number | null;
   advanced: number; branch_return: number; engaged: number; stuck: number; back: number; left: number; progress: number; progressRate: number | null;
+  /** こちらの約束待ち（お客様の止まり・離れに数えない・n には入る） */
+  our_wait: number;
 };
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
 
@@ -45,13 +49,15 @@ export function stationStatsOf(rows: ReadonlyArray<RouteStationRow>): StationSta
   const by = new Map<string, StationStat>();
   for (const r of rows) {
     const k = stationKeyOf(r); if (!k) continue;
-    const s = by.get(k) ?? { station: k, n: 0, map: 0, mapRate: null, advanced: 0, branch_return: 0, engaged: 0, stuck: 0, back: 0, left: 0, progress: 0, progressRate: null };
+    const s = by.get(k) ?? { station: k, n: 0, map: 0, mapRate: null, advanced: 0, branch_return: 0, engaged: 0, stuck: 0, back: 0, left: 0, progress: 0, progressRate: null, our_wait: 0 };
     s.n++;
     if (ROUTE_GOOD.has(r.agree)) s.map++;
     if (r.outcome === "advanced") s.advanced++;
     else if (r.branch && r.afterBranch === null && r.after && MAIN_STATIONS.has(r.after)) s.branch_return++;
     else if (r.outcome === "engaged") s.engaged++;
     // N2 の照らし①: 内覧予定の駅で内覧の日がまだ来ていない番は「止まった」でなく内覧の日待ち（続く）に数える（日が過ぎても動かない番だけ止まり）
+    // 2026-11-24 作業員A（数え方の直し・11/23 の実物読みで提案・ヒアリングの止まり＋離れ 12番のうち 2番）: こちらが約束して72時間果たしていない番は、お客様の離れではなく「こちら待ち」
+    else if (r.promiseWait === "not_fulfilled" && (r.outcome === "left" || r.outcome === "stuck")) s.our_wait++;
     else if (r.outcome === "stuck" && r.node === "viewing_scheduled" && !r.branch && viewingNotYet(r)) s.engaged++;
     else if (r.outcome === "stuck") s.stuck++;
     else if (r.outcome === "back") s.back++;

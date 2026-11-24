@@ -34,6 +34,13 @@ const STAGE_NODE: Record<string, RouteNodeId | null> = {
 export const nodeOfStage = (s: string | null | undefined): RouteNodeId | null => (s ? STAGE_NODE[s] ?? null : null);
 const idx = (n: RouteNodeId | null) => (n ? MAIN_ROUTE.indexOf(n) : -1);
 const POST_APPLY = new Set<RouteNodeId>(["applying"]);
+/** 2026-11-24 作業員A（11/23 の弱い駅の実物読み・a8dd6ec6＝仮抑えの後・25ccb676＝提携会社に引き継いだ後）: こちらの通にこの印が出た後の番は申込までの地図の対象の外 */
+export const OUT_OF_SCOPE_STAFF_RE = /仮(?:抑え|押さえ)(?:させて|致し|いたし)|提携(?:会社|先)[^。！!\n]{0,40}(?:担当させて|ご連絡させて|ご案内させて)/;
+/** こちら（手打ち・AIX）の通で、最初に対象の外の印が出た時刻（ISO・無ければ null） */
+export function outOfScopeAtOf(msgs: ReadonlyArray<GMsg>): string | null {
+  const m = [...msgs].filter((x) => x.sender === "staff" && OUT_OF_SCOPE_STAFF_RE.test(String(x.text ?? ""))).sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+  return m ? m.created_at : null;
+}
 
 /** 返信の締めの型（誘いの有無）。竹内さんの文の言葉から決まった形で（作らない・網） */
 export function closeKindOf(text: string): string {

@@ -11,7 +11,7 @@
 //   重い読み（会話ごとに customer-state の材料を読む）。JST 9〜22時は --days=2 --max-conv=10 に絞る（--force で外す）。
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { guideTurnsOf, type GMsg, type GAix, type GDecision, type GuideTurn } from "./lib/guide-measure";
+import { guideTurnsOf, outOfScopeAtOf, type GMsg, type GAix, type GDecision, type GuideTurn } from "./lib/guide-measure";
 import { actDirection, routeAgreement, type ActDirection, type Agreement } from "./lib/route-progress";
 import { loadCustomerStateInput } from "../app/lib/customer-state-server";
 import { resolveCustomerState, type CustomerStateInput } from "../app/lib/customer-state";
@@ -106,7 +106,7 @@ function sentBeforeOf(aix: ReadonlyArray<GAix>, T: number): Record<string, strin
 
 type Row = {
   conv: string; at: string; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
-  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null; sentBefore?: Record<string, string>;
+  dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null; sentBefore?: Record<string, string>; promiseWait?: GuideTurn["promiseWait"];
 };
 
 (async () => {
@@ -145,7 +145,10 @@ type Row = {
     // 2026-11-23 作業員A（R の台本の持ち主・統括役の決め・q038／8590144d）: 申込の記録で引く門（記入済みの申込フォーム・証明書類・書類の印の通・成約の記録）も通す。
     //   旧は deal_outcomes の applied_at／screening_at だけで、申込の書類が先に届いた会話（8590144d は 9/24 01:27 にフォーム）の後の番を数えていた
     const gateRec = await loadTurnApplicationRecords(sb as never, c);
-    const pre = turns.filter((t) => Date.parse(t.at) < firstApplied && !turnApplicationReason(gateRec, t.at));
+    // 2026-11-24 作業員A: 仮抑え・提携会社への引き継ぎの後の番も外す（申込以降と同じ・guide-measure.outOfScopeAtOf）
+    const outAt = outOfScopeAtOf((m.data ?? []) as GMsg[]);
+    const outMs = outAt ? Date.parse(outAt) : Infinity;
+    const pre = turns.filter((t) => Date.parse(t.at) < firstApplied && Date.parse(t.at) < outMs && !turnApplicationReason(gateRec, t.at));
     cutPost += turns.length - pre.length;
     if (!pre.length) continue;
     let input: CustomerStateInput | null = null;
@@ -180,6 +183,7 @@ type Row = {
         sub1: r.sub1, sub2: r.sub2, subAt1: atOk(s1), subAt2: atOk(s2), nextAix: r.loc.next?.aix ?? [],
         ...(afterBranch !== undefined ? { afterBranch } : {}),
         sentBefore: sentBeforeOf(((a30.data ?? []) as GAix[]), T),
+        ...(t.promiseWait ? { promiseWait: t.promiseWait } : {}), // 2026-11-24 作業員A: こちらの約束待ちを駅の数で分ける（route-station-trust.our_wait）
       });
     }
   }
