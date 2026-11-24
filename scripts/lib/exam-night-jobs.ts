@@ -2,6 +2,7 @@
 // 2026-11-25 作業員A（統括役の決め: 新しい Vercel の cron は足さない・毎晩手で流すと抜ける）
 //   ① 駅ごとの元の数: audit-route-progress-takeuchi --days=60 --json → audit-route-station-daily --from --write（台帳 #687）
 //   ② AIX の外れの組ごとの数: audit-aix-miss-causes --days=30 --write（台帳 #688・毎朝の self-improve も数えるが、晩にも書いておく）
+//   ③ 前の on の回から覚えた表: build-learned-reach --days=60（exam-cache/learned-reach.json・台帳 #683）
 //   晩＝JST 22時〜翌6時。晩の鍵は「JST の日付を12時で切った日」（22時と翌2時は同じ晩）。止める: EXAM_NIGHT_ZERO_COST=off
 export function nightKeyOf(nowMs: number): string { return new Date(nowMs + 9 * 3_600_000 - 12 * 3_600_000).toISOString().slice(0, 10); }
 export function nightZeroCostDue(lastKey: string | null | undefined, nowMs: number, env: Record<string, string | undefined> = {}): { due: boolean; key: string } {
@@ -17,5 +18,7 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "駅ごとの元の数（60日の照らし）", args: ["scripts/audit-route-progress-takeuchi.ts", "--days=60", "--max-conv=400", "--first-move", `--json=${jsonPath}`], timeoutMin: 40 },
     { name: "駅ごとの物差し（quality_daily）", args: ["scripts/audit-route-station-daily.ts", `--from=${jsonPath}`, "--days=60", "--write"], timeoutMin: 15 },
     { name: "AIX の外れの組ごとの数（quality_daily）", args: ["scripts/audit-aix-miss-causes.ts", "--days=30", "--write"], timeoutMin: 15 },
+    // 2026-11-25 作業員A（#683・L と表を1本に）: 前の on の回から覚えた表（exam-cache/learned-reach.json・L の reachRowOf が読む）
+    { name: "覚えた表（learned-reach.json）", args: ["scripts/build-learned-reach.ts", "--days=60"], timeoutMin: 10 },
   ];
 }
