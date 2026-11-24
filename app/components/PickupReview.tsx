@@ -22,6 +22,7 @@ import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/li
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
 import { buildPickupCardView, groupPickupRounds, mergeRoundItems, roundSiteSummary, siteLabel, verdictCounts, type CardMark, type CellTone } from "@/app/lib/pickup-card-view";
+import { sameDaySendRound, sameDayConfirmLine, otherDayStopLine } from "@/app/lib/pickup-same-day"; // 2026-11-24 作業員A（竹内さん「同じ日ならまたいで送れるように」・PICKUP_SEND_SAME_DAY・既定 on）
 import { sortByNewArrivals } from "@/app/lib/new-arrivals";
 import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type WebBrainProgress, type CommandLite } from "@/app/lib/web-brain-search";
 // 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
@@ -434,6 +435,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   const [openKey, setOpenKey] = useState<string | null>(focusKey);
   const [nBatches, setNBatches] = useState(3);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
+  // 2026-11-24 作業員A: スタッフが手で付け外ししたチェック（回ごとの既定のチェックと分ける＝同じ日のほかの回から足すのは手で付けた物だけ・pickup-same-day.ts）
+  const [manualChecked, setManualChecked] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
   const [note, setNote] = useState<string>("");
@@ -492,6 +495,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
         // 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: 旧は外す候補以外を全部チェック＝20件で、押すと「10件までに」で止まっていた
         // 2026-09-28 審査中・商談中は付けない・新規のお客様の回は AD の高い物件を優先（pickup-review-order・pickup-ad-priority）
         // 2026-09-30 v2.5.42 送付済みの部屋（別の回で届けた同じ部屋・建物名＋号室の完全一致）は既定のチェックに入れない
+        setManualChecked({}); // 2026-11-24 作業員A: お客様を開き直したら手のチェックの印も消す
         setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at, sentHistory: json.customer.sent_room_history ?? json.customer.sent_history ?? null, lastProposalSentAt: json.customer.last_proposal_sent_at }));
       }
       return json.customer;
@@ -1066,7 +1070,19 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   // 2026-09-24 竹内「確認してお客様に送るの部分を AIX で送るにして。押したら AIX の物件ピックアップに選択した画像がセットされた状態にする
   //   （トリミングされた画像＝PDF 1枚目の弊社帯替え用が送られる形）。元付業者の資料は送られないようにする」
   //   → 画像が無い物件は先に画像にし、LINE の会話画面を AIX【物件ピックアップした】に画像をセットして開く（/?conv=…&aix=property_send&pickup=ids）
-  const sendViaAix = async (c: Customer, b: Batch, only?: Item[]) => {
+  const sendViaAix = async (c: Customer, bIn: Batch, only?: Item[]) => {
+    // 2026-11-24 作業員A（竹内さん 11/24・PICKUP_SEND_SAME_DAY・既定 on）: 同じ JST の日のほかの回で手でチェックした物件も、この回に足して1回で送る。
+    //   束ね方は30分以内にまとまった回と同じ（batch_id を「,」・parts・物件に元の回）＝この後の送る道（/send・AIX・送った印・sent_facts／sent_properties）は今のまとまった回と同じ。
+    //   ほかの回に手のチェックが無ければ bIn のまま（今と1字も変わらない）。別の日の回に手のチェックがあれば止める
+    let b = bIn;
+    if (!only) {
+      const plan = sameDaySendRound(bIn, toRounds(c.batches), checked, { manual: manualChecked });
+      const stop = otherDayStopLine(plan);
+      if (stop) { setMsg(stop); return; }
+      const conf = sameDayConfirmLine(plan);
+      if (conf && typeof window !== "undefined" && !window.confirm(conf)) return;
+      b = plan.round;
+    }
     // only: 👑 全体で一番の吹き出しから、その1件だけを送る時（2026-09-24 竹内「1番オススメの物件全体の中で送る」）
     // 2026-09-27 竹内（確認済み）: 送信済みも1件だけ選んで物件オススメで送り直せる。ピックアップ（複数件）には送信済みを混ぜない（pickup-aix-handoff.planPickupAixSelection）
     const sel = only ? null : planPickupAixSelection(b.items, checked);
@@ -1281,7 +1297,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
         {/* 建物の段（リアプロの写真の位置に図面） */}
         <div className="flex gap-2 p-2 items-start" style={{ background: crown ? "#fff8e1" : "#fffdfb" }}>
           <label className="shrink-0 -m-1.5 p-1.5 flex items-start" aria-label={`【${it.rank}】を選ぶ`}>
-            <input type="checkbox" className="mt-1 h-4 w-4" disabled={!isPickupCheckable(it.status)} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+            <input type="checkbox" className="mt-1 h-4 w-4" disabled={!isPickupCheckable(it.status)} checked={!!checked[it.id]} onChange={(e) => { const v = e.target.checked; setChecked((p) => ({ ...p, [it.id]: v })); setManualChecked((p) => ({ ...p, [it.id]: true })); }} />
           </label>
           {it.expired && <ExpiredImage width={88} height={62} />}
           {img && (
@@ -1627,7 +1643,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                       <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void sendViaAix(open, bb.batch)}
                         title="LINE の会話画面で AIX を開き、選んだ物件の資料画像（1ページ目）をセットする（1件＝物件オススメ・2件以上＝物件ピックアップした）"
                         className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
-                        {pickupAixSelectionLabel(planPickupAixSelection(bb.batch.items, checked))}
+                        {pickupAixSelectionLabel(planPickupAixSelection(sameDaySendRound(bb.batch, toRounds(open.batches), checked, { manual: manualChecked }).round.items, checked))}
                       </button>
                       <button disabled={!!busy} onClick={() => void act(bb.batch, "skip")}
                         className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
