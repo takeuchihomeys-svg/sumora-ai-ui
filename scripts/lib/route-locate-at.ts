@@ -23,7 +23,8 @@ export function cutAt(input: CustomerStateInput, t: number): CustomerStateInput 
     messages: input.messages.filter((m) => le(m.createdAt)),
     aixRows: input.aixRows.filter((r) => le(r.sent_at ?? r.created_at)),
     recordedFacts: input.recordedFacts.filter((f) => le((f as { sent_at?: string | null }).sent_at ?? null)),
-    viewingHistory: input.viewingHistory.filter((v) => le(v.created_at ?? null)),
+    // 2026-11-25 作業員A（#687・照らしの漏れ）: 番の時刻より後に「済み・流れた」に書き換わった予定は、番の時刻ではまだ予定（その日時が番より後なら scheduled に戻す）
+    viewingHistory: input.viewingHistory.filter((v) => le(v.created_at ?? null)).map((v) => { const at = Date.parse(`${v.scheduled_date}T${String(v.scheduled_time ?? "23:59").slice(0, 5)}:00+09:00`); return Number.isFinite(at) && at > t && (v.status === "done" || v.status === "lapsed") ? { ...v, status: "scheduled", actual_date: null, viewing_report: null } : v; }),
     sentProperties: input.sentProperties.filter((s) => le(s.sent_at)),
     lineTasks: (input.lineTasks ?? []).filter((x) => le(x.created_at)),
     ledger: null,
