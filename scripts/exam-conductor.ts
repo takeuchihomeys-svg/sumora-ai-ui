@@ -530,6 +530,29 @@ async function addJob(): Promise<void> {
         if (wg.block && !flag("force")) throw new Error(`積まない（値打ち）: ${wg.line}。効く問題を --eff=q…（守りは外す）で示すか、悪化だけを見る組なら --force（止める EXAM_WORTH_GATE=off）`);
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 読めない時は止めない */ }
     }
+    // 2026-11-25 作業員A（台帳 #683・竹内さん「問題の部分を限定する能力」・L の 1本の表 exam-reach-rows と同じ行を使う）: 回す問題の最小の組（scripts/lib/exam-select.ts）。
+    //   EXAM_SELECT_MINIMAL: 既定 shadow＝係の記録に「回す問題の最小の組」の1行を出すだけ（問題は外さない）／on＝選ばなかった問題を外す（--force で外さない）／off。
+    //   on にするのは、前の7晩の物差し（scripts/audit-exam-select.ts）で見落とし0を統括役に見せてから（統括役の決め）
+    {
+      const selMode = (process.env.EXAM_SELECT_MINIMAL ?? "shadow").trim().toLowerCase();
+      if (job.runner === "brain-exam" && ids.length && !job.dig && selMode !== "off") {
+        try {
+          const onSel = Object.entries((job.env ?? {}) as Record<string, string>).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
+          const { selectMinimal } = await import("./lib/exam-select");
+          const { rowOfWith, tableOf, learnedForSelect } = await import("./lib/exam-reach-rows");
+          const rowOf = rowOfWith({ cacheRoot: examCacheRoot() });
+          const sel = selectMinimal({ ids, onSwitches: onSel, prior: readPriorLedger(join(cwd, "scripts", "brain-exam", "results"), new Set(ids)), off: loadOffPass(join(examCacheRoot(), "brain-exam-baseline")),
+            table: tableOf(onSel, rowOf), stage: job.stage === "draft" ? "draft" : "brain", learned: learnedForSelect(onSel, rowOf) });
+          const dropN = sel.drop.length;
+          log(`  回す問題の最小の組（#683・${selMode}）: ${sel.narrowed ? `${ids.length}→${sel.keep.length}問（外す ${sel.drop.map((d) => `${d.id}＝${d.why}`).join("・")}）・見込み $${sel.usdAll}→$${sel.usdKeep}` : `絞らない（${sel.reason}）`}`);
+          if (selMode === "on" && dropN && sel.keep.length && !flag("force")) {
+            const keep = new Set(sel.keep.map((k) => k.id));
+            for (let k = ids.length - 1; k >= 0; k--) if (!keep.has(ids[k])) ids.splice(k, 1);
+            job.only = ids.join(",");
+          }
+        } catch (e) { log(`  回す問題の最小の組（#683）: 読めない（${String(e).slice(0, 80)}・積むのは止めない）`); }
+      }
+    }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
       const fr = fillProblemsFromShared(spec as unknown as Array<Record<string, unknown>>, local, { addMissing: (id) => ids.includes(id) });
