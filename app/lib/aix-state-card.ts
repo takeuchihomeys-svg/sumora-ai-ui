@@ -4,6 +4,7 @@
 //   AIX を選ぶ時に要る状態を、送った物の記録（aix_usage_logs）・お客様の通・内覧の予定・タスクから決まった計算で1枚にする。
 //   スイッチ AIX_STATE_CARD: 既定 shadow（記録だけ）／on（ブレインの材料に入れる口・別に作る）／off
 import type { CustomerStateInput } from "./customer-state";
+import { docFactsOf, docFactsLine, type DocFacts, type DocPickup } from "./aix-state-doc";
 
 export type AixStateCard = {
   /** 物件の束（物件ピックアップ）を最後に送ってからの分・その後にお客様の通があったか・送った束の数（ピックアップ⇄オススメ） */
@@ -20,7 +21,11 @@ export type AixStateCard = {
   candidates: { pending: number | null; newSinceBundle: number | null };
   /** 2026-11-25 土台の欠けを足す: 送った物件のうち退去予定（入居中）の部屋の数（内覧開始日の確認の約束が先・現状を伝えて1件） */
   vacating: { rooms: number };
+  /** 2026-11-25 土台の欠け「資料にある」: 最後の束で送った物件の資料で、項目ごとに資料で答えられる件数（aix-state-doc・送った物件の資料を渡さない時は null） */
+  doc: DocFacts | null;
 };
+/** 資料の読みも札に入れるか（送った物件の資料＝pdf_text を読むので、既定 off・入れる AIX_STATE_CARD_DOC=on） */
+export function aixStateCardDocOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean { return (env.AIX_STATE_CARD_DOC ?? "").trim().toLowerCase() === "on"; }
 
 const minAgo = (now: number, iso: string | null | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) && t <= now ? Math.round((now - t) / 60_000) : null; };
 const jstDay = (ms: number) => Math.floor((ms + 9 * 3_600_000) / 86_400_000);
@@ -31,7 +36,7 @@ export function aixStateCardMode(env: Record<string, string | undefined> = typeo
 }
 
 /** 札（純関数）。now は判断の時刻（試験・照らしでは番の時刻） */
-export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "aixRows" | "viewingHistory" | "lineTasks"> & { pickups?: ReadonlyArray<{ created_at: string; status: string | null }> | null }, now: number): AixStateCard {
+export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "aixRows" | "viewingHistory" | "lineTasks"> & { pickups?: ReadonlyArray<{ created_at: string; status: string | null }> | null; docPickups?: ReadonlyArray<DocPickup> | null }, now: number): AixStateCard {
   const aix = [...input.aixRows].map((a) => ({ type: String(a.aix_type ?? ""), pat: (a as { check_pattern?: string | null }).check_pattern ?? null, t: Date.parse(String((a as { sent_at?: string | null }).sent_at ?? (a as { created_at?: string }).created_at ?? "")) }))
     .filter((a) => Number.isFinite(a.t) && a.t <= now).sort((a, b) => a.t - b.t);
   const last = (pred: (a: (typeof aix)[number]) => boolean) => [...aix].reverse().find(pred) ?? null;
@@ -73,6 +78,7 @@ export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "
       const pend = input.pickups.filter((x) => x.status === "pending" && Date.parse(x.created_at) <= now);
       return { pending: pend.length, newSinceBundle: lb ? pend.filter((x) => Date.parse(x.created_at) > lb.t).length : pend.length };
     })(),
+    doc: input.docPickups ? docFactsOf(input.docPickups, now) : null,
     vacating: { rooms: input.aixRows.filter((a) => Date.parse(String((a as { sent_at?: string | null }).sent_at ?? a.created_at ?? "")) <= now).reduce((n, a) => n + ((a as { prop_statuses?: string[] | null }).prop_statuses ?? []).filter((st) => st === "vacating" || st === "move_out_planned").length, 0) },
   };
 }
@@ -87,6 +93,7 @@ export function aixStateCardLine(c: AixStateCard): string {
     `管理会社の確認 開いている ${c.mgmt.openCheckTasks}件・最後の答え ${m(c.mgmt.lastMgmtAnswerMinAgo)}${c.mgmt.lastMgmtPattern ? `（${c.mgmt.lastMgmtPattern}）` : ""}`,
     ...(c.candidates.pending !== null ? [`送れる候補 ${c.candidates.pending}件（最後の束より後 ${c.candidates.newSinceBundle}件）`] : []),
     ...(c.vacating.rooms ? [`退去予定の部屋 ${c.vacating.rooms}`] : []),
+    ...(c.doc ? [docFactsLine(c.doc)] : []),
   ].join("／");
 }
 
@@ -107,6 +114,7 @@ export const CARD_FIELD_OF: ReadonlyArray<[RegExp, string]> = [
   [/募集が終わっていた|募集終了|紹介不可|物件なかった/, "estimate.checkResult"],
   [/管理会社に.*(聞いた|確認した)/, "mgmt.lastMgmtPattern"],
   [/新着|新しく募集に出た/, "candidates.newSinceBundle"],
+  [/資料に(?:書いてある|ある)/, "doc.topics"],
   [/退去予定|入居中/, "vacating.rooms"],
 ];
 /** 欠けの候補になる条件の言葉（辞書の when・lines から拾う物・札に欄が無いと「欠け」） */

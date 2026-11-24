@@ -3317,7 +3317,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     const ascMode = asc.aixStateCardMode();
     if (ascMode !== "off" && !isPostApplyStatus(convStatus)) {
       const { data: pk } = await supabase.from("property_pickups").select("created_at, status").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(60);
-      const card = asc.buildAixStateCard({ pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+      const { data: dp } = asc.aixStateCardDocOn() ? await supabase.from("property_pickups").select("property_name, created_at, terms, pdf_text, image_lines").eq("conversation_id", conversationId).eq("status", "sent").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).order("created_at", { ascending: false }).limit(20) : { data: null };
+      const card = asc.buildAixStateCard({ docPickups: dp ? (dp as never) : null, pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
       if (briefOnNow) briefInputs.aixStateCard = card;
       if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; }
     }
