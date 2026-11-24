@@ -470,6 +470,24 @@ async function addJob(): Promise<void> {
         }
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
     }
+    // 2026-11-24 作業員L（台帳 #670 の子・竹内さん「GPT の性質に合わせるのを徹底する仕組み」）: ブレイン・書き手を OpenAI で流す依頼は、
+    //   依頼の作業ツリーに使い方の表（app/lib/provider-profile.ts）があり、版が決まる時だけ積む（--force で越える）。決まった版はログと依頼に残す
+    {
+      const je = (job.env ?? {}) as Record<string, string>;
+      if (["EXAM_BRAIN_PROVIDER", "EXAM_WRITER_PROVIDER"].some((k) => String(je[k] ?? "").trim().toLowerCase() === "openai")) {
+        const pf = join(cwd, "app", "lib", "provider-profile.ts");
+        if (!existsSync(pf)) { if (!flag("force")) throw new Error("積まない: OpenAI で流す依頼だが、作業ツリーに使い方の表（app/lib/provider-profile.ts）が無い（--force で積む）"); }
+        else {
+          const { pathToFileURL } = await import("node:url");
+          const mod = (await import(pathToFileURL(pf).href)) as { examProfileVersions: (env: Record<string, string>) => { brain: string | null; writer: string | null; unknown: string[] } };
+          const v = mod.examProfileVersions(je);
+          if (v.unknown.length && !flag("force")) throw new Error(`積まない: 使い方の表に無い版を名指ししている（${v.unknown.join(",")}）`);
+          if ((String(je.EXAM_BRAIN_PROVIDER ?? "").toLowerCase() === "openai" && !v.brain) || (String(je.EXAM_WRITER_PROVIDER ?? "").toLowerCase() === "openai" && !v.writer)) { if (!flag("force")) throw new Error("積まない: OpenAI の係の版が決まらない（使い方の表を見直す）"); }
+          (job as unknown as Record<string, unknown>).providerProfiles = v;
+          log(`  使い方の表の版: ブレイン ${v.brain ?? "-"}・書き手 ${v.writer ?? "-"}`);
+        }
+      }
+    }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
       const fr = fillProblemsFromShared(spec as unknown as Array<Record<string, unknown>>, local, { addMissing: (id) => ids.includes(id) });
