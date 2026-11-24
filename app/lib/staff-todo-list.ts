@@ -846,9 +846,12 @@ export function renderCustomerV2(c: TodoCustomer, atMs: number, nums: ReadonlyMa
   // 状況・次の一手は統括ブレインの判断から（リストの側で作らない・古い時は印だけ）
   // 2026-11-24 統括役の直し②: 統括の次の手がやる事と合う時は出さない。食い違う時だけ「⚠統括は別の手」を①②より上に（スタッフが迷わないように）
   if (hasOpen) {
-    out.push(`　${conductorSituationLine(c.conductor ?? null, atMs, ROUTE_NAMES)}`);
     const cv = c.conductor ?? null;
-    if (cv && todoVsConductor(c.items.filter((i) => !i.doneAt && !i.waiting).map((i) => ({ action: i.action, checkPattern: i.checkPattern })), cv) === "mismatch") { const nx = nextStepShort(cv.nextSteps[0]); if (nx) out.push(`⚠統括は別の手: ${nx}`); }
+    const mismatch = !!cv && todoVsConductor(c.items.filter((i) => !i.doneAt && !i.waiting).map((i) => ({ action: i.action, checkPattern: i.checkPattern })), cv) === "mismatch";
+    const nx = mismatch ? nextStepShort(cv!.nextSteps[0]) : null;
+    // 食い違うのに何を確かめるか読めない時は ⚠ の行を出さず、状況の行に印だけ（2026-11-24 統括役の直し）
+    out.push(`　${conductorSituationLine(cv, atMs, ROUTE_NAMES)}${mismatch && !nx ? "・統括の手は読めない" : ""}`);
+    if (nx) out.push(`⚠統括は別の手: ${nx}`);
   }
   for (const i of c.items) {
     if (i.doneAt || i.waiting) { out.push(renderTodoItem(i, atMs)); continue; }

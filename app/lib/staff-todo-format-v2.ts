@@ -138,10 +138,6 @@ export function conductorNextLine(v: ConductorView | null): string | null {
   return s ? `統括の次の手: ${Array.from(s).slice(0, 48).join("")}${Array.from(s).length > 48 ? "…" : ""}` : null;
 }
 // 2026-11-24 統括役の直し①: 次の手は途中で切らず、動詞で終わる短い1文（30字ほど）に。LLM なしの要約・作れない時は AIX の種類の言葉
-const NEXT_FALLBACK: Record<string, string> = {
-  property_check_result: "管理会社に確認して結果を送る", property_send: "条件で物件を探して送る", estimate_sheet: "御見積書を作って送る",
-  viewing_invite: "内覧の候補日を送る", reply: "返信でお答えする",
-};
 const VERB_RE = /([^、。]{1,40}?)を([^、。を]{0,12}?)(確認|検索|探|送|回答|案内|報告|伝え|提案|調べ|お伝え|作成|作)/;
 const VERB_END: Record<string, string> = { 確認: "確認する", 検索: "検索する", 探: "探す", 送: "送る", 回答: "回答する", 案内: "案内する", 報告: "報告する", 伝え: "伝える", 提案: "提案する", 調べ: "調べる", お伝え: "お伝えする", 作成: "作成する", 作: "作る" };
 export const NEXT_SHORT_MAX = 36;
@@ -158,21 +154,36 @@ export function nextStepShort(text: string): string | null {
     obj = obj.replace(/^[^A-Za-zＡ-Ｚ]*?(?:てきた|された|した|頂いた|いただいた)(?=\S)/, "").trim();
     // 条件の並びは「条件で〇〇」だけ
     if (obj.includes("条件で")) obj = obj.slice(obj.indexOf("条件で"));
-    if (Array.from(obj).length > 14 && obj.includes("・")) { const h0 = obj.includes("の") ? obj.slice(0, obj.indexOf("の")) : ""; obj = obj.split("・").pop()!.trim(); if (h0 && /号室|d/.test(h0) && !obj.includes(h0) && Array.from(`${h0}の${obj}`).length <= 26) obj = `${h0}の${obj}`; } // 物件名（号室・数字）は残す // 並びは最後の1つ（「〜の繰上げ・2番手申込の可否」→「2番手申込の可否」）
+    if (Array.from(obj).length > 14 && obj.includes("・")) { const h0 = obj.includes("の") ? obj.slice(0, obj.indexOf("の")) : ""; obj = obj.split("・").pop()!.trim(); if (h0 && /号室|\d+階|[A-Za-z]/.test(h0) && !obj.includes(h0) && Array.from(`${h0}の${obj}`).length <= 26) obj = `${h0}の${obj}`; } // 物件名（号室・数字）は残す // 並びは最後の1つ（「〜の繰上げ・2番手申込の可否」→「2番手申込の可否」）
     if (Array.from(obj).length > 14 && obj.includes("の")) {
       const head = obj.slice(0, obj.indexOf("の")), tail = obj.slice(obj.lastIndexOf("の") + 1).split("・").pop()!.trim();
       obj = Array.from(`${head}の${tail}`).length <= 26 ? `${head}の${tail}` : tail;
     }
     if (Array.from(obj).length > 22) obj = obj.split("・").pop()!.trim();
-    if (Array.from(obj).length > 22) return NEXT_FALLBACK[nextStepAixOf(s) ?? ""] ?? null;
+    if (Array.from(obj).length > 22) return nextStepFallback(s);
     const mid = m[2].trim();
     const out = `${topic && !obj.includes(topic) ? `${topic}の` : ""}${obj}を${mid}${VERB_END[m[3]]}`;
     if (Array.from(out).length <= NEXT_SHORT_MAX) return out;
     const noTopic = `${obj}を${mid}${VERB_END[m[3]]}`;
     if (Array.from(noTopic).length <= NEXT_SHORT_MAX) return noTopic;
   }
-  const k = nextStepAixOf(s);
-  return k ? NEXT_FALLBACK[k] ?? null : null;
+  return nextStepFallback(s);
+}
+// 2026-11-24 統括役の直し: 代わりの言葉にも物件名と確かめる中身（next_steps の中の名詞）を入れる。どちらも取れない時は null（⚠ の行は出さず「統括の手は読めない」の印だけ）
+const PROP_RE = /([A-Za-zＡ-Ｚァ-ヶー一-龠々][A-Za-z0-9Ａ-Ｚ０-９ァ-ヶー一-龠々 ]{1,24}?(?:\d+号室|\d+階|号室))/;
+const NOUN_RE = /(募集状況|空き状況|空室|初期費用|ペット|申込|審査|駐車場|御見積書|見積書|入居日|内覧の日程)/;
+export function nextStepFallback(text: string): string | null {
+  const t = text.replace(/[（(][^）)]*[）)]/g, "");
+  const prop = t.match(PROP_RE)?.[1]?.trim() ?? null;
+  const noun = t.match(NOUN_RE)?.[1] ?? null;
+  const k = nextStepAixOf(t);
+  const P = prop ? `${prop}の` : "";
+  let out: string | null = null;
+  if (k === "property_check_result") out = noun ? `${P}${noun}を管理会社に確認する` : prop ? `${prop}を管理会社に確認する` : null;
+  else if (k === "estimate_sheet") out = prop ? `${P}御見積書を作って送る` : null;
+  else if (k === "viewing_invite") out = prop ? `${P}内覧の候補日を送る` : null;
+  else if (k === "property_send") out = /条件/.test(t) ? "条件で物件を探して送る" : null;
+  return out && Array.from(out).length <= NEXT_SHORT_MAX + 4 ? out : null;
 }
 
 /** next_steps の1行が指す AIX の種類（分からなければ null） */

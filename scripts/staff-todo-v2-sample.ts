@@ -62,6 +62,27 @@ const open = (c: TodoCustomer) => c.items.filter((i) => !i.doneAt && !i.waiting)
     else if (norm(m.cond) === norm(t)) followCond++;
     else neither++;
   }
+  // --takeuchi（今夜の①の組・2026-11-24 統括役の頼み）: 食い違った会話で、竹内さん本人（端末の記録）の次の一手（24時間以内の最初の通）がリストか統括のどちらに合ったか
+  const tk = { list: 0, cond: 0, neither: 0, none: 0 };
+  if (process.argv.includes("--takeuchi")) {
+    for (const m of mismatches) {
+      const from = new Date(m.at).toISOString(), to = new Date(m.at + 86400e3).toISOString();
+      const { data: ms } = await sb.from("messages").select("created_at, staff_writer, staff_writer_source, is_aix_generated").eq("conversation_id", m.cid).eq("sender", "staff").gte("created_at", from).lte("created_at", to).order("created_at").limit(40);
+      const first = ((ms ?? []) as Array<{ created_at: string; staff_writer: string | null; staff_writer_source: string | null; is_aix_generated: boolean | null }>).find((x) => x.staff_writer === "takeuchi" && x.staff_writer_source === "device");
+      if (!first) { tk.none++; continue; }
+      let move = "reply";
+      if (first.is_aix_generated) {
+        const t0 = Date.parse(first.created_at);
+        const { data: a } = await sb.from("aix_usage_logs").select("aix_type, created_at").eq("conversation_id", m.cid).gte("created_at", new Date(t0 - 10 * 60e3).toISOString()).lte("created_at", new Date(t0 + 2 * 60e3).toISOString()).order("created_at", { ascending: false }).limit(1);
+        move = (a?.[0] as { aix_type?: string } | undefined)?.aix_type ?? "aix";
+      }
+      const norm = (x: string | null) => (x === "property_recommendation" ? "property_send" : x);
+      if (m.list.map(norm).includes(norm(move))) tk.list++;
+      else if (norm(m.cond) === norm(move)) tk.cond++;
+      else tk.neither++;
+    }
+    console.log(`\n■ 食い違い ${mismatches.length}件を竹内さん本人（端末の記録）の次の一手で照らす（24時間以内の最初の通）: リスト ${tk.list}・統括 ${tk.cond}・どちらでもない ${tk.neither}・竹内さん本人の通なし ${tk.none}`);
+  }
   const avg = (x: { chars: number; lines: number; dup: number; sit: number; n: number }) => `1人あたり ${(x.chars / Math.max(1, x.n)).toFixed(0)}字・${(x.lines / Math.max(1, x.n)).toFixed(1)}行・重複 ${(x.dup / Math.max(1, x.n)).toFixed(2)}・状況の1行 ${x.n ? Math.round((x.sit / x.n) * 100) : 0}%（${x.n}人）`;
   const pc = (a: number) => `${a}（${nCust ? Math.round((a / nCust) * 100) : 0}%）`;
   console.log(`\n■ 物差し（やる事が残っている全員・2回分）\n  今の形: ${avg(tot.old)}\n  新しい形: ${avg(tot.v2)}`);
