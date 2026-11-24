@@ -39,7 +39,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   CUSTOMER_IMAGE_TASTE_WANTS: "off",
   CUSTOMER_MINDSET: "on",
   CUSTOMER_SENT_PROPERTY: "on",
-  DELIVERY_CHECK: "off",
+  DELIVERY_CHECK: "shadow",
   FACT_LEDGER_THREE: "on",
   HUMAN_LEARN_PROFILE_GUARD: "on",
   IMAGE_LABEL_1115: "on",

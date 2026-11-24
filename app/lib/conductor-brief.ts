@@ -117,10 +117,16 @@ export type ConductorBrief = {
   sure: { level: Sure; score: number; cues: SureCueKey[]; handoff: boolean };
   /** 作れなかった部品（欄の名前） */
   notYet: string[];
+  /** 2026-11-24 作業員A（台帳 #674・BRIEF_READ_EXTRA=on の時だけ）: 統括が読んでいなかった材料（物差しやブレインだけが読んでいた物）。書き手には渡さない（統括の中で読むだけ） */
+  extra?: { basis?: { purpose: string | null; keyPoint: string | null; from: "judge_basis_rec" }; clash?: Array<{ a: string; b: string; level: string }>; time_words?: Array<{ word: string; label: string }> };
 };
 
 const FACT_BASES = new Set(["conversation", "material", "company_fact", "general"]);
 const BASIS_JA: Record<string, string> = { conversation: "会話", material: "資料", company_fact: "会社の事実", general: "一般", judgement: "判断" };
+/** 2026-11-24 作業員A（台帳 #674）: 統括の指示書が、読んでいなかった材料（判断の根拠の記録・材料の食い違い・時の言葉）を読む（既定 off・書き手には渡さない） */
+export function briefReadExtraOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRIEF_READ_EXTRA ?? "").trim().toLowerCase() === "on";
+}
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const str = (v: unknown, n = 60): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
@@ -270,7 +276,21 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   // 2026-11-22 作業員M（台帳 #595）: 書き手に渡す時に要件の言葉が要るので、ask_carry.items の引用（お客様の要件の言葉・40字まで）も持つ（記録だけ・渡すのは BRIEF_CARRY_TO_WRITER=on の時）
   const caQuotes = Array.isArray(caRec?.items) ? (caRec!.items as Array<Record<string, unknown>>).filter((x) => x && typeof x.ask_id === "string" && typeof x.quote === "string").slice(0, 6).map((x) => ({ ask_id: String(x.ask_id), quote: Array.from(String(x.quote)).slice(0, 40).join(""), state: String(x.state ?? "") })) : [];
   const carry_asks = caRec ? { open: (Array.isArray(caRec.open) ? caRec.open : []).slice(0, 6) as string[], promised: (Array.isArray(caRec.promised) ? caRec.promised : []).slice(0, 6) as string[], ...(caQuotes.length ? { quotes: caQuotes } : {}) } : undefined;
-  return { main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), ...(route ? { route } : {}), decided, doubts, sure, notYet };
+  // 2026-11-24 作業員A（台帳 #674・BRIEF_READ_EXTRA=on の時だけ・既定 off＝今と1字も変わらない）: 読んでいなかった材料を統括の指示書に
+  //   #257 判断の根拠の記録（BRAIN_JUDGE_BASIS=shadow の meta.judge_basis_rec。on の時の meta.judge_basis は上の aim が前から読んでいる）
+  //   #258 材料どうしの食い違い（BRAIN_MATERIAL_CLASH の meta.material_clash.opposed）／#578 時の言葉（SITUATION_TIMELINE_WIDE で広がる meta.situation_now.timeline.words）
+  //   #152 約束の読み（PROMISE_READ_UNIFIED）は meta に置き場が無い（プロンプトの材料だけ）＝読めない。作る側が meta に残すのが先
+  const extra = briefReadExtraOn() ? (() => {
+    const out: NonNullable<ConductorBrief["extra"]> = {};
+    const jr = obj(m.judge_basis_rec);
+    if (jr && !jb) out.basis = { purpose: str(jr.purpose, 20), keyPoint: str(jr.key_point, 50) ?? str(jr.keyPoint, 50), from: "judge_basis_rec" };
+    const op = arr(obj(m.material_clash)?.opposed).map((x) => obj(x)).filter((x): x is Record<string, unknown> => !!x).slice(0, 4);
+    if (op.length) out.clash = op.map((x) => ({ a: str(obj(x.a)?.src ?? x.a, 30) ?? "?", b: str(obj(x.b)?.src ?? x.b, 30) ?? "?", level: str(x.level, 10) ?? "?" }));
+    const tw = arr(obj(obj(m.situation_now)?.timeline)?.words).map((x) => obj(x)).filter((x): x is Record<string, unknown> => !!x).slice(0, 6);
+    if (tw.length) out.time_words = tw.map((x) => ({ word: str(x.word, 20) ?? "", label: str(x.label, 30) ?? "" })).filter((x) => x.word);
+    return Object.keys(out).length ? out : null;
+  })() : null;
+  return { ...(extra ? { extra } : {}), main, facts, split, missing, fetch, open, type, order, alloc, combine, next, ...(next_concrete !== undefined ? { next_concrete } : {}), ...(next_link ? { next_link } : {}), ...(carry_asks ? { carry_asks } : {}), aim, ...(feeling ? { feeling } : {}), ...(route ? { route } : {}), decided, doubts, sure, notYet };
 }
 
 /** 指示書の欄 → 届き方の表（decided-subfields）の下の欄。文の統括と書き手へは、この下の欄の役目に当たる欄だけ渡す（表は decided-subfields が正） */
