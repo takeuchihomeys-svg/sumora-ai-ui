@@ -20,7 +20,7 @@ import { isTestConversation, isNoLineTestConversation } from "../app/lib/test-co
 import { checkLinkage } from "./check-linkage";
 import { loadLinkStatus } from "./audit-conductor-duty";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
-import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd } from "./lib/conductor-duty";
+import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd, dutyGapLinks, dutyDoneCount, dutyChanges, type DutyLedgerItem } from "./lib/conductor-duty";
 import { checkConductor, CAUSE_JA, type Cause } from "./check-conductor";
 import { checkFoundation } from "./check-foundation";
 import { checkStale } from "./check-stale";
@@ -185,6 +185,20 @@ async function main() {
       const ds = conductorDutySummary(dr);
       coreRows.push({ metric: "core:conductor_duty:have", value: ds.have, n: ds.n }, { metric: "core:conductor_duty:use", value: ds.use, n: ds.n }, { metric: "core:conductor_duty:reflect", value: ds.reflect, n: ds.n });
       lines.push(`- ${ds.line}（作業員A・#662）`);
+      // 2026-11-24 作業員A（#662）: 土台ごとの済んだ段の数（core:conductor_duty:f:<id>）と、前に書いた日からの変わり（増えた・減った土台）
+      for (const r of dr) coreRows.push({ metric: `core:conductor_duty:f:${r.id}`, value: dutyDoneCount(r), n: 3 });
+      {
+        const { data: pq } = await sb.from("quality_daily").select("day,metric,value").like("metric", "core:conductor_duty:f:%").lt("day", jstDay(now)).order("day", { ascending: false }).limit(60);
+        const rowsPq = (pq ?? []) as Array<{ day: string; metric: string; value: number | null }>;
+        const lastDay = rowsPq[0]?.day ?? null;
+        const prevMap: Record<string, number> = {}; for (const x of rowsPq.filter((y) => y.day === lastDay)) if (x.value != null) prevMap[x.metric.replace("core:conductor_duty:f:", "")] = x.value;
+        const ch = dutyChanges(dr, prevMap);
+        lines.push(lastDay ? `  - ${lastDay} からの変わり: 増えた ${ch.up.join("・") || "なし"}／減った ${ch.down.join("・") || "なし"}` : "  - 前の日の土台ごとの数がまだ無い（今日から書く）");
+        const { data: wi } = await sb.from("work_items").select("id, switch_name, stage, title").not("stage", "in", "(done,dropped)").limit(1000);
+        const links = dutyGapLinks(dr, LINKAGE_MAP, (wi ?? []) as DutyLedgerItem[]);
+        const none = links.filter((l) => !l.items.length);
+        lines.push(`  - 欠けた段 ${links.length}・次の直しが台帳にある ${links.length - none.length}${none.length ? `・台帳に無い ${none.map((l) => `${l.duty}の${l.row}`).join("・")}` : ""}`);
+      }
       const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
       for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }

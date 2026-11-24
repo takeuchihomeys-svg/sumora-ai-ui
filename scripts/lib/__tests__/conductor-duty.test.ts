@@ -1,6 +1,6 @@
 // 統括の受け持ち表（scripts/lib/conductor-duty.ts）
 // 実行: npx tsx scripts/lib/__tests__/conductor-duty.test.ts（全 PASS で exit 0）
-import { DUTY_PENDING_ROWS, CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd, dutyGapPrefix, type DutyRow } from "../conductor-duty";
+import { DUTY_PENDING_ROWS, CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, conductorDutyGapsToAdd, dutyGapPrefix, dutyGapLinks, dutyDoneCount, dutyChanges, type DutyRow } from "../conductor-duty";
 import { LINKAGE_MAP } from "../../../app/lib/linkage-map";
 
 let pass = 0, fail = 0;
@@ -27,5 +27,12 @@ const g = conductorDutyGapsToAdd(res, [`${dutyGapPrefix("C")} 前の行`]);
 ok("欠けのある土台だけ台帳へ・部品を先につなぐ案", g.length === 1 && g[0].title.startsWith(dutyGapPrefix("B")) && g[0].next.includes("X_ON") && g[0].owner === "作業員L");
 ok("同じ土台の行が開いていれば足さない", conductorDutyGapsToAdd(res, [`${dutyGapPrefix("B")} 前の行`]).length === 0);
 
+{
+  // 2026-11-24 作業員A（#662）: 欠けた段を台帳に結ぶ・昨日からの変わり
+  const res = conductorDutyOf([{ id: "x", name: "X", owner: "作業員A", have: ["r1"], use: ["conductor.compose_plan"], reflect: ["w1"] }], new Set(["r1", "conductor.compose_plan", "w1"]), { cut: new Set(["r1", "conductor.compose_plan"]), off: new Set(), unmeasured: new Set() });
+  const links = dutyGapLinks(res, [{ id: "r1", switches: ["R1_ON"], readerSwitches: [] }, { id: "conductor.compose_plan", switches: [], readerSwitches: [] }], [{ id: 5, switch_name: "R1_ON", stage: "built_off", title: "r1" }, { id: 673, switch_name: "COMPOSE_PLAN_REUSE", stage: "built_off", title: "設計図" }, { id: 9, switch_name: "R1_ON", stage: "done", title: "済" }]);
+  ok("欠けた段を台帳の開いている行に結ぶ（設計図は #673）", links.find((l) => l.row === "r1")?.items.join(",") === "5" && links.find((l) => l.row === "conductor.compose_plan")?.items.join(",") === "673", links);
+  ok("済んだ段の数と昨日からの変わり", dutyDoneCount(res[0]) === 1 && dutyChanges(res, { x: 0 }).up[0] === "X（0→1）" && dutyChanges(res, { x: 2 }).down[0] === "X（2→1）" && dutyChanges(res, {}).up.length === 0);
+}
 console.log(`conductor-duty: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

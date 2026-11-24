@@ -72,3 +72,37 @@ export function conductorDutyGapsToAdd(res: readonly DutyResult[], openTitles: r
         next: `今ある既定 off の部品を先につなぐ（${r.parts.join("・") || "連携の地図の切れている行の持ち主に確かめる"}）・新しく作るのは最後（P0 3041baaa）` };
     });
 }
+
+// ── 2026-11-24 作業員A（台帳 #662・統括役の頼み）: 欠けた段を台帳の行に結ぶ・昨日からの変わり ─────────────────
+/** 欠けた段の地図の行 → 台帳の行（スイッチの名前が地図の行の作る側・読む側にある行／設計図の行は COMPOSE_PLAN_REUSE・今どこの使うは #657） */
+export type DutyLedgerItem = { id: number; switch_name: string | null; stage: string; title: string };
+export type DutyGapLink = { duty: string; owner: string; stage: DutyStage; row: string; items: number[] };
+export function dutyGapLinks(res: readonly DutyResult[], map: ReadonlyArray<{ id: string; switches: string[]; readerSwitches: string[]; readers?: string[] }>, items: readonly DutyLedgerItem[]): DutyGapLink[] {
+  const open = items.filter((x) => x.stage !== "done" && x.stage !== "dropped");
+  const byId = new Map(map.map((r) => [r.id, r]));
+  const out: DutyGapLink[] = [];
+  for (const r of res) for (const s of ["have", "use", "reflect"] as DutyStage[]) {
+    if (r.stages[s].state !== "欠け") continue;
+    for (const row of r.stages[s].bad) {
+      const m = byId.get(row);
+      const sws = new Set([...(m?.switches ?? []), ...(m?.readerSwitches ?? [])]);
+      const ids = new Set(open.filter((x) => x.switch_name && sws.has(x.switch_name)).map((x) => x.id));
+      // 設計図（compose_plan・compose_roles）は判断を新しく作った番にしか作られない＝COMPOSE_PLAN_REUSE（#673）の直しに結ぶ
+      if (/^conductor\.compose_(plan|roles)$/.test(row) || m?.readers?.includes("conductor.compose_plan")) for (const x of open.filter((y) => y.switch_name === "COMPOSE_PLAN_REUSE")) ids.add(x.id);
+      // 今どこの物差し（next.situation_grasp）は台帳 #657
+      if (row === "next.situation_grasp") for (const x of open.filter((y) => y.id === 657)) ids.add(x.id);
+      out.push({ duty: r.name, owner: r.owner, stage: s, row, items: [...ids].sort((a, b) => a - b) });
+    }
+  }
+  return out;
+}
+/** 土台ごとの済んだ段の数（0〜3・毎朝の1枚の core:conductor_duty:f:<id>） */
+export function dutyDoneCount(r: DutyResult): number {
+  return (["have", "use", "reflect"] as DutyStage[]).filter((s) => r.stages[s].state === "済").length;
+}
+/** 前に書いた日からの変わり: 済んだ段が増えた・減った土台 */
+export function dutyChanges(res: readonly DutyResult[], prev: Readonly<Record<string, number>>): { up: string[]; down: string[] } {
+  const up: string[] = [], down: string[] = [];
+  for (const r of res) { const p = prev[r.id]; if (p == null) continue; const n = dutyDoneCount(r); if (n > p) up.push(`${r.name}（${p}→${n}）`); else if (n < p) down.push(`${r.name}（${p}→${n}）`); }
+  return { up, down };
+}

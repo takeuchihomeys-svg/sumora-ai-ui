@@ -5,7 +5,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
 import { runLinkageWatch } from "../app/lib/linkage-watch-server";
-import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, DUTY_JA, type LinkStatus, type DutyStage } from "./lib/conductor-duty";
+import { CONDUCTOR_DUTY, conductorDutyOf, conductorDutySummary, dutyGapLinks, DUTY_JA, type LinkStatus, type DutyStage, type DutyLedgerItem } from "./lib/conductor-duty";
 
 /** 連携の地図の見張りの最新（作業員P の loadLinkageStatus と同じ読み） */
 export async function loadLinkStatus(sb: SupabaseClient): Promise<(LinkStatus & { at: string }) | null> {
@@ -33,4 +33,10 @@ if (/audit-conductor-duty\.ts$/.test(process.argv[1] ?? "")) (async () => {
   console.log(`見張りの最新: ${st?.at ?? "なし"}`);
   console.log(sm.line);
   for (const r of res) console.log(`  ${r.name}（${r.owner}）: ${(["have", "use", "reflect"] as DutyStage[]).map((s) => `${DUTY_JA[s]} ${r.stages[s].state}${r.stages[s].bad.length ? `（${r.stages[s].bad.join("・")}）` : ""}`).join("・")}${r.parts.length ? `｜先につなぐ部品 ${r.parts.join("・")}` : ""}`);
+  // 2026-11-24 作業員A（#662）: 欠けた段を台帳の行に結ぶ（台帳は work_items の開いている行だけ・軽い読み）
+  const { data: wi } = await sb.from("work_items").select("id, switch_name, stage, title").not("stage", "in", "(done,dropped)").limit(1000);
+  const links = dutyGapLinks(res, LINKAGE_MAP, (wi ?? []) as DutyLedgerItem[]);
+  console.log(`\n■ 欠けた段 → 次の直し（台帳の番号）`);
+  for (const l of links) console.log(`  ${l.duty}（${l.owner}）・${DUTY_JA[l.stage]}が欠け（${l.row}）→ ${l.items.length ? l.items.map((x) => `#${x}`).join("・") : "台帳に無い"}`);
+  console.log(`  台帳に無い欠け: ${links.filter((l) => !l.items.length).length}/${links.length}`);
 })().catch((e) => { console.error(e); process.exit(1); });
