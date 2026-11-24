@@ -20,12 +20,14 @@ walk("app");
   const items = (data ?? []) as Array<{ id: number; title: string; owner: string | null; switch_name: string | null }>;
   // 直近7日の LLM の平均（action×model）と1日の番の数（軽い読み・日付で絞る）
   const since = new Date(Date.now() - 7 * 86400e3).toISOString();
+  const byModel = new Map<string, number>(); // `${action}|${model}` → 件数（7日）
   const usage = new Map<string, { n: number; inu: number; cr: number; cw: number; out: number; ms: number; model: string }>();
   for (let from = 0; ; from += 1000) {
     const { data: u, error: e } = await sb.from("llm_usage_logs").select("action, model, input_uncached, cache_read, cache_write, output_tokens, thinking_tokens, duration_ms").gte("created_at", since).range(from, from + 999);
     if (e) throw e;
     for (const r of (u ?? []) as Array<Record<string, number | string | null>>) {
       const k = String(r.action ?? "?");
+      { const km = `${k}|${String(r.model ?? "")}`; byModel.set(km, (byModel.get(km) ?? 0) + 1); }
       const s = usage.get(k) ?? { n: 0, inu: 0, cr: 0, cw: 0, out: 0, ms: 0, model: String(r.model ?? "") };
       s.n++; s.inu += Number(r.input_uncached ?? 0); s.cr += Number(r.cache_read ?? 0); s.cw += Number(r.cache_write ?? 0); s.out += Number(r.output_tokens ?? 0) + Number(r.thinking_tokens ?? 0); s.ms += Number(r.duration_ms ?? 0);
       usage.set(k, s);
@@ -33,6 +35,14 @@ walk("app");
     if (!u || u.length < 1000) break;
   }
   const perDay = (a: string) => (usage.get(a)?.n ?? 0) / 7;
+  // 2026-11-24 統括役の確かめ: 段ごとに実際にどのモデルで呼ばれたか（直近7日の llm_usage_logs）。Claude と DeepSeek（LLM_ALT_ACTIONS で回る物）の割合で単価を混ぜる
+  const GROUP_ACTIONS: Record<string, string[]> = { brain: ["brain_fresh", "brain_full", "brain_fresh_claude"], reply: ["reply_generate", "reply_generate_claude_writer"], aix: ["aix_template"] };
+  // 100万トークンあたり: Claude Sonnet 5（入力 $2・キャッシュの読み $0.20・5分書き $2.5）／DeepSeek pro（入力 $0.66・読み $0.022・書きの単価なし＝入力と同じ）
+  const PRICE = { claude: { in: 2, read: 0.2, write: 2.5 }, deepseek: { in: 0.66, read: 0.022, write: 0.66 } };
+  const mixOf = (g: string) => { let c = 0, d = 0; for (const [km, n] of byModel) { const [a, m] = km.split("|"); if (!GROUP_ACTIONS[g].includes(a) || m === "test-blocked") continue; if (/claude/.test(m)) c += n; else if (/deepseek/.test(m)) d += n; } const t = c + d; return { claude: t ? c / t : 0, deepseek: t ? d / t : 0, n: t }; };
+  const mixes = Object.fromEntries(Object.keys(GROUP_ACTIONS).map((g) => [g, mixOf(g)])) as Record<string, { claude: number; deepseek: number; n: number }>;
+  /** 1字あたりの $（kind＝in／read／write・1字のトークン数 tpc（Claude）・DeepSeek は 1字≈1トークン） */
+  const usdPerChar = (g: string, kind: "in" | "read" | "write", tpc: number) => (mixes[g].claude * PRICE.claude[kind] * tpc + mixes[g].deepseek * PRICE.deepseek[kind] * 1.0) / 1e6;
   const turnsPerDay: Record<string, number> = {
     brain: perDay("brain_fresh") + perDay("brain_full") + perDay("brain_fresh_claude"),
     reply: perDay("reply_generate") + perDay("reply_generate_claude_writer"),
@@ -52,7 +62,7 @@ walk("app");
     if (m[1]) return m[1];
     const c = txt.match(new RegExp(`${m[2]}\\s*=\\s*["']([\\w:.-]+)["']`)); return c ? c[1] : null;
   };
-  type CostRow = { id: number; title: string; owner: string | null; switch_name: string | null; kind: "zero" | "input" | "call" | "unknown"; evidence: string; perDayUsd: number | null; pos?: "前" | "後ろ" | "未確認"; waits?: boolean; module?: string; action?: string | null; perCall?: number | null; msAvg?: number | null; running?: boolean; inChars?: number; inNames?: string[]; inUsdDay?: number | null };
+  type CostRow = { id: number; title: string; owner: string | null; switch_name: string | null; kind: "zero" | "input" | "call" | "unknown"; evidence: string; perDayUsd: number | null; pos?: "前" | "後ろ" | "未確認"; waits?: boolean; module?: string; action?: string | null; perCall?: number | null; msAvg?: number | null; running?: boolean; inChars?: number; inNames?: string[]; inUsdDay?: number | null; inUsdDayLo?: number | null; frontVaries?: boolean };
   // 関数・定数の定義の本文（次の export／function まで）
   const defOf = (name: string): string | null => {
     const re = new RegExp(`(?:export\\s+)?(?:function\\s+${name}\\b|const\\s+${name}\\s*[:=])`);
@@ -89,16 +99,29 @@ walk("app");
       perDayUsd = perCall == null ? null : running ? perCall * u!.n / 7 : where ? perCall * turnsPerDay[where] : null;
     }
     // 入力増: 足す文字列の字数の上限（静的）→ 1日の $（日本語は1字≈1トークンと見る・後ろ＝キャッシュに乗らない入力の単価・前＝固定の文ならキャッシュの単価）
-    let inChars: number | undefined, inNames: string[] | undefined, inUsdDay: number | null = null;
+    let inChars: number | undefined, inNames: string[] | undefined, inUsdDay: number | null = null, inUsdDayLo: number | null = null, frontVaries: boolean | undefined;
     if (v.kind === "input") {
       const site = sites.find((x) => v.evidence.startsWith(`${x.file}:${x.line}`)) ?? sites[0];
-      const est = inputCharsUpper(winOf(site), defOf);
+      // 前（指示文の大きな1行に ${X_ON ? 欄 : ""} で入る形）は、そのスイッチの定数の式の中だけを数える（同じ行のほかの欄を混ぜない）
+      const constNames = sites.map((x) => x.text.match(/const\s+([A-Z][A-Z0-9_]*)\s*=\s*\w+\(/)?.[1]).filter((x): x is string => !!x);
+      let frontExpr: string | null = null;
+      if (v.pos === "前" && constNames.length) {
+        const re = new RegExp(`\\$\\{\\s*(?:${constNames.join("|")})\\s*\\?\\s*([^:}]+?)\\s*:`, "g");
+        const ex = [...winOf(site).matchAll(re)].map((m) => m[1]);
+        if (ex.length) frontExpr = ex.join(" ");
+      }
+      // 前で、そのスイッチの式が取れない（指示文の大きな1行に直接入る）時は、行のほかの欄を混ぜないよう未確認にする
+      const est = v.pos === "前" && !frontExpr ? { chars: 0, names: ["未確認（指示文の1行の中の式が取れない）"] } : inputCharsUpper(frontExpr ?? winOf(site), defOf);
       inChars = est.chars; inNames = est.names;
       const where = /brain-core/.test(site.file) ? "brain" : /generate-reply/.test(site.file) ? "reply" : /aix-template-generate/.test(site.file) ? "aix" : null;
-      const pricePerTok = v.pos === "前" ? 0.022 / 1e6 : 0.66 / 1e6; // DeepSeek pro（app/lib/llm-price.ts の read／in）
-      inUsdDay = est.chars && where ? est.chars * pricePerTok * turnsPerDay[where] : null;
+      // 前（指示文の固定部分）: 文が毎番同じ（定数だけ）ならキャッシュの読みの単価・毎番変わるなら書きの単価（Claude は 1.25倍）が番ごとに掛かる
+      const siteText = winOf(site);
+      // 毎番変わるか: 式の中に小文字の変数（関数の呼び出しでない）があれば変わる。定数（大文字）と文字列だけなら毎番同じ
+      frontVaries = v.pos === "前" && !frontExpr ? undefined : v.pos === "前" ? (frontExpr != null ? /\b[a-z][A-Za-z0-9_]*\b(?!\s*\()/.test(frontExpr.replace(/"[^"]*"|`[^`]*`/g, "")) : /\$\{[^}]*\b[a-z][A-Za-z0-9_]*\b/.test(siteText.replace(/\$\{\s*[A-Z][A-Z0-9_]*_ON\s*\?/g, ""))) : undefined;
+      const kindP: "in" | "read" | "write" = v.pos === "前" ? (frontVaries ? "write" : "read") : "in";
+      if (est.chars && where) { inUsdDayLo = est.chars * usdPerChar(where, kindP, 1.1) * turnsPerDay[where]; inUsdDay = est.chars * usdPerChar(where, kindP, 1.5) * turnsPerDay[where]; }
     }
-    return { ...it, kind: v.kind, pos: v.pos, waits: v.waits, module: v.module, action, perCall, msAvg, perDayUsd, running, evidence: v.evidence, inChars, inNames, inUsdDay };
+    return { ...it, kind: v.kind, pos: v.pos, waits: v.waits, module: v.module, action, perCall, msAvg, perDayUsd, running, evidence: v.evidence, inChars, inNames, inUsdDay, inUsdDayLo, frontVaries };
   });
   const c = (k: string) => rows.filter((r) => r.kind === k).length;
   console.log(`■ built_off ${rows.length}行を on にした時の費用の種類: ${["zero", "input", "call", "unknown"].map((k) => `${COST_JA[k as keyof typeof COST_JA]} ${c(k)}`).join("・")}`);
@@ -114,8 +137,11 @@ walk("app");
   console.log(`\n■ 上位10行`);
   for (const r of priced.slice(0, 10)) console.log(`  #${r.id} ${r.switch_name}: $${(r.perDayUsd ?? 0).toFixed(2)}/日（1回 $${(r.perCall ?? 0).toFixed(4)}・${r.action}・平均 ${r.msAvg ?? "?"}ms${r.waits ? "・本番で待つ" : ""}${(r as { running?: boolean }).running ? "・今も呼ばれている" : ""}）${r.evidence}`);
   const ins = rows.filter((r) => r.kind === "input");
-  const inTot = ins.reduce((s, r) => s + (r.inUsdDay ?? 0), 0);
-  console.log(`\n■ 入力増 ${ins.length}行の見込み（足す文字列の字数の上限・静的・条件が合う番だけ足すので上限）: 字数が出せた ${ins.filter((r) => r.inChars).length}行・1日 $${inTot.toFixed(2)}（毎番足すと見た上限）`);
-  for (const r of ins.filter((x) => x.inUsdDay != null).sort((a, b) => (b.inUsdDay ?? 0) - (a.inUsdDay ?? 0)).slice(0, 10)) console.log(`  #${r.id} ${r.switch_name}: 上限 ${r.inChars}字・${r.pos}・$${(r.inUsdDay ?? 0).toFixed(3)}/日（${(r.inNames ?? []).join("・")}）`);
+  const inTot = ins.reduce((s, r) => s + (r.inUsdDay ?? 0), 0), inTotLo = ins.reduce((s, r) => s + (r.inUsdDayLo ?? 0), 0);
+  console.log(`\n■ 段ごとの実際のモデルの割合（直近7日）: ${Object.entries(mixes).map(([g, m]) => `${g} Claude ${Math.round(m.claude * 100)}%・DeepSeek ${Math.round(m.deepseek * 100)}%（${m.n}回）`).join("／")}`);
+  const fr = ins.filter((r) => r.pos === "前");
+  console.log(`  キャッシュの前に入る ${fr.length}行: 毎番同じ文（読みの単価）${fr.filter((r) => r.frontVaries === false).length}・毎番変わる（書きの単価が番ごと）${fr.filter((r) => r.frontVaries).length}${fr.filter((r) => r.frontVaries).length ? `（${fr.filter((r) => r.frontVaries).map((r) => `#${r.id}`).join("・")}）` : ""}`);
+  console.log(`\n■ 入力増 ${ins.length}行の見込み（足す文字列の字数の上限・静的・条件が合う番だけ足すので上限）: 字数が出せた ${ins.filter((r) => r.inChars).length}行・1日 $${inTotLo.toFixed(2)}〜$${inTot.toFixed(2)}（Claude の1字 1.1〜1.5トークン・段ごとの実際のモデルの割合・毎番足すと見た上限）`);
+  for (const r of ins.filter((x) => x.inUsdDay != null).sort((a, b) => (b.inUsdDay ?? 0) - (a.inUsdDay ?? 0)).slice(0, 10)) console.log(`  #${r.id} ${r.switch_name}: 上限 ${r.inChars}字・${r.pos}${r.pos === "前" ? (r.frontVaries ? "（毎番変わる）" : "（毎番同じ）") : ""}・$${(r.inUsdDayLo ?? 0).toFixed(3)}〜$${(r.inUsdDay ?? 0).toFixed(3)}/日（${(r.inNames ?? []).join("・")}）`);
   if (arg("json")) writeFileSync(arg("json"), JSON.stringify(rows, null, 1));
 })().catch((e) => { console.error(e); process.exit(1); });
