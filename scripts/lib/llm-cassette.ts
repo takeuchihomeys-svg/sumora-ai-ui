@@ -296,7 +296,9 @@ export function setCassetteTag(tag: Record<string, string>): void {
 //   段ごとに効く: 1段目が同じなら main の答え → それを材料にした2段目の要求も同じなら main の答え …（最初に違った段から本当に呼ぶ）。
 //   全部の呼び出しが main の答えで済んだ回＝「入力が同じ」（答え・判定も main と同じ＝悪化・改善と数えない）。
 /** 1回の呼び出しの控え（pk＝要求の印・key＝録音の置き場の鍵・sha＝返した答えの本文の印・src＝どこから） */
-export type CallRef = { pk: string; key: string; sha: string; action: string | null; src: "pin" | "replay" | "record" | "miss" | "fail" };
+export type CallRef = { pk: string; key: string; sha: string; action: string | null; src: "pin" | "replay" | "record" | "miss" | "fail";
+  /** 2026-11-24 作業員L（#670・切り替えが効いたかの確かめ）: 応答のモデル名と id（読み切りの形だけ・1文字ずつの形は無い） */
+  respModel?: string | null; respId?: string | null };
 const callLog = new Map<string, CallRef[]>();
 const pinUsed = new Map<string, Set<number>>();
 let pins: Map<string, CallRef[]> | null = null;
@@ -461,6 +463,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
       const ref = logCall({ pk, key, sha: "", action, src: "record" });
       const done = clone.text().then(async (text) => {
         ref.sha = shaOfBody(text);
+        try { const rj = JSON.parse(text) as { model?: unknown; id?: unknown }; ref.respModel = typeof rj.model === "string" ? rj.model : null; ref.respId = typeof rj.id === "string" ? rj.id : null; } catch { /* 1文字ずつの形 */ }
         const usage = usageOfResponse(text, ct);
         const usd = await usdOfUsage(usage, at).catch(() => 0);
         bump(action, (t) => { t.real++; t.realUsd += usd; });
