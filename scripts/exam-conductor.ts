@@ -79,6 +79,7 @@ import { bisectPlan } from "./lib/exam-bisect";
 import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
 import { syncExamWorktree } from "./lib/exam-worktree-sync";
 import { preflightReachOf, preflightLines, readPriorLedger, preflightGate, preflightGateMode } from "./lib/exam-preflight-reach";
+import { examNarrowOn, narrowProblems, baseMajorityOf } from "./lib/exam-narrow";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -467,6 +468,20 @@ async function addJob(): Promise<void> {
           for (let i = ids.length - 1; i >= 0; i--) if (gate.drop.includes(ids[i])) ids.splice(i, 1);
           job.only = ids.join(",");
           log(`  積む前の関所: 材料0の問題 ${gate.drop.join(",")} を外した（残り ${ids.length}問・--force で外さない）`);
+        }
+        // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」・統括役の頼み）: 問題を自動で絞る（scripts/lib/exam-narrow.ts・既定 on・EXAM_NARROW=off／--no-narrow で止める）。
+        //   残すのは 材料が入る問題・前の回が無い問題・今の off で外れている問題（守りはこの後に足す）。材料の対応表に無いスイッチが on の時は絞らない
+        if (examNarrowOn() && !flag("no-narrow") && !flag("force") && ids.length) {
+          const R2 = join(cwd, "scripts", "brain-exam", "results");
+          const mains = existsSync(R2) ? readdirSync(R2).filter((f) => /^main-.*\.jsonl$/.test(f)).map((f) => ({ f, t: statSync(join(R2, f)).mtimeMs })).sort((x, y) => y.t - x.t).slice(0, 8) : [];
+          const seen = new Set<string>(); const baseRows: Array<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }> = [];
+          for (const m of mains) { const got = new Set<string>(); for (const line of readFileSync(join(R2, m.f), "utf8").split("\n")) { if (!line) continue; try { const r = JSON.parse(line) as { id: string }; if (!ids.includes(r.id) || seen.has(r.id)) continue; baseRows.push(r as never); got.add(r.id); } catch { /* */ } } for (const g of got) seen.add(g); }
+          const nr = narrowProblems({ ids, onSwitches: onSw, prior: readPriorLedger(R2, new Set(ids)), base: baseMajorityOf(baseRows) });
+          if (nr.applied) {
+            for (let i = ids.length - 1; i >= 0; i--) if (nr.drop.includes(ids[i])) ids.splice(i, 1);
+            job.only = ids.join(",");
+            log(`  問題の絞り: ${nr.drop.length}問を外した（材料0・off で当たり）・残り ${ids.length}問（--no-narrow で外さない）`);
+          } else log(`  問題の絞り: しない（${nr.reason}）`);
         }
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
     }
