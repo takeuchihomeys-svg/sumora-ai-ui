@@ -202,6 +202,8 @@ async function main() {
       const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
       for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（統括役の決め・新しい cron は作らない）: 今どこの読み違い（判断の駅×その後の一手・7日・軽い読み）をここで数えて quality_daily に（--write の時だけ書く）
+    try { const { runMisreadMove } = await import("./audit-route-misread-move"); await runMisreadMove({ sb: sb as never, days: 7, write: process.argv.includes("--write"), quiet: true }); } catch (e) { lines.push(`- 今どこの読み違いの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（台帳 #608・統括役の頼み）: ブレインは地図をどこまで使えているか（地図の根2つ・今どこの読み違い・組の本当の一致の、最新の数と前の日からの変わり・軽い読み）
     try {
       const ms = ["map:route:progress_60d:value", "map:route:next_match_60d:value", "route:station_misread_move", "growth:combo:本当の一致"];
