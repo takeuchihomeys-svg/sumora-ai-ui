@@ -376,10 +376,13 @@ async function main() {
     // 2026-11-23 作業員A（#624）: 本当の一致（combo_net・今の数は変えずに並べる・竹内さんに出す数は2週間並べてから切り替えを聞く）
     if (cd.net) {
       const x = cd.net;
+      // 2026-11-24 作業員A（統括役の頼み）: 今の組の一致と本当の一致を並べた1行・本当の外れの分け（並び・組の形・数え方の誤り）
+      lines.push(`  - 組の一致 ${cd.sameRate ?? "—"}%（今の数え方・${cd.n}番）｜本当の一致 ${x.rate ?? "—"}%（${x.n}番）｜本当の外れ ${x.real.length}: 並び ${x.realKinds?.order ?? 0}・組の形 ${x.realKinds?.shape ?? 0}・数え方の誤り ${x.realKinds?.counting ?? 0}`);
+      for (const k of ["order", "shape", "counting"] as const) growthRows.push({ metric: `growth:combo:本当の外れ:${k}`, value: x.realKinds?.[k] ?? 0, n: x.n, key: "first_move", higherIsBetter: false, label: `返信と AIX の組の本当の外れ（${k}）` });
       growthRows.push({ metric: "growth:combo:本当の一致", value: x.rate, n: x.n, key: "first_move", higherIsBetter: true, label: "返信と AIX の組の本当の一致（端末で竹内さん本人・2段の一致を一致に・決定／割れ／少数側／時刻で送る物を外す・14日）" });
       lines.push(`  - 本当の一致（combo_net）: ${x.rate ?? "—"}%（${x.same}/${x.n}・2段の一致 ${x.twoStageFirst}・外した 端末でない ${x.excluded.writer}／決定 ${x.excluded.decided}／割れ ${x.excluded.split}／少数側 ${x.excluded.minority}／時刻 ${x.excluded.timed}・本当の外れ ${x.real.length}${x.real.length ? `（${x.real.slice(0, 5).map((r) => r.conv).join("・")}）` : ""}）`);
     }
-    if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員M・台帳 #405・#32`);
+    if (dc) growthFix.push(`返信と AIX の組の一致が${dc === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${cd.sameRate}%）→ 作業員A・台帳 #405・#32・#624`);
     lines.push(`- 組の外れ（14日・竹内さん本人の番 ${cd.n}）: AIX→返信の外れ ${cd.aixToReply}（${Object.entries(cd.aixToReplyByKind).map(([k, n]) => `${k} ${n}`).join("・") || "—"}）・返信→AIX の外れ ${cd.replyToAix}・2つ目の AIX の取りこぼし ${cd.secondAixMiss}｜会話 ${cd.examples.comboMiss.join(",") || "—"}`);
     lines.push(`- 要件の帳面（14日・竹内さん本人の番・記録なしを除く ${cd.ask.n}）: 合う ${cd.ask.合う率 ?? "—"}%・取りこぼし ${cd.ask.取りこぼし}・重ね ${cd.ask.重ね}・取り違え ${cd.ask.取り違え}・種類違い ${cd.ask.種類違い}｜外れの会話 ${cd.ask.misses.slice(0, 8).map((x) => `${x.conv}（${x.cls}）`).join(",") || "—"}（作業員M・台帳 #520）`);
   }
