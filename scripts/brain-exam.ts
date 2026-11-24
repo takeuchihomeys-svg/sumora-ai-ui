@@ -1304,7 +1304,14 @@ async function prepareMainBaseline(): Promise<boolean> {
     const keyOf = (b: { stageKeys?: { brain: string; draft: string } | null; commit?: string }) => (b.stageKeys ?? (b.commit ? examStageKeys(b.commit, stageMemo) : null))?.[rel] ?? null;
     for (const id of [...plan.run]) {
       const cands = sibs.flatMap((n) => { const f = join(B.BASELINE_DIR, n, `${id}.json`); if (!existsSync(f)) return []; try { return [{ ...(JSON.parse(readFileSync(f, "utf8")) as import("./lib/brain-exam-baseline").BaselineFile<ResultRow>), dir: n }]; } catch { return []; } });
-      const hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      let hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf, envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+      // 2026-11-24 作業員A（統括役の頼み・既定 off）: 段の鍵が違っても、前の commit からの変更が「この構成で off のまま動かない所」だけ（scripts/lib/exam-offonly-key.ts・迷えば作り直す）なら持ち越す。
+      //   過去7晩に当てた数は scripts/audit-exam-offonly-key.ts。=on の時だけ: EXAM_BASELINE_OFFONLY_KEY=on
+      if (!hit && process.env.EXAM_BASELINE_OFFONLY_KEY === "on") {
+        const { offOnlyBetween } = await import("./lib/exam-offonly-key");
+        hit = B.findCarryOver(cands, { hash: hashOf.get(id)!, alt: altOf.get(id) }, { key: sk[rel], keyOf: (b) => (b.commit && b.commit !== commit && offOnlyBetween(b.commit, commit, cfg.env, rel).safe ? sk[rel] : null), envFp: "" }, REPEAT, { acceptComplete: REPEAT_FLAKY || BASE_FLAKY || !!REPS_OF, maxAgeMs });
+        if (hit) console.log(`  前の main（${String(hit.commit).slice(0, 7)}）からの変更は off の所だけ → ${id} の前を持ち越す（EXAM_BASELINE_OFFONLY_KEY）`);
+      }
       if (!hit) continue;
       const { dir: from, ...rest } = hit;
       B.saveBaseline<ResultRow>(dir, { ...rest, ...(vk ? { versionKey: vk } : {}), stageKeys: rest.stageKeys ?? (rest.commit ? examStageKeys(rest.commit, stageMemo) : null), carriedFrom: from });
