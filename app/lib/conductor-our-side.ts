@@ -100,6 +100,8 @@ export function vacatingRoomsOf(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Reado
  *   ③ 送った物件（束／1件の回数・最後はいつ）
  */
 /** 確かめ済みの事実の欄（弱い所 575）は別のスイッチ: OUR_SIDE_CHECKED=on（既定 off）。塊そのもの（CONDUCTOR_OUR_SIDE_BRAIN）の測りと混ぜない */
+/** 2026-11-24 作業員A: 統括の行の「束 N回」に送った件数も並べる（既定 off） */
+export const sendCountByItemsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SEND_COUNT_BY_ITEMS ?? "").trim().toLowerCase() === "on";
 export const ourSideCheckedOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OUR_SIDE_CHECKED ?? "").trim().toLowerCase() === "on";
 export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: ReadonlyArray<OurSideAix>; nowMs: number; withChecked?: boolean }): string {
   const msgs = [...o.msgs].filter((m) => Date.parse(m.created_at) <= o.nowMs).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -129,7 +131,10 @@ export function ourSideBlock(o: { msgs: ReadonlyArray<OurSideMsg>; aix: Readonly
   // ③ 送った物件
   const sends = aix.filter((a) => a.aix_type === "property_send"), recs = aix.filter((a) => a.aix_type === "property_recommendation");
   const lastSend = [...sends, ...recs].sort((a, b) => (a.sent_at ?? a.created_at).localeCompare(b.sent_at ?? b.created_at)).pop();
-  lines.push(sends.length || recs.length ? `・送った物件: 束 ${sends.length}回・1件のオススメ ${recs.length}回（最後 ${ago(o.nowMs, lastSend!.sent_at ?? lastSend!.created_at)}）` : "・送った物件: まだ無い");
+  // 2026-11-24 作業員A（統括役の決め・SEND_COUNT_BY_ITEMS=on の時だけ・既定 off＝1字も変わらない）: 同じ日の回をまたいで1回の AIX で送る（PICKUP_SEND_SAME_DAY）と束の回が少なく出るので、送った件数（各 AIX の物件名の数の和）も並べる
+  const sendItems = sends.reduce((n, a) => n + (a.property_names ?? []).filter(Boolean).length, 0);
+  const itemsNote = sendCountByItemsOn() && sends.length && sendItems ? `（計 ${sendItems}件）` : "";
+  lines.push(sends.length || recs.length ? `・送った物件: 束 ${sends.length}回${itemsNote}・1件のオススメ ${recs.length}回（最後 ${ago(o.nowMs, lastSend!.sent_at ?? lastSend!.created_at)}）` : "・送った物件: まだ無い");
   // ⑤ 退去予定の部屋（11/12 作業員7 の切り分け・q057: 塊が「募集中」だけを見せ、退去予定＝室内を内覧できない部屋に内覧調整の AIX を勧める読みになっていた）
   const vacating = vacatingRoomsOf({ msgs, aix, nowMs: o.nowMs });
   if (vacating.length) lines.push(`・退去予定の部屋（室内の内覧は退去後）: ${vacating.join("・")}`);

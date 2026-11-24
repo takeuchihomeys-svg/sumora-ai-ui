@@ -81,6 +81,7 @@ import { catalogBlockForBrain, isSceneUncertain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { checkOrderMode } from "@/app/lib/check-order";
 import { conductorBriefMode } from "@/app/lib/conductor-brief";
+import { conductorMaterialIndexOn, buildMaterialIndex } from "@/app/lib/conductor-material-index";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
 import { otherCandidatesReadOn, readOtherCandidates, pickOtherCandidatesExamples, otherCandidatesBrainText } from "@/app/lib/other-candidates-read";
 import { areaExcludeReadOn, readAreaExclude, pickAreaExcludeExamples, areaExcludeBrainText } from "@/app/lib/area-exclude-read";
@@ -1843,6 +1844,8 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
+      // 2026-11-24 作業員A（#675）: 材料の目録は指示書の extra.materials だけに置く（入力の写しに二重に残さない）
+      { const bi = mm.conductor_brief_inputs as Record<string, unknown> | undefined; if (bi && "materials" in bi) delete bi.materials; }
       // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 指示書に地図の欄（ROUTE_TO_BRIEF=on の時だけ）が入った番の印
       if ((brief as { route?: unknown }).route) mm.material_marks = { ...((mm.material_marks as Record<string, number> | undefined) ?? {}), route_brief: 1 };
       if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
@@ -4421,6 +4424,20 @@ ${history}`;
   const maskNames = [opts?.customerName, ...knownNamesForMask, ...knownCallNamesForMask, ...partyAliasesForMask.filter((s) => s.length >= 3)];
   const partyShortNames = brainRoutesAlt ? [opts?.customerName, ...partyAliasesForMask] : [];
   const maskBrain = (s: string) => maskPII(maskHonorificNames(s, partyShortNames), maskNames);
+  // 2026-11-24 作業員A（#675・統括役の決め・CONDUCTOR_MATERIAL_INDEX=on かつ指示書を作る番だけ・既定 off＝何も足さない）: 材料の目録。
+  //   上の見張り（brain:blocks）と同じ名前で、この番のブレインの入力に有った材料の名前・字数・要点（24字・名前は伏せる）を指示書の入力に。LLM の入力は1字も変えない
+  if (briefOnNow && conductorMaterialIndexOn()) {
+    try {
+      briefInputs.materials = buildMaterialIndex({
+        prevMeta: prevMetaText, status: statusText, timing: timingText, flags: flagsText, aixHistory: aixHistoryText, ledger: ledgerText,
+        sceneEvidence: sceneEvidenceText, judgeExamples: judgeExamplesText, routeType: routeTypeText, cond: condText, profile: profileText,
+        aiSummary: aiSummaryNote, scheduled: scheduledText, tasks: tasksText, viewings: viewingsText, checkpoint: checkpointText,
+        ragKnowledge: ragKnowledgeText, sentProps: sentPropsText, propertySearch: propertySearchText, customerState: customerStateBlockText,
+        parallelSearch: parallelSearchBrainText, companyFacts: companyFactsText, sendReplyTiming: sendReplyTimingText, promise: promiseBrainText,
+        seeMore: seeMoreBrainText, applyRoute: applyRouteText, applyReadiness: applyReadinessText, appealTiming: appealTimingText,
+      }, { split: ["customerState"], marks: materialMarks }).map((x) => ({ ...x, g: maskBrain(x.g) }));
+    } catch (e) { console.warn(JSON.stringify({ tag: "conductor:material-index-failed", error: e instanceof Error ? e.message : String(e) })); }
+  }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({
