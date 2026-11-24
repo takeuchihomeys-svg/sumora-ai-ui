@@ -12,14 +12,23 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
 const POST = new Set(["applying", "application", "screening", "approved", "contract", "closed_won", "closed_lost"]);
 
 /** 2026-11-24 作業員A（統括役の決め）: 毎朝の self-improve から呼ぶ（新しい cron は作らない）。quiet の時は画面に出さず、書いた行を返す */
-export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; write?: boolean; quiet?: boolean; withReply?: boolean } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
+export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; write?: boolean; quiet?: boolean; withReply?: boolean; withBackfill?: boolean } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
   const days = o.days ?? 7;
   const console = o.quiet ? { log: (..._a: unknown[]) => {} } : globalThis.console;
   const sb = o.sb ?? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const { data: logs, error } = await sb.from("brain_decision_logs").select("conversation_id, created_at, ar:digest->>ar").gte("created_at", since).not("digest->>ar", "is", null).order("created_at").limit(3000);
   if (error) throw error;
-  const rows0 = (logs ?? []) as Array<{ conversation_id: string; created_at: string; ar: string | null }>;
+  const rows0 = (logs ?? []) as Array<{ conversation_id: string; created_at: string; ar: string | null; src?: "backfill" }>;
+  // 2026-11-25 作業員A（統括役の決め）: #676 で古い判断に書き足した駅（conversations.last_brain_meta.apply_route・src=backfill）も読み合わせる。
+  //   当てた時刻（basis）を判断の時刻とみる（basis_mode=now の物は 11/24 の時点＝その後の一手が出るほど照らせる番が増える）。digest.ar の判断と同じ会話でも別の時刻の判断として数える
+  if (o.withBackfill ?? true) {
+    const { data: bf } = await sb.from("conversations").select("id, ar:last_brain_meta->apply_route").eq("last_brain_meta->apply_route->>src", "backfill").limit(2000);
+    for (const x of (bf ?? []) as Array<{ id: string; ar: { node?: string | null; branch?: string | null; basis?: string | null } | null }>) {
+      if (!x.ar?.node || !x.ar.basis || Date.parse(x.ar.basis) < Date.parse(since)) continue;
+      rows0.push({ conversation_id: x.id, created_at: x.ar.basis, ar: `${x.ar.node}${x.ar.branch ? `|${x.ar.branch}` : ""}`, src: "backfill" });
+    }
+  }
   const convIds = [...new Set(rows0.map((r) => r.conversation_id))];
   const convs = new Map<string, { status: string | null; post: boolean; backfill: boolean }>();
   const sends = new Map<string, Array<{ t: number; aix: string }>>();
@@ -40,7 +49,7 @@ export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; wr
     for (const x of (c ?? []) as Array<{ id: string; status: string | null; is_post_apply: boolean | null; src: string | null }>) convs.set(x.id, { status: x.status, post: !!x.is_post_apply || (!!x.status && POST.has(x.status)), backfill: x.src === "backfill" });
     for (const x of (a ?? []) as Array<{ conversation_id: string; aix_type: string | null; created_at: string }>) { if (!x.aix_type) continue; const l = sends.get(x.conversation_id) ?? []; l.push({ t: Date.parse(x.created_at), aix: String(x.aix_type).split("/")[0] }); sends.set(x.conversation_id, l); }
   }
-  type Out = { conv: string; at: string; node: string | null; branch: string | null; move: string | null; hours: number | null; kind: MoveKind; cause: MoveCause };
+  type Out = { src: "digest" | "backfill"; conv: string; at: string; node: string | null; branch: string | null; move: string | null; hours: number | null; kind: MoveKind; cause: MoveCause };
   let viaReply = 0;
   const out: Out[] = [];
   let post = 0;
@@ -56,12 +65,13 @@ export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; wr
     const before = list.filter((s) => s.t < t && t - s.t <= 30 * 864e5).map((s) => s.aix);
     const hours = next ? Math.round(((next.t - t) / 36e5) * 10) / 10 : null;
     const v = misreadMoveOf({ node: ar.node, branch: ar.branch, moveAix: next?.aix ?? null, hoursAfter: hours, sentBefore: before });
-    out.push({ conv: r.conversation_id.slice(0, 8), at: r.created_at, node: ar.node, branch: ar.branch, move: next ? `${next.by === "reply" ? "返信≈" : ""}${next.aix}` : null, hours, ...v });
+    out.push({ src: r.src ?? "digest", conv: r.conversation_id.slice(0, 8), at: r.created_at, node: ar.node, branch: ar.branch, move: next ? `${next.by === "reply" ? "返信≈" : ""}${next.aix}` : null, hours, ...v });
   }
   viaReply = out.filter((o) => o.move?.startsWith("返信≈") && o.kind !== "unknown" && o.kind !== "timed").length;
   const nm = (n: string | null, b: string | null) => `${n ? (ROUTE_NODES as Record<string, { name: string }>)[n]?.name ?? n : "?"}${b ? `／分:${(ROUTE_BRANCHES as Record<string, { name: string }>)[b]?.name ?? b}` : ""}`;
   const cnt = (f: (o: Out) => boolean) => out.filter(f).length;
   console.log(`■ 統括の判断の「今どこ」× その後の一手（${days}日・digest.ar のある判断 ${rows0.length}・申込以降で外す ${post}・照らした ${out.length}）`);
+  { const bfAll = rows0.filter((x) => x.src === "backfill").length, bfOut = out.filter((x) => x.src === "backfill"); if (!o.quiet) console.log(`  #676 の書き足し（last_brain_meta・basis の時点）: ${bfAll}会話・照らした ${bfOut.length}・その後の一手で照らせた ${bfOut.filter((x) => x.kind !== "unknown" && x.kind !== "timed").length}`); }
   for (const k of ["match", "behind", "ahead", "other_path", "timed", "unknown"] as MoveKind[]) console.log(`  ${MOVE_KIND_JA[k]}: ${cnt((o) => o.kind === k)}`);
   console.log(`  照らせた番のうち手打ちの返信で照らした番: ${viaReply}`);
   console.log(`  駅の一手でない ${cnt((o) => o.kind === "unknown")} の内訳: 30時間、駅の一手として読める AIX・返信が無い（答えだけの返信・送付なしを含む） ${cnt((o) => o.kind === "unknown" && !o.move)}・一手はあるが駅の一手として読めない ${cnt((o) => o.kind === "unknown" && !!o.move)}`);
