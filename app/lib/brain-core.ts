@@ -4443,7 +4443,7 @@ ${history}`;
   if (briefOnNow && !isPostApplyStatus(convStatus)) {
     try {
       const asc = await import("@/app/lib/aix-state-card");
-      if (asc.aixStateCardMode() !== "off") briefInputs.aixStateCard = asc.buildAixStateCard({ messages: brainLedgerInput.messages, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+      if (asc.aixStateCardMode() !== "off") briefInputs.aixStateCard = asc.buildAixStateCard({ messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
     } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   }
   const maskedStableText = maskBrain(stableKnowledgeText);
