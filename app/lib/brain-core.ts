@@ -1843,6 +1843,8 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const mm = meta as unknown as Record<string, unknown>;
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
+      // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 指示書に地図の欄（ROUTE_TO_BRIEF=on の時だけ）が入った番の印
+      if ((brief as { route?: unknown }).route) mm.material_marks = { ...((mm.material_marks as Record<string, number> | undefined) ?? {}), route_brief: 1 };
       if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
       if (mm.judge_basis && typeof mm.judge_basis === "object") Object.assign(mm.judge_basis as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
       else if (mm.judge_basis_rec && typeof mm.judge_basis_rec === "object") Object.assign(mm.judge_basis_rec as Record<string, unknown>, { doubts: brief.doubts.map((d) => d.kind), sure: brief.sure.level });
@@ -4284,7 +4286,10 @@ ${sh}`;
         viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
+      // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 道筋の言い方の1行（APPLY_ROUTE_PATH_LINE）・駅の中の状態（APPLY_ROUTE_SUBSTATE）が材料に入った番
+      { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
+      { const sub = applyRouteText.length - ar.text.length; if (sub > 0) materialMarks.route_substate = sub; }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
