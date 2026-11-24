@@ -86,6 +86,7 @@ import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type Mi
 import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 import { worthGate, loadOffPass } from "./lib/exam-worth";
+import { nightZeroCostDue, nightZeroCostSteps } from "./lib/exam-night-jobs";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -1335,6 +1336,20 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           const r = spawnSync("npx", ["tsx", "--env-file=.env.local", "scripts/owner-base-nightly.ts"], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: 10 * 60_000 });
           const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
           log(`取りこぼしの網（owner-base-nightly）: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
+        }
+        // 2026-11-25 作業員A（統括役の決め・新しい cron は足さない）: 晩の初めに1回、費用0の仕事（駅ごとの元の数・駅ごとの物差し・AIX の外れの数）を流す。
+        //   順に流し、前が落ちても次は流す。失敗しても試験は止めない（scripts/lib/exam-night-jobs.ts・止める EXAM_NIGHT_ZERO_COST=off）
+        const nzFile = join(MARKS, "night-zero-cost-last.json");
+        const nz = nightZeroCostDue(readJson<{ key?: string } | null>(nzFile, null)?.key ?? null, Date.now(), process.env);
+        if (nz.due) {
+          mkdirSync(MARKS, { recursive: true });
+          writeFileSync(nzFile, JSON.stringify({ key: nz.key, at: new Date().toISOString() })); // 先に印＝失敗しても同じ晩に繰り返さない
+          for (const st of nightZeroCostSteps(join(MARKS, `route-progress-60d-${nz.key}.json`))) {
+            const t0 = Date.now();
+            const r = spawnSync("npx", ["tsx", "--env-file=.env.local", ...st.args], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: st.timeoutMin * 60_000 });
+            const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
+            log(`晩の費用0の仕事・${st.name}: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
+          }
         }
         // 2026-11-21 作業員N（統括役の確かめ: quality_daily に growth:*・core:*・found:* が1行も無かった＝毎朝の1枚を流す所が無かった）:
         //   self-improve --write（全部・LLM なし）を JST 6:30〜8:59 に1日1回（流せなかった日は 22時以降）。失敗しても試験は止めない
