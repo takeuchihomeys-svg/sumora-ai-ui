@@ -245,3 +245,21 @@ export function firstTwoSameAsBase(cur: ReadonlyArray<PassPath>, baseRows: Reado
   const bPath = bs.filter((r) => r.path?.ok ?? r.score?.path).length * 2 > bs.length;
   return cur.slice(0, 2).every((x) => x.pass === bPass && x.path === bPath);
 }
+
+/**
+ * 2026-11-24 作業員L（竹内さん 11/24「なんでこんなに試験にお金が必要なのか」・統括役の頼み a・回数の段取り）:
+ *   前（main）の回が2回以上あって合格も道も全部そろっている（割れていない）問題は、今の1回目が前と同じ（合格も道も）なら2回目から回さない。
+ *   直近7晩の答案（30組・125問・208回）に当てて: 今の回 8.7% 減・悪化した20問の見落とし 0。
+ *   前が割れていなくても「1回目が同じなら止める」だけの形（前の割れを見ない）は 19% 減だが悪化を3問見落とした＝取らない（H の 11/21 と同じ結論）。
+ *   止める EXAM_REPS_ONE_IF_SAME=off
+ */
+export function repsOneIfSameOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_REPS_ONE_IF_SAME ?? "").trim().toLowerCase() !== "off";
+}
+export function firstSameAsUnanimousBase(cur: ReadonlyArray<PassPath>, baseRows: ReadonlyArray<BaseRowLite>): boolean {
+  const bs = baseRows.filter((r) => !r.error);
+  if (bs.length < 2 || !cur.length) return false;
+  const pp = bs.map(passPathOf);
+  if (!pp.every((x) => x.pass === pp[0].pass && x.path === pp[0].path)) return false;
+  return cur[0].pass === pp[0].pass && cur[0].path === pp[0].path;
+}
