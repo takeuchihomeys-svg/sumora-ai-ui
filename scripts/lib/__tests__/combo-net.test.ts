@@ -1,6 +1,6 @@
 // 返信と AIX の組の本当の一致（scripts/lib/combo-net.ts）
 // 実行: npx tsx scripts/lib/__tests__/combo-net.test.ts（全 PASS で exit 0）
-import { comboNetOf, comboNetMarkOf, type ComboNetTurn } from "../combo-net";
+import { comboNetOf, comboNetMarkOf, type ComboNetTurn , comboRealKindOf } from "../combo-net";
 
 let pass = 0, fail = 0;
 const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else { fail++; console.error(`✗ ${name}`, d); } };
@@ -32,5 +32,9 @@ ok("2分より離れた番は印なし", comboNetMarkOf({ conv: "0330a81a", at: 
 ok("割れ・少数側は地図の印から（分単位の時刻も読む）", comboNetMarkOf({ conv: "2d7548d5", at: "2026-11-09T07:52:30Z" }, [], [{ conv: "2d7548d5", at: "2026-11-09T07:52", side: "split" }]) === "split"
   && comboNetMarkOf({ conv: "2d7548d5", at: "2026-11-09T07:52:30Z" }, [], [{ conv: "2d7548d5", at: "2026-11-09T07:52", side: "n_short" }]) === null);
 
+// 2026-11-24 作業員A: 本当の外れの分け
+if (comboRealKindOf("aix_then_reply", "reply_then_aix_quick") !== "order") throw new Error("並び");
+if (comboRealKindOf("reply_only", "aix_only") !== "order" && comboRealKindOf("reply_only", "aix_then_reply") !== "shape") throw new Error("組の形");
+if (comboRealKindOf("promise_then_aix_later", "reply_then_aix_quick") !== "counting" || comboRealKindOf(null, "reply_only") !== "counting") throw new Error("数え方");
 console.log(`combo-net: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

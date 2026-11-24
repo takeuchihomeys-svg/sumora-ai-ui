@@ -49,6 +49,22 @@ export function misreadMoveOf(i: MoveInput): { kind: MoveKind; cause: MoveCause 
   }
   return { kind: "ahead", cause: "misread" };
 }
+/**
+ * 2026-11-24 作業員A（#657 の続き・照らせる番を増やす）: 手打ちの返信の締めを、同じ働きの AIX の一手として読む（読めない返信は null）。
+ *   お申込みのご案内→申込の後押し・内覧のご案内／日程を伺う→内覧の候補日・御見積書を作る→見積書・ピックアップしてお送り→物件を送る・確認させて頂きます→物件確認した
+ *   答えだけ・問いだけ・お待ちしております は駅の一手として読まない（作らない側に倒す）
+ */
+export function replyAsMove(text: string | null | undefined): string | null {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!t.trim()) return null;
+  if (/お申込み?(?:頂|いただ|下さ|ください|され)|お申込みで(?:お部屋を?)?(?:抑|押さ)え/.test(t)) return "application_push";
+  if (/ご内覧|内覧(?:頂|いただ|のご案内|させて)|ご案内させて頂|ご都合(?:の)?(?:よろしい|良い)(?:お日にち|日)/.test(t)) return "viewing_invite";
+  if (/御見積書|お見積/.test(t) && /(?:作成|お送り)/.test(t)) return "estimate_sheet";
+  if (/ピックアップ(?:して|させて)|(?:お部屋|物件)を?(?:お送り|お探し)させて頂/.test(t)) return "property_send";
+  if (/(?:管理会社|募集状況|空室)[^。！!]{0,20}確認(?:させて頂|致し|いたし|して)/.test(t)) return "property_check_result";
+  return null;
+}
+
 /** 毎朝の1枚の行（型ごとの割合・n は照らせた番＝unknown と timed を除く） */
 export function misreadMoveMetricRows(rows: ReadonlyArray<{ kind: MoveKind }>): Array<{ metric: string; value: number | null; n: number }> {
   const judged = rows.filter((r) => r.kind !== "unknown" && r.kind !== "timed");

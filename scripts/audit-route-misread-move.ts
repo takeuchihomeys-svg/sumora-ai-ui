@@ -5,7 +5,7 @@
 // 2026-11-24 作業員A（統括役の頼み）
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { parseAr, misreadMoveOf, misreadMoveMetricRows, MOVE_KIND_JA, MOVE_CAUSE_JA, type MoveKind, type MoveCause } from "../app/lib/route-misread-move";
+import { parseAr, misreadMoveOf, misreadMoveMetricRows, replyAsMove, MOVE_KIND_JA, MOVE_CAUSE_JA, type MoveKind, type MoveCause } from "../app/lib/route-misread-move";
 import { ROUTE_NODES, ROUTE_BRANCHES } from "../app/lib/apply-route-map";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -21,9 +21,16 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
   const convIds = [...new Set(rows0.map((r) => r.conversation_id))];
   const convs = new Map<string, { status: string | null; post: boolean; backfill: boolean }>();
   const sends = new Map<string, Array<{ t: number; aix: string }>>();
+  // 2026-11-24 #657 の続き: 手打ちの返信も、締めが駅の一手として読める物は一手に数える（--with-reply・既定で入れる・止める --no-reply）
+  const replies = new Map<string, Array<{ t: number; aix: string }>>();
+  const WITH_REPLY = !process.argv.includes("--no-reply");
   const from = new Date(Date.parse(since) - 30 * 864e5).toISOString();
   for (let i = 0; i < convIds.length; i += 80) {
     const ch = convIds.slice(i, i + 80);
+    if (WITH_REPLY) {
+      const { data: ms } = await sb.from("messages").select("conversation_id, sender, text, created_at, is_aix_generated").in("conversation_id", ch).eq("sender", "staff").gte("created_at", since).order("created_at").limit(5000);
+      for (const m of (ms ?? []) as Array<{ conversation_id: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>) { if (m.is_aix_generated) continue; const mv = replyAsMove(m.text); if (!mv) continue; const l = replies.get(m.conversation_id) ?? []; l.push({ t: Date.parse(m.created_at), aix: mv }); replies.set(m.conversation_id, l); }
+    }
     const [{ data: c }, { data: a }] = await Promise.all([
       sb.from("conversations").select("id, status, is_post_apply, src:last_brain_meta->apply_route->>src").in("id", ch),
       sb.from("aix_usage_logs").select("conversation_id, aix_type, created_at").in("conversation_id", ch).gte("created_at", from).order("created_at").limit(5000),
@@ -32,6 +39,7 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
     for (const x of (a ?? []) as Array<{ conversation_id: string; aix_type: string | null; created_at: string }>) { if (!x.aix_type) continue; const l = sends.get(x.conversation_id) ?? []; l.push({ t: Date.parse(x.created_at), aix: String(x.aix_type).split("/")[0] }); sends.set(x.conversation_id, l); }
   }
   type Out = { conv: string; at: string; node: string | null; branch: string | null; move: string | null; hours: number | null; kind: MoveKind; cause: MoveCause };
+  let viaReply = 0;
   const out: Out[] = [];
   let post = 0;
   for (const r of rows0) {
@@ -40,16 +48,21 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
     const ar = parseAr(r.ar); if (!ar) continue;
     const t = Date.parse(r.created_at);
     const list = sends.get(r.conversation_id) ?? [];
-    const next = list.find((s) => s.t > t && s.t - t <= 30 * 36e5);
+    // 一手＝判断の後30時間以内の最初の AIX か、駅の一手として読める手打ちの返信の早い方
+    const cand = [...list.map((x) => ({ ...x, by: "aix" })), ...(replies.get(r.conversation_id) ?? []).map((x) => ({ ...x, by: "reply" }))].filter((x) => x.t > t && x.t - t <= 30 * 36e5).sort((x, y) => x.t - y.t);
+    const next = cand[0];
     const before = list.filter((s) => s.t < t && t - s.t <= 30 * 864e5).map((s) => s.aix);
     const hours = next ? Math.round(((next.t - t) / 36e5) * 10) / 10 : null;
     const v = misreadMoveOf({ node: ar.node, branch: ar.branch, moveAix: next?.aix ?? null, hoursAfter: hours, sentBefore: before });
-    out.push({ conv: r.conversation_id.slice(0, 8), at: r.created_at, node: ar.node, branch: ar.branch, move: next?.aix ?? null, hours, ...v });
+    out.push({ conv: r.conversation_id.slice(0, 8), at: r.created_at, node: ar.node, branch: ar.branch, move: next ? `${next.by === "reply" ? "返信≈" : ""}${next.aix}` : null, hours, ...v });
   }
+  viaReply = out.filter((o) => o.move?.startsWith("返信≈") && o.kind !== "unknown" && o.kind !== "timed").length;
   const nm = (n: string | null, b: string | null) => `${n ? (ROUTE_NODES as Record<string, { name: string }>)[n]?.name ?? n : "?"}${b ? `／分:${(ROUTE_BRANCHES as Record<string, { name: string }>)[b]?.name ?? b}` : ""}`;
   const cnt = (f: (o: Out) => boolean) => out.filter(f).length;
   console.log(`■ 統括の判断の「今どこ」× その後の一手（${days}日・digest.ar のある判断 ${rows0.length}・申込以降で外す ${post}・照らした ${out.length}）`);
   for (const k of ["match", "behind", "ahead", "other_path", "timed", "unknown"] as MoveKind[]) console.log(`  ${MOVE_KIND_JA[k]}: ${cnt((o) => o.kind === k)}`);
+  console.log(`  照らせた番のうち手打ちの返信で照らした番: ${viaReply}`);
+  console.log(`  駅の一手でない ${cnt((o) => o.kind === "unknown")} の内訳: 30時間、駅の一手として読める AIX・返信が無い（答えだけの返信・送付なしを含む） ${cnt((o) => o.kind === "unknown" && !o.move)}・一手はあるが駅の一手として読めない ${cnt((o) => o.kind === "unknown" && !!o.move)}`);
   for (const m of misreadMoveMetricRows(out)) console.log(`  ${m.metric}: ${m.value ?? "—"}%（${m.n}番）`);
   console.log(`\n■ 読み違いの型 × 駅 × 原因（上位）`);
   const g = new Map<string, number>();

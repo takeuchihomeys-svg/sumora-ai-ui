@@ -24,12 +24,28 @@ export type ComboNet = {
   n: number; same: number; rate: number | null;
   twoStageFirst: number;
   excluded: { writer: number; decided: number; split: number; minority: number; timed: number };
-  real: Array<{ conv: string; at: string; brain: string | null; takeuchi: string | null }>;
+  real: Array<{ conv: string; at: string; brain: string | null; takeuchi: string | null; kind?: ComboRealKind }>;
+  /** 2026-11-24 作業員A（統括役の頼み）: 本当の外れの分け（並び・組の形・数え方の誤り） */
+  realKinds?: Record<ComboRealKind, number>;
 };
+export type ComboRealKind = "order" | "shape" | "counting";
+export const COMBO_REAL_KIND_JA: Record<ComboRealKind, string> = { order: "並び（同じ物の順が違う）", shape: "組の形（AIX の有る無し・数が違う）", counting: "数え方の誤り（同じ形を時間の窓・記録の欠けで別に数えた）" };
+/** 組の中身: 返信と AIX の数と、どちらが先か（promise_then_aix_later と reply_then_aix_quick は同じ「返信が先・AIX が後」） */
+const COMBO_PARTS: Record<string, { reply: number; aix: number; first: "reply" | "aix" }> = {
+  reply_only: { reply: 1, aix: 0, first: "reply" }, aix_only: { reply: 0, aix: 1, first: "aix" }, aix_then_reply: { reply: 1, aix: 1, first: "aix" },
+  reply_then_aix_quick: { reply: 1, aix: 1, first: "reply" }, promise_then_aix_later: { reply: 1, aix: 1, first: "reply" }, aix_then_aix: { reply: 0, aix: 2, first: "aix" },
+};
+/** 本当の外れ1つを分ける（純関数）: 片方が読めない／同じ形（時間の窓の違いだけ）＝数え方・同じ数で順が違う＝並び・数が違う＝組の形 */
+export function comboRealKindOf(brain: string | null, takeuchi: string | null): ComboRealKind {
+  const b = brain ? COMBO_PARTS[brain] : undefined, t = takeuchi ? COMBO_PARTS[takeuchi] : undefined;
+  if (!b || !t) return "counting";
+  if (b.reply === t.reply && b.aix === t.aix) return b.first === t.first ? "counting" : "order";
+  return "shape";
+}
 export const TIMED_FIRST_AIX = new Set(["greeting_viewing"]);
 
 export function comboNetOf(turns: ReadonlyArray<ComboNetTurn>): ComboNet {
-  const out: ComboNet = { n: 0, same: 0, rate: null, twoStageFirst: 0, excluded: { writer: 0, decided: 0, split: 0, minority: 0, timed: 0 }, real: [] };
+  const out: ComboNet = { n: 0, same: 0, rate: null, twoStageFirst: 0, excluded: { writer: 0, decided: 0, split: 0, minority: 0, timed: 0 }, real: [], realKinds: { order: 0, shape: 0, counting: 0 } };
   for (const t of turns) {
     if (!t.device) { out.excluded.writer++; continue; }
     const twoStage = !t.matched && t.brain === "promise_then_aix_later" && t.takeuchi === "reply_only";
@@ -38,7 +54,9 @@ export function comboNetOf(turns: ReadonlyArray<ComboNetTurn>): ComboNet {
     if (TIMED_FIRST_AIX.has(kind)) { out.excluded.timed++; continue; }
     if (t.mark) { out.excluded[t.mark]++; continue; }
     out.n++;
-    out.real.push({ conv: t.conv, at: t.at, brain: t.brain, takeuchi: t.takeuchi });
+    const rk = comboRealKindOf(t.brain, t.takeuchi);
+    out.real.push({ conv: t.conv, at: t.at, brain: t.brain, takeuchi: t.takeuchi, kind: rk });
+    out.realKinds![rk]++;
   }
   out.rate = out.n ? Math.round((out.same / out.n) * 1000) / 10 : null;
   return out;
