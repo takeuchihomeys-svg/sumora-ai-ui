@@ -10,6 +10,7 @@ import {
 import { loadReapplyStates, type ReapplyConvRow } from "@/app/lib/reapply-customer-server";
 import { loadParallelSecondActive } from "@/app/lib/post-apply";
 import { PARALLEL_STATUSES, parallelSecondEnabled } from "@/app/lib/parallel-second";
+import { staffTodoFormatV2On, conductorViewOf } from "@/app/lib/staff-todo-format-v2";
 import { type TodoTargetRow, type TodoDeliveryRow, type OtherConvRow, type OtherPcRow, todoTargetMergeEnabled, todoSonotaMergeEnabled, pickOtherDaily } from "@/app/lib/staff-todo-list";
 import type { TodoConditionRow } from "@/app/lib/staff-todo-instruction";
 import type { TodoPrioritySignal } from "@/app/lib/staff-todo-priority";
@@ -307,6 +308,24 @@ export async function loadHubSignals(sb: SupabaseClient, ids: ReadonlyArray<stri
   return out;
 }
 
+/**
+ * 2026-11-24 作業員A（竹内さん 11/24「統括ブレインと連携して」・STAFF_TODO_FORMAT_V2=on の時だけ）: やる事が残っているお客様の、統括ブレインの最後の判断の欄だけを読む
+ *   （apply_route・next_steps・situation_now.promises_open・analyzed_msg_ts・1回・載っている会話だけ）。古いか（最後の判断の後にお客様の通）は読んだ通で決める
+ */
+export async function attachConductorViews(sb: SupabaseClient, list: TodoList, input: Pick<TodoInput, "messages">): Promise<void> {
+  if (!staffTodoFormatV2On()) return;
+  const ids = list.customers.filter((c) => c.items.some((i) => !i.doneAt && !i.waiting)).map((c) => c.conversationId).slice(0, 150);
+  if (!ids.length) return;
+  try {
+    const { data } = await sb.from("conversations").select("id, ar:last_brain_meta->apply_route, ns:last_brain_meta->next_steps, po:last_brain_meta->situation_now->promises_open, ts:last_brain_meta->>analyzed_msg_ts").in("id", ids);
+    const byId = new Map(((data ?? []) as Array<{ id: string; ar: unknown; ns: unknown; po: unknown; ts: string | null }>).map((r) => [r.id, r]));
+    for (const c of list.customers) {
+      const r = byId.get(c.conversationId); if (!r) continue;
+      const lastCust = input.messages.filter((m) => m.conversation_id === c.conversationId && m.sender === "customer").reduce<string | null>((m, x) => (!m || x.created_at > m ? x.created_at : m), null);
+      c.conductor = conductorViewOf({ apply_route: r.ar, next_steps: r.ns, situation_now: { promises_open: r.po }, analyzed_msg_ts: r.ts }, lastCust);
+    }
+  } catch (e) { console.warn("[staff-todo] conductor views:", e instanceof Error ? e.message : String(e)); }
+}
 export async function loadStaffTodoList(sb: SupabaseClient, atMs: number = Date.now(), opts: StaffTodoLoadOptions = {}): Promise<TodoList> {
   const fast = opts.fastLoad ?? staffTodoFastLoadEnabled();
   const timer = opts.timer ?? createStageTimer();
@@ -315,20 +334,21 @@ export async function loadStaffTodoList(sb: SupabaseClient, atMs: number = Date.
   const input = await loadStaffTodoInput(sb, atMs, { ...opts, fastLoad: fast, timer });
   const first = buildStaffTodoList(input);
   timer.mark("build");
-  if (!(opts.hubScore ?? staffTodoHubScoreEnabled())) { report({ hub: "off" }); return first; }
+  if (!(opts.hubScore ?? staffTodoHubScoreEnabled())) { report({ hub: "off" }); await attachConductorViews(sb, first, input); return first; }
   // やる事が残っているお客様（新着確認だけの人は除く）のハブを読み、並びの点に足して組み立て直す
   const ids = first.customers.filter((c) => c.items.some((i) => !i.doneAt && i.source !== "target_new_arrival")).map((c) => c.conversationId);
-  if (!ids.length) { report({ hub: 0 }); return first; }
+  if (!ids.length) { report({ hub: 0 }); await attachConductorViews(sb, first, input); return first; }
   const base0 = opts.hubBudgetMs ?? Number(process.env.STAFF_TODO_HUB_BUDGET_MS ?? 20_000);
   const base = Number.isFinite(base0) ? base0 : 20_000;
   // 速い読み方: ハブの予算を残り時間から（締め切りが無ければ今まで通り）。残りが少なければ読まない
   const budget = fast ? hubBudgetMs({ baseMs: base, nowMs: Date.now(), deadlineAtMs: opts.deadlineAtMs ?? null }) : base;
-  if (budget <= 0) { report({ hub: "skipped_no_time", ids: ids.length }); return first; }
+  if (budget <= 0) { report({ hub: "skipped_no_time", ids: ids.length }); await attachConductorViews(sb, first, input); return first; }
   const decisions = linkConductorTodoEnabled() ? new Map<string, ConductorDecision>() : undefined;
   const signals = await loadHubSignals(sb, ids, atMs, budget, decisions, { hardStop: fast });
   timer.mark("hub");
   const out = buildStaffTodoList({ ...input, signals }, decisions?.size ? { conductor: conductorTodoOrder(decisions) } : {});
   timer.mark("rebuild");
+  await attachConductorViews(sb, out, input); // 2026-11-24 作業員A（STAFF_TODO_FORMAT_V2・既定 off）
   report({ hub: Object.keys(signals).length, ids: ids.length, hubBudgetMs: budget });
   return out;
 }
