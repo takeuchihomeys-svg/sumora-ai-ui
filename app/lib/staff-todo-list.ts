@@ -35,7 +35,7 @@ import {
 import { TARGET_SCHEDULE_LINES } from "./target-list-format";
 import { farMoveInOfTurns, farMoveInWaitText, contactYmdOf, type MoveInTurn } from "./far-move-in-todo";
 import { todoTwoLineEnabled, todoItemTitle, todoItemNextStep } from "./staff-todo-two-line";
-import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, conductorSituationLine, conductorNextLine, type ConductorView } from "./staff-todo-format-v2";
+import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, conductorSituationLine, nextStepShort, todoVsConductor, type ConductorView } from "./staff-todo-format-v2";
 
 const DAY = 86_400_000;
 
@@ -844,7 +844,12 @@ export function renderCustomerV2(c: TodoCustomer, atMs: number, nums: ReadonlyMa
   const hasOpen = c.items.some((i) => !i.doneAt && !i.waiting);
   const out = [v2Header(c.accountLabel, { maxOverdueDays: c.maxOverdueDays ?? 0, why: c.why, hasOpen })];
   // 状況・次の一手は統括ブレインの判断から（リストの側で作らない・古い時は印だけ）
-  if (hasOpen) { out.push(`　${conductorSituationLine(c.conductor ?? null, atMs, ROUTE_NAMES)}`); const nx = conductorNextLine(c.conductor ?? null); if (nx) out.push(`　${nx}`); }
+  // 2026-11-24 統括役の直し②: 統括の次の手がやる事と合う時は出さない。食い違う時だけ「⚠統括は別の手」を①②より上に（スタッフが迷わないように）
+  if (hasOpen) {
+    out.push(`　${conductorSituationLine(c.conductor ?? null, atMs, ROUTE_NAMES)}`);
+    const cv = c.conductor ?? null;
+    if (cv && todoVsConductor(c.items.filter((i) => !i.doneAt && !i.waiting).map((i) => ({ action: i.action, checkPattern: i.checkPattern })), cv) === "mismatch") { const nx = nextStepShort(cv.nextSteps[0]); if (nx) out.push(`⚠統括は別の手: ${nx}`); }
+  }
   for (const i of c.items) {
     if (i.doneAt || i.waiting) { out.push(renderTodoItem(i, atMs)); continue; }
     const n = nums.get(i.key);

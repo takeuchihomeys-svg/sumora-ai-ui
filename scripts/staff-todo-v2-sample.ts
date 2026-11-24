@@ -38,7 +38,7 @@ const open = (c: TodoCustomer) => c.items.filter((i) => !i.doneAt && !i.waiting)
       nCust++;
       const cv = c.conductor ?? null;
       if (cv && !cv.stale && !cv.node && !cv.nextSteps.length) emptyField++;
-      const r = todoVsConductor(open(c).map((i) => i.action), cv);
+      const r = todoVsConductor(open(c).map((i) => ({ action: i.action, checkPattern: i.checkPattern })), cv);
       vs[r]++;
       if (r === "mismatch") mismatches.push({ cid: c.conversationId, at, list: [...new Set(open(c).map((i) => i.action ?? "reply"))], cond: cv ? nextStepAixOf(cv.nextSteps[0]) : null });
     }

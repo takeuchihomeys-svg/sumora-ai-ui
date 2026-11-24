@@ -137,6 +137,44 @@ export function conductorNextLine(v: ConductorView | null): string | null {
   const s = v.nextSteps[0].replace(/^\s*Step\s*\d+[^:：]*[:：]\s*/i, "").trim();
   return s ? `統括の次の手: ${Array.from(s).slice(0, 48).join("")}${Array.from(s).length > 48 ? "…" : ""}` : null;
 }
+// 2026-11-24 統括役の直し①: 次の手は途中で切らず、動詞で終わる短い1文（30字ほど）に。LLM なしの要約・作れない時は AIX の種類の言葉
+const NEXT_FALLBACK: Record<string, string> = {
+  property_check_result: "管理会社に確認して結果を送る", property_send: "条件で物件を探して送る", estimate_sheet: "御見積書を作って送る",
+  viewing_invite: "内覧の候補日を送る", reply: "返信でお答えする",
+};
+const VERB_RE = /([^、。]{1,40}?)を([^、。を]{0,12}?)(確認|検索|探|送|回答|案内|報告|伝え|提案|調べ|お伝え|作成|作)/;
+const VERB_END: Record<string, string> = { 確認: "確認する", 検索: "検索する", 探: "探す", 送: "送る", 回答: "回答する", 案内: "案内する", 報告: "報告する", 伝え: "伝える", 提案: "提案する", 調べ: "調べる", お伝え: "お伝えする", 作成: "作成する", 作: "作る" };
+export const NEXT_SHORT_MAX = 36;
+/** next_steps の1行 → 「何を→どうする」の短い1文（動詞で終わる）。作れない時は AIX の種類の言葉・それも無ければ null */
+export function nextStepShort(text: string): string | null {
+  const s = text.replace(/^\s*Step\s*\d+[^:：]*[:：]\s*/i, "").trim();
+  // 括弧の中（金額・面積の並び）は落としてから読む
+  const first = s.split("。")[0].replace(/[（(][^）)]*[）)]/g, "");
+  const topic = first.match(/^([^、]{1,20}?)(?:について|の件)/)?.[1] ?? null;
+  const m = first.match(VERB_RE);
+  if (m) {
+    let obj = m[1].replace(/^[^、]*?について、?/, "").trim();
+    // 頭の説明の節（「顧客が画像で送ってきた」等）を落とす
+    obj = obj.replace(/^[^A-Za-zＡ-Ｚ]*?(?:てきた|された|した|頂いた|いただいた)(?=\S)/, "").trim();
+    // 条件の並びは「条件で〇〇」だけ
+    if (obj.includes("条件で")) obj = obj.slice(obj.indexOf("条件で"));
+    if (Array.from(obj).length > 14 && obj.includes("・")) { const h0 = obj.includes("の") ? obj.slice(0, obj.indexOf("の")) : ""; obj = obj.split("・").pop()!.trim(); if (h0 && /号室|d/.test(h0) && !obj.includes(h0) && Array.from(`${h0}の${obj}`).length <= 26) obj = `${h0}の${obj}`; } // 物件名（号室・数字）は残す // 並びは最後の1つ（「〜の繰上げ・2番手申込の可否」→「2番手申込の可否」）
+    if (Array.from(obj).length > 14 && obj.includes("の")) {
+      const head = obj.slice(0, obj.indexOf("の")), tail = obj.slice(obj.lastIndexOf("の") + 1).split("・").pop()!.trim();
+      obj = Array.from(`${head}の${tail}`).length <= 26 ? `${head}の${tail}` : tail;
+    }
+    if (Array.from(obj).length > 22) obj = obj.split("・").pop()!.trim();
+    if (Array.from(obj).length > 22) return NEXT_FALLBACK[nextStepAixOf(s) ?? ""] ?? null;
+    const mid = m[2].trim();
+    const out = `${topic && !obj.includes(topic) ? `${topic}の` : ""}${obj}を${mid}${VERB_END[m[3]]}`;
+    if (Array.from(out).length <= NEXT_SHORT_MAX) return out;
+    const noTopic = `${obj}を${mid}${VERB_END[m[3]]}`;
+    if (Array.from(noTopic).length <= NEXT_SHORT_MAX) return noTopic;
+  }
+  const k = nextStepAixOf(s);
+  return k ? NEXT_FALLBACK[k] ?? null : null;
+}
+
 /** next_steps の1行が指す AIX の種類（分からなければ null） */
 export function nextStepAixOf(text: string): string | null {
   if (/物件確認した|募集状況|管理会社に確認/.test(text)) return "property_check_result";
@@ -148,13 +186,27 @@ export function nextStepAixOf(text: string): string | null {
 }
 export type TodoVsConductor = "match" | "mismatch" | "no_conductor" | "stale" | "unknown";
 /** リストのやる事（AIX の種類の集まり）と統括の次の一手が合うか（見張り link:todo_vs_conductor の1件） */
-export function todoVsConductor(actions: ReadonlyArray<string | null>, v: ConductorView | null): TodoVsConductor {
+/** 確認の行の中身の手がかり（同じ「物件確認した」でも、統括の次の手が別の件を確かめるなら食い違い） */
+const CHECK_TOPIC_RE: Record<string, RegExp> = {
+  mgmt_pet: /ペット/, mgmt_parking: /駐車場/, nearby_parking: /駐車場/, mgmt_initial_cost: /初期費用|交渉|割引/, mgmt_guarantor: /保証/, mgmt_move_in: /入居/,
+  vacate_date: /退去/, mgmt_application_status: /申込|番手/, mgmt_screening: /審査/, mgmt_rent_negotiation: /家賃/, mgmt_equipment: /設備/, mgmt_contract_terms: /解約|クリーニング|フリーレント/,
+};
+export function todoVsConductor(items: ReadonlyArray<string | null | { action: string | null; checkPattern?: string | null }>, v: ConductorView | null): TodoVsConductor {
   if (!v || !v.nextSteps.length) return "no_conductor";
   if (v.stale) return "stale";
-  const a = nextStepAixOf(v.nextSteps[0]);
+  const step = v.nextSteps[0];
+  const a = nextStepAixOf(step);
   if (!a) return "unknown";
-  const set = new Set(actions.map((x) => (x === "property_recommendation" ? "property_send" : x ?? "reply")));
-  return set.has(a) ? "match" : "mismatch";
+  const its = items.map((x) => (typeof x === "object" && x !== null ? x : { action: x, checkPattern: null }));
+  const norm = (x: string | null) => (x === "property_recommendation" ? "property_send" : x ?? "reply");
+  const same = its.filter((i) => norm(i.action) === a);
+  if (!same.length) return "mismatch";
+  // 2026-11-24 統括役の直し②: 物件確認した 同士は中身（ペット・初期費用・申込…）まで見る。どの行の中身も次の手に出てこなければ別の件
+  if (a === "property_check_result") {
+    const topics = same.map((i) => (i.checkPattern ? CHECK_TOPIC_RE[i.checkPattern] : /募集状況|空き|空室/)).filter((r): r is RegExp => !!r);
+    if (topics.length && !topics.some((r) => r.test(step))) return "mismatch";
+  }
+  return "match";
 }
 
 /** 物差し: 1人分の字数・行数・重複（同じ言葉が見出しと行に2回）・状況の1行があるか */

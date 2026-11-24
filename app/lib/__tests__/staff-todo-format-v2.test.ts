@@ -1,6 +1,6 @@
 // 【やることリスト】の新しい形（app/lib/staff-todo-format-v2.ts）
 // 実行: npx tsx app/lib/__tests__/staff-todo-format-v2.test.ts（全 PASS で exit 0）
-import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, v2Measure, conductorViewOf, conductorSituationLine, conductorNextLine, nextStepAixOf, todoVsConductor } from "../staff-todo-format-v2";
+import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, v2Measure, conductorViewOf, conductorSituationLine, conductorNextLine, nextStepAixOf, todoVsConductor, nextStepShort } from "../staff-todo-format-v2";
 
 let pass = 0, fail = 0;
 const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else { fail++; console.error(`✗ ${name}`, d); } };
@@ -23,6 +23,17 @@ ok("最後の判断の後にお客様の通があれば古い＝推さない（�
 ok("統括の判断が無ければその印", conductorSituationLine(null, AT, names) === "今: 統括の判断なし");
 ok("次の手の種類", nextStepAixOf("新3物件の募集状況を管理会社に確認し") === "property_check_result" && nextStepAixOf("条件で検索する") === "property_send" && nextStepAixOf("あいさつ") === null);
 ok("食い違いの見張り", todoVsConductor(["property_check_result"], v) === "match" && todoVsConductor(["property_send"], v) === "mismatch" && todoVsConductor(["property_send"], stale) === "stale" && todoVsConductor(["x"], null) === "no_conductor");
+
+// 2026-11-24 統括役の直し①: 次の手は切らずに短い1文（動詞で終わる）
+const ex = [
+  "Step1（今すぐ）: 福万寺戸建てについて、1番手が審査落ちとなった場合の繰上げ・2番手申込の可否を管理会社に確認し、結果をお伝えする",
+  "Step1（今すぐ）: 顧客が画像で送ってきたGrandPaseo south 12階（107,000円・1LDK・41㎡）の募集状況を管理会社に確認する",
+  "Step1（今すぐ）: 1DK・1LDK、阪急京都線付近、家賃管理費込5〜6万、徒歩15分以内、バス・トイレ別・室内洗濯機置場の条件で物件を検索する",
+  "Step1（今すぐ）: ラシーヌ日本橋501号室の申込・審査の進捗を管理会社に確認する",
+].map(nextStepShort);
+console.log(ex.join("\n"));
+ok("次の手の短い1文: 動詞で終わる・36字以内・…で切らない", ex.every((x) => !!x && Array.from(x).length <= 36 && !x.includes("…") && /(する|す|る|える)$/.test(x)), ex);
+ok("福万寺戸建ての例は何を→どうする", ex[0] === "福万寺戸建ての2番手申込の可否を管理会社に確認する", ex[0]);
 
 console.log(`staff-todo-format-v2: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);
