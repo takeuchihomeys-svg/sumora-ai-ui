@@ -8,7 +8,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
 import { CONDUCTOR_DUTY } from "./lib/conductor-duty";
-import { classifyOff, groupByPart, composePlanRows, jointOf, blockRanking, defaultsFromCode, switchNamesOf, chainPlaceOf, offpartRowOf, switchForUnnamed, NO_SWITCH_MARK, OFF_REASON_JA, JOINT_JA, JOINT_DUTY, type OffItem, type Joint } from "./lib/off-reason";
+import { classifyOff, groupByPart, composePlanRows, jointOf, blockRanking, defaultsFromCode, switchNamesOf, chainPlaceOf, offpartRowOf, switchForUnnamed, NO_SWITCH_MARK, autoReadersOf, titlePlaceOf, majorityPlace, OFF_REASON_JA, JOINT_JA, JOINT_DUTY, type OffItem, type Joint } from "./lib/off-reason";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
 const WRITE = process.argv.includes("--write");
@@ -68,6 +68,13 @@ function codeText(dir: string): string {
   const offparts = [...new Set(eff.map((it) => it.switch_name).filter((s): s is string => !!s && !mapSw.has(s)))]
     .map((sw) => { const at = siteOf(sw); return at ? offpartRowOf(sw, at.file, at.line, chainPlaceOf(at.file)) : null; })
     .filter((r): r is NonNullable<typeof r> => !!r);
+  // #675 の続き（11/24 夕）: ブレインの材料の行（stage read）に読む側を足す＝統括が読むか（欄・入口を呼ぶ所・ブレインの入力）
+  for (const r of offparts) {
+    if (r.stage !== "read") continue;
+    const cut = r.key.lastIndexOf(":");
+    const ar = autoReadersOf(r.key.slice(0, cut), Number(r.key.slice(cut + 1)), FILES);
+    r.readers = ar.readers; r.next = `読む側: ${ar.why}`;
+  }
   const OFFPARTS = process.argv.includes("--offparts");
   const ctx = OFFPARTS ? { ...ctx0, map: [...LINKAGE_MAP, ...offparts] } : ctx0;
   if (OFFPARTS) {
@@ -112,9 +119,27 @@ function codeText(dir: string): string {
     if (!sw) return { place: null, at: "スイッチの名前が無い" };
     const at = siteOf(sw); // 読む所で決まらなければ入口を呼ぶ所（#675 の続き）
     if (!at) return { place: null, at: "env の読みが無い" };
-    return { place: chainPlaceOf(at.file), at: `${at.file}:${at.line}` };
+    const p0 = chainPlaceOf(at.file);
+    if (p0) return { place: p0, at: `${at.file}:${at.line}` };
+    // #675 の続き（11/24 夕）: ファイルで決まらない小さな部品は、読み込む所（import）の場所の多数で（2段まで）
+    const ip = importerPlace(at.file);
+    return ip ? { place: ip.place, at: `${at.file}:${at.line}（読み込む所 ${ip.from}）` } : { place: null, at: `${at.file}:${at.line}（読み込む所でも決まらない）` };
   };
-  const places = eff.map((it) => placeOf(it.switch_name));
+  const importerPlace = (file: string, depth = 2): { place: Joint; from: string } | null => {
+    const base = file.split("/").pop()!.replace(/\.tsx?$/, "");
+    const hit = (t: string) => t.includes(`/lib/${base}"`) || t.includes(`/lib/${base}'`) || t.includes(`"./${base}"`) || t.includes(`'./${base}'`);
+    const imp = FILES.filter((f) => f.path !== file && !/__tests__/.test(f.path) && hit(f.text));
+    const pl = majorityPlace(imp.map((f) => chainPlaceOf(f.path)));
+    if (pl) { const f = imp.find((x) => chainPlaceOf(x.path) === pl)!; return { place: pl, from: f.path }; }
+    if (depth > 1) for (const f of imp) { const q = importerPlace(f.path, depth - 1); if (q) return { place: q.place, from: `${f.path}→${q.from}` }; }
+    return null;
+  };
+  const places = eff.map((it) => {
+    const p = placeOf(it.switch_name);
+    if (p.place || it.switch_name) return p;
+    const t = titlePlaceOf(it.title); // スイッチの無い行は題の言葉で
+    return t.place ? { place: t.place, at: `題の「${t.word}」` } : p;
+  });
   console.log(`\n■ 全 ${items.length}行の鎖の場所（スイッチを最初に読む所のファイルで決めた・地図の外の行も）`);
   for (const r of ["a", "b", "c", "d", "e"] as const) {
     const ix = vs.map((v, i) => (v.reason === r ? i : -1)).filter((i) => i >= 0);
@@ -122,6 +147,11 @@ function codeText(dir: string): string {
     const c = new Map<string, number>(); for (const i of ix) { const k = places[i].place ? JOINT_JA[places[i].place!] : "未確認"; c.set(k, (c.get(k) ?? 0) + 1); }
     console.log(`  (${r}) ${[...c.entries()].sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
   }
+  const dU = vs.map((v, i) => (v.reason === "d" && !places[i].place ? i : -1)).filter((i) => i >= 0);
+  console.log(`  (d) で場所が決まらない ${dU.length}行: ${dU.map((i) => `#${items[i].id}（${places[i].at}）`).join("・")}`);
+  const how = new Map<string, number>();
+  for (const [i, p] of places.entries()) if (vs[i].reason === "d" && p.place) { const k = p.at.startsWith("題の") ? "題の言葉" : p.at.includes("読み込む所 ") ? "読み込む所" : "読む所のファイル"; how.set(k, (how.get(k) ?? 0) + 1); }
+  console.log(`  (d) の場所の決め方: ${[...how.entries()].map(([k, v]) => `${k} ${v}`).join("・")}`);
   const rows = items.map((it, i) => ({ place: places[i].place, placeAt: places[i].at, id: it.id, owner: it.owner, switch: it.switch_name, title: it.title.slice(0, 80), reason: vs[i].reason, why: vs[i].why, parts: vs[i].parts, reach: vs[i].reach, joint: js[i].joint, block: js[i].block, evidence: js[i].evidence }));
   if (arg("json")) writeFileSync(arg("json"), JSON.stringify(rows, null, 1));
   const todo = items.map((it, i) => ({ id: it.id, cur: it.conductor_reach, next: vs[i].reach })).filter((x) => !x.cur || (OFFPARTS && x.cur === "未確認" && x.next !== "未確認")); // #675: 分け直しで決まった未確認の行も書き直す
