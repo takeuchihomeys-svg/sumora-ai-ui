@@ -23,6 +23,7 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
 
 export type KeptState = "in_time" | "late" | "overdue" | "pending" | "n/a";
 export type PromiseRow = { conv: string; at: string; kind: PromiseKindName; writer: string; deadlineBy: "words" | "default72h" | "open_ended"; state: KeptState; by: string | null; scene: string;
+  /** 2026-11-25 作業員L（台帳 #664 の②・72時間の決めの確かめ）: 果たした時刻（果たしていなければ無し） */ fulfilledAt?: string | null;
   /** 2026-11-23 作業員L（台帳 #661）: 結んだ見張りの番の scene_key そのまま（場面の「少数」は表示だけの束ね・地図は sceneOfWatchKey で P と同じ細かさに寄せる）。番が無ければ null */
   sceneKey: string | null };
 /** 2026-11-21 台帳 #495: 約束の通を、その前24時間の一番近い見張りの番（お客様の番）に結んで場面を付ける（純関数）。数が足りる3場面は名前で・ほかは「少数」・番が無ければ「番なし」 */
@@ -69,13 +70,13 @@ export function promisesOf(conv: string, status: string | null, msgs: ReadonlyAr
     if (promiseClosedConversation(status, msgs, p.at)) continue;
     // 2026-11-23 作業員L（台帳 #660）: 期日の無い約束（新着で出次第）は、果たしていれば期限内・まだなら期限前（期日超えにしない）
     const openEnded = promiseOpenEnded(p.text);
-    const dl = openEnded ? { ms: Number.POSITIVE_INFINITY, by: "open_ended" as const } : promiseDeadlineMs(p.text, Date.parse(p.at));
+    const dl = openEnded ? { ms: Number.POSITIVE_INFINITY, by: "open_ended" as const } : promiseDeadlineMs(p.text, Date.parse(p.at), p.kind);
     const f = promiseFulfilledBy({ at: p.at, kind: p.kind, text: p.text }, ev, { checkObjectOf: CHECK_OBJECT_OF });
     let state: KeptState;
     if (f === "n/a") state = "n/a";
     else if (f) state = Date.parse(f.at) <= dl.ms ? "in_time" : "late";
     else state = nowMs > dl.ms ? "overdue" : "pending";
-    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null, scene: sceneOfPromise(Date.parse(p.at), turns), sceneKey: sceneKeyOfPromise(Date.parse(p.at), turns) });
+    out.push({ conv: conv.slice(0, 8), at: p.at, kind: p.kind, writer: p.writer, deadlineBy: dl.by, state, by: f && f !== "n/a" ? f.by : null, fulfilledAt: f && f !== "n/a" ? f.at : null, scene: sceneOfPromise(Date.parse(p.at), turns), sceneKey: sceneKeyOfPromise(Date.parse(p.at), turns) });
   }
   return out;
 }

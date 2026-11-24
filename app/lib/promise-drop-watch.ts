@@ -142,12 +142,21 @@ export function promiseSentenceOf(text: string): string {
   return cs.length ? cs.join("") : String(text ?? "");
 }
 /** 期限: 約束の文の期限の言葉（promise-due.promiseDueDay・「明日」「本日中」「週明け」「〇日までに」）ならその日の終わり（JST 24時）、無ければ 72時間 */
-export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by: "words" | "default72h" } {
+/**
+ * 2026-11-25 作業員L（台帳 #664 の②・統括役の頼み「72時間が竹内さんの感覚に合っているか」）: 期限の言葉が無い約束の期限を種類ごとに（PROMISE_DUE_BY_KIND・既定 off）。
+ *   竹内さん本人の約束が実際に果たされた時間（B1 60日・scripts/audit-promise-hours.ts）: 確認 30件 中央 1.0時間・8割 15.8時間・72時間超え0／
+ *   ピックアップ 65件 中央 11.3時間・8割 42.2時間・72時間超え8／見積 2件（数が小さい）。確認の 72時間は竹内さんの感覚より長すぎる＝期日超えに気づくのが2日遅い。
+ *   案: 確認 24時間・ピックアップ 48時間（8割の時間に少し余裕）・見積と他は 72時間のまま。by は今まで通り default72h（読む側を変えない）
+ */
+export const promiseDueByKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_DUE_BY_KIND ?? "").trim().toLowerCase() === "on";
+export const PROMISE_DUE_HOURS_BY_KIND: Readonly<Partial<Record<PromiseKindName, number>>> = { check: 24, pickup: 48 };
+export function promiseDeadlineMs(text: string, atMs: number, kind?: PromiseKindName | null, env?: Env): { ms: number; by: "words" | "default72h" } {
   const t = String(text ?? "").normalize("NFKC");
   // 「出来次第」「確認出来次第」は期限の言葉にしない（作業員N と決めた）。挨拶の「本日はお時間…」も期限にしない
   const scrubbed = t.replace(/(?:確認)?(?:出来|でき)次第/g, "").replace(/本日は(?:お時間|ご内覧|お電話|ありがとう)[^。！\n]*/g, "");
   const d = promiseDueDay(scrubbed, atMs);
-  return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + PROMISE_DROP_MIN_H * 3_600_000, by: "default72h" };
+  const h = kind && promiseDueByKindOn(env) ? PROMISE_DUE_HOURS_BY_KIND[kind] ?? PROMISE_DROP_MIN_H : PROMISE_DROP_MIN_H;
+  return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + h * 3_600_000, by: "default72h" };
 }
 /**
  * 2026-11-23 作業員L（台帳 #660）: 「新着で募集で次第お送り」「新着が出次第」は期日の無い約束（外の出来事待ち）。行動台帳の --wide-close（promise-ledger-metrics）と同じ決め方で、
@@ -255,7 +264,7 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
     const t0 = Date.parse(p.at);
     if ((nowMs - t0) / 864e5 > maxDays) continue;
     if (promiseOpenEnded(p.text)) continue; // #660: 期日の無い約束（新着で出次第）は期日超えにしない
-    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0);
+    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0, kind);
     if (nowMs < due.ms) continue;
     if (promiseFulfilledBy({ at: p.at, kind, text: p.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) continue;
     if (promiseClosedConversation(input.status, ms, p.at)) continue;
@@ -291,7 +300,7 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   const ageH = (nowMs - t0) / 36e5;
   // 期限（作業員N の B1 と同じ）: 文の期限の言葉の日の終わり／無ければ 72時間。minH を渡された時はそれを使う（テスト）
   if (o.minH == null && promiseOpenEnded(promise.text)) return null; // #660: 期日の無い約束は見張りに出さない
-  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0).ms;
+  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0, promise.kind).ms;
   if (!(nowMs >= due) || ageH > maxDays * 24) return null;
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
   if (promiseFulfilledBy({ at: promise.at, kind: promise.kind, text: promise.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) return null;
