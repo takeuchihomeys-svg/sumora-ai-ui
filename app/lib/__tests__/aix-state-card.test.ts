@@ -49,5 +49,13 @@ ok("資料: 最後の束（30分以内）の物件だけ・礼金は全件・駐
 ok("資料の1行", aixStateCardLine(c3).includes("最後の束 2件の資料"), aixStateCardLine(c3));
 ok("資料を渡さない時は null", card.doc === null);
 ok("欠けの表: 資料にあるは札の欄に当たる", cardGaps([{ key: "x", when: "資料にある時は返信" }]).length === 0);
+// 11/25 残りの欠け4つ
+const c4 = buildAixStateCard({ messages: [{ sender: "customer", text: "前の", createdAt: iso(300) }, { sender: "staff", text: "お送りしました", createdAt: iso(200) }, { sender: "customer", text: "同じマンションの別の部屋は空いてますか？室内の写真ありますか？家賃もう少し下がりませんか", createdAt: iso(5) }],
+  aixRows: [{ aix_type: "property_send", check_pattern: "widen", created_at: iso(200) } as never], viewingHistory: [], lineTasks: [],
+  docPickups: [{ property_name: "A", room_no: "101", created_at: iso(200), terms: { newBuild: true } as never }, { property_name: "A", room_no: "202", created_at: iso(3000) }] }, now);
+ok("頼み: 別の部屋・写真・値下げ（こちらの最後の通の後だけ）", c4.asks.otherRoom && c4.asks.photo && c4.asks.rentNego && !c4.asks.widen, c4.asks);
+ok("記録: 最後の束の種類・新築・同じ建物で2部屋", c4.record.lastBundlePattern === "widen" && c4.record.newBuildInBundle === 1 && c4.record.sameBuildingMulti === 1, c4.record);
+ok("こちらの最後の通より前の頼みは数えない", !buildAixStateCard({ messages: [{ sender: "customer", text: "家賃下がりますか", createdAt: iso(300) }, { sender: "staff", text: "確認します", createdAt: iso(200) }], aixRows: [], viewingHistory: [], lineTasks: [] }, now).asks.rentNego);
+ok("欠けの表: 残り4つも札の欄に当たる", cardGaps([{ key: "x", when: "同じ建物の別の部屋・条件を広げた・手元に無い・頼まれて" }]).length === 0);
 console.log(`aix-state-card: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

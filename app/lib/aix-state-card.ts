@@ -23,6 +23,15 @@ export type AixStateCard = {
   vacating: { rooms: number };
   /** 2026-11-25 土台の欠け「資料にある」: 最後の束で送った物件の資料で、項目ごとに資料で答えられる件数（aix-state-doc・送った物件の資料を渡さない時は null） */
   doc: DocFacts | null;
+  /** 2026-11-25 土台の欠けの残り4つ: こちらの最後の通の後のお客様の通で頼まれた事（決まった言葉の網・推して埋めない）と記録の側 */
+  asks: {
+    /** 同じ建物の別の部屋・別の階を聞かれた（物件確認した→同じ建物の別の部屋／他の部屋の確認） */ otherRoom: boolean;
+    /** 条件を広げて・範囲を広げて（物件ピックアップ→条件を広げた） */ widen: boolean;
+    /** 室内の写真を頼まれた（物件確認した→室内写真・手元に無い時は約束） */ photo: boolean;
+    /** 家賃の値下げを頼まれた（確認した→家賃の交渉・こちらから言い出さない） */ rentNego: boolean;
+  };
+  /** 記録の側: 最後の束の種類（ピッカー＝normal・new_arrival・widen・alternative）・最後の束の資料の新築の数（室内の写真が手元に無いことが多い）・30日に同じ建物で2部屋以上送った建物の数 */
+  record: { lastBundlePattern: string | null; newBuildInBundle: number | null; sameBuildingMulti: number | null };
 };
 /** 資料の読みも札に入れるか（送った物件の資料＝pdf_text を読むので、既定 off・入れる AIX_STATE_CARD_DOC=on） */
 export function aixStateCardDocOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean { return (env.AIX_STATE_CARD_DOC ?? "").trim().toLowerCase() === "on"; }
@@ -36,6 +45,12 @@ export function aixStateCardMode(env: Record<string, string | undefined> = typeo
 }
 
 /** 札（純関数）。now は判断の時刻（試験・照らしでは番の時刻） */
+const ASK_RE = {
+  otherRoom: /別の(?:お)?部屋|他の(?:お)?部屋|違う(?:お)?部屋|別の階|他の階|違う階|同じ(?:建物|マンション|アパート)の/,
+  widen: /条件を広げ|広げて(?:探|頂|いただ|もら|下さ|くださ)|エリアを広|範囲を広|予算を上げ|予算上げ/,
+  photo: /室内(?:の)?(?:写真|画像|動画)|中の(?:写真|画像|様子)|(?:写真|画像)(?:は)?(?:あり|あります|ありますか|ください|下さい|頂け|いただけ|見たい|見れ)/,
+  rentNego: /家賃[^。\n]{0,12}(?:下が|下げ|交渉|安く|値下)|値下げ|値引き/,
+} as const;
 export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "aixRows" | "viewingHistory" | "lineTasks"> & { pickups?: ReadonlyArray<{ created_at: string; status: string | null }> | null; docPickups?: ReadonlyArray<DocPickup> | null }, now: number): AixStateCard {
   const aix = [...input.aixRows].map((a) => ({ type: String(a.aix_type ?? ""), pat: (a as { check_pattern?: string | null }).check_pattern ?? null, t: Date.parse(String((a as { sent_at?: string | null }).sent_at ?? (a as { created_at?: string }).created_at ?? "")) }))
     .filter((a) => Number.isFinite(a.t) && a.t <= now).sort((a, b) => a.t - b.t);
@@ -79,6 +94,18 @@ export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "
       return { pending: pend.length, newSinceBundle: lb ? pend.filter((x) => Date.parse(x.created_at) > lb.t).length : pend.length };
     })(),
     doc: input.docPickups ? docFactsOf(input.docPickups, now) : null,
+    asks: (() => {
+      const lastStaff = [...input.messages].filter((m) => m.sender !== "customer" && Date.parse(m.createdAt) <= now).pop();
+      const t0 = lastStaff ? Date.parse(lastStaff.createdAt) : -Infinity;
+      const txt = cust.filter((m) => Date.parse(m.createdAt) > t0).map((m) => m.text ?? "").join("\n");
+      return { otherRoom: ASK_RE.otherRoom.test(txt), widen: ASK_RE.widen.test(txt), photo: ASK_RE.photo.test(txt), rentNego: ASK_RE.rentNego.test(txt) };
+    })(),
+    record: (() => {
+      const dp = input.docPickups ?? null;
+      const last = dp ? (() => { const xs = dp.filter((r) => Date.parse(r.created_at) <= now).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)); const t1 = xs[0] ? Date.parse(xs[0].created_at) : 0; return xs.filter((r) => t1 - Date.parse(r.created_at) <= 30 * 60_000); })() : null;
+      const multi = dp ? (() => { const m = new Map<string, Set<string>>(); for (const r of dp) { if (!r.property_name || Date.parse(r.created_at) > now) continue; const s = m.get(r.property_name) ?? new Set<string>(); s.add(String((r as { room_no?: string | null }).room_no ?? "?")); m.set(r.property_name, s); } return [...m.values()].filter((s) => s.size >= 2).length; })() : null;
+      return { lastBundlePattern: lb?.pat ?? null, newBuildInBundle: last ? last.filter((r) => !!(r.terms as { newBuild?: boolean } | null | undefined)?.newBuild).length : null, sameBuildingMulti: multi };
+    })(),
     vacating: { rooms: input.aixRows.filter((a) => Date.parse(String((a as { sent_at?: string | null }).sent_at ?? a.created_at ?? "")) <= now).reduce((n, a) => n + ((a as { prop_statuses?: string[] | null }).prop_statuses ?? []).filter((st) => st === "vacating" || st === "move_out_planned").length, 0) },
   };
 }
@@ -94,6 +121,9 @@ export function aixStateCardLine(c: AixStateCard): string {
     ...(c.candidates.pending !== null ? [`送れる候補 ${c.candidates.pending}件（最後の束より後 ${c.candidates.newSinceBundle}件）`] : []),
     ...(c.vacating.rooms ? [`退去予定の部屋 ${c.vacating.rooms}`] : []),
     ...(c.doc ? [docFactsLine(c.doc)] : []),
+    ...(c.asks.otherRoom || c.asks.widen || c.asks.photo || c.asks.rentNego ? [`お客様の今の頼み: ${[c.asks.otherRoom ? "同じ建物の別の部屋" : "", c.asks.widen ? "条件を広げて" : "", c.asks.photo ? "室内の写真" : "", c.asks.rentNego ? "家賃の値下げ" : ""].filter(Boolean).join("・")}`] : []),
+    ...(c.record.lastBundlePattern ? [`最後の束の種類 ${c.record.lastBundlePattern}`] : []),
+    ...(c.record.newBuildInBundle ? [`最後の束の新築 ${c.record.newBuildInBundle}件（室内の写真は手元に無いことが多い）`] : []),
   ].join("／");
 }
 
@@ -115,6 +145,10 @@ export const CARD_FIELD_OF: ReadonlyArray<[RegExp, string]> = [
   [/管理会社に.*(聞いた|確認した)/, "mgmt.lastMgmtPattern"],
   [/新着|新しく募集に出た/, "candidates.newSinceBundle"],
   [/資料に(?:書いてある|ある)/, "doc.topics"],
+  [/同じ建物の別の部屋/, "asks.otherRoom・record.sameBuildingMulti"],
+  [/条件を広げた/, "asks.widen・record.lastBundlePattern"],
+  [/手元にある|手元に無い/, "asks.photo・record.newBuildInBundle"],
+  [/頼まれて/, "asks.rentNego"],
   [/退去予定|入居中/, "vacating.rooms"],
 ];
 /** 欠けの候補になる条件の言葉（辞書の when・lines から拾う物・札に欄が無いと「欠け」） */

@@ -8,7 +8,7 @@
 import { routeContractTerm, type ContractMaterial, type ContractTermTopic } from "./contract-terms-question";
 
 export const DOC_TOPICS: readonly ContractTermTopic[] = ["key_money", "deposit", "guarantor_company", "guarantor_person", "move_in", "parking", "management_company", "two_person", "pet"];
-export type DocPickup = { property_name: string | null; created_at: string; terms?: ContractMaterial["terms"]; pdf_text?: string | null; image_lines?: string[] | null };
+export type DocPickup = { property_name: string | null; room_no?: string | null; created_at: string; terms?: ContractMaterial["terms"]; pdf_text?: string | null; image_lines?: string[] | null };
 export type DocFacts = { properties: number; topics: Partial<Record<ContractTermTopic, { material: number; confirm: number }>> };
 
 /** 資料で答えられる項目（純関数）。rows は送った物件（新しい順でも古い順でもよい）。now より後の行は入れない・最後の束（最新の作成時刻から30分以内）の物件だけ */
