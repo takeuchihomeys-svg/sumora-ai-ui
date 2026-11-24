@@ -4426,7 +4426,7 @@ ${history}`;
   const maskBrain = (s: string) => maskPII(maskHonorificNames(s, partyShortNames), maskNames);
   // 2026-11-24 作業員A（#675・統括役の決め・CONDUCTOR_MATERIAL_INDEX 既定 on＝記録だけ・=off で止まる・指示書を作る番だけ）: 材料の目録。
   //   上の見張り（brain:blocks）と同じ名前で、この番のブレインの入力に有った材料の名前・字数・要点（24字・名前は伏せる）を指示書の入力に。LLM の入力は1字も変えない
-  if (briefOnNow && conductorMaterialIndexOn()) {
+  if (briefOnNow && conductorMaterialIndexOn() && !isPostApplyStatus(convStatus)) { // 申込以降は対象外（目録も抜けの印も作らない）
     try {
       briefInputs.materials = buildMaterialIndex({
         prevMeta: prevMetaText, status: statusText, timing: timingText, flags: flagsText, aixHistory: aixHistoryText, ledger: ledgerText,

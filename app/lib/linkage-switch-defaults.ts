@@ -46,6 +46,7 @@ export const LINKAGE_SWITCH_DEFAULTS: Readonly<Record<string, string>> = {
   IMAGE_LABEL_1115: "on",
   IMAGE_READ_ROOMS: "off",
   LATENT_FIVE: "off",
+  MATERIAL_INDEX_GAP: "shadow",
   MATERIAL_ON_HAND: "off",
   OUR_SIDE_TO_COMPOSE: "on",
   OWN_PROPERTY_PORTAL_TITLE: "on",
