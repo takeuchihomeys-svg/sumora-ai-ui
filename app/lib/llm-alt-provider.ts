@@ -50,6 +50,19 @@ export function isBrainRouteName(name: string | null | undefined): boolean {
   const n = String(name ?? "");
   return (n === "brain" || n.startsWith("brain_")) && !n.endsWith("_claude");
 }
+/** 返信の書き手の名札か（reply_generate・書く役の flash） */
+export function isWriterRouteName(name: string | null | undefined): boolean {
+  const n = String(name ?? "");
+  return n === "reply_generate" || n === WRITER_FLASH_ACTION;
+}
+/** 2026-11-24 #670（統括役: Claude の費用は主に書き手）: 試験だけ、返信の書き手を回す相手（EXAM_WRITER_PROVIDER=openai・EXAM_WRITER_MODEL 既定 gpt-6.2-sol） */
+export function examWriterTarget(env: EnvLike): ProviderTarget | null {
+  if ((env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase() !== "openai") return null;
+  if (!isTestModeAllowed(env)) return null;
+  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) return null;
+  return { provider: "openai", endpoint: OPENAI_CHAT_ENDPOINT, apiKey, model: (env.EXAM_WRITER_MODEL ?? "").trim() || OPENAI_DEFAULT_MODEL };
+}
 /** 試験だけ: ブレインを回す相手（EXAM_BRAIN_PROVIDER=openai・テスト用の切り替えを効かせてよい環境だけ）。それ以外は null */
 export function examBrainTarget(env: EnvLike): ProviderTarget | null {
   if ((env.EXAM_BRAIN_PROVIDER ?? "").trim().toLowerCase() !== "openai") return null;
@@ -131,6 +144,8 @@ export type AltProviderConfig = {
   routes: Map<string, AltProviderConfig>;
   /** 2026-11-24 #670: 試験だけ、ブレインの名札を回す相手（examBrainTarget） */
   examBrain?: ProviderTarget | null;
+  /** 2026-11-24 #670: 試験だけ、返信の書き手の名札を回す相手（examWriterTarget） */
+  examWriter?: ProviderTarget | null;
 };
 
 /** 相手（provider）ごとの宛先・鍵・モデル。欠けていれば null */
@@ -316,7 +331,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   //   主の相手や null の判定は変えない＝ほかの名札の振り分けは1つも変わらない）
   for (const a of batchAltDefaultActions(env)) actions.add(a);
   const examBrain = testMode ? examBrainTarget(env) : null;
-  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes, ...(examBrain ? { examBrain } : {}) };
+  const examWriter = testMode ? examWriterTarget(env) : null;
+  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes, ...(examBrain ? { examBrain } : {}), ...(examWriter ? { examWriter } : {}) };
 }
 
 /** 参考（2026-09-19 の判断・readProviderTarget に移した）:
@@ -339,6 +355,7 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
   // 2026-11-24 #670: 試験だけ、ブレインの名札は EXAM_BRAIN_PROVIDER の相手（OpenAI）
   if (cfg.examBrain && isBrainRouteName(routeName)) return { ...cfg, ...cfg.examBrain, routes: new Map() };
+  if (cfg.examWriter && isWriterRouteName(routeName)) return { ...cfg, ...cfg.examWriter, routes: new Map() };
   const base0 = (routeName && cfg.routes?.get(routeName)) || cfg;
   // 2026-10-21 書く役の flash（writer-flash-scenes.ts・WRITER_FLASH_SCENES）: 名札 reply_generate_flash は同じ DeepSeek の鍵で flash のモデルに送る
   // 2026-10-22 AIX のブレイン（指揮官・実行役・aix-brain.ts）も DeepSeek の時は flash（伏せた材料だけ・申込以降／審査の事情は入口で Claude に固定）
@@ -406,6 +423,7 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (!cfg || !routeName) return false;
   // 2026-11-24 #670: 試験だけ、ブレインの名札を OpenAI に（examBrainTarget）
   if (cfg.examBrain && isBrainRouteName(routeName) && isTestModeAllowed(process.env)) return true;
+  if (cfg.examWriter && isWriterRouteName(routeName) && isTestModeAllowed(process.env)) return true;
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
@@ -993,7 +1011,7 @@ async function callOpenAICompatible(
     disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape || cfg.provider === "openai",
     thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
     ...(cfg.provider === "openai" ? { openai: {
-      reasoningEffort: (process.env.EXAM_BRAIN_REASONING ?? process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
+      reasoningEffort: (isWriterRouteName(routeName) ? process.env.EXAM_WRITER_REASONING ?? process.env.EXAM_BRAIN_REASONING : process.env.EXAM_BRAIN_REASONING)?.trim() || (process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
       cacheKey: routeName ? `sumora-${routeName}` : null,
       jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
     } } : {}),
