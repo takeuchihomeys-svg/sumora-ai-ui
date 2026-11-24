@@ -52,7 +52,8 @@ walk("app");
     if (m[1]) return m[1];
     const c = txt.match(new RegExp(`${m[2]}\\s*=\\s*["']([\\w:.-]+)["']`)); return c ? c[1] : null;
   };
-  const rows = items.map((it) => {
+  type CostRow = { id: number; title: string; owner: string | null; switch_name: string | null; kind: "zero" | "input" | "call" | "unknown"; evidence: string; perDayUsd: number | null; pos?: "前" | "後ろ" | "未確認"; waits?: boolean; module?: string; action?: string | null; perCall?: number | null; msAvg?: number | null; running?: boolean };
+  const rows: CostRow[] = items.map((it): CostRow => {
     const sw = it.switch_name;
     if (!sw) return { ...it, kind: "unknown" as const, evidence: "スイッチ無し（コードの直し）", perDayUsd: null as number | null };
     const re = new RegExp(`env\\.${sw}\\b|\\b${sw}\\b[^\\n]{0,40}\\?\\?`);
