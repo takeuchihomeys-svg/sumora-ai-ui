@@ -11,6 +11,8 @@ import { createClient } from "@supabase/supabase-js";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { altUsageUsd, claudeUsageUsd } from "../app/lib/llm-price";
+import { execFileSync } from "node:child_process";
+import { classifyJob, effMetrics, worseNight, proposalFor, REASON_JA, type EffJob, type EffMetrics } from "./lib/exam-efficiency";
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -129,12 +131,49 @@ function resultDirs(): string[] {
     }
   } catch { /* */ }
 
+  // 6) 2026-11-24 作業員L（台帳 #686・竹内さん「試験の費用も抑えて、質も上げていく仕組み」）: 効率の物差し
+  //   依頼ごと（係の結果 exam-queue/results/<label>.json の usd・worseSure・worseFlake・better・reps）を晩に分け、守りの問題の分の $ を回数の割合で出す
+  const guardsOf = new Map<string, string[]>();
+  try { for (const f of readdirSync(join(Q, "done"))) { if (!f.endsWith(".json")) continue; try { const j = JSON.parse(readFileSync(join(Q, "done", f), "utf8")) as { label?: string; guards?: string[] }; if (j.label && j.guards?.length) guardsOf.set(j.label, j.guards); } catch { /* */ } } } catch { /* */ }
+  const effJobs: EffJob[][] = nights.map(() => []);
+  try {
+    for (const f of readdirSync(join(Q, "results"))) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const r = JSON.parse(readFileSync(join(Q, "results", f), "utf8")) as { label?: string; owner?: string; runner?: string; usd?: string | number; at?: string; reps?: Record<string, number>; worseSure?: unknown[]; worseFlake?: unknown[]; better?: number; worse?: number };
+        if (!r.label || r.usd == null || /tsc/.test(String(r.runner ?? ""))) continue;
+        const i = nightOf(Date.parse(r.at ?? "")); if (i < 0) continue;
+        const usd = Number(String(r.usd).replace(/[^0-9.]/g, "")) || 0;
+        const reps = r.reps ?? {}, all = Object.values(reps).reduce((a, b) => a + b, 0);
+        const g = guardsOf.get(r.label) ?? [], gr = g.reduce((a, id) => a + (reps[id] ?? 0), 0);
+        effJobs[i].push({ label: r.label, owner: String(r.owner ?? ""), usd, cls: classifyJob(r), guardUsd: all ? (usd * gr) / all : 0 });
+      } catch { /* */ }
+    }
+  } catch { /* */ }
+  const dayWins = nights.map((d) => nightWindow(d, "day"));
+  const fixesOn = nights.map(() => 0);
+  {
+    const { data } = await sb.from("work_item_events").select("at, to_stage").gte("at", new Date(dayWins[0][0]).toISOString()).lt("at", new Date(dayWins[days][1]).toISOString()).in("to_stage", ["on", "passed"]).limit(2000);
+    for (const e of (data ?? []) as Array<{ at: string }>) { const t = Date.parse(e.at); const i = dayWins.findIndex(([a, b]) => t >= a && t < b); if (i >= 0) fixesOn[i]++; }
+  }
+  const matchOf = new Map<string, number>();
+  {
+    // 竹内さんの番の一致（line-watch-eval の reply_match・%）。n が5番に満たない日は数が小さすぎて動きに使わない
+    const { data } = await sb.from("quality_daily").select("day, value, n").eq("scope", "takeuchi").eq("metric", "reply_match").gte("day", nights[0]).lte("day", addDays(night, 1));
+    for (const r of (data ?? []) as Array<{ day: string; value: number | null; n: number | null }>) if (r.value != null && (r.n ?? 0) >= 5) matchOf.set(String(r.day), Number(r.value));
+  }
+  const eff: EffMetrics[] = nights.map((d, i) => {
+    const L = lev[i], jobUsd = effJobs[i].reduce((a, j) => a + j.usd, 0);
+    const probs = effJobs[i].length ? jobUsd / Math.max(1, effJobs[i].length * 5) : 0; // 外した問題1問の目安＝1本の $ を5問で割った程度
+    const m0 = matchOf.get(d), m1 = matchOf.get(addDays(d, 1));
+    return effMetrics({ jobs: effJobs[i], rebuildUsd: L.cChildUsd, fixesOn: fixesOn[i], stoppedUsd: L.cReusedUsd + L.replayUsd + (L.gateDropped + L.narrowDropped) * probs, totalUsd: total(cost[i]), matchDelta: m0 != null && m1 != null ? m1 - m0 : null });
+  });
   const prev = cost.slice(0, days), now = cost[days];
   const avg = (f: (c: Cost) => number) => prev.reduce((a, c) => a + f(c), 0) / days;
   const pl = lev.slice(0, days), ln = lev[days];
   const lavg = (k: keyof Lever) => pl.reduce((a, x) => a + x[k], 0) / days;
   const $ = (n: number) => `$${n.toFixed(2)}`;
-  if (argv.includes("--json")) { console.log(JSON.stringify({ night, window: win, nights, cost, lev, dbRows }, null, 1)); return; }
+  if (argv.includes("--json")) { console.log(JSON.stringify({ night, window: win, nights, cost, lev, eff, dbRows }, null, 1)); return; }
 
   console.log(`# 試験の費用（${night} の晩・${win === "day" ? "12時〜翌12時" : "22時〜翌8時"} JST）と前の${days}晩`);
   console.log(`（DB の試験の呼び出し ${dbRows}行・判定は手元の記録・読むだけ）\n`);
@@ -157,7 +196,40 @@ function resultDirs(): string[] {
   row("問題の絞りで外した問題", "narrowDropped", "問");
   row("関所で積まなかった依頼", "blocked", "本");
 
+  // 効率の物差し（台帳 #686）
+  const e = eff[days], ep = eff.slice(0, days);
+  const pct = (x: number | null) => (x == null ? "—" : `${(x * 100).toFixed(0)}%`);
+  console.log("\n## 効率の物差し（晩ごと）");
+  console.log("| 晩 | 費用 | 依頼 | 確かな悪化を見つけた | 良くなった | on にできた直し | 直し1本あたり | 差なしの組の $ | 止めた $ | 竹内さんの番の一致の動き |");
+  console.log("|---|---|---|---|---|---|---|---|---|---|");
+  nights.forEach((d, i) => { const x = eff[i]; console.log(`| ${d.slice(5)}${i === days ? "（今夜）" : ""} | ${$(x.totalUsd)} | ${x.jobs} | ${x.sure} | ${x.better} | ${x.fixesOn} | ${x.usdPerFix == null ? "—" : $(x.usdPerFix)} | ${pct(x.noDiffShare)} | ${$(x.stoppedUsd)} | ${x.matchDelta == null ? "—" : (x.matchDelta >= 0 ? "+" : "") + x.matchDelta.toFixed(1)} |`); });
+  const wn = worseNight(e, ep);
+  console.log(`\n## 自動の点検（前の${days}晩と比べて）`);
+  const proposals: Array<{ title: string; next: string; owner: string }> = [];
+  if (!wn.worse) console.log("- 効率は前の晩より悪くなっていない（差なしの割合・直し1本あたりの $）");
+  else {
+    console.log(`- 効率が悪くなった: ${wn.why.join("・")}`);
+    console.log(`- 一番増えた理由: ${wn.reason ? REASON_JA[wn.reason] : "—"}（前の平均より +${$(wn.overUsd)}）・内訳 差なし ${$(e.reasonUsd.nodiff)}・作り直し ${$(e.reasonUsd.rebuild)}・守り ${$(e.reasonUsd.guards)}・揺れ ${$(e.reasonUsd.flake)}`);
+    if (wn.reason) { const pr = proposalFor(wn.reason, effJobs[days], night); proposals.push(pr); console.log(`- 次の削りの案（持ち主 ${pr.owner}）: ${pr.next}`); }
+  }
+  // 書き込み（--write: quality_daily に test:efficiency:*・--write-items: 案を台帳の行に。同じ題の行があれば足さない）
+  if (argv.includes("--write")) {
+    const day = addDays(night, 1);
+    const kv: Array<[string, number | null]> = [
+      ["usd", e.totalUsd], ["fixes_on", e.fixesOn], ["sure_worse", e.sure], ["better", e.better], ["usd_per_fix", e.usdPerFix], ["nodiff_share", e.noDiffShare], ["stopped_usd", e.stoppedUsd],
+      ["usd_deepseek", now.ds + now.dsJudge], ["usd_openai", now.oa], ["usd_claude", now.cl], ["worse_night", wn.worse ? 1 : 0],
+    ];
+    const rows = kv.filter(([, v]) => v != null).map(([k, v]) => ({ day, metric: `test:efficiency:${k}`, scope: "all", value: Number(v), n: e.jobs, source: "audit-night-cost", detail: k === "worse_night" ? { why: wn.why, reason: wn.reason, night } : { night } }));
+    const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" });
+    console.log(error ? `quality_daily に書けない: ${error.message}` : `quality_daily に ${rows.length}行（${day}・test:efficiency:*）`);
+  }
+  if (argv.includes("--write-items")) for (const pr of proposals) {
+    const { data: ex } = await sb.from("work_items").select("id").eq("title", pr.title).limit(1);
+    if (ex?.length) { console.log(`台帳: もうある（#${(ex[0] as { id: number }).id}）`); continue; }
+    execFileSync("npx", ["tsx", "--env-file=.env.local", "scripts/work-items.ts", "--add", `"--title=${pr.title}"`, "--area=試験", "--origin=found_gap", "--stage=todo", `"--owner=${pr.owner}"`, `"--next=${pr.next}"`], { stdio: "inherit", shell: true });
+  }
+
   const a = ravg(total), t = total(now);
   console.log(`\n## 竹内さんへの1行`);
-  console.log(`試験の費用は前の${days}晩のうち試験のあった${ran.length}晩の1晩平均（${days}晩で割ると ${$(avg(total))}） ${$(a)} → 今夜 ${$(t)}（${a ? `${t <= a ? "−" : "+"}${Math.abs(((t - a) / a) * 100).toFixed(0)}%` : "前の記録なし"}・DeepSeek ${$(now.ds + now.dsJudge)}・OpenAI ${$(now.oa)}・Claude ${$(now.cl)}）`);
+  console.log(`試験の費用は前の${days}晩のうち試験のあった${ran.length}晩の1晩平均（${days}晩で割ると ${$(avg(total))}） ${$(a)} → 今夜 ${$(t)}（${a ? `${t <= a ? "−" : "+"}${Math.abs(((t - a) / a) * 100).toFixed(0)}%` : "前の記録なし"}・DeepSeek ${$(now.ds + now.dsJudge)}・OpenAI ${$(now.oa)}・Claude ${$(now.cl)}・on にできた直し ${e.fixesOn}本${e.usdPerFix != null ? `（1本あたり ${$(e.usdPerFix)}）` : ""}・差なしの組の $ ${pct(e.noDiffShare)}）`);
 })().catch((e) => { console.error(e); process.exit(1); });
