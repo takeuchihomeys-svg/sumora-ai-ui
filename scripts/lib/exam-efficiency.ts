@@ -30,7 +30,8 @@ export function effMetrics(n: EffNight): EffMetrics {
   return {
     totalUsd: n.totalUsd, jobs: n.jobs.length, sure: n.jobs.filter((j) => j.cls === "sure").length, better: n.jobs.filter((j) => j.cls === "better").length,
     fixesOn: n.fixesOn, matchDelta: n.matchDelta,
-    usdPerFix: n.fixesOn > 0 ? n.totalUsd / n.fixesOn : null,
+    // 費用の無い晩（試験を流していない）の直しは昼の分＝1本あたりに入れない
+    usdPerFix: n.fixesOn > 0 && n.totalUsd > 0.01 ? n.totalUsd / n.fixesOn : null,
     noDiffShare: jobUsd > 0 ? sum("nodiff") / jobUsd : null,
     stoppedUsd: n.stoppedUsd,
     reasonUsd: { nodiff: sum("nodiff"), rebuild: n.rebuildUsd, guards: n.jobs.reduce((a, j) => a + j.guardUsd, 0), flake: sum("flake") },
@@ -54,6 +55,11 @@ export function worseNight(now: EffMetrics, prev: readonly EffMetrics[]): { wors
     const avg = ran.reduce((a, p) => a + p.reasonUsd[k], 0) / ran.length;
     const d = now.reasonUsd[k] - avg;
     if (d > over) { over = d; reason = k; }
+  }
+  // どの欄も前の平均より増えていない（晩の費用が小さい）時は、割合で悪くなった物を理由に（差なしの割合なら差なし・ほかは今夜一番 $ の大きい欄）
+  if (!reason && why.length) {
+    if (why.some((w) => w.startsWith("差なし"))) reason = "nodiff";
+    else reason = (Object.keys(REASON_JA) as Reason[]).reduce((a, k) => (now.reasonUsd[k] > now.reasonUsd[a] ? k : a), "nodiff" as Reason);
   }
   return { worse: why.length > 0, why, reason: why.length ? reason : null, overUsd: why.length ? over : 0 };
 }
