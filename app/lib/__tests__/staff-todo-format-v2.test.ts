@@ -35,5 +35,6 @@ console.log(ex.join("\n"));
 ok("次の手の短い1文: 動詞で終わる・36字以内・…で切らない", ex.every((x) => !!x && Array.from(x).length <= 36 && !x.includes("…") && /(する|す|る|える)$/.test(x)), ex);
 ok("福万寺戸建ての例は何を→どうする", ex[0] === "福万寺戸建ての2番手申込の可否を管理会社に確認する", ex[0]);
 
+ok("#676: 11/21 より前の判断で駅が無い時はその印", conductorSituationLine(conductorViewOf({ next_steps: ["x"], analyzed_msg_ts: "2026-11-10T03:00:00Z" }, null), AT, names).includes("駅なし（統括の判断は 11/10"));
 console.log(`staff-todo-format-v2: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

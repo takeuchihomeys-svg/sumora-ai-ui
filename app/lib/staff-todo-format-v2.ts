@@ -113,6 +113,8 @@ export function conductorViewOf(meta: Record<string, unknown> | null | undefined
   const stale = !!(ts && lastCustomerAt && Date.parse(lastCustomerAt) > Date.parse(ts) + 1000);
   return { analyzedTs: ts, node: typeof ar?.node === "string" ? ar.node : null, branch: typeof ar?.branch === "string" ? ar.branch : null, substate: typeof ar?.substate === "string" ? ar.substate : null, nextSteps: ns, promisesOpen: po, stale };
 }
+/** 地図の駅を判断の記録（last_brain_meta.apply_route）に残し始めた時（APPLY_ROUTE_RECORD・route-record.ts・11/21 既定 on） */
+export const APPLY_ROUTE_RECORD_SINCE = "2026-11-21T00:00:00Z";
 /** 駅・分かれ道の名前（申込までの地図の名前を読み手が渡す） */
 export type RouteNames = { node: (id: string) => string | null; branch: (id: string) => string | null };
 /** 今の状況の1行（統括から）。判断が古い時は印だけ（推さない） */
@@ -122,6 +124,8 @@ export function conductorSituationLine(v: ConductorView | null, atMs: number, na
   const parts: string[] = [];
   const nn = v.node ? names.node(v.node) : null;
   if (nn) parts.push(nn);
+  // 2026-11-24 #676: 地図の駅を判断の記録に残すのは 11/21 から（APPLY_ROUTE_RECORD）。それより前の判断のままの会話は駅が無い＝推さずにその印
+  else if (!v.node && v.analyzedTs && v.analyzedTs < APPLY_ROUTE_RECORD_SINCE) parts.push(`駅なし（統括の判断は ${md(v.analyzedTs)}・地図の駅を残す前）`);
   const bn = v.branch ? names.branch(v.branch) : null;
   if (bn) parts.push(`分かれ道: ${bn}`);
   if (v.promisesOpen.length) {
