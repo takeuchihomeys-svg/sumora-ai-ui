@@ -28,6 +28,31 @@ export function preflightReachOf(onSwitches: readonly string[], ids: readonly st
   return out;
 }
 
+/**
+ * 2026-11-24 作業員L（統括役の頼み・竹内さん 11/24「試験もっと効率よく費用を抑える」・前の晩は $3.82 のうち $3.42 が材料0のスイッチ）:
+ *   積む前の関所（純関数）。EXAM_PREFLIGHT_REACH: 既定（未設定・on）＝関所／warn＝今まで通り警告だけ／off＝点検しない。
+ *   ・block … on にするスイッチのどれかで、積む問題が全部「要る材料0行」（前の回がある問題だけで・前の回が無い問題が1つでもあれば止めない）＝積まない（--force で越える）
+ *   ・drop … 一部の問題だけ0行: 材料の要るスイッチ全部で材料0行の問題を外す（どれか1つのスイッチで材料があれば残す）。外すと何も残らない時は block
+ */
+export type PreflightGate = { mode: "gate" | "warn" | "off"; block: string[]; drop: string[]; keep: string[] };
+export function preflightGateMode(env: Record<string, string | undefined> = process.env): PreflightGate["mode"] {
+  const v = String(env.EXAM_PREFLIGHT_REACH ?? "").trim().toLowerCase();
+  return v === "off" ? "off" : v === "warn" ? "warn" : "gate";
+}
+export function preflightGate(r: readonly PreflightReach[], ids: readonly string[], mode: PreflightGate["mode"] = "gate"): PreflightGate {
+  const out: PreflightGate = { mode, block: [], drop: [], keep: [...ids] };
+  if (mode !== "gate") return out;
+  const judged = r.filter((x) => x.needs.length);
+  if (!judged.length) return out;
+  for (const x of judged) if (x.noMaterial.length && !x.withMaterial.length && !x.unknown.length) out.block.push(x.sw);
+  if (out.block.length) return { ...out, keep: [] };
+  const useless = (id: string) => judged.every((x) => x.noMaterial.includes(id));
+  out.drop = ids.filter(useless);
+  out.keep = ids.filter((id) => !useless(id));
+  if (out.drop.length && !out.keep.length) out.block = judged.map((x) => x.sw);
+  return out;
+}
+
 /** 警告の行（無ければ空） */
 export function preflightLines(r: readonly PreflightReach[], o: { repeat?: number } = {}): string[] {
   const lines: string[] = [];
