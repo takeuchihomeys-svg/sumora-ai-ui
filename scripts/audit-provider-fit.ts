@@ -3,7 +3,7 @@
 //     キャッシュの当たりの率（llm_usage_logs・route=script:brain-exam-<label>・相手のモデルの行）・欄の欠けの率（ブレインの最初の答え）・
 //     長さの比と竹内さんの文との近さ（下書き）・言ってはいけない事・時間切れ／Claude への戻り（error_type）・道／本質／下書きの合格
 //   GPT に特有の外れの型（先走り＝返信の番に内覧の案内・慎重すぎ＝確認の番に聞き返し・短く切る＝長さの比 0.8 未満・欄の欠け）を数え、型ごとに表の欄の直しの案を出す。
-//   --write で quality_daily（scope=provider_fit:<版>・metric=provider_fit:<物差し>）に残す＝連携の地図 next.provider_fit の行（版を上げた時に前の版と比べる）
+//   --write で quality_daily（scope=all・metric=provider_fit:<版>:<物差し>・印 provider_fit:rows）に残す＝連携の地図 next.provider_fit の行（版を上げた時に前の版と比べる）
 // 実行: npx tsx --env-file=.env.local scripts/audit-provider-fit.ts --labels=l-oaw-sol,l-oaw-luna [--version-of=l-oaw-sol=openai-writer-v1,...] [--write]
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
@@ -26,8 +26,10 @@ export function dice(a: string, b: string): number {
   return na + nb ? (2 * inter) / (na + nb) : 0;
 }
 /** GPT に特有の外れの型（純関数・1答案） */
-export function gptMissTypes(r: Row, p: Problem | undefined): string[] {
+export function gptMissTypes(r: Row, p: Problem | undefined, role: "brain" | "writer" = "brain"): string[] {
   const out: string[] = [];
+  // 書き手の版ではブレインは別の相手（再生）＝ブレインの型は数えない
+  if (role === "writer") return r.draft?.text && p?.staffText && norm(r.draft.text).length / Math.max(1, norm(p.staffText).length) < 0.8 ? ["短く切る"] : [];
   const acc = (p?.accept ?? []).join("|");
   const code = String(r.essence?.code ?? r.path?.code ?? "");
   if (r.essence && !r.essence.ok) {
@@ -67,12 +69,13 @@ export const FIX_HINT: Readonly<Record<string, string>> = {
     const lens = drafts.map((r) => norm(r.draft!.text).length / Math.max(1, norm(probs.get(r.id)?.staffText ?? "").length));
     const raws = rows.filter((r) => r.raw);
     const miss: Record<string, number> = {};
-    for (const r of rows) for (const m of gptMissTypes(r, probs.get(r.id))) miss[m] = (miss[m] ?? 0) + 1;
+    const role = /writer/.test(version) ? "writer" as const : "brain" as const;
+    for (const r of rows) for (const m of gptMissTypes(r, probs.get(r.id), role)) miss[m] = (miss[m] ?? 0) + 1;
     const avg = (xs: number[]) => (xs.length ? +(xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(3) : null);
     out.push({
       label, version, n: rows.length,
       cacheHitPct: unc + hit ? +((100 * hit) / (unc + hit)).toFixed(1) : null, openaiCalls: us.length, errorsOrFallback: errs,
-      fieldMissingPct: raws.length ? +((100 * raws.filter((r) => BRAIN_KEYS.some((k) => !(k in (r.raw as Record<string, unknown>)))).length) / raws.length).toFixed(1) : null,
+      fieldMissingPct: role === "brain" && raws.length ? +((100 * raws.filter((r) => BRAIN_KEYS.some((k) => !(k in (r.raw as Record<string, unknown>)))).length) / raws.length).toFixed(1) : null,
       lenRatio: avg(lens), simToTakeuchi: avg(sims), ngViolated: drafts.reduce((a, r) => a + (r.draft!.ng ?? []).filter(Boolean).length, 0),
       path: `${rows.filter((r) => r.path?.ok).length}/${rows.length}`, essence: `${rows.filter((r) => r.essence?.ok).length}/${rows.filter((r) => r.essence).length}`, draftPass: `${drafts.filter((r) => r.draft!.pass).length}/${drafts.length}`,
       missTypes: miss, fixHints: Object.keys(miss).map((k) => `${k}: ${FIX_HINT[k] ?? "-"}`),
@@ -82,7 +85,20 @@ export const FIX_HINT: Readonly<Record<string, string>> = {
   if (argv.includes("--write")) {
     const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
     const rows = out.filter((o) => !o.missing).flatMap((o) => (["cacheHitPct", "fieldMissingPct", "lenRatio", "simToTakeuchi", "ngViolated", "errorsOrFallback"] as const)
-      .filter((k) => typeof o[k] === "number").map((k) => ({ day, metric: `provider_fit:${k}`, scope: `provider_fit:${o.version}`, value: o[k] as number, n: o.n as number, source: `scripts/audit-provider-fit.ts（${o.label}）` })));
-    if (rows.length) { const { error } = await sb.from("quality_daily").upsert(rows, { onConflict: "day,metric,scope" }); if (error) throw new Error(error.message); console.log(`quality_daily に ${rows.length}行`); }
+      .filter((k) => typeof o[k] === "number").map((k) => ({ day, metric: `provider_fit:${o.version}:${k}`, scope: "all", value: o[k] as number, n: o.n as number, source: `scripts/audit-provider-fit.ts（${o.label}）` })));
+    // 連携の地図の行（next.provider_fit）が数える印: この日に物差しを残した版の数
+    rows.push({ day, metric: "provider_fit:rows", scope: "all", value: new Set(out.filter((o) => !o.missing).map((o) => o.version)).size, n: out.length, source: "scripts/audit-provider-fit.ts" });
+    // 同じ版の組が2つ以上ある時は1行に（答案の数で重みを付けた平均）＝同じ鍵を1回の upsert で2度書かない
+    const merged = new Map<string, { day: string; metric: string; scope: string; value: number; n: number; source: string }>();
+    for (const r of rows) {
+      const k = `${r.day}|${r.metric}|${r.scope}`;
+      const m = merged.get(k);
+      if (!m) { merged.set(k, { ...r }); continue; }
+      const n = (m.n || 0) + (r.n || 0);
+      m.value = n ? (m.value * (m.n || 0) + r.value * (r.n || 0)) / n : r.value;
+      m.n = n; m.source = `${m.source}・${r.source}`.slice(0, 300);
+    }
+    const rowsM = [...merged.values()];
+    if (rowsM.length) { const { error } = await sb.from("quality_daily").upsert(rowsM, { onConflict: "day,metric,scope" }); if (error) throw new Error(error.message); console.log(`quality_daily に ${rowsM.length}行`); }
   }
 })().catch((e) => { console.error(e); process.exit(1); });

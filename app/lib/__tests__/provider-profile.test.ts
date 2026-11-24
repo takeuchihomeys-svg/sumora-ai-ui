@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { PROVIDER_PROFILES, DEFAULT_VERSIONS, profileFor, profileByVersion, profileRoleOf, openaiRequestOf, examProfileVersions, openaiProfileGate } from "../provider-profile";
+import { PROVIDER_PROFILES, DEFAULT_VERSIONS, profileFor, profileByVersion, profileRoleOf, openaiRequestOf, examProfileVersions, openaiProfileGate, moveExamplesFirst, shapeHintOf } from "../provider-profile";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -75,6 +75,27 @@ t("OpenAI の chat/completions を呼ぶ所は全部表を通っている（app/
     const s = readFileSync(f, "utf8");
     assert.ok(/from ["'][^"']*provider-profile["']/.test(s) && /(openaiRequestOf|openaiProfileGate|profileFor)\(/.test(s), `${f.slice(root.length)} が使い方の表を通っていない`);
   }
+});
+
+t("v2: 手本の塊を system の先頭に（見出しが無ければそのまま）", () => {
+  const sys = ["【指示】Aをする", "【場面別・正しいスモラスタイル例文】", "「質問」", "→ 答え！！", "", "【別の決まり】Bをする"].join("\n");
+  const out = moveExamplesFirst(sys);
+  assert.ok(out.startsWith("【竹内さんの文の手本"));
+  assert.match(out, /→ 答え！！/);
+  assert.ok(out.indexOf("【指示】") > out.indexOf("答え"));
+  assert.ok(out.includes("【別の決まり】Bをする"));
+  assert.equal(moveExamplesFirst("手本なし"), "手本なし");
+  assert.equal(profileFor("openai", "reply_generate", { OPENAI_PROFILE_WRITER: "openai-writer-v2-note" })?.cache.examplesFirst, true);
+});
+
+t("v2: 詳しさ（verbosity）と文の形の版", () => {
+  const v = openaiRequestOf(profileByVersion("openai-writer-v2-verb-high")!, { routeName: "reply_generate", env: {} });
+  assert.equal(v.verbosity, "high");
+  assert.equal(openaiRequestOf(profileByVersion("openai-writer-v1")!, { routeName: "reply_generate", env: {} }).verbosity, null);
+  assert.equal(openaiRequestOf(profileByVersion("openai-writer-v2-shape")!, { routeName: "reply_generate", env: {} }).shapeHint, true);
+  const u = ["前の文", "【竹内さんの近い番の組み立て（場面が同じ・文は写さない）】", "並び: greet > uke > close", "1. greet: …"].join(String.fromCharCode(10));
+  assert.match(shapeHintOf(u) ?? "", /3つの段（greet→uke→close）/);
+  assert.equal(shapeHintOf("並びなし"), null);
 });
 
 console.log(`provider-profile: ${n} ok`);

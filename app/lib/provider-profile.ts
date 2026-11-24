@@ -23,6 +23,8 @@ export type ProviderProfile = {
     minMaxTokens: number;
     /** temperature を送るか（GPT の考えるモデルは送らない） */
     temperature: boolean;
+    /** 2026-11-24 出力の詳しさ（OpenAI chat の verbosity: low・medium・high・既定 medium）。null＝送らない */
+    verbosity?: "low" | "medium" | "high" | null;
   };
   /** 考える深さ（null＝相手の既定）。DeepSeek は思考を切る（disabled） */
   reasoning: { effort: "low" | "medium" | "high" | null; deepseekThinking?: "disabled" };
@@ -34,6 +36,8 @@ export type ProviderProfile = {
   timeouts: { firstTokenMs: number | null; totalMs: number | null };
   /** 言い添えの名前（PROFILE_NOTES のどれか） */
   notes: readonly ProfileNoteName[];
+  /** 2026-11-24 文の形: 指示文の【竹内さんの近い番の組み立て】の「並び」から段の数と順を、お客様の通の後ろ（毎回変わる所）に足す */
+  shapeHint?: boolean;
 };
 
 export type ProfileNoteName = "gpt_note" | "len_hint";
@@ -69,6 +73,10 @@ export const PROVIDER_PROFILES: readonly ProviderProfile[] = [
   { version: "openai-writer-v1", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: [] },
   { version: "openai-writer-v1-note", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"] },
   { version: "openai-writer-v1-note-len", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note", "len_hint"] },
+  // 2026-11-24 統括役の頼み（v2）: 竹内さんの手本の文（指示文の【場面別・正しいスモラスタイル例文】）を system の先頭に固定（近さを Claude の 0.68 に・Sol の長さ 0.8倍）
+  { version: "openai-writer-v2-note", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"] },
+  { version: "openai-writer-v2-verb-high", provider: "openai", role: "writer", request: { ...OPENAI_REQ, verbosity: "high" }, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"] },
+  { version: "openai-writer-v2-shape", provider: "openai", role: "writer", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: { ...OPENAI_CACHE, examplesFirst: true }, timeouts: { firstTokenMs: 45_000, totalMs: 120_000 }, notes: ["gpt_note"], shapeHint: true },
   { version: "openai-conductor-v1", provider: "openai", role: "conductor", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
   { version: "openai-final_check-v1", provider: "openai", role: "final_check", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
   { version: "openai-light-v1", provider: "openai", role: "light", request: OPENAI_REQ, reasoning: { effort: "low" }, output: { json: "none" }, cache: OPENAI_CACHE, timeouts: NO_TIMEOUT, notes: [] },
@@ -138,6 +146,10 @@ export type OpenAIRequestParts = {
   notes: string | null;
   firstTokenMs: number | null;
   totalMs: number | null;
+  /** 手本の文を system の先頭に固定する */
+  examplesFirst: boolean;
+  verbosity: string | null;
+  shapeHint: boolean;
 };
 /**
  * 表の行 → OpenAI の要求の部品（純関数）。考える深さは env（EXAM_*_REASONING・OPENAI_REASONING_EFFORT）が表より先（試験で深さを並べるため）
@@ -159,6 +171,9 @@ export function openaiRequestOf(p: ProviderProfile, o: { routeName: string | nul
     notes: profileNotesText(p),
     firstTokenMs: p.timeouts.firstTokenMs,
     totalMs: p.timeouts.totalMs,
+    examplesFirst: p.cache.examplesFirst,
+    verbosity: p.request.verbosity ?? null,
+    shapeHint: !!p.shapeHint,
   };
 }
 
@@ -172,6 +187,30 @@ export function examProfileVersions(env: Env): { brain: string | null; writer: s
     return p.version;
   };
   return { brain: pick("EXAM_BRAIN_PROVIDER", "brain_fresh"), writer: pick("EXAM_WRITER_PROVIDER", "reply_generate"), unknown };
+}
+
+/** 手本の塊の見出し（書き手の指示文・line-reply-prompts の静的な部分） */
+export const EXAMPLES_HEADING = "【場面別・正しいスモラスタイル例文】";
+/**
+ * 手本の塊を system の先頭に移す（純関数）。見出しから次の行頭の【…】の見出しの前までを1つの塊とみる。見出しが無ければそのまま
+ */
+export function moveExamplesFirst(system: string): string {
+  const i = system.indexOf(EXAMPLES_HEADING);
+  if (i < 0) return system;
+  const rest = system.slice(i + EXAMPLES_HEADING.length);
+  const m = /\n【/.exec(rest);
+  const end = m ? i + EXAMPLES_HEADING.length + m.index : system.length;
+  const block = system.slice(i, end).trim();
+  return `【竹内さんの文の手本（先に読む・文の長さと書き方はこれに合わせる）】\n${block.slice(EXAMPLES_HEADING.length).trim()}\n\n${(system.slice(0, i) + system.slice(end)).trim()}`;
+}
+
+/** 文の形の言い添え（純関数）。「並び: greet > uke > close」が無ければ null */
+export function shapeHintOf(userText: string): string | null {
+  const m = /【竹内さんの近い番の組み立て[^】]*】\n並び: ([^\n]+)/.exec(userText);
+  if (!m) return null;
+  const parts = m[1].split(">").map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  return `【文の形】竹内さんの近い番と同じ ${parts.length}つの段（${parts.join("→")}）で書く。段ごとに1〜2文、どの段も省かない（上の組み立ての各段の説明に合わせる）。`;
 }
 
 /**
