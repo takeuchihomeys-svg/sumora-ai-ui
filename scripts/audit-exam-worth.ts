@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASELINE_DIR } from "./lib/brain-exam-baseline";
 import { examCacheRoot } from "./lib/llm-cassette";
-import { worthRow, rankWorth, roomOf, parseCandidateLine, type OffPass, type WorthRow } from "./lib/exam-worth";
+import { worthRow, rankWorth, roomOf, parseCandidateLine, parseCandidateBlocks, type OffPass, type WorthRow } from "./lib/exam-worth";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
 const DAYS = Number(arg("days") || 7);
@@ -69,7 +69,11 @@ console.log(`  off の答えが無くて余地を出せない組: $${unkUsd.toFi
 
 // ── 今夜以降の候補と台帳の off の行 ──
 const candFile = ["memory/night_bundle_candidates.md", "../../../memory/night_bundle_candidates.md"].find((p) => existsSync(p));
-const cands = (candFile ? readFileSync(candFile, "utf8").split(/\r?\n/) : []).map((l) => parseCandidateLine(l)).filter((x): x is NonNullable<ReturnType<typeof parseCandidateLine>> => !!x);
+const candLines = candFile ? readFileSync(candFile, "utf8").split(/\r?\n/) : [];
+// 新しい書式（「- 組:」の下に「効く:」「守り:」の行）を先に・その組に無いスイッチだけ古い1行の書き方から
+const blocks = parseCandidateBlocks(candLines);
+const blockSw = new Set(blocks.flatMap((b) => b.switches));
+const cands = [...blocks.map((b) => ({ switches: b.switches, eff: b.eff, guards: b.guards, stage: b.stage })), ...candLines.map((l) => parseCandidateLine(l)).filter((x): x is NonNullable<ReturnType<typeof parseCandidateLine>> => !!x && !x.switches.some((w) => blockSw.has(w)))];
 const lastJobOf = (sw: string) => jobs.filter((j) => j.switch === sw).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 const rows: WorthRow[] = [];
 const seen = new Set<string>();
