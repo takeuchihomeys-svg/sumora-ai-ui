@@ -491,7 +491,9 @@ async function addJob(): Promise<void> {
         const roomMode = roomGateMode();
         if (roomMode !== "off" && onSw.length) {
           const { readRoomTurns } = await import("./lib/exam-room-db");
-          const rr = roomOf({ onSwitches: onSw, turns: await readRoomTurns(db() as never, new Date(Date.now() - 14 * 86_400_000).toISOString()) });
+          // 表は1本（exam-reach-rows の rowOf＝exam-select と同じ行・統括役の決め）
+          const { rowOfWith, tableOf } = await import("./lib/exam-reach-rows");
+          const rr = roomOf({ onSwitches: onSw, table: tableOf(onSw, rowOfWith({ cacheRoot: examCacheRoot() })), turns: await readRoomTurns(db() as never, new Date(Date.now() - 14 * 86_400_000).toISOString()) });
           if (rr.decision === "unknown") log(`  （#684）本番の余地: 決めない（${rr.why}）`);
           else if (rr.decision === "block" && roomMode === "on" && !flag("force")) { log(`  （#684）積まない: ${label}（${rr.why}）`); throw new Error(`積まない（#684）: 本番の直近14日で、このスイッチが効く番に食い違いが無い（${rr.why}）＝試験で良くなる余地が無い。--force で積む`); }
           else log(`  （#684）本番の余地: ${rr.why}${rr.decision === "block" ? "・余地0（on なら止める）" : rr.decision === "defer" ? `・余地が小さい（${ROOM_MIN_OK} 未満）` : ""}（EXAM_ROOM_GATE=${roomMode}）`);
