@@ -25,7 +25,7 @@
 //   combine に優先度の表の組（priority）を並べる・next に何を（offer）・いつ（when）・どの形で（form）・aim に中期（mid）
 //   型（check_order_type）が無い番は check-order-wire.checkOrderRecord をこの中で作る（CHECK_ORDER_TABLE が off でも指示書の欄が埋まる・meta には書かない）
 //   文の統括と書き手には briefForRole で役目ごとに要る欄だけ（decided-subfields の下の欄×役目の表から引く・BRIEF_SECTION_SUBS）
-import { conductorMaterialIndexOn } from "./conductor-material-index";
+import { conductorMaterialIndexOn, materialIndexGapMode, materialGaps } from "./conductor-material-index";
 import { CHECK_ORDER_TYPES, CHECK_DEPTH, NEXT_MOVE_OF_TYPE, TYPE_INTENT, checkOrderById } from "./check-order";
 import { checkOrderRecord } from "./check-order-wire";
 import { priorityTableRecord, PRIORITY_ROWS, type PriorityRecord } from "./priority-table";
@@ -75,7 +75,7 @@ export type BriefInputs = {
   info?: { node: string | null; cells: InfoCell[] } | null;
   /** 照らし合わせの残りと、果たし済みのこちらの約束の鍵（exchange-ledger） */
   ledger?: { open: OpenItem[]; keptPromises: string[] } | null;
-  /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX=on の時だけ）: その番のブレインの入力に有った材料の目録（指示書の extra.materials に移し、ここからは消す） */
+  /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: その番のブレインの入力に有った材料の目録（指示書の extra.materials に移し、ここからは消す） */
   materials?: import("./conductor-material-index").MaterialIndexItem[] | null;
 };
 
@@ -122,8 +122,10 @@ export type ConductorBrief = {
   notYet: string[];
   /** 2026-11-24 作業員A（台帳 #674・BRIEF_READ_EXTRA=on の時だけ）: 統括が読んでいなかった材料（物差しやブレインだけが読んでいた物）。書き手には渡さない（統括の中で読むだけ） */
   extra?: { basis?: { purpose: string | null; keyPoint: string | null; from: "judge_basis_rec" }; clash?: Array<{ a: string; b: string; level: string }>; time_words?: Array<{ word: string; label: string }>;
-    /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX=on の時だけ）: 材料の目録（名前・字数・中身の要点24字）＝ブレインの入力だけだった材料を統括が1本の口で読む */
-    materials?: import("./conductor-material-index").MaterialIndexItem[] };
+    /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: 材料の目録（名前・字数・中身の要点24字）＝ブレインの入力だけだった材料を統括が1本の口で読む */
+    materials?: import("./conductor-material-index").MaterialIndexItem[];
+    /** 2026-11-24 作業員A（MATERIAL_INDEX_GAP 既定 shadow・記録だけ）: 有るはずの材料が目録に無い（証拠は situation_now・疑いの印にはまだ入れない） */
+    material_gaps?: import("./conductor-material-index").MaterialGap[] };
 };
 
 const FACT_BASES = new Set(["conversation", "material", "company_fact", "general"]);
@@ -289,7 +291,11 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   const extra = extraOn || indexOn ? (() => {
     const out: NonNullable<ConductorBrief["extra"]> = {};
     // 2026-11-24 作業員A（#675・統括役の決め）: 材料の目録（ブレインの入力に有った材料・1本の口）
-    if (indexOn && Array.isArray(inputs.materials) && inputs.materials.length) out.materials = inputs.materials;
+    if (indexOn && Array.isArray(inputs.materials) && inputs.materials.length) {
+      out.materials = inputs.materials;
+      // 2026-11-24 作業員A（MATERIAL_INDEX_GAP・既定 shadow＝記録だけ・=off で止まる）: 有るはずの材料の抜け
+      if (materialIndexGapMode() !== "off") { const g = materialGaps(m, inputs.materials); if (g.length) out.material_gaps = g; }
+    }
     if (!extraOn) return Object.keys(out).length ? out : null;
     const jr = obj(m.judge_basis_rec);
     if (jr && !jb) out.basis = { purpose: str(jr.purpose, 20), keyPoint: str(jr.key_point, 50) ?? str(jr.keyPoint, 50), from: "judge_basis_rec" };
