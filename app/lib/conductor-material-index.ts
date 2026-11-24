@@ -1,4 +1,4 @@
-// app/lib/conductor-material-index.ts — 統括の指示書の「材料の目録」（CONDUCTOR_MATERIAL_INDEX・既定 off）
+// app/lib/conductor-material-index.ts — 統括の指示書の「材料の目録」（CONDUCTOR_MATERIAL_INDEX・既定 on＝記録だけ・=off で止まる）
 // 2026-11-24 作業員A（台帳 #675 の続き・統括役の決め）: ブレインの入力だけに入り、統括が直に読む所の無かった材料（32行）を、
 //   32本の読み口でなく1本の口で統括に渡す。その番のブレインの入力に有った材料の名前・字数・中身の要点（各1行・24字まで）だけ。
 //   置き場は統括の指示書の extra（#674 と同じ・meta.conductor_brief.extra.materials）。書き手には渡さない（BRIEF_SECTION_SUBS に入れない）。
@@ -8,7 +8,7 @@ export type MaterialIndexItem = { k: string; n: number; g: string };
 type Env = Record<string, string | undefined>;
 
 export function conductorMaterialIndexOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.CONDUCTOR_MATERIAL_INDEX ?? "").trim().toLowerCase() === "on";
+  return (env.CONDUCTOR_MATERIAL_INDEX ?? "on").trim().toLowerCase() !== "off"; // 11/24 統括役の決め: 記録だけ＝既定 on（11/22 の決まり）・=off で止まる
 }
 
 export const MATERIAL_INDEX_MAX = 30;

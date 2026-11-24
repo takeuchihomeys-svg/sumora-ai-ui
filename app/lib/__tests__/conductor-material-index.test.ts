@@ -7,7 +7,7 @@ import { ourSideBlock, sendCountByItemsOn } from "../conductor-our-side";
 let pass = 0, fail = 0;
 const ok = (name: string, c: boolean, d: unknown = "") => { if (c) pass++; else { fail++; console.error(`✗ ${name}`, d); } };
 
-ok("既定は off", !conductorMaterialIndexOn({}) && conductorMaterialIndexOn({ CONDUCTOR_MATERIAL_INDEX: "on" }));
+ok("既定は on（記録だけ）・=off で止まる", conductorMaterialIndexOn({}) && !conductorMaterialIndexOn({ CONDUCTOR_MATERIAL_INDEX: "off" }));
 ok("要点: 見出しの名前＋続き（24字まで）", gistOf("【時系列の帳面】来月の入居を考えている") === "時系列の帳面：来月の入居を考えている" && Array.from(gistOf("あ".repeat(50))).length === 24);
 const idx = buildMaterialIndex({ status: "【状態】物件提案中", empty: "  ", customerState: "【状態の塊A】一つ目\n\n【状態の塊B】二つ目" }, { split: ["customerState"], marks: { ack_confirm: 40, status: 3 } });
 ok("空の材料は載せない・まとめた塊は見出しごとに分ける・印は mark. で", idx.map((x) => x.k).join(",") === "status,customerState/状態の塊A,customerState/状態の塊B,mark.ack_confirm,mark.status", idx);
@@ -15,13 +15,13 @@ ok("上限の件数", buildMaterialIndex(Object.fromEntries(Array.from({ length:
 const big = buildMaterialIndex(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`material_${i}`, `【見出し${i}】${"中".repeat(40)}`])));
 ok("文にした時の上限の字数", materialIndexText(big).length <= MATERIAL_INDEX_TEXT_MAX && materialIndexText(big).endsWith("・…") && materialIndexText([]) === "");
 
-delete process.env.CONDUCTOR_MATERIAL_INDEX; delete process.env.BRIEF_READ_EXTRA;
+process.env.CONDUCTOR_MATERIAL_INDEX = "off"; delete process.env.BRIEF_READ_EXTRA;
 const meta = { conductor_brief_inputs: { materials: idx } };
-ok("off の時は指示書に目録が無い（今と同じ）", buildConductorBrief(meta).extra === undefined);
-process.env.CONDUCTOR_MATERIAL_INDEX = "on";
+ok("=off の時は指示書に目録が無い（前と同じ）", buildConductorBrief(meta).extra === undefined);
+delete process.env.CONDUCTOR_MATERIAL_INDEX;
 const b = buildConductorBrief(meta);
-ok("on: 指示書の extra.materials に目録（BRIEF_READ_EXTRA の3つは off のまま）", b.extra?.materials?.length === idx.length && b.extra?.basis === undefined && b.extra?.clash === undefined, b.extra);
-ok("on でも目録が無い番は extra を付けない", buildConductorBrief({}).extra === undefined);
+ok("既定（on）: 指示書の extra.materials に目録（BRIEF_READ_EXTRA の3つは off のまま）", b.extra?.materials?.length === idx.length && b.extra?.basis === undefined && b.extra?.clash === undefined, b.extra);
+ok("目録が無い番は extra を付けない", buildConductorBrief({}).extra === undefined);
 delete process.env.CONDUCTOR_MATERIAL_INDEX;
 
 // SEND_COUNT_BY_ITEMS

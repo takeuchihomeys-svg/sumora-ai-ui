@@ -75,7 +75,7 @@ export type BriefInputs = {
   info?: { node: string | null; cells: InfoCell[] } | null;
   /** 照らし合わせの残りと、果たし済みのこちらの約束の鍵（exchange-ledger） */
   ledger?: { open: OpenItem[]; keptPromises: string[] } | null;
-  /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX=on の時だけ）: その番のブレインの入力に有った材料の目録（指示書の extra.materials に移し、ここからは消す） */
+  /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: その番のブレインの入力に有った材料の目録（指示書の extra.materials に移し、ここからは消す） */
   materials?: import("./conductor-material-index").MaterialIndexItem[] | null;
 };
 
@@ -122,7 +122,7 @@ export type ConductorBrief = {
   notYet: string[];
   /** 2026-11-24 作業員A（台帳 #674・BRIEF_READ_EXTRA=on の時だけ）: 統括が読んでいなかった材料（物差しやブレインだけが読んでいた物）。書き手には渡さない（統括の中で読むだけ） */
   extra?: { basis?: { purpose: string | null; keyPoint: string | null; from: "judge_basis_rec" }; clash?: Array<{ a: string; b: string; level: string }>; time_words?: Array<{ word: string; label: string }>;
-    /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX=on の時だけ）: 材料の目録（名前・字数・中身の要点24字）＝ブレインの入力だけだった材料を統括が1本の口で読む */
+    /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: 材料の目録（名前・字数・中身の要点24字）＝ブレインの入力だけだった材料を統括が1本の口で読む */
     materials?: import("./conductor-material-index").MaterialIndexItem[] };
 };
 
