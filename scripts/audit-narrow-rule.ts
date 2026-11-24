@@ -14,7 +14,12 @@ const R = arg("dir", join("scripts", "brain-exam", "results"));
 const since = Date.now() - (Number(arg("days", "7")) || 7) * 86_400_000;
 type Row = RowLite & { ledger?: { inserted?: Record<string, number> } | null };
 const rd = (x: string) => (existsSync(x) ? readFileSync(x, "utf8").trim().split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as Row; } catch { return null; } }).filter((r): r is Row => !!r && !r.error) : []);
-const out = { groups: 0, applied: 0, notApplied: {} as Record<string, number>, problems: 0, dropped: 0, usd: 0, droppedUsd: 0, worse: 0, missed: [] as string[] };
+// 試したスイッチ（係の済んだ依頼の switch・--queue=<exam-queue>）。無ければ meta.switches の on
+const Q = arg("queue");
+const testedOf = new Map<string, string[]>();
+if (Q && existsSync(join(Q, "done"))) for (const f of readdirSync(join(Q, "done")).filter((x) => x.endsWith(".json"))) { try { const j = JSON.parse(readFileSync(join(Q, "done", f), "utf8")) as { label?: string; switch?: string; env?: Record<string, string> }; const envOn = Object.entries(j.env ?? {}).filter(([k, v]) => !k.startsWith("EXAM_") && String(v).toLowerCase() === "on").map(([k]) => k); if (j.label && (j.switch || envOn.length)) testedOf.set(j.label, [...new Set([...envOn, ...String(j.switch ?? "").split(/[,+、\s]+/).filter((x) => /^[A-Z][A-Z0-9_]+$/.test(x))])]); } catch { /* */ } }
+const testedFor = (label: string) => testedOf.get(label) ?? testedOf.get(label.replace(/-p\d+$/, "")) ?? null;
+const out = { groups: 0, applied: 0, notApplied: {} as Record<string, number>, problems: 0, dropped: 0, usd: 0, droppedUsd: 0, worse: 0, missed: [] as string[], notAppliedDetail: [] as string[], appliedGroups: [] as Array<{ label: string; on: string; drop: number; of: number; why: string }> };
 for (const f of readdirSync(R).filter((x) => x.endsWith(".base-merged.jsonl"))) {
   const bf = join(R, f);
   if (statSync(bf).mtimeMs < since) continue;
@@ -25,15 +30,15 @@ for (const f of readdirSync(R).filter((x) => x.endsWith(".base-merged.jsonl"))) 
   try { meta = JSON.parse(readFileSync(join(R, `${label}.meta.json`), "utf8")); } catch { /* */ }
   try { cost = JSON.parse(readFileSync(join(R, `${label}.cost.json`), "utf8")); } catch { /* */ }
   out.groups++;
-  const on = Object.entries(meta.switches ?? {}).filter(([, v]) => String(v).toLowerCase() === "on").map(([k]) => k);
+  const on = testedFor(label) ?? Object.entries(meta.switches ?? {}).filter(([, v]) => String(v).toLowerCase() === "on").map(([k]) => k);
   const prior: PriorLedger = new Map();
   for (const r of cur) { const m = prior.get(r.id) ?? {}; for (const [k, v] of Object.entries(r.ledger?.inserted ?? {})) m[k] = Math.max(m[k] ?? 0, Number(v) || 0); prior.set(r.id, m); }
   const ids = [...new Set(cur.map((r) => r.id))];
   const res = narrowProblems({ ids, onSwitches: on, prior, base: baseMajorityOf(base) });
   const usd = (cost.total?.realUsd ?? 0) + (cost.baseline?.childUsd ?? 0);
   out.usd += usd; out.problems += ids.length;
-  if (!res.applied) { out.notApplied[res.reason.replace(/（.*$/, "")] = (out.notApplied[res.reason.replace(/（.*$/, "")] ?? 0) + 1; }
-  else out.applied++;
+  if (!res.applied) { out.notAppliedDetail.push(`${label}: ${res.reason}`); out.notApplied[res.reason.replace(/（.*$/, "")] = (out.notApplied[res.reason.replace(/（.*$/, "")] ?? 0) + 1; }
+  else { out.applied++; out.appliedGroups.push({ label, on: on.join(","), drop: res.drop.length, of: ids.length, why: [...new Set(res.drop.map((id) => res.why[id]))].join("|") }); }
   const repsOf = (id: string) => cur.filter((r) => r.id === id).length;
   const allReps = ids.reduce((a, id) => a + repsOf(id), 0) || 1;
   out.dropped += res.drop.length;
