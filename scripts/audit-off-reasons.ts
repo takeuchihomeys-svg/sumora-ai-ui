@@ -52,8 +52,21 @@ function codeText(dir: string): string {
     for (const fl of FILES) { const ls = fl.text.split(/\r?\n/); const k = ls.findIndex((l) => re.test(l)); if (k >= 0) return { file: fl.path, line: k + 1 }; }
     return null;
   };
+  // 2026-11-24 作業員A（#675 の続き）: スイッチを読むファイルで鎖の場所が決まらない時（decisions-1103.ts・two-stage.ts 等の小さな部品）は、
+  //   入口の関数（読む行か上の4行の export function／const）を呼ぶ所のファイルで決める（brain-core が呼ぶ＝①ブレインの材料 等）
+  const callerSite = (at: { file: string; line: number }): { file: string; line: number } | null => {
+    const fl = FILES.find((x) => x.path === at.file); if (!fl) return null;
+    const ls = fl.text.split(/\r?\n/);
+    let gate: string | null = null;
+    for (let j = at.line - 1; j >= Math.max(0, at.line - 5) && !gate; j--) { const m = ls[j].match(/export\s+(?:function|const)\s+(\w+)/); if (m) gate = m[1]; }
+    if (!gate) return null;
+    const gre = new RegExp(`\\b${gate}\\(`);
+    for (const f of FILES) { if (f.path === at.file) continue; const k = f.text.split(/\r?\n/).findIndex((l) => gre.test(l) && !/export\s+(?:function|const)/.test(l)); if (k >= 0 && chainPlaceOf(f.path)) return { file: f.path, line: k + 1 }; }
+    return null;
+  };
+  const siteOf = (sw: string): { file: string; line: number } | null => { const at = readSite(sw); if (!at) return null; return chainPlaceOf(at.file) ? at : callerSite(at) ?? at; };
   const offparts = [...new Set(eff.map((it) => it.switch_name).filter((s): s is string => !!s && !mapSw.has(s)))]
-    .map((sw) => { const at = readSite(sw); return at ? offpartRowOf(sw, at.file, at.line, chainPlaceOf(at.file)) : null; })
+    .map((sw) => { const at = siteOf(sw); return at ? offpartRowOf(sw, at.file, at.line, chainPlaceOf(at.file)) : null; })
     .filter((r): r is NonNullable<typeof r> => !!r);
   const OFFPARTS = process.argv.includes("--offparts");
   const ctx = OFFPARTS ? { ...ctx0, map: [...LINKAGE_MAP, ...offparts] } : ctx0;
@@ -97,9 +110,9 @@ function codeText(dir: string): string {
   // 地図に行が無いスイッチも、読む所（ファイル:行）から鎖の場所を出す（証拠つき・決められない物は未確認）
   const placeOf = (sw: string | null): { place: Joint | null; at: string } => {
     if (!sw) return { place: null, at: "スイッチの名前が無い" };
-    const re = new RegExp(`env\\.${sw}\\b`);
-    for (const fl of FILES) { const ls = fl.text.split(/\r?\n/); const k = ls.findIndex((l) => re.test(l)); if (k >= 0) return { place: chainPlaceOf(fl.path), at: `${fl.path}:${k + 1}` }; }
-    return { place: null, at: "env の読みが無い" };
+    const at = siteOf(sw); // 読む所で決まらなければ入口を呼ぶ所（#675 の続き）
+    if (!at) return { place: null, at: "env の読みが無い" };
+    return { place: chainPlaceOf(at.file), at: `${at.file}:${at.line}` };
   };
   const places = eff.map((it) => placeOf(it.switch_name));
   console.log(`\n■ 全 ${items.length}行の鎖の場所（スイッチを最初に読む所のファイルで決めた・地図の外の行も）`);

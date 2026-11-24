@@ -1,5 +1,24 @@
 [
  {
+  "id": "auto.TURN_ELAPSED_TWO_CHOICE",
+  "stage": "read",
+  "name": "TURN_ELAPSED_TWO_CHOICE（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3547",
+  "readers": [],
+  "switches": [
+   "TURN_ELAPSED_TWO_CHOICE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_DROP_DUPLICATES",
   "stage": "conductor",
   "name": "COMPOSE_DROP_DUPLICATES（地図の外の off の部品・compose-blueprint.ts）",
@@ -76,6 +95,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.BRAIN_DEMOTE_SEARCH_EXHAUSTED",
+  "stage": "read",
+  "name": "BRAIN_DEMOTE_SEARCH_EXHAUSTED（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3575",
+  "readers": [],
+  "switches": [
+   "BRAIN_DEMOTE_SEARCH_EXHAUSTED"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_REWRITE",
   "stage": "conductor",
   "name": "COMPOSE_REWRITE（地図の外の off の部品・compose-blueprint-server.ts）",
@@ -133,6 +171,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.SENT_CONFIRMED_NOTE",
+  "stage": "writer",
+  "name": "SENT_CONFIRMED_NOTE（地図の外の off の部品・route.ts）",
+  "producer": "app/api/generate-reply/route.ts",
+  "key": "app/api/generate-reply/route.ts:5690",
+  "readers": [],
+  "switches": [
+   "SENT_CONFIRMED_NOTE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.CONDUCTOR_FOCUS_GUARD",
   "stage": "conductor",
   "name": "CONDUCTOR_FOCUS_GUARD（地図の外の off の部品・conductor-focus.ts）",
@@ -179,6 +236,25 @@
   "readers": [],
   "switches": [
    "BRAIN_DEEP_RECHECK"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.VIEWING_CONFIRMED_ACK_WAIT",
+  "stage": "read",
+  "name": "VIEWING_CONFIRMED_ACK_WAIT（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3649",
+  "readers": [],
+  "switches": [
+   "VIEWING_CONFIRMED_ACK_WAIT"
   ],
   "readerSwitches": [],
   "fill": {
@@ -304,6 +380,44 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.SCENE_SKILLS",
+  "stage": "writer",
+  "name": "SCENE_SKILLS（地図の外の off の部品・route.ts）",
+  "producer": "app/api/generate-reply/route.ts",
+  "key": "app/api/generate-reply/route.ts:5931",
+  "readers": [],
+  "switches": [
+   "SCENE_SKILLS"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_MATERIAL_FETCH",
+  "stage": "read",
+  "name": "BRAIN_MATERIAL_FETCH（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:4037",
+  "readers": [],
+  "switches": [
+   "BRAIN_MATERIAL_FETCH"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_ORDER_TABLE",
   "stage": "conductor",
   "name": "COMPOSE_ORDER_TABLE（地図の外の off の部品・compose-order-table.ts）",
@@ -399,6 +513,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.BRAIN_FLOW_SIGNALS",
+  "stage": "read",
+  "name": "BRAIN_FLOW_SIGNALS（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:276",
+  "readers": [],
+  "switches": [
+   "BRAIN_FLOW_SIGNALS"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.RECOMMEND_SECOND_WISH_NG",
   "stage": "writer",
   "name": "RECOMMEND_SECOND_WISH_NG（地図の外の off の部品・second-message-scene.ts）",
@@ -407,6 +540,25 @@
   "readers": [],
   "switches": [
    "RECOMMEND_SECOND_WISH_NG"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.ACK_AFTER_PROMISE_REPLY",
+  "stage": "read",
+  "name": "ACK_AFTER_PROMISE_REPLY（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:1539",
+  "readers": [],
+  "switches": [
+   "ACK_AFTER_PROMISE_REPLY"
   ],
   "readerSwitches": [],
   "fill": {
@@ -445,6 +597,25 @@
   "readers": [],
   "switches": [
    "BRAIN_JUDGE_BASIS_NEXT"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.CHECK_ORDER_GUIDE",
+  "stage": "read",
+  "name": "CHECK_ORDER_GUIDE（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3760",
+  "readers": [],
+  "switches": [
+   "CHECK_ORDER_GUIDE"
   ],
   "readerSwitches": [],
   "fill": {
@@ -589,6 +760,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.BRAIN_OUTCOME_LEARN",
+  "stage": "read",
+  "name": "BRAIN_OUTCOME_LEARN（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:4131",
+  "readers": [],
+  "switches": [
+   "BRAIN_OUTCOME_LEARN"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_HOW_BY_TYPE",
   "stage": "conductor",
   "name": "COMPOSE_HOW_BY_TYPE（地図の外の off の部品・compose-sentence-plan.ts）",
@@ -703,6 +893,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.CONDITION_MOVE_IN_UNIFIED",
+  "stage": "read",
+  "name": "CONDITION_MOVE_IN_UNIFIED（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:9068",
+  "readers": [],
+  "switches": [
+   "CONDITION_MOVE_IN_UNIFIED"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.LINE_WATCH_GEN_NOTE",
   "stage": "next",
   "name": "LINE_WATCH_GEN_NOTE（地図の外の off の部品・line-watch-materials.ts）",
@@ -741,6 +950,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.WATCH_AIX_RECORD_V2",
+  "stage": "next",
+  "name": "WATCH_AIX_RECORD_V2（地図の外の off の部品・line-watch-eval-server.ts）",
+  "producer": "app/lib/line-watch-eval-server.ts",
+  "key": "app/lib/line-watch-eval-server.ts:162",
+  "readers": [],
+  "switches": [
+   "WATCH_AIX_RECORD_V2"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_HEAD_SPLIT",
   "stage": "conductor",
   "name": "COMPOSE_HEAD_SPLIT（地図の外の off の部品・compose-head.ts）",
@@ -749,6 +977,25 @@
   "readers": [],
   "switches": [
    "COMPOSE_HEAD_SPLIT"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.FIRST_CONTACT_SELF_SEND_REPLY",
+  "stage": "read",
+  "name": "FIRST_CONTACT_SELF_SEND_REPLY（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:6192",
+  "readers": [],
+  "switches": [
+   "FIRST_CONTACT_SELF_SEND_REPLY"
   ],
   "readerSwitches": [],
   "fill": {
@@ -779,6 +1026,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.MANUAL_DRAFT_POST_APPLY",
+  "stage": "writer",
+  "name": "MANUAL_DRAFT_POST_APPLY（地図の外の off の部品・route.ts）",
+  "producer": "app/api/generate-reply/route.ts",
+  "key": "app/api/generate-reply/route.ts:3397",
+  "readers": [],
+  "switches": [
+   "MANUAL_DRAFT_POST_APPLY"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.BRAIN_FAST_SLOW",
   "stage": "read",
   "name": "BRAIN_FAST_SLOW（地図の外の off の部品・brain-fast-slow.ts）",
@@ -787,6 +1053,25 @@
   "readers": [],
   "switches": [
    "BRAIN_FAST_SLOW"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.LINK_HUB",
+  "stage": "next",
+  "name": "LINK_HUB（地図の外の off の部品・link-brain-watch-server.ts）",
+  "producer": "app/lib/link-brain-watch-server.ts",
+  "key": "app/lib/link-brain-watch-server.ts:113",
+  "readers": [],
+  "switches": [
+   "LINK_HUB"
   ],
   "readerSwitches": [],
   "fill": {
@@ -855,6 +1140,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.NEXT_MOVE_CONCRETE",
+  "stage": "conductor",
+  "name": "NEXT_MOVE_CONCRETE（地図の外の off の部品・conductor-brief.ts）",
+  "producer": "app/lib/conductor-brief.ts",
+  "key": "app/lib/conductor-brief.ts:224",
+  "readers": [],
+  "switches": [
+   "NEXT_MOVE_CONCRETE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_ELEMENT_TYPES",
   "stage": "conductor",
   "name": "COMPOSE_ELEMENT_TYPES（地図の外の off の部品・compose-order-table.ts）",
@@ -874,6 +1178,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.TIME_FACTS",
+  "stage": "read",
+  "name": "TIME_FACTS（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:2567",
+  "readers": [],
+  "switches": [
+   "TIME_FACTS"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.EXAM_CLOUD",
   "stage": "next",
   "name": "EXAM_CLOUD（地図の外の off の部品・exam-cloud.ts）",
@@ -882,6 +1205,82 @@
   "readers": [],
   "switches": [
    "EXAM_CLOUD"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_MESSAGE_PLAN",
+  "stage": "writer",
+  "name": "BRAIN_MESSAGE_PLAN（地図の外の off の部品・route.ts）",
+  "producer": "app/api/generate-reply/route.ts",
+  "key": "app/api/generate-reply/route.ts:4474",
+  "readers": [],
+  "switches": [
+   "BRAIN_MESSAGE_PLAN"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.STALE_DAY_DRAFT_CLEAR",
+  "stage": "next",
+  "name": "STALE_DAY_DRAFT_CLEAR（地図の外の off の部品・route.ts）",
+  "producer": "app/api/cron/generate-pending-drafts/route.ts",
+  "key": "app/api/cron/generate-pending-drafts/route.ts:120",
+  "readers": [],
+  "switches": [
+   "STALE_DAY_DRAFT_CLEAR"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_REACTION_PREDICT",
+  "stage": "read",
+  "name": "BRAIN_REACTION_PREDICT（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:4120",
+  "readers": [],
+  "switches": [
+   "BRAIN_REACTION_PREDICT"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.STAFF_TODO_INSTANT_NOTICE",
+  "stage": "next",
+  "name": "STAFF_TODO_INSTANT_NOTICE（地図の外の off の部品・route.ts）",
+  "producer": "app/api/cron/link-brain-watch/route.ts",
+  "key": "app/api/cron/link-brain-watch/route.ts:40",
+  "readers": [],
+  "switches": [
+   "STAFF_TODO_INSTANT_NOTICE"
   ],
   "readerSwitches": [],
   "fill": {
@@ -950,6 +1349,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.CUSTOMER_FACT_LEDGER",
+  "stage": "read",
+  "name": "CUSTOMER_FACT_LEDGER（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3791",
+  "readers": [],
+  "switches": [
+   "CUSTOMER_FACT_LEDGER"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.FEELING_CONDUCTOR_TABLE",
   "stage": "read",
   "name": "FEELING_CONDUCTOR_TABLE（地図の外の off の部品・brain-core.ts）",
@@ -958,6 +1376,25 @@
   "readers": [],
   "switches": [
    "FEELING_CONDUCTOR_TABLE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.CONDUCTOR_NEAR_ANATOMY",
+  "stage": "conductor",
+  "name": "CONDUCTOR_NEAR_ANATOMY（地図の外の off の部品・conductor-near-opinion-server.ts）",
+  "producer": "app/lib/conductor-near-opinion-server.ts",
+  "key": "app/lib/conductor-near-opinion-server.ts:71",
+  "readers": [],
+  "switches": [
+   "CONDUCTOR_NEAR_ANATOMY"
   ],
   "readerSwitches": [],
   "fill": {
@@ -1007,6 +1444,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.PICKUP_FOCUS_ONE",
+  "stage": "writer",
+  "name": "PICKUP_FOCUS_ONE（地図の外の off の部品・route.ts）",
+  "producer": "app/api/aix/action/route.ts",
+  "key": "app/api/aix/action/route.ts:3953",
+  "readers": [],
+  "switches": [
+   "PICKUP_FOCUS_ONE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.COMPOSE_CLOSING_TABLE",
   "stage": "conductor",
   "name": "COMPOSE_CLOSING_TABLE（地図の外の off の部品・compose-value-slots.ts）",
@@ -1015,6 +1471,44 @@
   "readers": [],
   "switches": [
    "COMPOSE_CLOSING_TABLE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_OPENER_USE",
+  "stage": "writer",
+  "name": "BRAIN_OPENER_USE（地図の外の off の部品・route.ts）",
+  "producer": "app/api/generate-reply/route.ts",
+  "key": "app/api/generate-reply/route.ts:1558",
+  "readers": [],
+  "switches": [
+   "BRAIN_OPENER_USE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_ACTION_WIN_RATES",
+  "stage": "next",
+  "name": "BRAIN_ACTION_WIN_RATES（地図の外の off の部品・route.ts）",
+  "producer": "app/api/cron/auto-reply-readiness/route.ts",
+  "key": "app/api/cron/auto-reply-readiness/route.ts:81",
+  "readers": [],
+  "switches": [
+   "BRAIN_ACTION_WIN_RATES"
   ],
   "readerSwitches": [],
   "fill": {
@@ -1102,6 +1596,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.CONTRACT_TERMS_PET_CLEANING",
+  "stage": "read",
+  "name": "CONTRACT_TERMS_PET_CLEANING（地図の外の off の部品・brain-deep-check-server.ts）",
+  "producer": "app/lib/brain-deep-check-server.ts",
+  "key": "app/lib/brain-deep-check-server.ts:47",
+  "readers": [],
+  "switches": [
+   "CONTRACT_TERMS_PET_CLEANING"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.FC_BLUEPRINT_MARK",
   "stage": "check",
   "name": "FC_BLUEPRINT_MARK（地図の外の off の部品・final-check-blueprint-match.ts）",
@@ -1110,6 +1623,25 @@
   "readers": [],
   "switches": [
    "FC_BLUEPRINT_MARK"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.COMPANY_FACT_PAYMENT_LUMP",
+  "stage": "check",
+  "name": "COMPANY_FACT_PAYMENT_LUMP（地図の外の off の部品・final-check-facts-source.ts）",
+  "producer": "app/lib/final-check-facts-source.ts",
+  "key": "app/lib/final-check-facts-source.ts:6",
+  "readers": [],
+  "switches": [
+   "COMPANY_FACT_PAYMENT_LUMP"
   ],
   "readerSwitches": [],
   "fill": {
@@ -1159,6 +1691,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.INFO_FILL_MAP",
+  "stage": "read",
+  "name": "INFO_FILL_MAP（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:4235",
+  "readers": [],
+  "switches": [
+   "INFO_FILL_MAP"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.BRIEF_FILL_FROM_TYPE",
   "stage": "conductor",
   "name": "BRIEF_FILL_FROM_TYPE（地図の外の off の部品・conductor-brief.ts）",
@@ -1167,6 +1718,120 @@
   "readers": [],
   "switches": [
    "BRIEF_FILL_FROM_TYPE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.ROUTE_TO_BRIEF",
+  "stage": "conductor",
+  "name": "ROUTE_TO_BRIEF（地図の外の off の部品・conductor-brief.ts）",
+  "producer": "app/lib/conductor-brief.ts",
+  "key": "app/lib/conductor-brief.ts:242",
+  "readers": [],
+  "switches": [
+   "ROUTE_TO_BRIEF"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.PICKUP_WHY_TO_BRAIN",
+  "stage": "read",
+  "name": "PICKUP_WHY_TO_BRAIN（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3700",
+  "readers": [],
+  "switches": [
+   "PICKUP_WHY_TO_BRAIN"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_CLOSED_THANKS_NO_REPLY",
+  "stage": "read",
+  "name": "BRAIN_CLOSED_THANKS_NO_REPLY（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3847",
+  "readers": [],
+  "switches": [
+   "BRAIN_CLOSED_THANKS_NO_REPLY"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_LAYOUT_ASK_TEMPORARY",
+  "stage": "read",
+  "name": "BRAIN_LAYOUT_ASK_TEMPORARY（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3848",
+  "readers": [],
+  "switches": [
+   "BRAIN_LAYOUT_ASK_TEMPORARY"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_FAR_OTHER_FIRST",
+  "stage": "read",
+  "name": "BRAIN_FAR_OTHER_FIRST（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3849",
+  "readers": [],
+  "switches": [
+   "BRAIN_FAR_OTHER_FIRST"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.BRAIN_GUARANTOR_WORDING",
+  "stage": "read",
+  "name": "BRAIN_GUARANTOR_WORDING（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:3851",
+  "readers": [],
+  "switches": [
+   "BRAIN_GUARANTOR_WORDING"
   ],
   "readerSwitches": [],
   "fill": {
@@ -1216,6 +1881,25 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.VIEWING_CONFIRMED_ONLY",
+  "stage": "read",
+  "name": "VIEWING_CONFIRMED_ONLY（地図の外の off の部品・brain-core.ts）",
+  "producer": "app/lib/brain-core.ts",
+  "key": "app/lib/brain-core.ts:8660",
+  "readers": [],
+  "switches": [
+   "VIEWING_CONFIRMED_ONLY"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.TIMELINE_VIEWING_HOLD",
   "stage": "read",
   "name": "TIMELINE_VIEWING_HOLD（地図の外の off の部品・situation-timeline.ts）",
@@ -1235,11 +1919,49 @@
   "next": "読む側を確かめて地図に正式な行を足す（#675）"
  },
  {
+  "id": "auto.AUTO_STAR_BULK_CHUNK",
+  "stage": "next",
+  "name": "AUTO_STAR_BULK_CHUNK（地図の外の off の部品・route.ts）",
+  "producer": "app/api/cron/auto-star-winners/route.ts",
+  "key": "app/api/cron/auto-star-winners/route.ts:151",
+  "readers": [],
+  "switches": [
+   "AUTO_STAR_BULK_CHUNK"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.UPDATE_KNOWLEDGE_TIME_BUDGET",
+  "stage": "next",
+  "name": "UPDATE_KNOWLEDGE_TIME_BUDGET（地図の外の off の部品・route.ts）",
+  "producer": "app/api/cron/update-knowledge/route.ts",
+  "key": "app/api/cron/update-knowledge/route.ts:119",
+  "readers": [],
+  "switches": [
+   "UPDATE_KNOWLEDGE_TIME_BUDGET"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
   "id": "auto.BRIEF_CARRY_TO_WRITER",
   "stage": "conductor",
   "name": "BRIEF_CARRY_TO_WRITER（地図の外の off の部品・conductor-brief.ts）",
   "producer": "app/lib/conductor-brief.ts",
-  "key": "app/lib/conductor-brief.ts:301",
+  "key": "app/lib/conductor-brief.ts:321",
   "readers": [],
   "switches": [
    "BRIEF_CARRY_TO_WRITER"
@@ -1319,6 +2041,25 @@
   "readers": [],
   "switches": [
    "BRAIN_RULE6_OPEN_PROMISE"
+  ],
+  "readerSwitches": [],
+  "fill": {
+   "src": "meta",
+   "path": "-"
+  },
+  "owner": "-",
+  "layer": "連携",
+  "next": "読む側を確かめて地図に正式な行を足す（#675）"
+ },
+ {
+  "id": "auto.SIP_JUDGE",
+  "stage": "writer",
+  "name": "SIP_JUDGE（地図の外の off の部品・route.ts）",
+  "producer": "app/api/aix-template-generate/route.ts",
+  "key": "app/api/aix-template-generate/route.ts:1631",
+  "readers": [],
+  "switches": [
+   "SIP_JUDGE"
   ],
   "readerSwitches": [],
   "fill": {
