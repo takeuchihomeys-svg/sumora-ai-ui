@@ -106,6 +106,7 @@ export const EXPECTED: readonly ExpectedRow[] = [
     why: "これからの内覧があるのに、内覧の材料（内覧の表・お客様の状態の塊）が入力に無い",
   },
 ];
+// tasks（未完了のタスク）は入れない: 証拠になる欄が line_tasks の1回の読み（brain-core の openTasksResult）しか無く、行動台帳の lineTasks も材料の tasksText も同じ読みから作る＝同じ失敗で両方消える（読みの失敗は brain-material-miss の open_tasks が別に数えている）
 export type MaterialGap = { id: string; want: string; evidence: string; got: number };
 /** 有るはずの材料の抜け（決まった計算・LLM なし）。目録が無い番（指示書を作らない番・申込以降）は見ない。1番に max 件まで */
 export function materialGaps(m: Rec | null | undefined, items: readonly MaterialIndexItem[] | null | undefined, max = 3): MaterialGap[] {
