@@ -65,3 +65,18 @@ export function guardLine(guards: ReadonlyArray<GuardPick>, unitUsd: number): st
   const usd = guards.reduce((s, g) => s + unitUsd * (g.reusable ? 1 : 2), 0);
   return `守り +${guards.length}問（${guards.map((g) => `${g.id} ${g.why}`).join("／")}・1回）・見込み +$${usd.toFixed(2)}`;
 }
+
+/**
+ * 2026-11-24 作業員L（竹内さん 11/24「試験にお金がもったいない」・統括役の頼み）: 守りは、使い回せる基準（夜の基準に前の答えがある）がある時だけ・1組 GUARDS_REUSE_MAX 問まで。
+ *   直近7晩: 守りの回 101（今の回の 11.7%）のうち、前の答えがあって比べられたのは 19 だけ（残り 82 は前が無く比べられない＝費用だけ・前を作るとさらに倍）。
+ *   比べられた 19 で悪化と出たのは4（q094 が3組・q351 が1組）で、どれも前の答えのある守り＝この形でも残る。止める EXAM_GUARDS_REUSE_ONLY=off（今まで通り2問・前を作る守りも）
+ */
+export const GUARDS_REUSE_MAX = 1;
+export function guardsReuseOnlyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_GUARDS_REUSE_ONLY ?? "").trim().toLowerCase() !== "off";
+}
+/** 守りを使い回せる物だけ・上限まで（純関数）。off の時はそのまま */
+export function trimGuardsToReusable(guards: ReadonlyArray<GuardPick>, on: boolean = guardsReuseOnlyOn()): GuardPick[] {
+  if (!on) return [...guards];
+  return guards.filter((g) => g.reusable).slice(0, GUARDS_REUSE_MAX);
+}

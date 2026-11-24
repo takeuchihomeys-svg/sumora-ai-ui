@@ -66,7 +66,7 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
-import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
+import { chooseGuards, trimGuardsToReusable, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { reflectionLine, replanLine, type ReflRow } from "./lib/exam-reflection";
 import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
@@ -515,7 +515,8 @@ async function addJob(): Promise<void> {
         const unit = job.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP;
         const tr = jobRepsPlan(job, ids).reps, nbT = predictNeedsBase(cwd, ids);
         const baseUsd = ids.reduce((s, id) => s + (tr[id] ?? 1) * unit * (nbT.includes(id) ? 2 : 1), 0);
-        const g = fitGuardsToCap(g0, { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
+        // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」）: 守りは使い回せる基準のある物だけ・1問まで（EXAM_GUARDS_REUSE_ONLY=off で今まで通り）
+        const g = fitGuardsToCap(trimGuardsToReusable(g0), { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
         if (g.length) { job.guards = g.map((x) => x.id); ids.push(...job.guards); job.only = ids.join(","); }
         log(`  ${guardLine(g, unit)}${g.length < g0.length ? `（上限 $${job.capUsd} に合わせて ${g0.length}→${g.length}問）` : ""}${!cards.length ? "（問題の札が無い＝守りを選べない・exam-near-resolve が夜に札を写す）" : ""}`);
       } catch (e) { log(`  守りを選べない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
