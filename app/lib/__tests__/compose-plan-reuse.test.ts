@@ -12,5 +12,6 @@ ok("cached: 同じ番の取り置きだけ使い回す", g({ fresh: true, cached
 ok("on: 前の発言の判断も使い回す（stale の印）", g({ fresh: false, cached: true, hasMeta: true }, "on").reused === "stale" && g({ fresh: false, cached: false, hasMeta: true }, "on").reused === "stale");
 ok("判断の meta が無ければ作らない", !g({ fresh: true, cached: false, hasMeta: false }, "on").ok);
 
+ok("shadow: 取り置き・前の発言の判断の番も作る（書き手に渡さないのは route 側）", composePlanReuseMode({ COMPOSE_PLAN_REUSE: "shadow" }) === "shadow" && g({ fresh: true, cached: true, hasMeta: true }, "shadow").reused === "cached" && g({ fresh: false, cached: false, hasMeta: true }, "shadow").reused === "stale");
 console.log(`compose-plan-reuse: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

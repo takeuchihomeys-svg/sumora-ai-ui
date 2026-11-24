@@ -7,12 +7,15 @@
 
 /** 今いる作業員（2026-11-22 統括役の分担） */
 // 2026-11-23 統括役の分担（4人体制）
-export const LIVE_WORKERS: readonly string[] = ["作業員P", "作業員A", "作業員L", "作業員N2"];
+// 2026-11-24 竹内さんの決め（2人体制・P と N2 は止める）・統括役の付け替え: P→A・N2→L
+export const LIVE_WORKERS: readonly string[] = ["作業員A", "作業員L"];
 
 /** もういない作業員 → 今の作業員（統括役の決め 11/22） */
 export const OLD_WORKER_TO_LIVE: Readonly<Record<string, string>> = {
   // 2026-11-23 統括役の決め（4人体制の付け替え）: K2→P・M→A・H→N2・G→L・N→N2・R→A・K→P
-  作業員K: "作業員P", 作業員K2: "作業員P", 作業員M: "作業員A", 作業員H: "作業員N2", 作業員G: "作業員L", 作業員N: "作業員N2", 作業員R: "作業員A",
+  // 2026-11-24: 2人体制（K2→P→A・H→N2→L・N→N2→L・K→P→A）
+  作業員K: "作業員A", 作業員K2: "作業員A", 作業員M: "作業員A", 作業員H: "作業員L", 作業員G: "作業員L", 作業員N: "作業員L", 作業員R: "作業員A",
+  作業員P: "作業員A", 作業員N2: "作業員L",
   作業員1: "作業員L", 作業員4: "作業員L", 作業員7: "作業員L", 作業員25: "作業員L",
 };
 
@@ -20,7 +23,8 @@ export const OLD_WORKER_TO_LIVE: Readonly<Record<string, string>> = {
 export const STAGE_TO_LIVE: Readonly<Record<string, string>> = {
   in: "作業員L", read: "作業員L", sent: "作業員L", next: "作業員L", bridge: "作業員L",
   // 2026-11-23: 段の持ち主も付け替え先に（M→A・H→N2・K2→P）
-  writer: "作業員A", conductor: "作業員A", staff: "作業員A", check: "作業員N2", tool_cond: "作業員P", tool_rank: "作業員P", tool_api: "作業員P", tool_react: "作業員P",
+  // 2026-11-24: 2人体制（N2→L・P→A）
+  writer: "作業員A", conductor: "作業員A", staff: "作業員A", check: "作業員L", tool_cond: "作業員A", tool_rank: "作業員A", tool_api: "作業員A", tool_react: "作業員A",
 };
 
 /**

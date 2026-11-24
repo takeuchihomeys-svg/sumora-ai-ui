@@ -6,13 +6,15 @@
 //   COMPOSE_PLAN_REUSE（既定 off）:
 //     cached … 今の発言の後の判断だが取り置き（source=cached・enforcement_level=optional）の番だけ使い回す（同じ番の判断＝取り違えが起きにくい）
 //     on     … cached に加えて、今の発言より前の判断（not_fresh）でも使い回す（別の発言の読みが混ざりうる＝試験で確かめてから）
+//     shadow … cached・on の両方の番で設計図を作るが、書き手には渡さない（作れた印・行の数だけ）＝本番の文は今と1字も変わらずに届きを測る
+//       （2026-11-24: 試験は判断を毎回新しく作るので、取り置き・前の発言の判断の番が出ない＝試験では効き目が見えない）
 //   作る材料は前の判断の meta だけ（buildSentencePlan は純関数）＝LLM の呼び出しは増えない。
 //   物差し: 見張りの compose_plan_skip の理由の数（generate-reply・c89fbc471）と、使い回した番の印 compose_plan_reuse（cached／stale）・連携の見張りの設計図の届き（今 4〜5%）
 type Env = Record<string, string | undefined>;
-export type ComposePlanReuseMode = "off" | "cached" | "on";
+export type ComposePlanReuseMode = "off" | "cached" | "on" | "shadow";
 export function composePlanReuseMode(env: Env = typeof process !== "undefined" ? process.env : {}): ComposePlanReuseMode {
   const v = (env.COMPOSE_PLAN_REUSE ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "cached" ? "cached" : "off";
+  return v === "on" ? "on" : v === "cached" ? "cached" : v === "shadow" ? "shadow" : "off";
 }
 export type ComposePlanGate = { ok: boolean; reused: null | "cached" | "stale" };
 /**
@@ -24,6 +26,6 @@ export function composePlanGate(i: { fresh: boolean; cached: boolean; hasMeta: b
   if (i.fresh && !i.cached) return { ok: true, reused: null };
   if (mode === "off") return { ok: false, reused: null };
   if (i.fresh && i.cached) return { ok: true, reused: "cached" };
-  if (!i.fresh && mode === "on") return { ok: true, reused: "stale" };
+  if (!i.fresh && (mode === "on" || mode === "shadow")) return { ok: true, reused: "stale" };
   return { ok: false, reused: null };
 }

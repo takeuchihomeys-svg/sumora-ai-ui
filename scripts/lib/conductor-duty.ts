@@ -18,11 +18,11 @@ export const CONDUCTOR_DUTY: readonly DutyRow[] = [
   { id: "n.chrono", name: "時系列", owner: "作業員L", have: ["read.timeline"], use: ["conductor.brief"], reflect: ["writer.situation"] },
   { id: "route.path", name: "道筋（申込までの地図）", owner: "作業員A", have: ["read.route_map", "read.route_substate"], use: ["conductor.aims"], reflect: ["conductor.compose_roles"], parts: ["ROUTE_TO_BRIEF", "ROUTE_PATH_TO_BRIEF", "BRAIN_TURN_AIMS"] },
   { id: "route.now", name: "今どこ", owner: "作業員A", have: ["read.situation_now", "read.route_map"], use: ["next.situation_grasp"], reflect: ["conductor.brief"], parts: ["ROUTE_DIGEST"] /* 2026-11-24 #657: 物差し route:station_misread_move（scripts/audit-route-misread-move.ts・判断の駅×その後の一手） */ },
-  { id: "n.closing", name: "決めに行く", owner: "作業員P", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
-  { id: "n.flex", name: "臨機応変", owner: "作業員N2", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
+  { id: "n.closing", name: "決めに行く", owner: "作業員A", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
+  { id: "n.flex", name: "臨機応変", owner: "作業員L", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
   { id: "n.trust", name: "信頼", owner: "作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
-  { id: "n.feeling", name: "気持ち", owner: "作業員P", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
-  { id: "n.appeal", name: "訴求", owner: "作業員P", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"] },
+  { id: "n.feeling", name: "気持ち", owner: "作業員A", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
+  { id: "n.appeal", name: "訴求", owner: "作業員A", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"] },
   { id: "n.asks", name: "要件", owner: "作業員A", have: ["read.turn_read"], use: ["conductor.brief"], reflect: ["conductor.delivery"] },
   { id: "n.link", name: "つなぎ", owner: "作業員L", have: ["read.uptake"], use: ["conductor.combo"], reflect: ["writer.reply"] },
   { id: "n.lessons", name: "統括の学び", owner: "作業員L", have: ["rag.near_focus"], use: ["conductor.near"], reflect: ["conductor.brief"], parts: ["CONDUCTOR_LESSONS"] },
@@ -88,7 +88,10 @@ export function dutyGapLinks(res: readonly DutyResult[], map: ReadonlyArray<{ id
       const sws = new Set([...(m?.switches ?? []), ...(m?.readerSwitches ?? [])]);
       const ids = new Set(open.filter((x) => x.switch_name && sws.has(x.switch_name)).map((x) => x.id));
       // 設計図（compose_plan・compose_roles）は判断を新しく作った番にしか作られない＝COMPOSE_PLAN_REUSE（#673）の直しに結ぶ
-      if (/^conductor\.compose_(plan|roles)$/.test(row) || m?.readers?.includes("conductor.compose_plan")) for (const x of open.filter((y) => y.switch_name === "COMPOSE_PLAN_REUSE")) ids.add(x.id);
+      // 2026-11-24 統括役: 設計図を読むだけの作る側の行（turn_read 等）は #673 に寄せず、本来の部品の行に結ぶ
+      if (/^conductor\.compose_(plan|roles)$/.test(row)) for (const x of open.filter((y) => y.switch_name === "COMPOSE_PLAN_REUSE")) ids.add(x.id);
+      // 台帳の題にその地図の行の id がある行（受け持ちの欠けとして足した行 等）
+      for (const x of open.filter((y) => y.title.includes(row))) ids.add(x.id);
       // 今どこの物差し（next.situation_grasp）は台帳 #657
       if (row === "next.situation_grasp") for (const x of open.filter((y) => y.id === 657)) ids.add(x.id);
       out.push({ duty: r.name, owner: r.owner, stage: s, row, items: [...ids].sort((a, b) => a - b) });
