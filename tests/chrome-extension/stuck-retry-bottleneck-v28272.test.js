@@ -156,12 +156,15 @@ function makeSilenceSandbox() {
     assert.ok(/_clearStartGraspThen\(why \|\| tg, function \(\) \{ t0 = Date\.now\(\); step\(\); \}\)/.test(ps), "把握の後に t0 を取り直す");
   });
 
-  await scenario("版 2.8.272 がそろっている", async function () {
+  await scenario("版 2.8.272 以上がそろっている", async function () {
+    var ge = function (v) { var a = String(v).split(".").map(Number), b = [2, 8, 272]; for (var i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; } return true; };
     var man = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-    assert.strictEqual(man.version, "2.8.272");
-    assert.ok(/var _AXLX_PAGE_VER = "2\.8\.272";/.test(ps), "page-script の版");
+    assert.ok(ge(man.version), "manifest: " + man.version);
+    var pv = (ps.match(/var _AXLX_PAGE_VER = "([\d.]+)";/) || [])[1];
+    assert.ok(pv && ge(pv) && pv === man.version, "page-script の版: " + pv);
     var rules = fs.readFileSync(path.join(__dirname, "..", "..", "app", "lib", "auto-procedure-rules.ts"), "utf8");
-    assert.ok(/AUTO_RULES_REVIEWED_UP_TO = "2\.8\.272"/.test(rules), "手順の決まりの版");
+    var rv = (rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([\d.]+)"/) || [])[1];
+    assert.ok(rv === man.version, "手順の決まりの版: " + rv);
   });
 
   var fail = 0;

@@ -6544,12 +6544,32 @@ function executeBulkSearch(site) {
   if (!ids.length) return;
 
   // ループをbackground.jsに委ねる（popup.jsはリアプロページリロードで消えるため）
-  chrome.runtime.sendMessage({
-    type: "axlx-manual-bulk-search",
-    customerIds: ids,
-    site, // "realnetpro" / "itandi" / "reins" そのまま渡す
-    isWide: bulkSearchMode === "wide", // 2026-09-18: 広げて検索でも一括できるようにする
-  }, () => { void chrome.runtime.lastError; });
+  /**
+   * ★ 2.8.274 竹内さん「前のやつ強制的に終わらせたのにまだ残っている／画面消したらちゃんと最初からできるように」:
+   *   旧は返事を読まず、前の一括が残っていると開始を押しても何も起きなかった。
+   *   → 断られたら「終わらせて最初から始めますか？」と聞き、OK なら force で引き継いで最初から始める。
+   */
+  const sendBulkStart = (force) => {
+    chrome.runtime.sendMessage({
+      type: "axlx-manual-bulk-search",
+      customerIds: ids,
+      site, // "realnetpro" / "itandi" / "reins" そのまま渡す
+      isWide: bulkSearchMode === "wide", // 2026-09-18: 広げて検索でも一括できるようにする
+      force: !!force,
+    }, (res) => {
+      void chrome.runtime.lastError;
+      if (!res || res.ok !== false) return;
+      if (res.error === "batch_running" && res.kind === "manual" && !force) {
+        let go = false;
+        const where = res.phaseJa ? "（いま: " + res.phaseJa + (res.total ? "・" + (Number(res.index) + 1) + "/" + res.total + "人目" : "") + "）" : "";
+        try { go = confirm("前の一括が残っています" + where + "。\n終わらせて、選んだお客さんを最初から始めますか？"); } catch (_) {}
+        if (go) sendBulkStart(true);
+      } else if (res.error === "batch_running") {
+        try { alert("別の自動（キュー）が動いているため始められません。止めてからもう一度どうぞ。"); } catch (_) {}
+      }
+    });
+  };
+  sendBulkStart(false);
 
   // 即座にチェックをクリア（backgroundが連続処理する）
   selectedCustomerIds.clear();

@@ -37,7 +37,9 @@ function extractRegions(src) {
   var lEnd = src.indexOf("\n});\n", lStart);
   var doneListener = src.slice(lStart, lEnd + 4);
   var auditStep = sliceBetween(src, "function _auditStep(runId, k, d) {", "\n/** 次の回が始まったら", "点検の段を足す");
-  return { waiters: waiters, loop: loop, scrape: scrape, doneListener: doneListener, auditStep: auditStep };
+  // 2.8.278 結果の見出しが希望と違った時の入れ直し（1客1回）
+  var redo = sliceBetween(src, "async function _resultMismatchRedo(", "\n// ── 2026-09-30 v2.5.43 リアプロと ITANDI を同時に動かす", "結果の入れ直し");
+  return { waiters: waiters, loop: loop, scrape: scrape, doneListener: doneListener, auditStep: auditStep, redo: redo };
 }
 
 function declaredNames(code) {
@@ -290,7 +292,10 @@ function createSwEnv(world, owner, regions, postAudit, note) {
     setTimeout: st, clearTimeout: function (id) { clock.clear(id); },
     setInterval: si, clearInterval: function (id) { clock.clear(id); },
     Date: makeDateClass(clock),
-    fetch: function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve({}); } }); },
+    fetch: function (url, opt) {
+      (world.fetches = world.fetches || []).push({ t: clock.now(), url: String(url), body: opt && opt.body ? String(opt.body) : "" });
+      return Promise.resolve({ ok: true, json: function () { return Promise.resolve({}); } });
+    },
     SUMORA_BATCH_API: "https://example.invalid",
     _lastSentSkipped: {},
     _sentSkipKey: function (c, s) { return String(c) + (s ? "|" + s : ""); },
@@ -330,8 +335,13 @@ function createSwEnv(world, owner, regions, postAudit, note) {
         world.lastDoneCid = cid;
         var n = p.count == null ? 5 : p.count;
         if (p.dropBatchDone) note("batch_done_lost", cid);
+        else if (p.resultMismatch) {
+          // 2.8.278 結果の見出しが希望と違う → 資料を取らず印を付けて完了合図（bulk-dl.js の _resultVerifyReport と同じ形）
+          world.pageSend({ type: "axlx-batch-customer-done", customerId: cid, propertyCount: null, audit: { result_mismatch: p.resultMismatch } });
+        }
         else world.pageSend({ type: "axlx-batch-customer-done", customerId: cid, propertyCount: n });
-        if (!p.noPageWatch) world.pageArmWatch(cid, n, "batch_done");
+        // 結果が希望と違って止めた合図は見張りを付けない（bulk-dl.js の _resultVerifyReport は _sendBatchDone を通らない）
+        if (!p.noPageWatch && !p.resultMismatch) world.pageArmWatch(cid, n, "batch_done");
       }, (p.fillMs || 30000) + (p.batchMs || 60000), false);
       return Promise.resolve({});
     },
@@ -346,7 +356,7 @@ function createSwEnv(world, owner, regions, postAudit, note) {
   tracker = SA.createTracker({ post: postAudit, now: function () { return clock.now(); }, extVersion: "sim" });
   sandbox._auditTracker = tracker;
 
-  var code = [regions.auditStep, regions.waiters, regions.loop, regions.scrape, regions.doneListener].join("\n;\n");
+  var code = [regions.auditStep, regions.waiters, regions.loop, regions.scrape, regions.redo, regions.doneListener].join("\n;\n");
   var declared = declaredNames(code);
   var stored = {};
   var auto = new Proxy({}, {

@@ -4064,8 +4064,43 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.272";
+  var _AXLX_PAGE_VER = "2.8.280";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
+  /**
+   * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
+   *   1分ごとに「重い処理（longtask・50ms超）の回数・合計・最大」と「このタブの JS メモリ」を数え、
+   *   目立つ時（3回以上／最大0.5秒以上／メモリ400MB以上）と5分ごとの目安だけ点検の段（page:perf_*）に残す。
+   *   ⚠ 計測だけ。動きは変えない。進んだ印（__axlxFillTouchAt）にも数えない（_auditStepP の除外に perf_ を入れてある）。
+   */
+  (function _axlxPerfProbe() {
+    try {
+      if (typeof window === "undefined" || window.__axlxPerfProbeOn) return;
+      window.__axlxPerfProbeOn = true;
+      var _n = 0, _sum = 0, _max = 0, _beats = 0;
+      if (typeof PerformanceObserver === "function") {
+        try {
+          var po = new PerformanceObserver(function (list) {
+            list.getEntries().forEach(function (e) { _n++; _sum += e.duration; if (e.duration > _max) _max = e.duration; });
+          });
+          po.observe({ entryTypes: ["longtask"] });
+        } catch (_) {}
+      }
+      var tm = setInterval(function () {
+        try {
+          _beats++;
+          var mem = null;
+          try { if (performance && performance.memory) mem = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (_) {}
+          var notable = _n >= 3 || _max >= 500 || (mem != null && mem >= 400);
+          if (notable || _beats % 5 === 0) {
+            var d = "重い処理" + _n + "回 計" + Math.round(_sum) + "ms 最大" + Math.round(_max) + "ms" + (mem != null ? " メモリ" + mem + "MB" : "");
+            _auditStepP(notable ? "perf_longtask" : "perf_beat", d);
+          }
+          _n = 0; _sum = 0; _max = 0;
+        } catch (_) {}
+      }, 60000);
+      if (tm && typeof tm.unref === "function") tm.unref();
+    } catch (_) {}
+  })();
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
    *   ⚠ 決まりを足す・変える時は向こうと同時に直す（テスト auto-procedure-rules.test.ts が食い違いを止める）。
@@ -8821,7 +8856,7 @@ function _guideLikeAreaSkip(why) {
     // ★ 2.8.268: 止まり見張りの記録（silence_watch_tick 等）は進みではない。
     //   旧は記録のたびにこの印が今になり、12秒の沈黙判定が毎回解けて、撮影と次の手が約10秒おきに続いていた。
     try {
-      if (!/^(silence_watch_|silence_stuck_|silence_task_|screen_poll_|stuck_shot|stuck_best|pipeline_silence_|pipeline_screen_|timeout_bridge_|strengthen_|screen_task_)/.test(String(k || ""))) {
+      if (!/^(perf_|silence_watch_|silence_stuck_|silence_task_|screen_poll_|stuck_shot|stuck_best|pipeline_silence_|pipeline_screen_|timeout_bridge_|strengthen_|screen_task_)/.test(String(k || ""))) {
         window.__axlxFillTouchAt = Date.now();
       }
     } catch (_) {}
@@ -13257,6 +13292,54 @@ function _guideLikeAreaSkip(why) {
   var _axGateRetryN = 0;
   var _AX_GATE_RETRY_MAX = 6;
   /**
+   * ★ 2.8.276 竹内さん「次のお客さんに移る時、前のお客さんの条件を外して新しい条件を入れていなかった／前の条件で検索してしまった」:
+   *   旧の関所（_axGateCheck）は「次のお客さんが指定した項目」だけを画面と比べ、**指定しない項目（家賃・築年・徒歩）は比べなかった**。
+   *   → 前のお客さんの家賃の下限・徒歩などが画面に残っていても、関所を通って**前の条件のまま検索**できた。
+   *   新: 次のお客さんが指定しない項目は、画面も「指定なし」でなければ「前の条件が残っている」とする。
+   *   expect＝_axExpect（rentMin／rentMax／age／walk）・read＝画面の値 { rent_min, rent_max, age, walk }（文字）。
+   *   戻り値: [{ name（欄の name）, ja, got }]。⚠ 更新日・移動手段は既定値があるので見ない（誤検知を避ける）。
+   */
+  function _axLeftoverFields(expect, read) {
+    var out = [];
+    if (!expect || !read) return out;
+    var none = function (v) { return v == null || String(v).trim() === '' || String(v) === '-1' || String(v) === '0'; };
+    var chk = function (want, got, name, ja) {
+      if (none(want) && !none(got)) out.push({ name: name, ja: ja, got: String(got) });
+    };
+    chk(expect.rentMin, read.rent_min, 'rental_cost1', '家賃の下限');
+    chk(expect.rentMax, read.rent_max, 'rental_cost2', '家賃の上限');
+    chk(expect.age, read.age, 'structured_date', '築年数');
+    chk(expect.walk, read.walk, 'required_time', '駅からの徒歩');
+    return out;
+  }
+  /** 欄を「指定なし」に戻すための値（選択欄なら「指定なし」の option の値）。見つからなければ null */
+  function _axNoneValueOf(selEl) {
+    try {
+      if (!selEl || !selEl.options) return null;
+      for (var i = 0; i < selEl.options.length; i++) {
+        var v = String(selEl.options[i].value);
+        if (v === '-1' || v === '0' || v === '') return v;
+      }
+      for (var j = 0; j < selEl.options.length; j++) {
+        if (/指定なし|下限なし|上限なし|こだわらない/.test(String(selEl.options[j].textContent || '').replace(/\s+/g, ''))) return String(selEl.options[j].value);
+      }
+    } catch (_) {}
+    return null;
+  }
+  /** 前のお客さんの残りの欄を「指定なし」に戻す（カーソルで1つずつ・直書きしない） */
+  function _axResetLeftoverField(lf) {
+    try {
+      var s = document.querySelector('select[name="' + lf.name + '"]');
+      if (s) {
+        var nv = _axNoneValueOf(s);
+        if (nv != null) queueSelVal(lf.name, nv);
+        return;
+      }
+      var t = document.querySelector('input[name="' + lf.name + '"]');
+      if (t) queueTxtVal(lf.name, '');
+    } catch (_) {}
+  }
+  /**
    * 2026-11-10 v2.6.18 竹内さん「ちゃんと画面見て判断できるようになってるのかな場所など」→「なおす」:
    *   旧は**間取りだけ**を画面で確かめ、家賃・更新日・築年・徒歩・場所（区/駅）は確かめずに検索していた
    *   （入っていなくても「入れたつもり」で検索に進む）。
@@ -13330,6 +13413,38 @@ function _guideLikeAreaSkip(why) {
           }
         } catch (_) {}
       }
+      /**
+       * ★ 2.8.276: 次のお客さんが指定しない項目（家賃・築年・徒歩）に前のお客さんの値が残っていないか。
+       *   見つけたら errors に「前の条件が残っている」を足す（入れ直し→それでも残れば検索せず止める）。
+       */
+      try {
+        /**
+         * 選択欄は「先頭（selectedIndex 0）＝指定なし」（既存の _scanLeftoverForm と同じ基準）。
+         * 先頭・「指定なし」系の文字の時は空として読む＝既定値を前客の残りと誤検知しない。
+         */
+        var _rdNone = function (n) {
+          var el = sel(n);
+          if (!el) return null;
+          try {
+            if (el.selectedIndex != null && el.selectedIndex <= 0) return '';
+            var tx = (el.options && el.options[el.selectedIndex]) ? String(el.options[el.selectedIndex].textContent || '').replace(/\s+/g, '') : '';
+            if (/指定なし|下限なし|上限なし|こだわらない/.test(tx)) return '';
+          } catch (_) {}
+          return el.value;
+        };
+        var _wInp = document.querySelector('input[name="required_time"]');
+        var _lfRead = {
+          rent_min: _rdNone('rental_cost1'),
+          rent_max: _rdNone('rental_cost2'),
+          age: _rdNone('structured_date'),
+          walk: _wInp ? String(_wInp.value || '') : _rdNone('required_time'),
+        };
+        var _lf = _axLeftoverFields(_axExpect, _lfRead);
+        if (_lf.length) {
+          out.prevLeftover = _lf;
+          _lf.forEach(function (f) { out.errors.push('前の条件が残っている（' + f.ja + ' ' + f.got + '・このお客さんは指定なし）'); });
+        }
+      } catch (_) {}
       /**
        * ★ 2026-11-16 録画: 敷金・礼金なしが外れていた。
        *   関所でもチェック状態を確かめる（未チェックなら入れ直し）。
@@ -13611,6 +13726,24 @@ function _guideLikeAreaSkip(why) {
      */
     try { window._axSearchPressedAt = Date.now(); } catch (_) {}
     try { _ledgerSave("search"); } catch (_) {}
+    /**
+     * ★ 2.8.277 竹内さん「前客の駅外すようにちゃんと確認できないのか／画面を見て確認、問題あれば外す」:
+     *   リアプロのフォームには選んだ駅の一覧が出ない。**結果ページの上の「効いている条件」の文字**が
+     *   実際に何で検索されたかの証拠。結果ページ（bulk-dl.js・result-verify.js）が照らせるよう、
+     *   **検索を押した時の希望**を残す（同じタブの sessionStorage・頁が読み直されても残る）。
+     */
+    try {
+      if (_axExpect && window.sessionStorage) {
+        var _rxCid = '';
+        try { _rxCid = String(window.__axlxLastFilledCustomerId || (typeof _lastFilledCidLoad === 'function' ? _lastFilledCidLoad() : '') || ''); } catch (_) {}
+        window.sessionStorage.setItem('axlx_result_expect', JSON.stringify({
+          cid: _rxCid, at: Date.now(),
+          rentMin: _axExpect.rentMin, rentMax: _axExpect.rentMax, walk: _axExpect.walk, age: _axExpect.age,
+          updateDays: _axExpect.updateDays, floorPlan: _axExpect.floorPlan, areaMode: _axExpect.areaMode, areaText: _axExpect.areaText,
+        }));
+        if (_audit) _auditStepP('result_expect', '家賃' + (_axExpect.rentMin || '-') + '~' + (_axExpect.rentMax || '-') + ' 徒歩' + (_axExpect.walk || '-') + ' 築' + (_axExpect.age || '-') + ' ' + String(_axExpect.areaText || '').slice(0, 20));
+      }
+    } catch (_) {}
     try {
       var _PM = window.AxlxPointerUi;
       if (_audit && _PM && typeof _PM.motionStats === "function") {
@@ -13708,6 +13841,13 @@ function _guideLikeAreaSkip(why) {
               _gateQ.push({ name: "structured_date", run: function () { queueSelVal("structured_date", _axExpect.age); } });
             }
           }
+          // ★ 2.8.276 前のお客さんの残り（このお客さんが指定しない欄）は「指定なし」に戻す
+          if (_gate.prevLeftover && _gate.prevLeftover.length) {
+            try { _auditStepP('gate_prev_leftover', 'n=' + _axGateRetryN + ' ' + _gate.prevLeftover.map(function (f) { return f.ja + '=' + f.got; }).join('／').slice(0, 120)); } catch (_) {}
+            _gate.prevLeftover.forEach(function (lf) {
+              _gateQ.push({ name: lf.name + "_none", run: function () { _axResetLeftoverField(lf); } });
+            });
+          }
           if (_axExpect.shikirei || _gate.missingShikirei) {
             _gateQ.push({
               name: "敷金・礼金なし",
@@ -13792,7 +13932,8 @@ function _guideLikeAreaSkip(why) {
        */
       var _hardGate = _gate.errors.some(function (m) {
         var s = String(m);
-        return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
+        // ★ 2.8.276: 前のお客さんの条件が残ったままの検索は止める（旧は警告だけで検索していた）
+        return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0 || s.indexOf('前の条件が残っている') === 0;
       });
       if (_hardGate) {
         /**
@@ -15240,7 +15381,7 @@ function _guideLikeAreaSkip(why) {
           var _wg = _axGateCheck();
           var _hard = _wg.errors.some(function (m) {
             var s = String(m);
-            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
+            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0 || s.indexOf('前の条件が残っている') === 0; // ★ 2.8.276 前客の残りがある間は控え・長待ちの検索も押さない
           });
           if (!_hard) {
             console.warn('[AX] 1800秒・条件そろい → 完走のため検索（カーソル経由・切り上げない）');
@@ -15319,7 +15460,7 @@ function _guideLikeAreaSkip(why) {
           var g = _axGateCheck();
           var hardMissing = g.errors.some(function (m) {
             var s = String(m);
-            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
+            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0 || s.indexOf('前の条件が残っている') === 0; // ★ 2.8.276 前客の残りがある間は控え・長待ちの検索も押さない
           });
           if (hardMissing) {
             _auditStepP('search_backup_wait', '条件未完了のため控え保険は待つのみ: ' + g.errors.join(' / ').slice(0, 100));
@@ -15345,7 +15486,7 @@ function _guideLikeAreaSkip(why) {
           var _gateNow = _axGateCheck();
           var _hardMissing = _gateNow.errors.some(function (m) {
             var s = String(m);
-            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0;
+            return s.indexOf('場所') === 0 || s.indexOf('間取り') === 0 || s.indexOf('敷金') === 0 || s.indexOf('礼金') >= 0 || s.indexOf('前の条件が残っている') === 0; // ★ 2.8.276 前客の残りがある間は控え・長待ちの検索も押さない
           });
           if (!_hardMissing && _axConditionsReady) {
             console.warn('[AX] 条件完了後の長待ち → 完走のため検索（カーソル経由・中断しない）');
