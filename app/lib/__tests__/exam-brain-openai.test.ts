@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/exam-brain-openai.test.ts
 // 2026-11-24 作業員L（台帳 #670）: 試験だけブレインを OpenAI に回す切り替え（EXAM_BRAIN_PROVIDER=openai）と OpenAI の本文・単価
 import assert from "node:assert/strict";
-import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT, createSseConverter, openaiGuardOf, WRITER_GPT_NOTE } from "../llm-alt-provider";
+import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT, createSseConverter, openaiGuardOf, WRITER_GPT_NOTE, writerExamNotes } from "../llm-alt-provider";
 import { altPriceOf, altUsageUsd } from "../llm-price";
 
 let n = 0;
@@ -95,6 +95,15 @@ t("書き手の GPT 用の言い添えは system の最後（先頭は変えな�
   assert.ok(sys.startsWith("あなたは書き手"));
   assert.match(sys, /全然大丈夫です/);
   assert.match(sys, /短くまとめすぎない/);
+});
+
+t("試験の書き手の言い添えは名前ごとに（GPT_NOTE・LEN_HINT）", () => {
+  assert.equal(writerExamNotes({}), null);
+  assert.match(writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on" }) ?? "", /全然大丈夫です/);
+  assert.doesNotMatch(writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on" }) ?? "", /長さの目安/);
+  assert.match(writerExamNotes({ EXAM_WRITER_LEN_HINT: "on" }) ?? "", /80〜200字/);
+  const both = writerExamNotes({ EXAM_WRITER_GPT_NOTE: "on", EXAM_WRITER_LEN_HINT: "on" }) ?? "";
+  assert.ok(both.indexOf("書き方の補い") < both.indexOf("長さの目安"));
 });
 
 console.log(`exam-brain-openai: ${n} ok`);
