@@ -40,6 +40,10 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   BRAIN_MESSAGE_PLAN: { metaKey: "message_plan" },
   OUR_PARTS_PROMISE_WIDE: { mark: "our_parts_wide", markSince: "5351dc589", partial: "交渉する・電話する の項目が状況の our_items に入った番まで" },
   INFO_FILL_MAP: { mark: "info_fill", markSince: "5351dc589" },
+  // 2026-11-24 作業員A（統括役の決め・地図を統括と連携）: 記録だけの印（off では付かない）
+  ROUTE_TO_BRIEF: { mark: "route_brief", markSince: "9ca8564e7", partial: "指示書に地図の欄が入った番まで（書き手に届いたかは下書きの段で見る）" },
+  APPLY_ROUTE_PATH_LINE: { mark: "route_path_line", markSince: "9ca8564e7" },
+  APPLY_ROUTE_SUBSTATE: { mark: "route_substate", markSince: "9ca8564e7" },
   EQUIPMENT_WISH_LOOKUP: { mark: "equip_wish", markSince: "5351dc589" },
   // 2026-11-23 作業員A（統括役の頼み・#662 の「持つ」が欠けた土台の部品）
   TURN_READ: { metaKey: "turn_read" },

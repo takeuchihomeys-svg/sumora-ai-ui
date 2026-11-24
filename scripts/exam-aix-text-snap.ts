@@ -55,6 +55,9 @@ export function brainMetaFromDigest(d: Record<string, unknown> | null | undefine
     customer_questions: Array.isArray(d.q) ? (d.q as unknown[]).filter((x) => typeof x === "string") : [],
     // 2026-10-28 digest の st（turn_contract.situation・BRAIN_DIGEST_SITUATION=on の後の行だけ）
     ...(s("st") ? { turn_contract: { situation: s("st") } } : {}),
+    // 2026-11-24 作業員A（台帳 #94・統括役の頼み）: 決め手の残り（digest.mg＝brain-layers の customer_mindset.decideGap の写し）も戻す。
+    //   旧は戻していなかった＝試験の写しで AIX_SECOND_LINK の材料（decideGapOfMeta）が0だった（試験の側だけの直し・本番は変えない）
+    ...(() => { const g = d.mg as { p?: unknown; pt?: unknown; s?: unknown; q?: unknown } | null | undefined; const q = g && typeof g.q === "string" && g.q.trim() ? g.q.trim() : null; return q ? { customer_mindset: { decideGap: { property: typeof g!.p === "string" ? g!.p : null, point: typeof g!.pt === "string" ? g!.pt : null, solve: typeof g!.s === "string" ? g!.s : null, quote: q } } } : {}; })(),
   };
   for (const k of Object.keys(out)) if (out[k] === null) delete out[k];
   return Object.keys(out).length ? out : null;

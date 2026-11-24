@@ -202,6 +202,16 @@ async function main() {
       const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
       for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（統括役の決め・新しい cron は作らない）: 今どこの読み違い（判断の駅×その後の一手・7日・軽い読み）をここで数えて quality_daily に（--write の時だけ書く）
+    try { const { runMisreadMove } = await import("./audit-route-misread-move"); await runMisreadMove({ sb: sb as never, days: 7, write: process.argv.includes("--write"), quiet: true }); } catch (e) { lines.push(`- 今どこの読み違いの数え: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（台帳 #608・統括役の頼み）: ブレインは地図をどこまで使えているか（地図の根2つ・今どこの読み違い・組の本当の一致の、最新の数と前の日からの変わり・軽い読み）
+    try {
+      const ms = ["map:route:progress_60d:value", "map:route:next_match_60d:value", "route:station_misread_move", "growth:combo:本当の一致"];
+      const { data: q } = await sb.from("quality_daily").select("day,metric,value,n").in("metric", ms).order("day", { ascending: false }).limit(60);
+      const rq = (q ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>;
+      const pick = (m: string) => { const r = rq.filter((x) => x.metric === m); const a = r[0], b = r[1]; if (!a) return `—`; const d = a.value != null && b?.value != null ? Math.round((a.value - b.value) * 10) / 10 : null; return `${a.value ?? "—"}%（${a.n ?? "—"}番${d != null ? `・前の日から ${d >= 0 ? "+" : ""}${d}` : ""}）`; };
+      lines.push(`- ブレインは地図をどこまで使えているか: 進み ${pick(ms[0])}・候補と一手の一致 ${pick(ms[1])}・今どこの読み違い ${pick(ms[2])}・組の本当の一致 ${pick(ms[3])}（作業員A・#608・次の直し #646／#650／#657／#624）`);
+    } catch (e) { lines.push(`- 地図の使い方の数: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・COMPOSE_PLAN_REUSE=shadow 既定）: 前の日の返信の番で、設計図が作られた番・使い回しで作れた番（shadow の印）・作られなかった番（軽い読み・日付で絞る）
     try {
       const from = new Date(Date.parse(dayStart)).toISOString(), to = new Date(Date.parse(dayStart) + 86_400_000).toISOString();

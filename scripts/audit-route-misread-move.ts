@@ -3,17 +3,19 @@
 //   読む: brain_decision_logs（digest.ar がある判断・11/23 から）・aix_usage_logs（その会話の送付・判断の前30日〜後30時間）・conversations（申込以降を外す・backfill の印）
 //   分け方は app/lib/route-misread-move.ts（型 match／behind／ahead／other_path／timed／unknown・原因 材料が無い／読み違い／数え方）
 // 2026-11-24 作業員A（統括役の頼み）
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { parseAr, misreadMoveOf, misreadMoveMetricRows, replyAsMove, MOVE_KIND_JA, MOVE_CAUSE_JA, type MoveKind, type MoveCause } from "../app/lib/route-misread-move";
 import { ROUTE_NODES, ROUTE_BRANCHES } from "../app/lib/apply-route-map";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const days = Number(arg("days", "7"));
 const POST = new Set(["applying", "application", "screening", "approved", "contract", "closed_won", "closed_lost"]);
 
-(async () => {
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
+/** 2026-11-24 作業員A（統括役の決め）: 毎朝の self-improve から呼ぶ（新しい cron は作らない）。quiet の時は画面に出さず、書いた行を返す */
+export async function runMisreadMove(o: { sb?: SupabaseClient; days?: number; write?: boolean; quiet?: boolean; withReply?: boolean } = {}): Promise<Array<{ metric: string; value: number | null; n: number }>> {
+  const days = o.days ?? 7;
+  const console = o.quiet ? { log: (..._a: unknown[]) => {} } : globalThis.console;
+  const sb = o.sb ?? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const { data: logs, error } = await sb.from("brain_decision_logs").select("conversation_id, created_at, ar:digest->>ar").gte("created_at", since).not("digest->>ar", "is", null).order("created_at").limit(3000);
   if (error) throw error;
@@ -23,7 +25,7 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
   const sends = new Map<string, Array<{ t: number; aix: string }>>();
   // 2026-11-24 #657 の続き: 手打ちの返信も、締めが駅の一手として読める物は一手に数える（--with-reply・既定で入れる・止める --no-reply）
   const replies = new Map<string, Array<{ t: number; aix: string }>>();
-  const WITH_REPLY = !process.argv.includes("--no-reply");
+  const WITH_REPLY = o.withReply ?? true;
   const from = new Date(Date.parse(since) - 30 * 864e5).toISOString();
   for (let i = 0; i < convIds.length; i += 80) {
     const ch = convIds.slice(i, i + 80);
@@ -72,5 +74,17 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
   for (const o of out.filter((x) => x.kind !== "unknown" && x.kind !== "timed")) { const k = nm(o.node, o.branch); const s = byNode.get(k) ?? { n: 0, miss: 0 }; s.n++; if (o.kind !== "match") s.miss++; byNode.set(k, s); }
   console.log(`\n■ 駅ごとの読み違いの割合（照らせた番）: ${[...byNode.entries()].sort((a, b) => b[1].miss - a[1].miss).map(([k, s]) => `${k} ${s.miss}/${s.n}`).join("・")}`);
   console.log(`  #676 の backfill の判断（別に数える）: ${[...convs.values()].filter((c) => c.backfill).length}会話（digest.ar の判断とは別・まだ書いていなければ 0）`);
-  if (arg("json")) writeFileSync(arg("json"), JSON.stringify(out, null, 1));
-})().catch((e) => { console.error(e); process.exit(1); });
+  if (!o.quiet && arg("json")) writeFileSync(arg("json"), JSON.stringify(out, null, 1));
+  // 2026-11-24 作業員A（#608・統括役の頼み）: --write で quality_daily に今日の数を書く（毎朝の1枚の「ブレインは地図をどこまで使えているか」の1行が読む）
+  const metricRows = misreadMoveMetricRows(out);
+  if (o.write) {
+    const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const rowsQ = misreadMoveMetricRows(out).map((m) => ({ day, metric: m.metric, scope: "all", value: m.value, n: m.n, source: "scripts/audit-route-misread-move.ts（作業員A・#657）" }));
+    const { error: e } = await sb.from("quality_daily").upsert(rowsQ, { onConflict: "day,metric,scope" });
+    if (e) throw e;
+    console.log(`  quality_daily に書いた: ${rowsQ.length}行（${day}）`);
+  }
+  return metricRows;
+}
+
+if (/audit-route-misread-move\.ts$/.test(process.argv[1] ?? "")) runMisreadMove({ days: Number(arg("days", "7")), write: process.argv.includes("--write"), withReply: !process.argv.includes("--no-reply") }).catch((e) => { console.error(e); process.exit(1); });
