@@ -424,6 +424,8 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   // 2026-11-24 #670: 試験だけ、ブレインの名札を OpenAI に（examBrainTarget）
   if (cfg.examBrain && isBrainRouteName(routeName) && isTestModeAllowed(process.env)) return true;
   if (cfg.examWriter && isWriterRouteName(routeName) && isTestModeAllowed(process.env)) return true;
+  // 2026-11-24 #670（統括役の許し・Claude $1 まで）: 試験だけ、返信の書き手を本番と同じ Claude で（EXAM_WRITER_PROVIDER=claude・LLM_TEST_ALLOW_CLAUDE に名札が要る）
+  if (isWriterRouteName(routeName) && (process.env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase() === "claude" && cfg.testMode && isTestModeAllowed(process.env)) return false;
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
@@ -811,14 +813,16 @@ export function createSseConverter(model: string) {
       if (!data || data === "[DONE]") return [];
       let j: {
         choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-        usage?: { completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; prompt_tokens?: number };
+        usage?: { completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number; prompt_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
       };
       try { j = JSON.parse(data); } catch { return []; }
       const res: string[] = [];
       if (j.usage) {
         out = j.usage.completion_tokens ?? out;
-        inCached = j.usage.prompt_cache_hit_tokens ?? inCached;
-        inUncached = j.usage.prompt_cache_miss_tokens ?? j.usage.prompt_tokens ?? inUncached;
+        // 2026-11-24 作業員L（#670）: OpenAI の1文字ずつの形は prompt_tokens_details.cached_tokens（DeepSeek の形が無い時だけ見る）。旧は命中を全部「新規」に数えていた（書き手の Sol の費用が約10倍に出た）
+        const hit = j.usage.prompt_cache_hit_tokens ?? j.usage.prompt_tokens_details?.cached_tokens;
+        inCached = hit ?? inCached;
+        inUncached = j.usage.prompt_cache_miss_tokens ?? (typeof j.usage.prompt_tokens === "number" ? Math.max(0, j.usage.prompt_tokens - (hit ?? 0)) : inUncached);
       }
       const c = j.choices?.[0];
       if (c?.finish_reason) { finish = c.finish_reason === "length" ? "max_tokens" : "end_turn"; gotFinish = true; }
@@ -893,6 +897,13 @@ export function readBusyGuard(env: EnvLike = process.env): AltBusyGuard {
     breakerFailures: intEnv(env.DEEPSEEK_BREAKER_FAILURES, 2, 1, 20),
     breakerCooldownMs: intEnv(env.DEEPSEEK_BREAKER_COOLDOWN_MS, 5 * 60_000, 10_000, 60 * 60_000),
   };
+}
+
+/** OpenAI 用の待ち時間（純関数）。未設定は渡された値のまま */
+export function openaiGuardOf(guard: AltBusyGuard, env: EnvLike = process.env): AltBusyGuard {
+  if (!guard.enabled) return guard;
+  const ft = String(env.OPENAI_FIRST_TOKEN_MS ?? "").trim(), to = String(env.OPENAI_TIMEOUT_MS ?? "").trim();
+  return { ...guard, firstTokenMs: ft ? intEnv(ft, guard.firstTokenMs, 3_000, 120_000) : guard.firstTokenMs, totalMs: to ? intEnv(to, guard.totalMs, 10_000, 180_000) : guard.totalMs };
 }
 
 /** 混雑・無応答による失敗（回路の遮断に数える物）。400 等の「送り方が悪い」失敗は数えない */
@@ -1017,6 +1028,9 @@ async function callOpenAICompatible(
     } } : {}),
   });
   if (!payload) return null;
+  // 2026-11-24 作業員L（#670・統括役の頼み③）: OpenAI 用の待ち時間（最初の1文字・全体）。考える深さを上げると最初の1文字が遅く、DeepSeek 用の 15秒・60秒では Claude への戻りが増える。
+  //   OPENAI_FIRST_TOKEN_MS・OPENAI_TIMEOUT_MS（既定は未設定＝今まで通り DeepSeek と同じ値）
+  if (cfg.provider === "openai") guard = openaiGuardOf(guard, process.env);
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
     headers: cfg.provider === "deepseek" || cfg.provider === "qwen" || cfg.provider === "openai"
