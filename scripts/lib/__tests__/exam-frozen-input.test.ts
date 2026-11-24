@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { frozenSceneNow, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody, nearestSummaryOf, afterCutoff, leakSafeKeyedBody } from "../exam-frozen-input";
+import { frozenSceneNow, examClockAnchorOn, CLOCK_ANCHOR_LAG_MS, snapshotDay, snapshotTarget, snapshotKey, installDbSnapshot, keyedTarget, keyedKey, reduceKeyedBody, nearestSummaryOf, afterCutoff, leakSafeKeyedBody } from "../exam-frozen-input";
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
 import { maskVolatile } from "../llm-cassette";
 
@@ -12,6 +12,9 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
 const DAY = 86_400_000;
 
 // ─── 時計 ───
+// 2026-11-25 作業員A（#683）: ブレインを呼ぶ直前に時計を合わせ直す（既定 on）・最後の通（仮の今＋2分）より後
+ok("時計の合わせ直しは既定 on・=off で止まる", examClockAnchorOn({}) && !examClockAnchorOn({ EXAM_CLOCK_ANCHOR: "off" }));
+ok("合わせ直す時刻は最後の通（仮の今＋2分）より後", CLOCK_ANCHOR_LAG_MS > 2 * 60_000);
 {
   const at = Date.parse("2026-10-21T13:05:00Z"); // 水曜 22:05 JST
   const r1 = frozenSceneNow(at, Date.parse("2026-11-05T03:00:00Z")); // 木曜の昼

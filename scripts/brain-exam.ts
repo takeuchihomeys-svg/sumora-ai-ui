@@ -82,7 +82,7 @@ import { planFromMeta, planMessages, afterAixReplyBrief, afterAixDraftHint, type
 import { verifyCopy, type CopyVerdict } from "./lib/exam-copy-check";
 import { isNoLineTestConversation, isTestOnlyConversation, NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 // 2026-11-05 作業員8（弱い所 314・統括役の了承の 1）: 試験の入力を決まった形に（時計を問題ごとに固定・本番 DB の育つ材料をその日の写しに固定）
-import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, type SnapshotStats } from "./lib/exam-frozen-input";
+import { frozenSceneNow, frozenClockOn, dbSnapshotOn, installDbSnapshot, snapshotDay, examClockAnchorOn, CLOCK_ANCHOR_LAG_MS, type SnapshotStats } from "./lib/exam-frozen-input";
 import { decideBasePin, defaultOnFromSubjects, touchesExam, nightPinUpdate, type NightlyRecord } from "./lib/exam-base-pin";
 import { essenceOverride } from "./lib/exam-essence";
 import { readLedger, rowFromReusedId } from "./lib/exam-id-ledger";
@@ -1217,7 +1217,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     // 2026-11-05 作業員1: 通の時刻を元の間隔（EXAM_REAL_GAPS・既定 on）で置いた回は、90秒おきの前の答えと比べない（取り置きを作り直す）
     ...(examRealGapsOn(mainEnv as Record<string, string | undefined>) ? { sceneTimes: "gaps-day" } : {}),
     // 2026-11-05 作業員8: 時計の固定・DB の材料の写しの回は、今までの前の答えと比べない（取り置きを作り直す・入れた時だけ構成に足す）
-    ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: "frozen" } : {}),
+    // 2026-11-25 作業員A（#683）: ブレインを呼ぶ直前に時計を合わせ直す回（EXAM_CLOCK_ANCHOR・既定 on）は、合わせ直さない前の答えと比べない（構成に足す＝1回だけ作り直し）
+    ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: examClockAnchorOn(mainEnv as Record<string, string | undefined>) ? "frozen-anchor" : "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
     // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
     ...(judgeRubricOf() === "v2" ? { judgeRubric: "v2" } : {}),
@@ -2026,6 +2027,12 @@ async function main() {
         examClock.setExamClockSigned(examClock.realNow() - target);
         console.log(`  時計: 元の番の経過 ${delayMin}分 を見せる（${p.id}#${rep}）`);
       }
+      // 2026-11-25 作業員A（台帳 #683・統括役の頼み「時計の漏れを止める」・試験の側だけ）: 仮の今は問題の初めに決めるが、ブレインを呼ぶまでに
+      //   通の写し・台帳の写し・確かめ（DB への書き込み）で数十秒〜数分かかり、その長さが回ごとに違う＝「N分前」「時間情報」の時刻が回ごとに変わり、
+      //   off（前の main の答え）の控えが当たらなかった（11/21〜 brain_full 1370組の主な出所が時計 216・時計を含む 876）。
+      //   ブレインを呼ぶ直前に、時計を「仮の今＋3分」（最後の通は仮の今＋2分まで）に合わせ直す＝回ごと・off と on で同じ時刻を見る。
+      //   時計の固定の回だけ（経過の再生 EXAM_REPLAY_ELAPSED・写しの使い回し --reuse-fixture は今まで通り）。止める: EXAM_CLOCK_ANCHOR=off
+      const anchorBrainClock = () => { if (frozen && !reuse && !(REPLAY_ELAPSED && typeof delayMin === "number") && examClockAnchorOn()) examClock.setExamClockSigned(examClock.realNow() - (frozen.nowMs + CLOCK_ANCHOR_LAG_MS)); };
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
       // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
@@ -2084,12 +2091,14 @@ async function main() {
         S().rawBrainOutputs = [];
         // 2026-11-11 作業員8: 2回目以降の回で全体の分析（m0）を使い回す案（EXAM_REUSE_LAYER1）は試して外した＝m0 の呼び出しが
         //   条件の行に ai_summary を書き、今回の層はそれを【顧客プロファイル】として先頭に読む。m0 を呼ばない回はプロファイルが消え、材料が変わった（q164 で確かめた）
+        anchorBrainClock();
         const m0 = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         const strategy = m0 ? extractStrategy(m0, "combined", 0, new Date().toISOString()) : null;
         await insertMsgs(burst, p.context.length);
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
           S().rawBrainOutputs = [];
+          anchorBrainClock();
           meta = await runBrainChecked({
             ...base, prevPhase: (m0?.checkpoint_stage as string | null) ?? null, prevAix: m0 && m0.reply_mode === "aix" ? (m0.action as string | null) ?? null : null,
             prevMeta: (m0 ?? undefined) as never, mode: strategy ? "incremental" : "full", layer: strategy ? "fresh" : "combined", strategy,
@@ -2102,6 +2111,7 @@ async function main() {
         await new Promise((r) => setTimeout(r, 1300));
         for (let attempt = 0; attempt < 2 && !meta; attempt++) {
           S().rawBrainOutputs = [];
+          anchorBrainClock();
           meta = await runBrainChecked({ ...base, prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }, !!p.pc, row);
         }
         if (LAYER === "prod") row.trace = { strategy: "なし（初回・前の会話が無い）" };

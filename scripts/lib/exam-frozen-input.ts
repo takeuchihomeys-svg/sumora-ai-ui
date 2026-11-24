@@ -26,6 +26,9 @@ export function frozenSceneNow(atMs: number, realNowMs: number): { nowMs: number
 }
 
 export const frozenClockOn = (env: Record<string, string | undefined> = process.env) => String(env.EXAM_FROZEN_CLOCK ?? "").trim().toLowerCase() !== "off";
+/** 2026-11-25 作業員A（#683）: ブレインを呼ぶ直前に時計を「仮の今＋3分」に合わせ直す（既定 on・=off で止まる）。最後の通は仮の今＋2分まで */
+export const examClockAnchorOn = (env: Record<string, string | undefined> = process.env) => String(env.EXAM_CLOCK_ANCHOR ?? "").trim().toLowerCase() !== "off";
+export const CLOCK_ANCHOR_LAG_MS = 3 * 60_000;
 export const dbSnapshotOn = (env: Record<string, string | undefined> = process.env) => String(env.EXAM_DB_SNAPSHOT ?? "").trim().toLowerCase() !== "off";
 
 // ─── ② 本番 DB の育つ材料の夜の写し ─────────────────────────────────────────
