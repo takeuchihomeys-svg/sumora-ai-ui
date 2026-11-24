@@ -12,7 +12,8 @@ import { v2Measure, todoVsConductor, nextStepAixOf, type TodoVsConductor } from 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const people = Number(arg("people", "3"));
 const jst1030 = (daysAgo: number) => { const now = new Date(Date.now() + 9 * 3600e3); return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysAgo, 1, 30); };
-const ats = arg("at") ? arg("at").split(",").map((x) => Date.parse(x)) : [jst1030(1), jst1030(0)];
+// --at=cron:2026-11-24 … その日（JST）に実際に送った便の時刻（cron_run_logs の staff-todo-list）を全部使う
+let ats = arg("at") && !arg("at").startsWith("cron:") ? arg("at").split(",").map((x) => Date.parse(x)) : [jst1030(1), jst1030(0)];
 const mask = (s: string, c: TodoCustomer) => { const n = (c.name ?? "").trim(); return n && n !== "お客様" ? s.split(n).join(`${Array.from(n)[0]}○`) : s; };
 const oldBlock = (list: TodoList, c: TodoCustomer, nums: Map<string, number>) =>
   [`${c.accountLabel}${c.why && c.items.some((i) => !i.doneAt) ? ` ▶${c.why}` : ""}`, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key)))].join("\n");
@@ -25,6 +26,12 @@ const open = (c: TodoCustomer) => c.items.filter((i) => !i.doneAt && !i.waiting)
   const vs: Record<TodoVsConductor, number> = { match: 0, mismatch: 0, no_conductor: 0, stale: 0, unknown: 0 };
   let emptyField = 0, nCust = 0;
   const mismatches: Array<{ cid: string; at: number; list: string[]; cond: string | null }> = [];
+  if (arg("at").startsWith("cron:")) {
+    const ymd = arg("at").slice(5); const from = new Date(Date.parse(`${ymd}T00:00:00+09:00`)).toISOString(), to = new Date(Date.parse(`${ymd}T23:59:59+09:00`)).toISOString();
+    const { data: runs } = await sb.from("cron_run_logs").select("started_at").eq("cron_name", "staff-todo-list").eq("ok", true).gte("started_at", from).lte("started_at", to).order("started_at");
+    ats = ((runs ?? []) as Array<{ started_at: string }>).map((r) => Date.parse(r.started_at));
+    console.log(`便 ${ats.length}回（${ymd}・cron_run_logs）`);
+  }
   for (const at of ats) {
     const list = await loadStaffTodoList(sb, at, {});
     const nums = new Map(numberTodoItems(list).map((x) => [x.item.key, x.n]));
