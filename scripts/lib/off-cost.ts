@@ -40,6 +40,22 @@ export function costOfSites(sites: readonly CostSite[], windowOf: (s: CostSite) 
   return best!;
 }
 
+/**
+ * 入力増の字数の上限の見込み（静的）: 呼ぶ所の窓で使う関数（〜Line／Note／Block／Text／Section／RULES）の定義の中の文字列の字数の和。
+ * 実際に足されるのは条件が合う番だけ・文字列の一部だけのこともある＝上限。定数（RULES 等）はそのままの字数
+ */
+export function inputCharsUpper(windowText: string, defOf: (name: string) => string | null): { chars: number; names: string[] } {
+  const names = [...new Set([...windowText.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*(?:Line|Note|Block|Text|Section|RULES|FIELD|Lines|Notes))\b/g)].map((m) => m[1]))].slice(0, 6);
+  let chars = 0; const used: string[] = [];
+  for (const n of names) {
+    const d = defOf(n); if (!d) continue;
+    const lits = [...d.matchAll(/`([^`]*)`|"([^"\n]*)"/g)].map((m) => (m[1] ?? m[2] ?? "").replace(/\$\{[^}]*\}/g, ""));
+    const c = lits.reduce((s, x) => s + Array.from(x).length, 0);
+    if (c > 0) { chars += c; used.push(`${n}≈${c}字`); }
+  }
+  return { chars, names: used };
+}
+
 /** モデルの1回あたりの $（llm_usage_logs の平均トークン × app/lib/llm-price.ts の単価・ピークは見ない） */
 export function usdPerCall(u: { inu: number; cr: number; cw: number; out: number }, price: { in: number; read: number; out: number }): number {
   return (u.inu * price.in + u.cr * price.read + u.cw * price.in * 1.25 + u.out * price.out) / 1e6;

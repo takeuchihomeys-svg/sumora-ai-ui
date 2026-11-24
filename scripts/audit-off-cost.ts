@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { costOfSites, usdPerCall, COST_JA, type CostSite } from "./lib/off-cost";
+import { costOfSites, usdPerCall, inputCharsUpper, COST_JA, type CostSite } from "./lib/off-cost";
 import { altPriceOf, claudePriceOf } from "../app/lib/llm-price";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
@@ -52,7 +52,13 @@ walk("app");
     if (m[1]) return m[1];
     const c = txt.match(new RegExp(`${m[2]}\\s*=\\s*["']([\\w:.-]+)["']`)); return c ? c[1] : null;
   };
-  type CostRow = { id: number; title: string; owner: string | null; switch_name: string | null; kind: "zero" | "input" | "call" | "unknown"; evidence: string; perDayUsd: number | null; pos?: "前" | "後ろ" | "未確認"; waits?: boolean; module?: string; action?: string | null; perCall?: number | null; msAvg?: number | null; running?: boolean };
+  type CostRow = { id: number; title: string; owner: string | null; switch_name: string | null; kind: "zero" | "input" | "call" | "unknown"; evidence: string; perDayUsd: number | null; pos?: "前" | "後ろ" | "未確認"; waits?: boolean; module?: string; action?: string | null; perCall?: number | null; msAvg?: number | null; running?: boolean; inChars?: number; inNames?: string[]; inUsdDay?: number | null };
+  // 関数・定数の定義の本文（次の export／function まで）
+  const defOf = (name: string): string | null => {
+    const re = new RegExp(`(?:export\\s+)?(?:function\\s+${name}\\b|const\\s+${name}\\s*[:=])`);
+    for (const f of FILES) { const k = f.lines.findIndex((l) => re.test(l)); if (k < 0) continue; const body: string[] = [f.lines[k]]; for (let j = k + 1; j < Math.min(f.lines.length, k + 80); j++) { if (/^(?:export\s+)?(?:async\s+)?function\s|^export\s+const\s/.test(f.lines[j])) break; body.push(f.lines[j]); } return body.join("\n"); }
+    return null;
+  };
   const rows: CostRow[] = items.map((it): CostRow => {
     const sw = it.switch_name;
     if (!sw) return { ...it, kind: "unknown" as const, evidence: "スイッチ無し（コードの直し）", perDayUsd: null as number | null };
@@ -82,7 +88,17 @@ walk("app");
       running = !!u && u.n > 0;
       perDayUsd = perCall == null ? null : running ? perCall * u!.n / 7 : where ? perCall * turnsPerDay[where] : null;
     }
-    return { ...it, kind: v.kind, pos: v.pos, waits: v.waits, module: v.module, action, perCall, msAvg, perDayUsd, running, evidence: v.evidence };
+    // 入力増: 足す文字列の字数の上限（静的）→ 1日の $（日本語は1字≈1トークンと見る・後ろ＝キャッシュに乗らない入力の単価・前＝固定の文ならキャッシュの単価）
+    let inChars: number | undefined, inNames: string[] | undefined, inUsdDay: number | null = null;
+    if (v.kind === "input") {
+      const site = sites.find((x) => v.evidence.startsWith(`${x.file}:${x.line}`)) ?? sites[0];
+      const est = inputCharsUpper(winOf(site), defOf);
+      inChars = est.chars; inNames = est.names;
+      const where = /brain-core/.test(site.file) ? "brain" : /generate-reply/.test(site.file) ? "reply" : /aix-template-generate/.test(site.file) ? "aix" : null;
+      const pricePerTok = v.pos === "前" ? 0.022 / 1e6 : 0.66 / 1e6; // DeepSeek pro（app/lib/llm-price.ts の read／in）
+      inUsdDay = est.chars && where ? est.chars * pricePerTok * turnsPerDay[where] : null;
+    }
+    return { ...it, kind: v.kind, pos: v.pos, waits: v.waits, module: v.module, action, perCall, msAvg, perDayUsd, running, evidence: v.evidence, inChars, inNames, inUsdDay };
   });
   const c = (k: string) => rows.filter((r) => r.kind === k).length;
   console.log(`■ built_off ${rows.length}行を on にした時の費用の種類: ${["zero", "input", "call", "unknown"].map((k) => `${COST_JA[k as keyof typeof COST_JA]} ${c(k)}`).join("・")}`);
@@ -97,5 +113,9 @@ walk("app");
   console.log(`  $ が出せない呼び出し増 ${rows.filter((r) => r.kind === "call" && r.perDayUsd == null).length}行・入力増 ${c("input")}行（トークンの増えは未確認＝夜の試験の材料の字数で測る）`);
   console.log(`\n■ 上位10行`);
   for (const r of priced.slice(0, 10)) console.log(`  #${r.id} ${r.switch_name}: $${(r.perDayUsd ?? 0).toFixed(2)}/日（1回 $${(r.perCall ?? 0).toFixed(4)}・${r.action}・平均 ${r.msAvg ?? "?"}ms${r.waits ? "・本番で待つ" : ""}${(r as { running?: boolean }).running ? "・今も呼ばれている" : ""}）${r.evidence}`);
+  const ins = rows.filter((r) => r.kind === "input");
+  const inTot = ins.reduce((s, r) => s + (r.inUsdDay ?? 0), 0);
+  console.log(`\n■ 入力増 ${ins.length}行の見込み（足す文字列の字数の上限・静的・条件が合う番だけ足すので上限）: 字数が出せた ${ins.filter((r) => r.inChars).length}行・1日 $${inTot.toFixed(2)}（毎番足すと見た上限）`);
+  for (const r of ins.filter((x) => x.inUsdDay != null).sort((a, b) => (b.inUsdDay ?? 0) - (a.inUsdDay ?? 0)).slice(0, 10)) console.log(`  #${r.id} ${r.switch_name}: 上限 ${r.inChars}字・${r.pos}・$${(r.inUsdDay ?? 0).toFixed(3)}/日（${(r.inNames ?? []).join("・")}）`);
   if (arg("json")) writeFileSync(arg("json"), JSON.stringify(rows, null, 1));
 })().catch((e) => { console.error(e); process.exit(1); });
