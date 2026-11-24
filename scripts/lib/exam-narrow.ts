@@ -14,35 +14,59 @@ import { SWITCH_REACH, type SwitchReachDef } from "./exam-switch-reach";
 export function examNarrowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.EXAM_NARROW ?? "").trim().toLowerCase() !== "off";
 }
-export type NarrowBase = ReadonlyMap<string, { pathOk: boolean; pass: boolean }>;
+export type NarrowBase = ReadonlyMap<string, { pathOk: boolean; pass: boolean; /** 前の回のどれかで返信の下書きが出た */ hasDraft?: boolean; /** off の回数 */ n?: number; /** off で当たり（道も採点も）の回数 */ passN?: number }>;
+/**
+ * 2026-11-24 作業員L（統括役の頼み①）: スイッチごとの「効く場面」（コードで条件が決まる物だけ・推して埋めない）。
+ *   reply_draft＝返信の下書き（app/api/generate-reply の文の設計図 compose-sentence-plan・compose-value-slots の中だけで読まれる）。
+ *   brain-exam では、ブレインが AIX を選んだ番（reply_mode=aix・AFTER_AIX_DRAFT が off）と段が brain の問題は generate-reply を呼ばない＝この3つは効かない。
+ *   ブレイン（brain-core）や AIX の文（aix-template-generate）でも読むスイッチ（TSUNAGI_ONE_PLACE・BRAIN_SEVEN_FIELDS・BRAIN_COMPOSE_BLUEPRINT）は場面が決まらない＝入れない
+ */
+export const SWITCH_SCENE: Readonly<Record<string, { where: "reply_draft"; why: string }>> = {
+  COMPOSE_CLOSING_TABLE: { where: "reply_draft", why: "compose-value-slots（generate-reply だけ）" },
+  COMPOSE_LEAD_JUDGE_FIRST: { where: "reply_draft", why: "compose-sentence-plan（generate-reply だけ）" },
+  COMPOSE_DEST_FROM_BRAIN: { where: "reply_draft", why: "compose-sentence-plan（generate-reply だけ）" },
+};
+export function examNarrowSteadyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_NARROW_STEADY ?? "").trim().toLowerCase() !== "off";
+}
+export function examNarrowSceneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.EXAM_NARROW_SCENE ?? "").trim().toLowerCase() !== "off";
+}
 export type NarrowResult = { applied: boolean; keep: string[]; drop: string[]; why: Record<string, string>; reason: string };
 
 /** 前の基準の答え（問題ごと）→ 過半数の道・合格（純関数） */
-export function baseMajorityOf(rows: ReadonlyArray<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }>): Map<string, { pathOk: boolean; pass: boolean }> {
-  const by = new Map<string, Array<{ p: boolean; s: boolean }>>();
-  for (const r of rows) { if (r.error) continue; by.set(r.id, [...(by.get(r.id) ?? []), { p: !!r.path?.ok, s: !!r.score?.pass }]); }
-  const out = new Map<string, { pathOk: boolean; pass: boolean }>();
-  for (const [id, xs] of by) out.set(id, { pathOk: xs.filter((x) => x.p).length * 2 > xs.length, pass: xs.filter((x) => x.s).length * 2 > xs.length });
+export function baseMajorityOf(rows: ReadonlyArray<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }>): Map<string, { pathOk: boolean; pass: boolean; hasDraft: boolean; n: number; passN: number }> {
+  const by = new Map<string, Array<{ p: boolean; s: boolean; d: boolean }>>();
+  for (const r of rows) { if (r.error) continue; by.set(r.id, [...(by.get(r.id) ?? []), { p: !!r.path?.ok, s: !!r.score?.pass, d: !!(r as { draft?: { text?: string | null } | null }).draft?.text }]); }
+  const out = new Map<string, { pathOk: boolean; pass: boolean; hasDraft: boolean; n: number; passN: number }>();
+  for (const [id, xs] of by) out.set(id, { pathOk: xs.filter((x) => x.p).length * 2 > xs.length, pass: xs.filter((x) => x.s).length * 2 > xs.length, hasDraft: xs.some((x) => x.d), n: xs.length, passN: xs.filter((x) => x.p && x.s).length });
   return out;
 }
 
-export function narrowProblems(o: { ids: readonly string[]; onSwitches: readonly string[]; prior: PriorLedger; base: NarrowBase; table?: Record<string, SwitchReachDef> }): NarrowResult {
+export function narrowProblems(o: { ids: readonly string[]; onSwitches: readonly string[]; prior: PriorLedger; base: NarrowBase; table?: Record<string, SwitchReachDef>; scene?: Readonly<Record<string, { where: "reply_draft"; why: string }>> | null }): NarrowResult {
   const table = o.table ?? SWITCH_REACH;
   const ids = [...o.ids];
   const none = (reason: string): NarrowResult => ({ applied: false, keep: ids, drop: [], why: {}, reason });
   if (!o.onSwitches.length) return none("on のスイッチが無い");
-  const unknownSw = o.onSwitches.filter((s) => !(table[s]?.needs?.length));
-  if (unknownSw.length) return none(`材料の対応表に無いスイッチ（${unknownSw.join(",")}）＝どの問題に効くか分からない`);
+  const scene = o.scene === undefined ? (examNarrowSceneOn() ? SWITCH_SCENE : null) : o.scene;
+  const unknownSw = o.onSwitches.filter((s) => !(table[s]?.needs?.length) && !scene?.[s]);
+  if (unknownSw.length) return none(`材料・場面の表に無いスイッチ（${unknownSw.join(",")}）＝どの問題に効くか分からない`);
   const needs: string[] = [...new Set(o.onSwitches.flatMap((s) => table[s]?.needs ?? []))];
+  const steady = examNarrowSteadyOn();
+  const replyDraftSw = o.onSwitches.some((s) => scene?.[s]?.where === "reply_draft");
   const keep: string[] = [], drop: string[] = [], why: Record<string, string> = {};
   for (const id of ids) {
     const l = o.prior.get(id);
     const b = o.base.get(id);
-    if (!l) { keep.push(id); why[id] = "前の回が無い"; continue; }
-    if (needs.some((t) => (l[t] ?? 0) > 0)) { keep.push(id); why[id] = "材料あり"; continue; }
+    // 返信の下書きのスイッチ: 前の回で返信の下書きが出た問題は効きうる（前の答えが無ければ分からない＝残す）
+    if (replyDraftSw && (!b || b.hasDraft)) { keep.push(id); why[id] = b ? "返信の下書きが出る" : "前の答えが無い"; continue; }
+    if (needs.length && !l) { keep.push(id); why[id] = "前の回が無い"; continue; }
+    if (l && needs.some((t) => (l[t] ?? 0) > 0)) { keep.push(id); why[id] = "材料あり"; continue; }
     if (b && (!b.pathOk || !b.pass)) { keep.push(id); why[id] = "今の off で外れ"; continue; }
-    drop.push(id); why[id] = "材料0・off で当たり";
+    // 2026-11-24 作業員L（統括役の頼み）: 落とすのは off で2回以上・全部当たり（揺れていない）の問題だけ。揺れている問題は on の外れが揺れか効きか分けられない＝残す（EXAM_NARROW_STEADY=off で前の過半数に戻る）
+    if (steady && (!b || typeof b.n !== "number" || b.n < 2 || b.passN !== b.n)) { keep.push(id); why[id] = !b ? "前の答えが無い" : "off で揺れている・回数が足りない"; continue; }
+    drop.push(id); why[id] = replyDraftSw && !needs.length ? "返信の下書きが出ない番・off で当たり" : "材料0・off で当たり";
   }
   if (!keep.length) return none("絞ると0問（積む前の関所が止める）");
-  return { applied: drop.length > 0, keep, drop, why, reason: `材料の要るスイッチ（${o.onSwitches.join(",")}）` };
+  return { applied: drop.length > 0, keep, drop, why, reason: `材料・場面の決まるスイッチ（${o.onSwitches.join(",")}）` };
 }
