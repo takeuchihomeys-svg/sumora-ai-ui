@@ -29,6 +29,22 @@ for (const cut of Object.keys(CUTS) as CutId[]) {
   lines.push(`- ${c.name}（${c.sw}・今 ${env[c.sw] ?? "既定"}）: ${d.why}${d.off ? " → 止める" : ""}`);
   if (d.off) offs.push({ sw: c.sw, why: d.why });
 }
+// 2026-11-25 作業員L（統括役の決め）: 判定の段（tier）の見落とし＝flash 2回が揃って pro と合否が違った答案（q051 の型）。
+//   判定の比べの出力（brain-exam --judge-compare-out の JSON・--tier-compare=<path>）があれば数える。止めずに数だけ（tier は試験の比べの中では崩れない＝統括役の決め）
+const tc = arg("tier-compare");
+if (tc) {
+  try {
+    const j = JSON.parse(readFileSync(tc, "utf8")) as { rows?: Array<{ id: string; v: Record<string, { asks: boolean[]; ng: boolean[] } | null> }> };
+    const pass = (x: { asks: boolean[]; ng: boolean[] } | null | undefined) => (x ? x.asks.every(Boolean) && !x.ng.some(Boolean) : null);
+    const pairs: Array<[string, string]> = [["tier", "pro"], ["tier-v3", "v3"]];
+    for (const [a, b] of pairs) {
+      const rs = (j.rows ?? []).filter((r) => r.v[a] && r.v[b]);
+      if (!rs.length) continue;
+      const miss = rs.filter((r) => pass(r.v[a]) !== pass(r.v[b])).map((r) => r.id);
+      lines.push(`- 判定の段（${a} と ${b}）: 合否が違った ${miss.length}/${rs.length}答案${miss.length ? `（${miss.join("・")}）` : ""}（止めずに数だけ）`);
+    }
+  } catch (e) { lines.push(`- 判定の段: 比べの出力を読めない（${String(e).slice(0, 60)}）`); }
+}
 console.log(`# 試験の削りの見落とし（前の答案になぞる・${new Date().toISOString()}）`);
 console.log(lines.join("\n"));
 if (offs.length && argv.includes("--apply")) {
