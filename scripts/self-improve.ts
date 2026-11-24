@@ -612,6 +612,18 @@ async function main() {
   const worse = runs.filter((r) => /確かな悪化 [1-9]/.test(String(r.summary ?? "")));
   const cost = Math.round(runs.reduce((a, r) => a + Number(r.cost_usd ?? 0), 0) * 100) / 100;
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
+  // 2026-11-24 作業員L（台帳 #686・竹内さん「試験の費用も抑えて、質も上げていく仕組み」）: 試験の効率の物差し（scripts/audit-night-cost.ts --write が書いた test:efficiency:*）を1行で
+  if (!only || doCandidates) {
+    // 一番新しい日の分（audit-night-cost は晩の翌日の日付で書く・この1枚の day とずれるので日で絞らず新しい順）
+    const { data: ef0 } = await sb.from("quality_daily").select("day, metric, value, detail").eq("scope", "all").like("metric", "test:efficiency:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
+    const ef = ((ef0 ?? []) as Array<{ day: string }>).filter((r, _i, a) => r.day === a[0]?.day);
+    const ev = new Map((ef as unknown as Array<{ metric: string; value: number | null; detail: { why?: string[]; reason?: string | null } | null }>).map((r) => [r.metric.replace("test:efficiency:", ""), r]));
+    if (ev.size) {
+      const v = (k: string) => (ev.get(k)?.value == null ? null : Number(ev.get(k)!.value));
+      const wn = ev.get("worse_night");
+      lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
+    }
+  }
 
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
