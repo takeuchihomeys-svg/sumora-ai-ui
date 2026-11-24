@@ -1,6 +1,6 @@
 // 試験の守りの問題の自動の足し（scripts/lib/exam-guards.ts）の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/exam-guards.test.ts（全 PASS で exit 0）
-import { chooseGuards, fitGuardsToCap, guardLine } from "../exam-guards";
+import { chooseGuards, fitGuardsToCap, guardLine, trimGuardsToReusable, guardsReuseOnlyOn } from "../exam-guards";
 
 let fail = 0, pass = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else { fail++; console.error(`✗ ${name}${detail ? `\n   ${detail}` : ""}`); } }
@@ -34,6 +34,15 @@ ok("計画の1行", guardLine(g, 0.03).startsWith("守り +2問（q4 夜の基�
   ok("前を作る守りから外し、使い回せる守りを残す", m.map((g) => g.id).join(",") === "a", JSON.stringify(m));
   ok("依頼だけで上限を超えていても、使い回せる守りは2問とも残る（11/10 on2-bb-p1 の形）", fitGuardsToCap([mk("a", true), mk("b", true)], { capUsd: 0.4, baseUsd: 0.48, unitUsd: 0.03 }).length === 2);
   ok("前を作る守りだけでも1問は残す", fitGuardsToCap([mk("x", false), mk("y", false)], { capUsd: 0.1, baseUsd: 0.5, unitUsd: 0.03 }).length === 1);
+}
+// 2026-11-24 作業員L: 守りは使い回せる基準のある物だけ・1問まで（EXAM_GUARDS_REUSE_ONLY）
+{
+  const gs = [{ id: "q1", sim: 0.5, reusable: false, stable: true, why: "" }, { id: "q2", sim: 0.4, reusable: true, stable: true, why: "" }, { id: "q3", sim: 0.3, reusable: true, stable: false, why: "" }];
+  const a = trimGuardsToReusable(gs as never, true).map((g) => g.id);
+  if (JSON.stringify(a) !== JSON.stringify(["q2"])) throw new Error("trim: " + JSON.stringify(a));
+  if (trimGuardsToReusable(gs as never, false).length !== 3) throw new Error("off は今まで通り");
+  if (!guardsReuseOnlyOn({}) || guardsReuseOnlyOn({ EXAM_GUARDS_REUSE_ONLY: "off" })) throw new Error("既定 on");
+  console.log("ok 守りは使い回せる物だけ・1問まで");
 }
 console.log(`${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
