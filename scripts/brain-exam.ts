@@ -72,7 +72,7 @@ function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return
 import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
 import { ruleJudge } from "./lib/exam-brain";
 import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
-import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, skipNoRegressionOn, noRegressionPossible, repsOnlyIfDifferOn, firstTwoSameAsBase, passPathOf, type PassPath, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
+import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, skipNoRegressionOn, noRegressionPossible, repsOnlyIfDifferOn, firstTwoSameAsBase, repsOneIfSameOn, firstSameAsUnanimousBase, passPathOf, type PassPath, sigOfRow, pathSigOfRow, majoritySigOfRow, majoritySettled, majorityEarlyStopOn, judgeMajoritySettled, confirmJudgeMerge, type JudgeVote, type FlakeVerdict } from "./lib/exam-flake";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentLane, makeLane, runInLane, readConcurrency, installLaneEnvProxy, LaneLimiter, runLanes, splitRepsOn, planLaneUnits, type ExamLane } from "./lib/exam-lane";
 import type { ReplayFloor } from "../app/lib/test-replay-floor";
@@ -1826,7 +1826,7 @@ async function main() {
   const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number>, settled: 0, noRegression: 0, sameAsBase: 0 };
   // 2026-11-21 作業員H: 前（main）が合格も道も過半数で✕の問題は、今を重ねて回しても悪化にならない＝2回目以降を回さない（exam-flake.noRegressionPossible・EXAM_SKIP_NO_REGRESSION=off で止める）
   const baseRowsById = new Map<string, ResultRow[]>();
-  if ((skipNoRegressionOn() || repsOnlyIfDifferOn()) && !IS_BASELINE_CHILD && BASELINE && BASELINE !== "main") for (const r of readResults(BASELINE)) baseRowsById.set(r.id, [...(baseRowsById.get(r.id) ?? []), r]);
+  if ((skipNoRegressionOn() || repsOnlyIfDifferOn() || repsOneIfSameOn()) && !IS_BASELINE_CHILD && BASELINE && BASELINE !== "main") for (const r of readResults(BASELINE)) baseRowsById.set(r.id, [...(baseRowsById.get(r.id) ?? []), r]);
   const noRegCache = new Map<string, boolean>();
   const noRegressionFor = (id: string) => { let v = noRegCache.get(id); if (v === undefined) { v = noRegressionPossible((baseRowsById.get(id) ?? []) as never); noRegCache.set(id, v); } return v; };
   const EARLY_STOP = majorityEarlyStopOn() && (REPEAT_FLAKY || !!REPS_OF) && REPEAT > 1;
@@ -1928,6 +1928,8 @@ async function main() {
     if (rep > 1 && skipNoRegressionOn() && baseRowsById.size && noRegressionFor(p.id)) { skippedReps.n++; skippedReps.noRegression++; continue; }
     // 2026-11-21 作業員H（KB c6bb716c に戻す）: 最初の2回がどちらも前の過半数と同じなら3回目から回さない（EXAM_REPS_ONLY_IF_DIFFER=off で止める）
     if (rep > 2 && repsOnlyIfDifferOn() && baseRowsById.size && firstTwoSameAsBase(donePP.get(p.id) ?? [], (baseRowsById.get(p.id) ?? []) as never)) { skippedReps.n++; skippedReps.sameAsBase++; continue; }
+    // 2026-11-24 作業員L（竹内さん「試験の費用がもったいない」・統括役の a）: 前の回が全部そろっていて今の1回目が同じなら2回目から回さない（EXAM_REPS_ONE_IF_SAME=off で止める）
+    if (rep > 1 && repsOneIfSameOn() && baseRowsById.size && firstSameAsUnanimousBase(donePP.get(p.id) ?? [], (baseRowsById.get(p.id) ?? []) as never)) { skippedReps.n++; skippedReps.sameAsBase++; continue; }
     if (EARLY_STOP && rep > 1 && majoritySettled(doneMaj.get(p.id) ?? [], REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[p.id] ?? 1)) : REPEAT)) { skippedReps.n++; skippedReps.settled++; continue; }
     const realBefore = nonJudgeReal(); startedReps = true;
     const row: ResultRow = { ...({ profiles: examProfileVersions(process.env) } as object), id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
