@@ -276,6 +276,9 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const partsOn = brainDsPartsOn(env);
   const provider = explicitProvider || (testMode || finalSel || partsOn.length ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = [(env.LLM_ALT_ACTIONS ?? "").trim(), ...partsOn].filter(Boolean).join(",");
+  // 2026-11-24 #670: 別クラウドの設定が何も無くても、予算の振り分け（LLM_BUDGET_ROUTE）が on/shadow で OpenAI の鍵があれば包みを入れる（主の相手は OpenAI・actions は空＝予算の決まりの名札だけ回る）
+  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && ["on", "shadow"].includes((env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase());
+  if (budgetOnly) { const oa = readProviderTarget(env, "openai"); return oa ? { ...oa, actions: new Set<string>(), fallbackToAnthropic: true, allowAutoSend: false, testMode: null, routes: new Map() } : null; }
   if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
   //   旧は最初の振り分けの相手が主になり、LLM_ALT_ACTIONS=reply_generate が残っていると本文が Qwen に行った（PROVIDER 無しなら旧来は null＝Claude）
@@ -659,6 +662,7 @@ export function toOpenAIBody(
       max_completion_tokens: maxOut,
       ...(opts.openai.reasoningEffort ? { reasoning_effort: opts.openai.reasoningEffort } : {}),
       ...(schemaNote ? { response_format: { type: "json_object" } } : {}),
+      ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
   }
   return {
@@ -965,7 +969,7 @@ async function callOpenAICompatible(
   guard: AltBusyGuard = readBusyGuard({ DEEPSEEK_FALLBACK_CLAUDE: "off" }),
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
-  const allowStream = cfg.provider === "deepseek";
+  const allowStream = cfg.provider === "deepseek" || cfg.provider === "openai"; // 2026-11-24 #670: OpenAI の SSE も同じ形（include_usage）
   // テスト用の切り替えの時だけ構造化出力を JSON モードに移す（本番の経路は今までどおり）
   const testShape = !!cfg.testMode;
   // 2026-09-29 Qwen も思考は既定で切る（判定・分類の用途）。切り方は DashScope の enable_thinking
@@ -1156,7 +1160,23 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
     //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
     if (isPostApplyCall(headers)) return toClaude("申込以降の会話（個人情報の歯止め・YUMA なら status_manual_back_at を最新に）");
-    if (!shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
+    // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24「Claude はあと $25 使ったら OpenAI に切り替える」）: LLM_BUDGET_ROUTE（既定 off）。
+    //   今月の Claude の使用額が CLAUDE_SWITCH_AT_USD を超えたら、係の表（llm-budget-route.BUDGET_ROLE_TABLE）の名札だけ OpenAI に回す。
+    //   自動返信・申込以降は上で Claude に戻している。下の時刻の線・個人の値の網はそのまま通す（DeepSeek と同じ歯止め）。テストの間は使わない（試験は EXAM_BRAIN_PROVIDER）
+    let budgetTarget: AltProviderConfig | null = null;
+    let budgetFallback = true;
+    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "" && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
+      try {
+        const [{ budgetDecisionFor }, { supabase: sbBudget }] = await Promise.all([import("./llm-budget-route-server"), import("./supabase-server")]);
+        const d = await budgetDecisionFor(sbBudget, routeName);
+        if (d.route === "openai" && d.model) {
+          const oa = readProviderTarget(process.env, "openai");
+          if (d.shadow || !oa) console.log(JSON.stringify({ tag: "llm-budget", route: routeName, role: d.role, model: d.model, shadow: d.shadow, noKey: !oa, reason: d.reason }));
+          else { budgetTarget = { ...cfg, ...oa, model: d.model, routes: new Map() }; budgetFallback = d.fallbackToClaude; }
+        }
+      } catch (e) { console.warn("[llm-budget] 振り分けを決められない → 今まで通り:", e instanceof Error ? e.message : String(e)); }
+    }
+    if (!budgetTarget && !shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
 
     // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 二重の鍵。
     //   入口が線を引いた印（ヘッダ優先・無ければリクエストの箱）が無い会話の呼び出し・blocked は回さない。
@@ -1249,9 +1269,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const started = Date.now();
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）があればその相手（Qwen 等）・無ければ主の相手
-    const target = targetConfigFor(cfg, routeName);
+    const target = budgetTarget ?? targetConfigFor(cfg, routeName);
     // 2026-10-15 Claude に作り直してよい呼び出しか（物件の判断・読み取り・テストの間・LLM_ALT_FALLBACK=off は戻さない＝遮断もしない）
-    const mayFallBack = guard.enabled && cfg.fallbackToAnthropic && !cfg.testMode && !(routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName));
+    const mayFallBack = budgetTarget ? budgetFallback : guard.enabled && cfg.fallbackToAnthropic && !cfg.testMode && !(routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName));
     // Claude に戻す時、呼び出し側の signal が DeepSeek を待つ間に切れていたら新しい 45秒で送る
     //   （10/15 13:01 AIX property_check_result: DeepSeek 90秒の後に 25秒の signal で Claude を呼び 3ms で fetch_error）
     const claudeInit = (): RequestInit | undefined => (guard.enabled && init?.signal?.aborted ? { ...init, signal: AbortSignal.timeout(45_000) } : init);
@@ -1307,6 +1327,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         status: 0, errorType: altFailureType(e), durationMs: Date.now() - started,
         sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
+      // 2026-11-24 #670: 予算で OpenAI に回した物は係の表の fallbackToClaude で決める（既定は全部 Claude に戻す＝下書きが出ないのを避ける）
+      if (budgetTarget) { if (!budgetFallback) throw e; return original(input as RequestInfo, claudeInit()); }
       if (!cfg.fallbackToAnthropic) throw e;
       // 2026-09-26 テスト用の切り替えの間は**失敗しても Claude に戻さない**（失敗は失敗として出す）。
       //   理由: 戻すと、費用が黙って Claude に漏れる＋「DeepSeek で回したつもりの結果」が実は Claude の結果になり、試行錯誤の比較が混ざる。
