@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { resolveRouteName, testDeepseekModelOverride, isBrainRouteName } from "../../app/lib/llm-alt-provider";
+import { resolveRouteName, testDeepseekModelOverride, isBrainRouteName, isWriterRouteName } from "../../app/lib/llm-alt-provider";
 import { examEnvFingerprint, readDotenvLocal } from "./exam-env-fp";
 import { currentLane } from "./exam-lane";
 
@@ -30,6 +30,11 @@ function actionModelOverride(env: Record<string, string | undefined>, action: st
     let h = "";
     if (!action && body) { try { const sys = (JSON.parse(body) as { system?: unknown }).system; h = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : ""; } catch { h = ""; } }
     if (isBrainRouteName(resolveRouteName(action, h.slice(0, 200)))) return `openai:${(env.EXAM_BRAIN_MODEL ?? "").trim() || "gpt-6.2-sol"}:${(env.EXAM_BRAIN_REASONING ?? "").trim()}`;
+  }
+  if (["openai", "claude"].includes((env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase())) {
+    let h = "";
+    if (!action && body) { try { const sys = (JSON.parse(body) as { system?: unknown }).system; h = typeof sys === "string" ? sys : Array.isArray(sys) ? sys.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("") : ""; } catch { h = ""; } }
+    if (isWriterRouteName(resolveRouteName(action, h.slice(0, 200)))) return (env.EXAM_WRITER_PROVIDER ?? "").trim().toLowerCase() === "claude" ? "claude-writer" : `openai-writer:${(env.EXAM_WRITER_MODEL ?? "").trim() || "gpt-6.2-sol"}:${(env.EXAM_WRITER_REASONING ?? "").trim()}`;
   }
   if (!(env.LLM_TEST_DS_MODEL_BY_ACTION ?? "").trim()) return null;
   let head = "";
