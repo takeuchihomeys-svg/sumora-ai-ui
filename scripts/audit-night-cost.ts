@@ -33,9 +33,12 @@ type Lever = {
   runs: number; tierAnswers: number; tierNoPro: number; proCalls: number; guards: number; guardJobs: number;
   aSkipped: number; repsSkipped: number; cReused: number; cReusedUsd: number; cRan: number; cChildUsd: number;
   pinned: number; replayUsd: number; idSame: number; idItems: number; gateDropped: number; narrowDropped: number; blocked: number;
+  /** 2026-11-25 作業員L（#686 の④）: #683（覚えた材料で問題を絞る）・#684（本番の照らしで余地0の直しを積まない）の効き。
+   *   係の記録の行に「（#683）」「（#684）」の印と「N問を外した」「積まない」を書く決まり（作る人はこの形で log する） */
+  t683Dropped: number; t684Blocked: number; t684Dropped: number;
 };
 const zeroCost = (): Cost => ({ ds: 0, dsJudge: 0, oa: 0, cl: 0, calls: 0 });
-const zeroLever = (): Lever => ({ runs: 0, tierAnswers: 0, tierNoPro: 0, proCalls: 0, guards: 0, guardJobs: 0, aSkipped: 0, repsSkipped: 0, cReused: 0, cReusedUsd: 0, cRan: 0, cChildUsd: 0, pinned: 0, replayUsd: 0, idSame: 0, idItems: 0, gateDropped: 0, narrowDropped: 0, blocked: 0 });
+const zeroLever = (): Lever => ({ runs: 0, tierAnswers: 0, tierNoPro: 0, proCalls: 0, guards: 0, guardJobs: 0, aSkipped: 0, repsSkipped: 0, cReused: 0, cReusedUsd: 0, cRan: 0, cChildUsd: 0, pinned: 0, replayUsd: 0, idSame: 0, idItems: 0, gateDropped: 0, narrowDropped: 0, blocked: 0, t683Dropped: 0, t684Blocked: 0, t684Dropped: 0 });
 const total = (c: Cost) => c.ds + c.dsJudge + c.oa + c.cl;
 
 function resultDirs(): string[] {
@@ -127,6 +130,8 @@ function resultDirs(): string[] {
       const i = nightOf(Date.parse(l.slice(0, 24))); if (i < 0) continue;
       const g = l.match(/積む前の関所: 材料0の問題 (\S+) を外した/); if (g) lev[i].gateDropped += g[1].split(",").length;
       const n = l.match(/問題の絞り: (\d+)問を外した/); if (n) lev[i].narrowDropped += Number(n[1]);
+      const d6 = l.match(/（#68([34])）[^\n]*?(\d+)問を外した/); if (d6) { if (d6[1] === "3") lev[i].t683Dropped += Number(d6[2]); else lev[i].t684Dropped += Number(d6[2]); }
+      if (/（#684）[^\n]*積まない/.test(l)) lev[i].t684Blocked++;
       if (/積まない: /.test(l) && !/夜の基準は積まない/.test(l)) lev[i].blocked++;
     }
   } catch { /* */ }
@@ -195,6 +200,8 @@ function resultDirs(): string[] {
   row("積む前の関所で外した問題", "gateDropped", "問");
   row("問題の絞りで外した問題", "narrowDropped", "問");
   row("関所で積まなかった依頼", "blocked", "本");
+  row("#683 覚えた材料で外した問題", "t683Dropped", "問");
+  row("#684 本番の照らしで余地0＝積まなかった依頼", "t684Blocked", "本", `（外した問題 ${ln.t684Dropped}問）`);
 
   // 効率の物差し（台帳 #686）
   const e = eff[days], ep = eff.slice(0, days);
