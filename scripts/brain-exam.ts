@@ -809,7 +809,15 @@ async function judge(p: ExamProblem, meta: Record<string, unknown> | null, raw: 
 //   ② 答え方が2つある依頼（q177 の aix または promise 等）: 片方だけを正解として読んで✕にしていた
 //   （③ 返信の道のお礼・締め（q164 26○29✕ 等）を○に寄せる行は甘すぎて外した＝下の 13時の比べ）
 //   ⚠ 合否が変わる＝前（main）と比べる時は前も同じ版で判定し直す（--judge-compare=… --judge-compare-variants=v2 で保存した答案を判定し直して比べる・ブレインは回さない）
-export function judgeRubricOf(env: Record<string, string | undefined> = process.env): "v1" | "v2" { return String(env.EXAM_JUDGE_RUBRIC ?? "").trim().toLowerCase() === "v2" ? "v2" : "v1"; }
+export function judgeRubricOf(env: Record<string, string | undefined> = process.env): "v1" | "v2" | "v3" { const v = String(env.EXAM_JUDGE_RUBRIC ?? "").trim().toLowerCase(); return v === "v2" ? "v2" : v === "v3" ? "v3" : "v1"; }
+// 2026-11-25 作業員L（統括役の頼み・tier と pro のずれ q032・q051 の読み）: route の決まりのあいまいさ2つを足した版（EXAM_JUDGE_RUBRIC=v3・既定 off＝今の文と1文字も同じ）。
+//   ⑦ 答案がその依頼に全く触れていない時の route（q032: pro は true・flash は false＝「none＝触れない」の区別の読みが割れた）
+//   ⑧ 依頼に答える部分に別の約束が添えてある時（q051: お礼の返信に別の約束が添えてあり、flash が答え方を promise と読んだと見られる）
+//   ⚠ 合否が変わる＝前（main）と比べる時は前も同じ版で判定し直す（--judge-compare-variants=v3,tier-v3 で保存した答案を判定し直して一致を見る）
+export const JUDGE_RUBRIC_V3_LINES = [
+  "⑦ 答案がその依頼に全く触れていない（返信の方向・key_topics・約束・AIX のどこにも無い）時は、答え方は none。正解の答え方が none でなければ route=false・covered=false。",
+  "⑧ route は、その依頼に答えている部分の答え方だけで決める。同じ答案に別の依頼への約束や AIX が添えてあっても、その依頼に返信の本文で答えていれば答え方は reply。",
+];
 export const JUDGE_RUBRIC_V2_LINES = [
   "④ 答え方が『〇〇 または △△』と2つ書かれた依頼は、答案がどちらかの答え方で扱っていれば route=true（covered はその答え方で要点を見る）。片方だけを正解として読まない。",
   "⑤ 答案が AIX の番（reply_mode=aix で action が AIX）の時、答え方 reply の依頼は、AIX に添える文の方向（reply_direction・key_topics）でその依頼に答える指示があれば covered=true・route=true。『返信の本文が無い』『AIX で応える』だけを理由に false にしない（その依頼に触れていなければ false）。",
@@ -818,12 +826,13 @@ export const JUDGE_RUBRIC_V2_LINES = [
 //   「顧客の返信を待ち…」だけの答案（q144・q108）まで○にした＝甘すぎる。⑥は外した（締めの依頼の揺れは正解の書き方の側で直す）
 //   ④⑤だけの版も ✕→○ 24・○→✕ 2・締めの問題（q109・q111・q164）まで○に寄った＝決まりの文を足すと判定役が全体に甘くなる。既定 off のまま（人の○✕で較正するまで入れない）
 //   同じ比べで分かった事: 同じ答案を同じ指示（v1）で判定し直すだけで、問題×回の合否が 86〜91%しか揃わない（項目 90〜93%）＝判定役そのものの揺れが約1割
-async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number; rubric?: "v1" | "v2" } = {}): Promise<JudgeOut | null> {
+async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, raw: Record<string, unknown> | null, needRawPath: boolean, o: { model?: string; rubricFirst?: boolean; order?: "as-is" | "rubric" | "stable"; rep?: number; rubric?: "v1" | "v2" | "v3" } = {}): Promise<JudgeOut | null> {
   const asks = p.asks ?? [], ng = p.ng ?? [];
   if (!asks.length && !ng.length && !needRawPath) return { asks: [], asksWhy: [], ng: [], ngWhy: [], rawPath: null, route: [] };
   const plan = planOf(meta);
   const act = String(plan.action ?? "");
-  const rubricV2 = (o.rubric ?? judgeRubricOf()) === "v2";
+  const rubricV = o.rubric ?? judgeRubricOf();
+  const rubricV2 = rubricV === "v2";
   const sys = [
     "あなたは賃貸仲介の LINE 接客で『次の一手を決める AI（ブレイン）』の答案を採点する係です。",
     "ブレインの答案は JSON（reply_mode=aix なら action の AIX をスタッフが送る番／two_stage は約束の返信の種類／reply_direction は返信の方向／key_topics は返信に必ず入れる事／avoid_topics は言わない事／customer_questions はお客様の質問の一覧／turn_contract・asks があればこの番の依頼の一覧と答え方）。",
@@ -837,6 +846,7 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
     "② ng: 正解の『言ってはいけない事』ごとに、答案がそれを言う／する指示になっているか（violated）。はっきり指示している時だけ true。",
     `③ raw_path: 【LLM の最初の答え】（決まりで直される前）が、この番の返信をどの道にしようとしていたかを1つ選ぶ: ${PATH_CHOICES.join(" / ")}（返信＝約束なしで答える／2段:〇＝後で送る・確認する約束の返信／なし＝お客様の連絡待ちで送らない）。【LLM の最初の答え】が無ければ null。`,
     ...(rubricV2 ? JUDGE_RUBRIC_V2_LINES : []),
+    ...(rubricV === "v3" ? JUDGE_RUBRIC_V3_LINES : []),
     '出力は JSON だけ: {"asks":[{"i":1,"route":true,"covered":true,"why":"20字"}],"ng":[{"i":1,"violated":false,"why":"20字"}],"raw_path":"返信"}',
   ].join("\n");
   const answer = [
@@ -1221,7 +1231,7 @@ async function prepareMainBaseline(): Promise<boolean> {
     ...(frozenClockOn(mainEnv as Record<string, string | undefined>) ? { clock: examClockAnchorOn(mainEnv as Record<string, string | undefined>) ? "frozen-anchor" : "frozen" } : {}),
     ...(dbSnapshotOn(mainEnv as Record<string, string | undefined>) ? { dbSnap: "day" } : {}),
     // 判定の決まりを v2 にした回は、v1 で判定した前の答えと比べない（合否の物差しが違う）
-    ...(judgeRubricOf() === "v2" ? { judgeRubric: "v2" } : {}),
+    ...(judgeRubricOf() !== "v1" ? { judgeRubric: judgeRubricOf() } : {}),
     // 2026-11-20 作業員H（作業員M の頼み・AIX の2通目の系統の前と今）: --after-aix-draft は「AIX の後の返信の下書き」を作る＝前の答えの形が違う。
     //   付けた時だけ構成に足す（付けない回の置き場は変えない・付けた回は付けた前の答えとだけ比べる）
     ...(AFTER_AIX_DRAFT ? { afterAixDraft: AFTER_AIX_DRAFT } : {}),
@@ -1660,6 +1670,9 @@ async function judgeCompare(): Promise<void> {
         if (vname === "tier") o = await judgeTiered(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw);
         // 2026-11-11 作業員8: v2＝判定の決まりのあいまいさを直した版（並びは今まで通り as-is）・pro は今の版（v1）に固定
         else if (vname === "v2") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: "as-is", rubric: "v2" });
+        // 2026-11-25 作業員L: v3（route の決まり2つ）を pro と tier の両方で（tier-v3 は段の判定の中の flash・pro も v3）
+        else if (vname === "v3") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: "as-is", rubric: "v3" });
+        else if (vname === "tier-v3") { const prevR = process.env.EXAM_JUDGE_RUBRIC; process.env.EXAM_JUDGE_RUBRIC = "v3"; try { o = await judgeTiered(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw); } finally { if (prevR === undefined) delete process.env.EXAM_JUDGE_RUBRIC; else process.env.EXAM_JUDGE_RUBRIC = prevR; } }
         // 2026-11-24 作業員L（統括役の頼み③）: flash 1回だけ（並びは stable）。pro を flash にできる問題の種類を測る
         else if (vname === "flash") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { model: JUDGE_TIER_FLASH, order: "stable", rubric: "v1" });
         else o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: vname === "pro" ? "as-is" : (vname as "stable" | "rubric"), rubric: "v1" });
