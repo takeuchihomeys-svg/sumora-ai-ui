@@ -642,6 +642,17 @@ async function main() {
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
     }
   }
+  // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
+  //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
+  if (!only || doCandidates) {
+    const { parseOverdueNowDigest } = await import("../app/lib/conductor-overdue-promises");
+    const { data: odn } = await sb.from("brain_decision_logs").select("odn:digest->odn").gte("created_at", new Date(now - 86_400_000).toISOString()).not("digest->odn", "is", null).limit(2000);
+    const rs = ((odn ?? []) as Array<{ odn: unknown }>).map((r) => parseOverdueNowDigest(r.odn)).filter((x): x is NonNullable<typeof x> => !!x);
+    if (rs.length) {
+      const miss = rs.filter((r) => r.nNow > (r.nTurn ?? 0));
+      lines.push(`- 統括に渡す期日超えの約束（本当の今で読んだ記録・前の24時間）: 記録 ${rs.length}番・渡り損ねた番 ${miss.length}（足りなかった約束 ${miss.reduce((a, r) => a + r.nNow - (r.nTurn ?? 0), 0)}件・時間切れで渡らなかった番 ${rs.filter((r) => r.nTurn == null).length}）`, "");
+    }
+  }
 
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];

@@ -3,7 +3,7 @@
 //   列: building_key・room_no（判断した物件＝current_property を建物の鍵と号室に）・scene_key（ブレインの材料を絞る場面＝reply-scene）・brain_version（デプロイのコミット）
 //   digest: tc（2択の表示）・pp（ピックアップの約束が残っている）・cp（会話の実態の段階）・cs（締めの戦略の頭 60字）
 //   ※ scene_key は brain-scene の場面（reply-scene の ack/question/conditions…）。見張り（line_watch_turns.scene_key）の「AIX:〇〇／返信:〇〇」とは別の分け方
-import { overduePromisesDigest, overduePromisesDigestOn } from "./conductor-overdue-promises";
+import { overduePromisesDigest, overduePromisesDigestOn, overdueNowDigest } from "./conductor-overdue-promises";
 import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
@@ -105,6 +105,8 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
   // 2026-11-25 作業員L（#664 の④・統括に渡ったかの印）: 鍵を op → odp に。op は返信の書き出し（brain-layers.toFreshDigest の reply_opener）と同じ鍵で、
   //   期日超えの約束のある番は書き出しの記録を上書きしていた（7日で 1番）。記録だけ・判断は変えない。読む側（parseOverduePromisesDigest）は odp と前の op の形の両方を読む
   if (overduePromisesDigestOn(env)) { const odp = overduePromisesDigest(meta.overdue_promises); if (odp) (out as Record<string, unknown>).odp = odp; }
+  // 2026-11-25 作業員L（#664 ④・OVERDUE_NOW_CLOCK=shadow）: 渡した数と本当の今の数（odn＝"渡した|今|差の時間"・記録だけ）
+  { const odn = overdueNowDigest(meta.overdue_now); if (odn) (out as Record<string, unknown>).odn = odn; }
   return out;
 }
 
