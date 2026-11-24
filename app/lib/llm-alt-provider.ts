@@ -20,6 +20,7 @@
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
 import { WRITER_FLASH_ACTION } from "./writer-flash-scenes";
+import { profileFor, openaiRequestOf, moveExamplesFirst, shapeHintOf, charsHintOf } from "./provider-profile";
 import { AIX_BRAIN_ACTION } from "./aix-brain";
 import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, LLM_CUTOFF_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
@@ -671,7 +672,12 @@ export function toOpenAIBody(
       /** 2026-11-24 #670（試験だけ・EXAM_BRAIN_JSON_KEYS=on）: 出力の欄の言い添え＋JSON モード（Luna が action だけの JSON を返した） */
       jsonKeys?: readonly string[] | null;
       /** 2026-11-24 #670（試験だけ・EXAM_WRITER_GPT_NOTE=on）: 書き手の GPT 用の言い添え（system の最後＝キャッシュの先頭は変えない） */
-      writerNote?: string | null } } = {},
+      writerNote?: string | null;
+      /** 2026-11-24 #670（表の版 v2）: 手本の文を system の先頭に固定 */
+      examplesFirst?: boolean;
+      verbosity?: string | null;
+      shapeHint?: boolean;
+      charsHint?: boolean } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -703,6 +709,9 @@ export function toOpenAIBody(
     : { thinking };
   if (opts.openai) {
     const keys = opts.openai.jsonKeys?.length ? opts.openai.jsonKeys : null;
+    if (opts.openai.examplesFirst && messages[0]?.role === "system") messages[0].content = moveExamplesFirst(messages[0].content);
+    if (opts.openai.charsHint) { const lastUser = [...messages].reverse().find((m) => m.role === "user"); const h = lastUser ? charsHintOf(messages.filter((m) => m.role === "user").map((m) => m.content).join("\n")) : null; if (lastUser && h) lastUser.content += `\n\n${h}`; }
+    if (opts.openai.shapeHint) { const lastUser = [...messages].reverse().find((m) => m.role === "user"); const h = lastUser ? shapeHintOf(messages.filter((m) => m.role === "user").map((m) => m.content).join("\n")) : null; if (lastUser && h) lastUser.content += `\n\n${h}`; }
     if (opts.openai.writerNote) { if (messages[0]?.role === "system") messages[0].content += `\n\n${opts.openai.writerNote}`; else messages.unshift({ role: "system", content: opts.openai.writerNote }); }
     if (keys) {
       const note = `\n\n【出力の形（必須）】JSON オブジェクトを1つだけ出す。次の欄を全部入れる（分からない欄も空の値で入れる・欄を省かない）: ${keys.join(", ")}`;
@@ -717,6 +726,7 @@ export function toOpenAIBody(
       ...(opts.openai.reasoningEffort ? { reasoning_effort: opts.openai.reasoningEffort } : {}),
       ...(schemaNote || keys ? { response_format: { type: "json_object" } } : {}),
       ...(opts.openai.cacheKey ? { prompt_cache_key: opts.openai.cacheKey } : {}),
+      ...(opts.openai.verbosity ? { verbosity: opts.openai.verbosity } : {}),
       ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
   }
@@ -923,10 +933,11 @@ export function readBusyGuard(env: EnvLike = process.env): AltBusyGuard {
 }
 
 /** OpenAI 用の待ち時間（純関数）。未設定は渡された値のまま */
-export function openaiGuardOf(guard: AltBusyGuard, env: EnvLike = process.env): AltBusyGuard {
+export function openaiGuardOf(guard: AltBusyGuard, env: EnvLike = process.env, profile?: { firstTokenMs: number | null; totalMs: number | null }): AltBusyGuard {
   if (!guard.enabled) return guard;
   const ft = String(env.OPENAI_FIRST_TOKEN_MS ?? "").trim(), to = String(env.OPENAI_TIMEOUT_MS ?? "").trim();
-  return { ...guard, firstTokenMs: ft ? intEnv(ft, guard.firstTokenMs, 3_000, 120_000) : guard.firstTokenMs, totalMs: to ? intEnv(to, guard.totalMs, 10_000, 180_000) : guard.totalMs };
+  // env が先・無ければ使い方の表の値・それも無ければ渡された値（DeepSeek と同じ）
+  return { ...guard, firstTokenMs: ft ? intEnv(ft, guard.firstTokenMs, 3_000, 120_000) : profile?.firstTokenMs ?? guard.firstTokenMs, totalMs: to ? intEnv(to, guard.totalMs, 10_000, 180_000) : profile?.totalMs ?? guard.totalMs };
 }
 
 /** 混雑・無応答による失敗（回路の遮断に数える物）。400 等の「送り方が悪い」失敗は数えない */
@@ -1040,21 +1051,32 @@ async function callOpenAICompatible(
   const allowStream = cfg.provider === "deepseek" || cfg.provider === "openai"; // 2026-11-24 #670: OpenAI の SSE も同じ形（include_usage）
   // テスト用の切り替えの時だけ構造化出力を JSON モードに移す（本番の経路は今までどおり）
   const testShape = !!cfg.testMode;
+  // 2026-11-24 作業員L（#670 の子・竹内さん「GPT の性質に合わせるのを徹底する仕組み」）: OpenAI は使い方の表（provider-profile）を必ず通す。
+  //   表に無い版を名指しした時は送らない（投げる＝本番は Claude に戻る・試験は失敗）。試験の印（EXAM_*）は試験の時だけ読む
+  const profEnv: EnvLike = cfg.testMode ? process.env : Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("EXAM_")));
+  const prof = cfg.provider === "openai" ? profileFor("openai", routeName, profEnv) : null;
+  if (cfg.provider === "openai" && !prof) throw new Error(`openai: 使い方の表に版が無い（${routeName ?? "名札なし"}）`);
+  const parts = prof ? openaiRequestOf(prof, { routeName, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null, env: profEnv }) : null;
+  if (parts) console.log(JSON.stringify({ tag: "llm-alt:profile", route: routeName, version: parts.version, effort: parts.reasoningEffort }));
   // 2026-09-29 Qwen も思考は既定で切る（判定・分類の用途）。切り方は DashScope の enable_thinking
   const payload = toOpenAIBody(body, cfg.model, {
     disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape || cfg.provider === "openai",
     thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
-    ...(cfg.provider === "openai" ? { openai: {
-      reasoningEffort: (isWriterRouteName(routeName) ? process.env.EXAM_WRITER_REASONING ?? process.env.EXAM_BRAIN_REASONING : process.env.EXAM_BRAIN_REASONING)?.trim() || (process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
-      cacheKey: routeName ? `sumora-${routeName}` : null,
-      jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
-      writerNote: cfg.testMode && isWriterRouteName(routeName) ? writerExamNotes(process.env) : null,
+    ...(parts && prof ? { openai: {
+      reasoningEffort: parts.reasoningEffort,
+      cacheKey: parts.promptCacheKey,
+      jsonKeys: parts.jsonObject && prof.output.keys?.length ? prof.output.keys : null,
+      writerNote: parts.notes,
+      examplesFirst: parts.examplesFirst,
+      verbosity: parts.verbosity,
+      shapeHint: parts.shapeHint,
+      charsHint: parts.charsHint,
     } } : {}),
   });
   if (!payload) return null;
   // 2026-11-24 作業員L（#670・統括役の頼み③）: OpenAI 用の待ち時間（最初の1文字・全体）。考える深さを上げると最初の1文字が遅く、DeepSeek 用の 15秒・60秒では Claude への戻りが増える。
   //   OPENAI_FIRST_TOKEN_MS・OPENAI_TIMEOUT_MS（既定は未設定＝今まで通り DeepSeek と同じ値）
-  if (cfg.provider === "openai") guard = openaiGuardOf(guard, process.env);
+  if (cfg.provider === "openai") guard = openaiGuardOf(guard, process.env, parts ? { firstTokenMs: parts.firstTokenMs, totalMs: parts.totalMs } : undefined);
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
     headers: cfg.provider === "deepseek" || cfg.provider === "qwen" || cfg.provider === "openai"

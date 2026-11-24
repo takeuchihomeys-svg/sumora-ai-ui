@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { openaiProfileGate } from "@/app/lib/provider-profile";
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENAI_API_KEY?.replace(/\s/g, "");
@@ -47,6 +48,8 @@ export async function POST(req: NextRequest) {
 
   const userPrompt = `検索クエリ: ${query}\n\n会話一覧:\n${JSON.stringify(convSummary, null, 2)}`;
 
+  // 2026-11-24 作業員L（#670 の子）: OpenAI を呼ぶ所は使い方の表を通す（送る形は今のまま＝openai-legacy-direct-v1）
+  openaiProfileGate("openai-legacy-direct-v1");
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

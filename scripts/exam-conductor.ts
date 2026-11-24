@@ -66,7 +66,7 @@ import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPl
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
 import { findOverlaps, overlapBlocks, overlapLine, weakFor, type OverlapJob, type WeakRow } from "./lib/exam-overlap";
-import { chooseGuards, fitGuardsToCap, guardLine } from "./lib/exam-guards";
+import { chooseGuards, trimGuardsToReusable, fitGuardsToCap, guardLine } from "./lib/exam-guards";
 import { reflectionLine, replanLine, type ReflRow } from "./lib/exam-reflection";
 import { reflectAndReplan } from "./lib/exam-reflection-io";
 import { focusOf, focusPool, pickByFocus, focusLine, parseFocusTypes, type Focus, type FocusSpec, type FocusSceneMap } from "./lib/exam-focus";
@@ -79,6 +79,7 @@ import { bisectPlan } from "./lib/exam-bisect";
 import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
 import { syncExamWorktree } from "./lib/exam-worktree-sync";
 import { preflightReachOf, preflightLines, readPriorLedger, preflightGate, preflightGateMode } from "./lib/exam-preflight-reach";
+import { examNarrowOn, narrowProblems, baseMajorityOf } from "./lib/exam-narrow";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -469,7 +470,39 @@ async function addJob(): Promise<void> {
           job.only = ids.join(",");
           log(`  積む前の関所: 材料0の問題 ${gate.drop.join(",")} を外した（残り ${ids.length}問・--force で外さない）`);
         }
+        // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」・統括役の頼み）: 問題を自動で絞る（scripts/lib/exam-narrow.ts・既定 on・EXAM_NARROW=off／--no-narrow で止める）。
+        //   残すのは 材料が入る問題・前の回が無い問題・今の off で外れている問題（守りはこの後に足す）。材料の対応表に無いスイッチが on の時は絞らない
+        if (examNarrowOn() && !flag("no-narrow") && !flag("force") && ids.length) {
+          const R2 = join(cwd, "scripts", "brain-exam", "results");
+          const mains = existsSync(R2) ? readdirSync(R2).filter((f) => /^main-.*\.jsonl$/.test(f)).map((f) => ({ f, t: statSync(join(R2, f)).mtimeMs })).sort((x, y) => y.t - x.t).slice(0, 8) : [];
+          const seen = new Set<string>(); const baseRows: Array<{ id: string; error?: unknown; path?: { ok?: boolean } | null; score?: { pass?: boolean } | null }> = [];
+          for (const m of mains) { const got = new Set<string>(); for (const line of readFileSync(join(R2, m.f), "utf8").split("\n")) { if (!line) continue; try { const r = JSON.parse(line) as { id: string }; if (!ids.includes(r.id) || seen.has(r.id)) continue; baseRows.push(r as never); got.add(r.id); } catch { /* */ } } for (const g of got) seen.add(g); }
+          const nr = narrowProblems({ ids, onSwitches: onSw, prior: readPriorLedger(R2, new Set(ids)), base: baseMajorityOf(baseRows) });
+          if (nr.applied) {
+            for (let i = ids.length - 1; i >= 0; i--) if (nr.drop.includes(ids[i])) ids.splice(i, 1);
+            job.only = ids.join(",");
+            log(`  問題の絞り: ${nr.drop.length}問を外した（材料0・off で当たり）・残り ${ids.length}問（--no-narrow で外さない）`);
+          } else log(`  問題の絞り: しない（${nr.reason}）`);
+        }
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
+    }
+    // 2026-11-24 作業員L（台帳 #670 の子・竹内さん「GPT の性質に合わせるのを徹底する仕組み」）: ブレイン・書き手を OpenAI で流す依頼は、
+    //   依頼の作業ツリーに使い方の表（app/lib/provider-profile.ts）があり、版が決まる時だけ積む（--force で越える）。決まった版はログと依頼に残す
+    {
+      const je = (job.env ?? {}) as Record<string, string>;
+      if (["EXAM_BRAIN_PROVIDER", "EXAM_WRITER_PROVIDER"].some((k) => String(je[k] ?? "").trim().toLowerCase() === "openai")) {
+        const pf = join(cwd, "app", "lib", "provider-profile.ts");
+        if (!existsSync(pf)) { if (!flag("force")) throw new Error("積まない: OpenAI で流す依頼だが、作業ツリーに使い方の表（app/lib/provider-profile.ts）が無い（--force で積む）"); }
+        else {
+          const { pathToFileURL } = await import("node:url");
+          const mod = (await import(pathToFileURL(pf).href)) as { examProfileVersions: (env: Record<string, string>) => { brain: string | null; writer: string | null; unknown: string[] } };
+          const v = mod.examProfileVersions(je);
+          if (v.unknown.length && !flag("force")) throw new Error(`積まない: 使い方の表に無い版を名指ししている（${v.unknown.join(",")}）`);
+          if ((String(je.EXAM_BRAIN_PROVIDER ?? "").toLowerCase() === "openai" && !v.brain) || (String(je.EXAM_WRITER_PROVIDER ?? "").toLowerCase() === "openai" && !v.writer)) { if (!flag("force")) throw new Error("積まない: OpenAI の係の版が決まらない（使い方の表を見直す）"); }
+          (job as unknown as Record<string, unknown>).providerProfiles = v;
+          log(`  使い方の表の版: ブレイン ${v.brain ?? "-"}・書き手 ${v.writer ?? "-"}`);
+        }
+      }
     }
     // 2026-11-24 夜 作業員A（竹内さん 11/24「試験の改善を優先する」・統括役の決め）: 積む前の値打ちの関所。効く問題（--eff=… があればそれ・無ければ積む問題の全部）が
     //   今の off（off の基準の置き場の一番新しい答え）で全部過半数合格＝余地0（良くなりようがない）なら積まない。余地不明（off の答えが無い問題がある）は積む。
@@ -510,7 +543,8 @@ async function addJob(): Promise<void> {
         const unit = job.stage === "draft" ? DRAFT_USD_PER_REP : BRAIN_USD_PER_REP;
         const tr = jobRepsPlan(job, ids).reps, nbT = predictNeedsBase(cwd, ids);
         const baseUsd = ids.reduce((s, id) => s + (tr[id] ?? 1) * unit * (nbT.includes(id) ? 2 : 1), 0);
-        const g = fitGuardsToCap(g0, { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
+        // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」）: 守りは使い回せる基準のある物だけ・1問まで（EXAM_GUARDS_REUSE_ONLY=off で今まで通り）
+        const g = fitGuardsToCap(trimGuardsToReusable(g0), { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
         if (g.length) { job.guards = g.map((x) => x.id); ids.push(...job.guards); job.only = ids.join(","); }
         log(`  ${guardLine(g, unit)}${g.length < g0.length ? `（上限 $${job.capUsd} に合わせて ${g0.length}→${g.length}問）` : ""}${!cards.length ? "（問題の札が無い＝守りを選べない・exam-near-resolve が夜に札を写す）" : ""}`);
       } catch (e) { log(`  守りを選べない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }

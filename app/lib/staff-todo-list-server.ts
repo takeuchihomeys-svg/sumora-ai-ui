@@ -11,7 +11,7 @@ import { loadReapplyStates, type ReapplyConvRow } from "@/app/lib/reapply-custom
 import { loadParallelSecondActive } from "@/app/lib/post-apply";
 import { PARALLEL_STATUSES, parallelSecondEnabled } from "@/app/lib/parallel-second";
 import { staffTodoFormatV2On, conductorViewOf } from "@/app/lib/staff-todo-format-v2";
-import { type TodoTargetRow, type TodoDeliveryRow, type OtherConvRow, type OtherPcRow, todoTargetMergeEnabled, todoSonotaMergeEnabled, pickOtherDaily } from "@/app/lib/staff-todo-list";
+import { type TodoTargetRow, type TodoDeliveryRow, type OtherConvRow, type OtherPcRow, todoTargetMergeEnabled, todoSonotaMergeEnabled, pickOtherDaily, todoCloseBySentOn } from "@/app/lib/staff-todo-list";
 import type { TodoConditionRow } from "@/app/lib/staff-todo-instruction";
 import type { TodoPrioritySignal } from "@/app/lib/staff-todo-priority";
 import { loadBrainTargets, loadScreeningList, type BrainTarget, type ScreeningRow } from "@/app/lib/brain-attention-server";
@@ -232,7 +232,23 @@ export async function loadStaffTodoInput(sb: SupabaseClient, atMs: number = Date
     timer?.mark("moveIn");
   }
 
+  // 2026-11-24 #667 ①（STAFF_TODO_CLOSE_BY_SENT=on の時だけ読む）: 約束のある会話の、お客様に物件を送った時刻（sent_properties・グループへの共有と確認の結果の AIX は除く）
+  let propertySends: TodoDeliveryRow[] | undefined;
+  if (todoCloseBySentOn() && promiseRows.length) {
+    try {
+      const pc = [...new Set(promiseRows.map((p) => p.conversation_id).filter((x): x is string => !!x))];
+      propertySends = [];
+      for (let i = 0; i < pc.length; i += 50) {
+        const { data } = await sb.from("sent_properties").select("conversation_id, sent_at, source, delivery").in("conversation_id", pc.slice(i, i + 50)).gte("sent_at", new Date(atMs - 60 * 86_400_000).toISOString()).lte("sent_at", new Date(atMs).toISOString()).limit(5000);
+        for (const r of (data ?? []) as Array<{ conversation_id: string; sent_at: string; source: string | null; delivery: string | null }>) {
+          if (r.source === "line_group" || r.delivery === "group" || r.source === "aix:property_check_result") continue;
+          propertySends.push({ conversation_id: r.conversation_id, at: r.sent_at });
+        }
+      }
+    } catch (e) { console.warn("[staff-todo] property sends:", e instanceof Error ? e.message : String(e)); propertySends = undefined; }
+  }
   return {
+    ...(propertySends ? { propertySends } : {}),
     atMs, conversations, facts, customerTurns, marks, aixItems: aixRows, promises: promiseRows, viewings: viewingRows, messages: messageRows,
     everSent: [...everSent], deliveries, conditions, ...(moveInTurns ? { moveInTurns } : {}), ...(twoLine ? { nextActions } : {}),
     ...(mergeTargets || mergeSonota ? { targets, screening: mergeTargets ? screeningRows.map((r) => r.customerName) : [] } : {}),

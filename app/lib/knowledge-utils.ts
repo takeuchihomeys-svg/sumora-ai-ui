@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase-server";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
+import { openaiProfileGate } from "./provider-profile";
 
 // ─── テキスト類似度（bigram Jaccard）#31 ─────────────────────────────────────
 // 空白除去後の2文字グラム集合の Jaccard 係数（0〜1）。語順の入れ替えに頑健。
@@ -105,6 +106,8 @@ export async function extractPropertyDetailsFromImage(imageUrl: string): Promise
   const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;
   if (!apiKey || !imageUrl) return null;
   try {
+    // 2026-11-24 作業員L（#670 の子）: OpenAI を呼ぶ所は使い方の表を通す（送る形は今のまま＝openai-legacy-direct-v1）
+    openaiProfileGate("openai-legacy-direct-v1");
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -163,6 +166,8 @@ export async function extractRecommendationReason(generatedText: string): Promis
   const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;
   if (!apiKey || !generatedText.trim()) return null;
   try {
+    // 2026-11-24 作業員L（#670 の子）: OpenAI を呼ぶ所は使い方の表を通す（送る形は今のまま＝openai-legacy-direct-v1）
+    openaiProfileGate("openai-legacy-direct-v1");
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },

@@ -1,3 +1,4 @@
+import { openaiProfileGate } from "./provider-profile";
 ﻿// 物件スコアリング共通ライブラリ
 // match-property-customers / recommend-property の両APIで使用する
 // 画像パース・エリアトークン化・顧客×物件スコアリングを提供
@@ -19,6 +20,8 @@ export interface ParsedProperty {
 }
 
 export async function parsePropertyFromImage(base64: string, mediaType: string): Promise<ParsedProperty | null> {
+  // 2026-11-24 作業員L（#670 の子）: OpenAI を呼ぶ所は使い方の表を通す（送る形は今のまま＝openai-legacy-direct-v1）
+  openaiProfileGate("openai-legacy-direct-v1");
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     signal: AbortSignal.timeout(60_000),

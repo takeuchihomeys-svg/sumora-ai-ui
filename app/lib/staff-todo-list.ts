@@ -162,9 +162,21 @@ export type TodoInput = {
   moveInTurns?: ReadonlyArray<MoveInTurn & { conversation_id: string }>;
   /** お客様の要約の「次にする事」（会話 ID → property_customers.ai_summary_json.next_action・TODO_TWO_LINE=on の時だけ読み手が入れる） */
   nextActions?: Readonly<Record<string, string>>;
+  /** 2026-11-24 #667（STAFF_TODO_CLOSE_BY_SENT=on の時だけ読み手が入れる）: お客様に物件を送った時刻（sent_properties・グループへの共有と確認の結果の AIX は除く） */
+  propertySends?: ReadonlyArray<TodoDeliveryRow>;
 };
 /** 組み立ての任意の入れ口（司令塔＝将来つなぎのブレインが迷う所の順を決める） */
-export type TodoBuildOptions = { conductor?: TodoConductor | null };
+export type TodoBuildOptions = { conductor?: TodoConductor | null; /** 2026-11-24 #667: 14営業日を過ぎて外した約束を list.stalePromises に集める（古い約束の段・数え） */ collectStale?: boolean };
+/**
+ * 2026-11-24 作業員L（台帳 #667・統括役の頼み）: やることリストは期日から14営業日（TODO_MAX_AGE_DAYS）を過ぎた約束を外す（promise_stale）。見張りは記録だけなので、
+ *   古い未履行がどこにも出なかった（10/28 から27日開いたままの約束の見本）。直しは2つ・どちらも既定 off:
+ *   ① STAFF_TODO_CLOSE_BY_SENT=on: 物件ピックアップの約束は、約束の後にお客様へ物件を送った記録（sent_properties）があれば済み（閉じ忘れ）。確認の結果の AIX は数えない（#671 の竹内さんの答え待ち）
+ *   ② STAFF_TODO_OLD_PROMISES=on: 外した古い未履行の約束を、リストの末尾に「古い約束」としてまとめて出す（スタッフに見える変わり＝竹内さんの確認の後）
+ */
+export const todoCloseBySentOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.STAFF_TODO_CLOSE_BY_SENT ?? "").trim().toLowerCase() === "on";
+export const todoOldPromisesOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.STAFF_TODO_OLD_PROMISES ?? "").trim().toLowerCase() === "on";
+export type StalePromise = { id: number; conversationId: string; header: string; eventType: string | null; kindLabel: string; task: string; createdAt: string; dueAt: string; openDays: number };
+export const OLD_PROMISES_MAX = 10;
 
 // ─── 出力 ─────────────────────────────────────────────────────────────
 export type TodoSource = "aix_item" | "promise" | "viewing" | "unanswered" | "target_new_arrival";
@@ -216,7 +228,7 @@ export type TodoCustomer = {
 /** 見出しに付ける印（申込歴あり＝アツいお客様） */
 // 2026-10-21 竹内さんの決定（414dc9d4）: 印は【申込歴あり】（旧「🔥申込歴あり（再探し）」）。札・ターゲットと同じ文字（reapply-customer.REAPPLY_MARK_TEXT）
 export const REAPPLY_HEADER_MARK = "【申込歴あり】";
-export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: number; doneCount: number; skipped: Record<string, number>; screening?: string[]; targetsMerged?: boolean };
+export type TodoList = { atMs: number; customers: TodoCustomer[]; openCount: number; doneCount: number; skipped: Record<string, number>; screening?: string[]; targetsMerged?: boolean; /** #667: 14営業日を過ぎて外した約束（collectStale か STAFF_TODO_OLD_PROMISES=on の時だけ） */ stalePromises?: StalePromise[] };
 
 // ─── 小さな道具 ────────────────────────────────────────────────────────
 const t = (iso: string | null | undefined) => { const v = Date.parse(iso ?? ""); return Number.isFinite(v) ? v : NaN; };
@@ -421,6 +433,9 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
   const skipped: Record<string, number> = {};
   const skip = (k: string) => { skipped[k] = (skipped[k] ?? 0) + 1; };
   const convById = new Map(input.conversations.map((c) => [c.id, c]));
+  const closeBySent = todoCloseBySentOn();
+  const collectStale = !!opts.collectStale || todoOldPromisesOn();
+  const stale: StalePromise[] = [];
   const items: TodoItem[] = [];
 
   // ① AIX 要対応（その時点で未完了だった物＋今日済んだ物）
@@ -472,6 +487,11 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     if (postApplyOrClosed(convById.get(p.conversation_id))) { skip("promise_post_apply"); continue; }
     // 済み: 履行の送信（カレンダーを閉じるのと同じ判定・カレンダーがまだ開いていても送信が立てば済み）・グループの✅
     let doneAt: string | null = earliest(promiseDoneAt(p, input.facts), markedAt(`promise:${p.id}`, input.marks, at));
+    // #667 ①（STAFF_TODO_CLOSE_BY_SENT=on）: 物件ピックアップの約束は、約束の後にお客様へ物件を送った記録があれば済み（閉じ忘れ）
+    if (!doneAt && closeBySent && p.event_type === "property_send") {
+      const sentAfter = (input.propertySends ?? []).filter((d) => d.conversation_id === p.conversation_id && t(d.at) > created && t(d.at) <= at).sort((a, b) => t(a.at) - t(b.at))[0];
+      if (sentAfter) doneAt = sentAfter.at;
+    }
     // 閉じたのに履行の送信も✅も見つからない（画面で手で完了・別の判定）＝いつ済んだか分からないので出さない
     if (p.is_done && !doneAt) { skip("promise_closed_unknown"); continue; }
     if (doneAt && t(doneAt) > at && !p.is_done) doneAt = null;
@@ -482,7 +502,11 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
     }
     const doneMs = doneAt ? t(doneAt) : NaN;
     if (doneAt && doneMs <= at && doneMs < dayStart) continue; // 今日より前に済んだ
-    if (!(doneAt && doneMs <= at) && today - bizDayNo(due) > TODO_MAX_AGE_DAYS) { skip("promise_stale"); continue; }
+    if (!(doneAt && doneMs <= at) && today - bizDayNo(due) > TODO_MAX_AGE_DAYS) {
+      skip("promise_stale");
+      if (collectStale) { const cv = convById.get(p.conversation_id); const act = promiseAixActionOf(p.event_type); stale.push({ id: p.id, conversationId: p.conversation_id, header: customerHeader(cv?.customer_name ?? null, cv?.account ?? null), eventType: p.event_type, kindLabel: promiseAixLabelOf(p.notes) ?? (act ? aixButtonText(act) : "約束"), task: promiseTaskOf(p.notes), createdAt: p.created_at, dueAt: endOfBizDayIso(due), openDays: Math.max(0, Math.floor((at - created) / DAY)) }); }
+      continue;
+    }
     const isDoneNow = !!doneAt && doneMs <= at;
     const action = promiseAixActionOf(p.event_type);
     items.push({
@@ -663,6 +687,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
   const waitingCount = merged.filter((i) => !i.doneAt && i.waiting).length;
   return {
     atMs: at, customers: ordered, openCount, doneCount: merged.length - openCount - waitingCount, skipped,
+    ...(collectStale ? { stalePromises: stale.sort((a, b) => b.openDays - a.openDays) } : {}),
     ...(input.targets?.some((x) => !x.other) ? { targetsMerged: true, screening: [...(input.screening ?? [])] } : {}),
   };
 }
@@ -860,6 +885,15 @@ export function renderCustomerV2(c: TodoCustomer, atMs: number, nums: ReadonlyMa
   }
   return out;
 }
+/** #667 ② 古い約束の段（純関数）。上限を超えた分は件数だけ */
+export function oldPromisesLines(st: ReadonlyArray<StalePromise>, max = OLD_PROMISES_MAX): string[] {
+  if (!st.length) return [];
+  const shown = st.slice(0, max);
+  return ["", `【古い約束（期日から2週間を過ぎて開いたまま・${st.length}件）】`, ...shown.map((x) => `・${x.header} ${x.task}（${x.openDays}日）`),
+    ...(st.length > max ? [`ほか ${st.length - max}件`] : []), "済んでいる・もう要らない約束は、カレンダーの予定を完了にしてください（この段は番号の✅の外です）"];
+}
+/** #667: 外した約束だけを数える（数えの道具・audit-todo-stale-promises） */
+export function stalePromisesOf(input: TodoInput): StalePromise[] { return buildStaffTodoList(input, { collectStale: true }).stalePromises ?? []; }
 export function renderStaffTodoList(list: TodoList, opts: { compact?: boolean } = {}): string | null {
   return composeStaffTodoPost(list, opts).text;
 }
@@ -909,6 +943,8 @@ function renderList(list: TodoList, mode: RenderMode): string {
     const hour = new Date(list.atMs + JST_OFFSET_MS).getUTCHours();
     if (hour === SCHEDULE_HOUR_JST) out.push("", "【時間割】", ...TARGET_SCHEDULE_LINES.filter((l) => l.trim()));
   }
+  // #667 ②（STAFF_TODO_OLD_PROMISES=on）: 14営業日を過ぎて外した未履行の約束を末尾にまとめて（古い順・上限 OLD_PROMISES_MAX）
+  if (todoOldPromisesOn() && list.stalePromises?.length) out.push(...oldPromisesLines(list.stalePromises));
   out.push("", list.openCount === 0 ? "🎉 全部✅！" : `残り ${list.openCount}件／済み ${list.doneCount}件（✅=済み・☑=確認済み物件なし・（●日）=経過日数）`);
   if (list.openCount > 0) {
     out.push("済んだら「✅3」「✅3 5」や「〇〇さん 完了」とこのグループに返すと✅になります（LINE で送った物は自動で✅）");
