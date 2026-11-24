@@ -237,7 +237,7 @@ function makeSoftSandbox(fields, opt) {
     await sleep(500);
     ok("すでに把握済みの客は待たずに押す（取り直さない）", calls === 0 && presses.length === 1, { calls, presses: presses.length });
   }
-  ok("外しの始めは _clearChecksOneByOne でも把握を待つ（1つ目の前）", /if \(!gated\) \{ gated = true; _clearStartGraspThen\(why \|\| tg, step\); return; \}/.test(ps));
+  ok("外しの始めは _clearChecksOneByOne でも把握を待つ（1つ目の前・90秒は把握の後から数える）", /if \(!gated\) \{ gated = true; _clearStartGraspThen\(why \|\| tg, function \(\) \{ t0 = Date\.now\(\); step\(\); \}\); return; \}/.test(ps));
   ok("欄の戻しも最初の欄の前に把握を待つ", /if \(!gated\) \{ gated = true; _clearStartGraspThen\("欄の戻し", step\); return; \}/.test(ps));
   ok("次客の外しの始まり（round 0）で把握を取り直す", /if \(_rr === 0\) \{ try \{ _clearStartGrasped = false; \} catch/.test(ps));
   ok("送付後の外しの始まりでも取り直す", /window\.__axlxPostSendGen = \+\+_clearGen;\s*_clearStartGrasped = false;/.test(ps));

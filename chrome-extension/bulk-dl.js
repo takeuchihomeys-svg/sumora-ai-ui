@@ -611,6 +611,8 @@
   var _pipelineStuckActAt = 0;
   /** 120〜150秒のあいだ。page-script の AXLX_STUCK_IDLE_MS と同じ。 */
   var AXLX_STUCK_IDLE_MS = 135000;
+  /** 止まりと判断した後、まだ動かない時の次の撮影・次手までの間。page-script の AXLX_STUCK_RETRY_MS と同じ。 */
+  var AXLX_STUCK_RETRY_MS = 45000;
   function _touchPipelineProgress(why) {
     try {
       window.__axlxPipelineTouchAt = Date.now();
@@ -655,7 +657,7 @@
        */
       if (_pdfBusy || _isFillBusy()) return;
       if (idleMs < AXLX_STUCK_IDLE_MS) return;
-      if (_pipelineStuckActAt && Date.now() - _pipelineStuckActAt < AXLX_STUCK_IDLE_MS) return;
+      if (_pipelineStuckActAt && Date.now() - _pipelineStuckActAt < AXLX_STUCK_RETRY_MS) return;
       _pipelineStuckActAt = Date.now();
       _pipelineSilenceBusy = true;
       _pipelineSilenceTicks++;

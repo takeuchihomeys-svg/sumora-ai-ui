@@ -4064,7 +4064,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.271";
+  var _AXLX_PAGE_VER = "2.8.272";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * この拡張に入っている自動の決まり（id）。正本は app/lib/auto-procedure-rules.ts の AUTO_RULES。
@@ -8344,6 +8344,8 @@ function _guideLikeAreaSkip(why) {
   var _fillStuckActAt = 0;
   /** 120〜150秒のあいだ。送付の間隔（実測47〜81秒）より長く、止まりと判断してから撮影する。bulk-dl の同じ名前と揃える。 */
   var AXLX_STUCK_IDLE_MS = 135000;
+  /** 止まりと判断した後、まだ動かない時の次の撮影・次手までの間。135秒ごとだと次客へ進むまで約13.5分かかっていた。bulk-dl と揃える。 */
+  var AXLX_STUCK_RETRY_MS = 45000;
   function _disarmClearStuckWatch(why) {
     try { if (_clearWatchTimer) clearInterval(_clearWatchTimer); } catch (_) {}
     _clearWatchTimer = null;
@@ -8432,7 +8434,7 @@ function _guideLikeAreaSkip(why) {
         return;
       }
       // 直前の撮影・次手が終わるまで次を始めない（1つずつ）
-      if (_fillStuckActAt && Date.now() - _fillStuckActAt < AXLX_STUCK_IDLE_MS) return;
+      if (_fillStuckActAt && Date.now() - _fillStuckActAt < AXLX_STUCK_RETRY_MS) return;
       _fillStuckActAt = Date.now();
       _clearWatchBusy = true;
       _clearWatchTicks++;
@@ -12488,8 +12490,8 @@ function _guideLikeAreaSkip(why) {
       if (Date.now() - t0 > 90000) { finish("時間切れ"); return; }
       var left = _left();
       if (!left.length) { finish("完了"); return; }
-      // 最初の1つの前に外しの把握を待つ（入れる段の fill_start と同じ）
-      if (!gated) { gated = true; _clearStartGraspThen(why || tg, step); return; }
+      // 最初の1つの前に外しの把握を待つ（入れる段の fill_start と同じ）。90秒は把握が返ってから数える
+      if (!gated) { gated = true; _clearStartGraspThen(why || tg, function () { t0 = Date.now(); step(); }); return; }
       var cb = null, lb = null;
       for (var i = 0; i < left.length; i++) {
         var k = String(left[i].name) + ":" + String(left[i].value);

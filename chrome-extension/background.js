@@ -5414,6 +5414,8 @@ function _notifyFillDone(site, customerId, error) {
 // ★ 2026-11-18 竹内さん「タイムアウトがボトルネック／かなり長い時間・15分など」:
 //   旧 905秒≈15分でも9区＋間取りリトライで足りない → 両サイト 30分。進捗で更に延長。
 var FILL_DONE_TIMEOUT_MS = { itandi: 1800000, realnetpro: 1800000 };
+/** 応答するタブが無いまま進みが無い時に待ちを閉じるまで（画面が生きていれば止まり見張りが先に次客へ進める） */
+var FILL_NO_RESPONSE_CLOSE_MS = 5 * 60 * 1000;
 function _fillDoneTimeoutMs(site) {
   return FILL_DONE_TIMEOUT_MS[site] || 900000; // 既定も15分（旧90秒は短すぎ）
 }
@@ -5474,7 +5476,7 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
      *   → 進捗が2分無い間だけ1分ごとにタブが見えているかを確かめ、見えなければウィンドウを戻す。
      *     4回続けて見えないままなら、理由を付けて待ちを閉じる（約6分・進捗がある間は何もしない）。
      */
-    var _hidLastProg = Date.now(), _hidN = 0, _hidBusy = false;
+    var _hidLastProg = Date.now(), _hidN = 0, _hidBusy = false, _deadN = 0;
     var _hidWatch = setInterval(function () {
       if (_fillDoneWaiters.indexOf(entry) < 0) { clearInterval(_hidWatch); return; }
       if (_hidBusy || Date.now() - _hidLastProg < 120000) return;
@@ -5482,7 +5484,25 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       _fillTabHiddenCheck(entry).then(function (r) {
         _hidBusy = false;
         if (_fillDoneWaiters.indexOf(entry) < 0) { clearInterval(_hidWatch); return; }
-        if (!r || !r.hidden) { _hidN = 0; return; }
+        // 応答するタブが1つも無いまま進みが5分無い＝画面が固まった。生きている画面の30分は待たず、2回続けば閉じて次客へ
+        if (!r) {
+          var _deadSec = Math.round((Date.now() - _hidLastProg) / 1000);
+          if (_deadSec * 1000 < FILL_NO_RESPONSE_CLOSE_MS) return;
+          _deadN++;
+          try {
+            var _deadRun = _auditTracker && _auditTracker.findOpen
+              ? _auditTracker.findOpen(entry.customerId, entry.site === "itandi" ? "itandi" : "realpro")
+              : null;
+            _auditStep(_deadRun && _deadRun.run_id, "tab_no_response_stall", _deadN + "回目: タブが応答しないまま進捗" + _deadSec + "秒無し");
+          } catch (_) {}
+          if (_deadN >= 2) {
+            clearInterval(_hidWatch);
+            onTimeout("AXLX_TAB_NO_RESPONSE: 画面が応答しないまま入力が" + _deadSec + "秒進みません → 次のお客さんへ");
+          }
+          return;
+        }
+        _deadN = 0;
+        if (!r.hidden) { _hidN = 0; return; }
         _hidN++;
         var _hidRun = null;
         try {
@@ -5507,6 +5527,7 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       entry.timer = setTimeout(onTimeout, timeoutMs || FILL_DONE_TIMEOUT_MS.realnetpro || 900000);
       _hidLastProg = Date.now();
       _hidN = 0;
+      _deadN = 0;
     };
     entry.end = function (why) { onTimeout(why || "検索しない"); };
     _fillDoneWaiters.push(entry);
