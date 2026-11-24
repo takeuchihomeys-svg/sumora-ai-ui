@@ -77,6 +77,8 @@ export type BriefInputs = {
   ledger?: { open: OpenItem[]; keptPromises: string[] } | null;
   /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: その番のブレインの入力に有った材料の目録（指示書の extra.materials に移し、ここからは消す） */
   materials?: import("./conductor-material-index").MaterialIndexItem[] | null;
+  /** 2026-11-25 作業員A（#688・AIX_STATE_CARD 既定 shadow）: AIX ごとの状態の札（指示書の extra.aix_state_card に移し、ここからは消す） */
+  aixStateCard?: import("./aix-state-card").AixStateCard | null;
 };
 
 export const BRIEF_NONE = "未" as const;
@@ -125,7 +127,9 @@ export type ConductorBrief = {
     /** 2026-11-24 作業員A（#675・CONDUCTOR_MATERIAL_INDEX 既定 on・=off で無い）: 材料の目録（名前・字数・中身の要点24字）＝ブレインの入力だけだった材料を統括が1本の口で読む */
     materials?: import("./conductor-material-index").MaterialIndexItem[];
     /** 2026-11-24 作業員A（MATERIAL_INDEX_GAP 既定 shadow・記録だけ）: 有るはずの材料が目録に無い（証拠は situation_now・疑いの印にはまだ入れない） */
-    material_gaps?: import("./conductor-material-index").MaterialGap[] };
+    material_gaps?: import("./conductor-material-index").MaterialGap[];
+    /** 2026-11-25 作業員A（#688）: AIX ごとの状態の札（記録だけ・統括が AIX を選ぶ時の土台） */
+    aix_state_card?: import("./aix-state-card").AixStateCard };
 };
 
 const FACT_BASES = new Set(["conversation", "material", "company_fact", "general"]);
@@ -288,7 +292,7 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
   //   #258 材料どうしの食い違い（BRAIN_MATERIAL_CLASH の meta.material_clash.opposed）／#578 時の言葉（SITUATION_TIMELINE_WIDE で広がる meta.situation_now.timeline.words）
   //   #152 約束の読み（PROMISE_READ_UNIFIED）は meta に置き場が無い（プロンプトの材料だけ）＝読めない。作る側が meta に残すのが先
   const extraOn = briefReadExtraOn(), indexOn = conductorMaterialIndexOn();
-  const extra = extraOn || indexOn ? (() => {
+  const extra = extraOn || indexOn || !!inputs.aixStateCard ? (() => {
     const out: NonNullable<ConductorBrief["extra"]> = {};
     // 2026-11-24 作業員A（#675・統括役の決め）: 材料の目録（ブレインの入力に有った材料・1本の口）
     if (indexOn && Array.isArray(inputs.materials) && inputs.materials.length) {
@@ -296,6 +300,8 @@ export function buildConductorBrief(meta: Record<string, unknown> | null | undef
       // 2026-11-24 作業員A（MATERIAL_INDEX_GAP・既定 shadow＝記録だけ・=off で止まる）: 有るはずの材料の抜け
       if (materialIndexGapMode() !== "off") { const g = materialGaps(m, inputs.materials); if (g.length) out.material_gaps = g; }
     }
+    // 2026-11-25 作業員A（#688・AIX_STATE_CARD 既定 shadow）: 札は目録と同じ置き場に（記録だけ）
+    if (inputs.aixStateCard) out.aix_state_card = inputs.aixStateCard;
     if (!extraOn) return Object.keys(out).length ? out : null;
     const jr = obj(m.judge_basis_rec);
     if (jr && !jb) out.basis = { purpose: str(jr.purpose, 20), keyPoint: str(jr.key_point, 50) ?? str(jr.keyPoint, 50), from: "judge_basis_rec" };

@@ -1845,7 +1845,7 @@ export async function analyzeConversation(...args: Parameters<typeof analyzeConv
       const brief = buildConductorBrief(mm);
       mm.conductor_brief = brief;
       // 2026-11-24 作業員A（#675）: 材料の目録は指示書の extra.materials だけに置く（入力の写しに二重に残さない）
-      { const bi = mm.conductor_brief_inputs as Record<string, unknown> | undefined; if (bi && "materials" in bi) delete bi.materials; }
+      { const bi = mm.conductor_brief_inputs as Record<string, unknown> | undefined; if (bi && "materials" in bi) delete bi.materials; if (bi && "aixStateCard" in bi) delete bi.aixStateCard; }
       // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 指示書に地図の欄（ROUTE_TO_BRIEF=on の時だけ）が入った番の印
       if ((brief as { route?: unknown }).route) mm.material_marks = { ...((mm.material_marks as Record<string, number> | undefined) ?? {}), route_brief: 1 };
       if (prevCustomerPlanForBrief) { const { planBriefSection } = await import("@/app/lib/customer-plan"); const sec = planBriefSection(prevCustomerPlanForBrief, mm, Date.now()); if (sec) (brief as unknown as Record<string, unknown>).plan = sec; }
@@ -4437,6 +4437,14 @@ ${history}`;
         seeMore: seeMoreBrainText, applyRoute: applyRouteText, applyReadiness: applyReadinessText, appealTiming: appealTimingText,
       }, { split: ["customerState"], marks: materialMarks }).map((x) => ({ ...x, g: maskBrain(x.g) }));
     } catch (e) { console.warn(JSON.stringify({ tag: "conductor:material-index-failed", error: e instanceof Error ? e.message : String(e) })); }
+  }
+  // 2026-11-25 作業員A（台帳 #688・竹内さん「AIX の判断の部分は土台が必要なら追加して細分化して強化」）: AIX ごとの状態の札（決まった計算）。
+  //   既定 shadow＝指示書の extra.aix_state_card に記録だけ（ブレインの入力は1字も変えない）。=off で作らない。申込以降は作らない
+  if (briefOnNow && !isPostApplyStatus(convStatus)) {
+    try {
+      const asc = await import("@/app/lib/aix-state-card");
+      if (asc.aixStateCardMode() !== "off") briefInputs.aixStateCard = asc.buildAixStateCard({ messages: brainLedgerInput.messages, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+    } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
