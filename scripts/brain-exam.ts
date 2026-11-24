@@ -1628,6 +1628,8 @@ async function judgeCompare(): Promise<void> {
         if (vname === "tier") o = await judgeTiered(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw);
         // 2026-11-11 作業員8: v2＝判定の決まりのあいまいさを直した版（並びは今まで通り as-is）・pro は今の版（v1）に固定
         else if (vname === "v2") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: "as-is", rubric: "v2" });
+        // 2026-11-24 作業員L（統括役の頼み③）: flash 1回だけ（並びは stable）。pro を flash にできる問題の種類を測る
+        else if (vname === "flash") o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { model: JUDGE_TIER_FLASH, order: "stable", rubric: "v1" });
         else o = await judgeOnce(c.ps, c.row.brain, c.row.raw ?? null, c.needRaw, { order: vname === "pro" ? "as-is" : (vname as "stable" | "rubric"), rubric: "v1" });
       } catch (e) { console.warn(`  ${c.row.id} ${vname}: ${String(e).slice(0, 120)}`); }
       tally(vname, b, second, !!o);

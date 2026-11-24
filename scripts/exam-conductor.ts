@@ -78,7 +78,7 @@ import { fillProblemsFromShared, sharedProblemsEnabled } from "./lib/exam-proble
 import { bisectPlan } from "./lib/exam-bisect";
 import { checkEnvNames, formatUnread, missingPrereqs, sameAsDefault } from "./lib/exam-env-check";
 import { syncExamWorktree } from "./lib/exam-worktree-sync";
-import { preflightReachOf, preflightLines, readPriorLedger } from "./lib/exam-preflight-reach";
+import { preflightReachOf, preflightLines, readPriorLedger, preflightGate, preflightGateMode } from "./lib/exam-preflight-reach";
 import { appReaders, readDotenvLocal } from "./lib/exam-env-fp";
 import { examRefusalOf, nightBudgetGate, nightCapUsd, budgetUsdOf, partPlanUsd, type NightJob } from "./lib/exam-cost-gate";
 import { summarizeMisses, ownerOf, parseLogTags, weaknessHitsFromMisses, type MissRowLite } from "./lib/exam-miss-stage";
@@ -460,7 +460,15 @@ async function addJob(): Promise<void> {
         const onSw = Object.entries(env as Record<string, string>).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
         const pr = preflightReachOf(onSw, ids, readPriorLedger(join(cwd, "scripts", "brain-exam", "results"), new Set(ids)));
         for (const l of preflightLines(pr, { repeat: Number(arg("repeat", "2")) || 2 })) log(`  ${l}`);
-      } catch { /* 点検の失敗で積むのは止めない */ }
+        // 2026-11-24 作業員L（統括役の頼み）: 関所（既定）。全部の問題で材料0のスイッチがあれば積まない・一部だけ0なら、その問題を外して積む（--force で越える・EXAM_PREFLIGHT_REACH=warn で今まで通り）
+        const gate = preflightGate(pr, ids, preflightGateMode());
+        if (gate.block.length && !flag("force")) throw new Error(`積まない: ${gate.block.join(",")} の要る材料が、積む問題の前の回の写しで全部0行（確かめられない＝費用だけ使う）。材料のある問題を選ぶか、--force で積む`);
+        if (gate.drop.length && !flag("force")) {
+          for (let i = ids.length - 1; i >= 0; i--) if (gate.drop.includes(ids[i])) ids.splice(i, 1);
+          job.only = ids.join(",");
+          log(`  積む前の関所: 材料0の問題 ${gate.drop.join(",")} を外した（残り ${ids.length}問・--force で外さない）`);
+        }
+      } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
     }
     {
       const local = readJson<Array<Record<string, unknown>>>(join(cwd, "scripts/brain-exam/problems.json"), []);
