@@ -73,4 +73,12 @@ const POST = new Set(["applying", "application", "screening", "approved", "contr
   console.log(`\n■ 駅ごとの読み違いの割合（照らせた番）: ${[...byNode.entries()].sort((a, b) => b[1].miss - a[1].miss).map(([k, s]) => `${k} ${s.miss}/${s.n}`).join("・")}`);
   console.log(`  #676 の backfill の判断（別に数える）: ${[...convs.values()].filter((c) => c.backfill).length}会話（digest.ar の判断とは別・まだ書いていなければ 0）`);
   if (arg("json")) writeFileSync(arg("json"), JSON.stringify(out, null, 1));
+  // 2026-11-24 作業員A（#608・統括役の頼み）: --write で quality_daily に今日の数を書く（毎朝の1枚の「ブレインは地図をどこまで使えているか」の1行が読む）
+  if (process.argv.includes("--write")) {
+    const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const rowsQ = misreadMoveMetricRows(out).map((m) => ({ day, metric: m.metric, scope: "all", value: m.value, n: m.n, source: "scripts/audit-route-misread-move.ts（作業員A・#657）" }));
+    const { error: e } = await sb.from("quality_daily").upsert(rowsQ, { onConflict: "day,metric,scope" });
+    if (e) throw e;
+    console.log(`  quality_daily に書いた: ${rowsQ.length}行（${day}）`);
+  }
 })().catch((e) => { console.error(e); process.exit(1); });
