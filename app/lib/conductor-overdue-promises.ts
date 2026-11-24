@@ -26,7 +26,18 @@ export const OVERDUE_PROMISES_TIMEOUT_MS = 1500;
  *   OVERDUE_NOW_CLOCK=on（既定 off）: 「今」を本当の今に（試験の再生 REPLAY_FLOOR_FILE の時は今まで通り最後の通の時刻＝試験の時刻が崩れない）・待ちを 4秒に
  */
 export const overdueNowClockOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OVERDUE_NOW_CLOCK ?? "").trim().toLowerCase() === "on";
-export const overdueNowClockShadow = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OVERDUE_NOW_CLOCK ?? "").trim().toLowerCase() === "shadow";
+// 2026-11-25 統括役の決め: 記録だけ＝11/22 の決まりで既定 shadow（=off で止まる・=on で本当の今を渡す）
+export const overdueNowClockShadow = (env: Env = typeof process !== "undefined" ? process.env : {}) => { const v = (env.OVERDUE_NOW_CLOCK ?? "").trim().toLowerCase(); return v !== "off" && v !== "on"; };
+/** 判断の記録の digest に残す短い形（"渡した数|本当の今の数|何時間の差"・毎朝の1枚が数える） */
+export function overdueNowDigest(rec: unknown): string | null {
+  const r = rec as { nTurn?: number | null; nNow?: number; gapH?: number } | null | undefined;
+  if (!r || typeof r.nNow !== "number") return null;
+  return `${r.nTurn ?? "-"}|${r.nNow}|${r.gapH ?? 0}`;
+}
+export function parseOverdueNowDigest(v: unknown): { nTurn: number | null; nNow: number; gapH: number } | null {
+  const m = String(v ?? "").match(/^(-|\d+)\|(\d+)\|(-?\d+)$/);
+  return m ? { nTurn: m[1] === "-" ? null : Number(m[1]), nNow: Number(m[2]), gapH: Number(m[3]) } : null;
+}
 export const OVERDUE_PROMISES_TIMEOUT_MS_WIDE = 4000;
 /** 統括の読みに渡す「今」と待ちの上限（純関数） */
 export function overdueReadClock(o: { turnAt: string | null; nowMs: number; env?: Env }): { nowMs: number; timeoutMs: number; by: "turn" | "now"; shadowNowMs?: number } {

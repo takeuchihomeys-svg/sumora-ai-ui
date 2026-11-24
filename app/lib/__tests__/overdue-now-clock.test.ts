@@ -18,9 +18,9 @@ const input: PdInput = {
 const turnAt = at(70); // 一番新しい通（お客様）
 const now = T0 + 76 * H; // 期限（72時間）の後に裏で回った番
 
-assert.equal(overdueNowClockOn({}), false, "既定 off");
+assert.equal(overdueNowClockOn({}), false, "既定は on ではない");
 // off（今まで通り）: 最後の通の時刻で読む＝期限の前＝0件（本番の n=0）
-const off = overdueReadClock({ turnAt, nowMs: now, env: {} });
+const off = overdueReadClock({ turnAt, nowMs: now, env: { OVERDUE_NOW_CLOCK: "off" } });
 assert.deepEqual([off.by, off.timeoutMs], ["turn", OVERDUE_PROMISES_TIMEOUT_MS]);
 assert.equal(overduePromisesOf(input, off.nowMs).length, 0);
 // on: 本当の今で読む＝見張り（promiseDropOf を同じ今で）と同じ 1件
@@ -40,4 +40,14 @@ console.log("overdue-now-clock: ok");
   assert.deepEqual([sh.by, sh.nowMs === Date.parse(turnAt) + 1, sh.shadowNowMs], ["turn", true, now]);
   assert.equal(overdueReadClock({ turnAt, nowMs: now, env: { OVERDUE_NOW_CLOCK: "shadow", REPLAY_FLOOR_FILE: "x" } }).shadowNowMs, undefined, "試験では記録しない");
   console.log("overdue-now-clock shadow: ok");
+}
+// 既定は shadow（記録だけ）・digest の形
+{
+  const { overdueNowClockShadow, overdueNowDigest, parseOverdueNowDigest } = require("../conductor-overdue-promises") as typeof import("../conductor-overdue-promises");
+  assert.equal(overdueNowClockShadow({}), true, "既定 shadow");
+  assert.equal(overdueNowClockShadow({ OVERDUE_NOW_CLOCK: "off" }), false);
+  assert.equal(overdueReadClock({ turnAt, nowMs: now, env: {} }).shadowNowMs, now, "既定で本当の今を記録用に");
+  assert.equal(overdueNowDigest({ nTurn: 0, nNow: 1, gapH: 6 }), "0|1|6");
+  assert.deepEqual(parseOverdueNowDigest("-|2|3"), { nTurn: null, nNow: 2, gapH: 3 });
+  console.log("overdue-now-clock default shadow: ok");
 }
