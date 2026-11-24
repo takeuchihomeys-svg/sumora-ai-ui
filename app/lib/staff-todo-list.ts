@@ -15,7 +15,7 @@
 // テスト: app/lib/__tests__/staff-todo-list.test.ts
 import { aixButtonText } from "./aix-action-text";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
-import { MAIN_ROUTE, ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
+import { MAIN_ROUTE, ROUTE_NODES, ROUTE_BRANCHES, type RouteNodeId } from "./apply-route-map";
 import { STATUS_STAGE_RANK, DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { jstDayStartMs, jstMDHm, JST_OFFSET_MS } from "./jst-date";
 import { LINE_ACCOUNT_LABELS, normalizeLineAccountKey } from "./line-accounts";
@@ -36,7 +36,6 @@ import { TARGET_SCHEDULE_LINES } from "./target-list-format";
 import { farMoveInOfTurns, farMoveInWaitText, contactYmdOf, type MoveInTurn } from "./far-move-in-todo";
 import { todoTwoLineEnabled, todoItemTitle, todoItemNextStep } from "./staff-todo-two-line";
 import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, conductorSituationLine, conductorNextLine, type ConductorView } from "./staff-todo-format-v2";
-import { ROUTE_NODES, ROUTE_BRANCHES } from "./apply-route-map";
 
 const DAY = 86_400_000;
 
