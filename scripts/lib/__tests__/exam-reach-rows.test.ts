@@ -31,7 +31,7 @@ assert.equal(rowOfWith({ path: join(dir, "nothing.json") })("BRAIN_FAR_OTHER_FIR
 // exam-room（#684）: 同じ行の fixes で余地を数える
 calls = 0;
 const on = ["BRAIN_FAR_OTHER_FIRST"];
-const r = roomOf({ onSwitches: on, table: tableOf(on, rowOf), turns: [{ conv: "c", at: 0, isReply: true, mismatch: true, materials: {}, text: "遠いので他の候補もありますか" }] });
+const r = roomOf({ minApplicable: 0, onSwitches: on, table: tableOf(on, rowOf), turns: [{ conv: "c", at: 0, isReply: true, mismatch: true, materials: {}, text: "遠いので他の候補もありますか" }] });
 assert.deepEqual([r.applicable, r.room], [1, 1]);
 // exam-select（#683）: 同じ行の learned で、効かない問題を落とす（needs が無いスイッチ＝覚えた表の道）
 const sel = selectMinimal({ ids: ["q1", "q2", "q3"], onSwitches: on, prior: new Map(), off: new Map(), table: tableOf(on, rowOf), stage: "brain", learned: learnedForSelect(on, rowOf) });
