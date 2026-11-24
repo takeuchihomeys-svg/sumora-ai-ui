@@ -1,6 +1,7 @@
 // 2026-11-24 夜 作業員A（台帳 #683 の広げ）: 回す問題の最小の組（scripts/lib/exam-select.ts）
 // 実行: npx tsx scripts/lib/__tests__/exam-select.test.ts（env 不要・全 OK で exit 0）
 import { selectMinimal, sameConclusion } from "../exam-select";
+import { learnReach, mergeLearned } from "../exam-learned-reach";
 
 let passed = 0, failed = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -24,5 +25,19 @@ t("効く欄が表に無いスイッチは絞らない（全部を回す）", !u
 const pa = selectMinimal({ ids: ["q1", "q3"], onSwitches: ["ALL"], prior, off, table, stage: "brain" });
 t("指示文が全問に入るスイッチも絞らない", !pa.narrowed);
 t("同じ結論: 悪化・改善の問題が選んだ組に全部入る", sameConclusion(s, { worse: ["q1"], better: ["q2"] }).same && !sameConclusion(s, { worse: ["q4"], better: [] }).same && sameConclusion(s, { worse: ["q4"], better: [] }).missedWorse[0] === "q4");
+
+// 11/25 夜: 前の on の回から覚える表
+const L = learnReach([
+  { id: "a", inputSame: true, inputDiff: { calls: 3, pinned: 3, changed: [] } },
+  { id: "a", inputSame: true, inputDiff: { calls: 3, pinned: 3, changed: [] } },
+  { id: "b", inputSame: false, inputDiff: { calls: 3, pinned: 2, changed: ["brain_full"] } },
+  { id: "c", inputSame: false, inputDiff: { calls: 3, pinned: 2, changed: ["判定"] } },
+  { id: "d", inputSame: false, inputDiff: { calls: 3, pinned: 0, changed: ["brain_full"] } },
+  { id: "e", inputSame: true, inputDiff: { calls: 3, pinned: 3, changed: [] }, brain: { material_marks: { mk: 5 } } },
+], ["mk"]);
+t("覚え: 全部同じ入力＝none・判定以外が変わった＝hit・判定だけ／控えなし＝unknown・印が立った＝hit", L.get("a") === "none" && L.get("b") === "hit" && L.get("c") === "unknown" && L.get("d") === "unknown" && L.get("e") === "hit", [...L]);
+t("合わせ: どれか hit＝hit・全部 none＝none", mergeLearned([L, new Map([["a", "hit" as const]])], "a") === "hit" && mergeLearned([L], "a") === "none" && mergeLearned([], "a") === "unknown");
+const sl = selectMinimal({ ids: ["a", "b", "c"], onSwitches: ["NOPE"], prior, off, table, stage: "brain", learned: (id) => L.get(id) ?? "unknown" });
+t("覚えた表: 効かなかった問題だけ落とす", sl.narrowed && sl.drop.map((d) => d.id).join() === "a" && sl.keep.length === 2);
 console.log(`\n${passed} OK / ${failed} NG`);
 process.exit(failed ? 1 : 0);

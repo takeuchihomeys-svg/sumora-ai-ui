@@ -10,6 +10,7 @@ import { loadOffPass } from "./lib/exam-worth";
 import { readPriorLedger } from "./lib/exam-preflight-reach";
 import { SWITCH_REACH } from "./lib/exam-switch-reach";
 import { selectMinimal, sameConclusion } from "./lib/exam-select";
+import { learnReach, mergeLearned, type LearnRow, type Learned } from "./lib/exam-learned-reach";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
 const DAYS = Number(arg("days") || 7);
@@ -23,6 +24,23 @@ const since = Date.now() - DAYS * 86_400_000;
 const offMemo = new Map<number, ReturnType<typeof loadOffPass>>();
 const offAt = (t: number) => { const k = Math.floor(t / 3_600_000); if (!offMemo.has(k)) offMemo.set(k, loadOffPass(BL, t)); return offMemo.get(k)!; };
 
+// 覚えるための前の on の回（1つのスイッチを試した回だけ・行は results の jsonl）
+const LEARN_DAYS = Number(arg("learn-days") || 21);
+type Run = { sw: string; t: number; rows: LearnRow[] };
+const runs: Run[] = [];
+for (const f of existsSync(join(Q, "done")) ? readdirSync(join(Q, "done")) : []) {
+  if (!f.endsWith(".json")) continue;
+  const j = readJ<Job | null>(join(Q, "done", f), null);
+  if (!j?.label || (j.runner && j.runner !== "brain-exam") || Date.parse(j.createdAt) < Date.now() - (DAYS + LEARN_DAYS) * 86_400_000) continue;
+  const named = [...new Set([...String(j.switch ?? "").matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g)].map((m) => m[0]))];
+  if (named.length !== 1) continue;
+  const p = join(j.cwd ?? ".", "scripts", "brain-exam", "results", `${j.label}.jsonl`);
+  if (!existsSync(p)) continue;
+  const rs = readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as LearnRow; } catch { return null; } }).filter((x): x is LearnRow => !!x);
+  runs.push({ sw: named[0], t: Date.parse(j.createdAt), rows: rs });
+}
+const learnedAt = (sws: string[], t: number) => { const ms = sws.map((sw) => learnReach(runs.filter((r) => r.sw === sw && r.t < t).flatMap((r) => r.rows), SWITCH_REACH[sw]?.mark ? [SWITCH_REACH[sw].mark!] : [])); return (id: string): Learned => mergeLearned(ms, id); };
+const LEARN = !process.argv.includes("--no-learn");
 const rows: Array<{ label: string; n: number; keep: number; usd: number; usdKeep: number; narrowed: boolean; same: boolean | null; missedWorse: string[]; missedBetter: string[]; why: string; dropCounts: Record<string, number> }> = [];
 for (const f of existsSync(join(Q, "done")) ? readdirSync(join(Q, "done")) : []) {
   if (!f.endsWith(".json")) continue;
@@ -39,7 +57,7 @@ for (const f of existsSync(join(Q, "done")) ? readdirSync(join(Q, "done")) : [])
   const resultsDir = join(j.cwd ?? ".", "scripts", "brain-exam", "results");
   const prior = readPriorLedger(resultsDir, new Set(ids), { nowMs: t });
   const off = offAt(t);
-  const sel = selectMinimal({ ids, onSwitches: onSw, prior, off, table: SWITCH_REACH, stage: j.stage === "draft" ? "draft" : "brain" });
+  const sel = selectMinimal({ ids, onSwitches: onSw, prior, off, table: SWITCH_REACH, stage: j.stage === "draft" ? "draft" : "brain", ...(LEARN ? { learned: learnedAt(onSw, t) } : {}) });
   // 全部回した時の結論
   const worse = Array.isArray(res.worseSure) ? res.worseSure.map((x) => x.id) : [];
   const onRows = existsSync(join(resultsDir, `${j.label}.jsonl`)) ? readFileSync(join(resultsDir, `${j.label}.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as { id: string; error?: unknown; score?: { pass?: boolean } }; } catch { return null; } }).filter((x): x is { id: string; error?: unknown; score?: { pass?: boolean } } => !!x) : null;

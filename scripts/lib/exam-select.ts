@@ -7,8 +7,8 @@ import type { SwitchReachDef } from "./exam-switch-reach";
 import type { OffPass } from "./exam-worth";
 import { UNIT_USD } from "./exam-worth";
 
-export type SelectWhy = "off で揺れ（落とさない）" | "材料あり" | "今の off で外れ（余地）" | "前の回が無い（材料が分からない）" | "守り（off で安定して合格）" | "効く欄が表に無い（絞らない）" | "off の答えが無い";
-export type DropWhy = "材料0・off で合格（守りは1問で足りる）" | "材料0・off で揺れ（比べにならない）";
+export type SelectWhy = "前の on の回で効いた" | "効くか分からない（覚えが無い）" | "off で揺れ（落とさない）" | "材料あり" | "今の off で外れ（余地）" | "前の回が無い（材料が分からない）" | "守り（off で安定して合格）" | "効く欄が表に無い（絞らない）" | "off の答えが無い";
+export type DropWhy = "前の on の回で入力が off と同じ（効かない）" | "材料0・off で合格（守りは1問で足りる）" | "材料0・off で揺れ（比べにならない）";
 export type Selection = {
   keep: Array<{ id: string; why: SelectWhy; note?: string }>;
   drop: Array<{ id: string; why: DropWhy }>;
@@ -23,13 +23,23 @@ export function selectMinimal(o: {
   prior: ReadonlyMap<string, Record<string, number>>; off: ReadonlyMap<string, OffPass>;
   table: Readonly<Record<string, SwitchReachDef>>; stage: "brain" | "draft";
   weightOf?: (id: string) => number; guards?: number;
+  /** 2026-11-25 #683: 前の on の回から覚えた「効いた／効かなかった」（exam-learned-reach・効く欄が表に無いスイッチの時に使う） */
+  learned?: (id: string) => "none" | "hit" | "unknown";
 }): Selection {
   const ids = [...new Set(o.ids)];
   const cost = (n: number) => Math.round(n * 2 * UNIT_USD[o.stage] * 100) / 100;
   const all = (why: SelectWhy, reason: string): Selection => ({ keep: ids.map((id) => ({ id, why })), drop: [], dropCounts: {}, usdAll: cost(ids.length), usdKeep: cost(ids.length), narrowed: false, reason });
   if (!o.onSwitches.length) return all("効く欄が表に無い（絞らない）", "on のスイッチが無い");
   const unknown = o.onSwitches.filter((s) => !(o.table[s]?.needs?.length) || o.table[s]?.promptAll);
-  if (unknown.length) return all("効く欄が表に無い（絞らない）", `効く欄が決まらないスイッチ（${unknown.join(",")}）＝全部を回す（後で DeepSeek に決めさせる所）`);
+  if (unknown.length) {
+    if (!o.learned) return all("効く欄が表に無い（絞らない）", `効く欄が決まらないスイッチ（${unknown.join(",")}）＝全部を回す（後で DeepSeek に決めさせる所）`);
+    // 覚えた表: 前の on の回で入力が off と同じだった問題だけ落とす（同じ入力＝答えも判定も同じ＝差が出ようがない）。ほかは全部残す
+    const keep: Selection["keep"] = [], drop: Selection["drop"] = [];
+    for (const id of ids) { const v = o.learned(id); if (v === "none") drop.push({ id, why: "前の on の回で入力が off と同じ（効かない）" }); else keep.push({ id, why: v === "hit" ? "前の on の回で効いた" : "効くか分からない（覚えが無い）" }); }
+    if (!keep.length) return { keep: [], drop, dropCounts: { "前の on の回で入力が off と同じ（効かない）": drop.length }, usdAll: cost(ids.length), usdKeep: 0, narrowed: true, reason: `覚えた表: 全部の問題で効かない（${unknown.join(",")}）＝積まない` };
+    const dc: Record<string, number> = {}; for (const d of drop) dc[d.why] = (dc[d.why] ?? 0) + 1;
+    return { keep, drop, dropCounts: dc, usdAll: cost(ids.length), usdKeep: cost(keep.length), narrowed: drop.length > 0, reason: `覚えた表（${unknown.join(",")}）` };
+  }
   const needs = [...new Set(o.onSwitches.flatMap((s) => o.table[s]?.needs ?? []))];
   const keep: Selection["keep"] = [], cand: string[] = [], drop: Selection["drop"] = [];
   for (const id of ids) {
