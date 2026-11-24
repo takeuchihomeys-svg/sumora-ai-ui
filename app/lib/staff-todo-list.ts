@@ -15,7 +15,7 @@
 // テスト: app/lib/__tests__/staff-todo-list.test.ts
 import { aixButtonText } from "./aix-action-text";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
-import { MAIN_ROUTE, ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
+import { MAIN_ROUTE, ROUTE_NODES, ROUTE_BRANCHES, type RouteNodeId } from "./apply-route-map";
 import { STATUS_STAGE_RANK, DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { jstDayStartMs, jstMDHm, JST_OFFSET_MS } from "./jst-date";
 import { LINE_ACCOUNT_LABELS, normalizeLineAccountKey } from "./line-accounts";
@@ -35,6 +35,7 @@ import {
 import { TARGET_SCHEDULE_LINES } from "./target-list-format";
 import { farMoveInOfTurns, farMoveInWaitText, contactYmdOf, type MoveInTurn } from "./far-move-in-todo";
 import { todoTwoLineEnabled, todoItemTitle, todoItemNextStep } from "./staff-todo-two-line";
+import { staffTodoFormatV2On, v2TaskLine, v2Header, v2DueSuffix, conductorSituationLine, nextStepShort, todoVsConductor, type ConductorView } from "./staff-todo-format-v2";
 
 const DAY = 86_400_000;
 
@@ -193,6 +194,8 @@ export type TodoItem = {
   waiting?: { untilYmd: string; text: string } | null;
   /** お客様の要約の「次にする事」（2行の形の2行目の予備・staff-todo-two-line） */
   nextAction?: string | null;
+  /** 2026-11-24 新しい形（STAFF_TODO_FORMAT_V2=on の時だけ）: 動詞から始まる短い1行（何をする→どのボタンで） */
+  v2?: string | null;
 };
 export type TodoCustomer = {
   conversationId: string; name: string; accountLabel: string; status: string | null;
@@ -206,6 +209,9 @@ export type TodoCustomer = {
   why?: string;
   /** 🌟ターゲットの段（ターゲットでなければ無し） */
   target?: TargetTier | null;
+  /** 2026-11-24 新しい形（STAFF_TODO_FORMAT_V2=on の時だけ）: 一番過ぎた期限の日数と、統括ブレインの判断の欄（読み手 staff-todo-list-server が入れる・リストの側で作らない） */
+  maxOverdueDays?: number;
+  conductor?: ConductorView | null;
 };
 /** 見出しに付ける印（申込歴あり＝アツいお客様） */
 // 2026-10-21 竹内さんの決定（414dc9d4）: 印は【申込歴あり】（旧「🔥申込歴あり（再探し）」）。札・ターゲットと同じ文字（reapply-customer.REAPPLY_MARK_TEXT）
@@ -594,7 +600,9 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
 
   // 的確な指示（2026-10-21 竹内さんの決定 c0a91198）: ボタン→ピッカー→何を入れる／確かめる。分からない時は今までの文のまま
   const everSent = input.everSent ? new Set(input.everSent) : null;
+  const formatV2 = staffTodoFormatV2On(); // 2026-11-24 作業員A（竹内さん 11/24・既定 off）
   for (const it of merged) {
+    if (formatV2 && !it.action && !it.waiting) it.v2 = v2TaskLine({ action: null, checkPattern: null, source: it.source, task: it.task, kindLabel: it.kindLabel });
     if (!it.action || it.waiting) continue;
     const ins = todoInstruction({
       action: it.action, checkPattern: it.checkPattern, source: it.source, taskText: it.task,
@@ -602,6 +610,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
       conditions: conditionShort(input.conditions?.[it.conversationId]),
     });
     if (ins) it.instruction = ins;
+    if (formatV2) it.v2 = v2TaskLine({ action: it.action, checkPattern: it.checkPattern, source: it.source, task: it.task, kindLabel: it.kindLabel, conditions: conditionShort(input.conditions?.[it.conversationId]), everSent: everSent ? everSent.has(it.conversationId) : null });
   }
   if (input.nextActions) for (const it of merged) { const na = input.nextActions[it.conversationId]; if (na) it.nextAction = na; }
 
@@ -641,6 +650,7 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
       accountLabel: `${isTarget ? "🌟" : ""}${customerHeader(name, conv?.account ?? tg?.account ?? null)}${conv?.reapply ? REAPPLY_HEADER_MARK : ""}`,
       status: conv?.status ?? null, items: its, ...(conv?.reapply ? { reapply: true } : {}),
       group, score: sc.score, why: sc.why, target: sig.tier ?? null,
+      ...(formatV2 ? { maxOverdueDays: facts.maxOverdueDays } : {}),
     });
   }
   const keyed = customers.map((c) => ({
@@ -827,6 +837,29 @@ export function rotationOrder(pool: ReadonlyArray<TodoCustomer>, snapshots: Read
  *   長すぎる（TODO_LIST_MAX_CHARS 超え）時は ④ターゲットの新着確認だけのお客様を1人1行に詰め、それでも長い時は入るだけ出して残りを次の便に回す
  *   （回す順に前の便の控えを使う時は composeStaffTodoPost。番号と控えは返った list で振ること）
  */
+// ─── 2026-11-24 作業員A（竹内さん 11/24「読みやすく・何をすべきか・状況を分かりやすく」・STAFF_TODO_FORMAT_V2・既定 off）──
+const ROUTE_NAMES = { node: (id: string) => (ROUTE_NODES as Record<string, { name: string }>)[id]?.name ?? null, branch: (id: string) => (ROUTE_BRANCHES as Record<string, { name: string }>)[id]?.name ?? null };
+/** 1人分（見出し ▶急ぐ理由・今の状況の1行・今日やる事を1行ずつ）。番号・済みの印は今と同じ */
+export function renderCustomerV2(c: TodoCustomer, atMs: number, nums: ReadonlyMap<string, number>): string[] {
+  const hasOpen = c.items.some((i) => !i.doneAt && !i.waiting);
+  const out = [v2Header(c.accountLabel, { maxOverdueDays: c.maxOverdueDays ?? 0, why: c.why, hasOpen })];
+  // 状況・次の一手は統括ブレインの判断から（リストの側で作らない・古い時は印だけ）
+  // 2026-11-24 統括役の直し②: 統括の次の手がやる事と合う時は出さない。食い違う時だけ「⚠統括は別の手」を①②より上に（スタッフが迷わないように）
+  if (hasOpen) {
+    const cv = c.conductor ?? null;
+    const mismatch = !!cv && todoVsConductor(c.items.filter((i) => !i.doneAt && !i.waiting).map((i) => ({ action: i.action, checkPattern: i.checkPattern })), cv) === "mismatch";
+    const nx = mismatch ? nextStepShort(cv!.nextSteps[0]) : null;
+    // 食い違うのに何を確かめるか読めない時は ⚠ の行を出さず、状況の行に印だけ（2026-11-24 統括役の直し）
+    out.push(`　${conductorSituationLine(cv, atMs, ROUTE_NAMES)}${mismatch && !nx ? "・統括の手は読めない" : ""}`);
+    if (nx) out.push(`⚠統括は別の手: ${nx}`);
+  }
+  for (const i of c.items) {
+    if (i.doneAt || i.waiting) { out.push(renderTodoItem(i, atMs)); continue; }
+    const n = nums.get(i.key);
+    out.push(`${n ? todoNumberMark(n) : "・"}${i.v2 ?? i.instruction ?? `${i.kindLabel}：${i.task}`}${v2DueSuffix({ dueHasTime: i.dueHasTime, dueAt: i.dueAt, done: false })}`);
+  }
+  return out;
+}
 export function renderStaffTodoList(list: TodoList, opts: { compact?: boolean } = {}): string | null {
   return composeStaffTodoPost(list, opts).text;
 }
@@ -860,6 +893,7 @@ function renderList(list: TodoList, mode: RenderMode): string {
       lastGroup = c.group;
     }
     if (compact && (c.group === 4 || c.group === 5)) { out.push(renderCompactNewArrival(c, list.atMs, nums, compact === 2)); continue; }
+    if (staffTodoFormatV2On()) { out.push("", ...renderCustomerV2(c, list.atMs, nums)); continue; } // 2026-11-24 作業員A（竹内さん 11/24・既定 off）
     const head = `${c.accountLabel}${c.why && c.items.some((i) => !i.doneAt) ? ` ▶${c.why}` : ""}`;
     out.push("", head, ...c.items.map((i) => renderTodoItem(i, list.atMs, nums.get(i.key), twoLine)));
   }

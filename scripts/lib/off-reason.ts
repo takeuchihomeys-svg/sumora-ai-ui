@@ -128,6 +128,17 @@ export function jointOf(v: OffVerdict, ctx: JointCtx): JointVerdict {
   for (const p of v.parts) {
     const r = byId.get(p); if (!r) continue;
     const mine = v.switches.some((s) => r.switches.includes(s));
+    // 2026-11-24 作業員A（#675）: 地図の外の行を、スイッチを読む所（ファイル:行）から足した行（id が auto.）。読む側が分からないので、場所で分かる所まで
+    if (p.startsWith("auto.")) {
+      const file = r.producer;
+      if (/compose-/.test(file)) {
+        const c = ctx.composePlanMade;
+        return out(1, "設計図（conductor.compose_plan）", `${r.key} は設計図の中の部品。設計図は判断を新しく作った番（brainLocalFresh）にしか作られない${c ? `（${c.made}/${c.n}）` : ""}・KB 89672025`);
+      }
+      if (r.stage === "conductor") return out(4, `統括の部品（${file.split("/").pop()}）`, `${r.key}（統括の判断の部品そのものが既定 off）`);
+      if (STAGE_JOINT[r.stage]) return out(STAGE_JOINT[r.stage], `${r.stage} の部品（${file.split("/").pop()}）`, `${r.key}（統括より後の段で off）`);
+      return out(null, "未確認", `${r.key}: ブレインの材料の部品だが、統括が読むかは地図に無い（読む側が分からない）`);
+    }
     if (mine && (r.stage === "in" || r.stage === "read")) {
       // 作る側を on にした時、統括が読むか
       if (r.readers.includes("conductor.compose_plan")) {
@@ -163,7 +174,8 @@ export function blockRanking(js: readonly JointVerdict[]): Array<{ joint: Joint 
   const m = new Map<string, { joint: Joint | null; block: string; rows: number[] }>();
   for (const j of js) {
     if (j.block === "-") continue;
-    const k = `${j.joint ?? "?"}|${j.block}`;
+    // 2026-11-24: 1つの直しは止めている物（block）で数える（同じ設計図で ① と ③ に分かれる行もまとめる）
+    const k = j.block;
     const g = m.get(k) ?? { joint: j.joint, block: j.block, rows: [] };
     g.rows.push(j.id); m.set(k, g);
   }
@@ -180,6 +192,22 @@ export function defaultsFromCode(code: string, names: readonly string[]): Map<st
   }
   return out;
 }
+
+// ── #675（2026-11-24 作業員A）: 地図の外の行を載せる（動きは変えない・連携の見張りの LINKAGE_MAP には入れない＝scripts/lib/linkage-offparts.json に別に持つ）──
+const PLACE_STAGE: Partial<Record<Joint, LinkageRow["stage"]>> = { 1: "read", 4: "conductor", 5: "writer", 6: "check", 7: "sent", 8: "next" };
+/** スイッチを読む所から、地図の行（id は auto.<スイッチ>・読む側は分からないので空） */
+export function offpartRowOf(sw: string, file: string, line: number, place: Joint | null): LinkageRow | null {
+  const stage = place ? PLACE_STAGE[place] : undefined;
+  if (!stage) return null;
+  return { id: `auto.${sw}`, stage, name: `${sw}（地図の外の off の部品・${file.split("/").pop()}）`, producer: file, key: `${file}:${line}`, readers: [], switches: [sw], readerSwitches: [], fill: { src: "meta", path: "-" } as LinkageRow["fill"], owner: "-", layer: "連携", next: "読む側を確かめて地図に正式な行を足す（#675）" };
+}
+/** スイッチ名の無い台帳の行に入れる名前（題・次の一手の大文字の名前のうち、コードで読まれている物がちょうど1つの時だけ） */
+export function switchForUnnamed(it: Pick<OffItem, "switch_name" | "title" | "next_step">, readInCode: ReadonlySet<string>): string | null {
+  if (it.switch_name) return null;
+  const c = switchNamesOf(it).filter((s) => readInCode.has(s));
+  return c.length === 1 ? c[0] : null;
+}
+export const NO_SWITCH_MARK = "スイッチ無し（コードの直し）";
 
 /** スイッチを読む所（ファイル）→ 鎖の場所（継ぎ目の言葉）。地図に行が無いスイッチの「どこにある部品か」の証拠（ファイル:行）に使う */
 export function chainPlaceOf(path: string): Joint | null {
