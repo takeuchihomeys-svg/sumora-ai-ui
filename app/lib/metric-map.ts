@@ -22,7 +22,7 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 };
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
-export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split"
+export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split" | "two_stage_draft"
   | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue"
   | "feel_missed" | "feel_extra" | "appeal_missed" | "appeal_extra" | "appeal_other" | "under" | "over" | "field_gap" | "field_none";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
@@ -32,6 +32,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   minority: "竹内さんの少数側（同じ形の番で竹内さん本人の別の一手が過半数・ブレインは多い方を選んだ・外れの順位に入れない）",
   timed: "時刻で送る物（番の判断の外・例 当日のご挨拶は了承への返しでなく日にちで送る・外れの順位に入れない）",
   fixed_since: "直しが入った日より前の番（今のコードでは直っている・どの直しかは FIXED_SINCE・外れの順位に入れない）",
+  two_stage_draft: "ブレインも2段の約束を書いていた（竹内さんは約束の返信→後で AIX・ブレインの下書きも同じ種類の約束で、記録だけが後で果たす AIX＝先後に数えていた・外れの順位に入れない）",
   split: "割れ（同じ形の番で竹内さん本人の一手が半分前後に割れる・どちらにも決めない・外れの順位に入れない）",
   stuck: "止まった（次のお客様の発言で駅が進まない）", left: "離れた（返事が来ない）", back: "戻った（申込から遠い駅へ）", engaged: "やり取りは続くが駅は同じ", branch_stay: "分かれ道から本線に戻れない",
   viewing_wait: "内覧の日待ち（続く・内覧の日がまだ来ていない・直す所ではない）",
@@ -43,7 +44,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   field_gap: "届いていない（資料・画像には有るのに AIX の欄が空）", field_none: "読めていない（資料にも画像の読みにも無い）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
-export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait"]);
+export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait", "two_stage_draft"]);
 /** 決めに行く番の監査の行を木の番に（純関数）。種類＝竹内さんの決め方（または早すぎの時のブレインの一手）・場面＝申込予測の度合い（hot/warm/cold）・原因＝統括の材料の欠けがあれば材料・無ければ読み違い */
 export function closingTurnsOf(rows: ReadonlyArray<{ id: number; takeuchiClose: boolean; brainClose: boolean; closeHow: string | null; brainAct: string | null; level: string | null; gaps: string[] }>, side: "closing" | "closing_early"): MapTurn[] {
   const mine = rows.filter((r) => (side === "closing" ? r.takeuchiClose : r.brainClose));
@@ -429,6 +430,7 @@ export function itemsForRoot<T extends ForecastItem>(items: readonly T[], def: P
 /** 作業員A の audit-aix-turn-judgment.ts の json の1行（使う欄だけ） */
 export type DeviceTurnRow = {
   id: number; cls: string; tk: string | null; v: string; bk?: string | null; prevFulfil?: boolean;
+  /** 2026-11-25 作業員A: 先後の番で、画面に出たブレインの下書きが同じ種類の約束（audit-aix-turn-judgment の draftPromiseOf） */ bDraftPromise?: boolean;
   mat?: { pend?: number; pp?: boolean; checked?: number; taskResult?: number; mk?: string[] | null; mks?: boolean } | null;
 };
 /**
@@ -455,6 +457,7 @@ export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: Read
     const kind = r.tk && r.tk !== "?" ? r.tk : "other";
     const miss = DEVICE_MISS[r.v] ?? "aix_kind";
     if (miss !== "ok" && decided.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
+    if (miss === "order" && r.bDraftPromise) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "two_stage_draft" as const, cause: null };
     if (miss !== "ok" && fixedSince.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "fixed_since" as const, cause: null };
     if (miss !== "ok" && TIMED_AIX_KINDS.has(kind)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "timed" as const, cause: null };
     if (miss !== "ok" && split.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "split" as const, cause: null };
@@ -675,12 +678,12 @@ export function leafJa(key: string): string {
   }).join(" › ");
 }
 /** 外れの内訳（純関数）: 外れの型ごとの番の数（miss の段の n の合計）。分けて外す型と本当の外れ */
-export function missBreakdownOf(nodes: readonly MapNode[]): { real: number; decided: number; minority: number; split: number; timed: number; fixed_since: number } {
+export function missBreakdownOf(nodes: readonly MapNode[]): { real: number; decided: number; minority: number; split: number; timed: number; fixed_since: number; two_stage_draft: number } {
   const by: Record<string, number> = {};
   for (const x of nodes) if (x.dim === "miss" && x.val && x.val !== "ok") by[x.val] = (by[x.val] ?? 0) + x.n;
   const aside = (k: string) => by[k] ?? 0;
   const total = Object.values(by).reduce((s, v) => s + v, 0);
-  return { real: total - [...SET_ASIDE_MISS].reduce((s, k) => s + aside(k), 0), decided: aside("decided"), minority: aside("minority"), split: aside("split"), timed: aside("timed"), fixed_since: aside("fixed_since") };
+  return { real: total - [...SET_ASIDE_MISS].reduce((s, k) => s + aside(k), 0), decided: aside("decided"), minority: aside("minority"), split: aside("split"), timed: aside("timed"), fixed_since: aside("fixed_since"), two_stage_draft: aside("two_stage_draft") };
 }
 
 // ── 2026-11-23 作業員N2 の頼み（KB 0f38f47f・穴を台帳へ自動で・統括に届いているか）──

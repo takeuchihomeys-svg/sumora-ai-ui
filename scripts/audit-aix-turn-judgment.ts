@@ -28,6 +28,13 @@ import { shouldBeAixOf } from "../app/lib/aix-should-be";
 import { classifyCustomerBurst } from "../app/lib/customer-reaction-predict";
 import { aixKindOfTurn, turnClassOf, brainRouteOf, judgeTurn, type TurnClass } from "../app/lib/aix-turn-judgment";
 
+/** 下書きがその AIX の種類の約束か（audit-aix-miss-causes の PROMISE と同じ網・純関数） */
+export function draftPromiseOf(draft: string, kind: string): boolean {
+  const re = kind === "estimate_sheet" || kind === "cost_breakdown" ? /(?:御見積|お見積|見積書)[^。！\n]{0,20}(?:作成|お送り|させて頂きます)/
+    : kind === "property" || kind === "property_send" || kind === "property_recommendation" ? /ピックアップ[^。！\n]{0,20}(?:お送り|させて頂きます|させていただきます)|(?:新着|お部屋)[^。！\n]{0,15}出次第[^。！\n]{0,10}お送り/
+    : /(?:確認させて頂きます|確認させていただきます|確認致します|確認いたします|確認(?:出来|でき)次第)/;
+  return re.test(draft);
+}
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 
 type Msg = { at: number; sender: string; text: string; aix: boolean; writer: string | null };
@@ -54,11 +61,14 @@ type Dec = { id: string; created_at: string; suggested_action: string | null; su
       sb.from("sent_properties").select("sent_at, recruitment_status, recruitment_checked_at").eq("conversation_id", c).lt("sent_at", hi).limit(2000),
       sb.from("sent_image_properties").select("created_at, facts").eq("conversation_id", c).lt("created_at", hi).limit(2000),
       sb.from("line_tasks").select("task_type, status, created_at, completed_at, result").eq("conversation_id", c).lt("created_at", hi).limit(500),
-      sb.from("line_watch_turns").select("id, materials").in("id", ts.map((t) => t.id)),
+      sb.from("line_watch_turns").select("id, materials, draft_first, draft_last").in("id", ts.map((t) => t.id)),
     ]);
     const ms: Msg[] = ((mq.data ?? []) as Array<Record<string, unknown>>).map((m) => ({ at: Date.parse(String(m.created_at)), sender: String(m.sender), text: String(m.text ?? ""), aix: !!m.is_aix_generated, writer: (m.staff_writer as string | null) ?? null }));
     const ds = (bq.data ?? []) as Dec[];
     const blocksOf = new Map<number, { chars?: Record<string, number>; empty?: string[] } | null>();
+    // 2026-11-25 作業員A（統括役の頼み）: 見張りの下書き（画面に出た文）。ブレインが2段の約束を書き、記録は後で果たす AIX（suggested_reply_mode=aix）の番を分ける元
+    const draftOf = new Map<number, string>();
+    for (const w of (wq.data ?? []) as Array<{ id: number; draft_first: string | null; draft_last: string | null }>) { const l = String(w.draft_last ?? ""); draftOf.set(w.id, l.trim() && !/^\s*__[A-Z_]{2,30}__\s*$/.test(l) ? l : String(w.draft_first ?? "")); }
     for (const w of (wq.data ?? []) as Array<{ id: number; materials: { brain?: { blocks?: { chars?: Record<string, number>; empty?: string[] } } } | null }>) blocksOf.set(w.id, w.materials?.brain?.blocks ?? null);
     let gate: Awaited<ReturnType<typeof loadTurnApplicationRecords>> | null = null;
     for (const t of ts) {
@@ -93,9 +103,11 @@ type Dec = { id: string; created_at: string; suggested_action: string | null; su
       const openTasks = tasks.filter((x) => Date.parse(x.created_at) <= decAt && (!x.completed_at || Date.parse(x.completed_at) > decAt)).length;
       const taskResult = tasks.filter((x) => x.result && x.completed_at && Date.parse(x.completed_at) <= decAt && decAt - Date.parse(x.completed_at) <= 3 * 864e5).length;
       const bl = blocksOf.get(t.id) ?? null;
+      // 竹内さんは2段（約束の返信→後で AIX）・ブレインの記録は同じ種類の AIX（先後）でも、画面に出た下書きがその種類の約束なら「ブレインも2段の約束を書いた」（今の数え方は変えず印だけ）
+      const bDraftPromise = v === "先後" && !!tk && draftPromiseOf(draftOf.get(t.id) ?? "", tk);
       const firstAixAt = kinded.find((m) => m.aix)?.at ?? null;
       rows.push({
-        id: t.id, conv: c.slice(0, 8), at: t.customer_turn_at.slice(0, 16), cls, tk, prevFulfil, prevPromise, route: route.route, bk: route.kind, src: dec.decision_source, v,
+        id: t.id, conv: c.slice(0, 8), at: t.customer_turn_at.slice(0, 16), cls, tk, prevFulfil, prevPromise, bDraftPromise, route: route.route, bk: route.kind, src: dec.decision_source, v,
         minDecToAix: firstAixAt ? Math.round((firstAixAt - decAt) / 6e4) : null, burst: classifyCustomerBurst(burst),
         mat: { pend, pp: dg.pp === true, checked, taskResult, openTasks, imgFacts, po: (dg.sn as { po?: number } | undefined)?.po ?? null, mk: dg.mk ?? null, mks: dg.mks === true, ac: dg.ac ? (dg.ac as { answer?: string }).answer ?? "?" : null, ad: dg.ad ? { sb: (dg.ad as { sb?: string }).sb ?? null, pick: (dg.ad as { pick?: string }).pick ?? null } : null, rc: dg.rc ?? null, cp: dg.cp ?? null },
         blocks: bl ? { promise: bl.chars?.promise ?? 0, tasks: bl.chars?.tasks ?? 0, sentProps: bl.chars?.sentProps ?? 0, aixHistory: bl.chars?.aixHistory ?? 0, aixCatalog: bl.chars?.aixCatalog ?? 0, empty: bl.empty ?? [] } : null,
