@@ -202,6 +202,16 @@ async function main() {
       const { data: openDuty } = await sb.from("work_items").select("title").like("title", "統括の受け持ち %").not("stage", "in", "(done,dropped)").limit(200);
       for (const g of conductorDutyGapsToAdd(dr, ((openDuty ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
     } catch (e) { lines.push(`- 統括の受け持ち: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-24 作業員A（統括役の決め・COMPOSE_PLAN_REUSE=shadow 既定）: 前の日の返信の番で、設計図が作られた番・使い回しで作れた番（shadow の印）・作られなかった番（軽い読み・日付で絞る）
+    try {
+      const from = new Date(Date.parse(dayStart)).toISOString(), to = new Date(Date.parse(dayStart) + 86_400_000).toISOString();
+      const { data: wt } = await sb.from("line_watch_turns").select("cp:materials->reply->compose_plan, sh:materials->reply->compose_plan_reuse_shadow, sk:materials->reply->compose_plan_skip").gte("created_at", from).lt("created_at", to).limit(3000);
+      const w = (wt ?? []) as Array<{ cp: unknown; sh: { built?: boolean } | null; sk: { reason?: string } | null }>;
+      const made = w.filter((x) => x.cp).length, shadowBuilt = w.filter((x) => x.sh?.built).length, skip = w.filter((x) => x.sk).length;
+      const reasons = new Map<string, number>(); for (const x of w) if (x.sk?.reason) reasons.set(x.sk.reason, (reasons.get(x.sk.reason) ?? 0) + 1);
+      coreRows.push({ metric: "core:compose_plan_made", value: made, n: w.length }, { metric: "core:compose_plan_reuse_shadow", value: shadowBuilt, n: w.length });
+      lines.push(`- 設計図（前の日の番 ${w.length}）: 作られた ${made}・使い回しで作れた（shadow・書き手には渡さない）${shadowBuilt}・作られなかった ${skip}（${[...reasons.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・") || "理由の記録なし"}）（作業員A・#673）`);
+    } catch (e) { lines.push(`- 設計図の数: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
   }
 
   if (doCore) {

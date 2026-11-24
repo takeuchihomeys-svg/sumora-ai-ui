@@ -55,7 +55,7 @@ assert.equal(unverifiedOf(units, [{ scope: "scripts/audit-x.ts", day: "2026-11-0
 assert.equal(unverifiedOf(units, [], lc, "2026-11-21").every((u) => u.kind === "never"), true);
 
 const lg = countGapsForLedger([...unverifiedOf(units, [], lc, "2026-11-21"), ...uv]);
-assert.equal(lg.filter((x) => x.title.endsWith("の数えの台本")).length, 2, "一度も照らしていない物は持ち主ごとに1行（G→L・N→N2・L＝L と N2 の2行・2026-11-23 読む時に今の作業員へ）");
+assert.equal(lg.filter((x) => x.title.endsWith("の数えの台本")).length, 1, "一度も照らしていない物は持ち主ごとに1行（G→L・N→L・L＝L の1行・2026-11-24 2人体制）");
 assert.equal(lg.find((x) => x.title.endsWith("scripts/audit-x.ts"))!.priority, 10, "ズレは先に");
 
 // ⑤ 主な道の外
@@ -72,7 +72,7 @@ assert.equal(isConfirmedViewingEvent({ all_day: false, title: "山田 内覧 物
 
 // 持ち主
 assert.equal(liveOwnerOf("read"), "作業員L");
-assert.equal(liveOwnerOf("tool_rank"), "作業員P"); // 2026-11-23 4人体制（K2→P）
-assert.equal(liveOwnerOf("作業員K・作業員L"), "作業員P");
+assert.equal(liveOwnerOf("tool_rank"), "作業員A"); // 2026-11-24 2人体制（K2→P→A）
+assert.equal(liveOwnerOf("作業員K・作業員L"), "作業員A");
 assert.equal(liveOwnerOf("作業員Z"), "統括役");
 console.log("foundation-holes-345: ok");

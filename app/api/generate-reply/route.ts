@@ -341,7 +341,7 @@ import { isAckOnlyTurn, applySelfRepeatExit } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { priorityStepOn, normalizePriorities } from "@/app/lib/brain-priority";
 import { messagePlanOn, normalizeMessagePlan, alignPlanWithPriorities, planHasNextBusinessDay, type MessagePlan } from "@/app/lib/message-plan";
-import { composePlanGate, composePlanReuseMode } from "@/app/lib/compose-plan-reuse"; // 2026-11-24 作業員A（COMPOSE_PLAN_REUSE・既定 off）
+import { composePlanGate, composePlanReuseMode, composePlanForWriter } from "@/app/lib/compose-plan-reuse"; // 2026-11-24 作業員A（COMPOSE_PLAN_REUSE・既定 off）
 import { composeBlueprintOn, composeDigestLine, composeDropsDuplicate, type ComposeDuplicateNote } from "@/app/lib/compose-blueprint";
 import { sceneSkillsOn, ruleBookNote } from "@/app/lib/scene-skills";
 import { relativeDatesWriterNote } from "@/app/lib/relative-dates"; // 2026-10-23 送った日と今日の距離（BRAIN_RELATIVE_DATES・既定 off）
@@ -4575,9 +4575,10 @@ async function handleGenerateReply(req: NextRequest) {
         })()
       : null;
     // 2026-11-24 作業員A（COMPOSE_PLAN_REUSE=shadow）: 使い回しの番で作った設計図は書き手に渡さず、作れた印だけ残す（本番の文は今と同じ）
+    // 設計図を作る中（上の即時の関数）は同期の純関数だけ（await が無い＝DB・LLM は呼べない）。shadow で増えるのはこの計算だけ
     const composeReuseShadow = !!composePlanGateNow.reused && composePlanReuseMode() === "shadow";
     if (composeReuseShadow && conversationId) noteWatchMaterials(conversationId, "reply", "compose_plan_reuse_shadow", { at: new Date().toISOString(), reused: composePlanGateNow.reused, built: !!composeSentencePlanBuilt, rows: composeSentencePlanBuilt?.plan?.rows?.length ?? 0 } as unknown as Record<string, unknown>);
-    const composeSentencePlan = composeReuseShadow ? null : composeSentencePlanBuilt;
+    const composeSentencePlan = composePlanForWriter(composeSentencePlanBuilt || null, composePlanGateNow);
     if (composeSentencePlan) console.info("[compose-sentence-plan]", JSON.stringify({ conversationId, plan: composeSentencePlan.digest }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──

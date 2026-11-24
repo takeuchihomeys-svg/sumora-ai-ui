@@ -14,13 +14,21 @@ type Env = Record<string, string | undefined>;
 export type ComposePlanReuseMode = "off" | "cached" | "on" | "shadow";
 export function composePlanReuseMode(env: Env = typeof process !== "undefined" ? process.env : {}): ComposePlanReuseMode {
   const v = (env.COMPOSE_PLAN_REUSE ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "cached" ? "cached" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-24 統括役の決め（11/22「記録だけは既定 on」）: 既定は shadow（作って印だけ・書き手には渡さない）。=off で止まる
+  return v === "on" ? "on" : v === "cached" ? "cached" : v === "off" ? "off" : "shadow";
 }
 export type ComposePlanGate = { ok: boolean; reused: null | "cached" | "stale" };
 /**
  * 設計図を作ってよいか。fresh＝今の発言を見た判断（brainFreshForMessage）・cached＝取り置きの判断（isCachedMeta）。
  * 新しい判断（fresh かつ取り置きでない）は今まで通り作る。off の時は今と1つも変わらない。
  */
+/**
+ * 書き手に渡す設計図（route の最後の1か所）。使い回しの番で shadow の時は渡さない＝使い回しの前（門が閉じていた）と同じ null。
+ * 新しい判断の番（reused が null）は作った物をそのまま渡す＝今と1字も変わらない
+ */
+export function composePlanForWriter<T>(built: T | null, gate: ComposePlanGate, mode: ComposePlanReuseMode = composePlanReuseMode()): T | null {
+  return gate.reused && mode === "shadow" ? null : built;
+}
 export function composePlanGate(i: { fresh: boolean; cached: boolean; hasMeta: boolean }, mode: ComposePlanReuseMode = composePlanReuseMode()): ComposePlanGate {
   if (!i.hasMeta) return { ok: false, reused: null };
   if (i.fresh && !i.cached) return { ok: true, reused: null };

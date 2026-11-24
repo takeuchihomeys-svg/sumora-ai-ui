@@ -9,10 +9,10 @@ export type FoundationRow = { id: string; name: string; owner: string; rules: st
 
 // 2026-11-23 統括役の決め（持ち主は今の4人・作業員A の受け持ち表も同じ）: 約束・時系列・統括の学び・信頼・つなぎ＝L／道筋・今どこ・要件＝A／決めに行く・気持ち・訴求＝P／臨機応変＝N2
 export const FOUNDATION_N: FoundationRow[] = [
-  { id: "n.flex", name: "臨機応変", owner: "作業員N2", /* 2026-11-23 統括役: 持ち主は N2 */ rules: ["3c744786", "ecd7b961"], measures: ["scripts/audit-off-pattern.ts"], metric: "growth:flex:off_rate", parts: [], note: "統括の行き先の3行の部品が無い（12/05 の数え直しの後）" },
+  { id: "n.flex", name: "臨機応変", owner: "作業員L", /* 2026-11-24 統括役: 2人体制で N2→L */ rules: ["3c744786", "ecd7b961"], measures: ["scripts/audit-off-pattern.ts"], metric: "growth:flex:off_rate", parts: [], note: "統括の行き先の3行の部品が無い（12/05 の数え直しの後）" },
   { id: "n.trust", name: "信頼", owner: "作業員L", rules: ["d71352cd", "aa21438c", "45110555"], measures: ["scripts/audit-promise-kept.ts", "scripts/audit-trust-b4b5.ts", "scripts/audit-trust-repeat.ts"], metric: "growth:trust:promise_kept", parts: ["CONDUCTOR_OVERDUE_PROMISES", "PROMISE_DROP_WATCH"] },
-  { id: "n.feeling", name: "気持ち", owner: "作業員P", rules: ["c3b40411", "5cb0dd4c"], measures: ["scripts/audit-writer-linkage.ts"], metric: "writer_link:field:latent_kind:in_draft", parts: ["LATENT_FIVE", "BRAIN_CONCERN_SUBTOPIC"], note: "当たりの物差しは正解付け（#236）待ち", metricAlt: ["writer_link:field:latent_kind:delivered"] /* 2026-11-23 作業員N2: 名前の取り違えを直した（毎朝の1枚が書く名前は latent_kind・latent_feeling は1度も無い＝check-stale の「毎日の数が一度も無い」の元） */ },
-  { id: "n.appeal", name: "訴求", owner: "作業員P", rules: [], measures: ["scripts/audit-appeal-points.ts", "scripts/audit-aix-edit-diff.ts"], metric: "growth:aix_edit:ピックアップ", parts: ["SECOND_APPEAL_COUNT_BY_SCENE", "APPEAL_RECORD"], note: "竹内さんの選び A（11/18）の KB の id を足す" },
+  { id: "n.feeling", name: "気持ち", owner: "作業員A", rules: ["c3b40411", "5cb0dd4c"], measures: ["scripts/audit-writer-linkage.ts"], metric: "writer_link:field:latent_kind:in_draft", parts: ["LATENT_FIVE", "BRAIN_CONCERN_SUBTOPIC"], note: "当たりの物差しは正解付け（#236）待ち", metricAlt: ["writer_link:field:latent_kind:delivered"] /* 2026-11-23 作業員N2: 名前の取り違えを直した（毎朝の1枚が書く名前は latent_kind・latent_feeling は1度も無い＝check-stale の「毎日の数が一度も無い」の元） */ },
+  { id: "n.appeal", name: "訴求", owner: "作業員A", rules: [], measures: ["scripts/audit-appeal-points.ts", "scripts/audit-aix-edit-diff.ts"], metric: "growth:aix_edit:ピックアップ", parts: ["SECOND_APPEAL_COUNT_BY_SCENE", "APPEAL_RECORD"], note: "竹内さんの選び A（11/18）の KB の id を足す" },
   // 2026-11-22 作業員L（台帳 #501・#518）: 物差し＝時の言葉が帳面に届くか（audit-timeline-coverage・窓の内外）と、竹内さんの番の場面ごとの時の言葉への返し方（audit-time-reply-scene）。本番の数は作業員N2 が quality_daily に
   { id: "n.chrono", name: "時系列", owner: "作業員L", rules: ["b8dac051", "27aa2736"], measures: ["scripts/audit-timeline-coverage.ts", "scripts/audit-time-reply-scene.ts"], metric: "foundation:chrono:timeline_reach", parts: ["TIME_FACTS", "STALE_DAY_DRAFT_CLEAR"], note: "取り違えの台本 audit-chrono-mixup は未作成", metricAlt: ["writer_link:timeline:words:to_brain", "writer_link:timeline:promises:to_writer", "core:window_miss:timeline.customer"] },
   // 2026-11-22 作業員L（台帳 #502・#519）: audit-promise-kept は 11/21 #495 から場面ごとに数えている（SCENE_SPLIT へ）。本番の数は作業員N2 が quality_daily に
@@ -25,7 +25,7 @@ export const FOUNDATION_N: FoundationRow[] = [
     metricAlt: ["map:route:progress_60d:value", "route:sg_match", "map:route:next_match_60d:value"], note: "地図は道筋（一手はブレイン・KB 2d1c4c74）。弱い駅は地図の穴として台帳へ（self-improve）" },
   { id: "route.now", name: "今どこ", owner: "作業員A", rules: ["3907f365", "9f674d62"], measures: ["scripts/audit-route-progress-takeuchi.ts"], metric: "route:substate_mismatch_v2", parts: [],
     metricAlt: ["route:sg_match", "map:route:next_match_60d:value"], note: "駅の中の状態の読み違い（0 に向かう）・駅の記録との一致（sg の時代）" },
-  { id: "n.closing", name: "決めに行く", owner: "作業員P", /* 2026-11-23 統括役: 持ち主は P（#658） */ rules: [], measures: ["scripts/audit-closing-takeuchi.ts"], metric: "route:closing", parts: [],
+  { id: "n.closing", name: "決めに行く", owner: "作業員A", /* 2026-11-24 統括役: 2人体制で P→A（#658） */ rules: [], measures: ["scripts/audit-closing-takeuchi.ts"], metric: "route:closing", parts: [],
     metricAlt: ["map:route:closing:value", "route:closing_early", "map:route:closing_early:value"], note: "竹内さんの P0（11/23・#658）の KB の id を足す" },
   { id: "n.lessons", name: "統括の学び", owner: "作業員L", rules: [], measures: ["scripts/audit-conductor-duty.ts", "scripts/exam-leaf.ts"], metric: "core:conductor_duty:use", parts: ["CONDUCTOR_LESSONS"],
     metricAlt: ["core:conductor_duty:have", "core:conductor_duty:reflect"], note: "学びが地図の葉を指す印（exam-leaf --lessons）で地図の穴の『統括に届いているか』の学びの道になる" },
