@@ -52,6 +52,17 @@ export const WRITER_GPT_NOTE = [
   "① 文の長さは、手本の文や前にこちらが送った通と同じくらいにする。短くまとめすぎない（受け止め・お答え・お礼・次の一手を省かない）。",
   "② お客様が要望を言い直して謝った時・恐縮している時は「全然大丈夫です」で受けない。「とんでもございません😊！！」か、送って頂いた事・ご連絡頂いた事へのお礼で受ける。",
 ].join("\n");
+/**
+ * 2026-11-24 #670（統括役の頼み・試験だけ・EXAM_WRITER_LEN_HINT=on）: 長さの目安を数字で。竹内さんの返信（試験の問題の竹内さんの文 221通・返信／2段が正解の番）は
+ *   1通 77字（下から25%）〜120字（中央）〜199字（上から25%）。問題ごとの答えの長さは渡さない（全体の目安だけ）
+ */
+export const WRITER_LEN_HINT = "【長さの目安】竹内さんの返信は1通 およそ80〜200字（真ん中は120字ほど）。お客様の通が長い・答える事が多い時は長めに、短いお礼への返しは短くてよい。";
+/** 試験だけの書き手の言い添え（名前ごとに足す: EXAM_WRITER_GPT_NOTE=on・EXAM_WRITER_LEN_HINT=on）。無ければ null */
+export function writerExamNotes(env: EnvLike): string | null {
+  const on = (k: string) => (env[k] ?? "").trim().toLowerCase() === "on";
+  const parts = [on("EXAM_WRITER_GPT_NOTE") ? WRITER_GPT_NOTE : null, on("EXAM_WRITER_LEN_HINT") ? WRITER_LEN_HINT : null].filter((x): x is string => !!x);
+  return parts.length ? parts.join("\n") : null;
+}
 /** ブレインの出力の主な欄（11/24 の試験で DeepSeek・Sol がほぼ全部の答案で返した欄）。試験だけの言い添え EXAM_BRAIN_JSON_KEYS=on で使う */
 export const BRAIN_OUTPUT_KEYS: readonly string[] = ["reply_mode", "action", "aix", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "turn_contract", "reason"];
 /** ブレインの名札か（brain・brain_*。名前で Claude に固定した部品 *_claude は外す） */
@@ -1037,7 +1048,7 @@ async function callOpenAICompatible(
       reasoningEffort: (isWriterRouteName(routeName) ? process.env.EXAM_WRITER_REASONING ?? process.env.EXAM_BRAIN_REASONING : process.env.EXAM_BRAIN_REASONING)?.trim() || (process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
       cacheKey: routeName ? `sumora-${routeName}` : null,
       jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
-      writerNote: cfg.testMode && isWriterRouteName(routeName) && (process.env.EXAM_WRITER_GPT_NOTE ?? "").trim().toLowerCase() === "on" ? WRITER_GPT_NOTE : null,
+      writerNote: cfg.testMode && isWriterRouteName(routeName) ? writerExamNotes(process.env) : null,
     } } : {}),
   });
   if (!payload) return null;
