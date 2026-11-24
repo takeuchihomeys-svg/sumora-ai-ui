@@ -494,7 +494,7 @@ console.log("── ★ Qwen（名前ごとの振り分け・2026-09-29「作り
   const r2 = fromOpenAIResponse({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_cache_hit_tokens: 900, prompt_cache_miss_tokens: 100 } }, "deepseek-flash") as { usage: Record<string, number> };
   t("DeepSeek の形はそのまま（一致 900・不一致 100）", r2.usage.cache_read_input_tokens === 900 && r2.usage.input_tokens === 100);
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
-  t("★ 出口は振り分けた相手（target）で呼び・記録する（主の model を書かない）", /const target = targetConfigFor\(cfg, routeName\)/.test(provider) && /model: target\.model, action: routeName/.test(provider));
+  t("★ 出口は振り分けた相手（target）で呼び・記録する（主の model を書かない）", /const target = (?:budgetTarget \?\? )?targetConfigFor\(cfg, routeName\)/.test(provider) && /model: target\.model, action: routeName/.test(provider));
   t("★ .env.local に QWEN_API_KEY / LLM_ALT_ROUTES は無い（既定 OFF・鍵が無いので動かさない）", !/^(QWEN_API_KEY|LLM_ALT_ROUTES)=/m.test((() => { try { return readFileSync(".env.local", "utf8"); } catch { return ""; } })()));
 }
 

@@ -34,7 +34,28 @@ import { screeningSensitiveSignal, screeningPiiClaudeEnabled } from "./screening
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
-export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen";
+export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen" | "openai";
+
+// ─── 2026-11-24 作業員L（台帳 #670・竹内さん 11/24「OpenAI のブレインの試験は今やって大丈夫」・統括役の頼み）───
+//   OpenAI（chat/completions・OpenAI 互換の変換をそのまま使う）。鍵は今の埋め込みと同じ OPENAI_API_KEY。モデルは公式の料金表（developers.openai.com/api/docs/pricing・11/24）:
+//     gpt-6.2-astra $8/$0.40/$40・gpt-6.2-sol $2/$0.10/$10・gpt-6.1-terra $1/$0.05/$5・gpt-6-luna $0.10/$0.01/$0.50（入力/キャッシュ/出力・100万あたり・272K 以下）
+//   試験だけの切り替え EXAM_BRAIN_PROVIDER=openai（EXAM_BRAIN_MODEL・既定 gpt-6.2-sol）: テスト用の切り替え（LLM_TEST_MODE）の時だけ、ブレインの名札（brain・brain_*）を OpenAI に回す。
+//   本番（Vercel・NODE_ENV=production）では isTestModeAllowed が false＝何もしない。本番の振り分け（予算で切り替える）は別の段（#670 の続き）
+export const OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+export const OPENAI_DEFAULT_MODEL = "gpt-6.2-sol";
+/** ブレインの名札か（brain・brain_*。名前で Claude に固定した部品 *_claude は外す） */
+export function isBrainRouteName(name: string | null | undefined): boolean {
+  const n = String(name ?? "");
+  return (n === "brain" || n.startsWith("brain_")) && !n.endsWith("_claude");
+}
+/** 試験だけ: ブレインを回す相手（EXAM_BRAIN_PROVIDER=openai・テスト用の切り替えを効かせてよい環境だけ）。それ以外は null */
+export function examBrainTarget(env: EnvLike): ProviderTarget | null {
+  if ((env.EXAM_BRAIN_PROVIDER ?? "").trim().toLowerCase() !== "openai") return null;
+  if (!isTestModeAllowed(env)) return null;
+  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) return null;
+  return { provider: "openai", endpoint: OPENAI_CHAT_ENDPOINT, apiKey, model: (env.EXAM_BRAIN_MODEL ?? "").trim() || OPENAI_DEFAULT_MODEL };
+}
 
 /** DeepSeek 本家 API（OpenAI 互換）。Azure と同じ変換処理がそのまま使える */
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
@@ -106,6 +127,8 @@ export type AltProviderConfig = {
    * 書いた名前だけ、その相手（provider の鍵・モデル）に回す。鍵の無い相手は落とす（fail-closed）。空なら今までどおり LLM_ALT_ACTIONS だけ
    */
   routes: Map<string, AltProviderConfig>;
+  /** 2026-11-24 #670: 試験だけ、ブレインの名札を回す相手（examBrainTarget） */
+  examBrain?: ProviderTarget | null;
 };
 
 /** 相手（provider）ごとの宛先・鍵・モデル。欠けていれば null */
@@ -132,6 +155,12 @@ export function readProviderTarget(env: EnvLike, provider: string): ProviderTarg
     const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
     if (!apiKey || !model) return null;
     return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model };
+  }
+  if (p === "openai") {
+    const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+    const model = (env.OPENAI_MODEL ?? OPENAI_DEFAULT_MODEL).trim();
+    if (!apiKey || !model) return null;
+    return { provider: "openai", endpoint: OPENAI_CHAT_ENDPOINT, apiKey, model };
   }
   if (p === "qwen") {
     // 鍵は QWEN_API_KEY だけ（DEEPSEEK_API_KEY を流用しない＝別の会社）。無ければ何もしない
@@ -247,6 +276,9 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const partsOn = brainDsPartsOn(env);
   const provider = explicitProvider || (testMode || finalSel || partsOn.length ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = [(env.LLM_ALT_ACTIONS ?? "").trim(), ...partsOn].filter(Boolean).join(",");
+  // 2026-11-24 #670: 別クラウドの設定が何も無くても、予算の振り分け（LLM_BUDGET_ROUTE）が on/shadow で OpenAI の鍵があれば包みを入れる（主の相手は OpenAI・actions は空＝予算の決まりの名札だけ回る）
+  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && ["on", "shadow"].includes((env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase());
+  if (budgetOnly) { const oa = readProviderTarget(env, "openai"); return oa ? { ...oa, actions: new Set<string>(), fallbackToAnthropic: true, allowAutoSend: false, testMode: null, routes: new Map() } : null; }
   if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
   //   旧は最初の振り分けの相手が主になり、LLM_ALT_ACTIONS=reply_generate が残っていると本文が Qwen に行った（PROVIDER 無しなら旧来は null＝Claude）
@@ -281,7 +313,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   // 2026-11-03 夜の一括の読みの既定の名札（batchAltDefaultActions）は、別クラウドの設定がある時だけ足す（無い時は今までどおり null＝回さない・
   //   主の相手や null の判定は変えない＝ほかの名札の振り分けは1つも変わらない）
   for (const a of batchAltDefaultActions(env)) actions.add(a);
-  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes };
+  const examBrain = testMode ? examBrainTarget(env) : null;
+  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes, ...(examBrain ? { examBrain } : {}) };
 }
 
 /** 参考（2026-09-19 の判断・readProviderTarget に移した）:
@@ -302,6 +335,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 
 /** この名前の呼び出しを実際に受ける相手（名前ごとの振り分けがあればそれ・無ければ主） */
 export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
+  // 2026-11-24 #670: 試験だけ、ブレインの名札は EXAM_BRAIN_PROVIDER の相手（OpenAI）
+  if (cfg.examBrain && isBrainRouteName(routeName)) return { ...cfg, ...cfg.examBrain, routes: new Map() };
   const base0 = (routeName && cfg.routes?.get(routeName)) || cfg;
   // 2026-10-21 書く役の flash（writer-flash-scenes.ts・WRITER_FLASH_SCENES）: 名札 reply_generate_flash は同じ DeepSeek の鍵で flash のモデルに送る
   // 2026-10-22 AIX のブレイン（指揮官・実行役・aix-brain.ts）も DeepSeek の時は flash（伏せた材料だけ・申込以降／審査の事情は入口で Claude に固定）
@@ -367,6 +402,8 @@ export const DESK_DEEPSEEK_ACTIONS: ReadonlySet<string> = new Set(["aix_desk_com
 
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
   if (!cfg || !routeName) return false;
+  // 2026-11-24 #670: 試験だけ、ブレインの名札を OpenAI に（examBrainTarget）
+  if (cfg.examBrain && isBrainRouteName(routeName) && isTestModeAllowed(process.env)) return true;
   if (cfg.actions.has(routeName)) return true;
   // 2026-10-21 書く役の flash: 返信生成（reply_generate）を DeepSeek に回している時だけ、同じ門で回す（Claude の構成なら回さない）
   if (routeName === WRITER_FLASH_ACTION) return cfg.provider === "deepseek" && cfg.actions.has("reply_generate");
@@ -584,7 +621,9 @@ export function toOpenAIBody(
   model: string,
   opts: { disableThinking?: boolean; allowStream?: boolean; jsonSchemaToJsonMode?: boolean;
     /** 思考の切り方。deepseek（既定）= thinking:{type:"disabled"}／qwen（DashScope）= enable_thinking:false */
-    thinkingStyle?: "deepseek" | "qwen" } = {},
+    thinkingStyle?: "deepseek" | "qwen";
+    /** 2026-11-24 #670: OpenAI（max_completion_tokens・temperature を送らない・思考は reasoning_effort） */
+    openai?: { reasoningEffort?: string | null } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -614,6 +653,18 @@ export function toOpenAIBody(
   const thinkingField = !thinking ? {}
     : opts.thinkingStyle === "qwen" ? { enable_thinking: thinking.type === "enabled" }
     : { thinking };
+  if (opts.openai) {
+    // 思考（reasoning）の分も max_completion_tokens に入る＝Anthropic の max_tokens の2倍を上限にする（思考で本文が空にならないように）
+    const maxOut = Math.max(typeof body.max_tokens === "number" ? body.max_tokens : 4096, 4096) * 2;
+    return {
+      model,
+      messages,
+      max_completion_tokens: maxOut,
+      ...(opts.openai.reasoningEffort ? { reasoning_effort: opts.openai.reasoningEffort } : {}),
+      ...(schemaNote ? { response_format: { type: "json_object" } } : {}),
+      ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
+    };
+  }
   return {
     model,
     messages,
@@ -918,18 +969,19 @@ async function callOpenAICompatible(
   guard: AltBusyGuard = readBusyGuard({ DEEPSEEK_FALLBACK_CLAUDE: "off" }),
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
-  const allowStream = cfg.provider === "deepseek";
+  const allowStream = cfg.provider === "deepseek" || cfg.provider === "openai"; // 2026-11-24 #670: OpenAI の SSE も同じ形（include_usage）
   // テスト用の切り替えの時だけ構造化出力を JSON モードに移す（本番の経路は今までどおり）
   const testShape = !!cfg.testMode;
   // 2026-09-29 Qwen も思考は既定で切る（判定・分類の用途）。切り方は DashScope の enable_thinking
   const payload = toOpenAIBody(body, cfg.model, {
-    disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape,
+    disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape || cfg.provider === "openai",
     thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
+    ...(cfg.provider === "openai" ? { openai: { reasoningEffort: (process.env.EXAM_BRAIN_REASONING ?? process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null } } : {}),
   });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
-    headers: cfg.provider === "deepseek" || cfg.provider === "qwen"
+    headers: cfg.provider === "deepseek" || cfg.provider === "qwen" || cfg.provider === "openai"
       ? { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` }
       // Azure は api-key / Authorization のどちらでも通るので両方送る
       : { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
@@ -1108,7 +1160,23 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
     //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
     if (isPostApplyCall(headers)) return toClaude("申込以降の会話（個人情報の歯止め・YUMA なら status_manual_back_at を最新に）");
-    if (!shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
+    // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24「Claude はあと $25 使ったら OpenAI に切り替える」）: LLM_BUDGET_ROUTE（既定 off）。
+    //   今月の Claude の使用額が CLAUDE_SWITCH_AT_USD を超えたら、係の表（llm-budget-route.BUDGET_ROLE_TABLE）の名札だけ OpenAI に回す。
+    //   自動返信・申込以降は上で Claude に戻している。下の時刻の線・個人の値の網はそのまま通す（DeepSeek と同じ歯止め）。テストの間は使わない（試験は EXAM_BRAIN_PROVIDER）
+    let budgetTarget: AltProviderConfig | null = null;
+    let budgetFallback = true;
+    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "" && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
+      try {
+        const [{ budgetDecisionFor }, { supabase: sbBudget }] = await Promise.all([import("./llm-budget-route-server"), import("./supabase-server")]);
+        const d = await budgetDecisionFor(sbBudget, routeName);
+        if (d.route === "openai" && d.model) {
+          const oa = readProviderTarget(process.env, "openai");
+          if (d.shadow || !oa) console.log(JSON.stringify({ tag: "llm-budget", route: routeName, role: d.role, model: d.model, shadow: d.shadow, noKey: !oa, reason: d.reason }));
+          else { budgetTarget = { ...cfg, ...oa, model: d.model, routes: new Map() }; budgetFallback = d.fallbackToClaude; }
+        }
+      } catch (e) { console.warn("[llm-budget] 振り分けを決められない → 今まで通り:", e instanceof Error ? e.message : String(e)); }
+    }
+    if (!budgetTarget && !shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
 
     // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 二重の鍵。
     //   入口が線を引いた印（ヘッダ優先・無ければリクエストの箱）が無い会話の呼び出し・blocked は回さない。
@@ -1201,9 +1269,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const started = Date.now();
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）があればその相手（Qwen 等）・無ければ主の相手
-    const target = targetConfigFor(cfg, routeName);
+    const target = budgetTarget ?? targetConfigFor(cfg, routeName);
     // 2026-10-15 Claude に作り直してよい呼び出しか（物件の判断・読み取り・テストの間・LLM_ALT_FALLBACK=off は戻さない＝遮断もしない）
-    const mayFallBack = guard.enabled && cfg.fallbackToAnthropic && !cfg.testMode && !(routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName));
+    const mayFallBack = budgetTarget ? budgetFallback : guard.enabled && cfg.fallbackToAnthropic && !cfg.testMode && !(routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName));
     // Claude に戻す時、呼び出し側の signal が DeepSeek を待つ間に切れていたら新しい 45秒で送る
     //   （10/15 13:01 AIX property_check_result: DeepSeek 90秒の後に 25秒の signal で Claude を呼び 3ms で fetch_error）
     const claudeInit = (): RequestInit | undefined => (guard.enabled && init?.signal?.aborted ? { ...init, signal: AbortSignal.timeout(45_000) } : init);
@@ -1259,6 +1327,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         status: 0, errorType: altFailureType(e), durationMs: Date.now() - started,
         sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
+      // 2026-11-24 #670: 予算で OpenAI に回した物は係の表の fallbackToClaude で決める（既定は全部 Claude に戻す＝下書きが出ないのを避ける）
+      if (budgetTarget) { if (!budgetFallback) throw e; return original(input as RequestInfo, claudeInit()); }
       if (!cfg.fallbackToAnthropic) throw e;
       // 2026-09-26 テスト用の切り替えの間は**失敗しても Claude に戻さない**（失敗は失敗として出す）。
       //   理由: 戻すと、費用が黙って Claude に漏れる＋「DeepSeek で回したつもりの結果」が実は Claude の結果になり、試行錯誤の比較が混ざる。

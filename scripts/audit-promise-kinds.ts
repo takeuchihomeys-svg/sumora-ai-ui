@@ -103,9 +103,9 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("audit-promise-kinds.ts")) {
       (q) => (q as unknown as { eq: (a: string, b: string) => { gte: (a: string, b: string) => { order: (a: string, b: object) => never } } }).eq("status", "promised").gte("sent_at", new Date(Date.parse(since) - 86_400_000).toISOString()).order("sent_at", { ascending: true }));
     type C = { conversation_id: string | null; notes: string | null; created_at: string; is_done: boolean | null; done_at?: string | null };
     const cal = await page<C>("calendar_events", "conversation_id, notes, created_at, is_done, done_at",
-      (q) => (q as unknown as { gte: (a: string, b: string) => { order: (a: string, b: object) => never } }).gte("created_at", new Date(Date.parse(since) - 86_400_000).toISOString()).order("created_at", { ascending: true }));
+      (q) => (q as unknown as { gte: (a: string, b: string) => { order: (a: string, b: object) => never } }).gte("created_at", new Date(Date.parse(since) - 15 * 86_400_000).toISOString()).order("created_at", { ascending: true }));
 
-    type Row = { conv: string; at: string; type: PromiseType; watch: string | null; ledger: string[]; contact: boolean; meeting: boolean; openEnded: boolean; fact: boolean; calendar: boolean; key: string; shape: string; bucket: OtherBucket | null; wide: string | null; text: string; convFull: string };
+    type Row = { conv: string; at: string; type: PromiseType; watch: string | null; ledger: string[]; contact: boolean; meeting: boolean; openEnded: boolean; fact: boolean; calendar: boolean; calBefore: boolean; key: string; shape: string; bucket: OtherBucket | null; wide: string | null; text: string; convFull: string };
     const rows: Row[] = [];
     for (const m of msgs) {
       const text = String(m.text ?? "");
@@ -115,13 +115,15 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("audit-promise-kinds.ts")) {
       const contact = !!parseContactPromise(text, m.created_at);
       const fact = facts.some((f) => f.conversation_id === m.conversation_id && ((m.line_message_id && f.line_message_id === m.line_message_id) || Math.abs(Date.parse(f.sent_at) - atMs) <= 120_000));
       const calendar = cal.some((c) => c.conversation_id === m.conversation_id && /^\s*(?:【必ず】|【連絡日 )/.test(c.notes ?? "") && Math.abs(Date.parse(c.created_at) - atMs) <= 600_000);
+      // 前からの【必ず】の行がこの通の時に開いていた（planPromiseInsert が同じ種類の行を重ねない＝カレンダーに新しい行が無くても記録はある）。done_at の無い済みの行は時刻が分からないので「開いていた」に数えない
+      const calBefore = cal.some((c) => c.conversation_id === m.conversation_id && /^\s*【必ず】/.test(c.notes ?? "") && Date.parse(c.created_at) < atMs - 600_000 && (!c.is_done || (!!c.done_at && Date.parse(c.done_at) > atMs)));
       for (const c of clauses) {
         const watch = promiseKindNameOf(c, { PROMISE_KIND_WIDE: argv.includes("--wide") ? "on" : "off" });
         const ledger = classifyStaffTextFacts(c, m.created_at).filter((e) => e.status === "promised").map((e) => String(e.kind));
         const meeting = MEETING_PROMISE_RE.test(c.normalize("NFKC"));
         const cContact = contact && !!parseContactPromise(c, m.created_at);
         const type = promiseTypeOf({ watch: watch === "other" ? null : watch, ledger: ledger.length ? ledger : [], contact: cContact, meeting });
-        rows.push({ conv: m.conversation_id.slice(0, 8), at: m.created_at, type, watch, ledger, contact: cContact, meeting, openEnded: promiseOpenEnded(c), fact, calendar, key: shapeKey(c), shape: maskedShape(c), bucket: type === "その他" ? otherBucketOf(c) : null, wide: type === "その他" ? promiseWideKindOf(c) : null, text: c, convFull: m.conversation_id });
+        rows.push({ conv: m.conversation_id.slice(0, 8), at: m.created_at, type, watch, ledger, contact: cContact, meeting, openEnded: promiseOpenEnded(c), fact, calendar, calBefore, key: shapeKey(c), shape: maskedShape(c), bucket: type === "その他" ? otherBucketOf(c) : null, wide: type === "その他" ? promiseWideKindOf(c) : null, text: c, convFull: m.conversation_id });
       }
     }
     const by = <K extends string>(xs: Row[], f: (r: Row) => K) => xs.reduce((a, r) => { const k = f(r); a[k] = (a[k] ?? 0) + 1; return a; }, {} as Record<string, number>);
@@ -131,7 +133,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("audit-promise-kinds.ts")) {
     // 網どうしのずれ: 見張りが拾うが台帳が拾わない（記録に残らない＝画面のカレンダーに出ない）・台帳が拾うが見張りが拾わない（期日超えに出ない）
     const watchOnly = typed.filter((r) => r.watch && r.watch !== "other" && ["pickup", "check", "estimate"].includes(r.watch) && !r.ledger.length);
     const ledgerOnly = typed.filter((r) => r.ledger.length && (!r.watch || r.watch === "other"));
-    const recordedOf = (xs: Row[]) => ({ n: xs.length, fact: xs.filter((r) => r.fact).length, calendar: xs.filter((r) => r.calendar).length });
+    const recordedOf = (xs: Row[]) => ({ n: xs.length, fact: xs.filter((r) => r.fact).length, calendar: xs.filter((r) => r.calendar).length, calOpenBefore: xs.filter((r) => !r.calendar && r.calBefore).length, noCalendar: xs.filter((r) => !r.calendar && !r.calBefore).length });
     const shapes = Object.entries(by(other, (r) => r.key)).sort((a, b) => b[1] - a[1]);
     const samples: Record<string, string[]> = {};
     for (const r of other) { (samples[r.key] ??= []); if (samples[r.key].length < 4 && !samples[r.key].includes(r.shape)) samples[r.key].push(`${r.conv} ${r.shape}`); }

@@ -576,6 +576,26 @@ async function main() {
   const cost = Math.round(runs.reduce((a, r) => a + Number(r.cost_usd ?? 0), 0) * 100) / 100;
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
 
+  // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
+  const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
+  try {
+    const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
+    resetBudgetCache();
+    const ms = await monthSums(sb as never, now, {});
+    const bc = readBudgetConfig(process.env);
+    if (ms) {
+      const ls = [
+        monthSpendLine({ provider: "Claude", spendUsd: ms.claudeUsd * bc.factor, creditUsd: bc.claudeCreditUsd, nowMs: now }),
+        monthSpendLine({ provider: "OpenAI", spendUsd: ms.openaiUsd, creditUsd: bc.openaiCreditUsd, nowMs: now }),
+        monthSpendLine({ provider: "DeepSeek", spendUsd: ms.deepseekUsd, creditUsd: 0, nowMs: now }),
+      ];
+      if (!only || doCandidates) lines.push("### API の使用額（今月・llm_usage_logs の記録から・Console と合わない分は CLAUDE_COST_FACTOR）",
+        ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
+        `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}`);
+      for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
+    }
+  } catch (e) { console.warn("[self-improve] API の使用額を読めない:", e instanceof Error ? e.message : String(e)); }
+
   // 3 組む
   const gaps = [...coreFix.map((x) => `芯: ${x}`), ...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
   const examPtr = await pointersForExam(sb).catch(() => []);
@@ -605,6 +625,7 @@ async function main() {
     const rows = [
       { day, metric: "reply_match", scope: "takeuchi", value: mTk.match, n: mTk.n }, { day, metric: "reply_match", scope: "all", value: mAll.match, n: mAll.n },
       { day, metric: "aix_first_match", scope: "takeuchi", value: mMain.firstTk.rate, n: mMain.firstTk.n }, { day, metric: "aix_first_match", scope: "all", value: mMain.firstAll.rate, n: mMain.firstAll.n },
+      ...spendRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       { day, metric: "exam_cost_usd", scope: "all", value: cost, n: runs.length }, { day, metric: "exam_worse_runs", scope: "all", value: worse.length, n: runs.length },
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
       // 2026-11-23 作業員N2（統括役の頼み）: 穴のまとまりの数（上）は残し、まとまりが表す行の数を並べる（not_subdivided の 8 は地図の7行＋設計知見 89行＋欄4つ）
