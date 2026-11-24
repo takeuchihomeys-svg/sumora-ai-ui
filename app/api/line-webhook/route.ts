@@ -13,6 +13,7 @@ import { resolveEventTarget, groupConversationName, displayMemberCount, parseSta
 // 2026-09-27: お客様の文字の発言の処理は app/lib/line-webhook-text.ts へ移した（お客様役のテスト入口と同じ関数を通すため・中身は同じ）
 import { type AccountConfig, ACCOUNTS, fetchLineProfile, getDb, ensureConversation, updateProfileAsync, handleTextMessage, tryPromoteToApplying } from "@/app/lib/line-webhook-text";
 import { inboxPut, inboxDrain, replayAtOf, lineInboxOn, REPLAY_HEADER } from "@/app/lib/line-webhook-inbox";
+import { lineWebhookGapsOn, placeholderTextOf } from "@/app/lib/line-webhook-gaps"; // 2026-11-24 作業員A（#437・既定 off）
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 // 2026-09-13: 画像は読み取り（最大 IMAGE_READ_WAIT_MS）→ ブレイン（最大約90s・実行中に読み取りが終わった分の再分析1回）を直列にしたので 300 に
@@ -684,6 +685,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // secret未設定のアカウントは検証不能のため処理を拒否（fail-close）
   if (!matchedAccount.secret) {
     console.error("[line-webhook] channel secret未設定のため処理を拒否:", matchedAccount.key);
+    // 2026-11-24 作業員A（#437・LINE_WEBHOOK_GAPS=on の時だけ）: 本文を捨てずに貯める（入れ直しの時に署名を確かめる）
+    if (lineWebhookGapsOn() && !req.headers.get(REPLAY_HEADER)) await inboxPut(rawBody, signature, `secret_missing:${matchedAccount.key}`, "webhook");
     return NextResponse.json({ error: "channel secret not configured" }, { status: 500 });
   }
   const valid = await verifySignature(rawBody, signature, matchedAccount.secret);
@@ -936,6 +939,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (!ok) anyFailed = true;
       continue;
     } else {
+      // 2026-11-24 作業員A（#437・LINE_WEBHOOK_GAPS=on の時だけ）: 動画・音声・位置情報などを捨てずに「[動画]」等の1行で残す（スタンプと同じ道・下書きは作らない）
+      const ph = lineWebhookGapsOn() ? placeholderTextOf(msgType) : null;
+      if (ph) {
+        const ok = await handleTextMessage(userId, ph, matchedAccount, event.message?.id, undefined, true, replayAtOf(event, isReplay));
+        if (!ok) anyFailed = true;
+        console.log(JSON.stringify({ tag: "line-webhook:other-type-saved", account: matchedAccount.key, msgType }));
+        continue;
+      }
       // 未対応msgType（video/audio等）: ブレイン誘導のみクリア（draft生成は不要）
       const db = getDb();
       const { data: conv } = await db
