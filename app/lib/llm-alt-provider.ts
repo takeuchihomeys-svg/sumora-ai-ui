@@ -43,6 +43,15 @@ export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen" | "openai";
 //   本番（Vercel・NODE_ENV=production）では isTestModeAllowed が false＝何もしない。本番の振り分け（予算で切り替える）は別の段（#670 の続き）
 export const OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 export const OPENAI_DEFAULT_MODEL = "gpt-6.2-sol";
+/**
+ * 2026-11-24 #670（統括役の頼み・試験だけ・EXAM_WRITER_GPT_NOTE=on）: 書き手の GPT 用の言い添え。11/24 の書き手の比べ（同じ8問）で Luna・Sol は竹内さんの文の 0.74〜0.80倍に短く切り、
+ *   謝りを「全然大丈夫です」で受けた（q032・竹内さんの決まり KB 317c7a7c: 要望を言い直して謝った時は送ってくれた事への感謝で受ける・apology-ack の「とんでもございません」）
+ */
+export const WRITER_GPT_NOTE = [
+  "【書き方の補い】",
+  "① 文の長さは、手本の文や前にこちらが送った通と同じくらいにする。短くまとめすぎない（受け止め・お答え・お礼・次の一手を省かない）。",
+  "② お客様が要望を言い直して謝った時・恐縮している時は「全然大丈夫です」で受けない。「とんでもございません😊！！」か、送って頂いた事・ご連絡頂いた事へのお礼で受ける。",
+].join("\n");
 /** ブレインの出力の主な欄（11/24 の試験で DeepSeek・Sol がほぼ全部の答案で返した欄）。試験だけの言い添え EXAM_BRAIN_JSON_KEYS=on で使う */
 export const BRAIN_OUTPUT_KEYS: readonly string[] = ["reply_mode", "action", "aix", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "turn_contract", "reason"];
 /** ブレインの名札か（brain・brain_*。名前で Claude に固定した部品 *_claude は外す） */
@@ -649,7 +658,9 @@ export function toOpenAIBody(
       /** 2026-11-24 #670: OpenAI の自動キャッシュの束ね（係ごと・prompt_cache_key） */
       cacheKey?: string | null;
       /** 2026-11-24 #670（試験だけ・EXAM_BRAIN_JSON_KEYS=on）: 出力の欄の言い添え＋JSON モード（Luna が action だけの JSON を返した） */
-      jsonKeys?: readonly string[] | null } } = {},
+      jsonKeys?: readonly string[] | null;
+      /** 2026-11-24 #670（試験だけ・EXAM_WRITER_GPT_NOTE=on）: 書き手の GPT 用の言い添え（system の最後＝キャッシュの先頭は変えない） */
+      writerNote?: string | null } } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -681,6 +692,7 @@ export function toOpenAIBody(
     : { thinking };
   if (opts.openai) {
     const keys = opts.openai.jsonKeys?.length ? opts.openai.jsonKeys : null;
+    if (opts.openai.writerNote) { if (messages[0]?.role === "system") messages[0].content += `\n\n${opts.openai.writerNote}`; else messages.unshift({ role: "system", content: opts.openai.writerNote }); }
     if (keys) {
       const note = `\n\n【出力の形（必須）】JSON オブジェクトを1つだけ出す。次の欄を全部入れる（分からない欄も空の値で入れる・欄を省かない）: ${keys.join(", ")}`;
       if (messages[0]?.role === "system") messages[0].content += note; else messages.unshift({ role: "system", content: note.trim() });
@@ -1025,6 +1037,7 @@ async function callOpenAICompatible(
       reasoningEffort: (isWriterRouteName(routeName) ? process.env.EXAM_WRITER_REASONING ?? process.env.EXAM_BRAIN_REASONING : process.env.EXAM_BRAIN_REASONING)?.trim() || (process.env.OPENAI_REASONING_EFFORT ?? "").trim() || null,
       cacheKey: routeName ? `sumora-${routeName}` : null,
       jsonKeys: cfg.testMode && isBrainRouteName(routeName) && (process.env.EXAM_BRAIN_JSON_KEYS ?? "").trim().toLowerCase() === "on" ? BRAIN_OUTPUT_KEYS : null,
+      writerNote: cfg.testMode && isWriterRouteName(routeName) && (process.env.EXAM_WRITER_GPT_NOTE ?? "").trim().toLowerCase() === "on" ? WRITER_GPT_NOTE : null,
     } } : {}),
   });
   if (!payload) return null;

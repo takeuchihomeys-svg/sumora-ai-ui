@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/exam-brain-openai.test.ts
 // 2026-11-24 作業員L（台帳 #670）: 試験だけブレインを OpenAI に回す切り替え（EXAM_BRAIN_PROVIDER=openai）と OpenAI の本文・単価
 import assert from "node:assert/strict";
-import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT, createSseConverter, openaiGuardOf } from "../llm-alt-provider";
+import { examBrainTarget, isBrainRouteName, readProviderTarget, toOpenAIBody, OPENAI_CHAT_ENDPOINT, createSseConverter, openaiGuardOf, WRITER_GPT_NOTE } from "../llm-alt-provider";
 import { altPriceOf, altUsageUsd } from "../llm-price";
 
 let n = 0;
@@ -86,6 +86,15 @@ t("OpenAI 用の待ち時間（未設定は今まで通り）", () => {
   const o = openaiGuardOf(g, { OPENAI_FIRST_TOKEN_MS: "45000", OPENAI_TIMEOUT_MS: "120000" });
   assert.deepEqual([o.firstTokenMs, o.totalMs], [45_000, 120_000]);
   assert.equal(openaiGuardOf({ ...g, enabled: false }, { OPENAI_FIRST_TOKEN_MS: "45000" }).firstTokenMs, 15_000);
+});
+
+t("書き手の GPT 用の言い添えは system の最後（先頭は変えない）", () => {
+  const body = { model: "claude-x", max_tokens: 3000, system: "あなたは書き手", messages: [{ role: "user", content: "書いて" }] };
+  const p = toOpenAIBody(body as never, "gpt-6-luna", { openai: { writerNote: WRITER_GPT_NOTE } })!;
+  const sys = (p.messages as Array<{ content: string }>)[0].content;
+  assert.ok(sys.startsWith("あなたは書き手"));
+  assert.match(sys, /全然大丈夫です/);
+  assert.match(sys, /短くまとめすぎない/);
 });
 
 console.log(`exam-brain-openai: ${n} ok`);
