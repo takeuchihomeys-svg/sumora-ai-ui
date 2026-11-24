@@ -15,6 +15,32 @@ export const conductorOverduePromisesOn = (env: Env = typeof process !== "undefi
 /** 入口の統括で待つ上限（1会話分の読み・これを超えたら何も足さない） */
 export const OVERDUE_PROMISES_TIMEOUT_MS = 1500;
 
+/**
+ * 2026-11-25 作業員L（台帳 #664 の④・統括役の頼み「統括に渡す読みの期日超えの決め方が見張り・B1 と食い違う」）:
+ *   見張り（promiseDropOf）と統括の読み（overduePromisesOf）は、同じ時刻・同じ材料なら同じ答え（本番の5会話・28番で確かめた）。食い違いの元は呼ぶ側の2つ:
+ *   ① 時計: brain-core は「今」を会話の一番新しい通の時刻＋1ms（turnAt0）で渡す。見張りは本当の今。brain-sweep・generate-pending-drafts のように
+ *      最後の通より後で回る番では、その間に期限を過ぎた約束を数えない（7d5c6008: 11/24 19:38 JST の generate-pending-drafts は最後の通 13:37 の時刻で読み、15:39 に過ぎた確認の約束を 0 件）
+ *   ② 待ち: 1.5秒で切る。brain-sweep は米国（iad1）で回る事があり、DB（東京）の読みが間に合わない（8739fa57: 11/24 9:01 JST の brain-sweep は n=null・timedOut）
+ *   OVERDUE_NOW_CLOCK=shadow: 渡すのは今まで通り（最後の通の時刻）・本当の今で読んだ件数を記録だけ（brain:overdue-promises-now）。
+ *     試験は時刻が最後の通で止まる（REPLAY_FLOOR_FILE）ので off/on の差が出ない＝本番の記録で確かめる
+ *   OVERDUE_NOW_CLOCK=on（既定 off）: 「今」を本当の今に（試験の再生 REPLAY_FLOOR_FILE の時は今まで通り最後の通の時刻＝試験の時刻が崩れない）・待ちを 4秒に
+ */
+export const overdueNowClockOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OVERDUE_NOW_CLOCK ?? "").trim().toLowerCase() === "on";
+export const overdueNowClockShadow = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.OVERDUE_NOW_CLOCK ?? "").trim().toLowerCase() === "shadow";
+export const OVERDUE_PROMISES_TIMEOUT_MS_WIDE = 4000;
+/** 統括の読みに渡す「今」と待ちの上限（純関数） */
+export function overdueReadClock(o: { turnAt: string | null; nowMs: number; env?: Env }): { nowMs: number; timeoutMs: number; by: "turn" | "now"; shadowNowMs?: number } {
+  const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
+  const turnMs = o.turnAt ? Date.parse(o.turnAt) + 1 : null;
+  if (!overdueNowClockOn(env)) {
+    const base = { nowMs: turnMs ?? o.nowMs, timeoutMs: OVERDUE_PROMISES_TIMEOUT_MS, by: (turnMs != null ? "turn" : "now") as "turn" | "now" };
+    // shadow: 試験の再生でない時だけ・今の方が後の時だけ
+    return overdueNowClockShadow(env) && !String(env.REPLAY_FLOOR_FILE ?? "").trim() && turnMs != null && o.nowMs > turnMs ? { ...base, shadowNowMs: o.nowMs } : base;
+  }
+  if (String(env.REPLAY_FLOOR_FILE ?? "").trim() && turnMs != null) return { nowMs: turnMs, timeoutMs: OVERDUE_PROMISES_TIMEOUT_MS_WIDE, by: "turn" };
+  return { nowMs: Math.max(o.nowMs, turnMs ?? 0), timeoutMs: OVERDUE_PROMISES_TIMEOUT_MS_WIDE, by: "now" };
+}
+
 const KIND_JA: Record<string, string> = { pickup: "物件のピックアップ", check: "募集状況・管理会社への確認", estimate: "御見積書" };
 
 const jstDay = (iso: string) => {
