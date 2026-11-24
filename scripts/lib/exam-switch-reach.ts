@@ -25,7 +25,7 @@ export type SwitchReachDef = {
   fixes?: { turn?: TurnTestId; scene?: readonly string[] };
 };
 /** 番の文の判定の名前（scripts/lib/exam-room.ts が app/lib/decisions-1103 の関数で判定する） */
-export type TurnTestId = "closed_thanks" | "layout_ask" | "far_other";
+export type TurnTestId = "closed_thanks" | "layout_ask" | "far_other" | "equip_wish";
 export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   // 2026-11-25 作業員A（#688）: AIX ごとの状態の札をブレインの材料に入れた番（AIX_STATE_CARD=on）＝material_marks.aix_state_card（字数）
   AIX_STATE_CARD: { mark: "aix_state_card" },
@@ -38,6 +38,8 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   //   EQUIPMENT_WISH_LOOKUP＝お客様の文の言い方（detectEquipmentQuestion の wish）・対象はお客様の画像（messages）からも／SITUATION_TIMELINE_WIDE＝お客様の発言40通（毎番ある）／
   //   INFO_FILL_MAP＝地図の駅の埋まり（毎番プロンプトに足す）
   PROPERTY_THREAD_PHOTO_SENT: { needs: ["aix_usage_logs"] },
+  // 2026-11-25 作業員L（#684・統括役の頼み）: brain-core は estimate_records（この会話の行）を読んで estimateRecordsBlock に渡す・物件名と時刻のある行が0なら何も足さない
+  BRAIN_ESTIMATE_RECORDS: { needs: ["estimate_records"] },
   PICKUP_WHY_TO_BRAIN: { mark: "pickup_why", markSince: "4b86a9d72", needs: ["property_pickups"] },
   SIP_JUDGE: { mark: "pickup_why_sip", markSince: "4b86a9d72", needs: ["sent_image_properties"] },
   EXAM_LEDGER_SIP: { needs: ["sent_image_properties"] },
@@ -63,7 +65,9 @@ export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   ROUTE_TO_BRIEF: { mark: "route_brief", markSince: "9ca8564e7", partial: "指示書に地図の欄が入った番まで（書き手に届いたかは下書きの段で見る）" },
   APPLY_ROUTE_PATH_LINE: { mark: "route_path_line", markSince: "9ca8564e7" },
   APPLY_ROUTE_SUBSTATE: { mark: "route_substate", markSince: "9ca8564e7" },
-  EQUIPMENT_WISH_LOOKUP: { mark: "equip_wish", markSince: "5351dc589" },
+  // fixes（2026-11-25 作業員L・#684）: スイッチが変えるのは detectEquipmentQuestion の読み（希望の言い方・カウンターキッチン）だけ。呼ぶ所（brain-core・generate-reply・深い確かめ）はどれもその番のお客様の文を渡す
+  //   ＝その番の文で on と off の読みが違う番だけ効く（equip-wish-pickup はスイッチに関係なく on で読む）
+  EQUIPMENT_WISH_LOOKUP: { mark: "equip_wish", markSince: "5351dc589", fixes: { turn: "equip_wish" } },
   // 2026-11-23 作業員A（統括役の頼み・#662 の「持つ」が欠けた土台の部品）
   TURN_READ: { metaKey: "turn_read" },
   LATENT_FIVE: { metaKey: "latent_five" },

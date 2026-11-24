@@ -9,6 +9,7 @@
 import { SWITCH_REACH, type SwitchReachDef, type TurnTestId } from "./exam-switch-reach";
 import { SWITCH_SCENE } from "./exam-narrow";
 import { closedThanksLine, layoutAskLine, farOtherFirstLine } from "../../app/lib/decisions-1103";
+import { detectEquipmentQuestion } from "../../app/lib/equipment-question";
 
 export type RoomTurn = {
   conv: string; at: number; isReply: boolean; mismatch: boolean; materials: Readonly<Record<string, number>>;
@@ -18,12 +19,16 @@ export type RoomTurn = {
 export type RoomDecision = "unknown" | "block" | "defer" | "ok";
 export type RoomResult = { decision: RoomDecision; applicable: number; room: number; turns: number; why: string };
 export const ROOM_MIN_OK = 3;
+/** 2026-11-25 作業員L（なぞりで分かった事）: 本番の効く番がこれより少ない時は決めない。h1118-wish3 は本番の効く番 2・余地0 で「積まない」になったが、試験では2組とも良くなった（試験の問題は本番の14日より前の番から作る＝本番の番が少ないと余地を言えない） */
+export const ROOM_MIN_APPLICABLE = 10;
 
 /** 番の文の判定（コードの条件そのもの＝その関数が1行を出す番だけ効く） */
 export const TURN_TESTS: Record<TurnTestId, (t: RoomTurn) => boolean> = {
   closed_thanks: (t) => !!closedThanksLine(t.text ?? "", t.lastStaff ?? ""),
   layout_ask: (t) => !!layoutAskLine(t.text ?? ""),
   far_other: (t) => !!farOtherFirstLine(t.text ?? ""),
+  // on と off で読みが違う番だけ（同じなら答えも同じ）
+  equip_wish: (t) => JSON.stringify(detectEquipmentQuestion(t.text ?? "", { EQUIPMENT_WISH_LOOKUP: "on" })) !== JSON.stringify(detectEquipmentQuestion(t.text ?? "", { EQUIPMENT_WISH_LOOKUP: "off" })),
 };
 
 export function roomGateMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "warn" | "on" {
@@ -31,7 +36,7 @@ export function roomGateMode(env: Record<string, string | undefined> = typeof pr
   return v === "off" ? "off" : v === "on" ? "on" : "warn";
 }
 
-export function roomOf(o: { onSwitches: readonly string[]; turns: readonly RoomTurn[]; table?: Record<string, SwitchReachDef>; scene?: Readonly<Record<string, { where: string }>> }): RoomResult {
+export function roomOf(o: { onSwitches: readonly string[]; turns: readonly RoomTurn[]; table?: Record<string, SwitchReachDef>; scene?: Readonly<Record<string, { where: string }>>; minApplicable?: number }): RoomResult {
   const table = o.table ?? SWITCH_REACH, scene = o.scene ?? SWITCH_SCENE;
   const sw = o.onSwitches.filter(Boolean);
   if (!sw.length) return { decision: "unknown", applicable: 0, room: 0, turns: o.turns.length, why: "on のスイッチが無い" };
@@ -46,6 +51,8 @@ export function roomOf(o: { onSwitches: readonly string[]; turns: readonly RoomT
   };
   const ap = o.turns.filter((t) => sw.some((s) => appliesOne(s, t)));
   const room = ap.filter((t) => t.mismatch).length;
+  const minAp = o.minApplicable ?? ROOM_MIN_APPLICABLE;
+  if (ap.length < minAp) return { decision: "unknown", applicable: ap.length, room, turns: o.turns.length, why: `本番の効く番が少ない（${ap.length}/${o.turns.length}・${minAp} 未満）＝余地を言えない` };
   const decision: RoomDecision = room === 0 ? "block" : room < ROOM_MIN_OK ? "defer" : "ok";
   return { decision, applicable: ap.length, room, turns: o.turns.length, why: `効く番 ${ap.length}/${o.turns.length}・食い違い（余地）${room}` };
 }
