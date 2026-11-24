@@ -30,24 +30,32 @@ if (!WRITE && !process.argv.includes("--dry")) { console.error("--dry か --writ
   const has = rows.filter((r) => !post.includes(r) && r.ar?.node);
   const targets = rows.filter((r) => !post.includes(r) && !r.ar?.node).slice(0, MAX);
   console.log(`■ 判断のある会話（60日） ${rows.length}・申込以降で外す ${post.length}・もう駅がある ${has.length}・足す対象 ${rows.length - post.length - has.length}（今回 ${targets.length}）`);
-  const out: Array<{ id: string; before: unknown; analyzedAt: string | null; apply_route: Record<string, unknown> | null; why?: string }> = [];
+  // sentAfter: お客様の最後の連投より後に、こちらが送った物の記録（AIX・送った物件）がある＝駅が今より一つ手前に見えうる（2026-11-24 統括役の頼み）
+  const out: Array<{ id: string; before: unknown; analyzedAt: string | null; apply_route: Record<string, unknown> | null; why?: string; sentAfter?: string[] }> = [];
   for (const r of targets) {
     try {
       const input = await loadCustomerStateInput(r.id);
       if (!input) { out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, apply_route: null, why: "材料が読めない" }); continue; }
       const lastCust = [...input.messages].reverse().find((m) => m.sender === "customer");
       if (!lastCust) { out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, apply_route: null, why: "お客様の通が無い" }); continue; }
-      const T = Date.parse(lastCust.createdAt) + 1000;
+      // --basis=now: 今の時点で当てる（その後にこちらが送った物も入る）。既定は最後の連投の時点（統括の判断と同じ時点）
+      const T = arg("basis") === "now" ? Date.now() : Date.parse(lastCust.createdAt) + 1000;
       const loc = locateAt(input, T, false);
-      out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, apply_route: { node: loc.loc.node, branch: loc.loc.branch, next: loc.loc.next?.label?.slice(0, 40) ?? null, next_aix: (loc.loc.next?.aix ?? []).slice(0, 3), substate: loc.sub1, src: "backfill", at: new Date().toISOString(), basis: new Date(T).toISOString() } });
+      const sentAfter = [...new Set([
+        ...input.aixRows.filter((a) => Date.parse(a.sent_at ?? a.created_at) > T).map((a) => String(a.aix_type ?? "aix")),
+        ...input.sentProperties.filter((p) => Date.parse(p.sent_at) > T).map(() => "物件"),
+      ])];
+      out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, sentAfter, apply_route: { node: loc.loc.node, branch: loc.loc.branch, next: loc.loc.next?.label?.slice(0, 40) ?? null, next_aix: (loc.loc.next?.aix ?? []).slice(0, 3), substate: loc.sub1, src: "backfill", at: new Date().toISOString(), basis: new Date(T).toISOString() } });
     } catch (e) { out.push({ id: r.id, before: r.ar, analyzedAt: r.brain_analyzed_at, apply_route: null, why: (e instanceof Error ? e.message : String(e)).slice(0, 80) }); }
   }
   const ok = out.filter((o) => o.apply_route);
   const byNode = new Map<string, number>(); for (const o of ok) { const k = `${(ROUTE_NODES as Record<string, { name: string }>)[String(o.apply_route!.node)]?.name ?? o.apply_route!.node}${o.apply_route!.branch ? `／分:${(ROUTE_BRANCHES as Record<string, { name: string }>)[String(o.apply_route!.branch)]?.name ?? o.apply_route!.branch}` : ""}`; byNode.set(k, (byNode.get(k) ?? 0) + 1); }
   console.log(`  当てられた ${ok.length}・当てられない ${out.length - ok.length}（${[...new Set(out.filter((o) => !o.apply_route).map((o) => o.why))].join("・")}）`);
+  const sa = ok.filter((o) => o.sentAfter?.length);
+  console.log(`  最後の連投より後にこちらが送った記録がある（駅が一つ手前に見えうる）: ${sa.length}/${ok.length}（${[...new Set(sa.flatMap((o) => o.sentAfter ?? []))].join("・")}）`);
   console.log(`  駅ごと: ${[...byNode.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
   console.log(`\n■ 見本10件（会話の id の先頭8字・名前は出さない）`);
-  for (const o of ok.slice(0, 10)) console.log(`  ${o.id.slice(0, 8)}: ${JSON.stringify({ node: o.apply_route!.node, branch: o.apply_route!.branch, next: o.apply_route!.next, substate: o.apply_route!.substate, basis: String(o.apply_route!.basis).slice(0, 16) })}`);
+  for (const o of ok.slice(0, 10)) console.log(`  ${o.id.slice(0, 8)}: ${JSON.stringify({ node: o.apply_route!.node, branch: o.apply_route!.branch, next: o.apply_route!.next, substate: o.apply_route!.substate, basis: String(o.apply_route!.basis).slice(0, 16) })}${o.sentAfter?.length ? `  ⚠その後に送った: ${o.sentAfter.join("・")}` : ""}`);
   if (!WRITE) { console.log(`\n（--dry: 書いていない）`); return; }
   // 控え（書く前の値）を先に残す
   writeFileSync(arg("backup"), JSON.stringify(out.map((o) => ({ id: o.id, before_apply_route: o.before ?? null, brain_analyzed_at: o.analyzedAt })), null, 1));
