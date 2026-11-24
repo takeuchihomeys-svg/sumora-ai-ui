@@ -716,6 +716,7 @@ function codeFromString(c: string): PathCode {
 // 2026-11-13 作業員22: 答案に残す欄の一覧（PLAN_KEYS）と planOf は scripts/lib/exam-plan-keys.ts に移した（brain-exam.ts は読み込むと試験が走るのでテストから読めない）
 export { planOf } from "./lib/exam-plan-keys";
 import { planOf } from "./lib/exam-plan-keys";
+import { examProfileVersions } from "../app/lib/provider-profile";
 const TRACE_KEYS = ["pickup_ready", "decision_source", "decision_source_no_aix", "two_stage", "dropped_direction", "scene_evidence", "aix_suppressed_by_accept_rate", "signal_aix_result", "checkpoint_stage", "customer_intent"];
 const AIX_JA: Record<string, string> = { property_recommendation: "物件オススメ", property_send: "物件を送る（ピックアップした）", property_pickup: "物件ピックアップ", property_search: "物件検索", viewing_invite: "内覧調整", meeting_place: "待ち合わせ場所（内覧の確定）", application_push: "申込へ", property_check_result: "物件確認した（管理会社に確認した結果）", acknowledge_check: "確認した", estimate_sheet: "見積書送る", cost_explain: "初期費用を説明", cost_breakdown: "初期費用について", condition_hearing: "条件ヒアリング（フォーム）", guarantor_info: "保証会社について", phone_call: "電話をかける", zenryoku_support: "全力サポート", followup_revive: "追客フォロー" };
 const ROUTE_JA: Record<string, string> = { reply: "返信の本文で答える", promise: "後でやると約束する返信（確認・見積・ピックアップ・撮影・交渉）", aix: "AIX（スタッフが確かめた事・検索の結果・見積・内覧の段取りを送る）", none: "答えない" };
@@ -1801,7 +1802,8 @@ async function main() {
     if (prevFp && readResults(LABEL).length && (prevFp.hash ?? "") !== ENV_FP.hash) throw new Error(`label ${LABEL} は別のスイッチの指紋で回した結果がある（前 ${prevFp.hash || "既定"}${prevFp.text ? `＝${prevFp.text}` : ""} ／ 今 ${formatEnvFp(ENV_FP)}）。別の --label で回す`);
   }
   console.log(`スイッチの指紋: ${formatEnvFp(ENV_FP)}`);
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, basis: THINK || null,
+  // 2026-11-24 作業員L（#670 の子）: 使い方の表の版（相手が openai の時だけ・答案と結果に必ず残す）
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ providerProfiles: examProfileVersions(process.env), envFp: { hash: ENV_FP.hash, text: ENV_FP.text, pairs: Object.fromEntries(ENV_FP.pairs) }, conv: LANES.length ? LANES.map((l) => l.name).join(",") : (L0.lease?.name ?? "YUMA"), ...(LANES.length ? { concurrency: LANES.length } : {}), layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, stage: STAGE, cassette: CASSETTE_MODE, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, basis: THINK || null,
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
@@ -1926,7 +1928,7 @@ async function main() {
     if (rep > 2 && repsOnlyIfDifferOn() && baseRowsById.size && firstTwoSameAsBase(donePP.get(p.id) ?? [], (baseRowsById.get(p.id) ?? []) as never)) { skippedReps.n++; skippedReps.sameAsBase++; continue; }
     if (EARLY_STOP && rep > 1 && majoritySettled(doneMaj.get(p.id) ?? [], REPS_OF ? Math.max(1, Math.min(REPEAT, REPS_OF[p.id] ?? 1)) : REPEAT)) { skippedReps.n++; skippedReps.settled++; continue; }
     const realBefore = nonJudgeReal(); startedReps = true;
-    const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
+    const row: ResultRow = { ...({ profiles: examProfileVersions(process.env) } as object), id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
     // 2026-11-05 作業員1（統括役の (c)・入力が同じ回の写しと片付けを軽くする前に、回ごとの段の時間を測る）: row.timing＝回の始めからの ms
     const T0 = performance.now(); const tm: Record<string, number> = {}; const mark = (k: string) => { tm[k] = Math.round(performance.now() - T0); }; // Date.now は試験の時計（exam-clock）で動かされる＝本物の経過は performance.now
