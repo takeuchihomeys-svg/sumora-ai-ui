@@ -32,7 +32,10 @@ for (const f of existsSync(join(Q, "done")) ? readdirSync(join(Q, "done")) : [])
   if (!res) continue;
   const ids = j.only.split(",").filter(Boolean);
   const t = Date.parse(j.createdAt);
-  const onSw = Object.entries(j.env ?? {}).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
+  // 試すスイッチ（依頼の switch の名前）だけ。env の on には係の設定（examEnv）の既定の物も混じる＝それで「表に無い」と止めない
+  const envOn = Object.entries(j.env ?? {}).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
+  const named = [...String(j.switch ?? "").matchAll(/[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+/g)].map((m) => m[0]);
+  const onSw = named.length ? named.filter((n) => envOn.includes(n) || !Object.keys(j.env ?? {}).length) : envOn;
   const resultsDir = join(j.cwd ?? ".", "scripts", "brain-exam", "results");
   const prior = readPriorLedger(resultsDir, new Set(ids), { nowMs: t });
   const off = offAt(t);
