@@ -35,5 +35,11 @@ ok("n 不足の駅は出さない", weakStationsOf(stationStatsOf(rep(9, { outco
 const adds = stationGapsToAdd(weakStationsOf(stationStatsOf([...rep(10, { outcome: "left" }), ...rep(10, { node: "pickup", outcome: "stuck", after: "pickup" })])), [`${stationGapPrefix("pickup")} 前の行`]);
 ok("同じ駅の行が開いていれば足さない・題の頭は駅", adds.length === 1 && adds[0].station === "estimate" && adds[0].title.startsWith(stationGapPrefix("estimate")) && !!adds[0].next);
 
+{
+  // 2026-11-24 作業員A: こちらの約束を72時間で果たしていない番は止まり・離れに数えない（こちら待ち）
+  const w = stationStatsOf([R({ outcome: "left", promiseWait: "not_fulfilled" }), R({ outcome: "left", promiseWait: "fulfilled" }), R({ outcome: "left" })])[0];
+  ok("こちら待ちは our_wait に・果たした後の離れと欄の無い番は離れのまま", w.our_wait === 1 && w.left === 2 && w.n === 3, w);
+  ok("こちら待ちが多くても弱い駅の過半数に入れない", weakStationsOf(stationStatsOf([...rep(6, { outcome: "left", promiseWait: "not_fulfilled" }), ...rep(4, { outcome: "left" })])).length === 0);
+}
 console.log(`route-station-trust: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);
