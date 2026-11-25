@@ -17,6 +17,16 @@ type Msg = { sender: string; text: string | null; created_at: string; image_url:
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
 const jst = (ms: number) => new Date(ms + 9 * 3_600_000);
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
+/** 直前のこちらの文の種類（確認の約束・探す約束・見積の約束・問いかけ・答えとその他） */
+function prevKindOf(m: { text: string | null; is_aix_generated: boolean | null } | undefined): string {
+  if (!m || m.is_aix_generated) return "—";
+  const t = String(m.text ?? "");
+  if (/確認させて頂きます|確認出来次第|確認でき次第/.test(t)) return "確認の約束";
+  if (/ピックアップ[^。！\n]{0,20}(?:お送り|させて頂きます)|出次第[^。！\n]{0,10}お送り/.test(t)) return "探す約束";
+  if (/(?:御見積|お見積|見積書)[^。！\n]{0,20}(?:作成|お送り|させて頂きます)/.test(t)) return "見積の約束";
+  if (/[?？]|でしょうか|いかがでしょう/.test(t)) return "問いかけ";
+  return "答え・その他";
+}
 
 (async () => {
   const rows = JSON.parse(readFileSync(arg("json"), "utf8")) as Row[];
@@ -54,11 +64,12 @@ const WD = ["日", "月", "火", "水", "木", "金", "土"];
       確認の結果が手元に: (r.mat?.checked ?? 0) > 0 || (r.mat?.taskResult ?? 0) > 0 ? "あり" : "なし",
       開いている約束: (r.prevPromise ?? []).length ? (r.prevPromise ?? []).join("+") : "なし",
       直前のこちらの一手: !prevStaff ? "なし（初回）" : prevStaff.is_aix_generated ? "AIX" : /確認させて頂きます|確認出来次第|確認でき次第/.test(String(prevStaff.text ?? "")) ? "確認の約束の文" : "ほかの文",
+      直前の文の種類: prevKindOf(prevStaff),
       聞き方: detectAvailabilityCheckContext(burstTxt) ? "募集状況を聞いた" : burst.some(isProp) ? "送っただけ" : String(r.burst ?? "other"),
       込み具合: (count ?? 0) >= 20 ? "20通以上" : (count ?? 0) >= 8 ? "8〜19通" : "7通以下",
     });
   }
-  const fields = ["時間帯", "曜日", "営業時間", "一手までの分", "送ってきた物件", "物件の種類", "今の通に物件", "確認の結果が手元に", "開いている約束", "直前のこちらの一手", "聞き方", "込み具合"];
+  const fields = ["直前の文の種類", "時間帯", "曜日", "営業時間", "一手までの分", "送ってきた物件", "物件の種類", "今の通に物件", "確認の結果が手元に", "開いている約束", "直前のこちらの一手", "聞き方", "込み具合"];
   const nR = out.filter((o) => o.move === "返信が先").length, nA = out.length - nR;
   console.log(`■ 前24時間にお客様が物件を送ってきた竹内さん本人の番 ${out.length}（返信が先 ${nR}・AIX が先 ${nA}）\n`);
   const summary: Array<{ field: string; gap: number; rows: Array<{ v: string; reply: number; aix: number; say: boolean }> }> = [];
