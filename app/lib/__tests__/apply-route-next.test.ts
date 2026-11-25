@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/apply-route-next.test.ts
 import { greetingSentTodayOf } from "../apply-route-next";
 import { applyRouteNextByTurnOn, refineRouteNextStep, withRefinedNext, daysUntilYmd, ROUTE_ORDER, routeDigestOn, routeDigestOf, lapsedViewingBranchOn, lapsedViewingOpens } from "../apply-route-next";
-import { MAIN_ROUTE, locateApplyRoute, applyRouteBrainTextIfEnabled, ROUTE_NODES, type ApplyRouteSignals } from "../apply-route-map";
+import { MAIN_ROUTE, locateApplyRoute, applyRouteBrainTextIfEnabled, ROUTE_NODES, buildApplyRouteBrainText, type ApplyRouteSignals } from "../apply-route-map";
 import { brainDecisionDigestExtra } from "../brain-decision-ledger";
 export {};
 let passed = 0, failed = 0;
@@ -113,6 +113,19 @@ console.log("■ 内覧が流れた（VIEWING_LAPSED_BRANCH・#621）");
   t("ほかの分かれ道（延期）が強い", applyRouteBrainTextIfEnabled({ ...s, routeType: "postpone_cancel" }, LON).loc?.branch === "postponed");
   t("内覧後でない駅は開かない", !lapsedViewingOpens({ node: "proposing", branch: null }, { viewingUnconfirmed: true }, LON));
   t("on の文も600字以内", on.text.length <= 600);
+}
+// 2026-11-25 作業員A（#728 成約データ・APPLY_ROUTE_NO_VIEWING_PATH）: 内覧なしの道
+{
+  const loc = { node: "estimate", branch: null, next: ROUTE_NODES.estimate.next } as never;
+  const off = refineRouteNextStep(loc, { routeType: "apply_intent" } as never, {});
+  const on = refineRouteNextStep(loc, { routeType: "apply_intent" } as never, { APPLY_ROUTE_NO_VIEWING_PATH: "on" });
+  t("内覧なしの道: off は選び直さない・on は申込の意思で申込のご案内", (off === null || off.rule !== "no_viewing_apply") && on?.rule === "no_viewing_apply" && !!on?.next.aix.includes("application_push"));
+  t("内覧なしの道: 申込の意思でない番は選ばない", refineRouteNextStep(loc, { routeType: "cost_question" } as never, { APPLY_ROUTE_NO_VIEWING_PATH: "on" })?.rule !== "no_viewing_apply");
+  const prev = process.env.APPLY_ROUTE_NO_VIEWING_PATH;
+  delete process.env.APPLY_ROUTE_NO_VIEWING_PATH; const t0 = buildApplyRouteBrainText({ node: "estimate", branch: null, next: ROUTE_NODES.estimate.next, aim: [] } as never);
+  process.env.APPLY_ROUTE_NO_VIEWING_PATH = "on"; const t1 = buildApplyRouteBrainText({ node: "estimate", branch: null, next: ROUTE_NODES.estimate.next, aim: [] } as never);
+  if (prev === undefined) delete process.env.APPLY_ROUTE_NO_VIEWING_PATH; else process.env.APPLY_ROUTE_NO_VIEWING_PATH = prev;
+  t("内覧なしの道: 材料の1行は on の時だけ", !t0.includes("別の道") && t1.includes("別の道") && t1.includes("内覧"));
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
