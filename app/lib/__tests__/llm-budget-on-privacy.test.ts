@@ -62,7 +62,14 @@ async function main() {
   const BLOCKED = { ...CONV, [recorder.LLM_CUTOFF_HEADER]: formatCutoffMark({ kind: "blocked" }) };
   const SCREEN = "お客様: 過去に自己破産していて審査が不安です";
 
-  // ── 線を超えている（$400 ≥ $300）・既定（OpenAI に回してよい）
+  // 2026-11-25 月の数えは呼び出しの前に待たない: 控えの無い（冷えた）最初の呼び出しは Claude のまま・裏で読み直す
+  const { monthSums } = await import("../llm-budget-route-server");
+  const { supabase: sbTest } = await import("../supabase-server");
+  reset(); await send("conductor_intake");
+  assert.deepEqual(calls, { openai: 0, deepseek: 1, anthropic: 0 }, "控えの無い最初の呼び出しは数えを待たない（今まで通り DeepSeek）");
+  await monthSums(sbTest as never); // 控えを温める（本番は裏の読み直しで温まる）
+
+  // ── 2つの枠で配る（既定）・OpenAI の枠に余り・個人情報の番も OpenAI に回してよい（既定）
   reset(); await send("conductor_intake");
   assert.deepEqual(calls, { openai: 1, deepseek: 0, anthropic: 0 }, "会話の無い統括の受け口は OpenAI");
   reset(); await send("conductor_intake", POST);
@@ -94,7 +101,7 @@ async function main() {
   delete process.env.LLM_BUDGET_PII_TO_OPENAI;
 
   // ── 2026-11-25 2つの枠: OpenAI の枠いっぱい（$100 の 95% 以上）＝OpenAI に回らない＝歯止めの番は Claude・DeepSeek には決して出ない
-  openaiTokens = 50_000_000; resetBudgetCache(); // gpt-6.2-sol 5千万トークン×$2/M＝$100
+  openaiTokens = 50_000_000; resetBudgetCache(); await monthSums(sbTest as never); // gpt-6.2-sol 5千万トークン×$2/M＝$100
   reset(); await send("conductor_intake");
   assert.deepEqual(calls, { openai: 0, deepseek: 1, anthropic: 0 }, "OpenAI の枠いっぱい: DeepSeek に回してよい係は DeepSeek に戻る");
   reset(); await send("reply_generate", POST);
