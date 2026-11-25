@@ -30,7 +30,7 @@ t("③ 古いスイッチ TWO_STAGE_KIND_FROM_ABOUT=on でも同じ", resolveTwo
 delete process.env.TWO_STAGE_KIND_FROM_ABOUT;
 // 配線
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
-const i = bc.indexOf("alignAixToContract({ finalAix,"), j = bc.indexOf("const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {");
+const i = bc.indexOf("alignAixToContract({ keepBrainPropertyAix: ackPickupPathGiven, finalAix,"), j = bc.indexOf("const twoStageArgs: Parameters<typeof resolveTwoStageOrDirect>[0] = {");
 t("配線: brain-core は2段の前で揃える", i > 0 && j > i && bc.includes("brainAixFollowsContractOn() && !isPostApplyStatus(convStatus)"));
 // 2026-11-13 作業員C: q431 の悪化（w7b-t3-on3 の答案の生の出力そのまま）＝道は返信に寄ったが方向は「ピックアップを実行して届ける」のまま
 const q431 = replyPlanAfterFollow({ direction: "内覧のお礼を受け止め、約束した2LDKの物件ピックアップを実行して届ける", keyTopics: [], avoidTopics: [], openPickupPromise: true });
@@ -43,5 +43,7 @@ const already = replyPlanAfterFollow({ direction: "内覧後のお礼への感�
 t("もう受けて締める方向（本番の prodBrain）は変えない", !already.changed && already.direction.startsWith("内覧後のお礼"));
 t("後で送る約束（お部屋が出次第お送りする）は今送る向きと読まない", !replyPlanAfterFollow({ direction: "お礼を受け、オススメできるお部屋が出次第随時お送りすると伝える", keyTopics: ["お部屋が出次第お送りする"], avoidTopics: [], openPickupPromise: true }).changed);
 t("配線: ① の返信で方向を揃える", bc.includes("replyPlanAfterFollow({ direction:") && bc.indexOf("replyPlanAfterFollow({ direction:") > i && bc.indexOf("replyPlanAfterFollow({ direction:") < j);
+// 2026-11-25 作業員A（a-ack-1125-q105 の守り q125）: ピックアップの道の1行を渡した番で、ブレイン自身が物件の AIX を選んだ時は① all_reply で書き換えない
+t("道の1行の番・ブレインの物件の AIX は残す", alignAixToContract({ keepBrainPropertyAix: true, finalAix: "property_send", rawAix: "property_send", asks: [{ route: "reply", aix: null }] as never }) === null && alignAixToContract({ finalAix: "property_send", rawAix: "property_send", asks: [{ route: "reply", aix: null }] as never })?.to === "reply" && alignAixToContract({ keepBrainPropertyAix: true, finalAix: "property_send", rawAix: null, asks: [{ route: "reply", aix: null }] as never })?.to === "reply");
 console.log(`aix-follows-contract: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

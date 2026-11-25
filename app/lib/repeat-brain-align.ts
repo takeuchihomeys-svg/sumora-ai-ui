@@ -278,6 +278,16 @@ function ackPickupAixPathLine(f: AckFormFacts, env: Env): string {
     + "上の ack_form と竹内さんの数は、竹内さんが返信した時の形（受けだけ・待ちの形）で、道は変えない（60日の竹内さん本人の番: この形の番 48 のうち AIX を先に送った 27・返信だけ 11）。";
 }
 
+/**
+ * 2026-11-25 作業員A（統括役の頼み・試験 a-ack-1125-q105 の守り q125 の悪化）: ピックアップの道の1行を渡した番か（純関数）。
+ *   q125（初回のピックアップの約束の後のお礼・正解 AIX:物件）で、ブレインは道どおり aix=property_send を選んだのに、turn_contract の依頼（お礼への受け）が全部 reply だったため
+ *   後の BRAIN_AIX_FOLLOWS_CONTRACT の① all_reply が返信に書き換えた（brain:aix_follows_contract(reply)）。道の1行を渡した番で、ブレイン自身が物件の AIX を選んだ時はその書き換えをしない。
+ *   ACK_PICKUP_AIX_PATH=on の時だけ（止める ACK_PICKUP_KEEP_BRAIN_AIX=off）
+ */
+export function ackPickupAixPathGiven(f: AckFormFacts | null, env: Env = process.env): boolean {
+  if ((env.ACK_PICKUP_KEEP_BRAIN_AIX ?? "on").trim().toLowerCase() === "off") return false;
+  return !!f && f.customer === "了承だけ" && f.family === "探す" && !f.conditional && ackPickupAixPathLine(f, env) !== "";
+}
 /** 確認・見積の約束への了承だけの番の道の1行（当たらない時は ""）。2026-11-23 ACK_PICKUP_AIX_PATH=on の時はピックアップの約束にも */
 export function ackConfirmAixPathLine(f: AckFormFacts | null, env: Env = process.env): string {
   if (f && f.customer === "了承だけ" && f.family === "探す" && !f.conditional) return ackPickupAixPathLine(f, env);

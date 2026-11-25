@@ -55,9 +55,10 @@ export function replyPlanAfterFollow(i: { direction: unknown; keyTopics: unknown
   return { direction: sendNowDir ? direction : dir || direction, keyTopics, avoidTopics: av.includes(ng) ? av : [...av, ng], changed: true };
 }
 
-export function alignAixToContract(i: { finalAix: string | null | undefined; rawAix: unknown; asks: ReadonlyArray<ContractAskLite> | null | undefined }): FollowVerdict {
+export function alignAixToContract(i: { finalAix: string | null | undefined; rawAix: unknown; asks: ReadonlyArray<ContractAskLite> | null | undefined; /** 2026-11-25 作業員A: ピックアップの道の1行を渡した番（repeat-brain-align.ackPickupAixPathGiven）。ブレイン自身の aix が物件の AIX なら書き換えない */ keepBrainPropertyAix?: boolean }): FollowVerdict {
   const fa = keyOf(i.finalAix);
   if (!fa || !PROPERTY_AIX.test(fa)) return null;
+  if (i.keepBrainPropertyAix && !emptyAix(i.rawAix) && PROPERTY_AIX.test(keyOf(i.rawAix))) return null;
   const asks = (i.asks ?? []).filter(Boolean);
   if (!asks.length) return null;
   // ① 依頼が全部 返信・なし（どの依頼も AIX・約束を言っていない）
