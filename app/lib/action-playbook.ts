@@ -759,7 +759,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     }));
     sc.detail = guideDetail.concat(restDetail).slice(0, PLAYBOOK_MAX_STEPS);
     for (const rid of ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"] as const) {
-      if (!sc.rules.includes(rid)) sc.rules = [rid].concat(sc.rules);
+      if (!sc.rules.includes(rid)) sc.rules = [rid, ...sc.rules];
     }
     gaps.push("検索場面: 録画が薄いため、①検索押す→②手順書×画面で把握→③並べ替えへ を手順書に固定で載せた");
   }
