@@ -4,6 +4,69 @@
 
 ---
 
+## 2026-11-25 **2.8.290 リセットの押す位置を人の録画の実測に合わせる（確認結果）**
+
+- **竹内さんの問い**: 「いまリセットボタンを押すところ。通常モードで録画した場所やボタンの把握・押す場所の把握も徹底的に確認」
+- **人の実測（DB・読み取りのみ・直近21日）**: 通常モードのリセット操作は **1回だけ**（2026-11-25 16:36・5行は同じ1回の重複＝人の記録は畳まない作り）。中身は `左のリセット｜span`・`by:human`・`w:button`・幅160×高さ30・**押した位置 x=0.75・y=0.67**（要素内の右寄り・下寄り）・`stage:result`。`point_fields` にも同じ1件（n=1）。
+- **確認して分かった抜け**: 学習の束（`axlx_learn_points`）は **n≥2 の欄だけ**を残す（`human-learn-brain.ts` の `posOf`・`if (c < 2) continue`）。1回のこの欄は束に入らないので、`_aimByEl` が引けず **中央を押していた**。
+- **変更（2.8.290）**: `_resetPress` で span を押す時は、人の実測（x0.75/y0.67）を `opts.aim` に渡す。2回以上の学習があればその位置を優先する。span でない時（`div.reset_button` 等）は従来どおり中央。押すのは従来どおり `enqueueHumanClick`（人の動き・値の直接書き換えなし）。段 `reset_press` に「位置=learned／human_sample／center」を出す。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.290**。試験: 新規 `tests/chrome-extension/reset-press-point-v2290.test.js` 12件 OK。`reset-count-evidence-v2289` 23件・`reset-learned-target-v2287` 27件・`reset-between-customers-v28284` 69件・`press-gate-diag-v2288` 10件 OK。`tsc` は基準の7件のまま。
+- **未確認**: 実測は1回だけなので、人の押し方のばらつきは分からない。2回目以降の録画で位置が変われば、学習（n≥2）の位置に切り替わる。実機で span をこの位置で押せているかは、次の実行の `reset_press` の「位置=」で確かめる。
+
+---
+
+## 2026-11-25 **2.8.289 リセットの判定に「該当物件の数（○戸）が増えたか」を足す（竹内さんの決め）**
+
+- **竹内さんの決め（2026-11-25 16:29）**: 「お客さん検索完了→次のお客さんを入れる前にリセットを押す→押して10秒以上後に確認→リセットできていると画面写真で把握→拡張ツールから新しいお客さんの条件を入れる。外すところはリセットで外せる。外した後に該当物件の数がふえていたらリセットされた証拠。これでループできる」
+- **今の流れ（変えていない部分）**: リセットは送付が終わった後にだけ押す（`_postSendClearOrReset`）。押す→10〜14秒待つ→フォームが空かを読み戻す→記録の写真1枚→次の客。空にならない・押せない時は従来の1つずつ外しへ戻る。
+- **変えた部分（2.8.289）**:
+  - 押す前に該当物件の数（画面の「○棟○戸」の○戸・`_resultCountNow`）を覚える（読み直しを越えて残す sessionStorage）。
+  - 「外れた」と認めるのは **空かつ数が増えた時だけ**（`_resetCountJudge`）。数が同じ・減った時は待ち、maxMs で `verified:false` を返す。
+  - 空でも数が増えなければ `reset_count_same` の段を残して従来の1つずつ外しへ（fail-open）。
+  - 数が読めない時（押す前か後）は空の確認だけで決め、`countKnown=false` を段の記録に残す。
+  - 段 `reset_verified` の記録に「件数 前=○ 後=○」を出す。
+- **まだ実機で確かめていないこと（一番大事）**: リセット後に数が実際に増えるか（ページが既定の検索に戻って数が出るか）。増えなければ毎回 `reset_count_same` → 従来の1つずつ外しになる（安全だが速くならない）。次の実行の `reset_verified`/`reset_count_same` の「件数 前後」で確かめる。
+- **実績の確認（DB・2026-11-25）**: 直近8件の realpro 実行に `reset_*` の段は**1件も無い**。一括は並べ替えの前で止まっていて、送付・リセットまで届いていない（2.8.288 の記録待ち）。よって「リセットがループで回った」はまだ一度も実機で起きていない。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.289**。`search-audit.js` の RULE_STEP に `reset_count_same` を追加。ルール `reset_between_customers` の文に件数の判定を追記。
+- 試験: 新規 `tests/chrome-extension/reset-count-evidence-v2289.test.js` 23件 OK（件数の読み取り・増えた/同じ/減った/読めない の判定を実関数で確認）。`press-gate-diag-v2288` 10件・`reset-learned-target-v2287` 27件・`reset-between-customers-v28284` 69件・`bulk-loop-sim` 20件・`bulk-switch` 30件・`bulk-no-skip` 49件・`leftover-gate` 40件 OK。`auto-procedure-rules.test.ts` は既存の1件（`kb: ""`）のみ。`tsc` は基準の7件のまま。
+- 未コミット（「上げて」待ち）。
+
+---
+
+## 2026-11-25 **2.8.288 検索後に並べ替えへ進まない原因の確認（DB実測）と、止まった理由の記録**
+
+- **竹内さんの問い**: 「検索を押した後まよっている。並べ替えの位置が把握できていないのか／時間経過してから検索できたと判断して並べ替えに移っているのか」
+- **仕組み（コード）**: 検索の確認（`screenOk`）→ 人の間 1〜3.5秒（確認から合計1秒以上・`_waitMsFromSearchConfirm`）→ 並べ替えの関所（`_gateSortCursorReady`: 行あり・「並べ替え」の文字が見える・モーダル無し）→ カーソル → AD → 高→低。並べ替えの位置は「並べ替え」の文字（`_hasSortHeadVisible`／`_findSortHeadEl`）で探すので、**位置は分かっている**。
+- **DB 実測（読み取りのみ・小分け）**:
+  - 正常な単発（11-23 10:15・v2.8.206）: `search_armed → after_search_rows → sort_wait → sort_cursor_wait(待ち ms) → search_to_sort` と順に進んだ＝待ちの設計どおり。
+  - 一括（11-24 09:06・v2.8.275）: 行67件が見えていても `page_display_need_press`（押した時刻が無い）→ `sort_gate_need_page` を繰り返し、`estate_stuck_recover` が 0.4 秒おきに回り、約22秒で記録が途絶えた（20分後 abandoned）。**並べ替えへ進まなかった**。
+  - 今回の一括（11-25 16:13・v2.8.287・run `sa_mwvserka_lmhr2zja`）: 記録は5段（開始→`dl:send_bar_show` の4秒後まで）。検索の段・並べ替えの段は**1件も無い**。
+  - 一括の回（bulk_manual）の記録は、ほぼ全部が `dl:` の段だけ。ページ側の段（検索を押した・確認した）は `_audit` が無い自動の回では記録されない（`_auditStepP` の作り）＝**押したかどうかが DB から見えない**。
+- **判断**: 「並べ替えの位置が分からない」のではなく、並べ替えへ行く前の「**押した時刻が無い＝この一覧が今回の検索の結果か分からない**」で止まっている。2.8.264 の守り（古い一覧で並べ替えない）が効いている形。どこで押しが抜けたか（押していない／押したが記録されない）は、この版までの記録では決められない。
+- **2.8.288 の変更（動きは変えない）**: `_pressGateDiag(why)` を追加。`page_display_need_press` の記録に **B（押下の基準の有無）・S（自動の送りの印）・G（確認の印）・M（メモリの確認）・rows（見えている行）** を出す。次の一括で「どの印が無いから止まったか」が1回で分かる。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.288**。試験: `tests/chrome-extension/press-gate-diag-v2288.test.js` 10件 OK。`reset-learned-target-v2287` 27件・`reset-between-customers-v28284` 69件・`bulk-loop-sim` 20件・`bulk-switch` 30件・`leftover-gate` 40件 OK。`tsc` は基準の7件のまま。
+- **未決（竹内さんに確認）**: 「一覧が見えていて、押した時刻だけ無い」時に、一覧を今回の結果とみなして並べ替えへ進むか。進めば止まりは減るが、2.8.264 の「古い一覧で並べ替えて検索を打ち消す」不具合が戻る危険がある。まず次の1回で B/S/G/M を見てから決める。
+- 次にやること: 一括を1回回し、`page_display_need_press` の B/S/G/M を DB で読む。押し自体が無いなら自動の送り（fill→search）側、押しがあるのに印が無いなら印の受け渡し側を直す。
+
+---
+
+## 2026-11-25 **2.8.287 リセットの押す先を「人が押した形」から先に探す**
+
+- **竹内さんの問い**: 「リセットのボタンは人間の動作から把握しているのか」→ 2.8.286 までは否（固定の `div.reset_button` と文字「リセット」で探していた）。
+- **人の実測（DB・読み取りのみ）**: `human_motion_learn.shot_ops`（直近14日・写真付き行300件・操作 4,751件）に「左のリセット｜span」・`by: human`・クリック・押した要素は幅160×高さ30 が **4件**（2026-11-23 16:54〜20:08）。`ops` は件数だけの列、`fields`/`kinds`/`field_order` にはリセットは出ない（操作の中身は `shot_ops` にだけ残る）。
+- **変更**（`chrome-extension/page-script.js`）:
+  - `_findResetBtnLearned()`: 文字が「リセット」・子の無い葉・画面の幅の45%より左・幅120〜200×高さ22〜40 を先に探す（値の書き換えなし）。
+  - `_findResetBtn()`: 学習の形 → `div.reset_button` → 文字の順。押した先を `_resetVia`（learned／fixed_class／text）に残す。
+  - `_resetPress` の結果に `via` を足す。押すのは従来どおり `enqueueHumanClick`（人の動き）。
+- `background.js` の `reset_press` 段に「押した先=…」を出す（監査で学習の形が効いたかを後から見られる）。
+- 版: manifest / `_AXLX_PAGE_VER` / `AUTO_RULES_REVIEWED_UP_TO` = **2.8.287**。決まり `reset_between_customers` の文に押す先の順を追記。
+- 試験: 新規 `tests/chrome-extension/reset-learned-target-v2287.test.js` 27件 OK（偽の画面で実関数を動かし、learned／右側・幅違い・親の見出し・両方ある時の優先・無い時の null を確認）。前の reset/bulk/audit の試験も OK。`auto-procedure-rules.test.ts` は既存の1件（`kb: ""` の10ルール）のみ失敗（今回と無関係）。`tsc` は基準の7件のまま。
+- 設計知見: 【決定】の1本（P1）を `scripts/kb-insert.ts` で登録。
+- **未確認（実機）**: リアプロの実画面でこの形の要素が実際に見つかるか（＝押した先が `learned` になるか）。`reset_press` の「押した先」で確かめる。4件しか実測が無いので、外れたら従来の探し方に戻る。
+- 未コミット（竹内さんの「上げて」待ち）。
+
+---
+
 ## 2026-11-25 **2.8.286 一連の試験で見つかった抜け（判定が空回り・古いキュー）**
 
 - **試験の抜け**: 2.8.282〜284 の試験の `ok()` が、条件ではなく見出しの文字列を見ていた（見出しは常に真）。直してから回すと、次が出た。

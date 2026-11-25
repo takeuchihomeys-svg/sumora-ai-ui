@@ -1978,6 +1978,22 @@
     } catch (_) {}
     return 0;
   }
+  /**
+   * ★ 2.8.288 「押した時刻が無い」で並べ替えが止まる原因を、次の1回で見えるようにする（動きは変えない）。
+   *   B=押下の基準（axlx_search_press_baseline）／S=自動の送り（axlx_pending_auto_send_sync）
+   *   G=確認の印（axlx_search_grasped_sync）／M=メモリの確認／rows=見えている行数
+   *   2026-11-24 09:06 の実測: rows=67 の一覧が出ていても need_press が繰り返され、並べ替えへ進まなかった。
+   *   ⚠ 古い一覧を並べ替えない守り（2.8.264）は変えない。原因が分かるまで判定は据え置き。
+   */
+  function _pressGateDiag(why) {
+    var s = function (k) { try { return sessionStorage.getItem(k) ? "1" : "0"; } catch (_) { return "x"; } };
+    var n = 0;
+    try { n = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { n = 0; }
+    var m = "0";
+    try { m = _searchGraspedMem ? "1" : "0"; } catch (_) { m = "x"; }
+    return ("B" + s("axlx_search_press_baseline") + " S" + s("axlx_pending_auto_send_sync")
+      + " G" + s("axlx_search_grasped_sync") + " M" + m + " rows=" + n + " " + String(why || "").slice(0, 24)).slice(0, 80);
+  }
   function _pageDisplayedAfterThisSearch(why) {
     try {
       if (_isNavPending()) {
@@ -1989,7 +2005,7 @@
       }
       var pressAt = _pressAtForPageGate();
       if (!pressAt) {
-        try { _liveDlStep("page_display_need_press", String(why || "").slice(0, 28)); } catch (_) {}
+        try { _liveDlStep("page_display_need_press", _pressGateDiag(why)); } catch (_) {}
         return { ok: false, path: "need_press", why: "no_press" };
       }
       var elapsed = Math.max(0, Date.now() - pressAt);

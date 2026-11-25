@@ -10264,7 +10264,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
       _stamp("reset_press", "押せず→従来の外しへ: " + _why + (_press && _press.closed ? " 小窓閉じ=" + _press.closed : ""));
       return { ok: false, why: "reset_not_pressed:" + _why, notPressed: true };
     }
-    _stamp("reset_press", "押した" + (_press.cut ? "（読み直しで返事が切れた）" : "") + " 小窓閉じ=" + (_press.closed || 0) + " 押す前の残=" + String(_press.before || "-").slice(0, 50));
+    _stamp("reset_press", "押した" + (_press.cut ? "（読み直しで返事が切れた）" : "") + " 押した先=" + String(_press.via || "-") + " 位置=" + String(_press.aim || "-") + " 小窓閉じ=" + (_press.closed || 0) + " 押す前の残=" + String(_press.before || "-").slice(0, 50));
     // ② 読み直しを待つ（loading を見たら complete まで・8秒見ても無ければ読み直し無しとして進む）
     var _sawLoading = false, _tw = Date.now();
     while (Date.now() - _tw < 8000) {
@@ -10303,17 +10303,23 @@ async function _postSendResetRealpro(customerId, auditRunId) {
         }), 15000, "reset_verify");
         _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
       } catch (_) { _ver = null; }
-      if (_ver && _ver.ok && _ver.empty) break;
+      if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) break;
       await _sleep(700);
     }
     var _reloaded = !!(_ver && _ver.reloaded) || _sawLoading;
-    if (_ver && _ver.ok && _ver.empty) {
-      _stamp("reset_verified", "空を確認 読み直し=" + (_reloaded ? "あり" : "なし") + " 聞いた回数=" + _tries + " " + Math.round((Date.now() - _t0) / 1000) + "秒");
+    var _cntNote = " 件数 前=" + (_ver && _ver.countBefore != null ? _ver.countBefore : "-") + " 後=" + (_ver && _ver.countNow != null ? _ver.countNow : "-") + (_ver && _ver.countKnown === false ? "（読めず・空だけで判定）" : "");
+    if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) {
+      _stamp("reset_verified", "空を確認 読み直し=" + (_reloaded ? "あり" : "なし") + " 聞いた回数=" + _tries + " " + Math.round((Date.now() - _t0) / 1000) + "秒" + _cntNote);
       // ⑤ 待機（人の間）→ 画面の写真を1枚（空になった画面の記録）。撮れなくても進む
       await _sleep(RESET_SHOT_GAP_MIN_MS + Math.floor(Math.random() * 2000));
       var _shotNote = await _withTimeout(_resetShot(_tab, auditRunId || _auditOpenRunId(String(customerId), "realpro"), customerId), 25000, "reset_shot");
       _stamp("reset_shot", (_shotNote && _shotNote.__timeout) ? "時間切れ（進む）" : String(_shotNote));
       return { ok: true, left: 0, reset: true, reloaded: _reloaded };
+    }
+    // ★ 2.8.289 空でも件数が増えていない＝リセットで外れた証拠なし → 従来の1つずつ外しへ（残りは0でも確かめのため）
+    if (_ver && _ver.ok && _ver.empty && _ver.verified === false) {
+      _stamp("reset_count_same", "空だが件数が増えず（外れた証拠なし）→従来の外しへ" + _cntNote);
+      return { ok: false, left: 0, reset: true, reloaded: _reloaded, countSame: true, why: "reset_count_same" };
     }
     var _left = _ver && _ver.left != null ? _ver.left : -1;
     _stamp("reset_not_empty", "空にならず→従来の外しで残りを外す 残=" + _left + " " + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 60));

@@ -4064,7 +4064,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.286";
+  var _AXLX_PAGE_VER = "2.8.290";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -12216,15 +12216,67 @@ function _guideLikeAreaSkip(why) {
     (s.texts || []).forEach(function (n) { parts.push(n); });
     return { empty: parts.length === 0, left: parts.length, detail: parts.join(",").slice(0, 120) };
   }
-  function _findResetBtn() {
+  /** 2.8.287 直前に見つけた探し方（監査の段 reset_press の「押した先」に残す） */
+  var _resetVia = "";
+  /**
+   * ★ 2.8.287 人が押したリセットの形（人の操作の記録 shot_ops の実測・2026-11-23 の4件）:
+   *   「左のリセット｜span」・クリック・押した要素は幅160×高さ30（文字「リセット」の span）。
+   *   → 先にこの形（文字が「リセット」・画面の幅の45%より左・幅120〜200×高さ22〜40・子要素の無い葉）を探す。
+   *   ⚠ 値は書き換えない。押すのは従来どおり enqueueHumanClick（人の動き）。
+   *   ⚠ 4件しか実測が無いので、形が合わない時は下の従来の探し方（div.reset_button・文字）へ戻る。
+   */
+  function _findResetBtnLearned() {
     try {
+      var vw = window.innerWidth || 1200;
+      var hits = [].slice.call(document.querySelectorAll("span,div,a,button,label")).filter(function (e) {
+        if (!_isShown(e) || e.children.length !== 0) return false;
+        if (String(e.textContent || "").trim() !== "リセット") return false;
+        var r = e.getBoundingClientRect ? e.getBoundingClientRect() : null;
+        return !!r && r.width >= 120 && r.width <= 200 && r.height >= 22 && r.height <= 40 && r.left < vw * 0.45;
+      });
+      return hits[0] || null;
+    } catch (_) { return null; }
+  }
+  function _findResetBtn() {
+    _resetVia = "";
+    try {
+      var L1 = _findResetBtnLearned();
+      if (L1) { _resetVia = "learned"; return L1; }
       var a = [].slice.call(document.querySelectorAll("div.reset_button, a.reset_button, button.reset_button")).filter(_isShown);
-      if (a.length) return a[0];
+      if (a.length) { _resetVia = "fixed_class"; return a[0]; }
       var b = [].slice.call(document.querySelectorAll("a,button,div,span")).filter(function (e) {
         return _isShown(e) && String(e.textContent || "").trim() === "リセット" && e.children.length === 0;
       });
-      return b[0] || null;
+      if (b[0]) { _resetVia = "text"; return b[0]; }
+      return null;
     } catch (_) { return null; }
+  }
+  /**
+   * ★ 2.8.289 該当物件の数（画面の「○棟○戸」の○戸）。読めなければ null。
+   *   竹内さん「外した後に該当物件の数がふえていたらリセットされた証拠」。
+   */
+  function _resultCountNow() {
+    try {
+      var head = String((document.body && document.body.innerText) || "").slice(0, 6000);
+      var m = head.match(/([0-9０-９,，]+)\s*棟\s*([0-9０-９,，]+)\s*戸/);
+      if (!m) return null;
+      var toN = function (s) {
+        return Number(String(s).replace(/[,，]/g, "").replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }));
+      };
+      var ken = toN(m[2]);
+      return isFinite(ken) ? { n: ken, brief: m[1] + "棟" + m[2] + "戸" } : null;
+    } catch (_) { return null; }
+  }
+  /**
+   * ★ 2.8.289 リセットの件数の判定。
+   *   押す前の件数と、外した後の件数が両方読めた時は「増えた」だけを証拠にする（同じ・減った＝まだ外れていない）。
+   *   どちらかが読めない時は件数では決めず、空の確認だけで決める（known=false を記録に残す）。
+   */
+  function _resetCountJudge(before, now) {
+    var b = (typeof before === "number" && isFinite(before)) ? before : null;
+    var n = (typeof now === "number" && isFinite(now)) ? now : null;
+    if (b == null || n == null) return { verified: true, known: false, up: false, before: b, now: n };
+    return { verified: n > b, known: true, up: n > b, before: b, now: n };
   }
   function _resetPress(done) {
     var finished = false;
@@ -12246,10 +12298,19 @@ function _guideLikeAreaSkip(why) {
             var btn = _findResetBtn();
             if (!btn) { fin({ ok: false, why: "no_reset_button", closed: closed }); return; }
             var before = _resetFormState();
-            try { window.sessionStorage.setItem(_AX_RESET_PRESSED_KEY, JSON.stringify({ at: Date.now(), bootAt: window.__axlxBootAt || 0 })); } catch (_) {}
+            // ★ 2.8.289 押す前の該当物件の数（○戸）。外れた後に増えていればリセットの証拠（読み直しを越えて残す）
+            var cntBefore = _resultCountNow();
+            try { window.sessionStorage.setItem(_AX_RESET_PRESSED_KEY, JSON.stringify({ at: Date.now(), bootAt: window.__axlxBootAt || 0, cntBefore: cntBefore ? cntBefore.n : null })); } catch (_) {}
             try { window.sessionStorage.removeItem(_AX_RESET_CLEAN_KEY); } catch (_) {}
-            enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-            whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, bootAt: window.__axlxBootAt || 0 }); });
+            // ★ 2.8.290 人が押した位置（通常モード・2026-11-25 16:36・1回・要素内の右寄り下寄り x0.75/y0.67）。
+            //   学習の束は n≥2 の欄しか残さないので、1回のこの欄は _aimByEl で引けず中央を押していた。
+            //   2回目以降は学習の位置（_aimByEl）を優先する。
+            var _rAim = _aimByEl(btn, ["リセット", "左のリセット"]);
+            var _rOpts = _uiGapOpts();
+            if (_rAim && _rAim.n >= 2) _rOpts = Object.assign({}, _rOpts, { aim: { x: _rAim.x, y: _rAim.y } });
+            else if (String(btn.tagName || "").toUpperCase() === "SPAN") _rOpts = Object.assign({}, _rOpts, { aim: { x: 0.75, y: 0.67 } });
+            enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _rOpts);
+            whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, via: _resetVia, aim: _rAim && _rAim.n >= 2 ? "learned" : (String(btn.tagName || "").toUpperCase() === "SPAN" ? "human_sample" : "center"), countBefore: cntBefore ? cntBefore.n : null, bootAt: window.__axlxBootAt || 0 }); });
           } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
         }, humanRand(500, 1100));
       });
@@ -12268,17 +12329,20 @@ function _guideLikeAreaSkip(why) {
         var pressed = null;
         try { pressed = JSON.parse(window.sessionStorage.getItem(_AX_RESET_PRESSED_KEY) || "null"); } catch (_) { pressed = null; }
         var reloaded = !!(pressed && pressed.bootAt && window.__axlxBootAt && pressed.bootAt !== window.__axlxBootAt);
-        if (ready && st.empty) {
+        var cntNow = _resultCountNow();
+        var jd = _resetCountJudge(pressed ? pressed.cntBefore : null, cntNow ? cntNow.n : null);
+        if (ready && st.empty && jd.verified) {
           try { _ledgerClear(); window.__axlxPrevLedger = null; } catch (_) {}
           try {
             window.sessionStorage.setItem(_AX_RESET_CLEAN_KEY, JSON.stringify({ at: Date.now(), cid: String(o.cid || "") }));
             window.sessionStorage.removeItem(_AX_RESET_PRESSED_KEY);
           } catch (_) {}
-          fin({ ok: true, empty: true, left: 0, ready: true, reloaded: reloaded, ms: Date.now() - t0 });
+          fin({ ok: true, empty: true, verified: true, left: 0, ready: true, reloaded: reloaded, countBefore: jd.before, countNow: jd.now, countKnown: jd.known, countUp: jd.up, ms: Date.now() - t0 });
           return;
         }
+        // 空でも件数が増えていない時は「まだ外れていない」として待つ（印は付けない・maxMs で返す）
         if (Date.now() - t0 > maxMs) {
-          fin({ ok: true, empty: false, left: st.left, detail: st.detail, ready: ready, reloaded: reloaded, ms: Date.now() - t0 });
+          fin({ ok: true, empty: !!(ready && st.empty), verified: false, left: st.left, detail: st.detail, ready: ready, reloaded: reloaded, countBefore: jd.before, countNow: jd.now, countKnown: jd.known, countUp: jd.up, ms: Date.now() - t0 });
           return;
         }
       } catch (e) {
