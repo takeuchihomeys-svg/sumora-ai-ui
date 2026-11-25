@@ -13,7 +13,7 @@ import { weakStationHolesOf } from "./hole-reach-weekly";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf, ownerOfLeaf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, jsonTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
-  MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
+  MAP_CAUSE_JA, COUNT_VERSION, countVersionLine, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
 export const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
@@ -331,7 +331,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       lines.push(`- 並べて見る（${def.label.replace(/（.*$/, "")}${def.writerSelect === "style" ? "・文の癖で選んだ番" : def.writerSelect === "device" ? "・端末の記録で選んだ番" : ""}）: ${value ?? "—"}%（${top.n}番中 ${top.ok}番）`);
     } else {
       const mb = missBreakdownOf(nodes);
-      const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : "", mb.two_stage_draft ? `ブレインも2段の約束を書いていた ${mb.two_stage_draft}` : ""].filter(Boolean);
+      const aside = [mb.decided ? `竹内さんの決定で正解が変わった ${mb.decided}` : "", mb.minority ? `竹内さんが少数側 ${mb.minority}` : "", mb.split ? `竹内さんご自身が割れている ${mb.split}` : "", mb.timed ? `時刻で送る物 ${mb.timed}` : "", mb.fixed_since ? `今は直っている前の番 ${mb.fixed_since}` : "", mb.two_stage_draft ? `ブレインも2段の約束を書いていた ${mb.two_stage_draft}` : "", mb.staff_only ? `スタッフだけが知る結果 ${mb.staff_only}` : ""].filter(Boolean);
       // 見込みは作業ごとに1行（部品に割った作業も元の作業として1回だけ）
       const uniq = [...new Map(its.filter((i) => i.forecast_low != null).map((i) => [i.id, i])).values()].sort((a, b) => (b.forecast_high ?? 0) - (a.forecast_high ?? 0));
       const STAGE_JA: Record<string, string> = { todo: "まだ", building: "作っている", built_off: "作った（off）", testing: "試験中", passed: "試験を通った", on: "本番 on", waiting_owner: "竹内さん待ち", blocked: "止まっている" };
@@ -342,6 +342,8 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
           : `- 今 ${value ?? "—"}%（${top.n}番中 ${top.ok}番が竹内さんと同じ一手）。外れ ${top.misses}番のうち 直す所 ${mb.real}${aside.length ? `・分けて外した ${aside.join("・")}` : ""}`,
         // 2026-11-25 作業員A（統括役の頼み）: 今の数え方は消さず、ブレインも2段の約束を書いていた番を合うに数えた一致を並べる
         ...(mb.two_stage_draft && top.n ? [`- 並べて見る（ブレインも2段の約束を書いていた番を合うに数える）: ${Math.round(((top.ok + mb.two_stage_draft) / top.n) * 1000) / 10}%（${top.n}番中 ${top.ok + mb.two_stage_draft}番）`] : []),
+        // 2026-11-25 作業員A（統括役の決め）: ④スタッフだけが知る結果を数えない一致も並べる（今の数え方は消さない）
+        ...(mb.staff_only && top.n > mb.staff_only ? [`- 並べて見る（2段を合うに・スタッフだけが知る結果 ${mb.staff_only}番を数えない）: ${Math.round(((top.ok + mb.two_stage_draft) / (top.n - mb.staff_only)) * 1000) / 10}%（${top.n - mb.staff_only}番中 ${top.ok + mb.two_stage_draft}番）`] : []),
         ...uniq.slice(0, 4).map((i) => `- 見込み${(i.forecast_exam as { phase?: string } | null)?.phase ? `（${(i.forecast_exam as { phase?: string }).phase}）` : ""} #${i.id}（${STAGE_JA[i.stage] ?? i.stage}）: ${i.forecast_before ?? "—"}% → ${rng(i)}${i.blocker ? `・止まり: ${String(i.blocker).slice(0, 30)}` : ""}`),
         ...ranked.slice(0, 3).map((r, k) => { const it = r.items.length ? its.find((x) => x.id === r.items[0]) ?? null : null; // 葉に近い作業が先頭（rankLeaves の並び）
           return `- 次の一手 ${k + 1}: ${leafJa(r.key)}（外れ ${r.misses}${r.hold ? "・数が少ない" : ""}）→ ${r.hole || !it ? "作業がまだ無い所（持ち主を決める）" : `#${it.id}（${STAGE_JA[it.stage] ?? it.stage}${it.blocker ? `・止まり: ${String(it.blocker).slice(0, 20)}` : ""}）`}`; }),
@@ -372,6 +374,13 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い・統括に届いているか ${reach}${rr.cutRows?.length ? `・切れている材料 ${rr.cutRows.slice(0, 3).join("・")}` : ""}）→ 持ち主の案 ${own.owner}（${own.why}）`);
       holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, misses: h.misses, next: `外れ ${h.misses}/${h.n}・${h.reasons?.length ? `弱い駅（${h.reasons.join("・")}）` : "作業も見込みも無い葉"}（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
     }
+    // 2026-11-25 作業員A（統括役の頼み）: 前の日の数と数え方の版が違えば印の1行（数の detail.count_version）
+    try {
+      const { data: pv } = await sb.from("quality_daily").select("day,detail").eq("metric", `map:${def.metric}:value`).eq("scope", "all").lt("day", day).order("day", { ascending: false }).limit(1);
+      const prevRow = (pv ?? [])[0] as { detail?: { count_version?: string | null } | null } | undefined;
+      const vl = countVersionLine(prevRow?.detail?.count_version ?? null, COUNT_VERSION[def.metric] ?? null, !!prevRow);
+      if (vl) lines.push(vl);
+    } catch { /* 版の印は読めなくても1枚は出す */ }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
     // 測れなかった番（台本が数を出す根だけ）: 割合の分母に入っていない番を並べて出す
     const meta = def.builder && JSON_SOURCES[def.builder] ? jsonMeta.get(JSON_SOURCES[def.builder]) : undefined;
@@ -379,7 +388,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       lines.push(`- 測れなかった番（判断の記録に今の状況が無い・割合に入れていない）: ${meta.unmeasured}${meta.takeuchi_turns != null ? `/${meta.takeuchi_turns}番` : "番"}`);
       qd.push({ day, metric: `map:${def.metric}:unmeasured`, scope: "all", value: meta.unmeasured, n: meta.takeuchi_turns ?? null });
     }
-    qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },
+    qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built, count_version: COUNT_VERSION[def.metric] ?? null } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: nodes.length },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: hs.length, n: ranked.length },
       { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },

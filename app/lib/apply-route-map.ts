@@ -54,7 +54,34 @@ export type RouteNode = {
   next: RouteStep;
   /** 本線で次の駅 */
   nextNode: RouteNodeId | null;
+  /** 2026-11-25 作業員A（#728 作業員L の成約データ・統括役の決め①）: 本線の外の太い道（内覧なしで申込）。APPLY_ROUTE_NO_VIEWING_PATH=on の時だけ材料と選び直しに出す */
+  altNext?: { node: RouteNodeId; label: string; aix: string[]; when: string };
 };
+/**
+ * 2026-11-25 作業員A（竹内さん 11/25「地図は成約データから分析して流れ完全に理解できているのか」・作業員L の #728 deal_outcomes 518件）:
+ *   申込146件のうち内覧の記録なしで申込 101（7割）。太い道は「物件送り→見積→申込」「見積→申込（内覧なし）」「物件送り→申込」＝地図の nextNode は内覧の1本道だった。
+ *   内覧に入った件の申込到達は約2倍（内覧予定 61.5%・内覧後 65.2%・物件提案 31.1%・見積 35.9%）＝内覧を勧める本線は残し、お客様が申込の意思を示した時だけ内覧なしの道を候補に出す。
+ *   竹内さん本人の申込の意思の番（brain-route-type 13番）: 返信 6・約束 6・AIX 1＝申込へは返信（フォーマットのご案内）が主・AIX【申込へ】は候補に並べるだけ。
+ */
+/**
+ * 2026-11-25 作業員A（#687 ③・統括役の決め「入口の切れ目」）: 入口の統括の読み（conductor_intake）に駅を渡す1行（決まった計算・LLM なし）。
+ *   本番の会話の最新の記録で、入口の読みに駅が届いていたのは 0/4（駅は brain-core の後の地図の所で決まる作り）。入口の前に resolveRouteNode で駅だけ出して1行渡す。
+ *   既定 off（CONDUCTOR_INTAKE_ROUTE=on で入る）。off の時は空文字＝入口の材料は1文字も変わらない
+ */
+export function conductorIntakeRouteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONDUCTOR_INTAKE_ROUTE ?? "").trim().toLowerCase() === "on";
+}
+export function intakeRouteLine(node: RouteNodeId | null): string {
+  if (!node) return "";
+  const n = ROUTE_NODES[node];
+  const i = MAIN_ROUTE.indexOf(node);
+  const after = i >= 0 ? MAIN_ROUTE.slice(i + 1, i + 3).map((x) => ROUTE_NODES[x].name).join("→") : "";
+  return `【申込までの地図の駅（決まった計算・入口の材料）】今どこ: ${n.name}${after ? `（この先: ${after}）` : ""}／申込へ向けた次の一手の候補: ${n.next.label}${n.next.aix.length ? `（合う AIX: ${n.next.aix.join("・")}）` : ""}`;
+}
+export function applyRouteNoViewingPathOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.APPLY_ROUTE_NO_VIEWING_PATH ?? "").trim().toLowerCase() === "on";
+}
+const NO_VIEWING_ALT = { node: "apply_prep" as RouteNodeId, label: "お客様が申込の意思を示した時は、内覧なしでも申込のご案内（フォーマットと本人確認書類）へ", aix: ["application_push"], when: "申込の意思（抑えたい・申込みたい・進めたい）" };
 
 export const ROUTE_NODES: Record<RouteNodeId, RouteNode> = {
   inquiry: { id: "inquiry", name: "問い合わせ", aim: ["信用を頂く", "条件を聞き出す"], signals: "初めての連絡・こちらはまだ何も送っていない",
@@ -64,11 +91,11 @@ export const ROUTE_NODES: Record<RouteNodeId, RouteNode> = {
   pickup: { id: "pickup", name: "物件ピックアップ", aim: ["信用を頂く"], signals: "ピックアップしてお送りすると約束した（まだ送っていない）",
     next: { label: "約束どおり物件をピックアップしてお送りする", aix: ["property_send"] }, nextNode: "proposing" },
   proposing: { id: "proposing", name: "物件の提案（反応待ち）", aim: ["比べて選んでもらう"], signals: "物件を送った・お客様の反応待ち",
-    next: { label: "気になるお部屋を伺い、募集状況の確認・見積へ", aix: ["property_check_result", "property_recommendation"] }, nextNode: "interested" },
+    next: { label: "気になるお部屋を伺い、募集状況の確認・見積へ", aix: ["property_check_result", "property_recommendation"] }, nextNode: "interested", altNext: NO_VIEWING_ALT },
   interested: { id: "interested", name: "気に入った物件あり", aim: ["申込へ誘う", "比べて選んでもらう"], signals: "確認の結果を報告した・送った物件への言及・お客様の共有",
-    next: { label: "最大限割引の御見積書をお送りする", aix: ["estimate_sheet"] }, nextNode: "estimate" },
+    next: { label: "最大限割引の御見積書をお送りする", aix: ["estimate_sheet"] }, nextNode: "estimate", altNext: NO_VIEWING_ALT },
   estimate: { id: "estimate", name: "見積", aim: ["申込へ誘う"], signals: "御見積書を送った",
-    next: { label: "ご内覧のご案内（候補日）", aix: ["viewing_invite"] }, nextNode: "viewing_arrange" },
+    next: { label: "ご内覧のご案内（候補日）", aix: ["viewing_invite"] }, nextNode: "viewing_arrange", altNext: NO_VIEWING_ALT },
   viewing_arrange: { id: "viewing_arrange", name: "内覧調整", aim: ["申込へ誘う"], signals: "内覧を打診した・お客様が内覧を希望・日時はまだ",
     next: { label: "日時を決めて待ち合わせ場所をお送りする", aix: ["viewing_invite", "meeting_place"] }, nextNode: "viewing_scheduled" },
   viewing_scheduled: { id: "viewing_scheduled", name: "内覧予定", aim: ["信用を頂く"], signals: "内覧の日時が決まっている",
@@ -330,6 +357,8 @@ export function buildApplyRouteBrainText(loc: ApplyRouteLocation): string {
   // 2026-11-23 作業員A（KB 2d1c4c74「地図は道筋」・APPLY_ROUTE_PATH_LINE=on の時だけ・既定 off＝今の1行のまま）: 次の一手の候補の1行を、道筋の言い方（本線の次の駅・その先・そこへ向かう一手の例）に替える
   if (applyRoutePathLineOn()) { const pl = routePathBrainLine(routePathOf(loc), loc.next?.label ?? null, loc.next?.aix ?? []); if (pl) parts.push(pl); }
   else if (loc.next) parts.push(`申込へ向けた次の一手の候補: ${loc.next.label}${loc.next.aix.length ? `（合う AIX: ${loc.next.aix.join("・")}）` : ""}`);
+  // 2026-11-25 作業員A（#728 の成約データ・APPLY_ROUTE_NO_VIEWING_PATH=on の時だけ・既定 off＝1文字も変わらない）: 本線の外の太い道（内覧なしで申込）と、どの時にどちらかの材料
+  if (applyRouteNoViewingPathOn() && loc.node && !loc.branch) { const alt = ROUTE_NODES[loc.node]?.altNext; if (alt) parts.push(`別の道（成約データ: 申込146件の7割は内覧の記録なしで申込）: ${alt.when}が今の通にある時は${alt.label}。それ以外は本線（内覧に入った件の申込到達は約2倍＝内覧予定 61.5%・見積 35.9%）`); }
   parts.push("※位置は網。どう返すか・AIX にするかはあなたが会話を読んで決める。");
   let text = parts.join("\n");
   if (text.length > APPLY_ROUTE_TEXT_MAX) text = text.slice(0, APPLY_ROUTE_TEXT_MAX - 1) + "…";

@@ -10,6 +10,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-route-progress-takeuchi.ts [--days=60] [--max-conv=400] [--json=<出力>]
 //   重い読み（会話ごとに customer-state の材料を読む）。JST 9〜22時は --days=2 --max-conv=10 に絞る（--force で外す）。
 import { createClient } from "@supabase/supabase-js";
+import { sameRouteStation } from "./lib/flex-daily";
 import { writeFileSync } from "node:fs";
 import { guideTurnsOf, outOfScopeAtOf, type GMsg, type GAix, type GDecision, type GuideTurn } from "./lib/guide-measure";
 import { actDirection, routeAgreement, type ActDirection, type Agreement } from "./lib/route-progress";
@@ -150,7 +151,7 @@ type Row = {
     //   guide-measure は sg が無いと cp で駅を出す＝ピックアップ・気に入った・見積が全部 proposing、内覧調整・予定・後が全部 viewing_arrange になる（数え方）。時代で分けて比べる
     const SG_FROM = "2026-11-03T05:42";
     const CP5: Record<string, string> = { inquiry: "hearing", hearing: "hearing", pickup: "proposing", proposing: "proposing", interested: "proposing", estimate: "proposing", viewing_arrange: "viewing", viewing_scheduled: "viewing", viewed: "viewing", apply_prep: "applying", applying: "applying" };
-    const sameSt = (x: Row) => x.node === x.digestNode || (x.digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(x.node ?? ""));
+    const sameSt = (x: Row) => sameRouteStation(x.node, x.digestNode); // 2026-11-25 作業員A: flex-daily と同じ決め（初回で条件まで書いた番の inquiry≈hearing を含む）
     const bt = rows.filter((x) => x.node && x.digestNode), sgE = bt.filter((x) => x.at >= SG_FROM), cpE = bt.filter((x) => x.at < SG_FROM);
     console.log(`   時代で分けた一致: sg の時代（11/03〜）${sgE.filter(sameSt).length}/${sgE.length}・cp の時代（〜11/03・5段に寄せて）${cpE.filter((x) => CP5[x.node!] === CP5[x.digestNode!]).length}/${cpE.length}（駅のままだと ${cpE.filter(sameSt).length}）`);
   }

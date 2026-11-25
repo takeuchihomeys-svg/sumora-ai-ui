@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   locateApplyRoute, resolveRouteNode, buildApplyRouteBrainText, applyRouteBrainTextIfEnabled, applyRouteMapEnabled,
   ROUTE_NODES, ROUTE_BRANCHES, MAIN_ROUTE, APPLY_ROUTE_TEXT_MAX, SILENT_DAYS, type ApplyRouteSignals,
+  conductorIntakeRouteOn, intakeRouteLine,
 } from "../apply-route-map";
 import { rankMentionOf, latestRankMention } from "../parallel-second";
 
@@ -173,5 +174,13 @@ it("brain-core: off の時プロンプトは同じ（applyRouteText は '' で�
   ok(!src.slice(freshA, cst).includes("applyRoute"), "会話専用ブロック A/B に入れない");
 });
 
+// 2026-11-25 作業員A（#687 ③）: 入口の統括に駅の1行（CONDUCTOR_INTAKE_ROUTE・既定 off）
+{
+  const ln = intakeRouteLine("hearing");
+  it("入口の駅の1行: 今どこ・この先・次の一手", () => ok(ln.includes("条件ヒアリング") && ln.includes("この先") && ln.includes("合う AIX") && intakeRouteLine(null) === "", "入口の駅の1行: 今どこ・この先・次の一手"));
+  it("入口の駅の1行: 既定 off", () => ok(!conductorIntakeRouteOn({}) && conductorIntakeRouteOn({ CONDUCTOR_INTAKE_ROUTE: "on" }), "入口の駅の1行: 既定 off"));
+  const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
+  it("配線: 入口の carryLine にスイッチの時だけ", () => ok(bc.includes("am.conductorIntakeRouteOn() || isPostApplyStatus(convStatus)") && bc.indexOf("am.intakeRouteLine(nd)") > 0, "配線: 入口の carryLine にスイッチの時だけ"));
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

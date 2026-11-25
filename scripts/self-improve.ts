@@ -230,6 +230,16 @@ async function main() {
       const pick = (m: string) => { const r = rq.filter((x) => x.metric === m); const a = r[0], b = r[1]; if (!a) return `—`; const d = a.value != null && b?.value != null ? Math.round((a.value - b.value) * 10) / 10 : null; return `${a.value ?? "—"}%（${a.n ?? "—"}番${d != null ? `・前の日から ${d >= 0 ? "+" : ""}${d}` : ""}）`; };
       lines.push(`- ブレインは地図をどこまで使えているか: 進み ${pick(ms[0])}・候補と一手の一致 ${pick(ms[1])}・今どこの読み違い ${pick(ms[2])}・組の本当の一致 ${pick(ms[3])}（作業員A・#608・次の直し #646／#650／#657／#624）`);
     } catch (e) { lines.push(`- 地図の使い方の数: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
+    // 2026-11-25 作業員A（竹内さん 18時台「地図の土台を整えて細分化・統括と連携」・#687）: 駅ごとの土台の欠け（決まり・材料・物差し・試験・統括）と連携の届き（audit-route-foundation --write の最新・軽い読み）
+    try {
+      const { data: fq } = await sb.from("quality_daily").select("day,metric,value,n,detail").like("metric", "route:foundation:%").gte("day", new Date(Date.parse(dayStart) - 3 * 86_400_000).toISOString().slice(0, 10)).order("day", { ascending: false }).limit(200);
+      const fr = (fq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; detail: { gaps?: string[]; next?: { ok: number; n: number } } | null }>;
+      const d0 = fr[0]?.day; const latest = fr.filter((r) => r.day === d0 && (r.value ?? 0) > 0).sort((a, b) => (b.n ?? 0) - (a.n ?? 0));
+      for (const r of latest.slice(0, 6)) lines.push(`  - 駅 ${r.metric.replace("route:foundation:", "")}: 欠け ${(r.detail?.gaps ?? []).join("・")}${r.detail?.next ? `（次の一手 ${r.detail.next.ok}/${r.detail.next.n}）` : ""}`);
+      const { data: lq } = await sb.from("quality_daily").select("value,n,detail").eq("metric", "route:link:brain_ar").order("day", { ascending: false }).limit(1);
+      const l0 = (lq ?? [])[0] as { value: number | null; n: number | null; detail?: { empty?: number } } | undefined;
+      if (latest.length || l0) lines.push(`- 地図の連携の届き: 判断の記録に駅 ${l0?.value ?? "—"}%（${l0?.n ?? 0}番・空 ${l0?.detail?.empty ?? 0}＝#676）・指示書に地図＝ROUTE_TO_BRIEF（会話の最新の記録で数える）・入口の統括の読みには駅が届いていない（作業員A・#687）`);
+    } catch (e) { lines.push(`- 地図の駅ごとの土台: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・COMPOSE_PLAN_REUSE=shadow 既定）: 前の日の返信の番で、設計図が作られた番・使い回しで作れた番（shadow の印）・作られなかった番（軽い読み・日付で絞る）
     try {
       const from = new Date(Date.parse(dayStart)).toISOString(), to = new Date(Date.parse(dayStart) + 86_400_000).toISOString();

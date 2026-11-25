@@ -27,6 +27,7 @@ import { turnApplicationReason } from "../app/lib/turn-application-gate";
 import { shouldBeAixOf } from "../app/lib/aix-should-be";
 import { classifyCustomerBurst } from "../app/lib/customer-reaction-predict";
 import { aixKindOfTurn, turnClassOf, brainRouteOf, judgeTurn, type TurnClass } from "../app/lib/aix-turn-judgment";
+import { checkPromiseFlowOf } from "../app/lib/check-promise-flow";
 
 /** 下書きがその AIX の種類の約束か（audit-aix-miss-causes の PROMISE と同じ網・純関数） */
 export function draftPromiseOf(draft: string, kind: string): boolean {
@@ -107,6 +108,8 @@ type Dec = { id: string; created_at: string; suggested_action: string | null; su
       const bDraftPromise = v === "先後" && !!tk && draftPromiseOf(draftOf.get(t.id) ?? "", tk);
       const firstAixAt = kinded.find((m) => m.aix)?.at ?? null;
       rows.push({
+        // 2026-11-25 作業員A（竹内さんの4つの決め）: 番の時刻の確認の約束の流れの場面（AIX の結果は会話の見張りの番の staff_aix で読む）
+        cpf: ((cpfNow: number) => checkPromiseFlowOf(ms.filter((m) => m.at <= cpfNow).map((m) => ({ sender: m.sender, text: m.text, createdAt: new Date(m.at).toISOString(), isAix: m.aix })), ts.flatMap((x) => (x.staff_aix ?? []).map((a) => ({ aix_type: a.aix_type, sent_at: a.at }))), cpfNow).scene)(Math.max(at, ...ms.filter((m) => m.sender === "customer" && m.at > at && m.at < (moves[0]?.at ?? at)).map((m) => m.at)) + 1000),
         id: t.id, conv: c.slice(0, 8), at: t.customer_turn_at.slice(0, 16), cls, tk, prevFulfil, prevPromise, bDraftPromise, route: route.route, bk: route.kind, src: dec.decision_source, v,
         minDecToAix: firstAixAt ? Math.round((firstAixAt - decAt) / 6e4) : null, burst: classifyCustomerBurst(burst),
         mat: { pend, pp: dg.pp === true, checked, taskResult, openTasks, imgFacts, po: (dg.sn as { po?: number } | undefined)?.po ?? null, mk: dg.mk ?? null, mks: dg.mks === true, ac: dg.ac ? (dg.ac as { answer?: string }).answer ?? "?" : null, ad: dg.ad ? { sb: (dg.ad as { sb?: string }).sb ?? null, pick: (dg.ad as { pick?: string }).pick ?? null } : null, rc: dg.rc ?? null, cp: dg.cp ?? null },
