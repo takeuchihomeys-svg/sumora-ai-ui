@@ -642,6 +642,15 @@ async function main() {
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
     }
   }
+  // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
+  if (!only || doCandidates) {
+    const { data: pl0 } = await sb.from("quality_daily").select("day, metric, value").eq("scope", "all").like("metric", "promise_life:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
+    const pl = ((pl0 ?? []) as Array<{ day: string; metric: string; value: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (pl.length) {
+      const g = (k: string) => { const r = pl.find((x) => x.metric === `promise_life:${k}`); return r?.value == null ? "—" : `${Number(r.value)}%`; };
+      lines.push(`- 約束の一生（${pl[0].day}）: 見つけるの外れ ${g("find_miss")}・文に期限 ${g("due_words")}・台帳 ${g("record_fact")}・期限内に果たした ${g("kept_in_time")}・閉じた時刻 ${g("closed_with_time")}・試験の約束の依頼の扱い ${g("exam_promise_covered")}（答え方 ${g("exam_promise_route")}）`, "");
+    }
+  }
   // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
   //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
   if (!only || doCandidates) {
