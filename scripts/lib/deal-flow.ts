@@ -82,3 +82,34 @@ export function stationReach(fs: readonly DealFlow[]): Array<{ station: string; 
     return { station: st, n: pass.length, applied, rate: pass.length ? Math.round((applied / pass.length) * 1000) / 10 : null };
   });
 }
+
+// ── 申込したのに条件の時刻が無い件の分け（作業員A・統括役 11/25:「初回の通に条件まで書いてある＝条件の段を通らない道」か「本当の記録の抜け」か）
+//   condition_at は スタッフが条件を聞いた印（AIX condition_hearing・追いの condition_asked・段の履歴 condition_hearing）だけから付く（deal-outcome-server）。
+//   お客様が自分から条件を書いた通・スタッフが手打ちで条件を聞いた通は入らない。申込より前の通だけを見る（申込以降は読まない・呼ぶ側で切る）
+export type FlowMsg = { sender: string; text: string | null; at: string };
+export type CondGapKind = "first_msg_conditions" | "staff_hand_asked" | "later_customer_conditions" | "brought_property" | "no_conditions_seen";
+/** お客様の通の中の条件の種類（場所・家賃・間取り・入居の時期）。決まった語だけ */
+export function conditionKindsOf(text: string | null | undefined): string[] {
+  const t = String(text ?? "");
+  const k: string[] = [];
+  if (/駅|線|区|市|町|エリア|沿線|周辺|付近/.test(t)) k.push("area");
+  if (/\d+(\.\d+)?\s*万|家賃|予算|円以内|円まで/.test(t)) k.push("rent");
+  if (/[1-4１-４]\s*(R|K|DK|LDK|SLDK)|ワンルーム|間取/i.test(t)) k.push("layout");
+  if (/入居|引っ越|引越|\d+\s*月(頃|ごろ|中|末|上旬|中旬|下旬|から)|今月|来月/.test(t)) k.push("movein");
+  return k;
+}
+const HAND_ASK = /ご希望(の|は)?(条件|エリア|地域|駅|沿線|間取|家賃|時期)|ご予算|お聞かせ|教えて(頂|いただ|下さ|くださ)/;
+const PROP_LINK = /suumo|homes\.co\.jp|athome|chintai|https?:\/\/\S*(bukken|room|rent)/i;
+/** 1件を分ける。msgs は時刻の順・申込より前だけ */
+export function conditionGapOf(msgs: readonly FlowMsg[]): { kind: CondGapKind; firstKinds: string[] } {
+  const firstStaff = msgs.findIndex((m) => m.sender === "staff");
+  const before = firstStaff < 0 ? msgs : msgs.slice(0, firstStaff);
+  const firstKinds = [...new Set(before.filter((m) => m.sender === "customer").flatMap((m) => conditionKindsOf(m.text)))];
+  if (firstKinds.length >= 2) return { kind: "first_msg_conditions", firstKinds };
+  const condIdx = msgs.findIndex((m) => m.sender === "customer" && conditionKindsOf(m.text).length >= 2);
+  const askIdx = msgs.findIndex((m) => m.sender === "staff" && HAND_ASK.test(String(m.text ?? "")));
+  if (askIdx >= 0 && (condIdx < 0 || askIdx < condIdx)) return { kind: "staff_hand_asked", firstKinds };
+  if (condIdx >= 0) return { kind: "later_customer_conditions", firstKinds };
+  if (msgs.some((m) => m.sender === "customer" && PROP_LINK.test(String(m.text ?? "")))) return { kind: "brought_property", firstKinds };
+  return { kind: "no_conditions_seen", firstKinds };
+}
