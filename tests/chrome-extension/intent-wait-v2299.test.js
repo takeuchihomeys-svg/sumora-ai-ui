@@ -69,7 +69,14 @@ ok("列の20秒見張りは印の間は止まりと数えない", /if \(_holding
 ok("沈黙135秒の見張りも印の間は数えない", /if \(_intentWaitActive\(3000\)\) \{\s*_silenceNoProgTicks = 0;\s*return;\s*\}\s*if \(idleMs < AXLX_STUCK_IDLE_MS\)/.test(ps));
 ok("予定を大きく超えた時だけ本物の止まり（fill_pause_force）", /予定を15秒超えた（本物の止まり）/.test(ps));
 ok("止まった時の点検 q= に印の種類（iw）", /"\/iw" \+ \(window\.__axlxIntentWait/.test(ps));
-ok("版 2.8.299", /_AXLX_PAGE_VER = "2\.8\.299"/.test(ps));
+ok("版 2.8.300", /_AXLX_PAGE_VER = "2\.8\.300"/.test(ps));
+
+console.log("\n■ 2.8.300 手を止める停止は手の動きの上限（6秒）で切る（記録と動きを一致）");
+const pu = fs.readFileSync(path.join(__dirname, "../../chrome-extension/pointer-ui.js"), "utf8");
+const driftCap = (pu.match(/var total = Math\.max\(120, Math\.min\((\d+), Number\(ms\)/) || [])[1];
+const pauseCap = (ps.match(/var AXLX_HAND_PAUSE_MAX_MS = (\d+);/) || [])[1];
+ok("pointer-ui の drift の上限と同じ値", !!driftCap && driftCap === pauseCap, { driftCap, pauseCap });
+ok("停止の長さを上限で切ってから記録・印・待ちに使う", /var pause = Math\.min\(_longPauseDue\(item\), AXLX_HAND_PAUSE_MAX_MS\);\s*if \(pause > 0\) \{\s*try \{ _auditStepP\('fill_pause'/.test(ps));
 
 console.log("");
 console.log("結果: " + pass + " 件 OK / " + fail + " 件 NG");

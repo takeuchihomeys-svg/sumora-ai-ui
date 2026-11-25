@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.299";
+  var _AXLX_PAGE_VER = "2.8.300";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -6914,6 +6914,8 @@ function _guideLikeAreaSkip(why) {
     } catch (_) {}
     return w ? { kind: w.kind, planned: w.ms, actual: actual } : null;
   }
+  // pointer-ui.js の _driftNow の上限（Math.min(6000, ms)）と同じ値にする
+  var AXLX_HAND_PAUSE_MAX_MS = 6000;
   function _longPauseDue(item) {
     /**
      * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
@@ -6982,7 +6984,13 @@ function _guideLikeAreaSkip(why) {
         return _ofn.apply(this, arguments);
       };
     }
-    var pause = _longPauseDue(item);
+    /**
+     * ★ 2.8.300 竹内さん「人の動きの停止の部分はあえて停止させているとちゃんと理解させる」（長さは「おすすめで」）:
+     *   予定は 8〜25秒だが、手の動き（pointer-ui の drift）は最長6秒で終わり、その終わりで再開していた
+     *   （記録は「N秒」・実際は約6秒＝記録と動きの食い違い）。長い停止は止まりに見える（#1498 の 19.2秒）ので
+     *   動きは今まで通り約6秒のまま、予定の方を手の動きの上限で切って記録と一致させる。
+     */
+    var pause = Math.min(_longPauseDue(item), AXLX_HAND_PAUSE_MAX_MS);
     if (pause > 0) {
       try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（わざと止める・人の間＝止まりではない）'); } catch (_) {}
       _intentWaitMark("fill_pause", pause);
