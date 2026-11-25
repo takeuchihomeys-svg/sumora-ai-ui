@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.302";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.303";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -570,6 +570,24 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "function _handPauseMs()",
     file: "page-script.js",
+  },
+  {
+    id: "human_fixed_waits_routed",
+    scene: "press",
+    text: "押す前・押した後の人の間（検索の前のパネル清算350・ペット欄の確認350と280・再試行450）は固定の数字にせず _hd（人の間・基準の0.8〜1.5倍）を通す。固定だと毎回同じ間になり機械的に見える。",
+    since: "2.8.303",
+    kb: null,
+    marker: "setTimeout(clickSearch, _hd(350))",
+    file: "page-script.js",
+  },
+  {
+    id: "human_fixed_waits_routed_bulk",
+    scene: "press",
+    text: "一括（bulk-dl）の押す前・送る前の間（並べ替えの再試行1600・ホバー後120/200/140・並べ替えの開始500/450・チェック後の送付400・1件送付の間80）も _hd を通す。固定の数字の待ちを残さない。",
+    since: "2.8.303",
+    kb: null,
+    marker: "setTimeout(go, _hd(200))",
+    file: "bulk-dl.js",
   },
   {
     id: "ad_sort_hover",

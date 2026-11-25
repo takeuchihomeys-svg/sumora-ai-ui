@@ -3497,7 +3497,7 @@
         var next = _pdfQueue.shift();
         if (!next || !next.item || !next.url) continue;
         if (_onePdfSent[next.url]) continue;
-        setTimeout(function () { try { sendOnePdfNow(next.item); } catch (_) {} }, 80);
+        setTimeout(function () { try { sendOnePdfNow(next.item); } catch (_) {} }, _hd(80));
         break;
       }
     } catch (_) {}
@@ -3816,7 +3816,7 @@
                   if (typeof go === "function") go();
                 });
               });
-            }, 1600);
+            }, _hd(1600));
             return;
           }
           if (!alreadyAd && _sortFailWaitThenRetry("no_head")) return;
@@ -4616,7 +4616,7 @@
           }, function () {
             if (!alive()) { doneHover(false); return; }
             try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(fire, 120);
+            setTimeout(fire, _hd(120));
           });
           return;
         }
@@ -4659,7 +4659,7 @@
             if (!alive()) { cb(false); return; }
             var c = centerOf(el);
             try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(go, 200);
+            setTimeout(go, _hd(200));
           });
           return;
         }
@@ -4668,7 +4668,7 @@
         var c2 = centerOf(el);
         el.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true, view: window, clientX: c2.x, clientY: c2.y }));
       } catch (_) {}
-      setTimeout(go, 140);
+      setTimeout(go, _hd(140));
     };
     /**
      * ★ 2.8.185 竹内さん画像（赤丸）正本:
@@ -4752,7 +4752,7 @@
           setTimeout(tick, 320 + Math.floor(Math.random() * 180));
         });
       };
-      setTimeout(tick, 500);
+      setTimeout(tick, _hd(500));
     };
     /**
      * ★ 2.8.247: 並べ替えホバー後、下メニューに AD が出るまで待つ（固定1.4秒で諦めない）。
@@ -4782,7 +4782,7 @@
           setTimeout(tick, 360 + Math.floor(Math.random() * 160));
         });
       };
-      setTimeout(tick, 450);
+      setTimeout(tick, _hd(450));
     };
 
     // ① 「並べ替え」へカーソルを動かして置くだけ（クリックしない → 下に展開）
@@ -8555,7 +8555,7 @@
       if (item.cb && !item.cb.checked && !item.__axForced) {
         item.__axForced = true;
         try { item.cb.checked = true; updateBar(); } catch (_) {}
-        setTimeout(function () { _doSendOne(item, state, next); }, 400);
+        setTimeout(function () { _doSendOne(item, state, next); }, _hd(400));
         return;
       }
       _rememberPickedOne(state, item); // 2026-11-10: 送る1件を記録（点検の C2・C3 が読む）

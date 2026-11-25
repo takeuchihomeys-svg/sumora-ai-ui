@@ -69,7 +69,7 @@ ok("列の20秒見張りは印の間は止まりと数えない", /if \(_holding
 ok("沈黙135秒の見張りも印の間は数えない", /if \(_intentWaitActive\(3000\)\) \{\s*_silenceNoProgTicks = 0;\s*return;\s*\}\s*if \(idleMs < AXLX_STUCK_IDLE_MS\)/.test(ps));
 ok("予定を大きく超えた時だけ本物の止まり（fill_pause_force）", /予定を15秒超えた（本物の止まり）/.test(ps));
 ok("止まった時の点検 q= に印の種類（iw）", /"\/iw" \+ \(window\.__axlxIntentWait/.test(ps));
-ok("版 2.8.302", /_AXLX_PAGE_VER = "2\.8\.302"/.test(ps));
+ok("版 2.8.303", /_AXLX_PAGE_VER = "2\.8\.303"/.test(ps));
 
 console.log("\n■ 2.8.302 停止の上限は 11 秒（手の動きの既定 6 秒は他の呼び出しのまま・停止だけ maxMs で広げる）");
 const pu = fs.readFileSync(path.join(__dirname, "../../chrome-extension/pointer-ui.js"), "utf8");

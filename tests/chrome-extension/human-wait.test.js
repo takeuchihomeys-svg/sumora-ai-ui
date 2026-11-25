@@ -336,7 +336,7 @@ function rest() {
     ["page-script.js", /whenClickQueueIdle\(function \(\) \{ setTimeout\(_confirmPetPanel, 350\)/],
     ["page-script.js", /whenClickQueueIdle\(function \(\) \{ setTimeout\(_afterPetToggle, 280\)/],
     ["page-script.js", /setTimeout\(attempt, 450\);/],
-    ["bulk-dl.js", /_liveDlStep\("sort_retry_before_pdf", "head_visible"\);\s*setTimeout\(function \(\) \{/],
+    ["bulk-dl.js", /^\s*\}, 1600\);/m],
     ["bulk-dl.js", /setTimeout\(fire, 120\);/],
     ["bulk-dl.js", /setTimeout\(go, 200\);/],
     ["bulk-dl.js", /setTimeout\(go, 140\);/],

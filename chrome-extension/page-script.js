@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.302";
+  var _AXLX_PAGE_VER = "2.8.303";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4142,6 +4142,8 @@ function _guideLikeAreaSkip(why) {
     "sort_hover_no_click_loop",
     "intent_wait_not_stall",
     "hand_pause_range",
+    "human_fixed_waits_routed",
+    "human_fixed_waits_routed_bulk",
     "all_sent_advance_no_stuck",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
@@ -8869,7 +8871,7 @@ function _guideLikeAreaSkip(why) {
                   );
                 }
               } catch (_) {}
-              setTimeout(attempt, 450);
+              setTimeout(attempt, _hd(450));
               return;
             }
             runFail();
@@ -14126,7 +14128,7 @@ function _guideLikeAreaSkip(why) {
     if (_axPanelDebt) {
       try { _auditStepP("search_block_panel_debt", _axPanelDebt.kind + " / " + _axPanelDebt.why); } catch (_) {}
       _noteSearchWhy("panel_debt:" + _axPanelDebt.kind);
-      _settlePanelDebtThen("検索前のパネル清算", function () { setTimeout(clickSearch, 350); });
+      _settlePanelDebtThen("検索前のパネル清算", function () { setTimeout(clickSearch, _hd(350)); });
       return;
     }
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
@@ -17353,7 +17355,7 @@ function _guideLikeAreaSkip(why) {
                   } catch (_) { hit2 = chk; }
                   if (typeof _toggleCheckboxLikeHuman === "function") _toggleCheckboxLikeHuman(chk, wantPet);
                   else enqueueHumanClick(hit2, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
-                  whenClickQueueIdle(function () { setTimeout(_confirmPetPanel, 350); });
+                  whenClickQueueIdle(function () { setTimeout(_confirmPetPanel, _hd(350)); });
                   return;
                 }
               } catch (_) {}
@@ -17369,7 +17371,7 @@ function _guideLikeAreaSkip(why) {
               } catch (_) {}
               whenClickQueueIdle(function () { resolve(); });
             }
-            whenClickQueueIdle(function () { setTimeout(_afterPetToggle, 280); });
+            whenClickQueueIdle(function () { setTimeout(_afterPetToggle, _hd(280)); });
           });
         });
       },
