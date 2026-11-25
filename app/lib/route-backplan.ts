@@ -55,8 +55,8 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   const rest = (i >= 0 ? MAIN_ROUTE.slice(i + 1) : []).filter((n) => path === "内覧あり" || !VIEW_NODES.has(n));
   const ahead = rest.slice(0, 3);
   const plant = ahead[1] ? PLANT[ahead[1]] ?? null : ahead[0] ? PLANT[ahead[0]] ?? null : null;
-  // 申込の目安: 入居の約3週間前（申込→成約の中央 21.8日）
-  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? ymdAdd(f.moveInYmd, -22) : null;
+  // 申込の目安（11/26 統括役の注意）: 申込→成約の 21.8日は「成約の印まで」で入居日とは限らない＝入居希望日から幅で出す（申込から入居まで普通は3〜4週間・目安）
+  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -28)}〜${ymdAdd(f.moveInYmd, -21)}` : null;
   return { path, why, needs, ahead, plant, applyBy };
 }
 /** 材料の1行（当たらない時は ""）。道はブレインが決める＝「例」「目安」と書く */
@@ -64,5 +64,5 @@ export function backplanLine(p: Backplan | null): string {
   if (!p) return "";
   const ahead = p.ahead.map((n) => ROUTE_NODES[n].name).join("→");
   return `【申込から逆算した計画（決まった計算・材料・道はあなたが決める）】道: ${p.path}（${p.why}）／申込までに要る物: ${p.needs.map((n) => `${n.label} ${n.state}`).join("・")}`
-    + `${ahead ? `／この先: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃まで（入居の約3週間前）` : ""}`;
+    + `${ahead ? `／この先: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃（目安・申込から入居まで普通は3〜4週間・言い切らない）` : ""}`;
 }
