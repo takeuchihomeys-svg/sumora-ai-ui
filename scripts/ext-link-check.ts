@@ -28,8 +28,8 @@ const TESTS: Array<{ name: string; cmd: "tsx" | "node"; file: string }> = [
   { name: "一括の流れ（前の客の後に待つ）", cmd: "node", file: "tests/chrome-extension/bulk-loop-sim-v28265.test.js" },
   { name: "リセット後の入力の待ち", cmd: "node", file: "tests/chrome-extension/reset-before-fill-v2296.test.js" },
   { name: "リセット後の次の客の待ち", cmd: "node", file: "tests/chrome-extension/reset-between-customers-v28284.test.js" },
-  // 既知の赤（前からの古い試験。直すか廃止するかは竹内さんの判断）
-  { name: "人の待ち時間の一覧（既知の赤・固定の数字の表が古い）", cmd: "node", file: "tests/chrome-extension/human-wait.test.js" },
+  // 既知の赤: 人の操作の間（クリック・並べ替えの前後）に固定の数字の待ちが残っている（直すのは拡張の動きを変えるので竹内さんの OK 後）
+  { name: "人の操作の間の固定の待ち（直すまで赤）", cmd: "node", file: "tests/chrome-extension/human-wait.test.js" },
 ];
 
 type Row = { name: string; ok: boolean; detail: string };
