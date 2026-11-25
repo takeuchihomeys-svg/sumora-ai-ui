@@ -101,7 +101,10 @@ console.log("── ★ 申込以降は渡さない（竹内「申込までの�
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
   t("★ fetch の入口で申込以降なら Anthropic へ戻している",
     // 2026-10-01: Claude へ戻す所は toClaude（テストの間だけ止める・本番は original）を通す形にした
-    /isPostApplyCall\(headers\)\)\s*return (?:original|toClaude\()/.test(provider) && /const toClaude = [\s\S]{0,400}?return original\(input as RequestInfo, init\);/.test(provider),
+    // 2026-11-25 竹内さんの決め: 申込以降は Claude（線を超えて OpenAI に回る番だけ越える・DeepSeek には出さない）＝ postApplyHere && !piiPassToOpenAI(...) で toClaude
+    (/isPostApplyCall\(headers\)\)\s*return (?:original|toClaude\()/.test(provider)
+      || (/const postApplyHere = isPostApplyCall\(headers\)/.test(provider) && /if \(postApplyHere && !piiPassToOpenAI\([^)]*\)\) return toClaude\(/.test(provider) && /budgetTarget\.provider !== "openai"\) return false/.test(provider)))
+    && /const toClaude =[\s\S]{0,400}?return original\(input as RequestInfo, init\);/.test(provider),
     "この1行が消えると申込以降の会話が別クラウドに流れる");
   t("★ 申込以降には「開くスイッチ」を作っていない",
     !/LLM_ALT_POST_APPLY/.test(provider), "竹内『申込までのツールなので』＝開ける必要が無い");

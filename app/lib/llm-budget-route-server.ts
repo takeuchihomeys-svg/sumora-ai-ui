@@ -61,7 +61,7 @@ export async function claudeSpendNow(sb: SupabaseClient, nowMs = Date.now(), env
 }
 
 /** 名札の振り分け（off の時は DB を読まない） */
-export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, ctx: { httpRoute?: string | null; claudeModel?: string | null } = {}): Promise<BudgetDecision> {
+export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean } = {}): Promise<BudgetDecision> {
   const cfg = readBudgetConfig(env);
   if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg, ctx);
   // 表に無い名札は DB を読まない（Claude のまま）
