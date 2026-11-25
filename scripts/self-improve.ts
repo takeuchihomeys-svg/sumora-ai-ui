@@ -242,10 +242,11 @@ async function main() {
     } catch (e) { lines.push(`- 地図の駅ごとの土台: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-25 作業員A（#745・竹内さん「2手先・逆算」）: 逆算の計画の この先 の駅が竹内さん本人の会話で当たった割合（audit-route-backplan-hit --write の最新）
     try {
-      const { data: bq } = await sb.from("quality_daily").select("metric,value,n").in("metric", ["route:backplan_hit1", "route:backplan_hit2"]).order("day", { ascending: false }).limit(4);
+      const { data: bq } = await sb.from("quality_daily").select("metric,value,n").in("metric", ["route:backplan_hit1", "route:backplan_hit2", "route:backplan_takeuchi_match"]).order("day", { ascending: false }).limit(6);
       const bh = (bq ?? []) as Array<{ metric: string; value: number | null; n: number | null }>;
       const b1 = bh.find((x) => x.metric === "route:backplan_hit1"), b2 = bh.find((x) => x.metric === "route:backplan_hit2");
-      if (b1 || b2) lines.push(`- 地図の先読み（本線の この先 が実際に当たった割合・竹内さん本人の番）: 1手先 ${b1?.value ?? "—"}%（${b1?.n ?? 0}番）・2手先 ${b2?.value ?? "—"}%（${b2?.n ?? 0}番）（作業員A・#745）`);
+      const bt = bh.find((x) => x.metric === "route:backplan_takeuchi_match");
+      if (b1 || b2 || bt) lines.push(`- 地図の先読み: 竹内さんの先読みとの一致（竹内さんの仕込みの狙いが太い道の この先 に入っている）${bt?.value ?? "—"}%（${bt?.n ?? 0}番）／並べて見る: 本線の1手先 ${b1?.value ?? "—"}%（${b1?.n ?? 0}番）・2手先 ${b2?.value ?? "—"}%（${b2?.n ?? 0}番）（作業員A・#745）`);
     } catch (e) { lines.push(`- 地図の先読みの数: 失敗（${String(e).slice(0, 60)}・作業員A）`); }
     // 2026-11-24 作業員A（統括役の決め・COMPOSE_PLAN_REUSE=shadow 既定）: 前の日の返信の番で、設計図が作られた番・使い回しで作れた番（shadow の印）・作られなかった番（軽い読み・日付で絞る）
     try {

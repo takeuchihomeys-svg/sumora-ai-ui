@@ -22,7 +22,9 @@ export type BackplanFacts = {
   /** 審査の不安が開いている（審査の語・答えの後の受けが無い） */ screeningConcern: boolean;
   /** 入居の時期（YYYY-MM-DD・条件の入居時期の先頭）と今日（JST の YYYY-MM-DD） */ moveInYmd: string | null; todayYmd: string;
 };
-export type Backplan = { path: "内覧あり" | "内覧なし"; why: string; needs: Array<{ label: string; state: "済み" | "まだ" | "分からない" }>; ahead: RouteNodeId[]; plant: string | null; applyBy: string | null };
+export type Backplan = { path: "内覧あり" | "内覧なし"; why: string; needs: Array<{ label: string; state: "済み" | "まだ" | "分からない" }>; ahead: RouteNodeId[]; plant: string | null; applyBy: string | null;
+  /** 2026-11-26 #745 の直し②: ゴール側の仕込みの一言（竹内さん本人の60日の文の型） */ goalPlant: string | null;
+  /** 2026-11-26 #745 の直し③: 日付の目安（幅・言い切らない）と、分からないので聞く事 */ dates: string[]; asks: string[] };
 
 const VIEW_NODES: ReadonlySet<RouteNodeId> = new Set(["viewing_arrange", "viewing_scheduled", "viewed"]);
 /** 2手先・3手先の駅に向けて、今の番で仕込む一言の例（竹内さんの実送信の言い回しの型・押し付けない一文） */
@@ -35,6 +37,39 @@ const PLANT: Partial<Record<RouteNodeId, string>> = {
   viewing_scheduled: "当日は待ち合わせ場所でお待ちしていると添える",
   viewed: "お気に召されましたらお申込でお部屋を抑えられると添える",
   apply_prep: "お申込はフォーマットと本人確認書類で進められると添える",
+};
+/**
+ * 2026-11-26 #745 の直し①（竹内さん「２番手先のあたり弱い原因は？」・audit-route-backplan-miss）: この先は成約データの太い道で出す。
+ *   本線の次の2駅で固定だと、1手先の外れ 50 のうち 19 が「駅を飛ばした」（提案中→見積・ヒアリング→提案中 等）。作業員L の #728 の申込に届いた型:
+ *   物件送り→見積→申込／見積→申込（内覧なし）／物件送り→申込・内覧に入った件は 物件送り→見積→内覧の日時→内覧した→申込。
+ *   ＝気に入った（interested）は飛ばされやすい・見積の先は内覧か申込
+ */
+export const THICK_PATH: Partial<Record<RouteNodeId, { viewing: RouteNodeId[]; noViewing: RouteNodeId[] }>> = {
+  inquiry: { viewing: ["hearing", "pickup", "proposing"], noViewing: ["hearing", "pickup", "proposing"] },
+  hearing: { viewing: ["pickup", "proposing", "estimate"], noViewing: ["pickup", "proposing", "estimate"] },
+  pickup: { viewing: ["proposing", "estimate", "viewing_arrange"], noViewing: ["proposing", "estimate", "apply_prep"] },
+  proposing: { viewing: ["estimate", "viewing_arrange", "viewing_scheduled"], noViewing: ["estimate", "apply_prep"] },
+  interested: { viewing: ["estimate", "viewing_arrange", "viewing_scheduled"], noViewing: ["estimate", "apply_prep"] },
+  estimate: { viewing: ["viewing_arrange", "viewing_scheduled", "viewed"], noViewing: ["apply_prep"] },
+  viewing_arrange: { viewing: ["viewing_scheduled", "viewed", "apply_prep"], noViewing: ["viewing_scheduled", "viewed", "apply_prep"] },
+  viewing_scheduled: { viewing: ["viewed", "apply_prep"], noViewing: ["viewed", "apply_prep"] },
+  viewed: { viewing: ["apply_prep"], noViewing: ["apply_prep"] },
+};
+export function aheadOf(node: RouteNodeId, path: "内覧あり" | "内覧なし"): RouteNodeId[] {
+  const t = THICK_PATH[node];
+  if (t) return (path === "内覧なし" ? t.noViewing : t.viewing).slice(0, 3);
+  const i = MAIN_ROUTE.indexOf(node);
+  return (i >= 0 ? MAIN_ROUTE.slice(i + 1) : []).filter((n) => path === "内覧あり" || !VIEW_NODES.has(n)).slice(0, 3);
+}
+/**
+ * 2026-11-26 #745 の直し②: ゴール側の仕込みの一言（竹内さん本人の60日の文から抜いた型・audit で多い順）。竹内さんは2手より先（見積・申込）を早くから仕込む
+ *   （仕込みの言葉がある番 38 のうち、地図の この先 に竹内さんの狙いが入っていたのは 17）。
+ *   申込: 「お気に召されましたらお申込しお部屋抑えさせて頂きます」（60日で最も多い・12回＋言い換え）
+ *   見積: 「確認出来次第、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます」（9回）
+ */
+export const GOAL_PLANT: Partial<Record<RouteNodeId, string>> = {
+  estimate: "「確認出来次第、最大限割引させて頂いた初期費用の御見積書とあわせてご連絡させて頂きます」の型（竹内さん本人の60日の文で多い）",
+  apply_prep: "「お気に召されましたらお申込しお部屋抑えさせて頂きます」の型（竹内さん本人の60日の文で一番多い）",
 };
 const ymdAdd = (ymd: string, days: number) => { const t = Date.parse(`${ymd}T00:00:00+09:00`) + days * 86_400_000; return new Date(t + 9 * 3_600_000).toISOString().slice(0, 10); };
 
@@ -51,18 +86,28 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
     ...(path === "内覧あり" ? [{ label: "内覧", state: (f.viewingDone ? "済み" : f.viewingScheduled ? "分からない" : "まだ") as "済み" | "まだ" | "分からない" }] : []),
     { label: "審査の不安の解消", state: f.screeningConcern ? "まだ" : "分からない" },
   ];
-  const i = MAIN_ROUTE.indexOf(f.node);
-  const rest = (i >= 0 ? MAIN_ROUTE.slice(i + 1) : []).filter((n) => path === "内覧あり" || !VIEW_NODES.has(n));
-  const ahead = rest.slice(0, 3);
+  const ahead = aheadOf(f.node, path);
   const plant = ahead[1] ? PLANT[ahead[1]] ?? null : ahead[0] ? PLANT[ahead[0]] ?? null : null;
   // 申込の目安（11/26 統括役の注意）: 申込→成約の 21.8日は「成約の印まで」で入居日とは限らない＝入居希望日から幅で出す（申込から入居まで普通は3〜4週間・目安）
   const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -28)}〜${ymdAdd(f.moveInYmd, -21)}` : null;
-  return { path, why, needs, ahead, plant, applyBy };
+  // ゴール側: この先の中で一番先の 見積か申込準備（無ければ申込準備）
+  const goalNode = [...ahead].reverse().find((n) => GOAL_PLANT[n]) ?? (MAIN_ROUTE.indexOf(f.node) < MAIN_ROUTE.indexOf("apply_prep") ? "apply_prep" : null);
+  const goalPlant = goalNode ? GOAL_PLANT[goalNode] ?? null : null;
+  // 日付の目安（決まった計算・幅・言い切らない）と聞く事（分からない欄）
+  const dates: string[] = [], asks: string[] = [];
+  if (f.moveInYmd && f.moveInYmd > f.todayYmd) {
+    if (applyBy) dates.push(`申込の目安 ${applyBy} 頃`);
+    if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled) dates.push(`内覧の目安 ${ymdAdd(f.moveInYmd, -35)}〜${ymdAdd(f.moveInYmd, -24)} 頃（申込の目安の少し前）`);
+    if (!f.focus && f.propertiesSent === 0) dates.push("物件出しは今週");
+    asks.push("今のお住まいの解約の予告の時期（1か月前の所が多い・目安）");
+  } else asks.push("ご入居の時期（いつ頃までに住み始めたいか）");
+  if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled && f.node && VIEW_NODES.has(f.node)) asks.push("ご内覧のご都合のよろしい日");
+  return { path, why, needs, ahead, plant, applyBy, goalPlant, dates, asks };
 }
 /** 材料の1行（当たらない時は ""）。道はブレインが決める＝「例」「目安」と書く */
 export function backplanLine(p: Backplan | null): string {
   if (!p) return "";
   const ahead = p.ahead.map((n) => ROUTE_NODES[n].name).join("→");
   return `【申込から逆算した計画（決まった計算・材料・道はあなたが決める）】道: ${p.path}（${p.why}）／申込までに要る物: ${p.needs.map((n) => `${n.label} ${n.state}`).join("・")}`
-    + `${ahead ? `／この先: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃（目安・申込から入居まで普通は3〜4週間・言い切らない）` : ""}`;
+    + `${ahead ? `／この先（成約データの太い道）: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.goalPlant ? `／ゴール側の一言の例: ${p.goalPlant}` : ""}${p.dates.length ? `／日付の目安（幅・言い切らない）: ${p.dates.join("・")}` : ""}${p.asks.length ? `／分からないので聞く事: ${p.asks.join("・")}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃（目安・申込から入居まで普通は3〜4週間・言い切らない）` : ""}`;
 }

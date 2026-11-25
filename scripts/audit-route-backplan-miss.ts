@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { MAIN_ROUTE, type RouteNodeId } from "../app/lib/apply-route-map";
+import { aheadOf } from "../app/lib/route-backplan";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 type Row = { conv: string; at: string; node: string | null; branch: string | null };
@@ -27,7 +28,7 @@ const PLANT: Array<[RegExp, RouteNodeId]> = [
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
 
 (async () => {
-  type Out = { conv: string; at: string; node: string; ahead: string[]; changes: string[]; cls1: string | null; cls2: string | null; plant: string | null };
+  type Out = { conv: string; at: string; node: string; ahead: string[]; thick: string[]; changes: string[]; cls1: string | null; cls2: string | null; plant: string | null };
   const outs: Out[] = [];
   for (const xs0 of byConv.values()) {
     const xs = [...xs0].sort((a, b) => a.at.localeCompare(b.at));
@@ -50,7 +51,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
         if (idx(got) > idx(from)) return "①地図に道が無い（駅を飛ばした）";
         return "④お客様の返事で道が変わった（戻った・別の駅）";
       };
-      outs.push({ conv: r.conv, at: r.at, node, ahead, changes, cls1: classify(0), cls2: classify(1), plant: null });
+      outs.push({ conv: r.conv, at: r.at, node, ahead, thick: aheadOf(node as RouteNodeId, "内覧あり"), changes, cls1: classify(0), cls2: classify(1), plant: null });
     }
   }
   // 竹内さんの先読み: 番の後の竹内さんの最初の文（会話の頭8字で会話を引く）
@@ -78,6 +79,21 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
   console.log(`\n■ 竹内さんの先読み（文の中の仕込みの言葉がある番 ${withPlant.length}）`);
   console.log(`  竹内さんの狙いの駅が実際に来た: ${plantHit}/${withPlant.length}・地図の この先（2駅）に竹内さんの狙いが入っている: ${mapHasPlant}/${withPlant.length}・地図の この先 が当たった: ${mapHitWhenPlant}/${withPlant.length}`);
   const gap = new Map<string, number>(); for (const o of withPlant) if (!o.ahead.includes(o.plant!)) { const k = `${o.node}→竹内さんは ${o.plant}（地図は ${o.ahead.join("→")}）`; gap.set(k, (gap.get(k) ?? 0) + 1); }
+  // 2026-11-26 #745 の直し④: 太い道の この先（route-backplan.aheadOf・3駅）でも比べる＝竹内さんの先読みとの一致（主の物差し）
+  const thickHasPlant = withPlant.filter((o) => o.thick.includes(o.plant!)).length;
+  const thickHit1 = outs.filter((o) => o.changes[0]).filter((o) => o.thick[0] === o.changes[0]).length, thickN1 = outs.filter((o) => o.changes[0]).length;
+  console.log(`  太い道の この先（3駅）に竹内さんの狙いが入っている: ${thickHasPlant}/${withPlant.length}（本線の2駅は ${mapHasPlant}/${withPlant.length}）・太い道の1手先の当たり ${thickHit1}/${thickN1}`);
+  if (process.argv.includes("--write")) {
+    const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    const qd = [
+      { day, metric: "route:backplan_takeuchi_match", scope: "takeuchi", value: pct(thickHasPlant, withPlant.length), n: withPlant.length, detail: { main2: pct(mapHasPlant, withPlant.length), plant_came: pct(plantHit, withPlant.length) }, source: "scripts/audit-route-backplan-miss.ts（作業員A・#745）" },
+      { day, metric: "route:backplan_thick_hit1", scope: "takeuchi", value: pct(thickHit1, thickN1), n: thickN1, source: "scripts/audit-route-backplan-miss.ts（作業員A・#745）" },
+    ];
+    const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });
+    if (error) throw new Error(error.message);
+    console.log(`書いた: quality_daily ${qd.length}行（${day}）`);
+  }
   console.log(`  地図の この先 に無い竹内さんの狙い: ${[...gap].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("／") || "なし"}`);
   const miss2 = outs.filter((o) => o.cls2 && o.cls2 !== "当たり");
   console.log(`\n2手先の外れ ${miss2.length}番（会話の頭8字・時刻・駅 → 地図の この先 ／ 実際）:`);
