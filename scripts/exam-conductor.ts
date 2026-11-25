@@ -61,7 +61,7 @@ function problemHashesOf(cwd: string): (id: string) => string[] | null {
   return (id) => (mm.size ? mm.get(id) ?? [] : null);
 }
 import { pcState } from "./lib/exam-pc-state";
-import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom, parseAfterAixDraft, afterAixDraftArgv } from "./lib/exam-conductor-core";
+import { prodWatchMs, prodHealthCap, prodHealthVerdict, serviceKeyFrom, parseAfterAixDraft, afterAixDraftArgv, examDayHoldWhy } from "./lib/exam-conductor-core";
 import { hazardAuditDue, splitWorse, cheapNow, maxExamsNow, earlyVerdict, repsPlan, pickProblems, updateReleaseOrder, compareJobs, createdAtIso, effectivePriority, longWaiting, splitIds, splitByTime, cleanupTargets, remoteDeployState, inspectOutputText, estimateJobMin, remainingIds, comparedIds, staleExamGuard, type RowLite, type SceneMap } from "./lib/exam-conductor-core";
 import { ensureLedger, idClashes } from "./lib/exam-id-ledger";
 import { nightBaseJobDue, nightBaseAlready, isExamJobShape, pinConfirmIds, mergePinnedBase, NIGHT_BASE_REPEAT, nightBaseIds, nightBaseSkip } from "./lib/exam-base-pin";
@@ -157,6 +157,7 @@ export type ExamJob = {
   /** 2026-11-04 指揮役: AI を呼ばない読むだけの依頼（cmd だけ・--read-only）。2つ目の流す役（--remote）が試験と同時に流す */ readOnly?: boolean;
   /** 2026-11-04 (a)(b): 小さいほど先（既定 5）・1本の時間の上限（分・既定 EXAM_JOB_MAX_MIN=40） */ priority?: number; maxMin?: number;
   /** 夜だけ流す（JST 22〜9・重い全件の読み等・--night） */ nightOnly?: boolean;
+  /** 2026-11-26: 昼（JST 8〜22時）でも流す DeepSeek の試験（--day-ok・統括役が付ける・examDayHoldWhy） */ dayOk?: boolean;
   /** 保留の理由（あれば流さない・手で外す） */ hold?: string;
   /** この時刻（ISO）より前は流さない（--not-before=2026-11-10T22:00+09:00） */ notBefore?: string;
   /** 急ぎ（--urgent）: 混雑の時間（平日 JST 10〜13・15〜19）でも流す（2026-11-06） */ urgent?: boolean;
@@ -205,6 +206,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   // 2026-11-04 指揮役: AI を呼ばない読むだけの依頼は試験の本数の門に入れない（夜だけの印は守る・DB の窓と上限は依頼の引数のまま）
   if (j?.runner === "cmd" && j.readOnly) { if (j.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; } return { ok: true, why: "読むだけ（AI を呼ばない・試験の門の外）" }; }
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
+  // 2026-11-26 作業員L（統括役の決め・昼の試験が晩の関所の外で $161）: DeepSeek の試験は昼は流さない（tsc・読むだけ・OpenAI の試験・--day-ok は流す）
+  { const dh = examDayHoldWhy(j, new Date(), process.env); if (dh) return { ok: false, why: dh }; }
   // 2026-11-10 作業員8（D3 漏れの番人）: 近い番の答えの漏れの印があれば試験を止める（exam-near-resolve が置く・確かめて消すまで）
   if (existsSync(join(ROOT, LEAK_STOP_FILE)) && (process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
     if (!leakNoted) { leakNoted = true; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j?.owner ?? "?", label: j?.label ?? "", msg: `漏れの番人: exam-queue/${LEAK_STOP_FILE} がある＝試験を止めた（近い番の答えに元の番）` }) + "\n"); log(`  📣 知らせる: to=main 漏れの番人で試験を止めた（exam-queue/${LEAK_STOP_FILE}）`); }
@@ -373,7 +376,7 @@ async function addJob(): Promise<void> {
   // 2026-11-05 作業員8（統括役の了承「段を最小に: --stage=diff を既定にし、文の組だけ draft」）: 前の子の費用の約15%が下書きの段（final_check・aix_desk 等）。
   //   --stage を書かない依頼は diff（直したファイルが下書きに届かなければブレインだけ）・文の組（grp-reply・grp-aix）は draft。書いた時はそのまま
   const stageDefault = /^(?:grp-reply|grp-aix)/.test(label) ? "draft" : "diff";
-  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("prod-env") ? { prodEnv: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(Number(arg("cap-usd")) > 0 ? { capUsd: Number(arg("cap-usd")) } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
+  const base = { owner: arg("owner", "?"), switch: arg("switch", ""), cwd, stage: arg("stage") || stageDefault, env, createdAt: new Date().toISOString(), tries: 0, ...(arg("notify") ? { notify: arg("notify") } : {}), ...(flag("night") ? { nightOnly: true } : {}), ...(flag("prod-env") ? { prodEnv: true } : {}), ...(flag("urgent") ? { urgent: true } : {}), ...(flag("day-ok") ? { dayOk: true } : {}), ...(Number(arg("cap-usd")) > 0 ? { capUsd: Number(arg("cap-usd")) } : {}), ...(arg("not-before") && Number.isFinite(Date.parse(arg("not-before"))) ? { notBefore: new Date(Date.parse(arg("not-before"))).toISOString() } : {}) };
   // 2026-11-04 (a)(b): --priority=<小さいほど先・既定 5>・--max-min=<1本の時間の上限（分）>
   if (arg("priority")) (base as Record<string, unknown>).priority = Number(arg("priority"));
   // 2026-11-20 作業員H（作業員M の頼み）: --after-aix-draft=<none|hint> を brain-exam に渡す（AIX の2通目の系統の前と今を比べる）。違う値は積まない

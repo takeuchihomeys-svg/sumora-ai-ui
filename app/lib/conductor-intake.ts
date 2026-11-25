@@ -138,6 +138,29 @@ export function intakeDigestLine(ci: { answer?: IntakeAnswer | null; ds?: Intake
   return `${a.scene}|${a.confidence?.[0] ?? ""}|cr${ci.cacheRead ?? 0}${ag ? `|ds:${ag}` : ""}|a${intakeSaysAix({ roles, todos }) ? 1 : 0}${ds ? `|dx:${ds.scene}:a${intakeSaysAix(ds) ? 1 : 0}` : ""}`;
 }
 
+/**
+ * 2026-11-26 作業員L（台帳 #749・統括役の頼み「入口の読みが判断に間に合わない4割」を測った）: 14日の判断 681 のうち digest.ci の無い 270 は、
+ *   申込以降 125（入口を呼ばない決まり）・最後の通がこちら 82（お客様の番でない）・入口を呼んだのに答えが無い 63。その 63 の Sonnet の呼び出し 75回のうち
+ *   58回は出力が上限 450 で切れて JSON が閉じず（parseIntake が null）・8回は HTTP の失敗＝時間切れではなく字数の上限。重点（focus_read）を書く時は 450 で足りない。
+ *   既定で重点ありは 700・無しは 450（11/26 から既定 on・前の 450／300 に戻す CONDUCTOR_INTAKE_MAX_TOKENS_WIDE=off）
+ */
+export function intakeMaxTokens(focusOn: boolean, env: Env = typeof process !== "undefined" ? process.env : {}): number {
+  const wide = (env.CONDUCTOR_INTAKE_MAX_TOKENS_WIDE ?? "").trim().toLowerCase() !== "off"; // 2026-11-26 統括役の決め: 不具合の直しなので既定 on（止める =off）
+  return focusOn ? (wide ? 700 : 450) : (wide ? 450 : 300);
+}
+/**
+ * 2026-11-26 作業員L（台帳 #749 ②・既定 off）: 同じお客様の番を読み直す時（前の判断の analyzed_msg_ts が今のお客様の最後の通と同じ・その通が 10分以内）、
+ *   今の入口の答えが無ければ前の判断の入口の答えを使い回してよいか。CONDUCTOR_INTAKE_REUSE_PREV=on の時だけ・使うのは MATERIAL_PRIORITY の選び方だけ（記録の ci には入れない）
+ */
+export const INTAKE_REUSE_MAX_MS = 10 * 60_000;
+export function intakeReusePrev(o: { prevAnalyzedTs: string | null | undefined; prevAt: string | null | undefined; nowCustomerTs: string | null | undefined; nowMs: number; env?: Env }): boolean {
+  const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
+  if ((env.CONDUCTOR_INTAKE_REUSE_PREV ?? "").trim().toLowerCase() !== "on") return false;
+  if (!o.prevAnalyzedTs || !o.nowCustomerTs || o.prevAnalyzedTs !== o.nowCustomerTs) return false;
+  const at = Date.parse(String(o.prevAt ?? ""));
+  return Number.isFinite(at) && o.nowMs - at >= 0 && o.nowMs - at <= INTAKE_REUSE_MAX_MS;
+}
+
 /** 1回の費用の見積もり（USD・Sonnet: 入力 $3/M・作り置きの読み $0.3/M・作り置きの書き $3.75/M・出力 $15/M） */
 export function intakeCostUsd(o: { prefixTokens: number; variableTokens: number; outputTokens: number; cacheHit: boolean }): number {
   const pre = o.cacheHit ? o.prefixTokens * 0.3e-6 : o.prefixTokens * 3.75e-6;

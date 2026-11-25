@@ -516,6 +516,8 @@ export type SuggestedAixMeta = {
   material_marks?: Record<string, number>;
   /** 2026-11-26 作業員L（#747 MATERIAL_PRIORITY）: 統括の入口が選んだ「まず見る」の行のキー・動かしたキー */
   material_priority?: { mode: string; ready: boolean; keys: string[]; moved: string[]; why: string };
+  /** 2026-11-26 作業員L（#749）: 入口を始めた ms・材料を組み終えた ms（analyzeConversationCore の始めから）・その時に入口の答えが出ていたか */
+  intake_timing?: { start: number | null; matEnd: number; ready: boolean };
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-23 作業員L（台帳 #659）: 入口の統括の材料に渡した期日超えの約束の数・種類・その番の一手が果たす一手か（記録だけ・digest の op） */
@@ -1934,6 +1936,7 @@ async function analyzeConversationCore(
     /** 2026-11-03 読み直しの口（brain-recheck.ts・差し戻し／逆向きの相談／根拠なし／取ってきた材料／深く）。呼ぶのは analyzeAndSaveBrainMeta の中だけ・1番につき1回まで */
     recheck?: BrainRecheck | null },
 ): Promise<SuggestedAixMeta> {
+  const coreT0 = Date.now(); // 2026-11-26 作業員L（#749）: 入口を始めた時刻・材料を組み終えた時刻を、この関数の始めからの ms で記録（記録だけ）
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
@@ -3969,6 +3972,7 @@ ${sh}`;
   // 2026-11-04 入口の統括の最初の読み（Sonnet・作り置き・5番に1番は DeepSeek でも読んで比べる・CONDUCTOR_INTAKE: 既定は stage=yuma（YUMA・テスト用の会話だけ）・_STAGE=pct:N|all で広げる・=off で止める・読んだ結果は記録だけ）。
   //   ブレインの呼び出しと同時に流し（待たせない）、返す前に最大4秒だけ待つ。判断・文は変えない
   let intakeP: Promise<import("@/app/lib/conductor-intake-server").IntakeRun | null> | null = null;
+  let intakeStartMs: number | null = null; // #749: 入口を始めた時刻（関数の始めから）
   // 2026-11-21 作業員L（KB 56691196・CONDUCTOR_LESSONS・既定 shadow）: 入口の統括が読んだ近い場面の学び（記録と最終の印に使う）
   let lessonsRec: import("@/app/lib/conductor-lessons").LessonRow[] | null = null;
   // 2026-11-23 作業員L（台帳 #659）: 入口の統括の材料に渡した期日超えの約束（記録の op に使う・次の番は読まない）
@@ -3980,6 +3984,7 @@ ${sh}`;
   if ((conductorIntakeMode() === "shadow" || await (await import("@/app/lib/rollout")).stageOnNow("CONDUCTOR_INTAKE", conversationId, { kind: "all" } /* 2026-11-04 統括役（竹内さん「前倒し」）: yuma → all（記録だけ・判断も文も変えない・約 $9/日）。戻す: CONDUCTOR_INTAKE_STAGE=yuma か CONDUCTOR_INTAKE=off */)) && typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId) {
     const lastStaffTxt = typedMessages.find((m) => m.sender !== "customer" && !!(m.text ?? "").trim())?.text ?? null;
     const pmForCarry = (opts?.prevMeta ?? null) as unknown as { conductor_meta?: import("@/app/lib/conductor-meta").ConductorMeta } | null;
+    intakeStartMs = Date.now() - coreT0;
     intakeP = import("@/app/lib/conductor-intake-server").then(async ({ runConductorIntake }) => {
       // 2026-11-21 作業員L（統括役の注意）: 学びの読み（埋め込み＋RPC・最大1.5秒）は入口の他の読みと並べて先に始める（carryLine は順に待つ＝直列で延ばさない）
       const lessonsP: Promise<{ mode: string; rows: import("@/app/lib/conductor-lessons").LessonRow[] } | null> = (async () => { try { const cl = await import("@/app/lib/conductor-lessons"); const mode = cl.conductorLessonsMode(); if (mode === "off") return null; const { loadConductorLessonsWithin } = await import("@/app/lib/conductor-lessons-server"); const lastStaffMsg = typedMessages.find((mm) => mm.sender !== "customer"); return { mode, rows: await loadConductorLessonsWithin(supabase, { conversationId, customerTurn: unrepliedTurn.text ?? "", stage: convStatus ?? null, lastStaffKind: lastStaffMsg ? (lastStaffMsg.is_aix_generated ? "AIX" : "返信") : null }) }; } catch { return null; } })();
@@ -4462,13 +4467,22 @@ ${sh}`;
     const mpMode = mp.materialPriorityMode();
     if (mpMode !== "off" && intakeP && materialBlocks.length) {
       const run = mpMode === "on" ? await intakeDoneGet() : await Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 0))]);
-      const ans = run?.answer ?? null;
+      // #749 ②: 今の答えが無く、前の判断が同じお客様の番を数分以内に読んでいれば、その入口の答えを使い回す（CONDUCTOR_INTAKE_REUSE_PREV=on の時だけ）
+      const ci = await import("@/app/lib/conductor-intake");
+      const pmI = (opts?.prevMeta ?? null) as unknown as { conductor_intake?: { answer?: import("@/app/lib/conductor-intake").IntakeAnswer | null } | null; analyzed_msg_ts?: string | null} | null;
+      const reused = !run?.answer && !!pmI?.conductor_intake?.answer && ci.intakeReusePrev({ prevAnalyzedTs: pmI?.analyzed_msg_ts, prevAt: pmI?.analyzed_msg_ts ?? null, nowCustomerTs: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null, nowMs: Date.now() });
+      const ans = run?.answer ?? (reused ? pmI!.conductor_intake!.answer! : null);
       const { intakeSaysAix } = await import("@/app/lib/conductor-intake");
       const pick = mp.pickFirstKeys({ focus: ans?.focus_read?.focus ?? null, saysAix: intakeSaysAix(ans), hasStation: !!applyRouteText.trim(), available: materialBlocks.map((b) => b.key) });
       let moved: string[] = [];
       if (mpMode === "on" && pick.keys.length) { const r = mp.applyMaterialPriority({ cs: customerStateBlockText, route: applyRouteText, blocks: materialBlocks, keys: pick.keys, why: pick.why }); customerStateBlockText = r.cs; applyRouteText = r.route; moved = r.moved; }
-      materialPriorityRec = { mode: mpMode, ready: !!ans, keys: pick.keys, moved, why: pick.why };
+      materialPriorityRec = { mode: mpMode, ready: !!ans, keys: pick.keys, moved, why: reused ? `${pick.why}・前の読み` : pick.why };
     }
+  } catch (e) { console.warn("[brain-core] material-priority skipped:", e instanceof Error ? e.message : String(e)); }
+  // #749 ①の測り（記録だけ）: 入口を始めた時刻と材料を組み終えた時刻（関数の始めからの ms）。入口の答えがその時に出ていたか
+  let intakeTimingRec: { start: number | null; matEnd: number; ready: boolean } | null = null;
+  try {
+    if (intakeP) { const done = await Promise.race([intakeP.then((r) => !!r?.answer), new Promise<boolean>((r) => setTimeout(() => r(false), 0))]); intakeTimingRec = { start: intakeStartMs, matEnd: Date.now() - coreT0, ready: done }; }
   } catch (e) { console.warn("[brain-core] material-priority skipped:", e instanceof Error ? e.message : String(e)); }
   const fsDropSet: ReadonlySet<string> = fastSlow ? fastDrops(fastSlow.level) : new Set<string>();
   // 2026-10-27 節約①（app/lib/brain-cache-order.ts・BRAIN_CACHE_ORDER 既定 off）: 場面で決まる AIX の一覧＋アクション別ルールは、会話ごとの材料より前の独立したブロック（キャッシュの区切りつき）へ
@@ -7178,6 +7192,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
       // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      ...(intakeTimingRec ? { intake_timing: intakeTimingRec } : {}), // #749: 入口を始めた時刻・材料を組み終えた時刻・その時に答えが出ていたか（記録だけ）
       ...(materialPriorityRec ? { material_priority: materialPriorityRec } : {}), // 2026-11-26 作業員L（#747）: 選んだ「まず見る」の行・動かした行（記録だけ）
       material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）

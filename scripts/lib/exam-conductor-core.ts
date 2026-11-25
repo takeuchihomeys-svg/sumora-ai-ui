@@ -7,6 +7,21 @@ import { flakeVerdict } from "./exam-flake";
 const jstHM = (d: Date) => { const j = new Date(d.getTime() + 9 * 3600_000); return { h: j.getUTCHours(), dow: j.getUTCDay() }; };
 /** DeepSeek の安い時間（平日 JST 10〜13・15〜19 は2倍＝流さない） */
 export function cheapNow(d = new Date()): boolean { const { h, dow } = jstHM(d); if (dow === 0 || dow === 6) return true; return !((h >= 10 && h < 13) || (h >= 15 && h < 19)); }
+/**
+ * 2026-11-26 作業員L（統括役の決め・今月の手元の DeepSeek $381 のうち昼の試験 $161 が晩の関所の外だった）: DeepSeek の試験は JST 8〜22時は流さない（22時まで待たせる）。
+ *   流してよい物: tsc／tsc-remote・AI を呼ばない読むだけ（cmd の readOnly）・OpenAI で流す試験（竹内さんが昼に許した物＝ブレインか書き手が openai）・依頼に dayOk（統括役が付ける）。
+ *   止める EXAM_DAY_HOLD=off。返すのは止める理由（流してよければ null）
+ */
+export function examDayHoldWhy(j: { runner?: string; readOnly?: boolean; dayOk?: boolean; env?: Record<string, string> } | null | undefined, d = new Date(), env: Record<string, string | undefined> = {}): string | null {
+  if ((env.EXAM_DAY_HOLD ?? "").trim().toLowerCase() === "off") return null;
+  if (!j || j.dayOk) return null;
+  if (j.runner === "tsc" || j.runner === "tsc-remote") return null;
+  if (j.runner === "cmd" && j.readOnly) return null;
+  const je = j.env ?? {};
+  if (["EXAM_BRAIN_PROVIDER", "EXAM_WRITER_PROVIDER"].some((k) => String(je[k] ?? "").trim().toLowerCase() === "openai")) return null;
+  const { h } = jstHM(d);
+  return h >= 8 && h < 22 ? "昼（JST 8〜22時）は DeepSeek の試験を流さない（22時から・昼に流すなら統括役が --day-ok・止める EXAM_DAY_HOLD=off）" : null;
+}
 /** 本数の上限（JST 9〜22 は1本・それ以外は2本） */
 export function maxExamsNow(d = new Date()): number { const { h } = jstHM(d); return h >= 9 && h < 22 ? 1 : 2; }
 
