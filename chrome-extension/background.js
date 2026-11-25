@@ -6541,15 +6541,19 @@ async function _bulkKick(why, opt) {
   // 送付後の外し・ロック解除の段＝その客の送付は済んでいる
   else if (_bulkPhase && (_bulkPhase.phase === "post_send_clear" || _bulkPhase.phase === "release_lock") && q.cid && _bulkPhase.cid && String(_bulkPhase.cid) === String(q.cid)) start = idx + 1;
   else return { ok: false, reason: "running_not_done", stage: q.stage, cid: q.cid || null };
-  /** ★ 2.8.283: まだ片付いていない客を飛ばさない（番号だけで進めると1人目→3人目になる）。handledCids が無い古い記録は従来どおり */
+  /**
+   * ★ 2.8.283: まだ片付いていない客を飛ばさない（番号だけで進めると1人目→3人目になる）。
+   * ★ 2.8.286: handledCids が無い古いキューは sentCids を「片付いた客」として同じ上限を掛ける（旧データの番号だけを信じない）。
+   */
   var _startRaw = start;
-  if (Array.isArray(q.handledCids)) {
-    /** いまの客を「済み」と見て進める経路（done／doneCid 一致／送付後の外し）は、その客を片付いた扱いにしてから上限を見る（送付済みの客をやり直して二重送付しない） */
-    var _hk = q.handledCids.slice();
-    if (start > idx && q.cid && _hk.indexOf(String(q.cid)) < 0) _hk.push(String(q.cid));
-    start = _bulkClampStart(q.ids, _hk, start);
-    if (start > idx) _bulkQueueSave({ handledCids: _hk.slice(-200) });
-  }
+  var _hk = Array.isArray(q.handledCids) ? q.handledCids.slice() : (Array.isArray(q.sentCids) ? q.sentCids.map(function (x) { return String(x); }) : []);
+  /** いまの客を「済み」と見て進める経路（done／doneCid 一致／送付後の外し）は、その客を片付いた扱いにしてから上限を見る（送付済みの客をやり直して二重送付しない） */
+  if (start > idx && q.cid && _hk.indexOf(String(q.cid)) < 0) _hk.push(String(q.cid));
+  var _clamped = _bulkClampStart(q.ids, _hk, start);
+  // retrySame は「この客はまだ送っていないので同じ客」。前の客が記録に無くても、この客より前へ戻さない
+  if (o.retrySame && _clamped < idx) _clamped = idx;
+  start = _clamped;
+  if (!Array.isArray(q.handledCids) || start > idx) _bulkQueueSave({ handledCids: _hk.slice(-200) });
   if (start !== _startRaw) {
     try { if (_bulkPhaseRunId) _auditStep(_bulkPhaseRunId, "kick_clamp", ("続ける位置 " + (_startRaw + 1) + "人目→" + (start + 1) + "人目に戻した（未処理の客を飛ばさない）").slice(0, 80)); } catch (_) {}
   }
@@ -10477,7 +10481,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   /**
    * ★ 2026-11-19 竹内さん「入れたのを覚えていたら外せるので、完了したらちゃんと外すようにすれば問題ない。順番に行えば」→ 統括Pro 案B:
    *   リアプロの送付が終わった直後（次客の switch／fill より前・一連ロックを外す前）に、そのタブへ「送付後の外し」を頼み、
-   *   最大120秒まで待つ（非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
+   *   最大260秒まで待つ（リセットのあと10秒以上の間を含む。非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
    *   ・ITANDI には入れない（リアプロの連続のみ）／送付が途中のまま切り上げた回（送付進捗あり）は触らない
    *   ・最後のお客さん（_axlxLastCustomerId）は待たずに戻す（ページを汚れたまま残さないが、完了を待たせない）
    *   ・chrome.storage.local の axlx_post_send_clear_off が true なら実行しない（切り替えフラグ）
@@ -10557,14 +10561,14 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
           "next_customer_grasp",
           "いま=" + (_curNm || "-") + " 次客=" + (_nxtNm || "（末）") + " series_done",
         );
-        var _needClear = !_psOk || !!_nxtNm;
+        var _resetCleared = !!(_psRes && _psRes.reset === true && _psRes.ok === true && Number(_psRes.left) === 0);
+        var _moveName = !_nxtNm && _psOk
+          ? "一括完了"
+          : (_resetCleared ? "リセットで空を確認済み→次客の条件を入れる" : "前客の選択を1つずつ外す");
         _auditStep(
           _runId,
           "next_move_grasp",
-          "次の動き=" +
-            (_needClear ? "前客の選択を1つずつ外す" : "一括完了") +
-            (_psOk ? " 送付後外し済" : " 送付後未完→次客で外す") +
-            " series_done",
+          "次の動き=" + _moveName + (_psOk ? " 送付後外し済" : " 送付後未完→次客で外す") + " series_done",
         );
         if (!_psOk) {
           _auditStep(

@@ -166,7 +166,7 @@ function createWorld(scenario) {
       }
     } else if (body.phase === "finished") {
       var f = world.db.get(id);
-      if (f && f.status === "started") { f.status = "finished"; f.steps = (body.steps || []).slice(); f.error = body.error || null; }
+      if (f && f.status === "started") { f.status = "finished"; f.steps = (body.steps || []).slice(); f.error = body.error || null; f.error_kind = body.error_kind || null; }
     }
     return Promise.resolve({ ok: true });
   }

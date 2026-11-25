@@ -21,7 +21,7 @@ const man = JSON.parse(fs.readFileSync(path.join(root, "chrome-extension/manifes
 const rules = fs.readFileSync(path.join(root, "app/lib/auto-procedure-rules.ts"), "utf8");
 
 let pass = 0, fail = 0;
-function ok(c, m) { if (c) pass++; else { fail++; console.log("NG: " + m); } }
+function ok(name, c, extra) { if (c) pass++; else { fail++; console.log("NG: " + name + (extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 220))); } }
 function semverOk(v, min) {
   const a = String(v).split(".").map(Number), b = String(min).split(".").map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; }
@@ -115,7 +115,7 @@ console.log("\n■ ② 検索前の Ajax 待ち（実関数）");
   // 件数の表示が変わり続ける → 変わらなくなってから
   let hv = 0;
   r = run({ jq: () => 0, hitEls: () => [el("該当" + hv + "件")], loadEls: () => [], tick: (n) => { if (n < 1500) hv = Math.floor(n / 100); } });
-  ok("件数が変わっている間は待つ（変わらなくなって0.6秒後）", r.called && r.ms >= 2100 && r.ms <= 2600, JSON.stringify(r));
+  ok("件数が変わっている間は待つ（最後の変化から0.6秒）", r.called && r.ms >= 1800 && r.ms <= 2200, JSON.stringify(r));
   // 読み込み中の表示が出っぱなし → 5秒で押す（止まらない）
   r = run({ jq: () => 0, hitEls: () => [], loadEls: () => [el("loading")] });
   ok("読み込み表示が消えない → 5秒で押す（fail-open）", r.called && r.ms >= 5000 && r.ms <= 5400 && r.steps.some((s) => /^ajax_settle:timeout/.test(s)), JSON.stringify(r));
@@ -149,7 +149,12 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const o1 = order(w);
   ok("3-1 順序: 入れる→リセット→確認→次客", o1.slice(0, 5).join(" ") === "autofill:c1 reset_press_exec: reset_verify_exec: autofill:c2 reset_press_exec:", o1.join(" "));
   const k1 = stepKeys(w);
-  ok("3-1 記録に reset_press／reset_verified／reset_shot", ["reset_press", "reset_verified", "reset_shot"].every((k) => k1.includes(k)), JSON.stringify([...new Set(k1)].filter((k) => /reset/.test(k))));
+  ok("3-1 記録に reset_press／reset_wait／reset_verified／reset_shot", ["reset_press", "reset_wait", "reset_verified", "reset_shot"].every((k) => k1.includes(k)), JSON.stringify([...new Set(k1)].filter((k) => /reset/.test(k))));
+  const timed = [];
+  w.db.forEach((r) => (r.steps || []).forEach((s) => timed.push(s)));
+  const tPress = timed.find((s) => s.k === "reset_press");
+  const tVer = timed.find((s) => s.k === "reset_verified");
+  ok("3-1 押してから空の確認まで10秒以上", !!(tPress && tVer && tVer.at - tPress.at >= 10000), tPress && tVer ? tVer.at - tPress.at : null);
   ok("3-1 例外なし", (w.clock.errors || []).length === 0, (w.clock.errors || []).map(String).join("/"));
   ok("3-1 全件完了を1通", (w.fetches || []).filter((f) => /notify-group/.test(f.url) && /全件完了/.test(f.body)).length === 1);
 

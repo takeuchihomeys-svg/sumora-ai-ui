@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.285";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.286";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -889,7 +889,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "bulk_no_skip_customer",
     scene: "switch",
-    text: "一括で次のお客さんへ続ける位置は、まだ片付いていない最初のお客さんより先へ行かせない（handledCids）。引き継がれた古いループが遅れて完了を書き戻さない。全員が済んだら『全件完了』を1通だけ知らせて終わる。止めた・引き継いだ回はその場で stopped として閉じ（bulk_ended）、1人ごとの位置を bulk_pos で残す。印: kick_clamp／stale_done_skip／bulk_all_done／bulk_pos",
+    text: "一括で次のお客さんへ続ける位置は、まだ片付いていない最初のお客さんより先へ行かせない（handledCids）。handledCids が無い古いキューは sentCids を片付いた客として同じ上限を掛ける。引き継がれた古いループが遅れて完了を書き戻さない。全員が済んだら『全件完了』を1通だけ知らせて終わる。止めた・引き継いだ回はその場で stopped として閉じ（bulk_ended）、1人ごとの位置を bulk_pos で残す。印: kick_clamp／stale_done_skip／bulk_all_done／bulk_pos",
     since: "2.8.283",
     kb: "a762496e",
     marker: "_bulkClampStart",

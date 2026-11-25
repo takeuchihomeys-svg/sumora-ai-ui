@@ -19,7 +19,7 @@ const man = JSON.parse(fs.readFileSync(path.join(root, "chrome-extension/manifes
 const rules = fs.readFileSync(path.join(root, "app/lib/auto-procedure-rules.ts"), "utf8");
 
 let pass = 0, fail = 0;
-function ok(c, m) { if (c) pass++; else { fail++; console.log("NG: " + m); } }
+function ok(name, c, extra) { if (c) pass++; else { fail++; console.log("NG: " + name + (extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 220))); } }
 function semverOk(v, min) {
   const a = String(v).split(".").map(Number), b = String(min).split(".").map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; }
@@ -68,7 +68,7 @@ ok("ページに入力を始めたかを聞く（itandi）", /_probeItandiTab/.t
 ok("入力中は割らない", /probe\.fillRunning\) return \{ ok: false, reason: "filling" \}/.test(dead));
 ok("この客をもう一度（retrySame）", /_bulkKick\("autofill_dead", \{ retrySame: true \}\)/.test(dead));
 ok("印を残す", /autofill_dead_kick/.test(dead));
-ok("見回り（20秒）から呼ばれる", /p\.phase === "autofill"\) \{\s*_bulkAutofillDeadKick\(\)\.catch/.test(bg));
+ok("見回り（20秒）から呼ばれる", /p\.phase === "autofill"\) _bulkAutofillDeadKick\(\)\.catch/.test(bg));
 
 console.log("\n■ ④ retrySame の決め方（vm で動かす）");
 (function () {
@@ -84,18 +84,25 @@ console.log("\n■ ④ retrySame の決め方（vm で動かす）");
     _calls: [],
   };
   vm.createContext(ctx);
-  vm.runInContext(kick, ctx);
+  vm.runInContext(topFn(bg, "_bulkClampStart") + "\n" + kick, ctx);
   const reset = (q) => { ctx._q = q; ctx._bulkKickAt = 0; ctx._calls.length = 0; };
   (async () => {
-    reset({ ids: ["a", "b", "c"], index: 1, stage: "running", cid: "b" });
-    const r1 = await ctx._bulkKick("autofill_dead", { retrySame: true });
-    ok("retrySame → 同じ客（index 1）から", r1.ok && ctx._calls[0] && ctx._calls[0].startIndex === 1);
-    reset({ ids: ["a", "b", "c"], index: 1, stage: "running", cid: "b" });
-    const r2 = await ctx._bulkKick("t");
-    ok("retrySame 無しの running は進めない（二重送信の防止は残る）", !r2.ok && r2.reason === "running_not_done" && ctx._calls.length === 0);
-    reset({ ids: ["a", "b", "c"], index: 0, stage: "done", cid: "a" });
-    await ctx._bulkKick("t");
-    ok("done は今まで通り次の客から", ctx._calls[0] && ctx._calls[0].startIndex === 1);
+    try {
+      reset({ ids: ["a", "b", "c"], index: 1, stage: "running", cid: "b" });
+      const r1 = await ctx._bulkKick("autofill_dead", { retrySame: true });
+      ok("retrySame → 同じ客（index 1）から", r1.ok && ctx._calls[0] && ctx._calls[0].startIndex === 1);
+      reset({ ids: ["a", "b", "c"], index: 1, stage: "running", cid: "b" });
+      const r2 = await ctx._bulkKick("t");
+      ok("retrySame 無しの running は進めない（二重送信の防止は残る）", !r2.ok && r2.reason === "running_not_done" && ctx._calls.length === 0);
+      reset({ ids: ["a", "b", "c"], index: 0, stage: "done", cid: "a" });
+      await ctx._bulkKick("t");
+      ok("done は今まで通り次の客から", ctx._calls[0] && ctx._calls[0].startIndex === 1);
+      reset({ ids: ["a", "b", "c"], index: 2, stage: "done", cid: "c", sentCids: ["a"] });
+      await ctx._bulkKick("t");
+      ok("handledCids が無い古い記録は、送った人の次（2人目）へ戻す", ctx._calls[0] && ctx._calls[0].startIndex === 1, ctx._calls[0] && ctx._calls[0].startIndex);
+    } catch (e) {
+      ok("retrySame の vm が落ちない", false, String(e && e.stack || e));
+    }
   })();
 })();
 
@@ -108,4 +115,4 @@ ok("点検の段の名前が正本と一致", /switch_timeout/.test(rules) && /s
 setTimeout(function () {
   console.log("\n" + (fail ? "✗ " + fail + "/" + (pass + fail) + " 失敗" : "✓ 全 " + pass + " 件 OK"));
   if (fail) process.exit(1);
-}, 50);
+}, 300);

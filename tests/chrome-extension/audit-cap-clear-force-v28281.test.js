@@ -9,7 +9,7 @@ const A = require(path.join(__dirname, "..", "..", "chrome-extension", "search-a
 const man = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "chrome-extension", "manifest.json"), "utf8"));
 
 let pass = 0, fail = 0;
-function ok(c, m) { if (c) pass++; else { fail++; console.log("NG: " + m); } }
+function ok(name, c, extra) { if (c) pass++; else { fail++; console.log("NG: " + name + (extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 220))); } }
 function semverOk(v, min) {
   const a = String(v).split(".").map(Number), b = String(min).split(".").map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; }

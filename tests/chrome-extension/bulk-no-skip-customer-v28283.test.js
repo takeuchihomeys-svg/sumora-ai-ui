@@ -18,7 +18,7 @@ const man = JSON.parse(fs.readFileSync(path.join(root, "chrome-extension/manifes
 const rules = fs.readFileSync(path.join(root, "app/lib/auto-procedure-rules.ts"), "utf8");
 
 let pass = 0, fail = 0;
-function ok(c, m) { if (c) pass++; else { fail++; console.log("NG: " + m); } }
+function ok(name, c, extra) { if (c) pass++; else { fail++; console.log("NG: " + name + (extra === undefined ? "" : " " + JSON.stringify(extra).slice(0, 220))); } }
 function semverOk(v, min) {
   const a = String(v).split(".").map(Number), b = String(min).split(".").map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; }
@@ -66,14 +66,14 @@ const iSave = runBody.indexOf('stage: "done", sentCids: _bulkSentCidsWith');
 ok("世代の確認（stale_done_skip）が完了の書き込みより前", iGen > 0 && iSave > 0 && iGen < iSave);
 ok("成功の完了で handledCids を書く", /sentCids: _bulkSentCidsWith\(String\(_bc\.id\)\), handledCids: _bulkHandledCidsWith/.test(runBody));
 ok("エラーで飛ばした客も handledCids に入れる（世代が同じ時だけ書く）", /if \(_myGen === _manualBulkGen\) _bulkQueueSave\(\{ index: _bi, cid: String\(_bc\.id\), stage: "done", handledCids/.test(runBody));
-ok("見張りで見送った客も handledCids に入れる", /_watchSkipSite\(_bc, _bulkSite\)\) \{ _bulkQueueSave\(\{[^}]*handledCids/.test(runBody));
+ok("見張りで見送った客も handledCids に入れる", /watchStopApplies\(_watchStop, _bulkSite, Date\.now\(\)\)\) _bulkQueueSave\(\{[^}]*handledCids/.test(runBody) && /_watchSkipSite\(_bc, _bulkSite\)\) continue;/.test(runBody));
 ok("再開しても handledCids を引き継ぐ", /handledCids: _resume && _bulkQueue && Array\.isArray\(_bulkQueue\.handledCids\)/.test(runBody));
 
 console.log("\n■ ③ _bulkKick が上限を使う");
 const kick = topFn(bg, "async _bulkKick").length ? "" : bg.slice(bg.indexOf("async function _bulkKick("));
 const kickBody = kick.slice(0, kick.indexOf("\n}\n") + 3);
-ok("_bulkClampStart を呼ぶ", /start = _bulkClampStart\(q\.ids, q\.handledCids, start\)/.test(kickBody));
-ok("handledCids が無い古い記録は従来どおり", /if \(Array\.isArray\(q\.handledCids\)\)/.test(kickBody));
+ok("_bulkClampStart を呼ぶ", /_clamped = _bulkClampStart\(q\.ids, _hk, start\)/.test(kickBody));
+ok("handledCids が無い古い記録は sentCids で同じ上限", /Array\.isArray\(q\.handledCids\) \? q\.handledCids\.slice\(\) : \(Array\.isArray\(q\.sentCids\)/.test(kickBody));
 ok("戻した時は kick_clamp を残す", /"kick_clamp"/.test(kickBody));
 ok("上限の計算は開始（_manualBulkRun 呼び出し）より前", kickBody.indexOf("_bulkClampStart") < kickBody.indexOf("_manualBulkRun("));
 ok("retrySame（入力前に死んだ客）は同じ客のまま", /if \(o\.retrySame\) start = idx;/.test(kickBody));
@@ -142,9 +142,10 @@ ok("since が 2.8.283", /id: "bulk_no_skip_customer"[\s\S]{0,900}since: "2\.8\.2
   w = sim.createWorld({ customers: customers(3) });
   await start(w, 3);
   await w.run(20 * 60000);
-  const posBodies = (w.fetches || []).filter((f) => /search-audits/.test(f.url) && /bulk_pos/.test(f.body));
-  const posStr = posBodies.map((f) => f.body).join("\n");
-  ok("7-4 bulk_pos が記録に載る（3人分）", ["1/3", "2/3", "3/3"].every((s) => posStr.indexOf(s) >= 0), posBodies.length + "件");
+  const posSteps = [];
+  w.db.forEach((r) => (r.steps || []).forEach((s) => { if (s && s.k === "bulk_pos") posSteps.push(String(s.d || "")); }));
+  const posStr = posSteps.join("\n");
+  ok("7-4 bulk_pos が記録に載る（3人分）", ["1/3", "2/3", "3/3"].every((s) => posStr.indexOf(s) >= 0), posSteps.length + "件");
 
   // 7-5 止めてリセットした時、その場で「止めた」として閉じる（abandoned にしない）
   w = sim.createWorld({ customers: customers(3) });
@@ -152,8 +153,9 @@ ok("since が 2.8.283", /id: "bulk_no_skip_customer"[\s\S]{0,900}since: "2\.8\.2
   await w.run(40000);
   sw5.call("_bulkResetAll", "user_reset");
   await w.run(60000);
-  const fin = (w.fetches || []).filter((f) => /search-audits/.test(f.url) && /"phase":"finished"/.test(f.body) && /bulk_ended: user_reset/.test(f.body));
-  ok("7-5 止めてリセット → finished（bulk_ended・stopped）を送る", fin.length >= 1 && /"error_kind":"stopped"/.test(fin[0].body), fin.length + "件");
+  const fin = [];
+  w.db.forEach((r) => { if (r && r.status === "finished" && /bulk_ended: user_reset/.test(String(r.error || ""))) fin.push(r); });
+  ok("7-5 止めてリセット → finished（bulk_ended・stopped）を送る", fin.length >= 1 && fin[0].error_kind === "stopped", fin.length + "件");
 
   console.log("\n■ ⑧ 記録（コード）");
   ok("_bulkEndNow が回を閉じる", /function|async function _bulkEndNow/.test(bg) && /_auditFinish\(_bulkPhaseRunId, \{ error: "bulk_ended: " \+ w, error_kind: "stopped" \}\)/.test(bg));
