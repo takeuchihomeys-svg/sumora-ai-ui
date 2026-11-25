@@ -125,7 +125,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_per_panel",
     scene: "clear",
-    text: "外す時は箱ごと（間取り → 絞り込み条件（ペット）→ 所在地 → 残り）。箱を開ける → 1つずつカーソルで外す → 確定 → 次の箱。全部の箱を先に開けない",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】外す時は箱ごと（間取り → 絞り込み条件（ペット）→ 所在地 → 残り）。箱を開ける → 1つずつカーソルで外す → 確定 → 次の箱。全部の箱を先に開けない",
     since: "2.8.135",
     kb: null,
     marker: "_stage('input[name=\"eq_rm[]\"]:checked'",
@@ -299,7 +299,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_one_by_one",
     scene: "clear",
-    text: "前のお客さんの間取り・ペットなどのチェックも、入れる時と同じく1つずつ外す（まとめて積まない）。カーソルで押して外れたのを確かめてから次へ",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】前のお客さんの間取り・ペットなどのチェックも、入れる時と同じく1つずつ外す（まとめて積まない）。カーソルで押して外れたのを確かめてから次へ",
     since: "2.8.147",
     kb: null,
     marker: "入れる時と同じく1つずつ: 送る→カーソルで押す",
@@ -309,7 +309,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_single_owner",
     scene: "clear",
-    text: "外しは同時に1つだけ。送付後の外しが走っていれば、次のお客さんの入力は終わるまで待ってから外す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古い外しは押すのをやめる",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】外しは同時に1つだけ。送付後の外し（またはリセット＝最大260秒）が走っていれば、次のお客さんの入力は終わるまで待ってから外す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古い外しは押すのをやめる",
     since: "2.8.147",
     kb: null,
     marker: "外しは同時に1つだけ。引き継いだら古い外しは止める",
@@ -794,7 +794,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "station_clear_continue_after_stations",
     scene: "clear",
-    text: "駅を外したあとで止めない。沿線へ戻る／reopen／残0なら完了して次の外し（区・町等）へ続行。wrong_screen待ちの無限待機禁止。印: station_clear_continue／station_back_force_try／station_clear_reopen_after／station_clear_back_line",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】駅を外したあとで止めない。沿線へ戻る／reopen／残0なら完了して次の外し（区・町等）へ続行。wrong_screen待ちの無限待機禁止。印: station_clear_continue／station_back_force_try／station_clear_reopen_after／station_clear_back_line",
     since: "2.8.257",
     kb: null,
     marker: "station_clear_continue",
@@ -1110,7 +1110,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_clear_fill_gate",
     scene: "clear",
-    text: "外す時も入れる時も、手順表×画面照合で入れ忘れ・外し忘れを言葉にする。同種の場所（駅→駅）でも続き客は前客を外す。検索前に1回直してから conditions_ready",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】外す時も入れる時も、手順表×画面照合で入れ忘れ・外し忘れを言葉にする。同種の場所（駅→駅）でも続き客は前客を外す。検索前に1回直してから conditions_ready",
     since: "2.8.163",
     kb: "ad1e1176",
     marker: "_guideLikeClearGrasp",
@@ -1248,7 +1248,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "next_customer_move_one_by_one",
     scene: "search",
-    text: "次のお客さんと次の動きを把握してから進む。fill開始で next_customer_grasp／next_move_grasp／guide_phase_one。家賃など条件は _runBasicOneByOne で cond_one_grasp→1欄→cond_one_ok（同時に次欄へ飛ばない）。外しも名前付き1つずつ（clear_detail_grasp・3f4749d9）",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】次のお客さんと次の動きを把握してから進む。fill開始で next_customer_grasp／next_move_grasp／guide_phase_one。家賃など条件は _runBasicOneByOne で cond_one_grasp→1欄→cond_one_ok（同時に次欄へ飛ばない）。外しも名前付き1つずつ（clear_detail_grasp・3f4749d9）",
     since: "2.8.219",
     kb: "3f4749d9",
     marker: "_graspNextCustomerAndMove",
@@ -1356,7 +1356,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_method_api_grasp_transition",
     scene: "clear",
-    text: "次タスクへ移る前に、API手順書（human-learn-profile束の外し方・flow_series）で外し方を把握する。検索のsearch_graspと同型で session＋axlx-task-grasped に残す。clear_method_ledgerで外し方理解を測り、薄い時はclear_method_gap。外し完了→入れはtask_transition_graspを残してから進む",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】次タスクへ移る前に、API手順書（human-learn-profile束の外し方・flow_series）で外し方を把握する。検索のsearch_graspと同型で session＋axlx-task-grasped に残す。clear_method_ledgerで外し方理解を測り、薄い時はclear_method_gap。外し完了→入れはtask_transition_graspを残してから進む",
     since: "2.8.229",
     kb: "3c9d1894",
     marker: "_graspClearMethodFromPlaybook",
@@ -1385,7 +1385,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "task_api_refresh_before_next",
     scene: "clear",
-    text: "次のタスクへ行く前に、手順書が薄い・無い時は human-learn-profile をAPI取込してから把握する（検索前の束取込と同型）。_graspBeforeNextTaskThen が関所。外し→入れは取込→把握→task_transition_gate を残してから進む。場所完了・条件完了・入れ開始／完了・次客渡しも弱い段として同じAPI把握を行う。把握弱くても印付きで進む（search_grasp_infer 同型）",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】次のタスクへ行く前に、手順書が薄い・無い時は human-learn-profile をAPI取込してから把握する（検索前の束取込と同型）。_graspBeforeNextTaskThen が関所。外し→入れは取込→把握→task_transition_gate を残してから進む。場所完了・条件完了・入れ開始／完了・次客渡しも弱い段として同じAPI把握を行う。把握弱くても印付きで進む（search_grasp_infer 同型）",
     since: "2.8.230",
     kb: "64f4da9d",
     marker: "_graspBeforeNextTaskThen",
@@ -1415,7 +1415,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_phase_task_link",
     scene: "search",
-    text: "手順書×画面照会（guide_phase）の各段完了を、必ず task_now／task_done／task_next に落とす。照合だけの印で止めない。場所後・所在地・駅・検索前・外し後・検索後・一覧（list_start/before_next/after_next/handoff）で guide_task_link を残し、次にすることを同時に把握する",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】手順書×画面照会（guide_phase）の各段完了を、必ず task_now／task_done／task_next に落とす。照合だけの印で止めない。場所後・所在地・駅・検索前・外し後・検索後・一覧（list_start/before_next/after_next/handoff）で guide_task_link を残し、次にすることを同時に把握する",
     since: "2.8.231",
     kb: "0b023093",
     marker: "_linkGuidePhaseToTask",
@@ -1616,7 +1616,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_stuck_watch_use_improvements",
     scene: "clear",
-    text: "外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はclear_watchで定期に照会→次手",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はclear_watchで定期に照会→次手",
     since: "2.8.239",
     kb: "079c57d5",
     marker: "_armClearStuckWatch",
@@ -1731,7 +1731,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_detail_grasp",
     scene: "clear",
-    text: "外すも入れると同じ細かさで理解する。外す前に台帳×画面の残りを名前付きで1つずつ言う（guide_clear_grasp／guide_phase_one）。件数の「残:区・町」だけで終わらない。外し後も名前付きで残0を確かめてから入れへ",
+    text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）。以下は、リセットが押せない・空にならない時の代わりの手順】外すも入れると同じ細かさで理解する。外す前に台帳×画面の残りを名前付きで1つずつ言う（guide_clear_grasp／guide_phase_one）。件数の「残:区・町」だけで終わらない。外し後も名前付きで残0を確かめてから入れへ",
     since: "2.8.209",
     kb: null,
     marker: "_listLeftoverNamedItems",

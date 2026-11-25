@@ -14867,3 +14867,12 @@ Claude（統括役）からの依頼2件への対応。
 - 手順書 eset_retry_insurance を追加・eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
 - 試験: 新 eset-retry-insurance-v2308.test.js（17）。eset-before-fill-v2296（押す回数 1→2・正規表現）・eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
 - 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.308 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+
+### 2026-11-26 一連ループのボトルネック総点検（コードは 2.8.308 のまま・手順書の文言と試験の強化）
+- 本番DBの実データ（search_audits・realpro 直近14日）: bulk_manual 30件中 完了6件（すべて 2.8.250 以前）。2.8.273 以降は放棄ばかり。最後の自動は 2.8.295（#1654・#1656）で、reset_*・look_skip・保険の印は0＝2.8.296 以降の動きは本番で一度も動いていない。playbook_seen も「なし」。
+- #1656（2.8.295・リセットを押さない旧方式）: 前客の1つずつ外しが 1276 秒かかり、最後に fill_done error「leftover_stuck 前のお客さんの条件を外し切れず中止（残 駅5・沿線13）」で客が落ちた＝1つずつ外しは遅い上に失敗する（リセット優先の根拠）。#1654 は同じ待ちの段（sort_gate_wait_rows 等）で120段が埋まり後半の記録が無い（2.8.297 でまとめる対応済み・拡張が古く効いていない）。
+- 模擬の穴を直した: tests/chrome-extension/lib/bulk-sim.js は止められた裏（SW）の古いループが生き残り、共有の保存先へ古い位置を書き戻して『同じ客を何回もやり直す』偽の失敗を出していた → 止められた裏は保存・送信・画面操作・入力ができない形に（scenario.zombies:true で従来）。
+- 新しい総当たり試験 bulk-loop-chaos-v2308.test.js: 8人×（普通・入力遅い・送付完了の合図落ち・入力済み合図なし・0件・外し固まる/遅い・リセットのボタン無し/返事なし/空にならない・SWが止められる）を乱数で 400通り×2方式（800通り）→ 全員に1回ずつ入り完走（落ち0・1人あたり最大約6分）。時間を食う故障: リセットが押せても空にならない 約367秒/客（普通の約152秒より +215秒＝リセット2回＋従来の外し）・入力が遅い 約272秒・送付完了の合図落ち 約212秒。
+- 手順書の古い前提を直した: 『外す』を命じる11件（clear_one_by_one・clear_single_owner・clear_per_panel・clear_detail_grasp・clear_method_api_grasp_transition・clear_stuck_watch_use_improvements・station_clear_continue_after_stations・guide_clear_fill_gate・next_customer_move_one_by_one・task_api_refresh_before_next・guide_phase_task_link）にリセット優先の断り（reset_replaces_clear）を足した。clear_single_owner はリセット（最大260秒）も待つ相手に。静的試験 playbook-loop-consistency-v2308.test.js が、『外す』系の決まりがリセット優先に触れているか・古い『1秒以降』が現行で無いか・リセット周りの食い違いが無いかを見張る。
+- 調査用道具: scripts/audit-bulk-loop-bottleneck.ts（印の出現数・沈黙の大きい所・放棄の最後の印）／audit-bulk-sessions.ts（一括を時系列）／audit-run-dump.ts（1回の段を相対秒で）／audit-rules-time-scan.ts（手順書の待ち・外しの洗い出し）／bulk-chaos-seed.js（総当たりの1通りを時刻つきで）。
+- 未反映: main/DB は 2.8.305 のまま（2.8.306〜308 と今回の文言は push・attach とも未）。PC の拡張は 2.8.295。実機での通し（reset_verified・look_skip・保険の印）は未確認。
