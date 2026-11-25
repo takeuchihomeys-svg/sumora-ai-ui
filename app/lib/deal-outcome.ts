@@ -162,6 +162,9 @@ export type StageHistoryRow = { from_status: string | null; to_status: string | 
  *  スタッフが手打ちで条件を聞いた通は入らない＝申込したのに条件の時刻が無い件の一部は本当の記録の抜け。
  *  DEAL_CONDITION_HAND_ASK=on の時だけ、手打ちで条件を聞いたスタッフの通も条件の段の時刻にする（既定 off・記録だけ・お客様が初回に条件を書いた道はここでは足さない） */
 export const CONDITION_HAND_ASK_RE = /ご希望(の|は)?(条件|エリア|地域|駅|沿線|間取|家賃|時期)|ご予算|お聞かせ|教えて(頂|いただ|下さ|くださ)/;
+export function stageBeforeApplyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.DEAL_STAGE_BEFORE_APPLY ?? "off").trim().toLowerCase() === "on";
+}
 export function conditionHandAskEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_CONDITION_HAND_ASK ?? "off").trim().toLowerCase() === "on";
 }
@@ -267,6 +270,8 @@ export type DealInput = {
   /** 条件を聞いた／聞けた時刻（sent_facts condition_asked・段階 condition_hearing） */
   conditionAts: ReadonlyArray<string>;
   clues: ReadonlyArray<DealPropertyClue>;
+  /** 台帳 #742（2026-11-25 作業員L）: DEAL_STAGE_BEFORE_APPLY=on の時 true。申込より前の段は申込より前の時刻だけで決める（既定 off） */
+  stageBeforeApply?: boolean;
 };
 
 export type SwitchReason = "screening_rejected" | "application_cancelled" | "unknown";
@@ -288,6 +293,8 @@ export type DealEpisode = {
   afterScreeningFail: boolean;
   /** 前の案件までに届いた一番上の段階（決定④・信頼の強さ）。最初の案件は null */
   carriedTrustStage: DealStage | null;
+  /** 台帳 #742: stageBeforeApply の時、申込の後にあった条件・物件送りの最初の時刻（段には入れない・記録だけ・表には書かない） */
+  postApplyStageAt?: Partial<Record<DealStage, string>>;
   /** 申込前の無反応で、こちらは最後のお客様の発言の後に送っていた（追いかけた） */
   chased: boolean | null;
   property: DealProperty | null;
@@ -442,6 +449,31 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
       }
     }
 
+    // ─── 台帳 #742（2026-11-25 作業員L・統括役の決め・DEAL_STAGE_BEFORE_APPLY・既定 off）: 申込の後に付いた段の時刻のずれを直す ───
+    //   段の時刻は案件の窓 [from,to] の一番早い物で、申込の時刻で切っていなかった（申込の後に物件送り 11・条件／内覧 9 ずつ・#728）。
+    //   ① 条件・物件送りは申込より前の時刻だけ（申込の後の物は postApplyStageAt へ）② 申込の前後10分の条件の印は数えない（申込の書式の通を条件の質問と読んだ 8会話）
+    //   ③ 内覧したが申込と同じ日（JST）で申込より後なら 内覧した→申込 の順（時刻は申込の1分前）④ 申込の1日以上後の内覧は先行申込の道としてそのまま
+    let postApplyStageAt: Partial<Record<DealStage, string>> | undefined;
+    if (input.stageBeforeApply && stageAt.applied) {
+      const aMs = ms(stageAt.applied);
+      const post: Partial<Record<DealStage, string>> = {};
+      const pick = (xs: ReadonlyArray<string>, skip?: (t: number) => boolean) => {
+        const inWin = xs.filter((x) => { const t = ms(x); return t >= from && t < to; });
+        return { pre: minIso(inWin.filter((x) => ms(x) <= aMs && !(skip && skip(ms(x)))), from, to), post: minIso(inWin.filter((x) => ms(x) > aMs), from, to) };
+      };
+      const c = pick(input.conditionAts, (t) => Math.abs(t - aMs) <= 10 * 60_000);
+      if (c.pre) stageAt.condition = c.pre; else delete stageAt.condition;
+      if (c.post) post.condition = c.post;
+      const s = pick(input.propertySentAts);
+      if (s.pre) stageAt.property_sent = s.pre; else delete stageAt.property_sent;
+      if (s.post) post.property_sent = s.post;
+      const jstDay = (t: number) => new Date(t + 9 * 3_600_000).toISOString().slice(0, 10);
+      if (stageAt.viewing_held && ms(stageAt.viewing_held) > aMs && jstDay(ms(stageAt.viewing_held)) === jstDay(aMs)) {
+        stageAt.viewing_held = iso(aMs - 60_000);
+        if (stageAt.viewing && ms(stageAt.viewing) > ms(stageAt.viewing_held)) stageAt.viewing = stageAt.viewing_held;
+      }
+      if (Object.keys(post).length) postApplyStageAt = post;
+    }
     const maxStage = maxStageOf(stageAt, "first_contact");
     // 物件: 申込に届いた案件は申込の時刻で・届いていない案件は終わり（今）の時刻で（後者は推定）
     const refMs = stageAt.applied ? ms(stageAt.applied) : resultAt ? ms(resultAt) : Math.min(now, to);
@@ -455,6 +487,7 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
       stageAt, appliedAtEstimated, maxStage, result, certainty, evidence, resultAt,
       lostType, lostReason: lostType ? ruleLossReason(lostType, afterScreeningFail) : null,
       switchReason, afterScreeningFail, carriedTrustStage: carried, chased, property,
+      ...(postApplyStageAt ? { postApplyStageAt } : {}),
     });
     if (stageRank(maxStage) > stageRank(carried)) carried = maxStage;
   }
