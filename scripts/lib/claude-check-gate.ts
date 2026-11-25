@@ -11,7 +11,8 @@ import { join } from "node:path";
 export type SplitScene = { id: string; label: string; families: string[]; rate: number | null; n: number | null; since: string };
 export const SPLIT_SCENES: SplitScene[] = [
   // 11/25 の晩の Claude 20問の結果で rate・n を入れ、割れが小さければ外す（統括役の決め）
-  { id: "property_or_check_vs_reply", label: "物件・確認の AIX か返信か", families: ["物件", "確認"], rate: null, n: null, since: "2026-11-25" },
+  // 11/25 の晩の Claude 16問（a-claude-1125・今のコード）: 試験の DeepSeek と同じ系統 12/16（75%）。割れた4問は全部 DeepSeek 返信 → Claude AIX（見積 2・内覧 1・確認 1）＝Claude は AIX に寄る
+  { id: "property_or_check_vs_reply", label: "物件・確認の AIX か返信か", families: ["物件", "確認"], rate: 0.75, n: 16, since: "2026-11-25" },
 ];
 
 export type GateMode = "off" | "warn" | "on";
@@ -55,7 +56,7 @@ export function claudeCheckTargets(eff: readonly string[], problems: ReadonlyMap
 /** Claude の確かめの組の名前（記録を探す鍵） */
 export const claudeCheckLabel = (sw: string, day: string) => `cc-${sw.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${day}`;
 /** 見込み（1問1回・Claude のブレインの段。11/25 の晩の20問の実費で直す） */
-export const CLAUDE_BRAIN_USD_PER_REP = 0.1;
+export const CLAUDE_BRAIN_USD_PER_REP = 0.19; // 11/25 の晩の実費: Claude 36回 $3.01＝1問1回 約 $0.19（ブレイン 2回＋判定）
 
 /** 置き場（scripts/brain-exam/results）に、そのスイッチの Claude の確かめの行があるか */
 export function claudeCheckRecord(sw: string, resultsDir = "scripts/brain-exam/results"): { label: string; ids: string[]; pass: number; n: number } | null {
