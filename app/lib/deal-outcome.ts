@@ -163,7 +163,7 @@ export type StageHistoryRow = { from_status: string | null; to_status: string | 
  *  DEAL_CONDITION_HAND_ASK=on の時だけ、手打ちで条件を聞いたスタッフの通も条件の段の時刻にする（既定 off・記録だけ・お客様が初回に条件を書いた道はここでは足さない） */
 export const CONDITION_HAND_ASK_RE = /ご希望(の|は)?(条件|エリア|地域|駅|沿線|間取|家賃|時期)|ご予算|お聞かせ|教えて(頂|いただ|下さ|くださ)/;
 export function stageBeforeApplyEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.DEAL_STAGE_BEFORE_APPLY ?? "off").trim().toLowerCase() === "on";
+  return (env.DEAL_STAGE_BEFORE_APPLY ?? "").trim().toLowerCase() !== "off"; // 2026-11-25 夜 統括役の決め: 悪化0（order 58→30・到達率の動き 2pt 以内）で既定 on。止める =off
 }
 export function conditionHandAskEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_CONDITION_HAND_ASK ?? "off").trim().toLowerCase() === "on";
@@ -449,7 +449,7 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
       }
     }
 
-    // ─── 台帳 #742（2026-11-25 作業員L・統括役の決め・DEAL_STAGE_BEFORE_APPLY・既定 off）: 申込の後に付いた段の時刻のずれを直す ───
+    // ─── 台帳 #742（2026-11-25 作業員L・統括役の決め・DEAL_STAGE_BEFORE_APPLY・11/25 夜から既定 on・=off で止める）: 申込の後に付いた段の時刻のずれを直す ───
     //   段の時刻は案件の窓 [from,to] の一番早い物で、申込の時刻で切っていなかった（申込の後に物件送り 11・条件／内覧 9 ずつ・#728）。
     //   ① 条件・物件送りは申込より前の時刻だけ（申込の後の物は postApplyStageAt へ）② 申込の前後10分の条件の印は数えない（申込の書式の通を条件の質問と読んだ 8会話）
     //   ③ 内覧したが申込と同じ日（JST）で申込より後なら 内覧した→申込 の順（時刻は申込の1分前）④ 申込の1日以上後の内覧は先行申込の道としてそのまま

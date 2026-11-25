@@ -9,7 +9,8 @@ const base = (o: Partial<DealInput>): DealInput => ({
   stageHistory: [{ from_status: "proposing", to_status: "applying", changed_at: J("2026-10-05T15:00:00"), trigger: "manual" }],
   propertySentAts: [J("2026-10-08T10:00:00")], conditionAts: [J("2026-10-05T15:05:00"), J("2026-10-28T10:00:00")], ...o,
 });
-assert.equal(stageBeforeApplyEnabled({}), false);
+assert.equal(stageBeforeApplyEnabled({}), true);
+assert.equal(stageBeforeApplyEnabled({ DEAL_STAGE_BEFORE_APPLY: "off" }), false);
 assert.equal(stageBeforeApplyEnabled({ DEAL_STAGE_BEFORE_APPLY: "on" }), true);
 
 // off: 今と同じ（申込の後の物件送り・条件が段の時刻になる）
@@ -36,4 +37,4 @@ assert.ok(Date.parse(v.stageAt.viewing!) <= Date.parse(v.stageAt.viewing_held!))
 // ④ 申込の1日以上後の内覧（先行申込）はそのまま
 const late = resolveDealOutcomes(base({ stageBeforeApply: true, viewings: [{ ymd: "2026-10-09", status: "done", thankedAt: null, name: null }] }))[0];
 assert.equal(late.stageAt.viewing_held, J("2026-10-09T20:00:00"));
-console.log("deal-stage-before-apply ok 15");
+console.log("deal-stage-before-apply ok 16");
