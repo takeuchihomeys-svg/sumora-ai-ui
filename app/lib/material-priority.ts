@@ -35,7 +35,7 @@ export const FOCUS_FIRST_KEYS: Readonly<Record<string, readonly string[]>> = {
   relation: ["ack_confirm", "topic_state"],
 };
 /** 入口が AIX の番と見た時に先に足す行（確認の約束の流れ＝作業員A の #744 の分かれ目） */
-const AIX_FIRST_KEYS = ["check_promise_flow", "pickup_promise_flow"] as const;
+const AIX_FIRST_KEYS = ["check_promise_flow", "pickup_promise_flow", "aix_boundary"] as const; // 2026-11-26 作業員A: AIX と返信の境目（#688）も AIX の番に
 /** 地図の駅がある番に足す行 */
 const STATION_KEYS = ["station_state", "route_backplan"] as const;
 
