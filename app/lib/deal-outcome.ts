@@ -100,7 +100,7 @@ export function lossReasonNeedsText(type: LostType | null | undefined): boolean 
 export const APPLYING_STATUSES: ReadonlySet<string> = new Set(["applying", "application", "screening", "contract"]);
 const WON_STATUS = "closed_won";
 export function isApplyingStatus(s: string | null | undefined): boolean { return APPLYING_STATUSES.has((s ?? "").trim()); }
-function isPreApplyStatus(s: string | null | undefined): boolean {
+export function isPreApplyStatus(s: string | null | undefined): boolean {
   const t = (s ?? "").trim();
   return !!t && !APPLYING_STATUSES.has(t) && t !== WON_STATUS && t !== "closed_lost";
 }
