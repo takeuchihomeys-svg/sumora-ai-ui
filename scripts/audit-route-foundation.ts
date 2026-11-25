@@ -82,5 +82,18 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
   const g = new Map<string, number>(); for (const o of out) for (const x of o.gaps) g.set(x.split(":")[0], (g.get(x.split(":")[0]) ?? 0) + 1);
   console.log(`\n空きの段: ${[...g].map(([k, v]) => `${k} ${v}駅`).join("・") || "なし"}`);
   if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ rows: out, arAll, arEmpty, arBefore }, null, 1));
+  // --write: 毎朝の1枚の元（quality_daily・route:foundation:<駅>＝空きの段の数・detail に空き／route:link:brain_ar＝判断の記録に駅が入った割合）
+  if (process.argv.includes("--write")) {
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
+    const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
+    const qd = [
+      ...out.filter((o) => o.next.n || o.rules).map((o) => ({ day, metric: `route:foundation:${o.station}`, scope: "takeuchi", value: o.gaps.length, n: o.next.n, detail: { gaps: o.gaps, next: o.next, sg: o.sg, exam: o.exam, conductor: o.conductor, reach: o.reach }, source: "scripts/audit-route-foundation.ts（作業員A・#687）" })),
+      ...(process.argv.includes("--db") ? [{ day, metric: "route:link:brain_ar", scope: "all", value: arAll ? Math.round(((arAll - arEmpty) / arAll) * 1000) / 10 : null, n: arAll, detail: { empty: arEmpty, before: arBefore }, source: "scripts/audit-route-foundation.ts（作業員A・#687）" }] : []),
+    ];
+    const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });
+    if (error) throw new Error(error.message);
+    console.log(`書いた: quality_daily ${qd.length}行（${day}）`);
+  }
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
