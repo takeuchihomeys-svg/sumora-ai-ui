@@ -28,7 +28,7 @@ ok("fill_resume を残す", /_auditStepP\('fill_resume'/.test(ps));
 
 console.log("\n■ ③ 止まった後は必ず続きへ");
 ok("止まった後 _scheduleClickDrain を呼ぶ", /_auditStepP\('fill_resume'[\s\S]{0,240}?\} catch \(_\) \{\}\s*_scheduleClickDrain\(\);/.test(ps));
-ok("drift で静かに漂わせる（画面を暴れさせない）", /P0\.drift\(pause\)\.then\(_endPause, _endPause\)/.test(ps));
+ok("drift で静かに漂わせる（画面を暴れさせない・上限は maxMs で 11 秒）", /P0\.drift\(pause, \{ maxMs: AXLX_HAND_PAUSE_MAX_MS \}\)\.then\(_endPause, _endPause\)/.test(ps));
 ok("止まった物は失敗にしない（throw しない）", !/fill_pause[\s\S]{0,600}notifyDone/.test(ps));
 
 console.log("\n■ ④ わざとの停止中は安全弁が動かない");

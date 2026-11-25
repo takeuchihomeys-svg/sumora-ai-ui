@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.300";
+  var _AXLX_PAGE_VER = "2.8.302";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -6914,8 +6914,21 @@ function _guideLikeAreaSkip(why) {
     } catch (_) {}
     return w ? { kind: w.kind, planned: w.ms, actual: actual } : null;
   }
-  // pointer-ui.js の _driftNow の上限（Math.min(6000, ms)）と同じ値にする
-  var AXLX_HAND_PAUSE_MAX_MS = 6000;
+  // 手を止める停止の上限と下限（pointer-ui の drift に opts.maxMs で渡す。既定の手の動きは 6 秒のまま）
+  var AXLX_HAND_PAUSE_MAX_MS = 11000;
+  var AXLX_HAND_PAUSE_MIN_MS = 4000;
+  /**
+   * ★ 2.8.302 停止の長さ（手を止める時の間）: 毎回ちがう値（4〜11秒・中央 6.5秒）。
+   *   2.8.300 は min(予定,6000) で切って 6000ms に固まり、2.8.301 は 5〜6秒の狭い帯に寄っていた。
+   *   対数正規（人の止まり方は右に長く伸びる）。範囲の外に出た分は端の 1秒の帯にばらす（同じ値に固めない）。
+   *   11秒は区の停止（区の最中は長停止なし・_wardRunActive）と、#1498 の 19.2秒（一瞬止まった）の間に置く。
+   */
+  function _handPauseMs() {
+    var v = _ln(6500, 0.22, 2000, 15000);
+    if (v < AXLX_HAND_PAUSE_MIN_MS) v = AXLX_HAND_PAUSE_MIN_MS + Math.random() * 1000;
+    if (v > AXLX_HAND_PAUSE_MAX_MS) v = AXLX_HAND_PAUSE_MAX_MS - Math.random() * 1000;
+    return Math.round(v);
+  }
   function _longPauseDue(item) {
     /**
      * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
@@ -6990,15 +7003,15 @@ function _guideLikeAreaSkip(why) {
      *   （記録は「N秒」・実際は約6秒＝記録と動きの食い違い）。長い停止は止まりに見える（#1498 の 19.2秒）ので
      *   動きは今まで通り約6秒のまま、予定の方を手の動きの上限で切って記録と一致させる。
      */
-    var pause = Math.min(_longPauseDue(item), AXLX_HAND_PAUSE_MAX_MS);
+    var pause = _longPauseDue(item) > 0 ? _handPauseMs() : 0;
     if (pause > 0) {
-      try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（わざと止める・人の間＝止まりではない）'); } catch (_) {}
+      try { _auditStepP('fill_pause', (pause / 1000).toFixed(2) + '秒（わざと止める・人の間＝止まりではない）'); } catch (_) {}
       _intentWaitMark("fill_pause", pause);
       var _startAfterPause = function () {
         var _iw = _intentWaitEnd();
         try {
-          _auditStepP('fill_resume', 'わざと止めた後に再開 予定' + Math.round(pause / 1000) + '秒・実際'
-            + (_iw ? Math.round(_iw.actual / 1000) : '?') + '秒');
+          _auditStepP('fill_resume', 'わざと止めた後に再開 予定' + (pause / 1000).toFixed(2) + '秒・実際'
+            + (_iw ? (_iw.actual / 1000).toFixed(2) : '?') + '秒');
         } catch (_) {}
         _scheduleClickDrain();
       };
@@ -7029,7 +7042,7 @@ function _guideLikeAreaSkip(why) {
         try { _auditStepP('fill_pause_force', 'わざとの停止' + Math.round(pause / 1000) + '秒が予定を15秒超えた（本物の止まり）→次へ'); } catch (_) {}
         _endPause();
       }, pause + 15000);
-      if (P0 && P0.drift) { P0.drift(pause).then(_endPause, _endPause); }
+      if (P0 && P0.drift) { P0.drift(pause, { maxMs: AXLX_HAND_PAUSE_MAX_MS }).then(_endPause, _endPause); }
       else { setTimeout(_endPause, pause); }
       return;
     }

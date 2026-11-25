@@ -1285,7 +1285,9 @@
   function _driftNow(ms, opts) {
     var o = opts || {};
     if (!ensure()) return Promise.resolve(false);
-    var total = Math.max(120, Math.min(6000, Number(ms) || 400));
+    // 2.8.302: opts.maxMs で上限を上げられる（既定 6000ms＝今まで通り。わざとの停止だけ 11 秒まで）
+    var cap = Number(o.maxMs) > 0 ? Number(o.maxMs) : 6000;
+    var total = Math.max(120, Math.min(cap, Number(ms) || 400));
     var radius = Number(o.radius) || 18;
     try { _curCache = typeof WeakMap === "function" ? new WeakMap() : null; } catch (_) { _curCache = null; }
     _syncFromShared();

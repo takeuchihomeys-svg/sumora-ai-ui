@@ -21,7 +21,7 @@ function between(a, b) {
 
 console.log("\n■ 長い停止の後もその1件を押す（捨てない）");
 const drain = between("function _scheduleClickDrain()", "function isClickQueueBusy()");
-const pauseIdx = drain.indexOf("var pause = Math.min(_longPauseDue(item), AXLX_HAND_PAUSE_MAX_MS);");
+const pauseIdx = drain.indexOf("var pause = _longPauseDue(item) > 0 ? _handPauseMs() : 0;");
 const pauseBlock = drain.slice(pauseIdx, drain.indexOf("return;", pauseIdx) + 7);
 ok("停止の分岐がある", pauseIdx > 0);
 ok("止まった1件を列の先頭へ戻す（unshift）", /_clickQueue\.unshift\(item\);/.test(pauseBlock));

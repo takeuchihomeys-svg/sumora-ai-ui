@@ -64,7 +64,7 @@ console.log("\n■ ② 区の最中は長い停止を入れない（天王寺区
   ok("レーン（区・select）のアイテムでは 0 を返す", /item && item\.lane\) return 0/.test(body));
   ok("区クリックの直近20秒以内も 0（確率も進めない）", /_wardRunActive\(\)\) return 0/.test(body) && /Date\.now\(\) - window\.__axlxWardLastAt < 20000/.test(ps));
   ok("確率の式は今まで通り（2〜5%・8〜25秒）", /var p = 0\.02 \+ Math\.min\(0\.03, _opsSincePause \/ 2000\);/.test(ps) && /_ln\(11000, 0\.5, 8000, 25000\)/.test(ps));
-  ok("drain が item を渡す", /var pause = Math\.min\(_longPauseDue\(item\), AXLX_HAND_PAUSE_MAX_MS\);/.test(ps));
+  ok("drain が item を渡す", /var pause = _longPauseDue\(item\) > 0 \? _handPauseMs\(\) : 0;/.test(ps));
 }
 
 console.log("\n■ ③ 押した直後の反映を待つ（押して外れるのを防ぐ）");
