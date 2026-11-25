@@ -4405,6 +4405,11 @@ ${sh}`;
           if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員A（#688・AIX_DICTIONARY_LINE=on の時だけ・既定 off）: 地図の次の一手の候補の AIX の前提と竹内さん本人の手本を1行（控えの行 aix_dictionary）
+      try {
+        const ad = await import("@/app/lib/aix-dictionary");
+        if (ad.aixDictionaryLineOn() && ar.loc?.next?.aix?.length) { const dl = ad.aixDictionaryLine(ar.loc.next.aix); if (dl) { applyRouteText += `\n${dl}`; materialMarks.aix_dictionary = dl.length; materialBlocks.push({ key: "aix_dictionary", text: `\n${dl}`, from: "route" }); } }
+      } catch (e) { console.warn("[brain-core] aix-dictionary skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
