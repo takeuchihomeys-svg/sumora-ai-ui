@@ -13,7 +13,7 @@
 
 type Env = Record<string, string | undefined>;
 
-export type BudgetRole = "brain" | "conductor" | "writer" | "final_check" | "light";
+export type BudgetRole = "brain" | "conductor" | "writer" | "final_check" | "light" | "learn";
 export type BudgetRoleSpec = { model: string; fallbackToClaude: boolean; why: string };
 
 /**
@@ -23,11 +23,13 @@ export type BudgetRoleSpec = { model: string; fallbackToClaude: boolean; why: st
  *   失敗の時: 全部 Claude に戻す（下書きが出ないのを避ける・竹内さんの「下書きが出ないことは避ける」）
  */
 export const BUDGET_ROLE_TABLE: Readonly<Record<BudgetRole, BudgetRoleSpec>> = {
-  brain: { model: "gpt-6.2-sol", fallbackToClaude: true, why: "判断の核・試験で一致を測ってから" },
-  conductor: { model: "gpt-6.2-sol", fallbackToClaude: true, why: "統括の受け口・材料の取りまとめ" },
+  // 2026-11-25 竹内さんの決め（案 A）: brain は brain-sweep（裏の読み直し）の時だけ・本番のブレインは Claude のまま（budgetRoleOf の ctx.httpRoute で見る）
+  brain: { model: "gpt-6.2-sol", fallbackToClaude: true, why: "brain-sweep の裏の読み直しだけ（お客様を待たせない）" },
+  conductor: { model: "gpt-6.1-terra", fallbackToClaude: true, why: "統括の受け口・材料の取りまとめ（分類に近い）" },
   writer: { model: "gpt-6.2-sol", fallbackToClaude: true, why: "お客様に届く文・失敗は必ず Claude で書き直す" },
-  final_check: { model: "gpt-6.2-sol", fallbackToClaude: true, why: "送る前の確かめ・止まると下書きが出ない" },
-  light: { model: "gpt-6-luna", fallbackToClaude: true, why: "分類・判定・前処理（量が多く安い物で足りる）" },
+  final_check: { model: "gpt-6.1-terra", fallbackToClaude: true, why: "送る前の確かめ（文を書き直す revision は入れない）・止まると下書きが出ない" },
+  light: { model: "gpt-6-luna", fallbackToClaude: true, why: "分類・判定・前処理（今 Haiku の係・量が多く安い物で足りる）" },
+  learn: { model: "gpt-6.1-terra", fallbackToClaude: true, why: "学び・分類・判定（今 Sonnet・Opus の係・文の質に直接出ない）" },
 };
 
 /** 軽い係に入れる名札（判定・分類・前処理だけ。お客様に届く本文・物件の読み取りは入れない） */
@@ -35,16 +37,30 @@ export const LIGHT_ROUTES: ReadonlySet<string> = new Set([
   "resolve_area", "suggest_next_action", "classify_condition", "recommend_templates", "reply_example_learn", "reply_anatomy",
 ]);
 
-/** 名札 → 係（表に無い名札は null＝Claude のまま） */
-export function budgetRoleOf(routeName: string | null | undefined): BudgetRole | null {
+/** 2026-11-25 竹内さんの決め（案 A）: 学び・分類・判定の名札（文の質に直接出ない）。今 Haiku の係は light（Luna）・Sonnet と Opus の係は learn（Terra） */
+const LEARN_RE = /^(?:reply_example_learn|learn_|knowledge_bulk_judge|extract_estimate|resolve_area|classify_|aix_usage_gap_learn|aix_desk_(?:consult|command)|suggest_next_action|recommend_templates|reply_anatomy)/;
+/** お客様に届く文を書く係・画像の読み・キャッシュを温める呼び出し（案 A は Claude のまま＝OpenAI に回さない） */
+const KEEP_CLAUDE_RE = /vision|image|warm|^reply_generate|^aix_template|^property_|^final_check_revision|^aix_brain|^viewing_|^estimate_sheet|^cost_|^condition_hearing|^application_push|^followup_|^acknowledge_|^meeting_|^guarantor_|^phone_|^greeting_|^docs_request|^zenryoku_/;
+/**
+ * 2026-11-25 作業員L（本番の不具合の直し・統括役の急ぎ）: スタッフが画面で待つ係（呼ぶ側や関数の待ち時間が短い）は OpenAI に回さない＝Claude（Haiku 等）のまま。
+ *   resolve_area（物件検索の地域の読み取り・関数 30秒・呼ぶ側 property-brain/search-params）が OpenAI に回って 07:14・07:27 UTC に時間切れ 30秒が2回。
+ *   同じ形: suggest_next_action（関数 30秒・Anthropic の待ち 15秒）・recommend_templates（テンプレートの画面・関数 30秒）・extract_estimate（見積書の画面）
+ */
+export const STAFF_WAIT_ROUTES: ReadonlySet<string> = new Set(["resolve_area", "suggest_next_action", "recommend_templates", "extract_estimate"]);
+/** 名札 → 係（表に無い名札は null＝Claude のまま）。ctx.httpRoute＝リクエストの経路・ctx.claudeModel＝元の Claude のモデル */
+export function budgetRoleOf(routeName: string | null | undefined, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean; extra?: boolean } = {}): BudgetRole | null {
   const n = String(routeName ?? "").trim();
   if (!n) return null;
   if (n.endsWith("_claude")) return null; // 名前で Claude に固定した部品
-  if (n === "brain" || n.startsWith("brain_")) return "brain";
+  // 個人情報の歯止めの番の書き手だけ（ctx.piiWriter・budgetPiiToOpenAIOn の時）
+  if (ctx.piiWriter && (n === "reply_generate" || n === "reply_generate_flash")) return "writer";
+  if (KEEP_CLAUDE_RE.test(n)) return null;
+  if (STAFF_WAIT_ROUTES.has(n)) return null; // スタッフが画面で待つ係（短い待ち時間）
+  if (n === "brain" || n.startsWith("brain_")) return /\/api\/cron\/brain-sweep/.test(String(ctx.httpRoute ?? "")) || ctx.extra ? "brain" : null;
+  const haiku = /haiku/.test(String(ctx.claudeModel ?? ""));
   if (n.startsWith("conductor_")) return "conductor";
-  if (n === "reply_generate" || n === "reply_generate_flash") return "writer";
-  if (n.startsWith("final_check")) return "final_check";
-  if (LIGHT_ROUTES.has(n)) return "light";
+  if (n.startsWith("final_check")) return haiku ? "light" : "final_check";
+  if (LIGHT_ROUTES.has(n) || LEARN_RE.test(n)) return haiku ? "light" : "learn";
   return null;
 }
 
@@ -54,6 +70,19 @@ export type BudgetConfig = {
   switchAtUsd: number | null;
   baseUsd: number | null;
   baseAt: string | null;
+  /** 2026-11-25 竹内さん「次の $200 の特典が入るのは 12/10」: 使用額の区切りの日（毎月この日の JST 0時から・CLAUDE_CREDIT_RESET_DAY・既定 10） */
+  resetDay: number;
+  /**
+   * 2026-11-25 竹内さんの方針「Claude は $200、OpenAI も $200 の特典で回せたら理想」: 2つの枠で配る（LLM_BUDGET_SPLIT・既定 on・=off で前の「線を超えたら回す」）。
+   *   回せる係は区切りの初めから OpenAI（線を待たない）。OpenAI の使用額が枠×openaiStopShare（既定 0.95）に届いたら Claude（DeepSeek に回してよい係は DeepSeek）に戻す
+   */
+  split: boolean;
+  /** OpenAI の枠（OPENAI_ALLOWANCE_USD・既定 $100・$200 に増えたら変える）・区切りの日（OPENAI_CREDIT_RESET_DAY・既定 1＝暦の月初）・止める割合 */
+  openaiAllowanceUsd: number;
+  openaiResetDay: number;
+  openaiStopShare: number;
+  /** さらに回せる係（本番のブレインの Claude の分）を足す（LLM_BUDGET_EXTRA・既定 off・質の恐れあり＝試験で確かめてから） */
+  extra: boolean;
   factor: number;
   claudeCreditUsd: number;
   openaiCreditUsd: number;
@@ -65,6 +94,16 @@ const numOr = (v: string | undefined, d: number | null): number | null => {
   const n = Number(s);
   return Number.isFinite(n) ? n : d;
 };
+export const CLAUDE_SWITCH_AT_USD_DEFAULT = 316.71;
+/**
+ * 2026-11-25 竹内さんの決め（11/25 昼）「申込以降や審査関係も OpenAI に回って大丈夫」（OpenAI の共有＝学習は無効にした）: 線を超えている間、
+ *   個人情報の歯止めで Claude にしていた番（申込以降・時刻の線・審査の事情・申込の値）を OpenAI に回す。DeepSeek には今まで通り回さない（この口は OpenAI だけ）。
+ *   既定 on・LLM_BUDGET_PII_TO_OPENAI=off で今の「Claude のまま」に戻る。書き手（reply_generate）はこの番だけ OpenAI の書き手の版（Sol medium＋v2-note）
+ */
+export const budgetPiiToOpenAIOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.LLM_BUDGET_PII_TO_OPENAI ?? "").trim().toLowerCase() !== "off";
+export const BUDGET_PII_WRITER_PROFILE = "openai-writer-v2-note-med";
+export const CLAUDE_SPEND_BASE_USD_DEFAULT = 291.71;
+export const CLAUDE_SPEND_BASE_AT_DEFAULT = "2026-11-24T01:19:00Z";
 export function readBudgetConfig(env: Env = typeof process !== "undefined" ? process.env : {}): BudgetConfig {
   const m = String(env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase();
   const models: Partial<Record<BudgetRole, string>> = {};
@@ -72,12 +111,20 @@ export function readBudgetConfig(env: Env = typeof process !== "undefined" ? pro
     const [k, v] = part.split("=").map((x) => (x ?? "").trim());
     if (k && v && k in BUDGET_ROLE_TABLE) models[k as BudgetRole] = v;
   }
-  const baseAt = String(env.CLAUDE_SPEND_BASE_AT ?? "").trim();
+  // 2026-11-25: 本番の env は統括役から見えない＝基準の既定をコードに（11/24 10:19 JST の Console $291.71）。基準が今の区切りの中にある時だけ効く
+  const baseAt = String(env.CLAUDE_SPEND_BASE_AT ?? "").trim() || CLAUDE_SPEND_BASE_AT_DEFAULT;
   return {
-    mode: m === "on" ? "on" : m === "shadow" ? "shadow" : "off",
-    switchAtUsd: numOr(env.CLAUDE_SWITCH_AT_USD, null),
-    baseUsd: numOr(env.CLAUDE_SPEND_BASE_USD, null),
+    // 2026-11-25 竹内さんの決め（11/25 昼）: 既定 on（=off で止まる・=shadow は決めるだけ）。線の既定は 11/24 10:19 の画面 $291.71＋$25＝$316.71
+    mode: m === "off" ? "off" : m === "shadow" ? "shadow" : "on",
+    switchAtUsd: numOr(env.CLAUDE_SWITCH_AT_USD, CLAUDE_SWITCH_AT_USD_DEFAULT),
+    baseUsd: numOr(env.CLAUDE_SPEND_BASE_USD, CLAUDE_SPEND_BASE_USD_DEFAULT),
     baseAt: baseAt && Number.isFinite(Date.parse(baseAt)) ? new Date(baseAt).toISOString() : null,
+    resetDay: Math.min(28, Math.max(1, Math.round(numOr(env.CLAUDE_CREDIT_RESET_DAY, 10) ?? 10))),
+    split: String(env.LLM_BUDGET_SPLIT ?? "").trim().toLowerCase() !== "off",
+    openaiAllowanceUsd: numOr(env.OPENAI_ALLOWANCE_USD, numOr(env.OPENAI_MONTH_CREDIT_USD, 100)) ?? 100,
+    openaiResetDay: Math.min(28, Math.max(1, Math.round(numOr(env.OPENAI_CREDIT_RESET_DAY, 1) ?? 1))),
+    openaiStopShare: Math.min(1, Math.max(0.5, numOr(env.OPENAI_STOP_SHARE, 0.95) ?? 0.95)),
+    extra: String(env.LLM_BUDGET_EXTRA ?? "").trim().toLowerCase() === "on",
     factor: numOr(env.CLAUDE_COST_FACTOR, 1) ?? 1,
     claudeCreditUsd: numOr(env.CLAUDE_MONTH_CREDIT_USD, 200) ?? 200,
     openaiCreditUsd: numOr(env.OPENAI_MONTH_CREDIT_USD, 100) ?? 100,
@@ -86,12 +133,24 @@ export function readBudgetConfig(env: Env = typeof process !== "undefined" ? pro
 }
 
 /** 数え始めの時刻: 基準の時刻が今月なら基準から・無ければ月初（UTC・Console の月と同じ） */
-export function spendWindowStart(cfg: Pick<BudgetConfig, "baseAt" | "baseUsd">, nowMs: number): { since: string; useBase: boolean } {
-  const d = new Date(nowMs);
-  const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+/** 2026-11-25 使用額の区切りの始め: 毎月 resetDay 日の JST 0時（今より前で一番近い日）。既定 10日＝特典の入る日 */
+export function creditPeriodStartMs(resetDay: number, nowMs: number): number {
+  const J = 9 * 3_600_000;
+  const j = new Date(nowMs + J);
+  let start = Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), resetDay) - J;
+  if (start > nowMs) start = Date.UTC(j.getUTCFullYear(), j.getUTCMonth() - 1, resetDay) - J;
+  return start;
+}
+/** OpenAI の使用額の区切りの始め（既定は暦の月初 JST） */
+export function openaiWindowStart(cfg: Pick<BudgetConfig, "openaiResetDay">, nowMs: number): string {
+  return new Date(creditPeriodStartMs(cfg.openaiResetDay ?? 1, nowMs)).toISOString();
+}
+export function spendWindowStart(cfg: Pick<BudgetConfig, "baseAt" | "baseUsd"> & { resetDay?: number }, nowMs: number): { since: string; useBase: boolean } {
+  // 区切り: 特典の入る日（resetDay・既定 10日）。暦の月初ではない（竹内さん 11/25「次の $200 は 12/10」）
+  const periodStart = creditPeriodStartMs(cfg.resetDay ?? 10, nowMs);
   const baseMs = cfg.baseAt ? Date.parse(cfg.baseAt) : NaN;
-  if (cfg.baseUsd != null && Number.isFinite(baseMs) && baseMs >= monthStart && baseMs <= nowMs) return { since: new Date(baseMs).toISOString(), useBase: true };
-  return { since: new Date(monthStart).toISOString(), useBase: false };
+  if (cfg.baseUsd != null && Number.isFinite(baseMs) && baseMs >= periodStart && baseMs <= nowMs) return { since: new Date(baseMs).toISOString(), useBase: true };
+  return { since: new Date(periodStart).toISOString(), useBase: false };
 }
 
 /** 今月の Claude の使用額（基準＋基準の後の行の費用×補正） */
@@ -102,16 +161,29 @@ export function claudeMonthSpendUsd(cfg: Pick<BudgetConfig, "baseUsd" | "factor"
 export type BudgetDecision = { route: "claude" | "openai"; role: BudgetRole | null; model: string | null; fallbackToClaude: boolean; reason: string; shadow: boolean };
 
 /** 係ごとの振り分け（mode が off・線が無い・表に無い名札・線の手前は Claude） */
-export function budgetDecision(routeName: string | null | undefined, spendUsd: number | null, cfg: BudgetConfig): BudgetDecision {
-  const role = budgetRoleOf(routeName);
+export function budgetDecision(routeName: string | null | undefined, spendUsd: number | null, cfg: BudgetConfig, ctx: { httpRoute?: string | null; claudeModel?: string | null; partial?: boolean; piiWriter?: boolean; openaiUsd?: number | null } = {}): BudgetDecision {
+  const role = budgetRoleOf(routeName, { ...ctx, extra: cfg.extra });
+  // 2026-11-25 2つの枠で配る（既定）: 回せる係は区切りの初めから OpenAI・OpenAI の枠の 95% で止める（Claude の線は見ない）
+  if (cfg.split && cfg.mode !== "off") {
+    const c = (reason: string): BudgetDecision => ({ route: "claude", role, model: null, fallbackToClaude: true, reason, shadow: false });
+    if (!role) return c("表に無い名札");
+    const oa = ctx.openaiUsd;
+    if (oa == null || !Number.isFinite(oa)) return c("OpenAI の使用額が読めない");
+    const stopAt = cfg.openaiAllowanceUsd * cfg.openaiStopShare;
+    if (oa >= stopAt) return c(`OpenAI の使用額 ${oa.toFixed(2)} ≥ 枠 ${cfg.openaiAllowanceUsd}×${cfg.openaiStopShare}（止める）`);
+    const spec = BUDGET_ROLE_TABLE[role];
+    return { route: "openai", role, model: cfg.models[role] ?? spec.model, fallbackToClaude: spec.fallbackToClaude, reason: `2つの枠で配る（OpenAI ${oa.toFixed(2)}／${cfg.openaiAllowanceUsd}${ctx.partial ? "・読み切れていない＝下限" : ""}）`, shadow: cfg.mode === "shadow" };
+  }
   const claude = (reason: string): BudgetDecision => ({ route: "claude", role, model: null, fallbackToClaude: true, reason, shadow: false });
   if (cfg.mode === "off") return claude("LLM_BUDGET_ROUTE=off");
   if (cfg.switchAtUsd == null) return claude("CLAUDE_SWITCH_AT_USD が無い");
   if (!role) return claude("表に無い名札");
   if (spendUsd == null || !Number.isFinite(spendUsd)) return claude("使用額が読めない");
-  if (spendUsd < cfg.switchAtUsd) return claude(`使用額 $${spendUsd.toFixed(2)} < 線 $${cfg.switchAtUsd}`);
+  // 2026-11-25 読み切れていない時（partial・1回の読みは 50頁まで）の決め: 「超えた」と見なす（回す）。理由: 足した額は下限（読めた分だけ）で、
+  //   線の手前に見えても本当は超えている事がある。回すのは書き手以外の係だけで、失敗は Claude に戻る＝回しすぎても下書きは止まらない。逆に回し損ねると特典を超えて払う
+  if (spendUsd < cfg.switchAtUsd && !ctx.partial) return claude(`使用額 ${spendUsd.toFixed(2)} < 線 ${cfg.switchAtUsd}`);
   const spec = BUDGET_ROLE_TABLE[role];
-  const d: BudgetDecision = { route: "openai", role, model: cfg.models[role] ?? spec.model, fallbackToClaude: spec.fallbackToClaude, reason: `使用額 $${spendUsd.toFixed(2)} ≥ 線 $${cfg.switchAtUsd}`, shadow: cfg.mode === "shadow" };
+  const d: BudgetDecision = { route: "openai", role, model: cfg.models[role] ?? spec.model, fallbackToClaude: spec.fallbackToClaude, reason: spendUsd < cfg.switchAtUsd ? `使用額 ${spendUsd.toFixed(2)}（読み切れていない＝下限）・超えたと見なす` : `使用額 ${spendUsd.toFixed(2)} ≥ 線 ${cfg.switchAtUsd}`, shadow: cfg.mode === "shadow" };
   return d;
 }
 

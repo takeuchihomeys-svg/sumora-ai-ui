@@ -47,6 +47,7 @@ export type OtherBucket = "申込以降" | "約束でない" | "内覧当日" | 
 export const AFTER_APPLY_RE = /お?申(?:し)?込(?:み)?(?:し|を|させて|手続き|完了|変更)|審査|内定通知書|契約書|鍵のお渡し|お部屋(?:を)?(?:抑え|押さえ)|身分証明書|ご入力とお写真/;
 export const NOT_A_PROMISE_RE = /発生(?:いた|致)します|担当させて(?:頂|いただ)きます|と申しま|お手数をおかけ|ご報告させて(?:頂|いただ)きます(?:[！!。]|$)|ご判断/;
 export const FEELING_RE = /全力で|尽力|最善を尽く|出来る限り(?:の|抑え)|しっかり|無事[^。]{0,12}(?:よう|様)|ご安心/;
+export const SET_PHRASE_RE = /(?:初期費用|費用)[^。！!？?\n]{0,10}?最大限(?:割引|お安く|抑え)[^。！!？?\n]{0,4}?させて(?:頂|いただ)きます/;
 export const VIEWING_DAY_RE = /ご案内させて(?:頂|いただ)きます|(?:ご内覧日|お時間|ご内覧時間)(?:を)?変更させて/;
 // 種類の網の候補は promise-drop-watch.promiseWideKindOf（PROMISE_KIND_WIDE で見張りに足す物と同じ）
 export function otherBucketOf(clause: string): OtherBucket {
@@ -56,6 +57,8 @@ export function otherBucketOf(clause: string): OtherBucket {
   if (NOT_A_PROMISE_RE.test(t)) return "約束でない";
   if (VIEWING_DAY_RE.test(t)) return "内覧当日";
   if (FEELING_RE.test(t)) return "気持ち";
+  // 2026-11-25 作業員L（#664・統括役の頼み）: 「初期費用を最大限割引させて頂きます」だけの節は締めの決まり文句（竹内さん本人 60日 77回: 締めの位置 68%・72時間以内の見積の AIX 19%）＝約束に数えない
+  if (SET_PHRASE_RE.test(t) && !/御?見積/.test(t)) return "気持ち";
   return "残り";
 }
 
@@ -118,7 +121,7 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("audit-promise-kinds.ts")) {
       // 前からの【必ず】の行がこの通の時に開いていた（planPromiseInsert が同じ種類の行を重ねない＝カレンダーに新しい行が無くても記録はある）。done_at の無い済みの行は時刻が分からないので「開いていた」に数えない
       const calBefore = cal.some((c) => c.conversation_id === m.conversation_id && /^\s*【必ず】/.test(c.notes ?? "") && Date.parse(c.created_at) < atMs - 600_000 && (!c.is_done || (!!c.done_at && Date.parse(c.done_at) > atMs)));
       for (const c of clauses) {
-        const watch = promiseKindNameOf(c, { PROMISE_KIND_WIDE: argv.includes("--wide") ? "on" : "off" });
+        const watch = promiseKindNameOf(c, { PROMISE_KIND_WIDE: argv.includes("--wide") ? "on" : "off", PROMISE_KIND_WIDE2: argv.includes("--wide2") ? "on" : "off" });
         const ledger = classifyStaffTextFacts(c, m.created_at).filter((e) => e.status === "promised").map((e) => String(e.kind));
         const meeting = MEETING_PROMISE_RE.test(c.normalize("NFKC"));
         const cContact = contact && !!parseContactPromise(c, m.created_at);

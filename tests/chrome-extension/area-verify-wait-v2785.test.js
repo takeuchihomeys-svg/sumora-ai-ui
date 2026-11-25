@@ -27,7 +27,8 @@ function ok(name, cond, extra) {
 
 const ps = read("page-script.js");
 const iWard = ps.indexOf("function doAfterWard()");
-const wardFn = ps.slice(iWard, iWard + 9000);
+// 2026-11: 区を足す所（chk.missing）まで届くように窓を広げた（区の確認の関数の本体）
+const wardFn = ps.slice(iWard, iWard + 14000);
 
 console.log("■ ① 押し終わるまで待つ（時間で決めない）");
 {
@@ -41,8 +42,9 @@ console.log("■ ① 押し終わるまで待つ（時間で決めない）");
 
 console.log("\n■ ② 打ち切りは「時間」と「回数」の両方で守る（無限に待たない）");
 {
-  ok("上限の時間がある（MAX_MS）", /var MAX_MS = 45000;/.test(wardFn));
-  ok("押し直しは2回まで（MAX_RETRY）", /var MAX_RETRY = 2;/.test(wardFn));
+  // 2026-11 の直し: 上限は区の数で決める式（区×90秒・最低15分）。固定の 45000 ではない（上限があることを見る）
+  ok("上限の時間がある（MAX_MS・区の数で決まる式で上限を持つ）", /var MAX_MS = Math\.max\(900000, want\.length \* 90000\);/.test(wardFn));
+  ok("押し直しは有限（MAX_RETRY・上限30回まで）", /var MAX_RETRY = Math\.min\(30, /.test(wardFn));
   ok("上限を超えたら理由を残して止まる（黙って止まらない）", /AXLX_AREA_MISMATCH: ' \+ msg0/.test(wardFn) || /notifyDone\('AXLX_AREA_MISMATCH: ' \+ msg0\)/.test(wardFn));
   ok("何秒待ったかを記録に残す", /Math\.round\(elapsed \/ 1000\) \+ '秒待った/.test(wardFn));
 }
@@ -72,8 +74,8 @@ console.log("\n■ ④ 実際の速さで「3区が押し終わる前に打ち�
 
 console.log("\n■ ⑤ 押し直しで二重押し（＝外れる）をしない");
 {
-  ok("キューが空になってから足す", /if \(isClickQueueBusy\(\)\) \{[\s\S]{0,600}_verifyThenConfirm\(n\);[\s\S]{0,200}\n\s*\}\n\s*_wardVerifyStart = 0;/.test(wardFn));
-  ok("余計な区（stale）は外す・足りない区（missing）は足す", /chk\.stale\.forEach/.test(wardFn) && /chk\.missing\.length\) clickWardPrecise/.test(wardFn));
+  ok("キューが忙しい間は確認を先送りし、空になってから確かめる（whenClickQueueIdle）", /if \(isClickQueueBusy\(\)\) \{[\s\S]{0,900}whenClickQueueIdle\(/.test(wardFn));
+  ok("余計な区（stale）は外す・足りない区（missing）は足す", /chk\.stale\.forEach/.test(wardFn) && /chk\.missing\.forEach\(function \(code\) \{/.test(wardFn));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

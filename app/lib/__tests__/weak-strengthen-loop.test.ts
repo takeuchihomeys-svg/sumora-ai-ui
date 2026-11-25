@@ -29,6 +29,7 @@ console.log("\n■ 1つずつ: 欄ごとに photo_learn");
   ok("photo_learn が複数（1つずつ）", photos.length >= 3, photos.map((t) => t.fields));
   ok("各 photo は fields 1個", photos.every((t) => (t.fields || []).length === 1), photos.map((t) => t.fields));
   ok("what に1つ理解", photos.every((t) => /1つ理解/.test(t.what)));
+  ok("既定は order=sequence（連続録画）", photos.every((t) => t.order === "sequence"), photos.map((t) => t.order));
   ok("one_by_one フラグ", p.one_by_one === true);
   ok("学んだら強化: reflect がある", p.cycle.some((t) => t.kind === "reflect_auto"));
   ok("学んだら強化: 自動1回がある", p.cycle.some((t) => t.kind === "need_auto_run"));

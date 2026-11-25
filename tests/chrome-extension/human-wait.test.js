@@ -143,78 +143,179 @@ function rest() {
   // 残してよい物（人の操作の間ではない）: タイムアウトの上限・見張り・サーバーの待ち・画面の表示を消す・
   //   setInterval の見る間隔・checkbox を差し込む内部の間引き・起動時の読み込み待ち。
   // ここに無い固定の数字が増えたら落ちる（人の操作の間なら human-wait を通す／残すならここに理由を書いて足す）。
+  // 2026-11-26 作り直し: 表は今のコードの実物（scan）に合わせた。人の操作の間（クリック・入力・並べ替えの前後）は入れていない。
+  //   → 人の間の固定の待ちは「直す」一覧（下の ■ 人の操作の間…）で赤のまま残す（隠さない）。
+  //   要確認＝用途を関数名で見て人の間か決めきれていない物（直す前に1件ずつ確かめる）。
   const KEEP = {
     "background.js": {
-      
-      "setTimeout 35000": [2, "レインズの新タブの見張りの期限"], "setTimeout 500": [2, "タブが既に読み込み済みかの予備の確認・録画モードで SW が起き直した後の続き（v2.7.5）"],
-      "setTimeout 300": [1, "録画モードの最初の1枚を撮るまでの間（v2.7.5・読むだけ・サイトを触らない）"], "setTimeout 320": [2, "撮影の前にタブを前に出して描画が変わるのを待つ（v2.7.10）・同じ理由で最初から前に出す（v2.7.44）"],
-      // 2026-11-14 竹内さん「これで改善されたかな」: 撮る瞬間だけ拡張の小窓を隠すので、
-      //   `visibility` の反映（次の描画フレーム）を待つ。**人の操作の間ではない**（写真を撮る前の32ms・v2.7.64）
-      "setTimeout 32": [1, "小窓を隠した後に描画が終わるのを待つ（写真を撮る前・人を待たせない・v2.7.64）"],
-      "setTimeout 900": [2, "撮影の回数制限に当たった時のやり直しの待ち（v2.7.10・サイトを触らない）・記録側がまだ居ない時に待ってから聞き直す（v2.7.43・読むだけ）"], "setTimeout 400": [1, "記録側がまだ居ない時に注入してから聞き直す待ち（v2.7.43・読むだけ）"],
-      "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"], "setInterval 25000": [1, "Supabase Realtime の心拍"],
-      "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
-      "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41 _loadSentRooms・サイトを触らない）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
-      "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [2, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab・v2.5.45 _probeItandiTab）"],
-      "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
-      "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.58 fetchRealproPdfsInTab・タブの中で取る・ログイン情報をサーバーに渡さない）"],
-      "setTimeout 300000": [1, "送信の待ち行列の1件の上限（v2.6.26・超えたら次へ＝後の物件を止めない・サイトを触らない）"],
+      "setInterval 20000": [1, "一括の見張り（20秒ごとに起こす・サイトを触らない）"],
+      "setInterval 25000": [1, "Supabase Realtime の心拍"],
+      "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
+      "setInterval 60000": [1, "完了の待ちの裏の見張り（タブが隠れた時の取り直し）"],
+      "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"],
+      "setTimeout 10000": [1, "バッジを消す"],
+      "setTimeout 1200": [2, "タブの準備の待ち（リセット後・サイトを触らない）"],
+      "setTimeout 125000": [1, "送信の応答の期限（サーバー）"],
+      "setTimeout 1500": [3, "タブの応答の確かめの期限・再読み込み後の待ち（サイトを触らない）"],
+      "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
+      "setTimeout 2000": [1, "一括の読み込みの待ち（要確認：人の間か）"],
+      "setTimeout 250": [2, "一括の読み込みの待ちの間引き（要確認：人の間か）"],
+      "setTimeout 2800": [1, "読み直しの待ち（_ensureRealproPageFresh）"],
+      "setTimeout 300": [1, "録画モードの最初の1枚を撮るまでの間（読むだけ）"],
+      "setTimeout 3000": [2, "見張り（_bulkKick）・画面の文字の応答の期限（_snapDom・v2.5.40）"],
+      "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.58）"],
+      "setTimeout 300000": [1, "送信の待ち行列の1件の上限（v2.6.26）"],
+      "setTimeout 320": [3, "撮影の前に描画が変わるのを待つ（v2.7.10・v2.7.44）"],
+      "setTimeout 35000": [2, "レインズの新タブの見張りの期限"],
+      "setTimeout 400": [1, "録画の撮影の間（読むだけ）"],
+      "setTimeout 500": [2, "タブが既に読み込み済みかの確認（v2.7.5）・録画の続き"],
+      "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41）"],
+      "setTimeout 800": [2, "解放後の終わり・一括の状態の取り直し（サイトを触らない）"],
+      "setTimeout 8000": [1, "Realtime の再接続"],
+      "setTimeout 900": [3, "撮影の間（_capturePaced・_recordOneShot）・読み込みの間引き（_batchAutofill）"],
     },
     "bulk-dl.js": {
-      "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],
-      "setTimeout 2500": [2, "表示を戻す・Case C の予備の起動（Case A/B の後ろの安全網）"], "setTimeout 800": [1, "popup の応答の期限"],
-      "setTimeout 5000": [1, "表示を戻す"], "setTimeout 100": [2, "ダウンロードのリンクを消す"], "setTimeout 4000": [1, "表示を戻す"],
-      "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
-      "setTimeout 350": [1, "次のページが変わったかを確かめる見る間隔（v2.7.37・読むだけ・サイトを触らない）"], "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setTimeout 400": [3, "MutationObserver の間引き・1件送信前のチェック確認（v2.6.23）・次のページが変わったかの最初の確認（v2.7.37・読むだけ）"], "setInterval 1000": [2, "0件の確定の見る間隔（25秒で打ち切り）・休憩等の「あと何秒」の表示更新（v2.6.52）"],
-      "setTimeout 1200": [2, "起動時の差し込み・自動押下で押せない行を飛ばす待ち（v2.6.29）"],
-      "setTimeout 20000": [1, "1件だけのブレイン判定の期限（v2.6.26・超えたら送る＝fail-open）"],
-      "setTimeout 3000": [2, "「終わってから次を押してください」の知らせ（v2.6.28）・自動押下のカーソルが動けない時の予備の押下（v2.6.29）・サイトを触らない"],
-      "setTimeout 500": [1, "自動押下で1件の処理が終わったかを見る間隔（v2.6.29・サイトを触らない）"], "setInterval 60000": [1, "次回の自動便の時刻の描き直し（v2.7.0・画面の文字だけ・サイトを触らない）"],
-      "setTimeout 1400": [1, "並べ替えの後に条件が読めるか見直す間（v2.7.2・読むだけ・サイトを触らない）"],
-      "setTimeout 800": [3, "popup の応答の期限・自動押下で1件の処理の終わりを待ち始める（v2.6.29）・自動モードに切り替えた時に押し始める（v2.6.30）"],
-      // 2026-11-10: 「押した印刷用PDFを20秒まとめて送る」はやめた（押した1件をその場で送る・sendOnePdfNow）
+      "setInterval 1000": [2, "作業メモの描き直し・0件の確定の見る間隔（25秒で打ち切り）"],
+      "setInterval 10000": [1, "沈黙の見張り（_armPipelineSilence）"],
+      "setInterval 200": [1, "並べ替え（_beginSelect）の描画待ちの見る間隔"],
+      "setInterval 2000": [2, "裏の確認（_becomeOrphan）・start の見張り"],
+      "setInterval 60000": [2, "重さの数え・自動便の表示の描き直し"],
+      "setTimeout 100": [2, "ダウンロードのリンクを消す"],
+      "setTimeout 1200": [2, "起動時の差し込み・0件の再確認（_zeroCheck・読むだけ）"],
+      "setTimeout 1500": [2, "0件の確認（_zeroCheck・読むだけ）"],
+      "setTimeout 200": [2, "差し込みのやり直し・armScreen の見張り"],
+      "setTimeout 2000": [2, "読み込み後の差し込み・armSnap の見張り"],
+      "setTimeout 20000": [1, "1件だけのブレイン判定の期限（fail-open）"],
+      "setTimeout 2200": [1, "検索後の並べ替えの見直し（要確認）"],
+      "setTimeout 250": [1, "下のバーを描き直す間引き（位置だけ）"],
+      "setTimeout 2500": [2, "表示を戻す・次ページの読み直し（Case B/C）"],
+      "setTimeout 2700": [1, "自動の次ページの読み直し（Case E）"],
+      "setTimeout 280": [1, "沈黙の見張り（_armPipelineSilence）"],
+      "setTimeout 300": [2, "沈黙の見張り・obs の確認"],
+      "setTimeout 3000": [2, "印刷の送り出しの保険（fire 済みか確かめる）・進み表示の描き直し"],
+      "setTimeout 350": [1, "次のページが変わったかを見る間隔（読むだけ）"],
+      "setTimeout 35000": [1, "送付の判定の期限"],
+      "setTimeout 3800": [1, "並べ替えの再確認（要確認）"],
+      "setTimeout 400": [3, "MutationObserver の間引き・次ページの確認（読むだけ）・inject"],
+      "setTimeout 4000": [1, "表示を戻す"],
+      "setTimeout 50": [4, "計測・差し込み（内部）"],
+      "setTimeout 5000": [1, "表示を戻す"],
+      "setTimeout 5500": [2, "画面OKの見張り・並べ替えの再確認（要確認）"],
+      "setTimeout 6000": [1, "裏の返事が来なくても読み直す期限"],
+      "setTimeout 700": [1, "自動の次頁の待ち（Case A）"],
+      "setTimeout 80": [2, "印の再適用・差し込み（内部）"],
+      "setTimeout 800": [2, "popup の応答の期限・自動の読み込みの待ち"],
     },
-    "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
-    // 2026-11-10 v2.6.23 見えるカーソル: 90ms は「押した時の見た目の縮みを戻す」だけ（サイトを触らない・固定でよい）
-    // 2026-11-19 v2.8.25: 90ms の固定は廃止（押し込みは persona.press_ms の対数正規＝holdMs()・motion-human-v2825.test.js）
-    // 2026-11-20 v2.8.138: 40ms は「もう1つの世界のカーソルが動き終わったか」を見る間隔（人の操作の間ではない・最大6秒）
-    "pointer-ui.js": { "setTimeout 130": [1, "押した後に指先がわずかに動く（v2.6.56・見た目だけ・サイトを触らない）"], "setTimeout 40": [1, "1つのカーソル: もう1つの世界が動き終わるのを見る間隔（v2.8.138）"] },
+    "content.js": {
+      "setInterval 3000": [1, "サイドバーの見張り"],
+      "setTimeout 1200": [1, "押した後の確認の間（読むだけ）"],
+      "setTimeout 1500": [1, "pushAll の再試行（読み込み待ち）"],
+      "setTimeout 300": [2, "起動時・pushAll の間"],
+      "setTimeout 400": [1, "MutationObserver の間引き"],
+    },
+    "human-learn-record.js": { "setInterval 50": [1, "human-learn.js が来るのを待つ（最大3秒・読むだけ）"], "setTimeout 1500": [1, "起動直後に写真を1枚撮る（v2.7.0）"] },
     "itandi-bulk-dl.js": {
-      "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
-      "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [2, "0件の確定の見る間隔・休憩等の「あと何秒」の表示更新（v2.6.52）"],
-      "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（v2.5.73・読むだけ）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"],
+      "setInterval 1000": [2, "表示の描き直し・0件の確定の見る間隔"],
+      "setInterval 10000": [1, "重さの数え（axlx_perf の時だけ）"],
+      "setInterval 500": [1, "モーダルが出たかの見る間隔"],
+      "setTimeout 15000": [1, "モーダルの期限"],
+      "setTimeout 250": [1, "下のバーを描き直す間引き（位置だけ）"],
+      "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（読むだけ）"],
+      "setTimeout 5000": [1, "表示を戻す"],
+      "setTimeout 60000": [1, "PDF の期限"],
+      "setTimeout 800": [1, "popup の応答の期限"],
     },
     "itandi-content.js": { "setTimeout 300": [1, "起動時"] },
-    "itandi-page-script.js": {
-      "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"], "setTimeout 240000": [1, "見張り（fill-done の保証）"],
-      "setTimeout 5000": [1, "警告の表示を消す"], "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
+    "itandi-guide.js": {
+      "setInterval 10000": [1, "重さの数え（axlx_perf）"],
+      "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（読むだけ）"],
+      "setTimeout 120": [1, "画面の変化の後に光を見直す間引き（読むだけ）"],
     },
-    "page-script.js": { "setTimeout 15000": [1, "警告の表示を消す"], "setTimeout 260": [1, "地域がそろったかを確かめ直すまでの短い間（v2.7.85・押す列が空になってから・読むだけ）"], "setTimeout 400": [1, "区を押し終えた後に地域がそろったかを見直す間（v2.7.85・読むだけ・サイトを触らない）"], "setTimeout 620": [1, "区を外してから足すまでの間（v2.7.85・人が選び直す速さ）"], "setTimeout 895000": [1, "見張り（fill-done の保証）"], "setInterval 5000": [1, "180秒 操作が進まない時の見張り（v2.6.23）"], "setTimeout 0": [1, "同じ流れの続き"], "setInterval 3000": [1, "クリックの列が20秒固まったかの見張り（v2.6.23）"], "setTimeout 4000": [1, "住居ボタンを押した後に検索の欄が出たかの再確認（v2.6.23）"], "setTimeout 2500": [1, "住居検索を押しても移らない時の href での移動（v2.6.23）"], "setTimeout 500": [1, "検索を押した後にカーソルの居た所を点検へ残す（v2.6.63・読むだけ）"], "setTimeout 200": [1, "欄を開いたか見る間隔（v2.7.0・案内モードと同じ「＋を押して開く」）"], "setTimeout 150": [1, "欄を開いた後の見直しの間（v2.7.0）"], "setTimeout 8000": [2, "拡張が描いたプルダウンの一覧が残ったら必ず消す安全弁（v2.7.1・見た目だけ・サイトを触らない）・その他の要望の表示を8秒で消す（v2.7.72・見せるだけ）"], "setTimeout 25000": [1, "検索が押されていない時の保険（v2.7.25・条件が入っている時だけ押す・サイトを触らない）"], "setInterval 2500": [1, "検索が押されていないかの早い見張り（v2.7.35・読むだけ・押すのは条件が入っている時だけ）"] },
+    "itandi-page-script.js": {
+      "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"],
+      "setTimeout 1800000": [1, "見張り（fill-done の保証・30分）"],
+      "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
+      "setTimeout 5000": [1, "警告の表示を消す"],
+    },
+    "page-script.js": {
+      "setInterval 10000": [1, "停止の見張り（_armFillSilenceWatch）"],
+      "setInterval 3000": [2, "人の引き継ぎの見張り・速い見張り（_fillStillRunning）"],
+      "setInterval 5000": [1, "止まりの見張り（window.__axStallWatch）"],
+      "setInterval 60000": [1, "重さの数え（perf）"],
+      "setTimeout 120": [4, "画面の表示・押せる状態を待つ見直しの間（読むだけ）"],
+      "setTimeout 1200": [1, "台帳の保存の間引き"],
+      "setTimeout 120000": [1, "送信後のクリアの見張り"],
+      "setTimeout 150": [2, "要素が見えるまでの待ち（読むだけ）"],
+      "setTimeout 15000": [3, "警告の表示を消す・押しの見張り・再確認"],
+      "setTimeout 1800000": [1, "見張り（watchdog）"],
+      "setTimeout 200000": [1, "クリーン開始の関所の見張り"],
+      "setTimeout 2500": [1, "住居検索ページの確認（ensureRealproSearchPage）"],
+      "setTimeout 25000": [1, "検索が押されていない時の保険（条件が入っている時だけ）"],
+      "setTimeout 300": [1, "読み直しの間（読むだけ）"],
+      "setTimeout 40": [1, "もう1つの世界が動き終わるのを見る間隔（v2.8.138）"],
+      "setTimeout 400": [4, "確認の間（読むだけ）・検索後の確かめ（_verifyPressUnderstood）"],
+      "setTimeout 4000": [1, "住居ボタンを押した後の再確認"],
+      "setTimeout 500": [2, "画面がそろったかの確認（読むだけ）・再開の待ち"],
+      "setTimeout 600": [1, "検索を押した後の結果の読み直し（押す所の後）"],
+      "setTimeout 60000": [1, "見張り（_axWatchdogFire）"],
+      "setTimeout 620": [1, "コメントの中の例（実物の待ちは別にある）"],
+      "setTimeout 70": [1, "読み直しの間（読むだけ）"],
+      "setTimeout 700": [1, "検索押下後の画面照合の再開（読むだけ）"],
+      "setTimeout 800": [1, "再開の待ち（住居検索へ移った後）"],
+      "setTimeout 8000": [3, "拡張が描いた一覧の安全弁・その他の要望の表示・応答の期限"],
+      "setTimeout 900": [1, "地域がそろったかの確認（読むだけ）"],
+    },
+    "pointer-ui.js": { "setTimeout 130": [1, "押した後に指先がわずかに動く（見た目だけ）"], "setTimeout 40": [1, "もう1つの世界が動き終わるのを見る間隔（v2.8.138）"] },
     "popup.js": {
-      "setTimeout 6000": [1, "取得の期限"], "setTimeout 3000": [4, "取得のやり直し・表示を戻す"], "setTimeout 10000": [1, "取得の期限"],
-      "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],
-      "setTimeout 800": [1, "一時調整の保存の間引き"], "setTimeout 8000": [1, "表示を戻す"], "setTimeout 20000": [1, "固まり防止の見張り"],
-      "setTimeout 25000": [1, "固まり防止の見張り"], "setTimeout 1200": [1, "表示を閉じる"],
-      "setTimeout 100": [1, "会話から押されたお客様を開く前に一覧が出るのを待つ見る間隔（v2.5.86・5秒で打ち切り・サイトを触らない）"], "setTimeout 0": [1, "検索モードのボタンを繋ぐ（v2.6.23・DOM の後）"],
-      "setTimeout 150": [1, "開いた時に一覧が出るのを待つ見る間隔（v2.5.86・8秒で打ち切り・サイトを触らない）"],
-      "setInterval 45000": [1, "スマホ等で押された「一番上へ」の印の軽い取り直し（v2.5.86・見えている時だけ・サーバーを読むだけ）"],
-      "setInterval 60000": [1, "次回の自動便の時刻の描き直し（v2.7.0・画面の文字だけ・サイトを触らない）"],
+      "setInterval 45000": [1, "スマホ等で押された「一番上へ」の印の取り直し"],
+      "setInterval 60000": [1, "次回の自動便の時刻の描き直し（画面の文字だけ）"],
+      "setTimeout 0": [1, "検索モードのボタンを繋ぐ（DOM の後）"],
+      "setTimeout 100": [1, "一覧が出るのを待つ見る間隔（サイトを触らない）"],
+      "setTimeout 10000": [1, "取得の期限"],
+      "setTimeout 1100": [1, "表示を消す"],
+      "setTimeout 150": [1, "一覧が出るのを待つ見る間隔（8秒で打ち切り）"],
+      "setTimeout 15000": [2, "取得の期限・エリア解決の見張り"],
+      "setTimeout 1800": [1, "表示を戻す"],
+      "setTimeout 180000": [1, "送付完了の見張り（fill-done）"],
+      "setTimeout 2000": [1, "表示を戻す"],
+      "setTimeout 3000": [4, "取得のやり直し・表示を戻す・適用後の表示"],
+      "setTimeout 4000": [1, "表示を消す"],
+      "setTimeout 6000": [1, "取得の期限"],
+      "setTimeout 800": [1, "一時調整の保存の間引き"],
+      "setTimeout 8000": [1, "表示を戻す"],
+    },
+    "realpro-guide.js": {
+      "setInterval 10000": [1, "重さの数え（axlx_perf）"],
+      "setInterval 400": [1, "案内の光を見直す間隔（読むだけ）"],
+      "setTimeout 120": [1, "画面の変化の後に光を見直す間引き（読むだけ）"],
+      "setTimeout 2500": [2, "結果の読み直し（syncResults・読むだけ）"],
+      "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"],
     },
     "reins-bulk-dl.js": {
-      "setTimeout 100": [1, "表示の更新"], "setTimeout 800": [2, "popup の応答の期限・MutationObserver の間引き"], "setTimeout 5000": [1, "表示を戻す"],
-      "setTimeout 60000": [1, "PDF の期限"], "setTimeout 15000": [1, "期限"], "setInterval 200": [1, "行が出たかの見る間隔"],
-      "setTimeout 30000": [1, "期限"], "setInterval 300": [1, "見る間隔"], "setTimeout 50": [1, "表示の更新"], "setInterval 2000": [1, "見張り"],
+      "setInterval 200": [1, "行が出たかの見る間隔"],
+      "setInterval 2000": [1, "見張り"],
+      "setInterval 300": [1, "見る間隔"],
+      "setTimeout 100": [1, "表示の更新"],
+      "setTimeout 15000": [1, "期限"],
+      "setTimeout 30000": [1, "期限"],
+      "setTimeout 50": [1, "表示の更新"],
+      "setTimeout 5000": [1, "表示を戻す"],
+      "setTimeout 60000": [1, "PDF の期限"],
+      "setTimeout 800": [2, "popup の応答の期限・MutationObserver の間引き"],
     },
-    "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.58・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 2500": [2, "一覧の行が描かれるのを待つ（bulk-dl が読み込み＋2秒で行を読む・v2.5.71）"], "setTimeout 120": [1, "小窓が閉じた等の画面の変化の後に光を見直す間引き（v2.5.71・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・コンソールに出す・v2.5.72）"] },
-    "itandi-guide.js": { "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（v2.5.63・画面を読むだけ・サイトを触らない・v2.5.73 から変化が無ければ 1.5秒に1回）"], "setTimeout 120": [1, "画面の変化の後に光を見直す間引き（v2.5.73・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"] },
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
-    // 2026-11-11 竹内さん「写真ちゃんと送られたか」: 画面を開いた直後に1枚撮って「撮れるか」を確かめられるようにする（読むだけ）
-    "human-learn-record.js": { "setTimeout 1500": [1, "起動直後に写真を1枚撮る（v2.7.0・どのモードでも撮る）"], "setInterval 50": [1, "human-learn.js が来るのを待つ（v2.7.49・最大3秒・読むだけでサイトを触らない）"] },
-    // 2026-11-11 竹内さん「写真ちゃんと取れているか」: 写真テストで、クラウドに上がったかを見る間（読むだけ・サイトを触らない）
-    "snapshot-popup.js": { "setTimeout 2500": [1, "写真テストの結果（クラウドに上がったか）を待つ（v2.7.0）"], "setInterval 5000": [1, "録画モードの状態を取り直す（v2.7.5・画面の表示だけ・サイトを触らない）"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
-    "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（v2.5.90・読むだけでサイトを触らない）"], "setTimeout 50": [1, "パネルの動き"], "setTimeout 1200": [1, "展開待ちの期限（v2.7.16・過ぎたらその場で開く＝白いままにしない・サイトを触らない）"], "setTimeout 250": [1, "開いた後にもう一度描き直させる間（v2.7.17・見た目だけ）"], "setTimeout 600": [1, "開いた後に中身へ合図を送り直す間（v2.7.17・サイトを触らない）"] },
+    "score-overlay.js": { "setTimeout 300": [1, "点数の表示"], "setTimeout 500": [1, "点数の表示"], "setTimeout 900": [1, "点数の表示の間引き"] },
+    "snapshot-popup.js": { "setInterval 5000": [1, "録画モードの状態を取り直す（表示だけ・サイトを触らない）"], "setTimeout 2500": [1, "写真テストの結果（クラウドに上がったか）を待つ（読むだけ）"] },
+    "underbar.js": {
+      "setTimeout 1200": [1, "展開待ちの期限（過ぎたらその場で開く）"],
+      "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限"],
+      "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（読むだけ）"],
+      "setTimeout 250": [1, "開いた後にもう一度描き直させる間（見た目だけ）"],
+      "setTimeout 50": [1, "パネルの動き"],
+      "setTimeout 600": [1, "開いた後に中身へ合図を送り直す間"],
+      "setTimeout 80": [1, "パネルの表示"],
+    },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);
@@ -227,6 +328,24 @@ function rest() {
     eq(`${f}: 固定の数字の待ちは残してよい物だけ`, sortObj(got), sortObj(want));
   }
   console.log(`    （固定の数字の待ち 合計 ${totalFixed} 件＝全部 人の操作の間ではない物）`);
+
+  // 人の操作の間（クリック・入力・並べ替えの前後）に固定の数字が残っている所。直すまで赤のまま（2026-11-26 隠さない）
+  console.log("\n■ 人の操作の間の固定の待ち（直すまで赤のまま）");
+  const HUMAN_TODO = [
+    ["page-script.js", /setTimeout\(clickSearch, 350\)/],
+    ["page-script.js", /whenClickQueueIdle\(function \(\) \{ setTimeout\(_confirmPetPanel, 350\)/],
+    ["page-script.js", /whenClickQueueIdle\(function \(\) \{ setTimeout\(_afterPetToggle, 280\)/],
+    ["page-script.js", /setTimeout\(attempt, 450\);/],
+    ["bulk-dl.js", /^\s*\}, 1600\);/m],
+    ["bulk-dl.js", /setTimeout\(fire, 120\);/],
+    ["bulk-dl.js", /setTimeout\(go, 200\);/],
+    ["bulk-dl.js", /setTimeout\(go, 140\);/],
+    ["bulk-dl.js", /setTimeout\(tick, 500\);/],
+    ["bulk-dl.js", /setTimeout\(tick, 450\);/],
+    ["bulk-dl.js", /setTimeout\(function \(\) \{ _doSendOne\(item, state, next\); \}, 400\);/],
+    ["bulk-dl.js", /sendOnePdfNow\(next\.item\); \} catch \(_\) \{\} \}, 80\);/],
+  ];
+  for (const [f, re] of HUMAN_TODO) ok(`人の間が固定（直す）: ${f} ${String(re.source).slice(0, 50)}`, !re.test(read(f)));
 
   console.log("\n■ 人の操作の間が human-wait を通っている（件数の下限）");
   // 2026-11-10: bulk-dl.js は旧の一括（_hd/_sd を大量に使っていた）を消し、新しい自動押下は logNormalDelay を使う。
@@ -252,7 +371,7 @@ function rest() {
   const bulk = read("bulk-dl.js");
   //   いまは「印刷用PDFを1件ずつ押して送る」だけ（自動モードなら自動で押す）。
   ok("旧の一括の並び替え（_doStart）は残っていない（AD は新しい押下の前に戻した）", !/function _doStart\(/.test(bulk) && !/location\.href = adLink\.href/.test(bulk));
-  ok("AD 高い順への並べ替えは自動の押下の前にある", /function autoPressPdfs\(\)[\s\S]{0,2600}location\.href = _adLink\.href/.test(bulk));
+  ok("AD 高い順への並べ替えは自動の押下の前にある", /function autoPressPdfs\(opt\)[\s\S]{0,6000}_beginAdSortLikeHuman\(\)/.test(bulk));
   ok("旧の一括の入口は安全弁（呼ばれても全件送らない）", /旧の全ページ送る（autoSendAllPages）は使いません/.test(bulk));
   ok("旧のページ送りの続きは捨てる（二重に送らない）", /clearAutoSendState\(\); \/\/ 旧のページ送りの続きは捨てる/.test(bulk));
   ok("自動の押下は人の間（logNormalDelay）を通す", /logNormalDelay\(3500, 0\.4\)/.test(bulk) && /logNormalDelay\(1000, 0\.4\)/.test(bulk));
@@ -270,7 +389,7 @@ function rest() {
   ok("トグル: 旧の並び替えの遷移は消した（一括をなくした）", !/location\.href = _sortHref/.test(read("bulk-dl.js")));
   ok("クリックで切り替えない（旧の並び替えの遷移コードが無い）", !/location\.href = adLink\.href/.test(read("bulk-dl.js")));
   ok("checked の判定・クリックの関数は残る（_clickIfUnchecked・未チェックの時だけ押す）", /function _clickIfUnchecked\(el\) \{[\s\S]{0,900}if \(!el\.checked\) \{/.test(read("page-script.js")));
-  ok("見張り（235秒・240秒・90秒）の長さを固定している所を確かめる", /\}, 895000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
+  ok("見張りの長さ（page・itandi: 30分・reins: 90秒）を確かめる", /\}, 1800000\); \/\/ ★ 2026-11-18/.test(read("page-script.js")) && /\}, 1800000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
   ok("拡張の再読み込み: 版を上げた（2.5.29 以上）", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
 
   console.log("\n■ 全ファイル node --check");
@@ -293,7 +412,8 @@ console.log("\n■ ⑥ 自動モードの間隔（2026-11-10 対数正規・12�
   ok("休憩の印は 12・24・36… の所", xs.filter((x) => x.isBreak).map((x) => x.n).slice(0, 3).join(",") === "12,24,36");
   const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
   ok(`ふだんの間の中央値 ≒ 0.9秒（${med(normal)}ms）`, Math.abs(med(normal) - 900) < 120);
-  ok(`休憩の中央値 ≒ 8秒（${med(breaks)}ms）`, Math.abs(med(breaks) - 8000) < 1200);
+  // 20回だけの中央値は σ=0.55 だと大きくぶれる（同じ seed でも 9.6秒になる）→ 2万回の中央値で「真ん中が 8秒か」を見る
+  { const r3 = seeded(77); const big = []; for (let i = 0; i < 20000; i++) big.push(HW.logNormalDelay(8000, 0.55, r3)); ok(`休憩の中央値 ≒ 8秒（2万回の中央値 ${med(big)}ms・20回の中央値 ${med(breaks)}ms）`, Math.abs(med(big) - 8000) < 300); }
   ok(`ふだんの間がばらつく（${new Set(normal).size}通り／220回）`, new Set(normal).size > 100);
   ok(`休憩がばらつく（${new Set(breaks).size}通り／20回）`, new Set(breaks).size > 10);
   ok("下の端は 200ms 以上", normal.every((v) => v >= 200));
@@ -313,14 +433,15 @@ console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない�
   const rng = seeded(9);
   const path = HW.pointerPath({ x: 100, y: 100 }, { x: 600, y: 400 }, 14, rng);
   eq("点の数は steps+1", path.length, 15);
-  eq("出発点から始まる", path[0], { x: 100, y: 100 });
+  // 出発点も手ぶれの範囲（pointerPath は手ぶれを足す仕様・終点だけ 0 に寄せる）
+  ok("出発点は手ぶれの範囲（±2px）", Math.abs(path[0].x - 100) <= 2 && Math.abs(path[0].y - 100) <= 2, JSON.stringify(path[0]));
   eq("終点にぴったり着く", path[path.length - 1], { x: 600, y: 400 });
   ok("途中は直線上に無い（曲がる）", path.slice(1, -1).some((p) => {
     // 直線 y = 100 + (x-100)*0.6 から 1px 以上ずれている点がある
     return Math.abs(p.y - (100 + (p.x - 100) * 0.6)) > 1;
   }), path.slice(0, 4));
   ok("点はなめらか（隣り合う点が飛ばない）", path.slice(1).every((p, i) => Math.abs(p.x - path[i].x) <= 120 && Math.abs(p.y - path[i].y) <= 120));
-  eq("同じ所から同じ所なら動かない", HW.pointerPath({ x: 5, y: 5 }, { x: 5, y: 5 }, 6, rng).every((p) => p.x === 5 && p.y === 5), true);
+  ok("同じ所から同じ所は手ぶれの範囲（±2px）だけ", HW.pointerPath({ x: 5, y: 5 }, { x: 5, y: 5 }, 6, rng).every((p) => Math.abs(p.x - 5) <= 2 && Math.abs(p.y - 5) <= 2));
   eq("壊れた引数でも落ちない", HW.pointerPath(null, undefined, 3).length, 4);
   eq("steps は 2〜60 に収める", [HW.pointerPath({ x: 0, y: 0 }, { x: 10, y: 0 }, 1).length, HW.pointerPath({ x: 0, y: 0 }, { x: 10, y: 0 }, 999).length], [3, 61]);
 
@@ -332,12 +453,12 @@ console.log("\n■ ⑦ マウスの軌跡（pointerPath・まっすぐでない�
 
   // 打鍵（page-script.js / itandi-page-script.js に配線されている）
   const ps = read("page-script.js"), ips = read("itandi-page-script.js");
-  ok("リアプロ: 短い欄は1文字ずつ打つ（typeTextLikeHuman）", /function typeTextLikeHuman\(el, value\)/.test(ps) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ps));
+  ok("リアプロ: 短い欄は1文字ずつ打つ（typeTextLikeHuman）", /function typeTextLikeHuman\(el, value, opts\)/.test(ps) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ps));
   ok("リアプロ: 長い文字列は一気に入れる（待ちが長くなりすぎない）", /s\.length > TYPE_MAX_CHARS/.test(ps));
   ok("リアプロ: 打鍵の間は対数正規＋たまに止まる", /H\.logNormalDelay\(165, 0\.32\)/.test(ps) && /Math\.random\(\) < 0\.05/.test(ps));
-  ok("リアプロ: 押す前に画面へ入れて、人の軌跡でマウスを動かしてから押す", /_ensureInView\(item\.el\)/.test(ps) && /_humanPointerClick\(item\.el, item\.fn\)/.test(ps));
+  ok("リアプロ: 押す前に画面へ入れて、人の軌跡でマウスを動かしてから押す", /_ensureInView\(item\.el\)/.test(ps) && /_humanPointerClick\(item\.el, item\.fn/.test(ps));
   ok("リアプロ: 軌跡は human-wait.js の pointerPath を使う", /H\.pointerPath\(_pointer, to,/.test(ps));
-  ok("リアプロ: 押すのは最後の1回だけ（二重に効かせない）", /try \{ fire\(el\); \}/.test(ps) && (ps.match(/_humanPointerClick\(/g) || []).length >= 2);
+  ok("リアプロ: 押すのは最後の1回だけ（二重に効かせない）", /\bfire\(el\);/.test(ps) && (ps.match(/_humanPointerClick\(/g) || []).length >= 2);
   ok("ITANDI: 短い欄は1文字ずつ打つ（setReactValAsync）", /function setReactValAsync\(el, val\)/.test(ips) && /setter\.call\(el, s\.slice\(0, i\)\)/.test(ips));
   ok("ITANDI: スクロールは一瞬で飛ばさない（smoothScrollTo）", /function smoothScrollTo\(el\)/.test(ips) && /scrollIntoView\(\{ behavior: "smooth"/.test(ips) && !/behavior: "instant"/.test(ips));
   ok("一覧の次ページも押す前に画面へ入れる（リアプロ・ITANDI）", /_humanScrollToEl\(el\)/.test(read("bulk-dl.js")) && /nextBtn\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/.test(read("itandi-bulk-dl.js")));
@@ -359,8 +480,8 @@ console.log("\n■ ⑧ 1件ずつ（2026-11-10 竹内「まとめてチェック
   ok("ITANDI の条件: 待つ間隔は固定でない（_pd）", /_whenTickIdle\(cb\)\) ?, _pd\(120\)/.test(ips.replace(/\s+/g, " ")) || /_whenTickIdle\(cb\); \}, _pd\(120\)\);/.test(ips));
 
   const ps = read("page-script.js");
-  ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, 0\.32\)/.test(ps) && /0\.1ms 単位/.test(ps));
-  ok("リアプロの条件: 1件ずつの列に名前が付く（点検で1操作ずつ見える）", /label: _opLabel\(el\)/.test(ps));
+  ok("リアプロの条件: クリックの列の間は対数正規（humanRand が logNormalDelay）", /H\.logNormalDelay\(med, sig\)/.test(ps) && /var sig = \(opts && typeof opts\.sigma/.test(ps));
+  ok("リアプロの条件: 1件ずつの列に名前が付く（点検で1操作ずつ見える）", /label: \(opts && opts\.label\) \|\| _opLabel\(el\)/.test(ps));
 }
 
 console.log("\n■ ⑨ 人が動いているかの記録（human-trace.js・2026-11-10）");

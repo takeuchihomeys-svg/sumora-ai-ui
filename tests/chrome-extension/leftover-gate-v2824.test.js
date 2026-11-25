@@ -57,9 +57,9 @@ ok("駅5・沿線1が残る→地域の客: 駅・沿線を外す", p.clearStati
 p = plan(Object.assign({}, empty, { wards: 3, towns: 2 }), "station");
 ok("区3・町2が残る→駅の客: 区・町を外す", p.clearWards && !p.clearStations && p.transition === "地域→駅" && p.dirty, p);
 p = plan(Object.assign({}, empty, { stations: 3, lines: 1 }), "station");
-ok("駅→駅（同種）は個別に外さず入れ直しへ（dirty にしない）", !p.clearStations && p.sameKindPlace && !p.dirty, p);
+ok("駅→駅（同種）でも先に外す（dirty・sameKindMustClear）", p.clearStations && p.sameKindPlace && p.sameKindMustClear && p.dirty, p);
 p = plan(Object.assign({}, empty, { stations: 2, wards: 1 }), "area");
-ok("混在: 駅だけ外す", p.prev === "混在" && p.clearStations && !p.clearWards, p);
+ok("混在: 駅も区も外す（同種区＋異種駅）", p.prev === "混在" && p.clearStations && p.clearWards && p.dirty, p);
 p = plan(Object.assign({}, empty, { layouts: 2, shikirei: true }), "area");
 ok("間取り・敷礼なしの残り→チェック類の残りとして dirty", p.boxes.length === 2 && p.dirty, p);
 p = plan(Object.assign({}, empty, { selects: ["rental_cost2"], texts: ["required_time"] }), "area");
@@ -77,7 +77,7 @@ ok("要約に台帳の名前が出る（点検で読める）", /梅田/.test(p.
 p = plan(Object.assign({}, empty, { stations: 4, lines: 1 }), "area", ledger);
 ok("画面に見えている時は覚えのみにしない", p.clearStations && !p.memOnlyStations, p);
 p = plan(empty, "station", ledger);
-ok("台帳が駅で今回も駅→個別に外さない（入れ直し）", !p.clearStations && p.sameKindPlace, p);
+ok("台帳が駅で今回も駅→覚えのみでも外す（同種でも小窓を開く）", p.clearStations && p.memOnlyStations && p.sameKindMustClear && p.dirty, p);
 p = plan(empty, "station", { n: { wards: 3, towns: 0 }, names: [] });
 ok("台帳が区3で今回は駅→区・町を外す候補", p.clearWards && p.memOnlyWards, p);
 p = plan(empty, "area", null);
@@ -130,8 +130,8 @@ ok("やり直し後も残る→関所へ進む（無限に繰り返さない）�
 r = runGate({ scans: [{}, {}], ledger: { n: { stations: 5, lines: 1 }, names: ["駅:梅田"] } });
 ok("台帳だけに駅がある→沿線・駅を開いて確かめる（強制開き旗が立つ）→外した後きれい→台帳を消す",
   r.stClear === 1 && r.forceOpenAtStationClear === true && r.proceed === 1 && r.ledgerCleared >= 1 && r.steps.some((s) => s[0] === "leftover_ledger_open"), r);
-r = runGate({ cond: { station_names: ["梅田"] }, scans: [{ stations: 3 }, { stations: 3 }] });
-ok("駅→駅は外し専用を呼ばない（入れ直しの既存手順へ）", r.stClear === 0 && r.wdClear === 0 && r.proceed === 1, r);
+r = runGate({ cond: { station_names: ["梅田"] }, scans: [{ stations: 3 }, {}] });
+ok("駅→駅でも外し専用を呼ぶ（同種でも先に外す→きれい→進む）", r.stClear === 1 && r.wdClear === 0 && r.proceed === 1, r);
 r = runGate({ round: 1, scans: [{ stations: 5 }, { stations: 5 }] });
  // 2.8.125 竹内さん「最大3回って形だと残ってしまう」→ 外し切れず場所が残る時は汚れたまま関所へ進まず leftover_stuck で中止（旧: leftover_unclean で進む）
  ok("外し切れず駅が残る→leftover_stuck で理由を残して中止（進まない）", r.proceed === 0 && r.aborted === 1 && /^leftover_stuck:/.test(r.abortMsg) && r.steps.some((s) => s[0] === "leftover_stuck"), r);

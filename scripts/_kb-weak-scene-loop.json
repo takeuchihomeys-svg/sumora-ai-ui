@@ -1,0 +1,10 @@
+{
+  "title": "【決定】弱い場面は通常画像から改善されるまで学び、足りなければ土台を足して強化する",
+  "category": "architecture",
+  "insight": "自動の弱所（required_time・transportation_id・rental_cost2・structured_date・区を選ぶ/city_code押し直し）は通常録画画像から種類・位置を多数決で学ぶ。種類割れは多い方を採る。土台不足時は追加する（例: 区を選ぶ→area場面に紐づけ、前客の区を外すfoundation:ward-off）。学ぶ→土台→細部→束反映→拡張読込→自動確認を回し、改善されるまで続ける。",
+  "rationale": "竹内さん「場面弱いところは録画した画像から学習する／改善されるまで学習するし土台が足りなければ土台追加して補強／強化していく」。",
+  "context": "場面弱いところは録画した画像から学習する。改善されるまで学習するし土台が足りなければ土台追加して補強するようにする。そして強化していくようにする",
+  "applied_to": "scripts/tmp-weak-scene-learn.ts / learn-flow-steps sceneOfOp(区を選ぶ) / reproduce-foundation ward-off / human_learn_profile",
+  "tags": ["ブレイン", "分析強化の原則", "Chrome拡張", "点検表"],
+  "priority": 1
+}

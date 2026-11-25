@@ -20,7 +20,8 @@
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
 import { WRITER_FLASH_ACTION } from "./writer-flash-scenes";
-import { profileFor, openaiRequestOf, moveExamplesFirst, shapeHintOf, charsHintOf } from "./provider-profile";
+import { profileFor, openaiRequestOf, moveExamplesFirst, shapeHintOf, charsHintOf, openaiProfileGate } from "./provider-profile";
+import { budgetPiiToOpenAIOn, BUDGET_PII_WRITER_PROFILE } from "./llm-budget-route";
 import { AIX_BRAIN_ACTION } from "./aix-brain";
 import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, LLM_CUTOFF_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
@@ -128,6 +129,8 @@ export type EnvLike = Record<string, string | undefined>;
 
 export type AltProviderConfig = {
   provider: AltProvider;
+  /** 2026-11-25: OpenAI の使い方の表の版を名指し（予算の振り分けの個人情報の番の書き手・無ければ係の既定） */
+  profileVersion?: string;
   /** Azure: chat/completions の完全な URL（api-version まで含む） */
   endpoint: string;
   apiKey: string;
@@ -315,7 +318,7 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const provider = explicitProvider || (testMode || finalSel || partsOn.length ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = [(env.LLM_ALT_ACTIONS ?? "").trim(), ...partsOn].filter(Boolean).join(",");
   // 2026-11-24 #670: 別クラウドの設定が何も無くても、予算の振り分け（LLM_BUDGET_ROUTE）が on/shadow で OpenAI の鍵があれば包みを入れる（主の相手は OpenAI・actions は空＝予算の決まりの名札だけ回る）
-  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && ["on", "shadow"].includes((env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase());
+  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && (env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-25 既定 on
   if (budgetOnly) { const oa = readProviderTarget(env, "openai"); return oa ? { ...oa, actions: new Set<string>(), fallbackToAnthropic: true, allowAutoSend: false, testMode: null, routes: new Map() } : null; }
   if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
@@ -1054,7 +1057,7 @@ async function callOpenAICompatible(
   // 2026-11-24 作業員L（#670 の子・竹内さん「GPT の性質に合わせるのを徹底する仕組み」）: OpenAI は使い方の表（provider-profile）を必ず通す。
   //   表に無い版を名指しした時は送らない（投げる＝本番は Claude に戻る・試験は失敗）。試験の印（EXAM_*）は試験の時だけ読む
   const profEnv: EnvLike = cfg.testMode ? process.env : Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("EXAM_")));
-  const prof = cfg.provider === "openai" ? profileFor("openai", routeName, profEnv) : null;
+  const prof = cfg.provider === "openai" ? (cfg.profileVersion ? openaiProfileGate(cfg.profileVersion) : profileFor("openai", routeName, profEnv)) : null;
   if (cfg.provider === "openai" && !prof) throw new Error(`openai: 使い方の表に版が無い（${routeName ?? "名札なし"}）`);
   const parts = prof ? openaiRequestOf(prof, { routeName, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null, env: profEnv }) : null;
   if (parts) console.log(JSON.stringify({ tag: "llm-alt:profile", route: routeName, version: parts.version, effort: parts.reasoningEffort }));
@@ -1257,16 +1260,19 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     // 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
     //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
     //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
-    if (isPostApplyCall(headers)) return toClaude("申込以降の会話（個人情報の歯止め・YUMA なら status_manual_back_at を最新に）");
+    const postApplyHere = isPostApplyCall(headers); // 2026-11-25: 歯止めは下（予算の判定の後）で見る＝OpenAI に回る番だけ越える
     // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24「Claude はあと $25 使ったら OpenAI に切り替える」）: LLM_BUDGET_ROUTE（既定 off）。
     //   今月の Claude の使用額が CLAUDE_SWITCH_AT_USD を超えたら、係の表（llm-budget-route.BUDGET_ROLE_TABLE）の名札だけ OpenAI に回す。
     //   自動返信・申込以降は上で Claude に戻している。下の時刻の線・個人の値の網はそのまま通す（DeepSeek と同じ歯止め）。テストの間は使わない（試験は EXAM_BRAIN_PROVIDER）
     let budgetTarget: AltProviderConfig | null = null;
     let budgetFallback = true;
-    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "" && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
+    // 2026-11-25 既定 on（=off で止まる）。読みは表にある名札の時だけ（budgetDecisionFor）
+    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
       try {
         const [{ budgetDecisionFor }, { supabase: sbBudget }] = await Promise.all([import("./llm-budget-route-server"), import("./supabase-server")]);
-        const d = await budgetDecisionFor(sbBudget, routeName);
+        // 2026-11-25 竹内さんの決め（案 A）: brain は brain-sweep の時だけ・Haiku の係は Luna（経路と元のモデルを渡す）
+        const { httpRouteNow } = await import("./llm-budget-route-server");
+        const d = await budgetDecisionFor(sbBudget, routeName, Date.now(), process.env, { httpRoute: await httpRouteNow(), claudeModel: typeof body?.model === "string" ? body.model : null });
         if (d.route === "openai" && d.model) {
           const oa = readProviderTarget(process.env, "openai");
           if (d.shadow || !oa) console.log(JSON.stringify({ tag: "llm-budget", route: routeName, role: d.role, model: d.model, shadow: d.shadow, noKey: !oa, reason: d.reason }));
@@ -1274,6 +1280,26 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         }
       } catch (e) { console.warn("[llm-budget] 振り分けを決められない → 今まで通り:", e instanceof Error ? e.message : String(e)); }
     }
+    // 2026-11-25 竹内さんの決め: 個人情報の歯止めの番の書き手は、線を超えている間だけ OpenAI の書き手の版で（歯止めに当たった時だけ使う控え）
+    let piiWriterTarget: AltProviderConfig | null = null;
+    const piiToOpenAI = !cfg.testMode && budgetPiiToOpenAIOn() && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off";
+    if (piiToOpenAI && !budgetTarget && (routeName === "reply_generate" || routeName === "reply_generate_flash")) {
+      try {
+        const [{ budgetDecisionFor, httpRouteNow }, { supabase: sbBudget }] = await Promise.all([import("./llm-budget-route-server"), import("./supabase-server")]);
+        const d = await budgetDecisionFor(sbBudget, routeName, Date.now(), process.env, { httpRoute: await httpRouteNow(), claudeModel: typeof body?.model === "string" ? body.model : null, piiWriter: true });
+        const oa = d.route === "openai" && d.model && !d.shadow ? readProviderTarget(process.env, "openai") : null;
+        if (oa) piiWriterTarget = { ...cfg, ...oa, model: d.model as string, routes: new Map(), profileVersion: BUDGET_PII_WRITER_PROFILE };
+      } catch { /* 決められなければ今まで通り */ }
+    }
+    /** 個人情報の歯止めに当たった時: OpenAI に回る番（線を超えている・許す設定）なら越えて OpenAI へ。DeepSeek には決して回さない */
+    const piiPassToOpenAI = (why: string): boolean => {
+      if (!piiToOpenAI) return false;
+      if (!budgetTarget && piiWriterTarget) { budgetTarget = piiWriterTarget; budgetFallback = true; }
+      if (!budgetTarget || budgetTarget.provider !== "openai") return false;
+      console.log(JSON.stringify({ tag: "llm-budget:pii-to-openai", route: routeName, why, model: budgetTarget.model }));
+      return true;
+    };
+    if (postApplyHere && !piiPassToOpenAI("申込以降")) return toClaude("申込以降の会話（個人情報の歯止め・YUMA なら status_manual_back_at を最新に）");
     if (!budgetTarget && !shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
 
     // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 二重の鍵。
@@ -1285,14 +1311,14 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   2026-10-09: LINE につながっていないテスト専用の会話（YUMA2〜）も YUMA と同じ（isTestOnlyConversation）
     const mark: CutoffMark | null = markRaw ?? (cfg.testMode && isTestOnlyConversation(convForGate) ? { kind: "all" } as CutoffMark : null);
     const gate = cutoffGateDecision({ conversationId: convForGate, inScope: !!scope, mark });
-    if (gate !== "route") {
+    if (gate !== "route" && !piiPassToOpenAI(`時刻の線（${gate}）`)) {
       console.warn("[llm-alt] 時刻の線の印なし・渡さない会話 → Claude のまま", JSON.stringify({ route: routeName, gate, conversationId: convForGate }));
       return toClaude(`時刻の線（${gate}）`);
     }
     if (mark?.kind === "cut") {
       let leaks = -1;
       try { leaks = countCutoffLeaks(altBodyText(body), scope?.netChunks ? await scope.netChunks() : []); } catch { leaks = -1; }
-      if (leaks !== 0) {
+      if (leaks !== 0 && !piiPassToOpenAI("線より前の発言")) {
         // -1 ＝ 網の材料が読めない（fail-closed）
         console.warn("[llm-alt] 線より前のお客様の発言が本文に残っている → Claude のまま", JSON.stringify({ route: routeName, leaks, conversationId: convForGate }));
         return toClaude("線より前のお客様の発言が本文に残っている");
@@ -1300,7 +1326,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     }
     // 2026-10-21 竹内さんの決定（ec4d5990）: 印 masked（2番手で申込中・並行で探す）は出口の網が動いている時だけ渡す（伏せる仕組みが止まっていれば Claude）
     const reapplyNet = (mark?.kind === "cut" || mark?.kind === "masked") && altReapplyGateEnabled(process.env);
-    if (mark?.kind === "masked" && !reapplyNet) return toClaude("印 masked だが出口の網（LLM_ALT_PII_GATE / LLM_ALT_REAPPLY_GATE）が止まっている");
+    if (mark?.kind === "masked" && !reapplyNet && !piiPassToOpenAI("masked")) return toClaude("印 masked だが出口の網（LLM_ALT_PII_GATE / LLM_ALT_REAPPLY_GATE）が止まっている");
     // 2026-10-21 竹内さんの決定（414dc9d4）「申込中のところのお客さんの情報マスキングすればちゃんと DeepSeek に渡せる」:
     //   線のある呼び出し（cut）と masked は、網に当たったら Claude に戻す前に、まず申込情報の値（年収・生年月日・勤務先・書類の読み取り・申込フォームの欄・携帯・メール）を
     //   伏せ字に置き換える（alt-pii-gate.maskAltBody）。置き換えた後にまだ値が残る時だけ Claude。審査の事情は伏せずに Claude（下の網）。止める REAPPLY_MASK_INSTEAD=off
@@ -1339,17 +1365,30 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
             ?? (screeningPiiClaudeEnabled() ? (screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n")) ? "審査の事情" : null) : null)
           : null)
       : null;
-    if (piiGate) {
+    if (piiGate && !piiPassToOpenAI(`本文に個人の値（${piiGate}）`)) {
       recordAltUsage({ model: targetConfigFor(cfg, routeName).model, action: routeName, conversationId: convForGate, usage: {}, status: 0, errorType: "alt_skipped_pii",
         durationMs: 0, stream: !!body.stream, sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null });
       console.warn("[llm-alt] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ route: routeName, signal: piiGate, conversationId: convForGate }));
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: 本文に個人の値（${piiGate}）があるので DeepSeek に送らない（Claude には倒さない）`);
       return toClaude(`本文に個人の値（${piiGate}）`);
     }
+    // 2026-11-25 作業員L（竹内さんの決め 11/25 昼・予算の振り分けの既定 on）: OpenAI に回す呼び出しは、印（all・cut・masked・会話なし）に関わらず
+    //   messages に審査の事情があれば Claude（印 all の呼び出しは入口の会話単位の判定に頼っていた＝統括の受け口・brain-sweep・学びは入口が違う）。
+    //   試験 app/lib/__tests__/llm-budget-on-privacy.test.ts で見つけた穴。止める SCREENING_PII_CLAUDE=off（DeepSeek の網と同じ）
+    // 2026-11-25 統括役の頼み（竹内さんの決め）: この網は DeepSeek には必ず残す（印 all でも本文に審査の事情があれば DeepSeek に出さない）・
+    //   OpenAI には LLM_BUDGET_PII_TO_OPENAI=off の時だけ（既定は OpenAI に回してよい）
+    const toOpenAINow = !!budgetTarget && budgetTarget.provider === "openai";
+    if (screeningPiiClaudeEnabled() && (!toOpenAINow || !piiToOpenAI)) {
+      const sens = screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"));
+      if (sens) {
+        console.warn("[llm-alt] 本文に審査の事情 → 別クラウドに出さない", JSON.stringify({ route: routeName, to: toOpenAINow ? "openai" : cfg.provider, category: sens.category, conversationId: convForGate }));
+        return toClaude(`本文に審査の事情（${sens.category}）`);
+      }
+    }
     // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: 学びの経路（learn_*）は会話をまとめて読む（会話の呼び出しの印が無い）ので、
     //   今は全部 Claude だが（LLM_ALT_ACTIONS に無い・実数 30日 1,210回すべて Claude）、将来 DeepSeek に回した時に審査の事情
     //   （screening-sensitive.ts）が messages（system は除く＝指示文の語で止めない）に入っていれば Claude に戻す。戻す SCREENING_PII_CLAUDE=off
-    if (routeName?.startsWith("learn_") && screeningPiiClaudeEnabled()) {
+    if (routeName?.startsWith("learn_") && screeningPiiClaudeEnabled() && !(budgetTarget && piiToOpenAI)) {
       const sens = screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"));
       if (sens) {
         console.warn("[llm-alt] 学びの本文に審査の事情 → Claude のまま", JSON.stringify({ route: routeName, category: sens.category }));

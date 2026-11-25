@@ -21,6 +21,8 @@ import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
 import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
+import { PLAYBOOK_BUILD_V } from "@/app/lib/action-playbook";
+import { AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion } from "@/app/lib/auto-procedure-rules";
 
 export const dynamic = "force-dynamic";
 /**
@@ -815,7 +817,7 @@ export async function GET(req: NextRequest) {
   const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid"
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };
@@ -951,6 +953,22 @@ export async function GET(req: NextRequest) {
         needsAuto = !hit;
       }
     } catch { /* 監査が読めなくても solid は返す */ }
+    /** ★ 2026-11-23: 手順書決まり版を light でも返す（generated_at 据え置きでも拡張が版ずれ検知できる） */
+    let playbookRulesV: string | null = null;
+    let playbookRulesUpTo: string | null = null;
+    try {
+      if (guard && lightReq && row.playbook_rules_v != null) playbookRulesV = String(row.playbook_rules_v);
+      else if (row.bundle && typeof row.bundle === "object") {
+        const pb = (row.bundle as { playbook?: { rules_v?: string } }).playbook;
+        if (pb && pb.rules_v) playbookRulesV = String(pb.rules_v);
+      }
+      if (guard && lightReq) {
+        if (row.playbook_rules_up_to != null) playbookRulesUpTo = String(row.playbook_rules_up_to);
+      } else if (row.bundle && typeof row.bundle === "object") {
+        const pb2 = (row.bundle as { playbook?: { rules_up_to?: string } }).playbook;
+        if (pb2 && pb2.rules_up_to) playbookRulesUpTo = String(pb2.rules_up_to);
+      }
+    } catch { playbookRulesV = null; }
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
       generated_at: guard && lightReq
@@ -963,13 +981,20 @@ export async function GET(req: NextRequest) {
       screen_solid: solidLight,
       needs_auto: needsAuto,
       bundle_at: row.created_at,
+      playbook_rules_v: playbookRulesV,
+      // ★ 2.8.297: 手順書を作った版と、いま動いている本番コードの版。拡張・check-playbook-sync が「本番のコードが古い」を見つける
+      //   （本番が古いと、作り直しのたびに古い手順書へ戻る＝2026-11-25 22:00 の実測）。無い（古い本番）なら拡張は「本番が古い」と読む
+      playbook_rules_up_to: playbookRulesUpTo,
+      server_rules_v: autoRulesVersion(),
+      server_rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
+      server_build_v: PLAYBOOK_BUILD_V,
     }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;
   // 守りの時: 束の作り直しは同じ所で1本だけ（重なった要求は同じ結果を待つ）。作ってから短い間（LEARN_BUILD_MIN_GAP_MS）は作り直さない
   const builtRecently = guard && !!row && Date.now() - Date.parse(String(row.created_at ?? 0)) < LEARN_BUILD_MIN_GAP_MS;
   // ★ 2026-11-20: 営業時間は古い束を拡張の呼び出しで作り直さない（最新の束を返す・作り直しは 22:20 の cron と手動の refresh=1）
-  const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), hasBundle: !!row, forceFresh });
+  const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), minute: new Date(Date.now() + 9 * 3_600_000).getUTCMinutes(), hasBundle: !!row, forceFresh });
   if ((stale || forceFresh) && !daytimeHold && !(builtRecently && !forceFresh)) {
     try {
       // ★ 2026-11-20 作業員H（11/20 10:24〜10:38 の再起動の直後に時間切れ 181回・kix1 と iad1 の箱で作り直しが重なった）:

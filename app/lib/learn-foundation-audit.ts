@@ -19,6 +19,16 @@ import { DAY_MS, LEARN_PERIODS, materialsDays, periodLabelJa, sinceIso } from ".
 import { isAutoMode } from "./press-by";
 import { fieldHasPosition, mergeAliasPositions, type FieldWithPos } from "./field-name-aliases";
 import { summarizeLatestAutoChallenges } from "./latest-learn-loop";
+import { auditGuideScreenGraspFromAudits } from "./guide-screen-grasp";
+import { auditExtTestImproveLoop } from "./ext-test-improve-loop";
+import { evaluateHumanLikeImproveStamp } from "./human-like-improve-loop";
+import { evaluateWeakFindStamp, WEAK_FIND_STAMP_REL } from "./weak-find-strengthen";
+import { countFineAtomsAcrossAudits, HANDOFF_FINE_ORDER } from "./handoff-loop-ledger";
+import { autoRulesVersion, parsePlaybookSeen } from "./auto-procedure-rules";
+import { auditRootCauseImproveLoop } from "./root-cause-improve-loop";
+import { auditKeepStrengthenLoop } from "./keep-strengthen-loop";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export type FoundationItem = {
   id: string;
@@ -230,6 +240,38 @@ export function auditAutoReflectVerified(opt: {
         ? "自動/AIXで1回検索（新束より後）"
         : "2.8.78+再読込→自動1回（learn_reflect_ok / learn_flow_reflect_ok / aim有）";
   return { ok, line, next, readCount, autoAfter, reflectOk, flowReflectOk, aimYes };
+}
+
+/**
+ * ★ F63 2026-11-23: 手順書決まり版の反映関所（attach≠拡張読込の抜けを測る）
+ *   完了線: DB rules_v＝コード ∧ 自動 playbook_seen rv＝コード ∧ read≥1
+ */
+export function auditPlaybookRulesReflect(opt: {
+  codeRulesV: string;
+  dbRulesV?: string | null;
+  seenRulesV?: string | null;
+  readCount?: number;
+}): { ok: boolean; line: string; next: string } {
+  const code = String(opt.codeRulesV || "");
+  const db = opt.dbRulesV != null ? String(opt.dbRulesV) : "";
+  const seen = opt.seenRulesV != null ? String(opt.seenRulesV) : "";
+  const read = Math.max(0, Number(opt.readCount) || 0);
+  const dbOk = !!db && !!code && db === code;
+  const seenOk = !!seen && !!code && seen === code;
+  const readOk = read >= 1;
+  const ok = dbOk && seenOk && readOk;
+  const stop = !dbOk ? "DB≠コード" : !seenOk ? "自動既読≠コード" : !readOk ? "read=0" : "";
+  return {
+    ok,
+    line: `F63 手順書版反映 DB=${db || "-"} 自動既読=${seen || "-"} コード=${code || "-"} read=${read}`
+      + `（完了線: DB=コード ∧ playbook_seen rv=コード ∧ read≥1）`
+      + (stop ? `／止=${stop}` : ""),
+    next: ok
+      ? "維持（attach のたびに generated_at 上げ→再読込→自動1回）"
+      : !dbOk
+        ? "attach-playbook --apply（generated_at も上げる・read_count=0）"
+        : "拡張≥2.8.206再読込→自動1回（rules_v ずれで強制取込）→check-playbook-reflect",
+  };
 }
 
 /** ★ F56 純関数: 発見(F53/F54)→強化(F15/F28/F29)→自動反映(F55)の統括Pro完走責任 */
@@ -2284,6 +2326,261 @@ export async function auditLearnFoundations(
     });
   }
 
+  /**
+   * ★ F57 2026-11-22 竹内さん「手順書＋画面照会を細部まで／改善時に段ごとの完了線で仕組み化」:
+   *   コード配線だけでは完了にしない。search_audits の段印が必須段すべて揃って初めて✓。
+   */
+  {
+    const { data: graspAud } = await sb
+      .from("search_audits")
+      .select("steps,mode,ext_version,created_at")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto", "brain_staff", "staff"])
+      .order("created_at", { ascending: false })
+      .limit(12);
+    const f57 = auditGuideScreenGraspFromAudits(
+      (graspAud || []).map((a) => ({
+        steps: a.steps,
+        mode: a.mode,
+        ext_version: a.ext_version,
+      })),
+    );
+    items.push({
+      id: "F57_guide_screen_grasp",
+      ok: f57.improve_complete,
+      line: f57.line,
+      next: f57.next,
+      layer: f57.improve_complete ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F58 2026-11-22 竹内さん「テストの部分も土台強化／改善したらテストちゃんと／抜け見つかれば改善する仕組み」:
+   *   拡張の必須スイート＋配線抜けスキャンのスタンプ。未実行・失敗・抜け残りは未完。
+   */
+  {
+    const f58 = auditExtTestImproveLoop(process.cwd());
+    items.push({
+      id: "F58_ext_test_improve_loop",
+      ok: f58.ok,
+      line: f58.line,
+      next: f58.next,
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F59 2026-11-23: 人間らしさ未達の改善周回（測る→gaps→photo→再測）のスタンプ。
+   */
+  {
+    const p = join(process.cwd(), "memory/human_like_improve_last.json");
+    let ok = false;
+    let line = "F59 人間らしさ改善スタンプ無し（scripts/human-like-improve.ts --plan-only）";
+    let next = "npx tsx --env-file=.env.local scripts/human-like-improve.ts --plan-only";
+    if (existsSync(p)) {
+      try {
+        const stamp = JSON.parse(readFileSync(p, "utf8"));
+        const ev = evaluateHumanLikeImproveStamp(stamp);
+        ok = ev.ok;
+        line = `F59 ${ev.line}`;
+        next = ev.next;
+      } catch {
+        line = "F59 スタンプが読めない";
+      }
+    }
+    items.push({ id: "F59_human_like_improve_loop", ok, line, next, layer: ok ? "free" : "human" });
+  }
+
+  /**
+   * ★ F60 2026-11-23 竹内さん「弱い部分ほかにないのか／見つけて強化する仕組みの土台」:
+   *   手順書・近さ・位置・F57・F58・新束後自動を横断で洗い、未達を強化ルートへ振り分ける。
+   */
+  {
+    const p = join(process.cwd(), WEAK_FIND_STAMP_REL);
+    let ok = false;
+    let line = "F60 弱所横断スタンプ無し（scripts/weak-find.ts）";
+    let next = "npx tsx --env-file=.env.local scripts/weak-find.ts";
+    if (existsSync(p)) {
+      try {
+        const stamp = JSON.parse(readFileSync(p, "utf8"));
+        const ageH = stamp.at ? (Date.now() - new Date(stamp.at).getTime()) / 3600_000 : 999;
+        const ev = evaluateWeakFindStamp(stamp);
+        ok = ev.ok && ageH <= 36;
+        line = ageH > 36 ? `F60 スタンプ古い（${Math.round(ageH)}h） ${ev.line}` : `F60 ${ev.line}`;
+        next = ageH > 36 ? "npx tsx --env-file=.env.local scripts/weak-find.ts（鮮度）" : ev.next;
+      } catch {
+        line = "F60 スタンプが読めない";
+      }
+    }
+    items.push({ id: "F60_weak_find_strengthen", ok, line, next, layer: ok ? "free" : "human" });
+  }
+
+  /**
+   * ★ F61 2026-11-23 竹内さん「連続客で外して入れて検索送付を繰り返せるか／抜け土台」:
+   *   台帳＋background の runId 明示 stamp＋page leftover／post_send。実走印は再読込後。
+   */
+  {
+    const ledgerOk = existsSync(join(process.cwd(), "app/lib/handoff-loop-ledger.ts"));
+    let bg = "";
+    let pageSrc = "";
+    try {
+      bg = readFileSync(join(process.cwd(), "chrome-extension/background.js"), "utf8");
+      pageSrc = readFileSync(join(process.cwd(), "chrome-extension/page-script.js"), "utf8");
+    } catch { /* */ }
+    const wireOk =
+      /function _postSendClearRealpro\(customerId, auditRunId\)/.test(bg)
+      && /handoff_loop/.test(bg)
+      && /leftover_scan/.test(pageSrc)
+      && /__axlxPostSendClearP/.test(pageSrc);
+    let v203 = 0, leftN = 0, postN = 0, readyN = 0, loopN = 0;
+    const { data: cAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    for (const a of cAud || []) {
+      const v = String(a.ext_version || "");
+      if (/^2\.8\.(20[3-9]|2[1-9]\d|[3-9]\d{2,})/.test(v)) v203++;
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const joined = steps.map((s) => {
+        if (typeof s === "string") return s;
+        const o = s as { k?: string; d?: string };
+        return `${o.k || ""} ${o.d || ""}`;
+      }).join("|");
+      if (/leftover_clean|leftover_done_F57|leftover_scan/.test(joined)) leftN++;
+      if (/post_send_clear|handoff_atom_post_send|flow_atom_ok_post_send/.test(joined)) postN++;
+      if (/ready_next|series_done|handoff_atom_ready|flow_done_ready_next/.test(joined)) readyN++;
+      if (/handoff_loop/.test(joined)) loopN++;
+    }
+    const measureOk = v203 >= 1 && leftN >= 1 && postN >= 1 && readyN >= 1;
+    const ok = ledgerOk && wireOk && measureOk;
+    items.push({
+      id: "F61_continuous_customer_handoff_loop",
+      ok,
+      line: `F61 連続客ループ 配線=${wireOk ? "✓" : "✗"} 台帳=${ledgerOk ? "✓" : "✗"} v203+=${v203} leftover=${leftN} post_send=${postN} ready=${readyN} handoff_loop=${loopN}`
+        + `（完了線: ≥2.8.203自動で leftover∧post_send∧ready 各≥1）`,
+      next: ok
+        ? "維持（連続2客で細原子F62を確認）"
+        : !wireOk || !ledgerOk
+          ? "handoff-loop-ledger と background post_send(runId)／handoff_loop stamp を揃える"
+          : "拡張≥2.8.204再読込→連続2客自動→監査 leftover／post_send_clear／ready_next",
+      layer: measureOk ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F62 2026-11-23 竹内さん「穴の部分を細分化してとことん強化」:
+   *   連続客12細原子の出現を数え、0回の原子を強化次手にする。
+   *   完了線: ≥2.8.204 自動で必須6原子（switch/place_clear/search/fill_done/post_send/ready）が各≥1。
+   */
+  {
+    const { data: fAud } = await sb
+      .from("search_audits")
+      .select("steps,ext_version,mode")
+      .eq("site", markSite)
+      .in("mode", ["brain_aix", "aix", "auto"])
+      .order("created_at", { ascending: false })
+      .limit(40);
+    const recent = (fAud || []).filter((a) => /^2\.8\.(20[4-9]|2[1-9]\d|[3-9]\d{2,})/.test(String(a.ext_version || "")));
+    const pool = recent.length ? recent : (fAud || []).slice(0, 25);
+    const tallied = countFineAtomsAcrossAudits(pool);
+    const must = ["switch", "place_clear", "search", "fill_done", "post_send_clear", "ready_next"] as const;
+    const mustOk = must.every((id) => (tallied.counts[id] || 0) >= 1);
+    const has204 = recent.length >= 1;
+    const ok = has204 && mustOk;
+    const weakTop = tallied.weak.slice(0, 5).join("・") || "なし";
+    items.push({
+      id: "F62_continuous_handoff_subdivide",
+      ok,
+      line: `F62 連続客細分化 ${tallied.line}／必須6=${mustOk ? "✓" : "✗"} v204+=${recent.length} 原子数=${HANDOFF_FINE_ORDER.length}`
+        + `（完了線: ≥2.8.204で switch・place_clear・search・fill_done・post_send・ready 各≥1）`,
+      next: ok
+        ? `維持（弱0回=${weakTop} を1つずつ強化）`
+        : `scripts/handoff-loop-strengthen.ts → 拡張≥2.8.204再読込→連続2客／弱=${weakTop}`,
+      layer: ok ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F63 2026-11-23: 手順書 attach 後に拡張が旧版のまま止まる抜けを関所化。
+   *   DB実測: コード/DBは e0b8837b でも自動既読 4c266b56・read=0 → 「改善済み」にしない。
+   */
+  {
+    const codeV = autoRulesVersion();
+    const dbRv = (() => {
+      try {
+        const pb = (prof as { bundle?: { playbook?: { rules_v?: string } } } | null)?.bundle?.playbook;
+        return pb?.rules_v ? String(pb.rules_v) : null;
+      } catch { return null; }
+    })();
+    let seenRv: string | null = null;
+    try {
+      const { data: seenAud } = await sb
+        .from("search_audits")
+        .select("steps,mode,created_at")
+        .eq("site", markSite)
+        .in("mode", ["brain_aix", "aix", "auto"])
+        .order("created_at", { ascending: false })
+        .limit(12);
+      for (const a of seenAud || []) {
+        const steps = Array.isArray(a.steps) ? a.steps : [];
+        for (const s of steps) {
+          const k = typeof s === "string" ? "" : String((s as { k?: string })?.k || "");
+          const d = typeof s === "string" ? s : String((s as { d?: string })?.d || "");
+          if (!/playbook_seen/i.test(`${k} ${d}`)) continue;
+          const parsed = parsePlaybookSeen(d) || parsePlaybookSeen(`${k} ${d}`);
+          if (parsed?.rules_v) { seenRv = String(parsed.rules_v); break; }
+        }
+        if (seenRv) break;
+      }
+    } catch { /* 監査が読めなくても F63 は欠として出す */ }
+    const f63 = auditPlaybookRulesReflect({
+      codeRulesV: codeV,
+      dbRulesV: dbRv,
+      seenRulesV: seenRv,
+      readCount: Number(prof?.read_count) || 0,
+    });
+    items.push({
+      id: "F63_playbook_rules_reflect",
+      ok: f63.ok,
+      line: f63.line,
+      next: f63.next,
+      layer: f63.ok ? "free" : "human",
+    });
+  }
+
+  /**
+   * ★ F64 2026-11-24 竹内さん「表面の改善ばかりで根本的でない／完了まで試行／統括pro×設計知見」:
+   *   症状をDBで測る→根本の型→関所コード＋テスト→F58→本番実証印。表面文言だけは完了にしない。
+   */
+  {
+    const f64 = auditRootCauseImproveLoop(process.cwd());
+    items.push({
+      id: "F64_root_cause_improve_loop",
+      ok: f64.ok,
+      line: f64.line,
+      next: f64.next,
+      layer: "free",
+    });
+  }
+
+  /**
+   * ★ F65 2026-11-24 竹内さん「強化していくようにする」:
+   *   入口1回で終わらせず、沈黙中もaim再warm＋細分化。スタンプが次手を名指しし続ける。
+   */
+  {
+    const f65 = auditKeepStrengthenLoop(process.cwd());
+    items.push({
+      id: "F65_keep_strengthen_loop",
+      ok: f65.ok,
+      line: f65.line,
+      next: f65.next,
+      layer: f65.ok ? "free" : "human",
+    });
+  }
+
   const ok_n = items.filter((x) => x.ok).length;
   const missing_n = items.length - ok_n;
   const missIds = items.filter((x) => !x.ok).map((x) => x.id.replace(/^F\d+_/, "")).slice(0, 4);
@@ -2358,6 +2655,15 @@ const KEY_FOUNDATION_IDS = [
   "F54_challenge_learn_complete",
   "F55_auto_reflect_verified",
   "F56_pro_reflect_responsibility",
+  "F57_guide_screen_grasp",
+  "F58_ext_test_improve_loop",
+  "F59_human_like_improve_loop",
+  "F60_weak_find_strengthen",
+  "F61_continuous_customer_handoff_loop",
+  "F62_continuous_handoff_subdivide",
+  "F63_playbook_rules_reflect",
+  "F64_root_cause_improve_loop",
+  "F65_keep_strengthen_loop",
   "F6_auto_after_bundle",
   "F14_station_clear_cursor",
   "F18_fill_progress_steps",

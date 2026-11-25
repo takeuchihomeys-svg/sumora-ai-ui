@@ -1,0 +1,10 @@
+{
+  "title": "【決定】人間近さは短間隔を硬下限900・駅gap≥950・合成click二重を450ms畳みで潰す",
+  "category": "architecture",
+  "insight": "自動の短間隔%が許可線（≤12%）を大きく超える主因は、(1)駅の2つ目以降の短いgap、(2)settleが短間隔に入る、(3)合成clickと実clickの二重記録。硬下限を900に上げ、駅minを950、settleを950〜1100、合成同名は450ms内で畳む。効果は2.8.90再読込後の自動1回のF28/F29で測る。",
+  "rationale": "2026-11-17 統括Pro: 近さ16・短間隔51.6%。竹内さん「かぎりなく人間に近づくまで細部」。",
+  "context": "竹内さん「ほかの部分の改善も／かぎりなく近づくまで細部学習して改善／画像学習／統括pro」",
+  "applied_to": "chrome-extension/page-script.js, chrome-extension/human-learn-record.js, scripts/shot-learn.ts, memory/dept_search_tool.md",
+  "tags": ["統括Pro", "Chrome拡張", "人間らしさ", "分析強化の原則", "F29"],
+  "priority": 1
+}

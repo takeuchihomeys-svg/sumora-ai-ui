@@ -1,0 +1,10 @@
+{
+  "category": "architecture",
+  "title": "【決定】学習の足りない所は材料・学び方・関所・記憶・効果未測で洗い徹底改善",
+  "insight": "学習不足の洗い出しは5軸: ①材料 ②学び方 ③関所(read_count等) ④記憶(log/improvements) ⑤効果未測。材料があっても関所未通過なら効果は出ない。関所(再読込)とflashは同時可だが、完了と言わず再読込後のF31/F32/point/aimで測る。同束でも打合せ指紋が変われば統括ログを上書きし記憶を止めない。",
+  "rationale": "2026-11-18 竹内さん「学習するために足りないところがないか統括Proちゃんと見つけて徹底的な改善」。統括Pro: 材料は足りるがread_count=0と記憶→改善の一連が停止。潰す穴①再読込②位置flash thin③自動1回。",
+  "context": "実測 point14 近さ28 aim0 read0 完成度28。実装: learn-memory-loop / meetFingerprint / rec-challenge 8段。",
+  "applied_to": "app/lib/learn-memory-loop.ts, app/lib/learn-supervisor-db.ts, app/lib/learn-supervisor-pro.ts, app/api/cron/weak-strengthen/route.ts",
+  "tags": ["統括Pro", "分析強化の原則", "学習方法", "Chrome拡張", "汎用"],
+  "priority": 1
+}

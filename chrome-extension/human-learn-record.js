@@ -1000,6 +1000,12 @@
     try {
       var nmStr = name ? String(name).slice(0, 30) : null;
       if (!nmStr) return;
+      /**
+       * ★ 2026-11-22 通常録画 run_mwrlhyj3 実測:
+       *   「未完了:fill_done」「今の客:fill_done_gap」「流れ台帳」「流れ地図」が数十回混ざり、
+       *   本物の操作（確定・検索・高→低・印刷用PDF）が濁る。学習の輪には載せない。
+       */
+      if (/^(未完了:|完了済:|今の客:|流れ台帳|流れ地図|弱:)/.test(nmStr)) return;
       var last = _opsRing[_opsRing.length - 1];
       var t = Date.now();
       if (last && last.f === nmStr && t - Number(last.t || 0) < 120) return;
@@ -2000,6 +2006,34 @@
    *   `_autoOps` が空のまま＝ mode=aix のまとめ行が一度も送られていなかった。
    *   → postMessage で受ける。要素は渡せないので、名前と要素の中の割合（0〜1）だけ受ける。
    */
+  /**
+   * ★ 2.8.238: page-script（MAIN）から詰まり／タイムアウト時のスクショ依頼。
+   *   原因把握の証拠を残し、後から photo_learn でも追える。Visionで次手を決める主経路ではない。
+   */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-stuck-shot-req") return;
+      var stuck = String(e.data.stuck || "stuck").slice(0, 24);
+      var brief = String(e.data.brief || "").slice(0, 80);
+      var phase = String(e.data.phase || "timeout").slice(0, 24);
+      try {
+        _opsRing.push({
+          t: Date.now(),
+          k: "stuck",
+          f: ("詰まり:" + stuck + " " + brief).slice(0, 40),
+          w: phase,
+          by: "auto",
+        });
+        if (_opsRing.length > 200) _opsRing.shift();
+      } catch (_) {}
+      try { shootAfter("stuck_" + stuck, null, null); } catch (_) {}
+      try {
+        if (e.data.focusTab) {
+          chrome.runtime.sendMessage({ type: "axlx-stuck-focus-tab" }, function () { void chrome.runtime.lastError; });
+        }
+      } catch (_) {}
+    } catch (_) {}
+  });
   window.addEventListener("message", function (e) {
     try {
       if (!e || e.source !== window || !e.data || e.data.from !== "axlx-note-auto-op") return;

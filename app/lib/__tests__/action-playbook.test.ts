@@ -2,6 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/action-playbook.test.ts
 import {
   buildPlaybook, checkPlaybook, fnv1a, isPlaybookValue, normalizePlaybookSteps,
+  judgeFlowSeriesProgress, PLAYBOOK_FLOW_SERIES, PLAYBOOK_BUILD_V,
   PLAYBOOK_SOLID_RUNS, PLAYBOOK_MAX_STEPS, PLAYBOOK_STALE_MS,
 } from "../action-playbook";
 import { SCENE_JA } from "../learn-flow-steps";
@@ -44,7 +45,14 @@ console.log("■ 欄の名前（人が読む形・連続の畳み）");
 console.log("■ 場面の手順（束の scene_flows から）");
 {
   const pb = buildPlaybook({ generated_at: "2026-11-20T01:00:00Z", scene_flows: sceneFlows, points, opens: { x: { opens: "modal", n: 3, guessed: false } } });
-  ok("場面は束の順のまま（other は外す）", pb.scenes.map((s) => s.scene).join(",") === "area,cond,station", pb.scenes.map((s) => s.scene).join(","));
+  ok(
+    "束の場面を先に・otherは外す・足りない search/list は注入で後ろに足す",
+    pb.scenes.map((s) => s.scene).join(",").startsWith("area,cond,station")
+      && pb.scenes.some((s) => s.scene === "search")
+      && pb.scenes.some((s) => s.scene === "list")
+      && !pb.scenes.some((s) => s.scene === "other"),
+    pb.scenes.map((s) => s.scene).join(","),
+  );
   ok("場面の名前は人が読む日本語（SCENE_JA）", pb.scenes[0].label === SCENE_JA.area && pb.scenes[0].label === "所在地絞り込み", pb.scenes[0].label);
   ok("3回以上は solid・2回以下は thin", pb.scenes[0].confidence === "solid" && pb.scenes[2].confidence === "thin");
   ok("solid の基準は検索3回以上", PLAYBOOK_SOLID_RUNS === 3);
@@ -79,7 +87,11 @@ console.log("■ 学んだ押す位置・開く欄を全部載せる（整理の
 console.log("■ 足りない場面・迷い・薄さ・分からない欄（gaps）");
 {
   const pb = buildPlaybook({ scene_flows: sceneFlows });
-  ok("学んでいない場面を missing に出す（search など）", pb.missing.includes("search") && !pb.missing.includes("area"), pb.missing.join(","));
+  ok(
+    "録画にある area は missing に出さない／search は注入されるので missing から外れる",
+    !pb.missing.includes("area") && !pb.missing.includes("search") && pb.scenes.some((s) => s.scene === "search"),
+    pb.missing.join(","),
+  );
   ok("薄い場面を gaps に出す", pb.gaps.some((g) => /沿線・駅絞り込み：検索2回だけ/.test(g)), pb.gaps.join(" / "));
   ok("other（場面が決まらない）は『学んでいない場面』に入れない", !pb.missing.includes("other") && !pb.gaps.some((g) => /その他/.test(g)));
   ok("順番が複数あるのは『値を含む数・型は未確定』と書く（迷いと言い切らない）", pb.gaps.some((g) => /所在地絞り込み：順番4通り（区名・間取りなど値の違いを含む数/.test(g)), pb.gaps.join(" / "));
@@ -117,17 +129,57 @@ console.log("■ 検査（checkPlaybook）");
   ok("未分類の欄は検査で出す", checkPlaybook(unk, now).some((x) => /未分類の欄 1件/.test(x)));
   const zero = buildPlaybook({ generated_at: "2026-11-20T01:00:00Z", scene_flows: [{ scene: "station", runs: 487, ops: 9633, steps: ["沿線・駅絞り込みを開く"] }] });
   ok("順番の数が無い（0）は『0通り』と読まず、gaps と検査に出す（実データ: itandi 487回で0）", zero.gaps.some((g) => /順番の数が束に入っていない/.test(g)) && checkPlaybook(zero, now).some((x) => /順番の数が0/.test(x)));
+  /**
+   * ★ build_v10〜: 空／薄い束でも連続客用に area/cond/search/list を注入する。
+   *   旧「場面が0」は注入後は出ない → 注入場面＋薄いガイド gaps を確かめる。
+   */
   const empty = buildPlaybook({});
-  ok("空の手順書は『場面が0』と出す", checkPlaybook(empty, now).some((x) => /場面が0/.test(x)));
+  ok(
+    "空の束でも連続客用の場面が注入される（area/cond/search/list）",
+    ["area", "cond", "search", "list"].every((sc) => empty.scenes.some((s) => s.scene === sc)),
+    empty.scenes.map((s) => s.scene).join(","),
+  );
+  ok(
+    "空の束の検査で作り方・決まり・一連の抜けを出す（場面0固定ではない）",
+    checkPlaybook(empty, now).length >= 1,
+    checkPlaybook(empty, now).join(" / "),
+  );
   const leak = buildPlaybook({ generated_at: "2026-11-20T01:00:00Z", scene_flows: [{ scene: "cond", runs: 4, ops: 9, steps: ["2K"], variants: 1 }] });
-  ok("値だけの場面は手順が空になり、検査で『手順が空』と出す", leak.scenes[0].steps.length === 0 && checkPlaybook(leak, now).some((x) => /手順が空/.test(x)));
+  ok(
+    "値だけの cond は注入ガイド手順が載る／または手順空を検査",
+    leak.scenes.find((s) => s.scene === "cond")!.steps.length > 0
+      || checkPlaybook(leak, now).some((x) => /手順が空/.test(x)),
+  );
 }
 
 console.log("■ 空の束でも壊れない");
 {
   const e = buildPlaybook({});
-  ok("空の束 → 場面 0・missing は全部・gaps に『1つも無い』", e.scenes.length === 0 && e.missing.length === Object.keys(SCENE_JA).length - 1 && e.gaps.some((g) => /1つも無い/.test(g)));
+  ok(
+    "空の束 → 注入場面あり・版が付く・before_clear が一連にある",
+    e.scenes.length >= 4 && e.version.length === 8 && e.flow_series.some((p) => p.id === "before_clear"),
+    `scenes=${e.scenes.length}`,
+  );
   ok("空でも版が付く", e.version.length === 8);
+}
+
+console.log("■ 一連の流れ（flow_series・build_v8）");
+ok("作り方に sort_ad 段", PLAYBOOK_FLOW_SERIES.some((p) => p.id === "sort_ad"));
+{
+  const pb = buildPlaybook({ generated_at: "2026-11-22T01:00:00Z", scene_flows: sceneFlows, points });
+  ok("作り方の版は7以上", PLAYBOOK_BUILD_V >= 7 && pb.build_v >= 7);
+  ok("flow_series が載る", Array.isArray(pb.flow_series) && pb.flow_series.length >= 8, String(pb.flow_series?.length));
+  ok("必須段がある", ["before_clear", "clear_then_fill", "after_clear", "after_confirm", "after_search", "list", "handoff"].every((id) => pb.flow_series.some((p) => p.id === id)));
+  ok("定数 PLAYBOOK_FLOW_SERIES と同じ長さ", pb.flow_series.length === PLAYBOOK_FLOW_SERIES.length);
+  const j0 = judgeFlowSeriesProgress([]);
+  ok("印が無いと last=null", j0.last === null && !j0.ok);
+  const j1 = judgeFlowSeriesProgress([
+    { k: "page:guide_phase_after_clear" },
+    { k: "page:guide_phase_after_confirm" },
+    { k: "page:guide_phase_after_search" },
+  ]);
+  ok("検索把握まで到達すると ok", j1.ok && j1.last === "after_search", j1.why);
+  ok("検査で flow_series 必須", !checkPlaybook(pb).some((x) => /flow_series/.test(x)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

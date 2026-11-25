@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-23T18:14:58.378Z",
+  "ok": true,
+  "line": "強化継続武装✓ focus=need_auto_run F58=✓ F64=✗ code=2.8.246 audit=2.8.239",
+  "next": "拡張2.8.246再読込→自動1回（今の監査=2.8.239）→strengthen_loop印",
+  "code_ext_version": "2.8.246",
+  "latest_audit_version": "2.8.239",
+  "f58_ok": true,
+  "f64_ok": false,
+  "gaps": [
+    "拡張版が古い latest=2.8.239 < code=2.8.244（再読込→自動1回が必要）"
+  ],
+  "focus": "need_auto_run"
+}

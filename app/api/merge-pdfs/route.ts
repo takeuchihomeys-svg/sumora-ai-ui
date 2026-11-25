@@ -382,8 +382,9 @@ export async function POST(req: NextRequest) {
     // 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする。その時アナウンス入れる形で、
     //   PDF もここに添付しなくて大丈夫（ブレインの際）。ブレイン以外の状態なら今まで通りここのグループに共有する」
     //   （★物件出し★＝pickup_group_id。group_id の「AIX要対応」は別の物で触らない）
-    //   ブレイン（スタッフモード以外・お客様が分かる回）は検索のたびの本文と PDF のリンクを送らず、行に group_notice=deferred を付けて
+    //   ブレイン（通常／AIX／スタッフどれでも・お客様が分かる回）は検索のたびの本文と PDF のリンクを送らず、行に group_notice=deferred を付けて
     //   解析の完了（finishCompleteGroup）が1回だけ知らせる。決まりは pickup-group-announce.ts（戻す時は PICKUP_GROUP_DEFER=off）
+    // ★ 2026-11-22 竹内さん「スタッフモード＋ブレイン選択時は物件出しLINEに送らない／AIXツール解析後に送る」: staff でも brain なら deferred
     const notice = groupNoticePlan({ sendToLine: !!send_to_line, brainMode: brain_mode, staffMode: staff_mode, hasCustomer: !!resolvedCustomerId, deferEnv: process.env.PICKUP_GROUP_DEFER });
     if (staff_mode === true) {
       console.log(JSON.stringify({ tag: "merge-pdfs:staff-mode", note: "スタッフモードなので送付済みの除外をしない" }));

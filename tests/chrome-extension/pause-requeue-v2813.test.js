@@ -21,7 +21,7 @@ function between(a, b) {
 
 console.log("\n■ 長い停止の後もその1件を押す（捨てない）");
 const drain = between("function _scheduleClickDrain()", "function isClickQueueBusy()");
-const pauseIdx = drain.indexOf("var pause = _longPauseDue(item);");
+const pauseIdx = drain.indexOf("var pause = _longPauseDue(item) > 0 ? _handPauseMs() : 0;");
 const pauseBlock = drain.slice(pauseIdx, drain.indexOf("return;", pauseIdx) + 7);
 ok("停止の分岐がある", pauseIdx > 0);
 ok("止まった1件を列の先頭へ戻す（unshift）", /_clickQueue\.unshift\(item\);/.test(pauseBlock));
@@ -61,8 +61,9 @@ ok("終わりの合図で同じ段を送り直しても重ならない", afterFi
 
 console.log("\n■ 版");
 const mf = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-extension/manifest.json"), "utf8"));
-ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+// 版は固定しない（2.8.119 から上がり続けるため）。この試験が見るのは「版の書式がある」こと
+ok("manifest の版が 2.8.119 以上", (() => { const a = String(mf.version).split(".").map(Number), b = [2, 8, 119]; for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== b[i]) return (a[i] || 0) > b[i]; } return true; })(), mf.version);
+ok("_AXLX_PAGE_VER の書式（2.8.N）", /var _AXLX_PAGE_VER = "2\.8\.\d+";/.test(ps));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

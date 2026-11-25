@@ -37,7 +37,8 @@
     var s = st || {};
     var at = s.staffModeAt || 0;
     var staffOn = !!s.staffMode && (!at || Date.now() - at <= 2 * 60 * 60 * 1000);
-    if (staffOn) return false;
+    // ★ 2026-11-22: スタッフも選んだ客の自動検索〜送付のため案内 OFF（AIX相当）
+    if (staffOn) return true;
     var chosen = Number(s.autoModeAt) > 0;
     return chosen && (!!s.aixMode || !!s.aiMode);
   }

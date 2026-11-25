@@ -75,6 +75,19 @@ export function promiseWideKindOf(clause: string): PromiseWideKind | null {
   if (/(?:ご内覧|内覧|ご案内)(?:の)?(?:お?時間|日程|日時)(?:を)?調整させて(?:頂|いただ)|時間調整させて(?:頂|いただ)/.test(t)) return "viewing_slot";
   return null;
 }
+// ─── 2026-11-25 作業員L（台帳 #664 の①・統括役の了承）: 「その他」の残り 142 の言い回しから、種類が決まる物だけ足す網（PROMISE_KIND_WIDE2・既定 off）───
+//   探す: 「（ご入居可能な・初期費用抑えられる）お部屋（も）お送りさせて頂きます」「お部屋…出次第／随時お送りさせて」（お送り 24 の大半）
+//   確認: 「最終確認をさせて頂きます」「募集状況確認 翌営業日に…させていただきます」（間に語が入る形）・「（礼金の）減額交渉をさせて頂きます」
+//   見積: 「（最大限割引して）御見積書をご用意いたします」
+//   足さない: 「初期費用を最大限割引させて頂きます」だけの節（竹内さん本人 60日 77回のうち 68% が通の締めの位置・72時間以内に見積の AIX は 19%＝決まり文句）・ご連絡・共有（果たした判定が無い種類）
+export const promiseKindWide2On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_KIND_WIDE2 ?? "").trim().toLowerCase() === "on";
+export function promiseWide2KindOf(clause: string): "pickup" | "check" | "estimate" | null {
+  const t = String(clause ?? "").normalize("NFKC");
+  if (/御?見積(?:書|もり|り)?(?:を)?ご用意(?:いた|致|させて)/.test(t)) return "estimate";
+  if (/(?:最終確認|募集状況確認|空室確認)(?:を)?[^。！!？?\n]{0,16}?させて(?:頂|いただ)き|減額交渉(?:を)?させて(?:頂|いただ)き/.test(t)) return "check";
+  if (/(?:お部屋|物件)(?:も|を)?[^。！!？?\n]{0,16}?(?:次第|随時)?[^。！!？?\n]{0,6}?お送り(?:させて|さ)(?:頂|いただ)/.test(t) && !/(?:写真|動画|見積|資料|書類|QR)/.test(t)) return "pickup";
+  return null;
+}
 export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
   const t = promiseClausesOf(text);
   if (/新着/.test(t) && !/ピックアップ/.test(t)) return null;
@@ -86,6 +99,7 @@ export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
   if (/(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)させて頂|管理会社(?:に|へ)(?:確認|交渉)させて頂/.test(t)) return "check";
   if (/(?:(?:募集状況|空き状況|空室状況)[^。！!？?\n]{0,12}?(?:確認|お調べ)|管理会社(?:に|へ)(?:確認|交渉))させていただ(?:きます|き[、,]?[^。！!？?\n]*(?:次第|ご連絡|お送り|ご報告))/.test(t)) return "check";
   if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w === "pickup" || w === "check") return w; }
+  if (promiseKindWide2On(env)) { const w2 = promiseWide2KindOf(t); if (w2 === "pickup" || w2 === "check") return w2; }
   return null;
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
@@ -100,7 +114,7 @@ const STOP_STATUS = new Set(["applying", "application", "screening", "approved",
 
 // ─── 2026-11-21 作業員N（信頼の土台 B1・約束を期限内に果たした割合）と線をそろえた共有の決まり ───
 /** 約束の種類の名前（B1 と #435 で同じ文字列）。果たした判定ができるのは pickup・check・estimate だけ */
-export const PROMISE_KIND_NAMES = ["pickup", "check", "estimate", "viewing_slot", "callback", "other"] as const;
+export const PROMISE_KIND_NAMES = ["pickup", "check", "estimate", "viewing_slot", "callback", "other", "contact", "negotiate"] as const;
 export type PromiseKindName = typeof PROMISE_KIND_NAMES[number];
 export const PROMISE_KIND_JUDGEABLE: ReadonlySet<PromiseKindName> = new Set<PromiseKindName>(["pickup", "check", "estimate"]);
 /** こちらの手打ちの文の約束の種類（約束でなければ null）。新着を随時は期日が無いので null */
@@ -114,6 +128,8 @@ export function promiseKindNameOf(text: string, env?: Env): PromiseKindName | nu
   if (/内覧(?:の)?(?:候補日?|日程|ご日程|お日にち)(?:を)?(?:確認|お調べ|お送り)させて頂|ご案内(?:可能な)?(?:日時|お時間)(?:を)?確認させて頂/.test(t)) return "viewing_slot";
   if (/(?:折り返し|改めて)(?:お電話|ご連絡のお電話)させて頂|お電話させて頂/.test(t)) return "callback";
   if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w) return w; }
+  if (promiseKindWide2On(env)) { const w2 = promiseWide2KindOf(t); if (w2) return w2; }
+  if (promiseContactKindOn(env)) { const c = promiseContactKindOf(t); if (c) return c; }
   if (/させて頂きます/.test(t) && /(?:確認|お調べ|お送り|ご連絡)/.test(t)) return "other";
   return null;
 }
@@ -127,12 +143,21 @@ export function promiseSentenceOf(text: string): string {
   return cs.length ? cs.join("") : String(text ?? "");
 }
 /** 期限: 約束の文の期限の言葉（promise-due.promiseDueDay・「明日」「本日中」「週明け」「〇日までに」）ならその日の終わり（JST 24時）、無ければ 72時間 */
-export function promiseDeadlineMs(text: string, atMs: number): { ms: number; by: "words" | "default72h" } {
+/**
+ * 2026-11-25 作業員L（台帳 #664 の②・統括役の頼み「72時間が竹内さんの感覚に合っているか」）: 期限の言葉が無い約束の期限を種類ごとに（PROMISE_DUE_BY_KIND・既定 off）。
+ *   竹内さん本人の約束が実際に果たされた時間（B1 60日・scripts/audit-promise-hours.ts）: 確認 30件 中央 1.0時間・8割 15.8時間・72時間超え0／
+ *   ピックアップ 65件 中央 11.3時間・8割 42.2時間・72時間超え8／見積 2件（数が小さい）。確認の 72時間は竹内さんの感覚より長すぎる＝期日超えに気づくのが2日遅い。
+ *   案: 確認 24時間・ピックアップ 48時間（8割の時間に少し余裕）・見積と他は 72時間のまま。by は今まで通り default72h（読む側を変えない）
+ */
+export const promiseDueByKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_DUE_BY_KIND ?? "").trim().toLowerCase() === "on";
+export const PROMISE_DUE_HOURS_BY_KIND: Readonly<Partial<Record<PromiseKindName, number>>> = { check: 24, pickup: 48 };
+export function promiseDeadlineMs(text: string, atMs: number, kind?: PromiseKindName | null, env?: Env): { ms: number; by: "words" | "default72h" } {
   const t = String(text ?? "").normalize("NFKC");
   // 「出来次第」「確認出来次第」は期限の言葉にしない（作業員N と決めた）。挨拶の「本日はお時間…」も期限にしない
   const scrubbed = t.replace(/(?:確認)?(?:出来|でき)次第/g, "").replace(/本日は(?:お時間|ご内覧|お電話|ありがとう)[^。！\n]*/g, "");
   const d = promiseDueDay(scrubbed, atMs);
-  return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + PROMISE_DROP_MIN_H * 3_600_000, by: "default72h" };
+  const h = kind && promiseDueByKindOn(env) ? PROMISE_DUE_HOURS_BY_KIND[kind] ?? PROMISE_DROP_MIN_H : PROMISE_DROP_MIN_H;
+  return d != null ? { ms: d + 86_400_000 - 9 * 3_600_000, by: "words" } : { ms: atMs + h * 3_600_000, by: "default72h" };
 }
 /**
  * 2026-11-23 作業員L（台帳 #660）: 「新着で募集で次第お送り」「新着が出次第」は期日の無い約束（外の出来事待ち）。行動台帳の --wide-close（promise-ledger-metrics）と同じ決め方で、
@@ -169,7 +194,8 @@ export function narrowCheckObject(promiseText: string | null | undefined, checkO
   if (!obj || VACANCY_OBJ_RE.test(obj) || PARTY_OBJ_RE.test(obj)) return null;
   return obj;
 }
-export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName; text?: string | null }, ev: PromiseEvidence, o: { checkObjectOf?: CheckObjectOf } = {}): { by: string; at: string } | null | "n/a" {
+export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName; text?: string | null }, ev: PromiseEvidence, o: { checkObjectOf?: CheckObjectOf; env?: Env } = {}): { by: string; at: string } | null | "n/a" {
+  if (promise.kind === "contact" || promise.kind === "negotiate") return promiseContactKindOn(o.env) ? promiseContactFulfilledBy({ at: promise.at, kind: promise.kind }, ev) : "n/a";
   if (!PROMISE_KIND_JUDGEABLE.has(promise.kind)) return "n/a";
   const t0 = Date.parse(promise.at);
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
@@ -201,6 +227,37 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName;
   if (promise.kind === "pickup") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && PICKUP_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
   // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
+  return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
+}
+// ─── 2026-11-25 作業員L（台帳 #726・統括役の割り振り）: 連絡・交渉の約束の種類と果たした印（PROMISE_CONTACT_KIND・既定 off）───
+//   今は「ご連絡させて頂きます」「お伝えさせて頂きます」「交渉させて頂きます」が other（果たした判定なし）か、確認（check・WIDE の網）に混ざる。
+//   種類: contact＝相手（お客様・管理会社）へ後で知らせる約束（ご連絡・ご共有・お伝え・ご報告）／negotiate＝管理会社・大家への交渉（減額・値下げ・条件）。
+//     ほかの網（pickup・check・estimate・viewing_slot・callback）が先・ここは other に落ちる物だけ
+//   果たした印（決定論・こちらの通だけ・約束の後）:
+//     contact … こちらの通（手打ち・AIX）のうち、知らせた形の文（〜となります・〜でした・〜との事・ご連絡頂き・確認取れ・お伝えしました 等）か、
+//               結果を運ぶ AIX（確認の結果・物件・見積）
+//     negotiate … 交渉の結果の文（交渉の結果・減額／値下げ／割引 頂け・できました・難しい・不可・了承）か、見積の AIX（交渉の後の御見積書）
+//   on で: promiseKindNameOf がこの2つを返し、promiseFulfilledBy が判定する（B1・約束の一生・見張りの数え）。スタッフの画面・LINE には出さない（記録だけ）
+export const promiseContactKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CONTACT_KIND ?? "").trim().toLowerCase() === "on";
+export function promiseContactKindOf(clause: string): "contact" | "negotiate" | null {
+  const t = String(clause ?? "").normalize("NFKC");
+  if (/交渉(?:を)?(?:して(?:みます|参ります)|させて(?:頂|いただ)|致します|いたします)/.test(t)) return "negotiate";
+  if (/(?:ご連絡|ご共有|共有|お伝え|ご報告)(?:を)?(?:させて(?:頂|いただ)|致します|いたします|差し上げます)/.test(t)) return "contact";
+  return null;
+}
+const CONTACT_DONE_RE = /(?:と|に)なります|でした|ございました|との(?:事|こと)|ご連絡(?:頂|いただ)|確認(?:が)?取れ|お伝え(?:しました|致しました|いたしました|させて(?:頂|いただ)きました)|(?:頂|いただ)けました|(?:出来|でき)ました|可能です|難しい/;
+const NEGOTIATE_DONE_RE = /交渉(?:の)?結果|(?:減額|値下げ|割引|値引き|免除|無料)[^。！!？?\n]{0,10}(?:頂け|いただけ|して(?:頂|いただ)け|出来|でき|になり|となり|して下さ|してくださ)|(?:了承|承諾|OK)(?:を)?(?:頂|いただ|が出|でした)|難しい|不可|NG|(?:通り|通っ)ました/;
+export function promiseContactFulfilledBy(promise: { at: string; kind: "contact" | "negotiate" }, ev: PromiseEvidence): { by: string; at: string } | null {
+  const t0 = Date.parse(promise.at);
+  const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
+  const cands: Array<{ by: string; at: string }> = [];
+  const re = promise.kind === "negotiate" ? NEGOTIATE_DONE_RE : CONTACT_DONE_RE;
+  for (const m of ev.msgs) {
+    if (m.sender !== "staff" || !after(m.created_at)) continue;
+    if (re.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: m.is_aix_generated ? "aix_text" : "staff_text", at: m.created_at });
+  }
+  const aixRe = promise.kind === "negotiate" ? /estimate/ : /check_result|property|recommend|estimate/;
+  for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && aixRe.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
 }
 /** 見張らない会話か（申込以降・お客様が決めた・こちらが締めた）。約束の時刻より後の発言で見る */
@@ -240,7 +297,7 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
     const t0 = Date.parse(p.at);
     if ((nowMs - t0) / 864e5 > maxDays) continue;
     if (promiseOpenEnded(p.text)) continue; // #660: 期日の無い約束（新着で出次第）は期日超えにしない
-    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0);
+    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0, kind);
     if (nowMs < due.ms) continue;
     if (promiseFulfilledBy({ at: p.at, kind, text: p.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) continue;
     if (promiseClosedConversation(input.status, ms, p.at)) continue;
@@ -276,7 +333,7 @@ export function promiseDropOf(input: PdInput, nowMs: number, o: { minH?: number;
   const ageH = (nowMs - t0) / 36e5;
   // 期限（作業員N の B1 と同じ）: 文の期限の言葉の日の終わり／無ければ 72時間。minH を渡された時はそれを使う（テスト）
   if (o.minH == null && promiseOpenEnded(promise.text)) return null; // #660: 期日の無い約束は見張りに出さない
-  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0).ms;
+  const due = o.minH != null ? t0 + minH * 36e5 : promiseDeadlineMs(promiseSentenceOf(promise.text), t0, promise.kind).ms;
   if (!(nowMs >= due) || ageH > maxDays * 24) return null;
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
   if (promiseFulfilledBy({ at: promise.at, kind: promise.kind, text: promise.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) return null;

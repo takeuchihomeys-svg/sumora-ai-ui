@@ -18,6 +18,7 @@ import { LEARN_PERIODS } from "./learn-periods";
  *   ⚠ ここで独自に書くと、片方だけ直して**静かにずれる**（`"2.7.9" > "2.7.74"` の罠）。
  */
 import { parseExtVersion as _parseExtVersion, compareExtVersion as _compareExtVersion } from "./automation-pause-gate";
+import { countFineAtomsAcrossAudits } from "./handoff-loop-ledger";
 /** ⚠ import 名をそのまま関数の中で使うと「未使用」に見えるので、束ねて渡す */
 const _ver = { parseExtVersion: _parseExtVersion, compareExtVersion: _compareExtVersion };
 
@@ -100,6 +101,11 @@ export type AuditSummary = {
    *   ボタン理解と同型。何が完了しているかを測る。
    */
   flow?: AuditFlowUnderstand;
+  /**
+   * ★ 2.8.204: 連続客ループ細分化（外す→入れる→検索→送付→外す→次）
+   *   axes.handoff=null を防ぎ、弱い細原子を名指しする材料。
+   */
+  continuous?: AuditContinuousLoop;
 };
 
 /** 客1人の一連の完了理解（原子） */
@@ -115,6 +121,17 @@ export type AuditFlowUnderstand = {
   top: Array<{ id: string; n: number }>;
 };
 
+/** 連続客ループの細分化集計 */
+export type AuditContinuousLoop = {
+  leftover: number;
+  post_send_clear: number;
+  handoff_loop: number;
+  ready_next: number;
+  send_or_pdf: number;
+  fine_weak: string[];
+  line: string;
+};
+
 /** 客の一連完了→次客への切替まわり（原子） */
 export type AuditHandoff = {
   switch_fail: number;
@@ -128,6 +145,10 @@ export type AuditHandoff = {
   /** ★ F45: 一連完了印（ready_next / series_done） */
   series_done: number;
   flow_handoff_gap: number;
+  /** ★ 2.8.203: 送付後の条件外し（連続客ループ） */
+  post_send_clear: number;
+  /** ★ 2.8.203: 連続客ループ台帳印 */
+  handoff_loop: number;
   /** 人が読める1行 */
   line: string;
   /** 多い原子（id・回数） */
@@ -254,6 +275,8 @@ export function summarizeAudits(
     supersede: 0,
     series_done: 0,
     flow_handoff_gap: 0,
+    post_send_clear: 0,
+    handoff_loop: 0,
   };
   const flowN: Record<string, number> = {
     place_ok: 0,
@@ -331,6 +354,8 @@ export function summarizeAudits(
       if (keys.some((k) => k === "supersede") || /supersede|superseded-by-next/i.test(blob)) handoffN.supersede++;
       if (keys.some((k) => k === "series_done") || /series_done|flow_done_ready_next/i.test(blob)) handoffN.series_done++;
       if (keys.some((k) => k === "flow_handoff_gap") || /flow_handoff_gap/i.test(blob)) handoffN.flow_handoff_gap++;
+      if (keys.some((k) => k === "post_send_clear") || /post_send_clear/i.test(blob)) handoffN.post_send_clear++;
+      if (keys.some((k) => k === "handoff_loop") || /handoff_loop/i.test(blob)) handoffN.handoff_loop++;
       // F45 完了理解台帳
       if (keys.some((k) => k === "flow_done_place") || /flow_done_place/.test(blob)) flowN.place_ok++;
       if (keys.some((k) => k === "flow_done_conditions") || /flow_done_conditions/.test(blob)) flowN.conditions_ok++;
@@ -470,6 +495,8 @@ export function summarizeAudits(
     supersede: "前客fillを閉じて次客へ",
     series_done: "一連完了→次客可",
     flow_handoff_gap: "完了理解不足",
+    post_send_clear: "送付後外し",
+    handoff_loop: "連続客ループ印",
   };
   const handoff: AuditHandoff = {
     switch_fail: handoffN.switch_fail,
@@ -481,6 +508,8 @@ export function summarizeAudits(
     supersede: handoffN.supersede,
     series_done: handoffN.series_done,
     flow_handoff_gap: handoffN.flow_handoff_gap,
+    post_send_clear: handoffN.post_send_clear,
+    handoff_loop: handoffN.handoff_loop,
     top: handoffTop.slice(0, 5),
     line: handoffTop.length
       ? handoffTop.slice(0, 4).map((x) => `${handoffJa[x.id] || x.id}${x.n}回`).join("・")
@@ -514,11 +543,23 @@ export function summarizeAudits(
       : "完了理解の印なし（この期間・2.8.80以降で測る）",
   };
 
+  const tallied = countFineAtomsAcrossAudits(inWindow);
+  const continuous: AuditContinuousLoop = {
+    leftover: tallied.counts.place_clear || 0,
+    post_send_clear: tallied.counts.post_send_clear || 0,
+    handoff_loop: handoffN.handoff_loop || 0,
+    ready_next: tallied.counts.ready_next || 0,
+    send_or_pdf: tallied.counts.send_or_pdf || 0,
+    fine_weak: tallied.weak.slice(0, 8),
+    line: tallied.line + ((handoffN.handoff_loop || 0) > 0 ? `／handoff_loop印${handoffN.handoff_loop}` : "／handoff_loop印0"),
+  };
+
   return {
     runs, finished, abandoned, started, unknown, finish_rate,
     stalled_at, causes, errors, bad, top_problem, advice,
     handoff,
     flow,
+    continuous,
     /** ★ 2026-11-15: 版ごとの内訳（古い版の失敗で判断しないため） */
     versions,
     /** 版として読めなかった物（別枠・新旧を決めない） */

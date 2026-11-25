@@ -3,6 +3,7 @@
 import {
   auditChallengeLearnComplete,
   auditAutoReflectVerified,
+  auditPlaybookRulesReflect,
   auditProReflectResponsibility,
   collectBundleFieldSets,
 } from "../learn-foundation-audit";
@@ -121,6 +122,33 @@ console.log("\n■ auditProReflectResponsibility (F56)");
     f53Ok: true, f54Ok: false, f55Ok: true, f15Ok: true, f28Ok: true, f29Ok: true, f54Next: "残り通常を画像学習",
   });
   ok("F55済でF54未ならf54Next採用", !waitF54.ok && waitF54.done === 5 && /残り通常/.test(waitF54.next));
+}
+
+console.log("\n■ auditPlaybookRulesReflect (F63)");
+{
+  const full = auditPlaybookRulesReflect({
+    codeRulesV: "e0b8837b",
+    dbRulesV: "e0b8837b",
+    seenRulesV: "e0b8837b",
+    readCount: 2,
+  });
+  ok("DB=既読=コード・read≥1→✓", full.ok);
+
+  const staleSeen = auditPlaybookRulesReflect({
+    codeRulesV: "e0b8837b",
+    dbRulesV: "e0b8837b",
+    seenRulesV: "4c266b56",
+    readCount: 2,
+  });
+  ok("自動既読が旧→✗", !staleSeen.ok && /自動既読≠コード/.test(staleSeen.line));
+
+  const noRead = auditPlaybookRulesReflect({
+    codeRulesV: "e0b8837b",
+    dbRulesV: "e0b8837b",
+    seenRulesV: "e0b8837b",
+    readCount: 0,
+  });
+  ok("read0→✗", !noRead.ok && /read=0/.test(noRead.line));
 }
 
 console.log(`\n結果: 合格 ${pass} / 不合格 ${fail}`);

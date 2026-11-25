@@ -3,13 +3,14 @@
 //   古い時は、前に読んだ一番新しい id より後の行だけ足す（最初の1回だけ数え始めの時刻から全部）。読めない時は null（＝Claude のまま）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { claudeUsageUsd, altUsageUsd } from "./llm-price";
-import { readBudgetConfig, spendWindowStart, claudeMonthSpendUsd, budgetDecision, type BudgetDecision } from "./llm-budget-route";
+import { readBudgetConfig, spendWindowStart, openaiWindowStart, claudeMonthSpendUsd, budgetDecision, budgetRoleOf, type BudgetDecision } from "./llm-budget-route";
 
 export const BUDGET_CACHE_MS = 5 * 60_000;
-type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number };
+// 2026-11-25 統括役の頼み（本番と試験を混ぜた誤りの直し）: 本番（route が script: でない行）の分も持つ。振り分けの決めは特典を食う全部の額（試験も同じ鍵）で、見せる所は本番と試験を分ける
+type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number; key?: string; prod?: { claudeUsd: number; openaiUsd: number; deepseekUsd: number } };
 let cache: Sums | null = null;
 
-const COLS = "id, model, created_at, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens";
+const COLS = "id, model, route, created_at, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens";
 type Row = { id: number; model: string | null; created_at: string; input_uncached: number | null; cache_read: number | null; cache_write: number | null; cache_write_5m: number | null; cache_write_1h: number | null; output_tokens: number | null };
 
 /** 1行の費用を会社ごとに足す（純関数） */
@@ -20,24 +21,42 @@ export function addRow(s: Pick<Sums, "claudeUsd" | "openaiUsd" | "deepseekUsd">,
   else if (/deepseek/.test(m)) s.deepseekUsd += altUsageUsd(r);
 }
 
-export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<Sums | null> {
+/**
+ * 2026-11-25 作業員L（統括役の頼み・毎朝の1枚の月の費用が $142 と出て audit-llm-month-cost の $291 と食い違った）: 1回の読みは 50頁（5万行）まで。
+ *   今月は 11/24 で 10万行を超え、毎朝の1枚（1回だけ読む）は月の半分で止まっていた。本番（5分の控えで続きを読む）は今まで通り 50頁・
+ *   一回きりの読み（毎朝の1枚）は maxPages を大きく渡す。読み切れなかった時は partial=true
+ */
+export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, o: { maxPages?: number } = {}): Promise<(Sums & { partial?: boolean }) | null> {
   const cfg = readBudgetConfig(env);
-  const { since } = spendWindowStart(cfg, nowMs);
-  if (cache && cache.since === since && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
-  const next: Sums = cache && cache.since === since ? { ...cache } : { since, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0 };
+  // 2026-11-25 2つの枠: Claude は Claude の区切り（10日・基準）・OpenAI は OpenAI の区切り（暦の月初）から。読みは早い方から1回
+  const claudeSince = spendWindowStart(cfg, nowMs).since, openaiSince = openaiWindowStart(cfg, nowMs);
+  const since = claudeSince < openaiSince ? claudeSince : openaiSince;
+  const key = `${claudeSince}|${openaiSince}`;
+  if (cache && cache.key === key && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
+  const next: Sums = cache && cache.key === key ? { ...cache, prod: { ...(cache.prod ?? { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }) } } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0, prod: { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 } };
   try {
-    for (let page = 0; page < 50; page++) {
+    let done = false;
+    const maxPages = o.maxPages ?? 50;
+    for (let page = 0; page < maxPages; page++) {
       let q = sb.from("llm_usage_logs").select(COLS).gte("created_at", since).order("id", { ascending: true }).limit(1000);
       if (next.lastId) q = q.gt("id", next.lastId);
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       const rows = (data ?? []) as Row[];
-      for (const r of rows) { addRow(next, r); next.lastId = Math.max(next.lastId, Number(r.id)); }
-      if (rows.length < 1000) break;
+      for (const r of rows) {
+        const at = String(r.created_at ?? ""), m = String(r.model ?? "");
+        if (/claude/.test(m) ? at >= claudeSince : /^gpt-|^text-embedding/.test(m) ? at >= openaiSince : true) {
+          addRow(next, r);
+          if (!/^script:/.test(String((r as { route?: string | null }).route ?? ""))) addRow((next.prod ??= { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }), r);
+        }
+        next.lastId = Math.max(next.lastId, Number(r.id));
+      }
+      if (rows.length < 1000) { done = true; break; }
     }
+    (next as Sums & { partial?: boolean }).partial = !done;
   } catch (e) {
     console.warn("[llm-budget] 使用額を読めない:", e instanceof Error ? e.message : String(e));
-    return cache && cache.since === since ? cache : null;
+    return cache && cache.key === key ? cache : null;
   }
   next.readAt = nowMs;
   cache = next;
@@ -52,11 +71,32 @@ export async function claudeSpendNow(sb: SupabaseClient, nowMs = Date.now(), env
   return claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd });
 }
 
+let refreshing: Promise<unknown> | null = null;
+/** 控えをすぐ返す（無い・古い時は裏で読み直し・読み直し中に2本目を走らせない）。控えが無ければ null＝この呼び出しは Claude のまま */
+export function budgetSumsNoWait(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): (Sums & { partial?: boolean }) | null {
+  const fresh = cache && nowMs - cache.readAt < BUDGET_CACHE_MS;
+  if (!fresh && !refreshing) {
+    refreshing = monthSums(sb, nowMs, env).catch(() => null).finally(() => { refreshing = null; });
+    try { void import("@vercel/functions").then((m) => { try { if (refreshing) m.waitUntil(refreshing); } catch { /* Vercel の外 */ } }); } catch { /* */ }
+  }
+  return cache;
+}
 /** 名札の振り分け（off の時は DB を読まない） */
-export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<BudgetDecision> {
+export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean } = {}): Promise<BudgetDecision> {
   const cfg = readBudgetConfig(env);
-  if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg);
-  return budgetDecision(routeName, await claudeSpendNow(sb, nowMs, env), cfg);
+  if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg, ctx);
+  // 表に無い名札は DB を読まない（Claude のまま）
+  if (!budgetRoleOf(routeName, { ...ctx, extra: cfg.extra })) return budgetDecision(routeName, null, cfg, ctx);
+  // 2026-11-25 作業員L（本番の不具合・resolve_area の時間切れの元）: 月の数えの読み（最大 50頁×1000行）を呼び出しの前に待たない。
+  //   控えが無い（冷えた関数）か古い時は裏で読み直し、その間は手元の控え（無ければ Claude のまま）で決める。
+  //   11/25 07:14・07:27 UTC: resolve_area は LLM を呼ぶ前に 17秒以上かかり（米国 iad1 から東京の DB を数十回読む）、呼ぶ側が先に切れた
+  const s = budgetSumsNoWait(sb, nowMs, env);
+  const spend = s ? claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd }) : null;
+  return budgetDecision(routeName, spend, cfg, { ...ctx, partial: !!s?.partial, openaiUsd: s ? s.openaiUsd : null });
+}
+/** 2026-11-25: 今のリクエストの経路（"/api/cron/brain-sweep" 等・Next の作業情報・取れなければ null） */
+export async function httpRouteNow(): Promise<string | null> {
+  try { const mod = await import("next/dist/server/app-render/work-async-storage.external"); return ((mod as unknown as { workAsyncStorage?: { getStore(): { route?: string } | undefined } }).workAsyncStorage?.getStore()?.route) ?? null; } catch { return null; }
 }
 
 export function resetBudgetCache(): void { cache = null; }

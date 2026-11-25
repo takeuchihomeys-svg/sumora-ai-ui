@@ -5310,9 +5310,14 @@ CREATE TABLE IF NOT EXISTS work_log (
 );
 CREATE INDEX IF NOT EXISTS idx_work_log_task_time ON work_log(task, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_work_log_time ON work_log(created_at DESC);
-ALTER TABLE work_log ENABLE ROW LEVEL SECURITY;
+-- 2026-11-24 竹内さん「RLSはずす」（work_log だけ・拡張の extension_devices／extension_snapshots は今のまま）:
+--   サーバーの鍵が無い PC では途中経過を読み書きできなかった → RLS を外し、公開の鍵には「読む・足す」だけ許す。
+--   書き換え・削除は許さない（1行ずつ足すだけの台帳）。お客様の文・名前は入れない決まりは同じ。
+ALTER TABLE work_log DISABLE ROW LEVEL SECURITY;
 REVOKE ALL ON work_log FROM anon, authenticated;
+GRANT SELECT, INSERT ON work_log TO anon, authenticated;
 REVOKE ALL ON SEQUENCE work_log_id_seq FROM anon, authenticated;
+GRANT USAGE ON SEQUENCE work_log_id_seq TO anon, authenticated;
 
 -- 2026-10-29 aix_desk_cards … AIX の担当の札（ボタン×ピッカーごと・竹内さん KB P1 03d2bdd2）。scripts/build-aix-desk-cards.ts が毎週作り直す（upsert）。
 --   中身: 送る中身・使う場面・似たボタンとの線・竹内さんの文に入る物・入力欄・一緒に使われた定型・竹内さんの決定（設計知見の題）・

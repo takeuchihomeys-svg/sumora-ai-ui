@@ -27,14 +27,14 @@ ok("fill_pause を残す", /_auditStepP\('fill_pause'/.test(ps));
 ok("fill_resume を残す", /_auditStepP\('fill_resume'/.test(ps));
 
 console.log("\n■ ③ 止まった後は必ず続きへ");
-ok("止まった後 _scheduleClickDrain を呼ぶ", /try \{ _auditStepP\('fill_resume'[^;]*; \} catch \(_\) \{\}\s*_scheduleClickDrain\(\);/.test(ps));
-ok("drift で静かに漂わせる（画面を暴れさせない）", /P0\.drift\(pause\)\.then\(_endPause, _endPause\)/.test(ps));
+ok("止まった後 _scheduleClickDrain を呼ぶ", /_auditStepP\('fill_resume'[\s\S]{0,240}?\} catch \(_\) \{\}\s*_scheduleClickDrain\(\);/.test(ps));
+ok("drift で静かに漂わせる（画面を暴れさせない・上限は maxMs で 11 秒）", /P0\.drift\(pause, \{ maxMs: AXLX_HAND_PAUSE_MAX_MS \}\)\.then\(_endPause, _endPause\)/.test(ps));
 ok("止まった物は失敗にしない（throw しない）", !/fill_pause[\s\S]{0,600}notifyDone/.test(ps));
 
 console.log("\n■ ④ わざとの停止中は安全弁が動かない");
 ok("_holdingPause の間は時計を戻す", /if \(_holdingPause\) \{ _lastQueueProgressAt = Date\.now\(\); _lastBusyLabel = null; return; \}/.test(ps));
 ok("止まったら _holdingPause=true、戻ったら false", /_holdingPause = true;/.test(ps) && /_holdingPause = false; _lastQueueProgressAt = Date\.now\(\); _startAfterPause\(\);/.test(ps));
-ok("忙しい判定にも含める", /\|\| _holdingPause;/.test(ps));
+ok("忙しい判定にも含める（停止中・押している最中）", /\|\| _holdingPause \|\| _pressing;/.test(ps));
 
 console.log("\n■ ⑤ 本物のフリーズは今まで通り復帰");
 ok("20秒進まない時の強制復帰が残る", /クリックの列が20秒進まない → 強制的に次へ/.test(ps));

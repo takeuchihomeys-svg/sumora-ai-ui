@@ -35,7 +35,7 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("配線: 軽い確認は版だけ読む（束の全体を読まない）", /generated_at:bundle->>generated_at/.test(route));
     ok("配線: 読んだ印は守りの時は応答の後で・10分に1回", /shouldTouchRead\(row\.read_at/.test(route) && /after\(async \(\) => \{\s*try \{ await supabase\.from\("human_learn_profile"\)\.update/.test(route));
     ok("配線: 作り直しは1本にまとめる・作ってから5分は作らない", /coalesce\(`build:\$\{scope\}`/.test(route) && /builtRecently/.test(route));
-    ok("配線（2026-11-20）: 営業時間の古い束は作り直さない（holdDaytimeRebuild）", /holdDaytimeRebuild\(\{ hour: jstHourNow\(\), hasBundle: !!row, forceFresh \}\)/.test(route) && /!daytimeHold/.test(route));
+    ok("配線（2026-11-20）: 営業時間の古い束は作り直さない（holdDaytimeRebuild）", /holdDaytimeRebuild\(\{ hour: jstHourNow\(\), minute: [^,]+, hasBundle: !!row, forceFresh \}\)/.test(route) && /!daytimeHold/.test(route));
     ok("配線（2026-11-20）: 手動の refresh は全列 select(\"*\") をやめ、自動と同じ列の一覧（SELECT）で読む", !/\.select\("\*"\)/.test(route) && /selectDroppingMissing\(\s*SELECT\.split/.test(route));
     ok("配線（2026-11-20）: needs_auto は自動の記録だけを DB で絞って見る（新しい順40件の抜けをなくす）", /\.or\("mode\.ilike\.\*aix\*,mode\.ilike\.\*auto\*"\)/.test(route) && !/\.limit\(40\)/.test(route));
   }
@@ -48,7 +48,10 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("束が1件も無い → 昼でも作る（拡張が何も無いで止まらない）", holdDaytimeRebuild({ ...base, hour: 10, hasBundle: false }) === false);
     ok("?fresh=1 は強制 → 昼でも作る", holdDaytimeRebuild({ ...base, hour: 10, forceFresh: true }) === false);
     ok("戻す HUMAN_LEARN_DAYTIME_REBUILD=on → 昼も作る（旧の動き）", holdDaytimeRebuild({ ...base, hour: 10, env: { HUMAN_LEARN_DAYTIME_REBUILD: "on" } }) === false);
-    ok("境界: 9時ちょうどは昼（保留）・22時ちょうどは夜（作る）", holdDaytimeRebuild({ ...base, hour: 9 }) === true && holdDaytimeRebuild({ ...base, hour: 22 }) === false);
+    ok("境界: 9時ちょうどは昼（保留）・22時ちょうどは止めの中（11/25 夜から 22:30 まで）", holdDaytimeRebuild({ ...base, hour: 9 }) === true && holdDaytimeRebuild({ ...base, hour: 22 }) === true);
+    ok("22:10 は止めの中", holdDaytimeRebuild({ ...base, hour: 22, minute: 10 }) === true);
+    ok("22:30 は作る", holdDaytimeRebuild({ ...base, hour: 22, minute: 30 }) === false);
+    ok("HUMAN_LEARN_HOLD_UNTIL=22:00 で前の動き", holdDaytimeRebuild({ ...base, hour: 22, minute: 10, env: { HUMAN_LEARN_HOLD_UNTIL: "22:00" } }) === false);
   }
   {
     // 2026-11-21 作業員G: 11/20 22時台の時間切れ（作り直しの要求が 60秒で切れた）→ 古い束がある時は応答の後で作り直す
@@ -67,8 +70,9 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("既定は全部で1本の印", buildLeaseKey("all", {}) === buildLeaseKey("realpro", {}));
     ok("off で束の種類ごとの印", buildLeaseKey("all", { LEARN_BUILD_ONE_LANE: "off" }) === "human-learn-profile:all");
     ok("on: 全部で1本の印", buildLeaseKey("all", ON) === buildLeaseKey("realpro", ON));
-    ok("on・応答の後・他が作っている → 待つ", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: ON }) === 15000);
-    ok("上限を超えたら諦める", laneNextWait({ lease: "held", inAfter: true, waitedMs: LANE_WAIT_MAX_MS, env: ON }) === null);
+    ok("on・応答の後・他が作っている → 既定は待たない（11/25 夜・時間切れの直し）", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: ON }) === null);
+    ok("LEARN_AFTER_WAIT_LANE=on なら前の通り待つ", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: { ...ON, LEARN_AFTER_WAIT_LANE: "on" } }) === 15000);
+    ok("上限を超えたら諦める", laneNextWait({ lease: "held", inAfter: true, waitedMs: LANE_WAIT_MAX_MS, env: { ...ON, LEARN_AFTER_WAIT_LANE: "on" } }) === null);
     ok("応答の前（拡張が待っている）は待たない", laneNextWait({ lease: "held", inAfter: false, waitedMs: 0, env: ON }) === null);
     ok("取れたら待たない", laneNextWait({ lease: "acquired", inAfter: true, waitedMs: 0, env: ON }) === null);
     ok("off は待たない", laneNextWait({ lease: "held", inAfter: true, waitedMs: 0, env: { LEARN_BUILD_ONE_LANE: "off" } }) === null);

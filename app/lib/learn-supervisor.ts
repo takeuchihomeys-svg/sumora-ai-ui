@@ -124,7 +124,7 @@ export const LEARN_MECHANISMS = [
   /**
    * ★ 2026-11-16: 完了→次客は完走率だけでは見えない。
    */
-  "完了→次客を原子で把握する（switch_fail・owner_mismatch・no_fill_start・batch_timeout・pipeline_busy・series_done・flow_handoff_gap）",
+  "完了→次客を原子で把握する（switch_fail・owner_mismatch・no_fill_start・batch_timeout・pipeline_busy・series_done・flow_handoff_gap・post_send_clear・handoff_loop）",
   "完了理解を段ごとに把握する（place・conditions・search・fill_done・ready_next＝F45）",
   /**
    * ★ 2026-11-17 統括Pro「抜けが後から出る構造原因＝書き込み関所が無い」:
@@ -443,8 +443,21 @@ export type SupervisorInput = {
       supersede?: number;
       series_done?: number;
       flow_handoff_gap?: number;
+      /** ★ 2.8.203 連続客ループ */
+      post_send_clear?: number;
+      handoff_loop?: number;
       line: string;
       top?: Array<{ id: string; n: number }>;
+    } | null;
+    /** ★ 2.8.204 連続客細分化 */
+    continuous?: {
+      leftover?: number;
+      post_send_clear?: number;
+      handoff_loop?: number;
+      ready_next?: number;
+      send_or_pdf?: number;
+      fine_weak?: string[];
+      line: string;
     } | null;
     /** ★ F45 完了理解台帳 */
     flow?: {
@@ -2063,10 +2076,13 @@ function buildMeeting(m: {
         (h.switch_fail || 0) + (h.owner_mismatch || 0) + (h.no_fill_start || 0)
         + (h.batch_timeout || 0) + (h.pipeline_busy || 0)
         + (h.tab_reload || 0) + (h.flow_handoff_gap || 0);
+      const loopBits =
+        ((h.post_send_clear || 0) > 0 ? `／送付後外し${h.post_send_clear}回` : "／送付後外し0")
+        + ((h.handoff_loop || 0) > 0 ? `／連続客ループ印${h.handoff_loop}回` : "／連続客ループ印0");
       evidence.push({
         label: "完了→次客（細分化）",
-        value: h.line + ((h.series_done || 0) > 0 ? `／一連完了${h.series_done}回` : ""),
-        guessed: any > 0,
+        value: h.line + ((h.series_done || 0) > 0 ? `／一連完了${h.series_done}回` : "") + loopBits,
+        guessed: any > 0 || (h.post_send_clear || 0) === 0,
       });
       if (any > 0) {
         agenda.push({
@@ -2074,6 +2090,14 @@ function buildMeeting(m: {
           topic: "完了してから次のお客さんに移れない穴がある",
           why: h.line,
           decide: "一連ロック解除の競合・切替失敗・送る相手不一致・完了理解不足を原子ごとに直す（拡張→自動1回で確認）",
+        });
+      }
+      if ((h.post_send_clear || 0) === 0 && (h.series_done || 0) > 0) {
+        agenda.push({
+          priority: 0,
+          topic: "一連完了はあるが送付後外し（post_send_clear）の印が無い＝連続客の土台穴",
+          why: h.line + loopBits,
+          decide: "拡張≥2.8.203再読込→連続2客自動→監査に post_send_clear と handoff_loop が出るか確かめる",
         });
       }
     } else {
@@ -2105,6 +2129,31 @@ function buildMeeting(m: {
         value: "flow材料なし（完了印が監査に届いていない＝つなぎの穴・F45/F46）",
         guessed: true,
       });
+    }
+    // ★ 2.8.204: 連続客ループ細分化（axes が null にならないよう必ず残す）
+    {
+      const c = m.audits.continuous;
+      if (c && c.line) {
+        evidence.push({
+          label: "連続客ループ（細分化）",
+          value: c.line,
+          guessed: (c.post_send_clear || 0) === 0 || (c.fine_weak || []).length > 0,
+        });
+        if ((c.post_send_clear || 0) === 0 || (c.fine_weak || []).length > 0) {
+          agenda.push({
+            priority: 0,
+            topic: "連続客ループの細原子に穴がある（外す→入れる→検索→送付→外す）",
+            why: c.line,
+            decide: "F61/F62: 弱い細原子を1つずつ強化→拡張≥2.8.204再読込→連続2客で印確認（scripts/handoff-loop-strengthen.ts）",
+          });
+        }
+      } else {
+        evidence.push({
+          label: "連続客ループ（細分化）",
+          value: "continuous材料なし（audits未集計＝把握の穴・F61/F62）",
+          guessed: true,
+        });
+      }
     }
   }
   /**
@@ -2355,6 +2404,12 @@ function buildMeeting(m: {
       "F54_challenge_learn_complete",
       "F55_auto_reflect_verified",
       "F56_pro_reflect_responsibility",
+      "F57_guide_screen_grasp",
+      "F58_ext_test_improve_loop",
+      "F61_continuous_customer_handoff_loop",
+      "F62_continuous_handoff_subdivide",
+      "F63_playbook_rules_reflect",
+      "F64_root_cause_improve_loop",
       "F6_auto_after_bundle",
       "F4_hand_cs",
       "F14_station_clear_cursor",

@@ -244,3 +244,50 @@ export function findHumanLikeGaps(r: ReturnType<typeof auditHumanLike>): Array<{
   }
   return out;
 }
+
+/**
+ * 人間らしさ点検の合格線（テスト部隊・F58 用）。
+ *   findHumanLikeGaps と同じ比率。直書き・選ぶ欄打ち込みは 0 必須。
+ */
+export const HUMAN_LIKE_PASS = {
+  cursorMinPct: 50,
+  pointMinPct: 50,
+  typedOnChooseMax: 0,
+  changedWithoutClickMax: 0,
+} as const;
+
+/** 点検結果が合格線を満たすか（純関数・DB不要） */
+export function judgeHumanLikePass(r: ReturnType<typeof auditHumanLike>): {
+  ok: boolean;
+  cursorPct: number | null;
+  pointPct: number | null;
+  gaps: string[];
+  line: string;
+} {
+  const gaps: string[] = [];
+  const cursorPct = r.rows > 0 ? Math.round((1000 * r.withCursor) / r.rows) / 10 : null;
+  const pointPct = r.rows > 0 ? Math.round((1000 * r.withPoint) / r.rows) / 10 : null;
+  if (r.typedOnChoose.length > HUMAN_LIKE_PASS.typedOnChooseMax) {
+    gaps.push(`選ぶ欄に打ち込み ${r.typedOnChoose.length}件`);
+  }
+  if (r.changedWithoutClick.length > HUMAN_LIKE_PASS.changedWithoutClickMax) {
+    gaps.push(`直書き疑い ${r.changedWithoutClick.length}件`);
+  }
+  if (cursorPct != null && cursorPct < HUMAN_LIKE_PASS.cursorMinPct) {
+    gaps.push(`カーソル ${cursorPct}%<${HUMAN_LIKE_PASS.cursorMinPct}%`);
+  }
+  if (pointPct != null && pointPct < HUMAN_LIKE_PASS.pointMinPct) {
+    gaps.push(`押した位置 ${pointPct}%<${HUMAN_LIKE_PASS.pointMinPct}%`);
+  }
+  if (r.rows === 0) gaps.push("操作行が0（測れない）");
+  const ok = gaps.length === 0;
+  return {
+    ok,
+    cursorPct,
+    pointPct,
+    gaps,
+    line: ok
+      ? `人間らしさ合格 カーソル${cursorPct ?? "-"}%・位置${pointPct ?? "-"}%・直書き0`
+      : `人間らしさ未達 ${gaps.join("／")}`,
+  };
+}

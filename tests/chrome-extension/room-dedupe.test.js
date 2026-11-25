@@ -46,16 +46,39 @@ console.log("\n■ ② 同じ建物・同じ間取り・同じ平米 → 最安1
   t("  家賃が読める（5件）", r.groups[0].rents.length === 5, r.groups[0].rents);
 }
 
-console.log("\n■ ③ 間取りが違う／平米が違う → 別の部屋として残す");
+console.log("\n■ ③ 間取りが違う／面積差が2㎡超 → 別の部屋として残す");
 {
   const items = [
     { name: "同じ建物", cells: ["101", "1LDK", "29.28m²", "100,000円"] },
-    { name: "同じ建物", cells: ["102", "1LDK", "32.50m²", "110,000円"] },  // 平米が違う → 残す
+    { name: "同じ建物", cells: ["102", "1LDK", "32.50m²", "110,000円"] },  // 差 3.22㎡ → 残す
     { name: "同じ建物", cells: ["103", "2DK",  "29.28m²", "105,000円"] },  // 間取りが違う → 残す
     { name: "別の建物", cells: ["201", "1LDK", "29.28m²", "120,000円"] },  // 建物が違う → 残す
   ];
   const r = D.cheapestPerBuildingLayoutSize(items);
   t("4件すべて残る", r.keep.length === 4, r.keep);
+}
+
+console.log("\n■ ③b 面積差 2㎡以内 → 安い方だけ（売上サポと同じ線）");
+{
+  // スクショ相当: 同じ棟・1LDK・28.69㎡と29.06㎡が並ぶ
+  const items = [
+    { name: "エスライズ本町東", cells: ["1006", "1LDK", "28.69m²", "102,000円"] },
+    { name: "エスライズ本町東", cells: ["0803", "1LDK", "28.69m²", "99,000円"] },   // ← 最安
+    { name: "エスライズ本町東", cells: ["0604", "1LDK", "29.06m²", "100,500円"] },  // 差0.37㎡ → 落とす
+    { name: "エスライズ本町東", cells: ["1303", "1LDK", "28.69m²", "101,000円"] },
+  ];
+  const r = D.cheapestPerBuildingLayoutSize(items);
+  t("残るのは最安1件だけ", r.keep.length === 1 && r.keep[0] === 1, r.keep);
+  t("  高い3件は落とす", r.drop.length === 3, r.drop);
+  t("  定数は2㎡", D.SAME_AREA_DIFF_SQM === 2);
+  // 数珠つなぎにしない: 20・21.5・23 → 20と23を残す
+  const chain = [
+    { name: "A", cells: ["1", "1K", "20.0㎡", "80,000円"] },
+    { name: "A", cells: ["2", "1K", "21.5㎡", "90,000円"] },
+    { name: "A", cells: ["3", "1K", "23.0㎡", "85,000円"] },
+  ];
+  const c = D.cheapestPerBuildingLayoutSize(chain);
+  t("数珠つなぎしない（20と23を残し21.5を落とす）", JSON.stringify(c.keep) === "[0,2]" && c.drop.indexOf(1) >= 0, c);
 }
 
 console.log("\n■ ④ 迷ったら残す（読めない項目がある時）");

@@ -1,0 +1,10 @@
+{
+  "title": "【決定】連続客は所在地外しだけで終わらない／外し後関所→入れ／手順書に薄い場面を足す",
+  "category": "architecture",
+  "insight": "本番手順書が場面1（stationのみ）で area/cond/search/list が抜け、_guideLikeAfterClearCheck が未配線だった。2.8.208で clear_done後に台帳×画面の after_clear→clear_then_fill_ok/gap（残りなら再外し）、手順書 build_v10 で足りない場面を薄いガイドとして scenes に注入（場面5）。決まり clear_then_fill_gate。",
+  "rationale": "竹内さん: 連続で新しいお客さんに行った際に所在地だけはずすので終わった。ちゃんと外して新しいお客さんの条件を入れなかった。手順書が弱い可能性。細かい部分改善・テスト繰り返し・統括pro。",
+  "context": "また連続で新しいお客さんのところ行った際に、所在地だけはずすので終わってしまった。手順書などが弱い可能性高い。ちゃんと外して新しいお客さんの条件いれなかった原因を調査して細かい部分改善する。テスト繰り返す。統括proお願い。",
+  "applied_to": "chrome-extension/page-script.js, search-audit.js, manifest 2.8.208, app/lib/action-playbook.ts build_v10, app/lib/auto-procedure-rules.ts clear_then_fill_gate",
+  "tags": ["Chrome拡張", "連続客", "手順書", "ブレイン診断", "点検表"],
+  "priority": 1
+}

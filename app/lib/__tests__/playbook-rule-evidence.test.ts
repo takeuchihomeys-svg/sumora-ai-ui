@@ -83,11 +83,11 @@ console.log("■ 新しく確かめられる決まり");
 
 console.log("■ 確かめに使う段を記録の上限で落とさない");
 {
-  const code = checkRulesInCode({ pageScript: read("page-script.js"), searchAudit: read("search-audit.js"), manifestJson: read("manifest.json") });
+  const code = checkRulesInCode({ pageScript: read("page-script.js"), searchAudit: read("search-audit.js"), manifestJson: read("manifest.json"), bulkDl: read("bulk-dl.js"), background: read("background.js") });
   ok("コードの点検: 食い違い0", code.length === 0, code);
   const lostKeys = AUTO_RULES.flatMap((r) => verifyKeysOf(r.verify)).filter((k) => !SA.KEEP_STEP.test(k) && !SA.RULE_STEP.test(k));
   ok("verify の段は全部 KEEP_STEP か RULE_STEP", lostKeys.length === 0, lostKeys);
-  const broken = checkRulesInCode({ pageScript: read("page-script.js"), searchAudit: read("search-audit.js").replace("playbook_seen|", ""), manifestJson: read("manifest.json") });
+  const broken = checkRulesInCode({ pageScript: read("page-script.js"), searchAudit: read("search-audit.js").replace("playbook_seen|", ""), manifestJson: read("manifest.json"), bulkDl: read("bulk-dl.js"), background: read("background.js") });
   ok("RULE_STEP から段が消えたら点検で出る", broken.some((s) => s.includes("playbook_read") && s.includes("RULE_STEP")), broken);
 
   ok("search-audit の MAX_STEPS と同じ上限", SA.MAX_STEPS === AUDIT_MAX_STEPS, SA.MAX_STEPS);

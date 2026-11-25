@@ -1,0 +1,10 @@
+{
+  "title": "【決定】100%へ土台F16/F17/F18・自動was/csはMAIN↔isolated同期腕上げ・stepsは途中progress",
+  "category": "architecture",
+  "insight": "aim有0の主因は束空キャッシュ→fill先頭でlearn_warm強制。自動was/cs0の主因はpage-script(MAIN)とhuman-learn-record(isolated)の世界分断→CustomEvent axlx-rec-arm-wasで同期腕上げ。完走率の主因『stepsが届いていない』はwas経路とは別→fill_progressで途中段を点検へ。土台F16/F17/F18を監査に追加。束solid=0は本番fresh禁止・手元reflectで復元（96に戻した）。",
+  "rationale": "2026-11-16 竹内さん『足りていない土台あれば追加／100%にちかづける／統括proと協力』。統括Pro生: 『2.8.43を走らせてaim有0・was/cs0が直ったか測る』『stepsが届いていない36回が最大』。",
+  "context": "竹内さん『足りていない土台あれば追加するそして今自動モード改善をさらに人間らしく１００パーセントにちかづけるそのために今足りていない部分を強化する統括proと協力しておこなう改善お願い』",
+  "applied_to": "chrome-extension/page-script.js, human-learn-record.js, pointer-ui.js, content.js, background.js, search-audit.js, app/lib/learn-foundation-audit.ts, manifest 2.8.43",
+  "tags": ["Chrome拡張", "点検表", "ブレイン", "汎用"],
+  "priority": 1
+}

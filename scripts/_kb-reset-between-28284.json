@@ -1,0 +1,16 @@
+﻿{
+    "insight":  "竹内さん『条件はずしがむずかしくバグ・エラーが多い。人間のようにリセットボタンに切り替え、リセット→待機→画面照会（スクショ）→空と確認してから新しいお客さんの拡張ツール API を入れる』。過去に 2.8.105 でリセットを入れ、実測 search_audits 1492・1494（リセットの1〜3秒後に入力の段が途絶え入力が消えた）で 2.8.107 に戻した（f1bda8fd）。その原因は『入力の最中にリセットを押した』点なので、今回は押す場所を『送付完了の後〜次客を入れる前』の1点に限り（_postSendResetRealpro）、①押す前に完了の小窓を閉じる ②押した後はページの読み直し（window.__axlxBootAt・sessionStorage の印）を待つ ③人の間のあとフォーム（エリア・賃料・間取り等）が全部空かを DOM で読み戻す（_scanLeftoverForm・印 reset_verified／reset_not_empty）④空なら記録用の写真を1枚（reset_shot・失敗しても止めない）⑤空にならない・押せない・時間切れは従来の1つずつ外す方式へ戻す（reset_fallback）。入力・検索の最中は _doReset がリセットを押さないまま（no_reset_button の印を維持）。検索を押す前は jQuery.active・読み込み表示・件数の表示が落ち着くまで最大5秒待つ（ajax_settle）。完了判定は画像でなく客の番号＋DOM。旗 axlx_reset_button_mode=false で旧方式に戻る。リアプロの実 DOM（リセットが読み直しを起こすか・既定が空か）は未確認＝実機の reset_* の印で確かめる。",
+    "applied_to":  "chrome-extension/background.js（_postSendResetRealpro・_postSendClearOrReset・_resetShot）・page-script.js（__axlxResetPressP・__axlxResetVerifyP・_axAjaxSettleThen・_doReset の skip）・search-audit.js（RULE_STEP）・manifest.json 2.8.284・app/lib/auto-procedure-rules.ts（reset_between_customers）・tests/chrome-extension/reset-between-customers-v28284.test.js",
+    "title":  "【決定】次客へ移る時だけ『リセット』を押す（送付完了→小窓を閉じる→リセット→待機→フォームが空と読み戻し→写真→次客のAPI）。入力・検索の最中は押さない（拡張 2.8.284）",
+    "tags":  [
+                 "Chrome拡張",
+                 "リアプロ",
+                 "リセット",
+                 "次客",
+                 "竹内決定"
+             ],
+    "category":  "architecture",
+    "context":  "2026-11-25 竹内さん『条件はずしのところかなりむずかしくバグやえらーおきることがおおいので 人間のようにリセットボタンにきりかえる リセットボタンおしてでーたこわれないように待機と画面照会と新しいお客さんのAPI拡張ツールからいれることの流れちゃんとできるように…１つずつちゃんとできるように』",
+    "priority":  1,
+    "rationale":  "リセットが壊したのは入力の最中。同じ点を残さなければ『壊れる原因』は消える。外す方式（1つずつ外す）は残し、読み戻しで空と確かめられた時だけリセットに任せる。確かめられなければ元の方式なので、悪くなる所が無い。"
+}
