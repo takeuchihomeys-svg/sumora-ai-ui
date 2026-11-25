@@ -63,6 +63,21 @@ export type RouteNode = {
  *   内覧に入った件の申込到達は約2倍（内覧予定 61.5%・内覧後 65.2%・物件提案 31.1%・見積 35.9%）＝内覧を勧める本線は残し、お客様が申込の意思を示した時だけ内覧なしの道を候補に出す。
  *   竹内さん本人の申込の意思の番（brain-route-type 13番）: 返信 6・約束 6・AIX 1＝申込へは返信（フォーマットのご案内）が主・AIX【申込へ】は候補に並べるだけ。
  */
+/**
+ * 2026-11-25 作業員A（#687 ③・統括役の決め「入口の切れ目」）: 入口の統括の読み（conductor_intake）に駅を渡す1行（決まった計算・LLM なし）。
+ *   本番の会話の最新の記録で、入口の読みに駅が届いていたのは 0/4（駅は brain-core の後の地図の所で決まる作り）。入口の前に resolveRouteNode で駅だけ出して1行渡す。
+ *   既定 off（CONDUCTOR_INTAKE_ROUTE=on で入る）。off の時は空文字＝入口の材料は1文字も変わらない
+ */
+export function conductorIntakeRouteOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.CONDUCTOR_INTAKE_ROUTE ?? "").trim().toLowerCase() === "on";
+}
+export function intakeRouteLine(node: RouteNodeId | null): string {
+  if (!node) return "";
+  const n = ROUTE_NODES[node];
+  const i = MAIN_ROUTE.indexOf(node);
+  const after = i >= 0 ? MAIN_ROUTE.slice(i + 1, i + 3).map((x) => ROUTE_NODES[x].name).join("→") : "";
+  return `【申込までの地図の駅（決まった計算・入口の材料）】今どこ: ${n.name}${after ? `（この先: ${after}）` : ""}／申込へ向けた次の一手の候補: ${n.next.label}${n.next.aix.length ? `（合う AIX: ${n.next.aix.join("・")}）` : ""}`;
+}
 export function applyRouteNoViewingPathOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.APPLY_ROUTE_NO_VIEWING_PATH ?? "").trim().toLowerCase() === "on";
 }
