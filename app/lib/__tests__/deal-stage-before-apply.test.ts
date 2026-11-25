@@ -40,7 +40,8 @@ assert.equal(late.stageAt.viewing_held, J("2026-10-09T20:00:00"));
 console.log("deal-stage-before-apply ok 16");
 // 台帳 #748 ②: 物件探しのフォーマットの通は申込の時刻にしない（DEAL_APPLY_FORM_SEARCH_GUARD・既定 off）
 import { isSearchFormatText, applyFormSearchGuardEnabled } from "../deal-outcome";
-assert.equal(applyFormSearchGuardEnabled({}), false);
+assert.equal(applyFormSearchGuardEnabled({}), true);
+assert.equal(applyFormSearchGuardEnabled({ DEAL_APPLY_FORM_SEARCH_GUARD: "off" }), false);
 assert.equal(applyFormSearchGuardEnabled({ DEAL_APPLY_FORM_SEARCH_GUARD: "on" }), true);
 assert.equal(isSearchFormatText("氏名：\n生年月日：\nご希望のエリア：\n家賃の上限："), true);
 assert.equal(isSearchFormatText("氏名：\n生年月日：\nお申込みの物件：〇〇 301号室"), false);

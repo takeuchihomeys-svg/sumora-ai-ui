@@ -180,7 +180,7 @@ export function isSearchFormatText(text: string | null | undefined): boolean {
 }
 /** on の時、物件探しのフォーマットに見える申込フォームの通は申込の時刻の「候補」（ほかの印が無い時だけ使う） */
 export function applyFormSearchGuardEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.DEAL_APPLY_FORM_SEARCH_GUARD ?? "off").trim().toLowerCase() === "on";
+  return (env.DEAL_APPLY_FORM_SEARCH_GUARD ?? "").trim().toLowerCase() !== "off"; // 2026-11-26 統括役の決め: 悪化0（申込 145→145・no_road 77→77）で既定 on。止める =off
 }
 export function conditionHandAskEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_CONDITION_HAND_ASK ?? "off").trim().toLowerCase() === "on";
