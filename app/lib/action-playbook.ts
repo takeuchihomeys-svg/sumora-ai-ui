@@ -17,7 +17,7 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
-import { AUTO_RULES, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -30,8 +30,174 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *   5（2026-11-20）: source を field／alias（同じ欄の別名へ写した測った値）／mismatch（開くボタンにチェック欄の位置が写った）の3つに。
  *     4 では alias（賃料上限 等の正しい測り）まで「写し」にしていた。数は positions_alias／positions_mismatch。
  *   6（2026-11-20）: 決まりごとに点検記録で確かめる段（verified_by）を載せ、確かめる印が無い決まりを gaps に出す。
+ *   7（2026-11-22）: 一連の流れ（flow_series）を載せる。場面が並ぶだけでは足りず、外し→確定→駅/地域→検索→一覧→次→次客の把握線を1本にする。
+ *   8（2026-11-23）: list に AD 並べ替え①②③④を固定で載せる（録画が PDF だけでも抜けない）。
+ *   9（2026-11-23）: search に検索把握の手／area に確定してリストへ／clear・switch・pet を extra_guides で載せる（場面なし・薄い録画の穴）。
+ *   10（2026-11-23）: 録画が station だけでも area/cond/search/list を薄いガイド場面として scenes に足す（連続客の外し→入れが手順書から抜けない）。
+ *   11（2026-11-23）: clear extra_guides を入れる並みに細分化（外す前の名前付き把握→箱ごと1つずつ→駅小窓経由→外し後名確認→入れへ）。
+ *   12（2026-11-23）: flow_series 先頭に before_clear（外す前の名前付き把握）。外し後→入れの段が抜けない線。
+ *   13（2026-11-23）: clear_then_fill（外し完了→入れ）を一連に明示。物件取得完了→外す→入れ→検索→並び替え→取得→次客の把握線。
  */
-export const PLAYBOOK_BUILD_V = 6;
+export const PLAYBOOK_BUILD_V = 13;
+
+/**
+ * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
+ *   拡張は `page:flow_series_at` / `page:flow_series_ok` を残し、統括・点検が抜けを名指しする。
+ */
+export type PlaybookFlowPhase = {
+  id: string;
+  label: string;
+  /** 紐づく場面（scene_flows）。無い段もある（外し・次客） */
+  scene: string | null;
+  /** この段を把握した印（点検記録の k） */
+  grasp: string[];
+  next: string | null;
+};
+
+export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
+  /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
+  {
+    id: "before_clear",
+    label: "外す前の名前付き把握",
+    scene: null,
+    grasp: ["page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
+    next: "clear_then_fill",
+  },
+  {
+    id: "clear_then_fill",
+    label: "外し完了→新条件の入れへ",
+    scene: null,
+    grasp: ["page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
+    next: "after_clear",
+  },
+  {
+    id: "after_clear",
+    label: "前客の外し完了→入れへ",
+    scene: null,
+    grasp: ["page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
+    next: "after_confirm",
+  },
+  { id: "after_confirm", label: "確定してリストへ（入れた把握）", scene: "area", grasp: ["page:guide_phase_after_confirm"], next: "after_place" },
+  { id: "after_station", label: "駅の設定完了", scene: "station", grasp: ["page:guide_phase_after_station"], next: "after_place" },
+  { id: "after_area", label: "地域の設定完了", scene: "area", grasp: ["page:guide_phase_after_area"], next: "after_place" },
+  { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["page:guide_phase_after_place"], next: "before_search" },
+  { id: "before_search", label: "検索前の照合", scene: "cond", grasp: ["page:guide_phase_before_search", "page:conditions_ready"], next: "after_search" },
+  { id: "after_search", label: "検索押下の把握（並べ替えの前）", scene: "search", grasp: ["page:guide_phase_after_search", "dl:search_grasp_gate", "page:search_customer_grasp_ok"], next: "sort_ad" },
+  /**
+   * ★ 2026-11-23 竹内さん「並べ替えのADの部分だとわかりやすく手順書に」:
+   *   検索把握の次は必ず ①並べ替え→②AD→③高→低。印刷用PDFはその後。
+   */
+  { id: "sort_ad", label: "①並べ替え→②AD→③高→低", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_done", "dl:sort_menu"], next: "list" },
+  { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
+  { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
+  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "page:list_handoff_seen", "page:flow_done_ready_next"], next: null },
+];
+
+/** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
+export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
+  "①並べ替えへカーソルを置く（クリックしない）",
+  "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）",
+  "③ADの右の「高→低」（span.sort_detail）だけクリック",
+  "④並べ替え後に印刷用PDFを押す",
+];
+
+/**
+ * 検索場面に必ず載せる把握の手（録画が「検索を押す」1手だけだと、把握→並べ替えが手順書から抜ける）
+ *   ★ 2026-11-23 竹内さん「検索の理解の部分はちゃんとできているのか」
+ */
+export const PLAYBOOK_SEARCH_GRASP_STEPS: ReadonlyArray<string> = [
+  "①条件が揃ったら検索ボタンを押す",
+  "②検索したことを手順書×画面で把握する（並べ替え見出し／棟戸／印刷用PDFが見える）",
+  "③把握OKのあと並べ替え（AD）へ進む（印刷用PDFは並べ替えの後・把握なしでは並べ替えしない）",
+];
+
+/**
+ * 所在地（area）に必ず載せる確定の手（録画が区の欄だけだと「確定してリストへ」が抜ける）
+ */
+export const PLAYBOOK_AREA_CONFIRM_STEPS: ReadonlyArray<string> = [
+  "①所在地絞り込みを開く",
+  "②欲しい区（必要なら町）を選ぶ",
+  "③確定してリストへを押す（入れた把握のあと条件へ）",
+];
+
+/** 条件場面が録画に無い時の薄いガイド（連続客で所在地外しだけで止まらない） */
+export const PLAYBOOK_COND_GUIDE_STEPS: ReadonlyArray<string> = [
+  "①賃料・間取り・徒歩など条件を1つずつ入れる",
+  "②検索前に手順書×画面で入忘れ・外し忘れを確かめる",
+  "③揃ったら検索ボタンへ進む（外しだけで終わらない）",
+];
+
+/** 録画場面が無い決まり専用の手（clear / switch / pet）。scenes には載せず extra_guides へ */
+export type PlaybookExtraGuide = {
+  id: string;
+  label: string;
+  steps: ReadonlyArray<string>;
+  rules: ReadonlyArray<string>;
+};
+
+export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
+  {
+    id: "clear",
+    label: "前客の外し（場面なし・決まりから）",
+    steps: [
+      "①外す前に台帳×画面の残りを名前付きで1つずつ言う（入れると同じ細かさ）",
+      "②箱ごとに開ける→1つずつカーソルで外す→外れたか確かめる（間取り→絞込→所在地）",
+      "③駅・沿線は小窓経由で1駅ずつ外す（form直外ししない）",
+      "④外し後に残りの名前を1つずつ確かめる（after_clear）",
+      "⑤きれいになってから clear_then_fill_ok → 新条件の入れへ",
+    ],
+    rules: ["clear_per_panel", "clear_one_by_one", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
+  },
+  {
+    id: "switch",
+    label: "次客への切り替え（場面なし・決まりから）",
+    steps: [
+      "①手順書を読む（playbook_seen）",
+      "②次のお客さんに切り替える",
+      "③前客の外し→きれい確認→新条件の順を守る",
+    ],
+    rules: ["playbook_read"],
+  },
+  {
+    id: "pet",
+    label: "ペット条件（場面なし・決まりから）",
+    steps: [
+      "①絞り込み条件を開く",
+      "②ペット相談など必要な欄だけ押す",
+      "③確定してリストへを押してから検索へ",
+    ],
+    rules: ["pet_confirm"],
+  },
+];
+
+/** 点検記録の段から、一連の流れのどこまで把握できたかを決める（純関数） */
+export function judgeFlowSeriesProgress(
+  steps: ReadonlyArray<{ k?: string } | string | null | undefined>,
+  series: ReadonlyArray<PlaybookFlowPhase> = PLAYBOOK_FLOW_SERIES,
+): {
+  reached: string[];
+  last: string | null;
+  missing: string[];
+  ok: boolean;
+  why: string;
+} {
+  const keys = new Set<string>();
+  for (const s of steps) {
+    if (typeof s === "string") keys.add(s);
+    else if (s && typeof s === "object" && typeof s.k === "string") keys.add(s.k);
+  }
+  const reached: string[] = [];
+  for (const ph of series) {
+    if (ph.grasp.some((g) => keys.has(g))) reached.push(ph.id);
+  }
+  const last = reached.length ? reached[reached.length - 1] : null;
+  const missing = series.map((p) => p.id).filter((id) => !reached.includes(id));
+  const ok = reached.includes("after_search") || reached.includes("sort_ad") || reached.includes("list") || reached.includes("handoff");
+  const why = last
+    ? `一連の流れ: 最後に把握した段=${last}（到達 ${reached.length}/${series.length}・未達 ${missing.slice(0, 4).join("・")}${missing.length > 4 ? "…" : ""}）`
+    : `一連の流れ: どの段の把握印も無い（未達 ${series.map((p) => p.id).slice(0, 5).join("・")}…）`;
+  return { reached, last, missing, ok, why };
+}
 /** 束がこれより古いと検査で「古い」と出す（束は夜に作り直す想定） */
 export const PLAYBOOK_STALE_MS = 36 * 60 * 60 * 1000;
 
@@ -66,6 +232,13 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "square_meter_l": "面積（下限）",
   "印刷用PDF": "印刷用PDFを押す",
   "次": "次のページへ",
+  // 2026-11-23 実測: next 場面の欄名がページャー文言の連結で出る
+  "最初前1234次最後": "次のページへ",
+  "並べ替え": "並べ替えへカーソル（押さない）",
+  "並び替え": "並べ替えへカーソル（押さない）",
+  "AD": "ADへカーソル（押さない・一覧列禁止）",
+  "高→低": "高→低を押す",
+  "左の高→低｜span.sort_detail": "高→低（span.sort_detail）を押す",
 };
 
 /** 手順の1手の細部（押す欄・学んだ押す位置・押すと開く物） */
@@ -149,6 +322,11 @@ export type Playbook = {
   based_on: string;
   /** 場面の手順（束の順のまま） */
   scenes: PlaybookScene[];
+  /**
+   * 一連の流れ（客1人）。場面の並びとは別に「外し→確定→場所→検索→一覧→次→次客」の把握線。
+   *   拡張は flow_series_at 印で今どこかを残す。
+   */
+  flow_series: PlaybookFlowPhase[];
   /** まだ1件も学んでいない場面（人が1回通して録る候補） */
   missing: string[];
   /** 押す位置の確かさ（全体の数） */
@@ -173,6 +351,19 @@ export type Playbook = {
   rules: PlaybookRule[];
   /** 自動の決まりの版（拡張の点検記録 playbook_seen の rv と突き合わせる） */
   rules_v: string;
+  /**
+   * ★ 2.8.297 この手順書を作ったコードの「手順書の見直しの上限」（AUTO_RULES_REVIEWED_UP_TO）。
+   *   実測 2026-11-25 22:00〜22:24: 本番（main・2.8.154）が束を作り直し、手元で揃えた新しい手順書（2.8.296・91件）を
+   *   古い版（23件）で上書きした。版が付いていないと「新しい手順書を古いコードが潰す」のを書く側も読む側も見分けられない。
+   *   → 作った版を持たせ、書く側（bundle-write-prepare）は新しい手順書を古いコードで上書きしない。
+   *   無い（古い手順書）は "0" 扱い＝何にも勝たない。手順書の版（version）の計算には入れない。
+   */
+  rules_up_to?: string;
+  /**
+   * 録画場面が無い決まり専用の手（clear / switch / pet）。
+   *   scenes に無理に載せると場面の並びが崩れるので別枠。
+   */
+  extra_guides: PlaybookExtraGuide[];
 };
 
 type SceneFlowLike = {
@@ -204,6 +395,8 @@ export function cleanPlaybookName(raw: string): string {
   return String(raw ?? "")
     .replace(/^(左の|右の|上の|下の|中央の)/, "")
     .replace(/｜[^｜]*$/, "")
+    // Vision／学習印「🧠88通す」が付いたままだと FIELD_JA に当たらず未分類になる（実測: 印刷用PDF🧠88通す）
+    .replace(/🧠\d+通す$/u, "")
     .trim();
 }
 
@@ -366,6 +559,64 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
     .map((f) => playbookSceneOf(f, posIdx, openIdx));
   const learned = new Set(scenes.map((s) => s.scene));
+  const gapsEarly: string[] = [];
+  /**
+   * ★ 2.8.208 / build_v10: 録画が薄い束でも連続客に必要な場面を scenes に足す（missing 判定の前）。
+   */
+  const injectGuideSceneEarly = (
+    scene: string,
+    steps: ReadonlyArray<string>,
+    ruleIds: ReadonlyArray<string>,
+    why: string,
+  ) => {
+    if (scenes.some((s) => s.scene === scene)) return;
+    const detail: PlaybookStep[] = steps.map((step) => ({
+      step,
+      field: String(step).slice(0, 28),
+      aim: null,
+      opens: null,
+    }));
+    scenes.push({
+      scene,
+      label: (SCENE_JA as Record<string, string>)[scene] ?? scene,
+      runs: 0,
+      ops: 0,
+      steps: [...steps].slice(0, PLAYBOOK_MAX_STEPS),
+      gap_ms: null,
+      variants: 0,
+      values_dropped: 0,
+      unknown: [],
+      confidence: "thin",
+      detail: detail.slice(0, PLAYBOOK_MAX_STEPS),
+      rules: [...ruleIds],
+    });
+    learned.add(scene);
+    gapsEarly.push(why);
+  };
+  injectGuideSceneEarly(
+    "area",
+    PLAYBOOK_AREA_CONFIRM_STEPS,
+    ["guide_phase_checkpoints", "guide_clear_fill_gate"],
+    "所在地場面: 録画が無いため①開く→②区→③確定 を薄いガイド場面として手順書に足した",
+  );
+  injectGuideSceneEarly(
+    "cond",
+    PLAYBOOK_COND_GUIDE_STEPS,
+    ["guide_clear_fill_gate", "continuous_customer_loop"],
+    "条件場面: 録画が無いため①条件入れ→②照合→③検索へ を薄いガイド場面として手順書に足した（外しだけで終わらない）",
+  );
+  injectGuideSceneEarly(
+    "search",
+    PLAYBOOK_SEARCH_GRASP_STEPS,
+    ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"],
+    "検索場面: 録画が無いため①検索→②把握→③並べ替えへ を薄いガイド場面として手順書に足した",
+  );
+  injectGuideSceneEarly(
+    "list",
+    PLAYBOOK_LIST_AD_SORT_STEPS,
+    ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor", "guide_list_next_flow"],
+    "一覧場面: 録画が無いため①並べ替え→②AD→③高→低→④PDF を薄いガイド場面として手順書に足した",
+  );
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
@@ -404,7 +655,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   const opens_guessed = opens.length - opens_known;
   const next_n = Object.keys(bundle.next ?? {}).length;
 
-  const gaps: string[] = [];
+  const gaps: string[] = [...gapsEarly];
   if (!positions.length) gaps.push("押す位置が1つも無い（束の points が空）");
   if (mismatches) {
     const names = positions.filter((p) => p.source === "mismatch").map((p) => cleanPlaybookName(p.field)).slice(0, 4);
@@ -446,13 +697,146 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     gaps.push(`人の手本（録画の場面）がまだ無く、自動の決まりだけの場面：${ruleOnly.map((sc) => RULE_SCENE_JA[sc]).join("・")}`);
   }
 
-  const body = JSON.stringify({ build_v: PLAYBOOK_BUILD_V, scenes, missing, points: { solid, thin }, positions, opens, next_n, rules_v });
+  const flow_series = PLAYBOOK_FLOW_SERIES.map((p) => ({ ...p }));
+  // 一連の流れに紐づく場面が薄い／無い時は gaps に出す（場面の並びだけ見て「流れOK」と誤解しない）
+  for (const ph of flow_series) {
+    if (!ph.scene) continue;
+    const sc = scenes.find((s) => s.scene === ph.scene);
+    if (!sc) gaps.push(`一連の流れ「${ph.label}」に紐づく場面 ${ph.scene} が手順に無い`);
+    else if (sc.confidence === "thin") gaps.push(`一連の流れ「${ph.label}」の場面 ${sc.label} が薄い（検索${sc.runs}回）`);
+  }
+  if (!flow_series.length) gaps.push("一連の流れ（flow_series）が空");
+
+  /**
+   * ★ 2026-11-23: list 場面に AD 並べ替えの手を必ず載せる。
+   *   録画が印刷用PDFだけだと手順書から並べ替えが抜け、自動が PDF 直行する。
+   */
+  for (const sc of scenes) {
+    if (sc.scene !== "list") continue;
+    // 固定ガイド（①〜③）が無い時だけ足す。FIELD_JA の「並べ替え」文言だけでは足りない
+    const hasAdGuide = sc.steps.some((t) => /①並べ替え|②メニュー内のAD|③ADの右の/.test(String(t || "")));
+    if (hasAdGuide) continue;
+    const rest = sc.steps.filter((t) => !/印刷用PDF|並べ替え|高→低|^AD$|①|②|③|④/.test(String(t || "")));
+    // AD 手を先頭に・上限は PLAYBOOK_MAX_STEPS（長い録画手順で溢れない）
+    sc.steps = PLAYBOOK_LIST_AD_SORT_STEPS.concat(rest).slice(0, PLAYBOOK_MAX_STEPS);
+    const guideDetail: PlaybookStep[] = PLAYBOOK_LIST_AD_SORT_STEPS.map((step) => ({
+      step,
+      field: step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
+        : step.indexOf("AD") >= 0 ? "AD"
+        : step.indexOf("並べ替え") >= 0 ? "並べ替え"
+        : "印刷用PDF",
+      aim: null,
+      opens: null,
+    }));
+    sc.detail = guideDetail
+      .concat(sc.detail.filter((d) => !/①並べ替え|②メニュー|③AD|④並べ替え後|印刷用PDF/.test(d.step)))
+      .slice(0, PLAYBOOK_MAX_STEPS);
+    // 固定ガイドで PDF を載せるので、学習印付き PDF の未分類は落とす
+    sc.unknown = sc.unknown.filter((u) => !/^印刷用PDF/.test(cleanPlaybookName(u)));
+    if (!sc.rules.includes("ad_sort_hover")) {
+      sc.rules = ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor"].concat(sc.rules);
+    }
+    gaps.push("一覧場面: 録画に並べ替え手が薄いため、①並べ替え→②AD→③高→低→④PDF を手順書に固定で載せた");
+  }
+
+  /**
+   * ★ 2026-11-23: search 場面に検索把握の手を必ず載せる。
+   *   録画が「検索を押す」1手だけだと、把握→並べ替えが手順書から抜ける。
+   */
+  for (const sc of scenes) {
+    if (sc.scene !== "search") continue;
+    const hasSearchGuide = sc.steps.some((t) => /①条件が揃ったら検索|②検索したことを手順書|③把握OKのあと並べ替え/.test(String(t || "")));
+    if (hasSearchGuide) continue;
+    const oldSearchAim = sc.detail.find((d) => /検索/.test(d.step))?.aim ?? null;
+    const rest = sc.steps.filter((t) => !/検索を押す|^検索$|①条件|②検索した|③把握OK/.test(String(t || "")));
+    const restDetail = sc.detail.filter((d) => rest.includes(d.step));
+    sc.steps = PLAYBOOK_SEARCH_GRASP_STEPS.concat(rest).slice(0, PLAYBOOK_MAX_STEPS);
+    const guideDetail: PlaybookStep[] = PLAYBOOK_SEARCH_GRASP_STEPS.map((step, i) => ({
+      step,
+      field: step.indexOf("検索ボタン") >= 0 ? "検索" : "検索把握",
+      aim: i === 0 ? oldSearchAim : null,
+      opens: null,
+    }));
+    sc.detail = guideDetail.concat(restDetail).slice(0, PLAYBOOK_MAX_STEPS);
+    for (const rid of ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"] as const) {
+      if (!sc.rules.includes(rid)) sc.rules = [rid, ...sc.rules];
+    }
+    gaps.push("検索場面: 録画が薄いため、①検索押す→②手順書×画面で把握→③並べ替えへ を手順書に固定で載せた");
+  }
+
+  /**
+   * ★ 2026-11-23: area 場面に「確定してリストへ」を必ず載せる。
+   *   録画の手（押す位置つき）は残し、欠けた開く／確定だけ足す（全部差し替えない＝aim を消さない）。
+   */
+  for (const sc of scenes) {
+    if (sc.scene !== "area") continue;
+    const hasConfirm = sc.steps.some((t) => /確定してリストへ/.test(String(t || "")));
+    const hasOpen = sc.steps.some((t) => /所在地絞り込みを開く|所在地絞り込み/.test(String(t || "")));
+    if (hasConfirm && hasOpen) continue;
+    const prepend: PlaybookStep[] = [];
+    const append: PlaybookStep[] = [];
+    if (!hasOpen) {
+      prepend.push({
+        step: PLAYBOOK_AREA_CONFIRM_STEPS[0],
+        field: "所在地絞り込みを開く",
+        aim: null,
+        opens: null,
+      });
+    }
+    if (!hasConfirm) {
+      // 確定の押す位置が束にあれば載せる（aim を消さない方針）
+      const confField = "確定してリストへ";
+      const confPos = positions.find((p) => p.field === confField || p.field.indexOf("確定してリストへ") >= 0) || null;
+      append.push({
+        step: PLAYBOOK_AREA_CONFIRM_STEPS[2],
+        field: confField,
+        aim: confPos
+          ? { x: confPos.x ?? 0.5, y: confPos.y ?? 0.5, n: confPos.n, confidence: confPos.confidence, source: confPos.source }
+          : null,
+        opens: null,
+      });
+    }
+    sc.steps = prepend.map((d) => d.step).concat(sc.steps).concat(append.map((d) => d.step)).slice(0, PLAYBOOK_MAX_STEPS);
+    sc.detail = prepend.concat(sc.detail).concat(append).slice(0, PLAYBOOK_MAX_STEPS);
+    gaps.push(
+      !hasConfirm && !hasOpen
+        ? "所在地場面: 録画に開く・確定が薄いため、所在地絞り込みを開く／確定してリストへ を手順書に足した"
+        : !hasConfirm
+          ? "所在地場面: 録画に確定手が薄いため、確定してリストへ を手順書に足した"
+          : "所在地場面: 録画に開く手が薄いため、所在地絞り込みを開く を手順書に足した",
+    );
+  }
+
+  /** 録画場面が無い clear / switch / pet は extra_guides に載せる（scenes は崩さない） */
+  const extra_guides: PlaybookExtraGuide[] = PLAYBOOK_EXTRA_GUIDES.map((g) => ({
+    id: g.id,
+    label: g.label,
+    steps: [...g.steps],
+    rules: [...g.rules],
+  }));
+  for (const g of extra_guides) {
+    gaps.push(`場面なし「${g.label}」: 録画が無いため決まりから①②③を extra_guides に載せた`);
+  }
+
+  const body = JSON.stringify({
+    build_v: PLAYBOOK_BUILD_V,
+    scenes,
+    flow_series: flow_series.map((p) => p.id),
+    missing,
+    points: { solid, thin },
+    positions,
+    opens,
+    next_n,
+    rules_v,
+    extra_guides: extra_guides.map((g) => g.id),
+  });
   return {
     v: 1,
     build_v: PLAYBOOK_BUILD_V,
     version: fnv1a(body),
     based_on: String(bundle.generated_at ?? ""),
     scenes,
+    flow_series,
     missing,
     points: { solid, thin },
     positions,
@@ -465,6 +849,8 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     gaps,
     rules,
     rules_v,
+    rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
+    extra_guides,
   };
 }
 
@@ -512,6 +898,20 @@ export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[
   if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) issues.push(`作り方が古い（build_v=${pb.build_v}・今は ${PLAYBOOK_BUILD_V}）`);
   if (!Array.isArray(pb.rules) || !pb.rules.length) issues.push("自動の決まりが手順書に入っていない");
   else if (pb.rules_v !== autoRulesVersion()) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${autoRulesVersion()}）`);
+  if (!Array.isArray(pb.flow_series) || pb.flow_series.length < 5) {
+    issues.push("一連の流れ（flow_series）が無い／短すぎる（外し→検索→一覧→次客の把握線が無い）");
+  } else {
+    const ids = pb.flow_series.map((p) => p.id);
+    for (const need of ["before_clear", "clear_then_fill", "after_clear", "after_confirm", "after_search", "list", "handoff"]) {
+      if (!ids.includes(need)) issues.push(`一連の流れに必須段が無い: ${need}`);
+    }
+    const bi = ids.indexOf("before_clear");
+    const ai = ids.indexOf("after_clear");
+    if (bi >= 0 && ai >= 0 && bi > ai) issues.push("一連の流れ: before_clear が after_clear より後（順番抜け）");
+    const cti = ids.indexOf("after_clear");
+    const fi = ids.indexOf("after_confirm");
+    if (cti >= 0 && fi >= 0 && cti > fi) issues.push("一連の流れ: after_clear が after_confirm より後（外す→入れの順抜け）");
+  }
   for (const s of pb.scenes) {
     if (!Array.isArray(s.detail) || s.detail.length !== s.steps.length) issues.push(`${s.label}：1手ずつの細部が手順と合わない`);
   }

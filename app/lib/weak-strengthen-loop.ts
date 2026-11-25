@@ -8,10 +8,13 @@
  *
  * ★ 一連（弱さが残る限り回す）
  *   1. 弱い欄・ボタンを特定 → **1つずつ**順に
- *   2. その1つだけ通常画像から photo_learn（位置・押し方・種類）
+ *   2. その1つだけ**通常モードの連続録画**から photo_learn（order=sequence）
+ *      ※ newest だけだと流れの途中が切れる。並べ替え・条件モーダルは連続で理解する
  *   3. 全部の1つずつのあと束へ反映（reflect）
  *   4. 拡張が読む → 自動1回 → 効果確認
  *   5. まだ弱ければ 1 へ戻す
+ *
+ * ★ 2026-11-23 竹内さん「弱い部分画像学習有料で弱い部分の連続録画から学習／通常モードから徹底」
  *
  * ⚠ 純関数。DBに書かない・Visionを呼ばない。実行は scripts/weak-strengthen.ts。
  */
@@ -47,6 +50,11 @@ export type WeakStrengthenInput = {
   oneByOne?: boolean;
   /** 1ボタンあたりの画像枚数上限（省略時は統括limitを分割） */
   perButtonLimit?: number;
+  /**
+   * photo_learn の読み順。既定 `sequence`＝通常連続録画の先頭→末尾。
+   * （2026-11-23: 弱い部分は連続録画から理解できるまで）
+   */
+  photoOrder?: "sequence" | "newest" | "time";
   /**
    * ★ 2026-11-17: サイト別台帳（realpro / itandi）。混ぜない。
    *   既定 realpro。
@@ -107,6 +115,7 @@ export function buildWeakStrengthenPlan(inp: WeakStrengthenInput): WeakStrengthe
   const bn = inp.bottleneck_n ?? null;
   const round = Math.max(1, Number(inp.round) || 1);
   const pointPct = inp.pointPct == null ? null : Number(inp.pointPct);
+  const photoOrder = inp.photoOrder || "sequence";
 
   const cycle: ImproveTask[] = [];
   const needPhoto =
@@ -129,17 +138,18 @@ export function buildWeakStrengthenPlan(inp: WeakStrengthenInput): WeakStrengthe
       const label = site === "itandi" ? itandiButtonLabel(id) : realproButtonLabel(id);
       cycle.push({
         kind: "photo_learn",
-        what: `${siteJa}「${label}」を1つ理解して強化する（${i + 1}/${targets.length}）`,
-        why: `周回${round}・1つずつ／台帳正名のみ／このボタンだけ位置・押し方・種類を学ぶ／未学習通常 ${unread}枚`,
+        what: `${siteJa}「${label}」を連続録画から1つ理解して強化する（${i + 1}/${targets.length}）`,
+        why: `周回${round}・1つずつ／通常mode・order=${photoOrder}／このボタンの位置・押し方・流れを学ぶ／未学習通常 ${unread}枚`,
         cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
         limit: per,
-        order: "newest",
+        order: photoOrder,
         fields: [id],
       });
     });
   } else if (needPhoto) {
     const whyBits = [
       `周回${round}`,
+      `通常mode・order=${photoOrder}`,
       targets.length ? `対象: ${targets.slice(0, 6).join("・")}` : "弱い原子・位置%から",
       unread ? `未学習通常 ${unread}枚` : null,
       atoms.length ? `原子: ${atoms.slice(0, 4).join("・")}` : null,
@@ -148,15 +158,15 @@ export function buildWeakStrengthenPlan(inp: WeakStrengthenInput): WeakStrengthe
     cycle.push({
       kind: "photo_learn",
       what: targets.length
-        ? "弱い欄を通常画像から徹底学習する（位置・押し方・観点）"
-        : "弱い原子・位置不足を通常画像から徹底学習する",
+        ? "弱い欄を通常の連続録画から徹底学習する（位置・押し方・流れ）"
+        : "弱い原子・位置不足を通常の連続録画から徹底学習する",
       why: whyBits.join("／"),
       cost: "1枚ごとに Vision の費用（枚数は統括が課題に応じて決める）",
       limit: photoLearnLimitFor({
         todo: unread,
         fieldCount: Math.max(targets.length, atoms.length || 1),
       }),
-      order: "newest",
+      order: photoOrder,
       ...(targets.length ? { fields: targets.slice(0, 8) } : {}),
     });
   }

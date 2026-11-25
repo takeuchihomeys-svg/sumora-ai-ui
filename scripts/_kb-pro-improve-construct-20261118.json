@@ -1,0 +1,10 @@
+{
+  "title": "【決定】統括Proは学習後に改善する仕組みを構築し自動へ反映する（志向）",
+  "category": "architecture",
+  "insight": "統括Proの志向は①実データで学習②足りない・補強を層で名指し③どう強化④どんな仕組み（完了線）⑤構築⑥次の1手⑦束→拡張再読込→自動1回→効果測定。build_next＝仕組みの構築手、path_to_100＝欠→仕組み→構築→束→再読込→自動→効果。表示だけで終わらせない。pro-improve-construct.ts が決定論台帳。",
+  "rationale": "竹内さん『学習してからどう強化／どのような仕組みがあれば改善／何か足りていない／何を補強／改善する仕組みを作る／構築／次どのように／反映／志向／ちゃんと自動モード』。足りない→強化→改善の骨格に⑥仕組み⑦構築⑧自動反映を足し、志向を毎回axesに載せる。",
+  "context": "2026-11-18 竹内さん言葉: 統括proは学習してから、どう強化するか、どのような仕組みがあれば改善されるか、何か足りていないか、何を補強する必要があるか／改善する仕組みを作っていく必要がある／改善して構築するようにする／次どのようにしていくか構築できるように／反映できるようにしていく必要がある／構築するために統括proは何を志向する必要があるか／どのように強化していくか、ちゃんと自動モード",
+  "applied_to": "app/lib/pro-improve-construct.ts / pro-think-capability think_order / learn-supervisor LEARN_MECHANISMS+evidence / learn-supervisor-pro axes.improve_construct+ensureImproveConstructEvidence",
+  "tags": ["絶対・最優先", "統括Pro", "分析強化の原則", "ブレイン", "自動モード"],
+  "priority": 1
+}

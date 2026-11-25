@@ -39,8 +39,19 @@ export function trustMetricsOf(rows: ReadonlyArray<PromiseKeptRow>): { judged: n
  */
 export const ROUTE_SG_FROM = "2026-11-03T05:42";
 export type RouteProgressRow = { at: string; node: string | null; digestNode: string | null };
+/**
+ * 2026-11-25 作業員A（#687・竹内さん 18時台「地図の部分かなり重要・細分化して強化」・一番弱い駅 hearing 35.7%）: 同じに数える決め。
+ *   hearing の外れは、お客様の初めての通に条件まで書いてある番（こちらはまだ1通も送っていない）＝判断の記録の段は first（問い合わせ）・地図は hearing（条件の返し）。
+ *   60日の照らし 5番とも初回（スタッフの通 0）で、竹内さんの一手は探すの約束の返信＝どちらの駅でも次の一手は同じ＝数え方。止める ROUTE_SG_FIRST_HEARING=off
+ */
+export function sameRouteStation(node: string | null | undefined, digestNode: string | null | undefined, env: Record<string, string | undefined> = process.env): boolean {
+  if (node === digestNode) return true;
+  if (digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(node ?? "")) return true;
+  if ((env.ROUTE_SG_FIRST_HEARING ?? "").trim().toLowerCase() !== "off" && digestNode === "inquiry" && node === "hearing") return true;
+  return false;
+}
 export function routeSgMatchRowsOf(rows: ReadonlyArray<RouteProgressRow>): Array<{ metric: string; value: number | null; n: number }> {
-  const same = (x: RouteProgressRow) => x.node === x.digestNode || (x.digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(x.node ?? ""));
+  const same = (x: RouteProgressRow) => sameRouteStation(x.node, x.digestNode);
   const sg = rows.filter((x) => x.node && x.digestNode && x.at >= ROUTE_SG_FROM);
   const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
   const out = [{ metric: "route:sg_match", value: pct(sg.filter(same).length, sg.length), n: sg.length }];

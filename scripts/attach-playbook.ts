@@ -77,10 +77,36 @@ async function main() {
 
     if (!apply) continue;
     if (!prep.playbook_ok) { console.log("  手順書を作れないので書きません"); continue; }
+    /**
+     * ★ 2026-11-23 竹内さん「拡張が新束を読んでいない／手順書抜けを仕組み化」:
+     *   実測: 手順書だけ PATCH すると generated_at が据え置き → 拡張が same_version で取り直しをスキップ。
+     *   → 書く時は必ず generated_at を今にし、read_count を 0 に戻す（新手順書の反映は未実証と明示）。
+     */
+    clone.generated_at = new Date().toISOString();
+    const pbAfter = clone.playbook as { rules_v?: string; rules?: unknown[] } | undefined;
+    console.log(`  版上げ: generated_at を更新／決まり版=${pbAfter?.rules_v ?? "-"}／件数=${pbAfter?.rules?.length ?? 0}${prep.playbook_ver_bumped ? "（rules_v変化）" : "（attach強制）"}`);
+    console.log(`  ⚠ 関所: 拡張再読込→自動1回まで「反映済み」と言わない（read は 0 に戻す）`);
     fs.writeFileSync(path.join(backupDir, `${row.id}.json`), before);
-    const r = await fetch(`${URL_}/rest/v1/human_learn_profile?id=eq.${row.id}`, { method: "PATCH", headers: { ...H, Prefer: "return=minimal" }, body: JSON.stringify({ bundle: clone }) });
+    const r = await fetch(`${URL_}/rest/v1/human_learn_profile?id=eq.${row.id}`, {
+      method: "PATCH",
+      headers: { ...H, Prefer: "return=minimal" },
+      body: JSON.stringify({ bundle: clone, read_count: 0, read_at: null }),
+    });
     if (!r.ok) throw new Error(`書けません id=${row.id} (${r.status})`);
     console.log(`  書きました（控え: ${backupDir}）`);
+    try {
+      const stampDir = path.join(process.cwd(), "memory");
+      fs.mkdirSync(stampDir, { recursive: true });
+      fs.writeFileSync(path.join(stampDir, "playbook_reflect_pending.json"), JSON.stringify({
+        at: new Date().toISOString(),
+        scope,
+        row_id: row.id,
+        rules_v: pbAfter?.rules_v ?? null,
+        rules_n: pbAfter?.rules?.length ?? 0,
+        generated_at: clone.generated_at,
+        next: "拡張≥2.8.206再読込→自動1回→check-playbook-reflect（rv一致・read≥1）",
+      }, null, 2));
+    } catch { /* スタンプ失敗でも本体は書けた */ }
   }
   if (!apply) console.log("（dry-run: 何も書いていません。--apply --backup-dir=<場所> で書きます）");
 }

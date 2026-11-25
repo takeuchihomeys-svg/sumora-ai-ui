@@ -26,6 +26,20 @@ console.log("■ 名前の無い束は変えずに手順書だけ付く");
   ok("それでも手順書は付く", r.playbook_ok === true);
 }
 
+console.log("■ 手順書 rules_v が変わったら generated_at を上げる（attach→same_version抜け）");
+{
+  const b: Record<string, unknown> = {
+    generated_at: "2020-01-01T00:00:00.000Z",
+    playbook: { rules_v: "00000000", rules: [], scenes: [], build_v: 1 },
+    next: { id: { n: 2 } },
+  };
+  const r = prepareBundleForWrite(b);
+  const pb = b.playbook as { rules_v?: string };
+  ok("rules_v が古い版と違う", !!pb.rules_v && pb.rules_v !== "00000000");
+  ok("playbook_ver_bumped", r.playbook_ver_bumped === true);
+  ok("generated_at が更新される", String(b.generated_at) !== "2020-01-01T00:00:00.000Z");
+}
+
 console.log("■ 開くボタンの名前に写ったチェック欄の位置を外してから手順書を作る（束 2532 の形）");
 {
   const copy = { n: 1238, w: "checkbox", x: 0.5, y: 0.5 };

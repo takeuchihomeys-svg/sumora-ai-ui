@@ -14,6 +14,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyBundleAliasExpansion } from "./field-name-aliases";
+import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
+import { PLAYBOOK_BUILD_V } from "./action-playbook";
+import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -74,7 +77,13 @@ export function learnHistorySlimOn(env: Record<string, string | undefined> = typ
   // 2026-11-22 土台の点検の on/off で全 F の差 0 を確かめて既定 on（止める: LEARN_HISTORY_SLIM=off）
   return (env.LEARN_HISTORY_SLIM ?? "").trim().toLowerCase() !== "off";
 }
-export const HISTORY_SLIM_SELECT = "created_at,shots:bundle->shots,foundation_audit:bundle->foundation_audit,scene_flows:bundle->scene_flows";
+/**
+ * ★ 2.8.297（追補）細く読む時も、手順書の「作った版」の印だけは読む（pb_up_to・pb_build＝数文字）。
+ *   実測（2026-11-25 点検）: 標準が on なので、手順書本体（数十万字）を読まない細い読みでは、履歴の新しい手順書を
+ *   prepareBundleForWrite に渡せず、古いコードで潰さない歯止めが本番の標準の経路で働いていなかった。
+ *   → 印だけ読み、コードより新しい物が履歴にある時だけ、その1行の手順書を1回だけ読む（inheritLinkFoundations）。
+ */
+export const HISTORY_SLIM_SELECT = "created_at,shots:bundle->shots,foundation_audit:bundle->foundation_audit,scene_flows:bundle->scene_flows,pb_up_to:bundle->playbook->>rules_up_to,pb_build:bundle->playbook->>build_v";
 function historySelect(): string { return learnHistorySlimOn() ? HISTORY_SLIM_SELECT : "bundle,created_at"; }
 /** 細く読んだ行を、引き継ぎが読む形（bundle の中の3つ）に戻す（純関数） */
 export function toHistRow(r: unknown): HistRow {
@@ -82,7 +91,12 @@ export function toHistRow(r: unknown): HistRow {
   if ("bundle" in o) return o as HistRow;
   const bundle: Record<string, unknown> = {};
   for (const k of ["shots", "foundation_audit", "scene_flows"]) if (o[k] != null) bundle[k] = o[k];
-  return { bundle, created_at: typeof o.created_at === "string" ? o.created_at : undefined };
+  const created_at = typeof o.created_at === "string" ? o.created_at : undefined;
+  // ★ 2.8.297（追補）手順書の印だけ（本体は読んでいない＝__stamp_only）。いつの行かも持つ（必要な時に1行だけ読み直すため）
+  if (o.pb_up_to != null && String(o.pb_up_to).trim() !== "") {
+    bundle.playbook = { rules_up_to: String(o.pb_up_to), build_v: Number(o.pb_build) || 0, __stamp_only: true, __at: created_at };
+  }
+  return { bundle, created_at };
 }
 
 async function loadHistoryRows(
@@ -226,6 +240,7 @@ export async function inheritLinkFoundations(
   let historyHadSolid = false;
 
   const scopes = scopesToSearch(scope);
+  const historyPlaybooks: Array<Record<string, unknown>> = [];
 
   for (const sc of scopes) {
     const { rows, error } = await loadHistoryRows(sb, sc, lookback);
@@ -234,6 +249,12 @@ export async function inheritLinkFoundations(
       continue;
     }
     for (const row of rows) {
+      // ★ 2.8.297: 履歴の一番新しい手順書を覚える（prepareBundleForWrite が「古いコードで新しい手順書を潰さない」ために使う）
+      const hp = (row.bundle as { playbook?: Record<string, unknown> | null } | null)?.playbook;
+      if (hp && typeof hp === "object") {
+        if (hp.__stamp_only) hp.__scope = sc;
+        historyPlaybooks.push(hp);
+      }
       const old = countLearnedSolid(row.bundle);
       if (old.solid >= minSolid) historyHadSolid = true;
       const curSolid = countLearnedSolid(bundle).solid;
@@ -294,6 +315,32 @@ export async function inheritLinkFoundations(
 
   /** inherit 後も拡張の完全一致引き用に別名を載せる */
   applyBundleAliasExpansion(bundle);
+
+  // ★ 2.8.297: 履歴の一番新しい手順書を「列挙されない印」で束に載せる（JSON にも DB にも出ない・prepareBundleForWrite が読んで消す）
+  try {
+    let newest = pickNewestPlaybook<Record<string, unknown>>(historyPlaybooks);
+    // コードより新しい物だけ残す価値がある（そうでなければ作り直してよい＝本体は要らない）
+    if (newest && !isPlaybookNewerThanCode(newest, { upTo: AUTO_RULES_REVIEWED_UP_TO, build: PLAYBOOK_BUILD_V })) newest = null;
+    // 細い読みで印だけの時は、その1行の手順書本体を1回だけ読む（読めなければ印を付けない＝今までの動き）
+    if (newest && newest.__stamp_only) {
+      const at = String(newest.__at ?? ""), sc = String(newest.__scope ?? "");
+      let full: Record<string, unknown> | null = null;
+      if (at && sc) {
+        const { data, error } = await sb
+          .from("human_learn_profile")
+          .select("playbook:bundle->playbook")
+          .eq("scope", sc)
+          .eq("created_at", at)
+          .limit(1);
+        const p = !error && Array.isArray(data) ? (data[0] as { playbook?: unknown } | undefined)?.playbook : null;
+        if (p && typeof p === "object" && !Array.isArray(p) && (p as { rules_up_to?: unknown }).rules_up_to != null) full = p as Record<string, unknown>;
+      }
+      newest = full;
+    }
+    if (newest) {
+      Object.defineProperty(bundle, "__prev_playbook", { value: newest, enumerable: false, configurable: true, writable: true });
+    }
+  } catch { /* 印が付かなくても書く（今までの動き） */ }
 
   const solid = countLearnedSolid(bundle).solid;
   const has_fa = !!bundle.foundation_audit;

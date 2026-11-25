@@ -1,0 +1,10 @@
+{
+  "category": "architecture",
+  "title": "【決定】録画→課題→学習→仕組み補強→学び方強化の完全ループ",
+  "insight": "自動録画で課題を見つけ、通常から学び、足りない仕組みを補強し、束→拡張→自動→効果確認のあと、効果で学習方法自体を直して①へ戻す。flash偏重でread_count=0のときは関所（再読込）優先に学び方を切り替える。配線axlx-rec-pointは2.8.86+であり、無い前提で土台を足し直さない。",
+  "rationale": "竹内さん「録画して課題見つけて改善と学習して足りない仕組みは補強／完全にループ／学習したあと学習方法も学んでよりよい学習ができるように」。統括Pro: 止は段階4（束読込）。学び方を関所優先へ。",
+  "context": "2026-11-18 竹内さん。実装: rec-challenge-reinforce（8段）／learn-method-strengthen／サイト学習方法⑥。点検: scripts/rec-challenge-reinforce.ts・supervisor-pro --meet",
+  "applied_to": "app/lib/rec-challenge-reinforce.ts, app/lib/learn-method-strengthen.ts, app/lib/site-learn-method.ts, app/lib/learn-supervisor.ts, app/lib/learn-supervisor-pro.ts, scripts/rec-challenge-reinforce.ts",
+  "tags": ["統括Pro", "Chrome拡張", "学習方法", "分析強化の原則", "汎用"],
+  "priority": 1
+}

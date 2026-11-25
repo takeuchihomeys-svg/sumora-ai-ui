@@ -1,0 +1,10 @@
+{
+  "title": "【決定】一括の切り替えの返事に上限を付け、入力を始めていない段は起こす（拡張 2.8.282）",
+  "category": "architecture",
+  "insight": "一括が「条件を入れる」段のまま41分止まり、finished も error も付かず started で残った（search_audits #1640・v2.8.281・2026-11-25 13:14）。原因は chrome.tabs.sendMessage(axlx-switch-customer) の返事を new Promise で上限無しに待っていたこと。受け手 underbar.js は return true の非同期返事で、iframe 未作成時は load の出来事を待つだけで時間切れが無いため、load が来ないと sendResponse が一度も呼ばれず lastError も出ず Promise が永久に解決しない。段=autofill は BULK_KICKABLE_PHASES の外なので見回り（20秒）にも拾われず、励ましの getPlatformInfo が裏を生かし続けるので止まったことに誰も気づけない。直し: ①_SWITCH_SEND_TIMEOUT_MS=30000 でリアプロ・itandi の switch を _withTimeout で包む（underbar の返事の上限20秒より長く）②打ち切りは switch-no-answer-timeout として応答なしと同じ道（1回読み直し→直接入力）に流し段に switch_timeout を残す ③_bulkAutofillDeadKick: autofill が上限+1分を過ぎ、かつページが fillRunning でない時だけ _bulkKick(autofill_dead, retrySame:true) で同じ客を回す（入力中は割らない・段に autofill_dead_kick）④_bulkKick に retrySame（同じ客から）を足すが、送付まで進んだ客を二重に送らないため呼ぶ側が「まだ何も送っていない」と確かめた時だけ使う。",
+  "rationale": "返事の上限が無い所は、来なければ永久に待つ＝静かに止まる。Chrome 側にも待ちの上限が無いので、送る側で打ち切るしかない。さらに「入力の最中は割らない」ために見回りの対象外にした段（autofill）は、入力が始まっていない時まで守ってしまい、誰も起こさない穴になる。「上限を過ぎた」かつ「ページが動いていない」の2つを揃えた時だけ起こすことで、割らない決まりと止まらない決まりを両立する。retrySame は同じ客を回すので二重送信の危険があるため、送付前と確かめた時だけに限る。",
+  "context": "2026-11-25 竹内さん「つづきからしたい」→ 2.8.281 の実機の確認。search_audits #1640 が started のまま41分、段は begin→bulk_phase→customer_think→dl:send_bar_show の4つだけ。chrome_extension_feedback の [perf] は6行出ておりページは生きていた（画面の固まりではない）。",
+  "applied_to": "chrome-extension/background.js（_SWITCH_SEND_TIMEOUT_MS・_sendSwitch・_sendItandiSwitch・_bulkAutofillDeadKick・_bulkKick の retrySame・20秒の見回り）・chrome-extension/manifest.json・chrome-extension/page-script.js・app/lib/auto-procedure-rules.ts（bulk_switch_no_forever_wait）・tests/chrome-extension/bulk-switch-no-forever-wait-v28282.test.js",
+  "tags": ["Chrome拡張", "一括検索", "静かに壊れる", "service-worker", "次客"],
+  "priority": 1
+}

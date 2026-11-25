@@ -3,6 +3,47 @@
 // リアプロページにAIXLINX フローティングパネルを注入
 // 展開状態・位置・サイズをlocalStorageで保持（全タブ共有・ブラウザ再起動後も保持）
 (function () {
+  /**
+   * ★ 2.8.254: 既に wrap があるのに display:none（並べ替え tuck の残骸等）なら戻して終了。
+   *   旧は early return だけで、消えたまま永久に復活しなかった。
+   */
+  (function _healExistingWrap() {
+    try {
+      var w = document.getElementById("aixlinx-float-wrap");
+      if (!w) return;
+      if (w.getAttribute("data-axlx-sort-prev-display") != null) {
+        var prev = w.getAttribute("data-axlx-sort-prev-display");
+        w.style.setProperty("display", prev === "none" || prev === "" ? "flex" : (prev || "flex"), "important");
+        w.removeAttribute("data-axlx-sort-prev-display");
+      }
+      var cs = window.getComputedStyle ? window.getComputedStyle(w) : null;
+      var hidden = (w.style.display === "none") || (cs && cs.display === "none");
+      if (hidden && w.getAttribute("data-axlx-user-mini") !== "1") {
+        w.style.setProperty("display", "flex", "important");
+      }
+      /**
+       * ★ 2.8.258: 既存 wrap でも右ドックから離れていたら右へ戻す。
+       *   旧は early return で位置スナップが一度しか走らず、中央に残ったまま
+       *   「右ドックが消えた／物件送るが隠れる」状態が続いた。
+       */
+      if (!window.location.hostname.includes("reins.jp") && w.getAttribute("data-axlx-user-mini") !== "1") {
+        var ww = window.innerWidth || 1200;
+        var dockX = Math.max(10, ww - Math.max(420, parseInt(w.style.width, 10) || 660) - 20);
+        var curX = parseInt(w.style.left, 10);
+        if (!Number.isFinite(curX)) curX = w.getBoundingClientRect().left;
+        if (Math.abs(curX - dockX) > 120 || curX < ww * 0.35) {
+          w.style.setProperty("left", dockX + "px", "important");
+        }
+        // ★ 2.8.260: 既存 wrap の z-index も下げて物件送る枠を上に（旧 MAX のまま残る衝突）
+        try {
+          var zs = window.getComputedStyle ? window.getComputedStyle(w).zIndex : "";
+          if (String(zs) === "2147483647" || String(w.style.zIndex) === "2147483647") {
+            w.style.setProperty("z-index", "2147483645", "important");
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  })();
   if (document.getElementById("aixlinx-float-wrap")) return;
 
   // 2026-09-27 竹内「全て時間ランダムに」: 画面が落ち着くのを待つ固定の秒数（元より短くしない）。human-wait.js は manifest で先に読む。読めない時は元の値
@@ -33,12 +74,39 @@
   try { saved = JSON.parse(STORE.getItem(SK) || "{}"); } catch {}
 
   // デフォルト初期位置：レインズは中央寄り / リアプロは右寄り
-  const DEFAULT_X = isReins
-    ? Math.max(10, Math.round((window.innerWidth - INIT_W) / 2))
-    : Math.max(10, window.innerWidth - INIT_W - 20);
+  function _defaultDockX(w) {
+    var ww = Number(w) || window.innerWidth || 1200;
+    return isReins
+      ? Math.max(10, Math.round((ww - INIT_W) / 2))
+      : Math.max(10, ww - INIT_W - 20);
+  }
+  const DEFAULT_X = _defaultDockX(window.innerWidth);
   const DEFAULT_Y = 80;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
+  /**
+   * ★ 2.8.251 竹内さん「右側にあった拡張ツールの画面が消えている」:
+   *   保存位置が左へ寄りすぎ／画面外だと、右ドックが消えたように見える（一覧を覆う小窓だけ残る）。
+   *   リアプロは右端ドックが正本。左半分に居る・右端が見切れている保存値は右へ戻す。
+   */
+  (function _snapDockRightIfLost() {
+    if (isReins) return;
+    try {
+      var ww = window.innerWidth || 1200;
+      var dock = _defaultDockX(ww);
+      var tooLeft = Number(posX) < Math.round(ww * 0.35);
+      // ★ 2.8.254: 右端ドックから 120px 以上離れていれば「消えた／中央に被さった」とみなして戻す
+      var farFromDock = Math.abs(Number(posX) - dock) > 120;
+      var offRight = Number(posX) + Math.max(MIN_W, Number(saved.panelW) || INIT_W) > ww + 40;
+      var offScreen = Number(posX) < -20 || Number(posX) > ww - 80;
+      if (tooLeft || farFromDock || offRight || offScreen || saved.posX == null) {
+        posX = dock;
+        if (Number(posY) < 0 || Number(posY) > (window.innerHeight || 800)) posY = DEFAULT_Y;
+      }
+    } catch (_) {
+      posX = DEFAULT_X;
+    }
+  })();
   /**
    * 2026-11-12 竹内さん「たまにちいさくなって中の画面がかなり小さくなり、お客さんリスト確認できない時がある」:
    *   ⚠ 旧は保存された幅を**そのまま**使っていた。前回ドラッグで小さくした幅（300px など）が
@@ -92,7 +160,11 @@
   wrap.style.setProperty("left",     posX + "px", "important");
   wrap.style.setProperty("width",    MINI + "px", "important");
   wrap.style.setProperty("height",   MINI + "px", "important");
-  wrap.style.setProperty("z-index",  "2147483647", "important");
+  /**
+   * ★ 2.8.260: お客様パネルは 2147483645。物件送る枠(#axlx-bar)を上(…647)に出し、
+   *   右ドックに完全に隠れないようにする（旧は wrap が MAX で bar が常に下）。
+   */
+  wrap.style.setProperty("z-index",  "2147483645", "important");
 
   // ── ドラッグバー（展開時）─────────────────────────────────────────
   const dragBar = document.createElement("div");
@@ -245,10 +317,37 @@
     zIndex:   "4",
     display:  "none",
   });
+  resizeHandle.title = "ドラッグでパネルを延ばす（右下）";
   resizeHandle.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20">
     <path d="M20 8L20 20L8 20Z" fill="rgba(21,101,192,0.18)"/>
     <line x1="8"  y1="20" x2="20" y2="8"  stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
     <line x1="13" y1="20" x2="20" y2="13" stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>`;
+
+  /**
+   * 2026-11-22 竹内さん「中の部分見れなくなるときあるから右上にカーソル合わせて拡張ツール延ばせるようする」
+   *   統括Pro: F53詰まり『中央に拡張小窓が重なり一覧の一部が見えない（5回）』→ 右上コーナーで延ばす。
+   *   右下は既にある。右上は上方向にも広げられる（下端固定・top を動かす）。
+   */
+  const resizeNeHandle = document.createElement("div");
+  resizeNeHandle.id = "axlx-resize-ne";
+  Object.assign(resizeNeHandle.style, {
+    position: "absolute",
+    top:      "0",
+    right:    "0",
+    width:    "28px",
+    height:   "28px",
+    cursor:   "ne-resize",
+    zIndex:   "5",
+    display:  "none",
+  });
+  resizeNeHandle.title = "ドラッグでパネルを延ばす（右上）";
+  resizeNeHandle.innerHTML = `<svg width="28" height="28" viewBox="0 0 28 28">
+    <path d="M28 0L28 12L16 0Z" fill="rgba(255,255,255,0.22)"/>
+    <line x1="10" y1="2" x2="26" y2="2" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="26" y1="2" x2="26" y2="18" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="14" y1="4" x2="24" y2="4" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="24" y1="4" x2="24" y2="14" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
   </svg>`;
 
   // ── ミニ用オーバーレイ（常にAIXLINXアイコンを表示してiframe未ロードでも白くならない）──
@@ -269,6 +368,7 @@
   wrap.appendChild(dragBar);
   // iframeはここでは追加しない（ensureIframe()で遅延追加）
   wrap.appendChild(resizeHandle);
+  wrap.appendChild(resizeNeHandle);
   wrap.appendChild(miniOverlay);
   document.body.appendChild(wrap);
 
@@ -398,13 +498,15 @@
     if (exp) {
       // ミニボタンを隠し、wrapをflexで復元
       miniBtnEl.style.display = "none";
+      try { wrap.removeAttribute("data-axlx-user-mini"); } catch (_) {}
       wrap.style.setProperty("display", "flex", "important");
       clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
-      dragBar.style.display       = "flex";
-      resizeHandle.style.display  = "block";
-      miniOverlay.style.display   = "none";
+      dragBar.style.display        = "flex";
+      resizeHandle.style.display   = "block";
+      resizeNeHandle.style.display = "block";
+      miniOverlay.style.display    = "none";
       /**
        * 2026-11-13 竹内さん「閉じた状態から展開することができなくなる」:
        *   ⚠ 旧は `visibility` を戻すだけで、**display を戻していなかった**。
@@ -423,6 +525,7 @@
     } else {
       // wrapをdisplay:none !importantで完全に隠す（itandi CSS上書き問題を完全回避）
       wrap.style.setProperty("display", "none", "important");
+      try { wrap.setAttribute("data-axlx-user-mini", "1"); } catch (_) {}
       // ミニボタンをwrapの現在位置に表示
       const curLeft = parseInt(wrap.style.left) || posX;
       const curTop  = parseInt(wrap.style.top)  || posY;
@@ -442,7 +545,7 @@
   }
 
   // ── ドラッグ & リサイズ（一元管理）──────────────────────────────
-  let dragAction = null; // "move" | "resize"
+  let dragAction = null; // "move" | "resize" | "resize-ne"
   let startCX = 0, startCY = 0;
   let startWX = 0, startWY = 0;
   let startPW = panelW, startPH = panelH;
@@ -463,13 +566,22 @@
   }
 
   miniOverlay.addEventListener("mousedown",  (e) => onDragStart(e, "move"));
-  dragBar.addEventListener("mousedown",      (e) => onDragStart(e, "move"));
+  dragBar.addEventListener("mousedown",      (e) => {
+    // 右上ハンドル上は移動ではなくリサイズ（ドラッグバーと重なるため）
+    if (e.target === resizeNeHandle || (resizeNeHandle && resizeNeHandle.contains(e.target))) return;
+    onDragStart(e, "move");
+  });
   resizeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize"));
+  resizeNeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize-ne"));
 
-  // ダブルクリックでサイズをデフォルトにリセット
+  // ダブルクリックでサイズ＋位置を右ドックへリセット
   dragBar.addEventListener("dblclick", () => {
     panelW = INIT_W;
     panelH = 680;
+    posX = _defaultDockX(window.innerWidth);
+    posY = DEFAULT_Y;
+    wrap.style.setProperty("left", posX + "px", "important");
+    wrap.style.setProperty("top",  posY + "px", "important");
     clampHeight();
     wrap.style.setProperty("width",  panelW + "px", "important");
     wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
@@ -494,6 +606,27 @@
     if (dragAction === "move") {
       wrap.style.setProperty("left", Math.max(0, startWX + dx) + "px", "important");
       wrap.style.setProperty("top",  Math.max(0, startWY + dy) + "px", "important");
+    } else if (dragAction === "resize-ne") {
+      /**
+       * 右上: 右へ幅・上へ高さ（下端固定）。中身が見えるように延ばせる。
+       */
+      const minHRead = Math.min(MIN_H, Math.max(240, window.innerHeight - BOTTOM_GAP - DRAG_H - 10));
+      const maxW = Math.max(MIN_W, window.innerWidth - 20);
+      panelW = Math.min(Math.max(MIN_W, startPW + dx), maxW);
+      const bottomEdge = startWY + startPH + DRAG_H;
+      let newH = startPH - dy;
+      let newTop = bottomEdge - newH - DRAG_H;
+      if (newTop < 0) {
+        newTop = 0;
+        newH = Math.max(minHRead, bottomEdge - DRAG_H);
+      }
+      const maxH = window.innerHeight - newTop - BOTTOM_GAP - DRAG_H;
+      panelH = Math.min(Math.max(minHRead, newH), Math.max(minHRead, maxH));
+      newTop = Math.max(0, bottomEdge - panelH - DRAG_H);
+      wrap.style.setProperty("top", newTop + "px", "important");
+      wrap.style.setProperty("width",  panelW + "px", "important");
+      wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
+      posY = newTop;
     } else {
       const curTop = parseInt(wrap.style.top) || posY;
       const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;

@@ -52,9 +52,11 @@
       var s = st || {};
       var at = s.staffModeAt || 0;
       var staffOn = !!s.staffMode && (!at || Date.now() - at <= _AUTO_STAFF_TTL);
-      // 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」: AIX（aiMode）でも自動送信を開く
+      // 2026-11-11: AIX（aiMode）でも自動送信を開く
+      // ★ 2026-11-22: スタッフも選んだ客の検索〜送付まで自動（AIX相当・一括は claim しない）
+      if (staffOn) return true;
       var chosen = Number(s.autoModeAt) > 0;
-      return !staffOn && chosen && (!!s.aixMode || !!s.aiMode);
+      return chosen && (!!s.aixMode || !!s.aiMode);
     }
     function _applyAutoMode(st) {
       _autoModeOn = _readAutoMode(st);
@@ -1031,8 +1033,9 @@
   function autoSendAllPages(_manual) {
     if (_guideBlocksAuto("autoSendAllPages")) return; // 案内モードの間はページをめくって送らない（スタッフがチェックして「売上番長に送る」）
     if (_autoSendInProgress) return;
-    if (!_manual && _staffModeOn) {
-      console.log("[AXLX itandi] スタッフモード中 → autoSendAllPages をスキップ");
+    // ★ 2026-11-22: スタッフでも選んだ客の自動送信は開く（_autoModeOn が関所・手動ボタンも可）
+    if (!_manual && _staffModeOn && !_autoModeOn) {
+      console.log("[AXLX itandi] スタッフモード中（自動押しOFF）→ autoSendAllPages をスキップ");
       return;
     }
     _autoSendInProgress = true;

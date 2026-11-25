@@ -101,8 +101,25 @@ async function cmdStage() {
   const to = argv.find((a) => !a.startsWith("--")) ?? "";
   if (!id || !isStage(to)) throw new Error("--stage=<id> <新しい段>（段: " + STAGES.join("/") + "）");
   const db = sb();
-  const { data: cur, error } = await db.from("work_items").select("id,stage,commits,exam_labels").eq("id", id).single();
+  const { data: cur, error } = await db.from("work_items").select("id,stage,commits,exam_labels,switch_name").eq("id", id).single();
   if (error || !cur) throw new Error(error?.message ?? "無い");
+  // 2026-11-25 作業員A（統括役の頼み・試験は DeepSeek／本番は Claude）: 本番と割れやすい場面の型の効く問題がある直しは、on の前に Claude の確かめの記録を見る（CLAUDE_CHECK_GATE 既定 warn・on で止める・--force で越える）
+  if (to === "on" && cur.switch_name) {
+    try {
+      const g = await import("./lib/claude-check-gate");
+      const mode = g.claudeCheckGateMode();
+      if (mode !== "off") {
+        const { existsSync, readFileSync } = await import("node:fs");
+        const { parseCandidateBlocks } = await import("./lib/exam-worth");
+        const cf = ["memory/night_bundle_candidates.md", "../../../memory/night_bundle_candidates.md"].find((p) => existsSync(p));
+        const eff = cf ? [...new Set(parseCandidateBlocks(readFileSync(cf, "utf8").split("\n")).filter((b) => b.switches.includes(String(cur.switch_name))).flatMap((b) => b.eff))] : [];
+        const probs = g.loadProblemsLite();
+        const v = g.claudeGateVerdict({ mode, targets: g.claudeCheckTargets(eff, probs), record: g.claudeCheckRecord(String(cur.switch_name)) });
+        if (v.line) console.log(`${v.block ? "⛔" : "⚠"} ${v.line}`);
+        if (v.block && !flag("force")) throw new Error(`on に進めない（CLAUDE_CHECK_GATE=on）: ${v.line}`);
+      }
+    } catch (e) { if (e instanceof Error && e.message.startsWith("on に進めない")) throw e; console.warn("Claude の確かめの関所を読めない:", e instanceof Error ? e.message : e); }
+  }
   const note = arg("note");
   if (stageMoveNeedsNote(cur.stage, to) && !note) throw new Error(`段が戻る・飛ぶ・止まる時は --note= に理由を書く（${cur.stage} → ${to}）`);
   const patch: Record<string, unknown> = { stage: to, updated_at: new Date().toISOString() };
@@ -276,6 +293,9 @@ async function cmdMapBuild() {
   const timedN = t.nodes.filter((x) => x.dim === "miss" && x.val === "timed").reduce((s, x) => s + x.n, 0);
   const fixedN = t.nodes.filter((x) => x.dim === "miss" && x.val === "fixed_since").reduce((s, x) => s + x.n, 0);
   const splitN = t.nodes.filter((x) => x.dim === "miss" && x.val === "split").reduce((s, x) => s + x.n, 0);
+  // 2026-11-25 作業員A（統括役の頼み）: ブレインも2段の約束を書いていた番（先後に数えていた）。今の数（根の value）は変えず、合うに数えた一致を並べる
+  const tsdN = t.nodes.filter((x) => x.dim === "miss" && x.val === "two_stage_draft").reduce((s, x) => s + x.n, 0);
+  const soN = t.nodes.filter((x) => x.dim === "miss" && x.val === "staff_only").reduce((s, x) => s + x.n, 0); // ④スタッフだけが知る結果（11/25 統括役の決め）
   const nShort = [...t.sides].filter(([, v]) => v.side === "n_short");
   if (spec) console.log(`  竹内さんの決定で正解を改めた番: 外れに数えていた ${decN}（${[...t.decided].map(([id, q]) => `${id}=${q}`).join("・") || "なし"}）`);
   if (def.builder === "aix_turn_device") {
@@ -283,7 +303,9 @@ async function cmdMapBuild() {
     console.log(`  直しが入った日より前の番: ${fixedN}（${[...t.fixed].map(([id, f]) => `${id}＝${f}`).join("・") || "なし"}）`);
     console.log(`  割れ（どちらにも決めない）: ${splitN}（${[...t.sides].filter(([, v]) => v.side === "split").map(([id, v]) => `${id}＝${v.shape} で ${v.majority}/${v.n}`).join("・") || "なし"}）`);
     console.log(`  n 不足（外れのまま・見張りで数え続ける）: ${nShort.length}（${nShort.map(([id, v]) => `${id}＝n ${v.n}`).join("・") || "なし"}）`);
-    console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN - fixedN - splitN}（うち n 不足 ${nShort.length}）・決定で改めた ${decN}・竹内さんの少数側 ${minN}・割れ ${splitN}・時刻で送る物 ${timedN}・直しが入る前の番 ${fixedN}（n ${t.n}）`);
+    console.log(`  数の分け: 実送信で一致 ${t.nodes[0].ok}・外れ ${t.nodes[0].misses - decN - minN - timedN - fixedN - splitN - tsdN - soN}（うち n 不足 ${nShort.length}）・決定で改めた ${decN}・竹内さんの少数側 ${minN}・割れ ${splitN}・時刻で送る物 ${timedN}・直しが入る前の番 ${fixedN}・ブレインも2段の約束を書いていた ${tsdN}・スタッフだけが知る結果 ${soN}（n ${t.n}）`);
+    console.log(`  並べて見る（2段を合うに・スタッフだけが知る結果を数えない）: ${t.n > soN ? Math.round(((t.nodes[0].ok + tsdN) / (t.n - soN)) * 1000) / 10 : "—"}%（${t.n - soN}番中 ${t.nodes[0].ok + tsdN}番）`);
+    console.log(`  並べて見る（ブレインも2段の約束を書いていた番を合うに数える）: ${t.n ? Math.round(((t.nodes[0].ok + tsdN) / t.n) * 1000) / 10 : "—"}%（${t.n}番中 ${t.nodes[0].ok + tsdN}番・今の数え方 ${t.value}%）`);
   }
   if (def.builder === "route_next" || def.builder === "route_progress") {
     const { stationTableOf, leafJa } = await import("../app/lib/metric-map");
@@ -314,15 +336,17 @@ async function cmdMapBuild() {
     const day = m.jstDay(Date.now());
     const w = await m.writeTree(db, day, def, t.nodes, ranked);
     const qd = [
-      { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop() } },
+      { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop(), count_version: (await import("../app/lib/metric-map")).COUNT_VERSION[def.metric] ?? null } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: t.nodes.length },
       { day, metric: `map:${def.metric}:decided`, scope: "all", value: decN, n: t.n, detail: { turns: Object.fromEntries(t.decided) } },
       { day, metric: `map:${def.metric}:minority`, scope: "all", value: minN, n: t.n, detail: { turns: Object.fromEntries(t.minority) } },
       { day, metric: `map:${def.metric}:timed`, scope: "all", value: timedN, n: t.n },
       { day, metric: `map:${def.metric}:fixed_since`, scope: "all", value: fixedN, n: t.n, detail: { turns: Object.fromEntries(t.fixed) } },
       { day, metric: `map:${def.metric}:split`, scope: "all", value: splitN, n: t.n },
+      { day, metric: `map:${def.metric}:staff_only`, scope: "all", value: soN, n: t.n, detail: { ok_two_stage_net: t.nodes[0].ok + tsdN, rate_two_stage_net: t.n > soN ? Math.round(((t.nodes[0].ok + tsdN) / (t.n - soN)) * 1000) / 10 : null } },
+      { day, metric: `map:${def.metric}:two_stage_draft`, scope: "all", value: tsdN, n: t.n, detail: { ok_with_two_stage: t.nodes[0].ok + tsdN, rate_with_two_stage: t.n ? Math.round(((t.nodes[0].ok + tsdN) / t.n) * 1000) / 10 : null } },
       { day, metric: `map:${def.metric}:n_short`, scope: "all", value: nShort.length, n: t.n, detail: { turns: Object.fromEntries(nShort.map(([id, v]) => [id, v.n])) } },
-      { day, metric: `map:${def.metric}:misses_net`, scope: "all", value: t.nodes[0].misses - decN - minN - timedN - fixedN - splitN, n: t.n, detail: { ok: t.nodes[0].ok, decided: decN, minority: minN, split: splitN, timed: timedN, fixed_since: fixedN, n_short: nShort.length } },
+      { day, metric: `map:${def.metric}:misses_net`, scope: "all", value: t.nodes[0].misses - decN - minN - timedN - fixedN - splitN - tsdN - soN, n: t.n, detail: { ok: t.nodes[0].ok, two_stage_draft: tsdN, staff_only: soN, decided: decN, minority: minN, split: splitN, timed: timedN, fixed_since: fixedN, n_short: nShort.length } },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: m.holesOf(ranked, t.nodes).filter((h) => !h.hold).length, n: ranked.length },
       { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },
       ...ranked.slice(0, 5).map((r) => ({ day, metric: `map:${def.metric}:rank${r.rank}`, scope: "all", value: r.score, n: r.n, detail: { leaf: r.key, misses: r.misses, gain: r.gain, items: r.items, next: r.nextStep, hold: r.hold, hole: r.hole, writer_select: def.writerSelect } })),

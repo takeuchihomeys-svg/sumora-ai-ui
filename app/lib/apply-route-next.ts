@@ -49,7 +49,7 @@ export function daysUntilYmd(ymd: string | null | undefined, nowMs: number): num
   return Number.isFinite(t1) ? Math.round((t1 - t0) / 86_400_000) : null;
 }
 
-export type RouteNextRule = "cost_estimate" | "brought_cost" | "screening_apply" | "viewing_not_today" | "viewing_passed" | "ack_setup_not_today" | "greeting_sent_today";
+export type RouteNextRule = "no_viewing_apply" | "cost_estimate" | "brought_cost" | "screening_apply" | "viewing_not_today" | "viewing_passed" | "ack_setup_not_today" | "greeting_sent_today";
 
 // ── 2026-11-23 作業員A（R の代わり・統括役の頼み・申込までの地図の1位の葉「内覧予定 › 地図は当日のご挨拶・竹内さんは返信」）──
 //   ④は内覧の段取りの後のお礼（ack_after_viewing_setup）を外していた（下の注の「5番が全部 AIX【当日のご挨拶】」）。
@@ -83,6 +83,10 @@ export function refineRouteNextStep(loc: Pick<ApplyRouteLocation, "node" | "bran
   // ② 持ち込みの物件の費用（9de893ed: 持ち込みは募集状況の確認が先）。確認の後の御見積書も候補に並べる
   if (rt && COST_TURN.has(rt) && loc.branch === "brought_property") {
     return { rule: "brought_cost", next: { label: "持ち込みのお部屋の費用: 募集状況の確認の約束→確認できたら最大限割引の御見積書", aix: ["property_check_result", "estimate_sheet"] } };
+  }
+  // ⓪ 2026-11-25 作業員A（#728 成約データ・APPLY_ROUTE_NO_VIEWING_PATH=on の時だけ）: 提案中・気に入った・見積の駅で、お客様が申込の意思を示した番は内覧なしの道（申込のご案内）
+  if (rt === "apply_intent" && !loc.branch && (loc.node === "proposing" || loc.node === "interested" || loc.node === "estimate") && ((env ?? (typeof process !== "undefined" ? process.env : {})).APPLY_ROUTE_NO_VIEWING_PATH ?? "").trim().toLowerCase() === "on") {
+    return { rule: "no_viewing_apply", next: { label: "申込の意思: 内覧なしでも申込のご案内（フォーマットと本人確認書類）へ。内覧のご希望があれば内覧も", aix: ["application_push"] } };
   }
   // ③ 気に入った物件がある審査の相談: 通るまでサポートする旨と、まず審査をかけてみる（申込で抑える）
   if (loc.branch === "screening_concern" && idx(loc.node) >= idx("interested")) {

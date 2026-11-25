@@ -9,6 +9,11 @@ import { examCacheRoot } from "./lib/llm-cassette";
 import { loadOffPass } from "./lib/exam-worth";
 import { readPriorLedger } from "./lib/exam-preflight-reach";
 import { SWITCH_REACH } from "./lib/exam-switch-reach";
+import { rowOfWith, tableOf, learnedForSelect } from "./lib/exam-reach-rows";
+// 2026-11-25 --one-table: L の1本の表（tableOf＝SWITCH_REACH の fixes 入り）と置き場の覚え（learned-reach.json＝本番の係が今見る物）で当てる。
+//   置き場の覚えは今までの全部の回から作る＝その組より後の回の覚えも入る（物差しとしては甘めに出る）。既定（無し）はその組より前の回だけから覚える
+const ONE = process.argv.includes("--one-table");
+const rowOf = ONE ? rowOfWith({ cacheRoot: examCacheRoot() }) : null;
 import { selectMinimal, sameConclusion } from "./lib/exam-select";
 import { learnReach, mergeLearned, type LearnRow, type Learned } from "./lib/exam-learned-reach";
 
@@ -57,7 +62,7 @@ for (const f of existsSync(join(Q, "done")) ? readdirSync(join(Q, "done")) : [])
   const resultsDir = join(j.cwd ?? ".", "scripts", "brain-exam", "results");
   const prior = readPriorLedger(resultsDir, new Set(ids), { nowMs: t });
   const off = offAt(t);
-  const sel = selectMinimal({ ids, onSwitches: onSw, prior, off, table: SWITCH_REACH, stage: j.stage === "draft" ? "draft" : "brain", ...(LEARN ? { learned: learnedAt(onSw, t) } : {}) });
+  const sel = selectMinimal({ ids, onSwitches: onSw, prior, off, table: rowOf ? tableOf(onSw, rowOf) : SWITCH_REACH, stage: j.stage === "draft" ? "draft" : "brain", ...(rowOf ? { learned: learnedForSelect(onSw, rowOf) } : LEARN ? { learned: learnedAt(onSw, t) } : {}) });
   // 全部回した時の結論
   const worse = Array.isArray(res.worseSure) ? res.worseSure.map((x) => x.id) : [];
   const onRows = existsSync(join(resultsDir, `${j.label}.jsonl`)) ? readFileSync(join(resultsDir, `${j.label}.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) as { id: string; error?: unknown; score?: { pass?: boolean } }; } catch { return null; } }).filter((x): x is { id: string; error?: unknown; score?: { pass?: boolean } } => !!x) : null;

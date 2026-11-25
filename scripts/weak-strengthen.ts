@@ -358,17 +358,28 @@ async function oneRound(round: number) {
      *   先に通常（人の手本）。0枚なら自動(aix)の同じボタン写真も読む（弱い部分がなくなるまで）。
      */
     let r = await learnFromWeakShots({
-      site: null, mode: "normal", days: 7, limit, order: (t.order as "newest") || "newest",
-      perSig: 12, strideMs: 800, dryRun: false, noRefresh: true, concurrency: 3,
+      site: "realpro", mode: "normal", days: 7, limit,
+      order: (t.order as "newest" | "sequence" | "time") || "sequence",
+      perSig: 12, strideMs: t.order === "sequence" ? 400 : 800, dryRun: false, noRefresh: true, concurrency: 3,
       focusFields: focusFields.length ? focusFields : null,
     });
     if (r.tried === 0 && focusFields.length) {
-      console.log(`  ↪ 通常0枚 → 自動(aix)でも「${focus}」を読む`);
-      const r2 = await learnFromWeakShots({
-        site: null, mode: "aix", days: 7, limit, order: (t.order as "newest") || "newest",
-        perSig: 12, strideMs: 800, dryRun: false, noRefresh: true, concurrency: 3,
+      console.log(`  ↪ 通常0枚 → サイト指定なし通常で「${focus}」を読む`);
+      let r2 = await learnFromWeakShots({
+        site: null, mode: "normal", days: 7, limit,
+        order: (t.order as "newest" | "sequence" | "time") || "sequence",
+        perSig: 12, strideMs: t.order === "sequence" ? 400 : 800, dryRun: false, noRefresh: true, concurrency: 3,
         focusFields: focusFields.length ? focusFields : null,
       });
+      if (r2.tried === 0) {
+        console.log(`  ↪ 通常も0 → 最終手段で自動(aix)の同欄を読む（手本は通常が正）`);
+        r2 = await learnFromWeakShots({
+          site: null, mode: "aix", days: 7, limit,
+          order: (t.order as "newest" | "sequence" | "time") || "sequence",
+          perSig: 12, strideMs: t.order === "sequence" ? 400 : 800, dryRun: false, noRefresh: true, concurrency: 3,
+          focusFields: focusFields.length ? focusFields : null,
+        });
+      }
       r = {
         ...r2,
         tried: r.tried + r2.tried,

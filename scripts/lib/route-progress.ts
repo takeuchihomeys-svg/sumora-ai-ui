@@ -50,12 +50,26 @@ export type Agreement = "aix_match" | "promise_match" | "reply_match" | "reply_i
  *   other_aix      候補と違う AIX
  *   no_next        地図に候補が無い（位置が分からない）
  */
-export function routeAgreement(loc: Pick<ApplyRouteLocation, "next"> | null, act: string): Agreement {
+/**
+ * 2026-11-25 作業員A（#687・統括役の頼み・弱い駅「分:他社物件の持ち込み」「物件ピックアップ」を1番ずつ読んだ数え方の漏れ）: 同じ一手の仲間の AIX
+ *   ① 物件の束【物件ピックアップした】⇄1件【物件オススメ】（どちらも約束を果たす物件の AIX・ACK_PICKUP_AIX_PATH の道の1行と同じ）
+ *   ② 持ち込みの物件の駅で【見積書送る】＝募集状況を確かめた結果を最大限割引の御見積書で送った（竹内さんの決め 10/07「持ち込みは募集状況＋最大限割引の御見積書の両方」・地図の駅の戻り道と同じ）
+ *   止める ROUTE_AGREE_STRICT=on（前の数え方）
+ */
+export function sameStepAix(want: readonly string[], aix: string, branch: string | null | undefined, env: Record<string, string | undefined> = process.env): boolean {
+  if (want.includes(aix)) return true;
+  if ((env.ROUTE_AGREE_STRICT ?? "").trim().toLowerCase() === "on") return false;
+  const P = ["property_send", "property_recommendation"];
+  if (P.includes(aix) && want.some((w) => P.includes(w))) return true;
+  if (branch === "brought_property" && aix === "estimate_sheet" && want.includes("property_check_result")) return true;
+  return false;
+}
+export function routeAgreement(loc: (Pick<ApplyRouteLocation, "next"> & { branch?: string | null }) | null, act: string): Agreement {
   const want = loc?.next?.aix ?? null;
   if (!loc || !loc.next || want == null) return "no_next";
   const isAix = act.startsWith("aix:");
   const t = actTarget(act);
-  if (isAix && want.includes(act.slice(4))) return "aix_match";
+  if (isAix && sameStepAix(want, act.slice(4), loc.branch ?? null)) return "aix_match";
   if (t === "promise" && want.some((w) => PROMISE_FULFILS.includes(w))) return "promise_match";
   if (!want.length) return !isAix && t == null ? "reply_match" : "pushed_off_map";
   if (!isAix && t == null) return "push_missed";

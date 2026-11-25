@@ -1,0 +1,10 @@
+{
+  "title": "【決定】平田さん通常録画から学んだプルダウンの出方と選択位置（2026-11-16）",
+  "category": "architecture",
+  "insight": "通常モード2.8.9の平田さん録画338行から、プルダウンは必ず click→change（直書きなし）。位置は左サイドバー帯: update_date≈(0.19,0.20)操作／Vision≈(0.09,0.58)、rental_cost1≈(0.19,0.20)・Vision(0.06,0.76)、rental_cost2≈(0.20,0.40)・Vision(0.09,0.75)、square_meter_l≈(0.32,0.17)、structured_date≈(0.32,0.44)、required_time Vision≈(0.08,0.34)。間隔中央: update_date 1.4秒・rental_cost2 0.8秒・rental_cost1 2.6秒・面積 4.3秒。カーソル手の形(cs)はこの録画0。本番Visionキー欠落のためローカルVision12枚→shot-learn-ingestでDBへ。",
+  "rationale": "竹内さん「平田さんの録画いれたからここから統括徹底的に学習して／プルダウンの出方と選択の位置など徹底的に細かい部分まで画像から学習」。原因判断前にDB実データ（操作504 select・位置・Vision）を読んだ。",
+  "context": "いま通常モードで平田さんの録画いれたからここから統括徹底的に学習して。今足りていない部分、人間の動きの部分、プルダウンの出方と選択の位置など徹底的に細かい部分まで画像から学習おねがい。録画画像から",
+  "applied_to": "human_motion_learn.shot_learn / human_learn_profile / scripts/tmp-hirata-vision-local.ts / app/api/shot-learn-ingest/route.ts / app/api/learn-fill-shot/route.ts",
+  "tags": ["ブレイン", "Chrome拡張", "分析強化の原則", "鮮度", "点検表"],
+  "priority": 1
+}

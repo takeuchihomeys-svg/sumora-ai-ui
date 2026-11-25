@@ -1,0 +1,10 @@
+{
+  "title": "【決定】一括の次客へ続ける位置は、未処理の最初の客より先へ行かせない／最後の客の後に全件完了を知らせる（拡張 2.8.283）",
+  "category": "architecture",
+  "insight": "竹内さんの実機で「1人目が終わると3人目に飛ぶ」。本番DB（search_audits）には2.8.281の回が #1640 の1本（段4つ・13:14:23で止まり）しか無く、2人目以降の記録が無いため、飛んだ瞬間はDBから確かめられなかった（事実として記録）。コードを読んで穴を2つ塞いだ。①続ける位置は番号（何人目）だけで持っていたので、引き継がれた古いループが「完了」を遅れて書き戻す（旧は世代の確認が書き込みの後）等で位置が狂いうる→片付いた客の id（handledCids：送った／見送った／エラーで飛ばした）を別に持ち、_bulkKick の続ける位置を未処理の最初の客より先へ行かせない（_bulkClampStart・印 kick_clamp）。いまの客を済みと見て進める経路（stage=done／doneCid 一致／送付後の外し）はその客を片付いた扱いにしてから上限を見る（送付済みの客を戻して二重送付しない）。完了の書き込みは世代確認の後（印 stale_done_skip）。②出口: 全員が済んだら全件完了を notify-group に1通だけ（止めた回・引き継がれた回は出さない・印 bulk_all_done）。既にあった安全装置（0件の分岐・最終ページ扱い・検索前の関所＝場所が空なら全件検索せず中止）はテストで残っていることを固定した。",
+  "rationale": "番号だけで進める位置は、書き込みの順序・二重の続きで1人飛ぶ。「片付いた客の集合」を持てば、どの経路で続けても未処理の客を飛ばさない上限が計算で決まる。ただし上限は客を戻す物ではなく、送付済みの扱いは sentCids と送付済み把握が受け持つ。実測で確かめる前に直したので、次の実機の記録（kick_clamp・stale_done_skip の有無）で飛びの原因だったかを検証する。",
+  "context": "2026-11-25 竹内さん「次のお客さんにうつる際…1人目のお客さん完了したら3人目のお客さんにかわるようになってしまっている」。DBは #1640 のみ・直近30時間の bulk_manual は他に abandoned（段0〜3）ばかり＝一括の記録が途中で途切れること自体が観測の穴。",
+  "applied_to": "chrome-extension/background.js（_bulkHandledCidsWith・_bulkClampStart・_manualBulkRun の完了書き込み・_bulkKick・全件完了）・manifest.json・page-script.js・app/lib/auto-procedure-rules.ts（bulk_no_skip_customer）・tests/chrome-extension/bulk-no-skip-customer-v28283.test.js",
+  "tags": ["Chrome拡張", "一括検索", "次客", "静かに壊れる", "穴:G1"],
+  "priority": 1
+}

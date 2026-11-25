@@ -4,10 +4,10 @@
 //
 // 固定する形:
 //   ① モードは4つ: 通常／スタッフ／自動（aix）／AIX（ai）
-//   ② AIX は「選んだお客さんを自動で検索」する（aiCustomerSearch）
+//   ② AIX は「選んだお客さん」を扱う（aiCustomerSearch）※条件画面はボタン押下後に検索（2.8.155）
 //   ③ AIX は AIXツールの指示・新着（aix・web_brain）・自動便も受け取る（もともとあった動き）
-//   ④ popup はお客さんを選び、条件の読み直しが終わってから検索ボタンを押す（古い条件で押さない）
-//   ⑤ 同じお客様×サイトを続けて押さない（10分）・別のお客様に切り替わったら押さない
+//   ④ popup はお客さんを選び条件画面を開くが、開いただけでは検索しない（案内のみ）
+//   ⑤ 検索開始は 🔍ボタン押下／自動便の automated クリックのみ
 //   ⑥ 自動モード（aix）は今まで通り「一覧の行を1件ずつ押す」で、AIX とは別物
 const fs = require("fs");
 const path = require("path");
@@ -33,10 +33,12 @@ console.log("\n■ ② AIX は選んだお客さんの自動検索を開く");
 eq("AIX の aiCustomerSearch", M.behavior("ai", false).aiCustomerSearch, true);
 eq("AIX × ブレイン", M.behavior("ai", true).aiCustomerSearch, true);
 eq("自動（aix）は開かない", M.behavior("aix", false).aiCustomerSearch, false);
-eq("通常・スタッフは開かない", [M.behavior("normal", false).aiCustomerSearch, M.behavior("staff", false).aiCustomerSearch], [false, false]);
+eq("通常は開かない", M.behavior("normal", false).aiCustomerSearch, false);
+eq("スタッフは選んだ客の自動を開く（2.8.156）", M.behavior("staff", false).aiCustomerSearch, true);
 eq("実効（GUIDE_ONLY 中）でも AIX は開く", M.effectiveBehavior("ai", false).aiCustomerSearch, true);
 eq("実効で 通常は閉じる", M.effectiveBehavior("normal", true).aiCustomerSearch, false);
-eq("実効で スタッフは閉じる", M.effectiveBehavior("staff", true).aiCustomerSearch, false);
+eq("実効で スタッフは選んだ客だけ開く", M.effectiveBehavior("staff", true).aiCustomerSearch, true);
+eq("実効スタッフは一括を閉じる", M.effectiveBehavior("staff", true).claimCommands, false);
 
 console.log("\n■ ③ AIX は AIXツールの指示・新着・自動便も受け取る（もともとあった動き）");
 eq("claimAix（aix 由来の指示）", M.behavior("ai", false).claimAix, true);
@@ -46,26 +48,26 @@ eq("claimBrainCommands（web_brain・新着の条件）", M.behavior("ai", true)
 eq("ブレイン OFF では web_brain を受け取らない（判定する PC だけ）", M.behavior("ai", false).claimBrainCommands, false);
 eq("判定はブレインの時だけ", [M.behavior("ai", true).brainJudge, M.behavior("ai", false).brainJudge], [true, false]);
 
-console.log("\n■ ④ popup は条件の読み直しが終わってから押す");
+console.log("\n■ ④ popup は条件画面を開くが、開いただけでは検索しない（2.8.155）");
 {
   const pj = read("popup.js");
   ok("AIXモードの印を持つ（_aiCustomerModeOn）", /var _aiCustomerModeOn = false;/.test(pj) && /_aiCustomerModeOn = s\.mode === "ai";/.test(pj));
-  ok("お客さん選択時の自動検索の関数", /function _maybeAiCustomerAutoSearch\(btn, customer, site\)/.test(pj));
-  ok("条件の読み直し（fetchFreshCustomer）が終わってから呼ぶ", /_freshPreloadPromise = fetchFreshCustomer\(c0\?\.id\)\.then\(fresh => \{[\s\S]{0,900}_maybeAiCustomerAutoSearch\(autofillBtn, c0, "realpro"\)/.test(pj));
+  ok("お客さん選択時の案内関数", /function _maybeAiCustomerAutoSearch\(btn, customer, site\)/.test(pj));
+  ok("条件の読み直し（fetchFreshCustomer）が終わってから案内を呼ぶ", /_freshPreloadPromise = fetchFreshCustomer\(c0\?\.id\)\.then\(fresh => \{[\s\S]{0,900}_maybeAiCustomerAutoSearch\(autofillBtn, c0, "realpro"\)/.test(pj));
   ok("itandi でも同じ（読み直しの後）", /setupAreaModeSelector\(selectedCustomer, "itandi"\);[\s\S]{0,400}_maybeAiCustomerAutoSearch\(_itBtn, selectedCustomer, "itandi"\)/.test(pj));
-  ok("人が押すのと同じ道（btn.click）", /btn\.click\(\);/.test(pj));
+  const fn = (pj.match(/function _maybeAiCustomerAutoSearch\(btn, customer, site\) \{[\s\S]*?\n\}/) || [])[0] || "";
+  ok("案内関数は btn.click() しない（ボタン待ち）", fn.length > 0 && !/btn\.click\(\)/.test(fn));
+  ok("ボタン押しで開始のコメント", /ボタン押してから検索/.test(pj));
 }
 
-console.log("\n■ ⑤ 詰まらない決まり");
+console.log("\n■ ⑤ 検索開始の道（ボタン／自動便だけ）");
 {
   const pj = read("popup.js");
-  ok("同じお客様×サイトを続けて押さない（10分）", /AIX_RESEARCH_GAP_MS = 10 \* 60 \* 1000/.test(pj) && /同じお客様を続けて検索しない/.test(pj));
-  ok("別のお客様に切り替わったら押さない", /String\(selectedCustomer\.id\) !== String\(customer\.id\)\) return;/.test(pj));
-  ok("モードが変わったら押さない", /if \(!_aiCustomerModeOn\) return;/.test(pj));
-  ok("スタッフモードでは押さない", /if \(!_aiCustomerModeOn \|\| _staffModeOn\) return false;/.test(pj));
-  ok("自動の一括の回はそちらに任せる（二重に押さない）", /if \(btn\.dataset\.automated\) return false;/.test(pj));
-  ok("押した時刻を記録する（_aiAutoSearchMemo）", /_aiAutoSearchMemo\[key\] = now;/.test(pj));
-  ok("人の間（0.9〜4秒）を置いてから押す", /logNormalDelay\(1500, 0\.35\)/.test(pj));
+  ok("スタッフモードでは案内しない", /if \(!_aiCustomerModeOn \|\| _staffModeOn\) return false;/.test(pj));
+  ok("自動の一括の回は案内をスキップ", /if \(btn\.dataset\.automated\) return false;/.test(pj));
+  ok("人が押す道（autofillBtn.onclick）", /autofillBtn\.onclick = async \(\) => \{/.test(pj));
+  ok("自動便の automated クリック道", /aBtn\.dataset\.automated = \"1\"/.test(pj) && /aBtn\.click\(\)/.test(pj));
+  ok("AIXで人が押した時の点検印", /dataset\.ai_customer = \"1\"/.test(pj));
 }
 
 console.log("\n■ ⑥ 自動（aix）は一覧の行を1件ずつ押す（AIX とは別物）");

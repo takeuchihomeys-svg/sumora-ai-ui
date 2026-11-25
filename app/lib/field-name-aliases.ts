@@ -85,6 +85,15 @@ export const FIELD_NAME_ALIASES: Record<string, readonly string[]> = {
   "沿線・駅絞り込み＋": ["沿線を選ぶ", "route_id[]", "沿線・駅絞り込み", "駅名から絞り込み", "station_id[]"],
   "次のページ": ["次", "次へ", "ページ送り", "左の次｜td.pager", "pager"],
   "印刷用PDF": ["印刷", "PDF", "印刷用"],
+  /**
+   * ★ 2026-11-23 並べ替え（AD 高→低）:
+   *   本物は列見出し span.sort_detail「高→低」。棟一覧 main_table の「並べ替え」文言は別名にしない
+   *   （誤認すると拡張が棟行を押す）。
+   */
+  sort_detail: ["高→低", "AD高→低", "span.sort_detail", "左の高→低｜span.sort_detail"],
+  "高→低": ["sort_detail", "AD高→低", "span.sort_detail", "左の高→低｜span.sort_detail"],
+  "AD高→低": ["sort_detail", "高→低", "span.sort_detail", "左の高→低｜span.sort_detail"],
+  "左の高→低｜span.sort_detail": ["sort_detail", "高→低", "AD高→低", "span.sort_detail"],
 };
 
 export type FieldWithPos = {

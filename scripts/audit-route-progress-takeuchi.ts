@@ -10,6 +10,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-route-progress-takeuchi.ts [--days=60] [--max-conv=400] [--json=<出力>]
 //   重い読み（会話ごとに customer-state の材料を読む）。JST 9〜22時は --days=2 --max-conv=10 に絞る（--force で外す）。
 import { createClient } from "@supabase/supabase-js";
+import { sameRouteStation } from "./lib/flex-daily";
 import { writeFileSync } from "node:fs";
 import { guideTurnsOf, outOfScopeAtOf, type GMsg, type GAix, type GDecision, type GuideTurn } from "./lib/guide-measure";
 import { actDirection, routeAgreement, type ActDirection, type Agreement } from "./lib/route-progress";
@@ -74,7 +75,7 @@ type Row = {
     convs = [...new Set(((tk ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))].filter((c) => !skip.has(c)).slice(0, maxConv);
   }
   const rows: Row[] = [];
-  let convDone = 0, cutPost = 0, failed = 0;
+  let convDone = 0, cutPost = 0, failed = 0, timedSkip = 0;
   for (const c of convs) {
     const [m, a, d, deals, a30] = await Promise.all([
       sb.from("messages").select("sender, text, created_at, staff_writer, is_aix_generated").eq("conversation_id", c).gte("created_at", since).order("created_at").limit(2000),
@@ -106,6 +107,9 @@ type Row = {
       const tAt = Date.parse(t.at);
       const lastCust = [...input.messages].reverse().find((x) => x.sender === "customer" && Date.parse(x.createdAt) < tAt);
       if (!lastCust) continue;
+      // 2026-11-25 作業員A（#687・統括役の頼み「番の時刻が AIX の送信と重なる番を外す」）: 竹内さんの一手が、お客様の通の後の別の日に時刻で送った
+      //   AIX【当日のご挨拶】（内覧の日の朝に送る物）の番は、お客様の通への一手ではない（3db9db75 10/24: 一手の時刻＝ご挨拶の送信・お客様の通は前の日）＝外して別に数える。止める --keep-timed
+      { const jd = (ms: number) => Math.floor((ms + 9 * 3_600_000) / 86_400_000); if (!process.argv.includes("--keep-timed") && /greeting_viewing/.test(String(t.act ?? "")) && jd(tAt) !== jd(Date.parse(lastCust.createdAt))) { timedSkip++; continue; } }
       const T = Date.parse(lastCust.createdAt) + 1000;
       let r: ReturnType<typeof locateAt>;
       try { r = locateAt(input, T, false); } catch { continue; }
@@ -137,6 +141,7 @@ type Row = {
   const N = rows.length;
   const nm = (n: RouteNodeId | null) => (n ? ROUTE_NODES[n].name : "不明");
   console.log(`■ 申込までの地図 × 竹内さん本人の番（${days}日・会話 ${convs.length}→測った ${convDone}・読めない ${failed}・申込以降で外した番 ${cutPost}・番 ${N}・申込に届いた会話の番 ${rows.filter((r) => r.reached).length}）`);
+  console.log(`  別の日に時刻で送った当日のご挨拶の番（お客様の通への一手でない・外した）: ${timedSkip}（--keep-timed で入れる）`);
   console.log(`\n## A 位置: 地図の駅 ${cnt(rows.map((r) => nm(r.node)))}`);
   console.log(`   分かれ道: ${cnt(rows.map((r) => (r.branch ? ROUTE_BRANCHES[r.branch as keyof typeof ROUTE_BRANCHES].name : "なし")))}`);
   const both = rows.filter((r) => r.node && r.digestNode);
@@ -146,7 +151,7 @@ type Row = {
     //   guide-measure は sg が無いと cp で駅を出す＝ピックアップ・気に入った・見積が全部 proposing、内覧調整・予定・後が全部 viewing_arrange になる（数え方）。時代で分けて比べる
     const SG_FROM = "2026-11-03T05:42";
     const CP5: Record<string, string> = { inquiry: "hearing", hearing: "hearing", pickup: "proposing", proposing: "proposing", interested: "proposing", estimate: "proposing", viewing_arrange: "viewing", viewing_scheduled: "viewing", viewed: "viewing", apply_prep: "applying", applying: "applying" };
-    const sameSt = (x: Row) => x.node === x.digestNode || (x.digestNode === "pickup" && ["hearing", "pickup", "proposing"].includes(x.node ?? ""));
+    const sameSt = (x: Row) => sameRouteStation(x.node, x.digestNode); // 2026-11-25 作業員A: flex-daily と同じ決め（初回で条件まで書いた番の inquiry≈hearing を含む）
     const bt = rows.filter((x) => x.node && x.digestNode), sgE = bt.filter((x) => x.at >= SG_FROM), cpE = bt.filter((x) => x.at < SG_FROM);
     console.log(`   時代で分けた一致: sg の時代（11/03〜）${sgE.filter(sameSt).length}/${sgE.length}・cp の時代（〜11/03・5段に寄せて）${cpE.filter((x) => CP5[x.node!] === CP5[x.digestNode!]).length}/${cpE.length}（駅のままだと ${cpE.filter(sameSt).length}）`);
   }

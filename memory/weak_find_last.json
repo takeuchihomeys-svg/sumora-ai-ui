@@ -1,0 +1,137 @@
+{
+  "at": "2026-11-23T16:20:12.220Z",
+  "ok": false,
+  "line": "弱所横断 未達10/12 先頭=auto_after_bundle（P0）",
+  "mech_line": "仕組み台帳 仕組み無し0／本番未達(人)8／費用2／コード0 先頭人待ち=auto_after_bundle",
+  "next": "拡張再読込→ポップアップで束取得→自動1回 → （人）chrome://extensions → 自動1回 → scripts/weak-find.ts",
+  "gaps": [
+    {
+      "id": "auto_after_bundle",
+      "severity": "P0",
+      "why": "新束のあと自動が無い（学習・手順書が本番に届いていない）",
+      "script": "（人）chrome://extensions → 自動1回 → scripts/weak-find.ts",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "F6/F55・strengthen-vs-human-loop",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "playbook_reflect",
+      "severity": "P0",
+      "why": "手順書の反映が揃っていない（自動が読んだ手順書の決まりの版が古い（4c266b56・コード 74beb497）／拡張にあって手順書に無い決まり（手順書が古い）: guide_phase_checkpoints・flow_series_grasp 他13）",
+      "script": "scripts/check-playbook-reflect.ts／scripts/attach-playbook.ts --apply",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "judgePlaybookReflect／attach-playbook",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "playbook_seen",
+      "severity": "P0",
+      "why": "playbook_seen 関所未達（印ありだが rv=4c266b56 ≠ コード 74beb497）",
+      "script": "scripts/check-playbook-reflect.ts",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "page:playbook_seen＋rv照合",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "ad_sort",
+      "severity": "P1",
+      "why": "ad_sort_hover 未達（sort_hilo 欠など）",
+      "script": "scripts/check-playbook-reflect.ts／F58 sort_*",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "ad_sort_hover／sort_legacy",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "auto_cursor",
+      "severity": "P1",
+      "why": "自動カーソル60.1%<70%",
+      "script": "scripts/human-like-improve.ts --plan-only",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "aim／_humanPointerClick",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "auto_point",
+      "severity": "P1",
+      "why": "自動位置47.3%<60%",
+      "script": "scripts/human-like-improve.ts --yes-cost／scripts/weak-strengthen.ts --yes-cost",
+      "layer": "cost",
+      "mech": {
+        "exists": true,
+        "name": "photo_learn／expandAliasPoints",
+        "blocked": "cost"
+      }
+    },
+    {
+      "id": "f57_phases",
+      "severity": "P1",
+      "why": "F57 段印未完（手順書×画面照会 7/9✓ 欠=一覧・並べ替えAD高低（経路:駅要・地域要・一覧要）（完了線: 必須段の本番監査印が全て揃う・コード配線だけでは不可））",
+      "script": "scripts/check-guide-screen-grasp.ts",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "F57 guide_phase／flow_series",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "human_band",
+      "severity": "P1",
+      "why": "human帯19.6%<50%",
+      "script": "scripts/human-like-improve.ts --yes-cost（間隔＋必要なら位置）",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "F59／_wardGapPlan human帯",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "nearness_fold",
+      "severity": "P1",
+      "why": "近さ60<70（1押下畳み）",
+      "script": "scripts/human-like-improve.ts --plan-only",
+      "layer": "human",
+      "mech": {
+        "exists": true,
+        "name": "F59 human-like-improve／gaps floor",
+        "blocked": "human"
+      }
+    },
+    {
+      "id": "thin_points",
+      "severity": "P2",
+      "why": "thin欄82>8（位置票が薄い）",
+      "script": "scripts/weak-strengthen.ts --yes-cost",
+      "layer": "cost",
+      "mech": {
+        "exists": true,
+        "name": "weak-strengthen／photo_learn",
+        "blocked": "cost"
+      }
+    }
+  ],
+  "findings_n": 12,
+  "allow": {
+    "pointMin": 60,
+    "cursorMin": 70,
+    "humanBandMin": 50,
+    "nearnessMin": 70
+  },
+  "bundle_id": 2705
+}
