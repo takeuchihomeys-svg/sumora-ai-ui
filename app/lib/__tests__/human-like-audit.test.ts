@@ -10,7 +10,15 @@
 //   → 写真をまたいで1本にまとめてから判定しないと正しく見えない。
 //
 // 実行: npx tsx app/lib/__tests__/human-like-audit.test.ts
-import { mergeOpsAcrossShots, isChooseField, auditHumanLike, findHumanLikeGaps, isDiagOnlyRow } from "../human-like-audit";
+import {
+  mergeOpsAcrossShots,
+  isChooseField,
+  auditHumanLike,
+  findHumanLikeGaps,
+  isDiagOnlyRow,
+  judgeHumanLikePass,
+  HUMAN_LIKE_PASS,
+} from "../human-like-audit";
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean, extra?: unknown) => {
@@ -138,6 +146,46 @@ console.log("\n■ ⑧ 壊れた入力でも落ちない");
   ok("null でも落ちない", auditHumanLike(null as never).ops === 0);
   ok("null が混ざっても落ちない", auditHumanLike([null as never, { shot_ops: null }]).ops === 0);
   ok("名前が無い操作は飛ばす", mergeOpsAcrossShots([{ shot_ops: [{ k: "click" }] }]).length === 0);
+}
+
+console.log("\n■ ⑨ 人間らしさ合格線（judgeHumanLikePass・機械 vs 人）");
+{
+  ok("合格線定数", HUMAN_LIKE_PASS.cursorMinPct === 50 && HUMAN_LIKE_PASS.pointMinPct === 50 && HUMAN_LIKE_PASS.typedOnChooseMax === 0);
+
+  // 人っぽい: click→change・カーソル・位置あり・選ぶ欄に打ち込まない
+  const humanish = auditHumanLike([
+    {
+      moves_n: 12,
+      point_fields: { rental_cost2: { x: 0.4, y: 0.5, n: 3 } },
+      shot_ops: [
+        { t: 1000, k: "click", f: "rental_cost2", w: "select", cs: "pointer", by: "auto" },
+        { t: 1500, k: "change", f: "rental_cost2", w: "select", by: "auto" },
+        { t: 2500, k: "key", f: "required_time", w: "text", by: "auto" },
+      ],
+    },
+    {
+      moves_n: 8,
+      point_fields: { a: { n: 1 } },
+      shot_ops: [{ t: 3000, k: "click", f: "検索", w: "button", cs: "pointer", by: "auto" }],
+    },
+  ]);
+  const hp = judgeHumanLikePass(humanish);
+  ok("人っぽい操作は合格", hp.ok, hp.line);
+
+  // 機械っぽい: 選ぶ欄に key・押さず change・カーソル無し・位置無し
+  const machine = auditHumanLike([
+    {
+      moves_n: 0,
+      point_fields: null,
+      shot_ops: [
+        { t: 1000, k: "key", f: "rental_cost2", w: "select" },
+        { t: 1100, k: "change", f: "room_layout_id[]", w: "checkbox" },
+      ],
+    },
+  ]);
+  const mp = judgeHumanLikePass(machine);
+  ok("機械っぽい操作は不合格", !mp.ok, mp.line);
+  ok("機械は直書き・打ち込み・カーソルを名指し", mp.gaps.length >= 2, mp.gaps);
 }
 
 console.log(`\n結果: 合格 ${pass} / 不合格 ${fail}`);

@@ -1,0 +1,156 @@
+{
+  "at": "2026-11-23T16:20:35.761Z",
+  "runs": 40,
+  "counts": {
+    "switch": 18,
+    "who_grasp": 20,
+    "place_clear": 13,
+    "place_select": 19,
+    "conditions": 11,
+    "customer_think": 3,
+    "search": 8,
+    "fill_done": 3,
+    "send_or_pdf": 8,
+    "post_send_clear": 4,
+    "ready_next": 23,
+    "loop_advance": 1,
+    "next_clear": 14,
+    "designated": 0
+  },
+  "weak": [
+    "designated"
+  ],
+  "line": "連続客細原子 runs=40 客切替18・いま客・次客把握20・前客場所外し13・新客場所入れ19・条件欄11・客ごと思考3・検索押下8・入力完了3・送付8・送付後外し4・次客可23・ループ完了→次へ1・次客前外し14・指定客ロック0／弱0回=指定客ロック",
+  "latest_plan": {
+    "ok": false,
+    "trunk_gaps": [
+      "前客外し",
+      "客ごと思考",
+      "条件入れ",
+      "検索",
+      "送付",
+      "送付後外し",
+      "次客可"
+    ],
+    "fine_gaps": [
+      "switch",
+      "who_grasp",
+      "place_clear",
+      "place_select",
+      "conditions",
+      "customer_think",
+      "search",
+      "fill_done",
+      "send_or_pdf",
+      "post_send_clear",
+      "ready_next",
+      "loop_advance",
+      "next_clear",
+      "designated"
+    ],
+    "items": [
+      {
+        "id": "switch",
+        "layer": "free",
+        "why": "客切替の印が無い",
+        "next": "switch_grasp／flow_done_switch を fill 開始で stamp",
+        "foundation": "F44"
+      },
+      {
+        "id": "who_grasp",
+        "layer": "free",
+        "why": "いま客・次客把握の印が無い",
+        "next": "next_customer_grasp／loop_who_grasp／now_customer を fill・完了・次客前で残す（2.8.221+）",
+        "foundation": "F44"
+      },
+      {
+        "id": "place_clear",
+        "layer": "free",
+        "why": "前客場所外しの印が無い",
+        "next": "leftover_scan→clear_method→leftover_clean を前客外しで揃える",
+        "foundation": "F47"
+      },
+      {
+        "id": "place_select",
+        "layer": "free",
+        "why": "新客場所入れの印が無い",
+        "next": "flow_done_place／place_select 原子を場所入れ完了で stamp",
+        "foundation": "F45"
+      },
+      {
+        "id": "conditions",
+        "layer": "free",
+        "why": "条件欄の印が無い",
+        "next": "flow_done_conditions を条件入れ完了で stamp",
+        "foundation": "F45"
+      },
+      {
+        "id": "customer_think",
+        "layer": "free",
+        "why": "客ごと思考の印が無い",
+        "next": "fill直前 _refreshCustomerThink→customer_think stamp（2.8.202+）",
+        "foundation": "F61"
+      },
+      {
+        "id": "search",
+        "layer": "free",
+        "why": "検索押下の印が無い",
+        "next": "search_press／flow_done_search を検索押下で stamp",
+        "foundation": "F45"
+      },
+      {
+        "id": "fill_done",
+        "layer": "free",
+        "why": "入力完了の印が無い",
+        "next": "flow_done_fill_done を fill-done で stamp",
+        "foundation": "F45"
+      },
+      {
+        "id": "post_send_clear",
+        "layer": "free",
+        "why": "送付後外しの印が無い",
+        "next": "≥2.8.203 runId明示の post_send_clear／handoff_atom_post_send",
+        "foundation": "F61"
+      },
+      {
+        "id": "ready_next",
+        "layer": "free",
+        "why": "次客可の印が無い",
+        "next": "一連完了で ready_next／series_done／handoff_atom_ready",
+        "foundation": "F45"
+      },
+      {
+        "id": "loop_advance",
+        "layer": "free",
+        "why": "ループ完了→次への印が無い",
+        "next": "series_done 後に loop_advance（完了→次）と loop_phase_grasp を残す（2.8.222）",
+        "foundation": "F45"
+      },
+      {
+        "id": "next_clear",
+        "layer": "free",
+        "why": "次客前外しの印が無い",
+        "next": "次客開始 leftover_scan／flow_atom_ok_next_clear",
+        "foundation": "F47"
+      },
+      {
+        "id": "designated",
+        "layer": "free",
+        "why": "指定客ロックの印が無い",
+        "next": "指定客は designated_lock→designated_done（2.8.201+）",
+        "foundation": "F61"
+      },
+      {
+        "id": "send_or_pdf",
+        "layer": "human",
+        "why": "送付の印が無い",
+        "next": "一覧到達後 auto_pdf／batch_customer_done を残す（並べ替え穴も併せて）",
+        "foundation": "F62"
+      }
+    ],
+    "line": "連続客ループ強化要 幹欠=前客外し・客ごと思考・条件入れ・検索・送付・送付後外し・次客可／細欠=客切替・いま客・次客把握・前客場所外し・新客場所入れ・条件欄・客ごと思考・検索押下・入力完了・送付・送付後外し・次客可・ループ完了→次へ・次客前外し・指定客ロック",
+    "next": "[F44/free] switch_grasp／flow_done_switch を fill 開始で stamp"
+  },
+  "fine_n": 14,
+  "next": "[F44/free] switch_grasp／flow_done_switch を fill 開始で stamp"
+}

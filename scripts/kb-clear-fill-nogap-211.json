@@ -1,0 +1,10 @@
+{
+  "title": "【決定】連続客の外す＋入れるに抜けがないかテストで塞ぐ（fill_gate未配線を2.8.211で直す）",
+  "category": "architecture",
+  "insight": "徹底テストで _guideLikeFillGate が定義のみ未呼出と判明（外す側 clear grasp と同型の穴）。2.8.211で検索前に fill_gate→before_search→conditions_ready を配線。外す側は leftover→clear_grasp→clear_done→after_clear→clear_then_fill。continuous-clear-fill-no-gap テストで両方の抜けを固定監視。",
+  "rationale": "竹内さん: ちゃんとできているのかテストして徹底的に。連続でお客さん検索するさいのいれるところと外すところに抜けがないか。統括pro徹底的に確認。",
+  "context": "ちゃんとできているのかテストして徹底的におねがい。連続でお客さん検索するさいのいれるところと外すところに抜けがないか。統括pro徹底的に確認おねがい。",
+  "applied_to": "chrome-extension/page-script.js, manifest 2.8.211, app/lib/__tests__/continuous-clear-fill-no-gap.test.ts",
+  "tags": ["Chrome拡張", "連続客", "点検表", "分析強化の原則", "ブレイン診断"],
+  "priority": 1
+}

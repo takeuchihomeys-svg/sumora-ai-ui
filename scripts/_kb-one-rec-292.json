@@ -1,0 +1,10 @@
+{
+  "title": "【決定】1度の録画で学習・改善・反映まで完走する（one-rec-learn-loop）",
+  "category": "architecture",
+  "insight": "自動／通常の弱所は1本の録画に全部ある。flash・束・拡張・自動・効果が別経路だと『学んだ』が次の自動に届かず同じバグが繰り返す。→ one-rec-learn-loop の8段（抽出→学び→仕組み→束→再読込→自動反映→検証→学び方強化）で抜けを測り、verify印（layout_pre_search_ok／search_armed／Case C／status≠started）が出るまで同じ客で再走する。",
+  "rationale": "2026-11-18 竹内さん『このように1度の録画でちゃんと学習と改善と反映ができるようになるように徹底して改善する仕組みをつくる』。統括Pro: 根1関所hitWant>=1／根2 pending未書き。効果は自動1回後にF32で測る（axes nullのまま改善済みと言わない）。",
+  "context": "HONOKA監査1480 status=started layoutOps=0 want=[4,6]。拡張2.8.91全hit関所＋2.8.92 search_armed。app/lib/one-rec-learn-loop.ts。",
+  "applied_to": "app/lib/one-rec-learn-loop.ts, chrome-extension/page-script.js, bulk-dl.js, content.js, app/lib/learn-supervisor.ts, app/lib/auto-rec-diagnose.ts",
+  "tags": ["統括Pro", "学習", "Chrome拡張", "F46", "分析強化の原則"],
+  "priority": 1
+}

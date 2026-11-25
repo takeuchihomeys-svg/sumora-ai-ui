@@ -175,6 +175,10 @@ function createWorld(scenario) {
   var tab = { id: 1, url: "https://www.realnetpro.com/main.php", active: true, windowId: 1 };
   world.tab = tab;
   world.postSendClearCalls = 0;
+  world.resetPressCalls = 0;
+  world.resetVerifyCalls = 0;
+  // 2.8.284 既定の試験は従来の外しのまま（リセット押下の試験だけ scenario.resetButton: true で有効にする）
+  local.data.axlx_reset_button_mode = !!(scenario && scenario.resetButton);
 
   world.startSw = function () {
     if (world.sw) world.killSw("restart");
@@ -265,6 +269,26 @@ function createSwEnv(world, owner, regions, postAudit, note) {
           if (mode === "hang") return new Promise(function () {});
           return new Promise(function (resolve) {
             clock.add("page", function () { resolve([{ result: { ok: true, left: 0 } }]); }, mode === "slow" ? 90000 : 4000, false);
+          });
+        }
+        if (f.indexOf("__axlxResetPressP") >= 0) {
+          world.resetPressCalls++;
+          var rmode = (world.currentPage && world.currentPage.reset) || "ok";
+          note("reset_press_exec", rmode);
+          if (rmode === "nobutton") return Promise.resolve([{ result: { ok: false, why: "no_reset_button" } }]);
+          if (rmode === "hang") return new Promise(function () {});
+          return new Promise(function (resolve) {
+            clock.add("page", function () { resolve([{ result: { ok: true, pressed: true, closed: 1, before: "wards=3" } }]); }, 1500, false);
+          });
+        }
+        if (f.indexOf("__axlxResetVerifyP") >= 0) {
+          world.resetVerifyCalls++;
+          var vmode = (world.currentPage && world.currentPage.reset) || "ok";
+          note("reset_verify_exec", vmode);
+          return new Promise(function (resolve) {
+            clock.add("page", function () {
+              resolve([{ result: vmode === "notempty" ? { ok: true, empty: false, left: 2, detail: "wards=2" } : { ok: true, empty: true, left: 0, reloaded: true } }]);
+            }, 900, false);
           });
         }
         if (f.indexOf("__axlxForceClearAllPlace") >= 0 && world.currentPage && world.currentPage.forceFlagHang) return new Promise(function () {});

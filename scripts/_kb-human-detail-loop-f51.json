@@ -1,0 +1,10 @@
+{
+  "title": "【決定】人間細部改善ループF51（弱所→学ぶ→土台→狙って残す→度）",
+  "category": "architecture",
+  "insight": "人間として自動化するには細部改善を5段の仕組みで回す: ①自動録画で弱所原子 ②通常から学ぶ ③土台（F15/F16/F28/F29/F49・_fireAt座標） ④learn_warm→aim有→pointer→rec-point ⑤DETAIL_DEGREEで確かめる。F28/F29の短間隔はclick/tap/keyの動作間だけ測る（click→changeを混ぜない）。",
+  "rationale": "統括Pro 2026-11-17: 細部にこだわった改善のための仕組みと土台を徹底。実測でaim有0・learn_warm0・短間隔51%は計測がchange短gを混ぜていた穴＋押し直前のaim再引き不足。",
+  "context": "竹内さん「人間として自動化できるように細部にこだわった改善のために仕組みづくりと土台作りを徹底的に／細かく改善／統括Pro」",
+  "applied_to": "app/lib/human-detail-loop.ts,app/lib/human-nearness.ts,app/lib/learn-foundation-audit.ts,app/lib/learn-supervisor.ts,app/lib/learn-supervisor-pro.ts,chrome-extension 2.8.87",
+  "tags": ["統括Pro", "Chrome拡張", "人間らしさ", "分析強化の原則", "点検表"],
+  "priority": 1
+}

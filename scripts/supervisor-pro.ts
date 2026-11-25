@@ -176,6 +176,48 @@ void (async () => {
     line(`■ 土台点検スキップ: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
   }
 
+  /**
+   * ★ 2.8.204: 連続客 F61/F62 根拠は営業時間でも必ず載せる（重い FA ではなく search_audits 40行だけ）。
+   *   axes.foundation_f61/f62・continuous_loop が null のまま強化を語る穴を塞ぐ。
+   */
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const { countFineAtomsAcrossAudits } = await import("../app/lib/handoff-loop-ledger");
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (url && key && adv.meeting) {
+      const site = scope === "itandi" ? "itandi" : "realpro";
+      const { data: rows } = await createClient(url, key)
+        .from("search_audits")
+        .select("steps,ext_version,mode")
+        .eq("site", site)
+        .in("mode", ["brain_aix", "aix", "auto"])
+        .order("created_at", { ascending: false })
+        .limit(40);
+      const tallied = countFineAtomsAcrossAudits(rows || []);
+      const postN = tallied.counts.post_send_clear || 0;
+      const leftN = tallied.counts.place_clear || 0;
+      const readyN = tallied.counts.ready_next || 0;
+      const f61ok = leftN >= 1 && postN >= 1 && readyN >= 1;
+      const must = ["switch", "place_clear", "search", "fill_done", "post_send_clear", "ready_next"] as const;
+      const f62ok = must.every((id) => (tallied.counts[id] || 0) >= 1);
+      const contLine = tallied.line;
+      const ev = [...(adv.meeting.evidence || [])];
+      const upsert = (label: string, value: string, guessed: boolean) => {
+        const i = ev.findIndex((e) => e.label === label);
+        const row = { label, value, guessed };
+        if (i >= 0) ev[i] = row; else ev.push(row);
+      };
+      upsert("連続客ループ（細分化）", contLine, !f61ok || tallied.weak.length > 0);
+      upsert("土台 F61_continuous_customer_handoff_loop", `${f61ok ? "✓" : "✗"} leftover=${leftN} post_send=${postN} ready=${readyN}（完了線: 各≥1）`, !f61ok);
+      upsert("土台 F62_continuous_handoff_subdivide", `${f62ok ? "✓" : "✗"} ${contLine.slice(0, 160)}`, !f62ok);
+      adv = { ...adv, meeting: { ...adv.meeting, evidence: ev } };
+      line(`■ 連続客根拠（軽量）: F61=${f61ok ? "✓" : "✗"} F62=${f62ok ? "✓" : "✗"} weak=${tallied.weak.slice(0, 4).join("・") || "なし"}`);
+    }
+  } catch (e) {
+    line(`■ 連続客根拠スキップ: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
+  }
+
   // ★ 2026-11-19: 本番の束に shot_gaps が無いと、学べ済みを 0 と数えて「flash未実行」と誤判定する。
   //   束に無い時だけ DB の件数で補う（束の作りと同じ期間 materialsMs）。
   try {
@@ -242,7 +284,8 @@ void (async () => {
     const { createClient } = await import("@supabase/supabase-js");
     const { fetchOpenSupervisorAsks } = await import("../app/lib/supervisor-owner-ask-server");
     const u = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    /** ★ 2026-11-23: SERVICE_ROLE 欠でも ANON で読む（欠のとき createClient が supabaseKey required で落ち、未回答台帳を見ない抜け） */
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
     if (u && k) {
       const open = await fetchOpenSupervisorAsks(createClient(u, k));
       for (const o of open) openAskNotes.push(`確認待ち（竹内さんへ出して未回答・聞き直さない・この作業は保留）: ${o.question.slice(0, 120)}／オススメ=${o.recommended ?? "なし"}`);
@@ -333,7 +376,11 @@ void (async () => {
       try {
         const { createClient } = await import("@supabase/supabase-js");
         const { saveOwnerAsks } = await import("../app/lib/supervisor-owner-ask-server");
-        const res = await saveOwnerAsks(createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || ""), scope, asks);
+        /** ★ 2026-11-23: 他経路と同じく ANON フォールバック（SERVICE_ROLE 空だと supabaseKey required で台帳ゼロ＝統括の迷いが残らない抜け） */
+        const askKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+        const askUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+        if (!askUrl || !askKey) throw new Error("URL/鍵が空（.env.local の SUPABASE_* を確認）");
+        const res = await saveOwnerAsks(createClient(askUrl, askKey), scope, asks);
         ids = asks.map((a) => res.saved.find((s) => s.ask === a)?.id ?? res.skipped.find((s) => s.ask === a)?.id ?? null);
         line(`  台帳 owner_questions: 追加${res.saved.length}件／既にある${res.skipped.length}件${res.errors.length ? "／失敗: " + res.errors.join("・") : ""}`);
       } catch (e) {

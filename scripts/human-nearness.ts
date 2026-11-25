@@ -8,7 +8,7 @@
  * 土台: F29_human_nearness（foundation-audit）／統括束 human_nearness
  */
 import { createClient } from "@supabase/supabase-js";
-import { computeHumanNearness, NEARNESS_ALLOW } from "../app/lib/human-nearness";
+import { computeHumanNearness, gapsFromOps, NEARNESS_ALLOW } from "../app/lib/human-nearness";
 import { isAutoMode } from "../app/lib/press-by";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -42,12 +42,11 @@ async function main() {
     for (const r of data) {
       const m = String(r.mode || "").toLowerCase();
       const ops = Array.isArray(r.shot_ops) ? (r.shot_ops as Array<Record<string, unknown>>) : [];
-      for (const o of ops) {
-        const g = Number(o.g);
-        if (!(Number.isFinite(g) && g >= 0)) continue;
-        if (isAutoMode(m)) autoGaps.push(g);
-        else if (m === "normal") normalGaps.push(g);
-      }
+      // ★ 正本: click/tap/key の動作間隔だけ（change/diag の数十msを混ぜると短間隔が人工的に跳ねる）
+      const gs = gapsFromOps(ops);
+      if (!gs.length) continue;
+      if (isAutoMode(m)) autoGaps.push(...gs);
+      else if (m === "normal") normalGaps.push(...gs);
     }
     if (data.length < 1000) break;
   }

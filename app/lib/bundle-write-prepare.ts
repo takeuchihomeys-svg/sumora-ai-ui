@@ -17,6 +17,11 @@ export type PrepareBundleResult = {
   playbook_ok: boolean;
   /** 開くボタンの名前から外したチェック欄の写し（拡張が人の押した所の代わりに使ってしまう物） */
   opener_copies_removed: number;
+  /**
+   * ★ 2026-11-23: 手順書の決まり版が変わったら generated_at を上げた。
+   *   実測: attach だけだと generated_at が据え置き → 拡張が same_version で新手順書を取らず read=0・旧 playbook_seen のまま。
+   */
+  playbook_ver_bumped: boolean;
 };
 
 /** 束を書く形に整える（束を直接書き換える）。 */
@@ -38,11 +43,18 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
     // 外せなくても束は書く（手順書が mismatch として足りない所に出す）
   }
   let playbook_ok = false;
+  let playbook_ver_bumped = false;
   try {
+    const prevRv = String((bundle.playbook as { rules_v?: string } | null | undefined)?.rules_v ?? "");
     bundle.playbook = buildPlaybook(bundle as never);
     playbook_ok = true;
+    const nextRv = String((bundle.playbook as { rules_v?: string } | null | undefined)?.rules_v ?? "");
+    if (nextRv && nextRv !== prevRv) {
+      bundle.generated_at = new Date().toISOString();
+      playbook_ver_bumped = true;
+    }
   } catch {
     // 手順書が作れなくても束は書く（拡張は手順書無しで動く）
   }
-  return { names_stripped, playbook_ok, opener_copies_removed };
+  return { names_stripped, playbook_ok, opener_copies_removed, playbook_ver_bumped };
 }

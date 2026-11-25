@@ -1,0 +1,10 @@
+{
+  "title": "【決定】人間細部強化は通常画像flash→aim薄(n≥1)も束に載せ、自動1回でaim有を確かめる",
+  "category": "architecture",
+  "insight": "統括Proが押した位置35%・aim無を弱点細分した。原因は画面位置をn≥3だけstorageに載せてflashの薄い学びが捨てられること。n≥1をthinとして載せ、solid(n≥3)は連携完了の数えに残す。学習は通常newest画像から弱い欄（徒歩・区・確定・賃料上限等）をflashで読み束へ。効果は拡張再読込→自動1回のaim有／learn_reflect_okで測る。",
+  "rationale": "2026-11-17 竹内さん「画像学習して録画から人間のように細かい部分を強化／統括Pro」。Pro生: 画像→ProはOK、穴は束→自動とpoint35%。",
+  "context": "竹内さん「画像学習して録画から人間のように細かい部分ちゃんとこだわって改善する／統括proおねがい／ここの細かい部分ちゃんとおこなって今人間的にできていない部分を強化するようにする」",
+  "applied_to": "chrome-extension/background.js, chrome-extension/page-script.js, chrome-extension/pointer-ui.js, scripts/shot-learn.ts, memory/dept_search_tool.md",
+  "tags": ["統括Pro", "Chrome拡張", "人間らしさ", "aim", "photo_learn", "分析強化の原則"],
+  "priority": 1
+}

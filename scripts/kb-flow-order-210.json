@@ -1,0 +1,10 @@
+{
+  "title": "【決定】拡張ツールが一連の順番を徹底理解する（flow_series_plan/order/gap・2.8.210）",
+  "category": "architecture",
+  "insight": "拡張の _noteFlowSeriesAt は到達印だけで何番目か・前段抜けを見ていなかった。2.8.210で客開始時に flow_series_plan（全順を読む）、各段で flow_series_order（N/M）、抜けは flow_series_gap、before_clear 無しで入れへ進まない関所（_requireFlowSeriesUpTo）。古い手順書でも拡張が before_clear を先頭に補う。決まり flow_series_order_gate。",
+  "rationale": "竹内さん: ちゃんと順番りかいするように。拡張ツール側が順番ちゃんと徹底的に理解する必要がある。統括pro徹底的に。",
+  "context": "ちゃんと順番りかいするように。格調ツール側が順番ちゃんと徹底的に理解する必要がある。統括pro徹底的におねがい。",
+  "applied_to": "chrome-extension/page-script.js, manifest 2.8.210, app/lib/auto-procedure-rules.ts flow_series_order_gate",
+  "tags": ["Chrome拡張", "手順書", "順番", "点検表", "分析強化の原則"],
+  "priority": 1
+}

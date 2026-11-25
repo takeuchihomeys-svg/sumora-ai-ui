@@ -1,0 +1,92 @@
+{
+  "at": "2026-11-23T17:59:45.285Z",
+  "ok": false,
+  "line": "根本改善✗ 拡張版が古い latest=2.8.239 < code=2.8.244（再読込→自動1回が必要）／[sort_announce_before_search] 実証印が無い（要: next_move_premature_block|page:next_move_premature_block|dl:next_move_premature_block）／[stuck_next_page_on_single_page] 実証印が",
+  "next": "拡張版が古い latest=2.8.239 < code=2.8.244（再読込→自動1回が必要）",
+  "gaps": [
+    "拡張版が古い latest=2.8.239 < code=2.8.244（再読込→自動1回が必要）",
+    "[sort_announce_before_search] 実証印が無い（要: next_move_premature_block|page:next_move_premature_block|dl:next_move_premature_block）",
+    "[stuck_next_page_on_single_page] 実証印が無い（要: list_page_one_only|dl:list_page_one_only|page:list_page_one_only|list_no_next_advance|dl:list_no_next_advance）",
+    "[timeout_without_screen_poll] 実証印が無い（要: screen_poll_grasp|page:screen_poll_grasp|screen_poll_api_next|page:screen_poll_api_next）",
+    "[clear_mid_stuck_improvements_unused] 実証印が無い（要: clear_watch_on|page:clear_watch_on|clear_watch_tick|page:clear_watch_tick|stuck_best_act|page:stuck_best_act）",
+    "[ad_sort_before_search_results] 実証版が足りない（要≥2.8.240・今=2.8.239／古い監査の印だけでは足りない）",
+    "[silence_hang_no_stuck_wiring] 実証版が足りない（要≥2.8.242・今=2.8.239／古い監査の印だけでは足りない）",
+    "[legacy_ad_collides_screen_ok] 実証版が足りない（要≥2.8.243・今=2.8.239／古い監査の印だけでは足りない）",
+    "[armed_rows_bypass_screen_ok] 実証版が足りない（要≥2.8.244・今=2.8.239／古い監査の印だけでは足りない）",
+    "[foundation_subdivide_auto_reflect] 実証版が足りない（要≥2.8.243・今=2.8.239／古い監査の印だけでは足りない）"
+  ],
+  "cases": [
+    {
+      "id": "sort_announce_before_search",
+      "ok": false,
+      "gaps": [
+        "実証印が無い（要: next_move_premature_block|page:next_move_premature_block|dl:next_move_premature_block）"
+      ]
+    },
+    {
+      "id": "stuck_next_page_on_single_page",
+      "ok": false,
+      "gaps": [
+        "実証印が無い（要: list_page_one_only|dl:list_page_one_only|page:list_page_one_only|list_no_next_advance|dl:list_no_next_advance）"
+      ]
+    },
+    {
+      "id": "continuous_loop_advance_thin",
+      "ok": true,
+      "gaps": []
+    },
+    {
+      "id": "timeout_without_screen_poll",
+      "ok": false,
+      "gaps": [
+        "実証印が無い（要: screen_poll_grasp|page:screen_poll_grasp|screen_poll_api_next|page:screen_poll_api_next）"
+      ]
+    },
+    {
+      "id": "clear_mid_stuck_improvements_unused",
+      "ok": false,
+      "gaps": [
+        "実証印が無い（要: clear_watch_on|page:clear_watch_on|clear_watch_tick|page:clear_watch_tick|stuck_best_act|page:stuck_best_act）"
+      ]
+    },
+    {
+      "id": "ad_sort_before_search_results",
+      "ok": false,
+      "gaps": [
+        "実証版が足りない（要≥2.8.240・今=2.8.239／古い監査の印だけでは足りない）"
+      ]
+    },
+    {
+      "id": "silence_hang_no_stuck_wiring",
+      "ok": false,
+      "gaps": [
+        "実証版が足りない（要≥2.8.242・今=2.8.239／古い監査の印だけでは足りない）"
+      ]
+    },
+    {
+      "id": "legacy_ad_collides_screen_ok",
+      "ok": false,
+      "gaps": [
+        "実証版が足りない（要≥2.8.243・今=2.8.239／古い監査の印だけでは足りない）"
+      ]
+    },
+    {
+      "id": "armed_rows_bypass_screen_ok",
+      "ok": false,
+      "gaps": [
+        "実証版が足りない（要≥2.8.244・今=2.8.239／古い監査の印だけでは足りない）"
+      ]
+    },
+    {
+      "id": "foundation_subdivide_auto_reflect",
+      "ok": false,
+      "gaps": [
+        "実証版が足りない（要≥2.8.243・今=2.8.239／古い監査の印だけでは足りない）"
+      ]
+    }
+  ],
+  "latest_ext_version": "2.8.239",
+  "code_ext_version": "2.8.244",
+  "ext_test_ok": true,
+  "audit_keys_n": 55
+}

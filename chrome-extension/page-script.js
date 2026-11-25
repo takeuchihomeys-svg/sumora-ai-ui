@@ -4064,7 +4064,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.280";
+  var _AXLX_PAGE_VER = "2.8.285";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4173,6 +4173,9 @@ function _guideLikeAreaSkip(why) {
     "search_nav_pending_light_scan",
     "bulk_handoff_watch_resume",
     "bulk_stale_prev_lock",
+    "bulk_switch_no_forever_wait",
+    "bulk_no_skip_customer",
+    "reset_between_customers",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -12166,6 +12169,187 @@ function _guideLikeAreaSkip(why) {
     // executeScript(world:"MAIN") が結果を待てるよう Promise 版も出す（background.js _postSendClearRealpro が使う）
     window.__axlxPostSendClearP = function () { return new Promise(function (resolve) { _postSendClear(resolve); }); };
   } catch (_) {}
+  /**
+   * ★ 2.8.284 竹内さん「条件はずしのところかなりむずかしくバグやえらーおきることがおおい。人間のようにリセットボタンに切り替える。
+   *   リセットおして→待機→画面照会（スクショ）→空になったと確認してから新しいお客さんを拡張ツールで入れる」:
+   *   送付が終わったお客さんの結果ページで、**検索の最中ではなく「次の客を入れる前の1点」だけ**リセットを押す。
+   *   ⚠ 2.8.105→107 で戻した理由（#1492・#1494）は「**入力中の自動**がリセットで消えた」こと。ここは入力中は押さない（_axFillRunning なら断る）。
+   *   ・押す前に完了の小窓（div.this_window_close 等）を閉じる（背後の要素が押せずエラーになるのを防ぐ）
+   *   ・押す前に sessionStorage へ印（bootAt）を置く＝リセットでページが読み直されたか後で分かる
+   *   ・空になったかは **フォームの読み戻し**（URL/DOM）で決める（画像・録画では決めない）
+   *   ・空にならなければ呼び出し側（background）が従来の「1つずつ外す」へ戻る（fail-open）
+   *   呼び出し: background.js の _postSendResetRealpro が executeScript(MAIN) で window.__axlxResetPressP / __axlxResetVerifyP を呼ぶ
+   */
+  try { if (!window.__axlxBootAt) window.__axlxBootAt = Date.now(); } catch (_) {}
+  var _AX_RESET_PRESSED_KEY = "axlx_reset_pressed";
+  var _AX_RESET_CLEAN_KEY = "axlx_reset_clean";
+  function _isShown(el) { try { return !!(el && (el.offsetParent || (el.getClientRects && el.getClientRects().length))); } catch (_) { return false; } }
+  /** 送付の完了画面・ポップアップを閉じる（検索の小窓の×＋「閉じる」だけの小窓）。押した数を返す */
+  function _closeStrayWindows() {
+    var n = 0;
+    try {
+      [].slice.call(document.querySelectorAll("div.this_window_close")).forEach(function (x) {
+        if (!_isShown(x)) return;
+        try { enqueueHumanClick(x, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts()); n++; } catch (_) {}
+      });
+    } catch (_) {}
+    try {
+      [].slice.call(document.querySelectorAll('[role="dialog"], .modal, .modal_wrap, .complete_window')).forEach(function (d) {
+        if (!_isShown(d)) return;
+        try { if (d.closest && d.closest(".this_window")) return; } catch (_) {}
+        var btn = [].slice.call(d.querySelectorAll("a,button,div,span")).filter(function (b) {
+          return _isShown(b) && String(b.textContent || "").trim() === "閉じる";
+        })[0];
+        if (btn) { try { enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts()); n++; } catch (_) {} }
+      });
+    } catch (_) {}
+    return n;
+  }
+  /** フォームが「すべて空（未選択）」か。empty/left/detail を返す（_scanLeftoverForm の読み戻し） */
+  function _resetFormState() {
+    var s = {};
+    try { s = _scanLeftoverForm() || {}; } catch (_) { s = {}; }
+    var parts = [];
+    ["stations", "lines", "wards", "towns", "layouts", "structured", "pet"].forEach(function (k) { if (s[k] > 0) parts.push(k + "=" + s[k]); });
+    if (s.shikirei) parts.push("敷礼");
+    (s.selects || []).forEach(function (n) { parts.push(n); });
+    (s.texts || []).forEach(function (n) { parts.push(n); });
+    return { empty: parts.length === 0, left: parts.length, detail: parts.join(",").slice(0, 120) };
+  }
+  function _findResetBtn() {
+    try {
+      var a = [].slice.call(document.querySelectorAll("div.reset_button, a.reset_button, button.reset_button")).filter(_isShown);
+      if (a.length) return a[0];
+      var b = [].slice.call(document.querySelectorAll("a,button,div,span")).filter(function (e) {
+        return _isShown(e) && String(e.textContent || "").trim() === "リセット" && e.children.length === 0;
+      });
+      return b[0] || null;
+    } catch (_) { return null; }
+  }
+  function _resetPress(done) {
+    var finished = false;
+    var fin = function (r) {
+      if (finished) return;
+      finished = true;
+      try { clearTimeout(guard); } catch (_) {}
+      try { done(r); } catch (_) {}
+    };
+    var guard = setTimeout(function () { fin({ ok: false, why: "press_timeout15" }); }, 15000);
+    try {
+      var busy = false;
+      try { busy = !!window._axFillRunning; } catch (_) { busy = false; }
+      if (busy) { fin({ ok: false, skipped: "fill_running", why: "fill_running" }); return; }
+      var closed = _closeStrayWindows();
+      whenClickQueueIdle(function () {
+        setTimeout(function () {
+          try {
+            var btn = _findResetBtn();
+            if (!btn) { fin({ ok: false, why: "no_reset_button", closed: closed }); return; }
+            var before = _resetFormState();
+            try { window.sessionStorage.setItem(_AX_RESET_PRESSED_KEY, JSON.stringify({ at: Date.now(), bootAt: window.__axlxBootAt || 0 })); } catch (_) {}
+            try { window.sessionStorage.removeItem(_AX_RESET_CLEAN_KEY); } catch (_) {}
+            enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _uiGapOpts());
+            whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, bootAt: window.__axlxBootAt || 0 }); });
+          } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
+        }, humanRand(500, 1100));
+      });
+    } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
+  }
+  function _resetVerify(opts, done) {
+    var o = opts || {};
+    var maxMs = Number(o.maxMs) > 0 ? Number(o.maxMs) : 12000;
+    var t0 = Date.now();
+    var finished = false;
+    var fin = function (r) { if (finished) return; finished = true; try { done(r); } catch (_) {} };
+    (function poll() {
+      try {
+        var ready = document.readyState === "complete" && !!document.querySelector('select[name="rental_cost1"], div.go_search, div.go_search_submit');
+        var st = _resetFormState();
+        var pressed = null;
+        try { pressed = JSON.parse(window.sessionStorage.getItem(_AX_RESET_PRESSED_KEY) || "null"); } catch (_) { pressed = null; }
+        var reloaded = !!(pressed && pressed.bootAt && window.__axlxBootAt && pressed.bootAt !== window.__axlxBootAt);
+        if (ready && st.empty) {
+          try { _ledgerClear(); window.__axlxPrevLedger = null; } catch (_) {}
+          try {
+            window.sessionStorage.setItem(_AX_RESET_CLEAN_KEY, JSON.stringify({ at: Date.now(), cid: String(o.cid || "") }));
+            window.sessionStorage.removeItem(_AX_RESET_PRESSED_KEY);
+          } catch (_) {}
+          fin({ ok: true, empty: true, left: 0, ready: true, reloaded: reloaded, ms: Date.now() - t0 });
+          return;
+        }
+        if (Date.now() - t0 > maxMs) {
+          fin({ ok: true, empty: false, left: st.left, detail: st.detail, ready: ready, reloaded: reloaded, ms: Date.now() - t0 });
+          return;
+        }
+      } catch (e) {
+        if (Date.now() - t0 > maxMs) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); return; }
+      }
+      setTimeout(poll, 400);
+    })();
+  }
+  /** リセット直後に「空と確かめた」印があり、いまも空なら true（次客の開始時に「前客の外し」を省く） */
+  function _axResetCleanFresh() {
+    try {
+      var o = JSON.parse(window.sessionStorage.getItem(_AX_RESET_CLEAN_KEY) || "null");
+      if (!o || Date.now() - Number(o.at || 0) > 10 * 60 * 1000) return false;
+      return _resetFormState().empty;
+    } catch (_) { return false; }
+  }
+  /**
+   * ★ 2.8.284 検索を押す前に、リアプロの Ajax（非同期）の再計算が終わるのを待つ。
+   *   ・jQuery の未完了の通信（jQuery.active）が0
+   *   ・「読み込み中」らしい表示（loading／spinner／loader）が見えていない
+   *   ・件数らしい表示（class/id に count／hit／total を含む要素の数字入りの文字）が 600ms 変わらない
+   *   最大5秒。超えたら押す（fail-open・待ちで止めない）。結果は ajax_settle の段に残す。
+   */
+  function _axHitSig() {
+    try {
+      var sig = [];
+      var els = document.querySelectorAll('[class*="count"],[id*="count"],[class*="hit"],[id*="hit"],[class*="total"],[id*="total"]');
+      for (var i = 0; i < els.length && sig.length < 6; i++) {
+        if (!_isShown(els[i])) continue;
+        var t = String(els[i].textContent || "").replace(/\s+/g, "").slice(0, 40);
+        if (/\d/.test(t)) sig.push(t);
+      }
+      return sig.join("|");
+    } catch (_) { return ""; }
+  }
+  function _axLoadingShown() {
+    try {
+      var ls = document.querySelectorAll('[class*="loading"],[id*="loading"],[class*="spinner"],[class*="loader"],.ajax_loading');
+      for (var i = 0; i < ls.length; i++) {
+        if (!_isShown(ls[i])) continue;
+        var r = ls[i].getBoundingClientRect();
+        if (r.width > 4 && r.height > 4) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+  function _axAjaxSettleThen(cb) {
+    var t0 = Date.now();
+    var lastSig = _axHitSig();
+    var stableSince = Date.now();
+    var finished = false;
+    var jq = 0;
+    var fin = function (why) {
+      if (finished) return;
+      finished = true;
+      try { if (_audit) _auditStepP("ajax_settle", why + " " + (Date.now() - t0) + "ms jq=" + jq + " sig=" + String(lastSig || "-").slice(0, 40)); } catch (_) {}
+      try { cb(); } catch (_) {}
+    };
+    (function poll() {
+      try { jq = (window.jQuery && typeof window.jQuery.active === "number") ? window.jQuery.active : 0; } catch (_) { jq = 0; }
+      var sig = _axHitSig();
+      if (sig !== lastSig) { lastSig = sig; stableSince = Date.now(); }
+      if (jq === 0 && !_axLoadingShown() && Date.now() - stableSince >= 600) { fin("settled"); return; }
+      if (Date.now() - t0 > 5000) { fin("timeout"); return; }
+      setTimeout(poll, 150);
+    })();
+  }
+  try {
+    window.__axlxResetPressP = function () { return new Promise(function (resolve) { _resetPress(resolve); }); };
+    window.__axlxResetVerifyP = function (o) { return new Promise(function (resolve) { _resetVerify(o, resolve); }); };
+  } catch (_) {}
   function _clearStationsBeforeWardThen(nextFn, why, round, progArg) {
     var _why = why || "所在地";
     var _round = Number(round) || 0;
@@ -14030,7 +14214,11 @@ function _guideLikeAreaSkip(why) {
           window._axSearchLookDone = true;      // ← この回はもう待たない（無限ループ防止）
           window._axSearchLookedOver = false;
           window._axSearchLookAt = 0;
-          clickSearch();
+          /**
+           * ★ 2.8.284 竹内さん「リアプロは条件を入れると該当件数が非同期で再計算される。終わる前に検索すると全件・前の件数のまま進む」:
+           *   押す前に Ajax の通信が終わり、件数の表示が落ち着くまで待つ（最大5秒・超えたら押す＝fail-open）。
+           */
+          _axAjaxSettleThen(function () { try { clickSearch(); } catch (_) {} });
         } catch (_) {}
       }, _lookMs);
       return;
@@ -15649,6 +15837,17 @@ function _guideLikeAreaSkip(why) {
               if (_ct && _ct.forceClearSameKindStations && _wantM0 === "station") _needSameSt = true;
               if (_ct && _ct.forceClearSameKindWards && _wantM0 === "area") _needSameWd = true;
               if (_ct && _audit) _auditStepP("customer_think_apply", String(_ct.summary || "").slice(0, 160));
+            } catch (_) {}
+            /**
+             * ★ 2.8.284: 送付後にリセットを押し、フォームが空と**確かめた**直後なら、前客の外し（小窓を開いて確かめる）を省く。
+             *   いまも空（読み戻し）の時だけ。印は1回で消す（次の客に持ち越さない）。空でなければ従来どおり外す（fail-open）。
+             */
+            try {
+              if ((_needStClear || _needWdClear || _needSameSt || _needSameWd) && _axResetCleanFresh()) {
+                _needStClear = false; _needWdClear = false; _needSameSt = false; _needSameWd = false;
+                try { window.sessionStorage.removeItem(_AX_RESET_CLEAN_KEY); } catch (_) {}
+                if (_audit) _auditStepP("reset_clean_skip_clear", "リセットで空と確認済み→前客の外しを省く");
+              }
             } catch (_) {}
             if (_needStClear || _needWdClear || _needSameSt || _needSameWd) {
               if (_needStClear) {

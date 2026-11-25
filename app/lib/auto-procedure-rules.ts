@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.280";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.285";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -116,7 +116,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "no_reset_button",
     scene: "clear",
-    text: "リセットボタンは押さない。前のお客さんの条件はカーソルで1つずつ外す",
+    text: "検索・入力の最中はリセットボタンを押さない（_doReset は1つずつ外す）。リセットを押してよいのは送付完了の後〜次のお客さんを入れる前の1点だけ（reset_between_customers）",
     since: "2.8.107",
     kb: null,
     marker: "自動は「リセット」ボタンを押さない",
@@ -843,8 +843,7 @@ export const AUTO_RULES: AutoRule[] = [
     },
   },
   {
-    id: "bulk_stale_prev_lock",
-    scene: "switch",
+    id: "bulk_stale_prev_lock", scene: "switch",
     text: "一括で前のお客さんの送付完了まで済んだ後に、そのお客さんの一連の鍵（axlx_pipeline_job）が残っていても、次のお客さんを10分待たせて見送らない。この一括で送付完了まで済んだお客さん（axlx_bulk_queue.sentCids）の鍵だけを古い鍵として外して進む。送付の途中で切れたお客さんの鍵は外さない。印: stale_prev_lock_dropped",
     since: "2.8.266",
     kb: "0f430756",
@@ -857,6 +856,72 @@ export const AUTO_RULES: AutoRule[] = [
       mustHaveAny: [
         "fill_progress",
         "fill_done",
+      ],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.282 実測 #1640（2026-11-25 13:14・v2.8.281）: 一括が4段のまま41分止まり、finished も error も付かず started で残った。
+     *   原因は `chrome.tabs.sendMessage(axlx-switch-customer)` の返事に上限が無く、underbar.js の非同期の返事が来ないと
+     *   Promise が永久に解決しないこと（段は autofill＝見回りの進める対象外なので誰も起こさない）。
+     */
+    id: "bulk_switch_no_forever_wait",
+    scene: "switch",
+    text: "一括でお客さんを切り替える時（axlx-switch-customer）、返事を30秒で打ち切る。返事が来ない時は「応答が無い」と同じ扱いで1回だけ読み直してやり直し、だめなら地域を決めて直接入力する（永久に待たない）。条件を入れる段が上限を1分過ぎて、ページも入力を始めていない時は、そのお客さんをもう一度回す。印: switch_timeout／autofill_dead_kick",
+    since: "2.8.282",
+    kb: "613e31d9",
+    marker: "_SWITCH_SEND_TIMEOUT_MS",
+    file: "background.js",
+    verify: {
+      mustHaveAny: [
+        "switch_timeout",
+        "autofill_dead_kick",
+        "popup_fallback",
+      ],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.283 竹内さん「1人目が終わると次の人が済んだと誤判定され3人目に飛ぶ」:
+     *   続ける位置を「何人目」の番号だけで持つと、引き継がれた古いループの遅れた書き込み・二重の続きで1人飛ぶ。
+     *   → 片付いた客の id（handledCids）を別に持ち、続ける位置は未処理の最初の客より先へ行かせない。完了の書き込みは世代確認の後。
+     *   最後の客の後は「全件完了」を1通だけ知らせて正常に終わる。
+     */
+    id: "bulk_no_skip_customer",
+    scene: "switch",
+    text: "一括で次のお客さんへ続ける位置は、まだ片付いていない最初のお客さんより先へ行かせない（handledCids）。引き継がれた古いループが遅れて完了を書き戻さない。全員が済んだら『全件完了』を1通だけ知らせて終わる。止めた・引き継いだ回はその場で stopped として閉じ（bulk_ended）、1人ごとの位置を bulk_pos で残す。印: kick_clamp／stale_done_skip／bulk_all_done／bulk_pos",
+    since: "2.8.283",
+    kb: "a762496e",
+    marker: "_bulkClampStart",
+    file: "background.js",
+    verify: {
+      mustHaveAny: [
+        "kick_clamp",
+        "stale_done_skip",
+        "bulk_all_done",
+        "bulk_phase",
+      ],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.284 竹内さん「条件はずしはかなりむずかしくバグやエラーが多い。人間のようにリセットボタンに切り替える。
+     *   リセット→待機→画面照会→空と確認してから新しいお客さんの拡張ツール API を動かす」＋Ajax の件数待ち・完了小窓を閉じる。
+     *   2.8.107 で戻した理由は「入力中の自動がリセットで消えた」＝今回は送付完了の後の1点だけ・入力中は断る・空にならなければ従来の外しへ。
+     */
+    id: "reset_between_customers",
+    scene: "clear",
+    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので10秒以上（10〜14秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。空にならない・押せない時は従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。印: reset_press／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle",
+    since: "2.8.284",
+    kb: "265a1cca",
+    marker: "_postSendResetRealpro",
+    file: "background.js",
+    verify: {
+      mustHaveAny: [
+        "reset_press",
+        "reset_verified",
+        "reset_not_empty",
+        "reset_fallback",
       ],
     },
   },

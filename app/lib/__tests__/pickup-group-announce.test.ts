@@ -19,10 +19,14 @@ console.log("\n■ いつ送るか（merge-pdfs）");
   const n = groupNoticePlan({ ...base, brainMode: false });
   t("ブレイン以外（通常・手動の一括）: 今まで通り検索のたびに", n.perSearch && !n.deferred && n.reason === "not_brain");
   t("brainMode が無い（古い拡張）: 今まで通り", groupNoticePlan({ ...base, brainMode: null }).perSearch);
-  const s = groupNoticePlan({ ...base, staffMode: true });
-  t("スタッフモード（ブレイン ON でも）: 今まで通り", s.perSearch && !s.deferred && s.reason === "staff_mode");
+  const sBrain = groupNoticePlan({ ...base, staffMode: true });
+  t("スタッフ×ブレイン: 他の自動と同じく検索のたびは送らず解析後", !sBrain.perSearch && sBrain.deferred && sBrain.reason === "brain");
+  const sOff = groupNoticePlan({ ...base, staffMode: true, brainMode: false });
+  t("スタッフ×ブレインOFF: 今まで通り検索のたびに", sOff.perSearch && !sOff.deferred && sOff.reason === "staff_mode");
   const nc = groupNoticePlan({ ...base, hasCustomer: false });
   t("お客様が分からない回（自動まとめに乗らない）: 今まで通り", nc.perSearch && !nc.deferred && nc.reason === "no_customer");
+  const ncStaff = groupNoticePlan({ ...base, staffMode: true, hasCustomer: false });
+  t("スタッフ×ブレインでもお客様不明: 今まで通り", ncStaff.perSearch && !ncStaff.deferred && ncStaff.reason === "no_customer");
   t("PICKUP_GROUP_DEFER=off: 今まで通り", groupNoticePlan({ ...base, deferEnv: "off" }).perSearch && groupNoticePlan({ ...base, deferEnv: "OFF" }).reason === "env_off");
   t("別の値の環境変数は効かない", groupNoticePlan({ ...base, deferEnv: "on" }).deferred);
   const nl = groupNoticePlan({ ...base, sendToLine: false });
@@ -41,7 +45,7 @@ console.log("\n■ 送るか（解析の完了・二重に送らない）");
   t("遅れて届いた回が足された: 追加分として1回", p3.send && p3.update && JSON.stringify(p3.newIds) === "[9]" && JSON.stringify(p3.announcedAfter) === "[1,3,9]", p3);
   t("追加されたのがブレイン以外の行だけ: 送らない", !announcePlan([...rows, { id: 10, group_notice: null }], p1.announcedAfter).send);
   const none = announcePlan([{ id: 5, group_notice: null }, { id: 6 }], null);
-  t("deferred が無いまとめ（ブレイン以外・デプロイ前の行・スタッフモード）: 送らない", !none.send && none.announcedAfter.length === 0);
+  t("deferred が無いまとめ（ブレイン以外・デプロイ前・スタッフ×ブレインOFF）: 送らない", !none.send && none.announcedAfter.length === 0);
   t("空のまとめ: 送らない", !announcePlan([], null).send);
 }
 

@@ -1,0 +1,10 @@
+{
+  "title": "【決定】統括Proは録画+DBから原因→改善を再学習し土台・連携の抜けを徹底強化する",
+  "category": "architecture",
+  "insight": "統括Proは人間のように症状→原因（録画+DB）→層（学習/土台/連携/把握/反映）→どう改善→再学習→土台F→自動反映の順で考える。新しい考え方で『何が原因だったか・なにを改善するか』を全部学習し直す。土台は件数だけでなく id×完了線×次手。pro-cause-relearn が決定論台帳で foundation_gaps に落とす。",
+  "rationale": "竹内さん『学習の抜け・土台・連携も細かく／人間のように何が原因かどう改善／考える／新しい考え方で再学習／録画とDBから徹底強化／土台の徹底』。実測 realpro 土台 25/52✓・欠27（F1画面位置・F6新束後自動・F31反映・F32連携止・F33消失等）。",
+  "context": "2026-11-18 竹内さん: ほかにも学習の部分でぬけがないか土台や連携の部分も着眼して細かく見て改善する／実際の人間のように何が原因か、どうやったら改善されるか思考する等／考えることができるようにする／この統括proは新しい考え方でもう一度学習して何が原因だったのか、なにを改善するのか／この点もすべて学習する／録画とDBから統括proは徹底的に強化／土台の徹底した強化",
+  "applied_to": "app/lib/pro-cause-relearn.ts / learn-supervisor-pro ensureCauseRelearnEvidence / scripts/supervisor-pro foundation_audit注入 / LEARN_MECHANISMS",
+  "tags": ["絶対・最優先", "統括Pro", "分析強化の原則", "ブレイン", "点検表", "土台"],
+  "priority": 1
+}

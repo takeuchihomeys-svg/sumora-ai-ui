@@ -4,6 +4,82 @@
 
 ---
 
+## 2026-11-25 **2.8.285 リセットを押した後は10秒以上待つ（ラグ対策・人の間）**
+
+- **竹内さん**: 「リセット押してからは10秒以上間をみたほうがよいかも。ラグがあるので。そして人間のように」。
+- **直した（background.js `_postSendResetRealpro`）**: 読み直しの待ちの後、空の読み戻しの前に **10〜14秒**（`RESET_SETTLE_MIN_MS`=10000＋`RESET_SETTLE_JITTER_MS`=4000）を3回に分けて待つ（毎回の長さを揺らす）。印 `reset_wait`（search-audit.js の RULE_STEP に追加）。空と確かめた後、写真の前も2〜4秒の間（`RESET_SHOT_GAP_MIN_MS`）。
+- 試験: `reset-between-customers-v28284.test.js` に⑥を追加（68）／sim 20/20／tsc 基線 7。規則 `reset_between_customers` の文を更新。
+
+---
+
+## 2026-11-25 **2.8.284 次客へ移る時だけ「リセット」を押す（待機→空と読み戻し→写真→次客API）＋検索前の Ajax 待ち**
+
+- **竹内さん**: 「条件はずしは難しくバグやエラーが多い。人間のようにリセットボタンに切り替え、リセット→待機→画面照会（スクショ）→空と確認してから新しいお客さんの拡張ツールAPIを入れる。１つずつちゃんと」＋ リアプロは Ajax の件数更新を待つ／完了の小窓を閉じる／画像でなく URL＋DOM で完了判定。
+- **⚠ 過去の決定との食い違い（そのまま記録）**: 2.8.105 でリセットを入れ、実測 search_audits **1492・1494**（リセットの1〜3秒後に入力が消えた）で **2.8.107 に「押さない」へ戻した**（KB `f1bda8fd`・退役）。今回は**壊れた原因＝入力の最中に押した**点を残さないため、押す場所を「送付完了の後〜次客を入れる前」の1点に限った。新しい決定は KB `265a1cca`（P1・竹内さんの言葉そのまま）。
+- **流れ（background.js `_postSendResetRealpro`／`_postSendClearOrReset`）**: ①完了の小窓を閉じる ②リセットを押す（page-script `__axlxResetPressP`）③ページの読み直しを待つ（`__axlxBootAt`＋sessionStorage の印）④人の間（1.2〜2.2秒）⑤フォームが全部空かを DOM で読み戻す（`__axlxResetVerifyP`・`_scanLeftoverForm`）⑥空なら人の間のあと**記録用**の写真を1枚（`reset_shot`・マスク付き・`<all_urls>` が無ければ撮らず進む）⑦次客の API。**空にならない・押せない・時間切れは従来の1つずつ外す（`_postSendClearRealpro`）へ戻る**（fail-open）。旗 `chrome.storage.local axlx_reset_button_mode=false` で常に旧方式（既定は使う）。入力・検索の最中は `_doReset` がリセットを押さないまま（`no_reset_button` の印を維持）。リセットで空だった時は次客の入力で `_doReset` の外しを飛ばす（`reset_clean_skip_clear`）。
+- **Ajax 待ち**: 検索を押す前に `jQuery.active`・読み込み表示・該当件数の表示が落ち着くまで最大5秒（`_axAjaxSettleThen`・印 `ajax_settle`）。
+- **完了判定**: 画像・録画では決めない（客の番号＋送付完了の DOM。写真は記録だけ・試験④）。統括Proの判定基準の文面は**未変更**（費用が掛かるため `--dry-run` で確かめてから別に）。
+- **印（DB の steps）**: `reset_press`／`reset_verified`／`reset_shot`／`reset_not_empty`／`reset_fallback`／`ajax_settle`／`reset_clean_skip_clear`（search-audit.js RULE_STEP に追加済み。`switch_timeout`・`autofill_dead_kick`・`popup_fallback`・2.8.283 の印も同時に追加＝2.8.282/283 の決まりの確かめが記録の上限で落ちていた穴）。
+- **規則**: `reset_between_customers`（auto-procedure-rules.ts・`AUTO_RULES_REVIEWED_UP_TO` 2.8.284）／`.cursor/rules/auto-clear-not-reset.mdc` を更新。
+- **未確認（実機で見る）**: リアプロのリセットが**ページを読み直すか**・リセット後の既定が**全部空か**（空でない既定なら毎回 `reset_not_empty`→従来の外しに戻るだけで害は無いが、リセットの利点は出ない）・`<all_urls>` の許可・`reset_*` が DB に出るか。
+- **試験**: 新 `tests/chrome-extension/reset-between-customers-v28284.test.js` 64／`bulk-loop-sim-v28265` 20/20／`bulk-no-skip-customer-v28283` 49／拡張全体の失敗は 123 ファイル（既存の版固定・古い正規表現の試験が大半。今回の変更で壊れた2本＝`screen-watch`の見送り行の書式・`shot-hide-overlay` の呼び出し数を直した）／tsc 基線どおり 7／`auto-procedure-rules.test.ts` の失敗1（既存の `kb: ""` 10行）。`webapp-bridge` の失敗は未追跡の `page-script.restored.js`（私のファイルではない）。
+- ⚠ 2.8.273〜2.8.284 は**未コミット**（「上げて」と言われたら）。
+
+---
+
+## 2026-11-25 **2.8.283 一括の「次のお客さんへ」で未処理の客を飛ばさない＋全件完了の出口**
+
+- **竹内さん**: 「次のお客さんにうつる際かなり弱い…1人目完了したら3人目になる」。希望の流れ＝検索→物件送る→画面確認（スクショ）→前客の条件を外す→次客を入れる→検索（ループ）。4つの穴（①0件 ②指定ページ未満 ③API空データ ④全員終了の出口）。
+- **DB（絶対ルール6）**: `search_audits` は 2.8.281 の回が **#1640 の1本だけ**（段4つ・13:14:23 で止まる）。直近30時間の他の bulk_manual は **abandoned（段0〜3）ばかり**＝一括の記録が途中で途切れる。→ **飛んだ瞬間はDBから確かめられなかった**（事実）。スクショの「(3/3)」は枠の段の表示で、客の番号ではない。
+- **原因の候補（コードを読んで見つけた穴）**: 続ける位置を「何人目」の番号だけで持っていた。①完了の書き込み（`index/stage:"done"`）が世代確認より**前**＝引き継がれた古いループが遅れて書き戻す ②番号だけの進めなので二重の続き・書き戻しで1人飛ぶ余地。
+- **直した（background.js）**:
+  - `handledCids`（片付いた客の id・送った／見送った／エラーで飛ばした）を queue に持つ。`_bulkClampStart` で `_bulkKick` の続ける位置を**未処理の最初の客より先へ行かせない**（印 `kick_clamp`）。いまの客を済みと見て進める経路（done／doneCid 一致／送付後の外し）はその客を片付いた扱いにしてから上限を見る（送付済みの客をやり直して二重送付しない）。
+  - 完了の書き込みを世代確認の**後**へ（印 `stale_done_skip`）。エラー・見張りの見送りも handledCids に入れる。
+  - **出口**: 全員済んだら notify-group に「✅【一括検索 全件完了】」を1通だけ（止めた回・引き継がれた回は出さない・印 `bulk_all_done`）。
+- **既にあった安全装置（テストで固定）**: 0件の分岐（sentCount 付きで0件アナウンス）／最終ページ扱い（2.8.234）／検索前の関所（場所が空なら全件検索せず中止・page-script 13755 付近）。
+- **途中の失敗と直し**: 最初の clamp は doneCid 経路で送付済みの客を戻し、`bulk-loop-sim-v28265` の S4・S11 が落ちた（c1,c1,c2＝二重送付）→ 済み扱いにしてから上限を見る形に直した。
+- **試験**: 新 `tests/chrome-extension/bulk-no-skip-customer-v28283.test.js`（45・本物の一括ループのシミュレーター3本を含む）／`bulk-loop-sim-v28265` 20/20／拡張全体の失敗は基線どおり 121／tsc 基線どおり 7。
+- **記録の穴（③を実施）**: 読み直すと2.8.267以降の一括は段が届いている（#1634 段47・#1636 段66）。abandoned の正体は「止める・引き継ぐ回が finished を送らず20〜35分後の掃除で abandoned」。→ `_bulkEndNow` がその場で `error:"bulk_ended: <理由>"`・`error_kind:"stopped"`（問題札なし）で閉じる。#1640 の段4つは記録の穴ではなく、実際にそこで止まっていた（2.8.282で直した）。1人ごとに `bulk_pos`（何人目／cid／前客／処理済み数／起点／再開理由）を段へ残す＝次に飛んでも DB から追える。試験 49・sim 20/20。\n- **まだ**: ①画面確認（スクショ）して〇秒後に外す段 ②「次客を入れた後・検索前」に必須条件が1つ以上画面にあるかの専用確認（今は関所が家賃・間取り・場所を見る）③（済）④実機で確かめる（拡張・ページを再読み込み→2人以上の一括→`kick_clamp`／`stale_done_skip` の有無で飛びの原因だったか検証）。
+- ⚠ 2.8.273〜2.8.283 は**未コミット**（「上げて」と言われたら）。
+
+---
+
+## 2026-11-25 **2.8.282 一括が「条件を入れる」段で41分止まった原因（返事の上限が無い）を直す**
+
+- **竹内さん**: 「つづきからしたい」→ 2.8.281 の実機の確認の続き。
+- **DB（読んだ物・絶対ルール6）**: `search_audits` #1640（v2.8.281・brain_aix・bulk_manual・realpro・客 dd2dab8f 鶴橋/玉造/今里/布施・5〜7万・1K・徒歩15分）＝ **13:14:15 に started、13:55 時点で finished も error も無し**。段は **4つだけ**: `begin` → `bulk_phase autofill 上限300秒 1/3` → `customer_think`（前客 60be5b3d→地域：駅残を開いて外す・指定客ロック）→ `dl:send_bar_show`。最後の段から **41分** 進まず。
+  - `chrome_extension_feedback` は 13:14〜13:46 に `[perf] v2.8.281` が6行＝**ページは生きていた**（13:19 だけ重い: 止まり48回・計9秒）。→ 画面が固まったのではない。
+  - 13:19 以降は「止まり10回・計0.5秒」＝一覧を人が見ているだけの状態。
+  - 前の回（#1634/#1636・v2.8.273/275）は `dl:send_bar_dock` が大量に出て進んでいた＝**今回は 2.8.279/280 の軽量化で send_bar の記録が減り、本当の止まりが見えるようになった**（記録の見え方が変わっただけで、止まりは前から在った型）。
+- **原因（コードで確定）**: `background.js` の `_sendSwitch`（リアプロ）と `_sendItandiSwitch`（itandi）が
+  `chrome.tabs.sendMessage(axlx-switch-customer)` を **`new Promise` で包んで返事だけを待っている**。
+  受け手 `underbar.js` は `return true`（非同期の返事）で、iframe 未作成の時は `startForward` が **load の出来事を待つだけで時間切れが無い**。
+  load が来なければ `sendResponse` が一度も呼ばれず、`chrome.runtime.lastError` も出ない → **Promise は永久に解決しない**（Chrome 側にも待ちの上限が無い）。
+  一括ループ（`_manualBulkRun`）はここで止まり、段は `autofill` ＝ `BULK_KICKABLE_PHASES` の外なので**見回りに拾われない**。
+  さらに20秒ごとの励まし（`getPlatformInfo`）が裏を生かし続けるので、**止まったことに誰も気づけない**（#1640 が41分 started で残った理由）。
+- **直し（2.8.282）**:
+  1. `_SWITCH_SEND_TIMEOUT_MS = 30000` を足し、**リアプロ・itandi の両方の switch を `_withTimeout` で包む**（underbar の返事の上限20秒より長くする＝正直な理由を潰さない）。
+  2. 打ち切った時は `switch-no-answer-timeout` として **「応答が無い」と同じ道**に流す（1回だけ読み直してやり直し → だめなら地域を決めて直接入力）。段に `switch_timeout` を残す。
+  3. **`_bulkAutofillDeadKick`**（新）: 段が `autofill` で上限（300秒）＋1分を過ぎ、かつ **ページが入力を始めていない**（`fillRunning` でない）時だけ、`_bulkKick("autofill_dead", {retrySame:true})` で**同じ客をもう一度**回す。入力が本当に走っている時は触らない（割らない）。段に `autofill_dead_kick`。
+  4. `_bulkKick` に `retrySame`（同じ客から）を足す。⚠ 送付まで進んだ客を二重に送らないため、**呼ぶ側が「まだ何も送っていない」と確かめた時だけ**使う。
+- **試験**: `bulk-switch-no-forever-wait-v28282.test.js`（**29件**・新規。上限の有無・打ち切りの流れ・`retrySame` の決め方を vm で実物の `_bulkKick` を動かして確かめる・決まりと一覧の一致）。既存の `bulk-handoff-watch-resume-v28265`（62件）・`bulk-loop-sim-v28265`（20通り）・`bulk-stop-takeover-v28274`（9通り）・`normal-mode-no-force-auto-v28280`（18）・`audit-cap-clear-force-v28281`（14）すべて合格。拡張の試験 **316本で落ち121**（2.8.281 と同じ数・増えていない）。`tsc` の型エラーは**既存の7件のみ**（自分の変更前と同じ）。
+- **決まり（正本）**: `app/lib/auto-procedure-rules.ts` に `bulk_switch_no_forever_wait`（since 2.8.282）を足し、`AUTO_RULES_REVIEWED_UP_TO` を 2.8.282 に。`page-script.js` の `_AXLX_RULES_DONE` にも同じ id。
+- **版**: **2.8.282**（manifest・page-script）。
+- **次**: 拡張を再読み込み→リアプロのタブも読み直し→一括を2人以上で回す→DB で読む: ①#1640 のような `started` のまま残る回が出ないか ②`switch_timeout`・`autofill_dead_kick` が出たら**本当にその場で止まっていた**証拠（出なければ今まで通り）③2人目へ渡るか（`handoff_watch`・`bulk_phase` の段が進むか）。
+- ⚠ **未コミット**（2.8.273〜2.8.282 がまとめて未コミット）。竹内さんの「上げて」待ち。
+
+---
+
+## 2026-11-24 **2.8.281 通し点検（統括Pro）→ 点検段の上限で外し・auto_force を捨てにくくする**
+- **竹内さん**: 「一度通しでテストして抜けがないか徹底的に調査する／統括proおねがい」→ 点検の優先順は「おすすめでおねがい」。
+- **通しの結果**: 拡張の試験 314 中 121 落ち。2.8.272 のコミットに同じ試験を当てると 173 落ち＝もともと多い。**2.8.273〜280 で新しく壊れた試験は0**（`webapp-bridge` だけ未コミットの `page-script.restored.js` 由来）。2.8.232→272 で落ち始めた10件は実コードで機能が残っている事を確認（番号なし入力中は読み直し前に見送る・検索前の見直し・通路切れ判定）＝試験側の文字列照合・版固定が古いだけ。page-script.js は過去3コミットと識別子の数が同じ（欠けなし・文字化けなし）。
+- **DB（読んだ物）**: 最新の search_audits は v2.8.275（**276〜280 は実機未確認**）。`bulk_manual` の回は 11-23 18:57 以降 finished が無く abandoned（直近 v2.8.275 は 66段まで進み `dl:send_bar_dock` で止まり）。120段の上限に当たったのは直近25回で1回（v2.8.206）。
+- **段名の点検**: 段名394種のうち147が「上限で最初に捨てられる側」。重要な物（`dl:auto_force`・`dl:auto_force_denied`・`dl:next_customer_grasp`・`dl:next_move_grasp`・`page:station_clear_*`・`page:ward_clear_*`・`page:line_clear_*`）も入っていた。
+- **統括Pro**: 「点検段の優先順を『外し・auto_force_denied・次客handoff』に寄せるか、上限を上げる判断が要る」（生の言葉は supervisor-pro の出力・learn_supervisor_log に保存済み）。
+- **直し**: `search-audit.js` の `RULE_STEP`（重複だけ落とす側）に上の段を追加。KEEP には入れない・上限は 120 のまま。`RULE_STEP` の書き出し（`fill_progress|bulk_phase|bulk_kick|bulk_done_resend|stale_prev_lock_dropped|`）は他の試験が照合するので崩さない。
+- **試験**: `audit-cap-clear-force-v28281`（14通り・実物の pushStep に400段流しても守る段が残る）。全体の落ちは 121 のまま。
+- **版**: **2.8.281**。次: 拡張を再読み込み→自動で1回検索→DB で `dl:auto_force_denied`・外し系の段が残るか、一括が finished まで届くかを読む。
+
 ## 2026-11-24 **2.8.280 通常モードで並べ替え（AD）が勝手に動く原因を直す**
 - **竹内さん**: 「通常モードでも並べ替えのADのところかってになってしまっている／原因見つけて改善する」
 - **DB（読んだ物）**: 直近10時間の search_audits。`brain_normal`（通常）の回は v2.8.273・2.8.275 とも人の検索（`page:human_search`→`human_search_done`）で閉じており、`dl:sort_*` の段は**0**（通常モードの回は自動の段を記録しないため、DBには勝手な並べ替えが残らない）。`dl:sort_*`・`flow_atom_gap_sort_wait`・`sort_gate_need_page` が出るのは `brain_aix`（自動・bulk_manual）の回だけ。→ 記録の外で動いていたので、コードで特定。

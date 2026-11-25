@@ -1,0 +1,10 @@
+{
+  "title": "【決定】地域と駅はどちらか一方（F52）／自動録画診断／FBは構造化",
+  "category": "architecture",
+  "insight": "地域と駅が同時に入ると検索不能。関所で place_mixed をエラーにし area_mode の反対側を外す（F52）。自動録画は auto-rec-diagnose で問題・足りない土台・強化次手を原子化。フィードバックの駅/地域は自由文ではなく『何が起きたか・あるべき・語』の選択式で材料化する。",
+  "rationale": "統括Pro 2026-11-17＋竹内さん画面『日本橋が地域でも』『FBわかりにくい』。完成度28・混在で0件。both許可が穴だった。",
+  "context": "竹内さん「録画を送れば問題と足りない土台と強化が分かる仕組み／地域駅が混ざる／外し忘れ／FBわかりにくい／統括Pro」",
+  "applied_to": "app/lib/auto-rec-diagnose.ts,F52,chrome-extension popup feedback,page-script gate 2.8.88",
+  "tags": ["統括Pro", "Chrome拡張", "人間らしさ", "分析強化の原則"],
+  "priority": 1
+}

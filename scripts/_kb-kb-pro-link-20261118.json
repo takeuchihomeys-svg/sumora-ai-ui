@@ -1,0 +1,10 @@
+{
+  "title": "【決定】設計知見と統括Proは引く→把握→土台→課題→細部まで一連で連携する（抜け禁止）",
+  "category": "architecture",
+  "insight": "設計知見RAGで引いただけ・題だけでは連携していない。完了線は①引く②insight要旨で把握③foundation_gaps/build_nextへ落とす④learning_tasksへ落とす⑤原因再学習・改善構築・思考骨格の細部材料⑥log_memory。kb-pro-link.ts が段ごとに測り、欠けを課題・議題に落とす。ensure-gapless-learn で未学習・solid消失・自動0でも課題が空にならない。",
+  "rationale": "竹内さん『設計知見と統括proともちゃんと連携できるように細かい部分もちゃんと抜けないようにする』。F37は✓だがF34脳材料が薄く、引き→適用の細部が抜けていた。",
+  "context": "2026-11-18 竹内さん: 設計知見と統括proともちゃんと連携できるように細かい部分もちゃんと抜けないようにする",
+  "applied_to": "app/lib/kb-pro-link.ts / ensure-gapless-learn.ts / learn-supervisor-pro merge / learn-supervisor-pro-rag query+lite / improve-loop 段階5",
+  "tags": ["絶対・最優先", "統括Pro", "RAG", "分析強化の原則", "ブレイン"],
+  "priority": 1
+}

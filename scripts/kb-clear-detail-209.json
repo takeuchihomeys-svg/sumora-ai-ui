@@ -1,0 +1,10 @@
+{
+  "title": "【決定】外すも入れると同じ細かさで理解する（名前付き1つずつ／clear_detail_grasp）",
+  "category": "architecture",
+  "insight": "入れる側は guide_phase_one で駅入・区入を1つずつ言うが、外す側は件数（残:区・町）だけで、_guideLikeClearGrasp は定義のみ未配線だった。2.8.209で _listLeftoverNamedItems（区残:名・駅残:名・台帳控え）→外す前 guide_clear_grasp＋guide_phase_one→外し後も名前付き→手順書 clear①〜⑤・build_v11・決まり clear_detail_grasp。",
+  "rationale": "竹内さん: これちゃんと入れるときと同じように細かく理解しているのか。外す部分もちゃんと理解できるように徹底的に強化する。統括pro徹底的に。",
+  "context": "これちゃんと入れるときと同じように細かく理解しているのか。外す部分もちゃんと理解できるように徹底的に強化する。統括pro徹底的におねがい。",
+  "applied_to": "chrome-extension/page-script.js, search-audit.js, manifest 2.8.209, app/lib/action-playbook.ts build_v11, app/lib/auto-procedure-rules.ts clear_detail_grasp",
+  "tags": ["Chrome拡張", "連続客", "外し", "点検表", "分析強化の原則"],
+  "priority": 1
+}
