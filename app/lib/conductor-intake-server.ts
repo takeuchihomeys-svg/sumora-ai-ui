@@ -65,7 +65,7 @@ export async function runConductorIntake(o: {
   const { conductorFocusMode, nearFocusLine } = await import("./conductor-focus");
   const focusOn = conductorFocusMode() !== "off";
   const user = intakeUser({ ...o, nearFocusLine: focusOn ? nearFocusLine(o.nearFocus ?? null) : "" });
-  const maxTokens = (await import("./conductor-intake")).intakeMaxTokens(focusOn); // 2026-11-26 #749: 既定は今と同じ 450／300
+  const maxTokens = (await import("./conductor-intake")).intakeMaxTokens(focusOn); // 2026-11-26 #749: 既定 700／450（=off で前の 450／300）
   /** 近い番の重点を focus_read.near に（統括が添える物・決めるのは統括） */
   const withNear = (a: IntakeAnswer | null): IntakeAnswer | null => {
     if (!a?.focus_read || !o.nearFocus) return a;

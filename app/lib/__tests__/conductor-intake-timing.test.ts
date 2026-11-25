@@ -4,11 +4,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { intakeMaxTokens, intakeReusePrev, INTAKE_REUSE_MAX_MS } from "../conductor-intake";
 
-// 字数の上限: 既定は今と同じ（重点あり 450・無し 300）・=on で広げる
-assert.equal(intakeMaxTokens(true, {}), 450);
-assert.equal(intakeMaxTokens(false, {}), 300);
-assert.equal(intakeMaxTokens(true, { CONDUCTOR_INTAKE_MAX_TOKENS_WIDE: "on" }), 700);
-assert.equal(intakeMaxTokens(false, { CONDUCTOR_INTAKE_MAX_TOKENS_WIDE: "on" }), 450);
+// 字数の上限: 11/26 から既定で広げる（重点あり 700・無し 450）・=off で前の 450／300
+assert.equal(intakeMaxTokens(true, {}), 700);
+assert.equal(intakeMaxTokens(false, {}), 450);
+assert.equal(intakeMaxTokens(true, { CONDUCTOR_INTAKE_MAX_TOKENS_WIDE: "off" }), 450);
+assert.equal(intakeMaxTokens(false, { CONDUCTOR_INTAKE_MAX_TOKENS_WIDE: "off" }), 300);
 
 // 使い回し: 既定 off・同じお客様の番・その番が 10分以内の時だけ
 const ts = "2026-11-26T01:00:00.000Z", now = Date.parse(ts) + 3 * 60_000;
