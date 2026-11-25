@@ -315,7 +315,7 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const provider = explicitProvider || (testMode || finalSel || partsOn.length ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = [(env.LLM_ALT_ACTIONS ?? "").trim(), ...partsOn].filter(Boolean).join(",");
   // 2026-11-24 #670: 別クラウドの設定が何も無くても、予算の振り分け（LLM_BUDGET_ROUTE）が on/shadow で OpenAI の鍵があれば包みを入れる（主の相手は OpenAI・actions は空＝予算の決まりの名札だけ回る）
-  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && ["on", "shadow"].includes((env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase());
+  const budgetOnly = !actionsRaw && !testMode && !finalSel && routeTargets.size === 0 && !explicitProvider && (env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off"; // 2026-11-25 既定 on
   if (budgetOnly) { const oa = readProviderTarget(env, "openai"); return oa ? { ...oa, actions: new Set<string>(), fallbackToAnthropic: true, allowAutoSend: false, testMode: null, routes: new Map() } : null; }
   if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
@@ -1263,10 +1263,13 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     //   自動返信・申込以降は上で Claude に戻している。下の時刻の線・個人の値の網はそのまま通す（DeepSeek と同じ歯止め）。テストの間は使わない（試験は EXAM_BRAIN_PROVIDER）
     let budgetTarget: AltProviderConfig | null = null;
     let budgetFallback = true;
-    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "" && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
+    // 2026-11-25 既定 on（=off で止まる）。読みは表にある名札の時だけ（budgetDecisionFor）
+    if (!cfg.testMode && (process.env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase() !== "off") {
       try {
         const [{ budgetDecisionFor }, { supabase: sbBudget }] = await Promise.all([import("./llm-budget-route-server"), import("./supabase-server")]);
-        const d = await budgetDecisionFor(sbBudget, routeName);
+        // 2026-11-25 竹内さんの決め（案 A）: brain は brain-sweep の時だけ・Haiku の係は Luna（経路と元のモデルを渡す）
+        const { httpRouteNow } = await import("./llm-budget-route-server");
+        const d = await budgetDecisionFor(sbBudget, routeName, Date.now(), process.env, { httpRoute: await httpRouteNow(), claudeModel: typeof body?.model === "string" ? body.model : null });
         if (d.route === "openai" && d.model) {
           const oa = readProviderTarget(process.env, "openai");
           if (d.shadow || !oa) console.log(JSON.stringify({ tag: "llm-budget", route: routeName, role: d.role, model: d.model, shadow: d.shadow, noKey: !oa, reason: d.reason }));
@@ -1345,6 +1348,16 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       console.warn("[llm-alt] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ route: routeName, signal: piiGate, conversationId: convForGate }));
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: 本文に個人の値（${piiGate}）があるので DeepSeek に送らない（Claude には倒さない）`);
       return toClaude(`本文に個人の値（${piiGate}）`);
+    }
+    // 2026-11-25 作業員L（竹内さんの決め 11/25 昼・予算の振り分けの既定 on）: OpenAI に回す呼び出しは、印（all・cut・masked・会話なし）に関わらず
+    //   messages に審査の事情があれば Claude（印 all の呼び出しは入口の会話単位の判定に頼っていた＝統括の受け口・brain-sweep・学びは入口が違う）。
+    //   試験 app/lib/__tests__/llm-budget-on-privacy.test.ts で見つけた穴。止める SCREENING_PII_CLAUDE=off（DeepSeek の網と同じ）
+    if (budgetTarget && screeningPiiClaudeEnabled()) {
+      const sens = screeningSensitiveSignal((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n"));
+      if (sens) {
+        console.warn("[llm-budget] 本文に審査の事情 → OpenAI に出さない", JSON.stringify({ route: routeName, category: sens.category, conversationId: convForGate }));
+        return toClaude(`OpenAI に回す本文に審査の事情（${sens.category}）`);
+      }
     }
     // 2026-10-20 竹内「個人情報が絡む部分はかならずクロードにする」: 学びの経路（learn_*）は会話をまとめて読む（会話の呼び出しの印が無い）ので、
     //   今は全部 Claude だが（LLM_ALT_ACTIONS に無い・実数 30日 1,210回すべて Claude）、将来 DeepSeek に回した時に審査の事情
