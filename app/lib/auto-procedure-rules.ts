@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.304";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.305";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -116,7 +116,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "no_reset_button",
     scene: "clear",
-    text: "検索・入力の最中はリセットボタンを押さない（_doReset は1つずつ外す）。リセットを押してよいのは送付完了の後〜次のお客さんを入れる前の1点だけ（reset_between_customers）",
+    text: "検索・入力の最中（ページ内の _doReset）はリセットボタンを押さない（押すと読み直しで入力が消える）。リセットを押してよいのは background の2点だけ：送付完了の後（reset_between_customers）と、一括で条件を入れる前（reset_before_fill）。どちらかで空と確かめられたら外す工程はやらない（reset_replaces_clear）",
     since: "2.8.107",
     kb: null,
     marker: "自動は「リセット」ボタンを押さない",
@@ -596,6 +596,15 @@ export const AUTO_RULES: AutoRule[] = [
     since: "2.8.304",
     kb: null,
     marker: "var _extBehind =",
+    file: "background.js",
+  },
+  {
+    id: "reset_replaces_clear",
+    scene: "clear",
+    text: "リセットと「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括の入力前 reset_before_fill）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。単発の自動（ポップアップの自動ボタン）は、ポップアップがページの中の iframe でリセットの読み直しで消えるため、まだ ③ の従来の外しだけで動く（既知の穴・2.8.305時点）",
+    since: "2.8.305",
+    kb: "265a1cca",
+    marker: "reset_replaces_clear",
     file: "background.js",
   },
   {
@@ -1664,7 +1673,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "post_send_clear_grasp",
     scene: "clear",
-    text: "客完了→次へで送付後外しを実行し把握する。post_send_clear開始でguide_clear_grasp／loop_phase。skippedを外しOKと偽らない。未完了はpost_send_clear_gap＋次客で強制外す。取得完了はlist_done→clear（fillと誤らない）。leftover_scan開始でもclear段を把握",
+    text: "客完了→次へ。先に送付後のリセット（reset_between_customers）を押して空と確かめる（reset_replaces_clear）。リセットで空なら送付後外しはやらない。リセットが押せない・空にならない時だけ送付後外しを実行し把握する。post_send_clear開始でguide_clear_grasp／loop_phase。skippedを外しOKと偽らない。未完了はpost_send_clear_gap＋次客で強制外す。取得完了はlist_done→clear（fillと誤らない）。leftover_scan開始でもclear段を把握",
     since: "2.8.224",
     kb: "366a97cd",
     marker: "__axlxPostSendClearP",

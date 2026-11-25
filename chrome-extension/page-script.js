@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.304";
+  var _AXLX_PAGE_VER = "2.8.305";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4145,6 +4145,7 @@ function _guideLikeAreaSkip(why) {
     "human_fixed_waits_routed",
     "human_fixed_waits_routed_bulk",
     "ext_behind_notice",
+    "reset_replaces_clear",
     "all_sent_advance_no_stuck",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
@@ -15982,7 +15983,9 @@ function _guideLikeAreaSkip(why) {
      *
      * ★【決まり・2026-11-18 竹内さん「リセットが壊れる原因の可能性高いので厳しければ外す形戻す」】
      *   2.8.105 で「リセットを先に押す」にしたが、リセットでページが読み直され入力が消えた（audit 1492・1494）→ 2.8.107 で戻した。
-     *   → 前客の条件は **カーソルで1つずつ外す**（リセットは押さない）→ 新条件を入れる → 検索。
+     *   → 入力の最中（このページ内の _doReset）はリセットを押さない（押すとページが読み直されて入力が消える）。
+     *   ★ 2.8.305 ただしリセットを押す1点は別にある（background.js・人の順番）: 送付後（_postSendClearOrReset）と、一括で条件を入れる前（_resetBeforeFill）。
+     *     そこで「空」と読み戻せたら、ここ（1つずつ外す）はやる事が無い。1つずつ外すのは、リセットが押せない・空にならない時の代わり（決まり reset_replaces_clear）。
      *   細かい動きも通常と同じく **カーソルを動かしてからクリック**（直書きの checked=false 禁止）。
      *   正本: dept_search_tool 黄金ルール／.cursor/rules/auto-clear-not-reset.mdc
      */

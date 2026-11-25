@@ -10708,7 +10708,8 @@ function _cmpExtVer(a, b) {
   }
   return 0;
 }
-/** 送付後の「前客の条件はずし」: まずリセット→空の確認。だめなら従来の1つずつ外す（どちらも投げない） */
+/** 送付後の「前客の条件はずし」: まずリセット→空の確認。だめなら従来の1つずつ外す（どちらも投げない）
+ *  ★ 2.8.305 reset_replaces_clear: リセットで空と確かめられたら1つずつ外す工程は行わない（外しは、リセットが押せない・空にならない時の代わり）。 */
 async function _postSendClearOrReset(customerId, auditRunId) {
   var rr = null;
   try { rr = await _postSendResetRealpro(customerId, auditRunId); } catch (_) { rr = { ok: false, why: "reset_exception" }; }
