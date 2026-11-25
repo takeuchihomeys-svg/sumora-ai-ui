@@ -57,8 +57,17 @@ export function buildLeaseKey(scope: string, env?: Record<string, string | undef
   return learnBuildOneLaneOn(env) ? "human-learn-profile:lane" : `human-learn-profile:${scope}`;
 }
 /** 印が取れなかった時に、次に待つ ms（待たない時は null）。waited は今までに待った ms */
+/**
+ * 2026-11-25 夜 作業員L（統括役の了承・本番の時間切れ 10回／1時間・22:00〜22:07）: 22時に拡張の呼び出しが2秒で約30本来て、
+ *   応答の後の作り直しが1本だけ作り・残りは全部が印を最大150秒待った（作り直し 177〜297秒と合わせて 300秒を超えた）。
+ *   既定で、応答の後に印が他に取られていたら待たずにやめる（古い束のまま・次の呼び出しか 22:20 の cron で作る）。前の待つ動きは LEARN_AFTER_WAIT_LANE=on
+ */
+export function learnAfterWaitLaneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.LEARN_AFTER_WAIT_LANE ?? "").trim().toLowerCase() === "on";
+}
 export function laneNextWait(o: { lease: string; inAfter: boolean; waitedMs: number; env?: Record<string, string | undefined> }): number | null {
   if (!learnBuildOneLaneOn(o.env) || !o.inAfter || o.lease !== "held") return null;
+  if (!learnAfterWaitLaneOn(o.env ?? (typeof process !== "undefined" ? process.env : {}))) return null;
   return o.waitedMs + LANE_WAIT_STEP_MS <= LANE_WAIT_MAX_MS ? LANE_WAIT_STEP_MS : null;
 }
 
@@ -67,11 +76,18 @@ export function buildInAfter(o: { hasBundle: boolean; forceFresh: boolean; env?:
   return learnBuildAfterOn(o.env) && o.hasBundle && !o.forceFresh;
 }
 
-export function holdDaytimeRebuild(o: { hour: number; hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
+/** 営業時間の止めの終わり（JST の分・既定 22:30）。2026-11-25 夜 作業員L: 22:00 ちょうどに止めが外れて拡張のまとめての呼び出しで作り直しが重なった（時間切れ 10回）。
+ *  22:20 の cron が1回だけ作るよう、止めを 22:30 まで延ばす。HUMAN_LEARN_HOLD_UNTIL=22:00 で前の動き */
+export function holdUntilMin(env: Record<string, string | undefined>): number {
+  const m = String(env.HUMAN_LEARN_HOLD_UNTIL ?? "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 22 * 60 + 30;
+}
+export function holdDaytimeRebuild(o: { hour: number; minute?: number; hasBundle: boolean; forceFresh: boolean; env?: Record<string, string | undefined> }): boolean {
   const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
   if ((env.HUMAN_LEARN_DAYTIME_REBUILD ?? "").trim().toLowerCase() === "on") return false;
   if (o.forceFresh || !o.hasBundle) return false;
-  return o.hour >= 9 && o.hour < 22;
+  const now = o.hour * 60 + (o.minute ?? 0);
+  return o.hour >= 9 && now < holdUntilMin(env);
 }
 
 export function shouldTouchRead(readAt: string | null | undefined, nowMs: number = Date.now()): boolean {
