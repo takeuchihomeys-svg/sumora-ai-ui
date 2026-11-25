@@ -65,12 +65,17 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
     const reach = reachOf.get(rid) ?? null;
     const conductor = process.argv.includes("--db") ? ar.get(s.id) ?? 0 : null;
     const gaps: string[] = [];
+    // 2026-11-25 作業員A（#738）: 申込準備・申込・成約は申込の書類の手前で切る決まり（本番の材料・試験とも対象外）＝空きに数えない
+    const outOfScope = ["apply_prep", "applying", "won"].includes(rid);
+    if (outOfScope) gaps.push("範囲外（申込の書類の手前で切る）");
+    else {
     if (!rules) gaps.push("決まり");
     if (!material) gaps.push("材料");
     if (xs.length >= 5 && (pct(nextOk, xs.length) ?? 100) < 60) gaps.push("物差し:次の一手<60%");
     if (sgRows.length >= 5 && (pct(sgOk, sgRows.length) ?? 100) < 70) gaps.push("物差し:今どこ<70%");
     if (xs.length >= 5 && !exam.size) gaps.push("試験");
     if (conductor === 0) gaps.push("統括");
+    }
     return { station: s.id, name: s.name, rules, material, sg: { ok: sgOk, n: sgRows.length, rate: pct(sgOk, sgRows.length) }, next: { ok: nextOk, n: xs.length, rate: pct(nextOk, xs.length) }, reach, exam: exam.size, conductor, gaps };
   });
   console.log(`# 申込までの地図の駅ごとの土台（照らしの番 ${rows.length}${process.argv.includes("--db") ? `・判断の記録 ${arAll}（駅が空 ${arEmpty}＝#676・欄が無い前の番 ${arBefore}）` : ""}${deal.rows ? "・成約データの到達率あり" : ""}）\n`);
@@ -79,7 +84,7 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
     if (!o.next.n && !o.rules && !o.conductor) continue;
     console.log(`| ${o.name}（${o.station}） | ${o.rules} | ${o.material} | ${o.sg.n ? `${o.sg.ok}/${o.sg.n}` : "—"} | ${o.next.n ? `${o.next.ok}/${o.next.n}` : "—"} | ${o.reach ? `${o.reach.applied}/${o.reach.n}` : "—"} | ${o.exam} | ${o.conductor ?? "—"} | ${o.gaps.join("・") || "なし"} |`);
   }
-  const g = new Map<string, number>(); for (const o of out) for (const x of o.gaps) g.set(x.split(":")[0], (g.get(x.split(":")[0]) ?? 0) + 1);
+  const g = new Map<string, number>(); for (const o of out) for (const x of o.gaps.filter((y) => !y.startsWith("範囲外"))) g.set(x.split(":")[0], (g.get(x.split(":")[0]) ?? 0) + 1);
   console.log(`\n空きの段: ${[...g].map(([k, v]) => `${k} ${v}駅`).join("・") || "なし"}`);
   if (arg("out")) writeFileSync(arg("out"), JSON.stringify({ rows: out, arAll, arEmpty, arBefore }, null, 1));
   // --write: 毎朝の1枚の元（quality_daily・route:foundation:<駅>＝空きの段の数・detail に空き／route:link:brain_ar＝判断の記録に駅が入った割合）
