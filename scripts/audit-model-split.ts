@@ -3,7 +3,7 @@
 //   本番の道＝problems.json の prodBrain（その番の本番のブレインの決め: mode・action・src）／試験の道＝scripts/brain-exam/results の DeepSeek の行の path.code（off の前の行＝label が main- の物を優先・無ければ全部）。
 //   系統（返信・確認・見積・物件・内覧…）で比べる。2段（two_stage・two_stage_promise）は今の通＝返信。問題の型・正解の系統・本番の系統ごとに一致率
 // 実行: npx tsx scripts/audit-model-split.ts [--results=scripts/brain-exam/results] [--problems=scripts/brain-exam/problems.json]
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { aixFamily } from "./lib/prod-yardstick-db";
 
@@ -57,3 +57,4 @@ for (const [name, key] of [["問題の型", (x: Pair) => x.type], ["本番の系
 }
 const cross = new Map<string, number>(); for (const x of pairs) if (x.prod !== x.ds) cross.set(`${x.prod}→${x.ds}`, (cross.get(`${x.prod}→${x.ds}`) ?? 0) + 1);
 console.log(`\n食い違いの向き（本番の Claude → 試験の DeepSeek）: ${[...cross].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
+if (arg("json", "")) writeFileSync(arg("json", ""), JSON.stringify(pairs, null, 1));
