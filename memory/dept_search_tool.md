@@ -14815,3 +14815,9 @@ Claude（統括役）からの依頼2件への対応。
 2. PowerShell の一括置換で `$1` などが展開されて**ファイルが壊れた**（`(("版が...`）
    → 置換は `StrReplace` で1件ずつ。一括は使わない
 3. `_shrinkShot(dataUrl` を数えると**関数の定義**も数えてしまう → 呼び出しだけ数える
+
+### 2026-11-26 反映の記録（2.8.303）
+- コミット 71bbf72e6 を cursor-ext と main に push（main は fast-forward、b71c78590..71bbf72e6）。
+- DB の手順書（2813 all / 2815 realpro / 2814 itandi）を attach-playbook --apply で入れ替え（決まり版 6f81a131・件数 95・名前は前後とも 0 か所）。控え: C:\Users\Admin\axlx-backup-20261126-playbook-2308（repo の外）。
+- 点検の結果: 本番コードは まだ 2.8.302（Vercel 側の反映待ち）。拡張の再読込と自動1回で playbook_seen を確かめるまで「反映済み」とは言わない。
+- 残りの赤: 人の操作の間の固定の待ち（bulk-dl の要確認 6 行）。
