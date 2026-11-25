@@ -4,7 +4,7 @@
 //   今ブレインに渡るのは本線の駅の並び・今どこ・次の一手の候補1つだけ。申込から逆算した「申込までに要る物（済み／まだ／分からない）・このお客様に合う道（内覧あり／なし）・
 //   2手先3手先の駅・そこへ行くために今の番で仕込む一言・入居の時期からの申込の目安」を決まった計算で1行にする。
 //   q406・q065・q425 の前例（ブレインの出力に欄を足すと道がずれた）を踏まえ、ブレインには書かせず材料として渡すだけ（道を決めるのはブレイン）。
-//   道の選び方の元: 作業員L の #728 成約データ（申込146件の7割は内覧の記録なし・内覧に入った件の申込到達は約2倍・申込→成約の中央 21.8日）
+//   道の選び方の元: 作業員L の #728 成約データ（申込の約65%は内覧の記録なし＝推定の申込27件を外して 77/119・内覧に入った件の申込到達は約2倍・申込→成約の中央 21.8日）
 //   スイッチ APPLY_ROUTE_BACKPLAN: 既定 off（材料に入れない）／on
 import { MAIN_ROUTE, ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
 
@@ -43,7 +43,7 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   if (!f.node || f.node === "applying" || f.node === "won" || f.node === "apply_prep") return null;
   const viewingPath = f.viewingScheduled || f.viewingDone || f.viewingWish || VIEW_NODES.has(f.node);
   const path: Backplan["path"] = !viewingPath && f.applyIntent ? "内覧なし" : "内覧あり";
-  const why = path === "内覧なし" ? "申込の意思が出ていて内覧の希望が無い（成約データ: 申込の7割は内覧の記録なし）"
+  const why = path === "内覧なし" ? "申込の意思が出ていて内覧の希望が無い（成約データ: 申込の約65%は内覧の記録なし＝推定の申込を外して 77/119）"
     : viewingPath ? "内覧の希望・予定・実施がある" : "まだ決め手が無い＝内覧を勧める本線（内覧に入った件の申込到達は約2倍）";
   const needs: Backplan["needs"] = [
     { label: "物件が決まる", state: f.focus ? "済み" : f.propertiesSent > 0 ? "まだ" : "まだ" },
