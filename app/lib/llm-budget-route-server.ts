@@ -71,13 +71,26 @@ export async function claudeSpendNow(sb: SupabaseClient, nowMs = Date.now(), env
   return claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd });
 }
 
+let refreshing: Promise<unknown> | null = null;
+/** 控えをすぐ返す（無い・古い時は裏で読み直し・読み直し中に2本目を走らせない）。控えが無ければ null＝この呼び出しは Claude のまま */
+export function budgetSumsNoWait(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): (Sums & { partial?: boolean }) | null {
+  const fresh = cache && nowMs - cache.readAt < BUDGET_CACHE_MS;
+  if (!fresh && !refreshing) {
+    refreshing = monthSums(sb, nowMs, env).catch(() => null).finally(() => { refreshing = null; });
+    try { void import("@vercel/functions").then((m) => { try { if (refreshing) m.waitUntil(refreshing); } catch { /* Vercel の外 */ } }); } catch { /* */ }
+  }
+  return cache;
+}
 /** 名札の振り分け（off の時は DB を読まない） */
 export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean } = {}): Promise<BudgetDecision> {
   const cfg = readBudgetConfig(env);
   if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg, ctx);
   // 表に無い名札は DB を読まない（Claude のまま）
   if (!budgetRoleOf(routeName, { ...ctx, extra: cfg.extra })) return budgetDecision(routeName, null, cfg, ctx);
-  const s = await monthSums(sb, nowMs, env);
+  // 2026-11-25 作業員L（本番の不具合・resolve_area の時間切れの元）: 月の数えの読み（最大 50頁×1000行）を呼び出しの前に待たない。
+  //   控えが無い（冷えた関数）か古い時は裏で読み直し、その間は手元の控え（無ければ Claude のまま）で決める。
+  //   11/25 07:14・07:27 UTC: resolve_area は LLM を呼ぶ前に 17秒以上かかり（米国 iad1 から東京の DB を数十回読む）、呼ぶ側が先に切れた
+  const s = budgetSumsNoWait(sb, nowMs, env);
   const spend = s ? claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd }) : null;
   return budgetDecision(routeName, spend, cfg, { ...ctx, partial: !!s?.partial, openaiUsd: s ? s.openaiUsd : null });
 }
