@@ -9,3 +9,13 @@ assert.equal(conditionGapOf([c("customer", "こんにちは"), c("staff", "は�
 assert.equal(conditionGapOf([c("customer", "この物件 https://suumo.jp/x")]).kind, "brought_property");
 assert.equal(conditionGapOf([c("customer", "こんにちは"), c("staff", "はい")]).kind, "no_conditions_seen");
 console.log("deal-flow-condition-gap ok 5");
+import { handAskedConditionAts, conditionHandAskEnabled } from "../../../app/lib/deal-outcome";
+const ms = [
+  { sender: "staff", text: "ご希望の条件をお聞かせ下さい", createdAt: "a" },
+  { sender: "staff", text: "ご希望の条件をお聞かせ下さい", createdAt: "b", isAix: true },
+  { sender: "customer", text: "ご予算は", createdAt: "c" },
+];
+assert.deepEqual(handAskedConditionAts(ms), ["a"]);
+assert.equal(conditionHandAskEnabled({}), false);
+assert.equal(conditionHandAskEnabled({ DEAL_CONDITION_HAND_ASK: "on" }), true);
+console.log("deal-outcome hand-ask ok 3");

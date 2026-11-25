@@ -26,11 +26,11 @@ const JA: Record<CondGapKind, string> = {
   const deals = ((data ?? []) as Array<{ id: number; conversation_id: string; first_contact_at: string | null; applied_at: string }>).filter((d) => !isTestConversation(d.conversation_id));
   const rows: Array<{ id: number; conv8: string; kind: CondGapKind; firstKinds: string[]; msgs: number }> = [];
   for (const d of deals) {
-    let q = sb.from("messages").select("sender, text, created_at").eq("conversation_id", d.conversation_id).lt("created_at", d.applied_at).order("created_at").limit(400);
+    let q = sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", d.conversation_id).lt("created_at", d.applied_at).order("created_at").limit(400);
     if (d.first_contact_at) q = q.gte("created_at", new Date(Date.parse(d.first_contact_at) - 60e3).toISOString());
     const { data: m, error: e } = await q;
     if (e) throw new Error(e.message);
-    const msgs: FlowMsg[] = ((m ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((x) => ({ sender: x.sender, text: x.text, at: x.created_at }));
+    const msgs: FlowMsg[] = ((m ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>).map((x) => ({ sender: x.sender, text: x.text, at: x.created_at, aix: x.is_aix_generated }));
     const g = conditionGapOf(msgs);
     rows.push({ id: d.id, conv8: d.conversation_id.slice(0, 8), kind: g.kind, firstKinds: g.firstKinds, msgs: msgs.length });
     await new Promise((r) => setTimeout(r, 150)); // 試験の係と DB が重ならないように少しずつ

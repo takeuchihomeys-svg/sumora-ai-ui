@@ -158,6 +158,16 @@ export function detectDealLossText(text: string | null | undefined): DealLossTex
 // ═════════════════════════════════════════════════════════════════════════════
 
 export type StageHistoryRow = { from_status: string | null; to_status: string | null; changed_at: string; trigger: string | null };
+/** 台帳 #728（2026-11-25 作業員L）: 条件の段の時刻は スタッフが条件を聞いた印（AIX condition_hearing・追いの condition_asked・段の履歴）だけから付く。
+ *  スタッフが手打ちで条件を聞いた通は入らない＝申込したのに条件の時刻が無い件の一部は本当の記録の抜け。
+ *  DEAL_CONDITION_HAND_ASK=on の時だけ、手打ちで条件を聞いたスタッフの通も条件の段の時刻にする（既定 off・記録だけ・お客様が初回に条件を書いた道はここでは足さない） */
+export const CONDITION_HAND_ASK_RE = /ご希望(の|は)?(条件|エリア|地域|駅|沿線|間取|家賃|時期)|ご予算|お聞かせ|教えて(頂|いただ|下さ|くださ)/;
+export function conditionHandAskEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.DEAL_CONDITION_HAND_ASK ?? "off").trim().toLowerCase() === "on";
+}
+export function handAskedConditionAts(messages: ReadonlyArray<{ sender: string; text: string | null; createdAt: string; isAix?: boolean }>): string[] {
+  return messages.filter((m) => m.sender === "staff" && !m.isAix && CONDITION_HAND_ASK_RE.test(String(m.text ?? ""))).map((m) => m.createdAt);
+}
 /** auto-seiyaku の始まり（2026-07-23）。それより前の成約は自動ではない */
 export const AUTO_SEIYAKU_STARTED_AT = "2026-07-23T00:00:00Z";
 

@@ -9,7 +9,7 @@ import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { resolveCustomerState } from "@/app/lib/customer-state";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import {
-  resolveDealOutcomes, buildOutcomeEventRows, toDealOutcomeRow,
+  resolveDealOutcomes, buildOutcomeEventRows, toDealOutcomeRow, conditionHandAskEnabled, handAskedConditionAts,
   type DealInput, type DealPropertyClue, type RawOutcomeEvent, type DealEpisode, type OutcomeEventRow, type DealOutcomeRow, type StageHistoryRow,
 } from "@/app/lib/deal-outcome";
 import { turnSceneAt, stageBucketAt } from "@/app/lib/application-reach";
@@ -127,6 +127,8 @@ export async function computeConversationOutcome(conversationId: string, opts: {
     if (h.to_status === "condition_hearing") conditionAts.push(h.changed_at);
     raw.push({ at: h.changed_at, kind: "stage_change", sourceTable: "conversation_stage_history", sourceId: h.id, detail: { from: h.from_status, to: h.to_status, trigger: h.trigger } });
   }
+  // #728 11/25: 手打ちで条件を聞いたスタッフの通も条件の段の時刻に（既定 off・DEAL_CONDITION_HAND_ASK=on・記録だけ）
+  if (conditionHandAskEnabled()) conditionAts.push(...handAskedConditionAts(csInput.messages));
 
   const input: DealInput = {
     conversationId, nowMs,
