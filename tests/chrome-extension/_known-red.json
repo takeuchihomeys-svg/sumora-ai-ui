@@ -1,9 +1,7 @@
 {
-  "at": "2026-11-25T17:33:37.697Z",
+  "at": "2026-11-25T17:46:50.253Z",
   "note": "未整理の古い赤の一覧（隠すためではなく、新しい赤を見分けるための基準）。直したら --write-baseline で縮める。増やさない。",
   "red": [
-    "active-clock-v2819.test.js",
-    "ad-sort-cursor-path-v28164.test.js",
     "ad-sort-hilo-v28185.test.js",
     "ad-sort-keeps-conditions-v2686.test.js",
     "ai-customer-mode-v2634.test.js",

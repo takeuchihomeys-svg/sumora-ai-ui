@@ -166,7 +166,7 @@ function runStationClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(["_activeClock", "_leftoverProgressNew", "_leftoverProgressStep", "_clearStationsBeforeWardThen"].map(extractFn).join("\n"), ctx);
+  vm.runInContext("var _clearGen = 0;\n" + ["_clearGenStale", "_activeClock", "_leftoverProgressNew", "_leftoverProgressStep", "_clearStationsBeforeWardThen"].map(extractFn).join("\n"), ctx);
   vm.runInContext("_clearStationsBeforeWardThen", ctx)(() => { log.next++; }, "所在地");
   return { log, st, win };
 }
@@ -251,7 +251,7 @@ function runWardClear(opts) {
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(["_activeClock", "_leftoverProgressNew", "_leftoverProgressStep", "_clearWardsBeforeStationThen"].map(extractFn).join("\n"), ctx);
+  vm.runInContext("var _clearGen = 0;\n" + ["_clearGenStale", "_activeClock", "_leftoverProgressNew", "_leftoverProgressStep", "_clearWardsBeforeStationThen"].map(extractFn).join("\n"), ctx);
   vm.runInContext("_clearWardsBeforeStationThen", ctx)(() => { log.next++; }, "駅");
   return { log, w, win };
 }
@@ -307,7 +307,7 @@ const empty = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structure
 
 // ───────────────────────────────────────────────
 console.log("\n■ ④ きれい確認の関所: 完了線に届かない時は leftover_stuck で中止");
-const gateSrc = extractFn("_cleanStartGate");
+const gateSrc = "var _clearGen = 0;\n" + extractFn("_clearGenStale") + "\n" + extractFn("_cleanStartGate");
 function runGate(opts) {
   const log = { steps: [], proceed: 0, redo: 0, stClear: 0, wdClear: 0, ledgerCleared: 0, aborted: 0, abortMsg: "", swept: 0 };
   let scanN = 0;
@@ -389,7 +389,7 @@ ok("関所が200秒の最後の砦を持つ（残りがあれば中止・無け�
 
 // ───────────────────────────────────────────────
 console.log("\n■ ⑤ 送付後の外し（案B・page-script の _postSendClear）");
-const psc = extractFn("_postSendClear");
+const psc = "var _clearGen = 0;\n" + extractFn("_clearGenStale") + "\n" + extractFn("_postSendClear");
 ok("_postSendClear が最上位にある", !!psc);
 function runPostSend(opts) {
   const log = { steps: [], done: [], order: [], timers: [], ledgerCleared: 0, enq: 0 };

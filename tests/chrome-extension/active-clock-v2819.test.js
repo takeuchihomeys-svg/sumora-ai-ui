@@ -126,7 +126,7 @@ function runStationClear(opts) {
   const origBusy = ctx.isClickQueueBusy;
   ctx.isClickQueueBusy = () => { const b = origBusy(); if (b) log.polls++; return b; };
   vm.createContext(ctx);
-  vm.runInContext(srcClock + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + fn("_clearStationsBeforeWardThen"), ctx);
+  vm.runInContext(srcClock + "\nvar _clearGen = 0;\n" + fn("_clearGenStale") + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + fn("_clearStationsBeforeWardThen"), ctx);
   vm.runInContext("_clearStationsBeforeWardThen", ctx)(() => { log.next++; }, "所在地");
   return log;
 }
@@ -172,7 +172,7 @@ const srcW = fn("_clearWardsBeforeStationThen");
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
-  vm.runInContext(srcClock + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + srcW, ctx);
+  vm.runInContext(srcClock + "\nvar _clearGen = 0;\n" + fn("_clearGenStale") + "\n" + fn("_leftoverProgressNew") + "\n" + fn("_leftoverProgressStep") + "\n" + srcW, ctx);
   vm.runInContext("_clearWardsBeforeStationThen", ctx)(() => { log.next++; });
   ok("タブが隠れていた13秒を数えず押し直さない（旧: 6秒で押し直し・14秒で諦め）", log.opened === 1 && log.toggled === 2 && log.next === 1, log);
   ok("押し直しの記録も出ない", !log.steps.some((s) => s[0] === "ward_clear_open_retry"), log.steps);
@@ -293,8 +293,8 @@ async function runEnsure(opts) {
   console.log("\n■ 記録・版");
   const pin = (ps.match(/var _PIN = \/\^\(([^)]*)\)\//) || [])[1] || "";
   ["open_field_retry", "open_field_timeout"].forEach((k) => ok("記録が間引かれない: " + k, pin.split("|").indexOf(k) >= 0));
-  ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+ok("manifest が 2.8.119 以上（この試験の中身は 2.8.119 で入った）", (function () { var m = /^(\d+)\.(\d+)\.(\d+)$/.exec(mf.version); return !!m && (+m[1] * 1e6 + +m[2] * 1e3 + +m[3]) >= 2008119; })(), mf.version);
+ok("_AXLX_PAGE_VER が manifest と同じ", new RegExp('var _AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '";').test(ps));
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   process.exit(fail ? 1 : 0);

@@ -36,7 +36,7 @@ ok("③ 高→低へカーソルして押す", /③ 高→低へカーソルを�
 ok("AD は findNear below", /findNear\(\["AD"/.test(bd) && /"below"/.test(bd));
 ok("高→低は findHiToLoNear", /findHiToLoNear/.test(bd));
 ok("URL直書きしない", !/location\.href\s*=\s*_adLink/.test(bd) && !/location\.href\s*=\s*_u\.toString/.test(bd));
-ok("失敗印は sort_failed（dl:sort_）", /_tmark\("sort_failed"/.test(bd));
+ok("失敗印は sort_failed（dl:sort_）", /_liveDlStep\("sort_failed"/.test(bd));
 ok("決まり ad_sort_hover since ≥2.8.164", /id: "ad_sort_hover"[\s\S]{0,500}?since: "2\.8\.16[4-9]"/.test(rules));
 
 console.log("\n" + passed + " passed, " + failed + " failed");
