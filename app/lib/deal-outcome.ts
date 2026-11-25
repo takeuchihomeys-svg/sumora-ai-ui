@@ -168,7 +168,7 @@ export function stageBeforeApplyEnabled(env: Record<string, string | undefined> 
 /**
  * 台帳 #748 ②（2026-11-26 作業員L）: 申込の時刻が初回と同じ時刻に付いた 5件（599db03e・bfde8950・e4182b70・ac34b364・5fa0e206）は、
  *   どれもお客様の最初の通（氏名・生年月日・勤務先・住居年数 等を書いた物件探しのフォーマット）を申込フォームと読んでいた（isApplicationFormMessage が 9語で当たる）。
- *   探す条件の語（ご希望のエリア・家賃・間取り・入居時期）があり、申し込む物件（号室・物件名）が書いていない通は、案件の申込の時刻にしない。
+ *   探す条件の語（ご希望のエリア・家賃・間取り・入居時期）があり、申し込む物件（号室・物件名）が書いていない通は、申込の時刻の「候補」に下げる（ほかの印が無ければ使う）。
  *   DEAL_APPLY_FORM_SEARCH_GUARD=on の時だけ（既定 off・記録だけ）。申込フォームの判定そのもの（ほかの機能）は変えない
  */
 export const SEARCH_FORMAT_RE = /(?:ご)?希望(?:の)?(?:エリア|地域|駅|沿線|家賃|間取|条件)|家賃(?:の)?(?:上限|予算)|ご予算|間取り|入居(?:希望)?(?:時期|日)|お部屋探し/;
@@ -178,6 +178,7 @@ export function isSearchFormatText(text: string | null | undefined): boolean {
   const t = String(text ?? "");
   return SEARCH_FORMAT_RE.test(t) && !APPLY_WORDING_RE.test(t);
 }
+/** on の時、物件探しのフォーマットに見える申込フォームの通は申込の時刻の「候補」（ほかの印が無い時だけ使う） */
 export function applyFormSearchGuardEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_APPLY_FORM_SEARCH_GUARD ?? "off").trim().toLowerCase() === "on";
 }
@@ -386,7 +387,11 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
   const ignoredApply = (t: number) => ignoredApplyRanges.some(([a, b]) => t >= a && t <= b);
 
   // 申込の印（時刻）: お客様の申込フォーム（確定）＞ 段階の変化（修理以外）＞ 修理（repair:*）の時刻（申込の時刻としては推定）
-  const formAts = msgs.filter((m) => m.sender === "customer" && isApplicationFormMessage(m.text ?? "").detected && !(input.applyFormSearchGuard && isSearchFormatText(m.text))).map((m) => m.createdAt);
+  const formMsgs = msgs.filter((m) => m.sender === "customer" && isApplicationFormMessage(m.text ?? "").detected);
+  const formAts = formMsgs.map((m) => m.createdAt);
+  // 台帳 #748 ②（DEAL_APPLY_FORM_SEARCH_GUARD・既定 off）: 物件探しのフォーマットに見える申込フォームの通（申し込む物件の号室・物件名が無い）は「候補」に下げる。
+  //   同じ案件に段の履歴の申込か、物件の書いてある申込フォームの通があればそちらを申込の時刻に・無ければ今のまま候補を使う（申込そのものは消さない）
+  const weakFormAts = input.applyFormSearchGuard ? formMsgs.filter((m) => isSearchFormatText(m.text)).map((m) => m.createdAt) : [];
   const histApplyAts = hist.filter((h) => isApplyingStatus(h.to_status) && !isApplyingStatus(h.from_status) && h.from_status !== WON_STATUS && !(h.trigger ?? "").startsWith("repair")).map((h) => h.changed_at);
   const repairApplyAts = hist.filter((h) => isApplyingStatus(h.to_status) && (h.trigger ?? "").startsWith("repair")).map((h) => h.changed_at);
   const screeningAts = hist.filter((h) => h.to_status === "screening").map((h) => h.changed_at);
@@ -411,7 +416,7 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
     const hAt = minIso(held, from, to); if (hAt) { stageAt.viewing_held = hAt; if (!stageAt.viewing || ms(stageAt.viewing) > ms(hAt)) stageAt.viewing = hAt; }
     const realApply = [...formAts, ...histApplyAts].filter((x) => !ignoredApply(ms(x)) || formAts.includes(x));
     let appliedAtEstimated = false;
-    let aAt = minIso(realApply, from, to);
+    let aAt = weakFormAts.length ? (minIso(realApply.filter((x) => !weakFormAts.includes(x)), from, to) ?? minIso(realApply, from, to)) : minIso(realApply, from, to);
     if (!aAt) { aAt = minIso(repairApplyAts, from, to); if (aAt) appliedAtEstimated = true; }
     if (aAt) stageAt.applied = aAt;
     const sAt = minIso(screeningAts, from, to); if (sAt) stageAt.screening = sAt;
