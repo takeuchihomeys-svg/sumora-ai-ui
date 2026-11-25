@@ -23,6 +23,14 @@ export function missingNeeds(): Array<{ station: string; key: string; label: str
   return Object.entries(STATION_NEEDS).flatMap(([station, xs]) => xs.filter((x) => !x.source).map((x) => ({ station, key: x.key, label: x.label })));
 }
 
+/**
+ * 2026-11-25 作業員L（#728・081bfdc53）の成約データ: 成約した件で、その駅の段から次の段までの中央の日数（p75・件数）。静的な表（月に1回くらい作り直す）。
+ *   時刻の列が無い駅（pickup・interested・viewing_arrange）は無い。applying は申込の後の記録のずれが入るので使わない
+ */
+export const STAY_MEDIAN_WON: Record<string, { median: number; p75: number; n: number }> = {
+  inquiry: { median: 3, p75: 64, n: 60 }, proposing: { median: 4, p75: 15, n: 38 }, estimate: { median: 8.2, p75: 19.8, n: 16 },
+  viewing_scheduled: { median: 0.3, p75: 54, n: 17 }, viewed: { median: 4.7, p75: 61, n: 10 },
+};
 export function stationStateLineOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.STATION_STATE_LINE ?? "").trim().toLowerCase() === "on";
 }
@@ -34,7 +42,8 @@ export function stationStateLine(i: { node: string | null; since: string | null;
   const parts: string[] = [];
   if (needs.includes("days_in_station") && i.since) {
     const d = Math.floor((i.nowMs - Date.parse(i.since)) / 86_400_000);
-    if (Number.isFinite(d) && d >= 0) parts.push(`この駅に入って ${d}日`);
+    const st = STAY_MEDIAN_WON[i.node];
+    if (Number.isFinite(d) && d >= 0) parts.push(`この駅に入って ${d}日${st ? `（成約した件ではこの駅に中央 ${st.median}日・${st.n}件）` : ""}`);
   }
   if (needs.includes("reply_after_estimate") && i.card?.estimate.sentMinAgo != null) {
     const sentAt = i.nowMs - i.card.estimate.sentMinAgo * 60_000;
