@@ -34,7 +34,7 @@ console.log("■ ① 配線（一括ループでの位置・点検・手順書�
   ok("  リアプロの時だけ（ITANDI の回では押さない）", /if \(_bulkSite === "realnetpro"\) \{\s*await _waitInheritedReset[\s\S]{0,1800}await _resetBeforeFill\(_bc/.test(bg));
   ok("  世代が替わったら抜ける・ストップ要求で止まる", /await _resetBeforeFill\(_bc[\s\S]{0,400}_myGen !== _manualBulkGen[\s\S]{0,300}_batchShouldStop/.test(bg));
   ok("段の名前 pre_fill_reset（枠に出す日本語がある）", /pre_fill_reset: "条件を入れる前にリセットを押す"/.test(bg));
-  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
+  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
   {
     // 文字ではなく動き: 実際の正規表現に段の名前を通す（落とされない・前後の名前に巻き込まれない）
     const keep = eval(audit.match(/var KEEP_STEP = (\/.*\/);/)[1]);

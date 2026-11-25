@@ -53,9 +53,9 @@ ok("maxMs まで待ったら verified:false で返す（空かどうかは empty
 
 console.log("\n■ ③ 増えなければ従来の外しへ（背景）");
 const bgVerify = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendClearOrReset"));
-ok("空の確認ループは verified:false の時も続ける", /_ver\.empty && _ver\.verified !== false\) break/.test(bgVerify));
-ok("成功は verified !== false のときだけ", /_ver\.ok && _ver\.empty && _ver\.verified !== false\) \{/.test(bgVerify));
-ok("空でも件数が増えない時は reset_count_same で ok:false（従来へ）", /_ver\.verified === false\) \{[\s\S]{0,200}reset_count_same[\s\S]{0,120}ok: false/.test(bgVerify));
+ok("2.8.307 空の確認ループは空なら止める（件数が増えなくても外しへ回さない）", /_ver\.ok && _ver\.empty\) break;/.test(bgVerify) && !/_ver\.empty && _ver\.verified !== false\) break/.test(bgVerify));
+ok("2.8.307 成功は空なら（件数が増えなくても）", /if \(_ver && _ver\.ok && _ver\.empty\) \{/.test(bgVerify) && !/_ver\.empty && _ver\.verified !== false\) \{/.test(bgVerify));
+ok("2.8.307 空でも件数が増えない時は reset_count_same を記録だけして成功にする（ok:false で従来へ回さない）", /_ver\.verified === false\) _stamp\("reset_count_same"[\s\S]{0,1200}return \{ ok: true, left: 0, reset: true/.test(bgVerify) && !/countSame: true, why: "reset_count_same"/.test(bgVerify));
 ok("reset_count_same は監査の段として残る（search-audit の RULE_STEP）", /reset_count_same/.test(sa));
 ok("従来へ戻る経路は変わらず（_postSendClearOrReset の rr.ok 判定）", /if \(rr && rr\.ok\) return rr;/.test(bg));
 

@@ -6329,9 +6329,23 @@ async function _manualBulkRun(o) {
           } catch (_) { _lookMs = 3500; }
           if (_lookMs < 1800) _lookMs = 1800;
           if (_lookMs > 13000) _lookMs = 13000;
-          console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
-          _bulkPhaseSet("look", _lookMs, {});
-          await new Promise(function (r) { setTimeout(r, _lookMs); });
+          /**
+           * ★ 2.8.307 竹内さん「5（資料を見る間）はいるのか」→ リセットが成功した客は省く（reset_success_skips_look）:
+           *   リセット後の待ち30秒以上＋空の確認＋撮影までの間が、もう人の間になっている。リセットが使えなかった客だけ今まで通り置く。
+           */
+          var _skipLook = false;
+          try {
+            var _lp = self._axlxLastPsReset;
+            _skipLook = !!(_lp && _lp.ok && String(_lp.cid) === String(_bc.id) && Date.now() - _lp.at < 180000);
+          } catch (_) { _skipLook = false; }
+          if (_skipLook) {
+            console.log("[manual-bulk-search] 👀 資料を見る間は省く（リセットで人の間は済んでいる）（" + (_bc.customer_name || "") + "）");
+            try { if (_bulkAudit) _auditStep(_bulkAudit.runId, "look_skip", "リセット成功のため資料を見る間は省く"); } catch (_) {}
+          } else {
+            console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
+            _bulkPhaseSet("look", _lookMs, {});
+            await new Promise(function (r) { setTimeout(r, _lookMs); });
+          }
           if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
         }
         // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
@@ -10671,12 +10685,14 @@ async function _postSendResetRealpro(customerId, auditRunId) {
         }), 15000, "reset_verify");
         _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
       } catch (_) { _ver = null; }
-      if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) break;
+      if (_ver && _ver.ok && _ver.empty) break; // ★ 2.8.307 空なら十分（件数が増えなくても外しへ回さない・reset_empty_is_enough）
       await _sleep(700);
     }
     var _reloaded = !!(_ver && _ver.reloaded) || _sawLoading;
     var _cntNote = " 件数 前=" + (_ver && _ver.countBefore != null ? _ver.countBefore : "-") + " 後=" + (_ver && _ver.countNow != null ? _ver.countNow : "-") + (_ver && _ver.countKnown === false ? "（読めず・空だけで判定）" : "");
-    if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) {
+    if (_ver && _ver.ok && _ver.empty) {
+      // ★ 2.8.307 竹内さん: リセットで空になったら1つずつ外しはやらない（ボトルネックにしない）。件数が増えなかった事は記録だけに残す
+      if (_ver.verified === false) _stamp("reset_count_same", "空を確認・件数は増えず（記録のみ・空なので外さない）" + _cntNote);
       _stamp("reset_verified", "空を確認 読み直し=" + (_reloaded ? "あり" : "なし") + " 聞いた回数=" + _tries + " " + Math.round((Date.now() - _t0) / 1000) + "秒" + _cntNote);
       // ⑤ 待機（人の間）→ 画面の写真を1枚（空になった画面の記録）。撮れなくても進む
       await _sleep(RESET_SHOT_GAP_MIN_MS + Math.floor(Math.random() * 2000));
@@ -10684,11 +10700,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
       _stamp("reset_shot", (_shotNote && _shotNote.__timeout) ? "時間切れ（進む）" : String(_shotNote));
       return { ok: true, left: 0, reset: true, reloaded: _reloaded };
     }
-    // ★ 2.8.289 空でも件数が増えていない＝リセットで外れた証拠なし → 従来の1つずつ外しへ（残りは0でも確かめのため）
-    if (_ver && _ver.ok && _ver.empty && _ver.verified === false) {
-      _stamp("reset_count_same", "空だが件数が増えず（外れた証拠なし）→従来の外しへ" + _cntNote);
-      return { ok: false, left: 0, reset: true, reloaded: _reloaded, countSame: true, why: "reset_count_same" };
-    }
+    // ★ 2.8.307 旧: 空でも件数が増えなければ従来の1つずつ外しへ（2.8.289）→ 廃止。空なら上で成功にする（reset_empty_is_enough）
     var _left = _ver && _ver.left != null ? _ver.left : -1;
     _stamp("reset_not_empty", "空にならず→従来の外しで残りを外す 残=" + _left + " " + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 60));
     return { ok: false, left: _left, reset: true, reloaded: _reloaded, why: "reset_not_empty:" + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 40) };
@@ -10945,6 +10957,8 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
           _psRes = { skipped: "last_customer_async" };
         } else {
           _psRes = await _psP;
+          // ★ 2.8.307 リセットが成功したか（一括ループが「資料を見る間」を省く判断に使う・reset_success_skips_look）
+          try { self._axlxLastPsReset = { cid: String(customerId), ok: !!(_psRes && _psRes.ok && _psRes.reset), at: Date.now() }; } catch (_) {}
           // リセット→待機→空の確認が済んだ＝ここから次の客までの間（別の持ち主のまま残る reset は次の回が引き継いで待つ）
           if (_manualBulkAlive) _quietSet("gap", 180000, { cid: String(customerId), runId: _runId });
           else _quietClear("reset", "single_done");

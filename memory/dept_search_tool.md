@@ -14852,3 +14852,10 @@ Claude（統括役）からの依頼2件への対応。
 - 手順書の穴: 「次客の条件をAPIから読み直す」「この順番」を書いた決まりが無かった。search_to_sort_cursor（#322）が旧「1秒以降」のままで、search_confirm_then_wait_sort（30秒以上）とぶつかっていた。
 - 直した: 決まり series_handoff_order を追加（since 2.8.306・marker は _refreshCustomerBeforeSearch の行・background.js）。search_to_sort_cursor の文言を30〜36秒に。動きは変えていない。版 2.8.306。
 - 実データ（search_audits 直近60回）: sort_cursor_wait が残るのは 2.8.206 以前だけ（待ち1〜2秒）。2.8.292 以降の30〜36秒は、止まった回ばかりで、まだ実機の記録が無い。
+### 2026-11-26 2.8.307 連続ループ：リセット成功なら外しも資料を見る間もやらない（手順書も統一）
+- 竹内さん「5（資料を見る間）はいるのか／4 リセットが押せたら1つずつ外しは押さない・ボトルネック／9→2のループを理解しているか／古い決まりのボトルネックは」。実データ: 直近300回の search_audits で reset_press／reset_verified／reset_count_same／reset_before_fill は0段（リセットの流れは一度も実機で動いていない）。動いているのは1つずつ外しだけ（page:clear_done 24回）。
+- 直した（動きを変更）: ①background.js _postSendResetRealpro: 空と読み戻せたらリセット成功（件数が増えなくても）。reset_count_same は記録だけ・ok:false で外しへ回す旧の分岐は廃止。②page-script.js _resetVerify: 時間が来て空なら『きれい』印（axlx_reset_clean）を付け、ページ側の前客の外しも省く。③一括ループ: リセット成功の客は『資料を見る間』を省く（look_skip・_axlxLastPsReset）。リセットが使えない客・最後の客は今まで通り。
+- 手順書: series_handoff_order をループ版に書き直し（各客の最後にリセット→次客は①から・最後の客は待たない）。reset_empty_is_enough・reset_success_skips_look を追加。外す前提だった10本（continuous_customer_loop・flow_series_grasp・flow_series_order_gate・customer_loop_one_by_one・clear_then_fill_gate・one_task_complete_before_next・samekind_clear_before_fill・now_action_clear_then_fill・task_grasp_now_done_next・continuous_series_next_grasp）の頭に『リセットで空なら外しの段は行わない・以下はリセットが使えない時の代わり』を前置き。版 2.8.307。
+- 試験: reset-loop-v2307.test.js（新・19本）。reset-count-evidence-v2289・reset-before-fill-v2296・search-before-sort-next-guard-v28233 を新しい決まりに合わせた。全333→334本・新しい赤0（基準の赤122は変わらず）。
+- ⚠ 実機でまだ見ていない: 拡張は 2.8.295 のまま。再読み込み後の連続で reset_verified・look_skip が出るかで確かめる。
+- ⚠ 反映待ち: 2.8.306・2.8.307 は main・DB 手順書に未反映（竹内さんの OK）。
