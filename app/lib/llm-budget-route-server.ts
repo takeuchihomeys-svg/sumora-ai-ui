@@ -20,21 +20,29 @@ export function addRow(s: Pick<Sums, "claudeUsd" | "openaiUsd" | "deepseekUsd">,
   else if (/deepseek/.test(m)) s.deepseekUsd += altUsageUsd(r);
 }
 
-export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<Sums | null> {
+/**
+ * 2026-11-25 作業員L（統括役の頼み・毎朝の1枚の月の費用が $142 と出て audit-llm-month-cost の $291 と食い違った）: 1回の読みは 50頁（5万行）まで。
+ *   今月は 11/24 で 10万行を超え、毎朝の1枚（1回だけ読む）は月の半分で止まっていた。本番（5分の控えで続きを読む）は今まで通り 50頁・
+ *   一回きりの読み（毎朝の1枚）は maxPages を大きく渡す。読み切れなかった時は partial=true
+ */
+export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, o: { maxPages?: number } = {}): Promise<(Sums & { partial?: boolean }) | null> {
   const cfg = readBudgetConfig(env);
   const { since } = spendWindowStart(cfg, nowMs);
   if (cache && cache.since === since && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
   const next: Sums = cache && cache.since === since ? { ...cache } : { since, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0 };
   try {
-    for (let page = 0; page < 50; page++) {
+    let done = false;
+    const maxPages = o.maxPages ?? 50;
+    for (let page = 0; page < maxPages; page++) {
       let q = sb.from("llm_usage_logs").select(COLS).gte("created_at", since).order("id", { ascending: true }).limit(1000);
       if (next.lastId) q = q.gt("id", next.lastId);
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       const rows = (data ?? []) as Row[];
       for (const r of rows) { addRow(next, r); next.lastId = Math.max(next.lastId, Number(r.id)); }
-      if (rows.length < 1000) break;
+      if (rows.length < 1000) { done = true; break; }
     }
+    (next as Sums & { partial?: boolean }).partial = !done;
   } catch (e) {
     console.warn("[llm-budget] 使用額を読めない:", e instanceof Error ? e.message : String(e));
     return cache && cache.since === since ? cache : null;

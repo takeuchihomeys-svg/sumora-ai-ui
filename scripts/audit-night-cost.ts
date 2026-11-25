@@ -179,6 +179,17 @@ function resultDirs(): string[] {
   const lavg = (k: keyof Lever) => pl.reduce((a, x) => a + x[k], 0) / days;
   const $ = (n: number) => `$${n.toFixed(2)}`;
   if (argv.includes("--json")) { console.log(JSON.stringify({ night, window: win, nights, cost, lev, eff, dbRows }, null, 1)); return; }
+  // 2026-11-25 作業員L（統括役の頼み・昨夜 DeepSeek $10.35 で晩の $10 を超えた＝係を通さない流れが関所の外）: 夜の流れの前の関所。
+  //   今夜のここまでの DeepSeek（試験の呼び出し＋判定＋手元の流れ）に次の見込みを足して上限を超えるなら exit 3（流す側が止める）。
+  //   使い方: npx tsx --env-file=.env.local scripts/audit-night-cost.ts --days=1 --gate=<次の見込み $> [--cap=10] [--openai-cap=5 --gate-openai=<見込み>]
+  if (arg("gate")) {
+    const exp = Number(arg("gate")) || 0, cap = Number(arg("cap", "10")) || 10;
+    const ds = now.ds + now.dsJudge;
+    const expOa = Number(arg("gate-openai", "0")) || 0, capOa = Number(arg("openai-cap", "5")) || 5;
+    const over = ds + exp > cap || (expOa > 0 && now.oa + expOa > capOa);
+    console.log(`関所（${night} の晩）: DeepSeek ここまで $${ds.toFixed(2)}＋見込み $${exp.toFixed(2)}（上限 $${cap}）・OpenAI ここまで $${now.oa.toFixed(2)}＋見込み $${expOa.toFixed(2)}（上限 $${capOa}）→ ${over ? "流さない" : "流してよい"}`);
+    process.exit(over ? 3 : 0);
+  }
 
   console.log(`# 試験の費用（${night} の晩・${win === "day" ? "12時〜翌12時" : "22時〜翌8時"} JST）と前の${days}晩`);
   console.log(`（DB の試験の呼び出し ${dbRows}行・判定は手元の記録・読むだけ）\n`);
@@ -233,7 +244,7 @@ function resultDirs(): string[] {
   if (argv.includes("--write-items")) for (const pr of proposals) {
     const { data: ex } = await sb.from("work_items").select("id").eq("title", pr.title).limit(1);
     if (ex?.length) { console.log(`台帳: もうある（#${(ex[0] as { id: number }).id}）`); continue; }
-    execFileSync("npx", ["tsx", "--env-file=.env.local", "scripts/work-items.ts", "--add", `"--title=${pr.title}"`, "--area=試験", "--origin=found_gap", "--stage=todo", `"--owner=${pr.owner}"`, `"--next=${pr.next}"`], { stdio: "inherit", shell: true });
+    execFileSync("npx", ["tsx", "scripts/work-items.ts", "--add", `"--title=${pr.title}"`, "--area=試験", "--origin=found_gap", "--stage=todo", `"--owner=${pr.owner}"`, `"--next=${pr.next}"`], { stdio: "inherit", shell: true, env: process.env }); // 2026-11-25: 鍵は読み込み済みの env を渡す（作業ツリーに .env.local が無くても動く）
   }
 
   const a = ravg(total), t = total(now);
