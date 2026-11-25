@@ -11,7 +11,8 @@ delete process.env.LLM_BUDGET_ROUTE; // 既定（on）
 delete process.env.LLM_BUDGET_PII_TO_OPENAI; // 既定（on）
 process.env.CLAUDE_SWITCH_AT_USD = "300";
 
-let spendTokens = 200_000_000; // 入力 2億トークン×$2/M＝$400（線 $300 を超える）
+let spendTokens = 200_000_000; // Claude の行（2つの枠の決めでは Claude の線は見ない）
+let openaiTokens = 0; // 2026-11-25 2つの枠: OpenAI の使用額（gpt-6.2-sol 入力 $2/M）
 const calls = { openai: 0, deepseek: 0, anthropic: 0 };
 const bodies: string[] = [];
 const stub = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -19,7 +20,10 @@ const stub = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   const okJson = (o: unknown) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
   if (url.includes("api.openai.com")) { calls.openai++; bodies.push(String(init?.body ?? "")); return okJson({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 1 } }); }
   if (url.includes("api.deepseek.com")) { calls.deepseek++; return okJson({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 1 } }); }
-  if (url.includes("/rest/v1/llm_usage_logs")) return okJson([{ id: 1, model: "claude-sonnet-5-5", input_uncached: spendTokens, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0, output_tokens: 0, created_at: "2026-11-20T00:00:00Z", status: 200 }]);
+  if (url.includes("/rest/v1/llm_usage_logs")) return okJson([
+    { id: 1, model: "claude-sonnet-5-5", input_uncached: spendTokens, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0, output_tokens: 0, created_at: new Date().toISOString(), status: 200 },
+    { id: 2, model: "gpt-6.2-sol", input_uncached: openaiTokens, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0, output_tokens: 0, created_at: new Date().toISOString(), status: 200 },
+  ]);
   if (url.includes("api.anthropic.com")) { calls.anthropic++; return okJson({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 10, output_tokens: 1 } }); }
   return okJson([]);
 }) as typeof fetch;
@@ -89,12 +93,14 @@ async function main() {
   assert.deepEqual(calls, { openai: 0, deepseek: 0, anthropic: 1 }, "=off: 審査の事情 → Claude（前の直し）");
   delete process.env.LLM_BUDGET_PII_TO_OPENAI;
 
-  // ── 線の手前: OpenAI に回らない＝歯止めの番は Claude・DeepSeek には決して出ない
-  spendTokens = 0; resetBudgetCache(); // 基準 $291.71（既定）＋0 ＜ 線 $300
+  // ── 2026-11-25 2つの枠: OpenAI の枠いっぱい（$100 の 95% 以上）＝OpenAI に回らない＝歯止めの番は Claude・DeepSeek には決して出ない
+  openaiTokens = 50_000_000; resetBudgetCache(); // gpt-6.2-sol 5千万トークン×$2/M＝$100
+  reset(); await send("conductor_intake");
+  assert.deepEqual(calls, { openai: 0, deepseek: 1, anthropic: 0 }, "OpenAI の枠いっぱい: DeepSeek に回してよい係は DeepSeek に戻る");
   reset(); await send("reply_generate", POST);
-  assert.deepEqual(calls, { openai: 0, deepseek: 0, anthropic: 1 }, "★ 線の手前の申込以降 → Claude（DeepSeek ではない）");
+  assert.deepEqual(calls, { openai: 0, deepseek: 0, anthropic: 1 }, "★ OpenAI の枠いっぱいの申込以降 → Claude（DeepSeek ではない）");
   reset(); await send("reply_generate", BLOCKED);
-  assert.deepEqual(calls, { openai: 0, deepseek: 0, anthropic: 1 }, "★ 線の手前の時刻の線 → Claude");
+  assert.deepEqual(calls, { openai: 0, deepseek: 0, anthropic: 1 }, "★ OpenAI の枠いっぱいの時刻の線 → Claude");
   reset(); await send("reply_generate", { ...CONV, [recorder.LLM_CUTOFF_HEADER]: "all" }, SCREEN);
   assert.equal(calls.deepseek, 0, "★ 審査の事情は DeepSeek に出さない");
   console.log("llm-budget-on-privacy: ok");

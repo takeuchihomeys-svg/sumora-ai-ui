@@ -3,10 +3,10 @@
 //   古い時は、前に読んだ一番新しい id より後の行だけ足す（最初の1回だけ数え始めの時刻から全部）。読めない時は null（＝Claude のまま）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { claudeUsageUsd, altUsageUsd } from "./llm-price";
-import { readBudgetConfig, spendWindowStart, claudeMonthSpendUsd, budgetDecision, budgetRoleOf, type BudgetDecision } from "./llm-budget-route";
+import { readBudgetConfig, spendWindowStart, openaiWindowStart, claudeMonthSpendUsd, budgetDecision, budgetRoleOf, type BudgetDecision } from "./llm-budget-route";
 
 export const BUDGET_CACHE_MS = 5 * 60_000;
-type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number };
+type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number; key?: string };
 let cache: Sums | null = null;
 
 const COLS = "id, model, created_at, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens";
@@ -27,9 +27,12 @@ export function addRow(s: Pick<Sums, "claudeUsd" | "openaiUsd" | "deepseekUsd">,
  */
 export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, o: { maxPages?: number } = {}): Promise<(Sums & { partial?: boolean }) | null> {
   const cfg = readBudgetConfig(env);
-  const { since } = spendWindowStart(cfg, nowMs);
-  if (cache && cache.since === since && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
-  const next: Sums = cache && cache.since === since ? { ...cache } : { since, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0 };
+  // 2026-11-25 2つの枠: Claude は Claude の区切り（10日・基準）・OpenAI は OpenAI の区切り（暦の月初）から。読みは早い方から1回
+  const claudeSince = spendWindowStart(cfg, nowMs).since, openaiSince = openaiWindowStart(cfg, nowMs);
+  const since = claudeSince < openaiSince ? claudeSince : openaiSince;
+  const key = `${claudeSince}|${openaiSince}`;
+  if (cache && cache.key === key && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
+  const next: Sums = cache && cache.key === key ? { ...cache } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0 };
   try {
     let done = false;
     const maxPages = o.maxPages ?? 50;
@@ -39,13 +42,17 @@ export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Rec
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       const rows = (data ?? []) as Row[];
-      for (const r of rows) { addRow(next, r); next.lastId = Math.max(next.lastId, Number(r.id)); }
+      for (const r of rows) {
+        const at = String(r.created_at ?? ""), m = String(r.model ?? "");
+        if (/claude/.test(m) ? at >= claudeSince : /^gpt-|^text-embedding/.test(m) ? at >= openaiSince : true) addRow(next, r);
+        next.lastId = Math.max(next.lastId, Number(r.id));
+      }
       if (rows.length < 1000) { done = true; break; }
     }
     (next as Sums & { partial?: boolean }).partial = !done;
   } catch (e) {
     console.warn("[llm-budget] 使用額を読めない:", e instanceof Error ? e.message : String(e));
-    return cache && cache.since === since ? cache : null;
+    return cache && cache.key === key ? cache : null;
   }
   next.readAt = nowMs;
   cache = next;
@@ -65,10 +72,10 @@ export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | 
   const cfg = readBudgetConfig(env);
   if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg, ctx);
   // 表に無い名札は DB を読まない（Claude のまま）
-  if (!budgetRoleOf(routeName, ctx)) return budgetDecision(routeName, null, cfg, ctx);
+  if (!budgetRoleOf(routeName, { ...ctx, extra: cfg.extra })) return budgetDecision(routeName, null, cfg, ctx);
   const s = await monthSums(sb, nowMs, env);
   const spend = s ? claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd }) : null;
-  return budgetDecision(routeName, spend, cfg, { ...ctx, partial: !!s?.partial });
+  return budgetDecision(routeName, spend, cfg, { ...ctx, partial: !!s?.partial, openaiUsd: s ? s.openaiUsd : null });
 }
 /** 2026-11-25: 今のリクエストの経路（"/api/cron/brain-sweep" 等・Next の作業情報・取れなければ null） */
 export async function httpRouteNow(): Promise<string | null> {
