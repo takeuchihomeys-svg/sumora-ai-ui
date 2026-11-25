@@ -2184,11 +2184,20 @@
   var _sortCursorDeferN = 0;
   /** 保険（強制）使用回数。本線で動くのが正・保険は最後の1回だけ */
   var _sortCursorInsuranceUsed = false;
+  /**
+   * ★ 2.8.292 竹内さん「検索のあとのAD並べ替えは30秒以上あけてやると詰まらずにできていく」
+   *   （2026-11-25 通常モードの録画: 検索 17:38:18 → 並べ替え 17:38:54 は 36秒。
+   *    旧は 1〜3.5秒で、物件が表示され切る前に並べ替えへ入っていた）。
+   *   ⚠ 30秒未満にしない。上限は 36秒（人の間として少しだけ揺らす）。
+   *   ⚠ 起点は「検索の確認（screenOk）」の時刻。_waitMsFromSearchConfirm が残りを引く。
+   */
+  var SORT_AFTER_SEARCH_MIN_MS = 30000;
+  var SORT_AFTER_SEARCH_MAX_MS = 36000;
   function _humanWaitAfterSearchMs() {
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var base = H && H.logNormalDelay ? H.logNormalDelay(1800, 0.4) : (1800 + Math.floor(Math.random() * 900));
-    if (base < 1000) base = 1000 + Math.floor(Math.random() * 400);
-    if (base > 3500) base = 3500;
+    var base = H && H.logNormalDelay ? H.logNormalDelay(32000, 0.05) : (SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 4000));
+    if (base < SORT_AFTER_SEARCH_MIN_MS) base = SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 1500);
+    if (base > SORT_AFTER_SEARCH_MAX_MS) base = SORT_AFTER_SEARCH_MAX_MS;
     return Math.round(base);
   }
   /**
@@ -2431,9 +2440,12 @@
         try { sessionStorage.setItem("axlx_search_grasped_sync", JSON.stringify(_searchGraspedMem)); } catch (_) {}
       } catch (_) {}
       _sortCursorScheduled = true;
+      _sortCursorScheduledAt = Date.now();
       // ★ 2.8.207: 待ちは「検索確認時刻」から合計1秒以上（スケジュール時刻基準にしない）
       var wait = _waitMsFromSearchConfirm();
       var elapsed = _msSinceSearchConfirm();
+      // ★ 2.8.295 邪魔しない窓: 待ち＋並べ替え＋読み直し＋押し始めまで（押し始めで外す）
+      try { _quietPageSet("sort", wait + 120000); } catch (_) {}
       _stampSortFlowAtom("sort_wait", true, wait + "ms_from_confirm");
       try {
         _liveDlStep(
@@ -2547,6 +2559,7 @@
         try { _liveDlStep("sort_skip_inflight", String(why || "kick").slice(0, 36)); } catch (_) {}
         return false;
       }
+      try { if (_sortWaitState() === "stale") _clearStaleSortWait("kick:" + String(why || "")); } catch (_) {}
       return _scheduleSortCursorAfterSearch(why || "kick");
     } catch (err) {
       console.warn("[AXLX bulk-dl] kick失敗", err && err.message);
@@ -2659,6 +2672,15 @@
         // ← ここで return しない（下の押す処理へ進む）
       }
       console.log("[AXLX bulk-dl][auto] AD順に移った直後・条件が効いている一覧 → 押します");
+      /**
+       * ★ 2.8.293: 「並べ替えた後の読み直し」と見て並べ替えを飛ばす所。本当に高→低になっていたかを点検に残す
+       *   （並べ替えが効かずに読み直しだけ起きた回を後から見分ける。ここで並べ直すと URL に出ない並べ替えで繰り返すので、記録だけ）。
+       */
+      try {
+        var _qs = String(location.search || "");
+        var _adUrl = /(?:^|[?&])ad=odr_desc(?:&|$)/.test(_qs) || (/(?:^|[?&])key=ad(?:&|$)/.test(_qs) && /(?:^|[?&])odr=desc(?:&|$)/.test(_qs));
+        _liveDlStep("ad_sort_reload", _adUrl ? "ad_url" : "no_ad_url");
+      } catch (_) {}
       _adSortDone = true; // 判定おわり（この一覧ではもう聞かない）
     }
     /**
@@ -2671,6 +2693,18 @@
       console.log("[AXLX bulk-dl][auto] 検索後 → 並べ替えカーソル待ちへ (" + tracked.length + "行)");
       _tmark("auto_pdf_load", "afterSearch_sort_cursor rows=" + tracked.length);
       _scheduleSortCursorAfterSearch("maybe_afterSearch");
+      return;
+    }
+    /**
+     * ★ 2.8.293 竹内さん「検索結果表示した後時間差で並べ替えするはずが並べ替えされずに物件取得にはいってしまった」:
+     *   検索後の30秒の並べ替え待ち（_scheduleSortCursorAfterSearch）は、待ちを入れた時に _autoSendArmed を立てる。
+     *   待ちの間に一覧が描き直されると、ここ（見る間→押す道）が並べ替えの番を追い越して押し始められた。
+     *   → 並べ替えの待ち（または並べ替え失敗後の待ち直し）の間は、ここからは押さない。並べ替えの番が先。
+     *   ⚠ 待ちの印が固まっても永久に止めない（SORT_WAIT_OWN_MAX_MS を過ぎたらここを通す・135秒の見張りもある）。
+     */
+    var _sortOwnSince = _sortWaitRetryPending ? _sortWaitRetryAt : (_sortCursorScheduled ? _sortCursorScheduledAt : 0);
+    if (_sortOwnSince && Date.now() - _sortOwnSince < SORT_WAIT_OWN_MAX_MS) {
+      _tmark("auto_pdf_load", _sortWaitRetryPending ? "wait_sort_retry" : "wait_sort_cursor");
       return;
     }
     var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
@@ -2961,6 +2995,7 @@
    */
   var _bulkGraspState = null;
   function ensureBar() {
+    if (_orphaned) return; // ★ 2.8.294 古い中身は枠を作り直さない
     var existing = document.getElementById("axlx-bar");
     // ★ 2.8.213: 旧バー（いま／つぎ無し）は作り直す
     // ★ 2.8.217: 把握行が無い旧バーも作り直す
@@ -3524,6 +3559,11 @@
    *   continuePages=true … 次ページ再開。ページカウンタをリセットしない。
    */
   function autoPressPdfs(opt) {
+    // ★ 2.8.293 並べ替え失敗後の待ち直しの間は、別の道から並べ替え・押しを二重に始めない
+    if (_sortWaitRetryPending && Date.now() - _sortWaitRetryAt < SORT_WAIT_OWN_MAX_MS) {
+      _tmark("auto_pdf", "blocked_sort_wait_retry");
+      return { ok: false, reason: "sort_wait_retry" };
+    }
     _pressRunSince = _pressSince || Date.now();
     _pressSince = 0;
     if (!_autoModeOn) {
@@ -3604,6 +3644,47 @@
     var _isAdDesc = (_params.get("key") === "ad" && _params.get("odr") === "desc")
       || _params.get("ad") === "odr_desc"
       || /(?:^|[?&])ad=odr_desc(?:&|$)/.test(String(location.search || ""));
+    function _urlIsAdDescNow() {
+      try {
+        var _p = new URLSearchParams(location.search || "");
+        return (_p.get("key") === "ad" && _p.get("odr") === "desc")
+          || _p.get("ad") === "odr_desc"
+          || /(?:^|[?&])ad=odr_desc(?:&|$)/.test(String(location.search || ""));
+      } catch (_) { return false; }
+    }
+    /**
+     * ★ 2.8.293 並べ替えに失敗した時、並びのまま押す前に人の間（30〜36秒）待って並べ替えを最初からもう1回。
+     *   待ちを入れたら true（呼び元は押さずに戻る）。回数を使い切った・条件画面に戻った時は false。
+     */
+    function _sortFailWaitThenRetry(where) {
+      if (_sortFailWaitRetries >= SORT_FAIL_WAIT_RETRY_MAX) return false;
+      if (_isFillBusy() || _isCondModalLabelsOpen()) return false;
+      _sortFailWaitRetries++;
+      var waitMs = _humanWaitAfterSearchMs();
+      var genAt = _sortGen;
+      _sortWaitRetryPending = true;
+      _sortWaitRetryAt = Date.now();
+      try { _quietPageSet("sort", waitMs + 120000); } catch (_) {}
+      console.warn("[AXLX bulk-dl][auto] 並べ替えできず（" + where + "）→ " + Math.round(waitMs / 1000) + "秒待って並べ替えをもう一度（物件取得はその後）");
+      _liveDlStep("sort_failed_wait_retry", where + " try" + _sortFailWaitRetries + " wait" + Math.round(waitMs / 1000) + "s");
+      _nudge("⏳ 並べ替えがまだ出来ません → 約" + Math.round(waitMs / 1000) + "秒待ってもう一度並べ替えます（物件取得はその後）");
+      setTimeout(function () {
+        _sortWaitRetryPending = false;
+        if (_sortGen !== genAt || _isFillBusy() || _isCondModalLabelsOpen()) {
+          _liveDlStep("sort_abort", "wait_retry_cond");
+          return;
+        }
+        if (_urlIsAdDescNow()) {
+          _liveDlStep("sort_done", "ad_url_after_wait");
+          _adSortDone = true;
+          _beginListPressNoSort();
+          return;
+        }
+        _liveDlStep("sort_menu", "wait_retry_start");
+        _beginAdSortLikeHuman();
+      }, waitMs);
+      return true;
+    }
     /**
      * ★ 2026-11-22: AD並び替えの前に「検索を押した」把握（手順書×画面）。無いと並べ替えない。
      */
@@ -3685,6 +3766,7 @@
               }
               _sortByAdLikeHuman(function (ok2) {
                 if (ok2) _liveDlStep("sort_done", "hilo_retry");
+                else if (_sortFailWaitThenRetry("after_quick_retry")) return;
                 else {
                   console.warn("[AXLX bulk-dl][auto] 再試行も並べ替えできず → この並びのまま押します");
                   _nudge("⚠ 並べ替えできませんでした（この並びのまま続けます）");
@@ -3703,6 +3785,7 @@
             }, 1600);
             return;
           }
+          if (!alreadyAd && _sortFailWaitThenRetry("no_head")) return;
           console.warn("[AXLX bulk-dl][auto] 並べ替えできず → **この並びのまま押します**（物件を落とさない）");
           _nudge("⚠ 並べ替えできませんでした（この並びのまま続けます）");
           _liveDlStep("sort_failed", "continue");
@@ -3885,9 +3968,109 @@
    */
   var _sortGen = 0;
   var _sortGenAtStart = 0;
+  /**
+   * ★ 2.8.293 竹内さん「並べ替えされずに物件取得にはいってしまった」:
+   *   並べ替えに失敗すると、旧は見出しが見えない時は即・見える時も1.6秒の試し直し1回で「この並びのまま」押していた。
+   *   検索後の一覧は表示が追いつくまで処理がある（竹内さん「30秒以上あけてやると詰まらずに」）ので、
+   *   → 並びのまま押す前に、人の間（30〜36秒）待って並べ替えを最初からもう1回やる（1回まで）。
+   *   ⚠ 2026-11-14 の決定「出来なくても止まらずにそのまま動かす」は守る: 待ち直しても駄目なら警告を出して続ける。
+   */
+  var SORT_FAIL_WAIT_RETRY_MAX = 1;
+  var SORT_WAIT_OWN_MAX_MS = 90000;
+  var _sortFailWaitRetries = 0;
+  var _sortWaitRetryPending = false;
+  var _sortWaitRetryAt = 0;
+  var _sortCursorScheduledAt = 0;
+  /**
+   * ★ 2.8.295 並べ替えの待ちの状態（見張りが「固着」と取り違えないため）
+   *   waiting … 検索確認→並べ替えの待ち・失敗後の待ち直しの最中（見張りは手を出さない）
+   *   stale   … 待ちの印だけが SORT_WAIT_OWN_MAX_MS を過ぎて残り、タイマーも並べ替えも走っていない
+   *   none    … 待っていない
+   */
+  function _sortWaitState() {
+    var now = Date.now();
+    if (_sortWaitRetryPending) {
+      return (now - (Number(_sortWaitRetryAt) || 0) < SORT_WAIT_OWN_MAX_MS) ? "waiting" : "stale";
+    }
+    if (_sortCursorScheduled && !_autoPdfRun && !_adSortInFlight) {
+      if (now - (Number(_sortCursorScheduledAt) || 0) < SORT_WAIT_OWN_MAX_MS) return "waiting";
+      return _sortCursorTimer ? "waiting" : "stale";
+    }
+    return "none";
+  }
+  /**
+   * ★ 2.8.295 竹内さん「並べ替えやリセット、そして新しいお客さんの条件を…入れなおすところのあいだで別の作業入って邪魔されないように」:
+   *   邪魔しない窓（background の axlx_quiet と同じ1つの印・chrome.storage.session）。
+   *   ページは「検索確認→並べ替えの待ち」で sort を置き、押し始め・送付完了で外す（上限で必ず切れる）。
+   *   印は html の data-axlx-quiet（kind|until）にも写す＝page-script（MAIN）・content.js も同じ印を見て見送る。
+   */
+  var _quietMem = null;
+  var _quietDeferPageAt = {};
+  function _quietMirror(q) {
+    _quietMem = (q && typeof q === "object" && q.until && Date.now() < Number(q.until)) ? q : null;
+    try {
+      if (_quietMem) document.documentElement.setAttribute("data-axlx-quiet", String(_quietMem.kind) + "|" + Number(_quietMem.until));
+      else document.documentElement.removeAttribute("data-axlx-quiet");
+    } catch (_) {}
+  }
+  function _quietPageNow() {
+    return (_quietMem && Date.now() < Number(_quietMem.until)) ? _quietMem : null;
+  }
+  function _quietPageSet(kind, ms) {
+    var now = Date.now();
+    var q = { kind: String(kind), since: now, until: now + Math.max(5000, Number(ms) || 60000), owner: "page" };
+    try { q.cid = _pickCustomerIdForAuto() || null; } catch (_) {}
+    _quietMirror(q);
+    try { chrome.storage.session.set({ axlx_quiet: q }); } catch (_) {}
+    try { _liveDlStep("quiet_on", q.kind + " 上限" + Math.round((q.until - now) / 1000) + "秒"); } catch (_) {}
+  }
+  function _quietPageClear(kind, why) {
+    var q = _quietPageNow();
+    if (!q || (kind && q.kind !== kind)) return false;
+    _quietMirror(null);
+    try { chrome.storage.session.remove("axlx_quiet"); } catch (_) {}
+    try { _liveDlStep("quiet_off", q.kind + " " + Math.round((Date.now() - Number(q.since || Date.now())) / 1000) + "秒 " + String(why || "")); } catch (_) {}
+    return true;
+  }
+  function _quietPageDefer(who, detail) {
+    var k = String(who || "page");
+    var now = Date.now();
+    if (_quietDeferPageAt[k] && now - _quietDeferPageAt[k] < 15000) return;
+    _quietDeferPageAt[k] = now;
+    var q = _quietPageNow();
+    try {
+      _liveDlStep("quiet_defer", (k + " 窓=" + (q ? q.kind + " 残り" + Math.max(0, Math.round((Number(q.until) - now) / 1000)) + "秒" : "-") + (detail ? " " + detail : "")).slice(0, 80));
+    } catch (_) {}
+  }
+  try {
+    chrome.storage.session.get(["axlx_quiet"], function (r) { try { _quietMirror(r && r.axlx_quiet); } catch (_) {} });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "session" || !ch || !ch.axlx_quiet) return;
+      _quietMirror(ch.axlx_quiet.newValue);
+    });
+  } catch (_) {}
+  // page-script（MAIN）が窓の間に見送った事を点検へ（MAIN からは拡張へ直に送れない）
+  try {
+    window.addEventListener("message", function (e) {
+      try {
+        if (e.source !== window || !e.data || e.data.from !== "axlx-quiet-defer") return;
+        _quietPageDefer(String(e.data.who || "page").slice(0, 24), String(e.data.detail || "").slice(0, 30));
+      } catch (_) {}
+    });
+  } catch (_) {}
+  function _clearStaleSortWait(why) {
+    var since = _sortWaitRetryPending ? _sortWaitRetryAt : _sortCursorScheduledAt;
+    var age = since ? Date.now() - since : -1;
+    _sortWaitRetryPending = false;
+    _sortCursorScheduled = false;
+    try { if (_sortCursorTimer) { clearTimeout(_sortCursorTimer); _sortCursorTimer = null; } } catch (_) {}
+    try { _liveDlStep("sort_wait_stale_reset", String(why || "").slice(0, 20) + ":age=" + age); } catch (_) {}
+  }
   function _abortAdSort(why) {
     _sortGen++;
     _autoPdfRunPending = null;
+    _sortFailWaitRetries = 0;
+    _sortWaitRetryPending = false;
     // ★ 2026-11-22: 世代上げだけでは飛行中の moveTo が並べ替えへ着地し続ける → カーソルを止める
     // ★ 2.8.226: cancelMove は今座標を残す（中心やり直し禁止）
     try {
@@ -4871,6 +5054,7 @@
       };
       if (cid && !_autoRunCid) _autoRunCid = cid; // 終わりの合図は押し始めたお客さんの番号で送る（途中の選び直しに引きずられない）
       try { _touchPipelineProgress("press_start"); _armPipelineSilence("press"); } catch (_) {}
+      try { _quietPageClear("sort", "press_start"); } catch (_) {}
       _tmark("auto_pdf_start", String(list.length) + "件（元" + cand.length + "・送付済除外" + (filtered.sent || 0) + "・最安絞り" + (filtered.cheapest || 0) + "）");
       try { _graspAcquire("press_start", true, "未送付" + list.length + "件を押す（送付済は把握済で除外）"); } catch (_) {}
       console.log("[AXLX bulk-dl][auto] 押す順（人が見て回る順）: " + order.slice(0, 12).join("→") + (order.length > 12 ? "…" : "")
@@ -5807,6 +5991,7 @@
   /** 完了の合図だけ送る（`_autoFinish` と共通） */
   function _sendBatchDone(n, why, skipped) {
     try { _disarmPipelineSilence("batch_done"); } catch (_) {}
+    try { _quietPageClear("sort", "batch_done"); } catch (_) {}
     try {
       // 次のお客さんへの受け渡し: 一覧〜次ページの照合結果を残す
       _guideLikeListFlowGrasp("handoff", function (g) {
@@ -5884,6 +6069,98 @@
     _nudge("⏹ 止めます（いまの1件が終わってから）");
     return true;
   }
+
+  /** この画面の自動（押す・見る待ち・並べ替えの待ち・送る列）だけを黙って止める（裏へは送らない・読み直さない） */
+  function _quietLocalStop(why) {
+    try { if (_autoPdfRun) _autoPdfRun.stopped = true; } catch (_) {}
+    try { if (_lookWait && _lookWait.skip) _lookWait.skip(why || "stop"); } catch (_) {}
+    try { _pdfQueue = []; } catch (_) {}
+    try { _abortAdSort(why || "stop"); } catch (_) {}
+    try { if (_sortCursorTimer) { clearTimeout(_sortCursorTimer); _sortCursorTimer = null; } } catch (_) {}
+    try { _sortCursorScheduled = false; } catch (_) {}
+    try { _autoSendArmed = false; } catch (_) {}
+  }
+
+  /**
+   * ★ 2.8.294 竹内さん「昔ののこっているのとりのぞくようにする／新しく改善された動きちゃんと把握して」（2026-11-25 18:26）:
+   *   DB #1653（18:19:36）は拡張の読み直しの直後に「拡張の中身が応答しない」で止まり、その後の段も操作も0件。
+   *   拡張を読み直すと、ページに入っていた古い中身（このファイル）は裏と話せないまま動き続け、古い枠（旧の版）も残っていた。
+   *   → 裏とつながっていない（chrome.runtime.id が無い）と分かったら、この画面の自動を止めて枠を消し、読み直しの案内だけ出す。
+   *   ⚠ 新しい裏は読み直し時にリアプロのタブを読み直す（background の _reloadOrphanTabsOnInstall）。これはその取りこぼし用。
+   */
+  var _orphaned = false;
+  function _extAlive() {
+    try { return !!(typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id); } catch (_) { return false; }
+  }
+  function _becomeOrphan(why) {
+    if (_orphaned) return;
+    _orphaned = true;
+    _quietLocalStop("orphan");
+    try { _autoModeOn = false; } catch (_) {}
+    try { var bar = document.getElementById("axlx-bar"); if (bar) bar.remove(); } catch (_) {}
+    try {
+      if (document.body && !document.getElementById("axlx-orphan-note")) {
+        var n = document.createElement("div");
+        n.id = "axlx-orphan-note";
+        n.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:2147483647;background:#0f172a;color:#f8fafc;border:1px solid rgba(248,113,113,0.8);border-radius:12px;padding:10px 12px;font-size:12px;font-weight:700;max-width:280px;font-family:'Segoe UI','Hiragino Sans','Noto Sans JP',sans-serif;";
+        n.innerHTML = '<div style="margin-bottom:6px;">AIXLINX が新しくなりました。この画面の古い中身は止めました。</div>'
+          + '<button type="button" style="width:100%;padding:6px 8px;background:#2563eb;border:none;border-radius:8px;color:#fff;font-weight:800;cursor:pointer;">ページを読み直す（新しい動きで続ける）</button>';
+        document.body.appendChild(n);
+        n.querySelector("button").addEventListener("click", function () { try { location.reload(); } catch (_) {} });
+      }
+    } catch (_) {}
+    console.warn("[AXLX bulk-dl] 拡張が読み直された → この画面の古い中身を止めて枠を消しました（" + why + "）");
+  }
+  setInterval(function () { if (!_orphaned && !_extAlive()) _becomeOrphan("runtime_gone"); }, 2000);
+
+  /**
+   * ★ 2.8.294 竹内さん「リセット押すのも拡張りかいしていない」:
+   *   人がリアプロの「リセット」を押しても拡張は何も知らず、枠は「条件を入れている最中」のまま、
+   *   消えた一覧の続きを押そうとし得た（リセット後は全物件の一覧になる＝送ってはいけない）。
+   *   → 人の押下（isTrusted・拡張の押下は合成で false）を捕まえて:
+   *     ① この画面の自動を止める（新しい検索の確認まで一覧は押さない）② 検索済みの印を消す
+   *     ③ 裏へ知らせる（点検に human_reset_press・一括の次の条件入力はリセットから30秒以上あける）④ 枠に出す
+   *   ⚠ 位置は左の検索欄だけ（画面の左45%・拡張の枠の中のボタンは除く）。
+   */
+  var HUMAN_RESET_SETTLE_MS = 30000;
+  function _humanResetTarget(el) {
+    for (var u = 0, a = el; a && a.nodeType === 1 && u < 30; u++, a = a.parentElement) {
+      if (a.id === "axlx-bar" || a.id === "axlx-orphan-note") return null;
+    }
+    for (var i = 0, e = el; e && e.nodeType === 1 && i < 4; i++, e = e.parentElement) {
+      if (/(^|\s)reset_button(\s|$)/.test(String(e.className || ""))) return { el: e, via: "class" };
+      if (e.children && e.children.length === 0 && String(e.textContent || "").trim() === "リセット") return { el: e, via: "text" };
+    }
+    return null;
+  }
+  function _onHumanReset(via) {
+    var at = Date.now();
+    var pressing = !!(_autoPdfRun && !_autoPdfRun.stopped);
+    _quietLocalStop("human_reset");
+    try { chrome.storage.session.remove(["axlx_auto_next_page", "axlx_search_grasped", "axlx_ad_sort_pending"]); } catch (_) {}
+    try {
+      sessionStorage.removeItem(AUTO_SEND_KEY);
+      sessionStorage.removeItem("axlx_search_grasped_sync");
+    } catch (_) {}
+    try {
+      chrome.runtime.sendMessage({
+        type: "axlx-human-reset", at: at, via: via, pressing: pressing,
+        customerId: _pickCustomerIdForAuto() || null, url: String(location.href || "").slice(0, 200),
+      }, function () { void chrome.runtime.lastError; });
+    } catch (_) {}
+    try { _axlxWorkNote("🔄 人がリセットを押した → 物件の表示を待つ（この一覧は押さない）", at + HUMAN_RESET_SETTLE_MS); } catch (_) {}
+    console.log("[AXLX bulk-dl] 人がリセットを押した（" + via + (pressing ? "・送付中" : "") + "）→ この画面の自動を止め、次の条件入力は30秒以上あける");
+  }
+  document.addEventListener("click", function (ev) {
+    try {
+      if (!ev || !ev.isTrusted || _orphaned) return;
+      var hit = _humanResetTarget(ev.target);
+      if (!hit) return;
+      var r = hit.el.getBoundingClientRect ? hit.el.getBoundingClientRect() : null;
+      if (r && r.left > (window.innerWidth || 1200) * 0.45) return;
+      _onHumanReset(hit.via);
+    } catch (_) {}
+  }, true);
 
   /**
    * 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。人間が動いているように見たらわかるように。昼休みなら昼休みと」:
@@ -8710,8 +8987,15 @@
     // 定期: float-wrap / 物件送る枠が消えたままなら戻す（tuck 漏れ・右ドック被り対策）
     try {
       setInterval(function () {
+        /**
+         * ★ 2.8.295（コード調べ・中6）: 並べ替えの乗せの最中に戻すと、退避した案内・お客様パネルが並べ替えの小窓に被る。
+         *   → 並べ替えの最中は戻さない（終わりの _finishSort が戻す）。
+         */
+        var _sortNow = false;
+        try { _sortNow = !!_adSortInFlight; } catch (_) { _sortNow = false; }
         try {
-          if (document.querySelector("[data-axlx-sort-prev-display]")) _restoreGuidesAfterSort();
+          if (!_sortNow && document.querySelector("[data-axlx-sort-prev-display]")) _restoreGuidesAfterSort();
+          else if (_sortNow && document.querySelector("[data-axlx-sort-prev-display]")) _quietPageDefer("guide_restore", "sort_in_flight");
         } catch (_) {}
         try {
           var w = document.getElementById("aixlinx-float-wrap");
@@ -8726,7 +9010,7 @@
           var onEst = /[?&]method=estate\b/.test(String(location.search || ""))
             || /[?&]display=building\b/.test(String(location.search || ""));
           if (onEst) {
-            try { _snapCustomerPanelRight(); } catch (_) {}
+            if (!_sortNow) { try { _snapCustomerPanelRight(); } catch (_) {} }
             ensureBar();
             updateBar();
             try { _placeSendBarVisible(); } catch (_) {}
@@ -8765,6 +9049,17 @@
               try { _nR = tracked.filter(function (t) { return t && t.btn && t.btn.isConnected; }).length; } catch (_) { _nR = 0; }
               var _busy = false;
               try { _busy = !!(_isFillBusy() || _isCondModalOpen() || _adSortInFlight || _autoPdfRun); } catch (_) { _busy = false; }
+              /**
+               * ★ 2.8.295 竹内さん「並べ替え…のあいだで別の作業入って邪魔されないように」:
+               *   検索確認→30〜36秒→並べ替え の待ち・待ち直しは「動いていない」ではなく「待っている」。
+               *   旧はここが入っておらず、待ちの間に 4.5秒ごと estate_stuck_recover を送っていた（DB 4回）。
+               *   待ちの印が SORT_WAIT_OWN_MAX_MS を過ぎて残り、タイマーも走っていない時だけ「古い印」として外し、張り直す。
+               */
+              try {
+                var _sw = _sortWaitState();
+                if (_sw === "waiting") _busy = true;
+                else if (_sw === "stale") _clearStaleSortWait("estate_watch");
+              } catch (_) {}
               /**
                * ★ 2.8.279 竹内さん「拡張ツールひらいているとき重すぎる」:
                *   旧は「行がある・動いていない」だけで4.5秒ごとに立て直していた＝**人が一覧を見ているだけでも**

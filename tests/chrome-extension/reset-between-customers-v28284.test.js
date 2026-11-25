@@ -144,10 +144,11 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 3);
   await w.run(30 * 60000);
   ok("3-1 3人を順に", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2", "c3"]), filled(w).join(","));
-  ok("3-1 毎回リセット→確認（3回ずつ）", w.resetPressCalls === 3 && w.resetVerifyCalls === 3, w.resetPressCalls + "/" + w.resetVerifyCalls);
+  // 2.8.296: 条件を入れる前に「空か」を1回読む（3人分）＋送付後の確認（3回）＝読み戻し6回。空なので入力前は押さない＝押すのは3回のまま
+  ok("3-1 毎回リセット→確認（押す3回・読み戻し 入力前3＋送付後3）", w.resetPressCalls === 3 && w.resetVerifyCalls === 6, w.resetPressCalls + "/" + w.resetVerifyCalls);
   ok("3-1 従来の外しは呼ばない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
   const o1 = order(w);
-  ok("3-1 順序: 入れる→リセット→確認→次客", o1.slice(0, 5).join(" ") === "autofill:c1 reset_press_exec: reset_verify_exec: autofill:c2 reset_press_exec:", o1.join(" "));
+  ok("3-1 順序: 空の確認→入れる→リセット→確認→（次客の）空の確認→入れる", o1.slice(0, 7).join(" ") === "reset_verify_exec: autofill:c1 reset_press_exec: reset_verify_exec: reset_verify_exec: autofill:c2 reset_press_exec:", o1.join(" "));
   const k1 = stepKeys(w);
   ok("3-1 記録に reset_press／reset_wait／reset_verified／reset_shot", ["reset_press", "reset_wait", "reset_verified", "reset_shot"].every((k) => k1.includes(k)), JSON.stringify([...new Set(k1)].filter((k) => /reset/.test(k))));
   const timed = [];
@@ -171,7 +172,8 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   w = sim.createWorld({ customers: customers(2), resetButton: true, page: () => ({ reset: "nobutton" }) });
   await start(w, 2);
   await w.run(30 * 60000);
-  ok("3-3 ボタン無し → 従来の外し", w.postSendClearCalls === 2 && w.resetVerifyCalls === 0, w.postSendClearCalls + "/" + w.resetVerifyCalls);
+  // 2.8.296: 読み戻しは入力前の「空か」だけ（2人分）。押せないので押した後の確認は無い＝reset_verified が出ない
+  ok("3-3 ボタン無し → 従来の外し", w.postSendClearCalls === 2 && w.resetVerifyCalls === 2 && !stepKeys(w).includes("reset_verified"), w.postSendClearCalls + "/" + w.resetVerifyCalls);
   ok("3-3 次客へ進む", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
 
   // 3-4 押した返事が来ない → 25秒で諦めて従来の外し（止まらない）
@@ -193,6 +195,24 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await w.run(30 * 60000);
   const gap = w.autofills[1].at - w.autofills[0].at;
   ok("3-6 リセット込みでも2人目は10分以内", gap < 10 * 60000, Math.round(gap / 1000) + "秒");
+
+  // 3-7 ★ 2.8.296 最初の客の画面に前の条件が残っている（前客が0件・時間切れで終わった回／一括の最初の客の模擬）
+  //   → 条件を入れる前にリセットを押し、30秒以上あけてから入れる（古い「1つずつ外す」に落ちない）
+  w = sim.createWorld({ customers: customers(2), resetButton: true, dirtyStart: true });
+  await start(w, 2);
+  await w.run(30 * 60000);
+  const o7 = order(w);
+  ok("3-7 1人目: 空の確認→（空でない）リセット→確認→入れる", o7.slice(0, 4).join(" ") === "reset_verify_exec: reset_press_exec: reset_verify_exec: autofill:c1", o7.join(" "));
+  ok("3-7 従来の外し（1つずつ）は呼ばない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
+  const k7 = [];
+  w.db.forEach((r) => (r.steps || []).forEach((s) => k7.push(s)));
+  const rbf = k7.filter((s) => s.k === "reset_before_fill").map((s) => String(s.d));
+  ok("3-7 記録に reset_before_fill（空でない→押す／リセットで空を確認）", rbf.some((d) => /空でない/.test(d)) && rbf.some((d) => /リセットで空を確認/.test(d)), rbf);
+  const t7press = k7.find((s) => s.k === "reset_press");
+  const t7fill = k7.find((s) => s.k === "bulk_phase" && /autofill/.test(String(s.d)));
+  ok("3-7 リセットを押してから条件入力まで30秒以上", !!(t7press && t7fill && t7fill.at - t7press.at >= 30000), t7press && t7fill ? t7fill.at - t7press.at : null);
+  ok("3-7 2人を順に・例外なし", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]) && (w.clock.errors || []).length === 0, filled(w).join(","));
+  ok("3-7 2人目は前客のリセットで空→入力前は押さない（押すのは 入力前1＋送付後2＝3回）", w.resetPressCalls === 3, String(w.resetPressCalls));
 
   console.log("\n■ ④ 完了判定は画像に依らない（客の番号＋DOM）");
   ok("送付完了は axlx-batch-customer-done（客の番号つき）で待つ", /_createBatchCustomerDoneWaiter\(customerId/.test(bg));

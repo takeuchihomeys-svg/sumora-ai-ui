@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.290";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.297";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -230,12 +230,12 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "playbook_read",
     scene: "switch",
-    text: "自動は入力を始める時に手順書を読み、読んだ印（手順書の版・決まりの数・拡張に無い決まり）を点検記録に残す",
+    text: "自動は入力を始める時に手順書を読み、読んだ印（手順書の版・決まりの数・拡張に無い決まり）を点検記録に残す。手順書と拡張の版がずれていたら playbook_behind（どちらが古いか・版）を1段足す",
     since: "2.8.137",
     kb: null,
     marker: "function _auditPlaybookSeen()",
     file: "page-script.js",
-    verify: { mustHave: "page:playbook_seen", mustNot: ["page:playbook_none"] },
+    verify: { mustHave: "page:playbook_seen", mustNot: ["page:playbook_none", "page:playbook_behind"] },
   },
   {
     id: "one_cursor",
@@ -332,7 +332,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_confirm_then_wait_sort",
     scene: "list",
-    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_confirmed／screenOk）が取れてから。確認時刻から合計1秒以上空けて sort_cursor へ。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
+    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_confirmed／screenOk）が取れてから。確認時刻から30秒以上空けて sort_cursor へ（2.8.292・録画で確かめた人の間は36秒。1〜3.5秒は旧で、物件の表示が追いつかなかった）。並べ替えの待ちの間は一覧の描き直しから押し始めない（wait_sort_cursor）。並べ替えに失敗したら並びのまま押す前に30〜36秒待って最初からもう1回（sort_failed_wait_retry・2.8.293）。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
     since: "2.8.207",
     kb: null,
     marker: "_isSearchConfirmGrasp",
@@ -911,7 +911,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "reset_between_customers",
     scene: "clear",
-    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので10秒以上（10〜14秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。さらに該当物件の数（○戸）がリセット前より増えていたら外れた証拠（2.8.289）。空でも数が増えなければ従来の1つずつ外しへ。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle",
+    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。さらに該当物件の数（○戸）がリセット前より増えていたら外れた証拠（2.8.289）。空でも数が増えなければ従来の1つずつ外しへ。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
     since: "2.8.284",
     kb: "265a1cca",
     marker: "_postSendResetRealpro",
@@ -923,6 +923,41 @@ export const AUTO_RULES: AutoRule[] = [
         "reset_not_empty",
         "reset_fallback",
       ],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.295 竹内さん「並べ替えやリセット、そして新しいお客さんの条件を拡張ツールのAPIから入れなおすところのあいだで
+     *   別の作業入って邪魔されないように」→ 邪魔しない窓（axlx_quiet）1つで3つの間を守る。
+     */
+    id: "quiet_window_no_interrupt",
+    scene: "switch",
+    text: "並べ替え（検索確認→30〜36秒→並べ替え→読み直し→押し始め）・リセット（送付後のリセット→30秒以上の待機→空の確認）・次のお客さんまでの間・次客の条件入力（fill-done まで）の間は、邪魔しない窓（1つの印・上限で必ず切れる）を立てる。窓の間は、ウェブアプリからの別のお客さんの検索・すぐ拾う指示・写真のためのタブ切替・「検索条件を表示」の押し直し・並べ替え中の案内の戻し・前の回の続きの印を見送り、見送った事を点検に残す。並べ替えの待ちは見張りが固着と取り違えない（待ちの印が古い時だけ外して張り直す）。前客の入力待ちの間は同じ客をもう1本回さない。裏が起き直してリセットの途中で切れた時は、次の回がリセットから30秒以上待ってから条件を入れる。印: quiet_on／quiet_off／quiet_defer／quiet_inherit／reset_clear_marks／dl:sort_wait_stale_reset",
+    since: "2.8.295",
+    kb: null,
+    marker: "_quietSet(\"reset\"",
+    file: "background.js",
+    verify: {
+      onlyIf: ["reset_press"],
+      mustHaveAny: ["quiet_on", "dl:quiet_on"],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.296 竹内さん「何で次のお客さんの条件入れる前にリセットおしていないのか」→「昔の外す部分がボトルネックでリセットを押しに行っていない」
+     *   実測（監査 #1654・#1656）: リセットは送付が終わった客の後だけ。前客が0件・時間切れ／一括の最初の客／裏が起き直した回は
+     *   リセットの段が無く、ページ側の古い「1つずつ外す」（58秒・やり直し2回）で入力に入っていた。
+     */
+    id: "reset_before_fill",
+    scene: "clear",
+    text: "一括の各お客さんの条件を入れる前に、必ずページが空かを読み戻して確かめる。空ならリセットは押さない（二重に押さない）。空でなければリセットを押し、30秒以上の人の間で待ってから空を確かめる（送付後のリセットと同じ手順・邪魔しない窓 reset）。入力の最中は押さない。押せない・空にならない時だけページ側の従来の1つずつ外すへ任せる。印: reset_before_fill（すでに空／空でない→押す／空にできず）",
+    since: "2.8.296",
+    kb: null,
+    marker: "_resetBeforeFill(",
+    file: "background.js",
+    verify: {
+      onlyIf: ["bulk_pos"],
+      mustHaveAny: ["reset_before_fill"],
     },
   },
   {

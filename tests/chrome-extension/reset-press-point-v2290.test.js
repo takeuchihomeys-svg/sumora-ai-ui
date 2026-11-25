@@ -24,37 +24,39 @@ function fnSrc(src, header) {
 }
 
 console.log("\n■ 版");
-ok("manifest = page = rules = 2.8.290", man.version === "2.8.290"
-  && (ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1] === "2.8.290"
-  && (rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1] === "2.8.290", man.version);
+ok("manifest = page = rules ≥2.8.291", man.version === (ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1]
+  && (rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1] === man.version
+  && man.version.split(".").map(Number)[2] >= 291, man.version);
 
 const press = fnSrc(ps, "  function _resetPress(done) {");
 console.log("\n■ 押す位置");
 ok("学習の位置を先に引く（_aimByEl）", /_aimByEl\(btn, \["リセット", "左のリセット"\]\)/.test(press));
-ok("学習が2回以上ならその位置を使う", /_rAim && _rAim\.n >= 2/.test(press) && /aim: \{ x: _rAim\.x, y: _rAim\.y \}/.test(press));
-ok("span の時は人の実測（x0.75/y0.67）を使う", /=== "SPAN"\) _rOpts = Object\.assign\(\{\}, _rOpts, \{ aim: \{ x: 0\.75, y: 0\.67 \} \}\)/.test(press));
+ok("押す点は _resetAimPoint（中心＋ボタン上のばらつき）", /_resetAimPoint\(btn,/.test(press));
+ok("ばらつきはボタンの面（0.22〜0.78）に収める", /Math\.max\(0\.22, Math\.min\(0\.78/.test(fnSrc(ps, "  function _resetAimPoint(btn, learned) {")));
 ok("押すのは enqueueHumanClick（人の動き）のまま", /enqueueHumanClick\(btn, _clickEl, _uiGapMin\(\), _uiGapMax\(\), null, _rOpts\)/.test(press));
 ok("値の直接書き換えは無い", !/\.value\s*=/.test(press) && !/dispatchEvent/.test(press));
-ok("結果に使った位置（aim）を返す", /aim: _rAim && _rAim\.n >= 2 \? "learned"/.test(press) && /"human_sample"/.test(press));
+ok("結果に使った位置（種類と割合）を返す", /aim: _rPick\.kind \+ \(_rPick\.aim \? " " \+ _rPick\.aim\.x/.test(press));
 ok("背景の reset_press 段に 位置 が出る", /位置=" \+ String\(_press\.aim \|\| "-"\)/.test(bg));
 
 console.log("\n■ 位置の選び方（実コードの分岐を動かす）");
-function choose(tag, aim) {
-  const ctx = vm.createContext({ btn: { tagName: tag }, _rAim: aim, _rOpts: {} });
-  vm.runInContext(
-    'if (_rAim && _rAim.n >= 2) _rOpts = Object.assign({}, _rOpts, { aim: { x: _rAim.x, y: _rAim.y } });' +
-    'else if (String(btn.tagName || "").toUpperCase() === "SPAN") _rOpts = Object.assign({}, _rOpts, { aim: { x: 0.75, y: 0.67 } });' +
-    '__a = _rOpts.aim || null;', ctx);
-  return ctx.__a;
+const aimFn = fnSrc(ps, "  function _resetAimPoint(btn, learned) {");
+function pick(tag, learned) {
+  const ctx = vm.createContext({ Math, btn: { tagName: tag }, learned: learned });
+  vm.runInContext(aimFn + "\n__p = _resetAimPoint(btn, learned);", ctx);
+  return ctx.__p;
 }
-const a1 = choose("SPAN", null);
-ok("学習が無い span は人の実測（0.75/0.67）", a1 && a1.x === 0.75 && a1.y === 0.67, a1);
-const a2 = choose("SPAN", { n: 1, x: 0.4, y: 0.4 });
-ok("学習が1回の span は人の実測（1回は束に入らないため）", a2 && a2.x === 0.75 && a2.y === 0.67, a2);
-const a3 = choose("SPAN", { n: 3, x: 0.4, y: 0.5 });
-ok("学習が3回の span は学習の位置を優先", a3 && a3.x === 0.4 && a3.y === 0.5, a3);
-const a4 = choose("DIV", null);
-ok("span でない時（div.reset_button 等）は位置を付けない（中央・従来どおり）", a4 === null, a4);
+const a1 = pick("SPAN", null);
+ok("学習が無い span は人の点のまわり（種類 human_sample）", a1 && a1.kind === "human_sample" && a1.aim, a1);
+ok("その点はボタンの面の上（0.22〜0.78）", a1 && a1.aim.x >= 0.22 && a1.aim.x <= 0.78 && a1.aim.y >= 0.22 && a1.aim.y <= 0.78, a1);
+const seen = {};
+for (let i = 0; i < 30; i++) { const p = pick("SPAN", null); seen[p.aim.x + "/" + p.aim.y] = 1; }
+ok("30回押すと点が1つに固まらない（ばらつく）", Object.keys(seen).length >= 3, Object.keys(seen).length);
+const a2 = pick("SPAN", { n: 1, x: 0.4, y: 0.4 });
+ok("学習が1回の span は人の点（1回は束に入らない）", a2 && a2.kind === "human_sample", a2);
+const a3 = pick("SPAN", { n: 3, x: 0.4, y: 0.5 });
+ok("学習が3回の span は学習の位置のまわり", a3 && a3.kind === "learned" && a3.aim.x >= 0.22 && a3.aim.x <= 0.58, a3);
+const a4 = pick("DIV", null);
+ok("span でない時は位置を付けない（中央・従来どおり）", a4 && a4.aim === null && a4.kind === "center", a4);
 
 console.log("\n結果: " + pass + " 件OK / " + fail + " 件NG");
 if (fail > 0) process.exitCode = 1;

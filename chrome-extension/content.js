@@ -173,6 +173,11 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
   function fix() {
     if (!document.body) return;
     if (isSidebarVisible()) return;
+    // ★ 2.8.295 邪魔しない窓（sort／reset）の間は押さない（page-script 側でも止める・カーソル無しの押しもしない）
+    try {
+      var _qr = String(document.documentElement.getAttribute("data-axlx-quiet") || "").split("|");
+      if ((_qr[0] === "sort" || _qr[0] === "reset") && Date.now() < (Number(_qr[1]) || 0)) return;
+    } catch (_) {}
     // ページ側（page-script.js）が居れば、カーソル経由・4秒に1回の押しを頼む（2026-11-20 カーソル無しの押しをなくす）
     if (document.documentElement.getAttribute("data-axlx-ps") === "1") {
       window.postMessage({ from: "axlx-press-show-sidebar" }, "*");

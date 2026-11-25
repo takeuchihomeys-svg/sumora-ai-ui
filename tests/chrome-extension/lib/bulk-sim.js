@@ -284,6 +284,8 @@ function createSwEnv(world, owner, regions, postAudit, note) {
         if (f.indexOf("__axlxResetVerifyP") >= 0) {
           world.resetVerifyCalls++;
           var vmode = (world.currentPage && world.currentPage.reset) || "ok";
+          // 2.8.296 scenario.dirtyStart: 最初のリセットを押すまで画面に前の条件が残っている（一括の最初の客・前客が0件で終わった回の模擬）
+          if (scenario && scenario.dirtyStart && world.resetPressCalls === 0) vmode = "notempty";
           note("reset_verify_exec", vmode);
           return new Promise(function (resolve) {
             clock.add("page", function () {

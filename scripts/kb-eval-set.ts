@@ -397,4 +397,8 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "確認結果の文で資料や見積書と違う物件名を書いた",gold: ["a685c629"],scene: "property_share",from: "owner-base-1111b"},
   {q: "送った物件の上の階が空いているかの確認結果の書き方",gold: ["2482fa26"],scene: "property_share",from: "owner-base-1111b"},
   {q: "契約させて頂きたいの一言で申込確定として扱った",gold: ["ab1c07e6"],scene: "apply",from: "owner-base-1111b"},
+  // 2026-11-25 2.8.295 邪魔しない窓
+  { q: "並べ替えの待ちの間に見回りが割り込んで並べ替えを張り直す", gold: ["fd1aeb66"], from: "owner-base-1111b" },
+  { q: "一括の途中にウェブから検索が来たらお客さんを切り替えてよいか", gold: ["fd1aeb66"], from: "owner-base-1111b" },
+  { q: "リセットから次のお客さんの条件を入れるまでの間に別の指示を拾わない", gold: ["fd1aeb66"], ho: true, from: "owner-base-1111b" },
 ];

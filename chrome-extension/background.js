@@ -1732,6 +1732,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
       }
+      if (_manualBulkAlive || _quietNow()) {
+        _quietDefer("poll_now", _manualBulkAlive ? "manual_bulk" : "");
+        sendResponse({ ok: false, reason: "bulk_busy" });
+        return;
+      }
       sendResponse({ ok: true });
       _pollAndRunBatch().catch(function(e) {
         console.warn("[poll-now] error:", e.message || e);
@@ -1754,6 +1759,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (_guideOnly()) {
       console.warn("[webapp-search] 通常／スタッフモードのため検索しない（自動モード・AIXを選ぶと動きます）");
       sendResponse({ ok: false, error: "guide_only" });
+      return true;
+    }
+    /**
+     * ★ 2.8.295 竹内さん「…のあいだで別の作業入って邪魔されないように」（コード調べ・高2）:
+     *   一括の途中・邪魔しない窓の間にここが来ると、別のお客さんへの切り替え（axlx-switch-customer）・
+     *   main.php への移動・pendingPopupCmd で、並べ替え・リセット・次客の入力を割っていた。→ 受けない（理由を返す）。
+     */
+    if (_manualBulkAlive || _quietNow()) {
+      var _qw = _quietDefer("webapp_search", "cid=" + String((conditions && conditions.customerId) || "").slice(0, 8) + " site=" + String(site || ""));
+      sendResponse({
+        ok: false,
+        error: "bulk_busy",
+        message: "一括検索の途中（" + (_qw ? _qw.kind : "一括中") + "）なので、今は別のお客さんを入れません。一括が終わってから押し直してください。",
+      });
       return true;
     }
 
@@ -2473,6 +2492,12 @@ async function _takeShot(msg, done) {
         const prev = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(function () { return []; });
         const prevId = prev && prev[0] ? prev[0].id : null;
         const wasActive = (prevId === tab.id);
+        // ★ 2.8.295 邪魔しない窓の間はタブ・窓を切り替えて撮らない（並べ替えの乗せ・リセットの読み直しを割らない）
+        if (!wasActive && _quietNow()) {
+          _quietDefer("shot_tab_switch", "");
+          fail("quiet_window");
+          return;
+        }
         if (!wasActive) {
           try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
           try { await chrome.tabs.update(tab.id, { active: true }); } catch (_) {}
@@ -2500,6 +2525,11 @@ async function _takeShot(msg, done) {
          *   `captureVisibleTab` は**その窓のアクティブなタブ**しか撮れない。小窓を開いていると失敗する。
          *   → 一度そのタブをアクティブにして撮り、**すぐ元に戻す**（人の操作を邪魔しない）。
          */
+        if (_quietNow()) {
+          _quietDefer("shot_retry_focus", String((e && e.message) || e).slice(0, 30));
+          fail("capture_error: " + String((e && e.message) || e) + " / retry: quiet_window");
+          return;
+        }
         try {
           /**
            * 2026-11-12 竹内さん「くれさん通常モードで検索したけどちゃんと画面録画はできるようになっているかな」:
@@ -2906,6 +2936,24 @@ async function _refreshLearnedBundle(force) {
           try {
             var _lpb = st && st.axlx_learn_playbook;
             if (_lpb && typeof _lpb === "object") _localRulesV = String(_lpb.rules_v || "");
+          } catch (_) {}
+          /**
+           * ★ 2.8.297 本番のコードが拡張より古い／手順書が古い版で作られている、を覚えておく（次の回の記録に server_behind を残す）。
+           *   実測 2026-11-25 22:00: 本番（古い main）が手順書を作り直すたび 91件→23件へ戻った。拡張は「版が違う」とだけ見て取り直し続け、
+           *   原因（本番のデプロイ遅れ）はどこにも出なかった。server_rules_up_to を返さない本番＝最新のコードが載っていない。
+           */
+          try {
+            var _extV = chrome.runtime.getManifest().version;
+            var _srvUp = (hj && hj.server_rules_up_to) ? String(hj.server_rules_up_to) : "";
+            var _pbUp = (hj && hj.playbook_rules_up_to) ? String(hj.playbook_rules_up_to) : "";
+            var _srvBehind = !_srvUp || _cmpExtVer(_srvUp, _extV) < 0;
+            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0;
+            await chrome.storage.local.set({ axlx_server_state: {
+              behind: !!(_srvBehind || _pbBehind), server_behind: !!_srvBehind, playbook_behind: !!_pbBehind,
+              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, at: Date.now(),
+            } });
+            if (_srvBehind) { try { console.warn("[learn] ⚠ 本番のコードが古い（server=" + (_srvUp || "版なし") + " ext=" + _extV + "）→ 手順書は作り直しのたび古い版へ戻る。デプロイが必要"); } catch (_) {} }
+            else if (_pbBehind) { try { console.warn("[learn] ⚠ 手順書が古い版で作られている（手順書=" + (_pbUp || "版なし") + " ext=" + _extV + "）→ attach-playbook が必要"); } catch (_) {} }
           } catch (_) {}
           var _rulesStale = !!(!_serverRulesV || !_localRulesV ? false : _serverRulesV !== _localRulesV);
           if (_rulesStale) {
@@ -5066,6 +5114,59 @@ async function _getAutomationKeyHeader() {
 var _auditTracker = (self.AxlxSearchAudit && self.AxlxSearchAudit.createTracker({
   extVersion: (function () { try { return chrome.runtime.getManifest().version; } catch (_) { return null; } })(),
 })) || null;
+/**
+ * ★ 2.8.293 竹内さん「並べ替えの部分がなぜかデータかき消されて抜けていた可能性が高い」:
+ *   DB #1651（2026-11-25 18:05 一括・てんさん）は開始の5段で止まり started のまま。取得は 18:18 まで続いた。
+ *   回はこの裏のメモリにだけあり、裏（Service Worker）が起き直すと消え、後の段（並べ替え・取得）が全部捨てられていた。
+ *   → 中身が変わるたびに開いている回を chrome.storage.session に書き、起き直したら戻す（戻した印 sw_restart_restored）。
+ */
+var AUDIT_OPEN_RUNS_KEY = "axlx_audit_open_runs";
+var AUDIT_PERSIST_DEBOUNCE_MS = 800;
+var _auditPersistT = null;
+function _auditPersistSoon() {
+  try {
+    if (!_auditTracker || !_auditTracker.exportOpen || _auditPersistT) return;
+    _auditPersistT = setTimeout(function () {
+      _auditPersistT = null;
+      try {
+        var o = {};
+        o[AUDIT_OPEN_RUNS_KEY] = { at: Date.now(), runs: _auditTracker.exportOpen() };
+        chrome.storage.session.set(o);
+      } catch (_) {}
+    }, AUDIT_PERSIST_DEBOUNCE_MS);
+  } catch (_) {}
+}
+(function _auditWrapForPersist() {
+  if (!_auditTracker || !_auditTracker.exportOpen) return;
+  ["begin", "step", "attachFill", "attachProgress", "attachResult", "finish"].forEach(function (name) {
+    var orig = _auditTracker[name];
+    if (typeof orig !== "function") return;
+    _auditTracker[name] = function () {
+      var out = orig.apply(_auditTracker, arguments);
+      _auditPersistSoon();
+      return out;
+    };
+  });
+})();
+var _auditRestoreP = new Promise(function (resolve) {
+  try {
+    if (!_auditTracker || !_auditTracker.adopt || !chrome.storage || !chrome.storage.session) { resolve(0); return; }
+    chrome.storage.session.get([AUDIT_OPEN_RUNS_KEY], function (st) {
+      var n = 0;
+      try {
+        var v = st && st[AUDIT_OPEN_RUNS_KEY];
+        (v && Array.isArray(v.runs) ? v.runs : []).forEach(function (saved) {
+          var run = _auditTracker.adopt(saved);
+          if (!run) return;
+          n++;
+          _auditTracker.step(run.run_id, "sw_restart_restored", "裏が起き直した→開いていた回を戻した（この前の段は消えずに残る）");
+          if (_auditTracker.flushSoon) _auditTracker.flushSoon(run.run_id, 1500);
+        });
+      } catch (_) {}
+      resolve(n);
+    });
+  } catch (_) { resolve(0); }
+});
 // 個別の検索の閉じ忘れ（結果が届かない）を6分で閉じる
 var AUDIT_SINGLE_CLOSE_MS = 6 * 60 * 1000;
 var _auditSingleTimers = new Map();
@@ -6079,6 +6180,7 @@ async function _manualBulkRun(o) {
           _tabsGap.forEach(function (t) { try { chrome.tabs.sendMessage(t.id, { type: "axlx-work-note", text: "⏳ 次のお客様まで", untilMs: Date.now() + _gap }, function () { void chrome.runtime.lastError; }); } catch (_) {} });
         } catch (_) {}
         _bulkPhaseSet("gap", _gap, {});
+        _quietSet("gap", _gap + 30000, { cid: String(_bc.id) });
         await new Promise(function (r) { setTimeout(r, _gap); });
         if (_myGen !== _manualBulkGen) return;
         if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（間の間） → 中断"); break; }
@@ -6102,6 +6204,33 @@ async function _manualBulkRun(o) {
           _auditStep(_bulkAudit.runId, "bulk_pos", ((_bi + 1) + "/" + _bulkTargets.length + " cid=" + String(_bc.id).slice(0, 8) + " 前=" + (_prevT ? String(_prevT.id).slice(0, 8) : "-") + " 済=" + _hN + " 起点=" + (_startIndex + 1) + (_resume ? " 再開:" + String(o.why || "").slice(0, 16) : "")).slice(0, 110));
         }
       } catch (_) {}
+      /** ★ 2.8.297 本番のコード／手順書が拡張より古い印があれば、この客の記録に1段だけ残す（反映されない原因を DB から名指しできる） */
+      try {
+        if (_bulkAudit) {
+          var _ssw = await chrome.storage.local.get("axlx_server_state");
+          var _ssv = _ssw && _ssw.axlx_server_state;
+          if (_ssv && _ssv.behind) {
+            _auditStep(_bulkAudit.runId, "server_behind", ((_ssv.server_behind ? "本番コード古い" : "手順書古い") + " server=" + (_ssv.server_up_to || "なし") + " pb=" + (_ssv.playbook_up_to || "なし") + " ext=" + (_ssv.ext || "-")).slice(0, 110));
+          }
+        }
+      } catch (_) {}
+      await _waitAfterHumanReset(_bulkAudit ? _bulkAudit.runId : null);
+      if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 人のリセット待ちの間に新しいループへ → 古いループは抜ける gen=" + _myGen); return; }
+      if (_bulkSite === "realnetpro") {
+        await _waitInheritedReset(_bulkAudit ? _bulkAudit.runId : null);
+        if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 前の回のリセット待ちの間に新しいループへ → 古いループは抜ける gen=" + _myGen); return; }
+        /**
+         * ★ 2.8.296 竹内さん「何で次のお客さんの条件入れる前にリセットおしていないのか」:
+         *   実測（監査 #1654・#1656 2026-11-25 21:00）: リセットは「送付が終わった客の後」だけで、
+         *   前客が 0件・時間切れで終わる／一括の最初の客／裏が起き直した回は、リセットの段が1つも無く、
+         *   ページ側の古い「1つずつ外す」（58秒・やり直し2回）で入力に入っていた。画面には前客の賃料が残ったままだった。
+         *   → 条件を入れる前に必ず「ページが空か」を読み、空でなければリセットを押して空を確かめる（人の順番）。
+         *     押せない・空にならない時だけ従来の外し（ページ側）に任せる。
+         */
+        try { await _resetBeforeFill(_bc, _bulkAudit ? _bulkAudit.runId : null); } catch (_) {}
+        if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 入力前のリセットの間に新しいループへ → 古いループは抜ける gen=" + _myGen); return; }
+        if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（入力前のリセット） → 中断"); break; }
+      }
       try {
         // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
         var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
@@ -6121,6 +6250,7 @@ async function _manualBulkRun(o) {
         console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + (String(_bulkSite) === "itandi" ? "／ITANDI=" + (_bulkItDays ? _bulkItDays + "日以内" : "指定なし") : "") + " (" + _bc.customer_name + ")");
         _bulkPhaseRunId = _bulkAudit ? _bulkAudit.runId : null;
         _bulkPhaseSet("autofill", 300000, { runId: _bulkPhaseRunId });
+        _quietSet("refill", 300000, { cid: String(_bc.id), runId: _bulkPhaseRunId });
         var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays, itandi_update_days: _bulkItDays }, _bulkAudit);
         // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
         //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
@@ -6270,6 +6400,7 @@ async function _manualBulkRun(o) {
     if (_myGen === _manualBulkGen) {
       _manualBulkAlive = false;
       _bulkPhase = null;
+      _quietClear(null, "bulk_end");
       _bulkQueueSave({ done: true });
       try { await _withTimeout(_publishBulkGrasp(null), 8000, "publish_end"); } catch (_) {}
     }
@@ -6295,7 +6426,127 @@ var BULK_PHASE_JA = {
   autofill: "条件を入れる", wait_fill_done: "検索完了を待つ", wait_batch_done: "物件の送付を待つ",
   post_send_clear: "送付後に前客の選択を外す", release_lock: "次客へ渡す", publish_done: "次客へ渡す",
   look: "資料を見る間", interval: "次のお客さんまでの間",
+  human_reset_wait: "人のリセットの後の待ち", autofill_wait_prev: "前客が終わるのを待ってから条件を入れる",
+  pre_fill_reset: "条件を入れる前にリセットを押す",
 };
+
+/**
+ * ★ 2.8.295 竹内さん「並べ替えやリセット、そして新しいお客さんの条件を拡張ツールのAPIから入れなおすところのあいだで
+ *   別の作業入って邪魔されないように」→ 邪魔しない窓（1つの印）。
+ *   chrome.storage.session の axlx_quiet = { kind, cid, since, until, owner, runId }（裏の起き直しでも残る）。
+ *   kind: sort（検索確認→30〜36秒→並べ替え→読み直し→押し始め）／reset（送付後のリセット→待機→空の確認）／
+ *         gap（次のお客さんまでの間）／refill（次客の条件入力→fill-done）
+ *   割り込む側（ウェブからの検索・すぐ拾う・写真のタブ切替・検索条件を表示の押し直し 等）は窓の間は見送り、
+ *   点検に quiet_defer（誰が・どの窓・残り秒）を残す＝割り込みが DB で数えられる。
+ *   ⚠ 窓は上限（until）で必ず切れる（窓が残って全部が止まる事を作らない）。
+ */
+var QUIET_KEY = "axlx_quiet";
+var _SW_BOOT = Date.now().toString(36);
+var _quiet = null;
+var _quietDeferAt = {};
+function _quietOwner() { return _SW_BOOT + ":" + _manualBulkGen; }
+function _quietRunId() { return _bulkPhaseRunId || (_quiet && _quiet.runId) || null; }
+function _quietSet(kind, ms, extra) {
+  try {
+    var now = Date.now();
+    var q = Object.assign({}, extra || {}, {
+      kind: String(kind),
+      since: now,
+      until: now + Math.max(5000, Number(ms) || 60000),
+      owner: _quietOwner(),
+      runId: (extra && extra.runId) || _bulkPhaseRunId || null,
+    });
+    if (q.cid != null) q.cid = String(q.cid);
+    _quiet = q;
+    try { chrome.storage.session.set({ axlx_quiet: q }).catch(function () {}); } catch (_) {}
+    var rid = q.runId;
+    if (rid) _auditStep(rid, "quiet_on", (q.kind + " 上限" + Math.round((q.until - now) / 1000) + "秒" + (q.cid ? " cid=" + q.cid.slice(0, 8) : "")).slice(0, 80));
+    return q;
+  } catch (_) { return null; }
+}
+function _quietClear(kind, why) {
+  try {
+    if (!_quiet) return false;
+    if (kind && _quiet.kind !== kind) return false;
+    var q = _quiet;
+    _quiet = null;
+    try { chrome.storage.session.remove(QUIET_KEY).catch(function () {}); } catch (_) {}
+    var rid = q.runId || _bulkPhaseRunId;
+    if (rid) _auditStep(rid, "quiet_off", (q.kind + " " + Math.round((Date.now() - q.since) / 1000) + "秒 " + String(why || "")).slice(0, 80));
+    return true;
+  } catch (_) { return false; }
+}
+function _quietNow() {
+  var q = _quiet;
+  if (q && q.until && Date.now() < q.until) return q;
+  return null;
+}
+/** 割り込みを見送った印（同じ相手は15秒に1回まで）。戻り値は今の窓（無ければ null） */
+function _quietDefer(who, detail) {
+  var q = _quietNow();
+  try {
+    var k = String(who || "other");
+    var now = Date.now();
+    if (_quietDeferAt[k] && now - _quietDeferAt[k] < 15000) return q;
+    _quietDeferAt[k] = now;
+    var w = q ? (q.kind + " 残り" + Math.max(0, Math.round((q.until - now) / 1000)) + "秒") : (_manualBulkAlive ? "一括中" : "-");
+    console.log("[quiet] 見送り " + k + "（" + w + "）" + (detail ? " " + detail : ""));
+    var rid = _quietRunId();
+    if (rid) _auditStep(rid, "quiet_defer", (k + " 窓=" + w + (detail ? " " + detail : "")).slice(0, 80));
+  } catch (_) {}
+  return q;
+}
+try {
+  chrome.storage.session.get(QUIET_KEY).then(function (r) {
+    if (!_quiet && r && r[QUIET_KEY] && typeof r[QUIET_KEY] === "object") _quiet = r[QUIET_KEY];
+  }).catch(function () {});
+  chrome.storage.onChanged.addListener(function (ch, area) {
+    if (area !== "session" || !ch || !ch[QUIET_KEY]) return;
+    var nv = ch[QUIET_KEY].newValue;
+    _quiet = (nv && typeof nv === "object") ? nv : null;
+  });
+} catch (_) {}
+/**
+ * ★ 2.8.295 実測で無かった穴（コード調べ）: 裏が起き直す／古いループが別の世代に替わると、
+ *   リセット→待機→空の確認の途中で次の客へ進め得た（_bulkKick は idx+1 から始める・待ちと確かめが消える）。
+ *   → 窓が「別の持ち主の reset」のまま残っていたら、リセットから 30秒＋読み直しの分を待ち、
+ *     ページに「次の入力の前に前客の選択を外す」印を渡してから条件を入れる。
+ */
+async function _waitInheritedReset(runId) {
+  try {
+    var q = _quietNow();
+    if (!q) {
+      var st = await chrome.storage.session.get(QUIET_KEY);
+      var sq = st && st[QUIET_KEY];
+      if (sq && sq.until && Date.now() < sq.until) q = sq;
+    }
+    if (!q || q.kind !== "reset" || q.owner === _quietOwner()) return 0;
+    var el = Date.now() - (Number(q.since) || 0);
+    var need = Math.max(0, RESET_SETTLE_MIN_MS + 8000 - el);
+    if (need > 0) need += Math.floor(Math.random() * RESET_SETTLE_JITTER_MS);
+    if (runId) _auditStep(runId, "quiet_inherit", ("前の回のリセットが途中（" + Math.round(el / 1000) + "秒前）→ あと" + Math.round(need / 1000) + "秒待ち・前客の選択を外してから入れる").slice(0, 80));
+    try {
+      var tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+      var tab = (tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (tabs || [])[0];
+      if (tab && tab.id) {
+        await _withTimeout(chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function () {
+            try { window.__axlxForceClearAllPlace = true; } catch (_) {}
+            try { window.__axlxPostSendClearGap = true; } catch (_) {}
+          },
+        }), 10000, "quiet_inherit_flag");
+      }
+    } catch (_) {}
+    if (need > 0) {
+      if (_manualBulkAlive) _bulkPhaseSet("human_reset_wait", need + 15000, {});
+      await new Promise(function (r) { setTimeout(r, need); });
+    }
+    _quietSet("gap", 60000, { cid: q.cid || null });
+    return need;
+  } catch (_) { return 0; }
+}
 
 function _withTimeout(p, ms, label) {
   return Promise.race([
@@ -6384,6 +6635,7 @@ async function _bulkEndNow(why) {
   _manualBulkGen++;
   _manualBulkAlive = false;
   _bulkPhase = null;
+  _quietClear(null, "bulk_stop");
   _bulkKickAt = 0;
   try { _bulkQueueSave({ done: true, why: w }); } catch (_) {}
   try { await chrome.storage.session.remove("axlx_bulk_phase"); } catch (_) {}
@@ -6566,6 +6818,7 @@ async function _bulkKick(why, opt) {
     _manualBulkGen++;
     _manualBulkAlive = false;
     _bulkPhase = null;
+    _quietClear(null, "kick_end");
     try { await _withTimeout(_publishBulkGrasp(null), 8000, "publish_kick_end"); } catch (_) {}
     return { ok: true, ended: true };
   }
@@ -7126,6 +7379,8 @@ async function _takeSnapshot(trigger, ctx) {
       var plan = SC.capturePlan({ active: to.active }, to._win, { canCapture: canCapture, staffMode: staff, allowActivate: hist.snapAllowActivate !== false });
       delete to._win;
       if (plan.how === "none") { to.image_error = plan.reason; continue; }
+      // 2.8.295 邪魔しない窓: 並べ替え・リセット・次客の入力の間はタブを切り替えて撮らない（リアプロが裏に回る）
+      if (plan.how === "activate" && _quietNow()) { to.image_error = "quiet_window"; _quietDefer("snap_activate", trigger); continue; }
       var prevActive = null;
       try {
         if (plan.how === "activate") {
@@ -7526,6 +7781,25 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     } catch (_) {}
     return false;
   }
+  if (msg && msg.type === "axlx-human-reset") {
+    try {
+      var _hrAt = Number(msg.at) || Date.now();
+      _humanResetAt = _hrAt;
+      try { chrome.storage.session.set({ axlx_human_reset_at: _hrAt }); } catch (_) {}
+      var _hrRid = _bulkPhaseRunId || null;
+      if (!_hrRid && msg.customerId != null && _auditTracker && _auditTracker.findOpen) {
+        var _hrRun = _auditTracker.findOpen(String(msg.customerId), "realpro");
+        if (_hrRun) _hrRid = _hrRun.run_id;
+      }
+      if (!_hrRid) { var _hrH = _openHumanRun("realpro"); if (_hrH) _hrRid = _hrH.run_id; }
+      if (_hrRid) {
+        _auditStep(_hrRid, "human_reset_press", ((msg.pressing ? "送付中に" : "") + "人がリセット via=" + String(msg.via || "-")
+          + " 段=" + ((_bulkPhase && _bulkPhase.phase) || "-") + " 一括=" + (_manualBulkAlive ? "動" : "止")).slice(0, 100));
+      }
+      console.log("[human-reset] 人がリセットを押した → 次の条件入力はここから" + Math.round(RESET_SETTLE_MIN_MS / 1000) + "秒以上あける");
+    } catch (_) {}
+    return false;
+  }
   if (msg && msg.type === "axlx-audit-live-step") {
     try {
       var _liveK = String(msg.k || "").slice(0, 48);
@@ -7633,6 +7907,36 @@ function _resetBatchLock() {
 }
 chrome.runtime.onStartup.addListener(_resetBatchLock);
 chrome.runtime.onInstalled.addListener(_resetBatchLock);
+
+/**
+ * ★ 2.8.294 竹内さん「新しく改善された動きちゃんと把握して／昔ののこっているのとりのぞくようにする」:
+ *   拡張を読み直しても、開いているリアプロ・ITANDI のタブには古い中身が残り（裏と話せない・古い枠と古い版のまま）、
+ *   DB #1653 は再開の直後に「拡張の中身が応答しない」で止まった。
+ *   → 読み直し・入れ直しの時だけ、答えないタブ（＝古い中身）を読み直して新しい中身に入れ替える。答えるタブは触らない。
+ *   ⚠ Chrome の更新（chrome_update）・裏の起き直しでは中身は古くならないので何もしない。
+ */
+async function _reloadOrphanTabsOnInstall(details) {
+  try {
+    var reason = details && details.reason;
+    if (reason !== "update" && reason !== "install") return;
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    var tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
+    var reloaded = 0;
+    for (var i = 0; i < (tabs || []).length; i++) {
+      var t = tabs[i];
+      if (!t || !t.id || t.discarded) continue;
+      var isItandi = /^https:\/\/itandibb\.com/.test(String(t.url || ""));
+      var p = isItandi ? await _probeItandiTab(t.id) : await _probeRealproTab(t.id);
+      if (!p || p.pong || p.gone) continue;
+      try { await chrome.tabs.reload(t.id); reloaded++; } catch (_) {}
+    }
+    var ver = "";
+    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
+    try { await chrome.storage.session.set({ axlx_orphan_reload: { at: Date.now(), n: reloaded, ver: ver, reason: reason } }); } catch (_) {}
+    console.log("[orphan] 拡張 v" + ver + "（" + reason + "）→ 古い中身のタブを " + reloaded + " 個読み直しました");
+  } catch (e) { console.warn("[orphan] タブの入れ替え失敗:", e && e.message); }
+}
+chrome.runtime.onInstalled.addListener(_reloadOrphanTabsOnInstall);
 
 var BATCH_LOCK_TTL_MS = 15 * 60 * 1000; // 修正2: ロックTTL 15分
 
@@ -7780,6 +8084,15 @@ function _autoWorkGate() {
 }
 
 async function _pollAndRunBatch() {
+  /**
+   * ★ 2.8.295 コード調べ（割り込み経路の洗い出し・高1）: アラームは _manualBulkAlive で止めていたが、
+   *   ウェブアプリの「すぐ拾って」（axlx-poll-now）はここへ直に来て、一括の途中（並べ替え・リセット・次客の入力）に
+   *   別の指示を拾い、ページの読み直し・別客の入力まで始め得た。→ 一括中・邪魔しない窓の間は拾わない（指示はサーバーに残る）。
+   */
+  if (_manualBulkAlive || _quietNow()) {
+    _quietDefer("poll_batch", _manualBulkAlive ? "manual_bulk" : "");
+    return;
+  }
   if (_pollClaimInFlight) {
     console.log("[batch] 別の呼び出しが pending を拾っている最中 → 今回は見送り（次のアラームで拾う）");
     return;
@@ -8824,6 +9137,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       if (_hd === "go") {
         if (_waitNoted) _auditStep(_runId, "wait_prev_customer_done", Math.round((Date.now() - _waitT0) / 1000) + "秒待って前客の入力が終わった");
         try { _watchSet({ prevCustomerId: null }, "realnetpro"); } catch (_) {}
+        if (_waitNoted && _manualBulkAlive && _bulkPhase && _bulkPhase.phase === "autofill_wait_prev") _bulkPhaseSet("autofill", 300000, {});
         break;
       }
       if (_hd === "give_up") {
@@ -8837,6 +9151,14 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         _waitNoted = true;
         _auditStep(_runId, "wait_prev_customer", "前客の入力中→終わるまで待つ cid=" + String(_pv.fillCustomerId || "").slice(0, 8));
         _watchSet({ waitingFor: "前のお客さんの入力が終わるのを待っています" }, "realnetpro");
+        /**
+         * ★ 2.8.295（コード調べ・高3）: 段が autofill（上限300秒）のままここで最大10分待つと、
+         *   見回りの _bulkAutofillDeadKick が「入力を始めていない」と見て同じ客をもう1本回し、二重に入力し得た。
+         *   → 待っている間は別の段（autofill_wait_prev・見回りは触らない）にし、待ち終えたら autofill に戻す。
+         */
+        if (_manualBulkAlive && _bulkPhase && _bulkPhase.phase === "autofill") {
+          _bulkPhaseSet("autofill_wait_prev", (_H ? _H.OTHER_FILL_WAIT_MS : 10 * 60 * 1000) + 60000, {});
+        }
       }
       await new Promise(function (r) { setTimeout(r, 2000); });
     }
@@ -9535,7 +9857,13 @@ async function _ensureRealproTab(tab, auditRun, why, customerId, lastKnownUrl) {
    *   旧はすぐ読み直した＝人の自動検索の入力中の画面ごと消し得た。→ 2回まで確かめ直し、それでも答えず人の回が進行中なら読み直さずに見送る。
    */
   if (!why && plan.reason === "page_script_dead" && probe.pong) {
-    for (var _rp = 0; _rp < 2; _rp++) {
+    /**
+     * ★ 2.8.295: 邪魔しない窓（リセットの読み直しの直後・次客の入力の頭）はページの組み立てが遅いだけの事が多い
+     *   → 確かめ直しを 2回→5回（約6秒）に増やしてから読み直す（読み直しで入力の頭を消さない）。
+     */
+    var _rpMax = _quietNow() ? 5 : 2;
+    if (_rpMax > 2) _quietDefer("tab_reload_check", "page_script_dead→確かめ直し" + _rpMax + "回");
+    for (var _rp = 0; _rp < _rpMax; _rp++) {
       await new Promise(function (r) { setTimeout(r, 1200); });
       var _pr = await _probeRealproTab(tab.id);
       var _pl = G ? G.realproTabPlan(_pr) : { action: _pr.pong ? "use" : "reload" };
@@ -10184,8 +10512,34 @@ var RESET_BUTTON_MODE_KEY = "axlx_reset_button_mode";
 var RESET_PRESS_TIMEOUT_MS = 25000;
 var RESET_VERIFY_TOTAL_MS = 25000;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
-var RESET_SETTLE_MIN_MS = 10000;
+// 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
+//   → 下限を30秒に（録画で確かめた人の間は約100秒。次のお客さんの条件入力はこの待ちの後）
+var RESET_SETTLE_MIN_MS = 30000;
 var RESET_SETTLE_JITTER_MS = 4000;
+/**
+ * ★ 2.8.294 竹内さん「リセット押すのも拡張りかいしていない」:
+ *   人がリアプロの「リセット」を押した時刻（bulk-dl の axlx-human-reset）。拡張が押した時と同じく、
+ *   次のお客さんの条件入力はリセットから30秒以上あける（物件の表示まで処理がある・2.8.292 の決まり）。
+ *   裏が起き直しても分かるように storage.session にも置く。
+ */
+var _humanResetAt = 0;
+async function _waitAfterHumanReset(runId) {
+  try {
+    var at = _humanResetAt;
+    if (!at) {
+      var st = await chrome.storage.session.get("axlx_human_reset_at");
+      at = Number(st && st.axlx_human_reset_at) || 0;
+    }
+    if (!at) return 0;
+    var el = Date.now() - at;
+    if (el < 0 || el >= RESET_SETTLE_MIN_MS) return 0;
+    var need = RESET_SETTLE_MIN_MS - el + Math.floor(Math.random() * RESET_SETTLE_JITTER_MS);
+    if (runId) _auditStep(runId, "human_reset_wait", "人のリセットから" + Math.round(el / 1000) + "秒 → あと" + Math.round(need / 1000) + "秒待って条件を入れる");
+    if (_manualBulkAlive) _bulkPhaseSet("human_reset_wait", need + 15000, {});
+    await new Promise(function (r) { setTimeout(r, need); });
+    return need;
+  } catch (_) { return 0; }
+}
 var RESET_SHOT_GAP_MIN_MS = 2000;
 async function _resetShot(shotTab, runId, customerId) {
   try {
@@ -10241,6 +10595,15 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
     var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
     if (!_tab || !_tab.id) { _stamp("reset_press", "見送り=no_tab"); return { skipped: "no_tab" }; }
+    /**
+     * ★ 2.8.295: リセットの読み直しの後に、送り終えた客の「検索後の続き」の印（Case C／Case E）が残っていると、
+     *   空になった一覧を前客の続きとして押し始め得た（人のリセットは 2.8.294 で消していたが、拡張が押すリセットは消していなかった）。
+     *   → 押す前に裏とページ（sessionStorage）の続きの印を消す。
+     */
+    try {
+      await chrome.storage.session.remove(["axlx_pending_auto_send", "axlx_auto_next_page", "axlx_search_grasped", "axlx_ad_sort_pending"]);
+      _stamp("reset_clear_marks", "リセット前に前客の続きの印を消した");
+    } catch (_) {}
     // ① 完了の小窓を閉じて、リセットを押す（読み直しで切れても押した扱い→③④で確かめる）
     var _press = null;
     try {
@@ -10248,6 +10611,11 @@ async function _postSendResetRealpro(customerId, auditRunId) {
         target: { tabId: _tab.id },
         world: "MAIN",
         func: function () {
+          try {
+            ["axlx_pending_auto_send_sync", "axlx_search_grasped_sync", "axlx_auto_send"].forEach(function (k) {
+              try { sessionStorage.removeItem(k); } catch (_) {}
+            });
+          } catch (_) {}
           try {
             if (typeof window.__axlxResetPressP === "function") return window.__axlxResetPressP();
           } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
@@ -10330,6 +10698,16 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     return { ok: false, why: "error", notPressed: true };
   }
 }
+/** ★ 2.8.297 版の比べ（"2.8.296" 形・数で桁ごと）。a が新しければ正・同じ 0・古ければ負。空・不正は 0 扱い */
+function _cmpExtVer(a, b) {
+  var x = String(a || "").split(".").map(function (n) { return Number(n) || 0; });
+  var y = String(b || "").split(".").map(function (n) { return Number(n) || 0; });
+  for (var i = 0; i < Math.max(x.length, y.length); i++) {
+    var d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
 /** 送付後の「前客の条件はずし」: まずリセット→空の確認。だめなら従来の1つずつ外す（どちらも投げない） */
 async function _postSendClearOrReset(customerId, auditRunId) {
   var rr = null;
@@ -10340,6 +10718,60 @@ async function _postSendClearOrReset(customerId, auditRunId) {
     if (_rid) _auditStep(_rid, "reset_fallback", "従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");
   } catch (_) {}
   return _postSendClearRealpro(customerId, auditRunId);
+}
+/**
+ * ★ 2.8.296 条件を入れる前の1点: ページが空でなければリセットを押して空を確かめる（人の順番）。
+ *   - すでに空（前客のリセットで確認済み・新しいページ）→ 押さない（二重に押さない・待たない）
+ *   - 入力の最中（_axFillRunning）→ 押さない（入力が消える。2.8.105→107 の戻した理由）
+ *   - 空でない → 邪魔しない窓 reset を張ってリセット→待機30秒以上→空の確認（_postSendResetRealpro と同じ手順）
+ *   - 押せない・空にならない → 何も壊さず返す（ページ側の従来の外しが安全網として残る）
+ *   監査の段: reset_before_fill（結果）。リアプロ以外・タブ無しは何もしない。投げない。
+ */
+async function _resetBeforeFill(customer, runId) {
+  var _stamp = function (note) { try { if (runId) _auditStep(runId, "reset_before_fill", String(note || "").slice(0, 120)); } catch (_) {} };
+  var cid = customer && customer.id != null ? String(customer.id) : "";
+  var _t0 = Date.now();
+  try {
+    var _m = await chrome.storage.local.get(RESET_BUTTON_MODE_KEY);
+    if (_m && _m[RESET_BUTTON_MODE_KEY] === false) { _stamp("見送り=off（従来の外し）"); return { skipped: "off" }; }
+    var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
+    if (!_tab || !_tab.id) { _stamp("見送り=no_tab"); return { skipped: "no_tab" }; }
+    // ① いま空か（フォームの読み戻し）。空なら押さない
+    var _probe = null;
+    try {
+      var _pr = await _withTimeout(chrome.scripting.executeScript({
+        target: { tabId: _tab.id },
+        world: "MAIN",
+        func: function (c) {
+          try {
+            if (window._axFillRunning) return { ok: false, busy: true, why: "fill_running" };
+            if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 2500, cid: c });
+          } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+          return { ok: false, why: "no_page_fn" };
+        },
+        args: [cid],
+      }), 10000, "reset_before_fill_probe");
+      _probe = (_pr && !_pr.__timeout && _pr[0] && _pr[0].result) || null;
+    } catch (_) { _probe = null; }
+    if (_probe && _probe.busy) { _stamp("見送り=前の入力の最中（押すと消える）"); return { skipped: "fill_running" }; }
+    if (_probe && _probe.ok && _probe.empty) { _stamp("すでに空→押さない 確認" + Math.round((Date.now() - _t0) / 1000) + "秒"); return { ok: true, clean: true }; }
+    // ② 空でない → 窓を張ってリセット（人の間・空の確認まで）
+    var _left = _probe && _probe.left != null ? _probe.left : "?";
+    _stamp("空でない（残=" + _left + " " + String((_probe && _probe.detail) || "").slice(0, 40) + "）→リセットを押す");
+    if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 260000, { cid: cid });
+    _quietSet("reset", 260000, { cid: cid, runId: runId || null });
+    var rr = null;
+    try { rr = await _postSendResetRealpro(cid, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
+    _quietClear("reset", "pre_fill_done");
+    if (rr && rr.ok) _stamp("リセットで空を確認 " + Math.round((Date.now() - _t0) / 1000) + "秒");
+    else _stamp("空にできず→入力の前にページ側の従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");
+    return rr || { ok: false, why: "no_result" };
+  } catch (e) {
+    try { _quietClear("reset", "pre_fill_error"); } catch (_) {}
+    _stamp("error→従来の外しへ:" + String((e && e.message) || e).slice(0, 60));
+    return { ok: false, why: "error" };
+  }
 }
 var _scrapeLastOutcome = { timedOut: false };
 // 2026-09-30 v2.5.43 同時の回: 直前の1回の結果はサイトごと（realnetpro／itandi）。_scrapeLastOutcome は最後に終わった物（旧の読み手のため残す）
@@ -10359,6 +10791,11 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   if (_manualBulkAlive) _bulkPhaseSet("wait_fill_done", _fillDoneTimeoutMs(_siteKey) + 60000, { cid: String(customerId) });
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
+  // ★ 2.8.295 邪魔しない窓: 条件入力が済んだら「検索確認→並べ替え→押し始め」の窓へ（押し始めでページが外す・上限で必ず切れる）
+  if (_siteKey === "realnetpro") {
+    if (fillDone && !fillDone.stopped && !fillDone.timedOut) _quietSet("sort", 150000, { cid: String(customerId), runId: _runId });
+    else _quietClear("refill", fillDone && fillDone.stopped ? "stopped" : "fill_not_done");
+  }
   if (fillDone && fillDone.stopped) {
     try { await _releasePipelineLock("batch_stopped", customerId); } catch (_) {}
     throw new Error("__BATCH_STOPPED__");
@@ -10500,12 +10937,16 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
         _psIsLast = !!(self._axlxLastCustomerId && String(self._axlxLastCustomerId) === String(customerId));
         // ★ 2.8.284: リセット（最大約2分）＋失敗時の従来の外し（最大125秒）を入れるため上限を 140→260秒に
         if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 260000, { cid: String(customerId) });
+        _quietSet("reset", 260000, { cid: String(customerId), runId: _runId });
         var _psP = _postSendClearOrReset(customerId, _runId);
         if (_psIsLast) {
-          _psP.catch(function () {});
+          _psP.catch(function () {}).then(function () { _quietClear("reset", "last_customer_done"); });
           _psRes = { skipped: "last_customer_async" };
         } else {
           _psRes = await _psP;
+          // リセット→待機→空の確認が済んだ＝ここから次の客までの間（別の持ち主のまま残る reset は次の回が引き継いで待つ）
+          if (_manualBulkAlive) _quietSet("gap", 180000, { cid: String(customerId), runId: _runId });
+          else _quietClear("reset", "single_done");
         }
       } else {
         try {
@@ -10722,10 +11163,14 @@ async function _resultMismatchRedo(o) {
     }
   } catch (_) {}
   _bulkPhaseSet("gap", gap, { cid: cid });
+  _quietSet("gap", gap + 30000, { cid: cid, runId: runId });
   await new Promise(function (r) { setTimeout(r, gap); });
+  if (_batchShouldStop) throw new Error("__BATCH_STOPPED__");
+  await _waitAfterHumanReset(runId);
   if (_batchShouldStop) throw new Error("__BATCH_STOPPED__");
   var fillDoneP2 = _createFillDoneWaiter("realnetpro", cid, _fillDoneTimeoutMs("realnetpro"));
   _bulkPhaseSet("autofill", 300000, { runId: runId });
+  _quietSet("refill", 300000, { cid: cid, runId: runId });
   var conds2 = await _batchAutofill(o.customer, "realnetpro", o.isWide, o.payload, o.audit);
   var n = await _scrapeAndSendRealpro(fillDoneP2, cid, name, conds2 || _buildBatchConditions(o.customer, o.isWide, o.payload), "リアプロ", false, runId, o.loopMeta);
   var second = (_lastResultMismatch && _lastResultMismatch.cid === cid) ? _lastResultMismatch : null;

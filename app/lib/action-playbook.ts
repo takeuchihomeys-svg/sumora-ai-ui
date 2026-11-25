@@ -17,7 +17,7 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
-import { AUTO_RULES, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -351,6 +351,14 @@ export type Playbook = {
   rules: PlaybookRule[];
   /** 自動の決まりの版（拡張の点検記録 playbook_seen の rv と突き合わせる） */
   rules_v: string;
+  /**
+   * ★ 2.8.297 この手順書を作ったコードの「手順書の見直しの上限」（AUTO_RULES_REVIEWED_UP_TO）。
+   *   実測 2026-11-25 22:00〜22:24: 本番（main・2.8.154）が束を作り直し、手元で揃えた新しい手順書（2.8.296・91件）を
+   *   古い版（23件）で上書きした。版が付いていないと「新しい手順書を古いコードが潰す」のを書く側も読む側も見分けられない。
+   *   → 作った版を持たせ、書く側（bundle-write-prepare）は新しい手順書を古いコードで上書きしない。
+   *   無い（古い手順書）は "0" 扱い＝何にも勝たない。手順書の版（version）の計算には入れない。
+   */
+  rules_up_to?: string;
   /**
    * 録画場面が無い決まり専用の手（clear / switch / pet）。
    *   scenes に無理に載せると場面の並びが崩れるので別枠。
@@ -841,6 +849,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     gaps,
     rules,
     rules_v,
+    rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
     extra_guides,
   };
 }

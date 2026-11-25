@@ -4,6 +4,134 @@
 
 ---
 
+## 2026-11-25 **2.8.297 手順書が反映されない原因4つの歯止め（本番の古いコードが戻す／点検の段が落ちる／版が無い／ずれが見えない）**
+
+竹内さん「なんで手順書ちゃんと反映されないこと多いのか／連動して反映されるように／抜けている部分強化する」。
+
+**実測（DB・読むだけ）**
+- `scripts/check-playbook-sync.ts` を作って並べた結果、attach（22:27）の後、**22:51〜22:58 に 3 scope（all=2798・realpro=2797・itandi=2799）が build_v=6・rules_v=4c266b56（23件）へ戻っていた**。夜（22時以降の古い束）の拡張の呼び出しと 22:20 の cron が、本番（古い main・見直し 2.8.154）のコードで作り直すため。昼（9〜22時）は `holdDaytimeRebuild` が作り直しを止めるので attach は昼は残る。
+- 本番の light 応答は `server_rules_up_to` を返さない（＝2.8.297 より前のコード）。
+- 監査 #1654・#1656 は 120段で `playbook_seen` が無い。#1654 は `dl:sort_gate_wait_rows`・`dl:flow_atom_gap_after_search_rows` が各 49回（中身は同じ・交互）で上限を埋め、最後の手段の「先頭から落とす」で begin・bulk_pos・page_ver・playbook_seen が消えていた（`check-playbook-reflect` が「反映されていない」と誤読）。
+
+**直した所（4つ＋点検）**
+1. **書く側の歯止め**（`app/lib/playbook-freshness.ts` 新規・`bundle-write-prepare.ts`・`learn-bundle-preserve.ts`）: 手順書に `rules_up_to`（作ったコードの版）を持たせ、`prepareBundleForWrite` は「いまある、または履歴にある手順書がコードより厳密に新しい」なら作り直さず残す（`playbook_kept_newer`）。履歴の一番新しい物は `inheritLinkFoundations` が列挙されない印 `__prev_playbook` で渡す（DB へは出ない）。版が無い（古い）手順書は何にも勝たない＝新しいコードは必ず上書きできる。止める: `PLAYBOOK_DOWNGRADE_GUARD=off`。⚠ **本番が古い間は歯止めのコードも本番に無い**＝効くのは main へ入れて本番へ出した後。
+2. **見える化**（API・background・page-script）: light 応答に `playbook_rules_up_to`・`server_rules_up_to`・`server_rules_v`・`server_build_v`。background は本番が古い／手順書が古いを `axlx_server_state` に覚え、**客ごとの記録に `server_behind` を1段**残す。page-script は手順書と拡張がずれた時だけ `page:playbook_behind`（side=手順書が古い|拡張が古い・up・ext・両方向の差）。決まり `playbook_read` は `playbook_behind` が出たら守れていない（verify の mustNot）。
+3. **点検の段**（`search-audit.js`）: 待ち・間・見張り（`dl:`／`page:` の wait|gap|poll|watch|tick|rows）の**同じ種類・同じ中身は直近6段の中でまとめて n 回（to＝最後の時刻）**。`begin`・`bulk_pos`・`fill_done`・`page:page_ver`／`playbook_`／`learn_reflect_`／`learn_refresh_` は **最後の手段でも落とさない**（守る段以外の一番古い段から落とす）。押した記録（`reset_press` 等）はまとめない。
+4. **総点検** `scripts/check-playbook-sync.ts`（読むだけ・終了コード2＝切れている）: ①コード（版の結び・決まり件数）②DB の各 scope 最新＋**戻りの履歴** ③本番の light 1回 ④最新の点検記録 6件の読んだ印。`--no-prod`／`--prod=<URL>`。
+
+**テスト**: `tests/chrome-extension/playbook-reflect-v2297.test.js`（26）・`app/lib/__tests__/playbook-downgrade-guard.test.ts`（23）。既存は bundle-write-prepare 12・learn-write-path-gate 11・learn-bundle-preserve 20・action-playbook 56・quiet-window-v2295 78・reset-before-fill-v2296 34・reset-between-customers-v28284 75 すべて通る。`auto-procedure-rules` の「kb は id8 か null」1件・`bulk-handoff-watch-resume-v28265`（_bulkClampStart）は以前からの失敗（今回の変更と無関係）。tsc は以前からの 7件のまま（増えていない）。
+
+**⚠ 作業の事故（記録）**: `search-audit.js` を PowerShell の `Get-Content -Raw | -replace | Set-Content` で書き換えて**文字化け**させた（Windows 日本語環境の既定は cp932）。git の HEAD を土台に 3-way merge＋コメントを書き直して復元済み（`node --check` と全テストで確認）。**ファイルの書き換えは必ず Write／StrReplace か node の `fs`（UTF-8）で行う。PowerShell の Get-Content/Set-Content で日本語を含むファイルを直さない。**
+
+**本番への反映（竹内さんの「上げて」待ち）**: コミット（tsc→）→ main へ merge（`cursor-ext` は conflict 無し・`app/api` 14件を含む）→ デプロイ → `check-playbook-sync.ts` で ③ が ✅ になるのを見る → `attach-playbook.ts --apply --backup-dir=<リポジトリの外>` → 拡張を chrome://extensions で再読み込み＋リアプロのタブを開き直す。それまでは夜に戻る（attach は 22時以降の作り直しで古くなる）。DB は 23:05 に attach 済み（id=2797〜2799・rules_v=c77fc6b3・91件・控え `…\Temp\sumora-playbook-backup-20261125-2305`）。
+
+## 2026-11-25 **2.8.296 条件を入れる前に必ずリセット（古い「1つずつ外す」に落ちない）**
+
+- **竹内さん**: 「何で次のお客さんの条件入れる前にリセットおしていないのか／なんで検索したあと並べ替えおしていないのか／1つずつタスクおこなうように」→「今もともとあった外す部分のところがボトルネックになってリセットをおしにいっていない／昔の行動が残っていて、ちゃんと1つずつするのにボトルネックとなってしまう」
+- **DB 実測（監査 #1654・#1656・拡張 2.8.295・21:00 頃）**:
+  - **#1654（1人目）**: `reset_press` の段が **1つも無い**。かわりにページ側の古い外し（`clear_then_fill_redo`「after_clear dirty → _doReset再実行」・`leftover_rescan`・`leftover_force_open_wards`）が先に動き、**最初のガイド段（guide_phase）まで 58秒**。入力は `fill:入れる:賃料下限（1/11）` で止まり（`silence_watch_keep`）、**条件入力の上限 300秒が先に切れた**（`sw_restart_restored`＝裏が起き直し）。検索は 0棟0戸（画面に前の賃料 3.0〜8.0万が残っていた）で、`sort_gate_wait_rows`/`flow_atom_gap_after_search_rows` が `rows0` を **0.8秒ごとに空回り（49回）**。並べ替えに進めないまま `handoff_watch_end advanced` で次の客へ。
+  - **#1656（2人目）**: `bulk_pos` の次は `quiet_on refill` → `customer_think`（`区・町残を外す`）。**リセットの段は無い**。
+- **原因（コード）**: リセットを押す所は `_scrapeAndSendRealpro` の「送付が終わった客の後」の `_postSendClearOrReset` **だけ**。前客が 0件・時間切れ（`fill_timeout`）で終わる／一括の最初の客／裏が起き直した再開では通らない。次客の入力は、ページ側の安全網（`_doReset`＝リセットボタンを使わない古い1つずつ外し・やり直し付き）が**本線になっていた**。
+- **直した（2.8.296・background.js）**: `_resetBeforeFill(customer, runId)` を新設。一括ループで `_waitInheritedReset` の後・fill-done ウェイターの前（リアプロのみ）に呼ぶ。
+  1. リセットボタン機能 off／タブ無し → 見送り。入力の最中（`_axFillRunning`）→ 押さない（入力が消える）。
+  2. ページの `__axlxResetVerifyP({maxMs:2500})` で**いま空か**を読む。**空なら押さない**（送付後のリセット済みの客は二重に押さない）。
+  3. 空でない（読めない場合も）→ 窓 `reset`（上限260秒）を張り、`_postSendResetRealpro`（押す→読み直し待ち→**30秒以上**待つ→空の確認→写真）を再利用 → 窓を外す。段 `pre_fill_reset`。
+  4. 押せない・空にならない → 何も壊さず返す（ページ側の従来の外しが残る安全網）。
+  - 点検の段 `reset_before_fill`（`すでに空→押さない`／`空でない（残=…）→リセットを押す`／`リセットで空を確認 N秒`／`空にできず→…従来の外しへ（理由=…）`）。`search-audit.js` の KEEP_STEP・RULE_STEP に追加（**先頭の文字列は既存の試験が決め打ちしているので動かさず `customer_think` の後ろに入れた**）。
+  - 版 2.8.296（manifest・page-script・`AUTO_RULES_REVIEWED_UP_TO`）。手順書の決まり `reset_before_fill`（`bulk_pos` があるのに印が無ければ検出）。**手順書の束は再度 attach が要る**（`attach-playbook.ts`・DB の書き込み＝OK をもらってから）。
+- **試験**: `tests/chrome-extension/reset-before-fill-v2296.test.js`（34件・配線＋動作）。`reset-between-customers-v28284.test.js` は 入力前の「空か」の読み戻しが増えた分（3-1 は押す3回・読み戻し6回、3-3 は読み戻し2回）に期待を直し、**新しい 3-7（最初の画面が汚れている→入力前にリセット→30秒以上あけて入力・従来の外しは呼ばない）を追加（75件）**。`tests/chrome-extension/lib/bulk-sim.js` に `scenario.dirtyStart`。
+- **まだ直していない（別の穴・次の候補）**: ①0件の結果で `rows0` を 0.8秒ごとに空回りし、**上限（300秒）まで次へ進まない**（0棟0戸なら並べ替える物が無いので、検索確認済み・件数が読めて 0 の時は早めに「0件」で完了にしてリセット→次客へ、が自然。0件と読み込み中を取り違えない確認が要る）②入力が `賃料下限（1/11）` で約190秒止まった原因（裏が起き直した `sw_restart` との関係）は記録に段が無く未確定。③ページ側の古い外し（`_doReset`・`leftover_*`・`clear_then_fill_redo`）は安全網として残している（リセットで空になれば素通りする）。
+- **反映の確かめ方**: 拡張を再読み込み → Realpro タブを開き直し → 自動の一括を1回 → `scripts/check-quiet-windows.ts` と、点検の段に `reset_before_fill` があるか（`reset_press` の前・1人目の `bulk_pos` の後）を DB で見る。**実機で動くまで「反映済み」と言わない**。
+
+---
+
+## 2026-11-25 **2.8.295 並べ替え・リセット・次客の入れ直しの間に別の作業を入れない（邪魔しない窓）**
+
+- **竹内さん**: 「並べ替えやリセット、そして新しいお客さんの条件を拡張ツールのAPIから入れなおすところのあいだで別の作業入って邪魔されないように」「統括proと協力して徹底的に」「テスト繰り返してボトルネックになっている部分ないか」「ちゃんと反映されているかも細かいぶぶんまで調査できるように」
+- **DB 実測（11-23以降の一括）**: `tab_reload` 5回（4回は拡張の読み直し後の中身切れ）・`dl:estate_stuck_recover` 4回（**並べ替えの待ちの間**）。2.8.293 以上の一括の記録はまだ無い。
+- **割り込みの穴（調べて全部塞いだ）**:
+  1. 2秒の見回り（estate_stuck_recover）が並べ替えの待ち（30〜36秒）を「動いていない」と見て 6秒ごとに kick（1人あたり4〜6回）→ `_sortWaitState()` が waiting の間は忙しい扱い。90秒を過ぎてタイマーも無い時だけ stale として外して張り直す
+  2. 2秒の見回りが並べ替えの最中に案内・お客様パネルを戻す → `_adSortInFlight` の間はしない
+  3. 「検索条件を表示」の自動押し（page-script・content.js）が並べ替え・リセットの最中に出る → sort／reset の窓の間は押さない（refill は押す）
+  4. `axlx-poll-now`・アラームの `_pollAndRunBatch` が一括中に別の指示を拾う → 一括中・窓の間は見送り
+  5. ウェブからの検索（`axlx-webapp-search`）が一括の途中でお客さんを切り替える → `bulk_busy` で断る
+  6. 写真がタブ・窓を切り替える → 窓の間は撮らない（窓を前に出す撮り直しもしない）
+  7. 前客の送付待ち（最大10分）の間、段が autofill のまま→ `_bulkAutofillDeadKick` が同じ客を二重に回す → 段を `autofill_wait_prev` に
+  8. 裏の起き直しでリセットの待機（30〜34秒）が飛ぶ → 次の入力の前に `_waitInheritedReset` が前の持ち主の reset の残りを待ち、前客の選択を外す印を立てる
+  9. 拡張自身のリセットで前客の続きの印（Case C/E: `axlx_pending_auto_send`・`axlx_auto_next_page`・`axlx_search_grasped`・`axlx_ad_sort_pending` と sessionStorage の写し）が残る → 押す前に消す（`reset_clear_marks`）
+  10. 窓の間はタブの応答の確かめ直しを2回→5回（読み直しで入力の頭を消さない）
+  11. 見張りの写真（`_takeSnapshot`）がタブを切り替えて撮る（リアプロが裏に回る）→ 窓の間は撮らない（`snap_activate` を見送り）。録画モードの写真は `_takeShot` 経由なので 6 で塞がっている。`axlx-stuck-focus-tab` はリアプロ自身を前に出す復旧なので触らない
+- **窓（`axlx_quiet`・storage.session・html の `data-axlx-quiet` に写す）**: sort（予約で 待ち+120秒・fill-done 後 150秒・押し始め／送付完了で外す）／reset（260秒＝段の上限と同じ）／gap（客の間+30秒・リセット後の一括は180秒）／refill（300秒）。上限で必ず切れる。一括の終わり・止める・kick の終わりで外す。単発の終わりは外す（次の指示を止めない）。
+- **繰り返しの試し（5000人分・本物の待ちの関数）**: 並べ替えの待ち 30.0〜36.0秒（p50 32.0）・リセット後 30〜34秒・客の間 p50 17.8／p95 79.4／最大95秒。窓が先に切れる回・沈黙の見張り（135秒）を越える回・リセットが 260秒を越える回は全部 0。1人あたりの決まった待ち（並べ替え＋リセット＋間）p50 82秒・p95 144秒＝**ボトルネックは客の間の長い方（16%で40〜95秒）**で、窓・見張りとはぶつからない。
+- **点検**: `npx tsx --env-file=.env.local scripts/check-quiet-windows.ts [--limit= --id= --since= --verbose]`（窓の中に入った割り込み・見送りの相手・引き継ぎ・リセット→次の入力の秒・2.8.295 以上で窓の印が無い＝反映されていない）。手順書の決まり `quiet_window_no_interrupt`（reset_press がある回は quiet_on か dl:quiet_on が要る）。
+- **テスト（3本・合計120 OK）**:
+  - `quiet-window-v2295.test.js`（78 OK）: 配線（文字の確認）と、窓の上限・見送り・引き継ぎ・並べ替えの待ちの判定の動き・5000人分の繰り返し。**繰り返しの「0回」は設計上そうなる数字で、実測ではない**。
+  - `quiet-guards-behavior-v2295.test.js`（16 OK）: 本物の `background.js` を偽の Chrome の中で読み込み（`tests/chrome-extension/lib/bg-load.js`）、`axlx-poll-now`・`axlx-webapp-search`・`_takeShot`（受け口から）・`_takeSnapshot` のガードを実際に動かす。外すと落ちることを確認済み（4か所すべて）。
+  - `quiet-windows-core-v2295.test.js`（26 OK）: 点検の解析（`scripts/lib/quiet-windows-core.js`）を模擬の記録で試す。重なった窓（裏 gap ＋ ページ sort）の割り込みは両方書く（前は先の1つだけだった）。解析が前提にする段の名前が拡張のコードから出ているかも確認。
+- 点検スクリプトの型エラーを1件直し、評価問題に `from` を足した（tsc は前からの7件のまま）。
+- `human-run-claim-v28141` の「2回まで確かめ直す」を「窓の間は5回」に合わせた。
+- **全体の比較（HEAD 122 件／今 123 件）**: 新しく落ちたのは `webapp-bridge` の1件だけ。原因は作業ツリーにだけある Git 管理外の壊れたファイル `chrome-extension/page-script.restored.js`（HEAD に置いただけで同じ試験が落ちることを確認）。今回の変更とは無関係。このファイルの扱いは竹内さんの判断待ち。
+- **未了**: 一時コピー `tmp/_mut`・`tmp/_head`（Permission denied で削除できず）と、古い worktree の登録（`.git/worktrees/_head` など）。`git worktree prune` で他の worktree の登録も消そうとしたが、消えたものは無かった（生きている worktree は残っている）。
+- **次**: 拡張を再読み込み → 自動で一括を1回 → `check-quiet-windows.ts` で quiet_on／off／defer と「反映されていない 0」を確かめる。
+
+## 2026-11-25 **2.8.294 人の「リセット」を拡張が把握する・拡張を読み直した後の古い中身を取り除く**
+
+- **竹内さん**: 「リセット押すのも拡張りかいしていない。拡張の自動モードちゃんと反映されているのか。ここの部分調査してちゃんと拡張ツール側が把握するように。新しく改善された動きちゃんと把握して。昔ののこっているのとりのぞくようにする」（2026-11-25 18:26・画面の枠は v2.8.292 のまま「2/2 新しい条件を入れている最中」・一覧はてんさんの3頁目）
+- **DB 実測**: #1653（18:19:36・bulk_manual・brain_aix＝AIX は反映されていた）は begin → bulk_pos「2/2 cid=715d7562 前=e9157144 再開」→ bulk_phase autofill → **tab_reload「拡張の中身が応答しない（拡張の読み直しの後にページを読み直していない等）」**で止まり、読み直し後に必ず出る tab_check も無い。操作の記録は 18:18:22 の印刷用PDF が最後で、その後は0件（人のリセットも残っていない）。manifest の 2.8.293 への書き換えは 18:22:59 ＝ 18:19 の読み直しは版の表示が 2.8.292 のまま一部だけ新しい中身だった可能性。
+- **見つけた原因**:
+  1. 拡張を読み直すと、開いているリアプロのタブには**古い中身が残る**（裏と話せない・古い枠と旧の版の表示・押す待ちのタイマー）。それを片付ける仕組みが無かった。
+  2. **人がリアプロの「リセット」を押したことを見る仕組みが無かった**（拡張が押すリセットは page-script の `__axlxResetPressP` だけ）。枠は古い「いま」のまま、消えた一覧の続きを押し得た（リセット後は全物件の一覧）。
+- **変更（2.8.294）**:
+  - `bulk-dl.js`: `_quietLocalStop`（この画面の自動だけを止める）。**古い中身**: 2秒ごとに `chrome.runtime.id` を見て、無ければ自動を止め・古い枠を消し・「ページを読み直す」案内だけ出す（`ensureBar` も作り直さない）。**人のリセット**: 押下を capture で捕まえ（`isTrusted` だけ＝拡張の合成クリックは除く・左45%・拡張の枠の中は除く）、自動を止め、検索済みの印（`axlx_search_grasped`・`axlx_search_grasped_sync`・`AUTO_SEND_KEY`・`axlx_ad_sort_pending`）を消し、裏へ `axlx-human-reset`、枠に「人がリセットを押した → 物件の表示を待つ」。
+  - `background.js`: `axlx-human-reset` を受けて点検に `human_reset_press`（段・一括の動き）。`_waitAfterHumanReset`: 一括の次の条件入力（ループと入れ直しの2か所・fill-done の待ち手より前）を**人のリセットから30秒以上**あける（`human_reset_wait`・storage.session `axlx_human_reset_at` で起き直しても分かる）。`_reloadOrphanTabsOnInstall`: 拡張の読み直し・入れ直し（onInstalled の update/install）の時だけ、答えないリアプロ main.php・ITANDI のタブを読み直して新しい中身にする（答えるタブは触らない・Chrome の更新では何もしない）。
+  - `search-audit.js`: KEEP_STEP・RULE_STEP の**末尾**に `human_reset_press`・`human_reset_wait`（2.8.293 の `sw_restart_restored`・`dl:ad_sort_reload` も末尾へ移した。先頭に足すと「先頭から○文字以内に task_now」を見るテストが外れた）。
+  - 手順書の「送付後のリセット」の決まりに人のリセットを追記・版 2.8.294。
+- **⚠ 注意**: chrome.storage.session は**拡張の読み直しで消える**（裏の起き直しでは残る）。2.8.293 の点検の回の書き出しは「裏の起き直し」向けで、拡張の読み直しをまたいでは残らない（新しい版の回として始め直す）。
+- **テスト**: `tests/chrome-extension/human-reset-orphan-v2294.test.js`（40 OK）。2.8.293 42 OK・2.8.292 23 OK。拡張のテスト全体の落ちるファイル数は 123（触る前と同じ）。tsc は前からの7件のまま。
+- **次に見る所**: 読み直し後の一括で `human_reset_press`／`human_reset_wait`、読み直し時のタブの入れ替え（storage.session `axlx_orphan_reload`）。自動で次の客へ進める（人のリセット＝続けて良い、とみなす）のはまだしていない（自動で直す範囲は広げない）。
+
+## 2026-11-25 **2.8.293 並べ替えされずに物件取得へ入った件（点検の記録が消える所・並べ替えの番を追い越す所・失敗後すぐ押す所）**
+
+- **竹内さんの報告**: 「検索結果表示した後時間差で並べ替えするはずが並べ替えされずに物件取得にはいってしまった。おそらくタイムアウトとかで物件取得に入ったか。並べ替えの部分がなぜかデータかき消されて抜けていた可能性が高い。原因みつけて改善する」（2026-11-25 18:11・2.8.292・AIX・てんさん 1/2）
+- **DB 実測**: 点検 #1651（18:05:54 一括 bulk_manual）は begin・bulk_pos・bulk_phase autofill・customer_think・dl:send_bar_show の**5段で started のまま**。その後の回は無い。操作の記録（human_motion_learn・ai）は 18:10:10〜18:18:22 に印刷用PDF と「左の次」（18:13:30・18:16:35）だけで、**並べ替え（高→低）のクリックが1つも無い**。17:20 以降に自動の命令（automation_commands）は無い＝「更新順」の計画で並べ替えを外した線は無い。
+- **見つけた原因（コード）**:
+  1. 点検の回は裏（Service Worker）の**メモリにだけ**あり、起き直すと消える → 後から届く段（並べ替え・取得）が全部捨てられ、#1651 が5段で止まった（竹内さんの「データかき消され」はこれ）。どの道で並べ替えを飛ばしたかの記録が残らなかった。
+  2. 並べ替えに失敗した時、見出しが見えないと**即**「この並びのまま」押していた（見える時も1.6秒の試し直し1回だけ）。表示が追いつく前だと並べ替えが飛ぶ。
+  3. 30秒の並べ替え待ちを入れた時点で `_autoSendArmed` が立つので、待ちの間に一覧が描き直されると見る間→押す道（`_maybeAutoPressOnLoad` の後半）が並べ替えの番を追い越せた。
+- **変更（2.8.293）**:
+  - `search-audit.js`: tracker に `exportOpen()`（開いている回を書き出す）・`adopt()`（戻す・1時間以内・二重に戻さない）。`KEEP_STEP` に `sw_restart_restored`・`dl:ad_sort_reload`。
+  - `background.js`: 回を作った直後に begin/step/attach*/finish を包み、0.8秒まとめて `chrome.storage.session`（`axlx_audit_open_runs`）へ書く。起動時に戻して `sw_restart_restored` を残す。
+  - `bulk-dl.js`: ① 並べ替えの待ち・待ち直しの間は `_maybeAutoPressOnLoad` から押さない（`dl:` 印 `wait_sort_cursor`・上限90秒で固まりを解く）② 並べ替え失敗→並びのまま押す前に **30〜36秒待って並べ替えを最初からもう1回**（`dl:sort_failed_wait_retry`・1回まで・条件画面に戻れば何もしない）。待ち直しても駄目なら今まで通り警告して続ける（2026-11-14「出来なくても止まらずにそのまま動かす」を守る）③ 待ち直しの間は `autoPressPdfs` を二重に始めない ④ 読み直し直後に並べ替えを飛ばす所で、URL が高→低だったかを `dl:ad_sort_reload`（ad_url / no_ad_url）に残す（並べ直しはしない＝URL に出ない並べ替えで繰り返さないため）。
+  - 版 2.8.293（manifest・page-script・`AUTO_RULES_REVIEWED_UP_TO`）。手順書の並べ替えの決まりに待ち直しを追記。
+- **テスト**: `tests/chrome-extension/sort-skip-audit-restore-v2293.test.js`（42 OK）。2.8.292 の30秒テスト 23 OK のまま。tsc は前からの7件のまま。
+- **次に見る所**: 次の一括で、点検に `dl:sort_failed_wait_retry`・`dl:ad_sort_reload no_ad_url`・`sw_restart_restored` が出るか。出たらどの道で並べ替えが飛んでいたかが確定する。
+
+## 2026-11-25 **2.8.292 検索後の並べ替えとリセット後の次客入力は、30秒以上あける**
+
+- **竹内さんの決め**: 「検索のあとのAD並べ替えや、リセットの後の物件表示されるまで処理があるから、時間も30秒以上あけてやると詰まらずにできていく。並べ替えのところとリセットしてから拡張ツールから条件を入れる部分は時間30秒以上あける形にする。押す位置や押すための間隔が大切」（2026-11-25 17:42）
+- **録画で見えたこと（通常モード・17:36〜17:40 JST・DB 実測）**: リセット押下 17:36:37 → 次の検索 17:38:18（約100秒・条件入力を含む）。検索 17:38:18 → 並べ替え「左の高→低」17:38:54（**36秒**）。押した位置は リセット 横0.74/縦0.63（160×30）、高→低 横0.11/縦0.30（140×30）。
+- **旧の問題**: 検索後の並べ替えの待ちは 1〜3.5秒（`_humanWaitAfterSearchMs` の上限 3500）。リセット後の待ちは 10〜14秒（`RESET_SETTLE_MIN_MS` 10000）。どちらも物件の表示が追いつく前に次へ入っていた。
+- **変更**:
+  - `bulk-dl.js` `_humanWaitAfterSearchMs`: 中心 32秒（揺らぎ 0.05）・下限 30秒・上限 36秒。起点は検索の確認（screenOk）。`_waitMsFromSearchConfirm` がその残りを引く（経過40秒なら待たない 50ms）。
+  - `background.js` `RESET_SETTLE_MIN_MS`: 10000 → **30000**（揺れ 4秒・30〜34秒を3回に分けて待つ）。読み戻し・写真・次の客の入力はこの後。`post_send_clear` の段の上限 260秒は据え置き。
+  - 沈黙見張り（135秒）と合わない所は無し（36秒 < 135秒）。
+  - 手順書（`auto-procedure-rules.ts`）の並べ替え・リセットの文を 30秒 に直した。
+- **試験**: 新規 `search-reset-wait-30s-v2292` 23件 OK。`reset-between-customers-v28284` 69件 OK。HEAD と比べて今回新しく落ちたのは `webapp-bridge`（作業フォルダの未追跡 `page-script.restored.js` の文法エラーを拾うため・今回の変更とは無関係）。`tsc` はこれまでの 7件のまま。
+- **統括Pro（learn-supervisor）の生の言葉（同日・`supervisor-talk.ts`）**: 「押した位置38%（要≥60）」「カーソル62%（要≥70）」「間隔短0％」「同じ欄が写真の中で違う種類に見えた」「新束のあとの自動走行 0件」。押す位置と間隔は統括が未達と判断している。**この2.8.292は待ちを増やすだけで、押す位置の学習（録画→束→押す）はまだ直していない。**
+- 版: **2.8.292**（manifest・page-script・手順書 を揃えた）。未コミット。拡張の再読み込みが必要（DB の ext_version で 2.8.291 が動いていたのを確認）。
+
+---
+
+## 2026-11-25 **2.8.291 リセットは人の点のまわりで、ボタンの面の上にばらつかせて押す**
+
+- **竹内さんの問い**: 「押す場所やボタンの場所をちゃんと把握できないのか。人間のように、押す位置もボタンの上ならばらつきがあることも理解しているのか」
+- **把握していること**: ボタンの場所は左の「リセット」の span（幅160×高さ30）。人の押した点は1回だけ（横75%・縦67%・2026-11-25 16:36）。押す処理（`_humanPointerClick`）は学んだ点のまわりを ±6% ずらしてから、枠の中（端から2px）に収める。
+- **足りなかったこと**: 2.8.290 は毎回同じ点（0.75/0.67）を渡していた。共通の ±6% は、幅160なら横±約10px、高さ30なら縦±約2pxで、ボタンの面の上のばらつきとしては狭い。人のばらつきの幅は1回しか無いので実測できていない。
+- **変更**: `_resetAimPoint`。中心は人の点（学習が2回以上ならその位置）。毎回、横±0.10・縦±0.08 ずらして 0.22〜0.78 に収める（枠の端は押さない）。監査の `reset_press` に「位置=human_sample 0.71/0.64」のように、その回の割合を出す。
+- 版: **2.8.291**。試験 `reset-press-point-v2290` 14件 OK。未コミット。
+
+---
+
 ## 2026-11-25 **2.8.290 リセットの押す位置を人の録画の実測に合わせる（確認結果）**
 
 - **竹内さんの問い**: 「いまリセットボタンを押すところ。通常モードで録画した場所やボタンの把握・押す場所の把握も徹底的に確認」

@@ -23,8 +23,33 @@
    *     文字が短い見えている要素だけ（大きな入れ物の真ん中を押さない）・必ずカーソル経由。
    */
   var _axShowBtnAt = 0;
+  /**
+   * ★ 2.8.295（コード調べ・高5）: 3秒ごと・画面の書き換えのたびに、ここが「検索条件を表示」をカーソルで押していた。
+   *   並べ替えの乗せ（AD の小窓）・リセットの押し・読み直しの最中に押すと、その流れを割る。
+   *   → 邪魔しない窓（html の data-axlx-quiet＝bulk-dl が background の印を写す）が sort／reset の間は押さない。
+   *   ⚠ 次客の入力（refill）の間は押す（左の欄が無いと入力できない）。
+   */
+  function _axQuietBlocksSidebar() {
+    try {
+      var raw = document.documentElement.getAttribute("data-axlx-quiet") || "";
+      var parts = raw.split("|");
+      var kind = parts[0] || "";
+      var until = Number(parts[1]) || 0;
+      if (until && Date.now() < until && (kind === "sort" || kind === "reset")) return kind;
+    } catch (_) {}
+    return "";
+  }
+  var _axQuietDeferAt = 0;
   function _axPressShowSidebar() {
     if (Date.now() - _axShowBtnAt < 4000) return false;
+    var _qb = _axQuietBlocksSidebar();
+    if (_qb) {
+      if (Date.now() - _axQuietDeferAt > 15000) {
+        _axQuietDeferAt = Date.now();
+        try { window.postMessage({ from: "axlx-quiet-defer", who: "show_sidebar", detail: _qb }, "*"); } catch (_) {}
+      }
+      return false;
+    }
     var all = document.querySelectorAll('a,button,input,div,span,td,p');
     var best = null, bestLen = 1e9;
     for (var i = 0; i < all.length; i++) {
@@ -4064,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.290";
+  var _AXLX_PAGE_VER = "2.8.297";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4176,6 +4201,8 @@ function _guideLikeAreaSkip(why) {
     "bulk_switch_no_forever_wait",
     "bulk_no_skip_customer",
     "reset_between_customers",
+    "quiet_window_no_interrupt",
+    "reset_before_fill",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -4238,6 +4265,31 @@ function _guideLikeAreaSkip(why) {
         " 場面=" + pb.scenes.length + " 手=" + hands +
         " 一連=" + flowN + (flowHasBefore ? " before_clear=Y" : " before_clear=N"),
     );
+    /**
+     * ★ 2.8.297 手順書と拡張の版ずれを「段」で名指しする（読んだだけで済ませない）。
+     *   実測 2026-11-25: 本番（古い main）が束を作り直すたび手順書が23件へ戻り、拡張（91件）との差は playbook_seen の
+     *   「手順書に無い=…」に埋もれていた。→ ずれた時だけ playbook_behind を1段足す（side=手順書が古い／拡張が古い）。
+     *   up=手順書を作ったコードの版（無い＝古い本番が作った）・ext=この拡張の版。
+     */
+    try {
+      var _upTo = pb.rules_up_to ? String(pb.rules_up_to) : "";
+      var _ver2 = function (v) { return String(v || "").split(".").map(function (x) { return Number(x) || 0; }); };
+      var _older = function (a, b) {
+        var x = _ver2(a), y = _ver2(b);
+        for (var q = 0; q < Math.max(x.length, y.length); q++) { var dd = (x[q] || 0) - (y[q] || 0); if (dd) return dd < 0; }
+        return false;
+      };
+      var _pbOld = extra.length > 0 || (_upTo ? _older(_upTo, _AXLX_PAGE_VER) : true);
+      var _extOld = lack.length > 0 || (_upTo ? _older(_AXLX_PAGE_VER, _upTo) : false);
+      if (_pbOld || _extOld) {
+        _auditStepP(
+          "playbook_behind",
+          "side=" + (_extOld ? "拡張が古い" : "手順書が古い") +
+            " up=" + (_upTo || "なし") + " ext=" + _AXLX_PAGE_VER +
+            " 手順書に無い=" + _short(extra) + " 拡張に無い=" + _short(lack),
+        );
+      }
+    } catch (_) {}
     /** ★ 2.8.210: 手順書を読んだ時点で一連の順番も理解する */
     try { _graspFlowSeriesOrder("playbook_seen"); } catch (_) {}
   }
@@ -12278,6 +12330,25 @@ function _guideLikeAreaSkip(why) {
     if (b == null || n == null) return { verified: true, known: false, up: false, before: b, now: n };
     return { verified: n > b, known: true, up: n > b, before: b, now: n };
   }
+  /**
+   * ★ 2.8.291 リセットを押す点。中心は人の癖、毎回ボタンの面の上でずらす。
+   *   学習が2回以上あればその位置。無ければ span は人の1回（横0.75・縦0.67）。それ以外は中央（null）。
+   *   ばらつきは横±0.10・縦±0.08。0.22〜0.78 に収める（枠の端は押さない）。
+   */
+  function _resetAimPoint(btn, learned) {
+    var cx = null, cy = null, kind = "center";
+    try {
+      if (learned && learned.n >= 2 && typeof learned.x === "number" && typeof learned.y === "number") {
+        cx = learned.x; cy = learned.y; kind = "learned";
+      } else if (String((btn && btn.tagName) || "").toUpperCase() === "SPAN") {
+        cx = 0.75; cy = 0.67; kind = "human_sample";
+      }
+    } catch (_) { cx = null; }
+    if (cx == null) return { aim: null, kind: kind };
+    var x = Math.max(0.22, Math.min(0.78, cx + (Math.random() - 0.5) * 0.20));
+    var y = Math.max(0.22, Math.min(0.78, cy + (Math.random() - 0.5) * 0.16));
+    return { aim: { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 }, kind: kind };
+  }
   function _resetPress(done) {
     var finished = false;
     var fin = function (r) {
@@ -12304,13 +12375,13 @@ function _guideLikeAreaSkip(why) {
             try { window.sessionStorage.removeItem(_AX_RESET_CLEAN_KEY); } catch (_) {}
             // ★ 2.8.290 人が押した位置（通常モード・2026-11-25 16:36・1回・要素内の右寄り下寄り x0.75/y0.67）。
             //   学習の束は n≥2 の欄しか残さないので、1回のこの欄は _aimByEl で引けず中央を押していた。
-            //   2回目以降は学習の位置（_aimByEl）を優先する。
-            var _rAim = _aimByEl(btn, ["リセット", "左のリセット"]);
-            var _rOpts = _uiGapOpts();
-            if (_rAim && _rAim.n >= 2) _rOpts = Object.assign({}, _rOpts, { aim: { x: _rAim.x, y: _rAim.y } });
-            else if (String(btn.tagName || "").toUpperCase() === "SPAN") _rOpts = Object.assign({}, _rOpts, { aim: { x: 0.75, y: 0.67 } });
+            // ★ 2.8.291 竹内さん「ボタンの上ならばらつきがある」。中心は人の点（2回以上の学習があればそちら）。
+            //   毎回そのまわりでずらす。端は押し損ねなので 0.22〜0.78 に収める（ボタンの面の上）。
+            //   押す処理（_humanPointerClick）がさらに ±6% ずらしてから、枠の中に収める。
+            var _rPick = _resetAimPoint(btn, _aimByEl(btn, ["リセット", "左のリセット"]));
+            var _rOpts = _rPick.aim ? Object.assign({}, _uiGapOpts(), { aim: _rPick.aim }) : _uiGapOpts();
             enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _rOpts);
-            whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, via: _resetVia, aim: _rAim && _rAim.n >= 2 ? "learned" : (String(btn.tagName || "").toUpperCase() === "SPAN" ? "human_sample" : "center"), countBefore: cntBefore ? cntBefore.n : null, bootAt: window.__axlxBootAt || 0 }); });
+            whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, via: _resetVia, aim: _rPick.kind + (_rPick.aim ? " " + _rPick.aim.x + "/" + _rPick.aim.y : ""), countBefore: cntBefore ? cntBefore.n : null, bootAt: window.__axlxBootAt || 0 }); });
           } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
         }, humanRand(500, 1100));
       });
