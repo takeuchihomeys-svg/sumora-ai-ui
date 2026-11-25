@@ -434,6 +434,7 @@ export type DeviceTurnRow = {
   /** 2026-11-25 作業員A: 先後の番で、画面に出たブレインの下書きが同じ種類の約束（audit-aix-turn-judgment の draftPromiseOf） */ bDraftPromise?: boolean;
   /** 前の番のスタッフの約束の種類（property／property_check_result／estimate_sheet）・判断から竹内さんの最初の AIX までの分・お客様の連投の形 */
   prevPromise?: string[]; minDecToAix?: number | null; burst?: string | null;
+  /** 2026-11-25 確認の約束の流れの場面（check-promise-flow・竹内さんの4つの決め） */ cpf?: string | null;
   mat?: { pend?: number; pp?: boolean; checked?: number; taskResult?: number; mk?: string[] | null; mks?: boolean } | null;
 };
 /**
@@ -460,6 +461,8 @@ const DEVICE_MISS: Record<string, MapMiss> = { 一致: "ok", AIXの番を返信:
  */
 export function staffOnlyResultOf(r: Pick<DeviceTurnRow, "tk" | "prevPromise" | "minDecToAix" | "burst">): boolean {
   const fam = (k: string) => (k === "property_send" || k === "property" ? "property" : k);
+  // 11/25 竹内さんの決め①の場面（ack_wait）の物件確認した は、ブレインが選べる正解（後で果たす約束）＝スタッフだけが知る結果に分けない
+  if ((r as { cpf?: string | null }).cpf === "ack_wait" && r.tk === "property_check_result") return false;
   return !!r.tk && (r.prevPromise ?? []).map(fam).includes(fam(r.tk)) && (r.minDecToAix ?? 0) >= 20 && ["thanks", "other", "ack"].includes(String(r.burst ?? ""));
 }
 /** A の json の行を木の番に（純関数）。AIX の番（cls が reply 以外）だけ・場面は見張りの scene_key（id で引いた物） */
@@ -468,6 +471,8 @@ export function deviceTurnsOf(rows: readonly DeviceTurnRow[], sceneKeyById: Read
     const kind = r.tk && r.tk !== "?" ? r.tk : "other";
     const miss = DEVICE_MISS[r.v] ?? "aix_kind";
     if (miss !== "ok" && decided.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
+    // 2026-11-25 竹内さんの決め①（確認の約束の後のお礼だけ→返信せず、結果が揃ったら物件確認した）: 竹内さんが返信を先にした番でブレインが物件確認した＝後で果たす約束で正しい（決定で改めた番）
+    if (miss === "order" && r.cpf === "ack_wait" && kind === "property_check_result" && r.bk === "property_check_result") return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "decided" as const, cause: null };
     if (miss === "order" && r.bDraftPromise) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "two_stage_draft" as const, cause: null };
     if (miss !== "ok" && fixedSince.has(r.id)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "fixed_since" as const, cause: null };
     if (miss !== "ok" && TIMED_AIX_KINDS.has(kind)) return { id: r.id, kind, scene: sceneOfWatchKey(sceneKeyById.get(r.id) ?? null, kind), miss: "timed" as const, cause: null };

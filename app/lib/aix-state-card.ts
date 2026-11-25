@@ -5,6 +5,7 @@
 //   スイッチ AIX_STATE_CARD: 既定 shadow（記録だけ）／on（ブレインの材料に入れる口・別に作る）／off
 import type { CustomerStateInput } from "./customer-state";
 import { docFactsOf, docFactsLine, type DocFacts, type DocPickup } from "./aix-state-doc";
+import { checkPromiseFlowOf, type CheckFlow } from "./check-promise-flow";
 
 export type AixStateCard = {
   /** 物件の束（物件ピックアップ）を最後に送ってからの分・その後にお客様の通があったか・送った束の数（ピックアップ⇄オススメ） */
@@ -23,6 +24,8 @@ export type AixStateCard = {
   vacating: { rooms: number };
   /** 2026-11-25 土台の欠け「資料にある」: 最後の束で送った物件の資料で、項目ごとに資料で答えられる件数（aix-state-doc・送った物件の資料を渡さない時は null） */
   doc: DocFacts | null;
+  /** 2026-11-25 竹内さんの4つの決め: お客様が送ってきた物件の確認の約束の流れ（check-promise-flow・場面 ack_wait／question_after_promise／brought_no_promise／ack_plus） */
+  checkFlow: CheckFlow;
   /** 2026-11-25 土台の欠けの残り4つ: こちらの最後の通の後のお客様の通で頼まれた事（決まった言葉の網・推して埋めない）と記録の側 */
   asks: {
     /** 同じ建物の別の部屋・別の階を聞かれた（物件確認した→同じ建物の別の部屋／他の部屋の確認） */ otherRoom: boolean;
@@ -94,6 +97,7 @@ export function buildAixStateCard(input: Pick<CustomerStateInput, "messages" | "
       return { pending: pend.length, newSinceBundle: lb ? pend.filter((x) => Date.parse(x.created_at) > lb.t).length : pend.length };
     })(),
     doc: input.docPickups ? docFactsOf(input.docPickups, now) : null,
+    checkFlow: checkPromiseFlowOf(input.messages as never, input.aixRows as never, now),
     asks: (() => {
       const lastStaff = [...input.messages].filter((m) => m.sender !== "customer" && Date.parse(m.createdAt) <= now).pop();
       const t0 = lastStaff ? Date.parse(lastStaff.createdAt) : -Infinity;
@@ -121,6 +125,7 @@ export function aixStateCardLine(c: AixStateCard): string {
     ...(c.candidates.pending !== null ? [`送れる候補 ${c.candidates.pending}件（最後の束より後 ${c.candidates.newSinceBundle}件）`] : []),
     ...(c.vacating.rooms ? [`退去予定の部屋 ${c.vacating.rooms}`] : []),
     ...(c.doc ? [docFactsLine(c.doc)] : []),
+    ...(c.checkFlow?.brought24h ? [`お客様が送ってきた物件（24時間）: 確認の約束 ${c.checkFlow.checkPromised ? "済み" : "まだ"}・結果 ${c.checkFlow.resultSent ? "送った" : "まだ"}${c.checkFlow.scene ? `・場面 ${c.checkFlow.scene}` : ""}`] : []),
     ...(c.asks.otherRoom || c.asks.widen || c.asks.photo || c.asks.rentNego ? [`お客様の今の頼み: ${[c.asks.otherRoom ? "同じ建物の別の部屋" : "", c.asks.widen ? "条件を広げて" : "", c.asks.photo ? "室内の写真" : "", c.asks.rentNego ? "家賃の値下げ" : ""].filter(Boolean).join("・")}`] : []),
     ...(c.record.lastBundlePattern ? [`最後の束の種類 ${c.record.lastBundlePattern}`] : []),
     ...(c.record.newBuildInBundle ? [`最後の束の新築 ${c.record.newBuildInBundle}件（室内の写真は手元に無いことが多い）`] : []),
