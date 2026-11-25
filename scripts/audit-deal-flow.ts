@@ -7,7 +7,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-deal-flow.ts [--out=<json>]
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
-import { dealFlowOf, flowTypes, stationReach, FLOW_STAGES, type DealRow, type DealFlow } from "./lib/deal-flow";
+import { dealFlowOf, flowTypes, stationReach, stationStay, FLOW_STAGES, type DealRow, type DealFlow } from "./lib/deal-flow";
 import { ROUTE_NODES } from "../app/lib/apply-route-map";
 import { isTestConversation } from "../app/lib/test-conversations";
 
@@ -74,8 +74,11 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
   for (const [st, m] of nxt) { const top = [...m].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s, n]) => `${s} ${n}`).join("・"); console.log(`| ${st} | ${ROUTE_NODES[st as keyof typeof ROUTE_NODES]?.nextNode ?? "—"} | ${top} |`); }
 
   if (arg("out")) {
+    const stay = stationStay(fs);
     const rows = reach.map((r) => ({
       station: r.station, reach: { applied: r.applied, n: r.n, rate: r.rate },
+      // 作業員A 11/25: 駅にいた日数（次の段まで・申込に届いた件／届かなかった件）。時刻の列の無い駅（pickup 等）は無し
+      stay: stay.get(r.station) ?? null,
       flowTypes: flowTypes(fs.filter((f) => f.stations.includes(r.station))).slice(0, 3).map((t) => ({ type: t.type, n: t.n, applied: t.applied })),
       gaps: [...new Set(fs.filter((f) => f.stations.includes(r.station)).flatMap((f) => f.issues.map((i) => i.kind)))],
     }));

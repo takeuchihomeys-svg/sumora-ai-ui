@@ -84,6 +84,22 @@ export function stationReach(fs: readonly DealFlow[]): Array<{ station: string; 
   });
 }
 
+/** 駅にいた日数（作業員A 11/25・STATION_STATE_LINE の材料）: その駅の段から次の段（時刻の順の隣）までの日数。最後の段は数えない。申込に届いた件・届かなかった件・成約した件（申込に届いた件の内）で分ける */
+export type StayStat = { median_days: number | null; p75_days: number | null; n: number };
+export function stationStay(fs: readonly DealFlow[]): Map<string, { applied: StayStat; not_applied: StayStat; won: StayStat }> {
+  const acc = new Map<string, { a: number[]; na: number[]; w: number[] }>();
+  for (const f of fs) f.gaps.forEach((g, k) => {
+    const st = f.stations[k];
+    const x = acc.get(st) ?? { a: [], na: [], w: [] };
+    (f.applied ? x.a : x.na).push(g.days);
+    if (f.won) x.w.push(g.days);
+    acc.set(st, x);
+  });
+  const q = (xs: number[], p: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+  const stat = (xs: number[]): StayStat => ({ median_days: q(xs, 0.5), p75_days: q(xs, 0.75), n: xs.length });
+  return new Map([...acc].map(([st, x]) => [st, { applied: stat(x.a), not_applied: stat(x.na), won: stat(x.w) }]));
+}
+
 // ── 申込したのに条件の時刻が無い件の分け（作業員A・統括役 11/25:「初回の通に条件まで書いてある＝条件の段を通らない道」か「本当の記録の抜け」か）
 //   condition_at は スタッフが条件を聞いた印（AIX condition_hearing・追いの condition_asked・段の履歴 condition_hearing）だけから付く（deal-outcome-server）。
 //   お客様が自分から条件を書いた通・スタッフが手打ちで条件を聞いた通は入らない。申込より前の通だけを見る（申込以降は読まない・呼ぶ側で切る）
