@@ -104,6 +104,24 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled && f.node && VIEW_NODES.has(f.node)) asks.push("ご内覧のご都合のよろしい日");
   return { path, why, needs, ahead, plant, applyBy, goalPlant, dates, asks };
 }
+/**
+ * 2026-11-26 作業員A（#745・竹内さん「返信の内容も実際の竹内の言い回しに逆算のところちゃんと行えばよりよくなる」）: 書き手への1行。
+ *   逆算の期日（幅・言い切らない）と、竹内さん本人の仕込みの言い回しの型を、書き手の材料に1行で渡す。お客様が聞いていない内覧・申込を押し付けない・1文だけ。
+ *   スイッチ BACKPLAN_TO_WRITER: 既定 off（書き手に渡さない）／on
+ */
+export function backplanToWriterOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BACKPLAN_TO_WRITER ?? "").trim().toLowerCase() === "on";
+}
+export type BackplanRec = { path: string; ahead: string[]; goalPlant: string | null; plant: string | null; dates: string[] };
+export function backplanRecOf(p: Backplan | null): BackplanRec | null {
+  return p ? { path: p.path, ahead: p.ahead, goalPlant: p.goalPlant, plant: p.plant, dates: p.dates } : null;
+}
+export function backplanWriterNote(rec: unknown): string {
+  const r = rec as BackplanRec | null | undefined;
+  if (!r || (!r.goalPlant && !r.dates?.length)) return "";
+  return `\n【申込から逆算した仕込み（決まった計算・期日は目安）】${r.goalPlant ? `言い回しの型: ${r.goalPlant}` : ""}${r.dates?.length ? `${r.goalPlant ? "／" : ""}期日の目安: ${r.dates.join("・")}` : ""}`
+    + "。入れる時は文の終わりの方に自然に1文だけ（言い切らない・お客様が聞いていない内覧や申込を押し付けない・期日は「頃」「目安」）。合わない番は入れない";
+}
 /** 材料の1行（当たらない時は ""）。道はブレインが決める＝「例」「目安」と書く */
 export function backplanLine(p: Backplan | null): string {
   if (!p) return "";

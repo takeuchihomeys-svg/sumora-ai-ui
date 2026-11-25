@@ -527,6 +527,8 @@ export type SuggestedAixMeta = {
   /** 2026-11-03 3段（BRAIN_THREE_LAYER=on）→ digest.tl ／一番の要点（BRAIN_MAIN_POINT=on・key_topics の1つ・作業員6の ComposeIntent.main が受ける）→ digest.mp ／流れの合図（BRAIN_FLOW_SIGNALS=on）→ digest.fs */
   three_layer?: import("@/app/lib/brain-need").ThreeLayer;
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
+  /** 2026-11-26 作業員A（#745・BACKPLAN_TO_WRITER=on）: 逆算の計画の書き手への渡し（道・この先・ゴール側の言い回しの型・期日の目安） */
+  route_backplan?: import("@/app/lib/route-backplan").BackplanRec;
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 地図の駅・分かれ道・次の一手（記録だけ） */
   apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[]; substate?: string | null };
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 道の後の状態の表の狙い（turn-aims-after と同じ・記録だけ） */
@@ -3349,7 +3351,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const { count: pendN } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending");
       const pf = ppf.pickupPromiseFlowOf(brainLedgerInput.messages as never, (brainLedgerInput.recentAixRows ?? []) as never, typeof pendN === "number" ? pendN : null, Date.now());
       const ln = ppf.pickupPromiseFlowLine(pf);
-      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; pickupFlowMarkLen = ln.length; }
+      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; pickupFlowMarkLen = ln.length; materialBlocks.push({ key: "pickup_promise_flow", text: ln, from: "cs" }); }
       console.log(JSON.stringify({ tag: "brain:pickup-promise-flow", conversationId, scene: pf.scene, pending: pf.pending, promised: pf.promised, fulfilled: pf.fulfilled }));
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "pickup-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
@@ -4316,6 +4318,7 @@ ${sh}`;
   // 2026-11-21 作業員M（台帳 #467・竹内さん「地図の部分も細かく」）: 地図の駅・分かれ道は毎番求めてログに出すだけで meta に残っていなかった（連携の切れ）。
   //   APPLY_ROUTE_RECORD=on の時だけ meta.apply_route に残す（記録だけ・プロンプトは1文字も変えない）。お客様ごとの計画・指示書が段の語を1つにして読む
   let applyRouteLocRec: { node: string | null; branch: string | null; next: string | null; next_aix: string[] } | null = null;
+  let routeBackplanRec: import("@/app/lib/route-backplan").BackplanRec | null = null; // 2026-11-26 作業員A（#745・BACKPLAN_TO_WRITER=on の時だけ meta.route_backplan に・書き手への渡し）
   if (applyRouteMapEnabled()) {
     try {
       const oldestAR = [...typedMessages].reverse();
@@ -4360,7 +4363,7 @@ ${sh}`;
       // 2026-11-25 作業員A（#745・竹内さん「2手先や最善の方法・逆算してイメージ」・APPLY_ROUTE_BACKPLAN=on の時だけ・既定 off）: 申込から逆算した計画の1行（ブレインには書かせない・材料だけ）
       try {
         const bp = await import("@/app/lib/route-backplan");
-        if (bp.applyRouteBackplanOn() && ar.loc?.node && !ar.loc.branch) {
+        if ((bp.applyRouteBackplanOn() || bp.backplanToWriterOn()) && ar.loc?.node && !ar.loc.branch) {
           const { SCREENING_WORRY_RE: SWR } = await import("@/app/lib/apply-route-map");
           const custTexts = typedMessages.filter((m) => m.sender === "customer").slice(0, 12).map((m) => String(m.text ?? ""));
           const mvBP = resolveConditionMoveIn((pc as { move_in_time?: string | null } | null)?.move_in_time ?? null, { nowIso: new Date().toISOString() });
@@ -4371,7 +4374,9 @@ ${sh}`;
             moveInYmd: mvBP.kind === "future" ? ymdStrOf(mvBP.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10),
           });
           const bl = bp.backplanLine(plan);
-          if (bl) { applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; }
+          // 2026-11-26 作業員A（#747 の形）: 地図の文から別の行として控えに登録（MATERIAL_PRIORITY が並べ替える単位）・材料に入れるのは APPLY_ROUTE_BACKPLAN=on の時だけ
+          if (bl && bp.applyRouteBackplanOn()) { applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; materialBlocks.push({ key: "route_backplan", text: `\n${bl}`, from: "route" }); }
+          if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
@@ -7179,6 +7184,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       // 2026-11-21 作業員M（台帳 #467・APPLY_ROUTE_RECORD=on の時だけ）: 地図の駅と、道を決めた後の状態の表の狙い（turn-aims-after と同じ純関数・記録だけ）。
       //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
+      ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
       ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,

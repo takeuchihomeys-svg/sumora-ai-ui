@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/route-backplan.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { backplanOf, backplanLine, applyRouteBackplanOn, type BackplanFacts } from "../route-backplan";
+import { backplanOf, backplanLine, applyRouteBackplanOn, backplanRecOf, backplanWriterNote, backplanToWriterOn, type BackplanFacts } from "../route-backplan";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -22,7 +22,12 @@ t("申込以降・駅なしは null", backplanOf({ ...base, node: "applying" }) 
 const ln = backplanLine(p1);
 t("1行: 道・要る物・この先・道はあなたが決める", ln.includes("道: 内覧あり") && ln.includes("物件が決まる") && ln.includes("この先") && ln.includes("あなたが決める") && backplanLine(null) === "");
 t("既定 off", !applyRouteBackplanOn({}) && applyRouteBackplanOn({ APPLY_ROUTE_BACKPLAN: "on" }));
+const rec = backplanRecOf(p4);
+t("書き手への1行: 言い回しの型と期日の目安・押し付けない", backplanWriterNote(rec).includes("言い回しの型") && backplanWriterNote(rec).includes("期日の目安") && backplanWriterNote(rec).includes("押し付けない") && backplanWriterNote(null) === "");
+t("書き手への渡しは既定 off", !backplanToWriterOn({}) && backplanToWriterOn({ BACKPLAN_TO_WRITER: "on" }));
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
-t("配線: on の時だけ地図の文の後ろに", bc.includes("bp.applyRouteBackplanOn() && ar.loc?.node") && bc.includes("materialMarks.route_backplan"));
+t("配線: on の時だけ地図の文の後ろに・控えの行に登録", bc.includes("bl && bp.applyRouteBackplanOn()") && bc.includes("materialMarks.route_backplan") && bc.includes('key: "route_backplan"'));
+const gr = readFileSync(join(__dirname, "..", "..", "api", "generate-reply", "route.ts"), "utf8");
+t("配線: 書き手は BACKPLAN_TO_WRITER=on の時だけ", gr.includes("backplanToWriterOn() ? backplanWriterNote("));
 console.log(`route-backplan: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
