@@ -698,6 +698,23 @@ async function main() {
     } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
 
+  // 2026-11-26 作業員L（統括役の決め・今月の昼の試験 $161 が晩の関所の外だった）: 前の日の昼（JST 8〜22時）に流れた試験の DeepSeek の額（0 でなければ ⚠）。日付と route で絞った軽い読み
+  if (!only || doCandidates) {
+    try {
+      const { altUsageUsd } = await import("../app/lib/llm-price");
+      const d0 = new Date(now + 9 * 3_600_000 - 24 * 3_600_000).toISOString().slice(0, 10);
+      const a = new Date(Date.parse(`${d0}T08:00:00+09:00`)).toISOString(), b = new Date(Date.parse(`${d0}T22:00:00+09:00`)).toISOString();
+      let usd = 0, n = 0, lastId = 0;
+      for (let page = 0; page < 50; page++) {
+        const { data } = await sb.from("llm_usage_logs").select("id, created_at, model, input_uncached, cache_read, output_tokens").gte("created_at", a).lt("created_at", b).like("route", "script:brain-exam%").ilike("model", "deepseek%").gt("id", lastId).order("id").limit(1000);
+        const rs = (data ?? []) as Array<{ id: number }>;
+        for (const r of rs) { usd += altUsageUsd(r as never); n++; lastId = r.id; }
+        if (rs.length < 1000) break;
+      }
+      lines.push(`- 昼の試験（${d0} の 8〜22時・DeepSeek）: ${n ? `⚠ $${usd.toFixed(2)}（${n}回）＝晩の上限の外で流れた（EXAM_DAY_HOLD）` : "0"}`, "");
+    } catch (e) { console.warn("[self-improve] 昼の試験の行を作れない:", e instanceof Error ? e.message : String(e)); }
+  }
+
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
   try {
