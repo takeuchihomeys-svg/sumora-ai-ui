@@ -3992,6 +3992,8 @@ ${sh}`;
         carryLine: [carryQueryLine(pmForCarry?.conductor_meta ?? null),
           // 2026-11-25 作業員A（#687 ③・CONDUCTOR_INTAKE_ROUTE=on の時だけ・既定 off）: 入口の統括に地図の駅（決まった計算）を1行。申込以降は出さない
           await (async () => { try { const am = await import("@/app/lib/apply-route-map"); if (!am.conductorIntakeRouteOn() || isPostApplyStatus(convStatus)) return ""; const nd = am.resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node; const ln = am.intakeRouteLine(nd); if (ln) console.log(JSON.stringify({ tag: "brain:intake-route", conversationId, node: nd })); return ln; } catch { return ""; } })(),
+          // 2026-11-26 作業員L（#728 ③・CONDUCTOR_DEAL_FLOW_LINE=on の時だけ・既定 off）: 成約データの駅からの申込到達率と申込に届いた件の次の段（決まった数・日数は A の station_state）
+          await (async () => { try { const df = await import("@/app/lib/deal-flow-line"); if (!df.conductorDealFlowLineOn() || isPostApplyStatus(convStatus)) return ""; const am = await import("@/app/lib/apply-route-map"); const nd = am.resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node; return df.dealFlowIntakeLine(nd); } catch { return ""; } })(),
           await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
           // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
           await (async () => { try { const el = await import("@/app/lib/exchange-ledger"); if (!el.exchangeLedgerOn()) return ""; const line = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAt0 ? Date.parse(turnAt0) + 1 : Date.now() })); if (line) console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "intake", len: line.length })); return line; } catch { return ""; } })(),
@@ -4349,6 +4351,11 @@ ${sh}`;
           if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; materialBlocks.push({ key: "station_state", text: sl, from: "route" }); }
         }
       } catch (e) { console.warn("[brain-core] station-state skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員L（#728 ③・DEAL_FLOW_PRE_APPLY_LINE=on の時だけ・既定 off）: 申込準備の手前の駅に、成約データの申込の直前の一手（手打ちの返信が大半）を1行
+      try {
+        const df = await import("@/app/lib/deal-flow-line");
+        if (df.dealFlowPreApplyLineOn() && ar.loc?.node && !ar.loc.branch) { const pl = df.dealFlowPreApplyLine(ar.loc.node); if (pl) { applyRouteText += `\n${pl}`; materialMarks.deal_flow_pre_apply = pl.length; materialBlocks.push({ key: "deal_flow_pre_apply", text: pl, from: "route" }); } }
+      } catch (e) { console.warn("[brain-core] deal-flow-pre-apply skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
