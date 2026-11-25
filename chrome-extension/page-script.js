@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.297";
+  var _AXLX_PAGE_VER = "2.8.298";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -6966,7 +6966,22 @@ function _guideLikeAreaSkip(why) {
       _clickBusyItem = null;
       _holdingPause = true;
       var P0 = window.AxlxPointerUi;
-      var _endPause = function () { _holdingPause = false; _lastQueueProgressAt = Date.now(); _startAfterPause(); };
+      var _pauseSettled = false;
+      var _endPause = function () {
+        if (_pauseSettled) return;
+        _pauseSettled = true;
+        _holdingPause = false; _lastQueueProgressAt = Date.now(); _startAfterPause();
+      };
+      /**
+       * ★ 2.8.298 停止の安全弁: 停止の間は列の20秒見張りも止まる（_holdingPause）。
+       *   手の動き（drift）の終わりが返ってこないと、列が永久に止まる。
+       *   pause＋15秒で必ず次へ（ブラウザがタイマーを間引いた時の遅れも含む）。止まった印を残す。
+       */
+      setTimeout(function () {
+        if (_pauseSettled) return;
+        try { _auditStepP('fill_pause_force', Math.round(pause / 1000) + '秒の停止が15秒超え→次へ'); } catch (_) {}
+        _endPause();
+      }, pause + 15000);
       if (P0 && P0.drift) { P0.drift(pause).then(_endPause, _endPause); }
       else { setTimeout(_endPause, pause); }
       return;
@@ -8533,6 +8548,14 @@ function _guideLikeAreaSkip(why) {
       try {
         ph = String((window.__axlxNowCustomer && window.__axlxNowCustomer.loopPhase) || "silence").slice(0, 16);
       } catch (_) { ph = "silence"; }
+      // ★ 2.8.298 止まった時に「列の何が止まっているか」を残す（約190秒の入力停止の原因を次回に特定するため）
+      var _probe0 = "?";
+      try {
+        _probe0 = (typeof _clickQueue !== "undefined" ? _clickQueue.length : "?")
+          + "/" + (typeof _clickBusyItem !== "undefined" && _clickBusyItem ? String(_clickBusyItem.label || "?").slice(0, 26) : "-")
+          + "/pause" + (typeof _holdingPause !== "undefined" && _holdingPause ? 1 : 0)
+          + "/hid" + (document.hidden ? 1 : 0);
+      } catch (_) { _probe0 = "x"; }
       try { _forceAuditStepsFlush("silence_tick_pre"); } catch (_) {}
       try {
         _screenPollThenApiNext("silence_watch", ph + ":idle" + Math.round(idleMs / 1000) + "s", function (diag) {
@@ -8545,7 +8568,8 @@ function _guideLikeAreaSkip(why) {
                   + " idle=" + Math.round(idleMs / 1000) + "s"
                   + " ph=" + ph
                   + " stuck=" + String(diag && diag.stuck || "?").slice(0, 14)
-                  + " act=" + String(diag && diag.acted || "?").slice(0, 16),
+                  + " act=" + String(diag && diag.acted || "?").slice(0, 16)
+                  + " q=" + _probe0,
               );
             }
           } catch (_) {}

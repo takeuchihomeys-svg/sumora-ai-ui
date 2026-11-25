@@ -98,7 +98,7 @@ const keep = sa.match(/var KEEP_STEP = \/[^\n]+/)[0];
 ["quiet_on", "quiet_off", "quiet_defer", "quiet_inherit", "dl:quiet_", "reset_clear_marks", "tab_reload", "tab_check", "autofill_dead_kick"].forEach(function (k) {
   ok("KEEP_STEP に " + k + "（上限で落ちない）", keep.indexOf("|" + k) > 0);
 });
-ok("版: manifest == page-script == 手順書の見直し（2.8.295）", mf.version === "2.8.297" && /_AXLX_PAGE_VER = "2\.8\.297"/.test(ps) && /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.297"/.test(rules));
+ok("版: manifest == page-script == 手順書の見直し（2.8.298）", mf.version === "2.8.298" && /_AXLX_PAGE_VER = "2\.8\.298"/.test(ps) && /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.298"/.test(rules));
 ok("決まり quiet_window_no_interrupt（手順書と拡張の一覧）", /id: "quiet_window_no_interrupt"/.test(rules) && /"quiet_window_no_interrupt",/.test(ps));
 ok("  目印がコードにある（_quietSet(\"reset\"）", bg.indexOf('_quietSet("reset"') > 0);
 

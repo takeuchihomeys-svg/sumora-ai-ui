@@ -2353,6 +2353,38 @@
       return { ok: false, reason: "err" };
     }
   }
+  /**
+   * ★ 2.8.298 「0件の空回り」: 結果が 0棟0戸 と読めたら、行が出るのを待ち続けず 0件で終える。
+   *   実測（監査 #1654・2026-11-25）: 0棟0戸の一覧で「行 0」の待ちが 0.8秒ごとに49回回り、
+   *   上限の300秒まで次の客へ進まなかった（その間 fill・並べ替えは何もしていない）。
+   *   条件（全部そろった時だけ）: 自動の回（_autoSendArmed）・件数が 0棟0戸・PDF の印が0・
+   *     3回続けて読めた（約2.4秒＝読み込み中の一瞬の 0 を取り違えない）。
+   *   終わり方は Case C の 0件と同じ（押さずに終わった合図）。次の客の入力の前のリセットは従来どおり。
+   */
+  var _zeroCount0N = 0;
+  function _zeroCount0Check(why) {
+    var ev = null;
+    try { ev = _localScreenEvidenceBrief(); } catch (_) { ev = null; }
+    var cnt = String((ev && ev.count) || "").replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+    var is00 = cnt === "0/0" && Number((ev && ev.pdf) || 0) === 0;
+    if (!is00 || !_autoSendArmed) { _zeroCount0N = 0; return false; }
+    _zeroCount0N++;
+    if (_zeroCount0N < 3) return false;
+    _zeroCount0N = 0;
+    var cid = _autoRunCid || (_searchGraspedMem && _searchGraspedMem.customerId) || null;
+    if (!cid) {
+      try { _liveDlStep("zero_count0_no_cid", String(why || "").slice(0, 24)); } catch (_) {}
+      return false;
+    }
+    _stampSortFlowAtom("zero_count0", true, "0棟0戸×3 " + String(why || "").slice(0, 20));
+    try { _liveDlStep("zero_count0_finish", "0棟0戸 cid=" + String(cid).slice(0, 8)); } catch (_) {}
+    if (_sortCursorTimer) { try { clearTimeout(_sortCursorTimer); } catch (_) {} _sortCursorTimer = null; }
+    _autoSendArmed = false;
+    _pendingAutoSendDispatched = true;
+    try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+    _sendSkipDoneFor(cid, "zero_rows_count0", 0);
+    return true;
+  }
   var _pageWaitN = 0;
   function _scheduleSortCursorAfterSearch(why) {
     try {
@@ -2423,6 +2455,8 @@
         if (_sortCursorTimer) return false;
         _stampSortFlowAtom("after_search_rows", false, "rows0");
         try { _liveDlStep("sort_gate_wait_rows", "pre_schedule"); } catch (_) {}
+        // ★ 2.8.298: 0棟0戸が続けて読めたら 0件で終える（待ち続けない）
+        if (_zeroCount0Check(why)) return false;
         _sortCursorTimer = setTimeout(function () {
           _sortCursorTimer = null;
           try { _scheduleSortCursorAfterSearch((why || "wait") + "_retry"); } catch (_) {}
