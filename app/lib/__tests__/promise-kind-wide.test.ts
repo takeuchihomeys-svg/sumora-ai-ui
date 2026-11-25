@@ -6,7 +6,7 @@ import { promiseWideKindOf, promiseKindWideOn, promiseDropKindOf, promiseKindNam
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const ON = { PROMISE_KIND_WIDE: "on" };
-const OFF = { PROMISE_KIND_WIDE: "off" };
+const OFF = { PROMISE_KIND_WIDE: "off", PROMISE_KIND_WIDE2: "off" }; // 11/26 WIDE2 が既定 on になったので、今まで通りの網は両方 off
 
 t("既定は off・=on で使う", () => {
   assert.equal(promiseKindWideOn({}), false);
