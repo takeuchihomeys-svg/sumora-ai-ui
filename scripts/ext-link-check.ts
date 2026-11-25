@@ -46,6 +46,16 @@ for (const t of TESTS) {
   rows.push({ name: t.name, ok, detail: ok ? last.slice(0, 60) : `✗ ${failed} 件（${last.slice(0, 60)}）` });
 }
 
+// 2026-11-26: 上の一覧は 15 本だけ。拡張の試験は全部（約 330 本）を回し、基準（未整理の古い赤）より増えた赤だけを失敗にする
+{
+  const r = spawnSync("npx", ["tsx", join(ROOT, "scripts/ext-test-all.ts")], { encoding: "utf8", shell: true, cwd: ROOT });
+  const out = `${r.stdout ?? ""}`;
+  const head = out.split("\n").find((l) => l.startsWith("■")) ?? "";
+  const stale = out.split("\n").find((l) => l.includes("基準の赤")) ?? "";
+  const ok = r.status === 0;
+  rows.push({ name: "拡張の試験 全本（新しく壊れた赤が無いか）", ok, detail: ok ? `${head.replace("■ ", "")}／${stale.trim()}`.slice(0, 120) : out.split("\n").filter((l) => /❌|✗/.test(l)).slice(0, 4).join(" / ") });
+}
+
 if (process.argv.includes("--db")) {
   const r = spawnSync("npx", ["tsx", "--env-file=.env.local", join(ROOT, "scripts/check-playbook-sync.ts")], { encoding: "utf8", shell: true, cwd: ROOT });
   const out = `${r.stdout ?? ""}`;
@@ -55,7 +65,7 @@ if (process.argv.includes("--db")) {
 }
 
 console.log("■ 拡張ツールの連動点検");
-for (const r of rows) console.log(`  ${r.ok ? "✅" : "❌"} ${r.name}${r.ok ? "" : `\n      ${r.detail}`}`);
+for (const r of rows) console.log(`  ${r.ok ? "✅" : "❌"} ${r.name}${r.ok ? (r.name.startsWith("拡張の試験 全本") ? `\n      ${r.detail}` : "") : `\n      ${r.detail}`}`);
 const reds = rows.filter((r) => !r.ok).length;
 console.log(`\n結論: ${rows.length - reds} 件 OK / ${reds} 件 赤`);
 if (!process.argv.includes("--db")) console.log("（DB と本番は見ていない。連動を確かめるなら --db を付ける）");

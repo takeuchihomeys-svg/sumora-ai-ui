@@ -11,6 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { autoRulesVersion, AUTO_RULES_REVIEWED_UP_TO, AUTO_RULES } from "../app/lib/auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
 import { cmpVer } from "../app/lib/playbook-freshness";
@@ -28,6 +29,12 @@ const say = (s: string) => console.log(s);
 const OK = "✅", NG = "❌", WA = "⚠";
 
 function readText(p: string): string { return fs.readFileSync(path.join(process.cwd(), p), "utf8"); }
+function git(args: string[]): { ok: boolean; out: string } {
+  const r = spawnSync("git", args, { encoding: "utf8", cwd: process.cwd() });
+  return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
+}
+/** 反映に関わる場所（拡張・決まり・手順書・束の API）。ここが main に無ければ本番に出ない */
+const RELEASE_PATHS = ["chrome-extension", "app/lib/auto-procedure-rules.ts", "app/lib/action-playbook.ts", "app/lib/bundle-write-prepare.ts", "app/api/human-learn-profile", "app/api/cron/human-learn-brain"];
 
 async function main() {
   say("■ ① コード（手元）");
@@ -38,6 +45,23 @@ async function main() {
   say(`  manifest=${manifestV} page-script=${pageV}`);
   if (manifestV === pageV && pageV === code.upTo) say(`  ${OK} 版の結び（manifest == page-script == 見直し上限）`);
   else { say(`  ${NG} 版の結びが切れている`); bad.push("コード内の版が揃っていない（manifest / page-script / AUTO_RULES_REVIEWED_UP_TO）"); }
+
+  // 2026-11-26 ①-b 上げ道: 手元 →（コミット）→ main →（Vercel の自動デプロイ）→ 本番。ここが切れると ②③ を直しても本番に出ない
+  say("\n■ ①-b 上げ道（未コミット／main に入っているか）");
+  if (argv.includes("--no-git")) say("  （--no-git で飛ばした）");
+  else {
+    git(["fetch", "--quiet", "origin", "main"]);
+    const dirty = git(["status", "--porcelain", "--", ...RELEASE_PATHS]).out.split("\n").filter(Boolean);
+    if (dirty.length) { say(`  ${NG} 未コミットの変更 ${dirty.length}件（拡張・決まり・束の API）`); dirty.slice(0, 5).forEach((l) => say(`      ${l.trim()}`)); bad.push(`反映に関わる未コミットの変更が ${dirty.length}件ある（コミットしないと本番にも DB にも出ない）`); }
+    else say(`  ${OK} 反映に関わる場所に未コミットは無い`);
+    const ahead = git(["log", "--oneline", "origin/main..HEAD", "--", ...RELEASE_PATHS]);
+    if (!ahead.ok) { say(`  ${WA} main と比べられない（origin/main を取れない）`); warn.push("origin/main と比べられなかった"); }
+    else {
+      const n = ahead.out ? ahead.out.split("\n").length : 0;
+      if (n) { say(`  ${NG} main に入っていないコミット ${n}件（反映に関わる場所）`); ahead.out.split("\n").slice(0, 4).forEach((l) => say(`      ${l.slice(0, 90)}`)); bad.push(`main に未反映のコミットが ${n}件ある（Vercel は main だけをデプロイする）`); }
+      else say(`  ${OK} 反映に関わる場所は main に入っている`);
+    }
+  }
 
   say("\n■ ② DB の束の手順書（各 scope の最新行・戻りの履歴）");
   if (!URL_ || !KEY) { say(`  ${NG} 環境変数が無く DB を読めない`); bad.push("DB を読めない"); }
@@ -109,6 +133,28 @@ async function main() {
         say(`  ${flag} #${a.id} ${a.created_at ? a.created_at.slice(5, 16) + " " : ""}ver=${String(ver).slice(0, 12)} 段=${st.length}${collapsed ? `(まとめ${collapsed})` : ""} playbook_seen=${seen ? "あり " + String(seen).slice(0, 40) : "なし"}${behind ? `\n      ${NG} playbook_behind: ${behind}` : ""}${srvBehind ? `\n      ${NG} server_behind: ${srvBehind}` : ""}${none ? `\n      ${NG} playbook_none（手順書が届いていない）` : ""} reset_before_fill=${rbf}`);
       }
       say("  ※ playbook_seen が「なし」＝入力前に手順書を読んだ印が無い（古い拡張・上限で落ちた・自動入力を通っていない）");
+    }
+  }
+
+  // 2026-11-26 ⑤ 拡張が「実際に動いた版」。④ は playbook_seen を見るだけで、拡張の版の古さ（再読込の忘れ）を名指ししていなかった。
+  //   実測 2026-11-26: 手元 2.8.303 に対し、最後に自動を回した拡張は 2.8.295＝8版ぶん再読込されずに残っていた（Chrome の「パッケージ化されていない拡張」は自動で入れ替わらない）
+  say("\n■ ⑤ 拡張が実際に動いた版（点検記録 search_audits.ext_version・人の検索は除く）");
+  if (URL_ && KEY) {
+    const sb = createClient(URL_, KEY);
+    const { data, error } = await sb.from("search_audits").select("id, created_at, ext_version, run_id")
+      .eq("site", "realpro").not("run_id", "like", "human_*").not("ext_version", "is", null)
+      .order("created_at", { ascending: false }).limit(5);
+    if (error) { say(`  ${WA} 読めない（${error.message}）`); warn.push("拡張の版を読めなかった"); }
+    else {
+      const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string }>;
+      if (!rows.length) { say(`  ${WA} 自動の点検記録が無い`); warn.push("自動の点検記録が無く、拡張の版を確かめられない"); }
+      else {
+        const top = rows[0];
+        const hours = Math.round((Date.now() - new Date(top.created_at).getTime()) / 3600000);
+        const lag = cmpVer(top.ext_version, code.upTo) < 0;
+        say(`  ${lag ? NG : OK} 最後に自動を回した拡張=${top.ext_version}（#${top.id}・${top.created_at.slice(5, 16)}・${hours}時間前）／手元=${code.upTo}`);
+        if (lag) bad.push(`拡張が古いまま（最後に動いた版 ${top.ext_version} < 手元 ${code.upTo}）＝ chrome://extensions で再読み込み → リアプロのタブを開き直す → 自動を1回回す（それまで「反映済み」とは言えない）`);
+      }
     }
   }
 

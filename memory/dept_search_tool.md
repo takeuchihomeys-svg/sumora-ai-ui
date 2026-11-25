@@ -14821,3 +14821,8 @@ Claude（統括役）からの依頼2件への対応。
 - DB の手順書（2813 all / 2815 realpro / 2814 itandi）を attach-playbook --apply で入れ替え（決まり版 6f81a131・件数 95・名前は前後とも 0 か所）。控え: C:\Users\Admin\axlx-backup-20261126-playbook-2308（repo の外）。
 - 点検の結果: 本番コードは まだ 2.8.302（Vercel 側の反映待ち）。拡張の再読込と自動1回で playbook_seen を確かめるまで「反映済み」とは言わない。
 - 残りの赤: 人の操作の間の固定の待ち（bulk-dl の要確認 6 行）。
+
+### 2026-11-26 反映の鎖を点検で名指しする仕組み（拡張は変えていない）
+- 原因（実データ）: ①連動の点検が回す試験は332本中15本だけ・残り317本のうち124本が赤（古い試験が置き去り）②手元 2.8.303 に対し最後に自動を回した拡張は 2.8.295（再読込されていない）③DBの手順書は手動 attach と本番デプロイの順番待ちで毎回古くなる。
+- 追加: scripts/check-playbook-sync.ts に ①-b 上げ道（未コミット／main に入っているか）と ⑤ 拡張が実際に動いた版（search_audits.ext_version）。scripts/ext-test-all.ts（全試験・基準 tests/chrome-extension/_known-red.json より増えた赤だけ失敗・基準は縮める方向だけ）。scripts/ext-link-check.ts が両方を呼ぶ。
+- 本番は main への push で Vercel が自動デプロイ（約3分・Production）。attach-playbook は main 反映の後に1回。拡張は chrome://extensions の再読み込み＋リアプロのタブを開き直す＋自動1回までは「反映済み」と言わない。
