@@ -15,7 +15,7 @@ const page = readFileSync(join(process.cwd(), "chrome-extension/page-script.js")
 const man = JSON.parse(readFileSync(join(process.cwd(), "chrome-extension/manifest.json"), "utf8"));
 
 assert(man.version >= "2.8.210", "manifest >=2.8.210 今=" + man.version);
-assert(/_AXLX_PAGE_VER = "2\.8\.2(1[0-9]|2[0-9])"/.test(page), "page ver ≥2.8.210");
+assert(Number((page.match(/_AXLX_PAGE_VER = "2\.8\.(\d+)"/) || [])[1]) >= 210, "page ver ≥2.8.210");
 assert(AUTO_RULES_REVIEWED_UP_TO >= "2.8.210", "rules reviewed");
 assert(AUTO_RULES.some((r) => r.id === "flow_series_order_gate"), "rule exists");
 assert(page.includes("flow_series_order_gate"), "RULES_DONE has gate");

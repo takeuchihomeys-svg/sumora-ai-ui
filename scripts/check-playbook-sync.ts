@@ -52,7 +52,8 @@ async function main() {
       const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string | null; rules_v: string | null; build_v: string | null; up_to: string | null }>;
       if (!rows.length) { say(`  ${WA} ${scope}: 行なし`); continue; }
       const top = rows[0];
-      const topOk = top.rules_v === code.rv && Number(top.build_v) === code.build;
+      // 2.8.302: 見直しの印（rules_up_to）も比べる（前は表示だけで ✅ になっていた）
+      const topOk = top.rules_v === code.rv && Number(top.build_v) === code.build && top.up_to === code.upTo;
       say(`  ${topOk ? OK : NG} ${scope} 最新 id=${top.id} ${top.created_at.slice(0, 16)} build_v=${top.build_v ?? "-"} rules_v=${(top.rules_v ?? "-").slice(0, 8)} 見直し=${top.up_to ?? "なし"}${topOk ? "" : "  ← コードと違う（attach が必要／本番が古い）"}`);
       if (!topOk) bad.push(`${scope}: DB の手順書がコードと違う（id=${top.id}・build_v=${top.build_v}・rules_v=${(top.rules_v ?? "-").slice(0, 8)}→コード ${code.build}/${code.rv.slice(0, 8)}）`);
       // 戻り: 新しい行が1つ前（古い行）より古い手順書になっていないか

@@ -552,6 +552,26 @@ export const AUTO_RULES: AutoRule[] = [
     },
   },
   {
+    // 2.8.299: 人の間（わざとの停止・迷い・押す前の間）は「止まり」ではない。見張りが数えないための印を立てる
+    id: "intent_wait_not_stall",
+    scene: "press",
+    text: "人の間（手を止める・迷い・押す前の間）はわざとの待ち。待つ前に印（window.__axlxIntentWait）を立て、列の20秒見張りと沈黙135秒の見張り（スクショ→画面把握→次の手）は印の間は止まりと数えない（印は予定の終わり＋3秒で切れる）。予定を15秒超えた時だけ本物の止まり（fill_pause_force）。点検は予定と実際の秒（fill_pause／fill_resume）",
+    since: "2.8.299",
+    kb: null,
+    marker: "function _intentWaitMark(",
+    file: "page-script.js",
+  },
+  {
+    // 2.8.302: 手を止める長さは毎回ちがう（4〜11秒・中央6.5秒）。6秒に固めない
+    id: "hand_pause_range",
+    scene: "press",
+    text: "手を止める間は4〜11秒で毎回ちがう（中央6.5秒・対数正規）。手の動きの既定の上限は6秒のまま、停止だけ11秒まで（drift の maxMs）。区・select の最中は長い停止を入れない（区の間隔は別の決まり）",
+    since: "2.8.302",
+    kb: null,
+    marker: "function _handPauseMs()",
+    file: "page-script.js",
+  },
+  {
     id: "ad_sort_hover",
     scene: "list",
     text: "検索把握のあと物件取得の前に必ずAD並べ替え: ①「並べ替え」へカーソル（クリックしない）②メニュー内の「AD」へカーソル（クリックしない・一覧のAD列は禁止）③AD右のspan.sort_detail「高→低」だけクリック。URL直禁止。カーソルはforceOneCursorで1本。印: sort_head_hover→sort_ad_hover→sort_hilo/sort_done",
@@ -653,7 +673,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "一連で止まったら画面把握→強化。fill沈黙はfill終了で外れるため、一覧・AD・送付は pipeline_silence で照会・スクショ・最善次手・strengthen_loop を回す。印: pipeline_silence_on／tick／pipeline_screen_grasp／strengthen_loop",
     since: "2.8.250",
-    kb: "",
+    kb: null,
     marker: "pipeline_silence_tick",
     file: "bulk-dl.js",
     verify: {
@@ -678,7 +698,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "タイムアウト／長時間沈黙では録画(stuck_shot)→動かす部分強化(strengthen_loop)→次へ橋渡し(timeout_bridge)。一覧固着は bulk が並べ替え／客完了へつなぐ。印: timeout_bridge_on／timeout_bridge_next／timeout_bridge_recv／timeout_bridge_kick／stuck_shot_req",
     since: "2.8.256",
-    kb: "",
+    kb: null,
     marker: "_bridgeTimeoutRecordStrengthen",
     file: "page-script.js",
     verify: {
@@ -704,7 +724,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "clear",
     text: "駅を外したあとで止めない。沿線へ戻る／reopen／残0なら完了して次の外し（区・町等）へ続行。wrong_screen待ちの無限待機禁止。印: station_clear_continue／station_back_force_try／station_clear_reopen_after／station_clear_back_line",
     since: "2.8.257",
-    kb: "",
+    kb: null,
     marker: "station_clear_continue",
     file: "page-script.js",
     verify: {
@@ -731,7 +751,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "検索結果（estate）では「物件送る」枠を必ず出す。お客様パネルと重なる時は左隣へ。印: send_bar_show／dock=beside-wrap",
     since: "2.8.258",
-    kb: "",
+    kb: null,
     marker: "_placeSendBarVisible",
     file: "bulk-dl.js",
     verify: {
@@ -744,7 +764,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "物件送る枠(#axlx-bar)の z-index をお客様パネルより上(…647)。パネルが広い時は左余白不足→画面下(bottom-left)。既存 wrap の MAX z-index は 645 へ下げる。印: send_bar_dock／send_bar_zfix／send_bar_show",
     since: "2.8.260",
-    kb: "",
+    kb: null,
     marker: "send_bar_dock",
     file: "bulk-dl.js",
     verify: {
@@ -757,7 +777,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "検索結果(estate)に行があるのに並べ替え・送付が進まない固着を検知し、物件送る枠再表示＋並べ替えkick＋steps flush。枠に版表示(vX.Y.Z)。印: estate_stuck_recover／bulk_alive／send_bar_show",
     since: "2.8.261",
-    kb: "",
+    kb: null,
     marker: "estate_stuck_recover",
     file: "bulk-dl.js",
     verify: {
@@ -770,7 +790,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "estateではお客様パネルを右ドックへ戻す（中央放置禁止）。物件送る枠が無い／隠れている時は左下へ強制表示。印: panel_snap_right／send_bar_force／send_bar_missing／send_bar_show",
     since: "2.8.262",
-    kb: "",
+    kb: null,
     marker: "panel_snap_right",
     file: "bulk-dl.js",
     verify: {
@@ -783,7 +803,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "press",
     text: "検索click直前の画面基準を残し、結果ページが表示（変化または押下後settle）されてからだけ並べ替え。旧一覧のdom_inferで先に並べ替えない。検索見直し待ちは短く。印: search_press_baseline／page_display_wait／page_displayed_ok／sort_gate_need_page",
     since: "2.8.263",
-    kb: "",
+    kb: null,
     marker: "_pageDisplayedAfterThisSearch",
     file: "bulk-dl.js",
     verify: {
@@ -807,7 +827,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "press",
     text: "検索を押してからリアプロが新しいページへ移るまで（サーバー応答待ち）は古い一覧が残る。この間は結果と認めず並べ替えを始めない（beforeunload で移動中）。新しいページは読み込み完了で結果、同じページは目印（件数・PDF）が変わった時か6秒以上だけ。画面の判定はページ全文を作らない軽い走査。印: page_nav_pending／page_display_wait_load／nav_timing",
     since: "2.8.264",
-    kb: "",
+    kb: null,
     marker: "_isNavPending",
     file: "bulk-dl.js",
     verify: {
@@ -965,7 +985,7 @@ export const AUTO_RULES: AutoRule[] = [
     scene: "list",
     text: "並べ替えは head=Y になるまで待つ（wait_head）。表 scrollIntoView 禁止。見出し0は scroll0・ドック退避・DOM合成aim・elementFromPoint。棟戸 under も見出し候補。印: sort_gate_wait_head／sort_head_scroll0／sort_head_recover／sort_head_point／sort_head_hover",
     since: "2.8.259",
-    kb: "",
+    kb: null,
     marker: "sort_gate_wait_head",
     file: "bulk-dl.js",
     verify: {
@@ -1673,7 +1693,9 @@ function fnv(s: string): string {
 
 /** 決まりの版（id と文が変われば変わる）。手順書と拡張の点検記録で突き合わせる */
 export function autoRulesVersion(rules: ReadonlyArray<AutoRule> = AUTO_RULES): string {
-  return fnv(JSON.stringify(rules.map((r) => [r.id, r.scene, r.text, r.since])));
+  // 2.8.302: 見直しの印（AUTO_RULES_REVIEWED_UP_TO）も指紋に入れる。印だけ上げても手順書の版が変わり、
+  //   作り直し（refreshPlaybookIfStale）が必ず起きる＝「版を上げたのに DB が古いまま」を防ぐ
+  return fnv(JSON.stringify([rules.map((r) => [r.id, r.scene, r.text, r.since]), AUTO_RULES_REVIEWED_UP_TO]));
 }
 
 export type RuleJudge = {

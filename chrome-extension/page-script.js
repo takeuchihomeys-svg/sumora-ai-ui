@@ -4140,6 +4140,8 @@ function _guideLikeAreaSkip(why) {
     "flow_series_order_gate",
     "ad_sort_hover",
     "sort_hover_no_click_loop",
+    "intent_wait_not_stall",
+    "hand_pause_range",
     "all_sent_advance_no_stuck",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
