@@ -514,6 +514,8 @@ export type SuggestedAixMeta = {
   cancel_wide_shadow?: boolean;
   /** 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・中身は写さない）: ack_confirm・now_fulfillable・topic_state */
   material_marks?: Record<string, number>;
+  /** 2026-11-26 作業員L（#747 MATERIAL_PRIORITY）: 統括の入口が選んだ「まず見る」の行のキー・動かしたキー */
+  material_priority?: { mode: string; ready: boolean; keys: string[]; moved: string[]; why: string };
   /** 2026-11-21 作業員L: 入口の統括が読んだ近い場面の学び（CONDUCTOR_LESSONS・記録だけ）。mark＝最終の一手が前に外した一手と同じ学び */
   conductor_lessons?: { mode: string; ids: string[]; mark: string[] };
   /** 2026-11-23 作業員L（台帳 #659）: 入口の統括の材料に渡した期日超えの約束の数・種類・その番の一手が果たす一手か（記録だけ・digest の op） */
@@ -3294,6 +3296,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   旧の【内覧履歴・予定】の位置（2＝この会話で当分変わらない物の並び）に置くと、DeepSeek の先頭一致のキャッシュが
   //   その後ろ（未完了タスク・手本・会社の事実…）ごと外れる → 3（毎回変わる物）の並び・並行で探すの材料の直前に置く（customerStateBlockText）
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
+  // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY・既定 off）: 材料の行を足した時に { キー・文・どこに足したか } を控える（並べ替えは下で・off の時は控えるだけで何も変えない）
+  const materialBlocks: import("@/app/lib/material-priority").MaterialBlock[] = [];
   const customerStateText = customerStateBlockText;
   if (materialMissOn && materialMisses.length) customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${materialMissNote(materialMisses)}`;
   // 2026-11-23 作業員A（#648 の点検の印）: 照らし合わせの残りをブレインに足した時の字数（下の material_marks.exchange・記録だけ・off の時は付かない）
@@ -3333,7 +3337,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     if (cpf.brainCheckPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
       const flow = cpf.checkPromiseFlowOf(brainLedgerInput.messages as never, (brainLedgerInput.recentAixRows ?? []) as never, Date.now());
       const ln = cpf.checkPromiseFlowLine(flow);
-      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; checkFlowMarkLen = ln.length; }
+      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; checkFlowMarkLen = ln.length; materialBlocks.push({ key: "check_promise_flow", text: ln, from: "cs" }); }
       console.log(JSON.stringify({ tag: "brain:check-promise-flow", conversationId, scene: flow.scene, brought24h: flow.brought24h, promised: flow.checkPromised, resultSent: flow.resultSent }));
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "check-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
@@ -3668,7 +3672,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try {
       const ackFacts = ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at })));
       const ackLine = ackFormMaterialLine(ackFacts);
-      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); }
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; materialBlocks.push({ key: "ack_confirm", text: ackLine, from: "cs" }); ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -3756,6 +3760,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
           // 2026-11-23 作業員A（統括役の決め）: 試験で「この1行が入ったか」を見られるよう、字数だけを記録の印に（動きは変えない・中身は写さない）。
           //   昨夜の ess-1122r-pickupwhy-p1/p2 は結果に印が無く、SIP_JUDGE が1度も効いていない事を見落としていた。pickup_why_sip は画像の読みから足した物件の数
           materialMarks.pickup_why = line.length;
+          materialBlocks.push({ key: "pickup_why", text: line, from: "cs" });
           const fromSip = whyRows.length - (pwRows ?? []).length;
           if (fromSip > 0) materialMarks.pickup_why_sip = fromSip;
         }
@@ -3788,7 +3793,7 @@ ${sh}`;
   }
   if (nowFulfillableEnabled() && customerState && !isPostApplyStatus(convStatus)) {
     const nf = nowFulfillableLine({ rooms: customerState.properties, pickupReady: pickupReadyMaterial, nowMs: Date.now() });
-    if (nf) { customerStateBlockText += `\n${nf}`; materialMarks.now_fulfillable = nf.length; }
+    if (nf) { customerStateBlockText += `\n${nf}`; materialMarks.now_fulfillable = nf.length; materialBlocks.push({ key: "now_fulfillable", text: nf, from: "cs" }); }
     console.log(JSON.stringify({ tag: "brain:now-fulfillable", conversationId, chars: nf.length }));
   }
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
@@ -3938,7 +3943,7 @@ ${sh}`;
         const asc = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", created_at: m.created_at }));
         const marks = SF.staleStrategyMarks({ cs: opts.strategy.closing_strategy, csAt: opts.strategy.strategy_msg_ts ?? null, messages: asc, knownNames: sentProps.map((p) => p.property_name ?? "").filter(Boolean) });
         const sl = SF.staleStrategyLine(marks);
-        if (sl) { customerStateBlockText += `\n\n${sl}`; materialMarks.topic_state = marks.length; }
+        if (sl) { customerStateBlockText += `\n\n${sl}`; materialMarks.topic_state = marks.length; materialBlocks.push({ key: "topic_state", text: sl, from: "cs" }); }
         console.log(JSON.stringify({ tag: "brain:strategy-stale", conversationId, marks: marks.map((m) => `${m.kind}:${m.name ?? "-"}`) }));
       }
     } catch (e) { console.warn("[brain-core] strategy-stale skipped:", e instanceof Error ? e.message : String(e)); }
@@ -4288,7 +4293,7 @@ ${sh}`;
           screeningInfo: screeningIF ? screeningIF.slice(0, 30) : null,
         });
         const lineIF = infoFillMaterialLine(nodeIF, cellsIF, nodeIF ? ROUTE_NODES[nodeIF].name : null);
-        if (lineIF && infoFillMapOn()) { customerStateBlockText += `\n\n${lineIF}`; materialMarks.info_fill = lineIF.length; } // 2026-11-23 作業員A（#648・記録だけ）
+        if (lineIF && infoFillMapOn()) { customerStateBlockText += `\n\n${lineIF}`; materialMarks.info_fill = lineIF.length; materialBlocks.push({ key: "info_fill", text: lineIF, from: "cs" }); } // 2026-11-23 作業員A（#648・記録だけ）
         if (briefOnNow) briefInputs.info = { node: nodeIF ?? null, cells: cellsIF };
         if (infoFillMapOn()) console.log(JSON.stringify({ tag: "brain:info-fill", conversationId, node: nodeIF, cells: cellsIF.map((c) => `${c.key}:${c.state}`) }));
       }
@@ -4336,7 +4341,7 @@ ${sh}`;
           const { buildAixStateCard } = await import("@/app/lib/aix-state-card");
           const card = buildAixStateCard({ messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
           const sl = ss.stationStateLine({ node: ar.loc.node, since: customerState?.since ?? null, nowMs: Date.now(), messages: brainLedgerInput.messages as never, card });
-          if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; }
+          if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; materialBlocks.push({ key: "station_state", text: sl, from: "route" }); }
         }
       } catch (e) { console.warn("[brain-core] station-state skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
@@ -4411,6 +4416,22 @@ ${sh}`;
   const stableKnowledgeText = freshStableText;
   // 2026-10-22 慣れた事は速く: 速い道（easy）の番は判断に効きにくい大きな材料（brain-fast-slow FAST_DROP_MATERIALS）を渡さない。
   //   全部の材料の版（customerSpecificTextFull）も作っておき、1回目の判断に難しさの印が出たらそれで読み直す（戻り道）。drop が空なら旧と1文字も同じ
+  // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY・既定 off）: 統括の入口の読み（重点・AIX の番か）と地図の駅から「まず見る3つ」を選び、on の時だけその行を材料の先頭へ。
+  //   shadow は選ぶだけ（待たない＝入口が間に合っていた番だけ選べる）。on は入口を最大 4秒待つ（他の待ちと同じ intakeDoneGet）。入口が間に合わない番は今の並び
+  let materialPriorityRec: { mode: import("@/app/lib/material-priority").MaterialPriorityMode; ready: boolean; keys: string[]; moved: string[]; why: string } | null = null;
+  try {
+    const mp = await import("@/app/lib/material-priority");
+    const mpMode = mp.materialPriorityMode();
+    if (mpMode !== "off" && intakeP && materialBlocks.length) {
+      const run = mpMode === "on" ? await intakeDoneGet() : await Promise.race([intakeP, new Promise<null>((r) => setTimeout(() => r(null), 0))]);
+      const ans = run?.answer ?? null;
+      const { intakeSaysAix } = await import("@/app/lib/conductor-intake");
+      const pick = mp.pickFirstKeys({ focus: ans?.focus_read?.focus ?? null, saysAix: intakeSaysAix(ans), hasStation: !!applyRouteText.trim(), available: materialBlocks.map((b) => b.key) });
+      let moved: string[] = [];
+      if (mpMode === "on" && pick.keys.length) { const r = mp.applyMaterialPriority({ cs: customerStateBlockText, route: applyRouteText, blocks: materialBlocks, keys: pick.keys, why: pick.why }); customerStateBlockText = r.cs; applyRouteText = r.route; moved = r.moved; }
+      materialPriorityRec = { mode: mpMode, ready: !!ans, keys: pick.keys, moved, why: pick.why };
+    }
+  } catch (e) { console.warn("[brain-core] material-priority skipped:", e instanceof Error ? e.message : String(e)); }
   const fsDropSet: ReadonlySet<string> = fastSlow ? fastDrops(fastSlow.level) : new Set<string>();
   // 2026-10-27 節約①（app/lib/brain-cache-order.ts・BRAIN_CACHE_ORDER 既定 off）: 場面で決まる AIX の一覧＋アクション別ルールは、会話ごとの材料より前の独立したブロック（キャッシュの区切りつき）へ
   const cacheOrderOn = brainCacheOrderOn();
@@ -7119,6 +7140,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       material_clash: materialClashRec ?? undefined,
       cancel_wide_shadow: cancelWideShadow || undefined,
       // 2026-11-21 作業員L: 材料の1行を足した印（字数・数だけ・記録だけ）
+      ...(materialPriorityRec ? { material_priority: materialPriorityRec } : {}), // 2026-11-26 作業員L（#747）: 選んだ「まず見る」の行・動かした行（記録だけ）
       material_marks: Object.keys(materialMarks).length ? { ...materialMarks } : undefined, // aims_after は作業員M の meta.turn_aims_after（APPLY_ROUTE_RECORD）が同じ計算で既に残す＝重ねない
       // 2026-11-15 作業員L: 今の状況の記録の時系列の段（BRAIN_SITUATION_TIMELINE=on の時だけ・書き手・AIX・最終チェックが同じ物を読む元）
       situation_now: situationNowRec ?? (situationTimelineRec ? { timeline: { words: situationTimelineRec.words.map((w) => ({ word: w.word, said: new Date(w.saidAtMs).toISOString(), from: w.fromMs ? new Date(w.fromMs).toISOString() : null, to: w.toMs ? new Date(w.toMs).toISOString() : null, label: w.label })), viewings: situationTimelineRec.viewings.map((v) => ({ at: new Date(v.atMs).toISOString(), type: v.type, done: v.done })), promises: situationTimelineRec.promises.filter((p) => !p.done).map((p) => ({ at: new Date(p.atMs).toISOString(), type: p.type })) } } : undefined),

@@ -673,6 +673,21 @@ async function main() {
     }
   }
 
+  // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY・統括役の物差し）: 統括の入口が選んだ「まず見る」の行が ①材料の先頭に来た割合 ②その行をブレインが使った割合（前の24時間・digest.mpr・日付で絞った軽い読み）。
+  //   あわせて入口の読みが判断に間に合った割合（digest.ci のある番）。mpr の無い日（off）は間に合った割合だけ
+  if (!only || doCandidates) {
+    try {
+      const { materialPriorityMeasures } = await import("../app/lib/material-priority");
+      const { data: dg } = await sb.from("brain_decision_logs").select("digest").gte("created_at", new Date(now - 86_400_000).toISOString()).neq("source", "test").limit(2000);
+      const ds = ((dg ?? []) as Array<{ digest: Record<string, unknown> | null }>).map((r) => r.digest ?? {});
+      if (ds.length) {
+        const ci = ds.filter((d) => typeof d.ci === "string").length;
+        const m = materialPriorityMeasures(ds);
+        lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番）: 入口の読みが間に合った ${Math.round((ci / ds.length) * 100)}%（${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
+      }
+    } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
+  }
+
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
   try {
