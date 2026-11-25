@@ -14834,3 +14834,5 @@ Claude（統括役）からの依頼2件への対応。
 - 版を上げるたびに試験3本（quiet-window・playbook-reflect・intent-wait）の版を直す罠をやめ、manifest == page-script == 見直し上限の一致を見る形にした。reset-before-fill-v2296 の正規表現も ext_behind を許す形に。新しい試験 ext-behind-v28304.test.js（17件）。
 - ⚠ 2.8.295 のまま動いている拡張にはこの案内は無い（最初の再読み込みは手動）。その間は check-playbook-sync ⑤（点検記録の ext_version）が名指しする。
 - ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook を1回・竹内さんの OK）。
+
+- 2026-11-26 反映の記録（2.8.304）: f79d2e810 を main に push（71bbf72e6..f79d2e810）→ 本番 2.8.304 を確認 → attach-playbook --apply で DB の手順書（2813/2815/2814）を決まり版 4ac198e1・96件へ（名前は前後とも 0 か所・控え C:\Users\Admin\axlx-backup-20261126-playbook-2308-304）。残り: 拡張の再読み込み（手動・今の拡張は 2.8.295 のまま）→ リアプロのタブを開き直す → 自動1回 → check-playbook-sync で ⑤ が ✅ になり playbook_seen が出るまで「反映済み」と言わない。
