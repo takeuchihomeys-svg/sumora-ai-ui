@@ -10555,7 +10555,7 @@ async function _waitAfterHumanReset(runId) {
   } catch (_) { return 0; }
 }
 var RESET_SHOT_GAP_MIN_MS = 2000;
-async function _resetShot(shotTab, runId, customerId) {
+async function _resetShot(shotTab, runId, customerId, whatLabel) {
   try {
     if (typeof _capturePaced !== "function" || typeof _sendShotNow !== "function") return "no_capture_fn";
     if (typeof chrome.permissions === "undefined" || !chrome.permissions.contains) return "no_permissions_api";
@@ -10586,7 +10586,7 @@ async function _resetShot(shotTab, runId, customerId) {
     var mode = null;
     try { mode = await _modeLabelNow(); } catch (_) {}
     var res = await _sendShotNow({
-      data_url: up, site: "realnetpro", what: "reset_verified", kind: "reset_check",
+      data_url: up, site: "realnetpro", what: whatLabel || "reset_verified", kind: "reset_check",
       shot_w: w, shot_h: h, mode: mode, run_id: runId || null, seq: 0, tab_id: shotTab.id,
     });
     return res && res.ok ? ("ok " + Math.round(String(up).length * 3 / 4 / 1024) + "KB") : ("upload_ng " + String((res && res.error) || "").slice(0, 40));
@@ -10594,7 +10594,64 @@ async function _resetShot(shotTab, runId, customerId) {
     return "error:" + String((e && e.message) || e).slice(0, 50);
   }
 }
-async function _postSendResetRealpro(customerId, auditRunId) {
+/**
+ * ★ 2.8.308 リセットの保険（reset_retry_insurance）竹内さん「止まったらスクショして画面把握してそこからもう一度できるように」:
+ *   リセットが空にならない・押せない・例外の時、すぐ従来の1つずつ外しへ行かず、1回だけ
+ *   ①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）
+ *   ③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して確かめる（reset_retry）。
+ *   それでもだめな時だけ呼び元が従来の外しへ。skipped（off/no_tab/入力の最中）・ストップ要求は何もしない。待ちは再び上限260秒を張り直す。投げない。
+ */
+async function _resetWithInsurance(customerId, runId, phase) {
+  var rr = null;
+  try { rr = await _postSendResetRealpro(customerId, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
+  if (!rr || rr.ok || rr.skipped) return rr;
+  if (_batchShouldStop) return rr;
+  var _stamp = function (k, note) {
+    try {
+      var _rid = runId || _auditOpenRunId(String(customerId), "realpro");
+      if (_rid) _auditStep(_rid, k, String(note || "").slice(0, 120));
+    } catch (_) {}
+  };
+  try {
+    var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
+    if (!_tab || !_tab.id) return rr;
+    _stamp("reset_stuck_shot", "リセットで止まった（" + String(rr.why || "-").slice(0, 50) + "）→ 画面を1枚撮って読む");
+    var _shotNote = await _withTimeout(_resetShot(_tab, runId || _auditOpenRunId(String(customerId), "realpro"), customerId, "reset_stuck"), 25000, "reset_stuck_shot");
+    _stamp("reset_stuck_shot", "撮影 " + ((_shotNote && _shotNote.__timeout) ? "時間切れ" : String(_shotNote)));
+    var _g = null;
+    try {
+      var _gr = await _withTimeout(chrome.scripting.executeScript({
+        target: { tabId: _tab.id },
+        world: "MAIN",
+        func: function (c) {
+          try {
+            if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 2500, cid: c });
+          } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+          return { ok: false, why: "no_page_fn" };
+        },
+        args: [String(customerId || "")],
+      }), 15000, "reset_stuck_grasp");
+      _g = (_gr && !_gr.__timeout && _gr[0] && _gr[0].result) || null;
+    } catch (_) { _g = null; }
+    _stamp("reset_stuck_grasp", _g ? ("ready=" + (_g.ready ? 1 : 0) + " 空=" + (_g.empty ? 1 : 0) + " 残=" + (_g.left != null ? _g.left : "?") + " " + String(_g.detail || _g.why || "").slice(0, 50)) : "読めず");
+    if (_g && _g.ok && _g.empty) {
+      _stamp("reset_stuck_recovered", "画面は空だった（確認が遅れただけ）→リセット成功");
+      return { ok: true, left: 0, reset: true, recovered: true };
+    }
+    if (_batchShouldStop) return rr;
+    if (_manualBulkAlive && phase) _bulkPhaseSet(phase, 260000, { cid: String(customerId) });
+    _quietSet("reset", 260000, { cid: String(customerId), runId: runId || null });
+    _stamp("reset_retry", "リセットをもう1回押す");
+    var rr2 = null;
+    try { rr2 = await _postSendResetRealpro(customerId, runId); } catch (e) { rr2 = { ok: false, why: "reset_exception" }; }
+    _stamp("reset_retry", (rr2 && rr2.ok) ? "2回目で空を確認" : ("2回目もだめ→従来の外しへ（" + String((rr2 && (rr2.why || rr2.skipped)) || "-").slice(0, 50) + "）"));
+    return rr2 || rr;
+  } catch (e) {
+    _stamp("reset_retry", "保険でエラー→従来の外しへ:" + String((e && e.message) || e).slice(0, 50));
+    return rr;
+  }
+}async function _postSendResetRealpro(customerId, auditRunId) {
   var _t0 = Date.now();
   var _stamp = function (k, note) {
     try {
@@ -10724,7 +10781,7 @@ function _cmpExtVer(a, b) {
  *  ★ 2.8.305 reset_replaces_clear: リセットで空と確かめられたら1つずつ外す工程は行わない（外しは、リセットが押せない・空にならない時の代わり）。 */
 async function _postSendClearOrReset(customerId, auditRunId) {
   var rr = null;
-  try { rr = await _postSendResetRealpro(customerId, auditRunId); } catch (_) { rr = { ok: false, why: "reset_exception" }; }
+  try { rr = await _resetWithInsurance(customerId, auditRunId, "post_send_clear"); } catch (_) { rr = { ok: false, why: "reset_exception" }; }
   if (rr && rr.ok) return rr;
   try {
     var _rid = auditRunId || _auditOpenRunId(String(customerId), "realpro");
@@ -10775,7 +10832,7 @@ async function _resetBeforeFill(customer, runId) {
     if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 260000, { cid: cid });
     _quietSet("reset", 260000, { cid: cid, runId: runId || null });
     var rr = null;
-    try { rr = await _postSendResetRealpro(cid, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
+    try { rr = await _resetWithInsurance(cid, runId, "pre_fill_reset"); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
     _quietClear("reset", "pre_fill_done");
     if (rr && rr.ok) _stamp("リセットで空を確認 " + Math.round((Date.now() - _t0) / 1000) + "秒");
     else _stamp("空にできず→入力の前にページ側の従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");

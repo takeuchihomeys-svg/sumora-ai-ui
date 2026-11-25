@@ -173,7 +173,8 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 2);
   await w.run(30 * 60000);
   // 2.8.296: 読み戻しは入力前の「空か」だけ（2人分）。押せないので押した後の確認は無い＝reset_verified が出ない
-  ok("3-3 ボタン無し → 従来の外し", w.postSendClearCalls === 2 && w.resetVerifyCalls === 2 && !stepKeys(w).includes("reset_verified"), w.postSendClearCalls + "/" + w.resetVerifyCalls);
+  // 2.8.308 保険: 押せない→撮って画面を読む。この模擬は画面が空と読めるので「確認が遅れただけ」＝成功（外しに落ちない）。読み戻しは 入力前2＋保険の把握2＝4回
+  ok("3-3 ボタン無し → 保険で画面を読み、空なら成功（外しは呼ばない）", w.postSendClearCalls === 0 && w.resetVerifyCalls === 4 && !stepKeys(w).includes("reset_verified") && stepKeys(w).includes("reset_stuck_recovered"), w.postSendClearCalls + "/" + w.resetVerifyCalls);
   ok("3-3 次客へ進む", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
 
   // 3-4 押した返事が来ない → 25秒で諦めて従来の外し（止まらない）
@@ -181,7 +182,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 2);
   await w.run(40 * 60000);
   ok("3-4 返事なし → 従来の外し→次客へ", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
-  ok("3-4 reset_press に理由を残す", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_fallback"));
+  ok("3-4 reset_press に理由を残す（2.8.308 保険: 画面が空と読めれば reset_stuck_recovered・外しへは落ちない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_stuck_shot") && stepKeys(w).includes("reset_stuck_recovered"));
 
   // 3-5 切り替えフラグ off → リセットを押さない（従来どおり）
   w = sim.createWorld({ customers: customers(2) });

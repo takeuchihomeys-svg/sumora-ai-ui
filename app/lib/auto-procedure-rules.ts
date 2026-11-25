@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.307";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.308";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -635,6 +635,15 @@ export const AUTO_RULES: AutoRule[] = [
     file: "background.js",
   },
   {
+    id: "reset_retry_insurance",
+    scene: "clear",
+    text: "リセットが空にならない・押せない・例外の時は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（260秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
+    since: "2.8.308",
+    kb: "f3d2c5b1",
+    marker: "_resetWithInsurance(",
+    file: "background.js",
+  },
+  {
     id: "ad_sort_hover",
     scene: "list",
     text: "検索把握のあと物件取得の前に必ずAD並べ替え: ①「並べ替え」へカーソル（クリックしない）②メニュー内の「AD」へカーソル（クリックしない・一覧のAD列は禁止）③AD右のspan.sort_detail「高→低」だけクリック。URL直禁止。カーソルはforceOneCursorで1本。印: sort_head_hover→sort_ad_hover→sort_hilo/sort_done",
@@ -994,7 +1003,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "reset_between_customers",
     scene: "clear",
-    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。さらに該当物件の数（○戸）がリセット前より増えていたら外れた証拠（2.8.289）。空でも数が増えなければ従来の1つずつ外しへ。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
+    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。該当物件の数（○戸）がリセット前より増えたかは記録（reset_count_same）だけで、空なら増えなくても成功（2.8.307）。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は、スクショと画面把握のうえリセットをもう1回押し（reset_retry_insurance）、それでもだめな時だけ従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
     since: "2.8.284",
     kb: "265a1cca",
     marker: "_postSendResetRealpro",

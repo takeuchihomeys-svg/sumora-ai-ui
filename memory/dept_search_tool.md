@@ -14859,3 +14859,11 @@ Claude（統括役）からの依頼2件への対応。
 - 試験: reset-loop-v2307.test.js（新・19本）。reset-count-evidence-v2289・reset-before-fill-v2296・search-before-sort-next-guard-v28233 を新しい決まりに合わせた。全333→334本・新しい赤0（基準の赤122は変わらず）。
 - ⚠ 実機でまだ見ていない: 拡張は 2.8.295 のまま。再読み込み後の連続で reset_verified・look_skip が出るかで確かめる。
 - ⚠ 反映待ち: 2.8.306・2.8.307 は main・DB 手順書に未反映（竹内さんの OK）。
+
+### 2026-11-26 拡張 2.8.308 — リセットの保険（reset_retry_insurance）
+- 竹内さん「リセットと並べ替えで止まったらスクショして画面把握してそこからもう一度できる保険」→ 並べ替えには有り・リセットには無かったので足した（KB f3d2c5b1）。
+- background.js _resetWithInsurance(customerId, runId, phase)（送付後 _postSendClearOrReset と入力前 _resetBeforeFill の両方）: リセットが空にならない・押せない・例外 → ①_resetShot(...,"reset_stuck")で1枚撮る（reset_stuck_shot）②__axlxResetVerifyPで画面を読む（reset_stuck_grasp）③空なら成功（reset_stuck_recovered）④空でなければ待ち上限260秒を張り直してもう1回押す（reset_retry）⑤それでもだめな時だけ従来の1つずつ外し。skipped（off/no_tab/入力中）・ストップ要求は何もしない。
+- pre_fill_reset を BULK_KICKABLE_PHASES には入れていない（待ちは上限つきで保険の中で張り直すため）。
+- 手順書 eset_retry_insurance を追加・eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
+- 試験: 新 eset-retry-insurance-v2308.test.js（17）。eset-before-fill-v2296（押す回数 1→2・正規表現）・eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
+- 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.308 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。

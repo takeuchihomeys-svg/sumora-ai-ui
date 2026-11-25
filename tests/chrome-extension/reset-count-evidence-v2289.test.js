@@ -82,7 +82,7 @@ ok("外した後が読めない（5→null）は空の確認だけ（known=false
 
 console.log("\n■ ⑤ 古い決定との整合");
 ok("入力中はリセットを押さない（従来の決まり）", /skipped: "fill_running"/.test(pressSrc));
-ok("ルール文に件数の判定が入っている", /該当物件の数（○戸）がリセット前より増えていたら/.test(rules));
+ok("ルール文に件数の判定が入っている", /該当物件の数（○戸）がリセット前より増えたかは記録/.test(rules));
 
 console.log("\n結果: " + pass + " 件OK / " + fail + " 件NG");
 if (fail > 0) process.exitCode = 1;
