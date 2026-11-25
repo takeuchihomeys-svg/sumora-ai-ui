@@ -969,7 +969,7 @@ export async function GET(req: NextRequest) {
   // 守りの時: 束の作り直しは同じ所で1本だけ（重なった要求は同じ結果を待つ）。作ってから短い間（LEARN_BUILD_MIN_GAP_MS）は作り直さない
   const builtRecently = guard && !!row && Date.now() - Date.parse(String(row.created_at ?? 0)) < LEARN_BUILD_MIN_GAP_MS;
   // ★ 2026-11-20: 営業時間は古い束を拡張の呼び出しで作り直さない（最新の束を返す・作り直しは 22:20 の cron と手動の refresh=1）
-  const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), hasBundle: !!row, forceFresh });
+  const daytimeHold = stale && holdDaytimeRebuild({ hour: jstHourNow(), minute: new Date(Date.now() + 9 * 3_600_000).getUTCMinutes(), hasBundle: !!row, forceFresh });
   if ((stale || forceFresh) && !daytimeHold && !(builtRecently && !forceFresh)) {
     try {
       // ★ 2026-11-20 作業員H（11/20 10:24〜10:38 の再起動の直後に時間切れ 181回・kix1 と iad1 の箱で作り直しが重なった）:
