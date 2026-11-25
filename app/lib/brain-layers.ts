@@ -230,7 +230,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-11-12 作業員22（KB d030d496）: 判断の順番の型の候補（check-order-wire.checkOrderDigest・meta.check_order がある番だけ）
     ...((() => { const co = checkOrderDigest(meta.check_order); return co ? { co } : {}; })()),
     // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY）: 版|mode|入口が間に合ったか|選んだキー|動かしたキー（毎朝の1枚の物差し①②の材料）
-    ...((() => { const mpr = materialPriorityDigest(meta.material_priority as Parameters<typeof materialPriorityDigest>[0]); return mpr ? { mpr } : {}; })()),
+    // 2026-11-26 作業員L（#749）: 入口を始めた秒|材料を組み終えた秒|その時に答えがあったか（記録だけ）
+    ...(((): Record<string, string> => { const o: Record<string, string> = {}; const t = meta.intake_timing as { start?: number | null; matEnd?: number; ready?: boolean } | undefined; if (t && typeof t.matEnd === "number") o.itm = `${t.start == null ? "-" : (t.start / 1000).toFixed(1)}|${(t.matEnd / 1000).toFixed(1)}|${t.ready ? 1 : 0}`; const mpr = materialPriorityDigest(meta.material_priority as Parameters<typeof materialPriorityDigest>[0]); if (mpr) o.mpr = mpr; return o; })()),
     // 2026-11-12 作業員22: 統括の指示書（conductor-brief.conductorBriefDigest・meta.conductor_brief がある番だけ）
     ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
     // 2026-11-15 作業員I: 気持ち・状況の表の当たった行と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ）

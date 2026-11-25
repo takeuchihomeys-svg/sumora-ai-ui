@@ -678,12 +678,22 @@ async function main() {
   if (!only || doCandidates) {
     try {
       const { materialPriorityMeasures } = await import("../app/lib/material-priority");
-      const { data: dg } = await sb.from("brain_decision_logs").select("digest").gte("created_at", new Date(now - 86_400_000).toISOString()).neq("source", "test").limit(2000);
-      const ds = ((dg ?? []) as Array<{ digest: Record<string, unknown> | null }>).map((r) => r.digest ?? {});
+      const { data: dg } = await sb.from("brain_decision_logs").select("conversation_id, created_at, conversation_status, digest").gte("created_at", new Date(now - 86_400_000).toISOString()).neq("source", "test").limit(2000);
+      const rowsD = (dg ?? []) as Array<{ conversation_id: string; created_at: string; conversation_status: string | null; digest: Record<string, unknown> | null }>;
+      const ds = rowsD.map((r) => r.digest ?? {});
       if (ds.length) {
+        // 2026-11-26 作業員L（#749）: 分母は入口を呼ぶ番だけ（申込以降は呼ばない決まり・最後の通がこちらの番はお客様の番でない）。会話と時刻で1件ずつの軽い読み
+        const POST = new Set(["applying", "application", "screening", "approved", "contract", "closed_won"]);
+        let elig = 0, eligCi = 0;
+        for (const r of rowsD) {
+          if (POST.has(String(r.conversation_status ?? ""))) continue;
+          const { data: lm } = await sb.from("messages").select("sender").eq("conversation_id", r.conversation_id).lte("created_at", r.created_at).order("created_at", { ascending: false }).limit(1);
+          if (((lm ?? [])[0] as { sender?: string } | undefined)?.sender !== "customer") continue;
+          elig++; if (typeof r.digest?.ci === "string") eligCi++;
+        }
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
-        lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番）: 入口の読みが間に合った ${Math.round((ci / ds.length) * 100)}%（${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
+        lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
       }
     } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
