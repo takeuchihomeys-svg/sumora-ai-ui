@@ -9,7 +9,7 @@ type Env = Record<string, string | undefined>;
 export type TlField = "words" | "viewings" | "promises" | "holds";
 export const TL_FIELDS: readonly TlField[] = ["words", "viewings", "promises", "holds"];
 type Sn = { timeline?: { words?: unknown[]; viewings?: Array<{ at: string; done?: boolean }>; promises?: Array<{ at: string }>; holds?: Array<{ at: string; done?: boolean }> } } | null | undefined;
-export type TlCount = Record<TlField, { n: number; toBrain: number; toWriter: number }>;
+export type TlCount = Record<TlField, { n: number; toBrain: number; toWriter: number; /** 2026-11-26（#466）: 書き手に渡す対象の数（無ければ n） */ nW?: number; /** 書き手への配線が off（数えない） */ wOff?: boolean }>;
 
 const jstDayStart = (ms: number) => Date.parse(new Date(ms + 9 * 36e5).toISOString().slice(0, 10) + "T00:00:00+09:00");
 
@@ -23,10 +23,11 @@ export function timelineDeliveryOf(sn: Sn, nowMs: number, env: Env = {}): TlCoun
   const day = jstDayStart(nowMs);
   const vs = tl.viewings ?? [];
   const vFuture = vs.filter((v) => Date.parse(v.at) >= day && !v.done).length;
-  out.viewings = { n: vs.length, toBrain: vFuture + Math.min(3, vs.length - vFuture), toWriter: Math.min(3, vs.filter((v) => !v.done && Date.parse(v.at) >= nowMs - 12 * 36e5).length) };
+  const vW = vs.filter((v) => !v.done && Date.parse(v.at) >= nowMs - 12 * 36e5).length;
+  out.viewings = { n: vs.length, toBrain: vFuture + Math.min(3, vs.length - vFuture), toWriter: Math.min(3, vW), nW: vW };
   const ps = tl.promises ?? []; // situation_now は済みでない物だけを残している
   const writerOn = (env.SITUATION_WRITER_TIMELINE_PROMISES ?? "").trim().toLowerCase() === "on";
-  out.promises = { n: ps.length, toBrain: Math.min(5, ps.length), toWriter: writerOn ? Math.min(3, ps.filter((p) => Date.parse(p.at) >= day).length) : 0 };
+  out.promises = { n: ps.length, toBrain: Math.min(5, ps.length), toWriter: writerOn ? Math.min(3, ps.filter((p) => Date.parse(p.at) >= day).length) : 0, wOff: !writerOn };
   const hs = tl.holds ?? [];
   out.holds = { n: hs.length, toBrain: hs.filter((h) => Date.parse(h.at) >= day && !h.done).length, toWriter: 0 };
   return out;
@@ -35,7 +36,7 @@ export function timelineDeliveryOf(sn: Sn, nowMs: number, env: Env = {}): TlCoun
 /** 番ごとの数を足す */
 export function sumTimelineDelivery(rows: ReadonlyArray<TlCount>): TlCount {
   const out = Object.fromEntries(TL_FIELDS.map((k) => [k, { n: 0, toBrain: 0, toWriter: 0 }])) as TlCount;
-  for (const r of rows) for (const k of TL_FIELDS) { out[k].n += r[k].n; out[k].toBrain += r[k].toBrain; out[k].toWriter += r[k].toWriter; }
+  for (const r of rows) for (const k of TL_FIELDS) { out[k].n += r[k].n; out[k].toBrain += r[k].toBrain; out[k].toWriter += r[k].toWriter; out[k].nW = (out[k].nW ?? 0) + (r[k].nW ?? r[k].n); if (r[k].wOff) out[k].wOff = true; }
   return out;
 }
 
@@ -47,7 +48,8 @@ export function timelineMetricRows(sum: TlCount, hours: number): Array<{ metric:
     const c = sum[k];
     if (!c.n) continue;
     out.push({ metric: `writer_link:timeline:${k}:to_brain`, scope: "reply", value: pct(c.toBrain, c.n), n: c.n, detail: { hours } });
-    out.push({ metric: `writer_link:timeline:${k}:to_writer`, scope: "reply", value: pct(c.toWriter, c.n), n: c.n, detail: { hours } });
+    // 2026-11-26 作業員L（#466）: 書き手の分母は渡す対象（内覧は 12時間前より後で済みでない物）・配線が off の欄は書き手の行を出さない（作っていない）
+    if (!c.wOff && (c.nW ?? c.n) > 0) out.push({ metric: `writer_link:timeline:${k}:to_writer`, scope: "reply", value: pct(c.toWriter, c.nW ?? c.n), n: c.nW ?? c.n, detail: { hours } });
   }
   return out;
 }

@@ -381,13 +381,15 @@ async function main() {
   if (wl) {
     growthRows.push({ metric: "growth:writer_link:brief_used", value: wl.briefRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: "統括の指示書の欄が下書きに入った割合（直近24時間）" });
     growthRows.push({ metric: "growth:writer_link:delivered", value: wl.deliverRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: "決めた事の欄が書き手の注記に届いた割合（直近24時間）" });
+    if (wl.notBuilt?.length) lines.push(`- 書き手への届きで作っていない欄（配線が無い・スイッチ off＝数えない）: ${wl.notBuilt.join("・")}（作業員L・台帳 #466）`);
     growthRows.push({ metric: "growth:writer_link:in_draft", value: wl.inDraftRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: `決めた事の欄が下書きに入った割合（直近24時間・AIX の2通目に配線のある欄 ${wl.aix2Wired}）` });
   }
   const ptrs = await pointersOfItems(sb, [469, 466]).catch(() => ({} as Record<number, number[]>));
   const growthFix: string[] = [];
   if (doMetrics) lines.push("### 伸びしろ（毎朝追う・下がった／上がらない日は直しの候補へ）");
   for (const r of growthRows) {
-    const d = needsFix(r.value, prev2(r.metric, prevDay), prev2(r.metric, prevWeek), r.n, 3, r.higherIsBetter);
+    // 2026-11-26 作業員L（#466）: 書き手への届きは番が少ない（1日 5〜8番）ので、⚠ は 10番以上の日だけ
+    const d = needsFix(r.value, prev2(r.metric, prevDay), prev2(r.metric, prevWeek), r.n, r.key === "writer_link" ? 10 : 3, r.higherIsBetter);
     lines.push(`- ${r.label}: ${r.value ?? "—"}%（${r.n ?? "—"}番）｜前の日 ${prev2(r.metric, prevDay) ?? "—"}・前の週 ${prev2(r.metric, prevWeek) ?? "—"}${d ? (d === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
