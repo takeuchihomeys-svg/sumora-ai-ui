@@ -165,6 +165,22 @@ export const CONDITION_HAND_ASK_RE = /ご希望(の|は)?(条件|エリア|地�
 export function stageBeforeApplyEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_STAGE_BEFORE_APPLY ?? "").trim().toLowerCase() !== "off"; // 2026-11-25 夜 統括役の決め: 悪化0（order 58→30・到達率の動き 2pt 以内）で既定 on。止める =off
 }
+/**
+ * 台帳 #748 ②（2026-11-26 作業員L）: 申込の時刻が初回と同じ時刻に付いた 5件（599db03e・bfde8950・e4182b70・ac34b364・5fa0e206）は、
+ *   どれもお客様の最初の通（氏名・生年月日・勤務先・住居年数 等を書いた物件探しのフォーマット）を申込フォームと読んでいた（isApplicationFormMessage が 9語で当たる）。
+ *   探す条件の語（ご希望のエリア・家賃・間取り・入居時期）があり、申し込む物件（号室・物件名）が書いていない通は、案件の申込の時刻にしない。
+ *   DEAL_APPLY_FORM_SEARCH_GUARD=on の時だけ（既定 off・記録だけ）。申込フォームの判定そのもの（ほかの機能）は変えない
+ */
+export const SEARCH_FORMAT_RE = /(?:ご)?希望(?:の)?(?:エリア|地域|駅|沿線|家賃|間取|条件)|家賃(?:の)?(?:上限|予算)|ご予算|間取り|入居(?:希望)?(?:時期|日)|お部屋探し/;
+// 5件とも「申込」の語はある（フォーマットの見出し）が、申し込む物件（号室・物件名）が無い＝申込の時刻にしない
+const APPLY_WORDING_RE = /号室|物件名|申込(?:み)?物件|お申込(?:み)?(?:の)?物件|マンション名/;
+export function isSearchFormatText(text: string | null | undefined): boolean {
+  const t = String(text ?? "");
+  return SEARCH_FORMAT_RE.test(t) && !APPLY_WORDING_RE.test(t);
+}
+export function applyFormSearchGuardEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.DEAL_APPLY_FORM_SEARCH_GUARD ?? "off").trim().toLowerCase() === "on";
+}
 export function conditionHandAskEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.DEAL_CONDITION_HAND_ASK ?? "off").trim().toLowerCase() === "on";
 }
@@ -272,6 +288,8 @@ export type DealInput = {
   clues: ReadonlyArray<DealPropertyClue>;
   /** 台帳 #742（2026-11-25 作業員L）: DEAL_STAGE_BEFORE_APPLY=on の時 true。申込より前の段は申込より前の時刻だけで決める（既定 off） */
   stageBeforeApply?: boolean;
+  /** 台帳 #748 ②: DEAL_APPLY_FORM_SEARCH_GUARD=on の時 true。物件探しのフォーマットの通を申込の時刻にしない（既定 off） */
+  applyFormSearchGuard?: boolean;
 };
 
 export type SwitchReason = "screening_rejected" | "application_cancelled" | "unknown";
@@ -368,7 +386,7 @@ export function resolveDealOutcomes(input: DealInput): DealEpisode[] {
   const ignoredApply = (t: number) => ignoredApplyRanges.some(([a, b]) => t >= a && t <= b);
 
   // 申込の印（時刻）: お客様の申込フォーム（確定）＞ 段階の変化（修理以外）＞ 修理（repair:*）の時刻（申込の時刻としては推定）
-  const formAts = msgs.filter((m) => m.sender === "customer" && isApplicationFormMessage(m.text ?? "").detected).map((m) => m.createdAt);
+  const formAts = msgs.filter((m) => m.sender === "customer" && isApplicationFormMessage(m.text ?? "").detected && !(input.applyFormSearchGuard && isSearchFormatText(m.text))).map((m) => m.createdAt);
   const histApplyAts = hist.filter((h) => isApplyingStatus(h.to_status) && !isApplyingStatus(h.from_status) && h.from_status !== WON_STATUS && !(h.trigger ?? "").startsWith("repair")).map((h) => h.changed_at);
   const repairApplyAts = hist.filter((h) => isApplyingStatus(h.to_status) && (h.trigger ?? "").startsWith("repair")).map((h) => h.changed_at);
   const screeningAts = hist.filter((h) => h.to_status === "screening").map((h) => h.changed_at);
