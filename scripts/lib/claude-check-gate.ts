@@ -3,7 +3,7 @@
 //   audit-model-split（problems.json の prodBrain × results の DeepSeek）で、物件・確認の場面の道が本番の Claude と試験の DeepSeek で 37% 食い違った。
 //   その型の問題が効く問題に入っている直しは、DeepSeek の悪化0だけで on にしない＝Claude で最大5問・1回（--stage=brain）の確かめの記録を先に置く。
 //   場面の型の表（SPLIT_SCENES）は 11/25 の晩の Claude 20問の結果で決める（今は表の形と読み口だけ・rate は未定）。
-//   関所の強さ CLAUDE_CHECK_GATE: 既定 warn（書くだけ）／on（記録が無ければ on に進めない・--force で越える）／off
+//   関所の強さ CLAUDE_CHECK_GATE: 既定 on（記録が無ければ on に進めない・--force で越える・11/26 統括役の決め）／warn（書くだけ）／off
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,7 +17,8 @@ export const SPLIT_SCENES: SplitScene[] = [
 
 export type GateMode = "off" | "warn" | "on";
 export function claudeCheckGateMode(env: Record<string, string | undefined> = process.env): GateMode {
-  const v = (env.CLAUDE_CHECK_GATE ?? "warn").trim().toLowerCase();
+  // 2026-11-26 統括役の決め: 既定 on（返信に倒す直しで効く問題に物件・確認の型があるものは、on の前に Claude で最大5問・1回・Claude の確かめは1晩 $2 まで）。戻す CLAUDE_CHECK_GATE=warn
+  const v = (env.CLAUDE_CHECK_GATE ?? "on").trim().toLowerCase();
   return v === "off" ? "off" : v === "on" ? "on" : "warn";
 }
 
@@ -56,6 +57,8 @@ export function claudeCheckTargets(eff: readonly string[], problems: ReadonlyMap
 /** Claude の確かめの組の名前（記録を探す鍵） */
 export const claudeCheckLabel = (sw: string, day: string) => `cc-${sw.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${day}`;
 /** 見込み（1問1回・Claude のブレインの段。11/25 の晩の20問の実費で直す） */
+/** Claude の確かめは1晩 $2 まで（11/26 統括役の決め） */
+export const CLAUDE_CHECK_NIGHT_CAP_USD = 2;
 export const CLAUDE_BRAIN_USD_PER_REP = 0.19; // 11/25 の晩の実費: Claude 36回 $3.01＝1問1回 約 $0.19（ブレイン 2回＋判定）
 
 /** 置き場（scripts/brain-exam/results）に、そのスイッチの Claude の確かめの行があるか */
