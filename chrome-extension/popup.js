@@ -6764,7 +6764,7 @@ document.addEventListener("DOMContentLoaded", () => {
    */
   try {
     // ★ 学習→反映: 開いたら必ず強制再取得（版スキップなし）。反映状態を画面にも出す。
-    chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (r) {
+    chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "popup_open" }, function (r) {
       if (chrome.runtime.lastError) return;
       try {
         if (r && r.ok && !r.empty) console.log("[AX] 学習束を再取得:", r.skipped || "ok", r.link || "", "read=" + (r.server_read_count != null ? r.server_read_count : "?"), "needs_auto=" + !!r.needs_auto);

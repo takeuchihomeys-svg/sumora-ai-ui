@@ -3517,7 +3517,16 @@ try {
 try {
   chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
     if (!msg) return;
-    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundleQueued(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    /**
+     * ★ 2.8.309 旧「いつも強制」＝タスク切替の関所が毎回 重い束を取りに行く穴を塞ぐ（実測: 強制は版確認を飛ばし scope=realpro/itandi を各最大40秒で取る）。
+     *   ・強制にするのは「ポップアップを開いた時（src=popup_open）と、ページ起動で束が空・古い時（src=boot_need）」だけ。
+     *   ・それ以外（検索前・タスク切替の関所）は gate 判定（更新直後・手順書欠・needs_auto 等の時だけ強制。普段は版確認だけで「取らず」）。
+     */
+    if (msg.type === "axlx-learn-refresh") {
+      var _lrP = (msg.force === true && (msg.src === "popup_open" || msg.src === "boot_need")) ? _refreshLearnedBundleQueued(true) : _learnRefreshForAutofill();
+      _lrP.then(function (r) { try { sendResponse(r); } catch (_) {} });
+      return true;
+    }
     /**
      * ★ 2.8.238: 詰まり時にリアプロタブを前へ（画面照会で tab_hidden の最善次手）
      */

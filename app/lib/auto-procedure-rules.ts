@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.308";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.309";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -644,6 +644,14 @@ export const AUTO_RULES: AutoRule[] = [
     file: "background.js",
   },
   {
+    id: "task_gate_no_forced_refetch",
+    scene: "search",
+    text: "タスクが切り替わるたびの「手順書API取り直し」（task_api_refresh）は、いつも強制で重い束を取り直さない。強制にするのはポップアップを開いた時（src=popup_open）とページ起動で束が空・古い時（src=boot_need）だけ。検索前とタスク切替の関所は gate 判定（更新直後・手順書欠・needs_auto・束が薄い時だけ強制）で、普段は版だけ確かめて「取らず」で通す。旧は受け口がページ側の force を無視して毎回 true にしており、版確認を飛ばして scope=realpro / itandi を各最大40秒で取っていた（関所は8秒で切れて先へ進むが裏の取得は走り続け、1人あたり関所が複数回・サーバーへ追い打ち）。関所の結果は task_api_refresh_res（timeout／取らず／取込）と task_transition_gate で監査に残す（2.8.309 から保持）",
+    since: "2.8.309",
+    kb: "f3d2c5b1",
+    marker: 'src === "boot_need"',
+    file: "background.js",
+  },  {
     id: "ad_sort_hover",
     scene: "list",
     text: "検索把握のあと物件取得の前に必ずAD並べ替え: ①「並べ替え」へカーソル（クリックしない）②メニュー内の「AD」へカーソル（クリックしない・一覧のAD列は禁止）③AD右のspan.sort_detail「高→低」だけクリック。URL直禁止。カーソルはforceOneCursorで1本。印: sort_head_hover→sort_ad_hover→sort_hilo/sort_done",
