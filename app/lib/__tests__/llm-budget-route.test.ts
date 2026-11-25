@@ -129,4 +129,12 @@ t("2026-11-25 2つの枠で配る（既定）: 回せる係は区切りの初め
   assert.equal(openaiWindowStart(cfg, Date.parse("2026-12-01T00:00:00Z")), "2026-11-30T15:00:00.000Z");
 });
 
+t("2026-11-25 スタッフが画面で待つ係は OpenAI に回さない（resolve_area の時間切れの直し）", () => {
+  for (const a of ["resolve_area", "suggest_next_action", "recommend_templates", "extract_estimate"]) {
+    assert.equal(budgetRoleOf(a, { claudeModel: "claude-haiku-4-5" }), null, a);
+    assert.equal(budgetDecision(a, 5, readBudgetConfig({}), { openaiUsd: 0 }).route, "claude", a);
+  }
+  assert.equal(budgetRoleOf("classify_condition", { claudeModel: "claude-haiku-4-5" }), "light", "裏の分類は今まで通り");
+});
+
 console.log(`llm-budget-route: ${n} ok`);

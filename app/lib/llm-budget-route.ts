@@ -41,6 +41,12 @@ export const LIGHT_ROUTES: ReadonlySet<string> = new Set([
 const LEARN_RE = /^(?:reply_example_learn|learn_|knowledge_bulk_judge|extract_estimate|resolve_area|classify_|aix_usage_gap_learn|aix_desk_(?:consult|command)|suggest_next_action|recommend_templates|reply_anatomy)/;
 /** お客様に届く文を書く係・画像の読み・キャッシュを温める呼び出し（案 A は Claude のまま＝OpenAI に回さない） */
 const KEEP_CLAUDE_RE = /vision|image|warm|^reply_generate|^aix_template|^property_|^final_check_revision|^aix_brain|^viewing_|^estimate_sheet|^cost_|^condition_hearing|^application_push|^followup_|^acknowledge_|^meeting_|^guarantor_|^phone_|^greeting_|^docs_request|^zenryoku_/;
+/**
+ * 2026-11-25 作業員L（本番の不具合の直し・統括役の急ぎ）: スタッフが画面で待つ係（呼ぶ側や関数の待ち時間が短い）は OpenAI に回さない＝Claude（Haiku 等）のまま。
+ *   resolve_area（物件検索の地域の読み取り・関数 30秒・呼ぶ側 property-brain/search-params）が OpenAI に回って 07:14・07:27 UTC に時間切れ 30秒が2回。
+ *   同じ形: suggest_next_action（関数 30秒・Anthropic の待ち 15秒）・recommend_templates（テンプレートの画面・関数 30秒）・extract_estimate（見積書の画面）
+ */
+export const STAFF_WAIT_ROUTES: ReadonlySet<string> = new Set(["resolve_area", "suggest_next_action", "recommend_templates", "extract_estimate"]);
 /** 名札 → 係（表に無い名札は null＝Claude のまま）。ctx.httpRoute＝リクエストの経路・ctx.claudeModel＝元の Claude のモデル */
 export function budgetRoleOf(routeName: string | null | undefined, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean; extra?: boolean } = {}): BudgetRole | null {
   const n = String(routeName ?? "").trim();
@@ -49,6 +55,7 @@ export function budgetRoleOf(routeName: string | null | undefined, ctx: { httpRo
   // 個人情報の歯止めの番の書き手だけ（ctx.piiWriter・budgetPiiToOpenAIOn の時）
   if (ctx.piiWriter && (n === "reply_generate" || n === "reply_generate_flash")) return "writer";
   if (KEEP_CLAUDE_RE.test(n)) return null;
+  if (STAFF_WAIT_ROUTES.has(n)) return null; // スタッフが画面で待つ係（短い待ち時間）
   if (n === "brain" || n.startsWith("brain_")) return /\/api\/cron\/brain-sweep/.test(String(ctx.httpRoute ?? "")) || ctx.extra ? "brain" : null;
   const haiku = /haiku/.test(String(ctx.claudeModel ?? ""));
   if (n.startsWith("conductor_")) return "conductor";
