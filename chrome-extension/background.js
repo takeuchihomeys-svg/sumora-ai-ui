@@ -2947,10 +2947,10 @@ async function _refreshLearnedBundle(force) {
             var _srvUp = (hj && hj.server_rules_up_to) ? String(hj.server_rules_up_to) : "";
             var _pbUp = (hj && hj.playbook_rules_up_to) ? String(hj.playbook_rules_up_to) : "";
             var _srvBehind = !_srvUp || _cmpExtVer(_srvUp, _extV) < 0;
-            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0;
+            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0; /* ★ 2.8.304 逆向き: 拡張が本番の最新版より古い＝再読み込みの忘れ（実測 2026-11-26: 手元 2.8.303 に対し動いていた拡張は 2.8.295）。自動では再読み込みせず、案内と記録だけ出す */ var _extBehind = !!_srvUp && _cmpExtVer(_extV, _srvUp) < 0; if (_extBehind) { try { console.warn("[learn] ⚠ 拡張が古い（ext=" + _extV + " 本番の最新=" + _srvUp + "）→ git pull のあと chrome://extensions で再読み込み"); } catch (_) {} }
             await chrome.storage.local.set({ axlx_server_state: {
               behind: !!(_srvBehind || _pbBehind), server_behind: !!_srvBehind, playbook_behind: !!_pbBehind,
-              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, at: Date.now(),
+              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, ext_behind: !!_extBehind, at: Date.now(),
             } });
             if (_srvBehind) { try { console.warn("[learn] ⚠ 本番のコードが古い（server=" + (_srvUp || "版なし") + " ext=" + _extV + "）→ 手順書は作り直しのたび古い版へ戻る。デプロイが必要"); } catch (_) {} }
             else if (_pbBehind) { try { console.warn("[learn] ⚠ 手順書が古い版で作られている（手順書=" + (_pbUp || "版なし") + " ext=" + _extV + "）→ attach-playbook が必要"); } catch (_) {} }
@@ -6209,7 +6209,7 @@ async function _manualBulkRun(o) {
         if (_bulkAudit) {
           var _ssw = await chrome.storage.local.get("axlx_server_state");
           var _ssv = _ssw && _ssw.axlx_server_state;
-          if (_ssv && _ssv.behind) {
+          if (_ssv && _ssv.ext_behind) { _auditStep(_bulkAudit.runId, "ext_behind", ("拡張が古い ext=" + (_ssv.ext || "-") + " 最新=" + (_ssv.server_up_to || "-")).slice(0, 110)); } if (_ssv && _ssv.behind) {
             _auditStep(_bulkAudit.runId, "server_behind", ((_ssv.server_behind ? "本番コード古い" : "手順書古い") + " server=" + (_ssv.server_up_to || "なし") + " pb=" + (_ssv.playbook_up_to || "なし") + " ext=" + (_ssv.ext || "-")).slice(0, 110));
           }
         }

@@ -111,7 +111,7 @@ console.log("■ ⑤ API: 軽い版確認に、手順書を作った版と本番
 
 console.log("■ ⑥ 版の結び（manifest == page-script == 手順書の見直し）");
 {
-  ok("2.8.303 で揃っている（2.8.297 の時点の版は下の比較で見る）", mf.version === "2.8.303" && /_AXLX_PAGE_VER = "2\.8\.303"/.test(ps) && /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.303"/.test(rules));
+  ok("今の版で3か所が揃っている（版を上げるたびに試験を直さない形・2.8.297 の時点の版は下の比較で見る）", /^\d+\.\d+\.\d+$/.test(mf.version) && new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && new RegExp('AUTO_RULES_REVIEWED_UP_TO = "' + mf.version.replace(/\./g, "\\.") + '"').test(rules));
 }
 
 console.log("\n" + pass + " pass / " + fail + " fail");

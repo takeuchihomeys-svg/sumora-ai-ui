@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.303";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.304";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -588,6 +588,15 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "setTimeout(go, _hd(200))",
     file: "bulk-dl.js",
+  },
+  {
+    id: "ext_behind_notice",
+    scene: "switch",
+    text: "拡張が本番の最新版より古い時（再読み込みの忘れ）は、ポップアップの上に案内を出し、客ごとの記録に ext_behind を1段残す。自動では再読み込みしない（読み込み元のファイルが最新とは限らないため）。",
+    since: "2.8.304",
+    kb: null,
+    marker: "var _extBehind =",
+    file: "background.js",
   },
   {
     id: "ad_sort_hover",

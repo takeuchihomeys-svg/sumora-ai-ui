@@ -24,6 +24,7 @@ const TESTS: Array<{ name: string; cmd: "tsx" | "node"; file: string }> = [
   { name: "区レーン", cmd: "node", file: "tests/chrome-extension/ward-lane-v2808.test.js" },
   { name: "静かな窓・版の固定（manifest == page == 手順書）", cmd: "node", file: "tests/chrome-extension/quiet-window-v2295.test.js" },
   { name: "手順書の反映（拡張が読んだか）", cmd: "node", file: "tests/chrome-extension/playbook-reflect-v2297.test.js" },
+  { name: "拡張が古い時の案内（再読み込みの忘れを見える化）", cmd: "node", file: "tests/chrome-extension/ext-behind-v28304.test.js" },
   { name: "沈黙の見張り（画面把握→次の手）", cmd: "node", file: "tests/chrome-extension/stuck-retry-bottleneck-v28272.test.js" },
   { name: "一括の流れ（前の客の後に待つ）", cmd: "node", file: "tests/chrome-extension/bulk-loop-sim-v28265.test.js" },
   { name: "リセット後の入力の待ち", cmd: "node", file: "tests/chrome-extension/reset-before-fill-v2296.test.js" },

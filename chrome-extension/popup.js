@@ -7554,3 +7554,27 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 })();
+
+/** ★ 2.8.304 拡張が本番の最新版より古い時だけ、ポップアップの上に案内を出す（再読み込みの忘れを見える化・自動では再読み込みしない）
+ *  background.js が学習の版確認のたびに axlx_server_state.ext_behind を書く。再読み込みの直後は状態が前の版のものなので、今の版と違う状態は出さない。 */
+(function () {
+  function showExtStale(st) {
+    try {
+      var el = document.getElementById("ext-stale-warn");
+      if (!el) return;
+      var cur = chrome.runtime.getManifest().version;
+      if (st && st.ext_behind && String(st.ext || "") === cur) {
+        el.textContent = "⚠ 拡張が古いです（いま " + cur + "／最新 " + (st.server_up_to || "?") + "）。git pull のあと chrome://extensions で再読み込みし、リアプロのタブを開き直してください";
+        el.style.display = "block";
+      } else {
+        el.style.display = "none";
+      }
+    } catch (_) {}
+  }
+  try {
+    chrome.storage.local.get("axlx_server_state", function (r) { showExtStale(r && r.axlx_server_state); });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "local" && ch && ch.axlx_server_state) showExtStale(ch.axlx_server_state.newValue);
+    });
+  } catch (_) {}
+})();

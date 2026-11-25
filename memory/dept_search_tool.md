@@ -14826,3 +14826,11 @@ Claude（統括役）からの依頼2件への対応。
 - 原因（実データ）: ①連動の点検が回す試験は332本中15本だけ・残り317本のうち124本が赤（古い試験が置き去り）②手元 2.8.303 に対し最後に自動を回した拡張は 2.8.295（再読込されていない）③DBの手順書は手動 attach と本番デプロイの順番待ちで毎回古くなる。
 - 追加: scripts/check-playbook-sync.ts に ①-b 上げ道（未コミット／main に入っているか）と ⑤ 拡張が実際に動いた版（search_audits.ext_version）。scripts/ext-test-all.ts（全試験・基準 tests/chrome-extension/_known-red.json より増えた赤だけ失敗・基準は縮める方向だけ）。scripts/ext-link-check.ts が両方を呼ぶ。
 - 本番は main への push で Vercel が自動デプロイ（約3分・Production）。attach-playbook は main 反映の後に1回。拡張は chrome://extensions の再読み込み＋リアプロのタブを開き直す＋自動1回までは「反映済み」と言わない。
+
+### 2026-11-26 2.8.304 拡張が古い時の案内（再読み込みの忘れを見える化）
+- 竹内さん「案内を出す」を選択（自動の再読み込みはしない）。拡張が古いまま動き続けていた（最後に動いた版 2.8.295・手元 2.8.303）のが誰にも見えなかったため。
+- background.js: 学習の版確認（?touch=0）で本番の最新版（server_rules_up_to）と自分の版を比べ、拡張が古ければ axlx_server_state.ext_behind=true・console.warn。bulk の客ごとの記録に step ext_behind を1段（search-audit.js の KEEP_STEP/RULE_STEP に ext_behind を追加）。本番が版を返さない時は判定しない。
+- popup.html に #ext-stale-warn、popup.js 末尾に案内（状態の版が今の版と違う＝再読み込みの直後は出さない）。決まり ext_behind_notice を追加（since 2.8.304・marker 'var _extBehind ='・background.js）。
+- 版を上げるたびに試験3本（quiet-window・playbook-reflect・intent-wait）の版を直す罠をやめ、manifest == page-script == 見直し上限の一致を見る形にした。reset-before-fill-v2296 の正規表現も ext_behind を許す形に。新しい試験 ext-behind-v28304.test.js（17件）。
+- ⚠ 2.8.295 のまま動いている拡張にはこの案内は無い（最初の再読み込みは手動）。その間は check-playbook-sync ⑤（点検記録の ext_version）が名指しする。
+- ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook を1回・竹内さんの OK）。
