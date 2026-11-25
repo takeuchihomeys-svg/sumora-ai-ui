@@ -61,6 +61,7 @@ function makeSilenceSandbox() {
     _driveKeepStrengthen: function () {},
     _publishTaskGrasp: function () {},
     _actBestNextFromStuck: function () {},
+    _intentWaitActive: function () { return false; }, // 2.8.299: わざとの待ちの印なし（本物の止まりの場面）
     notifyDone: function (why) { if (!done) done = { t: now, why: why }; },
   };
   vm.createContext(sb);

@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.298";
+  var _AXLX_PAGE_VER = "2.8.299";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -6880,6 +6880,40 @@ function _guideLikeAreaSkip(why) {
   function _wardRunActive() {
     try { return !!(window.__axlxWardLastAt && Date.now() - window.__axlxWardLastAt < 20000); } catch (_) { return false; }
   }
+  /**
+   * ★ 2.8.299 竹内さん「人の動きの停止の部分はあえて停止させているとちゃんと理解させる」:
+   *   人の間（迷い・一息・手を止める）は**わざと待っている**。見張り（列の20秒・沈黙135秒）がこれを
+   *   「止まり」と数えないよう、待つ前に印 window.__axlxIntentWait = {kind, ms, at, until} を立て、終わったら消す。
+   *   印がある間（予定の終わり＋3秒まで）は止まりと見なさない。予定を大きく超えた時だけ本物の止まりとして扱う。
+   */
+  function _intentWaitMark(kind, ms) {
+    try {
+      var now = Date.now();
+      var until = now + Math.max(0, Number(ms) || 0);
+      var cur = window.__axlxIntentWait;
+      if (!cur || Number(cur.until || 0) < until) {
+        window.__axlxIntentWait = { kind: String(kind || "wait").slice(0, 16), ms: Math.round(Number(ms) || 0), at: now, until: until };
+      }
+    } catch (_) {}
+  }
+  function _intentWaitActive(graceMs) {
+    try {
+      var w = window.__axlxIntentWait;
+      return !!(w && Date.now() < Number(w.until || 0) + (Number(graceMs) || 0));
+    } catch (_) { return false; }
+  }
+  function _intentWaitEnd() {
+    var w = null;
+    try { w = window.__axlxIntentWait || null; } catch (_) { w = null; }
+    var actual = w ? Math.max(0, Date.now() - Number(w.at || Date.now())) : 0;
+    try {
+      window.__axlxIntentWait = null;
+      // わざと待った分は止まりの計測から外す（動いた扱いにはしない＝やり直しの空回りは隠さない）
+      var t = Number(window.__axlxFillTouchAt) || 0;
+      if (t && actual > 0) window.__axlxFillTouchAt = Math.min(Date.now(), t + actual);
+    } catch (_) {}
+    return w ? { kind: w.kind, planned: w.ms, actual: actual } : null;
+  }
   function _longPauseDue(item) {
     /**
      * ★ 2026-11-18 竹内さん「今回天王寺区を押して外して一瞬止まってしまった」:
@@ -6950,9 +6984,14 @@ function _guideLikeAreaSkip(why) {
     }
     var pause = _longPauseDue(item);
     if (pause > 0) {
-      try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（人が手を止めた）'); } catch (_) {}
+      try { _auditStepP('fill_pause', Math.round(pause / 1000) + '秒（わざと止める・人の間＝止まりではない）'); } catch (_) {}
+      _intentWaitMark("fill_pause", pause);
       var _startAfterPause = function () {
-        try { _auditStepP('fill_resume', '止まった後に再開'); } catch (_) {}
+        var _iw = _intentWaitEnd();
+        try {
+          _auditStepP('fill_resume', 'わざと止めた後に再開 予定' + Math.round(pause / 1000) + '秒・実際'
+            + (_iw ? Math.round(_iw.actual / 1000) : '?') + '秒');
+        } catch (_) {}
         _scheduleClickDrain();
       };
       /**
@@ -6979,7 +7018,7 @@ function _guideLikeAreaSkip(why) {
        */
       setTimeout(function () {
         if (_pauseSettled) return;
-        try { _auditStepP('fill_pause_force', Math.round(pause / 1000) + '秒の停止が15秒超え→次へ'); } catch (_) {}
+        try { _auditStepP('fill_pause_force', 'わざとの停止' + Math.round(pause / 1000) + '秒が予定を15秒超えた（本物の止まり）→次へ'); } catch (_) {}
         _endPause();
       }, pause + 15000);
       if (P0 && P0.drift) { P0.drift(pause).then(_endPause, _endPause); }
@@ -7042,6 +7081,7 @@ function _guideLikeAreaSkip(why) {
       } catch (_) { _wardTgt = null; }
     }
     var _planned = item.gap + hesitate, _setAt = Date.now();
+    _intentWaitMark(hesitate > 0 ? "hesitate" : "gap", _planned);
     if (hesitate > 0) { try { _tmarkHesitate(item.label, hesitate); } catch (_) {} }
     // 2026-11-10 v2.6.2 竹内さん「人間が迷いながらマウスもまよったりしながら考えながら入力していく」:
     //   迷う時は、まず**カーソルをその要素へ動かしてから漂わせる**（迷っている間に手が漂う形）。
@@ -7050,6 +7090,7 @@ function _guideLikeAreaSkip(why) {
     var _startClick = function () {
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
+      _intentWaitEnd();
       /**
        * ★ 2026-11-17 統括Pro「aim無／learn_warm=0」:
        *   積んだ時点で束が未温だと aim無のまま押す。押す直前に再引きする。
@@ -7792,6 +7833,7 @@ function _guideLikeAreaSkip(why) {
       // 2026-11-10 v2.6.8: 「忙しい物が変わった時」だけ時計を戻す（同じ物のままなら止まったまま）
       var cur = _clickBusyItem ? String(_clickBusyItem.label || '?') : null;
       if (_holdingPause) { _lastQueueProgressAt = Date.now(); _lastBusyLabel = null; return; }
+      if (_intentWaitActive(3000)) { _lastQueueProgressAt = Date.now(); return; }
       if (!_clickBusyItem) { _lastQueueProgressAt = Date.now(); _lastBusyLabel = null; return; }
       if (cur !== _lastBusyLabel) { _lastBusyLabel = cur; _lastQueueProgressAt = Date.now(); return; }
       if (Date.now() - _lastQueueProgressAt < 20000) return;
@@ -8533,6 +8575,11 @@ function _guideLikeAreaSkip(why) {
       try { touchAt = Number(window.__axlxFillTouchAt) || 0; } catch (_) { touchAt = 0; }
       var idleMs = touchAt ? (Date.now() - touchAt) : 999999;
       // 最後の動きから135秒（120〜150秒のあいだ）空くまで、止まりとは見ない
+      // ★ 2.8.299: わざとの待ち（人の間）の最中は止まりと数えない
+      if (_intentWaitActive(3000)) {
+        _silenceNoProgTicks = 0;
+        return;
+      }
       if (idleMs < AXLX_STUCK_IDLE_MS) {
         _silenceNoProgTicks = 0;
         _silenceTaskAdvanced = false;
@@ -8554,7 +8601,8 @@ function _guideLikeAreaSkip(why) {
         _probe0 = (typeof _clickQueue !== "undefined" ? _clickQueue.length : "?")
           + "/" + (typeof _clickBusyItem !== "undefined" && _clickBusyItem ? String(_clickBusyItem.label || "?").slice(0, 26) : "-")
           + "/pause" + (typeof _holdingPause !== "undefined" && _holdingPause ? 1 : 0)
-          + "/hid" + (document.hidden ? 1 : 0);
+          + "/hid" + (document.hidden ? 1 : 0)
+          + "/iw" + (window.__axlxIntentWait ? String(window.__axlxIntentWait.kind || "?").slice(0, 10) : "-");
       } catch (_) { _probe0 = "x"; }
       try { _forceAuditStepsFlush("silence_tick_pre"); } catch (_) {}
       try {

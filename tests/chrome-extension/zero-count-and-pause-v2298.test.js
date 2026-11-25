@@ -97,9 +97,9 @@ ok("rows0 の待ちから 0件確認を呼んでいる", /if \(_zeroCount0Check\
 // ── ② 入力停止: 停止の安全弁と点検の印（page-script.js）──
 console.log("■ ② 入力停止（停止の安全弁＋止まった時の点検）");
 ok("停止の終わりは1回だけ（_pauseSettled）", /var _pauseSettled = false;[\s\S]{0,260}if \(_pauseSettled\) return;\s*_pauseSettled = true;/.test(ps));
-ok("pause＋15秒で必ず次へ（fill_pause_force の印つき）", /setTimeout\(function \(\) \{\s*if \(_pauseSettled\) return;[\s\S]{0,200}fill_pause_force[\s\S]{0,120}\}, pause \+ 15000\);/.test(ps));
+ok("pause＋15秒で必ず次へ（fill_pause_force の印つき）", /setTimeout\(function \(\) \{\s*if \(_pauseSettled\) return;[\s\S]{0,200}fill_pause_force[\s\S]{0,260}\}, pause \+ 15000\);/.test(ps));
 ok("止まった時の点検に列の状態（q=…）を残す", /_probe0 = \(typeof _clickQueue/.test(ps) && /\+ " q=" \+ _probe0/.test(ps));
-ok("版 2.8.298 が page-script に入っている", /_AXLX_PAGE_VER = "2\.8\.298"/.test(ps));
+ok("版 2.8.298 以降が page-script に入っている", /_AXLX_PAGE_VER = "2\.8\.(298|299|3\d\d)"/.test(ps));
 
 console.log("");
 console.log("結果: " + pass + " 件 OK / " + fail + " 件 NG");
