@@ -3,7 +3,7 @@
 //   古い時は、前に読んだ一番新しい id より後の行だけ足す（最初の1回だけ数え始めの時刻から全部）。読めない時は null（＝Claude のまま）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { claudeUsageUsd, altUsageUsd } from "./llm-price";
-import { readBudgetConfig, spendWindowStart, claudeMonthSpendUsd, budgetDecision, type BudgetDecision } from "./llm-budget-route";
+import { readBudgetConfig, spendWindowStart, claudeMonthSpendUsd, budgetDecision, budgetRoleOf, type BudgetDecision } from "./llm-budget-route";
 
 export const BUDGET_CACHE_MS = 5 * 60_000;
 type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number };
@@ -61,10 +61,18 @@ export async function claudeSpendNow(sb: SupabaseClient, nowMs = Date.now(), env
 }
 
 /** 名札の振り分け（off の時は DB を読まない） */
-export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<BudgetDecision> {
+export async function budgetDecisionFor(sb: SupabaseClient, routeName: string | null, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, ctx: { httpRoute?: string | null; claudeModel?: string | null } = {}): Promise<BudgetDecision> {
   const cfg = readBudgetConfig(env);
-  if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg);
-  return budgetDecision(routeName, await claudeSpendNow(sb, nowMs, env), cfg);
+  if (cfg.mode === "off" || cfg.switchAtUsd == null) return budgetDecision(routeName, null, cfg, ctx);
+  // 表に無い名札は DB を読まない（Claude のまま）
+  if (!budgetRoleOf(routeName, ctx)) return budgetDecision(routeName, null, cfg, ctx);
+  const s = await monthSums(sb, nowMs, env);
+  const spend = s ? claudeMonthSpendUsd(cfg, { useBase: spendWindowStart(cfg, nowMs).useBase, sinceUsd: s.claudeUsd }) : null;
+  return budgetDecision(routeName, spend, cfg, { ...ctx, partial: !!s?.partial });
+}
+/** 2026-11-25: 今のリクエストの経路（"/api/cron/brain-sweep" 等・Next の作業情報・取れなければ null） */
+export async function httpRouteNow(): Promise<string | null> {
+  try { const mod = await import("next/dist/server/app-render/work-async-storage.external"); return ((mod as unknown as { workAsyncStorage?: { getStore(): { route?: string } | undefined } }).workAsyncStorage?.getStore()?.route) ?? null; } catch { return null; }
 }
 
 export function resetBudgetCache(): void { cache = null; }
