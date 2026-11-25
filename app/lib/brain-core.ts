@@ -3335,6 +3335,18 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       console.log(JSON.stringify({ tag: "brain:check-promise-flow", conversationId, scene: flow.scene, brought24h: flow.brought24h, promised: flow.checkPromised, resultSent: flow.resultSent }));
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "check-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
+  // 2026-11-26 作業員A（竹内さんの決め 11/26・BRAIN_PICKUP_PROMISE_FLOW=on の時だけ・既定 off）: 探す約束の後のお礼だけの番に、送れる候補の有無と竹内さんの決めの1行
+  let pickupFlowMarkLen = 0;
+  try {
+    const ppf = await import("@/app/lib/pickup-promise-flow");
+    if (ppf.brainPickupPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
+      const { count: pendN } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending");
+      const pf = ppf.pickupPromiseFlowOf(brainLedgerInput.messages as never, (brainLedgerInput.recentAixRows ?? []) as never, typeof pendN === "number" ? pendN : null, Date.now());
+      const ln = ppf.pickupPromiseFlowLine(pf);
+      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; pickupFlowMarkLen = ln.length; }
+      console.log(JSON.stringify({ tag: "brain:pickup-promise-flow", conversationId, scene: pf.scene, pending: pf.pending, promised: pf.promised, fulfilled: pf.fulfilled }));
+    }
+  } catch (e) { console.warn(JSON.stringify({ tag: "pickup-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
   if (briefOnNow) {
     try {
       const el = await import("@/app/lib/exchange-ledger");
@@ -3657,7 +3669,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   const materialMarks: Record<string, number> = {};
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
-  if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen; // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
+  if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
+  if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
