@@ -42,10 +42,12 @@ const LEARN_RE = /^(?:reply_example_learn|learn_|knowledge_bulk_judge|extract_es
 /** お客様に届く文を書く係・画像の読み・キャッシュを温める呼び出し（案 A は Claude のまま＝OpenAI に回さない） */
 const KEEP_CLAUDE_RE = /vision|image|warm|^reply_generate|^aix_template|^property_|^final_check_revision|^aix_brain|^viewing_|^estimate_sheet|^cost_|^condition_hearing|^application_push|^followup_|^acknowledge_|^meeting_|^guarantor_|^phone_|^greeting_|^docs_request|^zenryoku_/;
 /** 名札 → 係（表に無い名札は null＝Claude のまま）。ctx.httpRoute＝リクエストの経路・ctx.claudeModel＝元の Claude のモデル */
-export function budgetRoleOf(routeName: string | null | undefined, ctx: { httpRoute?: string | null; claudeModel?: string | null } = {}): BudgetRole | null {
+export function budgetRoleOf(routeName: string | null | undefined, ctx: { httpRoute?: string | null; claudeModel?: string | null; piiWriter?: boolean } = {}): BudgetRole | null {
   const n = String(routeName ?? "").trim();
   if (!n) return null;
   if (n.endsWith("_claude")) return null; // 名前で Claude に固定した部品
+  // 個人情報の歯止めの番の書き手だけ（ctx.piiWriter・budgetPiiToOpenAIOn の時）
+  if (ctx.piiWriter && (n === "reply_generate" || n === "reply_generate_flash")) return "writer";
   if (KEEP_CLAUDE_RE.test(n)) return null;
   if (n === "brain" || n.startsWith("brain_")) return /\/api\/cron\/brain-sweep/.test(String(ctx.httpRoute ?? "")) ? "brain" : null;
   const haiku = /haiku/.test(String(ctx.claudeModel ?? ""));
@@ -75,6 +77,13 @@ const numOr = (v: string | undefined, d: number | null): number | null => {
   return Number.isFinite(n) ? n : d;
 };
 export const CLAUDE_SWITCH_AT_USD_DEFAULT = 316.71;
+/**
+ * 2026-11-25 竹内さんの決め（11/25 昼）「申込以降や審査関係も OpenAI に回って大丈夫」（OpenAI の共有＝学習は無効にした）: 線を超えている間、
+ *   個人情報の歯止めで Claude にしていた番（申込以降・時刻の線・審査の事情・申込の値）を OpenAI に回す。DeepSeek には今まで通り回さない（この口は OpenAI だけ）。
+ *   既定 on・LLM_BUDGET_PII_TO_OPENAI=off で今の「Claude のまま」に戻る。書き手（reply_generate）はこの番だけ OpenAI の書き手の版（Sol medium＋v2-note）
+ */
+export const budgetPiiToOpenAIOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.LLM_BUDGET_PII_TO_OPENAI ?? "").trim().toLowerCase() !== "off";
+export const BUDGET_PII_WRITER_PROFILE = "openai-writer-v2-note-med";
 export const CLAUDE_SPEND_BASE_USD_DEFAULT = 291.71;
 export const CLAUDE_SPEND_BASE_AT_DEFAULT = "2026-11-24T01:19:00Z";
 export function readBudgetConfig(env: Env = typeof process !== "undefined" ? process.env : {}): BudgetConfig {
@@ -125,7 +134,7 @@ export function claudeMonthSpendUsd(cfg: Pick<BudgetConfig, "baseUsd" | "factor"
 export type BudgetDecision = { route: "claude" | "openai"; role: BudgetRole | null; model: string | null; fallbackToClaude: boolean; reason: string; shadow: boolean };
 
 /** 係ごとの振り分け（mode が off・線が無い・表に無い名札・線の手前は Claude） */
-export function budgetDecision(routeName: string | null | undefined, spendUsd: number | null, cfg: BudgetConfig, ctx: { httpRoute?: string | null; claudeModel?: string | null; partial?: boolean } = {}): BudgetDecision {
+export function budgetDecision(routeName: string | null | undefined, spendUsd: number | null, cfg: BudgetConfig, ctx: { httpRoute?: string | null; claudeModel?: string | null; partial?: boolean; piiWriter?: boolean } = {}): BudgetDecision {
   const role = budgetRoleOf(routeName, ctx);
   const claude = (reason: string): BudgetDecision => ({ route: "claude", role, model: null, fallbackToClaude: true, reason, shadow: false });
   if (cfg.mode === "off") return claude("LLM_BUDGET_ROUTE=off");
