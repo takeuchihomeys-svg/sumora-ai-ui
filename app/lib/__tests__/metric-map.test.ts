@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { SET_ASIDE_MISS, jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { SET_ASIDE_MISS, countVersionLine, COUNT_VERSION, jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
 import { pickupUnderstandTurnsOf, pickupUnderstandSummaryOf } from "../pickup-understand-map";
@@ -70,6 +70,7 @@ t("covers は段の区切りで", covers(`${R}/kind=a`, `${R}/kind=a/scene=b`) &
   t("端末の番: ④スタッフだけが知る結果（前の約束・お礼・20分以上後）は staff_only・早い番と問いの番は外れのまま", dt3[0].miss === "staff_only" && dt3[1].miss === "reply_not_aix" && dt3[2].miss === "reply_not_aix" && SET_ASIDE_MISS.has("staff_only"));
   const dt4 = deviceTurnsOf([{ id: 8, cls: "two_stage", tk: "property_check_result", v: "先後", bk: "property_check_result", cpf: "ack_wait" }, { id: 9, cls: "aix_first", tk: "property_check_result", v: "AIXの番を返信", prevPromise: ["property_check_result"], minDecToAix: 200, burst: "thanks", cpf: "ack_wait" }], new Map());
   t("端末の番: 竹内さんの決め①の場面（ack_wait）の先後は決定で改めた・物件確認した はスタッフだけが知る結果に分けない", dt4[0].miss === "decided" && dt4[1].miss === "reply_not_aix");
+  t("数え方の版: 前の日と違えば印・同じ・前の日が無い時は出さない", countVersionLine(null, COUNT_VERSION["route:next_match_60d"], true).includes("数え方の版が変わった") && countVersionLine("v2", "v2", true) === "" && countVersionLine(null, "v2", false) === "");
   t("端末の番: 2段の約束を書いた先後は two_stage_draft・分けて外す", dt2[0].miss === "two_stage_draft" && dt2[0].cause === null && dt2[1].miss === "order" && SET_ASIDE_MISS.has("two_stage_draft"));
   const rt = routeTurnsOf([{ conv: "a", at: "1", node: "pickup", branch: null, agree: "promise_match", dir: "promise" }, { conv: "a", at: "2", node: "pickup", branch: null, agree: "push_missed", dir: "promise" }, { conv: "b", at: "3", node: "hearing", branch: "viewing_lapsed", agree: "pushed_off_map", dir: "forward", nextAix: [] }]);
   const rtree = buildTree(rt, { metric: "route:next_match_60d", label: "r", dims: ["station", "miss", "cause"] });

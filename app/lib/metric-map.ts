@@ -120,6 +120,18 @@ export type MapRootDef = {
   /** metric を前方一致の名前の束として読む（欄ごとの数がまとめて増える根） */
   prefix?: boolean;
 };
+/**
+ * 2026-11-25 作業員A（統括役の頼み）: 根ごとの数え方の版。数え方を変えた日に書き足す（毎朝の1枚で前の日と版が違えば「数え方の版が変わった」と出す・数の detail.count_version に残す）
+ */
+export const COUNT_VERSION: Record<string, string> = {
+  "route:next_match_60d": "v2 11/25 同じ一手の仲間の AIX（束⇄1件・持ち込みの見積書）を合うに",
+  "aix_turn:match_60d_device": "v2 11/25 分けて外す型に 2段の約束・スタッフだけが知る結果・確認の約束の流れの決め",
+};
+/** 前の日の版と今の版から、毎朝の1枚の1行（変わっていない・前の版が分からない時は ""） */
+export function countVersionLine(prev: string | null | undefined, cur: string | null | undefined, hasPrevDay: boolean): string {
+  if (!hasPrevDay || (prev ?? null) === (cur ?? null)) return "";
+  return `- ⚠ 数え方の版が変わった（${prev ?? "前の版"} → ${cur ?? "版なし"}）＝前の日の数とそのまま比べない`;
+}
 /** 根の表（数の名前と割り方）。数え方は出所のスクリプトと同じ物だけを置く */
 export const MAP_ROOTS: MapRootDef[] = [
   // 2026-11-23 統括役（2回目）: 主は端末の版（下の aix_turn:match_60d_device）。文の癖の版は「並べて見る」用

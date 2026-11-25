@@ -13,7 +13,7 @@ import { weakStationHolesOf } from "./hole-reach-weekly";
 import {
   MAP_ROOTS, rootOf, covers, buildTree, sumMismatches, rankLeaves, leavesOf, forecastVerdictOf, dueChecksOf, gapCauseHintOf, sceneOfWatchKey, relatedFoundationOf, ownerOfLeaf,
   itemsForRoot, rebaseKey, deviceTurnsOf, routeTurnsOf, holesOf, decidedTurnIdsOf, decidedRouteIdxOf, routeProgressTurnsOf, closingTurnsOf, promiseMapTurnsOf, jsonTurnsOf, conductorReachOf, type LinkageStatus, sideOf, deviceMoveRowOf, type SideMark, leafJa, missBreakdownOf, BROUGHT_SHAPE_RE, fixedSinceOf, ackPlusCheckPromiseOf, type DeviceTurnRow, type RouteTurnRow,
-  MAP_CAUSE_JA, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
+  MAP_CAUSE_JA, COUNT_VERSION, countVersionLine, type MapNode, type MapRootDef, type MapTurn, type ForecastItem, type RankedLeaf, type WriterSelect, type MapCause,
 } from "../../app/lib/metric-map";
 
 export const jstDay = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
@@ -374,6 +374,13 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       fix.push(`地図の穴: ${h.key}（外れ ${h.misses}・作業も見込みも無い・統括に届いているか ${reach}${rr.cutRows?.length ? `・切れている材料 ${rr.cutRows.slice(0, 3).join("・")}` : ""}）→ 持ち主の案 ${own.owner}（${own.why}）`);
       holes.push({ title: `地図の穴: ${h.key}`, owner: own.owner, reach, misses: h.misses, next: `外れ ${h.misses}/${h.n}・${h.reasons?.length ? `弱い駅（${h.reasons.join("・")}）` : "作業も見込みも無い葉"}（台帳 #610 の地図）・持ち主の案 ${own.owner}（${own.why}）・統括に届いているか ${reach} → 外れの番を実物で読み、原因の4つで直しを作る` });
     }
+    // 2026-11-25 作業員A（統括役の頼み）: 前の日の数と数え方の版が違えば印の1行（数の detail.count_version）
+    try {
+      const { data: pv } = await sb.from("quality_daily").select("day,detail").eq("metric", `map:${def.metric}:value`).eq("scope", "all").lt("day", day).order("day", { ascending: false }).limit(1);
+      const prevRow = (pv ?? [])[0] as { detail?: { count_version?: string | null } | null } | undefined;
+      const vl = countVersionLine(prevRow?.detail?.count_version ?? null, COUNT_VERSION[def.metric] ?? null, !!prevRow);
+      if (vl) lines.push(vl);
+    } catch { /* 版の印は読めなくても1枚は出す */ }
     if (built && o.write) await writeTree(sb, day, def, nodes, ranked, foundRows);
     // 測れなかった番（台本が数を出す根だけ）: 割合の分母に入っていない番を並べて出す
     const meta = def.builder && JSON_SOURCES[def.builder] ? jsonMeta.get(JSON_SOURCES[def.builder]) : undefined;
@@ -381,7 +388,7 @@ export async function mapDaily(sb: SupabaseClient, o: { now?: number; write?: bo
       lines.push(`- 測れなかった番（判断の記録に今の状況が無い・割合に入れていない）: ${meta.unmeasured}${meta.takeuchi_turns != null ? `/${meta.takeuchi_turns}番` : "番"}`);
       qd.push({ day, metric: `map:${def.metric}:unmeasured`, scope: "all", value: meta.unmeasured, n: meta.takeuchi_turns ?? null });
     }
-    qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built } },
+    qd.push({ day, metric: `map:${def.metric}:value`, scope: "all", value, n, detail: { writer_select: def.writerSelect, built, count_version: COUNT_VERSION[def.metric] ?? null } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: nodes.length },
       { day, metric: `map:${def.metric}:holes`, scope: "all", value: hs.length, n: ranked.length },
       { day, metric: `map:${def.metric}:hold`, scope: "all", value: ranked.filter((r) => r.hold).length, n: ranked.length },

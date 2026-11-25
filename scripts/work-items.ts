@@ -319,7 +319,7 @@ async function cmdMapBuild() {
     const day = m.jstDay(Date.now());
     const w = await m.writeTree(db, day, def, t.nodes, ranked);
     const qd = [
-      { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop() } },
+      { day, metric: `map:${def.metric}:value`, scope: "all", value: t.value, n: t.n, detail: { writer_select: def.writerSelect, built: true, from_json: arg("json").split(/[\\/]/).pop(), count_version: (await import("../app/lib/metric-map")).COUNT_VERSION[def.metric] ?? null } },
       { day, metric: `map:${def.metric}:sum_mismatch`, scope: "all", value: bad.length, n: t.nodes.length },
       { day, metric: `map:${def.metric}:decided`, scope: "all", value: decN, n: t.n, detail: { turns: Object.fromEntries(t.decided) } },
       { day, metric: `map:${def.metric}:minority`, scope: "all", value: minN, n: t.n, detail: { turns: Object.fromEntries(t.minority) } },
