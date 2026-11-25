@@ -76,7 +76,7 @@ console.log("promise-drop-watch: ok");
 
 // 2026-11-21 作業員N（B1）と共有の決まり
 import { promiseKindNameOf, promiseDeadlineMs, promiseFulfilledBy, promiseClosedConversation, PROMISE_KIND_NAMES } from "../promise-drop-watch";
-assert.deepEqual([...PROMISE_KIND_NAMES], ["pickup", "check", "estimate", "viewing_slot", "callback", "other"]);
+assert.deepEqual([...PROMISE_KIND_NAMES], ["pickup", "check", "estimate", "viewing_slot", "callback", "other", "contact", "negotiate"]);
 assert.equal(promiseKindNameOf("最大限割引した御見積書作成させて頂きます！！"), "estimate");
 assert.equal(promiseKindNameOf("折り返しお電話させて頂きます！！"), "callback");
 assert.equal(promiseKindNameOf("内覧の候補日確認させて頂きます！！"), "viewing_slot");

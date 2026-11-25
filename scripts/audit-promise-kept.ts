@@ -128,7 +128,7 @@ async function main() {
   console.log(`信頼の土台 B1 約束を期限内に果たした割合（${days}日・会話 ${convs.length}/${convSet.size}・主は全体・書き手別も）`);
   line("全体", rows);
   for (const w of ["takeuchi", "employee", "unknown"]) line(`書き手 ${w}`, rows.filter((r) => r.writer === w));
-  for (const k of ["pickup", "check", "estimate", "viewing_slot", "callback", "other"] as const) line(`種類 ${k}`, rows.filter((r) => r.kind === k));
+  for (const k of ["pickup", "check", "estimate", "viewing_slot", "callback", "other", "contact", "negotiate"] as const) line(`種類 ${k}`, rows.filter((r) => r.kind === k));
   for (const b of ["words", "default72h"] as const) line(`期限 ${b}`, rows.filter((r) => r.deadlineBy === b && r.state !== "n/a"));
   for (const sc of [...MAIN_SCENES, "少数", "番なし"]) line(`場面 ${sc}`, rows.filter((r) => r.scene === sc));
   const over = rows.filter((r) => r.state === "overdue").sort((a, b) => a.at.localeCompare(b.at));

@@ -652,6 +652,15 @@ async function main() {
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
     }
   }
+  // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
+  if (!only || doCandidates) {
+    const { data: pl0 } = await sb.from("quality_daily").select("day, metric, value").eq("scope", "all").like("metric", "promise_life:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
+    const pl = ((pl0 ?? []) as Array<{ day: string; metric: string; value: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (pl.length) {
+      const g = (k: string) => { const r = pl.find((x) => x.metric === `promise_life:${k}`); return r?.value == null ? "—" : `${Number(r.value)}%`; };
+      lines.push(`- 約束の一生（${pl[0].day}）: 見つけるの外れ ${g("find_miss")}・文に期限 ${g("due_words")}・台帳 ${g("record_fact")}・期限内に果たした ${g("kept_in_time")}・閉じた時刻 ${g("closed_with_time")}・試験の約束の依頼の扱い ${g("exam_promise_covered")}（答え方 ${g("exam_promise_route")}）`, "");
+    }
+  }
   // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
   //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
   if (!only || doCandidates) {
@@ -670,8 +679,12 @@ async function main() {
     const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig, spendWindowStart, claudeMonthSpendUsd }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
     resetBudgetCache();
     // 2026-11-25 作業員L（統括役の頼み）: 月の全部の行を読む（前は 50頁＝5万行で止まり $142 と出た・audit-llm-month-cost は $291）。基準（CLAUDE_SPEND_BASE_*）も本番と同じ式で足す
-    const bc = readBudgetConfig(process.env);
-    const ms = await monthSums(sb as never, now, process.env, { maxPages: 500 });
+    // 2026-11-25 18:43 の 1枚で「LLM_BUDGET_ROUTE=off・Claude 142.29」と出た（手元の env で読んだ）→ 使用額と切り替えの名前は本番のスイッチの組（prod-env.json）で読む
+    const { budgetEnvFrom, readBudgetProdEnv } = await import("./lib/budget-prod-env");
+    const pe = readBudgetProdEnv();
+    const be = budgetEnvFrom(process.env, pe?.env ?? null);
+    const bc = readBudgetConfig(be.env);
+    const ms = await monthSums(sb as never, now, be.env, { maxPages: 500 });
     if (ms) {
       const ls = [
         monthSpendLine({ provider: "Claude", spendUsd: claudeMonthSpendUsd(bc, { useBase: spendWindowStart(bc, now).useBase, sinceUsd: ms.claudeUsd }), creditUsd: bc.claudeCreditUsd, nowMs: now }),
@@ -682,7 +695,7 @@ async function main() {
         ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
         // 2026-11-25 統括役の頼み: 本番（route が script: でない）と試験を分けて出す（前は混ぜて「本番のブレインは DeepSeek」と読み違えた）
         `- うち本番（試験を除く）: Claude ${(ms.prod?.claudeUsd ?? 0).toFixed(2)}・OpenAI ${(ms.prod?.openaiUsd ?? 0).toFixed(2)}・DeepSeek ${(ms.prod?.deepseekUsd ?? 0).toFixed(2)}／試験: Claude ${(ms.claudeUsd - (ms.prod?.claudeUsd ?? 0)).toFixed(2)}・OpenAI ${(ms.openaiUsd - (ms.prod?.openaiUsd ?? 0)).toFixed(2)}・DeepSeek ${(ms.deepseekUsd - (ms.prod?.deepseekUsd ?? 0)).toFixed(2)}（Claude は基準より後の行だけ）`,
-        `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}`);
+        `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}（${be.from === "prod" ? `本番のスイッチの組 ${pe?.hash.slice(0, 8)}・無い名前はコードの既定` : "⚠ 本番の控えが無く手元の env"}${be.dropped.length ? `・手元の env と違うので捨てた: ${be.dropped.join(" ")}` : ""}）`);
       for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
     }
   } catch (e) { console.warn("[self-improve] API の使用額を読めない:", e instanceof Error ? e.message : String(e)); }

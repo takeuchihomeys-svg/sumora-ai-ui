@@ -114,7 +114,7 @@ const STOP_STATUS = new Set(["applying", "application", "screening", "approved",
 
 // ─── 2026-11-21 作業員N（信頼の土台 B1・約束を期限内に果たした割合）と線をそろえた共有の決まり ───
 /** 約束の種類の名前（B1 と #435 で同じ文字列）。果たした判定ができるのは pickup・check・estimate だけ */
-export const PROMISE_KIND_NAMES = ["pickup", "check", "estimate", "viewing_slot", "callback", "other"] as const;
+export const PROMISE_KIND_NAMES = ["pickup", "check", "estimate", "viewing_slot", "callback", "other", "contact", "negotiate"] as const;
 export type PromiseKindName = typeof PROMISE_KIND_NAMES[number];
 export const PROMISE_KIND_JUDGEABLE: ReadonlySet<PromiseKindName> = new Set<PromiseKindName>(["pickup", "check", "estimate"]);
 /** こちらの手打ちの文の約束の種類（約束でなければ null）。新着を随時は期日が無いので null */
@@ -129,6 +129,7 @@ export function promiseKindNameOf(text: string, env?: Env): PromiseKindName | nu
   if (/(?:折り返し|改めて)(?:お電話|ご連絡のお電話)させて頂|お電話させて頂/.test(t)) return "callback";
   if (promiseKindWideOn(env)) { const w = promiseWideKindOf(t); if (w) return w; }
   if (promiseKindWide2On(env)) { const w2 = promiseWide2KindOf(t); if (w2) return w2; }
+  if (promiseContactKindOn(env)) { const c = promiseContactKindOf(t); if (c) return c; }
   if (/させて頂きます/.test(t) && /(?:確認|お調べ|お送り|ご連絡)/.test(t)) return "other";
   return null;
 }
@@ -193,7 +194,8 @@ export function narrowCheckObject(promiseText: string | null | undefined, checkO
   if (!obj || VACANCY_OBJ_RE.test(obj) || PARTY_OBJ_RE.test(obj)) return null;
   return obj;
 }
-export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName; text?: string | null }, ev: PromiseEvidence, o: { checkObjectOf?: CheckObjectOf } = {}): { by: string; at: string } | null | "n/a" {
+export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName; text?: string | null }, ev: PromiseEvidence, o: { checkObjectOf?: CheckObjectOf; env?: Env } = {}): { by: string; at: string } | null | "n/a" {
+  if (promise.kind === "contact" || promise.kind === "negotiate") return promiseContactKindOn(o.env) ? promiseContactFulfilledBy({ at: promise.at, kind: promise.kind }, ev) : "n/a";
   if (!PROMISE_KIND_JUDGEABLE.has(promise.kind)) return "n/a";
   const t0 = Date.parse(promise.at);
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
@@ -225,6 +227,37 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName;
   if (promise.kind === "pickup") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && PICKUP_SENT_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
   // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
+  return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
+}
+// ─── 2026-11-25 作業員L（台帳 #726・統括役の割り振り）: 連絡・交渉の約束の種類と果たした印（PROMISE_CONTACT_KIND・既定 off）───
+//   今は「ご連絡させて頂きます」「お伝えさせて頂きます」「交渉させて頂きます」が other（果たした判定なし）か、確認（check・WIDE の網）に混ざる。
+//   種類: contact＝相手（お客様・管理会社）へ後で知らせる約束（ご連絡・ご共有・お伝え・ご報告）／negotiate＝管理会社・大家への交渉（減額・値下げ・条件）。
+//     ほかの網（pickup・check・estimate・viewing_slot・callback）が先・ここは other に落ちる物だけ
+//   果たした印（決定論・こちらの通だけ・約束の後）:
+//     contact … こちらの通（手打ち・AIX）のうち、知らせた形の文（〜となります・〜でした・〜との事・ご連絡頂き・確認取れ・お伝えしました 等）か、
+//               結果を運ぶ AIX（確認の結果・物件・見積）
+//     negotiate … 交渉の結果の文（交渉の結果・減額／値下げ／割引 頂け・できました・難しい・不可・了承）か、見積の AIX（交渉の後の御見積書）
+//   on で: promiseKindNameOf がこの2つを返し、promiseFulfilledBy が判定する（B1・約束の一生・見張りの数え）。スタッフの画面・LINE には出さない（記録だけ）
+export const promiseContactKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CONTACT_KIND ?? "").trim().toLowerCase() === "on";
+export function promiseContactKindOf(clause: string): "contact" | "negotiate" | null {
+  const t = String(clause ?? "").normalize("NFKC");
+  if (/交渉(?:を)?(?:して(?:みます|参ります)|させて(?:頂|いただ)|致します|いたします)/.test(t)) return "negotiate";
+  if (/(?:ご連絡|ご共有|共有|お伝え|ご報告)(?:を)?(?:させて(?:頂|いただ)|致します|いたします|差し上げます)/.test(t)) return "contact";
+  return null;
+}
+const CONTACT_DONE_RE = /(?:と|に)なります|でした|ございました|との(?:事|こと)|ご連絡(?:頂|いただ)|確認(?:が)?取れ|お伝え(?:しました|致しました|いたしました|させて(?:頂|いただ)きました)|(?:頂|いただ)けました|(?:出来|でき)ました|可能です|難しい/;
+const NEGOTIATE_DONE_RE = /交渉(?:の)?結果|(?:減額|値下げ|割引|値引き|免除|無料)[^。！!？?\n]{0,10}(?:頂け|いただけ|して(?:頂|いただ)け|出来|でき|になり|となり|して下さ|してくださ)|(?:了承|承諾|OK)(?:を)?(?:頂|いただ|が出|でした)|難しい|不可|NG|(?:通り|通っ)ました/;
+export function promiseContactFulfilledBy(promise: { at: string; kind: "contact" | "negotiate" }, ev: PromiseEvidence): { by: string; at: string } | null {
+  const t0 = Date.parse(promise.at);
+  const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
+  const cands: Array<{ by: string; at: string }> = [];
+  const re = promise.kind === "negotiate" ? NEGOTIATE_DONE_RE : CONTACT_DONE_RE;
+  for (const m of ev.msgs) {
+    if (m.sender !== "staff" || !after(m.created_at)) continue;
+    if (re.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: m.is_aix_generated ? "aix_text" : "staff_text", at: m.created_at });
+  }
+  const aixRe = promise.kind === "negotiate" ? /estimate/ : /check_result|property|recommend|estimate/;
+  for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && aixRe.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
 }
 /** 見張らない会話か（申込以降・お客様が決めた・こちらが締めた）。約束の時刻より後の発言で見る */
