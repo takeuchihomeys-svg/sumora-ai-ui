@@ -670,6 +670,8 @@ async function main() {
       ];
       if (!only || doCandidates) lines.push(`### API の使用額（今月・llm_usage_logs の記録から・Console と合わない分は CLAUDE_COST_FACTOR）${ms.partial ? "（⚠ 行が多く途中まで）" : ""}`,
         ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
+        // 2026-11-25 統括役の頼み: 本番（route が script: でない）と試験を分けて出す（前は混ぜて「本番のブレインは DeepSeek」と読み違えた）
+        `- うち本番（試験を除く）: Claude ${(ms.prod?.claudeUsd ?? 0).toFixed(2)}・OpenAI ${(ms.prod?.openaiUsd ?? 0).toFixed(2)}・DeepSeek ${(ms.prod?.deepseekUsd ?? 0).toFixed(2)}／試験: Claude ${(ms.claudeUsd - (ms.prod?.claudeUsd ?? 0)).toFixed(2)}・OpenAI ${(ms.openaiUsd - (ms.prod?.openaiUsd ?? 0)).toFixed(2)}・DeepSeek ${(ms.deepseekUsd - (ms.prod?.deepseekUsd ?? 0)).toFixed(2)}（Claude は基準より後の行だけ）`,
         `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}`);
       for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
     }

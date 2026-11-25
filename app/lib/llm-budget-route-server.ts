@@ -6,10 +6,11 @@ import { claudeUsageUsd, altUsageUsd } from "./llm-price";
 import { readBudgetConfig, spendWindowStart, openaiWindowStart, claudeMonthSpendUsd, budgetDecision, budgetRoleOf, type BudgetDecision } from "./llm-budget-route";
 
 export const BUDGET_CACHE_MS = 5 * 60_000;
-type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number; key?: string };
+// 2026-11-25 統括役の頼み（本番と試験を混ぜた誤りの直し）: 本番（route が script: でない行）の分も持つ。振り分けの決めは特典を食う全部の額（試験も同じ鍵）で、見せる所は本番と試験を分ける
+type Sums = { since: string; lastId: number; claudeUsd: number; openaiUsd: number; deepseekUsd: number; readAt: number; key?: string; prod?: { claudeUsd: number; openaiUsd: number; deepseekUsd: number } };
 let cache: Sums | null = null;
 
-const COLS = "id, model, created_at, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens";
+const COLS = "id, model, route, created_at, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens";
 type Row = { id: number; model: string | null; created_at: string; input_uncached: number | null; cache_read: number | null; cache_write: number | null; cache_write_5m: number | null; cache_write_1h: number | null; output_tokens: number | null };
 
 /** 1行の費用を会社ごとに足す（純関数） */
@@ -32,7 +33,7 @@ export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Rec
   const since = claudeSince < openaiSince ? claudeSince : openaiSince;
   const key = `${claudeSince}|${openaiSince}`;
   if (cache && cache.key === key && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
-  const next: Sums = cache && cache.key === key ? { ...cache } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0 };
+  const next: Sums = cache && cache.key === key ? { ...cache, prod: { ...(cache.prod ?? { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }) } } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0, prod: { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 } };
   try {
     let done = false;
     const maxPages = o.maxPages ?? 50;
@@ -44,7 +45,10 @@ export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Rec
       const rows = (data ?? []) as Row[];
       for (const r of rows) {
         const at = String(r.created_at ?? ""), m = String(r.model ?? "");
-        if (/claude/.test(m) ? at >= claudeSince : /^gpt-|^text-embedding/.test(m) ? at >= openaiSince : true) addRow(next, r);
+        if (/claude/.test(m) ? at >= claudeSince : /^gpt-|^text-embedding/.test(m) ? at >= openaiSince : true) {
+          addRow(next, r);
+          if (!/^script:/.test(String((r as { route?: string | null }).route ?? ""))) addRow((next.prod ??= { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }), r);
+        }
         next.lastId = Math.max(next.lastId, Number(r.id));
       }
       if (rows.length < 1000) { done = true; break; }

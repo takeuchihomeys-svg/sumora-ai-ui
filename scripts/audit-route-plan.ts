@@ -29,6 +29,18 @@ type Row = { id: number; route: string | null; action: string | null; model: str
     if (rs.length < 1000) break;
   }
   const now = rows.reduce((a, r) => a + claudeUsageUsd(r as never), 0);
+  // 2026-11-25 統括役の頼み: 別クラウド（DeepSeek・OpenAI）の今月の額を本番と試験に分ける（試験の route は script:）
+  const alt: Record<string, { prod: number; exam: number; prodN: number; examN: number }> = {};
+  { let last = 0; for (let page = 0; page < 3000; page++) {
+    const { data, error } = await sb.from("llm_usage_logs").select("id, route, model, created_at, input_uncached, cache_read, output_tokens").gte("created_at", since.toISOString()).lt("created_at", until.toISOString()).not("model", "like", "claude%").gt("id", last).order("id", { ascending: true }).limit(1000);
+    if (error) throw new Error(error.message);
+    const rs = (data ?? []) as Array<{ id: number; route: string | null; model: string | null }>;
+    for (const r of rs) { last = Math.max(last, r.id); const k = /^gpt-/.test(String(r.model)) ? "OpenAI" : /deepseek/.test(String(r.model)) ? "DeepSeek" : "他"; const e = (alt[k] ??= { prod: 0, exam: 0, prodN: 0, examN: 0 }); const u = altUsageUsd(r as never); if (/^script:/.test(r.route ?? "")) { e.exam += u; e.examN++; } else { e.prod += u; e.prodN++; } }
+    if (rs.length < 1000) break; } }
+  for (const [k, e] of Object.entries(alt)) console.log(`今月の ${k}: 本番 ${e.prod.toFixed(2)}（${e.prodN}回）・試験 ${e.exam.toFixed(2)}（${e.examN}回）`);
+  // 本番のブレインの Claude の行（案 D の元）
+  const brainProd = rows.filter((r) => /^brain_/.test(r.action ?? "")).reduce((a, r) => a + claudeUsageUsd(r as never), 0);
+  console.log(`本番のブレインの Claude（試験を除く）: 今月 ${brainProd.toFixed(2)}（30日で ${(brainProd * scale).toFixed(0)}）`);
   console.log(`# 係ごとの振り分けの案（今月 ${since.toISOString().slice(0, 10)}〜${until.toISOString().slice(0, 16)}Z・${days.toFixed(1)}日・Claude の行 ${rows.length}・試験は除く）`);
   console.log(`今の Claude: 今月 $${now.toFixed(2)} → 30日で $${(now * scale).toFixed(0)}（枠 $${claudeCap}）\n`);
   for (const plan of ["A", "B", "C", "D"] as PlanName[]) {
