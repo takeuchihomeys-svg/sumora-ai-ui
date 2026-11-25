@@ -4336,6 +4336,23 @@ ${sh}`;
           if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; }
         }
       } catch (e) { console.warn("[brain-core] station-state skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-25 作業員A（#745・竹内さん「2手先や最善の方法・逆算してイメージ」・APPLY_ROUTE_BACKPLAN=on の時だけ・既定 off）: 申込から逆算した計画の1行（ブレインには書かせない・材料だけ）
+      try {
+        const bp = await import("@/app/lib/route-backplan");
+        if (bp.applyRouteBackplanOn() && ar.loc?.node && !ar.loc.branch) {
+          const { SCREENING_WORRY_RE: SWR } = await import("@/app/lib/apply-route-map");
+          const custTexts = typedMessages.filter((m) => m.sender === "customer").slice(0, 12).map((m) => String(m.text ?? ""));
+          const mvBP = resolveConditionMoveIn((pc as { move_in_time?: string | null } | null)?.move_in_time ?? null, { nowIso: new Date().toISOString() });
+          const plan = bp.backplanOf({
+            node: ar.loc.node as never, focus: !!customerState?.focusKey, propertiesSent: brainLedger.facts.propertiesSentCount ?? 0, estimateSent: !!brainLedger.facts.estimateSent,
+            viewingScheduled: !!brainLedger.facts.viewingAppointment || !!customerState?.upcomingViewing, viewingDone: !!brainLedger.facts.viewingDone,
+            viewingWish: custTexts.some((x) => /内覧|内見|見学|見に行/.test(x)), applyIntent: routeTypeNow === "apply_intent", screeningConcern: custTexts.some((x) => SWR.test(x)),
+            moveInYmd: mvBP.kind === "future" ? ymdStrOf(mvBP.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10),
+          });
+          const bl = bp.backplanLine(plan);
+          if (bl) { applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; }
+        }
+      } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
