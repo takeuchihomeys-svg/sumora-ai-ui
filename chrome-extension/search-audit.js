@@ -132,7 +132,8 @@
    *   「所在地の小窓が失敗→区で代替」の理由（page:fallback_area）が消えて、統括が原因を追えなかった。
    *   → 回の始まり・終わり・代替の理由は残し、それ以外の古い段から落とす（全部が残す段なら先頭から）。
    */
-  var KEEP_STEP = /^(begin|fill_done|finish|result|human_search|search_override|page:(toggle_repress|toggle_direct|hidden_wait_|fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|search_armed|leftover_|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|post_send_cancel|clear_cancelled))/;
+  /** flow_series_plan / order / gap / reset / skip も flow_series_ で残す */
+  var KEEP_STEP = /^(begin|bulk_kick|bulk_done_resend|dl:one_send_ms|dl:pdf_click_nocap|bulk_end_now|page:perf_|page:gate_prev_leftover|page:gate_stop_basic|dl:result_verify|page:result_expect|page:leftover_|fill_done|finish|result|human_search|search_override|customer_think|reset_before_fill|server_behind|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|loop_advance|loop_who_grasp|loop_task_list|dl:sort_|dl:sort_head_|dl:sort_panel_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:search_press_wait|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|dl:next_move_premature_block|dl:list_page_one_only|dl:list_no_next_advance|dl:all_sent_|dl:loop_advance|dl:loop_who_grasp|dl:handoff_grasp|dl:stale_grasp_drop|dl:legacy_blocked_no_screen|dl:screen_ok_path|dl:armed_wait_screen|dl:list_wait_screen|dl:pipeline_silence_|dl:timeout_bridge_|dl:send_bar_|dl:estate_stuck_|dl:bulk_alive|dl:panel_snap_|dl:page_display_|dl:page_displayed_|dl:sort_gate_need_page|dl:page_nav_|dl:nav_timing|page:(stuck_recover_retry|stuck_best_act|stuck_shot_req|screen_task_grasp|screen_poll_|pipeline_silence_|pipeline_screen_|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|learn_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|toggle_repress|list_page_one_only|toggle_direct|hidden_wait_|fallback_|area_all_done|modal_confirm_fallback|human_search|fill_start|fill_begin|page_ver|switch_grasp|fee_skip|search_armed|search_customer_grasp_|search_grasp_reload_resume|search_grasp_|search_press_ok|leftover_|force_clear_place|station_clear_continue|station_clear_reopen_after|station_back_force_try|station_clear_cursor|station_clear_back|station_back_wrong|line_clear_after|ward_detail_skip|ward_btn_y_timeout|ward_clear_one_ng|ward_clear_one_done|ward_hidden_diag|clear_one_ng|clear_one_done|clear_field_ng|clear_field_done|clear_one_grasp|clear_field_grasp|station_clear_one_grasp|line_clear_one_grasp|station_clear_one_ng|line_clear_one_ng|clear_done|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_cancel|post_send_clear|clear_cancelled|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|guide_detail_ledger|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance)|sw_restart_restored|dl:ad_sort_reload|human_reset_press|human_reset_wait|quiet_on|quiet_off|quiet_defer|quiet_inherit|dl:quiet_|reset_clear_marks|tab_reload|tab_check|autofill_dead_kick)/;
 
   /**
    * ★ 2026-11-20 (2.8.145) 手順書の決まりの確かめ（app/lib/auto-procedure-rules.ts の verify）に使う段。
@@ -141,14 +142,47 @@
    *   → 普通の段より後に落とし、落とす時も同じ種類の段を最低1つ残す（同じ種類が後にもある物から落とす）。
    *   ⚠ 決まりの verify に段を足したらここにも足す（checkRulesInCode が食い違いを止める）。
    */
-  var RULE_STEP = /^(fill_progress|page:(playbook_seen|playbook_none|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|flow_done_|flow_gap_|area_all_done|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one|clear_one|post_send_wait))/;
+  // ★ 2.8.281 統括Pro通し点検: 外し（station_clear・ward_clear・line_clear）・dl:auto_force・次客の把握を、上限で最初に捨てる側から外す（重複だけ落とす側へ）
+  var RULE_STEP = /^(fill_progress|bulk_phase|bulk_kick|bulk_done_resend|stale_prev_lock_dropped|switch_timeout|autofill_dead_kick|popup_fallback|kick_clamp|stale_done_skip|bulk_all_done|bulk_pos|reset_press|reset_wait|reset_verified|reset_shot|reset_not_empty|reset_fallback|ajax_settle|reset_clean_skip_clear|reset_count_same|dl:auto_force|dl:next_customer_grasp|dl:next_move_grasp|page:(station_clear_|ward_clear_|line_clear_|station_then_line_clear)|customer_think|reset_before_fill|server_behind|post_send_clear|post_send_clear_gap|handoff_loop|handoff_atom_|series_done|dl:sort_|dl:sort_head_|dl:sort_panel_|dl:search_to_sort|dl:search_grasp_|dl:search_confirm_|dl:search_press_wait|dl:after_search|dl:search_armed|dl:search_customer_|dl:flow_atom_|dl:list_flow_|dl:next_flow_|dl:handoff_|dl:next_move_premature_block|dl:list_page_one_only|dl:list_no_next_advance|dl:all_sent_|dl:loop_advance|dl:loop_who_grasp|dl:handoff_grasp|dl:stale_grasp_drop|dl:legacy_blocked_no_screen|dl:screen_ok_path|dl:armed_wait_screen|dl:list_wait_screen|dl:pipeline_silence_|dl:timeout_bridge_|dl:send_bar_|dl:estate_stuck_|dl:bulk_alive|dl:panel_snap_|dl:page_display_|dl:page_displayed_|dl:sort_gate_need_page|dl:page_nav_|dl:nav_timing|page:(stuck_recover_retry|stuck_best_act|stuck_shot_req|screen_task_grasp|screen_poll_|pipeline_silence_|pipeline_screen_|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|learn_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|playbook_seen|list_page_one_only|playbook_none|playbook_behind|cursor_one|cursor_two|cursor_old|hidden_press|clear_stage|modal_confirm|confirm_press_ok|search_cursor|search_armed|search_customer_grasp_|search_grasp_reload_resume|search_grasp_|search_press_ok|flow_done_|flow_gap_|area_all_done|place_ready|conditions_ready|pet_panel_confirm|walk_seal_|ward_btn_y_|ward_detail_skip|next_step|ward_clear_one|clear_one|clear_field|station_clear_one|line_clear_one|clear_done|station_clear_continue|station_clear_reopen_after|station_back_force_try|station_clear_cursor|station_clear_back|station_back_wrong|line_clear_after|clear_then_fill_|one_task_|now_action|task_now|task_done|task_next|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|place_keep|place_redo|cursor_resume|pointer_cancel|post_send_wait|post_send_clear|station_grasp_like_guide|station_route_from_map|station_no_route|guide_plan_linked|guide_plan_miss|guide_plan_act|station_primary_only|line_primary_only|guide_clear_|guide_clear_grasp|guide_fill_gate|guide_fill_fixed|guide_fill_still_gap|guide_phase_|flow_series_|list_handoff_seen|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|fill_start|leftover_|force_clear_place|fee_skip)|loop_advance|loop_who_grasp|loop_task_list|dl:loop_handoff_grasp|dl:loop_phase_req|dl:pointer_cancel|dl:handoff_grasp|dl:task_transition_grasp|dl:guide_task_link|dl:list_flow_grasp|human_reset_press|human_reset_wait)/;
 
   function _stepKey(s) { return String((s && s.k) || ""); }
 
-  // 段の記録（最大 MAX_STEPS 件）。落とす順: 普通の段 → 決まりの段の重複（後にも同じ種類がある物） → 残す段以外 → 先頭
+  /**
+   * ★ 2.8.297 手順書が「反映されたか」を後から確かめる段（回の始まり・どの版か・手順書を読んだか・学習の反映）。
+   *   実測 audit #1654: 同じ段（dl:sort_gate_wait_rows 等・約98件）が120段の上限を埋め、最後の手段の「先頭から落とす」で
+   *   begin・bulk_pos・page_ver・playbook_seen が消え、check-playbook-reflect が「反映されていない」と誤って読んだ。
+   *   → この段は最後の手段でも落とさない（回の途中の段から落とす）。
+   */
+  var PIN_STEP = /^(begin|bulk_pos|fill_done|page:(page_ver|playbook_|learn_reflect_|learn_refresh_))/;
+  /** 待ち・間・見張りの繰り返し（同じ種類・同じ中身が続く時だけ n 回にまとめる）。押した・押せたの記録（reset_press 等）は数を残すのでまとめない */
+  var COLLAPSE_STEP = /^(dl:|page:)[a-z0-9_]*(wait|gap|poll|watch|tick|rows)[a-z0-9_]*$/;
+
+  // 段の記録（最大 MAX_STEPS 件）。落とす順: 普通の段 → 決まりの段の重複（後にも同じ種類がある物） → 残す段以外 → 守る段以外 → 先頭
   function pushStep(steps, k, d, now) {
     var list = Array.isArray(steps) ? steps : [];
-    list.push({ at: typeof now === "number" ? now : Date.now(), k: String(k).slice(0, 40), d: d == null ? null : String(d).slice(0, 160) });
+    var kk = String(k).slice(0, 40);
+    var dd = d == null ? null : String(d).slice(0, 160);
+    var at = typeof now === "number" ? now : Date.now();
+    /**
+     * ★ 2.8.297 直前と同じ段（同じ種類・同じ中身）はまとめる（n 回・最後の時刻 to）。
+     *   待ち（sort_gate_wait_rows 等）の繰り返しで上限が埋まり、肝心の段が落ちるのを防ぐ。
+     *   ⚠ 守る段（begin・playbook_seen 等）はまとめない（1回ずつ時刻を残す）。
+     */
+    if (COLLAPSE_STEP.test(kk) && !PIN_STEP.test(kk)) {
+      // 実測 #1654: 2種類の待ちが交互（A,B,A,B…・各49回・中身は同じ）に並んだ → 直前だけでなく、直近6段の中の同じ種類と比べる
+      for (var b = list.length - 1, lim = Math.max(0, list.length - 6); b >= lim; b--) {
+        var prev = list[b];
+        if (prev && prev.k === kk) {
+          if ((prev.d == null ? null : prev.d) === dd) {
+            prev.n = (prev.n || 1) + 1;
+            prev.to = at;
+            return list;
+          }
+          break; // 同じ種類で中身が違う＝別の段として足す
+        }
+      }
+    }
+    list.push({ at: at, k: kk, d: dd });
     while (list.length > MAX_STEPS) {
       var drop = -1, i, key;
       for (i = 0; i < list.length && drop < 0; i++) {
@@ -161,7 +195,12 @@
         for (var j = i + 1; j < list.length; j++) { if (_stepKey(list[j]) === key) { drop = i; break; } }
       }
       for (i = 0; i < list.length && drop < 0; i++) {
-        if (!KEEP_STEP.test(_stepKey(list[i]))) drop = i;
+        key = _stepKey(list[i]);
+        if (!KEEP_STEP.test(key) && !PIN_STEP.test(key)) drop = i;
+      }
+      // 残す段だけになった時も、守る段（begin・playbook_seen 等）は落とさず、守る段以外の一番古い段から落とす
+      for (i = 0; i < list.length && drop < 0; i++) {
+        if (!PIN_STEP.test(_stepKey(list[i]))) drop = i;
       }
       list.splice(drop < 0 ? 0 : drop, 1);
     }
@@ -374,7 +413,7 @@
       if (ovr) pushStep(run.steps, "search_override", JSON.stringify(ovr).slice(0, 400), now());
       runs.set(id, run);
       if (ctx.post_started !== false) {
-        send({
+        run._startedP = send({
           phase: "started", brain: true, run_id: id, site: run.site, mode: run.mode, trigger: run.trigger,
           property_customer_id: run.property_customer_id, command_id: run.command_id, is_wide: run.is_wide,
           area_mode: run.area_mode, pass: run.pass, ext_version: o.extVersion || null,
@@ -460,17 +499,58 @@
         if (!r._progDbAt) r._progDbAt = 0;
         if (now() - r._progDbAt >= 3000) {
           r._progDbAt = now();
-          send({
-            phase: "progress",
-            brain: true,
-            run_id: r.run_id,
-            site: r.site,
-            mode: r.mode,
-            steps: r.steps.slice(-40),
-          });
+          sendProgress(r);
         }
       } catch (_) {}
       return r;
+    }
+
+    /**
+     * ★ 2.8.267 DB 実測 #1631（一括1人目・steps 0 のまま started）:
+     *   started と progress を同時に投げると、行ができる前に progress が着いて no_row で捨てられる。
+     *   → started の送信が終わってから progress を送る。
+     */
+    function sendProgress(r) {
+      var go = function () {
+        try { send({ phase: "progress", brain: true, run_id: r.run_id, site: r.site, mode: r.mode, steps: r.steps.slice(-40) }); } catch (_) {}
+      };
+      try {
+        if (r._startedP && typeof r._startedP.then === "function") { r._startedP.then(go, go); return; }
+      } catch (_) {}
+      go();
+    }
+
+    /**
+     * ★ 2.8.265: 今までの段を DB の started 行へすぐ書く（一括の段の切り替わり・止まる前の最後の段を残す）。1秒に1回まで。
+     */
+    function flush(id) {
+      var r = get(id);
+      if (!r || r.finished) return null;
+      try {
+        if (!r._flushAt) r._flushAt = 0;
+        if (now() - r._flushAt < 1000) { flushSoon(id, 1000); return r; }
+        r._flushAt = now();
+        sendProgress(r);
+      } catch (_) {}
+      return r;
+    }
+
+    /**
+     * ★ 2.8.267 DB 実測 #1631／#1633: 裏で足した段（前客の待ち・一覧／送付の dl: 段）は手元に溜まるだけで、
+     *   回が閉じられないと DB に1段も残らなかった（一覧で4分詰まった記録が0段）。
+     *   → 段を足したら delayMs 後にまとめて1回送る（同じ回の予約は1つだけ）。
+     */
+    function flushSoon(id, delayMs) {
+      var r = get(id);
+      if (!r || r.finished || r._soonT) return;
+      try {
+        r._soonT = setTimeout(function () {
+          r._soonT = null;
+          if (r.finished) return;
+          r._flushAt = 0;
+          flush(r.run_id);
+        }, delayMs == null ? 3000 : delayMs);
+      } catch (_) { r._soonT = null; }
     }
 
     function attachResult(id, result) {
@@ -507,7 +587,47 @@
       return send(body);
     }
 
-    return { begin: begin, get: get, findOpen: findOpen, step: step, openHumanSearchRuns: openHumanSearchRuns, attachFill: attachFill, attachProgress: attachProgress, attachResult: attachResult, finish: finish, _runs: runs };
+    /**
+     * ★ 2.8.293 DB 実測 #1651（2026-11-25 18:05 一括・てんさん）: 開始の5段だけで started のまま、
+     *   物件の取得は 18:18 まで続いたのに、並べ替え・取得の段が1つも残らなかった。
+     *   回はこの Service Worker のメモリにだけあり、起き直すと消え、後から届いた段は全部捨てられていた。
+     *   → 開いている回を書き出して（exportOpen）、起き直した時に戻す（adopt）。
+     *   ⚠ 戻すのは1時間以内の回だけ（sweepOld と同じ）。送信中の紐・タイマーは持ち越さない。
+     */
+    function exportOpen() {
+      var out = [];
+      runs.forEach(function (r) {
+        if (!r || r.finished) return;
+        out.push({
+          run_id: r.run_id, site: r.site, property_customer_id: r.property_customer_id, trigger: r.trigger,
+          mode: r.mode, command_id: r.command_id, is_wide: r.is_wide, area_mode: r.area_mode, pass: r.pass,
+          steps: (r.steps || []).slice(-MAX_STEPS), started_at: r.started_at, filled: r.filled || null,
+          result: r.result || null, human_search: !!r.human_search, fill_error: r.fill_error || null,
+        });
+      });
+      return out;
+    }
+
+    function adopt(saved) {
+      if (!saved || typeof saved !== "object" || !saved.run_id) return null;
+      if (runs.has(saved.run_id)) return null;
+      var started = Number(saved.started_at) || 0;
+      if (!started || now() - started > 60 * 60 * 1000) return null;
+      var run = {
+        run_id: String(saved.run_id), site: saved.site || null,
+        property_customer_id: saved.property_customer_id != null ? String(saved.property_customer_id) : null,
+        trigger: saved.trigger || "single", mode: saved.mode || null, command_id: saved.command_id || null,
+        is_wide: saved.is_wide == null ? null : !!saved.is_wide, area_mode: saved.area_mode || null, pass: saved.pass || null,
+        steps: Array.isArray(saved.steps) ? saved.steps.slice(-MAX_STEPS) : [],
+        started_at: started, filled: saved.filled || null, result: saved.result || null, finished: false,
+      };
+      if (saved.human_search) run.human_search = true;
+      if (saved.fill_error) run.fill_error = String(saved.fill_error).slice(0, 300);
+      runs.set(run.run_id, run);
+      return run;
+    }
+
+    return { begin: begin, get: get, findOpen: findOpen, step: step, openHumanSearchRuns: openHumanSearchRuns, attachFill: attachFill, attachProgress: attachProgress, flush: flush, flushSoon: flushSoon, attachResult: attachResult, finish: finish, exportOpen: exportOpen, adopt: adopt, _runs: runs };
   }
 
   return {

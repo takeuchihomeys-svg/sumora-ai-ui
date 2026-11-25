@@ -1,0 +1,100 @@
+{
+  "at": "2026-11-23T06:21:42.862Z",
+  "yesCost": true,
+  "rounds": 1,
+  "history": [
+    {
+      "round": 1,
+      "step": "weak-find",
+      "code": 2
+    },
+    {
+      "round": 1,
+      "step": "human-like-improve",
+      "code": 0
+    },
+    {
+      "round": 1,
+      "step": "weak-strengthen",
+      "code": 0
+    },
+    {
+      "round": 1,
+      "step": "F58",
+      "code": 0
+    },
+    {
+      "round": 1,
+      "step": "weak-find-remeasure",
+      "code": 2
+    }
+  ],
+  "gaps_n": 9,
+  "gaps": [
+    {
+      "id": "auto_after_bundle",
+      "severity": "P0",
+      "why": "新束のあと自動が無い（学習・手順書が本番に届いていない）",
+      "script": "（人）chrome://extensions → 自動1回 → scripts/weak-find.ts",
+      "layer": "human"
+    },
+    {
+      "id": "playbook_reflect",
+      "severity": "P0",
+      "why": "手順書の反映が揃っていない（自動が読んだ手順書の決まりの版が古い（4c266b56・コード 57c9b30a）／拡張にあって手順書に無い決まり（手順書が古い）: guide_phase_checkpoints・flow_series_grasp 他3）",
+      "script": "scripts/check-playbook-reflect.ts／scripts/attach-playbook.ts --apply",
+      "layer": "human"
+    },
+    {
+      "id": "ad_sort",
+      "severity": "P1",
+      "why": "ad_sort_hover 未達（sort_hilo 欠など）",
+      "script": "scripts/check-playbook-reflect.ts／F58 sort_*",
+      "layer": "human"
+    },
+    {
+      "id": "auto_cursor",
+      "severity": "P1",
+      "why": "自動カーソル64.8%<70%",
+      "script": "scripts/human-like-improve.ts --plan-only",
+      "layer": "human"
+    },
+    {
+      "id": "auto_point",
+      "severity": "P1",
+      "why": "自動位置52.8%<60%",
+      "script": "scripts/human-like-improve.ts --yes-cost／scripts/weak-strengthen.ts --yes-cost",
+      "layer": "cost"
+    },
+    {
+      "id": "f57_phases",
+      "severity": "P1",
+      "why": "F57 段印未完（手順書×画面照会 0/4✓ 欠=確定後・場所後・検索前・検索後（経路:駅-・地域-・一覧-）（完了線: 必須段の本番監査印が全て揃う・コード配線だけでは不可））",
+      "script": "scripts/check-guide-screen-grasp.ts",
+      "layer": "human"
+    },
+    {
+      "id": "human_band",
+      "severity": "P1",
+      "why": "human帯23.4%<50%",
+      "script": "scripts/human-like-improve.ts --yes-cost（間隔＋必要なら位置）",
+      "layer": "human"
+    },
+    {
+      "id": "nearness_fold",
+      "severity": "P1",
+      "why": "近さ66<70（1押下畳み）",
+      "script": "scripts/human-like-improve.ts --plan-only",
+      "layer": "human"
+    },
+    {
+      "id": "thin_points",
+      "severity": "P2",
+      "why": "thin欄96>8（位置票が薄い）",
+      "script": "scripts/weak-strengthen.ts --yes-cost",
+      "layer": "cost"
+    }
+  ],
+  "next": "拡張再読込→ポップアップで束取得→自動1回 → （人）chrome://extensions → 自動1回 → scripts/weak-find.ts",
+  "human_step": "chrome://extensions 再読込≥2.8.199 → 束取得 → 自動1回 → 再測"
+}

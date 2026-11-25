@@ -1,0 +1,10 @@
+{
+  "title": "【決定】統括Proは足りない→強化→改善を考える骨格を持つ（画像細部まで）",
+  "category": "architecture",
+  "insight": "画像学習は学べ枚数だけでは『ちゃんと行った』と言えない。種類到達・未読課題・種類衝突・記録≠写真・中央固定位置を欠けとして出し、pro-think-capability で①把握②足りない③強化④改善⑤細部原子⑥仮定⑦手配の順を決定論で先に組む。Proはその骨格の上で仮説と次手を書く。既知selectの衝突は種類再判定せず位置・開いて選ぶへ。",
+  "rationale": "2026-11-18 竹内さん。本番束は shots6000・photo学習の痕跡ありだが weak に kind_conflict / photo_vs_record が残り、meeting が薄いと axes null で Pro が空回りする。",
+  "context": "app/lib/pro-think-capability.ts。統括根拠『画像学習はちゃんと行ったか』『統括Pro思考骨格』『画像の細かい強化原子』。axes.pro_think。",
+  "applied_to": "app/lib/pro-think-capability.ts, app/lib/learn-supervisor.ts, app/lib/learn-supervisor-pro.ts",
+  "tags": ["統括Pro", "画像", "分析強化の原則", "学習", "汎用"],
+  "priority": 1
+}

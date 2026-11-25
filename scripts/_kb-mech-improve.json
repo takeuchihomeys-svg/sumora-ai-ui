@@ -1,0 +1,10 @@
+{
+  "title": "【決定】Vision誤読でselectをtextに上書きしない・まとめ文言は学ばない",
+  "category": "architecture",
+  "insight": "reconcilePoints: 操作がselectで写真がtextの時は操作を残す（rental_costのVision誤読実測）。by=visionのshot_learnは束の種類上書きに使わない（位置は別名経路）。isLearnableNameで「北区、中央区、西区」等のまとめ文言・手順テキストを除外。弱い場面学習はscripts/weak-scene-learn.tsで回し、改善まで学ぶ→土台→束の循環を続ける。",
+  "rationale": "竹内さん「このまま続ける／仕組みとして改善する部分あれば改善する」。",
+  "context": "このまま続ける。仕組みとして改善する部分あれば改善する",
+  "applied_to": "app/lib/shot-learn.ts reconcilePoints/isLearnableName/cleanFields / human-learn-brain by=vision / scripts/weak-scene-learn.ts",
+  "tags": ["ブレイン", "分析強化の原則", "静かに壊れる", "点検表"],
+  "priority": 1
+}

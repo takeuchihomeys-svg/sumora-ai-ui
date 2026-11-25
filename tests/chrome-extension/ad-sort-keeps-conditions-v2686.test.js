@@ -23,11 +23,12 @@ console.log("■ ① 並べ替えは「メニューを人の順に操作」（�
 {
   // 2026-11-11 竹内さん「並べ替えのところでほんの少し待機、そしてADのところでみぎに移動して 高→低 をおすながれ」
   ok("メニュー操作の関数がある（_sortByAdLikeHuman）", /function _sortByAdLikeHuman\(done\)/.test(bd));
-  ok("① 「並べ替え」を押す", /byText\(\["並び替え", "並べ替え", "並び順", "ソート"\]\)/.test(bd));
-  ok("①の後は**少し待つ**（押さない）", /step\(700, function \(\)/.test(bd));
-  ok("② AD の上へ**カーソルを移す**（押さない）", /hover\(adItem\)/.test(bd) && /② AD の上へ移します（押さない・待つ）/.test(bd));
-  ok("②の後も**少し待つ**", /step\(650, function \(\)/.test(bd));
-  ok("③ 右へ移して「高→低」を押す", /byText\(\["高→低", "高い順"/.test(bd) && /③ 高→低 を押します/.test(bd));
+  // ★ 2026-11-22: 並べ替え／AD はホバーのみ・高→低だけクリック
+  ok("① 「並べ替え」を探す", /byText\(\["並び替え", "並べ替え", "並び順", "ソート"\]\)/.test(bd));
+  ok("① 並べ替えはホバー（クリックしない）", /hover\(sortHead/.test(bd) && /並べ替えにマウスを置きます（クリックしない）/.test(bd));
+  ok("① press(sortHead) しない", !/press\(sortHead/.test(bd));
+  ok("② AD もホバー", /hover\(adItem/.test(bd) && /AD にマウスを置きます（クリックしない/.test(bd));
+  ok("③ 「高→低」を押す", /press\(hiToLo/.test(bd) && /③ 高→低 を押します/.test(bd));
   ok("  AD の親の中も探す（小メニューが入れ子の時）", /var p = adItem\.parentElement/.test(bd));
   ok("**ページを読み込み直さない**", !/location\.href = _u\.toString\(\)/.test(bd) && !/location\.href = _adLink\.href;/.test(bd));
   ok("行けなければ false（押さない＝全物件を送らない）", /done\(false\)/.test(bd));
@@ -64,8 +65,7 @@ console.log("\n■ ③ 条件が効いていない一覧では押さない（全
 
 console.log("\n■ ④ 既存の安全弁は残っている");
 {
-  ok("自動モードでない時は押さない", /if \(_autoPdfRun \|\| !_autoModeOn \|\| _staffModeOn\) return;/.test(bd));
-  ok("スタッフモードでは押さない", /_staffModeOn/.test(bd));
+  ok("自動モードでない時は押さない（_autoModeOn 関所）", /if \(_autoPdfRun \|\| !_autoModeOn\) return;/.test(bd));
   ok("同じ一覧で二度始めない（_autoPdfSig）", /sig === _autoPdfSig/.test(bd));
   ok("まだ押していない行がある時だけ", /var fresh = tracked\.some/.test(bd));
 }

@@ -28,6 +28,7 @@ console.log("■ 決まりの一覧の形");
   ok("kb は id8（8桁の16進）か null", AUTO_RULES.every((r) => r.kb === null || /^[0-9a-f]{8}$/.test(r.kb)));
   ok("前のお客さんを外す場面・ペット・押し方の決まりがある（人の録画の場面に無い所）",
     ["clear", "pet", "press"].every((sc) => AUTO_RULES.some((r) => r.scene === sc)));
+  ok("検索結果の並び替え（AD）の決まりがある（抜け防止）", AUTO_RULES.some((r) => r.id === "ad_sort_hover" && r.scene === "list" && r.file === "bulk-dl.js"));
 }
 
 console.log("■ コードに入っているか（直したのに手順書だけ・手順書だけで直していない、を止める）");
@@ -231,15 +232,44 @@ console.log("■ 押す位置の出どころ（束 2532 の実際の形: 開く�
 
 console.log("■ 統括Pro でも同じ点検（テストを回し忘れても出る）");
 {
-  const files = { pageScript, searchAudit: read("search-audit.js"), manifestJson: read("manifest.json") };
+  const files = { pageScript, searchAudit: read("search-audit.js"), manifestJson: read("manifest.json"), bulkDl: read("bulk-dl.js"), background: read("background.js") };
   const now = checkRulesInCode(files);
   ok("今のコードは食い違い 0", now.length === 0, now.join(" / "));
-  const bumped = checkRulesInCode({ ...files, manifestJson: JSON.stringify({ version: "2.8.199" }) });
+  // 現行より1段上の架空版（REVIEWED と一致させない）。版を固定すると REVIEWED が追いついた瞬間に壊れる
+  const bumpedVer = (() => {
+    const p = manifestVer.split(".").map((x) => Number(x) || 0);
+    p[p.length - 1] = (p[p.length - 1] || 0) + 1;
+    return p.join(".");
+  })();
+  const bumped = checkRulesInCode({ ...files, manifestJson: JSON.stringify({ version: bumpedVer }) });
   ok("版だけ上げて一覧を見直していない → 出る", bumped.some((x) => /見直していない/.test(x)), bumped.join(" / "));
   const lost = checkRulesInCode({ ...files, pageScript: files.pageScript.split("function _pickGapPlan").join("function _pickGapRenamed") });
   ok("直しの目印が消えた → 出る", lost.some((x) => /pick_pace の目印/.test(x)), lost.join(" / "));
   const extra = checkRulesInCode({ ...files, pageScript: files.pageScript.replace('"audit_one_progress",', '"audit_one_progress", "new_unlisted",') });
   ok("拡張にだけ足した決まり → 出る（手順書に載らない）", extra.some((x) => /new_unlisted/.test(x)), extra.join(" / "));
+  const noBulk = checkRulesInCode({ pageScript: files.pageScript, searchAudit: files.searchAudit, manifestJson: files.manifestJson });
+  ok("bulk-dl を渡さないと AD 決まりが抜けると出る", noBulk.some((x) => /ad_sort_hover/.test(x)), noBulk.join(" / "));
+  const adMarker = "findSortDetailByRec";
+  const adGone = checkRulesInCode({ ...files, bulkDl: files.bulkDl.split(adMarker).join("並べ替えを開く") });
+  ok("ADホバーの目印が消えた → 出る（手順書から抜けた重要動作）", adGone.some((x) => /ad_sort_hover の目印/.test(x)), adGone.join(" / "));
+}
+
+console.log("■ 点検で AD並び替えを確かめられる");
+{
+  const okSort: AuditStep[] = [
+    { k: "dl:sort_head_hover", d: "並べ替え", at: 1 },
+    { k: "dl:sort_ad_hover", d: "AD", at: 2 },
+    { k: "dl:sort_hilo", d: "高→低", at: 3 },
+  ];
+  const j = Object.fromEntries(judgeRulesOnAudit(okSort, AUTO_RULES, "2.8.169").map((x) => [x.id, x]));
+  ok("ホバー→高→低まで行けば ad_sort_hover=ok", j.ad_sort_hover.result === "ok", j.ad_sort_hover.why);
+  const failSort: AuditStep[] = [
+    { k: "dl:sort_head_hover", d: "並べ替え", at: 1 },
+    { k: "dl:sort_no_hilo", d: "見えていた: AD", at: 2 },
+  ];
+  ok("高→低まで行けなければ ng", judgeRulesOnAudit(failSort, AUTO_RULES, "2.8.169").find((x) => x.id === "ad_sort_hover")!.result === "ng");
+  ok("並び替えが無い回は no_data", judgeRulesOnAudit([], AUTO_RULES, "2.8.169").find((x) => x.id === "ad_sort_hover")!.result === "no_data");
+  ok("search-audit の RULE_STEP に dl:sort_ がある", /dl:sort_/.test(read("search-audit.js")));
 }
 
 console.log("■ 渡す時の作り直し（決まりを直してデプロイしたら、次の書き込みを待たずに拡張へ）");

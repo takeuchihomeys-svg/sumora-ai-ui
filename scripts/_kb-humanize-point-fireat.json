@@ -1,0 +1,10 @@
+{
+  "title": "【決定】押した位置%は_fireAt→synthetic座標配線とdiag分母除外が土台",
+  "category": "architecture",
+  "insight": "自動の押した位置%（point_pct）を上げるには、(1)_fireAtが押した実座標をaxlx-rec-pointで録画へ渡し_pushPoint(synthetic)する、(2)autoのMouseEventでも0,0以外のclientX/Yを使う、(3)human_like計測はaixだけ・diagだけの写真は分母に入れない。F40のDOM把握と混ぜない。",
+  "rationale": "統括Pro 2026-11-17: point_pct35%の根は_fireAtが_noteClickForLearnのみで座標未配線。DB実測2.8.85直近60行aixでpf>0が26・diag-only14。別客上書きの実測根拠はhandoff原子が無いと引けない（仮定禁止）。",
+  "context": "竹内さん「最新の拡張で新しい録画も課題見つけ改善／別客で上書きされてつぶれた可能性／細部にこだわって／録画から改善部分を見つけ／土台も整える／統括Pro」",
+  "applied_to": "chrome-extension/page-script.js,chrome-extension/human-learn-record.js,app/lib/human-like-audit.ts,app/lib/human-learn-brain.ts,2.8.86",
+  "tags": ["統括Pro", "Chrome拡張", "人間らしさ", "点検表", "分析強化の原則"],
+  "priority": 1
+}

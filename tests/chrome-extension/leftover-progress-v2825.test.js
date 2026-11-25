@@ -378,8 +378,8 @@ const keys = (r) => r.steps.map((s) => s[0]);
   ok("チェック類（間取り）だけ残る時は従来どおり関所へ進む（中止しない）", r.proceed === 1 && r.aborted === 0 && keys(r).indexOf("leftover_unclean") >= 0, r);
 }
 {
-  const r = runGate({ scans: [{ stations: 3 }, { stations: 3 }] , cond: { station_names: ["梅田"] }});
-  ok("駅→駅（同種）は外し専用も中止も無し（入れ直しの既存手順へ）", r.stClear === 0 && r.aborted === 0 && r.proceed === 1, r);
+  const r = runGate({ scans: [{ stations: 3 }, {}] , cond: { station_names: ["梅田"] }});
+  ok("駅→駅（同種）でも外し専用を呼ぶ（先に外す→きれい→進む）", r.stClear === 1 && r.aborted === 0 && r.proceed === 1, r);
 }
 {
   const r = runGate({ scans: [{ stations: 4, lines: 1, wards: 1 }, { stations: 4 }] });

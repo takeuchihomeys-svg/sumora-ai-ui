@@ -1,0 +1,10 @@
+{
+  "title": "【決定】手順書×画面照会は段ごとの本番監査印が揃って初めて改善完了（F57）",
+  "category": "architecture",
+  "insight": "コード配線や検索までの印だけでは改善完了にしない。段ごと（確定・駅/地域・場所・検索前・検索後・一覧・検索→並べ替え・並べ替え）に完了線を置き、search_auditsの印が必須段すべて揃って初めてimprove_complete。経路に無い段はスキップ印で区別。統括・点検はF57_guide_screen_grasp。",
+  "rationale": "細部まで改善できていなかった根因は完了定義がコード投入で止まっていたこと。仕組みで止めないと再発する。",
+  "context": "2026-11-22 竹内さん『なんでここ細部まで改善できていなかったのか／改善する際ちゃんと細部まで改善できるようにちゃんと仕組みをつくって／統括pro』",
+  "applied_to": "app/lib/guide-screen-grasp.ts,learn-foundation-audit F57,scripts/check-guide-screen-grasp.ts,chrome-extension 2.8.187",
+  "tags": ["分析強化の原則", "点検表", "Chrome拡張", "ブレイン"],
+  "priority": 1
+}

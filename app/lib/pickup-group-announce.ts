@@ -7,13 +7,15 @@
 //    「AIX要対応」は触らない・2026-09-29 竹内さんに確認済み）
 //
 // 決まり:
-//   - ブレイン（拡張の brainMode・スタッフモード以外・お客様が分かる回）: 検索のたびの本文＋結合 PDF のリンク（merge-pdfs）は送らない。
+//   - ブレイン（拡張の brainMode・お客様が分かる回・通常／AIX／スタッフどれでも）: 検索のたびの本文＋結合 PDF のリンク（merge-pdfs）は送らない。
 //     行（property_pickups.group_notice='deferred'）に印を付け、AIXツールの解析（まとめ＝自動の読み取り＋順位＋👑）が終わった時に
 //     1回だけアナウンス（finishCompleteGroup → pickup-group-announce-server）。PDF は添付しない
-//   - ブレイン以外（通常・スタッフモード・ブレインでもお客様が分からない回）: 今まで通り検索のたびに本文と PDF のリンク
+//   - ブレイン以外（通常・スタッフでブレインOFF・ブレインでもお客様が分からない回）: 今まで通り検索のたびに本文と PDF のリンク
 //   - 同じまとめで二重に送らない: まとめに「アナウンスした行」（announced_item_ids）を残し、まだ知らせていない deferred の行がある時だけ送る
 //     （まとめた後に同じ回の物件が遅れて届き、前のまとめに足された時だけ「追加分を含めて並べ直しました」で1回送る）
 //   - 戻す時は環境変数 PICKUP_GROUP_DEFER=off（全部、今まで通り検索のたびに送る）
+// ★ 2026-11-22 竹内さん「スタッフモードのところ ブレイン選択している場合、ここのラインに送らない／ほかの自動モードと同じでAIXツールで解析されたら送る」:
+//   旧は staffMode=true なら即送っていた（ブレインONでも★物件出し★に毎検索で出ていた）。新はブレインONならスタッフでも deferred。
 import { imageBonusOf, signedPoints } from "@/app/lib/pickup-image-bonus";
 import { nameWithRoom } from "@/app/lib/pickup-listing-text";
 
@@ -24,7 +26,7 @@ export type GroupNoticeInput = {
   sendToLine: boolean;
   /** 拡張の 🧠 ブレイン（chrome.storage.local.brainMode） */
   brainMode: boolean | null | undefined;
-  /** 拡張のスタッフモード（スタッフが自分で選んで送る） */
+  /** 拡張のスタッフモード（ブレインOFFの時だけ即送の理由に使う・ブレインONなら他モードと同じ deferred） */
   staffMode: boolean | null | undefined;
   /** お客様（property_customer_id）が分かるか。分からない回は自動のまとめ（解析の完了）に乗らない */
   hasCustomer: boolean;
@@ -43,11 +45,14 @@ export type GroupNoticePlan = {
 export function groupNoticePlan(i: GroupNoticeInput): GroupNoticePlan {
   if (!i.sendToLine) return { perSearch: false, deferred: false, reason: "no_line" };
   if (String(i.deferEnv ?? "").toLowerCase() === "off") return { perSearch: true, deferred: false, reason: "env_off" };
+  // ブレインON（スタッフ含む）: ★物件出し★へは検索のたび送らず、AIXツール解析完了後に1回
+  if (i.brainMode === true) {
+    if (!i.hasCustomer) return { perSearch: true, deferred: false, reason: "no_customer" };
+    return { perSearch: false, deferred: true, reason: "brain" };
+  }
+  // ブレインOFF: スタッフ／通常とも今まで通り検索のたびに送る
   if (i.staffMode === true) return { perSearch: true, deferred: false, reason: "staff_mode" };
-  if (i.brainMode !== true) return { perSearch: true, deferred: false, reason: "not_brain" };
-  // お客様が分からない回は売上サポの自動まとめ（解析の完了）に乗らない＝アナウンスが来ない → 今まで通り送る
-  if (!i.hasCustomer) return { perSearch: true, deferred: false, reason: "no_customer" };
-  return { perSearch: false, deferred: true, reason: "brain" };
+  return { perSearch: true, deferred: false, reason: "not_brain" };
 }
 
 /** 行に付ける印（property_pickups.group_notice） */
@@ -69,7 +74,7 @@ export type AnnouncePlan = {
 
 /**
  * まとめの行（group_notice 付き）と、前にアナウンスした行から、今回送るかを決める。
- *   deferred の行が1つも無いまとめ（ブレイン以外・デプロイ前の行・スタッフモードの回だけ）は送らない＝検索のたびに送ってある
+ *   deferred の行が1つも無いまとめ（ブレイン以外・デプロイ前の行・スタッフ×ブレインOFFの回）は送らない＝検索のたびに送ってある
  */
 export function announcePlan(rows: ReadonlyArray<AnnounceRowFlag>, announced: ReadonlyArray<number> | null | undefined): AnnouncePlan {
   const before = new Set((announced ?? []).filter((n) => Number.isFinite(n)));

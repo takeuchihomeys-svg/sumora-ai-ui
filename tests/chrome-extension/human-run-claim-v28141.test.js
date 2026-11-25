@@ -58,7 +58,8 @@ console.log("\n■ ④ background が使っている（場所と順番）");
   const iHold = bg.indexOf("holdReloadForBusyPage(probe, _openHumanRun(\"realpro\"))", iEns);
   const iReload = bg.indexOf("chrome.tabs.reload(tab.id)", iEns);
   ok("  読み直す前に人の回を見る", iEns > 0 && iHold > iEns && iHold < iReload, { iEns, iHold, iReload });
-  ok("  ページの答えが遅いだけなら2回まで確かめ直す", /for \(var _rp = 0; _rp < 2; _rp\+\+\)/.test(bg.slice(iEns, iReload)));
+  // 2.8.295: 邪魔しない窓の間は5回（リセットの読み直し直後・次客の入力の頭を読み直しで消さない）
+  ok("  ページの答えが遅いだけなら2回まで確かめ直す（窓の間は5回）", /var _rpMax = _quietNow\(\) \? 5 : 2;[\s\S]{0,200}for \(var _rp = 0; _rp < _rpMax; _rp\+\+\)/.test(bg.slice(iEns, iReload)));
   ok("  見送りは AXLX_OTHER_FILL_RUNNING（一括の最後にもう1回やり直す扱い）", /AXLX_OTHER_FILL_RUNNING: 人が始めた自動検索が進行中/.test(bg.slice(iEns, iReload)));
   ok("  customer-handoff がこの文をやり直しの対象として読む", /AXLX_OTHER_FILL_RUNNING/.test(fs.readFileSync(path.join(dir, "customer-handoff.js"), "utf8")));
 }

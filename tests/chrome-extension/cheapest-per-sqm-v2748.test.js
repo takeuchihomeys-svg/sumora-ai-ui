@@ -35,11 +35,11 @@ console.log("■ ① 呼び方が直っている（チェック状態で絞ら�
 {
   const iFn = code.indexOf("function _applyCheapestPerLayout");
   const seg = code.slice(iFn, iFn + 1400);
-  ok("候補（cand）を引数で受ける", /function _applyCheapestPerLayout\(state,\s*cand\)/.test(code));
+  ok("候補（cand）を引数で受ける", /function _applyCheapestPerLayout\(state,\s*cand(?:,\s*opts)?\)/.test(code));
   ok("  ⚠ チェック状態で絞っていない（これが原因だった）", !/t\.cb\.checked\)\s*return/.test(seg), seg.slice(0, 200));
   ok("  渡された候補を使う", /Array\.isArray\(cand\)\s*\?\s*cand\s*:\s*tracked/.test(seg));
   ok("  送付済み・古い行は対象外", /if \(t\.__axSkip\) return/.test(seg));
-  ok("  呼ぶ側が cand を渡す", /_applyCheapestPerLayout\(state,\s*cand\)/.test(code));
+  ok("  呼ぶ側が cand を渡す", /_applyCheapestPerLayout\(state,\s*cand/.test(code));
   ok("  外すのは印で判定（チェックに頼らない）", /__axCheapestSkip/.test(code));
 }
 
@@ -62,14 +62,14 @@ console.log("\n■ ② 同じ建物・同じ間取り・同じ平米なら最安
   ok("  ⚠ 一番高い 105,000円 は外す", res.drop.indexOf(2) >= 0, res.drop);
 }
 
-console.log("\n■ ③ 平米数が違えば別の部屋として残す（絞りすぎない）");
+console.log("\n■ ③ 面積差が2㎡超なら別の部屋として残す（絞りすぎない）");
 {
   const cards = [
     { name: "シーズンフラッツ梅田NORTH", cells: ["0701", "1LDK", "29.28m²", "102,600円"] },
-    { name: "シーズンフラッツ梅田NORTH", cells: ["0802", "1LDK", "31.50m²", "115,000円"] },
+    { name: "シーズンフラッツ梅田NORTH", cells: ["0802", "1LDK", "31.50m²", "115,000円"] }, // 差2.22㎡
   ];
   const res = RD.cheapestPerBuildingLayoutSize(cards);
-  ok("2件とも残す（平米が違う）", res.keep.length === 2 && res.drop.length === 0, res);
+  ok("2件とも残す（面積差>2㎡）", res.keep.length === 2 && res.drop.length === 0, res);
 }
 
 console.log("\n■ ④ 建物が違えば別（同じ平米でも絞らない）");

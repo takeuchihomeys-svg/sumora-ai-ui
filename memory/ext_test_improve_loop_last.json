@@ -1,0 +1,253 @@
+{
+  "at": "2026-11-23T17:59:43.070Z",
+  "suite_n": 34,
+  "pass_n": 34,
+  "fail_n": 0,
+  "ok": true,
+  "line": "拡張テスト改善ループ✓ suite=34/34 抜け0 版=2.8.244",
+  "next": "拡張を直したら scripts/ext-test-improve-loop.ts を再実行（鮮度を保つ）",
+  "runs": [
+    {
+      "id": "sort_head_buried",
+      "path": "tests/chrome-extension/sort-head-buried-v28197.test.js",
+      "ok": true,
+      "ms": 129,
+      "detail": "sort-head-buried-v28197: OK"
+    },
+    {
+      "id": "playbook_ad_sort_clear",
+      "path": "app/lib/__tests__/playbook-ad-sort-clear.test.ts",
+      "ok": true,
+      "ms": 1826,
+      "detail": "playbook-ad-sort-clear.test OK"
+    },
+    {
+      "id": "playbook_search_extra_guides",
+      "path": "app/lib/__tests__/playbook-search-extra-guides.test.ts",
+      "ok": true,
+      "ms": 1781,
+      "detail": "playbook-search-extra-guides.test OK"
+    },
+    {
+      "id": "playbook_build_v9_wiring",
+      "path": "tests/chrome-extension/playbook-build-v9-wiring.test.js",
+      "ok": true,
+      "ms": 124,
+      "detail": "playbook-build-v9-wiring.test OK"
+    },
+    {
+      "id": "action_playbook",
+      "path": "app/lib/__tests__/action-playbook.test.ts",
+      "ok": true,
+      "ms": 1856,
+      "detail": "56 passed, 0 failed"
+    },
+    {
+      "id": "search_customer_grasp_gaps",
+      "path": "tests/chrome-extension/search-customer-grasp-gaps-v28196.test.js",
+      "ok": true,
+      "ms": 133,
+      "detail": "search-customer-grasp-gaps-v28196: OK (10 gap checks + evidence table)"
+    },
+    {
+      "id": "search_customer_screen_grasp",
+      "path": "tests/chrome-extension/search-customer-screen-grasp-v28195.test.js",
+      "ok": true,
+      "ms": 125,
+      "detail": "search-customer-screen-grasp-v28195: OK"
+    },
+    {
+      "id": "sort_legacy_claude",
+      "path": "tests/chrome-extension/sort-legacy-claude-v28194.test.js",
+      "ok": true,
+      "ms": 128,
+      "detail": "sort-legacy-claude-v28194: OK (243 screenOk gate)"
+    },
+    {
+      "id": "sort_gate_insurance",
+      "path": "tests/chrome-extension/sort-gate-insurance-v28193.test.js",
+      "ok": true,
+      "ms": 119,
+      "detail": "sort-gate-insurance-v28193: OK"
+    },
+    {
+      "id": "sort_cursor_after_search",
+      "path": "tests/chrome-extension/sort-cursor-after-search-v28191.test.js",
+      "ok": true,
+      "ms": 125,
+      "detail": "sort-cursor-after-search-v28191: OK"
+    },
+    {
+      "id": "guide_screen_f57",
+      "path": "tests/chrome-extension/guide-screen-f57-v28187.test.js",
+      "ok": true,
+      "ms": 121,
+      "detail": "結果: ✓9 ✗0"
+    },
+    {
+      "id": "auto_procedure_rules",
+      "path": "app/lib/__tests__/auto-procedure-rules.test.ts",
+      "ok": true,
+      "ms": 1915,
+      "detail": "169 passed, 0 failed"
+    },
+    {
+      "id": "search_customer_grasp_f57",
+      "path": "app/lib/__tests__/search-customer-grasp-f57.test.ts",
+      "ok": true,
+      "ms": 1923,
+      "detail": "search-customer-grasp-f57.test OK"
+    },
+    {
+      "id": "human_like_audit",
+      "path": "app/lib/__tests__/human-like-audit.test.ts",
+      "ok": true,
+      "ms": 1800,
+      "detail": "  ✓ 機械は直書き・打ち込み・カーソルを名指し"
+    },
+    {
+      "id": "human_nearness",
+      "path": "app/lib/__tests__/human-nearness.test.ts",
+      "ok": true,
+      "ms": 1806,
+      "detail": "human-nearness.test OK"
+    },
+    {
+      "id": "human_like_wiring",
+      "path": "tests/chrome-extension/human-like-wiring.test.js",
+      "ok": true,
+      "ms": 112,
+      "detail": "human-like-wiring.test OK"
+    },
+    {
+      "id": "human_like_improve_loop",
+      "path": "app/lib/__tests__/human-like-improve-loop.test.ts",
+      "ok": true,
+      "ms": 1937,
+      "detail": "human-like-improve-loop.test OK"
+    },
+    {
+      "id": "human_like_gap_pace",
+      "path": "tests/chrome-extension/human-like-gap-pace-v28198.test.js",
+      "ok": true,
+      "ms": 117,
+      "detail": "human-like-gap-pace-v28198.test OK"
+    },
+    {
+      "id": "weak_find_strengthen",
+      "path": "app/lib/__tests__/weak-find-strengthen.test.ts",
+      "ok": true,
+      "ms": 1811,
+      "detail": "weak-find-strengthen.test OK"
+    },
+    {
+      "id": "customer_search_think",
+      "path": "app/lib/__tests__/customer-search-think.test.ts",
+      "ok": true,
+      "ms": 1650,
+      "detail": "customer-search-think: 12 passed, 0 failed"
+    },
+    {
+      "id": "handoff_loop_ledger",
+      "path": "app/lib/__tests__/handoff-loop-ledger.test.ts",
+      "ok": true,
+      "ms": 2055,
+      "detail": "handoff-loop-ledger: 21 passed, 0 failed"
+    },
+    {
+      "id": "search_before_sort_next_guard",
+      "path": "tests/chrome-extension/search-before-sort-next-guard-v28233.test.js",
+      "ok": true,
+      "ms": 141,
+      "detail": "21 passed, 0 failed"
+    },
+    {
+      "id": "root_cause_improve_loop",
+      "path": "app/lib/__tests__/root-cause-improve-loop.test.ts",
+      "ok": true,
+      "ms": 1823,
+      "detail": "19 passed, 0 failed"
+    },
+    {
+      "id": "list_one_page_grasp",
+      "path": "tests/chrome-extension/list-one-page-grasp-v28234.test.js",
+      "ok": true,
+      "ms": 139,
+      "detail": "19 passed, 0 failed"
+    },
+    {
+      "id": "continuous_series_next_grasp",
+      "path": "tests/chrome-extension/continuous-series-next-grasp-v28235.test.js",
+      "ok": true,
+      "ms": 141,
+      "detail": "15 passed, 0 failed"
+    },
+    {
+      "id": "screen_poll_instead_of_timeout",
+      "path": "tests/chrome-extension/screen-poll-instead-of-timeout-v28236.test.js",
+      "ok": true,
+      "ms": 121,
+      "detail": "19 passed, 0 failed"
+    },
+    {
+      "id": "screen_task_grasp_arch",
+      "path": "tests/chrome-extension/screen-task-grasp-arch-v28237.test.js",
+      "ok": true,
+      "ms": 134,
+      "detail": "13 passed, 0 failed"
+    },
+    {
+      "id": "stuck_shot_best_act",
+      "path": "tests/chrome-extension/stuck-shot-best-act-v28238.test.js",
+      "ok": true,
+      "ms": 128,
+      "detail": "14 passed, 0 failed"
+    },
+    {
+      "id": "clear_stuck_watch",
+      "path": "tests/chrome-extension/clear-stuck-watch-v28239.test.js",
+      "ok": true,
+      "ms": 125,
+      "detail": "18 passed, 0 failed"
+    },
+    {
+      "id": "search_results_before_ad",
+      "path": "tests/chrome-extension/search-results-before-ad-v28240.test.js",
+      "ok": true,
+      "ms": 146,
+      "detail": "18 passed, 0 failed"
+    },
+    {
+      "id": "silence_stale_wiring",
+      "path": "tests/chrome-extension/silence-stale-wiring-v28241.test.js",
+      "ok": true,
+      "ms": 126,
+      "detail": "24 passed, 0 failed"
+    },
+    {
+      "id": "silence_periodic_advance",
+      "path": "tests/chrome-extension/silence-periodic-advance-v28242.test.js",
+      "ok": true,
+      "ms": 126,
+      "detail": "18 passed, 0 failed"
+    },
+    {
+      "id": "foundation_legacy_subdivide",
+      "path": "tests/chrome-extension/foundation-legacy-subdivide-v28243.test.js",
+      "ok": true,
+      "ms": 129,
+      "detail": "25 passed, 0 failed"
+    },
+    {
+      "id": "legacy_collision_inventory",
+      "path": "tests/chrome-extension/legacy-collision-inventory-v28244.test.js",
+      "ok": true,
+      "ms": 122,
+      "detail": "20 passed, 0 failed"
+    }
+  ],
+  "findings": [],
+  "fixed": [],
+  "manifest_ver": "2.8.244",
+  "rules_reviewed": "2.8.244"
+}

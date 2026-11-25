@@ -1,0 +1,10 @@
+{
+  "title": "【決定】差埋めは録画flashを徹底し、束にhuman_like/nearnessを載せてから拡張再読込で測る",
+  "category": "architecture",
+  "insight": "録画・写真材料は十分（未読数千・F19/F21/F49✓）。差が埋まらない主因は(1)拡張が束を読んでいないread_count=0(2)aim有0(3)短間隔。統括Proは改善まで通常画像flashを続ける。束にhuman_like（point_pct）とhuman_nearnessを残し、学習のたびに差が見えるようにする。効果確認は拡張再読込→束取込→自動1回のF31/F32/F38/F29。",
+  "rationale": "2026-11-18 統括Pro生: 画像→ProはOK、穴はPro→拡張。竹内さん「改善するまで徹底的に録画から画像学習」。",
+  "context": "竹内さん「録画から学習したら差を埋められる／足りない土台／細部から改善／改善するまで統括proは徹底的に録画から画像学習」",
+  "applied_to": "app/lib/human-learn-brain.ts, scripts/shot-learn.ts, memory/dept_search_tool.md",
+  "tags": ["統括Pro", "分析強化の原則", "人間らしさ", "photo_learn", "Chrome拡張"],
+  "priority": 1
+}

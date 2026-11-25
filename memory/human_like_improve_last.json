@@ -1,0 +1,64 @@
+{
+  "at": "2026-11-23T09:37:52.086Z",
+  "hours": 48,
+  "nearness_source": "fold",
+  "nearness_raw": {
+    "score": 50,
+    "fast": 28.4,
+    "hb": 21,
+    "allowed": false,
+    "gN": 973
+  },
+  "nearness_fold": {
+    "score": 66,
+    "fast": 1.7,
+    "hb": 22.9,
+    "allowed": false,
+    "gN": 297
+  },
+  "point_pct": 52.3,
+  "point_source": "auto",
+  "auto_point": {
+    "rows": 174,
+    "point": 52.3,
+    "cursor": 62.1
+  },
+  "cursor_pct": 62.1,
+  "gap_pace": {
+    "median_ms": 1400,
+    "samples": 116,
+    "p10": 792,
+    "p50": 2525,
+    "p90": 19956,
+    "fast400pct": 0,
+    "humanBandPct": 34.5,
+    "floor_ms": 900,
+    "at": "2026-11-23T09:37:52.086Z"
+  },
+  "plan": {
+    "phase": "need_ext_spacing",
+    "gaps": [
+      "近さ66<70",
+      "human帯22.9%<50%",
+      "押した位置52.3%<60%",
+      "カーソル62.1%<70%"
+    ],
+    "photo_limit": 80,
+    "cycle": [
+      "reflect_auto",
+      "need_ext_reload",
+      "need_auto_run",
+      "photo_learn",
+      "photo_learn",
+      "reflect_auto",
+      "need_ext_reload",
+      "need_auto_run",
+      "verify_improve"
+    ]
+  },
+  "allow": {
+    "scoreMin": 70,
+    "fast400MaxPct": 12,
+    "humanBandMinPct": 50
+  }
+}

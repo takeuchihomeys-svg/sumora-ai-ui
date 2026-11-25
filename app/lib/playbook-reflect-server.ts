@@ -86,6 +86,8 @@ export async function fetchPlaybookReflect(env: Env, opts: { scope?: string; run
         pageScript: readFileSync(join(dir, "page-script.js"), "utf8"),
         searchAudit: readFileSync(join(dir, "search-audit.js"), "utf8"),
         manifestJson: readFileSync(join(dir, "manifest.json"), "utf8"),
+        bulkDl: readFileSync(join(dir, "bulk-dl.js"), "utf8"),
+        background: readFileSync(join(dir, "background.js"), "utf8"),
       });
       if (code.length) { reflect.ok = false; reflect.why.unshift(...code.map((c) => `コード: ${c}`)); }
       else reflect.facts.push("コード: 決まりの目印・拡張の一覧・見直した版は揃っている");

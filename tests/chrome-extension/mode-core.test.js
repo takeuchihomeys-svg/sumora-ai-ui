@@ -101,7 +101,8 @@ console.log("\n■ 2026-11-11 AIX（選んだお客さんを自動で検索）")
   eq("AIX は判定しない（人が選んだお客さん＝ブレイン OFF なら判定なし）", ai.brainJudge, false);
   eq("AIX × ブレイン は判定する", M.behavior("ai", true).brainJudge, true);
   eq("自動（aix）は aiCustomerSearch を開かない", M.behavior("aix", false).aiCustomerSearch, false);
-  eq("通常・スタッフは開かない", [M.behavior("normal", false).aiCustomerSearch, M.behavior("staff", false).aiCustomerSearch], [false, false]);
+  eq("通常は開かない", M.behavior("normal", false).aiCustomerSearch, false);
+  eq("スタッフは選んだ客の自動を開く（2.8.156）", M.behavior("staff", false).aiCustomerSearch, true);
   eq("書き戻し: AIX は aiMode=true・aixMode=false", M.storageUpdateForMode("ai", 1), { staffMode: false, staffModeAt: null, aixMode: false, autoModeAt: 1, aiMode: true });
   eq("読み戻し: aiMode=true → mode=ai", M.readState({ aiMode: true, autoModeAt: 1 }).mode, "ai");
   eq("スタッフが最優先（aiMode=true でも staff）", M.readState({ staffMode: true, staffModeAt: Date.now(), aiMode: true }).mode, "staff");

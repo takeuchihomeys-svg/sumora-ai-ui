@@ -1,0 +1,10 @@
+{
+  "title": "【決定】録画から改善する土台はF19〜F22で測る・cs/openedはAPIで捨てない",
+  "category": "architecture",
+  "insight": "録画→改善が回る条件: ①通常録画が新鮮(F19) ②shot_opsにcs/was(F20) ③point_fields(F21) ④opened(F22)。実測でcsが永久0の主因は本番APIがcsを捨てていた（拡張は送っていた）。openedも同様。APIで通し＋欠落時pointer補完。拡張送信前にもcs埋め。デプロイしないとDBに残らない。",
+  "rationale": "2026-11-17 竹内さん『学習できる土台はそろっているか／録画から改善する民に必要な土台をちゃんとそろえる／統括proと協力』。DB: 2.8.43走行でもkeys=f,k,t,w,by,gのみ。",
+  "context": "竹内さん『学習できる土台はそろっているか録画から改善する民に必要な土台をちゃんとそろえる統括proと協力して行う』",
+  "applied_to": "app/api/human-motion/route.ts, app/lib/learn-foundation-audit.ts, chrome-extension/background.js, manifest 2.8.44",
+  "tags": ["Chrome拡張", "点検表", "汎用", "監査"],
+  "priority": 1
+}

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.8.154",
+  "version": "2.8.297",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -37,7 +37,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "human-wait.js", "pointer-ui.js", "human-trace.js", "human-learn.js", "learn-order.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
+      "resources": ["popup.html", "human-wait.js", "pointer-ui.js", "human-trace.js", "human-learn.js", "learn-order.js", "popup-maps.js", "realpro-guide-plan.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
@@ -73,7 +73,7 @@
     },
     {
       "matches": ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*"],
-      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "autorun-note.js", "sent-skip.js", "update-order-stop.js", "room-dedupe.js", "customer-handoff.js", "bulk-dl.js"],
+      "js": ["bar-dock.js", "send-pairing.js", "auto-run.js", "autorun-note.js", "sent-skip.js", "update-order-stop.js", "room-dedupe.js", "customer-handoff.js", "bulk-panel-grasp.js", "result-verify.js", "bulk-dl.js"],
       "run_at": "document_idle"
     },
     {

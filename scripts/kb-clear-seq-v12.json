@@ -1,0 +1,10 @@
+{
+  "title": "【決定】連続外しの一連は before_clear→after_clear→入れ を抜けなく測る（build_v12）",
+  "category": "architecture",
+  "insight": "手順書 flow_series が after_clear から始まっており外す前の把握（guide_clear_grasp）が一連から抜けていた。build_v12で before_clear を先頭に追加し、after_clear に clear_then_fill_ok/clear_done を載せる。配線順 leftover_scan→guide_clear_grasp→clear_done→after_clear→clear_then_fill を continuous-clear-sequence テストで固定。",
+  "rationale": "竹内さん: テストしてちゃんと連続でやって外せるか。手順書や把握するところ順番に抜けないか徹底的に確認。統括pro。",
+  "context": "テストしてちゃんと連続でやって外せるか。手順書や把握するところ順番に抜けないか徹底的に確認する。統括proおねがい。",
+  "applied_to": "app/lib/action-playbook.ts PLAYBOOK_FLOW_SERIES build_v12, app/lib/__tests__/continuous-clear-sequence.test.ts",
+  "tags": ["Chrome拡張", "連続客", "手順書", "点検表", "分析強化の原則"],
+  "priority": 1
+}

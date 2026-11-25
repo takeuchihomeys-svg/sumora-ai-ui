@@ -7,14 +7,15 @@
 //   npx tsx --env-file=.env.local scripts/work-log.ts --task "<作業名>"            … その作業の履歴（古い順）
 //   npx tsx --env-file=.env.local scripts/work-log.ts --add "<作業名>" --status=progress --summary="…" [--next="…"] [--waiting="…"] [--branch=…] [--commit=…] [--actor=作業員N] [--kb=<引いた KB の id8,…>|none] [--dry]
 //   status: started（始めた）・progress（区切り）・blocked（詰まった）・waiting_owner（竹内さんの答え待ち）・done（終わった）・stopped（やめた）
-//   書くのはサーバーの鍵（RLS 有効・ポリシーなし）。お客様の文・名前は入れない。LINE には何も送らない。
+//   2026-11-24 竹内さん「RLSはずす」: work_log は RLS を外し、公開の鍵でも読む・足すができる（書き換え・削除は不可）。
+//   サーバーの鍵があればそちらを使う。お客様の文・名前は入れない。LINE には何も送らない。
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
 import { normalizeActor, parseKbIds } from "../app/lib/work-log-fields";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-if (!url || !key) { console.error("SUPABASE_SERVICE_ROLE_KEY が要ります（表は RLS 有効・公開キーでは読めない）"); process.exit(1); }
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+if (!url || !key) { console.error("NEXT_PUBLIC_SUPABASE_URL と鍵（SUPABASE_SERVICE_ROLE_KEY か NEXT_PUBLIC_SUPABASE_ANON_KEY）が要ります"); process.exit(1); }
 const sb = createClient(url, key);
 const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(`--${f}`);

@@ -906,7 +906,13 @@
     return new Promise(function (resolve) {
       var i = 0;
       function step() {
-        if (anim.cancelled) { resolve(false); return; }
+        if (anim.cancelled) {
+          /** ★ 2.8.226: 飛行中キャンセルでも今座標を残しロック解放（中心やり直し禁止） */
+          try { _place(_pos.x, _pos.y); _savePos(_pos.x, _pos.y); } catch (_) {}
+          try { _release(); } catch (_) {}
+          resolve(false);
+          return;
+        }
         if (i >= pts.length) {
           _pos = t;
           _place(t.x, t.y);
@@ -1294,7 +1300,12 @@
     _claim(600);
     return new Promise(function (resolve) {
       function step() {
-        if (anim.cancelled) { resolve(false); return; }
+        if (anim.cancelled) {
+          try { _place(_pos.x, _pos.y); _savePos(_pos.x, _pos.y); } catch (_) {}
+          try { _release(); } catch (_) {}
+          resolve(false);
+          return;
+        }
         var el = Date.now() - t0;
         if (el >= total) {
           _pos = start;
@@ -1384,5 +1395,63 @@
         shape: _shape,
       };
     },
+    /**
+     * ★ 2026-11-22 竹内さん「マウスが2つ出現／ちゃんと人間のように1つずつ」:
+     *   余分な #axlx-fake-cursor を消し、見えるカーソルを出し、OSカーソルを隠す。
+     *   条件入力・AD並び替えの前に呼ぶ（二重マウスを止める関所）。
+     */
+    forceOneCursor: function () {
+      try {
+        ensure();
+        var d = _doc();
+        if (d) {
+          var all = d.querySelectorAll("#" + ID);
+          var keep = (_el && _el.isConnected) ? _el : (all && all[0]) || null;
+          for (var i = 0; i < (all ? all.length : 0); i++) {
+            if (all[i] !== keep) {
+              try { all[i].parentNode && all[i].parentNode.removeChild(all[i]); } catch (_) {}
+            }
+          }
+          if (keep) {
+            _el = keep;
+            try { if (_el.style.opacity === "0") _el.style.opacity = "1"; } catch (_) {}
+          }
+        }
+        _osHide(true);
+        return oneCursorInfoSafe();
+      } catch (_) {
+        try { _osHide(true); } catch (__) {}
+        return { v: 1, count: 0, os_hidden: false, shape: _shape };
+      }
+    },
+    /**
+     * ★ 2026-11-22: 条件入力が始まった／駅モーダル中は、飛んでいる並べ替えカーソルを止める。
+     *   moveTo の途中でも `_anim.cancelled` で着地前に止める（世代上げだけでは飛行中が残る）。
+     * ★ 2.8.226: 止めた所で座標を固定（中心・左上へ飛ばさない）。戻り値は止めた座標。
+     */
+    cancelMove: function () {
+      try {
+        _syncFromShared();
+        if (_anim) _anim.cancelled = true;
+        if (_pos && isFinite(_pos.x) && isFinite(_pos.y)) {
+          _place(_pos.x, _pos.y);
+          _savePos(_pos.x, _pos.y);
+        }
+        try { _release(); } catch (_) {}
+        return { x: _pos.x, y: _pos.y, kept: true };
+      } catch (_) {
+        try { if (_anim) _anim.cancelled = true; } catch (_e) {}
+        return false;
+      }
+    },
   };
+  function oneCursorInfoSafe() {
+    var d = _doc();
+    return {
+      v: 1,
+      count: d ? d.querySelectorAll("#" + ID).length : 0,
+      os_hidden: !!(d && d.documentElement && d.documentElement.classList.contains(OS_CLS)),
+      shape: _shape,
+    };
+  }
 });

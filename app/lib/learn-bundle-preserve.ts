@@ -14,6 +14,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyBundleAliasExpansion } from "./field-name-aliases";
+import { pickNewestPlaybook } from "./playbook-freshness";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -226,6 +227,7 @@ export async function inheritLinkFoundations(
   let historyHadSolid = false;
 
   const scopes = scopesToSearch(scope);
+  const historyPlaybooks: Array<Record<string, unknown>> = [];
 
   for (const sc of scopes) {
     const { rows, error } = await loadHistoryRows(sb, sc, lookback);
@@ -234,6 +236,9 @@ export async function inheritLinkFoundations(
       continue;
     }
     for (const row of rows) {
+      // ★ 2.8.297: 履歴の一番新しい手順書を覚える（prepareBundleForWrite が「古いコードで新しい手順書を潰さない」ために使う）
+      const hp = (row.bundle as { playbook?: Record<string, unknown> | null } | null)?.playbook;
+      if (hp && typeof hp === "object") historyPlaybooks.push(hp);
       const old = countLearnedSolid(row.bundle);
       if (old.solid >= minSolid) historyHadSolid = true;
       const curSolid = countLearnedSolid(bundle).solid;
@@ -294,6 +299,14 @@ export async function inheritLinkFoundations(
 
   /** inherit 後も拡張の完全一致引き用に別名を載せる */
   applyBundleAliasExpansion(bundle);
+
+  // ★ 2.8.297: 履歴の一番新しい手順書を「列挙されない印」で束に載せる（JSON にも DB にも出ない・prepareBundleForWrite が読んで消す）
+  try {
+    const newest = pickNewestPlaybook<Record<string, unknown>>(historyPlaybooks);
+    if (newest) {
+      Object.defineProperty(bundle, "__prev_playbook", { value: newest, enumerable: false, configurable: true, writable: true });
+    }
+  } catch { /* 印が付かなくても書く（今までの動き） */ }
 
   const solid = countLearnedSolid(bundle).solid;
   const has_fa = !!bundle.foundation_audit;

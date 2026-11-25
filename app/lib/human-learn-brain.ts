@@ -1933,6 +1933,7 @@ export function buildHumanLearnBundle(
         advice: audits.advice ?? null,
         // ★ 完了→次客（統括Proが把握する原子）
         handoff: audits.handoff ?? null,
+        continuous: (audits as { continuous?: unknown }).continuous ?? null,
         // ★ F45 完了理解台帳（何が完了しているか）
         flow: audits.flow ?? null,
       }

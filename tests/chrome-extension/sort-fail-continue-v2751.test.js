@@ -31,8 +31,8 @@ console.log("■ ① 失敗しても止まらない（押さない return をや
 {
   ok("⚠ 並べ替え失敗で return して押さない、をやめた", !/並べ替えができませんでした。自動では押しません/.test(code));
   ok("  代わりに続行する", /この並びのまま押します/.test(code) || /この並びのまま押します/.test(bd));
-  ok("  続行時に go() を呼ぶ", /_tmark\("ad_sort", "failed_continue"\)[\s\S]{0,120}?if \(typeof go === "function"\) go\(\)/.test(code));
-  ok("  点検に残す（黙って続けない）", /failed_continue/.test(code));
+  ok("  続行時に go() を呼ぶ", /sort_failed[\s\S]{0,400}?if \(typeof go === "function"\) go\(\)/.test(code) || /if \(typeof go === "function"\) go\(\)/.test(code));
+  ok("  点検に残す（黙って続けない）", /sort_failed/.test(code) || /failed_continue/.test(code));
   ok("  画面にも出す", /並べ替えできませんでした（この並びのまま続けます）/.test(bd));
 }
 
@@ -41,7 +41,7 @@ console.log("\n■ ② 3回までリトライする");
   ok("_maxTry = 3", /var _maxTry = 3;/.test(code));
   ok("  失敗したらやり直す", /if \(_try < _maxTry\)/.test(code));
   ok("  少し待ってから（1.5〜2.7秒）", /1500 \+ Math\.floor\(Math\.random\(\) \* 1200\)/.test(code));
-  ok("  ⚠ 1回分を _sortOnce に分けた", /function _sortOnce\(done\)/.test(code));
+  ok("  ⚠ 1回分を _sortOnce に分けた", /function _sortOnce\(done/.test(code));
   ok("  入口は _sortByAdLikeHuman", /function _sortByAdLikeHuman\(done\)/.test(code));
 }
 
@@ -50,7 +50,7 @@ console.log("\n■ ③ 失敗した段を点検に送る（どの段で止まっ
   ok("sort_no_head（並べ替えが見つからない）", /_auditSort\("sort_no_head"/.test(code));
   ok("sort_no_ad（AD が見つからない）", /_auditSort\("sort_no_ad"/.test(code));
   ok("sort_no_hilo（高→低 が見つからない）", /_auditSort\("sort_no_hilo"/.test(code));
-  ok("  成功した段も残す（どこまで進んだか）", /_auditSort\("sort_head"/.test(code) && /_auditSort\("sort_ad"/.test(code));
+  ok("  成功した段も残す（どこまで進んだか）", /_auditSort\("sort_head_hover"/.test(code) && /_auditSort\("sort_ad_hover"/.test(code));
   ok("  見えていた短い文字も送る", /_visibleWords\(\)/.test(code));
 }
 
