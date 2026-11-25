@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.305";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.306";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -319,7 +319,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_to_sort_cursor",
     scene: "list",
-    text: "検索を押した把握をトリガーに、1秒以降の人間ランダム待ちのあと並べ替えへカーソル移動する。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
+    text: "検索を押した把握をトリガーに、検索確認の時刻から30〜36秒（2.8.292・経過した分は引く・残りは最低50ms）の人間ランダム待ちのあと並べ替えへカーソル移動する（旧「1秒以降」は廃止）。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
     since: "2.8.191",
     kb: "92413949",
     marker: "_scheduleSortCursorAfterSearch",
@@ -605,6 +605,15 @@ export const AUTO_RULES: AutoRule[] = [
     since: "2.8.305",
     kb: "265a1cca",
     marker: "reset_replaces_clear",
+    file: "background.js",
+  },
+  {
+    id: "series_handoff_order",
+    scene: "switch",
+    text: "連続のお客さんの受け渡しの順番（一括）: ①送付が終わる ②完了の小窓を閉じてリセットを押す ③ページの読み直しを待ち、30秒以上（30〜34秒）人の間で待つ ④フォームが空か読み戻して確かめ、該当数が増えていないかも見る（空にならなければ従来の外しへ）⑤資料を見る間（1.8〜13秒）⑥次のお客さんの番：前の回のリセットが途中なら残りを待つ→ページが空でなければ入力前にもう1回リセット→空を確認 ⑦そこで初めて次客の条件を拡張ツールのAPI（/api/property-customers・キャッシュなし）から読み直して入力する（_refreshCustomerBeforeSearch）。読み直しはリセット・空の確認より後。読めない時は今までの条件で続ける。最後のお客さんは完了を待たせず裏でリセットする。印: reset_verified／reset_before_fill／bulk_pos",
+    since: "2.8.306",
+    kb: "265a1cca",
+    marker: "var customer = await _refreshCustomerBeforeSearch(customer, site);",
     file: "background.js",
   },
   {

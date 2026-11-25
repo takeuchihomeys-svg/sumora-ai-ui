@@ -14845,3 +14845,10 @@ Claude（統括役）からの依頼2件への対応。
 - ⚠ 既知の穴: 単発の自動（ポップアップの自動ボタン）には入力前のリセットが無い。ポップアップはページ内の iframe（underbar.js）で、リセットの読み直しで消えるため。_resetBeforeFill は background の一括ループ（_manualBulkRun）だけが呼ぶ。直すなら『単発も1人の一括として background に渡す』か、background が入力の再送を持つ形が要る（拡張の動きの変更・竹内さんの OK）。
 - ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook・竹内さんの OK）。
 - 2026-11-26 反映の記録（2.8.305）: 40e7df606 を main に push（f79d2e810..40e7df606）→ 本番 2.8.305 を確認 → attach-playbook --apply で DB の手順書（2813/2815/2814）を rules_v=5d81f15d・97件・見直し2.8.305 に（控え: %TEMP%\playbook-backup-2.8.305）。残り: 拡張は 2.8.295 のまま（再読み込み→タブ開き直し→自動1回が済むまで『反映済み』と言わない）。単発の自動への入力前リセットは、手動の単発クリックが対象（直近14回では3回・brain_normal）で、一括に流すと送付の動きまで変わるため保留（竹内さんの判断待ち）。
+
+### 2026-11-26 2.8.306 連続客の受け渡しの順番を手順書に1本で明記（series_handoff_order）・並べ替えの待ちの古い文言を直す
+- 竹内さん「手順書は連続するお客さんの流れをちゃんと理解してるのか／完了したらリセット→数秒後に空を確認→次の客の条件を拡張のAPIから入れるか／検索後の並べ替えも完了後のログを考えて時間経過してから動くか」。
+- コードの実物（確認済み）: 送付後 _postSendClearOrReset（リセット→30秒以上→空と該当数の確認・だめなら従来の外し）→ 資料を見る間 → 次客: _waitInheritedReset → _resetBeforeFill（空でなければ押す）→ _batchAutofill 内の _refreshCustomerBeforeSearch（/api/property-customers・no-store）→ 入力。条件の読み直しはリセットと空の確認の後。並べ替えは bulk-dl.js _waitMsFromSearchConfirm が検索確認の時刻から30〜36秒を数え、経過した分を引く（残り最低50ms）。
+- 手順書の穴: 「次客の条件をAPIから読み直す」「この順番」を書いた決まりが無かった。search_to_sort_cursor（#322）が旧「1秒以降」のままで、search_confirm_then_wait_sort（30秒以上）とぶつかっていた。
+- 直した: 決まり series_handoff_order を追加（since 2.8.306・marker は _refreshCustomerBeforeSearch の行・background.js）。search_to_sort_cursor の文言を30〜36秒に。動きは変えていない。版 2.8.306。
+- 実データ（search_audits 直近60回）: sort_cursor_wait が残るのは 2.8.206 以前だけ（待ち1〜2秒）。2.8.292 以降の30〜36秒は、止まった回ばかりで、まだ実機の記録が無い。
