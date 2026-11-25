@@ -1383,7 +1383,7 @@ if (/exam-conductor.ts$/.test(process.argv[1] ?? "")) (async () => {
           for (const st of nightZeroCostSteps(join(MARKS, `route-progress-60d-${nz.key}.json`))) {
             const t0 = Date.now();
             // 2026-11-25 作業員A: shell: true は空白の入った引数（置き場の道筋「竹内 悠馬」）を2つに割る＝--json= の書き先が壊れて落ちた（11/25 22:03 の2つ）。空白のある引数は引用符で包む
-            const r = spawnSync("npx", ["tsx", "--env-file=.env.local", ...st.args.map((x) => (/s/.test(x) ? `"${x}"` : x))], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: st.timeoutMin * 60_000 });
+            const r = spawnSync("npx", ["tsx", "--env-file=.env.local", ...st.args.map((x) => (/\s/.test(x) ? `"${x}"` : x))], { cwd: process.cwd(), encoding: "utf8", shell: true, timeout: st.timeoutMin * 60_000 });
             const tail = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
             log(`晩の費用0の仕事・${st.name}: ${r.status === 0 ? "済み" : `落ちた（終わりの番号 ${r.status}${r.error ? "・" + r.error.message : ""}）`}・${Math.round((Date.now() - t0) / 1000)}秒・${tail.slice(0, 160)}`);
           }
