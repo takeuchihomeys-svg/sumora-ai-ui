@@ -29,7 +29,7 @@ type Row = { id: number; conv: string; at: string; cls: string; tk: string | nul
     if (ids) console.log(`  ${r.id} ${r.conv} ${w.customer_turn_at} 場面 ${f.scene ?? "—"}・竹内さん ${r.cls}/${r.tk ?? "—"}`);
     if (!f.scene) continue;
     const move = r.cls === "reply" || r.cls === "two_stage" ? "返信が先" : `AIX:${r.tk}`;
-    const o = tab.get(f.scene) ?? { n: 0, moves: new Map(), brain: new Map(), ex: [] };
+    const o = tab.get(f.scene) ?? { n: 0, moves: new Map<string, number>(), brain: new Map<string, number>(), ex: [] as string[] };
     o.n++; o.moves.set(move, (o.moves.get(move) ?? 0) + 1); o.brain.set(String(r.route ?? "?"), (o.brain.get(String(r.route ?? "?")) ?? 0) + 1); if (o.ex.length < 4) o.ex.push(`${r.conv}(${String(r.at).slice(5, 10)})`);
     tab.set(f.scene, o);
   }
