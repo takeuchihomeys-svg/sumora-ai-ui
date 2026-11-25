@@ -529,6 +529,8 @@ export type SuggestedAixMeta = {
   turn_aims?: import("@/app/lib/brain-turn-aims").TurnAims;
   /** 2026-11-26 作業員A（#745・BACKPLAN_TO_WRITER=on）: 逆算の計画の書き手への渡し（道・この先・ゴール側の言い回しの型・期日の目安） */
   route_backplan?: import("@/app/lib/route-backplan").BackplanRec;
+  /** 2026-11-26 作業員A（#747 の使った目印）: 材料に入った場面の印（cpf: a/q/b/p・ppf: r/n・bpn: 逆算の1手先の駅） */
+  flow_marks?: { cpf?: string; ppf?: string; bpn?: string };
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 地図の駅・分かれ道・次の一手（記録だけ） */
   apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[]; substate?: string | null };
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 道の後の状態の表の狙い（turn-aims-after と同じ・記録だけ） */
@@ -3334,12 +3336,13 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
+  const flowMarks: { cpf?: string; ppf?: string; bpn?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
     if (cpf.brainCheckPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
       const flow = cpf.checkPromiseFlowOf(brainLedgerInput.messages as never, (brainLedgerInput.recentAixRows ?? []) as never, Date.now());
       const ln = cpf.checkPromiseFlowLine(flow);
-      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; checkFlowMarkLen = ln.length; materialBlocks.push({ key: "check_promise_flow", text: ln, from: "cs" }); }
+      if (ln) { flowMarks.cpf = ({ ack_wait: "a", question_after_promise: "q", brought_no_promise: "b", ack_plus: "p" } as Record<string, string>)[String(flow.scene)] ?? undefined; customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; checkFlowMarkLen = ln.length; materialBlocks.push({ key: "check_promise_flow", text: ln, from: "cs" }); }
       console.log(JSON.stringify({ tag: "brain:check-promise-flow", conversationId, scene: flow.scene, brought24h: flow.brought24h, promised: flow.checkPromised, resultSent: flow.resultSent }));
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "check-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
@@ -3351,7 +3354,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const { count: pendN } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending");
       const pf = ppf.pickupPromiseFlowOf(brainLedgerInput.messages as never, (brainLedgerInput.recentAixRows ?? []) as never, typeof pendN === "number" ? pendN : null, Date.now());
       const ln = ppf.pickupPromiseFlowLine(pf);
-      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; pickupFlowMarkLen = ln.length; materialBlocks.push({ key: "pickup_promise_flow", text: ln, from: "cs" }); }
+      if (ln) { flowMarks.ppf = pf.scene === "ack_ready" ? "r" : "n"; customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; pickupFlowMarkLen = ln.length; materialBlocks.push({ key: "pickup_promise_flow", text: ln, from: "cs" }); }
       console.log(JSON.stringify({ tag: "brain:pickup-promise-flow", conversationId, scene: pf.scene, pending: pf.pending, promised: pf.promised, fulfilled: pf.fulfilled }));
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "pickup-promise-flow-failed", error: e instanceof Error ? e.message : String(e) })); }
@@ -4375,7 +4378,7 @@ ${sh}`;
           });
           const bl = bp.backplanLine(plan);
           // 2026-11-26 作業員A（#747 の形）: 地図の文から別の行として控えに登録（MATERIAL_PRIORITY が並べ替える単位）・材料に入れるのは APPLY_ROUTE_BACKPLAN=on の時だけ
-          if (bl && bp.applyRouteBackplanOn()) { applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; materialBlocks.push({ key: "route_backplan", text: `\n${bl}`, from: "route" }); }
+          if (bl && bp.applyRouteBackplanOn()) { if (plan?.ahead[0]) flowMarks.bpn = plan.ahead[0]; applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; materialBlocks.push({ key: "route_backplan", text: `\n${bl}`, from: "route" }); }
           if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
@@ -7185,6 +7188,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
+      ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
       ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
