@@ -669,8 +669,12 @@ async function main() {
     const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig, spendWindowStart, claudeMonthSpendUsd }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
     resetBudgetCache();
     // 2026-11-25 作業員L（統括役の頼み）: 月の全部の行を読む（前は 50頁＝5万行で止まり $142 と出た・audit-llm-month-cost は $291）。基準（CLAUDE_SPEND_BASE_*）も本番と同じ式で足す
-    const bc = readBudgetConfig(process.env);
-    const ms = await monthSums(sb as never, now, process.env, { maxPages: 500 });
+    // 2026-11-25 18:43 の 1枚で「LLM_BUDGET_ROUTE=off・Claude 142.29」と出た（手元の env で読んだ）→ 使用額と切り替えの名前は本番のスイッチの組（prod-env.json）で読む
+    const { budgetEnvFrom, readBudgetProdEnv } = await import("./lib/budget-prod-env");
+    const pe = readBudgetProdEnv();
+    const be = budgetEnvFrom(process.env, pe?.env ?? null);
+    const bc = readBudgetConfig(be.env);
+    const ms = await monthSums(sb as never, now, be.env, { maxPages: 500 });
     if (ms) {
       const ls = [
         monthSpendLine({ provider: "Claude", spendUsd: claudeMonthSpendUsd(bc, { useBase: spendWindowStart(bc, now).useBase, sinceUsd: ms.claudeUsd }), creditUsd: bc.claudeCreditUsd, nowMs: now }),
@@ -681,7 +685,7 @@ async function main() {
         ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
         // 2026-11-25 統括役の頼み: 本番（route が script: でない）と試験を分けて出す（前は混ぜて「本番のブレインは DeepSeek」と読み違えた）
         `- うち本番（試験を除く）: Claude ${(ms.prod?.claudeUsd ?? 0).toFixed(2)}・OpenAI ${(ms.prod?.openaiUsd ?? 0).toFixed(2)}・DeepSeek ${(ms.prod?.deepseekUsd ?? 0).toFixed(2)}／試験: Claude ${(ms.claudeUsd - (ms.prod?.claudeUsd ?? 0)).toFixed(2)}・OpenAI ${(ms.openaiUsd - (ms.prod?.openaiUsd ?? 0)).toFixed(2)}・DeepSeek ${(ms.deepseekUsd - (ms.prod?.deepseekUsd ?? 0)).toFixed(2)}（Claude は基準より後の行だけ）`,
-        `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}`);
+        `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}（${be.from === "prod" ? `本番のスイッチの組 ${pe?.hash.slice(0, 8)}・無い名前はコードの既定` : "⚠ 本番の控えが無く手元の env"}${be.dropped.length ? `・手元の env と違うので捨てた: ${be.dropped.join(" ")}` : ""}）`);
       for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
     }
   } catch (e) { console.warn("[self-improve] API の使用額を読めない:", e instanceof Error ? e.message : String(e)); }
