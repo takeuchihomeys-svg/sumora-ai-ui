@@ -80,7 +80,7 @@ export function promiseWideKindOf(clause: string): PromiseWideKind | null {
 //   確認: 「最終確認をさせて頂きます」「募集状況確認 翌営業日に…させていただきます」（間に語が入る形）・「（礼金の）減額交渉をさせて頂きます」
 //   見積: 「（最大限割引して）御見積書をご用意いたします」
 //   足さない: 「初期費用を最大限割引させて頂きます」だけの節（竹内さん本人 60日 77回のうち 68% が通の締めの位置・72時間以内に見積の AIX は 19%＝決まり文句）・ご連絡・共有（果たした判定が無い種類）
-export const promiseKindWide2On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_KIND_WIDE2 ?? "").trim().toLowerCase() === "on";
+export const promiseKindWide2On = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_KIND_WIDE2 ?? "").trim().toLowerCase() !== "off"; // 2026-11-26 統括役の決め: 既定 on（B1 60日で約束 +12＝取りこぼしの減り・記録だけ）。止める =off
 export function promiseWide2KindOf(clause: string): "pickup" | "check" | "estimate" | null {
   const t = String(clause ?? "").normalize("NFKC");
   if (/御?見積(?:書|もり|り)?(?:を)?ご用意(?:いた|致|させて)/.test(t)) return "estimate";

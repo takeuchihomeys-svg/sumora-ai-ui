@@ -21,12 +21,15 @@ const JA: Record<CondGapKind, string> = {
 
 (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
-  const { data, error } = await sb.from("deal_outcomes").select("id, conversation_id, first_contact_at, applied_at").not("applied_at", "is", null).is("condition_at", null).limit(2000);
+  // --all: 申込に届かなかった件も（条件ヒアリングの駅の到達率の分母をそろえる・作業員A 11/25 夜）。届かなかった件は今までの通（400通まで）
+  let base = sb.from("deal_outcomes").select("id, conversation_id, first_contact_at, applied_at").is("condition_at", null);
+  if (!argv.includes("--all")) base = base.not("applied_at", "is", null);
+  const { data, error } = await base.limit(3000);
   if (error) throw new Error(error.message);
-  const deals = ((data ?? []) as Array<{ id: number; conversation_id: string; first_contact_at: string | null; applied_at: string }>).filter((d) => !isTestConversation(d.conversation_id));
+  const deals = ((data ?? []) as Array<{ id: number; conversation_id: string; first_contact_at: string | null; applied_at: string | null }>).filter((d) => !isTestConversation(d.conversation_id));
   const rows: Array<{ id: number; conv8: string; kind: CondGapKind; firstKinds: string[]; msgs: number }> = [];
   for (const d of deals) {
-    let q = sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", d.conversation_id).lt("created_at", d.applied_at).order("created_at").limit(400);
+    let q = sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", d.conversation_id).lt("created_at", d.applied_at ?? new Date().toISOString()).order("created_at").limit(400);
     if (d.first_contact_at) q = q.gte("created_at", new Date(Date.parse(d.first_contact_at) - 60e3).toISOString());
     const { data: m, error: e } = await q;
     if (e) throw new Error(e.message);
