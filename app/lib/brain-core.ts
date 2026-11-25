@@ -4326,6 +4326,16 @@ ${sh}`;
       { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
       { const sub = applyRouteText.length - ar.text.length; if (sub > 0) materialMarks.route_substate = sub; }
+      // 2026-11-25 作業員A（#739・STATION_STATE_LINE=on の時だけ・既定 off）: 駅の中で足りない状態（駅に入ってからの日数・見積書の後のお客様の通）の1行
+      try {
+        const ss = await import("@/app/lib/route-station-state");
+        if (ss.stationStateLineOn() && ar.loc?.node && !ar.loc.branch) {
+          const { buildAixStateCard } = await import("@/app/lib/aix-state-card");
+          const card = buildAixStateCard({ messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
+          const sl = ss.stationStateLine({ node: ar.loc.node, since: customerState?.since ?? null, nowMs: Date.now(), messages: brainLedgerInput.messages as never, card });
+          if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; }
+        }
+      } catch (e) { console.warn("[brain-core] station-state skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
