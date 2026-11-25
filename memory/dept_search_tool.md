@@ -21,6 +21,8 @@
 
 **テスト**: `tests/chrome-extension/playbook-reflect-v2297.test.js`（26）・`app/lib/__tests__/playbook-downgrade-guard.test.ts`（23）。既存は bundle-write-prepare 12・learn-write-path-gate 11・learn-bundle-preserve 20・action-playbook 56・quiet-window-v2295 78・reset-before-fill-v2296 34・reset-between-customers-v28284 75 すべて通る。`auto-procedure-rules` の「kb は id8 か null」1件・`bulk-handoff-watch-resume-v28265`（_bulkClampStart）は以前からの失敗（今回の変更と無関係）。tsc は以前からの 7件のまま（増えていない）。
 
+**追補（2026-11-25 23:30・点検で見つけた抜け）**: 本番は `LEARN_HISTORY_SLIM` が既定 on（`main` 側の変更）＝履歴を細く読み、手順書本体を読まないため、上の 1. の「履歴の新しい手順書を渡す」が本番の既定の経路で働いていなかった（守れるのは、いまの束に手順書がある時だけ）。→ 細い読みに印だけ（`pb_up_to`・`pb_build`＝数文字）を足し、コードより新しい物が履歴にある時だけ、その1行の手順書を1回だけ読む（`inheritLinkFoundations`・読めなければ今まで通り）。テスト `playbook-downgrade-guard.test.ts` 29 件（細い読みの3場面を追加）。残る抜け（未対応）: ①決まりを変えて `AUTO_RULES_REVIEWED_UP_TO` を上げ忘れると歯止めが効かない ②本番へ出した後の attach・拡張の再読み込みは手動 ③歯止めは古いコード自体には無い（効くのは 2.8.297 以降のコード同士）。
+
 **⚠ 作業の事故（記録）**: `search-audit.js` を PowerShell の `Get-Content -Raw | -replace | Set-Content` で書き換えて**文字化け**させた（Windows 日本語環境の既定は cp932）。git の HEAD を土台に 3-way merge＋コメントを書き直して復元済み（`node --check` と全テストで確認）。**ファイルの書き換えは必ず Write／StrReplace か node の `fs`（UTF-8）で行う。PowerShell の Get-Content/Set-Content で日本語を含むファイルを直さない。**
 
 **本番への反映（竹内さんの「上げて」待ち）**: コミット（tsc→）→ main へ merge（`cursor-ext` は conflict 無し・`app/api` 14件を含む）→ デプロイ → `check-playbook-sync.ts` で ③ が ✅ になるのを見る → `attach-playbook.ts --apply --backup-dir=<リポジトリの外>` → 拡張を chrome://extensions で再読み込み＋リアプロのタブを開き直す。それまでは夜に戻る（attach は 22時以降の作り直しで古くなる）。DB は 23:05 に attach 済み（id=2797〜2799・rules_v=c77fc6b3・91件・控え `…\Temp\sumora-playbook-backup-20261125-2305`）。
