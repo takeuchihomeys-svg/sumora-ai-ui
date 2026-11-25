@@ -1,14 +1,15 @@
 // npx tsx app/lib/__tests__/llm-budget-route.test.ts
 // 2026-11-24 作業員L（台帳 #670）: 月の Claude の使用額で係ごとに Claude ⇄ OpenAI
 import assert from "node:assert/strict";
-import { budgetRoleOf, readBudgetConfig, budgetDecision, spendWindowStart, claudeMonthSpendUsd, monthSpendLine, BUDGET_ROLE_TABLE } from "../llm-budget-route";
+import { budgetRoleOf, readBudgetConfig, budgetDecision, spendWindowStart, openaiWindowStart, claudeMonthSpendUsd, monthSpendLine, BUDGET_ROLE_TABLE } from "../llm-budget-route";
 import { addRow } from "../llm-budget-route-server";
 import { readAltConfig } from "../llm-alt-provider";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
 const NOW = Date.parse("2026-11-24T03:00:00Z");
-const ON = { LLM_BUDGET_ROUTE: "on", CLAUDE_SWITCH_AT_USD: "316.7", CLAUDE_SPEND_BASE_USD: "291.71", CLAUDE_SPEND_BASE_AT: "2026-11-24T01:19:00Z" };
+// 2026-11-25: 前の「線を超えたら回す」の決め（LLM_BUDGET_SPLIT=off）の試験。2つの枠で配る決め（既定）は下の t で
+const ON = { LLM_BUDGET_ROUTE: "on", LLM_BUDGET_SPLIT: "off", CLAUDE_SWITCH_AT_USD: "316.7", CLAUDE_SPEND_BASE_USD: "291.71", CLAUDE_SPEND_BASE_AT: "2026-11-24T01:19:00Z" };
 
 t("係: ブレイン・統括・書き手・最終チェック・軽い係。表に無い名札と *_claude は null", () => {
   // 2026-11-25 案 A: 本番のブレインは Claude・brain-sweep のブレインだけ
@@ -26,7 +27,7 @@ t("係: ブレイン・統括・書き手・最終チェック・軽い係。表
 });
 
 t("2026-11-25 既定は on（=off で止まる）・線の既定 $316.71", () => {
-  const cfg = readBudgetConfig({});
+  const cfg = readBudgetConfig({ LLM_BUDGET_SPLIT: "off" });
   assert.equal(cfg.mode, "on");
   assert.equal(readBudgetConfig({ LLM_BUDGET_ROUTE: "off" }).mode, "off");
   assert.equal(cfg.switchAtUsd, 316.71);
@@ -71,7 +72,7 @@ t("数え始め: 基準の時刻が今月なら基準から（基準＋その後
   assert.deepEqual(spendWindowStart(readBudgetConfig({}), NOW), { since: "2026-11-24T01:19:00.000Z", useBase: true }, "既定の基準（$291.71・11/24 10:19 JST）");
   assert.deepEqual(spendWindowStart(readBudgetConfig({ CLAUDE_CREDIT_RESET_DAY: "1" }), Date.parse("2026-12-02T00:00:00Z")), { since: "2026-11-30T15:00:00.000Z", useBase: false }, "区切りの日は env で変えられる");
   // 12/9 までは前の区切り（基準＋その後）で線を超えたまま＝書き手以外の係は OpenAI・12/10 の数え直しで線の手前に戻る＝Claude に戻る
-  const dec = readBudgetConfig({});
+  const dec = readBudgetConfig({ LLM_BUDGET_SPLIT: "off" });
   const spendAt = (iso: string, sinceUsd: number) => claudeMonthSpendUsd(dec, { useBase: spendWindowStart(dec, Date.parse(iso)).useBase, sinceUsd });
   assert.equal(budgetDecision("conductor_intake", spendAt("2026-12-09T14:00:00Z", 30), dec).route, "openai", "12/9 は線を超えたまま");
   assert.equal(budgetDecision("conductor_intake", spendAt("2026-12-09T15:00:00Z", 0.5), dec).route, "claude", "12/10 の数え直しで Claude に戻る");
@@ -107,6 +108,25 @@ t("包み: 別クラウドの設定が無くても LLM_BUDGET_ROUTE=on/shadow �
   assert.equal(readAltConfig({ OPENAI_API_KEY: "sk-test" })?.provider, "openai", "2026-11-25 既定 on: 鍵があれば包みを入れる");
   assert.equal(readAltConfig({ LLM_BUDGET_ROUTE: "off", OPENAI_API_KEY: "sk-test" }), null, "=off は何もしない");
   assert.equal(readAltConfig({ LLM_BUDGET_ROUTE: "on" }), null);
+});
+
+t("2026-11-25 2つの枠で配る（既定）: 回せる係は区切りの初めから OpenAI・OpenAI の枠の 95% で止める・Claude の線は見ない", () => {
+  const cfg = readBudgetConfig({});
+  assert.equal(cfg.split, true);
+  assert.equal(cfg.openaiAllowanceUsd, 100, "OpenAI の枠の既定 $100");
+  assert.equal(readBudgetConfig({ OPENAI_ALLOWANCE_USD: "200" }).openaiAllowanceUsd, 200, "$200 に増えたら env で");
+  assert.equal(budgetDecision("conductor_intake", 5, cfg, { openaiUsd: 0 }).route, "openai", "Claude が線の手前でも回す（線を待たない）");
+  assert.equal(budgetDecision("conductor_intake", 5, cfg, { openaiUsd: 94.9 }).route, "openai");
+  assert.equal(budgetDecision("conductor_intake", 5, cfg, { openaiUsd: 95 }).route, "claude", "OpenAI の枠の 95% で止める");
+  assert.equal(budgetDecision("conductor_intake", 5, cfg, { openaiUsd: null }).route, "claude", "OpenAI の使用額が読めない時は回さない");
+  assert.equal(budgetDecision("reply_generate", 5, cfg, { openaiUsd: 0 }).route, "claude", "書き手はふだん回さない");
+  assert.equal(budgetDecision("reply_generate", 5, cfg, { openaiUsd: 0, piiWriter: true }).route, "openai", "歯止めの番の書き手は回す");
+  assert.equal(budgetDecision("brain_fresh", 5, cfg, { openaiUsd: 0 }).route, "claude", "本番のブレインは回さない（既定）");
+  assert.equal(budgetDecision("brain_fresh", 5, readBudgetConfig({ LLM_BUDGET_EXTRA: "on" }), { openaiUsd: 0 }).route, "openai", "LLM_BUDGET_EXTRA=on で本番のブレインも");
+  assert.equal(budgetDecision("conductor_intake", 999, readBudgetConfig({ LLM_BUDGET_ROUTE: "off" }), { openaiUsd: 0 }).route, "claude", "=off は回さない");
+  // OpenAI の区切りは暦の月初（JST）
+  assert.equal(openaiWindowStart(cfg, Date.parse("2026-11-25T03:00:00Z")), "2026-10-31T15:00:00.000Z");
+  assert.equal(openaiWindowStart(cfg, Date.parse("2026-12-01T00:00:00Z")), "2026-11-30T15:00:00.000Z");
 });
 
 console.log(`llm-budget-route: ${n} ok`);

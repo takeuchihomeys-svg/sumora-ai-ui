@@ -31,7 +31,7 @@ type Row = { id: number; route: string | null; action: string | null; model: str
   const now = rows.reduce((a, r) => a + claudeUsageUsd(r as never), 0);
   console.log(`# 係ごとの振り分けの案（今月 ${since.toISOString().slice(0, 10)}〜${until.toISOString().slice(0, 16)}Z・${days.toFixed(1)}日・Claude の行 ${rows.length}・試験は除く）`);
   console.log(`今の Claude: 今月 $${now.toFixed(2)} → 30日で $${(now * scale).toFixed(0)}（枠 $${claudeCap}）\n`);
-  for (const plan of ["A", "B"] as PlanName[]) {
+  for (const plan of ["A", "B", "C", "D"] as PlanName[]) {
     const tot: Record<"claude" | "openai" | "deepseek", number> = { claude: 0, openai: 0, deepseek: 0 };
     const moved = new Map<string, { to: Target; why: string; claudeUsd: number; newUsd: number; n: number }>();
     for (const r of rows) {
@@ -52,7 +52,7 @@ type Row = { id: number; route: string | null; action: string | null; model: str
       }
     }
     const f = (x: number) => `$${(x * scale).toFixed(0)}`;
-    console.log(`## 案 ${plan}（書き手は ${plan === "A" ? "Claude のまま" : "DeepSeek"}）: 30日で Claude ${f(tot.claude)}${tot.claude * scale <= claudeCap ? "（枠内）" : "（⚠ 枠を超える）"}・OpenAI ${f(tot.openai)}${tot.openai * scale <= openaiCap ? "（枠内）" : "（⚠ 枠を超える）"}・DeepSeek ${f(tot.deepseek)}`);
+    console.log(`## 案 ${plan}（${plan === "A" ? "書き手は Claude のまま" : plan === "B" ? "書き手は DeepSeek" : plan === "C" ? "本番＝A＋個人情報の番の書き手を OpenAI" : "C＋本番のブレインも OpenAI（既定 off）"}）: 30日で Claude ${f(tot.claude)}${tot.claude * scale <= claudeCap ? "（枠内）" : "（⚠ 枠を超える）"}・OpenAI ${f(tot.openai)}${tot.openai * scale <= openaiCap ? "（枠内）" : "（⚠ 枠を超える）"}・DeepSeek ${f(tot.deepseek)}`);
     for (const [k, m] of [...moved].sort((a, b) => b[1].claudeUsd - a[1].claudeUsd).slice(0, 20)) console.log(`- ${k}（${m.n}回）→ ${m.to}: Claude ${f(m.claudeUsd)} → ${f(m.newUsd)}・${m.why}`);
     console.log("");
   }
