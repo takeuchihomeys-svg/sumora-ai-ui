@@ -101,8 +101,25 @@ async function cmdStage() {
   const to = argv.find((a) => !a.startsWith("--")) ?? "";
   if (!id || !isStage(to)) throw new Error("--stage=<id> <新しい段>（段: " + STAGES.join("/") + "）");
   const db = sb();
-  const { data: cur, error } = await db.from("work_items").select("id,stage,commits,exam_labels").eq("id", id).single();
+  const { data: cur, error } = await db.from("work_items").select("id,stage,commits,exam_labels,switch_name").eq("id", id).single();
   if (error || !cur) throw new Error(error?.message ?? "無い");
+  // 2026-11-25 作業員A（統括役の頼み・試験は DeepSeek／本番は Claude）: 本番と割れやすい場面の型の効く問題がある直しは、on の前に Claude の確かめの記録を見る（CLAUDE_CHECK_GATE 既定 warn・on で止める・--force で越える）
+  if (to === "on" && cur.switch_name) {
+    try {
+      const g = await import("./lib/claude-check-gate");
+      const mode = g.claudeCheckGateMode();
+      if (mode !== "off") {
+        const { existsSync, readFileSync } = await import("node:fs");
+        const { parseCandidateBlocks } = await import("./lib/exam-worth");
+        const cf = ["memory/night_bundle_candidates.md", "../../../memory/night_bundle_candidates.md"].find((p) => existsSync(p));
+        const eff = cf ? [...new Set(parseCandidateBlocks(readFileSync(cf, "utf8").split("\n")).filter((b) => b.switches.includes(String(cur.switch_name))).flatMap((b) => b.eff))] : [];
+        const probs = g.loadProblemsLite();
+        const v = g.claudeGateVerdict({ mode, targets: g.claudeCheckTargets(eff, probs), record: g.claudeCheckRecord(String(cur.switch_name)) });
+        if (v.line) console.log(`${v.block ? "⛔" : "⚠"} ${v.line}`);
+        if (v.block && !flag("force")) throw new Error(`on に進めない（CLAUDE_CHECK_GATE=on）: ${v.line}`);
+      }
+    } catch (e) { if (e instanceof Error && e.message.startsWith("on に進めない")) throw e; console.warn("Claude の確かめの関所を読めない:", e instanceof Error ? e.message : e); }
+  }
   const note = arg("note");
   if (stageMoveNeedsNote(cur.stage, to) && !note) throw new Error(`段が戻る・飛ぶ・止まる時は --note= に理由を書く（${cur.stage} → ${to}）`);
   const patch: Record<string, unknown> = { stage: to, updated_at: new Date().toISOString() };
