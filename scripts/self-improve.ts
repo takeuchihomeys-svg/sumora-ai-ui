@@ -657,17 +657,18 @@ async function main() {
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
   try {
-    const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
+    const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig, spendWindowStart, claudeMonthSpendUsd }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
     resetBudgetCache();
-    const ms = await monthSums(sb as never, now, {});
+    // 2026-11-25 作業員L（統括役の頼み）: 月の全部の行を読む（前は 50頁＝5万行で止まり $142 と出た・audit-llm-month-cost は $291）。基準（CLAUDE_SPEND_BASE_*）も本番と同じ式で足す
     const bc = readBudgetConfig(process.env);
+    const ms = await monthSums(sb as never, now, process.env, { maxPages: 500 });
     if (ms) {
       const ls = [
-        monthSpendLine({ provider: "Claude", spendUsd: ms.claudeUsd * bc.factor, creditUsd: bc.claudeCreditUsd, nowMs: now }),
+        monthSpendLine({ provider: "Claude", spendUsd: claudeMonthSpendUsd(bc, { useBase: spendWindowStart(bc, now).useBase, sinceUsd: ms.claudeUsd }), creditUsd: bc.claudeCreditUsd, nowMs: now }),
         monthSpendLine({ provider: "OpenAI", spendUsd: ms.openaiUsd, creditUsd: bc.openaiCreditUsd, nowMs: now }),
         monthSpendLine({ provider: "DeepSeek", spendUsd: ms.deepseekUsd, creditUsd: 0, nowMs: now }),
       ];
-      if (!only || doCandidates) lines.push("### API の使用額（今月・llm_usage_logs の記録から・Console と合わない分は CLAUDE_COST_FACTOR）",
+      if (!only || doCandidates) lines.push(`### API の使用額（今月・llm_usage_logs の記録から・Console と合わない分は CLAUDE_COST_FACTOR）${ms.partial ? "（⚠ 行が多く途中まで）" : ""}`,
         ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
         `- 切り替え: LLM_BUDGET_ROUTE=${bc.mode}・線 ${bc.switchAtUsd == null ? "未設定" : `${bc.switchAtUsd}`}`);
       for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
