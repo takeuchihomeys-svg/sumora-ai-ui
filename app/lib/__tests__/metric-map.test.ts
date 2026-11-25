@@ -195,7 +195,7 @@ t("訴求の網（N2 の照らし 12838）: 推す＋誘うは both・送る約�
 {
   const rr = [{ conv: "c1", at: "2026-11-01T00:00:00Z", node: "pickup", branch: null, agree: "promise_match", outcome: "engaged", after: "proposing" }, { conv: "c2", at: "2026-11-01T00:00:00Z", node: "proposing", branch: null, agree: "aix_match", outcome: "stuck", after: "proposing" }] as never;
   const on = routeProgressTurnsOf(rr), off = routeProgressTurnsOf(rr, new Set(), { ROUTE_STATION_LAG: "off" });
-  t("駅の数え方のずれ: 地図の駅より記録の駅が先なら station_lag・同じ駅なら stuck・off は前と同じ", on[0].miss === "station_lag" && on[1].miss === "stuck" && off[0].miss === "engaged" && SET_ASIDE_MISS.has("station_lag"));
+  t("駅の数え方のずれ: 地図の駅より記録の駅が先なら station_lag・同じ駅なら stuck・off は前と同じ", on[0].miss === "station_lag" && on[1].miss === "stuck" && off[0].miss === "engaged" && SET_ASIDE_MISS.has("station_lag") && on[0].detail?.lag === "map_behind" && on[0].detail?.recordStation === "proposing" && !on[1].detail);
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

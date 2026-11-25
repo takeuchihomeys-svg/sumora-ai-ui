@@ -219,7 +219,9 @@ export const MAP_ROOTS: MapRootDef[] = [
 export const rootOf = (metric: string) => MAP_ROOTS.find((r) => r.metric === metric) ?? null;
 
 /** 1番（純）: 木に入れる単位 */
-export type MapTurn = { id: number | string; kind: string; scene: string; miss: MapMiss; cause: MapCause | null; station?: string };
+export type MapTurn = { id: number | string; kind: string; scene: string; miss: MapMiss; cause: MapCause | null; station?: string;
+  /** 2026-11-26 作業員A（L の頼み）: station_lag の番でどちらの駅が先か（map_behind＝判断の記録の駅が先＝地図の読み遅れ・地図の読み違いの台帳へ）と2つの駅 */
+  detail?: { lag: "map_behind"; mapStation: string; recordStation: string } };
 
 /** 見張りの scene_key（返信:条件提示・AIX:estimate_sheet など）を KB_SCENES の鍵に（純関数）。AIX: で始まる鍵はブレインの一手から来た物＝AIX の種類で場面に寄せる */
 export function sceneOfWatchKey(sceneKey: string | null | undefined, aixKind?: string | null): string {
@@ -569,7 +571,7 @@ export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcom
     const wait = r.outcome === "stuck" && r.node === "viewing_scheduled" && !r.branch && viewingNotYetOf(r.at, r.detail);
     const lag = lagOn && !r.branch && (r.outcome === "stuck" || r.outcome === "engaged") && mainIdx(r.node) >= 0 && mainIdx(r.after) > mainIdx(r.node);
     const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : wait ? "viewing_wait" : lag ? "station_lag" : r.outcome === "engaged" ? "engaged" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.branch ? "branch_stay" : "stuck";
-    return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null };
+    return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null, ...(miss === "station_lag" ? { detail: { lag: "map_behind" as const, mapStation: String(r.node), recordStation: String(r.after) } } : {}) };
   });
 }
 /** 駅ごとの本当の一致の表（純関数）: 駅（分かれ道）ごとに n・一致・分けて外した・本当の外れ */
