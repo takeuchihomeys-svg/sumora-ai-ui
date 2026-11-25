@@ -1,6 +1,6 @@
 // app/lib/__tests__/metric-map.test.ts — 数ごとの地図（木）と見込みの突き合わせの純関数（作業員P・2026-11-23・台帳 #610）
 //   実行: npx tsx app/lib/__tests__/metric-map.test.ts
-import { SET_ASIDE_MISS, countVersionLine, COUNT_VERSION, jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
+import { SET_ASIDE_MISS, countVersionLine, COUNT_VERSION, jsonTurnsOf, conductorReachOf, promiseMapTurnsOf, ownerOfLeaf, leafReachOf, closingTurnsOf, ackPlusCheckPromiseOf, sideOf, minorityOf, deviceTurnsOf, deviceCauseOf, routeTurnsOf, routeCauseOf, routeProgressTurnsOf, itemsForRoot, rebaseKey, buildTree, sumMismatches, leavesOf, rankLeaves, forecastVerdictOf, dueChecksOf, fixShareOf, sceneOfWatchKey, examLeafOf, examAixKindOf, examResultsByLeaf, examOrderByMap, gapCauseHintOf, relatedFoundationOf, covers, type MapTurn, type ForecastItem } from "../metric-map";
 import { isClosingAix, CLOSE_TEXT_RE, closingVerdictOf, graspGapsOf, closingSummaryOf } from "../closing-chance";
 import { feelingOf, appealOf, feelingMissOf, appealMissOf, feelingAppealTurnsOf, feelingAppealSummaryOf } from "../feeling-appeal-map";
 import { pickupUnderstandTurnsOf, pickupUnderstandSummaryOf } from "../pickup-understand-map";
@@ -191,5 +191,11 @@ t("今どこの地図の番（L の形）", (() => { const x = jsonTurnsOf({ roo
 t("訴求の網（N2 の照らし 12838）: 推す＋誘うは both・送る約束の文は推すにしない", appealOf("こちらのお部屋如何でしょうか。かなりオススメ出来るお部屋です。お気に召されましたらご案内させて頂きます") === "both"
   && appealOf("オススメできるお部屋を新たにピックアップしてお送りさせて頂きます。全力でサポートします") === "none" && appealMissOf("both", "invite") === "appeal_other");
 
+// 2026-11-26 作業員A: 地図の駅が記録の駅より手前に残った番は station_lag（分けて外す）・off で前と同じ
+{
+  const rr = [{ conv: "c1", at: "2026-11-01T00:00:00Z", node: "pickup", branch: null, agree: "promise_match", outcome: "engaged", after: "proposing" }, { conv: "c2", at: "2026-11-01T00:00:00Z", node: "proposing", branch: null, agree: "aix_match", outcome: "stuck", after: "proposing" }] as never;
+  const on = routeProgressTurnsOf(rr), off = routeProgressTurnsOf(rr, new Set(), { ROUTE_STATION_LAG: "off" });
+  t("駅の数え方のずれ: 地図の駅より記録の駅が先なら station_lag・同じ駅なら stuck・off は前と同じ", on[0].miss === "station_lag" && on[1].miss === "stuck" && off[0].miss === "engaged" && SET_ASIDE_MISS.has("station_lag"));
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
