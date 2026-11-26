@@ -34,6 +34,8 @@ const locateAt = (input: CustomerStateInput, T: number, envV2: boolean) => locat
 const FAR_MOVE_IN = process.argv.includes("--far-move-in");
 // 2026-11-23 作業員A: --first-move（既定なし＝今と同じ）＝竹内さんの一手を「最初の通から2時間以内の AIX」に限る（guide-measure の firstMoveH）。後で時刻で送った AIX は laterAix に分ける
 const FIRST_MOVE = process.argv.includes("--first-move");
+// 2026-11-27 作業員A（#804）: --all-writers＝スタッフ全員の番（会話の選び方も全員・行に writer）。既定なし＝竹内さん本人だけ（今と同じ）
+const ALL_WRITERS = process.argv.includes("--all-writers");
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
@@ -70,7 +72,7 @@ type Row = {
     convs = [];
     for (const p of CONVS) { const { data } = await sb.from("conversations").select("id").like("id", `${p}%`).limit(1); const id = (data?.[0] as { id?: string } | undefined)?.id; if (id && !skip.has(id)) convs.push(id); }
   } else {
-    const { data: tk, error } = await sb.from("messages").select("conversation_id").eq("sender", "staff").eq("staff_writer", "takeuchi").gte("created_at", since).limit(20000);
+    const { data: tk, error } = await sb.from("messages").select("conversation_id").eq("sender", "staff").in("staff_writer", ALL_WRITERS ? ["takeuchi", "employee"] : ["takeuchi"]).gte("created_at", since).limit(40000);
     if (error) throw new Error(error.message);
     convs = [...new Set(((tk ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id))].filter((c) => !skip.has(c)).slice(0, maxConv);
   }
@@ -86,7 +88,7 @@ type Row = {
       sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", c).gte("created_at", new Date(Date.parse(since) - 30 * 86_400_000).toISOString()).limit(1000),
     ]);
     const decisions: GDecision[] = ((d.data ?? []) as Array<{ created_at: string; digest: { sg?: string; cp?: string } | null }>).map((x) => ({ created_at: x.created_at, stage: x.digest?.sg ?? x.digest?.cp ?? null }));
-    const turns = guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: true, viewingWait: true, ...(FIRST_MOVE ? { firstMoveH: 2 } : {}) });
+    const turns = guideTurnsOf(c, (m.data ?? []) as GMsg[], (a.data ?? []) as GAix[], decisions, 48, { promiseWait: true, viewingWait: true, ...(FIRST_MOVE ? { firstMoveH: 2 } : {}), ...(ALL_WRITERS ? { allWriters: true } : {}) });
     const appliedAts = ((deals.data ?? []) as Array<{ applied_at: string | null; screening_at: string | null }>).map((x) => x.applied_at ?? x.screening_at).filter((x): x is string => !!x).map((x) => Date.parse(x)).sort((x, y) => x - y);
     const firstApplied = appliedAts[0] ?? Infinity;
     const reached = appliedAts.length > 0;
@@ -128,7 +130,7 @@ type Row = {
       const s1 = r.sub1 ? SUBSTATES.find((x) => x.id === r.sub1) : null, s2 = r.sub2 ? SUBSTATES.find((x) => x.id === r.sub2) : null;
       const atOk = (s: typeof s1) => (s ? s.at === r.loc.node || s.at === r.loc.branch : null);
       rows.push({
-        conv: c.slice(0, 8), at: t.at, reached, node: r.loc.node, branch: r.loc.branch, digestNode: t.before, act: t.act,
+        conv: c.slice(0, 8), at: t.at, writer: (t as { writer?: string | null }).writer ?? null, reached, node: r.loc.node, branch: r.loc.branch, digestNode: t.before, act: t.act,
         dir: actDirection(r.loc.node, t.act), agree: routeAgreement(r.loc, t.act), agree2: routeAgreement(r.loc2, t.act), rule2: r.loc2.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null,
         agree3: routeAgreement(r.loc3, t.act), rule3: r.loc3.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, agree4: routeAgreement(r.loc4, t.act), rule4: r.loc4.evidence.find((e) => e.startsWith("次の一手を番で選び直し:"))?.split(":")[1] ?? null, laterAix: t.laterAix ? `${t.laterAix}@${t.laterAixH}h` : null, rt: r.rt, detail: r.detail, outcome: t.outcome, after: t.after,
         sub1: r.sub1, sub2: r.sub2, subAt1: atOk(s1), subAt2: atOk(s2), nextAix: r.loc.next?.aix ?? [],

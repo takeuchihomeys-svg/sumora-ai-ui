@@ -6,23 +6,24 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { classifyCustomerBurst, REACTION_JA, type ReactionCat } from "../app/lib/customer-reaction-predict";
+import { replyCloseKindOf } from "../app/lib/reply-direction";
 import { buildSceneTree, treeStats, returnPaths, deadEnds, topGoalAct, type TreeEvent } from "../app/lib/scene-map-tree";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-type Row = { conv: string; at: string; node: string | null; branch: string | null; sub1?: string | null; act: string; agree: string; outcome?: string | null; reached?: boolean };
+type Row = { conv: string; at: string; node: string | null; branch: string | null; sub1?: string | null; act: string; agree: string; outcome?: string | null; reached?: boolean; writer?: string | null };
 (async () => {
   const rows = (JSON.parse(readFileSync(arg("from", ""), "utf8")) as Row[]).filter((r) => r.agree !== "no_next");
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
   const byConv = new Map<string, Row[]>(); for (const r of rows) byConv.set(r.conv, [...(byConv.get(r.conv) ?? []), r]);
   type Ev = { scene: string; reply: ReactionCat; next: string | null };
-  const evs: Ev[] = []; const tev: TreeEvent[] = [];
+  const evs: Ev[] = []; const tev: Array<TreeEvent & { writer: string; follow?: { days: number; back: boolean } }> = [];
   for (const [c, rs] of byConv) {
     rs.sort((a, b) => a.at.localeCompare(b.at));
     const lo = rs[0].at, hi = new Date(Date.parse(rs[rs.length - 1].at) + 3 * 864e5).toISOString();
     const { data: conv } = await sb.from("conversations").select("id").like("id", `${c}%`).limit(1);
     const id = (conv ?? [])[0]?.id; if (!id) continue;
-    const { data } = await sb.from("messages").select("sender,text,created_at").eq("conversation_id", id).gte("created_at", lo).lte("created_at", hi).order("created_at").limit(2000);
-    const ms = (data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>;
+    const { data } = await sb.from("messages").select("sender,text,created_at,is_aix_generated").eq("conversation_id", id).gte("created_at", lo).lte("created_at", new Date(Date.parse(hi) + 30 * 864e5).toISOString()).order("created_at").limit(2000);
+    const ms = (data ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null }>;
     rs.forEach((r, i) => {
       const t = Date.parse(r.at);
       let k = ms.findIndex((m) => Date.parse(m.created_at) > t + 1000 && m.sender === "customer");
@@ -34,7 +35,10 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
       evs.push({ scene, reply, next: reply === "silent" ? null : nx });
       // 段の順: 駅 → 細かい状態 → お客様の次の通 → 竹内さんの次の一手 → その一手の後の進み（次の番の outcome）
       const nr = rs[i + 1] && Date.parse(rs[i + 1].at) - t <= 4 * 864e5 && reply !== "silent" ? rs[i + 1] : null;
-      tev.push({ station: r.branch ? `分:${r.branch}` : String(r.node), sub: r.sub1 ?? null, reply: REACTION_JA[reply], act: nr ? nr.act : null, advanced: nr ? nr.outcome === "advanced" : false, reached: !!r.reached });
+      // 2026-11-27 #804: 返事なし → 追いの連絡（48時間より後・30日の内の最初のスタッフの通）と、その後48時間の内にお客様が戻ったか
+      let fol: { days: number; back: boolean; act: string } | null = null;
+      if (reply === "silent") { const f = ms.findIndex((m) => m.sender === "staff" && Date.parse(m.created_at) - t > 48 * 36e5 && Date.parse(m.created_at) - t <= 30 * 864e5); if (f >= 0) { const ft = Date.parse(ms[f].created_at); const back = ms.some((m) => m.sender === "customer" && Date.parse(m.created_at) > ft && Date.parse(m.created_at) - ft <= 48 * 36e5); fol = { days: Math.round((ft - t) / 864e5), back, act: ms[f].is_aix_generated ? "aix" : `reply:${replyCloseKindOf(String(ms[f].text ?? ""))}` }; } }
+      tev.push({ station: r.branch ? `分:${r.branch}` : String(r.node), sub: r.sub1 ?? null, reply: REACTION_JA[reply], act: nr ? nr.act : fol ? fol.act : null, advanced: nr ? nr.outcome === "advanced" : fol ? fol.back : false, reached: !!r.reached, writer: r.writer ?? "takeuchi", ...(fol ? { follow: { days: fol.days, back: fol.back } } : {}) });
     });
   }
   const scenes = new Map<string, Ev[]>(); for (const e of evs) scenes.set(e.scene, [...(scenes.get(e.scene) ?? []), e]);
@@ -53,10 +57,19 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
   const out = arg("out", ""); if (out) writeFileSync(out, JSON.stringify([...scenes].map(([s, es]) => ({ scene: s, n: es.length, branches: es.reduce((a, e) => { (a[e.reply] ??= {} as Record<string, number>); if (e.next) a[e.reply][e.next] = (a[e.reply][e.next] ?? 0) + 1; else a[e.reply]["-"] = (a[e.reply]["-"] ?? 0) + 1; return a; }, {} as Record<string, Record<string, number>>) })), null, 2));
   // 2026-11-27 #804: 大きな地図の木・ゴールへの道・戻る道・行き止まり
   const tree = buildSceneTree(tev); const ts = treeStats(tree); const rp = returnPaths(tev); const de = deadEnds(tree);
+  // 書き手ごと: 竹内さん本人だけの木と全員の木・場面×お客様の次（3段目・両方 n≥5）の一番多い一手の向きが同じか
+  const tkEv = tev.filter((e) => e.writer === "takeuchi"); const tTk = buildSceneTree(tkEv); const sTk = treeStats(tTk);
+  const topCh = (n: { children: Record<string, number> }) => Object.entries(n.children).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  let same = 0, cmp = 0; for (const [key, n] of tTk) { if (n.depth !== 3 || n.n < 5) continue; const a = tree.get(key); if (!a || a.n < 5) continue; cmp++; if (topCh(n) === topCh(a)) same++; }
+  const fol = tev.filter((e) => e.follow); const folBack = fol.filter((e) => e.follow!.back).length;
+  const fd = fol.map((e) => e.follow!.days).sort((a, b) => a - b);
   const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
   lines.push(`\n■ 大きな地図の木: 会話 ${byConv.size}・番 ${tev.length}・節 ${ts.nodes}・n≥10 の節 ${ts.dense}（${ts.denseShare}%）・段ごと ${Object.entries(ts.byDepth).map(([d, o]) => `${d}段 ${o.dense}/${o.nodes}`).join("・")}`);
   lines.push(`■ ゴールへの道（駅ごと・申込まで行った割合と一番多くつながった一手）: ${[...tree.values()].filter((x) => x.depth === 1).sort((a, b) => b.n - a.n).map((x) => `${x.key} ${pct(x.reached, x.n)}%（${x.n}）→ ${topGoalAct(x) ?? "なし"}`).join("｜")}`);
   lines.push(`■ 戻る道（離れる分かれ道ごと・戻せた割合・竹内さんの一手の上位）: ${rp.map((r) => `${r.reply} ${r.back}/${r.n}（${r.acts.slice(0, 3).map((a) => `${a.act} ${a.back}/${a.n}`).join("・")}）`).join("｜")}`);
+  lines.push(`■ 書き手: 全員の番 ${tev.length}・竹内さん本人 ${tkEv.length}（節 ${sTk.nodes}・n≥10 ${sTk.dense}＝${sTk.denseShare}%）・一手の向き（場面×お客様の次・両方 n≥5）が同じ ${same}/${cmp}`);
+  lines.push(`■ 返事なし → 追いの連絡: ${fol.length}番・戻った ${folBack}（${fol.length ? Math.round((folBack / fol.length) * 1000) / 10 : 0}%）・何日後（中央）${fd.length ? fd[Math.floor(fd.length / 2)] : "—"}日`);
+  lines.push(`■ 状態なしの番: ${tev.filter((e) => !e.sub).length}/${tev.length}`);
   lines.push(`■ 行き止まり: 申込への道が無い節（n≥10） ${de.noGoal.length}${de.noGoal.length ? `（${de.noGoal.join("・")}）` : ""}・n が少なく分からない節（2段目まで） ${de.unknown.length}`);
   const treeOut = arg("tree-out", ""); if (treeOut) writeFileSync(treeOut, JSON.stringify({ nodes: [...tree.values()], returns: rp, deadEnds: de }, null, 2));
   console.log(lines.join("\n"));
