@@ -14900,3 +14900,10 @@ Claude（統括役）からの依頼2件への対応。
 - E（反映の確認）: rules-change-check --sync で check-playbook-sync を呼ぶ（DB を読むだけ）。本文を変えると rules_v が変わるので、push → Vercel → attach-playbook --apply → check が必要。今は DB が rules_v 0fe72c33、コードが c87c8397 で、attach し直すまで古い。
 - 試験: reset-loop-v2307.test.js の『前置き』の期待を、事実の札の期待に更新（貼り足しを残さない）。ext-test-all の赤は基準どおり 122（新しい赤 0）。
 - 未: 本番の反映（push・attach）は竹内さんの OK 待ち。拡張の再読み込みも未。
+### 2026-11-26 残りの作業の完了（C・push・attach・反映確認）
+- C: リセットの幅（幅160×高さ30）と待ち（30〜34秒・3回に分けて）を app/lib/reset-facts.ts の正本に一本化。骨組み（clear・switch・一連の before_clear）は正本から文を作る。試験 reset-facts-single-source（決まりと骨組みの数字が一致・リセットの『N秒以上』はどこも 30）。コミット 2d3bb61ee。
+- push: origin/main 828071e1f → 2d3bb61ee（承認のうえ）。本番 Vercel は 11:39:33 作成の Production が Ready（commit 2d3bb61ee の push と同時刻）。
+- attach: attach-playbook --apply --backup-dir=C:\Users\Admin\Desktop\playbook-backup-20261126-1149。3件（all 2813／realpro 2815／itandi 2814）とも決まり版 c87c8397・件数 102。控えは同フォルダ。
+- 反映確認: check-playbook-sync は、本番と DB の手順書が一致（残りは拡張の版だけ）。
+- 残り（竹内さん側）: 拡張を再読み込み（2.8.295 → 2.8.309）→ リアプロのタブを開き直す → 連続のお客さんで自動を1回 → reset_verified／look_skip／playbook_seen／page:task_api_refresh_res を確認。それまで『反映済み』とは言わない。
+- 既存の赤（参考・今回と無関係）: continuous-clear-sequence（2.8.285 以降の _doReset の並び）。
