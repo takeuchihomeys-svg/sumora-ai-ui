@@ -1,7 +1,7 @@
 // npx tsx app/lib/__tests__/hook-points.test.ts
 // 2026-11-21 作業員K2: 刺さった点（SENT_HOOK_POINTS・SENT_HOOK_WEIGHT・既定 off）
 import assert from "node:assert/strict";
-import { hookPointsOf, normalizeHookPoints, sentHookRecordOn, sentHookWeightOn } from "../hook-points";
+import { hookPointsOf, normalizeHookPoints, sentHookRecordOn, sentHookWeightOn, isImageOnlyQuote, quotedTextForHook, sentHookImageTextOn } from "../hook-points";
 import { sentLikePoints, type SentLikeProfile } from "../sent-like-fit";
 
 let n = 0;
@@ -26,5 +26,11 @@ t("像の比べ: 刺さった軸は2倍・上限は同じ・無ければ今と�
   assert.equal(sentLikePoints({ ...base, hookPoints: ["広さ・間取り"] }, c).points, 8);
   assert.equal(sentLikePoints({ ...base, hookPoints: ["新しさ"] }, c).points, 4);
   assert.equal(sentLikePoints({ ...base, hookPoints: ["広さ・間取り"] }, { floorPlan: "2LDK", areaSqm: 52, buildingAge: 5, walkMinutes: 5 }).points, 10);
+});
+// 2026-11-26 作業員A（#793）: 画像の引用は資料の要約を引用先の文の代わりに
+t("画像だけの引用の見分け・代わりの文・既定 on", () => {
+  assert.equal(isImageOnlyQuote("[画像]"), true); assert.equal(isImageOnlyQuote(""), true); assert.equal(isImageOnlyQuote("【物件 101号室】家賃8万円"), false);
+  assert.equal(quotedTextForHook("物件", "101", "家賃8万円・1LDK"), "【物件 101】\n家賃8万円・1LDK"); assert.equal(quotedTextForHook("物件", "101", null), "");
+  assert.equal(sentHookImageTextOn({}), true); assert.equal(sentHookImageTextOn({ SENT_HOOK_IMAGE_TEXT: "off" }), false);
 });
 console.log(`${n} ok`);

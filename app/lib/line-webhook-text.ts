@@ -260,7 +260,7 @@ async function resolvePropertyReference(
   //   お客様が引用した返信 277通（60日）が1件も物件に結び付かず、customer_reaction（興味あり）が全行空だった
   const { data: props, error: propsErr } = await db
     .from("sent_properties")
-    .select("id, property_name, room_no, image_url, property_url")
+    .select("id, property_name, room_no, image_url, property_url, pickup_id")
     .eq("conversation_id", convId)
     .order("sent_at", { ascending: false })
     .limit(20);
@@ -288,12 +288,35 @@ async function resolvePropertyReference(
     .eq("id", hit.id);
   if (reactErr) console.warn("[resolvePropertyReference] customer_reaction:", reactErr.message);
 
+  // 4b. 2026-11-26 作業員A（#793・quote-interest.ts・SENT_QUOTE_INTEREST 既定 on・記録だけ・ブレインには渡さない）: 引用の問いの関心（費用・内覧・審査・空き）を刺さりの候補として別の欄に。
+  //   審査の関心は申込より前だけ（申込以降は会話の状態で外す）。別の update（列がまだ無い時も他の記録を壊さない）
+  try {
+    const qi = await import("@/app/lib/quote-interest");
+    if (qi.quoteInterestOn()) {
+      const { data: cst } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
+      const { isPostApplyStatus } = await import("@/app/lib/llm-alt-provider");
+      const interest = qi.quoteInterestOf(replyText, { postApply: isPostApplyStatus((cst as { status?: string | null } | null)?.status ?? null) });
+      if (interest.length) {
+        const { error: qiErr } = await db.from("sent_properties").update({ customer_interest_points: interest }).eq("id", hit.id);
+        if (qiErr) console.warn("[resolvePropertyReference] customer_interest_points:", qiErr.message);
+        else console.log(JSON.stringify({ tag: "webhook:quote-interest", convId, interest }));
+      }
+    }
+  } catch (e) { console.warn("[resolvePropertyReference] quote-interest:", e instanceof Error ? e.message : e); }
+
   // 5. 2026-11-21 作業員K2（hook-points.ts・SENT_HOOK_POINTS 既定 on・=off で止まる）: どの点が刺さったか（家賃・広さ・間取り・駅・新しさ…）を残す。
   //   別の update にする（列がまだ無い時も customer_reaction の記録を壊さない）
   if (!rejected) {
     const hp = await import("@/app/lib/hook-points");
     if (hp.sentHookRecordOn()) {
-      const points = hp.hookPointsOf(qText, replyText);
+      // 2026-11-26 作業員A（#793・SENT_HOOK_IMAGE_TEXT 既定 on・記録だけ）: 物件カードの画像の引用は、送った物件の資料の要約を引用先の文の代わりにする
+      let hookQ = qText;
+      if (hp.sentHookImageTextOn() && hp.isImageOnlyQuote(qText) && (hit as { pickup_id?: string | null }).pickup_id) {
+        const { data: pkRow } = await db.from("property_pickups").select("property_name, room_no, summary_text").eq("id", (hit as { pickup_id: string }).pickup_id).maybeSingle();
+        const alt = hp.quotedTextForHook(pkRow?.property_name ?? hit.property_name, pkRow?.room_no ?? hit.room_no, pkRow?.summary_text ?? null);
+        if (alt) hookQ = alt;
+      }
+      const points = hp.hookPointsOf(hookQ, replyText);
       if (points.length) {
         const { error: hookErr } = await db.from("sent_properties").update({ customer_hook_points: points }).eq("id", hit.id);
         if (hookErr) console.warn("[resolvePropertyReference] customer_hook_points:", hookErr.message);

@@ -3333,7 +3333,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const { data: dp } = asc.aixStateCardDocOn() ? await supabase.from("property_pickups").select("property_name, room_no, created_at, terms, pdf_text, image_lines").eq("conversation_id", conversationId).eq("status", "sent").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).order("created_at", { ascending: false }).limit(20) : { data: null };
       const card = asc.buildAixStateCard({ docPickups: dp ? (dp as never) : null, pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
       if (briefOnNow) briefInputs.aixStateCard = card;
-      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; }
+      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; materialBlocks.push({ key: "aix_state_card", text: `【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`, from: "cs" }); /* 2026-11-26 作業員A: MATERIAL_PRIORITY の控えの行に（統括役の頼み） */ }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
@@ -3784,6 +3784,22 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at, summary_text, terms")
           .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
         let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
+        // 2026-11-26 作業員A（竹内さん 11/26「物件を選んだ理由…連携」・PICKUP_WHY_PENDING_MATCH=on の時だけ・既定 off）: 選んだのに送った印（sent）が付かず pending のままの行（60日で 98/350）を、
+        //   72時間以内に送った物件の AIX の物件名（aix_usage_logs.property_names）に入っている物だけ足す
+        try {
+          const plm = await import("@/app/lib/pickup-link-stages");
+          if (plm.pickupWhyPendingMatchOn()) {
+            const { data: sentAix } = await supabase.from("aix_usage_logs").select("property_names").eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation"]).gte("sent_at", since).limit(20);
+            const names = ((sentAix ?? []) as Array<{ property_names: string[] | null }>).flatMap((r) => r.property_names ?? []);
+            if (names.length) {
+              const { data: pend } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, created_at, summary_text, terms")
+                .eq("conversation_id", conversationId).eq("status", "pending").gte("created_at", new Date(Date.now() - 6 * 864e5).toISOString()).limit(40);
+              const have = new Set(whyRows.map((r) => String(r.property_name ?? "")));
+              const add = plm.pendingMatchedOf((pend ?? []) as Array<{ property_name: string | null; created_at: string }>, names).filter((p) => !have.has(String(p.property_name ?? "")));
+              if (add.length) { whyRows = [...whyRows, ...add.map((p) => ({ ...(p as object), sent_at: (p as { created_at: string }).created_at }) as unknown as import("@/app/lib/pickup-why-line").SentPickupRow)]; materialMarks.pickup_why_pending = add.length; }
+            }
+          }
+        } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why-pending", error: String(e).slice(0, 120) })); }
         // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
         const sj = await import("@/app/lib/sip-judge");
         if (sj.sipJudgeOn() && pcResult.data) {
@@ -4408,6 +4424,20 @@ ${sh}`;
           if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員A（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」・CHAIN_INSIGHT_LINE=on の時だけ・既定 off）: 駅＋駅の中の状態＋前に送った AIX の組が
+      //   連鎖の型（chain-patterns）に当てはまった時、見立ての1行（控えの行 chain_insight）。出力の欄は足さない（q406 の前例）
+      try {
+        const cpm = await import("@/app/lib/chain-patterns");
+        if (cpm.chainInsightLineOn() && ar.loc) {
+          const sentB: Record<string, string> = {};
+          for (const x of (brainLedgerInput.recentAixRows ?? []) as Array<{ aix_type?: string | null; sent_at?: string | null; created_at?: string | null }>) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || sentB[k] < at)) sentB[k] = at; }
+          const subNow = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null; } catch { return null; } })(); // 照らしの json の sub1 と同じ計算
+          // 気持ちは前の番の判断の記録の値（作業員L の ROUTE_MINDSET_LINE と同じ・今の番の LLM の後の値は使わない）
+          const msPrev = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null;
+          const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString(), mindset: msPrev }));
+          if (cl) { applyRouteText += `\n${cl}`; materialMarks.chain_insight = cl.length; materialBlocks.push({ key: "chain_insight", text: `\n${cl}`, from: "route" }); }
+        }
+      } catch (e) { console.warn("[brain-core] chain-insight skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-26 作業員A（#688・AIX_DICTIONARY_LINE=on の時だけ・既定 off）: 地図の次の一手の候補の AIX の前提と竹内さん本人の手本を1行（控えの行 aix_dictionary）
       try {
         const ad = await import("@/app/lib/aix-dictionary");
