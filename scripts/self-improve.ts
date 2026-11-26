@@ -735,6 +735,14 @@ async function main() {
       }
       lines.push(`- 昼の試験（${d0} の 8〜22時・DeepSeek）: ${n ? `⚠ $${usd.toFixed(2)}（${n}回）＝晩の上限の外で流れた（EXAM_DAY_HOLD）` : "0"}`, "");
     } catch (e) { console.warn("[self-improve] 昼の試験の行を作れない:", e instanceof Error ? e.message : String(e)); }
+    // 2026-11-26 作業員L（台帳 #799 ①）: 晩の煙の1問（係の印 conductor-marks/night-smoke-last.json・止めた晩は ⚠）
+    try {
+      const { smokeMorningLine, SMOKE_MARK_FILE } = await import("./lib/exam-night-smoke");
+      const { examCacheRoot } = await import("./lib/llm-cassette");
+      const { existsSync: ex, readFileSync: rf } = await import("node:fs");
+      const p = `${examCacheRoot()}/conductor-marks/${SMOKE_MARK_FILE}`;
+      lines.push(smokeMorningLine(ex(p) ? JSON.parse(rf(p, "utf8")) : null, now), "");
+    } catch (e) { console.warn("[self-improve] 晩の煙の1問の行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
 
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
