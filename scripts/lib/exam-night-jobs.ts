@@ -34,5 +34,7 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "覚えた表（learned-reach.json）", args: ["scripts/build-learned-reach.ts", "--days=60"], timeoutMin: 10 },
     // 2026-11-26 作業員L（#799 ③）: 本番（Claude）と試験（DeepSeek）の割れの型の表（claude-split-learned.json・Claude の確かめの関所が手の表と重ねて読む・ファイルだけ）
     { name: "割れの型の表（claude-split-learned.json）", args: ["scripts/build-claude-split.ts"], timeoutMin: 5 },
+    // 2026-11-26 作業員L（#799 ④）: on にした直しの試験での差と本番の一致の動き（7日・14日・quality_daily on_after:*・#610 の突き合わせ）
+    { name: "on の後の本番の動き（quality_daily）", args: ["scripts/audit-on-after.ts", "--write"], timeoutMin: 5 },
   ];
 }
