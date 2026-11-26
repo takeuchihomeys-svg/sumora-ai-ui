@@ -56,7 +56,7 @@ export function closeKindOf(text: string): string {
 }
 
 export type GuideTurn = {
-  conv: string; at: string; act: string; actKind: "aix" | "reply"; before: RouteNodeId | null; after: RouteNodeId | null;
+  conv: string; at: string; writer?: string | null; act: string; actKind: "aix" | "reply"; before: RouteNodeId | null; after: RouteNodeId | null;
   mood: ReactionCat; reply: ReactionCat; hours: number | null; outcome: Outcome;
   /** 型の表の駅（2026-11-23 作業員L・#583 の照らし）: お客様が物件を送ってきた番は "brought_property"（見張りの scene_key で読む）・他は before */
   station?: string | null;
@@ -121,7 +121,8 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
   const out: GuideTurn[] = [];
   for (let i = 0; i < ms.length; i++) {
     const m = ms[i];
-    if (m.sender !== "staff" || m.is_aix_generated || m.staff_writer !== "takeuchi") continue;
+    // 2026-11-27 作業員A（#804・地図を全部の番に広げる）: opts.allWriters の時はスタッフ全員の番（既定 false＝竹内さんだけ・今と同じ）
+    if (m.sender !== "staff" || m.is_aix_generated || (!(opts as { allWriters?: boolean }).allWriters && m.staff_writer !== "takeuchi")) continue;
     // 番＝お客様の束の後の、竹内さんの最初の通（同じ番の続きの通は数えない）
     if (i > 0 && ms[i - 1].sender === "staff") continue;
     const prevCust: string[] = []; for (let j = i - 1; j >= 0 && ms[j].sender === "customer"; j--) prevCust.unshift(String(ms[j].text ?? ""));
@@ -159,7 +160,7 @@ export function guideTurnsOf(conv: string, msgs: ReadonlyArray<GMsg>, aix: Reado
     const sceneKey = opts.sceneOf && ri < i ? opts.sceneOf(ms[ri].created_at, m.created_at) : null;
     //   見張りの番が無い番（82c4d3e8 の 11/22 05:26: 見張りの番は次のお客様の通から始まっていた）は、お客様の通の物件の画面の見出し・物件サイトの URL で読む
     const station = (sceneKey && BROUGHT_SCENE_RE.test(sceneKey)) || (!sceneKey && BROUGHT_TEXT_RE.test(recentCust.join("\n"))) ? "brought_property" : before;
-    const row: GuideTurn = { conv, at: m.created_at, act, actKind: aixHere ? "aix" : "reply", before, after, station, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
+    const row: GuideTurn = { conv, at: m.created_at, writer: m.staff_writer ?? null, act, actKind: aixHere ? "aix" : "reply", before, after, station, mood: classifyCustomerBurst(prevCust), reply: replyCat, hours: hours == null ? null : Math.round(hours * 10) / 10, outcome };
     if (laterAix?.aix_type) { row.laterAix = laterAix.aix_type; row.laterAixH = Math.round((Date.parse(laterAix.sent_at ?? laterAix.created_at) - Date.parse(m.created_at)) / 36e5 * 10) / 10; }
     if (opts.promiseWait && act === "reply:promise" && replied && replyCat === "thanks") {
       const t0 = Date.parse(m.created_at);
