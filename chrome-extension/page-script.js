@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.312";
+  var _AXLX_PAGE_VER = "2.8.313";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4267,6 +4267,7 @@ function _guideLikeAreaSkip(why) {
     "reset_before_fill",
     "learn_reflect_before_reset",
     "notify_done_clears_queue",
+    "reset_clean_no_force_place",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -12620,6 +12621,20 @@ function _guideLikeAreaSkip(why) {
     } catch (_) { return false; }
   }
   /**
+   * ★ 2.8.313 実測のコード調べ: リセットで空と確かめた回でも、客が変わった事だけで「前客の場所を全部外す（強制）」の旗
+   *   （__axlxForceClearAllPlace・NeedClearWard/Station）を立てていた。空のフォームでも小窓を開いて確かめる分だけ時間を食う（外す物は無い）。
+   *   → リセットで空と読み戻せた直後（_axResetCleanFresh）は、客切替を理由にした強制の旗を立てない。
+   *   ⚠ 送付後の外し未完（__axlxPostSendClearGap）・前の回のリセットを引き継いだ旗・残りがある回は今まで通り（ここでは触らない）。
+   *   ⚠ 印（axlx_reset_clean）はここでは消さない（後ろの leftover 判定 reset_clean_skip_clear が使う）。
+   */
+  function _resetCleanSkipsForcePlace(stamp) {
+    try {
+      if (!_axResetCleanFresh()) return false;
+      if (stamp && _audit) _auditStepP("reset_clean_no_force_place", "リセットで空と確認済み→客切替でも前客の場所の全部外し（強制）は立てない");
+      return true;
+    } catch (_) { return false; }
+  }
+  /**
    * ★ 2.8.284 検索を押す前に、リアプロの Ajax（非同期）の再計算が終わるのを待つ。
    *   ・jQuery の未完了の通信（jQuery.active）が0
    *   ・「読み込み中」らしい表示（loading／spinner／loader）が見えていない
@@ -15610,7 +15625,7 @@ function _guideLikeAreaSkip(why) {
           try {
             var _pCid = String(window.__axlxSwitchPrevCid || "");
             var _nCid = String(_fillCustomerId || "");
-            if (_pCid && _nCid && _pCid !== _nCid) _willClear = true;
+            if (_pCid && _nCid && _pCid !== _nCid && !_resetCleanSkipsForcePlace(false)) _willClear = true;
             if (window.__axlxPostSendClearGap) _willClear = true;
             if (window.__axlxForceClearAllPlace) _willClear = true;
           } catch (_) {}
@@ -15687,6 +15702,8 @@ function _guideLikeAreaSkip(why) {
         var _swPrev = String(window.__axlxSwitchPrevCid || "");
         var _swNext = String(_fillCustomerId || "");
         var _switchedCust = !!(!_swPrev || !_swNext ? false : _swPrev !== _swNext);
+        // ★ 2.8.313: リセットで空と確かめた直後は、客切替でも強制の全部外しを立てない
+        if (_switchedCust && _resetCleanSkipsForcePlace(true)) _switchedCust = false;
         if (_switchedCust) {
           window.__axlxForceClearAllPlace = true;
           try { if (_audit) _auditStepP("place_redo", "客切替: 前の地域/駅を外してから新しい条件を選ぶ"); } catch (_ePr) {}
@@ -15783,7 +15800,7 @@ function _guideLikeAreaSkip(why) {
       try {
         var _p0 = String(window.__axlxSwitchPrevCid || "");
         var _n0 = String(_fillCustomerId || "");
-        if (_p0 && _n0 && _p0 !== _n0) _needForcePlace = true;
+        if (_p0 && _n0 && _p0 !== _n0 && !_resetCleanSkipsForcePlace(false)) _needForcePlace = true;
       } catch (_) {}
       if (_needForcePlace) {
         window.__axlxForceClearAllPlace = true;

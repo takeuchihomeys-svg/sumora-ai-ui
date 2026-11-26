@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.312";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.313";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -1518,7 +1518,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "task_change_api_every",
     scene: "clear",
-    text: "タスク段が変わるたびに拡張は human-learn-profile API取込経路を必ず通す（手元に手順書があっても飛ばさない）。BGゲートが新鮮なら skipped でも印 task_api_refresh を残す。幹段（clear_then_fill・fill_start・handoff・clear）は force、他は soft。取込後に把握→task_transition_gate→次へ。手順照合(guide_task_link)のあとも同じThenで次につながる",
+    text: "タスク段が変わるたびに拡張は human-learn-profile API取込経路を必ず通す（手元に手順書があっても飛ばさない）。BGゲートが新鮮なら skipped でも印 task_api_refresh を残す。幹段（clear_then_fill・fill_start・handoff・clear）のページ側 force は「重い取り直しを頼む意図」の印で、裏は src=popup_open／boot_need の時だけ本当に強制取得し、それ以外は版確認と gate 判定で「取らず」で通す（task_gate_no_forced_refetch・2.8.309。毎回強制はしない）。取込後に把握→task_transition_gate→次へ。手順照合(guide_task_link)のあとも同じThenで次につながる",
     since: "2.8.232",
     kb: "c87e11d3",
     marker: "_graspBeforeNextTaskThen",
@@ -1851,6 +1851,19 @@ export const AUTO_RULES: AutoRule[] = [
     verify: {
       onlyIf: ["fill_done"],
       mustHaveAny: ["fill_done"],
+    },
+  },
+  {
+    id: "reset_clean_no_force_place",
+    scene: "clear",
+    text: "リセットで空と読み戻せた直後（axlx_reset_clean の印があり、いまもフォームが空）は、客が変わったことだけを理由に「前客の場所を全部外す（強制）」を立てない（reset_clean_no_force_place）。空のフォームで所在地・沿線の小窓を開いて確かめる分の時間を省く。外す物がある回・送付後の外し未完（post_send_clear_gap）・前の回のリセットを引き継いだ回は今まで通り外す。印は残し、leftover 判定側の reset_clean_skip_clear が使う",
+    since: "2.8.313",
+    kb: null,
+    marker: "_resetCleanSkipsForcePlace",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:reset_clean_no_force_place"],
+      mustNot: ["page:place_redo"],
     },
   },
 ];

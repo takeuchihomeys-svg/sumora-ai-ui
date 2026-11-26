@@ -378,6 +378,9 @@ function splitByScene(ops: ReadonlyArray<FlowOp>): Map<FlowScene, string[]> {
   return out;
 }
 
+/** 次の操作までの間として数える最短（ms）。これ未満は同じ押下の二重記録とみなす */
+export const MIN_REAL_GAP_MS = 150;
+
 /** 中央値（純関数） */
 function med(a: number[]): number | null {
   if (!a.length) return null;
@@ -430,7 +433,13 @@ export function learnSceneFlows(
       if (t == null) continue;
       const sc = sceneOfOp(String(o?.k ?? ""));
       const prev = lastAt.get(sc);
-      if (prev != null && t > prev && t - prev < 120_000) {
+      /**
+       * ★ 2.8.313: 手順書（id 2851）の区の場面（area）の間の中央値が 95ms と出ていた。
+       *   ただし人の録画（通常モード・n=297）の「区→区」は 677〜772ms で 0.15 秒未満は0件＝人の実際の間ではない。
+       *   混ざった二重記録・旧い行の機械的な連続が原因とみて、0.15 秒未満（人が次を押せない間）は「次の操作までの間」に数えない。
+       *   ⚠ 原因は推測。直した後の手順書で area の中央値が 0.6〜0.8 秒に寄るかを確かめる。
+       */
+      if (prev != null && t > prev && t - prev < 120_000 && t - prev >= MIN_REAL_GAP_MS) {
         const a = acc.get(sc) ?? { runs: 0, ops: 0, raw: 0, seqs: new Map<string, number>(), gaps: [] };
         a.gaps.push(t - prev);
         acc.set(sc, a);

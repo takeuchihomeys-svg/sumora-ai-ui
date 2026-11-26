@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-27 **危険な所の改善（2.8.313）: リセット済みなら客切替でも強制の全部外しを省く／手順書の間の数え方／旧い決まり文の矛盾を直す**
+
+竹内さん「危険な部分徹底的に改善するようにする　動きも人間の動きと速さにするように」。実データ（#1656 など 2.8.295 の記録・手順書 id 2851・人の録画 n=297）を読んだ上での最小の直し。
+
+- **変更（page-script.js）**: `_resetCleanSkipsForcePlace(stamp)` を追加（`_axResetCleanFresh()`＝リセットで空と読み戻せた印が10分以内かつ今も空）。次の3か所で「客が変わった」だけを理由にした旗を立てない:
+  ① 前客の外しの予告 `_willClear`／② `_switchedCust`（`__axlxForceClearAllPlace`・`place_redo`）／③ `_needForcePlace`。立てなかった時は audit 段 `page:reset_clean_no_force_place`。
+  **変えない物**: 送付後の外し未完（`__axlxPostSendClearGap`）・前の回のリセット引き継ぎ・空でない回（今まで通り外す）・印（`axlx_reset_clean`）自体（leftover 判定 `reset_clean_skip_clear` が使う）。
+- **決まり**: `reset_clean_no_force_place`（scene clear・marker `_resetCleanSkipsForcePlace`・verify: 印があるのに `place_redo` が出たら違反）を追加。`task_change_api_every` の文（幹段は force・他は soft と読める旧文）を `task_gate_no_forced_refetch`（2.8.309）に合わせて直した。`search-audit.js` の KEEP/RULE に `reset_clean_no_force_place` を足した（120 段の上限で落とさない）。
+- **手順書の間（`learn-flow-steps.ts`）**: 場面ごとの `gap_ms` で 0.15 秒未満の差を数えない（`MIN_REAL_GAP_MS`）。手順書 id 2851 の area の間が 95ms だったが、人の録画（通常・n=297）の区→区は 677〜772ms で 0.15 秒未満は0件。**原因は推測**（二重記録・旧い行の機械的連続）。直した後の手順書で area の中央値が 0.6〜0.8 秒に寄るかを確かめる。
+- **版**: manifest／`_AXLX_PAGE_VER`／`_AXLX_ITANDI_PAGE_VER`／`AUTO_RULES_REVIEWED_UP_TO`／`ITANDI_RULES_REVIEWED_UP_TO` = 2.8.313。**手順書の作り直し（`attach-playbook --apply`）はまだ**（竹内さんの OK 待ち）。
+- **試験**: `tests/chrome-extension/reset-clean-no-force-place-v28313.test.js`（26）・`learn-flow-steps.test.ts`（72）・`auto-procedure-rules.test.ts`（205）・`ext-test-all`（新しい赤なし・基準 112）。tsc は既存の無関係な試験 8 ファイルの型エラーのみ（今回の変更では増えていない）。
+- **今回やらなかった物（理由つき）**: 待ち時間の定数変更（人の録画の実測に合わせる根拠が不足）／全体の `nextMove` 表示名の改名／重複行の本番側除去／旧い決まり本文（約30本）の書き直し。いずれも別作業。
+- **確かめ方（実測は未）**: 拡張を 2.8.313 に再読み込み → 続けて2客以上を自動 → 記録で `reset_press → reset_verified → … → page:reset_clean_no_force_place → clear_then_fill_ok` が出て、`place_redo`／`force_clear_place` が出ないこと。
+
+---
+
 ## 2026-11-27 **実ランタイム結合テスト＋本番 DB 実データ検証で発覚した抜け7件の完全修正（2.8.312 追試強化）**
 
 竹内さん「これでちゃんと改善されたのか 抜けなどはないのか テストして調査するようにする」を受け、本番 DB 実行（読み取り専用：`all` id=2846 / `realpro` id=2847,2849 / `itandi` id=2848,2850）・API ハンドラ直結（`?touch=0`）・VM 実ランタイム結合テストで再検査し、**実動時に起きる 7件の抜け**を追加で特定・修正した。

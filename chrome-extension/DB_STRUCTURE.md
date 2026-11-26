@@ -79,6 +79,7 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - chrome.storage / localStorage: モード・今のお客様・一括検索の状態・送付の状態・誤送の防止（axlx_search_for）・案内（リアプロ／ITANDI で別のキー）・一時調整（tempAdj_<id>・DB に残らない）
 - chrome.storage.session `axlx_auto_next_page`（2.8.104）: 自動が「次」を押す前に置く続きの印（頁・回数・累計・お客さん・時刻）。`td.pager` が読み直した後の `start()` Case E が読んで消す。2分で無効
 - chrome.storage.session `axlx_fill_busy`（2.8.106 で中身を足した）: 条件の入力中の印。`{ at, customerId?, why? }`。background が一括で次のお客さんを始める直前に `why:"batch_customer_start"` で置き、同時に前の `axlx_pending_auto_send`・`axlx_auto_next_page` を消す。bulk-dl の Case C は「検索した印（pending.ts）より入力開始（busy.at）が新しい」「お客さんが違う」時は押さない（`customer-handoff.js` の `pendingFlagBlockReason`）
+- 2026-11-27（2.8.313・DB の列・表・API は増やしていない）: 拡張の中だけの変更＝リセットで空と確かめた直後は客切替でも「前客の場所の全部外し（強制）」の旗を立てない（`_resetCleanSkipsForcePlace`・audit 段 `page:reset_clean_no_force_place`・決まり `reset_clean_no_force_place`）。手順書側は `learn-flow-steps.ts` の場面ごとの間（`gap_ms`）で 0.15 秒未満（`MIN_REAL_GAP_MS`）を数えない。`task_change_api_every` の旧い文（毎回 force）を 2.8.309 の決まりに合わせて直した。送る値・列は変わらない。
 - 2026-11-27（2.8.312・`PLAYBOOK_BUILD_V = 19`・DB の列・表は増やしていない）:
   - **CDN 版付きキャッシュバイパス（`human-learn-profile`）**: `?touch=0` が `bundle_v`（`${generated_at}_${rules_v}_${build_v}`）を返し、拡張（`buildBundleFetchUrl`）は取得 URL に `&v=<bundle_v>` を付けて送信。本体 GET で `forceFresh` / `playbookRefreshed` または `?v=` と実束 `actualBundleV` が不一致の時は `Cache-Control: no-store, no-cache, must-revalidate` を返す。
   - **統括の自己矛盾同期（`syncSupervisorImproveLoop`）**: `shots.learned` 継承後に `自動モード完成度`（`measureAutoCompletion` で `evidence`/`today`/`agenda` 再算定）と `学習完成（期間・土台・つながり・一連）` を実測へ同期。

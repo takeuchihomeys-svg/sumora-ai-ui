@@ -12,7 +12,7 @@
 // 実行: npx tsx --env-file=.env.local app/lib/__tests__/learn-flow-steps.test.ts
 import {
   learnSceneFlows, findWeakScenes, sceneOfOp, describeSceneFlow, scenePlaybook, lastSceneOf, SCENE_JA,
-  sceneOfFieldName, linkFieldsToScenes, qualityCycleLine,
+  sceneOfFieldName, linkFieldsToScenes, qualityCycleLine, MIN_REAL_GAP_MS,
   type FlowOp, type SceneFlow,
 } from "../learn-flow-steps";
 
@@ -187,6 +187,22 @@ console.log("\n■ ⑨ 止まった場面は「時系列で最後」（手数が
   ok("文字入力（key）だけなら1つ前の場面", lastSceneOf([H("click:rental_cost2", 1), H("key", 2), H("key", 3)]) === "cond");
   ok("場面が無ければ null", lastSceneOf([H("click:全く無関係なXYZボタン", 1)]) === null);
   ok("空でも落ちない", lastSceneOf([]) === null);
+}
+
+console.log("\n■ ⑨b 間（gap_ms）: 0.15 秒未満の二重記録は人の間に数えない（2.8.313）");
+{
+  // 区のクリック（ラベルとチェックの二重記録が 90ms 差で並ぶ）→ 人の間は約700ms
+  const run: FlowOp[] = [
+    H("click:大阪市西区｜label.one_city", 1000), H("change:city_code[]", 1090),
+    H("click:大阪市中央区｜label.one_city", 1770), H("change:city_code[]", 1860),
+    H("click:大阪市北区｜label.one_city", 2540), H("change:city_code[]", 2630),
+  ];
+  const area = learnSceneFlows([run]).find((f) => f.scene === "area");
+  ok("二重記録の 90ms は間に数えない（中央値が 0.15 秒以上）", (area?.gap_ms ?? 0) >= MIN_REAL_GAP_MS, area?.gap_ms);
+  ok("人の間（約680〜770ms）が出る", (area?.gap_ms ?? 0) >= 600 && (area?.gap_ms ?? 0) <= 800, area?.gap_ms);
+  ok("下限は 150ms", MIN_REAL_GAP_MS === 150);
+  const fast = learnSceneFlows([[H("click:大阪市西区｜label.one_city", 1000), H("click:大阪市北区｜label.one_city", 1100)]]).find((f) => f.scene === "area");
+  ok("全部が 0.15 秒未満なら間は null（嘘の間を作らない）", fast?.gap_ms == null, fast?.gap_ms);
 }
 
 console.log("\n■ ⑩ 壊れない");
