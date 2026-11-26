@@ -4,7 +4,7 @@
 //   根拠（#744・前24時間に物件を送ってきた竹内さん本人の番）: 揃っている時 AIX 2/2・揃っていない時 返信 4／AIX 2（AIX は2時間以上後に揃えてから）。
 //   10/21 の決め（お礼には返信せず AIX）は「揃っている時」に当たる。置き方は BRAIN_CHECK_PROMISE_FLOW と同じ（材料の1行・ブレインの判断は上書きしない）。
 //   スイッチ BRAIN_PICKUP_PROMISE_FLOW: 既定 off（材料に入れない）／on
-import { isAckOnlyTurn } from "./ack-topic-scope";
+import { isAckOnlyTurn, isAckOrReviewTurn, ackReviewAsAckOn } from "./ack-topic-scope";
 
 export function brainPickupPromiseFlowOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.BRAIN_PICKUP_PROMISE_FLOW ?? "").trim().toLowerCase() === "on";
@@ -30,7 +30,8 @@ export function pickupPromiseFlowOf(messages: ReadonlyArray<Msg>, aixRows: Reado
   const pAt = Date.parse(prev.createdAt);
   const fulfilled = aixRows.some((a) => /^(?:property_send|property_recommendation)/.test(String(a.aix_type ?? "")) && (() => { const t = Date.parse(String(a.sent_at ?? a.created_at ?? "")); return Number.isFinite(t) && t > pAt && t <= now; })());
   const out: PickupFlow = { scene: null, promised, fulfilled, pending };
-  if (fulfilled || pending == null || !isAckOnlyTurn(burst.map((m) => String(m.text ?? "")).join("\n"))) return out;
+  const ackNet = ackReviewAsAckOn() ? isAckOrReviewTurn : isAckOnlyTurn; // 2026-11-27 作業員A: ACK_REVIEW_AS_ACK=on で見る受けの付いたお礼も（既定 off）
+  if (fulfilled || pending == null || !ackNet(burst.map((m) => String(m.text ?? "")).join("\n"))) return out;
   return { ...out, scene: pending > 0 ? "ack_ready" : "ack_not_ready" };
 }
 /** 材料の1行（当たらない時は ""） */
