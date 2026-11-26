@@ -33,9 +33,9 @@ const keysOf = (s: unknown) => (typeof s === "string" && s ? s.split(",") : []);
 export function ownershipTable(ds: readonly OwnDecision[], aix: readonly OwnAix[], rows: readonly OwnRow[] = OWN_ROWS): OwnCount[] {
   const byConv = new Map<string, OwnAix[]>();
   for (const a of aix) byConv.set(a.conv, [...(byConv.get(a.conv) ?? []), a]);
-  const markedRows = ds.filter((d) => typeof d.digest.mk === "string");
+  const markedRows = ds.filter((d) => typeof d.digest.mtk === "string");
   return rows.map((r) => {
-    const has = r.mark ? markedRows.filter((d) => keysOf(d.digest.mk).includes(r.mark!)) : [];
+    const has = r.mark ? markedRows.filter((d) => keysOf(d.digest.mtk).includes(r.mark!)) : [];
     const head = has.filter((d) => keysOf(String(d.digest.mpr ?? "").split("|")[3]).includes(r.key));
     const um = USED_MARKERS[r.key];
     let usedOk = 0, usedOf = 0, reflectOk = 0, reflectOf = 0;
