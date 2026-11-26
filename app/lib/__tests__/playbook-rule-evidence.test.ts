@@ -114,7 +114,8 @@ console.log("■ 手順書に確かめ方が載る");
   ok("決まりに verified_by（確かめる段）", !!r && r.verified_by.includes("page:playbook_seen"), r);
   const nVer = pb.rules.filter((x) => x.verified_by.length).length;
   ok("確かめられる決まりが半分以上", nVer * 2 >= pb.rules.length, { nVer, all: pb.rules.length });
-  ok("確かめる印が無い決まりは gaps に出る", pb.gaps.some((g) => g.includes("確かめる印が無い")), pb.gaps);
+  // 2026-11-27: 確かめ方の無い決まりは、理由つきの例外（RULES_CODE_ONLY）なら抜けとして出さない。例外以外が増えた時だけ出る
+  ok("確かめ方が無い決まりのうち理由つきの例外でない物が無ければ、gaps に『確かめる印が無い』は出ない", !pb.gaps.some((g) => g.includes("確かめる印が無い")), pb.gaps);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

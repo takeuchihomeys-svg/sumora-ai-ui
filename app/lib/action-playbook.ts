@@ -17,7 +17,7 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
-import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, RULES_CODE_ONLY, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName } from "./human-motion-sanitize";
 
@@ -881,7 +881,8 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   if (!realproHands) {
     gaps.push("itandi の自動の決まりは、このリアプロの決まり一覧（拡張の page-script 用）とは別。手順書には載せていない（itandi 用の決まりはまだ作っていない）");
   }
-  const unverified = rules.filter((r) => !r.verified_by.length).map((r) => r.id);
+  // 2026-11-27: 確かめ方が無い決まりは、理由つきの例外（RULES_CODE_ONLY）以外を抜けとして出す
+  const unverified = rules.filter((r) => !r.verified_by.length && !RULES_CODE_ONLY[r.id]).map((r) => r.id);
   if (unverified.length) {
     gaps.push(`自動の決まり ${rules.length}件のうち ${unverified.length}件は点検記録で確かめる印が無い（コードにあるかだけ・${unverified.slice(0, 6).join("・")}${unverified.length > 6 ? ` 他${unverified.length - 6}` : ""}）`);
   }
