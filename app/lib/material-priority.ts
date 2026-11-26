@@ -122,6 +122,12 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
   },
   // 2026-11-26 作業員L（#728 ③・作業員A と決め・台帳 #783）: 成約データの申込の直前の一手（手打ちの返信が大半）＝返信を選んだ＝使った・申込へ以外の AIX＝使わなかった・
   //   AIX【申込へ】は案内の別の形なので決められない（材料の印のある番だけを数えるのは呼ぶ側）
+  // 2026-11-26 作業員L（#795・作業員A と決め）: 気持ち×駅の表の1位の一手（digest.msm: a:<AIX>／r:<返信の形>）。a: はその AIX を選んだ＝使った・r: は返信（AIX なし）＝使った
+  mindset_station: (d) => {
+    const m = String(d.msm ?? ""); if (!m) return null;
+    const aix = String(d.aix ?? "").trim();
+    return m.startsWith("a:") ? aix.startsWith(m.slice(2)) : aix === "";
+  },
   deal_flow_pre_apply: (d) => {
     const aix = String(d.aix ?? "").trim();
     if (!aix) return true;

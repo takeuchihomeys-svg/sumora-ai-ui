@@ -3341,7 +3341,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
-  const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
+  const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
     if (cpf.brainCheckPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
@@ -4451,7 +4451,7 @@ ${sh}`;
       // 2026-11-26 作業員L（#795 ③・ROUTE_MINDSET_LINE=on の時だけ・既定 off）: 前の判断の気持ち × 今の駅 → 竹内さん本人の多い一手（地図が気持ちを読む1行）
       try {
         const msm = await import("@/app/lib/mindset-station-move");
-        if (msm.routeMindsetLineOn() && ar.loc?.node && !ar.loc.branch) { const prevState = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null; const ml = msm.mindsetStationLine(ar.loc.node, prevState); if (ml) { applyRouteText += `\n${ml}`; materialMarks.mindset_station = ml.length; materialBlocks.push({ key: "mindset_station", text: ml, from: "route" }); } }
+        if (msm.routeMindsetLineOn() && ar.loc?.node && !ar.loc.branch) { const prevState = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null; const ml = msm.mindsetStationLine(ar.loc.node, prevState); if (ml) { const tm = msm.mindsetStationTopMark(ar.loc.node, prevState); if (tm) flowMarks.msm = tm; /* #795 使った目印 */ applyRouteText += `\n${ml}`; materialMarks.mindset_station = ml.length; materialBlocks.push({ key: "mindset_station", text: ml, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] mindset-station skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };

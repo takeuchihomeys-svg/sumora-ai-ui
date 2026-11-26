@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mindsetStationLine, routeMindsetLineOn, type StationMoveCell } from "../mindset-station-move";
+import { mindsetStationLine, routeMindsetLineOn, mindsetStationTopMark, chainRowsFromCells, type StationMoveCell } from "../mindset-station-move";
+import { USED_MARKERS } from "../material-priority";
+import { CHAIN_PATTERNS_REPLY } from "../chain-patterns-reply";
 import { cellsOf, replyWordOf, stationAt, stoneOf } from "../../../scripts/audit-mindset-station-move";
 import { readChainCounts, DECIDE_STATES } from "../../../scripts/audit-customer-read-chain";
 
@@ -30,4 +32,26 @@ assert.equal(rc.decideN, 2); assert.equal(rc.decideBlocker, 1); assert.ok(DECIDE
 // 配線
 const core = readFileSync(join(__dirname, "../brain-core.ts"), "utf8");
 assert.ok(/msm\.routeMindsetLineOn\(\) && ar\.loc\?\.node/.test(core) && /materialBlocks\.push\(\{ key: "mindset_station"/.test(core));
-console.log("mindset-station-move ok 19");
+// ① 使った目印（digest.msm）
+const tc: StationMoveCell[] = [
+  { station: "proposing", state: "迷い", stone: { to: [], reply: ["answer"], aix: [] }, move: "返信:answer", n: 14, share: 45.2 },
+  { station: "proposing", state: "迷い", stone: { to: [], reply: ["promise"], aix: [] }, move: "返信:promise", n: 8, share: 25.8 },
+  { station: "proposing", state: "内覧したい", stone: { to: [], reply: [], aix: ["viewing_invite"] }, move: "AIX:viewing_invite", n: 8, share: 40 },
+  { station: "proposing", state: "内覧したい", stone: { to: [], reply: ["answer"], aix: [] }, move: "返信:answer", n: 6, share: 30 },
+];
+assert.equal(mindsetStationTopMark("proposing", "迷い", tc), "r:answer");
+assert.equal(mindsetStationTopMark("proposing", "内覧したい", tc), "a:viewing_invite");
+assert.equal(mindsetStationTopMark("proposing", "無い", tc), "");
+const um = USED_MARKERS.mindset_station;
+assert.equal(um({ msm: "a:viewing_invite", aix: "viewing_invite" }), true);
+assert.equal(um({ msm: "a:viewing_invite", aix: "" }), false);
+assert.equal(um({ msm: "r:answer", aix: "" }), true);
+assert.equal(um({ msm: "r:answer", aix: "estimate_sheet" }), false);
+assert.equal(um({ aix: "" }), null, "印の無い番は決められない");
+assert.ok(/flowMarks\.msm = tm/.test(core) && /if \(fm\?\.msm\) o\.msm = fm\.msm/.test(readFileSync(join(__dirname, "../brain-layers.ts"), "utf8")), "印が digest まで届く");
+// ② 連鎖の型の行（駅＋気持ち・駅だけより 20pt 以上・駅だけの割合は上に寄せた見積もり）
+const cr = chainRowsFromCells(tc, 5, 5);
+assert.ok(cr.every((r) => r.parts[1].startsWith("気持ち:") && /^(reply|aix):/.test(r.move)));
+assert.ok(cr.some((r) => r.key === "proposing+気持ち:内覧したい" && r.move === "aix:viewing_invite"));
+assert.ok(CHAIN_PATTERNS_REPLY.every((r) => r.lift >= 20 && r.n >= 5), "表の行は控えめの線を越えた物だけ");
+console.log("mindset-station-move ok 31");
