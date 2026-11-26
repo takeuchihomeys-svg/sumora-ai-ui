@@ -27,6 +27,8 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   BRAIN_CHECK_PROMISE_FLOW: "check_promise_flow", BRAIN_PICKUP_PROMISE_FLOW: "pickup_promise_flow", APPLY_ROUTE_BACKPLAN: "route_backplan",
   AIX_BOUNDARY_LINE: "aix_boundary", AIX_DICTIONARY_LINE: "aix_dictionary", CHAIN_INSIGHT_LINE: "chain_insight", AIX_STATE_CARD: "aix_state_card",
   PICKUP_WHY_TO_BRAIN: "pickup_why", PICKUP_WHY_PENDING_MATCH: "pickup_why_pending", STATION_STATE_LINE: "station_state",
+  // 2026-11-27: 印なしだった3部品に印を足した（brain-core・on の時だけ）
+  ACK_PICKUP_AIX_PATH: "ack_pickup_path", BRAIN_RULE6_OPEN_PROMISE: "rule6_open_turn", APPLY_ROUTE_NEXT_BY_TURN: "route_next_by_turn",
 };
 export type ReachRow = { id: string; marks: Record<string, unknown> | null | undefined };
 export type ReachVerdict = { mark: string | null; reached: string[]; notReached: string[]; verdict: "比べる" | "届かず" | "印なし" };

@@ -3706,13 +3706,15 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
+  // 2026-11-27 作業員A: ⑥の差し替えが効く番（お客様の番がお礼・了承だけ）にだけ付く印 rule6_open_turn（試験の届いたかの関所用・on の時だけ・off は付かない）
+  if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON && isAckOnlyTurn(String(unrepliedTurn.text ?? ""))) materialMarks.rule6_open_turn = 1;
   if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
   if (exchangeMarkLen) materialMarks.exchange = exchangeMarkLen; // 2026-11-23 作業員A: CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on で1行を足した番だけ（動きは変えない）
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackFacts = ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at })));
       const ackLine = ackFormMaterialLine(ackFacts);
-      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; materialBlocks.push({ key: "ack_confirm", text: ackLine, from: "cs" }); ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); }
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; materialBlocks.push({ key: "ack_confirm", text: ackLine, from: "cs" }); ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); if (ackPickupPathGiven) materialMarks.ack_pickup_path = 1; /* 2026-11-27 作業員A: 試験で届いたかの印（ACK_PICKUP_AIX_PATH=on で道の1行を渡した番だけ・off は付かない） */ }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -4441,6 +4443,8 @@ ${sh}`;
         const ad = await import("@/app/lib/aix-dictionary");
         if (ad.aixDictionaryLineOn() && ar.loc?.next?.aix?.length) { const dl = ad.aixDictionaryLine(ar.loc.next.aix); if (dl) { flowMarks.dct = [...new Set(ar.loc.next.aix.map((x: string) => String(x).split("/")[0]))].slice(0, 2).join("+"); /* #783 使った目印 */ applyRouteText += `\n${dl}`; materialMarks.aix_dictionary = dl.length; materialBlocks.push({ key: "aix_dictionary", text: `\n${dl}`, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] aix-dictionary skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-27 作業員A: 次の一手を番で選び直した番の印（APPLY_ROUTE_NEXT_BY_TURN=on の時だけ evidence に出る＝off は付かない）
+      if (ar.loc?.evidence?.some((e: string) => e.startsWith("次の一手を番で選び直し:"))) materialMarks.route_next_by_turn = 1;
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
