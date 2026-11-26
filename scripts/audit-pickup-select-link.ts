@@ -52,7 +52,7 @@ const isTest = (c: string) => isTestConversation(c) || isNoLineTestConversation(
     if (rows.some((r) => Array.isArray(r.reason_codes) && r.reason_codes.length > 0)) { why++; if (pre) whyPre++; }
     else { noCodes++; missing.push(l.conversation_id.slice(0, 8)); }
   }
-  const { data: hooks } = await sb.from("sent_properties").select("conversation_id").not("customer_hook_points", "is", null).gte("created_at", new Date(Date.now() - (days + 30) * 864e5).toISOString()).limit(3000);
+  const { data: hooks } = await sb.from("sent_properties").select("conversation_id").not("customer_hook_points", "is", null).gte("sent_at", new Date(Date.now() - (days + 30) * 864e5).toISOString()).limit(3000); // 2026-11-26 作業員A（#793）: sent_properties に created_at は無い（日時は sent_at）＝前は毎回エラーで 0 と出ていた
   // 刺さった点は送った日ではなく引用の返事の日に付く＝送ったのが前でも数える（送った物件の行は 30日 前まで見る）
   const hookRows = ((hooks ?? []) as Array<{ conversation_id: string | null }>).filter((h) => h.conversation_id && !isTest(h.conversation_id));
   const out = { days, n, why, rate: n ? Math.round((why / n) * 1000) / 10 : null, no_pickup_row: noRow, no_pickup_row_with_images: noRowSip, no_codes: noCodes, hook_rows: hookRows.length, hook_convs: new Set(hookRows.map((h) => h.conversation_id)).size, convs: [...new Set(missing)],

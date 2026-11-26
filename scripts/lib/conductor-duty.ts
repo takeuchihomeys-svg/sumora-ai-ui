@@ -23,7 +23,7 @@ export const CONDUCTOR_DUTY: readonly DutyRow[] = [
   { id: "n.closing", name: "決めに行く", owner: "作業員A", have: ["read.mindset", "read.route_map", "read.situation_now", "read.apply_readiness"], use: ["conductor.focus"], reflect: ["writer.reply", "writer.aix_second"], partKeys: ["deal_flow_pre_apply", "intake_estimate"] }, // 11/23 P の確かめ: 申込までの段と今の状況も要る・AIX【申込の後押し】の側も（申込予測 apply-readiness は地図に行が無い＝L に頼む）
   { id: "n.flex", name: "臨機応変", owner: "作業員L", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
   { id: "n.trust", name: "信頼", owner: "作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
-  { id: "n.feeling", name: "気持ち", owner: "作業員A", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
+  { id: "n.feeling", name: "気持ち", owner: "作業員A", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"], partKeys: ["mindset_station"] },
   { id: "n.appeal", name: "訴求", owner: "作業員A", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"], partKeys: ["aix_boundary", "aix_dictionary", "pickup_why"] },
   { id: "n.asks", name: "要件", owner: "作業員A", have: ["read.turn_read"], use: ["conductor.brief"], reflect: ["conductor.delivery"] },
   { id: "n.link", name: "つなぎ", owner: "作業員L", have: ["read.uptake"], use: ["conductor.combo"], reflect: ["writer.reply"] },

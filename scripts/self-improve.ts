@@ -200,10 +200,11 @@ async function main() {
         const lg = await import("../app/lib/linkage-gap-matrix");
         lines.push("### 連携・連鎖（作業員A・竹内さん 11/26「仕組化」）", ...lg.gapTopLines());
         const top = lg.rankGaps()[0]; if (top) linkNextWhy = `- 連携の切れ目の1位「${top.name} → ${lg.SINK_JA[top.sink]}」（値打ち ${top.value}%）から既定 off でつなぐ（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」）`;
-        const { data: cq } = await sb.from("quality_daily").select("day,metric,value,n,detail").in("metric", ["chain:patterns", "chain:brain_match_hit"]).order("day", { ascending: false }).limit(6);
+        const { data: cq } = await sb.from("quality_daily").select("day,metric,value,n,detail").in("metric", ["chain:patterns", "chain:brain_match_hit", "chain:table_candidates"]).order("day", { ascending: false }).limit(9);
         const cr = (cq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; detail: { miss_rate?: number | null } | null }>;
         const pat = cr.filter((r) => r.metric === "chain:patterns"), hit = cr.filter((r) => r.metric === "chain:brain_match_hit");
         lines.push(`- 連鎖の型: ${pat[0]?.value ?? "—"}型（${pat[0]?.day ?? "まだ"}${pat[1] ? `・前の日 ${pat[1].value}` : ""}）・型が当てはまった番のブレインの一致 ${hit[0]?.value ?? "—"}%（${hit[0]?.n ?? 0}番・当てはまらない番 ${hit[0]?.detail?.miss_rate ?? "—"}%${hit[1]?.value != null && hit[0]?.value != null ? `・前の日との差 ${Math.round((hit[0].value - hit[1].value) * 10) / 10}pt` : ""}）`);
+        { const tc = cr.filter((r) => r.metric === "chain:table_candidates")[0] as { value: number | null; day: string; detail: { added?: string[]; gone?: string[] } | null } | undefined; if (tc) lines.push(`- 連鎖の型の表に足す候補 ${tc.value ?? 0}（${tc.day}・消えた型 ${tc.detail?.gone?.length ?? 0}・表の書き足しは週1回・作業員がテスト付きで）${tc.detail?.added?.length ? `: ${tc.detail.added.slice(0, 3).join("・")}` : ""}`); }
         lines.push(`- 次の晩の試験の候補（作ったが off の切れ目・値打ちの順）: ${lg.gapBundleCandidates().join("・") || "なし"}`);
         const { data: openGap } = await sb.from("work_items").select("title").like("title", "連携の切れ目: %").not("stage", "in", "(done,dropped)").limit(300);
         for (const g of lg.gapLedgerItems(((openGap ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });

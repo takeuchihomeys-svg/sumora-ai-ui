@@ -19,8 +19,11 @@ export function sentMarksOf(sentBefore: Record<string, string> | null | undefine
   }
   return [...new Set(out)].sort();
 }
-export function featuresOf(r: { node: string | null; branch: string | null; sub1?: string | null; sentBefore?: Record<string, string>; at: string }): ChainFeatures {
-  return { station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"), sub: r.sub1 ?? null, marks: sentMarksOf(r.sentBefore, Date.parse(r.at)) };
+/** 2026-11-26 作業員L の頼み: 気持ちの状態（作業員L の気持ち×駅の表と同じ名前）を印 "気持ち:<状態>" として足す（無ければ今と同じ） */
+export function featuresOf(r: { node: string | null; branch: string | null; sub1?: string | null; sentBefore?: Record<string, string>; at: string; mindset?: string | null }): ChainFeatures {
+  const marks = sentMarksOf(r.sentBefore, Date.parse(r.at));
+  if (r.mindset) marks.push(`気持ち:${r.mindset}`);
+  return { station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"), sub: r.sub1 ?? null, marks: [...new Set(marks)].sort() };
 }
 /** 組の鍵（駅＋状態＋印2つまで）。印の少ない組から順に */
 export function comboKeysOf(f: ChainFeatures): string[] {
@@ -61,6 +64,11 @@ export const CHAIN_PATTERNS: readonly ChainPattern[] = [
   {"key":"pickup+物件:前","parts":["pickup","物件:前"],"move":"reply:promise","share":60,"n":5,"stationShare":34.8,"lift":25.2},
   {"key":"pickup+物件:今日","parts":["pickup","物件:今日"],"move":"reply:promise","share":60,"n":5,"stationShare":34.8,"lift":25.2},
 ];
+/** 毎晩の数え直しと静的な表の差（純関数・統括役 11/26: 表への書き足しは週1回・作業員がテスト付きでコミット）: 新しく見つかった型・表にあるのに今は出ない型 */
+export function chainTableDiff(found: readonly ChainPattern[], table: readonly ChainPattern[] = CHAIN_PATTERNS): { added: ChainPattern[]; gone: ChainPattern[] } {
+  const tk = new Set(table.map((p) => `${p.key}>${p.move}`)), fk = new Set(found.map((p) => `${p.key}>${p.move}`));
+  return { added: found.filter((p) => !tk.has(`${p.key}>${p.move}`)), gone: table.filter((p) => !fk.has(`${p.key}>${p.move}`)) };
+}
 export function chainInsightLineOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.CHAIN_INSIGHT_LINE ?? "").trim().toLowerCase() === "on";
 }

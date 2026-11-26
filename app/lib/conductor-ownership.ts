@@ -28,6 +28,7 @@ export const OWN_ROWS: readonly OwnRow[] = [
   // 2026-11-26 作業員L（連携の一覧の3位）: 入口の見積の1行（入口の統括に渡す・印は material_marks.intake_estimate）。目当ては決められない（費用の答え・内覧の誘い・待ち）
   { key: "intake_estimate", name: "入口の見積の1行（CONDUCTOR_INTAKE_ESTIMATE）", owner: "作業員L", mark: "intake_estimate" },
   { key: "aix_state_card", name: "AIX の札（AIX_STATE_CARD・本番は shadow）", owner: "作業員A", mark: "aix_state_card" },
+  { key: "mindset_station", name: "地図が気持ちを読む1行（ROUTE_MINDSET_LINE）", owner: "作業員L", mark: "mindset_station" },
   { key: "pickup_why", name: "物件を選んだ理由（PICKUP_WHY_TO_BRAIN）", owner: "作業員A", mark: "pickup_why" },
   { key: "now_fulfillable", name: "今果たせる約束（SITUATION_NOW_FULFILLABLE）", owner: "作業員1", mark: "now_fulfillable" },
 ];

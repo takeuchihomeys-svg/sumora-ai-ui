@@ -15,7 +15,7 @@ const HAND = "手打ちの通 2240（60日）";
  *   組み合わせのつなぎは連鎖の見立て（chain-patterns・CHAIN_INSIGHT_LINE・既定 off）。値打ち＝型が当てはまった番でブレインが竹内さんと合う割合の差（+7.7pt・111番）は束ねた1行で並べる */
 const FOUNDATION = (id: string, name: string, sw: string): GapSource => ({ id, name, owner: "作業員A", value: null, valueBase: "ブレインの中の土台（値打ちは束ねた行 brain_combo で）", cells: { brain: { state: "on", switch: sw }, combo: { state: "none" } } });
 const BRAIN_FOUNDATIONS: readonly GapSource[] = [
-  FOUNDATION("f_check_order", "確認の順（check-order）", "CHECK_ORDER_TABLE"), FOUNDATION("f_mindset", "気持ち（customer-mindset）", "CUSTOMER_MINDSET"), FOUNDATION("f_station", "地図の駅（apply-route-map）", "ROUTE_DIGEST"),
+  FOUNDATION("f_check_order", "確認の順（check-order）", "CHECK_ORDER_TABLE"), { ...FOUNDATION("f_mindset", "気持ち（customer-mindset）", "CUSTOMER_MINDSET"), cells: { brain: { state: "on", switch: "CUSTOMER_MINDSET" }, combo: { state: "off", switch: "ROUTE_MINDSET_LINE", item: 795, note: "気持ち×駅 → 竹内さんの次の一手（作業員L・9470597e9）" } } }, FOUNDATION("f_station", "地図の駅（apply-route-map）", "ROUTE_DIGEST"),
   FOUNDATION("f_next_stone", "次の石（route-next-stone）", "ROUTE_NEXT_STONE_LINE"), FOUNDATION("f_backplan", "逆算の計画（route-backplan）", "APPLY_ROUTE_BACKPLAN"), FOUNDATION("f_promise_flow", "約束の流れ（確認・探す）", "BRAIN_CHECK_PROMISE_FLOW"),
   FOUNDATION("f_card", "AIX の札", "AIX_STATE_CARD"), FOUNDATION("f_aims_after", "判断の後の欄（turn-aims-after）", "TURN_AIMS_AFTER"), FOUNDATION("f_focus", "入口の重点（conductor focus）", "CONDUCTOR_FOCUS"),
   { id: "brain_combo", name: "ブレインの土台どうしの組み合わせ（駅＋状態＋送った物 → 竹内さんの一手）", owner: "作業員A", value: 7.7, valueBase: "連鎖の型が当てはまった番のブレインの一致の差 +7.7pt（111番）", cells: { combo: { state: "off", switch: "CHAIN_INSIGHT_LINE", note: "12型・見立ての1行（控えの行 chain_insight）" } } },
@@ -29,11 +29,16 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
     cells: { intake: { state: "off", note: "指示書の extra に記録だけ（shadow）" }, brain: { state: "off", switch: "AIX_STATE_CARD", note: "本番は shadow・控えの行 aix_state_card" }, writer: { state: "none" }, aix2: { state: "unknown" }, final: { state: "none" } } },
   { id: "brain_decided", name: "ブレインの決め（目的と中期・こちら側の状態ほか10欄）", owner: "作業員A", value: 49.5, valueBase: "竹内さん本人の AIX の文 194（目的と中期 96）",
     cells: { writer: { state: "on", note: "決めた事の欄は書き手の注記に届く（欄ごとに違う）" }, aix2: { state: "none", item: 796, note: "2通目に配線のある欄 1/11・提案タブ 87e7dba6" } } },
+  // 2026-11-26 作業員A（#796 の2番目）: こちら側の状態（もう送った・約束した・確かめ済み）の2通目は、作業員L の AIX_SECOND_DECIDED（既定 off）で配線済み＝新しいコードは要らない・試験の組で on を決める
+  { id: "brain_decided_our_side", name: "ブレインの決め（こちら側の状態＝もう送った・約束した・確かめ済み）", owner: "作業員L", value: 9.8, valueBase: "竹内さん本人の AIX の文 194（こちら側の状態 19）",
+    cells: { writer: { state: "on", switch: "OUR_SIDE_TO_COMPOSE" }, aix2: { state: "off", switch: "AIX_SECOND_DECIDED", item: 796, note: "事実の出所・刺さった所も同じスイッチ・SITUATION_WRITER_NOTE_AIX と重なる時は外す" } } },
   { id: "estimate_tool", name: "見積書ツール（金額・割引・内訳）", owner: "作業員L", value: 21.7, valueBase: HAND,
     // 2026-11-26 作業員L の確かめ（A が写した）
-    cells: { intake: { state: "none" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },
+    cells: { intake: { state: "off", switch: "CONDUCTOR_INTAKE_ESTIMATE", note: "作業員L が入口の見積の1行を作った（既定 off・11/26）" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },
   { id: "reaction_predict", name: "気持ちの読み・反応の予想", owner: "作業員L", value: 0.9, valueBase: HAND,
     cells: { brain: { state: "off", switch: "BRAIN_REACTION_PREDICT", item: 795, note: "作業員L が #795 で段ごとに数える" }, intake: { state: "unknown" }, writer: { state: "unknown" }, aix2: { state: "unknown" }, final: { state: "unknown" } } },
+  { id: "quote_interest", name: "引用の問いの関心（費用・内覧・審査・空き＝刺さりの候補・sent_properties.customer_interest_points）", owner: "作業員A", value: null, valueBase: "60日の引用 71通（問いが多い・刺さりの言葉は1）",
+    cells: { brain: { state: "none", note: "記録だけ・ブレインには渡さない（統括役の決め 11/26）" }, combo: { state: "none", note: "連鎖の型の部品の候補（関心:<種類>）" } } },
   { id: "property_check", name: "物件確認（募集中・終了・空き・交渉の結果）", owner: "作業員A", value: 2.5, valueBase: HAND,
     cells: { brain: { state: "on", note: "行動台帳・やる事の結果" }, writer: { state: "unknown" }, aix2: { state: "unknown" } } },
   { id: "viewing_calendar", name: "内覧の予定・カレンダー", owner: "作業員A", value: 19.8, valueBase: HAND,

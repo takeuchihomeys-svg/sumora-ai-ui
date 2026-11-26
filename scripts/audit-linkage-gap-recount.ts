@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { LINKAGE_GAP_SOURCES } from "../app/lib/linkage-gap-matrix";
 
 /** 升 → 材料の印のキー（判断の材料に入った時に material_marks に付く物） */
-const CELL_MARK: Record<string, string> = { "pickup_select:brain": "pickup_why", "aix_state_card:brain": "aix_state_card", "brain_combo:combo": "chain_insight", "deal_data:brain": "deal_flow_pre_apply", "property_check:brain": "now_fulfillable", "image_read:brain": "pickup_why_sip" };
+const CELL_MARK: Record<string, string> = { "pickup_select:brain": "pickup_why", "aix_state_card:brain": "aix_state_card", "brain_combo:combo": "chain_insight", "deal_data:brain": "deal_flow_pre_apply", "property_check:brain": "now_fulfillable", "image_read:brain": "pickup_why_sip", "f_mindset:combo": "mindset_station", "estimate_tool:intake": "intake_estimate" /* 2026-11-26 作業員L の #795（ROUTE_MINDSET_LINE・地図が気持ちを読む1行） */ };
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } });
