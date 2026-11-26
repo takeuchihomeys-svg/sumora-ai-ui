@@ -17,9 +17,10 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
   { id: "brain_decided", name: "ブレインの決め（目的と中期・こちら側の状態ほか10欄）", owner: "作業員A", value: 49.5, valueBase: "竹内さん本人の AIX の文 194（目的と中期 96）",
     cells: { writer: { state: "on", note: "決めた事の欄は書き手の注記に届く（欄ごとに違う）" }, aix2: { state: "none", item: 796, note: "2通目に配線のある欄 1/11・提案タブ 87e7dba6" } } },
   { id: "estimate_tool", name: "見積書ツール（金額・割引・内訳）", owner: "作業員L", value: 21.7, valueBase: HAND,
-    cells: { brain: { state: "unknown" }, writer: { state: "unknown" }, aix2: { state: "unknown" }, final: { state: "unknown" } } },
+    // 2026-11-26 作業員L の確かめ（A が写した）
+    cells: { intake: { state: "none" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },
   { id: "reaction_predict", name: "気持ちの読み・反応の予想", owner: "作業員L", value: 0.9, valueBase: HAND,
-    cells: { brain: { state: "off", note: "反応の予想は off" }, writer: { state: "unknown" }, aix2: { state: "unknown" } } },
+    cells: { brain: { state: "off", switch: "BRAIN_REACTION_PREDICT", item: 795, note: "作業員L が #795 で段ごとに数える" }, intake: { state: "unknown" }, writer: { state: "unknown" }, aix2: { state: "unknown" }, final: { state: "unknown" } } },
   { id: "property_check", name: "物件確認（募集中・終了・空き・交渉の結果）", owner: "作業員A", value: 2.5, valueBase: HAND,
     cells: { brain: { state: "on", note: "行動台帳・やる事の結果" }, writer: { state: "unknown" }, aix2: { state: "unknown" } } },
   { id: "viewing_calendar", name: "内覧の予定・カレンダー", owner: "作業員A", value: 19.8, valueBase: HAND,
@@ -27,10 +28,10 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
   { id: "image_read", name: "画像の読み（送った・送られた物件の画像）", owner: "作業員A", value: 7.6, valueBase: HAND,
     cells: { brain: { state: "off", switch: "SIP_JUDGE", note: "ツールの外で送った 176番を拾う側" }, writer: { state: "unknown" } } },
   { id: "doc_read", name: "送った資料の読み", owner: "作業員A", value: 1.0, valueBase: HAND, cells: { brain: { state: "unknown" }, writer: { state: "unknown" } } },
-  { id: "promise_ledger", name: "約束の台帳", owner: "作業員L", value: 21.8, valueBase: HAND, cells: { brain: { state: "unknown" }, writer: { state: "unknown" }, aix2: { state: "unknown" } } },
+  { id: "promise_ledger", name: "約束の台帳", owner: "作業員L", value: 21.8, valueBase: HAND, cells: { intake: { state: "on", switch: "CONDUCTOR_OVERDUE_PROMISES" }, brain: { state: "on", note: "期日超えの約束が統括の材料からブレインへ" }, writer: { state: "on", switch: "SITUATION_WRITER_NOTE", note: "開いている約束" }, aix2: { state: "off", switch: "SITUATION_WRITER_NOTE_AIX" }, final: { state: "unknown" } } },
   { id: "customer_memo", name: "顧客メモ", owner: "作業員A", value: null, valueBase: "語の網で数えられない", cells: { brain: { state: "unknown" } } },
-  { id: "deal_data", name: "成約データ（太い道・申込の直前の一手）", owner: "作業員L", value: null, valueBase: "会社の中の数（文に出ない）", cells: { intake: { state: "off", switch: "CONDUCTOR_DEAL_FLOW_LINE" }, brain: { state: "off", switch: "DEAL_FLOW_PRE_APPLY_LINE" } } },
-  { id: "lessons", name: "統括の学び", owner: "作業員L", value: null, valueBase: "会社の中の数", cells: { intake: { state: "unknown" }, brain: { state: "unknown" } } },
+  { id: "deal_data", name: "成約データ（太い道・申込の直前の一手）", owner: "作業員L", value: null, valueBase: "会社の中の数（文に出ない）", cells: { intake: { state: "off", switch: "CONDUCTOR_DEAL_FLOW_LINE", item: 728 }, brain: { state: "off", switch: "DEAL_FLOW_PRE_APPLY_LINE", item: 728 }, writer: { state: "none" }, aix2: { state: "none" }, final: { state: "none" } } },
+  { id: "lessons", name: "統括の学び", owner: "作業員L", value: null, valueBase: "会社の中の数", cells: { intake: { state: "off", switch: "CONDUCTOR_LESSONS", note: "shadow＝読んで記録だけ" }, brain: { state: "none" }, writer: { state: "none" }, aix2: { state: "none" }, final: { state: "none" } } },
 ];
 export type GapRank = { source: string; name: string; owner: string; sink: Sink; state: CellState; value: number; valueBase: string; switch?: string; item?: number; note?: string };
 /** 値打ちの高い切れ目（off か none の升だけ・値打ちの無い出す側は外す・純関数） */
