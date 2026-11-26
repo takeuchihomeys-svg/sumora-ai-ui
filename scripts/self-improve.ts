@@ -194,6 +194,8 @@ async function main() {
         const cs = co.ownershipTable(((dl ?? []) as Array<{ conversation_id: string; created_at: string; digest: Record<string, unknown> | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, digest: r.digest ?? {} })), ((al ?? []) as Array<{ conversation_id: string; created_at: string; aix_type: string | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, type: String(r.aix_type ?? "") })));
         for (const r of CONDUCTOR_DUTY) { const pl = co.dutyPartLine(r.partKeys, cs); if (pl) lines.push(`  - ${r.name}`, pl); }
       } catch (e) { lines.push(`  - 部品の数: 失敗（${String(e).slice(0, 60)}）`); }
+      // 2026-11-26 作業員A（竹内さん 11/26「ほかのも連携したらより質上がる部分を連携させていく」）: 連携の切れ目の値打ちの高い順 上位3つ（linkage-gap-matrix・上から1つずつ既定 off でつなぐ→試験→on）
+      try { const lg = await import("../app/lib/linkage-gap-matrix"); lines.push(...lg.gapTopLines()); } catch (e) { lines.push(`- 連携の切れ目: 失敗（${String(e).slice(0, 60)}）`); }
       // 2026-11-24 作業員A（#662）: 土台ごとの済んだ段の数（core:conductor_duty:f:<id>）と、前に書いた日からの変わり（増えた・減った土台）
       for (const r of dr) coreRows.push({ metric: `core:conductor_duty:f:${r.id}`, value: dutyDoneCount(r), n: 3 });
       {
