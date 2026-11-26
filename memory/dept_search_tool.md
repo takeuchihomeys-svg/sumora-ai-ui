@@ -14834,3 +14834,13 @@ Claude（統括役）からの依頼2件への対応。
 - 版を上げるたびに試験3本（quiet-window・playbook-reflect・intent-wait）の版を直す罠をやめ、manifest == page-script == 見直し上限の一致を見る形にした。reset-before-fill-v2296 の正規表現も ext_behind を許す形に。新しい試験 ext-behind-v28304.test.js（17件）。
 - ⚠ 2.8.295 のまま動いている拡張にはこの案内は無い（最初の再読み込みは手動）。その間は check-playbook-sync ⑤（点検記録の ext_version）が名指しする。
 - ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook を1回・竹内さんの OK）。
+
+- 2026-11-26 反映の記録（2.8.304）: f79d2e810 を main に push（71bbf72e6..f79d2e810）→ 本番 2.8.304 を確認 → attach-playbook --apply で DB の手順書（2813/2815/2814）を決まり版 4ac198e1・96件へ（名前は前後とも 0 か所・控え C:\Users\Admin\axlx-backup-20261126-playbook-2308-304）。残り: 拡張の再読み込み（手動・今の拡張は 2.8.295 のまま）→ リアプロのタブを開き直す → 自動1回 → check-playbook-sync で ⑤ が ✅ になり playbook_seen が出るまで「反映済み」と言わない。
+
+### 2026-11-26 2.8.305 リセットと「1つずつ外す」の順番を手順書に固定（reset_replaces_clear）
+- 竹内さん「送付後の外しリセットボタンおしてリセットにすることなんで手順書りかいしていないのか／それがあれば外す部分やらずにリセットにするやり方うちあわせしたのは適用されているのか？」。実データ（search_audits 直近14回）: リセット系の印は0。#1654・#1656（ext 2.8.295・bulk_manual）は1つずつ外しで止まった。2.8.296 の入力前リセットは、拡張が 2.8.295 のままで未実行。
+- 原因（手順書側）: リセットの決まり（#60 reset_between_customers・#62 reset_before_fill）と、外す決まり（#04・#21〜#23・#72・#74・#78・#79・#94・#95）と _doReset の注記「リセットは押さない」が並んでいて、どちらが先か書かれていなかった。
+- 直した: 決まり reset_replaces_clear を追加（since 2.8.305・marker 'reset_replaces_clear'・background.js）。no_reset_button と post_send_clear_grasp の文言を「リセット→空なら外しはやらない・外しは代わり」に。_doReset の注記と _postSendClearOrReset の注記も同じ向きに直した。動きは変えていない（文言と記録だけ）。版 2.8.305。
+- 設計知見: 8430edb2【決定】（P1）。
+- ⚠ 既知の穴: 単発の自動（ポップアップの自動ボタン）には入力前のリセットが無い。ポップアップはページ内の iframe（underbar.js）で、リセットの読み直しで消えるため。_resetBeforeFill は background の一括ループ（_manualBulkRun）だけが呼ぶ。直すなら『単発も1人の一括として background に渡す』か、background が入力の再送を持つ形が要る（拡張の動きの変更・竹内さんの OK）。
+- ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook・竹内さんの OK）。

@@ -59,7 +59,7 @@ export type RouteNode = {
 };
 /**
  * 2026-11-25 作業員A（竹内さん 11/25「地図は成約データから分析して流れ完全に理解できているのか」・作業員L の #728 deal_outcomes 518件）:
- *   申込146件のうち内覧の記録なしで申込 101（7割）。太い道は「物件送り→見積→申込」「見積→申込（内覧なし）」「物件送り→申込」＝地図の nextNode は内覧の1本道だった。
+ *   申込146件のうち内覧の記録なしで申込 101（7割）。11/26 L: 推定の申込（成約の時刻を申込に使った分）27件を外すと 77/119（64.7%）＝材料はこちらの数。太い道は「物件送り→見積→申込」「見積→申込（内覧なし）」「物件送り→申込」＝地図の nextNode は内覧の1本道だった。
  *   内覧に入った件の申込到達は約2倍（内覧予定 61.5%・内覧後 65.2%・物件提案 31.1%・見積 35.9%）＝内覧を勧める本線は残し、お客様が申込の意思を示した時だけ内覧なしの道を候補に出す。
  *   竹内さん本人の申込の意思の番（brain-route-type 13番）: 返信 6・約束 6・AIX 1＝申込へは返信（フォーマットのご案内）が主・AIX【申込へ】は候補に並べるだけ。
  */
@@ -358,7 +358,7 @@ export function buildApplyRouteBrainText(loc: ApplyRouteLocation): string {
   if (applyRoutePathLineOn()) { const pl = routePathBrainLine(routePathOf(loc), loc.next?.label ?? null, loc.next?.aix ?? []); if (pl) parts.push(pl); }
   else if (loc.next) parts.push(`申込へ向けた次の一手の候補: ${loc.next.label}${loc.next.aix.length ? `（合う AIX: ${loc.next.aix.join("・")}）` : ""}`);
   // 2026-11-25 作業員A（#728 の成約データ・APPLY_ROUTE_NO_VIEWING_PATH=on の時だけ・既定 off＝1文字も変わらない）: 本線の外の太い道（内覧なしで申込）と、どの時にどちらかの材料
-  if (applyRouteNoViewingPathOn() && loc.node && !loc.branch) { const alt = ROUTE_NODES[loc.node]?.altNext; if (alt) parts.push(`別の道（成約データ: 申込146件の7割は内覧の記録なしで申込）: ${alt.when}が今の通にある時は${alt.label}。それ以外は本線（内覧に入った件の申込到達は約2倍＝内覧予定 61.5%・見積 35.9%）`); }
+  if (applyRouteNoViewingPathOn() && loc.node && !loc.branch) { const alt = ROUTE_NODES[loc.node]?.altNext; if (alt) parts.push(`別の道（成約データ: 申込の約65%は内覧の記録なしで申込＝推定の申込を外して 77/119）: ${alt.when}が今の通にある時は${alt.label}。それ以外は本線（内覧に入った件の申込到達は約2倍＝内覧予定 61.5%・見積 35.9%）`); }
   parts.push("※位置は網。どう返すか・AIX にするかはあなたが会話を読んで決める。");
   let text = parts.join("\n");
   if (text.length > APPLY_ROUTE_TEXT_MAX) text = text.slice(0, APPLY_ROUTE_TEXT_MAX - 1) + "…";

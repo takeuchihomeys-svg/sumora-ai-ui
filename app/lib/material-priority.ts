@@ -16,7 +16,8 @@ export function materialPriorityMode(env: Env = typeof process !== "undefined" ?
   return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
 }
 /** 選び方の版（表を変えたら上げる・記録に残る） */
-export const MATERIAL_PRIORITY_VERSION = "mp-v1";
+// 2026-11-26 作業員A（統括役の頼み・#744 の分かれ目で見直し）: mp-v2＝AIX の番に探す約束の後のお礼を足し、約束の番の並びを 確認の約束の流れ→探す約束の後のお礼→今果たせる物 に
+export const MATERIAL_PRIORITY_VERSION = "mp-v2";
 
 export type MaterialBlock = { key: string; text: string; from: "cs" | "route" };
 
@@ -26,15 +27,15 @@ export type MaterialBlock = { key: string; text: string; from: "cs" | "route" };
  */
 export const FOCUS_FIRST_KEYS: Readonly<Record<string, readonly string[]>> = {
   answer: ["now_fulfillable", "info_fill", "check_promise_flow"],
-  promise_make: ["check_promise_flow", "pickup_why", "now_fulfillable"],
-  promise_keep: ["check_promise_flow", "now_fulfillable", "pickup_why"],
+  promise_make: ["check_promise_flow", "pickup_promise_flow", "now_fulfillable", "pickup_why"],
+  promise_keep: ["check_promise_flow", "pickup_promise_flow", "now_fulfillable", "pickup_why"],
   ease: ["ack_confirm", "topic_state"],
   close: ["station_state", "route_backplan", "now_fulfillable"],
   propose: ["pickup_why", "station_state", "route_backplan"],
   relation: ["ack_confirm", "topic_state"],
 };
 /** 入口が AIX の番と見た時に先に足す行（確認の約束の流れ＝作業員A の #744 の分かれ目） */
-const AIX_FIRST_KEYS = ["check_promise_flow"] as const;
+const AIX_FIRST_KEYS = ["check_promise_flow", "pickup_promise_flow", "aix_boundary"] as const; // 2026-11-26 作業員A: AIX と返信の境目（#688）も AIX の番に
 /** 地図の駅がある番に足す行 */
 const STATION_KEYS = ["station_state", "route_backplan"] as const;
 
@@ -81,8 +82,30 @@ export function materialPriorityDigest(r: { mode: MaterialPriorityMode; ready: b
  *   true＝使った・false＝使わなかった・null＝この番では決められない
  */
 export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) => boolean | null>> = {
-  // 確認の約束の流れ（お礼だけの返事を待つ番）: ブレインの AIX が確認の結果になったか（作業員A の案）
-  check_promise_flow: (d) => (typeof d.aix === "string" || d.aix == null ? String(d.aix ?? "") === "property_check_result" : null),
+  // 2026-11-26 作業員A（L と合わせた形）: 確認の約束の流れは場面（digest.cpf: a=ack_wait・q=question・b=brought・p=ack_plus）で分ける。
+  //   ack_wait は AIX【物件確認した】を選んだ＝使った・ほかの場面は返信（aix が空）＝使った。cpf が無い（前の記録）は前の決め（物件確認した なら使った）
+  check_promise_flow: (d) => {
+    const aix = String(d.aix ?? "").trim();
+    const s = String(d.cpf ?? "");
+    if (!s) return typeof d.aix === "string" || d.aix == null ? aix === "property_check_result" : null;
+    return s === "a" ? aix === "property_check_result" : aix === "";
+  },
+  // 探す約束の後のお礼（digest.ppf: r=候補が揃っている・n=揃っていない）: r は物件の AIX・n は返信＝使った
+  pickup_promise_flow: (d) => {
+    const s = String(d.ppf ?? ""); if (!s) return null;
+    const aix = String(d.aix ?? "").trim();
+    return s === "r" ? /^(?:property_send|property_recommendation)/.test(aix) : aix === "";
+  },
+  // 逆算の計画（digest.bpn＝1手先の駅）: その駅の AIX を今か後（la）に選んだ＝使った・別の AIX＝使わなかった・返信だけ＝決められない
+  route_backplan: (d) => {
+    const want = ({ estimate: "estimate_sheet", viewing_arrange: "viewing_invite", viewing_scheduled: "meeting_place", apply_prep: "application_push", proposing: "property_send" } as Record<string, string>)[String(d.bpn ?? "")];
+    if (!want) return null;
+    const got = [String(d.aix ?? "").trim(), String(d.la ?? "").trim()].filter(Boolean);
+    if (!got.length) return null;
+    return got.some((g) => g.startsWith(want));
+  },
+  // 駅の今の状態: 判断の記録から決める目印が無い＝いつも決められない
+  station_state: () => null,
   // 今果たせる物: ブレインが AIX を選んだか（果たす一手）
   now_fulfillable: (d) => !!String(d.aix ?? "").trim(),
 };

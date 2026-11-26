@@ -12,6 +12,6 @@ t("同じ晩は1回だけ", !nightZeroCostDue(nightKeyOf(jst("2026-11-25T22:05:0
 t("次の晩はまた流す", nightZeroCostDue(nightKeyOf(jst("2026-11-25T22:05:00")), jst("2026-11-26T22:30:00")).due);
 t("=off で止まる", !nightZeroCostDue(null, jst("2026-11-25T23:00:00"), { EXAM_NIGHT_ZERO_COST: "off" }).due);
 const st = nightZeroCostSteps("x.json");
-t("順: 60日の照らし → 駅ごとの物差し → AIX の外れ → 覚えた表", st.length === 4 && st[0].args[0].includes("route-progress") && st[1].args.includes("--from=x.json") && st[2].args[0].includes("aix-miss") && st[3].args[0].includes("learned-reach"));
+t("順: 60日の照らし → 駅ごとの物差し → 先読みの当たり → AIX の外れ → 覚えた表", st.length === 6 && st[0].args[0].includes("route-progress") && st[1].args.includes("--from=x.json") && st[2].args[0].includes("backplan-hit") && st[2].args.includes("--from=x.json") && st[3].args[0].includes("backplan-miss") && st[4].args[0].includes("aix-miss") && st[5].args[0].includes("learned-reach"));
 console.log(`exam-night-jobs: ${passed} OK / ${failed} NG`);
 if (failed) process.exit(1);

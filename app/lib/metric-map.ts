@@ -23,7 +23,7 @@ export const MAP_CAUSE_JA: Record<MapCause, string> = {
 export const MAP_CAUSES = Object.keys(MAP_CAUSE_JA) as MapCause[];
 // 2026-11-23 統括役（2回目）: 端末の版（作業員A の audit-aix-turn-judgment）の「先後」と、申込までの地図（作業員R の routeAgreement）の外れの型を足した
 export type MapMiss = "ok" | "reply_not_aix" | "aix_kind" | "order" | "push_missed" | "other_aix" | "pushed_off_map" | "decided" | "minority" | "timed" | "fixed_since" | "split" | "two_stage_draft" | "staff_only"
-  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "close_missed" | "close_early" | "late" | "overdue"
+  | "stuck" | "left" | "back" | "engaged" | "branch_stay" | "viewing_wait" | "station_lag" | "close_missed" | "close_early" | "late" | "overdue"
   | "feel_missed" | "feel_extra" | "appeal_missed" | "appeal_extra" | "appeal_other" | "under" | "over" | "field_gap" | "field_none";
 export const MAP_MISS_JA: Record<MapMiss, string> = {
   ok: "一致", reply_not_aix: "AIX を返信にした", aix_kind: "AIX の種類違い", order: "先後（竹内さんは2段・ブレインは今 AIX）",
@@ -37,6 +37,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   split: "割れ（同じ形の番で竹内さん本人の一手が半分前後に割れる・どちらにも決めない・外れの順位に入れない）",
   stuck: "止まった（次のお客様の発言で駅が進まない）", left: "離れた（返事が来ない）", back: "戻った（申込から遠い駅へ）", engaged: "やり取りは続くが駅は同じ", branch_stay: "分かれ道から本線に戻れない",
   viewing_wait: "内覧の日待ち（続く・内覧の日がまだ来ていない・直す所ではない）",
+  station_lag: "駅の数え方のずれ（地図の駅が判断の記録の駅より手前・記録では番の前から既に先の駅＝一手の弱さではない・外れの順位に入れない）",
   close_missed: "見逃し（竹内さんは決めに行った・ブレインは待った）", close_early: "早すぎ（ブレインは決めに行った・竹内さんは待った）",
   late: "遅れて果たした（約束）", overdue: "期限を過ぎて果たしていない（約束）",
   feel_missed: "気持ちの見逃し（竹内さんは受けた・AI は受けない）", feel_extra: "気持ちの言い過ぎ（AI だけ受けた）",
@@ -45,7 +46,7 @@ export const MAP_MISS_JA: Record<MapMiss, string> = {
   field_gap: "届いていない（資料・画像には有るのに AIX の欄が空）", field_none: "読めていない（資料にも画像の読みにも無い）",
 };
 /** 外れの順位・穴に入れない外れの型（別の数として並べる） */
-export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait", "two_stage_draft", "staff_only"]);
+export const SET_ASIDE_MISS = new Set<MapMiss>(["decided", "minority", "timed", "fixed_since", "split", "viewing_wait", "two_stage_draft", "staff_only", "station_lag"]);
 /** 決めに行く番の監査の行を木の番に（純関数）。種類＝竹内さんの決め方（または早すぎの時のブレインの一手）・場面＝申込予測の度合い（hot/warm/cold）・原因＝統括の材料の欠けがあれば材料・無ければ読み違い */
 export function closingTurnsOf(rows: ReadonlyArray<{ id: number; takeuchiClose: boolean; brainClose: boolean; closeHow: string | null; brainAct: string | null; level: string | null; gaps: string[] }>, side: "closing" | "closing_early"): MapTurn[] {
   const mine = rows.filter((r) => (side === "closing" ? r.takeuchiClose : r.brainClose));
@@ -56,6 +57,8 @@ export function closingTurnsOf(rows: ReadonlyArray<{ id: number; takeuchiClose: 
   });
 }
 /** 本線の駅（app/lib/apply-route-map.ts の MAIN_ROUTE と同じ・作業員A の route-station-trust と同じ） */
+/** 本線の駅の並び（申込に近いほど後ろ・apply-route-map の MAIN_ROUTE と同じ） */
+export const MAIN_ROUTE_ORDER: readonly string[] = ["inquiry", "hearing", "pickup", "proposing", "interested", "estimate", "viewing_arrange", "viewing_scheduled", "viewed", "apply_prep", "applying"];
 export const MAIN_STATIONS = new Set(["inquiry", "hearing", "pickup", "proposing", "interested", "estimate", "viewing_arrange", "viewing_scheduled", "viewed", "apply_prep", "applying"]);
 /** 内覧の日がまだ来ていない番か（純関数・作業員A の route-station-trust の viewingNotYet と同じ: 番の detail の「M/D」が番の日（JST）以後） */
 export function viewingNotYetOf(at: string | null | undefined, detail: string | null | undefined): boolean {
@@ -125,6 +128,7 @@ export type MapRootDef = {
  */
 export const COUNT_VERSION: Record<string, string> = {
   "route:next_match_60d": "v2 11/25 同じ一手の仲間の AIX（束⇄1件・持ち込みの見積書）を合うに",
+  "route:progress_60d": "v2 11/26 地図の駅が判断の記録の駅より手前に残った止まり・続く を駅の数え方のずれ（station_lag）として分けて外す",
   "aix_turn:match_60d_device": "v2 11/25 分けて外す型に 2段の約束・スタッフだけが知る結果・確認の約束の流れの決め",
 };
 /** 前の日の版と今の版から、毎朝の1枚の1行（変わっていない・前の版が分からない時は ""） */
@@ -215,7 +219,9 @@ export const MAP_ROOTS: MapRootDef[] = [
 export const rootOf = (metric: string) => MAP_ROOTS.find((r) => r.metric === metric) ?? null;
 
 /** 1番（純）: 木に入れる単位 */
-export type MapTurn = { id: number | string; kind: string; scene: string; miss: MapMiss; cause: MapCause | null; station?: string };
+export type MapTurn = { id: number | string; kind: string; scene: string; miss: MapMiss; cause: MapCause | null; station?: string;
+  /** 2026-11-26 作業員A（L の頼み）: station_lag の番でどちらの駅が先か（map_behind＝判断の記録の駅が先＝地図の読み遅れ・地図の読み違いの台帳へ）と2つの駅 */
+  detail?: { lag: "map_behind"; mapStation: string; recordStation: string } };
 
 /** 見張りの scene_key（返信:条件提示・AIX:estimate_sheet など）を KB_SCENES の鍵に（純関数）。AIX: で始まる鍵はブレインの一手から来た物＝AIX の種類で場面に寄せる */
 export function sceneOfWatchKey(sceneKey: string | null | undefined, aixKind?: string | null): string {
@@ -549,7 +555,11 @@ export function decidedRouteIdxOf(rows: ReadonlyArray<{ conv: string; at: string
   return out;
 }
 /** R の json の行を進みの木の番に（純関数）: 本線の番は advanced が進んだ・分かれ道の番は番の後に本線の駅（after）へ戻れたら進んだ。決定で改めた番は外す側（decided） */
-export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null; detail?: string | null }>, decided: ReadonlySet<number> = new Set()): MapTurn[] {
+export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcome?: string | null; after?: string | null; detail?: string | null }>, decided: ReadonlySet<number> = new Set(), env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): MapTurn[] {
+  // 2026-11-26 作業員A（統括役の頼み・L と形を合わせる）: 本線の番で「止まった／続く」なのに、番の後の駅（判断の記録・guide-measure の after）が地図の駅より先＝
+  //   記録では番の前から既に先の駅で、地図の駅だけが手前に残っている（ピックアップで続く 9番のうち 7番）→ station_lag（外れの順位に入れない）。止める: ROUTE_STATION_LAG=off
+  const lagOn = (env.ROUTE_STATION_LAG ?? "on").trim().toLowerCase() !== "off";
+  const mainIdx = (x: unknown) => MAIN_ROUTE_ORDER.indexOf(String(x ?? ""));
   return rows.map((r, i) => ({ r, i })).filter(({ r }) => r.agree !== "no_next").map(({ r, i }) => {
     const station = r.branch ? `分:${r.branch}` : String(r.node ?? "other");
     // 分かれ道の番: 作業員A の afterBranch（竹内さんの一手の後のお客様の返事で地図を当て直した分かれ道・閉じたら null）があれば null＝本線に戻れた。
@@ -559,8 +569,9 @@ export function routeProgressTurnsOf(rows: ReadonlyArray<RouteTurnRow & { outcom
     const ok = r.outcome === "advanced" || (!!r.branch && ab === null && "afterBranch" in r && !!r.after && MAIN_STATIONS.has(String(r.after)));
     // 内覧の予定ありの駅で内覧の日がまだ来ていない止まりは「内覧の日待ち（続く）」（N2 の照らし①・A と同じ）＝直す所ではない
     const wait = r.outcome === "stuck" && r.node === "viewing_scheduled" && !r.branch && viewingNotYetOf(r.at, r.detail);
-    const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : wait ? "viewing_wait" : r.outcome === "engaged" ? "engaged" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.branch ? "branch_stay" : "stuck";
-    return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null };
+    const lag = lagOn && !r.branch && (r.outcome === "stuck" || r.outcome === "engaged") && mainIdx(r.node) >= 0 && mainIdx(r.after) > mainIdx(r.node);
+    const miss: MapMiss = ok ? "ok" : decided.has(i) ? "decided" : wait ? "viewing_wait" : lag ? "station_lag" : r.outcome === "engaged" ? "engaged" : r.outcome === "left" ? "left" : r.outcome === "back" ? "back" : r.branch ? "branch_stay" : "stuck";
+    return { id: `${r.conv}@${r.at}#${i}`, kind: "", scene: "", station, miss, cause: null, ...(miss === "station_lag" ? { detail: { lag: "map_behind" as const, mapStation: String(r.node), recordStation: String(r.after) } } : {}) };
   });
 }
 /** 駅ごとの本当の一致の表（純関数）: 駅（分かれ道）ごとに n・一致・分けて外した・本当の外れ */
