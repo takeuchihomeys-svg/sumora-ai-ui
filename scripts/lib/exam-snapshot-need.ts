@@ -27,7 +27,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   BRAIN_CHECK_PROMISE_FLOW: "check_promise_flow", BRAIN_PICKUP_PROMISE_FLOW: "pickup_promise_flow", APPLY_ROUTE_BACKPLAN: "route_backplan",
   AIX_BOUNDARY_LINE: "aix_boundary", AIX_DICTIONARY_LINE: "aix_dictionary", CHAIN_INSIGHT_LINE: "chain_insight", AIX_STATE_CARD: "aix_state_card",
   PICKUP_WHY_TO_BRAIN: "pickup_why", PICKUP_WHY_PENDING_MATCH: "pickup_why_pending", STATION_STATE_LINE: "station_state",
-  MOVE_IN_LINE: "move_in_line", // 2026-11-27 作業員L（入居の時期と期限の1行）
+  MOVE_IN_LINE: "move_in_line", CUSTOMER_KARTE: "customer_karte", // 2026-11-27 作業員L（#806 お客様のカルテ） // 2026-11-27 作業員L（入居の時期と期限の1行）
 };
 export type ReachRow = { id: string; marks: Record<string, unknown> | null | undefined };
 export type ReachVerdict = { mark: string | null; reached: string[]; notReached: string[]; verdict: "比べる" | "届かず" | "印なし" };

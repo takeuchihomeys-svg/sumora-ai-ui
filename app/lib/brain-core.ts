@@ -3352,6 +3352,16 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; moveInMarkLen = ln.length; materialBlocks.push({ key: "move_in_line", text: ln, from: "cs" }); }
     }
   } catch (e) { console.warn("[brain-core] move-in line skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-11-27 作業員L（台帳 #806 お客様のカルテ・CUSTOMER_KARTE=on の時だけ・既定 off）: 登録の条件・会話・送った物件×反応から、一人ごとの1枚（優先・譲れない線・決める人・返事の速さ・言葉づかい・費用・前に断った物件と訳）。
+  //   審査の事情の欄は落とす・個人情報は伏せる（app/lib/customer-karte.ts）・申込以降は出さない。印 customer_karte
+  let karteMarkLen = 0;
+  try {
+    const ck = await import("@/app/lib/customer-karte");
+    if (ck.customerKarteOn() && !isPostApplyStatus(convStatus)) {
+      const kb = ck.karteBlock(ck.karteOf({ pc: pc as never, msgs: typedMessages.map((m) => ({ sender: m.sender, text: m.text ?? null, created_at: m.created_at })), sent: sentProps.filter((p) => !p.shared_only).map((p) => ({ property_name: p.property_name, room_no: p.room_no, sent_at: p.sent_at, rent: p.rent })), nowIso: new Date().toISOString(), names: [opts?.customerName ?? null] }));
+      if (kb) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${kb}`; karteMarkLen = kb.length; materialBlocks.push({ key: "customer_karte", text: kb, from: "cs" }); }
+    }
+  } catch (e) { console.warn("[brain-core] customer karte skipped:", e instanceof Error ? e.message : String(e)); }
   const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
@@ -3715,7 +3725,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
   if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
-  if (moveInMarkLen) materialMarks.move_in_line = moveInMarkLen; // 2026-11-27 作業員L（MOVE_IN_LINE=on の番だけ）
+  if (moveInMarkLen) materialMarks.move_in_line = moveInMarkLen;
+  if (karteMarkLen) materialMarks.customer_karte = karteMarkLen; // 2026-11-27 作業員L（#806・CUSTOMER_KARTE=on の番だけ） // 2026-11-27 作業員L（MOVE_IN_LINE=on の番だけ）
   if (aixBoundaryMarkLen) materialMarks.aix_boundary = aixBoundaryMarkLen;
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
