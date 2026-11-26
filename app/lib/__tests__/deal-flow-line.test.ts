@@ -22,3 +22,9 @@ const NV = { APPLY_ROUTE_NO_VIEWING_PATH: "on" };
 assert.ok(!dealFlowIntakeLine("viewed", NV).includes("手打ちの返信") && dealFlowIntakeLine("viewed", NV).includes("65%"), "内覧なしの道が on なら添えだけ出さない");
 assert.equal(dealFlowPreApplyLine("apply_prep", NV), "");
 console.log("deal-flow-line ok 15");
+// 「使った」の目印（作業員A と決め・#783）
+import { USED_MARKERS } from "../material-priority";
+assert.equal(USED_MARKERS.deal_flow_pre_apply({ aix: null }), true);
+assert.equal(USED_MARKERS.deal_flow_pre_apply({ aix: "estimate_sheet" }), false);
+assert.equal(USED_MARKERS.deal_flow_pre_apply({ aix: "application_push" }), null);
+console.log("deal-flow-line used-marker ok 3");
