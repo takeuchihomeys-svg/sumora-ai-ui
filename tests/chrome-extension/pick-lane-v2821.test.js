@@ -83,7 +83,7 @@ console.log("\n■ ④ 自動の1押下を1本に畳む（記録側）");
 {
   const src = hr.split("var _PRESS_KIND")[1].split("function _pushOp(")[0];
   const fold = new Function("var _PRESS_KIND" + src + "\nreturn _foldAutoPress;")();
-  ok("_pushOp と note-op の両方で畳む", (hr.match(/if \(_foldAutoPress\(last, _op(Obj|M)\)\) return;/g) || []).length === 2);
+  ok("_pushOp と note-op の両方で畳む", (hr.match(/if \(_foldAutoPress\(last, _op(Obj|M)\)\) return(?:\s+last \|\| null)?;/g) || []).length === 2);
   // DB の実物（11-18 13:45:25 河内永和）
   const a = { t: 0, k: "click", f: "左の河内永和｜label.one_station", by: "auto", cs: "pointer" };
   ok("模型: `左の河内永和｜label` の 272ms 後の `河内永和` は畳む", fold(a, { t: 272, k: "click", f: "河内永和", by: "auto", was: false, now: true }) === true);

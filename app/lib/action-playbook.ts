@@ -19,6 +19,7 @@
 import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
+import { isAllowedMotionFieldName } from "./human-motion-sanitize";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -42,13 +43,18 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 16;
+export const PLAYBOOK_BUILD_V = 18;
 // 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
 //   入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。buildPlaybook に site を渡し、itandi では載せない。
 //   site を渡さない時（既定）は今までどおり＝リアプロの動きは変えない。
 // 16（2026-11-26 竹内さん「まだ残っていることも改善お願い」）: itandi の手順書から、リアプロ用の決まり一覧・一連の流れ・
 //   追加ガイド（リセット幅160×30・30秒待ち・確定してリスト）を外し、itandi 用の流れと外し方（チップ・打つ欄・チェック）に替えた。
 //   itandi の欄「room_layout:in」を「間取りの欄（チェック）」に。realpro の出力は変えない。
+// 17（2026-11-27）: ITANDI_FLOW_SERIES を実際の search_audits.steps 形式（page: 接頭辞＋dl:it_list / dl:it_next / dl:it_handoff /
+//   page:search_press）に統一し、PLAYBOOK_FIELD_JA に ITANDI の実在欄（リスト検索・所在地で絞り込み・小窓の確定・rent:lteq 等）を追加。
+// 18（2026-11-27）: リアプロ手順書から ITANDI・ゴミ欄（#_r_* / css-* / input / ----- 等）と爆発点（0.5,0.5）を buildPlaybook 入口で除外。
+//   list 4手目「④並べ替え後に印刷用PDFを押す」の field 誤判定（「並べ替え」になっていた）を「印刷用PDF」に修正し、
+//   list/search/area のガイド手にも実測 aim/opens（高→低・印刷用PDF・検索・確定・所在地開き・one_line/one_station/one_city 集約）を引くようにした。
 
 /**
  * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
@@ -85,7 +91,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
     id: "after_clear",
     label: "前客のリセット完了（フォームが空）→入れへ",
     scene: null,
-    grasp: ["reset_verified", "reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
+    grasp: ["reset_verified", "page:reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
     next: "after_confirm",
   },
   { id: "after_confirm", label: "確定してリストへ（入れた把握）", scene: "area", grasp: ["page:guide_phase_after_confirm"], next: "after_place" },
@@ -101,28 +107,28 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "sort_ad", label: "①並べ替え→②AD→③高→低", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_done", "dl:sort_menu"], next: "list" },
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
   { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
-  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "page:list_handoff_seen", "page:flow_done_ready_next"], next: null },
+  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
 ];
 
 /**
- * itandi の一連の流れ（客1人・2026-11-26）。リアプロの段（確定してリスト・並べ替え・印刷用PDF）は itandi に無いので載せない。
- *   itandi の点検の印（chrome-extension/itandi-page-script.js の _itStep）: reset_start／reset（外せた）／reset_fail／reset_mixed／
- *   reset_confirm／location（所在地の入り方）／lines_done（路線・駅の入れ終わり）／fill_start（条件を入れ始め）／search_blocked／done_error。
- *   検索を押す・一覧・次ページ・次客の印は itandi の点検にまだ無い＝grasp は空（把握できない・gaps に出す）。
+ * itandi の一連の流れ（客1人・2026-11-27 修正）。リアプロの段（確定してリスト・並べ替え・印刷用PDF）は itandi に無いので載せない。
+ *   itandi-page-script.js の _itStep は background/search-audit.js の pushPageStep で "page:" が付く。
+ *   旧版は "page:" 抜き（"reset_start" 等）になっていたため、実測 search_audits.steps と1件も一致しなかった。
+ *   一覧・次ページ・客完了は itandi-bulk-dl.js の _itLiveStep（dl:it_list / dl:it_next / dl:it_handoff）で残す。
  */
 export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
-  { id: "before_clear", label: "前のお客さんの条件を外す（条件削除のボタンがあれば先に）", scene: null, grasp: ["reset_start", "reset_confirm"], next: "clear_then_fill" },
-  { id: "clear_then_fill", label: "空と読み戻せた→新条件の入れへ", scene: null, grasp: ["fill_start"], next: "after_clear" },
-  { id: "after_clear", label: "外せた（reset）→入れへ", scene: null, grasp: ["reset"], next: "after_confirm" },
-  { id: "after_confirm", label: "所在地（区）の設定", scene: "area", grasp: ["location"], next: "after_place" },
-  { id: "after_station", label: "路線・駅の設定", scene: "station", grasp: ["lines_done"], next: "after_place" },
-  { id: "after_area", label: "地域の設定", scene: "area", grasp: ["location"], next: "after_place" },
-  { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["lines_done"], next: "before_search" },
-  { id: "before_search", label: "検索前の照合（条件）", scene: "cond", grasp: ["fill_start"], next: "after_search" },
-  { id: "after_search", label: "検索を押す", scene: "search", grasp: [], next: "list" },
-  { id: "list", label: "一覧", scene: "list", grasp: [], next: "next" },
-  { id: "next", label: "次ページ", scene: "next", grasp: [], next: "handoff" },
-  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: [], next: null },
+  { id: "before_clear", label: "前のお客さんの条件を外す（条件削除のボタンがあれば先に）", scene: null, grasp: ["page:reset_start", "page:reset_confirm"], next: "clear_then_fill" },
+  { id: "clear_then_fill", label: "空と読み戻せた→新条件の入れへ", scene: null, grasp: ["page:fill_start"], next: "after_clear" },
+  { id: "after_clear", label: "外せた（reset）→入れへ", scene: null, grasp: ["page:reset"], next: "after_confirm" },
+  { id: "after_confirm", label: "所在地（区）の設定", scene: "area", grasp: ["page:location"], next: "after_place" },
+  { id: "after_station", label: "路線・駅の設定", scene: "station", grasp: ["page:lines_done"], next: "after_place" },
+  { id: "after_area", label: "地域の設定", scene: "area", grasp: ["page:location"], next: "after_place" },
+  { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["page:lines_done", "page:location"], next: "before_search" },
+  { id: "before_search", label: "検索前の照合（条件）", scene: "cond", grasp: ["page:fill_start"], next: "after_search" },
+  { id: "after_search", label: "検索を押す", scene: "search", grasp: ["page:search_press"], next: "list" },
+  { id: "list", label: "一覧", scene: "list", grasp: ["dl:it_list"], next: "next" },
+  { id: "next", label: "次ページ", scene: "next", grasp: ["dl:it_next"], next: "handoff" },
+  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:it_handoff"], next: null },
 ];
 
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
@@ -305,6 +311,26 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "左の高→低｜span.sort_detail": "高→低（span.sort_detail）を押す",
   // 2026-11-26 itandi の実測（束の欄名）: 間取りのチェック欄（chrome-extension/itandi-form-guard.js の FILTER_ROWS で「間取り」）
   "room_layout:in": "間取りの欄（チェック）",
+  // 2026-11-27 itandi 実データ（human_learn_profile #2824 / itandi-form-guard.js）の確定済み欄名
+  "リスト検索": "検索を押す（ITANDI）",
+  "所在地で絞り込み": "所在地で絞り込みを開く",
+  "路線・駅で絞り込み": "路線・駅で絞り込みを開く",
+  "小窓の確定": "小窓の確定を押す",
+  "rent:lteq": "賃料（上限）",
+  "rent:gteq": "賃料（下限）",
+  "floor_area_amount:gteq": "面積（下限）",
+  "floor_area_amount:lteq": "面積（上限）",
+  "station_walk_minutes:lteq": "駅徒歩（上限）",
+  "building_age:lteq": "築年数（上限）",
+  "building_name:match": "建物名検索",
+  "keyword": "キーワード検索",
+  "structure_type:in": "構造の欄（チェック）",
+  "option_id:all_in": "設備・条件の欄（チェック）",
+  "offer_conditions_updated_at:gteq": "募集条件更新日",
+  "敷金なし": "敷金なしの欄（チェック）",
+  "礼金なし": "礼金なしの欄（チェック）",
+  "物件資料": "物件資料を開く",
+  "物件資料🔍SUUMO": "物件資料を開く",
 };
 
 /** 手順の1手の細部（押す欄・学んだ押す位置・押すと開く物） */
@@ -572,6 +598,32 @@ function indexPositions(points: BundleLike["points"]): PosIndex {
     const better = !cur || SOURCE_RANK[source] > SOURCE_RANK[cur.source] || (cur.source === source && cur.n < n);
     if (better) m.set(key, { x: p.x as number, y: p.y as number, n, source });
   }
+  // route_id[] / station_id[] / city_code[] が直接無ければ、実際の選択ラベル（label.one_line / label.one_station / label.one_city）から要素内位置をまとめる
+  const aggDefs: Array<{ target: string; re: RegExp }> = [
+    { target: "route_id[]", re: /label\.one_line(?:[^a-zA-Z0-9_]|$)/ },
+    { target: "station_id[]", re: /label\.one_station(?:[^a-zA-Z0-9_]|$)/ },
+    { target: "city_code[]", re: /label\.one_city(?:[^a-zA-Z0-9_]|$)/ },
+  ];
+  for (const { target, re } of aggDefs) {
+    if (m.has(target)) continue;
+    let sumN = 0, sumX = 0, sumY = 0;
+    for (const [k, p] of entries) {
+      if (isOpenerName(k) || !re.test(k)) continue;
+      const pn = Math.min(50, Number(p.n) || 0);
+      if (pn <= 0) continue;
+      sumN += pn;
+      sumX += (p.x as number) * pn;
+      sumY += (p.y as number) * pn;
+    }
+    if (sumN > 0) {
+      m.set(target, {
+        x: Math.round((sumX / sumN) * 100) / 100,
+        y: Math.round((sumY / sumN) * 100) / 100,
+        n: sumN,
+        source: "alias",
+      });
+    }
+  }
   return m;
 }
 
@@ -629,10 +681,50 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
  */
 export function buildPlaybook(bundle: BundleLike, site?: string | null): Playbook {
   const realproHands = String(site ?? "") !== "itandi";
+  const siteKind: "realpro" | "itandi" = realproHands ? "realpro" : "itandi";
   // itandi は自動の決まり（AUTO_RULES）・リアプロの一連の流れ・追加ガイドを載せない（リアプロの拡張用の一覧で、itandi のページは使っていない）
   const ruleIdsFor = (ids: ReadonlyArray<string>): string[] => (realproHands ? [...ids] : []);
-  const posIdx = indexPositions(bundle.points);
-  const openIdx = indexOpens(bundle.opens);
+  // 入口防御: ゴミ欄名・他サイト要素・旧バグの爆発点（n>5000 かつ 0.5,0.5）を手順書から完全に除外する
+  const cleanPoints: NonNullable<BundleLike["points"]> = {};
+  for (const [k, p] of Object.entries(bundle.points ?? {})) {
+    if (!p || !isAllowedMotionFieldName(k, siteKind)) continue;
+    const rawN = Number(p.n) || 0;
+    if (rawN > 5000 && p.x === 0.5 && p.y === 0.5) continue;
+    cleanPoints[k] = rawN > 500 ? { ...p, n: 500 } : p;
+  }
+  const cleanOpens: NonNullable<BundleLike["opens"]> = {};
+  for (const [k, o] of Object.entries(bundle.opens ?? {})) {
+    if (!o || !isAllowedMotionFieldName(k, siteKind)) continue;
+    cleanOpens[k] = o;
+  }
+  const posIdx = indexPositions(cleanPoints);
+  const openIdx = indexOpens(cleanOpens);
+  const lookupAim = (field: string, aliases: ReadonlyArray<string> = []): PlaybookStep["aim"] => {
+    const keys = [field, cleanPlaybookName(field), ...aliases, ...aliases.map(cleanPlaybookName)];
+    for (const k of keys) {
+      if (!k) continue;
+      const p = posIdx.get(k);
+      if (p) {
+        return {
+          x: p.x,
+          y: p.y,
+          n: p.n,
+          confidence: p.source !== "mismatch" && p.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin",
+          source: p.source,
+        };
+      }
+    }
+    return null;
+  };
+  const lookupOpens = (field: string, aliases: ReadonlyArray<string> = []): string | null => {
+    const keys = [field, cleanPlaybookName(field), ...aliases, ...aliases.map(cleanPlaybookName)];
+    for (const k of keys) {
+      if (!k) continue;
+      const o = openIdx.get(k);
+      if (o) return o;
+    }
+    return null;
+  };
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
     .map((f) => playbookSceneOf(f, posIdx, openIdx));
@@ -650,12 +742,24 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     why: string,
   ) => {
     if (scenes.some((s) => s.scene === scene)) return;
-    const detail: PlaybookStep[] = steps.map((step) => ({
-      step,
-      field: String(step).slice(0, 28),
-      aim: null,
-      opens: null,
-    }));
+    const detail: PlaybookStep[] = steps.map((step) => {
+      const fGuess = step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
+        : step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
+        : step.indexOf("確定してリストへ") >= 0 ? "確定してリストへ"
+        : step.indexOf("所在地絞り込みを開く") >= 0 ? "所在地絞り込みを開く"
+        : step.indexOf("検索ボタン") >= 0 ? "検索"
+        : step.indexOf("区") >= 0 && scene === "area" ? "city_code[]"
+        : String(step).slice(0, 28);
+      const als = fGuess === "所在地絞り込みを開く" ? ["所在地絞り込み＋", "所在地絞り込み"]
+        : fGuess === "印刷用PDF" ? ["印刷用PDF｜a.print", "印刷用PDF｜img"]
+        : [];
+      return {
+        step,
+        field: fGuess,
+        aim: lookupAim(fGuess, als),
+        opens: lookupOpens(fGuess, als),
+      };
+    });
     scenes.push({
       scene,
       label: (SCENE_JA as Record<string, string>)[scene] ?? scene,
@@ -707,8 +811,8 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
   // 押す位置: 束の points を欄ごとに全部載せる（票1以上・票の多い順）。数は solid/thin で数える
-  const sigCounts = signatureCounts(bundle.points);
-  const positions: PlaybookPosition[] = Object.entries(bundle.points ?? {})
+  const sigCounts = signatureCounts(cleanPoints);
+  const positions: PlaybookPosition[] = Object.entries(cleanPoints)
     .map(([field, p]) => {
       const n = Number(p?.n) || 0;
       return {
@@ -729,7 +833,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   const mismatches = positions.filter((p) => p.source === "mismatch").length;
 
   // 開く欄: 人が確かめて学んだ物（n≥1 かつ推測でない）だけを「知っている」と数える。推測は別に数える
-  const opens: PlaybookOpen[] = Object.entries(bundle.opens ?? {})
+  const opens: PlaybookOpen[] = Object.entries(cleanOpens)
     .map(([field, o]) => ({
       field,
       opens: typeof o?.opens === "string" ? o.opens : null,
@@ -813,15 +917,21 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     const rest = sc.steps.filter((t) => !/印刷用PDF|並べ替え|高→低|^AD$|①|②|③|④/.test(String(t || "")));
     // AD 手を先頭に・上限は PLAYBOOK_MAX_STEPS（長い録画手順で溢れない）
     sc.steps = PLAYBOOK_LIST_AD_SORT_STEPS.concat(rest).slice(0, PLAYBOOK_MAX_STEPS);
-    const guideDetail: PlaybookStep[] = PLAYBOOK_LIST_AD_SORT_STEPS.map((step) => ({
-      step,
-      field: step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
+    const guideDetail: PlaybookStep[] = PLAYBOOK_LIST_AD_SORT_STEPS.map((step) => {
+      // ★ 「④並べ替え後に印刷用PDFを押す」は「並べ替え」にも一致するため印刷用PDFを先に判定する
+      const f = step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
+        : step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
         : step.indexOf("AD") >= 0 ? "AD"
         : step.indexOf("並べ替え") >= 0 ? "並べ替え"
-        : "印刷用PDF",
-      aim: null,
-      opens: null,
-    }));
+        : "印刷用PDF";
+      const als = f === "印刷用PDF" ? ["印刷用PDF｜a.print", "印刷用PDF｜img"] : [];
+      return {
+        step,
+        field: f,
+        aim: lookupAim(f, als),
+        opens: lookupOpens(f, als),
+      };
+    });
     sc.detail = guideDetail
       .concat(sc.detail.filter((d) => !/①並べ替え|②メニュー|③AD|④並べ替え後|印刷用PDF/.test(d.step)))
       .slice(0, PLAYBOOK_MAX_STEPS);
@@ -845,12 +955,15 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     const rest = sc.steps.filter((t) => !/検索を押す|^検索$|①条件|②検索した|③把握OK/.test(String(t || "")));
     const restDetail = sc.detail.filter((d) => rest.includes(d.step));
     sc.steps = PLAYBOOK_SEARCH_GRASP_STEPS.concat(rest).slice(0, PLAYBOOK_MAX_STEPS);
-    const guideDetail: PlaybookStep[] = PLAYBOOK_SEARCH_GRASP_STEPS.map((step, i) => ({
-      step,
-      field: step.indexOf("検索ボタン") >= 0 ? "検索" : "検索把握",
-      aim: i === 0 ? oldSearchAim : null,
-      opens: null,
-    }));
+    const guideDetail: PlaybookStep[] = PLAYBOOK_SEARCH_GRASP_STEPS.map((step, i) => {
+      const f = step.indexOf("検索ボタン") >= 0 ? "検索" : "検索把握";
+      return {
+        step,
+        field: f,
+        aim: i === 0 ? (oldSearchAim ?? lookupAim("検索", ["左の検索｜span", "検索"])) : null,
+        opens: i === 0 ? lookupOpens("検索", ["左の検索｜span", "検索"]) : null,
+      };
+    });
     sc.detail = guideDetail.concat(restDetail).slice(0, PLAYBOOK_MAX_STEPS);
     for (const rid of ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"] as const) {
       if (!sc.rules.includes(rid)) sc.rules = [rid, ...sc.rules];
@@ -873,8 +986,8 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
       prepend.push({
         step: PLAYBOOK_AREA_CONFIRM_STEPS[0],
         field: "所在地絞り込みを開く",
-        aim: null,
-        opens: null,
+        aim: lookupAim("所在地絞り込みを開く", ["所在地絞り込み＋", "所在地絞り込み", "左の所在地絞り込み＋｜div.one_slide_searc", "左の所在地絞り込み＋｜span"]),
+        opens: lookupOpens("所在地絞り込みを開く", ["所在地絞り込み＋", "所在地絞り込み"]),
       });
     }
     if (!hasConfirm) {
@@ -884,10 +997,10 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
       append.push({
         step: PLAYBOOK_AREA_CONFIRM_STEPS[2],
         field: confField,
-        aim: confPos
+        aim: lookupAim(confField) ?? (confPos
           ? { x: confPos.x ?? 0.5, y: confPos.y ?? 0.5, n: confPos.n, confidence: confPos.confidence, source: confPos.source }
-          : null,
-        opens: null,
+          : null),
+        opens: lookupOpens(confField),
       });
     }
     sc.steps = prepend.map((d) => d.step).concat(sc.steps).concat(append.map((d) => d.step)).slice(0, PLAYBOOK_MAX_STEPS);
@@ -913,7 +1026,6 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     gaps.push(`場面なし「${g.label}」: 録画が無いため①②③を extra_guides に載せた`);
   }
 
-  const siteKind: "realpro" | "itandi" = realproHands ? "realpro" : "itandi";
   const body = JSON.stringify({
     build_v: PLAYBOOK_BUILD_V,
     site: siteKind,

@@ -12,6 +12,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { humanMotionPaceOn, BurstMeter, PacedWriter } from "@/app/lib/human-motion-pacer";
 import { siteKeyOf } from "@/app/lib/site-key";
+import { sanitizeHumanMotionPayload, isAllowedMotionFieldName } from "@/app/lib/human-motion-sanitize";
 
 // 2026-11-18 作業員H（本番 12:16〜12:22 の DB の時間切れ・human_motion_learn の POST が5分で241件重なった）:
 //   重なった時だけ受け取りを先に返し、間を空けて25行ずつまとめて書く（app/lib/human-motion-pacer.ts・止める HUMAN_MOTION_PACE=off）
@@ -165,7 +166,27 @@ export async function POST(req: NextRequest) {
     points_n: pointsN,
     point_x: frac(pt.x),
     point_y: frac(pt.y),
-    point_fields: (pt.fields && typeof pt.fields === "object" && !Array.isArray(pt.fields)) ? pt.fields : null,
+    point_fields: (() => {
+      if (!pt.fields || typeof pt.fields !== "object" || Array.isArray(pt.fields)) return null;
+      const siteStr = siteOf(body.site);
+      const out: Record<string, unknown> = {};
+      let cnt = 0;
+      for (const [k, v] of Object.entries(pt.fields as Record<string, unknown>)) {
+        if (cnt >= 60) break;
+        const name = String(k ?? "").trim().slice(0, 30);
+        if (!isAllowedMotionFieldName(name, siteStr)) continue;
+        if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+        const r = v as Record<string, unknown>;
+        const x = frac(r.x), y = frac(r.y);
+        const rawN = Math.round(Number(r.n) || 0);
+        if (x == null || y == null || rawN <= 0) continue;
+        // 1回のアップロードで点数の異常爆発（8700万など）を防ぐ上限キャップ
+        const clampedN = Math.min(500, Math.max(1, rawN));
+        out[name] = { ...r, n: clampedN, x, y };
+        cnt++;
+      }
+      return Object.keys(out).length ? out : null;
+    })(),
 
     scrolls_n: scrollsN,
     scroll_dy: num(sc.dy, LIMIT.scroll_dy),
@@ -422,6 +443,26 @@ export async function POST(req: NextRequest) {
   }
   delete row.shot_b64_pending;
     void shotBytes;
+
+  // ★ 2026-11-27 サイト横断汚染・DOM破損名遮断（旧拡張からの混入も入口で止める）
+  try {
+    const san = sanitizeHumanMotionPayload({
+      site: (row.site as string | null) ?? null,
+      fields: (row.fields as string[] | null) ?? null,
+      field_order: (row.field_order as string[] | null) ?? null,
+      point_fields: (row.point_fields as Record<string, unknown> | null) ?? null,
+      opens: (row.opens as Record<string, unknown> | null) ?? null,
+      shot_ops: (row.shot_ops as Array<Record<string, unknown>> | null) ?? null,
+    });
+    if (san.filtered_count > 0) {
+      row.fields = san.fields;
+      row.field_order = san.field_order;
+      row.point_fields = san.point_fields;
+      row.opens = san.opens;
+      row.shot_ops = san.shot_ops;
+      console.warn("[human-motion] 混入/破損フィールドを除去:", row.site, "ext=" + (row.ext_version ?? "-"), "n=" + san.filtered_count, san.filtered_samples);
+    }
+  } catch { /* サニタイズ失敗で記録自体を落とさない */ }
 
   /**
    * 2026-11-12: `shot_b64` / `shot_in_db` の列が**まだ無い**環境でも壊れないようにする。

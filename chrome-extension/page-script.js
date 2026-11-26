@@ -181,6 +181,40 @@
    */
 
   /* ==== restored guideLike / flow_series (2.8.155–187 from transcript) ==== */
+  function _lineNameToRouteIdLocal(lineName) {
+    var want = _normLineName(String(lineName || "").replace("大阪市高速電気軌道", "大阪市高速軌道"));
+    if (!want) return null;
+    for (var id in ROUTE_LINE_MAP) {
+      var ln = _normLineName(ROUTE_LINE_MAP[id]);
+      if (ln === want || (ln.length >= 3 && want.indexOf(ln) >= 0) || (want.length >= 3 && ln.indexOf(want) >= 0)) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  function _fillRouteIdsFromStationMap(cond) {
+    if (!cond || !Array.isArray(cond.station_names) || !cond.station_names.length) return 0;
+    if (!_lineStationMap()) return 0;
+    var added = 0;
+    cond.route_ids = Array.isArray(cond.route_ids) ? cond.route_ids.slice() : [];
+    cond.station_names.forEach(function (st) {
+      (_mapLinesOfStation(st) || []).forEach(function (ln) {
+        var id = _lineNameToRouteIdLocal(ln);
+        if (id && cond.route_ids.indexOf(id) < 0) {
+          cond.route_ids.push(id);
+          added++;
+        }
+      });
+    });
+    if (added > 0) {
+      try {
+        if (_audit) _auditStepP("station_route_from_map", "駅地図から沿線 " + added + "本補完 (" + cond.route_ids.slice(0, 6).join(",") + ")");
+      } catch (_) {}
+    }
+    return added;
+  }
+
 function _applyGuideLikeStationGrasp(cond) {
     if (!cond) return false;
     var primary = Array.isArray(cond.primary_stations) ? cond.primary_stations.map(function (s) {
@@ -9249,7 +9283,7 @@ function _guideLikeAreaSkip(why) {
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open|place_xor|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open|place_xor|station_route_from_map|station_grasp_like_guide|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -16740,6 +16774,12 @@ function _guideLikeAreaSkip(why) {
       cond.city_codes  = [];
       cond.detail_ward = null;
       cond.detail_area = null;
+    }
+
+    // ★ 2026-11-27 復元漏れ修正: _applyGuideLikeStationGrasp が未呼出・内部ヘルパー欠損だったため
+    //   primary_stations 先頭寄せと「route_ids=[] で駅名だけの時の地図補完」を有効化する。
+    if (cond.area_mode !== "ward") {
+      try { _applyGuideLikeStationGrasp(cond); } catch (_) {}
     }
 
     /**

@@ -19,6 +19,8 @@ import {
   type AutoRow, type AutoOp,
 } from "./learn-auto-audit";
 import { isAutoMode } from "./press-by";
+import { isLearnableName } from "./shot-learn";
+import { isAllowedMotionFieldName } from "./human-motion-sanitize";
 
 export type ShotRowLite = {
   created_at?: string | null;
@@ -158,8 +160,15 @@ export function summarizeLatestAutoChallenges(
     }
   }
   const retriesAcc = countRetries(folded.map((r) => r.ops));
-  const changedNoClick = Object.entries(changedAcc).sort((a, b) => b[1] - a[1]).map(([f]) => f);
-  const retries = Object.entries(retriesAcc).filter(([, n]) => n >= 1).sort((a, b) => b[1] - a[1]).map(([f]) => f);
+  const isCleanChallengeField = (f: string) => isLearnableName(f) && isAllowedMotionFieldName(f, null);
+  const changedNoClick = Object.entries(changedAcc)
+    .filter(([f]) => isCleanChallengeField(f))
+    .sort((a, b) => b[1] - a[1])
+    .map(([f]) => f);
+  const retries = Object.entries(retriesAcc)
+    .filter(([f, n]) => n >= 1 && isCleanChallengeField(f))
+    .sort((a, b) => b[1] - a[1])
+    .map(([f]) => f);
   const fields = [...new Set([...changedNoClick, ...retries])].slice(0, 12);
   const challenges: LatestAutoChallenge["challenges"] = [];
   for (const f of changedNoClick.slice(0, 5)) {

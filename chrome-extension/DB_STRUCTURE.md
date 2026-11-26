@@ -59,7 +59,7 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - 注釈（`//`・`*` の行）は数えない。行の途中の注釈は残る。
 - **サイトの呼び名は `app/lib/site-key.ts` だけで変える**（`siteKeyOf`＝realpro・realnetpro・リアプロ→realpro、itandi、reins・レインズ。`commandSiteKeyOf`＝拡張の呼び名 realnetpro）。他の所で `=== "realnetpro"` と比べない（見張り ④）。試験: `npx tsx app/lib/__tests__/site-key.test.ts`。
 - **コミットの前に自動で回る**: `.githooks/pre-commit`（見張りの試験＋site-key の試験）。この PC では `git config core.hooksPath .githooks` を1回だけ設定済み（取り消しは `git config --unset core.hooksPath`）。TypeScript の型チェック（`npx tsc --noEmit`）は既存のエラーがあるので、フックには入れていない（CLAUDE.md の型チェックは別途）。
-- 今の結果（2026-11-26）: 箱の違反 0・両方を扱う共有ファイル 6（登録済み）・サイト名の直接比べ 4（登録済み・理由付き）。
+- 今の結果（2026-11-26）: 箱の違反 0・両方を扱う共有ファイル 6（登録済み）・サイト名の直接比べ 4（登録済み・理由付き）。（2026-11-27 に `app/lib/human-motion-sanitize.ts` を追加し共有ファイル 7 に更新・箱の違反 0 を維持）
 
 ## リアプロと ITANDI で混ざっている所（直す候補）
 1. ~~**`site` の値が2通り**~~ → 11/10 DB で揃えた（migration `ext_db_site_runs_views_1110`）。本番の値は automation_commands.sites と extension_devices.current_site だけ `realnetpro`、他の11の表は realpro/itandi/reins で揃っていた。DB の関数 `ext_site_key()`（realnetpro・リアプロ→realpro）と、site の列がある10表の trigger `trg_site_norm`（入る時に揃える・拒まない）を足した。拡張との指示のやり取り（sites の `realnetpro`）は変えない。→ 2026-11-26 に直した: サーバーの揃える関数（search-audit-check・screen-watch-server・search-update-days-server・search-widen-chain・human-motion・extension-live-server・sheet-layout・search-condition-drift・search-update-days）を `app/lib/site-key.ts`（唯一の正本）へ集めた。サイトの名前を直接比べる残りは見張り（site-split-guard ④）で理由付きの4か所だけ。
@@ -82,6 +82,9 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - 2.8.206: 手順書反映の抜け防止。`attach`／`prepareBundleForWrite` が `generated_at` を上げる・`read_count=0`。light API が `playbook_rules_v` を返す。拡張が rules_v ずれで強制取込。土台 **F63**（DB=コード∧seen rv=コード∧read≥1）。列は増やしていない
 - 2.8.205: 手順書穴の土台。決まり `continuous_customer_loop`（AUTO_RULES）を束へ attach（rv **e0b8837b**・39件）。`customer_think` 失敗時も stamp。checkRulesInCode が `background.js` も見る。weak-find の連続客は列 `ext_version`（`extension_version` は誤り）。列は増やしていない
 - 2.8.204: 連続客細分化強化。`handoff_atom_send`／`handoff_atom_post_send`／`handoff_atom_ready`／流れ地図に `send_or_pdf`・`post_send_clear`。台帳12細原子＋`planHandoffStrengthen`。土台 **F61（DB計測）**・**F62（細分化）**。`scripts/handoff-loop-strengthen.ts`（列は増やしていない）
+- 2026-11-27（2.8.310・`PLAYBOOK_BUILD_V = 18`・DB の列・表は増やしていない）:
+  - **単発自動のリセットリロード耐性**: `popup.js`（`underbar.js` 内 `iframe`）からリアプロ「リセット」後にタブが再読込されても自動入力が途切れないよう、リセット前に `axlx_pending_auto_send`・`axlx_score_data` を保存し、`axlx-reset-before-fill` の `autoFillAfter` を受けた `background.js` がリロード完了後に `axlx-set-fill-customer` + `axlx-realnetpro-autofill` を直接再送する。
+  - **学習データの増分送信とサーバー側浄化（`human_motion` / `human_learn_profile`）**: `human-learn-record.js` はローカル累計と今回の保存窓増分（`_sessionPoints` / `_sessionAutoPoints`、`n <= 200`）を分離し、`U(uploadDelta)` で増分だけを送信。`human-learn-upload.js` と `app/api/human-motion/route.ts` でもサイト別許可欄名（`isAllowedMotionFieldName`）チェックと `point_fields[k].n` 上限（拡張 200 / サーバー 500）を強制し、`0.5,0.5` 爆発ポイント・ゴミ名（`input`/`iframe`/`id`/`-----`）・他サイト混入を遮断。`prepareBundleForWrite` が保存前に `sanitizeBundleForSite(bundle, site)` と `syncSupervisorSceneFlows(bundle, site)` を実行し、`PLAYBOOK_BUILD_V = 18` で手順書の押す位置・`印刷用PDF` 判定・統括同期を整えた。
 - 2.8.302: 手を止める停止の長さは 4〜11秒（中央 6.5秒・毎回ちがう）。`page:fill_pause` / `page:fill_resume` の秒は小数2桁（例「6.42秒」）。手の動きの drift に `maxMs`（既定 6000・停止だけ 11000）。DB の列・表は増やしていない。過去の監査（2.8.300 以前）の停止の秒は、ばらつき無しの固定（2.8.300）か予定（2.8.299）なので、実際の長さとして読まない。
 - 2.8.300: 手を止める停止の `page:fill_pause` の秒数は最大6秒（実際に止まる長さ＝手の動きの上限）。2.8.299 までの「8〜25秒」の記録は予定で、実際は約6秒だった（過去の監査を読む時の注意）。
 - 2.8.299: 人の間（わざとの待ち）を見張りに分からせる（DB の列・表は増やしていない）。`search_audits.steps` の `page:fill_pause` の本文が「N秒（わざと止める・人の間＝止まりではない）」、`page:fill_resume` が「わざと止めた後に再開 予定N秒・実際M秒」に変わった。`page:fill_pause_force` は「予定を15秒超えた（本物の止まり）」。`silence_watch_tick` の `q=` の末尾に `/iw種類`（fill_pause／hesitate／gap／-）。ページの中だけの印 `window.__axlxIntentWait`（DB へは送らない）。
@@ -230,6 +233,11 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 **2026-11-26 深夜の決定（竹内さん）: レインズは使わない**
 - 実測（直近30日）: search_audits はリアプロ 596 件・ITANDI 84 件・レインズ 0 件。property_pickups の site=reins は 0 件。automation_commands（直近30日 1000 件まで）に reins を含む物は 0 件。
 - REINS の項目（上の表の REINS 列・4・A・下の REINS 関係）は**対象外**。見張り（site-split-rules）・写しの試験・拡張の `reins-*.js` 3本・manifest の reins の一覧は、まだ残している（止めるか消すかは未決・下の「未決」）。
+
+- **2026-11-27 同期と仕組み化**:
+  - `popup-maps.js`（正本）・`resolution-core.js` 内の重複キー 6件（`吹田` の JR東海道本線消失バグ含む・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原`）を解消し、`tests/chrome-extension/notation-copies-sync.test.js` に全マップ重複キー 0 検査を追加。
+  - `app/api/seed-maps/route.ts`（`STATION_WARD_MAP` / `STATION_LINE_MAP` / `NEIGHBORHOOD_WARD_MAP` / `LINE_STATION_ORDER`＋`@/app/lib/station-line-maps` import）および `app/api/resolve-search-conditions/route.ts`（`LINE_ROUTE_MAP` / `LINE_ALIAS_MAP`）を正本へ同期し、`notation-copies-sync.test.js` の監視対象に追加。
+  - `.githooks/pre-commit` に `realpro-guide-town.test.js`（詳細地域案内＋単発自動 `_resetBeforeFill`）・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を追加。
 
 **未決（竹内さんの判断が要る）**
 - A. （レインズは使わないので取り下げ）REINS の東海道本線の表記。

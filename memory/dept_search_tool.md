@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-11-27 **残課題の徹底改善・実データ確認とリアプロ手順書の完全整理（PLAYBOOK_BUILD_V = 18・2.8.310）**
+
+竹内さん「ほかに改善できていない部分あれば改善する」「ちゃんとリアプロ手順書も綺麗に整理されたのか徹底的に確認する」。
+
+**実 DB 比較で確認した主な成果（読むだけ・`realpro` id=2829 / `itandi` id=2830 / `all` id=2831）**
+1. **リアプロ手順書（`PLAYBOOK_BUILD_V: 16 -> 18`）の整理完了**:
+   - `points` の許可されないキー・他サイト混入・ゴミキー（`id`, `input`, `iframe`, `#[object HTMLInputElement]`, ITANDI の `#_r_*_` 等）: **28件 → 0件**（全170件 → 浄化後139件）。
+   - `n > 5000` の `0.5,0.5` 爆発ポイント（`id(n=545748)`, `eq_rm[](n=405150)` 等）: **5件 → 0件**（実測 `learnPoints` でも `effN <= 50` 制限＆爆発点低優先化）。
+   - `station` 手順の押す位置 `aim`: 4手中2手欠損（`route_id[]`, `station_id[]` が `null`）→ **4/4 手すべてに実測集約 `aim`（`label.one_line` / `label.one_station`）を付与**。
+   - `list` 4手目「④並べ替え後に印刷用PDFを押す」が誤って「並べ替え」と判定されていたバグを修正（`印刷用PDF` を先に判定）し、`AD`・`高→低`・`印刷用PDF` すべてに実測 `aim` を付与。
+   - 統括ログ（`supervisor` / `supervisor_by_site.realpro`）と `scene_flows` の食い違いを解消（`transportation_id → required_time` 残骸 → `沿線・駅絞り込み＋ → route_id[] → 駅の設定へ進む → station_id[]` に同期、`syncSupervisorSceneFlows`）。
+   - `checksAfter: []`（不整合・未分類 0件）、`AUTO_RULES` 検証カバレッジ **97/102（95.1%、5件のみ検査検証用に意図的維持）**。
+2. **ITANDI・全体（`itandi` id=2830 / `all` id=2831）の汚染除去**:
+   - `itandi` 内の `station`（リアプロ `沿線・駅絞り込み＋` 等）と `area`（連結ラベル `路線・駅選択都道府県北海`）を `sanitizeBundleForSite` で自動除去、`checksAfter: []`。
+3. **Chrome 拡張の残課題修正**:
+   - **単発自動のリセットリロード耐性**（`popup.js`, `background.js`, `auto-procedure-rules.ts`）: `underbar.js` 内 `iframe` 埋め込みの `popup.js` がリアプロ「リセット」押下のリロードで破棄される問題に対し、`axlx_pending_auto_send` / `axlx_score_data` / 記録をリセット前に保存し、`axlx-reset-before-fill` の `autoFillAfter` で `background.js` がリロード完了後に `axlx-set-fill-customer` + `axlx-realnetpro-autofill` を直接再送する経路を実装。
+   - **`point_fields[k].n` 指数爆発の根絶**（`human-learn-record.js`, `human-learn-upload.js`, `app/api/human-motion/route.ts`）: 累計 `_livePoints` の毎回再送信（1450万→8709万）を止め、保存窓ごとの増分 `_sessionPoints` / `_sessionAutoPoints`（`n <= 200`）だけを `uploadDelta` で送信し、サーバー受付側でも `isAllowedMotionFieldName` フィルタと `1..500` 上限を強制。保存済みストレージの旧爆発値も `_sanitizePointStore` で自動浄化。
+   - **`opens` 記録・`directText`・`stageOf` バグ修正**（`human-learn-record.js`, `human-learn.js`）: `click` のみ `noteBeforeClick` / `noteOpened` を実行し（`mousedown` 先取り併用）、`_pushOp` が返した操作オブジェクト `o` に直接 `o.opened` を書くことで `_ringAt` ズレを解消。`fieldName` での裸タグ名（`input`/`select`/`iframe`）返却を廃止、`directText` の多数要素連結（`路線・駅選択都道府県北海`）・記号のみ（`-----`）を遮断、`stageOf()` / `uiCounts()` を `getClientRects()` と主要モーダル列挙で正確化。
+   - **`shot-learn.ts` / `latest-learn-loop.ts` 誤警報・ゴミ除外**: 日本語間取り（`左の2LDK｜label`）・`更新日`・日本語セレクト欄名・`左の次｜td.pager` / `ページ送り` / `pager` の無害な UI 揺れを抑止し、`-----`・`input` 等のゴミを `findWeakPoints` / `latestAutoChallenge` から除外。
+   - **`site-split-rules.json`**: `app/lib/human-motion-sanitize.ts` を両サイト汚染除去の正本として `shared_mix` に登録。
+
+**検証結果**
+- Chrome 拡張テスト全 344本（`ext-test-all.ts`）: 青 232 / 赤 112（新規赤 0本・基準維持・全 67 JS 構文検証 OK）。
+- TS 防衛テスト群（`playbook-and-motion-hardening.test.ts` 25/0・`shot-learn.test.ts` 50/0・`action-playbook.test.ts` 56/0・`auto-rules-verify-exists.test.ts` 8/0・`playbook-rule-evidence.test.ts` 35/0・`playbook-site-split.test.ts` OK・`auto-procedure-rules.test.ts` 202/0・`site-contamination-guard.test.ts` 11/0・`learn-opens-and-itandi-flow.test.ts` 30/0・`bundle-write-prepare.test.ts` 12/0・`playbook-downgrade-guard.test.ts` 29/0 ほか）全通過。
+- `npx tsc --noEmit`: 今回編集・新規作成ファイルの型エラー 0件（既存テスト 8ファイルのみ以前のまま）。
+
+**反映手順（未実行・竹内さん承認後）**: commit & push → Chrome 拡張の再読み込み（`2.8.310`）→ `npx tsx --env-file=.env.local scripts/attach-playbook.ts --apply` で DB 手順書を `build_v=18` に更新。
+
+---
+
 ## 2026-11-26 **連動の点検を1回で回す仕組み（改善のたびに）・手順書が最新でなかった原因を直す**
 
 竹内さん「なんで最新にならないのか／最新にするように仕組み化したのではないのか」「拡張ツールをちゃんと連動させる・矛盾やボトルネックは仕組み化して、改善の際それを行う」。
@@ -15004,4 +15034,24 @@ Claude（統括役）からの依頼2件への対応。
 - 試験: line-repress-v2816 の期待値を南海本線に（湊）。notation-copies-sync 16 OK・station-line-maps 20 OK・拡張の試験 226 青・新しい赤 0・app の transit/station 試験 OK。tsc は既存の 22 件のまま。
 - 未決（竹内さんの DevTools の結果待ち）: 近鉄信貴線・近鉄西信貴ケーブル線・東海道・山陽新幹線はリアプロの路線番号が正本に無い。
 - 設計知見に【決定】1行追加。
+
+### 2026-11-27 徹底改善（Phase 1〜4）: サイト汚染遮断・学習束同期・重複地図解消・詳細地域案内・単発前リセット・仕組み化
+- **Phase 1（サイト汚染完全遮断＋再発防止）**: `app/lib/human-motion-sanitize.ts` で破損名・他サイト要素を除去し、`prepareBundleForWrite(bundle, scope)` に第2引数必須化＋`site-contamination-guard.test.ts`・`human-learn-site-isolation.test.js` で再発防止。
+- **Phase 2（拡張 ↔ API 手順書・学習束の同期とサイト分離）**: `action-playbook.ts` と `learn-bundle-preserve.ts` でサイト別の手順書・流れを同期。`playbook-site-split.test.ts`・`learn-bundle-site-sync.test.js` を追加。
+- **Phase 3（`opens` 消失修正・ITANDI 実在欄・死んだ `verify` 解消・`page-script.js` 補完復元）**:
+  - `human-learn.js` の `mergeAggregate` が `opens`/`open_kinds` を引き継ぐよう修正＋`learnOpens` で `shot_ops[].opened` も回収。
+  - `learn-flow-steps.ts` に ITANDI 実在欄（`リスト検索`・`路線・駅選択`・`rent:lteq`・`floor_area_amount:gteq` 等）を分類。
+  - `page-script.js`: `_lineNameToRouteIdLocal` / `_fillRouteIdsFromStationMap`（`station_route_from_map`）を実装し、`fillRealpro` で `_applyGuideLikeStationGrasp` を呼び出し復元。
+  - `search-audit.js`: ループで大量発火する `ward_pace` 等を `KEEP_STEP` から外し、`RULE_STEP` 側のみで保持（`page:cursor_one` 等の証跡押し出しを解消）。
+  - 仕組み化: `auto-rules-verify-exists.test.ts`（死んだ verify・grasp 印ゼロ検査 8/8）・`learn-opens-and-itandi-flow.test.ts`（30/30）。
+- **Phase 4（地図重複撲滅＋サーバー同期＋詳細地域案内＋単発前リセット＋Pre-commit 強化）**:
+  - **`popup-maps.js`（正本）＆ `resolution-core.js` 重複キー 6件解消**: `吹田`（重複により JR 東海道本線が上書き消滅していた致命バグを `["東海道本線", "阪急電鉄千里線"]` に回復）・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原` を統合・整理。
+  - **サーバー API 完全同期**: `app/api/seed-maps/route.ts` を正本（`STATION_WARD_MAP` 159・`STATION_LINE_MAP` 658・`NEIGHBORHOOD_WARD_MAP` 316・`LINE_STATION_ORDER` 40）と `@/app/lib/station-line-maps` import に同期。`app/api/resolve-search-conditions/route.ts` の `LINE_ROUTE_MAP`（能勢電鉄2線追加）と `LINE_ALIAS_MAP`（短縮線名16本追加・計25本）を同期。
+  - **`tests/chrome-extension/notation-copies-sync.test.js` 強化（43 OK / 0 NG）**: 全マップの重複キー 0件検査＋`吹田` 回帰確認＋`seed-maps` / `resolve-search-conditions` 同期監視を追加。
+  - **リアプロ案内モード 詳細地域（`detail_ward` / `detail_area` / `town_names`）対応**: `realpro-guide-plan.js` で `pick_city (hasTowns)` → `pick_town` を生成し、`realpro-guide.js` で「大阪府」ボタン・`div.next_step_button2`「詳細な地域の設定へ進む」・`label.one_town` / `town_code[]`・確定まで非操作（光らせるのみ）で案内可能に。
+  - **単発自動の前客リセット `_resetBeforeFill` 連携**: `background.js` に `axlx-reset-before-fill`（案内モード `normal` は必ずスキップ＋`preferredTabId` 優先）を追加し、`popup.js` の手動単発自動時（`!isAutomated && _isAutoModeNow()`）も条件投入前に前客クリアを実施。
+  - **仕組み化・フック強化**: `tests/chrome-extension/realpro-guide-town.test.js`（13 OK / 0 NG）追加。`.githooks/pre-commit` に `realpro-guide-town.test.js`・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を組み込み。
+  - **環境注記**: `.env.local` には `SUPABASE_SERVICE_ROLE_KEY` が無い（ANON キーのみ）ため、ローカルから RLS（service_role 専用）テーブル `human_motion` / `extension_snapshots` / `extension_devices` を直接読むと 0/null に見える。本番の実データは Vercel API（`/api/human-motion?summary=1` 20,000行・`/api/human-learn-profile?history=1` 等）で確認すること（2026-11-27 確認済み）。
+  - **版数**: `2.8.310` のまま（`head-ttl-served-v2310` 等と整合）。`ext-test-all.ts` 全 344 本: 青 232 / 赤 112（新赤 0）。変更・追加 TS ファイルの `tsc` エラー 0。
+
 

@@ -13,7 +13,7 @@ const ok = (n, c) => { if (c) { pass++; console.log("  OK " + n); } else { fail+
 // 1. 確認間隔が実際に使われる（2.8.309 まで計算だけで未使用だった）
 const headFn = bg.slice(bg.indexOf("async function _refreshLearnedBundle(force)"), bg.indexOf("async function _refreshLearnedBundle(force)") + 9000);
 const ttlAt = headFn.indexOf("_headCheckAt > 0 && _headAge < _checkMs");
-const fetchAt = headFn.indexOf('"/api/human-learn-profile?touch=0"');
+const fetchAt = headFn.indexOf('"/api/human-learn-profile?touch=0');
 ok("版の確認の前に確認間隔（_checkMs）を見て、内なら飛ばす", ttlAt > 0 && fetchAt > ttlAt);
 ok("飛ばした時は skipped=head_recent で返す", /skipped: "head_recent"/.test(headFn));
 ok("TTL は強制（!force の内側）だけ・強制の経路は見ない", /if \(!force\) \{[\s\S]{0,1600}_headCheckAt > 0 && _headAge < _checkMs/.test(headFn));

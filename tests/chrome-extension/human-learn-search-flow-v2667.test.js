@@ -178,7 +178,7 @@ console.log("\n■ ③ 3つのサイト全部で学習が動く（読み込み�
 console.log("\n■ ④ DB に届く（送る側の設定）");
 {
   const up = read("human-learn-upload.js"), bg = read("background.js");
-  ok("記録が増えたら送る", /ch\[KEY\]\.newValue/.test(up) && /maybeUpload\(\)/.test(up));
+  ok("記録が増えたら送る", /ch\[(?:KEY|SITE_KEY)\]\.newValue/.test(up) && /maybeUpload\(\)/.test(up));
   ok("5分は送らない（叩きすぎない）", /MIN_GAP_MS = 5 \* 60 \* 1000/.test(up));
   ok("画面を開いた時にも1回送る", /setTimeout\(maybeUpload, wait\)/.test(up));
   ok("background が鍵を付けて /api/human-motion へ送る", /type === "axlx-human-motion"/.test(bg) && /\/api\/human-motion/.test(bg));

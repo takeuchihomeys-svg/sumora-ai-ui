@@ -216,10 +216,10 @@ export async function GET(req: NextRequest) {
           const carry = await carryLearnedShots(supabase, p.scope, p.bundle);
           (p.bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
         } catch { /* 位置を継げなくても束は残す */ }
-        /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理） */
+        /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理）。★ 2026-11-27: 必ず p.scope（サイト）を渡す */
         try {
           const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-          prepareBundleForWrite(b);
+          prepareBundleForWrite(b, p.scope);
         } catch { /* 整えられなくても束は残す（次の作り直しで直る） */ }
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,

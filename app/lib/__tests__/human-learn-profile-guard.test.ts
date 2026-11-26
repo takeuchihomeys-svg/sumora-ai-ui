@@ -2,7 +2,7 @@
 //   その時の形（Vercel・Supabase のログ）: 12秒に関数の呼び出し 約130回・DB へ GET 452件（版だけの確認も束の全体を読む）・PATCH 302件（全部 同じ1行 id=1556 の read_count）
 // 実行: npx tsx app/lib/__tests__/human-learn-profile-guard.test.ts
 import { readFileSync } from "node:fs";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, learnBuildAfterOn, buildLeaseKey, laneNextWait, LANE_WAIT_MAX_MS } from "../human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, shouldPreserveLongCronBundle, coalesce, cacheHeaders, inflightCount, READ_MARK_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, learnBuildAfterOn, buildLeaseKey, laneNextWait, LANE_WAIT_MAX_MS } from "../human-learn-profile-guard";
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ""}`); } }
@@ -37,7 +37,22 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) { pass++; cons
     ok("配線: 作り直しは1本にまとめる・作ってから5分は作らない", /coalesce\(`build:\$\{scope\}`/.test(route) && /builtRecently/.test(route));
     ok("配線（2026-11-20）: 営業時間の古い束は作り直さない（holdDaytimeRebuild）", /holdDaytimeRebuild\(\{ hour: jstHourNow\(\), minute: [^,]+, hasBundle: !!row, forceFresh \}\)/.test(route) && /!daytimeHold/.test(route));
     ok("配線（2026-11-20）: 手動の refresh は全列 select(\"*\") をやめ、自動と同じ列の一覧（SELECT）で読む", !/\.select\("\*"\)/.test(route) && /selectDroppingMissing\(\s*SELECT\.split/.test(route));
-    ok("配線（2026-11-20）: needs_auto は自動の記録だけを DB で絞って見る（新しい順40件の抜けをなくす）", /\.or\("mode\.ilike\.\*aix\*,mode\.ilike\.\*auto\*"\)/.test(route) && !/\.limit\(40\)/.test(route));
+    ok("配線（2026-11-20/27）: needs_auto は自動の記録だけを DB で絞って見る（brain_staff / ai も isAutoMode で見る）", /\.or\("mode\.ilike\.\*aix\*,mode\.ilike\.\*auto\*,mode\.ilike\.\*brain\*,mode\.eq\.ai"\)/.test(route) && /isAutoMode\(a\.mode\)/.test(route) && !/\.limit\(40\)/.test(route));
+  }
+  {
+    const nowMs = Date.parse("2026-11-27T01:00:00Z");
+    const longCron = {
+      createdAt: "2026-11-26T13:20:00Z", // 11h40m 前（22:20 JST cron）
+      sourceFrom: "2026-10-27T13:20:00Z", // 30日 span
+      sourceTo: "2026-11-26T13:20:00Z",
+      forceFresh: false,
+      nowMs,
+      env: {},
+    };
+    ok("30日 cron 束は 12時間以内なら 3日 buildNow で上書きしない", shouldPreserveLongCronBundle(longCron) === true);
+    ok("12時間超なら再生成を許す", shouldPreserveLongCronBundle({ ...longCron, createdAt: "2026-11-26T12:00:00Z" }) === false);
+    ok("3日束は対象外（従来どおり 30分で更新）", shouldPreserveLongCronBundle({ ...longCron, sourceFrom: "2026-11-23T13:20:00Z" }) === false);
+    ok("fresh=1 なら強制更新を許す", shouldPreserveLongCronBundle({ ...longCron, forceFresh: true }) === false);
   }
   {
     // 2026-11-20 昼の保留の判定（純関数）: 営業時間（JST 9〜22時）・束がある・?fresh=1 でない・HUMAN_LEARN_DAYTIME_REBUILD=on でない

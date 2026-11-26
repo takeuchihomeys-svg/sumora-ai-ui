@@ -37,7 +37,8 @@ console.log("■ ① 押す前に画面の数を控える（これを呼ばな�
 {
   ok("  ⚠ noteBeforeClick を呼んでいる", /rec\.noteBeforeClick\(e\.target\)/.test(rec));
   // ⚠ _pushOp の**直後**（押した操作として同じ並びに載る）
-  const iPush = rec.indexOf("_pushOp(e.type || \"click\", e.target, _by);");
+  const mPush = rec.match(/_pushOp\(e\.type \|\| "click", e\.target, _by(?:,\s*e)?\);/);
+  const iPush = mPush && typeof mPush.index === "number" ? mPush.index : -1;
   const iNote = rec.indexOf("rec.noteBeforeClick(e.target)");
   ok("  ⚠ 押した操作の記録の後にある", iPush > 0 && iNote > iPush, { iPush, iNote });
 }

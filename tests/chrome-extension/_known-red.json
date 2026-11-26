@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-26T11:39:02.390Z",
+  "at": "2026-11-26T15:56:02.810Z",
   "note": "未整理の古い赤の一覧（隠すためではなく、新しい赤を見分けるための基準）。直したら --write-baseline で縮める。増やさない。",
   "red": [
     "ad-sort-hilo-v28185.test.js",
@@ -83,7 +83,6 @@
     "post-send-clear-grasp-v28223.test.js",
     "press-with-pointer-v2663.test.js",
     "realpro-guide.test.js",
-    "rent-select-opened-v2767.test.js",
     "scene-aim-v2810.test.js",
     "screen-aim-v2783.test.js",
     "screen-keep-v2815.test.js",
@@ -103,9 +102,7 @@
     "snapshot-core.test.js",
     "sort-head-aim-toori-v28218.test.js",
     "start-is-called-v2757.test.js",
-    "station-grasp-like-guide-v28161.test.js",
     "station-modal-timeout-v267.test.js",
-    "station-route-from-map-v28160.test.js",
     "stuck-after-sort-v2702.test.js",
     "supervisor-think-v2774.test.js",
     "switch-grasp-persist-v2830.test.js",

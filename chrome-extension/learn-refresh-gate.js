@@ -72,7 +72,9 @@
     if (!pb || typeof pb !== "object") {
       return { force: true, reason: "playbook_missing" };
     }
-    if (!Array.isArray(pb.rules) || pb.rules.length < 1) {
+    var _site = String((opts && opts.site) || st.axlx_learn_for_site || "").toLowerCase();
+    var _isItandiOrReins = (_site === "itandi" || _site === "reins");
+    if (!Array.isArray(pb.rules) || (!_isItandiOrReins && pb.rules.length < 1)) {
       return { force: true, reason: "playbook_no_rules" };
     }
     // build_v7 以降は一連の流れが必須。古い手元の手順書のまま押し始めない

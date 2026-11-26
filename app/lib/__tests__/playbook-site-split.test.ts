@@ -79,8 +79,12 @@ const RP_TEXT = /160×高さ30|幅160|30秒以上|確定してリストへ|並�
   // 外しは itandi の実際の順（打つ欄→チェック→チップ×）
   const clear = pb.extra_guides.find((g) => g.id === "clear")!.steps.join(" ");
   assert(/チップ.*×.*1つずつ/.test(clear) && /打つ欄/.test(clear), "itandi の外しはチップを1つずつ×で外す");
-  // 点検の印が無い段は gaps に「把握できない」と出る（黙って OK にしない）
-  assert(pb.gaps.some((g) => /点検の印が無い段（把握できない）/.test(g)), "itandi の印が無い段を gaps に出す");
+  // itandi の一連の流れは全段に実際の点検印（page: / dl:）が揃っている
+  assert(
+    pb.flow_series.every((p) => p.grasp.length > 0 && p.grasp.every((g) => /^(page:|dl:)/.test(g))),
+    "itandi の一連の流れの全段に page:/dl: 点検印がある",
+  );
+  assert(!pb.gaps.some((g) => /点検の印が無い段（把握できない）/.test(g)), "全段に印が揃えば把握できない段は出ない");
   assert(pb.gaps.some((g) => /決まりは、このリアプロ/.test(g)), "itandi の決まりは別と gaps に出す");
   // 点検（checkPlaybook）は itandi で「決まりが空」を誤って出さない
   const issues = checkPlaybook(pb, Date.parse(NOW));
@@ -110,13 +114,24 @@ const RP_TEXT = /160×高さ30|幅160|30秒以上|確定してリストへ|並�
   console.log("  ✓ 作り方 15 の itandi 手順書は読み出しで作り直す");
 }
 
-// 8. 実物の欄名の分類（itandi の未分類だった間取りのチェック欄）
+// 8. 実物の欄名の分類（itandi の未分類だった間取りのチェック欄・実データ実在欄）
 {
-  const bundleCond = { points: {}, opens: {}, generated_at: NOW, scene_flows: [{ scene: "cond", runs: 3, ops: 1, steps: ["room_layout:in"], variants: 1 }] };
+  const bundleCond = {
+    points: {},
+    opens: {},
+    generated_at: NOW,
+    scene_flows: [
+      { scene: "cond", runs: 3, ops: 6, steps: ["room_layout:in", "rent:lteq", "rent:gteq", "option_id:all_in", "building_name:match", "keyword"], variants: 1 },
+      { scene: "area", runs: 3, ops: 2, steps: ["所在地で絞り込み", "小窓の確定"], variants: 1 },
+      { scene: "station", runs: 3, ops: 1, steps: ["路線・駅で絞り込み"], variants: 1 },
+      { scene: "search", runs: 3, ops: 1, steps: ["リスト検索"], variants: 1 },
+    ],
+  };
   const pb = buildPlaybook(bundleCond as never, "itandi");
   const sc = pb.scenes.find((s) => s.scene === "cond")!;
   assert(sc.steps.join(" ").includes("間取りの欄（チェック）") && sc.unknown.length === 0, "room_layout:in は間取りの欄（未分類にしない）: " + sc.steps.join(" / "));
-  console.log("  ✓ room_layout:in は間取りの欄（未分類ではない）");
+  assert(pb.scenes.every((s) => s.unknown.length === 0), "itandi 実データの実在欄は未分類にしない: " + pb.scenes.map((s) => s.unknown.join(",")).join(" / "));
+  console.log("  ✓ room_layout:in・itandi 実在欄は未分類ではない");
 }
 
 console.log("playbook-site-split.test OK");

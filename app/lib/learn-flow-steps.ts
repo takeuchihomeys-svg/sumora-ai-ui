@@ -104,26 +104,23 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    *     名前が `検索|span` の形だと拾えない → **含むかどうか**で見る。
    *   ⚠ ただし「検索条件」「検索結果」は押すボタンではないので除く。
    */
-  if (/^(go_search|go_search_submit)$/.test(n) || /^search$/.test(n)) return "search";
+  if (/^(go_search|go_search_submit)$/.test(n) || /^search$/.test(n) || /リスト検索/.test(n)) return "search";
   if (/検索/.test(n) && !/検索条件|検索結果|再検索の設定/.test(n)) return "search";
+  /**
+   * ★ 2026-11-27: ITANDI の「路線・駅で絞り込み」「路線・駅選択」「駅選択」などは
+   *   「都道府県」や一般の駅判定より前に station として拾う（旧は「都道府県・駅選択」系が area に落ちていた）。
+   */
+  if (/路線・駅で絞り込み|路線・駅選択|駅選択|駅の設定へ進む|沿線の設定へ戻る|沿線を選び直す|路線を選び直す|沿線選択に戻る/.test(n)) {
+    return "station";
+  }
   // 所在地（区・町字・小窓）
   // ⚠ 「区を選ぶ」は自動課題の別名（city_code[]）。other に落とすと場面の手本が薄いと誤る
-  if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字|区を選ぶ|町字を選ぶ/.test(n)) return "area";
+  if (/city_code|town_code|one_city|one_town|住所|所在地|都道府県|市区郡|町字|区を選ぶ|町字を選ぶ|小窓の確定/.test(n)) return "area";
   /**
    * 実測の名前 `確定してリストへ｜span` は**所在地の小窓を閉じるボタン**。
    *   ⚠ 「その他」にすると、所在地の手順から**最後の1手が抜ける**（＝手順が途中で切れる）。
    */
   if (/確定してリストへ|リストへ確定/.test(n)) return "area";
-  /**
-   * ★ 2026-11-17 竹内さん「学習が自動に反映されない」・DB実測:
-   *   旧: `/設定へ進む|…|駅の設定/` を **area** に入れていた。
-   *   → 通常録画の正本「駅の設定へ進む → 駅外し → 沿線の設定へ戻る」が
-   *     **station の scene_flows から抜け**、自動の駅外し状態機械に学習が届かなかった。
-   *   → 駅モーダル遷移は **station を先に**。所在地の「地域の設定へ進む」だけ area。
-   */
-  if (/駅の設定へ進む|沿線の設定へ戻る|沿線を選び直す|路線を選び直す|沿線選択に戻る/.test(n)) {
-    return "station";
-  }
   /**
    * ★ 2026-11-16: 所在地モーダルの「次へ」（地域の設定へ進む／next_step_button2）。
    *   一覧のページ送り（next）とは別。所在地の段の「次」として area に入れる。
@@ -145,11 +142,13 @@ export function sceneOfOp(kind: string | null | undefined): FlowScene {
    * 条件（間取り・築年など）を **一覧より先に**判定する。
    *   ⚠ `room_layout_id[]` は旧だと `room_` に当たって「検索結果」に誤分類されていた（実測）。
    *   ⚠ `structured_date`（築年）も条件なのに「その他」になっていた。
+   *   ★ 2026-11-27: ITANDI 実在欄（rent:lteq/gteq, building_name, keyword, floor_area, building_age,
+   *     structure_type, option_id, offer_conditions_updated_at, 募集条件更新, 敷金なし, 礼金なし等）も cond に分類する。
    */
-  if (/rental_cost|update_date|structured_date|room_layout|madori|間取り|賃料|築年|walk|徒歩|面積|menseki|square_meter|include_common_fee|管理費|敷金|礼金|deposit/.test(n)) return "cond";
+  if (/rental_cost|rent:|reikin|shikikin|building_name|free_word|keyword|floor_area|building_age|structure_type|option_id|totalrentcheck|offer_conditions_updated_at|募集条件更新|敷金なし|礼金なし|update_date|structured_date|room_layout|madori|間取り|賃料|築年|walk|徒歩|面積|menseki|square_meter|include_common_fee|管理費|敷金|礼金|deposit/.test(n)) return "cond";
   if (/^(ワンルーム|\d+[KDRSL]+)$/i.test(cleaned || name)) return "cond";
-  // 検索結果の一覧（物件の取得・並べ替え）
-  if (/building_tr|property_list|sort|並び替え|結果|一覧|bukken|印刷用pdf|印刷用/.test(n)) return "list";
+  // 検索結果の一覧（物件の取得・並べ替え・ITANDI 一覧/詳細操作）
+  if (/building_tr|property_list|sort|並び替え|結果|一覧|bukken|印刷用pdf|印刷用|物件資料|募集中物確不要|basegridlis|detailconta/.test(n)) return "list";
   return "other";
 }
 

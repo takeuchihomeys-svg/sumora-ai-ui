@@ -17,6 +17,7 @@ import { applyBundleAliasExpansion } from "./field-name-aliases";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { PLAYBOOK_BUILD_V } from "./action-playbook";
 import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
+import { SCENE_JA, describeSceneFlow, type SceneFlow } from "./learn-flow-steps";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -223,6 +224,45 @@ function applyLearnedFromOld(
  * 履歴から学習土台を継ぎ足す（破壊的に bundle を更新）。
  * lookback 既定 80（最大 200）。
  */
+/**
+ * inheritLinkFoundations 等で bundle.scene_flows の station 手順が後から差し替わった時、
+ * bundle.supervisor / supervisor_by_site.realpro 内の「場面: ...」行を最新 scene_flows と同期する。
+ *   ※ 統括の判断文・矛盾自体は一切書き換えず、機械的に生成された scene_flows の転記行だけを一致させる。
+ */
+export function syncSupervisorSceneFlows(bundle: Record<string, unknown>, site?: string | null): number {
+  const flows = Array.isArray(bundle.scene_flows) ? (bundle.scene_flows as SceneFlow[]) : [];
+  if (!flows.length) return 0;
+  const targets: Array<Record<string, unknown>> = [];
+  const sup = bundle.supervisor as Record<string, unknown> | null | undefined;
+  if (sup && typeof sup === "object") targets.push(sup);
+  const bySite = bundle.supervisor_by_site as Record<string, unknown> | null | undefined;
+  if (bySite && typeof bySite === "object") {
+    const sKey = site === "itandi" ? "itandi" : "realpro";
+    const sSup = bySite[sKey] as Record<string, unknown> | null | undefined;
+    if (sSup && typeof sSup === "object") targets.push(sSup);
+  }
+  let synced = 0;
+  for (const t of targets) {
+    const meeting = t.meeting as { evidence?: Array<{ label?: string; value?: string; guessed?: boolean }> } | null | undefined;
+    const ev = Array.isArray(meeting?.evidence) ? meeting.evidence : null;
+    if (!ev) continue;
+    for (const f of flows) {
+      if (!f || !f.scene) continue;
+      const ja = SCENE_JA[f.scene];
+      if (!ja) continue;
+      const label = `場面: ${ja}`;
+      const expected = describeSceneFlow(f).replace(`${ja}: `, "");
+      for (const row of ev) {
+        if (row && row.label === label && row.value !== expected) {
+          row.value = expected;
+          synced++;
+        }
+      }
+    }
+  }
+  return synced;
+}
+
 export async function inheritLinkFoundations(
   sb: SupabaseClient,
   bundle: Record<string, unknown>,
@@ -232,7 +272,21 @@ export async function inheritLinkFoundations(
   const lookback = Math.max(5, Math.min(INHERIT_LOOKBACK_MAX, opt.lookback ?? INHERIT_LOOKBACK_DEFAULT));
   const minSolid = opt.minSolid ?? 30;
   const needFa = !bundle.foundation_audit;
-  const needTransit = !hasStationTransitSteps(bundle);
+  // ★ 2026-11-27: ITANDI / REINS にリアプロ固有の駅手順（駅の設定へ進む 等）を継承しない（#2520→#2821 の無限連鎖汚染を止める）
+  const isRealproFamily = scope !== "itandi" && scope !== "reins";
+  const needTransit = isRealproFamily && !hasStationTransitSteps(bundle);
+  if (!isRealproFamily && Array.isArray(bundle.scene_flows)) {
+    const cleanFlows: Array<{ scene?: string; steps?: string[] }> = [];
+    for (const f of bundle.scene_flows as Array<{ scene?: string; steps?: string[] }>) {
+      if (f && f.scene === "station" && Array.isArray(f.steps)) {
+        const keptSteps = f.steps.filter((s) => !/駅の設定へ進む|沿線の設定へ戻る|one_station|沿線・駅絞り込み/.test(String(s)));
+        if (keptSteps.length) cleanFlows.push({ ...f, steps: keptSteps });
+      } else {
+        cleanFlows.push(f);
+      }
+    }
+    bundle.scene_flows = cleanFlows;
+  }
 
   let preserved = false;
   let preserved_solid = 0;
@@ -288,7 +342,7 @@ export async function inheritLinkFoundations(
         }
       }
       const now = countLearnedSolid(bundle);
-      if (now.solid >= minSolid && now.solid >= preserved_solid && bundle.foundation_audit && hasStationTransitSteps(bundle)) {
+      if (now.solid >= minSolid && now.solid >= preserved_solid && bundle.foundation_audit && (!needTransit || hasStationTransitSteps(bundle))) {
         break;
       }
     }
@@ -315,6 +369,8 @@ export async function inheritLinkFoundations(
 
   /** inherit 後も拡張の完全一致引き用に別名を載せる */
   applyBundleAliasExpansion(bundle);
+  /** 駅遷移などを後から継いだとき、統括 evidence の「場面: ...」行を最新 scene_flows と同期させる */
+  try { syncSupervisorSceneFlows(bundle, scope); } catch { /* */ }
 
   // ★ 2.8.297: 履歴の一番新しい手順書を「列挙されない印」で束に載せる（JSON にも DB にも出ない・prepareBundleForWrite が読んで消す）
   try {

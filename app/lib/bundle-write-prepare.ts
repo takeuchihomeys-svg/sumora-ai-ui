@@ -13,6 +13,8 @@ import { buildPlaybook, PLAYBOOK_BUILD_V } from "./action-playbook";
 import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { cleanOpenerCheckboxCopies } from "./field-name-aliases";
+import { sanitizeBundleForSite } from "./human-motion-sanitize";
+import { syncSupervisorSceneFlows } from "./learn-bundle-preserve";
 
 export type PrepareBundleResult = {
   names_stripped: boolean;
@@ -48,6 +50,16 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>, site?: st
     opener_copies_removed = cleanOpenerCheckboxCopies(bundle);
   } catch {
     // 外せなくても束は書く（手順書が mismatch として足りない所に出す）
+  }
+  try {
+    sanitizeBundleForSite(bundle, site);
+  } catch {
+    // サニタイズ失敗時も束の保存は止めない
+  }
+  try {
+    syncSupervisorSceneFlows(bundle, site);
+  } catch {
+    // 同期失敗時も束の保存は止めない
   }
   let playbook_ok = false;
   let playbook_ver_bumped = false;

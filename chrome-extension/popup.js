@@ -5995,15 +5995,7 @@ function openInstructions(siteKey) {
         building_age:    adjC.building_age || null,
         floor_plan:      adjC.floor_plan || null,
       });
-      window.parent.postMessage({
-        from: "aixlinx-underbar",
-        action: "autofill",
-        source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
-        // ★ 2026-11-19 (2.8.126) audit 1535: 手動の単発は誰の入力か（番号）をページへ渡していなかった（now_customer cid=-）。
-        //   → 別の一括が「番号の無い入力中」を見て上書き・タブ読み直しをしてしまった。番号を載せる。
-        customerId: (c && c.id) ? String(c.id) : null,
-        // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
-        conditions: _auditTagWith(_auditCtx_rp, "realpro", c, {
+      const _rpConditions = _auditTagWith(_auditCtx_rp, "realpro", c, {
           area_mode:     _lockedMode || currentAreaMode,
           rent_min:      readAdjRentMin(c, rpEffectiveRentMax),
           rent_max:      rpEffectiveRentMax,
@@ -6043,29 +6035,10 @@ function openInstructions(siteKey) {
           //   案内モード（realpro-guide.js）が誰の検索か分からず送付済みの部屋を隠せなかった → 条件にお客様を載せる（page-script の入力は使わない欄）
           customer_id:   c.id || null,
           customer_name: c.customer_name || null,
-        }),
-      }, "*");
-      // ページリロード後も自動送信が再開できるようフラグを立てる（手動・自動バッチ共通）
-      // ★ 2026-08-17 修正: 以前は `if (!isAutomated)` で手動クリック限定にしていたが、
-      //   リアプロは検索実行（div.go_search クリック）でページが再読み込みされるため
-      //   bulk-dl.js のモジュール変数（_autoSendArmed 等）は毎回破棄される。
-      //   結果ページで自動送信を起動できる経路は Case C（chrome.storage.session）だけ。
-      //   手動限定にすると自動バッチ（axlx-switch-customer 経由 = isAutomated=1）は
-      //   フラグが立たず、残留フラグを消費した1人目だけ動いて2人目以降が無音で死ぬ。
-      //   Case A（AJAX経路）が先に発火した場合は bulk-dl.js 側でフラグを remove するため
-      //   二重送信にはならない。
-      //   2026-09-18 竹内「前のお客さんのデータのままLINEに共有された」:
-      //   旧はただの true で「誰の検索の再開か」を持っていなかった。リロード後の bulk-dl.js は
-      //   chrome.storage.local の current_customer_*（＝その時点で選ばれている顧客）を読み直すため、
-      //   background が次の顧客へ進んだ後にこのページが送ると、前の顧客の検索結果に
-      //   次の顧客の名前が付く。誰の検索かはフラグ自体に持たせる。
-      // 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」:
-      //   案内モード（guideMode・既定オン）の間は再開の印を置かない＝検索の後の一覧で自動の送信・ダウンロード・ページ送りが始まらない。
-      //   明示の OFF（false）の時だけ今まで通り置く
+      });
+      // ページリロード後も自動送信が再開できるよう、リセット前にフラグ・スコア・記録を確定させる（underbar iframe はリセットのページ再読み込みで消えるため）
       try {
         chrome.storage.local.get(["guideMode"], function (_gm) {
-          // v2.5.77: 光って選択するモードの間は再開の印を置かない（自動の送信・ダウンロード・ページ送りを始めない）
-          // 2026-11-10 v2.5.94: 自動モードを選んでいる時は今まで通り置く（拡張が一覧を読んで送る）
           if (_isAutoModeNow()) { /* 自動モードは置く */ }
           else if (!_gm || _gm.guideMode !== false || (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY)) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
           chrome.storage.session.set({ axlx_pending_auto_send: {
@@ -6076,7 +6049,6 @@ function openInstructions(siteKey) {
           } });
         });
       } catch (_) {}
-      // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
           rent_max:             rpEffectiveRentMax,
@@ -6091,22 +6063,60 @@ function openInstructions(siteKey) {
           ng_points:            c.ng_points || null,
           pet_ok:               c.pet === true || c.pet === 'true' || false,
           admin_fee_max:        c.admin_fee_max || null,
-          // 2026-09-24 竹内「ブレインモードも更新日ちゃんと分かるように」: 条件バーに「更新N日内」を出す
           rp_update_days:       adjUpdateDays ? Number(adjUpdateDays) : null,
           last_touch_date:      lastPropertyTouchDateJst(c) || null,
         }});
       } catch (_) { /* ignore */ }
+      try { _axPipelineStart(c, "realpro"); } catch (_) {}
+      recordSearchForSelected("realpro");
+
       autofillBtn.textContent = "⏳ 検索中...";
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
       autofillBtn.disabled = true;
-      // ★ 一連ロック: 検索開始〜送付完了までこのお客さんだけ（次客の自動検索を止める）
-      try { _axPipelineStart(c, "realpro"); } catch (_) {}
-      /**
-       * ★ 2026-11-17 実愛さん: 旧25秒は人らしいクリア＋地域＋確定＋条件1つずつに足りない。
-       *   bg の fill 待ちは約905秒。UIだけ先に戻すと「止まって条件未更新」に見える。
-       *   → **180秒**まで待つ（ボタンリセットのみ・fill本体は止めない）。
-       */
+
+      // ★ 手動単発の自動検索でも、一括と同じく条件投入前にリセットボタンで空を確認する（リロードで iframe が消えても background が autoFillAfter で自動入力を引き継ぐ）
+      let _dispatchedByBg = false;
+      if (!isAutomated && _isAutoModeNow()) {
+        try {
+          autofillBtn.textContent = "⏳ 前の条件を確認中...";
+          const _rr = await new Promise((resolve) => {
+            let _done = false;
+            const _tmo = setTimeout(() => { if (!_done) { _done = true; resolve(null); } }, 45000);
+            try {
+              chrome.runtime.sendMessage({
+                type: "axlx-reset-before-fill",
+                customer: { id: c.id || null },
+                runId: (_rpConditions && _rpConditions._audit_run_id) || null,
+                autoFillAfter: {
+                  customerId: (c && c.id) ? String(c.id) : null,
+                  conditions: _rpConditions,
+                  source: isAutoSendAll ? "flagged_batch" : "manual",
+                },
+              }, (res) => {
+                void chrome.runtime.lastError;
+                if (!_done) { _done = true; clearTimeout(_tmo); resolve(res || null); }
+              });
+            } catch (_) {
+              if (!_done) { _done = true; clearTimeout(_tmo); resolve(null); }
+            }
+          });
+          _dispatchedByBg = !!(_rr && _rr.dispatched);
+        } catch (_) {}
+      }
+      autofillBtn.textContent = "⏳ 検索中...";
+      if (!_dispatchedByBg) {
+        window.parent.postMessage({
+          from: "aixlinx-underbar",
+          action: "autofill",
+          source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
+          // ★ 2026-11-19 (2.8.126) audit 1535: 手動の単発は誰の入力か（番号）をページへ渡していなかった（now_customer cid=-）。
+          //   → 別の一括が「番号の無い入力中」を見て上書き・タブ読み直しをしてしまった。番号を載せる。
+          customerId: (c && c.id) ? String(c.id) : null,
+          // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
+          conditions: _rpConditions,
+        }, "*");
+      }
       clearTimeout(_fillDoneWatchdog);
       _fillDoneWatchdog = setTimeout(() => {
         const _b = document.getElementById("autofill-btn");
@@ -6117,8 +6127,6 @@ function openInstructions(siteKey) {
           console.warn("[AX] fill-done UIタイムアウト: 180秒以内に完了通知なし（fill本体は継続し得る）");
         }
       }, 180000);
-      // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
-      recordSearchForSelected("realpro");
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
@@ -6845,19 +6853,24 @@ document.addEventListener("DOMContentLoaded", () => {
     var L = self.AxlxHumanLearn;
     function paint() {
       try {
-        chrome.storage.local.get("axlx_human_learn", function (r) {
-          var agg = r && r.axlx_human_learn;
-          var n = agg && agg.n ? agg.n : 0;
+        chrome.storage.local.get(["axlx_human_learn__realpro", "axlx_human_learn__itandi", "axlx_human_learn"], function (r) {
+          var rp = r && r.axlx_human_learn__realpro;
+          var it = r && r.axlx_human_learn__itandi;
+          var leg = r && r.axlx_human_learn;
+          var nRp = (rp && rp.n) ? Number(rp.n) : 0;
+          var nIt = (it && it.n) ? Number(it.n) : 0;
+          var n = (nRp + nIt) > 0 ? (nRp + nIt) : ((leg && leg.n) ? Number(leg.n) : 0);
           btn.style.display = n > 0 ? "inline-block" : "none";
           btn.textContent = "👀 学習 " + n;
-          btn._axlxAgg = agg || null;
+          btn._axlxAgg = (nRp >= nIt ? (rp || it) : (it || rp)) || leg || null;
+          btn._axlxAggBySite = { realpro: rp || null, itandi: it || null };
         });
       } catch (_) {}
     }
     paint();
     try {
       chrome.storage.onChanged.addListener(function (ch, area) {
-        if (area === "local" && ch.axlx_human_learn) paint();
+        if (area === "local" && (ch.axlx_human_learn__realpro || ch.axlx_human_learn__itandi || ch.axlx_human_learn)) paint();
       });
     } catch (_) {}
     btn.addEventListener("click", function () {

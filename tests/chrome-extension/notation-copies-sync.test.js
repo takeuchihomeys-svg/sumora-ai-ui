@@ -47,6 +47,67 @@ function diffKeys(a, b) {
   return out;
 }
 
+// 同一オブジェクト内の重複キー（後勝ちで先行エントリが黙って消えるバグ）を検出する
+function findDupKeys(src, re) {
+  const m = re.exec(src);
+  if (!m) return { found: false, dups: [] };
+  const open = m.index + m[0].length - 1;
+  let d = 0, inStr = null, esc = false, prevSig = "{";
+  const seen = new Set();
+  const dups = [];
+  for (let k = open; k < src.length; k++) {
+    const ch = src[k];
+    if (inStr) {
+      let end = k;
+      while (end < src.length) {
+        const c = src[end];
+        if (esc) { esc = false; end++; continue; }
+        if (c === "\\") { esc = true; end++; continue; }
+        if (c === inStr) break;
+        end++;
+      }
+      const literal = src.slice(k - 1, end + 1);
+      // トップレベル (d === 1) で { または , の直後の "key": だけを対象にする
+      if (d === 1 && (prevSig === "{" || prevSig === ",")) {
+        let j = end + 1;
+        while (j < src.length && /\s/.test(src[j])) j++;
+        if (src[j] === ":") {
+          let key;
+          try { key = JSON.parse(literal); } catch (_) { key = literal; }
+          if (seen.has(key)) dups.push(key);
+          else seen.add(key);
+        }
+      }
+      inStr = null;
+      prevSig = "str";
+      k = end;
+      continue;
+    }
+    if (ch === "/" && src[k + 1] === "/") {
+      const nl = src.indexOf("\n", k);
+      if (nl < 0) break;
+      k = nl;
+      continue;
+    }
+    if (ch === "/" && src[k + 1] === "*") {
+      const ce = src.indexOf("*/", k + 2);
+      if (ce < 0) break;
+      k = ce + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === "{" || ch === "[") { d++; prevSig = ch; continue; }
+    if (ch === "}" || ch === "]") {
+      d--;
+      prevSig = ch;
+      if (d === 0) break;
+      continue;
+    }
+    if (!/\s/.test(ch)) prevSig = ch;
+  }
+  return { found: true, dups };
+}
+
 const pm = read("popup-maps.js");
 const rc = read("resolution-core.js");
 const pj = read("popup.js");
@@ -109,6 +170,51 @@ console.log("■ 正本の外の写し（リアプロ・ITANDI の経路・サ�
   else {
     const d = diffKeys(canonIt, appIt);
     t(`サーバー側 ITANDI_LINE_MAP（${Object.keys(appIt).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+}
+
+console.log("■ 同一オブジェクト内の重複キー禁止（後勝ち消失を防ぐ）");
+{
+  const mapNames = [
+    "STATION_WARD_MAP", "NEIGHBORHOOD_WARD_MAP", "STATION_LINE_MAP",
+    "LINE_STATION_ORDER", "WARD_CODE_MAP", "ITANDI_LINE_MAP_FILL",
+    "LINE_ROUTE_MAP", "LINE_ALIAS_MAP", "REINS_LINE_MAP",
+  ];
+  for (const [label, src, decl] of [["popup-maps.js", pm, "const"], ["resolution-core.js", rc, "var"]]) {
+    for (const name of mapNames) {
+      const r = findDupKeys(src, new RegExp(decl + " " + name + "\\s*=\\s*\\{"));
+      t(`${label} ${name} に重複キーが無い`, r.found && r.dups.length === 0, r.found ? `重複: ${r.dups.join(", ")}` : "定義が見つからない");
+    }
+  }
+  // 回帰確認: 吹田は JR東海道本線と阪急千里線の両方を保つ
+  const canonSt = grab(pm, /const STATION_LINE_MAP\s*=\s*\{/) || {};
+  const rcSt = grab(rc, /var STATION_LINE_MAP\s*=\s*\{/) || {};
+  t("吹田に東海道本線・阪急電鉄千里線の両方が残っている",
+    Array.isArray(canonSt["吹田"]) && canonSt["吹田"].includes("東海道本線") && canonSt["吹田"].includes("阪急電鉄千里線") &&
+    JSON.stringify(canonSt["吹田"]) === JSON.stringify(rcSt["吹田"]),
+    `正本=${JSON.stringify(canonSt["吹田"])} 写し=${JSON.stringify(rcSt["吹田"])}`);
+}
+
+console.log("■ サーバー API の同期（seed-maps / resolve-search-conditions）");
+{
+  const seedSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "seed-maps", "route.ts"), "utf8");
+  t("seed-maps/route.ts が @/app/lib/station-line-maps から ITANDI/REINS 表を共有している",
+    /from\s+["']@\/app\/lib\/station-line-maps["']/.test(seedSrc));
+  for (const name of ["STATION_WARD_MAP", "STATION_LINE_MAP", "NEIGHBORHOOD_WARD_MAP", "LINE_STATION_ORDER"]) {
+    const canon = grab(pm, new RegExp("const " + name + "\\s*=\\s*\\{"));
+    const copy = grab(seedSrc, new RegExp("const " + name + "\\s*(?::[^=]+)?=\\s*\\{"));
+    if (!canon || !copy) { t(`seed-maps ${name} が読める`, false, `正本=${!!canon} 写し=${!!copy}`); continue; }
+    const d = diffKeys(canon, copy);
+    t(`seed-maps ${name}（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      ") + (d.length > 8 ? `\n      …ほか ${d.length - 8} 件` : ""));
+  }
+
+  const rscSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "resolve-search-conditions", "route.ts"), "utf8");
+  for (const name of ["WARD_CODE_MAP", "LINE_ROUTE_MAP", "LINE_ALIAS_MAP"]) {
+    const canon = grab(pm, new RegExp("const " + name + "\\s*=\\s*\\{"));
+    const copy = grab(rscSrc, new RegExp("const " + name + "\\s*(?::[^=]+)?=\\s*\\{"));
+    if (!canon || !copy) { t(`resolve-search-conditions ${name} が読める`, false, `正本=${!!canon} 写し=${!!copy}`); continue; }
+    const d = diffKeys(canon, copy);
+    t(`resolve-search-conditions ${name}（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
   }
 }
 

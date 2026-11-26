@@ -111,7 +111,7 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
        *   → ① **親をたどって意味のある名前を探す**（画像を包むリンク・ボタン・行の見出し）。
        *     ② それでも無い `img` / `body` / `html` は **`null` を返す**（記録しない＝ゴミを貯めない）。
        */
-      var _NON_FIELD = /^(img|body|html|picture|svg|canvas|br|hr)$/i;
+      var _NON_FIELD = /^(img|body|html|picture|svg|canvas|br|hr|iframe)$/i;
       try {
         if (_NON_FIELD.test(tag) && el.closest) {
           // ① 押した画像/余白を包む「意味のある入れ物」を探す（リンク・ボタン・ラベル・行）
@@ -128,13 +128,24 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
           return null;
         }
       } catch (_) {}
-      // ③ id
-      var id = el.id;
-      if (id) return ("#" + id + (cls ? "｜" + mark : "")).slice(0, 30);
+      // ③ id（form 内に name="id" の要素があると form.id が HTMLInputElement になるため文字列属性を優先）
+      var rawId = (el.getAttribute && el.getAttribute("id")) || "";
+      var id = (typeof rawId === "string" && rawId) ? rawId : (typeof el.id === "string" ? el.id : "");
+      if (id && id.indexOf("[object ") !== 0) return ("#" + id + (cls ? "｜" + mark : "")).slice(0, 30);
       // ④ class だけ
-      if (cls) return mark.slice(0, 24);
-      // ⑤ タグだけ
-      return tag.toLowerCase();
+      if (cls && cls.indexOf("[object ") !== 0) return mark.slice(0, 24);
+      // ⑤ 名前も id も class も無い裸要素はラベル・aria-label を探し、取れなければ記録しない（裸の "input" / "div" 等をゴミにしない）
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") {
+        var aria = (el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("placeholder"))) || "";
+        aria = String(aria).replace(/[\s\u3000]+/g, "").slice(0, 20);
+        if (aria && !/^[-ー－_・=|/\\*~～]+$/.test(aria)) return (placePrefix + aria + "｜" + tag.toLowerCase()).slice(0, 30);
+        var hostLbl = el.closest ? el.closest("label") : null;
+        if (hostLbl) {
+          var ltxt = directText(hostLbl).slice(0, 20);
+          if (ltxt) return (placePrefix + ltxt + "｜" + tag.toLowerCase()).slice(0, 30);
+        }
+      }
+      return null;
     } catch (_) { return null; }
   }
   /**
@@ -150,9 +161,14 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
         if (t.replace(/\s+/g, "").length >= 12) break;
       }
       t = t.replace(/[\s\u3000]+/g, "");
-      if (t) return t;
-      // 自身の直下に文字が無ければ、全体の文字（短い時だけ）
+      if (t) {
+        if (/^[-ー－_・=|/\\*~～]+$/.test(t)) return "";
+        return t;
+      }
+      // 自身の直下に文字が無ければ、入れ子が多い大きな枠は混ぜない（ITANDI「路線・駅選択都道府県北海」等の切り貼り防止）
+      if (el.querySelectorAll && el.querySelectorAll("input,select,button,a,label,li").length > 3) return "";
       var all = String(el.textContent || "").replace(/[\s\u3000]+/g, "");
+      if (!all || all.length > 24 || /^[-ー－_・=|/\\*~～]+$/.test(all)) return "";
       return all.length <= 16 ? all : all.slice(0, 12);
     } catch (_) { return ""; }
   }
@@ -260,10 +276,13 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
       try {
         var d = D;
         if (!d || !d.querySelector) return "other";
-        // 小窓が開いているか（リアプロは .this_window、ITANDI は role=dialog）
-        if (d.querySelector(".this_window, [role='dialog'], .modal")) {
-          var w = d.querySelector(".this_window, [role='dialog'], .modal");
-          if (w && w.offsetParent !== null) return "modal";
+        // 小窓が開いているか（リアプロは .this_window / div.search_list / div.step5_m、ITANDI は role=dialog。position:fixed でも判定できるよう getClientRects も見る）
+        if (d.querySelectorAll) {
+          var ms = d.querySelectorAll(".this_window, div.search_list, div.step5_m, [role='dialog'], .modal, .MuiDialog-root, .MuiModal-root");
+          for (var mi = 0; mi < ms.length; mi++) {
+            var w = ms[mi];
+            if (w && (w.offsetParent !== null || (w.getClientRects && w.getClientRects().length))) return "modal";
+          }
         }
         // 検索結果の一覧か（物件の行がある）
         if (d.querySelector(".building_tr, .building_list, .property_list, [class*='building_tr']")) return "result";
@@ -306,34 +325,64 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
         try { return !!(e && (e.offsetParent !== null || (e.getClientRects && e.getClientRects().length))); } catch (_) { return false; }
       };
       var n = function (sel) { try { return d.querySelectorAll(sel).length; } catch (_) { return 0; } };
+      var MODAL_SEL = ".this_window, div.search_list, div.step5_m, [role='dialog'], .modal, .modal_wrap, .MuiDialog-root, .MuiModal-root, .MuiPopover-root";
       var modals = 0;
       try {
-        var ms = d.querySelectorAll(".this_window, [role='dialog'], .modal, .modal_wrap");
-        for (var i = 0; i < ms.length; i++) if (vis(ms[i])) modals++;
+        var ms = d.querySelectorAll(MODAL_SEL);
+        for (var i = 0; i < ms.length; i++) {
+          var elM = ms[i];
+          if (!vis(elM)) continue;
+          // 親のモーダル内側にある入れ子要素（.this_window 内の .search_list 等）を二重に数えない
+          var pM = elM.parentElement && elM.parentElement.closest ? elM.parentElement.closest(MODAL_SEL) : null;
+          if (pM && vis(pM)) continue;
+          modals++;
+        }
+      } catch (_) {}
+      var formVis = 0;
+      try {
+        var fs = d.querySelectorAll("select[name], input[name='city_code[]'], input[name='eq_rm[]'], input[name='room_layout_id[]'], input[name='rent:lteq'], div.go_search, div.go_search_submit");
+        for (var fi = 0; fi < fs.length; fi++) if (vis(fs[fi])) formVis++;
       } catch (_) {}
       return {
         modal: modals,
-        options: n("option"),
-        form: n("select[name], input[name='city_code[]'], div.go_search, div.go_search_submit"),
+        options: n("option, [role='option']"),
+        form: formVis,
         result: n(".building_tr, .building_list, .property_list, [class*='building_tr']"),
       };
     }
-    /** 押す直前の画面の数（展開先を知るための控え） */
+    /** 押す直前の画面の数（展開先を知るための控え・連続クリックで上書きされないよう最大8件積む） */
     var _beforeCounts = null;
-    function noteBeforeClick(el) {
-      try { _beforeCounts = uiCounts(); _beforeEl = el || null; } catch (_) { _beforeCounts = null; }
-    }
     var _beforeEl = null;
+    var _beforeStack = [];
+    function noteBeforeClick(el) {
+      try {
+        var c = uiCounts();
+        _beforeCounts = c;
+        _beforeEl = el || null;
+        _beforeStack.push({ el: el || null, counts: c, at: Date.now() });
+        if (_beforeStack.length > 8) _beforeStack.shift();
+      } catch (_) { _beforeCounts = null; }
+    }
     /**
      * 押した後に**何が開いたか**を1件残す。押してから 500ms 待ってから見る
      * （サイトは非同期で描くので、すぐ見ると「変化なし」に見える）。
      */
     function noteOpened(el) {
       try {
-        if (!_beforeCounts) return;
-        var b = _beforeCounts;
-        var target = el || _beforeEl;
-        _beforeCounts = null; _beforeEl = null;
+        var entry = null;
+        if (_beforeStack.length) {
+          for (var si = _beforeStack.length - 1; si >= 0; si--) {
+            if (_beforeStack[si] && _beforeStack[si].el === el) {
+              entry = _beforeStack.splice(si, 1)[0];
+              break;
+            }
+          }
+          if (!entry && el == null) entry = _beforeStack.pop();
+        }
+        var b = (entry && entry.counts) || _beforeCounts;
+        if (!b) return;
+        var target = el || (entry && entry.el) || _beforeEl;
+        if (!entry) { _beforeCounts = null; _beforeEl = null; }
         var a = uiCounts();
         var what = "none";
         if (a.modal > b.modal) what = "modal";
@@ -341,6 +390,10 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
         else if (a.result > b.result) what = "result";
         else if (a.form !== b.form) what = "form";
         else if (a.modal < b.modal) what = "modal_close";       // 閉じた（確定など）
+        // ネイティブ <select> は OS が選択肢ポップアップを描くため DOM の option 数が変わらない。開いた事実は確かなので options と記録
+        if (what === "none" && target && String(target.tagName || "").toUpperCase() === "SELECT") {
+          what = "options";
+        }
         opens.push({ f: fieldName(target), o: what, s: stageOf(), n: opens.length + 1 });
         if (opens.length > MAX_OPENS) opens.shift();
       } catch (_) {}
@@ -901,6 +954,55 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
    * 前の集計と今の集計を1つに（純関数・元は変えない）。
    *   回数は足す・間の見本は新しい物を残して上限まで・欄の順は新しい回を先に。
    */
+  function _mergeOpens(prevOpens, addOpens) {
+    var acc = {};
+    var isValidOpenField = function (f) {
+      return typeof f === "string" && f.length > 0 && f.indexOf("axlx") !== 0 && f.indexOf("aixlinx") !== 0
+        && f.indexOf("[object ") !== 0 && !/^(img|body|html|svg|picture|canvas)$/i.test(f);
+    };
+    var addOne = function (src) {
+      if (!src || typeof src !== "object" || Array.isArray(src)) return;
+      Object.keys(src).forEach(function (f) {
+        if (!isValidOpenField(f)) return;
+        var r = src[f];
+        if (!r || typeof r !== "object") return;
+        var cur = acc[f] || { n: 0, stage: null, all: {} };
+        var all = r.all && typeof r.all === "object" ? r.all : null;
+        var addedFromAll = false;
+        if (all) {
+          Object.keys(all).forEach(function (k) {
+            var c = Number(all[k]) || 0;
+            if (c > 0) {
+              cur.all[k] = (cur.all[k] || 0) + c;
+              addedFromAll = true;
+            }
+          });
+        }
+        var rn = Number(r.n) || 0;
+        var rk = typeof r.opens === "string" ? r.opens : "";
+        if (!addedFromAll && rk && rn > 0) {
+          cur.all[rk] = (cur.all[rk] || 0) + rn;
+        }
+        cur.n += rn > 0 ? rn : 0;
+        if (typeof r.stage === "string" && r.stage) cur.stage = r.stage;
+        acc[f] = cur;
+      });
+    };
+    addOne(prevOpens);
+    addOne(addOpens);
+    var out = {};
+    Object.keys(acc).slice(0, 30).forEach(function (f) {
+      var v = acc[f];
+      var best = "", bn = -1;
+      Object.keys(v.all).forEach(function (k) {
+        if (v.all[k] > bn) { best = k; bn = v.all[k]; }
+      });
+      if (!best || v.n <= 0) return;
+      out[f] = { opens: best, n: v.n, stage: v.stage, all: v.all };
+    });
+    return out;
+  }
+
   function mergeAggregate(prev, add) {
     var p = prev && typeof prev === "object" ? prev : {};
     var a = add && typeof add === "object" ? add : {};
@@ -918,6 +1020,12 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
     // 2026-11-11: マウスの動かし方・押した場所・画面の動かし方も合わせる
     var motion = mergeMotion({ moves: p.moves, points: p.points, scrolls: p.scrolls },
                              { moves: a.moves, points: a.points, scrolls: a.scrolls });
+    // 2026-11-27: opens / open_kinds も引き継ぐ（旧はここで落ちて全期間 DB 0件になっていた）
+    var opensMerged = _mergeOpens(p.opens, a.opens);
+    var openKinds = {};
+    var pok = p.open_kinds || {}, aok = a.open_kinds || {};
+    Object.keys(pok).forEach(function (k) { var c = Number(pok[k]) || 0; if (c > 0) openKinds[k] = (openKinds[k] || 0) + c; });
+    Object.keys(aok).forEach(function (k) { var c = Number(aok[k]) || 0; if (c > 0) openKinds[k] = (openKinds[k] || 0) + c; });
     return {
       v: 1,
       n: (Number(p.n) || 0) + (Number(a.n) || 0),
@@ -930,6 +1038,8 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
       moves: motion.moves,
       points: motion.points,
       scrolls: motion.scrolls,
+      opens: opensMerged,
+      open_kinds: openKinds,
     };
   }
 

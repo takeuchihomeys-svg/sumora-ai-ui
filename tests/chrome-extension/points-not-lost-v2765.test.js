@@ -37,10 +37,10 @@ console.log("■ ① `_livePoints` を null で始めない（読み込み前の
 
 console.log("\n■ ② 読み込みで上書きしない（統合する）");
 {
-  // ⚠ `POINTS_KEY2` は他にも出てくる（保存・別の読み込み）。**最後の出現**がここの読み込み。
-  const i = src.lastIndexOf("chrome.storage.local.get([POINTS_KEY2]");
+  // ⚠ `SITE_POINTS_KEY` は他にも出てくる（保存・別の読み込み）。**最後の出現**がここの読み込み。
+  const i = Math.max(src.lastIndexOf("chrome.storage.local.get([SITE_POINTS_KEY]"), src.lastIndexOf("chrome.storage.local.get([POINTS_KEY2]"));
   const seg = src.slice(i, i + 1400);
-  ok("  ⚠ 素朴な上書き（`_livePoints = r[KEY]`）をしていない", !/_livePoints = \(r && r\[POINTS_KEY2\]\) \|\| \{\}/.test(seg));
+  ok("  ⚠ 素朴な上書き（`_livePoints = r[KEY]`）をしていない", !/_livePoints = \(r && r\[(?:POINTS_KEY2|SITE_POINTS_KEY)\]\) \|\| \{\}/.test(seg));
   ok("  回数の多い方を残す（統合）", /Number\(b\.n\)[\s\S]{0,80}Number\(a\.n\)/.test(seg));
   ok("  既にある物を消さない（`if (!a)` の時だけ入れる）", /if \(!a\) \{ cur\[k\] = b; return; \}/.test(seg));
 }
