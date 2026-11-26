@@ -14942,3 +14942,11 @@ Claude（統括役）からの依頼2件への対応。
 - tsc --noEmit: 本体（action-playbook・bulk-dl）は 0。テストに前からある型エラー（overdue-promises-digest・sent-read-retry・exam-select・exam-switch-reach・deepseek-auto-usage・turn-aims-after・continuous-clear-fill-no-gap・continuous-clear-sequence の1件）は今回の変更と無関係（HEAD に既にある）。
 - DB: 書いていない（all 2813／realpro 2815／itandi 2814 は作り方 14 のまま。読み出し時に作り直される）。DB 反映（attach）は竹内さんの OK 待ち。
 - 未（実機）: 拡張 2.8.310 の再読み込み・itandi の実走（リセットの印が来るか）・realpro の実走。
+
+### 2026-11-26 リアプロ・ITANDI を混ぜない見張り（仕組み化）
+- 竹内さん「リアプロと ITANDI がごちゃごちゃにならないように仕組みで整理して行う。ここを徹底する。ここを行わないとバグが起きる」。
+- 調べた結果（拡張の中・1629 ファイル）: サイトの名前が付いたファイル（`realpro-*`・`itandi-*`・`reins-*`）の中に、他方の名前（対応表・画面の名前）は**無かった**（コメントの文字だけ）。両方を扱う共有ファイルは 6（background.js・popup-maps.js・popup.js・resolution-core.js・search-audit-diagnose.ts・migrate-schema/route.ts）。いずれも両方の入口で、理由を書いて登録した。
+- 仕組み: `tests/chrome-extension/site-split-rules.json`（名前の一覧・箱の決まり・登録の理由）と `tests/chrome-extension/site-split-guard.test.js`（`ext-test-all` が毎回回す）。箱の違反・登録していない新しい共有ファイルで止まる。`--report` で一覧を出す。違反を一時的に入れて止まることを確かめ、消して通ることを確かめた。
+- DB_STRUCTURE.md の「混ざっている所 2（一括・自動の更新日は ITANDI もリアプロの値）」は、2026-11-10 の直し（`background.js` 6264〜・`auto-run.js` の `optsForSite`／`optsForSiteRecord`）で直っていた。文書を現状に直した。
+- 拡張のコードは変えていない（バージョンは上げない）。
+- 残り（DB 側・判断待ち）: `station_map.itandi_lines` の 344 行が表と違う（書き換えは未実施・統括役の判断待ち）。
