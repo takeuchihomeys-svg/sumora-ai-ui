@@ -52,6 +52,16 @@ const files = [
   ...listFiles(path.join("app", "api"), [".ts"], true),
 ];
 
+// ④ サイトの呼び名の写し: app の中で、サイト名（realnetpro・realpro・リアプロ）を直接比べるコードは、
+//    正本 app/lib/site-key.ts の siteKeyOf／commandSiteKeyOf を使う。比べる物が「拡張・コマンドの名前」だけと
+//    分かっている所だけ shared_literal に理由付きで登録する（2026-11-26・8か所の写しを1つに集めた）。
+// 見るのは拡張の呼び名 realnetpro と「リアプロ」を比べる所（写しが食い違う元）。内部の名前 realpro で比べる物（正規化の後）は数えない。
+const SITE_LITERAL_RE = /(===|!==|==)\s*"(realnetpro|リアプロ)"|"(realnetpro|リアプロ)"\s*(===|!==|==)/;
+const SITE_KEY_HOME = "app/lib/site-key.ts";
+const literalFiles = listFiles("app", [".ts", ".tsx"], true)
+  .filter((rel) => rel !== SITE_KEY_HOME && !rel.includes("/__tests__/"))
+  .filter((rel) => SITE_LITERAL_RE.test(codeOnly(fs.readFileSync(path.join(ROOT, rel), "utf8"))));
+
 const scan = files.map((rel) => {
   const code = codeOnly(fs.readFileSync(path.join(ROOT, rel), "utf8"));
   const base = path.posix.basename(rel);
@@ -73,6 +83,9 @@ if (REPORT) {
     const bad = RULES.box_forbidden[s.box].flatMap((k) => (k === "realpro_only" ? s.realpro : k === "itandi_only" ? s.itandi : []));
     if (bad.length) console.log("  " + s.rel + "  使っている名前=[" + bad.join(",") + "]" + (RULES.box_exceptions[s.rel] ? "  例外登録済み" : "  ★違反"));
   }
+  console.log("■ サイト名を直接比べているファイル（app・site-key.ts 以外）");
+  for (const rel of literalFiles)
+    console.log("  " + rel + (RULES.shared_literal[rel] ? "  登録済み" : "  ★未登録（siteKeyOf を使う）"));
   process.exit(0);
 }
 
@@ -101,6 +114,13 @@ const stale = Object.keys(RULES.shared_mix).filter((rel) => {
   return !s || !(s.realpro.length && s.itandi.length);
 });
 if (stale.length) console.log("  ※ 登録を外せる（もう両方を使っていない）: " + stale.join(", "));
+
+// ④ サイト名の写し（正本 site-key.ts 以外で、サイト名を直接比べる）は、登録した理由付きだけ
+const newLiteral = literalFiles.filter((rel) => !RULES.shared_literal[rel]);
+ok("④ サイト名の直接比べは site-key.ts を使う（登録した所だけ例外・新しい写しは止める）", newLiteral.length === 0,
+  newLiteral);
+const staleLiteral = Object.keys(RULES.shared_literal).filter((rel) => !literalFiles.includes(rel));
+if (staleLiteral.length) console.log("  ※ 登録を外せる（もう直接比べていない）: " + staleLiteral.join(", "));
 
 console.log("  " + (failed === 0 ? "✅" : "❌") + " 合格 " + passed + "・不合格 " + failed);
 process.exit(failed === 0 ? 0 : 1);

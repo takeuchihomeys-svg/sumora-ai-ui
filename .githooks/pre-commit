@@ -1,0 +1,10 @@
+#!/bin/sh
+# コミットの前に、リアプロ・ITANDI を混ぜない見張りを回す（2026-11-26）。
+# 有効にする（1回だけ・この PC の設定）: git config core.hooksPath .githooks
+# 止まったら: 出た ✗ を直す。新しい共有ファイルなら tests/chrome-extension/site-split-rules.json に理由を書いて登録する。
+# 無効にする: git config --unset core.hooksPath
+set -e
+echo "[pre-commit] サイト分けの見張り（リアプロ・ITANDI・REINS）"
+node tests/chrome-extension/site-split-guard.test.js
+echo "[pre-commit] サイトの呼び名の正本の試験（app/lib/site-key.ts）"
+npx tsx app/lib/__tests__/site-key.test.ts
