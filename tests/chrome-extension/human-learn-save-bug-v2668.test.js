@@ -50,7 +50,7 @@ console.log("\n■ ③ 読み込み順（記録より先に送る係）");
 {
   const c = mf.content_scripts.find((x) => (x.js || []).includes("human-learn-record.js"));
   ok("送る係が先・記録が後", c.js.indexOf("human-learn-upload.js") < c.js.indexOf("human-learn-record.js"), c.js);
-  ok("どちらも3サイト＋リアプロ", c.matches.includes("https://www.realnetpro.com/*") && c.matches.includes("https://itandibb.com/*") && c.matches.includes("https://system.reins.jp/*"));
+  ok("どちらもリアプロ＋ITANDI（レインズは2026-11-26から対象外）", c.matches.includes("https://www.realnetpro.com/*") && c.matches.includes("https://itandibb.com/*") && !c.matches.some((m) => m.includes("reins")));
 }
 
 console.log("\n■ ④ その場で確かめられる（console）");
@@ -69,7 +69,7 @@ console.log("\n■ ⑤ 学習の読み込みが全サイトで有効");
 {
   const first = mf.content_scripts[0];
   ok("純関数が先頭（document_start）", first.js.includes("human-learn.js"));
-  ok("3サイトすべて", first.matches.length >= 4);
+  ok("リアプロ・ITANDIの全部（2サイト・レインズは対象外）", first.matches.length >= 3);
   ok("カーソル（pointer-ui.js）より前（癖を読める）", first.js.indexOf("human-learn.js") < first.js.indexOf("pointer-ui.js"));
 }
 

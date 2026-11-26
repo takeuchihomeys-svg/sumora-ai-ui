@@ -14970,3 +14970,18 @@ Claude（統括役）からの依頼2件への対応。
 - **DB（竹内さんの決定）**: 今日の空埋めで REINS 列に入れた `東海道本線` の 11 行を空に戻した（`reins_tokaido_revert_before_*.json` が戻す前の控え）。茨城は空埋めより前から `東海道本線` だったので触っていない。
 - **未決**: (A) REINS の東海道本線の画面の表記（東海道本線か東海道線か）・(B) 近鉄信貴線・西信貴ケーブル線を一括の経路で ITANDI・REINS に回すか（route_id が無い路線は回さない `if (id)` の所・ロジックの変更）・(C) 東海道本線を駅ごとに京都線／神戸線へ振り分けるか。
 - **注意**: 写しを揃えたので、一括の経路は REINS の「東海道本線」を出すようになった（以前は出なかった）。REINS の画面の表記が違えば、一括の REINS 検索で東海道の沿線が当たらない（未確認）。
+
+### 2026-11-26（深夜）レインズは使わない（竹内さん）
+- 実測（直近30日）: search_audits リアプロ 596・ITANDI 84・レインズ 0。property_pickups の site=reins 0。automation_commands の reins 0。
+- 対象外: REINS の表記（station_map.reins_line・REINS_LINE_MAP）・見張りの REINS の箱・写しの試験の REINS。
+- まだ残している（止める・消すは未決）: `reins-content.js`・`reins-bulk-dl.js`・`reins-page-script.js`・manifest の reins の一覧。
+- 設計知見に【決定】として1行入れた。
+
+### 2026-11-26（深夜）レインズ停止・見張りの穴を塞ぐ（竹内さんの選択）
+- レインズは使わない（実測: 直近30日 search_audits リアプロ 596・ITANDI 84・レインズ 0）。
+- 変更: `chrome-extension/manifest.json` から `system.reins.jp` を外した（host_permissions・web_accessible_resources・content_scripts の REINS 分）。`reins-*.js` のファイルは残す（消すかは未決）。版は上げていない（2.8.310 のまま。版を上げるなら `_AXLX_PAGE_VER`・`AUTO_RULES_REVIEWED_UP_TO` も一緒に直す必要がある）。拡張の再読み込みで反映。
+- 試験の期待値を2サイトに直した: `human-learn-save-bug-v2668`・`human-learn-search-flow-v2667`・`mode-gate-v2663`・`search-audit`。拡張の試験は 226 青・新しい赤 0。
+- 写しの見張りを広げた: `tests/chrome-extension/notation-copies-sync.test.js` に、リアプロの `ROUTE_LINE_MAP`（page-script・realpro-guide-plan）・ITANDI の `ITANDI_STATION_ALIAS_MAP`（itandi-page-script・itandi-guide-plan）・サーバー側 `ITANDI_LINE_MAP`（app/lib/station-line-maps.ts）を加えた。16 OK / 0 NG。
+- `.githooks/pre-commit` に `notation-copies-sync` を入れた（コミット前に動く）。
+- DB の点検: `scripts/check-station-map-canonical.ts`（読むだけ）を追加。結果: station_map 778行・リアプロ路線のある行 632・正本とずれた行 20（大阪環状線 17行＝DB が「大阪環状線」・正本は「JR大阪環状線」／東海道本線 3行＝神戸線側が無い）。
+- 未決: 大阪環状線 17行を残した理由が記録に無い（竹内さんに確認中）。東海道本線の粗さ（C）。

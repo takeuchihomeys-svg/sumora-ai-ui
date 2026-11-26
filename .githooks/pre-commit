@@ -6,5 +6,7 @@
 set -e
 echo "[pre-commit] サイト分けの見張り（リアプロ・ITANDI・REINS）"
 node tests/chrome-extension/site-split-guard.test.js
+echo "[pre-commit] 表記の写しが正本（popup-maps.js）と同じか"
+node tests/chrome-extension/notation-copies-sync.test.js
 echo "[pre-commit] サイトの呼び名の正本の試験（app/lib/site-key.ts）"
 npx tsx app/lib/__tests__/site-key.test.ts

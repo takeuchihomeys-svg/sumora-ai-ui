@@ -79,5 +79,38 @@ console.log("■ 写しの中身の約束（ずれやすい所）");
   t("近鉄信貴線・西信貴ケーブル線の ITANDI 名が正本どおり", rcItandi["近鉄信貴線"] === "近鉄信貴線" && rcItandi["近鉄西信貴ケーブル線"] === "近鉄西信貴鋼索線(西信貴ケーブル)");
 }
 
+// 2026-11-26（竹内さん「抜けを仕組みで止める」）: 正本の外にあった写しも見張る。
+//   ・リアプロの路線番号→名前（ROUTE_LINE_MAP）: page-script.js と realpro-guide-plan.js → 正本 LINE_ROUTE_MAP の逆引き
+//   ・ITANDI の駅の読み替え（ITANDI_STATION_ALIAS_MAP）: itandi-page-script.js と itandi-guide-plan.js → 互いに同じ
+//   ・サーバー側の ITANDI_LINE_MAP（app/lib/station-line-maps.ts）→ 正本 ITANDI_LINE_MAP_FILL
+console.log("■ 正本の外の写し（リアプロ・ITANDI の経路・サーバー側）");
+{
+  const inv = {};
+  const route = grab(pm, /const LINE_ROUTE_MAP\s*=\s*\{/) || {};
+  for (const [name, id] of Object.entries(route)) if (!(id in inv)) inv[id] = name;
+  const rpage = grab(read("page-script.js"), /var ROUTE_LINE_MAP\s*=\s*\{/);
+  const rguide = grab(read("realpro-guide-plan.js"), /var ROUTE_LINE_MAP\s*=\s*\{/);
+  for (const [label, src] of [["page-script.js", rpage], ["realpro-guide-plan.js", rguide]]) {
+    if (!src) { t(`ROUTE_LINE_MAP（${label}）が読める`, false); continue; }
+    const d = diffKeys(inv, src);
+    t(`ROUTE_LINE_MAP（${label}・${Object.keys(src).length}件）が正本の路線番号と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+  const ipage = grab(read("itandi-page-script.js"), /var ITANDI_STATION_ALIAS_MAP\s*=\s*\{/);
+  const iguide = grab(read("itandi-guide-plan.js"), /var ITANDI_STATION_ALIAS_MAP\s*=\s*\{/);
+  if (!ipage || !iguide) t("ITANDI_STATION_ALIAS_MAP が両方に読める", false);
+  else {
+    const d = diffKeys(ipage, iguide);
+    t(`ITANDI_STATION_ALIAS_MAP（${Object.keys(ipage).length}件）が itandi-page-script と itandi-guide-plan で同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+  const appSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "lib", "station-line-maps.ts"), "utf8");
+  const appIt = grab(appSrc, /const ITANDI_LINE_MAP\s*(:[^=]*)?=\s*\{/);
+  const canonIt = grab(pm, /const ITANDI_LINE_MAP_FILL\s*=\s*\{/);
+  if (!appIt || !canonIt) t("app/lib の ITANDI_LINE_MAP が読める", false, `読めた=${!!appIt}`);
+  else {
+    const d = diffKeys(canonIt, appIt);
+    t(`サーバー側 ITANDI_LINE_MAP（${Object.keys(appIt).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+}
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

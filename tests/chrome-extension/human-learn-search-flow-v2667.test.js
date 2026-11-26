@@ -167,7 +167,7 @@ console.log("\n■ ③ 3つのサイト全部で学習が動く（読み込み�
   const mf = JSON.parse(read("manifest.json"));
   const recCs = mf.content_scripts.find((c) => (c.js || []).includes("human-learn-record.js"));
   ok("human-learn-record.js が content script にある", !!recCs);
-  for (const m of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
+  for (const m of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*"]) {
     ok(`  ${m} で学習する`, recCs.matches.includes(m));
   }
   const firstCs = mf.content_scripts[0];
