@@ -6,7 +6,7 @@
 //   ④ 確認の約束の後、お客様が了承に一言足した → 足した所に返信・結果が揃ったら【物件確認した】
 //   場面は AIX の札（aix-state-card の checkFlow）と同じ欄で見分ける。ブレインへは材料の1行（答えの規則でなく竹内さんの決め）として渡す。
 //   スイッチ BRAIN_CHECK_PROMISE_FLOW: 既定 off（材料に入れない・札の欄は計算する）／on（ブレインの材料に1行）
-import { isAckOnlyTurn } from "./ack-topic-scope";
+import { isAckOnlyTurn, isAckOrReviewTurn, ackReviewAsAckOn } from "./ack-topic-scope";
 import { classifyCustomerBurst } from "./customer-reaction-predict";
 
 export type CheckFlowScene = "ack_wait" | "question_after_promise" | "brought_no_promise" | "ack_plus";
@@ -50,7 +50,7 @@ export function checkPromiseFlowOf(messages: ReadonlyArray<Msg>, aixRows: Readon
   const txt = texts.join("\n");
   const open = promiseAt !== null && !resultSent;
   if (open && !broughtNow) {
-    if (isAckOnlyTurn(txt)) return { ...out, scene: "ack_wait" };
+    if ((ackReviewAsAckOn() ? isAckOrReviewTurn : isAckOnlyTurn)(txt)) return { ...out, scene: "ack_wait" }; // 2026-11-27 作業員A: ACK_REVIEW_AS_ACK=on で見る受けの付いたお礼も（既定 off）
     const cat = classifyCustomerBurst(texts);
     if (cat === "question") return { ...out, scene: "question_after_promise" };
     if (!/[?？]|ですか|ますか|でしょうか/.test(txt) && txt.length <= 80 && /ありがと|よろしく|宜しく|わかりました|分かりました|了解|承知|かしこまり|お願い/.test(txt)) return { ...out, scene: "ack_plus" };

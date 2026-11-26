@@ -44,6 +44,27 @@ export function isAckOnlyTurn(text: string | null | undefined): boolean {
 }
 
 /**
+ * 2026-11-27 作業員A（統括役の頼み・q472 の根）: 「ありがとうございます！！確認させていただきます！」のように、送った物を見るという受けが付いたお礼は isAckOnlyTurn が false＝
+ *   探す約束・確認の約束の後のお礼の場面が立たなかった（試験の写しには送れる候補 3件があったのに材料の1行が入らない）。
+ *   見る受け（確認させて頂きます・拝見します・見てみます・目を通します）はお礼の札として数える。問い・条件の変更（もう少し・やっぱり・〜円・駅・エリア・間取り・他にも）が続く束は数えない。
+ *   スイッチ ACK_REVIEW_AS_ACK: 既定 off（今の isAckOnlyTurn のまま）／on（約束の流れの場面の見分けだけで使う）
+ */
+export function ackReviewAsAckOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ACK_REVIEW_AS_ACK ?? "").trim().toLowerCase() === "on";
+}
+const REVIEW_TOKEN_RE = /^(?:お世話になっております|(?:ご協力|ご丁寧に|お手数(?:ですが|をおかけしますが)?|わざわざ)?(?:ありがとう|有難う)(?:ございます|ございました)?|(?:ご)?(?:確認|拝見|検討)(?:させて|して|いた)?(?:いただ|頂)?(?:きます|します)|拝見します|見て(?:みます|おきます|みますね)|目を通します|確認します|見ます|みます|見させて(?:いただ|頂)きます)$/;
+const NOT_ACK_REVIEW_RE = /[?？]|ですか|ますか|でしょうか|もう少し|やっぱり|やはり|他にも|ほかにも|[0-9０-９]+\s*(?:万|円)|駅|エリア|間取り|条件|変更|追加/;
+/** お礼だけか、見る受けの付いたお礼（純関数） */
+export function isAckOrReviewTurn(text: string | null | undefined): boolean {
+  if (isAckOnlyTurn(text)) return true;
+  const s = String(text ?? "").normalize("NFKC").trim();
+  if (!s || [...s].length > 50 || NOT_ACK_REVIEW_RE.test(s) || /[\[［【]/.test(s)) return false;
+  const tokens = s.split(ACK_SPLIT_RE).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 5) return false;
+  return tokens.some((t) => REVIEW_TOKEN_RE.test(t)) && tokens.every((t) => ACK_TOKEN_RE.test(t) || REVIEW_TOKEN_RE.test(t));
+}
+
+/**
  * 2026-11-05 作業員1（竹内さんの35番の解き直し・番 8959）: スタンプだけの番（[スタンプ]）を、2段の見分けでお礼・了承と読む。
  *   isAckOnlyTurn は「[」を含む番を落とすので、ピックアップの約束の後のスタンプが「お礼・了承でない番」になり、物件の AIX が約束の返信（2段）に戻されていた。
  *   線（本番 90日・ピックアップの約束の直後のお客様の番）: スタンプ → 次の一手が AIX 5/5（竹内さん 3/3）・文字のお礼 → 竹内さん AIX 30/35。KB aca164df・2d0f33cf
