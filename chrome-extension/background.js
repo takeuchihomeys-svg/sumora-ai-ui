@@ -7124,13 +7124,37 @@ try {
         if (!q.beatAt || Date.now() - q.beatAt > 20 * 60000) { _bulkQueueSave({ done: true, why: "stale_on_start" }); return; }
         if (q.stage === "running") {
           console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける（90秒反応なければ自動確認）");
-          setTimeout(function () {
+          var _swWdRun = function (_swTry) {
             (async function () {
               try {
                 if (_manualBulkAlive || _batchLoopAlive) return;
                 var q2 = await _bulkQueueLoad();
                 if (!q2 || q2.done || q2.stage !== "running") return;
                 if (Date.now() - (Number(q2.beatAt) || 0) < 90000) return;
+                /**
+                 * ★ 2.8.315 実測 #1659→#1661（2026-11-27）: 入力（fillRunning）は終わっていても、検索後の
+                 *   「並べ替え→一覧→PDF」は画面側（bulk-dl）が続けている。旧はそこを見ず「放置」と決めて
+                 *   次客を始め、並べ替えが終わった5秒後に次客の「リセット」が前客の物件取得を割った
+                 *   （次客は前客の鍵で最大10分待ち → 条件が入らない）。
+                 *   → 前客の一連の鍵（axlx_pipeline_job）か検索後の印（axlx_pending_auto_send）が生きている間は
+                 *     次へ進めず、60秒ごとに見直す（鍵は無進捗12分・開始30分で切れるので永久には待たない）。
+                 */
+                try {
+                  var _wdLk = await chrome.storage.local.get("axlx_pipeline_job");
+                  var _wdJob = _wdLk && _wdLk.axlx_pipeline_job;
+                  var _wdSs = await chrome.storage.session.get("axlx_pending_auto_send");
+                  var _wdPa = _wdSs && _wdSs.axlx_pending_auto_send;
+                  var _wdCid = String(q2.cid || "");
+                  var _wdJobLive = !!(_wdJob && String(_wdJob.customerId || "") === _wdCid && _pipelineJobLive(_wdJob));
+                  var _wdPaLive = !!(_wdPa && String(_wdPa.customerId || "") === _wdCid && Date.now() - Number(_wdPa.ts || 0) < 10 * 60 * 1000);
+                  if ((_wdJobLive || _wdPaLive) && _swTry < 40) {
+                    console.warn("[bulk] SW再起動後の見張り: 前客は検索後の一覧・PDFの途中（鍵=" + _wdJobLive + " 印=" + _wdPaLive + "）→ 次へ進めず待つ " + (_swTry + 1));
+                    // beatAt は更新しない（更新すると次の見直しが「まだ新しい」で抜けて見張りが消える）
+                    var _swWdGapMs = 60000;
+                    setTimeout(function () { _swWdRun(_swTry + 1); }, _swWdGapMs);
+                    return;
+                  }
+                } catch (_) {}
                 // 画面タブが生きているか／実はもう終わっていないか確認し、止まったままなら次へ進める
                 var tabsR = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
                 var aliveFilling = false;
@@ -7147,7 +7171,8 @@ try {
                 }
               } catch (_) {}
             })();
-          }, 90000);
+          };
+          setTimeout(function () { _swWdRun(0); }, 90000);
           return;
         }
         await _bulkKick("sw_restart");

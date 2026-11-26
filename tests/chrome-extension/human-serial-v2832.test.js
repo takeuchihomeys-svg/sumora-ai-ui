@@ -113,7 +113,8 @@ function body(src, name) {
     ok("bg: 開始31分 → 延長していても切れる", live({ startedAt: now - 31 * 60e3, touchedAt: now - 60e3 }) === false);
     ok("popup と bg が同じ答え", ctx({ startedAt: now - 13 * 60e3 }) === true && ctx({ startedAt: now - 13 * 60e3, touchedAt: now - 2 * 60e3 }) === false && ctx({ startedAt: now - 31 * 60e3, touchedAt: now - 60e3 }) === true);
     ok("検索が終わって送付へ入る時に延長する", /_axPipelineTouch\("search-done→送付"\)/.test(pp));
-    ok("bg の3か所が固定の12分ではなく同じ決まりを使う", (bg.match(/_pipelineJobLive\(_/g) || []).length === 3 && !/startedAt \|\| 0\) < 12 \* 60 \* 1000/.test(bg));
+    // 2.8.315: 裏の再起動後の見張り（_swWdRun）が4か所目（同じ決まり _pipelineJobLive を使う）
+    ok("bg の4か所が固定の12分ではなく同じ決まりを使う", (bg.match(/_pipelineJobLive\(_/g) || []).length === 4 && !/startedAt \|\| 0\) < 12 \* 60 \* 1000/.test(bg));
   }
 
   console.log("\n■ ITANDI 自動の回は alert で止めない");

@@ -56,7 +56,7 @@ ok("20秒ごとに getPlatformInfo", /getPlatformInfo[\s\S]{0,600}\}, 20000\)/.t
 ok("見回りで段の止まりを見て進める", /_bulkPhaseStuck\(p\)\)\s*\{\s*_bulkKick\("stuck:"/.test(bg));
 ok("入力・送付の待ちは見回りで進めない", /BULK_KICKABLE_PHASES = \{[^}]*\}/.test(bg) && !/BULK_KICKABLE_PHASES = \{[^}]*wait_batch_done/.test(bg) && !/BULK_KICKABLE_PHASES = \{[^}]*autofill/.test(bg));
 ok("立ち上がり直したら続きを探す", /sw_restart/.test(bg));
-ok("入力・送付の最中に止められた時は送付完了を待つ", /q\.stage === "running"\)\s*\{[\s\S]{0,300}送付完了を待って続ける[\s\S]{0,2500}?batch_done_sw_watchdog[\s\S]{0,400}?return;/.test(bg));
+ok("入力・送付の最中に止められた時は送付完了を待つ", /q\.stage === "running"\)\s*\{[\s\S]{0,300}送付完了を待って続ける[\s\S]{0,6500}?batch_done_sw_watchdog[\s\S]{0,400}?return;/.test(bg));
 ok("送付完了の合図でループが無ければ続ける", /batch_done_no_loop/.test(bg));
 ok("定時の一括は続きを待つ間は割り込まない", /_bq && !_bq\.done && _bq\.beatAt/.test(bg));
 ok("Realtime も割り込まない", /_rtBq && !_rtBq\.done/.test(bg));

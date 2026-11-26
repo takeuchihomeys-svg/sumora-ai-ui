@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.315: 並べ替えが自分のパネルを掴む／裏の再起動後に前客の物件取得を割って次客へ進む（実測 #1659→#1661）**
+
+竹内さん実機（2.8.314）「並べ替えの場所を手順書で把握できていない・マウスが変な動き・検索が重い／並べ替え後に物件取得せずリセットを押した／リセット後に次客の条件が入らない」。**本番 DB（search_audits #1659・#1661）を時刻順に読んで**原因を2つ確かめた。
+
+**原因① 並べ替え見出しが自分のパネル**（bulk-dl.js）: `byTextLoose(["並べ替え"],28)` と `_findSortHeadEl` が拡張自身の行「𝑅.さん／並べ替え最中（1/2）」（17字）を本物の見出し（143字の塊）より先に掴み、そこへカーソルを置いて AD が出ず（`sort_no_ad menu_only 見えていた: AD/いま𝑅.さん／並べ替え最中`）数十秒やり直し。パネルを左へ避けた後でやっと本物（`sort_head_buried len=143`）に行けて成功した。
+→ 直し: `_isOwnUiEl`（id が `aixlinx-`／`axlx-` で始まる要素の中）を追加し、`_sortOnce` の `visible`・`_findSortHeadEl`・`_findSortHeadByAim` の `vis` で外した（byText／byTextLoose／_visibleWords／AD・高→低の探索も同じ `visible` を通る）。
+
+**原因② 裏の再起動後の見張りが検索後の途中を「放置」とみなす**（background.js）: #1659 は 22:14 に裏が再起動（`sw_restart_restored`）。90秒後の見張り（`batch_done_sw_watchdog`）が `fillRunning` だけを見て「入力中ではない＝放置」と決め、並べ替えが終わった5秒後（22:16:05）に次客 #1661 を開始。次客のリセットが前客（R.）の一覧・PDF取得を割り、`reset_press 押せず press_timeout15`×2 → 従来の外し → 前客の鍵（axlx_pipeline_job）が生きているため `wait_prev_customer`（最大10分）で**次客の条件が入らない**（画面は「新しい条件を入れている途中」のまま）。
+→ 直し: 見張りを `_swWdRun(try)` にして、**同じ客の鍵（`_pipelineJobLive`）か検索後の印（axlx_pending_auto_send・10分内）が生きている間は次へ進めず60秒ごとに見直す**（上限40回・beatAt は更新しない）。鍵は無進捗12分・開始30分で切れるので永久には待たない。
+→ 手順書: 決まり `sort_skip_own_ui`（list）・`sw_restart_wait_post_search_flow`（switch）を `auto-procedure-rules.ts` に追加（verify は点検記録に段が出ないので RULES_CODE_ONLY に理由つき）。`_AXLX_RULES_DONE` にも追加。
+
+**まだ分かっていない／未確認**（推測で直していない）: ①「検索が重くて固まる」は実測の裏付けが無い（perf 段は未確認）②リセットボタンが押せなかった理由（`press_timeout15`・`tab_hidden` ＝タブが背面）③ page-script の `loop_task_list` が fill_done の時点で sort/list を完了扱いにする（`loop_advance 客完了→次へ` が検索直後に出る）。表示の台帳だけで動きは変えていないが、紛らわしい。
+**テスト**: `tests/chrome-extension/sort-own-ui-sw-watchdog-v28315.test.js`（23項目）。
+**実機で確かめる事**: 再読込→自動2客→並べ替えの最初の hover が本物の見出し（`sort_head_hover` の d が「並べ替え更新日時…」）／裏が起き直しても前客の PDF が終わってから次客のリセット。
+
+---
+
 ## 2026-11-27 **拡張 2.8.314: 古い赤 104 本の整理（→赤 2 本）＋ 本物の退行 3 件の直し／戻し**
 
 竹内さん「残っていることも徹底的に細かく改善お願い」。8 人に 13 本ずつ割り振り、失敗した項目ごとに A（試験が古い＝今の設計に合わせて直す）／B（本物の退行の疑い）／C（意図した設計変更＝その項目だけ退役してコメントを残す）に分けて整理した。**コードを見て根拠を確かめてから**直した（推測で通していない）。

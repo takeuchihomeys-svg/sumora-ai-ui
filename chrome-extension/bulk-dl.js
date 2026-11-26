@@ -1020,10 +1020,22 @@
    * ★ 2.8.218 DB#1600: TreeWalker＋div.under 明示／巨大表でも葉テキストから掴む。
    *   「とぶ」＝見出し0のまま sort_failed:continue→PDF。見出しを掴めるまで aim＋葉探索を尽くす。
    */
+  /**
+   * ★ 2.8.315 実測 #1659（2026-11-27 竹内さん「並べ替えの場所を手順書で把握できていない／マウスが変な動き」）:
+   *   旧は文字だけで「並べ替え」を探し、**拡張自身のパネルの行（𝑅.さん／並べ替え最中（1/2）・17字）**が
+   *   本物の見出し（143字の塊）より短いため先に掴まれ、そこへカーソルを置いて AD が出ず（sort_no_ad）→ 数十秒やり直しになった。
+   *   → 拡張自身の画面（お客様パネル・一括バー・案内・偽カーソル。id が aixlinx- / axlx- で始まる物）の中は、
+   *     並べ替え・AD・高→低を探す対象から外す。
+   */
+  function _isOwnUiEl(el) {
+    try {
+      return !!(el && el.closest && el.closest("[id^='aixlinx-'], [id^='axlx-']"));
+    } catch (_) { return false; }
+  }
   function _findSortHeadEl() {
     try {
       var vis = function (el) {
-        try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
+        try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
       };
       var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
       var re = /並[べび]替え|並び順|並替/;
@@ -1237,7 +1249,7 @@
       var ax = aim.x * (window.innerWidth || 1);
       var ay = aim.y * (window.innerHeight || 1);
       var vis = function (el) {
-        try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
+        try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
       };
       var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
       var re = /並[べび]替え|並び順/;
@@ -4357,7 +4369,8 @@
         fn();
       }, Math.max(60, Math.round(wait(ms))));
     };
-    var visible = function (el) { try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
+    // ★ 2.8.315: 拡張自身の画面の中は「見えている物」に数えない（並べ替え・AD・高→低の文字探しが自分のパネルを掴まない）
+    var visible = function (el) { try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
     var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
     /**
      * 2026-11-14 竹内さん「検索した後並び替えしっぱいしたとでてから印刷用PDF押す前に止まってしまった

@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.314";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.315";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -71,6 +71,8 @@ export const RULES_CODE_ONLY: Readonly<Record<string, string>> = {
   hidden_work_no_pause: "画面に見えない作業（学習の取り込み・確かめ）の段は点検記録に出さない設計（迷い・停止の段で守れたかは見えない）",
   audit_rule_evidence: "点検記録そのものの作り方の決まり（段を落とす時の守り）。確かめる対象が点検の仕組み自身なので、段では確かめない",
   human_fixed_waits_routed: "固定の待ち時間を人の間（_hd）に通す決まり。待ち時間は段に残らないので、目印（コードの呼び方）で見る",
+  sort_skip_own_ui: "押した先が拡張自身の画面でなかったことは、hover の文字（d）の中身でしか見えず、段の名前では判定できない（コードの目印 _isOwnUiEl で守りを見る）",
+  sw_restart_wait_post_search_flow: "裏が起き直した直後の見張りは点検の回（runId）を持たないため段に残せない（console のみ・コードの目印 _swWdRun で守りを見る）",
   human_fixed_waits_routed_bulk: "一括の固定の待ち時間を人の間（_hd）に通す決まり。待ち時間は段に残らないので、目印（コードの呼び方）で見る",
 };
 
@@ -1865,6 +1867,24 @@ export const AUTO_RULES: AutoRule[] = [
       onlyIf: ["page:reset_clean_no_force_place"],
       mustNot: ["page:place_redo"],
     },
+  },
+  {
+    id: "sort_skip_own_ui",
+    scene: "list",
+    text: "並べ替え・AD・高→低を文字で探す時は、拡張自身の画面（お客様パネル・一括バー・案内・偽カーソル。id が aixlinx- か axlx- で始まる物）の中を探す対象に入れない（_isOwnUiEl）。パネルの行「𝑅.さん／並べ替え最中（1/2）」（17字）が本物の見出し（143字の塊）より短く先に掴まれ、そこへカーソルを置いて AD が出ず数十秒やり直す事があった（#1659）。並べ替えの場所は、学んだ位置（sort_detail の aim）→ 画面の文字（拡張の画面を除く）→ 表の上の見出しの順で掴む",
+    since: "2.8.315",
+    kb: null,
+    marker: "_isOwnUiEl",
+    file: "bulk-dl.js",
+  },
+  {
+    id: "sw_restart_wait_post_search_flow",
+    scene: "switch",
+    text: "裏（service worker）が起き直した後の見張り（batch_done_sw_watchdog）は、入力（fillRunning）が終わっていても、前のお客さんの一連の鍵（axlx_pipeline_job）か検索後の印（axlx_pending_auto_send）が生きている間は次のお客さんへ進めない（60秒ごとに見直す・鍵は無進捗12分で切れる）。検索後の並べ替え→一覧→PDFの途中で次客のリセットが割り込み、前客の物件取得が消え、次客は前客の鍵を待って条件が入らなかった（#1659→#1661）。次のお客さんへ移る順は「前客の物件取得と送付が終わる → リセット → 条件を入れる」",
+    since: "2.8.315",
+    kb: null,
+    marker: "_swWdRun",
+    file: "background.js",
   },
 ];
 

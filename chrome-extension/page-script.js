@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.314";
+  var _AXLX_PAGE_VER = "2.8.315";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4268,6 +4268,8 @@ function _guideLikeAreaSkip(why) {
     "learn_reflect_before_reset",
     "notify_done_clears_queue",
     "reset_clean_no_force_place",
+    "sort_skip_own_ui",
+    "sw_restart_wait_post_search_flow",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
