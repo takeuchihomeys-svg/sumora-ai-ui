@@ -13,3 +13,7 @@ export const RESET_WAIT_MIN_SEC = 30;
 export const RESET_WAIT_RANGE = "30〜34秒・3回に分けて";
 /** 待ちの文（骨組みの手に使う） */
 export const RESET_WAIT_TEXT = `${RESET_WAIT_MIN_SEC}秒以上（${RESET_WAIT_RANGE}）`;
+/** リセットを押した後、押せたかを確かめるまでの待ち（2.8.316・竹内さん「止まって120秒以上」）。15秒で「押せず」と決めない */
+export const RESET_PRESS_WAIT_TEXT = "最大120秒まで押すのを待つ（15秒で「押せず」と決めない）";
+/** 押した後・空と確かめた後の画面の追いつき（ラグ）の猶予（2.8.316・並べ替え／リセット共通・毎回揺らす） */
+export const LAG_GRACE_TEXT = "5〜9秒";

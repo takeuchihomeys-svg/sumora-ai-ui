@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
+import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
@@ -45,7 +45,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 19;
+export const PLAYBOOK_BUILD_V = 20;
+// 20（2026-11-27 竹内さん「手順書に抜けが無いか・時間を細かく」）: リセットの押す待ち（最大120秒）と、押した後のラグ猶予（5〜9秒・並べ替え／リセット）を
+//   骨組み（before_clear）・追加ガイド（clear の②③）・一覧（AD並べ替えの③）の文に入れた。決まりの一覧に reset_press_late_grasp・lag_grace_after_reset を載せた。
 // 19（2026-11-27）: cleanPoints で値データ（147,000円 等）を除外し、points にまだ無い欄は shots.learned の画面位置（source: "screen"）を
 //   手順書の positions / detail.aim に活用。ITANDI は itandi-field-aliases で別名も引き当て、rules_up_to をサイト別に分離。
 // 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
@@ -78,7 +80,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: `リセットを押す（左の「リセット」→読み直し→${RESET_WAIT_TEXT}のラグ待ち）`,
+    label: `リセットを押す（左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}のラグ待ち→${LAG_GRACE_TEXT}の猶予）`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
     grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
@@ -139,7 +141,7 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   "①並べ替えへカーソルを置く（クリックしない）",
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）",
-  "③ADの右の「高→低」（span.sort_detail）だけクリック",
+  "③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと5〜9秒の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）",
   "④並べ替え後に印刷用PDFを押す",
 ];
 
@@ -183,13 +185,13 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     label: "前客のリセット（場面なし・決まりから／1つずつ外さない）",
     steps: [
       "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
-      `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）`,
-      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ`,
+      `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）。${RESET_PRESS_WAIT_TEXT}`,
+      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。空と確かめたあとも${LAG_GRACE_TEXT}の猶予を置く（画面の追いつき）`,
       "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（空なら該当件数が増えなくても成功・reset_verified）",
       "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用）",
       "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ",
     ],
-    rules: ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
+    rules: ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", "lag_grace_after_reset"],
   },
   {
     id: "switch",
