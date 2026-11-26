@@ -14988,3 +14988,11 @@ Claude（統括役）からの依頼2件への対応。
 
 - **大阪環状線（竹内さんの答え）**: 「itandiは大阪環状線」。DB の 17 行（ITANDI 列「大阪環状線」）と一致。正本 popup-maps の「JR大阪環状線」と食い違うため、正本は変えていない。ITANDI の実画面で確かめてから揃える（設計知見に【決定】1行）。
 
+
+### 2026-11-26（深夜）大阪環状線の表記を画面で確認して揃えた（竹内さん）
+- ITANDI の路線一覧（スクリーンショット）の表示は「大阪環状線」。正本 popup-maps.js の ITANDI_LINE_MAP_FILL の「JR大阪環状線」を「大阪環状線」に直し、写し（resolution-core.js・popup.js・app/lib/station-line-maps.ts）も揃えた。
+- DB の station_map の ITANDI 列 17 行は書き換えなし（もう正本と一致）。
+- 試験: notation-copies-sync 16 OK／station-line-maps 20 OK／拡張の試験 226 青・新しい赤 0。
+- 点検 check-station-map-canonical: 正本とずれ 3 行（東海道本線・神戸線側が無い行）のみ。これは未決 C（東海道本線の駅ごとの振り分け）。
+- 設計知見: 【決定】を 1 行追加（56f88ca8）、古い未解決の行（c6ca8b8d）は退役。拡張の再読み込みで反映。
+
