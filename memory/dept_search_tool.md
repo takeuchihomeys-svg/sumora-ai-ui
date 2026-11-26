@@ -14996,3 +14996,12 @@ Claude（統括役）からの依頼2件への対応。
 - 点検 check-station-map-canonical: 正本とずれ 3 行（東海道本線・神戸線側が無い行）のみ。これは未決 C（東海道本線の駅ごとの振り分け）。
 - 設計知見: 【決定】を 1 行追加（56f88ca8）、古い未解決の行（c6ca8b8d）は退役。拡張の再読み込みで反映。
 
+
+### 2026-11-26（深夜）リアプロの沿線の画面と照合 → 南海本線に統一
+- 竹内さんのリアプロの沿線一覧（大阪府）と照合。画面の表示「南海電鉄南海本線」に合わせ、「南海電鉄南本線」を使わないようにした（路線番号 6681 は同じ）。
+- 変更: 正本 popup-maps.js（駅の表・並び順・ITANDI/REINS/ROUTE の重複行を削除）→ 写し（resolution-core.js・popup.js）・build-transit-graph.js → transit_graph.js（再生成・辺 1140→1120。消えたのは南本線の重複の辺）・app/lib/station-line-maps.ts・app/lib/osaka-transit-data.ts・app/api/seed-maps/route.ts・app/api/resolve-search-conditions/route.ts。
+- DB station_map: 41 行（hardcoded）の realpro_lines を南海本線に直した。控え: Desktop\station-map-backup-2026-11-26\nanpo-honsen-before-2026-11-26.json。読み直し: 南本線 0 行。
+- 試験: line-repress-v2816 の期待値を南海本線に（湊）。notation-copies-sync 16 OK・station-line-maps 20 OK・拡張の試験 226 青・新しい赤 0・app の transit/station 試験 OK。tsc は既存の 22 件のまま。
+- 未決（竹内さんの DevTools の結果待ち）: 近鉄信貴線・近鉄西信貴ケーブル線・東海道・山陽新幹線はリアプロの路線番号が正本に無い。
+- 設計知見に【決定】1行追加。
+
