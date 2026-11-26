@@ -36,5 +36,7 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "割れの型の表（claude-split-learned.json）", args: ["scripts/build-claude-split.ts"], timeoutMin: 5 },
     // 2026-11-26 作業員L（#799 ④）: on にした直しの試験での差と本番の一致の動き（7日・14日・quality_daily on_after:*・#610 の突き合わせ）
     { name: "on の後の本番の動き（quality_daily）", args: ["scripts/audit-on-after.ts", "--write"], timeoutMin: 5 },
+    // 2026-11-26 作業員L（#799 ⑤）: 週の全部 on の組の候補（土曜の晩だけ作る・係の置き場の md に足すだけ・積まない）
+    { name: "週の全部 on の組の候補（土曜だけ）", args: ["scripts/plan-week-combo.ts", "--weekly", `--write=${jsonPath.replace(/[^/\\]+$/, "week-combo-candidates.md")}`], timeoutMin: 5 },
   ];
 }
