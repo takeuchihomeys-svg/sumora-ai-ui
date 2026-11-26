@@ -4448,6 +4448,11 @@ ${sh}`;
         const df = await import("@/app/lib/deal-flow-line");
         if (df.dealFlowPreApplyLineOn() && ar.loc?.node && !ar.loc.branch) { const pl = df.dealFlowPreApplyLine(ar.loc.node); if (pl) { applyRouteText += `\n${pl}`; materialMarks.deal_flow_pre_apply = pl.length; materialBlocks.push({ key: "deal_flow_pre_apply", text: pl, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] deal-flow-pre-apply skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員L（#795 ③・ROUTE_MINDSET_LINE=on の時だけ・既定 off）: 前の判断の気持ち × 今の駅 → 竹内さん本人の多い一手（地図が気持ちを読む1行）
+      try {
+        const msm = await import("@/app/lib/mindset-station-move");
+        if (msm.routeMindsetLineOn() && ar.loc?.node && !ar.loc.branch) { const prevState = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null; const ml = msm.mindsetStationLine(ar.loc.node, prevState); if (ml) { applyRouteText += `\n${ml}`; materialMarks.mindset_station = ml.length; materialBlocks.push({ key: "mindset_station", text: ml, from: "route" }); } }
+      } catch (e) { console.warn("[brain-core] mindset-station skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
