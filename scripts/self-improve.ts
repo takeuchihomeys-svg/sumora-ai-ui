@@ -185,6 +185,15 @@ async function main() {
       const ds = conductorDutySummary(dr);
       coreRows.push({ metric: "core:conductor_duty:have", value: ds.have, n: ds.n }, { metric: "core:conductor_duty:use", value: ds.use, n: ds.n }, { metric: "core:conductor_duty:reflect", value: ds.reflect, n: ds.n });
       lines.push(`- ${ds.line}（作業員A・#662）`);
+      // 2026-11-26 作業員A（#662・統括役の決め「受け持ち表は1つの題に」）: 土台の段の下に部品ごとの番の数（判断の記録 digest.mk・mpr・USED_MARKERS×AIX・1日・軽い読み・記録だけ）
+      try {
+        const co = await import("../app/lib/conductor-ownership");
+        const since1 = new Date(now - 864e5).toISOString();
+        const { data: dl } = await sb.from("brain_decision_logs").select("conversation_id,created_at,digest").gte("created_at", since1).limit(3000);
+        const { data: al } = await sb.from("aix_usage_logs").select("conversation_id,created_at,aix_type").gte("created_at", since1).limit(3000);
+        const cs = co.ownershipTable(((dl ?? []) as Array<{ conversation_id: string; created_at: string; digest: Record<string, unknown> | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, digest: r.digest ?? {} })), ((al ?? []) as Array<{ conversation_id: string; created_at: string; aix_type: string | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, type: String(r.aix_type ?? "") })));
+        for (const r of CONDUCTOR_DUTY) { const pl = co.dutyPartLine(r.partKeys, cs); if (pl) lines.push(`  - ${r.name}`, pl); }
+      } catch (e) { lines.push(`  - 部品の数: 失敗（${String(e).slice(0, 60)}）`); }
       // 2026-11-24 作業員A（#662）: 土台ごとの済んだ段の数（core:conductor_duty:f:<id>）と、前に書いた日からの変わり（増えた・減った土台）
       for (const r of dr) coreRows.push({ metric: `core:conductor_duty:f:${r.id}`, value: dutyDoneCount(r), n: 3 });
       {

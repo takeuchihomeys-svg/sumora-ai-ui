@@ -24,5 +24,9 @@ import { USED_MARKERS } from "../material-priority";
 t("#783 境目: 行どおり＝使った・逆＝使わなかった・欄なし＝決められない", USED_MARKERS.aix_boundary({ abd: "property_check_result", aix: "property_check_result" }) === true && USED_MARKERS.aix_boundary({ abd: "reply", aix: "property_send" }) === false && USED_MARKERS.aix_boundary({ abd: "reply", aix: "" }) === true && USED_MARKERS.aix_boundary({}) === null);
 t("#783 辞書: 候補の AIX＝使った・別の AIX＝使わなかった・返信＝決められない", USED_MARKERS.aix_dictionary({ dct: "estimate_sheet+viewing_invite", aix: "viewing_invite" }) === true && USED_MARKERS.aix_dictionary({ dct: "estimate_sheet", aix: "property_send" }) === false && USED_MARKERS.aix_dictionary({ dct: "estimate_sheet", aix: "" }) === null);
 t("#783 記録: abd・dct を digest に", bl.includes("o.abd = fm.abd") && bl.includes("o.dct = fm.dct"));
+import { CONDUCTOR_DUTY } from "../../../scripts/lib/conductor-duty";
+import { dutyPartLine } from "../conductor-ownership";
+{ const all = CONDUCTOR_DUTY.flatMap((r) => r.partKeys ?? []); t("受け持ち表は1つ: 部品は全部どれか1つの土台の下", OWN_ROWS.every((r) => all.filter((k) => k === r.key).length === 1) && all.length === OWN_ROWS.length); }
+t("土台の下の1行", dutyPartLine(["check_promise_flow"], ownershipTable(ds, ax)).includes("確認の約束の流れ 持つ 2・使った 1/2・反映 1/1") && dutyPartLine([], []) === "");
 console.log(`conductor-ownership: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

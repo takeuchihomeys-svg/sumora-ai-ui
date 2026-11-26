@@ -56,8 +56,14 @@ export function ownershipTable(ds: readonly OwnDecision[], aix: readonly OwnAix[
     return { key: r.key, name: r.name, owner: r.owner, hold: r.mark ? has.length : null, head: r.mark ? head.length : null, usedOk, usedOf, reflectOk, reflectOf, gaps };
   });
 }
-/** 毎朝の1枚の行 */
+/** 毎朝の1枚: 土台（CONDUCTOR_DUTY の行）の段の下に部品ごとの数を1行（受け持ち表は1つの題・2026-11-26 統括役の決め） */
+export function dutyPartLine(partKeys: readonly string[] | undefined, cs: readonly OwnCount[]): string {
+  const ps = (partKeys ?? []).map((k) => cs.find((c) => c.key === k)).filter((c): c is OwnCount => !!c);
+  if (!ps.length) return "";
+  return `    - 部品の数（番ごと）: ${ps.map((c) => `${c.name.replace(/（.*$/, "")} 持つ ${c.hold ?? "印なし"}・使った ${c.usedOf ? `${c.usedOk}/${c.usedOf}` : "—"}・反映 ${c.reflectOf ? `${c.reflectOk}/${c.reflectOf}` : "—"}`).join("｜")}`;
+}
+/** 毎朝の1枚の行（台本の出力用） */
 export function ownershipLines(cs: readonly OwnCount[], decisions: number, marked: number): string[] {
-  return [`### 統括の受け持ち表（持つ／使う／反映する・判断の記録 ${decisions}番・材料の印のある番 ${marked}）`,
+  return [`### 統括の受け持ち・部品ごとの数（持つ／使う／反映する・判断の記録 ${decisions}番・材料の印のある番 ${marked}）`,
     ...cs.map((c) => `- ${c.name}: 持つ ${c.hold ?? "印なし"}・先頭 ${c.head ?? "—"}・使った ${c.usedOf ? `${c.usedOk}/${c.usedOf}` : "—"}・反映 ${c.reflectOf ? `${c.reflectOk}/${c.reflectOf}` : "—"}${c.gaps.length ? `｜欠け ${c.gaps.map((g) => g.slice(0, 2)).join("")}` : ""}`)];
 }
