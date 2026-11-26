@@ -16,6 +16,7 @@ export type OwnRow = {
 const BPN_AIX: Record<string, string> = { estimate: "estimate_sheet", viewing_arrange: "viewing_invite", viewing_scheduled: "meeting_place", apply_prep: "application_push", proposing: "property_send" };
 export const OWN_ROWS: readonly OwnRow[] = [
   { key: "intake_route", name: "入口の駅（CONDUCTOR_INTAKE_ROUTE）", owner: "作業員A", mark: null },
+  { key: "next_stone", name: "次の石（ROUTE_NEXT_STONE_LINE・未配線）", owner: "作業員A", mark: "next_stone" },
   { key: "route_backplan", name: "逆算の計画（APPLY_ROUTE_BACKPLAN）", owner: "作業員A", mark: "route_backplan", want: (d) => BPN_AIX[String(d.bpn ?? "")] ?? undefined },
   { key: "station_state", name: "駅の今の状態（STATION_STATE_LINE）", owner: "作業員A", mark: "station_state" },
   { key: "check_promise_flow", name: "確認の約束の流れ（BRAIN_CHECK_PROMISE_FLOW）", owner: "作業員A", mark: "check_promise_flow", want: (d) => (d.cpf ? (d.cpf === "a" ? "property_check_result" : null) : undefined) },

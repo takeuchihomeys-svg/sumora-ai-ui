@@ -1,6 +1,9 @@
 // app/lib/__tests__/route-next-stone.test.ts — 次の石（2026-11-26 作業員A・竹内さん 11/26 昼）
 //   実行: npx tsx app/lib/__tests__/route-next-stone.test.ts
-import { stoneMoveOf, stoneShare, nextStoneLine, nextStoneLineOn, NEXT_STONE } from "../route-next-stone";
+import { stoneMoveOf, stoneShare, nextStoneLine, nextStoneLineOn, NEXT_STONE, STONE_TOOLS, aixKindMissOf } from "../route-next-stone";
+import { AIX_DICTIONARY } from "../aix-dictionary";
+import { AIX_BOUNDARIES } from "../aix-boundary";
+import { actTarget } from "../../../scripts/lib/route-progress";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -13,5 +16,7 @@ const sh = stoneShare(["next_stone", "promise", "plant_ahead", "skip_apply", "ho
 t("割合: 一歩ずつ＝次の石へ＋約束・分母は駅が決まる番", sh.step === 2 && sh.plant === 1 && sh.skip === 1 && sh.n === 5);
 t("材料の1行（既定 off・まだ配線しない）", nextStoneLine("interested").includes("内覧の誘い") && nextStoneLine("other") === "" && !nextStoneLineOn({}));
 t("表: 本線の申込の手前の駅が全部ある", ["inquiry", "hearing", "pickup", "proposing", "interested", "estimate", "viewing_arrange", "viewing_scheduled", "viewed", "apply_prep"].every((k) => !!NEXT_STONE[k as keyof typeof NEXT_STONE]));
+t("道具の表: AIX は全部辞書にある・境目の行は全部境目の表にある", Object.values(STONE_TOOLS).every((x) => x!.aix.every((a) => !!AIX_DICTIONARY[a]) && x!.boundary.every((b) => AIX_BOUNDARIES.some((y) => y.id === b))));
+t("AIX の選び違い: 同じ石で種類違い（おすすめ⇄送る）は数える・違う石・返信は数えない", aixKindMissOf("pickup", "aix:property_send", "aix:property_recommendation", actTarget) && !aixKindMissOf("proposing", "aix:estimate_sheet", "aix:viewing_invite", actTarget) && !aixKindMissOf("pickup", "aix:property_send", "reply:", actTarget));
 console.log(`route-next-stone: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

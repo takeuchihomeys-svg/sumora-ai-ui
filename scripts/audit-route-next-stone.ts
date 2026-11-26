@@ -5,7 +5,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-route-next-stone.ts --from=<照らしの json> [--write]
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { stoneMoveOf, stoneShare, STONE_JA, NEXT_STONE, type StoneMove } from "../app/lib/route-next-stone";
+import { stoneMoveOf, stoneShare, STONE_JA, NEXT_STONE, STONE_TOOLS, aixKindMissOf, type StoneMove } from "../app/lib/route-next-stone";
 import { actTarget } from "./lib/route-progress";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -45,11 +45,21 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
   }
   const skipB = br.filter((x) => x.m === "skip_apply" || x.m === "plant_ahead");
   if (skipB.length) { const c: Record<string, number> = {}; for (const x of skipB) { const k = `${x.r.node}→${brainAct.get(x.r)}`; c[k] = (c[k] ?? 0) + 1; } console.log(`\n## ブレインが次の石より先へ置いた型: ${Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}（竹内さんは同じ番で: ${cnt(skipB.map((x) => ({ m: stoneMoveOf(x.r.node, actTarget(x.r.act)) })))}）`); }
+  // 2026-11-26 作業員A（竹内さん「AIX のことも組み合わせて」）: ① 駅ごとに竹内さんが次の石を進めた一手 ② 石は合っているが AIX の種類が違う番
+  console.log("\n## 駅ごとに次の石を進めた竹内さんの一手（多い順・括弧は進んだ番）｜表の道具（STONE_TOOLS）");
+  for (const node of Object.keys(NEXT_STONE)) {
+    const c: Record<string, { n: number; a: number }> = {};
+    for (const x of tk) if (x.r.node === node && (x.m === "next_stone" || x.m === "promise" || x.m === "plant_ahead")) { const o = (c[x.r.act] ??= { n: 0, a: 0 }); o.n++; if (x.r.outcome === "advanced") o.a++; }
+    const tl = STONE_TOOLS[node as keyof typeof STONE_TOOLS];
+    if (Object.keys(c).length) console.log(`  ${node}: ${Object.entries(c).sort((a, b) => b[1].n - a[1].n).map(([k, v]) => `${k} ${v.n}(${v.a})`).join("・")}｜道具 返信 ${tl?.reply.join("/") || "—"}・AIX ${tl?.aix.join("/") || "—"}`);
+  }
+  const kindMiss = br.filter((x) => aixKindMissOf(x.r.node, x.r.act, String(brainAct.get(x.r)), actTarget));
+  console.log(`  石は合っているが AIX の種類が違う（ブレイン×竹内さん・両方 AIX の番）: ${kindMiss.length}${kindMiss.length ? `（${kindMiss.map((x) => `${x.r.node}: 竹内さん ${x.r.act}／ブレイン ${brainAct.get(x.r)}`).join("・")}）` : ""}`);
   if (process.argv.includes("--write")) {
     const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
     const qd = [
       { day, metric: "route:next_stone_step", scope: "takeuchi", value: pct(ts.step, ts.n), n: ts.n, detail: { plant: ts.plant, skip_apply: ts.skip }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
-      { day, metric: "route:next_stone_step", scope: "brain", value: pct(bs.step, bs.n), n: bs.n, detail: { plant: bs.plant, skip_apply: bs.skip, reply_dir: "none" }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
+      { day, metric: "route:next_stone_step", scope: "brain", value: pct(bs.step, bs.n), n: bs.n, detail: { plant: bs.plant, skip_apply: bs.skip, reply_dir: "none", aix_kind_miss: kindMiss.length }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
     ];
     const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });
     if (error) throw new Error(error.message);

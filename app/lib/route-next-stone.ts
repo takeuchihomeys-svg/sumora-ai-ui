@@ -22,6 +22,29 @@ export const NEXT_STONE: Partial<Record<RouteNodeId, Stone>> = {
 // skip は2つに分ける（60日の竹内さん本人の番: 先へ飛んだ 26 のうち 25 は内覧・見積の誘いを先に置く仕込み・申込へ飛んだのは内覧予定からの1番だけ）
 //   plant_ahead … 次の石より先の内覧・見積へ誘う（竹内さんの先の仕込み・急ぎすぎではない）
 //   skip_apply …… 次の石より先で申込のご案内・申込へ（急ぎすぎ）
+/**
+ * 2026-11-26 作業員A（竹内さん 11/26「AIX のことも組み合わせて分析」）: 次の石を進める一手（返信の一言／AIX）と、辞書（aix-dictionary）・境目（aix-boundary）の行。
+ *   出所: 60日の竹内さん本人の番で次の石へ向かった一手（多い順）。竹内さんは石を返信（約束・誘い）で進める事が多く、AIX は約束を果たす2段目か、手元に物がある時
+ *   （例: 提案中は 約束 10・内覧の誘い 6・見積書 3／ヒアリングは 約束 13・おすすめ 3／見積の後は 内覧の誘い 4・約束 2）
+ */
+export type StoneTool = { reply: string[]; aix: string[]; boundary: string[] };
+export const STONE_TOOLS: Partial<Record<RouteNodeId, StoneTool>> = {
+  inquiry: { reply: ["promise", "invite_estimate"], aix: ["condition_hearing"], boundary: [] },
+  hearing: { reply: ["promise"], aix: ["property_recommendation", "property_send"], boundary: ["pickup_ack_ready", "pickup_ack_not_ready"] },
+  pickup: { reply: ["promise", "invite_viewing"], aix: ["property_recommendation", "property_send"], boundary: ["pickup_ack_ready", "pickup_ack_not_ready"] },
+  proposing: { reply: ["promise", "invite_viewing"], aix: ["estimate_sheet", "property_check_result"], boundary: ["check_ack_wait", "check_question", "check_brought_new", "check_ack_plus", "general_explain"] },
+  interested: { reply: ["promise", "invite_viewing", "invite_estimate"], aix: ["estimate_sheet", "viewing_invite"], boundary: [] },
+  estimate: { reply: ["invite_viewing", "promise"], aix: ["viewing_invite", "application_push"], boundary: [] },
+  viewing_arrange: { reply: ["promise", "ask_schedule"], aix: ["viewing_invite", "meeting_place"], boundary: [] },
+  viewing_scheduled: { reply: [], aix: ["meeting_place", "greeting_viewing"], boundary: [] },
+  viewed: { reply: ["invite_apply"], aix: ["application_push"], boundary: [] },
+};
+/** 同じ石で AIX の種類だけ違う（石は合っている・AIX の選び違い）か（純関数） */
+export function aixKindMissOf(node: RouteNodeId | string | null | undefined, takeuchiAct: string, brainAct: string, target: (a: string) => RouteNodeId | "promise" | null): boolean {
+  if (!takeuchiAct.startsWith("aix:") || !brainAct.startsWith("aix:") || takeuchiAct === brainAct) return false;
+  const a = target(takeuchiAct), b = target(brainAct);
+  return !!a && a === b && stoneMoveOf(node, a) !== "unknown";
+}
 export type StoneMove = "next_stone" | "promise" | "plant_ahead" | "skip_apply" | "same" | "back" | "hold" | "unknown";
 export const STONE_JA: Record<StoneMove, string> = { next_stone: "次の石へ", promise: "次の石の約束（2段）", plant_ahead: "先の仕込み（内覧・見積へ誘う）", skip_apply: "申込へ飛ばした", same: "同じ駅", back: "戻った", hold: "動かさない（答え・待ち）", unknown: "決められない" };
 const idx = (n: RouteNodeId | string | null | undefined) => MAIN_ROUTE.indexOf(String(n ?? "") as RouteNodeId);
