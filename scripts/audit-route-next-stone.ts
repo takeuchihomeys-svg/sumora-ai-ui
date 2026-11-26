@@ -18,11 +18,12 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
   const brainAct = new Map<Row, string | null>();
   for (const [c, rs] of byConv) {
     const lo = new Date(Math.min(...rs.map((r) => Date.parse(r.at))) - 30 * 60_000).toISOString(), hi = new Date(Math.max(...rs.map((r) => Date.parse(r.at))) + 1000).toISOString();
-    const { data } = await sb.from("brain_decision_logs").select("conversation_id,created_at,aix:digest->>aix").like("conversation_id", `${c}%`).gte("created_at", lo).lte("created_at", hi).order("created_at").limit(500);
-    const ds = (data ?? []) as Array<{ created_at: string; aix: string | null }>;
+    const { data } = await sb.from("brain_decision_logs").select("conversation_id,created_at,aix:digest->>aix,rdir:digest->>rdir").like("conversation_id", `${c}%`).gte("created_at", lo).lte("created_at", hi).order("created_at").limit(500);
+    const ds = (data ?? []) as Array<{ created_at: string; aix: string | null; rdir: string | null }>;
     for (const r of rs) {
       const t = Date.parse(r.at); const d = [...ds].reverse().find((x) => Date.parse(x.created_at) <= t && t - Date.parse(x.created_at) <= 30 * 60_000);
-      brainAct.set(r, d ? (d.aix && d.aix.trim() ? `aix:${d.aix.trim().split("/")[0]}` : "reply:") : null);
+      // 2026-11-26 #787: 返信の番は判断の記録の rdir（下書きの締めの型・決まった計算）で向きが分かる＝無い前の記録は動かさないに数える
+      brainAct.set(r, d ? (d.aix && d.aix.trim() ? `aix:${d.aix.trim().split("/")[0]}` : `reply:${d.rdir ?? ""}`) : null);
     }
   }
   const tk = rows.map((r) => ({ r, m: stoneMoveOf(r.node, actTarget(r.act)) }));
@@ -32,7 +33,7 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
   const ts = stoneShare(tk.map((x) => x.m)), bs = stoneShare(br.map((x) => x.m));
   console.log(`■ 次の石（本線の駅・竹内さん本人の番 ${rows.length}）`);
   console.log(`  竹内さん: 一歩ずつ ${ts.step}/${ts.n}（${pct(ts.step, ts.n) ?? "—"}%）・先の仕込み ${ts.plant}・申込へ飛ばした ${ts.skip}｜${cnt(tk)}`);
-  console.log(`  ブレイン（同じ番の直前の判断が残る ${br.length}）: 一歩ずつ ${bs.step}/${bs.n}（${pct(bs.step, bs.n) ?? "—"}%）・先の仕込み ${bs.plant}・申込へ飛ばした ${bs.skip}（返信の向きは記録に無い＝返信は動かさないに数える）｜${cnt(br)}`);
+  console.log(`  ブレイン（同じ番の直前の判断が残る ${br.length}）: 一歩ずつ ${bs.step}/${bs.n}（${pct(bs.step, bs.n) ?? "—"}%）・先の仕込み ${bs.plant}・申込へ飛ばした ${bs.skip}（返信の向きは判断の記録の rdir＝#787・無い前の記録は動かさないに数える）｜${cnt(br)}`);
   // 次の石へ向かった番の進み（今の主の数と並べる）
   const adv = (xs: Array<{ r: Row; m: StoneMove }>, m: StoneMove[]) => { const s = xs.filter((x) => m.includes(x.m)); return `${s.filter((x) => x.r.outcome === "advanced").length}/${s.length}`; };
   console.log(`  竹内さんの番の進み: 次の石へ・約束 ${adv(tk, ["next_stone", "promise"])}・先の仕込み ${adv(tk, ["plant_ahead"])}・申込へ飛ばした ${adv(tk, ["skip_apply"])}・動かさない ${adv(tk, ["hold"])}・同じ駅 ${adv(tk, ["same"])}`);

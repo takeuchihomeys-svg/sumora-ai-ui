@@ -8001,6 +8001,22 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 2026-11-13 作業員5（CONDUCTOR_STAFF_CHECK）: 統括が人に回した番の理由を画面の注記と影の関所に（下書きは変えない）
             if (staffCheckRec && finalCheck) finalCheck.staff_check = { reasons: staffCheckRec.reasons, note: staffCheckRec.note, gate: staffCheckRec.gate, ...(staffCheckRec.ref_detail ? { ref_detail: staffCheckRec.ref_detail } : {}) };
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
+            // 2026-11-26 作業員A（台帳 #787・記録だけ・REPLY_DIRECTION_RECORD=off で止める）: 下書きの締めの型と、判断の記録の駅から決まった計算で石の向きを付け、
+            //   同じ会話の最新の判断の記録の digest に rdir・rst を足す（ブレインには書かせない＝q406 の前例・fail-open）
+            if (persist && conversationId && finalDraftText && !isTemplateOptimize) {
+              const draftForDir = finalDraftText;
+              after(async () => {
+                try {
+                  const rd = await import("@/app/lib/reply-direction");
+                  if (!rd.replyDirectionRecordOn()) return;
+                  const { data: lastDec } = await supabase.from("brain_decision_logs").select("id, digest").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+                  const dg = (lastDec?.digest ?? null) as Record<string, unknown> | null;
+                  if (!lastDec?.id || !dg || dg.rdir) return;
+                  const { rdir, rst } = rd.replyStoneOf(typeof dg.ar === "string" ? dg.ar : null, draftForDir);
+                  await supabase.from("brain_decision_logs").update({ digest: { ...dg, rdir, rst } }).eq("id", lastDec.id);
+                } catch (e) { console.warn("[generate-reply] reply-direction record failed:", conversationId, e instanceof Error ? e.message : e); }
+              });
+            }
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
             if (!isTemplateOptimize && finalCheck) {
