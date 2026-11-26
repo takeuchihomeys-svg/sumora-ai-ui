@@ -3341,6 +3341,17 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
+  // 2026-11-27 作業員L（葉×出す側の穴の4位・竹内さん 11/27「現状の把握…細分化」・MOVE_IN_LINE=on の時だけ・既定 off）: 入居の時期と期限の1行（登録の条件＋お客様の会話の言い直し）。
+  //   読みは app/lib/move-in-line.moveInFor（作業員A の時間の地図も同じ読みを使う）。印 move_in_line（material_marks・SWITCH_TARGET_MARK）。申込以降は出さない
+  let moveInMarkLen = 0;
+  try {
+    const mil = await import("@/app/lib/move-in-line");
+    if (mil.moveInLineOn() && !isPostApplyStatus(convStatus)) {
+      const nowIsoMi = new Date().toISOString();
+      const ln = mil.moveInLine(mil.moveInFor({ registered: pc?.move_in_time ?? null, customerMsgs: typedMessages.filter((m) => m.sender === "customer").map((m) => ({ text: m.text ?? null, created_at: m.created_at })), nowIso: nowIsoMi }), nowIsoMi);
+      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; moveInMarkLen = ln.length; materialBlocks.push({ key: "move_in_line", text: ln, from: "cs" }); }
+    }
+  } catch (e) { console.warn("[brain-core] move-in line skipped:", e instanceof Error ? e.message : String(e)); }
   const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
@@ -3704,6 +3715,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
   if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
+  if (moveInMarkLen) materialMarks.move_in_line = moveInMarkLen; // 2026-11-27 作業員L（MOVE_IN_LINE=on の番だけ）
   if (aixBoundaryMarkLen) materialMarks.aix_boundary = aixBoundaryMarkLen;
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
