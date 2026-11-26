@@ -45,7 +45,8 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 22;
+export const PLAYBOOK_BUILD_V = 23;
+// 23（2026-11-27 竹内さん「まだ文に無い時間もなおす」）: 裏のリセットの押す待ち（130秒）・並べ替えの窓（待ち＋120秒／入力後150秒）・並べ替えの待ちの印（90秒で古い印）・見張りの再試行（45秒）を文に入れた。
 // 22（2026-11-27）: 場面の手順（area／cond／station／list／search／next）に、press（押す前後の人の間など全部の場面に効く決まり）も「この場面に効く決まり」として並べた。
 //   これまでは playbook.rules（一覧）にだけ載っていて、場面の手順から辿れなかった。
 // 21（2026-11-27 竹内さん「手順書に決まりとして文が無いところは漏れる」）: 追加ガイド clear／switch の手に、空の確認（最大25秒）・写真（2〜4秒の間・撮影最大25秒）・
@@ -143,7 +144,7 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
-  "①並べ替えへカーソルを置く（クリックしない）",
+  "①並べ替えへカーソルを置く（クリックしない・検索確認から30〜36秒の待ちのあと。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は90秒を過ぎたら古い印として外して張り直す）",
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）",
   "③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと5〜9秒の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）",
   "④並べ替え後に印刷用PDFを押す",
@@ -155,7 +156,7 @@ export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
  */
 export const PLAYBOOK_SEARCH_GRASP_STEPS: ReadonlyArray<string> = [
   "①条件が揃ったら検索ボタンを押す",
-  "②検索したことを手順書×画面で把握する（並べ替え見出し／棟戸／印刷用PDFが見える）",
+  "②検索したことを手順書×画面で把握する（並べ替え見出し／棟戸／印刷用PDFが見える。まだ動かない時は次の撮影・次手まで45秒あける）",
   "③把握OKのあと並べ替え（AD）へ進む（印刷用PDFは並べ替えの後・把握なしでは並べ替えしない）",
 ];
 
