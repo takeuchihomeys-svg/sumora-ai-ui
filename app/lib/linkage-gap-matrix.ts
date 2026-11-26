@@ -34,6 +34,8 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
     cells: { intake: { state: "off", switch: "CONDUCTOR_INTAKE_ESTIMATE", note: "作業員L が入口の見積の1行を作った（既定 off・11/26）" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },
   { id: "reaction_predict", name: "気持ちの読み・反応の予想", owner: "作業員L", value: 0.9, valueBase: HAND,
     cells: { brain: { state: "off", switch: "BRAIN_REACTION_PREDICT", item: 795, note: "作業員L が #795 で段ごとに数える" }, intake: { state: "unknown" }, writer: { state: "unknown" }, aix2: { state: "unknown" }, final: { state: "unknown" } } },
+  { id: "quote_interest", name: "引用の問いの関心（費用・内覧・審査・空き＝刺さりの候補・sent_properties.customer_interest_points）", owner: "作業員A", value: null, valueBase: "60日の引用 71通（問いが多い・刺さりの言葉は1）",
+    cells: { brain: { state: "none", note: "記録だけ・ブレインには渡さない（統括役の決め 11/26）" }, combo: { state: "none", note: "連鎖の型の部品の候補（関心:<種類>）" } } },
   { id: "property_check", name: "物件確認（募集中・終了・空き・交渉の結果）", owner: "作業員A", value: 2.5, valueBase: HAND,
     cells: { brain: { state: "on", note: "行動台帳・やる事の結果" }, writer: { state: "unknown" }, aix2: { state: "unknown" } } },
   { id: "viewing_calendar", name: "内覧の予定・カレンダー", owner: "作業員A", value: 19.8, valueBase: HAND,

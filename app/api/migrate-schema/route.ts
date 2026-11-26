@@ -3668,6 +3668,8 @@ ALTER TABLE image_details ADD COLUMN IF NOT EXISTS part TEXT;
 -- 2026-11-21 作業員K2（#469 の (a)・統括役の了承）: 送った物件のどの点が刺さったか（our-send-uptake の HOOK_POINTS の言葉: 家賃／広さ・間取り／駅・場所／新しさ／設備…）。
 --   お客様が物件の通を引用して返した時だけ line-webhook-text が書く（SENT_HOOK_POINTS=on）。null 可・既定なし。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_hook_points;
 ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_hook_points TEXT[];
+-- 2026-11-26 作業員A（#793）: 引用の問いの関心（cost・viewing・screening・vacancy）＝刺さりの候補（記録だけ・SENT_QUOTE_INTEREST）。null 可。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_interest_points;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_interest_points TEXT[];
 
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。
