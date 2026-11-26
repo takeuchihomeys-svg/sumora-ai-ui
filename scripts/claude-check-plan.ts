@@ -4,7 +4,7 @@
 //   --eff が無い時は memory/night_bundle_candidates.md の「組: …（SWITCH=on…）」の効く問題を読む
 import { existsSync, readFileSync } from "node:fs";
 import { parseCandidateBlocks } from "./lib/exam-worth";
-import { claudeCheckTargets, claudeCheckLabel, claudeCheckRecord, loadProblemsLite, CLAUDE_BRAIN_USD_PER_REP } from "./lib/claude-check-gate";
+import { claudeCheckTargets, claudeCheckLabel, claudeCheckRecord, loadProblemsLite, CLAUDE_BRAIN_USD_PER_REP, CLAUDE_CHECK_NIGHT_CAP_USD } from "./lib/claude-check-gate";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const sw = arg("switch");
@@ -29,5 +29,5 @@ if (!targets.length) { console.log("  型に当たる効く問題が無い＝確
 const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
 const label = claudeCheckLabel(sw, day);
 console.log(`  問題: ${targets.map((t) => `${t.id}（${t.scenes.join("・")}）`).join("・")}`);
-console.log(`  見込み: ${targets.length}問×1回×$${CLAUDE_BRAIN_USD_PER_REP} ≒ $${(targets.length * CLAUDE_BRAIN_USD_PER_REP).toFixed(2)}（Claude の分・22時以降・試験の係が空いた後）`);
+console.log(`  見込み: ${targets.length}問×1回×$${CLAUDE_BRAIN_USD_PER_REP} ≒ $${(targets.length * CLAUDE_BRAIN_USD_PER_REP).toFixed(2)}（Claude の分・22時以降・試験の係が空いた後・1晩の上限 ${CLAUDE_CHECK_NIGHT_CAP_USD}）`);
 console.log(`  流す: ${sw}=on REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-${label}.json LLM_TEST_FINAL_CLAUDE=1 npx tsx --env-file=.env.local scripts/brain-exam.ts --label=${label} --only=${targets.map((t) => t.id).join(",")} --stage=brain`);

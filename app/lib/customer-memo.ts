@@ -21,6 +21,8 @@ import { maskPII } from "./pii-mask";
 import { callCaptureEnabled } from "./staff-capture";
 import { applicationMaterialReason } from "./test-pii-guard";
 
+/** 2026-11-27 作業員L（今夜の煙の1問 q472 が審査の網の「前科」＝この見出しの「出所」で brain_full を3回とも止めた）: 決まりの見出し（screening-static-texts が網の前に外す） */
+export const CUSTOMER_MEMO_HEAD = "【お客様のメモ（人の営業のメモ帳・出所つき）】";
 export type MemoKind =
   | "core"         // 条件の芯（譲れない）
   | "flexible"     // 妥協できる所
@@ -416,7 +418,7 @@ export function buildCustomerMemoNote(i: { memo: StoredMemo; told: ReadonlyArray
   if (!lines.length && !toldLine && !callLines.length) return "";
   // 2026-10-14 竹内さん「判断に使うが書かない」: スタッフの記録（電話）がある時は書き写さない指示を末尾に
   const noCopy = staffRecordNoCopyOn() && (callLines.length > 0 || items.some((x) => x.kind === "call")) ? `\n${STAFF_RECORD_NO_COPY_RULE}` : "";
-  return `【お客様のメモ（人の営業のメモ帳・出所つき）】\n${[...callLines, ...lines, toldLine].filter(Boolean).join("\n")}\n→ メモの事情・芯・気にしている事を踏まえて方向を決める。もう伝えた事は言い直さず先へ進める（今回の答えにその中身が要る時・日付や物件を足して進める時だけ書く）${noCopy}`;
+  return `${CUSTOMER_MEMO_HEAD}\n${[...callLines, ...lines, toldLine].filter(Boolean).join("\n")}\n→ メモの事情・芯・気にしている事を踏まえて方向を決める。もう伝えた事は言い直さず先へ進める（今回の答えにその中身が要る時・日付や物件を足して進める時だけ書く）${noCopy}`;
 }
 
 /** 画面の行（短い箇条・出所つき）。決まった計算の「もう伝えた事」も id 付きで出す（スタッフが外せる） */

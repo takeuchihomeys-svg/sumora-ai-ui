@@ -22,8 +22,10 @@ const Q = join(CACHE, "exam-queue");
 const H = 3_600_000;
 
 /** 晩 D（JST の日付）の [始め, 終わり)（ms） */
-export function nightWindow(d: string, win: "night" | "day"): [number, number] {
+export function nightWindow(d: string, win: "night" | "day" | "gate"): [number, number] {
   const base = Date.parse(`${d}T00:00:00+09:00`);
+  // 2026-11-26 作業員L（統括役の決め・昼の試験 $161 が晩の関所の外だった）: 関所は D 8時〜翌8時の合計（昼に流した分も晩の上限から引く）
+  if (win === "gate") return [base + 8 * H, base + 32 * H];
   return win === "day" ? [base + 12 * H, base + 36 * H] : [base + 22 * H, base + 32 * H];
 }
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 24 * H).toISOString().slice(0, 10);
@@ -49,10 +51,13 @@ function resultDirs(): string[] {
 }
 
 (async () => {
-  const win = (arg("window", "night") === "day" ? "day" : "night") as "night" | "day";
+  // --gate の時は既定で 8時〜翌8時（--window で変えられる）
+  const winArg = arg("window", arg("gate") ? "gate" : "night");
+  const win = (winArg === "day" ? "day" : winArg === "gate" ? "gate" : "night") as "night" | "day" | "gate";
   const days = Math.max(1, Number(arg("days", "7")) || 7);
   // 既定の晩: 今（JST）から10時間前の日付（朝に流すと昨夜になる）
-  const night = arg("night", new Date(Date.now() + 9 * H - 10 * H).toISOString().slice(0, 10));
+  //   関所（8時〜翌8時）は今（JST）から8時間前の日付＝今を含む区切り
+  const night = arg("night", new Date(Date.now() + 9 * H - (win === "gate" ? 8 : 10) * H).toISOString().slice(0, 10));
   const nights = Array.from({ length: days + 1 }, (_, i) => addDays(night, i - days)); // 古い順・最後が今夜
   const wins = nights.map((d) => nightWindow(d, win));
   const nightOf = (ms: number) => { for (let i = 0; i < wins.length; i++) if (ms >= wins[i][0] && ms < wins[i][1]) return i; return -1; };
@@ -65,7 +70,7 @@ function resultDirs(): string[] {
     let lastId = 0;
     for (let page = 0; page < 200; page++) {
       const { data, error } = await sb.from("llm_usage_logs").select("id, model, created_at, status, input_uncached, cache_read, cache_write, cache_write_5m, cache_write_1h, output_tokens")
-        .gte("created_at", new Date(a).toISOString()).lt("created_at", new Date(b).toISOString()).like("route", "script:brain-exam%").gt("id", lastId).order("id", { ascending: true }).limit(1000);
+        .gte("created_at", new Date(a).toISOString()).lt("created_at", new Date(b).toISOString()).like("route", win === "gate" ? "script:%" : "script:brain-exam%").gt("id", lastId).order("id", { ascending: true }).limit(1000);
       if (error) throw new Error(error.message);
       const rs = (data ?? []) as Array<{ id: number; model: string | null; status: number | null; created_at: string }>;
       for (const r of rs) {
@@ -191,7 +196,7 @@ function resultDirs(): string[] {
     process.exit(over ? 3 : 0);
   }
 
-  console.log(`# 試験の費用（${night} の晩・${win === "day" ? "12時〜翌12時" : "22時〜翌8時"} JST）と前の${days}晩`);
+  console.log(`# 試験の費用（${night} の晩・${win === "day" ? "12時〜翌12時" : win === "gate" ? "8時〜翌8時" : "22時〜翌8時"} JST）と前の${days}晩`);
   console.log(`（DB の試験の呼び出し ${dbRows}行・判定は手元の記録・読むだけ）\n`);
   console.log("| 晩 | DeepSeek 試験 | DeepSeek 判定 | OpenAI | Claude | 合計 |");
   console.log("|---|---|---|---|---|---|");

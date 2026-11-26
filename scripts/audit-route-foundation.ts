@@ -12,6 +12,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { MAIN_ROUTE, ROUTE_NODES, ROUTE_BRANCHES } from "../app/lib/apply-route-map";
 import { SUBSTATES } from "../app/lib/apply-route-substate";
 import { sameRouteStation } from "./lib/flex-daily";
+import { STATION_NEEDS } from "../app/lib/route-station-state";
+import { THICK_PATH } from "../app/lib/route-backplan";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const rd = <T>(p: string, d: T): T => { try { return JSON.parse(readFileSync(p, "utf8")) as T; } catch { return d; } };
@@ -58,10 +60,12 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
     const sgRows = xs.filter((r) => !s.branch && r.digestNode && r.at >= "2026-11-03T05:42");
     const sgOk = sgRows.filter((r) => sameRouteStation(r.node, r.digestNode)).length;
     const nextOk = xs.filter((r) => GOOD.has(r.agree)).length;
-    const exam = new Set(spec.filter((p) => p.conv && p.at && xs.some((r) => r.conv === p.conv!.slice(0, 8) && Math.abs(Date.parse(r.at) - Date.parse(p.at!)) <= 600_000)).map((p) => p.id));
+    const exam = new Set(spec.filter((p) => p.conv && p.at && xs.some((r) => r.conv === p.conv!.slice(0, 8) && Math.abs(Date.parse(r.at) - Date.parse(p.at!)) <= 6 * 3_600_000)).map((p) => p.id));
     const rid = s.id.replace(/^分:/, "");
-    const rules = s.aix.length + (nextSrc.match(new RegExp(`(?:node|branch) === "${rid}"`, "g")) ?? []).length;
-    const material = SUBSTATES.filter((x) => (x as { at?: string }).at === rid).length;
+    // 2026-11-26: 決まり＝next.aix＋番の型の選び直し＋逆算の計画の太い道（THICK_PATH）
+    const rules = s.aix.length + (nextSrc.match(new RegExp(`(?:node|branch) === "${rid}"`, "g")) ?? []).length + ((THICK_PATH as Record<string, unknown>)[rid] ? 1 : 0);
+    // 2026-11-26 作業員A: 材料＝駅の中の状態（SUBSTATES）＋駅ごとの要る状態（STATION_NEEDS）＋約束の流れ（持ち込み＝確認の約束の流れ・ピックアップ＝探す約束の後のお礼）
+    const material = SUBSTATES.filter((x) => (x as { at?: string }).at === rid).length + (STATION_NEEDS[rid]?.length ?? 0) + (rid === "brought_property" || rid === "pickup" ? 1 : 0);
     const reach = reachOf.get(rid) ?? null;
     const conductor = process.argv.includes("--db") ? ar.get(s.id) ?? 0 : null;
     const gaps: string[] = [];

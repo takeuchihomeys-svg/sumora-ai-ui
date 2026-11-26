@@ -4,9 +4,9 @@
 //   申込以降・審査の中身・会話の文は読まない。会話は出さない（数だけ）。昼も軽い（deal_outcomes 1回＋会話ごとの見積の時刻）。
 //   出す物: ①実際の流れの型（申込に届いた型ごと）②駅ごとの申込到達率 ③地図との食い違い（no_road・order・record_missing）④段の間の日数（申込に届いた件・中央）
 //     ⑤申込に届いた件で、駅の次に多い段（地図の nextNode と比べる）。--out の JSON は作業員A（#687）の駅ごとの表と同じ station で重ねる形
-// 実行: npx tsx --env-file=.env.local scripts/audit-deal-flow.ts [--out=<json>]
+// 実行: npx tsx --env-file=.env.local scripts/audit-deal-flow.ts [--out=<json>] [--cond-gap=<json>]
 import { createClient } from "@supabase/supabase-js";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { dealFlowOf, flowTypes, stationReach, stationStay, FLOW_STAGES, type DealRow, type DealFlow } from "./lib/deal-flow";
 import { ROUTE_NODES } from "../app/lib/apply-route-map";
 import { isTestConversation } from "../app/lib/test-conversations";
@@ -16,7 +16,7 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
 
 (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
-  const cols = ["id", "conversation_id", ...FLOW_STAGES.map((s) => s.key).filter((k) => k !== "estimate_at")].join(", ");
+  const cols = ["id", "conversation_id", "applied_at_estimated", ...FLOW_STAGES.map((s) => s.key).filter((k) => k !== "estimate_at")].join(", "); // #748 ①: 推定の申込は別の型
   const { data, error } = await sb.from("deal_outcomes").select(cols).limit(5000);
   if (error) throw new Error(error.message);
   const deals = ((data ?? []) as unknown as DealRow[]).filter((d) => !isTestConversation(d.conversation_id));
@@ -37,7 +37,16 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
     const start = d.first_contact_at ? Date.parse(d.first_contact_at) : -Infinity;
     if (t != null && t >= start && (!d.applied_at || t <= Date.parse(d.applied_at) + 864e5)) d.estimate_at = new Date(t).toISOString();
   }
+  // 2026-11-25 夜 作業員A の頼み: --cond-gap=<audit-deal-condition-gap の json> を渡すと、初回の通に条件を書いてきた件（first_msg_conditions）は
+  //   「条件の段を通らない道」＝条件の時刻を初回の時刻とみる（record_missing に数えない・地図の resolveRouteNode と同じく条件ヒアリングの駅を初回で通る）
+  let condRoad = 0;
+  if (arg("cond-gap")) {
+    const g = JSON.parse(readFileSync(arg("cond-gap"), "utf8")) as { rows: Array<{ id: number; kind: string }> };
+    const ids = new Set(g.rows.filter((r) => r.kind === "first_msg_conditions").map((r) => r.id));
+    for (const d of deals) if (ids.has(d.id) && !d.condition_at && d.first_contact_at) { d.condition_at = d.first_contact_at; condRoad++; }
+  }
   const fs: DealFlow[] = deals.map(dealFlowOf);
+  if (arg("cond-gap")) console.log(`（--cond-gap: 初回の通に条件の ${condRoad}件は条件の時刻＝初回の時刻とみた＝条件の段を通らない道）\n`);
   const ap = fs.filter((f) => f.applied), na = fs.filter((f) => !f.applied);
   const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
   console.log(`# 成約データの流れ（deal_outcomes ${deals.length}件・申込 ${ap.length}・成約 ${fs.filter((f) => f.won).length}・試験の会話は除く）\n`);

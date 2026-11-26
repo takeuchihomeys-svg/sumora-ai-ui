@@ -17,6 +17,12 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
   return [
     { name: "駅ごとの元の数（60日の照らし）", args: ["scripts/audit-route-progress-takeuchi.ts", "--days=60", "--max-conv=400", "--first-move", `--json=${jsonPath}`], timeoutMin: 40 },
     { name: "駅ごとの物差し（quality_daily）", args: ["scripts/audit-route-station-daily.ts", `--from=${jsonPath}`, "--days=60", "--write"], timeoutMin: 15 },
+    // 2026-11-25 作業員A（#745 ③）: 逆算の計画の この先 の当たり（同じ照らしの json・DB は書くだけ）
+    { name: "地図の先読みの当たり（quality_daily）", args: ["scripts/audit-route-backplan-hit.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 5 },
+    // 2026-11-26 作業員A（#745 の直し④）: 竹内さんの先読みとの一致（主の物差し・竹内さん本人の文を軽く読む）
+    { name: "竹内さんの先読みとの一致（quality_daily）", args: ["scripts/audit-route-backplan-miss.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
+    // 2026-11-26 作業員A（#662）: 統括の受け持ち表（持つ／使う／反映する・7日・DB は書くだけ）
+    { name: "統括の受け持ち表（quality_daily）", args: ["scripts/audit-conductor-ownership.ts", "--days=7", "--write"], timeoutMin: 5 },
     { name: "AIX の外れの組ごとの数（quality_daily）", args: ["scripts/audit-aix-miss-causes.ts", "--days=30", "--write"], timeoutMin: 15 },
     // 2026-11-25 作業員A（#683・L と表を1本に）: 前の on の回から覚えた表（exam-cache/learned-reach.json・L の reachRowOf が読む）
     { name: "覚えた表（learned-reach.json）", args: ["scripts/build-learned-reach.ts", "--days=60"], timeoutMin: 10 },

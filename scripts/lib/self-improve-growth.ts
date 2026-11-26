@@ -57,16 +57,23 @@ export function runTsx(args: string[], timeoutMs = 120_000): string {
 }
 
 /** 3 統括の欄 → 書き手（L の台本の --json を読む・直近24時間） */
-export function writerLinkageNow(): { n: number; briefRate: number | null; deliverRate: number | null; inDraftRate: number | null; aix2Wired: string } | null {
+/** 2026-11-26 作業員L（#466・統括役の了承）: 届いていない訳が「欄が無い(a)」「スイッチ off(d)」だけの欄＝作っていない欄（数えると毎朝 0% で ⚠ になるので分母から外す） */
+export function notBuiltField(f: { writerOk: number; whyNo?: Record<string, number> }): boolean {
+  const ks = Object.keys(f.whyNo ?? {});
+  return f.writerOk === 0 && ks.length > 0 && ks.every((k) => k === "a" || k === "d");
+}
+export function writerLinkageNow(): { n: number; briefRate: number | null; deliverRate: number | null; inDraftRate: number | null; aix2Wired: string; notBuilt?: string[] } | null {
   const out = join(tmpdir(), `writer-linkage-${process.pid}.json`);
   try {
     runTsx(["scripts/audit-writer-linkage.ts", "--hours=24", "--max=60", `--json=${out}`], 180_000);
-    const j = JSON.parse(readFileSync(out, "utf8")) as { n: number; brief: Record<string, { n: number; used: number }>; fields: Array<{ val: number; writerOk: number; inDraft: number; aix2: string }> };
+    const j0 = JSON.parse(readFileSync(out, "utf8")) as { n: number; brief: Record<string, { n: number; used: number }>; fields: Array<{ key?: string; whyNo?: Record<string, number>; val: number; writerOk: number; inDraft: number; aix2: string }> };
+    const notBuilt = (j0.fields ?? []).filter((f) => notBuiltField(f)).map((f) => String(f.key ?? "?"));
+    const j = { ...j0, fields: (j0.fields ?? []).filter((f) => !notBuiltField(f)) };
     const bn = Object.values(j.brief ?? {}).reduce((a, c) => a + c.n, 0), bu = Object.values(j.brief ?? {}).reduce((a, c) => a + c.used, 0);
     const fv = (j.fields ?? []).reduce((a, f) => a + f.val, 0), fo = (j.fields ?? []).reduce((a, f) => a + f.writerOk, 0), fd = (j.fields ?? []).reduce((a, f) => a + f.inDraft, 0);
     const wired = (j.fields ?? []).filter((f) => f.aix2 === "届く").length;
     const r = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
-    return { n: j.n, briefRate: r(bu, bn), deliverRate: r(fo, fv), inDraftRate: r(fd, fv), aix2Wired: `${wired}/${(j.fields ?? []).length}` };
+    return { n: j.n, briefRate: r(bu, bn), deliverRate: r(fo, fv), inDraftRate: r(fd, fv), aix2Wired: `${wired}/${(j.fields ?? []).length}`, notBuilt };
   } catch { return null; } finally { try { rmSync(out); } catch { /* 無ければよい */ } }
 }
 

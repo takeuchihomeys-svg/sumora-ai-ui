@@ -108,3 +108,26 @@ export function wastedCostOf(runs: ReadonlyArray<{ label: string; cost: number |
   }
   return { wasted: r3(wasted), runs: w, partial: r3(partial), partialRuns: p, unverified: r3(unverified), unverifiedRuns: u, total: r3(total) };
 }
+
+/**
+ * 2026-11-26 作業員L（台帳 #799 ②・統括役の頼み・試験の質 p0）: 流す時の関所（純関数）。積んだ後に前の回の写しが増える・積む時の関所を --force で越えた組もあるので、
+ *   係が流す直前にもう一度、効く問題（守りでない問題）ごとに on のスイッチの要る材料が前の回の写しに入るかを決まった計算で見る。
+ *   入らない問題（材料の要るスイッチ全部で0行）は外さずに守り（1回だけ・悪化だけ見る）に回す。効く問題が全部守りに回る＝流さない。
+ *   前の回が無い問題は分からない＝効く問題のまま。材料の要らないスイッチ（印・指示文）だけの組は見ない。止める: EXAM_RUN_REACH=off
+ */
+export type RunReachSplit = { toGuard: string[]; effective: string[]; stop: boolean; line: string };
+export function runReachOn(env: Record<string, string | undefined> = {}): boolean { return String(env.EXAM_RUN_REACH ?? "").trim().toLowerCase() !== "off"; }
+export function runReachSplit(r: readonly PreflightReach[], ids: readonly string[], guards: readonly string[] = []): RunReachSplit {
+  const judged = r.filter((x) => x.needs.length);
+  const g = new Set(guards);
+  const cand = ids.filter((id) => !g.has(id));
+  if (!judged.length || !cand.length) return { toGuard: [], effective: cand, stop: false, line: "" };
+  const useless = (id: string) => judged.every((x) => x.noMaterial.includes(id));
+  const toGuard = cand.filter(useless), effective = cand.filter((id) => !useless(id));
+  const sw = judged.map((x) => x.sw).join(",");
+  const stop = toGuard.length > 0 && effective.length === 0;
+  const line = !toGuard.length ? `流す時の関所: ${sw} の材料が効く問題 ${effective.length}問に入る（または前の回が無い）`
+    : stop ? `流す時の関所: ${sw} の要る材料が効く問題 ${toGuard.length}問の全部で前の回の写しに0行＝確かめられない（流さない）`
+    : `流す時の関所: ${sw} の材料が入らない ${toGuard.join(",")} を守り（1回）に回した（効く問題 ${effective.length}問）`;
+  return { toGuard, effective, stop, line };
+}
