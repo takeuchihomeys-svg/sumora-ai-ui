@@ -64,6 +64,19 @@ ok("サーバ rules_v ずれは force", gate.shouldForceLearnRefresh({
     flow_series: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }],
   },
 }, { serverRulesV: "newnew02" }).reason === "playbook_rules_v_stale");
+ok("itandi は playbook.rules=[] が正常（無限再取得しない）", gate.shouldForceLearnRefresh({
+  axlx_learn_ver: "v",
+  axlx_learn_for_site: "itandi",
+  axlx_learn_screen: { a: 1 },
+  axlx_learn_link: { screen_solid: 5 },
+  axlx_learn_next: { a: 1 },
+  axlx_learn_points: { a: 1 },
+  axlx_learn_playbook: {
+    build_v: 7,
+    rules: [],
+    flow_series: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }],
+  },
+}).force === false);
 
 console.log("■ modeOpenedForLearn");
 ok("autoModeAt 新規", gate.modeOpenedForLearn("autoModeAt", 0, 123) === true);

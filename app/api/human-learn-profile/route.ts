@@ -18,7 +18,8 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, shouldPreserveLongCronBundle, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
+import { isAutoMode } from "@/app/lib/press-by";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 import { PLAYBOOK_BUILD_V } from "@/app/lib/action-playbook";
@@ -498,6 +499,41 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
     }
   }
+  /**
+   * ★ 2026-11-27 統括と手順書の矛盾ゼロ化:
+   *   buildHumanLearnBundle（内部の superviseLearn）に旧来の station 手順（transportation_id → required_time）を渡したあと
+   *   下の inheritLinkFoundations が station.steps を駅遷移付きへ差し替えると、
+   *   supervisor / supervisor_by_site.realpro の「場面: 沿線・駅絞り込み」だけが古い手順のまま残る矛盾が起きていた（id=2829）。
+   *   → リアプロ系で駅遷移ステップが欠けている時は、buildHumanLearnBundle の前に直前束から補完しておく。
+   */
+  if (scope !== "itandi" && scope !== "reins" && Array.isArray(sceneFlows) && sceneFlows.length) {
+    const _hasStTransit = (steps: string[]) => (steps || []).some((s) => /駅の設定へ進む|沿線の設定へ戻る|one_station|one_line|route_id/.test(String(s)));
+    const _curSt = sceneFlows.find((f) => f && f.scene === "station");
+    if (_curSt && !_hasStTransit(_curSt.steps || [])) {
+      try {
+        const scopes = scope === "all" ? ["all", "realpro"] : [scope, "all"];
+        for (const scPre of scopes) {
+          const { data: preRows } = await supabase
+            .from("human_learn_profile")
+            .select("sf:bundle->scene_flows")
+            .eq("scope", scPre)
+            .order("created_at", { ascending: false })
+            .limit(8);
+          let foundSteps: string[] | null = null;
+          for (const pr of (preRows || []) as Array<{ sf?: Array<{ scene?: string; steps?: string[] }> | null }>) {
+            const stPre = Array.isArray(pr?.sf)
+              ? pr.sf.find((x) => x && x.scene === "station" && _hasStTransit(Array.isArray(x.steps) ? x.steps : []))
+              : null;
+            if (stPre?.steps?.length) { foundSteps = stPre.steps; break; }
+          }
+          if (foundSteps) {
+            _curSt.steps = foundSteps;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  }
   const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
     scene_flows: sceneFlows,
     scene_missing: sceneMissing,
@@ -759,7 +795,7 @@ export async function GET(req: NextRequest) {
       }
       // ★ 2026-11-20: refresh=1 も名前の除去と手順書を通す（ここだけ通していなかった＝古い手順書の写しが残る）
       const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-      prepareBundleForWrite(b);
+      prepareBundleForWrite(b, "all");
       const ins = await supabase.from("human_learn_profile").insert({
         scope: "all", source_rows: rows.length, bundle: b,
       });
@@ -818,7 +854,7 @@ export async function GET(req: NextRequest) {
   const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_build_v:bundle->playbook->>build_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
+    ? "id, created_at, scope, source_rows, source_from, source_to, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_build_v:bundle->playbook->>build_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };
@@ -846,12 +882,14 @@ export async function GET(req: NextRequest) {
    *   **その場で記録から作る**（cron を待たない）。作った物は DB に残すので次からは速い。
    *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
    */
-  const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > LEARN_PERIODS.bundleFreshMs);
-  /**
-   * 2026-11-13: `?fresh=1` で**必ず作り直す**（30分待たずに確かめたい時）。
-   *   竹内さん「学習できていない部分も学習できるようになっているのか」→ 待たずに確かめたい。
-   */
   const forceFresh = req.nextUrl.searchParams.get("fresh") === "1";
+  const preserveLongCron = !!row && shouldPreserveLongCronBundle({
+    createdAt: row.created_at as string | null | undefined,
+    sourceFrom: row.source_from as string | null | undefined,
+    sourceTo: row.source_to as string | null | undefined,
+    forceFresh,
+  });
+  const stale = !row || (!preserveLongCron && (Date.now() - Date.parse(String(row.created_at ?? 0)) > LEARN_PERIODS.bundleFreshMs));
   /**
    * ★ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが根本）**:
    *
@@ -940,17 +978,15 @@ export async function GET(req: NextRequest) {
       const bundleAt = String(row.created_at || "");
       if (bundleAt && solidLight >= 30) {
         // ★ 2026-11-20: 新しい順 40 件だけ見ていた → 通常の検索が40件を超えると自動の記録が見えず、needs_auto が永久に残っていた。
-        //   → 自動（aix／auto）の記録だけを DB で絞って見る（1件あれば十分・軽い）
+        // ★ 2026-11-27: brain_staff / ai も isAutoMode で自動として扱い、needs_auto が消えない穴を塞ぐ。
         const { data: autoAfter } = await supabase
           .from("search_audits")
           .select("created_at, mode")
           .gte("created_at", bundleAt)
-          .or("mode.ilike.*aix*,mode.ilike.*auto*")
+          .or("mode.ilike.*aix*,mode.ilike.*auto*,mode.ilike.*brain*,mode.eq.ai")
           .order("created_at", { ascending: false })
           .limit(5);
-        const hit = (autoAfter || []).some((a) =>
-          /aix|auto|brain_aix/i.test(String(a.mode || "")),
-        );
+        const hit = (autoAfter || []).some((a) => isAutoMode(a.mode));
         needsAuto = !hit;
       }
     } catch { /* 監査が読めなくても solid は返す */ }
@@ -969,7 +1005,10 @@ export async function GET(req: NextRequest) {
        *   渡す時に作り直す束（refreshPlaybookIfStale）と同じ条件で、**渡す時の版**を返す（DB は書かない）。
        */
       playbookRulesV = servedPlaybookRulesV(dbPb, { rules_v: autoRulesVersion(), build_v: PLAYBOOK_BUILD_V }).rules_v;
-      if (guard && lightReq) {
+      const _servedStale = !dbPb || !dbPb.rules_v || (Number(dbPb.build_v) || 0) < PLAYBOOK_BUILD_V || String(dbPb.rules_v) !== autoRulesVersion();
+      if (_servedStale) {
+        playbookRulesUpTo = AUTO_RULES_REVIEWED_UP_TO;
+      } else if (guard && lightReq) {
         if (row.playbook_rules_up_to != null) playbookRulesUpTo = String(row.playbook_rules_up_to);
       } else if (row.bundle && typeof row.bundle === "object") {
         const pb2 = (row.bundle as { playbook?: { rules_up_to?: string } }).playbook;

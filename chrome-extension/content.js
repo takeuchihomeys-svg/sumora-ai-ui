@@ -571,6 +571,7 @@ window.addEventListener("message", function (e) {
     "axlx_learn_screen_flow", "axlx_learn_scene_flows", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
     "axlx_learn_opens", "axlx_learn_plan", "axlx_learn_cursor_hand",
     "axlx_human_profile", "axlx_human_learn", "axlx_human_points",
+    "axlx_human_profile__realpro", "axlx_human_learn__realpro", "axlx_human_points__realpro",
     // ★ 2026-11-19 v2.8.25: サーバーで学んだ動き（速さ・曲がり）と、ラン単位の動き計画を MAIN world（pointer-ui.js）へ。
     //   → window.__axlxServerMotion / window.__axlxMotionPlan（pointer-ui.js が axlx-page-learn-push で受ける）
     //   ⚠ "axlx_learn_gaps" は配列の最後に置く（pick-lane-v2821 のテストが末尾を見る）
@@ -579,8 +580,30 @@ window.addEventListener("message", function (e) {
     "axlx_learn_playbook",
     // ★ 2.8.202: 客ごとの思考（決定論）を MAIN へ
     "axlx_customer_think",
+    // ★ 2026-11-27 サイト分離: リアプロ専用キーを優先して渡す（"axlx_learn_gaps" は末尾を維持）
+    "axlx_learn_for_site",
+    "axlx_learn_playbook__realpro", "axlx_learn_next__realpro", "axlx_learn_points__realpro",
+    "axlx_learn_screen__realpro", "axlx_learn_scene__realpro", "axlx_learn_scene_flows__realpro",
     "axlx_learn_gaps",
   ];
+  var _RP_LEARN_BASE_KEYS = [
+    "axlx_learn_playbook", "axlx_learn_next", "axlx_learn_points",
+    "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_scene_flows",
+  ];
+  function _realproLearnView(raw) {
+    var out = Object.assign({}, raw || {});
+    var isForeign = out.axlx_learn_for_site && out.axlx_learn_for_site !== "realpro";
+    for (var i = 0; i < _RP_LEARN_BASE_KEYS.length; i++) {
+      var bk = _RP_LEARN_BASE_KEYS[i];
+      var rk = bk + "__realpro";
+      if (Object.prototype.hasOwnProperty.call(out, rk) && out[rk] !== undefined) {
+        out[bk] = out[rk];
+      } else if (isForeign) {
+        delete out[bk];
+      }
+    }
+    return out;
+  }
   function pushAll() {
     try {
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
@@ -588,7 +611,7 @@ window.addEventListener("message", function (e) {
         try {
           if (chrome.runtime && chrome.runtime.lastError) return;
           if (r && typeof r === "object" && Object.keys(r).length) {
-            window.postMessage({ from: "axlx-page-learn-push", data: r }, "*");
+            window.postMessage({ from: "axlx-page-learn-push", data: _realproLearnView(r) }, "*");
           }
         } catch (_) {}
       });
@@ -599,9 +622,19 @@ window.addEventListener("message", function (e) {
     if (e.data.from === "axlx-page-storage-get") {
       var id = e.data.id;
       var keys = Array.isArray(e.data.keys) ? e.data.keys : PUSH_KEYS;
+      var askSet = {};
+      var extraKeys = keys.slice();
+      for (var ki = 0; ki < keys.length; ki++) {
+        askSet[keys[ki]] = true;
+        if (_RP_LEARN_BASE_KEYS.indexOf(keys[ki]) >= 0) {
+          var rpKey = keys[ki] + "__realpro";
+          if (extraKeys.indexOf(rpKey) < 0) extraKeys.push(rpKey);
+        }
+      }
+      if (extraKeys.indexOf("axlx_learn_for_site") < 0) extraKeys.push("axlx_learn_for_site");
       try {
-        chrome.storage.local.get(keys, function (r) {
-          var payload = (chrome.runtime && chrome.runtime.lastError) ? {} : (r || {});
+        chrome.storage.local.get(extraKeys, function (r) {
+          var payload = (chrome.runtime && chrome.runtime.lastError) ? {} : _realproLearnView(r || {});
           try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: payload }, "*"); } catch (_) {}
         });
       } catch (_) {
@@ -662,7 +695,15 @@ window.addEventListener("message", function (e) {
           if (changes[k]) { out[k] = changes[k].newValue; has = true; }
         }
         if (has) {
-          try { window.postMessage({ from: "axlx-page-learn-push", data: out }, "*"); } catch (_) {}
+          try {
+            var mapped = Object.assign({}, out);
+            for (var bi = 0; bi < _RP_LEARN_BASE_KEYS.length; bi++) {
+              var bkk = _RP_LEARN_BASE_KEYS[bi];
+              var rkk = bkk + "__realpro";
+              if (Object.prototype.hasOwnProperty.call(mapped, rkk)) mapped[bkk] = mapped[rkk];
+            }
+            window.postMessage({ from: "axlx-page-learn-push", data: mapped }, "*");
+          } catch (_) {}
         }
       });
     }
@@ -681,7 +722,8 @@ window.addEventListener("message", function (e) {
         if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
         chrome.storage.local.get([
           "axlx_learn_needs_auto", "axlx_learn_ver", "axlx_learn_screen", "axlx_learn_link",
-          "axlx_learn_next", "axlx_learn_points", "axlx_learn_playbook", "axlx_learn_after_update",
+          "axlx_learn_next", "axlx_learn_points", "axlx_learn_playbook", "axlx_learn_playbook__realpro",
+          "axlx_learn_for_site", "axlx_learn_after_update",
           BOOT_KEY,
         ], function (st) {
           try {
@@ -689,9 +731,10 @@ window.addEventListener("message", function (e) {
             st = st || {};
             var last = Number(st[BOOT_KEY]) || 0;
             if (Date.now() - last < BOOT_GAP_MS) return;
-            var need = !!(st.axlx_learn_after_update || st.axlx_learn_needs_auto || !st.axlx_learn_playbook);
+            var pbReal = st.axlx_learn_playbook__realpro || (st.axlx_learn_for_site !== "itandi" ? st.axlx_learn_playbook : null);
+            var need = !!(st.axlx_learn_after_update || st.axlx_learn_needs_auto || !pbReal);
             if (!need) {
-              var pb = st.axlx_learn_playbook;
+              var pb = pbReal;
               if (pb && typeof pb === "object") {
                 var bv = Number(pb.build_v) || 0;
                 var fs = pb.flow_series;

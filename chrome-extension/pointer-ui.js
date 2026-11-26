@@ -201,11 +201,22 @@
     return null;
   }
   // 2026-11-11 竹内さん「通常モードの動きから学ぶのか」: 通常モードで覚えた実測から作った「動きの癖」
+  // ★ 2026-11-27 サイト横断汚染防止: ページホストに応じて __realpro / __itandi のキーを読む（他サイトの癖・位置と混ぜない）
+  var _ptrSite = (function () {
+    try {
+      var h = String((typeof location !== "undefined" && location && location.hostname) || "");
+      if (/realnetpro/.test(h)) return "realpro";
+      if (/itandibb/.test(h)) return "itandi";
+      if (/reins/.test(h)) return "reins";
+    } catch (_) {}
+    return "";
+  })();
+  var _ptrSiteSuffix = _ptrSite ? ("__" + _ptrSite) : "";
   var _prof = null;
   var _profLoaded = false;
-  var PROF_KEY = "axlx_human_learn";
+  var PROF_KEY = "axlx_human_learn" + _ptrSiteSuffix;
   // 2026-11-11 竹内さん「データたまって理解するたび反映」: 貯まるたびに作り直された癖（こちらを優先して読む）
-  var PROF_LIVE_KEY = "axlx_human_profile";
+  var PROF_LIVE_KEY = "axlx_human_profile" + _ptrSiteSuffix;
   var L = null;
   // ⚠ pointer-ui.js は human-learn.js より**先**に読み込まれる。
   //   読み込み時の1回だけ見ると undefined になるので、**使う時に読む**（ensure / reloadProfile の中）。
@@ -223,7 +234,7 @@
    *   これは通常モードで人はこう押した、という実測（DB の human_motion_learn.point_fields と同じ形）。
    *   貯まるたびに `axlx_human_points` に書かれている（human-learn-record.js）。
    */
-  var POINTS_KEY = "axlx_human_points";
+  var POINTS_KEY = "axlx_human_points" + _ptrSiteSuffix;
   var _points = null;
   var _pointsLoadedAt = 0;
   /** ★ 2026-11-16: 通常録画から学んだ「手が付く欄」（axlx_learn_cursor_hand） */

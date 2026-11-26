@@ -41,6 +41,9 @@
     "chrome-extension/popup.js": "画面の入口（両サイトの欄・更新日はサイトごとの列・対応表を参照）。サイトの値で分けて使う（DB の site 列は site-update-days.js が分ける）。",
     "chrome-extension/resolution-core.js": "対応表の写し（正本は popup-maps.js）。同じ表を持つので、ずれは見張りで止める。",
     "app/lib/search-audit-diagnose.ts": "検索の点検（両サイトの路線を読む）。サイトの値で分けて見る。",
+    "app/lib/learn-flow-steps.ts": "両サイトの録画操作の場面分類（sceneOfOp）。リアプロと ITANDI の実在欄名を場面へ振り分ける。",
+    "app/lib/action-playbook.ts": "両サイトの手順書ビルダー（buildPlaybook）。PLAYBOOK_FIELD_JA で両サイトの欄名を日本語化し、site 引数で手順・一連の流れを完全に分けて返す。",
+    "app/lib/human-motion-sanitize.ts": "両サイトの汚染・ゴミ・爆発ポイント除去の正本（sanitizeMotionPayload / sanitizeBundleForSite）。リアプロと ITANDI それぞれの禁止欄名パターンを定義し、site 引数で他サイトの欄名をブロックする（混ぜて使わない）。",
     "app/api/migrate-schema/route.ts": "列を作る所（両サイトの列を1つの移行に並べる）。列名は各サイトの物を使う。"
   }
 }

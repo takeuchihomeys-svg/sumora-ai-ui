@@ -429,7 +429,7 @@
   function _itStep(k, d) {
     if (!_itAudit) return;
     _itAudit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
-    if (_itAudit.steps.length > 20) _itAudit.steps.shift();
+    if (_itAudit.steps.length > 30) _itAudit.steps.shift();
   }
   function _itReadForm() {
     var f = {};
@@ -2043,6 +2043,7 @@
                   }
                   if (_itAudit) {
                     _itAudit.search_clicked = !!_searched;
+                    if (_searched) _itStep("search_press", "検索");
                     if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
                   }
                   if (!_searched) { _safeDone("AXLX_SEARCH_BLOCKED: 検索のボタンが見つからない"); return; }

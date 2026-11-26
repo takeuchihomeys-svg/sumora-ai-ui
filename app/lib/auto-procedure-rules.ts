@@ -199,6 +199,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "sel_one_press",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:sel_one_press"],
+      mustHaveAny: ["page:sel_one_press"],
+    },
   },
   {
     id: "checkbox_settle",
@@ -208,6 +212,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "return _settleChk(600)",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:toggle_late_ok", "page:toggle_repress", "page:toggle_direct"],
+      mustHaveAny: ["page:toggle_late_ok", "page:toggle_repress", "page:toggle_direct"],
+    },
   },
   {
     id: "ward_pace",
@@ -217,6 +225,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "5022ab57",
     marker: "function _wardGapPlan",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:ward_pace"],
+      mustHaveAny: ["page:ward_pace"],
+    },
   },
   {
     id: "pick_pace",
@@ -226,6 +238,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "eda23c77",
     marker: "function _pickGapPlan",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:pick_pace"],
+      mustHaveAny: ["page:pick_pace"],
+    },
   },
   {
     id: "playbook_read",
@@ -326,13 +342,13 @@ export const AUTO_RULES: AutoRule[] = [
     file: "bulk-dl.js",
     verify: {
       onlyIf: ["dl:search_to_sort", "dl:sort_cursor_wait", "dl:after_search"],
-      mustHaveAny: ["dl:sort_cursor_go", "dl:sort_menu", "dl:sort_head"],
+      mustHaveAny: ["dl:sort_cursor_go", "dl:sort_menu", "dl:sort_head_hover"],
     },
   },
   {
     id: "search_confirm_then_wait_sort",
     scene: "list",
-    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_confirmed／screenOk）が取れてから。確認時刻から30秒以上空けて sort_cursor へ（2.8.292・録画で確かめた人の間は36秒。1〜3.5秒は旧で、物件の表示が追いつかなかった）。並べ替えの待ちの間は一覧の描き直しから押し始めない（wait_sort_cursor）。並べ替えに失敗したら並びのまま押す前に30〜36秒待って最初からもう1回（sort_failed_wait_retry・2.8.293）。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
+    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_ok／screenOk）が取れてから。確認時刻から30秒以上空けて sort_cursor へ（2.8.292・録画で確かめた人の間は36秒。1〜3.5秒は旧で、物件の表示が追いつかなかった）。並べ替えの待ちの間は一覧の描き直しから押し始めない（wait_sort_cursor）。並べ替えに失敗したら並びのまま押す前に30〜36秒待って最初からもう1回（sort_failed_wait_retry・2.8.293）。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
     since: "2.8.207",
     kb: null,
     marker: "_isSearchConfirmGrasp",
@@ -341,9 +357,9 @@ export const AUTO_RULES: AutoRule[] = [
       onlyIf: ["dl:sort_cursor_go", "dl:sort_menu", "dl:search_to_sort"],
       mustHaveAny: [
         "page:search_press_ok",
-        "page:search_customer_grasp_confirmed",
+        "page:search_customer_grasp_ok",
         "page:guide_phase_after_search",
-        "dl:search_grasp_confirmed",
+        "dl:search_grasp_gate",
         "dl:search_customer_screen_ok",
         "dl:sort_cursor_wait",
         "dl:search_confirm_gap",
@@ -362,9 +378,9 @@ export const AUTO_RULES: AutoRule[] = [
       onlyIf: ["page:search_grasp_intent_only"],
       mustHaveAny: [
         "page:search_press_ok",
-        "page:search_customer_grasp_confirmed",
+        "page:search_customer_grasp_ok",
         "page:guide_phase_after_search",
-        "dl:search_grasp_confirmed",
+        "dl:search_grasp_gate",
         "dl:sort_gate_need_confirm",
       ],
     },
@@ -560,6 +576,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "function _intentWaitMark(",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:fill_resume", "page:fill_pause_force"],
+      mustHaveAny: ["page:fill_pause"],
+    },
   },
   {
     // 2.8.302: 手を止める長さは毎回ちがう（4〜11秒・中央6.5秒）。6秒に固めない
@@ -570,6 +590,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "function _handPauseMs()",
     file: "page-script.js",
+    verify: {
+      onlyIf: ["page:fill_pause", "page:fill_resume"],
+      mustHaveAny: ["page:fill_pause", "page:fill_resume"],
+    },
   },
   {
     id: "human_fixed_waits_routed",
@@ -597,15 +621,23 @@ export const AUTO_RULES: AutoRule[] = [
     kb: null,
     marker: "var _extBehind =",
     file: "background.js",
+    verify: {
+      onlyIf: ["ext_behind"],
+      mustHaveAny: ["ext_behind"],
+    },
   },
   {
     id: "reset_replaces_clear",
     scene: "clear",
-    text: "リセットと、最後の保険（リセットが押せない時だけ）の「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括の入力前 reset_before_fill）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。単発の自動（ポップアップの自動ボタン）は、ポップアップがページの中の iframe でリセットの読み直しで消えるため、まだ ③ の従来の外しだけで動く（既知の穴・2.8.305時点）",
+    text: "リセットと、最後の保険（リセットが押せない時だけ）の「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括・単発の入力前 reset_before_fill。単発は iframe がリロードで消えても background が autoFillAfter で自動入力を引き継ぐ）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。案内モード中（normal）はリセットを押さない（2.8.310）",
     since: "2.8.305",
     kb: "265a1cca",
     marker: "reset_replaces_clear",
     file: "background.js",
+    verify: {
+      onlyIf: ["reset_press"],
+      mustHaveAny: ["reset_verified", "reset_fallback", "reset_retry"],
+    },
   },
   {
     id: "series_handoff_order",
@@ -615,6 +647,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "265a1cca",
     marker: "var customer = await _refreshCustomerBeforeSearch(customer, site);",
     file: "background.js",
+    verify: {
+      onlyIf: ["handoff_loop"],
+      mustHaveAny: ["reset_before_fill", "reset_verified", "reset_fallback", "handoff_loop"],
+    },
   },
   {
     id: "reset_empty_is_enough",
@@ -624,6 +660,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "265a1cca",
     marker: "reset_empty_is_enough",
     file: "background.js",
+    verify: {
+      onlyIf: ["reset_count_same"],
+      mustHaveAny: ["reset_verified"],
+    },
   },
   {
     id: "reset_success_skips_look",
@@ -633,6 +673,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "265a1cca",
     marker: "reset_success_skips_look",
     file: "background.js",
+    verify: {
+      onlyIf: ["look_skip"],
+      mustHaveAny: ["look_skip"],
+    },
   },
   {
     id: "reset_retry_insurance",
@@ -642,6 +686,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "f3d2c5b1",
     marker: "_resetWithInsurance(",
     file: "background.js",
+    verify: {
+      onlyIf: ["reset_retry"],
+      mustHaveAny: ["reset_stuck_shot", "reset_verified", "reset_fallback"],
+    },
   },
   {
     id: "task_gate_no_forced_refetch",
@@ -651,6 +699,10 @@ export const AUTO_RULES: AutoRule[] = [
     kb: "f3d2c5b1",
     marker: 'src === "boot_need"',
     file: "background.js",
+    verify: {
+      onlyIf: ["page:task_api_refresh"],
+      mustHaveAny: ["page:task_api_refresh_res"],
+    },
   },  {
     id: "ad_sort_hover",
     scene: "list",
@@ -1096,7 +1148,7 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "_applyGuideLikeStationGrasp",
     file: "page-script.js",
     verify: {
-      onlyIf: ["page:station_grasp_like_guide", "page:station_route_from_map"],
+      onlyIf: ["page:station_grasp_like_guide", "page:station_route_from_map", "page:station_no_route"],
       mustHaveAny: ["page:station_grasp_like_guide", "page:station_route_from_map"],
       mustNot: ["page:station_no_route"],
     },
@@ -1131,14 +1183,14 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_list_next_flow",
     scene: "list",
-    text: "一覧・次ページも手順書の list/next 場面と画面（行・次ボタン・AD順）を照合してから進む。条件モーダル（駅・沿線・所在地）中は並べ替え／送付しない（照合NGで止める）。AD後も次ページへ。客完了時 handoff を残し、次客の切替で list_handoff_seen として読む",
+    text: "一覧・次ページも手順書の list/next 場面と画面（行・次ボタン・AD順）を照合してから進む。条件モーダル（駅・沿線・所在地）中は並べ替え／送付しない（照合NGで止める）。AD後も次ページへ。客完了時 handoff を残し、次客の切替で flow_handoff_ok / ready_next として読む",
     since: "2.8.170",
     kb: "b3b5e14c",
     marker: "_guideLikeListFlowGrasp",
     file: "bulk-dl.js",
     verify: {
-      onlyIf: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "page:list_handoff_seen", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
-      mustHaveAny: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "page:list_handoff_seen", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
+      onlyIf: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "flow_handoff_ok", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
+      mustHaveAny: ["dl:list_flow_grasp", "dl:next_flow_grasp", "dl:handoff_grasp", "flow_handoff_ok", "dl:list_flow_block", "dl:sort_blocked", "dl:sort_abort"],
     },
   },
   {
@@ -1624,22 +1676,22 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_stuck_watch_use_improvements",
     scene: "clear",
-    text: "外しはリセットで空にする（reset_replaces_clear）。外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はclear_watchで定期に照会→次手",
+    text: "外しはリセットで空にする（reset_replaces_clear）。外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はsilence_watch（旧clear_watch）で定期に照会→次手",
     since: "2.8.239",
     kb: "079c57d5",
     marker: "_armClearStuckWatch",
     file: "page-script.js",
     verify: {
       onlyIf: [
-        "page:clear_watch_on",
-        "page:clear_watch_tick",
+        "page:silence_watch_on",
+        "page:silence_watch_tick",
         "page:stuck_best_act",
         "page:screen_poll_api_next",
         "page:now_action",
       ],
       mustHaveAny: [
-        "page:clear_watch_on",
-        "page:clear_watch_tick",
+        "page:silence_watch_on",
+        "page:silence_watch_tick",
         "page:stuck_best_act",
       ],
     },

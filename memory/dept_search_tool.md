@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-11-27 **残課題の徹底改善・実データ確認とリアプロ手順書の完全整理（PLAYBOOK_BUILD_V = 18・2.8.310）**
+
+竹内さん「ほかに改善できていない部分あれば改善する」「ちゃんとリアプロ手順書も綺麗に整理されたのか徹底的に確認する」。
+
+**実 DB 比較で確認した主な成果（読むだけ・`realpro` id=2829 / `itandi` id=2830 / `all` id=2831）**
+1. **リアプロ手順書（`PLAYBOOK_BUILD_V: 16 -> 18`）の整理完了**:
+   - `points` の許可されないキー・他サイト混入・ゴミキー（`id`, `input`, `iframe`, `#[object HTMLInputElement]`, ITANDI の `#_r_*_` 等）: **28件 → 0件**（全170件 → 浄化後139件）。
+   - `n > 5000` の `0.5,0.5` 爆発ポイント（`id(n=545748)`, `eq_rm[](n=405150)` 等）: **5件 → 0件**（実測 `learnPoints` でも `effN <= 50` 制限＆爆発点低優先化）。
+   - `station` 手順の押す位置 `aim`: 4手中2手欠損（`route_id[]`, `station_id[]` が `null`）→ **4/4 手すべてに実測集約 `aim`（`label.one_line` / `label.one_station`）を付与**。
+   - `list` 4手目「④並べ替え後に印刷用PDFを押す」が誤って「並べ替え」と判定されていたバグを修正（`印刷用PDF` を先に判定）し、`AD`・`高→低`・`印刷用PDF` すべてに実測 `aim` を付与。
+   - 統括ログ（`supervisor` / `supervisor_by_site.realpro`）と `scene_flows` の食い違いを解消（`transportation_id → required_time` 残骸 → `沿線・駅絞り込み＋ → route_id[] → 駅の設定へ進む → station_id[]` に同期、`syncSupervisorSceneFlows`）。
+   - `checksAfter: []`（不整合・未分類 0件）、`AUTO_RULES` 検証カバレッジ **97/102（95.1%、5件のみ検査検証用に意図的維持）**。
+2. **ITANDI・全体（`itandi` id=2830 / `all` id=2831）の汚染除去**:
+   - `itandi` 内の `station`（リアプロ `沿線・駅絞り込み＋` 等）と `area`（連結ラベル `路線・駅選択都道府県北海`）を `sanitizeBundleForSite` で自動除去、`checksAfter: []`。
+3. **Chrome 拡張の残課題修正**:
+   - **単発自動のリセットリロード耐性**（`popup.js`, `background.js`, `auto-procedure-rules.ts`）: `underbar.js` 内 `iframe` 埋め込みの `popup.js` がリアプロ「リセット」押下のリロードで破棄される問題に対し、`axlx_pending_auto_send` / `axlx_score_data` / 記録をリセット前に保存し、`axlx-reset-before-fill` の `autoFillAfter` で `background.js` がリロード完了後に `axlx-set-fill-customer` + `axlx-realnetpro-autofill` を直接再送する経路を実装。
+   - **`point_fields[k].n` 指数爆発の根絶**（`human-learn-record.js`, `human-learn-upload.js`, `app/api/human-motion/route.ts`）: 累計 `_livePoints` の毎回再送信（1450万→8709万）を止め、保存窓ごとの増分 `_sessionPoints` / `_sessionAutoPoints`（`n <= 200`）だけを `uploadDelta` で送信し、サーバー受付側でも `isAllowedMotionFieldName` フィルタと `1..500` 上限を強制。保存済みストレージの旧爆発値も `_sanitizePointStore` で自動浄化。
+   - **`opens` 記録・`directText`・`stageOf` バグ修正**（`human-learn-record.js`, `human-learn.js`）: `click` のみ `noteBeforeClick` / `noteOpened` を実行し（`mousedown` 先取り併用）、`_pushOp` が返した操作オブジェクト `o` に直接 `o.opened` を書くことで `_ringAt` ズレを解消。`fieldName` での裸タグ名（`input`/`select`/`iframe`）返却を廃止、`directText` の多数要素連結（`路線・駅選択都道府県北海`）・記号のみ（`-----`）を遮断、`stageOf()` / `uiCounts()` を `getClientRects()` と主要モーダル列挙で正確化。
+   - **`shot-learn.ts` / `latest-learn-loop.ts` 誤警報・ゴミ除外**: 日本語間取り（`左の2LDK｜label`）・`更新日`・日本語セレクト欄名・`左の次｜td.pager` / `ページ送り` / `pager` の無害な UI 揺れを抑止し、`-----`・`input` 等のゴミを `findWeakPoints` / `latestAutoChallenge` から除外。
+   - **`site-split-rules.json`**: `app/lib/human-motion-sanitize.ts` を両サイト汚染除去の正本として `shared_mix` に登録。
+
+**検証結果**
+- Chrome 拡張テスト全 344本（`ext-test-all.ts`）: 青 232 / 赤 112（新規赤 0本・基準維持・全 67 JS 構文検証 OK）。
+- TS 防衛テスト群（`playbook-and-motion-hardening.test.ts` 25/0・`shot-learn.test.ts` 50/0・`action-playbook.test.ts` 56/0・`auto-rules-verify-exists.test.ts` 8/0・`playbook-rule-evidence.test.ts` 35/0・`playbook-site-split.test.ts` OK・`auto-procedure-rules.test.ts` 202/0・`site-contamination-guard.test.ts` 11/0・`learn-opens-and-itandi-flow.test.ts` 30/0・`bundle-write-prepare.test.ts` 12/0・`playbook-downgrade-guard.test.ts` 29/0 ほか）全通過。
+- `npx tsc --noEmit`: 今回編集・新規作成ファイルの型エラー 0件（既存テスト 8ファイルのみ以前のまま）。
+
+**反映手順（未実行・竹内さん承認後）**: commit & push → Chrome 拡張の再読み込み（`2.8.310`）→ `npx tsx --env-file=.env.local scripts/attach-playbook.ts --apply` で DB 手順書を `build_v=18` に更新。
+
+---
+
 ## 2026-11-26 **連動の点検を1回で回す仕組み（改善のたびに）・手順書が最新でなかった原因を直す**
 
 竹内さん「なんで最新にならないのか／最新にするように仕組み化したのではないのか」「拡張ツールをちゃんと連動させる・矛盾やボトルネックは仕組み化して、改善の際それを行う」。
@@ -14864,8 +14894,14 @@ Claude（統括役）からの依頼2件への対応。
 - 竹内さん「リセットと並べ替えで止まったらスクショして画面把握してそこからもう一度できる保険」→ 並べ替えには有り・リセットには無かったので足した（KB f3d2c5b1）。
 - background.js _resetWithInsurance(customerId, runId, phase)（送付後 _postSendClearOrReset と入力前 _resetBeforeFill の両方）: リセットが空にならない・押せない・例外 → ①_resetShot(...,"reset_stuck")で1枚撮る（reset_stuck_shot）②__axlxResetVerifyPで画面を読む（reset_stuck_grasp）③空なら成功（reset_stuck_recovered）④空でなければ待ち上限260秒を張り直してもう1回押す（reset_retry）⑤それでもだめな時だけ従来の1つずつ外し。skipped（off/no_tab/入力中）・ストップ要求は何もしない。
 - pre_fill_reset を BULK_KICKABLE_PHASES には入れていない（待ちは上限つきで保険の中で張り直すため）。
-- 手順書 eset_retry_insurance を追加・eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
-- 試験: 新 eset-retry-insurance-v2308.test.js（17）。eset-before-fill-v2296（押す回数 1→2・正規表現）・eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
+- 手順書 
+eset_retry_insurance を追加・
+eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
+- 試験: 新 
+eset-retry-insurance-v2308.test.js（17）。
+eset-before-fill-v2296（押す回数 1→2・正規表現）・
+eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・
+eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
 - 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.308 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
 
 ### 2026-11-26 一連ループのボトルネック総点検（コードは 2.8.308 のまま・手順書の文言と試験の強化）
@@ -14958,3 +14994,70 @@ Claude（統括役）からの依頼2件への対応。
 - **コミット前の見張り**: `.githooks/pre-commit`。この PC で `git config core.hooksPath .githooks` を設定済み。
 - **station_map の道具**: `scripts/apply-station-map-site-lines.ts`（既定 dry-run・`--mode=fill`・`--mode=fill-and-fix`・`--apply` には `--backup-dir` が要る）。書いていない。竹内さんの選択待ち。dry-run の数（2026-11-26）: ITANDI 空を埋める 305・ずれ 20／REINS 空を埋める 315・ずれ 3。ずれの例（ITANDI 表記）「大阪環状線」→「JR大阪環状線」は拡張の正本 `ITANDI_LINE_MAP_FILL` と一致。
 - **今回触っていない既存の赤**: `search-update-days.test.ts` の「号室の正規化」1件（sent-property-record の正規化・サイト分けと無関係）。
+- **station_map の空埋め（書いた）**: `--mode=fill --apply` で 317 行（ITANDI の空 305・REINS の空 315・重なり 3）。控え: `C:\Users\Admin\Desktop\station-map-backup-2026-11-26\station_map_before_fill_*.json`（戻す時は before を各 token に書き戻す）。書いた後の読み直し: ずれ（ITANDI 20・REINS 3）と対応が無い 12 行は残す。
+- **反映の経緯**: 2コミット（d00f39123・978393dce）を、他の作業者の変更が先に入った最新の履歴へ乗せ直して反映した（早送り・強制なし・作業ツリーは触らず一時の作業場所で行った）。最新の履歴の上でも見張りは緑。
+- 注意: この PC の cursor-ext と最新の履歴は中身が同じでもコミット番号が違う。次に cursor-ext から反映する時は、先に最新の履歴を取り込んでから。
+
+### 2026-11-26（深夜）表記の違いを把握して、写しを正本に揃えた（竹内さん「表記のところ、リアプロと itandi で違う部分もあるのでちゃんと把握しておけ」）
+- **把握した表**: `chrome-extension/DB_STRUCTURE.md` の「表記の違い（リアプロ・ITANDI・REINS）」に、主な路線の3サイトの表記を書いた（例: 大阪環状線＝ITANDI だけ「JR大阪環状線」・東西線＝REINS だけ「東西線」・阪急神戸線＝ITANDI「阪急神戸本線」）。正本は `popup-maps.js`。
+- **写しのずれ（実測）**: 一括・自動の経路の `resolution-core.js` は、駅→路線の表が正本 658 駅のうち 306 駅だけ・能勢電鉄妙見線／日生線の路線番号が無い・ITANDI の能勢・信貴・西信貴が無い・REINS の泉北・能勢・水間鉄道水間線・東海道本線が無かった。`popup.js` の手順書の注記の表も、東海道本線・近鉄難波・奈良線がずれていた。
+- **直したこと（拡張）**: `resolution-core.js` の 7 表（STATION_WARD_MAP・STATION_LINE_MAP・LINE_STATION_ORDER・ITANDI_LINE_MAP_FILL・LINE_ROUTE_MAP・LINE_ALIAS_MAP・REINS_LINE_MAP）と、`popup.js` の注記用 ITANDI 表の本体を、`popup-maps.js` からそのまま写した（関数は触っていない）。写す前の控え: `station-map-backup-2026-11-26\resolution-core.before-sync.js`・`popup.before-sync.js`。版（manifest）は上げていない → 拡張の再読み込みで反映。
+- **見張り（新しい）**: `tests/chrome-extension/notation-copies-sync.test.js`（写しの表が正本と同じか・能勢・信貴の約束）。`ext-test-all` の新しい赤は 0（基準の赤 115 は変えず）。
+- **DB（竹内さんの決定）**: 今日の空埋めで REINS 列に入れた `東海道本線` の 11 行を空に戻した（`reins_tokaido_revert_before_*.json` が戻す前の控え）。茨城は空埋めより前から `東海道本線` だったので触っていない。
+- **未決**: (A) REINS の東海道本線の画面の表記（東海道本線か東海道線か）・(B) 近鉄信貴線・西信貴ケーブル線を一括の経路で ITANDI・REINS に回すか（route_id が無い路線は回さない `if (id)` の所・ロジックの変更）・(C) 東海道本線を駅ごとに京都線／神戸線へ振り分けるか。
+- **注意**: 写しを揃えたので、一括の経路は REINS の「東海道本線」を出すようになった（以前は出なかった）。REINS の画面の表記が違えば、一括の REINS 検索で東海道の沿線が当たらない（未確認）。
+
+### 2026-11-26（深夜）レインズは使わない（竹内さん）
+- 実測（直近30日）: search_audits リアプロ 596・ITANDI 84・レインズ 0。property_pickups の site=reins 0。automation_commands の reins 0。
+- 対象外: REINS の表記（station_map.reins_line・REINS_LINE_MAP）・見張りの REINS の箱・写しの試験の REINS。
+- まだ残している（止める・消すは未決）: `reins-content.js`・`reins-bulk-dl.js`・`reins-page-script.js`・manifest の reins の一覧。
+- 設計知見に【決定】として1行入れた。
+
+### 2026-11-26（深夜）レインズ停止・見張りの穴を塞ぐ（竹内さんの選択）
+- レインズは使わない（実測: 直近30日 search_audits リアプロ 596・ITANDI 84・レインズ 0）。
+- 変更: `chrome-extension/manifest.json` から `system.reins.jp` を外した（host_permissions・web_accessible_resources・content_scripts の REINS 分）。`reins-*.js` のファイルは残す（消すかは未決）。版は上げていない（2.8.310 のまま。版を上げるなら `_AXLX_PAGE_VER`・`AUTO_RULES_REVIEWED_UP_TO` も一緒に直す必要がある）。拡張の再読み込みで反映。
+- 試験の期待値を2サイトに直した: `human-learn-save-bug-v2668`・`human-learn-search-flow-v2667`・`mode-gate-v2663`・`search-audit`。拡張の試験は 226 青・新しい赤 0。
+- 写しの見張りを広げた: `tests/chrome-extension/notation-copies-sync.test.js` に、リアプロの `ROUTE_LINE_MAP`（page-script・realpro-guide-plan）・ITANDI の `ITANDI_STATION_ALIAS_MAP`（itandi-page-script・itandi-guide-plan）・サーバー側 `ITANDI_LINE_MAP`（app/lib/station-line-maps.ts）を加えた。16 OK / 0 NG。
+- `.githooks/pre-commit` に `notation-copies-sync` を入れた（コミット前に動く）。
+- DB の点検: `scripts/check-station-map-canonical.ts`（読むだけ）を追加。結果: station_map 778行・リアプロ路線のある行 632・正本とずれた行 20（大阪環状線 17行＝DB が「大阪環状線」・正本は「JR大阪環状線」／東海道本線 3行＝神戸線側が無い）。
+- 未決: 大阪環状線 17行を残した理由が記録に無い（竹内さんに確認中）。東海道本線の粗さ（C）。
+
+- **大阪環状線（竹内さんの答え）**: 「itandiは大阪環状線」。DB の 17 行（ITANDI 列「大阪環状線」）と一致。正本 popup-maps の「JR大阪環状線」と食い違うため、正本は変えていない。ITANDI の実画面で確かめてから揃える（設計知見に【決定】1行）。
+
+
+### 2026-11-26（深夜）大阪環状線の表記を画面で確認して揃えた（竹内さん）
+- ITANDI の路線一覧（スクリーンショット）の表示は「大阪環状線」。正本 popup-maps.js の ITANDI_LINE_MAP_FILL の「JR大阪環状線」を「大阪環状線」に直し、写し（resolution-core.js・popup.js・app/lib/station-line-maps.ts）も揃えた。
+- DB の station_map の ITANDI 列 17 行は書き換えなし（もう正本と一致）。
+- 試験: notation-copies-sync 16 OK／station-line-maps 20 OK／拡張の試験 226 青・新しい赤 0。
+- 点検 check-station-map-canonical: 正本とずれ 3 行（東海道本線・神戸線側が無い行）のみ。これは未決 C（東海道本線の駅ごとの振り分け）。
+- 設計知見: 【決定】を 1 行追加（56f88ca8）、古い未解決の行（c6ca8b8d）は退役。拡張の再読み込みで反映。
+
+
+### 2026-11-26（深夜）リアプロの沿線の画面と照合 → 南海本線に統一
+- 竹内さんのリアプロの沿線一覧（大阪府）と照合。画面の表示「南海電鉄南海本線」に合わせ、「南海電鉄南本線」を使わないようにした（路線番号 6681 は同じ）。
+- 変更: 正本 popup-maps.js（駅の表・並び順・ITANDI/REINS/ROUTE の重複行を削除）→ 写し（resolution-core.js・popup.js）・build-transit-graph.js → transit_graph.js（再生成・辺 1140→1120。消えたのは南本線の重複の辺）・app/lib/station-line-maps.ts・app/lib/osaka-transit-data.ts・app/api/seed-maps/route.ts・app/api/resolve-search-conditions/route.ts。
+- DB station_map: 41 行（hardcoded）の realpro_lines を南海本線に直した。控え: Desktop\station-map-backup-2026-11-26\nanpo-honsen-before-2026-11-26.json。読み直し: 南本線 0 行。
+- 試験: line-repress-v2816 の期待値を南海本線に（湊）。notation-copies-sync 16 OK・station-line-maps 20 OK・拡張の試験 226 青・新しい赤 0・app の transit/station 試験 OK。tsc は既存の 22 件のまま。
+- 未決（竹内さんの DevTools の結果待ち）: 近鉄信貴線・近鉄西信貴ケーブル線・東海道・山陽新幹線はリアプロの路線番号が正本に無い。
+- 設計知見に【決定】1行追加。
+
+### 2026-11-27 徹底改善（Phase 1〜4）: サイト汚染遮断・学習束同期・重複地図解消・詳細地域案内・単発前リセット・仕組み化
+- **Phase 1（サイト汚染完全遮断＋再発防止）**: `app/lib/human-motion-sanitize.ts` で破損名・他サイト要素を除去し、`prepareBundleForWrite(bundle, scope)` に第2引数必須化＋`site-contamination-guard.test.ts`・`human-learn-site-isolation.test.js` で再発防止。
+- **Phase 2（拡張 ↔ API 手順書・学習束の同期とサイト分離）**: `action-playbook.ts` と `learn-bundle-preserve.ts` でサイト別の手順書・流れを同期。`playbook-site-split.test.ts`・`learn-bundle-site-sync.test.js` を追加。
+- **Phase 3（`opens` 消失修正・ITANDI 実在欄・死んだ `verify` 解消・`page-script.js` 補完復元）**:
+  - `human-learn.js` の `mergeAggregate` が `opens`/`open_kinds` を引き継ぐよう修正＋`learnOpens` で `shot_ops[].opened` も回収。
+  - `learn-flow-steps.ts` に ITANDI 実在欄（`リスト検索`・`路線・駅選択`・`rent:lteq`・`floor_area_amount:gteq` 等）を分類。
+  - `page-script.js`: `_lineNameToRouteIdLocal` / `_fillRouteIdsFromStationMap`（`station_route_from_map`）を実装し、`fillRealpro` で `_applyGuideLikeStationGrasp` を呼び出し復元。
+  - `search-audit.js`: ループで大量発火する `ward_pace` 等を `KEEP_STEP` から外し、`RULE_STEP` 側のみで保持（`page:cursor_one` 等の証跡押し出しを解消）。
+  - 仕組み化: `auto-rules-verify-exists.test.ts`（死んだ verify・grasp 印ゼロ検査 8/8）・`learn-opens-and-itandi-flow.test.ts`（30/30）。
+- **Phase 4（地図重複撲滅＋サーバー同期＋詳細地域案内＋単発前リセット＋Pre-commit 強化）**:
+  - **`popup-maps.js`（正本）＆ `resolution-core.js` 重複キー 6件解消**: `吹田`（重複により JR 東海道本線が上書き消滅していた致命バグを `["東海道本線", "阪急電鉄千里線"]` に回復）・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原` を統合・整理。
+  - **サーバー API 完全同期**: `app/api/seed-maps/route.ts` を正本（`STATION_WARD_MAP` 159・`STATION_LINE_MAP` 658・`NEIGHBORHOOD_WARD_MAP` 316・`LINE_STATION_ORDER` 40）と `@/app/lib/station-line-maps` import に同期。`app/api/resolve-search-conditions/route.ts` の `LINE_ROUTE_MAP`（能勢電鉄2線追加）と `LINE_ALIAS_MAP`（短縮線名16本追加・計25本）を同期。
+  - **`tests/chrome-extension/notation-copies-sync.test.js` 強化（43 OK / 0 NG）**: 全マップの重複キー 0件検査＋`吹田` 回帰確認＋`seed-maps` / `resolve-search-conditions` 同期監視を追加。
+  - **リアプロ案内モード 詳細地域（`detail_ward` / `detail_area` / `town_names`）対応**: `realpro-guide-plan.js` で `pick_city (hasTowns)` → `pick_town` を生成し、`realpro-guide.js` で「大阪府」ボタン・`div.next_step_button2`「詳細な地域の設定へ進む」・`label.one_town` / `town_code[]`・確定まで非操作（光らせるのみ）で案内可能に。
+  - **単発自動の前客リセット `_resetBeforeFill` 連携**: `background.js` に `axlx-reset-before-fill`（案内モード `normal` は必ずスキップ＋`preferredTabId` 優先）を追加し、`popup.js` の手動単発自動時（`!isAutomated && _isAutoModeNow()`）も条件投入前に前客クリアを実施。
+  - **仕組み化・フック強化**: `tests/chrome-extension/realpro-guide-town.test.js`（13 OK / 0 NG）追加。`.githooks/pre-commit` に `realpro-guide-town.test.js`・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を組み込み。
+  - **環境注記**: `.env.local` には `SUPABASE_SERVICE_ROLE_KEY` が無い（ANON キーのみ）ため、ローカルから RLS（service_role 専用）テーブル `human_motion` / `extension_snapshots` / `extension_devices` を直接読むと 0/null に見える。本番の実データは Vercel API（`/api/human-motion?summary=1` 20,000行・`/api/human-learn-profile?history=1` 等）で確認すること（2026-11-27 確認済み）。
+  - **版数**: `2.8.310` のまま（`head-ttl-served-v2310` 等と整合）。`ext-test-all.ts` 全 344 本: 青 232 / 赤 112（新赤 0）。変更・追加 TS ファイルの `tsc` エラー 0。
+
+

@@ -100,10 +100,10 @@ function loadMaps(file, names) {
   return ctx.__o;
 }
 const M = loadMaps("popup-maps.js", ["STATION_LINE_MAP", "LINE_STATION_ORDER", "LINE_ROUTE_MAP"]);
-ok("popup-maps: 湊 → 南海電鉄南本線", Array.isArray(M.STATION_LINE_MAP["湊"]) && M.STATION_LINE_MAP["湊"].includes("南海電鉄南本線"));
+ok("popup-maps: 湊 → 南海電鉄南海本線（2026-11-26 南本線を南海本線に統一）", Array.isArray(M.STATION_LINE_MAP["湊"]) && M.STATION_LINE_MAP["湊"].includes("南海電鉄南海本線"));
 ok("湊の沿線はリアプロ 6681（南海本線）", M.LINE_ROUTE_MAP[M.STATION_LINE_MAP["湊"][0]] === "6681");
 const rc = fs.readFileSync(path.join(root, "resolution-core.js"), "utf8");
-ok("resolution-core（写し）にも湊", /"湊": \["南海電鉄南本線"\]/.test(rc));
+ok("resolution-core（写し）にも湊", /"湊": \["南海電鉄南海本線"\]/.test(rc));
 const gaps = [];
 for (const [line, sts] of Object.entries(M.LINE_STATION_ORDER)) for (const st of sts) if (!M.STATION_LINE_MAP[st]) gaps.push(st + "（" + line + "）");
 ok("沿線の並びにあって逆引きに無い駅は 15 以下（地名と重なる13駅だけ・増やさない）", gaps.length <= 15, gaps);

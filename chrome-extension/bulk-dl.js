@@ -913,9 +913,12 @@
     var done = typeof cb === "function" ? cb : function () {};
     if (_playbookCache !== null) { done(_playbookCache === false ? null : _playbookCache); return; }
     try {
-      chrome.storage.local.get(["axlx_learn_playbook"], function (r) {
-        _playbookCache = (r && r.axlx_learn_playbook && typeof r.axlx_learn_playbook === "object")
-          ? r.axlx_learn_playbook : false;
+      chrome.storage.local.get(["axlx_learn_playbook__realpro", "axlx_learn_playbook", "axlx_learn_for_site"], function (r) {
+        var raw = (r && r.axlx_learn_playbook__realpro && typeof r.axlx_learn_playbook__realpro === "object")
+          ? r.axlx_learn_playbook__realpro
+          : (r && r.axlx_learn_for_site !== "itandi" && r.axlx_learn_playbook && typeof r.axlx_learn_playbook === "object")
+            ? r.axlx_learn_playbook : null;
+        _playbookCache = raw || false;
         done(_playbookCache === false ? null : _playbookCache);
       });
     } catch (_) { _playbookCache = false; done(null); }
@@ -1542,8 +1545,8 @@
       var now = Date.now();
       if (_supCache !== null && now - _supAt < 30000) { cb(_supCache); return; }
       _supAt = now;
-      chrome.storage.local.get([_SUP_KEY], function (r) {
-        _supCache = (r && r[_SUP_KEY]) || {};
+      chrome.storage.local.get(["axlx_learn_supervisor__realpro", _SUP_KEY, "axlx_learn_for_site"], function (r) {
+        _supCache = (r && r.axlx_learn_supervisor__realpro) || (r && r.axlx_learn_for_site !== "itandi" ? r[_SUP_KEY] : null) || {};
         cb(_supCache);
       });
     } catch (_) { cb({}); }
@@ -4219,9 +4222,10 @@
      *   旧 falseHead が棟戸｜under を全除外 → sort_head_aim_warm が出ず sort_no_head で PDF へ飛んだ。
      */
     try {
-      chrome.storage.local.get(["axlx_learn_points", "axlx_learn_scene_flows"], function (st) {
+      chrome.storage.local.get(["axlx_learn_points__realpro", "axlx_learn_scene_flows__realpro", "axlx_learn_points", "axlx_learn_scene_flows", "axlx_learn_for_site"], function (st) {
         try {
-          var pts = (st && st.axlx_learn_points) || {};
+          var _rpOk = !st || st.axlx_learn_for_site !== "itandi";
+          var pts = (st && st.axlx_learn_points__realpro) || (_rpOk && st && st.axlx_learn_points) || {};
           var best = null;
           Object.keys(pts).forEach(function (k) {
             var v = pts[k];
@@ -4299,7 +4303,7 @@
            *   高→低／並べ替え／AD が list|other|search 流れにあれば正本印を残す。
            */
           try {
-            var sflows = (st && st.axlx_learn_scene_flows) || window.__axlxLearnSceneFlows || null;
+            var sflows = (st && st.axlx_learn_scene_flows__realpro) || (!st || st.axlx_learn_for_site !== "itandi" ? (st && st.axlx_learn_scene_flows) : null) || window.__axlxLearnSceneFlows || null;
             var flowHit = "";
             if (Array.isArray(sflows)) {
               for (var fi = 0; fi < sflows.length && !flowHit; fi++) {

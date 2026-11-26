@@ -8,3 +8,12 @@ echo "[pre-commit] サイト分けの見張り（リアプロ・ITANDI・REINS�
 node tests/chrome-extension/site-split-guard.test.js
 echo "[pre-commit] サイトの呼び名の正本の試験（app/lib/site-key.ts）"
 npx tsx app/lib/__tests__/site-key.test.ts
+echo "[pre-commit] 表記の写しが正本（popup-maps.js）と同じか・重複キー0か"
+node tests/chrome-extension/notation-copies-sync.test.js
+echo "[pre-commit] リアプロ詳細地域案内＋単発自動リセットの試験"
+node tests/chrome-extension/realpro-guide-town.test.js
+echo "[pre-commit] 学習束・手順書サイト分離・死んだverify・証跡ステップの防衛試験"
+npx tsx app/lib/__tests__/playbook-site-split.test.ts
+npx tsx app/lib/__tests__/auto-rules-verify-exists.test.ts
+npx tsx app/lib/__tests__/playbook-rule-evidence.test.ts
+npx tsx app/lib/__tests__/learn-opens-and-itandi-flow.test.ts

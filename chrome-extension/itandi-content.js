@@ -269,4 +269,91 @@
       setTimeout(_run, 300);
     }
   })();
+
+  // ★ 2026-11-27 サイト横断汚染防止: ITANDI専用の学習・位置・手順書キーを MAIN world へ中継する
+  (function () {
+    var ITANDI_PUSH_KEYS = [
+      "axlx_human_profile__itandi",
+      "axlx_human_learn__itandi",
+      "axlx_human_points__itandi",
+      "axlx_learn_for_site",
+      "axlx_learn_playbook__itandi",
+      "axlx_learn_next__itandi",
+      "axlx_learn_points__itandi",
+      "axlx_learn_screen__itandi",
+      "axlx_learn_scene__itandi",
+      "axlx_learn_scene_flows__itandi",
+      "axlx_learn_supervisor__itandi",
+      "axlx_learn_motion",
+      "axlx_motion_plan",
+    ];
+    var _IT_BASE_KEYS = [
+      "axlx_learn_playbook", "axlx_learn_next", "axlx_learn_points",
+      "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_scene_flows", "axlx_learn_supervisor",
+    ];
+    function _itandiLearnView(raw) {
+      var out = Object.assign({}, raw || {});
+      for (var i = 0; i < _IT_BASE_KEYS.length; i++) {
+        var bk = _IT_BASE_KEYS[i];
+        var ik = bk + "__itandi";
+        if (Object.prototype.hasOwnProperty.call(out, ik) && out[ik] !== undefined) {
+          out[bk] = out[ik];
+        }
+      }
+      return out;
+    }
+    function pushAll() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+        chrome.storage.local.get(ITANDI_PUSH_KEYS, function (r) {
+          try {
+            if (chrome.runtime && chrome.runtime.lastError) return;
+            if (r && typeof r === "object" && Object.keys(r).length) {
+              window.postMessage({ from: "axlx-page-learn-push", data: _itandiLearnView(r) }, "*");
+            }
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }
+    window.addEventListener("message", function (e) {
+      if (e.source !== window || !e.data || typeof e.data !== "object") return;
+      if (e.data.from === "axlx-page-storage-get") {
+        var id = e.data.id;
+        var keys = Array.isArray(e.data.keys) ? e.data.keys : ITANDI_PUSH_KEYS;
+        var extraKeys = keys.slice();
+        for (var ki = 0; ki < keys.length; ki++) {
+          if (_IT_BASE_KEYS.indexOf(keys[ki]) >= 0) {
+            var itk = keys[ki] + "__itandi";
+            if (extraKeys.indexOf(itk) < 0) extraKeys.push(itk);
+          }
+        }
+        try {
+          chrome.storage.local.get(extraKeys, function (r) {
+            var payload = (chrome.runtime && chrome.runtime.lastError) ? {} : _itandiLearnView(r || {});
+            try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: payload }, "*"); } catch (_) {}
+          });
+        } catch (_) {
+          try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: {} }, "*"); } catch (__) {}
+        }
+      }
+    });
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+        chrome.storage.onChanged.addListener(function (changes, area) {
+          if (area !== "local" || !changes) return;
+          var out = {};
+          var has = false;
+          for (var i = 0; i < ITANDI_PUSH_KEYS.length; i++) {
+            var k = ITANDI_PUSH_KEYS[i];
+            if (changes[k]) { out[k] = changes[k].newValue; has = true; }
+          }
+          if (has) {
+            try { window.postMessage({ from: "axlx-page-learn-push", data: _itandiLearnView(out) }, "*"); } catch (_) {}
+          }
+        });
+      }
+    } catch (_) {}
+    setTimeout(pushAll, 300);
+    setTimeout(pushAll, 1500);
+  })();
 })();

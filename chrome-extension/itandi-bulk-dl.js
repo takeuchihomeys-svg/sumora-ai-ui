@@ -993,6 +993,14 @@
   // background は、ブレインの時だけその回の記録に足す。件数表示の場所は確かめていないので、画面の文字から「N件」の形を探して生のまま残す
   var _itAuditRes = null;
   var _itPageSkipped = 0;
+  function _itLiveStep(customerId, k, d) {
+    try {
+      chrome.runtime.sendMessage(
+        { type: "axlx-audit-live-step", customerId: customerId != null ? String(customerId) : null, k: k, d: d == null ? null : String(d).slice(0, 120) },
+        function () { void chrome.runtime.lastError; }
+      );
+    } catch (_) {}
+  }
   function _itAuditResult(extra) {
     var base = _itAuditRes || { pages: 0, read_rows: 0, sent_count: 0 };
     var r = { site: "itandi", pages: base.pages, read_rows: base.read_rows, sendable_rows: null, sent_count: base.sent_count, zero_reason: null, url: String(location.href || "").slice(0, 300) };
@@ -1061,6 +1069,7 @@
           updateBar();
           _itAuditRes = { pages: 1, read_rows: tracked.length, sent_count: 0 };
           console.warn("[AXLX itandi] 条件が効いていない形 → 資料をダウンロードせずに止める: " + ((pre.guard && pre.guard.reasons) || []).join("・"));
+          _itLiveStep(customerId, "dl:it_handoff", "guard_stopped");
           try {
             chrome.runtime.sendMessage(
               { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: null, audit: _itAuditResult({ guard: pre.guard || null, guard_stopped: true }) },
@@ -1082,6 +1091,7 @@
           _pendingAutoSendDispatched = false;
           var _rowMax = _G() ? _G().MAX_ROWS : null;
           console.log("[AXLX itandi] 1回の物件数の上限（" + _rowMax + "件）→ 次へ totalSent=" + _totalSentCount);
+          _itLiveStep(customerId, "dl:it_handoff", "row_limit=" + _totalSentCount);
           try {
             chrome.runtime.sendMessage(
               { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ row_limit: _rowMax }) },
@@ -1095,6 +1105,7 @@
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;
           console.log("[AXLX itandi] 前回の検索より古い行まで来た → 次のページは開かない totalSent=" + _totalSentCount);
+          _itLiveStep(customerId, "dl:it_handoff", "update_stop=" + _totalSentCount);
           try {
             chrome.runtime.sendMessage(
               { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult() },
@@ -1113,6 +1124,7 @@
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;
           console.log("[AXLX itandi] 自動便の " + _itLimit + "ページ上限 → 次へ totalSent=" + _totalSentCount);
+          _itLiveStep(customerId, "dl:it_handoff", "page_limit=" + _totalSentCount);
           try {
             chrome.runtime.sendMessage(
               { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ page_limit: _itLimit }) },
@@ -1126,6 +1138,7 @@
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;
           console.log("[AXLX itandi] 全ページ送信完了 totalSent=" + _totalSentCount);
+          _itLiveStep(customerId, "dl:it_handoff", "all_pages=" + _totalSentCount);
           // リアプロ(bulk-dl.js)と同様に background.js へ完了シグナルを送る
           try {
             chrome.runtime.sendMessage(
@@ -1135,6 +1148,7 @@
           } catch (_) {}
           return;
         }
+        _itLiveStep(customerId, "dl:it_next", "page=" + ((_itAuditRes && _itAuditRes.pages) || 0));
         // 次ページのDOM更新を待ってから再送
         setTimeout(function() {
           inject();
@@ -1144,6 +1158,7 @@
             } else {
               _autoSendInProgress = false;
               _pendingAutoSendDispatched = false;
+              _itLiveStep(customerId, "dl:it_handoff", "next_empty=" + _totalSentCount);
               // 次ページに物件がなかった（ページ移動後0件）→ 完了シグナル
               try {
                 chrome.runtime.sendMessage(
@@ -1365,6 +1380,7 @@
 
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
     if (_guideBlocksAuto("_autoSendOnePage")) return; // 終わりの知らせ（onComplete）は返さない＝次のページへ進まない
+    _itLiveStep(customerId, "dl:it_list", "rows=" + tracked.length);
     // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
     checkedKeys.clear();
     // 全選択（2026-11-10: 1件ずつ人の間を空けて押す。押し終わってから下の選別へ）
@@ -1445,6 +1461,7 @@
       _pendingAutoSendDispatched = true;
       console.log("[AXLX itandi] 15秒経過・物件なし確定 → 0件としてaxlx-batch-customer-done送信");
       _getSendCustomer(false, function(_n, customerId) {
+        _itLiveStep(customerId, "dl:it_handoff", "no_rows_15s");
         try {
           chrome.runtime.sendMessage(
             { type: "axlx-batch-customer-done", customerId: customerId || null, propertyCount: 0, audit: (function () { _itAuditRes = null; return _itAuditResult({ zero_reason: "no_rows_15s" }); })() },

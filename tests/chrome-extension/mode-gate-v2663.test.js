@@ -118,7 +118,7 @@ console.log("\n■ ④ 通常モードで人の動きを覚える（人の間を
   ok("1分ごとに書き出す（操作のたびに書かない）", /SAVE_EVERY_MS = 60000/.test(rec2));
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.find((c) => (c.js || []).includes("human-learn-record.js"));
-  ok("manifest: 3サイトで human-learn.js → human-learn-record.js を読む", !!cs && cs.js.indexOf("human-learn.js") < cs.js.indexOf("human-learn-record.js") && cs.matches.length === 4);
+  ok("manifest: リアプロ・ITANDIで human-learn.js → human-learn-record.js を読む（レインズは対象外）", !!cs && cs.js.indexOf("human-learn.js") < cs.js.indexOf("human-learn-record.js") && cs.matches.length === 3);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
