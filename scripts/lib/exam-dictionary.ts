@@ -34,7 +34,9 @@ export function inferSwitchMarks(runs: readonly InferRun[], offMarksOf: (id: str
 }
 /** 届いたかの関所（作業員A の reachGateOf と同じ考え・辞書の印で）: on の回の行で、スイッチの印（手も推定も）が出た問題だけを比べる。minReached 未満は「届かず」・印の無いスイッチは「印なし」 */
 export function dictReachGate(d: ExamDictionary, sw: string, onRows: ReadonlyArray<{ id: string; marks: Record<string, unknown> | null | undefined }>, targets: readonly string[], minReached = 3): { marks: string[]; reached: string[]; notReached: string[]; verdict: "比べる" | "届かず" | "印なし" } {
-  const marks = (d.switches[sw]?.marks ?? []).map((m) => m.mark);
+  // 手の印があればそれだけ（推定は他の部品の印も拾う＝届いたと見誤る・exam-preflight-marks と同じ）
+  const all = d.switches[sw]?.marks ?? []; const hand = all.filter((m) => m.source === "手");
+  const marks = (hand.length ? hand : all).map((m) => m.mark);
   if (!marks.length) return { marks, reached: [], notReached: [...targets], verdict: "印なし" };
   const reached = targets.filter((id) => onRows.some((r) => r.id === id && marks.some((k) => Number((r.marks ?? {})[k] ?? 0) > 0)));
   return { marks, reached, notReached: targets.filter((id) => !reached.includes(id)), verdict: reached.length >= minReached ? "比べる" : "届かず" };

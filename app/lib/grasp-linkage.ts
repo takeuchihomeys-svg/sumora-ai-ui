@@ -1,7 +1,7 @@
 // app/lib/grasp-linkage.ts — 「現状の把握」と「進め方」の葉 × 出す側 の連携の表（持つ・使う・反映）（純関数・DB/LLM なし）
 // 2026-11-27 作業員L（竹内さん 11/27「現状の把握とこれからどう進めるか把握する力を細分化して土台を固めて強化」「連携できるところも細かく連携すれば把握する能力も上がる」・統括役の割り振り）:
 //   葉（12）ごとに、読むのに使える出す側を並べ、出す側ごとに 持つ（試験の写し＝problems.json の ledger・登録の条件 pc に記録がある）／使う（ブレインの材料の印 material_marks が付いた）／
-//   反映（判断の欄に出た）を数える。印の無い出す側は「使う」を数えられない＝印を足すのが先（統括役の決め③）。作業員A の受け持ち表（conductor-ownership）の部品のキー（mark）と同じ名で持つ。
+//   反映（判断の欄に出た）を数える。2026-11-27: 中心の材料の塊の印（core_*・brain-core の CORE_MATERIAL_MARKS・記録だけ）を足した＝この印の付いた答えから「使う」が数えられる。印の無い出す側は「使う」を数えられない＝印を足すのが先（統括役の決め③）。作業員A の受け持ち表（conductor-ownership）の部品のキー（mark）と同じ名で持つ。
 //   形は linkage-gap-matrix（出す側×受け取る側）と同じ考え: ここは 受け取る側＝ブレインの葉。数えるのは scripts/audit-grasp-linkage.ts（手元の json・費用0）
 export type GraspLeaf = "station" | "substate" | "temp_doubt" | "open_promise" | "sent_reaction" | "move_in" | "waiting_for" | "next_line" | "next_move" | "ahead" | "timing" | "reply_or_aix";
 export const GRASP_LEAF_JA: Record<GraspLeaf, string> = {
@@ -18,16 +18,16 @@ export const LEAF_REFLECT: Record<GraspLeaf, string[]> = {
 /** 出す側: 持つ＝写しの表（ledger）か登録の条件の欄（pc）・使う＝材料の印（無ければ null＝数えられない）・読める葉 */
 export type GraspSource = { id: string; name: string; table?: string; pcField?: string; derived?: boolean; marks: string[]; leaves: GraspLeaf[]; note?: string };
 export const GRASP_SOURCES: readonly GraspSource[] = [
-  { id: "promise_ledger", name: "約束の台帳（こちらの約束・期限）", derived: true, marks: ["check_promise_flow", "pickup_promise_flow", "now_fulfillable", "fulfil_turn"], leaves: ["open_promise", "waiting_for", "next_move", "timing"], note: "会話の通から作る（写しの表は無い）" },
-  { id: "sent_properties", name: "物件の台帳（オススメした物件）", table: "sent_properties", marks: [], leaves: ["sent_reaction", "station", "next_move"], note: "【すでに送付済みの物件】は材料に入るが印が無い（pickup_why は選んだ理由の部品で別）" },
+  { id: "promise_ledger", name: "約束の台帳（こちらの約束・期限）", derived: true, marks: ["core_promise", "check_promise_flow", "pickup_promise_flow", "now_fulfillable", "fulfil_turn"], leaves: ["open_promise", "waiting_for", "next_move", "timing"], note: "会話の通から作る（写しの表は無い）" },
+  { id: "sent_properties", name: "物件の台帳（オススメした物件）", table: "sent_properties", marks: ["core_sent_props"], leaves: ["sent_reaction", "station", "next_move"], note: "【すでに送付済みの物件】は材料に入るが印が無い（pickup_why は選んだ理由の部品で別）" },
   { id: "property_pickups", name: "物件の台帳（ピックアップ・待ちの物件）", table: "property_pickups", marks: ["pickup_why_pending", "pickup_promise_flow"], leaves: ["waiting_for", "open_promise", "next_move"] },
   { id: "sent_image_properties", name: "物件の台帳（お客様が送ってきた物件）", table: "sent_image_properties", marks: ["pickup_why_sip"], leaves: ["sent_reaction", "waiting_for"] },
-  { id: "estimate_records", name: "見積の記録", table: "estimate_records", marks: [], leaves: ["sent_reaction", "station", "ahead", "next_move"], note: "ブレインの【送った御見積書】は印なし・入口の1行だけ印あり" },
-  { id: "viewings", name: "内覧の記録", table: "viewings", marks: [], leaves: ["station", "timing", "next_move"] },
-  { id: "viewing_history", name: "内覧の履歴", table: "viewing_history", marks: [], leaves: ["station", "sent_reaction"] },
-  { id: "aix_usage_logs", name: "AIX の送った行", table: "aix_usage_logs", marks: [], leaves: ["sent_reaction", "open_promise", "reply_or_aix"], note: "AIX の送った行は会話と台帳の材料に入るが印が無い（our_parts_wide・exchange は既定 off の別の部品）" },
-  { id: "sent_facts", name: "送った事実の帳面", table: "sent_facts", marks: [], leaves: ["sent_reaction", "waiting_for"] },
-  { id: "move_in_card", name: "入居の札（登録の条件の入居の時期）", pcField: "move_in_time", marks: [], leaves: ["move_in", "timing", "ahead"] },
+  { id: "estimate_records", name: "見積の記録", table: "estimate_records", marks: ["core_estimate_records", "intake_estimate"], leaves: ["sent_reaction", "station", "ahead", "next_move"], note: "ブレインの【送った御見積書】は印なし・入口の1行だけ印あり" },
+  { id: "viewings", name: "内覧の記録", table: "viewings", marks: ["core_viewings"], leaves: ["station", "timing", "next_move"] },
+  { id: "viewing_history", name: "内覧の履歴", table: "viewing_history", marks: ["core_viewings"], leaves: ["station", "sent_reaction"] },
+  { id: "aix_usage_logs", name: "AIX の送った行", table: "aix_usage_logs", marks: ["core_aix_history"], leaves: ["sent_reaction", "open_promise", "reply_or_aix"], note: "AIX の送った行は会話と台帳の材料に入るが印が無い（our_parts_wide・exchange は既定 off の別の部品）" },
+  { id: "sent_facts", name: "送った事実の帳面", table: "sent_facts", marks: ["core_ledger"], leaves: ["sent_reaction", "waiting_for"] },
+  { id: "move_in_card", name: "入居の札（登録の条件の入居の時期）", pcField: "move_in_time", marks: ["core_cond"], leaves: ["move_in", "timing", "ahead"] },
   { id: "customer_summary", name: "顧客の要約（登録の条件の ai_summary）", pcField: "ai_summary", marks: [], leaves: ["temp_doubt", "substate", "move_in"] },
   { id: "route_map", name: "申込までの地図（駅・状態・逆算）", derived: true, marks: ["station_state", "route_backplan", "route_substate", "route_path_line"], leaves: ["station", "substate", "ahead", "next_move"] },
   { id: "deal_outcomes", name: "成約の台帳（成約データの道）", derived: true, marks: ["deal_flow_pre_apply"], leaves: ["ahead", "timing"], note: "写しには無い＝本番の記録で" },

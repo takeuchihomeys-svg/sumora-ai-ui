@@ -4628,6 +4628,17 @@ ${history}`;
       }, { split: ["customerState"], marks: materialMarks }).map((x) => ({ ...x, g: maskBrain(x.g) }));
     } catch (e) { console.warn(JSON.stringify({ tag: "conductor:material-index-failed", error: e instanceof Error ? e.message : String(e) })); }
   }
+  // 2026-11-27 作業員L（統括役の決め・竹内さん 11/27「現状の把握…連携できるところも細かく連携」）: 中心の材料の塊の印（記録だけ・既定 on・CORE_MATERIAL_MARKS=off で止める）。
+  //   今までは後から足した部品にしか印が無く、【すでに送付済みの物件】・行動台帳（送った事実）・AIX の流れ・送った御見積書・内覧・約束・登録の条件が「使ったか」を数えられなかった。
+  //   材料の目録（buildMaterialIndex＝指示書の入力）の後に置く＝目録にも LLM の入力にも入らない（material_marks の記録だけ・プロンプトは1字も変わらない）
+  if ((process.env.CORE_MATERIAL_MARKS ?? "").trim().toLowerCase() !== "off") {
+    const core: Record<string, string> = { core_sent_props: sentPropsText, core_ledger: ledgerText, core_aix_history: aixHistoryText, core_estimate_records: estimateRecordsText, core_viewings: viewingsText, core_promise: promiseBrainText, core_cond: condText };
+    for (const [k, v] of Object.entries(core)) if (typeof v === "string" && v.trim()) materialMarks[k] = v.length;
+  }
+  // 2026-11-27 作業員L（#803・竹内さん 11/27「試験の質上げればもっと早く完了する」）: 昼の届きの確かめ（scripts/exam-preflight-marks.ts・LLM 0）。
+  //   EXAM_MARKS_PREFLIGHT=on の時だけ、ブレインを呼ぶ前のこの時点の材料の印の鍵を1行出す（本番では立たない・記録だけ・プロンプトは変わらない）
+  //   印を出したらブレインを呼ばずに止める（録音の無い呼び出しで待たない・試験の片付けは brain-exam の失敗の行の道で）
+  if (process.env.EXAM_MARKS_PREFLIGHT === "on") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({
