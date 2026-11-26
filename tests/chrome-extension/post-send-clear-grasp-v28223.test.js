@@ -16,9 +16,11 @@ function ok(name, c, d) {
 }
 
 console.log("\n■ 版");
-ok("manifest ≥2.8.223", /^2\.8\.(22[3-9]|2[3-9]\d|[3-9]\d{2})$/.test(mf.version), mf.version);
-ok("page ≥2.8.223", /_AXLX_PAGE_VER = "2\.8\.22[3-9]"/.test(ps));
-ok("AUTO_RULES ≥2.8.223", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.22[3-9]"/.test(rules));
+// 2.8.313: 版の固定が 2.8.22x だけを通す書き方で、以後の版で赤になっていた → 数の大小で比べる
+const _ge = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+ok("manifest ≥2.8.223", _ge(mf.version, "2.8.223"), mf.version);
+ok("page ≥2.8.223", _ge((ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.223"));
+ok("AUTO_RULES ≥2.8.223", _ge((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1], "2.8.223"));
 
 console.log("\n■ 偽OK禁止");
 ok("skipped を _psOk=false", /else if \(_psRes\.skipped\) _psOk = false/.test(bg));
@@ -33,7 +35,9 @@ ok("fill_start_gap で強制外す把握", /fill_start_gap/.test(ps) && /post_se
 console.log("\n■ 決まり・通し");
 ok("post_send_clear_grasp 決まり", /id: "post_send_clear_grasp"/.test(rules));
 ok("RULES_DONE に載る", /"post_send_clear_grasp"/.test(ps));
-ok("KEEP/RULE に gap", /KEEP_STEP[\s\S]{0,200}post_send_clear_gap/.test(sa) && /RULE_STEP[\s\S]{0,200}post_send_clear_gap/.test(sa));
+// 2.8.313: 「KEEP_STEP から200文字以内」の窓は、段の名前が増えて正規表現が長くなり（400文字目）届かなくなっていた。行ごとに見る。
+const _lineOf = (name) => (sa.split("\n").find((l) => l.indexOf("var " + name + " = /") >= 0) || "");
+ok("KEEP/RULE に gap", _lineOf("KEEP_STEP").includes("post_send_clear_gap") && _lineOf("RULE_STEP").includes("post_send_clear_gap"));
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

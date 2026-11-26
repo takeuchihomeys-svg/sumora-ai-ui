@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-26T20:50:54.435Z",
+  "at": "2026-11-26T21:11:28.514Z",
   "note": "未整理の古い赤の一覧（隠すためではなく、新しい赤を見分けるための基準）。直したら --write-baseline で縮める。増やさない。fails は赤のファイルごとの失敗項目（中の失敗が増えたら止める）。",
   "red": [
     "ad-sort-hilo-v28185.test.js",
@@ -20,8 +20,6 @@
     "bundle-storm-and-conds-v2775.test.js",
     "capture-outside-save-v2761.test.js",
     "clear-method-api-transition-v28229.test.js",
-    "clear-per-panel-search-decide-v28135.test.js",
-    "clear-samekind-transition-v28220.test.js",
     "commute-reach.test.js",
     "customer-no-mix-v2811.test.js",
     "fill-gate.test.js",
@@ -31,7 +29,6 @@
     "guide-auto-parity-v2682.test.js",
     "guide-list-next-flow-v28166.test.js",
     "guide-only-v2577.test.js",
-    "guide-phase-task-link-v28231.test.js",
     "guide-plan-link-v28162.test.js",
     "guide-screen-f57-v28187.test.js",
     "guide-search-parity-v2689.test.js",
@@ -46,7 +43,6 @@
     "human-random-order-v266.test.js",
     "human-rest-v2598.test.js",
     "human-search-signal-v2777.test.js",
-    "human-serial-v2832.test.js",
     "human-wait.test.js",
     "implied-fill-done-v2828.test.js",
     "itandi-form-guard.test.js",
@@ -69,18 +65,15 @@
     "list-sort-live-audit-v28186.test.js",
     "location-any-axis-v2692.test.js",
     "loop-clear-grasp-chain-v28224.test.js",
-    "loop-sort-cursor-keep-v28226.test.js",
     "never-stop-v2752.test.js",
     "next-customer-move-one-v28219.test.js",
     "no-press-before-search-v2703.test.js",
     "no-row-check-v2827.test.js",
-    "now-action-no-single-clear-loop-v28227.test.js",
     "one-task-complete-before-next-v28225.test.js",
     "parallel-sites.test.js",
     "perf-v2572.test.js",
     "pick-with-pointer.test.js",
     "place-switch-v2818.test.js",
-    "post-send-clear-grasp-v28223.test.js",
     "press-with-pointer-v2663.test.js",
     "realpro-guide.test.js",
     "scene-aim-v2810.test.js",
@@ -112,7 +105,6 @@
     "two-search-buttons-v2671.test.js",
     "unknown-fill-v2826.test.js",
     "update-order-stop.test.js",
-    "ward-clear-human-v2829.test.js",
     "was-sent-v2780.test.js"
   ],
   "fails": {
@@ -230,13 +222,6 @@
       "✗ page ≥#",
       "✗ rules ≥#"
     ],
-    "clear-per-panel-search-decide-v28135.test.js": [
-      "✗ _AXLX_PAGE_VER # 以降",
-      "✗ manifest # 以降"
-    ],
-    "clear-samekind-transition-v28220.test.js": [
-      "✗ page-script≥#"
-    ],
     "commute-reach.test.js": [
       "✗ page-script: 多数の駅は #〜#ms で押す（_stGapFast）・止まったら選べた駅で進む（commute_stall）"
     ],
@@ -274,10 +259,6 @@
     "guide-only-v2577.test.js": [
       "✗ popup: モードの選択に#つ（通常・スタッフ・自動）",
       "✗ 自動・AIXモード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain）"
-    ],
-    "guide-phase-task-link-v28231.test.js": [
-      "✗ page ≥#",
-      "✗ rules ≥#"
     ],
     "guide-plan-link-v28162.test.js": [
       "✗ station_scene が primaryPending を見る",
@@ -336,8 +317,8 @@
     "human-rest-v2598.test.js": [
       "✗ page-script: 検索の直前に #〜#秒の見直し"
     ],
-    "human-serial-v2832.test.js": [
-      "✗ manifest #"
+    "human-search-signal-v2777.test.js": [
+      "✗ current_customer_id を借りる"
     ],
     "human-movement-all-sites-v2776.test.js": [
       "✗ ⚠ 区を押すのは#つずつ（#〜#ms・#か所以上）",
@@ -346,9 +327,6 @@
       "✗ 余計な区を外す（#つずつ・#〜#ms）",
       "✗ 区を選び直す（ensureWardButtonY）",
       "✗ 次のステップ（div.next_step_button#）"
-    ],
-    "human-search-signal-v2777.test.js": [
-      "✗ current_customer_id を借りる"
     ],
     "itandi-form-guard.test.js": [
       "✗ background: fill-done の error は飛ばす（page-script側エラー（スキップ））",
@@ -359,13 +337,13 @@
       "✗ afterModal: 更新日",
       "✗ リアプロの page-script は変えていない（select[name=update_date] のまま）"
     ],
-    "learn-area-in-record.test.js": [
-      "✗ _takeShot が ops を job に渡す",
-      "✗ 確定してリストへ の段がある"
-    ],
     "learn-applies-to-auto.test.js": [
       "✗ その中で fillRealpro を呼ぶ",
       "✗ スタッフは自動にしない"
+    ],
+    "learn-area-in-record.test.js": [
+      "✗ _takeShot が ops を job に渡す",
+      "✗ 確定してリストへ の段がある"
     ],
     "learn-db-history-v2723.test.js": [
       "✗ insert が先（消すのが後）"
@@ -434,10 +412,6 @@
       "✗ page #",
       "✗ rules #"
     ],
-    "loop-sort-cursor-keep-v28226.test.js": [
-      "✗ page ≥#",
-      "✗ rules ≥#"
-    ],
     "never-stop-v2752.test.js": [
       "✗ スタッフモードでは押さない",
       "✗ 並べ替え失敗を点検に残す"
@@ -454,10 +428,6 @@
     "no-row-check-v2827.test.js": [
       "✗ _axlxNoRowCheck がある（自動の押下中か、自動の印が立っている間）"
     ],
-    "now-action-no-single-clear-loop-v28227.test.js": [
-      "✗ page ≥#",
-      "✗ rules ≥#"
-    ],
     "one-task-complete-before-next-v28225.test.js": [
       "✗ KEEP/RULE に one_task_",
       "✗ page ≥#",
@@ -472,11 +442,6 @@
     "pick-with-pointer.test.js": [
       "✗ ⚠ 動かせなくても必ず押す（止まらない）",
       "✗ ⚠ 覚えが無い（前のお客様の残り）時は今まで通り全部外す"
-    ],
-    "post-send-clear-grasp-v28223.test.js": [
-      "✗ AUTO_RULES ≥#",
-      "✗ KEEP/RULE に gap",
-      "✗ page ≥#"
     ],
     "press-with-pointer-v2663.test.js": [
       "✗ chooseSelectLikeHuman の最後に確かめを通す",
@@ -496,13 +461,13 @@
       "✗ learned_scene を読む",
       "✗ manifest が # \"#\""
     ],
+    "screen-keep-v2815.test.js": [
+      "✗ 控えの処理がある"
+    ],
     "screen-aim-v2783.test.js": [
       "✗ #回だけの記録は使わない（偶然）",
       "✗ #回以上見た欄だけ入れる",
       "✗ 押す位置とは別の入れ物（混ぜない）"
-    ],
-    "screen-keep-v2815.test.js": [
-      "✗ 控えの処理がある"
     ],
     "screen-poll-instead-of-timeout-v28236.test.js": [
       "✗ API経路 _graspBeforeNextTaskThen"
@@ -615,9 +580,6 @@
     ],
     "update-order-stop.test.js": [
       "✗ bulk-dl: 止めた行から先は送らない（_rowSkipReason が state.updateStop を見る）"
-    ],
-    "ward-clear-human-v2829.test.js": [
-      "✗ 版は manifest と page-script で同じ（# 以上）"
     ],
     "was-sent-v2780.test.js": [
       "✗ 送る所にも was がある",

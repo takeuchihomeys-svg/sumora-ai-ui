@@ -17,9 +17,11 @@ function ok(name, c, d) {
 }
 
 console.log("\n■ 版");
-ok("manifest ≥2.8.226", mf.version >= "2.8.226", mf.version);
-ok("page ≥2.8.226", /_AXLX_PAGE_VER = "2\.8\.2(2[6-9]|[3-9]\d)"/.test(ps));
-ok("rules ≥2.8.226", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.2(2[6-9]|[3-9]\d)"/.test(rules));
+// 2.8.313: 版の固定が 2.8.2xx だけを通す書き方で、2.8.3xx で赤になっていた → 数の大小で比べる
+const _ge = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+ok("manifest ≥2.8.226", _ge(mf.version, "2.8.226"), mf.version);
+ok("page ≥2.8.226", _ge((ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.226"));
+ok("rules ≥2.8.226", _ge((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1], "2.8.226"));
 
 console.log("\n■ ループ・次の動き・タスク一覧");
 ok("_AX_CUSTOMER_LOOP に sort", /id: "sort"/.test(ps) && /label: "並べ替え"/.test(ps));

@@ -16,9 +16,11 @@ function ok(name, c, d) {
 }
 
 console.log("\n■ 版");
-ok("manifest ≥2.8.231", mf.version >= "2.8.231", mf.version);
-ok("page ≥2.8.231", /_AXLX_PAGE_VER = "2\.8\.(231|232)"/.test(ps));
-ok("rules ≥2.8.231", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.(231|232)"/.test(rules));
+// 2.8.313: 版の固定が「2.8.231〜232」だけを通す書き方で、以後の版で全部赤になっていた → 数の大小で比べる
+const _ge = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+ok("manifest ≥2.8.231", _ge(mf.version, "2.8.231"), mf.version);
+ok("page ≥2.8.231", _ge((ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.231"));
+ok("rules ≥2.8.231", _ge((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1], "2.8.231"));
 
 console.log("\n■ 連携関数");
 ok("_linkGuidePhaseToTask", /function _linkGuidePhaseToTask\(/.test(ps));

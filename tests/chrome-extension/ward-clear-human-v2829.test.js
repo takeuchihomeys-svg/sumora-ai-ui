@@ -21,7 +21,7 @@ function body(src, name) {
   return "";
 }
 
-ok("版は manifest と page-script で同じ（2.8.129 以上）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && /^2\.8\.(129|1[3-9]\d)$/.test(mf.version));
+ok("版は manifest と page-script で同じ（2.8.129 以上）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && (function (a, b) { for (var i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; })(String(mf.version).split(".").map(Number), [2, 8, 129])); // 2.8.313: 2.8.1xx だけを通す書き方を数の大小に
 
 // 区の外し: DOM に在るだけで「開いた」とみなさない
 const wc = body(ps, "_clearWardsBeforeStationThen");

@@ -15,8 +15,10 @@ function check(name, ok) {
   if (!ok) fail++;
 }
 
-check("manifest 2.8.135 以降", /^2\.8\.(13[5-9]|1[4-9]\d)$/.test(manifest.version));
-check("_AXLX_PAGE_VER 2.8.135 以降", /_AXLX_PAGE_VER = "2\.8\.(13[5-9]|1[4-9]\d)"/.test(src));
+// 2.8.313: 版の固定が 2.8.13x〜2.8.19x だけを通す書き方で、以後の版で赤になっていた → 数の大小で比べる
+const _geVer = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+check("manifest 2.8.135 以降", _geVer(manifest.version, "2.8.135"));
+check("_AXLX_PAGE_VER 2.8.135 以降", _geVer((src.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.135"));
 
 const unc = src.slice(src.indexOf("function _uncheckLeftoversThenRest"), src.indexOf("function _uncheckLeftoversThenRest") + 12000);
 check("① _runUncheck が段（onlyRe/skipRe/after）を受ける", /var _runUncheck = function \(onlyRe, skipRe, after\)/.test(unc));

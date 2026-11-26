@@ -26,7 +26,8 @@ function body(src, name) {
 
 (async () => {
   console.log("■ 版");
-  ok("manifest 2.8.132", mf.version === "2.8.132");
+  // 2.8.313: 「ちょうど 2.8.132」の固定は次の版で必ず赤になる → 2.8.132 以上
+  ok("manifest 2.8.132 以上", (function (a, b) { for (var i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; })(String(mf.version).split(".").map(Number), [2, 8, 132]));
   ok("_AXLX_PAGE_VER が manifest と同じ", new RegExp('var _AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps));
 
   console.log("\n■ 列の外の押しも「押している最中」に数える（重ねて押さない）");
