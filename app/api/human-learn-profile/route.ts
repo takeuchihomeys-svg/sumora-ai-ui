@@ -23,6 +23,7 @@ import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 import { PLAYBOOK_BUILD_V } from "@/app/lib/action-playbook";
 import { AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion } from "@/app/lib/auto-procedure-rules";
+import { servedPlaybookRulesV } from "@/app/lib/playbook-served";
 
 export const dynamic = "force-dynamic";
 /**
@@ -817,7 +818,7 @@ export async function GET(req: NextRequest) {
   const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
+    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_build_v:bundle->playbook->>build_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };
@@ -957,11 +958,17 @@ export async function GET(req: NextRequest) {
     let playbookRulesV: string | null = null;
     let playbookRulesUpTo: string | null = null;
     try {
-      if (guard && lightReq && row.playbook_rules_v != null) playbookRulesV = String(row.playbook_rules_v);
+      let dbPb: { rules_v?: unknown; build_v?: unknown } | null = null;
+      if (guard && lightReq) dbPb = { rules_v: row.playbook_rules_v, build_v: row.playbook_build_v };
       else if (row.bundle && typeof row.bundle === "object") {
-        const pb = (row.bundle as { playbook?: { rules_v?: string } }).playbook;
-        if (pb && pb.rules_v) playbookRulesV = String(pb.rules_v);
+        dbPb = (row.bundle as { playbook?: { rules_v?: unknown; build_v?: unknown } }).playbook ?? null;
       }
+      /**
+       * ★ 2026-11-26 手順書が古いまま残る原因（2.8.310）:
+       *   ここは DB に書かれた版を返していたので、コードの決まりを直しても拡張は「版が同じ」と見て取りに行かなかった。
+       *   渡す時に作り直す束（refreshPlaybookIfStale）と同じ条件で、**渡す時の版**を返す（DB は書かない）。
+       */
+      playbookRulesV = servedPlaybookRulesV(dbPb, { rules_v: autoRulesVersion(), build_v: PLAYBOOK_BUILD_V }).rules_v;
       if (guard && lightReq) {
         if (row.playbook_rules_up_to != null) playbookRulesUpTo = String(row.playbook_rules_up_to);
       } else if (row.bundle && typeof row.bundle === "object") {

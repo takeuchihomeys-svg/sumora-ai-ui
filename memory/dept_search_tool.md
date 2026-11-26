@@ -14907,3 +14907,13 @@ Claude（統括役）からの依頼2件への対応。
 - 反映確認: check-playbook-sync は、本番と DB の手順書が一致（残りは拡張の版だけ）。
 - 残り（竹内さん側）: 拡張を再読み込み（2.8.295 → 2.8.309）→ リアプロのタブを開き直す → 連続のお客さんで自動を1回 → reset_verified／look_skip／playbook_seen／page:task_api_refresh_res を確認。それまで『反映済み』とは言わない。
 - 既存の赤（参考・今回と無関係）: continuous-clear-sequence（2.8.285 以降の _doReset の並び）。
+
+### 2026-11-26 項目2・3（計測と手順書の自動反映・2.8.310）
+- 項目3の本当の原因（実測で確認）: 拡張が使う版の確認（touch=0）は DB の行の手順書の版（rules_v）をそのまま返していた。一方、渡す時の束は refreshPlaybookIfStale でコードの手順書に作り直される（DB は書かない）。だから決まりを直しても DB を書き直すまで、拡張は『版が同じ』と見て取りに行かず古い手順書を使い続けた。
+- 直し: app/lib/playbook-served.ts（servedPlaybookRulesV・純関数）。human-learn-profile の軽い確認も通常の応答も、渡す時の版（作り直しが要る時はコードの版）を返す。DB は書かない＝attach や cron を待たず、デプロイ後の次の確認で拡張が取り直す。試験 app/lib/__tests__/playbook-served.test.ts（refreshPlaybookIfStale と5場合で判定が一致）。
+- 項目2: background.js の版の確認に TTL を効かせる（_headCheckAt・確認間隔＝自動中60秒・通常5分）。2.8.309 まで _checkMs は計算されるだけで未使用＝タスク切替のたびに版の確認が走っていた。同じ版・取り直し無しと確かめた時だけ時計を進める。強制の経路（popup・起動・needs_auto）は TTL を見ない。
+- 計測: page-script の task_api_refresh_res の文頭に経過ミリ秒（例: 120ms 取らず same_version）。次の実走で待ち時間を実測する。
+- 試験 tests/chrome-extension/head-ttl-served-v2310.test.js（13本）。ext-test-all は基準の赤 122（新しい赤 0）。
+- 版: 2.8.310（manifest・_AXLX_PAGE_VER・AUTO_RULES_REVIEWED_UP_TO）。
+- 決めた事: DB を1時間ごとに書く cron は作らない（書き込みを増やさない）。DB の行は日次の human-learn-brain（22:20 JST）が prepareBundleForWrite で追いつく・急ぐ時だけ attach。
+- 未: push（main）と DB 反映は竹内さんの OK 待ち。拡張の再読み込み（2.8.310）と realpro の実走で task_api_refresh_res の ms を確認する。

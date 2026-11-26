@@ -2769,6 +2769,13 @@ var _LEARN_CHECK_AUTO_MS = 60 * 1000;
 var _learnInflight = null;       // 実行中の1本（これがあれば新しい実行はせず、この結果を待つ）
 var _learnFailCount = 0;         // 続けて失敗した回数（間隔を延ばすのに使う）
 var _learnNextTryAt = 0;         // 次に試してよい時刻（失敗の後はここまで待つ）
+/**
+ * ★ 2.8.310: 版の確認（touch=0）を最後に「同じ版・取り直し無し」で済ませた時刻（メモリのみ・SW 再起動で 0）。
+ *   実測: 2.8.309 まで `_checkMs` は計算されるだけで**使われて**おらず、タスク切替のたびに版の確認が走っていた。
+ *   → 確認間隔（自動中 60 秒・通常 5 分）の内は版の確認を飛ばす。版が変わっても次の確認（最大 60 秒〜5 分後）まで待つ。
+ *     強制の経路（popup を開く・起動・needs_auto）は TTL を見ない＝すぐ確かめる。
+ */
+var _headCheckAt = 0;
 /** 失敗した後の間: 1分 → 5分 → 15分（それ以上は15分のまま） */
 function _learnBackoffMs(n) {
   if (n <= 0) return 0;
@@ -2912,6 +2919,11 @@ async function _refreshLearnedBundle(force) {
          *   → 版確認を **25秒**、取得を **40秒** に延ばす（実測 14.6秒＋余裕）。
          *     ⚠ 1分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
          */
+        // ★ 2.8.310: 確認間隔の内は版を見に行かない（タスク切替ごとの無駄な往復を止める）
+        var _headAge = Date.now() - _headCheckAt;
+        if (_headCheckAt > 0 && _headAge < _checkMs) {
+          return { ok: true, skipped: "head_recent", head_age_ms: _headAge };
+        }
         var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(25000) });
         if (head.ok) {
           var hj = await head.json();
@@ -2959,6 +2971,8 @@ async function _refreshLearnedBundle(force) {
           if (_rulesStale) {
             try { console.log("[learn] 手順書の決まり版が違う（手元" + _localRulesV.slice(0, 8) + "→サーバ" + _serverRulesV.slice(0, 8) + "）→取り直します"); } catch (_) {}
           }
+          // ★ 2.8.310: 同じ版で取り直しも要らないと確かめた時だけ、次の確認までの時計を進める
+          if (!_rulesStale && hv && hv === lastVer) _headCheckAt = Date.now();
           /**
            * ★ 2026-11-17「学習しても改善されない／反映の抜け」:
            *   版同じでも (1) サーバー solid が手元より多い → 取り直す
