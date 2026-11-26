@@ -55,7 +55,7 @@ function sentBeforeOf(aix: ReadonlyArray<GAix>, T: number): Record<string, strin
 }
 
 type Row = {
-  conv: string; at: string; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
+  conv: string; at: string; writer?: string | null; reached: boolean; node: RouteNodeId | null; branch: string | null; digestNode: RouteNodeId | null; act: string;
   dir: ActDirection | null; agree: Agreement; agree2: Agreement; rule2: string | null; agree3: Agreement; rule3: string | null; agree4: Agreement; rule4: string | null; laterAix: string | null; rt: string | null; detail: string | null; outcome: GuideTurn["outcome"]; after: RouteNodeId | null; sub1: string | null; sub2: string | null; subAt1: boolean | null; subAt2: boolean | null; nextAix: string[]; afterBranch?: string | null; sentBefore?: Record<string, string>; promiseWait?: GuideTurn["promiseWait"];
 };
 
