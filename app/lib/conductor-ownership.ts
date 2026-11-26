@@ -24,6 +24,7 @@ export const OWN_ROWS: readonly OwnRow[] = [
   { key: "aix_boundary", name: "AIX と返信の境目（AIX_BOUNDARY_LINE）", owner: "作業員A", mark: "aix_boundary", want: (d) => (d.abd ? (d.abd === "reply" ? null : String(d.abd)) : undefined) },
   { key: "aix_dictionary", name: "AIX の辞書（AIX_DICTIONARY_LINE）", owner: "作業員A", mark: "aix_dictionary", want: (d) => (d.dct && String(d.aix ?? "").trim() ? String(d.dct).split("+")[0] : undefined) },
   { key: "deal_flow_pre_apply", name: "成約データの1行（DEAL_FLOW_PRE_APPLY_LINE）", owner: "作業員L", mark: "deal_flow_pre_apply" },
+  { key: "pickup_why", name: "物件を選んだ理由（PICKUP_WHY_TO_BRAIN）", owner: "作業員A", mark: "pickup_why" },
   { key: "now_fulfillable", name: "今果たせる約束（SITUATION_NOW_FULFILLABLE）", owner: "作業員1", mark: "now_fulfillable" },
 ];
 export type OwnDecision = { digest: Record<string, unknown>; conv: string; at: string };

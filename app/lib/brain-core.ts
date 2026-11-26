@@ -3784,6 +3784,22 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
         const { data: pwRows } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, sent_at, summary_text, terms")
           .eq("conversation_id", conversationId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(20);
         let whyRows = (pwRows ?? []) as import("@/app/lib/pickup-why-line").SentPickupRow[];
+        // 2026-11-26 作業員A（竹内さん 11/26「物件を選んだ理由…連携」・PICKUP_WHY_PENDING_MATCH=on の時だけ・既定 off）: 選んだのに送った印（sent）が付かず pending のままの行（60日で 98/350）を、
+        //   72時間以内に送った物件の AIX の物件名（aix_usage_logs.property_names）に入っている物だけ足す
+        try {
+          const plm = await import("@/app/lib/pickup-link-stages");
+          if (plm.pickupWhyPendingMatchOn()) {
+            const { data: sentAix } = await supabase.from("aix_usage_logs").select("property_names").eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation"]).gte("sent_at", since).limit(20);
+            const names = ((sentAix ?? []) as Array<{ property_names: string[] | null }>).flatMap((r) => r.property_names ?? []);
+            if (names.length) {
+              const { data: pend } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, created_at, summary_text, terms")
+                .eq("conversation_id", conversationId).eq("status", "pending").gte("created_at", new Date(Date.now() - 6 * 864e5).toISOString()).limit(40);
+              const have = new Set(whyRows.map((r) => String(r.property_name ?? "")));
+              const add = plm.pendingMatchedOf((pend ?? []) as Array<{ property_name: string | null; created_at: string }>, names).filter((p) => !have.has(String(p.property_name ?? "")));
+              if (add.length) { whyRows = [...whyRows, ...add.map((p) => ({ ...(p as object), sent_at: (p as { created_at: string }).created_at }) as unknown as import("@/app/lib/pickup-why-line").SentPickupRow)]; materialMarks.pickup_why_pending = add.length; }
+            }
+          }
+        } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why-pending", error: String(e).slice(0, 120) })); }
         // 2026-11-21 作業員K2（台帳 #511・SIP_JUDGE=on の時だけ・既定 off）: 売上サポを通らずに送った物件（画像の読み sent_image_properties.facts）も判定に通して同じ1行に
         const sj = await import("@/app/lib/sip-judge");
         if (sj.sipJudgeOn() && pcResult.data) {

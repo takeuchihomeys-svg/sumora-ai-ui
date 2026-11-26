@@ -24,7 +24,7 @@ export const CONDUCTOR_DUTY: readonly DutyRow[] = [
   { id: "n.flex", name: "臨機応変", owner: "作業員L", have: ["read.turn_read"], use: ["conductor.check_order"], reflect: ["conductor.compose_plan"] },
   { id: "n.trust", name: "信頼", owner: "作業員L", have: ["read.exchange"], use: ["conductor.our_side"], reflect: ["writer.reply"] },
   { id: "n.feeling", name: "気持ち", owner: "作業員A", have: ["read.mindset", "read.latent_five"], use: ["conductor.focus"], reflect: ["conductor.compose_roles"] },
-  { id: "n.appeal", name: "訴求", owner: "作業員A", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"], partKeys: ["aix_boundary", "aix_dictionary"] },
+  { id: "n.appeal", name: "訴求", owner: "作業員A", have: ["read.uptake"], use: ["conductor.aix_desk"], reflect: ["writer.aix_second"], partKeys: ["aix_boundary", "aix_dictionary", "pickup_why"] },
   { id: "n.asks", name: "要件", owner: "作業員A", have: ["read.turn_read"], use: ["conductor.brief"], reflect: ["conductor.delivery"] },
   { id: "n.link", name: "つなぎ", owner: "作業員L", have: ["read.uptake"], use: ["conductor.combo"], reflect: ["writer.reply"] },
   { id: "n.lessons", name: "統括の学び", owner: "作業員L", have: ["rag.near_focus"], use: ["conductor.near"], reflect: ["conductor.brief"], parts: ["CONDUCTOR_LESSONS"] },
