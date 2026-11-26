@@ -934,7 +934,7 @@ export async function learnFromWeakShots(
       } else {
         /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理・bundle-write-prepare） */
         const { prepareBundleForWrite } = await import("./bundle-write-prepare");
-        for (const r of rows) prepareBundleForWrite(r.bundle);
+        for (const r of rows) prepareBundleForWrite(r.bundle, r.scope); // 2026-11-26: サイトを渡す
         const ins = await supabase.from("human_learn_profile").insert(rows);
         out.refreshed = !ins.error;
         if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));

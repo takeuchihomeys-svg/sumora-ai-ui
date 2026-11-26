@@ -28,8 +28,11 @@ export type PrepareBundleResult = {
   playbook_kept_newer: boolean;
 };
 
-/** 束を書く形に整える（束を直接書き換える）。 */
-export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareBundleResult {
+/**
+ * 束を書く形に整える（束を直接書き換える）。
+ * site: その束のサイト（'itandi' ならリアプロ専用の手を載せない・2026-11-26）。未指定は従来どおり。
+ */
+export function prepareBundleForWrite(bundle: Record<string, unknown>, site?: string | null): PrepareBundleResult {
   let names_stripped = false;
   try {
     const cleaned = stripCustomerNames(bundle);
@@ -71,7 +74,7 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
       playbook_kept_newer = true;
       playbook_ok = true;
     } else {
-      bundle.playbook = buildPlaybook(bundle as never);
+      bundle.playbook = buildPlaybook(bundle as never, site);
       playbook_ok = true;
       const nextRv = String((bundle.playbook as { rules_v?: string } | null | undefined)?.rules_v ?? "");
       if (nextRv && nextRv !== prevRv) {

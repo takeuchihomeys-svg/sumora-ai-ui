@@ -372,7 +372,18 @@ function createSwEnv(world, owner, regions, postAudit, note) {
       return Promise.resolve({});
     },
   };
-  sandbox.globalThis = sandbox;
+  // 2.8.308 止められた裏（env.dead）の古いループは、本物の Chrome では JS ごと消える。模擬では約束（Promise）が生き残って
+  //   共有の保存先へ古い位置を書き戻す・二重に入力する、という「模擬だけの」誤りが出ていたので、外への作用を止める
+  //   （scenario.zombies: true で従来どおり生かす）
+  if (!(scenario && scenario.zombies)) {
+    var never = function () { return new Promise(function () {}); };
+    var guardFn = function (fn) { return function () { return env.dead ? never() : fn.apply(this, arguments); }; };
+    var guardArea = function (area) { return { data: area.data, get: guardFn(area.get), set: guardFn(area.set), remove: guardFn(area.remove) }; };
+    chrome.storage = { local: guardArea(world.local), session: guardArea(world.session) };
+    Object.keys(chrome.tabs).forEach(function (k) { chrome.tabs[k] = guardFn(chrome.tabs[k]); });
+    chrome.scripting.executeScript = guardFn(chrome.scripting.executeScript);
+    ["fetch", "_publishBulkGrasp", "_batchAutofill", "_auditBegin"].forEach(function (k) { if (typeof sandbox[k] === "function") sandbox[k] = guardFn(sandbox[k]); });
+  }  sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(matchSrc, sandbox, { filename: "fill-done-match.js" });
   // fill-done-match.js は self に載せる

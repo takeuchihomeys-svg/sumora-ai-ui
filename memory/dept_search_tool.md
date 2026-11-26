@@ -14844,3 +14844,117 @@ Claude（統括役）からの依頼2件への対応。
 - 設計知見: 8430edb2【決定】（P1）。
 - ⚠ 既知の穴: 単発の自動（ポップアップの自動ボタン）には入力前のリセットが無い。ポップアップはページ内の iframe（underbar.js）で、リセットの読み直しで消えるため。_resetBeforeFill は background の一括ループ（_manualBulkRun）だけが呼ぶ。直すなら『単発も1人の一括として background に渡す』か、background が入力の再送を持つ形が要る（拡張の動きの変更・竹内さんの OK）。
 - ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook・竹内さんの OK）。
+- 2026-11-26 反映の記録（2.8.305）: 40e7df606 を main に push（f79d2e810..40e7df606）→ 本番 2.8.305 を確認 → attach-playbook --apply で DB の手順書（2813/2815/2814）を rules_v=5d81f15d・97件・見直し2.8.305 に（控え: %TEMP%\playbook-backup-2.8.305）。残り: 拡張は 2.8.295 のまま（再読み込み→タブ開き直し→自動1回が済むまで『反映済み』と言わない）。単発の自動への入力前リセットは、手動の単発クリックが対象（直近14回では3回・brain_normal）で、一括に流すと送付の動きまで変わるため保留（竹内さんの判断待ち）。
+
+### 2026-11-26 2.8.306 連続客の受け渡しの順番を手順書に1本で明記（series_handoff_order）・並べ替えの待ちの古い文言を直す
+- 竹内さん「手順書は連続するお客さんの流れをちゃんと理解してるのか／完了したらリセット→数秒後に空を確認→次の客の条件を拡張のAPIから入れるか／検索後の並べ替えも完了後のログを考えて時間経過してから動くか」。
+- コードの実物（確認済み）: 送付後 _postSendClearOrReset（リセット→30秒以上→空と該当数の確認・だめなら従来の外し）→ 資料を見る間 → 次客: _waitInheritedReset → _resetBeforeFill（空でなければ押す）→ _batchAutofill 内の _refreshCustomerBeforeSearch（/api/property-customers・no-store）→ 入力。条件の読み直しはリセットと空の確認の後。並べ替えは bulk-dl.js _waitMsFromSearchConfirm が検索確認の時刻から30〜36秒を数え、経過した分を引く（残り最低50ms）。
+- 手順書の穴: 「次客の条件をAPIから読み直す」「この順番」を書いた決まりが無かった。search_to_sort_cursor（#322）が旧「1秒以降」のままで、search_confirm_then_wait_sort（30秒以上）とぶつかっていた。
+- 直した: 決まり series_handoff_order を追加（since 2.8.306・marker は _refreshCustomerBeforeSearch の行・background.js）。search_to_sort_cursor の文言を30〜36秒に。動きは変えていない。版 2.8.306。
+- 実データ（search_audits 直近60回）: sort_cursor_wait が残るのは 2.8.206 以前だけ（待ち1〜2秒）。2.8.292 以降の30〜36秒は、止まった回ばかりで、まだ実機の記録が無い。
+### 2026-11-26 2.8.307 連続ループ：リセット成功なら外しも資料を見る間もやらない（手順書も統一）
+- 竹内さん「5（資料を見る間）はいるのか／4 リセットが押せたら1つずつ外しは押さない・ボトルネック／9→2のループを理解しているか／古い決まりのボトルネックは」。実データ: 直近300回の search_audits で reset_press／reset_verified／reset_count_same／reset_before_fill は0段（リセットの流れは一度も実機で動いていない）。動いているのは1つずつ外しだけ（page:clear_done 24回）。
+- 直した（動きを変更）: ①background.js _postSendResetRealpro: 空と読み戻せたらリセット成功（件数が増えなくても）。reset_count_same は記録だけ・ok:false で外しへ回す旧の分岐は廃止。②page-script.js _resetVerify: 時間が来て空なら『きれい』印（axlx_reset_clean）を付け、ページ側の前客の外しも省く。③一括ループ: リセット成功の客は『資料を見る間』を省く（look_skip・_axlxLastPsReset）。リセットが使えない客・最後の客は今まで通り。
+- 手順書: series_handoff_order をループ版に書き直し（各客の最後にリセット→次客は①から・最後の客は待たない）。reset_empty_is_enough・reset_success_skips_look を追加。外す前提だった10本（continuous_customer_loop・flow_series_grasp・flow_series_order_gate・customer_loop_one_by_one・clear_then_fill_gate・one_task_complete_before_next・samekind_clear_before_fill・now_action_clear_then_fill・task_grasp_now_done_next・continuous_series_next_grasp）の頭に『リセットで空なら外しの段は行わない・以下はリセットが使えない時の代わり』を前置き。版 2.8.307。
+- 試験: reset-loop-v2307.test.js（新・19本）。reset-count-evidence-v2289・reset-before-fill-v2296・search-before-sort-next-guard-v28233 を新しい決まりに合わせた。全333→334本・新しい赤0（基準の赤122は変わらず）。
+- ⚠ 実機でまだ見ていない: 拡張は 2.8.295 のまま。再読み込み後の連続で reset_verified・look_skip が出るかで確かめる。
+- ⚠ 反映待ち: 2.8.306・2.8.307 は main・DB 手順書に未反映（竹内さんの OK）。
+
+### 2026-11-26 拡張 2.8.308 — リセットの保険（reset_retry_insurance）
+- 竹内さん「リセットと並べ替えで止まったらスクショして画面把握してそこからもう一度できる保険」→ 並べ替えには有り・リセットには無かったので足した（KB f3d2c5b1）。
+- background.js _resetWithInsurance(customerId, runId, phase)（送付後 _postSendClearOrReset と入力前 _resetBeforeFill の両方）: リセットが空にならない・押せない・例外 → ①_resetShot(...,"reset_stuck")で1枚撮る（reset_stuck_shot）②__axlxResetVerifyPで画面を読む（reset_stuck_grasp）③空なら成功（reset_stuck_recovered）④空でなければ待ち上限260秒を張り直してもう1回押す（reset_retry）⑤それでもだめな時だけ従来の1つずつ外し。skipped（off/no_tab/入力中）・ストップ要求は何もしない。
+- pre_fill_reset を BULK_KICKABLE_PHASES には入れていない（待ちは上限つきで保険の中で張り直すため）。
+- 手順書 eset_retry_insurance を追加・eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
+- 試験: 新 eset-retry-insurance-v2308.test.js（17）。eset-before-fill-v2296（押す回数 1→2・正規表現）・eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
+- 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.308 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+
+### 2026-11-26 一連ループのボトルネック総点検（コードは 2.8.308 のまま・手順書の文言と試験の強化）
+- 本番DBの実データ（search_audits・realpro 直近14日）: bulk_manual 30件中 完了6件（すべて 2.8.250 以前）。2.8.273 以降は放棄ばかり。最後の自動は 2.8.295（#1654・#1656）で、reset_*・look_skip・保険の印は0＝2.8.296 以降の動きは本番で一度も動いていない。playbook_seen も「なし」。
+- #1656（2.8.295・リセットを押さない旧方式）: 前客の1つずつ外しが 1276 秒かかり、最後に fill_done error「leftover_stuck 前のお客さんの条件を外し切れず中止（残 駅5・沿線13）」で客が落ちた＝1つずつ外しは遅い上に失敗する（リセット優先の根拠）。#1654 は同じ待ちの段（sort_gate_wait_rows 等）で120段が埋まり後半の記録が無い（2.8.297 でまとめる対応済み・拡張が古く効いていない）。
+- 模擬の穴を直した: tests/chrome-extension/lib/bulk-sim.js は止められた裏（SW）の古いループが生き残り、共有の保存先へ古い位置を書き戻して『同じ客を何回もやり直す』偽の失敗を出していた → 止められた裏は保存・送信・画面操作・入力ができない形に（scenario.zombies:true で従来）。
+- 新しい総当たり試験 bulk-loop-chaos-v2308.test.js: 8人×（普通・入力遅い・送付完了の合図落ち・入力済み合図なし・0件・外し固まる/遅い・リセットのボタン無し/返事なし/空にならない・SWが止められる）を乱数で 400通り×2方式（800通り）→ 全員に1回ずつ入り完走（落ち0・1人あたり最大約6分）。時間を食う故障: リセットが押せても空にならない 約367秒/客（普通の約152秒より +215秒＝リセット2回＋従来の外し）・入力が遅い 約272秒・送付完了の合図落ち 約212秒。
+- 手順書の古い前提を直した: 『外す』を命じる11件（clear_one_by_one・clear_single_owner・clear_per_panel・clear_detail_grasp・clear_method_api_grasp_transition・clear_stuck_watch_use_improvements・station_clear_continue_after_stations・guide_clear_fill_gate・next_customer_move_one_by_one・task_api_refresh_before_next・guide_phase_task_link）にリセット優先の断り（reset_replaces_clear）を足した。clear_single_owner はリセット（最大260秒）も待つ相手に。静的試験 playbook-loop-consistency-v2308.test.js が、『外す』系の決まりがリセット優先に触れているか・古い『1秒以降』が現行で無いか・リセット周りの食い違いが無いかを見張る。
+- 調査用道具: scripts/audit-bulk-loop-bottleneck.ts（印の出現数・沈黙の大きい所・放棄の最後の印）／audit-bulk-sessions.ts（一括を時系列）／audit-run-dump.ts（1回の段を相対秒で）／audit-rules-time-scan.ts（手順書の待ち・外しの洗い出し）／bulk-chaos-seed.js（総当たりの1通りを時刻つきで）。
+- 未反映: main/DB は 2.8.305 のまま（2.8.306〜308 と今回の文言は push・attach とも未）。PC の拡張は 2.8.295。実機での通し（reset_verified・look_skip・保険の印）は未確認。
+### 2026-11-26 拡張 2.8.309 — 学習取り直しの受け口を「いつも強制」にしない（task_gate_no_forced_refetch）
+- 調査（竹内さん「古い手順書でボトルネックになる可能性あるのを見つけ出す」）: background.js の `axlx-learn-refresh` はページの force を無視して常に `_refreshLearnedBundleQueued(true)`。強制は版確認を飛ばし scope=realpro／itandi を各最大40秒で取る。タスク切替の関所（`_graspBeforeNextTaskThen`：clear_start／fill_start／clear_then_fill 等）が毎回呼び、ページは8秒で timeout して進むが裏の取得は走り続ける（1人あたり複数回・サーバーへ追い打ち）。
+- 実測の限界: 関所の印（task_api_refresh_res／task_transition_gate）は KEEP_STEP に無く120段の上限で落ち、DB に実測が無い（2.8.237 以降の run は20本・関所印は screen_task_grasp 1件のみ）。→ 2.8.309 から保持。
+- 直した所: 強制は `src=popup_open`（popup.js）と `src=boot_need`（content.js）だけ。それ以外は `_learnRefreshForAutofill`（gate 判定）。search-audit.js の KEEP_STEP に `page:task_api_refresh_res|page:task_transition_gate`（one-send-cache の並び順の試験に合わせ pdf_click_nocap の後ろ）。決まり `task_gate_no_forced_refetch`（kb 新規 P2）。試験 task-gate-no-forced-refetch-v2309（9）。
+- 古い手順書の構造（未変更・要判断）: `PLAYBOOK_FLOW_SERIES` は before_clear→clear_then_fill の1つずつ外し前提でリセット段が無く、handoff.next=null。`PLAYBOOK_EXTRA_GUIDES.clear` も①〜⑤が1つずつ外し。実際の動きは決まり側（reset_*）が優先しているが、手順書の骨組みは古いまま。
+- 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.309 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+### 2026-11-26 手順書 build_v14 — 骨組みの「1つずつ外す」をリセットボタンへ（竹内さん「1つずつ外すのはボトルネックなので抜く」）
+- 変更: `app/lib/action-playbook.ts`。flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_before_fill／reset_verified／reset_clean_skip_clear。旧の印も残す）。extra_guides.clear を ①完了の小窓を閉じる ②左の「リセット」(160×30)を人が押す形で ③読み直し→30秒以上のラグ待ち ④空を名前付きで読み戻し（空なら件数が増えなくても成功） ⑤clear_then_fill_ok→入れへ ⑥止まった時だけスクショ→画面把握→もう1回押す（最後の保険として従来の外し）。switch ③もリセット。決まりは reset_replaces_clear／reset_between_customers／reset_retry_insurance を載せ、clear_one_by_one／clear_per_panel を clear から外した。
+- 試験: app/lib/__tests__/playbook-reset-skeleton.test.ts を追加。関連の app/lib 試験は全部通る。continuous-clear-sequence は 2.8.285 以降の既存の赤（_doReset 内の clear_then_fill_ok の位置が変わったため・今回の変更とは無関係）。
+- 副: search-audit.js の KEEP_STEP の追加位置を末尾へ（先頭近くだと bulk-stop-takeover／one-send-cache の並びの試験が赤になる）。
+- 反映: コミット後に main→Vercel→attach-playbook（build_v 13→14）。拡張のコードは変えていない（骨組みを読む側は件数と文を表示するだけ）。
+### 2026-11-26 手順書の改善の仕組み（A・B・C・D・E）— 古い手順が残る原因への対策
+- 原因（竹内さんの問い「なんでこんなに古い手順書が残るのか」）: 直し方が『上に貼り足す』だった。外しの決まり5本は冒頭に『リセットで…』を貼っただけで本文は『1つずつ外す』のまま。さらに同じ『この外しの段は行わず次へ進む』という断りが、外しと関係ない決まり12本にも一括で貼られていた（flow_series・次客の流れ等）。骨組み（action-playbook.ts）と決まり（auto-procedure-rules.ts）は別々に書かれ、変更時に両方を見る仕組みが無かった。試験は『語があるか』しか見ていなかった。
+- 直したこと:
+  - 外しの決まり6本（clear_single_owner／clear_detail_grasp／clear_then_fill_gate／clear_per_panel／clear_one_by_one／guide_phase_checkpoints）の本文を書き直した（リセットを主手順・古い手順は『最後の保険（リセットが押せない・空にならない時だけ・reset_fallback）』と本文に書く）。
+  - 一括で貼られた断り12本を、事実だけの札『外しはリセットで空にする（reset_replaces_clear）』に置き換えた（外しと関係ない決まりから『外しの段は行わず』を消した）。
+  - reset_replaces_clear と series_handoff_order の文を、保険と否定が分かる書き方にした。
+- A（変更時の確認）: scripts/rules-change-check.ts --words=外す,リセット [--base=HEAD] [--strict]。変えた言葉で決まりと骨組みを探し、版と比べて『本文が変わった／変わっていない（要確認）』を出す。
+- B（廃止された手順）: app/lib/playbook-retired.ts（RETIRED_STEP_RE・BANNED_PREFIX_RE）。通常の手順として『1つずつ外す』を保険と断らず書いた文と、『以下は…代わりの手順』の貼り足しを出す。試験 app/lib/__tests__/playbook-retired-phrases.test.ts（決まり102・骨組み140 件で 0 件・自己点検あり）。
+- C（骨組みと決まりの参照）: 骨組みの rules が指す id が実在することを試験で固定。手順の文言そのものを決まりから生成する一本化は未（build_v14 の出力と試験の並びを大きく変えるため・別の作業）。
+- D（版の比較）: driftFlags（rules-change-check --drift）。リセット（2.8.305）より古い外しの決まりで、リセットに触れない物を出す。現在 0 件。自己点検あり。
+- E（反映の確認）: rules-change-check --sync で check-playbook-sync を呼ぶ（DB を読むだけ）。本文を変えると rules_v が変わるので、push → Vercel → attach-playbook --apply → check が必要。今は DB が rules_v 0fe72c33、コードが c87c8397 で、attach し直すまで古い。
+- 試験: reset-loop-v2307.test.js の『前置き』の期待を、事実の札の期待に更新（貼り足しを残さない）。ext-test-all の赤は基準どおり 122（新しい赤 0）。
+- 未: 本番の反映（push・attach）は竹内さんの OK 待ち。拡張の再読み込みも未。
+### 2026-11-26 残りの作業の完了（C・push・attach・反映確認）
+- C: リセットの幅（幅160×高さ30）と待ち（30〜34秒・3回に分けて）を app/lib/reset-facts.ts の正本に一本化。骨組み（clear・switch・一連の before_clear）は正本から文を作る。試験 reset-facts-single-source（決まりと骨組みの数字が一致・リセットの『N秒以上』はどこも 30）。コミット 2d3bb61ee。
+- push: origin/main 828071e1f → 2d3bb61ee（承認のうえ）。本番 Vercel は 11:39:33 作成の Production が Ready（commit 2d3bb61ee の push と同時刻）。
+- attach: attach-playbook --apply --backup-dir=C:\Users\Admin\Desktop\playbook-backup-20261126-1149。3件（all 2813／realpro 2815／itandi 2814）とも決まり版 c87c8397・件数 102。控えは同フォルダ。
+- 反映確認: check-playbook-sync は、本番と DB の手順書が一致（残りは拡張の版だけ）。
+- 残り（竹内さん側）: 拡張を再読み込み（2.8.295 → 2.8.309）→ リアプロのタブを開き直す → 連続のお客さんで自動を1回 → reset_verified／look_skip／playbook_seen／page:task_api_refresh_res を確認。それまで『反映済み』とは言わない。
+- 既存の赤（参考・今回と無関係）: continuous-clear-sequence（2.8.285 以降の _doReset の並び）。
+
+### 2026-11-26 項目2・3（計測と手順書の自動反映・2.8.310）
+- 項目3の本当の原因（実測で確認）: 拡張が使う版の確認（touch=0）は DB の行の手順書の版（rules_v）をそのまま返していた。一方、渡す時の束は refreshPlaybookIfStale でコードの手順書に作り直される（DB は書かない）。だから決まりを直しても DB を書き直すまで、拡張は『版が同じ』と見て取りに行かず古い手順書を使い続けた。
+- 直し: app/lib/playbook-served.ts（servedPlaybookRulesV・純関数）。human-learn-profile の軽い確認も通常の応答も、渡す時の版（作り直しが要る時はコードの版）を返す。DB は書かない＝attach や cron を待たず、デプロイ後の次の確認で拡張が取り直す。試験 app/lib/__tests__/playbook-served.test.ts（refreshPlaybookIfStale と5場合で判定が一致）。
+- 項目2: background.js の版の確認に TTL を効かせる（_headCheckAt・確認間隔＝自動中60秒・通常5分）。2.8.309 まで _checkMs は計算されるだけで未使用＝タスク切替のたびに版の確認が走っていた。同じ版・取り直し無しと確かめた時だけ時計を進める。強制の経路（popup・起動・needs_auto）は TTL を見ない。
+- 計測: page-script の task_api_refresh_res の文頭に経過ミリ秒（例: 120ms 取らず same_version）。次の実走で待ち時間を実測する。
+- 試験 tests/chrome-extension/head-ttl-served-v2310.test.js（13本）。ext-test-all は基準の赤 122（新しい赤 0）。
+- 版: 2.8.310（manifest・_AXLX_PAGE_VER・AUTO_RULES_REVIEWED_UP_TO）。
+- 決めた事: DB を1時間ごとに書く cron は作らない（書き込みを増やさない）。DB の行は日次の human-learn-brain（22:20 JST）が prepareBundleForWrite で追いつく・急ぐ時だけ attach。
+- 未: push（main）と DB 反映は竹内さんの OK 待ち。拡張の再読み込み（2.8.310）と realpro の実走で task_api_refresh_res の ms を確認する。
+- 本番確認（2026-11-26・3e2fa5e0b の Production Ready 後）: touch=0 の playbook_rules_v=43eae84d（渡す時の版）・DB の playbook_rules_up_to=2.8.309 のまま（DB は書いていない）。拡張が 2.8.310 に再読み込みされれば、手順書は次の確認で取り直される。
+- 注: 拡張の『attach-playbook が必要』の警告（_pbBehind）は DB の版を見ている。渡す時の版は合っているので、この警告は今は当てにならない（次に直す）。
+
+### 2026-11-26 手順書のサイト分け（作り方の版 15）
+- 確認: 手順書の文面を読んだ結果、itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・高→低・検索の把握）が入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。
+- 直し: buildPlaybook(bundle, site) で itandi の時は一覧・検索の手を載せない。site 未指定・realpro は従来どおり。prepareBundleForWrite・refreshPlaybookIfStale・API・cron（human-learn-brain）・shot-learn-server・attach-playbook は、行の scope を渡す。
+- 版: PLAYBOOK_BUILD_V 14→15（既存の束は読み出し時に作り直される）。DB の行は次の書き込みで直る（DB を今すぐ書き換えてはいない）。
+- 試験: app/lib/__tests__/playbook-site-split.test.ts（itandi に手が無い／realpro・未指定は従来どおり／作り直しも site で分かれる）。
+- 未（itandi の事実が要る）: 一連の流れ（flow_series）の sort_ad・list・before_clear（リセット）はリアプロの言葉のまま。itandi に『リセット』が有るかは未確認。itandi の未分類の欄 3 件（リスト検索・room_layout:in・管理費・共益費込み敷金な）。
+- 試験の揺れ: bulk-loop-chaos-v2308 が全体の試験の時だけ1回赤（60秒の時間切れの可能性）。単独 3 回・全体の再実行で通過。
+
+### 2026-11-26 手順書の残り（作り方の版 16・itandi の手順書を itandi の形に）
+- 直し（app/lib/action-playbook.ts）: itandi の手順書から、リアプロ用の自動の決まり一覧（AUTO_RULES・拡張の page-script 用）・リアプロの一連の流れ・リアプロの追加ガイド（リセット幅160×高さ30・30秒待ち・確定してリスト・ペット）を外した。itandi の場面（scenes）の決まりの印も空。realpro・未指定の出力は変えていない。
+- itandi 用の一連の流れ（ITANDI_FLOW_SERIES）: 段の名前は itandi の点検の印（reset_start／reset／reset_confirm／location／lines_done／fill_start）だけで把握する。検索を押す・一覧・次ページ・次客の段は、itandi の点検にまだ印が無いので grasp は空（gaps に「点検の印が無い段（把握できない）」と出す）。
+- itandi 用の追加ガイド（ITANDI_EXTRA_GUIDES）: clear＝①条件削除のボタンがあれば先に（無い画面が普通）②打つ欄を空③間取り・構造・設備のチェックを外す④チップを×で1つずつ⑤空と読み戻す⑥残れば1回だけ・それでも残れば飛ばす（AXLX_RESET_FAILED）。switch＝次客へ・外す・空を確かめて入れる。ペットは載せない（itandi のペット条件の手を未確認）。
+- 根拠（itandi-page-script.js の _itResetForm／_itClearOnce）: 条件削除のボタンは「あれば押す」。打つ欄→チェック→チップ×の順。リセットの 幅160×30 と 30秒待ちは itandi のコードに無い（リアプロの手）。
+- 未分類の欄: room_layout:in を「間取りの欄（チェック）」に（form-guard で「間取り」）。未分類のまま残すもの: 「リスト検索」（どの画面の何か未確認）・「管理費・共益費込み敷金な」（2つの欄の名前が繋がった物か未確認）。推測で名前を付けない。
+- checkPlaybook: itandi は決まりが空でも落とさない（版の確認は両方で行う）。Playbook に site（realpro／itandi）を足した。
+- 試験: playbook-site-split.test.ts に itandi の節（決まり空・リアプロの文言が無い・段と追加ガイドの中身・点検が通る）と realpro の節と版 15 の作り直しを追加。
+- 試験の見本を今の仕様に合わせた（コードは正しい方・テストの書き方が古かった）: playbook-reflect-v28137（手順書の版と一連の印を見本に）／learn-to-autofill-v2722（n≥1 の仕様・_aimOf の中身だけを見る）／clear-one-owner-v28147（_PIN の4語は並び順でなく含むで見る）／learn-scene-flows-v2746（読む鍵の一覧と _applyLearnNextStorage で見る）／customer-loop-grasp-v28221（版は「以上」で見る・呼び方の変更）／continuous-clear-sequence（判定の書き方が _beforeOk 付き）／reset-then-next-customer（波かっこ付きの書き方）／learn-write-path-gate（prepareBundleForWrite に scope を渡した後の探し方）。
+- bulk-dl.js: 並べ替え（高→低）の押し方（press→moveToEl の後の 180〜600ms）に「着いてすぐ押さない」の印を付けた（動きは同じ・コメントのみ）。拡張の版は上げていない。
+- 残った赤（直していない・理由あり）: customer-loop-grasp-v28221「handoff で loop_handoff_grasp」。決まり（customer_loop_one_by_one・auto-procedure-rules.ts の mustHaveAny）と handoff-loop-ledger.ts・search-audit.js の KEEP が「dl:loop_handoff_grasp」を探すが、今の拡張はこの名前を出さず「dl:handoff_grasp」を出す。決まりの判定は他の選択肢で守れるので壊れてはいない。名前を揃えると「守れた」の判定が変わるため、竹内さんの判断待ち。
+- tsc --noEmit: 本体（action-playbook・bulk-dl）は 0。テストに前からある型エラー（overdue-promises-digest・sent-read-retry・exam-select・exam-switch-reach・deepseek-auto-usage・turn-aims-after・continuous-clear-fill-no-gap・continuous-clear-sequence の1件）は今回の変更と無関係（HEAD に既にある）。
+- DB: 書いていない（all 2813／realpro 2815／itandi 2814 は作り方 14 のまま。読み出し時に作り直される）。DB 反映（attach）は竹内さんの OK 待ち。
+- 未（実機）: 拡張 2.8.310 の再読み込み・itandi の実走（リセットの印が来るか）・realpro の実走。
+
+### 2026-11-26 リアプロ・ITANDI を混ぜない見張り（仕組み化）
+- 竹内さん「リアプロと ITANDI がごちゃごちゃにならないように仕組みで整理して行う。ここを徹底する。ここを行わないとバグが起きる」。
+- 調べた結果（拡張の中・1629 ファイル）: サイトの名前が付いたファイル（`realpro-*`・`itandi-*`・`reins-*`）の中に、他方の名前（対応表・画面の名前）は**無かった**（コメントの文字だけ）。両方を扱う共有ファイルは 6（background.js・popup-maps.js・popup.js・resolution-core.js・search-audit-diagnose.ts・migrate-schema/route.ts）。いずれも両方の入口で、理由を書いて登録した。
+- 仕組み: `tests/chrome-extension/site-split-rules.json`（名前の一覧・箱の決まり・登録の理由）と `tests/chrome-extension/site-split-guard.test.js`（`ext-test-all` が毎回回す）。箱の違反・登録していない新しい共有ファイルで止まる。`--report` で一覧を出す。違反を一時的に入れて止まることを確かめ、消して通ることを確かめた。
+- DB_STRUCTURE.md の「混ざっている所 2（一括・自動の更新日は ITANDI もリアプロの値）」は、2026-11-10 の直し（`background.js` 6264〜・`auto-run.js` の `optsForSite`／`optsForSiteRecord`）で直っていた。文書を現状に直した。
+- 拡張のコードは変えていない（バージョンは上げない）。
+- 残り（DB 側・判断待ち）: `station_map.itandi_lines` の 344 行が表と違う（書き換えは未実施・統括役の判断待ち）。
+
+### 2026-11-26（夜）残りの改善: サイトの呼び名を1か所に・コミット前の見張り・station_map の道具
+- 竹内さん「まだ残っていること改善する／ちゃんと仕組み作れるように」。
+- **サイトの呼び名の正本**: `app/lib/site-key.ts`（`siteKeyOf`・`commandSiteKeyOf`）。8か所以上にコピーされていた変換（siteKey・normalizeSite・pickupSiteOf・commandSiteOf・siteOfCommand・human-motion の siteOf・sheet-layout・search-condition-drift・search-update-days・extension-live-server の siteJa）を移した。結果は元の関数と同じ（`extension-live-server` と `sheet-layout` は「リアプロ」の表記も受けるようになった＝より緩い。`search-audits` の受け付けは変えていない）。試験: `app/lib/__tests__/site-key.test.ts`（22件）。周辺の試験（search-audit-check 100・search-widen-chain 75・screen-watch 89・search-condition-drift 47・pickup-sheet 120 ほか）は通った。
+- **見張り ④**: `app` の中で、拡張の呼び名 `realnetpro`・`リアプロ` を直接比べる所は、登録した4か所だけ（migrate-schema の SQL 注釈・search-audits の受け付け限定・automation-sources のコマンドの sites・page.tsx の送り先ボタン）。新しい比べが増えると止まる。止まる事は仮の行で確かめた。
+- **コミット前の見張り**: `.githooks/pre-commit`。この PC で `git config core.hooksPath .githooks` を設定済み。
+- **station_map の道具**: `scripts/apply-station-map-site-lines.ts`（既定 dry-run・`--mode=fill`・`--mode=fill-and-fix`・`--apply` には `--backup-dir` が要る）。書いていない。竹内さんの選択待ち。dry-run の数（2026-11-26）: ITANDI 空を埋める 305・ずれ 20／REINS 空を埋める 315・ずれ 3。ずれの例（ITANDI 表記）「大阪環状線」→「JR大阪環状線」は拡張の正本 `ITANDI_LINE_MAP_FILL` と一致。
+- **今回触っていない既存の赤**: `search-update-days.test.ts` の「号室の正規化」1件（sent-property-record の正規化・サイト分けと無関係）。

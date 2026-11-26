@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.305";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.310";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -125,7 +125,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_per_panel",
     scene: "clear",
-    text: "外す時は箱ごと（間取り → 絞り込み条件（ペット）→ 所在地 → 残り）。箱を開ける → 1つずつカーソルで外す → 確定 → 次の箱。全部の箱を先に開けない",
+    text: "通常はリセットで空にする（reset_replaces_clear）。最後の保険（リセットが押せない・空にならない時だけ・reset_fallback）で外す時は、箱ごと（間取り → 絞り込み条件（ペット）→ 所在地 → 残り）に、箱を開ける → 1つずつカーソルで外す → 確定 → 次の箱。全部の箱を先に開けない",
     since: "2.8.135",
     kb: null,
     marker: "_stage('input[name=\"eq_rm[]\"]:checked'",
@@ -299,7 +299,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_one_by_one",
     scene: "clear",
-    text: "前のお客さんの間取り・ペットなどのチェックも、入れる時と同じく1つずつ外す（まとめて積まない）。カーソルで押して外れたのを確かめてから次へ",
+    text: "通常はリセットで空にする。最後の保険（リセットが押せない・空にならない時だけ・reset_fallback）で外す時は、前のお客さんの間取り・ペットなどのチェックも入れる時と同じく1つずつ外す（まとめて積まない）。カーソルで押して外れたのを確かめてから次へ",
     since: "2.8.147",
     kb: null,
     marker: "入れる時と同じく1つずつ: 送る→カーソルで押す",
@@ -309,7 +309,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_single_owner",
     scene: "clear",
-    text: "外しは同時に1つだけ。送付後の外しが走っていれば、次のお客さんの入力は終わるまで待ってから外す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古い外しは押すのをやめる",
+    text: "外しは同時に1つだけ。リセット（送付後のリセット＝最大260秒）が走っていれば、次のお客さんの入力は終わるまで待ってから押す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古いリセット・外しは押すのをやめる。最後の保険で1つずつ外す時（reset_fallback）も同時に1つだけ",
     since: "2.8.147",
     kb: null,
     marker: "外しは同時に1つだけ。引き継いだら古い外しは止める",
@@ -319,7 +319,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_to_sort_cursor",
     scene: "list",
-    text: "検索を押した把握をトリガーに、1秒以降の人間ランダム待ちのあと並べ替えへカーソル移動する。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
+    text: "検索を押した把握をトリガーに、検索確認の時刻から30〜36秒（2.8.292・経過した分は引く・残りは最低50ms）の人間ランダム待ちのあと並べ替えへカーソル移動する（旧「1秒以降」は廃止）。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
     since: "2.8.191",
     kb: "92413949",
     marker: "_scheduleSortCursorAfterSearch",
@@ -601,13 +601,57 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "reset_replaces_clear",
     scene: "clear",
-    text: "リセットと「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括の入力前 reset_before_fill）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。単発の自動（ポップアップの自動ボタン）は、ポップアップがページの中の iframe でリセットの読み直しで消えるため、まだ ③ の従来の外しだけで動く（既知の穴・2.8.305時点）",
+    text: "リセットと、最後の保険（リセットが押せない時だけ）の「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括の入力前 reset_before_fill）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。単発の自動（ポップアップの自動ボタン）は、ポップアップがページの中の iframe でリセットの読み直しで消えるため、まだ ③ の従来の外しだけで動く（既知の穴・2.8.305時点）",
     since: "2.8.305",
     kb: "265a1cca",
     marker: "reset_replaces_clear",
     file: "background.js",
   },
   {
+    id: "series_handoff_order",
+    scene: "switch",
+    text: "連続のお客さんのループ（一括）。各お客さんの流れ：①入力前：ページが空か読む（前の回のリセットが途中なら残りを待つ・空でなければもう1回リセットして空を確認。すでに空なら押さない）②次客の条件を拡張ツールのAPI（/api/property-customers・キャッシュなし）から読み直して入力（読めない時は今までの条件で続ける）③検索→確認の時刻から30〜36秒待って並べ替え→物件取得→送付 ④送付が終わったら、完了の小窓を閉じてリセットを押し、読み直しを待ち、30秒以上（30〜34秒）人の間で待ってから空を確認し、空の画面を1枚撮る。空ならリセット成功＝1つずつ外す工程は行わない・資料を見る間も置かない（件数が増えなくても空なら成功・数は記録だけ）⑤次のお客さんがいれば①へ戻る（リセットは各客の最後に1回・次客の①は通常すでに空なので押さない）。最後のお客さんは完了を待たせず裏でリセットして終わる。リセットが押せない・空にならない時だけ、従来の1つずつ外しと資料を見る間（1.8〜13秒）を代わりに使う（reset_fallback）。読み直し（②）はリセットと空の確認より後。印: reset_verified／reset_before_fill／look_skip／bulk_pos／handoff_loop",
+    since: "2.8.306",
+    kb: "265a1cca",
+    marker: "var customer = await _refreshCustomerBeforeSearch(customer, site);",
+    file: "background.js",
+  },
+  {
+    id: "reset_empty_is_enough",
+    scene: "clear",
+    text: "リセットを押した後、フォームが空と読み戻せたらリセット成功とする。該当件数が増えたかは記録（reset_count_same）だけに残し、増えなくても1つずつ外しに回さない（外しがボトルネックにならないように・2.8.307）。ページ側にも『きれい』の印（axlx_reset_clean）を付け、前客の外し（小窓を開いて確かめる）を省く。空にならない・押せない時だけ従来の外しへ",
+    since: "2.8.307",
+    kb: "265a1cca",
+    marker: "reset_empty_is_enough",
+    file: "background.js",
+  },
+  {
+    id: "reset_success_skips_look",
+    scene: "switch",
+    text: "一括で送付後のリセットが成功した客は、『資料を見る間（1.8〜13秒）』を置かない。リセット後の待ち（30秒以上）・空の確認・撮影までの間が、すでに人の間になっているため。リセットが使えなかった客・最後のお客さんだけ従来どおり置く。印: look_skip",
+    since: "2.8.307",
+    kb: "265a1cca",
+    marker: "reset_success_skips_look",
+    file: "background.js",
+  },
+  {
+    id: "reset_retry_insurance",
+    scene: "clear",
+    text: "リセットが空にならない・押せない・例外の時は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（260秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
+    since: "2.8.308",
+    kb: "f3d2c5b1",
+    marker: "_resetWithInsurance(",
+    file: "background.js",
+  },
+  {
+    id: "task_gate_no_forced_refetch",
+    scene: "search",
+    text: "タスクが切り替わるたびの「手順書API取り直し」（task_api_refresh）は、いつも強制で重い束を取り直さない。強制にするのはポップアップを開いた時（src=popup_open）とページ起動で束が空・古い時（src=boot_need）だけ。検索前とタスク切替の関所は gate 判定（更新直後・手順書欠・needs_auto・束が薄い時だけ強制）で、普段は版だけ確かめて「取らず」で通す。旧は受け口がページ側の force を無視して毎回 true にしており、版確認を飛ばして scope=realpro / itandi を各最大40秒で取っていた（関所は8秒で切れて先へ進むが裏の取得は走り続け、1人あたり関所が複数回・サーバーへ追い打ち）。関所の結果は task_api_refresh_res（timeout／取らず／取込）と task_transition_gate で監査に残す（2.8.309 から保持）",
+    since: "2.8.309",
+    kb: "f3d2c5b1",
+    marker: 'src === "boot_need"',
+    file: "background.js",
+  },  {
     id: "ad_sort_hover",
     scene: "list",
     text: "検索把握のあと物件取得の前に必ずAD並べ替え: ①「並べ替え」へカーソル（クリックしない）②メニュー内の「AD」へカーソル（クリックしない・一覧のAD列は禁止）③AD右のspan.sort_detail「高→低」だけクリック。URL直禁止。カーソルはforceOneCursorで1本。印: sort_head_hover→sort_ad_hover→sort_hilo/sort_done",
@@ -758,7 +802,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "station_clear_continue_after_stations",
     scene: "clear",
-    text: "駅を外したあとで止めない。沿線へ戻る／reopen／残0なら完了して次の外し（区・町等）へ続行。wrong_screen待ちの無限待機禁止。印: station_clear_continue／station_back_force_try／station_clear_reopen_after／station_clear_back_line",
+    text: "外しはリセットで空にする（reset_replaces_clear）。駅を外したあとで止めない。沿線へ戻る／reopen／残0なら完了して次の外し（区・町等）へ続行。wrong_screen待ちの無限待機禁止。印: station_clear_continue／station_back_force_try／station_clear_reopen_after／station_clear_back_line",
     since: "2.8.257",
     kb: null,
     marker: "station_clear_continue",
@@ -967,7 +1011,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "reset_between_customers",
     scene: "clear",
-    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。さらに該当物件の数（○戸）がリセット前より増えていたら外れた証拠（2.8.289）。空でも数が増えなければ従来の1つずつ外しへ。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
+    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。該当物件の数（○戸）がリセット前より増えたかは記録（reset_count_same）だけで、空なら増えなくても成功（2.8.307）。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は、スクショと画面把握のうえリセットをもう1回押し（reset_retry_insurance）、それでもだめな時だけ従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
     since: "2.8.284",
     kb: "265a1cca",
     marker: "_postSendResetRealpro",
@@ -1074,7 +1118,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_clear_fill_gate",
     scene: "clear",
-    text: "外す時も入れる時も、手順表×画面照合で入れ忘れ・外し忘れを言葉にする。同種の場所（駅→駅）でも続き客は前客を外す。検索前に1回直してから conditions_ready",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】外す時も入れる時も、手順表×画面照合で入れ忘れ・外し忘れを言葉にする。同種の場所（駅→駅）でも続き客は前客を外す。検索前に1回直してから conditions_ready",
     since: "2.8.163",
     kb: "ad1e1176",
     marker: "_guideLikeClearGrasp",
@@ -1100,7 +1144,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_phase_checkpoints",
     scene: "area",
-    text: "手順表×画面照合を外し完了直後（after_clear・外忘れだけ）・確定してリストへ閉じた後（after_confirm・入れた1つずつ）・駅後・地域後・場所後・検索前・検索押下後（after_search→AD並び替え前）で1つずつ行う。次客は外し→きれい確認→外し忘れ1つずつ→新条件。抜けは guide_phase_one。駅0・区0は次へ進まない。検索把握なしではAD並び替えしない",
+    text: "手順表×画面照合を外し完了直後（after_clear・外忘れだけ）・確定してリストへ閉じた後（after_confirm・入れた1つずつ）・駅後・地域後・場所後・検索前・検索押下後（after_search→AD並び替え前）で1つずつ行う。次客は通常リセット（reset_between_customers）→空の確認→新条件。最後の保険で外す時だけ（reset_fallback）外し→きれい確認→外し忘れ1つずつ→新条件。抜けは guide_phase_one。駅0・区0は次へ進まない。検索把握なしではAD並び替えしない",
     since: "2.8.177",
     kb: "530bb1f3",
     marker: "_guideLikeAfterConfirmCheck",
@@ -1113,7 +1157,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "flow_series_grasp",
     scene: "press",
-    text: "手順書の一連の流れ（flow_series: 外し→確定→場所→検索→一覧→次→次客）を段ごとに把握する。各段で page:flow_series_at を残し、場面の並びだけ見て流れ完了としない。検索把握なしでは一覧ADへ進まない",
+    text: "外しはリセットで空にする（reset_replaces_clear）。手順書の一連の流れ（flow_series: 外し→確定→場所→検索→一覧→次→次客）を段ごとに把握する。各段で page:flow_series_at を残し、場面の並びだけ見て流れ完了としない。検索把握なしでは一覧ADへ進まない",
     since: "2.8.182",
     kb: "38ed0d15",
     marker: "_noteFlowSeriesAt",
@@ -1126,7 +1170,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "flow_series_order_gate",
     scene: "clear",
-    text: "拡張が一連の順番を徹底理解する。客開始で flow_series_plan（何段・何順）を残し、各段で flow_series_order（N/M）を言う。前段抜けは flow_series_gap。before_clear 無しで after_clear／入れへ進まない（_requireFlowSeriesUpTo）",
+    text: "外しはリセットで空にする（reset_replaces_clear）。拡張が一連の順番を徹底理解する。客開始で flow_series_plan（何段・何順）を残し、各段で flow_series_order（N/M）を言う。前段抜けは flow_series_gap。before_clear 無しで after_clear／入れへ進まない（_requireFlowSeriesUpTo）",
     since: "2.8.210",
     kb: "d45560bf",
     marker: "_graspFlowSeriesOrder",
@@ -1139,7 +1183,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "continuous_customer_loop",
     scene: "switch",
-    text: "連続客は外す→客ごと思考→入れる→検索→送付→送付後外し→次客可を1人ずつ完了してから次へ。失敗でも customer_think／post_send_clear／handoff_loop の印を残す（測れない穴を作らない）",
+    text: "外しはリセットで空にする（reset_replaces_clear）。連続客は外す→客ごと思考→入れる→検索→送付→送付後外し→次客可を1人ずつ完了してから次へ。失敗でも customer_think／post_send_clear／handoff_loop の印を残す（測れない穴を作らない）",
     since: "2.8.205",
     kb: "0a5b99dd",
     marker: "_refreshCustomerThink",
@@ -1152,7 +1196,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_then_fill_gate",
     scene: "clear",
-    text: "連続客で所在地だけ外して終わらない。clear_doneのあと guide_phase_after_clear（台帳×画面）→ clear_then_fill_ok で新条件の入れへ。残りがあれば clear_then_fill_gap→外し再実行。外し完了後は next_move_grasp（新条件を1つずつ入れる）で次へ移行する。所在地外しだけで fill に進まない／完了扱いにしない",
+    text: "リセット（または最後の保険の外し）のあと、clear_done → guide_phase_after_clear（台帳×画面）→ clear_then_fill_ok で新条件の入れへ。空でなければ clear_then_fill_gap→リセットを再実行（保険の外しの時は外し再実行）。完了後は next_move_grasp（新条件を1つずつ入れる）で次へ移行する。所在地だけ空にして fill に進まない／完了扱いにしない",
     since: "2.8.208",
     kb: "98581439",
     marker: "clear_then_fill_ok",
@@ -1165,7 +1209,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "one_task_complete_before_next",
     scene: "clear",
-    text: "1つずつタスク完了してから次へ。before_clear未達でclear_then_fillに進まない（印だけ補完禁止）。未達ならguide_clearで把握し直し→再関所。dirtyなら再外し。完了時one_task_done。未完了はone_task_incomplete／one_task_gate_block",
+    text: "外しはリセットで空にする（reset_replaces_clear）。1つずつタスク完了してから次へ。before_clear未達でclear_then_fillに進まない（印だけ補完禁止）。未達ならguide_clearで把握し直し→再関所。dirtyなら再外し。完了時one_task_done。未完了はone_task_incomplete／one_task_gate_block",
     since: "2.8.225",
     kb: "6a1a665b",
     marker: "one_task_gate_block",
@@ -1192,7 +1236,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "samekind_clear_before_fill",
     scene: "clear",
-    text: "同種（駅→駅・地域→地域）でも先に外す。入れ直しだけで飛ばさない。台帳のみ残も memOnly で小窓を開く。フォーム展開後 leftover_rescan_after_form。前客cid違いの同種は ForceClearSameKind。要約は『同種でも先に外す』",
+    text: "外しはリセットで空にする（reset_replaces_clear）。同種（駅→駅・地域→地域）でも先に外す。入れ直しだけで飛ばさない。台帳のみ残も memOnly で小窓を開く。フォーム展開後 leftover_rescan_after_form。前客cid違いの同種は ForceClearSameKind。要約は『同種でも先に外す』",
     since: "2.8.220",
     kb: "6fa718ba",
     marker: "sameKindMustClear",
@@ -1212,7 +1256,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "next_customer_move_one_by_one",
     scene: "search",
-    text: "次のお客さんと次の動きを把握してから進む。fill開始で next_customer_grasp／next_move_grasp／guide_phase_one。家賃など条件は _runBasicOneByOne で cond_one_grasp→1欄→cond_one_ok（同時に次欄へ飛ばない）。外しも名前付き1つずつ（clear_detail_grasp・3f4749d9）",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】次のお客さんと次の動きを把握してから進む。fill開始で next_customer_grasp／next_move_grasp／guide_phase_one。家賃など条件は _runBasicOneByOne で cond_one_grasp→1欄→cond_one_ok（同時に次欄へ飛ばない）。外しも名前付き1つずつ（clear_detail_grasp・3f4749d9）",
     since: "2.8.219",
     kb: "3f4749d9",
     marker: "_graspNextCustomerAndMove",
@@ -1225,7 +1269,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "customer_loop_one_by_one",
     scene: "search",
-    text: "物件取得完了→外す→新条件入れ→検索→並び替え→物件取得→次客を1段ずつ理解する。loop_phase_grasp／loop_who_grasp／loop_task_list／loop_advanceでいま客・次客・いま段・次段・タスク一覧・完了→次へを残す。並べ替えもループ段。BG一括もseries_done後にloop_advance。手順書flow_seriesにclear_then_fillを含む",
+    text: "外しはリセットで空にする（reset_replaces_clear）。物件取得完了→外す→新条件入れ→検索→並び替え→物件取得→次客を1段ずつ理解する。loop_phase_grasp／loop_who_grasp／loop_task_list／loop_advanceでいま客・次客・いま段・次段・タスク一覧・完了→次へを残す。並べ替えもループ段。BG一括もseries_done後にloop_advance。手順書flow_seriesにclear_then_fillを含む",
     since: "2.8.222",
     kb: "62c86c80",
     marker: "_graspCustomerLoopPhase",
@@ -1240,7 +1284,7 @@ export const AUTO_RULES: AutoRule[] = [
         "page:next_customer_grasp",
         "page:next_move_grasp",
         "page:flow_series_at",
-        "dl:loop_handoff_grasp",
+        "dl:handoff_grasp",
         "dl:loop_phase_req",
         "loop_advance",
       ],
@@ -1271,7 +1315,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "now_action_clear_then_fill",
     scene: "clear",
-    text: "いまの行動をパネルに出す。外している最中なら『外す』、終わったら『新しい条件を入れる』。同一客・初回きれいでForceClear全部外しループを回さない（place_keep）。客切替・残・送付後ギャップの時だけ外す",
+    text: "外しはリセットで空にする（reset_replaces_clear）。いまの行動をパネルに出す。外している最中なら『外す』、終わったら『新しい条件を入れる』。同一客・初回きれいでForceClear全部外しループを回さない（place_keep）。客切替・残・送付後ギャップの時だけ外す",
     since: "2.8.227",
     kb: "f1ceec94",
     marker: "_publishNowAction",
@@ -1290,7 +1334,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "task_grasp_now_done_next",
     scene: "clear",
-    text: "1つ1つのタスクで『いま行っている／完了した／次に必要な動き』を把握する。外す（間取り含む）も入れるも task_now→task_done→task_next。箱ごと（間取り→ペット→区）に完了してから次へ。完了していないのに次へ進まない（one_task と併用）",
+    text: "外しはリセットで空にする（reset_replaces_clear）。1つ1つのタスクで『いま行っている／完了した／次に必要な動き』を把握する。外す（間取り含む）も入れるも task_now→task_done→task_next。箱ごと（間取り→ペット→区）に完了してから次へ。完了していないのに次へ進まない（one_task と併用）",
     since: "2.8.228",
     kb: "e7082bae",
     marker: "_publishTaskGrasp",
@@ -1320,7 +1364,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_method_api_grasp_transition",
     scene: "clear",
-    text: "次タスクへ移る前に、API手順書（human-learn-profile束の外し方・flow_series）で外し方を把握する。検索のsearch_graspと同型で session＋axlx-task-grasped に残す。clear_method_ledgerで外し方理解を測り、薄い時はclear_method_gap。外し完了→入れはtask_transition_graspを残してから進む",
+    text: "外しはリセットで空にする（reset_replaces_clear）。次タスクへ移る前に、API手順書（human-learn-profile束の外し方・flow_series）で外し方を把握する。検索のsearch_graspと同型で session＋axlx-task-grasped に残す。clear_method_ledgerで外し方理解を測り、薄い時はclear_method_gap。外し完了→入れはtask_transition_graspを残してから進む",
     since: "2.8.229",
     kb: "3c9d1894",
     marker: "_graspClearMethodFromPlaybook",
@@ -1349,7 +1393,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "task_api_refresh_before_next",
     scene: "clear",
-    text: "次のタスクへ行く前に、手順書が薄い・無い時は human-learn-profile をAPI取込してから把握する（検索前の束取込と同型）。_graspBeforeNextTaskThen が関所。外し→入れは取込→把握→task_transition_gate を残してから進む。場所完了・条件完了・入れ開始／完了・次客渡しも弱い段として同じAPI把握を行う。把握弱くても印付きで進む（search_grasp_infer 同型）",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】次のタスクへ行く前に、手順書が薄い・無い時は human-learn-profile をAPI取込してから把握する（検索前の束取込と同型）。_graspBeforeNextTaskThen が関所。外し→入れは取込→把握→task_transition_gate を残してから進む。場所完了・条件完了・入れ開始／完了・次客渡しも弱い段として同じAPI把握を行う。把握弱くても印付きで進む（search_grasp_infer 同型）",
     since: "2.8.230",
     kb: "64f4da9d",
     marker: "_graspBeforeNextTaskThen",
@@ -1379,7 +1423,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "guide_phase_task_link",
     scene: "search",
-    text: "手順書×画面照会（guide_phase）の各段完了を、必ず task_now／task_done／task_next に落とす。照合だけの印で止めない。場所後・所在地・駅・検索前・外し後・検索後・一覧（list_start/before_next/after_next/handoff）で guide_task_link を残し、次にすることを同時に把握する",
+    text: "【外しの部分は、リセットで空と確かめられた回は行わない（reset_replaces_clear）。入れる側の「1つずつ」は今まで通り】手順書×画面照会（guide_phase）の各段完了を、必ず task_now／task_done／task_next に落とす。照合だけの印で止めない。場所後・所在地・駅・検索前・外し後・検索後・一覧（list_start/before_next/after_next/handoff）で guide_task_link を残し、次にすることを同時に把握する",
     since: "2.8.231",
     kb: "0b023093",
     marker: "_linkGuidePhaseToTask",
@@ -1491,7 +1535,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "continuous_series_next_grasp",
     scene: "clear",
-    text: "一連（外す→入れ→検索→取得）完了から次客へ移る時は必ず loop_advance＋loop_who_grasp＋next_customer_grasp＋next_move_grasp を残す。series_done だけ残して次客把握が欠ける抜けを禁止。取得完了は _stampSeriesToNextCustomer／axlx-series-handoff。fill一連の series_done 経路でも同型印",
+    text: "外しはリセットで空にする（reset_replaces_clear）。一連（外す→入れ→検索→取得）完了から次客へ移る時は必ず loop_advance＋loop_who_grasp＋next_customer_grasp＋next_move_grasp を残す。series_done だけ残して次客把握が欠ける抜けを禁止。取得完了は _stampSeriesToNextCustomer／axlx-series-handoff。fill一連の series_done 経路でも同型印",
     since: "2.8.235",
     kb: "cccd00ca",
     marker: "_stampSeriesToNextCustomer",
@@ -1580,7 +1624,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_stuck_watch_use_improvements",
     scene: "clear",
-    text: "外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はclear_watchで定期に照会→次手",
+    text: "外しはリセットで空にする（reset_replaces_clear）。外している最中で止まっても画面照会・スクショ・最善次手を使う。結果一覧でも外し中はlistよりform/残りを優先（誤診list_ready空振り禁止）。残カウントはstation_id[]/route_id[]。外し段はclear_watchで定期に照会→次手",
     since: "2.8.239",
     kb: "079c57d5",
     marker: "_armClearStuckWatch",
@@ -1688,14 +1732,14 @@ export const AUTO_RULES: AutoRule[] = [
         "page:loop_phase_grasp",
         "post_send_clear_gap",
         "handoff_atom_post_send",
-        "dl:loop_handoff_grasp",
+        "dl:handoff_grasp",
       ],
     },
   },
   {
     id: "clear_detail_grasp",
     scene: "clear",
-    text: "外すも入れると同じ細かさで理解する。外す前に台帳×画面の残りを名前付きで1つずつ言う（guide_clear_grasp／guide_phase_one）。件数の「残:区・町」だけで終わらない。外し後も名前付きで残0を確かめてから入れへ",
+    text: "リセットの前にも、外すのと同じ細かさで台帳×画面の残りを名前付きで1つずつ言う（guide_clear_grasp／guide_phase_one）。件数の「残:区・町」だけで終わらない。リセット後（空の読み戻し）も名前付きで残0を確かめてから入れへ。最後の保険で外す時（reset_fallback・リセットが押せない・空にならない時だけ）も、外す前後に同じ名前付きの確認をする",
     since: "2.8.209",
     kb: null,
     marker: "_listLeftoverNamedItems",

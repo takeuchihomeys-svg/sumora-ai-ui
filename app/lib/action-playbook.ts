@@ -18,6 +18,7 @@
 
 import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -37,8 +38,17 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *   11（2026-11-23）: clear extra_guides を入れる並みに細分化（外す前の名前付き把握→箱ごと1つずつ→駅小窓経由→外し後名確認→入れへ）。
  *   12（2026-11-23）: flow_series 先頭に before_clear（外す前の名前付き把握）。外し後→入れの段が抜けない線。
  *   13（2026-11-23）: clear_then_fill（外し完了→入れ）を一連に明示。物件取得完了→外す→入れ→検索→並び替え→取得→次客の把握線。
+ *   14（2026-11-26 竹内さん「1つずつ外すのはボトルネックなので抜く」）: 骨組みの外しを「1つずつ外す」からリセットボタンへ。
+ *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
+ *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 13;
+export const PLAYBOOK_BUILD_V = 16;
+// 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
+//   入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。buildPlaybook に site を渡し、itandi では載せない。
+//   site を渡さない時（既定）は今までどおり＝リアプロの動きは変えない。
+// 16（2026-11-26 竹内さん「まだ残っていることも改善お願い」）: itandi の手順書から、リアプロ用の決まり一覧・一連の流れ・
+//   追加ガイド（リセット幅160×30・30秒待ち・確定してリスト）を外し、itandi 用の流れと外し方（チップ・打つ欄・チェック）に替えた。
+//   itandi の欄「room_layout:in」を「間取りの欄（チェック）」に。realpro の出力は変えない。
 
 /**
  * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
@@ -58,23 +68,24 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: "外す前の名前付き把握",
+    label: `リセットを押す（左の「リセット」→読み直し→${RESET_WAIT_TEXT}のラグ待ち）`,
     scene: null,
-    grasp: ["page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
+    // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
+    grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
     next: "clear_then_fill",
   },
   {
     id: "clear_then_fill",
-    label: "外し完了→新条件の入れへ",
+    label: "空と確かめた→新条件の入れへ",
     scene: null,
-    grasp: ["page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
+    grasp: ["reset_verified", "page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
     next: "after_clear",
   },
   {
     id: "after_clear",
-    label: "前客の外し完了→入れへ",
+    label: "前客のリセット完了（フォームが空）→入れへ",
     scene: null,
-    grasp: ["page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
+    grasp: ["reset_verified", "reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
     next: "after_confirm",
   },
   { id: "after_confirm", label: "確定してリストへ（入れた把握）", scene: "area", grasp: ["page:guide_phase_after_confirm"], next: "after_place" },
@@ -91,6 +102,27 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
   { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
   { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "page:list_handoff_seen", "page:flow_done_ready_next"], next: null },
+];
+
+/**
+ * itandi の一連の流れ（客1人・2026-11-26）。リアプロの段（確定してリスト・並べ替え・印刷用PDF）は itandi に無いので載せない。
+ *   itandi の点検の印（chrome-extension/itandi-page-script.js の _itStep）: reset_start／reset（外せた）／reset_fail／reset_mixed／
+ *   reset_confirm／location（所在地の入り方）／lines_done（路線・駅の入れ終わり）／fill_start（条件を入れ始め）／search_blocked／done_error。
+ *   検索を押す・一覧・次ページ・次客の印は itandi の点検にまだ無い＝grasp は空（把握できない・gaps に出す）。
+ */
+export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
+  { id: "before_clear", label: "前のお客さんの条件を外す（条件削除のボタンがあれば先に）", scene: null, grasp: ["reset_start", "reset_confirm"], next: "clear_then_fill" },
+  { id: "clear_then_fill", label: "空と読み戻せた→新条件の入れへ", scene: null, grasp: ["fill_start"], next: "after_clear" },
+  { id: "after_clear", label: "外せた（reset）→入れへ", scene: null, grasp: ["reset"], next: "after_confirm" },
+  { id: "after_confirm", label: "所在地（区）の設定", scene: "area", grasp: ["location"], next: "after_place" },
+  { id: "after_station", label: "路線・駅の設定", scene: "station", grasp: ["lines_done"], next: "after_place" },
+  { id: "after_area", label: "地域の設定", scene: "area", grasp: ["location"], next: "after_place" },
+  { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["lines_done"], next: "before_search" },
+  { id: "before_search", label: "検索前の照合（条件）", scene: "cond", grasp: ["fill_start"], next: "after_search" },
+  { id: "after_search", label: "検索を押す", scene: "search", grasp: [], next: "list" },
+  { id: "list", label: "一覧", scene: "list", grasp: [], next: "next" },
+  { id: "next", label: "次ページ", scene: "next", grasp: [], next: "handoff" },
+  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: [], next: null },
 ];
 
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
@@ -138,15 +170,16 @@ export type PlaybookExtraGuide = {
 export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
   {
     id: "clear",
-    label: "前客の外し（場面なし・決まりから）",
+    label: "前客のリセット（場面なし・決まりから／1つずつ外さない）",
     steps: [
-      "①外す前に台帳×画面の残りを名前付きで1つずつ言う（入れると同じ細かさ）",
-      "②箱ごとに開ける→1つずつカーソルで外す→外れたか確かめる（間取り→絞込→所在地）",
-      "③駅・沿線は小窓経由で1駅ずつ外す（form直外ししない）",
-      "④外し後に残りの名前を1つずつ確かめる（after_clear）",
-      "⑤きれいになってから clear_then_fill_ok → 新条件の入れへ",
+      "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
+      `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）`,
+      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ`,
+      "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（空なら該当件数が増えなくても成功・reset_verified）",
+      "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用）",
+      "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ",
     ],
-    rules: ["clear_per_panel", "clear_one_by_one", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
+    rules: ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
   },
   {
     id: "switch",
@@ -154,9 +187,9 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①手順書を読む（playbook_seen）",
       "②次のお客さんに切り替える",
-      "③前客の外し→きれい確認→新条件の順を守る",
+      `③前客のリセット（左の「リセット」→${RESET_WAIT_TEXT}のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）`,
     ],
-    rules: ["playbook_read"],
+    rules: ["playbook_read", "reset_between_customers"],
   },
   {
     id: "pet",
@@ -167,6 +200,37 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
       "③確定してリストへを押してから検索へ",
     ],
     rules: ["pet_confirm"],
+  },
+];
+
+/**
+ * itandi 用の追加ガイド（外し・切り替え）。リアプロの「リセット→30秒待ち」とは別の手。
+ *   itandi-page-script.js の _itResetForm／_itClearOnce の順（打つ欄→チェック→チップ×）に合わせる。
+ *   ペット（pet）の場面は itandi では載せていない（itandi のペット条件の手をまだ確かめていない）。
+ */
+export const ITANDI_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
+  {
+    id: "clear",
+    label: "前のお客さんの条件を外す（itandi・場面なし）",
+    steps: [
+      "①条件削除のボタンがあれば先に押す（無い画面が普通）",
+      "②打つ欄（家賃・面積・駅徒歩・築年数など）を空にする",
+      "③間取り・構造・設備のチェックを外す",
+      "④所在地・路線/駅のチップを、×で1つずつ外す（外すたびに並びが変わるので、押す時に読み直す）",
+      "⑤空と読み戻して、残りを名前付きで確かめる（空なら成功＝reset）",
+      "⑥残るなら、もう1回だけ外す。それでも残る時は、このお客さんの itandi は飛ばす（AXLX_RESET_FAILED・前の条件が混ざった検索はしない）",
+    ],
+    rules: [],
+  },
+  {
+    id: "switch",
+    label: "次客への切り替え（itandi・場面なし）",
+    steps: [
+      "①次のお客さんに切り替える",
+      "②前のお客さんの条件を外す（上の手順）",
+      "③空と確かめてから、新しい条件を入れる（fill_start）",
+    ],
+    rules: [],
   },
 ];
 
@@ -239,6 +303,8 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "AD": "ADへカーソル（押さない・一覧列禁止）",
   "高→低": "高→低を押す",
   "左の高→低｜span.sort_detail": "高→低（span.sort_detail）を押す",
+  // 2026-11-26 itandi の実測（束の欄名）: 間取りのチェック欄（chrome-extension/itandi-form-guard.js の FILTER_ROWS で「間取り」）
+  "room_layout:in": "間取りの欄（チェック）",
 };
 
 /** 手順の1手の細部（押す欄・学んだ押す位置・押すと開く物） */
@@ -364,6 +430,11 @@ export type Playbook = {
    *   scenes に無理に載せると場面の並びが崩れるので別枠。
    */
   extra_guides: PlaybookExtraGuide[];
+  /**
+   * どのサイトの手順書か（2026-11-26）。itandi は決まり一覧・リアプロの一連の流れ・追加ガイドを載せない。
+   *   無い（古い手順書）は realpro 扱い。
+   */
+  site?: "realpro" | "itandi";
 };
 
 type SceneFlowLike = {
@@ -551,13 +622,22 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
   };
 }
 
-/** 束 → 手順書（純関数。同じ束からは同じ版） */
-export function buildPlaybook(bundle: BundleLike): Playbook {
+/**
+ * 束 → 手順書（純関数。同じ束からは同じ版）
+ * site: 'itandi' なら、リアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）を載せない（ITANDI は並べ替えが無い）。
+ *       それ以外（未指定・realpro・all）は従来どおり。
+ */
+export function buildPlaybook(bundle: BundleLike, site?: string | null): Playbook {
+  const realproHands = String(site ?? "") !== "itandi";
+  // itandi は自動の決まり（AUTO_RULES）・リアプロの一連の流れ・追加ガイドを載せない（リアプロの拡張用の一覧で、itandi のページは使っていない）
+  const ruleIdsFor = (ids: ReadonlyArray<string>): string[] => (realproHands ? [...ids] : []);
   const posIdx = indexPositions(bundle.points);
   const openIdx = indexOpens(bundle.opens);
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
     .map((f) => playbookSceneOf(f, posIdx, openIdx));
+  // itandi の場面には、リアプロの自動の決まりを付けない（場面の決まりは rulesForScene＝AUTO_RULES 由来）
+  if (!realproHands) for (const s of scenes) s.rules = [];
   const learned = new Set(scenes.map((s) => s.scene));
   const gapsEarly: string[] = [];
   /**
@@ -588,35 +668,41 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
       unknown: [],
       confidence: "thin",
       detail: detail.slice(0, PLAYBOOK_MAX_STEPS),
-      rules: [...ruleIds],
+      rules: ruleIdsFor(ruleIds),
     });
     learned.add(scene);
     gapsEarly.push(why);
   };
-  injectGuideSceneEarly(
-    "area",
-    PLAYBOOK_AREA_CONFIRM_STEPS,
-    ["guide_phase_checkpoints", "guide_clear_fill_gate"],
-    "所在地場面: 録画が無いため①開く→②区→③確定 を薄いガイド場面として手順書に足した",
-  );
+  // 所在地の「確定してリストへ」はリアプロの画面の手（itandi には確定の段が無い）→ realpro だけ
+  if (realproHands) {
+    injectGuideSceneEarly(
+      "area",
+      PLAYBOOK_AREA_CONFIRM_STEPS,
+      ["guide_phase_checkpoints", "guide_clear_fill_gate"],
+      "所在地場面: 録画が無いため①開く→②区→③確定 を薄いガイド場面として手順書に足した",
+    );
+  }
   injectGuideSceneEarly(
     "cond",
     PLAYBOOK_COND_GUIDE_STEPS,
     ["guide_clear_fill_gate", "continuous_customer_loop"],
     "条件場面: 録画が無いため①条件入れ→②照合→③検索へ を薄いガイド場面として手順書に足した（外しだけで終わらない）",
   );
-  injectGuideSceneEarly(
-    "search",
-    PLAYBOOK_SEARCH_GRASP_STEPS,
-    ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"],
-    "検索場面: 録画が無いため①検索→②把握→③並べ替えへ を薄いガイド場面として手順書に足した",
-  );
-  injectGuideSceneEarly(
-    "list",
-    PLAYBOOK_LIST_AD_SORT_STEPS,
-    ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor", "guide_list_next_flow"],
-    "一覧場面: 録画が無いため①並べ替え→②AD→③高→低→④PDF を薄いガイド場面として手順書に足した",
-  );
+  // 検索・一覧の手（並べ替え AD・印刷用PDF）はリアプロだけ。itandi には並べ替えが無いので載せない
+  if (realproHands) {
+    injectGuideSceneEarly(
+      "search",
+      PLAYBOOK_SEARCH_GRASP_STEPS,
+      ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"],
+      "検索場面: 録画が無いため①検索→②把握→③並べ替えへ を薄いガイド場面として手順書に足した",
+    );
+    injectGuideSceneEarly(
+      "list",
+      PLAYBOOK_LIST_AD_SORT_STEPS,
+      ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor", "guide_list_next_flow"],
+      "一覧場面: 録画が無いため①並べ替え→②AD→③高→低→④PDF を薄いガイド場面として手順書に足した",
+    );
+  }
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
@@ -683,11 +769,14 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   }
 
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
-  const rules: PlaybookRule[] = AUTO_RULES.map((r) => ({
+  const rules: PlaybookRule[] = realproHands ? AUTO_RULES.map((r) => ({
     id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: r.kb,
     verified_by: verifyKeysOf(r.verify),
-  }));
+  })) : [];
   const rules_v = autoRulesVersion();
+  if (!realproHands) {
+    gaps.push("itandi の自動の決まりは、このリアプロの決まり一覧（拡張の page-script 用）とは別。手順書には載せていない（itandi 用の決まりはまだ作っていない）");
+  }
   const unverified = rules.filter((r) => !r.verified_by.length).map((r) => r.id);
   if (unverified.length) {
     gaps.push(`自動の決まり ${rules.length}件のうち ${unverified.length}件は点検記録で確かめる印が無い（コードにあるかだけ・${unverified.slice(0, 6).join("・")}${unverified.length > 6 ? ` 他${unverified.length - 6}` : ""}）`);
@@ -697,7 +786,9 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     gaps.push(`人の手本（録画の場面）がまだ無く、自動の決まりだけの場面：${ruleOnly.map((sc) => RULE_SCENE_JA[sc]).join("・")}`);
   }
 
-  const flow_series = PLAYBOOK_FLOW_SERIES.map((p) => ({ ...p }));
+  // 一連の流れ: itandi は itandi 用の段（点検の印が実際に出る物だけ）。リアプロは従来どおり
+  const flowSeries = realproHands ? PLAYBOOK_FLOW_SERIES : ITANDI_FLOW_SERIES;
+  const flow_series = flowSeries.map((p) => ({ ...p, grasp: [...p.grasp] }));
   // 一連の流れに紐づく場面が薄い／無い時は gaps に出す（場面の並びだけ見て「流れOK」と誤解しない）
   for (const ph of flow_series) {
     if (!ph.scene) continue;
@@ -705,6 +796,9 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     if (!sc) gaps.push(`一連の流れ「${ph.label}」に紐づく場面 ${ph.scene} が手順に無い`);
     else if (sc.confidence === "thin") gaps.push(`一連の流れ「${ph.label}」の場面 ${sc.label} が薄い（検索${sc.runs}回）`);
   }
+  // 点検の印が1つも無い段は「把握できない」と明示する（itandi の検索・一覧・次客は拡張の印がまだ無い）
+  const noMark = flow_series.filter((p) => !p.grasp.length).map((p) => p.label);
+  if (noMark.length) gaps.push(`一連の流れのうち点検の印が無い段（把握できない）：${noMark.join("・")}`);
   if (!flow_series.length) gaps.push("一連の流れ（flow_series）が空");
 
   /**
@@ -712,7 +806,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
    *   録画が印刷用PDFだけだと手順書から並べ替えが抜け、自動が PDF 直行する。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "list") continue;
+    if (sc.scene !== "list" || !realproHands) continue;
     // 固定ガイド（①〜③）が無い時だけ足す。FIELD_JA の「並べ替え」文言だけでは足りない
     const hasAdGuide = sc.steps.some((t) => /①並べ替え|②メニュー内のAD|③ADの右の/.test(String(t || "")));
     if (hasAdGuide) continue;
@@ -744,7 +838,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
    *   録画が「検索を押す」1手だけだと、把握→並べ替えが手順書から抜ける。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "search") continue;
+    if (sc.scene !== "search" || !realproHands) continue;
     const hasSearchGuide = sc.steps.some((t) => /①条件が揃ったら検索|②検索したことを手順書|③把握OKのあと並べ替え/.test(String(t || "")));
     if (hasSearchGuide) continue;
     const oldSearchAim = sc.detail.find((d) => /検索/.test(d.step))?.aim ?? null;
@@ -769,7 +863,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
    *   録画の手（押す位置つき）は残し、欠けた開く／確定だけ足す（全部差し替えない＝aim を消さない）。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "area") continue;
+    if (sc.scene !== "area" || !realproHands) continue;
     const hasConfirm = sc.steps.some((t) => /確定してリストへ/.test(String(t || "")));
     const hasOpen = sc.steps.some((t) => /所在地絞り込みを開く|所在地絞り込み/.test(String(t || "")));
     if (hasConfirm && hasOpen) continue;
@@ -808,18 +902,21 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   }
 
   /** 録画場面が無い clear / switch / pet は extra_guides に載せる（scenes は崩さない） */
-  const extra_guides: PlaybookExtraGuide[] = PLAYBOOK_EXTRA_GUIDES.map((g) => ({
+  const guideSrc = realproHands ? PLAYBOOK_EXTRA_GUIDES : ITANDI_EXTRA_GUIDES;
+  const extra_guides: PlaybookExtraGuide[] = guideSrc.map((g) => ({
     id: g.id,
     label: g.label,
     steps: [...g.steps],
     rules: [...g.rules],
   }));
   for (const g of extra_guides) {
-    gaps.push(`場面なし「${g.label}」: 録画が無いため決まりから①②③を extra_guides に載せた`);
+    gaps.push(`場面なし「${g.label}」: 録画が無いため①②③を extra_guides に載せた`);
   }
 
+  const siteKind: "realpro" | "itandi" = realproHands ? "realpro" : "itandi";
   const body = JSON.stringify({
     build_v: PLAYBOOK_BUILD_V,
+    site: siteKind,
     scenes,
     flow_series: flow_series.map((p) => p.id),
     missing,
@@ -833,6 +930,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
   return {
     v: 1,
     build_v: PLAYBOOK_BUILD_V,
+    site: siteKind,
     version: fnv1a(body),
     based_on: String(bundle.generated_at ?? ""),
     scenes,
@@ -862,7 +960,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
  * 束の手順書が古ければ（作り方の版が下・決まりの版がコードと違う・無い）作り直した写しを返す（元の束は変えない）。
  *   API が拡張へ渡す時に使う＝決まりを直してデプロイしたら、次に束を書く前でも拡張は新しい手順書を読む。
  */
-export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | undefined): {
+export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | undefined, site?: string | null): {
   bundle: Record<string, unknown> | null | undefined; refreshed: boolean; why: string | null;
 } {
   if (!bundle || typeof bundle !== "object") return { bundle, refreshed: false, why: null };
@@ -873,7 +971,7 @@ export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | 
   else if (pb.rules_v !== autoRulesVersion()) why = `決まりの版が古い（${pb.rules_v ?? "-"}→${autoRulesVersion()}）`;
   if (!why) return { bundle, refreshed: false, why: null };
   const copy: Record<string, unknown> = { ...bundle };
-  copy.playbook = buildPlaybook(copy as never);
+  copy.playbook = buildPlaybook(copy as never, site);
   return { bundle: copy, refreshed: true, why };
 }
 
@@ -896,7 +994,8 @@ export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[
   }
   // 自動の決まり（拡張で直した物）が手順書に入っているか・コードの決まりと同じ版か
   if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) issues.push(`作り方が古い（build_v=${pb.build_v}・今は ${PLAYBOOK_BUILD_V}）`);
-  if (!Array.isArray(pb.rules) || !pb.rules.length) issues.push("自動の決まりが手順書に入っていない");
+  // itandi は自動の決まりを載せない設計（buildPlaybook）＝空は正しい。版の確認は両方で行う
+  if (pb.site !== "itandi" && (!Array.isArray(pb.rules) || !pb.rules.length)) issues.push("自動の決まりが手順書に入っていない");
   else if (pb.rules_v !== autoRulesVersion()) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${autoRulesVersion()}）`);
   if (!Array.isArray(pb.flow_series) || pb.flow_series.length < 5) {
     issues.push("一連の流れ（flow_series）が無い／短すぎる（外し→検索→一覧→次客の把握線が無い）");

@@ -11,6 +11,7 @@ import { completeAuthOk } from "@/app/lib/pickup-complete";
 import { supabase } from "@/app/lib/supabase-server";
 import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { humanMotionPaceOn, BurstMeter, PacedWriter } from "@/app/lib/human-motion-pacer";
+import { siteKeyOf } from "@/app/lib/site-key";
 
 // 2026-11-18 作業員H（本番 12:16〜12:22 の DB の時間切れ・human_motion_learn の POST が5分で241件重なった）:
 //   重なった時だけ受け取りを先に返し、間を空けて25行ずつまとめて書く（app/lib/human-motion-pacer.ts・止める HUMAN_MOTION_PACE=off）
@@ -64,12 +65,9 @@ function frac(v: unknown): number | null {
   if (!Number.isFinite(n)) return null;
   return Math.max(0, Math.min(1, Math.round(n * 100) / 100));
 }
+// 2026-11-26: 呼び名の変換は app/lib/site-key.ts（唯一の正本）
 function siteOf(v: unknown): string | null {
-  const s = String(v ?? "").toLowerCase();
-  if (s === "realpro" || s === "realnetpro" || s === "リアプロ") return "realpro";
-  if (s === "itandi") return "itandi";
-  if (s === "reins" || s === "レインズ") return "reins";
-  return null;
+  return siteKeyOf(String(v ?? ""));
 }
 /** 文字の配列を整える（上限・空を落とす・名前は30字まで） */
 function strArr(v: unknown, cap: number): string[] | null {

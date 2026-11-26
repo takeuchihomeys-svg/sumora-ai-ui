@@ -704,7 +704,7 @@ window.addEventListener("message", function (e) {
             patch[BOOT_KEY] = Date.now();
             chrome.storage.local.set(patch, function () {
               try {
-                chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (res) {
+                chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "boot_need" }, function (res) {
                   void chrome.runtime.lastError;
                   pushAll();
                   try {

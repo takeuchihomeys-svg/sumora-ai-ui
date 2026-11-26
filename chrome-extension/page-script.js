@@ -4089,7 +4089,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.305";
+  var _AXLX_PAGE_VER = "2.8.310";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4146,6 +4146,11 @@ function _guideLikeAreaSkip(why) {
     "human_fixed_waits_routed_bulk",
     "ext_behind_notice",
     "reset_replaces_clear",
+    "series_handoff_order",
+    "reset_empty_is_enough",
+    "reset_success_skips_look",
+    "reset_retry_insurance",
+    "task_gate_no_forced_refetch",
     "all_sent_advance_no_stuck",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
@@ -4824,16 +4829,18 @@ function _guideLikeAreaSkip(why) {
       }
     } catch (_) {}
     try {
+      // ★ 2.8.310: 次タスク前の版確認にかかった時間を残す（次の実走で「どれだけ待ったか」を実測する）
+      var _lrT0 = Date.now();
       _requestLearnRefresh(!!forceMajor).then(function (res) {
         try {
           if (_audit) {
             _auditStepP(
               "task_api_refresh_res",
-              res === "timeout" ? "timeout"
+              (Date.now() - _lrT0) + "ms " + (res === "timeout" ? "timeout"
                 : !res ? "結果なし"
                   : (res.ok === false ? ("失敗 " + String(res.error || "").slice(0, 24))
                     : (res.skipped ? ("取らず " + String(res.skipped).slice(0, 20))
-                      : ("取込" + (res.ver ? " 版" + String(res.ver).slice(0, 8) : "")))),
+                      : ("取込" + (res.ver ? " 版" + String(res.ver).slice(0, 8) : ""))))),
             );
           }
         } catch (_) {}
@@ -12510,8 +12517,15 @@ function _guideLikeAreaSkip(why) {
           fin({ ok: true, empty: true, verified: true, left: 0, ready: true, reloaded: reloaded, countBefore: jd.before, countNow: jd.now, countKnown: jd.known, countUp: jd.up, ms: Date.now() - t0 });
           return;
         }
-        // 空でも件数が増えていない時は「まだ外れていない」として待つ（印は付けない・maxMs で返す）
+        // 空でも件数が増えていない時は maxMs まで待つ。★ 2.8.307 時間が来て空なら「きれい」印を付ける（空なら十分・外しへ回さない）
         if (Date.now() - t0 > maxMs) {
+          if (ready && st.empty) {
+            try {
+              _ledgerClear(); window.__axlxPrevLedger = null;
+              window.sessionStorage.setItem(_AX_RESET_CLEAN_KEY, JSON.stringify({ at: Date.now(), cid: String(o.cid || "") }));
+              window.sessionStorage.removeItem(_AX_RESET_PRESSED_KEY);
+            } catch (_) {}
+          }
           fin({ ok: true, empty: !!(ready && st.empty), verified: false, left: st.left, detail: st.detail, ready: ready, reloaded: reloaded, countBefore: jd.before, countNow: jd.now, countKnown: jd.known, countUp: jd.up, ms: Date.now() - t0 });
           return;
         }

@@ -34,7 +34,7 @@ console.log("■ ① 配線（一括ループでの位置・点検・手順書�
   ok("  リアプロの時だけ（ITANDI の回では押さない）", /if \(_bulkSite === "realnetpro"\) \{\s*await _waitInheritedReset[\s\S]{0,1800}await _resetBeforeFill\(_bc/.test(bg));
   ok("  世代が替わったら抜ける・ストップ要求で止まる", /await _resetBeforeFill\(_bc[\s\S]{0,400}_myGen !== _manualBulkGen[\s\S]{0,300}_batchShouldStop/.test(bg));
   ok("段の名前 pre_fill_reset（枠に出す日本語がある）", /pre_fill_reset: "条件を入れる前にリセットを押す"/.test(bg));
-  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
+  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
   {
     // 文字ではなく動き: 実際の正規表現に段の名前を通す（落とされない・前後の名前に巻き込まれない）
     const keep = eval(audit.match(/var KEEP_STEP = (\/.*\/);/)[1]);
@@ -46,7 +46,7 @@ console.log("■ ① 配線（一括ループでの位置・点検・手順書�
   ok("手順書の決まり reset_before_fill（since 2.8.296・印が無ければ検出）", /id: "reset_before_fill"[\s\S]{0,1200}since: "2\.8\.296"[\s\S]{0,300}mustHaveAny: \["reset_before_fill"\]/.test(rules));
   ok("ページ側の印の一覧にも入れた（_AXLX_RULES_DONE）", /"quiet_window_no_interrupt",\s*"reset_before_fill",/.test(ps));
   ok("入力の最中は押さない（_axFillRunning を先に読む）", /_resetBeforeFill[\s\S]{0,1500}window\._axFillRunning/.test(bg));
-  ok("押す手順は送付後と同じ _postSendResetRealpro（30秒以上の待ち・空の確認を再利用）", /_resetBeforeFill[\s\S]{0,3500}await _postSendResetRealpro\(cid, runId\)/.test(bg));
+  ok("押す手順は送付後と同じ（_resetWithInsurance 経由で _postSendResetRealpro＝30秒以上の待ち・空の確認を再利用・2.8.308 保険つき）", /_resetBeforeFill[\s\S]{0,3500}await _resetWithInsurance\(cid, runId, "pre_fill_reset"\)/.test(bg));
 }
 
 function mk(probe, over) {
@@ -96,7 +96,7 @@ const stepOf = (steps) => steps.filter((s) => s.k === "reset_before_fill").map((
   {
     const t = mk({ ok: true, empty: false, left: 2, detail: "wards=2" }, { pressResult: { ok: false, why: "reset_not_pressed:no_reset_button", notPressed: true } });
     const r = await t.h.ctx._resetBeforeFill({ id: "c3333333-cccc" }, "run3");
-    ok("押そうとした（1回）", t.press.n === 1);
+    ok("押そうとした（2.8.308 保険つき: 1回目＋撮って読んでもう1回＝2回）", t.press.n === 2, t.press.n);
     ok("  失敗を返す（呼び出し側は止まらず入力へ進む）", r && r.ok === false, r);
     ok("  点検に「空にできず→…従来の外しへ（理由=…no_reset_button）」", stepOf(t.steps).some((d) => /空にできず[\s\S]*no_reset_button/.test(d)), stepOf(t.steps));
     ok("  窓は残さない", t.h.ctx._quiet == null);

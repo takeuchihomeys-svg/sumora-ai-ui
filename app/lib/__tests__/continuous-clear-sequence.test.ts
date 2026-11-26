@@ -47,7 +47,8 @@ console.log("■ 拡張の配線順（連続外し→入れ）");
   const b = body.indexOf("try { _guideLikeClearGrasp(cond); }");
   const c = body.indexOf('_auditStepP("clear_done"');
   const d = body.indexOf("_guideLikeAfterClearCheck(cond");
-  const e = body.indexOf('dirty ? "clear_then_fill_gap" : "clear_then_fill_ok"');
+  // 2026-11-26: 判定は「汚れ（dirty）」と「外し前の把握が済んだ（_beforeOk）」の両方を見る形になった（判定の意味は同じ＝ok は把握済みの時だけ）
+  const e = body.indexOf('dirty ? "clear_then_fill_gap" : (_beforeOk ? "clear_then_fill_ok" : "clear_then_fill_gap")');
   assert(a >= 0 && b >= 0 && c >= 0 && d >= 0 && e >= 0, "_doReset 内に外し→入れ関所が揃う");
   assert(a < b, "leftover_scan → guide_clear_grasp");
   assert(b < c, "guide_clear_grasp → clear_done");

@@ -66,7 +66,7 @@ async function main() {
     const hadPlaybook = !!row.bundle.playbook;
 
     const clone = JSON.parse(before) as Record<string, unknown>;
-    const prep = prepareBundleForWrite(clone);
+    const prep = prepareBundleForWrite(clone, scope); // 2026-11-26: サイトを渡す（itandi にリアプロの手を載せない）
     const after = JSON.stringify(clone);
     const namesAfter = (after.match(NAME_RE) || []).length;
     const pb = clone.playbook as { version?: unknown; scenes?: unknown[]; positions?: unknown[] } | undefined;
