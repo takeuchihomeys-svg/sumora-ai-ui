@@ -145,7 +145,8 @@ import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
 import { greetingSentTodayOf } from "@/app/lib/apply-route-next";
 import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
-import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
+import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after";
+import { substateInContext, substateContextOn } from "@/app/lib/substate-context"; // 2026-11-27 作業員A: 細かい状態の前提（SUBSTATE_CONTEXT・既定 off） // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
@@ -4435,7 +4436,7 @@ ${sh}`;
         if (cpm.chainInsightLineOn() && ar.loc) {
           const sentB: Record<string, string> = {};
           for (const x of (brainLedgerInput.recentAixRows ?? []) as Array<{ aix_type?: string | null; sent_at?: string | null; created_at?: string | null }>) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || sentB[k] < at)) sentB[k] = at; }
-          const subNow = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null; } catch { return null; } })(); // 照らしの json の sub1 と同じ計算
+          const subNow = (() => { try { return substateContextOn() ? substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }).id : (matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null); } catch { return null; } })(); // 照らしの json の sub1 と同じ計算（SUBSTATE_CONTEXT=on は前提つき）
           // 気持ちは前の番の判断の記録の値（作業員L の ROUTE_MINDSET_LINE と同じ・今の番の LLM の後の値は使わない）
           const msPrev = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null;
           const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString(), mindset: msPrev }));
@@ -7266,7 +7267,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
       ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
-      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
+      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { if (substateContextOn()) { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); if (sc.droppedBy) materialMarks.substate_context_dropped = 1; return sc.id; } return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,
