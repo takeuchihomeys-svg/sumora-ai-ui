@@ -9,7 +9,7 @@ const evs = [...Array(10)].map((_, i) => E({ reached: i < 4, act: i < 4 ? "reply
 const tree = buildSceneTree(evs);
 t("節: 駅・状態・お客様の次・一手の4段・n と申込まで行った数", tree.get("proposing")?.n === 10 && tree.get("proposing")?.reached === 4 && tree.get("proposing > （状態なし） > 質問 > reply:invite_viewing")?.n === 4);
 t("ゴールへ一番多くつながった一手", topGoalAct(tree.get("proposing")!) === "reply:invite_viewing");
-t("n が少ない節は1段上に戻して読む", readWithBackoff(tree, ["proposing", "（状態なし）", "質問", "reply:invite_viewing"])?.key === "proposing" && readWithBackoff(tree, ["inquiry"]) === null);
+t("n が少ない節は1段上に戻して読む", readWithBackoff(tree, ["proposing", "（状態なし）", "質問", "reply:invite_viewing"])?.key === "proposing > （状態なし） > 質問" && readWithBackoff(tree, ["inquiry"]) === null);
 const rp = returnPaths(evs);
 t("戻る道: 離れる分かれ道で竹内さんの一手と戻せた数", rp.some((r) => r.reply === "その他" && r.back === 1 && r.acts[0].act === "reply:promise"));
 const de = deadEnds(tree);
