@@ -10,6 +10,8 @@ import { CONDITION_HAND_ASK_RE } from "../../app/lib/deal-outcome";
 export type DealRow = {
   id: number; conversation_id: string; first_contact_at?: string | null; condition_at?: string | null; property_sent_at?: string | null;
   viewing_at?: string | null; viewing_held_at?: string | null; applied_at?: string | null; won_at?: string | null; estimate_at?: string | null;
+  /** 2026-11-26 作業員L（台帳 #748 ①）: 申込の時刻が推定（修理・成約の時刻）。流れの型では「申込（推定）」と分け、内覧なし・条件の抜けに数えない */
+  applied_at_estimated?: boolean | null;
 };
 export const FLOW_STAGES = [
   { key: "first_contact_at", ja: "初回", station: "inquiry" },
@@ -34,13 +36,16 @@ export type DealFlow = {
   gaps: Array<{ from: string; to: string; days: number }>;
   skipped: string[]; backward: Array<{ from: string; to: string }>;
   stations: string[]; issues: Array<{ kind: GapKind; why: string }>;
+  /** 申込の時刻が推定（#748 ①） */
+  estimated?: boolean;
 };
 
 const ms = (v?: string | null) => (v ? Date.parse(v) : NaN);
 export function dealFlowOf(r: DealRow): DealFlow {
   const have = FLOW_STAGES.map((s, i) => ({ ...s, i, t: ms(r[s.key as StageKey]) })).filter((x) => Number.isFinite(x.t));
   const ord = [...have].sort((a, b) => a.t - b.t || a.i - b.i);
-  const path = ord.map((x) => x.ja);
+  const est = !!r.applied_at_estimated;
+  const path = ord.map((x) => (est && x.key === "applied_at" ? "申込（推定）" : x.ja));
   const gaps = ord.slice(1).map((x, k) => ({ from: ord[k].ja, to: x.ja, days: Math.round(((x.t - ord[k].t) / 864e5) * 10) / 10 }));
   const backward: DealFlow["backward"] = [];
   for (let k = 1; k < ord.length; k++) if (ord[k].i < ord[k - 1].i) backward.push({ from: ord[k - 1].ja, to: ord[k].ja });
@@ -49,13 +54,15 @@ export function dealFlowOf(r: DealRow): DealFlow {
   const skipped = FLOW_STAGES.slice(0, Math.max(0, last)).filter((s) => !Number.isFinite(ms(r[s.key as StageKey]))).map((s) => s.ja);
   const issues: DealFlow["issues"] = [];
   const has = (k: StageKey) => Number.isFinite(ms(r[k]));
+  // 推定の申込は時刻の並びが当てにならない（初回から 65〜129日後に付く）＝道の食い違いに数えず、記録の抜けを1つだけ
+  if (applied && est) { issues.push({ kind: "record_missing", why: "申込の時刻が推定（修理・成約の時刻）" }); return { id: r.id, applied, won, path, gaps, skipped, backward: [], stations: ord.map((x) => x.station), issues, estimated: true }; }
   if (applied && !has("viewing_held_at")) issues.push({ kind: "no_road", why: "内覧なしで申込（地図は 内覧後 → 申込準備 の道だけ）" });
   if (has("viewing_held_at") && !has("viewing_at")) issues.push({ kind: "record_missing", why: "内覧したのに内覧の日時の記録が無い" });
   if (applied && !has("property_sent_at")) issues.push({ kind: "record_missing", why: "申込したのに物件送りの記録が無い（持ち込みの物件か送付の記録の抜け）" });
   if (applied && !has("condition_at")) issues.push({ kind: "record_missing", why: "申込したのに条件の時刻が無い" });
   if (won && !applied) issues.push({ kind: "record_missing", why: "成約なのに申込の時刻が無い" });
   for (const b of backward) issues.push({ kind: "order", why: `地図と順番が違う（${b.from} の後に ${b.to}）` });
-  return { id: r.id, applied, won, path, gaps, skipped, backward, stations: ord.map((x) => x.station), issues };
+  return { id: r.id, applied, won, path, gaps, skipped, backward, stations: ord.map((x) => x.station), issues, estimated: false };
 }
 
 /** 型（段の並び）ごと・申込に届いたかで数える */

@@ -13,7 +13,7 @@ const tg = claudeCheckTargets(["q1", "q2", "q9"], probs);
 t("効く問題から型の合う物だけ", tg.length === 1 && tg[0].id === "q1");
 t("関所: warn は止めない・on は記録が無ければ止める・記録があれば通す", !claudeGateVerdict({ mode: "warn", targets: tg, record: null }).block && claudeGateVerdict({ mode: "on", targets: tg, record: null }).block
   && !claudeGateVerdict({ mode: "on", targets: tg, record: { label: "cc-x", ids: ["q1"], pass: 1, n: 1 } }).block && claudeGateVerdict({ mode: "on", targets: [], record: null }).line === "");
-t("既定は warn", claudeCheckGateMode({}) === "warn" && claudeCheckGateMode({ CLAUDE_CHECK_GATE: "on" }) === "on");
+t("既定は on（11/26）", claudeCheckGateMode({}) === "on" && claudeCheckGateMode({ CLAUDE_CHECK_GATE: "warn" }) === "warn");
 t("組の名前", claudeCheckLabel("BRAIN_CHECK_PROMISE_FLOW", "2026-11-25") === "cc-brain-check-promise-flow-2026-11-25");
 console.log(`claude-check-gate: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

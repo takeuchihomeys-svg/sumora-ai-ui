@@ -387,6 +387,7 @@ import { phraseCatalogNote, formSlotsNote } from "@/app/lib/compose-phrase-catal
 import { composePlanRowsV2On, buildPlanRowsV2, planRowsV2Note, planRowsV2Digest } from "@/app/lib/compose-plan-rows-v2";
 // 2026-11-13 作業員10（COMPOSE_BRIEF_ROLES・既定 off）: 統括の指示書の役目ごとの欄（briefForRole）を書き手への注記に
 import { briefRolesNote } from "@/app/lib/compose-brief-roles";
+import { backplanToWriterOn, backplanWriterNote } from "@/app/lib/route-backplan";
 import { briefUptakeMode, briefUptake, uptakeDigest as briefUptakeDigest, uptakeNote as briefUptakeNote } from "@/app/lib/compose-brief-uptake";
 import { dateWordsOf } from "@/app/lib/compose-brief";
 import { composeAsksFactsOn, asksFactsOf, recordFactsOf, composeFactsNote, type EstimateRec } from "@/app/lib/compose-asks-facts";
@@ -5696,6 +5697,8 @@ async function handleGenerateReply(req: NextRequest) {
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote + daySubjectNote + (ledgerActive && !isFollowUp ? relativeDatesWriterNote(ledger.entries) : "") + sentConfirmedWriterNote
       // 2026-11-18 作業員L（SITUATION_WRITER_NOTE・既定 off）: 今の状況の記録（時の言葉の日付・これからの内覧・開いている約束・確かめた結果）を書き手にも事実で
       + (!isFollowUp && situationWriterNoteOn() ? situationWriterNote((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now()) : "")
+      // 2026-11-26 作業員A（#745・BACKPLAN_TO_WRITER=on の時だけ・既定 off）: 逆算の期日と竹内さん本人の仕込みの言い回しの型を書き手に1行
+      + (!isFollowUp && backplanToWriterOn() ? backplanWriterNote((brainMeta as Record<string, unknown> | null)?.route_backplan) : "")
       // 2026-11-21 作業員K2（OUR_ITEMS_WRITER_NOTE・既定 off・situation-writer-aix.ts）: こちらが前に伝えた事（our_items・答えの有無）も書き手へ（言い直しの外れ: AI の下書きだけ 32/979）
       + (!isFollowUp && ourItemsWriterNoteOn() ? ourItemsReplyNote((brainMeta as Record<string, unknown> | null)?.situation_now) : "")
       // 2026-11-23 作業員K2（台帳 #442・PROMISE_RESTATE_MARK・既定 off・promise-restate.ts）: 前の通でした約束（確認できた時のご連絡・管理会社・審査）を、
