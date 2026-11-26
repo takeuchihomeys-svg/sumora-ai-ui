@@ -28,6 +28,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   AIX_BOUNDARY_LINE: "aix_boundary", AIX_DICTIONARY_LINE: "aix_dictionary", CHAIN_INSIGHT_LINE: "chain_insight", AIX_STATE_CARD: "aix_state_card",
   PICKUP_WHY_TO_BRAIN: "pickup_why", PICKUP_WHY_PENDING_MATCH: "pickup_why_pending", STATION_STATE_LINE: "station_state",
   // 2026-11-27: 印なしだった3部品に印を足した（brain-core・on の時だけ）
+  TIME_MAP_LINE: "time_map", // 2026-11-27 #808（配線は逆算の on の後）
   BACKPLAN_TO_WRITER: "backplan_to_writer", BACKPLAN_NEXT_STONE: "backplan_next_stone",
   ACK_PICKUP_AIX_PATH: "ack_pickup_path", BRAIN_RULE6_OPEN_PROMISE: "rule6_open_turn", APPLY_ROUTE_NEXT_BY_TURN: "route_next_by_turn",
 };
