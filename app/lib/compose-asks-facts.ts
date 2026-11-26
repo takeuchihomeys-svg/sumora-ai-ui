@@ -6,6 +6,8 @@
 //     route=aix の依頼は事実に入れない（スタッフの番）。route=promise は「約束の中身」として入れる（結果は書かない）。
 //     記録の値は値のまま（見積の金額・内覧の日時）。文は写さない。
 
+/** 2026-11-27 作業員L: 決まりの見出し（「出所」を含む・screening-static-texts が網の前に外す＝書き手の呼び出しが審査の網で止まらない） */
+export const ASKS_FACTS_HEAD = "- 使う事実（ブレインの依頼ごとの答え・記録の値・出所つき・これ以外の値は書かない）:";
 type Env = Record<string, string | undefined>;
 export function composeAsksFactsOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   // 11/18 統括役の決め: h1115-asksfacts-s1〜s6（16問×2回・draft）で確かな悪化0 → 既定 on（止める COMPOSE_ASKS_FACTS=off）
@@ -46,5 +48,5 @@ export function recordFactsOf(o: { estimates?: ReadonlyArray<EstimateRec>; viewi
 }
 export function composeFactsNote(facts: ReadonlyArray<ComposeFact>, env?: Env): string {
   if (!composeAsksFactsOn(env) || !facts.length) return "";
-  return `- 使う事実（ブレインの依頼ごとの答え・記録の値・出所つき・これ以外の値は書かない）:\n${facts.map((f) => `  ・${f.quote ? `「${f.quote}」→ ` : ""}${f.text}（${f.from}）`).join("\n")}`;
+  return `${ASKS_FACTS_HEAD}\n${facts.map((f) => `  ・${f.quote ? `「${f.quote}」→ ` : ""}${f.text}（${f.from}）`).join("\n")}`;
 }
