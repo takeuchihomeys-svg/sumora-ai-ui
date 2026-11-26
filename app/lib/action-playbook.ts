@@ -18,6 +18,7 @@
 
 import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -61,7 +62,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: "リセットを押す（左の「リセット」→読み直し→30秒以上のラグ待ち）",
+    label: `リセットを押す（左の「リセット」→読み直し→${RESET_WAIT_TEXT}のラグ待ち）`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
     grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
@@ -145,8 +146,8 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     label: "前客のリセット（場面なし・決まりから／1つずつ外さない）",
     steps: [
       "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
-      "②左の「リセット」ボタン（幅160×高さ30）を人が押す形で押す（値は直接書き換えない）",
-      "③ページの読み直しを待ち、ラグがあるので30秒以上（30〜34秒・3回に分けて）人の間で待つ",
+      `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）`,
+      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ`,
       "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（空なら該当件数が増えなくても成功・reset_verified）",
       "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用）",
       "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ",
@@ -159,7 +160,7 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①手順書を読む（playbook_seen）",
       "②次のお客さんに切り替える",
-      "③前客のリセット（左の「リセット」→30秒以上のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）",
+      `③前客のリセット（左の「リセット」→${RESET_WAIT_TEXT}のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）`,
     ],
     rules: ["playbook_read", "reset_between_customers"],
   },
