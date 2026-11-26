@@ -260,7 +260,7 @@ async function resolvePropertyReference(
   //   お客様が引用した返信 277通（60日）が1件も物件に結び付かず、customer_reaction（興味あり）が全行空だった
   const { data: props, error: propsErr } = await db
     .from("sent_properties")
-    .select("id, property_name, room_no, image_url, property_url")
+    .select("id, property_name, room_no, image_url, property_url, pickup_id")
     .eq("conversation_id", convId)
     .order("sent_at", { ascending: false })
     .limit(20);
@@ -293,7 +293,14 @@ async function resolvePropertyReference(
   if (!rejected) {
     const hp = await import("@/app/lib/hook-points");
     if (hp.sentHookRecordOn()) {
-      const points = hp.hookPointsOf(qText, replyText);
+      // 2026-11-26 作業員A（#793・SENT_HOOK_IMAGE_TEXT 既定 on・記録だけ）: 物件カードの画像の引用は、送った物件の資料の要約を引用先の文の代わりにする
+      let hookQ = qText;
+      if (hp.sentHookImageTextOn() && hp.isImageOnlyQuote(qText) && (hit as { pickup_id?: string | null }).pickup_id) {
+        const { data: pkRow } = await db.from("property_pickups").select("property_name, room_no, summary_text").eq("id", (hit as { pickup_id: string }).pickup_id).maybeSingle();
+        const alt = hp.quotedTextForHook(pkRow?.property_name ?? hit.property_name, pkRow?.room_no ?? hit.room_no, pkRow?.summary_text ?? null);
+        if (alt) hookQ = alt;
+      }
+      const points = hp.hookPointsOf(hookQ, replyText);
       if (points.length) {
         const { error: hookErr } = await db.from("sent_properties").update({ customer_hook_points: points }).eq("id", hit.id);
         if (hookErr) console.warn("[resolvePropertyReference] customer_hook_points:", hookErr.message);
