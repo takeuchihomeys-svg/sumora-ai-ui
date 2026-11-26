@@ -123,11 +123,11 @@ export function shouldPreserveLongCronBundle(o: {
   return spanMs >= LONG_BUNDLE_MIN_SPAN_MS && ageMs >= 0 && ageMs < LONG_BUNDLE_KEEP_AGE_MS;
 }
 
-/** CDN のキャッシュの見出し（軽い確認は30秒・束は60秒・古くても5分は返しながら裏で取り直す・v不整合や再構築時はno-store） */
+/** CDN のキャッシュの見出し（lightはSWR無しで30秒・束は60秒+SWR300秒・v不整合や再構築時はno-store） */
 export function cacheHeaders(kind: "light" | "bundle" | "none"): Record<string, string> {
   if (kind === "none") return { "Cache-Control": "no-store, no-cache, must-revalidate" };
-  const s = kind === "light" ? 30 : 60;
-  return { "Cache-Control": `public, s-maxage=${s}, stale-while-revalidate=300` };
+  if (kind === "light") return { "Cache-Control": "public, s-maxage=30, must-revalidate" };
+  return { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" };
 }
 
 /** 束の版クエリ文字列を作る（拡張が ?touch=0 で検知した新版を本体 URL の &v=... に載せて CDN 旧キャッシュを確実にバイパスする） */

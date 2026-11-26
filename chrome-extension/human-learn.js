@@ -1134,6 +1134,26 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
    *   → サーバーの motion を**先に**見る（無ければ今まで通りローカルの癖）。
    *     ⚠ 丸めは同じ（120〜1600ms）。極端な値で飛ばない・止まらないようにする。
    */
+  function _hlSiteNow() {
+    try {
+      var h = (typeof location !== "undefined" && location && location.hostname) ? String(location.hostname) : "";
+      if (/itandi/i.test(h)) return "itandi";
+      if (/reins/i.test(h)) return "reins";
+      if (/realnetpro/i.test(h)) return "realpro";
+    } catch (_) {}
+    return null;
+  }
+  function _pickSiteValue(r, baseKey) {
+    if (!r || typeof r !== "object") return null;
+    var s = _hlSiteNow();
+    if (s) {
+      var sk = baseKey + "__" + s;
+      if (r[sk] && typeof r[sk] === "object") return r[sk];
+      if (r.axlx_learn_for_site === s && r[baseKey] && typeof r[baseKey] === "object") return r[baseKey];
+      return null;
+    }
+    return (r[baseKey] && typeof r[baseKey] === "object") ? r[baseKey] : null;
+  }
   var _srvMotion = null;
   var _srvMotionAt = 0;
   function _serverMotion() {
@@ -1154,9 +1174,9 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
     _srvMotionAt = now;
     try {
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return _srvMotion;
-      chrome.storage.local.get(["axlx_learn_motion"], function (r) {
+      chrome.storage.local.get(["axlx_learn_motion", "axlx_learn_motion__realpro", "axlx_learn_motion__itandi", "axlx_learn_motion__reins", "axlx_learn_for_site"], function (r) {
         try {
-          var m = (r && r.axlx_learn_motion) || null;
+          var m = _pickSiteValue(r, "axlx_learn_motion");
           _srvMotion = (m && typeof m === "object") ? m : {};
         } catch (_) { _srvMotion = {}; }
       });
@@ -1229,9 +1249,9 @@ var MOVE_GAP_MS = 650;      // 指が止まってこれだけ経ったら「1回
     _srvGapAt = now;
     try {
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
-      chrome.storage.local.get(["axlx_learn_gaps"], function (r) {
+      chrome.storage.local.get(["axlx_learn_gaps", "axlx_learn_gaps__realpro", "axlx_learn_gaps__itandi", "axlx_learn_gaps__reins", "axlx_learn_for_site"], function (r) {
         try {
-          var g = (r && r.axlx_learn_gaps) || null;
+          var g = _pickSiteValue(r, "axlx_learn_gaps");
           var ms = g && typeof g.median_ms === "number" ? g.median_ms : null;
           _srvGap = (ms && ms > 0) ? { ms: Math.max(200, Math.min(3000, ms)) } : null;
         } catch (_) { _srvGap = null; }

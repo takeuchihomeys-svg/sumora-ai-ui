@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-11-27 **実ランタイム結合テスト＋本番 DB 実データ検証で発覚した抜け7件の完全修正（2.8.312 追試強化）**
+
+竹内さん「これでちゃんと改善されたのか 抜けなどはないのか テストして調査するようにする」を受け、本番 DB 実行（読み取り専用：`all` id=2846 / `realpro` id=2847,2849 / `itandi` id=2848,2850）・API ハンドラ直結（`?touch=0`）・VM 実ランタイム結合テストで再検査し、**実動時に起きる 7件の抜け**を追加で特定・修正した。
+
+1. **`app/lib/learn-bundle-preserve.ts`（`syncSupervisorImproveLoop` の本番実データ破壊バグ3点）**:
+   - **全角 `％` パース漏れ**: 本家の `自動モード完成度` は全角 `％`（`再現20％・欄×観点68％・精度31％`）だが、旧同期が半角 `%` のみ見ていたため `id=2847/2848` で値が消えて完成度 `38→27（再現?％・欄×観点?％・精度?％）` に下落していた → 全角/半角両対応＋`todayCompLine` 併用で `38→45`（`itandi` は `41→48`）へ正しく同期。
+   - **`meeting.today` 参照先ズレ**: 統括の本番構造は `supervisor.today` ではなく **`supervisor.meeting.today`** だったため、`today` 内の `自動モード完成度` / `完成度の残り` / `完成度↑` が一切同期されていなかった → `meeting.today` を同期するよう修正。
+   - **4本柱 & `linkDone` 誤判定**: `buildLinkPipeline` の `"5.自動で使う: ..."` が「段階」を含まない時に `linkDone = true`（`✗` なのに `✓` 表示）になるバグ、および `学習完成・学習期間`/`土台` 行が省かれた `realpro` で `1/4 ✓` が `1/2 ✓` に半減していたバグを、`学習期間・構築の細部` / `学習土台点検（F番号）` / `rowChain` 補完で修正。
+2. **`chrome-extension/itandi-page-script.js`（ITANDI 学習座標の座標系取り違え & 入力中タブ保護）**:
+   - `window.__axlxLearnPoints` と `pb.positions (source !== "screen")`（要素内割合）を最優先し、`source === "screen"` / `window.__axlxLearnScreen`（画面全体割合）の時は `_itScreenPosToElAim` で `getBoundingClientRect()` と `innerWidth/Height` から要素内相対座標へ変換（矩形外なら誤爆防止のため `aim` を付けず `pointer-ui.js` に任せる）。
+   - 入力開始〜`_safeDone`/`_watchdog` の間 `data-axlx-it-fill-running="1"` を立て、`itandi-content.js` (`axlx-ping`) と `background.js` (`_probeItandiTab`) が `fillRunning` を返して更新時の誤リロードを防止。
+3. **`chrome-extension/human-learn.js`（ISOLATED world のサイト横断汚染修正）**:
+   - `_serverMotion()` / `_loadServerGap()` に `_hlSiteNow()` / `_pickSiteValue()` を追加し、ホスト名に応じた `axlx_learn_motion__<site>` / `axlx_learn_gaps__<site>`（フォールバックも `axlx_learn_for_site` 一致時のみ）を読むよう修正。
+4. **`app/lib/human-learn-profile-guard.ts` & `app/api/human-learn-profile/route.ts` & `chrome-extension/background.js`（CDN `stale` 残存ゼロ化）**:
+   - `cacheHeaders("light")` から `stale-while-revalidate=300` を外して `"public, s-maxage=30, must-revalidate"` に変更（30秒経過後に古い `stale` を返す穴を遮断）。
+   - `route.ts` の `?refresh=1` と `if (fresh)` 応答にも `bundle_v` と `cacheHeaders("none")` を付与。
+   - `background.js`: `allBundle` フォールバック fetch に `?v=` を付与、`axlx-learn-status` も `msg.site` に応じた専用キーを返すよう修正。
+5. **`content.js` / `itandi-content.js` / `popup.js` / `page-script.js` / `pointer-ui.js`**:
+   - `bootLearnIfNeeded` の版判定を `bv < 19` かつ `rules_up_to < manifest.version` へ更新（2.8.311 以前を残さない）。
+   - `popup.js` 学習レポート小窓の `serverLearnLines` がアクティブタブのサイト専用キーを優先読込するよう修正。
+   - `page-script.js` レガシー `onChanged` に `__realpro` 優先＋`axlx_learn_for_site` 保護を追加、`pointer-ui.js` の `_ptrBridgeFetch` に `"axlx_learn_for_site"` を同梱。
+
+**検証結果（実ランタイム結合＋本番 DB 実測＋全テスト）**
+- 実 DB コピー（`id=2846 / 2849 / 2850`）＋ API `GET ?touch=0` 実測：`Cache-Control: public, s-maxage=30, must-revalidate`、`bundle_v` 出力、`realpro` 104ルール (`db8d3064`) / `itandi` 17ルール (`71e38ffd`) へ正常更新、完成度 `38→45` / `41→48`、`meeting.today` 完全同期、`1/4 ✓` 維持、自己矛盾・破壊 0。
+- 新規実ランタイム結合テスト（`reflect-pipeline-v28312.test.js` 23/0・`reflect-mechanism-hardening.test.ts` 27/0）＋ `ext-test-all.ts`（345本・新規赤 0）＋ `pre-commit` 全 17 スイート全合格。
+- `check-playbook-sync.ts`: 自己点検⑦ 9項目すべて ✅。残る ⑥ の ITANDI 新しい抜け 1件（「押す位置の票が3回未満の手：③揃ったら検索ボタンへ進む」）の正体は、前日 0票（`学んでいない手`）から `points` に 1票入って進歩したため種別が変わったもの（`shots.learned` には `n=4` があるが要素内座標の精度を守るため `points` `n=1` を画面座標で上書きせず残している仕様。通常検索であと 2回「検索」を押せば消える正常な進歩）。
+
+---
+
 ## 2026-11-27 **改善・手順書の確実な反映仕組み化と実行停止ボトルネック解消（2.8.312・PLAYBOOK_BUILD_V = 19）**
 
 竹内さん「ちゃんと拡張ツールの手順書や動きは最新のが反映されるように、そして最新のに対してボトルネックになっている部分やバグの部分取り除ける仕組みは徹底的に細かくできているのか」「改善しても反映うまくできないことが今まで多かったので、その面もちゃんと改善できるように仕組み化を徹底しておこなっていく」。

@@ -33,34 +33,49 @@ console.log("■ 1. CDN キャッシュ完全バイパスヘッダ & 版クエ�
     bundleVersionParam({ generated_at: "2026-11-27T01:23:45Z", playbook_rules_v: "abcd1234", playbook_build_v: 19 }));
   ok("bundleVersionParam(null) がクラッシュせず 0_0_0 を返す", bundleVersionParam(null) === "0_0_0");
 
+  const hLight = cacheHeaders("light");
+  ok("cacheHeaders('light') は stale-while-revalidate を含まず s-maxage=30",
+    /s-maxage=30/.test(hLight["Cache-Control"]) && !/stale-while-revalidate/.test(hLight["Cache-Control"]),
+    hLight);
+
   const routeSrc = readRel("app/api/human-learn-profile/route.ts");
-  ok("route.ts: touch=0 が bundle_v を返す", routeSrc.includes("bundle_v:"));
-  ok("route.ts: forceFresh || playbookRefreshed || 版不一致時に cacheHeaders('none') を返す",
-    routeSrc.includes("cacheHeaders(\"none\")") && routeSrc.includes("actualBundleV"));
+  ok("route.ts: touch=0 / fresh / refresh=1 が bundle_v と cacheHeaders('none') を返す",
+    routeSrc.includes("bundle_v:")
+    && routeSrc.includes("cacheHeaders(\"none\")")
+    && routeSrc.includes("actualBundleV")
+    && (routeSrc.match(/cacheHeaders\("none"\)/g) || []).length >= 4);
 }
 
-console.log("\n■ 2. syncSupervisorImproveLoop: 統括の自己矛盾（自動モード完成度 & 学習完成）の同期");
+console.log("\n■ 2. syncSupervisorImproveLoop: 統括の自己矛盾（自動モード完成度 & 学習完成 & meeting.today）の同期");
 {
   const bundle: Record<string, unknown> = {
     source: { rows: 120, with_ops: 800, newest_at: "2026-11-27T02:00:00Z", oldest_at: "2026-11-20T02:00:00Z" },
-    bundle_reflect: { read_count: 4, read_at: "2026-11-27T02:10:00Z", auto_after: true },
+    bundle_reflect: { read_count: 4, read_at: "2026-11-27T02:10:00Z", auto_after: false },
     shots: {
       in_storage: 850,
       learned: {
-        form: [
-          { name: "賃料", x: 0.1, y: 0.5, n: 12 },
-          { name: "rental_cost1", x: 0.1, y: 0.5, n: 6 },
-          { name: "間取り", x: 0.2, y: 0.5, n: 5 },
-          { name: "所在地絞り込み＋", x: 0.1, y: 0.3, n: 4 },
-        ],
+        form: Array.from({ length: 32 }, (_, i) => ({ name: `欄${i}`, x: 0.1 + i * 0.01, y: 0.5, n: 5 })),
       },
     },
     supervisor: {
       meeting: {
+        // 本番の統括は meeting.today に today を持ち、数値は全角「％」を使う
+        today: [
+          "自動モード完成度 38/100（土台づくり）／一連3/6・再現20％・欄×観点68％・精度31％・人間として不可",
+          "完成度の残り: 一連: 束の画面位置で停止（3/6）・再現: 直書き1・欄×観点 68%（要≥70）",
+          "完成度↑: 再現・反映・完走の線を満たすまで学ぶ（渡してよいにはしない）",
+          "【全体】他の判断行はそのまま残す",
+        ],
         evidence: [
-          { label: "自動モード完成度", value: "自動モード完成度 30/100／人間らしさの再現40%／欄×観点35%／精度50%（画面位置の土台がまだゼロ）", guessed: true },
-          { label: "学習完成（期間・土台・つながり・一連）", value: "つながり=画面位置がゼロ・未完", guessed: true },
-          { label: "学習完成・つながり", value: "0件（画面位置がゼロ）", guessed: true },
+          {
+            label: "自動モード完成度",
+            value: "自動モード完成度 38/100（土台づくり）／一連3/6・再現20％・欄×観点68％・精度31％・人間として不可／内訳: 一連（束→拡張→自動→効果）20/40・人間らしさの再現5/25・欄×観点10/15・精度3/10・人間として自動できるか0/10／残り: 一連: 束の画面位置で停止（3/6）・再現: 直書き1／完成度↑: 再現・反映・完走の線を満たすまで学ぶ",
+            guessed: true,
+          },
+          { label: "学習期間・構築の細部", value: "学習期間・構築: 止=fine_avg:欄×観点の細部学習が完了線未満／次=足りない観点", guessed: true },
+          { label: "学習土台点検（F番号）", value: "土台(realpro/印realpro) 33/65 ✓／欠 32", guessed: true },
+          { label: "学習完成（期間・土台・つながり・一連）", value: "学習完成: 1/4 ✓／止=土台／土台 33/65 ✓／欠32／重要欠:F6_auto_after_bundle／次=重要欠 F6_auto_after_bundle", guessed: true },
+          { label: "学習完成・つながり", value: "✗ 3.束の画面位置: 画面位置がゼロ", guessed: true },
         ],
         agenda: [
           { priority: 1, topic: "自動モード完成度: まず通常検索で画面位置をためる", why: "古い行（画面位置0）", decide: "画面位置をためる" },
@@ -70,17 +85,27 @@ console.log("\n■ 2. syncSupervisorImproveLoop: 統括の自己矛盾（自動�
     },
   };
   const n = syncSupervisorImproveLoop(bundle, "realpro");
-  const ev = (bundle.supervisor as { meeting: { evidence: Array<{ label: string; value: string }> } }).meeting.evidence;
-  const ag = (bundle.supervisor as { meeting: { agenda: Array<{ topic: string; why: string }> } }).meeting.agenda;
+  const m = (bundle.supervisor as { meeting: { today: string[]; evidence: Array<{ label: string; value: string }>; agenda: Array<{ topic: string; why: string }> } }).meeting;
+  const ev = m.evidence;
+  const ag = m.agenda;
   const autoEv = ev.find((e) => e.label === "自動モード完成度")?.value || "";
+  const linkEv = ev.find((e) => e.label === "学習完成・つながり")?.value || "";
   const finEv = ev.find((e) => e.label === "学習完成（期間・土台・つながり・一連）")?.value || "";
   const autoAg = ag.find((a) => a.topic.startsWith("自動モード完成度"))?.why || "";
   ok("syncSupervisorImproveLoop が更新を返す", n > 0, n);
-  ok("自動モード完成度 から「まだゼロ」自己矛盾が消え、実測値に同期する",
-    !/まだゼロ/.test(autoEv) && /[%％]/.test(autoEv) && !/再現\?/.test(autoEv),
+  ok("全角％の自動モード完成度が消滅せず 38→45（一連4/6・再現20％・欄×観点68％・精度31％）へ正しく同期",
+    /45\/100/.test(autoEv) && /一連4\/6/.test(autoEv) && /再現20％/.test(autoEv) && /欄×観点68％/.test(autoEv) && /精度31％/.test(autoEv),
     autoEv);
-  ok("学習完成（期間・土台・つながり・一連）が画面位置ゼロ誤記から更新される",
-    !/画面位置がゼロ/.test(finEv) && finEv.length > 0,
+  ok("meeting.today の機械計算3行が同期され、統括の通常判断行は維持される",
+    m.today.some((s) => /^自動モード完成度 45\/100.*一連4\/6/.test(s))
+    && m.today.some((s) => /^完成度の残り: 一連: 自動で使うで停止（4\/6）/.test(s))
+    && m.today.some((s) => s === "【全体】他の判断行はそのまま残す"),
+    m.today);
+  ok("auto_after=false 時は solid>=30 でも学習完成・つながりが ✓ に化けず ✗ 5.自動で使う になる",
+    /^✗ 5\.自動で使う/.test(linkEv),
+    linkEv);
+  ok("期間/土台の個別行が無い realpro 形式でも 1/4 ✓ が 1/2 ✓ に半減しない",
+    /^学習完成: 1\/4 ✓/.test(finEv) && !/1\/2/.test(finEv),
     finEv);
   ok("agenda の自動モード完成度理由も最新化される",
     !/古い行（画面位置0）/.test(autoAg) && autoAg.length > 0,
@@ -119,6 +144,7 @@ console.log("\n■ 3. リアプロ・ITANDI 決まり正本 + 拡張版数一致
   const jsFiles = [
     "chrome-extension/background.js",
     "chrome-extension/content.js",
+    "chrome-extension/human-learn.js",
     "chrome-extension/itandi-content.js",
     "chrome-extension/itandi-page-script.js",
     "chrome-extension/learn-refresh-gate.js",

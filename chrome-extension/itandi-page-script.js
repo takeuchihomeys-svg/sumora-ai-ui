@@ -162,14 +162,44 @@
     var list = Array.isArray(names) ? names : [names];
     var clean = function (s) { return String(s || "").replace(/^(左の|右の|上の|下の|中央の)/, "").replace(/｜[^｜]*$/, "").trim(); };
     try {
+      var pts = window.__axlxLearnPoints;
+      if (pts && typeof pts === "object") {
+        var ptKeys = Object.keys(pts);
+        for (var p0 = 0; p0 < list.length; p0++) {
+          var tp = clean(list[p0]);
+          if (!tp) continue;
+          for (var k0 = 0; k0 < ptKeys.length; k0++) {
+            var pk = ptKeys[k0];
+            if (clean(pk) === tp) {
+              var pv = pts[pk];
+              if (pv && typeof pv.x === "number" && typeof pv.y === "number") {
+                return { x: pv.x, y: pv.y, n: Number(pv.n) || 0, source: "points", isScreen: false };
+              }
+            }
+          }
+        }
+      }
       var pb = window.__axlxLearnPlaybook;
       if (pb && Array.isArray(pb.positions)) {
+        // ① 要素内割合（field / alias / mismatch）を画面割合（screen）より優先
         for (var i = 0; i < list.length; i++) {
           var target = clean(list[i]);
+          if (!target) continue;
           for (var j = 0; j < pb.positions.length; j++) {
             var p = pb.positions[j];
-            if (p && clean(p.field) === target && typeof p.x === "number" && typeof p.y === "number") {
-              return { x: p.x, y: p.y, n: p.n || 0, source: p.source || "playbook" };
+            if (p && p.source !== "screen" && clean(p.field) === target && typeof p.x === "number" && typeof p.y === "number") {
+              return { x: p.x, y: p.y, n: p.n || 0, source: p.source || "playbook", isScreen: false };
+            }
+          }
+        }
+        // ② 画面全体割合（source === "screen"）は変換必須の目印付きで返す
+        for (var iS = 0; iS < list.length; iS++) {
+          var tS = clean(list[iS]);
+          if (!tS) continue;
+          for (var jS = 0; jS < pb.positions.length; jS++) {
+            var pS = pb.positions[jS];
+            if (pS && pS.source === "screen" && clean(pS.field) === tS && typeof pS.x === "number" && typeof pS.y === "number") {
+              return { x: pS.x, y: pS.y, n: pS.n || 0, source: "screen", isScreen: true };
             }
           }
         }
@@ -182,14 +212,37 @@
           if (!Array.isArray(arr)) continue;
           for (var i2 = 0; i2 < list.length; i2++) {
             var t2 = clean(list[i2]);
+            if (!t2) continue;
             for (var k = 0; k < arr.length; k++) {
               var it = arr[k];
               if (it && clean(it.name) === t2 && typeof it.x === "number" && typeof it.y === "number") {
-                return { x: it.x, y: it.y, n: it.n || 0, source: "screen:" + screens[s] };
+                return { x: it.x, y: it.y, n: it.n || 0, source: "screen:" + screens[s], isScreen: true };
               }
             }
           }
         }
+      }
+    } catch (_) {}
+    return null;
+  }
+  function _itScreenPosToElAim(el, lp) {
+    if (!lp || typeof lp.x !== "number" || typeof lp.y !== "number") return null;
+    if (!lp.isScreen) return { x: lp.x, y: lp.y };
+    try {
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      var r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!(vw > 0 && vh > 0 && r && r.width > 2 && r.height > 2)) return null;
+      var px = lp.x * vw;
+      var py = lp.y * vh;
+      var fx = (px - r.left) / r.width;
+      var fy = (py - r.top) / r.height;
+      // 画面位置がこの要素の矩形上に実際に重なっている時だけ要素内割合へ変換（スクロールずれ時の端誤爆を防ぐ）
+      if (fx >= -0.1 && fx <= 1.1 && fy >= -0.1 && fy <= 1.1) {
+        return {
+          x: Math.max(0.12, Math.min(0.88, fx)),
+          y: Math.max(0.12, Math.min(0.88, fy)),
+        };
       }
     } catch (_) {}
     return null;
@@ -450,8 +503,9 @@
           }
           if (names) {
             var lp = _itLearnPosOf(names);
-            if (lp && typeof lp.x === "number" && typeof lp.y === "number") {
-              moveOpts = { aim: { x: lp.x, y: lp.y } };
+            var aimConverted = _itScreenPosToElAim(el, lp);
+            if (aimConverted) {
+              moveOpts = { aim: aimConverted };
             }
           }
         }
@@ -2135,11 +2189,13 @@
     var _myRunId = _itRunId;
     _itStep("page_ver", _AXLX_ITANDI_PAGE_VER);
     _itStep("fill_start", cond && cond.area_mode);
+    try { document.documentElement.setAttribute("data-axlx-it-fill-running", "1"); } catch (_) {}
     // v2.5.45: 時間切れ・失敗で返した後は、この回の続き（遅れて動くタイマー）が検索を押さない（次のお客様の入力と重ねない）
     var _dead = false;
     var _watchdog = setTimeout(function () {
       console.warn("[AX] watchdog: 1800s timeout — fill-done強制送信");
       _dead = true;
+      try { document.documentElement.removeAttribute("data-axlx-it-fill-running"); } catch (_) {}
       // skip: 検索を押していない → background はこのサイトを飛ばす（押していない検索の結果を待たない）
       var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout", skip: true };
       if (_fillCid) wmsg.customerId = _fillCid;
@@ -2150,6 +2206,7 @@
       if (_dead) return; // 時間切れで返した後・もう返した後は2回目を送らない
       _dead = true;
       clearTimeout(_watchdog);
+      try { document.documentElement.removeAttribute("data-axlx-it-fill-running"); } catch (_) {}
       var msg = { from: "aixlinx-fill-done" };
       if (_fillCid) msg.customerId = _fillCid;
       // v2.5.45: ここで返す失敗はどれも検索を押す前（所在地・路線・更新日・例外・押せない検索）→ skip（そのサイトを飛ばす）

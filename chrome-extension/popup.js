@@ -6891,20 +6891,32 @@ document.addEventListener("DOMContentLoaded", () => {
          */
         if (L && L.serverLearnLines) {
           try {
-            chrome.storage.local.get(["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps", "axlx_learn_screen_flow", "axlx_learn_shots", "axlx_learn_opens", "axlx_learn_supervisor"],
-              function (r) {
+            var _readSrvKeys = function (sitePref) {
+              var baseKeys = ["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps", "axlx_learn_screen_flow", "axlx_learn_shots", "axlx_learn_opens", "axlx_learn_supervisor"];
+              var allKeys = ["axlx_learn_for_site"].concat(baseKeys);
+              baseKeys.forEach(function (k) { allKeys.push(k + "__realpro", k + "__itandi"); });
+              chrome.storage.local.get(allKeys, function (r) {
                 try {
+                  var pick = function (k) {
+                    if (!r) return null;
+                    if (sitePref === "itandi" || sitePref === "realpro") {
+                      return r[k + "__" + sitePref] || (r.axlx_learn_for_site === sitePref ? r[k] : null) || null;
+                    }
+                    var fs = r.axlx_learn_for_site;
+                    if (fs === "itandi" || fs === "realpro") return r[k + "__" + fs] || r[k] || null;
+                    return r[k + "__realpro"] || r[k] || r[k + "__itandi"] || null;
+                  };
                   var srv = {
-                    next: (r && r.axlx_learn_next) || null,
-                    weak: (r && r.axlx_learn_weak) || null,
-                    site_flow: (r && r.axlx_learn_site_flow) || null,
-                    gaps: (r && r.axlx_learn_gaps) || null,
-                    screen_flow: (r && r.axlx_learn_screen_flow) || null,
-                    shots: (r && r.axlx_learn_shots) || null,
+                    next: pick("axlx_learn_next"),
+                    weak: pick("axlx_learn_weak"),
+                    site_flow: pick("axlx_learn_site_flow"),
+                    gaps: pick("axlx_learn_gaps"),
+                    screen_flow: pick("axlx_learn_screen_flow"),
+                    shots: pick("axlx_learn_shots"),
                     /** 2026-11-14: 押したら何が開くか（学んでいるのに見せていなかった） */
-                    opens: (r && r.axlx_learn_opens) || null,
+                    opens: pick("axlx_learn_opens"),
                     /** 2026-11-14: 統括の判断（結論・次にやる事） */
-                    supervisor: (r && r.axlx_learn_supervisor) || null,
+                    supervisor: pick("axlx_learn_supervisor"),
                   };
                   if (!srv.next && !srv.weak && !srv.site_flow && !srv.screen_flow && !srv.opens) return; // まだ無ければ何もしない
                   var srvLines = L.serverLearnLines(srv);
@@ -6925,6 +6937,16 @@ document.addEventListener("DOMContentLoaded", () => {
                   try { host.scrollTop = host.scrollHeight; } catch (_) {}
                 } catch (_) {}
               });
+            };
+            if (chrome.tabs && chrome.tabs.query) {
+              chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+                var u = (tabs && tabs[0] && tabs[0].url) ? String(tabs[0].url) : "";
+                var sp = /itandi/i.test(u) ? "itandi" : (/realnetpro/i.test(u) ? "realpro" : null);
+                _readSrvKeys(sp);
+              });
+            } else {
+              _readSrvKeys(null);
+            }
           } catch (_) {}
         }
         // 2026-11-11 竹内さん「ボタン物件検索でおすばしょ理解できたかな」: どのボタンをどこで押したかを出す

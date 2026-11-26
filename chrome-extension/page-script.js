@@ -3567,11 +3567,28 @@ function _guideLikeAreaSkip(why) {
     if (chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener(function (changes, area) {
         if (area !== "local") return;
-        if (changes.axlx_learn_screen) {
-          try { _learnScreen = (changes.axlx_learn_screen.newValue) || {}; } catch (_) { _learnScreen = {}; }
+        // MAIN world の本番では axlx-page-learn-push でサイト別投影を受ける。ここはレガシー環境向けの保護付きフォールバック
+        if (changes.axlx_learn_screen__realpro) {
+          try { _learnScreen = (changes.axlx_learn_screen__realpro.newValue) || {}; } catch (_) { _learnScreen = {}; }
+        } else if (changes.axlx_learn_screen) {
+          try {
+            chrome.storage.local.get(["axlx_learn_for_site", "axlx_learn_screen__realpro"], function (st) {
+              if (st && st.axlx_learn_screen__realpro) return;
+              if (st && st.axlx_learn_for_site === "itandi") return;
+              try { _learnScreen = (changes.axlx_learn_screen.newValue) || {}; } catch (_) { _learnScreen = {}; }
+            });
+          } catch (_) {}
         }
-        if (changes.axlx_learn_scene) {
-          try { _learnSceneMap = (changes.axlx_learn_scene.newValue) || {}; } catch (_) { _learnSceneMap = {}; }
+        if (changes.axlx_learn_scene__realpro) {
+          try { _learnSceneMap = (changes.axlx_learn_scene__realpro.newValue) || {}; } catch (_) { _learnSceneMap = {}; }
+        } else if (changes.axlx_learn_scene) {
+          try {
+            chrome.storage.local.get(["axlx_learn_for_site", "axlx_learn_scene__realpro"], function (st) {
+              if (st && st.axlx_learn_scene__realpro) return;
+              if (st && st.axlx_learn_for_site === "itandi") return;
+              try { _learnSceneMap = (changes.axlx_learn_scene.newValue) || {}; } catch (_) { _learnSceneMap = {}; }
+            });
+          } catch (_) {}
         }
       });
     }

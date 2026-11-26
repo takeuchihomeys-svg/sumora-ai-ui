@@ -343,7 +343,7 @@
             try { _handFields = (r && r[CURSOR_HAND_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _handFields = {}; }
           });
         } else {
-          _ptrBridgeFetch([CURSOR_HAND_KEY, POINTS_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY]);
+          _ptrBridgeFetch([CURSOR_HAND_KEY, POINTS_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY, "axlx_learn_for_site"]);
         }
       }
       if (!_handFields || typeof _handFields !== "object") return false;
@@ -366,7 +366,7 @@
             try { _points = (r && r[POINTS_KEY]) || {}; _ptrCacheSave(r); } catch (_) { _points = {}; }
           });
         } else {
-          _ptrBridgeFetch([POINTS_KEY, CURSOR_HAND_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY]);
+          _ptrBridgeFetch([POINTS_KEY, CURSOR_HAND_KEY, PROF_LIVE_KEY, PROF_KEY, MOTION_KEY, PLAN_KEY, "axlx_learn_for_site"]);
         }
       } catch (_) {}
     }
@@ -385,7 +385,7 @@
       var LL = _learn();
       if (!LL || !LL.profileFrom) return;
       if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
-        _ptrBridgeFetch([PROF_LIVE_KEY, PROF_KEY, POINTS_KEY, CURSOR_HAND_KEY, MOTION_KEY, PLAN_KEY]);
+        _ptrBridgeFetch([PROF_LIVE_KEY, PROF_KEY, POINTS_KEY, CURSOR_HAND_KEY, MOTION_KEY, PLAN_KEY, "axlx_learn_for_site"]);
         return;
       }
       /**

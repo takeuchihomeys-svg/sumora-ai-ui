@@ -767,6 +767,7 @@ export async function GET(req: NextRequest) {
         }
         g.__axlxBundleRefreshAt = Date.now();
         const bRec = built as unknown as Record<string, unknown>;
+        const bPb = (bRec.playbook && typeof bRec.playbook === "object") ? (bRec.playbook as { rules_v?: unknown; build_v?: unknown }) : null;
         return NextResponse.json({
           ok: true,
           refreshed: bRec.saved_to_db === true,
@@ -775,7 +776,8 @@ export async function GET(req: NextRequest) {
           rows: built.source?.rows ?? 0,
           shots: built.shots ?? null,
           playbook: bRec.playbook ?? null,
-        }, { headers: CORS });
+          bundle_v: bundleVersionParam({ generated_at: built.generated_at, playbook_rules_v: bPb?.rules_v, playbook_build_v: bPb?.build_v }),
+        }, { headers: { ...CORS, ...cacheHeaders("none") } });
       }
       const mod = await import("@/app/lib/human-learn-brain");
       const buildHumanLearnBundle = mod.buildHumanLearnBundle;
@@ -829,10 +831,12 @@ export async function GET(req: NextRequest) {
         const ids = ((old.data ?? []) as Array<{ id: unknown }>).slice(20).map((x) => x.id);
         if (ids.length) await supabase.from("human_learn_profile").delete().in("id", ids);
       } catch (_) {}
+      const allPb = (b.playbook && typeof b.playbook === "object") ? (b.playbook as { rules_v?: unknown; build_v?: unknown }) : null;
       return NextResponse.json({
         ok: true, refreshed: true, rows: rows.length, preserved: pr.preserved, solid: pr.solid,
         shots: (b as { shots?: unknown }).shots ?? null,
-      }, { headers: CORS });
+        bundle_v: bundleVersionParam({ generated_at: b.generated_at, playbook_rules_v: allPb?.rules_v, playbook_build_v: allPb?.build_v }),
+      }, { headers: { ...CORS, ...cacheHeaders("none") } });
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) }, { status: 500, headers: CORS });
     } finally {
@@ -1132,6 +1136,7 @@ export async function GET(req: NextRequest) {
             }
           } catch { /* 印は残らなくても束は返す */ }
         }
+        const freshPb = ((fresh as unknown as { playbook?: { rules_v?: unknown; build_v?: unknown } }).playbook) || null;
         return NextResponse.json({
           ok: true, empty: false, scope, generated_now: true,
           generated_at: fresh.generated_at,
@@ -1141,6 +1146,7 @@ export async function GET(req: NextRequest) {
           ext_version: null,
           lines: fresh.lines,
           bundle: fresh,
+          bundle_v: bundleVersionParam({ generated_at: fresh.generated_at, playbook_rules_v: freshPb?.rules_v, playbook_build_v: freshPb?.build_v }),
           read_count: readCount,
           read_at: readAt,
           /**
@@ -1152,7 +1158,7 @@ export async function GET(req: NextRequest) {
           /** DB に無くて外した列（空なら全部読めた） */
           why: why ?? null,
           dropped_cols: (fresh as unknown as Record<string, unknown>).dropped_cols ?? null,
-        }, { headers: CORS });
+        }, { headers: { ...CORS, ...cacheHeaders("none") } });
       }
     } catch (e) {
       console.warn("[human-learn-profile] その場で作れませんでした:", e instanceof Error ? e.message : String(e));

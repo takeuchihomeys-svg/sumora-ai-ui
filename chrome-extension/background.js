@@ -3184,7 +3184,8 @@ async function _refreshLearnedBundle(force) {
     var allBundle = null;
     if (curSite !== "itandi" && !perSite.realpro) {
       try {
-        var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(40000) });
+        var allUrl = SUMORA_BATCH_API + "/api/human-learn-profile" + (force ? ("?v=" + encodeURIComponent(_forceSalt)) : "");
+        var allRes = await fetch(allUrl, { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (allRes.ok) {
           var allJson = await allRes.json();
           if (allJson && allJson.bundle && typeof allJson.bundle === "object") {
@@ -3759,17 +3760,30 @@ try {
       return true;
     }
     if (msg.type !== "axlx-learn-status") return;
-    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver"])).then(function (r) {
-      var nx = (r && r.axlx_learn_next) || {};
-      var pt = (r && r.axlx_learn_points) || {};
-      var link = (r && r.axlx_learn_link) || null;
-      var scr = (r && r.axlx_learn_screen) || {};
+    var stKeys = _LEARN_KEYS.concat(["axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver", "axlx_learn_for_site"]);
+    var wantSt = (msg.site === "itandi" || msg.site === "realpro") ? msg.site : null;
+    if (wantSt) {
+      ["axlx_learn_at", "axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver", "axlx_learn_next", "axlx_learn_points"].forEach(function (k) {
+        stKeys.push(k + "__" + wantSt);
+      });
+    }
+    chrome.storage.local.get(stKeys).then(function (r) {
+      var pick = function (k) {
+        if (!r) return null;
+        if (wantSt) return r[k + "__" + wantSt] || (r.axlx_learn_for_site === wantSt ? r[k] : null) || null;
+        return r[k] || null;
+      };
+      var nx = pick("axlx_learn_next") || {};
+      var pt = pick("axlx_learn_points") || {};
+      var link = pick("axlx_learn_link") || null;
+      var scr = pick("axlx_learn_screen") || {};
       try {
         sendResponse({
           ok: true,
-          at: (r && r.axlx_learn_at) || null,
-          src: (r && r.axlx_learn_src) || null,
-          ver: (r && r.axlx_learn_ver) || null,
+          site: wantSt || (r && r.axlx_learn_for_site) || null,
+          at: pick("axlx_learn_at") || null,
+          src: pick("axlx_learn_src") || null,
+          ver: pick("axlx_learn_ver") || null,
           link: link,
           screen_solid: link && typeof link.screen_solid === "number" ? link.screen_solid : Object.keys(scr).length,
           complete: !!(link && link.complete),
@@ -10250,7 +10264,7 @@ async function _probeItandiTab(tabId) {
     } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
   });
   var pong = !!(resp && !resp.err && resp.pong);
-  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, extVer: pong && resp.extVer ? String(resp.extVer) : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, extVer: pong && resp.extVer ? String(resp.extVer) : null, fillRunning: pong && !!resp.fillRunning, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
 }
 
 // v2.5.48 背面（hidden）の ITANDI のタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない・リアプロの _bringRealproTabFront と同じ）。

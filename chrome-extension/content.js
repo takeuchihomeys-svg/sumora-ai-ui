@@ -774,8 +774,18 @@ window.addEventListener("message", function (e) {
               if (pb && typeof pb === "object") {
                 var bv = Number(pb.build_v) || 0;
                 var fs = pb.flow_series;
+                var curV = "";
+                try { curV = (chrome.runtime && chrome.runtime.getManifest && chrome.runtime.getManifest().version) || ""; } catch (_) {}
+                var pbUp = String(pb.rules_up_to || "");
+                var cmpV = function (a, b) {
+                  var pa = String(a || "").split(".").map(function (n) { return parseInt(n, 10) || 0; });
+                  var pb2 = String(b || "").split(".").map(function (n) { return parseInt(n, 10) || 0; });
+                  for (var k = 0; k < 4; k++) { var d = (pa[k] || 0) - (pb2[k] || 0); if (d !== 0) return d; }
+                  return 0;
+                };
                 if (bv >= 7 && (!Array.isArray(fs) || fs.length < 5)) need = true;
-                if (bv > 0 && bv < 7) need = true;
+                else if (bv > 0 && bv < 19) need = true;
+                else if (curV && (!pbUp || cmpV(pbUp, curV) < 0)) need = true;
               }
             }
             if (!need) return;

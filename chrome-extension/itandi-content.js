@@ -135,7 +135,9 @@
       if (msg.type === "axlx-ping") {
         var extVer = null;
         try { extVer = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().version : null; } catch (_) {}
-        sendResponse({ pong: true, list: /^\/rent_rooms\/list/.test(location.pathname), vis: document.visibilityState, extVer: extVer });
+        var itBusy = false;
+        try { itBusy = document.documentElement.getAttribute("data-axlx-it-fill-running") === "1"; } catch (_) {}
+        sendResponse({ pong: true, list: /^\/rent_rooms\/list/.test(location.pathname), vis: document.visibilityState, extVer: extVer, fillRunning: itBusy });
         return true;
       }
       if (msg.type === "axlx-scrape-itandi") {
@@ -491,9 +493,19 @@
               if (!need && pbIt && typeof pbIt === "object") {
                 var bv = Number(pbIt.build_v) || 0;
                 var fs = pbIt.flow_series;
+                var curV = "";
+                try { curV = (chrome.runtime && chrome.runtime.getManifest && chrome.runtime.getManifest().version) || ""; } catch (_) {}
+                var pbUp = String(pbIt.rules_up_to || "");
+                var cmpV = function (a, b) {
+                  var pa = String(a || "").split(".").map(function (n) { return parseInt(n, 10) || 0; });
+                  var pb = String(b || "").split(".").map(function (n) { return parseInt(n, 10) || 0; });
+                  for (var k = 0; k < 4; k++) { var d = (pa[k] || 0) - (pb[k] || 0); if (d !== 0) return d; }
+                  return 0;
+                };
                 if (!Array.isArray(pbIt.rules) || pbIt.rules.length < 1) need = true;
                 else if (bv >= 7 && (!Array.isArray(fs) || fs.length < 5)) need = true;
-                else if (bv > 0 && bv < 7) need = true;
+                else if (bv > 0 && bv < 19) need = true;
+                else if (curV && (!pbUp || cmpV(pbUp, curV) < 0)) need = true;
               }
               if (!need) return;
               var patch = {};

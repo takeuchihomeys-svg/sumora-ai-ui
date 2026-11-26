@@ -360,10 +360,14 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
 
   for (const t of targets) {
     const meeting = t.meeting as {
+      today?: string[];
       evidence?: Array<{ label?: string; value?: string; guessed?: boolean }>;
       agenda?: Array<{ priority?: number; topic?: string; why?: string; decide?: string }>;
     } | null | undefined;
-    const todayArr = Array.isArray((t as { today?: unknown }).today) ? ((t as { today?: unknown[] }).today as string[]) : null;
+    // 本番の統括は `t.meeting.today` に today を持つ（テスト等で `t.today` にある時も両対応）
+    const todayArr = Array.isArray((t as { today?: unknown }).today)
+      ? ((t as { today?: unknown[] }).today as string[])
+      : (Array.isArray(meeting?.today) ? meeting!.today! : null);
     const ev = Array.isArray(meeting?.evidence) ? meeting!.evidence! : null;
     if (!ev) continue;
 
@@ -464,23 +468,24 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
     // ★ 2026-11-27: 同じ束の中で「改善までの一連=段階5」と「自動モード完成度／学習完成=段階3・画面位置3/6✗」が矛盾しないよう同期する
     if (rowAutoComp) {
       const valStr = String(rowAutoComp.value || "");
-      const mRepro = valStr.match(/人間らしさの再現(\d+)%/);
-      const mFine = valStr.match(/欄×観点(\d+)%/);
-      const mPrec = valStr.match(/精度(\d+)%/);
-      const humanOk = /人間として自動できるか10\/10/.test(valStr) || /人間として可/.test(valStr);
       const todayCompLine = todayArr?.find((s) => typeof s === "string" && s.startsWith("自動モード完成度 ")) || "";
-      const mReproT = todayCompLine.match(/再現(\d+)％/);
-      const mFineT = todayCompLine.match(/欄×観点(\d+)％/);
-      const mPrecT = todayCompLine.match(/精度(\d+)％/);
-      const reproPct = mRepro ? Number(mRepro[1]) : (mReproT ? Number(mReproT[1]) : null);
-      const fineAvg = mFine ? Number(mFine[1]) : (mFineT ? Number(mFineT[1]) : null);
-      const precisionScore = mPrec ? Number(mPrec[1]) : (mPrecT ? Number(mPrecT[1]) : null);
+      const bothStr = `${valStr} ${todayCompLine}`;
+      // 本家の出力は全角「％」（例: 再現20％・欄×観点68％・精度31％）だが半角「%」も両方拾う
+      const mRepro = valStr.match(/再現(\d+)[%％]/) || todayCompLine.match(/再現(\d+)[%％]/) || valStr.match(/人間らしさの再現(\d+)[%％]/);
+      const mFine = valStr.match(/欄×観点(\d+)[%％]/) || todayCompLine.match(/欄×観点(\d+)[%％]/);
+      const mPrec = valStr.match(/精度(\d+)[%％]/) || todayCompLine.match(/精度(\d+)[%％]/);
+      const reproPct = mRepro ? Number(mRepro[1]) : null;
+      const fineAvg = mFine ? Number(mFine[1]) : null;
+      const precisionScore = mPrec ? Number(mPrec[1]) : null;
+      const humanOk = /人間として可/.test(bothStr) || /人間として自動できるか\s*10\/10/.test(valStr) || /人間として自動:\s*可/.test(valStr);
       const oldRemainM = valStr.match(/残り:\s*([^／]+)/);
-      const oldReproRemains = (oldRemainM?.[1] || "")
+      const todayRemLine = todayArr?.find((s) => typeof s === "string" && s.startsWith("完成度の残り:")) || "";
+      const oldReproRemains = `${oldRemainM?.[1] || ""}・${todayRemLine.replace(/^完成度の残り:\s*/, "")}`
         .split("・")
         .map((x) => x.trim())
         .filter((x) => x.startsWith("再現:"))
-        .map((x) => x.replace(/^再現:\s*/, ""));
+        .map((x) => x.replace(/^再現:\s*/, ""))
+        .filter((v, i, a) => a.indexOf(v) === i);
       const ac = measureAutoCompletion({
         improveSteps: loop.steps,
         bottleneckN: loop.bottleneck_n,
@@ -544,7 +549,8 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
 
       const linkBnM = pipe.bottleneck ? pipe.bottleneck.match(/段階\s*(\d+)/) : null;
       const linkBn = linkBnM ? Number(linkBnM[1]) : null;
-      const linkDone = (screenSolid >= 30 && hint.read_count >= 1 && hint.auto_after) || (linkBn == null && screenSolid >= 30);
+      // pipe.bottleneck は「5.自動で使う: ...」の形で「段階」を含まないことがあるため、bottleneck 非空なら必ず未達
+      const linkDone = !pipe.bottleneck && screenSolid >= 30 && hint.read_count >= 1 && hint.auto_after;
       const linkLineStr = pipe.bottleneck || pipe.line;
       const linkNext = screenSolid < 30
         ? "画面位置 solid を履歴から復元（F1/F33）"
@@ -572,9 +578,44 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
         const parts = cleanBody.split("／次=");
         return { name, ok: okFlag, line: parts[0] || "", next: parts[1] || "" };
       };
+      // 個別行（学習完成・学習期間／土台）が省かれている束では、他の evidence 行や既存の rowChain から 4本柱を保つ
+      let pPeriod = parsePillar(rowPPeriod, "学習期間");
+      if (!rowPPeriod) {
+        const rDet = ev.find((r) => r && r.label === "学習期間・構築の細部");
+        const rcVal = String(rowChain?.value || "");
+        if (rDet?.value) {
+          const v = String(rDet.value);
+          // fine_avg 等の止=は構築細部(construct)であり「学習期間」柱自体は rowChain で 止=学習期間 でない限り ✓
+          const periodFailed = /止=学習期間/.test(rcVal) || /止=(materials|window|days|period)/.test(v);
+          const okDet = !periodFailed && !/期間不足|日窓が短い/.test(v);
+          pPeriod = { name: "学習期間", ok: okDet, line: v.split("／")[0] || v, next: okDet ? "維持（材料3日で揃え）" : "材料・期間を揃える" };
+        }
+      }
+      let pFound = parsePillar(rowPFound, "土台");
+      if (!rowPFound) {
+        const rF = ev.find((r) => r && r.label === "学習土台点検（F番号）");
+        const rcVal = String(rowChain?.value || "");
+        const mRcFound = rcVal.match(/(土台\s+\d+\/\d+\s*✓[^／]*)/);
+        if (rF?.value) {
+          const v = String(rF.value);
+          const mNum = v.match(/(\d+)\/(\d+)\s*✓／欠\s*(\d+)/);
+          const missN = mNum ? Number(mNum[3]) : 1;
+          const okF = missN === 0;
+          const baseLine = mRcFound?.[1] ? `${mRcFound[1]}${missN > 0 ? `／欠${missN}` : ""}` : v.split("／").slice(0, 2).join("／");
+          const mImp = rcVal.match(/重要欠:([^／]+)/);
+          pFound = {
+            name: "土台",
+            ok: okF,
+            line: mImp ? `${baseLine}／重要欠:${mImp[1]}` : baseLine,
+            next: mImp ? `重要欠 ${mImp[1].split("・")[0]} を完了線まで埋める` : (missN > 0 ? `欠${missN}を上から1本` : "維持"),
+          };
+        } else if (mRcFound) {
+          pFound = { name: "土台", ok: !/欠[1-9]|止=土台/.test(rcVal), line: mRcFound[1], next: "土台欠を埋める" };
+        }
+      }
       const pillars = [
-        parsePillar(rowPPeriod, "学習期間"),
-        parsePillar(rowPFound, "土台"),
+        pPeriod,
+        pFound,
         { name: "つながり", ok: linkDone, line: linkLineStr, next: linkNext },
         { name: "一連の動き", ok: seriesDone, line: loop.improve_line, next: seriesNext },
       ].filter((p) => p.line || p.name === "つながり" || p.name === "一連の動き");
