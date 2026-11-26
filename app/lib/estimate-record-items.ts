@@ -70,6 +70,41 @@ export function parseCostNote(note: string, index: number): EstimateRecordItem |
   };
 }
 
+/**
+ * 2026-11-26 作業員L（台帳 #798 ②・統括役の決め 案A）: 初期費用の内訳（estimate_records.cost_items）を AIX の記録から決まった計算で読む（純関数）。
+ *   30日の見積の AIX 97行: 本文に「名前: N円」の行は 19（ほとんど「初期費用」だけ）・費用メモ 25（高額項目 25・クリーニング費用 8）＝今の AIX の記録には内訳の一部しか無い。
+ *   全部の内訳は見積書ツールの中にある（送る流れの入口は提案 f02252a0・竹内さんの判断）。ここは AIX の記録にある分だけ: 費用メモの「高額項目: 礼金N円」「クリーニング費用: N円」と、
+ *   本文の「名前: N円」の行（初期費用・合計・割引・家賃・月額は内訳ではないので外す）。書くのは ESTIMATE_RECORD_COST_ITEMS=on の時だけ（列を DB に当てた後に on）
+ */
+export type CostItem = { label: string; yen: number };
+export const estimateRecordCostItemsOn = (env: Record<string, string | undefined> = process.env) => (env.ESTIMATE_RECORD_COST_ITEMS ?? "").trim().toLowerCase() === "on";
+const NOT_ITEM_RE = /初期費用|合計|総額|割引|差額|節約|家賃|賃料|月額|管理費|共益費/;
+export function costItemsFromNote(note: string | null | undefined): CostItem[] {
+  const out: CostItem[] = [];
+  for (const p of toHalf(String(note ?? "")).split(" / ").slice(1).map((s) => s.trim())) {
+    const hi = p.match(/^高額項目\s*[:：]\s*(.+)$/);
+    if (hi) { for (const m of hi[1].matchAll(/([^\d、・,，\s][^\d、・]{0,15}?)\s*([\d,]{3,9})\s*円/g)) { const y = yen(m[2]); if (y && !NOT_ITEM_RE.test(m[1])) out.push({ label: m[1].trim(), yen: y }); } continue; }
+    const cl = p.match(/^(クリーニング費用|鍵交換費用?|消毒費用?|保証料|賃貸保証料|火災保険料?|仲介手数料|礼金|敷金)\s*[:：]\s*([\d,]{3,9})\s*円/);
+    if (cl) { const y = yen(cl[2]); if (y) out.push({ label: cl[1], yen: y }); }
+  }
+  return out;
+}
+export function costItemsFromText(text: string | null | undefined): CostItem[] {
+  const out: CostItem[] = [];
+  for (const m of toHalf(String(text ?? "")).matchAll(/(?:^|\n)\s*[・\-]?\s*([^\n:：0-9]{2,12}?)\s*[:：]\s*[¥]?\s*([\d,]{3,9})\s*円/g)) {
+    const label = m[1].trim(); const y = yen(m[2]);
+    if (y && !NOT_ITEM_RE.test(label)) out.push({ label, yen: y });
+  }
+  return out;
+}
+/** 物件の行ごとの内訳（費用メモの行は同じ番の物件に・本文の行は物件が1件の時だけ）と出所。無ければ null */
+export function costItemsForRecord(item: Pick<EstimateRecordItem, "index" | "source">, log: EstimateLogInput, itemCount: number): { items: CostItem[]; source: "cost_notes" | "aix_text" } | null {
+  if (item.source === "cost_notes") { const xs = costItemsFromNote(String(log.propCostNotes?.[item.index] ?? "")); return xs.length ? { items: xs, source: "cost_notes" } : null; }
+  if (itemCount !== 1) return null;
+  const xs = costItemsFromText(log.generatedText);
+  return xs.length ? { items: xs, source: "aix_text" } : null;
+}
+
 const ENDED_STATUS = new Set(["unavailable", "ended"]);
 const PLACEHOLDER_NAME_RE = /^(?:物件|お部屋)\s*[①-⑳0-9０-９]*$/;
 
