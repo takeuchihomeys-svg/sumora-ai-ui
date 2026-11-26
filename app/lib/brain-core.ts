@@ -3339,7 +3339,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
-  const flowMarks: { cpf?: string; ppf?: string; bpn?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
+  const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
     if (cpf.brainCheckPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
@@ -3374,8 +3374,9 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       let pickupScene: string | null = null;
       if (pfPre.promised && !pfPre.fulfilled) { const { count: pendAB } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending"); pickupScene = ppf2.pickupPromiseFlowOf(msgsAB, aixAB, typeof pendAB === "number" ? pendAB : null, Date.now()).scene; }
       const customerAsked = /[?？]|ですか|ますか|でしょうか|教えて/.test(String(unrepliedTurn.text ?? ""));
-      const ln = ab.aixBoundaryLine(ab.boundariesFor({ checkScene, pickupScene, customerAsked }));
-      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; aixBoundaryMarkLen = ln.length; materialBlocks.push({ key: "aix_boundary", text: ln, from: "cs" }); }
+      const bsAB = ab.boundariesFor({ checkScene, pickupScene, customerAsked });
+      const ln = ab.aixBoundaryLine(bsAB);
+      if (ln) { flowMarks.abd = bsAB[0].aix === "返信" ? "reply" : bsAB[0].aix; /* #783 使った目印 */ customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; aixBoundaryMarkLen = ln.length; materialBlocks.push({ key: "aix_boundary", text: ln, from: "cs" }); }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "aix-boundary-failed", error: e instanceof Error ? e.message : String(e) })); }
   if (briefOnNow) {
@@ -4410,7 +4411,7 @@ ${sh}`;
       // 2026-11-26 作業員A（#688・AIX_DICTIONARY_LINE=on の時だけ・既定 off）: 地図の次の一手の候補の AIX の前提と竹内さん本人の手本を1行（控えの行 aix_dictionary）
       try {
         const ad = await import("@/app/lib/aix-dictionary");
-        if (ad.aixDictionaryLineOn() && ar.loc?.next?.aix?.length) { const dl = ad.aixDictionaryLine(ar.loc.next.aix); if (dl) { applyRouteText += `\n${dl}`; materialMarks.aix_dictionary = dl.length; materialBlocks.push({ key: "aix_dictionary", text: `\n${dl}`, from: "route" }); } }
+        if (ad.aixDictionaryLineOn() && ar.loc?.next?.aix?.length) { const dl = ad.aixDictionaryLine(ar.loc.next.aix); if (dl) { flowMarks.dct = [...new Set(ar.loc.next.aix.map((x: string) => String(x).split("/")[0]))].slice(0, 2).join("+"); /* #783 使った目印 */ applyRouteText += `\n${dl}`; materialMarks.aix_dictionary = dl.length; materialBlocks.push({ key: "aix_dictionary", text: `\n${dl}`, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] aix-dictionary skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-26 作業員L（#728 ③・DEAL_FLOW_PRE_APPLY_LINE=on の時だけ・既定 off）: 申込準備の手前の駅に、成約データの申込の直前の一手（手打ちの返信が大半）を1行
       try {
