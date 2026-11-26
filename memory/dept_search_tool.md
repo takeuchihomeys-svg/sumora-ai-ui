@@ -14917,3 +14917,5 @@ Claude（統括役）からの依頼2件への対応。
 - 版: 2.8.310（manifest・_AXLX_PAGE_VER・AUTO_RULES_REVIEWED_UP_TO）。
 - 決めた事: DB を1時間ごとに書く cron は作らない（書き込みを増やさない）。DB の行は日次の human-learn-brain（22:20 JST）が prepareBundleForWrite で追いつく・急ぐ時だけ attach。
 - 未: push（main）と DB 反映は竹内さんの OK 待ち。拡張の再読み込み（2.8.310）と realpro の実走で task_api_refresh_res の ms を確認する。
+- 本番確認（2026-11-26・3e2fa5e0b の Production Ready 後）: touch=0 の playbook_rules_v=43eae84d（渡す時の版）・DB の playbook_rules_up_to=2.8.309 のまま（DB は書いていない）。拡張が 2.8.310 に再読み込みされれば、手順書は次の確認で取り直される。
+- 注: 拡張の『attach-playbook が必要』の警告（_pbBehind）は DB の版を見ている。渡す時の版は合っているので、この警告は今は当てにならない（次に直す）。
