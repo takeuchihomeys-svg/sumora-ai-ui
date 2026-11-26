@@ -19,8 +19,11 @@ export function sentMarksOf(sentBefore: Record<string, string> | null | undefine
   }
   return [...new Set(out)].sort();
 }
-export function featuresOf(r: { node: string | null; branch: string | null; sub1?: string | null; sentBefore?: Record<string, string>; at: string }): ChainFeatures {
-  return { station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"), sub: r.sub1 ?? null, marks: sentMarksOf(r.sentBefore, Date.parse(r.at)) };
+/** 2026-11-26 作業員L の頼み: 気持ちの状態（作業員L の気持ち×駅の表と同じ名前）を印 "気持ち:<状態>" として足す（無ければ今と同じ） */
+export function featuresOf(r: { node: string | null; branch: string | null; sub1?: string | null; sentBefore?: Record<string, string>; at: string; mindset?: string | null }): ChainFeatures {
+  const marks = sentMarksOf(r.sentBefore, Date.parse(r.at));
+  if (r.mindset) marks.push(`気持ち:${r.mindset}`);
+  return { station: r.branch ? `分:${r.branch}` : String(r.node ?? "other"), sub: r.sub1 ?? null, marks: [...new Set(marks)].sort() };
 }
 /** 組の鍵（駅＋状態＋印2つまで）。印の少ない組から順に */
 export function comboKeysOf(f: ChainFeatures): string[] {

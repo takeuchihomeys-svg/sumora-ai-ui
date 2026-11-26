@@ -17,5 +17,6 @@ t("見立ての1行: 当てはまった時だけ・決めるのはあなた", ch
 t("表: 60日の12型・既定 off", CHAIN_PATTERNS.length === 12 && !chainInsightLineOn({}));
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 t("配線: on の時だけ・控えの行 chain_insight", bc.includes("cpm.chainInsightLineOn() && ar.loc") && bc.includes('key: "chain_insight"'));
+t("気持ちの印: mindset があれば 気持ち:<状態> が組の部品になる・無ければ今と同じ", comboKeysOf(featuresOf({ node: "proposing", branch: null, at: "2026-11-20T10:00:00Z", mindset: "迷い" })).includes("proposing+気持ち:迷い") && comboKeysOf(featuresOf({ node: "proposing", branch: null, at: "2026-11-20T10:00:00Z" })).join() === "proposing");
 console.log(`chain-patterns: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
