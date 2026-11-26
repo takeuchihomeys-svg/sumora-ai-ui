@@ -29,6 +29,9 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
     cells: { intake: { state: "off", note: "指示書の extra に記録だけ（shadow）" }, brain: { state: "off", switch: "AIX_STATE_CARD", note: "本番は shadow・控えの行 aix_state_card" }, writer: { state: "none" }, aix2: { state: "unknown" }, final: { state: "none" } } },
   { id: "brain_decided", name: "ブレインの決め（目的と中期・こちら側の状態ほか10欄）", owner: "作業員A", value: 49.5, valueBase: "竹内さん本人の AIX の文 194（目的と中期 96）",
     cells: { writer: { state: "on", note: "決めた事の欄は書き手の注記に届く（欄ごとに違う）" }, aix2: { state: "none", item: 796, note: "2通目に配線のある欄 1/11・提案タブ 87e7dba6" } } },
+  // 2026-11-26 作業員A（#796 の2番目）: こちら側の状態（もう送った・約束した・確かめ済み）の2通目は、作業員L の AIX_SECOND_DECIDED（既定 off）で配線済み＝新しいコードは要らない・試験の組で on を決める
+  { id: "brain_decided_our_side", name: "ブレインの決め（こちら側の状態＝もう送った・約束した・確かめ済み）", owner: "作業員L", value: 9.8, valueBase: "竹内さん本人の AIX の文 194（こちら側の状態 19）",
+    cells: { writer: { state: "on", switch: "OUR_SIDE_TO_COMPOSE" }, aix2: { state: "off", switch: "AIX_SECOND_DECIDED", item: 796, note: "事実の出所・刺さった所も同じスイッチ・SITUATION_WRITER_NOTE_AIX と重なる時は外す" } } },
   { id: "estimate_tool", name: "見積書ツール（金額・割引・内訳）", owner: "作業員L", value: 21.7, valueBase: HAND,
     // 2026-11-26 作業員L の確かめ（A が写した）
     cells: { intake: { state: "off", switch: "CONDUCTOR_INTAKE_ESTIMATE", note: "作業員L が入口の見積の1行を作った（既定 off・11/26）" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },
