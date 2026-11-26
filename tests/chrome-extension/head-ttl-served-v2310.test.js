@@ -19,7 +19,7 @@ const fetchAt = headFn.indexOf('"/api/human-learn-profile?touch=0');
 ok("版の確認の前に確認間隔（_checkMs）を見て、内なら飛ばす", ttlAt > 0 && fetchAt > ttlAt);
 ok("飛ばした時は skipped=head_recent で返す", /skipped: "head_recent"/.test(headFn));
 ok("TTL は強制（!force の内側）だけ・強制の経路は見ない", /if \(!force\) \{[\s\S]{0,1600}_headCheckAt > 0 && _headAge < _checkMs/.test(headFn));
-ok("時計を進めるのは「同じ版・取り直し無し」の時だけ", /if \(!_rulesStale && hv && hv === lastVer\) _headCheckAt = Date\.now\(\);/.test(bg));
+ok("時計を進めるのは「同じ版・取り直し無し」の時だけ", /if \(!_rulesStale && hv && hv === lastVer\)\s*\{?\s*_headCheckAt = Date\.now\(\);/.test(bg));
 ok("_headCheckAt は宣言されている（メモリのみ）", /var _headCheckAt = 0;/.test(bg));
 
 // 2. ページ側: 関所の版確認に経過ミリ秒を残す

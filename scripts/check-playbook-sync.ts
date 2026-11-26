@@ -222,6 +222,53 @@ async function main() {
     warn.push("手順書の抜けを DB で見ていない（環境変数が無い）");
   }
 
+  // ⑦ 2026-11-27 反映仕組みの自己点検（サーバー・統括・拡張の配管が抜けていないかを決定論で監視）
+  say("\n■ ⑦ 反映仕組みの自己点検（CDNバイパス・サイト分離・統括同期・SW耐性・ITANDI配管）");
+  const mechChecks: Array<[string, boolean]> = [
+    ["human-learn-profile-guard: cacheHeaders('none') & bundleVersionParam", (() => {
+      const s = readText("app/lib/human-learn-profile-guard.ts");
+      return s.includes(`"none"`) && s.includes("bundleVersionParam");
+    })()],
+    ["human-learn-profile/route.ts: 版不一致/強制時は no-store & touch=0 に bundle_v", (() => {
+      const s = readText("app/api/human-learn-profile/route.ts");
+      return s.includes("actualBundleV") && s.includes(`cacheHeaders("none")`) && s.includes("bundle_v");
+    })()],
+    ["learn-bundle-preserve: 統括 自動モード完成度・学習完成 の再算定同期", (() => {
+      const s = readText("app/lib/learn-bundle-preserve.ts");
+      return s.includes("自動モード完成度") && s.includes("学習完成（期間・土台・つながり・一連）") && s.includes("measureAutoCompletion");
+    })()],
+    ["learn-refresh-gate.js: projectLearnStorageForSite & buildBundleFetchUrl & ITANDIルール欠検知", (() => {
+      const s = readText("chrome-extension/learn-refresh-gate.js");
+      return s.includes("projectLearnStorageForSite") && s.includes("buildBundleFetchUrl") && s.includes("pb.rules.length < 1");
+    })()],
+    ["background.js: サイト別 _headCheckAtBySite・?v=URL・即時永続・SW見張り・extVer強制更新", (() => {
+      const s = readText("chrome-extension/background.js");
+      return s.includes("_headCheckAtBySite") && s.includes("buildBundleFetchUrl") && s.includes("_auditPersistNow")
+        && s.includes("p.extVer !== ver") && s.includes("superseded_by_new_bulk") && s.includes("batch_done_sw_watchdog");
+    })()],
+    ["content.js: _realproLearnView・site=realpro・extVer・PUSH_KEYS末尾axlx_learn_gaps", (() => {
+      const s = readText("chrome-extension/content.js");
+      return s.includes("_realproLearnView") && s.includes(`site: "realpro"`) && s.includes("extVer") && /"axlx_learn_gaps",?\s*\]/.test(s);
+    })()],
+    ["itandi-content.js: _itandiLearnView・refresh/auto-linked中継・bootLearnIfNeeded・extVer", (() => {
+      const s = readText("chrome-extension/itandi-content.js");
+      return s.includes("_itandiLearnView") && s.includes("axlx-page-learn-refresh") && s.includes("axlx-page-learn-auto-linked")
+        && s.includes("bootLearnIfNeeded") && s.includes("extVer");
+    })()],
+    ["page-script.js: _startResetAfterReflect(ゲート完了後リセット)・notifyDone時clearClickQueue", (() => {
+      const s = readText("chrome-extension/page-script.js");
+      return s.includes("_startResetAfterReflect") && s.includes(`if (typeof clearClickQueue === "function") clearClickQueue();`);
+    })()],
+    ["itandi-page-script.js: _itEnsureLearnReflectedForFill・_itSerialType(直列数値入力)・学習位置aim", (() => {
+      const s = readText("chrome-extension/itandi-page-script.js");
+      return s.includes("_itEnsureLearnReflectedForFill") && s.includes("_itSerialType") && s.includes("_itLearnPosOf(names)");
+    })()],
+  ];
+  for (const [label, okFlag] of mechChecks) {
+    say(`  ${okFlag ? OK : NG} ${label}`);
+    if (!okFlag) bad.push(`反映仕組みが欠落: ${label}`);
+  }
+
   say("\n■ 結論");
   if (!bad.length) { say(`  ${OK} コード・DB・本番が揃っている${warn.length ? "（注意あり）" : ""}`); }
   else { say(`  ${NG} 切れている所 ${bad.length}件:`); bad.forEach((b, i) => say(`   ${i + 1}. ${b}`)); }

@@ -25,5 +25,7 @@ echo "[pre-commit] 手順書浄化・ITANDI別名分離・拡張同期・統括�
 npx tsx app/lib/__tests__/playbook-clean-and-itandi-sync.test.ts
 npx tsx app/lib/__tests__/site-contamination-guard.test.ts
 npx tsx app/lib/__tests__/playbook-and-motion-hardening.test.ts
+npx tsx app/lib/__tests__/reflect-mechanism-hardening.test.ts
 node tests/chrome-extension/head-ttl-served-v2310.test.js
 node tests/chrome-extension/learn-bundle-site-sync.test.js
+node tests/chrome-extension/reflect-pipeline-v28312.test.js

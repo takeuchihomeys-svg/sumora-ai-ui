@@ -16,7 +16,7 @@ import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion, fnv, type Rule
 /**
  * ITANDI の決まりの一覧を見直した拡張の版（リアプロの AUTO_RULES_REVIEWED_UP_TO とは別に管理する・2026-11-27）。
  */
-export const ITANDI_RULES_REVIEWED_UP_TO = "2.8.311";
+export const ITANDI_RULES_REVIEWED_UP_TO = "2.8.312";
 
 export type ItandiRuleFile = "itandi-page-script.js" | "itandi-bulk-dl.js";
 
@@ -163,6 +163,33 @@ export const ITANDI_AUTO_RULES: ReadonlyArray<ItandiRule> = [
     since: null,
     marker: `"no_rows_15s"`,
     file: "itandi-bulk-dl.js",
+    verify_reason: NO_SEGMENT_YET,
+  },
+  {
+    id: "it_learn_reflect_gate",
+    scene: "switch",
+    text: "ITANDI でも入力・案内開始の前に ITANDI 専用の手順書・学習位置（site=itandi）を取得・反映し終えてから前客クリアへ進む",
+    since: "2.8.312",
+    marker: "_itEnsureLearnReflectedForFill",
+    file: "itandi-page-script.js",
+    verify_reason: NO_SEGMENT_YET,
+  },
+  {
+    id: "it_learn_aim_pointer",
+    scene: "press",
+    text: "ITANDI のボタン・検索押下は _itLearnPosOf で学習済みの画面位置を引き、AxlxPointerUi.moveToEl({ aim }) に渡して実際のカーソル位置へ反映する",
+    since: "2.8.312",
+    marker: "_itLearnPosOf(names)",
+    file: "itandi-page-script.js",
+    verify_reason: NO_SEGMENT_YET,
+  },
+  {
+    id: "it_serial_numeric_input",
+    scene: "cond",
+    text: "ITANDI の賃料・面積・徒歩・築年数などの数値欄は _itSerialType で1欄ずつ直列に入力し、全数値欄＋チェック完了を待ってから検索可否を判定する",
+    since: "2.8.312",
+    marker: "_itSerialType",
+    file: "itandi-page-script.js",
     verify_reason: NO_SEGMENT_YET,
   },
 ];

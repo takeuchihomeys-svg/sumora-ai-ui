@@ -18,7 +18,7 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
-import { learnProfileGuardOn, shouldTouchRead, shouldPreserveLongCronBundle, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, shouldPreserveLongCronBundle, coalesce, cacheHeaders, bundleVersionParam, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
 import { isAutoMode } from "@/app/lib/press-by";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
@@ -1036,13 +1036,19 @@ export async function GET(req: NextRequest) {
         if (pb2 && pb2.rules_up_to) playbookRulesUpTo = String(pb2.rules_up_to);
       }
     } catch { playbookRulesV = null; }
+    const lightGeneratedAt = guard && lightReq
+      ? (row.generated_at ?? row.created_at)
+      : (row.bundle && typeof row.bundle === "object")
+        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+        : row.created_at;
+    const lightBundleV = bundleVersionParam({
+      generated_at: lightGeneratedAt,
+      playbook_rules_v: playbookRulesV,
+      playbook_build_v: PLAYBOOK_BUILD_V,
+    });
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
-      generated_at: guard && lightReq
-        ? (row.generated_at ?? row.created_at)
-        : (row.bundle && typeof row.bundle === "object")
-          ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
-          : row.created_at,
+      generated_at: lightGeneratedAt,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
       screen_solid: solidLight,
@@ -1055,6 +1061,7 @@ export async function GET(req: NextRequest) {
       server_rules_v: rulesVersionFor(scope),
       server_rules_up_to: rulesReviewedUpToFor(scope),
       server_build_v: PLAYBOOK_BUILD_V,
+      bundle_v: lightBundleV,
     }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;
@@ -1208,12 +1215,25 @@ export async function GET(req: NextRequest) {
     console.warn("[human-learn-profile] 手順書の作り直し（渡す時）に失敗:", e instanceof Error ? e.message : String(e));
   }
 
+  const servedBundleObj = (servedBundle && typeof servedBundle === "object") ? (servedBundle as Record<string, unknown>) : null;
+  const servedGeneratedAt = servedBundleObj?.generated_at ?? row.created_at;
+  const servedPb = (servedBundleObj?.playbook && typeof servedBundleObj.playbook === "object")
+    ? (servedBundleObj.playbook as { rules_v?: unknown; build_v?: unknown })
+    : null;
+  const actualBundleV = bundleVersionParam({
+    generated_at: servedGeneratedAt,
+    playbook_rules_v: servedPb?.rules_v,
+    playbook_build_v: servedPb?.build_v,
+  });
+  const reqV = req.nextUrl.searchParams.get("v") || "";
+  const bypassBundleCache = forceFresh || !!playbookRefreshed || (!!reqV && reqV !== actualBundleV);
+
   return NextResponse.json(
     {
       ok: true,
       empty: false,
       scope: row.scope,
-      generated_at: (row.bundle as Record<string, unknown> | null)?.generated_at ?? row.created_at,
+      generated_at: servedGeneratedAt,
       source_rows: row.source_rows,
       source_from: row.source_from,
       source_to: row.source_to,
@@ -1221,9 +1241,10 @@ export async function GET(req: NextRequest) {
       lines: row.lines ?? [],
       bundle: servedBundle,
       playbook_refreshed: playbookRefreshed,
+      bundle_v: actualBundleV,
       read_count: servedReadCount,
       read_at: servedReadAt,
     },
-    { headers: guard ? { ...CORS, ...cacheHeaders("bundle") } : CORS },
+    { headers: guard ? { ...CORS, ...(bypassBundleCache ? cacheHeaders("none") : cacheHeaders("bundle")) } : CORS },
   );
 }

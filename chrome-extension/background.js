@@ -1882,7 +1882,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           console.log("[webapp-search] itandiタブ:", _itandiTab.url);
           // itandi-content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
-          try { await chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid), customerName: _custName }); } catch(_) {}
+          try { await _withTimeout(chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid), customerName: _custName }), 4000, "set_fill_customer"); } catch(_) {}
 
           // underbar.js → popup.js 経由でリアプロと同じ仕組みで自動入力
           var _directOk = await new Promise(function(resolve) {
@@ -2776,6 +2776,14 @@ var _learnNextTryAt = 0;         // 次に試してよい時刻（失敗の後�
  *     強制の経路（popup を開く・起動・needs_auto）は TTL を見ない＝すぐ確かめる。
  */
 var _headCheckAt = 0;
+var _headCheckAtBySite = { realpro: 0, itandi: 0 };
+var _pendingRefreshTargetSite = null;
+function _normLearnSite(s) {
+  var v = String(s || "").toLowerCase();
+  if (v === "itandi" || /itandibb/.test(v)) return "itandi";
+  if (v === "realpro" || v === "realnetpro" || /realnetpro/.test(v)) return "realpro";
+  return "";
+}
 /** 失敗した後の間: 1分 → 5分 → 15分（それ以上は15分のまま） */
 function _learnBackoffMs(n) {
   if (n <= 0) return 0;
@@ -2796,7 +2804,12 @@ function _learnStartJitterMs() {
  *   ⚠ 成否の後始末（間隔を延ばす・戻す）は**ここで1か所**でやる。
  *     `_refreshLearnedBundle` の中に散らすと、早期 return のどれかで記録し忘れて静かに壊れる。
  */
-function _refreshLearnedBundleQueued(force, _noChain) {
+function _refreshLearnedBundleQueued(force, targetSite, _noChain) {
+  if (typeof targetSite === "boolean") {
+    _noChain = targetSite;
+    targetSite = null;
+  }
+  var normSite = _normLearnSite(targetSite);
   if (_learnInflight) {
     /**
      * ★ 2026-11-19 タクヤ audit #1513（screen=0 のまま自動開始）:
@@ -2805,13 +2818,14 @@ function _refreshLearnedBundleQueued(force, _noChain) {
      */
     if (force && !_noChain) {
       return _learnInflight.then(function (r) {
-        if (r && r.skipped && r.skipped !== "backoff") return _refreshLearnedBundleQueued(true, true);
+        if (r && r.skipped && r.skipped !== "backoff") return _refreshLearnedBundleQueued(true, normSite || null, true);
         return r;
       });
     }
     // 実行中 → そのまま待つ（重ねて呼ばない）
     return _learnInflight;
   }
+  _pendingRefreshTargetSite = normSite || null;
   var p = _refreshLearnedBundle(force).then(function (r) {
     _learnInflight = null;
     /**
@@ -2844,42 +2858,59 @@ function _refreshLearnedBundleQueued(force, _noChain) {
  * ★ 2026-11-18: autofill（手動・一括・webapp）の直前に学習束を版確認／必要なら取り直す。
  *   ポップアップを開かない経路でも content script が storage 経由で最新束を使えるようにする。
  */
-async function _learnRefreshForAutofill() {
+async function _learnRefreshForAutofill(targetSite) {
   try {
     var st = await chrome.storage.local.get([
       "axlx_learn_needs_auto",
+      "axlx_learn_needs_auto__realpro",
+      "axlx_learn_needs_auto__itandi",
       "axlx_learn_screen",
+      "axlx_learn_screen__realpro",
+      "axlx_learn_screen__itandi",
       "axlx_learn_ver",
+      "axlx_learn_ver__realpro",
+      "axlx_learn_ver__itandi",
       "axlx_learn_link",
+      "axlx_learn_link__realpro",
+      "axlx_learn_link__itandi",
       "axlx_learn_next",
+      "axlx_learn_next__realpro",
+      "axlx_learn_next__itandi",
       "axlx_learn_points",
+      "axlx_learn_points__realpro",
+      "axlx_learn_points__itandi",
       "axlx_learn_playbook",
       "axlx_learn_for_site",
       "axlx_learn_playbook__realpro",
       "axlx_learn_playbook__itandi",
       "axlx_learn_after_update",
     ]);
-    var _afSite = (st && st.axlx_learn_for_site) || "";
-    try {
-      var _tabsAf = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      var _uAf = String((_tabsAf && _tabsAf[0] && _tabsAf[0].url) || "");
-      if (/itandibb\.com/.test(_uAf)) _afSite = "itandi";
-      else if (/realnetpro\.com/.test(_uAf)) _afSite = "realpro";
-    } catch (_) {}
-    var _stForGate = Object.assign({}, st || {});
-    if (_afSite && st && st["axlx_learn_playbook__" + _afSite]) {
+    var _afSite = _normLearnSite(targetSite) || _normLearnSite(st && st.axlx_learn_for_site) || "";
+    if (!_normLearnSite(targetSite)) {
+      try {
+        var _tabsAf = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var _uAf = String((_tabsAf && _tabsAf[0] && _tabsAf[0].url) || "");
+        if (/itandibb\.com/.test(_uAf)) _afSite = "itandi";
+        else if (/realnetpro\.com/.test(_uAf)) _afSite = "realpro";
+      } catch (_) {}
+    }
+    var G = self.AxlxLearnRefreshGate;
+    var _stForGate = (G && G.projectLearnStorageForSite && _afSite)
+      ? G.projectLearnStorageForSite(st || {}, _afSite)
+      : Object.assign({}, st || {});
+    if (!_stForGate.axlx_learn_playbook && _afSite && st && st["axlx_learn_playbook__" + _afSite]) {
       _stForGate.axlx_learn_playbook = st["axlx_learn_playbook__" + _afSite];
     }
     /**
      * ★ 2026-11-22 2.8.183: 手順書欠落・更新直後も force（画面位置だけ揃って古い手順書のまま押し始めない）。
      */
-    var _gate = (self.AxlxLearnRefreshGate && self.AxlxLearnRefreshGate.shouldForceLearnRefresh)
-      ? self.AxlxLearnRefreshGate.shouldForceLearnRefresh(_stForGate, { site: _afSite || undefined })
-      : { force: !!(st.axlx_learn_needs_auto || !st.axlx_learn_ver), reason: "fallback" };
+    var _gate = (G && G.shouldForceLearnRefresh)
+      ? G.shouldForceLearnRefresh(_stForGate, { site: _afSite || undefined })
+      : { force: !!(_stForGate.axlx_learn_needs_auto || !_stForGate.axlx_learn_ver), reason: "fallback" };
     try {
-      if (_gate.force) console.log("[learn] autofill前の取込 force=" + _gate.reason);
+      if (_gate.force) console.log("[learn] autofill前の取込(" + (_afSite || "?") + ") force=" + _gate.reason);
     } catch (_) {}
-    return await _refreshLearnedBundleQueued(!!_gate.force);
+    return await _refreshLearnedBundleQueued(!!_gate.force, _afSite || null);
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
@@ -2897,8 +2928,20 @@ async function _refreshLearnedBundle(force) {
     }
     var st = await chrome.storage.local.get(_LEARN_KEYS.concat([
       "axlx_learn_link",
+      "axlx_learn_link__realpro",
+      "axlx_learn_link__itandi",
       "axlx_learn_needs_auto",
+      "axlx_learn_needs_auto__realpro",
+      "axlx_learn_needs_auto__itandi",
+      "axlx_learn_auto_linked__realpro",
+      "axlx_learn_auto_linked__itandi",
       "axlx_learn_screen",
+      "axlx_learn_screen__realpro",
+      "axlx_learn_screen__itandi",
+      "axlx_learn_next__realpro",
+      "axlx_learn_next__itandi",
+      "axlx_learn_points__realpro",
+      "axlx_learn_points__itandi",
       "axlx_learn_playbook",
       "axlx_learn_for_site",
       "axlx_learn_ver__realpro",
@@ -2906,19 +2949,29 @@ async function _refreshLearnedBundle(force) {
       "axlx_learn_playbook__realpro",
       "axlx_learn_playbook__itandi",
       "axlx_learn_empty_refetch_at",
+      "axlx_learn_empty_refetch_at__realpro",
+      "axlx_learn_empty_refetch_at__itandi",
+      "axlx_learn_other_head_at__realpro",
+      "axlx_learn_other_head_at__itandi",
     ]));
-    // 今いるタブのサイトを先に確定（?touch=0 の ?scope= とサイト別版に揃える）
-    var curSite = String((st && st.axlx_learn_for_site) || "realpro");
-    if (curSite !== "realpro" && curSite !== "itandi") curSite = "realpro";
-    try {
-      var tabsEarly = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      var uEarly = String((tabsEarly && tabsEarly[0] && tabsEarly[0].url) || "");
-      if (/itandibb\.com/.test(uEarly)) curSite = "itandi";
-      else if (/realnetpro\.com/.test(uEarly)) curSite = "realpro";
-    } catch (_) {}
+    // 呼び出し元のサイト指定があればそれを最優先（裏タブ作業中の別サイト誤判定を防ぐ）
+    var explicitSite = _normLearnSite(_pendingRefreshTargetSite);
+    _pendingRefreshTargetSite = null;
+    var curSite = explicitSite || _normLearnSite(st && st.axlx_learn_for_site) || "realpro";
+    if (!explicitSite) {
+      try {
+        var tabsEarly = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var uEarly = String((tabsEarly && tabsEarly[0] && tabsEarly[0].url) || "");
+        if (/itandibb\.com/.test(uEarly)) curSite = "itandi";
+        else if (/realnetpro\.com/.test(uEarly)) curSite = "realpro";
+      } catch (_) {}
+    }
     var _siteSwitched = !!(st && st.axlx_learn_for_site && st.axlx_learn_for_site !== curSite);
+    var _G = self.AxlxLearnRefreshGate;
+    var _curView = (_G && _G.projectLearnStorageForSite) ? _G.projectLearnStorageForSite(st, curSite) : st;
     var last = Number(st && st.axlx_learn_at) || 0;
-    var lastVer = _siteSwitched ? "" : String((st && st["axlx_learn_ver__" + curSite]) || (st && st.axlx_learn_ver) || "");
+    var lastVer = String((st && st["axlx_learn_ver__" + curSite]) || (!_siteSwitched && st && st.axlx_learn_ver) || "");
+    var _headHintBySite = { realpro: null, itandi: null };
     /**
      * 強制でない時: 1時間たっていなければ「版だけ」確かめる（軽い）。
      *   ・版が変わっていなければ何もしない
@@ -2938,37 +2991,19 @@ async function _refreshLearnedBundle(force) {
      *   → photo_learn で束が新しくなっても、通常モードでは最大5分気づかない。
      *   → **版確認（touch=0）は毎回やる**。版が同じかつ新鮮な時だけ取得をスキップ。
      */
+    _headCheckAt = Number(_headCheckAtBySite[curSite]) || 0;
     if (!force) {
       try {
-        /**
-         * ⚠ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが止まっていた）**:
-         *   版を見る `?touch=0` のタイムアウトが **8秒**だったが、
-         *   束が古い時はサーバーが**その場で作り直す**ので **14.6秒かかる**（実測）。
-         *   → 8秒で切れて `catch` に入り「取りに行く」流れになるが、
-         *     その直後の取得（15秒）も**足りずに失敗**し、結果として**新しい学びが届かなかった**。
-         *   → 版確認を **25秒**、取得を **40秒** に延ばす（実測 14.6秒＋余裕）。
-         *     ⚠ 1分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
-         */
         // ★ 2.8.310: 確認間隔の内は版を見に行かない（サイト切替時はスキップせず反映）
         var _headAge = Date.now() - _headCheckAt;
         if (!_siteSwitched && _headCheckAt > 0 && _headAge < _checkMs) {
-          return { ok: true, skipped: "head_recent", head_age_ms: _headAge };
+          return { ok: true, skipped: "head_recent", head_age_ms: _headAge, site: curSite };
         }
         var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(curSite), { cache: "no-store", signal: AbortSignal.timeout(25000) });
         if (head.ok) {
           var hj = await head.json();
+          _headHintBySite[curSite] = hj;
           var hv = String((hj && hj.generated_at) || "");
-          /**
-           * ★ 2026-11-15 竹内さん「版が同じなら取り直さない」（依頼1-4）
-           *   ⚠ 旧は `lastVer` が**空**（初回）の時や、版は同じでも `axlx_learn_at` が古い時に
-           *     scope ごとの重い取得（realpro / itandi / 全体）を**3回**やっていた。
-           *   → 版が**分かっている**（`hv` がある）かつ `hv === lastVer` なら**ここで終わる**（取得しない）。
-           *     ⚠ `lastVer` が空の時も `hv` があれば、手元に束が入っているかを別に見る（下）。
-           */
-          /**
-           * ★ 2026-11-16: 版同じでも read_count=0 なら「届いていない」扱い → 取り直して印を付ける。
-           *   版同じかつ既に読まれている時は mark_read=1 だけ飛ばしてスキップ（重い束は取らない）。
-           */
           var _serverRead = (hj && typeof hj.read_count === "number") ? hj.read_count : 0;
           var _serverSolid = (hj && typeof hj.screen_solid === "number") ? hj.screen_solid : null;
           var _needsAuto = !!(hj && hj.needs_auto);
@@ -2976,74 +3011,67 @@ async function _refreshLearnedBundle(force) {
           var _serverRulesV = (hj && hj.playbook_rules_v != null) ? String(hj.playbook_rules_v) : "";
           var _localRulesV = "";
           try {
-            var _lpb = (st && st["axlx_learn_playbook__" + curSite]) || (st && !_siteSwitched ? st.axlx_learn_playbook : null);
+            var _lpb = (_curView && _curView.axlx_learn_playbook) || (st && st["axlx_learn_playbook__" + curSite]) || (st && !_siteSwitched ? st.axlx_learn_playbook : null);
             if (_lpb && typeof _lpb === "object") _localRulesV = String(_lpb.rules_v || "");
           } catch (_) {}
-          /**
-           * ★ 2.8.297 本番のコードが拡張より古い／手順書が古い版で作られている、を覚えておく（次の回の記録に server_behind を残す）。
-           *   実測 2026-11-25 22:00: 本番（古い main）が手順書を作り直すたび 91件→23件へ戻った。拡張は「版が違う」とだけ見て取り直し続け、
-           *   原因（本番のデプロイ遅れ）はどこにも出なかった。server_rules_up_to を返さない本番＝最新のコードが載っていない。
-           */
           try {
             var _extV = chrome.runtime.getManifest().version;
             var _srvUp = (hj && hj.server_rules_up_to) ? String(hj.server_rules_up_to) : "";
             var _pbUp = (hj && hj.playbook_rules_up_to) ? String(hj.playbook_rules_up_to) : "";
             var _srvBehind = !_srvUp || _cmpExtVer(_srvUp, _extV) < 0;
-            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0; /* ★ 2.8.304 逆向き: 拡張が本番の最新版より古い＝再読み込みの忘れ（実測 2026-11-26: 手元 2.8.303 に対し動いていた拡張は 2.8.295）。自動では再読み込みせず、案内と記録だけ出す */ var _extBehind = !!_srvUp && _cmpExtVer(_extV, _srvUp) < 0; if (_extBehind) { try { console.warn("[learn] ⚠ 拡張が古い（ext=" + _extV + " 本番の最新=" + _srvUp + "）→ git pull のあと chrome://extensions で再読み込み"); } catch (_) {} }
+            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0;
+            var _extBehind = !!_srvUp && _cmpExtVer(_extV, _srvUp) < 0;
+            if (_extBehind) { try { console.warn("[learn] ⚠ 拡張が古い（ext=" + _extV + " 本番の最新=" + _srvUp + "）→ git pull のあと chrome://extensions で再読み込み"); } catch (_) {} }
             await chrome.storage.local.set({ axlx_server_state: {
               behind: !!(_srvBehind || _pbBehind), server_behind: !!_srvBehind, playbook_behind: !!_pbBehind,
-              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, ext_behind: !!_extBehind, at: Date.now(),
+              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, ext_behind: !!_extBehind, site: curSite, at: Date.now(),
             } });
             if (_srvBehind) { try { console.warn("[learn] ⚠ 本番のコードが古い（server=" + (_srvUp || "版なし") + " ext=" + _extV + "）→ 手順書は作り直しのたび古い版へ戻る。デプロイが必要"); } catch (_) {} }
             else if (_pbBehind) { try { console.warn("[learn] ⚠ 手順書が古い版で作られている（手順書=" + (_pbUp || "版なし") + " ext=" + _extV + "）→ attach-playbook が必要"); } catch (_) {} }
           } catch (_) {}
           var _rulesStale = !!(_serverRulesV && _serverRulesV !== _localRulesV);
           if (_rulesStale) {
-            try { console.log("[learn] 手順書の決まり版が違う（手元" + _localRulesV.slice(0, 8) + "→サーバ" + _serverRulesV.slice(0, 8) + "）→取り直します"); } catch (_) {}
+            try { console.log("[learn] 手順書の決まり版が違う（" + curSite + " 手元" + _localRulesV.slice(0, 8) + "→サーバ" + _serverRulesV.slice(0, 8) + "）→取り直します"); } catch (_) {}
           }
-          // ★ 2.8.310: 同じ版で取り直しも要らないと確かめた時だけ、次の確認までの時計を進める
-          if (!_rulesStale && hv && hv === lastVer) _headCheckAt = Date.now();
-          /**
-           * ★ 2026-11-17「学習しても改善されない／反映の抜け」:
-           *   版同じでも (1) サーバー solid が手元より多い → 取り直す
-           *   (2) needs_auto → 印を付けて返す（自動1回を促す・束は再取しない）
-           */
+          // ★ 2.8.310: 同じ版で取り直しも要らないと確かめた時だけ、次の確認までの時計を進める（サイト別＋互換変数）
+          if (!_rulesStale && hv && hv === lastVer) {
+            _headCheckAt = Date.now();
+            _headCheckAtBySite[curSite] = _headCheckAt;
+          }
           var _localSolid = null;
           try {
-            var _lnk0 = st && st.axlx_learn_link;
+            var _lnk0 = _curView && _curView.axlx_learn_link;
             if (_lnk0 && typeof _lnk0.screen_solid === "number") _localSolid = _lnk0.screen_solid;
           } catch (_) {}
           if (!_rulesStale && hv && hv === lastVer) {
-            /**
-             * ★ 2026-11-17 実測 2.8.76: 版同じ・read≥1 でも axlx_learn_screen が空 → aim無・reflect_gap。
-             *   → 手元 solid=0／screen空 かつサーバ solid>0 なら必ず取り直す。
-             */
             var _localScreenN = 0;
             try {
-              var _scr0 = st && st.axlx_learn_screen;
+              var _scr0 = _curView && _curView.axlx_learn_screen;
               if (_scr0 && typeof _scr0 === "object") _localScreenN = Object.keys(_scr0).length;
             } catch (_) {}
+            var _emptyRefetchKey = "axlx_learn_empty_refetch_at__" + curSite;
+            var _emptyRefetchAt = Number((st && st[_emptyRefetchKey]) || (st && st.axlx_learn_empty_refetch_at)) || 0;
             if (_serverRead <= 0) {
-              try { console.log("[learn] 版同じだが未読(read_count=0)→取り直して印を付けます"); } catch (_) {}
+              try { console.log("[learn] 版同じだが未読(" + curSite + " read_count=0)→取り直して印を付けます"); } catch (_) {}
             } else if (_serverSolid != null && _localSolid != null && _serverSolid > _localSolid) {
-              try { console.log("[learn] 版同じだが solid 増（手元" + _localSolid + "→サーバ" + _serverSolid + "）→取り直します"); } catch (_) {}
+              try { console.log("[learn] 版同じだが solid 増（" + curSite + " 手元" + _localSolid + "→サーバ" + _serverSolid + "）→取り直します"); } catch (_) {}
             } else if ((_localSolid === 0 || _localSolid == null || _localScreenN === 0) && _serverSolid != null && _serverSolid > 0) {
-              try { console.log("[learn] 版同じだが手元screen空/solid0（サーバ solid=" + _serverSolid + "）→取り直します"); } catch (_) {}
-            } else if (_localScreenN === 0 && Date.now() - (Number(st && st.axlx_learn_empty_refetch_at) || 0) > 10 * 60 * 1000) {
-              /**
-               * ★ 2026-11-19: 本番の版確認が screen_solid を返さない時（_serverSolid=null）も、
-               *   手元の画面位置が空なら取り直す（10分に1回まで・サーバーの負担を抑える）。
-               */
-              try { console.log("[learn] 版同じだが手元screen空（サーバ solid 不明）→取り直します"); } catch (_) {}
-              try { await chrome.storage.local.set({ axlx_learn_empty_refetch_at: Date.now() }); } catch (_) {}
+              try { console.log("[learn] 版同じだが手元screen空/solid0（" + curSite + " サーバ solid=" + _serverSolid + "）→取り直します"); } catch (_) {}
+            } else if (_localScreenN === 0 && Date.now() - _emptyRefetchAt > 10 * 60 * 1000) {
+              try { console.log("[learn] 版同じだが手元screen空（" + curSite + " サーバ solid 不明）→取り直します"); } catch (_) {}
+              try {
+                var _erPatch = { axlx_learn_empty_refetch_at: Date.now() };
+                _erPatch[_emptyRefetchKey] = Date.now();
+                await chrome.storage.local.set(_erPatch);
+              } catch (_) {}
             } else {
               var _localNextN = 0;
               var _localPtsN = 0;
-              try { _localNextN = Object.keys(st.axlx_learn_next || {}).length; } catch (_) {}
-              try { _localPtsN = Object.keys(st.axlx_learn_points || {}).length; } catch (_) {}
+              try { _localNextN = Object.keys((_curView && _curView.axlx_learn_next) || {}).length; } catch (_) {}
+              try { _localPtsN = Object.keys((_curView && _curView.axlx_learn_points) || {}).length; } catch (_) {}
               if (_needsAuto && (_localNextN === 0 || _localPtsN === 0 || _localScreenN === 0)) {
                 try {
-                  console.log("[learn] needs_autoだが手元の束が薄い（next=" + _localNextN + " points=" + _localPtsN + " screen=" + _localScreenN + "）→取り直します");
+                  console.log("[learn] needs_autoだが手元の束が薄い（" + curSite + " next=" + _localNextN + " points=" + _localPtsN + " screen=" + _localScreenN + "）→取り直します");
                 } catch (_) {}
               } else {
               // ★ 2026-11-27: 反対側サイト（curSite=realpro 時の itandi 等）の版・決まり版が古い時も抜けない
@@ -3058,6 +3086,7 @@ async function _refreshLearnedBundle(force) {
                   var _otherHead = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(_otherSite), { cache: "no-store", signal: AbortSignal.timeout(15000) });
                   if (_otherHead && _otherHead.ok) {
                     var _ohj = await _otherHead.json();
+                    _headHintBySite[_otherSite] = _ohj;
                     var _ohv = String((_ohj && _ohj.generated_at) || "");
                     var _orv = (_ohj && _ohj.playbook_rules_v != null) ? String(_ohj.playbook_rules_v) : "";
                     if ((_orv && _orv !== _otherLocalRv) || (_ohv && _ohv !== _otherLastVer)) {
@@ -3074,20 +3103,19 @@ async function _refreshLearnedBundle(force) {
               if (_otherStale) {
                 // 下の取り直しへ進む
               } else {
-              /**
-               * ★ 2026-11-17 実測: same_version のたびに mark_read×3 を飛ばし
-               *   read_count が 0→738 まで水増し（束は読んだが自動未使用なのに「拡張が読んだ738回」と誤認）。
-               *   → 心拍では mark_read しない。印は**実際に束を取り込んだ時だけ**付ける。
-               */
               try {
-                await chrome.storage.local.set({
+                var _naPatch = {
                   axlx_learn_needs_auto: _needsAuto,
                   axlx_learn_server_solid: _serverSolid,
-                });
+                };
+                _naPatch["axlx_learn_needs_auto__" + curSite] = _needsAuto;
+                _naPatch["axlx_learn_server_solid__" + curSite] = _serverSolid;
+                await chrome.storage.local.set(_naPatch);
               } catch (_) {}
               return {
                 ok: true,
                 skipped: "same_version",
+                site: curSite,
                 server_read_count: _serverRead,
                 screen_solid: _serverSolid,
                 needs_auto: _needsAuto,
@@ -3098,46 +3126,36 @@ async function _refreshLearnedBundle(force) {
             }
           }
           if (hv && !lastVer) {
-            // 初回でも、既に同じ版の束が storage に入っているなら取り直さない
             var bySiteNow = st && st.axlx_learn_by_site;
-            if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length) {
-              await chrome.storage.local.set({ axlx_learn_ver: hv });
+            if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length && !_rulesStale) {
+              var _verFirst = { axlx_learn_ver: hv };
+              _verFirst["axlx_learn_ver__" + curSite] = hv;
+              await chrome.storage.local.set(_verFirst);
               if (_serverRead <= 0) {
-                try { console.log("[learn] 手元に束あり・サーバー未読→取り直して印を付けます"); } catch (_) {}
+                try { console.log("[learn] 手元に束あり・サーバー未読(" + curSite + ")→取り直して印を付けます"); } catch (_) {}
               } else {
-                // ★ 2026-11-17: ここも mark_read 連打しない（上と同じ穴）
-                return { ok: true, skipped: "same_version_first", server_read_count: _serverRead, needs_auto: _needsAuto };
+                return { ok: true, skipped: "same_version_first", site: curSite, server_read_count: _serverRead, needs_auto: _needsAuto };
               }
             }
           } else if (hv && hv !== lastVer) {
-            console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
+            console.log("[learn] 学習が新しくなりました（" + curSite + " " + lastVer + " → " + hv + "）→ 取り込みます");
           }
         }
       } catch (e) {
-        // ⚠ 版が読めなくても取りに行く（安全側）。理由を残す（次に同じ事が起きたら分かる）
         try { console.log("[learn] 版を確かめられません（取りに行きます）:", (e && e.message) || e); } catch (_) {}
       }
     }
-    // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
-    /**
-     * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
-     *   改善していくためにも必要」:
-     *
-     *   ⚠ 旧は `?scope=` を付けずに読んでいたので、**リアプロと itandi の学びが1つに混ざった束**を
-     *     両方のサイトで使っていた。サイトごとに手順も欄の名前も違うので、
-     *     混ぜると「itandi で学んだ順番をリアプロで使う」ような**誤適用**が起きる。
-     *
-     *   → **サイトごとに別々に取る**（`?scope=realpro` / `?scope=itandi`）。
-     *     ・`axlx_learn_by_site` … `{ realpro: {next, points, ...}, itandi: {...} }`（サイト別の正本）
-     *     ・今までのキー（`axlx_learn_next` など）は**今いるサイトの物**を入れる
-     *       （page-script は今まで通り読める＝変更が要らない）
-     */
     var SITES = ["realpro", "itandi"];
     var perSite = {};
+    var _forceSalt = force ? ("force_" + Math.floor(Date.now() / 1000)) : "";
     for (var si = 0; si < SITES.length; si++) {
       var sc = SITES[si];
       try {
-        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(40000) });
+        var _scHint = _headHintBySite[sc];
+        var _scUrl = (_G && _G.buildBundleFetchUrl)
+          ? _G.buildBundleFetchUrl(SUMORA_BATCH_API, sc, _scHint || (_forceSalt ? { bundle_v: _forceSalt } : null))
+          : (SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc + (_forceSalt ? "&v=" + encodeURIComponent(_forceSalt) : ""));
+        var sres = await fetch(_scUrl, { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (!sres.ok) continue;
         var sjson = await sres.json();
         if (sjson && sjson.bundle && typeof sjson.bundle === "object") {
@@ -3148,13 +3166,15 @@ async function _refreshLearnedBundle(force) {
         }
       } catch (_) { /* 片方が取れなくても、もう片方は使う */ }
     }
-    // ★ 2026-11-27: 先頭で確定した curSite を念のため再確認（取得中にタブ切替された場合も吸収）
-    try {
-      var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
-      if (/itandibb\.com/.test(uNow)) curSite = "itandi";
-      else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
-    } catch (_) {}
+    // 明示呼び出しでない場合だけアクティブタブで再確定（裏タブ作業のサイト上書きを防ぐ）
+    if (!explicitSite) {
+      try {
+        var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
+        if (/itandibb\.com/.test(uNow)) curSite = "itandi";
+        else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
+      } catch (_) {}
+    }
     /**
      * ★ 2026-11-27 サイト横断汚染遮断:
      *   allBundle（混載束）は、対象サイトの束がまだ1件も無い（初回）時のフォールバックのみに限定する。
@@ -3238,172 +3258,196 @@ async function _refreshLearnedBundle(force) {
      *   旧は n≥3 だけ → flashで読んだ弱い欄（n=1〜2）が storage に載らず aim無のまま。
      *   → **n≥1 も載せる**（thin）。連携完了の solid 数えは n≥3 のまま。
      */
-    var _screenAim = {};
-    try {
-      var learned = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
-      if (learned && typeof learned === "object") {
-        for (var _sc in learned) {
-          var list = Array.isArray(learned[_sc]) ? learned[_sc] : [];
-          for (var _i = 0; _i < list.length; _i++) {
-            var f = list[_i];
-            if (!f || typeof f.name !== "string" || typeof f.x !== "number" || typeof f.y !== "number") continue;
-            if ((Number(f.n) || 0) < 1) continue;
-            var k = String(f.name).slice(0, 40);
-            if (!_screenAim[k] || (Number(_screenAim[k].n) || 0) < (Number(f.n) || 0)) {
-              _screenAim[k] = {
-                x: Math.round(f.x * 100) / 100,
-                y: Math.round(f.y * 100) / 100,
-                n: Number(f.n) || 0,
-                kind: f.kind || null,
-                screen: _sc,
-                thin: (Number(f.n) || 0) < 3,
-              };
+    function _extractScreenAndSceneFromBundle(b, bSite) {
+      var sAim = {};
+      try {
+        var lrn = (b && b.shots && b.shots.learned) ? b.shots.learned : null;
+        if (lrn && typeof lrn === "object") {
+          for (var _sck in lrn) {
+            var lst = Array.isArray(lrn[_sck]) ? lrn[_sck] : [];
+            for (var _idx = 0; _idx < lst.length; _idx++) {
+              var ff = lst[_idx];
+              if (!ff || typeof ff.name !== "string" || typeof ff.x !== "number" || typeof ff.y !== "number") continue;
+              if ((Number(ff.n) || 0) < 1) continue;
+              var kk = String(ff.name).slice(0, 40);
+              if (!sAim[kk] || (Number(sAim[kk].n) || 0) < (Number(ff.n) || 0)) {
+                sAim[kk] = {
+                  x: Math.round(ff.x * 100) / 100,
+                  y: Math.round(ff.y * 100) / 100,
+                  n: Number(ff.n) || 0,
+                  kind: ff.kind || null,
+                  screen: _sck,
+                  thin: (Number(ff.n) || 0) < 3,
+                };
+              }
             }
           }
         }
-      }
-      /** ★ 2026-11-17: HTML名↔日本語名を複製（page-script の別名引きと二重で連動） */
-      var _aimAliasPairs = [
-        ["city_code[]", "所在地絞り込み", "所在地を絞り込み", "区を選ぶ"],
-        ["route_id[]", "沿線を選ぶ", "沿線・駅絞り込み＋", "沿線・駅絞り込み", "路線"],
-        ["station_id[]", "駅", "駅を選ぶ"],
-        ["transportation_id", "駅からの移動手段", "移動手段"],
-        ["required_time", "分数", "徒歩分数", "駅徒歩"],
-        ["rental_cost1", "賃料下限", "下限賃料", "賃料"],
-        ["rental_cost2", "賃料上限", "上限賃料"],
-        ["update_date", "更新日"],
-        ["structured_date", "築年数", "築年"],
-        ["確定してリストへ", "確定してリストへ｜span", "確定"],
-      ];
-      for (var _ap = 0; _ap < _aimAliasPairs.length; _ap++) {
-        var _pair = _aimAliasPairs[_ap];
-        var _src = null;
-        for (var _pj = 0; _pj < _pair.length; _pj++) {
-          var _pv = _screenAim[_pair[_pj]];
-          if (_pv && typeof _pv.x === "number" && typeof _pv.y === "number") {
-            if (!_src || (Number(_pv.n) || 0) > (Number(_src.n) || 0)) _src = _pv;
-          }
-        }
-        if (!_src) continue;
-        for (var _pk = 0; _pk < _pair.length; _pk++) {
-          var _nm = _pair[_pk];
-          if (!_screenAim[_nm] || (Number(_screenAim[_nm].n) || 0) < (Number(_src.n) || 0)) {
-            _screenAim[_nm] = { x: _src.x, y: _src.y, n: _src.n, kind: _src.kind || null, screen: _src.screen || null };
-          }
-        }
-      }
-    } catch (_) {}
-    /**
-     * ★ 2026-11-15 竹内さん「学習からの連携をしっかり完了するまで一連の流れを拡張ちゃんと把握して
-     *   新しくなったら新しくしたのもちゃんと把握してつくる」:
-     *   取り込みのたびに **一連の到達点**を storage に残す（版・前の版・画面位置の数・完了か）。
-     *   ⚠ これが無いと「取ったつもり・新しいのに古い」が現場で分からない。
-     */
-    /**
-     * ★ 2026-11-18 竹内さん「場面ごとの強化を画像学習にも紐づける」:
-     *   束の shots.learned_scene（場面 area/station/cond… ごとの欄の位置）を axlx_learn_scene へ。
-     *   拡張は「今いる場面」の位置を先に引き、無ければ従来の axlx_learn_screen（画面単位）へ戻る。
-     */
-    var _sceneAim = {};
-    try {
-      var _ls = (bundle.shots && bundle.shots.learned_scene) ? bundle.shots.learned_scene : null;
-      if (_ls && typeof _ls === "object") {
-        for (var _sck in _ls) {
-          var _sarr = _ls[_sck];
-          if (!Array.isArray(_sarr)) continue;
-          var _sm = {};
-          for (var _si = 0; _si < _sarr.length; _si++) {
-            var _sf = _sarr[_si];
-            if (!_sf || typeof _sf.name !== "string" || typeof _sf.x !== "number" || typeof _sf.y !== "number") continue;
-            if ((Number(_sf.n) || 0) < 2) continue;
-            var _sk = String(_sf.name).slice(0, 40);
-            if (!_sm[_sk] || (Number(_sm[_sk].n) || 0) < (Number(_sf.n) || 0)) {
-              _sm[_sk] = { x: Math.round(_sf.x * 100) / 100, y: Math.round(_sf.y * 100) / 100, n: Number(_sf.n) || 0, kind: _sf.kind || null };
+        var _pairs = bSite === "itandi"
+          ? [
+            ["所在地で絞り込み", "所在地で絞り込みを開く"],
+            ["路線・駅で絞り込み", "路線・駅で絞り込みを開く"],
+            ["更新日", "募集条件更新"],
+            ["検索", "検索する", "この条件で検索"],
+            ["敷金・礼金なし", "敷金礼金なし"],
+          ]
+          : [
+            ["city_code[]", "所在地絞り込み", "所在地を絞り込み", "区を選ぶ"],
+            ["route_id[]", "沿線を選ぶ", "沿線・駅絞り込み＋", "沿線・駅絞り込み", "路線"],
+            ["station_id[]", "駅", "駅を選ぶ"],
+            ["transportation_id", "駅からの移動手段", "移動手段"],
+            ["required_time", "分数", "徒歩分数", "駅徒歩"],
+            ["rental_cost1", "賃料下限", "下限賃料", "賃料"],
+            ["rental_cost2", "賃料上限", "上限賃料"],
+            ["update_date", "更新日"],
+            ["structured_date", "築年数", "築年"],
+            ["確定してリストへ", "確定してリストへ｜span", "確定"],
+          ];
+        for (var _ap = 0; _ap < _pairs.length; _ap++) {
+          var _pair = _pairs[_ap];
+          var _src = null;
+          for (var _pj = 0; _pj < _pair.length; _pj++) {
+            var _pv = sAim[_pair[_pj]];
+            if (_pv && typeof _pv.x === "number" && typeof _pv.y === "number") {
+              if (!_src || (Number(_pv.n) || 0) > (Number(_src.n) || 0)) _src = _pv;
             }
           }
-          if (Object.keys(_sm).length) _sceneAim[String(_sck).slice(0, 12)] = _sm;
+          if (!_src) continue;
+          for (var _pk = 0; _pk < _pair.length; _pk++) {
+            var _nm = _pair[_pk];
+            if (!sAim[_nm] || (Number(sAim[_nm].n) || 0) < (Number(_src.n) || 0)) {
+              sAim[_nm] = { x: _src.x, y: _src.y, n: _src.n, kind: _src.kind || null, screen: _src.screen || null };
+            }
+          }
         }
-      }
-    } catch (_) { _sceneAim = {}; }
-    /**
-     * ★ 2026-11-19 竹内さん「束不安定なのはどう改善したら最善なのか」→「拡張の保険」:
-     *   本番の作り直し（#2413〜#2420）は位置0の束を出し、手元の良い位置を空で上書きしていた。
-     *   → サイトごとに最後の良い位置を控え（axlx_learn_screen_keep）、新しい束が位置0ならそのサイトの控えを使う。
-     *   ⚠ 控えはサイト別（リアプロの位置を ITANDI に使わない・タブ切替で消さない）。
-     */
-    var _screenKept = null;
+      } catch (_) {}
+      var scAim = {};
+      try {
+        var _ls = (b && b.shots && b.shots.learned_scene) ? b.shots.learned_scene : null;
+        if (_ls && typeof _ls === "object") {
+          for (var _sck2 in _ls) {
+            var _sarr = _ls[_sck2];
+            if (!Array.isArray(_sarr)) continue;
+            var _sm = {};
+            for (var _si2 = 0; _si2 < _sarr.length; _si2++) {
+              var _sf = _sarr[_si2];
+              if (!_sf || typeof _sf.name !== "string" || typeof _sf.x !== "number" || typeof _sf.y !== "number") continue;
+              if ((Number(_sf.n) || 0) < 2) continue;
+              var _sk = String(_sf.name).slice(0, 40);
+              if (!_sm[_sk] || (Number(_sm[_sk].n) || 0) < (Number(_sf.n) || 0)) {
+                _sm[_sk] = { x: Math.round(_sf.x * 100) / 100, y: Math.round(_sf.y * 100) / 100, n: Number(_sf.n) || 0, kind: _sf.kind || null };
+              }
+            }
+            if (Object.keys(_sm).length) scAim[String(_sck2).slice(0, 12)] = _sm;
+          }
+        }
+      } catch (_) { scAim = {}; }
+      return { screenAim: sAim, sceneAim: scAim };
+    }
+    var _keep = {};
     try {
       var _keepSt = await chrome.storage.local.get(["axlx_learn_screen_keep"]);
-      var _keep = (_keepSt && _keepSt.axlx_learn_screen_keep && typeof _keepSt.axlx_learn_screen_keep === "object")
+      _keep = (_keepSt && _keepSt.axlx_learn_screen_keep && typeof _keepSt.axlx_learn_screen_keep === "object")
         ? _keepSt.axlx_learn_screen_keep : {};
-      var _ks = String(curSite || "");
-      if (_ks) {
-        if (Object.keys(_screenAim).length) {
-          _keep[_ks] = { screen: _screenAim, scene: _sceneAim, ver: String(bundle.generated_at || ""), at: Date.now() };
-          await chrome.storage.local.set({ axlx_learn_screen_keep: _keep });
-        } else if (_keep[_ks] && _keep[_ks].screen && typeof _keep[_ks].screen === "object" && Object.keys(_keep[_ks].screen).length) {
-          _screenAim = _keep[_ks].screen;
-          if (!Object.keys(_sceneAim).length && _keep[_ks].scene && typeof _keep[_ks].scene === "object") _sceneAim = _keep[_ks].scene;
-          _screenKept = String(_keep[_ks].ver || "kept").slice(0, 19);
-          try { console.log("[learn] 新しい束の画面位置が0 → " + _ks + " の控え（版 " + _screenKept + "）を使います"); } catch (_) {}
-        }
+    } catch (_) { _keep = {}; }
+    var _sitePrepared = {};
+    for (var _spSiteKey in perSite) {
+      if (!Object.prototype.hasOwnProperty.call(perSite, _spSiteKey)) continue;
+      var _spB = perSite[_spSiteKey];
+      if (!_spB || typeof _spB !== "object") continue;
+      var _ex = _extractScreenAndSceneFromBundle(_spB, _spSiteKey);
+      var _keptTag = null;
+      if (Object.keys(_ex.screenAim).length) {
+        _keep[_spSiteKey] = { screen: _ex.screenAim, scene: _ex.sceneAim, ver: String(_spB.generated_at || ""), at: Date.now() };
+      } else if (_keep[_spSiteKey] && _keep[_spSiteKey].screen && typeof _keep[_spSiteKey].screen === "object" && Object.keys(_keep[_spSiteKey].screen).length) {
+        _ex.screenAim = _keep[_spSiteKey].screen;
+        if (!Object.keys(_ex.sceneAim).length && _keep[_spSiteKey].scene && typeof _keep[_spSiteKey].scene === "object") _ex.sceneAim = _keep[_spSiteKey].scene;
+        _keptTag = String(_keep[_spSiteKey].ver || "kept").slice(0, 19);
+        try { console.log("[learn] 新しい束の画面位置が0 → " + _spSiteKey + " の控え（版 " + _keptTag + "）を使います"); } catch (_) {}
       }
-    } catch (_) {}
-    var _screenAllKeys = Object.keys(_screenAim).length;
-    var _screenSolid = 0;
-    try {
-      for (var _ssk in _screenAim) {
-        if ((Number(_screenAim[_ssk].n) || 0) >= 3) _screenSolid++;
+      var _spAllKeys = Object.keys(_ex.screenAim).length;
+      var _spSolid = 0;
+      for (var _ssk0 in _ex.screenAim) {
+        if ((Number(_ex.screenAim[_ssk0].n) || 0) >= 3) _spSolid++;
       }
-    } catch (_) { _screenSolid = 0; }
-    var _screenAll = 0;
-    try {
-      var _lrn = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
-      if (_lrn && typeof _lrn === "object") {
-        for (var _sc2 in _lrn) {
-          var _lst2 = Array.isArray(_lrn[_sc2]) ? _lrn[_sc2] : [];
-          for (var _j2 = 0; _j2 < _lst2.length; _j2++) {
-            if (_lst2[_j2] && typeof _lst2[_j2].x === "number" && typeof _lst2[_j2].y === "number") _screenAll++;
+      var _spAll = 0;
+      try {
+        var _lrnSp = (_spB.shots && _spB.shots.learned) ? _spB.shots.learned : null;
+        if (_lrnSp && typeof _lrnSp === "object") {
+          for (var _scSp in _lrnSp) {
+            var _lstSp = Array.isArray(_lrnSp[_scSp]) ? _lrnSp[_scSp] : [];
+            for (var _jSp = 0; _jSp < _lstSp.length; _jSp++) {
+              if (_lstSp[_jSp] && typeof _lstSp[_jSp].x === "number" && typeof _lstSp[_jSp].y === "number") _spAll++;
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+      _sitePrepared[_spSiteKey] = {
+        screenAim: _ex.screenAim,
+        sceneAim: _ex.sceneAim,
+        screenKept: _keptTag,
+        screenAllKeys: _spAllKeys,
+        screenSolid: _spSolid,
+        screenAll: _spAll,
+      };
+    }
+    try { await chrome.storage.local.set({ axlx_learn_screen_keep: _keep }); } catch (_) {}
+    var _curPrep = _sitePrepared[curSite] || (function () {
+      var _exCur = _extractScreenAndSceneFromBundle(bundle, curSite);
+      var _scAll = Object.keys(_exCur.screenAim).length;
+      var _scSol = 0;
+      for (var _kSol in _exCur.screenAim) { if ((Number(_exCur.screenAim[_kSol].n) || 0) >= 3) _scSol++; }
+      return { screenAim: _exCur.screenAim, sceneAim: _exCur.sceneAim, screenKept: null, screenAllKeys: _scAll, screenSolid: _scSol, screenAll: _scAll };
+    })();
+    var _screenAim = _curPrep.screenAim;
+    var _sceneAim = _curPrep.sceneAim;
+    var _screenKept = _curPrep.screenKept;
+    var _screenAllKeys = _curPrep.screenAllKeys;
+    var _screenSolid = _curPrep.screenSolid;
+    var _screenAll = _curPrep.screenAll;
     var _newVer = String(bundle.generated_at || "");
     var _prevVer = lastVer || "";
     var _updated = !!(_newVer && _prevVer && _newVer !== _prevVer);
     var _linkComplete = _screenSolid >= 3 && Object.keys(next).length > 0 && Object.keys(points).length > 0;
-    var _link = {
-      ver: _newVer,
-      prev_ver: _prevVer || null,
-      updated: _updated,
-      at: new Date().toISOString(),
-      site: curSite,
-      next: Object.keys(next).length,
-      points: Object.keys(points).length,
-      screen_solid: _screenSolid,
-      screen_all: _screenAll,
-      screen_keys: _screenAllKeys,
-      screen_kept: _screenKept,
-      complete: _linkComplete,
-      server_read_count: (typeof bundle._server_read_count === "number")
-        ? bundle._server_read_count
-        : ((perSite[curSite] && typeof perSite[curSite]._server_read_count === "number")
-          ? perSite[curSite]._server_read_count
-          : null),
-      steps: [
-        "1.サーバーの束を取得（read印つき）",
-        "2.サイト別と全体で新しい方を採用",
-        "3.画面位置 n≥1=" + _screenAllKeys + "欄（うち solid n≥3=" + _screenSolid + "）を axlx_learn_screen へ",
-        "4.順番 " + Object.keys(next).length + "・場所 " + Object.keys(points).length + " を配置",
-        _linkComplete ? "5.連携完了（自動が使える状態）" : "5.まだ不足（画面位置か順番が薄い）",
-        "6.自動1回で効果確認（F6/F31/F38・読んだだけでは改善済みにしない）",
-      ],
-      needs_auto: true,
-    };
+    function _buildLinkObj(b, bSite, prep, prevVerStr) {
+      var bNext = (b && b.next && typeof b.next === "object") ? b.next : {};
+      var bPoints = (b && b.points && typeof b.points === "object") ? b.points : {};
+      var bNewVer = String((b && b.generated_at) || "");
+      var bUpdated = !!(bNewVer && prevVerStr && bNewVer !== prevVerStr);
+      var bComplete = prep.screenSolid >= 3 && Object.keys(bNext).length > 0 && Object.keys(bPoints).length > 0;
+      return {
+        ver: bNewVer,
+        prev_ver: prevVerStr || null,
+        updated: bUpdated,
+        at: new Date().toISOString(),
+        site: bSite,
+        next: Object.keys(bNext).length,
+        points: Object.keys(bPoints).length,
+        screen_solid: prep.screenSolid,
+        screen_all: prep.screenAll,
+        screen_keys: prep.screenAllKeys,
+        screen_kept: prep.screenKept,
+        complete: bComplete,
+        server_read_count: (b && typeof b._server_read_count === "number") ? b._server_read_count : null,
+        steps: [
+          "1.サーバーの束を取得（read印つき）",
+          "2.サイト別と全体で新しい方を採用",
+          "3.画面位置 n≥1=" + prep.screenAllKeys + "欄（うち solid n≥3=" + prep.screenSolid + "）を axlx_learn_screen へ",
+          "4.順番 " + Object.keys(bNext).length + "・場所 " + Object.keys(bPoints).length + " を配置",
+          bComplete ? "5.連携完了（自動が使える状態）" : "5.まだ不足（画面位置か順番が薄い）",
+          "6.自動1回で効果確認（F6/F31/F38・読んだだけでは改善済みにしない）",
+        ],
+        needs_auto: bComplete,
+      };
+    }
+    var _link = _buildLinkObj(bundle, curSite, _curPrep, _prevVer);
+    if (_link.server_read_count == null && perSite[curSite] && typeof perSite[curSite]._server_read_count === "number") {
+      _link.server_read_count = perSite[curSite]._server_read_count;
+    }
     if (_updated) {
-      try { console.log("[learn] ★学びが新しくなりました: " + _prevVer.slice(0, 19) + " → " + _newVer.slice(0, 19) + "／画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + "／連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+      try { console.log("[learn] ★学びが新しくなりました(" + curSite + "): " + _prevVer.slice(0, 19) + " → " + _newVer.slice(0, 19) + "／画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + "／連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
     } else {
-      try { console.log("[learn] 学びを取り込みました（版 " + _newVer.slice(0, 19) + "）画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + " 連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+      try { console.log("[learn] 学びを取り込みました（" + curSite + " 版 " + _newVer.slice(0, 19) + "）画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + " 連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
     }
     await chrome.storage.local.set({
       axlx_learn_screen: _screenAim,
@@ -3416,45 +3460,15 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_weak: weak,
       axlx_learn_site_flow: siteFlow,
       axlx_learn_screen_flow: screenFlow,
-      /**
-       * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習」:
-       *   **サイト別の正本**（リアプロ用と itandi 用を別々に持つ）。
-       *   ⚠ 上のキー（`axlx_learn_next` など）は**今いるサイトの物**なので、
-       *     タブを切り替えた時に取り直せば、そのサイトの学びに切り替わる。
-       */
       axlx_learn_by_site: perSite,
-      /**
-       * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
-       *   統括の**判断**（結論・次にやる事・数字）も置く。
-       *   ⚠ これが無いと「今の学びを自動検索に渡してよいか」が現場で分からない。
-       */
       axlx_learn_supervisor: (bundle.supervisor && typeof bundle.supervisor === "object") ? bundle.supervisor : null,
       axlx_learn_supervisor_by_site: (bundle.supervisor_by_site && typeof bundle.supervisor_by_site === "object") ? bundle.supervisor_by_site : null,
-      /**
-       * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」→ **まだだった**。
-       *
-       *   ⚠ サーバーで**場面ごとの手順**（`scene_flows`・人が実際に押した順）を作ったのに、
-       *     拡張は**1箇所も読んでいなかった**（実測 0箇所）。
-       *     ＝「計算したが現場に届かない」を、前回（`screen_flow`）と**同じ穴でもう一度**作っていた。
-       *
-       *   → 自動検索が使える形で置く:
-       *     ・`axlx_learn_scene_flows` … 場面ごとの手順（area/station/cond/search/list/next）
-       *     ・`axlx_learn_stopped_scene` … 止まる回が多い場面（自動が「ここで慎重に」を選べる）
-       *     ・`axlx_learn_scene_missing` … 手本が無い場面（自動で**推測しない**ための印）
-       *   ⚠ これらは**並べ替えの材料**として使う（項目の増減は絶対にしない＝検索漏れを出さない）。
-       */
       axlx_learn_scene_flows: Array.isArray(bundle.scene_flows) ? bundle.scene_flows.slice(0, 12) : null,
       axlx_learn_stopped_scene: (typeof bundle.stopped_scene === "string" && bundle.stopped_scene) ? bundle.stopped_scene : null,
       axlx_learn_scene_missing: (typeof bundle.scene_missing === "number" && bundle.scene_missing > 0)
         ? { n: bundle.scene_missing, names: String(bundle.scene_missing_names || "") } : null,
-      /**
-       * 2026-11-20 竹内さん「手順書は束の中に載せる」: 束から作った手順書（場面の手順・押す位置・開く欄・次のページの件数）。
-       *   ⚠ 並べ替え・確かめの材料として使う（項目の増減はしない）。サーバーが作れなかった時は null。
-       */
       axlx_learn_playbook: (bundle.playbook && typeof bundle.playbook === "object") ? bundle.playbook : null,
-      /** 今どのサイトの学びを上のキーに入れたか（点検用） */
       axlx_learn_for_site: curSite,
-      /** サイト別に何が学べているか（1行ずつ） */
       axlx_learn_site_summary: (function () {
         var o = {};
         for (var k in perSite) {
@@ -3477,21 +3491,14 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_seq: seqFlow,
       axlx_learn_by_mode: byMode,
       axlx_learn_plan: plan,
-      /** モード別の押す順番（そのモードで学べている時だけ） */
       ...(modeNext ? { axlx_learn_next_mode: modeNext, axlx_learn_next_mode_name: myMode } : {}),
       axlx_learn_at: Date.now(),
-      /** 2026-11-14: 学習の版（変わったら取り直す印） */
       axlx_learn_ver: String(bundle.generated_at || ""),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
-      /**
-       * ★ 2026-11-17: 新束を読んだ直後は「自動未確認」。自動1回後に false にする。
-       *   学習しても改善されない抜け＝読むだけで終わるのを止める印。
-       */
       axlx_learn_needs_auto: _linkComplete,
       axlx_learn_server_solid: _screenSolid,
-      /** ★ 2.8.183: 更新直後の強制取込が成功したら印を下ろす（次回は版確認だけでよい） */
       axlx_learn_after_update: false,
-      // ★ 2026-11-27 サイト分離: 共有キーに加えてサイト専用キー(__realpro / __itandi)にも書き、タブ併開時に他サイトで上書きされないようにする
+      // ★ 2026-11-27 サイト分離: 両サイトの全学習キーをサイト専用キー(__realpro / __itandi)へ完全分離保存
       ...(function () {
         var extra = {};
         for (var _scKey in perSite) {
@@ -3499,37 +3506,49 @@ async function _refreshLearnedBundle(force) {
           var _sb = perSite[_scKey];
           if (!_sb || typeof _sb !== "object") continue;
           var _suf = "__" + _scKey;
+          var _sp = _sitePrepared[_scKey] || { screenAim: {}, sceneAim: {}, screenKept: null, screenAllKeys: 0, screenSolid: 0, screenAll: 0 };
+          var _prevScVer = String((st && st["axlx_learn_ver" + _suf]) || "");
+          var _scLink = _buildLinkObj(_sb, _scKey, _sp, _prevScVer);
+          var _scHint = _headHintBySite[_scKey];
+          var _scNeedsAuto = (_scHint && typeof _scHint.needs_auto === "boolean")
+            ? _scHint.needs_auto
+            : (_scLink.complete && (_prevScVer !== _scLink.ver || !(st && st["axlx_learn_auto_linked" + _suf])));
+          var _scByMode = (_sb.by_mode && typeof _sb.by_mode === "object") ? _sb.by_mode : {};
+          var _scModeNext = (myMode && _scByMode[myMode] && _scByMode[myMode].next) ? _scByMode[myMode].next : null;
           extra["axlx_learn_playbook" + _suf] = (_sb.playbook && typeof _sb.playbook === "object") ? _sb.playbook : null;
           extra["axlx_learn_next" + _suf] = (_sb.next && typeof _sb.next === "object") ? _sb.next : {};
           extra["axlx_learn_points" + _suf] = (_sb.points && typeof _sb.points === "object") ? _sb.points : {};
           extra["axlx_learn_scene_flows" + _suf] = Array.isArray(_sb.scene_flows) ? _sb.scene_flows.slice(0, 12) : null;
+          extra["axlx_learn_stopped_scene" + _suf] = (typeof _sb.stopped_scene === "string" && _sb.stopped_scene) ? _sb.stopped_scene : null;
+          extra["axlx_learn_scene_missing" + _suf] = (typeof _sb.scene_missing === "number" && _sb.scene_missing > 0)
+            ? { n: _sb.scene_missing, names: String(_sb.scene_missing_names || "") } : null;
           extra["axlx_learn_supervisor" + _suf] = (_sb.supervisor && typeof _sb.supervisor === "object") ? _sb.supervisor : null;
           extra["axlx_learn_ver" + _suf] = String(_sb.generated_at || "");
-          if (_scKey === curSite) {
-            extra["axlx_learn_screen" + _suf] = _screenAim;
-            extra["axlx_learn_scene" + _suf] = _sceneAim;
-          } else {
-            var _oScr = {};
-            try {
-              var _oLrn = (_sb.shots && _sb.shots.learned) ? _sb.shots.learned : null;
-              if (_oLrn && typeof _oLrn === "object") {
-                for (var _osc in _oLrn) {
-                  var _ol = Array.isArray(_oLrn[_osc]) ? _oLrn[_osc] : [];
-                  for (var _oi = 0; _oi < _ol.length; _oi++) {
-                    var _of = _ol[_oi];
-                    if (!_of || typeof _of.name !== "string" || typeof _of.x !== "number" || typeof _of.y !== "number") continue;
-                    if ((Number(_of.n) || 0) < 1) continue;
-                    var _ok = String(_of.name).slice(0, 40);
-                    if (!_oScr[_ok] || (Number(_oScr[_ok].n) || 0) < (Number(_of.n) || 0)) {
-                      _oScr[_ok] = { x: Math.round(_of.x * 100) / 100, y: Math.round(_of.y * 100) / 100, n: Number(_of.n) || 0, kind: _of.kind || null, screen: _osc, thin: (Number(_of.n) || 0) < 3 };
-                    }
-                  }
-                }
-              }
-            } catch (_) {}
-            extra["axlx_learn_screen" + _suf] = _oScr;
+          extra["axlx_learn_screen" + _suf] = _sp.screenAim;
+          extra["axlx_learn_scene" + _suf] = _sp.sceneAim;
+          extra["axlx_learn_opens" + _suf] = (_sb.opens && typeof _sb.opens === "object") ? _sb.opens : {};
+          extra["axlx_learn_gaps" + _suf] = (_sb.gaps && typeof _sb.gaps === "object") ? _sb.gaps : {};
+          extra["axlx_learn_weak" + _suf] = Array.isArray(_sb.weak) ? _sb.weak.slice(0, 80) : [];
+          extra["axlx_learn_site_flow" + _suf] = (_sb.site_flow && typeof _sb.site_flow === "object") ? _sb.site_flow : {};
+          extra["axlx_learn_screen_flow" + _suf] = (_sb.screen_flow && typeof _sb.screen_flow === "object") ? _sb.screen_flow : {};
+          extra["axlx_learn_seq" + _suf] = (_sb.sequence_flow && typeof _sb.sequence_flow === "object") ? _sb.sequence_flow : {};
+          extra["axlx_learn_by_mode" + _suf] = _scByMode;
+          extra["axlx_learn_plan" + _suf] = (_sb.learn_plan && typeof _sb.learn_plan === "object") ? _sb.learn_plan : {};
+          extra["axlx_learn_motion" + _suf] = (_sb.motion && typeof _sb.motion === "object") ? _sb.motion : {};
+          extra["axlx_learn_cursor_hand" + _suf] = (_sb.cursor_hand && typeof _sb.cursor_hand === "object") ? _sb.cursor_hand : {};
+          if (_scModeNext) {
+            extra["axlx_learn_next_mode" + _suf] = _scModeNext;
+            extra["axlx_learn_next_mode_name" + _suf] = myMode;
           }
+          extra["axlx_learn_link" + _suf] = _scLink;
+          extra["axlx_learn_needs_auto" + _suf] = !!_scNeedsAuto;
+          extra["axlx_learn_server_solid" + _suf] = _sp.screenSolid;
+          if (_scKey === curSite) {
+            extra.axlx_learn_needs_auto = !!_scNeedsAuto;
+          }
+          _headCheckAtBySite[_scKey] = Date.now();
         }
+        _headCheckAt = Date.now();
         return extra;
       })(),
     });
@@ -3662,7 +3681,8 @@ try {
       return true;
     }
     if (msg.type === "axlx-learn-refresh") {
-      var _lrP = (msg.force === true && (msg.src === "popup_open" || msg.src === "boot_need")) ? _refreshLearnedBundleQueued(true) : _learnRefreshForAutofill();
+      var _lrSite = _normLearnSite(msg.site) || _normLearnSite(_s && _s.tab && _s.tab.url) || null;
+      var _lrP = (msg.force === true && (msg.src === "popup_open" || msg.src === "boot_need")) ? _refreshLearnedBundleQueued(true, _lrSite) : _learnRefreshForAutofill(_lrSite);
       _lrP.then(function (r) { try { sendResponse(r); } catch (_) {} });
       return true;
     }
@@ -3686,25 +3706,52 @@ try {
     }
     /**
      * ★ 2026-11-17: page-script が learn_reflect_ok を出したら即連動完了印。
-     *   fill-done 前に反映できた回も needs_auto を下ろせる。
+     *   fill-done 前に反映できた回も needs_auto を下ろせる。サイト別に分けて保存する。
      */
     if (msg.type === "axlx-learn-auto-linked") {
       try {
+        var _lkSite = _normLearnSite(msg.site) || _normLearnSite(_s && _s.tab && _s.tab.url) || "";
+        var _lkPatch = {};
         if (msg.ok) {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: false,
-            axlx_learn_auto_linked: true,
-            axlx_learn_auto_linked_at: Date.now(),
-            axlx_learn_auto_linked_screen: Number(msg.screen) || 0,
-            axlx_learn_flow_linked: !!msg.flow,
+          if (_lkSite) {
+            _lkPatch["axlx_learn_needs_auto__" + _lkSite] = false;
+            _lkPatch["axlx_learn_auto_linked__" + _lkSite] = true;
+            _lkPatch["axlx_learn_auto_linked_at__" + _lkSite] = Date.now();
+            _lkPatch["axlx_learn_auto_linked_screen__" + _lkSite] = Number(msg.screen) || 0;
+            _lkPatch["axlx_learn_flow_linked__" + _lkSite] = !!msg.flow;
+          }
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!_lkSite || !fs || fs === _lkSite) {
+                _lkPatch.axlx_learn_needs_auto = false;
+                _lkPatch.axlx_learn_auto_linked = true;
+                _lkPatch.axlx_learn_auto_linked_at = Date.now();
+                _lkPatch.axlx_learn_auto_linked_screen = Number(msg.screen) || 0;
+                _lkPatch.axlx_learn_flow_linked = !!msg.flow;
+              }
+              chrome.storage.local.set(_lkPatch);
+            } catch (_) {}
           });
         } else {
           /** ★ F46: 流れ反映不足なら needs_auto を残す（録画強化→自動反映を切らない） */
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: true,
-            axlx_learn_auto_linked: false,
-            axlx_learn_flow_linked: !!msg.flow,
-            axlx_learn_auto_reflect_miss_at: Date.now(),
+          if (_lkSite) {
+            _lkPatch["axlx_learn_needs_auto__" + _lkSite] = true;
+            _lkPatch["axlx_learn_auto_linked__" + _lkSite] = false;
+            _lkPatch["axlx_learn_flow_linked__" + _lkSite] = !!msg.flow;
+            _lkPatch["axlx_learn_auto_reflect_miss_at__" + _lkSite] = Date.now();
+          }
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!_lkSite || !fs || fs === _lkSite) {
+                _lkPatch.axlx_learn_needs_auto = true;
+                _lkPatch.axlx_learn_auto_linked = false;
+                _lkPatch.axlx_learn_flow_linked = !!msg.flow;
+                _lkPatch.axlx_learn_auto_reflect_miss_at = Date.now();
+              }
+              chrome.storage.local.set(_lkPatch);
+            } catch (_) {}
           });
         }
       } catch (_) {}
@@ -4913,7 +4960,7 @@ async function _runScrapeAndCompare(customerId, conditions) {
     try {
       await chrome.tabs.update(_scRealTab.id, { active: true });
       // content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
-      try { await chrome.tabs.sendMessage(_scRealTab.id, { type: "axlx-set-fill-customer", customerId: String(customerId) }); } catch(_) {}
+      try { await _withTimeout(chrome.tabs.sendMessage(_scRealTab.id, { type: "axlx-set-fill-customer", customerId: String(customerId) }), 4000, "set_fill_customer"); } catch(_) {}
       var _directResp = await new Promise(function(resolve) {
         chrome.tabs.sendMessage(_scRealTab.id, {
           type:         "axlx-switch-customer",
@@ -5271,16 +5318,23 @@ var _auditTracker = (self.AxlxSearchAudit && self.AxlxSearchAudit.createTracker(
 var AUDIT_OPEN_RUNS_KEY = "axlx_audit_open_runs";
 var AUDIT_PERSIST_DEBOUNCE_MS = 800;
 var _auditPersistT = null;
-function _auditPersistSoon() {
+function _auditPersistNow() {
   try {
-    if (!_auditTracker || !_auditTracker.exportOpen || _auditPersistT) return;
+    if (!_auditTracker || !_auditTracker.exportOpen) return;
+    if (_auditPersistT) { clearTimeout(_auditPersistT); _auditPersistT = null; }
+    var o = {};
+    o[AUDIT_OPEN_RUNS_KEY] = { at: Date.now(), runs: _auditTracker.exportOpen() };
+    chrome.storage.session.set(o);
+  } catch (_) {}
+}
+function _auditPersistSoon(immediate) {
+  try {
+    if (!_auditTracker || !_auditTracker.exportOpen) return;
+    if (immediate) { _auditPersistNow(); return; }
+    if (_auditPersistT) return;
     _auditPersistT = setTimeout(function () {
       _auditPersistT = null;
-      try {
-        var o = {};
-        o[AUDIT_OPEN_RUNS_KEY] = { at: Date.now(), runs: _auditTracker.exportOpen() };
-        chrome.storage.session.set(o);
-      } catch (_) {}
+      _auditPersistNow();
     }, AUDIT_PERSIST_DEBOUNCE_MS);
   } catch (_) {}
 }
@@ -5289,9 +5343,10 @@ function _auditPersistSoon() {
   ["begin", "step", "attachFill", "attachProgress", "attachResult", "finish"].forEach(function (name) {
     var orig = _auditTracker[name];
     if (typeof orig !== "function") return;
+    var immediate = (name === "begin" || name === "attachFill" || name === "attachResult" || name === "finish");
     _auditTracker[name] = function () {
       var out = orig.apply(_auditTracker, arguments);
-      _auditPersistSoon();
+      _auditPersistSoon(immediate);
       return out;
     };
   });
@@ -5570,8 +5625,17 @@ async function _auditOnFillDone(msg, sender) {
       _auditFinish(_rid, {});
       return;
     }
-    // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
-    if (run.site === "reins" || ((run.trigger === "single" || run.trigger === "local") && _pageErr)) _auditFinish(_rid, {});
+    var _hasFillW = false;
+    try {
+      var _cidFill = run.property_customer_id != null ? String(run.property_customer_id) : "";
+      _hasFillW = _fillDoneWaiters.some(function (w) {
+        return _waiterSiteMatch(w, run.site) && (!w.customerId || !_cidFill || String(w.customerId) === _cidFill);
+      });
+    } catch (_) { _hasFillW = false; }
+    // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索、または SW再起動で復元／待ち手消滅後に失敗が来た時は即閉じる
+    if (run.site === "reins" || (_pageErr && (run.trigger === "single" || run.trigger === "local" || run.restored || (!_manualBulkAlive && !_batchLoopAlive && !_hasFillW)))) {
+      _auditFinish(_rid, _pageErr ? { error: _pageErr } : {});
+    }
   } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }
 }
 
@@ -5586,7 +5650,16 @@ function _auditOnBatchDone(customerId, propertyCount, audit) {
     delete res.site;
     if (propertyCount != null) res.property_count = propertyCount;
     _auditTracker.attachResult(run.run_id, res);
-    if (run.trigger === "single") _auditFinish(run.run_id, {});
+    var _hasBatchW = false;
+    try {
+      var _cidB = customerId != null ? String(customerId) : "";
+      _hasBatchW = _batchCustomerDoneWaiters.some(function (w) {
+        return _waiterSiteMatch(w, site || run.site) && (!w.customerId || !_cidB || String(w.customerId) === _cidB);
+      });
+    } catch (_) { _hasBatchW = false; }
+    if (run.trigger === "single" || run.restored || (!_manualBulkAlive && !_batchLoopAlive && !_hasBatchW)) {
+      _auditFinish(run.run_id, {});
+    }
   } catch (e) { console.warn("[search-audit] 結果の記録に失敗:", e && e.message); }
 }
 
@@ -6182,6 +6255,19 @@ async function _manualBulkRun(o) {
       // 前回バッチのストップ残留をクリア（即解決を防ぐ）
       _batchShouldStop = false;
       try { await chrome.storage.local.set({ batchStopRequested: false }); } catch(_) {}
+      // 同一ブラウザ内に残っていた前の放置 run（やり直しで孤立した bulk_manual）を先に掃除する（abandoned 防止）
+      try {
+        if (_auditTracker && _auditTracker.listOpen) {
+          var _oldBulkRuns = _auditTracker.listOpen();
+          for (var _obi = 0; _obi < _oldBulkRuns.length; _obi++) {
+            var _or = _oldBulkRuns[_obi];
+            if (_or && _or.trigger === "bulk_manual" && _or.run_id) {
+              _auditStep(_or.run_id, "bulk_superseded", "新しい一括開始により前回の残りを閉じる");
+              _auditFinish(_or.run_id, { error: "superseded_by_new_bulk" });
+            }
+          }
+        }
+      } catch (_) {}
     } else {
       try {
         var _stopSt = await chrome.storage.local.get("batchStopRequested");
@@ -7023,7 +7109,31 @@ try {
         if (!q || q.done) return;
         if (!q.beatAt || Date.now() - q.beatAt > 20 * 60000) { _bulkQueueSave({ done: true, why: "stale_on_start" }); return; }
         if (q.stage === "running") {
-          console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける");
+          console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける（90秒反応なければ自動確認）");
+          setTimeout(function () {
+            (async function () {
+              try {
+                if (_manualBulkAlive || _batchLoopAlive) return;
+                var q2 = await _bulkQueueLoad();
+                if (!q2 || q2.done || q2.stage !== "running") return;
+                if (Date.now() - (Number(q2.beatAt) || 0) < 90000) return;
+                // 画面タブが生きているか／実はもう終わっていないか確認し、止まったままなら次へ進める
+                var tabsR = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
+                var aliveFilling = false;
+                for (var ti = 0; ti < (tabsR || []).length; ti++) {
+                  var tb = tabsR[ti];
+                  if (!tb || !tb.id) continue;
+                  var isIt = /^https:\/\/itandibb\.com/.test(String(tb.url || ""));
+                  var pr = isIt ? await _probeItandiTab(tb.id) : await _probeRealproTab(tb.id);
+                  if (pr && pr.fillRunning) { aliveFilling = true; break; }
+                }
+                if (!aliveFilling && q2.cid) {
+                  console.warn("[bulk] SW再起動後の見張り: 入力中ではなく放置状態 → batch_done_sw_watchdog で再開");
+                  await _bulkKick("batch_done_sw_watchdog", { doneCid: String(q2.cid) });
+                }
+              } catch (_) {}
+            })();
+          }, 90000);
           return;
         }
         await _bulkKick("sw_restart");
@@ -7847,18 +7957,40 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           }
         } catch (_) {}
         if (_refOk) {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: false,
-            axlx_learn_auto_confirmed_at: Date.now(),
-            axlx_learn_auto_linked: true,
+          var _lkAutoSite = _normLearnSite(_msgSite) || "realpro";
+          var _refPatchOk = {};
+          _refPatchOk["axlx_learn_needs_auto__" + _lkAutoSite] = false;
+          _refPatchOk["axlx_learn_auto_confirmed_at__" + _lkAutoSite] = Date.now();
+          _refPatchOk["axlx_learn_auto_linked__" + _lkAutoSite] = true;
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!fs || fs === _lkAutoSite) {
+                _refPatchOk.axlx_learn_needs_auto = false;
+                _refPatchOk.axlx_learn_auto_confirmed_at = Date.now();
+                _refPatchOk.axlx_learn_auto_linked = true;
+              }
+              chrome.storage.local.set(_refPatchOk);
+            } catch (_) {}
           });
         } else {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: true,
-            axlx_learn_auto_reflect_miss_at: Date.now(),
-            axlx_learn_auto_linked: false,
+          var _lkMissSite = _normLearnSite(_msgSite) || "realpro";
+          var _refPatchNg = {};
+          _refPatchNg["axlx_learn_needs_auto__" + _lkMissSite] = true;
+          _refPatchNg["axlx_learn_auto_reflect_miss_at__" + _lkMissSite] = Date.now();
+          _refPatchNg["axlx_learn_auto_linked__" + _lkMissSite] = false;
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!fs || fs === _lkMissSite) {
+                _refPatchNg.axlx_learn_needs_auto = true;
+                _refPatchNg.axlx_learn_auto_reflect_miss_at = Date.now();
+                _refPatchNg.axlx_learn_auto_linked = false;
+              }
+              chrome.storage.local.set(_refPatchNg);
+            } catch (_) {}
           });
-          try { console.warn("[learn] 自動完了だが learn_reflect_ok 無し → needs_auto 維持（連動未完了）"); } catch (_) {}
+          try { console.warn("[learn] 自動完了だが learn_reflect_ok 無し(" + _lkMissSite + ") → needs_auto 維持（連動未完了）"); } catch (_) {}
         }
       }
     } catch (_) {}
@@ -8082,6 +8214,8 @@ async function _reloadOrphanTabsOnInstall(details) {
     var reason = details && details.reason;
     if (reason !== "update" && reason !== "install") return;
     await new Promise(function (r) { setTimeout(r, 1500); });
+    var ver = "";
+    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
     var tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
     var reloaded = 0;
     for (var i = 0; i < (tabs || []).length; i++) {
@@ -8089,11 +8223,15 @@ async function _reloadOrphanTabsOnInstall(details) {
       if (!t || !t.id || t.discarded) continue;
       var isItandi = /^https:\/\/itandibb\.com/.test(String(t.url || ""));
       var p = isItandi ? await _probeItandiTab(t.id) : await _probeRealproTab(t.id);
-      if (!p || p.pong || p.gone) continue;
+      if (!p || p.pong || p.gone) {
+        // pong ありでも、もし応答内の extVer が現在の版と違う（旧版スクリプトが残存・かつ入力中でない）なら更新する
+        if (p && p.pong && !p.gone && ver && p.extVer && p.extVer !== ver && !p.fillRunning) {
+          try { await chrome.tabs.reload(t.id); reloaded++; } catch (_) {}
+        }
+        continue;
+      }
       try { await chrome.tabs.reload(t.id); reloaded++; } catch (_) {}
     }
-    var ver = "";
-    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
     try { await chrome.storage.session.set({ axlx_orphan_reload: { at: Date.now(), n: reloaded, ver: ver, reason: reason } }); } catch (_) {}
     console.log("[orphan] 拡張 v" + ver + "（" + reason + "）→ 古い中身のタブを " + reloaded + " 個読み直しました");
   } catch (e) { console.warn("[orphan] タブの入れ替え失敗:", e && e.message); }
@@ -9390,7 +9528,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         }
       }
       // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
-      try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }); } catch(_) {}
+      try { await _withTimeout(chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }), 4000, "set_fill_customer"); } catch(_) {}
       /**
        * ★ 2026-11-17: 新客の検索開始時に送る相手（storage）もその客へ揃える。
        *   popup が一連ロック中に次客を選んでいた／未開の時でも、物件保存が前客のままになる抜けを止める。
@@ -9511,7 +9649,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     // リアプロと同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → itandi-page-script.js
     // itandi-content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
     // v2.5.48: itandi-bulk-dl.js もこの合図を受け、自動の送信は「この入力を始めさせたお客様」で送る（popup の今の選択を後から読まない・名前も渡す）
-    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }); } catch(_) {}
+    try { await _withTimeout(chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }), 4000, "set_fill_customer"); } catch(_) {}
     // ★ 2026-11-17: 新客開始時に送る相手 storage を揃える（リアプロと同じ・物件が前客に付く抜け防止）
     try {
       await chrome.storage.local.set({
@@ -9955,6 +10093,7 @@ async function _probeRealproTab(tabId) {
     pong: pong,
     page: pong && typeof resp.page === "boolean" ? resp.page : null,
     vis: pong && typeof resp.vis === "string" ? resp.vis : null,
+    extVer: pong && resp.extVer ? String(resp.extVer) : null,
     fillRunning: pong && !!resp.fillRunning,
     fillCustomerId: pong && resp.fillCustomerId ? String(resp.fillCustomerId) : null,
     err: resp && resp.err ? String(resp.err).slice(0, 120) : null,
@@ -10111,7 +10250,7 @@ async function _probeItandiTab(tabId) {
     } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
   });
   var pong = !!(resp && !resp.err && resp.pong);
-  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, extVer: pong && resp.extVer ? String(resp.extVer) : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
 }
 
 // v2.5.48 背面（hidden）の ITANDI のタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない・リアプロの _bringRealproTabFront と同じ）。

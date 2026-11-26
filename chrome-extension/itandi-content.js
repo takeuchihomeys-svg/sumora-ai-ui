@@ -133,7 +133,9 @@
       // ── itandi スクレイプ ─────────────────────────────────────────────────
       // v2.5.45 タブの確かめ（background の _ensureItandiTab）: 中身が生きているか・検索の一覧（/rent_rooms/list）か
       if (msg.type === "axlx-ping") {
-        sendResponse({ pong: true, list: /^\/rent_rooms\/list/.test(location.pathname), vis: document.visibilityState });
+        var extVer = null;
+        try { extVer = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().version : null; } catch (_) {}
+        sendResponse({ pong: true, list: /^\/rent_rooms\/list/.test(location.pathname), vis: document.visibilityState, extVer: extVer });
         return true;
       }
       if (msg.type === "axlx-scrape-itandi") {
@@ -295,7 +297,7 @@
     }
   })();
 
-  // ★ 2026-11-27 サイト横断汚染防止: ITANDI専用の学習・位置・手順書キーを MAIN world へ中継する
+  // ★ 2026-11-27 サイト横断汚染防止: ITANDI専用の学習・位置・手順書キーを MAIN world へ中継＋裏取込・反映通知をリアプロと対等に実装
   (function () {
     var ITANDI_PUSH_KEYS = [
       "axlx_human_profile__itandi",
@@ -309,20 +311,39 @@
       "axlx_learn_scene__itandi",
       "axlx_learn_scene_flows__itandi",
       "axlx_learn_supervisor__itandi",
+      "axlx_learn_opens__itandi",
+      "axlx_learn_site_flow__itandi",
+      "axlx_learn_screen_flow__itandi",
+      "axlx_learn_seq__itandi",
+      "axlx_learn_next_mode__itandi",
+      "axlx_learn_plan__itandi",
+      "axlx_learn_motion__itandi",
+      "axlx_learn_cursor_hand__itandi",
+      "axlx_learn_gaps__itandi",
+      "axlx_learn_needs_auto__itandi",
+      "axlx_learn_stopped_scene__itandi",
+      "axlx_learn_scene_missing__itandi",
       "axlx_learn_motion",
       "axlx_motion_plan",
     ];
     var _IT_BASE_KEYS = [
       "axlx_learn_playbook", "axlx_learn_next", "axlx_learn_points",
       "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_scene_flows", "axlx_learn_supervisor",
+      "axlx_learn_opens", "axlx_learn_site_flow", "axlx_learn_screen_flow",
+      "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_plan",
+      "axlx_learn_motion", "axlx_learn_cursor_hand", "axlx_learn_gaps",
+      "axlx_learn_needs_auto", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
     ];
     function _itandiLearnView(raw) {
       var out = Object.assign({}, raw || {});
+      var isForeign = out.axlx_learn_for_site && out.axlx_learn_for_site !== "itandi";
       for (var i = 0; i < _IT_BASE_KEYS.length; i++) {
         var bk = _IT_BASE_KEYS[i];
         var ik = bk + "__itandi";
         if (Object.prototype.hasOwnProperty.call(out, ik) && out[ik] !== undefined) {
           out[bk] = out[ik];
+        } else if (isForeign) {
+          delete out[bk];
         }
       }
       return out;
@@ -352,6 +373,7 @@
             if (extraKeys.indexOf(itk) < 0) extraKeys.push(itk);
           }
         }
+        if (extraKeys.indexOf("axlx_learn_for_site") < 0) extraKeys.push("axlx_learn_for_site");
         try {
           chrome.storage.local.get(extraKeys, function (r) {
             var payload = (chrome.runtime && chrome.runtime.lastError) ? {} : _itandiLearnView(r || {});
@@ -360,6 +382,41 @@
         } catch (_) {
           try { window.postMessage({ from: "axlx-page-storage-result", id: id, data: {} }, "*"); } catch (__) {}
         }
+      } else if (e.data.from === "axlx-page-learn-refresh") {
+        var rid = e.data.id;
+        try {
+          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force, site: "itandi" }, function (res) {
+            void chrome.runtime.lastError;
+            pushAll();
+            var slim = null;
+            try {
+              if (res && typeof res === "object") {
+                slim = {
+                  ok: res.ok !== false, skipped: res.skipped || null, empty: !!res.empty,
+                  error: res.error ? String(res.error).slice(0, 80) : null,
+                  screen_solid: typeof res.screen_solid === "number" ? res.screen_solid : null,
+                  screen_all: typeof res.screen_all === "number" ? res.screen_all : null,
+                  retry_in_ms: typeof res.retry_in_ms === "number" ? res.retry_in_ms : null,
+                  ver: res.ver ? String(res.ver).slice(0, 19) : null,
+                };
+              }
+            } catch (_) { slim = null; }
+            try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid, res: slim }, "*"); } catch (_) {}
+          });
+        } catch (_) {
+          try { window.postMessage({ from: "axlx-page-learn-refresh-done", id: rid }, "*"); } catch (__) {}
+        }
+      } else if (e.data.from === "axlx-page-learn-auto-linked") {
+        try {
+          chrome.runtime.sendMessage({
+            type: "axlx-learn-auto-linked",
+            site: "itandi",
+            ok: !!e.data.ok,
+            screen: Number(e.data.screen) || 0,
+            scenes: Number(e.data.scenes) || 0,
+            flow: !!e.data.flow,
+          }, function () { void chrome.runtime.lastError; });
+        } catch (_) {}
       }
     });
     try {
@@ -368,17 +425,97 @@
           if (area !== "local" || !changes) return;
           var out = {};
           var has = false;
+          var hasItSpecific = false;
           for (var i = 0; i < ITANDI_PUSH_KEYS.length; i++) {
             var k = ITANDI_PUSH_KEYS[i];
-            if (changes[k]) { out[k] = changes[k].newValue; has = true; }
+            if (changes[k]) {
+              out[k] = changes[k].newValue;
+              has = true;
+              if (k.indexOf("__itandi") >= 0) hasItSpecific = true;
+            }
           }
           if (has) {
-            try { window.postMessage({ from: "axlx-page-learn-push", data: _itandiLearnView(out) }, "*"); } catch (_) {}
+            var emitIt = function (baseObj) {
+              try {
+                var mapped = _itandiLearnView(baseObj);
+                if (Object.keys(mapped).length) {
+                  window.postMessage({ from: "axlx-page-learn-push", data: mapped }, "*");
+                }
+              } catch (_) {}
+            };
+            if (hasItSpecific) {
+              emitIt(out);
+            } else {
+              try {
+                chrome.storage.local.get(["axlx_learn_for_site"], function (fs) {
+                  if (chrome.runtime && chrome.runtime.lastError) return;
+                  if (fs && fs.axlx_learn_for_site && fs.axlx_learn_for_site !== "itandi") return;
+                  emitIt(Object.assign({ axlx_learn_for_site: (fs && fs.axlx_learn_for_site) || "itandi" }, out));
+                });
+              } catch (_) {}
+            }
           }
         });
       }
     } catch (_) {}
     setTimeout(pushAll, 300);
     setTimeout(pushAll, 1500);
+    /** ITANDI ページを開いただけで未取込／手順書欠なら裏で ITANDI 束を取り込む（3分に1回まで） */
+    (function bootLearnIfNeeded() {
+      var BOOT_KEY = "axlx_learn_boot_refresh_at__itandi";
+      var BOOT_GAP_MS = 3 * 60 * 1000;
+      function maybe() {
+        try {
+          if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+          chrome.storage.local.get([
+            "axlx_learn_needs_auto", "axlx_learn_needs_auto__itandi",
+            "axlx_learn_ver", "axlx_learn_ver__itandi",
+            "axlx_learn_screen", "axlx_learn_screen__itandi",
+            "axlx_learn_link", "axlx_learn_link__itandi",
+            "axlx_learn_next", "axlx_learn_next__itandi",
+            "axlx_learn_points", "axlx_learn_points__itandi",
+            "axlx_learn_playbook", "axlx_learn_playbook__itandi",
+            "axlx_learn_for_site", "axlx_learn_after_update",
+            BOOT_KEY,
+          ], function (st) {
+            try {
+              if (chrome.runtime && chrome.runtime.lastError) return;
+              st = st || {};
+              var last = Number(st[BOOT_KEY]) || 0;
+              if (Date.now() - last < BOOT_GAP_MS) return;
+              var pbIt = st.axlx_learn_playbook__itandi || (st.axlx_learn_for_site === "itandi" ? st.axlx_learn_playbook : null);
+              var naIt = Object.prototype.hasOwnProperty.call(st, "axlx_learn_needs_auto__itandi")
+                ? !!st.axlx_learn_needs_auto__itandi
+                : (st.axlx_learn_for_site === "itandi" && !!st.axlx_learn_needs_auto);
+              var need = !!(st.axlx_learn_after_update || naIt || !pbIt);
+              if (!need && pbIt && typeof pbIt === "object") {
+                var bv = Number(pbIt.build_v) || 0;
+                var fs = pbIt.flow_series;
+                if (!Array.isArray(pbIt.rules) || pbIt.rules.length < 1) need = true;
+                else if (bv >= 7 && (!Array.isArray(fs) || fs.length < 5)) need = true;
+                else if (bv > 0 && bv < 7) need = true;
+              }
+              if (!need) return;
+              var patch = {};
+              patch[BOOT_KEY] = Date.now();
+              chrome.storage.local.set(patch, function () {
+                try {
+                  chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "boot_need", site: "itandi" }, function (res) {
+                    void chrome.runtime.lastError;
+                    pushAll();
+                    try {
+                      if (res && res.ok) {
+                        console.log("[itandi-content] 起動で学習束を取込:", res.skipped || "ok", "needs_auto=" + !!res.needs_auto);
+                      }
+                    } catch (_) {}
+                  });
+                } catch (_) {}
+              });
+            } catch (_) {}
+          });
+        } catch (_) {}
+      }
+      setTimeout(maybe, 1200);
+    })();
   })();
 })();

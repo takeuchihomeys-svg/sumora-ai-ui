@@ -3039,10 +3039,10 @@ function _guideLikeAreaSkip(why) {
       window.addEventListener("message", onDone);
       try {
         if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!force }, function (r) { fin(r || null); });
+          chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!force, site: "realpro" }, function (r) { fin(r || null); });
         }
       } catch (_) {}
-      try { window.postMessage({ from: "axlx-page-learn-refresh", id: id, force: !!force }, "*"); } catch (_) {}
+      try { window.postMessage({ from: "axlx-page-learn-refresh", id: id, force: !!force, site: "realpro" }, "*"); } catch (_) {}
       setTimeout(function () { fin("timeout"); }, 8000);
     });
   }
@@ -4123,7 +4123,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.311";
+  var _AXLX_PAGE_VER = "2.8.312";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4248,6 +4248,8 @@ function _guideLikeAreaSkip(why) {
     "reset_between_customers",
     "quiet_window_no_interrupt",
     "reset_before_fill",
+    "learn_reflect_before_reset",
+    "notify_done_clears_queue",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -5782,8 +5784,12 @@ function _guideLikeAreaSkip(why) {
       } catch (_) {}
     });
   } catch (_) {}
-  function _ensureLearnReflectedForFill() {
-    return new Promise(function (resolve) {
+  var _lastLearnReflectOkAt = 0;
+  var _learnReflectInflight = null;
+  function _ensureLearnReflectedForFill(opts) {
+    if (_learnReflectInflight) return _learnReflectInflight;
+    var forceFresh = !!(opts && opts.force);
+    var p = new Promise(function (resolve) {
       try { if (_audit) _auditStepP("learn_reflect_gate", "取込開始 page=" + _AXLX_PAGE_VER); } catch (_) {}
       try { if (_audit) _auditStepP("page_ver", _AXLX_PAGE_VER); } catch (_) {}
       var done = function () {
@@ -5817,10 +5823,12 @@ function _guideLikeAreaSkip(why) {
           /** 駅反映＋流れ反映の両方が揃った時だけ needs_auto を下ろす合図（MAIN→content中継含む） */
           try {
             var _linkedOk = !!(_stHit && _sk > 0 && _flowR.ok);
+            if (_linkedOk) _lastLearnReflectOkAt = Date.now();
+            window.__axlxLearnNeedsAuto = !_linkedOk;
             if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-              chrome.runtime.sendMessage({ type: "axlx-learn-auto-linked", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok });
+              chrome.runtime.sendMessage({ type: "axlx-learn-auto-linked", site: "realpro", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok });
             } else {
-              window.postMessage({ from: "axlx-page-learn-auto-linked", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok }, "*");
+              window.postMessage({ from: "axlx-page-learn-auto-linked", site: "realpro", ok: _linkedOk, screen: _sk, scenes: _sfn, flow: !!_flowR.ok }, "*");
             }
           } catch (_) {}
         } catch (_) {}
@@ -5830,7 +5838,14 @@ function _guideLikeAreaSkip(why) {
         _loadLearnNextAsync(true).then(done, done);
       };
       var warmLocal = function () {
-        _requestLearnRefresh(true).then(function (res) {
+        // 直近45秒以内に同一ページで全反映OK & 手順書有 & needs_auto無 なら強制再取得を省いて高速反映する
+        var _hasPb = !!(window.__axlxLearnPlaybook && typeof window.__axlxLearnPlaybook === "object" && Array.isArray(window.__axlxLearnPlaybook.scenes));
+        var _hasSc = !!(_learnScreen && typeof _learnScreen === "object" && Object.keys(_learnScreen).length > 0);
+        var _fastOk = !forceFresh && _lastLearnReflectOkAt > 0 && (Date.now() - _lastLearnReflectOkAt < 45000) && _hasPb && _hasSc && !window.__axlxLearnNeedsAuto;
+        var reqP = _fastOk
+          ? Promise.resolve({ ok: true, skipped: "fast_cached_45s" })
+          : _requestLearnRefresh(true);
+        reqP.then(function (res) {
           try {
             if (_audit) {
               var _rd = res === "timeout" ? "timeout8s（裏の取り直しが終わる前に読む・後から届けば反映）"
@@ -5842,20 +5857,29 @@ function _guideLikeAreaSkip(why) {
               _auditStepP("learn_refresh_res", String(_rd).slice(0, 110));
             }
           } catch (_) {}
-          return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS, ["axlx_learn_link"]), 8000, true);
+          return _storageLocalGet(_LEARN_WARM_KEYS.concat(_LEARN_NEXT_KEYS, ["axlx_learn_link", "axlx_learn_needs_auto"]), _fastOk ? 2500 : 8000, !_fastOk);
         }).then(function (r) {
           try { _applyLearnStoragePayload(r); } catch (_) {}
+          try {
+            if (r && Object.prototype.hasOwnProperty.call(r, "axlx_learn_needs_auto")) {
+              window.__axlxLearnNeedsAuto = !!r.axlx_learn_needs_auto;
+            }
+          } catch (_) {}
           try {
             var _lk = r && r.axlx_learn_link;
             if (_audit && _lk && _lk.screen_kept) {
               _auditStepP("learn_screen_kept", "束の画面位置0→" + (_lk.site || "") + "の控え 版" + String(_lk.screen_kept).slice(0, 19) + " keys=" + (_lk.screen_keys || 0));
             }
           } catch (_) {}
-          return _learnWarm(true);
+          return _learnWarm(!_fastOk);
         }).then(afterWarm, afterWarm);
       };
       warmLocal();
     });
+    _learnReflectInflight = p;
+    var clearInf = function () { if (_learnReflectInflight === p) _learnReflectInflight = null; };
+    p.then(clearInf, clearInf);
+    return p;
   }
   try { _loadLearnNext(); } catch (_) {}
 
@@ -9604,6 +9628,7 @@ function _guideLikeAreaSkip(why) {
     } catch (_) {}
     if (_doneNotified) return;
     _doneNotified = true;
+    try { if (typeof clearClickQueue === "function") clearClickQueue(); } catch (_) {}
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
     /**
      * ★ 2.8.201: 途中停止でも「この客を入れた」印を残す（次客の leftover が前客を正しく見る）。
@@ -15703,10 +15728,9 @@ function _guideLikeAreaSkip(why) {
         });
       };
       try {
-        enqueueHumanAction(function () { return _ensureLearnReflectedForFill(); }, 300, 800, "learn_reflect_gate");
-        whenClickQueueIdle(_goEstateAfterLearn);
-      } catch (_) {
         _ensureLearnReflectedForFill().then(_goEstateAfterLearn, _goEstateAfterLearn);
+      } catch (_) {
+        _goEstateAfterLearn();
       }
       // ページが移らなかった場合に備えて、少し待ってからもう一度確かめる（移っていれば欄がある）
       setTimeout(function () {
@@ -16002,12 +16026,12 @@ function _guideLikeAreaSkip(why) {
         _understandCustomerSwitch(_prevCid2, _nextCid2, cond);
       }
     } catch (_) {}
+    // ★ 2026-11-27: 先に束＋手順書の反映完了を待つ Promise を起動し、下の _doReset 入口で確実に完了を待ってから動き始める
+    var _learnReflectP = Promise.resolve(true);
     try {
-      enqueueHumanAction(function () {
-        return _ensureLearnReflectedForFill();
-      }, 700, 1200, "learn_reflect_gate");
+      _learnReflectP = _ensureLearnReflectedForFill();
     } catch (_) {
-      try { _ensureLearnReflectedForFill(); } catch (__) {}
+      _learnReflectP = Promise.resolve(true);
     }
     /**
      * ★ 2026-11-15 竹内さん「検索の条件に、次の2つも並べる: その他の要望（other_requests を「・」で区切った1つずつ）／
@@ -16671,7 +16695,9 @@ function _guideLikeAreaSkip(why) {
       }, showFormDelay); // Step0: 検索条件を表示 展開待機
     }
 
-    _doReset(function() {
+    var _startResetAfterReflect = function () {
+      if (_doneNotified || _axHumanTookOver) return;
+      _doReset(function() {
     /**
      * 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」:
      *   空のフォームの前に座った人は、いきなり駅を押さない。**まず全体をざっと見て、どこから手を付けるか決める**。
@@ -19405,6 +19431,8 @@ function _guideLikeAreaSkip(why) {
     }, 0); // _doReset内で待機済みのため即時実行
     }); // 考える間（_waitThinkThenFill）end
     }); // _doReset end
+    };
+    _learnReflectP.then(_startResetAfterReflect, _startResetAfterReflect);
   }
 
   // ── axlx-realpro-freeword-search: フリーワード検索ハンドラー ────────────────

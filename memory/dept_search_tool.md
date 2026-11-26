@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-11-27 **改善・手順書の確実な反映仕組み化と実行停止ボトルネック解消（2.8.312・PLAYBOOK_BUILD_V = 19）**
+
+竹内さん「ちゃんと拡張ツールの手順書や動きは最新のが反映されるように、そして最新のに対してボトルネックになっている部分やバグの部分取り除ける仕組みは徹底的に細かくできているのか」「改善しても反映うまくできないことが今まで多かったので、その面もちゃんと改善できるように仕組み化を徹底しておこなっていく」。
+
+### 1. 改善しても反映されなかった根本原因（ボトルネック）の除去
+1. **サーバー／CDN キャッシュで旧束が返り続ける問題**（`app/lib/human-learn-profile-guard.ts`, `app/api/human-learn-profile/route.ts`）:
+   - `?touch=0` に `bundle_v`（`${generated_at}_${rules_v}_${build_v}`）を追加し、拡張が取得時に `?v=<bundle_v>` を付与（`buildBundleFetchUrl`）。
+   - 本体 GET で `forceFresh` / `playbookRefreshed` または要求 `?v=` と実束 `actualBundleV` の不一致時は `cacheHeaders("none")`（`no-store, no-cache, must-revalidate`）で旧 CDN キャッシュを完全バイパス。
+2. **統括の自己矛盾（「一連=段階5〜6」と「自動モード完成度=0%・まだゼロ」の同居）**（`app/lib/learn-bundle-preserve.ts`）:
+   - `syncSupervisorImproveLoop` で `shots.learned` 継承後に `自動モード完成度`（`measureAutoCompletion` で `evidence`・`today`・`agenda` 再算定。`reproPct` 変数バグ修正含む）および `学習完成（期間・土台・つながり・一連）`・`学習完成の道筋`・`学習完成・つながり`・`学習完成・一連の動き` を実測値へ同期。
+3. **拡張側サイト分離と反映ゲート・配線漏れ**（`learn-refresh-gate.js`, `background.js`, `content.js`, `itandi-content.js`, `pointer-ui.js`）:
+   - `projectLearnStorageForSite(st, site)` / `buildBundleFetchUrl` を新設し、`_headCheckAtBySite` でサイト別に確認間隔を分離。共有キーを他サイト側へフォールバックしないよう遮断し、ITANDI の `pb.rules.length < 1` 時は強制リフレッシュ。
+   - `content.js`: `_realproLearnView`、全キーフル化（`PUSH_KEYS` 末尾 `"axlx_learn_gaps"` 維持）、`axlx-page-learn-refresh` / `axlx-page-learn-auto-linked` へ `site: "realpro"` 明示、`axlx-ping` に `extVer` 返却。
+   - `itandi-content.js`: `_itandiLearnView`、他サイト共有遮断、`axlx-page-learn-refresh` / `axlx-page-learn-auto-linked`（`site: "itandi"`）中継、`bootLearnIfNeeded`（`__itandi` 監視）、`axlx-ping` に `extVer` 返却。
+   - `pointer-ui.js`: `CURSOR_HAND_KEY` / `MOTION_KEY` に `__realpro` / `__itandi` 優先＋フォールバック、`moveToEl(el, opts)` の `opts.aim` 対応。
+4. **SW 途中終了・ハング・古いタブ残存の解消**（`background.js`, `search-audit.js`, `underbar.js`, `popup.js`）:
+   - `search-audit.js` に `_auditPersistNow`（`begin` / `attachFill` / `attachResult` / `finish` の即時 `chrome.storage.session` 永続化）・`adopt()` 復元時の `restored: true`・`listOpen()` を追加。
+   - `background.js` に `_manualBulkRun` 開始時の未完了掃除（`superseded_by_new_bulk`）、SW 起動時 90秒ウォッチドッグ（`batch_done_sw_watchdog`）、`axlx-set-fill-customer` 全4箇所の 4秒タイムアウト保護（`_withTimeout`）、`_reloadOrphanTabsOnInstall` の `extVer !== ver && !p.fillRunning` 旧タブ強制リロードを追加。
+   - `underbar.js`: `startForward` 8秒フォールバック＋二重発火ガード、`Extension context invalidated` 時の赤リロードバナー `_showReloadBanner`。`popup.js`: `ext_behind` 警告を両サイト共通文言へ改善。
+5. **実操作フロー・順番バグの解消**（`page-script.js`, `itandi-page-script.js`, `auto-procedure-rules.ts`, `auto-itandi-rules.ts`）:
+   - `page-script.js`: `_startResetAfterReflect` により反映ゲート `_learnReflectP` 完了後に `_doReset` を開始する順序へ変更し、`notifyDone` で `clearClickQueue()` を必ず実行。リアプロ決まり正本に `learn_reflect_before_reset`, `notify_done_clears_queue` 追加。
+   - `itandi-page-script.js`: `_itEnsureLearnReflectedForFill`（`fill()` の `_itResetForm` 前および `_guideOn()` で実行）、`_itSerialType`（`rent_max`/`rent_min`/`area_min`/`area_max`/`walk_minutes`/`building_age` の複数数値入力をカーソル取り合い無しで直列完了待機・単体抜き出しテスト互換維持）、`_pointerMoveTo`/`_humanClick` の学習位置 `aim`（`learnNames` 指定含む）反映を実装。ITANDI 決まり正本に `it_learn_reflect_gate`, `it_learn_aim_pointer`, `it_serial_numeric_input` 追加。
+   - 版数統一：`manifest.json` = `_AXLX_PAGE_VER` = `_AXLX_ITANDI_PAGE_VER` = `AUTO_RULES_REVIEWED_UP_TO` = `ITANDI_RULES_REVIEWED_UP_TO` = **`2.8.312`**。
+
+### 2. 「直しても抜けない・すぐ検知する」仕組み化（自動検証と監視）
+- `scripts/check-playbook-sync.ts` に **⑦ 反映仕組みの自己点検**（CDNバイパス・サイト分離・統括同期・SW耐性・ITANDI配管の 9項目決定論チェック）を追加。
+- `app/lib/__tests__/reflect-mechanism-hardening.test.ts`（24/0：CDNバイパス・統括自己矛盾同期・正本/拡張構文検証 `vm.Script` + `node --input-type=module --check`）と `tests/chrome-extension/reflect-pipeline-v28312.test.js`（11/0）を新設し、`.githooks/pre-commit` へ組み込み。
+- 仕様強化に伴い旧正規表現がズレていた4本の拡張テスト（`head-ttl-served-v2310`, `human-reset-orphan-v2294`, `look-before-act-v2610`, `task-gate-no-forced-refetch-v2309`）を最新仕様照合へ更新。
+
+**検証結果（すべて 2.8.312 で完走）**
+- `npx tsx scripts/ext-test-all.ts`: 全345本 青 233 / 赤 112（**新規赤 0本**、基準維持）
+- `reflect-mechanism-hardening.test.ts`: 24 passed / 0 failed、`reflect-pipeline-v28312.test.js`: 11 passed / 0 failed
+- `pre-commit` 全テスト（`site-split-guard`, `notation-copies-sync`, `realpro-guide-town`, `site-key`, `playbook-site-split`, `auto-rules-verify-exists`, `playbook-rule-evidence`, `learn-opens-and-itandi-flow`, `playbook-gap-baseline`, `playbook-clean-and-itandi-sync`, `site-contamination-guard`, `playbook-and-motion-hardening`, `auto-procedure-rules`, `itandi-rules-separate`, `head-ttl-served-v2310`, `learn-bundle-site-sync`）全合格
+- `npx tsc --noEmit`: 今回編集・新規作成ファイルの型エラー 0件（既存テスト 8ファイルのみ以前のまま）
+- `check-playbook-sync.ts` ⑥ の `itandi` で既知の抜け1件（「条件：押す位置を学んでいない手」が実記録1〜2票化により「押す位置の票が3回未満の手（③揃ったら検索ボタンへ進む）」へ変化・要竹内さん確認）を検出。
+
+**反映手順（次ステップ）**: commit & push（main → Vercel 本番）→ `attach-playbook --apply` → 手元 Chrome 拡張 `git pull` & 再読み込み（`2.8.312`）→ タブ開き直し・自動1回後に `check-playbook-sync.ts` 完了確認。
+
+---
+
 ## 2026-11-27 **残課題の徹底改善・実データ確認とリアプロ手順書の完全整理（PLAYBOOK_BUILD_V = 18・2.8.310）**
 
 竹内さん「ほかに改善できていない部分あれば改善する」「ちゃんとリアプロ手順書も綺麗に整理されたのか徹底的に確認する」。

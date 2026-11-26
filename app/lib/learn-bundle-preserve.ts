@@ -22,6 +22,7 @@ import { rulesReviewedUpToFor } from "./auto-itandi-rules";
 import { SCENE_JA, describeSceneFlow, type SceneFlow } from "./learn-flow-steps";
 import { buildLinkPipeline, type BundleReflectHint } from "./bundle-reflect";
 import { buildImproveLoop } from "./improve-loop";
+import { measureAutoCompletion } from "./learn-improve-mech";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -362,12 +363,15 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
       evidence?: Array<{ label?: string; value?: string; guessed?: boolean }>;
       agenda?: Array<{ priority?: number; topic?: string; why?: string; decide?: string }>;
     } | null | undefined;
+    const todayArr = Array.isArray((t as { today?: unknown }).today) ? ((t as { today?: unknown[] }).today as string[]) : null;
     const ev = Array.isArray(meeting?.evidence) ? meeting!.evidence! : null;
     if (!ev) continue;
 
     const rowLink = ev.find((r) => r && r.label === "学習→自動の連携");
     const rowLoop = ev.find((r) => r && r.label === "改善までの一連");
-    if (!rowLink && !rowLoop) continue;
+    const rowAutoComp = ev.find((r) => r && r.label === "自動モード完成度");
+    const rowChain = ev.find((r) => r && r.label === "学習完成（期間・土台・つながり・一連）");
+    if (!rowLink && !rowLoop && !rowAutoComp && !rowChain) continue;
 
     const sampleLine = String(rowLoop?.value || rowLink?.value || "");
     const mPhoto = sampleLine.match(/写真Storage保存✓\s*（(\d+)枚|（(\d+)枚（human-motion-shots/);
@@ -453,6 +457,162 @@ export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?
         } else {
           meeting!.agenda!.splice(idxAg, 1);
           updated++;
+        }
+      }
+    }
+
+    // ★ 2026-11-27: 同じ束の中で「改善までの一連=段階5」と「自動モード完成度／学習完成=段階3・画面位置3/6✗」が矛盾しないよう同期する
+    if (rowAutoComp) {
+      const valStr = String(rowAutoComp.value || "");
+      const mRepro = valStr.match(/人間らしさの再現(\d+)%/);
+      const mFine = valStr.match(/欄×観点(\d+)%/);
+      const mPrec = valStr.match(/精度(\d+)%/);
+      const humanOk = /人間として自動できるか10\/10/.test(valStr) || /人間として可/.test(valStr);
+      const todayCompLine = todayArr?.find((s) => typeof s === "string" && s.startsWith("自動モード完成度 ")) || "";
+      const mReproT = todayCompLine.match(/再現(\d+)％/);
+      const mFineT = todayCompLine.match(/欄×観点(\d+)％/);
+      const mPrecT = todayCompLine.match(/精度(\d+)％/);
+      const reproPct = mRepro ? Number(mRepro[1]) : (mReproT ? Number(mReproT[1]) : null);
+      const fineAvg = mFine ? Number(mFine[1]) : (mFineT ? Number(mFineT[1]) : null);
+      const precisionScore = mPrec ? Number(mPrec[1]) : (mPrecT ? Number(mPrecT[1]) : null);
+      const oldRemainM = valStr.match(/残り:\s*([^／]+)/);
+      const oldReproRemains = (oldRemainM?.[1] || "")
+        .split("・")
+        .map((x) => x.trim())
+        .filter((x) => x.startsWith("再現:"))
+        .map((x) => x.replace(/^再現:\s*/, ""));
+      const ac = measureAutoCompletion({
+        improveSteps: loop.steps,
+        bottleneckN: loop.bottleneck_n,
+        reproducePct: reproPct,
+        reproduceRemain: oldReproRemains,
+        fineAvg,
+        precisionScore,
+        humanAutoOk: humanOk,
+        challengeN: chFields.length,
+      });
+      const nextEvVal = `${ac.line}／内訳: ${ac.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り: ${ac.remain.slice(0, 4).join("・") || "なし"}／${ac.learnHint}`;
+      if (rowAutoComp.value !== nextEvVal) {
+        rowAutoComp.value = nextEvVal;
+        rowAutoComp.guessed = ac.score < 85;
+        updated++;
+      }
+      if (todayArr) {
+        const idxTLine = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("自動モード完成度 "));
+        if (idxTLine >= 0 && todayArr[idxTLine] !== ac.line) {
+          todayArr[idxTLine] = ac.line;
+          updated++;
+        }
+        const idxTRem = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("完成度の残り:"));
+        if (ac.remain.length) {
+          const nextRemLine = `完成度の残り: ${ac.remain.slice(0, 5).join("・")}`;
+          if (idxTRem >= 0 && todayArr[idxTRem] !== nextRemLine) {
+            todayArr[idxTRem] = nextRemLine;
+            updated++;
+          }
+        } else if (idxTRem >= 0) {
+          todayArr.splice(idxTRem, 1);
+          updated++;
+        }
+        const idxTHint = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("完成度↑:"));
+        if (idxTHint >= 0 && todayArr[idxTHint] !== ac.learnHint) {
+          todayArr[idxTHint] = ac.learnHint;
+          updated++;
+        }
+      }
+      if (Array.isArray(meeting?.agenda)) {
+        const idxAgAc = meeting!.agenda!.findIndex((a) => typeof a?.topic === "string" && /^自動モード完成度(?:[\s:：\/／（(]|$)/.test(a.topic));
+        if (idxAgAc >= 0) {
+          const nextTop = `自動モード完成度 ${ac.score}/100（${ac.grade}）`;
+          const nextWhy = `内訳 ${ac.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り ${ac.remain.slice(0, 3).join("・") || "なし"}`;
+          if (meeting!.agenda![idxAgAc].topic !== nextTop || meeting!.agenda![idxAgAc].why !== nextWhy || meeting!.agenda![idxAgAc].decide !== ac.learnHint) {
+            meeting!.agenda![idxAgAc].topic = nextTop;
+            meeting!.agenda![idxAgAc].why = nextWhy;
+            meeting!.agenda![idxAgAc].decide = ac.learnHint;
+            updated++;
+          }
+        }
+      }
+    }
+
+    if (rowChain || ev.some((r) => r && (r.label === "学習完成・つながり" || r.label === "学習完成・一連の動き"))) {
+      const rowPPeriod = ev.find((r) => r && r.label === "学習完成・学習期間");
+      const rowPFound = ev.find((r) => r && r.label === "学習完成・土台");
+      const rowPLink = ev.find((r) => r && r.label === "学習完成・つながり");
+      const rowPSeries = ev.find((r) => r && r.label === "学習完成・一連の動き");
+      const rowPath = ev.find((r) => r && r.label === "学習完成の道筋");
+
+      const linkBnM = pipe.bottleneck ? pipe.bottleneck.match(/段階\s*(\d+)/) : null;
+      const linkBn = linkBnM ? Number(linkBnM[1]) : null;
+      const linkDone = (screenSolid >= 30 && hint.read_count >= 1 && hint.auto_after) || (linkBn == null && screenSolid >= 30);
+      const linkLineStr = pipe.bottleneck || pipe.line;
+      const linkNext = screenSolid < 30
+        ? "画面位置 solid を履歴から復元（F1/F33）"
+        : (hint.read_count < 1
+          ? "拡張再読込で束を読む（read_count）"
+          : (!hint.auto_after ? "自動1回（F6）" : "連携段を再測"));
+      const seriesDone = loop.bottleneck_n == null && !!loop.improve_line;
+      const seriesNext = loop.bottleneck_n != null
+        ? `improve_loop 段階${loop.bottleneck_n}の次手（photo_learn/再読込/自動/効果）`
+        : "一連の印を束に載せる";
+
+      if (rowPLink) {
+        const nextV = `${linkDone ? "✓" : "✗"} ${linkLineStr}${linkDone ? "" : `／次=${linkNext}`}`;
+        if (rowPLink.value !== nextV) { rowPLink.value = nextV; rowPLink.guessed = !linkDone; updated++; }
+      }
+      if (rowPSeries) {
+        const nextV = `${seriesDone ? "✓" : "✗"} ${loop.improve_line}${seriesDone ? "" : `／次=${seriesNext}`}`;
+        if (rowPSeries.value !== nextV) { rowPSeries.value = nextV; rowPSeries.guessed = !seriesDone; updated++; }
+      }
+
+      const parsePillar = (row: { value?: string; guessed?: boolean } | undefined, name: string) => {
+        const raw = String(row?.value || "");
+        const okFlag = raw.startsWith("✓");
+        const cleanBody = raw.replace(/^[✓✗]\s*/, "");
+        const parts = cleanBody.split("／次=");
+        return { name, ok: okFlag, line: parts[0] || "", next: parts[1] || "" };
+      };
+      const pillars = [
+        parsePillar(rowPPeriod, "学習期間"),
+        parsePillar(rowPFound, "土台"),
+        { name: "つながり", ok: linkDone, line: linkLineStr, next: linkNext },
+        { name: "一連の動き", ok: seriesDone, line: loop.improve_line, next: seriesNext },
+      ].filter((p) => p.line || p.name === "つながり" || p.name === "一連の動き");
+      const doneN = pillars.filter((p) => p.ok).length;
+      const totalN = pillars.length;
+      const allOk = totalN > 0 && doneN === totalN;
+      const stuck = pillars.find((p) => !p.ok) || null;
+      const chainLine = allOk
+        ? `学習完成: 期間・土台・つながり・一連 すべて✓（${doneN}/${totalN}）`
+        : `学習完成: ${doneN}/${totalN} ✓／止=${stuck?.name}／${stuck?.line || ""}`;
+      const chainNext = stuck?.next || "維持: 4本柱を毎回測る";
+      const pathStr = pillars
+        .filter((p) => !p.ok)
+        .map((p, i) => `${i + 1}.${p.name}:${p.next}`)
+        .join(" → ")
+        || "完成済み→自動1回で効果確認のみ";
+
+      if (rowChain) {
+        const nextV = chainLine + (allOk ? "" : `／次=${chainNext}`);
+        if (rowChain.value !== nextV) { rowChain.value = nextV; rowChain.guessed = !allOk; updated++; }
+      }
+      if (rowPath) {
+        if (rowPath.value !== pathStr) { rowPath.value = pathStr; rowPath.guessed = !allOk; updated++; }
+      }
+      if (Array.isArray(meeting?.agenda)) {
+        const idxCh = meeting!.agenda!.findIndex((a) => a?.topic === "学習期間・土台・つながり・一連を完成させる");
+        if (idxCh >= 0) {
+          if (allOk) {
+            meeting!.agenda!.splice(idxCh, 1);
+            updated++;
+          } else if (stuck) {
+            const nextWhy = `${stuck.name}: ${stuck.line}`;
+            if (meeting!.agenda![idxCh].why !== nextWhy || meeting!.agenda![idxCh].decide !== pathStr) {
+              meeting!.agenda![idxCh].why = nextWhy;
+              meeting!.agenda![idxCh].decide = pathStr;
+              updated++;
+            }
+          }
         }
       }
     }

@@ -199,12 +199,25 @@
    */
   let _pendingTimer = null;
 
+  function _showReloadBanner(why) {
+    try {
+      if (document.getElementById("axlx-reload-banner")) return;
+      var b = document.createElement("div");
+      b.id = "axlx-reload-banner";
+      b.style.cssText = "position:fixed;top:10px;right:12px;z-index:2147483647;background:#b91c1c;color:#fff;padding:10px 14px;border-radius:8px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35);display:flex;align-items:center;gap:10px;cursor:pointer;font-family:sans-serif;";
+      b.innerHTML = '<span>🔄 拡張機能が更新されました。最新を反映するにはこのページを再読み込みしてください' + (why ? ' (' + String(why).slice(0, 24) + ')' : '') + '</span><button type="button" style="background:#fff;color:#b91c1c;border:none;border-radius:5px;padding:4px 10px;font-weight:700;cursor:pointer;">再読み込み</button>';
+      b.addEventListener("click", function () { try { location.reload(); } catch (_) {} });
+      if (document.body) document.body.appendChild(b);
+    } catch (_) {}
+  }
+
   function ensureIframe() {
     if (iframe) return iframe;
-    // 拡張コンテキスト無効（extension reload後）のとき getURL が throw する → null 返却でパネル無効化
+    // 拡張コンテキスト無効（extension reload後）のとき getURL が throw する → null 返却＋目立つ再読み込みバナー表示
     let popupUrl;
     try { popupUrl = chrome.runtime.getURL("popup.html"); } catch (_e) {
       wrap.title = "🔄 ページをリロードしてパネルを復活";
+      _showReloadBanner("拡張更新検知");
       return null;
     }
     /**
@@ -938,6 +951,7 @@
   });
 
   // iframe が無ければ作って load を待ってから渡す（switch-customer と search-focus の共通・v2.5.86 で関数に）
+  // 2026-11-27: load イベントが来ない／既に complete のケースで永久無応答にならないよう 8秒フォールバックを付与
   function startForward(fn, sendResponse) {
     if (!iframe) {
       // iframeが未作成（遅延初期化）→ 今すぐ作成してload後に転送
@@ -949,12 +963,18 @@
         return true;
       }
       console.log("[underbar] iframe作成完了 → loadイベント待機中");
-      // load完了後にpopup.jsの初期化を待って転送（allCustomers fetchも含め1秒待機）
-      iframe.addEventListener("load", function _onLoad() {
-        iframe.removeEventListener("load", _onLoad);
-        console.log("[underbar] iframe load完了 → 1秒後に転送");
-        setTimeout(fn, _sd(1000)); // 2026-09-27 毎回ばらつかせる（元より短くしない＝popup の初期化待ちを削らない）
-      });
+      var fired = false;
+      var fireOnce = function (why) {
+        if (fired) return;
+        fired = true;
+        try { clearTimeout(fbTimer); } catch (_) {}
+        try { iframe.removeEventListener("load", _onLoad); } catch (_) {}
+        console.log("[underbar] iframe ready (" + why + ") → 1秒後に転送");
+        setTimeout(fn, _sd(1000));
+      };
+      var _onLoad = function () { fireOnce("load"); };
+      var fbTimer = setTimeout(function () { fireOnce("load-timeout-8s"); }, 8000);
+      iframe.addEventListener("load", _onLoad);
     } else {
       fn();
     }

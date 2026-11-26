@@ -340,11 +340,14 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
       // ★ 2026-11-17: fillRunning／fillCustomerId も返す（次客溜まり→誤更新の防止）
       _axPingPage(700).then(function (p) {
         var pageOk = !!(p && p.page);
+        var extVer = null;
+        try { extVer = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().version : null; } catch (_) {}
         sendResponse({
           ok: true,
           pong: true,
           page: pageOk,
           vis: document.visibilityState,
+          extVer: extVer,
           fillRunning: !!(p && p.fillRunning),
           fillCustomerId: (p && p.fillCustomerId) || null,
           fillGen: (p && p.fillGen) || 0,
@@ -584,11 +587,19 @@ window.addEventListener("message", function (e) {
     "axlx_learn_for_site",
     "axlx_learn_playbook__realpro", "axlx_learn_next__realpro", "axlx_learn_points__realpro",
     "axlx_learn_screen__realpro", "axlx_learn_scene__realpro", "axlx_learn_scene_flows__realpro",
+    "axlx_learn_opens__realpro", "axlx_learn_site_flow__realpro", "axlx_learn_screen_flow__realpro",
+    "axlx_learn_seq__realpro", "axlx_learn_next_mode__realpro", "axlx_learn_plan__realpro",
+    "axlx_learn_motion__realpro", "axlx_learn_cursor_hand__realpro", "axlx_learn_gaps__realpro",
+    "axlx_learn_needs_auto__realpro", "axlx_learn_stopped_scene__realpro", "axlx_learn_scene_missing__realpro",
     "axlx_learn_gaps",
   ];
   var _RP_LEARN_BASE_KEYS = [
     "axlx_learn_playbook", "axlx_learn_next", "axlx_learn_points",
     "axlx_learn_screen", "axlx_learn_scene", "axlx_learn_scene_flows",
+    "axlx_learn_opens", "axlx_learn_site_flow", "axlx_learn_screen_flow",
+    "axlx_learn_seq", "axlx_learn_next_mode", "axlx_learn_plan",
+    "axlx_learn_motion", "axlx_learn_cursor_hand", "axlx_learn_gaps",
+    "axlx_learn_needs_auto", "axlx_learn_stopped_scene", "axlx_learn_scene_missing",
   ];
   function _realproLearnView(raw) {
     var out = Object.assign({}, raw || {});
@@ -643,7 +654,7 @@ window.addEventListener("message", function (e) {
     } else if (e.data.from === "axlx-page-learn-refresh") {
       var rid = e.data.id;
       try {
-        chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force }, function (res) {
+        chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: !!e.data.force, site: "realpro" }, function (res) {
           void chrome.runtime.lastError;
           pushAll();
           var slim = null;
@@ -668,6 +679,7 @@ window.addEventListener("message", function (e) {
       try {
         chrome.runtime.sendMessage({
           type: "axlx-learn-auto-linked",
+          site: "realpro",
           ok: !!e.data.ok,
           screen: Number(e.data.screen) || 0,
           scenes: Number(e.data.scenes) || 0,
@@ -690,20 +702,36 @@ window.addEventListener("message", function (e) {
         if (area !== "local" || !changes) return;
         var out = {};
         var has = false;
+        var hasRpSpecific = false;
         for (var i = 0; i < PUSH_KEYS.length; i++) {
           var k = PUSH_KEYS[i];
-          if (changes[k]) { out[k] = changes[k].newValue; has = true; }
+          if (changes[k]) {
+            out[k] = changes[k].newValue;
+            has = true;
+            if (k.indexOf("__realpro") >= 0) hasRpSpecific = true;
+          }
         }
         if (has) {
-          try {
-            var mapped = Object.assign({}, out);
-            for (var bi = 0; bi < _RP_LEARN_BASE_KEYS.length; bi++) {
-              var bkk = _RP_LEARN_BASE_KEYS[bi];
-              var rkk = bkk + "__realpro";
-              if (Object.prototype.hasOwnProperty.call(mapped, rkk)) mapped[bkk] = mapped[rkk];
-            }
-            window.postMessage({ from: "axlx-page-learn-push", data: mapped }, "*");
-          } catch (_) {}
+          // 共有キーだけの変化時は他サイト(itandi)混入を防ぐため現在の axlx_learn_for_site を確認してから流す
+          var emit = function (baseObj) {
+            try {
+              var mapped = _realproLearnView(baseObj);
+              if (Object.keys(mapped).length) {
+                window.postMessage({ from: "axlx-page-learn-push", data: mapped }, "*");
+              }
+            } catch (_) {}
+          };
+          if (hasRpSpecific) {
+            emit(out);
+          } else {
+            try {
+              chrome.storage.local.get(["axlx_learn_for_site"], function (fs) {
+                if (chrome.runtime && chrome.runtime.lastError) return;
+                if (fs && fs.axlx_learn_for_site && fs.axlx_learn_for_site !== "realpro") return;
+                emit(Object.assign({ axlx_learn_for_site: (fs && fs.axlx_learn_for_site) || "realpro" }, out));
+              });
+            } catch (_) {}
+          }
         }
       });
     }
@@ -712,17 +740,22 @@ window.addEventListener("message", function (e) {
   setTimeout(pushAll, 1500);
   /**
    * ★ 2026-11-22 2.8.183: リアプロページを開いただけで、未取込／手順書欠なら裏で束を取る。
-   *   ポップアップを開かなくても新束へ寄せる（3分に1回まで）。
+   *   ポップアップを開かなくても新束へ寄せる（3分に1回まで）。サイト専用キー(__realpro)で判定。
    */
   (function bootLearnIfNeeded() {
-    var BOOT_KEY = "axlx_learn_boot_refresh_at";
+    var BOOT_KEY = "axlx_learn_boot_refresh_at__realpro";
     var BOOT_GAP_MS = 3 * 60 * 1000;
     function maybe() {
       try {
         if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
         chrome.storage.local.get([
-          "axlx_learn_needs_auto", "axlx_learn_ver", "axlx_learn_screen", "axlx_learn_link",
-          "axlx_learn_next", "axlx_learn_points", "axlx_learn_playbook", "axlx_learn_playbook__realpro",
+          "axlx_learn_needs_auto", "axlx_learn_needs_auto__realpro",
+          "axlx_learn_ver", "axlx_learn_ver__realpro",
+          "axlx_learn_screen", "axlx_learn_screen__realpro",
+          "axlx_learn_link", "axlx_learn_link__realpro",
+          "axlx_learn_next", "axlx_learn_next__realpro",
+          "axlx_learn_points", "axlx_learn_points__realpro",
+          "axlx_learn_playbook", "axlx_learn_playbook__realpro",
           "axlx_learn_for_site", "axlx_learn_after_update",
           BOOT_KEY,
         ], function (st) {
@@ -732,7 +765,10 @@ window.addEventListener("message", function (e) {
             var last = Number(st[BOOT_KEY]) || 0;
             if (Date.now() - last < BOOT_GAP_MS) return;
             var pbReal = st.axlx_learn_playbook__realpro || (st.axlx_learn_for_site !== "itandi" ? st.axlx_learn_playbook : null);
-            var need = !!(st.axlx_learn_after_update || st.axlx_learn_needs_auto || !pbReal);
+            var naReal = Object.prototype.hasOwnProperty.call(st, "axlx_learn_needs_auto__realpro")
+              ? !!st.axlx_learn_needs_auto__realpro
+              : (st.axlx_learn_for_site !== "itandi" && !!st.axlx_learn_needs_auto);
+            var need = !!(st.axlx_learn_after_update || naReal || !pbReal);
             if (!need) {
               var pb = pbReal;
               if (pb && typeof pb === "object") {
@@ -747,7 +783,7 @@ window.addEventListener("message", function (e) {
             patch[BOOT_KEY] = Date.now();
             chrome.storage.local.set(patch, function () {
               try {
-                chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "boot_need" }, function (res) {
+                chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "boot_need", site: "realpro" }, function (res) {
                   void chrome.runtime.lastError;
                   pushAll();
                   try {

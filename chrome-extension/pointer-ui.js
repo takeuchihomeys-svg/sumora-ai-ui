@@ -238,13 +238,15 @@
   var _points = null;
   var _pointsLoadedAt = 0;
   /** ★ 2026-11-16: 通常録画から学んだ「手が付く欄」（axlx_learn_cursor_hand） */
-  var CURSOR_HAND_KEY = "axlx_learn_cursor_hand";
+  var CURSOR_HAND_KEY = "axlx_learn_cursor_hand" + _ptrSiteSuffix;
+  var CURSOR_HAND_SHARED_KEY = "axlx_learn_cursor_hand";
   var _handFields = null;
   var _handLoadedAt = 0;
   /** ★ 2026-11-18 MAIN world(pointer-ui) 向け: content.js 橋＋localStorage キャッシュから癖/位置/手の形を読む */
-  var _PTR_CACHE_KEY = "axlx_pointer_cache";
+  var _PTR_CACHE_KEY = "axlx_pointer_cache" + _ptrSiteSuffix;
   /** ★ 2026-11-19 v2.8.25: サーバーで学んだ動き／ラン単位の動き計画（content.js の橋で届く） */
-  var MOTION_KEY = "axlx_learn_motion";
+  var MOTION_KEY = "axlx_learn_motion" + _ptrSiteSuffix;
+  var MOTION_SHARED_KEY = "axlx_learn_motion";
   var PLAN_KEY = "axlx_motion_plan";
   function _root() {
     try {
@@ -288,6 +290,7 @@
       }
       if (r[POINTS_KEY] && typeof r[POINTS_KEY] === "object") _points = r[POINTS_KEY];
       if (r[CURSOR_HAND_KEY] && typeof r[CURSOR_HAND_KEY] === "object") _handFields = r[CURSOR_HAND_KEY];
+      else if (r[CURSOR_HAND_SHARED_KEY] && typeof r[CURSOR_HAND_SHARED_KEY] === "object" && (!r.axlx_learn_for_site || r.axlx_learn_for_site === _ptrSite)) _handFields = r[CURSOR_HAND_SHARED_KEY];
       /**
        * ★ 2026-11-19 v2.8.25: サーバーで学んだ動き（axlx_learn_motion）と動き計画（axlx_motion_plan）を MAIN world の
        *   グローバルへ置く。human-learn.js の _serverMotion は chrome.storage が無い時にこれを読む。
@@ -302,6 +305,8 @@
       if (!_R || !r || typeof r !== "object") return;
       if (Object.prototype.hasOwnProperty.call(r, MOTION_KEY)) {
         _R.__axlxServerMotion = (r[MOTION_KEY] && typeof r[MOTION_KEY] === "object") ? r[MOTION_KEY] : null;
+      } else if (Object.prototype.hasOwnProperty.call(r, MOTION_SHARED_KEY) && (!r.axlx_learn_for_site || r.axlx_learn_for_site === _ptrSite)) {
+        _R.__axlxServerMotion = (r[MOTION_SHARED_KEY] && typeof r[MOTION_SHARED_KEY] === "object") ? r[MOTION_SHARED_KEY] : null;
       }
       if (Object.prototype.hasOwnProperty.call(r, PLAN_KEY)) {
         _R.__axlxMotionPlan = (r[PLAN_KEY] && typeof r[PLAN_KEY] === "object") ? r[PLAN_KEY] : null;
@@ -990,35 +995,29 @@
     });
   }
 
-  /** 要素の真ん中あたりへ動く（人が狙う少しずらした点） */
-  function moveToEl(el) {
+  /** 要素の真ん中あたりへ動く（人が狙う少しずらした点）。opts.aim があれば学習位置として最優先で使う */
+  function moveToEl(el, opts) {
     try {
       if (!el || !el.getBoundingClientRect) return Promise.resolve(false);
       _tapEl = el;  // 2026-11-11: 押す時に「どの要素か」を記録側へ渡せるように覚える
       var r = el.getBoundingClientRect();
       if (!r || (r.width <= 0 && r.height <= 0)) return Promise.resolve(false);
-      /**
-       * 2026-11-11 竹内さん「ボタンのどこ押すかもちゃんとたまるんかな」:
-       *   通常モードで覚えた**押す位置の癖**（真ん中ではなく左寄り等）があれば、その割合で狙う。
-       *   無ければ今まで通り 40〜60%（ほぼ真ん中）。
-       */
       var prof = _profile();
       var fx = 0.4 + Math.random() * 0.2;
       var fy = 0.4 + Math.random() * 0.2;
-      /**
-       * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
-       *   これまでは**全体の平均**（1つの `aim`）だけだったので、たとえば
-       *   「賃料は左寄り・検索ボタンは真ん中」のような**要素ごとの違い**が学習に残っていなかった。
-       *   → 要素ごとの実測（`axlx_human_points`・`point_fields`）があれば**そちらを優先**する。
-       *     無ければ今まで通り全体の平均（`prof.aim`）→ それも無ければ真ん中。
-       */
+      var explicitAim = opts && opts.aim && typeof opts.aim.x === "number" && typeof opts.aim.y === "number" ? opts.aim : null;
       var perEl = null;
-      try {
-        var LE = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
-        var nm = el && LE && LE.fieldName ? LE.fieldName(el) : null;
-        if (nm && _pointsFor) perEl = _pointsFor(nm);
-      } catch (_) {}
-      if (perEl) {
+      if (!explicitAim) {
+        try {
+          var LE = (typeof self !== "undefined" ? self : window).AxlxHumanLearn;
+          var nm = el && LE && LE.fieldName ? LE.fieldName(el) : null;
+          if (nm && _pointsFor) perEl = _pointsFor(nm);
+        } catch (_) {}
+      }
+      if (explicitAim) {
+        fx = Math.max(0.12, Math.min(0.88, explicitAim.x + (Math.random() - 0.5) * 0.24));
+        fy = Math.max(0.12, Math.min(0.88, explicitAim.y + (Math.random() - 0.5) * 0.24));
+      } else if (perEl) {
         // ★ 2026-11-16: 学習位置のまわりを広めにずらす（お客ごとに同じ点に見えない）
         fx = Math.max(0.12, Math.min(0.88, perEl.x + (Math.random() - 0.5) * 0.28));
         fy = Math.max(0.12, Math.min(0.88, perEl.y + (Math.random() - 0.5) * 0.28));

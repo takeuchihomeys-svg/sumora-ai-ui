@@ -13,7 +13,7 @@
   function _itFG() { return (typeof self !== "undefined" ? self : window).AxlxItandiFormGuard; }
 
   // ★ 2026-11-27 ITANDI 専用手順書（app/lib/auto-itandi-rules.ts と id 一覧・版を揃える）
-  var _AXLX_ITANDI_PAGE_VER = "2.8.311";
+  var _AXLX_ITANDI_PAGE_VER = "2.8.312";
   try { window.__axlxItandiPageVer = _AXLX_ITANDI_PAGE_VER; } catch (_) {}
   var _AXLX_ITANDI_RULES_DONE = [
     "it_reset_before_fill",
@@ -30,7 +30,13 @@
     "it_dup_fill_ignored",
     "it_list_next_handoff",
     "it_list_no_rows_stop",
+    "it_learn_reflect_gate",
+    "it_learn_aim_pointer",
+    "it_serial_numeric_input",
   ];
+  var _itLearnDataAt = 0;
+  var _itLearnReflectOkAt = 0;
+  var _itLearnReflectInflight = null;
   function _itApplyLearnData(d) {
     if (!d || typeof d !== "object") return;
     try {
@@ -39,24 +45,110 @@
       if (d.axlx_learn_points && typeof d.axlx_learn_points === "object") window.__axlxLearnPoints = d.axlx_learn_points;
       if (d.axlx_learn_next && typeof d.axlx_learn_next === "object") window.__axlxLearnNext = d.axlx_learn_next;
       if (d.axlx_learn_scene_flows && Array.isArray(d.axlx_learn_scene_flows)) window.__axlxLearnSceneFlows = d.axlx_learn_scene_flows;
+      if (Object.prototype.hasOwnProperty.call(d, "axlx_learn_needs_auto")) window.__axlxItandiNeedsAuto = !!d.axlx_learn_needs_auto;
+      _itLearnDataAt = Date.now();
     } catch (_) {}
   }
   var _itLearnReqSeq = 0;
-  function _itRequestLearnStorage() {
-    try {
+  function _itRequestLearnStorage(timeoutMs) {
+    return new Promise(function (resolve) {
+      var done = false;
       var rid = "it_" + (++_itLearnReqSeq) + "_" + Date.now();
-      window.postMessage({
-        from: "axlx-page-storage-get",
-        id: rid,
-        keys: [
-          "axlx_learn_playbook",
-          "axlx_learn_screen",
-          "axlx_learn_points",
-          "axlx_learn_next",
-          "axlx_learn_scene_flows",
-        ],
-      }, "*");
-    } catch (_) {}
+      var fin = function (d) {
+        if (done) return;
+        done = true;
+        try { window.removeEventListener("message", onRes); } catch (_) {}
+        resolve(d || null);
+      };
+      var onRes = function (e) {
+        if (e.source !== window || !e.data || typeof e.data !== "object") return;
+        if (e.data.from === "axlx-page-storage-result" && e.data.id === rid) {
+          _itApplyLearnData(e.data.data);
+          fin(e.data.data);
+        }
+      };
+      window.addEventListener("message", onRes);
+      try {
+        window.postMessage({
+          from: "axlx-page-storage-get",
+          id: rid,
+          keys: [
+            "axlx_learn_playbook",
+            "axlx_learn_screen",
+            "axlx_learn_points",
+            "axlx_learn_next",
+            "axlx_learn_scene_flows",
+            "axlx_learn_needs_auto",
+          ],
+        }, "*");
+      } catch (_) {}
+      setTimeout(function () { fin(null); }, timeoutMs || 1800);
+    });
+  }
+  function _itRequestLearnRefresh(force, timeoutMs) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var rid = "itlr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+      var fin = function (res) {
+        if (done) return;
+        done = true;
+        try { window.removeEventListener("message", onDone); } catch (_) {}
+        resolve(res === undefined ? null : res);
+      };
+      var onDone = function (e) {
+        if (e.source !== window || !e.data || typeof e.data !== "object") return;
+        if (e.data.from === "axlx-page-learn-refresh-done" && e.data.id === rid) fin(e.data.res || null);
+      };
+      window.addEventListener("message", onDone);
+      try { window.postMessage({ from: "axlx-page-learn-refresh", id: rid, force: !!force, site: "itandi" }, "*"); } catch (_) {}
+      setTimeout(function () { fin("timeout"); }, timeoutMs || 4500);
+    });
+  }
+  function _itEnsureLearnReflectedForFill(opts) {
+    if (_itLearnReflectInflight) return _itLearnReflectInflight;
+    var forceFresh = !!(opts && opts.force);
+    var maxWait = (opts && Number(opts.maxWaitMs)) || 4500;
+    var p = new Promise(function (resolve) {
+      var hasPb = !!(window.__axlxLearnPlaybook && typeof window.__axlxLearnPlaybook === "object" && Array.isArray(window.__axlxLearnPlaybook.scenes));
+      var fastOk = !forceFresh && _itLearnReflectOkAt > 0 && (Date.now() - _itLearnReflectOkAt < 45000) && hasPb && !window.__axlxItandiNeedsAuto;
+      var afterStorage = function (refreshRes) {
+        try {
+          if (_itAudit) {
+            var rd = refreshRes === "timeout" ? "timeout"
+              : !refreshRes ? "no_res"
+              : (refreshRes.skipped ? ("skip:" + refreshRes.skipped) : (refreshRes.ok ? ("ok:" + String(refreshRes.ver || "")) : ("err:" + String(refreshRes.error || ""))));
+            _itStep("learn_refresh_res", rd.slice(0, 80));
+          }
+          var pb = window.__axlxLearnPlaybook;
+          var scr = window.__axlxLearnScreen;
+          var sf = window.__axlxLearnSceneFlows;
+          var sk = (scr && typeof scr === "object") ? Object.keys(scr).length : 0;
+          var sfn = Array.isArray(sf) ? sf.length : 0;
+          var hasRules = !!(pb && Array.isArray(pb.rules) && pb.rules.length > 0 && Array.isArray(pb.scenes) && pb.scenes.length > 0);
+          var linkedOk = !!(hasRules && (sk > 0 || sfn > 0));
+          if (linkedOk) _itLearnReflectOkAt = Date.now();
+          window.__axlxItandiNeedsAuto = !linkedOk;
+          try {
+            window.postMessage({ from: "axlx-page-learn-auto-linked", site: "itandi", ok: linkedOk, screen: sk, scenes: sfn, flow: sfn > 0 }, "*");
+          } catch (_) {}
+          if (_itAudit) _itStep(linkedOk ? "learn_reflect_ok" : "learn_reflect_gap", "pb=" + (hasRules ? 1 : 0) + " screen=" + sk + " scenes=" + sfn);
+        } catch (_) {}
+        resolve(true);
+      };
+      if (fastOk) {
+        _itRequestLearnStorage(1200).then(function () { afterStorage({ ok: true, skipped: "fast_cached_45s" }); }, function () { afterStorage({ ok: true, skipped: "fast_cached_45s" }); });
+        return;
+      }
+      _itRequestLearnRefresh(true, maxWait).then(function (r) {
+        return _itRequestLearnStorage(1800).then(function () { afterStorage(r); }, function () { afterStorage(r); });
+      }, function () {
+        _itRequestLearnStorage(1500).then(function () { afterStorage(null); }, function () { afterStorage(null); });
+      });
+    });
+    _itLearnReflectInflight = p;
+    var clr = function () { if (_itLearnReflectInflight === p) _itLearnReflectInflight = null; };
+    p.then(clr, clr);
+    return p;
   }
   window.addEventListener("message", function (e) {
     if (e.source !== window || !e.data || typeof e.data !== "object") return;
@@ -166,52 +258,76 @@
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     var H = _hw();
     var look = H && H.logNormalDelay ? H.logNormalDelay(700, 0.4) : 500;
-    var type = function () {
-      try {
-        // 欄を押す（人が入力を始める形）
-        ["mousedown", "mouseup", "click"].forEach(function (t) {
-          try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (_) {}
-        });
-        if (el.focus) { try { el.focus(); } catch (_) {} }
-      } catch (_) {}
-      var p = setReactVal(el, val);
-      var finish = function () { _itLeave(el); };
-      if (p && typeof p.then === "function") { p.then(finish, finish); } else { setTimeout(finish, _hd(280)); }
+    return new Promise(function (resolve) {
+      var settled = false;
+      var done = function () {
+        if (settled) return;
+        settled = true;
+        resolve(true);
+      };
+      var guard = setTimeout(done, 12000);
+      var type = function () {
+        try {
+          // 欄を押す（人が入力を始める形）
+          ["mousedown", "mouseup", "click"].forEach(function (t) {
+            try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+          });
+          if (el.focus) { try { el.focus(); } catch (_) {} }
+        } catch (_) {}
+        var p = setReactVal(el, val);
+        var finish = function () {
+          clearTimeout(guard);
+          _itLeave(el);
+          done();
+        };
+        if (p && typeof p.then === "function") { p.then(finish, finish); } else { setTimeout(finish, _hd(280)); }
+      };
+      // 押す前に「その欄が本当に画面に出ているか」を確かめる（最大6秒）
+      var waitVisible = function (attempt, next) {
+        var ok = true;
+        try {
+          var r = el.getBoundingClientRect();
+          ok = !!(r && (r.width > 0 || r.height > 0));
+          if (ok && typeof isVis === "function") ok = isVis(el);
+        } catch (_) { ok = true; }
+        if (ok || attempt >= 12) { next(); return; }
+        setTimeout(function () { waitVisible(attempt + 1, next); }, H && H.pollDelay ? H.pollDelay(500) : 500);
+      };
+      var afterLook = function () {
+        if (P && P.moveToEl) {
+          try { P.ensure(); } catch (_) {}
+          P.moveToEl(el).then(function () {
+            if (P.tap) { try { P.tap(); } catch (_) {} }
+            var withDrift = function (next) {
+              if (P && P.drift && Math.random() < 0.12) {
+                P.drift(400 + Math.floor(Math.random() * 900), { radius: 8 + Math.random() * 14 }).then(next, next);
+              } else next();
+            };
+            withDrift(function () { waitVisible(0, function () { setTimeout(type, look); }); });
+          }, function () { waitVisible(0, function () { setTimeout(type, look); }); });
+          return;
+        }
+        waitVisible(0, function () { setTimeout(type, look); });
+      };
+      afterLook();
+    });
+  }
+  // 2026-11-27: 複数数値入力（家賃上限・下限・面積・徒歩・築年数）が同時に走ってカーソル・フォーカスを取り合わないよう直列化する
+  var _itTypeQueueP = Promise.resolve();
+  var _itTypeQueuePending = 0;
+  function _itSerialType(fn) {
+    _itTypeQueuePending++;
+    var run = function () {
+      try { return Promise.resolve(fn()); }
+      catch (_) { return Promise.resolve(false); }
     };
-    // 2026-11-10 v2.6.10 竹内さん「ちゃんと画面を見ながら動くようにしていく。そうすれば理数の形となっていく」:
-    //   押す前に「その欄が本当に画面に出ているか」を確かめる（人が目で見つけてから触る形）。
-    //   見えていなければ少し待って見直す（最大6秒）。それでも見えなければ今まで通り触る（止まらない）。
-    var waitVisible = function (attempt, done) {
-      var ok = true;
-      try {
-        var r = el.getBoundingClientRect();
-        ok = !!(r && (r.width > 0 || r.height > 0));
-        if (ok && typeof isVis === "function") ok = isVis(el);
-      } catch (_) { ok = true; }
-      if (ok || attempt >= 12) { done(); return; }
-      setTimeout(function () { waitVisible(attempt + 1, done); }, H && H.pollDelay ? H.pollDelay(500) : 500);
-    };
-    var afterLook = function () {
-      if (P && P.moveToEl) {
-        try { P.ensure(); } catch (_) {}
-        return P.moveToEl(el).then(function () {
-          if (P.tap) { try { P.tap(); } catch (_) {} }
-          /**
-           * 2026-11-11 竹内さん「2つともそろえる」:
-           *   リアプロは入力の前に「迷ってカーソルが漂う」動きが入っている（pointer-ui の drift）。
-           *   ITANDI も同じく、12%で欄の周りを小さく漂わせてから入力を始める（人が「ここでいいかな」と思う形）。
-           */
-          var withDrift = function (next) {
-            if (P && P.drift && Math.random() < 0.12) {
-              P.drift(400 + Math.floor(Math.random() * 900), { radius: 8 + Math.random() * 14 }).then(next, next);
-            } else next();
-          };
-          withDrift(function () { waitVisible(0, function () { setTimeout(type, look); }); });
-        }, function () { waitVisible(0, function () { setTimeout(type, look); }); });
-      }
-      waitVisible(0, function () { setTimeout(type, look); });
-    };
-    afterLook();
+    var p = (_itTypeQueuePending === 1) ? run() : _itTypeQueueP.then(run, run);
+    _itTypeQueueP = p.then(function () {
+      _itTypeQueuePending = Math.max(0, _itTypeQueuePending - 1);
+    }, function () {
+      _itTypeQueuePending = Math.max(0, _itTypeQueuePending - 1);
+    });
+    return p;
   }
 
   // 2026-11-10 竹内「まとめてチェックではなくて1つずつおこなう」:
@@ -239,11 +355,11 @@
     return a;
   }
   /** 2026-11-10 v2.6.0 見えるカーソル（pointer-ui.js・見た目だけ）。読み込めなければ何もしない */
-  function _pointerMoveTo(el) {
+  function _pointerMoveTo(el, opts) {
     var P = (typeof self !== "undefined" ? self : window).AxlxPointerUi;
     if (!P || !P.moveToEl) return Promise.resolve(false);
     try { P.ensure(); } catch (_) {}
-    return P.moveToEl(el);
+    return P.moveToEl(el, opts);
   }
   /**
    * 押す時はカーソルが着いてから（動きながら押さない）
@@ -322,7 +438,25 @@
       var doneClick = function () { if (P && P.tap) { try { P.tap(); } catch (_) {} } try { click(); } catch (_) {} resolve(true); };
       if (!P || !P.moveToEl) { doneClick(); return; }
       try { P.ensure(); } catch (_) {}
-      _pointerMoveTo(el).then(function () {
+      var moveOpts = null;
+      try {
+        if (o.aim && typeof o.aim.x === "number" && typeof o.aim.y === "number") {
+          moveOpts = { aim: o.aim };
+        } else {
+          var names = Array.isArray(o.learnNames) && o.learnNames.length ? o.learnNames : null;
+          if (!names && (kind === "decide" || kind === "other")) {
+            var elTxt = String(el.textContent || "").replace(/\s+/g, "").trim();
+            if (elTxt && elTxt.length >= 2 && elTxt.length <= 24) names = [elTxt];
+          }
+          if (names) {
+            var lp = _itLearnPosOf(names);
+            if (lp && typeof lp.x === "number" && typeof lp.y === "number") {
+              moveOpts = { aim: { x: lp.x, y: lp.y } };
+            }
+          }
+        }
+      } catch (_) {}
+      _pointerMoveTo(el, moveOpts).then(function () {
         var p = kind === "choose" ? 0.15 : (kind === "decide" ? 0.03 : 0.08);
         if (Math.random() >= p * (0.8 + Math.random() * 0.45)) { doneClick(); return; }
         var r = Math.random();
@@ -1479,22 +1613,24 @@
 
   // モーダル完了後に入力する条件（専有面積・築年数・間取り・構造・ペット・駅徒歩）
   function fillRemainingFields(cond) {
+    var _typePromises = [];
+    var _q = (typeof _itSerialType === "function") ? _itSerialType : function (f) { return f(); };
     // 専有面積（フィールド名はfloor_area_amount:gteq / lteq）
     if (cond.area_min) {
       var areaMinEl = document.querySelector('input[name="floor_area_amount:gteq"]');
-      if (areaMinEl) _itTypeIntoHuman(areaMinEl, cond.area_min);
+      if (areaMinEl) _typePromises.push(_q(function () { return _itTypeIntoHuman(areaMinEl, cond.area_min); }));
     }
     if (cond.area_max) {
       var areaMaxEl = document.querySelector('input[name="floor_area_amount:lteq"]');
-      if (areaMaxEl) _itTypeIntoHuman(areaMaxEl, cond.area_max);
+      if (areaMaxEl) _typePromises.push(_q(function () { return _itTypeIntoHuman(areaMaxEl, cond.area_max); }));
     }
     if (cond.walk_minutes) {
       var walkEl = document.querySelector('input[name="station_walk_minutes:lteq"]');
-      if (walkEl) _itTypeIntoHuman(walkEl, cond.walk_minutes);
+      if (walkEl) _typePromises.push(_q(function () { return _itTypeIntoHuman(walkEl, cond.walk_minutes); }));
     }
     if (cond.building_age) {
       var ageEl = document.querySelector('input[name="building_age:lteq"]');
-      if (ageEl) _itTypeIntoHuman(ageEl, cond.building_age);
+      if (ageEl) _typePromises.push(_q(function () { return _itTypeIntoHuman(ageEl, cond.building_age); }));
     }
     if (cond.floor_plan) {
       var FLOOR_RANK_IT = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
@@ -1686,6 +1822,7 @@
         console.log('[AX] 敷金・礼金なし チェック完了(itandi)');
       }
     }
+    return _typePromises.length ? Promise.all(_typePromises) : Promise.resolve([]);
   }
 
   // v2.5.45「条件削除」を押す。確かめの窓（window.confirm）が出る作りでもページが止まらないように、押す間だけ「はい」で答える。
@@ -1996,9 +2133,7 @@
     // 検索の点検: popup が載せた run_id（無ければ local_it_* を振って点検段を残す）
     _itAuditReset(cond && cond._audit_run_id, _fillCid);
     var _myRunId = _itRunId;
-    if (!window.__axlxLearnPlaybook) _itRequestLearnStorage();
     _itStep("page_ver", _AXLX_ITANDI_PAGE_VER);
-    _itAuditPlaybookSeen();
     _itStep("fill_start", cond && cond.area_mode);
     // v2.5.45: 時間切れ・失敗で返した後は、この回の続き（遅れて動くタイマー）が検索を押さない（次のお客様の入力と重ねない）
     var _dead = false;
@@ -2035,30 +2170,34 @@
       setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 5000);
     }
 
-    // v2.5.46 前のお客様の条件を1つずつ外して、空になったのを読み戻してから入れる（ITANDI に消去のボタンは無い・竹内 9/30）。
-    //   空にならない欄があれば、その欄の名前を付けて返す（このお客様の ITANDI は飛ばす＝前の条件が混ざった検索をしない）
-    _itStep("reset_start", null);
-    _itResetForm(function (res) {
+    // ★ 2026-11-27: ITANDI でも入力開始前に最新手順書・位置の反映関所を完了させてから前客クリア→入力に進む
+    function _startItandiResetAndFill() {
       if (_dead) return;
-      if (_itAudit) {
-        _itAudit.reset = res && res.summary ? { cleared: res.summary.cleared, leftover: res.summary.leftover, ops: res.summary.ops, ms: res.summary.ms } : null;
-        if (_itAudit.reset && res.summary.unreadable) _itAudit.reset.unreadable = res.summary.unreadable;
-        if (_itAudit.reset && res.summary.leftover_other && res.summary.leftover_other.length) _itAudit.reset.leftover_other = res.summary.leftover_other;
-        if (_itAudit.reset && res.hint) _itAudit.reset.hint = res.hint;
-      }
-      if (!res || !res.ok) {
-        var _rf = (res && res.summary && _itFG().resetFailText(res.summary)) || ("前の条件を消せない: " + ((res && res.error) || "理由不明"));
-        if (_itAudit) _itAudit.reset_fail = _rf;
-        _itStep("reset_fail", (res && res.summary ? res.summary.leftover.join(",") : (res && res.error) || "").slice(0, 100));
-        console.warn("[AX] itandi " + _rf + "（このお客様の ITANDI は検索しない）", res && res.hint);
-        showItandiWarnToast(_rf);
-        _safeDone("AXLX_RESET_FAILED: " + _rf.replace(/^前の条件を消せない: /, ""));
-        return;
-      }
-      _itStep("reset", res.summary ? "外した " + res.summary.cleared.length + "欄・" + res.summary.ops + "操作" : "module_missing");
-      console.log("[AX] itandi 前の条件を外した", res.summary ? res.summary.cleared : "(form-guard なし)");
-      setTimeout(_afterReset, _hd(300));
-    });
+      _itAuditPlaybookSeen();
+      _itStep("reset_start", null);
+      _itResetForm(function (res) {
+        if (_dead) return;
+        if (_itAudit) {
+          _itAudit.reset = res && res.summary ? { cleared: res.summary.cleared, leftover: res.summary.leftover, ops: res.summary.ops, ms: res.summary.ms } : null;
+          if (_itAudit.reset && res.summary.unreadable) _itAudit.reset.unreadable = res.summary.unreadable;
+          if (_itAudit.reset && res.summary.leftover_other && res.summary.leftover_other.length) _itAudit.reset.leftover_other = res.summary.leftover_other;
+          if (_itAudit.reset && res.hint) _itAudit.reset.hint = res.hint;
+        }
+        if (!res || !res.ok) {
+          var _rf = (res && res.summary && _itFG().resetFailText(res.summary)) || ("前の条件を消せない: " + ((res && res.error) || "理由不明"));
+          if (_itAudit) _itAudit.reset_fail = _rf;
+          _itStep("reset_fail", (res && res.summary ? res.summary.leftover.join(",") : (res && res.error) || "").slice(0, 100));
+          console.warn("[AX] itandi " + _rf + "（このお客様の ITANDI は検索しない）", res && res.hint);
+          showItandiWarnToast(_rf);
+          _safeDone("AXLX_RESET_FAILED: " + _rf.replace(/^前の条件を消せない: /, ""));
+          return;
+        }
+        _itStep("reset", res.summary ? "外した " + res.summary.cleared.length + "欄・" + res.summary.ops + "操作" : "module_missing");
+        console.log("[AX] itandi 前の条件を外した", res.summary ? res.summary.cleared : "(form-guard なし)");
+        setTimeout(_afterReset, _hd(300));
+      });
+    }
+    _itEnsureLearnReflectedForFill().then(_startItandiResetAndFill, _startItandiResetAndFill);
 
     function _afterReset() { try {
 
@@ -2118,24 +2257,22 @@
       setTimeout(next, ms);
     })(function () {
 
-    // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
-    // 2026-11-10 v2.6.9 竹内さん「ここの部分リアプロもITANDIもちゃんとできるように徹底していく」:
-    //   旧はカーソルを動かさず setReactVal で即入力（貼り付けた動き）。
-    //   新は カーソルを欄へ動かす → 少し見る → 欄を押す → 1文字ずつ打つ → 離れる（人が入力する形）。
-    //   値の作り方（5桁以内への切り下げ）は今まで通り。
+    // ── STEP 1: 賃料（最初に入力・直列入力でフォーカス衝突防止）────────────────
+    var _rentTypePs = [];
+    var _rq = (typeof _itSerialType === "function") ? _itSerialType : function (f) { return f(); };
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? cond.rent_max / 10000 : cond.rent_max;
       // v2.5.45: ITANDI は「5桁以内」。84,999円→「8.4999」は弾かれて検索のボタンが押せなくなる → 5文字以内（8.499）に切り下げ
       if (_itFG()) { var _rt = _itFG().rentText(cond.rent_max, "max"); if (_rt) rentVal = _rt; }
       var rentEl = document.querySelector('input[name="rent:lteq"]');
-      if (rentEl) _itTypeIntoHuman(rentEl, rentVal);
+      if (rentEl) _rentTypePs.push(_rq(function () { return _itTypeIntoHuman(rentEl, rentVal); }));
     }
     // 賃料下限（一時調整 v2.5.6）: 面積と同じ命名規則 name:gteq。欄が無ければ何もしない
     if (cond.rent_min) {
       var rentMinVal = cond.rent_min > 1000 ? cond.rent_min / 10000 : cond.rent_min;
       if (_itFG()) { var _rtm = _itFG().rentText(cond.rent_min, "min"); if (_rtm) rentMinVal = _rtm; }
       var rentMinEl = document.querySelector('input[name="rent:gteq"]');
-      if (rentMinEl) { _itTypeIntoHuman(rentMinEl, rentMinVal); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
+      if (rentMinEl) { _rentTypePs.push(_rq(function () { return _itTypeIntoHuman(rentMinEl, rentMinVal); })); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
       else console.warn('[AX] itandi 賃料下限の欄(rent:gteq)が見つかりません');
     }
     tick(document.querySelector('input[name="totalRentCheck"]'));
@@ -2146,7 +2283,9 @@
     var hasLines = !!(cond.itandi_lines && cond.itandi_lines.length);
     if (_itAudit) { _itAudit.area_path = hasArea ? "area" : hasLines ? "station" : "none"; _itStep("location", _itAudit.area_path); }
 
-    setTimeout(function () {
+    var _waitRentDone = _rentTypePs.length ? Promise.all(_rentTypePs) : Promise.resolve([]);
+    _waitRentDone.then(function () { if (_dead) return; setTimeout(function () {
+      if (_dead) return;
 
       function afterModal() {
         // 間取り input が現れるまで最大3秒ポーリング（固定500ms待機ではReact再レンダリングが保証されない）
@@ -2157,16 +2296,15 @@
                             document.querySelector("input[name*='layout']");
           if (layoutInput || _afterModalPolled >= 3000) {
             clearInterval(_afterModalPoll);
-            // v2.5.34: 更新日（募集条件更新 N日以内）を先に入れる。後の fillRemainingFields のペットの欄を開くクリックが
-            //   打っている途中の欄から focus を奪わないように（欄を離れると一覧の入力が戻ることがある）
             if (_dead) return;
             _itFillUpdateDays(cond, function (udOk, udErr) {
             if (_dead) return;
             if (!udOk) { showItandiWarnToast(udErr); _safeDone(udErr); return; }
-            // v2.5.45: ここで投げた例外は _itFillUpdateDays の中で黙って捨てられ（settled の後の onErr）、240秒の時間切れになっていた
-            //   （9/28・9/30 の区のお客様の watchdog-timeout: 最後の段が update_days）→ 捕まえて理由付きで返す
-            try { fillRemainingFields(cond); }
+            var _remFieldsP = Promise.resolve([]);
+            try { _remFieldsP = Promise.resolve(fillRemainingFields(cond) || []); }
             catch (errR) { console.error("[AX] 残りの条件の入力で例外", errR); _safeDone("fill-exception(remaining): " + String((errR && errR.message) || errR).slice(0, 100)); return; }
+            _remFieldsP.then(function () {
+            if (_dead) return;
             setTimeout(function () { try {
               if (_dead) return;
               // 2026-11-10: 検索条件のチェックは1件ずつ（人の間）入れるので、押し終わるのを待ってから検索を押す
@@ -2215,10 +2353,10 @@
                    *   新はカーソルが着いて押し終わるまで待つ（_humanClick の Promise を返す）。
                    */
                   var _pressP;
-                  if (btn) { _pressP = _humanClick(btn); _searched = true; }
+                  if (btn) { _pressP = _humanClick(btn, { learnNames: ["検索", "検索する", "この条件で検索"] }); _searched = true; }
                   else {
                     var _sBtn = _findBtn("検索");
-                    if (_sBtn) { _pressP = _humanClick(_sBtn); _searched = true; }
+                    if (_sBtn) { _pressP = _humanClick(_sBtn, { learnNames: ["検索", "検索する", "この条件で検索"] }); _searched = true; }
                     else { _searched = false; _pressP = Promise.resolve(false); }
                   }
                   if (_itAudit) {
@@ -2236,6 +2374,7 @@
               } catch (errS) { _safeDone("fill-exception(search): " + String((errS && errS.message) || errS).slice(0, 100)); } });
               } catch (errW) { _safeDone("fill-exception(search): " + String((errW && errW.message) || errW).slice(0, 100)); } }); // _whenTickIdle
             } catch (errT) { _safeDone("fill-exception(search): " + String((errT && errT.message) || errT).slice(0, 100)); } }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
+            }); // _remFieldsP
             }); // _itFillUpdateDays
           }
         }, 100);
@@ -2272,7 +2411,7 @@
         _safeDone(_errE);
       }
 
-    }, _hd(800));
+    }, _hd(800)); }); // _waitRentDone end
     }); // 考える間（_waitThinkThenFill）end
 
     } catch(err) {
@@ -2306,16 +2445,26 @@
     //   既定は案内（印が付く前に依頼が届いても自動で入れない＝安全側）。OFF の印（"0"）が付いている時だけ今まで通り入力する
     if (_guideOn()) {
       var _gCid = e.data.customerId || null;
-      _itAuditReset(e.data.conditions && e.data.conditions._audit_run_id, _gCid);
-      if (!window.__axlxLearnPlaybook) _itRequestLearnStorage();
+      var _gCond = e.data.conditions || {};
+      _itAuditReset(_gCond._audit_run_id, _gCid);
       _itStep("page_ver", _AXLX_ITANDI_PAGE_VER);
-      _itAuditPlaybookSeen();
-      _itStep("guide_mode", "案内モード（手動入力）");
-      window.postMessage({ from: "axlx-itandi-guide-start", conditions: e.data.conditions || {}, customerId: _gCid }, "*");
-      var _gDone = { from: "aixlinx-fill-done", error: "guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）", skip: true };
-      if (_gCid) _gDone.customerId = _gCid;
-      if (_itRunId) { _gDone.runId = _itRunId; _gDone.audit = _itPack(); }
-      window.postMessage(_gDone, "*");
+      _itEnsureLearnReflectedForFill({ maxWaitMs: 2500 }).then(function () {
+        _itAuditPlaybookSeen();
+        _itStep("guide_mode", "案内モード（手動入力）");
+        window.postMessage({ from: "axlx-itandi-guide-start", conditions: _gCond, customerId: _gCid }, "*");
+        var _gDone = { from: "aixlinx-fill-done", error: "guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）", skip: true };
+        if (_gCid) _gDone.customerId = _gCid;
+        if (_itRunId) { _gDone.runId = _itRunId; _gDone.audit = _itPack(); }
+        window.postMessage(_gDone, "*");
+      }, function () {
+        _itAuditPlaybookSeen();
+        _itStep("guide_mode", "案内モード（手動入力）");
+        window.postMessage({ from: "axlx-itandi-guide-start", conditions: _gCond, customerId: _gCid }, "*");
+        var _gDone = { from: "aixlinx-fill-done", error: "guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）", skip: true };
+        if (_gCid) _gDone.customerId = _gCid;
+        if (_itRunId) { _gDone.runId = _itRunId; _gDone.audit = _itPack(); }
+        window.postMessage(_gDone, "*");
+      });
       return;
     }
     fill(e.data.conditions);

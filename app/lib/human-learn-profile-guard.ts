@@ -123,10 +123,24 @@ export function shouldPreserveLongCronBundle(o: {
   return spanMs >= LONG_BUNDLE_MIN_SPAN_MS && ageMs >= 0 && ageMs < LONG_BUNDLE_KEEP_AGE_MS;
 }
 
-/** CDN のキャッシュの見出し（軽い確認は30秒・束は60秒・古くても5分は返しながら裏で取り直す） */
-export function cacheHeaders(kind: "light" | "bundle"): Record<string, string> {
+/** CDN のキャッシュの見出し（軽い確認は30秒・束は60秒・古くても5分は返しながら裏で取り直す・v不整合や再構築時はno-store） */
+export function cacheHeaders(kind: "light" | "bundle" | "none"): Record<string, string> {
+  if (kind === "none") return { "Cache-Control": "no-store, no-cache, must-revalidate" };
   const s = kind === "light" ? 30 : 60;
   return { "Cache-Control": `public, s-maxage=${s}, stale-while-revalidate=300` };
+}
+
+/** 束の版クエリ文字列を作る（拡張が ?touch=0 で検知した新版を本体 URL の &v=... に載せて CDN 旧キャッシュを確実にバイパスする） */
+export function bundleVersionParam(o?: {
+  generated_at?: unknown;
+  playbook_rules_v?: unknown;
+  playbook_build_v?: unknown;
+} | null): string {
+  const src = o && typeof o === "object" ? o : {};
+  const gen = String(src.generated_at ?? "").trim().replace(/[^0-9A-Za-z._:-]/g, "");
+  const rv = String(src.playbook_rules_v ?? "").trim().slice(0, 12).replace(/[^0-9A-Za-z_-]/g, "");
+  const bv = Number(src.playbook_build_v) || 0;
+  return [gen || "0", rv || "0", String(bv)].join("_");
 }
 
 /** 同じ鍵の重なった呼び出しを1本にまとめる（on でない時はそのまま呼ぶ）。終わったら外す */

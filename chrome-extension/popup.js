@@ -7577,7 +7577,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!el) return;
       var cur = chrome.runtime.getManifest().version;
       if (st && st.ext_behind && String(st.ext || "") === cur) {
-        el.textContent = "⚠ 拡張が古いです（いま " + cur + "／最新 " + (st.server_up_to || "?") + "）。git pull のあと chrome://extensions で再読み込みし、リアプロのタブを開き直してください";
+        el.textContent = "⚠ 拡張が古いです（いま " + cur + "／最新 " + (st.server_up_to || "?") + "）。git pull → chrome://extensions で再読み込み → このページを開き直してください（旧タブのままでは最新が効きません）";
         el.style.display = "block";
       } else {
         el.style.display = "none";

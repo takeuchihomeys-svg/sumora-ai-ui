@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.311";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.312";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -1825,6 +1825,32 @@ export const AUTO_RULES: AutoRule[] = [
     verify: {
       onlyIf: ["page:place_xor", "page:place_xor_plan", "page:location", "page:place_mixed", "page:place_xor_gate"],
       mustHaveAny: ["page:place_xor", "page:place_xor_plan", "page:location"],
+    },
+  },
+  {
+    id: "learn_reflect_before_reset",
+    scene: "switch",
+    text: "検索画面での自動入力は、まず最新の学習束・手順書（_ensureLearnReflectedForFill）を取り込み・反映し終えてから _doReset（前客クリア）へ進む。取り込みとリセットを並走させない",
+    since: "2.8.312",
+    kb: null,
+    marker: "_startResetAfterReflect",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:learn_reflect_gate", "page:fill_start"],
+      mustHaveAny: ["page:learn_reflect_gate", "page:learn_reflect_ok", "page:learn_reflect_gap"],
+    },
+  },
+  {
+    id: "notify_done_clears_queue",
+    scene: "press",
+    text: "完了・エラー・門止めの notifyDone が呼ばれた瞬間、残りのクリックキュー（clearClickQueue）を必ず破棄して停止後の誤クリックや遅れ発火を根絶する",
+    since: "2.8.312",
+    kb: null,
+    marker: `if (typeof clearClickQueue === "function") clearClickQueue();`,
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["fill_done"],
+      mustHaveAny: ["fill_done"],
     },
   },
 ];
