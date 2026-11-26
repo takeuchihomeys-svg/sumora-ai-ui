@@ -2267,7 +2267,10 @@ async function analyzeConversationCore(
     };
   // 2026-11-13 作業員1（BRAIN_MSG_WINDOW_UNITS=on）: AIX の物件の画像の束は1行にまとめる（brain-msg-window.collapseAixImageBursts）
   const historyRev = [...typedMessages].reverse();
-  const history = (brainMsgWindowUnitsOn() ? collapseAixImageBursts(historyRev, historyLineOf, (m) => `${historyLineOf(m).split("]")[0]}]`) : historyRev.map(historyLineOf)).join("\n");
+  const historyLinesUnits = brainMsgWindowUnitsOn() ? collapseAixImageBursts(historyRev, historyLineOf, (m) => `${historyLineOf(m).split("]")[0]}]`) : null;
+  const history = (historyLinesUnits ?? historyRev.map(historyLineOf)).join("\n");
+  // 2026-11-27 作業員A（届きの印・BRAIN_MSG_WINDOW_UNITS=on の時だけ）: 束ねた画像の行の数＋いつもの窓より多く読めた通の数（0＝off と同じ材料＝印なし）→ material_marks.msg_window_units
+  const msgWindowUnitsMark = historyLinesUnits ? (historyRev.length - historyLinesUnits.length) + Math.max(0, typedMessages.length - brainMsgWindow()) : 0;
 
   // セーブポイントRAG検索: 現在の会話コンテキストに関連する古いCPを類似検索
   // RAG化 Phase2: 同じ embedding を再利用して ai_reply_knowledge の類似ナレッジも検索する
@@ -3705,6 +3708,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (msgWindowUnitsMark > 0) materialMarks.msg_window_units = msgWindowUnitsMark; // 2026-11-27 作業員A（BRAIN_MSG_WINDOW_UNITS の届きの印）
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
   if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
@@ -4475,6 +4479,9 @@ ${sh}`;
       if (ar.loc?.evidence?.some((e: string) => e.startsWith("次の一手を番で選び直し:"))) materialMarks.route_next_by_turn = 1;
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
+      // 2026-11-27 作業員A（届きの印・SUBSTATE_CONTEXT=on の時だけ）: 細かい状態を前提つきで読んだ番に substate_context=1・前提で外した番に substate_context_dropped=1。
+      //   下の記録（apply_route.substate）の中で付けていた印は material_marks を写した後だったので残っていなかった＝ここで先に付ける（off は何も変えない）
+      if (applyRouteLocRec && substateContextOn()) { try { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); materialMarks.substate_context = 1; if (sc.droppedBy) materialMarks.substate_context_dropped = 1; } catch { /* 印だけ */ } }
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
   }
   viewingsText += viewingReportText;
@@ -6406,7 +6413,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         console.log(JSON.stringify({ tag: "brain:first-contact-ready-pickup", conversationId }));
         finalAix = "property_send";
         // 2026-11-10 作業員1（q118）: 2段はこの前でヒアリングの番として決まり済み＝ここでピックアップの約束の2段を作る（FIRST_CONTACT_READY_TWO_STAGE=on の時だけ）
-        if (!twoStage) { twoStage = firstContactReadyPickupTwoStage(unrepliedTurn.text ?? ""); if (twoStage) console.log(JSON.stringify({ tag: "brain:first-contact-ready-two-stage", conversationId })); }
+        if (!twoStage) { twoStage = firstContactReadyPickupTwoStage(unrepliedTurn.text ?? ""); if (twoStage) { materialMarks.first_contact_two_stage = 1; /* 2026-11-27 作業員A: 届きの印（FIRST_CONTACT_READY_TWO_STAGE=on で2段を作った番だけ） */ console.log(JSON.stringify({ tag: "brain:first-contact-ready-two-stage", conversationId })); } }
       }
       firstContactPickup = resolveFirstContactPickup({ finalAix, custSentConditionForm, sceneEvidence: compactSceneEvidence(sceneEvidence), imageType: firstContactImageType });
       // 2026-10-09 竹内さん「友だち追加だけで条件がまだ無い初回は AIX【条件ヒアリング】が正解・guard:first_contact で消さない（条件が既にある初回とは分ける）」
