@@ -4269,6 +4269,7 @@ function _guideLikeAreaSkip(why) {
     "notify_done_clears_queue",
     "reset_clean_no_force_place",
     "sort_skip_own_ui",
+    "reset_press_late_grasp",
     "sw_restart_wait_post_search_flow",
   ];
   /**
@@ -12539,15 +12540,60 @@ function _guideLikeAreaSkip(why) {
     var y = Math.max(0.22, Math.min(0.78, cy + (Math.random() - 0.5) * 0.16));
     return { aim: { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 }, kind: kind };
   }
+  /**
+   * ★ 2.8.315 実測 #1661（2026-11-27 竹内さん「リセットはちゃんと押せていた。押したと把握できていなかったのか」）:
+   *   旧は 15 秒で「押せず（press_timeout15）」と返したが、人の動きのクリックは**キューに積まれたまま後で実行される**ので、
+   *   報告は「押せず」でも実際は押されていた（裏は「押せず」→画面を撮る→リセットをもう1回押す→従来の外し、と二重に動いた）。
+   *   → ① 本当にクリックが実行された所を捉える（_fired）② 15 秒で諦めず、まだ押していなければ最大 40 秒まで待つ
+   *     ③ 40 秒でも押していなければ、積んだクリックを取り消してから「押せず」と返す（あとで勝手に押されない）
+   *     ④ 15 秒を過ぎた時と、取り消した時は点検に残す（page:reset_press_slow／page:reset_press_cancel）
+   */
+  var _RESET_PRESS_SOFT_MS = 15000;
+  var _RESET_PRESS_HARD_MS = 40000;
+  var _RESET_PRESS_POLL_MS = 2000;
   function _resetPress(done) {
     var finished = false;
+    var fired = false;
+    var firedAt = 0;
+    var btnQ = null;
+    var slowNoted = false;
+    var guard = null;
+    var tStart = Date.now();
     var fin = function (r) {
       if (finished) return;
       finished = true;
       try { clearTimeout(guard); } catch (_) {}
       try { done(r); } catch (_) {}
     };
-    var guard = setTimeout(function () { fin({ ok: false, why: "press_timeout15" }); }, 15000);
+    var cancelQueued = function () {
+      try {
+        if (!btnQ) return false;
+        var had = false;
+        for (var qi = _clickQueue.length - 1; qi >= 0; qi--) {
+          if (_clickQueue[qi] && _clickQueue[qi].el === btnQ) { _clickQueue.splice(qi, 1); had = true; }
+        }
+        btnQ.__axPending = false;
+        return had;
+      } catch (_) { return false; }
+    };
+    var guardTick = function () {
+      if (finished) return;
+      var age = Date.now() - tStart;
+      // すでにクリックは実行済み（キューが空くのを待っていただけ）→ 押した扱い
+      if (fired) {
+        fin({ ok: true, pressed: true, late: true, closed: 0, via: "late", aim: "late", bootAt: window.__axlxBootAt || 0 });
+        return;
+      }
+      if (!slowNoted) {
+        slowNoted = true;
+        try { if (_audit) _auditStepP("reset_press_slow", Math.round(age / 1000) + "秒たってもまだ押していない（人の動きの待ち）→最大" + Math.round(_RESET_PRESS_HARD_MS / 1000) + "秒まで待つ btn=" + (btnQ ? "queued" : "not_yet") + " busy=" + (isClickQueueBusy() ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
+      }
+      if (age < _RESET_PRESS_HARD_MS) { guard = setTimeout(guardTick, _RESET_PRESS_POLL_MS); return; }
+      var cut = cancelQueued();
+      try { if (_audit) _auditStepP("reset_press_cancel", Math.round(age / 1000) + "秒押せず→積んだクリックを取り消した=" + (cut ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
+      fin({ ok: false, why: "press_timeout" + Math.round(age / 1000) });
+    };
+    guard = setTimeout(guardTick, _RESET_PRESS_SOFT_MS);
     try {
       var busy = false;
       try { busy = !!window._axFillRunning; } catch (_) { busy = false; }
@@ -12570,7 +12616,11 @@ function _guideLikeAreaSkip(why) {
             //   押す処理（_humanPointerClick）がさらに ±6% ずらしてから、枠の中に収める。
             var _rPick = _resetAimPoint(btn, _aimByEl(btn, ["リセット", "左のリセット"]));
             var _rOpts = _rPick.aim ? Object.assign({}, _uiGapOpts(), { aim: _rPick.aim }) : _uiGapOpts();
-            enqueueHumanClick(btn, _clickEl, _uiGapMin(), _uiGapMax(), null, _rOpts);
+            btnQ = btn;
+            // ★ 2.8.315: 押した瞬間を捉える（キューが空くのを待つ間に15秒を過ぎても「押した」と数える）
+            var _fireReset = function (el) { fired = true; firedAt = Date.now(); return _clickEl(el); };
+            var _enq = enqueueHumanClick(btn, _fireReset, _uiGapMin(), _uiGapMax(), null, _rOpts);
+            if (_enq === false) { fin({ ok: false, why: "enqueue_refused" + (_axHumanTookOver ? ":human" : ":pending") }); return; }
             whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, via: _resetVia, aim: _rPick.kind + (_rPick.aim ? " " + _rPick.aim.x + "/" + _rPick.aim.y : ""), countBefore: cntBefore ? cntBefore.n : null, bootAt: window.__axlxBootAt || 0 }); });
           } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
         }, humanRand(500, 1100));

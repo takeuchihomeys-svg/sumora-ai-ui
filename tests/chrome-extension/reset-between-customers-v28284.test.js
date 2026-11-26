@@ -45,9 +45,10 @@ const press = fnSrc(ps, "  function _resetPress(done) {");
 ok("入力中は断る（fill_running）", /window\._axFillRunning/.test(press) && /skipped: "fill_running"/.test(press));
 ok("押す前に完了の小窓を閉じる", press.indexOf("_closeStrayWindows()") > 0 && press.indexOf("_closeStrayWindows()") < press.indexOf("_findResetBtn()"));
 ok("押す前に読み直しの印（bootAt）を置く", /sessionStorage\.setItem\(_AX_RESET_PRESSED_KEY/.test(press) && /bootAt/.test(press));
-ok("人のようにカーソルを動かして押す（enqueueHumanClick）", /enqueueHumanClick\(btn, _clickEl/.test(press));
+ok("人のようにカーソルを動かして押す（enqueueHumanClick）", /enqueueHumanClick\(btn, _fireReset/.test(press) && /_clickEl\(el\)/.test(press)); // 2.8.315: 押した瞬間を捉えるため _clickEl を包む
 ok("押す物が無ければ no_reset_button", /why: "no_reset_button"/.test(press));
-ok("15秒で必ず返す（fail-open）", /press_timeout15/.test(press));
+// 2.8.315: 15秒で諦めず、押していなければ最大40秒まで待ってから返す（押されているのに「押せず」を防ぐ）。必ず返す点は同じ
+ok("40秒までに必ず返す（fail-open）", /_RESET_PRESS_SOFT_MS = 15000/.test(ps) && /_RESET_PRESS_HARD_MS = 40000/.test(ps) && /why: "press_timeout" \+ Math\.round\(age \/ 1000\)/.test(press));
 const closeFn = fnSrc(ps, "  function _closeStrayWindows() {");
 ok("this_window_close を閉じる", /div\.this_window_close/.test(closeFn));
 ok("「閉じる」だけの小窓も閉じる（検索の小窓は別扱い）", /=== "閉じる"/.test(closeFn) && /\.this_window/.test(closeFn));
@@ -182,7 +183,8 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 2);
   await w.run(40 * 60000);
   ok("3-4 返事なし → 従来の外し→次客へ", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
-  ok("3-4 reset_press に理由を残す（2.8.308 保険: 画面が空と読めれば reset_stuck_recovered・外しへは落ちない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_stuck_shot") && stepKeys(w).includes("reset_stuck_recovered"));
+  // 2.8.315 #1661: 押した返事が来なくても画面が読み直されていれば「遅れて押した」→待機→空の確認へ進む（画面を撮ってもう1回押す・従来の外しへは行かない）
+  ok("3-4 返事なしでも読み直されていれば遅れて押した扱い（reset_verified まで進み、もう1回押さない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_verified") && !stepKeys(w).includes("reset_stuck_shot") && !stepKeys(w).includes("reset_retry"));
 
   // 3-5 切り替えフラグ off → リセットを押さない（従来どおり）
   w = sim.createWorld({ customers: customers(2) });
@@ -243,7 +245,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const bgSrc = require("fs").readFileSync(require("path").join(__dirname, "../../chrome-extension/background.js"), "utf8");
   const min = Number((bgSrc.match(/var RESET_SETTLE_MIN_MS = (\d+);/) || [])[1]);
   const body = bgSrc.slice(bgSrc.indexOf("async function _postSendResetRealpro"), bgSrc.indexOf("async function _postSendClearOrReset"));
-  const iPress = body.indexOf("__axlxResetPressP"), iWait = body.indexOf("_settleMs"), iVerify = body.indexOf("__axlxResetVerifyP");
+  const iPress = body.indexOf("__axlxResetPressP"), iWait = body.indexOf("_settleMs"), iVerify = body.lastIndexOf("__axlxResetVerifyP"); // 2.8.315: 先頭近くに「遅れて押した」の確かめ（同じ関数）が増えたので、待ちの後の読み戻し（最後）で比べる
   console.log("\n■ ⑥ 押した後は10秒以上待ってから空を読み戻す（2.8.285）");
   ok("待ちの下限が10秒以上", min >= 10000, min);
   ok("押す → 待つ → 空を読み戻す の順", iPress > 0 && iWait > iPress && iVerify > iWait, { iPress, iWait, iVerify });

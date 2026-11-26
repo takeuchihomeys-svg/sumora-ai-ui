@@ -252,7 +252,7 @@ function rest() {
       "setTimeout 1200": [1, "台帳の保存の間引き"],
       "setTimeout 120000": [1, "送信後のクリアの見張り"],
       "setTimeout 150": [2, "要素が見えるまでの待ち（読むだけ）"],
-      "setTimeout 15000": [3, "警告の表示を消す・押しの見張り・再確認"],
+      "setTimeout 15000": [2, "警告の表示を消す・押しの見張り・再確認（2.8.315: リセットを押す見張りは定数 _RESET_PRESS_SOFT_MS に出した）"],
       "setTimeout 1800000": [1, "見張り（watchdog）"],
       "setTimeout 200000": [1, "クリーン開始の関所の見張り"],
       "setTimeout 2500": [1, "住居検索ページの確認（ensureRealproSearchPage）"],

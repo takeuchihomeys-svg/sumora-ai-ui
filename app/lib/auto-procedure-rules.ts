@@ -1878,6 +1878,19 @@ export const AUTO_RULES: AutoRule[] = [
     file: "bulk-dl.js",
   },
   {
+    id: "reset_press_late_grasp",
+    scene: "clear",
+    text: "リセットを押したかは「クリックが実際に実行された」で決める（_fireReset）。人の動きのクリックはキューに積まれて遅れて実行されるので、15秒で「押せず」と返さない（旧は押されているのに押せず→画面を撮る→もう1回押す→従来の外し、と二重に動いた #1661）。15秒を過ぎてもまだなら最大40秒まで待ち（page:reset_press_slow）、40秒でも押していなければ積んだクリックを取り消してから「押せず」と返す（page:reset_press_cancel・あとで勝手に押されない）。裏は返事が時間切れでも、押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として先へ進み、もう1回押さない",
+    since: "2.8.315",
+    kb: null,
+    marker: "_RESET_PRESS_HARD_MS",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:reset_press_slow"],
+      mustHaveAny: ["reset_verified", "reset_stuck_recovered"],
+    },
+  },
+  {
     id: "sw_restart_wait_post_search_flow",
     scene: "switch",
     text: "裏（service worker）が起き直した後の見張り（batch_done_sw_watchdog）は、入力（fillRunning）が終わっていても、前のお客さんの一連の鍵（axlx_pipeline_job）か検索後の印（axlx_pending_auto_send）が生きている間は次のお客さんへ進めない（60秒ごとに見直す・鍵は無進捗12分で切れる）。検索後の並べ替え→一覧→PDFの途中で次客のリセットが割り込み、前客の物件取得が消え、次客は前客の鍵を待って条件が入らなかった（#1659→#1661）。次のお客さんへ移る順は「前客の物件取得と送付が終わる → リセット → 条件を入れる」",

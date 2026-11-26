@@ -10861,7 +10861,8 @@ async function _postSendClearRealpro(customerId, auditRunId) {
  *   投げない。{ ok, left, reset:true, reloaded, why? } か { skipped } を返す。
  */
 var RESET_BUTTON_MODE_KEY = "axlx_reset_button_mode";
-var RESET_PRESS_TIMEOUT_MS = 25000;
+// ★ 2.8.315: ページ側が最大40秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）
+var RESET_PRESS_TIMEOUT_MS = 45000;
 var RESET_VERIFY_TOTAL_MS = 25000;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
 // 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
@@ -11035,6 +11036,34 @@ async function _resetWithInsurance(customerId, runId, phase) {
       else _press = (_pr && _pr[0] && _pr[0].result) || null;
     } catch (e) {
       _press = { ok: true, pressed: true, cut: true, why: "page_reloaded:" + String((e && e.message) || e).slice(0, 40) };
+    }
+    /**
+     * ★ 2.8.315 実測 #1661: 返事が「押せず（時間切れ・返事なし）」でも、実は押されて画面が読み直された事がある
+     *   （人の動きのクリックはキューに残って後で実行される。タブが背面だと遅い）。押した印（axlx_reset_pressed の bootAt）が
+     *   いまのページの起動と違う＝読み直された、なら「押した（遅れて）」として先へ進む（もう1回押さない・従来の外しへ行かない）。
+     */
+    if (!_press || (_press.ok === false && !_press.skipped && /^press_timeout/.test(String(_press.why || "")))) {
+      try {
+        var _lateWhy = String((_press && _press.why) || "no_answer");
+        var _lv = await _withTimeout(chrome.scripting.executeScript({
+          target: { tabId: _tab.id },
+          world: "MAIN",
+          func: function (c) {
+            try {
+              if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 1500, cid: c });
+            } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+            return { ok: false, why: "no_page_fn" };
+          },
+          args: [String(customerId || "")],
+        }), 8000, "reset_late_press_probe");
+        var _lr = (_lv && !_lv.__timeout && _lv[0] && _lv[0].result) || null;
+        if (_lr && _lr.reloaded) {
+          _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが画面は読み直されていた）→先へ進む");
+          _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };
+        } else {
+          _stamp("reset_press_late_check", "返事=" + _lateWhy + " 読み直し=" + (_lr ? (_lr.reloaded ? 1 : 0) : "読めず") + " 空=" + (_lr && _lr.empty ? 1 : 0));
+        }
+      } catch (_) {}
     }
     if (!_press || _press.ok === false || !_press.pressed) {
       var _why = (_press && (_press.why || _press.skipped)) || "no_answer";

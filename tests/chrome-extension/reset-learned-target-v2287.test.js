@@ -52,7 +52,7 @@ ok("押す先の印 _resetVia が決まる", /_resetVia = "learned"/.test(find) 
 
 console.log("\n■ ② 押す（人の動き）と結果");
 const press = fnSrc(ps, "  function _resetPress(done) {");
-ok("押すのは enqueueHumanClick のまま", /enqueueHumanClick\(btn, _clickEl/.test(press));
+ok("押すのは enqueueHumanClick のまま", /enqueueHumanClick\(btn, _fireReset/.test(press) && /_clickEl\(el\)/.test(press));
 ok("結果に押した先（via）が入る", /via: _resetVia/.test(press));
 ok("_resetPress は _findResetBtn() の後で _resetVia を読む（閉じ込め）", press.indexOf("_findResetBtn()") > 0 && press.indexOf("via: _resetVia") > press.indexOf("_findResetBtn()"));
 

@@ -33,7 +33,7 @@ console.log("\n■ 押す位置");
 ok("学習の位置を先に引く（_aimByEl）", /_aimByEl\(btn, \["リセット", "左のリセット"\]\)/.test(press));
 ok("押す点は _resetAimPoint（中心＋ボタン上のばらつき）", /_resetAimPoint\(btn,/.test(press));
 ok("ばらつきはボタンの面（0.22〜0.78）に収める", /Math\.max\(0\.22, Math\.min\(0\.78/.test(fnSrc(ps, "  function _resetAimPoint(btn, learned) {")));
-ok("押すのは enqueueHumanClick（人の動き）のまま", /enqueueHumanClick\(btn, _clickEl, _uiGapMin\(\), _uiGapMax\(\), null, _rOpts\)/.test(press));
+ok("押すのは enqueueHumanClick（人の動き）のまま", /enqueueHumanClick\(btn, _fireReset, _uiGapMin\(\), _uiGapMax\(\), null, _rOpts\)/.test(press));
 ok("値の直接書き換えは無い", !/\.value\s*=/.test(press) && !/dispatchEvent/.test(press));
 ok("結果に使った位置（種類と割合）を返す", /aim: _rPick\.kind \+ \(_rPick\.aim \? " " \+ _rPick\.aim\.x/.test(press));
 ok("背景の reset_press 段に 位置 が出る", /位置=" \+ String\(_press\.aim \|\| "-"\)/.test(bg));

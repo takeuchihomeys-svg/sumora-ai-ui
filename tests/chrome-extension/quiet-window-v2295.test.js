@@ -227,7 +227,7 @@ function part4() {
   const SILENCE = num(/var AXLX_STUCK_IDLE_MS = (\d+);/);
   const OWN_MAX = num(/var SORT_WAIT_OWN_MAX_MS = (\d+);/);
   ok("定数を読めた（リセット30秒・揺れ4秒・押し25秒・確かめ25秒・沈黙135秒・待ちの持ち90秒）",
-    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 25000 && VERIFY_TO === 25000 && SILENCE === 135000 && OWN_MAX === 90000,
+    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 45000 && VERIFY_TO === 25000 && SILENCE === 135000 && OWN_MAX === 90000,
     { RESET_MIN, RESET_JIT, PRESS_TO, VERIFY_TO, SILENCE, OWN_MAX });
 
   const N = 5000;
