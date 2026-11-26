@@ -635,7 +635,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch { /* 位置を継げなくても束は残す */ }
   try {
     const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-    const prep = prepareBundleForWrite(bundle as unknown as Record<string, unknown>);
+    const prep = prepareBundleForWrite(bundle as unknown as Record<string, unknown>, scope); // 2026-11-26: サイトを渡す（itandi にリアプロの手を載せない）
     if (!prep.playbook_ok) console.warn("[human-learn-profile] 手順書を作れません（束は書く）");
   } catch (e) {
     console.warn("[human-learn-profile] 書く前の整えに失敗:", e instanceof Error ? e.message : String(e));
@@ -1142,7 +1142,7 @@ export async function GET(req: NextRequest) {
   let playbookRefreshed: string | null = null;
   try {
     const { refreshPlaybookIfStale } = await import("@/app/lib/action-playbook");
-    const rf = refreshPlaybookIfStale(row.bundle as Record<string, unknown> | null);
+    const rf = refreshPlaybookIfStale(row.bundle as Record<string, unknown> | null, String(row.scope ?? ""));
     if (rf.refreshed) { servedBundle = rf.bundle; playbookRefreshed = rf.why; }
   } catch (e) {
     console.warn("[human-learn-profile] 手順書の作り直し（渡す時）に失敗:", e instanceof Error ? e.message : String(e));

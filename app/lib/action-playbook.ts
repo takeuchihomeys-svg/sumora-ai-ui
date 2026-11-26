@@ -42,7 +42,10 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 14;
+export const PLAYBOOK_BUILD_V = 15;
+// 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
+//   入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。buildPlaybook に site を渡し、itandi では載せない。
+//   site を渡さない時（既定）は今までどおり＝リアプロの動きは変えない。
 
 /**
  * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
@@ -557,8 +560,13 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
   };
 }
 
-/** 束 → 手順書（純関数。同じ束からは同じ版） */
-export function buildPlaybook(bundle: BundleLike): Playbook {
+/**
+ * 束 → 手順書（純関数。同じ束からは同じ版）
+ * site: 'itandi' なら、リアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）を載せない（ITANDI は並べ替えが無い）。
+ *       それ以外（未指定・realpro・all）は従来どおり。
+ */
+export function buildPlaybook(bundle: BundleLike, site?: string | null): Playbook {
+  const realproHands = String(site ?? "") !== "itandi";
   const posIdx = indexPositions(bundle.points);
   const openIdx = indexOpens(bundle.opens);
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
@@ -611,18 +619,21 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
     ["guide_clear_fill_gate", "continuous_customer_loop"],
     "条件場面: 録画が無いため①条件入れ→②照合→③検索へ を薄いガイド場面として手順書に足した（外しだけで終わらない）",
   );
-  injectGuideSceneEarly(
-    "search",
-    PLAYBOOK_SEARCH_GRASP_STEPS,
-    ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"],
-    "検索場面: 録画が無いため①検索→②把握→③並べ替えへ を薄いガイド場面として手順書に足した",
-  );
-  injectGuideSceneEarly(
-    "list",
-    PLAYBOOK_LIST_AD_SORT_STEPS,
-    ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor", "guide_list_next_flow"],
-    "一覧場面: 録画が無いため①並べ替え→②AD→③高→低→④PDF を薄いガイド場面として手順書に足した",
-  );
+  // 検索・一覧の手（並べ替え AD・印刷用PDF）はリアプロだけ。itandi には並べ替えが無いので載せない
+  if (realproHands) {
+    injectGuideSceneEarly(
+      "search",
+      PLAYBOOK_SEARCH_GRASP_STEPS,
+      ["search_decide", "search_customer_screen_grasp", "search_to_sort_cursor"],
+      "検索場面: 録画が無いため①検索→②把握→③並べ替えへ を薄いガイド場面として手順書に足した",
+    );
+    injectGuideSceneEarly(
+      "list",
+      PLAYBOOK_LIST_AD_SORT_STEPS,
+      ["ad_sort_hover", "sort_head_buried_find", "search_to_sort_cursor", "guide_list_next_flow"],
+      "一覧場面: 録画が無いため①並べ替え→②AD→③高→低→④PDF を薄いガイド場面として手順書に足した",
+    );
+  }
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
@@ -718,7 +729,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
    *   録画が印刷用PDFだけだと手順書から並べ替えが抜け、自動が PDF 直行する。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "list") continue;
+    if (sc.scene !== "list" || !realproHands) continue;
     // 固定ガイド（①〜③）が無い時だけ足す。FIELD_JA の「並べ替え」文言だけでは足りない
     const hasAdGuide = sc.steps.some((t) => /①並べ替え|②メニュー内のAD|③ADの右の/.test(String(t || "")));
     if (hasAdGuide) continue;
@@ -750,7 +761,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
    *   録画が「検索を押す」1手だけだと、把握→並べ替えが手順書から抜ける。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "search") continue;
+    if (sc.scene !== "search" || !realproHands) continue;
     const hasSearchGuide = sc.steps.some((t) => /①条件が揃ったら検索|②検索したことを手順書|③把握OKのあと並べ替え/.test(String(t || "")));
     if (hasSearchGuide) continue;
     const oldSearchAim = sc.detail.find((d) => /検索/.test(d.step))?.aim ?? null;
@@ -868,7 +879,7 @@ export function buildPlaybook(bundle: BundleLike): Playbook {
  * 束の手順書が古ければ（作り方の版が下・決まりの版がコードと違う・無い）作り直した写しを返す（元の束は変えない）。
  *   API が拡張へ渡す時に使う＝決まりを直してデプロイしたら、次に束を書く前でも拡張は新しい手順書を読む。
  */
-export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | undefined): {
+export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | undefined, site?: string | null): {
   bundle: Record<string, unknown> | null | undefined; refreshed: boolean; why: string | null;
 } {
   if (!bundle || typeof bundle !== "object") return { bundle, refreshed: false, why: null };
@@ -879,7 +890,7 @@ export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | 
   else if (pb.rules_v !== autoRulesVersion()) why = `決まりの版が古い（${pb.rules_v ?? "-"}→${autoRulesVersion()}）`;
   if (!why) return { bundle, refreshed: false, why: null };
   const copy: Record<string, unknown> = { ...bundle };
-  copy.playbook = buildPlaybook(copy as never);
+  copy.playbook = buildPlaybook(copy as never, site);
   return { bundle: copy, refreshed: true, why };
 }
 

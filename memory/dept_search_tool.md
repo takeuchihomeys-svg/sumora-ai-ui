@@ -14919,3 +14919,11 @@ Claude（統括役）からの依頼2件への対応。
 - 未: push（main）と DB 反映は竹内さんの OK 待ち。拡張の再読み込み（2.8.310）と realpro の実走で task_api_refresh_res の ms を確認する。
 - 本番確認（2026-11-26・3e2fa5e0b の Production Ready 後）: touch=0 の playbook_rules_v=43eae84d（渡す時の版）・DB の playbook_rules_up_to=2.8.309 のまま（DB は書いていない）。拡張が 2.8.310 に再読み込みされれば、手順書は次の確認で取り直される。
 - 注: 拡張の『attach-playbook が必要』の警告（_pbBehind）は DB の版を見ている。渡す時の版は合っているので、この警告は今は当てにならない（次に直す）。
+
+### 2026-11-26 手順書のサイト分け（作り方の版 15）
+- 確認: 手順書の文面を読んだ結果、itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・高→低・検索の把握）が入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。
+- 直し: buildPlaybook(bundle, site) で itandi の時は一覧・検索の手を載せない。site 未指定・realpro は従来どおり。prepareBundleForWrite・refreshPlaybookIfStale・API・cron（human-learn-brain）・shot-learn-server・attach-playbook は、行の scope を渡す。
+- 版: PLAYBOOK_BUILD_V 14→15（既存の束は読み出し時に作り直される）。DB の行は次の書き込みで直る（DB を今すぐ書き換えてはいない）。
+- 試験: app/lib/__tests__/playbook-site-split.test.ts（itandi に手が無い／realpro・未指定は従来どおり／作り直しも site で分かれる）。
+- 未（itandi の事実が要る）: 一連の流れ（flow_series）の sort_ad・list・before_clear（リセット）はリアプロの言葉のまま。itandi に『リセット』が有るかは未確認。itandi の未分類の欄 3 件（リスト検索・room_layout:in・管理費・共益費込み敷金な）。
+- 試験の揺れ: bulk-loop-chaos-v2308 が全体の試験の時だけ1回赤（60秒の時間切れの可能性）。単独 3 回・全体の再実行で通過。
