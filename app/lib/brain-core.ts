@@ -4430,7 +4430,9 @@ ${sh}`;
           const sentB: Record<string, string> = {};
           for (const x of (brainLedgerInput.recentAixRows ?? []) as Array<{ aix_type?: string | null; sent_at?: string | null; created_at?: string | null }>) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || sentB[k] < at)) sentB[k] = at; }
           const subNow = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null; } catch { return null; } })(); // 照らしの json の sub1 と同じ計算
-          const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString() }));
+          // 気持ちは前の番の判断の記録の値（作業員L の ROUTE_MINDSET_LINE と同じ・今の番の LLM の後の値は使わない）
+          const msPrev = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null;
+          const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString(), mindset: msPrev }));
           if (cl) { applyRouteText += `\n${cl}`; materialMarks.chain_insight = cl.length; materialBlocks.push({ key: "chain_insight", text: `\n${cl}`, from: "route" }); }
         }
       } catch (e) { console.warn("[brain-core] chain-insight skipped:", e instanceof Error ? e.message : String(e)); }
