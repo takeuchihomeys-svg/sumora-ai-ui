@@ -145,7 +145,8 @@ import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from
 import { applyRouteMapEnabled, applyRouteBrainTextIfEnabled } from "@/app/lib/apply-route-map";
 import { greetingSentTodayOf } from "@/app/lib/apply-route-next";
 import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作業員M（#467）: 地図の駅を meta.apply_route に残す（既定 on・=off で止める・11/21 統括役の了承）
-import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after"; // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
+import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after";
+import { substateInContext, substateContextOn } from "@/app/lib/substate-context"; // 2026-11-27 作業員A: 細かい状態の前提（SUBSTATE_CONTEXT・既定 off） // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
 import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
@@ -3397,6 +3398,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       let pickupScene: string | null = null;
       if (pfPre.promised && !pfPre.fulfilled) { const { count: pendAB } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending"); pickupScene = ppf2.pickupPromiseFlowOf(msgsAB, aixAB, typeof pendAB === "number" ? pendAB : null, Date.now()).scene; }
       const customerAsked = /[?？]|ですか|ますか|でしょうか|教えて/.test(String(unrepliedTurn.text ?? ""));
+      // 2026-11-27 作業員A（q473・q475 で場面が出なかった訳を試験で見る・AIX_BOUNDARY_LINE=on の時だけの記録）: 約束・果たし・候補の数・場面を1行のログに
+      console.log(JSON.stringify({ tag: "brain:aix-boundary-scene", conversationId, checkScene, pickupPromised: pfPre.promised, pickupFulfilled: pfPre.fulfilled, pickupScene, msgs: (brainLedgerInput.messages ?? []).length }));
       const bsAB = ab.boundariesFor({ checkScene, pickupScene, customerAsked });
       const ln = ab.aixBoundaryLine(bsAB);
       if (ln) { flowMarks.abd = bsAB[0].aix === "返信" ? "reply" : bsAB[0].aix; /* #783 使った目印 */ customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; aixBoundaryMarkLen = ln.length; materialBlocks.push({ key: "aix_boundary", text: ln, from: "cs" }); }
@@ -3731,13 +3734,15 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
   if (equipWishMarkLen) materialMarks.equip_wish = equipWishMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
+  // 2026-11-27 作業員A: ⑥の差し替えが効く番（お客様の番がお礼・了承だけ）にだけ付く印 rule6_open_turn（試験の届いたかの関所用・on の時だけ・off は付かない）
+  if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON && isAckOnlyTurn(String(unrepliedTurn.text ?? ""))) materialMarks.rule6_open_turn = 1;
   if (rule6OpenPromiseOn() && !BRAIN_RULES_678_FACTS_ON) materialMarks.rule6_open = 1; // 2026-11-23 作業員A（#648）: 差し替えた⑥が指示文に入った（全問に同じ文＝効き目は答えの比べ・記録だけ）
   if (exchangeMarkLen) materialMarks.exchange = exchangeMarkLen; // 2026-11-23 作業員A: CONDUCTOR_EXCHANGE_LEDGER_BRAIN=on で1行を足した番だけ（動きは変えない）
   if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
     try {
       const ackFacts = ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at })));
       const ackLine = ackFormMaterialLine(ackFacts);
-      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; materialBlocks.push({ key: "ack_confirm", text: ackLine, from: "cs" }); ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); }
+      if (ackLine) { customerStateBlockText += `\n\n${ackLine}`; materialMarks.ack_confirm = ackLine.length; materialBlocks.push({ key: "ack_confirm", text: ackLine, from: "cs" }); ackPickupPathGiven = ackPickupAixPathGiven(ackFacts); if (ackPickupPathGiven) materialMarks.ack_pickup_path = 1; /* 2026-11-27 作業員A: 試験で届いたかの印（ACK_PICKUP_AIX_PATH=on で道の1行を渡した番だけ・off は付かない） */ }
     } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
@@ -4446,10 +4451,12 @@ ${sh}`;
             viewingWish: custTexts.some((x) => /内覧|内見|見学|見に行/.test(x)), applyIntent: routeTypeNow === "apply_intent", screeningConcern: custTexts.some((x) => SWR.test(x)),
             moveInYmd: mvBP.kind === "future" ? ymdStrOf(mvBP.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10),
           });
-          const bl = bp.backplanLine(plan);
+          let bl = bp.backplanLine(plan);
+          // 2026-11-27 作業員A（BACKPLAN_NEXT_STONE=on の時だけ・既定 off）: 逆算の1行に次の石を束ねる・印 backplan_next_stone
+          if (bl && bp.backplanNextStoneOn()) { const ns = await import("@/app/lib/route-next-stone"); const st = ns.NEXT_STONE[ar.loc.node as keyof typeof ns.NEXT_STONE]; const tail = bp.backplanNextStoneTail(st?.label); if (tail) { bl += tail; materialMarks.backplan_next_stone = 1; } }
           // 2026-11-26 作業員A（#747 の形）: 地図の文から別の行として控えに登録（MATERIAL_PRIORITY が並べ替える単位）・材料に入れるのは APPLY_ROUTE_BACKPLAN=on の時だけ
           if (bl && bp.applyRouteBackplanOn()) { if (plan?.ahead[0]) flowMarks.bpn = plan.ahead[0]; applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; materialBlocks.push({ key: "route_backplan", text: `\n${bl}`, from: "route" }); }
-          if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
+          if (bp.backplanToWriterOn()) { routeBackplanRec = bp.backplanRecOf(plan); if (routeBackplanRec) materialMarks.backplan_to_writer = 1; /* 2026-11-27 作業員A: 書き手へ渡した番の印（BACKPLAN_TO_WRITER=on の時だけ） */ }
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-26 作業員A（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」・CHAIN_INSIGHT_LINE=on の時だけ・既定 off）: 駅＋駅の中の状態＋前に送った AIX の組が
@@ -4459,7 +4466,7 @@ ${sh}`;
         if (cpm.chainInsightLineOn() && ar.loc) {
           const sentB: Record<string, string> = {};
           for (const x of (brainLedgerInput.recentAixRows ?? []) as Array<{ aix_type?: string | null; sent_at?: string | null; created_at?: string | null }>) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || sentB[k] < at)) sentB[k] = at; }
-          const subNow = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null; } catch { return null; } })(); // 照らしの json の sub1 と同じ計算
+          const subNow = (() => { try { return substateContextOn() ? substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }).id : (matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null); } catch { return null; } })(); // 照らしの json の sub1 と同じ計算（SUBSTATE_CONTEXT=on は前提つき）
           // 気持ちは前の番の判断の記録の値（作業員L の ROUTE_MINDSET_LINE と同じ・今の番の LLM の後の値は使わない）
           const msPrev = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null;
           const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString(), mindset: msPrev }));
@@ -4481,6 +4488,8 @@ ${sh}`;
         const msm = await import("@/app/lib/mindset-station-move");
         if (msm.routeMindsetLineOn() && ar.loc?.node && !ar.loc.branch) { const prevState = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null; const ml = msm.mindsetStationLine(ar.loc.node, prevState); if (ml) { const tm = msm.mindsetStationTopMark(ar.loc.node, prevState); if (tm) flowMarks.msm = tm; /* #795 使った目印 */ applyRouteText += `\n${ml}`; materialMarks.mindset_station = ml.length; materialBlocks.push({ key: "mindset_station", text: ml, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] mindset-station skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-27 作業員A: 次の一手を番で選び直した番の印（APPLY_ROUTE_NEXT_BY_TURN=on の時だけ evidence に出る＝off は付かない）
+      if (ar.loc?.evidence?.some((e: string) => e.startsWith("次の一手を番で選び直し:"))) materialMarks.route_next_by_turn = 1;
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }
@@ -7309,7 +7318,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
       ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
-      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
+      ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { if (substateContextOn()) { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); if (sc.droppedBy) materialMarks.substate_context_dropped = 1; return sc.id; } return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
       three_layer: BRAIN_THREE_LAYER_ON ? (normalizeThreeLayer((parsed as { three_layer?: unknown }).three_layer) ?? undefined) : undefined,
       main_point: BRAIN_MAIN_POINT_ON ? (normalizeMainPoint((parsed as { main_point?: unknown }).main_point, rentFirst.applied ? rentFirst.keyTopics : keyTopics) ?? undefined) : undefined,

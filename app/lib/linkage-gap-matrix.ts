@@ -32,6 +32,13 @@ export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
   // 2026-11-26 作業員A（#796 の2番目）: こちら側の状態（もう送った・約束した・確かめ済み）の2通目は、作業員L の AIX_SECOND_DECIDED（既定 off）で配線済み＝新しいコードは要らない・試験の組で on を決める
   { id: "brain_decided_our_side", name: "ブレインの決め（こちら側の状態＝もう送った・約束した・確かめ済み）", owner: "作業員L", value: 9.8, valueBase: "竹内さん本人の AIX の文 194（こちら側の状態 19）",
     cells: { writer: { state: "on", switch: "OUR_SIDE_TO_COMPOSE" }, aix2: { state: "off", switch: "AIX_SECOND_DECIDED", item: 796, note: "事実の出所・刺さった所も同じスイッチ・SITUATION_WRITER_NOTE_AIX と重なる時は外す" } } },
+  // 2026-11-27 作業員A（竹内さん「他の部分にも逆算組み合わせて連携させていけば」）: 逆算（APPLY_ROUTE_BACKPLAN・11/27 の晩に届いた7問で on を決める）の受け取り先
+  //   書き手: 竹内さんが先を仕込んだ番 57 のうち下書きも同じ向き 31（54.4%）＝つなげば変わる 26番（BACKPLAN_TO_WRITER・作ったが off）
+  //   AIX の2通目: 内覧の誘い・集合場所の日にちは 98/100・68/68 がスタッフの空きの実際の日時＝逆算の目安の日にちとは別物（AIX は人だけが知る事）＝つながない
+  //   統括の材料の優先: 試験で逆算の1行が届いた 7/11・並べ替えで落ちた番は数えられない（MATERIAL_PRIORITY の shadow の当たりの数の後）
+  //   連鎖の型・次の石: 逆算の この先 の1手目と次の石は 9駅中 9駅で同じ向き・連鎖の型 12 のうち 3型も同じ向き＝別の行にすると重なる → 逆算の1行に次の石を束ねる BACKPLAN_NEXT_STONE（作ったが off）
+  { id: "route_backplan_out", name: "逆算の計画（この先・仕込む一言・日にちの目安）", owner: "作業員A", value: 45.6, valueBase: "竹内さんが先を仕込んだ番 57 のうち下書きが同じ向きでなかった 26（45.6%）",
+    cells: { brain: { state: "off", switch: "APPLY_ROUTE_BACKPLAN", note: "11/27 の晩に届いた7問で on を決める" }, writer: { state: "off", switch: "BACKPLAN_TO_WRITER" }, aix2: { state: "none", note: "日にちはスタッフの空き＝つながない" }, combo: { state: "off", switch: "BACKPLAN_NEXT_STONE", note: "次の石と1行に束ねる" } } },
   { id: "estimate_tool", name: "見積書ツール（金額・割引・内訳）", owner: "作業員L", value: 21.7, valueBase: HAND,
     // 2026-11-26 作業員L の確かめ（A が写した）
     cells: { intake: { state: "off", switch: "CONDUCTOR_INTAKE_ESTIMATE", note: "作業員L が入口の見積の1行を作った（既定 off・11/26）" }, brain: { state: "on", switch: "BRAIN_ESTIMATE_RECORDS", item: 580, note: "物件・号室・初期費用・送った日。割引 BRAIN_ESTIMATE_DISCOUNT・見積の後の反応 BRAIN_ESTIMATE_REACTION は off" }, writer: { state: "on", switch: "COMPOSE_ASKS_FACTS", note: "初期費用と割引・新しい3件" }, aix2: { state: "unknown" }, final: { state: "on", note: "draft-fact-grounding が estimate_records の物件名を読む" } } },

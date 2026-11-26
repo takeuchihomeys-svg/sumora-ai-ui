@@ -21,9 +21,33 @@ export const PICKUP_LINK_STAGES: readonly LinkStage[] = [
 export function pickupWhyPendingMatchOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.PICKUP_WHY_PENDING_MATCH ?? "").trim().toLowerCase() === "on";
 }
-const norm = (s: unknown) => String(s ?? "").normalize("NFKC").replace(/[\s　]/g, "");
-/** pending の行のうち、72時間以内に送った物件の AIX の物件名に入っている物だけ（純関数） */
-export function pendingMatchedOf<T extends { property_name?: string | null }>(pending: readonly T[], sentNames: readonly string[]): T[] {
-  const set = new Set(sentNames.map(norm).filter(Boolean));
-  return pending.filter((p) => set.has(norm(p.property_name)));
+/** 号室を数に（"0403"→"403"・無ければ null） */
+const roomOf = (s: unknown): string | null => { const d = String(s ?? "").normalize("NFKC").replace(/\D/g, ""); return d ? String(parseInt(d, 10)) : null; };
+/**
+ * 物件名を「建物名」と「号室」に分ける（純関数）。2026-11-27 作業員A（L の発見: AIX の property_names は「建物名 号室」・
+ *   ピックアップの property_name は建物名だけ＝名前全体の一致では写しの 96問中 3問しか合わなかった）
+ *   - 後ろの号室（空白＋数字＋号室/号/室 か、数字＋号室）を外して号室に
+ *   - 後ろの階の帯（「2-8F」「15F」＝同じ建物の募集の分け方）を外す
+ *   - 括弧の中（旧名など）を外し、空白・記号をそろえる
+ *   頭一致は使わない: 写しで「ハーモニーテラス歌島Ⅴ」と「Ⅵ」、「プレジオ難波Asian」と「プレジオ難波」が別の建物（誤一致になる）
+ */
+export function splitPropertyName(s: unknown): { building: string; room: string | null } {
+  let t = String(s ?? "").normalize("NFKC").trim();
+  let room: string | null = null;
+  const m = t.match(/[\s　]+([A-Za-z]?\d{1,4}[A-Za-z]?)[\s　]*(?:号室|号|室)?$/) ?? t.match(/(\d{1,4})[\s　]*号室$/);
+  if (m && m.index != null) { room = roomOf(m[1]); t = t.slice(0, m.index); }
+  t = t.replace(/[\s　]*\d{1,2}(?:-\d{1,2})?F$/i, "");
+  t = t.replace(/[(（【\[][^)）】\]]*[)）】\]]/g, "");
+  return { building: t.replace(/[\s　・\-‐‑–—_/／.,、。'"’]/g, ""), room };
+}
+/** pending の行のうち、72時間以内に送った物件の AIX の物件名と同じ物件の物だけ（純関数）。
+ *  建物名が同じ・両方に号室がある時は号室も同じ。AIX 側に号室が無い時は建物名だけで合わせる */
+export function pendingMatchedOf<T extends { property_name?: string | null; room_no?: string | null }>(pending: readonly T[], sentNames: readonly string[]): T[] {
+  const sent = sentNames.map(splitPropertyName).filter((x) => x.building);
+  return pending.filter((p) => {
+    const a = splitPropertyName(p.property_name);
+    if (!a.building) return false;
+    const room = roomOf(p.room_no) ?? a.room;
+    return sent.some((s) => s.building === a.building && !(room && s.room && room !== s.room));
+  });
 }
