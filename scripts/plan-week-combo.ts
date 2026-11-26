@@ -59,7 +59,7 @@ if (require.main === module) (async () => {
   const first = fixes.map((f) => f.onAt).sort()[0];
   const baseRef = first ? (() => { try { return execFileSync("git", ["rev-list", "-1", `--before=${first}`, "origin/main"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim().slice(0, 9) || null; } catch { return null; } })() : null;
   console.log(`その週（${days}日）に on にした直し: ${fixes.length}本（スイッチのある物）${fixes.map((f) => `\n- #${f.itemId} ${f.switchName}: 効く ${f.eff.length}・守り ${f.guards.length}`).join("")}`);
-  const c = weekComboOf(fixes, { day: today, baseRef, notBefore: arg("not-before", "2026-11-30") });
+  const c = weekComboOf(fixes, { day: today, baseRef, notBefore: arg("not-before", "2026-11-30"), night: arg("night", "") });
   if (!c) { console.log("組を作らない（スイッチのある直しが2本未満）"); return; }
   console.log(`\n${c.block}`);
   const w = arg("write", "");

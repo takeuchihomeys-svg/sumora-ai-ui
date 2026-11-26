@@ -24,7 +24,7 @@ export function roundRobin(lists: ReadonlyArray<readonly string[]>, max: number)
   }
   return out;
 }
-export function weekComboOf(fixes: readonly WeekFix[], o: { day: string; baseRef: string | null; notBefore?: string; maxEff?: number; maxGuards?: number; repeat?: number; capUsd?: number; spentUsd?: number }): WeekCombo | null {
+export function weekComboOf(fixes: readonly WeekFix[], o: { day: string; baseRef: string | null; notBefore?: string; night?: string; maxEff?: number; maxGuards?: number; repeat?: number; capUsd?: number; spentUsd?: number }): WeekCombo | null {
   const withSw = fixes.filter((f) => f.switchName);
   if (withSw.length < 2) return null; // 1本だけの週は重なりが無い
   const maxEff = o.maxEff ?? 10, maxGuards = o.maxGuards ?? 2, repeat = o.repeat ?? 2, cap = o.capUsd ?? 10;
@@ -35,10 +35,10 @@ export function weekComboOf(fixes: readonly WeekFix[], o: { day: string; baseRef
   // 見込み: 今の回（効く×回・守り×1）＋前の回（main@ref の答えが無い前提で同じ数）
   const usd = Math.round((eff.length * repeat + guards.length) * 2 * BRAIN_USD_PER_REP * 1000) / 1000;
   const fits = (o.spentUsd ?? 0) + usd <= cap;
-  const night = nextSunday(o.day, o.notBefore ?? "");
+  const night = o.night || nextSunday(o.day, o.notBefore ?? ""); // --night で晩を手で決める（統括役の決め・最初の週は 11/30 の晩）
   const name = `week-combo-${night}`;
   const block = [
-    `## ${o.day} 作業員L: 週の全部 on の組（台帳 #799 ⑤・その週に on にした ${switches.length}本・流す晩の案 ${night}（日曜）・見込み $${usd.toFixed(2)}${fits ? "" : "・⚠ 晩の上限を超える＝問題を減らす"}）`,
+    `## ${o.day} 作業員L: 週の全部 on の組（台帳 #799 ⑤・その週に on にした ${switches.length}本・流す晩の案 ${night}${new Date(`${night}T00:00:00Z`).getUTCDay() === 0 ? "（日曜）" : ""}・見込み $${usd.toFixed(2)}${fits ? "" : "・⚠ 晩の上限を超える＝問題を減らす"}）`,
     `- 組: ${name} ${switches.join(" ")} stage=brain`,
     `- 効く: ${eff.join(",") || "（無し＝各直しの効く問題が分からない）"}`,
     `- 守り: ${guards.join(",") || "なし"}`,

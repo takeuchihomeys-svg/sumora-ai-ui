@@ -33,5 +33,6 @@ const dir = mkdtempSync(join(tmpdir(), "wc-"));
 writeFileSync(join(dir, "a.json"), JSON.stringify({ switch: "A_ON", only: "q101,q102,q107", guards: ["q107"], at: "2026-11-21" }));
 writeFileSync(join(dir, "b.json"), JSON.stringify({ switch: "A_ONX", only: "q105", at: "2026-11-22" }));
 assert.deepEqual(resultProblemsOf(dir, "A_ON"), { eff: ["q101", "q102"], guards: ["q107"] });
-assert.ok(nightZeroCostSteps("C:/x/m/route.json").some((s) => s.args[0] === "scripts/plan-week-combo.ts" && s.args.includes("--weekly") && s.args.includes("--write=C:/x/m/week-combo-candidates.md")), "晩の費用0の仕事（土曜だけ作る）");
-console.log("week-combo: ok 13");
+assert.ok(nightZeroCostSteps("C:/x/m/route.json").some((s) => s.args[0] === "scripts/plan-week-combo.ts" && s.args.includes("--weekly") && s.args.includes("--write=../../../memory/night_bundle_candidates.md")), "晩の費用0の仕事（土曜だけ作る）");
+assert.equal(weekComboOf(fx, { day: "2026-11-26", baseRef: null, night: "2026-11-30" })!.name, "week-combo-2026-11-30", "晩を手で決める");
+console.log("week-combo: ok 14");
