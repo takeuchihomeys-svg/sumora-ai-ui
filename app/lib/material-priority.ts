@@ -138,6 +138,36 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
   },
 };
 
+/**
+ * 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」・統括役の頼み）: shadow の当たり＝入口が選んだ「まず見る3つ」（digest.mpr のキー）が、
+ *   その番の竹内さん本人の一手（takeuchiAix: AIX の種類・返信は ""・竹内さんの番でなければ null）で目印（USED_MARKERS）どおりだったか（純関数）。
+ *   番の当たり＝選んだキーのどれかの目印が竹内さんの一手で true／外れ＝決められたキーが1つ以上あり全部 false／決められない＝それ以外。
+ *   当たった番は 11/30 の MATERIAL_PRIORITY の組の効く問題の候補（会話と時刻を返す）
+ */
+export type PriorityHitRow = { conv: string; at: string; digest: Record<string, unknown>; takeuchiAix: string | null };
+export function priorityHitsOf(rows: readonly PriorityHitRow[]): { turns: number; hit: number; miss: number; undecided: number; rate: number | null; byKey: Record<string, { hit: number; of: number }>; hits: Array<{ conv: string; at: string; keys: string[] }> } {
+  let turns = 0, hit = 0, miss = 0, undecided = 0;
+  const byKey: Record<string, { hit: number; of: number }> = {};
+  const hits: Array<{ conv: string; at: string; keys: string[] }> = [];
+  for (const r of rows) {
+    const m = String(r.digest.mpr ?? "").split("|");
+    if (m.length < 5 || r.takeuchiAix == null) continue;
+    const keys = m[3] ? m[3].split(",").filter(Boolean) : [];
+    if (!keys.length) continue;
+    turns++;
+    const d = { ...r.digest, aix: r.takeuchiAix, la: "" };
+    let anyTrue = false, anyDecided = false; const hk: string[] = [];
+    for (const k of keys) {
+      const f = USED_MARKERS[k]; const u = f ? f(d) : null;
+      if (u == null) continue;
+      anyDecided = true; const o = (byKey[k] ??= { hit: 0, of: 0 }); o.of++;
+      if (u) { anyTrue = true; o.hit++; hk.push(k); }
+    }
+    if (anyTrue) { hit++; hits.push({ conv: r.conv, at: r.at, keys: hk }); } else if (anyDecided) miss++; else undecided++;
+  }
+  return { turns, hit, miss, undecided, rate: hit + miss ? Math.round((hit / (hit + miss)) * 1000) / 10 : null, byKey, hits };
+}
+
 /** 物差し①②を記録の行から数える（毎朝の1枚） */
 export function materialPriorityMeasures(digests: ReadonlyArray<Record<string, unknown>>): { picked: number; ready: number; headShare: number | null; used: number; usedOf: number } {
   let picked = 0, ready = 0, keysN = 0, movedN = 0, used = 0, usedOf = 0;

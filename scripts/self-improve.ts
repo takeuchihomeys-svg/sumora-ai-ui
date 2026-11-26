@@ -732,6 +732,8 @@ async function main() {
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
         lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
+        // 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」）: MATERIAL_PRIORITY の shadow の当たり（入口が選んだ3つ × 竹内さん本人の一手 × USED_MARKERS・記録は晩の費用0の仕事 mp:shadow_hit）
+        try { const { measurePriorityHits } = await import("./audit-material-priority-hit"); const ph = await measurePriorityHits(sb, new Date(now - 86_400_000).toISOString(), new Date(now).toISOString()); lines.push(`- MATERIAL_PRIORITY の shadow の当たり（mpr のある判断 ${ph.withMpr}・竹内さん本人の番 ${ph.turns}）: 当たり ${ph.hit}・外れ ${ph.miss}・決められない ${ph.undecided}${ph.rate != null ? `（${ph.rate}%）` : ""}${Object.keys(ph.byKey).length ? `・目印ごと ${Object.entries(ph.byKey).map(([k, v]) => `${k} ${v.hit}/${v.of}`).join("・")}` : ""}`); } catch (e) { console.warn("[self-improve] shadow の当たりを数えられない:", e instanceof Error ? e.message : String(e)); }
       }
     } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
