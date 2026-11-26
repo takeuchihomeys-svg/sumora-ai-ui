@@ -3333,7 +3333,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       const { data: dp } = asc.aixStateCardDocOn() ? await supabase.from("property_pickups").select("property_name, room_no, created_at, terms, pdf_text, image_lines").eq("conversation_id", conversationId).eq("status", "sent").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).order("created_at", { ascending: false }).limit(20) : { data: null };
       const card = asc.buildAixStateCard({ docPickups: dp ? (dp as never) : null, pickups: (pk ?? []) as Array<{ created_at: string; status: string | null }>, messages: brainLedgerInput.messages as never, aixRows: brainLedgerInput.recentAixRows as never, viewingHistory: viewingHistoryRows as never, lineTasks: brainLedgerInput.lineTasks as never }, Date.now());
       if (briefOnNow) briefInputs.aixStateCard = card;
-      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; }
+      if (ascMode === "on") { const ln = asc.aixStateCardLine(card); customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`; aixCardMarkLen = ln.length; materialBlocks.push({ key: "aix_state_card", text: `【AIX を選ぶ時の今の状態（送った物の記録・予定から決まった計算）】${ln}`, from: "cs" }); /* 2026-11-26 作業員A: MATERIAL_PRIORITY の控えの行に（統括役の頼み） */ }
     }
   } catch (e) { console.warn(JSON.stringify({ tag: "aix-state-card-failed", error: e instanceof Error ? e.message : String(e) })); }
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
