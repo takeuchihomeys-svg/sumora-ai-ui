@@ -1,3 +1,4 @@
+import { siteKeyOf } from "./site-key";
 // app/lib/sheet-layout.ts（純関数・依存なし・画面とサーバーで共用できる）
 // 物件資料（1ページ目）の「型」を決め、DeepSeek に読ませる所（間取り図・画像の範囲）の切り出し位置を決める。
 //
@@ -99,8 +100,9 @@ export type SheetTypeDecision = { type: SheetType; by: "site" | "url" | "text" |
  */
 export function detectSheetType(input: { site?: string | null; pdfUrl?: string | null; pageText?: string | null }): SheetTypeDecision {
   const site = String(input.site ?? "").trim().toLowerCase();
-  if (site === "realpro" || site === "realnetpro") return { type: "realpro", by: "site" };
-  if (site === "itandi") return { type: "itandi", by: "site" };
+  const sk = siteKeyOf(site); // 2026-11-26: 呼び名は site-key.ts
+  if (sk === "realpro") return { type: "realpro", by: "site" };
+  if (sk === "itandi") return { type: "itandi", by: "site" };
   if (site) return { type: "unknown", by: "site" };   // reins など（今は売上サポに来ないが同じ扱い）
   if (/realnetpro/i.test(String(input.pdfUrl ?? ""))) return { type: "realpro", by: "url" };
   const text = String(input.pageText ?? "");

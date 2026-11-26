@@ -22,6 +22,7 @@ import { agesOutside, coversGap, fmtGap, hoursSince, neededDays, planFor, type U
 import { buildSentRoomIndex, isSentRoom } from "./sent-room-match";
 import { SEARCH_MAX_PAGES } from "./auto-search-schedule";
 import { ownerStepsFrom } from "./pickup-owner";
+import { siteKeyOf } from "./site-key";
 
 export type AuditSeverity = "ok" | "warn" | "bad";
 export type AuditSite = "realpro" | "itandi" | "reins";
@@ -265,12 +266,9 @@ function codeRank(code: string): number {
   return i < 0 ? CODE_ORDER.length : i;
 }
 
+// 2026-11-26: サイトの呼び名の変換は app/lib/site-key.ts（唯一の正本）へ。
 export function normalizeSite(s: string | null | undefined): AuditSite | null {
-  const v = String(s ?? "").toLowerCase();
-  if (v === "realpro" || v === "realnetpro" || v === "リアプロ") return "realpro";
-  if (v === "itandi") return "itandi";
-  if (v === "reins" || v === "レインズ") return "reins";
-  return null;
+  return siteKeyOf(s);
 }
 
 /** 原因の鍵の1部分（: を含めない・空白を詰める・40字まで） */

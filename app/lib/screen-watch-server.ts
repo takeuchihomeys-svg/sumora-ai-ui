@@ -23,6 +23,7 @@ import { buildSearchIntent, independentExpectation, decisionDrift, intentSummary
 import { runSearchAuditChecks, type AuditInput, type AuditCheck } from "@/app/lib/search-audit-check";
 import { isMissingColumnError } from "@/app/lib/extension-snapshots";
 import { auditUpdateContext } from "@/app/lib/search-update-days-server";
+import { siteKeyOf } from "@/app/lib/site-key";
 import { hoursSince, neededDays } from "@/app/lib/search-update-days";
 import { itemizeWants } from "@/app/lib/customer-wants";
 import type { JevBrainMaterial } from "@/app/lib/screen-watch";
@@ -209,12 +210,9 @@ export type CheckpointDecision = {
   stop_site: { site: string; label: string; reason: string } | null;
 };
 
+// 2026-11-26: 呼び名の変換は app/lib/site-key.ts（唯一の正本）。知らない値はそのまま返す（今まで通り）。
 function siteKey(s: string | null | undefined): string | null {
-  const v = String(s ?? "").toLowerCase();
-  if (v === "realpro" || v === "realnetpro" || v === "リアプロ") return "realpro";
-  if (v === "itandi") return "itandi";
-  if (v === "reins" || v === "レインズ") return "reins";
-  return v || null;
+  return siteKeyOf(s) ?? (String(s ?? "").toLowerCase() || null);
 }
 
 /** 更新日の材料（その回の入れようとした日数・前回の検索から空いた時間） */

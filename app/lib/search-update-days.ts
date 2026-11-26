@@ -1,3 +1,4 @@
+import { siteKeyOf } from "./site-key";
 // app/lib/search-update-days.ts（純関数・DB も fetch も無し・画面からも使える）
 // 更新日（リアプロの「N日以内」・ITANDI の「募集条件更新 N日以内」）を「前回の検索から空いた日数」で覆えているかを決める・確かめる。
 //
@@ -118,8 +119,8 @@ export function stopLinesBySite(
   const changed = conditionChangedAt ? Date.parse(conditionChangedAt) : NaN;
   const out: Record<string, string> = {};
   for (const s of sites) {
-    const v = String(s ?? "").toLowerCase();
-    const k = v === "realnetpro" || v === "realpro" ? "realpro" : v === "itandi" ? "itandi" : null;
+    const sk = siteKeyOf(s); // 2026-11-26: 呼び名は site-key.ts（レインズはここでは線を持たない）
+    const k = sk === "realpro" || sk === "itandi" ? sk : null;
     const at = k ? last[k] : undefined;
     const t = at ? Date.parse(at) : NaN;
     if (!k || !at || !Number.isFinite(t)) continue;

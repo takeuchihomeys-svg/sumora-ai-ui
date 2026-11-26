@@ -27,6 +27,7 @@
 //   この回の後に自動の広げてを積んだ（1回だけ）。分からない時は広げない（勝手に検索しない側に倒す）
 import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
 import { effectiveRpUpdateDays } from "./rp-update-days";
+import { siteKeyOf } from "./site-key";
 
 export type SearchMode = "pinpoint" | "widen";
 export function normalizeSearchMode(v: unknown): SearchMode | null {
@@ -53,19 +54,16 @@ export function passThreshold(kind: WidenKind): number {
 }
 
 /** 物件の届くサイト（売上サポ・検索の点検の呼び名）→ コマンドのサイト（web_brain）。レインズ・知らないサイトは null（広げない） */
+// 2026-11-26: 呼び名の変換は app/lib/site-key.ts（唯一の正本）。ここはレインズを広げない決まりだけ持つ。
 export function commandSiteOf(site: string | null | undefined): "realnetpro" | "itandi" | null {
-  const s = String(site ?? "").toLowerCase();
-  if (s === "realpro" || s === "realnetpro" || s === "リアプロ") return "realnetpro";
-  if (s === "itandi") return "itandi";
+  const k = siteKeyOf(site);
+  if (k === "realpro") return "realnetpro";
+  if (k === "itandi") return "itandi";
   return null;
 }
 /** 売上サポ・検索の点検の呼び名にそろえる（realpro / itandi / reins） */
 export function pickupSiteOf(site: string | null | undefined): "realpro" | "itandi" | "reins" | null {
-  const s = String(site ?? "").toLowerCase();
-  if (s === "realpro" || s === "realnetpro" || s === "リアプロ") return "realpro";
-  if (s === "itandi") return "itandi";
-  if (s === "reins" || s === "レインズ") return "reins";
-  return null;
+  return siteKeyOf(site);
 }
 
 export type AuditLite = {

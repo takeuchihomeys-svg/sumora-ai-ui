@@ -29,6 +29,12 @@
     "reins-": ["realpro_only", "itandi_only"]
   },
   "box_exceptions": {},
+  "shared_literal": {
+    "app/api/migrate-schema/route.ts": "SQL の文字列の中の注釈（拡張の background.js の分岐の説明）。コードの比べではない。",
+    "app/api/search-audits/route.ts": "受け付ける呼び名を限る検査（realpro・realnetpro・itandi だけ＝reins と リアプロ は受けない・今まで通り）。変えると受け付ける物が増えるので、そのまま残す。",
+    "app/lib/automation-sources.ts": "コマンドの sites 配列の中身（拡張の呼び名 realnetpro）を見る。コマンドの名前そのものの比べ。",
+    "app/page.tsx": "物件検索の送り先のボタン（sites は realnetpro・itandi の2つだけ＝コマンドの呼び名）。表示の文字も正しい（リアプロで検索／itandiで検索）。"
+  },
   "shared_mix": {
     "chrome-extension/background.js": "両方の入口（一括検索・自動便・サイトごとの接頭辞 siteUrlPrefixes）。リアプロの検索指示（city_code・route_id・main.php）と、ITANDI の路線の写し（ITANDI_LINE_MAP_FILL）を、site の値で分けて使う。",
     "chrome-extension/popup-maps.js": "対応表の正本（リアプロの WARD_CODE_MAP・LINE_ROUTE_MAP・TOWN_CODE_MAP と ITANDI_LINE_MAP_FILL を1か所に持つ）。両サイトの表を並べて持つのが役目（中で混ぜて使わない）。",

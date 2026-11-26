@@ -14950,3 +14950,11 @@ Claude（統括役）からの依頼2件への対応。
 - DB_STRUCTURE.md の「混ざっている所 2（一括・自動の更新日は ITANDI もリアプロの値）」は、2026-11-10 の直し（`background.js` 6264〜・`auto-run.js` の `optsForSite`／`optsForSiteRecord`）で直っていた。文書を現状に直した。
 - 拡張のコードは変えていない（バージョンは上げない）。
 - 残り（DB 側・判断待ち）: `station_map.itandi_lines` の 344 行が表と違う（書き換えは未実施・統括役の判断待ち）。
+
+### 2026-11-26（夜）残りの改善: サイトの呼び名を1か所に・コミット前の見張り・station_map の道具
+- 竹内さん「まだ残っていること改善する／ちゃんと仕組み作れるように」。
+- **サイトの呼び名の正本**: `app/lib/site-key.ts`（`siteKeyOf`・`commandSiteKeyOf`）。8か所以上にコピーされていた変換（siteKey・normalizeSite・pickupSiteOf・commandSiteOf・siteOfCommand・human-motion の siteOf・sheet-layout・search-condition-drift・search-update-days・extension-live-server の siteJa）を移した。結果は元の関数と同じ（`extension-live-server` と `sheet-layout` は「リアプロ」の表記も受けるようになった＝より緩い。`search-audits` の受け付けは変えていない）。試験: `app/lib/__tests__/site-key.test.ts`（22件）。周辺の試験（search-audit-check 100・search-widen-chain 75・screen-watch 89・search-condition-drift 47・pickup-sheet 120 ほか）は通った。
+- **見張り ④**: `app` の中で、拡張の呼び名 `realnetpro`・`リアプロ` を直接比べる所は、登録した4か所だけ（migrate-schema の SQL 注釈・search-audits の受け付け限定・automation-sources のコマンドの sites・page.tsx の送り先ボタン）。新しい比べが増えると止まる。止まる事は仮の行で確かめた。
+- **コミット前の見張り**: `.githooks/pre-commit`。この PC で `git config core.hooksPath .githooks` を設定済み。
+- **station_map の道具**: `scripts/apply-station-map-site-lines.ts`（既定 dry-run・`--mode=fill`・`--mode=fill-and-fix`・`--apply` には `--backup-dir` が要る）。書いていない。竹内さんの選択待ち。dry-run の数（2026-11-26）: ITANDI 空を埋める 305・ずれ 20／REINS 空を埋める 315・ずれ 3。ずれの例（ITANDI 表記）「大阪環状線」→「JR大阪環状線」は拡張の正本 `ITANDI_LINE_MAP_FILL` と一致。
+- **今回触っていない既存の赤**: `search-update-days.test.ts` の「号室の正規化」1件（sent-property-record の正規化・サイト分けと無関係）。

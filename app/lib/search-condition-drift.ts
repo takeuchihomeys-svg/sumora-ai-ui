@@ -1,3 +1,4 @@
+import { siteKeyOf } from "./site-key";
 // app/lib/search-condition-drift.ts（純関数・依存なし・画面とサーバーで共用できる）
 // 検索の点検: 「実際に画面に入った値（読み戻し）」と「お客様の登録の条件（検索を始めた時の写し）」の食い違いを見る。
 //
@@ -153,7 +154,7 @@ export function conditionDrift(a: DriftInput): DriftResult {
   const i = a.intended ?? null;
   const form = a.form ?? null;
   const site = String(a.site ?? "").toLowerCase();
-  const realpro = site === "realpro" || site === "realnetpro";
+  const realpro = siteKeyOf(a.site) === "realpro"; // 2026-11-26: 呼び名は site-key.ts
   const wide = a.is_wide; // true / false / null（分からない）
   const ov = (c._search_override && typeof c._search_override === "object") ? c._search_override as Record<string, unknown> : {};
   const add = (field: DriftField, kind: DriftKind, severity: DriftSeverity, title: string, detail: string, source: "form" | "intended") =>

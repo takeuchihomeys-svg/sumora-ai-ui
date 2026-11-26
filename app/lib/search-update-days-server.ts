@@ -8,18 +8,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dropGhostSingles } from "@/app/lib/search-audit-ghost";
 import { planUpdateDays, stopLinesBySite, type UpdateDaysPlan } from "./search-update-days";
+import { siteKeyOf } from "./site-key";
 
 /** 見る範囲（これより前の回は無い物として扱う＝指定なしまで広がる前に今までの決まりに任せる） */
 const LOOKBACK_DAYS = 30;
 
 type AuditLite = { property_customer_id: string | null; site: string | null; created_at: string; error: string | null; error_kind: string | null; result: Record<string, unknown> | null; trigger?: string | null; command_id?: string | null };
 
+// 2026-11-26: 呼び名の変換は app/lib/site-key.ts（唯一の正本）。
 export function siteOfCommand(s: string | null | undefined): string | null {
-  const v = String(s ?? "").toLowerCase();
-  if (v === "realnetpro" || v === "realpro") return "realpro";
-  if (v === "itandi") return "itandi";
-  if (v === "reins") return "reins";
-  return null;
+  return siteKeyOf(s);
 }
 
 function completed(r: AuditLite): boolean {

@@ -7,6 +7,7 @@
 //     ・search_audits … 直近の検索の1回ごと（何を入れた・結果・操作ごとの時刻）
 //   書き込みは一切しない（読み取り専用＝スマホから何かを動かせない。止めたい時は今まで通りサーバーの止めの印を使う）。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { siteKeyOf } from "./site-key";
 
 function admin(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -65,11 +66,12 @@ type AuditRow = {
   ext_version: string | null;
 };
 
+// 2026-11-26: 呼び名は site-key.ts（知らない値はそのまま返す＝今まで通り）
 const siteJa = (s: string | null): string | null => {
-  const v = String(s || "").toLowerCase();
-  if (v === "realpro" || v === "realnetpro") return "リアプロ";
-  if (v === "itandi") return "ITANDI";
-  if (v === "reins") return "レインズ";
+  const k = siteKeyOf(s);
+  if (k === "realpro") return "リアプロ";
+  if (k === "itandi") return "ITANDI";
+  if (k === "reins") return "レインズ";
   return s;
 };
 
