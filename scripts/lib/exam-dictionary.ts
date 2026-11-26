@@ -108,11 +108,12 @@ export function dictSelect(d: ExamDictionary, onSwitches: readonly string[], ids
     if (p?.flake.flaky) flaky.push(id);
     if (judged.length && p && judged.every((s) => !s.withMaterial.includes(id))) { dropNoMaterial.push(id); continue; }
     if (sws.length && sws.every((s) => s.none.includes(id) && !s.hit.includes(id))) { dropNone.push(id); continue; }
-    // 2026-11-27: 前の on の回で走ったのに、どのスイッチの印も一度も出なかった問題（場面が立たない＝材料が有っても部品が動かない・q472 の型）。前の回が無い問題は残す
-    if (withMarks.length && withMarks.every((s) => (s.ranOn ?? []).includes(id) && !(s.marked ?? []).includes(id))) { dropNoReach.push(id); continue; }
+    // 2026-11-27: 前の on の回で走ったのに、どのスイッチの印も一度も出なかった問題（場面が立たない＝材料が有っても部品が動かない・q472 の型）。前の回が無い問題は残す。
+    //   統括役の決め①: 外さずに守り（1回・悪化の見張り）に回す＝比べる数からは外すが、思わぬ悪化を拾う役は残す（dropNoReach＝守りに回す問題・keep にも入る）
+    if (withMarks.length && withMarks.every((s) => (s.ranOn ?? []).includes(id) && !(s.marked ?? []).includes(id))) { dropNoReach.push(id); keep.push(id); continue; }
     keep.push(id);
   }
-  const line = `試験の辞書: 残す ${keep.length}・材料なし ${dropNoMaterial.length}・前に効かなかった ${dropNone.length}・前の on で届かなかった ${dropNoReach.length}・揺れの大きい ${flaky.length}${untestable.length ? `・⚠ 試験できない（先に写し）: ${untestable.join(",")}` : ""}`;
+  const line = `試験の辞書: 残す ${keep.length}・材料なし ${dropNoMaterial.length}・前に効かなかった ${dropNone.length}・前の on で届かなかった＝守りに回す ${dropNoReach.length}・揺れの大きい ${flaky.length}${untestable.length ? `・⚠ 試験できない（先に写し）: ${untestable.join(",")}` : ""}`;
   return { keep, dropNoMaterial, dropNone, dropNoReach, flaky, untestable, line };
 }
 export function examDictionaryMode(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): "off" | "shadow" | "on" {
@@ -120,17 +121,18 @@ export function examDictionaryMode(env: Record<string, string | undefined> = typ
   return v === "off" ? "off" : v === "on" ? "on" : "shadow";
 }
 /** 物差し（純関数）: 前の晩の組に辞書を当てて、外れた問題の数・浮いた費用・比べられる問題（守りでない・揺れの小さい）の数の前後 */
-export function dictEval(d: ExamDictionary, jobs: ReadonlyArray<{ label: string; switches: string[]; ids: string[]; guards?: string[]; usd: number; signal?: string[] }>): { jobs: number; dropped: number; savedUsd: number; comparableBefore: number; comparableAfter: number; missedSignals: number; untestableJobs: string[] } {
-  let dropped = 0, saved = 0, cb = 0, ca = 0, missed = 0; const un: string[] = [];
+export function dictEval(d: ExamDictionary, jobs: ReadonlyArray<{ label: string; switches: string[]; ids: string[]; guards?: string[]; usd: number; signal?: string[] }>): { jobs: number; dropped: number; toGuard: number; savedUsd: number; comparableBefore: number; comparableAfter: number; watchedAfter: number; missedSignals: number; untestableJobs: string[] } {
+  let dropped = 0, toGuard = 0, saved = 0, cb = 0, ca = 0, wa = 0, missed = 0; const un: string[] = [];
   for (const j of jobs) {
     const s = dictSelect(d, j.switches, j.ids, j.guards ?? []);
-    const drop = s.dropNoMaterial.length + s.dropNone.length + s.dropNoReach.length;
-    dropped += drop;
-    missed += [...s.dropNoMaterial, ...s.dropNone, ...s.dropNoReach].filter((x) => (j.signal ?? []).includes(x)).length; // 外した問題のうち、その晩に確かな悪化・良くなったが出た物（辞書の見落とし）
-    if (j.ids.length) saved += (j.usd * drop) / j.ids.length;
+    const drop = s.dropNoMaterial.length + s.dropNone.length;
+    dropped += drop; toGuard += s.dropNoReach.length;
+    missed += [...s.dropNoMaterial, ...s.dropNone].filter((x) => (j.signal ?? []).includes(x)).length; // 外した問題のうち、その晩に確かな悪化・良くなったが出た物（辞書の見落とし）
+    // 守りに回す問題は1回だけ（ふつうは3回）＝その問題の費用の 2/3 が浮く見込み
+    if (j.ids.length) saved += (j.usd * (drop + s.dropNoReach.length * (2 / 3))) / j.ids.length;
     const comp = (xs: readonly string[]) => xs.filter((x) => !(j.guards ?? []).includes(x) && !d.problems[x]?.flake.flaky).length;
-    cb += comp(j.ids); ca += comp(s.keep);
+    cb += comp(j.ids); ca += comp(s.keep.filter((x) => !s.dropNoReach.includes(x))); wa += comp(s.keep);
     if (s.untestable.length) un.push(j.label);
   }
-  return { jobs: jobs.length, dropped, savedUsd: Math.round(saved * 1000) / 1000, comparableBefore: cb, comparableAfter: ca, missedSignals: missed, untestableJobs: un };
+  return { jobs: jobs.length, dropped, toGuard, savedUsd: Math.round(saved * 1000) / 1000, comparableBefore: cb, comparableAfter: ca, watchedAfter: wa, missedSignals: missed, untestableJobs: un };
 }

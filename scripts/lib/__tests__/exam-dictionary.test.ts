@@ -53,7 +53,7 @@ const d2 = buildDictionary({
 assert.deepEqual(d2.switches.SW_A.marks, [{ mark: "a_line", source: "推定", n: 2 }]);
 assert.deepEqual([d2.switches.SW_A.ranOn, d2.switches.SW_A.marked], [["q1", "q2"], ["q1"]]);
 assert.equal(d2.switches.SW_H.marks![0].source, "手", "手の行と推定は分ける");
-assert.deepEqual(dictSelect(d2, ["SW_A"], ["q1", "q2", "q3"], []).dropNoReach, ["q2"], "前の on で走ったのに印が出なかった問題（場面が立たない）・前の回が無い q3 は残す");
+{ const s2 = dictSelect(d2, ["SW_A"], ["q1", "q2", "q3"], []); assert.deepEqual([s2.dropNoReach, s2.keep], [["q2"], ["q1", "q2", "q3"]], "前の on で印が出なかった問題は守りに回す（外さない・決め①）・前の回が無い q3 は残す"); }
 // 届いたかの関所（A の案と同じ所）
 assert.equal(dictReachGate(d2, "SW_A", [{ id: "q1", marks: { a_line: 5 } }, { id: "q2", marks: {} }], ["q1", "q2"], 3).verdict, "届かず");
 assert.equal(dictReachGate(d2, "SW_A", [{ id: "q1", marks: { a_line: 5 } }], ["q1"], 1).verdict, "比べる");

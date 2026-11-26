@@ -96,7 +96,7 @@ if (require.main === module) {
     let gated = 0, compared = 0, noMark = 0; const gatedLabels: string[] = [];
     for (const j of jobs) { const rows = rowsOf.get(j.label) ?? []; const targets = j.ids.filter((x) => !j.guards.includes(x)); const vs = j.switches.map((sw) => dictReachGate(d, sw, rows, targets)); if (!vs.length || vs.every((v) => v.verdict === "印なし")) { noMark++; continue; } if (vs.some((v) => v.verdict === "比べる")) compared++; else { gated++; gatedLabels.push(j.label); } }
     console.log(`届いたかの関所（前の晩の組 ${jobs.length}）: 比べる ${compared}・届かず ${gated}${gatedLabels.length ? `（${gatedLabels.slice(0, 6).join(",")}）` : ""}・印なし ${noMark}`);
-    console.log(`物差し（前の${arg("days", "7")}晩の試験の組 ${e.jobs}）: 辞書で外れた問題 ${e.dropped}・浮いた費用 $${e.savedUsd.toFixed(2)}・比べられる問題（守りでない・揺れの小さい）${e.comparableBefore}→${e.comparableAfter}・外した問題の確かな悪化（見落とし）${e.missedSignals}${e.untestableJobs.length ? `・試験できないスイッチの組 ${e.untestableJobs.length}（${e.untestableJobs.slice(0, 5).join(",")}）` : ""}`);
+    console.log(`物差し（前の${arg("days", "7")}晩の試験の組 ${e.jobs}）: 辞書で外れた問題 ${e.dropped}・浮いた費用 $${e.savedUsd.toFixed(2)}・守りに回す ${e.toGuard}・比べられる問題（守りでない・揺れの小さい）${e.comparableBefore}→${e.comparableAfter}・悪化を見張る問題（守りに回した分を含む）${e.comparableBefore}→${e.watchedAfter}・外した問題の確かな悪化（見落とし）${e.missedSignals}${e.untestableJobs.length ? `・試験できないスイッチの組 ${e.untestableJobs.length}（${e.untestableJobs.slice(0, 5).join(",")}）` : ""}`);
   }
   if (!process.argv.includes("--dry")) { writeFileSync(EXAM_DICTIONARY_FILE(), JSON.stringify(d)); console.log(`書いた: ${EXAM_DICTIONARY_FILE()}`); }
 }
