@@ -6,6 +6,8 @@
 //   関所の強さ CLAUDE_CHECK_GATE: 既定 on（記録が無ければ on に進めない・--force で越える・11/26 統括役の決め）／warn（書くだけ）／off
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { examCacheRoot } from "./llm-cassette";
+import { loadLearnedSplit, mergeSplitScenes } from "./claude-split-learned";
 
 /** 割れやすい場面の型（families＝道の系統・正解か本番の道がこの系統に入る問題を当てる）。rate＝今のコードの Claude と DeepSeek が同じ道を選んだ割合（未定は null） */
 export type SplitScene = { id: string; label: string; families: string[]; rate: number | null; n: number | null; since: string };
@@ -14,6 +16,11 @@ export const SPLIT_SCENES: SplitScene[] = [
   // 11/25 の晩の Claude 16問（a-claude-1125・今のコード）: 試験の DeepSeek と同じ系統 12/16（75%）。割れた4問は全部 DeepSeek 返信 → Claude AIX（見積 2・内覧 1・確認 1）＝Claude は AIX に寄る
   { id: "property_or_check_vs_reply", label: "物件・確認の AIX か返信か", families: ["物件", "確認"], rate: 0.75, n: 16, since: "2026-11-25" },
 ];
+
+/** 2026-11-26 作業員L（台帳 #799 ③）: 手の表（SPLIT_SCENES）と毎晩の結果から覚えた表（<exam-cache>/claude-split-learned.json・scripts/build-claude-split.ts）を重ねた今の表。CLAUDE_SPLIT_LEARNED=off で手の表だけ */
+export const CLAUDE_SPLIT_LEARNED_FILE = () => join(examCacheRoot(), "claude-split-learned.json");
+let splitNowCache: SplitScene[] | null = null;
+export function splitScenesNow(): SplitScene[] { return (splitNowCache ??= mergeSplitScenes(SPLIT_SCENES, loadLearnedSplit(CLAUDE_SPLIT_LEARNED_FILE()))); }
 
 export type GateMode = "off" | "warn" | "on";
 export function claudeCheckGateMode(env: Record<string, string | undefined> = process.env): GateMode {
@@ -37,7 +44,7 @@ export function familyOfAnswer(a: string): string {
 }
 export type ProblemLite = { id: string; accept?: string[]; mustNot?: string[]; prodBrain?: { mode?: string | null; action?: string | null } | null };
 /** 問題が当たる型（無ければ []） */
-export function scenesOfProblem(p: ProblemLite, table: readonly SplitScene[] = SPLIT_SCENES): string[] {
+export function scenesOfProblem(p: ProblemLite, table: readonly SplitScene[] = splitScenesNow()): string[] {
   const fams = new Set([...(p.accept ?? []), ...(p.mustNot ?? [])].map(familyOfAnswer));
   if (p.prodBrain?.mode === "aix" && p.prodBrain.action) fams.add(familyOfAnswer(`AIX:${p.prodBrain.action}`));
   return table.filter((s) => s.families.some((f) => fams.has(f))).map((s) => s.id);
@@ -51,7 +58,7 @@ export function loadProblemsLite(dir = "scripts/brain-exam"): Map<string, Proble
   return m;
 }
 /** 効く問題のうち Claude の確かめが要る問題（型が当たる物・並びは効く問題の順） */
-export function claudeCheckTargets(eff: readonly string[], problems: ReadonlyMap<string, ProblemLite>, table: readonly SplitScene[] = SPLIT_SCENES): Array<{ id: string; scenes: string[] }> {
+export function claudeCheckTargets(eff: readonly string[], problems: ReadonlyMap<string, ProblemLite>, table: readonly SplitScene[] = splitScenesNow()): Array<{ id: string; scenes: string[] }> {
   return eff.map((id) => ({ id, scenes: problems.get(id) ? scenesOfProblem(problems.get(id)!, table) : [] })).filter((x) => x.scenes.length);
 }
 /** Claude の確かめの組の名前（記録を探す鍵） */
