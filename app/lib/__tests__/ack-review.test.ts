@@ -11,6 +11,7 @@ t("見る受けの付いたお礼は数える（今の isAckOnlyTurn は false�
 // 含めない: 問い・条件の変更が続く束（実物の型）
 const no = ["確認させていただきます。ちなみに駅から近い物件ありますか？", "ありがとうございます！確認させて頂きます。もう少し家賃抑えたいです", "確認させていただきます！10万以下でもありますか", "ありがとうございます😊\nそこを候補にもう少し見てみます🙇🏻‍♂️"];
 t("問い・条件の変更・もう少し が続く束は数えない", no.every((x) => !isAckOrReviewTurn(x)));
+t("q474 の形: ご協力ありがとうございます もお礼（問いが続けば数えない）", isAckOrReviewTurn("ご協力ありがとうございます") && !isAckOnlyTurn("ご協力ありがとうございます") && !isAckOrReviewTurn("ご協力ありがとうございます。駅から近い所はありますか"));
 t("お礼だけは今と同じ", isAckOrReviewTurn("ありがとうございます！！") && !isAckOrReviewTurn("駅から近いのはありますか"));
 t("既定 off", !ackReviewAsAckOn({}) && ackReviewAsAckOn({ ACK_REVIEW_AS_ACK: "on" }));
 // q472 の形: 探す約束の後に見る受けの付いたお礼・送れる候補 3件 → on なら ack_ready・off なら場面なし

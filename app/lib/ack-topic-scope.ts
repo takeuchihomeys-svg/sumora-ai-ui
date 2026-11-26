@@ -52,7 +52,7 @@ export function isAckOnlyTurn(text: string | null | undefined): boolean {
 export function ackReviewAsAckOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.ACK_REVIEW_AS_ACK ?? "").trim().toLowerCase() === "on";
 }
-const REVIEW_TOKEN_RE = /^(?:お世話になっております|(?:ご)?(?:確認|拝見|検討)(?:させて|して|いた)?(?:いただ|頂)?(?:きます|します)|拝見します|見て(?:みます|おきます|みますね)|目を通します|確認します|見ます|みます|見させて(?:いただ|頂)きます)$/;
+const REVIEW_TOKEN_RE = /^(?:お世話になっております|(?:ご協力|ご丁寧に|お手数(?:ですが|をおかけしますが)?|わざわざ)?(?:ありがとう|有難う)(?:ございます|ございました)?|(?:ご)?(?:確認|拝見|検討)(?:させて|して|いた)?(?:いただ|頂)?(?:きます|します)|拝見します|見て(?:みます|おきます|みますね)|目を通します|確認します|見ます|みます|見させて(?:いただ|頂)きます)$/;
 const NOT_ACK_REVIEW_RE = /[?？]|ですか|ますか|でしょうか|もう少し|やっぱり|やはり|他にも|ほかにも|[0-9０-９]+\s*(?:万|円)|駅|エリア|間取り|条件|変更|追加/;
 /** お礼だけか、見る受けの付いたお礼（純関数） */
 export function isAckOrReviewTurn(text: string | null | undefined): boolean {
