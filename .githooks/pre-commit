@@ -31,6 +31,8 @@ node tests/chrome-extension/learn-bundle-site-sync.test.js
 node tests/chrome-extension/reflect-pipeline-v28312.test.js
 echo "[pre-commit] 新しい決まりの実機の証拠の判定（2.8.313）"
 npx tsx app/lib/__tests__/new-rules-evidence.test.ts
+echo "[pre-commit] 拡張の試験の出力の読み方（青を赤と数えない・2.8.314）"
+npx tsx app/lib/__tests__/ext-test-parse.test.ts
 STAGED="$(git diff --cached --name-only)"
 if echo "$STAGED" | grep -qE '^(chrome-extension/|tests/chrome-extension/)'; then
   echo "[pre-commit] 拡張の試験を全部（基準の赤より増えていないか・赤の中の失敗項目も・2.8.313）"

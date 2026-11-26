@@ -16,6 +16,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { countNg, failKeys, normFail } from "./lib/ext-test-parse";
 
 const ROOT = process.cwd();
 const DIR = path.join(ROOT, "tests", "chrome-extension");
@@ -32,10 +33,8 @@ type Baseline = {
   fails?: Record<string, string[]>;
 };
 
-/** 失敗の行を比べやすい形にする（版・数字・→以降の値は変わるので丸める） */
-export function normFail(line: string): string {
-  return line.trim().split(" → ")[0].replace(/\d+(\.\d+)*/g, "#").replace(/\s+/g, " ").slice(0, 140);
-}
+// 出力の読み方は純関数（scripts/lib/ext-test-parse.ts・試験 app/lib/__tests__/ext-test-parse.test.ts）
+export { normFail };
 
 type RunRes = { name: string; red: boolean; ng: number; code: number | null; timedOut: boolean; tail: string; fails: string[] };
 
@@ -54,9 +53,9 @@ function run(file: string): Promise<RunRes> {
     p.on("close", (code) => {
       clearTimeout(timer);
       // 2.8.314: 行頭の ✗／❌ だけを数える（「結果: ✓8 ✗0」「0 件 ✗」の件数の行を失敗と数えて、青い試験が7本ずっと赤扱いだった）
-      const ng = out.split(/\r?\n/).filter((l) => /^\s*(✗|❌)/.test(l)).length;
+      const ng = countNg(out);
       const tail = out.trim().split(/\r?\n/).slice(-8).join(" | ");
-      const fails = [...new Set(out.split(/\r?\n/).filter((l) => /^\s*(NG:|✗|❌|FAIL)/.test(l)).map(normFail))];
+      const fails = failKeys(out);
       resolve({ name: file, red: code !== 0 || ng > 0 || timedOut, ng, code, timedOut, tail, fails });
     });
     p.on("error", (err) => { clearTimeout(timer); resolve({ name: file, red: true, ng: 0, code: null, timedOut: false, tail: String(err), fails: [] }); });

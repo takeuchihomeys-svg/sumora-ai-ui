@@ -1,0 +1,20 @@
+{
+  "_comment": "点検の段の保持表（search-audit.js の KEEP_STEP／RULE_STEP）に名前があるのに、拡張のどこにも名前が出てこない「幽霊」の受け入れ表。新しい幽霊が増えたら audit-step-phantoms-v28314.test.js が赤になる（機能が消えた・名前を直した時に表だけ残った、を見つける）。直った物はここから消す（残っていても赤）。",
+  "since": "2.8.314",
+  "accepted": {
+    "page:ward_clear_one_ng": "動的（_clearChecksOneByOne の tag + _ng）。tag は文字列で渡る",
+    "page:ward_clear_one_done": "動的（tag + _done）",
+    "page:clear_one_ng": "動的（tag + _ng）",
+    "page:clear_one_done": "動的（tag + _done）",
+    "page:clear_one_grasp": "動的（tag + _grasp）",
+    "page:station_clear_one_grasp": "動的（tag + _grasp）",
+    "page:line_clear_one_grasp": "動的（tag + _grasp）",
+    "page:station_clear_one_ng": "動的（tag + _ng）",
+    "page:line_clear_one_ng": "動的（tag + _ng）",
+    "dl:loop_handoff_grasp": "旧名。拡張が出す名前は dl:handoff_grasp に統一済み（表の旧名は無害）",
+    "page:guide_plan_act": "【未整理・要判断】2.8.162 の手順表連携の印。2.8.187 の復旧で戻っていない（guide-plan-link-v28162 の赤と同じ根）",
+    "page:station_primary_only": "【未整理・要判断】2.8.162「指定駅だけ先に押す」の印。同上",
+    "page:line_primary_only": "【未整理・要判断】2.8.162「指定沿線だけ先に押す」の印。同上",
+    "fill_progress": "【未整理・要確認】サーバー側（learn-foundation-audit 等）が期待する印。拡張に出す所が無い"
+  }
+}
