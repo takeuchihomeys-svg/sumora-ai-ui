@@ -21,6 +21,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "地図の先読みの当たり（quality_daily）", args: ["scripts/audit-route-backplan-hit.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 5 },
     // 2026-11-26 作業員A（#745 の直し④）: 竹内さんの先読みとの一致（主の物差し・竹内さん本人の文を軽く読む）
     { name: "竹内さんの先読みとの一致（quality_daily）", args: ["scripts/audit-route-backplan-miss.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
+    // 2026-11-26 作業員A（竹内さん 11/26 昼）: 次の石に向かった割合（同じ照らしの json・ブレインの判断は会話ごとに日付で読む）
+    { name: "次の石（quality_daily）", args: ["scripts/audit-route-next-stone.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
     // 2026-11-26 作業員A（#662）: 統括の受け持ち表（持つ／使う／反映する・7日・DB は書くだけ）
     { name: "統括の受け持ち表（quality_daily）", args: ["scripts/audit-conductor-ownership.ts", "--days=7", "--write"], timeoutMin: 5 },
     { name: "AIX の外れの組ごとの数（quality_daily）", args: ["scripts/audit-aix-miss-causes.ts", "--days=30", "--write"], timeoutMin: 15 },
