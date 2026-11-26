@@ -7,6 +7,7 @@
 //   道の選び方の元: 作業員L の #728 成約データ（申込の約65%は内覧の記録なし＝推定の申込27件を外して 77/119・内覧に入った件の申込到達は約2倍・申込→成約の中央 21.8日）
 //   スイッチ APPLY_ROUTE_BACKPLAN: 既定 off（材料に入れない）／on
 import { MAIN_ROUTE, ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
+import { APPLY_LEAD_DAYS } from "./time-map";
 
 export function applyRouteBackplanOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.APPLY_ROUTE_BACKPLAN ?? "").trim().toLowerCase() === "on";
@@ -91,7 +92,7 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   // 申込の目安（11/27 統括役の確かめで出所をそろえた・前の「3〜4週間前」は出所の無い作業員A の見積りだった）:
   //   竹内さんの決定 10/20（KB 9b8dbfca）「お申込みからご入居まで1ヶ月以内でのご入居がほとんど…12月末ごろお引っ越しご予定ですと1ヶ月前の11月末ごろにお部屋のお申し込み」＝入居の約1ヶ月前
   //   審査期間 14日（KB 5bd1480b「今日の日付＋審査期間（14日）」）＝遅くとも入居の2週間前 → 幅は 入居の30〜14日前（目安・言い切らない）
-  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -30)}〜${ymdAdd(f.moveInYmd, -14)}` : null;
+  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.from)}〜${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.to)}` : null;
   // ゴール側: この先の中で一番先の 見積か申込準備（無ければ申込準備）
   const goalNode = [...ahead].reverse().find((n) => GOAL_PLANT[n]) ?? (MAIN_ROUTE.indexOf(f.node) < MAIN_ROUTE.indexOf("apply_prep") ? "apply_prep" : null);
   const goalPlant = goalNode ? GOAL_PLANT[goalNode] ?? null : null;
@@ -99,7 +100,7 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   const dates: string[] = [], asks: string[] = [];
   if (f.moveInYmd && f.moveInYmd > f.todayYmd) {
     if (applyBy) dates.push(`申込の目安 ${applyBy} 頃`);
-    if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled) dates.push(`内覧の目安 ${ymdAdd(f.moveInYmd, -37)}〜${ymdAdd(f.moveInYmd, -30)} 頃（申込の目安の少し前）`);
+    if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled) dates.push(`内覧の目安 ${ymdAdd(f.moveInYmd, -(APPLY_LEAD_DAYS.from + 7))}〜${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.from)} 頃（申込の目安の少し前）`);
     if (!f.focus && f.propertiesSent === 0) dates.push("物件出しは今週");
     asks.push("今のお住まいの解約の予告の時期（1か月前の所が多い・目安）");
   } else asks.push("ご入居の時期（いつ頃までに住み始めたいか）");
