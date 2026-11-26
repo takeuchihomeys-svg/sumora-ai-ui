@@ -13,7 +13,8 @@ type Env = Record<string, string | undefined>;
 export type MaterialPriorityMode = "off" | "shadow" | "on";
 export function materialPriorityMode(env: Env = typeof process !== "undefined" ? process.env : {}): MaterialPriorityMode {
   const v = (env.MATERIAL_PRIORITY ?? "").trim().toLowerCase();
-  return v === "on" ? "on" : v === "shadow" ? "shadow" : "off";
+  // 2026-11-26 統括役の決め: 既定 shadow（記録だけ・入口の答えを待たない・材料は動かさない・digest.mpr の当たりを数える）。止める MATERIAL_PRIORITY=off
+  return v === "on" ? "on" : v === "off" ? "off" : "shadow";
 }
 /** 選び方の版（表を変えたら上げる・記録に残る） */
 // 2026-11-26 作業員A（統括役の頼み・#744 の分かれ目で見直し）: mp-v2＝AIX の番に探す約束の後のお礼を足し、約束の番の並びを 確認の約束の流れ→探す約束の後のお礼→今果たせる物 に
