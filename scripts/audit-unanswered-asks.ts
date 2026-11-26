@@ -11,6 +11,9 @@ import { unansweredAsks, askStateOf, ASK_TOPIC_JA, type AskTopic } from "../app/
 
 const path = process.argv.find((a) => a.endsWith("problems.json")) ?? "scripts/brain-exam/problems.json";
 const show = process.argv.includes("--show");
+const showAnswered = process.argv.includes("--show-answered");
+const mask = (t: string) => t.replace(/s+/g, " ").replace(/[一-龠ァ-ヶa-zA-Zー]+(?:さん|様)/g, "◯さん");
+const answeredSamples: string[] = [];
 const allWriters = process.argv.includes("--writers=all");
 const writers = JSON.parse(readFileSync(join(__dirname, "..", "..", "..", "..", ".claude", "exam-cache", "problem-writers.json"), "utf8")) as Record<string, string>;
 type Ctx = { s: string; t: string; aix?: boolean; ago: number };
@@ -35,6 +38,13 @@ for (const q of probs) {
   promised += asks.filter((a) => a.state === "promised").length;
   withdrawn += asks.filter((a) => a.state === "withdrawn").length; stale += asks.filter((a) => a.state === "stale").length; answeredEarlier += asks.filter((a) => a.state === "answered").length;
   if (open.length) turnsFlagged++;
+  if (showAnswered) for (const a of asks.filter((x) => x.state === "answered")) {
+    const later = msgs.filter((m) => m.sender === "staff" && m.created_at > a.at);
+    const laterAix = aix.filter((x) => x.created_at > a.at);
+    const by = later.find((m, i) => askStateOf(a, later.slice(i, i + 1).map((x) => ({ text: x.text })), []) === "answered");
+    const byAix = laterAix.find((x) => askStateOf(a, [], [x]) === "answered");
+    answeredSamples.push(`  ${q.id} [${ASK_TOPIC_JA[a.topic as AskTopic]}] 「${mask(a.quote).slice(0, 34)}」 → ${by ? `通「${mask(by.text).slice(0, 60)}」` : byAix ? `AIX ${byAix.aix_type}` : "(はい・いいえ/通話・画像)"}`);
+  }
   for (const a of open) {
     flagged++;
     const st = askStateOf(a, [{ text: q.staffText }], []);
@@ -43,6 +53,7 @@ for (const q of probs) {
     if (show) console.log(`  ${q.id} [${ASK_TOPIC_JA[a.topic as AskTopic]}] 「${a.quote.slice(0, 30)}」 後のこちら${a.oursAfter}通 → 次の通: ${st}${st !== "answered" ? `｜次の通の頭「${q.staffText.replace(/\s+/g, " ").slice(0, 40)}」` : ""}`);
   }
 }
+if (showAnswered) { const step = Math.max(1, Math.floor(answeredSamples.length / 20)); answeredSamples.filter((_, i) => i % step === 0).slice(0, 20).forEach((x) => console.log(x)); }
 const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
 console.log(JSON.stringify({
   書き手: allWriters ? "全員" : "竹内さん本人", 番: turns, 照らした問い: asksAll, 前の通で答えた: answeredEarlier, 約束で返した問い: promised, 取り消し・了承で外した: withdrawn, 古い問いで外した: stale,

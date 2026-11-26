@@ -28,7 +28,7 @@ const TOPIC_RE: Array<[AskTopic, RegExp]> = [
   ["cost", /いくら|費用|初期|家賃|賃料|金額|円|見積|安く|値下|値引|仲介手数料|敷金|礼金|管理費|共益費|更新料|お金/],
   ["availability", /空い|空き|空室|募集|まだあり|まだあります|残って|埋ま|申込(?:が)?入/],
   ["viewing", /内覧|内見|見学|見に行|見れ|見られ/],
-  ["procedure", /審査|ブラック|通る|通り(?:ます|やす)|書類|必要な(?:物|もの)|契約|手続|保証|在籍|身分証|住民票/],
+  ["procedure", /審査|ブラック|名義|通る|通り(?:ます|やす|づら|にく)|書類|必要な(?:物|もの)|契約|手続|保証|在籍|身分証|住民票/],
   ["place", /どこ|場所|集合|住所|待ち合わせ/],
   ["when", /いつ|何日|何時|[0-9]+時|時半|[0-9]+日|曜日|日程|何曜|期間|どのくらい|どの位|どれくらい|何日前|入居日|入居可能/],
   ["property", /物件|お部屋|部屋|間取り|設備|ペット|駐車|駐輪|バス|トイレ|ネット|オートロック|洗濯|エアコン|日当|階|築|駅|徒歩/],
@@ -37,7 +37,7 @@ export function topicOf(q: string): AskTopic { for (const [k, re] of TOPIC_RE) i
 
 /** お客様の1通から問いの文だけ（文ごとに分ける） */
 export function customerAsksOf(text: string | null | undefined, at: string): Ask[] {
-  const t = String(text ?? "").normalize("NFKC").trim();
+  const t = String(text ?? "").normalize("NFKC").replace(/h\s*ttps?\s*:\s*\/\/[^\n]*/g, "").trim();
   if (!t || /^\[(?:画像|動画|スタンプ)\]$/.test(t)) return [];
   const sentences = t.split(/(?<=[。!?？！\n])/).map((s) => s.trim()).filter(Boolean);
   const out: Ask[] = [];
@@ -71,24 +71,27 @@ const AIX_ANSWERS: Record<AskTopic, RegExp> = {
 };
 // はい・いいえで答える問い（「可能ですか」「行けますか」「ありますか」）と、その答えの言葉。答えはすぐ後のこちらの通に出る（竹内さんの「はい！！」）
 const YESNO_ASK_RE = /可能(?:です)?か|できますか|出来ますか|いけますか|行けますか|大丈夫(?:です|でしょう)か|ありますか|あります(?:でしょう)?か|ございますか|難しい(?:です|でしょう)?か|でしょうか|ですかね|ますか/;
-const YESNO_ANS_RE = /^(?:はい|いいえ|可能|大丈夫|出来|できま|行けま|いけま|ございま|ありま|難し|申し訳|残念)|可能です|大丈夫です|出来ます|できます|ございます|難しい|出来かね|できかね|不可|ございません|ありません/; // 「かしこまりました」「承知」は受け取りの言葉で答えではない（exchange-ledger の試験の型: ペットの問いに「かしこまりました！！家賃7万円で…」）
+const YESNO_ANS_RE = /^(?:はい|いいえ|可能|大丈夫|出来|できま|行けま|いけま|ございま|ありま|難し|申し訳|残念)|可能です|大丈夫です|ご案内(?:出来|でき|可能)|難しい|出来かね|できかね|不可|ございません|ありません/; // 2026-11-27 目で読んだ20件: 「ありがとうございます」の「ございます」を答えと読んでいた（q070）ので外した // 「かしこまりました」「承知」は受け取りの言葉で答えではない（exchange-ledger の試験の型: ペットの問いに「かしこまりました！！家賃7万円で…」）
 const PROMISE_RE = /確認(?:して|させて|致し|いたし|します|しま)|お調べ|調べて|お問い?合わせ|問い合わせ|折り返し|改めて(?:ご連絡|お送り|お伝え)|分かり次第|わかり次第|判明次第|確認が取れ次第/;
 // 2026-11-27（統括役の頼み・当たり 38.9% の直し）: 電話・画像・動画で返した番は答えた扱い（竹内さんは文で答えずに電話の AIX・写真で返す）
-const OTHER_CHANNEL_RE = /\[画像\]|\[動画\]|\[通話リクエスト\]|電話をかける|お電話(?:させて|致し|いたし|でご説明|にて)/;
+const MEDIA_TOPICS: ReadonlySet<AskTopic> = new Set<AskTopic>(["cost", "availability", "property", "other"]);
 // お客様が後で取り消した・了承した（「やっぱり大丈夫です」「分かりました」）＝答えなくてよい
 const WITHDRAW_RE = /やっぱり(?:大丈夫|いい|なし|やめ)|^大丈夫です|結構です|キャンセル|取り消|取りやめ|なしで|やめ(?:ます|とき|てお)|見送|他社(?:で|に)?(?:決|契約)|決まりました|解決しました|分かりました|わかりました|了解(?:です|しました)|承知しました|理解しました/;
 /** 何通も前の古い問いの線: 後にお客様の塊が2つ以上来た・こちらが4通以上送った */
 export const STALE_CUSTOMER_BLOCKS = 2, STALE_OURS = 4;
-const COURTESY = /させて|頂き|致し|お送り|ご確認|こちら|お世話|よろしく|ありがとう|ござい|でしょう|ですか|ますか|ください|下さい|いただ|教えて/;
+// 重なりに数えない言葉: 挨拶・へりくだり＋どの通にも出る言葉（2026-11-27 目で読んだ20件: 「夜職なのですが可能ですか」に挨拶の通の「可能」で重なっていた q070）
+const COURTESY = /させて|頂き|致し|お送り|ご確認|こちら|お世話|よろしく|ありがとう|ござい|でしょう|ですか|ますか|ください|下さい|いただ|教えて|^可能$|^大丈夫$|^確認$|^案内$|^物件$|^部屋$|^お部屋$|^連絡$|^ご連絡$|^担当$/;
 const kw = (t: string) => (t.match(/[一-龠ァ-ヶー]{2,}/g) ?? []).filter((k) => !COURTESY.test(k));
 const overlaps = (a: string, b: string) => kw(a).some((k) => b.includes(k));
 
 /** 問い1つを、その後のこちらの通・AIX で照らす */
 export function askStateOf(ask: Ask, laterOurs: ReadonlyArray<{ text: string }>, laterAix: ReadonlyArray<{ aix_type: string }>): AskState {
   if (laterAix.some((a) => AIX_ANSWERS[ask.topic].test(a.aix_type) || a.aix_type === "phone_call")) return "answered";
-  if (laterOurs.slice(0, 2).some((m) => OTHER_CHANNEL_RE.test(String(m.text ?? "")))) return "answered";
+  // 2026-11-27 目で読んだ20件: 「[画像]」で答えた扱いが 8/20 で中身が読めない。画像が答えになる種類だけにする（時期・手続き・場所・内覧の問いは画像では答えた扱いにしない）。通話は種類を問わない
+  if (laterOurs.slice(0, 2).some((m) => /\[通話リクエスト\]|電話をかける|お電話(?:させて|致し|いたし|でご説明|にて)/.test(String(m.text ?? "")))) return "answered";
+  if (MEDIA_TOPICS.has(ask.topic) && laterOurs.slice(0, 2).some((m) => /\[画像\]|\[動画\]/.test(String(m.text ?? "")))) return "answered";
   // はい・いいえの問いは、すぐ後のこちらの通がはい・いいえの言葉で始まる／含む（約束だけの通は除く）なら答えた
-  if (YESNO_ASK_RE.test(ask.quote) && laterOurs[0]) { const t0 = String(laterOurs[0].text ?? "").normalize("NFKC").trim(); if (YESNO_ANS_RE.test(t0) && !(PROMISE_RE.test(t0) && t0.length < 40)) return "answered"; }
+  if (YESNO_ASK_RE.test(ask.quote) && laterOurs[0]) { const t0 = String(laterOurs[0].text ?? "").normalize("NFKC").trim().replace(/^(?:[^\n！!。]{0,12}(?:さん|様)[、,]?\s*)?(?:お世話になっております[！!。]*\s*)?(?:(?:ご連絡|ご返信)?(?:頂き|いただき)?ありがとうございます[😊！!。]*\s*)?/u, ""); if (YESNO_ANS_RE.test(t0) && !(PROMISE_RE.test(t0) && t0.length < 40)) return "answered"; }
   for (const m of laterOurs) {
     const t = String(m.text ?? "").normalize("NFKC");
     // 費用・時期・空きは答えの形（金額・日付・空きの言葉）があれば答えた。ほかは問いの言葉と重なる事も要る
@@ -96,7 +99,8 @@ export function askStateOf(ask: Ask, laterOurs: ReadonlyArray<{ text: string }>,
       : EVIDENCE[ask.topic].test(t) && (ask.topic === "cost" || ask.topic === "when" || ask.topic === "availability" || overlaps(ask.quote, t));
     if (!ev) continue;
     // 「確認して改めてご連絡」は答えではなく約束。ただし金額・日付を書いた上での一言は答え
-    if (!PROMISE_RE.test(t) || ((ask.topic === "cost" || ask.topic === "when") && /[0-9]/.test(t))) return "answered";
+    const newNums = (t.match(/[0-9]+/g) ?? []).filter((n) => !ask.quote.normalize("NFKC").includes(n));
+    if (!PROMISE_RE.test(t) || ((ask.topic === "cost" || ask.topic === "when") && newNums.length > 0)) return "answered";
   }
   if (laterOurs.some((m) => PROMISE_RE.test(String(m.text ?? "")))) return "promised";
   return "open";
