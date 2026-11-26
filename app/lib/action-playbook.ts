@@ -45,7 +45,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 20;
+export const PLAYBOOK_BUILD_V = 21;
+// 21（2026-11-27 竹内さん「手順書に決まりとして文が無いところは漏れる」）: 追加ガイド clear／switch の手に、空の確認（最大25秒）・写真（2〜4秒の間・撮影最大25秒）・
+//   従来の外し（最大125秒）・次の客までの間（8〜25秒・ときどき40〜95秒）を入れ、clear／switch の決まりを追加ガイドに全部つないだ（一覧にしか無かった物を場面から辿れるように）。
 // 20（2026-11-27 竹内さん「手順書に抜けが無いか・時間を細かく」）: リセットの押す待ち（最大120秒）と、押した後のラグ猶予（5〜9秒・並べ替え／リセット）を
 //   骨組み（before_clear）・追加ガイド（clear の②③）・一覧（AD並べ替えの③）の文に入れた。決まりの一覧に reset_press_late_grasp・lag_grace_after_reset を載せた。
 // 19（2026-11-27）: cleanPoints で値データ（147,000円 等）を除外し、points にまだ無い欄は shots.learned の画面位置（source: "screen"）を
@@ -179,6 +181,9 @@ export type PlaybookExtraGuide = {
   rules: ReadonlyArray<string>;
 };
 
+/** リセットで空にする今の形では載せない「1つずつ外す」の決まり（最後の保険の話だけ残す・試験 playbook-reset-skeleton が見張る） */
+const RETIRED_ONE_BY_ONE: ReadonlySet<string> = new Set(["clear_one_by_one", "clear_per_panel", "ward_clear_one"]);
+
 export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
   {
     id: "clear",
@@ -187,21 +192,21 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
       "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
       `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）。${RESET_PRESS_WAIT_TEXT}`,
       `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。空と確かめたあとも${LAG_GRACE_TEXT}の猶予を置く（画面の追いつき）`,
-      "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（空なら該当件数が増えなくても成功・reset_verified）",
-      "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用）",
-      "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ",
+      "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（確かめは最大25秒・空なら該当件数が増えなくても成功・reset_verified）",
+      "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用。写真の前に2〜4秒の間を置き、撮影は最大25秒。撮れなければそのまま進む）",
+      "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ（従来の外しは最大125秒）",
     ],
-    rules: ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", "lag_grace_after_reset"],
+    rules: [...new Set(["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", "lag_grace_after_reset", ...AUTO_RULES.filter((r) => r.scene === "clear" && !RETIRED_ONE_BY_ONE.has(r.id)).map((r) => r.id)])],
   },
   {
     id: "switch",
     label: "次客への切り替え（場面なし・決まりから）",
     steps: [
       "①手順書を読む（playbook_seen）",
-      "②次のお客さんに切り替える",
+      "②次のお客さんに切り替える（次の客までの間は8〜25秒・ときどき40〜95秒の人の間。リセットが成功した客は資料を見る間（1.8〜13秒）を置かない）",
       `③前客のリセット（左の「リセット」→${RESET_WAIT_TEXT}のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）`,
     ],
-    rules: ["playbook_read", "reset_between_customers"],
+    rules: [...new Set(["playbook_read", "reset_between_customers", ...AUTO_RULES.filter((r) => r.scene === "switch").map((r) => r.id)])],
   },
   {
     id: "pet",
