@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/chain-patterns.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { sentMarksOf, featuresOf, comboKeysOf, chainPatternsOf, chainInsightLine, chainInsightLineOn, CHAIN_PATTERNS } from "../chain-patterns";
+import { sentMarksOf, featuresOf, comboKeysOf, chainPatternsOf, chainInsightLine, chainInsightLineOn, CHAIN_PATTERNS, chainTableDiff } from "../chain-patterns";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -18,5 +18,6 @@ t("表: 60日の12型・既定 off", CHAIN_PATTERNS.length === 12 && !chainInsig
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 t("配線: on の時だけ・控えの行 chain_insight・気持ちは前の番の判断の記録", bc.includes("cpm.chainInsightLineOn() && ar.loc") && bc.includes('key: "chain_insight"') && bc.includes("mindset: msPrev"));
 t("気持ちの印: mindset があれば 気持ち:<状態> が組の部品になる・無ければ今と同じ", comboKeysOf(featuresOf({ node: "proposing", branch: null, at: "2026-11-20T10:00:00Z", mindset: "迷い" })).includes("proposing+気持ち:迷い") && comboKeysOf(featuresOf({ node: "proposing", branch: null, at: "2026-11-20T10:00:00Z" })).join() === "proposing");
+{ const d = chainTableDiff([...CHAIN_PATTERNS.slice(1), { key: "x+y", parts: ["x", "y"], move: "reply:promise", share: 80, n: 5, stationShare: 30, lift: 50 }]); t("表との差: 新しい型と消えた型", d.added.length === 1 && d.added[0].key === "x+y" && d.gone.length === 1 && d.gone[0].key === CHAIN_PATTERNS[0].key); }
 console.log(`chain-patterns: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

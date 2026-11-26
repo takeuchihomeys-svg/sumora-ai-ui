@@ -4,7 +4,10 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-chain-patterns.ts --from=<json> [--min-n=5] [--min-lift=20] [--out=<型の json>] [--write]
 import { readFileSync, writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { featuresOf, chainPatternsOf, comboKeysOf } from "../app/lib/chain-patterns";
+import { featuresOf, chainPatternsOf, comboKeysOf, chainTableDiff } from "../app/lib/chain-patterns";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { examCacheRoot } from "./lib/llm-cassette";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 type Row = { conv: string; at: string; node: string | null; branch: string | null; sub1?: string | null; act: string; agree: string; sentBefore?: Record<string, string> };
@@ -29,6 +32,10 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
   console.log(`■ 連鎖の型（竹内さん本人の番 ${rows.length}・組 n≥${arg("min-n", "5")}・駅だけより +${arg("min-lift", "20")}pt）: ${pats.length}`);
   for (const p of pats.slice(0, 15)) console.log(`  ${p.parts.join("＋")} → ${p.move} ${p.share}%（${p.n}番）・駅だけ ${p.stationShare}%・+${p.lift}`);
   const out = arg("out", ""); if (out) writeFileSync(out, JSON.stringify(pats, null, 2));
+  // 2026-11-26 統括役: 静的な表（CHAIN_PATTERNS）との差を候補のファイルに（記録だけ・表への書き足しは週1回・作業員がテスト付きで）
+  const diff = chainTableDiff(pats);
+  console.log(`  表との差: 新しく見つかった型 ${diff.added.length}・表にあるのに今は出ない型 ${diff.gone.length}`);
+  if (process.argv.includes("--write")) { try { const dir = examCacheRoot(); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "chain-pattern-candidates.json"), JSON.stringify({ at: new Date().toISOString(), added: diff.added, gone: diff.gone }, null, 2)); } catch (e) { console.warn("候補のファイルに書けない:", e instanceof Error ? e.message : e); } }
   // ③ 物差し: 型が当てはまった番／当てはまらない番で、ブレインの一手が竹内さんと同じ（AIX は種類・返信は返信どうし）割合（ブレインの一手は上で読んだ）
   console.log(`  気持ちの印が付いた番: ${ms.size}/${rows.length}`);
   const pk = new Set(pats.map((p) => p.key));
@@ -43,6 +50,7 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
     const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
     const qd = [
       { day, metric: "chain:patterns", scope: "takeuchi", value: pats.length, n: rows.length, source: "scripts/audit-chain-patterns.ts（作業員A）" },
+      { day, metric: "chain:table_candidates", scope: "takeuchi", value: diff.added.length, n: pats.length, detail: { added: diff.added.map((p) => `${p.key}>${p.move}`), gone: diff.gone.map((p) => `${p.key}>${p.move}`) }, source: "scripts/audit-chain-patterns.ts（作業員A）" },
       { day, metric: "chain:brain_match_hit", scope: "brain", value: rate(hit), n: hit.length, detail: { miss_rate: rate(miss), miss_n: miss.length }, source: "scripts/audit-chain-patterns.ts（作業員A）" },
     ];
     const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });

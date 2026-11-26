@@ -64,6 +64,11 @@ export const CHAIN_PATTERNS: readonly ChainPattern[] = [
   {"key":"pickup+物件:前","parts":["pickup","物件:前"],"move":"reply:promise","share":60,"n":5,"stationShare":34.8,"lift":25.2},
   {"key":"pickup+物件:今日","parts":["pickup","物件:今日"],"move":"reply:promise","share":60,"n":5,"stationShare":34.8,"lift":25.2},
 ];
+/** 毎晩の数え直しと静的な表の差（純関数・統括役 11/26: 表への書き足しは週1回・作業員がテスト付きでコミット）: 新しく見つかった型・表にあるのに今は出ない型 */
+export function chainTableDiff(found: readonly ChainPattern[], table: readonly ChainPattern[] = CHAIN_PATTERNS): { added: ChainPattern[]; gone: ChainPattern[] } {
+  const tk = new Set(table.map((p) => `${p.key}>${p.move}`)), fk = new Set(found.map((p) => `${p.key}>${p.move}`));
+  return { added: found.filter((p) => !tk.has(`${p.key}>${p.move}`)), gone: table.filter((p) => !fk.has(`${p.key}>${p.move}`)) };
+}
 export function chainInsightLineOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.CHAIN_INSIGHT_LINE ?? "").trim().toLowerCase() === "on";
 }
