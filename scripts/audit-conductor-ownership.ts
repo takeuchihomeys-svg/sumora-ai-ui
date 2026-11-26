@@ -27,7 +27,7 @@ const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--$
     if ((data ?? []).length < 1000) break;
   }
   const cs = ownershipTable(ds, ax);
-  const marked = ds.filter((d) => typeof d.digest.mk === "string").length;
+  const marked = ds.filter((d) => typeof d.digest.mtk === "string").length;
   console.log(ownershipLines(cs, ds.length, marked).join("\n"));
   for (const c of cs) if (c.gaps.length) console.log(`  欠け ${c.name}: ${c.gaps.join("／")}`);
   if (process.argv.includes("--write")) {
