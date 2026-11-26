@@ -108,6 +108,18 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
   station_state: () => null,
   // 今果たせる物: ブレインが AIX を選んだか（果たす一手）
   now_fulfillable: (d) => !!String(d.aix ?? "").trim(),
+  // 2026-11-26 作業員A（#783・L と合わせた）: AIX と返信の境目（digest.abd＝当たった行の一手・AIX の種類か reply）: 行どおりの一手＝使った・逆＝使わなかった
+  aix_boundary: (d) => {
+    const w = String(d.abd ?? ""); if (!w) return null;
+    const aix = String(d.aix ?? "").trim();
+    return w === "reply" ? aix === "" : aix.startsWith(w);
+  },
+  // AIX の辞書（digest.dct＝候補の AIX・+ でつなぐ）: 候補の AIX を選んだ＝使った・別の AIX＝使わなかった・返信＝決められない（前提がそろわない番は返信が正しい事がある）
+  aix_dictionary: (d) => {
+    const c = String(d.dct ?? "").split("+").filter(Boolean); if (!c.length) return null;
+    const aix = String(d.aix ?? "").trim(); if (!aix) return null;
+    return c.some((x) => aix.startsWith(x));
+  },
 };
 
 /** 物差し①②を記録の行から数える（毎朝の1枚） */

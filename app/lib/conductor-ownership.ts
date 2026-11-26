@@ -20,8 +20,8 @@ export const OWN_ROWS: readonly OwnRow[] = [
   { key: "station_state", name: "駅の今の状態（STATION_STATE_LINE）", owner: "作業員A", mark: "station_state" },
   { key: "check_promise_flow", name: "確認の約束の流れ（BRAIN_CHECK_PROMISE_FLOW）", owner: "作業員A", mark: "check_promise_flow", want: (d) => (d.cpf ? (d.cpf === "a" ? "property_check_result" : null) : undefined) },
   { key: "pickup_promise_flow", name: "探す約束の後のお礼（BRAIN_PICKUP_PROMISE_FLOW）", owner: "作業員A", mark: "pickup_promise_flow", want: (d) => (d.ppf ? (d.ppf === "r" ? "property_send" : null) : undefined) },
-  { key: "aix_boundary", name: "AIX と返信の境目（AIX_BOUNDARY_LINE）", owner: "作業員A", mark: "aix_boundary" },
-  { key: "aix_dictionary", name: "AIX の辞書（AIX_DICTIONARY_LINE）", owner: "作業員A", mark: "aix_dictionary" },
+  { key: "aix_boundary", name: "AIX と返信の境目（AIX_BOUNDARY_LINE）", owner: "作業員A", mark: "aix_boundary", want: (d) => (d.abd ? (d.abd === "reply" ? null : String(d.abd)) : undefined) },
+  { key: "aix_dictionary", name: "AIX の辞書（AIX_DICTIONARY_LINE）", owner: "作業員A", mark: "aix_dictionary", want: (d) => (d.dct && String(d.aix ?? "").trim() ? String(d.dct).split("+")[0] : undefined) },
   { key: "deal_flow_pre_apply", name: "成約データの1行（DEAL_FLOW_PRE_APPLY_LINE）", owner: "作業員L", mark: "deal_flow_pre_apply" },
   { key: "now_fulfillable", name: "今果たせる約束（SITUATION_NOW_FULFILLABLE）", owner: "作業員1", mark: "now_fulfillable" },
 ];
