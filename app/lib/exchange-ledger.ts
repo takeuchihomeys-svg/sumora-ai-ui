@@ -11,6 +11,7 @@
 import { splitOurPartsFine, aixPart, splitTheirParts, OUR_PART_KIND_LABEL, EXPECT_LABEL, THEIR_PART_LABEL, type OurPart, type TheirPart } from "./our-part-types";
 import { AIX_JA, pickJa, type OurSideMsg, type OurSideAix } from "./conductor-our-side";
 import { promiseReadUnifiedOn, openPromises, PROMISE_READ_KIND_JA } from "./promise-read";
+import { unansweredAsks, ASK_TOPIC_JA } from "./unanswered-asks";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
@@ -93,7 +94,12 @@ export function buildExchangeLedger(o: { msgs: ReadonlyArray<OurSideMsg>; aix: R
   // お客様の問い: 後にこちらの部分が無い／重なる言葉の無い物
   // 今の番（最後のお客様の塊）の問いは入口が読む今の一通なので、ここは前の番に残った問いだけ
   const lastStaffAt = [...win].reverse().find((m) => m.sender === "staff")?.created_at ?? "";
-  for (const t of theirs.filter((x) => (x.kind === "question" || x.kind === "worry") && x.at < lastStaffAt)) {
+  // 2026-11-27 作業員A（#814・統括役の頼み「同じ物を2つ持たない」）: お客様の問いの照らしは unanswered-asks.ts を正にする（文ごと・種類ごとの答えの形・電話/画像で返した・取り消し・古い問いを外す）。
+  //   ここは同じ窓（turns・days）で呼んで open の物だけを入れる。不安（worry）は問いの形でないので前の照らしのまま
+  for (const a of unansweredAsks({ msgs: o.msgs, aix: o.aix, nowMs: o.nowMs, days: o.days ?? 7, turns }).filter((x) => x.state === "open")) {
+    open.push({ kind: "their_question_unanswered", what: `問い（${ASK_TOPIC_JA[a.topic]}）「${a.quote.slice(0, 30)}」`, at: a.at, overdue: a.oursAfter > 0 });
+  }
+  for (const t of theirs.filter((x) => x.kind === "worry" && x.at < lastStaffAt)) {
     const laterOurs = win.filter((m) => m.sender === "staff" && m.created_at > t.at);
     const laterAix = after(ours, t.at).some((p) => p.kind === "aix");
     const answered = laterOurs.some((m) => overlaps(t.text, m.text ?? "")) || laterAix;
