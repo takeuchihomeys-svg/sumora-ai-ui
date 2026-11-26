@@ -3264,8 +3264,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   try {
     const erb = await import("@/app/lib/estimate-records-block");
     if (erb.estimateRecordsBlockOn()) {
-      const { data: erRows } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
+      const { data: erRows } = await supabase.from("estimate_records").select(erb.estimateDiscountOn() ? "property_name, room_no, initial_cost_yen, discount_yen, created_at" : "property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
       estimateRecordsText = erb.estimateRecordsBlock((erRows ?? []) as never);
+      // 2026-11-26 作業員L（BRAIN_ESTIMATE_REACTION・既定 off）: 新しい見積の後のお客様の反応の1行（会話の通から・決まった語）
+      if (erb.estimateReactionOn() && estimateRecordsText) { const rl = erb.estimateReactionLine(((erRows ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null, typedMessages as never); if (rl) estimateRecordsText += `\n${rl}`; }
     }
   } catch (e) { console.warn("[brain-core] estimate-records block skipped:", e instanceof Error ? e.message : String(e)); }
   const tasksText = (openTasks.length > 0
