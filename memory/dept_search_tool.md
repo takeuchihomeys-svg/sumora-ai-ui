@@ -14958,3 +14958,6 @@ Claude（統括役）からの依頼2件への対応。
 - **コミット前の見張り**: `.githooks/pre-commit`。この PC で `git config core.hooksPath .githooks` を設定済み。
 - **station_map の道具**: `scripts/apply-station-map-site-lines.ts`（既定 dry-run・`--mode=fill`・`--mode=fill-and-fix`・`--apply` には `--backup-dir` が要る）。書いていない。竹内さんの選択待ち。dry-run の数（2026-11-26）: ITANDI 空を埋める 305・ずれ 20／REINS 空を埋める 315・ずれ 3。ずれの例（ITANDI 表記）「大阪環状線」→「JR大阪環状線」は拡張の正本 `ITANDI_LINE_MAP_FILL` と一致。
 - **今回触っていない既存の赤**: `search-update-days.test.ts` の「号室の正規化」1件（sent-property-record の正規化・サイト分けと無関係）。
+- **station_map の空埋め（書いた）**: `--mode=fill --apply` で 317 行（ITANDI の空 305・REINS の空 315・重なり 3）。控え: `C:\Users\Admin\Desktop\station-map-backup-2026-11-26\station_map_before_fill_*.json`（戻す時は before を各 token に書き戻す）。書いた後の読み直し: ずれ（ITANDI 20・REINS 3）と対応が無い 12 行は残す。
+- **反映の経緯**: 2コミット（d00f39123・978393dce）を、他の作業者の変更が先に入った最新の履歴へ乗せ直して反映した（早送り・強制なし・作業ツリーは触らず一時の作業場所で行った）。最新の履歴の上でも見張りは緑。
+- 注意: この PC の cursor-ext と最新の履歴は中身が同じでもコミット番号が違う。次に cursor-ext から反映する時は、先に最新の履歴を取り込んでから。
