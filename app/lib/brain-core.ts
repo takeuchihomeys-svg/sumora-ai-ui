@@ -3796,12 +3796,14 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
           if (plm.pickupWhyPendingMatchOn()) {
             const { data: sentAix } = await supabase.from("aix_usage_logs").select("property_names").eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation"]).gte("sent_at", since).limit(20);
             const names = ((sentAix ?? []) as Array<{ property_names: string[] | null }>).flatMap((r) => r.property_names ?? []);
+            if (!names.length) console.log(JSON.stringify({ tag: "brain:pickup-why-pending-counts", conversationId, sentRows: whyRows.length, sentAix: (sentAix ?? []).length, names: 0 }));
             if (names.length) {
               const { data: pend } = await supabase.from("property_pickups").select("property_name, room_no, recommended, score, reason_codes, created_at, summary_text, terms")
                 .eq("conversation_id", conversationId).eq("status", "pending").gte("created_at", new Date(Date.now() - 6 * 864e5).toISOString()).limit(40);
               const have = new Set(whyRows.map((r) => String(r.property_name ?? "")));
               const add = plm.pendingMatchedOf((pend ?? []) as Array<{ property_name: string | null; created_at: string }>, names).filter((p) => !have.has(String(p.property_name ?? "")));
               if (add.length) { whyRows = [...whyRows, ...add.map((p) => ({ ...(p as object), sent_at: (p as { created_at: string }).created_at }) as unknown as import("@/app/lib/pickup-why-line").SentPickupRow)]; materialMarks.pickup_why_pending = add.length; }
+              console.log(JSON.stringify({ tag: "brain:pickup-why-pending-counts", conversationId, sentRows: whyRows.length - add.length, names: names.length, pend: (pend ?? []).length, add: add.length })); // 2026-11-27 作業員A: どこで落ちるかの件数（on の時だけ・記録だけ）
             }
           }
         } catch (e) { console.warn(JSON.stringify({ tag: "brain:pickup-why-pending", error: String(e).slice(0, 120) })); }
