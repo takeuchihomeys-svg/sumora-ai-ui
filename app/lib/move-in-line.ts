@@ -5,6 +5,8 @@
 //   切替: MOVE_IN_LINE=on（既定 off）。申込以降は呼ぶ側で出さない。事実だけ（道の言葉は書かない）
 import { parseMoveInWant } from "./move-in-want";
 import { resolveMoveInStart } from "./contact-promise";
+// 申込の目安の幅は作業員A の時間の地図と同じ定数（同じ数を2か所で持たない）。出所: 竹内さんの決定 10/20（KB 9b8dbfca・申込から入居まで1ヶ月以内がほとんど・1ヶ月前の申込がスムーズ）・審査期間 14日（KB 5bd1480b）
+import { APPLY_LEAD_DAYS } from "./time-map";
 
 type Env = Record<string, string | undefined>;
 export const moveInLineOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.MOVE_IN_LINE ?? "").trim().toLowerCase() === "on";
@@ -25,11 +27,11 @@ export function moveInFor(i: { registered?: string | null; registeredAt?: string
   if (w.kind === "after" || w.kind === "vague") return { kind: "unknown", startYmd: null, endYmd: null, source: "registered", label: w.label };
   return { kind: "unknown", startYmd: null, endYmd: null, source: null, label: null };
 }
-/** 材料の1行（事実だけ・日にちが読めない時は空）。あと何日・申込の目安（入居の3〜4週間前＝作業員A の逆算の計画と同じ目安） */
+/** 材料の1行（事実だけ・日にちが読めない時は空）。あと何日・申込の目安（入居の APPLY_LEAD_DAYS.from〜to 日前＝作業員A の時間の地図・逆算と同じ定数） */
 export function moveInLine(mi: MoveInInput, nowIso: string): string {
   if (mi.kind === "unknown" || !mi.startYmd) return "";
   const days = Math.round((Date.parse(`${mi.startYmd}T00:00:00+09:00`) - Date.parse(`${nowIso.slice(0, 10)}T00:00:00+09:00`)) / 864e5);
   const [, m, d] = mi.startYmd.split("-").map(Number);
   const from = mi.source === "conversation" ? "お客様の会話" : "登録の条件";
-  return `【入居の時期と期限】${m}/${d}${mi.label ? `（${mi.label}）` : ""}・あと ${days}日（${from}）・申込の目安は入居の3〜4週間前`;
+  return `【入居の時期と期限】${m}/${d}${mi.label ? `（${mi.label}）` : ""}・あと ${days}日（${from}）・申込の目安は入居の${APPLY_LEAD_DAYS.from}〜${APPLY_LEAD_DAYS.to}日前`;
 }

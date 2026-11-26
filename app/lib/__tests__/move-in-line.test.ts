@@ -11,7 +11,7 @@ const now = "2026-11-27T03:00:00.000Z";
 assert.equal(moveInLineOn({}), false, "既定 off");
 const reg = moveInFor({ registered: "2027年1月15日", nowIso: now });
 assert.deepEqual([reg.kind, reg.startYmd, reg.source], ["date", "2027-01-15", "registered"]);
-assert.match(moveInLine(reg, now), /^【入居の時期と期限】1\/15.*あと 49日（登録の条件）・申込の目安は入居の3〜4週間前$/);
+assert.match(moveInLine(reg, now), /^【入居の時期と期限】1\/15.*あと 49日（登録の条件）・申込の目安は入居の30〜14日前$/, "作業員A の APPLY_LEAD_DAYS と同じ数");
 const conv = moveInFor({ registered: "2027年1月15日", customerMsgs: [{ text: "内覧は12月5日でお願いします", created_at: "2026-11-26T01:00:00Z" }, { text: "入居は12月20日頃にしたいです", created_at: "2026-11-25T01:00:00Z" }], nowIso: now });
 assert.deepEqual([conv.kind, conv.startYmd, conv.source], ["date", "2026-12-20", "conversation"], "入居の語のある通だけで上書き（内覧の日は取り違えない）");
 assert.equal(moveInFor({ registered: "未定", nowIso: now }).kind, "unknown");
