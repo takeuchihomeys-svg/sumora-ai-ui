@@ -44,7 +44,8 @@ ok("手順undefined 防止（Array.isArray）", /if \(!Array\.isArray\(steps\)\)
 
 console.log("\n■ 一覧手順×画面");
 ok("flow_series から list/next を読む", /flow_series[\s\S]{0,200}fid === "list"/.test(bd) || /fid === "list" \|\| fid === "sort_ad"/.test(bd));
-ok("handoff で loop_handoff_grasp", /loop_handoff_grasp/.test(bd));
+// 2026-11-26: 決まりの判定名を、拡張が実際に出す段（dl:handoff_grasp・取得完了→外す の印）に揃えた（出ない名前は消す）
+ok("handoff で dl:handoff_grasp（取得完了→外す）", /_liveDlStep\("handoff_grasp"/.test(bd) && !/loop_handoff_grasp/.test(bd));
 
 console.log("\n■ 決まり");
 ok("customer_loop_one_by_one", /id: "customer_loop_one_by_one"/.test(rules));

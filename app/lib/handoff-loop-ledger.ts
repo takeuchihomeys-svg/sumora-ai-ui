@@ -133,7 +133,7 @@ const FINE_RE: Record<HandoffFineId, RegExp> = {
   customer_think: /customer_think|handoff_atom_think/,
   designated: /designated_lock|designated_done|handoff_atom_designated/,
   who_grasp: /next_customer_grasp|loop_who_grasp|now_customer/,
-  loop_advance: /loop_advance|loop_phase_grasp|dl:loop_handoff_grasp|clear_then_fill_ok/,
+  loop_advance: /loop_advance|loop_phase_grasp|dl:handoff_grasp|clear_then_fill_ok/,
 };
 
 /** 監査 steps から幹原子を読む */
