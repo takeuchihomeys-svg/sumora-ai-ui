@@ -18,6 +18,7 @@ const probs = JSON.parse(readFileSync(path, "utf8")) as Array<{ id: string; conv
 // 書き手の表（5行だけ）に無い時は、写しの出所の札「竹内さんの番」で竹内さん本人の番と見る
 const writerOf = (q: { conv: string; at: string; source?: string }) => (/竹内さんの番|竹内さん本人/.test(q.source ?? "") ? "takeuchi" : null) ?? writers[`${q.conv}@${q.at}`] ?? Object.entries(writers).find(([k]) => k.startsWith(q.conv) && Math.abs(Date.parse(k.split("@")[1]) - Date.parse(q.at)) < 120e3)?.[1] ?? null;
 
+let withdrawn = 0, stale = 0, answeredEarlier = 0;
 let turns = 0, turnsFlagged = 0, flagged = 0, answeredNext = 0, promisedNext = 0, promised = 0, asksAll = 0;
 const byTopic: Record<string, { flagged: number; next: number }> = {};
 for (const q of probs) {
@@ -32,6 +33,7 @@ for (const q of probs) {
   asksAll += asks.length;
   const open = asks.filter((a) => a.state === "open");
   promised += asks.filter((a) => a.state === "promised").length;
+  withdrawn += asks.filter((a) => a.state === "withdrawn").length; stale += asks.filter((a) => a.state === "stale").length; answeredEarlier += asks.filter((a) => a.state === "answered").length;
   if (open.length) turnsFlagged++;
   for (const a of open) {
     flagged++;
@@ -43,7 +45,7 @@ for (const q of probs) {
 }
 const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
 console.log(JSON.stringify({
-  書き手: allWriters ? "全員" : "竹内さん本人", 番: turns, 照らした問い: asksAll, 約束で返した問い: promised,
-  答え漏れと見た番: turnsFlagged, 答え漏れと見た問い: flagged, 次の通で答えた: answeredNext, 割合: pct(answeredNext, flagged), 次の通で確認の約束: promisedNext,
+  書き手: allWriters ? "全員" : "竹内さん本人", 番: turns, 照らした問い: asksAll, 前の通で答えた: answeredEarlier, 約束で返した問い: promised, 取り消し・了承で外した: withdrawn, 古い問いで外した: stale,
+  答え漏れと見た番: turnsFlagged, 答え漏れと見た問い: flagged, 次の通で答えた: answeredNext, 割合: pct(answeredNext, flagged), "答えた＋確認の約束の割合": pct(answeredNext + promisedNext, flagged), 次の通で確認の約束: promisedNext,
   種類ごと: Object.fromEntries(Object.entries(byTopic).map(([k, v]) => [ASK_TOPIC_JA[k as AskTopic], `${v.next}/${v.flagged}`])),
 }));

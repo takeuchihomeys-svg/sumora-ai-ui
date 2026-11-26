@@ -23,6 +23,29 @@ t("約束: 「確認させて頂きます」だけの通は答えではなく約
 t("漏れ: 費用の問いに物件の AIX だけ（exchange-ledger は答えた扱いにしていた型）", askStateOf(A("初期費用はいくらですか？"), [{ text: "こちらのお部屋もオススメです！！" }], [{ aix_type: "property_send" }]) === "open");
 t("漏れ: 場所の問いに約束も答えも無い通", askStateOf(A("大阪市で多少治安悪いとこだとどこになりますか?"), [{ text: "こちらのお部屋もオススメです！！" }], []) === "open");
 
+// 2026-11-27 統括役の頼みの3つ
+t("答えた: 電話の AIX で返した", askStateOf(A("審査厳しいって聞いてたんですけど大丈夫ですか？"), [], [{ aix_type: "phone_call" }]) === "answered");
+t("答えた: すぐ後の通が画像・通話リクエスト", askStateOf(A("アリバイの値段が知りたい"), [{ text: "【AIX】[画像]" }], []) === "answered" && askStateOf(A("審査は大丈夫ですか？"), [{ text: "[通話リクエスト] 電話をかけるボタン" }], []) === "answered");
+t("受け取りの言葉は答えではない: ペットの問いに「かしこまりました！！家賃…」", askStateOf(A("ペットは飼えますか？"), [{ text: "かしこまりました！！家賃7万円以内でピックアップさせて頂きます！！" }], []) === "open");
+const at = (h: number) => new Date(Date.parse("2026-11-01T00:00:00Z") + h * 36e5).toISOString();
+const wd = unansweredAsks({ msgs: [
+  { sender: "customer", text: "初期費用はいくらですか？", created_at: at(1) },
+  { sender: "staff", text: "こちらのお部屋もオススメです！！", created_at: at(2) },
+  { sender: "customer", text: "やっぱり大丈夫です！", created_at: at(3) },
+  { sender: "staff", text: "かしこまりました！！", created_at: at(4) },
+  { sender: "customer", text: "内見したいです", created_at: at(5) },
+], aix: [], nowMs: Date.parse(at(5)) + 1 });
+t("外す: お客様が後で取り消した問い（やっぱり大丈夫です）", wd.length === 1 && wd[0].state === "withdrawn" && unansweredLine(wd, []) === "");
+const st = unansweredAsks({ msgs: [
+  { sender: "customer", text: "初期費用はいくらですか？", created_at: at(1) },
+  { sender: "staff", text: "オススメです！！", created_at: at(2) },
+  { sender: "customer", text: "ここも気になります", created_at: at(3) },
+  { sender: "staff", text: "ありがとうございます！！", created_at: at(4) },
+  { sender: "customer", text: "こちらも見たいです", created_at: at(5) },
+  { sender: "staff", text: "かしこまりました！！", created_at: at(6) },
+  { sender: "customer", text: "よろしくお願いします", created_at: at(7) },
+], aix: [], nowMs: Date.parse(at(7)) + 1 });
+t("別の欄: 後にお客様の塊が2つ以上来た古い問いは stale・1行に入れない", st.length === 1 && st[0].state === "stale" && unansweredLine(st, []) === "");
 // 会話で: 今の番の問いは入れない・前の番の答えていない問いだけ
 const msgs = [
   { sender: "customer", text: "初期費用はいくらですか？", created_at: "2026-11-01T01:00:00Z" },

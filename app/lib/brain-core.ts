@@ -3316,7 +3316,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     const el = await import("@/app/lib/exchange-ledger");
     if (el.exchangeLedgerBrainOn()) {
       const turnAtEL = typedMessages[0]?.created_at ?? null;
-      const lineEL = el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() }));
+      const ledEL = el.buildExchangeLedger({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: turnAtEL ? Date.parse(turnAtEL) + 1 : Date.now() });
+      // 2026-11-27 作業員A（#814）: 【まだ答えていない事】（UNANSWERED_ASKS_LINE=on）が問いと約束を持つ時は、ここから同じ物を外す（同じ物を2回渡さない）
+      if ((await import("@/app/lib/unanswered-asks")).unansweredLineOn()) ledEL.open = ledEL.open.filter((x) => x.kind !== "their_question_unanswered" && x.kind !== "our_promise_unkept");
+      const lineEL = el.exchangeLedgerLine(ledEL);
       if (lineEL) { exchangeMarkLen = lineEL.length; customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}【${lineEL}】`; console.log(JSON.stringify({ tag: "brain:exchange-ledger", conversationId, where: "brain", len: lineEL.length })); }
     }
   } catch (e) { console.warn("[brain-core] exchange-ledger skipped:", e instanceof Error ? e.message : String(e)); }

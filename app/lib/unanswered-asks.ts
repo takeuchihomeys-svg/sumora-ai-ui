@@ -16,7 +16,8 @@ export const unansweredLineOn = (env: Env = envOf()) => (env.UNANSWERED_ASKS_LIN
 export type AskTopic = "cost" | "when" | "availability" | "viewing" | "place" | "procedure" | "property" | "other";
 export const ASK_TOPIC_JA: Record<AskTopic, string> = { cost: "費用", when: "時期・日", availability: "空き・募集", viewing: "内覧", place: "場所", procedure: "手続き・審査", property: "物件の中身", other: "その他" };
 export type Ask = { quote: string; topic: AskTopic; at: string };
-export type AskState = "answered" | "promised" | "open";
+// withdrawn＝お客様が後で取り消した・了承した（答えなくてよい）／stale＝何通も前の古い問い（1行には入れない・別に数える）
+export type AskState = "answered" | "promised" | "open" | "withdrawn" | "stale";
 export type AskMsg = { sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null };
 export type AskAix = { aix_type: string; created_at: string; sent_at?: string | null };
 
@@ -70,15 +71,22 @@ const AIX_ANSWERS: Record<AskTopic, RegExp> = {
 };
 // はい・いいえで答える問い（「可能ですか」「行けますか」「ありますか」）と、その答えの言葉。答えはすぐ後のこちらの通に出る（竹内さんの「はい！！」）
 const YESNO_ASK_RE = /可能(?:です)?か|できますか|出来ますか|いけますか|行けますか|大丈夫(?:です|でしょう)か|ありますか|あります(?:でしょう)?か|ございますか|難しい(?:です|でしょう)?か|でしょうか|ですかね|ますか/;
-const YESNO_ANS_RE = /^(?:はい|いいえ|可能|大丈夫|出来|できま|行けま|いけま|ございま|ありま|難し|申し訳|残念)|可能です|大丈夫です|出来ます|できます|ございます|難しい|出来かね|できかね|不可|ございません|ありません|承知|かしこまりました/;
+const YESNO_ANS_RE = /^(?:はい|いいえ|可能|大丈夫|出来|できま|行けま|いけま|ございま|ありま|難し|申し訳|残念)|可能です|大丈夫です|出来ます|できます|ございます|難しい|出来かね|できかね|不可|ございません|ありません/; // 「かしこまりました」「承知」は受け取りの言葉で答えではない（exchange-ledger の試験の型: ペットの問いに「かしこまりました！！家賃7万円で…」）
 const PROMISE_RE = /確認(?:して|させて|致し|いたし|します|しま)|お調べ|調べて|お問い?合わせ|問い合わせ|折り返し|改めて(?:ご連絡|お送り|お伝え)|分かり次第|わかり次第|判明次第|確認が取れ次第/;
+// 2026-11-27（統括役の頼み・当たり 38.9% の直し）: 電話・画像・動画で返した番は答えた扱い（竹内さんは文で答えずに電話の AIX・写真で返す）
+const OTHER_CHANNEL_RE = /\[画像\]|\[動画\]|\[通話リクエスト\]|電話をかける|お電話(?:させて|致し|いたし|でご説明|にて)/;
+// お客様が後で取り消した・了承した（「やっぱり大丈夫です」「分かりました」）＝答えなくてよい
+const WITHDRAW_RE = /やっぱり(?:大丈夫|いい|なし|やめ)|^大丈夫です|結構です|キャンセル|取り消|取りやめ|なしで|やめ(?:ます|とき|てお)|見送|他社(?:で|に)?(?:決|契約)|決まりました|解決しました|分かりました|わかりました|了解(?:です|しました)|承知しました|理解しました/;
+/** 何通も前の古い問いの線: 後にお客様の塊が2つ以上来た・こちらが4通以上送った */
+export const STALE_CUSTOMER_BLOCKS = 2, STALE_OURS = 4;
 const COURTESY = /させて|頂き|致し|お送り|ご確認|こちら|お世話|よろしく|ありがとう|ござい|でしょう|ですか|ますか|ください|下さい|いただ|教えて/;
 const kw = (t: string) => (t.match(/[一-龠ァ-ヶー]{2,}/g) ?? []).filter((k) => !COURTESY.test(k));
 const overlaps = (a: string, b: string) => kw(a).some((k) => b.includes(k));
 
 /** 問い1つを、その後のこちらの通・AIX で照らす */
 export function askStateOf(ask: Ask, laterOurs: ReadonlyArray<{ text: string }>, laterAix: ReadonlyArray<{ aix_type: string }>): AskState {
-  if (laterAix.some((a) => AIX_ANSWERS[ask.topic].test(a.aix_type))) return "answered";
+  if (laterAix.some((a) => AIX_ANSWERS[ask.topic].test(a.aix_type) || a.aix_type === "phone_call")) return "answered";
+  if (laterOurs.slice(0, 2).some((m) => OTHER_CHANNEL_RE.test(String(m.text ?? "")))) return "answered";
   // はい・いいえの問いは、すぐ後のこちらの通がはい・いいえの言葉で始まる／含む（約束だけの通は除く）なら答えた
   if (YESNO_ASK_RE.test(ask.quote) && laterOurs[0]) { const t0 = String(laterOurs[0].text ?? "").normalize("NFKC").trim(); if (YESNO_ANS_RE.test(t0) && !(PROMISE_RE.test(t0) && t0.length < 40)) return "answered"; }
   for (const m of laterOurs) {
@@ -109,7 +117,12 @@ export function unansweredAsks(o: { msgs: ReadonlyArray<AskMsg>; aix: ReadonlyAr
     for (const a of customerAsksOf(m.text, m.created_at)) {
       const laterOurs = asc.filter((x) => x.sender === "staff" && x.created_at > a.at).map((x) => ({ text: String(x.text ?? "") }));
       const laterAix = o.aix.filter((x) => (x.sent_at ?? x.created_at) > a.at && Date.parse(x.sent_at ?? x.created_at) <= o.nowMs);
-      out.push({ ...a, state: askStateOf(a, laterOurs, laterAix), oursAfter: laterOurs.length });
+      let state = askStateOf(a, laterOurs, laterAix);
+      const firstOurAt = asc.find((x) => x.sender === "staff" && x.created_at > a.at)?.created_at ?? "";
+      const laterCust = asc.filter((x, i) => x.sender === "customer" && x.created_at > a.at && (i === 0 || asc[i - 1].sender !== "customer"));
+      if (state === "open" && firstOurAt && asc.some((x) => x.sender === "customer" && x.created_at > firstOurAt && WITHDRAW_RE.test(String(x.text ?? "").normalize("NFKC").trim()))) state = "withdrawn";
+      if (state === "open" && (laterCust.length >= STALE_CUSTOMER_BLOCKS || laterOurs.length >= STALE_OURS)) state = "stale";
+      out.push({ ...a, state, oursAfter: laterOurs.length });
     }
   }
   // 同じ種類の問いが続いたら新しい方だけ（「いくら？」「費用は？」の重ね）
