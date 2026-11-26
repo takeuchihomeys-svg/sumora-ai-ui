@@ -14887,3 +14887,16 @@ Claude（統括役）からの依頼2件への対応。
 - 試験: app/lib/__tests__/playbook-reset-skeleton.test.ts を追加。関連の app/lib 試験は全部通る。continuous-clear-sequence は 2.8.285 以降の既存の赤（_doReset 内の clear_then_fill_ok の位置が変わったため・今回の変更とは無関係）。
 - 副: search-audit.js の KEEP_STEP の追加位置を末尾へ（先頭近くだと bulk-stop-takeover／one-send-cache の並びの試験が赤になる）。
 - 反映: コミット後に main→Vercel→attach-playbook（build_v 13→14）。拡張のコードは変えていない（骨組みを読む側は件数と文を表示するだけ）。
+### 2026-11-26 手順書の改善の仕組み（A・B・C・D・E）— 古い手順が残る原因への対策
+- 原因（竹内さんの問い「なんでこんなに古い手順書が残るのか」）: 直し方が『上に貼り足す』だった。外しの決まり5本は冒頭に『リセットで…』を貼っただけで本文は『1つずつ外す』のまま。さらに同じ『この外しの段は行わず次へ進む』という断りが、外しと関係ない決まり12本にも一括で貼られていた（flow_series・次客の流れ等）。骨組み（action-playbook.ts）と決まり（auto-procedure-rules.ts）は別々に書かれ、変更時に両方を見る仕組みが無かった。試験は『語があるか』しか見ていなかった。
+- 直したこと:
+  - 外しの決まり6本（clear_single_owner／clear_detail_grasp／clear_then_fill_gate／clear_per_panel／clear_one_by_one／guide_phase_checkpoints）の本文を書き直した（リセットを主手順・古い手順は『最後の保険（リセットが押せない・空にならない時だけ・reset_fallback）』と本文に書く）。
+  - 一括で貼られた断り12本を、事実だけの札『外しはリセットで空にする（reset_replaces_clear）』に置き換えた（外しと関係ない決まりから『外しの段は行わず』を消した）。
+  - reset_replaces_clear と series_handoff_order の文を、保険と否定が分かる書き方にした。
+- A（変更時の確認）: scripts/rules-change-check.ts --words=外す,リセット [--base=HEAD] [--strict]。変えた言葉で決まりと骨組みを探し、版と比べて『本文が変わった／変わっていない（要確認）』を出す。
+- B（廃止された手順）: app/lib/playbook-retired.ts（RETIRED_STEP_RE・BANNED_PREFIX_RE）。通常の手順として『1つずつ外す』を保険と断らず書いた文と、『以下は…代わりの手順』の貼り足しを出す。試験 app/lib/__tests__/playbook-retired-phrases.test.ts（決まり102・骨組み140 件で 0 件・自己点検あり）。
+- C（骨組みと決まりの参照）: 骨組みの rules が指す id が実在することを試験で固定。手順の文言そのものを決まりから生成する一本化は未（build_v14 の出力と試験の並びを大きく変えるため・別の作業）。
+- D（版の比較）: driftFlags（rules-change-check --drift）。リセット（2.8.305）より古い外しの決まりで、リセットに触れない物を出す。現在 0 件。自己点検あり。
+- E（反映の確認）: rules-change-check --sync で check-playbook-sync を呼ぶ（DB を読むだけ）。本文を変えると rules_v が変わるので、push → Vercel → attach-playbook --apply → check が必要。今は DB が rules_v 0fe72c33、コードが c87c8397 で、attach し直すまで古い。
+- 試験: reset-loop-v2307.test.js の『前置き』の期待を、事実の札の期待に更新（貼り足しを残さない）。ext-test-all の赤は基準どおり 122（新しい赤 0）。
+- 未: 本番の反映（push・attach）は竹内さんの OK 待ち。拡張の再読み込みも未。

@@ -63,12 +63,17 @@ const OLD = [
   "continuous_customer_loop", "flow_series_grasp", "flow_series_order_gate", "customer_loop_one_by_one", "clear_then_fill_gate",
   "one_task_complete_before_next", "samekind_clear_before_fill", "now_action_clear_then_fill", "task_grasp_now_done_next", "continuous_series_next_grasp",
 ];
+// 2026-11-26 更新: 貼り足しの前置き（「この外しの段は行わず」）は、外しと関係ない決まりにも一括で付いていて誤った文だった。
+// 事実だけの札「外しはリセットで空にする（reset_replaces_clear）」に置き換えた。貼り足しは残さない。
 ok(
-  "古い外しの層10本すべてに『リセットで空なら外しの段は行わない』の前置き",
-  OLD.every((id) => /text: "【リセットで空と確かめられた回は、この外しの段は行わず次へ進む（reset_replaces_clear）/.test(block(id))),
-  OLD.filter((id) => !/【リセットで空と確かめられた回/.test(block(id)))
+  "古い外しの層10本に、本文がリセットを主手順にしている（札か書き直し）",
+  OLD.every((id) => /リセット/.test(block(id))),
+  OLD.filter((id) => !/リセット/.test(block(id)))
 );
-ok("新2本の marker が拡張の中にある", bg.includes("reset_empty_is_enough") && bg.includes("reset_success_skips_look"));
+ok(
+  "貼り足しの前置き（この外しの段は行わず次へ進む）は、どの決まりにも残らない",
+  !/この外しの段は行わず次へ進む/.test(rules)
+);ok("新2本の marker が拡張の中にある", bg.includes("reset_empty_is_enough") && bg.includes("reset_success_skips_look"));
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
