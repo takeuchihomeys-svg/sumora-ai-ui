@@ -1,0 +1,40 @@
+{
+  "_note": "リアプロ・ITANDI・REINS を混ぜない見張りの正本（2026-11-26）。読む: tests/chrome-extension/site-split-guard.test.js（ext-test-all が毎回回す）。直し方: memory/dept_search_tool.md の「サイトの分け方」・chrome-extension/DB_STRUCTURE.md。中身は正規表現の断片（JSON の中の \\ は1つの \\ になる）。注釈（// や * で始まる行）は数えない。",
+  "realpro_only": [
+    "ROUTE_LINE_MAP",
+    "STATION_NAME_ALIASES",
+    "LINE_ROUTE_MAP",
+    "TOWN_CODE_MAP",
+    "WARD_CODE_MAP",
+    "city_code",
+    "route_id",
+    "main\\.php",
+    "realpro-guide"
+  ],
+  "itandi_only": [
+    "ITANDI_STATION_ALIAS_MAP",
+    "ITANDI_LINE_MAP_FILL",
+    "itandi-page-script",
+    "itandi-guide",
+    "itandi-form-guard",
+    "option_id",
+    "FILTER_ROWS",
+    "CLEAR_TEXT_FIELDS",
+    "CLEAR_CHECK_NAMES",
+    "CLEAR_CHECK_LABELS"
+  ],
+  "box_forbidden": {
+    "realpro-": ["itandi_only"],
+    "itandi-": ["realpro_only"],
+    "reins-": ["realpro_only", "itandi_only"]
+  },
+  "box_exceptions": {},
+  "shared_mix": {
+    "chrome-extension/background.js": "両方の入口（一括検索・自動便・サイトごとの接頭辞 siteUrlPrefixes）。リアプロの検索指示（city_code・route_id・main.php）と、ITANDI の路線の写し（ITANDI_LINE_MAP_FILL）を、site の値で分けて使う。",
+    "chrome-extension/popup-maps.js": "対応表の正本（リアプロの WARD_CODE_MAP・LINE_ROUTE_MAP・TOWN_CODE_MAP と ITANDI_LINE_MAP_FILL を1か所に持つ）。両サイトの表を並べて持つのが役目（中で混ぜて使わない）。",
+    "chrome-extension/popup.js": "画面の入口（両サイトの欄・更新日はサイトごとの列・対応表を参照）。サイトの値で分けて使う（DB の site 列は site-update-days.js が分ける）。",
+    "chrome-extension/resolution-core.js": "対応表の写し（正本は popup-maps.js）。同じ表を持つので、ずれは見張りで止める。",
+    "app/lib/search-audit-diagnose.ts": "検索の点検（両サイトの路線を読む）。サイトの値で分けて見る。",
+    "app/api/migrate-schema/route.ts": "列を作る所（両サイトの列を1つの移行に並べる）。列名は各サイトの物を使う。"
+  }
+}

@@ -51,9 +51,17 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 | sent_properties | 送った物件 | 共有 | **site**（11/10 足した・merge-pdfs の共有の行と AIX で送った行が入れる・LINE の画像の読み取り vision は NULL） |
 | chrome_extension_feedback | 拡張からの声 | 両方 | site |
 
+## リアプロ・ITANDI・REINS を混ぜない決まりと見張り（2026-11-26・必ず守る）
+- **箱**: サイトの名前が付いたファイルは、そのサイトだけを扱う（`realpro-*.js`・`itandi-*.js`・`reins-*.js`・`app/lib`・`app/api` の同じ名前）。違う方の名前を使わない。
+- **両方を扱う共有ファイル**は、どのサイトの値がどこで切り替わるか（`site` の値・サイトごとの列）を理由に書いて登録する。登録されていない新しい共有ファイルは止まる。
+- **見張りの正本**: `tests/chrome-extension/site-split-rules.json`（名前の一覧・箱の決まり・登録の理由）と `tests/chrome-extension/site-split-guard.test.js`（`ext-test-all` が毎回回す）。`node tests/chrome-extension/site-split-guard.test.js --report` で今の一覧を出す。
+- **新しい名前（地図・画面の名前）を足す時**: 先に `site-split-rules.json` の名前の一覧に入れる（どちらのサイトの物か）。両方の名前が1ファイルに入ったら、見張りが「登録してください」と止める。
+- 注釈（`//`・`*` の行）は数えない。行の途中の注釈は残る。
+- 今の結果（2026-11-26）: 箱の違反 0・両方を扱う共有ファイル 6（登録済み）。
+
 ## リアプロと ITANDI で混ざっている所（直す候補）
 1. ~~**`site` の値が2通り**~~ → 11/10 DB で揃えた（migration `ext_db_site_runs_views_1110`）。本番の値は automation_commands.sites と extension_devices.current_site だけ `realnetpro`、他の11の表は realpro/itandi/reins で揃っていた。DB の関数 `ext_site_key()`（realnetpro・リアプロ→realpro）と、site の列がある10表の trigger `trg_site_norm`（入る時に揃える・拒まない）を足した。拡張との指示のやり取り（sites の `realnetpro`）は変えない。サーバーの揃える関数4か所（search-audit-check.ts・screen-watch-server.ts・search-update-days-server.ts・search-widen-chain.ts pickupSiteOf）は残っている。
-2. **一括検索・自動の便では ITANDI もリアプロの更新日を使う**: cron と automation の payload は `rp_update_days` しか持たない（v2.5.76 で列を分けたのは popup だけ）。
+2. ~~**一括検索・自動の便では ITANDI もリアプロの更新日を使う**~~ → 直っている（2026-11-26 に裏付けを確認）: 手の一括は `background.js` 6264〜（`_bulkItDays` に `itandi_update_days` を使う）・自動便は `auto-run.js` の `optsForSite`（207）／`optsForSiteRecord`（273）が ITANDI の回だけ `itandi_update_days` を `rp_update_days` の位置へ写す（読む側の itandi-page-script.js は `cond.rp_update_days` のまま＝写しの仕組み）。payload に `itandi_update_days` が無い古い命令は今まで通りリアプロの値に落ちる。
 3. **`line_stations` はリアプロの内部名だけ**: ITANDI の駅の順番は持っていない。
 4. **`station_map.itandi_lines` はリアプロの路線名から変換して作った物**。`reins_line` は最初の1本だけ。~~スタッフの手直し（station-map の POST）はリアプロの列しか直さない。~~ → 11/10 直した: POST はリアプロの路線が来たら `app/lib/station-line-maps.ts` の `deriveSiteLines` で ITANDI・REINS も作り直す（表に無い路線の列は前の値を残し warning で返す）。既存の行は 767行中 344行が表と違う（空を埋める 317・上書き 19・リアプロの列が表に無い名前 8）＝書き換えは未実施（統括役の判断待ち・`scripts/audit-station-map-site-lines.ts`）。
 5. **対応表の写しが5か所以上**: popup-maps.js（正本）・resolution-core.js・popup.js の中・seed-maps・token-resolve・DB（station_map・line_meta）。11/10: token-resolve の写しは `app/lib/station-line-maps.ts` に移し、正本とのずれをテストで見張る（他の写しはまだ）。
