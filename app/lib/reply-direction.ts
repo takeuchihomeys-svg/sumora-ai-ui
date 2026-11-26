@@ -23,6 +23,12 @@ export function replyCloseKindOf(text: string): string {
 }
 /** 締めの型 → 向かう駅（route-progress の ACT_TARGET の reply: の行と同じ） */
 const REPLY_TARGET: Record<string, RouteNodeId | "promise" | null> = { invite_apply: "apply_prep", invite_viewing: "viewing_arrange", invite_estimate: "estimate", ask_schedule: "viewing_arrange", promise: "promise" };
+/** 付け先の確かめ: 下書きの元の判断が見たお客様の通の時刻の前後1秒（無い・読めない時は null＝付けない・純関数） */
+export function decisionTsWindow(ts: string | null | undefined): { lo: string; hi: string } | null {
+  const t = Date.parse(String(ts ?? ""));
+  if (!Number.isFinite(t)) return null;
+  return { lo: new Date(t - 1000).toISOString(), hi: new Date(t + 1000).toISOString() };
+}
 /** 判断の記録の駅（digest.ar＝"node|branch|substate|版"）と下書きから、石の向き（純関数） */
 export function replyStoneOf(ar: string | null | undefined, draft: string): { rdir: string; rst: StoneMove } {
   const rdir = replyCloseKindOf(draft);

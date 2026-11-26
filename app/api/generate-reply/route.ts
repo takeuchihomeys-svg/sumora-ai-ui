@@ -8005,11 +8005,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   同じ会話の最新の判断の記録の digest に rdir・rst を足す（ブレインには書かせない＝q406 の前例・fail-open）
             if (persist && conversationId && finalDraftText && !isTemplateOptimize) {
               const draftForDir = finalDraftText;
+              // 付け先の確かめ（統括役 11/26）: 下書きの元になった判断が見たお客様の通の時刻（analyzed_msg_ts）と同じ判断の記録の行にだけ付ける。分からない・合う行が無い時は付けない
+              const decTsForDir = (brainDecisionSrc as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
               after(async () => {
                 try {
                   const rd = await import("@/app/lib/reply-direction");
                   if (!rd.replyDirectionRecordOn()) return;
-                  const { data: lastDec } = await supabase.from("brain_decision_logs").select("id, digest").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+                  const win = rd.decisionTsWindow(decTsForDir);
+                  if (!win) return;
+                  const { data: lastDec } = await supabase.from("brain_decision_logs").select("id, digest, analyzed_msg_ts").eq("conversation_id", conversationId).gte("analyzed_msg_ts", win.lo).lte("analyzed_msg_ts", win.hi).order("created_at", { ascending: false }).limit(1).maybeSingle();
                   const dg = (lastDec?.digest ?? null) as Record<string, unknown> | null;
                   if (!lastDec?.id || !dg || dg.rdir) return;
                   const { rdir, rst } = rd.replyStoneOf(typeof dg.ar === "string" ? dg.ar : null, draftForDir);
