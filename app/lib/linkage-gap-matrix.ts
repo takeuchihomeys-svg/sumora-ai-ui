@@ -15,7 +15,7 @@ const HAND = "手打ちの通 2240（60日）";
  *   組み合わせのつなぎは連鎖の見立て（chain-patterns・CHAIN_INSIGHT_LINE・既定 off）。値打ち＝型が当てはまった番でブレインが竹内さんと合う割合の差（+7.7pt・111番）は束ねた1行で並べる */
 const FOUNDATION = (id: string, name: string, sw: string): GapSource => ({ id, name, owner: "作業員A", value: null, valueBase: "ブレインの中の土台（値打ちは束ねた行 brain_combo で）", cells: { brain: { state: "on", switch: sw }, combo: { state: "none" } } });
 const BRAIN_FOUNDATIONS: readonly GapSource[] = [
-  FOUNDATION("f_check_order", "確認の順（check-order）", "CHECK_ORDER_TABLE"), FOUNDATION("f_mindset", "気持ち（customer-mindset）", "CUSTOMER_MINDSET"), FOUNDATION("f_station", "地図の駅（apply-route-map）", "ROUTE_DIGEST"),
+  FOUNDATION("f_check_order", "確認の順（check-order）", "CHECK_ORDER_TABLE"), { ...FOUNDATION("f_mindset", "気持ち（customer-mindset）", "CUSTOMER_MINDSET"), cells: { brain: { state: "on", switch: "CUSTOMER_MINDSET" }, combo: { state: "off", switch: "ROUTE_MINDSET_LINE", item: 795, note: "気持ち×駅 → 竹内さんの次の一手（作業員L・9470597e9）" } } }, FOUNDATION("f_station", "地図の駅（apply-route-map）", "ROUTE_DIGEST"),
   FOUNDATION("f_next_stone", "次の石（route-next-stone）", "ROUTE_NEXT_STONE_LINE"), FOUNDATION("f_backplan", "逆算の計画（route-backplan）", "APPLY_ROUTE_BACKPLAN"), FOUNDATION("f_promise_flow", "約束の流れ（確認・探す）", "BRAIN_CHECK_PROMISE_FLOW"),
   FOUNDATION("f_card", "AIX の札", "AIX_STATE_CARD"), FOUNDATION("f_aims_after", "判断の後の欄（turn-aims-after）", "TURN_AIMS_AFTER"), FOUNDATION("f_focus", "入口の重点（conductor focus）", "CONDUCTOR_FOCUS"),
   { id: "brain_combo", name: "ブレインの土台どうしの組み合わせ（駅＋状態＋送った物 → 竹内さんの一手）", owner: "作業員A", value: 7.7, valueBase: "連鎖の型が当てはまった番のブレインの一致の差 +7.7pt（111番）", cells: { combo: { state: "off", switch: "CHAIN_INSIGHT_LINE", note: "12型・見立ての1行（控えの行 chain_insight）" } } },
