@@ -97,7 +97,7 @@ function makeEnv(clickDelayMs) {
   };
   env.now = () => now;
   vm.createContext(ctx);
-  const consts = "var _RESET_PRESS_SOFT_MS = 15000;\nvar _RESET_PRESS_HARD_MS = 40000;\nvar _RESET_PRESS_POLL_MS = 2000;\n";
+  const consts = "var _RESET_PRESS_SOFT_MS = 15000;\nvar _RESET_PRESS_HARD_MS = 120000;\nvar _RESET_PRESS_POLL_MS = 2000;\n";
   vm.runInContext(consts + cut(ps, "  function _resetPress(done) {") + "\nthis._resetPress = _resetPress;", ctx);
   env.start = () => ctx._resetPress((r) => { env.result = r; env.doneAt = now; });
   return env;
@@ -119,8 +119,8 @@ let e3 = makeEnv(35000); e3.start(); e3.run(90000);
 ok("かなり遅い(35秒): 押した扱い", e3.result && e3.result.ok === true && e3.result.pressed === true, e3.result);
 // 押されない（600秒かかる）→ 40秒で取り消して「押せず」
 let e4 = makeEnv(600000); e4.start(); e4.run(700000);
-ok("押されない: 押せずを返す", e4.result && e4.result.ok === false && /^press_timeout4\d$/.test(String(e4.result.why)), e4.result);
-ok("押されない: 40秒前後で返す（無限に待たない）", e4.doneAt >= 40000 && e4.doneAt <= 43000, e4.doneAt);
+ok("押されない: 押せずを返す", e4.result && e4.result.ok === false && /^press_timeout12\d$/.test(String(e4.result.why)), e4.result);
+ok("押されない: 120秒前後で返す（無限に待たない）", e4.doneAt >= 120000 && e4.doneAt <= 123000, e4.doneAt);
 ok("押されない: 積んだクリックを取り消した（あとで勝手に押されない）", e4.queue.length === 0 && e4.clicked === 0, { q: e4.queue.length, c: e4.clicked });
 ok("押されない: 取り消しの印が残る", e4.steps.some((s) => s[0] === "reset_press_cancel"), e4.steps);
 // 入力中は断る
@@ -130,7 +130,7 @@ ok("(参考)入力中でない時はすぐ断られない", e5.result === null);
 
 console.log("\n■ ② 裏の遅れて押した把握");
 const sec = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("/** ★ 2.8.297 版の比べ"));
-ok("裏の押す待ちの上限が45秒（ページの40秒より長い）", /var RESET_PRESS_TIMEOUT_MS = 45000;/.test(bg));
+ok("裏の押す待ちの上限が130秒（ページの120秒より長い）", /var RESET_PRESS_TIMEOUT_MS = 130000;/.test(bg));
 ok("返事が press_timeout／返事なしなら読み直しを確かめる", /!_press \|\| \(_press\.ok === false && !_press\.skipped && \/\^press_timeout\/\.test/.test(sec));
 ok("読み直し（reloaded）なら遅れて押した扱い", /_lr && _lr\.reloaded/.test(sec) && /late: true/.test(sec));
 ok("遅れて押した扱いの後は従来どおり待機→空の確認へ進む", sec.indexOf("late_press") > 0 && sec.indexOf("late_press") < sec.indexOf("② 読み直しを待つ"));

@@ -2216,6 +2216,18 @@
     return Math.round(base);
   }
   /**
+   * ★ 2.8.316 竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」:
+   *   並べ替え・リセットの押した後は、画面の描き直し（ラグ）が続く。次の段（一覧の取得・次の入力）を
+   *   画面が追いつく前に始めると、押し損ね・読み違いが起きる（#1659：並べ替えが終わった直後に一覧を取り始めた）。
+   *   → 押した後に 5〜9 秒の猶予を置く（毎回揺らす）。background（リセット後）も同じ幅を使う。
+   *   ⚠ 猶予は人の間。固定の数字の待ちにしない（_lagGraceMs を通す）。
+   */
+  var LAG_GRACE_MIN_MS = 5000;
+  var LAG_GRACE_MAX_MS = 9000;
+  function _lagGraceMs() {
+    return LAG_GRACE_MIN_MS + Math.floor(Math.random() * (LAG_GRACE_MAX_MS - LAG_GRACE_MIN_MS));
+  }
+  /**
    * ★ 2.8.207 竹内さん「検索押したと確認 → そのあと1秒以上空けて並べ替え」:
    *   意図(intent/直前)だけでは未確認。press_ok / screen / confirmed だけ本線。
    */
@@ -4984,7 +4996,10 @@
             console.log("[AXLX bulk-dl][sort] ③ 高→低へカーソルを動かして押します（赤丸=AD右の高→低・URL直しない）");
             press(hiToLo, function (okPress) {
               if (!okPress) { done(false); return; }
-              step(1200, function () { done(true); });
+              // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る
+              var _lagG = _lagGraceMs();
+              _auditSort("sort_lag_grace", Math.round(_lagG / 1000) + "秒 押した後の猶予（ラグ）");
+              step(1200 + _lagG, function () { done(true); });
             });
           });
         });

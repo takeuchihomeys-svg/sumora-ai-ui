@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.315";
+  var _AXLX_PAGE_VER = "2.8.316";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4271,6 +4271,8 @@ function _guideLikeAreaSkip(why) {
     "sort_skip_own_ui",
     "reset_press_late_grasp",
     "sw_restart_wait_post_search_flow",
+    "lag_grace_after_sort",
+    "lag_grace_after_reset",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -12544,12 +12546,12 @@ function _guideLikeAreaSkip(why) {
    * ★ 2.8.315 実測 #1661（2026-11-27 竹内さん「リセットはちゃんと押せていた。押したと把握できていなかったのか」）:
    *   旧は 15 秒で「押せず（press_timeout15）」と返したが、人の動きのクリックは**キューに積まれたまま後で実行される**ので、
    *   報告は「押せず」でも実際は押されていた（裏は「押せず」→画面を撮る→リセットをもう1回押す→従来の外し、と二重に動いた）。
-   *   → ① 本当にクリックが実行された所を捉える（_fired）② 15 秒で諦めず、まだ押していなければ最大 40 秒まで待つ
-   *     ③ 40 秒でも押していなければ、積んだクリックを取り消してから「押せず」と返す（あとで勝手に押されない）
+   *   → ① 本当にクリックが実行された所を捉える（_fired）② 15 秒で諦めず、まだ押していなければ最大 120 秒まで待つ
+   *     ③ 120 秒でも押していなければ、積んだクリックを取り消してから「押せず」と返す（あとで勝手に押されない）
    *     ④ 15 秒を過ぎた時と、取り消した時は点検に残す（page:reset_press_slow／page:reset_press_cancel）
    */
   var _RESET_PRESS_SOFT_MS = 15000;
-  var _RESET_PRESS_HARD_MS = 40000;
+  var _RESET_PRESS_HARD_MS = 120000;
   var _RESET_PRESS_POLL_MS = 2000;
   function _resetPress(done) {
     var finished = false;

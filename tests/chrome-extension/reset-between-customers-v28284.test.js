@@ -48,7 +48,7 @@ ok("押す前に読み直しの印（bootAt）を置く", /sessionStorage\.setIt
 ok("人のようにカーソルを動かして押す（enqueueHumanClick）", /enqueueHumanClick\(btn, _fireReset/.test(press) && /_clickEl\(el\)/.test(press)); // 2.8.315: 押した瞬間を捉えるため _clickEl を包む
 ok("押す物が無ければ no_reset_button", /why: "no_reset_button"/.test(press));
 // 2.8.315: 15秒で諦めず、押していなければ最大40秒まで待ってから返す（押されているのに「押せず」を防ぐ）。必ず返す点は同じ
-ok("40秒までに必ず返す（fail-open）", /_RESET_PRESS_SOFT_MS = 15000/.test(ps) && /_RESET_PRESS_HARD_MS = 40000/.test(ps) && /why: "press_timeout" \+ Math\.round\(age \/ 1000\)/.test(press));
+ok("40秒までに必ず返す（fail-open）", /_RESET_PRESS_SOFT_MS = 15000/.test(ps) && /_RESET_PRESS_HARD_MS = 120000/.test(ps) && /why: "press_timeout" \+ Math\.round\(age \/ 1000\)/.test(press));
 const closeFn = fnSrc(ps, "  function _closeStrayWindows() {");
 ok("this_window_close を閉じる", /div\.this_window_close/.test(closeFn));
 ok("「閉じる」だけの小窓も閉じる（検索の小窓は別扱い）", /=== "閉じる"/.test(closeFn) && /\.this_window/.test(closeFn));
@@ -192,7 +192,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await w.run(30 * 60000);
   ok("3-5 flag off → リセットを押さない", w.resetPressCalls === 0 && w.postSendClearCalls === 2, w.resetPressCalls + "/" + w.postSendClearCalls);
 
-  // 3-6 リセット込みの1人あたりの増え分が上限（260秒）の中
+  // 3-6 リセット込みの1人あたりの増え分が上限（330秒）の中
   w = sim.createWorld({ customers: customers(2), resetButton: true });
   await start(w, 2);
   await w.run(30 * 60000);
@@ -230,7 +230,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const clearOrReset = bg.slice(bg.indexOf("async function _postSendClearOrReset("), bg.indexOf("var _scrapeLastOutcome"));
   ok("失敗時は従来の外し（_postSendClearRealpro）へ", /return _postSendClearRealpro\(customerId, auditRunId\)/.test(clearOrReset));
   ok("送付後の呼び出しは _postSendClearOrReset", /var _psP = _postSendClearOrReset\(customerId, _runId\)/.test(bg));
-  ok("段の上限を 260秒に（リセット＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 260000/.test(bg));
+  ok("段の上限を 330秒に（待ち120秒のリセット＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 330000/.test(bg));
   ok("切り替えフラグ axlx_reset_button_mode（false で使わない）", /RESET_BUTTON_MODE_KEY\] === false/.test(bg));
   ok("2.8.107 の試験が見ていた名前が増えていない", ps.indexOf("_tryResetButtonThen") === -1 && ps.indexOf("RESET_TEXTS") === -1 && ps.indexOf('"reset_btn"') === -1);
   ok("正本に reset_between_customers", /id: "reset_between_customers"/.test(rules));

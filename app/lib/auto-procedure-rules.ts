@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.315";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.316";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -340,7 +340,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "clear_single_owner",
     scene: "clear",
-    text: "外しは同時に1つだけ。リセット（送付後のリセット＝最大260秒）が走っていれば、次のお客さんの入力は終わるまで待ってから押す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古いリセット・外しは押すのをやめる。最後の保険で1つずつ外す時（reset_fallback）も同時に1つだけ",
+    text: "外しは同時に1つだけ。リセット（送付後のリセット＝最大330秒・押す待ち120秒を含む）が走っていれば、次のお客さんの入力は終わるまで待ってから押す（60秒で終わらなければ止めて引き継ぐ）。引き継いだ古いリセット・外しは押すのをやめる。最後の保険で1つずつ外す時（reset_fallback）も同時に1つだけ",
     since: "2.8.147",
     kb: null,
     marker: "外しは同時に1つだけ。引き継いだら古い外しは止める",
@@ -696,7 +696,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "reset_retry_insurance",
     scene: "clear",
-    text: "リセットが空にならない・押せない・例外の時は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（260秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
+    text: "リセットが空にならない・押せない・例外の時は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（330秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
     since: "2.8.308",
     kb: "f3d2c5b1",
     marker: "_resetWithInsurance(",
@@ -1880,7 +1880,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "reset_press_late_grasp",
     scene: "clear",
-    text: "リセットを押したかは「クリックが実際に実行された」で決める（_fireReset）。人の動きのクリックはキューに積まれて遅れて実行されるので、15秒で「押せず」と返さない（旧は押されているのに押せず→画面を撮る→もう1回押す→従来の外し、と二重に動いた #1661）。15秒を過ぎてもまだなら最大40秒まで待ち（page:reset_press_slow）、40秒でも押していなければ積んだクリックを取り消してから「押せず」と返す（page:reset_press_cancel・あとで勝手に押されない）。裏は返事が時間切れでも、押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として先へ進み、もう1回押さない",
+    text: "リセットを押したかは「クリックが実際に実行された」で決める（_fireReset）。人の動きのクリックはキューに積まれて遅れて実行されるので、15秒で「押せず」と返さない（旧は押されているのに押せず→画面を撮る→もう1回押す→従来の外し、と二重に動いた #1661）。15秒を過ぎてもまだなら最大120秒まで待ち（page:reset_press_slow・人が止まっている時に40秒で判断すると早すぎるため・2.8.316）、120秒でも押していなければ積んだクリックを取り消してから「押せず」と返す（page:reset_press_cancel・あとで勝手に押されない）。裏は返事が時間切れでも、押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として先へ進み、もう1回押さない",
     since: "2.8.315",
     kb: null,
     marker: "_RESET_PRESS_HARD_MS",
@@ -1888,6 +1888,32 @@ export const AUTO_RULES: AutoRule[] = [
     verify: {
       onlyIf: ["page:reset_press_slow"],
       mustHaveAny: ["reset_verified", "reset_stuck_recovered"],
+    },
+  },
+  {
+    id: "lag_grace_after_sort",
+    scene: "list",
+    text: "並べ替えの高→低を押した後は、画面の描き直し（ラグ）の猶予（5〜9秒・毎回揺らす）を置いてから一覧の取得に進む（dl:sort_lag_grace）。並べ替えが終わった直後に一覧を取り始めると、画面が追いつかず読み違える（#1659）。猶予は固定の数字の待ちにせず _lagGraceMs を通す",
+    since: "2.8.316",
+    kb: null,
+    marker: "_lagGraceMs",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_hilo"],
+      mustHaveAny: ["dl:sort_lag_grace"],
+    },
+  },
+  {
+    id: "lag_grace_after_reset",
+    scene: "clear",
+    text: "リセットで空と確かめた後も、画面の追いつき（ラグ）の猶予（5〜9秒）を置いてから次の段に進む（reset_lag_grace）。押した後の待ち（30〜34秒）と写真の後に、さらに猶予を置く。猶予は _lagGraceMs を通す（bulk-dl と同じ幅）",
+    since: "2.8.316",
+    kb: null,
+    marker: "_lagGraceMs",
+    file: "background.js",
+    verify: {
+      onlyIf: ["reset_verified"],
+      mustHaveAny: ["reset_lag_grace"],
     },
   },
   {

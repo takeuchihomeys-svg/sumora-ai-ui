@@ -91,7 +91,7 @@ const iSettle = bg.indexOf("var _settleMs = RESET_SETTLE_MIN_MS");
 const iVerify = bg.indexOf("__axlxResetVerifyP", iSettle);
 const iNext = bg.indexOf("return { ok: true, left: 0, reset: true", iSettle);
 ok("待ちは読み戻し（空の確認）より前・次の客への返事より前", iSettle > 0 && iSettle < iVerify && iVerify < iNext, [iSettle, iVerify, iNext]);
-ok("post_send_clear の段の上限は 260秒（30秒の待ち＋確認＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 260000/.test(bg));
+ok("post_send_clear の段の上限は 330秒（30秒の待ち＋確認＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 330000/.test(bg));
 ok("ページの中の押し（人の動き）・直接の書き換えは増やしていない", !/RESET_SETTLE_MIN_MS\s*=\s*[0-9]{1,4}\s*;/.test(bg));
 
 console.log("\n■ 手順書（決まりの文）");

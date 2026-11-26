@@ -10861,8 +10861,8 @@ async function _postSendClearRealpro(customerId, auditRunId) {
  *   投げない。{ ok, left, reset:true, reloaded, why? } か { skipped } を返す。
  */
 var RESET_BUTTON_MODE_KEY = "axlx_reset_button_mode";
-// ★ 2.8.315: ページ側が最大40秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）
-var RESET_PRESS_TIMEOUT_MS = 45000;
+// ★ 2.8.315: ページ側が最大120秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）。2.8.316 竹内さん「止まって120秒以上にする」
+var RESET_PRESS_TIMEOUT_MS = 130000;
 var RESET_VERIFY_TOTAL_MS = 25000;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
 // 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
@@ -10894,6 +10894,12 @@ async function _waitAfterHumanReset(runId) {
   } catch (_) { return 0; }
 }
 var RESET_SHOT_GAP_MIN_MS = 2000;
+/** ★ 2.8.316 ラグの猶予（押した後の画面の追いつき・bulk-dl の _lagGraceMs と同じ 5〜9秒）。固定の数字の待ちにしない */
+var LAG_GRACE_MIN_MS_BG = 5000;
+var LAG_GRACE_MAX_MS_BG = 9000;
+function _lagGraceMs() {
+  return LAG_GRACE_MIN_MS_BG + Math.floor(Math.random() * (LAG_GRACE_MAX_MS_BG - LAG_GRACE_MIN_MS_BG));
+}
 async function _resetShot(shotTab, runId, customerId, whatLabel) {
   try {
     if (typeof _capturePaced !== "function" || typeof _sendShotNow !== "function") return "no_capture_fn";
@@ -10938,7 +10944,7 @@ async function _resetShot(shotTab, runId, customerId, whatLabel) {
  *   リセットが空にならない・押せない・例外の時、すぐ従来の1つずつ外しへ行かず、1回だけ
  *   ①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）
  *   ③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して確かめる（reset_retry）。
- *   それでもだめな時だけ呼び元が従来の外しへ。skipped（off/no_tab/入力の最中）・ストップ要求は何もしない。待ちは再び上限260秒を張り直す。投げない。
+ *   それでもだめな時だけ呼び元が従来の外しへ。skipped（off/no_tab/入力の最中）・ストップ要求は何もしない。待ちは再び上限330秒を張り直す。投げない。
  */
 async function _resetWithInsurance(customerId, runId, phase) {
   var rr = null;
@@ -10979,8 +10985,8 @@ async function _resetWithInsurance(customerId, runId, phase) {
       return { ok: true, left: 0, reset: true, recovered: true };
     }
     if (_batchShouldStop) return rr;
-    if (_manualBulkAlive && phase) _bulkPhaseSet(phase, 260000, { cid: String(customerId) });
-    _quietSet("reset", 260000, { cid: String(customerId), runId: runId || null });
+    if (_manualBulkAlive && phase) _bulkPhaseSet(phase, 330000, { cid: String(customerId) });
+    _quietSet("reset", 330000, { cid: String(customerId), runId: runId || null });
     _stamp("reset_retry", "リセットをもう1回押す");
     var rr2 = null;
     try { rr2 = await _postSendResetRealpro(customerId, runId); } catch (e) { rr2 = { ok: false, why: "reset_exception" }; }
@@ -11122,6 +11128,10 @@ async function _resetWithInsurance(customerId, runId, phase) {
       await _sleep(RESET_SHOT_GAP_MIN_MS + Math.floor(Math.random() * 2000));
       var _shotNote = await _withTimeout(_resetShot(_tab, auditRunId || _auditOpenRunId(String(customerId), "realpro"), customerId), 25000, "reset_shot");
       _stamp("reset_shot", (_shotNote && _shotNote.__timeout) ? "時間切れ（進む）" : String(_shotNote));
+      // ★ 2.8.316: リセットの後もラグの猶予（5〜9秒）を置いてから次の段へ（_lagGraceMs・bulk-dl と同じ幅）
+      var _lagR = _lagGraceMs();
+      _stamp("reset_lag_grace", Math.round(_lagR / 1000) + "秒 リセット後の猶予（ラグ）");
+      await _sleep(_lagR);
       return { ok: true, left: 0, reset: true, reloaded: _reloaded };
     }
     // ★ 2.8.307 旧: 空でも件数が増えなければ従来の1つずつ外しへ（2.8.289）→ 廃止。空なら上で成功にする（reset_empty_is_enough）
@@ -11198,8 +11208,8 @@ async function _resetBeforeFill(customer, runId, preferredTabId) {
     // ② 空でない → 窓を張ってリセット（人の間・空の確認まで）
     var _left = _probe && _probe.left != null ? _probe.left : "?";
     _stamp("空でない（残=" + _left + " " + String((_probe && _probe.detail) || "").slice(0, 40) + "）→リセットを押す");
-    if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 260000, { cid: cid });
-    _quietSet("reset", 260000, { cid: cid, runId: runId || null });
+    if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 330000, { cid: cid });
+    _quietSet("reset", 330000, { cid: cid, runId: runId || null });
     var rr = null;
     try { rr = await _resetWithInsurance(cid, runId, "pre_fill_reset"); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
     _quietClear("reset", "pre_fill_done");
@@ -11363,7 +11373,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   /**
    * ★ 2026-11-19 竹内さん「入れたのを覚えていたら外せるので、完了したらちゃんと外すようにすれば問題ない。順番に行えば」→ 統括Pro 案B:
    *   リアプロの送付が終わった直後（次客の switch／fill より前・一連ロックを外す前）に、そのタブへ「送付後の外し」を頼み、
-   *   最大260秒まで待つ（リセットのあと10秒以上の間を含む。非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
+   *   最大330秒まで待つ（リセットのあと10秒以上の間を含む。非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
    *   ・ITANDI には入れない（リアプロの連続のみ）／送付が途中のまま切り上げた回（送付進捗あり）は触らない
    *   ・最後のお客さん（_axlxLastCustomerId）は待たずに戻す（ページを汚れたまま残さないが、完了を待たせない）
    *   ・chrome.storage.local の axlx_post_send_clear_off が true なら実行しない（切り替えフラグ）
@@ -11374,9 +11384,9 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     try {
       if (!(batchDone && batchDone.timedOut && batchDone.sawProgress)) {
         _psIsLast = !!(self._axlxLastCustomerId && String(self._axlxLastCustomerId) === String(customerId));
-        // ★ 2.8.284: リセット（最大約2分）＋失敗時の従来の外し（最大125秒）を入れるため上限を 140→260秒に
-        if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 260000, { cid: String(customerId) });
-        _quietSet("reset", 260000, { cid: String(customerId), runId: _runId });
+        // ★ 2.8.284: リセット（最大約2分）＋失敗時の従来の外し（最大125秒）を入れるため上限を 140→330秒に
+        if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 330000, { cid: String(customerId) });
+        _quietSet("reset", 330000, { cid: String(customerId), runId: _runId });
         var _psP = _postSendClearOrReset(customerId, _runId);
         if (_psIsLast) {
           _psP.catch(function () {}).then(function () { _quietClear("reset", "last_customer_done"); });

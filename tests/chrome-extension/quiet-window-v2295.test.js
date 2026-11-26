@@ -56,7 +56,7 @@ ok("一括の間: gap（間＋30秒）", /_bulkPhaseSet\("gap", _gap, \{\}\);\s*
 ok("一括の入力: refill（300秒）", /_bulkPhaseSet\("autofill", 300000, \{ runId: _bulkPhaseRunId \}\);\s*_quietSet\("refill", 300000/.test(bg));
 ok("入れ直しの道（_resultMismatchRedo）も gap と refill", /_quietSet\("gap", gap \+ 30000, \{ cid: cid, runId: runId \}\)/.test(bg) && /_quietSet\("refill", 300000, \{ cid: cid, runId: runId \}\)/.test(bg));
 ok("fill-done の後は sort（150秒・押し始めでページが外す）", /_quietSet\("sort", 150000, \{ cid: String\(customerId\), runId: _runId \}\)/.test(bg));
-ok("送付後のリセットは reset（260秒＝段の上限と同じ）", /_bulkPhaseSet\("post_send_clear", 260000[\s\S]{0,120}_quietSet\("reset", 260000/.test(bg));
+ok("送付後のリセットは reset（330秒＝段の上限と同じ・2.8.316 待ち120秒に合わせて広げた）", /_bulkPhaseSet\("post_send_clear", 330000[\s\S]{0,120}_quietSet\("reset", 330000/.test(bg));
 ok("リセットの後は一括の時だけ gap（単発は窓を外す＝次の指示を3分止めない）", /if \(_manualBulkAlive\) _quietSet\("gap", 180000[\s\S]{0,120}else _quietClear\("reset", "single_done"\)/.test(bg));
 ok("一括の終わり・止める・kick の終わりで窓を外す", (bg.match(/_quietClear\(null, "(bulk_end|bulk_stop|kick_end)"\)/g) || []).length === 3);
 ok("条件を入れる前に前の回のリセットを引き継いで待つ（リアプロ）", /await _waitAfterHumanReset\(_bulkAudit[\s\S]{0,300}await _waitInheritedReset\(_bulkAudit/.test(bg));
@@ -227,7 +227,7 @@ function part4() {
   const SILENCE = num(/var AXLX_STUCK_IDLE_MS = (\d+);/);
   const OWN_MAX = num(/var SORT_WAIT_OWN_MAX_MS = (\d+);/);
   ok("定数を読めた（リセット30秒・揺れ4秒・押し25秒・確かめ25秒・沈黙135秒・待ちの持ち90秒）",
-    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 45000 && VERIFY_TO === 25000 && SILENCE === 135000 && OWN_MAX === 90000,
+    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 130000 && VERIFY_TO === 25000 && SILENCE === 135000 && OWN_MAX === 90000,
     { RESET_MIN, RESET_JIT, PRESS_TO, VERIFY_TO, SILENCE, OWN_MAX });
 
   const N = 5000;
@@ -257,8 +257,8 @@ function part4() {
     const fallback = rng() < 0.02;
     const w2r = U(1000, PRESS_TO) * (rng() < 0.9 ? 0.15 : 1) + U(500, 8000) + settle + U(1000, VERIFY_TO) * (rng() < 0.9 ? 0.1 : 1)
       + (fallback ? U(20000, 125000) : U(2000, 4000) + U(1000, 25000));
-    if (w2r > 260000) col.resetQuiet++;
-    if (w2r > 260000 + 60000) col.resetPhase++;
+    if (w2r > 330000) col.resetQuiet++;
+    if (w2r > 330000 + 60000) col.resetPhase++;
     // 間: 8〜25秒（16%で40〜95秒）・窓は 間+30秒
     const g = A.bulkCustomerGapMs(rng);
     gaps.push(g);
@@ -276,7 +276,7 @@ function part4() {
   ok("リセット後の待機は 30〜34秒の中（5000回）", Math.min(...waitsReset) >= 30000 && Math.max(...waitsReset) < 34000);
   ok("並べ替えの窓が押し始めより先に切れる回: 0", col.sortQuiet === 0, col.sortQuiet);
   ok("並べ替えの待ち＋作業が沈黙の見張り（135秒）を越える回: 0", col.sortSilence === 0, col.sortSilence);
-  ok("リセットの一連が窓（260秒）を越える回: 0", col.resetQuiet === 0, col.resetQuiet);
+  ok("リセットの一連が窓（330秒）を越える回: 0", col.resetQuiet === 0, col.resetQuiet);
   ok("リセットの一連が段の上限＋1分を越えて見回りに進められる回: 0", col.resetPhase === 0, col.resetPhase);
   ok("客の間の窓が間より先に切れる回: 0", col.gapQuiet === 0);
   // 2秒ごとの見回り・4.5秒の間＝実際は6秒ごと → 30〜36秒の待ちで4〜6回（そのたびに並べ替えの kick も呼んでいた）

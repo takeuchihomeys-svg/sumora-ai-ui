@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.316: 押した後のラグ猶予（並べ替え・リセット）／リセットの押し待ち 120秒以上**
+
+竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」「出来ている場合の40秒は判断が早すぎるので、止まって120秒以上にする」。
+
+- **押す待ち（リセット）**: page-script `_RESET_PRESS_HARD_MS` 40000 → **120000**（15秒の「まだ押していなければ」→120秒まで待つ→それでも押していなければ積んだクリックを取り消して「押せず」）。background `RESET_PRESS_TIMEOUT_MS` 45000 → **130000**（ページの120秒より長く待つ）。決まり `reset_press_late_grasp` の文も 120秒に。
+- **押す待ちに合わせて窓を広げた**（これを忘れると、押す待ちの最中に窓が切れる）: 送付後のリセットの段の上限・窓 reset `260秒 → 330秒`（background の `_bulkPhaseSet("post_send_clear"／"pre_fill_reset", …)` と `_quietSet("reset", …)` の4か所＋comment）。計算: 押し120〜130秒＋読み直し8秒＋待機30〜34秒＋確かめ25秒＋写真の間4秒＋写真25秒＝約230秒。2%の従来の外し（最大125秒）が続く最悪は約330秒。`quiet-window-v2295` の繰り返し試し（5000回）で 260 のままだと最悪 1〜2回が窓を越えたため広げた（10回連続で 0）。
+- **ラグの猶予（新規）**: 並べ替えの高→低を押した後 `_lagGraceMs()`（5000〜8999ms・毎回揺らす）を置いてから一覧へ（bulk-dl `sort_lag_grace`・`step(1200 + _lagG, …)`）。リセット空を確かめて写真の後にも同じ猶予（background `reset_lag_grace`）。**検索後は既に 30〜36秒、リセット後は既に 30〜34秒の待ちがあるので、そこには足さない（二重にしない）**。決まり `lag_grace_after_sort`（list）・`lag_grace_after_reset`（clear）を追加。
+- **版**: manifest・page-script `_AXLX_PAGE_VER`・itandi-page-script・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` すべて 2.8.316。`_AXLX_RULES_DONE` にも2件追加。
+- **テスト**: 新規 `tests/chrome-extension/lag-grace-v28316.test.js`（25項目・猶予の範囲を vm で 2000回実行）。120秒・130秒・330秒に合わせて `reset-press-late-grasp-v28315`・`quiet-window-v2295`・`reset-between-customers-v28284`・`search-reset-wait-30s-v2292` を更新。
+- **未確認（実機で確かめる事）**: 猶予の分だけ1客あたりの時間が延びる（並べ替え後 +5〜9秒・リセット後 +5〜9秒 ＝ 1客あたり約10〜18秒）。実機で「押した後の画面の追いつき」が本当に効いたかは、次の本番の `sort_lag_grace`／`reset_lag_grace` の段と `reset_press` の遅れ（`page:reset_press_slow`）で見る。
+
+---
+
 ## 2026-11-27 **拡張 2.8.315: 並べ替えが自分のパネルを掴む／裏の再起動後に前客の物件取得を割って次客へ進む（実測 #1659→#1661）**
 
 竹内さん実機（2.8.314）「並べ替えの場所を手順書で把握できていない・マウスが変な動き・検索が重い／並べ替え後に物件取得せずリセットを押した／リセット後に次客の条件が入らない」。**本番 DB（search_audits #1659・#1661）を時刻順に読んで**原因を2つ確かめた。
@@ -16,7 +29,7 @@
 → 手順書: 決まり `sort_skip_own_ui`（list）・`sw_restart_wait_post_search_flow`（switch）を `auto-procedure-rules.ts` に追加（verify は点検記録に段が出ないので RULES_CODE_ONLY に理由つき）。`_AXLX_RULES_DONE` にも追加。
 
 **原因③ リセットは押せていたのに「押せず」と把握した**（page-script `_resetPress`・background `_postSendResetRealpro`）: 竹内さん「今回リセットボタンはちゃんと押せていた」。#1661 は `reset_press 押せず: press_timeout15` が2回。ページ側は 15 秒で「押せず」を返すが、人の動きのクリックは**キューに積まれて遅れて実行される**（タブが背面だと特に遅い）ので、実際は押されていた。裏は「押せず」→画面を撮る→**もう1回押す**→従来の外し、と二重に動き（外しは過去に1308秒かかった例 #1656）、読み直し中のページを読んで「読めず」になった。
-→ 直し: ①`_fireReset` でクリックが実際に実行された所を捉える ②15秒で諦めず、まだなら最大40秒まで待つ（`page:reset_press_slow`）③40秒でも押していなければ積んだクリックを取り消してから「押せず」（`page:reset_press_cancel`＝あとで勝手に押されない）④enqueue が断られた時は `enqueue_refused` ⑤裏は上限を45秒にし、返事が時間切れ／無しでも押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として待機→空の確認へ進む（もう1回押さない）。決まり `reset_press_late_grasp`（clear）を追加。
+→ 直し: ①`_fireReset` でクリックが実際に実行された所を捉える ②15秒で諦めず、まだなら最大120秒まで待つ（`page:reset_press_slow`・2.8.316 で 40→120秒に広げた：竹内さん「止まって120秒以上にする」）③120秒でも押していなければ積んだクリックを取り消してから「押せず」（`page:reset_press_cancel`＝あとで勝手に押されない）④enqueue が断られた時は `enqueue_refused` ⑤裏は上限を130秒にし（2.8.316 で 45→130秒）、返事が時間切れ／無しでも押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として待機→空の確認へ進む（もう1回押さない）。決まり `reset_press_late_grasp`（clear）を追加。
 → テスト: `tests/chrome-extension/reset-press-late-grasp-v28315.test.js`（仮想時計で `_resetPress` を実際に動かす・22項目）。古い試験3本（reset-between-customers／quiet-window／…）の固定値を新しい作りに更新。
 
 **ボトルネックの調べ**（実測 #1654/#1656/#1659/#1661 と定数）:
