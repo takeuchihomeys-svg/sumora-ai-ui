@@ -3374,6 +3374,8 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
       let pickupScene: string | null = null;
       if (pfPre.promised && !pfPre.fulfilled) { const { count: pendAB } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending"); pickupScene = ppf2.pickupPromiseFlowOf(msgsAB, aixAB, typeof pendAB === "number" ? pendAB : null, Date.now()).scene; }
       const customerAsked = /[?？]|ですか|ますか|でしょうか|教えて/.test(String(unrepliedTurn.text ?? ""));
+      // 2026-11-27 作業員A（q473・q475 で場面が出なかった訳を試験で見る・AIX_BOUNDARY_LINE=on の時だけの記録）: 約束・果たし・候補の数・場面を1行のログに
+      console.log(JSON.stringify({ tag: "brain:aix-boundary-scene", conversationId, checkScene, pickupPromised: pfPre.promised, pickupFulfilled: pfPre.fulfilled, pickupScene, msgs: (brainLedgerInput.messages ?? []).length }));
       const bsAB = ab.boundariesFor({ checkScene, pickupScene, customerAsked });
       const ln = ab.aixBoundaryLine(bsAB);
       if (ln) { flowMarks.abd = bsAB[0].aix === "返信" ? "reply" : bsAB[0].aix; /* #783 使った目印 */ customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; aixBoundaryMarkLen = ln.length; materialBlocks.push({ key: "aix_boundary", text: ln, from: "cs" }); }
