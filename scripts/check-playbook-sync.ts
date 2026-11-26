@@ -16,6 +16,7 @@ import { autoRulesVersion, AUTO_RULES_REVIEWED_UP_TO, AUTO_RULES } from "../app/
 import { PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
 import { cmpVer } from "../app/lib/playbook-freshness";
 import { diffGaps } from "../app/lib/playbook-gap-baseline";
+import { ITANDI_AUTO_RULES, ITANDI_RULES_REVIEWED_UP_TO, checkItandiRulesInCode, itandiRulesVersion, rulesReviewedUpToFor, rulesVersionFor } from "../app/lib/auto-itandi-rules";
 import { gapReportFor } from "./playbook-gap-audit";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -45,6 +46,17 @@ async function main() {
   const pageV = (readText("chrome-extension/page-script.js").match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1] || "?";
   say(`  決まり ${code.rules}件 rules_v=${code.rv} build_v=${code.build} 見直し上限=${code.upTo}`);
   say(`  manifest=${manifestV} page-script=${pageV}`);
+  // 2026-11-27: ITANDI の決まりは ITANDI だけの一覧（auto-itandi-rules.ts）。目印・混ざりをコードで確かめる
+  const itIssues = checkItandiRulesInCode({
+    itandiPage: readText("chrome-extension/itandi-page-script.js"),
+    itandiBulk: readText("chrome-extension/itandi-bulk-dl.js"),
+    manifestVersion: manifestV,
+    searchAudit: readText("chrome-extension/search-audit.js"),
+  });
+  const itPageV = (readText("chrome-extension/itandi-page-script.js").match(/_AXLX_ITANDI_PAGE_VER\s*=\s*"([^"]+)"/) || [])[1] || "?";
+  say(`  ITANDI の決まり ${ITANDI_AUTO_RULES.length}件 rules_v=${itandiRulesVersion().slice(0, 8)} 見直し上限=${ITANDI_RULES_REVIEWED_UP_TO} itandi-page-script=${itPageV}`);
+  if (itIssues.length) { for (const m of itIssues) say(`  ${NG} ${m}`); bad.push(...itIssues); }
+  else say(`  ${OK} ITANDI の決まりの目印・版・リアルタイム点検は全部コードにある（リアプロの決まりとの混ざり無し）`);
   if (manifestV === pageV && pageV === code.upTo) say(`  ${OK} 版の結び（manifest == page-script == 見直し上限）`);
   else { say(`  ${NG} 版の結びが切れている`); bad.push("コード内の版が揃っていない（manifest / page-script / AUTO_RULES_REVIEWED_UP_TO）"); }
 
@@ -83,9 +95,12 @@ async function main() {
       if (!rows.length) { say(`  ${WA} ${scope}: 行なし`); continue; }
       const top = rows[0];
       // 2.8.302: 見直しの印（rules_up_to）も比べる（前は表示だけで ✅ になっていた）
-      const topOk = top.rules_v === code.rv && Number(top.build_v) === code.build && top.up_to === code.upTo;
+      // 2026-11-27: 決まりの版は scope（サイト）ごと。itandi は ITANDI の版と比べる（リアプロの版と混ぜない）
+      const rvScope = rulesVersionFor(scope);
+      const upToScope = rulesReviewedUpToFor(scope);
+      const topOk = top.rules_v === rvScope && Number(top.build_v) === code.build && top.up_to === upToScope;
       say(`  ${topOk ? OK : NG} ${scope} 最新 id=${top.id} ${top.created_at.slice(0, 16)} build_v=${top.build_v ?? "-"} rules_v=${(top.rules_v ?? "-").slice(0, 8)} 見直し=${top.up_to ?? "なし"}${topOk ? "" : "  ← コードと違う（attach が必要／本番が古い）"}`);
-      if (!topOk) bad.push(`${scope}: DB の手順書がコードと違う（id=${top.id}・build_v=${top.build_v}・rules_v=${(top.rules_v ?? "-").slice(0, 8)}→コード ${code.build}/${code.rv.slice(0, 8)}）`);
+      if (!topOk) bad.push(`${scope}: DB の手順書がコードと違う（id=${top.id}・build_v=${top.build_v}・rules_v=${(top.rules_v ?? "-").slice(0, 8)}→コード ${code.build}/${rvScope.slice(0, 8)}）`);
       // 戻り: 新しい行が1つ前（古い行）より古い手順書になっていないか
       for (let i = 0; i < rows.length - 1; i++) {
         const nw = rows[i], ol = rows[i + 1];
@@ -99,36 +114,50 @@ async function main() {
     }
   }
 
-  say("\n■ ③ 本番のコード（軽い版確認 1回・読んだ印は付けない）");
+  say("\n■ ③ 本番のコード（サイト別の軽い版確認・読んだ印は付けない）");
   if (noProd) say("  （--no-prod で飛ばした）");
   else {
-    try {
-      const r = await fetch(`${PROD}/api/human-learn-profile?touch=0&scope=realpro`, { cache: "no-store", signal: AbortSignal.timeout(25000) });
-      const j = (await r.json()) as Record<string, unknown>;
-      const srvUp = j.server_rules_up_to != null ? String(j.server_rules_up_to) : "";
-      const srvRv = j.server_rules_v != null ? String(j.server_rules_v) : "";
-      const pbUp = j.playbook_rules_up_to != null ? String(j.playbook_rules_up_to) : "";
-      say(`  HTTP ${r.status} 本番コードの見直し=${srvUp || "（返さない＝2.8.297 より前のコード）"} rules_v=${srvRv ? srvRv.slice(0, 8) : "-"} 返した手順書の rules_v=${String(j.playbook_rules_v ?? "-").slice(0, 8)} 手順書の見直し=${pbUp || "なし"}`);
-      if (!srvUp) { say(`  ${NG} 本番に最新のコードが載っていない（作り直しのたび古い手順書へ戻る）`); bad.push("本番のコードが古い（server_rules_up_to を返さない）＝デプロイが必要"); }
-      else if (cmpVer(srvUp, code.upTo) < 0) { say(`  ${NG} 本番コード ${srvUp} < 手元 ${code.upTo}`); bad.push(`本番のコードが手元より古い（${srvUp}→${code.upTo}）＝デプロイが必要`); }
-      else say(`  ${OK} 本番のコードは手元と同じ以上`);
-    } catch (e) {
-      say(`  ${WA} 本番を読めない（${e instanceof Error ? e.message : String(e)}）`);
-      warn.push("本番を読めなかった");
+    for (const ps of ["realpro", "itandi"] as const) {
+      try {
+        const expectedUp = rulesReviewedUpToFor(ps);
+        const expectedRv = rulesVersionFor(ps);
+        const r = await fetch(`${PROD}/api/human-learn-profile?touch=0&scope=${ps}`, { cache: "no-store", signal: AbortSignal.timeout(25000) });
+        const j = (await r.json()) as Record<string, unknown>;
+        const srvUp = j.server_rules_up_to != null ? String(j.server_rules_up_to) : "";
+        const srvRv = j.server_rules_v != null ? String(j.server_rules_v) : "";
+        const pbUp = j.playbook_rules_up_to != null ? String(j.playbook_rules_up_to) : "";
+        const pbRv = j.playbook_rules_v != null ? String(j.playbook_rules_v) : "";
+        say(`  [${ps}] HTTP ${r.status} 本番見直し=${srvUp || "（未返却）"} srv_rules_v=${srvRv ? srvRv.slice(0, 8) : "-"} 返却pb_v=${pbRv ? pbRv.slice(0, 8) : "-"} pb見直し=${pbUp || "なし"}`);
+        if (!srvUp) {
+          say(`  ${NG} [${ps}] 本番に最新のコードが載っていない（server_rules_up_to 未返却）`);
+          bad.push(`${ps}: 本番のコードが古い（server_rules_up_to を返さない）＝デプロイが必要`);
+        } else if (cmpVer(srvUp, expectedUp) < 0 || (srvRv && srvRv !== expectedRv)) {
+          say(`  ${NG} [${ps}] 本番コード ${srvUp}/${srvRv.slice(0, 8)} != 手元 ${expectedUp}/${expectedRv.slice(0, 8)}`);
+          bad.push(`${ps}: 本番のコードが手元より古い（${srvUp}→${expectedUp}）＝デプロイが必要`);
+        } else {
+          say(`  ${OK} [${ps}] 本番のコードは手元と同じ以上`);
+        }
+      } catch (e) {
+        say(`  ${WA} [${ps}] 本番を読めない（${e instanceof Error ? e.message : String(e)}）`);
+        warn.push(`${ps}: 本番を読めなかった`);
+      }
     }
   }
 
-  say("\n■ ④ 拡張が実際に読んだ印（最新の点検記録 6件）");
+  say("\n■ ④ 拡張が実際に読んだ印（サイト別の最新点検記録 各4件）");
   if (URL_ && KEY) {
     const sb = createClient(URL_, KEY);
-    let res = await sb.from("search_audits").select("id, created_at, steps").order("id", { ascending: false }).limit(6);
-    if (res.error) res = (await sb.from("search_audits").select("id, steps").order("id", { ascending: false }).limit(6)) as typeof res;
-    if (res.error) { say(`  ${WA} 読めない（${res.error.message}）`); warn.push("点検記録を読めなかった"); }
-    else {
-      for (const a of (res.data ?? []) as unknown as Array<{ id: number; created_at?: string; steps?: Array<{ k: string; d: string | null; n?: number }> }>) {
+    for (const auditSite of ["realpro", "itandi"] as const) {
+      say(`  --- site=${auditSite} ---`);
+      let res = await sb.from("search_audits").select("id, created_at, mode, ext_version, steps").eq("site", auditSite).order("id", { ascending: false }).limit(4);
+      if (res.error) res = (await sb.from("search_audits").select("id, steps").eq("site", auditSite).order("id", { ascending: false }).limit(4)) as typeof res;
+      if (res.error) { say(`  ${WA} ${auditSite} 読めない（${res.error.message}）`); warn.push(`${auditSite}: 点検記録を読めなかった`); continue; }
+      const rows = (res.data ?? []) as unknown as Array<{ id: number; created_at?: string; mode?: string; ext_version?: string; steps?: Array<{ k: string; d: string | null; n?: number }> }>;
+      if (!rows.length) { say(`  ${WA} ${auditSite}: 点検記録なし`); continue; }
+      for (const a of rows) {
         const st = Array.isArray(a.steps) ? a.steps : [];
         const find = (k: string) => st.filter((x) => x.k === k);
-        const ver = find("page:page_ver")[0]?.d ?? "-";
+        const ver = find("page:page_ver")[0]?.d ?? (a.ext_version || "-");
         const seen = find("page:playbook_seen")[0]?.d ?? null;
         const behind = find("page:playbook_behind")[0]?.d ?? null;
         const srvBehind = find("server_behind")[0]?.d ?? null;
@@ -136,31 +165,31 @@ async function main() {
         const rbf = find("reset_before_fill").length;
         const collapsed = st.filter((x) => (x.n || 0) > 1).length;
         const flag = behind || srvBehind || none ? NG : seen ? OK : WA;
-        say(`  ${flag} #${a.id} ${a.created_at ? a.created_at.slice(5, 16) + " " : ""}ver=${String(ver).slice(0, 12)} 段=${st.length}${collapsed ? `(まとめ${collapsed})` : ""} playbook_seen=${seen ? "あり " + String(seen).slice(0, 40) : "なし"}${behind ? `\n      ${NG} playbook_behind: ${behind}` : ""}${srvBehind ? `\n      ${NG} server_behind: ${srvBehind}` : ""}${none ? `\n      ${NG} playbook_none（手順書が届いていない）` : ""} reset_before_fill=${rbf}`);
+        say(`  ${flag} #${a.id} ${a.created_at ? a.created_at.slice(5, 16) + " " : ""}[${a.mode || "?"}] ver=${String(ver).slice(0, 12)} 段=${st.length}${collapsed ? `(まとめ${collapsed})` : ""} playbook_seen=${seen ? "あり " + String(seen).slice(0, 48) : "なし"}${behind ? `\n      ${NG} playbook_behind: ${behind}` : ""}${srvBehind ? `\n      ${NG} server_behind: ${srvBehind}` : ""}${none ? `\n      ${NG} playbook_none（手順書が届いていない）` : ""} reset_before_fill=${rbf}`);
       }
-      say("  ※ playbook_seen が「なし」＝入力前に手順書を読んだ印が無い（古い拡張・上限で落ちた・自動入力を通っていない）");
     }
+    say("  ※ playbook_seen が「なし」＝入力前に手順書を読んだ印が無い（古い拡張・上限で落ちた・自動入力を通っていない）");
   }
 
-  // 2026-11-26 ⑤ 拡張が「実際に動いた版」。④ は playbook_seen を見るだけで、拡張の版の古さ（再読込の忘れ）を名指ししていなかった。
-  //   実測 2026-11-26: 手元 2.8.303 に対し、最後に自動を回した拡張は 2.8.295＝8版ぶん再読込されずに残っていた（Chrome の「パッケージ化されていない拡張」は自動で入れ替わらない）
-  say("\n■ ⑤ 拡張が実際に動いた版（点検記録 search_audits.ext_version・人の検索は除く）");
+  // 2026-11-26 ⑤ 拡張が「実際に動いた版」。realpro・itandi 別／staff（他PC）を分離してメイン自動版も見る
+  say("\n■ ⑤ 拡張が実際に動いた版（サイト別 search_audits.ext_version・人の検索は除く）");
   if (URL_ && KEY) {
     const sb = createClient(URL_, KEY);
-    const { data, error } = await sb.from("search_audits").select("id, created_at, ext_version, run_id")
-      .eq("site", "realpro").not("run_id", "like", "human_*").not("ext_version", "is", null)
-      .order("created_at", { ascending: false }).limit(5);
-    if (error) { say(`  ${WA} 読めない（${error.message}）`); warn.push("拡張の版を読めなかった"); }
-    else {
-      const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string }>;
-      if (!rows.length) { say(`  ${WA} 自動の点検記録が無い`); warn.push("自動の点検記録が無く、拡張の版を確かめられない"); }
-      else {
-        const top = rows[0];
-        const hours = Math.round((Date.now() - new Date(top.created_at).getTime()) / 3600000);
-        const lag = cmpVer(top.ext_version, code.upTo) < 0;
-        say(`  ${lag ? NG : OK} 最後に自動を回した拡張=${top.ext_version}（#${top.id}・${top.created_at.slice(5, 16)}・${hours}時間前）／手元=${code.upTo}`);
-        if (lag) bad.push(`拡張が古いまま（最後に動いた版 ${top.ext_version} < 手元 ${code.upTo}）＝ chrome://extensions で再読み込み → リアプロのタブを開き直す → 自動を1回回す（それまで「反映済み」とは言えない）`);
-      }
+    for (const auditSite of ["realpro", "itandi"] as const) {
+      const { data, error } = await sb.from("search_audits").select("id, created_at, ext_version, run_id, mode")
+        .eq("site", auditSite).not("run_id", "like", "human_*").not("ext_version", "is", null)
+        .order("created_at", { ascending: false }).limit(20);
+      if (error) { say(`  ${WA} ${auditSite}: 読めない（${error.message}）`); warn.push(`${auditSite}: 拡張の版を読めなかった`); continue; }
+      const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string; mode?: string }>;
+      if (!rows.length) { say(`  ${WA} ${auditSite}: 自動の点検記録が無い`); warn.push(`${auditSite}: 自動の点検記録が無く、拡張の版を確かめられない`); continue; }
+      const mainAuto = rows.filter((r) => r.mode !== "brain_staff");
+      const staffAuto = rows.filter((r) => r.mode === "brain_staff");
+      const top = mainAuto[0] ?? rows[0];
+      const expected = rulesReviewedUpToFor(auditSite);
+      const hours = Math.round((Date.now() - new Date(top.created_at).getTime()) / 3600000);
+      const lag = cmpVer(top.ext_version, expected) < 0;
+      say(`  ${lag ? NG : OK} [${auditSite}] メイン自動=${top.ext_version}（#${top.id}・${top.mode || "?"}・${top.created_at.slice(5, 16)}・${hours}時間前）／手元=${expected}${staffAuto[0] ? `（別PC staff=${staffAuto[0].ext_version} #${staffAuto[0].id}）` : ""}`);
+      if (lag) bad.push(`${auditSite} の拡張が古いまま（最後に動いたメイン自動 ${top.ext_version} < 手元 ${expected}）＝ chrome://extensions で再読み込み → ${auditSite} のタブを開き直す → 自動を1回回す`);
     }
   }
 

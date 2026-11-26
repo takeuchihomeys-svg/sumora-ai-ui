@@ -3046,6 +3046,34 @@ async function _refreshLearnedBundle(force) {
                   console.log("[learn] needs_autoだが手元の束が薄い（next=" + _localNextN + " points=" + _localPtsN + " screen=" + _localScreenN + "）→取り直します");
                 } catch (_) {}
               } else {
+              // ★ 2026-11-27: 反対側サイト（curSite=realpro 時の itandi 等）の版・決まり版が古い時も抜けない
+              var _otherSite = curSite === "itandi" ? "realpro" : "itandi";
+              var _otherStale = false;
+              try {
+                var _otherAt = Number(st && st["axlx_learn_other_head_at__" + _otherSite]) || 0;
+                var _otherPb = st && st["axlx_learn_playbook__" + _otherSite];
+                var _otherLocalRv = (_otherPb && typeof _otherPb === "object") ? String(_otherPb.rules_v || "") : "";
+                var _otherLastVer = String((st && st["axlx_learn_ver__" + _otherSite]) || "");
+                if (!_otherLocalRv || (Date.now() - _otherAt) >= _checkMs) {
+                  var _otherHead = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(_otherSite), { cache: "no-store", signal: AbortSignal.timeout(15000) });
+                  if (_otherHead && _otherHead.ok) {
+                    var _ohj = await _otherHead.json();
+                    var _ohv = String((_ohj && _ohj.generated_at) || "");
+                    var _orv = (_ohj && _ohj.playbook_rules_v != null) ? String(_ohj.playbook_rules_v) : "";
+                    if ((_orv && _orv !== _otherLocalRv) || (_ohv && _ohv !== _otherLastVer)) {
+                      _otherStale = true;
+                      try { console.log("[learn] 反対側サイト(" + _otherSite + ")に更新あり → 両サイト取り直します"); } catch (_) {}
+                    } else {
+                      var _otherMark = {};
+                      _otherMark["axlx_learn_other_head_at__" + _otherSite] = Date.now();
+                      try { await chrome.storage.local.set(_otherMark); } catch (_) {}
+                    }
+                  }
+                }
+              } catch (_) {}
+              if (_otherStale) {
+                // 下の取り直しへ進む
+              } else {
               /**
                * ★ 2026-11-17 実測: same_version のたびに mark_read×3 を飛ばし
                *   read_count が 0→738 まで水増し（束は読んだが自動未使用なのに「拡張が読んだ738回」と誤認）。
@@ -3065,6 +3093,7 @@ async function _refreshLearnedBundle(force) {
                 needs_auto: _needsAuto,
                 link: _needsAuto ? "needs_auto" : "same_version",
               };
+              }
               }
             }
           }
@@ -3128,11 +3157,12 @@ async function _refreshLearnedBundle(force) {
     } catch (_) {}
     /**
      * ★ 2026-11-27 サイト横断汚染遮断:
-     *   allBundle（実態はリアプロ主体・混載）を ITANDI へ混ぜると、ITANDI の shots.learned / screen_flow / next / points / supervisor が
-     *   リアプロの内容で上書きされて壊れる。allBundle の補助は realpro（かつ実測が新しい時）に限定し、itandi には絶対に混ぜない。
+     *   allBundle（混載束）は、対象サイトの束がまだ1件も無い（初回）時のフォールバックのみに限定する。
+     *   perSite.realpro / perSite.itandi が取れている時は混載 allBundle の shots.learned / screen_flow 等で
+     *   上書きしない（ITANDI 操作が all 経由で realpro へ逆流・混入するのを防ぐ）。
      */
     var allBundle = null;
-    if (curSite !== "itandi" || perSite.realpro) {
+    if (curSite !== "itandi" && !perSite.realpro) {
       try {
         var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (allRes.ok) {
@@ -3146,50 +3176,16 @@ async function _refreshLearnedBundle(force) {
         }
       } catch (_) {}
     }
-    function _genMs(b) {
-      if (!b || typeof b !== "object") return 0;
-      return Date.parse(String(b.generated_at || "")) || 0;
-    }
-    function _mergeLearnedShots(into, from) {
-      if (!into || !from) return into;
-      try {
-        if (!into.shots || typeof into.shots !== "object") into.shots = {};
-        if (from.shots && from.shots.learned) into.shots.learned = from.shots.learned;
-        if (from.shots && typeof from.shots.total === "number") into.shots.total = from.shots.total;
-        if (from.screen_flow && typeof from.screen_flow === "object") into.screen_flow = from.screen_flow;
-      } catch (_) {}
-      return into;
-    }
     var siteBundle = perSite[curSite] || null;
     var bundle = null;
     if (curSite === "itandi") {
-      // ITANDI には allBundle（リアプロ主体）を絶対に混ぜない
+      // ITANDI には allBundle（混載）を絶対に混ぜない
       bundle = siteBundle;
-    } else if (siteBundle && allBundle) {
-      if (_genMs(allBundle) > _genMs(siteBundle)) {
-        // realpro 側で全体の方が新しい場合のみ、画面位置と薄い項目を補う
-        bundle = siteBundle;
-        _mergeLearnedShots(bundle, allBundle);
-        try {
-          if ((!bundle.next || !Object.keys(bundle.next).length) && allBundle.next) bundle.next = allBundle.next;
-          if ((!bundle.points || !Object.keys(bundle.points).length) && allBundle.points) bundle.points = allBundle.points;
-          if (allBundle.supervisor) bundle.supervisor = allBundle.supervisor;
-          bundle.generated_at = allBundle.generated_at || bundle.generated_at;
-        } catch (_) {}
-        console.log("[learn] 全体の束の方が新しい → 画面位置を all から載せました（" + curSite + " は " + String((siteBundle.generated_at || "")).slice(0, 19) + " / all " + String((allBundle.generated_at || "")).slice(0, 19) + "）");
-      } else {
-        bundle = siteBundle;
-      }
     } else {
       bundle = siteBundle || allBundle;
     }
-    // perSite 台帳の補完も realpro のみに限定（itandi には混ぜない）
-    if (allBundle && _genMs(allBundle) > 0) {
-      if (perSite.realpro && _genMs(allBundle) > _genMs(perSite.realpro)) {
-        _mergeLearnedShots(perSite.realpro, allBundle);
-      }
-      if (!perSite.realpro && curSite !== "itandi" && allBundle) perSite.realpro = allBundle;
-    }
+    // perSite 台帳の補完も realpro が完全に空の初回のみ（既存 perSite.realpro は all で上書きしない）
+    if (!perSite.realpro && curSite !== "itandi" && allBundle) perSite.realpro = allBundle;
     if (!bundle || typeof bundle !== "object") {
       // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
       await chrome.storage.local.set({ axlx_learn_at: Date.now() });
@@ -9589,8 +9585,9 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       console.warn("[batchAutofill] itandi: axlx-switch-customer 未応答 → direct fallback");
       _auditStep(auditRun && auditRun.runId, "popup_fallback", "switch-customer 未応答 → 直接入力");
       _auditPostIntended(auditRun, site, conds);
+      if (auditRun && auditRun.runId && !conds._audit_run_id) conds._audit_run_id = auditRun.runId;
       var itandiFbSent = await new Promise(function(resolve) {
-        chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
+        chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds, customerId: String(customer.id) }, function(resp) {
           resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
         });
       });
@@ -9599,11 +9596,11 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           world: "MAIN",
-          func: function(c) {
-            window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
-            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c }, "*");
+          func: function(c, cid) {
+            window.postMessage({ from: "axlx-itandi-autofill-initiated", customerId: cid || null }, "*");
+            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c, customerId: cid || null }, "*");
           },
-          args: [conds]
+          args: [conds, String(customer.id)]
         });
       }
     }
@@ -10296,16 +10293,27 @@ async function _webappAutofill(site, conditions) {
       );
     }
     // itandi / reins は従来どおり executeScript にフォールバック
-    // 修正: フォールバックも失敗したら throw して呼び出し元が status:'error' を記録できるようにする
+    // 修正: ITANDI は CustomEvent("axlx-itandi-fill") ではなく window.postMessage("axlx-itandi-fill-exec") を待つ
     console.warn("[webapp-autofill] sendMessage failed, fallback to executeScript for", site);
     try {
-      var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-        args: [evName, conditions]
-      });
+      if (site === "reins") {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) { window.dispatchEvent(new CustomEvent("axlx-reins-fill", { detail: c })); },
+          args: [conditions]
+        });
+      } else {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) {
+            window.postMessage({ from: "axlx-itandi-autofill-initiated", customerId: (c && c.customer_id) || null }, "*");
+            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c, customerId: (c && c.customer_id) || null }, "*");
+          },
+          args: [conditions]
+        });
+      }
     } catch (fallbackErr) {
       throw new Error("autofill failed (" + site + "): sendMessage失敗 + executeScriptフォールバック失敗: " +
         ((fallbackErr && fallbackErr.message) || fallbackErr));

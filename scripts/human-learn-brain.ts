@@ -102,7 +102,7 @@ const SELECT = [
         return site === "realpro" ? (s === "realpro" || s.includes("realnet")) : (s === "itandi" || s.includes("itandi"));
       });
       if (sub.length < 3) continue;
-      const one = compactBundle(buildHumanLearnBundle(sub, nowMs));
+      const one = compactBundle(buildHumanLearnBundle(sub, nowMs, null, null, { site }), { site });
       candidates.push({
         scope: site,
         source_rows: one.source.rows,

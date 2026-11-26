@@ -74,7 +74,7 @@ console.log("■ 2. learnPoints（爆発点から本物の実測位置を守る�
   ];
   const pts = learnPoints(rows, { site: "realpro" });
   ok("爆発した city_code[] (n=685万@0.5,0.5) に本物実測 (0.28,0.44) が勝つ", pts["city_code[]"]?.x === 0.28 && pts["city_code[]"]?.y === 0.44, pts["city_code[]"]);
-  ok("1行あたりの n が 50 でキャップされる", pts["rental_cost2"]?.n === 50, pts["rental_cost2"]);
+  ok("1行あたりの n が 500 でキャップされる", pts["rental_cost2"]?.n === 500, pts["rental_cost2"]);
   ok("ITANDI キー・ゴミキーが learnPoints(realpro) から落ちる", !pts["#_r_10f_｜input.css-vm8hlm"] && !pts["input"]);
 }
 

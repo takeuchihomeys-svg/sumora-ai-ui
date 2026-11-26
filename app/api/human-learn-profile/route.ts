@@ -23,7 +23,7 @@ import { isAutoMode } from "@/app/lib/press-by";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 import { PLAYBOOK_BUILD_V } from "@/app/lib/action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion } from "@/app/lib/auto-procedure-rules";
+import { rulesReviewedUpToFor, rulesVersionFor } from "@/app/lib/auto-itandi-rules";
 import { servedPlaybookRulesV } from "@/app/lib/playbook-served";
 
 export const dynamic = "force-dynamic";
@@ -542,7 +542,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     improvements,
     bundle_reflect: reflectHint,
     foundation_audit: foundationAudit,
-  }, prevAdvice));
+    site: scope === "realpro" || scope === "itandi" ? scope : null,
+  }, prevAdvice), { site: scope === "realpro" || scope === "itandi" ? scope : null });
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
    * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
@@ -757,6 +758,25 @@ export async function GET(req: NextRequest) {
     }
     g.__axlxBundleRefreshing = true;
     try {
+      // ★ 2026-11-27: ?refresh=1&scope=realpro|itandi の時は、そのサイトだけの束を buildAndSaveBundle で作り直す（all 固定を解消）
+      if (scope === "realpro" || scope === "itandi") {
+        let buildWhy: string | null = null;
+        const built = await buildNow(scope, (w) => { buildWhy = w; });
+        if (!built) {
+          return NextResponse.json({ ok: true, refreshed: false, scope, why: buildWhy || "no_rows_for_site" }, { headers: CORS });
+        }
+        g.__axlxBundleRefreshAt = Date.now();
+        const bRec = built as unknown as Record<string, unknown>;
+        return NextResponse.json({
+          ok: true,
+          refreshed: bRec.saved_to_db === true,
+          wipe_blocked: bRec.wipe_blocked === true,
+          scope,
+          rows: built.source?.rows ?? 0,
+          shots: built.shots ?? null,
+          playbook: bRec.playbook ?? null,
+        }, { headers: CORS });
+      }
       const mod = await import("@/app/lib/human-learn-brain");
       const buildHumanLearnBundle = mod.buildHumanLearnBundle;
       const compactBundle = mod.compactBundle;
@@ -1004,10 +1024,11 @@ export async function GET(req: NextRequest) {
        *   ここは DB に書かれた版を返していたので、コードの決まりを直しても拡張は「版が同じ」と見て取りに行かなかった。
        *   渡す時に作り直す束（refreshPlaybookIfStale）と同じ条件で、**渡す時の版**を返す（DB は書かない）。
        */
-      playbookRulesV = servedPlaybookRulesV(dbPb, { rules_v: autoRulesVersion(), build_v: PLAYBOOK_BUILD_V }).rules_v;
-      const _servedStale = !dbPb || !dbPb.rules_v || (Number(dbPb.build_v) || 0) < PLAYBOOK_BUILD_V || String(dbPb.rules_v) !== autoRulesVersion();
+      // 2026-11-27: 決まりの版は scope（サイト）ごと。ITANDI の手順書はリアプロの版と比べない
+      playbookRulesV = servedPlaybookRulesV(dbPb, { rules_v: rulesVersionFor(scope), build_v: PLAYBOOK_BUILD_V }).rules_v;
+      const _servedStale = !dbPb || !dbPb.rules_v || (Number(dbPb.build_v) || 0) < PLAYBOOK_BUILD_V || String(dbPb.rules_v) !== rulesVersionFor(scope);
       if (_servedStale) {
-        playbookRulesUpTo = AUTO_RULES_REVIEWED_UP_TO;
+        playbookRulesUpTo = rulesReviewedUpToFor(scope);
       } else if (guard && lightReq) {
         if (row.playbook_rules_up_to != null) playbookRulesUpTo = String(row.playbook_rules_up_to);
       } else if (row.bundle && typeof row.bundle === "object") {
@@ -1031,8 +1052,8 @@ export async function GET(req: NextRequest) {
       // ★ 2.8.297: 手順書を作った版と、いま動いている本番コードの版。拡張・check-playbook-sync が「本番のコードが古い」を見つける
       //   （本番が古いと、作り直しのたびに古い手順書へ戻る＝2026-11-25 22:00 の実測）。無い（古い本番）なら拡張は「本番が古い」と読む
       playbook_rules_up_to: playbookRulesUpTo,
-      server_rules_v: autoRulesVersion(),
-      server_rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
+      server_rules_v: rulesVersionFor(scope),
+      server_rules_up_to: rulesReviewedUpToFor(scope),
       server_build_v: PLAYBOOK_BUILD_V,
     }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }

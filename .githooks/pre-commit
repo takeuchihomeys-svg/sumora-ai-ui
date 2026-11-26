@@ -17,5 +17,13 @@ npx tsx app/lib/__tests__/playbook-site-split.test.ts
 npx tsx app/lib/__tests__/auto-rules-verify-exists.test.ts
 npx tsx app/lib/__tests__/playbook-rule-evidence.test.ts
 npx tsx app/lib/__tests__/learn-opens-and-itandi-flow.test.ts
+echo "[pre-commit] ITANDI の決まりはリアプロと分かれている・目印がコードにある（2026-11-27）"
+npx tsx app/lib/__tests__/itandi-rules-separate.test.ts
 echo "[pre-commit] 手順書の抜けの基準・確かめない決まりの理由（増えたら止める）"
 npx tsx app/lib/__tests__/playbook-gap-baseline.test.ts
+echo "[pre-commit] 手順書浄化・ITANDI別名分離・拡張同期・統括ループ同期（2026-11-27）"
+npx tsx app/lib/__tests__/playbook-clean-and-itandi-sync.test.ts
+npx tsx app/lib/__tests__/site-contamination-guard.test.ts
+npx tsx app/lib/__tests__/playbook-and-motion-hardening.test.ts
+node tests/chrome-extension/head-ttl-served-v2310.test.js
+node tests/chrome-extension/learn-bundle-site-sync.test.js

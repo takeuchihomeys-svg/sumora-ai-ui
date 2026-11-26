@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.310";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.311";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -1830,7 +1830,7 @@ export const AUTO_RULES: AutoRule[] = [
 ];
 
 /** FNV-1a（32bit）の16進（版の印・暗号ではない） */
-function fnv(s: string): string {
+export function fnv(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(16).padStart(8, "0");

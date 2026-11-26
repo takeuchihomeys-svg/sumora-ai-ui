@@ -5,6 +5,8 @@ const bg = fs.readFileSync(path.join(root, "chrome-extension/background.js"), "u
 const page = fs.readFileSync(path.join(root, "chrome-extension/page-script.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "chrome-extension/manifest.json"), "utf8"));
 const rules = fs.readFileSync(path.join(root, "app/lib/auto-procedure-rules.ts"), "utf8");
+const itRules = fs.readFileSync(path.join(root, "app/lib/auto-itandi-rules.ts"), "utf8");
+const itPage = fs.readFileSync(path.join(root, "chrome-extension/itandi-page-script.js"), "utf8");
 const route = fs.readFileSync(path.join(root, "app/api/human-learn-profile/route.ts"), "utf8");
 
 let pass = 0, fail = 0;
@@ -26,13 +28,26 @@ ok("関所の版確認の開始時刻を取る", t0 > 0);
 ok("task_api_refresh_res に経過ミリ秒を付ける", /\(Date\.now\(\) - _lrT0\) \+ "ms "/.test(page));
 ok("task_api_refresh_res の監査キーは変えていない（KEEP_STEP を保つ）", /"task_api_refresh_res",/.test(page));
 
-// 3. 版の一致（manifest・ページ・決まりの印）
-ok("manifest が 2.8.310", manifest.version === "2.8.310");
-ok("ページの版が 2.8.310", /var _AXLX_PAGE_VER = "2\.8\.310";/.test(page));
-ok("決まりの見直し印が 2.8.310", /export const AUTO_RULES_REVIEWED_UP_TO = "2\.8\.310";/.test(rules));
+// 3. 版の一致（manifest・realproページ・itandiページ・両サイトの見直し印が一致し 2.8.310 以上）
+function cmpVer(a, b) {
+  const pa = String(a || "").split(".").map((n) => Number(n) || 0);
+  const pb = String(b || "").split(".").map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+const pageV = (page.match(/var _AXLX_PAGE_VER = "([^"]+)";/) || [])[1] || "";
+const itPageV = (itPage.match(/var _AXLX_ITANDI_PAGE_VER = "([^"]+)";/) || [])[1] || "";
+const upToV = (rules.match(/export const AUTO_RULES_REVIEWED_UP_TO = "([^"]+)";/) || [])[1] || "";
+const itUpToV = (itRules.match(/export const ITANDI_RULES_REVIEWED_UP_TO = "([^"]+)";/) || [])[1] || "";
+ok("manifest が 2.8.310 以上", cmpVer(manifest.version, "2.8.310") >= 0);
+ok("リアルプロ・ITANDI ページの版が manifest と一致", pageV === manifest.version && itPageV === manifest.version);
+ok("決まりの見直し印（両サイト）が manifest と一致", upToV === manifest.version && itUpToV === manifest.version);
 
 // 4. サーバー: 軽い確認は「渡す時の版」を返す（DB の古い版をそのまま返さない）
-ok("軽い確認の版は servedPlaybookRulesV を通す", /playbookRulesV = servedPlaybookRulesV\(dbPb, \{ rules_v: autoRulesVersion\(\), build_v: PLAYBOOK_BUILD_V \}\)\.rules_v;/.test(route));
+ok("軽い確認の版は servedPlaybookRulesV を通す", /playbookRulesV = servedPlaybookRulesV\(dbPb, \{ rules_v: rulesVersionFor\(scope\), build_v: PLAYBOOK_BUILD_V \}\)\.rules_v;/.test(route));
 ok("軽い確認の取る列に build_v がある", /playbook_build_v:bundle->playbook->>build_v/.test(route));
 
 console.log("\n" + pass + " passed, " + fail + " failed");

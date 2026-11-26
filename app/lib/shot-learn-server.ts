@@ -915,7 +915,7 @@ export async function learnFromWeakShots(
         candidates.push({
           scope: site,
           source_rows: sub.length,
-          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs, null, null, sceneMetaSite)) as unknown as Record<string, unknown>,
+          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs, null, null, { ...(sceneMetaSite ?? {}), site }), { site }) as unknown as Record<string, unknown>,
         });
       }
       const rows: Array<{ scope: string; source_rows: number; bundle: Record<string, unknown> }> = [];

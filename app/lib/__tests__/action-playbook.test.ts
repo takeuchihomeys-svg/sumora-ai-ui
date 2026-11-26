@@ -80,7 +80,8 @@ console.log("■ 学んだ押す位置・開く欄を全部載せる（整理の
   ok("押す位置の確かさ（solid/thin）と座標", pb.positions[0].confidence === "solid" && pb.positions[2].confidence === "thin" && pb.positions[0].x === 0.1 && pb.positions[0].w === "checkbox");
   ok("推測の開く欄は『知っている』に数えない", pb.opens_known === 2 && pb.opens_guessed === 2, `${pb.opens_known}/${pb.opens_guessed}`);
   ok("推測の開く欄は一覧に残す（guessed の印つき）", pb.opens.some((o) => o.field === "update_date" && o.guessed === true));
-  ok("次のページの学び（next）は件数を出し、場面の手順に無いと gaps に出す", pb.next_n === 2 && pb.gaps.some((g) => /次のページへ：束の next に 2件/.test(g)), pb.gaps.join(" / "));
+  // 2026-11-27: 束の next は押す順番（次のページ送りではない）。次のページ送りは場面 next で判定する
+  ok("束の next は押す順番として件数を出し、次のページ送りの学びが無ければ gaps に出す", pb.next_n === 2 && pb.gaps.some((g) => /次のページ送り（場面 next）はまだ学んでいない（束の next は押す順番の2件/.test(g)), pb.gaps.join(" / "));
   ok("押す位置が空だと gaps に出す", buildPlaybook({ scene_flows: sceneFlows }).gaps.some((g) => /押す位置が1つも無い/.test(g)));
 }
 

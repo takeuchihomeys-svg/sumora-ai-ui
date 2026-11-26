@@ -5,6 +5,8 @@
  * npx tsx app/lib/__tests__/playbook-site-split.test.ts
  */
 import { buildPlaybook, checkPlaybook, refreshPlaybookIfStale, PLAYBOOK_BUILD_V } from "../action-playbook";
+import { AUTO_RULES } from "../auto-procedure-rules";
+import { ITANDI_AUTO_RULES, itandiRulesVersion } from "../auto-itandi-rules";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error("FAIL: " + msg);
@@ -65,7 +67,10 @@ const RP_TEXT = /160×高さ30|幅160|30秒以上|確定してリストへ|並�
 {
   const pb = buildPlaybook(ITBUNDLE, "itandi");
   assert(pb.site === "itandi", "itandi の手順書は site=itandi");
-  assert(pb.rules.length === 0, "itandi の手順書に自動の決まり（リアプロ用）を載せない");
+  // 2026-11-27: itandi の決まりは ITANDI 専用の一覧（リアプロの AUTO_RULES は1つも載せない）
+  assert(pb.rules.length === ITANDI_AUTO_RULES.length && pb.rules.length > 0, "itandi の手順書は ITANDI 専用の決まりを載せる");
+  assert(pb.rules.every((r) => !AUTO_RULES.some((a) => a.id === r.id)), "itandi の決まりにリアプロの決まりが混ざらない");
+  assert(pb.rules_v === itandiRulesVersion(), "itandi の手順書の決まりの版は ITANDI の版");
   assert(pb.scenes.every((s) => s.rules.length === 0), "itandi の場面に決まりの印を付けない");
   const allText = [
     ...pb.scenes.flatMap((s) => s.steps.concat(s.detail.map((d) => d.step))),
@@ -85,12 +90,12 @@ const RP_TEXT = /160×高さ30|幅160|30秒以上|確定してリストへ|並�
     "itandi の一連の流れの全段に page:/dl: 点検印がある",
   );
   assert(!pb.gaps.some((g) => /点検の印が無い段（把握できない）/.test(g)), "全段に印が揃えば把握できない段は出ない");
-  assert(pb.gaps.some((g) => /決まりは、このリアプロ/.test(g)), "itandi の決まりは別と gaps に出す");
-  // 点検（checkPlaybook）は itandi で「決まりが空」を誤って出さない
+  assert(pb.gaps.some((g) => /itandi の自動の決まり \d+件は、点検の段がまだ保存されず/.test(g)), "itandi の決まりが確かめられない抜けを gaps に出す");
+  // 点検（checkPlaybook）は itandi の決まり（ITANDI 専用の版）で通る
   const issues = checkPlaybook(pb, Date.parse(NOW));
-  assert(!issues.some((i) => /自動の決まりが手順書に入っていない/.test(i)), "itandi は決まりが空でも点検に引っかからない: " + issues.join(" / "));
+  assert(!issues.some((i) => /自動の決まりが手順書に入っていない|自動の決まりの版が古い/.test(i)), "itandi の決まりは点検に通る: " + issues.join(" / "));
   assert(!issues.some((i) => /一連の流れに必須段が無い/.test(i)), "itandi の必須段が揃う: " + issues.join(" / "));
-  console.log("  ✓ itandi: リアプロの決まり・流れ・追加ガイド・確定の文言が無い（自動の決まりは空で点検も通る）");
+  console.log("  ✓ itandi: リアプロの決まり・流れ・追加ガイド・確定の文言が無い（決まりは ITANDI 専用の一覧で点検も通る）");
 }
 
 // 6. realpro は従来どおり（決まり・並べ替え・リセット幅の手が載る）
@@ -110,7 +115,7 @@ const RP_TEXT = /160×高さ30|幅160|30秒以上|確定してリストへ|並�
   const r = refreshPlaybookIfStale(old, "itandi");
   assert(r.refreshed === true, "作り方 15 の itandi 手順書は作り直す");
   const pb = (r.bundle as { playbook: ReturnType<typeof buildPlaybook> }).playbook;
-  assert(pb.site === "itandi" && pb.rules.length === 0, "作り直した itandi は決まり無し");
+  assert(pb.site === "itandi" && pb.rules.length === ITANDI_AUTO_RULES.length, "作り直した itandi は ITANDI 専用の決まり");
   console.log("  ✓ 作り方 15 の itandi 手順書は読み出しで作り直す");
 }
 

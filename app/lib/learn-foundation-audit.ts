@@ -24,7 +24,8 @@ import { auditExtTestImproveLoop } from "./ext-test-improve-loop";
 import { evaluateHumanLikeImproveStamp } from "./human-like-improve-loop";
 import { evaluateWeakFindStamp, WEAK_FIND_STAMP_REL } from "./weak-find-strengthen";
 import { countFineAtomsAcrossAudits, HANDOFF_FINE_ORDER } from "./handoff-loop-ledger";
-import { autoRulesVersion, parsePlaybookSeen } from "./auto-procedure-rules";
+import { parsePlaybookSeen } from "./auto-procedure-rules";
+import { rulesVersionFor } from "./auto-itandi-rules";
 import { auditRootCauseImproveLoop } from "./root-cause-improve-loop";
 import { auditKeepStrengthenLoop } from "./keep-strengthen-loop";
 import { existsSync, readFileSync } from "node:fs";
@@ -2508,7 +2509,8 @@ export async function auditLearnFoundations(
    *   DB実測: コード/DBは e0b8837b でも自動既読 4c266b56・read=0 → 「改善済み」にしない。
    */
   {
-    const codeV = autoRulesVersion();
+    // 2026-11-27: 決まりの版は サイトごと（itandi は ITANDI の決まりの版と比べる）
+    const codeV = rulesVersionFor(markSite);
     const dbRv = (() => {
       try {
         const pb = (prof as { bundle?: { playbook?: { rules_v?: string } } } | null)?.bundle?.playbook;

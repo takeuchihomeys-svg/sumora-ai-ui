@@ -28,19 +28,21 @@ function loadBase(): Baseline | null {
   try { return JSON.parse(fs.readFileSync(BASE, "utf8")) as Baseline; } catch { return null; }
 }
 
-function run(file: string): Promise<{ name: string; red: boolean; ng: number }> {
+function run(file: string): Promise<{ name: string; red: boolean; ng: number; code: number | null; timedOut: boolean; tail: string }> {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [path.join(DIR, file)], { cwd: ROOT });
     let out = "";
-    const timer = setTimeout(() => { try { p.kill(); } catch { /* 終わっていた */ } }, 60_000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch { /* 終わっていた */ } }, 60_000);
     p.stdout.on("data", (d) => { out += String(d); });
     p.stderr.on("data", (d) => { out += String(d); });
     p.on("close", (code) => {
       clearTimeout(timer);
       const ng = (out.match(/✗/g) ?? []).length;
-      resolve({ name: file, red: code !== 0 || ng > 0, ng });
+      const tail = out.trim().split(/\r?\n/).slice(-8).join(" | ");
+      resolve({ name: file, red: code !== 0 || ng > 0 || timedOut, ng, code, timedOut, tail });
     });
-    p.on("error", () => { clearTimeout(timer); resolve({ name: file, red: true, ng: 0 }); });
+    p.on("error", (err) => { clearTimeout(timer); resolve({ name: file, red: true, ng: 0, code: null, timedOut: false, tail: String(err) }); });
   });
 }
 
@@ -51,7 +53,7 @@ async function main() {
     return;
   }
   const files = fs.readdirSync(DIR).filter((f) => f.endsWith(".test.js")).sort();
-  const results: Array<{ name: string; red: boolean; ng: number }> = [];
+  const results: Array<{ name: string; red: boolean; ng: number; code: number | null; timedOut: boolean; tail: string }> = [];
   let i = 0;
   const worker = async () => { while (i < files.length) { const f = files[i++]; results.push(await run(f)); } };
   await Promise.all(Array.from({ length: 8 }, worker));
@@ -85,7 +87,11 @@ async function main() {
   if (healed.length) console.log(`  ✅ 直っていた ${healed.length}本（--write-baseline で基準から外せる）: ${healed.slice(0, 5).join(" / ")}${healed.length > 5 ? " …" : ""}`);
   if (fresh.length) {
     console.log(`  ❌ 新しく赤になった ${fresh.length}本（基準に無い＝今の変更で壊した可能性）`);
-    fresh.forEach((n) => console.log(`     ✗ ${n}`));
+    const byName = new Map(results.map((r) => [r.name, r]));
+    fresh.forEach((n) => {
+      const r = byName.get(n);
+      console.log(`     ✗ ${n} (code=${r?.code}, ng=${r?.ng}, timeout=${r?.timedOut}) :: ${r?.tail ?? ""}`);
+    });
     process.exit(1);
   }
   console.log("  ✅ 新しい赤は無い（古い赤が残っていることは、上の件数どおり）");

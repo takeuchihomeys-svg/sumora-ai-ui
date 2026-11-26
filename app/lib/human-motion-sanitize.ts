@@ -9,7 +9,23 @@
  *   - human_motion_learn site=itandi 107件中11件にリアプロ要素 eq_rm[] / city_code[] / #top_free / #main_form 等が混入
  */
 
-const GARBAGE_FIELD_RE = /^(?:#?\[object\s[^\]]*\]|undefined|null|\?|[-ー－_・=|/\\*~～]{2,}|input|select|textarea|button|span|div|label|iframe|id|form|table|tr|td|th|ul|li|body|html|img)$/i;
+const GARBAGE_FIELD_RE = /^(?:#?\[object\s[^\]]*\]|undefined|null|\?|[-ー－_・=|/\\*~～]{2,}|input|select|textarea|button|span|div|label|iframe|id|form|table|tr|td|th|ul|li|body|html|img|#top_free|#main_form|div\.main_table|button\.history_btn)$/i;
+
+/** 値セル・生CSSハッシュ単体・装飾画像だけの履歴ボタン等のゴミ欄名（どのサイトでも手順書に入れない） */
+const GARBAGE_VALUE_OR_HASH_RE = new RegExp(
+  [
+    // 物件一覧の金額・月数・面積セルそのもの（例: 147,000円｜td.text_right, 1.5ヶ月｜td.text_right）
+    "^[0-9０-９,.\\s]+(?:円|万円|ヶ月|カ月|ヵ月|年|㎡|階|棟|戸|%|％)(?:｜|$)",
+    // td.text_right / td.list_... 等の表データセル（td.pager は次ページボタンなので別扱い）
+    "｜td\\.(?!pager\\b)",
+    // 表の巨大コンテナや拡張の履歴ボタン（例: 左の大阪2棟3戸並べ替え更新｜div.main_table, img→button.history_btn）
+    "｜div\\.main_table(?:$|[^a-zA-Z0-9_])",
+    "(?:^|→)button\\.history_btn(?:$|[^a-zA-Z0-9_])",
+    // 日本語ラベル無しの生CSSハッシュ単体（例: input.css-1j76uus, div.css-abc123）
+    "^(?:input|button|div|span|a|label|select|textarea)\\.(?:css|sc)-[a-z0-9_-]+$",
+  ].join("|"),
+  "i",
+);
 
 /** リアプロ固有の要素名・UI文言（site=itandi に入っていたら混入） */
 const REALPRO_ONLY_FIELD_RE = new RegExp(
@@ -17,12 +33,18 @@ const REALPRO_ONLY_FIELD_RE = new RegExp(
     "^(?:eq_rm|city_code|town_code|route_id|station_id|room_layout_id|struct_id|exclusive_area)\\[",
     "^rental_cost[12]$",
     "^structured_date$",
+    "^update_date$",
     "^(?:transportation_id|required_time)$",
     "^deposit_recommpence",
     "^#(?:top_free|main_form)$",
-    "駅の設定へ進む|沿線の設定へ戻る|確定してリストへ",
-    "\\.(?:one_city|one_town|one_line|one_station|go_search)(?:[^a-zA-Z0-9_]|$)",
-    "(?:沿線・駅絞り込み|所在地絞り込み)",
+    "駅の設定へ進む|沿線の設定へ戻る|確定してリストへ|詳細な地域の設定へ進む|都道府県の設定",
+    "\\.(?:one_city|one_town|one_line|one_station|go_search|pager|sort_detail)(?:[^a-zA-Z0-9_]|$)",
+    "(?:沿線・駅絞り込み|所在地絞り込み|所在地を絞り込み|マップ検索|印刷用PDF|沿線リセット|市区郡リセット)",
+    "(?:全部屋を表示|5部屋まで表示|表示棟数|即入物件で絞り込み|管理会社絞り込み|スタジオタイプ|問合せ履歴)",
+    "(?:建物ごと|部屋ごと|閲覧履歴|並べ替え|並び替え|ピンポイント|広げて検索|大阪環状線|駅名から絞り込み|PDF出力|表示件数|×とじる)",
+    "(?:駅からの移動手段|^移動手段$|^賃料下限$|^下限賃料$|^賃料上限$|^上限賃料$|^高→低$)",
+    "^(?:リセット|最初|最後|変更|クリア|絞り込み|とじる|路線|駅)$",
+    "^(?:(?:左|右|上|下|中央)の)?(?:区を選ぶ|沿線を選ぶ|駅を選ぶ|one_station|one_station_id|one_line|one_city|one_town)(?:｜|$)",
   ].join("|"),
 );
 
@@ -38,16 +60,82 @@ const ITANDI_ONLY_FIELD_RE = new RegExp(
   "i",
 );
 
+/**
+ * 1枚の画像・操作束が別サイトの画面誤記録かを見抜くため、相手サイト固有の欄名に一致するかだけを返す（一般ゴミは false）。
+ */
+export function isCrossSiteFieldName(name: unknown, site: string | null | undefined): boolean {
+  if (typeof name !== "string") return false;
+  const s = name.trim();
+  if (!s) return false;
+  const sc = String(site || "").toLowerCase();
+  if (sc === "realpro") return ITANDI_ONLY_FIELD_RE.test(s);
+  if (sc === "itandi") return REALPRO_ONLY_FIELD_RE.test(s);
+  return false;
+}
+
 export function isAllowedMotionFieldName(name: unknown, site: string | null | undefined): boolean {
   if (typeof name !== "string") return false;
   const s = name.trim();
   if (!s) return false;
-  if (GARBAGE_FIELD_RE.test(s) || /\[object\s+[A-Z]/i.test(s) || /路線・駅選択都道府県/.test(s)) return false;
+  if (GARBAGE_FIELD_RE.test(s) || GARBAGE_VALUE_OR_HASH_RE.test(s) || /\[object\s+[A-Z]/i.test(s) || /路線・駅選択都道府県/.test(s)) return false;
 
   const sc = String(site || "").toLowerCase();
   if (sc === "realpro" && ITANDI_ONLY_FIELD_RE.test(s)) return false;
   if (sc === "itandi" && REALPRO_ONLY_FIELD_RE.test(s)) return false;
   return true;
+}
+
+/**
+ * shots.learned / shots.learned_scene 等の画面マップから、指定サイトに不要なゴミ・他サイト混入を除く。
+ */
+export function sanitizeLearnedForSite(
+  learned: unknown,
+  site?: string | null,
+): { learned: Record<string, unknown[]> | null; removed: number; samples: string[] } {
+  if (!learned || typeof learned !== "object" || Array.isArray(learned)) {
+    return { learned: null, removed: 0, samples: [] };
+  }
+  const sc = (site === "realpro" || site === "itandi") ? site : null;
+  let removed = 0;
+  const samples: string[] = [];
+  const noteDrop = (name: unknown) => {
+    removed++;
+    const s = String(name ?? "").slice(0, 40);
+    if (s && samples.length < 10 && !samples.includes(s)) samples.push(s);
+  };
+  const out: Record<string, unknown[]> = {};
+  for (const [screen, arr] of Object.entries(learned as Record<string, unknown>)) {
+    if (!Array.isArray(arr)) continue;
+    const realproDrops: number[] = [];
+    const kept0 = arr.filter((item) => {
+      const rec = (item && typeof item === "object") ? (item as Record<string, unknown>) : null;
+      const nm = rec?.name;
+      const ok = isAllowedMotionFieldName(nm, sc);
+      if (!ok) {
+        noteDrop(nm);
+        if (sc === "itandi" && typeof nm === "string" && REALPRO_ONLY_FIELD_RE.test(nm.trim())) {
+          realproDrops.push(Number(rec?.n) || 0);
+        }
+      }
+      return ok;
+    });
+    // #2514 以前のサイト未分離世代（リアプロ固有項目が高票で同居していた混載配列）は、同配列に積まれた旧共通名（n>=22）も一掃する
+    const pollutedGeneration = sc === "itandi"
+      && realproDrops.length >= 3
+      && (realproDrops.filter((n) => n >= 50).length >= 2 || realproDrops.filter((n) => n >= 22).length >= 3);
+    const kept = pollutedGeneration
+      ? kept0.filter((item) => {
+        const rec = (item && typeof item === "object") ? (item as Record<string, unknown>) : null;
+        if ((Number(rec?.n) || 0) >= 22) {
+          noteDrop(rec?.name);
+          return false;
+        }
+        return true;
+      })
+      : kept0;
+    if (kept.length) out[screen] = kept;
+  }
+  return { learned: Object.keys(out).length ? out : null, removed, samples };
 }
 
 /**
@@ -126,17 +214,21 @@ export function sanitizeBundleForSite(bundle: Record<string, unknown>, site?: st
   if (bundle.shots && typeof bundle.shots === "object" && !Array.isArray(bundle.shots)) {
     const sh = bundle.shots as Record<string, unknown>;
     if (sh.learned && typeof sh.learned === "object" && !Array.isArray(sh.learned)) {
-      const cleanLearned: Record<string, unknown> = {};
-      for (const [screen, arr] of Object.entries(sh.learned as Record<string, unknown>)) {
-        if (!Array.isArray(arr)) { cleanLearned[screen] = arr; continue; }
-        cleanLearned[screen] = arr.filter((item) => {
-          const nm = (item && typeof item === "object") ? (item as Record<string, unknown>).name : null;
-          const ok = isAllowedMotionFieldName(nm, sc);
-          if (!ok) noteDrop(nm);
-          return ok;
-        });
+      const slRes = sanitizeLearnedForSite(sh.learned, sc);
+      removed += slRes.removed;
+      for (const s of slRes.samples) {
+        if (samples.length < 10 && !samples.includes(s)) samples.push(s);
       }
-      sh.learned = cleanLearned;
+      sh.learned = slRes.learned ?? {};
+    }
+    if (sh.learned_scene && typeof sh.learned_scene === "object" && !Array.isArray(sh.learned_scene)) {
+      const scRes = sanitizeLearnedForSite(sh.learned_scene, sc);
+      removed += scRes.removed;
+      for (const s of scRes.samples) {
+        if (samples.length < 10 && !samples.includes(s)) samples.push(s);
+      }
+      if (scRes.learned) sh.learned_scene = scRes.learned;
+      else delete sh.learned_scene;
     }
   }
 

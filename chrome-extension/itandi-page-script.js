@@ -12,6 +12,97 @@
   // v2.5.45 ITANDI のフォームの決まり（itandi-form-guard.js・同じ world:MAIN の段で先に読む）。読めない時は旧の動き
   function _itFG() { return (typeof self !== "undefined" ? self : window).AxlxItandiFormGuard; }
 
+  // ★ 2026-11-27 ITANDI 専用手順書（app/lib/auto-itandi-rules.ts と id 一覧・版を揃える）
+  var _AXLX_ITANDI_PAGE_VER = "2.8.311";
+  try { window.__axlxItandiPageVer = _AXLX_ITANDI_PAGE_VER; } catch (_) {}
+  var _AXLX_ITANDI_RULES_DONE = [
+    "it_reset_before_fill",
+    "it_reset_mixed_note",
+    "it_area_before_cond",
+    "it_station_miss_recorded",
+    "it_update_days_first",
+    "it_one_tick_then_wait",
+    "it_search_ready_check",
+    "it_search_blocked_no_press",
+    "it_guide_no_search",
+    "it_breath_before_search",
+    "it_watchdog_stop",
+    "it_dup_fill_ignored",
+    "it_list_next_handoff",
+    "it_list_no_rows_stop",
+  ];
+  function _itApplyLearnData(d) {
+    if (!d || typeof d !== "object") return;
+    try {
+      if (d.axlx_learn_playbook && typeof d.axlx_learn_playbook === "object") window.__axlxLearnPlaybook = d.axlx_learn_playbook;
+      if (d.axlx_learn_screen && typeof d.axlx_learn_screen === "object") window.__axlxLearnScreen = d.axlx_learn_screen;
+      if (d.axlx_learn_points && typeof d.axlx_learn_points === "object") window.__axlxLearnPoints = d.axlx_learn_points;
+      if (d.axlx_learn_next && typeof d.axlx_learn_next === "object") window.__axlxLearnNext = d.axlx_learn_next;
+      if (d.axlx_learn_scene_flows && Array.isArray(d.axlx_learn_scene_flows)) window.__axlxLearnSceneFlows = d.axlx_learn_scene_flows;
+    } catch (_) {}
+  }
+  var _itLearnReqSeq = 0;
+  function _itRequestLearnStorage() {
+    try {
+      var rid = "it_" + (++_itLearnReqSeq) + "_" + Date.now();
+      window.postMessage({
+        from: "axlx-page-storage-get",
+        id: rid,
+        keys: [
+          "axlx_learn_playbook",
+          "axlx_learn_screen",
+          "axlx_learn_points",
+          "axlx_learn_next",
+          "axlx_learn_scene_flows",
+        ],
+      }, "*");
+    } catch (_) {}
+  }
+  window.addEventListener("message", function (e) {
+    if (e.source !== window || !e.data || typeof e.data !== "object") return;
+    if (e.data.from === "axlx-page-learn-push" && e.data.data) _itApplyLearnData(e.data.data);
+    if (e.data.from === "axlx-page-storage-result" && String(e.data.id || "").indexOf("it_") === 0 && e.data.data) {
+      _itApplyLearnData(e.data.data);
+    }
+  });
+  _itRequestLearnStorage();
+  function _itLearnPosOf(names) {
+    var list = Array.isArray(names) ? names : [names];
+    var clean = function (s) { return String(s || "").replace(/^(左の|右の|上の|下の|中央の)/, "").replace(/｜[^｜]*$/, "").trim(); };
+    try {
+      var pb = window.__axlxLearnPlaybook;
+      if (pb && Array.isArray(pb.positions)) {
+        for (var i = 0; i < list.length; i++) {
+          var target = clean(list[i]);
+          for (var j = 0; j < pb.positions.length; j++) {
+            var p = pb.positions[j];
+            if (p && clean(p.field) === target && typeof p.x === "number" && typeof p.y === "number") {
+              return { x: p.x, y: p.y, n: p.n || 0, source: p.source || "playbook" };
+            }
+          }
+        }
+      }
+      var scr = window.__axlxLearnScreen;
+      if (scr && typeof scr === "object") {
+        var screens = ["form", "modal", "result"];
+        for (var s = 0; s < screens.length; s++) {
+          var arr = scr[screens[s]];
+          if (!Array.isArray(arr)) continue;
+          for (var i2 = 0; i2 < list.length; i2++) {
+            var t2 = clean(list[i2]);
+            for (var k = 0; k < arr.length; k++) {
+              var it = arr[k];
+              if (it && clean(it.name) === t2 && typeof it.x === "number" && typeof it.y === "number") {
+                return { x: it.x, y: it.y, n: it.n || 0, source: "screen:" + screens[s] };
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   // 2026-11-10 人間的な動き: 値を一瞬で入れると「貼り付けた」動きになる。短い欄は1文字ずつ打つ（打鍵の間 60〜220ms・たまに止まる）。
   //   長い文字列（40字超）は一気に入れる。最後は input/change を出して React の state を更新する（今までと同じ）。
   var _TYPE_MAX_CHARS = 40;
@@ -420,16 +511,98 @@
   // 駅は「路線ごとに全駅名を試す」ので、1路線で見つからないのは普通 → 最後まで1度も押せなかった駅だけを「押せなかった」にする
   var _itAudit = null;
   var _itRunId = null;
+  var _itLiveCid = null;
   var _itDiag = {}; // 正規化した駅名 → 最後に見つからなかった時の { line, label_count, sample }
-  function _itAuditReset(runId) {
-    _itRunId = runId || null;
+  var _IT_PIN_RE = /^(?:page_ver|playbook_|fill_start|reset_start|reset$|reset_fail|location|lines_done|update_days|search_press|search_blocked|guide_mode|done_error|watchdog)/;
+  var _IT_LIVE_RE = /^(?:page_ver|playbook_|fill_start|reset_start|reset$|reset_fail|reset_mixed|location|lines_done|line_miss|update_days|search_press|search_blocked|guide_mode|done_error|watchdog|dup_fill)/;
+  function _itFlushLiveSteps(steps, cid) {
+    try {
+      var list = Array.isArray(steps) ? steps : [];
+      if (!list.length) return;
+      window.postMessage({
+        from: "axlx-guide-live-flush",
+        steps: list,
+        customerId: cid || _itLiveCid || _pendingFillCid || null,
+      }, "*");
+    } catch (_) {}
+  }
+  function _itAuditReset(runId, cid) {
+    var noRunId = !runId;
+    _itRunId = runId || ("local_it_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6));
+    _itLiveCid = cid || _pendingFillCid || null;
     _itDiag = {};
-    _itAudit = _itRunId ? { v: 1, site: "itandi", search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, reset: null, area_path: null, fallback: null, steps: [] } : null;
+    _itAudit = {
+      v: 1, site: "itandi", no_run_id: noRunId,
+      search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [],
+      click_fails: [], reset_fail: null, reset: null, area_path: null, fallback: null, steps: [],
+    };
   }
   function _itStep(k, d) {
+    var kk = String(k).slice(0, 30);
+    var dd = d == null ? null : String(d).slice(0, 120);
+    if (_itAudit) {
+      _itAudit.steps.push({ at: Date.now(), k: kk, d: dd });
+      if (_itAudit.steps.length > 120) {
+        var drop = -1;
+        for (var i = 0; i < _itAudit.steps.length; i++) {
+          if (!_IT_PIN_RE.test(String((_itAudit.steps[i] && _itAudit.steps[i].k) || ""))) { drop = i; break; }
+        }
+        _itAudit.steps.splice(drop >= 0 ? drop : 0, 1);
+      }
+    }
+    if (_IT_LIVE_RE.test(kk)) _itFlushLiveSteps([{ k: kk, d: dd }], _itLiveCid);
+  }
+  function _itAuditPlaybookSeen() {
     if (!_itAudit) return;
-    _itAudit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
-    if (_itAudit.steps.length > 30) _itAudit.steps.shift();
+    var pb = window.__axlxLearnPlaybook;
+    if (!pb || typeof pb !== "object" || !Array.isArray(pb.scenes)) {
+      _itStep("playbook_none", "ITANDI手順書が届いていない page=" + _AXLX_ITANDI_PAGE_VER);
+      return;
+    }
+    var ids = Array.isArray(pb.rules) ? pb.rules.map(function (x) { return String((x && x.id) || ""); }).filter(Boolean) : [];
+    var have = 0, lack = [], extra = [];
+    for (var i = 0; i < ids.length; i++) {
+      if (_AXLX_ITANDI_RULES_DONE.indexOf(ids[i]) >= 0) have++; else lack.push(ids[i]);
+    }
+    for (var j = 0; j < _AXLX_ITANDI_RULES_DONE.length; j++) {
+      if (ids.indexOf(_AXLX_ITANDI_RULES_DONE[j]) < 0) extra.push(_AXLX_ITANDI_RULES_DONE[j]);
+    }
+    var hands = 0;
+    for (var s = 0; s < pb.scenes.length; s++) {
+      var sc = pb.scenes[s] || {};
+      hands += Array.isArray(sc.detail) ? sc.detail.length : (Array.isArray(sc.steps) ? sc.steps.length : 0);
+    }
+    var posN = Array.isArray(pb.positions) ? pb.positions.length : 0;
+    var flowN = Array.isArray(pb.itandi_flow) ? pb.itandi_flow.length : 0;
+    var _short = function (a) { return a.length ? (a.slice(0, 2).join(",") + (a.length > 2 ? ",+" + (a.length - 2) : "")) : "-"; };
+    _itStep(
+      "playbook_seen",
+      "site=itandi v=" + String(pb.version || "-").slice(0, 8) +
+        " rv=" + String(pb.rules_v || "-").slice(0, 8) +
+        " 決まり=" + have + "/" + ids.length +
+        " 無い=" + _short(lack) +
+        " 手順書に無い=" + _short(extra) +
+        " 場面=" + pb.scenes.length + " 手=" + hands + " 位置=" + posN + " it_flow=" + flowN,
+    );
+    try {
+      var _upTo = pb.rules_up_to ? String(pb.rules_up_to) : "";
+      var _ver2 = function (v) { return String(v || "").split(".").map(function (x) { return Number(x) || 0; }); };
+      var _older = function (a, b) {
+        var x = _ver2(a), y = _ver2(b);
+        for (var q = 0; q < Math.max(x.length, y.length); q++) { var dd = (x[q] || 0) - (y[q] || 0); if (dd) return dd < 0; }
+        return false;
+      };
+      var _pbOld = extra.length > 0 || (_upTo ? _older(_upTo, _AXLX_ITANDI_PAGE_VER) : true);
+      var _extOld = lack.length > 0 || (_upTo ? _older(_AXLX_ITANDI_PAGE_VER, _upTo) : false);
+      if (_pbOld || _extOld) {
+        _itStep(
+          "playbook_behind",
+          "side=" + (_extOld ? "拡張が古い" : "手順書が古い") +
+            " up=" + (_upTo || "なし") + " ext=" + _AXLX_ITANDI_PAGE_VER +
+            " 手順書に無い=" + _short(extra) + " 拡張に無い=" + _short(lack),
+        );
+      }
+    } catch (_) {}
   }
   function _itReadForm() {
     var f = {};
@@ -937,7 +1110,11 @@
               || clickBtn("路線・駅で絞り込み") || clickBtn("路線で絞り込む")
               || clickBtn("路線で絞り込み") || clickBtn("沿線・駅で絞り込む")
               || clickBtn("沿線・駅で絞り込み") || clickBtn("沿線・駅を絞り込む");
-    if (!opened) return false;
+    if (!opened) {
+      var hintLinePos = _itLearnPosOf(["路線・駅で絞り込み", "路線・駅で絞り込みを開く"]);
+      if (hintLinePos && _itAudit) _itStep("line_btn_hint", "screen=(" + hintLinePos.x + "," + hintLinePos.y + ") n=" + hintLinePos.n);
+      return false;
+    }
 
     var stNames = (stationNames || []).map(function (s) { return s.replace(/駅$/, "").trim(); }).filter(Boolean);
     var _abort = typeof onError === "function" ? onError : onDone;
@@ -1816,9 +1993,12 @@
     // ★ 2026-11-18: background.js の FILL_DONE_TIMEOUT_MS.itandi（1800000=30分）に合わせ、旧240秒(4分)で自爆しないようにする。
     // 2026-09-18 竹内（一括検索の混線）: この入力を始めた時の顧客 ID を fill-done にそのまま載せて返す
     var _fillCid = _pendingFillCid;
-    // 検索の点検: popup が載せた run_id（ブレインの時だけ）
-    _itAuditReset(cond && cond._audit_run_id);
+    // 検索の点検: popup が載せた run_id（無ければ local_it_* を振って点検段を残す）
+    _itAuditReset(cond && cond._audit_run_id, _fillCid);
     var _myRunId = _itRunId;
+    if (!window.__axlxLearnPlaybook) _itRequestLearnStorage();
+    _itStep("page_ver", _AXLX_ITANDI_PAGE_VER);
+    _itAuditPlaybookSeen();
     _itStep("fill_start", cond && cond.area_mode);
     // v2.5.45: 時間切れ・失敗で返した後は、この回の続き（遅れて動くタイマー）が検索を押さない（次のお客様の入力と重ねない）
     var _dead = false;
@@ -2064,6 +2244,8 @@
       if (hasArea) {
         var opened = selectItandiArea(wardNames, cond.ward_town_map || null, cond.town_area || null, afterModal);
         if (!opened) {
+          var _hintA = _itLearnPosOf(["所在地で絞り込み", "所在地で絞り込みを開く"]);
+          if (_hintA) _itStep("area_btn_hint", "screen=(" + _hintA.x + "," + _hintA.y + ") n=" + _hintA.n);
           var _errA = '所在地で絞り込みボタンが見つかりませんでした';
           console.warn('[AX] ' + _errA);
           showItandiWarnToast(_errA);
@@ -2124,9 +2306,15 @@
     //   既定は案内（印が付く前に依頼が届いても自動で入れない＝安全側）。OFF の印（"0"）が付いている時だけ今まで通り入力する
     if (_guideOn()) {
       var _gCid = e.data.customerId || null;
+      _itAuditReset(e.data.conditions && e.data.conditions._audit_run_id, _gCid);
+      if (!window.__axlxLearnPlaybook) _itRequestLearnStorage();
+      _itStep("page_ver", _AXLX_ITANDI_PAGE_VER);
+      _itAuditPlaybookSeen();
+      _itStep("guide_mode", "案内モード（手動入力）");
       window.postMessage({ from: "axlx-itandi-guide-start", conditions: e.data.conditions || {}, customerId: _gCid }, "*");
       var _gDone = { from: "aixlinx-fill-done", error: "guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）", skip: true };
       if (_gCid) _gDone.customerId = _gCid;
+      if (_itRunId) { _gDone.runId = _itRunId; _gDone.audit = _itPack(); }
       window.postMessage(_gDone, "*");
       return;
     }

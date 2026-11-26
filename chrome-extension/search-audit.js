@@ -155,7 +155,7 @@
    */
   var PIN_STEP = /^(begin|bulk_pos|fill_done|page:(page_ver|playbook_|learn_reflect_|learn_refresh_))/;
   /** 待ち・間・見張りの繰り返し（同じ種類・同じ中身が続く時だけ n 回にまとめる）。押した・押せたの記録（reset_press 等）は数を残すのでまとめない */
-  var COLLAPSE_STEP = /^(dl:|page:)[a-z0-9_]*(wait|gap|poll|watch|tick|rows)[a-z0-9_]*$/;
+  var COLLAPSE_STEP = /^(?:dl:send_bar_show|(?:dl:|page:)[a-z0-9_]*(?:wait|gap|poll|watch|tick|rows)[a-z0-9_]*)$/;
 
   // 段の記録（最大 MAX_STEPS 件）。落とす順: 普通の段 → 決まりの段の重複（後にも同じ種類がある物） → 残す段以外 → 守る段以外 → 先頭
   function pushStep(steps, k, d, now) {

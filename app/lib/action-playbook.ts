@@ -17,9 +17,11 @@
 //   ⚠ 統括（Pro）の判断は入れない。ここは決定論（数えて並べて検査するだけ）。
 
 import { SCENE_JA } from "./learn-flow-steps";
-import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, RULE_SCENE_JA, RULES_CODE_ONLY, autoRulesVersion, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
+import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
+import { itandiAliasesOf } from "./itandi-field-aliases";
 import { RESET_BUTTON_SIZE, RESET_WAIT_TEXT } from "./reset-facts";
-import { isAllowedMotionFieldName } from "./human-motion-sanitize";
+import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
 export const PLAYBOOK_SOLID_RUNS = 3;
@@ -43,7 +45,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 18;
+export const PLAYBOOK_BUILD_V = 19;
+// 19（2026-11-27）: cleanPoints で値データ（147,000円 等）を除外し、points にまだ無い欄は shots.learned の画面位置（source: "screen"）を
+//   手順書の positions / detail.aim に活用。ITANDI は itandi-field-aliases で別名も引き当て、rules_up_to をサイト別に分離。
 // 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
 //   入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。buildPlaybook に site を渡し、itandi では載せない。
 //   site を渡さない時（既定）は今までどおり＝リアプロの動きは変えない。
@@ -339,7 +343,7 @@ export type PlaybookStep = {
   step: string;
   /** 押す欄の名前（束の名前・飾りを落とした物） */
   field: string;
-  /** 学んだ押す位置（要素の中の割合）。学んでいなければ null。source は PositionSource（mismatch は solid にしない） */
+  /** 学んだ押す位置（要素の中の割合／screen は画面全体の割合）。学んでいなければ null。source は PositionSource（mismatch は solid にしない） */
   aim: { x: number; y: number; n: number; confidence: "solid" | "thin"; source: PositionSource } | null;
   /** 押すと開く物（人が確かめて学んだ物だけ）。無ければ null */
   opens: string | null;
@@ -391,7 +395,7 @@ export type PlaybookPosition = {
   x: number | null;
   y: number | null;
   confidence: "solid" | "thin";
-  /** field: この名前で測った／alias: 同じ欄の別名へ写した測った値／mismatch: 開くボタンにチェック欄の位置が写った */
+  /** field: この名前で測った／alias: 同じ欄の別名へ写した測った値／screen: 写真学習の画面位置／mismatch: 開くボタンにチェック欄の位置が写った */
   source: PositionSource;
 };
 
@@ -435,8 +439,10 @@ export type Playbook = {
   opens: PlaybookOpen[];
   /** 推測のまま・票0の開く欄の数 */
   opens_guessed: number;
-  /** 束の `next`（次のページ等）の学びの数（場面の手順にはまだ入っていないかもしれない） */
+  /** 束の `next`（押す順番の並び・次のページ送りではない）の数。次のページ送りは場面 next で判定する */
   next_n: number;
+  /** ITANDI の押す順番（site_flow.itandi だけから作る・リアプロでは空）。リアプロの流れとは混ぜない */
+  itandi_flow: Array<{ from: string; to: string; n: number }>;
   /** 足りない所・迷い・分からない欄（人が確かめる文） */
   gaps: string[];
   /** 自動の決まり（全部・場面つき） */
@@ -478,6 +484,12 @@ type BundleLike = {
   points?: Record<string, { n?: number; w?: unknown; x?: unknown; y?: unknown }> | null;
   opens?: Record<string, { opens?: unknown; n?: unknown; guessed?: unknown }> | null;
   next?: Record<string, unknown> | null;
+  /** サイトごとの押す順番（{ itandi: [{n,from,to}] } / { realpro: [...] }）。2026-11-27: 読むのは scope のキーだけ */
+  site_flow?: Record<string, unknown> | null;
+  /** 写真学習で集めた画面上の位置（points に無い欄・特に ITANDI の補完に使う） */
+  shots?: {
+    learned?: Record<string, Array<{ name?: unknown; kind?: unknown; n?: unknown; x?: unknown; y?: unknown }>> | null;
+  } | null;
 };
 
 /** FNV-1a（32bit）の16進。版の印に使う（暗号ではない） */
@@ -556,8 +568,8 @@ type OpenIndex = Map<string, string>;
  *   実測（2026-11-20 束 2532）: city_code[]・所在地絞り込み・左の所在地絞り込み＋｜span が全部 n=1238 (0.5,0.5) checkbox。
  *     FIELD_NAME_ALIASES で city_code[] と 所在地絞り込み（開くボタン）が同じ組になっているため。沿線・駅も同じ。
  */
-export type PositionSource = "field" | "alias" | "mismatch";
-const SOURCE_RANK: Record<PositionSource, number> = { field: 3, alias: 2, mismatch: 1 };
+export type PositionSource = "field" | "alias" | "mismatch" | "screen";
+const SOURCE_RANK: Record<PositionSource, number> = { field: 4, alias: 3, screen: 2, mismatch: 1 };
 
 function pointSignature(p: { n?: number; x?: unknown; y?: unknown; w?: unknown }): string {
   return `${p.n}|${p.x}|${p.y}|${String(p.w ?? "")}`;
@@ -627,6 +639,79 @@ function indexPositions(points: BundleLike["points"]): PosIndex {
   return m;
 }
 
+type ScreenPosCandidate = { field: string; n: number; w: string | null; x: number; y: number; aliasKeys: string[] };
+
+/** 同一座標・同票の別名複製群から人が読みやすい代表名1つを選ぶための優先スコア */
+function screenFieldRepScore(name: string, n: number, sp: number, alreadyExists: boolean): number {
+  const key = cleanPlaybookName(name);
+  const notExisting = alreadyExists ? -5000 : 2000;
+  const inJa = PLAYBOOK_FIELD_JA[key] ? 1000 : 0;
+  const hasJa = /[ぁ-んァ-ヶ一-龠]/.test(key) ? 200 : 0;
+  const notArrayName = /\[\]$/.test(key) ? -400 : 0;
+  const lenScore = Math.min(30, key.length >= 2 ? key.length * 3 : 0);
+  const noPipe = name.includes("｜") ? 0 : 50;
+  const noOpenerNoise = /^(?:路線|駅|分)$/.test(key) ? -80 : 0;
+  return notExisting + inJa + hasJa + notArrayName + lenScore + noPipe + noOpenerNoise + sp * 10 + Math.min(n, 500) * 0.01;
+}
+
+/** 写真学習（shots.learned）から、points に無い欄の画面上位置を拾う（form > modal > result、高 n 優先、同一座標コピー統合） */
+function collectScreenLearnedPositions(
+  shots: BundleLike["shots"],
+  siteKind: "realpro" | "itandi",
+  existingKeys: ReadonlySet<string> = new Set(),
+): ScreenPosCandidate[] {
+  const learned = sanitizeLearnedForSite(shots?.learned, siteKind).learned;
+  if (!learned) return [];
+  const screenPrio = (sc: string) => (sc === "form" ? 3 : sc === "modal" ? 2 : sc === "result" ? 1 : 0);
+  const order = [...Object.keys(learned)].sort((a, b) => screenPrio(b) - screenPrio(a));
+  const best = new Map<string, { field: string; n: number; w: string | null; x: number; y: number; sp: number }>();
+  for (const sc of order) {
+    const list = learned[sc];
+    if (!Array.isArray(list)) continue;
+    const sp = screenPrio(sc);
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const it = item as Record<string, unknown>;
+      const rawName = String(it.name ?? "").trim();
+      if (!rawName) continue;
+      if (!isAllowedMotionFieldName(rawName, siteKind)) continue;
+      const key = cleanPlaybookName(rawName);
+      if (!key) continue;
+      if (!PLAYBOOK_FIELD_JA[key] && isPlaybookValue(rawName)) continue;
+      const n = Math.min(500, Number(it.n) || 0);
+      if (n < 1) continue;
+      if (typeof it.x !== "number" || !Number.isFinite(it.x) || typeof it.y !== "number" || !Number.isFinite(it.y)) continue;
+      const w = typeof it.kind === "string" && it.kind ? it.kind : null;
+      const prev = best.get(key);
+      if (!prev || sp > prev.sp || (sp === prev.sp && n > prev.n)) {
+        best.set(key, { field: rawName, n, w, x: it.x, y: it.y, sp });
+      }
+    }
+  }
+  // 同一座標・同票（別名展開由来の複製）は代表1件だけを positions に出し、別名キー一覧も lookup 用に保持する
+  const byCoord = new Map<string, Array<{ key: string; field: string; n: number; w: string | null; x: number; y: number; sp: number }>>();
+  for (const [key, v] of best.entries()) {
+    const sig = `${v.x.toFixed(3)}|${v.y.toFixed(3)}|${v.n}`;
+    const grp = byCoord.get(sig) ?? [];
+    grp.push({ key, ...v });
+    byCoord.set(sig, grp);
+  }
+  const deduped: ScreenPosCandidate[] = [];
+  for (const grp of byCoord.values()) {
+    grp.sort((a, b) => screenFieldRepScore(b.field, b.n, b.sp, existingKeys.has(b.key)) - screenFieldRepScore(a.field, a.n, a.sp, existingKeys.has(a.key)));
+    const rep = grp[0];
+    deduped.push({
+      field: rep.field,
+      n: rep.n,
+      w: rep.w,
+      x: rep.x,
+      y: rep.y,
+      aliasKeys: grp.map((g) => g.key),
+    });
+  }
+  return deduped.sort((a, b) => b.n - a.n).slice(0, 120);
+}
+
 /** 束の opens を同じく引けるようにする（人が確かめた物だけ・推測は入れない） */
 function indexOpens(opens: BundleLike["opens"]): OpenIndex {
   const m: OpenIndex = new Map();
@@ -643,14 +728,25 @@ function rulesForScene(scene: string): string[] {
 }
 
 /** 場面の手順 → 手順書の場面（値を外す・名前を読める形に・件数で上限・1手ずつの細部） */
-export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn: OpenIndex = new Map()): PlaybookScene {
+export function playbookSceneOf(
+  f: SceneFlowLike,
+  pos: PosIndex = new Map(),
+  opn: OpenIndex = new Map(),
+  aliasesFn?: (field: string) => ReadonlyArray<string>,
+): PlaybookScene {
   const scene = String(f.scene ?? "other");
   const runs = Number(f.runs) || 0;
   const norm = normalizePlaybookSteps((Array.isArray(f.steps) ? f.steps : []).map((x) => String(x)));
   const steps = norm.steps.slice(0, PLAYBOOK_MAX_STEPS);
   const detail: PlaybookStep[] = steps.map((step, i) => {
     const field = norm.fields[i] ?? "";
-    const p = pos.get(field);
+    let p = pos.get(field);
+    if (!p && aliasesFn && field) {
+      for (const al of aliasesFn(field)) {
+        const cand = pos.get(cleanPlaybookName(al));
+        if (cand) { p = cand; break; }
+      }
+    }
     return {
       step,
       field,
@@ -684,10 +780,11 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   const siteKind: "realpro" | "itandi" = realproHands ? "realpro" : "itandi";
   // itandi は自動の決まり（AUTO_RULES）・リアプロの一連の流れ・追加ガイドを載せない（リアプロの拡張用の一覧で、itandi のページは使っていない）
   const ruleIdsFor = (ids: ReadonlyArray<string>): string[] => (realproHands ? [...ids] : []);
-  // 入口防御: ゴミ欄名・他サイト要素・旧バグの爆発点（n>5000 かつ 0.5,0.5）を手順書から完全に除外する
+  // 入口防御: ゴミ欄名・値セル・他サイト要素・旧バグの爆発点（n>5000 かつ 0.5,0.5）を手順書から完全に除外する
   const cleanPoints: NonNullable<BundleLike["points"]> = {};
   for (const [k, p] of Object.entries(bundle.points ?? {})) {
     if (!p || !isAllowedMotionFieldName(k, siteKind)) continue;
+    if (!PLAYBOOK_FIELD_JA[cleanPlaybookName(k)] && isPlaybookValue(k)) continue;
     const rawN = Number(p.n) || 0;
     if (rawN > 5000 && p.x === 0.5 && p.y === 0.5) continue;
     cleanPoints[k] = rawN > 500 ? { ...p, n: 500 } : p;
@@ -698,9 +795,37 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     cleanOpens[k] = o;
   }
   const posIdx = indexPositions(cleanPoints);
+  const existingKeys = new Set([
+    ...Object.keys(cleanPoints).map((k) => cleanPlaybookName(k)),
+    ...posIdx.keys(),
+  ]);
+  const screenPositions: PlaybookPosition[] = [];
+  for (const sp of collectScreenLearnedPositions(bundle.shots, siteKind, existingKeys)) {
+    const key = cleanPlaybookName(sp.field);
+    for (const ak of sp.aliasKeys) {
+      const cur = posIdx.get(ak);
+      if (!cur || cur.source === "mismatch") {
+        posIdx.set(ak, { x: sp.x, y: sp.y, n: sp.n, source: "screen" });
+      }
+    }
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      screenPositions.push({
+        field: sp.field,
+        n: sp.n,
+        w: sp.w,
+        x: sp.x,
+        y: sp.y,
+        confidence: sp.n >= PLAYBOOK_SOLID_RUNS ? "solid" : "thin",
+        source: "screen",
+      });
+    }
+  }
   const openIdx = indexOpens(cleanOpens);
+  const siteAliasFn = siteKind === "itandi" ? itandiAliasesOf : undefined;
   const lookupAim = (field: string, aliases: ReadonlyArray<string> = []): PlaybookStep["aim"] => {
-    const keys = [field, cleanPlaybookName(field), ...aliases, ...aliases.map(cleanPlaybookName)];
+    const siteAls = siteAliasFn ? siteAliasFn(field) : [];
+    const keys = [field, cleanPlaybookName(field), ...aliases, ...aliases.map(cleanPlaybookName), ...siteAls, ...siteAls.map(cleanPlaybookName)];
     for (const k of keys) {
       if (!k) continue;
       const p = posIdx.get(k);
@@ -727,7 +852,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   };
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
-    .map((f) => playbookSceneOf(f, posIdx, openIdx));
+    .map((f) => playbookSceneOf(f, posIdx, openIdx, siteAliasFn));
   // itandi の場面には、リアプロの自動の決まりを付けない（場面の決まりは rulesForScene＝AUTO_RULES 由来）
   if (!realproHands) for (const s of scenes) s.rules = [];
   const learned = new Set(scenes.map((s) => s.scene));
@@ -810,7 +935,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   // other（場面が決まらない操作）は「学んでいない場面」ではないので外す
   const missing = Object.keys(SCENE_JA).filter((k) => k !== "other" && !learned.has(k));
 
-  // 押す位置: 束の points を欄ごとに全部載せる（票1以上・票の多い順）。数は solid/thin で数える
+  // 押す位置: 束の points（＋写真学習 shots.learned の補完）を欄ごとに載せる（票1以上・票の多い順）。数は solid/thin で数える
   const sigCounts = signatureCounts(cleanPoints);
   const positions: PlaybookPosition[] = Object.entries(cleanPoints)
     .map(([field, p]) => {
@@ -826,6 +951,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
       };
     })
     .filter((p) => p.n >= 1)
+    .concat(screenPositions)
     .sort((a, b) => b.n - a.n);
   const solid = positions.filter((p) => p.confidence === "solid").length;
   const thin = positions.filter((p) => p.confidence === "thin").length;
@@ -843,7 +969,15 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     .sort((a, b) => b.n - a.n);
   const opens_known = opens.filter((o) => !o.guessed && o.n > 0).length;
   const opens_guessed = opens.length - opens_known;
+  // 2026-11-27: 束の next は「次に押す欄」の並び（押す順番）で、次のページ送りの記録ではない（リアプロ・ITANDI とも）。
+  //   次のページは場面 next（人が押した記録）でだけ判定する。
   const next_n = Object.keys(bundle.next ?? {}).length;
+  // ITANDI の押す順番は ITANDI 自身の site_flow.itandi だけから作る（リアプロの site_flow は読まない＝混ざり防止）
+  const itandi_flow: Array<{ from: string; to: string; n: number }> = siteKind === "itandi"
+    ? ((Array.isArray(bundle.site_flow?.itandi) ? bundle.site_flow?.itandi : []) as Array<{ from?: unknown; to?: unknown; n?: unknown }>)
+      .filter((e) => e && typeof e.from === "string" && typeof e.to === "string")
+      .map((e) => ({ from: String(e.from).split("｜")[0], to: String(e.to).split("｜")[0], n: Number(e.n) || 0 }))
+    : [];
 
   const gaps: string[] = [...gapsEarly];
   if (!positions.length) gaps.push("押す位置が1つも無い（束の points が空）");
@@ -852,7 +986,8 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     gaps.push(`押す位置 ${positions.length}件のうち ${mismatches}件は、開くボタンに箱の中のチェック欄の位置が写った物（${names.join("・")}）＝別名の組（field-name-aliases.ts）でボタンとチェック欄が同じ組になっている`);
   }
   if (opens_guessed) gaps.push(`開く欄 ${opens_guessed}件は推測のまま（人が開いて確かめていない・数に入れない）`);
-  if (next_n && !learned.has("next")) gaps.push(`次のページへ：束の next に ${next_n}件あるが、場面の手順（人が押した順）にはまだなっていない（整理の抜けの疑い）`);
+  if (!learned.has("next")) gaps.push(`次のページ送り（場面 next）はまだ学んでいない${next_n ? `（束の next は押す順番の${next_n}件で、次のページ送りの記録ではない）` : ""}`);
+  if (siteKind === "itandi" && !itandi_flow.length) gaps.push("ITANDI の押す順番（site_flow.itandi）がまだ無い");
   if (!scenes.length) gaps.push("場面の手順が1つも無い（まだ学んでいない）");
   for (const s of scenes) {
     if (s.confidence === "thin") gaps.push(`${s.label}：検索${s.runs}回だけ（3回未満・人が1回通して確かめる候補）`);
@@ -873,16 +1008,21 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }
 
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
+  // 2026-11-27: ITANDI は ITANDI だけの決まり（auto-itandi-rules.ts）を載せる。リアプロの決まりは載せない（混ざり防止）
   const rules: PlaybookRule[] = realproHands ? AUTO_RULES.map((r) => ({
     id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: r.kb,
     verified_by: verifyKeysOf(r.verify),
-  })) : [];
-  const rules_v = autoRulesVersion();
+  })) : ITANDI_AUTO_RULES.map((r) => ({
+    id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: null,
+    verified_by: [],
+  }));
+  const rules_v = rulesVersionFor(siteKind);
+  // 2026-11-27: ITANDI の決まりは、確かめる段がまだ保存されていない（理由は auto-itandi-rules.ts の verify_reason）
   if (!realproHands) {
-    gaps.push("itandi の自動の決まりは、このリアプロの決まり一覧（拡張の page-script 用）とは別。手順書には載せていない（itandi 用の決まりはまだ作っていない）");
+    gaps.push(`itandi の自動の決まり ${rules.length}件は、点検の段がまだ保存されず確かめられない（保存の直しと ITANDI の実走が要る）`);
   }
-  // 2026-11-27: 確かめ方が無い決まりは、理由つきの例外（RULES_CODE_ONLY）以外を抜けとして出す
-  const unverified = rules.filter((r) => !r.verified_by.length && !RULES_CODE_ONLY[r.id]).map((r) => r.id);
+  // 2026-11-27: 確かめ方が無い決まりは、理由つきの例外（RULES_CODE_ONLY）以外を抜けとして出す（リアプロの決まりだけ）
+  const unverified = realproHands ? rules.filter((r) => !r.verified_by.length && !RULES_CODE_ONLY[r.id]).map((r) => r.id) : [];
   if (unverified.length) {
     gaps.push(`自動の決まり ${rules.length}件のうち ${unverified.length}件は点検記録で確かめる印が無い（コードにあるかだけ・${unverified.slice(0, 6).join("・")}${unverified.length > 6 ? ` 他${unverified.length - 6}` : ""}）`);
   }
@@ -1037,6 +1177,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     positions,
     opens,
     next_n,
+    itandi_flow,
     rules_v,
     extra_guides: extra_guides.map((g) => g.id),
   });
@@ -1057,10 +1198,11 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     opens,
     opens_guessed,
     next_n,
+    itandi_flow,
     gaps,
     rules,
     rules_v,
-    rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
+    rules_up_to: rulesReviewedUpToFor(siteKind),
     extra_guides,
   };
 }
@@ -1081,7 +1223,7 @@ export function refreshPlaybookIfStale(bundle: Record<string, unknown> | null | 
   let why: string | null = null;
   if (!pb || typeof pb !== "object") why = "手順書が無い";
   else if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) why = `作り方が古い（${pb.build_v ?? "-"}→${PLAYBOOK_BUILD_V}）`;
-  else if (pb.rules_v !== autoRulesVersion()) why = `決まりの版が古い（${pb.rules_v ?? "-"}→${autoRulesVersion()}）`;
+  else if (pb.rules_v !== rulesVersionFor(site ?? pb.site)) why = `決まりの版が古い（${pb.rules_v ?? "-"}→${rulesVersionFor(site ?? pb.site)}）`;
   if (!why) return { bundle, refreshed: false, why: null };
   const copy: Record<string, unknown> = { ...bundle };
   copy.playbook = buildPlaybook(copy as never, site);
@@ -1107,9 +1249,9 @@ export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[
   }
   // 自動の決まり（拡張で直した物）が手順書に入っているか・コードの決まりと同じ版か
   if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) issues.push(`作り方が古い（build_v=${pb.build_v}・今は ${PLAYBOOK_BUILD_V}）`);
-  // itandi は自動の決まりを載せない設計（buildPlaybook）＝空は正しい。版の確認は両方で行う
-  if (pb.site !== "itandi" && (!Array.isArray(pb.rules) || !pb.rules.length)) issues.push("自動の決まりが手順書に入っていない");
-  else if (pb.rules_v !== autoRulesVersion()) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${autoRulesVersion()}）`);
+  // 2026-11-27: 決まりはサイトごと（リアプロ＝AUTO_RULES・ITANDI＝ITANDI_AUTO_RULES）。空は両方で無い＝抜け。版もサイトごとに比べる
+  if (!Array.isArray(pb.rules) || !pb.rules.length) issues.push("自動の決まりが手順書に入っていない");
+  else if (pb.rules_v !== rulesVersionFor(pb.site)) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${rulesVersionFor(pb.site)}）`);
   if (!Array.isArray(pb.flow_series) || pb.flow_series.length < 5) {
     issues.push("一連の流れ（flow_series）が無い／短すぎる（外し→検索→一覧→次客の把握線が無い）");
   } else {

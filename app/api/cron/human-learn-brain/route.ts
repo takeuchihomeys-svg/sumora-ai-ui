@@ -166,7 +166,11 @@ export async function GET(req: NextRequest) {
     const sub = rows.filter((r) => String(r.site || "") === s);
     if (sub.length < 5) continue; // 少なすぎる物は束にしない（偶然を学ばない）
     const sceneMetaSite = await fetchLearnBundleSceneMeta(supabase, s);
-    perSite.push({ scope: s, bundle: compactBundle(buildHumanLearnBundle(sub, now, null, null, sceneMetaSite)) });
+    const sFilter = s === "realpro" || s === "itandi" ? s : null;
+    perSite.push({
+      scope: s,
+      bundle: compactBundle(buildHumanLearnBundle(sub, now, null, null, { ...(sceneMetaSite ?? {}), site: sFilter }), { site: sFilter }),
+    });
   }
 
   const extVersion = rows.length ? String(rows[0]?.ext_version ?? "") || null : null;

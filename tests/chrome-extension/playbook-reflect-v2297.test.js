@@ -106,7 +106,7 @@ console.log("■ ④ 背景: 本番が古い印を覚えて、次の客の記録
 console.log("■ ⑤ API: 軽い版確認に、手順書を作った版と本番コードの版を載せる");
 {
   ok("light の列に playbook_rules_up_to", /playbook_rules_up_to:bundle->playbook->>rules_up_to/.test(route));
-  ok("応答に server_rules_up_to / server_rules_v / server_build_v / playbook_rules_up_to", /playbook_rules_up_to: playbookRulesUpTo,[\s\S]{0,400}server_rules_v: autoRulesVersion\(\),[\s\S]{0,100}server_rules_up_to: AUTO_RULES_REVIEWED_UP_TO,[\s\S]{0,100}server_build_v: PLAYBOOK_BUILD_V/.test(route));
+  ok("応答に server_rules_up_to / server_rules_v / server_build_v / playbook_rules_up_to", /playbook_rules_up_to: playbookRulesUpTo,[\s\S]{0,400}server_rules_v:\s*(?:autoRulesVersion\(\)|rulesVersionFor\(scope\)),[\s\S]{0,100}server_rules_up_to:\s*(?:AUTO_RULES_REVIEWED_UP_TO|rulesReviewedUpToFor\(scope\)),[\s\S]{0,100}server_build_v:\s*PLAYBOOK_BUILD_V/.test(route));
 }
 
 console.log("■ ⑥ 版の結び（manifest == page-script == 手順書の見直し）");

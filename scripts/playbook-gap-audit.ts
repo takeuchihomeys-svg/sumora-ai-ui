@@ -17,6 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { buildPlaybook, checkPlaybook, PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
 import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, checkRulesInCode } from "../app/lib/auto-procedure-rules";
+import { checkItandiRulesInCode } from "../app/lib/auto-itandi-rules";
 import { gapKey, diffGaps, type GapBaseline } from "../app/lib/playbook-gap-baseline";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -65,13 +66,17 @@ export function gapReportFor(site: string, row: Row | null): GapReport {
 export function ruleIssuesFromRepo(root: string): string[] {
   const ext = path.join(root, "chrome-extension");
   const read = (f: string) => { try { return fs.readFileSync(path.join(ext, f), "utf8"); } catch { return ""; } };
-  return checkRulesInCode({
-    pageScript: read("page-script.js"),
-    searchAudit: read("search-audit.js"),
-    manifestJson: read("manifest.json"),
-    bulkDl: read("bulk-dl.js"),
-    background: read("background.js"),
-  }, AUTO_RULES);
+  // リアプロの決まり（page-script など）と、ITANDI の決まり（itandi-page-script / itandi-bulk-dl）は別々に点検する
+  return [
+    ...checkRulesInCode({
+      pageScript: read("page-script.js"),
+      searchAudit: read("search-audit.js"),
+      manifestJson: read("manifest.json"),
+      bulkDl: read("bulk-dl.js"),
+      background: read("background.js"),
+    }, AUTO_RULES),
+    ...checkItandiRulesInCode({ itandiPage: read("itandi-page-script.js"), itandiBulk: read("itandi-bulk-dl.js") }),
+  ];
 }
 
 async function main() {

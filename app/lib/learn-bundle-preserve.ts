@@ -13,11 +13,15 @@
  *   → 履歴 SELECT 失敗時は solid 不足なら safe_to_write=false（読めない＝消す書き込みを許さない）。
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { applyBundleAliasExpansion } from "./field-name-aliases";
+import { applyBundleAliasExpansion, fieldHasPosition } from "./field-name-aliases";
+import { applyItandiBundleAliasExpansion, itandiAliasesOf } from "./itandi-field-aliases";
+import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { PLAYBOOK_BUILD_V } from "./action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
+import { rulesReviewedUpToFor } from "./auto-itandi-rules";
 import { SCENE_JA, describeSceneFlow, type SceneFlow } from "./learn-flow-steps";
+import { buildLinkPipeline, type BundleReflectHint } from "./bundle-reflect";
+import { buildImproveLoop } from "./improve-loop";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -35,14 +39,16 @@ export type BundlePreserveResult = {
 export const INHERIT_LOOKBACK_DEFAULT = 80;
 export const INHERIT_LOOKBACK_MAX = 200;
 
-export function countLearnedSolid(bundle: unknown): { solid: number; learned: unknown } {
+export function countLearnedSolid(bundle: unknown, site?: string | null): { solid: number; learned: unknown } {
   const learned = (bundle as { shots?: { learned?: unknown } } | null)?.shots?.learned;
+  const sc = (site === "realpro" || site === "itandi") ? site : null;
   let solid = 0;
   if (learned && typeof learned === "object") {
     for (const list of Object.values(learned as Record<string, unknown>)) {
       for (const f of Array.isArray(list) ? list : []) {
-        const rec = f as { x?: unknown; y?: unknown; n?: unknown };
+        const rec = f as { name?: unknown; x?: unknown; y?: unknown; n?: unknown };
         if (typeof rec?.x !== "number" || typeof rec?.y !== "number") continue;
+        if (sc && typeof rec?.name === "string" && !isAllowedMotionFieldName(rec.name, sc)) continue;
         if ((Number(rec.n) || 0) >= 3) solid++;
       }
     }
@@ -200,16 +206,23 @@ function applyLearnedFromOld(
   bundle: Record<string, unknown>,
   oldB: unknown,
   oldSolid: number,
+  scope?: string | null,
 ): void {
-  const old = countLearnedSolid(oldB);
+  const old = countLearnedSolid(oldB, scope);
   if (!old.learned || typeof old.learned !== "object") return;
   const curSh = ((bundle.shots as Record<string, unknown>) || {});
   const oldSh = ((oldB as { shots?: Record<string, unknown> })?.shots || {});
-  const merged = mergeLearnedKeepSolid(curSh.learned, old.learned);
+  const cleanOld = sanitizeLearnedForSite(old.learned, scope).learned;
+  if (!cleanOld) return;
+  const cleanCur = sanitizeLearnedForSite(curSh.learned, scope).learned;
+  const merged = mergeLearnedKeepSolid(cleanCur ?? curSh.learned, cleanOld);
+  const cleanOldScene = oldSh.learned_scene ? sanitizeLearnedForSite(oldSh.learned_scene, scope).learned : null;
+  const cleanCurScene = curSh.learned_scene ? sanitizeLearnedForSite(curSh.learned_scene, scope).learned : null;
   bundle.shots = {
     ...oldSh,
     ...curSh,
     learned: merged.learned,
+    ...(cleanCurScene || cleanOldScene ? { learned_scene: cleanCurScene ?? cleanOldScene } : {}),
     learned_from_new: merged.from_new,
     preserved_learned: true,
     preserved_solid: oldSolid,
@@ -263,6 +276,190 @@ export function syncSupervisorSceneFlows(bundle: Record<string, unknown>, site?:
   return synced;
 }
 
+/**
+ * 2026-11-27: inheritLinkFoundations / carryLearnedShots で bundle.shots.learned が増えた後、
+ *   buildHumanLearnBundle 時点の 3日窓 shotLearn ベースで作成された
+ *   supervisor.meeting.evidence（「学習→自動の連携」「連携のボトルネック」「改善までの一連」）と
+ *   agenda（「改善までの一連: 段階3で停止」）・challenge_missing_in_bundle を、
+ *   実際の bundle.shots.learned の画面位置（screen_solid / screen_all）と同期させる。
+ *   ※ 統括の判断文（today/headline 等）は書き換えず、機械計算の連携行だけを事実と一致させる。
+ *   ※ scope='all' の時は supervisor のみ更新し、supervisor_by_site.itandi を all 件数で汚染しない。
+ */
+export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?: string | null): number {
+  const sh = (bundle.shots && typeof bundle.shots === "object") ? (bundle.shots as Record<string, unknown>) : null;
+  const rawLearned = sh?.learned;
+  if (!rawLearned || typeof rawLearned !== "object" || Array.isArray(rawLearned)) return 0;
+
+  const siteFilter = site === "itandi" || site === "realpro" ? site : null;
+  const cleanLearned = sanitizeLearnedForSite(rawLearned, siteFilter).learned ?? (rawLearned as Record<string, unknown[]>);
+  let screenAll = 0;
+  let screenSolid = 0;
+  const haveXy = new Set<string>();
+  for (const list of Object.values(cleanLearned)) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as { name?: unknown; x?: unknown; y?: unknown; n?: unknown };
+      const name = String(r.name ?? "").trim();
+      if (!name || !isAllowedMotionFieldName(name, siteFilter)) continue;
+      if (typeof r.x !== "number" || typeof r.y !== "number") continue;
+      screenAll++;
+      if ((Number(r.n) || 0) >= 3) screenSolid++;
+      haveXy.add(name);
+    }
+  }
+  const pts = (bundle.points && typeof bundle.points === "object" && !Array.isArray(bundle.points))
+    ? (bundle.points as Record<string, unknown>)
+    : null;
+  if (pts) {
+    for (const [k, v] of Object.entries(pts)) {
+      const p = v as { x?: unknown; y?: unknown } | null;
+      if (p && typeof p.x === "number" && typeof p.y === "number" && isAllowedMotionFieldName(k, siteFilter)) {
+        haveXy.add(k);
+      }
+    }
+  }
+
+  let updated = 0;
+  if (Array.isArray(bundle.challenge_missing_in_bundle) && haveXy.size > 0) {
+    const prevMissing = bundle.challenge_missing_in_bundle as unknown[];
+    const nextMissing = prevMissing.filter((raw) => {
+      const f = String(raw ?? "").trim();
+      if (!f) return false;
+      return siteFilter === "itandi"
+        ? !itandiAliasesOf(f).some((a) => haveXy.has(a))
+        : !fieldHasPosition(f, haveXy);
+    });
+    if (nextMissing.length !== prevMissing.length) {
+      bundle.challenge_missing_in_bundle = nextMissing;
+      updated++;
+    }
+  }
+
+  if (screenAll === 0 && screenSolid === 0) return updated;
+
+  const brMeta = (bundle.bundle_reflect && typeof bundle.bundle_reflect === "object")
+    ? (bundle.bundle_reflect as { read_count?: unknown; read_at?: unknown; auto_after?: unknown })
+    : null;
+  const srcObj = (bundle.source && typeof bundle.source === "object") ? (bundle.source as Record<string, unknown>) : null;
+  const lacObj = (bundle.latest_auto_challenge && typeof bundle.latest_auto_challenge === "object")
+    ? (bundle.latest_auto_challenge as { fields?: unknown })
+    : null;
+  const chFields = Array.isArray(lacObj?.fields) ? (lacObj!.fields as string[]).filter(Boolean) : [];
+
+  const targets: Array<Record<string, unknown>> = [];
+  if (bundle.supervisor && typeof bundle.supervisor === "object") {
+    targets.push(bundle.supervisor as Record<string, unknown>);
+  }
+  const bySite = bundle.supervisor_by_site as Record<string, unknown> | null | undefined;
+  if (bySite && typeof bySite === "object" && siteFilter) {
+    const sSup = bySite[siteFilter] as Record<string, unknown> | null | undefined;
+    if (sSup && typeof sSup === "object") targets.push(sSup);
+  }
+
+  for (const t of targets) {
+    const meeting = t.meeting as {
+      evidence?: Array<{ label?: string; value?: string; guessed?: boolean }>;
+      agenda?: Array<{ priority?: number; topic?: string; why?: string; decide?: string }>;
+    } | null | undefined;
+    const ev = Array.isArray(meeting?.evidence) ? meeting!.evidence! : null;
+    if (!ev) continue;
+
+    const rowLink = ev.find((r) => r && r.label === "学習→自動の連携");
+    const rowLoop = ev.find((r) => r && r.label === "改善までの一連");
+    if (!rowLink && !rowLoop) continue;
+
+    const sampleLine = String(rowLoop?.value || rowLink?.value || "");
+    const mPhoto = sampleLine.match(/写真Storage保存✓\s*（(\d+)枚|（(\d+)枚（human-motion-shots/);
+    const photoInStorage = Number(sh?.in_storage) || Number(mPhoto?.[1] || mPhoto?.[2] || 0) || (sampleLine.includes("写真Storage保存✓") ? 1 : 0);
+    const mOps = sampleLine.match(/操作つき\s*(\d+)件/);
+    const withOps = Number(srcObj?.with_ops) || Number(mOps?.[1] || 0) || (sampleLine.includes("操作・押した位置✓") ? 1 : 0);
+
+    let hint: BundleReflectHint;
+    if (brMeta && (typeof brMeta.read_count === "number" || typeof brMeta.auto_after === "boolean")) {
+      hint = {
+        read_count: Number(brMeta.read_count) || 0,
+        read_at: brMeta.read_at ? String(brMeta.read_at) : null,
+        auto_after: brMeta.auto_after === true,
+        bundle_at: null,
+      };
+    } else {
+      const mRead = sampleLine.match(/読んだ\s*(\d+)回（([^）]+)）|読んだ\s*(\d+)回/);
+      hint = {
+        read_count: Number(mRead?.[1] || mRead?.[3] || 0) || (sampleLine.includes("拡張が束を読む✓") ? 1 : 0),
+        read_at: mRead?.[2] ? String(mRead[2]) : null,
+        auto_after: sampleLine.includes("自動で使う✓"),
+        bundle_at: null,
+      };
+    }
+
+    const pipe = buildLinkPipeline({
+      photoInStorage,
+      withOps,
+      screenSolid,
+      screenAll,
+      hint,
+    });
+    const loop = buildImproveLoop({
+      photoInStorage,
+      withOps,
+      screenSolid,
+      screenAll,
+      hint,
+      challengeFields: chFields,
+      canMeasure: hint.read_count > 0 && hint.auto_after,
+    });
+
+    if (rowLink && rowLink.value !== pipe.line) {
+      rowLink.value = pipe.line;
+      rowLink.guessed = (hint.read_count <= 0) || !hint.auto_after;
+      updated++;
+    }
+    const idxBn = ev.findIndex((r) => r && r.label === "連携のボトルネック");
+    if (pipe.bottleneck) {
+      if (idxBn >= 0) {
+        if (ev[idxBn].value !== pipe.bottleneck) {
+          ev[idxBn].value = pipe.bottleneck;
+          ev[idxBn].guessed = true;
+          updated++;
+        }
+      } else {
+        const idxLink = ev.findIndex((r) => r && r.label === "学習→自動の連携");
+        const insertAt = idxLink >= 0 ? idxLink + 1 : ev.length;
+        ev.splice(insertAt, 0, { label: "連携のボトルネック", value: pipe.bottleneck, guessed: true });
+        updated++;
+      }
+    } else if (idxBn >= 0) {
+      ev.splice(idxBn, 1);
+      updated++;
+    }
+    if (rowLoop && rowLoop.value !== loop.improve_line) {
+      rowLoop.value = loop.improve_line;
+      rowLoop.guessed = (loop.bottleneck_n ?? 0) > 0;
+      updated++;
+    }
+
+    if (Array.isArray(meeting?.agenda)) {
+      const idxAg = meeting!.agenda!.findIndex((a) => typeof a?.topic === "string" && a.topic.startsWith("改善までの一連: 段階"));
+      if (idxAg >= 0) {
+        if (loop.bottleneck_n != null) {
+          const nextTopic = `改善までの一連: 段階${loop.bottleneck_n}で停止`;
+          const nextWhy = loop.improve_line || loop.bottleneck || "";
+          if (meeting!.agenda![idxAg].topic !== nextTopic || meeting!.agenda![idxAg].why !== nextWhy) {
+            meeting!.agenda![idxAg].topic = nextTopic;
+            meeting!.agenda![idxAg].why = nextWhy;
+            updated++;
+          }
+        } else {
+          meeting!.agenda!.splice(idxAg, 1);
+          updated++;
+        }
+      }
+    }
+  }
+  return updated;
+}
+
 export async function inheritLinkFoundations(
   sb: SupabaseClient,
   bundle: Record<string, unknown>,
@@ -309,16 +506,16 @@ export async function inheritLinkFoundations(
         if (hp.__stamp_only) hp.__scope = sc;
         historyPlaybooks.push(hp);
       }
-      const old = countLearnedSolid(row.bundle);
+      const old = countLearnedSolid(row.bundle, scope);
       if (old.solid >= minSolid) historyHadSolid = true;
-      const curSolid = countLearnedSolid(bundle).solid;
+      const curSolid = countLearnedSolid(bundle, scope).solid;
       if (
         old.solid >= minSolid
         && old.learned
         && typeof old.learned === "object"
         && old.solid > curSolid
       ) {
-        applyLearnedFromOld(bundle, row.bundle, old.solid);
+        applyLearnedFromOld(bundle, row.bundle, old.solid, scope);
         preserved = true;
         preserved_solid = Math.max(preserved_solid, old.solid);
       }
@@ -341,7 +538,7 @@ export async function inheritLinkFoundations(
           bundle.scene_flows = flows;
         }
       }
-      const now = countLearnedSolid(bundle);
+      const now = countLearnedSolid(bundle, scope);
       if (now.solid >= minSolid && now.solid >= preserved_solid && bundle.foundation_audit && (!needTransit || hasStationTransitSteps(bundle))) {
         break;
       }
@@ -349,7 +546,7 @@ export async function inheritLinkFoundations(
   }
 
   // lookback 窓外の solid≥min も必ず拾う（0 連打で窓外に押し出された 96 を救出）
-  if (countLearnedSolid(bundle).solid < minSolid || !historyHadSolid) {
+  if (countLearnedSolid(bundle, scope).solid < minSolid || !historyHadSolid) {
     for (const sc of scopes) {
       const { row, error } = await loadBestSolidRow(sb, sc, minSolid, INHERIT_LOOKBACK_MAX);
       if (error) {
@@ -357,26 +554,29 @@ export async function inheritLinkFoundations(
         continue;
       }
       if (!row) continue;
-      const old = countLearnedSolid(row.bundle);
+      const old = countLearnedSolid(row.bundle, scope);
       if (old.solid >= minSolid) historyHadSolid = true;
-      if (old.solid > countLearnedSolid(bundle).solid) {
-        applyLearnedFromOld(bundle, row.bundle, old.solid);
+      if (old.solid > countLearnedSolid(bundle, scope).solid) {
+        applyLearnedFromOld(bundle, row.bundle, old.solid, scope);
         preserved = true;
         preserved_solid = Math.max(preserved_solid, old.solid);
       }
     }
   }
 
-  /** inherit 後も拡張の完全一致引き用に別名を載せる */
-  applyBundleAliasExpansion(bundle);
+  /** inherit 後も拡張の完全一致引き用に別名を載せる（2026-11-27: ITANDI は ITANDI 専用の別名だけを使う） */
+  if (scope === "itandi") applyItandiBundleAliasExpansion(bundle);
+  else applyBundleAliasExpansion(bundle);
   /** 駅遷移などを後から継いだとき、統括 evidence の「場面: ...」行を最新 scene_flows と同期させる */
   try { syncSupervisorSceneFlows(bundle, scope); } catch { /* */ }
+  /** 引き継いだ shots.learned の screen_solid に合わせて連携・改善ループ行も同期させる */
+  try { syncSupervisorImproveLoop(bundle, scope); } catch { /* */ }
 
   // ★ 2.8.297: 履歴の一番新しい手順書を「列挙されない印」で束に載せる（JSON にも DB にも出ない・prepareBundleForWrite が読んで消す）
   try {
     let newest = pickNewestPlaybook<Record<string, unknown>>(historyPlaybooks);
     // コードより新しい物だけ残す価値がある（そうでなければ作り直してよい＝本体は要らない）
-    if (newest && !isPlaybookNewerThanCode(newest, { upTo: AUTO_RULES_REVIEWED_UP_TO, build: PLAYBOOK_BUILD_V })) newest = null;
+    if (newest && !isPlaybookNewerThanCode(newest, { upTo: rulesReviewedUpToFor(scope), build: PLAYBOOK_BUILD_V })) newest = null;
     // 細い読みで印だけの時は、その1行の手順書本体を1回だけ読む（読めなければ印を付けない＝今までの動き）
     if (newest && newest.__stamp_only) {
       const at = String(newest.__at ?? ""), sc = String(newest.__scope ?? "");
@@ -398,7 +598,7 @@ export async function inheritLinkFoundations(
     }
   } catch { /* 印が付かなくても書く（今までの動き） */ }
 
-  const solid = countLearnedSolid(bundle).solid;
+  const solid = countLearnedSolid(bundle, scope).solid;
   const has_fa = !!bundle.foundation_audit;
   const has_transit = hasStationTransitSteps(bundle);
 

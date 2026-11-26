@@ -10,11 +10,11 @@
 //   先に呼ぶと、過去の行から名前や古い手順が戻る。
 import { stripCustomerNames } from "./bundle-privacy";
 import { buildPlaybook, PLAYBOOK_BUILD_V } from "./action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
+import { rulesReviewedUpToFor } from "./auto-itandi-rules";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { cleanOpenerCheckboxCopies } from "./field-name-aliases";
 import { sanitizeBundleForSite } from "./human-motion-sanitize";
-import { syncSupervisorSceneFlows } from "./learn-bundle-preserve";
+import { syncSupervisorSceneFlows, syncSupervisorImproveLoop } from "./learn-bundle-preserve";
 
 export type PrepareBundleResult = {
   names_stripped: boolean;
@@ -61,6 +61,11 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>, site?: st
   } catch {
     // 同期失敗時も束の保存は止めない
   }
+  try {
+    syncSupervisorImproveLoop(bundle, site);
+  } catch {
+    // 同期失敗時も束の保存は止めない
+  }
   let playbook_ok = false;
   let playbook_ver_bumped = false;
   let playbook_kept_newer = false;
@@ -78,7 +83,7 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>, site?: st
     if (process.env.PLAYBOOK_DOWNGRADE_GUARD !== "off") {
       const hidden = (bundle as { __prev_playbook?: Record<string, unknown> | null }).__prev_playbook;
       const best = pickNewestPlaybook<Record<string, unknown>>([cur ?? null, hidden ?? null].filter(Boolean) as Record<string, unknown>[]);
-      if (best && isPlaybookNewerThanCode(best, { upTo: AUTO_RULES_REVIEWED_UP_TO, build: PLAYBOOK_BUILD_V })) kept = best;
+      if (best && isPlaybookNewerThanCode(best, { upTo: rulesReviewedUpToFor(site), build: PLAYBOOK_BUILD_V })) kept = best;
     }
     try { delete (bundle as { __prev_playbook?: unknown }).__prev_playbook; } catch { /* 列挙されない印なので消えなくても書かれない */ }
     if (kept) {

@@ -238,6 +238,11 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
   - `popup-maps.js`（正本）・`resolution-core.js` 内の重複キー 6件（`吹田` の JR東海道本線消失バグ含む・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原`）を解消し、`tests/chrome-extension/notation-copies-sync.test.js` に全マップ重複キー 0 検査を追加。
   - `app/api/seed-maps/route.ts`（`STATION_WARD_MAP` / `STATION_LINE_MAP` / `NEIGHBORHOOD_WARD_MAP` / `LINE_STATION_ORDER`＋`@/app/lib/station-line-maps` import）および `app/api/resolve-search-conditions/route.ts`（`LINE_ROUTE_MAP` / `LINE_ALIAS_MAP`）を正本へ同期し、`notation-copies-sync.test.js` の監視対象に追加。
   - `.githooks/pre-commit` に `realpro-guide-town.test.js`（詳細地域案内＋単発自動 `_resetBeforeFill`）・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を追加。
+  - **2.8.311 / 作り方19 手順書浄化・ITANDI 独立・監査同期**:
+    - `app/lib/itandi-field-aliases.ts` を新設し、`ITANDI` の `compactBundle` / `buildPlaybook` / `inheritLinkFoundations` がリアプロ別名表 `field-name-aliases.ts` を混ぜない構造に分離。`app/lib/auto-itandi-rules.ts` に独立版 `ITANDI_RULES_REVIEWED_UP_TO` を分離。
+    - `app/api/human-learn-profile/route.ts` の `?refresh=1&scope=realpro|itandi` 対象スコープ修正＋`?touch=0` の `rulesReviewedUpToFor(scope)` 統一。
+    - `chrome-extension/itandi-page-script.js` が `axlx_learn_playbook__itandi` / `axlx_learn_bundle__itandi` を読み、`search_audits.steps` に `page:page_ver`, `page:playbook_seen`, `page:playbook_none`, `page:playbook_behind` と途中保存（`itandi-content.js` `axlx-guide-live-flush` → `background.js` `axlx-audit-live-step` `site: "itandi"`）を送る経路を追加。`search-audit.js` で `dl:send_bar_show` を畳み込み、`background.js` で反対側サイト更新検知・`perSite.realpro` 混載上書き停止・ITANDI フォールバック `postMessage("axlx-itandi-fill-exec")` ＆ `customerId` 伝播を修正。
+    - `learn-supervisor.ts`（`read_count` / `auto_after` 実値伝播）＆ `learn-bundle-preserve.ts` `syncSupervisorImproveLoop`（`shots.learned` 引き継ぎ後の `改善までの一連` 同期）を実装し、`pre-commit` に `playbook-clean-and-itandi-sync.test.ts` 等を追加。
 
 **未決（竹内さんの判断が要る）**
 - A. （レインズは使わないので取り下げ）REINS の東海道本線の表記。

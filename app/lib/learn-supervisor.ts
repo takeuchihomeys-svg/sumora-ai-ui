@@ -4452,6 +4452,16 @@ function buildMeeting(m: {
     const centerOnly = num(im?.centerOnlyPos)
       || (num(im?.withScreenPos) > 0 && num(im?.matched) === 0 ? num(im?.withScreenPos) : 0);
     const solidPos = num(im?.solidPos) || num(im?.matched);
+    // ★ 2026-11-27: 実測 read_count / auto_after / foundationMissingN をベタ書き null ではなくそのまま渡す（read=3 なのに read_count=0 と誤診するのを防ぐ）
+    const hasBrForPro = m.bundleReflect != null && typeof m.bundleReflect === "object";
+    const realReadCount = hasBrForPro && typeof m.bundleReflect!.read_count === "number" ? m.bundleReflect!.read_count : null;
+    const realAutoAfter = hasBrForPro && typeof m.bundleReflect!.auto_after === "boolean" ? m.bundleReflect!.auto_after : null;
+    const realFaMissingN = typeof m.foundationAudit?.missing_n === "number"
+      ? m.foundationAudit.missing_n
+      : (Array.isArray(m.foundationAudit?.missing) ? m.foundationAudit.missing.length : null);
+    const k43ForPro = m.foundationAudit?.key?.F43_improve_to_auto_link;
+    const k55ForPro = m.foundationAudit?.key?.F55_auto_reflect_verified;
+    const realReflectOk = k43ForPro ? (k43ForPro.ok === true ? 1 : 0) : (k55ForPro ? (k55ForPro.ok === true ? 1 : 0) : null);
     const think = buildProThinkCapability({
       visionBottleneckN: vision_pro_link.bottleneck_n,
       visionLine: vision_pro_link.line,
@@ -4468,9 +4478,9 @@ function buildMeeting(m: {
       kindConflictFields: conflictFields.slice(0, 12),
       photoVsRecordN: vsOnly.length || null,
       photoVsRecordFields: (vsOnly.length ? vsOnly : vsFields).slice(0, 12),
-      readCount: null,
-      autoAfter: null,
-      foundationMissingN: null,
+      readCount: realReadCount,
+      autoAfter: realAutoAfter,
+      foundationMissingN: realFaMissingN,
       oneRecBottleneck: null,
     });
     evidence.unshift({
@@ -4504,10 +4514,10 @@ function buildMeeting(m: {
       learnedOk: learnedOkN,
       photoTodo: todoN,
       hasPhotoLearnTask: learning_tasks.some((t) => t.kind === "photo_learn"),
-      readCount: null,
-      autoAfter: null,
-      reflectOk: null,
-      foundationMissingN: null,
+      readCount: realReadCount,
+      autoAfter: realAutoAfter,
+      reflectOk: realReflectOk,
+      foundationMissingN: realFaMissingN,
       thinkMissingN: think.missing.length,
       acquireArmed: acqHint.phases_ok.includes("armed") ? true : (acqHint.stuck_before_acquire ? false : null),
       acquireSentGrasped: acqHint.sent_grasped,

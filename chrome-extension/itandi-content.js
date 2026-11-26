@@ -200,7 +200,31 @@
   // itandi-page-script.js（world:MAIN）へpostMessageで転送
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-itandi-fill") return;
-    window.postMessage({ from: "axlx-itandi-fill-exec", conditions: e.data.conditions }, "*");
+    if (e.data.customerId) _pendingFillCustomerId = e.data.customerId;
+    window.postMessage({
+      from: "axlx-itandi-fill-exec",
+      conditions: e.data.conditions,
+      customerId: e.data.customerId || _pendingFillCustomerId || null,
+    }, "*");
+  });
+
+  // ★ 2026-11-27: ITANDI でも page:* の点検段をリアルタイム送信（タイムアウト時も途中の段を DB に残す）
+  window.addEventListener("message", function (e) {
+    if (e.source !== window || !e.data || e.data.from !== "axlx-guide-live-flush") return;
+    try {
+      var steps = Array.isArray(e.data.steps) ? e.data.steps : [];
+      for (var i = 0; i < steps.length; i++) {
+        var st = steps[i] || {};
+        if (!st.k) continue;
+        chrome.runtime.sendMessage({
+          type: "axlx-audit-live-step",
+          k: "page:" + String(st.k || "").slice(0, 40),
+          d: st.d == null ? null : String(st.d).slice(0, 120),
+          customerId: e.data.customerId != null ? String(e.data.customerId) : (_pendingFillCustomerId || null),
+          site: "itandi",
+        }, function () { void chrome.runtime.lastError; });
+      }
+    } catch (_) {}
   });
 
   // URLパラメータ検知：?sumora_cid=<ID> でページを開いたとき自動入力をトリガー
@@ -256,7 +280,8 @@
             console.warn("[itandi-content] sumora_cid not found:", _cid);
             return;
           }
-          window.postMessage({ from: "axlx-itandi-fill-exec", conditions: _buildConditions(c) }, "*");
+          _pendingFillCustomerId = _cid;
+          window.postMessage({ from: "axlx-itandi-fill-exec", conditions: _buildConditions(c), customerId: _cid }, "*");
         })
         .catch(function (e) {
           console.warn("[itandi-content] URLパラメータ自動入力エラー:", e);

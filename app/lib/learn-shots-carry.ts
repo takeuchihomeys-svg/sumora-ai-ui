@@ -9,6 +9,7 @@
  *   → 版の確認（touch=0）が束の本体を読まずに数だけ返せるよう、束の一番上に screen_solid / screen_positions を置く。
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { sanitizeLearnedForSite } from "./human-motion-sanitize";
 
 type LearnedMap = Record<string, unknown[]>;
 
@@ -58,8 +59,11 @@ export async function carryLearnedShots(
     b.screen_solid = c.solid;
     b.screen_positions = c.positions;
   };
-  const own = asLearned(shots.learned);
+  const siteFilter = (scope === "realpro" || scope === "itandi") ? scope : null;
+  const ownRaw = asLearned(shots.learned);
+  const own = ownRaw ? asLearned(sanitizeLearnedForSite(ownRaw, siteFilter).learned) : null;
   if (own) {
+    shots.learned = own;
     const c = countLearnedPositions(own);
     stamp(c);
     return { carried: false, from_id: null, ...c, why: "own" };
@@ -76,11 +80,15 @@ export async function carryLearnedShots(
         .eq("id", r.id).limit(1);
       if (q.error) continue;
       const row = ((q.data ?? [])[0] ?? null) as { learned?: unknown; learned_scene?: unknown } | null;
-      const got = asLearned(row?.learned);
+      const gotRaw = asLearned(row?.learned);
+      if (!gotRaw) continue;
+      // ★ 2026-11-27: 過去の汚染束（例: #2514）から他サイト・ゴミを継がないよう引き継ぎ時点で浄化する
+      const got = asLearned(sanitizeLearnedForSite(gotRaw, siteFilter).learned);
       if (!got) continue;
       const next: Record<string, unknown> = { ...shots, learned: got, carried_from: r.id };
-      const sc = asLearned(row?.learned_scene);
-      if (sc) next.learned_scene = sc;
+      const scRaw = asLearned(row?.learned_scene);
+      const scClean = scRaw ? asLearned(sanitizeLearnedForSite(scRaw, siteFilter).learned) : null;
+      if (scClean) next.learned_scene = scClean;
       b.shots = next;
       const c = countLearnedPositions(got);
       stamp(c);

@@ -5379,11 +5379,12 @@ function openInstructions(siteKey) {
       // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
       _auditTag("itandi", selectedCustomer, conditions, _auditCtx_it);
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
+      const _itCid = selectedCustomer && selectedCustomer.id != null ? String(selectedCustomer.id) : null;
       if (isUnderbar) {
-        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
+        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, customerId: _itCid, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
       } else {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions }, () => {
+          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions, customerId: _itCid }, () => {
             if (chrome.runtime.lastError) {
               console.warn("[popup] sendMessage failed:", chrome.runtime.lastError.message);
               autofillBtn.textContent = "⚠ itandiのタブで開いてください";

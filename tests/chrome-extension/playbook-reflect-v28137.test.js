@@ -35,7 +35,7 @@ const done = [...doneSrc.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
 // 2026-11-26: 手順書は版（rules_up_to）と一連の流れ（flow_series）の印を持つ（2.8.297・2.8.3xx で足した）。古い見本のままだと
 //   「手順書の版が無い＝手順書が古い（playbook_behind）」が余分に出る。見本を今の形（版＝拡張と同じ）に揃える。
 const pbAll = {
-  version: "abcdef0123456789", rules_v: "d30a6a50", rules_up_to: "2.8.310",
+  version: "abcdef0123456789", rules_v: "d30a6a50", rules_up_to: manifest.version,
   rules: done.map((id) => ({ id })),
   flow_series: [{ id: "before_clear" }, { id: "after_clear" }],
   scenes: [{ steps: ["a", "b"], detail: [{}, {}] }, { steps: ["c"], detail: [{}] }],

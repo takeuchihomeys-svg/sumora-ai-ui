@@ -20,6 +20,7 @@
 // ⚠ LLM は「迷った時だけ」呼ぶ（決定論で分かる物は決定論で決める＝費用を抑える）。
 
 import { isAutoMode } from "./press-by";
+import { isAllowedMotionFieldName, isCrossSiteFieldName } from "./human-motion-sanitize";
 
 /** 写真から読んだ1つの欄 */
 export type ShotField = {
@@ -523,7 +524,7 @@ export function learnFromShots(
      */
     mode?: unknown;
   }>,
-  opt: { mode?: "normal" | "all" } = {},
+  opt: { mode?: "normal" | "all"; site?: string | null } = {},
 ): {
   screens: Record<string, {
     n: number;
@@ -561,6 +562,7 @@ export function learnFromShots(
   const sceneAcc: Record<string, Record<string, { n: number; xs: number[]; ys: number[]; kinds: Record<string, number> }>> = {};
   let withOps = 0;
   const preferNormal = opt.mode === "normal";
+  const siteFilter = (opt.site === "realpro" || opt.site === "itandi") ? opt.site : null;
 
   for (const s0 of Array.isArray(shots) ? shots : []) {
     /**
@@ -574,12 +576,20 @@ export function learnFromShots(
      *   ⚠ 自動の録画は**結果の確認**であって手本ではない（P0）。
      */
     if (preferNormal && isAutoMode(s.mode)) continue;
+    // ★ 2026-11-27: 1枚の画像に相手サイト固有の欄（例: itandi行にリアプロのマップ検索・閲覧履歴）が写っていれば、
+    //   その写真に同居していた「徒歩」「検索」「賃料」等ごと別サイト誤記録として丸ごと除外する
+    if (siteFilter) {
+      const rawSl = (s.shot_learn && typeof s.shot_learn === "object" ? (s.shot_learn as { fields?: unknown }).fields : null);
+      if (Array.isArray(rawSl) && rawSl.some((f) => f && typeof f === "object" && isCrossSiteFieldName((f as { name?: unknown }).name, siteFilter))) {
+        continue;
+      }
+    }
     let ops = Array.isArray(s.shot_ops)
       ? (s.shot_ops as unknown[])
         .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))
         .filter((o): o is Record<string, unknown> => !!o)
         .map((o) => ({ f: typeof o.f === "string" ? String(o.f).slice(0, 30) : "" }))
-        .filter((o) => o.f)
+        .filter((o) => o.f && (!siteFilter || isAllowedMotionFieldName(o.f, siteFilter)))
       : [];
     /**
      * 2026-11-14 竹内さん「データベースの写真から学習する」:
@@ -592,14 +602,14 @@ export function learnFromShots(
      */
     if (!ops.length) {
       const fo = Array.isArray(s.field_order) ? (s.field_order as unknown[]) : [];
-      const names = fo.map((x) => norm(x)).filter((x) => x && isLearnableName(x));
+      const names = fo.map((x) => norm(x)).filter((x) => x && isLearnableName(x) && (!siteFilter || isAllowedMotionFieldName(x, siteFilter)));
       if (names.length) {
         ops = names.slice(0, 60).map((f) => ({ f }));
       } else {
         const pf = (s.point_fields && typeof s.point_fields === "object" && !Array.isArray(s.point_fields))
           ? (s.point_fields as Record<string, unknown>) : null;
         if (pf) {
-          const keys = Object.keys(pf).filter((k) => isLearnableName(k)).slice(0, 60);
+          const keys = Object.keys(pf).filter((k) => isLearnableName(k) && (!siteFilter || isAllowedMotionFieldName(k, siteFilter))).slice(0, 60);
           if (keys.length) ops = keys.map((f) => ({ f }));
         }
       }
@@ -618,7 +628,7 @@ export function learnFromShots(
           y: typeof f.y === "number" && f.y >= 0 && f.y <= 1 ? f.y : null,
           zone: typeof f.zone === "string" ? String(f.zone).slice(0, 10) : null,
         }))
-        .filter((f) => f.name && f.kind);
+        .filter((f) => f.name && f.kind && isAllowedMotionFieldName(f.name, siteFilter));
     })();
 
     const slObj = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn as Record<string, unknown> : null);

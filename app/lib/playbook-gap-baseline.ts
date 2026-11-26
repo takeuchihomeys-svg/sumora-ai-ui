@@ -6,11 +6,15 @@
 //   無い新しい抜けだけを「増えた」と出す。直すと「消えた」と出る。
 //   ⚠ 基準は「受け入れた抜け」の一覧。増えたら、直すか・理由を書いて基準に加える（竹内さんの確認つき）。
 
-/** 抜けの文を比べる形（件数・（…）の中身・前後の空白を外す） */
+/** 抜けの文を比べる形（件数・（…）の中身・前後の空白を外す。ネストした括弧も内側から順に外す） */
 export function gapKey(text: string): string {
-  return String(text ?? "")
-    .replace(/（[^）]*）/g, "")
-    .replace(/\(([^)]*)\)/g, "")
+  let s = String(text ?? "");
+  let prev = "";
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/（[^（）]*）/g, "").replace(/\([^()]*\)/g, "");
+  }
+  return s
     .replace(/\d+/g, "#")
     .replace(/\s+/g, " ")
     .trim();

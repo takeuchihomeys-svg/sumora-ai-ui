@@ -15054,4 +15054,28 @@ Claude（統括役）からの依頼2件への対応。
   - **環境注記**: `.env.local` には `SUPABASE_SERVICE_ROLE_KEY` が無い（ANON キーのみ）ため、ローカルから RLS（service_role 専用）テーブル `human_motion` / `extension_snapshots` / `extension_devices` を直接読むと 0/null に見える。本番の実データは Vercel API（`/api/human-motion?summary=1` 20,000行・`/api/human-learn-profile?history=1` 等）で確認すること（2026-11-27 確認済み）。
   - **版数**: `2.8.310` のまま（`head-ttl-served-v2310` 等と整合）。`ext-test-all.ts` 全 344 本: 青 232 / 赤 112（新赤 0）。変更・追加 TS ファイルの `tsc` エラー 0。
 
+### 2026-11-27 徹底調査＆改善（2.8.311 / 作り方 19）: 手順書浄化・ITANDI 単独稼働・拡張同期・統括ループ矛盾解消
+- **① 手順書（`action-playbook.ts` `PLAYBOOK_BUILD_V` 18→19・`human-motion-sanitize.ts`・`itandi-field-aliases.ts`）**:
+  - 値セル（`147,000円｜td.text_right` 等 `｜td.(?!pager)`）・巨大表コンテナ（`div.main_table`）・拡張の履歴ボタン（`button.history_btn`）・`#top_free` / `#main_form`・生CSSハッシュ単体（`^(?:input|button|div|span|a|label|select|textarea)\.(?:css|sc)-[a-z0-9_-]+$`）を除去（ラベル付き `左のリスト検索｜button.css-...` は保持）。
+  - **ITANDI `#2514` 混載汚染の根絶**: `sanitizeLearnedForSite(learned, "itandi")` でリアプロ亡霊 3件以上＋高票(`n≥50` 2件以上 または `n≥22` 3件以上)を検知し同世代混入を一掃（綺麗な将来の高票 ITANDI 配列は無傷、本物 ITANDI `n=1..15` は維持）。実 DB ドライラン（`#2839`）で 170 汚染項目を除去、`solid=3 → 37 / total=72`（純 ITANDI・0 ゴミ・`checkPlaybook` 0件）を確認。
+  - `shot-learn.ts` の `learnFromShots(shots, { site })`: 他サイト欄（`isCrossSiteFieldName`）を1件でも含む写真行（`#21929` 型）は共通名「徒歩」ごと丸ごとスキップ。
+  - `app/lib/itandi-field-aliases.ts` を新設（リアプロ別名 `field-name-aliases.ts` と物理分離）。`compactBundle` / `buildHumanLearnBundle` / `inheritLinkFoundations` / `buildPlaybook` が `site="itandi"` でリアプロ別名を作らないようにした。
+  - `action-playbook.ts`: `shots.learned` を `source: "screen"`（`field > alias > screen > mismatch`）として手順書位置に組み込み、同一座標・同票の別名複製を1代表へ畳み、`aggDefs`（`route_id[]`/`station_id[]`/`city_code[]`）との重複出力を防止。
+- **② 改善ループ・統括矛盾・API 修正**:
+  - `auto-itandi-rules.ts`: 独立版 `ITANDI_RULES_REVIEWED_UP_TO = "2.8.311"` と `rulesReviewedUpToFor(site)` を分離（リアプロ更新で ITANDI 版が偽更新される問題を解消）。
+  - `app/api/human-learn-profile/route.ts`: `?refresh=1&scope=realpro|itandi` が指定 `scope` を作り直さず `"all"` だけ再生成していたバグを修正（さらに `?touch=0` も `rulesReviewedUpToFor(scope)` 参照に統一）。
+  - `app/lib/human-learn-brain.ts`: `learnPoints` の1行上限を `50` → `500` に統一（中央爆発 `n>500 & 0.5,0.5` のみ `effN=1` 維持）、`site` を各段へ伝播。
+  - `app/lib/learn-supervisor.ts`: `buildProThinkCapability` と `buildImproveConstruct` にベタ書きされていた `readCount: null / autoAfter: null / foundationMissingN: null` を実測値（`m.bundleReflect` / `m.foundationAudit`）へ接続し、`read=3` でも `Pro思考骨格` が「`read_count=0`（読んでいない）」と誤診し続けるバグを修正。
+  - `app/lib/learn-bundle-preserve.ts` & `bundle-write-prepare.ts`: `syncSupervisorImproveLoop(bundle, scope)` を新設し、`inheritLinkFoundations` / `carryLearnedShots` で `shots.learned` が増えた後に `supervisor.meeting.evidence`（「学習→自動の連携」「連携のボトルネック」「改善までの一連」）と `agenda` の段階3偽停止（`n≥3 0` vs `F32 ✓` の食い違い）・`challenge_missing_in_bundle` を実 `screen_solid` に同期。
+  - `app/lib/playbook-gap-baseline.ts`: `gapKey` がネストした括弧（例: `（…・区の欄（チェック）・…）`）の内側閉じ括弧で止まり偽の増減を出していたバグを修正（内側から順に剥離）。
+- **③ Chrome 拡張同期（`2.8.311`）**:
+  - `manifest.json`・`page-script.js`・`itandi-page-script.js`・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` を `2.8.311` に統一。
+  - `itandi-page-script.js`: `_AXLX_ITANDI_PAGE_VER`・`_AXLX_ITANDI_RULES_DONE`（14 ID）・`_itApplyLearnData` / `_itRequestLearnStorage` / `_itLearnPosOf`（手順書消費＆未検出時の学んだ座標ログ）・`_itAuditPlaybookSeen()`（`page_ver` / `playbook_seen` / `playbook_none` / `playbook_behind`）・`_itAuditReset` の `local_it_*` runId 補完・120段上限・`_IT_PIN_RE`・`_itFlushLiveSteps`（リアルタイム途中保存）を実装。`itandi-content.js` に `axlx-guide-live-flush` 転送、`popup.js`/`underbar.js` に ITANDI `customerId` 伝播を追加。
+  - `background.js`: `_refreshLearnedBundle` で反対側サイト（`axlx_learn_other_head_at__<other>`）も確認し古い時は `"same_version"` スキップしない・`perSite.realpro` への混載 `allBundle` 上書きを初回空時のみに制限・ITANDI フォールバック（`:9589`, `:10302`）で `_audit_run_id` / `customerId` 補完＆存在しない `CustomEvent("axlx-itandi-fill")` から `postMessage("axlx-itandi-fill-exec")` へ修正。
+  - `search-audit.js`: `dl:send_bar_show` を `COLLAPSE_STEP` に追加（80連続でも 1段 `n=80` に畳み 120段溢れを防止）。
+- **④ 見張りと実機残**:
+  - 新規・更新防衛テスト: `playbook-clean-and-itandi-sync.test.ts`（46/46）・`itandi-rules-separate.test.ts`（27/27）・`playbook-and-motion-hardening.test.ts`（25/25）・`playbook-site-split.test.ts`・`scripts/check-playbook-sync.ts`・`scripts/ext-test-all.ts`（失敗詳細出力追加、344本 232青 / 新赤0）。`.githooks/pre-commit` に追加済み。
+  - 本番反映待ち（竹内さん OK 待ち）: commit / push（main デプロイ）→ `playbook-gap-audit.ts --write-baseline` → `attach-playbook.ts --apply` & `?refresh=1&scope=realpro|itandi` → ローカル `git pull`・拡張再読込・Realpro/ITANDI 各1回の自動検索で `F6/F38/F55/F63` 通過＆`playbook_seen` 実測確認。
+
+
 
