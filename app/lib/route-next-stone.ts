@@ -74,3 +74,20 @@ export function nextStoneLine(node: RouteNodeId | string | null | undefined): st
   const st = NEXT_STONE[String(node ?? "") as RouteNodeId];
   return st ? `【次の石（申込へは一歩ずつ・材料）】今の駅の次は ${st.label}。申込のご案内へ飛ばさず、まずここへ（竹内さん本人は一歩ずつ進める）` : "";
 }
+
+/**
+ * 2026-11-26 作業員A（竹内さん 11/26「強化して細分化して質あげる」・統括役の頼み）: 内覧の当日〜内覧の後〜申込の細かい石（駅 viewing_scheduled → viewed → apply_prep の間）
+ *   出所: 成約データ（deal_outcomes）で内覧した 43件（75日・内覧の後2日以上たった件）と、その後48時間のこちらの通・AIX（11/26 午後・軽い読み）。内覧の後→申込は中央 1.7日
+ *   ② 届いた件 18／届かなかった件 25 の、内覧の後48時間のこちらの一手:
+ *      手打ちの申込のご案内（お申込・抑え）: 15/18（83%）／12/25（48%）← 一番の差（お客様の「申込みたい」への返しも入る＝向きは両方ある）
+ *      AIX【申込へ】: 6/18／6/25（差なし）・感想を聞く（如何でしたか）: 0/18／3/25・見積: 7/18／8/25・お礼: 全件
+ *   ③ ブレイン（同じ48時間に判断の記録が残る 33件）: AIX【申込へ】を選んだ 届いた 6/15・届かなかった 1/18／物件出しに戻した 4/15・10/18（気に入らなかった件は戻すのが竹内さんと同じ向き）
+ *      内覧が済む前に【申込へ】を選んだ（早すぎ）2件。返信の向きは判断の記録に無い（#787）＝返信で申込のご案内が遅れたかは数えられない
+ */
+export type ViewingStone = { id: string; name: string; move: string[]; phrase: string[]; aix: string[]; note: string };
+export const VIEWING_STONES: readonly ViewingStone[] = [
+  { id: "v_day", name: "内覧の当日（挨拶・待ち合わせ）", move: ["aix:greeting_viewing", "aix:meeting_place"], phrase: ["本日○時お部屋ご案内させて頂きます", "現地エントランスお待ち合わせで何卒よろしくお願い致します"], aix: ["greeting_viewing", "meeting_place"], note: "当日のご挨拶は時刻で送る（番の判断の外・timed）" },
+  { id: "v_thanks", name: "内覧の後のお礼", move: ["reply"], phrase: ["本日はお時間頂きありがとうございました"], aix: [], note: "届いた・届かないとも全件＝差は無い（これだけでは石が進まない）" },
+  { id: "v_liked", name: "気に入った確かめ", move: ["reply:answer", "reply:invite_apply"], phrase: ["お気に召されましたお部屋お申込みも可能ですのでお気軽にお知らせください"], aix: [], note: "竹内さんは感想を問う（如何でしたか）より、気に入った前提で申込の道を示す（感想を問う 届いた 0/18）" },
+  { id: "v_apply", name: "申込のご案内", move: ["reply:invite_apply", "aix:application_push"], phrase: ["お気に召されましたらお申込しお部屋抑えさせて頂きます", "こちらお申込に必要なご情報となります", "お送り頂き次第、お部屋お申込し抑えさせて頂きます"], aix: ["application_push"], note: "内覧の後48時間の手打ちの申込のご案内 届いた 83%・届かない 48%・AIX【申込へ】は差なし" },
+];
