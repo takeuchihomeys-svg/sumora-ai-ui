@@ -2040,6 +2040,57 @@ export function judgeRulesOnAudit(
   });
 }
 
+/** 新しい決まり1本の「実機の証拠」の状態 */
+export type NewRuleEvidence = {
+  id: string;
+  since: string;
+  /**
+   * verified=新しい版の自動で確かめられて守れた／ng=確かめられて守れていない／
+   * waiting_ext=その版以降の自動の記録がまだ無い（拡張の再読み込み＋自動1回が要る）／
+   * no_scene=新しい版で回ったが、この決まりの場面（onlyIf）が一度も出ていない／
+   * no_verify=記録での確かめ方が無い（コードにあるかだけ）
+   */
+  state: "verified" | "ng" | "waiting_ext" | "no_scene" | "no_verify";
+  eligible_runs: number;
+  ok: number;
+  ng: number;
+  why: string;
+};
+
+/**
+ * ★ 2.8.313 新しい決まり（直近の版で入った決まり）が、実機の自動の記録で本当に確かめられたかを数える（純関数）。
+ *   実測の穴: 決まりを足しても、その場面が出ない／拡張が古いままだと per_rule は no_data のままで、
+ *   「確かめられていない」ことが誰にも見えなかった（無音で効いていないかもしれない）。
+ *   ⚠ no_data を ok に混ぜない。新しい版の回が無いのと、回ったのに場面が出ないのを分けて言う。
+ */
+export function newRulesEvidence(
+  runs: ReadonlyArray<{ ext_version?: string | null; steps?: ReadonlyArray<AuditStep> | null }>,
+  rules: ReadonlyArray<AutoRule> = AUTO_RULES,
+  opts: { recent?: number } = {},
+): NewRuleEvidence[] {
+  const recent = Math.max(1, opts.recent ?? 3);
+  const sinces = [...new Set(rules.map((r) => r.since).filter((s): s is string => !!s && /^\d+(\.\d+)*$/.test(s)))]
+    .sort((a, b) => compareExtVersion(b, a))
+    .slice(0, recent);
+  const out: NewRuleEvidence[] = [];
+  for (const r of rules) {
+    if (!r.since || !sinces.includes(r.since)) continue;
+    if (!r.verify) { out.push({ id: r.id, since: r.since, state: "no_verify", eligible_runs: 0, ok: 0, ng: 0, why: "点検記録での確かめ方が無い（コードにあるかだけ）" }); continue; }
+    const elig = runs.filter((a) => a.ext_version && /^\d+(\.\d+)*$/.test(a.ext_version) && compareExtVersion(a.ext_version, r.since!) >= 0);
+    let ok = 0, ng = 0, lastNg = "";
+    for (const a of elig) {
+      const j = judgeRulesOnAudit(Array.isArray(a.steps) ? a.steps : [], [r], a.ext_version ?? null)[0];
+      if (j?.result === "ok") ok++;
+      else if (j?.result === "ng") { ng++; if (!lastNg) lastNg = j.why; }
+    }
+    if (!elig.length) out.push({ id: r.id, since: r.since, state: "waiting_ext", eligible_runs: 0, ok, ng, why: `${r.since} 以降の拡張の自動がまだ記録に無い（再読み込み→自動を回す）` });
+    else if (ng > 0) out.push({ id: r.id, since: r.since, state: "ng", eligible_runs: elig.length, ok, ng, why: `守れていない ${ng}回（${lastNg.slice(0, 60)}）` });
+    else if (ok > 0) out.push({ id: r.id, since: r.since, state: "verified", eligible_runs: elig.length, ok, ng, why: `新しい版の自動 ${elig.length}回のうち ${ok}回で守れたと確かめた` });
+    else out.push({ id: r.id, since: r.since, state: "no_scene", eligible_runs: elig.length, ok, ng, why: `新しい版の自動 ${elig.length}回で、この決まりの場面（${(r.verify.onlyIf ?? []).join("・") || "確かめる段"}）が一度も出ていない` });
+  }
+  return out;
+}
+
 export type PlaybookSeen = {
   version: string | null;
   rules_v: string | null;

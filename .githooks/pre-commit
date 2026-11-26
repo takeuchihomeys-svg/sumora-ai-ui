@@ -29,3 +29,14 @@ npx tsx app/lib/__tests__/reflect-mechanism-hardening.test.ts
 node tests/chrome-extension/head-ttl-served-v2310.test.js
 node tests/chrome-extension/learn-bundle-site-sync.test.js
 node tests/chrome-extension/reflect-pipeline-v28312.test.js
+echo "[pre-commit] 新しい決まりの実機の証拠の判定（2.8.313）"
+npx tsx app/lib/__tests__/new-rules-evidence.test.ts
+STAGED="$(git diff --cached --name-only)"
+if echo "$STAGED" | grep -qE '^(chrome-extension/|tests/chrome-extension/)'; then
+  echo "[pre-commit] 拡張の試験を全部（基準の赤より増えていないか・赤の中の失敗項目も・2.8.313）"
+  npx tsx scripts/ext-test-all.ts
+fi
+if echo "$STAGED" | grep -qE '\.(ts|tsx)$'; then
+  echo "[pre-commit] 型エラーが基準より増えていないか（絶対ルール5・2.8.313）"
+  npx tsx scripts/tsc-gate.ts
+fi

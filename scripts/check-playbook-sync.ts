@@ -14,6 +14,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { autoRulesVersion, AUTO_RULES_REVIEWED_UP_TO, AUTO_RULES } from "../app/lib/auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
+import { fetchPlaybookReflect } from "../app/lib/playbook-reflect-server";
 import { cmpVer } from "../app/lib/playbook-freshness";
 import { diffGaps } from "../app/lib/playbook-gap-baseline";
 import { ITANDI_AUTO_RULES, ITANDI_RULES_REVIEWED_UP_TO, checkItandiRulesInCode, itandiRulesVersion, rulesReviewedUpToFor, rulesVersionFor } from "../app/lib/auto-itandi-rules";
@@ -267,6 +268,27 @@ async function main() {
   for (const [label, okFlag] of mechChecks) {
     say(`  ${okFlag ? OK : NG} ${label}`);
     if (!okFlag) bad.push(`反映仕組みが欠落: ${label}`);
+  }
+
+  // ⑧ 2026-11-27(2.8.313) 新しい決まりが実機の自動で本当に確かめられたか（効いたと言えるか）
+  say("\n■ ⑧ 新しい決まりの実機の証拠（直近の版で入った決まり・リアプロ・直近20回の自動）");
+  if (URL_ && KEY) {
+    try {
+      const rep = await fetchPlaybookReflect(process.env, { scope: "realpro", runs: 20 });
+      if (!rep.new_rules.length) say(`  ${WA} 新しい決まりが無い（since が読めない）`);
+      for (const n of rep.new_rules) {
+        const mark = n.state === "verified" ? OK : n.state === "ng" ? NG : WA;
+        say(`  ${mark} ${n.id}（${n.since}〜）${n.state}: ${n.why}`);
+        if (n.state === "ng") bad.push(`新しい決まり ${n.id} が実機で守れていない（${n.why}）`);
+      }
+      const waiting = rep.new_rules.filter((n) => n.state === "waiting_ext" || n.state === "no_scene");
+      if (waiting.length) warn.push(`新しい決まり ${waiting.length}件が実機で未確認（${waiting.slice(0, 4).map((n) => n.id).join("・")}${waiting.length > 4 ? "…" : ""}）＝「効いた」とはまだ言えない`);
+    } catch (e) {
+      say(`  ${WA} 読めない（${e instanceof Error ? e.message : String(e)}）`);
+      warn.push("新しい決まりの実機の証拠を読めなかった");
+    }
+  } else {
+    say(`  ${WA} DB が読めないので見ていない`);
   }
 
   say("\n■ 結論");
