@@ -120,6 +120,13 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
     const aix = String(d.aix ?? "").trim(); if (!aix) return null;
     return c.some((x) => aix.startsWith(x));
   },
+  // 2026-11-26 作業員L（#728 ③・作業員A と決め・台帳 #783）: 成約データの申込の直前の一手（手打ちの返信が大半）＝返信を選んだ＝使った・申込へ以外の AIX＝使わなかった・
+  //   AIX【申込へ】は案内の別の形なので決められない（材料の印のある番だけを数えるのは呼ぶ側）
+  deal_flow_pre_apply: (d) => {
+    const aix = String(d.aix ?? "").trim();
+    if (!aix) return true;
+    return aix.startsWith("application_push") ? null : false;
+  },
 };
 
 /** 物差し①②を記録の行から数える（毎朝の1枚） */

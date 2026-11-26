@@ -692,6 +692,8 @@ async function main() {
     }
   }
 
+  // 2026-11-26 作業員L（台帳 #505・土台の帳面）: 入口の読みが間に合った割合を毎日の数に（core:intake_reach:in_time・入口を呼ぶ番が分母）
+  const intakeReachRows: Array<{ metric: string; value: number | null; n: number }> = [];
   // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY・統括役の物差し）: 統括の入口が選んだ「まず見る」の行が ①材料の先頭に来た割合 ②その行をブレインが使った割合（前の24時間・digest.mpr・日付で絞った軽い読み）。
   //   あわせて入口の読みが判断に間に合った割合（digest.ci のある番）。mpr の無い日（off）は間に合った割合だけ
   if (!only || doCandidates) {
@@ -710,6 +712,7 @@ async function main() {
           if (((lm ?? [])[0] as { sender?: string } | undefined)?.sender !== "customer") continue;
           elig++; if (typeof r.digest?.ci === "string") eligCi++;
         }
+        intakeReachRows.push({ metric: "core:intake_reach:in_time", value: elig ? Math.round((eligCi / elig) * 1000) / 10 : null, n: elig });
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
         lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
@@ -791,6 +794,7 @@ async function main() {
       { day, metric: "reply_match", scope: "takeuchi", value: mTk.match, n: mTk.n }, { day, metric: "reply_match", scope: "all", value: mAll.match, n: mAll.n },
       { day, metric: "aix_first_match", scope: "takeuchi", value: mMain.firstTk.rate, n: mMain.firstTk.n }, { day, metric: "aix_first_match", scope: "all", value: mMain.firstAll.rate, n: mMain.firstAll.n },
       ...spendRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...intakeReachRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       { day, metric: "exam_cost_usd", scope: "all", value: cost, n: runs.length }, { day, metric: "exam_worse_runs", scope: "all", value: worse.length, n: runs.length },
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
       // 2026-11-23 作業員N2（統括役の頼み）: 穴のまとまりの数（上）は残し、まとまりが表す行の数を並べる（not_subdivided の 8 は地図の7行＋設計知見 89行＋欄4つ）
