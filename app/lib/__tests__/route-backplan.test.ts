@@ -16,7 +16,7 @@ t("見積・申込の意思・内覧の希望なし: 内覧なしの道は内覧
 const p3 = backplanOf({ ...base, node: "estimate", estimateSent: true, applyIntent: true, viewingWish: true })!;
 t("申込の意思でも内覧の希望があれば内覧あり", p3.path === "内覧あり");
 const p4 = backplanOf({ ...base, moveInYmd: "2026-12-31" })!;
-t("申込の目安: 入居の3〜4週間前の幅", p4.applyBy === "2026-12-03〜2026-12-10" && backplanLine(p4).includes("目安"));
+t("申込の目安: 入居の約1ヶ月前〜審査の2週間前の幅（KB 9b8dbfca・5bd1480b）", p4.applyBy === "2026-12-01〜2026-12-17" && backplanLine(p4).includes("目安"));
 t("日付の目安: 申込・内覧・物件出し・解約の予告は聞く事", p4.dates.some((d) => d.startsWith("申込の目安")) && p4.dates.some((d) => d.startsWith("内覧の目安")) && p4.asks.some((a) => a.includes("解約の予告")));
 t("申込以降・駅なしは null", backplanOf({ ...base, node: "applying" }) === null && backplanOf({ ...base, node: null }) === null);
 const ln = backplanLine(p1);

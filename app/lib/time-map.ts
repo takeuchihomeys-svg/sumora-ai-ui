@@ -33,15 +33,16 @@ export function nextBusinessDay(ymd: string): string { let x = ymd; for (let i =
 /** その日か前の最後の営業日 */
 export function prevBusinessDay(ymd: string): string { let x = ymd; for (let i = 0; i < 14 && !isBusinessDay(x); i++) x = addDays(x, -1); return x; }
 
-/** 予定表（純関数）: 今日より後の日を並べる。申込の目安は入居の28〜21日前（逆算と同じ幅・言い切らない＝soft）を営業日に寄せる */
+/** 予定表（純関数）: 今日より後の日を並べる。申込の目安は入居の30〜14日前（逆算と同じ幅・言い切らない＝soft）を営業日に寄せる
+ *   出所: 竹内さんの決定 10/20（KB 9b8dbfca・申込から入居まで約1ヶ月＝12月末入居なら11月末ごろ申込）・審査期間 14日（KB 5bd1480b） */
 export function buildTimeMap(i: { todayYmd: string; moveIn?: MoveInInput | null; viewings?: readonly ViewingInput[]; promises?: readonly PromiseDue[] }): TimeEvent[] {
   const out: TimeEvent[] = [];
   const mi = i.moveIn;
   const moveStart = mi && mi.kind !== "unknown" ? mi.startYmd ?? null : null;
   if (moveStart) {
     out.push({ ymd: moveStart, kind: "move_in", label: mi!.kind === "range" && mi!.endYmd ? `入居の時期（${moveStart}〜${mi!.endYmd}）` : `入居の希望日（${moveStart}）`, soft: mi!.kind === "range" });
-    const from = nextBusinessDay(addDays(moveStart, -28)), to = prevBusinessDay(addDays(moveStart, -21));
-    if (to >= i.todayYmd) out.push({ ymd: from < i.todayYmd ? i.todayYmd : from, kind: "apply_by", label: `申込の目安（${from}〜${to}・入居の3〜4週間前・言い切らない）`, soft: true });
+    const from = nextBusinessDay(addDays(moveStart, -30)), to = prevBusinessDay(addDays(moveStart, -14));
+    if (to >= i.todayYmd) out.push({ ymd: from < i.todayYmd ? i.todayYmd : from, kind: "apply_by", label: `申込の目安（${from}〜${to}・入居の約1ヶ月前〜審査の2週間前・言い切らない）`, soft: true });
   }
   for (const v of i.viewings ?? []) if (v.ymd >= i.todayYmd) out.push({ ymd: v.ymd, kind: "viewing", label: `内覧の日（${v.ymd}${v.time ? ` ${v.time}` : ""}）`, soft: false });
   for (const p of i.promises ?? []) {
