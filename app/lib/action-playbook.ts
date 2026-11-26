@@ -45,7 +45,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 21;
+export const PLAYBOOK_BUILD_V = 22;
+// 22（2026-11-27）: 場面の手順（area／cond／station／list／search／next）に、press（押す前後の人の間など全部の場面に効く決まり）も「この場面に効く決まり」として並べた。
+//   これまでは playbook.rules（一覧）にだけ載っていて、場面の手順から辿れなかった。
 // 21（2026-11-27 竹内さん「手順書に決まりとして文が無いところは漏れる」）: 追加ガイド clear／switch の手に、空の確認（最大25秒）・写真（2〜4秒の間・撮影最大25秒）・
 //   従来の外し（最大125秒）・次の客までの間（8〜25秒・ときどき40〜95秒）を入れ、clear／switch の決まりを追加ガイドに全部つないだ（一覧にしか無かった物を場面から辿れるように）。
 // 20（2026-11-27 竹内さん「手順書に抜けが無いか・時間を細かく」）: リセットの押す待ち（最大120秒）と、押した後のラグ猶予（5〜9秒・並べ替え／リセット）を
@@ -729,9 +731,9 @@ function indexOpens(opens: BundleLike["opens"]): OpenIndex {
   return m;
 }
 
-/** 手順書の場面 → 効く自動の決まり（同じ場面の物。press は全部の場面に効くので playbook.rules で見る） */
+/** 手順書の場面 → 効く自動の決まり（同じ場面の物＋press＝押す前後の人の間・全部の場面に効く。2026-11-27 竹内さん「決まりとして文が無いところは漏れる」→ 場面ごとに並べる） */
 function rulesForScene(scene: string): string[] {
-  return AUTO_RULES.filter((r) => r.scene === scene).map((r) => r.id);
+  return AUTO_RULES.filter((r) => r.scene === scene || r.scene === "press").map((r) => r.id);
 }
 
 /** 場面の手順 → 手順書の場面（値を外す・名前を読める形に・件数で上限・1手ずつの細部） */
