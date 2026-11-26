@@ -56,11 +56,15 @@ async function main() {
     const dirty = git(["status", "--porcelain", "--", ...RELEASE_PATHS]).out.split("\n").filter(Boolean);
     if (dirty.length) { say(`  ${NG} 未コミットの変更 ${dirty.length}件（拡張・決まり・束の API）`); dirty.slice(0, 5).forEach((l) => say(`      ${l.trim()}`)); bad.push(`反映に関わる未コミットの変更が ${dirty.length}件ある（コミットしないと本番にも DB にも出ない）`); }
     else say(`  ${OK} 反映に関わる場所に未コミットは無い`);
-    const ahead = git(["log", "--oneline", "origin/main..HEAD", "--", ...RELEASE_PATHS]);
-    if (!ahead.ok) { say(`  ${WA} main と比べられない（origin/main を取れない）`); warn.push("origin/main と比べられなかった"); }
+    // 2026-11-27: ハッシュではなく中身（パッチ）で比べる（git cherry）。同じ変更を別のハッシュで入れた時の誤報を防ぐ
+    const cherry = git(["cherry", "origin/main", "HEAD"]);
+    if (!cherry.ok) { say(`  ${WA} main と比べられない（origin/main を取れない）`); warn.push("origin/main と比べられなかった"); }
     else {
-      const n = ahead.out ? ahead.out.split("\n").length : 0;
-      if (n) { say(`  ${NG} main に入っていないコミット ${n}件（反映に関わる場所）`); ahead.out.split("\n").slice(0, 4).forEach((l) => say(`      ${l.slice(0, 90)}`)); bad.push(`main に未反映のコミットが ${n}件ある（Vercel は main だけをデプロイする）`); }
+      const notInMain = cherry.out.split("\n").filter((l) => l.startsWith("+")).map((l) => l.slice(2).trim());
+      const touching = notInMain.filter((h) => git(["diff-tree", "--no-commit-id", "--name-only", "-r", h]).out
+        .split("\n").some((f) => RELEASE_PATHS.some((p) => f.startsWith(p))));
+      const n = touching.length;
+      if (n) { say(`  ${NG} main に入っていないコミット ${n}件（反映に関わる場所）`); touching.slice(0, 4).forEach((h) => say(`      ${git(["log", "-1", "--format=%h %s", h]).out.slice(0, 90)}`)); bad.push(`main に未反映のコミットが ${n}件ある（Vercel は main だけをデプロイする）`); }
       else say(`  ${OK} 反映に関わる場所は main に入っている`);
     }
   }
