@@ -168,6 +168,7 @@ async function main() {
   const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
   const coreFix: string[] = [];
   const ledger: FoundGap[] = []; // 穴の型③〜⑤の穴（--write の時に台帳へ・題で重ねない）
+  let linkNextWhy = ""; // 2026-11-26 作業員A: 次に何をなぜ に連携の切れ目の1位
   const mapQd: QdOut[] = []; // 芯 ⑤ 数ごとの地図（map:* / forecast:*・detail 付きで別に書く）
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
@@ -185,6 +186,28 @@ async function main() {
       const ds = conductorDutySummary(dr);
       coreRows.push({ metric: "core:conductor_duty:have", value: ds.have, n: ds.n }, { metric: "core:conductor_duty:use", value: ds.use, n: ds.n }, { metric: "core:conductor_duty:reflect", value: ds.reflect, n: ds.n });
       lines.push(`- ${ds.line}（作業員A・#662）`);
+      // 2026-11-26 作業員A（#662・統括役の決め「受け持ち表は1つの題に」）: 土台の段の下に部品ごとの番の数（判断の記録 digest.mk・mpr・USED_MARKERS×AIX・1日・軽い読み・記録だけ）
+      try {
+        const co = await import("../app/lib/conductor-ownership");
+        const since1 = new Date(now - 864e5).toISOString();
+        const { data: dl } = await sb.from("brain_decision_logs").select("conversation_id,created_at,digest").gte("created_at", since1).limit(3000);
+        const { data: al } = await sb.from("aix_usage_logs").select("conversation_id,created_at,aix_type").gte("created_at", since1).limit(3000);
+        const cs = co.ownershipTable(((dl ?? []) as Array<{ conversation_id: string; created_at: string; digest: Record<string, unknown> | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, digest: r.digest ?? {} })), ((al ?? []) as Array<{ conversation_id: string; created_at: string; aix_type: string | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, type: String(r.aix_type ?? "") })));
+        for (const r of CONDUCTOR_DUTY) { const pl = co.dutyPartLine(r.partKeys, cs); if (pl) lines.push(`  - ${r.name}`, pl); }
+      } catch (e) { lines.push(`  - 部品の数: 失敗（${String(e).slice(0, 60)}）`); }
+      // 2026-11-26 作業員A（竹内さん 11/26「ほかのも連携したらより質上がる部分を連携させていく」）: 連携の切れ目の値打ちの高い順 上位3つ（linkage-gap-matrix・上から1つずつ既定 off でつなぐ→試験→on）
+      try {
+        const lg = await import("../app/lib/linkage-gap-matrix");
+        lines.push("### 連携・連鎖（作業員A・竹内さん 11/26「仕組化」）", ...lg.gapTopLines());
+        const top = lg.rankGaps()[0]; if (top) linkNextWhy = `- 連携の切れ目の1位「${top.name} → ${lg.SINK_JA[top.sink]}」（値打ち ${top.value}%）から既定 off でつなぐ（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」）`;
+        const { data: cq } = await sb.from("quality_daily").select("day,metric,value,n,detail").in("metric", ["chain:patterns", "chain:brain_match_hit"]).order("day", { ascending: false }).limit(6);
+        const cr = (cq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; detail: { miss_rate?: number | null } | null }>;
+        const pat = cr.filter((r) => r.metric === "chain:patterns"), hit = cr.filter((r) => r.metric === "chain:brain_match_hit");
+        lines.push(`- 連鎖の型: ${pat[0]?.value ?? "—"}型（${pat[0]?.day ?? "まだ"}${pat[1] ? `・前の日 ${pat[1].value}` : ""}）・型が当てはまった番のブレインの一致 ${hit[0]?.value ?? "—"}%（${hit[0]?.n ?? 0}番・当てはまらない番 ${hit[0]?.detail?.miss_rate ?? "—"}%${hit[1]?.value != null && hit[0]?.value != null ? `・前の日との差 ${Math.round((hit[0].value - hit[1].value) * 10) / 10}pt` : ""}）`);
+        lines.push(`- 次の晩の試験の候補（作ったが off の切れ目・値打ちの順）: ${lg.gapBundleCandidates().join("・") || "なし"}`);
+        const { data: openGap } = await sb.from("work_items").select("title").like("title", "連携の切れ目: %").not("stage", "in", "(done,dropped)").limit(300);
+        for (const g of lg.gapLedgerItems(((openGap ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
+      } catch (e) { lines.push(`- 連携の切れ目: 失敗（${String(e).slice(0, 60)}）`); }
       // 2026-11-24 作業員A（#662）: 土台ごとの済んだ段の数（core:conductor_duty:f:<id>）と、前に書いた日からの変わり（増えた・減った土台）
       for (const r of dr) coreRows.push({ metric: `core:conductor_duty:f:${r.id}`, value: dutyDoneCount(r), n: 3 });
       {
@@ -773,7 +796,7 @@ async function main() {
     ...drafts.slice(0, 5).map((p) => `- 下書き P${p.id}: ${String(p.kb_draft).slice(0, 80)}`), "",
     "## 4. 次に何をなぜ（決まった計算）",
     `- 重点の型「${POINTER_KIND_JA[(kinds[0] ?? "other") as PointerKind] ?? "-"}」の穴から直す（竹内さんの指摘の重みが一番大きい）`,
-    `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`);
+    `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`, ...(linkNextWhy ? [linkNextWhy] : []));
 
   // 2026-11-23 作業員N2（台帳 #473・統括役の頼み）: 竹内さんが朝に読む順に並べ直す（中身は変えない・止める SELF_IMPROVE_SHEET_ORDER=off）
   const sheet = (process.env.SELF_IMPROVE_SHEET_ORDER ?? "").trim().toLowerCase() === "off" ? lines : orderSheetLines(lines);
