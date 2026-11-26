@@ -4667,10 +4667,19 @@ ${history}`;
     const core: Record<string, string> = { core_sent_props: sentPropsText, core_ledger: ledgerText, core_aix_history: aixHistoryText, core_estimate_records: estimateRecordsText, core_viewings: viewingsText, core_promise: promiseBrainText, core_cond: condText };
     for (const [k, v] of Object.entries(core)) if (typeof v === "string" && v.trim()) materialMarks[k] = v.length;
   }
+  // 2026-11-27 作業員L（統括役の決め・印を足す順の1番目: L の持ち分で効く問題が辞書にある物）: 指示文や判断の後で効く部品にも「効きうる番」の印（記録だけ・その部品が on の時だけ）。
+  //   COND_PICKUP_SENT_FIRST＝条件の番の決まりの文（全問に入る）が効きうるのは、送った物件がある番（送った資料で答えられる希望）
+  //   TWO_STAGE_SCREENING_NO_REWRITE＝判断の後の2段の書き換えを止める部品が効きうるのは、場面が審査の問い（S3_screening）の番
+  try {
+    const cpp = await import("@/app/lib/cond-pickup-promise");
+    if (cpp.condPickupPromiseOn() && cpp.condPickupSentFirstOn() && sentPropsText.trim()) materialMarks.cond_pickup_sent_first = 1;
+    if (screeningNoRewriteEnabled() && sceneEvidence?.scene === "S3_screening") materialMarks.screening_no_rewrite_turn = 1;
+  } catch { /* 印だけ・読めなくても止めない */ }
   // 2026-11-27 作業員L（#803・竹内さん 11/27「試験の質上げればもっと早く完了する」）: 昼の届きの確かめ（scripts/exam-preflight-marks.ts・LLM 0）。
   //   EXAM_MARKS_PREFLIGHT=on の時だけ、ブレインを呼ぶ前のこの時点の材料の印の鍵を1行出す（本番では立たない・記録だけ・プロンプトは変わらない）
   //   印を出したらブレインを呼ばずに止める（録音の無い呼び出しで待たない・試験の片付けは brain-exam の失敗の行の道で）
-  if (process.env.EXAM_MARKS_PREFLIGHT === "on") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
+  //   試験の2層（全体の分析 m0→今回の番）の1つ目（お客様の今の番を入れる前・一番新しい通がこちら）では止めない＝今回の番の呼び出しの印だけを見る（11/27 q009 で m0 の印を見誤っていた）
+  if (process.env.EXAM_MARKS_PREFLIGHT === "on" && typedMessages[0]?.sender === "customer") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({

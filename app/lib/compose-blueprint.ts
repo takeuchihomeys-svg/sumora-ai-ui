@@ -14,6 +14,7 @@ import { promiseReadUnifiedOn, isPromiseSentence } from "./promise-read";
 
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
+// ⛔ 退役（2026-11-27 統括役の決め・台帳 #28 dropped・#816）: 既定 off のまま。理由＝代わりあり（文の設計図は COMPOSE_PLAN・WATCH_COMPOSE_PLAN／COMPOSE_PLAN_REUSE）・試験で確かな悪化 1（bundle-1121-p4-bAB の q450）。コードを消すのは後でまとめて
 export function composeBlueprintOn(env: Env = envOf()): boolean {
   return (env.BRAIN_COMPOSE_BLUEPRINT ?? "").trim().toLowerCase() === "on";
 }

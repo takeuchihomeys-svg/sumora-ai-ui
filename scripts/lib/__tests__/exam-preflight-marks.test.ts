@@ -16,5 +16,6 @@ assert.equal(preflightVerdict({ q1: ["a"] }, ["a"], 3).verdict, "比べる", "�
 assert.equal(preflightVerdict({ q1: ["a"] }, [], 3).verdict, "印なし");
 assert.deepEqual(targetMarksOf({ v: 1, builtAt: "", problems: {}, switches: { S: { sw: "S", needs: [], testable: true, why: "", withMaterial: [], hit: [], none: [], marks: [{ mark: "m1", source: "手", n: 0 }, { mark: "m2", source: "推定", n: 3 }] } } }, ["S", "X"]), ["m1"], "手の印があればそれだけ");
 const core = readFileSync(join(__dirname, "../../../app/lib/brain-core.ts"), "utf8");
-assert.ok(/if \(process\.env\.EXAM_MARKS_PREFLIGHT === "on"\) \{ console\.log\(`\[preflight-marks\]/.test(core) && core.includes('throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた")'), "印を出したらブレインを呼ばずに止める（本番では立たない）");
-console.log("exam-preflight-marks ok 10");
+assert.ok(core.includes('if (process.env.EXAM_MARKS_PREFLIGHT === "on" && typedMessages[0]?.sender === "customer") { console.log(`[preflight-marks]') && core.includes('throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた")'), "印を出したらブレインを呼ばずに止める（本番では立たない）");
+assert.equal(preflightVerdict({ q1: null }, ["a"], 3).verdict, "分からない", "1問も流れていない");
+console.log("exam-preflight-marks ok 11");
