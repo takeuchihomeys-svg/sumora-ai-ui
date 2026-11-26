@@ -3,13 +3,26 @@
 //   出す側ごとに 受け取る側（統括の入口・ブレインの判断・書き手・AIX の2通目・最後の確かめ）へ つながっている(on)／作ったが off／つないでいない(none)／未確認 を書く。
 //   値打ち＝その中身がスタッフの手打ちの通（60日・2240通・AIX を除く・10字超）に入っていた割合（語の網の粗い数・11/26 昼）。AIX の2通目の欄は竹内さん本人の AIX の文（194通）を分母にした割合。
 //   毎朝の1枚に 値打ちの高い切れ目 上位3つ（off か none の升だけ・未確認は持ち主が確かめるまで並べない）→ 上から1つずつ 既定 off でつなぐ → 試験 → on
-export type Sink = "intake" | "brain" | "writer" | "aix2" | "final";
-export const SINK_JA: Record<Sink, string> = { intake: "統括の入口", brain: "ブレインの判断", writer: "書き手", aix2: "AIX の2通目", final: "最後の確かめ" };
+// 2026-11-26: 作業員L の頼みで書き手を「文の設計図（compose）」と「下書き（writer＝書き手の注記）」に分けた・ブレインの土台どうしの組み合わせ（combo＝連鎖の見立て）を足した
+export type Sink = "intake" | "brain" | "compose" | "writer" | "aix2" | "final" | "combo";
+export const SINK_JA: Record<Sink, string> = { intake: "統括の入口", brain: "ブレインの判断", compose: "文の設計図", writer: "下書き（書き手の注記）", aix2: "AIX の2通目", final: "最後の確かめ", combo: "土台どうしの組み合わせ（連鎖の見立て）" };
+import { LINKAGE_GAP_REPLY_ROWS } from "./linkage-gap-reply-rows";
 export type CellState = "on" | "off" | "none" | "unknown";
 export type GapCell = { state: CellState; switch?: string; item?: number; note?: string };
 export type GapSource = { id: string; name: string; owner: string; value: number | null; valueBase: string; cells: Partial<Record<Sink, GapCell>> };
 const HAND = "手打ちの通 2240（60日）";
+/** 2026-11-26 作業員A（竹内さん「AIX だけではなく返信の土台やブレインの部分で連携させていく」）: ブレインの土台は今ばらばらの1行ずつ＝組み合わせ（combo）はつないでいない。
+ *   組み合わせのつなぎは連鎖の見立て（chain-patterns・CHAIN_INSIGHT_LINE・既定 off）。値打ち＝型が当てはまった番でブレインが竹内さんと合う割合の差（+7.7pt・111番）は束ねた1行で並べる */
+const FOUNDATION = (id: string, name: string, sw: string): GapSource => ({ id, name, owner: "作業員A", value: null, valueBase: "ブレインの中の土台（値打ちは束ねた行 brain_combo で）", cells: { brain: { state: "on", switch: sw }, combo: { state: "none" } } });
+const BRAIN_FOUNDATIONS: readonly GapSource[] = [
+  FOUNDATION("f_check_order", "確認の順（check-order）", "CHECK_ORDER_TABLE"), FOUNDATION("f_mindset", "気持ち（customer-mindset）", "CUSTOMER_MINDSET"), FOUNDATION("f_station", "地図の駅（apply-route-map）", "ROUTE_DIGEST"),
+  FOUNDATION("f_next_stone", "次の石（route-next-stone）", "ROUTE_NEXT_STONE_LINE"), FOUNDATION("f_backplan", "逆算の計画（route-backplan）", "APPLY_ROUTE_BACKPLAN"), FOUNDATION("f_promise_flow", "約束の流れ（確認・探す）", "BRAIN_CHECK_PROMISE_FLOW"),
+  FOUNDATION("f_card", "AIX の札", "AIX_STATE_CARD"), FOUNDATION("f_aims_after", "判断の後の欄（turn-aims-after）", "TURN_AIMS_AFTER"), FOUNDATION("f_focus", "入口の重点（conductor focus）", "CONDUCTOR_FOCUS"),
+  { id: "brain_combo", name: "ブレインの土台どうしの組み合わせ（駅＋状態＋送った物 → 竹内さんの一手）", owner: "作業員A", value: 7.7, valueBase: "連鎖の型が当てはまった番のブレインの一致の差 +7.7pt（111番）", cells: { combo: { state: "off", switch: "CHAIN_INSIGHT_LINE", note: "12型・見立ての1行（控えの行 chain_insight）" } } },
+];
 export const LINKAGE_GAP_SOURCES: readonly GapSource[] = [
+  ...BRAIN_FOUNDATIONS,
+  ...LINKAGE_GAP_REPLY_ROWS,
   { id: "pickup_select", name: "物件検索・選定のブレイン（選んだ理由・合う点・合わない点）", owner: "作業員A", value: 12.4, valueBase: HAND,
     cells: { intake: { state: "none" }, brain: { state: "off", switch: "PICKUP_WHY_TO_BRAIN", item: 511, note: "本番で 0%・pending の 28% は PICKUP_WHY_PENDING_MATCH（#791）" }, writer: { state: "none", item: 790 }, aix2: { state: "on", note: "1件のオススメの2通目だけ" }, final: { state: "none" } } },
   { id: "aix_state_card", name: "AIX の札（束・内覧・見積・確認・候補の状態）", owner: "作業員A", value: 19.8, valueBase: HAND,
@@ -39,6 +52,17 @@ export function rankGaps(srcs: readonly GapSource[] = LINKAGE_GAP_SOURCES): GapR
   return srcs.flatMap((s) => (Object.entries(s.cells) as Array<[Sink, GapCell]>).filter(([, c]) => c.state === "off" || c.state === "none").filter(() => s.value != null)
     .map(([sink, c]) => ({ source: s.id, name: s.name, owner: s.owner, sink, state: c.state, value: s.value as number, valueBase: s.valueBase, switch: c.switch, item: c.item, note: c.note })))
     .sort((a, b) => b.value - a.value || (a.state === "off" ? -1 : 1));
+}
+/** 自動で台帳に足す切れ目（値打ちの線以上・台帳の番号が無い・同じ題が開いていない・純関数） */
+export const GAP_LEDGER_MIN = 15;
+export const gapLedgerTitle = (g: GapRank) => `連携の切れ目: ${g.name} → ${SINK_JA[g.sink]}`;
+export function gapLedgerItems(openTitles: readonly string[], srcs: readonly GapSource[] = LINKAGE_GAP_SOURCES, min = GAP_LEDGER_MIN): Array<{ title: string; owner: string; next: string }> {
+  return rankGaps(srcs).filter((g) => g.value >= min && !g.item && !openTitles.some((t) => t.startsWith(gapLedgerTitle(g))))
+    .map((g) => ({ title: gapLedgerTitle(g), owner: g.owner, next: `値打ち ${g.value}%（${g.valueBase}）・${g.state === "off" ? `作ったが off（${g.switch ?? "-"}）＝試験の組にする` : "つないでいない＝既定 off でつなぐ"}（linkage-gap-matrix・竹内さん 11/26「仕組化」）` }));
+}
+/** 次の晩の試験の候補（作ったが off でスイッチのある切れ目・値打ちの順） */
+export function gapBundleCandidates(srcs: readonly GapSource[] = LINKAGE_GAP_SOURCES, k = 3): string[] {
+  return rankGaps(srcs).filter((g) => g.state === "off" && g.switch).slice(0, k).map((g) => `${g.switch}（${g.name} → ${SINK_JA[g.sink]}・値打ち ${g.value}%・${g.owner}）`);
 }
 /** 毎朝の1枚の行 */
 export function gapTopLines(srcs: readonly GapSource[] = LINKAGE_GAP_SOURCES, k = 3): string[] {

@@ -23,6 +23,10 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "竹内さんの先読みとの一致（quality_daily）", args: ["scripts/audit-route-backplan-miss.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
     // 2026-11-26 作業員A（竹内さん 11/26 昼）: 次の石に向かった割合（同じ照らしの json・ブレインの判断は会話ごとに日付で読む）
     { name: "次の石（quality_daily）", args: ["scripts/audit-route-next-stone.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
+    // 2026-11-26 作業員A（竹内さん 11/26「仕組化」）: 連鎖の型を竹内さん本人の新しい番から数え直す（同じ照らしの json・型の n・一手・ブレインとの一致）
+    // 2026-11-26 作業員A: 連携の一覧の升を本番の記録（digest.mtk）から数え直す
+    { name: "連携の升の数え直し（quality_daily）", args: ["scripts/audit-linkage-gap-recount.ts", "--days=1", "--write"], timeoutMin: 5 },
+    { name: "連鎖の型（quality_daily）", args: ["scripts/audit-chain-patterns.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 10 },
     // 2026-11-26 作業員A（#662）: 統括の受け持ち表（持つ／使う／反映する・7日・DB は書くだけ）
     { name: "統括の受け持ち表（quality_daily）", args: ["scripts/audit-conductor-ownership.ts", "--days=7", "--write"], timeoutMin: 5 },
     { name: "AIX の外れの組ごとの数（quality_daily）", args: ["scripts/audit-aix-miss-causes.ts", "--days=30", "--write"], timeoutMin: 15 },

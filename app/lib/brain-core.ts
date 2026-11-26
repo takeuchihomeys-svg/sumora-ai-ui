@@ -4422,6 +4422,18 @@ ${sh}`;
           if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員A（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」・CHAIN_INSIGHT_LINE=on の時だけ・既定 off）: 駅＋駅の中の状態＋前に送った AIX の組が
+      //   連鎖の型（chain-patterns）に当てはまった時、見立ての1行（控えの行 chain_insight）。出力の欄は足さない（q406 の前例）
+      try {
+        const cpm = await import("@/app/lib/chain-patterns");
+        if (cpm.chainInsightLineOn() && ar.loc) {
+          const sentB: Record<string, string> = {};
+          for (const x of (brainLedgerInput.recentAixRows ?? []) as Array<{ aix_type?: string | null; sent_at?: string | null; created_at?: string | null }>) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || sentB[k] < at)) sentB[k] = at; }
+          const subNow = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "", {})?.id ?? null; } catch { return null; } })(); // 照らしの json の sub1 と同じ計算
+          const cl = cpm.chainInsightLine(cpm.featuresOf({ node: ar.loc.node, branch: ar.loc.branch, sub1: subNow, sentBefore: sentB, at: new Date().toISOString() }));
+          if (cl) { applyRouteText += `\n${cl}`; materialMarks.chain_insight = cl.length; materialBlocks.push({ key: "chain_insight", text: `\n${cl}`, from: "route" }); }
+        }
+      } catch (e) { console.warn("[brain-core] chain-insight skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-26 作業員A（#688・AIX_DICTIONARY_LINE=on の時だけ・既定 off）: 地図の次の一手の候補の AIX の前提と竹内さん本人の手本を1行（控えの行 aix_dictionary）
       try {
         const ad = await import("@/app/lib/aix-dictionary");
