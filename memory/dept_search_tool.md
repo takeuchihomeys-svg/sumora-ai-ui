@@ -14927,3 +14927,18 @@ Claude（統括役）からの依頼2件への対応。
 - 試験: app/lib/__tests__/playbook-site-split.test.ts（itandi に手が無い／realpro・未指定は従来どおり／作り直しも site で分かれる）。
 - 未（itandi の事実が要る）: 一連の流れ（flow_series）の sort_ad・list・before_clear（リセット）はリアプロの言葉のまま。itandi に『リセット』が有るかは未確認。itandi の未分類の欄 3 件（リスト検索・room_layout:in・管理費・共益費込み敷金な）。
 - 試験の揺れ: bulk-loop-chaos-v2308 が全体の試験の時だけ1回赤（60秒の時間切れの可能性）。単独 3 回・全体の再実行で通過。
+
+### 2026-11-26 手順書の残り（作り方の版 16・itandi の手順書を itandi の形に）
+- 直し（app/lib/action-playbook.ts）: itandi の手順書から、リアプロ用の自動の決まり一覧（AUTO_RULES・拡張の page-script 用）・リアプロの一連の流れ・リアプロの追加ガイド（リセット幅160×高さ30・30秒待ち・確定してリスト・ペット）を外した。itandi の場面（scenes）の決まりの印も空。realpro・未指定の出力は変えていない。
+- itandi 用の一連の流れ（ITANDI_FLOW_SERIES）: 段の名前は itandi の点検の印（reset_start／reset／reset_confirm／location／lines_done／fill_start）だけで把握する。検索を押す・一覧・次ページ・次客の段は、itandi の点検にまだ印が無いので grasp は空（gaps に「点検の印が無い段（把握できない）」と出す）。
+- itandi 用の追加ガイド（ITANDI_EXTRA_GUIDES）: clear＝①条件削除のボタンがあれば先に（無い画面が普通）②打つ欄を空③間取り・構造・設備のチェックを外す④チップを×で1つずつ⑤空と読み戻す⑥残れば1回だけ・それでも残れば飛ばす（AXLX_RESET_FAILED）。switch＝次客へ・外す・空を確かめて入れる。ペットは載せない（itandi のペット条件の手を未確認）。
+- 根拠（itandi-page-script.js の _itResetForm／_itClearOnce）: 条件削除のボタンは「あれば押す」。打つ欄→チェック→チップ×の順。リセットの 幅160×30 と 30秒待ちは itandi のコードに無い（リアプロの手）。
+- 未分類の欄: room_layout:in を「間取りの欄（チェック）」に（form-guard で「間取り」）。未分類のまま残すもの: 「リスト検索」（どの画面の何か未確認）・「管理費・共益費込み敷金な」（2つの欄の名前が繋がった物か未確認）。推測で名前を付けない。
+- checkPlaybook: itandi は決まりが空でも落とさない（版の確認は両方で行う）。Playbook に site（realpro／itandi）を足した。
+- 試験: playbook-site-split.test.ts に itandi の節（決まり空・リアプロの文言が無い・段と追加ガイドの中身・点検が通る）と realpro の節と版 15 の作り直しを追加。
+- 試験の見本を今の仕様に合わせた（コードは正しい方・テストの書き方が古かった）: playbook-reflect-v28137（手順書の版と一連の印を見本に）／learn-to-autofill-v2722（n≥1 の仕様・_aimOf の中身だけを見る）／clear-one-owner-v28147（_PIN の4語は並び順でなく含むで見る）／learn-scene-flows-v2746（読む鍵の一覧と _applyLearnNextStorage で見る）／customer-loop-grasp-v28221（版は「以上」で見る・呼び方の変更）／continuous-clear-sequence（判定の書き方が _beforeOk 付き）／reset-then-next-customer（波かっこ付きの書き方）／learn-write-path-gate（prepareBundleForWrite に scope を渡した後の探し方）。
+- bulk-dl.js: 並べ替え（高→低）の押し方（press→moveToEl の後の 180〜600ms）に「着いてすぐ押さない」の印を付けた（動きは同じ・コメントのみ）。拡張の版は上げていない。
+- 残った赤（直していない・理由あり）: customer-loop-grasp-v28221「handoff で loop_handoff_grasp」。決まり（customer_loop_one_by_one・auto-procedure-rules.ts の mustHaveAny）と handoff-loop-ledger.ts・search-audit.js の KEEP が「dl:loop_handoff_grasp」を探すが、今の拡張はこの名前を出さず「dl:handoff_grasp」を出す。決まりの判定は他の選択肢で守れるので壊れてはいない。名前を揃えると「守れた」の判定が変わるため、竹内さんの判断待ち。
+- tsc --noEmit: 本体（action-playbook・bulk-dl）は 0。テストに前からある型エラー（overdue-promises-digest・sent-read-retry・exam-select・exam-switch-reach・deepseek-auto-usage・turn-aims-after・continuous-clear-fill-no-gap・continuous-clear-sequence の1件）は今回の変更と無関係（HEAD に既にある）。
+- DB: 書いていない（all 2813／realpro 2815／itandi 2814 は作り方 14 のまま。読み出し時に作り直される）。DB 反映（attach）は竹内さんの OK 待ち。
+- 未（実機）: 拡張 2.8.310 の再読み込み・itandi の実走（リセットの印が来るか）・realpro の実走。

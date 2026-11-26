@@ -159,7 +159,9 @@ function makeSandbox(items, extra) {
   ok("開いた方法を残す（ward_clear_open）", /_auditStepP\("ward_clear_open"/.test(wbs));
 
   console.log("■ 点検記録・決まり・版");
-  ok("page 側 _PIN に clear_one・post_send_wait・post_send_cancel・clear_cancelled", /var _PIN = [^\n]*\|clear_one\|post_send_wait\|post_send_cancel\|clear_cancelled/.test(ps));
+  // _PIN は後から足した語が別の所に入るので、並びでなく「4語とも _PIN の中にある」で見る（2026-11-26）
+  const pinLine = (ps.match(/var _PIN = [^\n]*/) || [""])[0];
+  ok("page 側 _PIN に clear_one・post_send_wait・post_send_cancel・clear_cancelled", ["clear_one", "post_send_wait", "post_send_cancel", "clear_cancelled"].every((w) => pinLine.indexOf("|" + w + "|") >= 0 || pinLine.indexOf("(" + w + "|") >= 0));
   ok("RULE_STEP に clear_one・post_send_wait", A.RULE_STEP.test("page:clear_one_done") && A.RULE_STEP.test("page:post_send_wait") && A.RULE_STEP.test("page:post_send_wait_done"));
   ok("KEEP_STEP に clear_one_ng・done・post_send_cancel・clear_cancelled", A.KEEP_STEP.test("page:clear_one_ng") && A.KEEP_STEP.test("page:clear_one_done") && A.KEEP_STEP.test("page:post_send_cancel") && A.KEEP_STEP.test("page:clear_cancelled"));
   const rules = fs.readFileSync(path.join(ROOT, "app/lib/auto-procedure-rules.ts"), "utf8");

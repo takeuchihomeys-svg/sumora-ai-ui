@@ -18,8 +18,14 @@ function ok(name, c, d) {
 console.log("\n■ 版");
 ok("manifest ≥2.8.221", /^2\.8\.(22[1-9]|2[3-9]\d|[3-9]\d{2})$/.test(mf.version) || mf.version >= "2.8.221", mf.version);
 ok("page-script ≥2.8.221", /_AXLX_PAGE_VER = "2\.8\.22[1-9]"/.test(ps) || /_AXLX_PAGE_VER = "2\.8\.[3-9]/.test(ps));
-ok("PLAYBOOK_BUILD_V=13", /PLAYBOOK_BUILD_V = 13/.test(ap));
-ok("AUTO_RULES_REVIEWED_UP_TO ≥2.8.221", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.22[1-9]"/.test(rules));
+// 2026-11-26: 版は今の値で見る（その版以上）。固定の 13 や 2.8.22x のままだと版を上げるたびに落ちる
+{
+  const bv = Number((ap.match(/PLAYBOOK_BUILD_V = (\d+)/) || [])[1] || 0);
+  ok("PLAYBOOK_BUILD_V ≥13（作り方の版は上がっている）", bv >= 13, "build_v=" + bv);
+  const up = ((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([\d.]+)"/) || [])[1]) || "";
+  const cmp = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
+  ok("AUTO_RULES_REVIEWED_UP_TO ≥2.8.221", !!up && cmp(up, "2.8.221") >= 0, "reviewed=" + up);
+}
 
 console.log("\n■ 手順書一連");
 ok("flow_series に clear_then_fill", /id: "clear_then_fill"/.test(ap));
@@ -29,8 +35,9 @@ console.log("\n■ 把握配線");
 ok("_graspCustomerLoopPhase がある", /function _graspCustomerLoopPhase\(/.test(ps));
 ok("loop_phase_grasp / loop_who_grasp 印", /loop_phase_grasp/.test(ps) && /loop_who_grasp/.test(ps));
 ok("fill_start で loop 把握", /_graspCustomerLoopPhase\("fill", "fill_start"\)/.test(ps));
-ok("clear_then_fill で loop 把握", /_graspCustomerLoopPhase\("clear", "clear_then_fill"\)/.test(ps));
-ok("after_search で loop 把握", /_graspCustomerLoopPhase\("search", "after_search"\)/.test(ps));
+// 2026-11-26: 呼び方が変わった（外し完了→入れは「入れ」の段・検索押下は why が after_search_press）。動きは同じ
+ok("clear_then_fill で loop 把握（外し完了→入れ）", /_graspCustomerLoopPhase\("fill", "clear_then_fill→入れ"\)/.test(ps));
+ok("after_search で loop 把握（検索押下）", /_graspCustomerLoopPhase\("search", "after_search_press"\)/.test(ps));
 ok("ready_next で next+loop+handoff", /_graspNextCustomerAndMove\("ready_next"\)/.test(ps) && /_graspCustomerLoopPhase\("handoff"/.test(ps));
 ok("bulk-next で currentName も受ける", /__axlxBulkCurrentName/.test(ps) && /bulk_grasp/.test(ps));
 ok("手順undefined 防止（Array.isArray）", /if \(!Array\.isArray\(steps\)\) steps = \[\]/.test(ps));

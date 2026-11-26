@@ -4652,6 +4652,7 @@
       };
       try {
         if (P && P.moveToEl) {
+          // 着いてすぐ押さない（人は目で確かめてから押す・並べ替えの高→低などもこの道・2026-11-20）
           P.moveToEl(el).then(function (moved) {
             if (moved === false || !alive()) { cb(false); return; }
             setTimeout(go, 180 + Math.floor(Math.random() * 420));

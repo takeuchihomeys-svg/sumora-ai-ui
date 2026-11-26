@@ -42,10 +42,13 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 15;
+export const PLAYBOOK_BUILD_V = 16;
 // 15（2026-11-26 竹内さん「手順書これでできてる？」）: itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・検索の把握）が
 //   入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。buildPlaybook に site を渡し、itandi では載せない。
 //   site を渡さない時（既定）は今までどおり＝リアプロの動きは変えない。
+// 16（2026-11-26 竹内さん「まだ残っていることも改善お願い」）: itandi の手順書から、リアプロ用の決まり一覧・一連の流れ・
+//   追加ガイド（リセット幅160×30・30秒待ち・確定してリスト）を外し、itandi 用の流れと外し方（チップ・打つ欄・チェック）に替えた。
+//   itandi の欄「room_layout:in」を「間取りの欄（チェック）」に。realpro の出力は変えない。
 
 /**
  * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
@@ -99,6 +102,27 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
   { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
   { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "page:list_handoff_seen", "page:flow_done_ready_next"], next: null },
+];
+
+/**
+ * itandi の一連の流れ（客1人・2026-11-26）。リアプロの段（確定してリスト・並べ替え・印刷用PDF）は itandi に無いので載せない。
+ *   itandi の点検の印（chrome-extension/itandi-page-script.js の _itStep）: reset_start／reset（外せた）／reset_fail／reset_mixed／
+ *   reset_confirm／location（所在地の入り方）／lines_done（路線・駅の入れ終わり）／fill_start（条件を入れ始め）／search_blocked／done_error。
+ *   検索を押す・一覧・次ページ・次客の印は itandi の点検にまだ無い＝grasp は空（把握できない・gaps に出す）。
+ */
+export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
+  { id: "before_clear", label: "前のお客さんの条件を外す（条件削除のボタンがあれば先に）", scene: null, grasp: ["reset_start", "reset_confirm"], next: "clear_then_fill" },
+  { id: "clear_then_fill", label: "空と読み戻せた→新条件の入れへ", scene: null, grasp: ["fill_start"], next: "after_clear" },
+  { id: "after_clear", label: "外せた（reset）→入れへ", scene: null, grasp: ["reset"], next: "after_confirm" },
+  { id: "after_confirm", label: "所在地（区）の設定", scene: "area", grasp: ["location"], next: "after_place" },
+  { id: "after_station", label: "路線・駅の設定", scene: "station", grasp: ["lines_done"], next: "after_place" },
+  { id: "after_area", label: "地域の設定", scene: "area", grasp: ["location"], next: "after_place" },
+  { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["lines_done"], next: "before_search" },
+  { id: "before_search", label: "検索前の照合（条件）", scene: "cond", grasp: ["fill_start"], next: "after_search" },
+  { id: "after_search", label: "検索を押す", scene: "search", grasp: [], next: "list" },
+  { id: "list", label: "一覧", scene: "list", grasp: [], next: "next" },
+  { id: "next", label: "次ページ", scene: "next", grasp: [], next: "handoff" },
+  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: [], next: null },
 ];
 
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
@@ -179,6 +203,37 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
   },
 ];
 
+/**
+ * itandi 用の追加ガイド（外し・切り替え）。リアプロの「リセット→30秒待ち」とは別の手。
+ *   itandi-page-script.js の _itResetForm／_itClearOnce の順（打つ欄→チェック→チップ×）に合わせる。
+ *   ペット（pet）の場面は itandi では載せていない（itandi のペット条件の手をまだ確かめていない）。
+ */
+export const ITANDI_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
+  {
+    id: "clear",
+    label: "前のお客さんの条件を外す（itandi・場面なし）",
+    steps: [
+      "①条件削除のボタンがあれば先に押す（無い画面が普通）",
+      "②打つ欄（家賃・面積・駅徒歩・築年数など）を空にする",
+      "③間取り・構造・設備のチェックを外す",
+      "④所在地・路線/駅のチップを、×で1つずつ外す（外すたびに並びが変わるので、押す時に読み直す）",
+      "⑤空と読み戻して、残りを名前付きで確かめる（空なら成功＝reset）",
+      "⑥残るなら、もう1回だけ外す。それでも残る時は、このお客さんの itandi は飛ばす（AXLX_RESET_FAILED・前の条件が混ざった検索はしない）",
+    ],
+    rules: [],
+  },
+  {
+    id: "switch",
+    label: "次客への切り替え（itandi・場面なし）",
+    steps: [
+      "①次のお客さんに切り替える",
+      "②前のお客さんの条件を外す（上の手順）",
+      "③空と確かめてから、新しい条件を入れる（fill_start）",
+    ],
+    rules: [],
+  },
+];
+
 /** 点検記録の段から、一連の流れのどこまで把握できたかを決める（純関数） */
 export function judgeFlowSeriesProgress(
   steps: ReadonlyArray<{ k?: string } | string | null | undefined>,
@@ -248,6 +303,8 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "AD": "ADへカーソル（押さない・一覧列禁止）",
   "高→低": "高→低を押す",
   "左の高→低｜span.sort_detail": "高→低（span.sort_detail）を押す",
+  // 2026-11-26 itandi の実測（束の欄名）: 間取りのチェック欄（chrome-extension/itandi-form-guard.js の FILTER_ROWS で「間取り」）
+  "room_layout:in": "間取りの欄（チェック）",
 };
 
 /** 手順の1手の細部（押す欄・学んだ押す位置・押すと開く物） */
@@ -373,6 +430,11 @@ export type Playbook = {
    *   scenes に無理に載せると場面の並びが崩れるので別枠。
    */
   extra_guides: PlaybookExtraGuide[];
+  /**
+   * どのサイトの手順書か（2026-11-26）。itandi は決まり一覧・リアプロの一連の流れ・追加ガイドを載せない。
+   *   無い（古い手順書）は realpro 扱い。
+   */
+  site?: "realpro" | "itandi";
 };
 
 type SceneFlowLike = {
@@ -567,11 +629,15 @@ export function playbookSceneOf(f: SceneFlowLike, pos: PosIndex = new Map(), opn
  */
 export function buildPlaybook(bundle: BundleLike, site?: string | null): Playbook {
   const realproHands = String(site ?? "") !== "itandi";
+  // itandi は自動の決まり（AUTO_RULES）・リアプロの一連の流れ・追加ガイドを載せない（リアプロの拡張用の一覧で、itandi のページは使っていない）
+  const ruleIdsFor = (ids: ReadonlyArray<string>): string[] => (realproHands ? [...ids] : []);
   const posIdx = indexPositions(bundle.points);
   const openIdx = indexOpens(bundle.opens);
   const scenes = (Array.isArray(bundle.scene_flows) ? bundle.scene_flows : [])
     .filter((f) => f && typeof f.scene === "string" && f.scene !== "other")
     .map((f) => playbookSceneOf(f, posIdx, openIdx));
+  // itandi の場面には、リアプロの自動の決まりを付けない（場面の決まりは rulesForScene＝AUTO_RULES 由来）
+  if (!realproHands) for (const s of scenes) s.rules = [];
   const learned = new Set(scenes.map((s) => s.scene));
   const gapsEarly: string[] = [];
   /**
@@ -602,17 +668,20 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
       unknown: [],
       confidence: "thin",
       detail: detail.slice(0, PLAYBOOK_MAX_STEPS),
-      rules: [...ruleIds],
+      rules: ruleIdsFor(ruleIds),
     });
     learned.add(scene);
     gapsEarly.push(why);
   };
-  injectGuideSceneEarly(
-    "area",
-    PLAYBOOK_AREA_CONFIRM_STEPS,
-    ["guide_phase_checkpoints", "guide_clear_fill_gate"],
-    "所在地場面: 録画が無いため①開く→②区→③確定 を薄いガイド場面として手順書に足した",
-  );
+  // 所在地の「確定してリストへ」はリアプロの画面の手（itandi には確定の段が無い）→ realpro だけ
+  if (realproHands) {
+    injectGuideSceneEarly(
+      "area",
+      PLAYBOOK_AREA_CONFIRM_STEPS,
+      ["guide_phase_checkpoints", "guide_clear_fill_gate"],
+      "所在地場面: 録画が無いため①開く→②区→③確定 を薄いガイド場面として手順書に足した",
+    );
+  }
   injectGuideSceneEarly(
     "cond",
     PLAYBOOK_COND_GUIDE_STEPS,
@@ -700,11 +769,14 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }
 
   // 自動の決まり（拡張で直した物）。人の手本の場面が無い所（前客の外し・ペット等）も決まりは載せる
-  const rules: PlaybookRule[] = AUTO_RULES.map((r) => ({
+  const rules: PlaybookRule[] = realproHands ? AUTO_RULES.map((r) => ({
     id: r.id, scene: r.scene, scene_label: RULE_SCENE_JA[r.scene], text: r.text, since: r.since, kb: r.kb,
     verified_by: verifyKeysOf(r.verify),
-  }));
+  })) : [];
   const rules_v = autoRulesVersion();
+  if (!realproHands) {
+    gaps.push("itandi の自動の決まりは、このリアプロの決まり一覧（拡張の page-script 用）とは別。手順書には載せていない（itandi 用の決まりはまだ作っていない）");
+  }
   const unverified = rules.filter((r) => !r.verified_by.length).map((r) => r.id);
   if (unverified.length) {
     gaps.push(`自動の決まり ${rules.length}件のうち ${unverified.length}件は点検記録で確かめる印が無い（コードにあるかだけ・${unverified.slice(0, 6).join("・")}${unverified.length > 6 ? ` 他${unverified.length - 6}` : ""}）`);
@@ -714,7 +786,9 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     gaps.push(`人の手本（録画の場面）がまだ無く、自動の決まりだけの場面：${ruleOnly.map((sc) => RULE_SCENE_JA[sc]).join("・")}`);
   }
 
-  const flow_series = PLAYBOOK_FLOW_SERIES.map((p) => ({ ...p }));
+  // 一連の流れ: itandi は itandi 用の段（点検の印が実際に出る物だけ）。リアプロは従来どおり
+  const flowSeries = realproHands ? PLAYBOOK_FLOW_SERIES : ITANDI_FLOW_SERIES;
+  const flow_series = flowSeries.map((p) => ({ ...p, grasp: [...p.grasp] }));
   // 一連の流れに紐づく場面が薄い／無い時は gaps に出す（場面の並びだけ見て「流れOK」と誤解しない）
   for (const ph of flow_series) {
     if (!ph.scene) continue;
@@ -722,6 +796,9 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     if (!sc) gaps.push(`一連の流れ「${ph.label}」に紐づく場面 ${ph.scene} が手順に無い`);
     else if (sc.confidence === "thin") gaps.push(`一連の流れ「${ph.label}」の場面 ${sc.label} が薄い（検索${sc.runs}回）`);
   }
+  // 点検の印が1つも無い段は「把握できない」と明示する（itandi の検索・一覧・次客は拡張の印がまだ無い）
+  const noMark = flow_series.filter((p) => !p.grasp.length).map((p) => p.label);
+  if (noMark.length) gaps.push(`一連の流れのうち点検の印が無い段（把握できない）：${noMark.join("・")}`);
   if (!flow_series.length) gaps.push("一連の流れ（flow_series）が空");
 
   /**
@@ -786,7 +863,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
    *   録画の手（押す位置つき）は残し、欠けた開く／確定だけ足す（全部差し替えない＝aim を消さない）。
    */
   for (const sc of scenes) {
-    if (sc.scene !== "area") continue;
+    if (sc.scene !== "area" || !realproHands) continue;
     const hasConfirm = sc.steps.some((t) => /確定してリストへ/.test(String(t || "")));
     const hasOpen = sc.steps.some((t) => /所在地絞り込みを開く|所在地絞り込み/.test(String(t || "")));
     if (hasConfirm && hasOpen) continue;
@@ -825,18 +902,21 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }
 
   /** 録画場面が無い clear / switch / pet は extra_guides に載せる（scenes は崩さない） */
-  const extra_guides: PlaybookExtraGuide[] = PLAYBOOK_EXTRA_GUIDES.map((g) => ({
+  const guideSrc = realproHands ? PLAYBOOK_EXTRA_GUIDES : ITANDI_EXTRA_GUIDES;
+  const extra_guides: PlaybookExtraGuide[] = guideSrc.map((g) => ({
     id: g.id,
     label: g.label,
     steps: [...g.steps],
     rules: [...g.rules],
   }));
   for (const g of extra_guides) {
-    gaps.push(`場面なし「${g.label}」: 録画が無いため決まりから①②③を extra_guides に載せた`);
+    gaps.push(`場面なし「${g.label}」: 録画が無いため①②③を extra_guides に載せた`);
   }
 
+  const siteKind: "realpro" | "itandi" = realproHands ? "realpro" : "itandi";
   const body = JSON.stringify({
     build_v: PLAYBOOK_BUILD_V,
+    site: siteKind,
     scenes,
     flow_series: flow_series.map((p) => p.id),
     missing,
@@ -850,6 +930,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   return {
     v: 1,
     build_v: PLAYBOOK_BUILD_V,
+    site: siteKind,
     version: fnv1a(body),
     based_on: String(bundle.generated_at ?? ""),
     scenes,
@@ -913,7 +994,8 @@ export function checkPlaybook(pb: Playbook, nowMs: number = Date.now()): string[
   }
   // 自動の決まり（拡張で直した物）が手順書に入っているか・コードの決まりと同じ版か
   if ((Number(pb.build_v) || 0) < PLAYBOOK_BUILD_V) issues.push(`作り方が古い（build_v=${pb.build_v}・今は ${PLAYBOOK_BUILD_V}）`);
-  if (!Array.isArray(pb.rules) || !pb.rules.length) issues.push("自動の決まりが手順書に入っていない");
+  // itandi は自動の決まりを載せない設計（buildPlaybook）＝空は正しい。版の確認は両方で行う
+  if (pb.site !== "itandi" && (!Array.isArray(pb.rules) || !pb.rules.length)) issues.push("自動の決まりが手順書に入っていない");
   else if (pb.rules_v !== autoRulesVersion()) issues.push(`自動の決まりの版が古い（手順書 ${pb.rules_v}・コード ${autoRulesVersion()}）`);
   if (!Array.isArray(pb.flow_series) || pb.flow_series.length < 5) {
     issues.push("一連の流れ（flow_series）が無い／短すぎる（外し→検索→一覧→次客の把握線が無い）");
