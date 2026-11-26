@@ -3873,6 +3873,24 @@ ${sh}`;
     if (g) { customerStateBlockText += `\n${g.text}`; checkOrderGuideRec = { type: g.type, steps: g.steps }; }
     console.log(JSON.stringify({ tag: "brain:check-order-guide", conversationId, type: g?.type ?? null, steps: g?.steps.length ?? 0 }));
   }
+  // 2026-11-27 作業員A（#814・竹内さんの決定 11/12 KB 6d457f12 の「まだ答えていない問い・まだ果たしていない約束」）: 前の番までの問いのうち答えになっていない物と、
+  //   約束の台帳（promise-read）の果たしていない約束を【まだ答えていない事】の1行に。事実の一覧・決めるのはブレイン。UNANSWERED_ASKS_LINE=on の時だけ（既定 off）・印 unanswered（件数）
+  if (conversationId && !isPostApplyStatus(convStatus)) {
+    try {
+      const ua = await import("@/app/lib/unanswered-asks");
+      if (ua.unansweredLineOn()) {
+        const pr = await import("@/app/lib/promise-read");
+        const turnAtUA = typedMessages[0]?.created_at ? Date.parse(typedMessages[0].created_at) + 1 : Date.now();
+        const aixUA = aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type);
+        const asksUA = ua.unansweredAsks({ msgs: typedMessages, aix: aixUA, nowMs: turnAtUA });
+        const promUA = pr.openPromises({ msgs: typedMessages, aix: aixUA, nowMs: turnAtUA, days: 7 }).map((p) => ({ kindJa: pr.PROMISE_READ_KIND_JA[p.kind], sentence: p.sentence, at: p.at, overdue: !p.waiting && p.elapsedH > 24 }));
+        const lineUA = ua.unansweredLine(asksUA, promUA);
+        const openN = asksUA.filter((a) => a.state === "open").length;
+        if (lineUA) { customerStateBlockText += `\n\n【${lineUA}】`; materialMarks.unanswered = openN + promUA.length; materialBlocks.push({ key: "unanswered", text: `【${lineUA}】`, from: "cs" }); }
+        console.log(JSON.stringify({ tag: "brain:unanswered", conversationId, asks: asksUA.length, open: openN, promised: asksUA.filter((a) => a.state === "promised").length, promises: promUA.length, chars: lineUA.length }));
+      }
+    } catch (e) { console.warn(JSON.stringify({ tag: "brain:unanswered", conversationId, error: String(e).slice(0, 160) })); }
+  }
   if (opts?.sendBack) {
     const { sendBackMaterialLine } = await import("@/app/lib/aix-sendback");
     const sbl = sendBackMaterialLine(opts.sendBack, opts.sendBackFirstAix ?? null);
