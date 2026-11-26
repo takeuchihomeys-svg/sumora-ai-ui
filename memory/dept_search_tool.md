@@ -14961,3 +14961,12 @@ Claude（統括役）からの依頼2件への対応。
 - **station_map の空埋め（書いた）**: `--mode=fill --apply` で 317 行（ITANDI の空 305・REINS の空 315・重なり 3）。控え: `C:\Users\Admin\Desktop\station-map-backup-2026-11-26\station_map_before_fill_*.json`（戻す時は before を各 token に書き戻す）。書いた後の読み直し: ずれ（ITANDI 20・REINS 3）と対応が無い 12 行は残す。
 - **反映の経緯**: 2コミット（d00f39123・978393dce）を、他の作業者の変更が先に入った最新の履歴へ乗せ直して反映した（早送り・強制なし・作業ツリーは触らず一時の作業場所で行った）。最新の履歴の上でも見張りは緑。
 - 注意: この PC の cursor-ext と最新の履歴は中身が同じでもコミット番号が違う。次に cursor-ext から反映する時は、先に最新の履歴を取り込んでから。
+
+### 2026-11-26（深夜）表記の違いを把握して、写しを正本に揃えた（竹内さん「表記のところ、リアプロと itandi で違う部分もあるのでちゃんと把握しておけ」）
+- **把握した表**: `chrome-extension/DB_STRUCTURE.md` の「表記の違い（リアプロ・ITANDI・REINS）」に、主な路線の3サイトの表記を書いた（例: 大阪環状線＝ITANDI だけ「JR大阪環状線」・東西線＝REINS だけ「東西線」・阪急神戸線＝ITANDI「阪急神戸本線」）。正本は `popup-maps.js`。
+- **写しのずれ（実測）**: 一括・自動の経路の `resolution-core.js` は、駅→路線の表が正本 658 駅のうち 306 駅だけ・能勢電鉄妙見線／日生線の路線番号が無い・ITANDI の能勢・信貴・西信貴が無い・REINS の泉北・能勢・水間鉄道水間線・東海道本線が無かった。`popup.js` の手順書の注記の表も、東海道本線・近鉄難波・奈良線がずれていた。
+- **直したこと（拡張）**: `resolution-core.js` の 7 表（STATION_WARD_MAP・STATION_LINE_MAP・LINE_STATION_ORDER・ITANDI_LINE_MAP_FILL・LINE_ROUTE_MAP・LINE_ALIAS_MAP・REINS_LINE_MAP）と、`popup.js` の注記用 ITANDI 表の本体を、`popup-maps.js` からそのまま写した（関数は触っていない）。写す前の控え: `station-map-backup-2026-11-26\resolution-core.before-sync.js`・`popup.before-sync.js`。版（manifest）は上げていない → 拡張の再読み込みで反映。
+- **見張り（新しい）**: `tests/chrome-extension/notation-copies-sync.test.js`（写しの表が正本と同じか・能勢・信貴の約束）。`ext-test-all` の新しい赤は 0（基準の赤 115 は変えず）。
+- **DB（竹内さんの決定）**: 今日の空埋めで REINS 列に入れた `東海道本線` の 11 行を空に戻した（`reins_tokaido_revert_before_*.json` が戻す前の控え）。茨城は空埋めより前から `東海道本線` だったので触っていない。
+- **未決**: (A) REINS の東海道本線の画面の表記（東海道本線か東海道線か）・(B) 近鉄信貴線・西信貴ケーブル線を一括の経路で ITANDI・REINS に回すか（route_id が無い路線は回さない `if (id)` の所・ロジックの変更）・(C) 東海道本線を駅ごとに京都線／神戸線へ振り分けるか。
+- **注意**: 写しを揃えたので、一括の経路は REINS の「東海道本線」を出すようになった（以前は出なかった）。REINS の画面の表記が違えば、一括の REINS 検索で東海道の沿線が当たらない（未確認）。
