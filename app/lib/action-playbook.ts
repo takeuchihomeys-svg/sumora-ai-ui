@@ -37,8 +37,11 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *   11（2026-11-23）: clear extra_guides を入れる並みに細分化（外す前の名前付き把握→箱ごと1つずつ→駅小窓経由→外し後名確認→入れへ）。
  *   12（2026-11-23）: flow_series 先頭に before_clear（外す前の名前付き把握）。外し後→入れの段が抜けない線。
  *   13（2026-11-23）: clear_then_fill（外し完了→入れ）を一連に明示。物件取得完了→外す→入れ→検索→並び替え→取得→次客の把握線。
+ *   14（2026-11-26 竹内さん「1つずつ外すのはボトルネックなので抜く」）: 骨組みの外しを「1つずつ外す」からリセットボタンへ。
+ *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
+ *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 13;
+export const PLAYBOOK_BUILD_V = 14;
 
 /**
  * 一連の流れ（客1人）。手順書の場面（area/cond/…）とは別に、「次に進んでよいか」の把握段。
@@ -58,23 +61,24 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: "外す前の名前付き把握",
+    label: "リセットを押す（左の「リセット」→読み直し→30秒以上のラグ待ち）",
     scene: null,
-    grasp: ["page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
+    // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
+    grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
     next: "clear_then_fill",
   },
   {
     id: "clear_then_fill",
-    label: "外し完了→新条件の入れへ",
+    label: "空と確かめた→新条件の入れへ",
     scene: null,
-    grasp: ["page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
+    grasp: ["reset_verified", "page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
     next: "after_clear",
   },
   {
     id: "after_clear",
-    label: "前客の外し完了→入れへ",
+    label: "前客のリセット完了（フォームが空）→入れへ",
     scene: null,
-    grasp: ["page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
+    grasp: ["reset_verified", "reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
     next: "after_confirm",
   },
   { id: "after_confirm", label: "確定してリストへ（入れた把握）", scene: "area", grasp: ["page:guide_phase_after_confirm"], next: "after_place" },
@@ -138,15 +142,16 @@ export type PlaybookExtraGuide = {
 export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
   {
     id: "clear",
-    label: "前客の外し（場面なし・決まりから）",
+    label: "前客のリセット（場面なし・決まりから／1つずつ外さない）",
     steps: [
-      "①外す前に台帳×画面の残りを名前付きで1つずつ言う（入れると同じ細かさ）",
-      "②箱ごとに開ける→1つずつカーソルで外す→外れたか確かめる（間取り→絞込→所在地）",
-      "③駅・沿線は小窓経由で1駅ずつ外す（form直外ししない）",
-      "④外し後に残りの名前を1つずつ確かめる（after_clear）",
-      "⑤きれいになってから clear_then_fill_ok → 新条件の入れへ",
+      "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
+      "②左の「リセット」ボタン（幅160×高さ30）を人が押す形で押す（値は直接書き換えない）",
+      "③ページの読み直しを待ち、ラグがあるので30秒以上（30〜34秒・3回に分けて）人の間で待つ",
+      "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（空なら該当件数が増えなくても成功・reset_verified）",
+      "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用）",
+      "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ",
     ],
-    rules: ["clear_per_panel", "clear_one_by_one", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
+    rules: ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate"],
   },
   {
     id: "switch",
@@ -154,9 +159,9 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①手順書を読む（playbook_seen）",
       "②次のお客さんに切り替える",
-      "③前客の外し→きれい確認→新条件の順を守る",
+      "③前客のリセット（左の「リセット」→30秒以上のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）",
     ],
-    rules: ["playbook_read"],
+    rules: ["playbook_read", "reset_between_customers"],
   },
   {
     id: "pet",

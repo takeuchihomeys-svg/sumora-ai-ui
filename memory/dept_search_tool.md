@@ -14882,3 +14882,8 @@ Claude（統括役）からの依頼2件への対応。
 - 直した所: 強制は `src=popup_open`（popup.js）と `src=boot_need`（content.js）だけ。それ以外は `_learnRefreshForAutofill`（gate 判定）。search-audit.js の KEEP_STEP に `page:task_api_refresh_res|page:task_transition_gate`（one-send-cache の並び順の試験に合わせ pdf_click_nocap の後ろ）。決まり `task_gate_no_forced_refetch`（kb 新規 P2）。試験 task-gate-no-forced-refetch-v2309（9）。
 - 古い手順書の構造（未変更・要判断）: `PLAYBOOK_FLOW_SERIES` は before_clear→clear_then_fill の1つずつ外し前提でリセット段が無く、handoff.next=null。`PLAYBOOK_EXTRA_GUIDES.clear` も①〜⑤が1つずつ外し。実際の動きは決まり側（reset_*）が優先しているが、手順書の骨組みは古いまま。
 - 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.309 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+### 2026-11-26 手順書 build_v14 — 骨組みの「1つずつ外す」をリセットボタンへ（竹内さん「1つずつ外すのはボトルネックなので抜く」）
+- 変更: `app/lib/action-playbook.ts`。flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_before_fill／reset_verified／reset_clean_skip_clear。旧の印も残す）。extra_guides.clear を ①完了の小窓を閉じる ②左の「リセット」(160×30)を人が押す形で ③読み直し→30秒以上のラグ待ち ④空を名前付きで読み戻し（空なら件数が増えなくても成功） ⑤clear_then_fill_ok→入れへ ⑥止まった時だけスクショ→画面把握→もう1回押す（最後の保険として従来の外し）。switch ③もリセット。決まりは reset_replaces_clear／reset_between_customers／reset_retry_insurance を載せ、clear_one_by_one／clear_per_panel を clear から外した。
+- 試験: app/lib/__tests__/playbook-reset-skeleton.test.ts を追加。関連の app/lib 試験は全部通る。continuous-clear-sequence は 2.8.285 以降の既存の赤（_doReset 内の clear_then_fill_ok の位置が変わったため・今回の変更とは無関係）。
+- 副: search-audit.js の KEEP_STEP の追加位置を末尾へ（先頭近くだと bulk-stop-takeover／one-send-cache の並びの試験が赤になる）。
+- 反映: コミット後に main→Vercel→attach-playbook（build_v 13→14）。拡張のコードは変えていない（骨組みを読む側は件数と文を表示するだけ）。
