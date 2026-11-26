@@ -123,6 +123,17 @@ export function backplanWriterNote(rec: unknown): string {
     + "。入れる時は文の終わりの方に自然に1文だけ（言い切らない・お客様が聞いていない内覧や申込を押し付けない・期日は「頃」「目安」）。合わない番は入れない";
 }
 /** 材料の1行（当たらない時は ""）。道はブレインが決める＝「例」「目安」と書く */
+/**
+ * 2026-11-27 作業員A（竹内さん 11/27「他の部分にも逆算組み合わせて連携させていけば」・統括役の頼み）: 逆算の1行に、今の駅の次の石（route-next-stone）を同じ1行で添える。
+ *   逆算の この先（太い道）の1手目と次の石は 9駅中 9駅で同じ向き（提案中→見積・見積→内覧の調整…）＝別々の2行にすると同じ事を2回言う。次の石の1行（ROUTE_NEXT_STONE_LINE）は未配線のまま、ここで1行に束ねる
+ *   スイッチ BACKPLAN_NEXT_STONE: 既定 off（逆算の1行は今と同じ）／on（「／次の石: …」を末尾に1つ足す）
+ */
+export function backplanNextStoneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BACKPLAN_NEXT_STONE ?? "").trim().toLowerCase() === "on";
+}
+export function backplanNextStoneTail(stoneLabel: string | null | undefined): string {
+  return stoneLabel ? `／次の石（一歩ずつ・申込のご案内へ飛ばさない）: ${stoneLabel}` : "";
+}
 export function backplanLine(p: Backplan | null): string {
   if (!p) return "";
   const ahead = p.ahead.map((n) => ROUTE_NODES[n].name).join("→");

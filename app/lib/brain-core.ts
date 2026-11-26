@@ -4420,10 +4420,12 @@ ${sh}`;
             viewingWish: custTexts.some((x) => /内覧|内見|見学|見に行/.test(x)), applyIntent: routeTypeNow === "apply_intent", screeningConcern: custTexts.some((x) => SWR.test(x)),
             moveInYmd: mvBP.kind === "future" ? ymdStrOf(mvBP.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10),
           });
-          const bl = bp.backplanLine(plan);
+          let bl = bp.backplanLine(plan);
+          // 2026-11-27 作業員A（BACKPLAN_NEXT_STONE=on の時だけ・既定 off）: 逆算の1行に次の石を束ねる・印 backplan_next_stone
+          if (bl && bp.backplanNextStoneOn()) { const ns = await import("@/app/lib/route-next-stone"); const st = ns.NEXT_STONE[ar.loc.node as keyof typeof ns.NEXT_STONE]; const tail = bp.backplanNextStoneTail(st?.label); if (tail) { bl += tail; materialMarks.backplan_next_stone = 1; } }
           // 2026-11-26 作業員A（#747 の形）: 地図の文から別の行として控えに登録（MATERIAL_PRIORITY が並べ替える単位）・材料に入れるのは APPLY_ROUTE_BACKPLAN=on の時だけ
           if (bl && bp.applyRouteBackplanOn()) { if (plan?.ahead[0]) flowMarks.bpn = plan.ahead[0]; applyRouteText += `\n${bl}`; materialMarks.route_backplan = bl.length; materialBlocks.push({ key: "route_backplan", text: `\n${bl}`, from: "route" }); }
-          if (bp.backplanToWriterOn()) routeBackplanRec = bp.backplanRecOf(plan);
+          if (bp.backplanToWriterOn()) { routeBackplanRec = bp.backplanRecOf(plan); if (routeBackplanRec) materialMarks.backplan_to_writer = 1; /* 2026-11-27 作業員A: 書き手へ渡した番の印（BACKPLAN_TO_WRITER=on の時だけ） */ }
         }
       } catch (e) { console.warn("[brain-core] route-backplan skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-26 作業員A（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」・CHAIN_INSIGHT_LINE=on の時だけ・既定 off）: 駅＋駅の中の状態＋前に送った AIX の組が

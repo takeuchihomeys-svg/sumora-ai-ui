@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/route-backplan.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { backplanOf, backplanLine, applyRouteBackplanOn, backplanRecOf, backplanWriterNote, backplanToWriterOn, type BackplanFacts } from "../route-backplan";
+import { backplanOf, backplanLine, applyRouteBackplanOn, backplanRecOf, backplanWriterNote, backplanToWriterOn, backplanNextStoneOn, backplanNextStoneTail, type BackplanFacts } from "../route-backplan";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -29,5 +29,8 @@ const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
 t("配線: on の時だけ地図の文の後ろに・控えの行に登録", bc.includes("bl && bp.applyRouteBackplanOn()") && bc.includes("materialMarks.route_backplan") && bc.includes('key: "route_backplan"'));
 const gr = readFileSync(join(__dirname, "..", "..", "api", "generate-reply", "route.ts"), "utf8");
 t("配線: 書き手は BACKPLAN_TO_WRITER=on の時だけ", gr.includes("backplanToWriterOn() ? backplanWriterNote("));
+t("次の石を束ねる: 既定 off・ラベルがあれば末尾の1つ・無ければ空", !backplanNextStoneOn({}) && backplanNextStoneOn({ BACKPLAN_NEXT_STONE: "on" }) && backplanNextStoneTail("初期費用の見積書・内覧の誘い").includes("次の石") && backplanNextStoneTail(null) === "");
+{ const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8"); t("配線: on の時だけ・印 backplan_next_stone・書き手へ渡した印 backplan_to_writer", bc.includes("bp.backplanNextStoneOn()") && bc.includes("materialMarks.backplan_next_stone = 1") && bc.includes("materialMarks.backplan_to_writer = 1")); }
+
 console.log(`route-backplan: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);
