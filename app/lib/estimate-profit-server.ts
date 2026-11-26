@@ -8,7 +8,7 @@ import { supabase } from "@/app/lib/supabase-server";
 import { rentFromSummary } from "@/app/lib/estimate-handoff";
 import { linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
 // 2026-10-08 8巡目（記録）: 物件確認した＋同封・【】の無い見積書も全件残す（決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）
-import { estimateRecordItemsFromLog } from "@/app/lib/estimate-record-items";
+import { estimateRecordItemsFromLog, costItemsForRecord, estimateRecordCostItemsOn } from "@/app/lib/estimate-record-items";
 // 2026-11-14 作業員G: 物件確認した＋同封（check_names）の金額の欄を、一緒に送った見積の札の文で埋める（既定 on・戻す ESTIMATE_CARD_FILL=off）
 import { estimateCardFillOn, cardCostsOf, fillItemsFromCards, ESTIMATE_CARD_RE } from "@/app/lib/estimate-card-fill";
 
@@ -121,6 +121,8 @@ export async function recordEstimateFromAix(input: {
         profit_yen: computeProfitYen(link?.adYen, it.discountYen),
         source: it.source,
         estimated_at: input.createdAt,
+        // 2026-11-26 作業員L（台帳 #798 ②）: 初期費用の内訳（ESTIMATE_RECORD_COST_ITEMS=on の時だけ・列は migrate-schema で足す・当てる前に on にしない）
+        ...(estimateRecordCostItemsOn() ? (() => { const ci = costItemsForRecord(it, { aixType: input.aixType, generatedText: input.generatedText, propertyNames: input.propertyNames, propStatuses: input.propStatuses, propCostNotes: input.propCostNotes }, items.length); return ci ? { cost_items: ci.items, items_source: ci.source } : {}; })() : {}),
       };
     });
     if (input.dryRun) { res.recorded = rows.length; return res; }

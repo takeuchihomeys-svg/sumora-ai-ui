@@ -3264,8 +3264,10 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   try {
     const erb = await import("@/app/lib/estimate-records-block");
     if (erb.estimateRecordsBlockOn()) {
-      const { data: erRows } = await supabase.from("estimate_records").select("property_name, room_no, initial_cost_yen, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
+      const { data: erRows } = await supabase.from("estimate_records").select(`${erb.estimateDiscountOn() ? "property_name, room_no, initial_cost_yen, discount_yen, created_at" : "property_name, room_no, initial_cost_yen, created_at"}${erb.estimateItemsOn() ? ", cost_items, items_source" : ""}`).eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
       estimateRecordsText = erb.estimateRecordsBlock((erRows ?? []) as never);
+      // 2026-11-26 作業員L（BRAIN_ESTIMATE_REACTION・既定 off）: 新しい見積の後のお客様の反応の1行（会話の通から・決まった語）
+      if (erb.estimateReactionOn() && estimateRecordsText) { const rl = erb.estimateReactionLine(((erRows ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null, typedMessages as never); if (rl) estimateRecordsText += `\n${rl}`; }
     }
   } catch (e) { console.warn("[brain-core] estimate-records block skipped:", e instanceof Error ? e.message : String(e)); }
   const tasksText = (openTasks.length > 0
@@ -3339,7 +3341,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
-  const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
+  const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
     if (cpf.brainCheckPromiseFlowOn() && !isPostApplyStatus(convStatus)) {
@@ -4046,6 +4048,9 @@ ${sh}`;
           // 2026-11-25 作業員A（#687 ③・CONDUCTOR_INTAKE_ROUTE=on の時だけ・既定 off）: 入口の統括に地図の駅（決まった計算）を1行。申込以降は出さない
           await (async () => { try { const am = await import("@/app/lib/apply-route-map"); if (!am.conductorIntakeRouteOn() || isPostApplyStatus(convStatus)) return ""; const nd = am.resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node; const ln = am.intakeRouteLine(nd); if (ln) console.log(JSON.stringify({ tag: "brain:intake-route", conversationId, node: nd })); return ln; } catch { return ""; } })(),
           // 2026-11-26 作業員L（#728 ③・CONDUCTOR_DEAL_FLOW_LINE=on の時だけ・既定 off）: 成約データの駅からの申込到達率と申込に届いた件の次の段（決まった数・日数は A の station_state）
+          // 2026-11-26 作業員L（連携の一覧の3位「見積書ツール → 統括の入口」・CONDUCTOR_INTAKE_ESTIMATE=on の時だけ・既定 off）: 一番新しい見積の 送った日・合計・割引・見積の後の反応か「まだ返事なし（N日）」の1行。
+          //   値は BRAIN_ESTIMATE_DISCOUNT・REACTION と同じ（estimate_records の discount_yen・estimateReactionLine）。控えの行 intake_estimate（MATERIAL_PRIORITY・受け持ち表）。申込以降は出さない
+          await (async () => { try { const erb = await import("@/app/lib/estimate-records-block"); if (!erb.conductorIntakeEstimateOn() || isPostApplyStatus(convStatus)) return ""; const { data: er } = await Promise.race([supabase.from("estimate_records").select(`property_name, room_no, initial_cost_yen, discount_yen, created_at${erb.estimateItemsOn() ? ", cost_items, items_source" : ""}`).eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(5), new Promise<{ data: null }>((r) => setTimeout(() => r({ data: null }), 1_500))]); const ln = erb.intakeEstimateLine((er ?? []) as never, typedMessages as never, turnAt0 ? Date.parse(turnAt0) : Date.now()); if (ln) { materialMarks.intake_estimate = ln.length; materialBlocks.push({ key: "intake_estimate", text: ln, from: "intake" }); } return ln; } catch { return ""; } })(),
           await (async () => { try { const df = await import("@/app/lib/deal-flow-line"); if (!df.conductorDealFlowLineOn() || isPostApplyStatus(convStatus)) return ""; const am = await import("@/app/lib/apply-route-map"); const nd = am.resolveRouteNode({ stage: customerState?.stage ?? null, searching: customerState?.searching ?? null, ledger: brainLedger.facts, routeType: routeTypeNow ?? null }).node; return df.dealFlowIntakeLine(nd); } catch { return ""; } })(),
           await (async () => { try { const os = await import("@/app/lib/conductor-our-side"); if (!os.intakeStaffRefreshOn() || !turnAt0) return ""; const prevTodos = ((opts?.prevMeta as { conductor_intake?: { answer?: { todos?: Array<{ kind?: string; what?: string }> } | null } } | null | undefined)?.conductor_intake?.answer?.todos) ?? null; return os.staffSinceLine({ msgs: typedMessages, aix: aixLogs.filter((a): a is AixLog & { aix_type: string } => !!a.aix_type), nowMs: Date.parse(turnAt0) + 1, prevTodos }); } catch { return ""; } })(),
           // 2026-11-12 作業員4（竹内さん「こちらから送った部分と相手が送ってきた部分を照らし合わせられるように」）: ここ数番の照らし合わせの残り（事実だけ・既定 off CONDUCTOR_EXCHANGE_LEDGER=on）
@@ -4448,6 +4453,11 @@ ${sh}`;
         const df = await import("@/app/lib/deal-flow-line");
         if (df.dealFlowPreApplyLineOn() && ar.loc?.node && !ar.loc.branch) { const pl = df.dealFlowPreApplyLine(ar.loc.node); if (pl) { applyRouteText += `\n${pl}`; materialMarks.deal_flow_pre_apply = pl.length; materialBlocks.push({ key: "deal_flow_pre_apply", text: pl, from: "route" }); } }
       } catch (e) { console.warn("[brain-core] deal-flow-pre-apply skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-26 作業員L（#795 ③・ROUTE_MINDSET_LINE=on の時だけ・既定 off）: 前の判断の気持ち × 今の駅 → 竹内さん本人の多い一手（地図が気持ちを読む1行）
+      try {
+        const msm = await import("@/app/lib/mindset-station-move");
+        if (msm.routeMindsetLineOn() && ar.loc?.node && !ar.loc.branch) { const prevState = ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null; const ml = msm.mindsetStationLine(ar.loc.node, prevState); if (ml) { const tm = msm.mindsetStationTopMark(ar.loc.node, prevState); if (tm) flowMarks.msm = tm; /* #795 使った目印 */ applyRouteText += `\n${ml}`; materialMarks.mindset_station = ml.length; materialBlocks.push({ key: "mindset_station", text: ml, from: "route" }); } }
+      } catch (e) { console.warn("[brain-core] mindset-station skipped:", e instanceof Error ? e.message : String(e)); }
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
     } catch (e) { console.warn("[brain-core] apply-route skipped:", e instanceof Error ? e.message : String(e)); }

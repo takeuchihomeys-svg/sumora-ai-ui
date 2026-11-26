@@ -119,6 +119,31 @@ async function main() {
     const c = t3[`${e.now}|${e.draft}|${tempOf.get(e.id)}`]; const n = c ? Object.values(c).reduce((a, b) => a + b, 0) : 0;
     return n >= 20 ? (Object.entries(c!).sort((a, b) => b[1] - a[1])[0][0] as ReactionCat) : predictReaction(e.now, e.draft, table).likely;
   }]);
+  // 2026-11-26 作業員L（統括役: 予想の当たり 37.3% は基準A と同じ＝気持ち×駅の表と組み合わせて基準を超える形があるか・台帳 #795）:
+  //   --by-station で、例ごとに駅（案件の段の時刻・audit-mindset-station-move.stationAt）と気持ち（その時刻より前の一番新しい判断の digest.ms）を付け、
+  //   学び側の 今回×下書き×駅×気持ち（20番以上）・駅×気持ち（20番以上）の多数で当てる（足りない鍵は 今回×下書き の表に戻す）。読む物が増える＝晩だけ（22時以降）
+  if (process.argv.includes("--by-station")) {
+    const { stationAt } = await import("./audit-mindset-station-move");
+    const cids = [...new Set(exs.map((e) => e.cid))];
+    const dealOf = new Map<string, Record<string, string | null> | null>();
+    const msOf = new Map<string, Array<{ t: number; s: string }>>();
+    for (let i = 0; i < cids.length; i += 100) {
+      const part = cids.slice(i, i + 100);
+      const dd = await all<Record<string, string | null>>((f) => sb.from("deal_outcomes").select("conversation_id, property_sent_at, viewing_at, viewing_held_at, applied_at").in("conversation_id", part).range(f, f + 999));
+      for (const d of dd) if (!dealOf.has(String(d.conversation_id))) dealOf.set(String(d.conversation_id), d);
+      const ds = await all<{ conversation_id: string; created_at: string; digest: Record<string, unknown> | null }>((f) => sb.from("brain_decision_logs").select("conversation_id, created_at, digest").in("conversation_id", part).gte("created_at", since).neq("source", "test").order("created_at").range(f, f + 999));
+      for (const d of ds) { const s = String(d.digest?.ms ?? "").split("|")[0]; if (s) msOf.set(d.conversation_id, [...(msOf.get(d.conversation_id) ?? []), { t: Date.parse(d.created_at), s }]); }
+    }
+    const keyOf = (e: Ex) => { const st = stationAt(e.at, dealOf.get(e.cid) ?? null); const ms = (msOf.get(e.cid) ?? []).filter((x) => x.t <= e.at).pop()?.s ?? "-"; return { st, ms }; };
+    const k4: Record<string, Record<string, number>> = {}, k2: Record<string, Record<string, number>> = {};
+    const kOf = new Map<string, { st: string; ms: string }>(); for (const e of exs) kOf.set(e.id, keyOf(e));
+    for (const e of train) { const k = kOf.get(e.id)!; const a = (k4[`${e.now}|${e.draft}|${k.st}|${k.ms}`] ??= {}); a[e.actual] = (a[e.actual] ?? 0) + 1; const b = (k2[`${k.st}|${k.ms}`] ??= {}); b[e.actual] = (b[e.actual] ?? 0) + 1; }
+    const majOf = (c: Record<string, number> | undefined) => { const n = c ? Object.values(c).reduce((a, b) => a + b, 0) : 0; return n >= 20 ? (Object.entries(c!).sort((a, b) => b[1] - a[1])[0][0] as ReactionCat) : null; };
+    methods.push(["試し 今回×下書き×駅×気持ち", (e) => { const k = kOf.get(e.id)!; return majOf(k4[`${e.now}|${e.draft}|${k.st}|${k.ms}`]) ?? predictReaction(e.now, e.draft, table).likely; }]);
+    methods.push(["試し 駅×気持ち", (e) => { const k = kOf.get(e.id)!; return majOf(k2[`${k.st}|${k.ms}`]) ?? predictReaction(e.now, e.draft, table).likely; }]);
+    const hasMs = test.filter((e) => kOf.get(e.id)!.ms !== "-").length;
+    console.log(`駅×気持ち: 当て ${test.length}番のうち気持ちの付いた番 ${hasMs}・鍵の数 ${Object.keys(k4).length}（20番以上 ${Object.values(k4).filter((c) => Object.values(c).reduce((a, b) => a + b, 0) >= 20).length}）`);
+  }
   for (const t of ["高", "中", "低"]) { const g = test.filter((e) => tempOf.get(e.id) === t); console.log(`温度 ${t}: ${g.length}番・悪い反応 ${pct(g.filter((e) => BAD_CATS.has(e.actual)).length, g.length)}・進む ${pct(g.filter((e) => e.actual === "proceed").length, g.length)}`); }
   console.log("\n① 次の反応の種類の当たり（当て側）");
   for (const [k, f] of methods) console.log(`  ${k.padEnd(28)} ${pct(acc(f), test.length)}（${acc(f)}/${test.length}）`);

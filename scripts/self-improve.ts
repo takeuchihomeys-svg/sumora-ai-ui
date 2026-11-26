@@ -728,6 +728,8 @@ async function main() {
           elig++; if (typeof r.digest?.ci === "string") eligCi++;
         }
         intakeReachRows.push({ metric: "core:intake_reach:in_time", value: elig ? Math.round((eligCi / elig) * 1000) / 10 : null, n: elig });
+        // 2026-11-26 作業員L（#795 ②）: 決め手の残りが読めた割合は「決めに行く場面の状態」だけで数える（記録・既定 on・mindset:decide_gap_readable）
+        { const { readChainCounts } = await import("./audit-customer-read-chain"); const rc = readChainCounts(ds); intakeReachRows.push({ metric: "mindset:decide_gap_readable", value: rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 1000) / 10 : null, n: rc.decideN }); lines.push(`- 決め手の残りが読めた（決めに行く場面の状態だけ・前の24時間）: ${rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 100) : "—"}%（${rc.decideBlocker}/${rc.decideN}）`); }
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
         lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");

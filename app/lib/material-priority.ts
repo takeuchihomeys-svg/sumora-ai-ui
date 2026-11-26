@@ -19,7 +19,8 @@ export function materialPriorityMode(env: Env = typeof process !== "undefined" ?
 // 2026-11-26 作業員A（統括役の頼み・#744 の分かれ目で見直し）: mp-v2＝AIX の番に探す約束の後のお礼を足し、約束の番の並びを 確認の約束の流れ→探す約束の後のお礼→今果たせる物 に
 export const MATERIAL_PRIORITY_VERSION = "mp-v2";
 
-export type MaterialBlock = { key: string; text: string; from: "cs" | "route" };
+/** from: cs＝お客様の状態の塊・route＝地図の塊・intake＝入口の統括に渡した行（2026-11-26 作業員L・ブレインの材料の文には無い＝控えの行として数えるだけで動かさない） */
+export type MaterialBlock = { key: string; text: string; from: "cs" | "route" | "intake" };
 
 /**
  * 重点（入口の focus_read.focus）ごとに、先に見る行のキー（左ほど先）。v1 は作業員A の案（11/25 夜）と check-order の竹内さんの確認の順の型から:
@@ -57,7 +58,7 @@ export function applyMaterialPriority(o: { cs: string; route: string; blocks: re
   const moved: string[] = [];
   for (const k of o.keys) {
     const b = o.blocks.find((x) => x.key === k && x.text.trim());
-    if (!b) continue;
+    if (!b || b.from === "intake") continue;
     const src = b.from === "route" ? route : cs;
     const i = src.indexOf(b.text);
     if (i < 0) continue;
@@ -120,6 +121,14 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
     const aix = String(d.aix ?? "").trim(); if (!aix) return null;
     return c.some((x) => aix.startsWith(x));
   },
+  // 2026-11-26 作業員L（#795・作業員A と決め）: 気持ち×駅の表の1位の一手（digest.msm: a:<AIX>／r:<返信の形>）。a: はその AIX を選んだ＝使った・r: は返信（AIX なし）＝使った
+  mindset_station: (d) => {
+    const m = String(d.msm ?? ""); if (!m) return null;
+    const aix = String(d.aix ?? "").trim();
+    return m.startsWith("a:") ? aix.startsWith(m.slice(2)) : aix === "";
+  },
+  // 2026-11-26 作業員L（連携の一覧の3位）: 入口の見積の1行（入口の統括に渡す物＝ブレインの判断の目印は決められない）
+  intake_estimate: () => null,
   // 2026-11-26 作業員L（#728 ③・作業員A と決め・台帳 #783）: 成約データの申込の直前の一手（手打ちの返信が大半）＝返信を選んだ＝使った・申込へ以外の AIX＝使わなかった・
   //   AIX【申込へ】は案内の別の形なので決められない（材料の印のある番だけを数えるのは呼ぶ側）
   deal_flow_pre_apply: (d) => {

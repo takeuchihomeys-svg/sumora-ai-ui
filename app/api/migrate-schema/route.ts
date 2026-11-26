@@ -2296,6 +2296,9 @@ CREATE TABLE IF NOT EXISTS estimate_records (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_estimate_records_log_item ON estimate_records(aix_usage_log_id, item_index);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_customer ON estimate_records(property_customer_id, estimated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_conv ON estimate_records(conversation_id, estimated_at DESC);
+-- 2026-11-26 作業員L（台帳 #798 ②・統括役の決め 案A）: 初期費用の内訳（[{label, yen}]・0円の行は入れない）と内訳の出所（tool／aix_text／cost_notes）。どちらも NULL 可
+ALTER TABLE estimate_records ADD COLUMN IF NOT EXISTS cost_items JSONB;
+ALTER TABLE estimate_records ADD COLUMN IF NOT EXISTS items_source TEXT;
 
 -- ── property_pickups: 物件ピックアップの1回分を「売上サポ」で確認して送るための行（2026-09-24）──
 -- 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを判断して共有。

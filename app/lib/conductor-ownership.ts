@@ -25,6 +25,8 @@ export const OWN_ROWS: readonly OwnRow[] = [
   { key: "aix_boundary", name: "AIX と返信の境目（AIX_BOUNDARY_LINE）", owner: "作業員A", mark: "aix_boundary", want: (d) => (d.abd ? (d.abd === "reply" ? null : String(d.abd)) : undefined) },
   { key: "aix_dictionary", name: "AIX の辞書（AIX_DICTIONARY_LINE）", owner: "作業員A", mark: "aix_dictionary", want: (d) => (d.dct && String(d.aix ?? "").trim() ? String(d.dct).split("+")[0] : undefined) },
   { key: "deal_flow_pre_apply", name: "成約データの1行（DEAL_FLOW_PRE_APPLY_LINE）", owner: "作業員L", mark: "deal_flow_pre_apply" },
+  // 2026-11-26 作業員L（連携の一覧の3位）: 入口の見積の1行（入口の統括に渡す・印は material_marks.intake_estimate）。目当ては決められない（費用の答え・内覧の誘い・待ち）
+  { key: "intake_estimate", name: "入口の見積の1行（CONDUCTOR_INTAKE_ESTIMATE）", owner: "作業員L", mark: "intake_estimate" },
   { key: "aix_state_card", name: "AIX の札（AIX_STATE_CARD・本番は shadow）", owner: "作業員A", mark: "aix_state_card" },
   { key: "mindset_station", name: "地図が気持ちを読む1行（ROUTE_MINDSET_LINE）", owner: "作業員L", mark: "mindset_station" },
   { key: "pickup_why", name: "物件を選んだ理由（PICKUP_WHY_TO_BRAIN）", owner: "作業員A", mark: "pickup_why" },
