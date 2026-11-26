@@ -17,3 +17,5 @@ npx tsx app/lib/__tests__/playbook-site-split.test.ts
 npx tsx app/lib/__tests__/auto-rules-verify-exists.test.ts
 npx tsx app/lib/__tests__/playbook-rule-evidence.test.ts
 npx tsx app/lib/__tests__/learn-opens-and-itandi-flow.test.ts
+echo "[pre-commit] 手順書の抜けの基準・確かめない決まりの理由（増えたら止める）"
+npx tsx app/lib/__tests__/playbook-gap-baseline.test.ts

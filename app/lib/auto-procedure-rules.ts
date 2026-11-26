@@ -61,6 +61,19 @@ export type RuleVerify = {
   seq?: string[];
 };
 
+/**
+ * 点検記録で確かめられない決まりの「理由つきの例外」（2026-11-27 抜け防止）。
+ *   ここに無い決まりで verify が空のものは、テスト（playbook-gap-baseline.test.ts）が止める＝確かめ方を作るか、理由を書く。
+ *   理由は「なぜ点検記録に段が出ないか」を一言で。手順書の抜け一覧（gaps）には出さない（理由つきで受け入れた物）。
+ */
+export const RULES_CODE_ONLY: Readonly<Record<string, string>> = {
+  no_reset_button: "リセットボタンを押さない、という「押さなかった」事は段に残らない（押したら _doReset の段が出るので、コードの目印で守りを見る）",
+  hidden_work_no_pause: "画面に見えない作業（学習の取り込み・確かめ）の段は点検記録に出さない設計（迷い・停止の段で守れたかは見えない）",
+  audit_rule_evidence: "点検記録そのものの作り方の決まり（段を落とす時の守り）。確かめる対象が点検の仕組み自身なので、段では確かめない",
+  human_fixed_waits_routed: "固定の待ち時間を人の間（_hd）に通す決まり。待ち時間は段に残らないので、目印（コードの呼び方）で見る",
+  human_fixed_waits_routed_bulk: "一括の固定の待ち時間を人の間（_hd）に通す決まり。待ち時間は段に残らないので、目印（コードの呼び方）で見る",
+};
+
 /** 点検記録の段の上限（chrome-extension/search-audit.js の MAX_STEPS と同じ） */
 export const AUDIT_MAX_STEPS = 120;
 

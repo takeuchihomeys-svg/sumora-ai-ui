@@ -15,6 +15,8 @@ import { spawnSync } from "node:child_process";
 import { autoRulesVersion, AUTO_RULES_REVIEWED_UP_TO, AUTO_RULES } from "../app/lib/auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
 import { cmpVer } from "../app/lib/playbook-freshness";
+import { diffGaps } from "../app/lib/playbook-gap-baseline";
+import { gapReportFor } from "./playbook-gap-audit";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -156,6 +158,35 @@ async function main() {
         if (lag) bad.push(`拡張が古いまま（最後に動いた版 ${top.ext_version} < 手元 ${code.upTo}）＝ chrome://extensions で再読み込み → リアプロのタブを開き直す → 自動を1回回す（それまで「反映済み」とは言えない）`);
       }
     }
+  }
+
+  // ⑥ 手順書の抜け（2026-11-27 竹内さん「手順書ぬけのないように」）: 受け入れた抜けの基準と比べ、増えた抜けを止める
+  say("\n■ ⑥ 手順書の抜け（基準と比べる・増えたら止める）");
+  const gapBasePath = path.join(process.cwd(), "memory", "playbook_gaps_baseline.json");
+  let gapBase: { sites?: Record<string, string[]> } | null = null;
+  try { gapBase = JSON.parse(fs.readFileSync(gapBasePath, "utf8")); } catch { gapBase = null; }
+  if (!gapBase) {
+    say(`  ${WA} 基準が無い（npx tsx scripts/playbook-gap-audit.ts --write-baseline で作る）`);
+    warn.push("手順書の抜けの基準が無い");
+  } else if (URL_ && KEY) {
+    const sbGap = createClient(URL_, KEY);
+    for (const site of ["realpro", "itandi"]) {
+      const { data, error } = await sbGap.from("human_learn_profile").select("id, scope, created_at, bundle")
+        .eq("scope", site).order("created_at", { ascending: false }).limit(1);
+      if (error) { say(`  ${WA} ${site}: 読めない（${error.message}）`); warn.push(`${site} の抜けを読めなかった`); continue; }
+      const row = ((data ?? []) as unknown as Array<{ id: number; scope: string; created_at: string; bundle: Record<string, unknown> }>)[0] ?? null;
+      const rep = gapReportFor(site, row);
+      if (!rep.fresh) { say(`  ${WA} ${site}: 束の行が無い`); warn.push(`${site} の束の行が無い`); continue; }
+      const d = diffGaps(rep.fresh.gaps, gapBase.sites?.[site] ?? []);
+      say(`  ${d.added.length ? NG : OK} ${site}: 受け入れ済み ${d.kept}件・新しい抜け ${d.added.length}件・直った ${d.removed.length}件`);
+      for (const t of d.added) say(`     ${NG} 新しい抜け: ${t}`);
+      if (d.added.length) bad.push(`${site} に新しい手順書の抜け ${d.added.length}件（${d.added.slice(0, 2).join(" ／ ")}）：直す、または理由を書いて基準に加える（竹内さんの確認）`);
+      if (d.removed.length) warn.push(`${site}: 基準の抜けが ${d.removed.length}件 直っている（基準から外す＝ playbook-gap-audit --write-baseline）`);
+      if (rep.fresh.problems.length) bad.push(`${site} の手順書に問題 ${rep.fresh.problems.length}件（${rep.fresh.problems[0].slice(0, 60)}）`);
+    }
+  } else {
+    say(`  ${WA} DB が読めないので抜けは見ていない`);
+    warn.push("手順書の抜けを DB で見ていない（環境変数が無い）");
   }
 
   say("\n■ 結論");
