@@ -19,21 +19,24 @@ export function preflightKeysOf(out: string): string[][] {
   return xs;
 }
 /** 届いたかの判定（純関数）: 目当ての印（辞書の手＋推定）が付いた問題の数が min 以上で「比べる」・未満は「届かず」・印の無いスイッチは「印なし」 */
-export function preflightVerdict(byId: Record<string, string[] | null>, targets: readonly string[], min = 3): { reached: string[]; notReached: string[]; unknown: string[]; verdict: "比べる" | "届かず" | "印なし" } {
+export function preflightVerdict(byId: Record<string, string[] | null>, targets: readonly string[], min = 3, missedById: Record<string, number> = {}): { reached: string[]; notReached: string[]; noRecord: string[]; unknown: string[]; verdict: "比べる" | "届かず" | "録音なし" | "印なし" } {
   const ids = Object.keys(byId);
-  if (!targets.length) return { reached: [], notReached: [], unknown: ids, verdict: "印なし" };
+  if (!targets.length) return { reached: [], notReached: [], noRecord: [], unknown: ids, verdict: "印なし" };
   const reached = ids.filter((id) => (byId[id] ?? []).some((k) => targets.includes(k)));
   const unknown = ids.filter((id) => byId[id] == null);
-  const notReached = ids.filter((id) => byId[id] != null && !reached.includes(id));
-  return { reached, notReached, unknown, verdict: reached.length >= Math.min(min, ids.length) && reached.length > 0 ? "比べる" : "届かず" };
+  // 統括役の決め: 録音の無い前段の読みがあった問題で届かなかった物は「録音なし」（届かずと混ぜない）
+  const noRecord = ids.filter((id) => byId[id] != null && !reached.includes(id) && (missedById[id] ?? 0) > 0);
+  const notReached = ids.filter((id) => byId[id] != null && !reached.includes(id) && !noRecord.includes(id));
+  const enough = reached.length >= Math.min(min, ids.length) && reached.length > 0;
+  return { reached, notReached, noRecord, unknown, verdict: enough ? "比べる" : reached.length + noRecord.length >= Math.min(min, ids.length) ? "録音なし" : "届かず" };
 }
 export function targetMarksOf(d: ExamDictionary | null, switches: readonly string[]): string[] {
   // 手の印（SWITCH_TARGET_MARK・SWITCH_REACH.mark）があればそれだけ（推定の印は他の部品の印も拾う＝now_fulfillable 等で届いたと見誤る・a-cpf で確かめた）
   return [...new Set(switches.flatMap((s) => { const ms = d?.switches[s]?.marks ?? []; const hand = ms.filter((m) => m.source === "手"); return (hand.length ? hand : ms).map((m) => m.mark); }))];
 }
 /** 1問ずつ流す（問題と印の対応を確かにする）。費用は 0（strict）・1問 30〜90秒 */
-export function runPreflight(o: { cwd: string; ids: readonly string[]; env: Record<string, string>; label: string }): { byId: Record<string, string[] | null>; missed: number } {
-  const byId: Record<string, string[] | null> = {}; let missed = 0;
+export function runPreflight(o: { cwd: string; ids: readonly string[]; env: Record<string, string>; label: string }): { byId: Record<string, string[] | null>; missed: number; missedById: Record<string, number> } {
+  const byId: Record<string, string[] | null> = {}; let missed = 0; const missedById: Record<string, number> = {};
   for (const id of o.ids) {
     const envFile = existsSync(join(o.cwd, ".env.local")) ? join(o.cwd, ".env.local") : join(o.cwd, "..", "exam-night", ".env.local"); // .env は写さない（係の作業ツリーの物を読む）
     const r = spawnSync("npx", ["tsx", `"--env-file=${envFile}"`, "scripts/brain-exam.ts", `--label=${o.label}-${id}`, "--conv=auto", "--repeat=1", "--stage=brain", `--only=${id}`, "--no-judge", "--replay=strict"], {
@@ -44,9 +47,9 @@ export function runPreflight(o: { cwd: string; ids: readonly string[]; env: Reco
     const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
     const ks = preflightKeysOf(out);
     byId[id] = ks.length ? [...new Set(ks.flat())] : null;
-    const mm = out.match(/録音の無い・変わった要求が (\d+)回/); if (mm) missed += Number(mm[1]);
+    const mm = out.match(/録音の無い・変わった要求が (\d+)回/); if (mm) { missed += Number(mm[1]); missedById[id] = Number(mm[1]); }
   }
-  return { byId, missed };
+  return { byId, missed, missedById };
 }
 
 if (require.main === module) {
@@ -59,7 +62,7 @@ if (require.main === module) {
   const targets = targetMarksOf(dict, switches);
   const t0 = Date.now();
   const r = runPreflight({ cwd, ids, env, label: `pfm-${new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "")}` });
-  const v = preflightVerdict(r.byId, targets, Number(arg("min", "3")) || 3);
-  console.log(`届きの確かめ（LLM 0・${ids.length}問・${Math.round((Date.now() - t0) / 1000)}秒）: ${v.verdict}・目当ての印 ${targets.join(",") || "なし"}・届いた ${v.reached.length}（${v.reached.join(",")}）・届かない ${v.notReached.length}・分からない ${v.unknown.length}${r.missed ? `・録音の無い前段の要求 ${r.missed}回（呼んでいない＝その読みに依る部品は届かずに見えることがある）` : ""}`);
+  const v = preflightVerdict(r.byId, targets, Number(arg("min", "3")) || 3, r.missedById);
+  console.log(`届きの確かめ（LLM 0・${ids.length}問・${Math.round((Date.now() - t0) / 1000)}秒）: ${v.verdict}・目当ての印 ${targets.join(",") || "なし"}・届いた ${v.reached.length}（${v.reached.join(",")}）・届かない ${v.notReached.length}・録音なし ${v.noRecord.length}・分からない ${v.unknown.length}${r.missed ? `・録音の無い前段の要求 ${r.missed}回（呼んでいない＝その読みに依る部品は届かずに見えることがある）` : ""}`);
   for (const id of ids) console.log(`  ${id}: ${r.byId[id] == null ? "（印の行が出ない＝始まる前に止まった）" : (r.byId[id] ?? []).join(",") || "印なし"}`);
 }

@@ -24,9 +24,11 @@ export function offSwitchesInDir(dir: string): string[] {
   walk(dir);
   return [...out].sort();
 }
+/** 部品でない切り替え（試験の道具・確かめの回の印）は数えない */
+export const NOT_PART_SWITCH_RE = /^(?:EXAM_|LLM_TEST_)/;
 /** 印の決まっていないスイッチ（純関数）: covered に無い物を、許しの一覧にある物（警告）と新しい物（止める）に分ける */
 export function markCoverage(offSwitches: readonly string[], covered: ReadonlySet<string>, allow: ReadonlySet<string>): { covered: string[]; allowed: string[]; fresh: string[] } {
   const c: string[] = [], a: string[] = [], f: string[] = [];
-  for (const s of offSwitches) (covered.has(s) ? c : allow.has(s) ? a : f).push(s);
+  for (const s of offSwitches) { if (NOT_PART_SWITCH_RE.test(s)) continue; (covered.has(s) ? c : allow.has(s) ? a : f).push(s); }
   return { covered: c, allowed: a, fresh: f };
 }
