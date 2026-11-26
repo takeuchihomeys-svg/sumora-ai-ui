@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mindsetStationLine, routeMindsetLineOn, type StationMoveCell } from "../mindset-station-move";
-import { cellsOf, stationAt } from "../../../scripts/audit-mindset-station-move";
+import { cellsOf, replyWordOf, stationAt, stoneOf } from "../../../scripts/audit-mindset-station-move";
 import { readChainCounts, DECIDE_STATES } from "../../../scripts/audit-customer-read-chain";
 
 assert.equal(routeMindsetLineOn({}), false);
@@ -15,6 +15,10 @@ assert.equal(mindsetStationLine(null, "安くしたい", cells), "");
 const c = cellsOf([...Array(4)].map(() => ({ station: "proposing", state: "迷い", move: "返信:answer" })).concat([{ station: "proposing", state: "迷い", move: "AIX:property_send" }]), 5);
 assert.equal(c[0].move, "返信:answer"); assert.equal(c[0].share, 80); assert.deepEqual(c[0].stone.reply, ["answer"]);
 assert.equal(cellsOf([{ station: "a", state: "b", move: "x" }], 5).length, 0, "番の少ないマスは出さない");
+assert.deepEqual(c[0].stone.to, ["interested", "estimate"], "to は NEXT_STONE の駅から");
+assert.deepEqual(stoneOf("estimate", "AIX:viewing_invite"), { to: ["viewing_arrange", "apply_prep"], reply: [], aix: ["viewing_invite"] });
+assert.deepEqual(stoneOf("applying", "返信:promise").to, [], "石の無い駅は空");
+assert.equal(replyWordOf("確認して折り返しご連絡致します"), "promise");
 // 駅の当て方（段の時刻から）
 const t = Date.parse("2026-11-10T00:00:00Z");
 assert.equal(stationAt(t, { property_sent_at: "2026-11-01T00:00:00Z" }), "proposing");
@@ -26,4 +30,4 @@ assert.equal(rc.decideN, 2); assert.equal(rc.decideBlocker, 1); assert.ok(DECIDE
 // 配線
 const core = readFileSync(join(__dirname, "../brain-core.ts"), "utf8");
 assert.ok(/msm\.routeMindsetLineOn\(\) && ar\.loc\?\.node/.test(core) && /materialBlocks\.push\(\{ key: "mindset_station"/.test(core));
-console.log("mindset-station-move ok 15");
+console.log("mindset-station-move ok 19");

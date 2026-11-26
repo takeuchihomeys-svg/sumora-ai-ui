@@ -8,6 +8,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { draftKindOf } from "../app/lib/customer-reaction-predict";
+import { proposalKindOf } from "../app/lib/customer-mood-flow";
+import { NEXT_STONE } from "../app/lib/route-next-stone";
 import { isTestConversation } from "../app/lib/test-conversations";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -23,6 +25,18 @@ export function stationAt(t: number, d: { property_sent_at?: string | null; esti
   if (le(d.property_sent_at)) return "proposing";
   return "inquiry";
 }
+/** 返信の形を作業員A の STONE_TOOLS の語にそろえる（誘いは 内覧→invite_viewing・見積→invite_estimate・申込→invite_apply・純関数） */
+export function replyWordOf(text: string | null | undefined): string {
+  const k = draftKindOf(text);
+  if (k !== "push") return k;
+  const p = proposalKindOf(String(text ?? "").normalize("NFKC"));
+  return p === "内覧" ? "invite_viewing" : p === "見積" ? "invite_estimate" : p === "申込" ? "invite_apply" : "push";
+}
+/** 一手 → 次の石の形（to は NEXT_STONE[駅].to・純関数） */
+export function stoneOf(station: string, move: string): { to: string[]; reply: string[]; aix: string[] } {
+  const to = [...((NEXT_STONE as Record<string, { to: string[] } | undefined>)[station]?.to ?? [])];
+  return move.startsWith("AIX:") ? { to, reply: [], aix: [move.slice(4).split("/")[0]] } : { to, reply: [move.replace(/^返信:/, "")], aix: [] };
+}
 export type StationMoveCell = { station: string; state: string; stone: { to: string[]; reply: string[]; aix: string[] }; move: string; n: number; share: number };
 /** 駅×気持ちごとに一手を数え、多い順に（純関数） */
 export function cellsOf(rows: ReadonlyArray<{ station: string; state: string; move: string }>, min = 5): StationMoveCell[] {
@@ -34,7 +48,7 @@ export function cellsOf(rows: ReadonlyArray<{ station: string; state: string; mo
     if (tot < min) continue;
     const [station, state] = k.split("|");
     for (const [move, n] of [...m].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
-      const stone = move.startsWith("AIX:") ? { to: [], reply: [], aix: [move.slice(4).split("/")[0]] } : { to: [], reply: [move.replace(/^返信:/, "")], aix: [] };
+      const stone = stoneOf(station, move);
       out.push({ station, state, stone, move, n, share: Math.round((n / tot) * 1000) / 10 });
     }
   }
@@ -63,7 +77,7 @@ if (require.main === module) (async () => {
     const { data: m } = await sb.from("messages").select("text, created_at, is_aix_generated, staff_writer").eq("conversation_id", d.conversation_id).eq("sender", "staff").gt("created_at", new Date(t).toISOString()).lt("created_at", new Date(t + 864e5).toISOString()).order("created_at").limit(1);
     const x = ((m ?? []) as Array<{ text: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer: string | null }>)[0];
     if (!x || x.staff_writer !== "takeuchi") continue;
-    let move = `返信:${draftKindOf(x.text)}`;
+    let move = `返信:${replyWordOf(x.text)}`;
     if (x.is_aix_generated) {
       const { data: a } = await sb.from("aix_usage_logs").select("aix_type, sent_at, created_at").eq("conversation_id", d.conversation_id).gte("created_at", new Date(Date.parse(x.created_at) - 180_000).toISOString()).lte("created_at", new Date(Date.parse(x.created_at) + 180_000).toISOString()).limit(1);
       move = `AIX:${((a ?? []) as Array<{ aix_type: string }>)[0]?.aix_type ?? "不明"}`;
