@@ -14,8 +14,13 @@ function ok(name, c, detail) {
   else { fail++; console.log("  ✗ " + name + (detail !== undefined ? "  " + JSON.stringify(detail) : "")); }
 }
 
-const a = bg.indexOf("var _screenKept = null;");
-const b = bg.indexOf("var _screenAllKeys = Object.keys(_screenAim).length;", a);
+// 2.8.313: 控えの処理は「サイトごとの束（perSite）を回して _keep[サイト] に控える」形になった。
+//   見る範囲は `var _keep = {};` から `var _screenKept = _curPrep.screenKept;` まで。
+//   束から画面位置を取り出す _extractScreenAndSceneFromBundle は、試験では束に載せた値をそのまま返す代役にする。
+const a = bg.indexOf("var _keep = {};");
+const bMark = "var _screenKept = _curPrep.screenKept;";
+const b0 = bg.indexOf(bMark, a);
+const b = b0 > 0 ? b0 + bMark.length : -1;
 const block = a > 0 && b > a ? bg.slice(a, b) : "";
 
 function makeRun() {
@@ -24,7 +29,10 @@ function makeRun() {
     get: async (keys) => { const o = {}; for (const k of keys) if (k in store) o[k] = JSON.parse(JSON.stringify(store[k])); return o; },
     set: async (o) => { for (const k in o) store[k] = JSON.parse(JSON.stringify(o[k])); },
   } } };
-  const fn = new Function("chrome", "console", `return async function (curSite, _screenAim, _sceneAim, bundle) {
+  const fn = new Function("chrome", "console", `return async function (curSite, screenIn, sceneIn, bundle) {
+    bundle.__screen = screenIn; bundle.__scene = sceneIn;
+    var perSite = {}; perSite[curSite] = bundle;
+    var _extractScreenAndSceneFromBundle = function (b) { return { screenAim: b.__screen || {}, sceneAim: b.__scene || {} }; };
     ${block}
     return { screen: _screenAim, scene: _sceneAim, kept: _screenKept };
   };`)(chrome, { log() {} });
@@ -53,13 +61,16 @@ function makeRun() {
   ok("新しい良い束が来たらそちらを使い控えも更新", r.screen["賃料"].n === 7 && h.store.axlx_learn_screen_keep.realpro.screen["賃料"].n === 7 && r.kept === null);
 
   console.log("\n■ 配線");
-  ok("link に screen_kept を載せる", /screen_kept: _screenKept,/.test(bg));
-  ok("ページが learn_screen_kept を記録", /_auditStepP\("learn_screen_kept"/.test(ps) && /concat\(_LEARN_NEXT_KEYS, \["axlx_learn_link"\]\)/.test(ps));
+  ok("link に screen_kept を載せる", /screen_kept: (_screenKept|prep\.screenKept),/.test(bg));
+  ok("ページが learn_screen_kept を記録", /_auditStepP\("learn_screen_kept"/.test(ps) && /concat\(_LEARN_NEXT_KEYS, \["axlx_learn_link"/.test(ps));
   ok("新しい段は間引かない（_PIN）", /\|learn_screen_kept\|/.test(ps));
 
   console.log("\n■ 版");
-  ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+  // 2.8.313: 版の固定をやめ「その版以上」で見る
+  const verGte = (v, w) => { const x = String(v).split(".").map(Number), y = w.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== y[i]) return (x[i] || 0) > y[i]; } return true; };
+  ok("manifest が 2.8.119 以上", verGte(mf.version, "2.8.119"), mf.version);
+  const pv = (ps.match(/var _AXLX_PAGE_VER = "([\d.]+)";/) || [])[1];
+  ok("_AXLX_PAGE_VER が 2.8.119 以上", !!pv && verGte(pv, "2.8.119"), pv);
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail) process.exit(1);

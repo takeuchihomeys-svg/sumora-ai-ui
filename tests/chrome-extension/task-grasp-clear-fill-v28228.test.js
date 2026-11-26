@@ -42,7 +42,9 @@ ok("入れ完了:", /入れ完了:/.test(ps));
 
 console.log("\n■ パネル・KEEP");
 ok("panel taskNow", /taskNow/.test(bp));
-ok("KEEP/RULE に task_", /KEEP_STEP[\s\S]{0,1200}task_now/.test(sa) && /RULE_STEP[\s\S]{0,1200}task_now/.test(sa));
+// 2.8.313: KEEP_STEP／RULE_STEP は段の名前が増えて 1200 字の窓では届かない。定義の行ごと（var KEEP_STEP = ... ;）に task_now・task_done・task_next が入っているかを見る
+const _stepLine = (nm) => (sa.split("\n").find((l) => new RegExp("^\\s*var " + nm + " = ").test(l)) || "");
+ok("KEEP/RULE に task_", /task_now/.test(_stepLine("KEEP_STEP")) && /task_now/.test(_stepLine("RULE_STEP")) && /task_done/.test(_stepLine("KEEP_STEP")) && /task_done/.test(_stepLine("RULE_STEP")) && /task_next/.test(_stepLine("KEEP_STEP")) && /task_next/.test(_stepLine("RULE_STEP")));
 ok("PIN に task_", /task_now\|task_done\|task_next/.test(ps));
 
 console.log("\n" + pass + " passed, " + fail + " failed");

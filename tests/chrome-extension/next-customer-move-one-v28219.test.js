@@ -37,7 +37,9 @@ assert(page.includes("_graspNextCustomerAndMove(\"fill_start\")") || page.includ
 assert(page.includes("axlx-bulk-next"), "listen bulk next");
 assert(page.includes("next_customer_move_one_by_one"), "RULES_DONE");
 assert(rules.includes('id: "next_customer_move_one_by_one"'), "AUTO_RULE");
-assert(rules.includes('AUTO_RULES_REVIEWED_UP_TO = "2.8.219"'), "reviewed up to");
+// 版の固定をやめる: 決まりの確認済み版は進み続けるので「2.8.219 以上」を見る
+const _rv = /AUTO_RULES_REVIEWED_UP_TO = "([0-9.]+)"/.exec(rules);
+assert(_rv && semverOk(_rv[1], "2.8.219"), "reviewed up to >= 2.8.219 got " + (_rv && _rv[1]));
 assert(bulk.includes("axlx-bulk-next"), "bulk posts next");
 assert(graspJs.includes("次の動き:"), "panel nextMove");
 

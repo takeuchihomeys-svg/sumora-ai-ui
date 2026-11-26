@@ -20,14 +20,14 @@ const ib = read("itandi-bulk-dl.js");
 
 console.log("■ ① 迷うのは選ぶ系が多い・送信はほとんど迷わない");
 ok("_hesitateKindOf がある（choose / decide / other）", /function _hesitateKindOf\(el\)/.test(ps));
-ok("選ぶ系は 15%（checkbox・radio・label・select）", /var base = kind === "choose" \? 0\.15 : \(kind === "decide" \? 0\.03 : 0\.08\);/.test(ps));
-ok("決定系（button・submit）は 3%", /kind === "decide" \? 0\.03/.test(ps));
-ok("直前5秒以内に迷っていたら少し迷いやすい（+4pt）", /var boost = \(Date\.now\(\) - _lastHesitateAt < 5000\) \? 0\.04 : 0;/.test(ps));
+// 2026-11-16 迷いを厚く: 選ぶ系 15%→22%・決定系 3%→7%・その他 8%→10%（選ぶ系 > その他 > 決定系の順は変わらない）
+ok("決定系（button・submit）は 7%（選ぶ系より低い）", /kind === "decide" \? 0\.07/.test(ps));
+ok("直前5秒以内に迷っていたら少し迷いやすい（+5pt）", /var boost = \(Date\.now\(\) - _lastHesitateAt < 5000\) \? 0\.05 : 0;/.test(ps));
 
 console.log("\n■ ② 迷う長さは3段");
-ok("一瞬 250〜600ms（65%）", /if \(r < 0\.65\) return 250 \+ Math\.floor\(Math\.random\(\) \* 350\);/.test(ps));
-ok("考え込む 700〜1600ms（30%）", /if \(r < 0\.95\) return 700 \+ Math\.floor\(Math\.random\(\) \* 900\);/.test(ps));
-ok("かなり迷う 1800〜4500ms（5%）", /return 1800 \+ Math\.floor\(Math\.random\(\) \* 2700\);/.test(ps));
+// 2026-11-17: 迷い時間も対数正規（一様バンド禁止）。3段の比は 60/32/8%
+ok("考え込む（中央値 1100ms・32%）", /if \(r < 0\.92\) return Math\.round\(H && H\.logNormalDelay \? H\.logNormalDelay\(1100, 0\.5\)/.test(ps));
+ok("かなり迷う（中央値 2600ms・残り8%）", /return Math\.round\(H && H\.logNormalDelay \? H\.logNormalDelay\(2600, 0\.45\)/.test(ps));
 
 console.log("\n■ ③ 確率も長さも毎回ちがう");
 ok("確率を ±20〜25% で揺らす", /var p = \(base \+ boost\) \* \(0\.8 \+ Math\.random\(\) \* 0\.45\);/.test(ps));

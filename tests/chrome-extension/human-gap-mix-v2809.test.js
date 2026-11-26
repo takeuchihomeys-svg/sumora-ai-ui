@@ -28,7 +28,8 @@ function grab(startRe, endMarker) {
 }
 
 const lnSrc = grab(/function _ln\(median, sigma, lo, hi\) \{/, "return Math.max(lo, Math.min(hi, v));\n  }");
-const planSrc = grab(/function _wardPaceMs\(\) \{/, "return { kind: \"pause\", ms: _ln(8500, 0.13, 7000, 11000) };\n  }");
+// 2.8.313: 間隔の計算の終わりの目印は _selGapPlan の最後の return（旧は _ln(8500,..) で終わっていた。2026-11-19 束の間隔・2026-11-23 人間らしさ改善で式が変わった）
+const planSrc = grab(/function _wardPaceMs\(\) \{/, "return { kind: \"pause\", ms: _ln(5000, 0.18, 3800, 7500) };\n  }");
 console.log("■ 0 実装の取り出し");
 ok("_ln が取り出せる", lnSrc.length > 50);
 ok("_wardPaceMs / _wardGapPlan / _selGapPlan が取り出せる", /_wardGapPlan/.test(planSrc) && /_selGapPlan/.test(planSrc), planSrc.slice(0, 80));
@@ -59,8 +60,7 @@ console.log("\n■ ① 区の間隔: 速い群＋迷い＋停止の混合（通�
   ok("速い群の中央値は 0.9s 付近（±100ms）", Math.abs(fast.q(0.5) - 900) <= 100, fast.q(0.5));
   ok("どの間隔も 11 秒を超えない（自動の最大 23.9s にしない）", r.max <= 11000, r.max);
   ok("どの間隔も 650ms 未満にならない", r.min >= 650, r.min);
-  const hes = r.xs.filter((x) => x >= 1500 && x <= 6500);
-  ok("迷いの中央値が 3〜4.8s（通常 約3.9s）", hes.length > 0 && hes[Math.floor(hes.length / 2)] > 2800 && hes[Math.floor(hes.length / 2)] < 4800, hes[Math.floor(hes.length / 2)]);
+  // 2.8.313 退役: 「迷いの中央値 3〜4.8s」— 2.8.198/199（memory/dept_search_tool.md の「1押下畳み・human帯主」）で _wardGapPlan の迷いを _ln(2400,..,1500,4000) に短くした（長停止過多で human帯23%・許可≥50 を満たさなかったため）。旧の分布（3.9s）は役目を終えた
   ok("毎回ちがう（種類が多い）", new Set(r.xs.map(Math.round)).size > 1000);
 }
 
@@ -73,7 +73,7 @@ console.log("\n■ ② select欄の間隔: 通常の分布（欄どうし p50=2.
   ok("中央値が通常（2.2s）に近い（±0.5s）", Math.abs(r.q(0.5) - 2200) <= 500, r.q(0.5));
   ok("p90 が 通常 3.5s〜迷いを含めて 5.5s 以下", r.q(0.9) <= 5500, r.q(0.9));
   ok("自動の旧 p50（4.1s）より短い", r.q(0.5) < 4100, r.q(0.5));
-  ok("迷いが 8〜16%・停止が 1〜5%", f("hesitate") > 0.08 && f("hesitate") < 0.16 && f("pause") > 0.01 && f("pause") < 0.05, { h: f("hesitate"), p: f("pause") });
+  // 2.8.313 退役: 「迷い 8〜16%・停止 1〜5%」— 2.8.198/199（memory/dept_search_tool.md「_wardGapPlan/_selGapPlan を human帯主に」）で _selGapPlan を 速い62%／迷い32%／停止6% の human帯主に作り替えた。旧の比率（速い85/迷い12/停止3）は役目を終えた（上限 11 秒・p50・p90 の項目は残してある）
   ok("停止でも 11 秒を超えない", r.max <= 11000, r.max);
   ok("毎回ちがう（種類が多い）", new Set(r.xs.map(Math.round)).size > 1000);
 }
@@ -116,8 +116,11 @@ console.log("\n■ ④ 欄の中の所要（開く→選ぶ）の見積り（通
 console.log("\n■ ⑤ 版");
 {
   const mf = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-extension/manifest.json"), "utf8"));
-  ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+  // 2.8.313: 版の固定（=== 2.8.119）をやめ「2.8.119 以上」を見る（版は上がり続けるため）
+  const verNum = (s) => String(s).split(".").map(Number).reduce((a, n) => a * 1000 + n, 0);
+  const pv = (ps.match(/var _AXLX_PAGE_VER = "([\d.]+)";/) || [])[1];
+  ok("manifest が 2.8.119 以上", verNum(mf.version) >= verNum("2.8.119"), mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.119 以上", !!pv && verNum(pv) >= verNum("2.8.119"), pv);
 }
 
 console.log(`\n結果: ${pass} 合格 / ${fail} 不合格`);

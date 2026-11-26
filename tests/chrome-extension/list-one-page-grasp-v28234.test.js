@@ -29,7 +29,9 @@ ok("onclick無しの次をスキップ", /onclick無し/.test(bd));
 ok("list_page_one_only 印", /list_page_one_only/.test(bd) && /list_page_one_only/.test(ps));
 ok("list_no_next_advance 印", /list_no_next_advance/.test(bd));
 ok("before_next で外すへ", /物件取得完了→外す/.test(bd));
-ok("次無し後に handoff", /before_next_no_btn[\s\S]{0,400}handoff/.test(bd) || /list_page_one_only[\s\S]{0,200}_guideLikeListFlowGrasp\("handoff"/.test(bd));
+// 2.8.248 以降: 次無し／1ページのみは _sendBatchDone 一本化（その中で _guideLikeListFlowGrasp("handoff") → _stampSeriesToNextCustomer）
+ok("次無し後に handoff", /_guideLikeListFlowGrasp\("before_next", function \(g\) \{[\s\S]{0,900}"list_page_one_only"[\s\S]{0,900}_sendBatchDone\(/.test(bd)
+  && /function _sendBatchDone\([^)]*\) \{[\s\S]{0,500}_guideLikeListFlowGrasp\("handoff"[\s\S]{0,300}_stampSeriesToNextCustomer\(/.test(bd));
 ok("RULES_DONE", /"list_one_page_grasp_advance"/.test(ps));
 ok("決まり list_one_page_grasp_advance", /id: "list_one_page_grasp_advance"/.test(rules));
 ok("marker _readPagerState", /marker: "_readPagerState"/.test(rules));

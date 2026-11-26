@@ -40,9 +40,15 @@ console.log("■ ① 地域モーダルが動く（hasModalWard の巻き上げ�
   t("hasModalWard を locationMode で計算していない（前の行）",
     !/var hasModalWard = !!!\(cond\.detail_ward\) \|\| \(hasCities && locationMode === "area"\);/.test(ps));
   // 確定後に正しく直しているか
-  t("locationMode の確定後に hasModalWard を直す",
-    /var locationMode = decideLocationMode\(cond\);[\s\S]{0,600}hasModalWard = !!\(cond\.detail_ward\) \|\| \(hasCities && locationMode === "area"\);/.test(ps));
-  t("場所モードの判定を点検に残す", /_auditStepP\('location', locationMode\)/.test(ps));
+  // 2.8.313: 間に場所XOR（_axApplyPlaceXor）が入って距離が伸びたので、窓ではなく「後ろにある」順序で見る
+  {
+    const iMode = ps.indexOf("var locationMode = decideLocationMode(cond);");
+    const re = /hasModalWard = !!\(cond\.detail_ward\) \|\| \(hasCities && locationMode === "area"\);/g;
+    re.lastIndex = Math.max(iMode, 0);
+    const m = iMode >= 0 ? re.exec(ps) : null;
+    t("locationMode の確定後に hasModalWard を直す", iMode >= 0 && !!m && m.index > iMode && m.index - iMode < 8000);
+  }
+  t("場所モードの判定を点検に残す", /_auditStepP\(["']location["'], locationMode\)/.test(ps));
   t("地域モーダルを使うかログに出す", /地域モーダル: " \+ \(hasModalWard \? "使う" : "使わない"\)/.test(ps));
 }
 
@@ -50,7 +56,10 @@ console.log("■ ② 前の条件を消せる（_resetRest のバグ）");
 {
   t("_resetRest が関数宣言", /function _resetRest\(\)/.test(ps));
   t("var _resetRest = function ではない", !/var _resetRest = function/.test(ps));
-  t("_afterUncheck から呼べる", /var _afterUncheck = function \(\) \{ _resetRest\(\); \};/.test(ps));
+  // 2.8.313: _afterUncheck は無くなり、外し終わりの後続（after / _runUncheck の最後）に _resetRest を渡す形（関数宣言なので巻き上げで未代入にならない）
+  t("外し終わりの後続から _resetRest を呼べる（_uncheckLeftoversThenRest / _runUncheck の後続）",
+    /_next = typeof after === "function" \? after : _resetRest;/.test(ps) &&
+    /_runUncheck\(null, [^\n]*?, _resetRest\)/.test(ps));
 }
 
 console.log("■ ③ 検索が押される（search_look の繰り返し）");
@@ -58,7 +67,9 @@ console.log("■ ③ 検索が押される（search_look の繰り返し）");
   t("予約済みなら二重に予約しない", /_nowMs - _lookAt < 6000/.test(ps));
   t("予約済みを点検に残す", /search_look_skip/.test(ps));
   t("タイマーは1本だけ（clearTimeout で消す）", /if \(window\._axSearchLookTimer\) clearTimeout\(window\._axSearchLookTimer\)/.test(ps));
-  t("発火時にフラグと時刻を戻す", /window\._axSearchLookedOver = false;[\s\S]{0,120}window\._axSearchLookAt = 0;[\s\S]{0,60}clickSearch\(\)/.test(ps));
+  // 2.8.313: 間に長いコメントと Ajax 落ち着き待ち（_axAjaxSettleThen）が入り、clickSearch はその中で呼ばれる
+  t("発火時にフラグと時刻を戻す",
+    /window\._axSearchLookTimer = setTimeout\(function \(\) \{[\s\S]{0,300}window\._axSearchLookedOver = false;\s*window\._axSearchLookAt = 0;[\s\S]{0,1500}_axAjaxSettleThen\(function \(\) \{ try \{ clickSearch\(\); \}/.test(ps));
 }
 
 console.log("■ ④ 前の地域の選択を外してから選ぶ");
@@ -66,9 +77,9 @@ console.log("■ ④ 前の地域の選択を外してから選ぶ");
   t("モーダルを開いた直後に前の選択を外す", /_clearPrevAreaSelection/.test(ps));
   t("区を外す処理がある", ps.includes('input[name="city_code[]"]:checked'));
   t("町字を外す処理がある", ps.includes('input[name="town_code[]"]:checked'));
-  t("外した事を点検に残す", /_auditStepP\('area_prev_clear'/.test(ps));
-  t("checked を直接 false にして change を送る（トグルに頼らない）",
-    /cb\.checked = false;[\s\S]{0,120}dispatchEvent\(new Event\("change"/.test(ps));
+  t("外した事を点検に残す", /_auditStepP\(\s*_forceAll \? "area_prev_clear_force" : "area_prev_clear"/.test(ps));
+  // 2.8.313 退役: 「checked を直接 false にして change を送る」は、2026-11-16 に「checked 直書き禁止・label カーソル押しだけ（_toggleCheckboxLikeHuman）」へ置き換わった
+  //   （page-script.js _clearPrevAreaSelection のコメント／.cursor/rules/auto-clear-not-reset.mdc「直書きの checked=false 禁止」）。
 }
 
 console.log("■ ⑤ 押す順番（所在地絞り込み → 地域選択 → 確定）");
@@ -76,9 +87,12 @@ console.log("■ ⑤ 押す順番（所在地絞り込み → 地域選択 → �
   t("STEP1: 所在地絞り込みを開く", /clickByText\(\['所在地絞り込み＋', '所在地絞り込み\+', '所在地絞り込み'\]\)/.test(ps));
   t("STEP2-3: 区を選ぶ", /clickWardPrecise/.test(ps));
   t("STEP5: 町字を選ぶ", /clickDetailArea/.test(ps));
-  t("最後に 確定してリストへ", /_findByText\(\['確定してリストへ'/.test(ps));
+  // 2.8.313: 確定は _pressConfirmListLikeHuman（中で「確定してリストへ」を探して人と同じ押し）に集約。地域モーダルの確定もここ
+  t("最後に 確定してリストへ",
+    /function _pressConfirmListLikeHuman\(why\) \{\s*var labels = \["確定してリストへ"/.test(ps) &&
+    /_pressConfirmListLikeHuman\("所在地モーダル確定"\)/.test(ps));
   t("順番を点検に残す（modal→ward→town→modal_confirm）",
-    /_auditStepP\('modal', 'area'\)/.test(ps) && /_auditStepP\('ward'/.test(ps) && /_auditStepP\('town'/.test(ps) && /_auditStepP\('modal_confirm'/.test(ps));
+    /_auditStepP\(['"]modal['"], ['"]area['"]\)/.test(ps) && /_auditStepP\(['"]ward['"]/.test(ps) && /_auditStepP\(['"]town['"]/.test(ps) && /_auditStepP\(["']modal_confirm["']/.test(ps));
 }
 
 console.log("■ ⑥ 検索ボタンは左のサイドバーを押す（小窓の中ではない）");
@@ -92,7 +106,7 @@ console.log("■ ⑦ 開く前に地域が入っていない（竹内さんの�
   t("モーダルを開く直前に前の選択を外す", /_clearBeforeOpen/.test(ps));
   t("区と町字の両方を外す（同じセレクタで）",
     ps.includes('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'));
-  t("外した事を点検に残す（area_preclear）", /_auditStepP\('area_preclear'/.test(ps));
+  t("外した事を点検に残す（area_preclear）", /_forceAll \? "area_preclear_force" : "area_preclear"/.test(ps) && /_auditStepP\(\s*_forceAll \? "area_preclear_force"/.test(ps));
   t("直接チェックの分岐はモーダルでは通さない", /var _useDirectCities = \(locationMode === "area" && !hasModalWard\);/.test(ps));
   t("モーダルで選ぶ時は直接チェックしない事を残す", /area_skip_direct/.test(ps));
   // 直接チェックの呼び出しが _useDirectCities の中だけか

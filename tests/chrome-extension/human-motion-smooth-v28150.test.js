@@ -32,7 +32,10 @@ ok("label が見える時は label にカーソル（待つより先）", hp.ind
 
 console.log("■ ③ 印が DB に残る");
 const ss = read("search-audit.js");
-ok("KEEP_STEP の page:( に toggle_repress・toggle_direct・hidden_wait_", /page:\(toggle_repress\|toggle_direct\|hidden_wait_\|/.test(ss));
+// 今の KEEP_STEP は page:( の群の中の並びが変わった（toggle_repress の直後は list_page_one_only 等）。順でなく「群の中にあるか」を見る
+const keepLine = (ss.match(/var KEEP_STEP = .*/) || [""])[0];
+const keepGroups = (keepLine.match(/page:\(([^()]*)\)/g) || []).map((g) => g.slice(6, -1).split("|"));
+ok("KEEP_STEP の page:( に toggle_repress・toggle_direct・hidden_wait_", keepGroups.some((g) => g.includes("toggle_repress") && g.includes("toggle_direct") && g.includes("hidden_wait_")));
 
 console.log("■ 版");
 const man = JSON.parse(read("manifest.json"));

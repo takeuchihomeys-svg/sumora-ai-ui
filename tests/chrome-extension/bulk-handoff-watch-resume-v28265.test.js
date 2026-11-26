@@ -56,7 +56,7 @@ ok("20秒ごとに getPlatformInfo", /getPlatformInfo[\s\S]{0,600}\}, 20000\)/.t
 ok("見回りで段の止まりを見て進める", /_bulkPhaseStuck\(p\)\)\s*\{\s*_bulkKick\("stuck:"/.test(bg));
 ok("入力・送付の待ちは見回りで進めない", /BULK_KICKABLE_PHASES = \{[^}]*\}/.test(bg) && !/BULK_KICKABLE_PHASES = \{[^}]*wait_batch_done/.test(bg) && !/BULK_KICKABLE_PHASES = \{[^}]*autofill/.test(bg));
 ok("立ち上がり直したら続きを探す", /sw_restart/.test(bg));
-ok("入力・送付の最中に止められた時は送付完了を待つ", /q\.stage === "running"\)\s*\{[\s\S]{0,200}return;/.test(bg));
+ok("入力・送付の最中に止められた時は送付完了を待つ", /q\.stage === "running"\)\s*\{[\s\S]{0,300}送付完了を待って続ける[\s\S]{0,2500}?batch_done_sw_watchdog[\s\S]{0,400}?return;/.test(bg));
 ok("送付完了の合図でループが無ければ続ける", /batch_done_no_loop/.test(bg));
 ok("定時の一括は続きを待つ間は割り込まない", /_bq && !_bq\.done && _bq\.beatAt/.test(bg));
 ok("Realtime も割り込まない", /_rtBq && !_rtBq\.done/.test(bg));
@@ -83,18 +83,21 @@ console.log("\n■ _bulkKick の決め方（vm で動かす）");
     _bulkQueueLoad: async function () { return ctx._q; },
     _bulkQueueSave: function (p) { ctx._q = Object.assign({}, ctx._q, p); },
     _auditStep: function () {},
+    _quietClear: function () { return false; }, // 2.8.295: 邪魔しない窓を閉じる（ここでは決め方だけ見るので何もしない）
     _withTimeout: function (p) { return p; },
     _publishBulkGrasp: async function () {},
     _manualBulkRun: function (o) { calls.push(o); },
   };
   vm.createContext(ctx);
   vm.runInContext(kick, ctx);
+  // 2.8.283: 未処理の客を飛ばさない上限（_bulkKick が使う）。今のコードの関数をそのまま入れる
+  vm.runInContext(topFn(bg, "_bulkClampStart"), ctx);
   function reset(q) { ctx._q = q; ctx._bulkKickAt = 0; calls.length = 0; }
   return (async function () {
     reset({ ids: ["a", "b", "c"], index: 0, stage: "done", cid: "a", site: "realnetpro", isWide: false });
     var r1 = await ctx._bulkKick("t");
     ok("done → 次の客から", r1.ok && calls[0] && calls[0].startIndex === 1 && calls[0].resume === true);
-    reset({ ids: ["a", "b", "c"], index: 1, stage: "pre", cid: "b" });
+    reset({ ids: ["a", "b", "c"], index: 1, stage: "pre", cid: "b", handledCids: ["a"] }); // 2.8.283: 前の客が片付いている形（片付いていない客は飛ばさない）
     await ctx._bulkKick("t");
     ok("pre → その客から", calls[0] && calls[0].startIndex === 1);
     reset({ ids: ["a", "b", "c"], index: 0, stage: "running", cid: "a" });
@@ -115,7 +118,7 @@ console.log("\n■ _bulkKick の決め方（vm で動かす）");
     var r4b = await ctx._bulkKick("t");
     ok("送付完了待ちは合図なしで進めない", !r4b.ok && calls.length === 0);
     ctx._bulkPhase = null;
-    reset({ ids: ["a", "b"], index: 1, stage: "done", cid: "b" });
+    reset({ ids: ["a", "b"], index: 1, stage: "done", cid: "b", handledCids: ["a"] }); // 2.8.283: 前の客が片付いている形
     var r6 = await ctx._bulkKick("t");
     ok("最後の客が済み → 一括を閉じる", r6.ended === true && ctx._q.done === true && calls.length === 0);
     reset({ ids: ["a", "b"], index: 0, stage: "done", done: true });

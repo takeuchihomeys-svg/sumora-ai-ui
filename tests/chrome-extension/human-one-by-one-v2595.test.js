@@ -54,8 +54,10 @@ console.log("\n■ ⑤ 送らない行はチェックを触らずに判定");
 ok("_rowSkipReason がある（送付済み・前回より古い）", /function _rowSkipReason\(state, item\)/.test(bd));
 ok("_rowSkipReason はチェックを変えない", !/function _rowSkipReason[\s\S]{0,1400}\.checked = /.test(bd));
 ok("_selectAllowed は「先にチェック→外す」でなく、通った行だけを送る", /function _selectAllowed\(cand\)[\s\S]{0,900}allowed\.push\(t\)/.test(bd) && /_doSend\(allowed\.map/.test(bd));
-ok("送付済みの判定は今までの物差し（AxlxSentSkip）と同じ", /function _rowSkipReason[\s\S]{0,900}SK\.isSentRoom\(idx, card\.name, room\)/.test(bd));
-ok("前回の検索より古い行の判定も今まで通り（state.updateStop）", /function _rowSkipReason[\s\S]{0,1400}at >= stop\.index\) return "old"/.test(bd));
+// 2.8.313: 画面の「送付済み」札の検知が増えて関数が長くなった（窓 {0,900}/{0,1400} では届かない）。関数の本体（次の関数の手前まで）の中で見る。
+const _rowSkipBody = (() => { const i = bd.indexOf("function _rowSkipReason("); const j = bd.indexOf("\n  function ", i + 10); return i > 0 ? bd.slice(i, j > i ? j : i + 12000) : ""; })();
+ok("送付済みの判定は今までの物差し（AxlxSentSkip）と同じ", _rowSkipBody.length > 500 && /SK\.isSentRoom\(idx, card\.name, room\)\) return "sent"/.test(_rowSkipBody), _rowSkipBody.length);
+ok("前回の検索より古い行の判定も今まで通り（state.updateStop）", /var stop = state\.updateStop;[\s\S]{0,300}at >= stop\.index\) return "old"/.test(_rowSkipBody));
 
 console.log("\n■ ⑥ 間は対数正規・たまに一息（機械的な等間隔にしない）");
 (() => {
@@ -70,9 +72,14 @@ ok("次の行までの間は対数正規＋12%で一息", /logNormalDelay\(1500,
 ok("押してから送るまでの間も対数正規（_humanGapThen）", /function _humanGapThen\(\)[\s\S]{0,400}logNormalDelay\(1000, 0\.4\)/.test(bd));
 
 console.log("\n■ ⑦ ひとつずつ押す形（押した分を溜めて自動で続けない）");
-ok("押した分を溜める待ち行列を持たない（押したらその1件だけ）", !/_pdfQueue/.test(bdCode) && !/_pumpPdfQueue/.test(bdCode));
+// 2.8.313 退役: 「押した分を溜める待ち行列を持たない」— 2026-11-22（v2.8.179/181）に「busy 中の2件目以降を捨てると押したのに AIX に無い」になるため、
+//   待ち行列（_pdfQueue・上限12・押した順に1件ずつ消化）を手押し・自動共通で復活させた（memory/dept_search_tool.md の 2.8.179/2.8.181 の記録・bulk-dl.js sendOnePdfNow のコメント）。
+//   → 下に「溜めても1件ずつ（同時には送らない）」を守る形に置き換えて見る。
+ok("待ち行列に積んでも同時には送らない（busy の間は積むだけ・1件終わってから _idleAfterOne が次の1件を送る）",
+  /if \(_pdfBusy\) \{[\s\S]{0,1200}_pdfQueue\.push\(\{ item: item, url: url \}\);[\s\S]{0,300}return;\s*\}\s*_pdfBusy = true;/.test(bdCode)
+  && /function _idleAfterOne\(item\) \{[\s\S]{0,1500}_pdfQueue\.shift\(\);[\s\S]{0,300}sendOnePdfNow\(next\.item\)/.test(bdCode));
 ok("送信中・確認中は次の押下を受け付けない（_pdfBusy）", /if \(_pdfBusy\) \{/.test(bdCode) && /_pdfBusy = true;/.test(bdCode) && /_pdfBusy = false;/.test(bdCode));
-ok("受け付けない時は枠の1行で知らせる", /_nudge\("⏳ いま1件を送っています。終わってから次を押してください"\)/.test(bdCode));
+ok("受け付けない時は枠の1行で知らせる（待ち行列の件数つき）", /_nudge\("⏳ 送信待ち " \+ _pdfQueue\.length \+ "件（終わってから送ります）"\)/.test(bdCode));
 ok("1件終わったら押せる状態に戻る（_idleAfterOne）と知らせる", /function _idleAfterOne\(item\)/.test(bdCode) && /✅ 送りました。次の物件を押してください/.test(bdCode));
 ok("組は押した行そのものから作る（他の行にチェックを奪われて no-item にならない）", /function _buildOneItem\(btn\)/.test(bdCode));
 ok("ブレインの判定も1件だけ（全件を毎回呼ばない）", /function _judgeOneBrain\(customerId, one, cb\)/.test(bd) && /items: \[\{ summary: one\.summary, data: jd, url: one\.url/.test(bd));
@@ -84,25 +91,40 @@ ok("1件の送信に 300秒の上限（超えたら次へ）", /300000/.test(bg2
 console.log("\n■ ⑨ 資料に一度目を通してから次の物件へ（人の動き）");
 ok("送れた1件は「資料を見る間」を置いてから押せる状態に戻る（_lookAtDocThenGo）", /function _lookAtDocThenGo\(item, goNext\)/.test(bd) && /_lookAtDocThenGo\(item, function \(\) \{ _idleAfterOne\(item\); \}\)/.test(bd));
 ok("見る間は人の間（中央値 3.5秒・1.8〜13秒・たまに長く見る）", /logNormalDelay\(3500, 0\.4\)/.test(bd) && /if \(base < 1800\) base = 1800;/.test(bd) && /if \(base > 13000\) base = 13000;/.test(bd));
-ok("見る間は札を「👀 確認中…」にする（画面で分かる）", /👀 確認中…/.test(bd) && /👀 資料を確認中…/.test(bd));
+// 2.8.313: 枠の文言は「資料を確認中…（N秒ほど）」（絵文字なし）に、札（_onePdfBadge の look）が「👀 確認中…」になっている。見る間に両方が出る形を見る。
+ok("見る間は札を「👀 確認中…」にする（画面で分かる）",
+  /state === "look" \? "👀 確認中…"/.test(bd) && /_onePdfBadge\(item, "look"\);[\s\S]{0,200}_setStatusNowNext\("資料を確認中…/.test(bd));
 ok("「👀 見た → 次へ」で人の判断で先へ進める（押さなくても自動で次へ）", /axlx-look-next-btn/.test(bd) && /_lookWait\.skip\("skip"\)/.test(bd));
 ok("見る間が終わったら選択を外して押せる状態に戻る（人がそうする形）", /function _idleAfterOne\(item\)[\s\S]{0,600}item\.cb\.checked = false; updateBar\(\);/.test(bd));
 ok("送れなかった1件は見る物が無いのですぐ押せる状態に戻る", /if \(!ok\) \{ _idleAfterOne\(item\); return; \}/.test(bd));
 ok("点検に残す（look_doc・look_skip）", /_tmark\("look_doc"/.test(bd) && /_tmark\("look_skip"/.test(bd));
 
 console.log("\n■ ⑩ 自動モードは拡張が1件ずつ押していく（手動と同じ流れを自動で）");
-ok("自動モードの時だけ動く（_autoModeOn・スタッフモードでは動かない）", /function autoPressPdfs\(\)[\s\S]{0,500}if \(!_autoModeOn\)/.test(bd) && /if \(_staffModeOn\) \{ _nudge\("スタッフモードでは自動で押しません"\)/.test(bd));
+// 2.8.313 退役（後半のみ）: 「スタッフモードでは動かない」— 2026-11-22 に「スタッフも選んだ客の検索〜物件送付まで自動押し（AIX相当）」へ設計を変えた
+//   （bulk-dl.js _readAutoMode の `if (staffOn) return true;`・_maybeAutoPressOnLoad のコメント「旧は _staffModeOn で止めていた」・memory/dept_search_tool.md の「スタッフモードでお客さんを選ぶ→…印刷用PDFを1件ずつ押して送付まで」）。
+//   → 関所は `_autoModeOn` 一本（自動／AIX／スタッフ選んだ客でないと押さない）。前半「自動モードの時だけ動く」は今の形で守る。
+ok("自動モードの時だけ動く（関所は _autoModeOn 一本・でないと押さずに枠で知らせる）",
+  /function autoPressPdfs\(opt\) \{[\s\S]{0,1800}if \(!_autoModeOn\) \{\s*_nudge\("自動／AIX／スタッフ（選んだ客）の時だけ自動で押せます"\);\s*return \{ ok: false, reason: "not-auto" \};/.test(bd));
 ok("人が押すのと同じ（行までカーソル → 印刷用PDFを押す → 押した合図で送る）", /function _pressPrintPdf\(item, cb\)/.test(bd) && /P\.moveToEl\(btn\)/.test(bd) && /try \{ btn\.click\(\); \} catch \(_\) \{\}/.test(bd));
-ok("1件ずつ（送信中・確認中が終わるのを待ってから次の行）", /function _waitPdfIdle\(cb\)/.test(bd) && /if \(!_pdfBusy\) \{ cb\(\); return; \}/.test(bd));
+// 2.8.313: _waitPdfIdle は「一度 busy になって、終わった」を見る形（2026-11-17・押した直後の捕捉待ちの間は次を押さない）に変わった。
+ok("1件ずつ（送信中・確認中が終わるのを待ってから次の行）",
+  /function _waitPdfIdle\(cb, customerId\)/.test(bd) && /if \(_pdfBusy\) sawBusy = true;\s*if \(!_pdfBusy && sawBusy\) \{ finish\(null\); return; \}/.test(bd)
+  && /!_clickSendPending\(\)\) \{ finish\("送信が始まらない"\)/.test(bd));
 ok("押した合図で送る流れを使う（手動と同じ sendOnePdfNow）", /_pressPrintPdf\(item, function \(pressed\)/.test(bd));
 ok("止められる（⏹ 止める＝いまの1件が終わってから）", /function stopAutoPdfs\(\)/.test(bd) && /_autoPdfRun\.stopped = true;/.test(bd));
-ok("結果が出たら自動で始まる（Case C・同じ一覧で二度始めない）", /_autoPdfSig/.test(bd) && /自動モード: 結果が出たので印刷用PDFを1件ずつ押して送ります/.test(bd));
-ok("120秒たっても1件が終わらない時は次へ（止まらない）", /waited > 120000/.test(bd));
+ok("結果が出たら自動で始まる（同じ一覧で二度始めない・_autoPdfSig）", /if \(!sig \|\| sig === _autoPdfSig\) return;/.test(bd) && /自動モード: 一覧が出たので印刷用PDFを1件ずつ押して送ります/.test(bd));
+// 2.8.313: 打ち切りは 120秒→45秒に早まった（_waitPdfIdle・2026-11-17・一度も busy にならなければ約2.5秒で次へ）。止まらない形は同じ。
+ok("45秒たっても1件が終わらない時は次へ（止まらない）", /if \(waited > 45000\) \{ finish\("45秒タイムアウト"\); return; \}/.test(bd));
 ok("点検に残す（auto_pdf_start・auto_pdf_end）", /_tmark\("auto_pdf_start"/.test(bd) && /_tmark\("auto_pdf_end"/.test(bd));
-ok("自動モードでは古い「全ページ送る」を走らせない（Case A が自動押下へ）", /_hasNewBtn\) \{[\s\S]{0,400}_maybeAutoPressOnLoad\(\);/.test(bd) && !/setTimeout\(autoSendAllPages,/.test(bdCode));
+// 2.8.313: Case A の中が並べ替え専用道などで長くなった（窓 {0,400} では届かない）。Case A の塊（Case B の手前まで）の中で自動押下へ進む事を見る。
+ok("自動モードでは古い「全ページ送る」を走らせない（Case A が自動押下へ）", (() => {
+  const i = bd.indexOf("if (_hasNewBtn) {"); const j = bd.indexOf("// Case B:", i);
+  const seg = i > 0 && j > i ? bd.slice(i, j) : "";
+  return seg.length > 300 && /_maybeAutoPressOnLoad\(\{ afterSearch: true \}\)/.test(seg) && !/autoSendAllPages\(/.test(seg);
+})() && !/setTimeout\(autoSendAllPages,/.test(bdCode));
 ok("旧の一括の入口は何もしない安全弁（呼ばれても全件送らない）", /旧の全ページ送る（autoSendAllPages）は使いません/.test(bd));
 ok("旧のページ送りの続きは捨てる（二重に送らない）", /clearAutoSendState\(\); \/\/ 旧のページ送りの続きは捨てる/.test(bd));
-ok("「自動」に切り替えた時点でも始まる（_maybeAutoPressOnLoad）", /function _maybeAutoPressOnLoad\(\)/.test(bd) && /if \(_autoModeOn\) \{ try \{ setTimeout\(_maybeAutoPressOnLoad, 800\); \}/.test(bd));
+ok("「自動」に切り替えた時点でも始まる（_maybeAutoPressOnLoad）", /function _maybeAutoPressOnLoad\(opt\)/.test(bd) && /if \(_autoModeOn\) \{ try \{ setTimeout\(_maybeAutoPressOnLoad, 800\); \}/.test(bd));
 ok("一覧が出た時点でも始まる（検索の完了合図に頼らない）", /_maybeAutoPressOnLoad\(\);\s*\}\s*\/\/ 自動で押し始めた/.test(bd) || /一覧が出た時点で自動で押し始める/.test(bd));
 ok("自動モードでは古いページ送りの継続もしない（Case B を外した）", !/function tryNext\(state\)[\s\S]{0,300}case B/i.test(bdCode) || !/Case B: AJAXページネーション継続 P/.test(bd));
 

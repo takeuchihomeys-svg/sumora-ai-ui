@@ -40,7 +40,7 @@ function grab(name) {
 console.log("■ ① 写真は「学習」と切り離した（自動・AIX でも撮る）");
 {
   ok("shouldShoot がある（モードに関係なく撮る）", /function shouldShoot\(st\)/.test(rec));
-  ok("shouldLearn と shouldShoot を別々に使う", /if \(shouldLearn\(st\)\)/.test(rec) && /if \(shouldShoot\(st\)\) startShooting\(\)/.test(rec));
+  ok("shouldLearn と shouldShoot を別々に使う", /if \(shouldLearn\(st\)\)/.test(rec) && /_shotAllow = shouldShoot\(st\);\s*if \(_shotAllow\) startShooting\(\)/.test(rec));
   /**
    * 2026-11-14 竹内さん「データベースを見る考えを統括重要にする」→ **DBで判明**:
    *   ⚠ 旧は `if (!_shooting && !watching) return;` で、**見張りが止まると写真も止まった**。

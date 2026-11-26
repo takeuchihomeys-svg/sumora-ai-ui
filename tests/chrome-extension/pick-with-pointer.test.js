@@ -27,7 +27,7 @@ console.log("■ ① 地域を1つずつマウスで動かして押す");
 {
   const seg = ps.slice(ps.indexOf("function _clickEl"), ps.indexOf("function _clickEl") + 900);
   t("_clickEl がカーソルを動かしてから押す", /_humanPointerClick\(el/.test(seg), seg.slice(0, 200));
-  t("  ⚠ 動かせなくても必ず押す（止まらない）", /function \(x\) \{ try \{ x\.click\(\); \}/.test(seg));
+  t("  ⚠ 動かせなくても必ず押す（止まらない）", /_humanPointerClick\(el, function \(x\) \{[\s\S]{0,200}try \{ x\.click\(\); \}/.test(seg));
   t("  ⚠ 例外でも押す（最後の砦）", /try \{ el\.click\(\); \} catch \(__\)/.test(seg));
   t("  区・町字・間取りなど13か所が同じ道を使う", (ps.match(/, _clickEl,/g) || []).length >= 10, (ps.match(/, _clickEl,/g) || []).length);
   t("  ⚠ 2重に動かさない（setCheckboxes で _humanPointerClick を包まない）", !/enqueueHumanClick\(cb, function \(el\) \{ return _humanPointerClick/.test(ps));
@@ -61,7 +61,7 @@ console.log("\n■ ③ 人が選んだ地域を自動で消さない");
   t("  ⚠ _noteWardPicked で「自動で入れた区」を覚える", /_noteAutoPicked\("city", code\)/.test(wSeg), wSeg.slice(-300));
   t("  モーダルを開く前に「自動で入れた物だけ」外す", /area_preclear_keep/.test(ps));
   t("  開いた直後も「自動で入れた物だけ」外す", /area_keep_human/.test(ps));
-  t("  ⚠ 覚えが無い（前のお客様の残り）時は今まで通り全部外す", /if \(_autoSet\)/.test(ps));
+  t("  ⚠ 覚えが無い（前のお客様の残り）時は今まで通り全部外す", /if \(!_forceAll && _autoPickedHasMemory\(\)\) \{\s*var _autoSet = \{\};/.test(ps) && /function _autoPickedHasMemory/.test(ps));
   t("自動入力の頭で覚えをリセット", /_resetAutoPicked\(\)/.test(ps));
 }
 

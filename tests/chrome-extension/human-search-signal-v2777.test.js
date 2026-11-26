@@ -58,7 +58,8 @@ t("宣言が onClick より前にある（呼べる）", declPos > 0 && declPos 
 t("document.addEventListener を消していない", (ps.match(/document\.addEventListener\("click", onClick, true\)/g) || []).length === 1);
 
 // ── ⑥ 顧客IDを借りる（無くても送る）────────────
-t("current_customer_id を借りる", /chrome\.storage\.local\.get\(\["current_customer_id"\]/.test(ps));
+// 2026-11-18 F18: MAIN world では chrome.runtime が無いので _storageLocalGet ブリッジ経由で借りる（借りる動きは同じ）
+t("current_customer_id を借りる", /_storageLocalGet\(\["current_customer_id"\]/.test(ps) && /_fillCustomerId = c;/.test(ps));
 t("無くても送る（点検の段だけ残す）", /_sendHumanSearchDone\(Date\.now\(\)\)/.test(ps));
 
 // ── ⑦ 既存を壊していない ────────────

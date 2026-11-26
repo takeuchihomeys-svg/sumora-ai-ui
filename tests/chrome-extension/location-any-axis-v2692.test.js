@@ -57,7 +57,8 @@ console.log("\n■ ③ 2つの判定（batch-guard と page-script）が同じ�
   ok("page-script は「ward の希望でも駅・沿線なら通す」", /c\.area_mode === "ward"\) \{[\s\S]{0,320}if \(_hasStation\(c\)\) return "station";[\s\S]{0,120}if \(_hasRoutes\(c\)\) return "route";/.test(ps));
   ok("page-script は「station の希望でも区なら通す」", /c\.area_mode === "station"\) \{[\s\S]{0,320}if \(_hasWard\(c\)\) return "area";/.test(ps));
   ok("page-script は 'none' を返す前に3つの軸を全部見る", /_hasWard\(c\)\) return "area";\s*return "none";/.test(ps));
-  ok("関所は「区・駅のどちらか入っていれば通す」（覚えている分も数える）", /var hasArea = \(wardEff > 0\) \|\| \(stEff > 0\) \|\| urlHasArea/.test(ps) && /_pickedCounts\(\)/.test(ps));
+  // 2.8.313: URL の条件は「この回で選んだ印がある時だけ」場所ありに数える形に締めた（2026-11-16 前客URLの誤認で全件検索になった件・page-script.js hasArea のコメント）。区・駅の「どちらか」で通す点は同じ。
+  ok("関所は「区・駅のどちらか入っていれば通す」（覚えている分も数える）", /var hasArea = \(wardEff > 0\) \|\| \(stEff > 0\) \|\| \(urlHasArea && _axPlaceReady/.test(ps) && /_pickedCounts\(\)/.test(ps));
   // 2026-11-11 竹内さん「所在地の部分も選択しているのに把握できていない可能性ある」
   ok("選んだ区・駅を覚えておく（モーダルを閉じると DOM から消えるため）", /function _noteWardPicked/.test(ps) && /function _noteStationPicked/.test(ps));
   ok("覚えている分と画面の数の大きい方を使う", /Math\.max\(wardN, _picked\.ward\)/.test(ps) && /Math\.max\(stN, _picked\.station\)/.test(ps));
@@ -71,8 +72,16 @@ console.log("\n■ ③ 2つの判定（batch-guard と page-script）が同じ�
 console.log("\n■ ④ 止めるのは「本当に両方空」の時だけ（場所で止まりすぎない）");
 {
   ok("場所のエラー文には区と駅の数を両方出す", /'）が画面に入っていない（区 ' \+ wardN \+ '・駅 ' \+ stN \+ '）'/.test(ps));
-  ok("場所で止める分岐はある（全件検索の防止）", /_auditStepP\('gate_stop_area'/.test(ps));
-  ok("stall の回復も場所だけ見る", /_areaMissing/.test(ps));
+  // 2.8.313: 場所の止め方は専用の gate_stop_area でなく、場所・間取り・敷礼・前客残りをまとめて見る関所（_hardGate → gate_stop_basic・AXLX_FILL_INCOMPLETE）に統合された
+  //   （2026-11-16「間取りや敷金礼金なしの前に検索が走った」で場所以外も止める決まりに広げた・page-script.js の _hardGate のコメント）。場所が空なら必ず止まる事を見る。
+  ok("場所で止める分岐はある（全件検索の防止）",
+    /out\.missingArea = true;/.test(ps) && /out\.errors\.push\('場所（'/.test(ps)
+    && /var _hardGate = _gate\.errors\.some\(function \(m\) \{[\s\S]{0,300}s\.indexOf\('場所'\) === 0/.test(ps)
+    && /_auditStepP\('gate_stop_basic', gateMiss\);[\s\S]{0,300}notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\);/.test(ps));
+  // 2.8.313: 「stall の回復も場所だけ見る」の「だけ」は上の決まりで広がった（場所＋間取り・敷礼・前客残り）。場所が空のままなら stall の長待ち後も検索しない、は今も同じ。
+  ok("stall の回復も場所が空なら検索しない（場所を含む未完了は待ち続ける）",
+    /var _hardMissing = _gateNow\.errors\.some\(function \(m\) \{[\s\S]{0,300}s\.indexOf\('場所'\) === 0/.test(ps)
+    && /if \(!_hardMissing && _axConditionsReady\) \{[\s\S]{0,300}clickSearch\(\)/.test(ps) && /stall_keep_waiting/.test(ps));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

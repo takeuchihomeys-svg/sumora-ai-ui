@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.313";
+  var _AXLX_PAGE_VER = "2.8.314";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -5979,7 +5979,12 @@ function _guideLikeAreaSkip(why) {
       }
       // 同一ms連発を避ける微小ジッター（1〜47ms）
       out += 1 + Math.floor(Math.random() * 47);
-      return Math.round(Math.min(hi * 2.6, out) * 10) / 10;
+      // ★ 2.8.314: 上限（hi*2.6）で頭打ちにすると、ためらいを足した値の約3割が「ちょうど上限の同じ値」に
+      //   積み上がり（hi=200→520msが30.5%）、等間隔に見える機械の印になっていた。
+      //   上限は越えないまま、超えた分は上限の86〜100%にばらけさせる（積み上がらない）。
+      var _cap = hi * 2.6;
+      if (out > _cap) out = _cap * (0.86 + Math.random() * 0.14);
+      return Math.round(out * 10) / 10;
     }
     // 予備: 一様ではなく三角寄与（中央寄り）＋ジッター
     var u = Math.random() + Math.random();
@@ -15702,8 +15707,12 @@ function _guideLikeAreaSkip(why) {
         var _swPrev = String(window.__axlxSwitchPrevCid || "");
         var _swNext = String(_fillCustomerId || "");
         var _switchedCust = !!(!_swPrev || !_swNext ? false : _swPrev !== _swNext);
-        // ★ 2.8.313: リセットで空と確かめた直後は、客切替でも強制の全部外しを立てない
-        if (_switchedCust && _resetCleanSkipsForcePlace(true)) _switchedCust = false;
+        // ★ 2.8.314: 次の客へ切り替わった印（2.8.166 の page:list_handoff_seen。2.8.187 の復旧で戻っていなかった）。点検だけ・動きは変えない
+        if (_switchedCust) { try { if (_audit) _auditStepP("list_handoff_seen", String(_swPrev).slice(0, 8) + "→" + String(_swNext).slice(0, 8)); } catch (_eH) {} }
+        // ★ 2.8.313: リセットで空と確かめた直後は、客切替でも強制の全部外しを立てない。
+        // ★ 2.8.314: すでに別の所が強制を立てている回（送付後の外し未完・前の回のリセット引き継ぎ・結果違いの入れ直し）は省かない
+        //   （省いたと印だけ残して強制は立ったまま、になるのを防ぐ＝印が出た回は本当に強制が立っていない）
+        if (_switchedCust && !window.__axlxForceClearAllPlace && _resetCleanSkipsForcePlace(true)) _switchedCust = false;
         if (_switchedCust) {
           window.__axlxForceClearAllPlace = true;
           try { if (_audit) _auditStepP("place_redo", "客切替: 前の地域/駅を外してから新しい条件を選ぶ"); } catch (_ePr) {}
@@ -16732,6 +16741,9 @@ function _guideLikeAreaSkip(why) {
     var _startResetAfterReflect = function () {
       if (_doneNotified || _axHumanTookOver) return;
       _doReset(function() {
+    // ★ 2.8.314: リセット（手動クリア→リセットボタン方式 2.8.284 への置き換えで消えていた）完了の段を戻す。
+    //   audit-timing の「リセットにかかった時間」と KEEP_STEP の page:reset$ が、この段が無いと空になっていた。
+    try { _auditStepP('reset', null); } catch (_) {}
     /**
      * 2026-11-11 竹内さん「最初人間ならここちょっと考える時間あったりする」:
      *   空のフォームの前に座った人は、いきなり駅を押さない。**まず全体をざっと見て、どこから手を付けるか決める**。

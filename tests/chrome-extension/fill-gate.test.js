@@ -26,11 +26,14 @@ const G = require("../../chrome-extension/batch-guard.js");
 console.log("\n■ 検索を押す前の関所（page-script.js）");
 {
   // 2026-11-10 v2.6.23: 関所の判定が増えたので範囲を広げる（4200字）
-  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 9000);
-  ok("clickSearch が関所（_axGateCheck）を検索の前に見る", cs.indexOf("_axGateCheck()") > 0 && cs.indexOf("_axGateCheck()") < cs.indexOf("div.go_search"));
-  ok("1回だけ入れ直す（gate_retry・間取り・家賃・更新日・築年・徒歩）", /_axGateRetried = true;[\s\S]{0,900}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs) && /setSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(cs) && /setSelVal\("update_date", _axExpect\.updateDays\)/.test(cs));
+  // 2.8.313: clickSearch は長いコメントと待ちの関所で伸びたので窓を広げる（関所→止め→押す の順序は位置の大小で見る）。
+  //   入れ直しは「1回だけ」から「上限つき（_AX_GATE_RETRY_MAX）」に、setSelVal は カーソル付きの queueSelVal に変わった。
+  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 24000);
+  const iGoSearch = cs.indexOf("div.go_search");
+  ok("clickSearch が関所（_axGateCheck）を検索の前に見る", cs.indexOf("_axGateCheck()") > 0 && iGoSearch > 0 && cs.indexOf("_axGateCheck()") < iGoSearch);
+  ok("上限つきで入れ直す（gate_retry・間取り・家賃・更新日・築年・徒歩）", /_AX_GATE_RETRY_MAX = \d+;/.test(ps) && /_axGateRetryN < _AX_GATE_RETRY_MAX/.test(cs) && /_axGateRetried = true;[\s\S]{0,6000}setCheckboxes\("room_layout_id\[\]", _axExpect\.layoutVals\)/.test(cs) && /queueSelVal\("rental_cost2", _axExpect\.rentMax\)/.test(cs) && /queueSelVal\("update_date", _axExpect\.updateDays\)/.test(cs) && /queueSelVal\("structured_date", _axExpect\.age\)/.test(cs) && /name: "required_time"/.test(cs));
   ok("だめなら検索せず、gate 付きで fill-done を返す", /notifyDone\('AXLX_FILL_INCOMPLETE: ' \+ gateMiss, true\);\s*return;/.test(cs));
-  ok("止めた時は検索のボタンを押さない（return が go_search より前）", cs.indexOf("AXLX_FILL_INCOMPLETE") < cs.indexOf("div.go_search"));
+  ok("止めた時は検索のボタンを押さない（return が go_search より前）", cs.indexOf("AXLX_FILL_INCOMPLETE") > 0 && cs.indexOf("AXLX_FILL_INCOMPLETE") < iGoSearch);
   ok("関所の材料は、間取り・家賃・更新日・徒歩・場所を1か所に置く", (() => {
     const i = ps.indexOf("_axExpect = {");
     if (i < 0) return false;
@@ -39,7 +42,7 @@ console.log("\n■ 検索を押す前の関所（page-script.js）");
   })());
   ok("お客様ごとに材料を置き直す（fillRealpro の最初で消す）", /_axExpect = null; _axGateRetried = false;/.test(ps));
   ok("画面でチェックの付いた間取りを数える", /input\[name="room_layout_id\[\]"\]:checked/.test(ps));
-  ok("notifyDone が gate を載せる", /function notifyDone\(errMsg, gate\)[\s\S]{0,2000}if \(gate\) msg\.gate = true;/.test(ps));
+  ok("notifyDone が gate を載せる", /function notifyDone\(errMsg, gate\)[\s\S]{0,6000}if \(gate\) msg\.gate = true;/.test(ps));
   ok("全角の間取り（２K）を半角にそろえてから読む", /var fpStr = String\(cond\.floor_plan\)\.replace\(\/\[Ａ-Ｚａ-ｚ０-９\]\/g/.test(ps));
 }
 

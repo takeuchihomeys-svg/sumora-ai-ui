@@ -37,9 +37,14 @@ console.log("\n■ ② 人の順番: 所在地絞り込み → 該当の地域 �
   ok("③ 該当の区を押す（コードで探す）", /clickWardPrecise\(\[wardFull, wardShort\]\)/.test(ps));
   ok("  区を押した事を覚える（_noteWardPicked）", /_noteWardPicked\(codes\[ci2\]/.test(ps));
   // 3
-  ok("③ 「確定してリストへ」を押す", /_findByText\(\['確定してリストへ', 'この条件で絞り込む', '決定'\]\)/.test(ps));
-  ok("  押した事を点検に残す（modal_confirm）", /_auditStepP\('modal_confirm', '確定してリストへ'\)/.test(ps));
-  ok("  カーソルを動かしてから押す（人の形）", /_humanPointerClick\(conf, function \(\) \{ try \{ conf\.click\(\); \} catch \(_\) \{\} \}\)/.test(ps));
+  // 2.8.313: 確定は共通 `_pressConfirmListLikeHuman`（確定必押）に集約された。所在地・駅の両モーダルがこれを呼ぶ。
+  const iPress = ps.indexOf("function _pressConfirmListLikeHuman(");
+  const pressBody = iPress > 0 ? ps.slice(iPress, ps.indexOf("\n  }\n", iPress)) : "";
+  ok("③ 「確定してリストへ」を押す（共通 _pressConfirmListLikeHuman を所在地モーダルが呼ぶ）",
+    /labels = \["確定してリストへ", "この条件で絞り込む", "決定"\]/.test(pressBody) && /_findByText\(labels\)/.test(pressBody)
+    && /_pressConfirmListLikeHuman\("所在地モーダル確定"\)/.test(ps));
+  ok("  押した事を点検に残す（modal_confirm）", /_auditStepP\("modal_confirm", why \|\| "確定してリストへ"\)/.test(pressBody));
+  ok("  カーソルを動かしてから押す（人の形・enqueueHumanClick の列で押す）", /enqueueHumanClick\(conf, function \(el\)/.test(pressBody) && /simulateClick\(el\)/.test(pressBody));
   // 2026-11-11 竹内さん「確定してリストへ」: ×（とじる）より**確定を先に**押す
   ok("×より「確定してリストへ」を先に探す", (() => {
     const iFn = ps.indexOf("function closeAreaModal()");
@@ -71,14 +76,16 @@ console.log("\n■ ④ 駅も同じ5段階（沿線・駅絞り込み → 沿線
   ok("④ 該当の駅を押す（selectStationsByName）", /selectStationsByName\(cond\.station_names\)/.test(ps));
   ok("⑤ 「確定してリストへ」を押す（駅モーダル）", /function closeStationModal\(\)/.test(ps) && /station_confirm/.test(ps));
   ok("⑤ は ×（とじる）より**確定を先に**押す", (() => {
+    // 2.8.313: 確定は _pressConfirmListLikeHuman を呼ぶ形。関数全体（次の関数の手前まで）で呼びが × より前にある事を見る。
     const iFn = ps.indexOf("function closeStationModal()");
-    const seg = ps.slice(iFn, iFn + 1200);
-    const iConf = seg.indexOf("確定してリストへ");
+    const iEnd = ps.indexOf("function _afterStationThenBasicSearch", iFn);
+    const seg = iFn > 0 && iEnd > iFn ? ps.slice(iFn, iEnd) : "";
+    const iConf = seg.indexOf('_pressConfirmListLikeHuman("駅モーダル確定")');
     const iX = seg.indexOf("this_window_close");
     return iConf > 0 && iX > 0 && iConf < iX;
   })());
   ok("「駅の設定へ進む」は押し終わるまで次へ進まない（_stationNextPressed）", /if \(_stationNextPressed\) \{/.test(ps));
-  ok("駅ページに移ったかを確かめる（移っていなければ押し直す）", /まだ路線の一覧のまま/.test(ps));
+  ok("駅ページに移ったかを確かめる（沿線一覧のままなら押し直す）", /_uGo\.screen === "line_list"[\s\S]{0,1400}?_stationNextPressed = false;/.test(ps) && /_uGo\.screen === "station_list"/.test(ps));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

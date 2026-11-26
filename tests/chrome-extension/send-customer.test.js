@@ -139,7 +139,7 @@ console.log("\n配線（読み込み・呼び出し）");
   ok("前に出すのはタブだけ（窓は触らない）", !/_bringItandiTabFront[\s\S]{0,700}chrome\.windows\.update/.test(bg));
   ok("リアプロを飛ばす時に待ち手を閉じる", /_endFillDoneWaiter\("realnetpro", String\(customerId\), "リアプロのタブが検索の画面でない"\)[\s\S]{0,120}throw new Error\("AXLX_TAB_DEAD: リアプロ/.test(bg));
   ok("最初の確かめにお客様を渡す", /_ensureRealproTab\(tab, auditRun, null, customer && customer\.id\)/.test(bg));
-  ok("やり直しの確かめにもお客様を渡す", /"content_script_dead" : "page_script_dead", _cidStr\)/.test(bg));
+  ok("やり直しの確かめにもお客様を渡す", /"content_script_dead"\s*:\s*"page_script_dead",\s*_cidStr,/.test(bg) /* 2.8.313: 引数の後ろに最後に知っていた URL（_lastKnownRealproUrl）が増えて改行された。お客様の番号（_cidStr）を渡す事は同じ */);
   ok("拾いに行く前に rp=0", /if \(_rpReady === false\) \{[\s\S]{0,80}_qs\.push\("rp=0"\)/.test(bg));
   ok("2026-11-12: リアプロを使えない PC は自動の回を拾わない（pending のまま・別の PC が拾う）", /if \(_autoModeOn\) \{[\s\S]{0,600}no_realpro_tab/.test(bg));
 

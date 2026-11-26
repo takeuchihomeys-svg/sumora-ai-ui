@@ -32,7 +32,9 @@ ss.axlx_last_filled_cid = JSON.stringify({ cid: "old", at: Date.now() - 7 * 3600
 ok("6時間より古い番号は使わない", A.load() === "");
 
 ok("切替把握は _lastFilledCidLoad で前客を読む", /var _prevCid = _lastFilledCidLoad\(\)/.test(ps));
-ok("開始時に _lastFilledCidSave で今客を残す", /_lastFilledCidSave\(_nextCid\)/.test(ps));
+// 2.8.313 退役: 「開始時に _lastFilledCidSave(今客) で残す」は 2.8.201 で意図して置き換わった。開始直後に今客で上書きすると前客≠今客が常に偽になり、
+//   前客の残り（駅）を外さず止まったため、前客の番号は一連の完了時（notifyDone／ready_next）にだけ残す（page-script.js のコメント・memory/dept_search_tool.md 2026-11-23 2.8.201）。
+ok("今客の番号は開始時でなく完了時にだけ残す（2.8.201）", !/_lastFilledCidSave\(_nextCid\)/.test(ps) && /if \(_doneCid\) _lastFilledCidSave\(_doneCid\)/.test(ps) && /if \(_ndCid\) _lastFilledCidSave\(_ndCid\)/.test(ps));
 
 // 前客の希望と今客の希望の差
 const D = new Function(body(ps, "_wantDiff") + "; return _wantDiff;")();

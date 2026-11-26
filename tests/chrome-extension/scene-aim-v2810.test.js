@@ -20,11 +20,14 @@ const cs = rd("chrome-extension/content.js");
 const mf = JSON.parse(rd("chrome-extension/manifest.json"));
 
 console.log("■ 版");
-ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+// 2.8.313: 2.8.119 だけを通す書き方をやめ、「manifest と page-script が同じ版で 2.8.119 以上」を見る形に
+const _verGte = (a, b) => { a = String(a).split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > b[i]) return true; if ((a[i] || 0) < b[i]) return false; } return true; };
+ok("manifest が 2.8.119 以上", _verGte(mf.version, [2, 8, 119]), mf.version);
+ok("_AXLX_PAGE_VER が manifest と同じ（2.8.119 以上）", new RegExp('var _AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '";').test(ps));
 
 console.log("■ background: 束の learned_scene を axlx_learn_scene へ");
-ok("learned_scene を読む", /bundle\.shots\.learned_scene/.test(bg));
+// 2.8.313: 変数名が bundle → b に変わった（b.shots.learned_scene）。束名にこだわらず shots.learned_scene を読むことを見る
+ok("learned_scene を読む", /\b\w+\.shots\.learned_scene\b/.test(bg));
 ok("n<2 は載せない（1枚の偶然を採らない）", /if \(\(Number\(_sf\.n\) \|\| 0\) < 2\) continue;/.test(bg));
 ok("storage.set に axlx_learn_scene", /axlx_learn_scene: _sceneAim,/.test(bg));
 ok("旧 axlx_learn_screen は残す", /axlx_learn_screen: _screenAim,/.test(bg));

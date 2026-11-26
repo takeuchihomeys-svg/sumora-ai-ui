@@ -54,7 +54,7 @@ console.log("\n■ ② 押した時に種類も残す（記録）");
 console.log("\n■ ③ 学習の束に種類が入り、日本語で出る");
 {
   ok("PointStat に w（種類）を持つ", /type PointStat = \{[^}]*w\?: string/.test(brain));
-  ok("  回数の多い実測の種類を採る", /const w = typeof r\.w === "string"/.test(brain));
+  ok("  回数の多い実測の種類を採る", /const w =\s*typeof r\.w === "string"/.test(brain) && /effN >= old\.n/.test(brain) && /const wUse = w \|\| old\?\.w;/.test(brain));
   ok("  種類ごとにまとめて出す", /プルダウン（開いて選ぶ）/.test(brain) && /直接入力/.test(brain));
   ok("  種類が無ければ「まだ学んでいません」と出す", /欄の種類: まだ学んでいません/.test(brain));
 }

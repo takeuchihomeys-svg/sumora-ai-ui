@@ -26,10 +26,13 @@ const bd = read("bulk-dl.js");
 const ps = read("page-script.js");
 ok("リアプロ: 送る時（手で押す・20秒後のまとめて送る）に確かめる", /if \(sendToLine && !_sendGuardOk\(customerName, customerId\)\) return;/.test(bd));
 ok("押した1件をその場で送る時にも確かめる（_sendGuardOk）", /function _sendOnePdf\(item, url, done\)[\s\S]{0,1200}if \(!_sendGuardOk\(customerName, customerId\)\)/.test(bd));
-ok("自動モードは確かめの小窓を出さずに送る（押した＝送る）", /if \(_autoModeOn\) \{\s*_tmark\("guard_pass"/.test(bd) && /自動モードなので確かめの小窓は出さずに送ります/.test(bd));
+// 2.8.313: 2026-11-22b にブレインONも自動と同じく小窓で止めない形になった（if (_autoModeOn || _brainModeOn)）。自動モードで小窓を出さない動きは今も有る
+ok("自動モードは確かめの小窓を出さずに送る（押した＝送る）", /if \(_autoModeOn(?: \|\| _brainModeOn)?\) \{\s*_tmark\("guard_pass"/.test(bd) && /_autoModeOn \? "自動" : "ブレイン"\) \+ "なので確かめの小窓は出さずに送ります/.test(bd));
 ok("リアプロ: 押した1件は20秒待たずに送る（1つずつ行ったのと同じ形）", /function sendOnePdfNow/.test(bd) && !/scheduleForward\(\)/.test(bd));
 ok("リアプロ: ブレインの下見の場所（AREA_FAR）を印に", /setAttribute\("data-axlx-area", _codes\.indexOf\("AREA_FAR"\) >= 0 \? "far"/.test(bd));
-ok("自動入力で検索した時も「誰の一覧か」の印を書く（自動モードでも小窓を出さないため）", /function notifyDone[\s\S]{0,1400}AxlxSearchStamp[\s\S]{0,900}SS\.write\(\{/.test(ps));
+// 2.8.313: notifyDone の中にコメントが増えて 1400/900 字の窓では届かない。notifyDone の本体（次の2字下げの function まで）の中で見る
+const _nd = (function () { const i = ps.indexOf("function notifyDone("); if (i < 0) return ""; const j = ps.indexOf("\n  function ", i + 20); return ps.slice(i, j < 0 ? i + 20000 : j); })();
+ok("自動入力で検索した時も「誰の一覧か」の印を書く（自動モードでも小窓を出さないため）", _nd.length > 0 && /AxlxSearchStamp/.test(_nd) && /SS\.write\(\{/.test(_nd) && /!gate && !errMsg/.test(_nd));
 ok("案内（リアプロ）: 検索を押した時にこの一覧を検索したお客様を印（手順が終わっていたかも）", /SS\.write\(\{ cid: String\(session\.customerId\), name: session\.customerName \|\| "", at: Date\.now\(\), site: "realpro", complete: cur\.step\.kind === "search"/.test(read("realpro-guide.js")));
 ok("案内（ITANDI）: 検索を押した時に印", /site: "itandi", complete: true/.test(read("itandi-guide.js")));
 const mf = JSON.parse(read("manifest.json"));

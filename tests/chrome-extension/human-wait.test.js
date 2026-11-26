@@ -110,7 +110,8 @@ function rest() {
   // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
   eq("先頭の段（document_start・3サイト）が human-wait.js → human-trace.js → own-mutation.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "human-learn.js", "pointer-ui.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
-  for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
+  // 2.8.313 退役: system.reins.jp の項目 — 2026-11-26 竹内さん「レインズは使わない」で manifest から system.reins.jp を外した（memory/dept_search_tool.md「レインズ停止・見張りの穴を塞ぐ」）
+  for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));
   }
   // human-wait を使う content script が全部、先頭の段の matches に入っている
@@ -124,7 +125,8 @@ function rest() {
   eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "human-learn.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
   const war = manifest.web_accessible_resources[0];
   ok("web_accessible_resources に human-wait.js（リアプロ・レインズのページへ <script> で入れる）", war.resources.includes("human-wait.js"));
-  ok("web_accessible_resources の対象にリアプロとレインズ", war.matches.some((m) => /realnetpro/.test(m)) && war.matches.some((m) => /reins/.test(m)));
+  // 2.8.313 退役（レインズの分だけ）: 2026-11-26 に manifest から system.reins.jp を外した（レインズは使わない・竹内さん）。リアプロ・itandi は今も見る
+  ok("web_accessible_resources の対象にリアプロとitandi（レインズは 2026-11-26 に外した）", war.matches.some((m) => /realnetpro/.test(m)) && war.matches.some((m) => /itandibb/.test(m)));
   ok("background.js が human-wait.js を import", /^import "\.\/human-wait\.js";/m.test(read("background.js")));
   const html = read("popup.html");
   const iHw = html.indexOf('<script src="human-wait.js">'), iPop = html.indexOf('<script src="popup.js">');
@@ -172,6 +174,7 @@ function rest() {
       "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41）"],
       "setTimeout 800": [2, "解放後の終わり・一括の状態の取り直し（サイトを触らない）"],
       "setTimeout 8000": [1, "Realtime の再接続"],
+      "setTimeout 90000": [1, "SW 再起動後の見張り（入力中か確かめて放置なら再開・サイトを触らない）"],
       "setTimeout 900": [3, "撮影の間（_capturePaced・_recordOneShot）・読み込みの間引き（_batchAutofill）"],
     },
     "bulk-dl.js": {
@@ -181,8 +184,10 @@ function rest() {
       "setInterval 2000": [2, "裏の確認（_becomeOrphan）・start の見張り"],
       "setInterval 60000": [2, "重さの数え・自動便の表示の描き直し"],
       "setTimeout 100": [2, "ダウンロードのリンクを消す"],
-      "setTimeout 1200": [2, "起動時の差し込み・0件の再確認（_zeroCheck・読むだけ）"],
-      "setTimeout 1500": [2, "0件の確認（_zeroCheck・読むだけ）"],
+      "setTimeout 1200": [3, "起動時の差し込み・0件の再確認（_zeroCheck・読むだけ）・並べ替え予約のやり直しの間（_scheduleSortCursorAfterSearch・読むだけ）"],
+      "setTimeout 1500": [3, "0件の確認（_zeroCheck・読むだけ）・並べ替え失敗後の再試行の間（要確認：人の間か。中の操作は _hd を通る）"],
+      "setTimeout 1400": [1, "並べ替えの後に条件が描かれるのを待って見直す間（_maybeAutoPressOnLoad・読むだけ）"],
+      "setTimeout 900": [1, "結果ページが出るのを待って並べ替え予約をやり直す間（_scheduleSortCursorAfterSearch・読むだけ）"],
       "setTimeout 200": [2, "差し込みのやり直し・armScreen の見張り"],
       "setTimeout 2000": [2, "読み込み後の差し込み・armSnap の見張り"],
       "setTimeout 20000": [1, "1件だけのブレイン判定の期限（fail-open）"],
@@ -204,7 +209,7 @@ function rest() {
       "setTimeout 6000": [1, "裏の返事が来なくても読み直す期限"],
       "setTimeout 700": [1, "自動の次頁の待ち（Case A）"],
       "setTimeout 80": [2, "印の再適用・差し込み（内部）"],
-      "setTimeout 800": [2, "popup の応答の期限・自動の読み込みの待ち"],
+      "setTimeout 800": [4, "popup の応答の期限・自動の読み込みの待ち・行が出るのを待つ見直しの間（resumeTries／_scheduleSortCursorAfterSearch・読むだけ）"],
     },
     "content.js": {
       "setInterval 3000": [1, "サイドバーの見張り"],
@@ -225,7 +230,7 @@ function rest() {
       "setTimeout 60000": [1, "PDF の期限"],
       "setTimeout 800": [1, "popup の応答の期限"],
     },
-    "itandi-content.js": { "setTimeout 300": [1, "起動時"] },
+    "itandi-content.js": { "setTimeout 300": [2, "起動時・pushAll の最初の間"], "setTimeout 1500": [1, "pushAll の再試行（読み込み待ち）"], "setTimeout 1200": [1, "ITANDI の束の取り込みが要るかの確認（裏で取り込むだけ・サイトを触らない）"] },
     "itandi-guide.js": {
       "setInterval 10000": [1, "重さの数え（axlx_perf）"],
       "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（読むだけ）"],
@@ -234,6 +239,7 @@ function rest() {
     "itandi-page-script.js": {
       "setInterval 100": [2, "モーダルが消えた・間取りの欄が出たかの見る間隔（3秒で打ち切り）"],
       "setTimeout 1800000": [1, "見張り（fill-done の保証・30分）"],
+      "setTimeout 12000": [1, "入力が終わらない時の期限（guard・打鍵そのものは setReactValAsync の人の間）"],
       "setTimeout 500": [1, "検索を押した後の完了の合図（ページを触らない）"],
       "setTimeout 5000": [1, "警告の表示を消す"],
     },
@@ -268,6 +274,7 @@ function rest() {
     "pointer-ui.js": { "setTimeout 130": [1, "押した後に指先がわずかに動く（見た目だけ）"], "setTimeout 40": [1, "もう1つの世界が動き終わるのを見る間隔（v2.8.138）"] },
     "popup.js": {
       "setInterval 45000": [1, "スマホ等で押された「一番上へ」の印の取り直し"],
+      "setTimeout 45000": [1, "前の条件を確認する応答の期限（サイトを触らない）"],
       "setInterval 60000": [1, "次回の自動便の時刻の描き直し（画面の文字だけ）"],
       "setTimeout 0": [1, "検索モードのボタンを繋ぐ（DOM の後）"],
       "setTimeout 100": [1, "一覧が出るのを待つ見る間隔（サイトを触らない）"],
@@ -310,6 +317,7 @@ function rest() {
     "underbar.js": {
       "setTimeout 1200": [1, "展開待ちの期限（過ぎたらその場で開く）"],
       "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限"],
+      "setTimeout 8000": [1, "iframe の読み込みが来ない時の期限（load-timeout-8s・転送前の期限で人の操作の間ではない）"],
       "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し（読むだけ）"],
       "setTimeout 250": [1, "開いた後にもう一度描き直させる間（見た目だけ）"],
       "setTimeout 50": [1, "パネルの動き"],

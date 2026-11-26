@@ -96,6 +96,8 @@ function runStationClear(opts) {
     _auditStepP: (k, d) => log.steps.push([k, d]),
     setTimeout: (f) => f(),
     _ln: () => 0,
+    // 2.8.313: 外しの持ち主の世代（_clearGen・2.8.2xx で追加）は実物では最上位の変数。ここでは世代が替わらない（0・古くならない）物として置く
+    _clearGen: 0, _clearGenStale: () => false,
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);
@@ -189,6 +191,8 @@ function runWardClear(opts) {
     console: { log: () => {} },
     setTimeout: (f) => f(),
     _ln: () => 0,
+    // 2.8.313: 外しの持ち主の世代（_clearGen・2.8.2xx で追加）は実物では最上位の変数。ここでは世代が替わらない（0・古くならない）物として置く
+    _clearGen: 0, _clearGenStale: () => false,
   };
   ctx.waitForClick = fakeWaitForClick(clk, log);
   vm.createContext(ctx);

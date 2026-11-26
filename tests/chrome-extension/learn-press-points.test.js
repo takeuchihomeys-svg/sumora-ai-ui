@@ -44,15 +44,16 @@ console.log("■ ① 学んだ位置を要素から引ける（名前の無い�
 console.log("\n■ ② 学んだ位置で押す共通の道具");
 {
   t("_pressLearned がある", /function _pressLearned\(el, keys, tag\)/.test(ps));
-  t("  学んだ位置があれば _humanPointerClick に渡す", /_humanPointerClick\(el, function \(\) \{ simulateClick\(el\); \}, aim\)/.test(ps));
+  t("  学んだ位置があれば _humanPointerClick に渡す", /_humanPointerClick\(el, function \(\) \{ simulateClick\(el\); \}, aim( \|\| null)?\)/.test(ps));
   t("  無ければ今まで通り simulateClick", /try \{ simulateClick\(el\); \}/.test(ps));
   t("  点検に残す（learn_aim）", /_auditStepP\('learn_aim'/.test(ps));
 }
 
 console.log("\n■ ③ ボタンを押す関数が「学んだ位置」を受ける");
 {
-  t("_humanPointerClick が第3引数 aim を受ける", /function _humanPointerClick\(el, fallbackFn, aim\)/.test(ps));
-  t("  学んだ割合へカーソルを動かす（moveTo）", /_P\.moveTo\(_aimPt\.x, _aimPt\.y\)/.test(ps));
+  t("_humanPointerClick が第3引数 aim を受ける", /function _humanPointerClick\(el, fallbackFn, aim(, tgtAt)?\)/.test(ps));
+  // 2.8.313: 見えるカーソル側は毎回数ピクセルずらす（_jx/_jy）ので、_aimPt を元にした座標で moveTo する
+  t("  学んだ割合へカーソルを動かす（moveTo）", /if \(_aimPt && _P\.moveTo\) \{[\s\S]{0,600}_P\.moveTo\(_jx, _jy\)/.test(ps) && /var _jx = _aimPt\.x/.test(ps));
   t("  端すぎる所は押さない（0.2〜0.8）", /Math\.max\(0\.2, Math\.min\(0\.8, aim\.x\)/.test(ps));
   t("  学びが無ければ真ん中（moveToEl・今まで通り）", /return _P\.moveToEl\(el\);/.test(ps));
 }
@@ -78,8 +79,9 @@ console.log("\n■ ⑤ 区・町字は**1つずつカーソルを動かして**�
    *     ⚠ 旧コメントの心配「押した直後に確定が走って区が入らない」は、
    *       `_verifyThenConfirm` が620msごとに『欲しい区が全部そろったか』を確かめてから確定するので問題ない。
    */
-  t("  ⚠ 区（コードで選択）は enqueueHumanClick（カーソルを動かして1つずつ）", /enqueueHumanClick\(c2 \|\| lb2, _clickEl, 620, 1400/.test(ps));
-  t("  ⚠ 区（文字で照合）も enqueueHumanClick", /enqueueHumanClick\(inp \|\| wardLabels\[i\], _clickEl, 620, 1400/.test(ps));
+  // 2.8.313: 区の押しは _toggleCheckboxLikeHuman（中で enqueueHumanClick＝カーソルを動かして1つずつ・label を押す）に集約
+  t("  ⚠ 区（コードで選択）は enqueueHumanClick（カーソルを動かして1つずつ）", /_toggleCheckboxLikeHuman\(target\.c, true, 620, 1400/.test(ps) && /function _toggleCheckboxLikeHuman\(cb, wantOn, minGap, maxGap, flags\) \{[\s\S]{0,3000}enqueueHumanClick\(hit, function \(\)/.test(ps));
+  t("  ⚠ 区（文字で照合）も enqueueHumanClick", /if \(inp\) _toggleCheckboxLikeHuman\(inp, true, 620, 1400\);\s*\n\s*else enqueueHumanClick\(wardLabels\[i\]/.test(ps));
   t("  ⚠ 一気押しの同期クリックが残っていない", !/simulateClick\(lb2\); hitByCode\+\+/.test(ps) && !/simulateClick\(wardLabels\[i\]\);/.test(ps));
   t("  ⚠ そろうまで待ってから確定する（_verifyThenConfirm）", /_verifyThenConfirm/.test(ps));
   t("  駅の絞り込み（開くだけ）は _pressLearned でよい", /_pressLearned\(divs\[i\], \['左の沿線・駅絞り込み/.test(ps));
@@ -99,14 +101,14 @@ console.log("\n■ ⑥ 検索ボタンで学んだ位置を使う");
 {
   const seg = ps.slice(ps.indexOf("var _pressSearchBtn"), ps.indexOf("// 「検索」ボタンは2か所ある"));
   t("  _aimByEl で検索ボタンの学びを引く", /_aimByEl\(btn, \['左の検索'/.test(seg));
-  t("  _humanPointerClick に渡す", /_humanPointerClick\(btn, function \(\) \{ try \{ btn\.click\(\); \} catch \(_\) \{\} \}, _sAim\)/.test(seg));
+  t("  _humanPointerClick に渡す", /_humanPointerClick\(btn, function \(\) \{[\s\S]{0,300}try \{ btn\.click\(\); \} catch \(_\) \{\}\s*\}, _sAim\)/.test(seg));
   t("  ⚠ 小窓の中の検索には学んだ位置を使わない（2か所を取り違えない）", /if \(!_inModal\(btn\)\) _sAim/.test(seg));
   t("  点検に残す（search の学び）", /'search:'/.test(seg));
 }
 
 console.log("\n■ ⑦ 学びは先に読み込む（名前の無いボタンは _kindOf を通らない）");
 {
-  t("_learnWarm がある", /function _learnWarm\(\)/.test(ps));
+  t("_learnWarm がある", /function _learnWarm\((force, cb)?\)/.test(ps));
   t("  _aimByEl が _learnWarm を呼ぶ", /if \(!all\) \{ try \{ _learnWarm\(\); \}/.test(ps));
   t("  _kindOf も _learnWarm を使う（二重実装しない）", /function _kindOf\(name\) \{\s*\n\s*try \{\s*\n\s*_learnWarm\(\);/.test(ps));
   t("  30秒は読み直さない", /now - _learnKitsAt > 30000|now - _learnKindsAt > 30000/.test(ps));

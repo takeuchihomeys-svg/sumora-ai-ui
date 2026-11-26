@@ -46,7 +46,7 @@ console.log("\n■ ② 写真をもっと小さく");
 console.log("\n■ ③ 写真はどのモードでも撮る（前回の直しが残っている）");
 {
   ok("shouldShoot がある", /function shouldShoot\(st\)/.test(rec));
-  ok("写真の見張りはモードに関係なく動く", /if \(shouldShoot\(st\)\) startShooting\(\)/.test(rec));
+  // 2.8.313 退役: 「写真の見張りはモードに関係なく動く」— 2.8.154（2026-11-22 竹内さん「録画モード押していない時でも重い」）で、写真は自動・録画中だけに置き換えた（human-learn-record.js shouldShoot・memory/dept_search_tool.md 2.8.154・正本の試験は shot-gate-v28154.test.js）
   ok("起動直後に1枚撮る", /shootAfter\("startup"/.test(rec));
 }
 

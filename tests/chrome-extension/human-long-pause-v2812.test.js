@@ -20,11 +20,15 @@ ok("長い迷いの範囲は 4000〜9000ms に収める", /Math\.min\(9000, Math
 ok("対数正規の中心 5200", /logNormalDelay\(5200, 0\.3\)/.test(body));
 
 // 区・選択レーンは _hesitateMs を通さない（別の混合で管理）
-const ward = ps.indexOf("var hesitate = (_isWardItem || _isSelItem) ? 0 : _hesitateMs(item.el);");
+// 2.8.313: 条件に pick・decide 等が後から増えたので「区・選択が先頭に並ぶ」形で見る（0 にする守りは同じ）
+const ward = ps.search(/var hesitate = \(_isWardItem \|\| _isSelItem\b[^;]*\) \? 0 : _hesitateMs\(item\.el\);/);
 ok("区・選択レーンの迷いは 0（_hesitateMs を呼ばない）", ward > 0);
 
 // 版
-ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+// 2.8.313: 版は manifest と同じで 2.8.119 以上（2.8.119 だけを通す書き方をやめた）
+const mf = JSON.parse(fs.readFileSync(path.join(__dirname, "../../chrome-extension/manifest.json"), "utf8"));
+const verGte = (a, b) => { a = String(a).split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > b[i]) return true; if ((a[i] || 0) < b[i]) return false; } return true; };
+ok("_AXLX_PAGE_VER が manifest と同じで 2.8.119 以上", new RegExp('var _AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '";').test(ps) && verGte(mf.version, [2, 8, 119]));
 
 console.log(fail ? `\n${fail} 件失敗` : "\nすべて OK");
 process.exit(fail ? 1 : 0);

@@ -45,7 +45,7 @@ ok("stamp の時だけ audit に印", /if \(stamp && _audit\) _auditStepP\("rese
 ok("印（reset_clean）はここで消さない", !/removeItem/.test(helper));
 ok("落ちない（try/catch）", /catch \(_\) \{ return false; \}/.test(helper));
 ok("① 前客の外しの予告（_willClear）で使う", /_pCid !== _nCid && !_resetCleanSkipsForcePlace\(false\)\) _willClear = true/.test(ps));
-ok("② 客切替の旗（_switchedCust）で使う", /if \(_switchedCust && _resetCleanSkipsForcePlace\(true\)\) _switchedCust = false;/.test(ps));
+ok("② 客切替の旗（_switchedCust）で使う", /if \(_switchedCust && !window\.__axlxForceClearAllPlace && _resetCleanSkipsForcePlace\(true\)\) _switchedCust = false;/.test(ps)); // 2.8.314: 他が強制を立てている回は省かない
 ok("③ 場所の強制（_needForcePlace）で使う", /_p0 !== _n0 && !_resetCleanSkipsForcePlace\(false\)\) _needForcePlace = true/.test(ps));
 ok("送付後の外し未完（PostSendClearGap）は今まで通り立てる", /if \(window\.__axlxPostSendClearGap\) _willClear = true;/.test(ps));
 ok("決まりの id が拡張に入っている", /"reset_clean_no_force_place",\n  \];/.test(ps));

@@ -33,8 +33,8 @@ console.log("■ ① 自動入力の最中（条件を入れる前）は押さ�
   ok("自動入力の開始で立てる（axlx-autofill-initiated）", /_setFillInProgress\(true\)/.test(bd));
   ok("  「検索を押すまでは押しません」と記録する", /検索を押すまでは画面の一覧を押しません/.test(bd));
   ok("検索を押した合図（fill-done）で解く", /_autofillInProgress = false;\s*\n\s*_setFillInProgress\(false\);/.test(bd));
-  ok("_maybeAutoPressOnLoad が最中は止める", /if \(_autofillInProgress\) \{/.test(bd) && /blocked_during_fill/.test(bd));
-  ok("inject の自動の枝も最中は通さない", /&& !_autoPdfRun && !_autofillInProgress\) \{/.test(bd));
+  ok("_maybeAutoPressOnLoad が最中は止める", /if \(_isFillBusy\(\) && !\(opt && opt\.afterSearch\)\) \{/.test(bd) && /blocked_during_fill/.test(bd) && /function _isFillBusy\(\) \{\s*return !!\(_autofillInProgress/.test(bd));
+  ok("inject の自動の枝も最中は通さない", /&& _autoModeOn && !_autoPdfRun && !_isFillBusy\(\)\) \{/.test(bd));
   ok("「自動で押して送る」を手で押しても最中は断る", /条件の入力中なので押しません/.test(bd) && /reason: "filling"/.test(bd));
   ok("合図が来ないまま固まっても20分で解く（永久に押せなくしない）", /_autofillStuckMs = 20 \* 60 \* 1000/.test(bd));
   ok("  ⚠ sessionStorage には残さない（読み直し後に検索結果を押せなくなるため）", !/axlx_fill_in_progress/.test(bd));
@@ -43,10 +43,11 @@ console.log("■ ① 自動入力の最中（条件を入れる前）は押さ�
 console.log("\n■ ② 「新しい行」が無ければ押さない（前のお客様の一覧を送らない）");
 {
   ok("自動入力の直前の行を控える（_preAutofillBtns）", /_preAutofillBtns = new Set\(findPrintBtns\(\)/.test(bd));
-  ok("inject の自動の枝で新しい行を確かめる", /_hasNewForAuto/.test(bd));
-  ok("  新しい行が1つも無ければ押さない", /if \(_preAutofillBtns\.size > 0 && !_hasNewForAuto\) \{/.test(bd));
-  ok("  理由を点検に残す（blocked_not_new_rows）", /blocked_not_new_rows/.test(bd));
-  ok("  控えが空の時（初回）は今まで通り動く", /_preAutofillBtns\.size > 0/.test(bd));
+  // 2.8.313: inject の自動の枝（Case C）は 2026-11-16 に「fill-done で armed された道（Case A）だけ押す」へ置き換わった（blocked_need_fill_done）。新しい行の確かめは Case A の _hasNewBtn が今の形
+  ok("inject の自動の枝で新しい行を確かめる（Case A の _hasNewBtn）", /var _hasNewBtn = tracked\.some\(function\(item\) \{[^}]*!_preAutofillBtns\.has\(k\)/.test(bd) && /if \(_hasNewBtn\) \{/.test(bd) && /blocked_need_fill_done/.test(bd));
+  ok("  新しい行が1つも無ければ押さない（Case A は新しい行がある時だけ・2秒の保険も見送る）", /if \(_hasNewBtn\) \{/.test(bd) && /if \(!_hasNewBtn2s\) \{[\s\S]*?見送り（前顧客 DOM 残留）/.test(bd));
+  // 2.8.313 退役: 「理由を点検に残す（blocked_not_new_rows）」— 2026-11-16 の直し（commit 6a53fddca）で、この印を出していた inject の自動の枝（Case C）の `_hasNewForAuto` 判定ごと「fill-done 前は一切押さない（点検の印は blocked_need_fill_done）」へ置き換えた（bulk-dl.js inject の Case C のコメント）
+  ok("  控えが空の時（初回）は今まで通り動く（空の控えなら全部の行が新しい行）", /var _preAutofillBtns = new Set\(\);/.test(bd) && /return k && !_preAutofillBtns\.has\(k\)/.test(bd));
 }
 
 console.log("\n■ ③ 条件の入力が始まったら、前の一覧の自動押下を止める");
@@ -67,7 +68,8 @@ console.log("\n■ ④ 検索の後の一覧は今まで通り押せる（直し
 
 console.log("\n■ ⑤ 全物件を送らない安全弁は残っている");
 {
-  ok("自動モード・スタッフモードの関所", /if \(_autoPdfRun \|\| !_autoModeOn \|\| _staffModeOn\) return;/.test(bd));
+  // 2.8.313 退役（スタッフモードの分だけ）: 2026-11-22「スタッフでも _autoModeOn（選んだ客の自動）なら押す」へ変えた（bulk-dl.js _maybeAutoPressOnLoad のコメント）。自動モードの関所は今も見る
+  ok("自動モードの関所（_autoModeOn が無ければ押さない）", /if \(_autoPdfRun \|\| !_autoModeOn\) return;/.test(bd));
   ok("並べ替えの後の条件の確認（v2.7.2）", /_AD_SORT_GRACE_MS/.test(bd) && /_blockedAfterSortNote/.test(bd));
   ok("同じ一覧で二度始めない", /_autoPdfSig/.test(bd));
 }

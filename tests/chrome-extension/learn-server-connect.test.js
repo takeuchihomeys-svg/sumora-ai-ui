@@ -46,13 +46,21 @@ console.log("■ ② 読んだ印（read_count）が残る＝touch=1 で読む")
    * 2026-11-14: 版を確かめる軽い呼び出し（`?touch=0`）は**正しい用途**（読んだ印を増やさない）。
    *   本体の取り込みでは touch を付けない（＝読んだ印を残す）。
    */
-  const touchZeroUses = (s.match(/human-learn-profile\?touch=0/g) || []).length;
-  ok("touch=0 は『版の確認』だけ（本体の取り込みでは付けない）", touchZeroUses <= 1, touchZeroUses);
-  ok("本体の取り込みは touch 無し", /fetch\(SUMORA_BATCH_API \+ "\/api\/human-learn-profile", \{/.test(s));
+  // 2026-11-27 現在: 版の確認（touch=0）は「今のサイト」と「もう片方のサイト」の2か所（どちらも head＝版だけ見る変数に入れる）
+  const touchZeroLines = s.split("\n").filter((l) => /human-learn-profile\?touch=0/.test(l));
+  ok("touch=0 は『版の確認』だけ（本体の取り込みでは付けない）",
+    touchZeroLines.length <= 2 && touchZeroLines.every((l) => /var (head|_otherHead) = await fetch/.test(l)), touchZeroLines);
+  // 本体の取り込みは buildBundleFetchUrl（learn-refresh-gate.js）か allUrl で URL を作る。どちらも touch を付けない
+  const gate = read("learn-refresh-gate.js");
+  const bodyUrlLines = s.split("\n").filter((l) => /(_scUrl|allUrl) = |"\/api\/human-learn-profile\?scope=" \+ sc/.test(l));
+  ok("本体の取り込みは touch 無し",
+    bodyUrlLines.length >= 2 && bodyUrlLines.every((l) => !/touch/.test(l))
+    && /human-learn-profile\?scope=/.test(gate) && !/touch/.test(gate.slice(gate.indexOf("function buildBundleFetchUrl"), gate.indexOf("function buildBundleFetchUrl") + 900)), bodyUrlLines);
   t("読んだ印のため touch=1（既定）で読む", line.includes("/api/human-learn-profile"));
   // サーバー側: touch が true の時だけ read_count を増やす
   const route = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "human-learn-profile", "route.ts"), "utf8");
-  t("サーバーは touch で read_count を増やす", /read_count:\s*\(Number\(row\.read_count\)/.test(route));
+  // 2026-11-17〜: 水増し対策で 10分以内の再読は据え置き。touch の時だけ read_count を +1 して read_at と一緒に書く
+  t("サーバーは touch で read_count を増やす", /else if \(touch\) \{[\s\S]{0,900}servedReadCount = recent && prev > 0 \? prev : prev \+ 1;[\s\S]{0,300}read_count: servedReadCount/.test(route) && /if \(touch && guard\) \{[\s\S]{0,900}servedReadCount = \(Number\(row\.read_count\) \|\| 0\) \+ 1;/.test(route));
   t("touch=0 なら増やさない", /get\("touch"\)\s*!==\s*"0"/.test(route));
 }
 

@@ -22,7 +22,8 @@ ok("旧の「DOM の並びのまま forEach」ではない", !/cbs\.forEach\(fun
 
 console.log("\n■ ② 選ぶ集合は変えない");
 ok("対象は「今と違う物」だけ（入れ忘れ・余計なし）", /cb\.checked !== \(svals\.indexOf\(String\(cb\.value\)\) >= 0\)/.test(ps));
-ok("入れる側の guard はそのまま（_clickIfUnchecked / _clickEl）", /enqueueHumanClick\(cb, _clickEl, 420, 980\)/.test(ps));
+// 今の形: 間取り・所在地・駅・沿線は _toggleCheckboxLikeHuman（押す直前に cb.checked === wantOn なら押さない）、それ以外は _clickEl を人間レンジの間隔で積む（固定値 420/980 は廃止）
+ok("入れる側の guard はそのまま（_clickEl／押す直前に状態を見る）", /enqueueHumanClick\(cb, _clickEl, _cg\.lo, _cg\.hi, null, \{ keys: \[String\(name \|\| ""\)\], sigma: 0\.55 \}\)/.test(ps) && /function _toggleCheckboxLikeHuman[\s\S]{0,3000}?if \(cb\.checked === !!wantOn\) \{/.test(ps));
 
 console.log("\n■ ③ ITANDI の間取りも毎回ちがう順");
 ok("_shuffle がある（Fisher-Yates）", /function _shuffle\(arr\)/.test(ips));
@@ -39,7 +40,7 @@ for (const [name, src] of [["page-script.js", ps], ["itandi-page-script.js", ips
 ok("enqueueHumanClick の下限が 300ms 未満の物が無い", tooFast.length === 0, tooFast.slice(0, 5));
 ok("リアプロの打鍵は 165ms/文字", /logNormalDelay\(165, 0\.32\)/.test(ps));
 ok("ITANDI のチェックはボタンの意味で間を変える（選択350〜1000ms・決定1200〜3200ms）", /_r = \[350, 1000\]/.test(ips) && /_r = \[1200, 3200\]/.test(ips) && /logNormalDelay\(\(_r\[0\] \+ _r\[1\]\) \/ 2, 0\.32\)/.test(ips));
-ok("プルダウンは開く450〜1000・見る700〜1600・確認250〜700", /_ln\(700, 0\.4, 450, 1000\)/.test(ps) && /_ln\(1100, 0\.42, 700, 1600\)/.test(ps) && /_ln\(430, 0\.45, 250, 700\)/.test(ps));
+ok("プルダウンは開く700〜1400（開く下限を450→700へ引き上げた今の形）・見る700〜1600・確認250〜700", /_ln\(900, 0\.4, 700, 1400\)/.test(ps) && /_ln\(1100, 0\.42, 700, 1600\)/.test(ps) && /_ln\(430, 0\.45, 250, 700\)/.test(ps));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

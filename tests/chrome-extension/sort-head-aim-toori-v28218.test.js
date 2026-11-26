@@ -28,7 +28,8 @@ function semverOk(v, min) {
 }
 
 assert(semverOk(man.version, "2.8.218"), "manifest >= 2.8.218 got " + man.version);
-assert(page.includes('2.8.218'), "page ver 2.8.218");
+// 版の固定（'2.8.218' を含む）でなく「以上」で比べる
+assert(semverOk((page.match(/_AXLX_PAGE_VER = "([\d.]+)"/) || [])[1], "2.8.218"), "page ver >= 2.8.218");
 assert(bulk.includes("function _pickSortHeadAimFromPoints"), "_pickSortHeadAimFromPoints");
 assert(bulk.includes("toori_under"), "toori_under src");
 assert(bulk.includes("sort_head_aim_scroll"), "aim scroll stamp");

@@ -79,7 +79,10 @@ console.log("\n■ 配線");
   ok("popup: 3サイトの conditions に commute（点検の記録用）", /commute:\s+_commuteAudit,/.test(pp) && /commute:\s+_commuteAudit_it,/.test(pp) && /commute:\s+_commuteAudit_rn,/.test(pp));
   ok("popup: 手で駅を入れた時は広げない（_adjStation_rp／_adjStation_it／レインズの駅欄）", /planCommuteReachFor\(c, adjAreaClean, !!_adjStation_rp\)/.test(pp) === false || true);
   const ps = read("page-script.js");
-  ok("page-script: 多数の駅は 25〜60ms で押す（_stGapFast）・止まったら選べた駅で進む（commute_stall）", /_stGapFast = !!\(cond && cond\.commute && cond\.station_names && cond\.station_names\.length > 60\);/.test(ps) && /_auditStepP\("commute_stall"/.test(ps) && (ps.match(/_stGapMin\(\), _stGapMax\(\)/g) || []).length === 6);
+  // 2.8.313 退役（25〜60ms で押す部分のみ）: 2.5.96 竹内さん「駅も一気に選択してしまう」で多数の駅も 320〜900ms の人の速さに置き換え、
+  //   さらに 2.8.x で _stGapMin/_stGapMax を実測（駅 gap p50≈1.1 秒・下限950ms）に（page-script.js のコメント・memory/dept_search_tool.md 10281 行付近）。
+  //   速押し（_stGapFast は印だけ残り押す間隔には使わない）の主張は設計が意図して置き換わった。「止まったら選べた駅で進む」は今も有るので見る。
+  ok("page-script: 多数の駅（60駅超の通勤）の判定が有り・止まったら選べた駅で進む（commute_stall）", /_stGapFast = !!\(cond && cond\.commute && cond\.station_names && cond\.station_names\.length > 60\);/.test(ps) && /_auditStepP\("commute_stall"/.test(ps));
   const rs = read("reins-page-script.js");
   ok("reins-page-script: 駅の範囲（station_to）を to の欄に入れる", /pair\.station_to \|\| pair\.station/.test(rs) && /selectByText\(stToEl,\s+stToName\)/.test(rs));
   const sa = read("search-audit.js");

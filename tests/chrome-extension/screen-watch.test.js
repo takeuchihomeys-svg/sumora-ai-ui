@@ -47,7 +47,7 @@ console.log("\n■ 次のお客様の境目で見送る（一括・手動の一�
   const iSkip = rb.indexOf("if (_watchSkipSite(customer, batchSite)) return { skipped: true };");
   ok("一括: サイトの繰り返しの頭（点検の記録・入力より前）で見送る", iSkip > 0 && iSkip < rb.indexOf("var _batchAudit = await _auditBegin(") && iSkip > rb.indexOf("async function _runSiteLane(customer, batchSite, laneMode, laneNote) {"));
   ok("一括: 失敗した時は画面を見張りに聞いてから（最長8秒）", /if \(_batchAudit\) await _watchOnPassError\(batchSite, effectiveCustomer\.id, command\.id, _batchAudit\.runId, e\);/.test(rb));
-  ok("一括: 見張りが止めたサイトの失敗は1人ずつ知らせない", /if \(!_isMultiPass && self\.AxlxBatchGuard && !_watchStopped\) \{/.test(rb));
+  ok("一括: 見張りが止めたサイトの失敗は1人ずつ知らせない", /if \(!_isMultiPass && self\.AxlxBatchGuard && !_watchStopped( && _bd !== "retry")?\) \{/.test(rb));
   ok("一括: 見送ったお客様は命令の記録に残す（失敗にしない）", /if \(_watchSkipped\.length\) doneUpdates\.error_message = /.test(rb));
   const mb = between('if (msg.type === "axlx-manual-bulk-search")', '[manual-bulk-search] ✔ 完了');
   ok("手動の一括: 始めに消す・境目で見送る・失敗は聞いてから・知らせは見張りの1通", /_watchStop = null;/.test(mb) && /if \(_watchSkipSite\(_bc, _bulkSite\)\) continue;/.test(mb) && /await _watchOnPassError\(_bulkSite/.test(mb) && /watchStopApplies\(_watchStop, _bulkSite, Date\.now\(\)\)\) continue;/.test(mb));

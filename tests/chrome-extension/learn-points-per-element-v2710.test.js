@@ -41,11 +41,13 @@ console.log("\n■ ③ カーソルが「そのボタンの押された場所」
   ok("読み出し口がある（_pointsFor）", /function _pointsFor\(name\)/.test(ptr));
   ok("  pointer-ui と同じ鍵", /POINTS_KEY = "axlx_human_points"/.test(ptr));
   ok("  30秒ごとに読み直す（貯まった分を次の動きから）", /30000/.test(ptr));
-  ok("  2回未満は使わない", /if \(Number\(v\.n\) < 2\) return null;/.test(ptr));
+  // 2.8.313 退役: 「2回未満は使わない（n<2）」は 2026-11-17 統括Pro「n=1 の学びも捨てない（point%・aim無対策）」で意図して n<1 に緩めた（pointer-ui.js _pointsFor のコメント）。代わりに今の下限（n が無い/0 は使わない）を守る
+  ok("  n が1未満（記録なし）は使わない（n=1 は使う・2026-11-17 統括Pro）", /if \(Number\(v\.n\) < 1\) return null;/.test(ptr));
   ok("要素ごとの位置を**優先**して狙う", /if \(perEl\) \{/.test(ptr));
   ok("  無ければ全体の平均（prof.aim）", /else if \(prof && prof\.aim\)/.test(ptr));
-  ok("  揺らしは小さめ（要素の中なので 0.12）", /perEl\.x \+ \(Math\.random\(\) - 0\.5\) \* 0\.12/.test(ptr));
-  ok("要素の外にはみ出さない（0.15〜0.85）", /Math\.max\(0\.15, Math\.min\(0\.85, perEl\.x/.test(ptr));
+  // 2.8.313 退役: 「揺らしは小さめ 0.12」は 2026-11-16「学習位置のまわりを広めにずらす（お客ごとに同じ点に見えない）」で 0.28 に意図して広げた（pointer-ui.js moveToEl のコメント）。揺らしがある事・要素の中に収める事は今も守る
+  ok("  学習位置のまわりを揺らす（広め 0.28・2026-11-16）", /perEl\.x \+ \(Math\.random\(\) - 0\.5\) \* 0\.28/.test(ptr) && /perEl\.y \+ \(Math\.random\(\) - 0\.5\) \* 0\.28/.test(ptr));
+  ok("要素の外にはみ出さない（0.12〜0.88）", /Math\.max\(0\.12, Math\.min\(0\.88, perEl\.x/.test(ptr) && /Math\.max\(0\.12, Math\.min\(0\.88, perEl\.y/.test(ptr));
 }
 
 console.log("\n■ ④ 移動（速さ・曲がり）の学習は今まで通り効いている");

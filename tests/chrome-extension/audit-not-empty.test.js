@@ -48,9 +48,15 @@ console.log("■ ① 重複した呼び出しが「段なしの finished」を�
 
 console.log("\n■ ② 重複の判定より先に点検を作る");
 {
-  const dupLine = ps.indexOf("if (window._axFillRunning)", ps.indexOf("duplicate_ignored") - 1600);
-  const resetAt = ps.indexOf("try { _auditReset(cond && cond._audit_run_id); }");
-  t("_auditReset が重複判定より前にある", resetAt > 0 && dupLine > 0 && resetAt < dupLine, { resetAt, dupLine });
+  // 今の形（2026-11-14 の直しの後の整理）: 重複ブロックは1回目の点検に1行足すだけで、点検を作り直さない。
+  //   _auditReset は重複ブロックを抜けた後に1回だけ呼ばれ、_axFillRunning = true はそのさらに後。
+  //   ＝重複が来る時（_axFillRunning が true の時）は必ず1回目が作った点検が既にある。
+  const dupAt = ps.indexOf("duplicate_ignored");
+  const dupLine = ps.lastIndexOf("if (window._axFillRunning) {", dupAt);
+  const resetAt = ps.indexOf("try { _auditReset(cond && cond._audit_run_id); }", dupAt);
+  const runningTrueAt = ps.indexOf("window._axFillRunning = true;", resetAt);
+  t("重複ブロックの中で点検を作り直さない（1回目の点検を消さない）", dupLine > 0 && !/_auditReset\s*\(/.test(ps.slice(dupLine, ps.indexOf("return;", dupAt)).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")), { dupLine, dupAt });
+  t("_auditReset は重複ブロックを抜けた後で、_axFillRunning = true より前（重複が来る時は点検が必ず既にある）", dupLine > 0 && resetAt > dupAt && runningTrueAt > resetAt, { dupLine, resetAt, runningTrueAt });
   t("  ⚠ 落ちても止まらない（try/catch）", /try \{ _auditReset\(/.test(ps));
 }
 

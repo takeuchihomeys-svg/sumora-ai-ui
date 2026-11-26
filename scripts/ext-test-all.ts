@@ -53,7 +53,8 @@ function run(file: string): Promise<RunRes> {
     p.stderr.on("data", (d) => { out += String(d); });
     p.on("close", (code) => {
       clearTimeout(timer);
-      const ng = (out.match(/✗/g) ?? []).length;
+      // 2.8.314: 行頭の ✗／❌ だけを数える（「結果: ✓8 ✗0」「0 件 ✗」の件数の行を失敗と数えて、青い試験が7本ずっと赤扱いだった）
+      const ng = out.split(/\r?\n/).filter((l) => /^\s*(✗|❌)/.test(l)).length;
       const tail = out.trim().split(/\r?\n/).slice(-8).join(" | ");
       const fails = [...new Set(out.split(/\r?\n/).filter((l) => /^\s*(NG:|✗|❌|FAIL)/.test(l)).map(normFail))];
       resolve({ name: file, red: code !== 0 || ng > 0 || timedOut, ng, code, timedOut, tail, fails });

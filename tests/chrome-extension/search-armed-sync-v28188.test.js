@@ -14,7 +14,9 @@ function assert(cond, msg) {
 }
 
 assert(man.version >= "2.8.188", "manifest version >=2.8.188 got " + man.version);
-assert(/_AXLX_PAGE_VER = "2\.8\.18[89]"/.test(page) || page.includes('_AXLX_PAGE_VER = "2.8.189"'), "page-script PAGE_VER 188+");
+// 版の固定をやめる: PAGE_VER が 2.8.188 以上なら良い（版は進み続ける）
+const _pv = /_AXLX_PAGE_VER = "(\d+)\.(\d+)\.(\d+)"/.exec(page);
+assert(_pv && (Number(_pv[1]) > 2 || (Number(_pv[1]) === 2 && (Number(_pv[2]) > 8 || (Number(_pv[2]) === 8 && Number(_pv[3]) >= 188)))), "page-script PAGE_VER 188+");
 assert(page.includes("axlx_pending_auto_send_sync"), "page arm sync key");
 assert(page.includes("axlx_search_grasped_sync"), "page grasp sync key");
 assert(bulk.includes("axlx_pending_auto_send_sync"), "bulk pending sync");

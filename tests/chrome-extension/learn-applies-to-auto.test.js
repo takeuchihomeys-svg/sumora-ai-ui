@@ -25,7 +25,13 @@ console.log("■ ① 自動モードも同じ入力関数（fillRealpro）を通
 {
   const ps = read("page-script.js");
   t("aixlinx-fill を受ける", /e\.data\.from !== "aixlinx-fill"/.test(ps));
-  t("その中で fillRealpro を呼ぶ", /e\.data\.from !== "aixlinx-fill"[\s\S]{0,1800}fillRealpro\(e\.data\.conditions\)/.test(ps));
+  // 2.8.313: 受けた後の関所（別客の入力中は断る等）が増えて窓 {0,1800} では届かない。受け口の始まりから fillRealpro の呼びまで、別の message 受け口をまたがずに続く事を見る。
+  {
+    const i = ps.indexOf('e.data.from !== "aixlinx-fill") return;');
+    const j = ps.indexOf("fillRealpro(e.data.conditions)", i);
+    const between = i > 0 && j > i ? ps.slice(i + 10, j) : "";
+    t("その中で fillRealpro を呼ぶ", i > 0 && j > i && j - i < 15000 && !/addEventListener\("message"/.test(between), { i, j });
+  }
 }
 
 console.log("■ ② 学習の並べ替えにモードの分岐が無い（全モード共通）");
@@ -49,7 +55,10 @@ console.log("■ ④ 自動モードの判定（案内をOFFにする条件）")
 {
   const g = read("realpro-guide.js");
   t("autoModeOf がある", /function autoModeOf\(/.test(g));
-  t("スタッフは自動にしない", /if \(staffOn\) return false;/.test(g));
+  // 2.8.313 退役: 「スタッフは自動にしない」— 2026-11-22 にスタッフも選んだ客の自動検索〜送付のため案内 OFF（AIX相当）へ設計を変えた
+  //   （realpro-guide.js autoModeOf のコメント「スタッフも選んだ客の自動検索〜送付のため案内 OFF」・bulk-dl.js _readAutoMode・memory/dept_search_tool.md「スタッフモードでお客さんを選ぶ→…送付まで」）。
+  //   置き換え: スタッフ（2時間の期限内）は自動側（true）になる事を見る。
+  t("スタッフ（選んだ客）も自動にする（2時間の期限つき）", /var staffOn = !!s\.staffMode && \(!at \|\| Date\.now\(\) - at <= 2 \* 60 \* 60 \* 1000\);[\s\S]{0,600}if \(staffOn\) return true;/.test(g));
   t("autoModeAt が要る", /Number\(s\.autoModeAt\) > 0/.test(g));
   t("aixMode か aiMode が要る", /chosen && \(!!s\.aixMode \|\| !!s\.aiMode\)/.test(g));
   t("自動の時は案内をOFFにする", /guideOn = !\(v === true\)/.test(g));

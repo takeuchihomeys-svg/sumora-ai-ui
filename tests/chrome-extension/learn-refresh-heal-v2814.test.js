@@ -26,10 +26,12 @@ function fnSrc(src, head) {
 
 (async function () {
   console.log("\n■ 強制の取り直しが実行中の確認に吸収されない");
-  const q = fnSrc(bg, "function _refreshLearnedBundleQueued(force, _noChain)");
+  // 2.8.313: 引数が (force, targetSite, _noChain) に増えた（サイト別の取り直し）。頭は引数の並びに依存しない形で取る
+  const q = fnSrc(bg, "function _refreshLearnedBundleQueued(");
   ok("関数が取れる", q.length > 200);
   const mk = new Function("stub", `
-    var _learnInflight = null, _learnFailCount = 0, _learnNextTryAt = 0;
+    var _learnInflight = null, _learnFailCount = 0, _learnNextTryAt = 0, _pendingRefreshTargetSite = null;
+    function _normLearnSite(s) { return s || null; }
     var calls = [];
     function _learnBackoffMs() { return 60000; }
     function _refreshLearnedBundle(force) { calls.push(force); return Promise.resolve(stub(force, calls.length)); }
@@ -63,9 +65,10 @@ function fnSrc(src, head) {
   ok("通常同士は1回だけ", h.calls.length === 1, h.calls);
 
   console.log("\n■ 本番が screen_solid を返さなくても、手元の画面位置が空なら取り直す");
-  ok("solid 不明でも空なら取り直す分岐がある", /else if \(_localScreenN === 0 && Date\.now\(\) - \(Number\(st && st\.axlx_learn_empty_refetch_at\) \|\| 0\) > 10 \* 60 \* 1000\)/.test(bg));
-  ok("10分に1回の印を残す", /chrome\.storage\.local\.set\(\{ axlx_learn_empty_refetch_at: Date\.now\(\) \}\)/.test(bg));
-  ok("印を storage から読む", /"axlx_learn_empty_refetch_at",\s*\]\)\);/.test(bg));
+  // 2.8.313: 印がサイト別（axlx_learn_empty_refetch_at__<site>）に増えた（旧の共通の印も互換で残る）。10分に1回は同じ
+  ok("solid 不明でも空なら取り直す分岐がある", /else if \(_localScreenN === 0 && Date\.now\(\) - _emptyRefetchAt > 10 \* 60 \* 1000\)/.test(bg) && /var _emptyRefetchAt = Number\(\(st && st\[_emptyRefetchKey\]\) \|\| \(st && st\.axlx_learn_empty_refetch_at\)\) \|\| 0;/.test(bg));
+  ok("10分に1回の印を残す", /var _erPatch = \{ axlx_learn_empty_refetch_at: Date\.now\(\) \};\s*\n\s*_erPatch\[_emptyRefetchKey\] = Date\.now\(\);\s*\n\s*await chrome\.storage\.local\.set\(_erPatch\)/.test(bg));
+  ok("印を storage から読む", /"axlx_learn_empty_refetch_at",\s*\n\s*"axlx_learn_empty_refetch_at__realpro",\s*\n\s*"axlx_learn_empty_refetch_at__itandi",/.test(bg));
 
   console.log("\n■ 取り直しの結果がページまで届き、実行記録に残る");
   ok("content.js が結果を渡す", /from: "axlx-page-learn-refresh-done", id: rid, res: slim/.test(ct));
@@ -85,8 +88,11 @@ function fnSrc(src, head) {
   ok("一括の run_id（ctx）は使い回さない", /if \(!\(ctx && ctx\.runId\) && _lastAuditTag/.test(tag));
 
   console.log("\n■ 版");
-  ok("manifest が 2.8.119", mf.version === "2.8.119", mf.version);
-  ok("_AXLX_PAGE_VER が 2.8.119", /var _AXLX_PAGE_VER = "2\.8\.119";/.test(ps));
+  // 2.8.313: 版の固定（=== 2.8.119）をやめ「2.8.114 以上」を見る（版は上がり続けるため。この試験の版は 2.8.114）
+  const verNum = (s) => String(s).split(".").map(Number).reduce((a, n) => a * 1000 + n, 0);
+  const pv = (ps.match(/var _AXLX_PAGE_VER = "([\d.]+)";/) || [])[1];
+  ok("manifest が 2.8.114 以上", verNum(mf.version) >= verNum("2.8.114"), mf.version);
+  ok("_AXLX_PAGE_VER が 2.8.114 以上", !!pv && verNum(pv) >= verNum("2.8.114"), pv);
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail) process.exit(1);

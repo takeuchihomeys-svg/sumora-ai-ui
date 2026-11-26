@@ -31,9 +31,9 @@ function ok(name, cond, extra) {
 console.log("■ 依頼1-① 同時に1本だけ（実行中なら新しく呼ばず、その結果を待つ）");
 {
   ok("  実行中の1本を持つ変数がある", /var _learnInflight = null/.test(bg));
-  ok("  ⚠ 実行中なら新しい実行をしない", /if \(_learnInflight\) \{[\s\S]{0,200}?return _learnInflight;/.test(bg));
+  ok("  ⚠ 実行中なら新しい実行をしない", /if \(_learnInflight\) \{[\s\S]*?\n\s*return _learnInflight;\s*\n\s*\}\s*\n\s*_pendingRefreshTargetSite/.test(bg)); // 2.8.313: 間に強制取り直しの連鎖（#1513）と長いコメントが入ったので距離窓をやめ、「実行中なら return して新規実行へ進まない」形を見る
   ok("  実行中でなければ走らせて保持する", /_learnInflight = p;/.test(bg));
-  ok("  Queued 版がある", /function _refreshLearnedBundleQueued\(force\)/.test(bg));
+  ok("  Queued 版がある", /function _refreshLearnedBundleQueued\(force[,)]/.test(bg)); // 2.8.313: 引数が (force, targetSite, _noChain) に増えた
   ok("  ⚠ 起動・定期・サイト切替・メッセージが Queued を使う", 
     (bg.match(/_refreshLearnedBundleQueued\(/g) || []).length >= 4,
     (bg.match(/_refreshLearnedBundleQueued\(/g) || []).length);
@@ -62,7 +62,7 @@ console.log("\n■ 依頼1-③ 起動の時はずらす（0〜30秒）");
 
 console.log("\n■ 依頼1-④ 版が同じなら scope ごとの取り直しをしない");
 {
-  ok("  ⚠ 版が同じなら即返る", /if \(hv && hv === lastVer\) return \{ ok: true, skipped: "same_version" \}/.test(bg));
+  ok("  ⚠ 版が同じなら即返る", /if \(!_rulesStale && hv && hv === lastVer\) \{/.test(bg) && /ok: true,\s*\n\s*skipped: "same_version",/.test(bg)); // 2.8.313: 版が同じでも決まりが古ければ（_rulesStale）取り直す条件が加わり、返す物も増えた
   ok("  ⚠ 初回でも同じ版の束があれば取り直さない", /skipped: "same_version_first"/.test(bg));
   ok("  by_site を読むキーが入っている", /axlx_learn_by_site"\]/.test(bg) || /"axlx_learn_by_site"/.test(bg));
 }

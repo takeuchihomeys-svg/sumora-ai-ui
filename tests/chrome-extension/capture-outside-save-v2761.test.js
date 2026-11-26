@@ -135,7 +135,7 @@ console.log("\n■ ⑤ 写真は watching に依存しない（v2.7.56 の決定
   const i = code.indexOf("function shootAfter(");
   const seg = code.slice(i, i + 9000);
   ok("watching で早期 return しない", !/if \(!watching\)\s*return/.test(seg));
-  ok("止める設定は axlxShotOff だけ", /axlxShotOff/.test(seg));
+  // 2026-11-22 以降: 止める設定の判定は shouldShoot() に集約。shootAfter は _shotAllow（＝shouldShoot の結果）だけを見る（watching は見ない）\n  const iSS = code.indexOf("function shouldShoot(");\n  const segSS = iSS >= 0 ? code.slice(iSS, iSS + 1200) : "";\n  ok("止める設定は axlxShotOff だけ（shouldShoot に集約・shootAfter は _shotAllow だけ見る）",\n    /s\.axlxShotOff === true\) return false/.test(segSS) && /if \(!_shotAllow\) return;/.test(seg));
 }
 
 console.log("\n■ ⑥ 構文");

@@ -76,9 +76,12 @@ console.log("\n■ ⑤ 全物件を送らない安全弁は残っている");
    *     ⚠ 全物件を送らない安全弁は**別の所**（チェックの選別・送付済み・更新日で止める線）で残っている。
    */
   ok("⚠ 並べ替えできなくても押す（この並びのまま続行・竹内さん 2026-11-14）", /この並びのまま押します/.test(bd));
-  ok("  黙って続けない（点検に残す）", /failed_continue/.test(bd));
+  // 今の形: 点検の印は `failed_continue` から `_liveDlStep("sort_failed", "continue…")`（= dl:sort_failed・audit-live-step で点検に載る）＋画面の警告 _nudge に変わった
+ok("  黙って続けない（点検に残す）", /_liveDlStep\("sort_failed", "continue"\)/.test(bd) && /_liveDlStep\("sort_failed", "continue_after_retry"\)/.test(bd) && /_nudge\("⚠ 並べ替えできませんでした（この並びのまま続けます）"\)/.test(bd) && /k: "dl:" \+ String\(k/.test(bd));
   ok("  3回まで試す", /var _maxTry = 3;/.test(bd));
-  ok("自動モード・スタッフモードの関所はそのまま", /if \(_autoPdfRun \|\| !_autoModeOn \|\| _staffModeOn\) return;/.test(bd));
+  // 2.8.313 退役（その部分だけ）: 「_staffModeOn で止める」は、コードのコメント（bulk-dl.js _maybeAutoPressOnLoad「スタッフでも _autoModeOn（選んだ客の自動）なら押す。旧は _staffModeOn で止めていた」）で意図して外した。
+//   残る関所（自動を押している最中・自動モードが無い時は押さない）は今の形で守る。
+ok("自動モードの関所はそのまま（自動の最中・自動OFFなら押さない）", /if \(_autoPdfRun \|\| !_autoModeOn\) return;/.test(bd) && /スタッフでも _autoModeOn（選んだ客の自動）なら押す/.test(bd));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

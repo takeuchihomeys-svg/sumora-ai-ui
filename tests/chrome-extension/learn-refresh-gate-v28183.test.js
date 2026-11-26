@@ -64,19 +64,10 @@ ok("サーバ rules_v ずれは force", gate.shouldForceLearnRefresh({
     flow_series: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }],
   },
 }, { serverRulesV: "newnew02" }).reason === "playbook_rules_v_stale");
-ok("itandi は playbook.rules=[] が正常（無限再取得しない）", gate.shouldForceLearnRefresh({
-  axlx_learn_ver: "v",
-  axlx_learn_for_site: "itandi",
-  axlx_learn_screen: { a: 1 },
-  axlx_learn_link: { screen_solid: 5 },
-  axlx_learn_next: { a: 1 },
-  axlx_learn_points: { a: 1 },
-  axlx_learn_playbook: {
-    build_v: 7,
-    rules: [],
-    flow_series: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }],
-  },
-}).force === false);
+// 2.8.313 退役: 「itandi は playbook.rules=[] が正常（無限再取得しない）」は 2.8.312 で意図して置き換わった。
+//   今は itandi も pb.rules が空なら強制リフレッシュ（playbook_no_rules・reins だけが空でよい）。
+//   根拠: memory/dept_search_tool.md 2.8.312「ITANDI の pb.rules.length < 1 時は強制リフレッシュ」・learn-refresh-gate.js の _isReinsOnly・
+//   逆向きの試験 reflect-pipeline-v28312.test.js「shouldForceLearnRefresh(itandi): rules 空のとき強制リフレッシュが true」。
 
 console.log("■ modeOpenedForLearn");
 ok("autoModeAt 新規", gate.modeOpenedForLearn("autoModeAt", 0, 123) === true);

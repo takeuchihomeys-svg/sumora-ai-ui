@@ -46,14 +46,14 @@ console.log("\n■ ② 人の手本と混ぜない（by で分ける）");
 
 console.log("\n■ ③ 合成クリックの位置は真ん中（枠の外で捨てない）");
 {
-  ok("syn を判定", /var syn = \(by === "auto"\)/.test(code));
+  // 2.8.152〜: syn 変数は廃止。合成（auto・synthetic）かどうかは useXY の判定で見る（実座標がある時は実座標・無い／0,0 の時は真ん中）\n  ok("syn を判定", /var useXY = hasXY && !zeroish && \(ev\.synthetic === true \|\| by === "human" \|\| by === "auto"\)/.test(code));
   /**
    * ⚠ 2026-11-15 竹内さん「実装する」: 自動モードでも**実際の位置**を記録するようにしたので、
    *   「真ん中 0.5」の条件が変わった（`synthetic:true` の時は実座標を使う）。
    *   ⚠ 座標が無い時だけ真ん中（今まで通り）。
    */
-  ok("  真ん中 0.5（座標が無い時だけ）", /\(syn \|\| !hasXY\) \? 0\.5/.test(code) || /syn \? 0\.5 :/.test(code));
-  ok("  ⚠ 捨てるのは『合成でない時だけ』", /if \(!syn && hasXY && !\(fx >= -0\.2/.test(code) || /if \(!syn && !\(fx >= -0\.2/.test(code));
+  ok("  真ん中 0.5（座標が無い時だけ）", /var fx = useXY \? \(\(cxU - r\.left\) \/ r\.width\) : 0\.5/.test(code) && /var zeroish = hasXY && Math\.abs\(cxU\) < 1 && Math\.abs\(cyU\) < 1/.test(code));
+  ok("  ⚠ 捨てるのは『合成でない時だけ』", /if \(useXY && !\(fx >= -0\.2 && fx <= 1\.2 && fy >= -0\.2 && fy <= 1\.2\)\) return;/.test(code));
 }
 
 console.log("\n■ ④ 押された順番を持つ（field_order になる）");
@@ -72,7 +72,7 @@ console.log("\n■ ⑤ 同じ欄の click→change を畳む");
 
 console.log("\n■ ⑥ 名前が取れない物は積まない（img/body を貯めない）");
 {
-  ok("名前が無ければ return", /if \(!name\) return;/.test(code));
+  ok("名前が無ければ return", /if \(!name \|\| name\.indexOf\("\[object "\) >= 0\) return;/.test(code));
   ok("  見えていない要素も積まない（幅・高さ0）", /if \(!r \|\| !\(r\.width > 0 && r\.height > 0\)\) return;/.test(code));
 }
 

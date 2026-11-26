@@ -300,7 +300,7 @@ const empty = { stations: 0, lines: 0, wards: 0, towns: 0, layouts: 0, structure
   j = F57(Object.assign({}, empty, { stations: 1, wards: 1 }), pl({ stations: 1, wards: 1 }, "area"), []);
   ok("F57: 混在印が立つ（駅と区が両方ある）→ 未完了", !j.done && j.mixed === 1, j);
   j = F57(Object.assign({}, empty, { stations: 3, lines: 1 }), pl({ stations: 3, lines: 1 }, "station"), []);
-  ok("F57: 駅の客の駅は「外す側」ではないので残りに数えない", j.done, j);
+  // 2.8.313 退役: 「駅の客の駅は外す側ではない（残りに数えない）」は 2.8.220 で意図して置き換わった（_planLeftover のコメント「同種でも先に外す（人がやる順）」・clearStations: placeSt > 0）。駅が画面に残る間は客の種類を問わず外す側＝未完了に数える。
   j = F57(Object.assign({}, empty, { layouts: 2 }), pl({ layouts: 2 }, "area"), []);
   ok("F57: 場所の完了線は間取りの残りに左右されない（間取りは別のやり直し）", j.done, j);
 }
@@ -540,9 +540,15 @@ async function runBg(opts) {
   // ───────────────────────────────────────────────
   console.log("\n■ ⑥ 呼び出し経路・監査名（ソースの形）");
   const scrape = extractFrom(bg, "async function _scrapeAndSendRealpro(");
-  ok("_scrapeAndSendRealpro がリアプロ（realnetpro）の時だけ送付後の外しを頼む（ITANDI には入れない）", /if \(_siteKey === "realnetpro"\) \{[\s\S]{0,400}_postSendClearRealpro\(customerId\)/.test(scrape));
-  ok("送付進捗ありの切り上げ（送付が続く）では触らない", /!\(batchDone && batchDone\.timedOut && batchDone\.sawProgress\)\)[\s\S]{0,200}_postSendClearRealpro/.test(scrape));
-  ok("次客の switch／fill より前（一連ロックを外す前）に実行する", scrape.indexOf("_postSendClearRealpro(customerId)") > 0 && scrape.indexOf("_postSendClearRealpro(customerId)") < scrape.indexOf('_releasePipelineLock(batchDone && batchDone.timedOut ? "batch_timeout" : "scrape_done"'));
+  // 2.8.313: 2.8.305（reset_replaces_clear）で送付後の外しの入口は _postSendClearOrReset（リセット→だめなら従来の _postSendClearRealpro）に変わった。
+  //   background.js の _postSendClearOrReset の末尾が _postSendClearRealpro へ戻る（fail-open）ことも合わせて見る。窓（文字数）ではなく位置と並びで見る。
+  const _PS_CALL = "_postSendClearOrReset(customerId, _runId)";
+  const _psAt = scrape.indexOf(_PS_CALL);
+  const _psBefore = _psAt > 0 ? scrape.slice(0, _psAt) : "";
+  const _siteGuardAt = _psBefore.lastIndexOf('if (_siteKey === "realnetpro") {');
+  ok("_scrapeAndSendRealpro がリアプロ（realnetpro）の時だけ送付後の外しを頼む（ITANDI には入れない）", _siteGuardAt > 0 && !/_siteKey === "itandi"/.test(_psBefore.slice(_siteGuardAt)) && /return _postSendClearRealpro\(customerId, auditRunId\);/.test(extractFrom(bg, "async function _postSendClearOrReset(")));
+  ok("送付進捗ありの切り上げ（送付が続く）では触らない", _psAt > 0 && _psBefore.lastIndexOf("if (!(batchDone && batchDone.timedOut && batchDone.sawProgress)) {") > _siteGuardAt && /_psRes = \{ skipped: "send_timeout_hold" \}/.test(scrape));
+  ok("次客の switch／fill より前（一連ロックを外す前）に実行する", _psAt > 0 && _psAt < scrape.indexOf('_releasePipelineLock(batchDone && batchDone.timedOut ? "batch_timeout" : "scrape_done"'));
   ok("最後のお客さんは待たずに戻す（_axlxLastCustomerId と同じ客なら await しない）", /_psIsLast[\s\S]{0,200}_psP\.catch/.test(scrape));
   ok("一括（_runBatchSearch）と手の一括の両方の客ループで最後の客の印を置く", (bg.match(/self\._axlxLastCustomerId = /g) || []).length === 2);
   ok("_auditFinish が leftover_stuck: を error_kind=leftover_stuck にする", /leftover_stuck:\/\.test\(String\(x\.error\)\)[\s\S]{0,120}error_kind: "leftover_stuck"/.test(bg));

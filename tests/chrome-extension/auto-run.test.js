@@ -140,7 +140,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
    * ⚠ 2026-11-14: 「次ページへ進む」処理を足して `autoPressPdfs()` が長くなったので、
    *   範囲を 3400 → 6000 文字に広げた（**意図は変えない**: 押す前に AD 順へ並べ替える）。
    */
-  ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える（メニューを人の順に操作）", /function autoPressPdfs\(\)[\s\S]{0,6000}_sortByAdLikeHuman/.test(bd) && /③ 高→低 を押します/.test(bd));
+  ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える（メニューを人の順に操作）", /function autoPressPdfs\((?:opt)?\)[\s\S]{0,12000}_sortByAdLikeHuman/.test(bd) && /③ 高→低へカーソルを動かして押します/.test(bd) && /function _sortByAdLikeHuman\(done\)/.test(bd));
 ok("bulk-dl: AD順のためにページを読み込み直さない（全物件にならない）", !/location\.href = _adLink\.href;/.test(bd));
 ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_autoPdfRunPending = function \(\) \{\s*\n\s*try \{ _rescanRows\(\); \} catch \(_\) \{\}\s*\n\s*_startAutoPressRun\(\);/.test(bd));
   ok("bulk-dl: 午後の便（更新順）は並べ替えない（allowAdSort）", /_AR\(\)\.allowAdSort\(_arOpts\)/.test(bd) && /更新順の指定 → AD へ並べ替えずに押します/.test(bd));

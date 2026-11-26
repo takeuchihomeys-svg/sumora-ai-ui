@@ -14,7 +14,9 @@ const code = bd.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\
 
 console.log("■ 自動（AIX）の押下ではチェックを付けない");
 ok("_axlxNoRowCheck がある（自動の押下中か、自動の印が立っている間）",
-  /function _axlxNoRowCheck\(\) \{[\s\S]{0,200}_autoPdfRun \|\| \(_autoModeOn && !_staffModeOn\)/.test(code));
+  // 2.8.313: 2026-11-22 の変更で「スタッフも選んだ客の検索〜物件送付まで自動押し（AIX相当）」になり、_autoModeOn がスタッフ(staffMode)も含む（bulk-dl.js _readAutoMode のコメント）。
+  //   そのため `&& !_staffModeOn` の除外は意図して外れた（スタッフも自動の押下なのでチェックを付けない）。自動の押下中か自動の印が立っている間は付けない、は同じ。
+  /function _axlxNoRowCheck\(\) \{[\s\S]{0,200}_autoPdfRun \|\| _autoModeOn\b/.test(code) && !/function _axlxNoRowCheck\(\) \{[\s\S]{0,200}_staffModeOn/.test(code));
 ok("sendOnePdfNow は _selectOnly を _axlxNoRowCheck の外で呼ぶ（自動では呼ばない）",
   /if \(!_axlxNoRowCheck\(\)\) \{\s*(?:\/\/[^\n]*\n\s*)*_selectOnly\(item\);\s*\}/.test(code));
 ok("_selectOnly の呼び出しは sendOnePdfNow の中の1か所だけ（他から直接呼ばない）",

@@ -30,7 +30,7 @@ console.log("■ ① 地域の段が学習の記録に入る");
   t("所在地絞り込みを開く段がある", /_auditStepP\('modal', 'area'\)/.test(ps));
   t("区を選ぶ段がある", /_auditStepP\('ward', null\)/.test(ps));
   t("町字を選ぶ段がある", /_auditStepP\('town', null\)/.test(ps));
-  t("確定してリストへ の段がある", /_auditStepP\('modal_confirm'/.test(ps));
+  t("確定してリストへ の段がある", /_auditStepP\(["']modal_confirm["']/.test(ps));
   t("日本語の名前に変換している", /modal: "所在地絞り込み"/.test(ps));
   t(" 区を選ぶ", /ward: "区を選ぶ"/.test(ps));
   t(" 町字を選ぶ", /town: "町字を選ぶ"/.test(ps));
@@ -70,7 +70,7 @@ console.log("■ ④ 録画の経路でも ops を送る");
   t("録画の撮影に ops を渡す",
     /ops: _opsForSend/.test(bg) && /if \(\(!ops \|\| !ops\.length\) && _lastOpsWhy\)/.test(bg));
   t("  ⚠ 操作が空でも「なぜ空か」を DB に残す（k:diag）", /k: "diag"/.test(bg));
-  t("_takeShot が ops を job に渡す", /ops: Array\.isArray\(msg\.ops\) \? msg\.ops : null/.test(bg));
+  t("_takeShot が ops を job に渡す", /ops: \(function \(\) \{\s*var raw = Array\.isArray\(msg\.ops\) \? msg\.ops : null;\s*if \(!raw\) return null;/.test(bg));
   t("送信の中身に shot_ops を入れる", /shot_ops: Array\.isArray\(job\.ops\)/.test(bg));
 }
 

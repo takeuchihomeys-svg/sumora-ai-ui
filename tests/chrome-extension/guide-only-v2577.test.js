@@ -31,7 +31,12 @@ const AUTO = ["claimCommands", "claimAix", "autoSend", "runAutoSchedule", "claim
 // 2026-11-11 竹内さん「4つ目にAIXをつけて、AIXの場合選択したお客さんが自動検索できるようにする」→ AIX（AI_MODE）も自動の道を開く
 const AUTO_MODES = [M.AUTO_MODE, M.AI_MODE];
 const NO_AUTO = M.MODES.filter((m) => AUTO_MODES.indexOf(m) < 0).flatMap((m) => [false, true].map((b) => [m, b]));
-ok("自動・AIXモード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain）", NO_AUTO.every(([m, b]) => AUTO.every((k) => M.effectiveBehavior(m, b)[k] === false)), NO_AUTO.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+// 2.8.313: 2026-11-22 竹内さん「スタッフモードは選択したお客さんをAIXのように検索して物件ダウンロードまで完了」で、
+//   スタッフの autoSend（選んだお客さんの自動送信）だけは意図して開いた（mode-core.js effectiveBehavior の staff 分岐）。
+//   → スタッフの autoSend は退役（true を許す）。他の4つ（受け取り・自動便・web_brain）は今も閉じたまま見る。通常は全部 false のまま。
+const _autoKeysFor = (m) => (m === "staff" ? AUTO.filter((k) => k !== "autoSend") : AUTO);
+ok("自動・AIXモード以外の組み合わせは自動の物が false（受け取り・自動送信・自動便・web_brain。スタッフの自動送信だけ 2.8.2xx で開いた）", NO_AUTO.every(([m, b]) => _autoKeysFor(m).every((k) => M.effectiveBehavior(m, b)[k] === false)), NO_AUTO.map(([m, b]) => [m, b, AUTO.map((k) => M.effectiveBehavior(m, b)[k])]));
+ok("スタッフは選んだお客さんの自動送信と自動検索だけ開く（一括・自動便は閉じたまま）", [false, true].every((b) => { const e = M.effectiveBehavior("staff", b); return e.autoSend === true && e.aiCustomerSearch === true && e.claimCommands === false && e.runAutoSchedule === false; }));
 ok("AIXモードも自動の道が開く（選んだお客さんを自動で検索）", ["claimCommands", "claimAix", "autoSend", "runAutoSchedule"].every((k) => M.effectiveBehavior(M.AI_MODE, false)[k] === true) && M.effectiveBehavior(M.AI_MODE, false).aiCustomerSearch === true);
 ok("自動モードを選んだ時だけ自動の道が開く（受け取り・AIX・自動送信・自動便）", ["claimCommands", "claimAix", "autoSend", "runAutoSchedule"].every((k) => M.effectiveBehavior(M.AUTO_MODE, false)[k] === true));
 ok("自動モード×ブレインは web_brain も受け取る", M.effectiveBehavior(M.AUTO_MODE, true).claimBrainCommands === true);
@@ -49,7 +54,7 @@ ok("background: 一括検索のコマンドが届いても動かさない（止�
 ok("background: Realtime の検索コマンドも動かさない", /if \(_guideOnly\(\)\) \{ console\.log\("\[SB-RT\] 光って選択するモードのため scrape_command を無視/.test(bg));
 ok("background: 更新・起動のたびに古い値を書き直す", /chrome\.runtime\.onInstalled\.addListener\(_migrateGuideOnly\);/.test(bg) && /chrome\.runtime\.onStartup\.addListener\(_migrateGuideOnly\);/.test(bg));
 const pp = read("popup.js"), html = read("popup.html");
-ok("popup: モードの選択に3つ（通常・スタッフ・自動）", /<option value="aix">自動<\/option>/.test(html) && /<option value="staff">スタッフ<\/option>/.test(html) && /<option value="normal">通常<\/option>/.test(html));
+ok("popup: モードの選択に3つ（通常・スタッフ・自動）", /<option value="aix">自動<\/option>/.test(html) && /<option value="staff">スタッフ[^<]*<\/option>/.test(html) && /<option value="normal">通常<\/option>/.test(html));
 ok("popup: 自動モードを通常に落とさない（GUIDE_ONLY でも選べる）", !/if \(core && core\.GUIDE_ONLY && mode === "aix"\) mode = "normal";/.test(pp));
 // 2026-11-11 竹内さん「もともとのAIXのようにチェックしたお客さんをリアプロとitandiで一括検索できる機能はあるかな？」→
 //   ある（もともとのAIX）。v2.5.77 から隠していたのを、**自動・AIXモードの時だけ出す**に変えた（通常・スタッフでは今まで通り隠す）

@@ -33,7 +33,8 @@ console.log("■ ① プルダウンは「開く→中で選ぶ→閉じる」�
   // 選んだ後に画面の値を見て、違えば1回入れ直す
   ok("選んだ後に画面の値を見る（_verifySel）", /function _verifySel\(el, target\)/.test(ps));
   ok("違えば入れ直して点検に残す（sel_mismatch）", /_audit\.sel_mismatch\.push\(\{ name: el\.name/.test(ps));
-  ok("chooseSelectLikeHuman の最後に確かめを通す", /openThenChoose\(\)\.then\(function \(\) \{ return _verifySel\(el, target\); \}\)/.test(ps));
+  // 2026-11-20〜: 確かめは _verifyOrRetry に包んだ（違えばもう1回開いて選び直し→それでも違う時だけ _verifySel で直す）。最後に必ず通る点は同じ
+  ok("chooseSelectLikeHuman の最後に確かめを通す", /openThenChoose\(\)\.then\(_verifyOrRetry\)/.test(ps) && /var _verifyOrRetry = function \(\) \{[\s\S]{0,300}_verifySel\(el, target\)/.test(ps));
 }
 
 console.log("\n■ ② 地域・駅の「進む」はカーソルを動かして押し、押し終わるまで次へ進まない");
@@ -47,7 +48,8 @@ console.log("\n■ ② 地域・駅の「進む」はカーソルを動かして
   // 「駅の設定へ進む」は押した印→押し終わる→次へ
   ok("「駅の設定へ進む」は押した印を持つ（_stationNextPressed）", /var _stationNextPressed = false;/.test(ps));
   ok("押し終わるまで次へ進まない（_pressBusy > 0 なら false）", /if \(_stationNextPressed\) \{\s*if \(_pressBusy > 0\) return false;/.test(ps));
-  ok("駅ページに移っていなければもう一度押す", /_stationNextPressed = false;\s*\/\/ まだ路線の一覧のまま/.test(ps));
+  // 2026-11-19〜: 場面理解（_understandStationScene）で沿線一覧のままなら押し直す（押してから1.8秒は切り替わりを待つ）。DOM の form 残りでも同じ
+  ok("駅ページに移っていなければもう一度押す", /_uGo\.screen === "line_list"[\s\S]{0,1800}_stationNextPressed = false;\s*return false;/.test(ps) && /!document\.querySelectorAll\('input\[name="station_id\[\]"\]'\)\.length\) \{\s*_stationNextPressed = false;/.test(ps));
   // 「詳細な地域の設定へ進む」
   ok("「詳細な地域の設定へ進む」も押した直後は待つ（_nextPressedAt）", /_nextPressedAt = Date.now\(\);/.test(ps) && /Date\.now\(\) - _nextPressedAt < 900/.test(ps));
   ok("カーソル移動中は押し直さない（_pressBusy > 0 なら false）", /if \(isY && _pressBusy > 0\) return false;/.test(ps));
@@ -59,11 +61,14 @@ console.log("\n■ ② 地域・駅の「進む」はカーソルを動かして
 
 console.log("\n■ ③ 検索ボタンもカーソルを動かして押す");
 {
-  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 14000);
-  ok("検索はカーソルを動かして押す（_humanPointerClick）", /_humanPointerClick\(btn, function \(\) \{ try \{ btn\.click\(\); \}/.test(cs) || /_pressSearchBtn = function \(btn\)[\s\S]{0,1200}_humanPointerClick/.test(cs));
+  // clickSearch は長くなった（検索を押す本体 _pressSearchBtn は関数の中ほど）ので、行数に依存しない窓にする
+  const csStart = ps.indexOf("function clickSearch()");
+  const cs = ps.slice(csStart, csStart + 60000);
+  const pressFn = ps.slice(ps.indexOf("var _pressSearchBtn = function (btn)"), ps.indexOf("var _pressSearchBtn = function (btn)") + 9000);
+  ok("検索はカーソルを動かして押す（_humanPointerClick）", /enqueueHumanClick\(btn, function \(el\) \{[\s\S]{0,400}el\.click\(\);/.test(pressFn) && /_humanPointerClick\(btn, function \(\) \{[\s\S]{0,300}btn\.click\(\);/.test(pressFn) && /_auditStepP\('search_cursor'/.test(pressFn));
   ok("その場で .click() しない（goDivs[i].click() が無い）", !/goDivs\[i\]\.click\(\)/.test(cs));
-  ok("押す前に画面を送る（見えてから押す）", /_scrollIntoViewSoft\(btn\)/.test(cs));
-  ok("押した場所と時刻を点検に残す（search_press）", /_audit\.search_press = \{/.test(cs) && /pointer/.test(cs));
+  ok("押す前に画面を送る（見えてから押す）", /_scrollIntoViewSoft\(btn\)/.test(pressFn) && /search_wait_view/.test(pressFn));
+  ok("押した場所と時刻を点検に残す（search_press）", /_audit\.search_press = \{/.test(pressFn) && /_audit\.search_press\.pointer = /.test(pressFn));
 }
 
 console.log("\n■ ④ ITANDI も押し終わるのを待つ");
@@ -78,7 +83,11 @@ console.log("\n■ ④ ITANDI も押し終わるのを待つ");
 
 console.log("\n■ ⑤ 守るべき決定は変えていない");
 {
-  ok("スクロールは block:nearest（真ん中へ寄せない）", !/block: "center"/.test(ps));
+// 2.8.313 退役: 「スクロールは block:nearest だけ・block:"center" を使わない」は、2.8.27（築年の見切れ→SELECT は中央）・2.8.68（駅・区・確定も中央寄り）・
+//   2026-11-18/20（検索ボタンが画面外なら中央へ送ってから押す）で意図して置き換わった（page-script.js _ensureInView のコメント・memory/dept_search_tool.md 2.8.27/2.8.68）。
+//   残っている本来の決まり（画面に入っていれば動かさない・直近 900ms は連続で動かさない＝押すたびに往復しない）は下の項目で守る。
+  ok("画面に入っていればスクロールしない・900ms以内は続けて動かさない（_ensureInView）",
+    /function _ensureInView\(el\) \{[\s\S]{0,600}if \(r\.top >= margin && r\.bottom <= vh - margin\) return 0;[\s\S]{0,400}if \(_lastScrollAt && now - _lastScrollAt < 900\) return/.test(ps));
   ok("_scrollIntoViewSoft は既存の _ensureInView に任せる（二重に持たない）", /function _scrollIntoViewSoft\(el\) \{[\s\S]{0,400}_ensureInView\(el\)/.test(ps));
   ok("一斉クリックをしていない（forEach で即 click しない）", !/\.forEach\(function\s*\([^)]*\)\s*\{\s*[a-zA-Z_$][\w$.]*\.click\(\);\s*\}\)/.test(ps));
 }

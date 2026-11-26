@@ -24,12 +24,12 @@ console.log("■ ① 並べ替えは「メニューを人の順に操作」（�
   // 2026-11-11 竹内さん「並べ替えのところでほんの少し待機、そしてADのところでみぎに移動して 高→低 をおすながれ」
   ok("メニュー操作の関数がある（_sortByAdLikeHuman）", /function _sortByAdLikeHuman\(done\)/.test(bd));
   // ★ 2026-11-22: 並べ替え／AD はホバーのみ・高→低だけクリック
-  ok("① 「並べ替え」を探す", /byText\(\["並び替え", "並べ替え", "並び順", "ソート"\]\)/.test(bd));
-  ok("① 並べ替えはホバー（クリックしない）", /hover\(sortHead/.test(bd) && /並べ替えにマウスを置きます（クリックしない）/.test(bd));
+  ok("① 「並べ替え」を探す", /byText\(\["並び替え", "並べ替え", "並び順", "ソート"[,\]]/.test(bd));
+  ok("① 並べ替えはホバー（クリックしない）", /hover\(sortHead/.test(bd) && /並べ替えへカーソルを動かします（クリックしない/.test(bd));
   ok("① press(sortHead) しない", !/press\(sortHead/.test(bd));
-  ok("② AD もホバー", /hover\(adItem/.test(bd) && /AD にマウスを置きます（クリックしない/.test(bd));
-  ok("③ 「高→低」を押す", /press\(hiToLo/.test(bd) && /③ 高→低 を押します/.test(bd));
-  ok("  AD の親の中も探す（小メニューが入れ子の時）", /var p = adItem\.parentElement/.test(bd));
+  ok("② AD もホバー", /hover\(adItem/.test(bd) && /並べ替えから AD へカーソルを動かします（クリックしない/.test(bd));
+  ok("③ 「高→低」を押す", /press\(hiToLo/.test(bd) && /③ 高→低へカーソルを動かして押します/.test(bd));
+  ok("  AD の親の中も探す（小メニューが入れ子の時）", (function () { var s = bd.indexOf("var findAdInOpenMenu = function"); var seg = s >= 0 ? bd.slice(s, bd.indexOf("var hover = function", s)) : ""; return /el\.parentElement/.test(seg) && /par\.textContent/.test(seg) && /MENU_HINTS/.test(seg); })());
   ok("**ページを読み込み直さない**", !/location\.href = _u\.toString\(\)/.test(bd) && !/location\.href = _adLink\.href;/.test(bd));
   ok("行けなければ false（押さない＝全物件を送らない）", /done\(false\)/.test(bd));
 }
