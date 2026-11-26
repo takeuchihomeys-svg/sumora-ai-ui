@@ -59,3 +59,20 @@ export function estimateRecordsBlock(rows: ReadonlyArray<EstimateRow>, max = 6, 
   });
   return `\n【送った御見積書（記録・新しい順）】\n${lines.join("\n")}`;
 }
+
+/**
+ * 2026-11-26 作業員L（連携の一覧の3位「見積書ツール → 統括の入口」つないでいない・値打ち 21.7%・統括役の頼み）: 入口の統括の材料に見積の1行（純関数）。
+ *   一番新しい見積の 送った日・物件・初期費用（合計）・割引（BRAIN_ESTIMATE_DISCOUNT と同じ discount_yen）と、見積の後のお客様の反応の型か「まだ返事なし（N日）」
+ *   （BRAIN_ESTIMATE_REACTION と同じ estimateReactionLine の数え）。スイッチ CONDUCTOR_INTAKE_ESTIMATE=on（既定 off）。見積が無ければ空
+ */
+export const conductorIntakeEstimateOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.CONDUCTOR_INTAKE_ESTIMATE ?? "").trim().toLowerCase() === "on";
+export function intakeEstimateLine(rows: ReadonlyArray<EstimateRow>, msgs: ReadonlyArray<{ sender: string; text: string | null; created_at: string }>, nowMs = Date.now()): string {
+  const num = (v: unknown) => { const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/[,，円]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
+  const xs = rows.filter((r) => r.created_at).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const h = xs[0]; if (!h?.created_at) return "";
+  const name = String(h.property_name ?? "").trim();
+  const room = String(h.room_no ?? "").normalize("NFKC").replace(/号室?$/, "").trim();
+  const cost = num(h.initial_cost_yen), disc = num(h.discount_yen);
+  const react = estimateReactionLine(h.created_at, msgs, nowMs).replace(/^【見積の後のお客様】/, "");
+  return `【見積】${jstMD(h.created_at)}送付${name ? `・${name}${room ? ` ${room}号室` : ""}` : ""}・初期費用 ${cost != null ? `${cost.toLocaleString()}円` : "（記録に金額なし）"}${disc != null ? `・割引 ${disc.toLocaleString()}円` : ""}${xs.length > 1 ? `（見積 ${xs.length}件）` : ""}${react ? `・${react}` : ""}`;
+}
