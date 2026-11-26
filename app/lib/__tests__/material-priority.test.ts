@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { materialPriorityMode, pickFirstKeys, applyMaterialPriority, materialPriorityDigest, materialPriorityMeasures, USED_MARKERS } from "../material-priority";
 
-assert.equal(materialPriorityMode({}), "off");
+assert.equal(materialPriorityMode({}), "shadow", "既定 shadow（11/26 統括役の決め・記録だけ）");
+assert.equal(materialPriorityMode({ MATERIAL_PRIORITY: "off" }), "off");
 assert.equal(materialPriorityMode({ MATERIAL_PRIORITY: "shadow" }), "shadow");
 assert.equal(materialPriorityMode({ MATERIAL_PRIORITY: "on" }), "on");
 
