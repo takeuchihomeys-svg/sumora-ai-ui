@@ -104,6 +104,13 @@ export async function learnFromModifiedExample(params: {
   if (!aiDraft?.trim() || !sentReply?.trim()) {
     return { ok: false, reason: "missing fields" };
   }
+  // 2026-11-28 作業員L（統括役の決め・申込以降を学びに使わない）: 検索の外（rag_excluded）の手本からは自動ナレッジを作らない（お客様の発言を埋め込みとナレッジ本文に残さない）。
+  //   手本の id がある時だけ見る（無い呼び出しは今まで通り）。読めない時は作らない側
+  if (params.exampleId) {
+    const { data: ex, error: exErr } = await supabase.from("ai_reply_examples").select("entry_source").eq("id", params.exampleId).maybeSingle();
+    if (exErr) return { ok: false, reason: "example read failed" };
+    if ((ex as { entry_source?: string | null } | null)?.entry_source === "rag_excluded") return { ok: false, reason: "rag_excluded" };
+  }
 
   // AIと送信文が同じなら学習不要
   if (aiDraft.trim() === sentReply.trim()) {

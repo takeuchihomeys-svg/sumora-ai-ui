@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { embeddingCacheKey } from "@/app/lib/embedding-cache-key";
 import { supabase } from "@/app/lib/supabase-server";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
@@ -31,8 +32,11 @@ export function textSimilarity(a: string, b: string): number {
 const embeddingCache = new Map<string, number[]>();
 
 // 2026-09-13 RAG 監査: 検索の問いの個人情報は埋め込みの共通入口で伏せ字にする（maskForEmbedding の根拠は pii-mask.ts）
+// 2026-11-28 作業員L（統括役の決め・案B）: embedding_cache の鍵は md5（app/lib/embedding-cache-key.ts・文を DB に残さない）。OpenAI に送るのは伏せた文
+export { embeddingCacheKey };
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  const cacheKey = maskForEmbedding(text).slice(0, 2000);
+  const input = maskForEmbedding(text).slice(0, 2000);
+  const cacheKey = embeddingCacheKey(input);
 
   // メモリキャッシュ確認（最速）
   if (embeddingCache.has(cacheKey)) return embeddingCache.get(cacheKey)!;
@@ -62,7 +66,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: cacheKey }),
+      body: JSON.stringify({ model: "text-embedding-3-small", input }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;

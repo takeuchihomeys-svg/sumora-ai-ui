@@ -787,6 +787,11 @@ export async function PATCH(req: NextRequest) {
   }
   // 生成失敗文の下書きは「AIの誤り」ではないので差分学習に使わない
   const usableDraft = isUsableAiDraft(existing.ai_draft as string | null) ? (existing.ai_draft as string) : null;
+  // 2026-11-28 作業員L（統括役の決め・申込以降を学びに使わない）: 検索の外（rag_excluded）の手本は、☆を付けてもナレッジ・フレーズ・差分・自動ナレッジを作らない
+  //   （新規保存の道は 10/09 から止めていたが、☆の道は entry_source を見ずに作っていた＝お客様の発言でナレッジを作り埋め込んでいた）。☆の印そのものは残す
+  if ((existing.entry_source as string | null) === RAG_EXCLUDED_ENTRY_SOURCE) {
+    return NextResponse.json({ ok: true, skippedAnalysis: true, reason: "rag_excluded" });
+  }
 
   // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
   // after()化: ☆フラグ更新（最低限の保存）は完了済みのため、Sonnet分析チェーンは
@@ -1260,6 +1265,10 @@ export async function POST(req: NextRequest) {
       if ((existingRecord.entry_source as string | null) === "aix_action") {
         return NextResponse.json({ ok: true, id: existingRecord.id, merged: true, skippedAnalysis: true });
       }
+      // 2026-11-28 作業員L（統括役の決め・申込以降を学びに使わない）: 検索の外（rag_excluded）の手本は☆でも学びに使わない（PATCH の☆の道と同じ）
+      if ((existingRecord.entry_source as string | null) === RAG_EXCLUDED_ENTRY_SOURCE) {
+        return NextResponse.json({ ok: true, id: existingRecord.id, merged: true, skippedAnalysis: true, reason: "rag_excluded" });
+      }
       const existConvState = existingRecord.conversation_state as string;
       const existSentReply = existingRecord.sent_reply as string;
       const existCustMsg   = existingRecord.customer_message as string;
@@ -1388,12 +1397,13 @@ export async function POST(req: NextRequest) {
     const mergedEmbeddingInput = previousStaffMessage
       ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
-    const mergedEmbedding = await generateEmbedding(mergedEmbeddingInput);
+    // 2026-11-28 作業員L（統括役の決め・申込以降を学びに使わない）: 検索の外（rag_excluded）の判定を埋め込みの前に。外になる行は埋め込まない（OpenAI にも embedding_cache にも出さない）
+    const mergedExclude = await ragExcludeFor(mergedReply);
+    const mergedEmbedding = mergedExclude ? null : await generateEmbedding(mergedEmbeddingInput);
     const updatePayload: Record<string, unknown> = { sent_reply: mergedReply };
     if (mergedEmbedding) updatePayload.embedding = JSON.stringify(mergedEmbedding);
     // RAG の入口の歯止め: 結合後の文で見る（1通目は約束・2通目が物件カード等の分割送信）。line_reply の行だけ付け替える
     {
-      const mergedExclude = await ragExcludeFor(mergedReply);
       if (mergedExclude) {
         const { count } = await supabase.from("ai_reply_examples").select("id", { count: "exact", head: true }).eq("id", splitCandidate.id).eq("entry_source", "line_reply");
         if (count) { updatePayload.entry_source = RAG_EXCLUDED_ENTRY_SOURCE; console.info(JSON.stringify({ tag: "rag-intake:excluded", reason: mergedExclude, id: splitCandidate.id, merged: true })); }
@@ -1496,7 +1506,9 @@ export async function POST(req: NextRequest) {
     : previousStaffMessage
       ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
-  const embeddingPromise = generateEmbedding(embeddingInput);
+  // 2026-11-28 作業員L（統括役の決め・申込以降を学びに使わない）: 検索の外（rag_excluded）の判定を埋め込みの前に動かした。外になる行は埋め込まない（OpenAI にも embedding_cache にも出さない）
+  const ragExcludeReason = await ragExcludeFor(sentReply);
+  const embeddingPromise = ragExcludeReason ? Promise.resolve(null) : generateEmbedding(embeddingInput);
 
   // 各ピッカー: 変更されたコンポーネントを reply_angle に記録（analyze-diffs が固有情報スキップを精密化）
   // アクション別の固有情報パーツ（日時・物件名等 — 変化しても学習不要）
@@ -1525,7 +1537,7 @@ export async function POST(req: NextRequest) {
 
   // 無修正送信（AIドラフトをそのまま採用）は挿入時に自動スター
   const autoStarred = wasAiUsed === true && wasAiModified === false ? true : false;
-  const ragExcludeReason = await ragExcludeFor(sentReply);
+  // ragExcludeReason は埋め込みの前（上）で決めた
   if (ragExcludeReason) console.info(JSON.stringify({ tag: "rag-intake:excluded", reason: ragExcludeReason, conversationId: conversationId ?? null }));
 
   // 2026-10-14 区切り1（記録の穴）: 画面から tpo_debug が来なかった時は、会話の ai_draft_check が同じ番（下書きの hash・お客様の発言の hash）の時だけそれを使う
