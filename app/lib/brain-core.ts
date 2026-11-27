@@ -5521,7 +5521,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           const vfSrc = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
           // 2026-11-27 作業員A（案2・BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3=on の時だけ 内覧の日の希望を材料に下げる・off は今と同じ signal_decided）
           const vfFam = vfSrc === "signal:viewing_flow_date_wish" && overrideDemoted("signal_date_wish_s3") ? "signal_date_wish_s3" : "signal_decided";
-          if (vfFam === "signal_date_wish_s3" && finalAix !== "viewing_invite") materialMarks.demote_date_wish_s3 = 1;
+          if (vfFam === "signal_date_wish_s3") materialMarks.demote_date_wish_s3 = 1; // この枝の finalAix は内覧調整でない（上の条件で絞られている）＝下げた番は必ずブレインと食い違う
           if (applyOverride(demotedOverrides, vfFam, vfSrc, "viewing_invite", finalAix)) {
             finalAix = "viewing_invite";
             decisionSource = vfSrc;
