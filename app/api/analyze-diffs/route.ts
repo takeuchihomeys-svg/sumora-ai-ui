@@ -889,6 +889,14 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     .order("created_at", { ascending: false })
     .limit(200);
   if (error || !recentExamples || recentExamples.length === 0) return { detected: 0, demoted: 0 };
+  // 2026-11-28 作業員L（統括役の決め3-2・申込以降を学びに使わない）: 消された言い回しの数えは entry_source で絞っておらず、検索の外（rag_excluded）の手本も数えていた。
+  //   DIFF_DELETION_SKIP_RAG_EXCLUDED=on（既定 off・段階で読む）の時だけ rag_excluded の行を外す
+  if (await stageOnNow("DIFF_DELETION_SKIP_RAG_EXCLUDED", null)) {
+    const kept = recentExamples.filter((r) => (r as { entry_source?: string | null }).entry_source !== "rag_excluded");
+    if (kept.length !== recentExamples.length) console.info(JSON.stringify({ tag: "analyze-diffs:deletion-skip-rag-excluded", n: recentExamples.length - kept.length }));
+    recentExamples.splice(0, recentExamples.length, ...kept);
+    if (!recentExamples.length) return { detected: 0, demoted: 0 };
+  }
 
   // 成約済み・終了済み会話（DRAFT_SKIP_STATUSES・is_post_apply=true）を除外
   const _closedIdsRepeat = await excludeClosedConversationIds(
