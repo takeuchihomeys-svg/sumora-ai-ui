@@ -3,6 +3,8 @@ import { supabase } from "@/app/lib/supabase-server";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { stageOnNow } from "@/app/lib/rollout";
+import { isFilledApplicationForm } from "@/app/lib/post-apply";
 
 // Opus呼び出し（80件履歴）を1会話ずつシーケンシャル処理するため延長
 export const maxDuration = 300;
@@ -100,7 +102,18 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const history = (msgs as Array<{ sender: string; text: string | null }>)
+      // 2026-11-28 作業員L（統括役の決め3・申込以降を学びに使わない）: 直近80通には記入済みの申込フォームと申込の後の通も入る。
+      //   LATENT_INTENT_CUT_AT_APPLY=on（既定 off・段階で読む）の時だけ、最初の記入済みの申込フォームの通か deal_outcomes の applied_at の早い方より前の通だけ（learn-closing-pattern と同じ形）
+      let useMsgs = msgs as Array<{ sender: string; text: string | null; created_at: string }>;
+      if (await stageOnNow("LATENT_INTENT_CUT_AT_APPLY", conv.id)) {
+        const { data: outs } = await supabase.from("deal_outcomes").select("applied_at").eq("conversation_id", conv.id).not("applied_at", "is", null).order("applied_at", { ascending: true }).limit(1);
+        const formAt = [...useMsgs].reverse().find((m) => m.created_at && isFilledApplicationForm(m.text))?.created_at ?? null;
+        const appliedAt = ((outs ?? []) as Array<{ applied_at: string | null }>)[0]?.applied_at ?? null;
+        const cut = [formAt, appliedAt].filter((x): x is string => !!x).sort()[0] ?? null;
+        if (cut) useMsgs = useMsgs.filter((m) => m.created_at < cut);
+        if (useMsgs.length < 5) { skipped++; continue; }
+      }
+      const history = useMsgs
         .slice()
         .reverse()
         .map((m) => `${m.sender === "customer" ? "お客さん" : "スタッフ"}: ${(m.text || "").slice(0, 150)}`)
