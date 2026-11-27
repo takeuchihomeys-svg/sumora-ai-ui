@@ -2285,6 +2285,36 @@ async function analyzeConversationCore(
   let ragKnowledgeRaw: RagKnowledgeRow[] = [];
   let ragWinningPatterns: Array<{ situation: string | null; pattern: string; closing_action: string | null; human_type_label: string | null; outcome_type: string; notes: string | null; win_rate: number | null; importance: number; customer_intent: string | null; staff_reply_intent: string | null; checkpoint_stage: string | null; similarity: number }> = [];
   let ragTemplates: Array<{ id: string; category: string | null; label: string | null; win_rate: number | null; use_count: number | null; won_count: number | null; similarity: number }> = [];
+  // 2026-11-27 作業員L（統括役の頼み・BRAIN_MATERIAL_PARALLEL・既定 off）: 前の部品の答えに依らない材料の読みを、ここで先に始めて置き場で待つ（app/lib/material-prefetch.ts）。
+  //   off の時は登録だけ（置き場で今まで通り呼ぶ）。on でも off でも、置き場で同じ関数の答えを同じ順に材料へ足す＝ブレインに渡す文字は同じ。同時に走らせるのは上限（既定 4）まで
+  //   入力は会話の id・今の通の並び（typedMessages）・状態・お客様の名前だけ（どれもここで決まっている）。今の番は置き場と同じ純関数（unrepliedCustomerTurn）で出す
+  const mpMod = await import("@/app/lib/material-prefetch");
+  const mpOn = await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("BRAIN_MATERIAL_PARALLEL", conversationId); } catch { return false; } })(); // 段階で読む（既定 off）
+  const mpf = mpMod.createMaterialPrefetch(mpOn, mpMod.materialParallelMax());
+  const mpTurn = unrepliedCustomerTurn(typedMessages);
+  const mpNearTrace = { stage: "start", ms: {} as Record<string, number> };
+  {
+    const custTurnNow = typedMessages[0]?.sender === "customer";
+    const notPostApply = !isPostApplyStatus(convStatus);
+    mpf.register("offline", async () => (await import("@/app/lib/offline-result-server")).loadOfflineResultLineWithin(5_000, conversationId), notPostApply);
+    mpf.register("ptNote", async () => { const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server"); return Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]); });
+    mpf.register("nearOpinion", async () => {
+      const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
+      return Promise.race([
+        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: mpTurn.text ?? "" }).scene, customerTurn: mpTurn.text ?? "" }, mpNearTrace),
+        new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
+      ]);
+    }, custTurnNow && notPostApply && !!conversationId && (await import("@/app/lib/conductor-near-opinion")).nearOpinionOn());
+    mpf.register("sentBundles", async () => { const { loadSentBundles } = await import("@/app/lib/sent-bundles-server"); return Promise.race([loadSentBundles(conversationId), new Promise<[]>((r) => setTimeout(() => r([]), 4_000))]); }, (await import("@/app/lib/sent-bundles")).sentBundlesEnabled());
+    mpf.register("customerMemo", async () => {
+      const { customerMemoNoteFor } = await import("@/app/lib/customer-memo-server");
+      return Promise.race([
+        customerMemoNoteFor(conversationId, { scene: resolveReplyScene({ customerText: mpTurn.text ?? "" }).scene, customerName: opts?.customerName ?? null }),
+        new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
+      ]);
+    });
+    mpf.register("reapply", async () => { const { reapplyBrainNoteFor } = await import("@/app/lib/reapply-customer-server"); return Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]); });
+  }
   // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
   if (process.env.OPENAI_API_KEY) {
@@ -3521,8 +3551,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   //   （保存の欄は使われていない: 電話終了後 AIX 0回・内覧の記録 3/135）。OFFLINE_RESULT_MATERIAL=on の時だけ（既定 off）
   if (!isPostApplyStatus(convStatus)) {
     try {
-      const { loadOfflineResultLineWithin } = await import("@/app/lib/offline-result-server");
-      const offlineLine = await loadOfflineResultLineWithin(5_000, conversationId);
+      const offlineLine = await mpf.take<Awaited<ReturnType<typeof import("@/app/lib/offline-result-server").loadOfflineResultLineWithin>>>("offline"); // 2026-11-27 先に始めた読み（off は今ここで呼ぶ）
       if (offlineLine) customerStateBlockText += `\n\n${offlineLine}`;
     } catch (e) { console.warn("[brain-core] offline-result skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -3586,8 +3615,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-10-13 主語の抜け（q082〜q087）: 台帳の文（▶ 指している物件の候補）の名前も current_property の実在ゲートに入れる
   let propertyThreadNoteText = "";
   try {
-    const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server");
-    const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
+    const ptNote = await mpf.take<string>("ptNote"); // 2026-11-27 先に始めた読み（8秒まで・off は今ここで呼ぶ）
     if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-16 竹内悠馬（直す事5・調べる係）: 決まった処理で拾えない「さっきの部屋」「前に言ってた条件」等は、DeepSeek が何を調べるか決め、
@@ -4037,14 +4065,11 @@ ${sh}`;
   //   その番の要約と竹内さんの実際の文と1組でブレインの材料に1行（決めるのはブレイン）。CONDUCTOR_NEAR_OPINION=on（既定 off）・2秒まで待つ・無ければ何も足さない
   if (typedMessages[0]?.sender === "customer" && !isPostApplyStatus(convStatus) && conversationId && (await import("@/app/lib/conductor-near-opinion")).nearOpinionOn()) {
     try {
-      const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
       const { nearOpinionDigest } = await import("@/app/lib/conductor-near-opinion");
       // 11/15 作業員H: 時間切れの時にどの段まで進んだかをログに（nop9o-1 の原因の切り分け・NEAR_OPINION_PARALLEL）
-      const nearTrace = { stage: "start", ms: {} as Record<string, number> };
-      const r = await Promise.race([
-        nearOpinionForTurn(supabase, { conversationId, propertyCustomerId: propertyCustomerId ?? null, turnAt: typedMessages[0].created_at, scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerTurn: unrepliedTurn.text ?? "" }, nearTrace),
-        new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
-      ]);
+      // 2026-11-27 作業員L: 読み（2秒まで）は材料の初めに登録した物（BRAIN_MATERIAL_PARALLEL=on で先に始める・off は今ここで呼ぶ）。段の記録も同じ入れ物
+      const nearTrace = mpNearTrace;
+      const r = await mpf.take<Awaited<ReturnType<typeof import("@/app/lib/conductor-near-opinion-server").nearOpinionForTurn>> | null>("nearOpinion");
       if (r?.line) customerStateBlockText += `\n\n${r.line}`;
       nearOpinionNote = r === null ? "timeout" : `${nearOpinionDigest(r.op)}|${r.inBand}`;
       console.log(JSON.stringify({ tag: "brain:near-opinion", conversationId, op: nearOpinionDigest(r?.op ?? null), inBand: r?.inBand ?? null, timeout: r === null, stage: r === null ? nearTrace.stage : undefined, stageMs: r === null ? nearTrace.ms : undefined }));
@@ -4259,8 +4284,7 @@ ${sh}`;
     try {
       const { sentBundlesEnabled, bundleOfQuoted, buildSentBundlesNote } = await import("@/app/lib/sent-bundles");
       if (sentBundlesEnabled()) {
-        const { loadSentBundles } = await import("@/app/lib/sent-bundles-server");
-        const bundles = await Promise.race([loadSentBundles(conversationId), new Promise<[]>((r) => setTimeout(() => r([]), 4_000))]);
+        const bundles = await mpf.take<Awaited<ReturnType<typeof import("@/app/lib/sent-bundles-server").loadSentBundles>> | []>("sentBundles"); // 2026-11-27 先に始めた読み（4秒まで）
         const lastCust = typedMessages.find((m) => m.sender === "customer");
         const quoted = bundleOfQuoted(bundles, lastCust?.quoted_message_id ?? null);
         const recent = bundles[0] && lastCust && Date.parse(lastCust.created_at) - Date.parse(bundles[0].sentAt) <= 3 * 86_400_000;
@@ -4274,11 +4298,7 @@ ${sh}`;
     // 2026-10-08 竹内さん「人間でいうメモ」「気持ちの判断の強化」: お客様のメモ（芯・事情・決める人・気にしている事・好き嫌い・伝えた事・聞かれた事＋もう伝えた事の種類）と
     //   気持ちの流れ（このお客様のいつもとの違い・前の提案への反応・前回までの気持ち）。場面で要る種類だけ（customer-memo-server.ts・CUSTOMER_MEMO=off／CUSTOMER_MOOD_FLOW=off）
     try {
-      const { customerMemoNoteFor } = await import("@/app/lib/customer-memo-server");
-      const memo = await Promise.race([
-        customerMemoNoteFor(conversationId, { scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, customerName: opts?.customerName ?? null }),
-        new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
-      ]);
+      const memo = await mpf.take<Awaited<ReturnType<typeof import("@/app/lib/customer-memo-server").customerMemoNoteFor>> | null>("customerMemo"); // 2026-11-27 先に始めた読み（5秒まで）
       if (memo?.note) { customerStateBlockText += `\n\n${memo.note}`; console.log(JSON.stringify({ tag: "brain:customer-memo", conversationId, memoChars: memo.memoChars, moodChars: memo.moodChars, items: memo.items, pay: memo.pay?.decision ?? null })); }
       paymentPlan = memo?.pay ?? null;
     } catch (e) { console.warn("[brain-core] customer-memo skipped:", e instanceof Error ? e.message : String(e)); }
@@ -4307,8 +4327,7 @@ ${sh}`;
     // 2026-10-21 竹内さんの決定（70193195・c2909936）: 申込歴あり（再探し）のお客様は、アツいお客様である事・戻った理由（①否決 ②1番手が通過 ③切り替え／理由不明）と
     //   理由ごとの次の一手を材料に足す（パターンの名前と一手だけ・申込中の中身は書かない・reapply-customer.ts）。戻す REAPPLY_MARK=off
     try {
-      const { reapplyBrainNoteFor } = await import("@/app/lib/reapply-customer-server");
-      const ra = await Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+      const ra = await mpf.take<Awaited<ReturnType<typeof import("@/app/lib/reapply-customer-server").reapplyBrainNoteFor>> | null>("reapply"); // 2026-11-27 先に始めた読み（4秒まで）
       if (ra?.note) { customerStateBlockText += `\n\n${ra.note}`; console.log(JSON.stringify({ tag: "brain:reapply", conversationId, pattern: ra.info?.pattern ?? null, source: ra.info?.source ?? null })); }
     } catch (e) { console.warn("[brain-core] reapply skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-21 竹内さんの決定（ec4d5990）: 2番手で申込中（並行で探す）— 申込は止めずに別の物件を並行して出す（申込の中身には触れない・parallel-second.ts）
@@ -4712,6 +4731,8 @@ ${history}`;
   //   EXAM_MARKS_PREFLIGHT=on の時だけ、ブレインを呼ぶ前のこの時点の材料の印の鍵を1行出す（本番では立たない・記録だけ・プロンプトは変わらない）
   //   印を出したらブレインを呼ばずに止める（録音の無い呼び出しで待たない・試験の片付けは brain-exam の失敗の行の道で）
   //   試験の2層（全体の分析 m0→今回の番）の1つ目（お客様の今の番を入れる前・一番新しい通がこちら）では止めない＝今回の番の呼び出しの印だけを見る（11/27 q009 で m0 の印を見誤っていた）
+  // 2026-11-27 作業員L（BRAIN_MATERIAL_PARALLEL の印・on の時だけ）: 先に始めた材料の読みの数（プロンプトは変えない＝記録の印だけ）
+  if (mpf.started().length) materialMarks.material_parallel = mpf.started().length;
   if (process.env.EXAM_MARKS_PREFLIGHT === "on" && typedMessages[0]?.sender === "customer") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）

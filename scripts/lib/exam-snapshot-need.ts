@@ -28,6 +28,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   AIX_BOUNDARY_LINE: "aix_boundary", AIX_DICTIONARY_LINE: "aix_dictionary", CHAIN_INSIGHT_LINE: "chain_insight", AIX_STATE_CARD: "aix_state_card",
   PICKUP_WHY_TO_BRAIN: "pickup_why", PICKUP_WHY_PENDING_MATCH: "pickup_why_pending", STATION_STATE_LINE: "station_state",
   MOVE_IN_LINE: "move_in_line", CUSTOMER_KARTE: "customer_karte",
+  BRAIN_MATERIAL_PARALLEL: "material_parallel", // 2026-11-27 作業員L（材料の読みを並べる・プロンプトは同じ＝記録の印だけ）
   COND_PICKUP_SENT_FIRST: "cond_pickup_sent_first", TWO_STAGE_SCREENING_NO_REWRITE: "screening_no_rewrite_turn", // 2026-11-27 作業員L（印を足す順の1番目） // 2026-11-27 作業員L（#806 お客様のカルテ） // 2026-11-27 作業員L（入居の時期と期限の1行）
   // 2026-11-27: 印なしだった3部品に印を足した（brain-core・on の時だけ）
   UNANSWERED_ASKS_LINE: "unanswered", // 2026-11-27 #814 まだ答えていない事
