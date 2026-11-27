@@ -28,6 +28,7 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   { name: "SHADOW_REACH", defaultStage: { kind: "off" } }, // #823 影の届き（記録だけ）
   { name: "CHECK_NOW_POSSIBLE_LINE", defaultStage: { kind: "off" } }, // #821 今確かめられるか
   { name: "PICKUP_FIT_NOW_LINE", defaultStage: { kind: "off" } }, // #821 送れる候補が今の条件にも合うか
+  { name: "PENDING_CHECK_ANSWERED_GUARD", defaultStage: { kind: "off" } }, // #829 文で答えた確認タスクを確認中から外す（generate-reply）
 ];
 
 /** コードの既定を on にした部品の「版の変わり目」（その既定が入った commit の日・JST）。brain_switch_versions に出ない物の all に上がった日 */

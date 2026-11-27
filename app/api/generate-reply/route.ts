@@ -3739,6 +3739,26 @@ async function handleGenerateReply(req: NextRequest) {
       if (deepseekCutActive) ledgerTasks = filterAfterCutoff(ledgerTasks, (t) => t.created_at ?? null, deepseekCutoff);
     } catch (err) { console.error("[generate-reply] ledger line_tasks 取得失敗:", err); }
   }
+  // 2026-11-27 作業員A（台帳 #829・竹内さんの決定 KB 212e2945「回答済み物件を未回答と表現しない・履歴照合が必須」）:
+  //   確認タスクが pending のままでも、タスクの作成より後にこちらが文で結果を伝えていれば（全部の pending の確認タスクで）「確認中」から外す
+  //   ＝下の【募集状況確認中】のヒント・確認の文脈・最終チェックが同じ扱いになる。PENDING_CHECK_ANSWERED_GUARD（既定 off・段階で読む）
+  //   線は scripts/audit-pending-check-answered.ts（60日 257件: 外す番 432・前の確認の続きで次の通がまだ確認中＝誤検出 0）
+  if (activeTaskTypes.includes("property_check") && conversationId && !isTemplateOptimize) {
+    try {
+      const { stageOn } = await import("@/app/lib/rollout");
+      const { loadSwitchStageCtx } = await import("@/app/lib/switch-stage");
+      const ctx = await loadSwitchStageCtx(conversationId);
+      if (stageOn("PENDING_CHECK_ANSWERED_GUARD", conversationId, process.env, ctx.overrides)) {
+        const { allPendingChecksAnswered, dropAnsweredCheck } = await import("@/app/lib/pending-check-answered");
+        const { data: pend } = await supabase.from("line_tasks").select("created_at")
+          .eq("conversation_id", conversationId).eq("task_type", "property_check").eq("status", "pending");
+        const r = allPendingChecksAnswered((pend ?? []) as Array<{ created_at: string | null }>,
+          recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? null, isAix: !!m.isAix })));
+        logWatchMaterial(JSON.stringify({ tag: "gen:pending-check-answered", conversationId, tasks: r.verdicts.length, all: r.all, by: r.verdicts.map((v) => v.by) }));
+        activeTaskTypes = dropAnsweredCheck(activeTaskTypes, r.all);
+      }
+    } catch (err) { console.error("[generate-reply] PENDING_CHECK_ANSWERED_GUARD 失敗（今まで通り確認中のまま）:", err); }
+  }
   // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
   if (activeTaskTypes.includes("property_check")) {
     autoHints.push({ at: "head", text: "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！募集状況確認出来次第ご連絡させて頂きます😊！！」のような短い返しのみ行う（確認対象「募集状況」を必ず書く。「すぐに」禁止）。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）" });
