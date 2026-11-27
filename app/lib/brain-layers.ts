@@ -139,6 +139,8 @@ export type FreshDigest = {
   la?: string | null; ds?: string | null;
   /** 2026-11-03: 後ろの決まりの書き換え（"LLMのAIX→最終@出どころ"）と、下げた上書きの数（記録だけ） */
   rw?: string; dm?: number;
+  /** 2026-11-27 作業員A（#821「判定ごとにブレインの答えを記録に残す」・記録だけ）: 物件確認した のピッカー（check_pattern）の書き換え（"LLMのピッカー→最終"）。同じなら付けない */
+  rp?: string;
   /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
   nd?: string; pa?: string; cf?: string;
   /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
@@ -205,6 +207,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-11-03 作業員2（指揮役: 後ろの決まりの書き換えを記録・既定 on・記録だけ）: LLM の AIX（la）と最終（aix）が違う番は「何から何へ・どの決まりで」を1つの欄に。
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
+    ...((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),

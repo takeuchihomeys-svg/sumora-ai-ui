@@ -563,7 +563,7 @@ export type SuggestedAixMeta = {
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null; /** 2026-10-15 zenryoku_candidate（記録だけ） */ zc?: boolean | null };
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; /** 2026-11-27 #821 LLM のピッカー（記録だけ） */ cpat?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null; /** 2026-10-15 zenryoku_candidate（記録だけ） */ zc?: boolean | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -7353,6 +7353,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,
         // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
         cp: rawCurrentProperty || null,
+        // 2026-11-27 作業員A（#821・記録だけ）: LLM が出したピッカー（check_pattern・決まった規則の前）。digest.rp（ピッカーの書き換え）で数える
+        cpat: typeof (parsed as { check_pattern?: unknown }).check_pattern === "string" ? String((parsed as { check_pattern?: unknown }).check_pattern).slice(0, 30) : null,
         // 2026-10-13 棚卸しの表 2: 生の本質の道の数（reconcile の前）。digest.tc は規則の後の値なので、2段の食い違いはこちらで数える
         tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract),
         // 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ）
