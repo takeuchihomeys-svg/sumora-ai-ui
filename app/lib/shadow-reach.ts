@@ -9,6 +9,18 @@
 //   ・その部品のスイッチが on の番は組まない（本物が材料に入れている＝"on"）
 // スイッチ SHADOW_REACH（既定 off・段階で読む）。記録 meta.shadow_reach = { v, parts: { 印: 字数（0＝届かず）| "err" | "skip" | "on" }, ms } → digest.shr
 import { stagedOn, STAGE_OFF } from "./switch-stage";
+import { stationStateLine } from "./route-station-state";
+import { buildAixStateCard } from "./aix-state-card";
+import { aixDictionaryLine } from "./aix-dictionary";
+import { chainInsightLine, featuresOf } from "./chain-patterns";
+import { matchSubstateOf } from "./turn-aims-after";
+import { substateInContext } from "./substate-context";
+import { substateAlsoHit, substatesFor } from "./apply-route-substate";
+import { checkOrderGuideFor, preBrainCues } from "./check-order-guide";
+import { unansweredAsks, unansweredLine } from "./unanswered-asks";
+import { openPromises, PROMISE_READ_KIND_JA } from "./promise-read";
+import { exchangeLedgerLine, buildExchangeLedger } from "./exchange-ledger";
+// 2026-11-27 作業員A（統括役）: 部品は brain-core と同じ静的 import（冷えた動的 import の読み込みが影の組みの 50ms に入って skip が出た＝読み込みは影の時間の外に）
 
 type Env = Record<string, string | undefined>;
 export const SHADOW_REACH_VERSION = "shr-2026-11-27";
@@ -32,49 +44,44 @@ export type ShadowPart = { sw: string; mark: string; build: (c: ShadowReachCtx) 
 export const SHADOW_PARTS: readonly ShadowPart[] = [
   { sw: "STATION_STATE_LINE", mark: "station_state", build: async (c) => {
     if (!c.loc?.node || c.loc.branch) return "";
-    const ss = await import("./route-station-state"); const { buildAixStateCard } = await import("./aix-state-card");
     const card = buildAixStateCard({ messages: c.ledgerMessages as never, aixRows: c.recentAixRows as never, viewingHistory: c.viewingHistory as never, lineTasks: c.lineTasks as never }, c.turnAtMs);
-    return ss.stationStateLine({ node: c.loc.node as never, since: c.since, nowMs: c.turnAtMs, messages: c.ledgerMessages as never, card }) ?? "";
+    return stationStateLine({ node: c.loc.node as never, since: c.since, nowMs: c.turnAtMs, messages: c.ledgerMessages as never, card }) ?? "";
   } },
   { sw: "AIX_DICTIONARY_LINE", mark: "aix_dictionary", build: async (c) => {
     const aix = c.loc?.next?.aix ?? []; if (!aix.length) return "";
-    return (await import("./aix-dictionary")).aixDictionaryLine(aix) ?? "";
+    return aixDictionaryLine(aix) ?? "";
   } },
   { sw: "CHAIN_INSIGHT_LINE", mark: "chain_insight", build: async (c) => {
     if (!c.loc) return "";
-    const cpm = await import("./chain-patterns"); const { matchSubstateOf } = await import("./turn-aims-after");
     const sentB: Record<string, string> = {};
     for (const x of c.recentAixRows) { const k = String(x.aix_type ?? "").split("/")[0]; const at = x.sent_at ?? x.created_at; if (k && at && (!sentB[k] || at > sentB[k])) sentB[k] = at; }
     const sub = matchSubstateOf(c.unrepliedText)?.id ?? null;
-    return cpm.chainInsightLine(cpm.featuresOf({ node: c.loc.node, branch: c.loc.branch, sub1: sub, sentBefore: sentB, at: new Date(c.turnAtMs).toISOString(), mindset: c.prevMindset })) ?? "";
+    return chainInsightLine(featuresOf({ node: c.loc.node, branch: c.loc.branch, sub1: sub, sentBefore: sentB, at: new Date(c.turnAtMs).toISOString(), mindset: c.prevMindset })) ?? "";
   } },
   { sw: "SUBSTATE_CONTEXT", mark: "substate_context", build: async (c) => {
     if (!c.loc) return "";
-    const sc = (await import("./substate-context")).substateInContext(c.unrepliedText, { estimateSent: !!c.ledgerFacts.estimateSent, propertiesSent: (c.ledgerFacts.propertiesSentCount ?? 0) > 0 }, { SUBSTATE_CONTEXT: "on" });
+    const sc = substateInContext(c.unrepliedText, { estimateSent: !!c.ledgerFacts.estimateSent, propertiesSent: (c.ledgerFacts.propertiesSentCount ?? 0) > 0 }, { SUBSTATE_CONTEXT: "on" });
     return sc.id ?? "";
   } },
   { sw: "SUBSTATE_MULTI_STATION", mark: "substate_multi_station", build: async (c) => {
     if (!c.loc) return "";
-    const ar = await import("./apply-route-substate");
-    return ar.substateAlsoHit(c.loc as never, { SUBSTATE_MULTI_STATION: "on" }) ? ar.substatesFor(c.loc as never, { SUBSTATE_MULTI_STATION: "on" }).map((s) => s.id).join(",") : "";
+    return substateAlsoHit(c.loc as never, { SUBSTATE_MULTI_STATION: "on" }) ? substatesFor(c.loc as never, { SUBSTATE_MULTI_STATION: "on" }).map((s) => s.id).join(",") : "";
   } },
   { sw: "CHECK_ORDER_GUIDE", mark: "check_order_guide", build: async (c) => {
-    const cog = await import("./check-order-guide"); const f = c.ledgerFacts;
-    const g = cog.checkOrderGuideFor(cog.preBrainCues({ scene: c.scene, customerText: c.unrepliedText, hasImageOrUrl: c.unrepliedHasImage || /https?:/.test(c.unrepliedText),
+    const f = c.ledgerFacts;
+    const g = checkOrderGuideFor(preBrainCues({ scene: c.scene, customerText: c.unrepliedText, hasImageOrUrl: c.unrepliedHasImage || /https?:/.test(c.unrepliedText),
       pickupPromisedUnfulfilled: !!f.pickupPromisedUnfulfilled, confirmationPromisedUnfulfilled: !!f.confirmationPromisedUnfulfilled, estimatePromisedUnfulfilled: !!f.estimatePromisedUnfulfilled,
       pickupReady: c.pickupReady, firstContact: f.propertiesSentCount === 0 && f.lastStaffEntry == null }));
     return g?.text ?? "";
   } },
   { sw: "UNANSWERED_ASKS_LINE", mark: "unanswered", build: async (c) => {
-    const ua = await import("./unanswered-asks"); const pr = await import("./promise-read");
     const aix = c.aixLogs.filter((a): a is { aix_type: string; created_at: string; sent_at?: string | null } => !!a.aix_type);
-    const asks = ua.unansweredAsks({ msgs: c.typedMessages, aix, nowMs: c.turnAtMs });
-    const proms = pr.openPromises({ msgs: c.typedMessages, aix, nowMs: c.turnAtMs, days: 7 }).map((p) => ({ kindJa: pr.PROMISE_READ_KIND_JA[p.kind], sentence: p.sentence, at: p.at, overdue: !p.waiting && p.elapsedH > 24 }));
-    return ua.unansweredLine(asks, proms);
+    const asks = unansweredAsks({ msgs: c.typedMessages, aix, nowMs: c.turnAtMs });
+    const proms = openPromises({ msgs: c.typedMessages, aix, nowMs: c.turnAtMs, days: 7 }).map((p) => ({ kindJa: PROMISE_READ_KIND_JA[p.kind], sentence: p.sentence, at: p.at, overdue: !p.waiting && p.elapsedH > 24 }));
+    return unansweredLine(asks, proms);
   } },
   { sw: "CONDUCTOR_EXCHANGE_LEDGER_BRAIN", mark: "exchange", build: async (c) => {
-    const el = await import("./exchange-ledger");
-    return el.exchangeLedgerLine(el.buildExchangeLedger({ msgs: c.typedMessages, aix: c.aixLogs.filter((a): a is { aix_type: string; created_at: string } => !!a.aix_type) as never, nowMs: c.turnAtMs }));
+    return exchangeLedgerLine(buildExchangeLedger({ msgs: c.typedMessages, aix: c.aixLogs.filter((a): a is { aix_type: string; created_at: string } => !!a.aix_type) as never, nowMs: c.turnAtMs }));
   } },
 ];
 

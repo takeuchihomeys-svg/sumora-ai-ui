@@ -21,7 +21,7 @@ const ctx: ShadowReachCtx = {
   aixLogs: [], prevMindset: null, turnAtMs: Date.parse(T(5)) + 1,
 };
 (async () => {
-  const r = await runShadowReach(ctx, { env: {}, budgetMs: 10000 }); // 冷えた import は遅い（本番は brain-core が読み込み済み）＝中身の確かめは上限を広げる
+  const r = await runShadowReach(ctx, { env: {} }); // 部品は静的 import＝読み込みは影の時間の外（上限 50ms のまま）
   t("部品は8つ・どれも 字数か err か skip（off の部品は全部組む）", Object.keys(r.parts).length === SHADOW_PARTS.length && Object.values(r.parts).every((v) => typeof v === "number" || v === "err" || v === "skip"));
   t("答え漏れ: 前の番の費用の問いに届く（字数 > 0）", typeof r.parts.unanswered === "number" && (r.parts.unanswered as number) > 0);
   t("駅の状態: 分かれ道の番は組まない（0）", r.parts.station_state === 0);
