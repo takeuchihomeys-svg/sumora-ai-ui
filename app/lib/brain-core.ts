@@ -3213,7 +3213,11 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   const holdSoftNextText = appealTiming && appealTiming.input.scene !== "post_apply"
     ? holdSoftNextMaterial({ customerText: unrepliedTurn.text ?? "", scene: appealTiming.input.scene, room: appealTiming.input.room, delayed: !!appealTiming.input.viewingDelayed, checkAllUnavailable: lastPropertyMoveAllUnavailable(aixLogs) })
     : "";
-  const appealTimingText = (appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "") + holdSoftNextText;
+  // 2026-11-27 作業員L（#815・ACK_SOFT_NEXT・既定 off・段階で読む）: 物件への反応の番（好意・中身の質問）にも柔らかい次の一手を候補で渡す（決めるのはブレイン・印 ack_soft_next）
+  const ackSoftNextText = appealTiming && !holdSoftNextText && appealTiming.input.scene !== "post_apply" && await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("ACK_SOFT_NEXT", conversationId); } catch { return false; } })()
+    ? (await import("@/app/lib/hold-soft-next")).ackSoftNextMaterial({ customerText: unrepliedTurn.text ?? "", scene: appealTiming.input.scene, customer: appealTiming.input.customer, room: appealTiming.input.room, delayed: !!appealTiming.input.viewingDelayed, checkAllUnavailable: lastPropertyMoveAllUnavailable(aixLogs) })
+    : "";
+  const appealTimingText = (appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "") + holdSoftNextText + ackSoftNextText;
   let brainAixFeedback: FeedbackRow[] = [];
   try {
     const { data: fbRows } = await supabase
@@ -3774,6 +3778,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (ackSoftNextText) materialMarks.ack_soft_next = ackSoftNextText.length; // 2026-11-27 作業員L（#815 ACK_SOFT_NEXT の印・候補の1行を渡した番だけ）
   // 2026-11-27 作業員L（BRAIN_MATERIAL_MISS_NOTE の印・on で「読めなかった」を材料に足した番だけ・数＝読めなかった材料の数）
   if (materialMissOn && materialMisses.length) materialMarks.material_miss_note = materialMisses.length;
   if (msgWindowUnitsMark > 0) materialMarks.msg_window_units = msgWindowUnitsMark; // 2026-11-27 作業員A（BRAIN_MSG_WINDOW_UNITS の届きの印）
