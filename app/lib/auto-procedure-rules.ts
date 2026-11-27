@@ -23,7 +23,7 @@ import { flowNode } from "./loop-flow-map";
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.324";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.325";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -827,6 +827,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "_panelWord(",
     file: "bulk-dl.js",
     verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:list_flow_announce"] },
+  },
+  {
+    id: "box_shows_waits",
+    scene: "list",
+    text: "待ち（並べ替えの押したあと・読み直したあと・検索の後の並べ替え待ち・リセット後の30〜34秒）は、枠の「いま」の下に ⏳ 何を待っているか（あと N 秒）で出し、0秒で消す（2.8.325 竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように／細かく何しているか表示」）。言葉は流れの地図の LOOP_WAITS が正本（WAIT_WORDS を gen-panel-words.ts が作る）。印: sort_lag_grace（読み直し後も同じ）",
+    since: "2.8.325",
+    kb: null,
+    marker: "axlx-wait",
+    file: "bulk-dl.js",
+    verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:sort_lag_grace"] },
   },
   {
     id: "zero_result_finish_reset",

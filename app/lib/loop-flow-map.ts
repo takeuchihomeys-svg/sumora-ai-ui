@@ -529,6 +529,48 @@ export function checkPanelWords(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES
 }
 
 /**
+ * 待ちの見える化（2.8.325・竹内さん 2026-11-27「待機中や待機している時間もちゃんとボックスに表示／ボックスにも細かく何しているか表示」）。
+ *   待ちは「いま」の行の中に、残りの秒数つきで出す（拡張の枠の #axlx-wait）。言葉は地図が正本。
+ *   拡張の写し（bulk-dl.js・background.js の WAIT_WORDS）は scripts/gen-panel-words.ts が作る。
+ */
+export type FlowWait = {
+  id: string;
+  /** どの手の中で起きる待ちか */
+  nodeId: string;
+  /** 枠に出す言葉（何を待っているか。秒数は枠が後ろに付ける） */
+  label: string;
+  minMs: number;
+  maxMs: number;
+};
+
+export const LOOP_WAITS: ReadonlyArray<FlowWait> = [
+  { id: "search_to_sort", nodeId: "sort", label: "検索の結果が画面に出きるまで待っている（並べ替えは検索確認から40〜50秒後）", minMs: 40000, maxMs: 50000 },
+  { id: "sort_lag", nodeId: "sort", label: "高→低を押したあと、並べ替えの画面が追いつくまで待っている", minMs: 15000, maxMs: 20000 },
+  { id: "sort_resume_lag", nodeId: "sort", label: "読み直したあと、並べ替えの画面が追いつくまで待っている", minMs: 15000, maxMs: 20000 },
+  { id: "reset_settle", nodeId: "reset", label: "リセットを押して、画面が空になるまで待っている（30〜34秒）", minMs: 30000, maxMs: 34000 },
+];
+
+/** 拡張の写し（WAIT_WORDS）の本文。id → 枠に出す言葉 */
+export function renderWaitWordsJs(varName: string = "WAIT_WORDS", waits: ReadonlyArray<FlowWait> = LOOP_WAITS): string {
+  const lines = waits.map((w, i) => `    ${w.id}: ${JSON.stringify(w.label)}${i < waits.length - 1 ? "," : ""}`);
+  return [`  var ${varName} = {`, ...lines, "  };"].join("\n");
+}
+
+/** 待ちの点検: id が重ならない・どの手にあるか（地図に在る）・言葉が空でない・秒数が正しい */
+export function checkWaits(waits: ReadonlyArray<FlowWait> = LOOP_WAITS, nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
+  const out: string[] = [];
+  const ids = new Set<string>();
+  for (const w of waits) {
+    if (ids.has(w.id)) out.push(`待ちの id が重なっている: ${w.id}`);
+    ids.add(w.id);
+    if (!flowNode(w.nodeId, nodes)) out.push(`${w.id} の手（${w.nodeId}）が地図に無い＝どの手の待ちか分からない`);
+    if (!w.label || !w.label.trim()) out.push(`${w.id} の言葉（label）が無い＝枠に何を待っているか出せない`);
+    if (!(w.minMs > 0) || !(w.maxMs >= w.minMs)) out.push(`${w.id} の秒数が正しくない（min=${w.minMs} max=${w.maxMs}）`);
+  }
+  return out;
+}
+
+/**
  * 手順書の一覧の手のうち ④から先（④・④の場合分け・⑤客完了）を、地図から作る。
  *   ・④ の文に「押す物が無い時は下の『④の1〜n』＝④の場合分け。順に行う手ではない」を自動で入れる
  *   ・branch は「④の k（④の場合分け）」。通し番号は付けない

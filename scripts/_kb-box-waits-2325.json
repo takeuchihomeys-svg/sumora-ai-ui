@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】待っている間は、枠に「何を待っているか」と残りの秒数を出す（0秒で消す）",
+    "category": "ux",
+    "insight": "並べ替えの押したあと・読み直したあと・検索後の並べ替え待ち・リセット後の待ちは、枠の「いま」の下に ⏳ 何を待っているか（あと N 秒）を出す。残りは1秒ごとに数え、0で消す。言葉と秒数は流れの地図（loop-flow-map.ts の LOOP_WAITS）が正本で、拡張の WAIT_WORDS は gen-panel-words.ts が作る。手で言葉を書かない。",
+    "rationale": "待ちが見えないと、止まっているのか壊れているのか分からず、竹内さんが途中で押し直すおそれがある。待ちも流れの地図から作れば、待ちを直した時に枠の言葉も一緒に直る（パネルと同じ仕組み）。試験は地図と拡張の一致・配線・悪い地図4形を止めることで見る。",
+    "context": "2026-11-27 竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように」「ボックスにも細かく何しているか表示されるのが理想」。",
+    "applied_to": "app/lib/loop-flow-map.ts（LOOP_WAITS・checkWaits・renderWaitWordsJs）、scripts/gen-panel-words.ts、chrome-extension/bulk-dl.js（#axlx-wait・_paintWait・_setBulkWaitById）、chrome-extension/background.js（_bulkWaitShow reset_settle）、app/lib/auto-procedure-rules.ts（box_shows_waits）",
+    "tags": ["Chrome拡張", "待ち", "ボックス", "流れの地図", "UX", "汎用"],
+    "priority": 1
+  }
+]

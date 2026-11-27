@@ -2514,6 +2514,7 @@
       // ★ 2.8.295 邪魔しない窓: 待ち＋並べ替え＋読み直し＋押し始めまで（押し始めで外す）
       try { _quietPageSet("sort", wait + 120000); } catch (_) {}
       _stampSortFlowAtom("sort_wait", true, wait + "ms_from_confirm");
+      _setBulkWaitById("search_to_sort", wait);
       try {
         _liveDlStep(
           "sort_cursor_wait",
@@ -2745,6 +2746,7 @@
       _sortResumeWaiting = true;
       var _lagR = _lagGraceMs();
       try { _liveDlStep("sort_lag_grace", Math.round(_lagR / 1000) + "秒 読み直し後の猶予（ラグ・並べ替えは完了済み）"); } catch (_) {}
+      _setBulkWaitById("sort_resume_lag", _lagR);
       setTimeout(function () {
         _sortResumeWaiting = false;
         if (_sortResumeStarted || _autoPdfRun) return;
@@ -3193,6 +3195,7 @@
       '  <div>',
       '    <div style="font-size:10px;font-weight:700;color:#38bdf8;letter-spacing:0.06em;margin-bottom:3px;">いま</div>',
       '    <div id="axlx-count" style="font-size:13px;font-weight:700;line-height:1.45;color:#f8fafc;">待機中</div>',
+      '    <div id="axlx-wait" style="display:none;font-size:11px;font-weight:700;line-height:1.45;color:#fde68a;margin-top:3px;"></div>',
       "  </div>",
       '  <div style="height:1px;background:rgba(148,163,184,0.2);"></div>',
       '  <div>',
@@ -3469,6 +3472,50 @@
       try { chrome.storage.session.set({ axlx_bulk_grasp: _bulkGraspState }); } catch (_) {}
       try { _liveDlStep("list_flow_announce", String(key) + " " + String(why || "").slice(0, 40)); } catch (_) {}
     } catch (_) {}
+  }
+  /* WAIT_WORDS:BEGIN */
+  var WAIT_WORDS = {
+    search_to_sort: "検索の結果が画面に出きるまで待っている（並べ替えは検索確認から40〜50秒後）",
+    sort_lag: "高→低を押したあと、並べ替えの画面が追いつくまで待っている",
+    sort_resume_lag: "読み直したあと、並べ替えの画面が追いつくまで待っている",
+    reset_settle: "リセットを押して、画面が空になるまで待っている（30〜34秒）"
+  };
+  /* WAIT_WORDS:END */
+  /**
+   * ★ 2.8.325 竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように／ボックスにも細かく何しているか表示」:
+   *   待ちは「いま」の下に、何を待っているか＋残りの秒数で出す（#axlx-wait）。言葉は流れの地図の LOOP_WAITS が正本（上の WAIT_WORDS）。
+   *   background（リセット後の30〜34秒）は id と秒数だけを送る（axlx-bulk-wait）。
+   */
+  var _waitTick = null;
+  var _waitUntilMs = 0;
+  var _waitLabelNow = "";
+  function _stopWaitTick() {
+    if (_waitTick) { clearInterval(_waitTick); _waitTick = null; }
+    _waitUntilMs = 0;
+  }
+  function _paintWait() {
+    var el = document.getElementById("axlx-wait");
+    var left = _waitUntilMs ? Math.ceil((_waitUntilMs - Date.now()) / 1000) : 0;
+    if (left <= 0) {
+      if (el) { el.style.display = "none"; el.textContent = ""; }
+      _stopWaitTick();
+      return;
+    }
+    if (el) {
+      el.style.display = "block";
+      el.textContent = "⏳ " + _waitLabelNow + "（あと " + left + " 秒）";
+    }
+  }
+  function _setBulkWait(label, ms) {
+    _waitLabelNow = String(label || "").slice(0, 90);
+    _waitUntilMs = Date.now() + Math.max(0, Math.round(Number(ms) || 0));
+    _paintWait();
+    if (_waitUntilMs > Date.now() && !_waitTick) _waitTick = setInterval(_paintWait, 1000);
+  }
+  function _setBulkWaitById(id, ms) {
+    var label = WAIT_WORDS && WAIT_WORDS[id];
+    if (!label) { try { _liveDlStep("wait_unknown_id", String(id || "").slice(0, 30)); } catch (_) {} return; }
+    _setBulkWait(label, ms);
   }
   /** ★ 2.8.217: 一括把握の配信を枠へ反映 */
   function _applyBulkGrasp(g) {
@@ -5168,6 +5215,7 @@
               // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る
               var _lagG = _lagGraceMs();
               _auditSort("sort_lag_grace", Math.round(_lagG / 1000) + "秒 押した後の猶予（ラグ）");
+              _setBulkWaitById("sort_lag", 1200 + _lagG);
               step(1200 + _lagG, function () { done(true); });
             });
           });
@@ -6707,6 +6755,11 @@
       if (msg && msg.type === "axlx-work-note-clear") {
         _axlxClearWorkNote();
         _paintPdfProgress();
+        return;
+      }
+      /** ★ 2.8.325: 待ち（background のリセット後の待ち等）を枠の「待ち」行へ */
+      if (msg && msg.type === "axlx-bulk-wait") {
+        _setBulkWaitById(String(msg.id || ""), Number(msg.ms) || 0);
         return;
       }
       /** ★ 2.8.217: 一括の誰・何件・次客・把握 */

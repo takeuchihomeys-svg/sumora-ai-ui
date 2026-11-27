@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.325: 待ちを枠に出す（待っている物・残りの秒数）。言葉は流れの地図が正本**
+竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように／ボックスにも細かく何しているか表示されるのが理想」。
+- **起きていた形**: 並べ替えの押したあとの猶予・読み直しの猶予・検索後の並べ替え待ち・リセット後の30〜34秒は、枠の「いま」が前の言葉のまま止まり、待っていることも残りの秒数も見えなかった。
+- **直した所**:
+  - `app/lib/loop-flow-map.ts`: `LOOP_WAITS`（4つ・どの手か・言葉・秒数）。`checkWaits`／`renderWaitWordsJs`。
+  - `chrome-extension/bulk-dl.js`: 枠に `#axlx-wait`（いまの下・最初は隠す）。`_setBulkWait`／`_paintWait`（1秒ごとに「あと N 秒」・0で消す）。言葉は `WAIT_WORDS`（scripts/gen-panel-words.ts が作る）。
+  - 使う所: 押したあと（sort_lag）・読み直したあと（sort_resume_lag）・検索後の並べ替え待ち（search_to_sort）。
+  - `chrome-extension/background.js`: リセット後の待ち（reset_settle）は id と秒数だけを `axlx-bulk-wait` で送る（言葉は地図から bulk-dl に1つだけ）。
+- **試験**: `app/lib/__tests__/wait-words-from-map.test.ts`（地図と同じ・手書きの言葉なし・4つとも配線・悪い地図4形を止める）、`tests/chrome-extension/box-wait-v2325.test.js`（枠の位置・1秒の数え方・配線・言葉の無い id）。どちらも pre-commit に入れた。
+- **決まり**: AUTO_RULES `box_shows_waits`（2.8.325）。
+- **まだ入れていない待ち**: 検索を押す前の条件の見直し（9〜12秒・page-script の `search_review_wait`）。短いので次の回で入れるか、竹内さんに確認する。
+- **反映**: 版 2.8.325（5か所）。コミットのみ。push・attach は竹内さんの OK の後。実機（再読込→自動2客以上→押したあとに「⏳ …（あと N 秒）」が出て0で消える）で確かめるまで「反映済み」と言わない。
+
 ## 2026-11-27 **拡張 2.8.324: 高→低のあとの読み直しでも、15〜20秒あけてから物件取得へ（実測 #1673）**
 竹内さん「AD並べ替えのあと取得するまでの期間がはやすぎる気がする／並べ替えのあとはラグが起きるので時間を少し開けるのが理想」。
 - **実測（search_audits #1673・2.8.323）**: `dl:sort_pressed`（279秒）→ `dl:sort_lag_grace 15秒` の印は出たが、`dl:sort_done pressed_resume`（283秒）で読み直し後の入口が猶予なしに一覧を始め、約4秒後に `list_press`（物件取得）が始まった。

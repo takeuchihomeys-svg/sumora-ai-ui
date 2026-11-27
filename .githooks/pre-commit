@@ -33,6 +33,9 @@ node tests/chrome-extension/reset-front-visible-v2320.test.js
 node tests/chrome-extension/human-move-arrive-v2321.test.js
 node tests/chrome-extension/sort-pressed-then-list-v2322.test.js
 node tests/chrome-extension/resume-lag-wait-v2324.test.js
+echo "[pre-commit] 枠の待ち表示（2.8.325・待ちは地図から・配線・秒の数え方）"
+node tests/chrome-extension/box-wait-v2325.test.js
+npx tsx app/lib/__tests__/wait-words-from-map.test.ts
 echo "[pre-commit] 流れの地図（分かれ道は全部 客完了→リセットへ合流・手順書は地図から作る・直す前の前提の決まりが書いてある）"
 npx tsx app/lib/__tests__/loop-flow-map.test.ts
 echo "[pre-commit] パネルの言葉は流れの地図から作る（手を足したらパネルも決める・写しが古くない・手書きの古い言葉が残らない・2.8.323）"

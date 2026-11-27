@@ -14,28 +14,30 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPanelWords, renderPanelWordsJs } from "../app/lib/loop-flow-map";
+import { checkPanelWords, checkWaits, renderPanelWordsJs, renderWaitWordsJs } from "../app/lib/loop-flow-map";
 
-const BEGIN = "/* PANEL_WORDS:BEGIN */";
-const END = "/* PANEL_WORDS:END */";
-const TARGETS: Array<{ file: string; varName: string }> = [
-  { file: "chrome-extension/bulk-panel-grasp.js", varName: "PANEL_PHASE_WORDS" },
-  { file: "chrome-extension/page-script.js", varName: "_AXLX_PANEL_WORDS" },
+type Target = { file: string; varName: string; marker: "PANEL_WORDS" | "WAIT_WORDS"; render: (varName: string) => string };
+const TARGETS: Target[] = [
+  { file: "chrome-extension/bulk-panel-grasp.js", varName: "PANEL_PHASE_WORDS", marker: "PANEL_WORDS", render: (v) => renderPanelWordsJs(undefined, v) },
+  { file: "chrome-extension/page-script.js", varName: "_AXLX_PANEL_WORDS", marker: "PANEL_WORDS", render: (v) => renderPanelWordsJs(undefined, v) },
+  { file: "chrome-extension/bulk-dl.js", varName: "WAIT_WORDS", marker: "WAIT_WORDS", render: (v) => renderWaitWordsJs(v) },
 ];
 
 /** 目印の間を作り直した本文（目印が無ければ null）。試験からも使う */
-export function regenerate(src: string, varName: string): string | null {
+export function regenerate(src: string, varName: string, render: (v: string) => string = (v) => renderPanelWordsJs(undefined, v), marker: "PANEL_WORDS" | "WAIT_WORDS" = "PANEL_WORDS"): string | null {
   const s = src.replace(/\r\n/g, "\n");
+  const BEGIN = `/* ${marker}:BEGIN */`;
+  const END = `/* ${marker}:END */`;
   const bi = s.indexOf(BEGIN);
   const ei = s.indexOf(END);
   if (bi < 0 || ei < 0 || ei < bi) return null;
-  return s.slice(0, bi + BEGIN.length) + "\n" + renderPanelWordsJs(undefined, varName) + "\n  " + s.slice(ei);
+  return s.slice(0, bi + BEGIN.length) + "\n" + render(varName) + "\n  " + s.slice(ei);
 }
 
 function main() {
-  const bad = checkPanelWords();
+  const bad = [...checkPanelWords(), ...checkWaits()];
   if (bad.length) {
-    console.error("❌ 地図のパネルの言葉が正しくない:\n" + bad.map((b) => "  ・" + b).join("\n"));
+    console.error("❌ 地図の言葉（パネル・待ち）が正しくない:\n" + bad.map((b) => "  ・" + b).join("\n"));
     process.exit(2);
   }
   const check = process.argv.includes("--check");
@@ -44,9 +46,9 @@ function main() {
     const path = join(process.cwd(), t.file);
     const raw = readFileSync(path, "utf8");
     const crlf = raw.includes("\r\n");
-    const next = regenerate(raw, t.varName);
+    const next = regenerate(raw, t.varName, t.render, t.marker);
     if (next === null) {
-      console.error(`❌ ${t.file} に PANEL_WORDS の BEGIN／END が無い`);
+      console.error(`❌ ${t.file} に ${t.marker} の BEGIN／END が無い`);
       process.exit(2);
     }
     if (next === raw.replace(/\r\n/g, "\n")) {

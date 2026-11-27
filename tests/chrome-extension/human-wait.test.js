@@ -178,7 +178,7 @@ function rest() {
       "setTimeout 900": [3, "撮影の間（_capturePaced・_recordOneShot）・読み込みの間引き（_batchAutofill）"],
     },
     "bulk-dl.js": {
-      "setInterval 1000": [2, "作業メモの描き直し・0件の確定の見る間隔（25秒で打ち切り）"],
+      "setInterval 1000": [3, "作業メモの描き直し・0件の確定の見る間隔（25秒で打ち切り）・待ちの残りの数え（枠の ⏳ あと N 秒・表示だけ・2.8.325）"],
       "setInterval 10000": [1, "沈黙の見張り（_armPipelineSilence）"],
       "setInterval 200": [1, "並べ替え（_beginSelect）の描画待ちの見る間隔"],
       "setInterval 2000": [2, "裏の確認（_becomeOrphan）・start の見張り"],

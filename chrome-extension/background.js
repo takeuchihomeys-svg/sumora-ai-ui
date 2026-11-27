@@ -79,6 +79,16 @@ var _extLogSavedAt = 0;
 // 待ち時間のばらつき（human-wait.js）。settle＝ページが落ち着くのを待つ固定の秒数（元より短くしない）／
 //   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
 function _settleMs(ms) { var H = self.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+/** ★ 2.8.325: 枠の「待ち」行へ（id と秒数だけ送る。言葉は bulk-dl.js の WAIT_WORDS＝地図が正本）。残りは枠が数える */
+function _bulkWaitShow(id, ms) {
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-wait", id: String(id || ""), ms: Math.round(Number(ms) || 0) }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
 function _pollMs(ms) { var H = self.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
@@ -11187,6 +11197,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     _stamp("reset_wait", "押した後の待機 " + Math.round(_settleMs / 1000) + "秒（ラグ対策・人の間）");
     var _w1 = Math.floor(_settleMs * (0.35 + Math.random() * 0.1));
     var _w2 = Math.floor(_settleMs * (0.3 + Math.random() * 0.1));
+    _bulkWaitShow("reset_settle", _settleMs);
     await _sleep(_w1);
     await _sleep(_w2);
     await _sleep(Math.max(1000, _settleMs - _w1 - _w2));
