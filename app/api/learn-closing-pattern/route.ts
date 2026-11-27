@@ -5,6 +5,8 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { stageOnNow } from "@/app/lib/rollout";
+import { isFilledApplicationForm } from "@/app/lib/post-apply";
 
 // Sonnet呼び出し（80件履歴）+ embedding生成で15〜30秒かかるため延長
 export const maxDuration = 60;
@@ -32,7 +34,17 @@ export async function POST(req: NextRequest) {
       .not("text", "is", null)
       .order("created_at", { ascending: false })
       .limit(80);
-    const msgs = (msgsRaw ?? []).slice().reverse();
+    let msgs = (msgsRaw ?? []).slice().reverse();
+    // 2026-11-28 作業員L（統括役の決め3・申込以降を学びに使わない）: 直近80通には、記入済みの申込フォームと申込の後の通（審査・書類の話）も入っていた。
+    //   CLOSING_PATTERN_CUT_AT_APPLY=on（既定 off・段階で読む）の時だけ、最初の記入済みの申込フォームの通か deal_outcomes の applied_at の早い方より前の通だけにする
+    //   （学ぶのは「申込に至った一手」＝申込の手前までで足りる）。off は今までと同じ
+    if (await stageOnNow("CLOSING_PATTERN_CUT_AT_APPLY", conversation_id)) {
+      const { data: outs } = await supabase.from("deal_outcomes").select("applied_at").eq("conversation_id", conversation_id).not("applied_at", "is", null).order("applied_at", { ascending: true }).limit(1);
+      const formAt = (msgs as Array<{ text: string | null; created_at: string }>).find((m) => m.created_at && isFilledApplicationForm(m.text))?.created_at ?? null;
+      const appliedAt = ((outs ?? []) as Array<{ applied_at: string | null }>)[0]?.applied_at ?? null;
+      const cut = [formAt, appliedAt].filter((x): x is string => !!x).sort()[0] ?? null;
+      if (cut) msgs = (msgs as Array<{ created_at: string }>).filter((m) => m.created_at < cut) as typeof msgs;
+    }
 
     if (!msgs.length || msgs.length < 3) {
       return NextResponse.json({ ok: false, error: "会話履歴が少なすぎます" });
