@@ -425,4 +425,8 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "並べ替えの待ちの間に見回りが割り込んで並べ替えを張り直す", gold: ["fd1aeb66"], from: "owner-base-1111b" },
   { q: "一括の途中にウェブから検索が来たらお客さんを切り替えてよいか", gold: ["fd1aeb66"], from: "owner-base-1111b" },
   { q: "リセットから次のお客さんの条件を入れるまでの間に別の指示を拾わない", gold: ["fd1aeb66"], ho: true, from: "owner-base-1111b" },
+  // 2026-11-27 直す前に前提と流れを理解する（流れの地図）
+  { q: "手順書に分かれ道を足す時に通し番号の手として並べてよいか", gold: ["bf85fa07"], from: "owner-base-1111b" },
+  { q: "流れを変える前に何を読んで何を書いてから直すか", gold: ["bf85fa07"], from: "owner-base-1111b" },
+  { q: "全部送付済みや0件のお客さんもリセットして次のお客さんへ行く流れの正本はどこか", gold: ["bf85fa07"], ho: true, from: "owner-base-1111b" },
 ];

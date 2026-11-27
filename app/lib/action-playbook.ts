@@ -20,6 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
+import { renderListPressSteps } from "./loop-flow-map";
 import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
@@ -153,12 +154,9 @@ export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   `①並べ替えへカーソルを置く（クリックしない・検索確認（把握）から${SORT_AFTER_SEARCH_TEXT}の待ちのあと＝検索後は画面が固まるので早すぎたら追いつけない。待ちは1本だけ。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は120秒を過ぎたら古い印として外して張り直す）`,
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
   `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）`,
-  "④並べ替え後に印刷用PDFを押す（押せる行＝送付済みでない行がある時。押す物が無い時は下の「④の1〜3」＝④の場合分け。順に行う手ではない）",
-  // ★ 2.8.319 竹内さん「全部送付済みなら次へで次のページ／次ページも全部送付済み・検索結果0件でも、リセットして次のお客さんへ。リセットからの流れは同じ」
-  "④の1（④の場合分け）この頁の行が全部「送付済み」なら、印刷用PDFは押さず「次へ」で次のページへ移る（止まらない・all_sent_page）",
-  "④の2（④の場合分け）次のページも全部送付済みなら、また「次へ」。最後のページまで全部送付済みなら新しい物件なしとして客完了（all_sent_done）",
-  "④の3（④の場合分け）検索結果が0件（0棟0戸）の時も、行が出るのを待ち続けず客完了にする（zero_count0_finish）",
-  "⑤客完了（④で送り終えた・④の1〜3のどれでも）→リセットを押して次のお客さんへ。リセットからの流れは同じ（リセット→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索）",
+  // ★ 2.8.319 の後の土台強化 ④から先（④の場合分け・⑤客完了）は手で書き足さず、流れの地図（loop-flow-map.ts）から作る。
+  //   分かれ道を通し番号の手として一列に並べられない（2.8.319 で ⑤〜⑧ と並べて紛らわしくなった反省・竹内さん 2026-11-27）
+  ...renderListPressSteps(),
 ];
 
 /**
