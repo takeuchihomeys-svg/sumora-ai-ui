@@ -2290,14 +2290,17 @@ async function analyzeConversationCore(
   //   入力は会話の id・今の通の並び（typedMessages）・状態・お客様の名前だけ（どれもここで決まっている）。今の番は置き場と同じ純関数（unrepliedCustomerTurn）で出す
   const mpMod = await import("@/app/lib/material-prefetch");
   const mpOn = await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("BRAIN_MATERIAL_PARALLEL", conversationId); } catch { return false; } })(); // 段階で読む（既定 off）
-  const mpf = mpMod.createMaterialPrefetch(mpOn, mpMod.materialParallelMax());
+  // 2026-11-27 作業員L（案 2）: 入口が8秒の待ちの間に先に始めた読み（同じ関数・同じ一番新しい通の時だけ・それ以外は捨てて読み直す）
+  const mpEarly = mpOn ? mpMod.adoptEarly(conversationId, typedMessages[0]?.created_at ?? null) : null;
+  const mpf = mpMod.createMaterialPrefetch(mpOn, mpMod.materialParallelMax(), mpEarly);
+  const mpJobs = (await import("@/app/lib/material-prefetch-server")).materialEarlyJobs(supabase, conversationId);
   const mpTurn = unrepliedCustomerTurn(typedMessages);
   const mpNearTrace = { stage: "start", ms: {} as Record<string, number> };
   {
     const custTurnNow = typedMessages[0]?.sender === "customer";
     const notPostApply = !isPostApplyStatus(convStatus);
-    mpf.register("offline", async () => (await import("@/app/lib/offline-result-server")).loadOfflineResultLineWithin(5_000, conversationId), notPostApply);
-    mpf.register("ptNote", async () => { const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server"); return Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]); });
+    mpf.register("offline", mpJobs.offline, notPostApply);
+    mpf.register("ptNote", mpJobs.ptNote);
     mpf.register("nearOpinion", async () => {
       const { nearOpinionForTurn } = await import("@/app/lib/conductor-near-opinion-server");
       return Promise.race([
@@ -2313,7 +2316,15 @@ async function analyzeConversationCore(
         new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
       ]);
     });
-    mpf.register("reapply", async () => { const { reapplyBrainNoteFor } = await import("@/app/lib/reapply-customer-server"); return Promise.race([reapplyBrainNoteFor(supabase, conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]); });
+    // 2026-11-27 作業員L（統括役の頼み・条件の中にあった5つ）: 置き場と同じ条件（guard）が成り立つ番だけ先に始める（成り立たない番は先に読まない＝DB の読みを増やさない）
+    mpf.register("pendNow", mpJobs.pendNow, overrideDemoted("two_stage_promise") && notPostApply);
+    const mpLastStaffAt = typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null;
+    mpf.register("prevDecision", async () => supabase.from("brain_decision_logs").select("created_at, suggested_action, suggested_reply_mode, digest").eq("conversation_id", conversationId).lt("created_at", mpLastStaffAt as string).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      mpOn && !!conversationId && custTurnNow && notPostApply && !!mpLastStaffAt && await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("BRAIN_LAST_TURN_REVIEW", conversationId, LAST_TURN_REVIEW_DEFAULT_STAGE); } catch { return false; } })());
+    const mpThree = mpOn && factLedgerMode() !== "off" && notPostApply && factLedgerThreeOn();
+    mpf.register("condHistory", async () => supabase.from("property_condition_history").select("changed_field, old_value, new_value, created_at").eq("property_customer_id", propertyCustomerId as string).order("created_at", { ascending: false }).limit(8), mpThree && !!propertyCustomerId);
+    mpf.register("dealOutcomes", mpJobs.dealOutcomes, mpThree);
+    mpf.register("reapply", mpJobs.reapply);
   }
   // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
@@ -3693,7 +3704,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try {
       // 2026-11-11 作業員1（A1・弱い所 326 の system の側①）: 候補の中身も渡す時だけ列を足す（BRAIN_PICKUP_CANDIDATES_LIST=on・既定 off＝今まで通り2列）
       const candList = pickupCandidatesListOn();
-      const { data: pendNow } = await supabase.from("property_pickups").select(candList ? "created_at, expired_at, property_name, room_no, summary_text, score, rank, verdict" : "created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+      // 2026-11-27: 読みは材料の初めに登録した物（同じ列の選び・BRAIN_MATERIAL_PARALLEL=on で先に始める）
+      const { data: pendNow } = await mpf.take<{ data: unknown[] | null }>("pendNow");
       const readyNow = freshPickupReady((pendNow ?? []) as unknown as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
       pickupReadyMaterial = readyNow;
       // 2026-10-14: この件のピックアップの約束がもうあるか（無ければ竹内さんはまず約束・材料の1行に足す）
@@ -3821,7 +3833,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try {
       // 前回の番の判断＝こちらの最後の送信より前の一番新しい判断（今の番の読み直しの行は数えない）
       const lastStaffAt = typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null;
-      const { data: prevRow } = lastStaffAt ? await supabase.from("brain_decision_logs").select("created_at, suggested_action, suggested_reply_mode, digest").eq("conversation_id", conversationId).lt("created_at", lastStaffAt).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null };
+      const { data: prevRow } = lastStaffAt ? await mpf.take<{ data: unknown }>("prevDecision") : { data: null }; // 2026-11-27: 材料の初めに登録した読み（lastStaffAt は同じ式）
       const pr = prevRow as { created_at: string; suggested_action: string | null; suggested_reply_mode: string | null; digest: { sg?: string | null } | null } | null;
       if (pr) {
         const after = (at: string) => Date.parse(at) > Date.parse(pr.created_at);
@@ -3998,10 +4010,10 @@ ${sh}`;
             Object.assign(three, memoItemsToThree((await loadCustomerMemo(conversationId)).items));
           } catch { /* メモが読めない時は条件の履歴と前の回だけ */ }
           if (propertyCustomerId) {
-            const { data: ch } = await supabase.from("property_condition_history").select("changed_field, old_value, new_value, created_at").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(8);
+            const { data: ch } = await mpf.take<{ data: unknown[] | null }>("condHistory"); // 2026-11-27: 材料の初めに登録した読み
             three.restated = ((ch ?? []) as Array<{ changed_field: string; old_value: string | null; new_value: string | null; created_at: string }>).map((r) => ({ field: r.changed_field, from: r.old_value, to: r.new_value, at: r.created_at }));
           }
-          const { data: eps } = await supabase.from("deal_outcomes").select("episode_no, result, ended_at, property_name").eq("conversation_id", conversationId).order("episode_no", { ascending: false }).limit(3);
+          const { data: eps } = await mpf.take<{ data: unknown[] | null }>("dealOutcomes"); // 2026-11-27: 材料の初めに登録した読み
           const epRows = (eps ?? []) as Array<{ episode_no: number; result: string | null; ended_at: string | null; property_name: string | null }>;
           const prev = epRows.find((e, i) => i > 0 && e.result);
           if (prev) three.revisit = { result: prev.result!, endedAt: prev.ended_at, propertyName: prev.property_name };

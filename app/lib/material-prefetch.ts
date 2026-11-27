@@ -31,7 +31,7 @@ export type MaterialPrefetch = {
   /** 先に始めた読みの名前（印・ログ用） */
   started(): string[];
 };
-export function createMaterialPrefetch(on: boolean, max = 4): MaterialPrefetch {
+export function createMaterialPrefetch(on: boolean, max = 4, adopted: ReadonlyMap<string, Promise<Settled>> | null = null): MaterialPrefetch {
   const fns = new Map<string, () => Promise<unknown>>();
   const runs = new Map<string, Promise<Settled>>();
   const limit = makeLimiter(max);
@@ -39,7 +39,11 @@ export function createMaterialPrefetch(on: boolean, max = 4): MaterialPrefetch {
   return {
     register(key, fn, guard = true) {
       fns.set(key, fn);
-      if (on && guard && !runs.has(key)) { startedKeys.push(key); runs.set(key, limit(fn).then((v): Settled => ({ ok: true, v }), (e): Settled => ({ ok: false, e }))); }
+      if (!on || !guard || runs.has(key)) return;
+      startedKeys.push(key);
+      // 8秒の待ちの間に先に始めた読み（同じ関数・同じ最新の通の時だけ渡される）があればそれを使う
+      const early = adopted?.get(key);
+      runs.set(key, early ?? limit(fn).then((v): Settled => ({ ok: true, v }), (e): Settled => ({ ok: false, e })));
     },
     async take<T>(key: string): Promise<T> {
       const r = runs.get(key);
@@ -50,4 +54,29 @@ export function createMaterialPrefetch(on: boolean, max = 4): MaterialPrefetch {
     },
     started() { return [...startedKeys]; },
   };
+}
+
+// ─── 2026-11-27 作業員L（統括役の案 2）: 8秒の待ち（続けての送信を待つ・長さも後の判断も変えない）の間に、新しい発言に依らない読みを先に始める ─────
+//   入口（generate-draft-bg-async）が待ちの前に earlyStart（その時の一番新しい通の時刻を控える）・ブレインが材料の初めに adoptEarly で受け取る。
+//   待ちの間に新しい通が来た（一番新しい通の時刻が違う）・古い（60秒より前）時は、先に始めた答えを捨てて、ブレインが今まで通り読み直す。
+//   受け取りは1回だけ（受け取ったら消す）・同じ関数で作った読みだけ（material-prefetch-server.materialEarlyJobs）・同じ箱（関数の実体）の中だけ
+export const EARLY_MAX_AGE_MS = 60_000;
+type EarlyEntry = { at: number; latestAt: string | null; runs: Map<string, Promise<Settled>> };
+const earlyStore = new Map<string, EarlyEntry>();
+export function earlyStart(conversationId: string, latestAt: string | null, jobs: Record<string, () => Promise<unknown>>, max = 4, nowMs = Date.now()): string[] {
+  const limit = makeLimiter(max);
+  const runs = new Map<string, Promise<Settled>>();
+  for (const [k, fn] of Object.entries(jobs)) runs.set(k, limit(fn).then((v): Settled => ({ ok: true, v }), (e): Settled => ({ ok: false, e })));
+  earlyStore.set(conversationId, { at: nowMs, latestAt, runs });
+  return [...runs.keys()];
+}
+/** 受け取る（純粋に近い: 控えの中だけ）。一番新しい通の時刻が同じで新しい時だけ。受け取ったら消す */
+export function adoptEarly(conversationId: string | null | undefined, latestAt: string | null, nowMs = Date.now()): Map<string, Promise<Settled>> | null {
+  if (!conversationId) return null;
+  const e = earlyStore.get(conversationId);
+  if (!e) return null;
+  earlyStore.delete(conversationId);
+  if (nowMs - e.at > EARLY_MAX_AGE_MS) return null;
+  if ((e.latestAt ?? "") !== (latestAt ?? "") || !latestAt) return null; // 待ちの間に新しい通が来た＝捨てて読み直す
+  return e.runs;
 }

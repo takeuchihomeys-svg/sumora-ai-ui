@@ -37,6 +37,24 @@ async function main() {
   }
   // 登録していない読みは止める（書き間違いを黙って通さない）
   await assert.rejects(createMaterialPrefetch(true).take("無い"), /登録されていない/);
-  console.log("material-prefetch ok 14");
+  // 8秒の待ちの間に先に始めた読み: 一番新しい通が同じで新しい時だけ受け取る・受け取りは1回・違えば捨てて読み直す
+  {
+    const { earlyStart, adoptEarly } = await import("../material-prefetch");
+    let calls = 0; const job = { a: async () => { calls++; return "早い"; } };
+    earlyStart("c1", "2026-11-27T03:00:00Z", job, 4, 1000);
+    assert.equal(adoptEarly("c1", "2026-11-27T03:00:09Z", 2000), null, "待ちの間に新しい通が来たら捨てる");
+    assert.equal(adoptEarly("c1", "2026-11-27T03:00:00Z", 2000), null, "捨てた後は残らない（受け取りは1回）");
+    earlyStart("c2", "t", job, 4, 1000);
+    assert.equal(adoptEarly("c2", "t", 1000 + 61_000), null, "60秒より古ければ捨てる");
+    earlyStart("c3", "t", job, 4, 1000);
+    const got = adoptEarly("c3", "t", 5000); assert.ok(got);
+    const p = createMaterialPrefetch(true, 4, got);
+    let lateCalls = 0; p.register("a", async () => { lateCalls++; return "遅い"; });
+    assert.equal(await p.take<string>("a"), "早い", "受け取った読みを使う（同じ関数の答え）"); assert.equal(lateCalls, 0, "読み直さない");
+    const q = createMaterialPrefetch(true, 4, null); q.register("a", async () => "読み直し"); assert.equal(await q.take<string>("a"), "読み直し", "受け取れない時は今まで通り読む");
+    assert.equal(adoptEarly(null, "t"), null);
+    void calls;
+  }
+  console.log("material-prefetch ok 21");
 }
 main().catch((e) => { console.error(e); process.exit(1); });
