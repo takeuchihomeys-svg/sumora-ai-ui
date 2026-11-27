@@ -56,7 +56,9 @@ console.log("■ 場面の手順（束の scene_flows から）");
   ok("場面の名前は人が読む日本語（SCENE_JA）", pb.scenes[0].label === SCENE_JA.area && pb.scenes[0].label === "所在地絞り込み", pb.scenes[0].label);
   ok("3回以上は solid・2回以下は thin", pb.scenes[0].confidence === "solid" && pb.scenes[2].confidence === "thin");
   ok("solid の基準は検索3回以上", PLAYBOOK_SOLID_RUNS === 3);
-  ok("手順は人が読む名前（区名なし）", pb.scenes[0].steps.join(" > ") === "所在地絞り込みを開く > 区の欄（チェック） > 確定してリストへ", pb.scenes[0].steps.join(" > "));
+  // build_v 37: 手の文には把握が付き、要る時だけの町は地図から足す（playbook-step-grasp.test.ts）。ここは録画の手の名前だけを見る
+  const recNames = pb.scenes[0].detail.filter((d) => d.from !== "map").map((d) => d.step).join(" > ");
+  ok("手順は人が読む名前（区名なし）", recNames === "所在地絞り込みを開く > 区の欄（チェック） > 確定してリストへ", recNames);
   ok("操作数・間・順番数を写す（順番は値を含む数のまま）", pb.scenes[0].ops === 81 && pb.scenes[0].gap_ms === 66 && pb.scenes[0].variants === 4);
   ok("押す位置: solid（3回以上）と thin（1〜2回）", pb.points.solid === 2 && pb.points.thin === 1, JSON.stringify(pb.points));
   ok("押すと開く欄の数", pb.opens_known === 1);

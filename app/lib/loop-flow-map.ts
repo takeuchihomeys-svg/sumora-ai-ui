@@ -97,6 +97,12 @@ export type FlowPress = {
   gate: boolean;
   /** 印を出すコード（目印の語がそのファイルに実在する） */
   evidence: { file: string; token: string };
+  /**
+   * 手順書（リアプロの録画の場面）のどの手か。fields は録画の欄名（action-playbook の PLAYBOOK_FIELD_JA の鍵）。
+   *   when が在る＝その客に要る時だけ行う手（録画に出ない客があるため、録画に無ければ地図から手順書に足す）。
+   *   after＝足す時に置く位置（この欄の手の後ろ・無ければ場面の末尾）。
+   */
+  playbookStep?: { scenes: string[]; fields: string[]; when?: string; after?: string };
 };
 
 /**
@@ -184,6 +190,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "見えなければ、押している最中でない時に押し直す（最大3回・開いた直後9秒の間だけ。開く途中で押すと閉じるため）",
         gate: true,
         evidence: { file: "page-script.js", token: "area_open_ok" },
+        playbookStep: { scenes: ["area"], fields: ["所在地絞り込み＋"] },
       },
       {
         button: "駅の設定へ進む",
@@ -194,6 +201,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "1.8秒で出なければ押し直す→3回で止める",
         gate: true,
         evidence: { file: "page-script.js", token: "station_go_stuck" },
+        playbookStep: { scenes: ["station"], fields: ["駅の設定へ進む"] },
       },
       // 2.8.328 竹内さん「町の選択や管理費・構造の選択は、効いたかを確かめていない ここも順に改善する」
       {
@@ -205,6 +213,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "付いていない町だけ1回選び直す→それでも付かなければ記録して枠に⚠を出し、確定へ進む（検索は止めない）",
         gate: true,
         evidence: { file: "page-script.js", token: "_townPickedState(" },
+        playbookStep: { scenes: ["area"], fields: ["town_code[]"], when: "お客さんに町（ピンポイント）がある時だけ", after: "city_code[]" },
       },
       {
         button: "確定してリストへ",
@@ -215,6 +224,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "6秒で閉じなければ1回押し直す→それでも閉じなければ止める（開いたまま進むと条件が入らない・検索が押せない）",
         gate: true,
         evidence: { file: "page-script.js", token: "_confirmEffectThen(" },
+        playbookStep: { scenes: ["area", "station"], fields: ["確定してリストへ"] },
       },
       {
         button: "管理費・共益費込み",
@@ -225,6 +235,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "1回だけ押し直す→それでも付かなければ記録して枠に⚠を出し、次の欄へ進む（欄が無い時は fee_skip を残して飛ばす）",
         gate: true,
         evidence: { file: "page-script.js", token: "_feeEffect(" },
+        playbookStep: { scenes: ["cond"], fields: ["include_common_fee"] },
       },
       {
         button: "構造",
@@ -235,6 +246,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "1回だけ選び直す（足りない所を付け、余計を外す）→それでも合わなければ記録して枠に⚠を出し、次の欄へ進む",
         gate: true,
         evidence: { file: "page-script.js", token: "_structureEffect(" },
+        playbookStep: { scenes: ["cond"], fields: ["structured_type[]"], when: "お客さんに構造の希望がある時だけ" },
       },
     ],
   },
@@ -257,6 +269,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "見えるまで並べ替えへ進まない（次の撮影・次の手まで45秒あける）",
         gate: true,
         evidence: { file: "page-script.js", token: "search_customer_grasp_ok" },
+        playbookStep: { scenes: ["search"], fields: ["検索", "go_search"] },
       },
     ],
   },
@@ -281,6 +294,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "押した時刻が分からない・時間差が短い時は記録して枠に⚠を出して④へ進む（アドレスに出ない並べ替えで押し直すと繰り返すため）",
         gate: true,
         evidence: { file: "bulk-dl.js", token: "_sortTimeRecognized(" },
+        playbookStep: { scenes: ["list"], fields: ["高→低", "左の高→低｜span.sort_detail"] },
       },
     ],
     note: "2.8.322 #1668: 高→低のあと sort_lag_grace で終わり、sort_done も物件取得も無かった。完了の文は③に載せる。2.8.324 #1673: 読み直し後の入口が猶予なしで4秒後に物件取得を始めた（猶予は読み直しで消えるため読み直し後にも取る）",
@@ -304,6 +318,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "押せなければその物件を飛ばして次へ。送り始めなければ待ちを打ち切って次の物件へ（同じ物件を二度押さない）",
         gate: true,
         evidence: { file: "bulk-dl.js", token: "press_pdf_sum" },
+        playbookStep: { scenes: ["list"], fields: ["印刷用PDF"] },
       },
     ],
   },
@@ -332,6 +347,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         onFail: "前の頁の行が消えるまで待つ。番号が合わなければ記録して枠に⚠を出す（送付済みの行は飛ばす・頁の上限で必ず終わる）",
         gate: true,
         evidence: { file: "bulk-dl.js", token: "press_next_moved" },
+        playbookStep: { scenes: ["next"], fields: ["次", "最初前1234次最後"] },
       },
     ],
   },
@@ -855,6 +871,12 @@ export function checkPresses(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): 
       if (!p.onFail.trim()) out.push(`${tag} に効かない時の動き（onFail）が無い`);
       if (!p.gate && !/記録/.test(p.onFail)) out.push(`${tag} は効いたのを待たないのに、効かない時に記録すると書いていない（黙って進む）`);
       if (!p.evidence || !p.evidence.file || !p.evidence.token) out.push(`${tag} にコードの目印が無い`);
+      // リセットは録画の場面が無い（手順書のリセットの手に直接載せる）。それ以外は手順書の手と結ぶ
+      if (!p.playbookStep && n.id !== "reset") out.push(`${tag} が手順書の手と結ばれていない（playbookStep が無い＝手の文に把握が載らない）`);
+      if (p.playbookStep) {
+        if (!p.playbookStep.scenes.length || !p.playbookStep.fields.length) out.push(`${tag} の playbookStep に場面か欄名が無い`);
+        if (p.playbookStep.after && !p.playbookStep.when) out.push(`${tag} は毎回の手なのに after がある（after は録画に無い時に足す要る時だけの手の置き場所）`);
+      }
     }
   }
   return out;

@@ -73,7 +73,7 @@ assert(area!.detail.length === area!.steps.length, "area detail=steps");
 
 const next = pb.scenes.find((s) => s.scene === "next");
 assert(!!next, "next scene");
-assert(next!.steps.some((t) => t === "次のページへ"), "next mapped not 未分類");
+assert(next!.detail.some((d) => d.step === "次のページへ"), "next mapped not 未分類");
 assert(!next!.steps.some((t) => /未分類/.test(t)), "next no 未分類");
 
 assert(pb.gaps.some((g) => /検索場面/.test(g)), "gap search fixed");

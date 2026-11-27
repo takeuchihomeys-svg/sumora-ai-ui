@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { flowNode, pressLine, pressLinesOf, renderListPressSteps } from "./loop-flow-map";
+import { flowNode, LOOP_FLOW_NODES, pressLine, pressLinesOf, renderListPressSteps, type FlowPress } from "./loop-flow-map";
 import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
@@ -51,7 +51,8 @@ export const PLAYBOOK_MAX_STEPS = 12;
 // 34（2026-11-27 竹内さん「ちゃんと押したら押したってこと理解できるように それぞれの手順書のところでもボタンをおしたってことの把握」）: 押す手ごとに「押した／効いた／効かない時」の文を流れの地図（presses）から作って載せる（リセット・所在地を開く・確定・検索・高→低・印刷用PDF・次へ）。決まり press_grasp_each に全部（拡張 2.8.328）。
 // 33（2026-11-27 竹内さん「完了の20秒以降にリセットする」「作業ごとに完了してから20秒あける」「従来の1つずつ外しを完全に消す」）: 送付完了→20秒→リセット→空を確かめたら20秒→次客の読み直し→20秒→入れる。従来の1つずつ外しの文は無くした（拡張 2.8.328）。
 // 32（2026-11-27 竹内さん「押して空になったことを確実に確かめる。1で完了／2は保険（通知が来ない時だけ・60〜90秒後・確かめ→押し直し1回）／空とみなして次へは無くす」）
-export const PLAYBOOK_BUILD_V = 36;
+// 37（2026-11-27 竹内さん「手ごとに押したことの把握を流れの地図から付ける・町と構造も手に足す（入れ物を先に直す）」）: リアプロの録画の手に、地図の押す物（playbookStep）と結んで grasp／when を持たせ、手の文に載せる。町・構造は客に要る時だけの手（when）で、録画に無ければ地図から足す（from: "map"）。ITANDI には付けない。
+export const PLAYBOOK_BUILD_V = 37;
 // 31（2026-11-27 竹内さん「まとめてなおす・ちゃんと手順書も反映」）: 押した結果（検索・高→低・リセット・確かめられなかった押し）を枠に出す。手順書の検索・並べ替え・リセットの手に載せた（拡張 2.8.326）。
 // 30（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）: ③の末尾と④の文に、地図の「押した時点で並べ替えは完了／読み直した一覧は④物件取得／パネルは物件取得最中」をそのまま載せる。決まり1行だけでは手順書の手は強くならない。checkListPlaybookStrength が、手からその文が消えたら止める。
 // 29（2026-11-27 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得するように・完了を把握できていない」）: 高→低を押したあとの読み直しで、並べ替え完了とみて④物件取得へ進む（sort_pressed_then_list・拡張 2.8.322）。手順書の④自体は地図から既に出ている。
@@ -163,6 +164,20 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 function pressLineOf(nodeId: string, button: string): string {
   const p = (flowNode(nodeId)?.presses || []).find((x) => x.button === button);
   return p ? pressLine(p) : "";
+}
+
+/** 地図の押す物のうち、手順書の手と結んだ物（playbookStep が在る物） */
+export function flowPressesForPlaybook(): Array<FlowPress & { playbookStep: NonNullable<FlowPress["playbookStep"]> }> {
+  const out: Array<FlowPress & { playbookStep: NonNullable<FlowPress["playbookStep"]> }> = [];
+  for (const n of LOOP_FLOW_NODES) {
+    for (const p of n.presses || []) if (p.playbookStep) out.push(p as FlowPress & { playbookStep: NonNullable<FlowPress["playbookStep"]> });
+  }
+  return out;
+}
+
+/** 手の文（人が読む）: 名前（要る時だけなら条件）。押したことの把握 */
+export function renderPlaybookStepText(d: Pick<PlaybookStep, "step" | "grasp" | "when">): string {
+  return d.step + (d.when ? `（${d.when}）` : "") + (d.grasp ? `。${d.grasp}` : "");
 }
 
 /** 手の欄を決める時は「押したことの把握」の文より前だけを見る（把握の文に出る別の欄の名前で取り違えない） */
@@ -345,6 +360,8 @@ export const PLAYBOOK_FIELD_JA: Record<string, string> = {
   "room_layout_id[]": "間取りの欄（チェック）",
   "update_date": "更新日",
   "include_common_fee": "管理費込みの欄",
+  // リアプロの構造の欄（page-script.js が structured_type[] に印を付ける）
+  "structured_type[]": "構造の欄（チェック）",
   "確定してリストへ": "確定してリストへ",
   "検索": "検索を押す",
   "go_search": "検索を押す",
@@ -396,6 +413,12 @@ export type PlaybookStep = {
   aim: { x: number; y: number; n: number; confidence: "solid" | "thin"; source: PositionSource } | null;
   /** 押すと開く物（人が確かめて学んだ物だけ）。無ければ null */
   opens: string | null;
+  /** 押したことの把握（流れの地図の押す物から作る・リアプロだけ）。地図に無い手は付けない */
+  grasp?: string | null;
+  /** その客に要る時だけ行う手の条件（地図の playbookStep.when）。毎回行う手は付けない */
+  when?: string | null;
+  /** "map"＝録画に無く流れの地図から足した手（人の手本がまだ無い） */
+  from?: "map";
 };
 
 /** 手順書に載せる自動の決まり（auto-procedure-rules.ts の写し） */
@@ -904,6 +927,42 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     .map((f) => playbookSceneOf(f, posIdx, openIdx, siteAliasFn));
   // itandi の場面には、リアプロの自動の決まりを付けない（場面の決まりは rulesForScene＝AUTO_RULES 由来）
   if (!realproHands) for (const s of scenes) s.rules = [];
+  // リアプロの録画の手に地図の押す物を結ぶ（押したことの把握・要る時だけの条件）。
+  //   要る時だけの手（when）は録画に出ない客があるので、録画に無ければ地図から足す。ITANDI の欄・流れは別なので結ばない
+  if (realproHands) {
+    for (const sc of scenes) {
+      for (const p of flowPressesForPlaybook()) {
+        const ps = p.playbookStep;
+        if (!ps.scenes.includes(sc.scene)) continue;
+        const names = new Set(ps.fields.flatMap((f) => [f, PLAYBOOK_FIELD_JA[f] ?? f]));
+        const hit = sc.detail.filter((d) => names.has(d.field) || names.has(d.step));
+        for (const d of hit) {
+          d.grasp = pressLine(p);
+          if (ps.when) d.when = ps.when;
+        }
+        if (hit.length || !ps.when) continue;
+        const field = ps.fields[0];
+        const added: PlaybookStep = {
+          step: PLAYBOOK_FIELD_JA[field] ?? field,
+          field,
+          aim: lookupAim(field),
+          opens: lookupOpens(field),
+          grasp: pressLine(p),
+          when: ps.when,
+          from: "map",
+        };
+        const afterNames = ps.after ? new Set([ps.after, PLAYBOOK_FIELD_JA[ps.after] ?? ps.after]) : null;
+        let at = sc.detail.length;
+        if (afterNames) {
+          for (let i = sc.detail.length - 1; i >= 0; i--) {
+            if (afterNames.has(sc.detail[i].field) || afterNames.has(sc.detail[i].step)) { at = i + 1; break; }
+          }
+        }
+        sc.detail.splice(at, 0, added);
+        sc.steps.splice(at, 0, added.step);
+      }
+    }
+  }
   const learned = new Set(scenes.map((s) => s.scene));
   const gapsEarly: string[] = [];
   /**
@@ -1049,8 +1108,10 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }
   if (missing.length) gaps.push(`まだ学んでいない場面：${missing.map((k) => (SCENE_JA as Record<string, string>)[k]).join("・")}`);
   for (const s of scenes) {
-    const noAim = s.detail.filter((d) => !d.aim).map((d) => d.step);
+    const noAim = s.detail.filter((d) => !d.aim && d.from !== "map").map((d) => d.step);
     if (noAim.length) gaps.push(`${s.label}：押す位置を学んでいない手 ${noAim.length}件（${noAim.slice(0, 4).join("・")}）`);
+    const fromMap = s.detail.filter((d) => d.from === "map").map((d) => d.step);
+    if (fromMap.length) gaps.push(`${s.label}：録画に無く流れの地図から足した要る時だけの手 ${fromMap.length}件（${fromMap.slice(0, 4).join("・")}）・その客が来た時の人の手本はまだ無い`);
     const badAim = s.detail.filter((d) => d.aim?.source === "mismatch").map((d) => d.step);
     if (badAim.length) gaps.push(`${s.label}：押す位置がボタンとチェック欄の取り違えの手 ${badAim.length}件（${badAim.slice(0, 4).join("・")}）`);
     const thinAim = s.detail.filter((d) => d.aim && d.aim.source !== "mismatch" && d.aim.confidence === "thin").map((d) => d.step);
@@ -1218,6 +1279,17 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }));
   for (const g of extra_guides) {
     gaps.push(`場面なし「${g.label}」: 録画が無いため①②③を extra_guides に載せた`);
+  }
+
+  // 地図と結んだ手の文に、条件と押したことの把握を載せる（固定ガイドが同じ文を既に持つ場面では二重にしない）
+  for (const sc of scenes) {
+    for (const d of sc.detail) {
+      if (!d.grasp && !d.when) continue;
+      const i = sc.steps.indexOf(d.step);
+      if (i < 0) continue;
+      const dup = !!d.grasp && sc.steps.some((t, j) => j !== i && String(t).indexOf(d.grasp as string) >= 0);
+      sc.steps[i] = renderPlaybookStepText(dup ? { ...d, grasp: null } : d);
+    }
   }
 
   const body = JSON.stringify({

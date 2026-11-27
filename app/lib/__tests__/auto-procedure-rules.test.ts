@@ -182,7 +182,7 @@ console.log("■ 手順書に決まりと1手ずつの細部が載る（作り�
   const cond = pb.scenes.find((s) => s.scene === "cond")!;
   ok("推測の開く物は載せない", cond.detail[0].opens === null);
   ok("今日の実データの欄が読める名前になる（絞り込み条件＋・eq_rm[]・square_meter_l）",
-    cond.steps.join(" > ") === "絞り込み条件を開く > ペットの欄（チェック） > 面積（下限）", cond.steps.join(" > "));
+    cond.detail.filter((d) => d.from !== "map").map((d) => d.step).join(" > ") === "絞り込み条件を開く > ペットの欄（チェック） > 面積（下限）", cond.steps.join(" > "));
   ok("場面に効く決まりが付く（所在地: 区の速さ・場所の後に条件）", area.rules.includes("ward_pace") && area.rules.includes("area_before_cond"));
   ok("押す位置を学んでいない手は足りない所に出る", pb.gaps.some((g) => /押す位置を学んでいない手/.test(g)), pb.gaps.join(" / "));
   ok("人の手本が無く決まりだけの場面（前のお客さんを外す・ペット）が足りない所に出る",
