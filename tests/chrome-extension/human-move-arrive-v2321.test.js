@@ -50,6 +50,7 @@ function makeEnv(plan) {
     _clickEl() {}, isVisible: () => true, _labelForCheckbox: () => null, _visibleHitPoint: () => null,
     _hitPlain: () => true, _hitOkAt: () => true, _opLabel: () => "桜川", _audit: { steps: [] },
     _auditStepP: (k, d) => steps.push({ k, d }), _pointer: { x: 0, y: 0 },
+    _pressNote() {},
     _fireAt: (e, fire) => { log.push("fire"); try { fire(e); } catch (_) {} return Promise.resolve(true); },
   };
   vm.createContext(sandbox);

@@ -849,6 +849,16 @@ export const AUTO_RULES: AutoRule[] = [
     verify: { onlyIf: ["reset_press"], mustHaveAny: ["reset_settled"] },
   },
   {
+    id: "press_receipts_all",
+    scene: "search",
+    text: "押した結果は枠の「押した」行に出す（2.8.326 竹内さん「押したことを把握できていない部分がほかにもある」）：検索は✓検索を押した、並べ替えは✓高→低を押した／✗押せなかった（押し直す）、リセットは✓押した／✗押せず、カーソルが着かず・見えないまま押したら⚠押したが確かめられず。枠の「いま」は予定から作らない",
+    since: "2.8.326",
+    kb: null,
+    marker: "axlx-press-note",
+    file: "page-script.js",
+    verify: { mustHaveAny: ["search_press_ok"] },
+  },
+  {
     id: "zero_result_finish_reset",
     scene: "list",
     text: "検索結果が0件（0棟0戸・印刷用PDFも0・3回続けて読めた時）は、行が出るのを待ち続けず、押さずに客完了にする（zero_count0_finish・2.8.298）。客完了のあとは「全部送付済み」「次ページも全部送付済み」「送って終わった」客と同じ流れ：リセットを押す→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索（2.8.319 竹内さん「検索結果0件でもリセットして次のお客さんへ・リセットからの流れは同じ」）。印: zero_count0_finish／post_send_clear／reset_press／reset_settled",

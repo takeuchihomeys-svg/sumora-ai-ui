@@ -3537,11 +3537,22 @@
     else if (what === "reset_check" && result === "empty") t = "✓ 空を確認した（リセット後）";
     else if (what === "reset_check" && result === "not_empty") { t = "⚠ 空の確認で残りが見えた（残 " + d + "）→ 空とみなして次へ（確認できず）"; col = "#fde68a"; }
     else if (what === "reset_check") { t = "⚠ 空かどうか読めず → 空とみなして次へ"; col = "#fde68a"; }
+    else if (what === "sort" && result === "pressed") t = "✓ 高→低を押した（" + hm + "）→ 画面が追いつくまで待つ";
+    else if (what === "sort" && result === "not_pressed") { t = "✗ 高→低を押せなかった（" + hm + "）→ 押し直す"; col = "#fca5a5"; }
+    else if (what === "search" && result === "pressed") t = "✓ 検索を押した（" + hm + "）→ 結果を待つ";
+    else if (what === "press" && result === "unverified") { t = "⚠ 押したが確かめられず（" + d + "）→ 画面で確かめる"; col = "#fde68a"; }
     else return;
     el.textContent = t;
     el.style.color = col;
     el.style.display = "block";
   }
+  /** ★ 2.8.326 ページ側（page-script.js の _pressNote）の押した結果を枠の「押した」行へ */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-press-note") return;
+      _setPressNote(String(e.data.what || ""), String(e.data.result || ""), String(e.data.detail || ""));
+    } catch (_) {}
+  });
   /** ★ 2.8.217: 一括把握の配信を枠へ反映 */
   function _applyBulkGrasp(g) {
     _bulkGraspState = g && Number(g.total) > 0 ? g : null;
@@ -5228,13 +5239,14 @@
             _auditSort("sort_hilo", _hiloHow + ":" + norm(hiToLo.textContent || hiToLo.getAttribute("href") || "").slice(0, 22));
             console.log("[AXLX bulk-dl][sort] ③ 高→低へカーソルを動かして押します（赤丸=AD右の高→低・URL直しない）");
             press(hiToLo, function (okPress) {
-              if (!okPress) { done(false); return; }
+              if (!okPress) { try { _setPressNote("sort", "not_pressed", ""); } catch (_) {} done(false); return; }
               // ★ 2.8.322: 押した事実を読み直しより前に残す（待ちタイマーは読み直しで消える）
               try {
                 sessionStorage.setItem("axlx_sort_pressed_sync", JSON.stringify({ at: Date.now(), href: String(location.href || "").slice(0, 300) }));
               } catch (_) {}
               _adSortDone = true;
               try { _liveDlStep("sort_pressed", "高→低を押した→読み直し後は④物件取得"); } catch (_) {}
+              try { _setPressNote("sort", "pressed", ""); } catch (_) {}
               // ★ 2.8.323: 地図の sort.panel.switchTo=list。押した時点でパネルも物件取得の言葉へ（猶予の間「並べ替え最中」のままにしない）
               try { _announcePhase("list", "sort_pressed"); } catch (_) {}
               // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る

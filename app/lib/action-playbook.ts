@@ -46,7 +46,8 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 30;
+export const PLAYBOOK_BUILD_V = 31;
+// 31（2026-11-27 竹内さん「まとめてなおす・ちゃんと手順書も反映」）: 押した結果（検索・高→低・リセット・確かめられなかった押し）を枠に出す。手順書の検索・並べ替え・リセットの手に載せた（拡張 2.8.326）。
 // 30（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）: ③の末尾と④の文に、地図の「押した時点で並べ替えは完了／読み直した一覧は④物件取得／パネルは物件取得最中」をそのまま載せる。決まり1行だけでは手順書の手は強くならない。checkListPlaybookStrength が、手からその文が消えたら止める。
 // 29（2026-11-27 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得するように・完了を把握できていない」）: 高→低を押したあとの読み直しで、並べ替え完了とみて④物件取得へ進む（sort_pressed_then_list・拡張 2.8.322）。手順書の④自体は地図から既に出ている。
 // 28（2026-11-27 竹内さん「駅入れるところで直接入力が入ってしまう・1つ1つ人間のようにカーソル動かして押していく」）: 押す物は、カーソルが着いたことを確かめてから押す。移動が途中で打ち切られたら動かし直す（最大3回）。拡張 2.8.321・決まり human_move_arrive。
@@ -96,7 +97,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない。押す前にタブが背面なら前に出す＝2.8.320）`,
+    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない。押す前にタブが背面なら前に出す＝2.8.320。押した結果は枠の「押した」行に出す（✓押した・✗押せず・空の確認＝2.8.326））`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
     grasp: ["reset_vis", "reset_front", "reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
@@ -147,7 +148,7 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "after_area", label: "地域の設定", scene: "area", grasp: ["page:location"], next: "after_place" },
   { id: "after_place", label: "場所全体のあと", scene: "area", grasp: ["page:lines_done", "page:location"], next: "before_search" },
   { id: "before_search", label: "検索前の照合（条件）", scene: "cond", grasp: ["page:fill_start"], next: "after_search" },
-  { id: "after_search", label: "検索を押す", scene: "search", grasp: ["page:search_press"], next: "list" },
+  { id: "after_search", label: "検索を押す（押したら枠に「✓検索を押した」。カーソルが着かず押した時は「⚠押したが確かめられず」を出す＝2.8.326）", scene: "search", grasp: ["page:search_press"], next: "list" },
   { id: "list", label: "一覧", scene: "list", grasp: ["dl:it_list"], next: "next" },
   { id: "next", label: "次ページ", scene: "next", grasp: ["dl:it_next"], next: "handoff" },
   { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:it_handoff"], next: null },
@@ -157,7 +158,7 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   `①並べ替えへカーソルを置く（クリックしない・検索確認（把握）から${SORT_AFTER_SEARCH_TEXT}の待ちのあと＝検索後は画面が固まるので早すぎたら追いつけない。待ちは1本だけ。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は120秒を過ぎたら古い印として外して張り直す）`,
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
-  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）。${flowNode("sort")?.playbook ?? ""}`,
+  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）。押せなかったら枠に「✗高→低を押せなかった」を出して押し直す（2.8.326）。${flowNode("sort")?.playbook ?? ""}`,
   // ★ 2.8.319 の後の土台強化 ④から先（④の場合分け・⑤客完了）は手で書き足さず、流れの地図（loop-flow-map.ts）から作る。
   //   分かれ道を通し番号の手として一列に並べられない（2.8.319 で ⑤〜⑧ と並べて紛らわしくなった反省・竹内さん 2026-11-27）
   ...renderListPressSteps(),

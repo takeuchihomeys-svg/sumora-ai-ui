@@ -4227,6 +4227,7 @@ function _guideLikeAreaSkip(why) {
     "panel_words_from_flow_map",
     "box_shows_waits",
     "press_receipt_reset",
+    "press_receipts_all",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",
@@ -6254,6 +6255,10 @@ function _guideLikeAreaSkip(why) {
       return true;
     } catch (_) { return true; }
   }
+    /** ★ 2.8.326 押した結果を枠の「押した」行へ（bulk-dl が受ける）。確かめられなかった押し（カーソルが着かず・見えないまま）も残す */
+  function _pressNote(what, result, detail) {
+    try { window.postMessage({ from: "axlx-press-note", what: String(what || ""), result: String(result || ""), detail: String(detail || "").slice(0, 40) }, "*"); } catch (_) {}
+  }
   function _humanPointerClick(el, fallbackFn, aim, tgtAt) {
     var H = window.AxlxHumanWait;
     var fire = fallbackFn || _clickEl;
@@ -6305,6 +6310,7 @@ function _guideLikeAreaSkip(why) {
       }
       el.__axHidWaited = 0;
       try { _auditStepP("hidden_press", String(_opLabel(el)).slice(0, 40) + " 見える欄が無くカーソル無しで押した"); } catch (_) {}
+      _pressNote("press", "unverified", String(_opLabel(el)).slice(0, 24) + "（見える欄なし）");
       fire(el);
       return Promise.resolve(false);
     }
@@ -6438,6 +6444,7 @@ function _guideLikeAreaSkip(why) {
           if (arrived) return true;
           if (_moveTry >= 3) {
             try { if (_audit) _auditStepP("press_no_arrive", String(_opLabel(el)).slice(0, 40) + " カーソルが着かないまま3回→押した"); } catch (_) {}
+            _pressNote("press", "unverified", String(_opLabel(el)).slice(0, 24) + "（カーソルが着かず）");
             return false;
           }
           try { if (_audit) _auditStepP("move_retry", String(_opLabel(el)).slice(0, 40) + " カーソルが着く前に止まった→動かし直す" + _moveTry); } catch (_) {}
@@ -6497,6 +6504,7 @@ function _guideLikeAreaSkip(why) {
       if (!window.__axNoPtrUiNoted) {
         window.__axNoPtrUiNoted = 1;
         if (_audit) _auditStepP("press_no_cursor_ui", String(_opLabel(el)).slice(0, 40) + " 見えるカーソル無しで押した");
+        _pressNote("press", "unverified", String(_opLabel(el)).slice(0, 24) + "（カーソル無し）");
       }
     } catch (_) {}
     // ★ 2026-11-16: 狙う点も毎回ずらす（同じ欄でも同じピクセルに着かない）
@@ -14902,6 +14910,7 @@ function _guideLikeAreaSkip(why) {
               : "検索押下",
           );
           try { _auditStepP("search_press_ok", "検索を押した"); } catch (_) {}
+          _pressNote("search", "pressed", "");
           try { _guideLikeAfterSearchGrasp("search_press_ok"); } catch (_) {}
           try { _noteNowCustomer("search", "検索押下"); } catch (_) {}
         } catch (_) {}

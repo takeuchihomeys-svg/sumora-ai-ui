@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】押した結果は、押すすべての所で同じ型（✓押した／✗押せなかった／⚠確かめられず）で枠に出す",
+    "category": "ux",
+    "insight": "押した結果を枠に出す型は1つにまとめる。検索・高→低・リセットの押した結果と、カーソルが着かず押した・見えないまま押したを、枠の「押した」行で言う。確かめられなかった押しは⚠で出し、押した扱いで先へ進むことを隠さない。枠の「いま」は予定から作らない。",
+    "rationale": "2.8.326 の調査で、押す所のうち押した結果が枠に届いていないのが、検索・高→低の押せず・カーソルが着かない押しの3つあった。予定の言葉で『押した』と見せると、押せなかった時に気づけない。型を1つにすると、新しい押す所を足しても同じ書き方で把握できる。",
+    "context": "2026-11-27 竹内さん「このようにしたことを把握していない部分がほかにもある可能性あるので調査する」「まとめてなおす／ちゃんと手順書も反映」。",
+    "applied_to": "chrome-extension/page-script.js（_pressNote・_humanPointerClick の確かめられない押し・search_press_ok）、chrome-extension/bulk-dl.js（_setPressNote・window の axlx-press-note・並べ替えの押せた／押せず）、app/lib/action-playbook.ts（検索・並べ替え・リセットの手・PLAYBOOK_BUILD_V 31）、app/lib/auto-procedure-rules.ts（press_receipts_all）",
+    "tags": ["Chrome拡張", "押す", "把握", "枠", "手順書", "汎用"],
+    "priority": 1
+  }
+]
