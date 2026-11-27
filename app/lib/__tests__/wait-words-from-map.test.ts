@@ -21,8 +21,9 @@ console.log("■ 今の地図の待ちは正しい");
 {
   const bad = checkWaits();
   assert(bad.length === 0, "地図の待ちに問題: " + bad.join(" / "));
-  assert(LOOP_WAITS.length === 4, "待ちは4つ（検索後・押したあと・読み直しあと・リセット後）");
-  console.log("  ✓ 4つの待ち・どの手にあるか・言葉・秒数が正しい");
+  // 2.8.328: 見えないタブで押さずに待つ（reset_hidden・最大10分）を足した
+  assert(LOOP_WAITS.length === 9, "待ちは9つ（検索後・押したあと・読み直しあと・リセット後・見えるまで・保険の60〜90秒・20秒の3つ）");
+  console.log("  ✓ 9つの待ち・どの手にあるか・言葉・秒数が正しい");
 }
 
 console.log("■ 拡張の WAIT_WORDS は地図と同じ（生成部分が古くない）");
@@ -53,9 +54,16 @@ console.log("■ 各待ちは拡張のコードで使われている（地図に
     sort_resume_lag: /_setBulkWaitById\("sort_resume_lag", _lagR\)/.test(dl),
     // リセット後の待ちは background が id を送る（言葉は bulk-dl の WAIT_WORDS）
     reset_settle: /_bulkWaitShow\("reset_settle", _settleMs\)/.test(bg) && /msg\.type === "axlx-bulk-wait"/.test(dl),
+    reset_insure: /_bulkWaitShow\("reset_insure", _insureMs\)/.test(bg) && /msg\.type === "axlx-bulk-wait"/.test(dl),
+    // 2.8.328: 見えないタブで押さずに待つ（_waitRealproVisible が id で枠を出す）
+    reset_hidden: /_bulkWaitShow\("reset_hidden", RESET_HIDDEN_WAIT_MAX_MS\)/.test(bg),
+    // 2.8.328: 完了の20秒あけ（_gapBeforeNext が id で枠を出す）
+    reset_gap: /_gapBeforeNext\(customerId, auditRunId, "reset_gap", 20000\)/.test(bg),
+    reset_done_gap: /_gapBeforeNext\(customerId, auditRunId, "reset_done_gap", 20000\)/.test(bg),
+    api_reload_gap: /_gapBeforeNext\(customer && customer\.id, null, "api_reload_gap", 20000\)/.test(bg),
   };
   for (const w of LOOP_WAITS) assert(used[w.id] === true, `待ち ${w.id} がコードで使われていない（地図に書いただけ）`);
-  console.log("  ✓ 4つとも配線されている");
+  console.log("  ✓ 9つとも配線されている");
 }
 
 console.log("■ 悪い地図を止める（自己点検）");

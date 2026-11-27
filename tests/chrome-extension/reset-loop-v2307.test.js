@@ -37,10 +37,10 @@ ok("look_skip は点検の段として残る（KEEP_STEP・RULE_STEP の両方�
 console.log("\n■ ② 空なら件数が増えなくても成功（1つずつ外しに回さない）");
 const bgVerify = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendClearOrReset"));
 // 2.8.317: 送付後のリセットは押して30〜34秒待ったら空とみなす（読み戻しループ・件数の記録・reset_not_empty は廃止）
-ok("押して待ったら空とみなす（reset_settled・assumedEmpty）", /_stamp\("reset_settled"/.test(bgVerify) && /assumedEmpty: true/.test(bgVerify));
+ok("押して空を確かめたら完了（reset_settled・confirmed・空とみなさない）", /_stamp\("reset_settled"/.test(bgVerify) && /confirmed: true/.test(bgVerify) && !/assumedEmpty: true/.test(bgVerify));
 ok("空の確認ループ（RESET_VERIFY_TOTAL_MS）は無い", bgVerify.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
 ok("旧の『空でも増えなければ従来の外しへ』は無い", !/countSame: true, why: "reset_count_same"/.test(bgVerify));
-ok("押せない・例外の時は ok:false で呼び元の保険→従来の外しへ", /ok: false/.test(bgVerify) && /reset_press", "押せず→従来の外しへ/.test(bgVerify));
+ok("押せない・例外の時は ok:false で呼び元の保険へ（従来の外しへ行かない）", /ok: false/.test(bgVerify) && /reset_press", "押せず→保険/.test(bgVerify));
 
 console.log("\n■ ③ ページ側も空なら『きれい』印を付ける");
 const verifySrc = ps.slice(ps.indexOf("  function _resetVerify(opts, done) {"), ps.indexOf("  function _axResetCleanFresh"));

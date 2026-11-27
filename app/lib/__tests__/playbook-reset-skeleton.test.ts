@@ -19,7 +19,8 @@ assert(/空/.test(clear.steps[3]) && /reset_settled/.test(clear.steps[3]), "手4
 assert(/API/.test(clear.steps[4]) && /customer_api_reload/.test(clear.steps[4]), "手5は次客の条件をAPIから読み直して入れる");
 assert(!/猶予を置く/.test(text), "リセット後の猶予は置かない");
 assert(!/1つずつカーソルで外す|1駅ずつ外す|箱ごとに開ける→/.test(text), "旧の1つずつ外す手が残っていない");
-assert(/最後の保険/.test(clear.steps[clear.steps.length - 1]), "1つずつ外すは最後の保険だけ");
+// 2.8.327（竹内さん 2026-11-27「それでもダメならスクショを撮って止める」）: 最後の手は止める。1つずつ外すへ戻らない
+assert(/止める/.test(clear.steps[clear.steps.length - 1]) && !/1つずつ外す(?!.*行かない)/.test(clear.steps[clear.steps.length - 1]), "保険の最後は止める（1つずつ外すへ戻らない）");
 for (const id of ["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance"]) {
   assert(clear.rules.includes(id), "clear の決まりに " + id);
 }

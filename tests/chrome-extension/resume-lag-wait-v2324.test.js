@@ -24,7 +24,8 @@ console.log("■ 1. 読み直し後の入口は、すぐ始めず猶予を取る
   ok("猶予は _lagGraceMs() で取る（固定の数字の待ちにしない）", /var _lagR = _lagGraceMs\(\);/.test(dl.slice(i0 - 200, i0 + 200)));
   ok("猶予の時間で setTimeout する", i1 > i0 && i2 > i1 && /\}, _lagR\);/.test(dl.slice(i2 - 2, i2 + 12)));
   // 入口から最初の _startAutoPressRun() までに、即時の呼び出しが無い
-  const entry = dl.indexOf("if (_sortPressedMeansList(_readSortPressedSync())) {");
+  // 2.8.328: 押した印を一度読んで（押した時刻も使う）から入口を判断する
+  const entry = dl.indexOf("if (_sortPressedMeansList(_sortSync)) {");
   const firstStart = dl.indexOf("_startAutoPressRun();", entry);
   ok("入口の中で _startAutoPressRun() を直接呼ばず、猶予のあとに呼ぶ", entry > 0 && firstStart > i1 && firstStart > i2 - 600);
   ok("猶予の長さを点検に残す（sort_lag_grace・読み直し後）", /_liveDlStep\("sort_lag_grace", Math.round\(_lagR \/ 1000\) \+ "秒 読み直し後の猶予/.test(dl));

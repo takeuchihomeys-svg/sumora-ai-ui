@@ -20,7 +20,7 @@ const js = req(join(process.cwd(), "chrome-extension/bulk-panel-grasp.js"));
 console.log("■ JS の写しと TS が同じ言葉");
 {
   assert(JSON.stringify(js.PANEL_PHASE_WORDS) === JSON.stringify(PANEL_PHASE_WORDS), "PANEL_PHASE_WORDS が JS と TS で違う");
-  const g = { total: 3, index: 2, currentName: "てん", nextName: "やまだ", nextMove: "前客の選択を1つずつ外す", currentAction: "外している最中" };
+  const g = { total: 3, index: 2, currentName: "てん", nextName: "やまだ", nextMove: "リセットで空にして次のお客さんへ", currentAction: "外している最中" };
   const a = formatBulkPanelGrasp(g);
   const b = js.formatBulkPanelGrasp(g);
   assert(!!a && !!b && a.now === b.now && a.next === b.next, "表示が JS と TS で違う: " + a?.now + " / " + b?.now);
@@ -36,7 +36,7 @@ console.log("■ 一覧の手に 送付済み→次へ／0件／客完了→リ�
   assert(/④の3（④の場合分け）[^\n]*0件[^\n]*客完了/.test(steps), "④の3 0件→客完了");
   assert(/^④並べ替え後に印刷用PDFを押す（[^\n]*④の1〜3[^\n]*順に行う手ではない/m.test(steps), "④ が ④の1〜3 は場合分けで順に行う手ではないと言っている");
   assert(/押した時点で並べ替えは完了/.test(steps) && /物件取得最中/.test(steps) && /並べ替え最中/.test(steps), "③④に完了とパネルの言葉がある");
-  assert(/^⑤客完了（④で送り終えた・④の1〜3のどれでも）[^\n]*リセット[^\n]*次のお客さん[^\n]*リセットからの流れは同じ/m.test(steps), "⑤ 客完了→リセットして次のお客さん");
+  assert(/^⑤客完了（④で送り終えた・④の1〜3のどれでも）→送付が終わった合図のあと20秒あけてから、リセットを押す。リセットからの流れは同じ[^\n]*次のお客さん/m.test(steps), "⑤ 客完了→リセットして次のお客さん");
   assert(!/[⑥⑦⑧]/.test(steps), "通し番号の⑥⑦⑧が残っていない（④の場合分けと混ざらない）");
   const handoff = PLAYBOOK_FLOW_SERIES.find((p) => p.id === "handoff");
   assert(/0件/.test(String(handoff?.label)) && /次頁も全部送付済み/.test(String(handoff?.label)) && /リセット/.test(String(handoff?.label)), "一連の流れ handoff");

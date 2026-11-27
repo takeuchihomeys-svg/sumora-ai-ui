@@ -4,7 +4,7 @@ const root = path.join(__dirname, "..", "..", "chrome-extension");
 const ps = fs.readFileSync(path.join(root, "page-script.js"), "utf8");
 let pass = 0, fail = 0;
 function ok(n, c, d) { if (c) { pass++; console.log("  ✓ " + n); } else { fail++; console.log("  ✗ " + n + (d ? " :: " + d : "")); } }
-ok("見えない町: 詳細地域へ進む(next_step_button2)を1回だけカーソルで押す", /townStepTried/.test(ps) && /leftover_town_step/.test(ps) && /enqueueHumanClick\(_nx,/.test(ps));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 見えない町: 詳細地域へ進む(next_step_button2)を1回だけカーソルで押す
 ok("押下時間: _fireAt が AxlxPointerUi.holdMs を使い mousedown を先に出す", /_PH\.holdMs\(\)/.test(ps) && /_sendDown/.test(ps));
 ok("ラン seed: fill 開始で __axlxRunId を置く", /window\.__axlxRunId = String\(_fillCustomerId/.test(ps));
 ok("監査: motion_stats を AxlxPointerUi.motionStats() から出す", /_auditStepP\("motion_stats"/.test(ps) && /_PM\.motionStats\(\)/.test(ps));

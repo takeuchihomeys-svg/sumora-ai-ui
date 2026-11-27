@@ -4926,12 +4926,23 @@ function openInstructions(siteKey) {
         _clickAuditCtx(autofillBtn);
         return;
       }
-      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
+      // ⚠ 押す側は click() から戻った直後に印・点検の文脈・更新日の欄を戻す → 最初の await より前に写し取る
+      const _auditCtx_it = _clickAuditCtx(autofillBtn);
+      const _btnSnap_it = {
+        automated: !!autofillBtn.dataset.automated,
+        auto_send_all: !!autofillBtn.dataset.auto_send_all,
+        area_mode_locked: autofillBtn.dataset.area_mode_locked || null,
+        auto_sort: autofillBtn.dataset.auto_sort || null,
+        auto_max_pages: Number(autofillBtn.dataset.auto_max_pages) || null,
+        update_days: document.getElementById("adj-update-days")?.value || "",
+      };
       _itandiFillRunningAt = Date.now();
-      const _auditCtx_it = _clickAuditCtx(autofillBtn); // await 前に取得
-      try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
+      try {
+        await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
+        await _itandiAutofillRun(_auditCtx_it, _btnSnap_it);
+      } finally { _itandiFillRunningAt = 0; }
     };
-    const _itandiAutofillRun = async (_auditCtx_it) => {
+    const _itandiAutofillRun = async (_auditCtx_it, _btnSnap_it) => {
       // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする。検索の画面の入力は手動でそれ以外は今まで通りに」:
       //   案内モード（guideMode・既定オン）の間も条件は今まで通りここで組み立てて送る（広げての家賃・築年数＋5年・隣の駅も同じ）。
       //   受け取った itandi-page-script.js が案内モードなら入力せずに案内（itandi-guide.js）へ渡す＝入力と検索はスタッフ
@@ -4939,15 +4950,16 @@ function openInstructions(siteKey) {
       // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値は使わない）
       // 2026-11-10 v2.5.94: 自動モード（通常／スタッフ／自動 の「自動」）を選んでいる時は案内を OFF にして拡張が入力する（昔の自動と同じ）
       const _guideIt = _isAutoModeNow() ? false : ((self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY) ? true : _gmIt !== false);
-      const isAutomated_itandi = !!autofillBtn.dataset.automated;
-      const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
-      const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
-      // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。await 前に取得
-      const _autoSort_it = autofillBtn.dataset.auto_sort || null;
+      const _snapIt = _btnSnap_it || {};
+      const isAutomated_itandi = !!_snapIt.automated;
+      const isAutoSendAll_itandi = !!_snapIt.auto_send_all;
+      const _lockedMode_itandi = _snapIt.area_mode_locked || null;
+      // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。押した時に写し取った値
+      const _autoSort_it = _snapIt.auto_sort || null;
       let c = selectedCustomer;
       // 2026-11-16 竹内「最大3／新着は5」: 自動便の指定が無ければ未送付＝新着→5
       const _autoMaxPages_it = (function () {
-        var fromBtn = Number(autofillBtn.dataset.auto_max_pages) || null;
+        var fromBtn = Number(_snapIt.auto_max_pages) || null;
         if (fromBtn) return fromBtn;
         var AR = (typeof self !== "undefined" && self.AxlxAutoRun) || null;
         if (AR && AR.resolveMaxPages && c) {
@@ -4969,7 +4981,7 @@ function openInstructions(siteKey) {
       const adjPet       = document.getElementById("adj-pet").checked;
       // v2.5.34 竹内「リアプロはボタンで選択やけど ITANDI は入力となる（更新日）」: リアプロと同じ更新日の欄（preloadAdjForm が入れる）の日数を
       //   ITANDI の「募集条件更新 N日以内」に打つ（itandi-page-script.js）。「指定なし」は null＝欄を空のまま
-      const adjUpdateDaysIt = document.getElementById("adj-update-days")?.value || "";
+      const adjUpdateDaysIt = _btnSnap_it ? String(_snapIt.update_days || "") : (document.getElementById("adj-update-days")?.value || "");
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
       // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
@@ -5475,8 +5487,13 @@ function openInstructions(siteKey) {
     });
 
     autofillBtn.onclick = async () => {
-      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
-      const _auditCtx_rp = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得（点検の文脈は click に直接渡る）
+      /**
+       * ⚠ 押す側（_switchAndClick）は click() から戻った直後に、自動の印（dataset.automated 等）・点検の文脈・
+       *   自動便の更新日の欄を元に戻す。だから印とフォームの値は**最初の await より前**に全部読む。
+       *   2.8.112〜2.8.328 は先頭で学びの取り直しを await していたため、自動の押しを手押しと読み違え、
+       *   番号なしの入力前リセットを何度も頼んでいた（#1666 で29回・#1671 で58回）。学びの取り直しは読み終えた後で待つ。
+       */
+      const _auditCtx_rp = _clickAuditCtx(autofillBtn);
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
       // AIX: 条件画面はボタン押しで開始（開いただけでは動かない）。点検用の印
@@ -5552,6 +5569,7 @@ function openInstructions(siteKey) {
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
       };
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
+      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
 
       // ① API呼び出しを先に実施（モード判定 + 補完データ取得を兼ねる）
       // キャッシュがあれば即返る。未知トークンがなければ null。

@@ -429,4 +429,15 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "手順書に分かれ道を足す時に通し番号の手として並べてよいか", gold: ["bf85fa07"], from: "owner-base-1111b" },
   { q: "流れを変える前に何を読んで何を書いてから直すか", gold: ["bf85fa07"], from: "owner-base-1111b" },
   { q: "全部送付済みや0件のお客さんもリセットして次のお客さんへ行く流れの正本はどこか", gold: ["bf85fa07"], ho: true, from: "owner-base-1111b" },
+  { q: "拡張がボタンを押したかどうかを把握する仕組みはどうなっているか", gold: ["530603c3"], from: "owner-press-grasp-1127" },
+  { q: "確定してリストへを押しても小窓が閉じない時はどうするか", gold: ["530603c3"], from: "owner-press-grasp-1127" },
+  { q: "押した印が点検の記録に残らない原因と直し方", gold: ["530603c3"], ho: true, from: "owner-press-grasp-1127" },
+  // 2026-11-27 2.8.328 並べ替えの時間差・入力前リセットの二重・町／管理費／構造の確かめ
+  { q: "高→低を押した後に画面で並べ替えが効いたか確かめられない時はどう判断するか", gold: ["b9eaef83"], from: "owner-sort-time-1127" },
+  { q: "並べ替え済みの一覧でもう一度並べ替えが始まってカーソルが取り消される", gold: ["b9eaef83"], ho: true, from: "owner-sort-time-1127" },
+  { q: "裏が起き直した後に入力前のリセットが2回押される原因", gold: ["b9949cbb"], from: "owner-reset-dup-1127" },
+  { q: "同じ秒に bulk_phase の同じ段が何十行も点検に残る", gold: ["b9949cbb"], from: "owner-reset-dup-1127" },
+  { q: "自動の印をボタンの処理が await の後に読んで手動扱いになる", gold: ["b9949cbb"], ho: true, from: "owner-reset-dup-1127" },
+  { q: "町をピンポイントで選んだ後に本当にチェックが付いたかを確かめるか", gold: ["abc82e4e"], from: "owner-pick-effect-1127" },
+  { q: "管理費・共益費込みや構造の選択が効かなかった時に検索を止めるか", gold: ["abc82e4e"], ho: true, from: "owner-pick-effect-1127" },
 ];

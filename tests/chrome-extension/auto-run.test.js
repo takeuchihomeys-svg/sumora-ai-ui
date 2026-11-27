@@ -131,7 +131,14 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("popup: 更新日の欄は値を入れるだけ（change を出さない＝DB に書かない）", /undo\.prevDays = el\.value; el\.value = ar\.rp_update_days \? String\(ar\.rp_update_days\) : "";/.test(pp) && !/_applyAutoRunToForm[\s\S]{0,900}dispatchEvent/.test(pp.slice(pp.indexOf("function _applyAutoRunToForm"), pp.indexOf("function _restoreAutoRun"))));
   ok("popup: リアプロの条件に sort_order・max_pages（自動便だけ）", /sort_order: _autoSort,\s*max_pages: _autoMaxPages,/.test(pp));
   ok("popup: ITANDI の条件に sort_order・max_pages", /sort_order: _autoSort_it,\s*max_pages: _autoMaxPages_it,/.test(pp));
-  ok("popup: dataset は await より前に読む", /const _autoSort = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp) && /const _autoSort_it = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp));
+  {
+    // 2.8.328: 旧は文があるだけで通っていた（実際は先頭の学びの取り直しの await の後で読み、押す側が戻した後の値を読んでいた）→ 位置で見る
+    const rpAt = pp.indexOf("const _autoSort = autofillBtn.dataset.auto_sort || null;");
+    const rpOn = pp.lastIndexOf("autofillBtn.onclick = async () => {", rpAt);
+    const rpAwait = pp.slice(rpOn, rpAt).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").search(/\bawait\b/);
+    ok("popup: dataset は await より前に読む（リアプロ: 処理の先頭から読むまでに await が無い）", rpAt > 0 && rpOn > 0 && rpAwait < 0, { rpAt, rpOn, rpAwait });
+    ok("popup: dataset は await より前に読む（ITANDI: 押した時に写し取って渡す）", /auto_sort: autofillBtn\.dataset\.auto_sort \|\| null,[\s\S]{0,400}await new Promise\(function \(r\) \{ _axLearnRefreshBeforeAutofill\(r\); \}\);\s*await _itandiAutofillRun\(_auditCtx_it, _btnSnap_it\);/.test(pp) && /const _autoSort_it = _snapIt\.auto_sort \|\| null;/.test(pp));
+  }
   const bd = read("bulk-dl.js");
   // 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている。ページ更新すると拡張ツールの検索のところが
 //   閉じてしまうのにそのまま物件取得にうつってしまうので全物件が対象となってしまう」:

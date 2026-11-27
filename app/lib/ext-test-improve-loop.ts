@@ -520,13 +520,13 @@ export function scanExtWiringFindings(root = process.cwd()): ExtTestFinding[] {
       });
     }
     // ★ 2.8.203: 連続客・送付後外しの監査印（runId 明示・見送りでも stamp）
-    if (!/_postSendClearRealpro\s*\(\s*customerId\s*,\s*auditRunId\s*\)/.test(bg)
-      && !/function _postSendClearRealpro\(customerId, auditRunId\)/.test(bg)) {
+    // 2.8.328: 送付後の外し（_postSendClearRealpro）は消した。送付後はリセット（_postSendClearOrReset）の runId 明示を見る
+    if (!/async function _postSendClearOrReset\(customerId, auditRunId\)/.test(bg)) {
       findings.push({
         id: "post_send_runid",
         layer: "free",
-        gap: "_postSendClearRealpro が auditRunId を受け取っていない（印が消える穴）",
-        next: "runId を明示渡しし、見送りでも post_send_clear を stamp",
+        gap: "_postSendClearOrReset が auditRunId を受け取っていない（印が消える穴）",
+        next: "runId を明示渡しし、見送りでも post_send_clear を stamp（2.8.328）",
         fixable: false,
       });
     }
@@ -539,12 +539,12 @@ export function scanExtWiringFindings(root = process.cwd()): ExtTestFinding[] {
         fixable: false,
       });
     }
-    if (!/leftover_scan/.test(pageSrc) || !/__axlxPostSendClearP/.test(pageSrc)) {
+    if (!/leftover_scan/.test(pageSrc) || /__axlxPostSendClearP/.test(pageSrc)) {
       findings.push({
         id: "handoff_loop_page",
         layer: "free",
-        gap: "page に leftover_scan または送付後外し関数が無い",
-        next: "前客外しと __axlxPostSendClearP を戻す",
+        gap: "page に leftover_scan が無い、または消した送付後の外し（__axlxPostSendClearP）が戻っている",
+        next: "leftover_scan を戻す（送付後の1つずつ外しは 2.8.328 で消した・戻さない）",
         fixable: false,
       });
     }

@@ -232,7 +232,7 @@ export function formatLoopAdvance(input: {
   const idx = Number(input.index) || 0;
   const tot = Number(input.total) || 0;
   const pos = idx > 0 && tot > 0 ? `（${idx}/${tot}）` : "";
-  const nextMove = nxt ? "前客の選択を1つずつ外す" : "一括完了";
+  const nextMove = nxt ? "リセットで空にして次のお客さんへ" : "一括完了";
   return {
     summary: nxt
       ? `客完了→次へ${pos} いま=${cur.slice(0, 16)} 次=${nxt.slice(0, 16)}`

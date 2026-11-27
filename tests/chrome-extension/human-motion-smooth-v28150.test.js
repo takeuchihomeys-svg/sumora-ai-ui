@@ -23,9 +23,10 @@ ok("プルダウンを見せる送りは2回目以降も smooth", /el\.scrollInt
 ok("検索ボタンは6回待っても外なら smooth で送って印を残す", /search_scroll_smooth/.test(ps));
 
 console.log("■ ② 見えない欄は待ってからカーソルで");
-const hp = fnBody("function _humanPointerClick(el, fallbackFn, aim, tgtAt)");
+// 2.8.328: 外側の _humanPointerClick は押した受領だけ。動き方の中身は _humanPointerClickCore（呼び直しも中身へ＝受領が二重にならない）
+const hp = fnBody("function _humanPointerClickCore(el, fallbackFn, aim, tgtAt)");
 ok("見えるまで最大1.2秒待つ", /if \(!el\.__axHidWaited\)/.test(hp) && /Date\.now\(\) - _hw0 >= 1200/.test(hp));
-ok("待ってから自分を呼び直す（カーソルの経路へ）", /res\(_humanPointerClick\(el, fallbackFn, aim, tgtAt\)\)/.test(hp));
+ok("待ってから自分を呼び直す（カーソルの経路へ）", /res\(_humanPointerClickCore\(el, fallbackFn, aim, tgtAt\)\)/.test(hp));
 ok("見えたら印 hidden_wait_ok", /_auditStepP\("hidden_wait_ok"/.test(hp));
 ok("待っても見えない時だけ hidden_press（印は残す）", hp.indexOf("__axHidWaited = 0;") > 0 && hp.indexOf("__axHidWaited = 0;") < hp.indexOf('_auditStepP("hidden_press"'));
 ok("label が見える時は label にカーソル（待つより先）", hp.indexOf("if (_proxy) {") < hp.indexOf("if (!el.__axHidWaited)"));

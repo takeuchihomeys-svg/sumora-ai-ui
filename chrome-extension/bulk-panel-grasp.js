@@ -1,7 +1,7 @@
 /**
  * 一括検索パネル把握文（app/lib/bulk-panel-grasp.ts の写し・MAIN/SW 共用）
  * 2026-11-23 竹内さん「誰を一括で／何件／次の客／把握できているか」を枠に出す
- * ★ 2.8.227: いまの行動（外している最中）を now に出す
+ * ★ 2.8.227: いまの行動（リセットで空を確かめている最中）を now に出す
  * ★ 2.8.228: task_now（間取外:2LDK 等）があれば now に優先
  */
 (function (root) {
@@ -28,7 +28,7 @@
   /* PANEL_WORDS:END */
   function playbookAction(a) {
     var t = String(a || "");
-    if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
+    if (/リセットで空を確かめ|外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
     if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
     return t;
   }

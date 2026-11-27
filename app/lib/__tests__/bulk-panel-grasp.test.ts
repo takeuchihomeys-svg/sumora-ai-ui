@@ -33,7 +33,7 @@ console.log("■ 決定表");
 
   const clearing = formatBulkPanelGrasp({
     total: 2, index: 2, currentName: "やまだ", nextName: "",
-    nextMove: "前客の選択を1つずつ外す", currentAction: "外している最中",
+    nextMove: "リセットで空にして次のお客さんへ", currentAction: "外している最中",
   });
   assert(!!clearing && clearing.now.includes(PANEL_PHASE_WORDS.reset.now) && !/外している最中/.test(clearing.now), "外す中→手順書の言葉 now=" + clearing?.now);
   assert(!!clearing && clearing.next.includes(PANEL_PHASE_WORDS.reset.next), "外す中 next=" + clearing?.next);

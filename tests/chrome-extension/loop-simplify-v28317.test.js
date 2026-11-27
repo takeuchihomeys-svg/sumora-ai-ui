@@ -101,7 +101,7 @@ console.log("\n■ ① リセット＝押して待つだけ");
 {
   const seg = range(bg, "async function _postSendResetRealpro", "async function _resetWithInsurance") || bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendResetRealpro") + 12000);
   ok("reset_settled を残す", /_stamp\("reset_settled"/.test(bg));
-  ok("押して待ったら空とみなす（assumedEmpty）", /assumedEmpty: true/.test(bg));
+  ok("押して空を確かめたら完了（confirmed・空とみなさない）", /confirmed: true/.test(bg) && !/assumedEmpty: true/.test(bg));
   ok("読み戻しは『きれい』印のための1回・最大1.5秒", /maxMs:1500/.test(bg.replace(/\s/g, "")));
   ok("空の読み戻しの繰り返し（RESET_VERIFY_TOTAL_MS）は無い", bg.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
   ok("リセット後の写真の間（RESET_SHOT_GAP_MIN_MS）は無い", bg.indexOf("RESET_SHOT_GAP_MIN_MS") < 0);
@@ -111,7 +111,7 @@ console.log("\n■ ① リセット＝押して待つだけ");
 console.log("\n■ ① 最初の客・前客リセット済みの客は入れる前にリセットしない");
 {
   ok("最初の客は見送る", /_bi === _startIndex && !_resume/.test(bg) && /この一括の最初の客はリセットしない/.test(bg));
-  ok("前客のリセットが済んでいれば見送る", /前客のリセットが済んでいる（空とみなしてそのまま入れる）/.test(bg) && /String\(_lp0\.cid\) === String\(_prevT0\.id\)/.test(bg));
+  ok("前客のリセットが済んでいれば見送る", /前客のリセットが空と確かめ済み（そのまま入れる）/.test(bg) && /String\(_lp0\.cid\) === String\(_prevT0\.id\)/.test(bg));
   ok("見送りは reset_before_fill に残す", /"見送り=" \+ _skipPreFill/.test(bg));
   ok("見送らない時は従来どおり _resetBeforeFill", /await _resetBeforeFill\(_bc, _bulkAudit/.test(bg));
 }

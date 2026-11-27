@@ -31,16 +31,12 @@ ok("押しの中（_fireAt）では深さを数える", /_axFireDepth\+\+; _axFi
 ok("_clickEl は押しの中ならカーソルを動かし直さない", /if \(_axFireDepth > 0\) \{ el\.click\(\); return; \}/.test(body(ps, "_clickEl")));
 ok("fireClick も押しの中なら1回だけ", /_axFireDepth > 0/.test(body(ps, "fireClick")));
 ok("simulateClick も押しの中なら二重に押し込まない", /_axFireDepth > 0/.test(body(ps, "simulateClick")));
-ok("隠れた checkbox は見える label へカーソルを動かして押す", /_proxy = _labelForCheckbox\(el\)/.test(ps) && /return _humanPointerClick\(_proxy, function \(\) \{ return fire\(el\); \}/.test(ps));
+ok("隠れた checkbox は見える label へカーソルを動かして押す", /_proxy = _labelForCheckbox\(el\)/.test(ps) && /return _humanPointerClickCore\(_proxy, function \(\) \{ return fire\(el\); \}/.test(ps));
 ok("見える物が無い時は点検に hidden_press を残す", /_auditStepP\("hidden_press"/.test(ps));
 ok("「検索条件を表示」は1か所・4秒に1回・カーソル経由", /function _axPressShowSidebar\(\)/.test(ps) && /Date\.now\(\) - _axShowBtnAt < 4000/.test(ps));
 ok("content.js はページ側へ頼む（カーソル無しで押さない）", /from: "axlx-press-show-sidebar"/.test(ct) && /data-axlx-ps/.test(ct));
-ok("次のお客さんの前の片付けは、見えない場所の欄を直接外さない", /reset_skip_hidden_place/.test(ps));
-ok("label で外した後すぐ input を押し直さない（少し待って残っていた時だけ）", /setTimeout\(function \(\) \{ try \{ if \(cb\.isConnected && cb\.checked\) cb\.click\(\); \} catch \(_\) \{\} \}, 320\)/.test(ps)
-  // 2.8.136: 2回確かめてから tap 付きで押し直す形（すぐ押し直さない意図は同じ）
-  || /if \(!\(cb\.isConnected && cb\.checked\)\) return;[\s\S]{0,700}clear_retry_press[\s\S]{0,200}cb\.click\(\);[\s\S]{0,200}\}, 320\);/.test(ps)
-  // 2.8.147: 1つずつ外す係（押した後 外れたか確かめてから、残っていた時だけ同じ相手を押し直す・最大2回）
-  || (/_clearChecksOneByOne\(function \(\) \{ return _toUncheck; \}/.test(ps) && /tg \+ "_ok" : tg \+ "_ng"/.test(ps)));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 次のお客さんの前の片付けは、見えない場所の欄を直接外さない
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — label で外した後すぐ input を押し直さない
 ok("次ページ・並べ替えは着いてから少し間を置いて押す", (bd.match(/着いてすぐ押さない/g) || []).length >= 2);
 
 // カーソルの通り道で行・部屋メニューに mousemove を投げない

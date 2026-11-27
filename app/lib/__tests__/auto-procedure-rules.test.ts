@@ -93,7 +93,8 @@ console.log("■ 点検記録で守れたかを確かめる");
     { k: "page:playbook_seen", d: "v=aaaa rv=bbbb 決まり=16/16 無い=- 手順書に無い=- 場面=6 手=30", at: t0 - 100 },
   ];
   const j = Object.fromEntries(judgeRulesOnAudit(good).map((x) => [x.id, x]));
-  ok("外す順番どおり → ok", j.clear_per_panel.result === "ok", j.clear_per_panel.why);
+  // 退役（段階1・2026-11-27）: 箱ごとの外す順番は廃止。残りが無い回は no_data（外さない）
+  ok("残りが無い回は no_data（1つずつ外さない）", j.clear_per_panel.result === "no_data", j.clear_per_panel.why);
   ok("見えない押下が無い → ok", j.no_hidden_press.result === "ok");
   ok("確定まで 1.2秒 → ok", j.confirm_decide.result === "ok", j.confirm_decide.why);
   ok("検索まで 1.5秒 → ok", j.search_decide.result === "ok", j.search_decide.why);
@@ -111,7 +112,10 @@ console.log("■ 点検記録で守れたかを確かめる");
     { k: "page:playbook_none", d: "手順書が届いていない", at: t0 - 100 },
   ];
   const b = Object.fromEntries(judgeRulesOnAudit(bad).map((x) => [x.id, x]));
-  ok("所在地を先に外した → ng", b.clear_per_panel.result === "ng", b.clear_per_panel.why);
+  ok("外す順番が逆（所在地→間取り）でも残りが無ければ no_data", b.clear_per_panel.result === "no_data", b.clear_per_panel.why);
+  const stay: AuditStep[] = [{ k: "page:leftover_soft_stay", d: "前客の欄が残り（1つずつ戻すのは廃止）", at: t0 }];
+  const st = Object.fromEntries(judgeRulesOnAudit(stay).map((x) => [x.id, x]));
+  ok("残りがあって外さず止めた → ok", st.clear_per_panel.result === "ok", st.clear_per_panel.why);
   ok("見えない押下 → ng", b.no_hidden_press.result === "ng");
   ok("確定まで 10秒 → ng", b.confirm_decide.result === "ng", b.confirm_decide.why);
   ok("検索まで 8秒 → ng（詰まり）", b.search_decide.result === "ng", b.search_decide.why);

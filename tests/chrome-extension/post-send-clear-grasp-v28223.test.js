@@ -28,8 +28,8 @@ ok("post_send_clear_gap 印", /post_send_clear_gap/.test(bg) && /post_send_clear
 ok("未完了で ForceClear 注入", /__axlxForceClearAllPlace = true/.test(bg) && /__axlxPostSendClearGap/.test(bg));
 
 console.log("\n■ 把握");
-ok("post_send 開始で guide_clear_grasp", /guide_clear_grasp[\s\S]{0,40}送付後外し把握/.test(ps) || /送付後外し把握/.test(ps));
-ok("post_send で loop clear", /_graspCustomerLoopPhase\("clear", "post_send_clear"\)/.test(ps));
+ok("post_send 開始で guide_clear_grasp は無い（2.8.328: 送付後の外しを消した）", !/送付後外し把握/.test(ps));
+ok("post_send で loop clear は無い（2.8.328）", !/_graspCustomerLoopPhase\("clear", "post_send_clear"\)/.test(ps));
 ok("fill_start_gap で強制外す把握", /fill_start_gap/.test(ps) && /post_send_gap/.test(ps));
 
 console.log("\n■ 決まり・通し");

@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { flowNode, renderListPressSteps } from "./loop-flow-map";
+import { flowNode, pressLine, pressLinesOf, renderListPressSteps } from "./loop-flow-map";
 import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
@@ -46,7 +46,11 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 31;
+// 35（2026-11-27 竹内さん「町の選択や管理費・構造の選択は、効いたかを確かめていない」「ならべ化…時間差で並べ替えしたということの認識にすればよい」）: 町・管理費・構造の「選んだ→印が付いたか読む→1回選び直す」と、高→低の時間差の認識を地図から載せる（拡張 2.8.328）。
+// 34（2026-11-27 竹内さん「ちゃんと押したら押したってこと理解できるように それぞれの手順書のところでもボタンをおしたってことの把握」）: 押す手ごとに「押した／効いた／効かない時」の文を流れの地図（presses）から作って載せる（リセット・所在地を開く・確定・検索・高→低・印刷用PDF・次へ）。決まり press_grasp_each に全部（拡張 2.8.328）。
+// 33（2026-11-27 竹内さん「完了の20秒以降にリセットする」「作業ごとに完了してから20秒あける」「従来の1つずつ外しを完全に消す」）: 送付完了→20秒→リセット→空を確かめたら20秒→次客の読み直し→20秒→入れる。従来の1つずつ外しの文は無くした（拡張 2.8.328）。
+// 32（2026-11-27 竹内さん「押して空になったことを確実に確かめる。1で完了／2は保険（通知が来ない時だけ・60〜90秒後・確かめ→押し直し1回）／空とみなして次へは無くす」）
+export const PLAYBOOK_BUILD_V = 35;
 // 31（2026-11-27 竹内さん「まとめてなおす・ちゃんと手順書も反映」）: 押した結果（検索・高→低・リセット・確かめられなかった押し）を枠に出す。手順書の検索・並べ替え・リセットの手に載せた（拡張 2.8.326）。
 // 30（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）: ③の末尾と④の文に、地図の「押した時点で並べ替えは完了／読み直した一覧は④物件取得／パネルは物件取得最中」をそのまま載せる。決まり1行だけでは手順書の手は強くならない。checkListPlaybookStrength が、手からその文が消えたら止める。
 // 29（2026-11-27 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得するように・完了を把握できていない」）: 高→低を押したあとの読み直しで、並べ替え完了とみて④物件取得へ進む（sort_pressed_then_list・拡張 2.8.322）。手順書の④自体は地図から既に出ている。
@@ -97,7 +101,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない。押す前にタブが背面なら前に出す＝2.8.320。押した結果は枠の「押した」行に出す（✓押した・✗押せず・空の確認＝2.8.326））`,
+    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない。押す前にタブが背面なら前に出す＝2.8.320。押した結果は枠の「押した」行に出す（✓押した・✗押せず・空の確認＝2.8.326））。${pressLinesOf("reset").join("。")}`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
     grasp: ["reset_vis", "reset_front", "reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
@@ -105,7 +109,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   },
   {
     id: "clear_then_fill",
-    label: "空とみなした→次客の条件をAPIから読み直して入れへ",
+    label: "空を確かめた→次客の条件をAPIから読み直して入れへ",
     scene: null,
     grasp: ["reset_settled", "customer_api_reload", "reset_verified", "page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
     next: "after_clear",
@@ -154,11 +158,23 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:it_handoff"], next: null },
 ];
 
+/** 流れの地図の押す物1つの「押したことの把握」の文（無ければ空） */
+function pressLineOf(nodeId: string, button: string): string {
+  const p = (flowNode(nodeId)?.presses || []).find((x) => x.button === button);
+  return p ? pressLine(p) : "";
+}
+
+/** 手の欄を決める時は「押したことの把握」の文より前だけを見る（把握の文に出る別の欄の名前で取り違えない） */
+function stepHead(step: string): string {
+  const i = String(step).indexOf("。押したことの把握");
+  return i < 0 ? String(step) : String(step).slice(0, i);
+}
+
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   `①並べ替えへカーソルを置く（クリックしない・検索確認（把握）から${SORT_AFTER_SEARCH_TEXT}の待ちのあと＝検索後は画面が固まるので早すぎたら追いつけない。待ちは1本だけ。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は120秒を過ぎたら古い印として外して張り直す）`,
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
-  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）。押せなかったら枠に「✗高→低を押せなかった」を出して押し直す（2.8.326）。${flowNode("sort")?.playbook ?? ""}`,
+  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）。押せなかったら枠に「✗高→低を押せなかった」を出して押し直す（2.8.326）。${flowNode("sort")?.playbook ?? ""}。${pressLinesOf("sort").join("。")}`,
   // ★ 2.8.319 の後の土台強化 ④から先（④の場合分け・⑤客完了）は手で書き足さず、流れの地図（loop-flow-map.ts）から作る。
   //   分かれ道を通し番号の手として一列に並べられない（2.8.319 で ⑤〜⑧ と並べて紛らわしくなった反省・竹内さん 2026-11-27）
   ...renderListPressSteps(),
@@ -169,7 +185,7 @@ export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
  *   ★ 2026-11-23 竹内さん「検索の理解の部分はちゃんとできているのか」
  */
 export const PLAYBOOK_SEARCH_GRASP_STEPS: ReadonlyArray<string> = [
-  `①条件を入れ終えたら、${SEARCH_REVIEW_TEXT}見直す間をあけてから検索ボタンを押す（検索後は画面が固まるので入れてすぐ押さない・search_review_wait）`,
+  `①条件を入れ終えたら、${SEARCH_REVIEW_TEXT}見直す間をあけてから検索ボタンを押す（検索後は画面が固まるので入れてすぐ押さない・search_review_wait）。${pressLinesOf("search").join("。")}`,
   "②検索したことを手順書×画面で把握する（並べ替え見出し／棟戸／印刷用PDFが見える。まだ動かない時は次の撮影・次手まで45秒あける）",
   `③把握OKのあと${SORT_AFTER_SEARCH_TEXT}待って並べ替え（AD）へ進む（印刷用PDFは並べ替えの後・把握なしでは並べ替えしない）`,
 ];
@@ -178,14 +194,14 @@ export const PLAYBOOK_SEARCH_GRASP_STEPS: ReadonlyArray<string> = [
  * 所在地（area）に必ず載せる確定の手（録画が区の欄だけだと「確定してリストへ」が抜ける）
  */
 export const PLAYBOOK_AREA_CONFIRM_STEPS: ReadonlyArray<string> = [
-  "①所在地絞り込みを開く",
-  "②欲しい区（必要なら町）を選ぶ",
-  "③確定してリストへを押す（入れた把握のあと条件へ）",
+  `①所在地絞り込みを開く。${pressLineOf("fill", "所在地絞り込み")}`,
+  `②欲しい区（必要なら町）を選ぶ。${pressLineOf("fill", "町（ピンポイント）")}`,
+  `③確定してリストへを押す（入れた把握のあと条件へ）。${pressLineOf("fill", "確定してリストへ")}`,
 ];
 
 /** 条件場面が録画に無い時の薄いガイド（連続客で所在地外しだけで止まらない） */
 export const PLAYBOOK_COND_GUIDE_STEPS: ReadonlyArray<string> = [
-  "①【毎回・全員】入れる条件は、その客の最新を拡張ツールがAPIから読み直した値（古い手元のコピーでは入れない・customer_api_reload・next_customer_api_reload）。その条件の賃料・間取り・徒歩などを空のフォームへ1つずつ入れる（最初の客も2人目以降も同じ）",
+  "①【毎回・全員】入れる条件は、その客の最新を拡張ツールがAPIから読み直した値（古い手元のコピーでは入れない・customer_api_reload・next_customer_api_reload）。その条件の賃料・間取り・徒歩などを空のフォームへ1つずつ入れる（最初の客も2人目以降も同じ）。" + pressLineOf("fill", "管理費・共益費込み") + "。" + pressLineOf("fill", "構造"),
   "②検索前に手順書×画面で入忘れ・外し忘れを確かめる",
   "③揃ったら検索ボタンへ進む（外しだけで終わらない）",
 ];
@@ -206,12 +222,12 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     id: "clear",
     label: "前客のリセット（場面なし・決まりから／1つずつ外さない）",
     steps: [
-      "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
+      "①送付が終わったら完了の小窓を閉じ、完了の合図のあと20秒あける（reset_gap・1つずつ外さない・箱ごとに開けて外す手は使わない）",
       `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）。${RESET_PRESS_WAIT_TEXT}`,
-      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。待つだけ（2.8.317・竹内さん「30〜34秒のところだけでリセットすれば改善」）。空かの読み戻し・写真・猶予は置かない`,
-      "④押して待ったら、フォームは空になっているとみなす（竹内さん「リセットしたら必ず空になっている」・reset_settled）。リセットは各客の送付のあと1回だけ（最初のお客さん・前客のリセットが済んだ客は、入れる前にも押さない＝first_customer_no_reset）",
-      "⑤すぐ次客の条件を拡張ツールのAPIから読み直して（古い手元のコピーは使わない・失敗は2秒・4秒あけて最大3回・customer_api_reload）、空のフォームへそのまま入れる（next_customer_api_reload）",
-      "⑥押せない・例外の時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ（従来の外しは最大125秒・外す前後は残りを名前付きで1つずつ言う）",
+      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。そのあと画面を1回読んで、残りを名前付きで空かを確かめる（2.8.327・竹内さん「押して空になったことを確実に確かめる」）`,
+      "④空と読めたら完了（reset_settled・空を確認）。空とみなして次へは進まない（2.8.327）。完了したら20秒あけてから次の手へ（reset_done_gap）。リセットは各客の送付のあと1回が基本（最初のお客さん・前客のリセットが済んだ客は、入れる前にも押さない＝first_customer_no_reset）",
+      "⑤20秒あけてから次客の条件を拡張ツールのAPIから読み直し（古い手元のコピーは使わない・失敗は2秒・4秒あけて最大3回・customer_api_reload）、読み直したあと20秒あけて空のフォームへ入れる（api_reload_gap・next_customer_api_reload）",
+      "⑥空と読めなかった時（押せない・残りが見える）だけ保険：さらに60〜90秒待つ→スクショを撮る→画面を読む（残り・小窓・読み込み中）→空ならそこで完了（reset_stuck_recovered）。まだ残っていればリセットをもう1回だけ押し、30〜34秒後に空を確かめる（reset_retry_insurance）。それでも空を確かめられなければ止める（次のお客さんへ進まない・従来の1つずつ外しへ行かない・reset_stop）",
     ],
     rules: [...new Set(["reset_replaces_clear", "reset_between_customers", "reset_empty_is_enough", "first_customer_no_reset", "next_customer_api_reload", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", ...AUTO_RULES.filter((r) => r.scene === "clear" && !RETIRED_ONE_BY_ONE.has(r.id)).map((r) => r.id)])],
   },
@@ -263,8 +279,8 @@ export const ITANDI_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①次のお客さんに切り替える",
       "②前のお客さんの条件を外す（上の手順）",
-      "③【毎回】次のお客さんの条件を、拡張ツールからAPIで最新を読み直す（古い手元のコピーでは入れない・失敗は2秒・4秒あけて最大3回・customer_api_reload）",
-      "④空と確かめてから、読み直した新しい条件を入れる（fill_start）",
+      "③20秒あけてから、【毎回】次のお客さんの条件を、拡張ツールからAPIで最新を読み直す（古い手元のコピーでは入れない・失敗は2秒・4秒あけて最大3回・customer_api_reload）",
+      "④空と確かめ、読み直したあと20秒あけてから、新しい条件を入れる（api_reload_gap・fill_start）",
     ],
     rules: ["next_customer_api_reload"],
   },
@@ -894,12 +910,13 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   ) => {
     if (scenes.some((s) => s.scene === scene)) return;
     const detail: PlaybookStep[] = steps.map((step) => {
-      const fGuess = step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
-        : step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
-        : step.indexOf("確定してリストへ") >= 0 ? "確定してリストへ"
-        : step.indexOf("所在地絞り込みを開く") >= 0 ? "所在地絞り込みを開く"
-        : step.indexOf("検索ボタン") >= 0 ? "検索"
-        : step.indexOf("区") >= 0 && scene === "area" ? "city_code[]"
+      const h = stepHead(step);
+      const fGuess = h.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
+        : h.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
+        : h.indexOf("確定してリストへ") >= 0 ? "確定してリストへ"
+        : h.indexOf("所在地絞り込みを開く") >= 0 ? "所在地絞り込みを開く"
+        : h.indexOf("検索ボタン") >= 0 ? "検索"
+        : h.indexOf("区") >= 0 && scene === "area" ? "city_code[]"
         : String(step).slice(0, 28);
       const als = fGuess === "所在地絞り込みを開く" ? ["所在地絞り込み＋", "所在地絞り込み"]
         : fGuess === "印刷用PDF" ? ["印刷用PDF｜a.print", "印刷用PDF｜img"]
@@ -1087,11 +1104,12 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     const guideDetail: PlaybookStep[] = PLAYBOOK_LIST_AD_SORT_STEPS.map((step) => {
       // ★ 「④並べ替え後に印刷用PDFを押す」は「並べ替え」にも一致するため印刷用PDFを先に判定する
       // ★ 2.8.319 ④の1〜3（送付済み→次へ／0件）と⑤（客完了→リセット）は印刷用PDFの欄ではない。先に分ける
+      const h = stepHead(step);
       const f = /^④の/.test(step) ? "次へ" : /^⑤/.test(step) ? "リセット"
-        : step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
-        : step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
-        : step.indexOf("AD") >= 0 ? "AD"
-        : step.indexOf("並べ替え") >= 0 ? "並べ替え"
+        : h.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
+        : h.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
+        : h.indexOf("AD") >= 0 ? "AD"
+        : h.indexOf("並べ替え") >= 0 ? "並べ替え"
         : "印刷用PDF";
       const als = f === "印刷用PDF" ? ["印刷用PDF｜a.print", "印刷用PDF｜img"] : [];
       return {

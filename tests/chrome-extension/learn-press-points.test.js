@@ -90,9 +90,10 @@ console.log("\n■ ⑤ 区・町字は**1つずつカーソルを動かして**�
 
 console.log("\n■ ⑤-2 押し直しは「押し終わるのを待ってから」（二重押しで閉じない）");
 {
-  const _a = ps.indexOf("_ensureAreaOpened(tries)");
-  const seg = ps.slice(_a, _a + 2600);
-  t("  最初は待つ（grace 1400ms）", /n === 0 \? 1400/.test(seg));
+  // 2.8.328: 開いた直後9秒の間だけ確かめる（startAt）・最初の待ちは 2400ms（押し終わる前に「開いていない」と見て閉じない）
+  const _a = ps.indexOf("_ensureAreaOpened(tries, startAt)");
+  const seg = _a < 0 ? "" : ps.slice(_a, _a + 5000);
+  t("  最初は待つ（grace 2400ms）", /n === 0 \? 2400/.test(seg));
   t("  待ってから「開いたか」を確かめる", /setTimeout\(function \(\) \{\s*\n\s*if \(opened\(\)\)/.test(seg));
   t("  押し直しも学んだ位置で押す", /_pressLearned\(cand\[0\]/.test(seg));
 }

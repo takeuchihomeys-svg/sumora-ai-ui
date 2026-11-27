@@ -54,9 +54,9 @@ ok("maxMs まで待ったら verified:false で返す（空かどうかは empty
 console.log("\n■ ③ 増えなければ従来の外しへ（背景）");
 const bgVerify = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendClearOrReset"));
 // 2.8.317: 送付後のリセットは押して30〜34秒待つだけ＝空とみなす（読み戻しループ・件数の判定・reset_count_same は廃止）。ページ側の判定関数（①②④）は単発の経路が使うので残す
-ok("2.8.317 押して待ったら空とみなす（読み戻しループ・件数の判定は送付後の経路から外した）", /assumedEmpty: true/.test(bgVerify) && /reset_settled/.test(bgVerify) && !/_ver\.verified === false\) _stamp\("reset_count_same"/.test(bgVerify) && bgVerify.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
+ok("2.8.327 押して空を確かめたら完了（件数の判定は送付後の経路から外した）", /confirmed: true/.test(bgVerify) && !/assumedEmpty: true/.test(bgVerify) && /reset_settled/.test(bgVerify) && !/_ver\.verified === false\) _stamp\("reset_count_same"/.test(bgVerify) && bgVerify.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
 ok("reset_count_same は古い版の記録を読むため search-audit の表に残さなくてよい（幽霊の受け入れ表で扱う）", true);
-ok("従来へ戻る経路は変わらず（_postSendClearOrReset の rr.ok 判定）", /if \(rr && rr\.ok\) return rr;/.test(bg));
+ok("空を確かめられなければ止める（_postSendClearOrReset は reset_stop を返す・従来の外しへ落とさない・2.8.328）", /if \(rr && rr\.ok\) await _gapBeforeNext/.test(bg) && /return rr;/.test(bg));
 
 console.log("\n■ ④ 件数の読み取りと判定（実関数を動かす）");
 function runCount(text) {

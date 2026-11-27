@@ -49,10 +49,10 @@ ok("人の操作（isTrusted）で止める仕組みがある", /function _onHum
 ok("pointerdown と keydown を捕まえる（click/change は見ない）", /addEventListener\("pointerdown", _onHumanTakeover, true\)/.test(src) && /addEventListener\("keydown", _onHumanTakeover, true\)/.test(src) && !/addEventListener\("change", _onHumanTakeover/.test(src));
 ok("拡張の小窓・カーソルは数えない", /\[id\^="aixlinx-"\], \[id\^="axlx"\], \[data-axlx-shape\]/.test(src));
 ok("止めた時は gate（全ページ自動送信を構えない）", /notifyDone\("human_takeover:[^;]+, "human_takeover"\)/.test(src));
-ok("enqueueHumanClick が引き取り後は積まない", /function enqueueHumanClick\([^)]*\) \{\s*if \(!el \|\| el\.__axPending\) return false;\s*if \(_axHumanTookOver\) return false;/.test(src));
-ok("whenClickQueueIdle が引き取り後は回らない", /function whenClickQueueIdle\(cb\) \{\s*if \(_axHumanTookOver\) return;/.test(src));
+ok("enqueueHumanClick が引き取り後は積まない", /function enqueueHumanClick\([^)]*\) \{[\s\S]{0,1200}?if \(_axHumanTookOver\) return false;/.test(src));
+ok("whenClickQueueIdle が引き取り後は回らない", /function whenClickQueueIdle\(cb, pollMs\) \{\s*if \(_axHumanTookOver\) return;/.test(src));
 ok("waitForClick が引き取り後は回らない", /function attempt\(\) \{\s*if \(_axHumanTookOver\) return;/.test(src));
-ok("fill 開始で引き取り印を戻す", /_axHumanTookOver = false;\s*_axFillStartedAt = Date\.now\(\);[\s\S]{0,120}window\._axFillRunning = true;/.test(src));
+ok("fill 開始で引き取り印を戻す", /_axHumanTookOver = false;\s*_axFillStartedAt = Date\.now\(\);[\s\S]{0,1500}?window\._axFillRunning = true;/.test(src));
 
 console.log("■ 区は画面の並び順に1つずつ（人の通常録画と同じ）");
 ok("codes を画面の並び順に並べ替える", /codes = codes\.slice\(\)\.sort\(function \(a, b\) \{\s*var ia = _domOrder/.test(cwp + src.slice(src.indexOf("function clickWardPrecise("), src.indexOf("function clickWardPrecise(") + 9000)));

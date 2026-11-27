@@ -53,9 +53,13 @@ console.log("■ 2. 合流とリセットの戻り（リセットからの流れ
 console.log("■ 3. 失敗の道（リセットが押せない・読み直せない）");
 {
   const resetBr = branchesOf("reset").map((b) => b.id).sort().join(",");
-  ok("リセットの失敗の道は3本（返事が遅れた／もう1回／従来の外し）", resetBr === "b_reset_fallback,b_reset_late,b_reset_retry", resetBr);
+  // 2.8.328: 見えないタブで押せない（#1661・#1666・#1671）→ 押さずに見えるまで待つ／10分見えなければ止める、の2本を足した
+  ok("リセットの失敗の道は5本（見えるまで待つ／見えないまま止める／返事が遅れた／保険（確かめ→押し直し1回）／止まる）", resetBr === "b_reset_hidden_stop,b_reset_hidden_wait,b_reset_insure,b_reset_late,b_reset_stop", resetBr);
+  ok("見えるまで待つ道は、見えたらリセット（親の手）へ戻る＝押す", flowNode("b_reset_hidden_wait")!.next.join() === "reset");
+  ok("10分見えない道は止まり（次のお客さんへ進まない）", flowNode("b_reset_hidden_stop")!.kind === "stop" && flowNode("b_reset_hidden_stop")!.next.length === 0);
   ok("読み直しの失敗の道は1本（このお客さんを飛ばす）", branchesOf("api_reload").map((b) => b.id).join() === "b_api_skip");
-  ok("失敗の道は全部 次のお客さんの読み直し（api_reload）か客完了へ出る", ["b_reset_late", "b_reset_retry", "b_reset_fallback", "b_api_skip"].every((id) => {
+  ok("止まり（b_reset_stop）は行き先が無い（ここで止まる・次のお客さんへ進まない）", flowNode("b_reset_stop")!.kind === "stop" && flowNode("b_reset_stop")!.next.length === 0);
+  ok("失敗の道は全部 次のお客さんの読み直し（api_reload）か客完了へ出る", ["b_reset_late", "b_reset_insure", "b_api_skip"].every((id) => {
     const b = flowNode(id)!;
     return b.next.every((x) => x === "api_reload" || x === "customer_done");
   }));
@@ -109,7 +113,7 @@ console.log("■ 6. 手順書の一覧の手は地図から作られる・分か
   ok("④が「④の1〜3は場合分け・順に行う手ではない」と言う", /^④[^\n]*④の1〜3[^\n]*順に行う手ではない/.test(tail[0]), tail[0]);
   ok("分かれ道は「④の1」「④の2」「④の3」で、④の場合分けと書く", [1, 2, 3].every((k) => tail[k]?.startsWith(`④の${k}（④の場合分け）`)));
   ok("通し番号は ④ と ⑤ だけ（⑥⑦⑧が無い・分かれ道に通し番号が付かない）", !/[⑥⑦⑧⑨]/.test(tail.join("")) && /^⑤客完了/.test(tail[4] || ""));
-  ok("⑤ は ④で送り終えた・④の1〜3のどれでもリセットして次のお客さんへ、と言う", /^⑤客完了（④で送り終えた・④の1〜3のどれでも）→リセットを押して次のお客さんへ。リセットからの流れは同じ/.test(tail[4] || ""));
+  ok("⑤ は ④で送り終えた・④の1〜3のどれでもリセットして次のお客さんへ、と言う", /^⑤客完了（④で送り終えた・④の1〜3のどれでも）→送付が終わった合図のあと20秒あけてから、リセットを押す。リセットからの流れは同じ/.test(tail[4] || ""));
   const strong = checkListPlaybookStrength(PLAYBOOK_LIST_AD_SORT_STEPS);
   ok("③④は地図の完了の文をそのまま載せている", strong.length === 0, strong.join(" / "));
   const stripped = PLAYBOOK_LIST_AD_SORT_STEPS.map((s) => s.startsWith("③") ? s.replace(flowNode("sort")!.playbook || "___", "") : s);
@@ -132,8 +136,8 @@ console.log("■ 7. 悪い地図を止める（自己点検）");
   ok("分かれ道に親が無い（一列の手に見える）→止まる", bad((m) => { delete g(m, "b_zero").parent; }).some((s) => /親の手（parent）が無い/.test(s)));
   ok("分かれ道に条件が無い→止まる", bad((m) => { g(m, "b_zero").when = ""; }).some((s) => /条件（when）が無い/.test(s)));
   ok("分かれ道が step になっている（通し番号が付いてしまう形）→止まる", bad((m) => { g(m, "b_zero").kind = "step"; }).some((s) => /branch ではないのに parent/.test(s)));
-  ok("分かれ道が勝手に別の手へ飛ぶ（押せない時の道が fill へ直行）→止まる", bad((m) => { g(m, "b_reset_retry").next = ["fill"]; }).some((s) => /は許されない/.test(s)));
-  ok("失敗の道が客完了を通らずに次の手へ行く（b_reset_fallback→search）→止まる", bad((m) => { g(m, "b_reset_fallback").next = ["search"]; }).some((s) => /は許されない/.test(s)));
+  ok("分かれ道が勝手に別の手へ飛ぶ（保険の道が fill へ直行）→止まる", bad((m) => { g(m, "b_reset_insure").next = ["fill"]; }).some((s) => /は許されない/.test(s)));
+  ok("止まりに行き先を足す（止まらずに次の手へ行く）→止まる", bad((m) => { g(m, "b_reset_stop").next = ["search"]; }).some((s) => /行き先（next）があってはならない/.test(s)));
   ok("客完了が2つ→止まる", bad((m) => { g(m, "fill").kind = "join"; }).some((s) => /join（合流点＝客完了）は1つだけ/.test(s)));
   ok("客完了からリセット（reset_front）に戻らない→止まる", bad((m) => { g(m, "customer_done").next = ["reset"]; }).some((s) => /reset_front/.test(s)));
   ok("コードの目印が無い→止まる", bad((m) => { g(m, "b_zero").evidence = { file: "", token: "" }; }).some((s) => /目印（evidence）が無い/.test(s)));

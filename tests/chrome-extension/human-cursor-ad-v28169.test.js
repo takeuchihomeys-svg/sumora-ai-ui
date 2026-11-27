@@ -35,7 +35,8 @@ ok("forceOneCursor がある", /forceOneCursor:\s*function/.test(pu));
 //   forceOneCursor を押し前に直接呼ぶのは bulk-dl 側（AD前）に残っている。
 ok("押し前にカーソル1本化（_humanPointerClick → ensure が余分を消す）",
   (function () {
-    const a = ps.indexOf("function _humanPointerClick(");
+    // 2.8.328: 動き方の中身は _humanPointerClickCore（外側は押した受領だけ）
+    const a = ps.indexOf("function _humanPointerClickCore(");
     const b = a < 0 ? -1 : ps.indexOf("var _P = window.AxlxPointerUi;", a);
     // 次の function 宣言より前（＝この関数の中）で _P.ensure() を呼んでいる
     const nx = a < 0 ? -1 : ps.indexOf("\n  function ", a + 30);

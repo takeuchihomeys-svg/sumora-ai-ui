@@ -70,7 +70,7 @@ console.log("■ 6. まとめて直した押し（検索・並べ替え・確か
   ok("枠の言葉: 検索・並べ替え・確かめられず の分岐がある", /what === "search" && result === "pressed"/.test(dl) && /what === "sort" && result === "pressed"/.test(dl) && /押したが確かめられず/.test(dl));
   ok("手順書の検索の手に押した結果の言い方（2.8.326）", /検索を押す（押したら枠に「✓検索を押した」/.test(ap));
   ok("手順書の並べ替えの手に押せなかった時の言い方（2.8.326）", /押せなかったら枠に「✗高→低を押せなかった」/.test(ap));
-  ok("手順書の作り方の番号が上がっている（31）", /PLAYBOOK_BUILD_V = 31/.test(ap));
+  ok("手順書の作り方の番号が上がっている（33 以上）", Number((/PLAYBOOK_BUILD_V = (\d+)/.exec(ap) || [])[1] || 0) >= 33);
 }
 
 console.log(`\n結果: ${pass} 合格 / ${fail} 不合格`);

@@ -1426,7 +1426,7 @@
           list_start: "並べ替えor物件取得",
           before_next: "次ページを押す",
           after_next: "一覧照合→物件取得",
-          handoff: "前客の選択を1つずつ外す",
+          handoff: "リセットで空にして次のお客さんへ",
         };
         var _listDone = {
           list_start: "一覧の手順×画面照合完了",
@@ -2422,6 +2422,8 @@
   function _scheduleSortCursorAfterSearch(why) {
     try {
       if (_sortCursorScheduled || _autoPdfRun) return false;
+      // ★ 2.8.328 #1673: 並べ替え済み（押した・読み直し後の続き・物件取得が始まった）の一覧で、新しい行の道から並べ替えをもう一度始めていた
+      if (_sortRecognizedDone("schedule:" + String(why || ""))) return false;
       // ★ 2.8.264: 検索の移動中は行の読み直しもしない（死にゆく古い一覧を重く読まない）
       if (_isNavPending()) {
         try { _pageDisplayedAfterThisSearch(why || "schedule"); } catch (_) {}
@@ -2639,6 +2641,46 @@
       return o;
     } catch (_) { return null; }
   }
+  /**
+   * ★ 2.8.328 竹内さん「並べ替えのところは押したのが残らないなら、前後の手順と時間差をちゃんとあけて、時間差で並べ替えしたということの認識にすればよい」:
+   *   高→低は押すとページが読み直され、URL に出ない並べ替えもある＝画面から「効いた」を確かめきれない。
+   *   → 押した時刻（同じページ: _sortPressedAt／読み直し後: axlx_sort_pressed_sync.at）から猶予をあけて④へ入る所で
+   *     「時間差で並べ替え完了」と認識する（press_sort_effect_ok）。AD高／AD未は参考に残すだけ（止めない）。
+   *   認識した後は同じ一覧で並べ替えを始めない（_sortRecognizedDone）。
+   */
+  var _sortPressedAt = 0;
+  var _sortRecognizedNoted = false;
+  var SORT_MIN_GAP_MS = 12000; // 押してから④までの最小の時間差（猶予 15〜20秒の下限より少し短く・これより短い時は⚠を残す）
+  function _sortTimeRecognized(via, pressedAt) {
+    if (_sortRecognizedNoted) return;
+    _sortRecognizedNoted = true;
+    try {
+      var at = Number(pressedAt) || 0;
+      var gap = at ? Date.now() - at : -1;
+      var adHi = false;
+      try { adHi = !!(_screenListNow() || {}).adHi; } catch (_) { adHi = false; }
+      var info = "via=" + String(via || "-").slice(0, 16) + " 押してから" + (gap >= 0 ? Math.round(gap / 1000) + "秒" : "不明") + " " + (adHi ? "AD高" : "AD未");
+      if (gap >= SORT_MIN_GAP_MS) {
+        _liveDlStep("press_sort_effect_ok", "時間差で並べ替え完了と認識 " + info);
+        _setPressNote("sort", "effect_ok", Math.round(gap / 1000) + "秒あけた");
+      } else {
+        _liveDlStep("press_ng_sort_effect", (gap < 0 ? "押した時刻が分からない " : "時間差が短い ") + info);
+        _setPressNote("sort", "effect_unknown", gap < 0 ? "押した時刻不明" : Math.round(gap / 1000) + "秒");
+      }
+    } catch (_) {}
+  }
+  /** この一覧はもう並べ替え済み（押した・読み直し後の続き・次頁の続き・物件取得が始まった）＝並べ替えを始めない */
+  var _sortSkipDoneNoted = "";
+  function _sortRecognizedDone(where) {
+    var why = _adSortDone ? "done" : _sortResumeStarted ? "press_run" : _sortResumeWaiting ? "resume_wait"
+      : (_sortPressedAt ? "pressed" : (_sortPressedMeansList(_readSortPressedSync()) ? "pressed_sync" : ""));
+    if (!why) return false;
+    if (_sortSkipDoneNoted !== why) {
+      _sortSkipDoneNoted = why;
+      try { _liveDlStep("sort_skip_done", why + " " + String(where || "").slice(0, 24)); } catch (_) {}
+    }
+    return true;
+  }
   function _sortPressedMeansList(o) {
     if (!o || !o.at) return false;
     if (Date.now() - Number(o.at) > 3 * 60 * 1000) return false;
@@ -2650,10 +2692,7 @@
   }
   function _kickSortAfterSearch(why) {
     try {
-      if (_sortPressedMeansList(_readSortPressedSync())) {
-        try { _liveDlStep("sort_skip_done", "pressed→④ " + String(why || "").slice(0, 24)); } catch (_) {}
-        return false;
-      }
+      if (_sortRecognizedDone("kick:" + String(why || ""))) return false;
       if (_pendingAutoSendDispatched || _autoPdfRun) return false;
       if (_adSortInFlight) {
         try { _liveDlStep("sort_skip_inflight", String(why || "kick").slice(0, 36)); } catch (_) {}
@@ -2730,11 +2769,13 @@
      * ★ 2.8.322: 高→低を押したあとの読み直し。並べ替えは完了。④物件取得へ。
      *   「検索前だから押さない」より前に見る（この印がある回は、検索はもう終わっている）。
      */
-    if (_sortPressedMeansList(_readSortPressedSync())) {
+    var _sortSync = _readSortPressedSync();
+    if (_sortPressedMeansList(_sortSync)) {
       _adSortDone = true;
       _autoSendArmed = true;
       _sortCursorScheduled = false;
       _sortWaitRetryPending = false;
+      if (!_sortPressedAt) _sortPressedAt = Number(_sortSync.at) || 0;
       if (!tracked.length) {
         _listWaitReason("sort_pressed_rows0");
         return;
@@ -2752,6 +2793,7 @@
         if (_sortResumeStarted || _autoPdfRun) return;
         _sortResumeStarted = true;
         try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
+        _sortTimeRecognized("resume", _sortPressedAt);
         try { _liveDlStep("sort_done", "pressed_resume"); } catch (_) {}
         try { _announcePhase("list", "sort_pressed_resume"); } catch (_) {}
         try { _requestLoopGrasp("list", "sort_pressed_resume", true); } catch (_) {}
@@ -3316,7 +3358,7 @@
   }
 
   /**
-   * ★ 2.8.227: page から「いまの行動」（外している最中／入れ最中）を受けて枠へ反映
+   * ★ 2.8.227: page から「いまの行動」（リセットで空を確かめている最中／入れ最中）を受けて枠へ反映
    * ★ 2.8.228: task_now（間取外:2LDK 等）も枠へ
    * ★ 2.8.229: axlx-task-grasped（検索の search_grasped と同型・次タスク移行のAPI把握）
    */
@@ -3479,7 +3521,12 @@
     search_to_sort: "検索の結果が画面に出きるまで待っている（並べ替えは検索確認から40〜50秒後）",
     sort_lag: "高→低を押したあと、並べ替えの画面が追いつくまで待っている",
     sort_resume_lag: "読み直したあと、並べ替えの画面が追いつくまで待っている",
-    reset_settle: "リセットを押して、画面が空になるまで待っている（30〜34秒）"
+    reset_settle: "リセットを押して、画面が空になるまで待っている（30〜34秒）",
+    reset_hidden: "リアプロのタブが見えないので、リセットを押さずに待っている（Chrome を前に出してください）",
+    reset_insure: "完了の通知が来ないので、さらに60〜90秒待ってから画面を確かめている",
+    reset_gap: "送付が終わったので、20秒あけてからリセットへ進んでいる",
+    reset_done_gap: "リセットで空を確かめたので、20秒あけてから次のお客さんの条件を読み直している",
+    api_reload_gap: "条件を読み直したので、20秒あけてから入れている"
   };
   /* WAIT_WORDS:END */
   /**
@@ -3533,15 +3580,42 @@
     var col = "#86efac";
     if (what === "reset" && result === "pressed") t = "✓ リセットを押した（" + hm + "）→ 画面の読み直しを待つ";
     else if (what === "reset" && result === "pressed_late") t = "✓ リセットを押した（" + hm + "・返事は遅れたが画面は読み直された）";
-    else if (what === "reset" && result === "not_pressed") { t = "✗ リセットを押せなかった（" + hm + "）→ 1つずつ外す保険へ"; col = "#fca5a5"; }
+    else if (what === "reset" && result === "not_pressed") { t = "✗ リセットを押せなかった（" + hm + "）→ 60〜90秒後に確かめる保険へ"; col = "#fde68a"; }
+    else if (what === "reset" && result === "hidden_wait") { t = "⚠ リアプロの画面が隠れているので、リセットは押さずに待っている（" + hm + "）→ Chrome を前に出してください"; col = "#fde68a"; }
+    else if (what === "reset" && result === "hidden_stopped") { t = "✗ 画面が10分見えないままだったので、リセットを押さずに止めた（次のお客さんへ進まない）"; col = "#fca5a5"; }
+    else if (what === "reset" && result === "stopped") { t = "✗ 空を確かめられず止めた（次のお客さんへ進まない・画面を確かめてください）"; col = "#fca5a5"; }
     else if (what === "reset_check" && result === "empty") t = "✓ 空を確認した（リセット後）";
-    else if (what === "reset_check" && result === "not_empty") { t = "⚠ 空の確認で残りが見えた（残 " + d + "）→ 空とみなして次へ（確認できず）"; col = "#fde68a"; }
-    else if (what === "reset_check") { t = "⚠ 空かどうか読めず → 空とみなして次へ"; col = "#fde68a"; }
+    else if (what === "reset_check" && result === "not_empty") { t = "⚠ 空の確認で残りが見えた（残 " + d + "）→ 空を確かめるまで次へ進まない（保険へ）"; col = "#fde68a"; }
+    else if (what === "reset_check") { t = "⚠ 空かどうか読めず → 空を確かめるまで次へ進まない（保険へ）"; col = "#fde68a"; }
     else if (what === "sort" && result === "pressed") t = "✓ 高→低を押した（" + hm + "）→ 画面が追いつくまで待つ";
     else if (what === "sort" && result === "not_pressed") { t = "✗ 高→低を押せなかった（" + hm + "）→ 押し直す"; col = "#fca5a5"; }
+    else if (what === "sort" && result === "effect_ok") t = "✓ 高→低を押して時間差をあけた＝並べ替え完了と認識（" + d + "・" + hm + "）";
+    else if (what === "sort" && result === "effect_unknown") { t = "⚠ 高→低の時間差を確かめられない（" + d + "）→ 記録して進む（押し直さない）"; col = "#fde68a"; }
     else if (what === "search" && result === "pressed") t = "✓ 検索を押した（" + hm + "）→ 結果を待つ";
     else if (what === "press" && result === "unverified") { t = "⚠ 押したが確かめられず（" + d + "）→ 画面で確かめる"; col = "#fde68a"; }
+    // ★ 2.8.328 押したことの把握: ページ側の全部のボタンの受領・確定が効いたか・印刷用PDF・次へ
+    else if (what === "press" && result === "ok") t = "✓ 押した：" + d + "（" + hm + "）";
+    else if (what === "press" && result === "ng") { t = "✗ 押せなかった：" + d + "（" + hm + "）"; col = "#fca5a5"; }
+    else if (what === "confirm" && result === "closed") t = "✓ 確定してリストへが効いた（" + d + "の小窓が閉じた・" + hm + "）";
+    else if (what === "confirm" && result === "still_open") { t = "✗ 確定してリストへを2回押しても" + d + "の小窓が閉じない → 止めた"; col = "#fca5a5"; }
+    else if (what === "pdf" && result === "pressed") t = "✓ 印刷用PDFを押した（" + d + "・" + hm + "）→ 送るのを待つ";
+    else if (what === "pdf" && result === "not_pressed") { t = "✗ 印刷用PDFを押せなかった（" + d + "）→ 次の物件へ"; col = "#fca5a5"; }
+    else if (what === "pdf" && result === "sent") t = "✓ 印刷用PDFを送り終えた（" + d + "・" + hm + "）";
+    else if (what === "pdf" && result === "no_effect") { t = "⚠ 印刷用PDFを押したが送れていない（" + d + "）→ 次の物件へ"; col = "#fde68a"; }
+    else if (what === "next" && result === "pressed") t = "✓ 次へを押した（→" + d + "・" + hm + "）→ 頁が変わるのを待つ";
+    else if (what === "next" && result === "not_pressed") { t = "✗ 次へを押せなかった（→" + d + "）"; col = "#fca5a5"; }
+    else if (what === "next" && result === "moved") t = "✓ 次の頁に進んだ（" + d + "・" + hm + "）";
+    else if (what === "next" && result === "not_moved") { t = "⚠ 次へを押したが頁の番号が合わない（" + d + "）"; col = "#fde68a"; }
+    // 2.8.328 選んだ欄（町・管理費・構造）が効いたか
+    else if (what === "pick" && result === "effect_ok") t = "✓ 選んだ欄が効いた：" + d + "（" + hm + "）";
+    else if (what === "pick" && result === "retry") { t = "⚠ 選んだのに付いていない：" + d + " → 1回だけ選び直す"; col = "#fde68a"; }
+    else if (what === "pick" && result === "effect_ng") { t = "✗ 選び直しても付かない：" + d + " → 記録して進む（画面で確かめてください）"; col = "#fca5a5"; }
     else return;
+    // 普通の「✓ 押した」で、直前（4秒以内）の注意・失敗の行を消さない
+    try {
+      if (what === "press" && result === "ok" && el.__axWarnAt && Date.now() - el.__axWarnAt < 4000) return;
+      el.__axWarnAt = col !== "#86efac" ? Date.now() : 0;
+    } catch (_) {}
     el.textContent = t;
     el.style.color = col;
     el.style.display = "block";
@@ -4041,7 +4115,7 @@
                 return;
               }
               _sortByAdLikeHuman(function (ok2) {
-                if (ok2) { _liveDlStep("sort_done", "hilo_retry"); _announcePhase("list", "sort_done_retry"); }
+                if (ok2) { _sortTimeRecognized("hilo_retry", _sortPressedAt); _liveDlStep("sort_done", "hilo_retry"); _announcePhase("list", "sort_done_retry"); }
                 else if (_sortFailWaitThenRetry("after_quick_retry")) return;
                 else {
                   console.warn("[AXLX bulk-dl][auto] 再試行も並べ替えできず → この並びのまま押します");
@@ -4066,6 +4140,7 @@
           _nudge("⚠ 並べ替えできませんでした（この並びのまま続けます）");
           _liveDlStep("sort_failed", "continue");
         } else {
+          _sortTimeRecognized("hilo", _sortPressedAt);
           _liveDlStep("sort_done", "hilo");
           _announcePhase("list", "sort_done");
           try { _requestLoopGrasp("list", "sort_done", true); } catch (_) {}
@@ -5245,6 +5320,7 @@
                 sessionStorage.setItem("axlx_sort_pressed_sync", JSON.stringify({ at: Date.now(), href: String(location.href || "").slice(0, 300) }));
               } catch (_) {}
               _adSortDone = true;
+              _sortPressedAt = Date.now();
               try { _liveDlStep("sort_pressed", "高→低を押した→読み直し後は④物件取得"); } catch (_) {}
               try { _setPressNote("sort", "pressed", ""); } catch (_) {}
               // ★ 2.8.323: 地図の sort.panel.switchTo=list。押した時点でパネルも物件取得の言葉へ（猶予の間「並べ替え最中」のままにしない）
@@ -5829,9 +5905,14 @@
           setTimeout(function () {
             try { if (P && P.tap) P.tap(); } catch (_) {}
             setTimeout(function () {
+              // ★ 2.8.328 押したことの把握: 旧は押せなくても必ず cb(true)（「押せず」の分かれを一度も通らなかった）
+              var ok = !!(btn && btn.isConnected);
               try { btn.click(); } catch (_) {}
-              console.log("[AXLX bulk-dl][auto] 印刷用PDFを押しました:", String(btn.href || "").slice(0, 80));
-              cb(true);
+              try { if (_autoPdfRun) { if (ok) _autoPdfRun.pressOk = (Number(_autoPdfRun.pressOk) || 0) + 1; else _autoPdfRun.pressNg = (Number(_autoPdfRun.pressNg) || 0) + 1; } } catch (_) {}
+              try { _setPressNote("pdf", ok ? "pressed" : "not_pressed", (_autoPdfRun ? _autoPdfRun.total + "件目" : "")); } catch (_) {}
+              if (!ok) { try { _liveDlStep("press_ng_pdf", "印刷用PDFを押せず（行が画面から外れた）"); } catch (_) {} }
+              console.log("[AXLX bulk-dl][auto] 印刷用PDFを" + (ok ? "押しました:" : "押せませんでした:"), String(btn && btn.href || "").slice(0, 80));
+              cb(ok);
             }, 70 + Math.floor(Math.random() * 130));
           }, gap);
         });
@@ -5879,6 +5960,17 @@
       if (done) return;
       done = true;
       if (why) console.warn("[AXLX bulk-dl][auto] 1件待ち打ち切り → 次へ:", why);
+      // ★ 2.8.328 押した後に効いたか（送り始めて終わった）を数える。効かなかった物は1件ずつ残す
+      try {
+        if (why) {
+          if (_autoPdfRun) _autoPdfRun.noEffect = (Number(_autoPdfRun.noEffect) || 0) + 1;
+          _liveDlStep("press_ng_pdf_effect", "印刷用PDFを押したが" + String(why).slice(0, 30));
+          _setPressNote("pdf", "no_effect", String(why).slice(0, 20));
+        } else if (_autoPdfRun) {
+          _autoPdfRun.effectOk = (Number(_autoPdfRun.effectOk) || 0) + 1;
+          _setPressNote("pdf", "sent", _autoPdfRun.effectOk + "件目");
+        }
+      } catch (_) {}
       try { cb(); } catch (_) {}
     };
     var poll = function () {
@@ -5929,6 +6021,11 @@
   function _autoFinish(why) {
     var n = _autoPdfRun ? _autoPdfRun.done : 0;
     var skipped = _autoPdfRun ? (Number(_autoPdfRun.skipped) || 0) : 0;
+    try {
+      var _pr = _autoPdfRun || {};
+      _liveDlStep("press_pdf_sum", "P" + (Number(_autoPdfPage) || 1) + " 押した" + (Number(_pr.pressOk) || 0) + " 送り終えた" + (Number(_pr.effectOk) || 0)
+        + " 送れず" + (Number(_pr.noEffect) || 0) + " 押せず" + (Number(_pr.pressNg) || 0));
+    } catch (_) {}
     var whyText = _skipWhyText(_autoPdfRun);
     _autoPdfRun = null;
     _autoPdfTotalSent = (Number(_autoPdfTotalSent) || 0) + (Number(n) || 0);
@@ -6038,6 +6135,17 @@
    * ★ 2026-11-14／2026-11-16: 次のページへ進んで押し直す（上限5ページ）。
    *   送付済みだけの頁でも、未送付を送った頁のあとでも進む。
    */
+  /**
+   * ★ 2.8.328 次へが効いたか: 頁の番号（td.pager の押せない番号＝いまの頁）が押した先と合うかを残す。
+   *   合わない時は記録と枠に出すだけ（送付済みの行は飛ばすので同じ物件は送らない・頁の上限で必ず終わる）。
+   */
+  function _nextPageEffectNote(expect, extra) {
+    var cur = null;
+    try { cur = _readPagerState().current; } catch (_) { cur = null; }
+    var ok = cur != null && Number(cur) === Number(expect);
+    _liveDlStep(ok ? "press_next_moved" : "press_ng_next_page", "頁 いま=" + (cur == null ? "?" : cur) + " 押した先=P" + expect + " " + String(extra || "").slice(0, 30));
+    _setPressNote("next", ok ? "moved" : "not_moved", "P" + expect + (ok ? "" : "（いま" + (cur == null ? "?" : cur) + "）"));
+  }
   function _autoNextPageThenRestart(why, meta) {
     _announcePhase("next_page", String(why || "").slice(0, 24));
     var maxP = _autoMaxPages();
@@ -6097,12 +6205,19 @@
           return;
         }
         var P = window.AxlxPointerUi;
+        var _nextFired = false;
         var fire = function () {
+          if (_nextFired) return;
+          _nextFired = true;
+          var ok = false;
           try {
             try { _nextMark.at = Date.now(); chrome.storage.session.set({ axlx_auto_next_page: _nextMark }); } catch (_) {}
             if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", btn);
-            btn.click();
-          } catch (_) {}
+            if (btn && btn.isConnected) { btn.click(); ok = true; }
+          } catch (_) { ok = false; }
+          // ★ 2.8.328 押したことの把握: 次へを押した／押せなかったを残す（効いたかは行の入れ替わり・読み直し後の頁番号で見る）
+          try { _liveDlStep(ok ? "press_next" : "press_ng_next", (ok ? "次へを押した→P" : "次へを押せず→P") + _autoPdfPage); } catch (_) {}
+          try { _setPressNote("next", ok ? "pressed" : "not_pressed", "P" + _autoPdfPage); } catch (_) {}
         };
         if (P && P.moveToEl) {
           try { if (P.ensure) P.ensure(); } catch (_) {}
@@ -6148,6 +6263,7 @@
         }
         // 読み直し無しで続けられた → 読み直し用の印は要らない（二重に始めない）
         try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
+        try { _nextPageEffectNote(_autoPdfPage, "rows=" + n); } catch (_) {}
         // ★ continuePages: ページカウンタを消さない（3ページ目に進むため）
         // 次ページ到着後も手順表×画面照合（行が出たか）
         _guideLikeListFlowGrasp("after_next", function () {
@@ -6196,7 +6312,7 @@
         _liveDlStep("next_customer_grasp", "いま=" + cur + " 次客=" + (nxt || "（末）") + " " + String(why || "").slice(0, 20));
       } catch (_) {}
       try {
-        _liveDlStep("next_move_grasp", "次の動き=前客の選択を1つずつ外す " + String(why || "").slice(0, 20));
+        _liveDlStep("next_move_grasp", "次の動き=リセットで空にして次のお客さんへ " + String(why || "").slice(0, 20));
       } catch (_) {}
       try {
         _liveDlStep("handoff_grasp", "取得完了→外す " + String(why || "").slice(0, 28));
@@ -6212,7 +6328,7 @@
           from: "axlx-bulk-next",
           currentName: String(bg.currentName || ""),
           nextName: String(bg.nextName || ""),
-          nextMove: "前客の選択を1つずつ外す",
+          nextMove: "リセットで空にして次のお客さんへ",
         }, "*");
       } catch (_) {}
       try {
@@ -6221,7 +6337,7 @@
           why: String(why || "batch_done").slice(0, 40),
           currentName: String(bg.currentName || ""),
           nextName: String(bg.nextName || ""),
-          nextMove: "前客の選択を1つずつ外す",
+          nextMove: "リセットで空にして次のお客さんへ",
           onlyOnePage: onePage,
           sent: Number(bg.sentCount) || null,
         }, "*");
@@ -6231,7 +6347,7 @@
           from: "axlx-task-grasp",
           now: null,
           done: onePage ? "1ページのみ・物件取得完了" : "物件取得完了",
-          next: "前客の選択を1つずつ外す",
+          next: "リセットで空にして次のお客さんへ",
           kind: "handoff",
         }, "*");
       } catch (_) {}
@@ -9619,6 +9735,7 @@
             _pendingAutoSendDispatched = true;
             console.log("[AXLX bulk-dl][auto] Case E: 次ページの読み直し後 → P" + _autoPdfPage + " を続きから押します（行=" + n + "・累計 " + _autoPdfTotalSent + "件）");
             _tmark("auto_next_page_resume", "P" + _autoPdfPage + " rows=" + n);
+            try { _nextPageEffectNote(_autoPdfPage, "読み直し後 rows=" + n); } catch (_) {}
             _guideLikeListFlowGrasp("after_next", function () {
               _startAutoPressAfterLook(n || 10, { continuePages: true });
             });

@@ -37,7 +37,7 @@ if (args.includes("--check")) {
 
 const AREAS: Record<string, { ids: string[]; scenes: string[]; kb: string }> = {
   list: { ids: ["sort", "list_press", "b_all_sent_next", "b_all_sent_last", "b_zero", "customer_done"], scenes: ["list", "next"], kb: "一覧 全部送付済み 次ページ 0件 客完了" },
-  reset: { ids: ["customer_done", "reset_front", "reset", "b_reset_late", "b_reset_retry", "b_reset_fallback", "api_reload", "b_api_skip", "fill"], scenes: ["clear", "switch"], kb: "リセット 次客 API読み直し 押せない 背面 タブ" },
+  reset: { ids: ["customer_done", "reset_front", "reset", "b_reset_late", "b_reset_insure", "b_reset_stop", "api_reload", "b_api_skip", "fill"], scenes: ["clear", "switch"], kb: "リセット 次客 API読み直し 押せない 背面 タブ" },
   all: { ids: LOOP_FLOW_NODES.map((n) => n.id), scenes: ["clear", "switch", "cond", "search", "list", "next"], kb: "お客さん1人ぶんの流れ" },
 };
 const area = arg("area") || "all";
@@ -52,7 +52,7 @@ function whereIs(n: FlowNode): string {
   const i = cache[f].findIndex((l) => l.includes(n.evidence.token));
   return i >= 0 ? `chrome-extension/${f}:${i + 1}（${n.evidence.token}）` : `⚠ ${f} に ${n.evidence.token} が無い`;
 }
-const KIND_JA: Record<string, string> = { step: "順に行う手", branch: "分かれ道（順に行う手ではない）", join: "合流点" };
+const KIND_JA: Record<string, string> = { step: "順に行う手", branch: "分かれ道（順に行う手ではない）", join: "合流点", stop: "止まり（次の手へ行かない）" };
 
 console.log(`■ ① 流れの地図（${area}）\n`);
 for (const id of def.ids) {

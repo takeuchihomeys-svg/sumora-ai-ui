@@ -85,7 +85,8 @@ console.log("\n■ 前客の残りと自分が押した沿線を分ける");
 const toggle = ps.slice(ps.indexOf("function _toggleCheckboxLikeHuman("), ps.indexOf("function _toggleCheckboxLikeHuman(") + 5000);
 ok("沿線を選んだら __axlxLinePickedRun に印", /wantOn && \/route_id\/\.test\(nm\)[\s\S]{0,200}__axlxLinePickedRun\[String\(cb\.value/.test(toggle));
 const ov = ps.slice(ps.indexOf("var _keptMine = 0;"), ps.indexOf("var _keptMine = 0;") + 2000);
-ok("自分が押した物は _keptMine・それ以外だけ前客と数える", /if \(_mine\) _keptMine\+\+; else _keptOverlap\+\+;/.test(ov));
+// 段階2-B（stop_all・2026-11-27）: 自分が押した物だけ残し、それ以外は外さず止める（前の「_keptOverlap で数えて続行」は退役）
+ok("自分が押した物は _keptMine で残す・それ以外は外さず止める", /if \(_mine\) \{ _keptMine\+\+; return; \}/.test(ov) && /_lineResidueStop = true;/.test(ov));
 ok("前客と被りの記録は客ごとに1回", /_keptOverlap > 0 && !window\.__axlxLineOverlapSent/.test(ov));
 const reset = ps.slice(ps.indexOf("window.__axlxStationForceClearedOnce = false;\n      window.__axlxLineWaitN = 0;".replace(/\n/g, ps.includes("\r\n") ? "\r\n" : "\n")) - 10, ps.indexOf("window._axPreSearchWalkSealed = false;"));
 ok("客ごとに待ち回数・押し直し回数・押した沿線を空にする", ["__axlxLineWaitN = 0", "__axlxLineRepressN = 0", "__axlxLineStuckSent = false", "__axlxLineOverlapSent = false", "__axlxLinePickedRun = {}"].every((s) => reset.indexOf(s) >= 0), reset.slice(0, 300));

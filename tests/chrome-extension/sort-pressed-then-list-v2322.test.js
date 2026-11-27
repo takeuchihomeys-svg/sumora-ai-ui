@@ -53,7 +53,7 @@ console.log("■ 2. 押す手と、読み直し後の進み方の順番");
   const lagAt = dl.indexOf("_auditSort(\"sort_lag_grace\"");
   ok("高→低を押した印は、待ち（lag）より前に書く", pressAt > 0 && lagAt > pressAt, "press=" + pressAt + " lag=" + lagAt);
   const maybe = sliceFn(dl, "_maybeAutoPressOnLoad");
-  const resumeAt = maybe.indexOf("_sortPressedMeansList(_readSortPressedSync())");
+  const resumeAt = maybe.indexOf("_sortPressedMeansList(_sortSync)"); // 2.8.328: 押した印を一度読んでから判断
   const blockAt = maybe.indexOf("blocked_need_search_first");
   ok("読み直し後の④は、「検索前だから押さない」より前", resumeAt > 0 && blockAt > resumeAt, "resume=" + resumeAt + " block=" + blockAt);
   ok("④は物件取得の開始（_startAutoPressRun）", maybe.indexOf("_startAutoPressRun()") > resumeAt);
@@ -63,7 +63,9 @@ console.log("■ 2. 押す手と、読み直し後の進み方の順番");
     return r0 > 0 && rm > r0;
   })());
   const kick = sliceFn(dl, "_kickSortAfterSearch");
-  ok("並べ替えの開始は、押したあとなら断る（もう一度並べ替えない）", kick.indexOf("sort_skip_done") > 0 && kick.indexOf("return false") > kick.indexOf("sort_skip_done"));
+  // 2.8.328: 断る確かめは _sortRecognizedDone に1つにまとめた（kick・予約の入口で同じ物を使う・sort_skip_done はそこで残す）
+  const rec = sliceFn(dl, "_sortRecognizedDone");
+  ok("並べ替えの開始は、押したあとなら断る（もう一度並べ替えない）", /^\s*if \(_sortRecognizedDone\("kick:[^\n]*\) return false;/m.test(kick) && rec.indexOf("sort_skip_done") > 0 && rec.indexOf("_adSortDone") > 0);
 }
 
 console.log("■ 3. パネルが並べ替えのまま戻らない");

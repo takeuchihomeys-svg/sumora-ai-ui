@@ -50,7 +50,8 @@ console.log("■ ② clickByText が「一番内側」を採る");
 console.log("■ ③ 押した後に「本当に開いたか」を確かめる");
 {
   t("確認の関数がある", /_ensureAreaOpened/.test(ps));
-  t("開いたかの判定（区・町字・都道府県）", /label\.one_city, label\.one_town, input\[name="city_code\[\]"\], input\[name="pref_code"\]/.test(ps));
+  // 2.8.328: 旧の「input が有るか」は閉じていてもフォームに有る＝いつも開いた。小窓の中身が見えているかで見る
+  t("開いたかの判定（小窓の中身が見えているか）", /var g = _graspAreaModalScreen\(\);\s*return !!\(g && g\.kind !== "closed"\)/.test(ps));
   t("開かなければ押し直す", /所在地絞り込みを押し直します/.test(ps));
   t("最大3回で止める", /if \(n >= 3\)/.test(ps));
   t("開いた事を点検に残す", /area_open_retry/.test(ps));

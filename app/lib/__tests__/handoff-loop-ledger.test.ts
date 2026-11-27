@@ -108,7 +108,7 @@ function t(name: string, ok: boolean) {
 
 {
   const adv = formatLoopAdvance({ currentName: "山田", nextName: "佐藤", index: 2, total: 5 });
-  t("formatLoopAdvance 次あり", /客完了→次へ（2\/5）/.test(adv.summary) && adv.nextMove === "前客の選択を1つずつ外す");
+  t("formatLoopAdvance 次あり", /客完了→次へ（2\/5）/.test(adv.summary) && adv.nextMove === "リセットで空にして次のお客さんへ");
   const last = formatLoopAdvance({ currentName: "末", nextName: "", index: 5, total: 5 });
   t("formatLoopAdvance 末", /一括末/.test(last.summary) && last.nextMove === "一括完了");
 }

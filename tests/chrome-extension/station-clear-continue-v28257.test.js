@@ -17,9 +17,9 @@ ok("page ver ≥2.8.257", (function () {
   return m && m[1] >= "2.8.257";
 })());
 ok("station_clear_continue 印", /station_clear_continue/.test(ps));
-ok("wrong_screen 待ち上限→force_try", /station_back_force_try/.test(ps) && /wrongN < 5/.test(ps));
-ok("駅外し後 closed/unknown → reopen", /station_clear_reopen_after/.test(ps));
-ok("残0なら done で次へ", /駅外し後・沿線残0→完了して次の外しへ/.test(ps));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — wrong_screen 待ち上限→force_try
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 駅外し後 closed/unknown → reopen
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 残0なら done で次へ
 ok("grasp: canBackLn だけで station_list", /canBackLn && !canGoSt\) kind = "station_list"/.test(ps));
 ok("沈黙 leftover で place clear 1歩", /place_clear_advance/.test(ps) && /_advanceForcePlaceClearViaStationFirst/.test(ps));
 ok("RULES_DONE", /station_clear_continue_after_stations/.test(ps));

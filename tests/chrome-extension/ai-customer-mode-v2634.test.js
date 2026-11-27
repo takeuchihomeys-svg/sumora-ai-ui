@@ -242,11 +242,11 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI: 間取りを上から順に選ばない（順番をシャッフル）", /_range\.sort\(function \(a, b\) \{ return \(0\.5 - Math\.random\(\)\); \}\)/.test(ips4) && /_subs\.sort\(function \(\) \{ return 0\.5 - Math\.random\(\); \}\)/.test(ips4));
   // 2026-11-11 竹内さん「物件検索した後に次のお客さんにうつるためにリセットする間隔など人間的になっているか」
   // 2.8.313: 外し方は 2.8.147（竹内さん「外し方も入れるのと同じように１つずつ」）で _clearChecksOneByOne（送る→カーソルで押す→外れたか確かめる→次）に置き換わった。一瞬で全部外さず1つずつ、は今も同じ。
-  ok("リアプロ: 前のお客様の条件を一瞬で全部外さない（1つずつ人の間で外す）", /_toUncheck\.push\(cb\)/.test(ps4) && /_clearChecksOneByOne\(function \(\) \{ return _toUncheck; \}/.test(ps4) && /_toggleCheckboxLikeHuman\(cb, false, null, null, \{ quick: okN > 0 \}\)/.test(fnSlice(ps4, "function _clearChecksOneByOne(")));
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リアプロ: 前のお客様の条件を一瞬で全部外さない
   // 2.8.313 退役: 外す間の「90〜260ms・8%で一息」は 2.8.147 で外しも入れる時と同じ1つずつ（_clearChecksOneByOne→_toggleCheckboxLikeHuman）に置き換わり、間は人の速さ（硬下限900〜）になった（page-script.js _clearChecksOneByOne のコメント）。
   // 2.8.313 退役: 「20件超は5件ずつまとめて外す」は 2.8.147 で廃止（旧はまとめて順番待ちに積み外れたか確かめず次を押していた→常に1つずつ確かめて外す・page-script.js の 2.8.146/147 のコメント）。
   // 2.8.313: `_afterUncheck` は無くなり、1つずつ外し終わった後の done から `_next`（既定 _resetRest）へ進む形に（関数宣言 function _resetRest は残っている）。
-  ok("リアプロ: 全部消えてから次へ進む（_resetRest）", /var _next = typeof after === "function" \? after : _resetRest;/.test(ps4) && /_clearChecksOneByOne\(function \(\) \{ return _toUncheck; \}, function \(\) \{/.test(ps4) && /function _resetRest\(\) \{/.test(ps4) && /if \(!left\.length\) \{ finish\("完了"\); return; \}/.test(ps4));
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リアプロ: 全部消えてから次へ進む
   ok("次のお客様まで 15〜60秒＋一息（nextCommandGapMs）", /function nextCommandGapMs\(rng\) \{\s*return customerGapMs\(rng\);/.test(fs4.readFileSync(path.join(dir, "auto-run.js"), "utf8")));
   // 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから。ほかでもちゃんと確認おねがい。リアプロもitandiも」
   // 2.8.313: _stationBreath は2段のまま、数字だけ録画に合わせて調整された（12%で約1.4秒・3.5%で約3.6秒の対数正規）。
@@ -265,7 +265,7 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("休憩の長さ（short 12〜30秒・long 60〜180秒）", /REST_SHORT_MS = 12000, REST_SHORT_MAX_MS = 30000/.test(hwn) && /REST_LONG_MS = 60000, REST_LONG_MAX_MS = 180000/.test(hwn)); }
   // 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか。人間のように一息もランダムにはいる」
   // 2.8.313: 2.8.270 で _resetFieldsOneByOne（欄ごとに 戻す→戻ったか読む→次）に置き換わった。select はカーソルで先頭へ・text は欄へカーソルを当てて空に、を1つずつ。
-  ok("リセット: セレクト・テキストも1つずつ消す（一斉に消さない）", /_resetFieldsOneByOne\(_collectSoftClearTargets\(null\), "前客の選ぶ欄・文字"/.test(ps4) && (function () { const b = fnSlice(ps4, "function _resetFieldsOneByOne("); return /chooseSelectLikeHuman\(t\.el, v0, \{ forceOpen: true \}\)/.test(b) && /typeTextLikeHuman\(t\.el, ""/.test(b) && /var t = list\[i\+\+\];/.test(b); })());
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リセット: セレクト・テキストも1つずつ消す
   ok("リセット: 全部消えたのを見届ける間にも一息（10%）", /var _look = _ln\(650, 0\.4, 380, 1300\);[\s\S]{0,200}Math\.random\(\) < 0\.10\) _look \+= 900/.test(ps4));
   // 2.8.313: _enqueueWithEl の本体にコメントが増えて 900 字の窓で届かない。関数の本体の中で見る形に（一息の数字は同じ）。
   ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", (function () { const b = fnSlice(ps4, "function _enqueueWithEl("); return /Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(b) && /Math\.random\(\) < 0\.03\) \{[\s\S]{0,200}"考え"/.test(b); })());

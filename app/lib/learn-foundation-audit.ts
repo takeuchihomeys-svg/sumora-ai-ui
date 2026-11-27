@@ -2428,11 +2428,14 @@ export async function auditLearnFoundations(
       bg = readFileSync(join(process.cwd(), "chrome-extension/background.js"), "utf8");
       pageSrc = readFileSync(join(process.cwd(), "chrome-extension/page-script.js"), "utf8");
     } catch { /* */ }
+    // 2.8.328: 送付後の外し（_postSendClearRealpro・__axlxPostSendClearP）は消した。送付後はリセット（_postSendClearOrReset）だけ
     const wireOk =
-      /function _postSendClearRealpro\(customerId, auditRunId\)/.test(bg)
+      /async function _postSendClearOrReset\(customerId, auditRunId\)/.test(bg)
+      && /_resetWithInsurance\(/.test(bg)
       && /handoff_loop/.test(bg)
       && /leftover_scan/.test(pageSrc)
-      && /__axlxPostSendClearP/.test(pageSrc);
+      && !/_postSendClearRealpro/.test(bg)
+      && !/__axlxPostSendClearP/.test(pageSrc);
     let v203 = 0, leftN = 0, postN = 0, readyN = 0, loopN = 0;
     const { data: cAud } = await sb
       .from("search_audits")

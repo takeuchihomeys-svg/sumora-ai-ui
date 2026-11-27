@@ -26,8 +26,6 @@ var FAULTS = [
   { k: "drop_done", w: 3, page: { dropBatchDone: true } },
   { k: "no_fill_done", w: 2, page: { noFillDone: true } },
   { k: "zero_count", w: 2, page: { count: 0 } },
-  { k: "psc_hang", w: 2, page: { postSendClear: "hang" } },
-  { k: "psc_slow", w: 2, page: { postSendClear: "slow" } },
   { k: "reset_nobutton", w: 3, page: { reset: "nobutton" } },
   { k: "reset_hang", w: 3, page: { reset: "hang" } },
   { k: "reset_notempty", w: 3, page: { reset: "notempty" } },
@@ -68,9 +66,16 @@ async function one(seed, resetMode) {
   try { alive = w.sw ? w.sw.get("_manualBulkAlive") : null; } catch (_) {}
   var gaps = [];
   for (var i = 1; i < w.autofills.length; i++) gaps.push({ cid: w.autofills[i - 1].cid, ms: w.autofills[i].at - w.autofills[i - 1].at });
+  // 2026-11-27（リセットは押して空を確かめる・確かめられなければ止める）: リセットの故障で止まった時は、
+  // 次の客へ入らず止まっていること（届いた客は先頭からの連続＝飛ばして入れていない）を見る
+  var resetFault = customers(N).some(function (c) { return /^reset_/.test(plan[c.id].k); });
+  // 2.8.328: 従来の1つずつ外しへ戻る道は無いので、リセットの確かめられない客は（ボタンの有無に関わらず）止まる
+  var stoppedByReset = resetFault && JSON.stringify(Array.from(w.db.values())).indexOf("reset_stop") >= 0;
+  var prefixOk = want.slice(0, uniq.length).join() === uniq.join();
   var res = {
     seed: seed, plan: plan, filled: filled,
     allReached: uniq.length === N && uniq.join() === want.join(),
+    stoppedByReset: stoppedByReset, prefixOk: prefixOk,
     dup: filled.length - uniq.length,
     done: !!(q && (q.done || q.stage === "done") && (q.index === N - 1 || q.done)),
     queue: q, alive: alive,
@@ -98,7 +103,7 @@ async function one(seed, resetMode) {
       var problems = [];
       if (res.crash) problems.push("crash:" + res.crash.slice(0, 200));
       else {
-        if (!res.allReached) problems.push("全員に届かず（入れた=" + res.filled.join(",") + "）");
+        if (!res.allReached && !(res.stoppedByReset && res.prefixOk)) problems.push("全員に届かず（入れた=" + res.filled.join(",") + "）");
         if (res.errors.length) problems.push("例外:" + res.errors[0].slice(0, 100));
         if (res.maxGap > PER_CUSTOMER_LIMIT_MS) problems.push("1人あたり " + Math.round(res.maxGap / 60000) + "分");
         if (res.dup > 3) problems.push("同じ客を" + res.dup + "回やり直し");

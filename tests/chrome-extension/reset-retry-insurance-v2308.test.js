@@ -34,7 +34,9 @@ ok("保険の段が点検に残る（KEEP_STEP・RULE_STEP の両方）", (sa.ma
 console.log("\n■ 保険の関数を実際に動かす");
 const s0 = bg.indexOf("async function _resetWithInsurance");
 const s1 = bg.indexOf("async function _postSendResetRealpro(");
-const fnSrc = bg.slice(s0, s1);
+// 2.8.328: 押すタブの選び方は入力と同じ1か所（_pickRealproResetTab）を使う → 一緒に読み込む
+const pk0 = bg.indexOf("function _pickRealproResetTab(");
+const fnSrc = (pk0 < 0 ? "" : bg.slice(pk0, bg.indexOf("\n}\n", pk0) + 3)) + bg.slice(s0, s1);
 
 function run(opts) {
   const steps = [];
@@ -44,7 +46,8 @@ function run(opts) {
     console,
     _batchShouldStop: !!opts.stop,
     _manualBulkAlive: true,
-    Promise, setTimeout, String, Date,
+    Promise, setTimeout: (fn) => setImmediate(fn), String, Date,
+    _bulkWaitShow: () => {}, _bulkPressShow: () => {},
     _postSendResetRealpro: async () => { calls.reset++; return results.shift() || { ok: false, why: "none" }; },
     _auditStep: (rid, k, n) => steps.push(k + ":" + n),
     _auditOpenRunId: () => "run1",
@@ -77,13 +80,16 @@ function run(opts) {
   ok("2回目の前に待ちの上限を張り直す（phase と quiet）", t.calls.phase === 1 && t.calls.quiet === 1, t.calls);
 
   t = await run({ results: [{ ok: false, why: "press_timeout" }, { ok: false, why: "reset_not_empty:y", left: 2 }], grasp: { ok: true, empty: false, left: 2 } });
-  ok("2回ともだめ → ok:false を返す（呼び元が従来の外しへ）・押すのは2回まで", t.r.ok === false && t.calls.reset === 2, t);
+  ok("2回ともだめ → 止める（stop・次の客へ進まない・従来の外しへ行かない）・押すのは2回まで", t.r.ok === false && t.r.stop === true && t.calls.reset === 2, t);
 
   t = await run({ results: [{ ok: false, why: "reset_not_empty:y" }], grasp: null, stop: true });
   ok("ストップ要求の時は保険を入れない", t.calls.reset === 1 && t.calls.shot === 0 && t.r.ok === false, t);
 
   t = await run({ results: [{ ok: false, why: "error", notPressed: true }, { ok: true, left: 0, reset: true }], grasp: null });
   ok("把握が読めなくても（null）もう1回押す", t.r.ok === true && t.calls.reset === 2, t);
+
+  t = await run({ results: [{ ok: false, why: "press_timeout" }, { ok: false, why: "x" }], grasp: { ok: true, empty: false, left: 2 } });
+  ok("保険の前に60〜90秒待つ（reset_insure_wait・完了の通知が来ない）", t.steps.some((s) => /^reset_insure_wait:完了の通知が来ない/.test(s)) && t.steps.some((s) => /さらに(6\d|7\d|8\d|90)秒待って/.test(s)), t.steps);
 
   console.log("\n■ 手順書");
   const block = (id) => { const i = rules.indexOf('id: "' + id + '"'); return i < 0 ? "" : rules.slice(i, rules.indexOf("\n  },", i)); };

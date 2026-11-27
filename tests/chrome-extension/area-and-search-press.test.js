@@ -77,7 +77,8 @@ console.log("■ ④ 前の地域の選択を外してから選ぶ");
   t("モーダルを開いた直後に前の選択を外す", /_clearPrevAreaSelection/.test(ps));
   t("区を外す処理がある", ps.includes('input[name="city_code[]"]:checked'));
   t("町字を外す処理がある", ps.includes('input[name="town_code[]"]:checked'));
-  t("外した事を点検に残す", /_auditStepP\(\s*_forceAll \? "area_prev_clear_force" : "area_prev_clear"/.test(ps));
+  // 段階2-B（stop_all・2026-11-27）: 前客の地域は外さず止める。点検は area_prev_clear_stop
+t("残りがあれば外さず止めた事を点検に残す", /_auditStepP\('area_prev_clear_stop'/.test(ps));
   // 2.8.313 退役: 「checked を直接 false にして change を送る」は、2026-11-16 に「checked 直書き禁止・label カーソル押しだけ（_toggleCheckboxLikeHuman）」へ置き換わった
   //   （page-script.js _clearPrevAreaSelection のコメント／.cursor/rules/auto-clear-not-reset.mdc「直書きの checked=false 禁止」）。
 }
@@ -106,7 +107,8 @@ console.log("■ ⑦ 開く前に地域が入っていない（竹内さんの�
   t("モーダルを開く直前に前の選択を外す", /_clearBeforeOpen/.test(ps));
   t("区と町字の両方を外す（同じセレクタで）",
     ps.includes('input[name="city_code[]"]:checked, input[name="town_code[]"]:checked'));
-  t("外した事を点検に残す（area_preclear）", /_forceAll \? "area_preclear_force" : "area_preclear"/.test(ps) && /_auditStepP\(\s*_forceAll \? "area_preclear_force"/.test(ps));
+  // 段階2-B（stop_all・2026-11-27）: モーダルを開く前の地域は外さず止める。点検は area_preclear_stop
+t("残りがあれば外さず止めた事を点検に残す（area_preclear_stop）", /_auditStepP\('area_preclear_stop'/.test(ps));
   t("直接チェックの分岐はモーダルでは通さない", /var _useDirectCities = \(locationMode === "area" && !hasModalWard\);/.test(ps));
   t("モーダルで選ぶ時は直接チェックしない事を残す", /area_skip_direct/.test(ps));
   // 直接チェックの呼び出しが _useDirectCities の中だけか

@@ -34,7 +34,8 @@ console.log("■ ① 配線（一括ループでの位置・点検・手順書�
   ok("  リアプロの時だけ（ITANDI の回では押さない）", /if \(_bulkSite === "realnetpro"\) \{\s*await _waitInheritedReset[\s\S]{0,4000}await _resetBeforeFill\(_bc/.test(bg));
   ok("  世代が替わったら抜ける・ストップ要求で止まる", /await _resetBeforeFill\(_bc[\s\S]{0,400}_myGen !== _manualBulkGen[\s\S]{0,300}_batchShouldStop/.test(bg));
   ok("段の名前 pre_fill_reset（枠に出す日本語がある）", /pre_fill_reset: "条件を入れる前にリセットを押す"/.test(bg));
-  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
+  // 2.8.328: 見えないタブの待ち（reset_hidden_*）の印を足した
+  ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|reset_gap|reset_done_gap|api_reload_gap|reset_insure_wait|reset_stop|reset_hidden_|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|reset_gap|reset_done_gap|api_reload_gap|reset_insure_wait|reset_stop|reset_hidden_|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
   {
     // 文字ではなく動き: 実際の正規表現に段の名前を通す（落とされない・前後の名前に巻き込まれない）
     const keep = eval(audit.match(/var KEEP_STEP = (\/.*\/);/)[1]);
@@ -98,7 +99,7 @@ const stepOf = (steps) => steps.filter((s) => s.k === "reset_before_fill").map((
     const r = await t.h.ctx._resetBeforeFill({ id: "c3333333-cccc" }, "run3");
     ok("押そうとした（2.8.308 保険つき: 1回目＋撮って読んでもう1回＝2回）", t.press.n === 2, t.press.n);
     ok("  失敗を返す（呼び出し側は止まらず入力へ進む）", r && r.ok === false, r);
-    ok("  点検に「空にできず→…従来の外しへ（理由=…no_reset_button）」", stepOf(t.steps).some((d) => /空にできず[\s\S]*no_reset_button/.test(d)), stepOf(t.steps));
+    ok("  点検に「空にできず→…入れずに止める（理由=…reset_stop）」", stepOf(t.steps).some((d) => /空にできず[\s\S]*reset_stop/.test(d)), stepOf(t.steps));
     ok("  窓は残さない", t.h.ctx._quiet == null);
   }
 
@@ -117,9 +118,9 @@ const stepOf = (steps) => steps.filter((s) => s.k === "reset_before_fill").map((
     ok("リアプロのタブが無い → 見送り（押さない・読まない）", t.press.n === 0 && r && r.skipped === "no_tab", { r, n: t.press.n });
   }
   {
-    const t = mk({ ok: true, empty: false }, { off: true });
+    const t = mk({ ok: true, empty: false }, {});
     const r = await t.h.ctx._resetBeforeFill({ id: "c6" }, "run6");
-    ok("リセットボタン機能がオフ → 見送り（従来の外し）", t.press.n === 0 && r && r.skipped === "off", { r, n: t.press.n });
+    ok("切り替えフラグ（off で押さない）は無い（2.8.328・従来の外しを消したので逃げ道も無い）", !/axlx_reset_button_mode|RESET_BUTTON_MODE_KEY/.test(bg));
   }
   {
     const t = mk(null, { probeThrows: true });

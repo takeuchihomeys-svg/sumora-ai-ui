@@ -75,7 +75,10 @@ console.log("■ 2. 詳細地域案内（realpro-guide.js）と禁止操作ゼ�
 console.log("■ 3. 単発自動の _resetBeforeFill 連携と案内保護");
 {
   ok("background.js に axlx-reset-before-fill 受け口があり、案内モード（normal）を絶対に弾く",
-    /if \(msg\.type === "axlx-reset-before-fill"\)[\s\S]{0,700}stMode === "normal"[\s\S]{0,120}skipped:\s*"guide_mode"[\s\S]{0,200}_resetBeforeFill\(/.test(bgSrc));
+    /if \(msg\.type === "axlx-reset-before-fill"\)[\s\S]{0,700}stMode === "normal"[\s\S]{0,120}skipped:\s*"guide_mode"[\s\S]{0,900}_resetBeforeFill\(/.test(bgSrc));
+  // 2.8.328: 一括の最中は受け口から押さない（一括が持つ・#1666/#1671 の重なり）
+  ok("一括の最中は受け口から入力前リセットを押さない（bulk_owns_reset）",
+    /skipped:\s*"guide_mode"[\s\S]{0,300}if \(_manualBulkAlive \|\| _batchLoopAlive\) \{[\s\S]{0,400}skipped: "bulk_owns_reset"/.test(bgSrc));
   ok("_resetBeforeFill が preferredTabId を受けて対象タブを優先する",
     /async function _resetBeforeFill\(customer,\s*runId,\s*preferredTabId\)/.test(bgSrc));
   ok("popup.js が手動単発自動時 (!isAutomated && _isAutoModeNow()) だけ axlx-reset-before-fill を呼ぶ",

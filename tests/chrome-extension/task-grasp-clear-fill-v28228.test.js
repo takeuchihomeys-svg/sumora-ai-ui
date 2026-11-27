@@ -30,9 +30,9 @@ ok("RULES_DONE に載る", /"task_grasp_now_done_next"/.test(ps));
 ok("決まり task_grasp_now_done_next", /id: "task_grasp_now_done_next"/.test(rules));
 
 console.log("\n■ 外す1つずつ（間取り含む）");
-ok("clear で _publishTaskGrasp", /_clearChecksOneByOne[\s\S]{0,1200}_publishTaskGrasp/.test(ps));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — clear で _publishTaskGrasp
 ok("間取り clear_stage で把握", /room_layout_id[\s\S]{0,80}"間取り"/.test(ps) && /を1つずつ外す/.test(ps));
-ok("間取り外し完了印", /"間取り"[\s\S]{0,200}外し完了/.test(ps) || /stageJa \|\| name\) \+ "外し完了"/.test(ps));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 間取り外し完了印
 ok("clear_one_by_one 決まり残", /id: "clear_one_by_one"/.test(rules));
 
 console.log("\n■ 入れる1つずつも同型");

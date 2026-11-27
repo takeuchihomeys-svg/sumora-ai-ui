@@ -37,7 +37,7 @@ ok("marker _guardNextMove", /marker: "_guardNextMove"/.test(rules));
 console.log("\n■ bulk / 監査残し");
 ok("bulk が premature_block", /next_move_premature_block/.test(bd));
 ok("KEEP に next_move_premature_block", /next_move_premature_block/.test(sa));
-ok("RULE に next_move_premature_block", /RULE_STEP[\s\S]{0,1000}next_move_premature_block/.test(sa));
+ok("RULE に next_move_premature_block", /RULE_STEP[\s\S]{0,1400}next_move_premature_block/.test(sa));
 
 console.log("\n■ F64 根本改善ループ配線");
 ok("root-cause-improve-loop がある", /evaluateRootCauseImproveLoop/.test(rc));

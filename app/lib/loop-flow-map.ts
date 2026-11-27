@@ -23,7 +23,8 @@
  * 試験: app/lib/__tests__/loop-flow-map.test.ts（形・合流・実在・手順書との一致・失敗の道・割り込み・悪い地図の自己点検）
  */
 
-export type FlowKind = "step" | "branch" | "join";
+/** stop＝止まり（ここで一括が止まる。次の手へ行かない・客完了へ合流しない） */
+export type FlowKind = "step" | "branch" | "join" | "stop";
 
 /**
  * パネル（拡張の枠の「いま／つぎ」）に出す言葉の段。
@@ -70,6 +71,32 @@ export type FlowNode = {
   panel?: FlowPanel[];
   /** パネルに専用の言葉を持たない理由（どの段の言葉で出すか）。panel か noPanel のどちらかは必須 */
   noPanel?: string;
+  /** この手で押すボタンと「押した・効いた」の把握（2.8.328）。手順書の手の文は pressLine() で地図から作る */
+  presses?: FlowPress[];
+};
+
+/**
+ * 押す物1つの把握（2.8.328 竹内さん「押したら押したってこと理解できるように／それぞれの手順書のところでも押したことの把握」）。
+ *   押した（押す関数が実際に呼ばれた）と、効いた（画面が変わった・送れた・頁が進んだ）は別の印。
+ *   「積んだ」「列が空いた」は押した証拠にしない。
+ */
+export type FlowPress = {
+  /** 画面のボタンの名前 */
+  button: string;
+  /** 押した受領の印（search_audits の段の名前） */
+  receipt: string[];
+  /** 効いた印 */
+  effect: string[];
+  /** 押せなかった・効かなかった印 */
+  fail: string[];
+  /** 効いたとみなす画面の変化（手順書の文） */
+  effectJa: string;
+  /** 効かなかった時の動き（押し直す回数・止める・記録して進む） */
+  onFail: string;
+  /** 次の手が「効いた」を待ってから進むか（false は記録して進む＝理由を onFail に書く） */
+  gate: boolean;
+  /** 印を出すコード（目印の語がそのファイルに実在する） */
+  evidence: { file: string; token: string };
 };
 
 /**
@@ -111,10 +138,22 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     panel: [{ phase: "reset", now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる", short: "リセット", then: ["fill"] }],
     kind: "step",
     label: "リセットを押す（送付のあと1回）",
-    next: ["api_reload", "b_reset_late", "b_reset_retry", "b_reset_fallback"],
+    next: ["api_reload", "b_reset_hidden_wait", "b_reset_hidden_stop", "b_reset_late", "b_reset_insure", "b_reset_stop"],
     evidence: { file: "background.js", token: "_postSendResetRealpro" },
-    audit: ["reset_press", "reset_settled"],
-    note: "最初のお客さんと前客リセット済みの客は入れる前に押さない（first_customer_no_reset）",
+    audit: ["reset_press", "reset_settled", "reset_done_gap"],
+    presses: [
+      {
+        button: "リセット",
+        receipt: ["reset_press"],
+        effect: ["reset_settled"],
+        fail: ["reset_stop", "page:reset_press_cancel", "page:reset_press_late_blocked"],
+        effectJa: "読み直した画面のフォームが空",
+        onFail: "押した印が無い（実際のクリックが呼ばれない）・空にならない時は60〜90秒後に画面を確かめて押し直し1回→それでも空でなければ止める",
+        gate: true,
+        evidence: { file: "page-script.js", token: "queue_idle_not_fired" },
+      },
+    ],
+    note: "最初のお客さんと前客リセット済みの客は入れる前に押さない（first_customer_no_reset）。空を確かめたら20秒あけてから次の手へ（reset_done_gap）",
   },
   {
     id: "api_reload",
@@ -123,8 +162,8 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     label: "次客の条件をAPIから読み直す",
     next: ["fill", "b_api_skip"],
     evidence: { file: "background.js", token: "_refreshCustomerBeforeSearch" },
-    audit: ["customer_api_reload"],
-    note: "読めなければ古い条件では検索せずこの客を飛ばす（2.8.318）",
+    audit: ["customer_api_reload", "api_reload_gap"],
+    note: "読めなければ古い条件では検索せずこの客を飛ばす（2.8.318）。読めたら20秒あけてから入れる（api_reload_gap・2026-11-27）",
   },
   {
     id: "fill",
@@ -134,6 +173,70 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     next: ["search"],
     evidence: { file: "page-script.js", token: "fill_done" },
     audit: ["fill_done"],
+    note: "入力の終わりに、この回で押せたボタン・押せなかったボタンの数を1行で残す（press_sum）",
+    presses: [
+      {
+        button: "所在地絞り込み",
+        receipt: ["page:press_ok_area_open"],
+        effect: ["page:area_open_ok"],
+        fail: ["page:press_ng_area_open", "page:area_open_fail"],
+        effectJa: "所在地の小窓（都道府県・区・町の一覧か確定のボタン）が見えた",
+        onFail: "見えなければ、押している最中でない時に押し直す（最大3回・開いた直後9秒の間だけ。開く途中で押すと閉じるため）",
+        gate: true,
+        evidence: { file: "page-script.js", token: "area_open_ok" },
+      },
+      {
+        button: "駅の設定へ進む",
+        receipt: ["page:press_ok_go_station"],
+        effect: ["page:go_press_ok"],
+        fail: ["page:go_press_fail", "page:station_go_stuck"],
+        effectJa: "駅の一覧が見えた",
+        onFail: "1.8秒で出なければ押し直す→3回で止める",
+        gate: true,
+        evidence: { file: "page-script.js", token: "station_go_stuck" },
+      },
+      // 2.8.328 竹内さん「町の選択や管理費・構造の選択は、効いたかを確かめていない ここも順に改善する」
+      {
+        button: "町（ピンポイント）",
+        receipt: ["page:cond_pick_idle"],
+        effect: ["page:cond_effect_ok"],
+        fail: ["page:press_ng_cond_effect"],
+        effectJa: "選んだ町ごとに、小窓の町の印が付いている（押す列が空いてから読み直す）",
+        onFail: "付いていない町だけ1回選び直す→それでも付かなければ記録して枠に⚠を出し、確定へ進む（検索は止めない）",
+        gate: true,
+        evidence: { file: "page-script.js", token: "_townPickedState(" },
+      },
+      {
+        button: "確定してリストへ",
+        receipt: ["page:press_ok_confirm"],
+        effect: ["page:confirm_effect_ok"],
+        fail: ["page:press_ng_confirm", "page:confirm_effect_retry", "page:confirm_effect_ng"],
+        effectJa: "所在地・駅の小窓が閉じた",
+        onFail: "6秒で閉じなければ1回押し直す→それでも閉じなければ止める（開いたまま進むと条件が入らない・検索が押せない）",
+        gate: true,
+        evidence: { file: "page-script.js", token: "_confirmEffectThen(" },
+      },
+      {
+        button: "管理費・共益費込み",
+        receipt: ["page:cond_pick_idle"],
+        effect: ["page:cond_effect_ok"],
+        fail: ["page:press_ng_cond_effect"],
+        effectJa: "管理費・共益費込みの欄に印が付いている（押す列が空いてから読み直す）",
+        onFail: "1回だけ押し直す→それでも付かなければ記録して枠に⚠を出し、次の欄へ進む（欄が無い時は fee_skip を残して飛ばす）",
+        gate: true,
+        evidence: { file: "page-script.js", token: "_feeEffect(" },
+      },
+      {
+        button: "構造",
+        receipt: ["page:cond_pick_idle"],
+        effect: ["page:cond_effect_ok"],
+        fail: ["page:press_ng_cond_effect"],
+        effectJa: "欲しい構造だけに印が付いている（足りない・余計が0）",
+        onFail: "1回だけ選び直す（足りない所を付け、余計を外す）→それでも合わなければ記録して枠に⚠を出し、次の欄へ進む",
+        gate: true,
+        evidence: { file: "page-script.js", token: "_structureEffect(" },
+      },
+    ],
   },
   {
     id: "search",
@@ -143,6 +246,19 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     next: ["sort"],
     evidence: { file: "page-script.js", token: "search_review_wait" },
     audit: ["dl:search_press_wait"],
+    presses: [
+      {
+        button: "検索",
+        receipt: ["page:press_ok_search", "page:search_press_ok"],
+        effect: ["page:search_customer_grasp_ok"],
+        fail: ["page:press_ng_search", "page:search_customer_grasp_gap"],
+        // 検索の手の文に「印刷用PDF」を書かない（拡張の _pbListNext が1手目の PDF の字で一覧の手と見る）
+        effectJa: "検索結果の画面（並べ替えの見出し・棟戸の数）が見えた",
+        onFail: "見えるまで並べ替えへ進まない（次の撮影・次の手まで45秒あける）",
+        gate: true,
+        evidence: { file: "page-script.js", token: "search_customer_grasp_ok" },
+      },
+    ],
   },
   {
     id: "sort",
@@ -154,6 +270,19 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     next: ["list_press", "b_zero"],
     evidence: { file: "bulk-dl.js", token: "_sortByAdLikeHuman" },
     audit: ["dl:sort_done", "dl:sort_pressed"],
+    presses: [
+      {
+        button: "高→低",
+        receipt: ["dl:sort_pressed"],
+        effect: ["dl:press_sort_effect_ok"],
+        fail: ["dl:press_ng_sort_effect", "dl:sort_no_hilo"],
+        // 2.8.328 竹内さん「押したのが残らないなら、前後の手順と時間差をちゃんとあけて、時間差で並べ替えしたということの認識にすればよい」
+        effectJa: "押した時刻から猶予（押した後と読み直し後に15〜20秒）をあけて④に入った＝時間差で並べ替え完了と認識（AD高／AD未は参考に残す）。認識した後は同じ一覧で並べ替えを始めない",
+        onFail: "押した時刻が分からない・時間差が短い時は記録して枠に⚠を出して④へ進む（アドレスに出ない並べ替えで押し直すと繰り返すため）",
+        gate: true,
+        evidence: { file: "bulk-dl.js", token: "_sortTimeRecognized(" },
+      },
+    ],
     note: "2.8.322 #1668: 高→低のあと sort_lag_grace で終わり、sort_done も物件取得も無かった。完了の文は③に載せる。2.8.324 #1673: 読み直し後の入口が猶予なしで4秒後に物件取得を始めた（猶予は読み直しで消えるため読み直し後にも取る）",
   },
   {
@@ -165,6 +294,18 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     next: ["list_press", "customer_done", "b_all_sent_next", "b_all_sent_last"],
     evidence: { file: "bulk-dl.js", token: "_startAutoPressRun" },
     audit: ["dl:list_flow_grasp"],
+    presses: [
+      {
+        button: "印刷用PDF",
+        receipt: ["dl:press_pdf_sum"],
+        effect: ["dl:one_send_ms"],
+        fail: ["dl:press_ng_pdf", "dl:press_ng_pdf_effect"],
+        effectJa: "送り始めて送り終えた（1件ずつ）",
+        onFail: "押せなければその物件を飛ばして次へ。送り始めなければ待ちを打ち切って次の物件へ（同じ物件を二度押さない）",
+        gate: true,
+        evidence: { file: "bulk-dl.js", token: "press_pdf_sum" },
+      },
+    ],
   },
   // ── 分かれ道（順に行う手ではない）─────────────────────────────
   {
@@ -181,6 +322,18 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     next: ["list_press"],
     evidence: { file: "bulk-dl.js", token: "all_sent_page" },
     audit: ["dl:all_sent_page"],
+    presses: [
+      {
+        button: "次へ",
+        receipt: ["dl:press_next"],
+        effect: ["dl:press_next_moved"],
+        fail: ["dl:press_ng_next", "dl:press_ng_next_page"],
+        effectJa: "頁の番号が押した先になった（前の頁の行が消えた）",
+        onFail: "前の頁の行が消えるまで待つ。番号が合わなければ記録して枠に⚠を出す（送付済みの行は飛ばす・頁の上限で必ず終わる）",
+        gate: true,
+        evidence: { file: "bulk-dl.js", token: "press_next_moved" },
+      },
+    ],
   },
   {
     id: "b_all_sent_last",
@@ -219,28 +372,53 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     audit: ["reset_press", "reset_press_late_check"],
   },
   {
-    id: "b_reset_retry",
-    noPanel: "リセット（reset）の言葉で出す。もう1回押すだけ",
+    id: "b_reset_insure",
+    noPanel: "リセット（reset）の言葉で出す。完了が来ない時は60〜90秒後に確かめ、残りがあれば押し直し1回",
     kind: "branch",
-    label: "押せず→もう1回押す",
+    label: "完了（空の確認）が来ない→さらに60〜90秒後に確かめ・残りなら押し直し1回",
     parent: "reset",
-    when: "押す処理が押せず（返事なし・押した跡なし）、押した跡もまだ無い",
-    playbook: "押せなかったら、もう1回押す（reset_retry・押す前の見え方を残す）",
+    when: "押した後に空と確かめられない（押せず・押した跡なし・残りが見える）",
+    playbook: "完了（空の確認）が来なければ、さらに60〜90秒待ってから画面を撮って読む。空ならリセット完了として次のお客さんへ。残りがあれば押し直しを1回だけ（押し直すのは確かめた後だけ・reset_retry）。押し直して空と確かめられたら完了。",
     next: ["api_reload"],
-    evidence: { file: "background.js", token: "reset_retry" },
-    audit: ["reset_retry"],
+    evidence: { file: "background.js", token: "reset_insure_wait" },
+    audit: ["reset_insure_wait", "reset_stuck_shot", "reset_stuck_grasp", "reset_retry"],
   },
   {
-    id: "b_reset_fallback",
-    noPanel: "リセット（reset）の言葉で出す。従来の外しも「リセットを押す最中」と同じ言葉に直す",
-    kind: "branch",
-    label: "リセットが押せない・空にならない→従来の1つずつ外し",
+    id: "b_reset_stop",
+    noPanel: "リセット（reset）の言葉で出す。止まったことは押した結果の行（✗空を確かめられず止めた）で出す",
+    kind: "stop",
+    label: "保険の後も空を確かめられない→止める（次のお客さんへ進まない）",
     parent: "reset",
-    when: "もう1回押しても押せない、または押しても空にならない（最後の保険）",
-    playbook: "最後の保険として、従来の1つずつ外しへ（reset_fallback・外す前後は残りを名前付きで確かめる）",
-    next: ["api_reload"],
-    evidence: { file: "background.js", token: "reset_not_pressed:" },
-    audit: ["reset_stuck_shot", "reset_stuck_grasp"],
+    when: "保険（60〜90秒後の確かめ・押し直し1回）の後も、空と確かめられない",
+    playbook: "空を確かめられなければ、次のお客さんへは進まず止める（残りを次の客へ持ち越さない・従来の1つずつ外しへも行かない・reset_stop）。画面は残し、グループに知らせる。",
+    next: [],
+    evidence: { file: "background.js", token: "_resetStopNotify" },
+    audit: ["reset_stop", "reset_stuck_shot", "reset_stuck_grasp"],
+  },
+  {
+    id: "b_reset_hidden_wait",
+    noPanel: "リセット（reset）の言葉で出す。待っている事は枠の待ちの行（⏳）と押した結果の行（⚠見えないので押さずに待っている）で出す",
+    kind: "branch",
+    label: "前に出してもタブが見えない→押さずに見えるまで待つ（知らせる）",
+    parent: "reset",
+    when: "前に出しても見え方が hidden のまま（Chrome の窓が他のアプリに隠れている）",
+    playbook: "前に出してもリアプロのタブが見えなければ、リセットは押さずに一括を止めて待つ。Windows の通知と枠で「Chrome を前に出してください」と知らせ、見えたら自動で続けて押す（強制的に前に出さない・2026-11-27 竹内さん）",
+    next: ["reset"],
+    evidence: { file: "background.js", token: "reset_hidden_wait" },
+    audit: ["reset_hidden_wait", "reset_hidden_visible"],
+    note: "見えないタブでは Chrome が待ちの時計を遅くし、人の動きのクリックが120秒たっても押されなかった（#1661・#1666・#1671）。待っている間は段と窓の上限を伸ばし、見張りが固着と見て割り込まないようにする",
+  },
+  {
+    id: "b_reset_hidden_stop",
+    noPanel: "リセット（reset）の言葉で出す。止まったことは押した結果の行（✗見えないまま10分たったので止めた）で出す",
+    kind: "stop",
+    label: "10分待っても見えない→止める（次のお客さんへ進まない）",
+    parent: "reset",
+    when: "見えるのを10分待っても hidden のまま",
+    playbook: "10分待っても見えなければ、リセットは押さずに止める（次のお客さんへ進まない・グループに知らせる・reset_hidden_stuck）",
+    next: [],
+    evidence: { file: "background.js", token: "reset_hidden_stuck" },
+    audit: ["reset_hidden_stuck"],
   },
   {
     id: "b_api_skip",
@@ -262,10 +440,10 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     kind: "join",
     label: "客完了→リセットして次のお客さんへ",
     playbook:
-      "リセットを押して次のお客さんへ。リセットからの流れは同じ（リセット→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索）",
+      "送付が終わった合図のあと20秒あけてから、リセットを押す。リセットからの流れは同じ：リセット→30〜34秒待って空を確かめる→20秒あけて次のお客さんの条件をAPIから読み直す→20秒あけて入れる→検索。作業が1つ終わったら、次の作業へ行く前に時間をあける（止まりやすいため）。「空とみなして次へ」は使わない（2026-11-27）",
     next: ["reset_front"],
     evidence: { file: "bulk-dl.js", token: "_sendBatchDone" },
-    audit: ["post_send_clear", "handoff_loop"],
+    audit: ["post_send_clear", "handoff_loop", "reset_gap"],
     note: "最後のお客さんは完了を待たせず裏でリセットして終わる",
   },
 ];
@@ -310,7 +488,7 @@ export function flowNode(id: string, nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_
 
 /** 親の手にぶら下がる分かれ道（地図の並び順） */
 export function branchesOf(parentId: string, nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): FlowNode[] {
-  return nodes.filter((n) => n.kind === "branch" && n.parent === parentId);
+  return nodes.filter((n) => (n.kind === "branch" || n.kind === "stop") && n.parent === parentId);
 }
 
 /** from から next をたどって to に着けるか */
@@ -348,14 +526,15 @@ export function checkFlowMap(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): 
     for (const x of n.next) if (!ids.has(x)) out.push(`${n.id} の next が実在しない: ${x}`);
     if (!n.evidence || !n.evidence.file || !n.evidence.token) out.push(`${n.id} にコードの目印（evidence）が無い`);
     if (!n.audit.length) out.push(`${n.id} に点検の印（audit）が無い＝何が起きたか残らない`);
-    if (n.kind === "branch") {
-      if (!n.parent) { out.push(`${n.id}（branch）に親の手（parent）が無い＝一列の手に見えてしまう`); continue; }
+    if (n.kind === "stop" && n.next.length) out.push(`${n.id}（止まり）に行き先（next）があってはならない＝ここで止まる`);
+    if (n.kind === "branch" || n.kind === "stop") {
+      if (!n.parent) { out.push(`${n.id}（${n.kind}）に親の手（parent）が無い＝一列の手に見えてしまう`); continue; }
       const p = flowNode(n.parent, nodes);
       if (!p) out.push(`${n.id} の親 ${n.parent} が実在しない`);
       else if (p.kind !== "step") out.push(`${n.id} の親 ${n.parent} は step ではない`);
       if (!n.when || !n.when.trim()) out.push(`${n.id}（branch）に条件（when）が無い`);
       if (!n.playbook || !n.playbook.trim()) out.push(`${n.id}（branch）に手順書の文（playbook）が無い`);
-      if (!n.next.length) out.push(`${n.id}（branch）の行き先（next）が無い`);
+      if (n.kind === "branch" && !n.next.length) out.push(`${n.id}（branch）の行き先（next）が無い`);
     } else if (n.parent) {
       out.push(`${n.id} は branch ではないのに parent がある`);
     }
@@ -548,6 +727,12 @@ export const LOOP_WAITS: ReadonlyArray<FlowWait> = [
   { id: "sort_lag", nodeId: "sort", label: "高→低を押したあと、並べ替えの画面が追いつくまで待っている", minMs: 15000, maxMs: 20000 },
   { id: "sort_resume_lag", nodeId: "sort", label: "読み直したあと、並べ替えの画面が追いつくまで待っている", minMs: 15000, maxMs: 20000 },
   { id: "reset_settle", nodeId: "reset", label: "リセットを押して、画面が空になるまで待っている（30〜34秒）", minMs: 30000, maxMs: 34000 },
+  { id: "reset_hidden", nodeId: "b_reset_hidden_wait", label: "リアプロのタブが見えないので、リセットを押さずに待っている（Chrome を前に出してください）", minMs: 600000, maxMs: 600000 },
+  { id: "reset_insure", nodeId: "b_reset_insure", label: "完了の通知が来ないので、さらに60〜90秒待ってから画面を確かめている", minMs: 60000, maxMs: 90000 },
+  // 2026-11-27 竹内さん「完了の20秒以降にリセットする」「作業ごとに完了してから20秒あける」
+  { id: "reset_gap", nodeId: "reset_front", label: "送付が終わったので、20秒あけてからリセットへ進んでいる", minMs: 20000, maxMs: 20000 },
+  { id: "reset_done_gap", nodeId: "reset", label: "リセットで空を確かめたので、20秒あけてから次のお客さんの条件を読み直している", minMs: 20000, maxMs: 20000 },
+  { id: "api_reload_gap", nodeId: "api_reload", label: "条件を読み直したので、20秒あけてから入れている", minMs: 20000, maxMs: 20000 },
 ];
 
 /** 拡張の写し（WAIT_WORDS）の本文。id → 枠に出す言葉 */
@@ -586,17 +771,20 @@ export function renderListPressSteps(
   const brs = branchesOf(press.id, nodes);
   const range = brs.length ? `${no}の1〜${brs.length}` : "";
   const steps: string[] = [];
+  // 押す物の「押したことの把握」は、その手の文の後ろに地図から付ける（手順書に手で書かない）
+  const sfx = (id: string) => pressLinesOf(id, nodes).map((t) => `。${t}`).join("");
   steps.push(
     `${no}${press.playbook}` +
       (brs.length
         ? `（押せる行＝送付済みでない行がある時。押す物が無い時は下の「${range}」＝${no}の場合分け。順に行う手ではない）`
-        : ""),
+        : "") +
+      sfx(press.id),
   );
-  brs.forEach((b, i) => steps.push(`${no}の${i + 1}（${no}の場合分け）${b.playbook}`));
+  brs.forEach((b, i) => steps.push(`${no}の${i + 1}（${no}の場合分け）${b.playbook}${sfx(b.id)}`));
   const join = nodes.find((n) => n.kind === "join");
   if (join && join.playbook) {
     const jno = CIRCLED[firstNo + 1] || String(firstNo + 1);
-    steps.push(`${jno}客完了（${brs.length ? `${no}で送り終えた・${range}のどれでも` : `${no}で送り終えた`}）→${join.playbook}`);
+    steps.push(`${jno}客完了（${brs.length ? `${no}で送り終えた・${range}のどれでも` : `${no}で送り終えた`}）→${join.playbook}${sfx("reset")}`);
   }
   return steps;
 }
@@ -624,6 +812,61 @@ export function checkListPlaybookStrength(
   const blob = steps.join("\n");
   for (const w of ["並べ替えは完了", "読み直した一覧", "④物件取得", "物件取得最中", "並べ替え最中"]) {
     if (!blob.includes(w)) out.push(`手順書の一覧に「${w}」が無い`);
+  }
+  return out;
+}
+
+// ── 押したことの把握（2.8.328）─────────────────────────────────────
+
+/** ボタンを押す手（押す物が無い手＝読み直し・客完了・止まり は除く）。ここに挙げた手は presses が必須 */
+export const PRESS_REQUIRED_NODES: ReadonlyArray<string> = ["reset", "fill", "search", "sort", "list_press", "b_all_sent_next"];
+
+/** 手順書に載せる「押したことの把握」の1文（地図から作る。手で書かない） */
+export function pressLine(p: FlowPress): string {
+  return `押したことの把握（${p.button}）: 押した＝${p.receipt.join("・")}／効いた＝${p.effectJa}（${p.effect.join("・")}）／効かない時＝${p.onFail}`
+    + (p.gate ? "。効いたのを見てから次の手へ" : "");
+}
+
+/** その手の押す物の文（手順書の手の末尾に付ける） */
+export function pressLinesOf(nodeId: string, nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
+  return (flowNode(nodeId, nodes)?.presses || []).map(pressLine);
+}
+
+/**
+ * 押す物の形の点検（悪い地図を止める）:
+ *   ・押す手に presses が在る ・受領／効いた／失敗の印が在る ・押した印と効いた印が同じでない（押した≠効いた）
+ *   ・効いたを待たない（gate=false）なら、効かない時の文に「記録」がある（黙って進まない）
+ */
+export function checkPresses(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
+  const out: string[] = [];
+  for (const id of PRESS_REQUIRED_NODES) {
+    const n = flowNode(id, nodes);
+    if (!n) { out.push(`押す手 ${id} が地図に無い`); continue; }
+    if (!n.presses || !n.presses.length) out.push(`${id} はボタンを押す手なのに押す物（presses）が無い＝押したか分からない`);
+  }
+  for (const n of nodes) {
+    for (const p of n.presses || []) {
+      const tag = `${n.id}「${p.button}」`;
+      if (!p.receipt.length) out.push(`${tag} に押した受領の印が無い`);
+      if (!p.effect.length) out.push(`${tag} に効いた印が無い（押した＝効いた、と取り違える）`);
+      if (!p.fail.length) out.push(`${tag} に押せなかった・効かなかった印が無い`);
+      if (p.receipt.some((r) => p.effect.includes(r))) out.push(`${tag} の押した印と効いた印が同じ（押した≠効いた）`);
+      if (!p.effectJa.trim()) out.push(`${tag} に効いたとみなす画面の変化（effectJa）が無い`);
+      if (!p.onFail.trim()) out.push(`${tag} に効かない時の動き（onFail）が無い`);
+      if (!p.gate && !/記録/.test(p.onFail)) out.push(`${tag} は効いたのを待たないのに、効かない時に記録すると書いていない（黙って進む）`);
+      if (!p.evidence || !p.evidence.file || !p.evidence.token) out.push(`${tag} にコードの目印が無い`);
+    }
+  }
+  return out;
+}
+
+/** 手順書の手に、地図の押す物の文がそのまま載っているか（コードだけ直して手順書が古いまま、を止める） */
+export function checkPressPlaybook(playbookText: string, nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
+  const out: string[] = [];
+  for (const n of nodes) {
+    for (const p of n.presses || []) {
+      if (!playbookText.includes(pressLine(p))) out.push(`手順書に ${n.id}「${p.button}」の押したことの把握の文が無い`);
+    }
   }
   return out;
 }

@@ -167,9 +167,9 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 2);
   await w.run(40 * 60000);
   // 2.8.317: 押して待ったら空とみなす（読み戻しで『空でない』を見つけて従来の外しへ回す事はしない）
-  ok("3-2 押して待ったら空とみなす → 従来の外しへ戻らない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
-  ok("3-2 次客へ進む", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
-  ok("3-2 reset_settled を残し、reset_not_empty／reset_fallback は出さない", stepKeys(w).includes("reset_settled") && !stepKeys(w).includes("reset_not_empty") && !stepKeys(w).includes("reset_fallback"));
+  ok("3-2 残りが見える→保険→止まる（従来の外しへ戻らない）", w.postSendClearCalls === 0, String(w.postSendClearCalls));
+  ok("3-2 空を確かめられないので次客へ進まない", JSON.stringify(filled(w)) === JSON.stringify(["c1"]), filled(w).join(","));
+  ok("3-2 reset_settled と reset_stop を残し、reset_fallback は出さない", stepKeys(w).includes("reset_settled") && stepKeys(w).includes("reset_stop") && !stepKeys(w).includes("reset_fallback"));
   ok("3-2 reset_verified は出さない", !stepKeys(w).includes("reset_verified"));
 
   // 3-3 リセットが見つからない → 従来の外しへ
@@ -185,15 +185,9 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   w = sim.createWorld({ customers: customers(2), resetButton: true, page: (cid) => (cid === "c1" ? { reset: "hang" } : {}) });
   await start(w, 2);
   await w.run(40 * 60000);
-  ok("3-4 返事なし → 従来の外し→次客へ", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
+  ok("3-4 返事なしでも読み直されて空なら→次客へ（遅れて押した扱い・止まらない）", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
   // 2.8.315 #1661: 押した返事が来なくても画面が読み直されていれば「遅れて押した」→待機→空の確認へ進む（画面を撮ってもう1回押す・従来の外しへは行かない）
   ok("3-4 返事なしでも読み直されていれば遅れて押した扱い（reset_settled まで進み、もう1回押さない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_settled") && !stepKeys(w).includes("reset_stuck_shot") && !stepKeys(w).includes("reset_retry"));
-
-  // 3-5 切り替えフラグ off → リセットを押さない（従来どおり）
-  w = sim.createWorld({ customers: customers(2) });
-  await start(w, 2);
-  await w.run(30 * 60000);
-  ok("3-5 flag off → リセットを押さない", w.resetPressCalls === 0 && w.postSendClearCalls === 2, w.resetPressCalls + "/" + w.postSendClearCalls);
 
   // 3-6 リセット込みの1人あたりの増え分が上限（330秒）の中
   w = sim.createWorld({ customers: customers(2), resetButton: true });
@@ -214,7 +208,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const k7 = [];
   w.db.forEach((r) => (r.steps || []).forEach((s) => k7.push(s)));
   const rbf = k7.filter((s) => s.k === "reset_before_fill").map((s) => String(s.d));
-  ok("3-7 記録に reset_before_fill（1人目＝最初の客はしない／2人目＝前客のリセット済み）の見送り", rbf.some((d) => /最初の客はリセットしない/.test(d)) && rbf.some((d) => /前客のリセットが済んでいる/.test(d)), rbf);
+  ok("3-7 記録に reset_before_fill（1人目＝最初の客はしない／2人目＝前客のリセット済み）の見送り", rbf.some((d) => /最初の客はリセットしない/.test(d)) && rbf.some((d) => /前客のリセットが空と確かめ済み/.test(d)), rbf);
   const t7press = k7.find((s) => s.k === "reset_press");
   const t7fill = k7.find((s) => s.k === "bulk_phase" && /autofill/.test(String(s.d)) && t7press && s.at > t7press.at);
   ok("3-7 リセットを押してから次客の条件入力まで30秒以上", !!(t7press && t7fill && t7fill.at - t7press.at >= 30000), t7press && t7fill ? t7fill.at - t7press.at : null);
@@ -228,15 +222,15 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   ok("一括ループは画面の写真・録画で完了を決めない", !/captureVisibleTab|_capturePaced|_resetShot|axlx-human-shot/.test(loopSrc));
   const resetFn = bg.slice(bg.indexOf("async function _postSendResetRealpro("), bg.indexOf("async function _postSendClearOrReset("));
   // 2.8.317: 押して待ったら空とみなす（読み戻しで決めない・写真も撮らない）。写真は保険（押せなかった時）の経路だけ
-  ok("リセットの『空』は押して待ったら空とみなす（読み戻し・写真で決めない）", /reset_settled/.test(resetFn) && /assumedEmpty: true/.test(resetFn) && resetFn.indexOf("_resetShot(") < 0);
+  ok("リセットの『空』は押して30〜34秒後に読んで確かめる（confirmed・空とみなさない・写真は保険だけ）", /reset_settled/.test(resetFn) && /confirmed: true/.test(resetFn) && !/assumedEmpty: true/.test(resetFn) && resetFn.indexOf("_resetShot(") < 0);
   ok("写真が撮れなくても進む（保険の経路・時間切れ・権限なしは記録のみ）", /_withTimeout\(_resetShot\(/.test(bg) && /no_permission/.test(bg));
 
   console.log("\n■ ⑤ 整合・配線");
   const clearOrReset = bg.slice(bg.indexOf("async function _postSendClearOrReset("), bg.indexOf("var _scrapeLastOutcome"));
-  ok("失敗時は従来の外し（_postSendClearRealpro）へ", /return _postSendClearRealpro\(customerId, auditRunId\)/.test(clearOrReset));
+  ok("失敗時は従来の外しへ落とさない（_postSendClearRealpro は無い・2.8.328）", !/_postSendClearRealpro/.test(bg) && !/_postSendClearRealpro/.test(clearOrReset) && /_resetWithInsurance\(/.test(clearOrReset));
   ok("送付後の呼び出しは _postSendClearOrReset", /var _psP = _postSendClearOrReset\(customerId, _runId\)/.test(bg));
-  ok("段の上限を 330秒に（待ち120秒のリセット＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 330000/.test(bg));
-  ok("切り替えフラグ axlx_reset_button_mode（false で使わない）", /RESET_BUTTON_MODE_KEY\] === false/.test(bg));
+  ok("段の上限を 330秒に（リセット＋保険の待ち）", /_bulkPhaseSet\("post_send_clear", 330000/.test(bg));
+  ok("切り替えフラグ axlx_reset_button_mode は無い（2.8.328: 従来の外しを消したので off の道も無い）", !/axlx_reset_button_mode|RESET_BUTTON_MODE_KEY/.test(bg));
   ok("2.8.107 の試験が見ていた名前が増えていない", ps.indexOf("_tryResetButtonThen") === -1 && ps.indexOf("RESET_TEXTS") === -1 && ps.indexOf('"reset_btn"') === -1);
   ok("正本に reset_between_customers", /id: "reset_between_customers"/.test(rules));
   ok("page-script の完了一覧に reset_between_customers", /"reset_between_customers"/.test(ps));
