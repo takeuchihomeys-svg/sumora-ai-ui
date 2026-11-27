@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { flakeOf, materialsOf, buildDictionary, dictSelect, dictEval, examDictionaryMode, inferSwitchMarks, dictReachGate } from "../exam-dictionary";
+import { flakeOf, materialsOf, buildDictionary, dictSelect, dictEval, examDictionaryMode, inferSwitchMarks, dictReachGate, neverPassedOf, guardSkipNeverPassed, guardSkipNeverPassedOn } from "../exam-dictionary";
 import { nightZeroCostSteps } from "../exam-night-jobs";
 
 // 揺れ: 同じ版×モデルの観測で見る
@@ -58,4 +58,10 @@ assert.equal(d2.switches.SW_H.marks![0].source, "手", "手の行と推定は分
 assert.equal(dictReachGate(d2, "SW_A", [{ id: "q1", marks: { a_line: 5 } }, { id: "q2", marks: {} }], ["q1", "q2"], 3).verdict, "届かず");
 assert.equal(dictReachGate(d2, "SW_A", [{ id: "q1", marks: { a_line: 5 } }], ["q1"], 1).verdict, "比べる");
 assert.equal(dictReachGate(d2, "NO_MARK", [], ["q1"]).verdict, "印なし");
-console.log("exam-dictionary: ok 27");
+// 2026-11-27: 一度も合格していない守り（q203 の型）
+assert.equal(neverPassedOf([o("A|✕"), o("A|✕"), o("B|✕"), o("A|✕"), o("A|✕")]), true);
+assert.equal(neverPassedOf([o("A|✕"), o("A|○"), o("A|✕"), o("A|✕"), o("A|✕")]), false, "1回でも合格があれば外さない");
+assert.equal(neverPassedOf([o("A|✕"), o("A|✕")]), false, "観測が少ない時は決めない");
+assert.deepEqual(guardSkipNeverPassed({ v: 1, builtAt: "", switches: {}, problems: { g1: { neverPassed: true } as never, g2: { neverPassed: false } as never } }, ["g1", "g2", "g9"]), ["g1"]);
+assert.equal(guardSkipNeverPassedOn({}), false, "既定は記録だけ");
+console.log("exam-dictionary: ok 32");
