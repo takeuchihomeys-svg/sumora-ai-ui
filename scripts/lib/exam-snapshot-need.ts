@@ -36,6 +36,11 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   SUBSTATE_CONTEXT: "substate_context", // 細かい状態を前提つきで読んだ番（外した番は substate_context_dropped も）
   ROUTE_STATION_FROM_RECORD: "route_station_unify", // まだ配線していない（route-station-unify.ts）。配線する時に同じ名前の印を付ける
   FIRST_CONTACT_READY_TWO_STAGE: "first_contact_two_stage", // 初回で条件が揃った番にピックアップの約束の2段を作った番
+  // 2026-11-27 作業員A（L の昼の届きの確かめで「印なし」だった A の持ち物）
+  BRAIN_MESSAGE_PLAN: "message_plan", // 1通の計画が出た番
+  CONDUCTOR_EXCHANGE_LEDGER: "exchange_intake", // 入口の統括に照らし合わせの1行を渡した番（ブレインの材料の側は CONDUCTOR_EXCHANGE_LEDGER_BRAIN＝exchange）
+  CONDUCTOR_EXCHANGE_LEDGER_BRAIN: "exchange",
+  CONDUCTOR_TODOS: "conductor_todos", // やる事の一覧の記録を作った番
   CHECK_ORDER_GUIDE: "check_order_guide", // 2026-11-27 #818 竹内さんの P0 7d6fe3eb（確かめる順番となぜの1行を材料に足した番）
   BRAIN_DEMOTE_ANSWERABLE_DIRECT: "demote_answerable_direct", // 2026-11-27 #821 すぐ AIX の決め打ちを下げた番（ブレインの答えと食い違った番だけ）
   BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3: "demote_date_wish_s3", // 2026-11-27 #821 内覧の日の希望・保証人 S3 の信号を下げた番
