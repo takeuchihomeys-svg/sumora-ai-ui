@@ -425,4 +425,8 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "並べ替えの待ちの間に見回りが割り込んで並べ替えを張り直す", gold: ["fd1aeb66"], from: "owner-base-1111b" },
   { q: "一括の途中にウェブから検索が来たらお客さんを切り替えてよいか", gold: ["fd1aeb66"], from: "owner-base-1111b" },
   { q: "リセットから次のお客さんの条件を入れるまでの間に別の指示を拾わない", gold: ["fd1aeb66"], ho: true, from: "owner-base-1111b" },
+  // 2026-11-27 作業員A（#821 竹内さん「ブレインに任せる」5c170a5c）
+  {q: "管理会社に確かめれば分かる問いはすぐ AIX で返すのか約束の返信か",gold: ["5c170a5c"],from: "decision-1127"},
+  {q: "answerable_direct の決め打ちを材料に下げる",gold: ["5c170a5c"],from: "decision-1127"},
+  {q: "内覧の日の希望の信号と保証人 S3 の信号は上書きか材料か",gold: ["5c170a5c"],from: "decision-1127"},
 ];

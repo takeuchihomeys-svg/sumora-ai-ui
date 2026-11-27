@@ -5245,7 +5245,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
         const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
-        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
+        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S3(?:_|$)/.test(sceneSig.decisionSource) && overrideDemoted("signal_date_wish_s3") ? (sceneSig.action !== finalAix ? (materialMarks.demote_date_wish_s3 = 1, "signal_date_wish_s3") : "signal_date_wish_s3") : /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
           sceneSignalCheckPattern = sceneSig.checkPattern;
           decisionSource = sceneSig.decisionSource;
@@ -5519,7 +5519,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           decisionSource = "signal:viewing_flow_meeting_too_early";
         } else if (dateReply && decisionSource !== "guard:viewing" && (vf.stage === "wished" || vf.stage === "proposing" || vf.stage === "confirmed") && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
           const vfSrc = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
-          if (applyOverride(demotedOverrides, "signal_decided", vfSrc, "viewing_invite", finalAix)) {
+          // 2026-11-27 作業員A（案2・BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3=on の時だけ 内覧の日の希望を材料に下げる・off は今と同じ signal_decided）
+          const vfFam = vfSrc === "signal:viewing_flow_date_wish" && overrideDemoted("signal_date_wish_s3") ? "signal_date_wish_s3" : "signal_decided";
+          if (vfFam === "signal_date_wish_s3" && finalAix !== "viewing_invite") materialMarks.demote_date_wish_s3 = 1;
+          if (applyOverride(demotedOverrides, vfFam, vfSrc, "viewing_invite", finalAix)) {
             finalAix = "viewing_invite";
             decisionSource = vfSrc;
           }
@@ -6235,7 +6238,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       let answerableDirectFrom: string | null = null;
       if (twoStageRes.direct) {
         answerableDirectFrom = twoStageRes.coreSource;
-        if (finalAix !== twoStageRes.direct) {
+        // 2026-11-27 作業員A（竹内さんの決め 11/27「ブレインに任せる」・BRAIN_DEMOTE_ANSWERABLE_DIRECT=on の時だけ・既定 off）: 決め打ちをやめ、ブレインの答えのまま（記録＋印 demote_answerable_direct）
+        const adSrc = `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise(|)$/g, "")})`;
+        const adApply = finalAix === twoStageRes.direct || applyOverride(demotedOverrides, "answerable_direct", adSrc, twoStageRes.direct, finalAix);
+        if (!adApply) { materialMarks.demote_answerable_direct = 1; answerableDirectFrom = null; console.log(JSON.stringify({ tag: "brain:answerable-direct-demoted", conversationId, brain: finalAix, would: twoStageRes.direct, core: twoStageRes.coreSource })); }
+        if (adApply && finalAix !== twoStageRes.direct) {
           console.log(JSON.stringify({ tag: "brain:answerable-direct", conversationId, from: finalAix, to: twoStageRes.direct, core: twoStageRes.coreSource }));
           decisionSource = finalAix
             ? `${decisionSource ?? "llm"}+answerable_direct`

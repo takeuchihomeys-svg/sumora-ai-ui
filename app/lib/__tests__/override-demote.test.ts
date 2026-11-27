@@ -67,5 +67,13 @@ t("WIDE=on でも見積・確認・資料・route=reply・about 無しは false"
   && !brainContractPromisesPickup({ asks: [{ route: "reply", about: "search_condition", answer: "新着が出次第お送りする" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" })
   && !brainContractPromisesPickup({ asks: [{ route: "promise", answer: "再検索してお送りする" }] }, { BRAIN_PROMISE_PICKUP_WIDE: "on" }));
 t("WIDE=on でも BRAIN_PROMISE_PICKUP=off が先", !brainContractPromisesPickup(q367, { BRAIN_PROMISE_PICKUP: "off", BRAIN_PROMISE_PICKUP_WIDE: "on" }));
+// 2026-11-27 竹内さんの決め「ブレインに任せる」: すぐ AIX（answerable_direct）と 内覧の日の希望・保証人 S3 は既定 off（今まで通り上書き）・on で下げる
+t("answerable_direct・signal_date_wish_s3 は既定 off（上書き）", !overrideDemoted("answerable_direct", {}) && !overrideDemoted("signal_date_wish_s3", {}) && DEMOTE_ENV.answerable_direct === "BRAIN_DEMOTE_ANSWERABLE_DIRECT" && DEMOTE_ENV.signal_date_wish_s3 === "BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3");
+t("on で下げる＝ブレインの答えのまま・食い違いを記録", (() => { const l: DemotedOverride[] = []; const r = applyOverride(l, "answerable_direct", "rule:answerable_direct(check)", "property_check_result", null, { BRAIN_DEMOTE_ANSWERABLE_DIRECT: "on" }); return r === false && l.length === 1 && l[0].would === "property_check_result" && l[0].brain === null; })());
+{
+  const bc = (require("node:fs") as typeof import("node:fs")).readFileSync((require("node:path") as typeof import("node:path")).join(__dirname, "..", "brain-core.ts"), "utf8");
+  t("配線: すぐ AIX は applyOverride（answerable_direct）を通る・下げた番に印", bc.includes('applyOverride(demotedOverrides, "answerable_direct"') && bc.includes("materialMarks.demote_answerable_direct = 1"));
+  t("配線: 内覧の日の希望・S3 は on の時だけ別の家族・off は signal_decided のまま", bc.includes('overrideDemoted("signal_date_wish_s3") ? "signal_date_wish_s3" : "signal_decided"') && bc.includes("materialMarks.demote_date_wish_s3 = 1"));
+}
 console.log(`\n${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);
