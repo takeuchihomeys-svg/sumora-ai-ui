@@ -7,7 +7,9 @@
  *             地図の欄名が実在する／拡張が1手目の字で一覧・次ページを見分ける所を壊さない。
  * npx tsx app/lib/__tests__/playbook-step-grasp.test.ts
  */
-import { buildPlaybook, flowPressesForPlaybook, PLAYBOOK_FIELD_JA, PLAYBOOK_BUILD_V } from "../action-playbook";
+import * as fs from "fs";
+import * as path from "path";
+import { buildPlaybook, flowPressesForPlaybook, normalizePlaybookSteps, PLAYBOOK_FIELD_JA, PLAYBOOK_BUILD_V, PLAYBOOK_MARKER_RE } from "../action-playbook";
 import { checkPresses, LOOP_FLOW_NODES, pressLine } from "../loop-flow-map";
 
 let n = 0;
@@ -145,6 +147,39 @@ assert(PLAYBOOK_BUILD_V >= 37, "build_v は 37 以上");
     if (sc.scene !== "next") assert(!/次のページ|次へ|pager/i.test(first), `${sc.scene} の1手目に次ページの字が無い: ${first.slice(0, 60)}`);
   }
   console.log("  ✓ 1手目の字の見分けを壊さない");
+}
+
+// 6. 拡張が録画へ渡す点検の印（押す物でない名前）は手順書の手にしない（2026-11-27 束 2868: 一覧＝["次タスクAPI結果"]）
+{
+  const src = fs.readFileSync(path.join(__dirname, "../../../chrome-extension/page-script.js"), "utf8");
+  const labelsOf = (head: string): string[] => {
+    const i = src.indexOf(head);
+    assert(i >= 0, `page-script.js に ${head} が在る`);
+    const body = src.slice(i, src.indexOf("};", i));
+    return Array.from(body.matchAll(/\w+:\s*"([^"]+)"/g)).map((m) => m[1]);
+  };
+  const labels = Array.from(new Set([...labelsOf("var _STEP_JA = {"), ...labelsOf("var _STEP_JA2 = {")]));
+  assert(labels.length >= 90, "印の表を読めた: " + labels.length);
+  // 押す・選ぶ・外す操作そのもの（録画の手として残す）
+  const OPERATIONS = new Set([
+    "所在地絞り込み", "区を選ぶ", "地域の設定へ進む", "町字を選ぶ", "確定してリストへ",
+    "沿線・駅絞り込み", "沿線を選ぶ", "駅の設定へ進む", "駅を選ぶ", "沿線の設定へ戻る",
+    "ペット可を外す", "ペット可を選ぶ", "ペット操作後に確定してリストへ",
+    "駅を外す", "沿線を外す", "駅のあと沿線を外す", "外しのため駅の設定へ進む",
+  ]);
+  for (const l of labels) {
+    const marker = PLAYBOOK_MARKER_RE.test(l);
+    assert(marker !== OPERATIONS.has(l), `「${l}」は印か操作のどちらか一方に仕分ける（印=${marker}・操作=${OPERATIONS.has(l)}）`);
+  }
+  for (const op of OPERATIONS) assert(labels.includes(op), `操作の一覧「${op}」は page-script の表に実在する`);
+
+  const pb = buildPlaybook(bundleOf([...BASE.filter((f) => f.scene !== "next"), flow("list", ["次タスクAPI結果"]), flow("next", ["左の次｜td.pager", "完了済:検索"])]), "realpro");
+  const all = pb.scenes.flatMap((s) => s.steps);
+  assert(!all.some((t) => /未分類|次タスク|完了済/.test(t)), "点検の印は手にならない: " + all.filter((t) => /未分類|次タスク|完了済/.test(t)).join(" / "));
+  assert(!pb.gaps.some((g) => /欄の名前が分からない/.test(g)), "点検の印は「欄の名前が分からない」に出ない");
+  const norm = normalizePlaybookSteps(["所在地絞り込み＋", "次タスクAPI結果", "city_code[]", "流れ台帳", "確定してリストへ"]);
+  assert(norm.steps.join(" > ") === "所在地絞り込みを開く > 区の欄（チェック） > 確定してリストへ" && norm.steps.length === norm.fields.length && !norm.unknown.length, "印を落としても並びと欄名は揃う: " + norm.steps.join(" > "));
+  console.log("  ✓ 録画に混ざる点検の印（_STEP_JA/_STEP_JA2）は手にしない・新しい名前は仕分けを求める");
 }
 
 console.log(`playbook-step-grasp: ${n} 件 OK`);

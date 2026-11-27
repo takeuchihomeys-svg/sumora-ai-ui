@@ -602,6 +602,14 @@ export function isPlaybookValue(raw: string): boolean {
  * 操作の並び（束の steps）→ 手順（人が読む名前）。純関数。
  *   値を外す → 欄の名前を読める形に → 同じ名前の連続を1つに。分からない名前は「未分類」として残す。
  */
+/**
+ * 拡張が録画へ渡す点検の印（page-script.js の _STEP_JA2 → axlx-rec-note-name）のうち、押す物でない名前。
+ *   学習の点検（F41 押した印・F45 完了理解台帳）のために録画に残すが、手順書の手にはしない。
+ *   実測（2026-11-27 束 2868）: 一覧の場面の並びが ["次タスクAPI結果"] だけになり、手順書に「未分類（次タスクAPI結果）」が出た。
+ *   _STEP_JA2 に名前を足したら playbook-step-grasp.test.ts が、印か操作かの仕分けを求める。
+ */
+export const PLAYBOOK_MARKER_RE = /^(?:完了済:|未完了:|押す済:|押す失敗:|選ぶ済:|外す済:|次タスク|手順照合→|理解台帳$|流れ台帳$|全流れ地図台帳$|流れ反映|細分化|今の客$|切替把握$|学習束を温める$|束の駅|束取込ゲート$|沿線↔駅地図|沿線ごと駅|ページ脚本の版$|自動入力開始$|残駅あるが沿線未選択$|(?:駅|間取り|地域)場面$|(?:駅|所在地|間取り)の外し方$|駅・沿線を外す開始$)/;
+
 export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
   steps: string[];
   /** steps と同じ順の欄の名前（飾りを落とした物） */
@@ -616,6 +624,7 @@ export function normalizePlaybookSteps(steps: ReadonlyArray<string>): {
   for (const raw of steps) {
     const n = cleanPlaybookName(String(raw ?? ""));
     if (!n) continue;
+    if (PLAYBOOK_MARKER_RE.test(n)) continue;
     if (isPlaybookValue(n)) { values_dropped++; continue; }
     const label = PLAYBOOK_FIELD_JA[n];
     let item: string;
