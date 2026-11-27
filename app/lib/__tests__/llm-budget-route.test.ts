@@ -137,4 +137,26 @@ t("2026-11-25 スタッフが画面で待つ係は OpenAI に回さない（reso
   assert.equal(budgetRoleOf("classify_condition", { claudeModel: "claude-haiku-4-5" }), "light", "裏の分類は今まで通り");
 });
 
+t("2026-11-27 OpenAI の枠は OPENAI_ALLOWANCE_FROM の日から自動で $200（竹内さんの決め）", () => {
+  const env = { OPENAI_ALLOWANCE_FROM: "2026-12-04" };
+  const before = Date.parse("2026-12-03T14:59:59Z"), at = Date.parse("2026-12-03T15:00:00Z"), later = Date.parse("2027-01-10T03:00:00Z");
+  // その日より前は今まで通り（$100・月初）
+  const b = readBudgetConfig(env, before);
+  assert.equal(b.openaiAllowanceUsd, 100); assert.equal(b.openaiCreditUsd, 100); assert.equal(b.openaiResetDay, 1);
+  assert.equal(budgetDecision("conductor_intake", 5, b, { openaiUsd: 96 }).route, "claude", "前の日は $100 の 95% で止める");
+  // その日の JST 0時から $200・区切りの日もその日
+  const a = readBudgetConfig(env, at);
+  assert.equal(a.openaiAllowanceUsd, 200); assert.equal(a.openaiCreditUsd, 200); assert.equal(a.openaiResetDay, 4);
+  assert.equal(budgetDecision("conductor_intake", 5, a, { openaiUsd: 96 }).route, "openai", "$200 の枠の内は回す");
+  assert.equal(budgetDecision("conductor_intake", 5, a, { openaiUsd: 190 }).route, "claude", "$200 の 95% で止める");
+  assert.equal(openaiWindowStart(a, at), "2026-12-03T15:00:00.000Z", "区切りはその日の JST 0時から");
+  assert.equal(openaiWindowStart(readBudgetConfig(env, later), later), "2027-01-03T15:00:00.000Z", "次の月もその日から");
+  // 額は env で替えられる・書き手とブレインは今まで通り回さない
+  assert.equal(readBudgetConfig({ ...env, OPENAI_ALLOWANCE_FROM_USD: "150" }, at).openaiAllowanceUsd, 150);
+  assert.equal(budgetDecision("reply_generate", 5, a, { openaiUsd: 0 }).route, "claude", "書き手は Claude のまま");
+  assert.equal(budgetDecision("brain_fresh", 5, a, { openaiUsd: 0 }).route, "claude", "ブレインの読みは Claude のまま");
+  // env が無い・読めない時は今と同じ
+  for (const e of [{}, { OPENAI_ALLOWANCE_FROM: "12/4" }, { OPENAI_ALLOWANCE_FROM: "" }]) { const c = readBudgetConfig(e, later); assert.equal(c.openaiAllowanceUsd, 100); assert.equal(c.openaiResetDay, 1); }
+});
+
 console.log(`llm-budget-route: ${n} ok`);
