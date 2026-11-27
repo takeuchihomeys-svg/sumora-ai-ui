@@ -511,8 +511,8 @@ export async function POST(req: NextRequest) {
             ]);
             const jobs = mps.materialEarlyJobs((await import("@/app/lib/supabase-server")).supabase, convId); // ブレインと同じ DB の口（同じ鍵）
             const notPostApply = !isPostApplyStatus(conv.status as string | null);
-            const pick: Record<string, () => Promise<unknown>> = { ptNote: jobs.ptNote, reapply: jobs.reapply };
-            if (notPostApply) pick.offline = jobs.offline;
+            const pick: Record<string, () => Promise<unknown>> = { ptNote: jobs.ptNote };
+            if (notPostApply) { pick.offline = jobs.offline; pick.reapply = jobs.reapply; } // ブレインの置き場と同じ条件
             if (overrideDemoted("two_stage_promise") && notPostApply) pick.pendNow = jobs.pendNow;
             if (factLedgerMode() !== "off" && notPostApply && factLedgerThreeOn()) pick.dealOutcomes = jobs.dealOutcomes;
             const keys = mp.earlyStart(convId, (latest?.created_at as string | undefined) ?? null, pick, mp.materialParallelMax());

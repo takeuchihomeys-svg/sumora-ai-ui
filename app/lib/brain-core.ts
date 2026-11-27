@@ -2308,14 +2308,14 @@ async function analyzeConversationCore(
         new Promise<null>((res) => setTimeout(() => res(null), 2_000)),
       ]);
     }, custTurnNow && notPostApply && !!conversationId && (await import("@/app/lib/conductor-near-opinion")).nearOpinionOn());
-    mpf.register("sentBundles", async () => { const { loadSentBundles } = await import("@/app/lib/sent-bundles-server"); return Promise.race([loadSentBundles(conversationId), new Promise<[]>((r) => setTimeout(() => r([]), 4_000))]); }, (await import("@/app/lib/sent-bundles")).sentBundlesEnabled());
+    mpf.register("sentBundles", async () => { const { loadSentBundles } = await import("@/app/lib/sent-bundles-server"); return Promise.race([loadSentBundles(conversationId), new Promise<[]>((r) => setTimeout(() => r([]), 4_000))]); }, notPostApply && (await import("@/app/lib/sent-bundles")).sentBundlesEnabled()); // 置き場は「申込以降でない」の中
     mpf.register("customerMemo", async () => {
       const { customerMemoNoteFor } = await import("@/app/lib/customer-memo-server");
       return Promise.race([
         customerMemoNoteFor(conversationId, { scene: resolveReplyScene({ customerText: mpTurn.text ?? "" }).scene, customerName: opts?.customerName ?? null }),
         new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
       ]);
-    });
+    }, notPostApply); // 2026-11-27: 置き場は「申込以降でない」の中（guard が無いと申込以降の番に先読みが走り LLM の呼び出しが1つ増えた）
     // 2026-11-27 作業員L（統括役の頼み・条件の中にあった5つ）: 置き場と同じ条件（guard）が成り立つ番だけ先に始める（成り立たない番は先に読まない＝DB の読みを増やさない）
     mpf.register("pendNow", mpJobs.pendNow, overrideDemoted("two_stage_promise") && notPostApply);
     const mpLastStaffAt = typedMessages.find((m) => m.sender !== "customer")?.created_at ?? null;
@@ -2324,7 +2324,7 @@ async function analyzeConversationCore(
     const mpThree = mpOn && factLedgerMode() !== "off" && notPostApply && factLedgerThreeOn();
     mpf.register("condHistory", async () => supabase.from("property_condition_history").select("changed_field, old_value, new_value, created_at").eq("property_customer_id", propertyCustomerId as string).order("created_at", { ascending: false }).limit(8), mpThree && !!propertyCustomerId);
     mpf.register("dealOutcomes", mpJobs.dealOutcomes, mpThree);
-    mpf.register("reapply", mpJobs.reapply);
+    mpf.register("reapply", mpJobs.reapply, notPostApply); // 置き場は「申込以降でない」の中
   }
   // RAG: incremental mode でも実行する（winning_patterns / templates は毎回必要）。
   // checkpoint RAG のみ非incremental 限定（古い会話セーブポイントの検索は差分分析では不要）。
