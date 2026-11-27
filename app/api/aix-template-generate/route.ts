@@ -1495,6 +1495,15 @@ export async function POST(req: NextRequest) {
     const swn = situationWriterNoteAix((brainMeta as Record<string, unknown> | null)?.situation_now, Date.now());
     if (swn) { aixChainNote = `${aixChainNote ?? ""}${swn}`; console.log(JSON.stringify({ tag: "aix-template-generate:situation-note", actionType, len: swn.length })); }
   }
+  // 2026-11-27 作業員A（台帳 #827・AIX_BRAIN_READ_CARD・既定 off・段階で読む）: その会話の最新のブレインの読み（番の目的・狙い・仕込み・要点・地図の駅・逆算・答え漏れ・誘い）を札1枚で。
+  //   事実と向きだけ・言い回しは手本のまま・AIX の種類とピッカーは変えない。古い判断（isStaleMeta）では渡さない。印＝下のログ（aix_brain_link）
+  try {
+    const arc = await import("@/app/lib/aix-brain-read-card");
+    if (!isStaleMeta && arc.aixBrainReadCardOn()) {
+      const card = arc.aixBrainReadCard((brainMeta as Parameters<typeof arc.aixBrainReadCard>[0]) ?? null);
+      if (card) { aixChainNote = `${aixChainNote ?? ""}${card}`; console.log(JSON.stringify({ tag: "aix-template-generate:brain-read-card", conversationId, actionType, len: card.length })); }
+    }
+  } catch (e) { console.warn("[aix-template-generate] brain-read-card skipped:", e instanceof Error ? e.message : String(e)); }
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
   let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };

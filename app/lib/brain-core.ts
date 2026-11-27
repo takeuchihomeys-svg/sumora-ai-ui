@@ -540,6 +540,7 @@ export type SuggestedAixMeta = {
   turn_aims_after?: import("@/app/lib/brain-turn-aims").TurnAims;
   /** 2026-11-27 作業員A: 判断の後に決まった計算で作る記録（入居の期限に向いた一手か・次に来やすい通の上位2つ・AFTER_DECISION_RECORDS） */
   after_records?: import("@/app/lib/after-decision-records").AfterRecords;
+  aix_read_src?: import("@/app/lib/aix-brain-read-card").AixReadSrc; // #827 AIX ボタンの札の材料（判断の後の決まった計算）
   /** 2026-11-27 作業員A（#823）: 影の届き（既定 off の部品の1行を LLM の後に記録だけで組んだ字数・SHADOW_REACH） */
   shadow_reach?: import("@/app/lib/shadow-reach").ShadowReachRecord;
   main_point?: string;
@@ -7266,6 +7267,12 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         afterRecords = adr.buildAfterRecords({ moveInYmd: mvA.kind === "future" ? ymdStrOf(mvA.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 36e5).toISOString().slice(0, 10), finalAix: finalAix ?? null, station: stA, sub: subA });
       }
     } catch (e) { console.warn("[brain-core] after-records skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-11-27 作業員A（台帳 #827・統括役の条件①）: AIX ボタンの文作りに渡す材料の要約を、判断の後に決まった計算で meta に残す（ブレインの出力の欄ではない・プロンプトは変えない）
+    let aixReadSrc: import("@/app/lib/aix-brain-read-card").AixReadSrc | null = null;
+    try {
+      const arc = await import("@/app/lib/aix-brain-read-card");
+      if (arc.aixBrainReadCardOn()) aixReadSrc = arc.aixReadSrcOf({ blocks: materialBlocks, holdSoftNext: holdSoftNextText });
+    } catch (e) { console.warn("[brain-core] aix-read-src skipped:", e instanceof Error ? e.message : String(e)); }
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -7371,6 +7378,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
       ...(afterRecords ? { after_records: afterRecords } : {}),
+      ...(aixReadSrc ? { aix_read_src: aixReadSrc } : {}), // #827 AIX の札の材料（記録だけ）
       ...(shadowReachRec ? { shadow_reach: shadowReachRec } : {}), // 2026-11-27 作業員A: 影の届き（SHADOW_REACH） // 2026-11-27 作業員A: 判断の後の記録（AFTER_DECISION_RECORDS）
       ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
       ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { if (substateContextOn()) { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); if (sc.droppedBy) materialMarks.substate_context_dropped = 1; return sc.id; } return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
