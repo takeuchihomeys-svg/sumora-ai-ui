@@ -7,9 +7,9 @@
 ## 2026-11-27 **拡張 2.8.319: 全部送付済み／次頁も全部送付済み／検索結果0件でも、客完了→リセット→次客へ（手順書 build_v 26）＋パネルの言葉を手順書と同じに**
 竹内さん「並べ替えした後物件取得するところで止まった／全部送付済みの場合次へで次のページにうつること手順書は把握しているのか／拡張ツールのアナウンスも手順書とあわせる（確認できるから）」「検索結果が0でも、すべて送付済みで次ページも送付済みでも、リセットして次のお客さんにうつる。リセットからの流れは同じ」。
 
-- **手順書**: 一覧の手 PLAYBOOK_LIST_AD_SORT_STEPS に ⑤この頁が全部送付済み→印刷用PDFは押さず「次へ」で次のページ ⑥次頁も全部送付済み／最後まで→客完了（all_sent_done）⑦0件→待たず客完了（zero_count0_finish）⑧客完了→リセット→30〜34秒→空とみなす→次客の条件をAPIから読み直して入れる→検索（リセットからの流れは同じ）を足した。一連の流れ（next／handoff）の文も同じ。決まり ll_sent_advance_no_stuck を強め、新しい決まり zero_result_finish_reset（印 dl:zero_count0_finish → post_send_clear 等）を足した。
+- **手順書**: 一覧の手 `PLAYBOOK_LIST_AD_SORT_STEPS` に、④（印刷用PDFを押す）の**場合分け**として ④の1 この頁が全部送付済み→印刷用PDFは押さず「次へ」で次のページ／④の2 次頁も全部送付済み・最後まで→客完了（all_sent_done）／④の3 0件→待たず客完了（zero_count0_finish）を足した（順に行う手ではない・④で押す物が無い時の分かれ道。最初は⑤〜⑧と通し番号にして紛らわしかったので直した）。最後に ⑤客完了（④で送り終えた・④の1〜3のどれでも）→リセット→30〜34秒→空とみなす→次客の条件をAPIから読み直して入れる→検索（リセットからの流れは同じ）。一連の流れ（next／handoff）の文も同じ。決まり `all_sent_advance_no_stuck` を強め、新しい決まり `zero_result_finish_reset`（印 dl:zero_count0_finish → post_send_clear 等）を足した。
 - **コードは既に進む形**だった（_autoFinish が all_sent_page→次へ／次無しは _sendBatchDone、0件は _zeroCount0Check→_sendSkipDoneFor、どれも _scrapeAndSendRealpro の送付後リセットを通る）。今回は手順書に書き、点検の印 dl:zero_count0_ を search-audit.js の KEEP_STEP／RULE_STEP に足した（今まで点検に残らなかった）。
-- **パネルの言葉**: PANEL_PHASE_WORDS（pp/lib/bulk-panel-grasp.ts／chrome-extension/bulk-panel-grasp.js の写し）。「外している最中」「新しい条件を入れている最中」は手順書の言葉（リセットを押して待っている最中／条件を入れている最中 …）に直して出す。ulk-dl.js の _announcePhase（印 dl:list_flow_announce）が、並べ替え・物件取得・全部送付済み・次ページ・客完了で枠を更新し、session の xlx_bulk_grasp にも書く（読み直しで古い言葉に戻らない）。試験 ulk-panel-playbook-sync.test.ts が JS と TS の一致と、手順書に要の語が在ることを見張る。
+- **パネルの言葉**: PANEL_PHASE_WORDS（app/lib/bulk-panel-grasp.ts／chrome-extension/bulk-panel-grasp.js の写し）。「外している最中」「新しい条件を入れている最中」は手順書の言葉（リセットを押して待っている最中／条件を入れている最中 …）に直して出す。bulk-dl.js の _announcePhase（印 dl:list_flow_announce）が、並べ替え・物件取得・全部送付済み・次ページ・客完了で枠を更新し、session の axlx_bulk_grasp にも書く（読み直しで古い言葉に戻らない）。試験 bulk-panel-playbook-sync.test.ts が JS と TS の一致と、手順書に要の語が在ることを見張る。
 - **止まった原因は未確定**: 実測（#1663）では sort_lag_grace の後が何も残っていない。_maybeAutoPressOnLoad に黙って return する所があった（	racked.length === 0＝押せる行0・sig 同じ・新しい行なし等）。全行が送付済みで押せる行が0の時はここで黙って止まる疑い。**今回は理由を残すだけ**（印 dl:list_flow_wait_reason・同じ理由は10秒に1回）。次の実機で 	racked0 sentVis=… が出れば確定できる。挙動はまだ変えていない。
 - **版**: manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO すべて 2.8.319。設計知見 e9bf9f5b（P1）。
 
@@ -18,11 +18,11 @@
 竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」（精度を優先する決定。kb-insert で P1 に記録）。
 
 - **変更**（background _batchAutofill）: _refreshCustomerBeforeSearch が3回とも読めなかった時（または読み直した一覧に居ない時）は、条件を入れる前に例外 AXLX_API_RELOAD_FAILED で止める。点検の段 customer_api_reload に「飛ばす」と理由を残す。一括（_manualBulkRun）も自動（_passGuard）も、既存の「そのお客さんの例外 → 検索できなかったと知らせて次へ」に乗る。
-- **知らせの文**（batch-guard ailureNotice）: AXLX_API_RELOAD_FAILED を「最新の条件を読み直せなかった→古い条件では検索せず飛ばした」と言う。
+- **知らせの文**（batch-guard failureNotice）: AXLX_API_RELOAD_FAILED を「最新の条件を読み直せなかった→古い条件では検索せず飛ばした」と言う。
 - **手順書**（auto-procedure-rules 
 ext_customer_api_reload・action-playbook 切り替え③④）: 「全部だめな時だけ手元の条件で続ける」を「古い条件では検索せず飛ばす」に直した。series_handoff_order の目印を新しい行に合わせた。PLAYBOOK_BUILD_V 24→25。
 - **版**: manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO すべて 2.8.318。
-- **テスト**: undle-storm-and-conds-v2775 の「読めなくても止まらない」を「読めなければ飛ばす」に置き換え（順番の確認も新しい形に）。loop-simplify-v28317 の目印を更新。
+- **テスト**: bundle-storm-and-conds-v2775 の「読めなくても止まらない」を「読めなければ飛ばす」に置き換え（順番の確認も新しい形に）。loop-simplify-v28317 の目印を更新。
 - **注意（精度と引き換え）**: 読み直しが続けて失敗すると、そのお客さんは検索されない。失敗の多い回は「検索できなかった」の知らせが増える。点検の段で件数を見る。
 - **未確認（実機）**: 本番の拡張を再読込して、自動または一括で3客以上を通すまで「反映済み」と言わない。飛ばす側の動き（知らせが1通・次の客へ進む・古い条件で入力されない）は実機で確かめる。
 
@@ -13837,22 +13837,22 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 竹内さん「画面操作を別の PC で行う場合、その操作ちゃんと動いているかスマホで確認できるツールできるかな？」「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」
 
 ### 1. スマホで見る画面（読み取りだけ・新しい表・列は作らない）
-- pp/lib/extension-live-server.ts（新規）: 今ある表を**読むだけ**で「今どうなっているか」を1つの形にする。
+- app/lib/extension-live-server.ts（新規）: 今ある表を**読むだけ**で「今どうなっているか」を1つの形にする。
   - extension_devices（1分ごとの心拍）: 版・モード・実行中の命令・今のお客様・サイト・待っている事・最後に進んだ時刻・3分以上来ない＝止まっている・10分以上進まない＝止まった疑い
-  - utomation_commands（6時間・pending/running/error）: たまっている指示・拾った PC・失敗の理由
+  - automation_commands（6時間・pending/running/error）: たまっている指示・拾った PC・失敗の理由
   - search_audits（15分）: 直近の検索の1回・ページ数・行数・送信数・最後の段・操作の記録・**人の操作**
   - screen_watch_events（15分・normal 以外）: 見張りの印
-- pp/api/extension-live/route.ts（新規）: GET ?view=… は JSON・&format=html でスマホ用の画面（20秒ごとに自分で更新）。
+- app/api/extension-live/route.ts（新規）: GET ?view=… は JSON・&format=html でスマホ用の画面（20秒ごとに自分で更新）。
   認証は今の見張りと同じ内部認証（Authorization: Bearer INTERNAL_API_SECRET）＋ スマホのブラウザ用に ?key= も受ける。
-- **書き込みは一切しない**（スマホから止める・動かすはできない）。止めたい時は今まで通りサーバーの止めの印（utomation_settings.paused）。
+- **書き込みは一切しない**（スマホから止める・動かすはできない）。止めたい時は今まで通りサーバーの止めの印（automation_settings.paused）。
 - 出る物: PC ごとの「動いている／止まっている／進んでいない」・今のお客様・待っている事・直近の検索（人か自動か）・指示の残り・見張りの印。
 
 ### 2. 人が動いているかの記録（chrome-extension/human-trace.js・新規）
-- ブラウザが人が起こしたイベントは isTrusted === true、拡張が dispatchEvent／el.click() で作った物は alse。**これで「拡張の操作」と「人の操作」を分ける**。
+- ブラウザが人が起こしたイベントは isTrusted === true、拡張が dispatchEvent／el.click() で作った物は false。**これで「拡張の操作」と「人の操作」を分ける**。
 - 数える物: 押した（click）・打った（keydown）・選んだ（change）・スクロール（人のホイールから 400ms に1回）の回数、最後の操作の種類・欄の名前・操作の間の平均（ms）。**入力した中身（値）は残さない**（個人の情報を記録に載せない）。
 - judge(human, guideMode): 人が動いていれば「人が操作している（N回）」／案内モードで 0回なら「**誰も触っていない＝止まっている疑い**」／自動系で 0回は「拡張だけで動いている（正常）」。
-- 配線: manifest の先頭の段（human-wait.js の次）で読む（リアプロ・ITANDI・レインズ全部）。page-script.js・itandi-page-script.js が自分の器を持ち、点検の illed.human に載せる。案内（
-ealpro-guide.js・itandi-guide.js）は別の段なので自分で数えて xlx-guide-filled の human で送る（background が illed.human に入れる）。
+- 配線: manifest の先頭の段（human-wait.js の次）で読む（リアプロ・ITANDI・レインズ全部）。page-script.js・itandi-page-script.js が自分の器を持ち、点検の filled.human に載せる。案内（
+ealpro-guide.js・itandi-guide.js）は別の段なので自分で数えて axlx-guide-filled の human で送る（background が filled.human に入れる）。
 - 点検の記録（search_audits.filled.human）と、スマホの画面（検索の1行ごとの「👤 …」）の両方で見られる。
 
 ### 3. 版と確認

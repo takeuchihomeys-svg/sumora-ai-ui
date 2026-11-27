@@ -16,7 +16,7 @@ function assert(cond: boolean, msg: string) {
 }
 
 assert(PLAYBOOK_BUILD_V >= 8, "build_v >= 8");
-assert(PLAYBOOK_LIST_AD_SORT_STEPS.length === 8, "①〜④の AD 手＋⑤〜⑧（全部送付済み→次へ・0件・客完了→リセット）");
+assert(PLAYBOOK_LIST_AD_SORT_STEPS.length === 8, "①〜④の AD 手＋④の1〜3（場合分け）＋⑤客完了→リセット");
 assert(PLAYBOOK_LIST_AD_SORT_STEPS[0].includes("並べ替え"), "step1");
 assert(PLAYBOOK_LIST_AD_SORT_STEPS[1].includes("AD"), "step2");
 assert(PLAYBOOK_LIST_AD_SORT_STEPS[2].includes("高→低"), "step3");

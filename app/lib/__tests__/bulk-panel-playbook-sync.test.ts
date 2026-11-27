@@ -31,10 +31,12 @@ console.log("■ JS の写しと TS が同じ言葉");
 console.log("■ 一覧の手に 送付済み→次へ／0件／客完了→リセット がある");
 {
   const steps = PLAYBOOK_LIST_AD_SORT_STEPS.join("\n");
-  assert(/⑤[^\n]*全部「送付済み」[^\n]*次へ[^\n]*次のページ/.test(steps), "⑤ 全部送付済み→次へで次のページ");
-  assert(/⑥[^\n]*次のページも全部送付済み[^\n]*客完了/.test(steps), "⑥ 次頁も全部送付済み→客完了");
-  assert(/⑦[^\n]*0件[^\n]*客完了/.test(steps), "⑦ 0件→客完了");
-  assert(/⑧[^\n]*リセット[^\n]*次のお客さん[^\n]*リセットからの流れは同じ/.test(steps), "⑧ 客完了→リセットして次のお客さん");
+  assert(/④の1（④の場合分け）[^\n]*全部「送付済み」[^\n]*次へ[^\n]*次のページ/.test(steps), "④の1 全部送付済み→次へで次のページ");
+  assert(/④の2（④の場合分け）[^\n]*次のページも全部送付済み[^\n]*客完了/.test(steps), "④の2 次頁も全部送付済み→客完了");
+  assert(/④の3（④の場合分け）[^\n]*0件[^\n]*客完了/.test(steps), "④の3 0件→客完了");
+  assert(/^④並べ替え後に印刷用PDFを押す（[^\n]*④の1〜3[^\n]*順に行う手ではない/m.test(steps), "④ が ④の1〜3 は場合分けで順に行う手ではないと言っている");
+  assert(/^⑤客完了（④で送り終えた・④の1〜3のどれでも）[^\n]*リセット[^\n]*次のお客さん[^\n]*リセットからの流れは同じ/m.test(steps), "⑤ 客完了→リセットして次のお客さん");
+  assert(!/[⑥⑦⑧]/.test(steps), "通し番号の⑥⑦⑧が残っていない（④の場合分けと混ざらない）");
   const handoff = PLAYBOOK_FLOW_SERIES.find((p) => p.id === "handoff");
   assert(/0件/.test(String(handoff?.label)) && /次頁も全部送付済み/.test(String(handoff?.label)) && /リセット/.test(String(handoff?.label)), "一連の流れ handoff");
   const next = PLAYBOOK_FLOW_SERIES.find((p) => p.id === "next");
