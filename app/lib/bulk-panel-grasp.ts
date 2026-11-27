@@ -7,22 +7,20 @@
  * ★ 2.8.228: task_now（間取外:2LDK 等）があれば now に優先
  */
 
+import { panelPhaseWords } from "./loop-flow-map";
+
 /**
  * ★ 2.8.319 竹内さん「拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる（確認できるから）」:
  *   パネルの「いま／つぎ」に出す言葉は、手順書（action-playbook.ts の手）と同じ言葉に揃える。
  *   手順書の手の文にも同じ言葉を入れてある（試験 bulk-panel-playbook-sync が両方に在るか見張る）。
  *   JS の写し: chrome-extension/bulk-panel-grasp.js の PANEL_PHASE_WORDS（同じ言葉・試験で一致を見る）。
+ *
+ * ★ 2.8.323 竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」:
+ *   この言葉は手で別に持たない。**流れの地図（app/lib/loop-flow-map.ts の各手の panel）が正本**。
+ *   言葉を直す・手を足す時は地図を直し、`npx tsx scripts/gen-panel-words.ts` で拡張の写しを作り直す。
+ *   試験 panel-from-flow-map.test.ts が「地図とパネルの食い違い・写しの古さ・手で書いた古い言葉」を止める。
  */
-export const PANEL_PHASE_WORDS = {
-  reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
-  fill: { now: "条件を入れている最中", next: "検索を押す" },
-  search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
-  sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
-  list: { now: "物件取得最中", next: "全部送付済みなら次ページへ・無ければ客完了" },
-  all_sent: { now: "全部送付済み→次ページへ", next: "次ページ（無ければ客完了→リセット）" },
-  next_page: { now: "次ページへ移動中", next: "物件取得（送付済み以外の行）" },
-  done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" },
-} as const;
+export const PANEL_PHASE_WORDS = panelPhaseWords();
 
 /** 古い内部の言葉（page-script／bulk-dl が出す）を、手順書と同じ言葉に直して見せる */
 function playbookAction(a: string): string {
@@ -73,9 +71,9 @@ function actionFromMove(move: string): string | null {
   if (/次ページ|送付済み/.test(m)) return PANEL_PHASE_WORDS.all_sent.now;
   if (/外す/.test(m)) return PANEL_PHASE_WORDS.reset.now;
   if (/入れ|条件を1つ/.test(m)) return PANEL_PHASE_WORDS.fill.now;
-  if (/並べ替え/.test(m)) return "並べ替え最中";
-  if (/検索を押/.test(m)) return "検索を押す最中";
-  if (/物件|取得/.test(m)) return "物件取得最中";
+  if (/並べ替え/.test(m)) return PANEL_PHASE_WORDS.sort.now;
+  if (/検索を押/.test(m)) return PANEL_PHASE_WORDS.search.now;
+  if (/物件|取得/.test(m)) return PANEL_PHASE_WORDS.list.now;
   return null;
 }
 

@@ -23,7 +23,7 @@ import { flowNode } from "./loop-flow-map";
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.322";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.323";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -817,6 +817,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "axlx_sort_pressed_sync",
     file: "bulk-dl.js",
     verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:sort_done", "dl:list_flow_announce"] },
+  },
+  {
+    id: "panel_words_from_flow_map",
+    scene: "list",
+    text: "パネル（拡張の枠の「いま／つぎ」）の言葉は流れの地図（loop-flow-map.ts の各手の panel）が正本。手で別に持たない（2.8.323 竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」）。流れを変える時は ①地図の panel（か noPanel の理由）を直す ②npx tsx scripts/gen-panel-words.ts で拡張の写しを作り直す ③試験 panel-from-flow-map。並べ替えは押した時点でパネルも物件取得の言葉へ（switchTo=list）。印: list_flow_announce（sort_pressed）",
+    since: "2.8.323",
+    kb: null,
+    marker: "_panelWord(",
+    file: "bulk-dl.js",
+    verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:list_flow_announce"] },
   },
   {
     id: "zero_result_finish_reset",

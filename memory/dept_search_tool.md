@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.323: パネルの言葉は流れの地図が正本。地図から作る（改善したらパネルも改善される）**
+竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」。
+- **起きていた形**: パネルの「いま／つぎ」の言葉が TS（PANEL_PHASE_WORDS）・拡張の写し・page-script の `_publishNowAction`・bulk-dl.js の手書き（`"物件取得最中"` など）に散らばっていた。地図を直してもパネルの文字は手で探すしかなく、並べ替えのあと「並べ替え最中」が残った。
+- **直した所（正本を1か所に）**:
+  - `app/lib/loop-flow-map.ts`: 各手に `panel`（段・いま・つぎ・要の語 short・次の段 then・切り替え先 switchTo）か `noPanel`（持たない理由）。`checkPanelWords`／`panelPhaseWords`／`renderPanelWordsJs`。
+  - `app/lib/bulk-panel-grasp.ts`: `PANEL_PHASE_WORDS = panelPhaseWords()`（地図から作る）。拡張の写し（bulk-panel-grasp.js）と page-script.js の `_AXLX_PANEL_WORDS` は `scripts/gen-panel-words.ts` が目印（PANEL_WORDS:BEGIN〜END）の間だけ書く。
+  - `bulk-dl.js`: `_panelWord(段, now|next)` で引く。手書きの言葉を無くした。並べ替えは地図の `switchTo=list` で、高→低を押した直後（猶予の前）にパネルも「物件取得最中」へ（`_announcePhase("list","sort_pressed")`）。
+- **直す順番（これからの決まり）**: ① 地図の panel（手を足したら panel か noPanel）を直す → ② `npx tsx scripts/gen-panel-words.ts` → ③ 試験。道具: `change-premise.ts --area=list` の ①d にパネルの言葉が出る。
+- **試験** `app/lib/__tests__/panel-from-flow-map.test.ts`（pre-commit にも入れた）: 手を足してパネルを決めていない／いまの言葉の重なり／つぎが次の段の要の語を含まない／パネルの言葉を持たない手だけを通る地図の道が無い／輪が閉じない／写しが古い／生成部分の外の手書きの古い言葉。悪い地図 8 形を止める自己点検つき。`bulk-panel-playbook-sync`・`bulk-panel-grasp` も pre-commit に追加（今まで入っていなかった）。
+- **新しい決まり**: AUTO_RULES `panel_words_from_flow_map`（2.8.323）。
+- **反映**: 版 2.8.323（5か所）。push・attach は竹内さんの OK の後。実機（再読込→自動2客以上→高→低を押した直後にパネルが「物件取得最中」になる→`check-playbook-sync`）まで「反映済み」と言わない。
+
 ## 2026-11-27 **手順書の強化: 改善した中身を、決まり1行ではなく手順書の手（③④）にそのまま載せる（build_v 30）**
 竹内さん「改善する際手順書の部分強化する仕組みになっているのか／ここの部分細かく徹底的に強化するようにする」。
 - **それまでの仕組み**: 流れの地図から④以降を作る。決まり（AUTO_RULES）を1行足す。build を上げて attach する。直す前に change-premise を出す。

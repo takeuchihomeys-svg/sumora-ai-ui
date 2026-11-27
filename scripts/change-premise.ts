@@ -6,7 +6,7 @@
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=list     # 一覧（並べ替え→物件取得→次頁→客完了）
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=reset    # リセット→次客
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=all      # お客さん1人ぶんの全部
- *   npx tsx --env-file=.env.local scripts/change-premise.ts --check         # 地図の形と、手順書の③④が地図の文を載せているか（終了コード 0/1）
+ *   npx tsx --env-file=.env.local scripts/change-premise.ts --check         # 地図の形・手順書の③④・パネルの言葉（終了コード 0/1）
  *
  * 出す物: ① 流れの地図（順に行う手／分かれ道／合流）と、コードの目印の場所（ファイル:行）
  *         ② その場面の決まり（AUTO_RULES）③ 理解の書面の雛形（4点）④ 設計知見を引く言い方
@@ -14,7 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, checkListPlaybookStrength, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
+import { LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, checkListPlaybookStrength, checkPanelWords, panelPhases, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
 import { AUTO_RULES } from "../app/lib/auto-procedure-rules";
 import { PLAYBOOK_LIST_AD_SORT_STEPS } from "../app/lib/action-playbook";
 
@@ -24,12 +24,14 @@ const arg = (k: string) => (args.find((a) => a.startsWith(`--${k}=`)) || "").sli
 if (args.includes("--check")) {
   const p = checkFlowMap();
   const s = checkListPlaybookStrength(PLAYBOOK_LIST_AD_SORT_STEPS);
-  if (p.length || s.length) {
+  const pw = checkPanelWords();
+  if (p.length || s.length || pw.length) {
+    if (pw.length) console.log("❌ パネルの言葉が地図と合っていない:\n  - " + pw.join("\n  - "));
     if (p.length) console.log("❌ 流れの地図に問題:\n  - " + p.join("\n  - "));
     if (s.length) console.log("❌ 手順書の手が地図より弱い:\n  - " + s.join("\n  - "));
     process.exit(1);
   }
-  console.log("✅ 流れの地図の形は正しい。手順書の③④は地図の完了の文をそのまま載せている");
+  console.log("✅ 流れの地図の形は正しい。手順書の③④は地図の完了の文をそのまま載せている。パネルの言葉は地図と合っている");
   process.exit(0);
 }
 
@@ -84,6 +86,15 @@ if (area === "list" || area === "all") {
   console.log(weak.length ? "\n❌ 手順書の手が地図より弱い:\n  - " + weak.join("\n  - ") : "\n✅ ③④は地図の完了の文をそのまま載せている（決まり1行だけでは終わっていない）");
 }
 
+// パネル（拡張の枠の「いま／つぎ」）。正本は地図の panel。直す時は 地図 → npx tsx scripts/gen-panel-words.ts → 試験
+console.log("\n■ ①d パネルの言葉（拡張の枠の「いま／つぎ」・正本は地図の panel）\n");
+for (const p of panelPhases()) {
+  console.log(`・${p.phase}［${p.nodeId}］いま「${p.now}」／つぎ「${p.next}」　次の段: ${p.then.join(", ")}${p.switchTo ? `　押した時点で ${p.switchTo} の言葉へ` : ""}`);
+}
+for (const n of LOOP_FLOW_NODES.filter((x) => x.noPanel && def.ids.includes(x.id))) console.log(`・（${n.id} は専用の言葉なし）${n.noPanel}`);
+const probP = checkPanelWords();
+console.log(probP.length ? "\n❌ パネルの言葉に問題:\n  - " + probP.join("\n  - ") : "\n✅ パネルの言葉は地図と合っている。直したら: 地図の panel → npx tsx scripts/gen-panel-words.ts → 試験 panel-from-flow-map");
+
 console.log(`\n■ ② この場面の決まり（AUTO_RULES・scene = ${def.scenes.join("/")}）\n`);
 for (const r of AUTO_RULES.filter((x) => def.scenes.includes(x.scene))) {
   console.log(`・${r.id}（${r.since}）${String(r.text).replace(/\s+/g, " ").slice(0, 90)}…`);
@@ -94,6 +105,7 @@ console.log(`
   1. 形: 今回の変更は 順に行う手／分かれ道（どの手の？）／繰り返し／合流 のどれか。（上の地図のどこ？）
   2. 前提: その手の前と後は何か。入口（どこから来る）と出口（どこへ行く）。例外（最初の客・最後の客・失敗）は？
   3. 入れ物: 手順書・パネル・点検の入れ物（文字の一列／next が1つ）は、その形を表せるか。表せないなら入れ物を先に直す。
+     パネルの言葉も地図の panel から作る（①d）。手を足したら panel か noPanel（理由）を地図に書く。
   4. 言い直し: 竹内さんの言葉を、自分の言葉で言い直して合っているか。ずれる所があれば1つ聞く。
   ※ 流れを変える時は、コードや手順書の文より先に app/lib/loop-flow-map.ts を直す（手順書の④から先は地図から作られる）。
 

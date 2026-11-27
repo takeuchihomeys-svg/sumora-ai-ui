@@ -25,6 +25,28 @@
 
 export type FlowKind = "step" | "branch" | "join";
 
+/**
+ * パネル（拡張の枠の「いま／つぎ」）に出す言葉の段。
+ *   2026-11-27 竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」
+ *   パネルの言葉は手で別に持たない。この地図の panel から作る（app/lib/bulk-panel-grasp.ts・拡張の写しは scripts/gen-panel-words.ts）。
+ */
+export const PANEL_PHASE_KEYS = ["reset", "fill", "search", "sort", "list", "all_sent", "next_page", "done"] as const;
+export type PanelPhaseKey = (typeof PANEL_PHASE_KEYS)[number];
+
+export type FlowPanel = {
+  phase: PanelPhaseKey;
+  /** 「いま」に出す言葉 */
+  now: string;
+  /** 「つぎ」に出す言葉（then の段の要の語 short を必ず含む＝つぎが次の段を指している） */
+  next: string;
+  /** この段を一言で（前の段の next に入っていなければならない要の語） */
+  short: string;
+  /** この段の次に来うる段（地図の next でたどれる段だけ） */
+  then: PanelPhaseKey[];
+  /** 押した時点で「いま」を別の段の言葉へ切り替える（読み直しを待たない）。then のどれか */
+  switchTo?: PanelPhaseKey;
+};
+
 export type FlowNode = {
   id: string;
   kind: FlowKind;
@@ -44,6 +66,10 @@ export type FlowNode = {
   audit: string[];
   /** 補足（例: 最初のお客さんはリセットしない） */
   note?: string;
+  /** パネルに出す言葉（段ごと）。1つの手に複数の段（例: 全部送付済み→次ページ）が在ってよい */
+  panel?: FlowPanel[];
+  /** パネルに専用の言葉を持たない理由（どの段の言葉で出すか）。panel か noPanel のどちらかは必須 */
+  noPanel?: string;
 };
 
 /**
@@ -72,6 +98,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   // ── 1人ぶんの終わりから次の客へ ─────────────────────────────
   {
     id: "reset_front",
+    noPanel: "リセットの手（reset）の言葉で出す。押す前の確かめはパネルに別の段を作らない",
     kind: "step",
     label: "押す前にリアプロのタブを確かめ、背面なら前に出す",
     next: ["reset"],
@@ -81,6 +108,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "reset",
+    panel: [{ phase: "reset", now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる", short: "リセット", then: ["fill"] }],
     kind: "step",
     label: "リセットを押す（送付のあと1回）",
     next: ["api_reload", "b_reset_late", "b_reset_retry", "b_reset_fallback"],
@@ -90,6 +118,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "api_reload",
+    noPanel: "リセットの「つぎ」（次客の条件をAPIから読み直して入れる）が言う。読み直しだけの段は作らない",
     kind: "step",
     label: "次客の条件をAPIから読み直す",
     next: ["fill", "b_api_skip"],
@@ -99,6 +128,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "fill",
+    panel: [{ phase: "fill", now: "条件を入れている最中", next: "検索を押す", short: "条件", then: ["search"] }],
     kind: "step",
     label: "条件を入れる",
     next: ["search"],
@@ -107,6 +137,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "search",
+    panel: [{ phase: "search", now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）", short: "検索", then: ["sort"] }],
     kind: "step",
     label: "検索を押す（9〜12秒見直してから）",
     next: ["sort"],
@@ -115,6 +146,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "sort",
+    panel: [{ phase: "sort", now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）", short: "並べ替え", then: ["list"], switchTo: "list" }],
     kind: "step",
     label: "並べ替え（AD→高→低・①〜③）",
     /** ③の文の末尾に、この文をそのまま載せる（手で要約しない。checkListPlaybookStrength が見張る） */
@@ -126,6 +158,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "list_press",
+    panel: [{ phase: "list", now: "物件取得最中", next: "全部送付済みなら次ページへ・無ければ客完了", short: "物件取得", then: ["all_sent", "done"] }],
     kind: "step",
     label: "印刷用PDFを押す（④）",
     playbook: "並べ替え後に印刷用PDFを押す（物件取得・1件ずつ）。並べ替え完了（高→低を押したあとの読み直し）を把握してから押す",
@@ -136,6 +169,10 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   // ── 分かれ道（順に行う手ではない）─────────────────────────────
   {
     id: "b_all_sent_next",
+    panel: [
+      { phase: "all_sent", now: "全部送付済み→次ページへ", next: "次ページ（無ければ客完了→リセット）", short: "送付済み", then: ["next_page", "done"] },
+      { phase: "next_page", now: "次ページへ移動中", next: "物件取得（送付済み以外の行）", short: "次ページ", then: ["list"] },
+    ],
     kind: "branch",
     label: "この頁が全部送付済み→次へ",
     parent: "list_press",
@@ -147,6 +184,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_all_sent_last",
+    noPanel: "客完了（done）の言葉で出す",
     kind: "branch",
     label: "次頁も全部送付済み／最後まで→客完了",
     parent: "list_press",
@@ -158,6 +196,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_zero",
+    noPanel: "客完了（done）の言葉で出す（0件でも客完了と同じ）",
     kind: "branch",
     label: "検索結果0件→客完了",
     parent: "list_press",
@@ -169,6 +208,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_reset_late",
+    noPanel: "リセット（reset）の言葉で出す。押した扱いで先へ進むだけ",
     kind: "branch",
     label: "押す返事が遅れた→押した跡があれば先へ",
     parent: "reset",
@@ -180,6 +220,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_reset_retry",
+    noPanel: "リセット（reset）の言葉で出す。もう1回押すだけ",
     kind: "branch",
     label: "押せず→もう1回押す",
     parent: "reset",
@@ -191,6 +232,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_reset_fallback",
+    noPanel: "リセット（reset）の言葉で出す。従来の外しも「リセットを押して待っている最中」と同じ言葉に直す",
     kind: "branch",
     label: "リセットが押せない・空にならない→従来の1つずつ外し",
     parent: "reset",
@@ -202,6 +244,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_api_skip",
+    noPanel: "リセットの「つぎ」の言葉で出す。飛ばした客は次の客の読み直しへ進む",
     kind: "branch",
     label: "条件を読み直せない→このお客さんを飛ばして次へ",
     parent: "api_reload",
@@ -215,6 +258,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   // ── 合流 ──────────────────────────────────────────────────
   {
     id: "customer_done",
+    panel: [{ phase: "done", now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ", short: "客完了", then: ["reset"] }],
     kind: "join",
     label: "客完了→リセットして次のお客さんへ",
     playbook:
@@ -354,6 +398,132 @@ export function checkInterrupts(list: ReadonlyArray<FlowInterrupt> = LOOP_INTERR
     if (!i.audit.length) out.push(`${i.id} に点検の印（audit）が無い`);
     if (!i.resume || !i.resume.trim()) out.push(`${i.id} に起きた後の動き（resume）が無い`);
     if (!i.applies || !i.applies.trim()) out.push(`${i.id} にどの段で起きるか（applies）が無い`);
+  }
+  return out;
+}
+
+/** 地図の panel を段の順に並べた平らな一覧（どの手の言葉かも持つ） */
+export function panelPhases(
+  nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES,
+): Array<FlowPanel & { nodeId: string }> {
+  const out: Array<FlowPanel & { nodeId: string }> = [];
+  for (const n of nodes) for (const p of n.panel || []) out.push({ ...p, nodeId: n.id });
+  const rank = (k: string) => PANEL_PHASE_KEYS.indexOf(k as PanelPhaseKey);
+  return out.sort((a, b) => rank(a.phase) - rank(b.phase));
+}
+
+/** パネルの言葉（段→いま／つぎ）。bulk-panel-grasp.ts の PANEL_PHASE_WORDS はこれ（手で別に持たない） */
+export function panelPhaseWords(
+  nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES,
+): Record<PanelPhaseKey, { now: string; next: string }> {
+  const out = {} as Record<PanelPhaseKey, { now: string; next: string }>;
+  for (const p of panelPhases(nodes)) out[p.phase] = { now: p.now, next: p.next };
+  return out;
+}
+
+/** 拡張の写し（chrome-extension/bulk-panel-grasp.js と page-script.js の生成部分）の本文。scripts/gen-panel-words.ts が書き、試験が一致を見る */
+export function renderPanelWordsJs(
+  nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES,
+  varName: string = "PANEL_PHASE_WORDS",
+): string {
+  const w = panelPhaseWords(nodes);
+  const lines = PANEL_PHASE_KEYS.map(
+    (k, i) =>
+      `    ${k}: { now: ${JSON.stringify(w[k].now)}, next: ${JSON.stringify(w[k].next)} }${i < PANEL_PHASE_KEYS.length - 1 ? "," : ""}`,
+  );
+  return [`  var ${varName} = {`, ...lines, "  };"].join("\n");
+}
+
+/**
+ * パネルの言葉を持つ手から、次に「パネルの言葉を持つ手」へ着く手（途中の手はパネルの言葉を持たない物だけ通る）。
+ *   分かれ道は親の手の場合分けなので、兄弟の分かれ道の行き先（例: 全部送付済み→次へ の兄弟＝最後まで全部送付済み→客完了）も含める。
+ *   ただの到達（canReach）では、検索から客完了までも「着ける」ことになり、飛ばした流れを見逃す。
+ */
+function panelNeighbors(startId: string, nodes: ReadonlyArray<FlowNode>): Set<string> {
+  const hit = new Set<string>();
+  const seen = new Set<string>();
+  const stack: string[] = [startId];
+  let isStart = true;
+  while (stack.length) {
+    const id = stack.pop() as string;
+    const n = flowNode(id, nodes);
+    if (!n) continue;
+    if (!isStart && n.panel && n.panel.length) { hit.add(id); continue; }
+    isStart = false;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const outs = [...n.next];
+    if (n.kind === "branch" && n.parent) for (const s of branchesOf(n.parent, nodes)) if (s.id !== id) outs.push(...s.next);
+    for (const x of outs) stack.push(x);
+  }
+  return hit;
+}
+
+/**
+ * パネルの言葉の点検（流れを変えたのにパネルの言葉が古いまま、を止める・2026-11-27）。
+ *   ・どの手（step／branch／join）も panel か noPanel（理由）を持つ＝手を足したらパネルをどうするか決めさせる
+ *   ・段は8つ全部あり、重ならない。「いま」の言葉も、「つぎ」の要の語（short）も重ならない（古い言葉が別の段に残らない）
+ *   ・各段の「つぎ」は then の段の要の語を含む＝つぎが次の段を指している
+ *   ・then の段は、地図の next で「パネルの言葉を持たない手だけを通って」着ける手の言葉（地図に無い道・飛ばした流れを言わない）
+ *   ・段の輪が閉じる（reset から全部に着き、done は reset へ戻る＝客完了→リセットへ戻る）
+ *   ・switchTo は then の1つ（並べ替えは押した時点で物件取得の言葉へ）
+ */
+export function checkPanelWords(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
+  const out: string[] = [];
+  for (const n of nodes) {
+    const hasPanel = !!(n.panel && n.panel.length);
+    const hasNo = !!(n.noPanel && n.noPanel.trim());
+    if (!hasPanel && !hasNo) out.push(`${n.id} にパネルの言葉（panel）も、持たない理由（noPanel）も無い＝流れを足してパネルを決めていない`);
+    if (hasPanel && hasNo) out.push(`${n.id} は panel と noPanel の両方を持っている`);
+  }
+  const ps = panelPhases(nodes);
+  const byKey = new Map<string, FlowPanel & { nodeId: string }>();
+  for (const p of ps) {
+    if (byKey.has(p.phase)) out.push(`パネルの段 ${p.phase} が重なっている`);
+    byKey.set(p.phase, p);
+  }
+  for (const k of PANEL_PHASE_KEYS) if (!byKey.has(k)) out.push(`パネルの段 ${k} が地図に無い`);
+  const seenNow = new Map<string, string>();
+  const seenShort = new Map<string, string>();
+  for (const p of ps) {
+    if (!p.now.trim() || !p.next.trim()) out.push(`${p.phase} の いま／つぎ が空`);
+    if (p.now === p.next) out.push(`${p.phase} の いま と つぎ が同じ言葉`);
+    if (seenNow.has(p.now)) out.push(`「${p.now}」が ${seenNow.get(p.now)} と ${p.phase} で同じ＝古い言葉が別の段に残る`);
+    seenNow.set(p.now, p.phase);
+    if (!p.short.trim()) out.push(`${p.phase} に要の語（short）が無い`);
+    if (seenShort.has(p.short)) out.push(`要の語「${p.short}」が ${seenShort.get(p.short)} と ${p.phase} で重なる`);
+    seenShort.set(p.short, p.phase);
+    if (!p.then.length) out.push(`${p.phase} に次の段（then）が無い`);
+    for (const t of p.then) {
+      const tp = byKey.get(t);
+      if (!tp) { out.push(`${p.phase} の then ${t} が地図に無い`); continue; }
+      if (!p.next.includes(tp.short)) out.push(`${p.phase} の「つぎ」(${p.next}) に、次の段 ${t} の要の語「${tp.short}」が無い＝つぎが次を指していない`);
+      if (tp.nodeId !== p.nodeId && !panelNeighbors(p.nodeId, nodes).has(tp.nodeId)) {
+        out.push(`${p.phase}（${p.nodeId}）から ${t}（${tp.nodeId}）へ、パネルの言葉を持たない手だけを通る地図の道が無い＝地図に無い流れをパネルが言っている`);
+      }
+    }
+    if (p.switchTo && !p.then.includes(p.switchTo)) out.push(`${p.phase} の switchTo ${p.switchTo} は then に無い`);
+    // 切り替えの約束は手順書の文にも書く（パネルの言葉を直したのに手順書の文が古いまま、を止める）
+    if (p.switchTo) {
+      const node = flowNode(p.nodeId, nodes);
+      const to = byKey.get(p.switchTo);
+      const pb = node?.playbook || "";
+      if (to && !pb.includes(`「${to.now}」`)) out.push(`${p.nodeId} の手順書の文に、切り替え先のパネルの言葉「${to.now}」が無い`);
+      if (!pb.includes(`「${p.now}」`)) out.push(`${p.nodeId} の手順書の文に、切り替え前のパネルの言葉「${p.now}」（のままにしない）が無い`);
+    }
+  }
+  // 輪: reset から全部に着き、done から reset へ戻る
+  if (byKey.has("reset")) {
+    const seen = new Set<string>();
+    const stack: string[] = ["reset"];
+    while (stack.length) {
+      const k = stack.pop() as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      for (const t of byKey.get(k)?.then || []) stack.push(t);
+    }
+    for (const k of PANEL_PHASE_KEYS) if (byKey.has(k) && !seen.has(k)) out.push(`パネルの段 ${k} に reset からたどり着けない（孤立）`);
+    if (byKey.has("done") && !byKey.get("done")!.then.includes("reset")) out.push("done の次は reset でなければならない（客完了→リセットへ戻る）");
   }
   return out;
 }

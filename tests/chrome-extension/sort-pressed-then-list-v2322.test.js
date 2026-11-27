@@ -68,8 +68,8 @@ console.log("■ 2. 押す手と、読み直し後の進み方の順番");
 
 console.log("■ 3. パネルが並べ替えのまま戻らない");
 {
-  ok("並べ替え完了後に「並べ替え」の次の動きが来たら物件取得に直す", /並べ替え\|並び替え/.test(dl) && dl.includes('nmG = "物件取得（全部送付済みなら次ページへ）"'));
-  ok("いまの表示が並べ替えのままでも、完了後は物件取得最中に直す", dl.includes('_caG = "物件取得最中"'));
+  ok("並べ替え完了後に「並べ替え」の次の動きが来たら物件取得に直す", /並べ替え\|並び替え/.test(dl) && dl.includes('nmG = _panelWord("list", "next") || nmG'));
+  ok("いまの表示が並べ替えのままでも、完了後は物件取得最中に直す", dl.includes('_caG = _panelWord("list", "now") || _caG'));
   ok("ページ側は、押したあとの sort 要求を list（物件取得）にする", page.includes('ph = "list"; wh = "sort_pressed"'));
   ok("list の次の動きは物件取得", page.includes('nextMove = "物件取得（印刷用PDF）"'));
 }
@@ -77,7 +77,7 @@ console.log("■ 3. パネルが並べ替えのまま戻らない");
 console.log("■ 4. 手順書の④は地図から出ている（この回で手書きの⑤を足していない）");
 {
   const map = fs.readFileSync(path.join(root, "app", "lib", "loop-flow-map.ts"), "utf8");
-  ok("地図の並べ替えの次は list_press（④）", /id: "sort"[\s\S]{0,240}next: \["list_press", "b_zero"\]/.test(map));
+  ok("地図の並べ替えの次は list_press（④）", /id: "sort"[\s\S]{0,900}next: \["list_press", "b_zero"\]/.test(map));
   ok("④の文は地図の playbook から作る", map.includes("export function renderListPressSteps"));
   const pb = fs.readFileSync(path.join(root, "app", "lib", "action-playbook.ts"), "utf8");
   ok("一覧の手は renderListPressSteps() を使う", pb.includes("...renderListPressSteps()"));

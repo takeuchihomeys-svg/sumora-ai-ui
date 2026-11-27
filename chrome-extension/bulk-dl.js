@@ -3386,7 +3386,8 @@
       if (e.data.from === "axlx-task-grasped") {
         if (e.data.currentAction) {
           var _caG = String(e.data.currentAction).slice(0, 28);
-          if (_adSortDone && /並べ替え/.test(_caG)) _caG = "物件取得最中";
+          // ★ 2.8.323: 並べ替えが完了したあとの「いま」は、地図の物件取得の言葉（手で書かない）
+          if (_adSortDone && /並べ替え/.test(_caG)) _caG = _panelWord("list", "now") || _caG;
           _bulkGraspState.taskNow = _caG;
           _bulkGraspState.currentAction = _caG;
         }
@@ -3397,7 +3398,7 @@
             try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
           }
           if (/並べ替え|並び替え/.test(nmG) && _adSortDone) {
-            nmG = "物件取得（全部送付済みなら次ページへ）";
+            nmG = _panelWord("list", "next") || nmG;
           }
           try {
             var _pG = typeof _readPagerState === "function" ? _readPagerState() : null;
@@ -3432,6 +3433,18 @@
    *   ページの読み直しで古い言葉（「新しい条件を入れている最中」）に戻らないよう、session の axlx_bulk_grasp にも書く。
    *   印: dl:list_flow_announce（点検で何をいつ言ったか読める）
    */
+  /**
+   * ★ 2.8.323 パネルの言葉は流れの地図が正本（bulk-panel-grasp.js の PANEL_PHASE_WORDS は scripts/gen-panel-words.ts が作る）。
+   *   ここで言葉を手で書かない。段（reset/fill/search/sort/list/all_sent/next_page/done）と field（now/next）で引く。
+   */
+  function _panelWord(key, field) {
+    try {
+      var W = window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.PANEL_PHASE_WORDS;
+      var w = W && W[key];
+      if (w && w[field]) return String(w[field]);
+    } catch (_) {}
+    return "";
+  }
   function _announcePhase(key, why) {
     try {
       var W = window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.PANEL_PHASE_WORDS;
@@ -5138,6 +5151,8 @@
               } catch (_) {}
               _adSortDone = true;
               try { _liveDlStep("sort_pressed", "高→低を押した→読み直し後は④物件取得"); } catch (_) {}
+              // ★ 2.8.323: 地図の sort.panel.switchTo=list。押した時点でパネルも物件取得の言葉へ（猶予の間「並べ替え最中」のままにしない）
+              try { _announcePhase("list", "sort_pressed"); } catch (_) {}
               // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る
               var _lagG = _lagGraceMs();
               _auditSort("sort_lag_grace", Math.round(_lagG / 1000) + "秒 押した後の猶予（ラグ）");

@@ -10,7 +10,11 @@
     if (!t) return "";
     return /さん$/.test(t) ? t : t + "さん";
   }
-  /** ★ 2.8.319 手順書と同じ言葉（app/lib/bulk-panel-grasp.ts の PANEL_PHASE_WORDS の写し・試験で一致を見る） */
+  /**
+   * ★ 2.8.319 手順書と同じ言葉。★ 2.8.323: 正本は流れの地図（app/lib/loop-flow-map.ts の各手の panel）。
+   * 下の BEGIN〜END は scripts/gen-panel-words.ts が作る。手で直さない（直すと試験 panel-from-flow-map が止める）。
+   */
+  /* PANEL_WORDS:BEGIN */
   var PANEL_PHASE_WORDS = {
     reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
     fill: { now: "条件を入れている最中", next: "検索を押す" },
@@ -21,6 +25,7 @@
     next_page: { now: "次ページへ移動中", next: "物件取得（送付済み以外の行）" },
     done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
   };
+  /* PANEL_WORDS:END */
   function playbookAction(a) {
     var t = String(a || "");
     if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
@@ -40,9 +45,9 @@
     if (/次ページ|送付済み/.test(m)) return PANEL_PHASE_WORDS.all_sent.now;
     if (/外す/.test(m)) return PANEL_PHASE_WORDS.reset.now;
     if (/入れ|条件を1つ/.test(m)) return PANEL_PHASE_WORDS.fill.now;
-    if (/並べ替え/.test(m)) return "並べ替え最中";
-    if (/検索を押/.test(m)) return "検索を押す最中";
-    if (/物件|取得/.test(m)) return "物件取得最中";
+    if (/並べ替え/.test(m)) return PANEL_PHASE_WORDS.sort.now;
+    if (/検索を押/.test(m)) return PANEL_PHASE_WORDS.search.now;
+    if (/物件|取得/.test(m)) return PANEL_PHASE_WORDS.list.now;
     return null;
   }
   function formatBulkPanelGrasp(g) {

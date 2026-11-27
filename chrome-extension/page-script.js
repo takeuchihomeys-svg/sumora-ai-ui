@@ -4140,7 +4140,24 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.322";
+  /**
+   * ★ 2.8.323 パネルに出す言葉（正本は流れの地図 app/lib/loop-flow-map.ts の各手の panel）。
+   *   下の BEGIN〜END は scripts/gen-panel-words.ts が作る。手で直さない（試験 panel-from-flow-map が止める）。
+   *   ここでは 検索・並べ替え・物件取得の「いま」と、並べ替えの「つぎ」だけ使う（外す・入れるは bulk-panel-grasp.js が手順書の言葉へ直す）。
+   */
+  /* PANEL_WORDS:BEGIN */
+  var _AXLX_PANEL_WORDS = {
+    reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
+    fill: { now: "条件を入れている最中", next: "検索を押す" },
+    search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
+    sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
+    list: { now: "物件取得最中", next: "全部送付済みなら次ページへ・無ければ客完了" },
+    all_sent: { now: "全部送付済み→次ページへ", next: "次ページ（無ければ客完了→リセット）" },
+    next_page: { now: "次ページへ移動中", next: "物件取得（送付済み以外の行）" },
+    done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
+  };
+  /* PANEL_WORDS:END */
+  var _AXLX_PAGE_VER = "2.8.323";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4207,6 +4224,7 @@ function _guideLikeAreaSkip(why) {
     "reset_front_visible",
     "human_move_arrive",
     "sort_pressed_then_list",
+    "panel_words_from_flow_map",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",
@@ -5284,15 +5302,15 @@ function _guideLikeAreaSkip(why) {
       var actionJa =
         ph === "clear" ? "外している最中"
           : ph === "fill" ? "新しい条件を入れている最中"
-            : ph === "search" ? "検索を押す最中"
-              : ph === "sort" ? "並べ替え最中"
-                : ph === "list" ? "物件取得最中"
+            : ph === "search" ? _AXLX_PANEL_WORDS.search.now
+              : ph === "sort" ? _AXLX_PANEL_WORDS.sort.now
+                : ph === "list" ? _AXLX_PANEL_WORDS.list.now
                   : _phaseNextJa(ph);
       var nextJa =
         ph === "clear" ? "新しいお客さんの条件を1つずつ入れる"
           : ph === "fill" ? "検索を押す"
             : ph === "search" ? "検索結果の表示を待つ"
-              : ph === "sort" ? "物件を1つずつ取得"
+              : ph === "sort" ? _AXLX_PANEL_WORDS.sort.next
                 : _phaseNextJa((_AX_CUSTOMER_LOOP.filter(function (r) { return r.id === ph; })[0] || {}).next || "");
       /** ★ 2.8.233: search 段でも確認前は並べ替えを出さない */
       try { nextJa = _guardNextMove(nextJa, ph); } catch (_) {}
