@@ -143,3 +143,57 @@ export function reachedIdsOf(sw: string, marks: readonly string[], runs: readonl
   for (const r of runs) if (r.switches.includes(sw) && r.switches.length <= maxCo) for (const row of r.rows) if (marks.some((k) => Number(row.marks?.[k] ?? 0) > 0)) s.add(row.id);
   return [...s].sort();
 }
+
+// ── 2026-11-27 夜 作業員L（統括役の頼み・作業員A の報告「近さが 0.50〜0.60 に固まり、お礼だけ・送っただけの番に寄る」）: 場面の形の文 v2 ──
+//   v1 は流れ4通（スタッフの長い定型の文・URL）と写しの材料の数が文の大半＝どの問題も似て、お客様の言葉の差が埋もれた。
+//   v2: ① お客様の直前の文から決まり文句（お礼・了承・挨拶・絵文字・URL）を外して先頭に2回（比重を上げる）② 外して何も残らなければ「（お礼・了承だけ）」の1語
+//       ③ こちらの直前の1通だけ・定型を外して 40字 ④ 材料は表の名前だけ（数を書かない）⑤ 正解の手と本番のブレインは残す
+const BOILER_RE = /(?:本当に|大変|とても)?(?:ありがとう(?:ございます|ございました|ござます)?|有難う(?:ございます)?|よろしく(?:お願い(?:いた|致)?します|お願いします|です)?|宜しく(?:お願い(?:いた|致)?します)?|承知(?:しました|致しました|いたしました)|かしこまりました|了解(?:です|しました|致しました)?|お疲れ様です|お世話になって(?:おります|います)|失礼(?:します|致します|いたします)|すみません|はい|わかりました|分かりました|助かります|お願いします)[！!。、,.～〜ー…]*/g;
+const URL_RE = /https?:\/\/\S+|by SUUMO|\[番号非表示\]/g;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu;
+const STAFF_TEMPLATE_RE = /(?:お手隙の際に)?ご査収(?:ください|下さい)[^。！!]*|お気軽にご連絡(?:ください|下さい)[^。！!]*|失礼致します[！!]*|[^。！!\n]*さん(?:夜分遅くに|お世話になっております)[^。！!\n]*|（オススメポイント）|（室内イメージ）|🌟/g;
+export function stripBoilerplate(s: string): string {
+  return s.replace(URL_RE, " ").replace(EMOJI_RE, "").replace(BOILER_RE, " ").replace(/[！!。、,.\s]+/g, " ").trim();
+}
+export function sceneShapeTextV2(p: RagProblemIn, mask: (s: string) => string): string {
+  const cust = stripBoilerplate(oneLine(mask(p.customer ?? "")));
+  const custLine = cust.length >= 2 ? clip(cust, 220) : "（お礼・了承だけ）";
+  const lastStaff = [...(p.context ?? [])].reverse().find((c) => c.s !== "customer");
+  const staff = lastStaff ? clip(stripBoilerplate(oneLine(mask(String(lastStaff.t ?? "")).replace(STAFF_TEMPLATE_RE, " "))), 40) : "";
+  const asks = (p.asks ?? []).map((a) => `${clip(stripBoilerplate(oneLine(mask(a.q ?? ""))), 40)}→${a.route ?? ""}`);
+  const mats = snapshotMaterialsOf(p.ledger).map(([k]) => k);
+  return [
+    `お客様: ${custLine}`,
+    `お客様: ${custLine}`,
+    asks.length ? `依頼: ${asks.join(" / ")}` : "",
+    `場面: ${p.type ?? "?"} / ${p.sub ?? "?"}`,
+    staff ? `こちらの直前: ${lastStaff?.aix ? "AIX " : ""}${staff}` : "",
+    `正解: ${(p.accept ?? []).join("・") || "?"}${p.mustNot?.length ? ` / 避ける: ${p.mustNot.join("・")}` : ""}`,
+    p.prodBrain?.action ? `本番のブレイン: ${p.prodBrain.action}` : "",
+    mats.length ? `材料: ${mats.join("・")}` : "",
+  ].filter(Boolean).join("\n");
+}
+/** v2 の場面の言葉（問題の文と同じ書き方・届いた例の無い部品）。お客様の言葉を先頭に2回 */
+export const SWITCH_SCENE_WORDS_V2: Record<string, string> = {
+  PICKUP_WHY_TO_BRAIN: "お客様: 送って頂いたお部屋見ました ちょっと駅から遠いですね 2件目は思ったより狭いです 1件目が気になります\nお客様: 送って頂いたお部屋見ました ちょっと駅から遠いですね 2件目は思ったより狭いです 1件目が気になります\n場面: 物件を送った後 / other:その他・物件を送った後\nこちらの直前: AIX ご条件に近いお部屋をピックアップしました\n正解: 返信\n材料: property_pickups・sent_properties・aix_usage_logs",
+  APPLY_ROUTE_NEXT_BY_TURN: "お客様: 内覧は土曜の14時でお願いします 初期費用はだいたいいくらくらいになりますか 申込はどうしたら良いですか\nお客様: 内覧は土曜の14時でお願いします 初期費用はだいたいいくらくらいになりますか 申込はどうしたら良いですか\n場面: 内覧の前後・申込の手前 / 質問の番\nこちらの直前: 内覧のご希望日時をお伺いしてもよろしいでしょうか\n正解: 返信・AIX:内覧",
+  BRAIN_CHECK_PROMISE_FLOW: "お客様: （お礼・了承だけ）\nお客様: （お礼・了承だけ）\n場面: お客様が物件を送ってきた / property_share:送っただけ\nこちらの直前: こちらのお部屋確認させて頂きます\n正解: 返信・AIX:property_check_result\n材料: aix_usage_logs・sent_properties",
+  ACK_SOFT_NEXT: "お客様: このお部屋すごく良いですね 間取りも好みです 駐車場は空いてますか\nお客様: このお部屋すごく良いですね 間取りも好みです 駐車場は空いてますか\n場面: 物件への反応 / 好意・中身の質問\nこちらの直前: AIX オススメのお部屋をお送りしました\n正解: 返信 / 避ける: 2段:pickup\n材料: sent_properties・aix_usage_logs",
+  SEARCH_CHOICE_TWO_MODE_SPLIT: "お客様: 他にも条件に合うお部屋ありますか もう少し探してほしいです\nお客様: 他にも条件に合うお部屋ありますか もう少し探してほしいです\n場面: 出し切り / 物件を送った後の言い足し\nこちらの直前: AIX ご条件に近いお部屋全てピックアップさせて頂きました\n正解: 返信・AIX:左右 / 避ける: AIX:zenryoku_support・右:全力\n材料: sent_properties・aix_usage_logs",
+  CHECK_NOW_POSSIBLE_LINE: "お客様: こちらのお部屋まだ空いてますか 内装の写真もありますか\nお客様: こちらのお部屋まだ空いてますか 内装の写真もありますか\n場面: 物件を送ってきた・空きの質問 / property_share:質問つき\nこちらの直前: 確認させて頂きます\n正解: AIX:property_check_result / 避ける: 2段:check\n材料: aix_usage_logs・sent_properties",
+  PICKUP_FIT_NOW_LINE: "お客様: やっぱり2階以上で駅から10分以内がいいです 予算は8万までで\nお客様: やっぱり2階以上で駅から10分以内がいいです 予算は8万までで\n場面: 探す約束の後・条件の言い直し / conditions:言い直し\nこちらの直前: ご条件に合うお部屋お探しさせて頂きます\n正解: AIX:物件・返信 / 避ける: 2段:pickup\n材料: property_pickups・aix_usage_logs",
+};
+/** 2026-11-27 夜（統括役の決め）: 3段の引き方（純関数）。① 届いた例が2問以上＝重心 ② 無ければ形の当てはめ（作業員A の決まった計算）の候補を RAG で並べ替える
+ *   ③ 昼の届きの確かめで例が2問できたら①へ（呼ぶ側が reached を足す）。形の当てはめも無ければ 場面の言葉 → 説明 の順（今までの2段） */
+export type RagMode3 = "重心" | "形の当てはめ" | "場面の言葉" | "説明";
+export function ragQueryMode3(reached: number, hasShape: boolean, hasScene: boolean): RagMode3 { return reached >= 2 ? "重心" : hasShape ? "形の当てはめ" : hasScene ? "場面の言葉" : "説明"; }
+/** ② の並べ替え（純関数）: 形の当てはめの候補だけを、近さの順に並べる（候補の外の問題は足さない＝RAG は並べ替えだけ） */
+export function rerankWithin(ids: readonly string[], q: readonly number[], vecs: Readonly<Record<string, readonly number[]>>): Array<{ id: string; sim: number }> {
+  return ids.filter((id) => vecs[id]).map((id) => ({ id, sim: Math.round(cosine(q, vecs[id]) * 1000) / 1000 })).sort((a, b) => b.sim - a.sim || a.id.localeCompare(b.id));
+}
+export type ShapeCandidates = { eff: string[]; guard: string[]; why?: string };
+/** 形の当てはめの置き場（作業員A の関数が来るまでの受け口）: { v: 1, switches: { 名前: { eff, guard, why } } } */
+export function shapeCandidatesFrom(json: unknown, sw: string): ShapeCandidates | null {
+  const s = (json as { v?: number; switches?: Record<string, ShapeCandidates> } | null)?.switches?.[sw];
+  return s && Array.isArray(s.eff) ? { eff: s.eff, guard: Array.isArray(s.guard) ? s.guard : [], why: s.why } : null;
+}

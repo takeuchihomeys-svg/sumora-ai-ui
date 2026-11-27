@@ -13,7 +13,7 @@ import { maskForEmbedding } from "../app/lib/pii-mask";
 import { SWITCH_REACH } from "./lib/exam-switch-reach";
 import { SWITCH_TARGET_MARK } from "./lib/exam-snapshot-need";
 import { loadLearnedReach } from "./lib/exam-learned-reach";
-import { SWITCH_SCENE_WORDS, centerVecs, centroidOf, commentsNearSwitch, ragCandidates, ragEvalOf, ragQueryModeOf, reachedIdsOf, subVec, ragMissOf, sceneShapeText, switchSceneText, type RagEvalRun, type RagProblemIn } from "./lib/exam-problem-rag";
+import { SWITCH_SCENE_WORDS, SWITCH_SCENE_WORDS_V2, centerVecs, centroidOf, commentsNearSwitch, ragCandidates, ragEvalOf, ragQueryMode3, reachedIdsOf, rerankWithin, sceneShapeTextV2, shapeCandidatesFrom, subVec, ragMissOf, sceneShapeText, switchSceneText, type RagEvalRun, type RagProblemIn } from "./lib/exam-problem-rag";
 import { readRunsWithMarks } from "./build-exam-dictionary";
 import type { ExamDictionary } from "./lib/exam-dictionary";
 
@@ -50,21 +50,23 @@ function switchParts(sw: string, kb: Record<string, string[]>) {
 
 if (require.main === module) (async () => {
   const k = Number(arg("k", "12")) || 12; const dry = has("dry");
-  const ps = (() => { const j = JSON.parse(readFileSync("scripts/brain-exam/problems.json", "utf8")); return (Array.isArray(j) ? j : j.problems) as RagProblemIn[]; })();
+  const ps = (() => { const j = JSON.parse(readFileSync(arg("problems", "scripts/brain-exam/problems.json"), "utf8")); return (Array.isArray(j) ? j : j.problems) as RagProblemIn[]; })();
   const store = loadStore();
-  // ① 問題の場面の形
+  // ① 問題の場面の形（2026-11-27 夜 統括役の決め: 既定は v2＝決まり文句を外しお客様の言葉を先頭に・--shape=v1 で旧）
+  const shapeV1 = arg("shape", "v2") === "v1";
+  const shapeFn = shapeV1 ? sceneShapeText : sceneShapeTextV2; const sceneWords = shapeV1 ? SWITCH_SCENE_WORDS : SWITCH_SCENE_WORDS_V2;
   const todo: Array<{ id: string; text: string; h: string }> = [];
-  for (const p of ps) { const text = sceneShapeText(p, maskForEmbedding); const h = hashOf(text); if (store.problems[p.id]?.h !== h) todo.push({ id: p.id, text, h }); }
+  for (const p of ps) { const text = shapeFn(p, maskForEmbedding); const h = hashOf(text); if (store.problems[p.id]?.h !== h) todo.push({ id: p.id, text, h }); }
   // ② スイッチの説明
   const sws = has("all-marked") ? [...new Set([...Object.keys(SWITCH_TARGET_MARK), ...Object.entries(SWITCH_REACH).filter(([, d]) => (d as { mark?: string }).mark).map(([s]) => s)])] : arg("switches").split(",").filter(Boolean);
   const kb: Record<string, string[]> = (() => { const f = arg("kb-file"); if (!f || !existsSync(f)) return {}; try { return JSON.parse(readFileSync(f, "utf8")); } catch { return {}; } })();
   const swTodo: Array<{ sw: string; text: string; h: string }> = [];
   for (const sw of sws) { const text = switchSceneText(sw, switchParts(sw, kb)); const h = hashOf(text); if (store.switches[sw]?.h !== h) swTodo.push({ sw, text, h }); }
   // 場面の言葉（SWITCH_SCENE_WORDS）は別の鍵 scene:<名前> で持つ（問題と同じ書き方＝問題の平均を引いて比べる）
-  for (const sw of sws) { const text = SWITCH_SCENE_WORDS[sw]; if (!text) continue; const h = hashOf(text); if (store.switches[`scene:${sw}`]?.h !== h) swTodo.push({ sw: `scene:${sw}`, text, h }); }
+  for (const sw of [...new Set([...sws, ...Object.keys(sceneWords)])]) { const text = sceneWords[sw]; if (!text) continue; const h = hashOf(text); if (store.switches[`scene:${sw}`]?.h !== h) swTodo.push({ sw: `scene:${sw}`, text, h }); }
   const chars = [...todo, ...swTodo].reduce((a, x) => a + x.text.length, 0);
   console.log(`[rag] 問題 ${ps.length}（埋め込み直し ${todo.length}）・スイッチ ${sws.length}（直し ${swTodo.length}）・字数 ${chars}（概算 $${((chars * 1.2) / 1e6 * 0.02).toFixed(5)}）`);
-  if (has("show")) { const p = ps.find((x) => x.id === arg("show-id", ps[0].id)); if (p) console.log(sceneShapeText(p, maskForEmbedding)); for (const s of swTodo.slice(0, 2)) console.log(`---\n${s.text}`); }
+  if (has("show")) { const p = ps.find((x) => x.id === arg("show-id", ps[0].id)); if (p) console.log(shapeFn(p, maskForEmbedding)); for (const s of swTodo.slice(0, 2)) console.log(`---\n${s.text}`); }
   if (dry) return;
   const all = [...todo.map((t) => ({ key: `p:${t.id}`, ...t })), ...swTodo.map((t) => ({ key: `s:${t.sw}`, id: t.sw, ...t }))];
   for (let i = 0; i < all.length; i += 96) {
@@ -86,17 +88,23 @@ if (require.main === module) (async () => {
   // ⑤ 前の回（係の結果のファイル・DB なし）: --eval=<results の場所>
   const evalDir = arg("eval");
   const evalRuns: RagEvalRun[] | null = evalDir ? readRunsWithMarks(evalDir).runs.map((r) => ({ label: r.label, switches: r.switches, rows: r.rowsFull })) : null;
-  for (const sw of sws) {
-    const s = store.switches[sw]; if (!s) continue;
+  // ② の受け口: 形の当てはめ（作業員A の決まった計算・来るまでは <exam-cache>/exam-shape-candidates.json）
+  const shapeJson = (() => { try { return JSON.parse(readFileSync(arg("shape-file", join(examCacheRoot(), "exam-shape-candidates.json")), "utf8")); } catch { return null; } })();
+  for (const sw of [...new Set([...sws, ...Object.keys(sceneWords)])]) {
+    const s = store.switches[sw]; const shape = shapeCandidatesFrom(shapeJson, sw);
+    if (!s && !store.switches[`scene:${sw}`] && !shape) continue;
     // 2026-11-27 統括役の決め: 2段＝届いた例が2問以上あれば重心で・無ければ場面の言葉（SWITCH_SCENE_WORDS）・それも無ければ説明
     const marks = [SWITCH_TARGET_MARK[sw], (SWITCH_REACH[sw] as { mark?: string } | undefined)?.mark].filter((x): x is string => !!x);
     const reached = evalRuns ? reachedIdsOf(sw, marks, evalRuns).filter((id) => vecs[id]) : [];
     const sc = store.switches[`scene:${sw}`];
-    const mode = ragQueryModeOf(reached.length, !!sc);
-    const q = mode === "重心" ? centroidOf(reached, vecs)! : mode === "場面の言葉" ? (mean.length ? subVec(sc.v, mean) : sc.v) : swMean.length ? subVec(s.v, swMean) : s.v;
+    // 2026-11-27 夜 統括役の決め: 3段＝① 届いた例 2問以上は重心 ② 無ければ形の当てはめの候補を RAG で並べ替えるだけ ③ 場面の言葉 → 説明
+    const mode = ragQueryMode3(reached.length, !!shape, !!sc);
+    const sceneQ = sc ? (mean.length ? subVec(sc.v, mean) : sc.v) : s ? (swMean.length ? subVec(s.v, swMean) : s.v) : null;
+    const q = mode === "重心" ? centroidOf(reached, vecs)! : sceneQ;
+    if (!q) continue;
     // 重心の時は届いた問題そのものは候補から外さない（もう届くと分かっている＝効く問題に入れる）・順位の先頭に置く
     const c0 = ragCandidates(q, vecs, k, never);
-    const c = mode === "重心" ? (() => { const r = new Set(reached); const rest = [...c0.eff, ...c0.guard].filter((x) => !r.has(x.id)); const effX = [...reached.map((id) => ({ id, sim: 1 })), ...rest].slice(0, Math.max(k, reached.length)); return { eff: effX, guard: rest.filter((x) => !effX.some((y) => y.id === x.id)).slice(0, k) }; })() : c0;
+    const c = mode === "形の当てはめ" && shape ? { eff: rerankWithin(shape.eff, q, vecs).slice(0, Math.max(k, shape.eff.length)), guard: rerankWithin(shape.guard, q, vecs) } : mode === "重心" ? (() => { const r = new Set(reached); const rest = [...c0.eff, ...c0.guard].filter((x) => !r.has(x.id)); const effX = [...reached.map((id) => ({ id, sim: 1 })), ...rest].slice(0, Math.max(k, reached.length)); return { eff: effX, guard: rest.filter((x) => !effX.some((y) => y.id === x.id)).slice(0, k) }; })() : c0;
     const eff = ((SWITCH_REACH[sw] as { eff?: string[] } | undefined)?.eff ?? []);
     const hits = Object.entries(learned?.switches?.[sw]?.problems ?? {}).filter(([, v]) => v.v === "hit").map(([id]) => id);
     const ragIds = [...c.eff, ...c.guard].map((x) => x.id);

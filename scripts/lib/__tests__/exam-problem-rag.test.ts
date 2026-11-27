@@ -49,3 +49,25 @@ assert.deepEqual(ragMissOf(["q1"], ["q1", "q2"]), { hit: ["q1"], missed: ["q2"],
 assert.equal(EXAM_PROBLEM_RAG_MODE({}), "shadow", "既定は記録だけ");
 assert.equal(EXAM_PROBLEM_RAG_MODE({ EXAM_PROBLEM_RAG: "on" }), "on");
 console.log("exam-problem-rag: ok");
+// 2026-11-27 夜: 場面の形 v2（決まり文句を外し・お客様の言葉を先頭に2回）
+import("../exam-problem-rag").then(({ stripBoilerplate, sceneShapeTextV2, SWITCH_SCENE_WORDS_V2 }) => {
+  assert.equal(stripBoilerplate("ありがとうございます！！よろしくお願いします😊"), "");
+  assert.equal(stripBoilerplate("ありがとうございます！駐車場は空いてますか？"), "駐車場は空いてますか？");
+  const t = sceneShapeTextV2({ id: "q1", type: "t", sub: "s", customer: "ありがとうございます🙇", context: [{ s: "staff", t: "YUMAさんお手隙の際にご査収ください😌！！ https://suumo.jp/x", aix: true }], accept: ["返信"], ledger: { aix_usage_logs: [{}, {}] } }, maskForEmbedding);
+  assert.ok(t.startsWith("お客様: （お礼・了承だけ）\nお客様: （お礼・了承だけ）"), "お礼だけは1語");
+  assert.ok(!t.includes("https") && !t.includes("ご査収") && t.includes("材料: aix_usage_logs") && !t.includes("aix_usage_logs:2"), "URL・定型・材料の数を外す");
+  for (const [k, v] of Object.entries(SWITCH_SCENE_WORDS_V2)) assert.ok(v.startsWith("お客様: ") && v.includes("正解: "), k);
+  console.log("exam-problem-rag v2: ok");
+});
+// 2026-11-27 夜: 3段（重心 → 形の当てはめ → 場面の言葉 → 説明）
+import("../exam-problem-rag").then(({ ragQueryMode3, rerankWithin, shapeCandidatesFrom }) => {
+  assert.equal(ragQueryMode3(2, true, true), "重心");
+  assert.equal(ragQueryMode3(1, true, true), "形の当てはめ");
+  assert.equal(ragQueryMode3(0, false, true), "場面の言葉");
+  assert.equal(ragQueryMode3(0, false, false), "説明");
+  assert.deepEqual(rerankWithin(["b", "a", "zz"], [1, 0], { a: [1, 0], b: [0, 1], c: [1, 0] }).map((x) => x.id), ["a", "b"], "候補の中だけを並べ替える（候補の外の c は足さない・ベクトルの無い zz は外す）");
+  assert.deepEqual(shapeCandidatesFrom({ v: 1, switches: { X: { eff: ["q1"], guard: ["q2"], why: "w" } } }, "X"), { eff: ["q1"], guard: ["q2"], why: "w" });
+  assert.equal(shapeCandidatesFrom({ v: 1, switches: {} }, "X"), null);
+  assert.equal(shapeCandidatesFrom(null, "X"), null);
+  console.log("exam-problem-rag 3段: ok");
+});
