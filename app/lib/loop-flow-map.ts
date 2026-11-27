@@ -203,6 +203,18 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
         evidence: { file: "page-script.js", token: "station_go_stuck" },
         playbookStep: { scenes: ["station"], fields: ["駅の設定へ進む"] },
       },
+      // 2.8.329 竹内さん「沿線までせんたくすると駅までちゃんと選択するように手順書にいれる ここ(中津～本町)とでているので中津駅から本町駅までの間の駅をすべてせんたくする」
+      {
+        button: "駅（沿線の次に駅まで選ぶ）",
+        receipt: ["page:station_per_line_ok"],
+        effect: ["page:station_select_ok"],
+        fail: ["page:station_name_absent", "page:station_line_stuck"],
+        effectJa: "沿線を選んだら駅まで選ぶ。希望の駅すべてに印が付いている（沿線（A〜B）の指定はその線のAからBまでの駅を端も含めて全部・例 御堂筋線 中津〜本町＝中津・梅田・淀屋橋・本町）",
+        onFail: "付いていない駅だけ選び直す（駅の札だけを見る・沿線名の字は押さない）→一覧に無い駅は記録して飛ばし、選べた駅で確定へ",
+        gate: true,
+        evidence: { file: "page-script.js", token: "station_select_ok" },
+        playbookStep: { scenes: ["station"], fields: ["station_id[]"], when: "沿線を選んだ時（駅で探すお客さん）は必ず", after: "駅の設定へ進む" },
+      },
       // 2.8.328 竹内さん「町の選択や管理費・構造の選択は、効いたかを確かめていない ここも順に改善する」
       {
         button: "町（ピンポイント）",

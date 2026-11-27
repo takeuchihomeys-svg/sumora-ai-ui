@@ -1429,6 +1429,14 @@
       var pst = typeof _readPagerState === "function" ? _readPagerState() : null;
       if (pst) onlyOne = !!pst.onlyOnePage;
       next = !onlyOne && !!(typeof _findNextPageEl === "function" && _findNextPageEl());
+      var _prKey = String(location.search || "") + "|" + (pst ? pst.nums.join(",") : "");
+      if (pst && window.__axlxPagerReadKey !== _prKey) {
+        window.__axlxPagerReadKey = _prKey;
+        _liveDlStep("pager_read", ("番号[" + pst.nums.join(",") + "] 今" + (pst.currentKnown ? pst.current : "?")
+          + (pst.onlyOnePage ? " 1頁のみ" : (pst.hasNextUsable ? " 次有" : " 次無"))
+          + " 元=" + pst.source + " 葉=" + (pst.cells || []).join(" ")
+          + " 次oc=" + String(pst.nextOnclick || "-")).slice(0, 160));
+      }
     } catch (_) { next = false; }
     try {
       var p = new URLSearchParams(location.search || "");
@@ -8398,13 +8406,34 @@
    * ★ 2.8.234 竹内さん「1ページだけの場合止まってしまう／1ページのみと把握して次へ」:
    *   リアプロは 1ページでも「次」セルが出ることがある。数字が1つだけ＝1ページのみ。
    *   次に onclick が無い／pager(現在以下)＝押せない次。把握印 list_page_one_only。
+   * ★ 2.8.329 #1677「前頁 1 2 次 最後」の2頁を1ページのみと読んでリセットした（30日で次ページを押せた印0件）:
+   *   td.pager だけ数えると、いまの頁の番号が td.pager でない形では2頁が [2] だけ＝1頁になる。
+   *   番号は「次」と同じ行の全部の葉から数える。いまの頁＝押す口（onclick・href）の無い番号。
+   *   次がある＝いまの頁 < 最後の番号（pager(N) の N は0始まりの事があるので、いまの頁と比べない）。
    */
+  function _pagerCellClickable(el, stopAt) {
+    for (var x = el, up = 0; x && up < 4 && x !== stopAt; x = x.parentElement, up++) {
+      if (x.getAttribute && (x.getAttribute("onclick") || (x.tagName === "A" && x.getAttribute("href")))) return true;
+    }
+    return false;
+  }
+  function _pagerCellLooksCurrent(el) {
+    try {
+      var cls = String(el.className || "") + " " + String((el.parentElement && el.parentElement.className) || "");
+      if (/current|active|selected|now|on\b/i.test(cls)) return true;
+      var tg = String(el.tagName || "").toUpperCase();
+      if (tg === "B" || tg === "STRONG") return true;
+    } catch (_) {}
+    return false;
+  }
   function _readPagerState() {
     var nums = [];
     var current = null;
     var nextEl = null;
     var nextOnclick = "";
     var texts = [];
+    var cells = [];
+    var source = "td.pager";
     try {
       var tds = document.querySelectorAll("td.pager");
       for (var i = 0; i < tds.length; i++) {
@@ -8413,36 +8442,68 @@
         var t = String(td.textContent || "").replace(/\s+/g, "").trim();
         if (!t) continue;
         texts.push(t);
-        if (/^\d+$/.test(t)) {
-          var n = parseInt(t, 10);
-          if (nums.indexOf(n) < 0) nums.push(n);
-          var oc = String(td.getAttribute("onclick") || "");
-          // 番号セルに onclick が無い＝いまのページ
-          if (!oc) current = n;
-        }
         if (/^(次|次へ|次のページ)$/.test(t)) {
           nextEl = td;
           nextOnclick = String(td.getAttribute("onclick") || "");
         }
       }
+      var row = nextEl ? (nextEl.closest ? nextEl.closest("tr") : nextEl.parentElement) : null;
+      if (!row && tds.length) row = tds[0].closest ? tds[0].closest("tr") : tds[0].parentElement;
+      var leaves = [];
+      if (row) {
+        source = "row";
+        var all = row.querySelectorAll("td,th,a,span,b,strong,font,li");
+        for (var j = 0; j < all.length; j++) {
+          var c = all[j];
+          var tt = String(c.textContent || "").replace(/\s+/g, "").trim();
+          if (!/^\d+$/.test(tt)) continue;
+          var inner = c.querySelectorAll("td,th,a,span,b,strong,font,li");
+          var dupInner = false;
+          for (var q = 0; q < inner.length; q++) {
+            if (String(inner[q].textContent || "").replace(/\s+/g, "").trim() === tt) { dupInner = true; break; }
+          }
+          if (dupInner) continue;
+          leaves.push(c);
+        }
+      } else {
+        for (var k = 0; k < tds.length; k++) {
+          if (/^\d+$/.test(String(tds[k].textContent || "").replace(/\s+/g, "").trim())) leaves.push(tds[k]);
+        }
+      }
+      var curByShape = null;
+      for (var L = 0; L < leaves.length; L++) {
+        var le = leaves[L];
+        if (!_isElVisible(le)) continue;
+        var n = parseInt(String(le.textContent || "").replace(/\s+/g, ""), 10);
+        if (!isFinite(n)) continue;
+        if (nums.indexOf(n) < 0) nums.push(n);
+        var click = _pagerCellClickable(le, row ? row.parentElement : null);
+        if (!click && current == null) current = n;
+        if (curByShape == null && _pagerCellLooksCurrent(le)) curByShape = n;
+        if (cells.length < 8) {
+          cells.push(String(le.tagName || "").toLowerCase() + "." + String(le.className || "").slice(0, 12) + ":" + n + (click ? ":押" : ":今"));
+        }
+      }
+      if (current == null && curByShape != null) current = curByShape;
     } catch (_) {}
-    if (current == null && nums.length) current = nums[0];
+    nums.sort(function (a, b) { return a - b; });
+    var maxN = nums.length ? nums[nums.length - 1] : 0;
     var onlyOne = nums.length <= 1;
     var usable = false;
-    if (nextEl && !_isDisabledEl(nextEl) && _isElVisible(nextEl) && !onlyOne) {
-      if (nextOnclick) {
-        var m = nextOnclick.match(/pager\s*\(\s*(\d+)/i);
-        if (m) usable = Number(m[1]) > (current || 1);
-        else usable = true;
-      }
+    if (nextEl && !_isDisabledEl(nextEl) && _isElVisible(nextEl) && !onlyOne && nextOnclick) {
+      if (current != null) usable = current < maxN;
+      else usable = true;
     }
     if (onlyOne) usable = false;
     return {
       nums: nums,
       current: current || 1,
+      currentKnown: current != null,
       onlyOnePage: onlyOne,
       hasNextUsable: usable,
       texts: texts.slice(0, 12),
+      cells: cells,
+      source: source,
       nextOnclick: nextOnclick.slice(0, 40),
     };
   }
@@ -8486,12 +8547,9 @@
           console.log("[AXLX bulk-dl] _findNextPageEl: 次にonclick無し → 最終ページ扱い");
           continue;
         }
-        var pm = poc.match(/pager\s*\(\s*(\d+)/i);
-        if (pm) {
-          var pst1 = null;
-          try { pst1 = _readPagerState(); } catch (_) { pst1 = null; }
-          if (pst1 && Number(pm[1]) <= (pst1.current || 1)) continue;
-        }
+        var pst1 = null;
+        try { pst1 = _readPagerState(); } catch (_) { pst1 = null; }
+        if (pst1 && !pst1.hasNextUsable) continue;
         console.log("[AXLX bulk-dl] _findNextPageEl: td.pager で次ボタン発見 onclick=" + poc);
         return pt;
       }

@@ -6511,10 +6511,52 @@ function _guideLikeAreaSkip(why) {
           return _pp.x >= _rr.left - 10 && _pp.x <= _rr.right + 10 && _pp.y >= _rr.top - 10 && _pp.y <= _rr.bottom + 10;
         } catch (_) { return true; }
       };
+      /**
+       * ★ 2.8.329 竹内さん「まようのならマウス途中で途切れてへんなうごきをしないように、まうすもつながったようにする」（#1678）:
+       *   ① 押す物が画面に無い（外れた・大きさ0・非表示）時はカーソルを動かさない（画面の端や左上へ飛ばない）。
+       *      外れた物は押さない。見えない入力欄（隠れたチェック等）は今まで通り押す。
+       *   ② 動かし直す前に、いま飛んでいるカーソルが止まるのを待つ（途中で打ち切る＝途切れて見えるのを止める）。
+       */
+      var _tgtShown = function () {
+        try {
+          if (el.isConnected === false) return "detached";
+          var _rq = el.getBoundingClientRect();
+          if (!(_rq.width > 0 && _rq.height > 0)) return "zero";
+          var _cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+          if (_cs && (_cs.visibility === "hidden" || _cs.display === "none")) return "hidden";
+        } catch (_) {}
+        return "";
+      };
+      var _waitPointerIdle = function () {
+        if (!_P.moving) return Promise.resolve();
+        var _t0w = Date.now();
+        return new Promise(function (resv) {
+          (function _poll() {
+            var _mv = false;
+            try { _mv = !!_P.moving(); } catch (_) { _mv = false; }
+            if (!_mv || Date.now() - _t0w > 2500) return resv();
+            setTimeout(_poll, 70 + Math.floor(Math.random() * 50));
+          })();
+        });
+      };
       var _moveUntilArrived = function () {
+        var _gone = _tgtShown();
+        if (_gone) {
+          try {
+            var _gk = String(_opLabel(el)).slice(0, 40) + "|" + _gone;
+            window.__axMoveGone = window.__axMoveGone || {};
+            if (_audit && !window.__axMoveGone[_gk]) {
+              window.__axMoveGone[_gk] = 1;
+              _auditStepP("move_target_gone", String(_opLabel(el)).slice(0, 40) + " 押す物が画面に無い(" + _gone + ")→カーソルを動かさない");
+            }
+          } catch (_) {}
+          return Promise.resolve(_gone === "detached" ? "gone" : false);
+        }
         _moveTry++;
         var _pr;
-        try { _pr = Promise.resolve(_move()); } catch (_) { _pr = Promise.resolve(false); }
+        try {
+          _pr = (_moveTry > 1 ? _waitPointerIdle() : Promise.resolve()).then(function () { return _move(); });
+        } catch (_) { _pr = Promise.resolve(false); }
         return _pr.then(function (ok) { return _arrivedAt(ok); }, function () { return false; }).then(function (arrived) {
           if (arrived) return true;
           if (_moveTry >= 3) {
@@ -6534,7 +6576,11 @@ function _guideLikeAreaSkip(why) {
           });
         });
       };
-      return _moveUntilArrived().then(function () {
+      return _moveUntilArrived().then(function (_arr) {
+        if (_arr === "gone") {
+          _pressNote("press", "unverified", String(_opLabel(el)).slice(0, 24) + "（押す物が外れた・押さない）");
+          return false;
+        }
         var _dwell = H && H.logNormalDelay ? H.logNormalDelay(280, 0.5) : (180 + Math.floor(Math.random() * 220));
         if (Math.random() < 0.22) _dwell += 200 + Math.floor(Math.random() * 480);
         if (Math.random() < 0.07) _dwell += 500 + Math.floor(Math.random() * 900);
@@ -9563,7 +9609,7 @@ function _guideLikeAreaSkip(why) {
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
     // ★ 2.8.328 押したことの把握（press_ok_／press_ng_／press_sum・効いたかの確かめ）はページ側でも間引かない・すぐ送る
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|press_ok_|press_ng_|press_sum|search_press_ok|search_customer_grasp_|reset_press_|station_go_stuck|press_stuck_after|confirm_effect_|area_open_ok|area_open_fail|area_open_late_skip|go_press_|confirm_press_fail|cond_effect_|cond_pick_|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|move_retry|press_no_arrive|press_no_cursor_ui|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|clear_cancelled|ward_clear_open|place_xor|station_route_from_map|station_grasp_like_guide|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|station_select_ok|station_per_line_ok|move_target_gone|station_line_text_skip|press_ok_|press_ng_|press_sum|search_press_ok|search_customer_grasp_|reset_press_|station_go_stuck|press_stuck_after|confirm_effect_|area_open_ok|area_open_fail|area_open_late_skip|go_press_|confirm_press_fail|cond_effect_|cond_pick_|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|move_retry|press_no_arrive|press_no_cursor_ui|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|clear_cancelled|ward_clear_open|place_xor|station_route_from_map|station_grasp_like_guide|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -13961,7 +14007,18 @@ function _guideLikeAreaSkip(why) {
        *   沿線が前客と被って残っていても、駅はここで必ず選ぶ。
        */
       var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_station'));
-      if (!labels.length) labels = Array.prototype.slice.call(document.querySelectorAll('label'));
+      /**
+       * ★ 2.8.329 #1678 tomiさん: 「御堂筋」が駅として来て、画面の「御堂筋線」（沿線の札・設定中の沿線）に前方一致して押しに行き迷った。
+       *   駅の画面では駅の札（label.one_station）と station_id[] だけを見る。沿線の札・「〜線」の字は駅にしない。
+       */
+      var _stScreen = labels.length > 0 || document.querySelectorAll('input[name="station_id[]"]').length > 0;
+      if (!labels.length) {
+        labels = Array.prototype.slice.call(document.querySelectorAll('label')).filter(function (lb) {
+          if (lb.classList && lb.classList.contains("one_line")) return false;
+          var lt = String(lb.textContent || "").replace(/\s+/g, "");
+          return !(/線$/.test(lt) && !/線$/.test(clean));
+        });
+      }
       /**
        * ★ 2026-11-17 竹内さん「沿線ごとに同名駅（十三）をすべて押す」:
        *   旧: 非表示ラベルを skip → 画面外の十三が残る／同一 value を1つだけ → 沿線違いの同名を落とす。
@@ -14028,9 +14085,20 @@ function _guideLikeAreaSkip(why) {
         return;
       }
 
-      var els = Array.prototype.slice.call(
+      var els = _stScreen ? [] : Array.prototype.slice.call(
         document.querySelectorAll('a,button,td,li,span,div,p')
-      );
+      ).filter(function (el) {
+        return !(/線$/.test(getDirectText(el)) && !/線$/.test(clean));
+      });
+      if (_stScreen && _audit) {
+        try {
+          window.__axStLineSkip = window.__axStLineSkip || {};
+          if (!window.__axStLineSkip[clean]) {
+            window.__axStLineSkip[clean] = 1;
+            _auditStepP("station_line_text_skip", clean + " 駅の札に無い→画面の他の字（沿線名など）は押さない");
+          }
+        } catch (_) {}
+      }
 
       // STEP2〜4はfireClickの前にchecked状態を確認できないままだとポーリング再実行時に
       // トグル解除される危険があるため、紐づくcheckboxが特定でき既にcheckedなら

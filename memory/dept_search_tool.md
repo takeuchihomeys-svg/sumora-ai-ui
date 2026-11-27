@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-28 **拡張 2.8.329（同じ版に追加・まだ上げていない）2人目が次のページへ行かずリセット／3人目の沿線（区間）で駅を選べず迷った**
+竹内さんの言葉（そのまま）: 「2人目のひと物件検索してしゅとくしたあとに次のページ行かずにリセットとなった ここちゃんと手順書で次に行かなかった原因はなになのか…なぜ次へに2人目のお客さんはいかなかったのか ここの原因見つけて改善する」「3人目のお客さんなのだが沿線検索したところでなぜか止まって迷いはじめた ここの部分まようのならなんでマウス途中で途切れてへんなうごきをしないように、まうすもつながったようにする そして沿線までおしたら駅まで選択する部分をちゃんと理解できていない可能性が高い 沿線までせんたくすると駅までちゃんと選択するように手順書にいれるようにする ここ(中津～本町)とでているので中津駅から本町駅までの間の駅をすべてせんたくするようにする ちゃんと把握するようにする」。設計知見 P1: 1af727d6（頁の番号）・5e63195d（沿線の区間）・2f0bf04e（カーソル・96a0bab7 を訂正して退役）。
+- **2人目の原因（本番 #1677 genki-sano）**: 一覧の開始から `list_flow_grasp list_start … next有 … 1ページのみ` を出し、9件送った後 `list_no_next_advance`→リセット。画面は「前頁 1 2 次 最後」。`_readPagerState` は td.pager の数字だけ数え、数字が1つ以下なら1ページのみ。いまの頁の番号が td.pager でない形だと2頁が [2] だけになる（3頁以上は通るので2頁の時だけ落ちる）。さらに `pager(N)` の N と今の頁を比べていた（N が0始まりなら1頁目の次を押せない次と読む）。直近30日で次へを押せた印（`dl:press_next_moved`）は0件。手順書・流れの地図（④の分かれ道）の形は正しかった（change-premise --area=list で確認）。読み違えたのは分かれ道の入口の条件。
+- **bulk-dl.js**: `_readPagerState` は「次」と同じ行（tr）の全部の葉（td・a・b・span 等）から番号を数える。いまの頁＝押す口（onclick・a[href]）の無い番号（無ければ current/active クラス・b/strong）。次がある＝いまの頁 < 最後の番号（今の頁が分からない時は「次」に onclick があれば有）。`_findNextPageEl` の td.pager の「次」も `hasNextUsable` で決める（pager(N) と比べない）。読んだ形を `dl:pager_read`（番号・今・元・葉の形・次の onclick）で1頁1行。**実機で形を確かめる**（DOM の形は DB に無い）。
+- **3人目の原因（本番 #1678 tomi・希望エリア「御堂筋沿線（中津〜本町）」）**: intended が `route_ids:["6701"]`・`station_names:["御堂筋"]`。popup.js の `expandLineRange` が「御堂筋沿線」をそのまま駅の並びの表で引いて外れ、区間が消えた（resolution-core は括弧を先に消していた）。駅の画面で「御堂筋」の駅が無く、`_selectStationsByNameCore` の汎用の字の一致（STEP4 前方一致）が画面の「御堂筋線」の字を押しに行き、`move_retry`・`press_no_arrive` を繰り返して迷った。
+- **popup.js**: `lineRangeKey`（沿線・線無し・短い名前→表のキー）・`lineRangeSpecs`・`restrictRangeRoutes` を足した。`parseAreaTokens` は括弧を消す前に「〇〇沿線（A〜B）」「〇〇線（A〜B）」「〇〇（A〜B）」をその線の A〜B の駅（端も含む）へ。送る直前に区間の駅を足し、沿線は区間の線だけ（区間の外の駅・通勤の線は残す）。欄に展開済みの駅が入っている時は登録の希望エリアから区間を読む。線の名前の切れ端（「御堂筋」）は駅から外す。駅の表にある語は数字に崩さない（谷町四丁目→谷町4丁目にしない）。
+- **resolution-core.js**: 同じ考えの `lineRangeKey`・`expandLineRange`・`lineRangeSpecs`・`restrictRangeRoutes`（SUMORA_RESOLUTION に公開）。`resolveConditionsLocal` で区間の線だけに絞る。「御堂筋沿線（中津〜本町）」→ route_ids [6701]・駅 中津・梅田・淀屋橋・本町・未解決0。
+- **page-script.js**: 駅の画面（label.one_station／station_id[]）では駅の札だけを見る（汎用の字 STEP2〜4 を使わない・`station_line_text_skip`）。札が無い時の label の代わりも沿線の札（one_line）・「〜線」の字を外す。カーソル: 動かし直す前に飛んでいるカーソルが止まるのを待つ（`_waitPointerIdle`・最長2.5秒）。押す物が途中で画面から消えたらカーソルを動かさない（`move_target_gone`）・DOM から外れた物は押さない。隠れた入力欄は今まで通り（hidden_press）。
+- **pointer-ui.js**: `moving()`（飛んでいる途中か）を公開。
+- **流れの地図・手順書**: loop-flow-map.ts の入力の手（fill）の presses に「駅（沿線の次に駅まで選ぶ）」を「駅の設定へ進む」と「確定してリストへ」の間に足した（効いた＝`page:station_select_ok`・押した＝`page:station_per_line_ok`・失敗＝`station_name_absent`／`station_line_stuck`・例「御堂筋線 中津〜本町＝中津・梅田・淀屋橋・本町」）。駅の場面の station_id[] の手に結ぶ（録画に無ければ駅の設定へ進むの後ろに足す）。`PLAYBOOK_BUILD_V` 37→38（サーバーが手順書を作り直す）。
+- **点検の段**: KEEP_STEP に `dl:pager_read`・`page:move_target_gone`・`page:station_line_text_skip`・`page:station_select_ok`・`page:station_per_line_ok`・`page:station_name_absent`・`page:station_line_stuck`。ページ側の _PIN にも4つ。
+- **試験**: 新規 `tests/chrome-extension/next-page-line-range-v28329.test.js`（41件・実際の `_readPagerState` を偽の画面で動かす＝いまの頁が td.pager でない形・0始まりの pager(N)・最後の頁・1頁・a の中の番号／resolution-core と popup の関数を実物の文と表で／駅の画面の飛ばしの順番／地図の並び）。ext-test-all 全360本 青358・赤2（基準の古い赤）。press-grasp-map 177・loop-flow-map 106・auto-procedure-rules 224・playbook-step-grasp 緑。tsc は既存の古いテストのエラーだけ（今回の変更の分は0）。
+- **まだ**: 実機（再読込→2頁ある客で `dl:pager_read` の形と `dl:press_next_moved`・沿線（区間）の客で駅4つ）。「梅田・御堂筋沿線（中津〜本町）」のように区間の駅を別にも書いた時は、その駅の他の線も絞られる（今は区間を優先）。
+
 ## 2026-11-27 **拡張 2.8.329 リセットの「押した」を読み直しを越えて把握・枠の表記と時間をずれなく・重さの計測（削るのは計測の後）**
 竹内さんの言葉（そのまま）: 「リセット押すまでの一連のながれできたのに、次のお客さんにすすまない、おそらくリセットボタンを押したてこと理解できていない。ここどうすれば押したことりかいできるようになるのか 根本的な原因を徹底的に調査する」「ボックスのあなうんすのところ…表記間違えていること多いのでこまかいところまでちゃんとわわせるように、時間も5秒刻みとかでよいのでしっかりと表記するように」「次のお客さん検索押したところで重すぎてかたまっている…重い部分をなおせたらかなり実用的になる」。選択: `all_measure_first`（リセットと枠を直し、同じ更新で重さの計測を入れる・削るのは計測の後）。設計知見 P1「【決定】リセットの「押した」は読み直しを越えて残る印で把握する…」。
 - **原因（本番 #1677 で確認）**: リセットを押すとページが読み直され、押す処理の返事ごと消えた（`no_answer`）。背景の遅れの確かめは1回だけで、読み直し中の失敗を黙って捨て「押せず」→保険の86秒待ち→`reset_stuck_recovered` で遅れて進んでいた（押せてはいた）。

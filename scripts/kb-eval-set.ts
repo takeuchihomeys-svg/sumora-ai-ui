@@ -442,6 +442,13 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "リセットを押したのに次のお客さんに進まず保険の待ちに入る原因", gold: ["e67aa569"], from: "owner-reset-receipt-1127" },
   { q: "枠の待ちの残り秒や押した行がページの読み直しで消える", gold: ["e67aa569"], ho: true, from: "owner-reset-receipt-1127" },
   { q: "検索を押した所でリアプロが重くなる時にまず何をするか", gold: ["e67aa569"], from: "owner-reset-receipt-1127" },
+  // 2026-11-28 2.8.329 2人目が次のページへ行かずリセット（頁の番号の読み違い）・沿線（区間）の駅・迷った時のカーソル
+  { q: "2頁ある一覧なのに1ページのみと読んで次のページへ行かずリセットした", gold: ["1af727d6"], from: "owner-next-page-1128" },
+  { q: "リアプロの一覧の次ページがあるかを何で決めるか（pager の番号）", gold: ["1af727d6"], ho: true, from: "owner-next-page-1128" },
+  { q: "御堂筋沿線（中津〜本町）はどの駅を選ぶか", gold: ["5e63195d"], from: "owner-line-range-1128" },
+  { q: "沿線を選んだ後に駅まで選ぶ・区間指定の駅を全部", gold: ["5e63195d"], ho: true, from: "owner-line-range-1128" },
+  { q: "沿線検索の所で迷ってカーソルが途中で途切れて変な動きをする", gold: ["2f0bf04e"], from: "owner-cursor-1128" },
+  { q: "駅の画面で駅の名前が無い時に画面の沿線名の字を押しに行く", gold: ["2f0bf04e"], ho: true, from: "owner-cursor-1128" },
   { q: "町をピンポイントで選んだ後に本当にチェックが付いたかを確かめるか", gold: ["abc82e4e"], from: "owner-pick-effect-1127" },
   { q: "管理費・共益費込みや構造の選択が効かなかった時に検索を止めるか", gold: ["abc82e4e"], ho: true, from: "owner-pick-effect-1127" },
   { q: "リアプロの録画から作った手順書の手に押したことの把握の文を付けるか", gold: ["66f23127"], from: "owner-step-grasp-1127" },

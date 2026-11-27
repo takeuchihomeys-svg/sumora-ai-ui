@@ -1396,6 +1396,10 @@
     motionStats: motionStats,
     /** 点検用: 今の形（arrow|hand） */
     shape: function () { return _shape; },
+    /** ★ 2.8.329: いまカーソルが飛んでいる途中か（動かし直す前に待つ＝途中で打ち切らずつながった動きにする） */
+    moving: function () {
+      try { return !!(_anim && !_anim.cancelled && !_anim.done) || _busyByOther(); } catch (_) { return false; }
+    },
     ELEMENT_ID: ID,
     /** 点検用: 1つのカーソル（2つの世界で位置を共有・OS カーソルと同時に出さない・形はページの CSS） */
     oneCursorInfo: function () {

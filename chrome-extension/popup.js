@@ -771,10 +771,14 @@ function parseAreaTokens(rawArea) {
     }
   );
   // 「路線名（駅A〜駅B）」→ 区間内の駅リストに展開（例: おおさか東線（野江〜放出）→ JR野江,鴫野,放出）
-  rawArea = rawArea.replace(/([ぁ-鿿\w]+線)[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g, function(match, lineName, fromStr, toStr) {
-    const rangeStations = expandLineRange(lineName, fromStr.trim(), toStr.trim());
+  // ★ 2.8.329: 「御堂筋沿線（中津〜本町）」「御堂筋（中津〜本町）」も同じ（括弧を消す前に区間の駅へ）
+  rawArea = rawArea.replace(_LINE_RANGE_RE, function(match, baseName, suffix, fromStr, toStr) {
+    const lineName = baseName + (suffix || "");
+    const key = lineRangeKey(lineName);
+    const rangeStations = key ? expandLineRange(key, fromStr.trim(), toStr.trim()) : null;
     if (rangeStations && rangeStations.length > 0) return rangeStations.join(",");
-    return lineName; // 解決できない場合は路線名のみ（全線動作）
+    if (suffix) return key || lineName.replace(/沿線$/, "線"); // 解決できない場合は路線名のみ（全線動作）
+    return match;
   });
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
@@ -822,7 +826,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
                 .replace(/[かや]$/, "")  // 「〜駅か」→駅除去後に残る末尾助詞を除去
                 .trim())
-    .map(normalizeNumerals)
+    .map(t => (STATION_LINE_MAP[t] ? t : normalizeNumerals(t)))
     .filter(t => t.length >= 1);
   // 連結駅名を自動分解（例: "寝屋川萱島大和田古川橋門真"）
   const result = [];
@@ -924,8 +928,73 @@ function findStationLines(areaText) {
 
 // 「路線名（駅A〜駅B）」の区間内駅リストを LINE_STATION_ORDER から取得
 // 駅名のJR・阪急等のプレフィックスを正規化して曖昧一致（野江→JR野江）
+/**
+ * ★ 2.8.329 tomiさん「御堂筋沿線（中津〜本町）」: 「沿線」付き・「線」無し・短い名前でも駅の並びの表のキーへ直す。
+ *   旧は「御堂筋沿線」をそのまま表で引いて外れ、区間が消えて「御堂筋」が駅として送られた（#1678）。
+ */
+function lineRangeKey(lineName) {
+  const name = String(lineName || "").trim();
+  if (!name) return null;
+  const learned = (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER) || {};
+  const has = k => !!(k && ((LINE_STATION_ORDER[k] && LINE_STATION_ORDER[k].length) || (learned[k] && learned[k].length)));
+  const base = name.replace(/沿線$/, "").replace(/線$/, "");
+  const cands = [name, base + "線", name.replace(/沿線$/, "線")];
+  for (const c of cands) {
+    if (has(c)) return c;
+    const internal = typeof lineNameToInternalName === "function" ? lineNameToInternalName(c) : null;
+    if (has(internal)) return internal;
+  }
+  if (base.length >= 2) {
+    const hit = Object.keys(LINE_STATION_ORDER).find(k => k.endsWith(base + "線"));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+const _LINE_RANGE_RE = /([^\s,、・\/（(]+?)(沿線|線)?[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g;
+
+/** 希望エリアの「〇〇沿線（A〜B）」「〇〇線（A〜B）」「〇〇（A〜B）」を [{key, route_id, stations}] に（線が分かる物だけ） */
+function lineRangeSpecs(rawArea) {
+  const out = [];
+  const s = String(rawArea || "");
+  let m;
+  _LINE_RANGE_RE.lastIndex = 0;
+  while ((m = _LINE_RANGE_RE.exec(s)) !== null) {
+    const key = lineRangeKey(m[1] + (m[2] || ""));
+    if (!key) continue;
+    const st = expandLineRange(key, m[3].trim(), m[4].trim());
+    if (!st || !st.length) continue;
+    out.push({ key, route_id: lineNameToRouteId(key), stations: st });
+  }
+  return out;
+}
+
+/**
+ * 区間の駅は区間の線だけで選ぶ（梅田・本町の他の線まで広げない）。
+ *   区間に入らない駅の線・keep（通勤の線など）は残す。
+ */
+function restrictRangeRoutes(routeIds, stationNames, specs, routesOfStation, keep) {
+  if (!specs || !specs.length) return (routeIds || []).slice();
+  const inRange = new Set();
+  const specRoutes = [];
+  specs.forEach(sp => {
+    sp.stations.forEach(x => inRange.add(x));
+    if (sp.route_id && !specRoutes.includes(sp.route_id)) specRoutes.push(sp.route_id);
+  });
+  const justified = new Set(specRoutes);
+  (keep || []).forEach(r => justified.add(r));
+  (stationNames || []).forEach(st => {
+    if (inRange.has(st)) return;
+    (routesOfStation(st) || []).forEach(r => justified.add(r));
+  });
+  const out = specRoutes.slice();
+  (routeIds || []).forEach(r => { if (justified.has(r) && !out.includes(r)) out.push(r); });
+  return out;
+}
+
 function expandLineRange(lineName, fromStation, toStation) {
-  const order = LINE_STATION_ORDER[lineName] || (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER[lineName]) || [];
+  const _key = lineRangeKey(lineName) || lineName;
+  const order = LINE_STATION_ORDER[_key] || (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER[_key]) || [];
   if (!order.length) return null;
   const stripPfx = s => s.replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪|地下鉄)\s*/, '').trim();
   const fromNorm = stripPfx(fromStation), toNorm = stripPfx(toStation);
@@ -6000,6 +6069,36 @@ function openInstructions(siteKey) {
         });
         console.log("[AX] 駅名から沿線を補完:", route_ids.length + "本", route_ids.slice(0, 12));
       }
+      // ★ 2.8.329 #1678: 線の名前の切れ端（「御堂筋」）を駅として送らない（駅の画面で「御堂筋線」の字を押しに行って迷った）
+      try {
+        const _lineFrag = realpro_station_names.filter(s => !STATION_LINE_MAP[s] && !(LEARNED_STATION_MAP[s]?.realpro_lines?.length) && lineRangeKey(s));
+        if (_lineFrag.length) {
+          const _lf = new Set(_lineFrag);
+          realpro_station_names.splice(0, realpro_station_names.length, ...realpro_station_names.filter(s => !_lf.has(s)));
+          primary_stations.splice(0, primary_stations.length, ...primary_stations.filter(s => !_lf.has(s)));
+          console.log("[AX] 線の名前の切れ端を駅から外した:", _lineFrag);
+        }
+      } catch (_) {}
+      // ★ 2.8.329 「御堂筋沿線（中津〜本町）」: 沿線は区間の線だけ・駅は区間の全部（端も含む）
+      try {
+        let _rangeSpecs = lineRangeSpecs(adjAreaClean);
+        if (!_rangeSpecs.length) {
+          // 欄には区間を展開した駅（中津・梅田…）が入っている事がある → 登録の希望エリアから区間を読む（駅が揃っている時だけ）
+          _rangeSpecs = lineRangeSpecs(c.desired_area || c.area || "")
+            .filter(sp => sp.stations.every(s => realpro_station_names.includes(s)));
+        }
+        if (_rangeSpecs.length && (_lockedMode || currentAreaMode) === "station") {
+          _rangeSpecs.forEach(sp => sp.stations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); }));
+          const _routesOf = (st) => (getHubLines(st) || []).map(l => lineNameToRouteId(l)).filter(Boolean);
+          const _keepR = _reach && _reach.plan ? (_reach.plan.lines || []).map(l => lineNameToRouteId(l)).filter(Boolean) : [];
+          const _rr = restrictRangeRoutes(route_ids, realpro_station_names, _rangeSpecs, _routesOf, _keepR);
+          route_ids.splice(0, route_ids.length, ..._rr);
+          const _pr2 = restrictRangeRoutes(primary_route_ids, realpro_station_names, _rangeSpecs, _routesOf, _keepR)
+            .filter(r => route_ids.includes(r));
+          primary_route_ids.splice(0, primary_route_ids.length, ..._pr2);
+          console.log("[AX] 沿線の区間: " + _rangeSpecs.map(sp => sp.key + "（" + sp.stations.join("・") + "）").join(" / ") + " → 路線 " + route_ids.join(","));
+        }
+      } catch (_e) { console.warn("[AX] 沿線の区間の処理で失敗:", _e); }
       console.log('[AX] autofill送信:', {
         area_mode:       _lockedMode || currentAreaMode,
         primary_stations: primary_stations.slice(),

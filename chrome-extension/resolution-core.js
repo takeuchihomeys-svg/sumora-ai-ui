@@ -1613,8 +1613,84 @@ function decomposeToken(token) {
 }
 
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
+/**
+ * ★ 2.8.329 tomiさん「御堂筋沿線（中津〜本町）」: 括弧を消す前に、線＋区間をその線の A〜B の駅（端も含む）へ。
+ *   旧は括弧を先に消して区間が消え、「御堂筋」が未解決になった（popup.js lineRangeKey と同じ考え）。
+ */
+const _LINE_RANGE_RE_CORE = /([^\s,、・\/（(]+?)(沿線|線)?[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g;
+function _lineOrderOf(key) {
+  return (key && (LINE_STATION_ORDER[key] || (_LEARNED.lineOrder && _LEARNED.lineOrder[key]))) || [];
+}
+function lineRangeKey(lineName) {
+  const name = String(lineName || "").trim();
+  if (!name) return null;
+  const base = name.replace(/沿線$/, "").replace(/線$/, "");
+  const cands = [name, base + "線", name.replace(/沿線$/, "線")];
+  for (const c of cands) {
+    if (_lineOrderOf(c).length) return c;
+    const canon = lineNameToCanonical(c);
+    if (_lineOrderOf(canon).length) return canon;
+  }
+  if (base.length >= 2) {
+    const hit = Object.keys(LINE_STATION_ORDER).find(k => k.endsWith(base + "線"));
+    if (hit) return hit;
+  }
+  return null;
+}
+function expandLineRange(lineName, fromStation, toStation) {
+  const key = lineRangeKey(lineName) || lineName;
+  const order = _lineOrderOf(key);
+  if (!order.length) return null;
+  const stripPfx = s => String(s || "").replace(/駅$/, "").replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪|地下鉄)\s*/, "").trim();
+  const fromNorm = stripPfx(fromStation), toNorm = stripPfx(toStation);
+  const fromIdx = order.findIndex(s => stripPfx(s) === fromNorm);
+  const toIdx = order.findIndex(s => stripPfx(s) === toNorm);
+  if (fromIdx < 0 || toIdx < 0) return null;
+  const lo = Math.min(fromIdx, toIdx), hi = Math.max(fromIdx, toIdx);
+  return order.slice(lo, hi + 1);
+}
+function lineRangeSpecs(rawArea) {
+  const out = [];
+  const s = String(rawArea || "");
+  let m;
+  _LINE_RANGE_RE_CORE.lastIndex = 0;
+  while ((m = _LINE_RANGE_RE_CORE.exec(s)) !== null) {
+    const key = lineRangeKey(m[1] + (m[2] || ""));
+    if (!key) continue;
+    const st = expandLineRange(key, m[3].trim(), m[4].trim());
+    if (!st || !st.length) continue;
+    out.push({ key, route_id: lineNameToRouteId(key), stations: st });
+  }
+  return out;
+}
+function restrictRangeRoutes(routeIds, stationNames, specs, routesOfStation, keep) {
+  if (!specs || !specs.length) return (routeIds || []).slice();
+  const inRange = new Set();
+  const specRoutes = [];
+  specs.forEach(sp => {
+    sp.stations.forEach(x => inRange.add(x));
+    if (sp.route_id && !specRoutes.includes(sp.route_id)) specRoutes.push(sp.route_id);
+  });
+  const justified = new Set(specRoutes);
+  (keep || []).forEach(r => justified.add(r));
+  (stationNames || []).forEach(st => {
+    if (inRange.has(st)) return;
+    (routesOfStation(st) || []).forEach(r => justified.add(r));
+  });
+  const out = specRoutes.slice();
+  (routeIds || []).forEach(r => { if (justified.has(r) && !out.includes(r)) out.push(r); });
+  return out;
+}
+
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
+  rawArea = String(rawArea).replace(_LINE_RANGE_RE_CORE, function (match, baseName, suffix, fromStr, toStr) {
+    const key = lineRangeKey(baseName + (suffix || ""));
+    const st = key ? expandLineRange(key, fromStr.trim(), toStr.trim()) : null;
+    if (st && st.length) return st.join(",");
+    if (suffix) return key || (baseName + "線");
+    return match;
+  });
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
   // 「大阪市内の御堂筋線」→「大阪市内,御堂筋線」に分割（市内/府内 + 線名の複合表現）
@@ -1636,7 +1712,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
                 .replace(/[かや]$/, "")  // 「〜駅か」→駅除去後に残る末尾助詞を除去
                 .trim())
-    .map(normalizeNumerals)
+    .map(t => (STATION_LINE_MAP[t] ? t : normalizeNumerals(t)))
     .filter(t => t.length >= 1);
   // 連結駅名を自動分解（例: "寝屋川萱島大和田古川橋門真"）
   const result = [];
@@ -2043,6 +2119,17 @@ function resolveConditionsLocal(baseConditions, opts) {
     }
   }
 
+  // ⑤-2 ★ 2.8.329 「〇〇沿線（A〜B）」: 沿線は区間の線だけ（梅田・本町の他の線まで広げない）
+  const rangeSpecs = lineRangeSpecs(desired_area);
+  if (rangeSpecs.length) {
+    const routesOf = (st) => _stationLines(st).map(l => lineNameToRouteId(l)).filter(Boolean);
+    const kept = restrictRangeRoutes(route_ids, col.station_names, rangeSpecs, routesOf, []);
+    route_ids.splice(0, route_ids.length, ...kept);
+    const keptLines = col.realpro_lines.filter(l => kept.includes(lineNameToRouteId(l)));
+    rangeSpecs.forEach(sp => { if (!keptLines.includes(sp.key)) keptLines.unshift(sp.key); });
+    col.realpro_lines.splice(0, col.realpro_lines.length, ...keptLines);
+  }
+
   // ⑥ itandi / REINS 路線名（収集済みリアプロ正規路線名から変換）
   const itandi_line_names = [];
   const reins_line_names = [];
@@ -2100,6 +2187,7 @@ globalThis.SUMORA_RESOLUTION = {
   normalizeNumerals, parseAreaTokens, decomposeToken,
   resolveWard, resolveWardLoose, resolveStation, findStationWard,
   lineNameToRouteId, lineNameToCanonical, getAdjacentStations, expandStationRange,
+  lineRangeKey, expandLineRange, lineRangeSpecs, restrictRangeRoutes,
   buildAreaRouteCodes, computeUnknownTokens,
   // 公開API
   resolveWardLocal, resolveStationLocal, resolveAreaLocal, resolveConditionsLocal,
