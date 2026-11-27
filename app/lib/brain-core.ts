@@ -5283,6 +5283,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
         const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
+        // 2026-11-28 作業員A: S3 の信号が動いた番の印（on/off どちらでも・記録だけ・食い違いの印 demote_date_wish_s3 とは別）
+        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && /^signal:scene_S3(?:_|$)/.test(sceneSig.decisionSource)) materialMarks.date_wish_s3_fired = 1;
         if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S3(?:_|$)/.test(sceneSig.decisionSource) && overrideDemoted("signal_date_wish_s3") ? (sceneSig.action !== finalAix ? (materialMarks.demote_date_wish_s3 = 1, "signal_date_wish_s3") : "signal_date_wish_s3") : /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
           sceneSignalCheckPattern = sceneSig.checkPattern;
@@ -5558,6 +5560,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         } else if (dateReply && decisionSource !== "guard:viewing" && (vf.stage === "wished" || vf.stage === "proposing" || vf.stage === "confirmed") && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
           const vfSrc = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
           // 2026-11-27 作業員A（案2・BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3=on の時だけ 内覧の日の希望を材料に下げる・off は今と同じ signal_decided）
+          if (vfSrc === "signal:viewing_flow_date_wish") materialMarks.date_wish_s3_fired = 1; // 2026-11-28 作業員A: 内覧の日の希望の信号が動いた番（記録だけ）
           const vfFam = vfSrc === "signal:viewing_flow_date_wish" && overrideDemoted("signal_date_wish_s3") ? "signal_date_wish_s3" : "signal_decided";
           if (vfFam === "signal_date_wish_s3") materialMarks.demote_date_wish_s3 = 1; // この枝の finalAix は内覧調整でない（上の条件で絞られている）＝下げた番は必ずブレインと食い違う
           if (applyOverride(demotedOverrides, vfFam, vfSrc, "viewing_invite", finalAix)) {
@@ -6275,6 +6278,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   管理会社に確かめれば分かる問い（空き状況・見積・設備）は約束を挟まず AIX【物件確認した／見積書送る】を直接
       let answerableDirectFrom: string | null = null;
       if (twoStageRes.direct) {
+        // 2026-11-28 作業員A（統括役 11/28・dictReachGate で a-demote-ad が印0）: 決め打ちが動いた番の印（on/off どちらでも・記録だけ）。demote_answerable_direct はブレインと食い違った番だけ＝届いたかはこちらで見る
+        materialMarks.answerable_direct_fired = 1;
         answerableDirectFrom = twoStageRes.coreSource;
         // 2026-11-27 作業員A（竹内さんの決め 11/27「ブレインに任せる」・BRAIN_DEMOTE_ANSWERABLE_DIRECT=on の時だけ・既定 off）: 決め打ちをやめ、ブレインの答えのまま（記録＋印 demote_answerable_direct）
         const adSrc = `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise(|)$/g, "")})`;
