@@ -141,6 +141,11 @@ console.log("\n■ ④ 点検に残る・枠に出る・地図と手順書");
   ok("地図の印の目印がコードにある（_townPickedState・_feeEffect・_structureEffect）", ["_townPickedState(", "_feeEffect(", "_structureEffect("].every((t) => ps.indexOf(t) > 0));
   ok("手順書: 所在地②に町の把握の文（地図から）", /`②欲しい区（必要なら町）を選ぶ。\$\{pressLineOf\("fill", "町（ピンポイント）"\)\}`/.test(pb));
   ok("手順書: 条件①に管理費・構造の把握の文（地図から）", /pressLineOf\("fill", "管理費・共益費込み"\) \+ "。" \+ pressLineOf\("fill", "構造"\)/.test(pb));
+  // build_v 36: 確かめの仕組みはリアプロの page-script だけ → ITANDI の条件のガイドには載せない（サイトを混ぜない）
+  ok("手順書: 管理費・構造の把握はリアプロのガイドだけ（ITANDI の素のガイドに無い）",
+    /PLAYBOOK_COND_GUIDE_STEPS_REALPRO[^=]*=\s*\[\s*COND_GUIDE_FIRST \+ pressLineOf\("fill", "管理費/.test(pb)
+    && /realproHands \? PLAYBOOK_COND_GUIDE_STEPS_REALPRO : PLAYBOOK_COND_GUIDE_STEPS/.test(pb)
+    && !/PLAYBOOK_COND_GUIDE_STEPS: ReadonlyArray<string> = \[[^\]]*pressLineOf/.test(pb));
 }
 
 console.log("\n結果: " + pass + " 通過 / " + fail + " 失敗");

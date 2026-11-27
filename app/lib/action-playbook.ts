@@ -46,11 +46,12 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
+// 36（2026-11-27 竹内さん「これで手順書にぬけはないのか」）: 条件の薄いガイドの管理費・構造の把握の文がサイトを見ずに載り、ITANDI（確かめの仕組みが無い）に入っていた → リアプロだけに載せる（PLAYBOOK_COND_GUIDE_STEPS_REALPRO）。
 // 35（2026-11-27 竹内さん「町の選択や管理費・構造の選択は、効いたかを確かめていない」「ならべ化…時間差で並べ替えしたということの認識にすればよい」）: 町・管理費・構造の「選んだ→印が付いたか読む→1回選び直す」と、高→低の時間差の認識を地図から載せる（拡張 2.8.328）。
 // 34（2026-11-27 竹内さん「ちゃんと押したら押したってこと理解できるように それぞれの手順書のところでもボタンをおしたってことの把握」）: 押す手ごとに「押した／効いた／効かない時」の文を流れの地図（presses）から作って載せる（リセット・所在地を開く・確定・検索・高→低・印刷用PDF・次へ）。決まり press_grasp_each に全部（拡張 2.8.328）。
 // 33（2026-11-27 竹内さん「完了の20秒以降にリセットする」「作業ごとに完了してから20秒あける」「従来の1つずつ外しを完全に消す」）: 送付完了→20秒→リセット→空を確かめたら20秒→次客の読み直し→20秒→入れる。従来の1つずつ外しの文は無くした（拡張 2.8.328）。
 // 32（2026-11-27 竹内さん「押して空になったことを確実に確かめる。1で完了／2は保険（通知が来ない時だけ・60〜90秒後・確かめ→押し直し1回）／空とみなして次へは無くす」）
-export const PLAYBOOK_BUILD_V = 35;
+export const PLAYBOOK_BUILD_V = 36;
 // 31（2026-11-27 竹内さん「まとめてなおす・ちゃんと手順書も反映」）: 押した結果（検索・高→低・リセット・確かめられなかった押し）を枠に出す。手順書の検索・並べ替え・リセットの手に載せた（拡張 2.8.326）。
 // 30（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）: ③の末尾と④の文に、地図の「押した時点で並べ替えは完了／読み直した一覧は④物件取得／パネルは物件取得最中」をそのまま載せる。決まり1行だけでは手順書の手は強くならない。checkListPlaybookStrength が、手からその文が消えたら止める。
 // 29（2026-11-27 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得するように・完了を把握できていない」）: 高→低を押したあとの読み直しで、並べ替え完了とみて④物件取得へ進む（sort_pressed_then_list・拡張 2.8.322）。手順書の④自体は地図から既に出ている。
@@ -200,10 +201,16 @@ export const PLAYBOOK_AREA_CONFIRM_STEPS: ReadonlyArray<string> = [
 ];
 
 /** 条件場面が録画に無い時の薄いガイド（連続客で所在地外しだけで止まらない） */
+const COND_GUIDE_FIRST = "①【毎回・全員】入れる条件は、その客の最新を拡張ツールがAPIから読み直した値（古い手元のコピーでは入れない・customer_api_reload・next_customer_api_reload）。その条件の賃料・間取り・徒歩などを空のフォームへ1つずつ入れる（最初の客も2人目以降も同じ）。";
 export const PLAYBOOK_COND_GUIDE_STEPS: ReadonlyArray<string> = [
-  "①【毎回・全員】入れる条件は、その客の最新を拡張ツールがAPIから読み直した値（古い手元のコピーでは入れない・customer_api_reload・next_customer_api_reload）。その条件の賃料・間取り・徒歩などを空のフォームへ1つずつ入れる（最初の客も2人目以降も同じ）。" + pressLineOf("fill", "管理費・共益費込み") + "。" + pressLineOf("fill", "構造"),
+  COND_GUIDE_FIRST,
   "②検索前に手順書×画面で入忘れ・外し忘れを確かめる",
   "③揃ったら検索ボタンへ進む（外しだけで終わらない）",
+];
+/** リアプロの条件のガイド。管理費・構造の効いたの確かめは page-script.js（_condEffectCheck）だけにある＝ITANDI には載せない */
+export const PLAYBOOK_COND_GUIDE_STEPS_REALPRO: ReadonlyArray<string> = [
+  COND_GUIDE_FIRST + pressLineOf("fill", "管理費・共益費込み") + "。" + pressLineOf("fill", "構造"),
+  ...PLAYBOOK_COND_GUIDE_STEPS.slice(1),
 ];
 
 /** 録画場面が無い決まり専用の手（clear / switch / pet）。scenes には載せず extra_guides へ */
@@ -956,7 +963,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   }
   injectGuideSceneEarly(
     "cond",
-    PLAYBOOK_COND_GUIDE_STEPS,
+    realproHands ? PLAYBOOK_COND_GUIDE_STEPS_REALPRO : PLAYBOOK_COND_GUIDE_STEPS,
     ["guide_clear_fill_gate", "continuous_customer_loop", "next_customer_api_reload"],
     "条件場面: 録画が無いため①条件入れ→②照合→③検索へ を薄いガイド場面として手順書に足した（外しだけで終わらない）",
   );

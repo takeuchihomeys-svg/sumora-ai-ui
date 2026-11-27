@@ -32,6 +32,19 @@ function sceneSteps(pb: ReturnType<typeof buildPlaybook>, scene: string): string
   console.log("  ✓ itandi: 一覧・検索にリアプロの手が無い");
 }
 
+// 1-b. 押したことの把握（町・管理費・構造の効いたの確かめ）はリアプロの page-script だけ → itandi の手順書に載せない（build_v 36）
+{
+  const RP_PICK = /cond_effect|cond_pick|町（ピンポイント）|押したことの把握（管理費|押したことの把握（構造/;
+  const it = buildPlaybook(EMPTY, "itandi");
+  const itText = JSON.stringify({ scenes: it.scenes, extra: (it as { extra_guides?: unknown }).extra_guides ?? null });
+  assert(!RP_PICK.test(itText), "itandi の手順書にリアプロの町・管理費・構造の把握が無い: " + (itText.match(RP_PICK) || [""])[0]);
+  assert(sceneSteps(it, "cond").length === 3 && sceneSteps(it, "cond")[2].startsWith("③揃ったら検索ボタンへ"), "itandi の条件のガイドは①②③のまま");
+  const rp = buildPlaybook(EMPTY, "realpro");
+  const rpCond = sceneSteps(rp, "cond").join(" / ");
+  assert(/押したことの把握（管理費・共益費込み）/.test(rpCond) && /押したことの把握（構造）/.test(rpCond), "realpro の条件のガイドには管理費・構造の把握が載る: " + rpCond.slice(0, 200));
+  console.log("  ✓ 町・管理費・構造の把握はリアプロだけ（itandi に混ざらない）");
+}
+
 // 2. realpro（明示）と既定（未指定）は従来どおり載る
 {
   for (const pb of [buildPlaybook(EMPTY, "realpro"), buildPlaybook(EMPTY)]) {
