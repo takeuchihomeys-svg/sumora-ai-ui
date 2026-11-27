@@ -630,6 +630,75 @@
       }, 60000);
     } catch (_) {}
   })();
+  /**
+   * ★ 2.8.329 竹内さん「次のお客さん検索押したところで重すぎてかたまっている…重い部分をなおせたらかなり実用的になる」
+   *   → 選択「計測してから削る」。#1677 は検索を押して56秒たっても古い一覧のままだったが、その1分の止まりは計3.8秒だけで、
+   *   リアプロの返事待ちか拡張の処理かが分からなかった。動きは変えずに次を点検に残す:
+   *   ① dl:perf_nav … この頁の読み込みの内訳（サーバーの返事待ち・受け取り・組み立て・load）
+   *   ② dl:perf_loaf … 画面が止まった長い描画（long-animation-frame）を、原因のスクリプトのファイルごとに足し上げた上位（最初の60秒）
+   *   ③ dl:perf_loaf_prev … 前の頁（検索を押した頁）を離れるまでの同じ集計（pagehide で sessionStorage に置き、次の頁が出す）
+   */
+  (function _axlxLoafProbe() {
+    try {
+      if (window.__axlxLoafOn || typeof PerformanceObserver !== "function") return;
+      window.__axlxLoafOn = true;
+      var agg = {};
+      var frames = 0, blockSum = 0, layoutSum = 0;
+      var t0 = Date.now();
+      var fileOf = function (u) {
+        var s = String(u || "");
+        if (!s) return "不明";
+        if (/^chrome-extension:/.test(s)) return "拡張:" + s.split("/").pop().split("?")[0].slice(0, 28);
+        try { var x = new URL(s); return "頁:" + (x.pathname.split("/").pop() || x.host).slice(0, 24); } catch (_) { return s.slice(0, 24); }
+      };
+      try {
+        new PerformanceObserver(function (list) {
+          list.getEntries().forEach(function (e) {
+            frames++;
+            blockSum += Number(e.blockingDuration || 0);
+            var sc = e.scripts || [];
+            if (!sc.length) { agg["描画・配置"] = (agg["描画・配置"] || 0) + Number(e.duration || 0); return; }
+            sc.forEach(function (s) {
+              var k = fileOf(s.sourceURL);
+              agg[k] = (agg[k] || 0) + Number(s.duration || 0);
+              layoutSum += Number(s.forcedStyleAndLayoutDuration || 0);
+            });
+          });
+        }).observe({ type: "long-animation-frame", buffered: true });
+      } catch (_) { return; }
+      var summary = function () {
+        var top = Object.keys(agg).map(function (k) { return [k, agg[k]]; })
+          .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 4)
+          .map(function (p) { return p[0] + "=" + Math.round(p[1]); }).join(" ");
+        return "止" + frames + "回 塞" + Math.round(blockSum) + "ms 配置" + Math.round(layoutSum) + "ms " + top;
+      };
+      var pageKind = function () {
+        return (String(location.pathname || "").split("/").pop() + String(location.search || "")).slice(0, 18) || "頁";
+      };
+      try {
+        var prev = JSON.parse(sessionStorage.getItem("axlx_perf_prev") || "null");
+        sessionStorage.removeItem("axlx_perf_prev");
+        if (prev && Date.now() - Number(prev.at || 0) < 5 * 60000) {
+          setTimeout(function () { try { _liveDlStep("perf_loaf_prev", (String(prev.kind || "") + " " + Math.round(Number(prev.ms || 0) / 1000) + "秒 " + String(prev.sum || "")).slice(0, 80)); } catch (_) {} }, 3000);
+        }
+      } catch (_) {}
+      window.addEventListener("pagehide", function () {
+        try { sessionStorage.setItem("axlx_perf_prev", JSON.stringify({ at: Date.now(), kind: pageKind(), ms: Date.now() - t0, sum: summary() })); } catch (_) {}
+      });
+      var navOnce = function () {
+        try {
+          var n = performance.getEntriesByType("navigation")[0];
+          if (!n) return;
+          var r = function (v) { return Math.max(0, Math.round(Number(v) || 0)); };
+          _liveDlStep("perf_nav", (pageKind() + " 返事待ち" + r(n.responseStart - n.requestStart) + "ms 受取" + r(n.responseEnd - n.responseStart)
+            + "ms 組立" + r(n.domContentLoadedEventEnd - n.responseEnd) + "ms load" + r(n.loadEventEnd) + "ms 全" + r(n.duration) + "ms").slice(0, 80));
+        } catch (_) {}
+      };
+      if (document.readyState === "complete") setTimeout(navOnce, 1500);
+      else window.addEventListener("load", function () { setTimeout(navOnce, 1500); });
+      setTimeout(function () { try { _liveDlStep("perf_loaf", (pageKind() + " 60秒 " + summary()).slice(0, 80)); } catch (_) {} }, 60000);
+    } catch (_) {}
+  })();
   function _liveDlStep(k, d, cid) {
     try { _perfC.live++; } catch (_) {}
     try { _tmark(k, d, cid); } catch (_) {}
@@ -3346,14 +3415,58 @@
     }
   }
 
+  /**
+   * ★ 2.8.329 竹内さん「時間も5秒刻みとかでよいのでしっかりと表記する」:
+   *   「いま」の手がどれだけ続いているかを5秒刻みで添える（同じ手の間は数え続ける・リセットの読み直しを越えて
+   *   数えるので、始まりの時刻はこのタブの sessionStorage に置く）。言葉が変わったら0から数え直す。
+   *   枠の言葉が変わった時は点検に1行（dl:panel_text）残す（あとで実際の手と枠の言葉がずれていないか確かめるため）。
+   */
+  var _nowTextRaw = "";
+  var _nowNextRaw = "";
+  var _nowSince = 0;
+  var _nowTick = null;
+  var _panelTextSig = "";
+  function _fmtElapsed5(ms) {
+    var s = Math.floor(Math.max(0, Number(ms) || 0) / 5000) * 5;
+    if (s < 5) return "";
+    return s < 60 ? s + "秒" : Math.floor(s / 60) + "分" + (s % 60 ? (s % 60) + "秒" : "");
+  }
+  function _paintNow() {
+    var nowEl = document.getElementById("axlx-count");
+    if (!nowEl) return;
+    var el = _nowTextRaw && _nowSince ? _fmtElapsed5(Date.now() - _nowSince) : "";
+    nowEl.textContent = _nowTextRaw + (el ? "・経過 " + el : "");
+  }
+  function _nowKeyOf(t) {
+    // 何人目か（2/3）は同じ手の間も変わらないが、念のため数字の並びは外さずそのまま比べる
+    return String(t || "");
+  }
   /** ★ 2.8.213: いま／つぎを同時に書く（旧 axlx-count 互換） */
   function _setStatusNowNext(nowText, nextText) {
     var nowEl = document.getElementById("axlx-count");
     var nextEl = document.getElementById("axlx-next");
-    if (nowEl) nowEl.textContent = nowText == null ? "" : String(nowText);
+    var raw = nowText == null ? "" : String(nowText);
+    if (_nowKeyOf(raw) !== _nowKeyOf(_nowTextRaw)) {
+      _nowSince = Date.now();
+      try {
+        var _sv = JSON.parse(sessionStorage.getItem("axlx_now_since") || "null");
+        if (_sv && _sv.key === _nowKeyOf(raw) && Date.now() - Number(_sv.at || 0) < 15 * 60000) _nowSince = Number(_sv.at);
+        else sessionStorage.setItem("axlx_now_since", JSON.stringify({ key: _nowKeyOf(raw), at: _nowSince }));
+      } catch (_) {}
+    }
+    _nowTextRaw = raw;
+    if (nowEl) _paintNow();
+    if (!_nowTick) _nowTick = setInterval(function () { if (!document.hidden) _paintNow(); }, 5000);
+    var n = "";
     if (nextEl) {
-      var n = nextText == null || nextText === "" ? _statusNextHint(nowText) : String(nextText);
+      n = nextText == null || nextText === "" ? _statusNextHint(nowText) : String(nextText);
       nextEl.textContent = n;
+    }
+    _nowNextRaw = n;
+    var sig = raw + "｜" + n;
+    if (sig !== _panelTextSig && raw) {
+      _panelTextSig = sig;
+      try { _liveDlStep("panel_text", ("いま=" + raw + " つぎ=" + n).slice(0, 80)); } catch (_) {}
     }
   }
 
@@ -3551,7 +3664,9 @@
     }
     if (el) {
       el.style.display = "block";
-      el.textContent = "⏳ " + _waitLabelNow + "（あと " + left + " 秒）";
+      // ★ 2.8.329 5秒刻み（切り上げ）。最後の5秒だけ「あと5秒以内」
+      var left5 = Math.ceil(left / 5) * 5;
+      el.textContent = "⏳ " + _waitLabelNow + "（" + (left5 <= 5 ? "あと5秒以内" : "あと約" + _fmtElapsed5(left5 * 1000)) + "）";
     }
   }
   function _setBulkWait(label, ms) {
@@ -3570,10 +3685,11 @@
    *   押した結果（押せた／押せず／遅れて押せた・空の確認）を、枠の「把握」の下に「✓ 押した…」で出す。
    *   「予定」（次の動き）ではなく「実際に押した結果」だけを書く。background（_bulkPressShow）が送る。
    */
-  function _setPressNote(what, result, detail) {
+  function _setPressNote(what, result, detail, atMs) {
     var el = document.getElementById("axlx-press");
     if (!el) return;
-    var now = new Date();
+    // ★ 2.8.329 読み直しの後に戻す時は、押した時の時刻で書く（戻した時刻にしない）
+    var now = atMs ? new Date(Number(atMs)) : new Date();
     var hm = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function (n) { return (n < 10 ? "0" : "") + n; }).join(":");
     var d = String(detail || "").slice(0, 30);
     var t = "";
@@ -3620,6 +3736,32 @@
     el.style.color = col;
     el.style.display = "block";
   }
+  /**
+   * ★ 2.8.329 リセットの位置（background の axlx-bulk-reset-pos）。入れる前のリセットなら「つぎ」はいまの客の条件、
+   *   送付のあとなら次の客の条件（bulk-panel-grasp の {after}）。読み直しを越えるので axlx_box_live からも戻す。
+   */
+  var _resetPos = null;
+  function _setResetPos(kind, at) {
+    _resetPos = kind ? { kind: String(kind), at: Number(at) || Date.now() } : null;
+    try { if (_bulkGraspState) _applyBulkGrasp(_bulkGraspState); } catch (_) {}
+  }
+  /** ★ 2.8.329 読み直しで消えた枠の待ち・押した行・リセットの位置を session（background が書く axlx_box_live）から戻す */
+  function _restoreBoxLive() {
+    try {
+      chrome.storage.session.get("axlx_box_live").then(function (st) {
+        var v = (st && st.axlx_box_live) || null;
+        if (!v) return;
+        var nowMs = Date.now();
+        if (v.resetPos && nowMs - Number(v.resetPos.at || 0) < 6 * 60000) _setResetPos(v.resetPos.kind, v.resetPos.at);
+        if (v.wait && Number(v.wait.until) > nowMs + 1000) _setBulkWaitById(String(v.wait.id || ""), Number(v.wait.until) - nowMs);
+        if (v.press && nowMs - Number(v.press.at || 0) < 3 * 60000) {
+          _setPressNote(String(v.press.what || ""), String(v.press.result || ""), String(v.press.detail || ""), Number(v.press.at));
+        }
+        try { _liveDlStep("box_live_restore", "待ち=" + (v.wait && Number(v.wait.until) > nowMs ? v.wait.id : "-") + " 押した=" + (v.press ? v.press.what + ":" + v.press.result : "-") + " 位置=" + (v.resetPos ? v.resetPos.kind : "-")); } catch (_) {}
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  setTimeout(_restoreBoxLive, 2000);
   /** ★ 2.8.326 ページ側（page-script.js の _pressNote）の押した結果を枠の「押した」行へ */
   window.addEventListener("message", function (e) {
     try {
@@ -3648,7 +3790,8 @@
     var lines = null;
     try {
       if (window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.formatBulkPanelGrasp) {
-        lines = window.AxlxBulkPanelGrasp.formatBulkPanelGrasp(_bulkGraspState);
+        var _rp = _resetPos && Date.now() - _resetPos.at < 6 * 60000 ? _resetPos.kind : null;
+        lines = window.AxlxBulkPanelGrasp.formatBulkPanelGrasp(_bulkGraspState ? Object.assign({}, _bulkGraspState, { resetPos: _rp }) : null);
       }
     } catch (_) { lines = null; }
     if (!lines && _bulkGraspState) {
@@ -6326,6 +6469,7 @@
       try {
         window.postMessage({
           from: "axlx-bulk-next",
+          done: true,
           currentName: String(bg.currentName || ""),
           nextName: String(bg.nextName || ""),
           nextMove: "リセットで空にして次のお客さんへ",
@@ -6918,6 +7062,11 @@
       /** ★ 2.8.326 押した結果（background の押す処理から）を枠の「押した」行へ */
       if (msg && msg.type === "axlx-bulk-press") {
         _setPressNote(String(msg.what || ""), String(msg.result || ""), String(msg.detail || ""));
+        return;
+      }
+      /** ★ 2.8.329 リセットの位置（送付のあと／入れる前） */
+      if (msg && msg.type === "axlx-bulk-reset-pos") {
+        _setResetPos(String(msg.kind || ""), Date.now());
         return;
       }
       /** ★ 2.8.217: 一括の誰・何件・次客・把握 */

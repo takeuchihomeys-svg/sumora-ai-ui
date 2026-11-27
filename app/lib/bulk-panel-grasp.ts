@@ -22,12 +22,39 @@ import { panelPhaseWords } from "./loop-flow-map";
  */
 export const PANEL_PHASE_WORDS = panelPhaseWords();
 
+/**
+ * ★ 2.8.329 実測 #1677: 枠に内部の段の名前（handoff）がそのまま出た。英字だけの段名は日本語にするか出さない。
+ */
+const RAW_PHASE_JA: Record<string, string> = {
+  handoff: "客完了→次のお客さんへ",
+  ready_next: "客完了→次のお客さんへ",
+  list_done: "物件取得完了",
+  clear: PANEL_PHASE_WORDS.reset.now,
+  next_clear: PANEL_PHASE_WORDS.reset.now,
+  fill: PANEL_PHASE_WORDS.fill.now,
+  search: PANEL_PHASE_WORDS.search.now,
+  sort: PANEL_PHASE_WORDS.sort.now,
+  list: PANEL_PHASE_WORDS.list.now,
+};
 /** 古い内部の言葉（page-script／bulk-dl が出す）を、手順書と同じ言葉に直して見せる */
 function playbookAction(a: string): string {
   const t = String(a || "");
+  if (/^[a-z][a-z_]*$/.test(t)) return RAW_PHASE_JA[t] || "";
   if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
   if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
   return t;
+}
+/**
+ * ★ 2.8.329 竹内さん「表記にずれのない内容にする」: リセットの「つぎ」は誰の条件を読み直すかを名前で言う。
+ *   入れる前のリセット（pre_fill）＝いまの客、送付のあと（post_send・位置が分からない時も）＝次の客。
+ *   地図の言葉の {after} をその名前に置き換える。
+ */
+export function resetAfterName(cur: string, nxt: string, resetPos: string | null | undefined): string {
+  if (resetPos === "pre_fill") return cur || "このお客さん";
+  return nxt || "次のお客さん";
+}
+export function fillAfter(text: string, afterName: string): string {
+  return String(text || "").split("{after}").join(afterName || "次のお客さん");
 }
 function playbookMove(m: string): string {
   const t = String(m || "");
@@ -50,6 +77,8 @@ export type BulkPanelGraspInput = {
   currentAction?: string | null;
   /** ★ 2.8.228: いまの1タスク（間取外:2LDK／入れる:賃料 等） */
   taskNow?: string | null;
+  /** ★ 2.8.329: リセットの位置（pre_fill＝入れる前・post_send＝送付のあと） */
+  resetPos?: string | null;
 };
 
 export type BulkPanelGraspLines = {
@@ -104,17 +133,24 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
     now = "一括 " + index + "/" + total + "（客名未把握）";
   }
 
+  const resetting = /外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act);
+  const afterName = resetAfterName(cur, nxt, g.resetPos);
   let next = "";
-  if (nxt) next = "次は " + nxt;
-  else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
-  else if (index <= 0) next = nxt ? "次は " + nxt : "最初の客へ";
-  else next = "次の客を把握中…";
-  if (move) {
-    // いまの行動が外すなら、次の動きは「新しい条件を入れる」を優先表示
-    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act)) {
-      next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
-    } else {
-      next += (next ? "／" : "") + "次の動き:" + move;
+  if (resetting && g.resetPos === "pre_fill") {
+    // 入れる前のリセット: 次に入れるのはいまの客。列の次の客は「その次」として言う（「次は 次の客」と言わない）
+    next = "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName) + (nxt ? "／その次の客は " + nxt : "");
+  } else {
+    if (nxt) next = "次は " + nxt;
+    else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
+    else if (index <= 0) next = nxt ? "次は " + nxt : "最初の客へ";
+    else next = "次の客を把握中…";
+    if (move || resetting) {
+      // いまの行動が外す・リセットなら、次の動きは「（誰の）条件を読み直して入れる」を優先表示
+      if (resetting) {
+        next += (next ? "／" : "") + "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName);
+      } else {
+        next += (next ? "／" : "") + "次の動き:" + fillAfter(move, afterName);
+      }
     }
   }
 
@@ -123,7 +159,7 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
     (cur ? "／いま" + cur.replace(/さん$/, "") : "") +
     (act ? "／行" + act.slice(0, 10) : "") +
     (nxt ? "／次" + nxt.replace(/さん$/, "") : index >= total && index > 0 ? "／次なし" : "") +
-    (move ? "／動" + move.slice(0, 12) : "");
+    (move ? "／動" + fillAfter(move, afterName).slice(0, 12) : "");
 
   return { now, next, grasp, graspOk };
 }

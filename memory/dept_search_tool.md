@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.329 リセットの「押した」を読み直しを越えて把握・枠の表記と時間をずれなく・重さの計測（削るのは計測の後）**
+竹内さんの言葉（そのまま）: 「リセット押すまでの一連のながれできたのに、次のお客さんにすすまない、おそらくリセットボタンを押したてこと理解できていない。ここどうすれば押したことりかいできるようになるのか 根本的な原因を徹底的に調査する」「ボックスのあなうんすのところ…表記間違えていること多いのでこまかいところまでちゃんとわわせるように、時間も5秒刻みとかでよいのでしっかりと表記するように」「次のお客さん検索押したところで重すぎてかたまっている…重い部分をなおせたらかなり実用的になる」。選択: `all_measure_first`（リセットと枠を直し、同じ更新で重さの計測を入れる・削るのは計測の後）。設計知見 P1「【決定】リセットの「押した」は読み直しを越えて残る印で把握する…」。
+- **原因（本番 #1677 で確認）**: リセットを押すとページが読み直され、押す処理の返事ごと消えた（`no_answer`）。背景の遅れの確かめは1回だけで、読み直し中の失敗を黙って捨て「押せず」→保険の86秒待ち→`reset_stuck_recovered` で遅れて進んでいた（押せてはいた）。
+- **page-script.js**: `_fireReset` で押す直前に sessionStorage `axlx_reset_fired` {at, bootAt, origin} を置く（押すと読み直されるので先に置く）。`_resetPress` の初めに前の印を消す。`axlx-bulk-next` は同じ中身の連続を1回に（`__axlxBulkNextSig`）・`list_done` は送付完了（`done: true`）の時だけ（検索の最中に一覧完了＝handoff にならない）。`axlx-task-grasped` の いま は日本語（taskNow／段の日本語）。細分化の駅の焦点は枠に出さない（`flow_subdivide_focus` の印だけ）。
+- **background.js**: 押す前に時刻 `_pressT0` を取り、前の印を消してから押す。返事が無い／時間切れの時、最大25秒（1.5秒おき）タブの状態と「印」「いまのページの起動時刻（performance.timeOrigin）」を直接読む。起動＞印の時刻＝押した後に読み直された＝押せた→`reset_press`「押した（遅れて）」で先へ（保険へ行かない）。押す前より古い印は数えない。返事が消えたのに読み終えたページで印が3回続けて無い＝押していない→待たずに保険へ。どの結果でも `reset_press_late_check`（返事・回数・秒・結果・各回の理由）を1行。枠の生きた状態を `chrome.storage.session` の `axlx_box_live`（wait／press／resetPos）へ順に保存（`_boxLiveSave`）。リセットの初めに位置（入れる前 pre_fill／送付のあと post_send）を枠へ（`axlx-bulk-reset-pos`）。
+- **bulk-dl.js（枠）**: いまの手の経過を5秒刻みで添える（`_fmtElapsed5`・始まりは sessionStorage `axlx_now_since`・読み直しを越えて数える）。待ちは「あと約N秒」（5秒刻みの切り上げ）。読み直しの後 2秒で `axlx_box_live` から待ち・押した行・位置を戻す（`dl:box_live_restore`）。枠の言葉が変わった時だけ `dl:panel_text` を点検に1行。
+- **言葉（bulk-panel-grasp.ts／.js・地図 loop-flow-map.ts）**: リセットの つぎ は `{after}の条件をAPIから読み直して入れる`。入れる前のリセット＝いまの客の名前＋「／その次の客は 次の客」、送付のあと（位置不明も）＝次の客の名前。英字だけの段名（handoff 等）は日本語にするか出さない。`gen-panel-words.ts` で写しを作り直した。
+- **重さの計測（動きは変えない）**: `dl:perf_nav`（返事待ち＝responseStart−requestStart・受取・組立・load）／`dl:perf_loaf`（最初の60秒の長い描画を原因のファイルごとに足した上位4）／`dl:perf_loaf_prev`（前の頁＝検索を押した頁を離れるまでの同じ集計・pagehide で sessionStorage `axlx_perf_prev`）。次の実機の回でリアプロの返事待ちか拡張のどのファイルかを見て、重い所を削る。
+- **点検の段（search-audit.js KEEP_STEP）**: `dl:panel_text`・`dl:perf_nav`・`dl:perf_loaf`・`dl:box_live_restore`・`reset_press_late_check` を足した。
+- **試験**: 新規 `tests/chrome-extension/reset-receipt-box-v28329.test.js`（36件・印を置いてから押す順・輪の後に必ず1行・古い印を数えない・done の門・枠の戻し・計測）。`bulk-panel-grasp.test.ts` に位置ごとの つぎ・英字の段名を出さない・TS と JS の写しが同じ文、を足した。loop-flow-map／panel-from-flow-map／bulk-panel-playbook-sync／playbook-reset-skeleton／audit-step-phantoms 緑。tsc は既存の古いテストの22件だけ（今回の変更の分は0）。
+- **まだ**: 実機（再読込→2客以上→`check-playbook-sync` ⑧）は未確認。重さを削るのは計測の結果を見てから。上の青い帯（score-overlay）が古いまま・1人目の送付のあとのリセットが無い（`再開:batch_done_no_lo`）は別に。
+
 ## 2026-11-27 **拡張 2.8.328 段階1: 入れる前の「前客の残り」は1つずつ外さず、残っていれば止める（外す係を全部消す途中）**
 竹内さんの指示（そのまま）: 「１」（段階1から進める）／「これでおねがい」（段階1の計画）／「従来の1つずつ外しを完全に消す」（2.8.328 の指示）。
 決まり（そのまま・2026-11-27）: 「一番最初のお客さんはリセットされた状態で検索進めるためリセットしなくて大丈夫　格調の休憩時間明けのお客さんとかはリセットする」。

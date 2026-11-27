@@ -26,7 +26,10 @@ ok("_resetPress がある", rp.length > 0);
 
 const fireIdx = rp.indexOf("var _fireReset = function (el) {");
 const guardIdx = rp.indexOf("if (finished && !fired)");
-const setIdx = rp.indexOf("fired = true; firedAt = Date.now(); return _clickEl(el);");
+// 2.8.329: 印を立ててから押すまでの間に、読み直しを越える押した印（axlx_reset_fired）を置く行が入った
+const setIdx = rp.indexOf("fired = true; firedAt = Date.now();");
+const clickIdx = rp.indexOf("return _clickEl(el);", setIdx);
+ok("印を立ててから押す", setIdx > 0 && clickIdx > setIdx);
 ok("押す関数（_fireReset）の中に、終わった後は押さない守りがある", fireIdx > 0 && guardIdx > fireIdx && setIdx > guardIdx);
 ok("守りは押した印（fired）を立てる前に見る", guardIdx > 0 && setIdx > guardIdx);
 ok("守りに当たったら点検に残し、押さずに返す", /reset_press_late_blocked[\s\S]{0,120}return false;/.test(rp.slice(guardIdx)));

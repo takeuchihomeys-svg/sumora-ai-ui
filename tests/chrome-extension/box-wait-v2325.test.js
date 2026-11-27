@@ -29,7 +29,8 @@ console.log("■ 2. 残りを1秒ごとに数え、0で消す");
 {
   const p = dl.indexOf("function _paintWait()");
   const body = dl.slice(p, p + 600);
-  ok("残りの秒数を出す（あと N 秒）", /（あと " \+ left \+ " 秒）/.test(body));
+  // 2.8.329 竹内さん「時間も5秒刻みとかでよいのでしっかりと表記するように」→ 残りは5秒刻みの切り上げ（最後の5秒は「あと5秒以内」）
+  ok("残りの秒数を出す（あと約 N 秒・5秒刻み）", /Math\.ceil\(left \/ 5\) \* 5/.test(body) && /"あと5秒以内"/.test(body) && /"あと約" \+ _fmtElapsed5\(left5 \* 1000\)/.test(body));
   ok("0以下で隠して止める", /left <= 0[\s\S]{0,160}display = "none"[\s\S]{0,80}_stopWaitTick\(\)/.test(body));
   ok("1秒ごとに数え直す（setInterval 1000）", /setInterval\(_paintWait, 1000\)/.test(dl));
 }

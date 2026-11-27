@@ -16,7 +16,7 @@
    */
   /* PANEL_WORDS:BEGIN */
   var PANEL_PHASE_WORDS = {
-    reset: { now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる" },
+    reset: { now: "リセットを押す最中", next: "{after}の条件をAPIから読み直して入れる" },
     fill: { now: "条件を入れている最中", next: "検索を押す" },
     search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
     sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
@@ -26,8 +26,29 @@
     done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
   };
   /* PANEL_WORDS:END */
+  // ★ 2.8.329 英字だけの内部の段名（handoff 等）は日本語にするか出さない（app/lib/bulk-panel-grasp.ts と同じ）
+  var RAW_PHASE_JA = {
+    handoff: "客完了→次のお客さんへ",
+    ready_next: "客完了→次のお客さんへ",
+    list_done: "物件取得完了",
+    clear: PANEL_PHASE_WORDS.reset.now,
+    next_clear: PANEL_PHASE_WORDS.reset.now,
+    fill: PANEL_PHASE_WORDS.fill.now,
+    search: PANEL_PHASE_WORDS.search.now,
+    sort: PANEL_PHASE_WORDS.sort.now,
+    list: PANEL_PHASE_WORDS.list.now
+  };
+  /** ★ 2.8.329 リセットの「つぎ」は誰の条件か（入れる前＝いまの客・送付のあと＝次の客） */
+  function resetAfterName(cur, nxt, resetPos) {
+    if (resetPos === "pre_fill") return cur || "このお客さん";
+    return nxt || "次のお客さん";
+  }
+  function fillAfter(text, afterName) {
+    return String(text || "").split("{after}").join(afterName || "次のお客さん");
+  }
   function playbookAction(a) {
     var t = String(a || "");
+    if (/^[a-z][a-z_]*$/.test(t)) return RAW_PHASE_JA[t] || "";
     if (/リセットで空を確かめ|外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
     if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
     return t;
@@ -69,16 +90,22 @@
     else if (act) now = (cur ? cur + "／" : "") + act + "（" + index + "/" + total + "）";
     else if (cur) now = cur + "を検索中（" + index + "/" + total + "）";
     else now = "一括 " + index + "/" + total + "（客名未把握）";
+    var resetting = /外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act);
+    var afterName = resetAfterName(cur, nxt, g.resetPos);
     var next = "";
-    if (nxt) next = "次は " + nxt;
-    else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
-    else if (index <= 0) next = "最初の客へ";
-    else next = "次の客を把握中…";
-    if (move) {
-      if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act)) {
-        next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
-      } else {
-        next += (next ? "／" : "") + "次の動き:" + move;
+    if (resetting && g.resetPos === "pre_fill") {
+      next = "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName) + (nxt ? "／その次の客は " + nxt : "");
+    } else {
+      if (nxt) next = "次は " + nxt;
+      else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
+      else if (index <= 0) next = "最初の客へ";
+      else next = "次の客を把握中…";
+      if (move || resetting) {
+        if (resetting) {
+          next += (next ? "／" : "") + "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName);
+        } else {
+          next += (next ? "／" : "") + "次の動き:" + fillAfter(move, afterName);
+        }
       }
     }
     var grasp =
@@ -86,7 +113,7 @@
       (cur ? "／いま" + cur.replace(/さん$/, "") : "") +
       (act ? "／行" + act.slice(0, 10) : "") +
       (nxt ? "／次" + nxt.replace(/さん$/, "") : index >= total && index > 0 ? "／次なし" : "") +
-      (move ? "／動" + move.slice(0, 12) : "");
+      (move ? "／動" + fillAfter(move, afterName).slice(0, 12) : "");
     return { now: now, next: next, grasp: grasp, graspOk: graspOk };
   }
   function bulkGraspFromQueue(names, index0, waitingFor, nextMove, currentAction, taskNow) {
@@ -111,7 +138,7 @@
       taskNow: taskNow || null,
     };
   }
-  var api = { formatBulkPanelGrasp: formatBulkPanelGrasp, bulkGraspFromQueue: bulkGraspFromQueue, PANEL_PHASE_WORDS: PANEL_PHASE_WORDS };
+  var api = { formatBulkPanelGrasp: formatBulkPanelGrasp, bulkGraspFromQueue: bulkGraspFromQueue, PANEL_PHASE_WORDS: PANEL_PHASE_WORDS, resetAfterName: resetAfterName, fillAfter: fillAfter };
   if (typeof self !== "undefined") self.AxlxBulkPanelGrasp = api;
   if (typeof window !== "undefined") window.AxlxBulkPanelGrasp = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -80,7 +80,37 @@ var _extLogSavedAt = 0;
 //   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
 function _settleMs(ms) { var H = self.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
 /** ★ 2.8.325: 枠の「待ち」行へ（id と秒数だけ送る。言葉は bulk-dl.js の WAIT_WORDS＝地図が正本）。残りは枠が数える */
+/**
+ * ★ 2.8.329 枠の待ち・押した行・リセットの位置は1回きりの知らせで、リセットの読み直しで枠ごと消えていた
+ *   （#1677: 保険の86秒待ちの間、枠に残りの秒も押した結果も出ていなかった）。
+ *   → 知らせと同時に session（axlx_box_live）にも書き、読み直した枠（bulk-dl.js）が起動時に戻す。
+ */
+var _boxLiveChain = Promise.resolve();
+function _boxLiveSave(part, value) {
+  // 続けて呼ばれても上書きし合わないよう1つずつ（読む→足す→書く）
+  _boxLiveChain = _boxLiveChain.then(function () {
+    return chrome.storage.session.get("axlx_box_live").then(function (st) {
+      var cur = (st && st.axlx_box_live) || {};
+      cur[part] = value;
+      return chrome.storage.session.set({ axlx_box_live: cur });
+    });
+  }).catch(function () {});
+}
+/** リセットがどの位置か（送付のあと＝次の客の条件へ／入れる前＝いまの客の条件へ）を枠へ */
+function _bulkResetPosShow(phase) {
+  var kind = phase === "pre_fill_reset" ? "pre_fill" : "post_send";
+  var v = { kind: kind, at: Date.now() };
+  _boxLiveSave("resetPos", v);
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-reset-pos", kind: kind }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
 function _bulkWaitShow(id, ms) {
+  _boxLiveSave("wait", { id: String(id || ""), until: Date.now() + Math.round(Number(ms) || 0) });
   try {
     chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
       for (var i = 0; i < tabs.length; i++) {
@@ -91,6 +121,7 @@ function _bulkWaitShow(id, ms) {
 }
 /** ★ 2.8.326: 押した結果を枠の「押した」行へ（押した・押せず・遅れて押せた・空の確認）。言葉は bulk-dl.js の _setPressNote が作る */
 function _bulkPressShow(what, result, detail) {
+  _boxLiveSave("press", { what: String(what || ""), result: String(result || ""), detail: String(detail || ""), at: Date.now() });
   try {
     chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
       for (var i = 0; i < tabs.length; i++) {
@@ -10953,6 +10984,9 @@ async function _refreshCustomerThink(customer, auditRun) {
  */
 // ★ 2.8.315: ページ側が最大120秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）。2.8.316 竹内さん「止まって120秒以上にする」
 var RESET_PRESS_TIMEOUT_MS = 130000;
+/** ★ 2.8.329 返事が無い・時間切れの時、読み直しが済むまで押した印を確かめ直す長さと間隔 */
+var RESET_LATE_TRY_MS = 25000;
+var RESET_LATE_POLL_MS = 1500;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
 // 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
 //   → 下限を30秒に（録画で確かめた人の間は約100秒。次のお客さんの条件入力はこの待ちの後）
@@ -11031,6 +11065,7 @@ async function _resetShot(shotTab, runId, customerId, whatLabel) {
  *   skipped（off／入力の最中）・ストップ要求は何もしない。投げない。
  */
 async function _resetWithInsurance(customerId, runId, phase) {
+  try { _bulkResetPosShow(phase); } catch (_) {}
   var rr = null;
   try { rr = await _postSendResetRealpro(customerId, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
   if (!rr || rr.ok || rr.skipped) return rr;
@@ -11233,6 +11268,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     } catch (_) {}
     // ① 完了の小窓を閉じて、リセットを押す（読み直しで切れても押した扱い→③④で確かめる）
     var _press = null;
+    var _pressT0 = Date.now();
     try {
       var _pr = await _withTimeout(chrome.scripting.executeScript({
         target: { tabId: _tab.id },
@@ -11240,7 +11276,8 @@ async function _postSendResetRealpro(customerId, auditRunId) {
         func: function () {
           try {
             // axlx_sort_pressed_sync: 並べ替えを押した印（3分有効）。残るとリセットの読み直し後の全件一覧を「並べ替え済み」と見て物件取得を始め得る
-            ["axlx_pending_auto_send_sync", "axlx_search_grasped_sync", "axlx_auto_send", "axlx_sort_pressed_sync"].forEach(function (k) {
+            // axlx_reset_fired: 前のリセットの押した印。残ると今回押していないのに「押せた」と見る
+            ["axlx_pending_auto_send_sync", "axlx_search_grasped_sync", "axlx_auto_send", "axlx_sort_pressed_sync", "axlx_reset_fired"].forEach(function (k) {
               try { sessionStorage.removeItem(k); } catch (_) {}
             });
           } catch (_) {}
@@ -11262,30 +11299,60 @@ async function _postSendResetRealpro(customerId, auditRunId) {
      */
     // ★ 2.8.320 ページ側の押す処理の途中の印を、背景側の点検へ移す（ページの点検は次の入力で捨てられるため）
     try { if (_press && Array.isArray(_press.steps)) _press.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
+    /**
+     * ★ 2.8.329 実測 #1677（タブが見えていた）: すぐ押せてページが読み直され、押す処理の返事ごと消えた（no_answer）。
+     *   旧はここで1回だけ確かめ、読み直しの最中の失敗を黙って捨てて「押せず」→保険の86秒待ちに入っていた（画面は空だった）。
+     *   → 読み直しが済むまで数回（最大 RESET_LATE_TRY_MS）確かめ直す。ページの関数に頼らず、押した瞬間の印
+     *     （sessionStorage の axlx_reset_fired）と、いまのページの起動時刻（performance.timeOrigin）を直接読む。
+     *     印の時刻より後に起動したページ＝押した後に読み直された＝押せた。毎回の結果を1行にまとめて点検に残す。
+     */
     if (!_press || (_press.ok === false && !_press.skipped && /^press_timeout/.test(String(_press.why || "")))) {
-      try {
-        var _lateWhy = String((_press && _press.why) || "no_answer");
-        var _lv = await _withTimeout(chrome.scripting.executeScript({
-          target: { tabId: _tab.id },
-          world: "MAIN",
-          func: function (c) {
-            try {
-              if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 1500, cid: c });
-            } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
-            return { ok: false, why: "no_page_fn" };
-          },
-          args: [String(customerId || "")],
-        }), 8000, "reset_late_press_probe");
-        var _lr = (_lv && !_lv.__timeout && _lv[0] && _lv[0].result) || null;
-        try { if (_lr && Array.isArray(_lr.steps)) _lr.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
-        if (_lr && _lr.reloaded) {
-          _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが画面は読み直されていた）→先へ進む");
-          _bulkPressShow("reset", "pressed_late", String(_lateWhy).slice(0, 30));
-          _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };
-        } else {
-          _stamp("reset_press_late_check", "返事=" + _lateWhy + " 読み直し=" + (_lr ? (_lr.reloaded ? 1 : 0) : "読めず") + " 空=" + (_lr && _lr.empty ? 1 : 0));
+      var _lateWhy = String((_press && _press.why) || "no_answer");
+      var _lateT0 = Date.now();
+      var _tries = [];
+      var _lateHit = null;
+      while (Date.now() - _lateT0 < RESET_LATE_TRY_MS) {
+        var _st = "?";
+        try { var _tInfo = await chrome.tabs.get(_tab.id); _st = (_tInfo && _tInfo.status) || "?"; } catch (_) { _st = "no_tab"; }
+        if (_st === "no_tab") { _tries.push("no_tab"); break; }
+        if (_st === "loading") { _tries.push("loading"); await _sleep(RESET_LATE_POLL_MS); continue; }
+        var _lr = null;
+        try {
+          var _lv = await _withTimeout(chrome.scripting.executeScript({
+            target: { tabId: _tab.id },
+            world: "MAIN",
+            func: function () {
+              var f = null;
+              try { f = JSON.parse(window.sessionStorage.getItem("axlx_reset_fired") || "null"); } catch (_) { f = null; }
+              var origin = 0;
+              try { origin = Math.round(performance.timeOrigin || 0); } catch (_) { origin = 0; }
+              return { fired: f, origin: origin, ready: document.readyState };
+            },
+          }), 4000, "reset_late_press_probe");
+          if (_lv && _lv.__timeout) _tries.push("timeout");
+          else _lr = (_lv && _lv[0] && _lv[0].result) || null;
+          if (!_lr && !(_lv && _lv.__timeout)) _tries.push("no_result");
+        } catch (e) {
+          _tries.push("err:" + String((e && e.message) || e).slice(0, 24));
         }
-      } catch (_) {}
+        if (_lr) {
+          var _fa = _lr.fired && Number(_lr.fired.at) || 0;
+          if (_fa && _fa < _pressT0 - 2000) _fa = 0;
+          if (_fa && _lr.origin && _lr.origin > _fa) { _lateHit = _lr; _tries.push("fired+reloaded"); break; }
+          _tries.push(_fa ? "fired_same_page" : "no_mark");
+          // 押した印があって同じページのまま＝まだ読み直し前→確かめを続ける。
+          // 返事が消えた（no_answer）のに読み終えたページで印が3回続けて無い＝押していない→待たずに保険へ（時間切れの時は遅れて押し得るので続ける）
+          if (!_fa && _lateWhy === "no_answer" && _lr.ready === "complete" && _tries.slice(-3).join(",") === "no_mark,no_mark,no_mark") break;
+        }
+        await _sleep(RESET_LATE_POLL_MS);
+      }
+      var _tryLine = _tries.slice(-8).join(",");
+      _stamp("reset_press_late_check", "返事=" + _lateWhy + " 確かめ" + _tries.length + "回 " + Math.round((Date.now() - _lateT0) / 1000) + "秒 結果=" + (_lateHit ? "押せた" : "未確認") + " [" + _tryLine + "]");
+      if (_lateHit) {
+        _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが、押した後にページが読み直されていた）→先へ進む");
+        _bulkPressShow("reset", "pressed_late", String(_lateWhy).slice(0, 30));
+        _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };
+      }
     }
     if (!_press || _press.ok === false || !_press.pressed) {
       var _why = (_press && (_press.why || _press.skipped)) || "no_answer";

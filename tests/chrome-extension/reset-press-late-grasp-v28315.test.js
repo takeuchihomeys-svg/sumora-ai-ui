@@ -133,7 +133,8 @@ console.log("\n■ ② 裏の遅れて押した把握");
 const sec = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("/** ★ 2.8.297 版の比べ"));
 ok("裏の押す待ちの上限が130秒（ページの120秒より長い）", /var RESET_PRESS_TIMEOUT_MS = 130000;/.test(bg));
 ok("返事が press_timeout／返事なしなら読み直しを確かめる", /!_press \|\| \(_press\.ok === false && !_press\.skipped && \/\^press_timeout\/\.test/.test(sec));
-ok("読み直し（reloaded）なら遅れて押した扱い", /_lr && _lr\.reloaded/.test(sec) && /late: true/.test(sec));
+// 2.8.329 #1677: ページの関数は読み直しの最中に居ない（1回だけ確かめて落ちていた）→押した印より後に起動したページ＝読み直された、で見る
+ok("読み直し（押した印より後に起動したページ）なら遅れて押した扱い", /_lr\.origin > _fa/.test(sec) && /late: true/.test(sec));
 ok("遅れて押した扱いの後は従来どおり待機→空の確認へ進む", sec.indexOf("late_press") > 0 && sec.indexOf("late_press") < sec.indexOf("② 読み直しを待つ"));
 ok("読み直されていなければ今まで通り押せず", /reset_press_late_check/.test(sec) && /reset_not_pressed:/.test(sec));
 

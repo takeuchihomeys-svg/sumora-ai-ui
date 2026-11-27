@@ -438,6 +438,10 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "裏が起き直した後に入力前のリセットが2回押される原因", gold: ["b9949cbb"], from: "owner-reset-dup-1127" },
   { q: "同じ秒に bulk_phase の同じ段が何十行も点検に残る", gold: ["b9949cbb"], from: "owner-reset-dup-1127" },
   { q: "自動の印をボタンの処理が await の後に読んで手動扱いになる", gold: ["b9949cbb"], ho: true, from: "owner-reset-dup-1127" },
+  // 2026-11-27 2.8.329 リセットの押したの把握（読み直しで返事が消える）・枠の表記と5秒刻み・重さは計測してから
+  { q: "リセットを押したのに次のお客さんに進まず保険の待ちに入る原因", gold: ["e67aa569"], from: "owner-reset-receipt-1127" },
+  { q: "枠の待ちの残り秒や押した行がページの読み直しで消える", gold: ["e67aa569"], ho: true, from: "owner-reset-receipt-1127" },
+  { q: "検索を押した所でリアプロが重くなる時にまず何をするか", gold: ["e67aa569"], from: "owner-reset-receipt-1127" },
   { q: "町をピンポイントで選んだ後に本当にチェックが付いたかを確かめるか", gold: ["abc82e4e"], from: "owner-pick-effect-1127" },
   { q: "管理費・共益費込みや構造の選択が効かなかった時に検索を止めるか", gold: ["abc82e4e"], ho: true, from: "owner-pick-effect-1127" },
   { q: "リアプロの録画から作った手順書の手に押したことの把握の文を付けるか", gold: ["66f23127"], from: "owner-step-grasp-1127" },

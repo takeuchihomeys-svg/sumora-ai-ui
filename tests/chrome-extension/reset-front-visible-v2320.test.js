@@ -35,7 +35,8 @@ console.log("■ 1. 押す前に見え方を確かめ、背面なら前に出す
 console.log("■ 2. 押す処理の途中の印を背景の点検へ運ぶ（ページの点検で消えない）");
 {
   ok("背景は押す処理の返事の steps を点検へ移す（page:）", /_press\.steps\.forEach\(function \(s\) \{ _stamp\("page:"/.test(bg));
-  ok("遅れて返事が来た時の印（_lr.steps）も移す", /_lr\.steps\.forEach\(function \(s\) \{ _stamp\("page:"/.test(bg));
+  // 2.8.329: 遅れの確かめはページの関数（読み直し後は新しいページの空の箱）に頼らず押した印を直接読む。各回の結果を1行にまとめて残す
+  ok("遅れの確かめは毎回の結果を点検へ残す（_tries）", /_stamp\("reset_press_late_check", [^\n]*_tryLine/.test(bg));
   ok("ページ側の印は専用の箱（_resetStepBuf）に残す", /var _resetStepBuf = \[\];/.test(page) && /function _resetStepP\(k, d\)/.test(page));
   ok("押す処理の開始の印（reset_press_start）", /_resetStepP\("reset_press_start"/.test(page));
   ok("押せず（slow）の印は専用の箱へ（点検の _audit があるかに依存しない）", /_resetStepP\("reset_press_slow"/.test(page) && !/if \(_audit\) _auditStepP\("reset_press_slow"/.test(page));

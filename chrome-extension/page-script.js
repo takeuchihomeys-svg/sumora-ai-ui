@@ -4147,7 +4147,7 @@ function _guideLikeAreaSkip(why) {
    */
   /* PANEL_WORDS:BEGIN */
   var _AXLX_PANEL_WORDS = {
-    reset: { now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる" },
+    reset: { now: "リセットを押す最中", next: "{after}の条件をAPIから読み直して入れる" },
     fill: { now: "条件を入れている最中", next: "検索を押す" },
     search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
     sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
@@ -4157,7 +4157,7 @@ function _guideLikeAreaSkip(why) {
     done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
   };
   /* PANEL_WORDS:END */
-  var _AXLX_PAGE_VER = "2.8.328";
+  var _AXLX_PAGE_VER = "2.8.329";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4794,7 +4794,7 @@ function _guideLikeAreaSkip(why) {
           customerId: cid,
           playbookOk: payload.playbookOk,
           confirmed: true,
-          currentAction: payload.taskNow || payload.phase,
+          currentAction: payload.taskNow || _phaseNextJa(payload.phase),
           nextMove: payload.taskNext,
           clearMethods: payload.clearMethods,
         }, "*");
@@ -5076,15 +5076,9 @@ function _guideLikeAreaSkip(why) {
           "焦点=" + focus + " 弱=" + r.gapAtoms.length + " 次=" + String(nextJa).slice(0, 28),
         );
       }
-      try {
-        if (typeof _publishTaskGrasp === "function") {
-          _publishTaskGrasp({
-            now: "細分化:" + focus,
-            next: nextJa,
-            kind: "fill",
-          });
-        }
-      } catch (_) {}
+      // ★ 2.8.329 細分化の焦点は学習の弱い所（いまの手ではない）。枠の「いま／つぎ」には出さない
+      //   （地域のお客さんにも「沿線↔駅の地図を載せる」と出て、実際の手とずれていた）。点検の段だけに残す
+      try { if (_audit) _auditStepP("flow_subdivide_focus", "焦点=" + focus + " 次=" + String(nextJa).slice(0, 28)); } catch (_) {}
     } catch (_) {}
     return r;
   }
@@ -5822,7 +5816,18 @@ function _guideLikeAreaSkip(why) {
             if (window.__axlxBulkNextMove) window.__axlxNowCustomer.nextMove = window.__axlxBulkNextMove;
           }
         } catch (_) {}
-        try { _graspNextCustomerAndMove("bulk_grasp"); } catch (_) {}
+        /**
+         * ★ 2.8.329 実測 #1677: この知らせは枠を描き直すたびに来る（送付完了だけではない）。旧は毎回「物件取得完了」に
+         *   していたので、入力・検索の最中に段が list_done→handoff になり、枠に「handoff」「次は外す」と出た
+         *   （検索を押した瞬間に手順書のAPI取り直しも走った）。名前・次の動きが変わった時だけ印を残し、
+         *   取得完了は送付完了の知らせ（done:true）の時だけにする。
+         */
+        var _bnSig = window.__axlxBulkCurrentName + "|" + window.__axlxBulkNextName + "|" + window.__axlxBulkNextMove;
+        if (_bnSig !== window.__axlxBulkNextSig) {
+          window.__axlxBulkNextSig = _bnSig;
+          try { _graspNextCustomerAndMove("bulk_grasp"); } catch (_) {}
+        }
+        if (e.data.done !== true) return;
         /**
          * ★ 2.8.224: 取得完了→次は外す（旧は fill と誤把握＝ループ上の外す把握抜け）
          *   bulk-dl の nextMove=前客を外す と揃える。list_done→clear。
@@ -11918,6 +11923,12 @@ function _guideLikeAreaSkip(why) {
   try { if (!window.__axlxBootAt) window.__axlxBootAt = Date.now(); } catch (_) {}
   var _AX_RESET_PRESSED_KEY = "axlx_reset_pressed";
   var _AX_RESET_CLEAN_KEY = "axlx_reset_clean";
+  /**
+   * ★ 2.8.329 押した瞬間の印（読み直しを越えて残る）。リセットはページを読み直すので、押す処理の返事（Promise）は
+   *   ページごと消える（#1677: タブが見えていてすぐ押せた→返事なし no_answer→保険86秒待ち・画面は空だった）。
+   *   裏は読み直し後のページでこの印を読み、印の時刻より後に起動したページ（performance.timeOrigin）なら「押せた」とする。
+   */
+  var _AX_RESET_FIRED_KEY = "axlx_reset_fired";
   function _isShown(el) { try { return !!(el && (el.offsetParent || (el.getClientRects && el.getClientRects().length))); } catch (_) { return false; } }
   /** 送付の完了画面・ポップアップを閉じる（検索の小窓の×＋「閉じる」だけの小窓）。押した数を返す */
   function _closeStrayWindows() {
@@ -12066,6 +12077,7 @@ function _guideLikeAreaSkip(why) {
     var guard = null;
     var tStart = Date.now();
     _resetStepBuf = [];
+    try { window.sessionStorage.removeItem(_AX_RESET_FIRED_KEY); } catch (_) {}
     _resetStepP("reset_press_start", "hidden=" + (document.hidden ? 1 : 0) + " vis=" + document.visibilityState + " qlen=" + _clickQueue.length + " busy=" + (isClickQueueBusy() ? 1 : 0));
     var fin = function (r) {
       if (finished) return;
@@ -12133,7 +12145,9 @@ function _guideLikeAreaSkip(why) {
                 try { _resetStepP("reset_press_late_blocked", "押す処理は押せずで終わった→遅れて来たクリックは押さない"); } catch (_) {}
                 return false;
               }
-              fired = true; firedAt = Date.now(); return _clickEl(el);
+              fired = true; firedAt = Date.now();
+              try { window.sessionStorage.setItem(_AX_RESET_FIRED_KEY, JSON.stringify({ at: firedAt, bootAt: window.__axlxBootAt || 0, origin: Math.round(performance.timeOrigin || 0) })); } catch (_) {}
+              return _clickEl(el);
             };
             var _enq = enqueueHumanClick(btn, _fireReset, _uiGapMin(), _uiGapMax(), null, _rOpts);
             _resetStepP("reset_press_queued", "enq=" + (_enq === false ? "refused" : "ok") + " qlen=" + _clickQueue.length + " hidden=" + (document.hidden ? 1 : 0));

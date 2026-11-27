@@ -266,6 +266,7 @@ function createSwEnv(world, owner, regions, postAudit, note) {
         var f = String(o && o.func);
         if (f.indexOf("__axlxResetPressP") >= 0) {
           world.resetPressCalls++;
+          world.resetPressAt = clock.now();
           var rmode = (world.currentPage && world.currentPage.reset) || "ok";
           note("reset_press_exec", rmode);
           if (rmode === "nobutton") return Promise.resolve([{ result: { ok: false, why: "no_reset_button" } }]);
@@ -273,6 +274,16 @@ function createSwEnv(world, owner, regions, postAudit, note) {
           return new Promise(function (resolve) {
             clock.add("page", function () { resolve([{ result: { ok: true, pressed: true, closed: 1, before: "wards=3" } }]); }, 1500, false);
           });
+        }
+        // 2.8.329 押した後の遅れの確かめ（sessionStorage の押した印と、いまのページの起動時刻を直接読む）。
+        //   hang＝押してページが読み直され返事ごと消えた: 印は押した直後・ページの起動はその後
+        if (f.indexOf("axlx_reset_fired") >= 0 && f.indexOf("timeOrigin") >= 0) {
+          world.resetLateProbeCalls = (world.resetLateProbeCalls || 0) + 1;
+          var lmode = (world.currentPage && world.currentPage.reset) || "ok";
+          var pAt = Number(world.resetPressAt || 0);
+          note("reset_late_probe_exec", lmode);
+          if (lmode === "hang" && pAt) return Promise.resolve([{ result: { fired: { at: pAt + 500 }, origin: pAt + 2000, ready: "complete" } }]);
+          return Promise.resolve([{ result: { fired: null, origin: clock.now(), ready: "complete" } }]);
         }
         if (f.indexOf("__axlxResetVerifyP") >= 0) {
           world.resetVerifyCalls++;
