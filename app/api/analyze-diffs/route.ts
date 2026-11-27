@@ -13,6 +13,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { stageOnNow } from "@/app/lib/rollout";
+import { inApplyWindow } from "@/app/lib/rag-garbage";
 import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer";
 
 export const maxDuration = 300;
@@ -1112,7 +1114,7 @@ export async function POST(req: NextRequest) {
   //    'aix_edit' という値は存在しない）。編集有無は was_ai_modified で判別する。
   const { data: aixExamples, error: aixExamplesError } = await supabase
     .from("ai_reply_examples")
-    .select("id, conversation_id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred")
+    .select("id, conversation_id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred, created_at")
     .eq("was_ai_modified", true)
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
@@ -1128,6 +1130,22 @@ export async function POST(req: NextRequest) {
   if (aixExamples) {
     // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
     aixExamples.splice(0, aixExamples.length, ...aixExamples.filter((e) => !isTestConversation((e as { conversation_id?: string | null }).conversation_id ?? null)));
+    // 2026-11-28 作業員L（統括役の決め3・申込以降を学びに使わない）: AIX の手本には検索の外（rag_excluded）の印が無い＝申込の期間（deal_outcomes の applied_at〜ended_at）の
+    //   AIX の直しからも、お客様の発言を trigger_example にしたナレッジを作って埋め込んでいた（前の30日の aix_action 692行のうち 171行が申込の期間）。
+    //   AIX_DIFF_LEARN_SKIP_APPLY=on（既定 off・段階で読む）の時だけ、申込の期間の行を外し、その行は diff_analyzed_at を付けて取り直さない（読めない時は外す側）
+    if (aixExamples.length && await stageOnNow("AIX_DIFF_LEARN_SKIP_APPLY", null)) {
+      const convIds = [...new Set(aixExamples.map((e) => (e as { conversation_id?: string | null }).conversation_id).filter((c): c is string => !!c))];
+      const { data: outs, error: outErr } = convIds.length ? await supabase.from("deal_outcomes").select("conversation_id, applied_at, ended_at").in("conversation_id", convIds).not("applied_at", "is", null) : { data: [], error: null };
+      const winOf = new Map<string, Array<{ applied_at: string | null; ended_at: string | null }>>();
+      for (const o of (outs ?? []) as Array<{ conversation_id: string; applied_at: string | null; ended_at: string | null }>) winOf.set(o.conversation_id, [...(winOf.get(o.conversation_id) ?? []), o]);
+      const skip = aixExamples.filter((e) => { const r = e as { conversation_id?: string | null; created_at?: string | null }; return !!outErr || (!!r.conversation_id && inApplyWindow(winOf.get(r.conversation_id) ?? [], r.created_at ?? "")); });
+      if (skip.length) {
+        const ids = skip.map((e) => (e as { id: string }).id);
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: new Date().toISOString() }).in("id", ids);
+        console.info(JSON.stringify({ tag: "analyze-diffs:aix-skip-apply", n: ids.length, readFailed: !!outErr }));
+        aixExamples.splice(0, aixExamples.length, ...aixExamples.filter((e) => !ids.includes((e as { id: string }).id)));
+      }
+    }
     for (let i = aixExamples.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [aixExamples[i], aixExamples[j]] = [aixExamples[j], aixExamples[i]];
