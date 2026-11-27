@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.316";
+  var _AXLX_PAGE_VER = "2.8.317";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4272,7 +4272,10 @@ function _guideLikeAreaSkip(why) {
     "reset_press_late_grasp",
     "sw_restart_wait_post_search_flow",
     "lag_grace_after_sort",
-    "lag_grace_after_reset",
+    "sort_mouse_retry",
+    "search_review_wait",
+    "first_customer_no_reset",
+    "next_customer_api_reload",
   ];
   /**
    * ★ 2026-11-20 竹内さん「同時に２つマウス出現しないように」「マウスの色や…形が実際の人間の形と違う」:
@@ -14579,7 +14582,7 @@ function _guideLikeAreaSkip(why) {
      */
     var _nowMs = Date.now();
     var _lookAt = Number(window._axSearchLookAt) || 0;
-    if (_nowMs - _lookAt < 6000) {
+    if (_nowMs - _lookAt < 30000) { // ★ 2.8.317: 見直しを 9〜12秒にしたので 6秒→30秒（待っている間に別の経路から呼ばれても今すぐ押さない）
       // 直前に「見直す」を予約した → **二重に予約しない**（タイマーが押す）
       if (_audit) _auditStepP('search_look_skip', '予約済み');
       return;
@@ -14598,9 +14601,14 @@ function _guideLikeAreaSkip(why) {
        * ★ 2.8.263 竹内さん「検索ボタン押してから実検索までラグが大きい」:
        *   旧 1.0〜2.2秒＋一息で最大~7秒。見直しは残すが短く（0.4〜1.0秒・一息は稀）。
        */
-      var _lookMs = humanRand(400, 1000);
-      // 一息は稀に（5%で 0.5〜1.2秒）— 長い息は検索ラグの主因だった
-      if (Math.random() < 0.05) _lookMs += 500 + Math.floor(Math.random() * 700);
+      /**
+       * ★ 2.8.317 竹内さん「検索を押す前の時間 1〜2秒だと短すぎるので、10秒ほどたって検索を押す」:
+       *   見直しの間を 0.4〜1.0秒 → 9〜12秒（_searchReviewMs・毎回揺らす）に。条件を入れ終えてすぐ検索すると、
+       *   検索のあとの画面の固まり（物件の表示・再計算）に追いつけず詰まる。一息（旧 +0.5〜1.2秒）は 9〜12秒に含めたので足さない。
+       *   ⚠ 長くしたので二重の予約を弾く窓は 30秒に広げた（下の search_look_skip）。見直しは「この回で1回だけ」の決まりは今まで通り。
+       */
+      var _lookMs = _searchReviewMs();
+      _auditStepP('search_review_wait', '検索を押す前に条件を見直す間 ' + Math.round(_lookMs / 1000) + '秒');
       _auditStepP('search_look', Math.round(_lookMs) + 'ms');
       /**
        * ⚠ タイマーは**1本だけ**。発火したら**この回の見直しは済み**にして、そのまま検索へ進む。
@@ -15027,6 +15035,14 @@ function _guideLikeAreaSkip(why) {
     return Math.round(v);
   }
   function _uiGapOpts() { return { strictLo: true, sigma: 0.55 }; }
+  /** ★ 2.8.317 検索を押す前の見直しの間（9〜12秒・毎回揺らす・固定の数字にしない） */
+  function _searchReviewMs() {
+    var H = window.AxlxHumanWait;
+    var v = H && H.logNormalDelay ? H.logNormalDelay(10500, 0.08) : (9000 + Math.floor(Math.random() * 3000));
+    if (v < 9000) v = 9000 + Math.floor(Math.random() * 800);
+    if (v > 12000) v = 12000;
+    return Math.round(v);
+  }
   // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;

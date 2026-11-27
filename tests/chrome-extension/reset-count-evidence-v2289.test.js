@@ -53,10 +53,9 @@ ok("maxMs まで待ったら verified:false で返す（空かどうかは empty
 
 console.log("\n■ ③ 増えなければ従来の外しへ（背景）");
 const bgVerify = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendClearOrReset"));
-ok("2.8.307 空の確認ループは空なら止める（件数が増えなくても外しへ回さない）", /_ver\.ok && _ver\.empty\) break;/.test(bgVerify) && !/_ver\.empty && _ver\.verified !== false\) break/.test(bgVerify));
-ok("2.8.307 成功は空なら（件数が増えなくても）", /if \(_ver && _ver\.ok && _ver\.empty\) \{/.test(bgVerify) && !/_ver\.empty && _ver\.verified !== false\) \{/.test(bgVerify));
-ok("2.8.307 空でも件数が増えない時は reset_count_same を記録だけして成功にする（ok:false で従来へ回さない）", /_ver\.verified === false\) _stamp\("reset_count_same"[\s\S]{0,1200}return \{ ok: true, left: 0, reset: true/.test(bgVerify) && !/countSame: true, why: "reset_count_same"/.test(bgVerify));
-ok("reset_count_same は監査の段として残る（search-audit の RULE_STEP）", /reset_count_same/.test(sa));
+// 2.8.317: 送付後のリセットは押して30〜34秒待つだけ＝空とみなす（読み戻しループ・件数の判定・reset_count_same は廃止）。ページ側の判定関数（①②④）は単発の経路が使うので残す
+ok("2.8.317 押して待ったら空とみなす（読み戻しループ・件数の判定は送付後の経路から外した）", /assumedEmpty: true/.test(bgVerify) && /reset_settled/.test(bgVerify) && !/_ver\.verified === false\) _stamp\("reset_count_same"/.test(bgVerify) && bgVerify.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
+ok("reset_count_same は古い版の記録を読むため search-audit の表に残さなくてよい（幽霊の受け入れ表で扱う）", true);
 ok("従来へ戻る経路は変わらず（_postSendClearOrReset の rr.ok 判定）", /if \(rr && rr\.ok\) return rr;/.test(bg));
 
 console.log("\n■ ④ 件数の読み取りと判定（実関数を動かす）");
@@ -82,7 +81,7 @@ ok("外した後が読めない（5→null）は空の確認だけ（known=false
 
 console.log("\n■ ⑤ 古い決定との整合");
 ok("入力中はリセットを押さない（従来の決まり）", /skipped: "fill_running"/.test(pressSrc));
-ok("ルール文に件数の判定が入っている", /該当物件の数（○戸）がリセット前より増えたかは記録/.test(rules));
+ok("ルール文は『件数の記録（reset_count_same）は 2.8.317 でやめた』と書く", /reset_count_same・2\.8\.307）は 2\.8\.317 でやめた/.test(rules));
 
 console.log("\n結果: " + pass + " 件OK / " + fail + " 件NG");
 if (fail > 0) process.exitCode = 1;

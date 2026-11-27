@@ -6475,7 +6475,32 @@ async function _manualBulkRun(o) {
          *   → 条件を入れる前に必ず「ページが空か」を読み、空でなければリセットを押して空を確かめる（人の順番）。
          *     押せない・空にならない時だけ従来の外し（ページ側）に任せる。
          */
-        try { await _resetBeforeFill(_bc, _bulkAudit ? _bulkAudit.runId : null); } catch (_) {}
+        /**
+         * ★ 2.8.317 竹内さん「検索始めの1番最初のお客さんはリセットしなくて大丈夫」「リセットしたら必ず空になっているので、
+         *   そのままお客さんの条件を拡張ツールからいれるようにする」:
+         *   ・この一括の最初の客（再開ではない回の頭）は入力前にリセットしない。
+         *   ・前の客のリセットが済んでいる（_axlxLastPsReset が前客の物で成功）なら、入力前の「空か読む→空でなければリセット」もしない。
+         *   ・印が無い回（前客が途中で終わった・裏が起き直した・再開）だけ従来どおり入力前に空を読む。
+         *   ⚠ ページ側の「外す」安全網（leftover 判定）は残る。ここは「リセットを押す回数を減らす」だけ。
+         */
+        var _skipPreFill = "";
+        try {
+          if (_bi === _startIndex && !_resume) {
+            _skipPreFill = "この一括の最初の客はリセットしない";
+          } else {
+            var _lp0 = self._axlxLastPsReset;
+            var _prevT0 = _bi > 0 ? _bulkTargets[_bi - 1] : null;
+            if (_lp0 && _lp0.ok && _prevT0 && String(_lp0.cid) === String(_prevT0.id) && Date.now() - Number(_lp0.at || 0) < 20 * 60 * 1000) {
+              _skipPreFill = "前客のリセットが済んでいる（空とみなしてそのまま入れる）";
+            }
+          }
+        } catch (_) { _skipPreFill = ""; }
+        if (_skipPreFill) {
+          console.log("[manual-bulk-search] 入力前のリセットは見送り: " + _skipPreFill + "（" + (_bc.customer_name || "") + "）");
+          try { if (_bulkAudit) _auditStep(_bulkAudit.runId, "reset_before_fill", ("見送り=" + _skipPreFill).slice(0, 120)); } catch (_) {}
+        } else {
+          try { await _resetBeforeFill(_bc, _bulkAudit ? _bulkAudit.runId : null); } catch (_) {}
+        }
         if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 入力前のリセットの間に新しいループへ → 古いループは抜ける gen=" + _myGen); return; }
         if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（入力前のリセット） → 中断"); break; }
       }
@@ -9309,6 +9334,13 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
    */
   var customer = await _refreshCustomerBeforeSearch(customer, site);
   var conds = _buildBatchConditions(customer, isWide, opts);
+  // ★ 2.8.317 毎回のAPI読み直しの結果を監査に残す（読めたか・条件が更新されていたか・失敗の理由。竹内さん「かなり重要」）
+  try {
+    var _rl = _lastCustomerReload;
+    if (auditRun && auditRun.runId && _rl && String(_rl.cid) === String(customer && customer.id)) {
+      _auditStep(auditRun.runId, "customer_api_reload", (_rl.ok ? ("API読み直しOK " + _rl.tries + "回目" + (_rl.changed ? "・条件が更新されていた" : "・更新なし")) : ("API読み直し失敗→今までの条件で続行（" + String(_rl.why || "-").slice(0, 40) + "・" + _rl.tries + "回）")).slice(0, 120));
+    }
+  } catch (_) {}
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
   //   popup はお客様の登録の条件から欄を作り直すので、同じ上書きを searchOverride で渡して一時調整の欄に入れさせる（pass は area_mode）
   var _searchOverride = (opts && self.AxlxSearchOverride && self.AxlxSearchOverride.sourceAllows(opts.source)) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
@@ -10011,29 +10043,59 @@ async function _fetchCustomerListWithRetry(url, tag) {
   throw (lastErr instanceof Error) ? lastErr : new Error("顧客データ取得失敗");
 }
 
+/**
+ * ★ 2.8.317 竹内さん「次のお客さんの条件を拡張ツールからAPIで読み込んでいれなおすってところかなり重要。これを毎回することでループが安定性もつ」:
+ *   毎回（1人目も・2人目以降も）リセットの後・条件を入れる直前に API から読み直す。結果（成功・更新あり/なし・失敗の理由・何回目か）は
+ *   _lastCustomerReload に残し、_batchAutofill が監査の段 customer_api_reload に書く（読めたか後から DB で確かめられる）。
+ *   ・失敗（通信エラー・5xx・時間切れ）は最大3回までやり直す（間 2秒→4秒）。4xx・「その客が居ない」はやり直さない。
+ *   ・3回とも読めない時だけ今までの条件で続ける（止めない・理由を残す）。
+ */
+var _lastCustomerReload = null;
 async function _refreshCustomerBeforeSearch(c, site) {
+  var _note = { cid: (c && c.id != null) ? String(c.id) : "", ok: false, tries: 0, changed: false, why: "", at: Date.now(), site: String(site || "") };
+  _lastCustomerReload = _note;
   try {
-    if (!c || c.id == null) return c;
+    if (!c || c.id == null) { _note.why = "no_customer"; return c; }
     var id = String(c.id);
-    var url = "https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(id) + "&fresh=" + Date.now();
-    var res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
-    if (!res.ok) {
-      console.warn("[customer] 条件を読み直せませんでした（HTTP " + res.status + "）→ 今までの条件で検索します");
-      return c;
-    }
-    var j = await res.json();
-    /**
-     * ⚠ API の返す形が「配列」「{customer}」「1件そのもの」のどれでも動くようにする。
-     */
     var fresh = null;
-    if (Array.isArray(j)) fresh = j.find(function (x) { return x && String(x.id) === id; }) || null;
-    else if (j && Array.isArray(j.customers)) fresh = j.customers.find(function (x) { return x && String(x.id) === id; }) || null;
-    else if (j && j.customer && String(j.customer.id) === id) fresh = j.customer;
-    else if (j && String(j.id) === id) fresh = j;
+    for (var _t = 1; _t <= 3 && !fresh; _t++) {
+      _note.tries = _t;
+      var retryable = true;
+      try {
+        var url = "https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(id) + "&fresh=" + Date.now();
+        var res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+        if (!res.ok) {
+          _note.why = "HTTP " + res.status;
+          if (res.status >= 400 && res.status < 500) retryable = false;
+          console.warn("[customer] 条件を読み直せませんでした（HTTP " + res.status + "・" + _t + "回目）");
+        } else {
+          var j = await res.json();
+          /**
+           * ⚠ API の返す形が「配列」「{customer}」「1件そのもの」のどれでも動くようにする。
+           */
+          if (Array.isArray(j)) fresh = j.find(function (x) { return x && String(x.id) === id; }) || null;
+          else if (j && Array.isArray(j.customers)) fresh = j.customers.find(function (x) { return x && String(x.id) === id; }) || null;
+          else if (j && j.customer && String(j.customer.id) === id) fresh = j.customer;
+          else if (j && String(j.id) === id) fresh = j;
+          if (!fresh) {
+            _note.why = "not_in_response";
+            retryable = false;
+            console.warn("[customer] 読み直した中にこのお客様が居ません → 今までの条件で検索します");
+          }
+        }
+      } catch (e) {
+        _note.why = "error:" + String((e && e.message) || e).slice(0, 40);
+        console.warn("[customer] 条件の読み直しで例外（" + _t + "回目）:", (e && e.message) || e);
+      }
+      if (!fresh && retryable && _t < 3) await new Promise(function (r) { setTimeout(r, _t === 1 ? 2000 : 4000); });
+      else if (!fresh && !retryable) break;
+    }
     if (!fresh) {
-      console.warn("[customer] 読み直した中にこのお客様が居ません → 今までの条件で検索します");
+      console.warn("[customer] 条件を読み直せませんでした（" + _note.why + "・" + _note.tries + "回）→ 今までの条件で検索します");
       return c;
     }
+    _note.ok = true;
+    _note.why = "";
 
     /**
      * ② `updated_at` が前より新しければ「条件が変わった」印を出す。
@@ -10042,6 +10104,7 @@ async function _refreshCustomerBeforeSearch(c, site) {
     var before = Date.parse(String(c.updated_at || "")) || 0;
     var after = Date.parse(String(fresh.updated_at || "")) || 0;
     if (after && before && after > before) {
+      _note.changed = true;
       var msg = "🔔 条件が変わりました（" + (c.name || fresh.name || "このお客様") + "）→ 新しい条件で検索します";
       console.log("[customer] " + msg + "（" + String(c.updated_at) + " → " + String(fresh.updated_at) + "）");
       try { if (typeof _nudge === "function") _nudge(msg); } catch (_) {}
@@ -10852,9 +10915,8 @@ async function _postSendClearRealpro(customerId, auditRunId) {
  *   送付が終わった直後（次客の switch より前・一連ロックを外す前）に、そのタブで
  *     ① 完了の小窓を閉じてリセットを押す（page-script _resetPress）
  *     ② ページが読み直されるのを待つ（読み直されなくても進む）
- *     ③ 人の間（1.2〜2.2秒）待つ
- *     ④ フォームが**すべて空**か読み戻す（_resetVerify・URL/DOM。画像では決めない）
- *     ⑤ 空なら人の間（1.5〜3秒）の後に画面の写真を1枚撮って DB へ（reset_check）→ 次客へ
+ *     ③ 30〜34秒待つ（人の間・ラグ対策。3回に分ける）
+ *     ④ ★ 2.8.317: 待った後は**空とみなして次客へ**（読み戻しのループ・写真・猶予は廃止。「きれい」の印のため1回だけ読む・reset_settled）
  *   ⚠ 2.8.107 で戻した理由は「入力中の自動がリセットで消えた」こと。ここは送付完了の後の1点だけ（入力中は page 側が断る）。
  *   ⚠ 空にならない／押せない／タブが無い時は**従来の1つずつ外す**（_postSendClearRealpro）へ戻る（fail-open・次客を止めない）。
  *   ⚠ chrome.storage.local の axlx_reset_button_mode が false なら使わない（切り替えフラグ・既定は使う）。
@@ -10863,7 +10925,6 @@ async function _postSendClearRealpro(customerId, auditRunId) {
 var RESET_BUTTON_MODE_KEY = "axlx_reset_button_mode";
 // ★ 2.8.315: ページ側が最大120秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）。2.8.316 竹内さん「止まって120秒以上にする」
 var RESET_PRESS_TIMEOUT_MS = 130000;
-var RESET_VERIFY_TOTAL_MS = 25000;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
 // 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
 //   → 下限を30秒に（録画で確かめた人の間は約100秒。次のお客さんの条件入力はこの待ちの後）
@@ -10893,13 +10954,7 @@ async function _waitAfterHumanReset(runId) {
     return need;
   } catch (_) { return 0; }
 }
-var RESET_SHOT_GAP_MIN_MS = 2000;
-/** ★ 2.8.316 ラグの猶予（押した後の画面の追いつき・bulk-dl の _lagGraceMs と同じ 5〜9秒）。固定の数字の待ちにしない */
-var LAG_GRACE_MIN_MS_BG = 5000;
-var LAG_GRACE_MAX_MS_BG = 9000;
-function _lagGraceMs() {
-  return LAG_GRACE_MIN_MS_BG + Math.floor(Math.random() * (LAG_GRACE_MAX_MS_BG - LAG_GRACE_MIN_MS_BG));
-}
+/** ★ 2.8.317 リセット後の写真・猶予・空の読み戻しのループは廃止（押す→30〜34秒待つだけ）。写真（_resetShot）は押せなかった時の保険でだけ使う */
 async function _resetShot(shotTab, runId, customerId, whatLabel) {
   try {
     if (typeof _capturePaced !== "function" || typeof _sendShotNow !== "function") return "no_capture_fn";
@@ -10996,7 +11051,15 @@ async function _resetWithInsurance(customerId, runId, phase) {
     _stamp("reset_retry", "保険でエラー→従来の外しへ:" + String((e && e.message) || e).slice(0, 50));
     return rr;
   }
-}async function _postSendResetRealpro(customerId, auditRunId) {
+}
+/**
+ * ★ 2.8.317 竹内さん「リセットは 30〜34秒のところだけで・リセットしたら必ず空になっている」（reset_empty_is_enough）:
+ *   ①完了の小窓を閉じる ②リセットを押す（押せたか＝クリックの実行で決める・最大130秒待つ）③読み直しを待ち、30〜34秒（3回に分けて）待つ
+ *   ④押して待ったら空とみなして返す（reset_settled・assumedEmpty）。空かの読み戻しの繰り返し・写真・5〜9秒の猶予は置かない
+ *   （読み戻しは『きれい』の印 axlx_reset_clean を付けるための1回・最大1.5秒だけ。結果で成功・失敗は決めない）。
+ *   押せなかった・例外の時だけ呼び元（_resetWithInsurance）が保険→従来の外しへ。
+ */
+async function _postSendResetRealpro(customerId, auditRunId) {
   var _t0 = Date.now();
   var _stamp = function (k, note) {
     try {
@@ -11097,47 +11160,33 @@ async function _resetWithInsurance(customerId, runId, phase) {
     await _sleep(_w1);
     await _sleep(_w2);
     await _sleep(Math.max(1000, _settleMs - _w1 - _w2));
-    // ④ すべて空かを読み戻す（ページが読み直しの途中で答えない時は少し待って聞き直す）
-    var _ver = null, _vt = Date.now(), _tries = 0;
-    while (Date.now() - _vt < RESET_VERIFY_TOTAL_MS) {
-      _tries++;
-      try {
-        var _vr = await _withTimeout(chrome.scripting.executeScript({
-          target: { tabId: _tab.id },
-          world: "MAIN",
-          func: function (cid) {
-            try {
-              if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 8000, cid: cid });
-            } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
-            return { ok: false, why: "no_page_fn" };
-          },
-          args: [String(customerId || "")],
-        }), 15000, "reset_verify");
-        _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
-      } catch (_) { _ver = null; }
-      if (_ver && _ver.ok && _ver.empty) break; // ★ 2.8.307 空なら十分（件数が増えなくても外しへ回さない・reset_empty_is_enough）
-      await _sleep(700);
-    }
+    /**
+     * ★ 2.8.317 竹内さん「前客のリセットのところ多すぎてバグる可能性ある。30〜34秒のところだけでリセットすればより改善される」
+     *   「リセットしたら必ず空になっているので、そのままお客さんの条件を拡張ツールからいれる」:
+     *   ④空の読み戻し（最大25秒のループ）・⑤写真（2〜4秒の間＋最大25秒）・⑥5〜9秒の猶予は**やめた**。
+     *   押す→読み直しを待つ→30〜34秒待つ、で終わり。待った後は空とみなして次へ進む（reset_settled）。
+     *   ⚠ ページに「きれい」の印（axlx_reset_clean）を付けるため、ページを**1回だけ**読む（待たない・繰り返さない・空でなくても止めない・外しへ回さない）。
+     *     印があると次客の入力前に「所在地の小窓を開いて確かめる」時間を省ける。読めなければ印は付かないだけ（ページ側の安全網が確かめる）。
+     *   ⚠ 押せなかった時の保険（_resetWithInsurance）と従来の外しは、押せなかった時だけ残す（ここは通らない）。
+     */
+    var _ver = null;
+    try {
+      var _vr = await _withTimeout(chrome.scripting.executeScript({
+        target: { tabId: _tab.id },
+        world: "MAIN",
+        func: function (cid) {
+          try {
+            if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 1500, cid: cid });
+          } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+          return { ok: false, why: "no_page_fn" };
+        },
+        args: [String(customerId || "")],
+      }), 8000, "reset_settle_mark");
+      _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
+    } catch (_) { _ver = null; }
     var _reloaded = !!(_ver && _ver.reloaded) || _sawLoading;
-    var _cntNote = " 件数 前=" + (_ver && _ver.countBefore != null ? _ver.countBefore : "-") + " 後=" + (_ver && _ver.countNow != null ? _ver.countNow : "-") + (_ver && _ver.countKnown === false ? "（読めず・空だけで判定）" : "");
-    if (_ver && _ver.ok && _ver.empty) {
-      // ★ 2.8.307 竹内さん: リセットで空になったら1つずつ外しはやらない（ボトルネックにしない）。件数が増えなかった事は記録だけに残す
-      if (_ver.verified === false) _stamp("reset_count_same", "空を確認・件数は増えず（記録のみ・空なので外さない）" + _cntNote);
-      _stamp("reset_verified", "空を確認 読み直し=" + (_reloaded ? "あり" : "なし") + " 聞いた回数=" + _tries + " " + Math.round((Date.now() - _t0) / 1000) + "秒" + _cntNote);
-      // ⑤ 待機（人の間）→ 画面の写真を1枚（空になった画面の記録）。撮れなくても進む
-      await _sleep(RESET_SHOT_GAP_MIN_MS + Math.floor(Math.random() * 2000));
-      var _shotNote = await _withTimeout(_resetShot(_tab, auditRunId || _auditOpenRunId(String(customerId), "realpro"), customerId), 25000, "reset_shot");
-      _stamp("reset_shot", (_shotNote && _shotNote.__timeout) ? "時間切れ（進む）" : String(_shotNote));
-      // ★ 2.8.316: リセットの後もラグの猶予（5〜9秒）を置いてから次の段へ（_lagGraceMs・bulk-dl と同じ幅）
-      var _lagR = _lagGraceMs();
-      _stamp("reset_lag_grace", Math.round(_lagR / 1000) + "秒 リセット後の猶予（ラグ）");
-      await _sleep(_lagR);
-      return { ok: true, left: 0, reset: true, reloaded: _reloaded };
-    }
-    // ★ 2.8.307 旧: 空でも件数が増えなければ従来の1つずつ外しへ（2.8.289）→ 廃止。空なら上で成功にする（reset_empty_is_enough）
-    var _left = _ver && _ver.left != null ? _ver.left : -1;
-    _stamp("reset_not_empty", "空にならず→従来の外しで残りを外す 残=" + _left + " " + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 60));
-    return { ok: false, left: _left, reset: true, reloaded: _reloaded, why: "reset_not_empty:" + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 40) };
+    _stamp("reset_settled", "押して" + Math.round(_settleMs / 1000) + "秒待った＝空とみなして次へ（読み戻し1回: " + (_ver ? ("空=" + (_ver.empty ? 1 : 0) + (_ver.empty ? "" : " 残=" + (_ver.left != null ? _ver.left : "?"))) : "読めず") + "・読み直し=" + (_reloaded ? "あり" : "なし") + "）" + " 計" + Math.round((Date.now() - _t0) / 1000) + "秒");
+    return { ok: true, left: 0, reset: true, reloaded: _reloaded, assumedEmpty: true };
   } catch (e) {
     console.warn("[reset-press] 失敗（非致命・従来の外しへ）:", e && e.message ? e.message : e);
     _stamp("reset_press", "error→従来の外しへ:" + String(e && e.message || e).slice(0, 50));
@@ -11213,7 +11262,7 @@ async function _resetBeforeFill(customer, runId, preferredTabId) {
     var rr = null;
     try { rr = await _resetWithInsurance(cid, runId, "pre_fill_reset"); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
     _quietClear("reset", "pre_fill_done");
-    if (rr && rr.ok) _stamp("リセットで空を確認 " + Math.round((Date.now() - _t0) / 1000) + "秒");
+    if (rr && rr.ok) _stamp("リセットを押して待った＝空とみなす " + Math.round((Date.now() - _t0) / 1000) + "秒");
     else _stamp("空にできず→入力の前にページ側の従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");
     return rr || { ok: false, why: "no_result" };
   } catch (e) {

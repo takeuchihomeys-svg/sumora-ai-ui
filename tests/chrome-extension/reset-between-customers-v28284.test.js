@@ -146,17 +146,19 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await w.run(30 * 60000);
   ok("3-1 3人を順に", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2", "c3"]), filled(w).join(","));
   // 2.8.296: 条件を入れる前に「空か」を1回読む（3人分）＋送付後の確認（3回）＝読み戻し6回。空なので入力前は押さない＝押すのは3回のまま
-  ok("3-1 毎回リセット→確認（押す3回・読み戻し 入力前3＋送付後3）", w.resetPressCalls === 3 && w.resetVerifyCalls === 6, w.resetPressCalls + "/" + w.resetVerifyCalls);
+  // 2.8.317: 最初の客・前客リセット済みの客は入力前に読まない／押さない。送付後は押して待つだけ（読み戻しは『きれい』の印を付ける1回＝3回）
+  ok("3-1 毎回リセット（押す3回・読み戻し＝印のための1回×3のみ）", w.resetPressCalls === 3 && w.resetVerifyCalls === 3, w.resetPressCalls + "/" + w.resetVerifyCalls);
   ok("3-1 従来の外しは呼ばない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
   const o1 = order(w);
-  ok("3-1 順序: 空の確認→入れる→リセット→確認→（次客の）空の確認→入れる", o1.slice(0, 7).join(" ") === "reset_verify_exec: autofill:c1 reset_press_exec: reset_verify_exec: reset_verify_exec: autofill:c2 reset_press_exec:", o1.join(" "));
+  ok("3-1 順序: 入れる（1人目はリセットしない）→リセット→（次客は空の確認なしで）入れる", o1.slice(0, 7).join(" ") === "autofill:c1 reset_press_exec: reset_verify_exec: autofill:c2 reset_press_exec: reset_verify_exec: autofill:c3", o1.join(" "));
   const k1 = stepKeys(w);
-  ok("3-1 記録に reset_press／reset_wait／reset_verified／reset_shot", ["reset_press", "reset_wait", "reset_verified", "reset_shot"].every((k) => k1.includes(k)), JSON.stringify([...new Set(k1)].filter((k) => /reset/.test(k))));
+  ok("3-1 記録に reset_press／reset_wait／reset_settled（読み戻しの reset_verified・写真の reset_shot は出さない）", ["reset_press", "reset_wait", "reset_settled"].every((k) => k1.includes(k)) && !k1.includes("reset_verified") && !k1.includes("reset_shot"), JSON.stringify([...new Set(k1)].filter((k) => /reset/.test(k))));
   const timed = [];
   w.db.forEach((r) => (r.steps || []).forEach((s) => timed.push(s)));
   const tPress = timed.find((s) => s.k === "reset_press");
-  const tVer = timed.find((s) => s.k === "reset_verified");
-  ok("3-1 押してから空の確認まで10秒以上", !!(tPress && tVer && tVer.at - tPress.at >= 10000), tPress && tVer ? tVer.at - tPress.at : null);
+  const tVer = timed.find((s) => s.k === "reset_settled");
+  ok("3-1 押してから『空とみなす』まで30秒以上（待つだけ）", !!(tPress && tVer && tVer.at - tPress.at >= 30000), tPress && tVer ? tVer.at - tPress.at : null);
+  // （次客のAPI読み直し customer_api_reload は _batchAutofill の中。この模擬は _batchAutofill を偽にしているので loop-simplify-v28317 の静的な試験で見る）
   ok("3-1 例外なし", (w.clock.errors || []).length === 0, (w.clock.errors || []).map(String).join("/"));
   ok("3-1 全件完了を1通", (w.fetches || []).filter((f) => /notify-group/.test(f.url) && /全件完了/.test(f.body)).length === 1);
 
@@ -164,10 +166,11 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   w = sim.createWorld({ customers: customers(2), resetButton: true, page: () => ({ reset: "notempty" }) });
   await start(w, 2);
   await w.run(40 * 60000);
-  ok("3-2 空にならない → 従来の外しへ戻る", w.postSendClearCalls === 2, String(w.postSendClearCalls));
+  // 2.8.317: 押して待ったら空とみなす（読み戻しで『空でない』を見つけて従来の外しへ回す事はしない）
+  ok("3-2 押して待ったら空とみなす → 従来の外しへ戻らない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
   ok("3-2 次客へ進む", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
-  ok("3-2 reset_not_empty／reset_fallback を残す", stepKeys(w).includes("reset_not_empty") && stepKeys(w).includes("reset_fallback"));
-  ok("3-2 空でないのに reset_verified を出さない", !stepKeys(w).includes("reset_verified"));
+  ok("3-2 reset_settled を残し、reset_not_empty／reset_fallback は出さない", stepKeys(w).includes("reset_settled") && !stepKeys(w).includes("reset_not_empty") && !stepKeys(w).includes("reset_fallback"));
+  ok("3-2 reset_verified は出さない", !stepKeys(w).includes("reset_verified"));
 
   // 3-3 リセットが見つからない → 従来の外しへ
   w = sim.createWorld({ customers: customers(2), resetButton: true, page: () => ({ reset: "nobutton" }) });
@@ -175,7 +178,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await w.run(30 * 60000);
   // 2.8.296: 読み戻しは入力前の「空か」だけ（2人分）。押せないので押した後の確認は無い＝reset_verified が出ない
   // 2.8.308 保険: 押せない→撮って画面を読む。この模擬は画面が空と読めるので「確認が遅れただけ」＝成功（外しに落ちない）。読み戻しは 入力前2＋保険の把握2＝4回
-  ok("3-3 ボタン無し → 保険で画面を読み、空なら成功（外しは呼ばない）", w.postSendClearCalls === 0 && w.resetVerifyCalls === 4 && !stepKeys(w).includes("reset_verified") && stepKeys(w).includes("reset_stuck_recovered"), w.postSendClearCalls + "/" + w.resetVerifyCalls);
+  ok("3-3 ボタン無し → 保険で画面を読み、空なら成功（外しは呼ばない）", w.postSendClearCalls === 0 && w.resetVerifyCalls === 2 && !stepKeys(w).includes("reset_verified") && stepKeys(w).includes("reset_stuck_recovered"), w.postSendClearCalls + "/" + w.resetVerifyCalls); // 2.8.317: 入力前の読み取りは省く＝保険の把握2回のみ
   ok("3-3 次客へ進む", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
 
   // 3-4 押した返事が来ない → 25秒で諦めて従来の外し（止まらない）
@@ -184,7 +187,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await w.run(40 * 60000);
   ok("3-4 返事なし → 従来の外し→次客へ", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]), filled(w).join(","));
   // 2.8.315 #1661: 押した返事が来なくても画面が読み直されていれば「遅れて押した」→待機→空の確認へ進む（画面を撮ってもう1回押す・従来の外しへは行かない）
-  ok("3-4 返事なしでも読み直されていれば遅れて押した扱い（reset_verified まで進み、もう1回押さない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_verified") && !stepKeys(w).includes("reset_stuck_shot") && !stepKeys(w).includes("reset_retry"));
+  ok("3-4 返事なしでも読み直されていれば遅れて押した扱い（reset_settled まで進み、もう1回押さない）", stepKeys(w).includes("reset_press") && stepKeys(w).includes("reset_settled") && !stepKeys(w).includes("reset_stuck_shot") && !stepKeys(w).includes("reset_retry"));
 
   // 3-5 切り替えフラグ off → リセットを押さない（従来どおり）
   w = sim.createWorld({ customers: customers(2) });
@@ -205,17 +208,18 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   await start(w, 2);
   await w.run(30 * 60000);
   const o7 = order(w);
-  ok("3-7 1人目: 空の確認→（空でない）リセット→確認→入れる", o7.slice(0, 4).join(" ") === "reset_verify_exec: reset_press_exec: reset_verify_exec: autofill:c1", o7.join(" "));
+  // 2.8.317 竹内さん「検索始めの1番最初のお客さんはリセットしなくて大丈夫」: 1人目は入力前に読まない・押さない
+  ok("3-7 1人目: リセットも空の確認もせず入れる", o7.slice(0, 2).join(" ") === "autofill:c1 reset_press_exec:", o7.join(" "));
   ok("3-7 従来の外し（1つずつ）は呼ばない", w.postSendClearCalls === 0, String(w.postSendClearCalls));
   const k7 = [];
   w.db.forEach((r) => (r.steps || []).forEach((s) => k7.push(s)));
   const rbf = k7.filter((s) => s.k === "reset_before_fill").map((s) => String(s.d));
-  ok("3-7 記録に reset_before_fill（空でない→押す／リセットで空を確認）", rbf.some((d) => /空でない/.test(d)) && rbf.some((d) => /リセットで空を確認/.test(d)), rbf);
+  ok("3-7 記録に reset_before_fill（1人目＝最初の客はしない／2人目＝前客のリセット済み）の見送り", rbf.some((d) => /最初の客はリセットしない/.test(d)) && rbf.some((d) => /前客のリセットが済んでいる/.test(d)), rbf);
   const t7press = k7.find((s) => s.k === "reset_press");
-  const t7fill = k7.find((s) => s.k === "bulk_phase" && /autofill/.test(String(s.d)));
-  ok("3-7 リセットを押してから条件入力まで30秒以上", !!(t7press && t7fill && t7fill.at - t7press.at >= 30000), t7press && t7fill ? t7fill.at - t7press.at : null);
+  const t7fill = k7.find((s) => s.k === "bulk_phase" && /autofill/.test(String(s.d)) && t7press && s.at > t7press.at);
+  ok("3-7 リセットを押してから次客の条件入力まで30秒以上", !!(t7press && t7fill && t7fill.at - t7press.at >= 30000), t7press && t7fill ? t7fill.at - t7press.at : null);
   ok("3-7 2人を順に・例外なし", JSON.stringify(filled(w)) === JSON.stringify(["c1", "c2"]) && (w.clock.errors || []).length === 0, filled(w).join(","));
-  ok("3-7 2人目は前客のリセットで空→入力前は押さない（押すのは 入力前1＋送付後2＝3回）", w.resetPressCalls === 3, String(w.resetPressCalls));
+  ok("3-7 入力前のリセットは押さない（押すのは送付後の2回だけ）", w.resetPressCalls === 2, String(w.resetPressCalls));
 
   console.log("\n■ ④ 完了判定は画像に依らない（客の番号＋DOM）");
   ok("送付完了は axlx-batch-customer-done（客の番号つき）で待つ", /_createBatchCustomerDoneWaiter\(customerId/.test(bg));
@@ -223,8 +227,9 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const loopSrc = bg.slice(bg.indexOf("async function _manualBulkRun("), bg.indexOf("\nvar _manualBulkGen = 0;"));
   ok("一括ループは画面の写真・録画で完了を決めない", !/captureVisibleTab|_capturePaced|_resetShot|axlx-human-shot/.test(loopSrc));
   const resetFn = bg.slice(bg.indexOf("async function _postSendResetRealpro("), bg.indexOf("async function _postSendClearOrReset("));
-  ok("リセットの『空』は読み戻し（verify）で決め、写真は記録だけ", resetFn.indexOf("_ver.empty") > 0 && resetFn.indexOf("_resetShot(") > resetFn.indexOf("reset_verified"));
-  ok("写真が撮れなくても進む（時間切れ・権限なしは記録のみ）", /_withTimeout\(_resetShot\(/.test(resetFn) && /no_permission/.test(bg));
+  // 2.8.317: 押して待ったら空とみなす（読み戻しで決めない・写真も撮らない）。写真は保険（押せなかった時）の経路だけ
+  ok("リセットの『空』は押して待ったら空とみなす（読み戻し・写真で決めない）", /reset_settled/.test(resetFn) && /assumedEmpty: true/.test(resetFn) && resetFn.indexOf("_resetShot(") < 0);
+  ok("写真が撮れなくても進む（保険の経路・時間切れ・権限なしは記録のみ）", /_withTimeout\(_resetShot\(/.test(bg) && /no_permission/.test(bg));
 
   console.log("\n■ ⑤ 整合・配線");
   const clearOrReset = bg.slice(bg.indexOf("async function _postSendClearOrReset("), bg.indexOf("var _scrapeLastOutcome"));
@@ -245,7 +250,7 @@ const order = (w) => w.log.filter((l) => ["autofill", "reset_press_exec", "reset
   const bgSrc = require("fs").readFileSync(require("path").join(__dirname, "../../chrome-extension/background.js"), "utf8");
   const min = Number((bgSrc.match(/var RESET_SETTLE_MIN_MS = (\d+);/) || [])[1]);
   const body = bgSrc.slice(bgSrc.indexOf("async function _postSendResetRealpro"), bgSrc.indexOf("async function _postSendClearOrReset"));
-  const iPress = body.indexOf("__axlxResetPressP"), iWait = body.indexOf("_settleMs"), iVerify = body.lastIndexOf("__axlxResetVerifyP"); // 2.8.315: 先頭近くに「遅れて押した」の確かめ（同じ関数）が増えたので、待ちの後の読み戻し（最後）で比べる
+  const iPress = body.indexOf("__axlxResetPressP"), iWait = body.indexOf("_settleMs"), iVerify = body.lastIndexOf("__axlxResetVerifyP"); // 2.8.317: 待ちの後の読み戻しは『きれい』の印だけ（最大1.5秒・結果で成功・失敗は決めない） // 2.8.315: 先頭近くに「遅れて押した」の確かめ（同じ関数）が増えたので、待ちの後の読み戻し（最後）で比べる
   console.log("\n■ ⑥ 押した後は10秒以上待ってから空を読み戻す（2.8.285）");
   ok("待ちの下限が10秒以上", min >= 10000, min);
   ok("押す → 待つ → 空を読み戻す の順", iPress > 0 && iWait > iPress && iVerify > iWait, { iPress, iWait, iVerify });

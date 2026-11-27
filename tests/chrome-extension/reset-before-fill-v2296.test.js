@@ -31,7 +31,7 @@ console.log("■ ① 配線（一括ループでの位置・点検・手順書�
   const iAuto = bg.indexOf("await _batchAutofill(_bc, _bulkSite");
   ok("一括ループが条件を入れる前に _resetBeforeFill を呼ぶ", iRbf > 0);
   ok("  順番: 前回のリセット待ち → 入力前のリセット → fill-done ウェイター → 条件入力", iInh > 0 && iInh < iRbf && iRbf < iWaiter && iWaiter < iAuto, { iInh, iRbf, iWaiter, iAuto });
-  ok("  リアプロの時だけ（ITANDI の回では押さない）", /if \(_bulkSite === "realnetpro"\) \{\s*await _waitInheritedReset[\s\S]{0,1800}await _resetBeforeFill\(_bc/.test(bg));
+  ok("  リアプロの時だけ（ITANDI の回では押さない）", /if \(_bulkSite === "realnetpro"\) \{\s*await _waitInheritedReset[\s\S]{0,4000}await _resetBeforeFill\(_bc/.test(bg));
   ok("  世代が替わったら抜ける・ストップ要求で止まる", /await _resetBeforeFill\(_bc[\s\S]{0,400}_myGen !== _manualBulkGen[\s\S]{0,300}_batchShouldStop/.test(bg));
   ok("段の名前 pre_fill_reset（枠に出す日本語がある）", /pre_fill_reset: "条件を入れる前にリセットを押す"/.test(bg));
   ok("点検が reset_before_fill を残す（KEEP_STEP・RULE_STEP）", /KEEP_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit) && /RULE_STEP = \/\^\([^\n]*\|customer_think\|reset_before_fill\|(?:(?:look_skip|reset_stuck_shot|reset_stuck_grasp|reset_stuck_recovered|reset_retry|server_behind|ext_behind)\|)*post_send_clear\|/.test(audit));
@@ -88,7 +88,7 @@ const stepOf = (steps) => steps.filter((s) => s.k === "reset_before_fill").map((
     ok("  終わったら窓を外す（残さない）", t.h.ctx._quiet == null, t.h.ctx._quiet);
     ok("  結果 ok", r && r.ok === true, r);
     const d = stepOf(t.steps);
-    ok("  点検に「空でない（残=4 …）→リセットを押す」と「リセットで空を確認」", d.some((x) => /空でない（残=4/.test(x)) && d.some((x) => /リセットで空を確認/.test(x)), d);
+    ok("  点検に「空でない（残=4 …）→リセットを押す」と「リセットで空を確認」", d.some((x) => /空でない（残=4/.test(x)) && d.some((x) => /リセットを押して待った＝空とみなす/.test(x)), d); // 2.8.317: 押して待ったら空とみなす（読み戻さない）
     ok("  窓の印 quiet_on / quiet_off も残る", t.steps.some((s) => s.k === "quiet_on" && /^reset/.test(s.d)) && t.steps.some((s) => s.k === "quiet_off" && /pre_fill_done/.test(s.d)), t.steps.map((s) => s.k));
   }
 

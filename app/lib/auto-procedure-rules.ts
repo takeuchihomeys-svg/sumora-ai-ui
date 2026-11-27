@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.316";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.317";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -180,7 +180,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_decide",
     scene: "search",
-    text: "検索は条件を見直した後（1〜2秒）、迷い・手を止めるを入れずに押す",
+    text: "検索は条件を見直す間（9〜12秒・2.8.317 竹内さん「10秒ほどたって検索を押す」。search_review_wait）をあけた後、カーソルを動かして迷い・手を止めるを入れずに押す（見直しのあと押すまでは1〜3秒）",
     since: "2.8.135",
     kb: null,
     marker: "label: \"click:検索\", strictLo: true, sigma: 0.55, decide: true",
@@ -350,7 +350,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_to_sort_cursor",
     scene: "list",
-    text: "検索を押した把握をトリガーに、検索確認の時刻から30〜36秒（2.8.292・経過した分は引く・残りは最低50ms）の人間ランダム待ちのあと並べ替えへカーソル移動する（旧「1秒以降」は廃止）。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
+    text: "検索を押した把握をトリガーに、検索確認の時刻から40〜50秒（2.8.317 竹内さん「検索後かたまるので早すぎたら追いつけない」。旧30〜36秒・経過した分は引く・残りは最低50ms）の人間ランダム待ちのあと並べ替えへカーソル移動する（旧「1秒以降」は廃止）。見る間キャンセルで _autoPdfSig を固着させない。印: dl:sort_cursor_wait / sort_cursor_go / sort_menu",
     since: "2.8.191",
     kb: "92413949",
     marker: "_scheduleSortCursorAfterSearch",
@@ -363,7 +363,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "search_confirm_then_wait_sort",
     scene: "list",
-    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_ok／screenOk）が取れてから。確認時刻から30秒以上空けて sort_cursor へ（2.8.292・録画で確かめた人の間は36秒。1〜3.5秒は旧で、物件の表示が追いつかなかった）。並べ替えの待ちの間は一覧の描き直しから押し始めない（wait_sort_cursor）。並べ替えに失敗したら並びのまま押す前に30〜36秒待って最初からもう1回（sort_failed_wait_retry・2.8.293）。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
+    text: "並べ替えは検索ボタン押下の確認（search_press_ok／search_customer_grasp_ok／screenOk）が取れてから。確認時刻から40〜50秒空けて sort_cursor へ（2.8.317・旧は30〜36秒。1〜3.5秒はさらに旧で、物件の表示が追いつかなかった）。並べ替えの待ちの間は一覧の描き直しから押し始めない（wait_sort_cursor）。並べ替えに失敗したら並びのまま押す前に40〜50秒待って最初からもう1回（sort_failed_wait_retry・2.8.293）。click直前の意図印・armed直後の旧一覧では並べ替えない。印: search_grasp_intent_only / sort_gate_need_confirm / search_confirm_gap / sort_cursor_wait",
     since: "2.8.207",
     kb: null,
     marker: "_isSearchConfirmGrasp",
@@ -644,46 +644,46 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "reset_replaces_clear",
     scene: "clear",
-    text: "リセットと、最後の保険（リセットが押せない時だけ）の「1つずつ外す」はぶつけない。順番は固定：①リセットを押して空と読み戻す（送付後 reset_between_customers／一括・単発の入力前 reset_before_fill。単発は iframe がリロードで消えても background が autoFillAfter で自動入力を引き継ぐ）②空と確かめられたら外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま新条件を入れる ③リセットが押せない・空にならない・数が増えた（外れた証拠）時だけ、従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。案内モード中（normal）はリセットを押さない（2.8.310）",
+    text: "リセットと、最後の保険（リセットが押せない時だけ）の「1つずつ外す」はぶつけない。順番は固定：①リセットを押して、読み直しを待ち、30〜34秒待つ（送付後 reset_between_customers。一括は送付後の1回だけ・最初のお客さんと前客のリセットが済んだ客は入れる前に押さない＝first_customer_no_reset。単発の入力前は reset_before_fill。単発は iframe がリロードで消えても background が autoFillAfter で自動入力を引き継ぐ）②押して待ったら空とみなし（2.8.317・一括は読み戻して成功・失敗を決めない＝reset_empty_is_enough）、外す工程（clear_stage・post_send_clear・clear_then_fill_ok の待ち）は行わず、そのまま次客の条件をAPIから読み直して入れる（next_customer_api_reload）③リセットが押せない・例外の時だけ、保険（もう1回押す）→従来の1つずつ外すを代わりに使う（reset_fallback）。リセットは入力の最中には押さない（入力が消える）。案内モード中（normal）はリセットを押さない（2.8.310）",
     since: "2.8.305",
     kb: "265a1cca",
     marker: "reset_replaces_clear",
     file: "background.js",
     verify: {
       onlyIf: ["reset_press"],
-      mustHaveAny: ["reset_verified", "reset_fallback", "reset_retry"],
+      mustHaveAny: ["reset_settled", "reset_verified", "reset_fallback", "reset_retry"],
     },
   },
   {
     id: "series_handoff_order",
     scene: "switch",
-    text: "連続のお客さんのループ（一括）。各お客さんの流れ：①入力前：ページが空か読む（前の回のリセットが途中なら残りを待つ・空でなければもう1回リセットして空を確認。すでに空なら押さない）②次客の条件を拡張ツールのAPI（/api/property-customers・キャッシュなし）から読み直して入力（読めない時は今までの条件で続ける）③検索→確認の時刻から30〜36秒待って並べ替え→物件取得→送付 ④送付が終わったら、完了の小窓を閉じてリセットを押し、読み直しを待ち、30秒以上（30〜34秒）人の間で待ってから空を確認し、空の画面を1枚撮る。空ならリセット成功＝1つずつ外す工程は行わない・資料を見る間も置かない（件数が増えなくても空なら成功・数は記録だけ）⑤次のお客さんがいれば①へ戻る（リセットは各客の最後に1回・次客の①は通常すでに空なので押さない）。最後のお客さんは完了を待たせず裏でリセットして終わる。リセットが押せない・空にならない時だけ、従来の1つずつ外しと資料を見る間（1.8〜13秒）を代わりに使う（reset_fallback）。読み直し（②）はリセットと空の確認より後。印: reset_verified／reset_before_fill／look_skip／bulk_pos／handoff_loop",
+    text: "連続のお客さんのループ（一括・2.8.317 で簡素化。竹内さん「ここでループが安定する」）。各お客さんの流れ：①入力前：最初のお客さんはリセットしない（まっさら）。2人目以降は前客の送付後のリセットが済んでいれば空とみなして押さない（済んでいない・失敗・20分以上前の時だけ入れる前に押す）②次客の条件を拡張ツールのAPI（/api/property-customers・キャッシュなし）から毎回読み直して（失敗は2秒・4秒あけて最大3回）空のフォームへ入力する＝ループの要（next_customer_api_reload・印 customer_api_reload）③検索：条件を入れ終えて 9〜12 秒見直してから押す（search_review_wait）→確認の時刻から40〜50秒待って並べ替え（押した後の猶予15〜20秒）→物件取得→送付 ④送付が終わったら、完了の小窓を閉じてリセットを押し、読み直しを待ち、30〜34秒人の間で待つだけ。空かの読み戻し・写真・猶予は置かない（押して待ったら空とみなす＝reset_settled）⑤次のお客さんがいれば①へ戻る（リセットは各客の最後に1回だけ）。最後のお客さんは完了を待たせず裏でリセットして終わる。リセットが押せない・例外の時だけ、保険（もう1回押す）と従来の1つずつ外し・資料を見る間（1.8〜13秒）を代わりに使う（reset_fallback）。読み直し（②）は必ずリセット（待ち）より後。印: reset_settled／customer_api_reload／reset_before_fill／look_skip／bulk_pos／handoff_loop",
     since: "2.8.306",
     kb: "265a1cca",
     marker: "var customer = await _refreshCustomerBeforeSearch(customer, site);",
     file: "background.js",
     verify: {
       onlyIf: ["handoff_loop"],
-      mustHaveAny: ["reset_before_fill", "reset_verified", "reset_fallback", "handoff_loop"],
+      mustHaveAny: ["reset_before_fill", "reset_settled", "reset_verified", "reset_fallback", "handoff_loop"],
     },
   },
   {
     id: "reset_empty_is_enough",
     scene: "clear",
-    text: "リセットを押した後、フォームが空と読み戻せたらリセット成功とする。該当件数が増えたかは記録（reset_count_same）だけに残し、増えなくても1つずつ外しに回さない（外しがボトルネックにならないように・2.8.307）。ページ側にも『きれい』の印（axlx_reset_clean）を付け、前客の外し（小窓を開いて確かめる）を省く。空にならない・押せない時だけ従来の外しへ",
+    text: "一括の送付後のリセットは、押して、読み直しを待ち、30〜34秒待ったら空とみなして次へ進む（2.8.317 竹内さん「リセットしたら必ず空になっている」。旧は空かの読み戻し・写真・猶予の5〜9秒を重ねて詰まっていた）。件数が増えたか・空かの確かめ直しで成功・失敗を決めない。ページ側に『きれい』の印（axlx_reset_clean）だけ1.5秒以内で付け（前客の外し＝小窓を開いて確かめるを省くため）、印: reset_settled。押せない・例外の時だけ保険（reset_retry_insurance）→従来の外しへ。入れる前のリセット（reset_before_fill）も同じ（押す前にページが空なら押さない・押したら待つだけ）。単発（ポップアップ）の経路は今まで通り",
     since: "2.8.307",
-    kb: "265a1cca",
+    kb: "1ff4d9b6",
     marker: "reset_empty_is_enough",
     file: "background.js",
     verify: {
-      onlyIf: ["reset_count_same"],
-      mustHaveAny: ["reset_verified"],
+      onlyIf: ["reset_press"],
+      mustHaveAny: ["reset_settled", "reset_verified", "reset_fallback", "reset_retry"],
     },
   },
   {
     id: "reset_success_skips_look",
     scene: "switch",
-    text: "一括で送付後のリセットが成功した客は、『資料を見る間（1.8〜13秒）』を置かない。リセット後の待ち（30秒以上）・空の確認・撮影までの間が、すでに人の間になっているため。リセットが使えなかった客・最後のお客さんだけ従来どおり置く。印: look_skip",
+    text: "一括で送付後のリセットが成功した客は、『資料を見る間（1.8〜13秒）』を置かない。リセット後の待ち（30〜34秒）が、すでに人の間になっているため。リセットが使えなかった客・最後のお客さんだけ従来どおり置く。印: look_skip",
     since: "2.8.307",
     kb: "265a1cca",
     marker: "reset_success_skips_look",
@@ -696,14 +696,14 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "reset_retry_insurance",
     scene: "clear",
-    text: "リセットが空にならない・押せない・例外の時は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（330秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
+    text: "リセットが押せない・例外の時（2.8.317 から、押した後の空の読み戻しはしないので「空にならない」は入口ではない）は、すぐ従来の1つずつ外しへ行かず、1回だけ保険を入れる：①画面を1枚撮る（reset_stuck_shot）②画面を読む（reset_stuck_grasp＝空か・残り・読み込み中）③じつは空だった（確認が遅れただけ）なら成功（reset_stuck_recovered）④空でなければリセットをもう1回押して空を確かめる（reset_retry）⑤それでもだめな時だけ従来の外しへ（reset_fallback）。送付後のリセットと入力前のリセットの両方に効く。off・タブなし・入力の最中・ストップ要求の時は何もしない。待ちの上限（330秒）は2回目の前に張り直す。並べ替え側の保険（本線5回待ち→1回だけ強制・失敗→30〜36秒待って最初から・135秒沈黙→スクショ→画面把握→最善の次手）と同じ考え方",
     since: "2.8.308",
     kb: "f3d2c5b1",
     marker: "_resetWithInsurance(",
     file: "background.js",
     verify: {
       onlyIf: ["reset_retry"],
-      mustHaveAny: ["reset_stuck_shot", "reset_verified", "reset_fallback"],
+      mustHaveAny: ["reset_stuck_shot", "reset_settled", "reset_verified", "reset_fallback"],
     },
   },
   {
@@ -1078,7 +1078,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "reset_between_customers",
     scene: "clear",
-    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待ってから、フォームがすべて空か読み戻して確かめる。該当物件の数（○戸）がリセット前より増えたかは記録（reset_count_same）だけで、空なら増えなくても成功（2.8.307）。空なら写真を1枚撮って（記録のみ）次のお客さんを入れる。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は、スクショと画面把握のうえリセットをもう1回押し（reset_retry_insurance）、それでもだめな時だけ従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
+    text: "送付が終わったら、完了の小窓を閉じてリセットを押し、ページの読み直しを待ち、ラグがあるので30秒以上（2.8.292・30〜34秒・3回に分けて）人の間で待つだけ（2.8.317 竹内さん「リセットしたら必ず空になっている」「30〜34秒のところだけでリセットすれば改善」。一括は空の読み戻し・写真・5〜9秒の猶予を置かず、押して待ったら空とみなして＝reset_settled、次のお客さんの条件をAPIから読み直して入れる）。入れる前のリセット（reset_before_fill）も同じ（押す前にページが空なら押さない）。該当物件の数（○戸）が増えたかの記録（reset_count_same・2.8.307）は 2.8.317 でやめた。押す先は人が押した形（左の「リセット」の文字・幅160×高さ30＝2.8.287）を先に探し、無ければ div.reset_button・文字の順。値は直接書き換えず人の動きで押す。空にならない・押せない時は、スクショと画面把握のうえリセットをもう1回押し（reset_retry_insurance）、それでもだめな時だけ従来の1つずつ外すへ戻る。検索を押す前は Ajax（jQuery.active・読み込み表示・件数の表示）が落ち着くのを最大5秒待つ。人がリセットを押した時（拡張の押下と分けて人の押下だけ）も拡張が把握し、その画面の自動を止めて一覧を押さず、次のお客さんの条件入力はそこから30秒以上あける（2.8.294）。印: reset_press（押した先）／reset_wait／reset_settled／reset_verified／reset_shot／reset_not_empty／reset_fallback／ajax_settle／human_reset_press／human_reset_wait",
     since: "2.8.284",
     kb: "265a1cca",
     marker: "_postSendResetRealpro",
@@ -1086,8 +1086,8 @@ export const AUTO_RULES: AutoRule[] = [
     verify: {
       mustHaveAny: [
         "reset_press",
+        "reset_settled",
         "reset_verified",
-        "reset_not_empty",
         "reset_fallback",
       ],
     },
@@ -1099,7 +1099,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "quiet_window_no_interrupt",
     scene: "switch",
-    text: "並べ替え（検索確認→30〜36秒→並べ替え→読み直し→押し始め）・リセット（送付後のリセット→30秒以上の待機→空の確認）・次のお客さんまでの間・次客の条件入力（fill-done まで）の間は、邪魔しない窓（1つの印・上限で必ず切れる）を立てる。窓の間は、ウェブアプリからの別のお客さんの検索・すぐ拾う指示・写真のためのタブ切替・「検索条件を表示」の押し直し・並べ替え中の案内の戻し・前の回の続きの印を見送り、見送った事を点検に残す。並べ替えの待ちは見張りが固着と取り違えない（待ちの印が古い時だけ外して張り直す）。前客の入力待ちの間は同じ客をもう1本回さない。裏が起き直してリセットの途中で切れた時は、次の回がリセットから30秒以上待ってから条件を入れる。印: quiet_on／quiet_off／quiet_defer／quiet_inherit／reset_clear_marks／dl:sort_wait_stale_reset",
+    text: "並べ替え（検索確認→40〜50秒→並べ替え→猶予15〜20秒→読み直し→押し始め）・リセット（送付後のリセット→30〜34秒の待機＝空とみなす）・次のお客さんまでの間・次客の条件入力（fill-done まで）の間は、邪魔しない窓（1つの印・上限で必ず切れる）を立てる。窓の間は、ウェブアプリからの別のお客さんの検索・すぐ拾う指示・写真のためのタブ切替・「検索条件を表示」の押し直し・並べ替え中の案内の戻し・前の回の続きの印を見送り、見送った事を点検に残す。並べ替えの待ちは見張りが固着と取り違えない（待ちの印が古い時だけ外して張り直す）。前客の入力待ちの間は同じ客をもう1本回さない。裏が起き直してリセットの途中で切れた時は、次の回がリセットから30秒以上待ってから条件を入れる。印: quiet_on／quiet_off／quiet_defer／quiet_inherit／reset_clear_marks／dl:sort_wait_stale_reset",
     since: "2.8.295",
     kb: null,
     marker: "_quietSet(\"reset\"",
@@ -1117,7 +1117,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "reset_before_fill",
     scene: "clear",
-    text: "一括の各お客さんの条件を入れる前に、必ずページが空かを読み戻して確かめる。空ならリセットは押さない（二重に押さない）。空でなければリセットを押し、30秒以上の人の間で待ってから空を確かめる（送付後のリセットと同じ手順・邪魔しない窓 reset）。入力の最中は押さない。押せない・空にならない時だけページ側の従来の1つずつ外すへ任せる。印: reset_before_fill（すでに空／空でない→押す／空にできず）",
+    text: "（2.8.317 から一括は、最初のお客さんと、前客のリセットが済んでいる客では入れる前の確かめ・リセットを省く＝first_customer_no_reset。以下は省かない時と単発の入力前）条件を入れる前に、ページが空かを読み戻して確かめる。空ならリセットは押さない（二重に押さない）。空でなければリセットを押し、30〜34秒の人の間で待つだけ（押した後は空とみなす・送付後のリセットと同じ手順・邪魔しない窓 reset）。入力の最中は押さない。押せない時だけページ側の従来の1つずつ外すへ任せる。印: reset_before_fill（すでに空／空でない→押す／空にできず）",
     since: "2.8.296",
     kb: null,
     marker: "_resetBeforeFill(",
@@ -1887,13 +1887,13 @@ export const AUTO_RULES: AutoRule[] = [
     file: "page-script.js",
     verify: {
       onlyIf: ["page:reset_press_slow"],
-      mustHaveAny: ["reset_verified", "reset_stuck_recovered"],
+      mustHaveAny: ["reset_settled", "reset_verified", "reset_stuck_recovered"],
     },
   },
   {
     id: "lag_grace_after_sort",
     scene: "list",
-    text: "並べ替えの高→低を押した後は、画面の描き直し（ラグ）の猶予（5〜9秒・毎回揺らす）を置いてから一覧の取得に進む（dl:sort_lag_grace）。並べ替えが終わった直後に一覧を取り始めると、画面が追いつかず読み違える（#1659）。猶予は固定の数字の待ちにせず _lagGraceMs を通す",
+    text: "並べ替えの高→低を押した後は、画面の描き直し（ラグ）の猶予（15〜20秒・毎回揺らす・2.8.317 竹内さん「押した後の猶予も15秒〜」。旧5〜9秒）を置いてから一覧の取得に進む（dl:sort_lag_grace）。並べ替えが終わった直後に一覧を取り始めると、画面が追いつかず読み違える（#1659）。猶予は固定の数字の待ちにせず _lagGraceMs を通す",
     since: "2.8.316",
     kb: null,
     marker: "_lagGraceMs",
@@ -1904,16 +1904,70 @@ export const AUTO_RULES: AutoRule[] = [
     },
   },
   {
-    id: "lag_grace_after_reset",
-    scene: "clear",
-    text: "リセットで空と確かめた後も、画面の追いつき（ラグ）の猶予（5〜9秒）を置いてから次の段に進む（reset_lag_grace）。押した後の待ち（30〜34秒）と写真の後に、さらに猶予を置く。猶予は _lagGraceMs を通す（bulk-dl と同じ幅）",
-    since: "2.8.316",
+    /**
+     * ★ 2.8.317 竹内さん「並べ替えの押した後の猶予も15秒〜」「マウスもへんなうごきとぎれてしまわないように」:
+     *   並べ替えの操作中にカーソルの動きが取り消された（moveToEl が false）時は、すぐ諦めず 0.4〜0.9秒あけて1回だけ動かし直す。
+     */
+    id: "sort_mouse_retry",
+    scene: "list",
+    text: "並べ替え（AD・高→低）の操作でカーソルの動きが途切れた（取り消された）時は、すぐ直接移動に切り替えず、0.4〜0.9秒あけてもう1回だけカーソルを動かし直す（dl:sort_mouse_retry・moveToElRetry）。それでも動かない時だけ今まで通りの移動に切り替える。変な動きで途切れて並べ替えがずれるのを防ぐ。押した後は猶予 15〜20 秒（lag_grace_after_sort）",
+    since: "2.8.317",
     kb: null,
-    marker: "_lagGraceMs",
+    marker: "moveToElRetry",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:sort_mouse_retry"],
+      mustHaveAny: ["dl:sort_hilo", "dl:sort_done"],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.317 竹内さん「検索を押す前の時間 1〜2秒だと短すぎるので、10秒ほどたって検索を押すようにする」。
+     */
+    id: "search_review_wait",
+    scene: "search",
+    text: "条件を入れ終えてから検索を押すまでに、条件を見直す間を 9〜12 秒あける（毎回揺らす・page:search_review_wait）。旧は 0.4〜1.0 秒で、検索の後に画面が固まる（物件の表示・再計算）のに追いつけなかった。見直しは「この回で1回だけ」（待ち直さない）。待っている間に別の経路から検索が呼ばれても今すぐ押さない（予約済みの窓は30秒）。見直しのあと Ajax の件数が落ち着くのを最大5秒待ち、カーソルを動かして押す",
+    since: "2.8.317",
+    kb: null,
+    marker: "_searchReviewMs",
+    file: "page-script.js",
+    verify: {
+      onlyIf: ["page:search_look"],
+      mustHaveAny: ["page:search_review_wait"],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.317 竹内さん「１の部分前客のリセットのところ多すぎてバグる可能性ある。検索始めの1番最初のお客さんはリセットしなくて大丈夫」
+     *   「2の部分はリセットしたら必ず空になっているので、そのままお客さんの条件を拡張ツールからいれる」。
+     */
+    id: "first_customer_no_reset",
+    scene: "switch",
+    text: "一括の検索を始める時の1番最初のお客さんは、入れる前のリセットを押さない（検索を始める前の画面はまっさら＝リセット不要）。2人目以降は、前のお客さんの送付の後に押したリセットが済んでいれば（空になっている）、入れる前のリセットも押さず、そのまま次のお客さんの条件を拡張ツールのAPIから入れる（reset_before_fill の見送り）。リセットは「送付の後」の1回だけ。前客のリセットが無かった・失敗した・20分以上前の時だけ、入れる前に押す",
+    since: "2.8.317",
+    kb: "1ff4d9b6",
+    marker: "この一括の最初の客はリセットしない",
     file: "background.js",
     verify: {
-      onlyIf: ["reset_verified"],
-      mustHaveAny: ["reset_lag_grace"],
+      onlyIf: ["bulk_pos"],
+      mustHaveAny: ["reset_before_fill"],
+    },
+  },
+  {
+    /**
+     * ★ 2.8.317 竹内さん「この次のお客さんの条件を拡張ツールからAPIで読み込んでいれなおすってところかなり重要。
+     *   これを毎回することでループが安定性もつ」。
+     */
+    id: "next_customer_api_reload",
+    scene: "switch",
+    text: "次のお客さんへ移る時は、必ず毎回、拡張ツールからAPIでそのお客さんの最新の条件を読み込み直して（古い手元のコピーは使わない）、その条件を空のフォームへ入れる。読み込みに失敗したら2秒・4秒あけて最大3回までやり直し（権限・存在しないエラーはやり直さない）、全部だめな時だけ手元の条件で続ける。何回目で成功したか・条件が更新されていたかは印（customer_api_reload）に残す。これを毎回することでループが安定する（竹内さん・2026-11-27「かなり重要」）。順は ①前客の送付 ②リセット（30〜34秒待つだけ）③次客の条件をAPIから読み直す ④空のフォームへ入れる ⑤検索",
+    since: "2.8.317",
+    kb: "1ff4d9b6",
+    marker: "_lastCustomerReload",
+    file: "background.js",
+    verify: {
+      onlyIf: ["bulk_pos"],
+      mustHaveAny: ["customer_api_reload"],
     },
   },
   {

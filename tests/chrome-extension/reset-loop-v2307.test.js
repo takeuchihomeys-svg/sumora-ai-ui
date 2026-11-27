@@ -36,11 +36,11 @@ ok("look_skip は点検の段として残る（KEEP_STEP・RULE_STEP の両方�
 
 console.log("\n■ ② 空なら件数が増えなくても成功（1つずつ外しに回さない）");
 const bgVerify = bg.slice(bg.indexOf("async function _postSendResetRealpro"), bg.indexOf("async function _postSendClearOrReset"));
-ok("空の確認ループは空で止める", /_ver\.ok && _ver\.empty\) break;/.test(bgVerify));
-ok("空なら成功（verified に依らない）", /if \(_ver && _ver\.ok && _ver\.empty\) \{/.test(bgVerify));
-ok("件数が増えなかった時は reset_count_same を記録だけする", /_ver\.verified === false\) _stamp\("reset_count_same"/.test(bgVerify));
+// 2.8.317: 送付後のリセットは押して30〜34秒待ったら空とみなす（読み戻しループ・件数の記録・reset_not_empty は廃止）
+ok("押して待ったら空とみなす（reset_settled・assumedEmpty）", /_stamp\("reset_settled"/.test(bgVerify) && /assumedEmpty: true/.test(bgVerify));
+ok("空の確認ループ（RESET_VERIFY_TOTAL_MS）は無い", bgVerify.indexOf("RESET_VERIFY_TOTAL_MS") < 0);
 ok("旧の『空でも増えなければ従来の外しへ』は無い", !/countSame: true, why: "reset_count_same"/.test(bgVerify));
-ok("空でない時は従来どおり reset_not_empty で外しへ", /reset_not_empty/.test(bgVerify) && /ok: false, left: _left/.test(bgVerify));
+ok("押せない・例外の時は ok:false で呼び元の保険→従来の外しへ", /ok: false/.test(bgVerify) && /reset_press", "押せず→従来の外しへ/.test(bgVerify));
 
 console.log("\n■ ③ ページ側も空なら『きれい』印を付ける");
 const verifySrc = ps.slice(ps.indexOf("  function _resetVerify(opts, done) {"), ps.indexOf("  function _axResetCleanFresh"));
@@ -58,7 +58,7 @@ ok(
   "series_handoff_order にループ（⑤次のお客さんは①へ戻る・最後は待たない）がある",
   /⑤次のお客さんがいれば①へ戻る/.test(block("series_handoff_order")) && /最後のお客さんは完了を待たせず/.test(block("series_handoff_order"))
 );
-ok("series_handoff_order は『資料を見る間も置かない』と書く", /資料を見る間も置かない/.test(block("series_handoff_order")));
+ok("series_handoff_order は『空かの読み戻し・写真・猶予は置かない』と書く（資料を見る間は reset_success_skips_look）", /空かの読み戻し・写真・猶予は置かない/.test(block("series_handoff_order")));
 const OLD = [
   "continuous_customer_loop", "flow_series_grasp", "flow_series_order_gate", "customer_loop_one_by_one", "clear_then_fill_gate",
   "one_task_complete_before_next", "samekind_clear_before_fill", "now_action_clear_then_fill", "task_grasp_now_done_next", "continuous_series_next_grasp",

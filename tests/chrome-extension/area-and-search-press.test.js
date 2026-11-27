@@ -64,7 +64,7 @@ console.log("■ ② 前の条件を消せる（_resetRest のバグ）");
 
 console.log("■ ③ 検索が押される（search_look の繰り返し）");
 {
-  t("予約済みなら二重に予約しない", /_nowMs - _lookAt < 6000/.test(ps));
+  t("予約済みなら二重に予約しない", /_nowMs - _lookAt < 30000/.test(ps));
   t("予約済みを点検に残す", /search_look_skip/.test(ps));
   t("タイマーは1本だけ（clearTimeout で消す）", /if \(window\._axSearchLookTimer\) clearTimeout\(window\._axSearchLookTimer\)/.test(ps));
   // 2.8.313: 間に長いコメントと Ajax 落ち着き待ち（_axAjaxSettleThen）が入り、clickSearch はその中で呼ばれる

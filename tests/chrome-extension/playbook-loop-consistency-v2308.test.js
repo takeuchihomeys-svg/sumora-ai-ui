@@ -36,7 +36,7 @@ ok("外しに触れる決まり（" + mustHave.length + "件）は全部リセ�
 console.log("\n■ 古い短い待ちが現行として残っていない");
 ["search_to_sort_cursor", "search_confirm_then_wait_sort"].forEach((id) => {
   const t = by(id).text;
-  ok(id + " は 30〜36秒を言う", /30〜36秒|30秒/.test(t), t.slice(0, 80));
+  ok(id + " は 40〜50秒を言う（2.8.317）", /40〜50秒/.test(t), t.slice(0, 80));
   ok(id + " の「1秒」は『旧…廃止』としてだけ出る", !/1秒/.test(t) || /旧[^。]{0,12}1秒[^。]{0,12}廃止/.test(t), t.match(/.{0,20}1秒.{0,20}/));
 });
 
@@ -46,11 +46,11 @@ ok("①〜⑤がある", ["①", "②", "③", "④", "⑤"].every((c) => loop.i
 ok("⑤は次の客があれば①へ戻る（ループ）", /⑤[^。]*①へ戻る/.test(loop));
 ok("リセット→読み直し→次客の条件はAPIから、の順", loop.indexOf("リセット") > 0 && loop.indexOf("リセット") < loop.indexOf("読み直"), loop.slice(0, 60));
 ok("最後の客は待たず裏でリセットして終わる", /最後のお客さんは完了を待たせず裏でリセット/.test(loop));
-ok("リセットが使えない時だけ従来の外し", /リセットが押せない・空にならない時だけ/.test(loop));
+ok("リセットが使えない時だけ従来の外し", /リセットが押せない・例外の時だけ/.test(loop));
 
 console.log("\n■ リセット周りの決まりが互いに食い違わない");
 const rb = by("reset_between_customers").text, rc = by("reset_count_evidence").text || "";
-ok("reset_between_customers: 空なら件数が増えなくても成功", /増えなくても成功/.test(rb));
+ok("reset_between_customers: 押して待ったら空とみなす（件数で成功・失敗を決めない・2.8.317）", /空とみなして/.test(rb));
 ok("reset_between_customers: 保険（もう1回押す）を書く", /reset_retry_insurance/.test(rb));
 ok("どの決まりも『空でも数が増えなければ従来の外し』と言っていない", rules.every((r) => !/空でも数が増えなければ従来の1つずつ外しへ/.test(r.text)), rules.filter((r) => /空でも数が増えなければ/.test(r.text)).map((r) => r.id));
 ok("保険の決まりがある", /reset_stuck_shot/.test(by("reset_retry_insurance").text) && /reset_retry/.test(by("reset_retry_insurance").text));

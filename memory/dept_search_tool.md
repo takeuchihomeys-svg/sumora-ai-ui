@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.317: リセット簡素化（30〜34秒だけ）／検索前10秒／並べ替え40〜50秒／次客の条件を毎回APIで読み直す（手順書 build_v 24）**
+
+竹内さん「前客のリセットが多すぎてバグる可能性。30〜34秒のところだけでリセット。最初の客はリセットしない」「リセットしたら必ず空。そのまま条件を入れる」「検索を押す前 1〜2秒は短い→10秒ほど」「並べ替えは検索確認から40〜50秒。押した後の猶予15秒〜。マウスが途切れないように」「外した後、拡張ツールからAPIで次の客の条件を読み込んで入れる（毎回・ループ安定の要）」。質問の答え: 把握→並べ替え開始は 40〜50秒の1本。
+
+- **リセット**（background `_postSendResetRealpro`／`_resetBeforeFill`）: 押す→再読み込み待ち→**30〜34秒待つ＝空とみなす**（読み戻しの繰り返し・写真・ラグ猶予は廃止。クリーン印を付けるための ≤1.5秒の確認だけ残す）。失敗時の保険（従来の外し）は残す。`lag_grace_after_reset` は廃止。
+- **最初の客はリセットしない**（`_bi === _startIndex && !_resume`）。前客の送付後リセットが成功済み（20分以内・cid一致）なら入力前リセットも見送る（段 `reset_before_fill` に理由を残す）。
+- **検索**（page-script `_searchReviewMs` 9〜12秒・`search_review_wait`）。見直し予約の二重ガードを 30秒に拡大。
+- **並べ替え**（bulk-dl）: 検索把握から **40〜50秒**（`SORT_AFTER_SEARCH_*`）・押した後の猶予 **15〜20秒**（`LAG_GRACE`）・マウス移動の取り消しは1回やり直し（`dl:sort_mouse_retry`）。`SORT_WAIT_OWN_MAX_MS` 90→**120秒**。
+- **次客の条件を毎回 API から読み直す**（`_refreshCustomerBeforeSearch`・最大3回・段 `customer_api_reload`）。手順書の決まり `next_customer_api_reload`・`first_customer_no_reset`・`search_review_wait`・`sort_mouse_retry` を追加。
+- **版**: manifest・page-script・itandi-page-script・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` すべて 2.8.317。
+- **未確認（実機）**: 拡張再読込 → 自動で2客以上 → `check-playbook-sync` ⑧ が verified になるまで「反映済み」と言わない。ITANDI の一回の通しも未確認。popup 単発の入力前リセット（`axlx-reset-before-fill`）は今回変えていない。
+
+---
+
 ## 2026-11-27 **拡張 2.8.316: 押した後のラグ猶予（並べ替え・リセット）／リセットの押し待ち 120秒以上**
 
 竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」「出来ている場合の40秒は判断が早すぎるので、止まって120秒以上にする」。

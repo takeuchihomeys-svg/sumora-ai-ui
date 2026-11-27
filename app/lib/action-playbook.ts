@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT } from "./reset-facts";
+import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
 /** 場面の確かさ: 3回以上の検索で出た＝solid（手順として使える）／1〜2回＝thin（薄い・人が1回確かめる候補） */
@@ -45,7 +45,11 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 23;
+export const PLAYBOOK_BUILD_V = 24;
+// 24（2026-11-27 竹内さん「リセットは多すぎてバグる・30〜34秒だけに／1人目はリセットしない／検索前10秒／並べ替え40〜50秒＋猶予15秒〜／次客の条件を毎回APIから読み直す」）:
+//   ループを簡素にした（拡張 2.8.317）。リセット＝押して30〜34秒待つだけ（空の読み戻し・写真・猶予なし）。最初の客と前客リセット済みの客は入れる前にリセットしない。
+//   検索は条件を入れ終えて9〜12秒見直してから。並べ替えは検索確認から40〜50秒・押した後の猶予15〜20秒。
+//   次客の条件を拡張ツールからAPIで毎回読み直して空のフォームへ入れる手（next_customer_api_reload）を clear／switch の手に太く入れた。lag_grace_after_reset は廃止。
 // 23（2026-11-27 竹内さん「まだ文に無い時間もなおす」）: 裏のリセットの押す待ち（130秒）・並べ替えの窓（待ち＋120秒／入力後150秒）・並べ替えの待ちの印（90秒で古い印）・見張りの再試行（45秒）を文に入れた。
 // 22（2026-11-27）: 場面の手順（area／cond／station／list／search／next）に、press（押す前後の人の間など全部の場面に効く決まり）も「この場面に効く決まり」として並べた。
 //   これまでは playbook.rules（一覧）にだけ載っていて、場面の手順から辿れなかった。
@@ -85,7 +89,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: `リセットを押す（左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}のラグ待ち→${LAG_GRACE_TEXT}の猶予）`,
+    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない）`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
     grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
@@ -93,16 +97,16 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   },
   {
     id: "clear_then_fill",
-    label: "空と確かめた→新条件の入れへ",
+    label: "空とみなした→次客の条件をAPIから読み直して入れへ",
     scene: null,
-    grasp: ["reset_verified", "page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
+    grasp: ["reset_settled", "customer_api_reload", "reset_verified", "page:clear_then_fill_ok", "page:next_move_grasp", "page:loop_phase_grasp"],
     next: "after_clear",
   },
   {
     id: "after_clear",
     label: "前客のリセット完了（フォームが空）→入れへ",
     scene: null,
-    grasp: ["reset_verified", "page:reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
+    grasp: ["reset_settled", "reset_verified", "page:reset_clean_skip_clear", "page:guide_phase_after_clear", "page:leftover_after_clear", "page:clear_then_fill_ok", "page:clear_done"],
     next: "after_confirm",
   },
   { id: "after_confirm", label: "確定してリストへ（入れた把握）", scene: "area", grasp: ["page:guide_phase_after_confirm"], next: "after_place" },
@@ -144,9 +148,9 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 
 /** 一覧場面に必ず載せる AD 並べ替えの手（録画が印刷用PDFだけでも手順書から抜けない） */
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
-  "①並べ替えへカーソルを置く（クリックしない・検索確認から30〜36秒の待ちのあと。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は90秒を過ぎたら古い印として外して張り直す）",
-  "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）",
-  "③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと5〜9秒の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）",
+  `①並べ替えへカーソルを置く（クリックしない・検索確認（把握）から${SORT_AFTER_SEARCH_TEXT}の待ちのあと＝検索後は画面が固まるので早すぎたら追いつけない。待ちは1本だけ。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は120秒を過ぎたら古い印として外して張り直す）`,
+  "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
+  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）`,
   "④並べ替え後に印刷用PDFを押す",
 ];
 
@@ -155,9 +159,9 @@ export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
  *   ★ 2026-11-23 竹内さん「検索の理解の部分はちゃんとできているのか」
  */
 export const PLAYBOOK_SEARCH_GRASP_STEPS: ReadonlyArray<string> = [
-  "①条件が揃ったら検索ボタンを押す",
+  `①条件を入れ終えたら、${SEARCH_REVIEW_TEXT}見直す間をあけてから検索ボタンを押す（検索後は画面が固まるので入れてすぐ押さない・search_review_wait）`,
   "②検索したことを手順書×画面で把握する（並べ替え見出し／棟戸／印刷用PDFが見える。まだ動かない時は次の撮影・次手まで45秒あける）",
-  "③把握OKのあと並べ替え（AD）へ進む（印刷用PDFは並べ替えの後・把握なしでは並べ替えしない）",
+  `③把握OKのあと${SORT_AFTER_SEARCH_TEXT}待って並べ替え（AD）へ進む（印刷用PDFは並べ替えの後・把握なしでは並べ替えしない）`,
 ];
 
 /**
@@ -194,12 +198,12 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①送付が終わったら完了の小窓を閉じる（1つずつ外さない・箱ごとに開けて外す手は使わない）",
       `②左の「リセット」ボタン（${RESET_BUTTON_SIZE}）を人が押す形で押す（値は直接書き換えない）。${RESET_PRESS_WAIT_TEXT}`,
-      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。空と確かめたあとも${LAG_GRACE_TEXT}の猶予を置く（画面の追いつき）`,
-      "④フォームがすべて空か、区・駅・間取りなどの残りを名前付きで1つずつ読み戻して確かめる（確かめは最大25秒・空なら該当件数が増えなくても成功・reset_verified）",
-      "⑤空と確かめたら clear_then_fill_ok → 新条件の入れへ（写真は1枚撮るだけ・記録用。写真の前に2〜4秒の間を置き、撮影は最大25秒。撮れなければそのまま進む）",
-      "⑥空にならない・押せない時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ（従来の外しは最大125秒）",
+      `③ページの読み直しを待ち、ラグがあるので${RESET_WAIT_TEXT}人の間で待つ。待つだけ（2.8.317・竹内さん「30〜34秒のところだけでリセットすれば改善」）。空かの読み戻し・写真・猶予は置かない`,
+      "④押して待ったら、フォームは空になっているとみなす（竹内さん「リセットしたら必ず空になっている」・reset_settled）。リセットは各客の送付のあと1回だけ（最初のお客さん・前客のリセットが済んだ客は、入れる前にも押さない＝first_customer_no_reset）",
+      "⑤すぐ次客の条件を拡張ツールのAPIから読み直して（古い手元のコピーは使わない・失敗は2秒・4秒あけて最大3回・customer_api_reload）、空のフォームへそのまま入れる（next_customer_api_reload）",
+      "⑥押せない・例外の時だけ：スクショを撮る→画面を読む（残り・小窓・読み込み中）→リセットをもう1回押す（reset_retry_insurance）。それでもだめな時だけ最後の保険として従来の外しへ（従来の外しは最大125秒・外す前後は残りを名前付きで1つずつ言う）",
     ],
-    rules: [...new Set(["reset_replaces_clear", "reset_between_customers", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", "lag_grace_after_reset", ...AUTO_RULES.filter((r) => r.scene === "clear" && !RETIRED_ONE_BY_ONE.has(r.id)).map((r) => r.id)])],
+    rules: [...new Set(["reset_replaces_clear", "reset_between_customers", "reset_empty_is_enough", "first_customer_no_reset", "next_customer_api_reload", "reset_retry_insurance", "clear_single_owner", "clear_detail_grasp", "clear_then_fill_gate", "reset_press_late_grasp", ...AUTO_RULES.filter((r) => r.scene === "clear" && !RETIRED_ONE_BY_ONE.has(r.id)).map((r) => r.id)])],
   },
   {
     id: "switch",
@@ -207,9 +211,10 @@ export const PLAYBOOK_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①手順書を読む（playbook_seen）",
       "②次のお客さんに切り替える（次の客までの間は8〜25秒・ときどき40〜95秒の人の間。リセットが成功した客は資料を見る間（1.8〜13秒）を置かない）",
-      `③前客のリセット（左の「リセット」→${RESET_WAIT_TEXT}のラグ待ち）→空の確認→新条件の順を守る（1つずつ外さない）`,
+      `③前客のリセット（送付のあと1回・左の「リセット」→${RESET_WAIT_TEXT}待つだけ＝空とみなす）。順は「前客の送付→リセット→次客の条件をAPIから読み直す→空のフォームへ入れる→検索」を守る（1つずつ外さない。最初のお客さんはリセットしない）`,
+      "④【最重要】次のお客さんの条件は、毎回、拡張ツールからAPIで最新を読み込み直して入れ直す（古いコピーで入れない・失敗は2秒・4秒あけて最大3回・全部だめな時だけ手元の条件で続ける）。これを毎回やることでループが安定する（竹内さん・2026-11-27「かなり重要」。印: customer_api_reload＝何回目で読めたか・条件が更新されていたか）",
     ],
-    rules: [...new Set(["playbook_read", "reset_between_customers", ...AUTO_RULES.filter((r) => r.scene === "switch").map((r) => r.id)])],
+    rules: [...new Set(["playbook_read", "reset_between_customers", "next_customer_api_reload", "first_customer_no_reset", "series_handoff_order", ...AUTO_RULES.filter((r) => r.scene === "switch").map((r) => r.id)])],
   },
   {
     id: "pet",

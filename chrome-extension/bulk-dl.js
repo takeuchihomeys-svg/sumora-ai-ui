@@ -2206,11 +2206,15 @@
    *   ⚠ 30秒未満にしない。上限は 36秒（人の間として少しだけ揺らす）。
    *   ⚠ 起点は「検索の確認（screenOk）」の時刻。_waitMsFromSearchConfirm が残りを引く。
    */
-  var SORT_AFTER_SEARCH_MIN_MS = 30000;
-  var SORT_AFTER_SEARCH_MAX_MS = 36000;
+  /**
+   * ★ 2.8.317 竹内さん「検索後かたまるので、ここは早すぎたら追いつけない。並べ替えは検索確認から40〜50秒あけてバグらないように」:
+   *   30〜36秒 → 40〜50秒（起点は同じ・検索確認の時刻）。⚠ 40秒未満にしない・上限は50秒。
+   */
+  var SORT_AFTER_SEARCH_MIN_MS = 40000;
+  var SORT_AFTER_SEARCH_MAX_MS = 50000;
   function _humanWaitAfterSearchMs() {
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var base = H && H.logNormalDelay ? H.logNormalDelay(32000, 0.05) : (SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 4000));
+    var base = H && H.logNormalDelay ? H.logNormalDelay(45000, 0.05) : (SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 10000));
     if (base < SORT_AFTER_SEARCH_MIN_MS) base = SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 1500);
     if (base > SORT_AFTER_SEARCH_MAX_MS) base = SORT_AFTER_SEARCH_MAX_MS;
     return Math.round(base);
@@ -2219,11 +2223,12 @@
    * ★ 2.8.316 竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」:
    *   並べ替え・リセットの押した後は、画面の描き直し（ラグ）が続く。次の段（一覧の取得・次の入力）を
    *   画面が追いつく前に始めると、押し損ね・読み違いが起きる（#1659：並べ替えが終わった直後に一覧を取り始めた）。
-   *   → 押した後に 5〜9 秒の猶予を置く（毎回揺らす）。background（リセット後）も同じ幅を使う。
+   *   → 押した後に猶予を置く（毎回揺らす）。
+   *   ★ 2.8.317 竹内さん「押した後の猶予も15秒～と猶予いれる」: 5〜9秒 → 15〜20秒。リセット後の猶予は廃止（リセットは押す→30〜34秒待つだけ）。
    *   ⚠ 猶予は人の間。固定の数字の待ちにしない（_lagGraceMs を通す）。
    */
-  var LAG_GRACE_MIN_MS = 5000;
-  var LAG_GRACE_MAX_MS = 9000;
+  var LAG_GRACE_MIN_MS = 15000;
+  var LAG_GRACE_MAX_MS = 20000;
   function _lagGraceMs() {
     return LAG_GRACE_MIN_MS + Math.floor(Math.random() * (LAG_GRACE_MAX_MS - LAG_GRACE_MIN_MS));
   }
@@ -4037,7 +4042,7 @@
    *   ⚠ 2026-11-14 の決定「出来なくても止まらずにそのまま動かす」は守る: 待ち直しても駄目なら警告を出して続ける。
    */
   var SORT_FAIL_WAIT_RETRY_MAX = 1;
-  var SORT_WAIT_OWN_MAX_MS = 90000;
+  var SORT_WAIT_OWN_MAX_MS = 120000; // ★ 2.8.317: 90→120秒（並べ替えの待ちを 40〜50秒にしたので、待ち直し1回でも古い印にしない＝待ちの最大の2倍以上）
   var _sortFailWaitRetries = 0;
   var _sortWaitRetryPending = false;
   var _sortWaitRetryAt = 0;
@@ -4613,6 +4618,30 @@
       ads.sort(function (a, b) { return a.score - b.score; });
       return ads[0].el;
     };
+    /**
+     * ★ 2.8.317 竹内さん「マウスもへんなうごき・とぎれてしまわないように」:
+     *   カーソルの移動が途中で取り消される（別の動き・浮遊が割り込む＝moveToEl が false）と、旧は並べ替え全体を諦めていた
+     *   （sort_abort 系で最初からやり直し・数十秒ロス）。→ 取り消されたら少し待って**1回だけ**同じ要素へ動かし直す（sort_mouse_retry）。
+     *   結果は cb(moved) ＝ true（着いた）／false（2回とも取り消された）／"rejected"（例外・従来の直接移動へ）。
+     */
+    var moveToElRetry = function (el, cb) {
+      var tryN = 0;
+      var go = function () {
+        tryN++;
+        var pr = null;
+        try { pr = P.moveToEl(el); } catch (_) { pr = null; }
+        if (!pr || typeof pr.then !== "function") { cb("rejected"); return; }
+        pr.then(function (moved) {
+          if (moved === false && tryN < 2 && alive()) {
+            _auditSort("sort_mouse_retry", "カーソルの動きが途中で取り消された→少し待って1回だけ動かし直す");
+            setTimeout(go, 400 + Math.floor(Math.random() * 500));
+            return;
+          }
+          cb(moved);
+        }, function () { cb("rejected"); });
+      };
+      go();
+    };
     /** 押さずに「カーソルをその上へ移す」（展開を待つだけ・click しない・座標は要素の真ん中） */
     var hover = function (el, cb) {
       var doneHover = typeof cb === "function" ? cb : function () {};
@@ -4639,13 +4668,15 @@
       };
       try {
         if (P && P.moveToEl) {
-          P.moveToEl(el).then(function (moved) {
+          moveToElRetry(el, function (moved) {
+            if (moved === "rejected") {
+              if (!alive()) { doneHover(false); return; }
+              try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
+              setTimeout(fire, _hd(120));
+              return;
+            }
             if (moved === false || !alive()) { doneHover(false); return; }
             setTimeout(fire, 140 + Math.floor(Math.random() * 220));
-          }, function () {
-            if (!alive()) { doneHover(false); return; }
-            try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(fire, _hd(120));
           });
           return;
         }
@@ -4682,14 +4713,16 @@
       try {
         if (P && P.moveToEl) {
           // 着いてすぐ押さない（人は目で確かめてから押す・並べ替えの高→低などもこの道・2026-11-20）
-          P.moveToEl(el).then(function (moved) {
+          moveToElRetry(el, function (moved) {
+            if (moved === "rejected") {
+              if (!alive()) { cb(false); return; }
+              var c = centerOf(el);
+              try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
+              setTimeout(go, _hd(200));
+              return;
+            }
             if (moved === false || !alive()) { cb(false); return; }
             setTimeout(go, 180 + Math.floor(Math.random() * 420));
-          }, function () {
-            if (!alive()) { cb(false); return; }
-            var c = centerOf(el);
-            try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(go, _hd(200));
           });
           return;
         }

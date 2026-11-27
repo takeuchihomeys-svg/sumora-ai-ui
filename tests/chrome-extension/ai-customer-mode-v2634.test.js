@@ -270,7 +270,7 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   // 2.8.313: _enqueueWithEl の本体にコメントが増えて 900 字の窓で届かない。関数の本体の中で見る形に（一息の数字は同じ）。
   ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", (function () { const b = fnSlice(ps4, "function _enqueueWithEl("); return /Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(b) && /Math\.random\(\) < 0\.03\) \{[\s\S]{0,200}"考え"/.test(b); })());
   // 2.8.313: 2.8.263 竹内さん「検索ボタン押してから実検索までラグが大きい」で、見直しは 0.4〜1.0秒・一息は稀（5%で 0.5〜1.2秒）に短くした。一息が入る形は今も有る。
-  ok("リアプロ: 検索を押す前の見直しにも一息（稀に 5%・見直しは 0.4〜1.0秒）", /var _lookMs = humanRand\(400, 1000\);/.test(ps4) && /if \(Math\.random\(\) < 0\.05\) _lookMs \+= 500 \+ Math\.floor\(Math\.random\(\) \* 700\);/.test(ps4) && /window\._axSearchLookedOver = true;/.test(ps4));
+  ok("リアプロ: 検索を押す前の見直し（2.8.317 から 9〜12秒・毎回揺らす。旧の稀な一息 5% は含めた）", /var _lookMs = _searchReviewMs\(\);/.test(ps4) && /window\._axSearchLookedOver = true;/.test(ps4));
   ok("ITANDI: 検索を押す前にも一息（10%・3%）", /_preSearchBreath[\s\S]{0,400}Math\.random\(\) < 0\.10\) _preSearchBreath = 900/.test(ips4));
   // 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。昼休みなら昼休みと人間のように」
   // 2.8.313: 資料を見る間の表示文は「資料を確認中」に変わった（bulk-dl.js _lookAtDocThenGo）。検索結果を見る間は「👀 検索結果を見ています」。_axlxWorkNote(text, untilMs) 自体は同じ。
