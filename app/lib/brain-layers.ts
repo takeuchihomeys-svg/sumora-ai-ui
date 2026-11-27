@@ -141,6 +141,8 @@ export type FreshDigest = {
   rw?: string; dm?: number;
   /** 2026-11-27 作業員A（#821「判定ごとにブレインの答えを記録に残す」・記録だけ）: 物件確認した のピッカー（check_pattern）の書き換え（"LLMのピッカー→最終"）。同じなら付けない */
   rp?: string;
+  /** 2026-11-27 作業員A（AFTER_DECISION_RECORDS・判断の後の記録）: 入居の期限に向いた一手か（1語）・次に来やすい通の種類の上位2つ（"・"でつなぐ） */
+  mif?: string; nl?: string;
   /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
   nd?: string; pa?: string; cf?: string;
   /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
@@ -208,6 +210,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
     ...((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()),
+    ...((() => { const ar = meta.after_records as { mif?: unknown; nl?: unknown } | undefined; if (!ar) return {}; const mif = str(ar.mif, 12); const nl = Array.isArray(ar.nl) ? (ar.nl as unknown[]).map(String).join("・").slice(0, 24) : null; return { ...(mif ? { mif } : {}), ...(nl ? { nl } : {}) }; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),

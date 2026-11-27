@@ -538,6 +538,8 @@ export type SuggestedAixMeta = {
   apply_route?: { node: string | null; branch: string | null; next: string | null; next_aix: string[]; substate?: string | null };
   /** 2026-11-21 作業員M（#467・APPLY_ROUTE_RECORD=on）: 道の後の状態の表の狙い（turn-aims-after と同じ・記録だけ） */
   turn_aims_after?: import("@/app/lib/brain-turn-aims").TurnAims;
+  /** 2026-11-27 作業員A: 判断の後に決まった計算で作る記録（入居の期限に向いた一手か・次に来やすい通の上位2つ・AFTER_DECISION_RECORDS） */
+  after_records?: import("@/app/lib/after-decision-records").AfterRecords;
   main_point?: string;
   flow_signals?: string[];
   /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
@@ -7202,6 +7204,18 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       const tcRoutes = (normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []).map((a) => (a as { route?: string | null }).route ?? null);
       console.log(JSON.stringify({ tag: "brain:now-later", conversationId, nl: nowLaterDigest(nowLaterParsed), aixNow: aixNowOf(nowLaterParsed, finalAix) ?? null, finalAix: finalAix ?? null, conflicts: nowLaterConflicts(nowLaterParsed, { finalAix, contractRoutes: tcRoutes }) }));
     }
+    // 2026-11-27 作業員A（統括役の頼み・受け持ち表の土台の穴①②・AFTER_DECISION_RECORDS=on の時だけ・既定 off）: 判断の後に決まった計算で作る記録（ブレインの出力の欄にはしない）。
+    //   入居の期限に向いた一手か（1語）・この場面で次に来やすい通の種類の上位2つ（#804 の分かれ道の表）→ meta.after_records → digest.mif・digest.nl
+    let afterRecords: import("@/app/lib/after-decision-records").AfterRecords | null = null;
+    try {
+      const adr = await import("@/app/lib/after-decision-records");
+      if (adr.afterDecisionRecordsOn()) {
+        const mvA = resolveConditionMoveIn(pc?.move_in_time ?? null, { nowIso: new Date().toISOString() });
+        const stA = applyRouteLocRec ? (applyRouteLocRec.branch ? `分:${applyRouteLocRec.branch}` : applyRouteLocRec.node) : null;
+        const subA = (() => { try { return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })();
+        afterRecords = adr.buildAfterRecords({ moveInYmd: mvA.kind === "future" ? ymdStrOf(mvA.start.ymd) : null, todayYmd: new Date(Date.now() + 9 * 36e5).toISOString().slice(0, 10), finalAix: finalAix ?? null, station: stA, sub: subA });
+      }
+    } catch (e) { console.warn("[brain-core] after-records skipped:", e instanceof Error ? e.message : String(e)); }
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -7307,6 +7321,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
+      ...(afterRecords ? { after_records: afterRecords } : {}), // 2026-11-27 作業員A: 判断の後の記録（AFTER_DECISION_RECORDS）
       ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
       ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { if (substateContextOn()) { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); if (sc.droppedBy) materialMarks.substate_context_dropped = 1; return sc.id; } return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
