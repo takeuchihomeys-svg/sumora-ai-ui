@@ -1,0 +1,185 @@
+{
+ "v": 1,
+ "at": "2026-11-27",
+ "note": "main（733fe783c）で 1本ずつ流して決めた。slow＝1本 5秒超（夜に回す）・needsEnv＝DB の url が要る（.env があれば通る）・knownFail＝main でも落ちる（試験が古いのかコードが古いのかを分けて直したら消す）",
+ "slow": [
+  {
+   "file": "brain-prompt-rules-1112.test.ts",
+   "sec": 12.3
+  },
+  {
+   "file": "brain-prompt-rules-1113.test.ts",
+   "sec": 11.9
+  },
+  {
+   "file": "brain-reply-mode-p0.test.ts",
+   "sec": 12.1
+  },
+  {
+   "file": "deepseek-busy-fallback.test.ts",
+   "sec": 16.9
+  },
+  {
+   "file": "final-check-flash.test.ts",
+   "sec": 5.4
+  }
+ ],
+ "needsEnv": [
+  "cron-log-wrap.test.ts",
+  "learn-improvements.test.ts",
+  "man-yen.test.ts",
+  "sent-image-doc-guard.test.ts",
+  "shot-ops-focus.test.ts",
+  "shot-retention.test.ts",
+  "supervisor-save.test.ts"
+ ],
+ "knownFail": [
+  {
+   "file": "ack-confirm-aix-path.test.ts",
+   "owner": "統括役",
+   "was": "作業員D",
+   "ledger": 826
+  },
+  {
+   "file": "aix-catalog.test.ts",
+   "owner": "統括役",
+   "was": "作業員21",
+   "ledger": 826
+  },
+  {
+   "file": "aix-consult.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "apply-period-summary.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "apply-route-map.test.ts",
+   "owner": "統括役",
+   "was": "作業員M",
+   "ledger": 826
+  },
+  {
+   "file": "auto-next-page-resume.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "compose-sentence-plan.test.ts",
+   "owner": "統括役",
+   "was": "作業員14",
+   "ledger": 826
+  },
+  {
+   "file": "customer-sim.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "deepseek-cutoff-routes.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "learn-audit.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "learn-garbage-cleanup.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "link-promise-picker.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "listing-text.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "llm-alt-provider.test.ts",
+   "owner": "統括役",
+   "was": "作業員8",
+   "ledger": 826
+  },
+  {
+   "file": "migrate-schema-rls.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "normal-photo-learn-traps.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "owner-answers-1021.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "pdf-render-text.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "pdf-sheet-crop.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "reapply-customer.test.ts",
+   "owner": "統括役",
+   "was": "作業員H",
+   "ledger": 826
+  },
+  {
+   "file": "relative-area.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "schema-objects-check.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "search-focus.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "search-update-days.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "supervisor-selfcheck-humanness.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "supervisor-wiring.test.ts",
+   "owner": "統括役",
+   "ledger": 826
+  },
+  {
+   "file": "ward-reselect-loop.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "writing-blueprint.test.ts",
+   "owner": "統括役",
+   "was": "作業員4",
+   "ledger": 826
+  }
+ ]
+}
