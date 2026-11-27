@@ -4,6 +4,7 @@
 //       ③ #818 の決まりとコードの食い違い（--drift=<audit-rule-code-drift --json の json>）④ #816 のスイッチの一生（<exam-cache>/switch-life.json か --life=）
 //   既定は一覧を出すだけ。--ledger で ①（台帳に無い）と ③（食い違いで台帳に無い）を記録だけから台帳に積む（題で重ねない）。--json で表を書く
 // 実行: npx tsx --env-file=.env.local scripts/audit-unfinished.ts [--drift=<json>] [--life=<json>] [--top=20] [--json=<file>] [--ledger]
+import { requireFreeMemMb } from "./lib/free-mem-guard";
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,8 @@ const flag = (k: string) => process.argv.includes(`--${k}`);
 const readJson = <T>(f: string): T | null => { try { return JSON.parse(readFileSync(f, "utf8")) as T; } catch { return null; } };
 
 async function main() {
+  // 2026-11-28 作業員L（統括役の決め）: 流す前の空きメモリの関所（500MB・--min-free= で変える・--wait-min= の間待つ）
+  await requireFreeMemMb(Number(process.argv.find((a) => a.startsWith("--min-free="))?.slice(11) ?? "") || 500, { waitMin: Number(process.argv.find((a) => a.startsWith("--wait-min="))?.slice(11) ?? "0") || 0, label: "抜けの棚卸し" });
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!, { auth: { persistSession: false } });
   const nowIso = new Date().toISOString(); const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
   // ① 設計知見（本文は読まない＝軽い）

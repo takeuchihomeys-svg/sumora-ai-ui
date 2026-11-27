@@ -12,6 +12,9 @@ const pick = (re: RegExp, s: string) => [...new Set([...String(s).normalize("NFK
 const MONEY_RE = /\d[\d,，]*\s*(?:万|千)?円|\d+(?:\.\d+)?\s*万/g;
 const DATE_RE = /\d{1,2}\s*[\/月]\s*\d{1,2}\s*日?|\d{1,2}\s*[:：時]\s*\d{0,2}\s*分?|(?:今日|明日|明後日|本日|来週|今週)(?:中|の|に)?/g;
 const PROP_RE = /\d{2,4}\s*号室|[ァ-ヶー]{3,}(?:[ァ-ヶーⅠ-Ⅹ0-9]{0,6})|[一-龥]{2,}(?:マンション|ハイツ|コーポ|レジデンス|荘)/g;
+/** 物件名ではない普通のカタカナ（返信によく出る言葉・設備・手続き） */
+export const COMMON_KATAKANA = new Set(["ピックアップ", "オススメ", "サポート", "エリア", "ペット", "ペットサイズ", "メール", "エラー", "フォーマット", "リビング", "カード", "アクセス", "オートロック", "メッセージ", "スタッフ", "キッチン", "バストイレ", "エアコン", "インターネット", "クローゼット", "ベランダ", "バルコニー", "フローリング", "シャワー", "トイレ", "コンロ", "ガスコンロ", "システムキッチン", "ロフト", "スーモ", "ホームページ", "スケジュール", "キャンセル", "プラン", "オーナー", "フリーレント", "ルームツアー", "マンション", "アパート", "タイミング", "ポイント", "チェック", "スムーズ", "コメント", "ラインナップ", "リスト"]);
+const propTokens = (s: string) => [...new Set([...String(s).normalize("NFKC").matchAll(PROP_RE)].map((m) => m[0].replace(/[,，\s]/g, "")).filter((t) => !COMMON_KATAKANA.has(t)))].sort().join("|");
 const PROMISE_RE = /確認(?:させて|して|致し|いたし)|お調べ|折り返し|お送り(?:させて|致し|いたし)|ご連絡(?:させて|致し|いたし)|手配|押さえ/g;
 /** 直しで変わった危ない種類（純関数）。下書きが無い・直していない番は空 */
 export function dangerOfEdit(draft: string | null | undefined, sent: string | null | undefined): DangerKind[] {
@@ -19,12 +22,16 @@ export function dangerOfEdit(draft: string | null | undefined, sent: string | nu
   const out: DangerKind[] = [];
   if (pick(MONEY_RE, draft) !== pick(MONEY_RE, sent)) out.push("金額");
   if (pick(DATE_RE, draft) !== pick(DATE_RE, sent)) out.push("日時");
-  if (pick(PROP_RE, draft) !== pick(PROP_RE, sent)) out.push("物件");
+  // 2026-11-28 作業員L（#811 の本番の数え）: カタカナの普通の言葉（ピックアップ 43・オススメ 28・サポート 25・エリア 10 …）が物件名に数えられ、
+  //   返信の番の半分以上が「危ない間違い」になっていた＝物件名の候補から普通の言葉を外す
+  if (propTokens(draft) !== propTokens(sent)) out.push("物件");
   if ((pick(PROMISE_RE, draft) !== "") !== (pick(PROMISE_RE, sent) !== "")) out.push("約束");
   return out;
 }
 export type DelegCell = { scene: string; replyTurns: number; asIs: number; asIsRate: number | null; edited: number; danger: number; dangerKinds: Partial<Record<DangerKind, number>>; aixTurns: number; aixAsReply: number };
-const isAix = (s: string) => /^AIX/.test(s) || s === "2段";
+// 2026-11-28 作業員L（統括役の決め・作業員A の c7aa79e00 と同じ数え方）: AIX の番は、スタッフの返事の塊の中ですぐ押した AIX（truth が AIX）だけ。
+//   「2段」（約束の文を返して後で AIX）はブレインの返信と合う＝AIX の番に数えず、返信の番として「そのまま送れたか」を数える
+const isAix = (s: string) => /^AIX/.test(s);
 /** 場面ごとの表（純関数） */
 export function delegationTable(rows: readonly DelegRow[]): DelegCell[] {
   const by = new Map<string, DelegRow[]>();

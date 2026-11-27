@@ -3,7 +3,7 @@
 //   空きメモリが 1000MB 未満の間は待つ（--wait-min まで・60秒ごとに見る）。結果は --out の json（スイッチ → 比べる／届かず／録音なし／印なし／分からない・届いた問題）。LLM 0・本番 DB の読み 0
 // 実行: npx tsx scripts/exam-preflight-switches.ts --switches=A,B --out=<json> [--per=4] [--wait-min=180]
 import { readFileSync, writeFileSync } from "node:fs";
-import { freemem } from "node:os";
+import { requireFreeMemMb } from "./lib/free-mem-guard";
 import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { runPreflight, preflightVerdict, targetMarksOf } from "./exam-preflight-marks";
@@ -11,7 +11,6 @@ import type { ExamDictionary } from "./lib/exam-dictionary";
 import { SWITCH_REACH } from "./lib/exam-switch-reach";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** スイッチの効く問題（純関数）: 写しに材料のある問題 → 前の on の回で走った問題 → 前に効いた問題 の順に重ねて per 問 */
 export function problemsForSwitch(d: ExamDictionary | null, sw: string, per = 4): string[] {
   // 2026-11-27: 手で選んだ効く問題（SWITCH_REACH の eff）があれば先に（辞書に無いスイッチも確かめられる）
@@ -36,8 +35,8 @@ if (require.main === module) (async () => {
     if (!targets.length) { res[sw] = { verdict: "印なし", ids, targets }; console.log(`${sw}: 印なし（目当ての印が無い）`); save(); continue; }
     if (!ids.length) { res[sw] = { verdict: "分からない", why: "効く問題が辞書に無い", targets }; console.log(`${sw}: 分からない（効く問題が無い）`); save(); continue; }
     const t0 = Date.now();
-    while (Math.round(freemem() / 1048576) < 1000 && Date.now() - t0 < waitMin * 60_000) await sleep(60_000);
-    if (Math.round(freemem() / 1048576) < 1000) { res[sw] = { verdict: "分からない", why: "空きメモリが戻らない", targets, ids }; console.log(`${sw}: 止めた（空きメモリ）`); save(); break; }
+    // 2026-11-28 作業員L（統括役の決め）: 共通の関所（scripts/lib/free-mem-guard）で待ち、戻らなければ止める
+    try { await requireFreeMemMb(1000, { waitMin: Math.max(0, waitMin - (Date.now() - t0) / 60_000), label: `昼の届きの確かめ・${sw}` }); } catch { res[sw] = { verdict: "分からない", why: "空きメモリが戻らない", targets, ids }; console.log(`${sw}: 止めた（空きメモリ）`); save(); break; }
     const r = runPreflight({ cwd: process.cwd(), ids, env: { [sw]: "on" }, label: `pfs-${sw.toLowerCase().slice(0, 20)}` });
     const v = preflightVerdict(r.byId, targets, 3, r.missedById);
     res[sw] = { verdict: v.verdict, targets, ids, reached: v.reached, notReached: v.notReached, noRecord: v.noRecord, unknown: v.unknown };

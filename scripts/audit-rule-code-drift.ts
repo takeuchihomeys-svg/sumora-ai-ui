@@ -1,6 +1,7 @@
 // scripts/audit-rule-code-drift.ts — 決まり（設計知見）とコードの食い違いの一覧（台帳 #818・LLM なし・DB は設計知見と台帳の軽い読みだけ）
 // 2026-11-27 作業員L（統括役の頼み）: 毎週の整理（kb-curate）の時に回す。既定は一覧を出すだけ。--ledger で食い違いを持ち主つきで台帳（work_items・origin=found_gap）に積む（題で重ねない）
 // 実行: npx tsx --env-file=.env.local scripts/audit-rule-code-drift.ts [--ledger] [--json=<file>]
+import { requireFreeMemMb } from "./lib/free-mem-guard";
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { examCacheRoot } from "./lib/llm-cassette";
@@ -11,6 +12,8 @@ const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}
 const flag = (k: string) => process.argv.includes(`--${k}`);
 
 async function main() {
+  // 2026-11-28 作業員L（統括役の決め）: 流す前の空きメモリの関所（500MB・--min-free= で変える・--wait-min= の間待つ）
+  await requireFreeMemMb(Number(process.argv.find((a) => a.startsWith("--min-free="))?.slice(11) ?? "") || 500, { waitMin: Number(process.argv.find((a) => a.startsWith("--wait-min="))?.slice(11) ?? "0") || 0, label: "#818 決まりとコードの食い違い" });
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!, { auth: { persistSession: false } });
   const rows: KbRow[] = [];
   for (let from = 0; from < 20_000; from += 1000) {

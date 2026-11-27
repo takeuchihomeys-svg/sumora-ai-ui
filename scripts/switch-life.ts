@@ -5,6 +5,7 @@
 //         RAG（--rag=<exam-problem-rag の --out>・--pf=<昼の届きの確かめの json,...>）・前の回（--results=<brain-exam/results>）・設計知見（名前の出る現行の行の id だけ）
 //   既定は一覧を出すだけ。--ledger で「試す／退役」の候補を台帳に積む（題で重ねない）。--json で表を書く。--morning で朝の1枚の1行だけ
 // 実行: npx tsx --env-file=.env.local scripts/switch-life.ts [--write] [--results=<dir>] [--rag=<json>] [--pf=<json,...>] [--json=<file>] [--ledger] [--morning]
+import { requireFreeMemMb } from "./lib/free-mem-guard";
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -25,6 +26,8 @@ export const SWITCH_LIFE_FILE = () => join(examCacheRoot(), "switch-life.json");
 const readJson = <T>(f: string): T | null => { try { return JSON.parse(readFileSync(f, "utf8")) as T; } catch { return null; } };
 
 async function main() {
+  // 2026-11-28 作業員L（統括役の決め）: 流す前の空きメモリの関所（500MB・--min-free= で変える・--wait-min= の間待つ）
+  await requireFreeMemMb(Number(process.argv.find((a) => a.startsWith("--min-free="))?.slice(11) ?? "") || 500, { waitMin: Number(process.argv.find((a) => a.startsWith("--wait-min="))?.slice(11) ?? "0") || 0, label: "スイッチの一生" });
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!, { auth: { persistSession: false } });
   const nowIso = new Date().toISOString();
   const code = scanCodeDefaults(["app/lib", "app/api"]);

@@ -5,6 +5,7 @@
 //   既定は記録だけ: 候補を出すだけで、試験の選びは変えない（EXAM_PROBLEM_RAG=shadow）
 // 実行: npx tsx --env-file=.env.local scripts/exam-problem-rag.ts [--switches=A,B|--all-marked] [--k=12] [--out=<json>] [--dry]
 import { createHash } from "node:crypto";
+import { requireFreeMemMb } from "./lib/free-mem-guard";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -49,6 +50,8 @@ function switchParts(sw: string, kb: Record<string, string[]>) {
 }
 
 if (require.main === module) (async () => {
+  // 2026-11-28 作業員L（統括役の決め）: 流す前の空きメモリの関所（埋め込みと手元の照らしだけ＝500MB）
+  await requireFreeMemMb(Number(arg("min-free", "")) || 500, { waitMin: Number(arg("wait-min", "0")) || 0, label: "試験の問題の RAG" });
   const k = Number(arg("k", "12")) || 12; const dry = has("dry");
   const ps = (() => { const j = JSON.parse(readFileSync(arg("problems", "scripts/brain-exam/problems.json"), "utf8")); return (Array.isArray(j) ? j : j.problems) as RagProblemIn[]; })();
   const store = loadStore();
