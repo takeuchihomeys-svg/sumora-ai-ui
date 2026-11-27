@@ -8,13 +8,17 @@ import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { runPreflight, preflightVerdict, targetMarksOf } from "./exam-preflight-marks";
 import type { ExamDictionary } from "./lib/exam-dictionary";
+import { SWITCH_REACH } from "./lib/exam-switch-reach";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** スイッチの効く問題（純関数）: 写しに材料のある問題 → 前の on の回で走った問題 → 前に効いた問題 の順に重ねて per 問 */
 export function problemsForSwitch(d: ExamDictionary | null, sw: string, per = 4): string[] {
-  const s = d?.switches[sw]; if (!s) return [];
-  return [...new Set([...s.withMaterial, ...(s.ranOn ?? []), ...s.hit])].slice(0, per);
+  // 2026-11-27: 手で選んだ効く問題（SWITCH_REACH の eff）があれば先に（辞書に無いスイッチも確かめられる）
+  const eff = (SWITCH_REACH[sw]?.eff ?? []) as readonly string[];
+  const s = d?.switches[sw];
+  if (!s) return [...eff].slice(0, per);
+  return [...new Set([...eff, ...s.withMaterial, ...(s.ranOn ?? []), ...s.hit])].slice(0, per);
 }
 
 if (require.main === module) (async () => {
@@ -25,6 +29,7 @@ if (require.main === module) (async () => {
   const save = () => { if (out) writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), results: res }, null, 1)); };
   for (const sw of sws) {
     const targets = targetMarksOf(dict, [sw]);
+    if (SWITCH_REACH[sw]?.notExam) { res[sw] = { verdict: "測らない", why: SWITCH_REACH[sw].notExam }; console.log(`${sw}: 測らない（${SWITCH_REACH[sw].notExam}）`); save(); continue; }
     const ids = problemsForSwitch(dict, sw, per);
     if (!targets.length) { res[sw] = { verdict: "印なし", ids, targets }; console.log(`${sw}: 印なし（目当ての印が無い）`); save(); continue; }
     if (!ids.length) { res[sw] = { verdict: "分からない", why: "効く問題が辞書に無い", targets }; console.log(`${sw}: 分からない（効く問題が無い）`); save(); continue; }
