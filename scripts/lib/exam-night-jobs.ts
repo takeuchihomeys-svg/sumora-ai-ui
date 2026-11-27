@@ -42,6 +42,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "試験の辞書（exam-dictionary.json）", args: ["scripts/build-exam-dictionary.ts", "--eval"], timeoutMin: 5 },
     // 2026-11-27 作業員L（#816 スイッチの一生の台帳）: 既定 off の部品ごとの1行と「試す／退役／印が先」の候補（exam-cache/switch-life.json・朝の1枚の1行・DB は台帳と設計知見の軽い読み・積まない）
     { name: "スイッチの一生（switch-life.json）", args: ["scripts/switch-life.ts", "--write"], timeoutMin: 30 },
+    // 2026-11-28 作業員L（#806 お客様のカルテ）: 前の7日の会話にカルテの計算を当てて、出る割合・欄ごとの埋まり・審査の事情で落とした欄を数える（quality_daily karte:*・本番の会話を軽く読む・LLM 0）
+    { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
     // 2026-11-26 作業員L（#799 ⑤）: 週の全部 on の組の候補（土曜の晩だけ作る・係の置き場の md に足すだけ・積まない）
     //   統括役 11/26 の決め: 土曜に作って係の候補（memory/night_bundle_candidates.md・係の作業ツリーから ../../../memory）に足し、日曜の晩に流す
     { name: "週の全部 on の組の候補（土曜だけ）", args: ["scripts/plan-week-combo.ts", "--weekly", "--write=../../../memory/night_bundle_candidates.md"], timeoutMin: 5 },

@@ -703,6 +703,12 @@ async function main() {
   if (!only || doCandidates) {
     try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
   }
+  // 2026-11-28 作業員L（台帳 #806 お客様のカルテ）: 晩の費用0の仕事（scripts/audit-customer-karte.ts --write）が書いた quality_daily karte:*（一番新しい日）の1行
+  if (!only || doCandidates) {
+    const { data: kq0 } = await sb.from("quality_daily").select("day, metric, value, n").eq("scope", "all").like("metric", "karte:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
+    const kq = ((kq0 ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (kq.length) { const lines2 = (await import("./lib/karte-morning")).karteMorningLine(kq); if (lines2) lines.push(lines2); }
+  }
   // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
   //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
   if (!only || doCandidates) {
