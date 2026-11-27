@@ -72,6 +72,7 @@
   - 地図: fill の押す物に「町（ピンポイント）」（駅の設定へ進む と 確定 の間）・「管理費・共益費込み」「構造」（確定の後）。手順書は所在地②と条件①に地図から把握の文（`PLAYBOOK_BUILD_V = 35`）。道具 `scripts/pick-effect-check.ts`（本番の町・構造の回を数える・読むだけ）。
   - 試験: 新 `reset-dup-burst-v28328`（21・3本同時のリセットを動かして押すのは1回）・`pick-effect-v28328`（31・確かめる手を4通りで動かす）。形の変化に合わせた古い試験: auto-run（await より前を構造で見る）・realpro-guide-town・resume-lag-wait-v2324・search-nav-pending-light-scan-v28264・sort-pressed-then-list-v2322・switch-once。拡張 358本中 356 青（基準の赤2）・地図162・型エラー基準10。
 - **2026-11-27 済**: 竹内さんの OK でコミット `09d4e1d89`→origin/main を取り込み `71ee0d7b8`（衝突は kb-eval-set.ts の問いの足し合いだけ・取り込んだ Claude Code 側の試験2本の型エラー3件を型だけ直した＝exam-intake-openai・substate-multi-station・動きは同じ）→ `ext-release.ts --all`（main・cursor-ext へ push・本番 2.8.328・手順書 attach 3行）。
+- **2026-11-27 手順書の抜けの点検（竹内さん「これで手順書にぬけはないのか」）**: 本番の手順書（row 2865 realpro・2866 itandi）を読んだ。①**私の誤り**: 条件の薄いガイド（録画に条件の場面が無いサイトだけに足す＝実際は ITANDI だけ）に管理費・構造の把握の文を足していた → ITANDI に混ざり、リアプロの手には載っていなかった。`PLAYBOOK_COND_GUIDE_STEPS_REALPRO` に分けて build_v 36（コミット `baac413fa`・push と attach は竹内さんの OK 待ち）。試験 playbook-site-split 1-b で止める。②リアプロの所在地・条件の手は録画から作る＝欄の名前だけ（「区の欄」「管理費込みの欄」）。押したことの把握の文は決まり `press_grasp_each` の中だけで、町・構造は手に無い（録画に一度も無い）。③ITANDI の新しい抜け（③揃ったら検索ボタンへ進む・票が3回未満）は当て方が前の版と同じ＝ITANDI の「検索」の票が1〜2回たまって区分が変わっただけ（今回の変更が元ではない）。
 - **未実施（人の手）**: 実機（拡張の再読込→リアプロ／ITANDI のタブを開き直す→自動2客以上→`check-playbook-sync` ⑧が verified）まで「反映済み」と言わない。同期点検の残り: itandi の手順書の抜け1件（③揃ったら検索ボタンへ進む・押す位置の票が3回未満）＝今回の変更とは別。`git worktree` の `%TEMP%\axbase` は残っている（`git worktree remove --force` で消せる・竹内さんが実行）。
 
 ---
