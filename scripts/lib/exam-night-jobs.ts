@@ -40,6 +40,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "MATERIAL_PRIORITY の shadow の当たり（quality_daily）", args: ["scripts/audit-material-priority-hit.ts", "--hours=24", "--write"], timeoutMin: 10 },
     // 2026-11-27 作業員L（#803 試験の辞書）: 問題の定義・要る材料・前の on の覚え・揺れを1つの表に（exam-cache/exam-dictionary.json・ファイルだけ）と前の7晩の物差し
     { name: "試験の辞書（exam-dictionary.json）", args: ["scripts/build-exam-dictionary.ts", "--eval"], timeoutMin: 5 },
+    // 2026-11-27 作業員L（#816 スイッチの一生の台帳）: 既定 off の部品ごとの1行と「試す／退役／印が先」の候補（exam-cache/switch-life.json・朝の1枚の1行・DB は台帳と設計知見の軽い読み・積まない）
+    { name: "スイッチの一生（switch-life.json）", args: ["scripts/switch-life.ts", "--write"], timeoutMin: 30 },
     // 2026-11-26 作業員L（#799 ⑤）: 週の全部 on の組の候補（土曜の晩だけ作る・係の置き場の md に足すだけ・積まない）
     //   統括役 11/26 の決め: 土曜に作って係の候補（memory/night_bundle_candidates.md・係の作業ツリーから ../../../memory）に足し、日曜の晩に流す
     { name: "週の全部 on の組の候補（土曜だけ）", args: ["scripts/plan-week-combo.ts", "--weekly", "--write=../../../memory/night_bundle_candidates.md"], timeoutMin: 5 },

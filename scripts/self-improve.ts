@@ -699,6 +699,10 @@ async function main() {
       lines.push(`- 約束の一生（${pl[0].day}）: 見つけるの外れ ${g("find_miss")}・文に期限 ${g("due_words")}・台帳 ${g("record_fact")}・期限内に果たした ${g("kept_in_time")}・閉じた時刻 ${g("closed_with_time")}・試験の約束の依頼の扱い ${g("exam_promise_covered")}（答え方 ${g("exam_promise_route")}）`, "");
     }
   }
+  // 2026-11-27 作業員L（台帳 #816 スイッチの一生の台帳）: 晩の費用0の仕事（scripts/switch-life.ts --write）が書いた <exam-cache>/switch-life.json の1行（36時間より古ければ出さない）
+  if (!only || doCandidates) {
+    try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
+  }
   // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
   //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
   if (!only || doCandidates) {
