@@ -13,7 +13,7 @@ import { aixTemplateStaticSystemText } from "../aix-template-system";
 import { aixTemplateSharedParts, aixTemplateDbKnowledgeParts } from "../aix-template-cache";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
 import { isBrainCall } from "../llm-test-mode";
-import { buildReplyWriterWarmTarget, replyWriterWarmEnabled, REPLY_WRITER_WARM_MODEL } from "../prefix-warm";
+import { buildReplyWriterWarmTarget, replyWriterWarmEnabled, REPLY_WRITER_WARM_MODEL, prefixWarmSkipsWhenOpenAI } from "../prefix-warm";
 import { REPLY_GENERATION_MODEL } from "../reply-generation-model";
 import { cacheGroupOf } from "../claude-model-map";
 
@@ -223,6 +223,10 @@ console.log("── 2026-11-11 C1 返信の書き手の system の温め（REPLY
     && classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 96_956, cache_write_5m: 0 }, w!.staticHitMinRead) === "cold"
     && classifyPrefixWarmUsage({ cache_read: 96_956, cache_write_1h: 0, cache_write_5m: 0 }, w!.staticHitMinRead) === "hit");
 }
+
+// 2026-11-27 本体が OpenAI に回る確かめは温めない・書き直しは温める（統括役の決め）
+t("OpenAI に回る時に温めない: rule_check・anomaly_scan・context_check", ["final_check_warm_rule_check", "final_check_warm_anomaly_scan", "final_check_warm_context_check"].every(prefixWarmSkipsWhenOpenAI));
+t("書き直し・ほかの温めは今まで通り", !prefixWarmSkipsWhenOpenAI("final_check_warm_revision") && !prefixWarmSkipsWhenOpenAI("customer_summary_warm") && !prefixWarmSkipsWhenOpenAI("aix_template_warm"));
 
 console.log(`\n${passed} OK / ${failed} NG`);
 process.exit(failed === 0 ? 0 : 1);

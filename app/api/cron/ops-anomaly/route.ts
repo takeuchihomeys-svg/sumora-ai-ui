@@ -28,7 +28,15 @@ async function handleGET(req: NextRequest) {
     const { error } = await db.from("brain_switch_versions").upsert({ hash: fp.h, switches: fp.text, n: fp.n, commit_sha: brainVersionOf(process.env), last_seen_at: new Date().toISOString() }, { onConflict: "hash" });
     ver = error ? `書けない: ${error.message.slice(0, 80)}` : fp.h;
   }
-  if (mode === "off" && req.nextUrl.searchParams.get("dry") !== "1") return NextResponse.json({ ok: true, ver, skipped: "OPS_ANOMALY_WATCH が on でない" });
+  // 2026-11-27 作業員L（統括役の決め）: 毎時1回、月の使用額の控えを1行書く（冷えた関数が月の行を全部読まないように・失敗しても見張りは止めない）
+  let budgetSnap: string | null = null;
+  if (req.nextUrl.searchParams.get("dry") !== "1") {
+    try {
+      const b = await import("@/app/lib/llm-budget-route-server");
+      if (b.budgetSnapshotDue(Date.now())) { const r = await b.writeBudgetSnapshot(db as never); budgetSnap = r.written ? "ok" : r.why; }
+    } catch (e) { budgetSnap = `書けない: ${(e instanceof Error ? e.message : String(e)).slice(0, 80)}`; }
+  }
+  if (mode === "off" && req.nextUrl.searchParams.get("dry") !== "1") return NextResponse.json({ ok: true, ver, budgetSnap, skipped: "OPS_ANOMALY_WATCH が on でない" });
   try {
     // 2026-11-05: 残高切れ（402）だけは dry の間も表と竹内さん個人の LINE（YUMA）に出す（?dry=1 の手の確かめでは出さない）
     const r = await runOpsAnomalyWatch(db, { dry, balanceLive: mode === "dry" && req.nextUrl.searchParams.get("dry") !== "1" && opsAnomalyBalanceLive() });
