@@ -4444,7 +4444,7 @@ ${sh}`;
         : holdFirstReason(validCircumstances(extractCircumstances(oldestAR.filter((m) => m.sender === "customer").map((m) => ({ text: m.text, createdAt: m.created_at })), turnStartAR), Date.now()), Date.now());
       const psInAR = parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at })));
       const lastMsgAR = typedMessages[0];
-      const ar = applyRouteBrainTextIfEnabled({
+      const ar0 = applyRouteBrainTextIfEnabled({
         stage: customerState?.stage ?? null,
         searching: customerState?.searching ?? null,
         ledger: brainLedger.facts,
@@ -4460,6 +4460,8 @@ ${sh}`;
         greetingSentToday: greetingSentTodayOf(aixLogs, Date.now()), // 2026-11-23 作業員A: APPLY_ROUTE_GREETING_SENT_SKIP=on の時だけ読む（off は文が変わらない）
         viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
+      // 2026-11-28 作業員A（#804・ROUTE_ESTIMATE_NEXT_REPLY・既定 off・段階で読む）: 見積の駅の次の一手の候補を返信へ（材料の言葉だけ・off は ar0 のまま）
+      const ar = await (async () => { try { const re = await import("@/app/lib/route-estimate-next"); const r = re.withEstimateNextReply(ar0, re.routeEstimateNextOn()); if (r.changed) materialMarks.route_estimate_next = 1; return { text: r.text, loc: r.loc }; } catch { return ar0; } })();
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
       // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 道筋の言い方の1行（APPLY_ROUTE_PATH_LINE）・駅の中の状態（APPLY_ROUTE_SUBSTATE）が材料に入った番
       { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }

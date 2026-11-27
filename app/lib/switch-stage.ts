@@ -29,6 +29,7 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   { name: "CHECK_NOW_POSSIBLE_LINE", defaultStage: { kind: "off" } }, // #821 今確かめられるか
   { name: "PICKUP_FIT_NOW_LINE", defaultStage: { kind: "off" } }, // #821 送れる候補が今の条件にも合うか
   { name: "VACATE_VIEWING_HOLD_FIRST", defaultStage: { kind: "off" } }, // #830 退去予定の部屋の内覧が7日以内なら申込で抑える（材料・10/28 から env だけで読んでいた）
+  { name: "ROUTE_ESTIMATE_NEXT_REPLY", defaultStage: { kind: "off" } }, // #804 見積の駅の次の一手の候補を返信へ
   { name: "AIX_BRAIN_READ_CARD", defaultStage: { kind: "off" } }, // #827 AIX ボタンの文作りにブレインの読みの札
   { name: "PENDING_CHECK_ANSWERED_GUARD", defaultStage: { kind: "off" } }, // #829 文で答えた確認タスクを確認中から外す（generate-reply）
 ];
