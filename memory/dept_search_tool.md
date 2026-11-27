@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.319: 全部送付済み／次頁も全部送付済み／検索結果0件でも、客完了→リセット→次客へ（手順書 build_v 26）＋パネルの言葉を手順書と同じに**
+竹内さん「並べ替えした後物件取得するところで止まった／全部送付済みの場合次へで次のページにうつること手順書は把握しているのか／拡張ツールのアナウンスも手順書とあわせる（確認できるから）」「検索結果が0でも、すべて送付済みで次ページも送付済みでも、リセットして次のお客さんにうつる。リセットからの流れは同じ」。
+
+- **手順書**: 一覧の手 PLAYBOOK_LIST_AD_SORT_STEPS に ⑤この頁が全部送付済み→印刷用PDFは押さず「次へ」で次のページ ⑥次頁も全部送付済み／最後まで→客完了（all_sent_done）⑦0件→待たず客完了（zero_count0_finish）⑧客完了→リセット→30〜34秒→空とみなす→次客の条件をAPIから読み直して入れる→検索（リセットからの流れは同じ）を足した。一連の流れ（next／handoff）の文も同じ。決まり ll_sent_advance_no_stuck を強め、新しい決まり zero_result_finish_reset（印 dl:zero_count0_finish → post_send_clear 等）を足した。
+- **コードは既に進む形**だった（_autoFinish が all_sent_page→次へ／次無しは _sendBatchDone、0件は _zeroCount0Check→_sendSkipDoneFor、どれも _scrapeAndSendRealpro の送付後リセットを通る）。今回は手順書に書き、点検の印 dl:zero_count0_ を search-audit.js の KEEP_STEP／RULE_STEP に足した（今まで点検に残らなかった）。
+- **パネルの言葉**: PANEL_PHASE_WORDS（pp/lib/bulk-panel-grasp.ts／chrome-extension/bulk-panel-grasp.js の写し）。「外している最中」「新しい条件を入れている最中」は手順書の言葉（リセットを押して待っている最中／条件を入れている最中 …）に直して出す。ulk-dl.js の _announcePhase（印 dl:list_flow_announce）が、並べ替え・物件取得・全部送付済み・次ページ・客完了で枠を更新し、session の xlx_bulk_grasp にも書く（読み直しで古い言葉に戻らない）。試験 ulk-panel-playbook-sync.test.ts が JS と TS の一致と、手順書に要の語が在ることを見張る。
+- **止まった原因は未確定**: 実測（#1663）では sort_lag_grace の後が何も残っていない。_maybeAutoPressOnLoad に黙って return する所があった（	racked.length === 0＝押せる行0・sig 同じ・新しい行なし等）。全行が送付済みで押せる行が0の時はここで黙って止まる疑い。**今回は理由を残すだけ**（印 dl:list_flow_wait_reason・同じ理由は10秒に1回）。次の実機で 	racked0 sentVis=… が出れば確定できる。挙動はまだ変えていない。
+- **版**: manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO すべて 2.8.319。設計知見 e9bf9f5b（P1）。
+
 ## 2026-11-27 **拡張 2.8.318: 次客の条件を読み直せなかったら、古い条件では検索せず飛ばす（手順書 build_v 25）**
 
 竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」（精度を優先する決定。kb-insert で P1 に記録）。

@@ -13,7 +13,7 @@
   function _itFG() { return (typeof self !== "undefined" ? self : window).AxlxItandiFormGuard; }
 
   // ★ 2026-11-27 ITANDI 専用手順書（app/lib/auto-itandi-rules.ts と id 一覧・版を揃える）
-  var _AXLX_ITANDI_PAGE_VER = "2.8.318";
+  var _AXLX_ITANDI_PAGE_VER = "2.8.319";
   try { window.__axlxItandiPageVer = _AXLX_ITANDI_PAGE_VER; } catch (_) {}
   var _AXLX_ITANDI_RULES_DONE = [
     "it_reset_before_fill",

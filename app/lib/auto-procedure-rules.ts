@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.318";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.319";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -765,7 +765,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "all_sent_advance_no_stuck",
     scene: "list",
-    text: "送付済みのみ／押せるPDF0／次頁無しでも止まらない。all_sent_no_press→_autoFinish→_sendBatchDone一本化→外す→次客。旧 no-rows return と客完了二重送信は廃止。印: all_sent_no_press／all_sent_done／list_no_next_advance",
+    text: "この頁の行が全部「送付済み」（押せるPDF0）なら、印刷用PDFは押さず「次へ」で次のページへ移る（止まらない・all_sent_page）。次のページも全部送付済みなら続けて「次へ」。最後のページまで全部送付済み・次頁無し・1ページのみでも、新しい物件なしとして客完了（all_sent_done）。客完了のあとは送って終わった客と同じく、リセットを押す→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる（2.8.319 竹内さん「リセットからの流れは同じ」）。all_sent_no_press→_autoFinish→_sendBatchDone一本化。旧 no-rows return と客完了二重送信は廃止。印: all_sent_no_press／all_sent_page／all_sent_done／list_no_next_advance",
     since: "2.8.248",
     kb: "9cff6130",
     marker: "all_sent_no_press",
@@ -784,6 +784,19 @@ export const AUTO_RULES: AutoRule[] = [
         "dl:all_sent_page",
         "dl:list_no_next_advance",
       ],
+    },
+  },
+  {
+    id: "zero_result_finish_reset",
+    scene: "list",
+    text: "検索結果が0件（0棟0戸・印刷用PDFも0・3回続けて読めた時）は、行が出るのを待ち続けず、押さずに客完了にする（zero_count0_finish・2.8.298）。客完了のあとは「全部送付済み」「次ページも全部送付済み」「送って終わった」客と同じ流れ：リセットを押す→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索（2.8.319 竹内さん「検索結果0件でもリセットして次のお客さんへ・リセットからの流れは同じ」）。印: zero_count0_finish／post_send_clear／reset_press／reset_settled",
+    since: "2.8.319",
+    kb: "e9bf9f5b",
+    marker: "zero_count0_finish",
+    file: "bulk-dl.js",
+    verify: {
+      onlyIf: ["dl:zero_count0_finish"],
+      mustHaveAny: ["post_send_clear", "reset_press", "reset_settled", "handoff_atom_post_send", "series_done"],
     },
   },
   {

@@ -10,10 +10,36 @@
     if (!t) return "";
     return /さん$/.test(t) ? t : t + "さん";
   }
+  /** ★ 2.8.319 手順書と同じ言葉（app/lib/bulk-panel-grasp.ts の PANEL_PHASE_WORDS の写し・試験で一致を見る） */
+  var PANEL_PHASE_WORDS = {
+    reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
+    fill: { now: "条件を入れている最中", next: "検索を押す" },
+    search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
+    sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
+    list: { now: "物件取得最中", next: "全部送付済みなら次ページへ・無ければ客完了" },
+    all_sent: { now: "全部送付済み→次ページへ", next: "次ページ（無ければ客完了→リセット）" },
+    next_page: { now: "次ページへ移動中", next: "物件取得（送付済み以外の行）" },
+    done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
+  };
+  function playbookAction(a) {
+    var t = String(a || "");
+    if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
+    if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
+    return t;
+  }
+  function playbookMove(m) {
+    var t = String(m || "");
+    if (/次ページ|送付済み|客完了|リセット|API/.test(t)) return t;
+    if (/外す|外して|物件取得完了/.test(t)) return PANEL_PHASE_WORDS.done.next;
+    if (/新しいお客さんの条件|条件を1つ/.test(t)) return PANEL_PHASE_WORDS.reset.next;
+    return t;
+  }
   function actionFromMove(move) {
     var m = String(move || "");
-    if (/外す/.test(m)) return "外している最中";
-    if (/入れ|条件を1つ/.test(m)) return "新しい条件を入れている最中";
+    if (/リセット/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+    if (/次ページ|送付済み/.test(m)) return PANEL_PHASE_WORDS.all_sent.now;
+    if (/外す/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+    if (/入れ|条件を1つ/.test(m)) return PANEL_PHASE_WORDS.fill.now;
     if (/並べ替え/.test(m)) return "並べ替え最中";
     if (/検索を押/.test(m)) return "検索を押す最中";
     if (/物件|取得/.test(m)) return "物件取得最中";
@@ -26,13 +52,13 @@
     var cur = nm(g.currentName);
     var nxt = nm(g.nextName);
     var graspOk = !!(cur || index === 0) && total > 0;
-    var move = String(g.nextMove || "").trim().slice(0, 28);
-    var taskNow = String(g.taskNow || "").trim().slice(0, 24);
+    var move = playbookMove(String(g.nextMove || "").trim().slice(0, 40)).slice(0, 40);
+    var taskNow = playbookAction(String(g.taskNow || "").trim().slice(0, 28)).slice(0, 28);
     var act =
       taskNow ||
-      String(g.currentAction || "").trim().slice(0, 24) ||
+      playbookAction(String(g.currentAction || "").trim().slice(0, 28)).slice(0, 28) ||
       actionFromMove(move) ||
-      (g.waitingFor ? String(g.waitingFor).slice(0, 24) : "");
+      (g.waitingFor ? String(g.waitingFor).slice(0, 28) : "");
     var now = "";
     if (index <= 0) now = "一括" + total + "人を把握（開始前）";
     else if (act) now = (cur ? cur + "／" : "") + act + "（" + index + "/" + total + "）";
@@ -44,8 +70,8 @@
     else if (index <= 0) next = "最初の客へ";
     else next = "次の客を把握中…";
     if (move) {
-      if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act)) {
-        next += (next ? "／" : "") + "次の動き:新しいお客さんの条件を入れる";
+      if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押して/.test(act)) {
+        next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
       } else {
         next += (next ? "／" : "") + "次の動き:" + move;
       }
@@ -80,7 +106,7 @@
       taskNow: taskNow || null,
     };
   }
-  var api = { formatBulkPanelGrasp: formatBulkPanelGrasp, bulkGraspFromQueue: bulkGraspFromQueue };
+  var api = { formatBulkPanelGrasp: formatBulkPanelGrasp, bulkGraspFromQueue: bulkGraspFromQueue, PANEL_PHASE_WORDS: PANEL_PHASE_WORDS };
   if (typeof self !== "undefined") self.AxlxBulkPanelGrasp = api;
   if (typeof window !== "undefined") window.AxlxBulkPanelGrasp = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

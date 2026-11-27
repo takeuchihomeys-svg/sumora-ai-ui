@@ -4,7 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bulkGraspFromQueue, formatBulkPanelGrasp } from "../bulk-panel-grasp";
+import { PANEL_PHASE_WORDS, bulkGraspFromQueue, formatBulkPanelGrasp } from "../bulk-panel-grasp";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error("FAIL: " + msg);
@@ -27,23 +27,23 @@ console.log("■ 決定表");
   const withMove = formatBulkPanelGrasp({
     total: 2, index: 1, currentName: "てん", nextName: "やまだ", nextMove: "条件を1つずつ入れる",
   });
-  assert(!!withMove && /次の動き:条件を1つずつ入れる/.test(withMove.next), "nextMove=" + withMove?.next);
-  assert(!!withMove && /動条件/.test(withMove.grasp), "grasp move");
-  assert(!!withMove && /入れている最中/.test(withMove.now), "now action from move=" + withMove?.now);
+  assert(!!withMove && new RegExp("次の動き:" + PANEL_PHASE_WORDS.reset.next).test(withMove.next), "nextMove=" + withMove?.next);
+  assert(!!withMove && /動次客の条件/.test(withMove.grasp), "grasp move");
+  assert(!!withMove && withMove.now.includes(PANEL_PHASE_WORDS.fill.now), "now action from move=" + withMove?.now);
 
   const clearing = formatBulkPanelGrasp({
     total: 2, index: 2, currentName: "やまだ", nextName: "",
     nextMove: "前客の選択を1つずつ外す", currentAction: "外している最中",
   });
-  assert(!!clearing && /外している最中/.test(clearing.now), "外す中 now=" + clearing?.now);
-  assert(!!clearing && /新しいお客さんの条件を入れる/.test(clearing.next), "外す中 next=" + clearing?.next);
+  assert(!!clearing && clearing.now.includes(PANEL_PHASE_WORDS.reset.now) && !/外している最中/.test(clearing.now), "外す中→手順書の言葉 now=" + clearing?.now);
+  assert(!!clearing && clearing.next.includes(PANEL_PHASE_WORDS.reset.next), "外す中 next=" + clearing?.next);
 
   const taskClear = formatBulkPanelGrasp({
     total: 2, index: 1, currentName: "てん", nextName: "やまだ",
     nextMove: "次の間取を外す", taskNow: "間取外:2LDK",
   });
   assert(!!taskClear && /間取外:2LDK/.test(taskClear.now), "taskNow now=" + taskClear?.now);
-  assert(!!taskClear && /新しいお客さんの条件を入れる/.test(taskClear.next), "taskNow next=" + taskClear?.next);
+  assert(!!taskClear && taskClear.next.includes(PANEL_PHASE_WORDS.reset.next), "taskNow next=" + taskClear?.next);
 
   const last = formatBulkPanelGrasp({ total: 2, index: 2, currentName: "最終", nextName: "" });
   assert(!!last && /一括の最後/.test(last.next), "最後 next");

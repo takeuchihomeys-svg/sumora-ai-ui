@@ -2410,6 +2410,7 @@
     }
     _stampSortFlowAtom("zero_count0", true, "0棟0戸×3 " + String(why || "").slice(0, 20));
     try { _liveDlStep("zero_count0_finish", "0棟0戸 cid=" + String(cid).slice(0, 8)); } catch (_) {}
+    try { _announcePhase("done", "zero_count0"); } catch (_) {}
     if (_sortCursorTimer) { try { clearTimeout(_sortCursorTimer); } catch (_) {} _sortCursorTimer = null; }
     _autoSendArmed = false;
     _pendingAutoSendDispatched = true;
@@ -2636,13 +2637,30 @@
    * @param {{ afterSearch?: boolean }} [opt]
    *   afterSearch=true … 検索後の読み直し（pending）から。条件入力中ではない。
    */
+  /**
+   * ★ 2.8.319 竹内さん「並べ替えした後物件取得するところで止まった」:
+   *   一覧が出たのに物件取得が始まらない時の理由を点検に残す（旧は黙って return して原因が見えなかった）。
+   *   同じ理由は10秒に1回まで（点検を埋めない）。印: dl:list_flow_wait_reason
+   */
+  var _lastListWaitWhy = "";
+  var _lastListWaitAt = 0;
+  function _listWaitReason(why) {
+    try {
+      var now = Date.now();
+      var w = String(why || "").slice(0, 60);
+      if (w === _lastListWaitWhy && now - _lastListWaitAt < 10000) return;
+      _lastListWaitWhy = w;
+      _lastListWaitAt = now;
+      _liveDlStep("list_flow_wait_reason", w);
+    } catch (_) {}
+  }
   function _maybeAutoPressOnLoad(opt) {
     // ★ 2026-11-22: スタッフでも _autoModeOn（選んだ客の自動）なら押す。旧は _staffModeOn で止めていた。
     // ★ 2.8.190: 検索後印があるのに auto OFF ならこの一覧だけ開く（止まらない）
     if (!_autoModeOn) _forceAutoForPending((opt && opt.afterSearch) ? "afterSearch" : "onLoad");
     if (_autoPdfRun || !_autoModeOn) return;
-    if (_guideBlocksAuto("autoOnLoad")) return;
-  if (_supBlocksAuto("autoOnLoad")) return;
+    if (_guideBlocksAuto("autoOnLoad")) { _listWaitReason("guide_blocks"); return; }
+  if (_supBlocksAuto("autoOnLoad")) { _listWaitReason("supervisor_blocks"); return; }
     /**
      * ★ 2026-11-22: 駅・沿線・所在地モーダル中は一覧が裏にあっても押さない／並べ替えない。
      */
@@ -2680,7 +2698,13 @@
       _tmark("auto_pdf_load", "blocked_need_search_first");
       return;
     }
-    if (tracked.length === 0) return;
+    if (tracked.length === 0) {
+      // ★ 2.8.319 並べ替えの後に止まった回の原因が点検に残らなかった（黙って return）。押せる行0＋画面の送付済み数を残す
+      var _sv0 = 0;
+      try { _sv0 = document.querySelectorAll("a,span,td").length ? Array.prototype.filter.call(document.querySelectorAll("a,span,td"), function (e) { var t = String(e.textContent || "").replace(/\s+/g, ""); return t === "送付済み" || t === "送付済"; }).length : 0; } catch (_) { _sv0 = 0; }
+      _listWaitReason("tracked0 sentVis=" + _sv0 + " armed=" + (_autoSendArmed ? 1 : 0) + " sortDone=" + (_adSortDone ? 1 : 0));
+      return;
+    }
     /** ★ 2.8.277 結果ページの見出しを希望と照らす（記録・警告・旗がある時だけ止める） */
     var _rvr = _resultVerifyOnce();
     if (_rvr && (_rvr.verdict === "mismatch" || _rvr.verdict === "full") && _resultVerifyEnforce(_rvr)) {
@@ -2774,10 +2798,11 @@
       return;
     }
     var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
+    if (!sig || sig === _autoPdfSig) _listWaitReason(!sig ? "sig_empty" : "sig_same_as_before");
     if (!sig || sig === _autoPdfSig) return;
     // まだ1件も押していない一覧だけ（既に送った行がある一覧の描き直しでは始めない）
     var fresh = tracked.some(function (t) { return t.btn && !_onePdfSent[t.btn.href]; });
-    if (!fresh) return;
+    if (!fresh) { _listWaitReason("no_fresh_row（全行が送信済みの印）"); return; }
     // ★ 2.8.191: 見る間の前に sig を立てない（キャンセル後に再試行不能になるため）
     console.log("[AXLX bulk-dl][auto] 自動モード: 一覧が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
     _tmark("auto_pdf_load", "rows=" + tracked.length);
@@ -3344,6 +3369,25 @@
     } catch (_) {}
   });
 
+  /**
+   * ★ 2.8.319 竹内さん「拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる（確認できるから）」:
+   *   一覧の動き（並べ替え→物件取得→全部送付済み→次ページ→客完了）を、手順書と同じ言葉（PANEL_PHASE_WORDS）で枠に出す。
+   *   ページの読み直しで古い言葉（「新しい条件を入れている最中」）に戻らないよう、session の axlx_bulk_grasp にも書く。
+   *   印: dl:list_flow_announce（点検で何をいつ言ったか読める）
+   */
+  function _announcePhase(key, why) {
+    try {
+      var W = window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.PANEL_PHASE_WORDS;
+      var w = W && W[key];
+      if (!w || !_bulkGraspState || !(Number(_bulkGraspState.total) > 0)) return;
+      _bulkGraspState.currentAction = w.now;
+      _bulkGraspState.taskNow = "";
+      _bulkGraspState.nextMove = w.next;
+      _applyBulkGrasp(_bulkGraspState);
+      try { chrome.storage.session.set({ axlx_bulk_grasp: _bulkGraspState }); } catch (_) {}
+      try { _liveDlStep("list_flow_announce", String(key) + " " + String(why || "").slice(0, 40)); } catch (_) {}
+    } catch (_) {}
+  }
   /** ★ 2.8.217: 一括把握の配信を枠へ反映 */
   function _applyBulkGrasp(g) {
     _bulkGraspState = g && Number(g.total) > 0 ? g : null;
@@ -3764,6 +3808,7 @@
        * → メニュー操作を**必ず試す**（リンクの有無で止めない）。
        */
       _liveDlStep("sort_menu", "start");
+      _announcePhase("sort", "sort_menu_start");
       /** ★ 2.8.185/186: 検索完了→並べ替えへ移る印（ライブで監査へ・batch待ちしない） */
       try { _liveDlStep("search_to_sort", "after_search_grasp"); } catch (_) {}
       /** ★ 2.8.226: ループ段=並べ替え／次の動きを page 側で把握（タスク一覧に sort が入る） */
@@ -3831,7 +3876,7 @@
                 return;
               }
               _sortByAdLikeHuman(function (ok2) {
-                if (ok2) _liveDlStep("sort_done", "hilo_retry");
+                if (ok2) { _liveDlStep("sort_done", "hilo_retry"); _announcePhase("list", "sort_done_retry"); }
                 else if (_sortFailWaitThenRetry("after_quick_retry")) return;
                 else {
                   console.warn("[AXLX bulk-dl][auto] 再試行も並べ替えできず → この並びのまま押します");
@@ -3857,6 +3902,7 @@
           _liveDlStep("sort_failed", "continue");
         } else {
           _liveDlStep("sort_done", "hilo");
+          _announcePhase("list", "sort_done");
           try { _requestLoopGrasp("list", "sort_done", true); } catch (_) {}
         }
         // AD後も手順書 list×画面照合してから押す（揃わなければ押さない＝駅選択中の誤送付を止める）
@@ -5042,6 +5088,7 @@
 
   /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
   function _startAutoPressRun() {
+    _announcePhase("list", "auto_press_run");
     var pick = function () {
       return tracked.filter(function (t) { return t.cb && t.btn && t.btn.isConnected && AxlxSendPairing.isHttpUrl(t.btn.href); });
     };
@@ -5081,6 +5128,7 @@
         _nudge("👀 送る部屋がありません（画面送付済み " + sentVis0 + "・押せるPDF0）→ 次へ／客完了");
         _tmark("auto_pdf_start", "all_sent_no_press sentVis=" + sentVis0);
         try { _liveDlStep("all_sent_no_press", "sentVis=" + sentVis0 + "→客完了へ"); } catch (_) {}
+        _announcePhase("all_sent", "no_press sentVis=" + sentVis0);
         try {
           _graspAcquire("all_sent", true, "押せる行0・画面送付済" + sentVis0 + "＝失敗ではない→次頁/客完了");
         } catch (_) {}
@@ -5134,6 +5182,7 @@
           );
         } catch (_) {}
         try { _liveDlStep("all_sent_page", "filtered0 skip=" + skipN); } catch (_) {}
+        _announcePhase("all_sent", "filtered0 skip=" + skipN);
         // 全部送付済みなら次ページへ／無ければ客完了（_autoFinish 一本化）
         _autoPdfRun = { total: 0, done: 0, index: 0, skipped: skipN, order: [], customerId: cid || null, startedAt: Date.now() };
         _autoFinish("このページは送る部屋が無い");
@@ -5811,6 +5860,7 @@
    *   送付済みだけの頁でも、未送付を送った頁のあとでも進む。
    */
   function _autoNextPageThenRestart(why, meta) {
+    _announcePhase("next_page", String(why || "").slice(0, 24));
     var maxP = _autoMaxPages();
     if (_autoNextPageTries >= (maxP - 1)) {
       console.log("[AXLX bulk-dl][auto] ページ上限 " + maxP + " に達した → 終わります");
@@ -5974,9 +6024,8 @@
       } catch (_) {}
       try {
         if (_bulkGraspState) {
-          _bulkGraspState.nextMove = "前客の選択を1つずつ外す";
           _bulkGraspState.lastDone = onePage ? "1ページのみ物件取得完了" : "物件取得完了";
-          _applyBulkGrasp(_bulkGraspState);
+          _announcePhase("done", String(why || "").slice(0, 24));
         }
       } catch (_) {}
       try {

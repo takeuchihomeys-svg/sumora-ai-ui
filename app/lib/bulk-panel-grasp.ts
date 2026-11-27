@@ -7,6 +7,38 @@
  * ★ 2.8.228: task_now（間取外:2LDK 等）があれば now に優先
  */
 
+/**
+ * ★ 2.8.319 竹内さん「拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる（確認できるから）」:
+ *   パネルの「いま／つぎ」に出す言葉は、手順書（action-playbook.ts の手）と同じ言葉に揃える。
+ *   手順書の手の文にも同じ言葉を入れてある（試験 bulk-panel-playbook-sync が両方に在るか見張る）。
+ *   JS の写し: chrome-extension/bulk-panel-grasp.js の PANEL_PHASE_WORDS（同じ言葉・試験で一致を見る）。
+ */
+export const PANEL_PHASE_WORDS = {
+  reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
+  fill: { now: "条件を入れている最中", next: "検索を押す" },
+  search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
+  sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
+  list: { now: "物件取得最中", next: "全部送付済みなら次ページへ・無ければ客完了" },
+  all_sent: { now: "全部送付済み→次ページへ", next: "次ページ（無ければ客完了→リセット）" },
+  next_page: { now: "次ページへ移動中", next: "物件取得（送付済み以外の行）" },
+  done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" },
+} as const;
+
+/** 古い内部の言葉（page-script／bulk-dl が出す）を、手順書と同じ言葉に直して見せる */
+function playbookAction(a: string): string {
+  const t = String(a || "");
+  if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
+  if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
+  return t;
+}
+function playbookMove(m: string): string {
+  const t = String(m || "");
+  if (/次ページ|送付済み|客完了|リセット|API/.test(t)) return t;
+  if (/外す|外して|物件取得完了/.test(t)) return PANEL_PHASE_WORDS.done.next;
+  if (/新しいお客さんの条件|条件を1つ/.test(t)) return PANEL_PHASE_WORDS.reset.next;
+  return t;
+}
+
 export type BulkPanelGraspInput = {
   total: number;
   /** 1始まり。0=まだ誰も始めていない */
@@ -37,8 +69,10 @@ function nm(s: string | null | undefined): string {
 
 function actionFromMove(move: string): string | null {
   const m = String(move || "");
-  if (/外す/.test(m)) return "外している最中";
-  if (/入れ|条件を1つ/.test(m)) return "新しい条件を入れている最中";
+  if (/リセット/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+  if (/次ページ|送付済み/.test(m)) return PANEL_PHASE_WORDS.all_sent.now;
+  if (/外す/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+  if (/入れ|条件を1つ/.test(m)) return PANEL_PHASE_WORDS.fill.now;
   if (/並べ替え/.test(m)) return "並べ替え最中";
   if (/検索を押/.test(m)) return "検索を押す最中";
   if (/物件|取得/.test(m)) return "物件取得最中";
@@ -53,13 +87,13 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
   const cur = nm(g.currentName);
   const nxt = nm(g.nextName);
   const graspOk = !!(cur || index === 0) && total > 0;
-  const move = String(g.nextMove || "").trim().slice(0, 28);
-  const taskNow = String(g.taskNow || "").trim().slice(0, 24);
+  const move = playbookMove(String(g.nextMove || "").trim().slice(0, 40)).slice(0, 40);
+  const taskNow = playbookAction(String(g.taskNow || "").trim().slice(0, 28)).slice(0, 28);
   const act =
     taskNow ||
-    String(g.currentAction || "").trim().slice(0, 24) ||
+    playbookAction(String(g.currentAction || "").trim().slice(0, 28)).slice(0, 28) ||
     actionFromMove(move) ||
-    (g.waitingFor ? String(g.waitingFor).slice(0, 24) : "");
+    (g.waitingFor ? String(g.waitingFor).slice(0, 28) : "");
 
   let now = "";
   if (index <= 0) {
@@ -79,8 +113,8 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
   else next = "次の客を把握中…";
   if (move) {
     // いまの行動が外すなら、次の動きは「新しい条件を入れる」を優先表示
-    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act)) {
-      next += (next ? "／" : "") + "次の動き:新しいお客さんの条件を入れる";
+    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押して/.test(act)) {
+      next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
     } else {
       next += (next ? "／" : "") + "次の動き:" + move;
     }

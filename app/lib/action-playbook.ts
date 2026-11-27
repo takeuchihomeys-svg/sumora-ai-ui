@@ -45,7 +45,8 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 25;
+export const PLAYBOOK_BUILD_V = 26;
+// 26（2026-11-27 竹内さん「全部送付済み→次へで次のページ／次ページも全部送付済み・検索結果0件でも、リセットして次のお客さんへ。リセットからの流れは同じ」「アナウンスも手順書とあわせる」）: 一覧の手に ⑤全部送付済み→次へ ⑥次頁も全部送付済み→客完了 ⑦0件→客完了 ⑧客完了→リセットして次客へ を足した。パネルの言葉も手順書と同じ（PANEL_PHASE_WORDS）。
 // 25（2026-11-27 竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」）: 次客の条件を読み直せなかったら、古い条件で検索せず飛ばす（拡張 2.8.318・customer_api_reload に理由）。手順書の文もそれに合わせた。
 // 24（2026-11-27 竹内さん「リセットは多すぎてバグる・30〜34秒だけに／1人目はリセットしない／検索前10秒／並べ替え40〜50秒＋猶予15秒〜／次客の条件を毎回APIから読み直す」）:
 //   ループを簡素にした（拡張 2.8.317）。リセット＝押して30〜34秒待つだけ（空の読み戻し・写真・猶予なし）。最初の客と前客リセット済みの客は入れる前にリセットしない。
@@ -122,8 +123,8 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
    */
   { id: "sort_ad", label: "①並べ替え→②AD→③高→低", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_done", "dl:sort_menu"], next: "list" },
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
-  { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
-  { id: "handoff", label: "客完了→次客へ（次客の条件は毎回APIから読み直して入れる＝customer_api_reload）", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
+  { id: "next", label: "次ページ（この頁が全部送付済みなら「次へ」で次のページへ・次頁も全部送付済み／最後まで来たら客完了）", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
+  { id: "handoff", label: "客完了（送付済みのみ・次頁も全部送付済み・検索結果0件・送って終わり、どれも同じ）→リセットして次客へ（次客の条件は毎回APIから読み直して入れる＝customer_api_reload）", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
 ];
 
 /**
@@ -153,6 +154,11 @@ export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
   `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）`,
   "④並べ替え後に印刷用PDFを押す",
+  // ★ 2.8.319 竹内さん「全部送付済みなら次へで次のページ／次ページも全部送付済み・検索結果0件でも、リセットして次のお客さんへ。リセットからの流れは同じ」
+  "⑤この頁の行が全部「送付済み」なら、印刷用PDFは押さず「次へ」で次のページへ移る（止まらない・all_sent_page）",
+  "⑥次のページも全部送付済みなら、また「次へ」。最後のページまで全部送付済みなら新しい物件なしとして客完了（all_sent_done）",
+  "⑦検索結果が0件（0棟0戸）の時も同じ。行が出るのを待ち続けず客完了にする（zero_count0_finish）",
+  "⑧客完了（送った・全部送付済み・次頁も全部送付済み・0件、どれでも）→リセットを押して次のお客さんへ。リセットからの流れは同じ（リセット→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索）",
 ];
 
 /**
@@ -1077,7 +1083,9 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
     sc.steps = PLAYBOOK_LIST_AD_SORT_STEPS.concat(rest).slice(0, PLAYBOOK_MAX_STEPS);
     const guideDetail: PlaybookStep[] = PLAYBOOK_LIST_AD_SORT_STEPS.map((step) => {
       // ★ 「④並べ替え後に印刷用PDFを押す」は「並べ替え」にも一致するため印刷用PDFを先に判定する
-      const f = step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
+      // ★ 2.8.319 ⑤〜⑧（送付済み→次へ／0件／客完了→リセット）は印刷用PDFの欄ではない。先に分ける
+      const f = /^[⑤⑥⑦⑧]/.test(step) ? (/^⑧/.test(step) ? "リセット" : "次へ")
+        : step.indexOf("印刷用PDF") >= 0 ? "印刷用PDF"
         : step.indexOf("高→低") >= 0 ? "左の高→低｜span.sort_detail"
         : step.indexOf("AD") >= 0 ? "AD"
         : step.indexOf("並べ替え") >= 0 ? "並べ替え"
