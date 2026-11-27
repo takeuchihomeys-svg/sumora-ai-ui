@@ -12,11 +12,11 @@ export const GRASP_GROUP: Record<GraspLeaf, "現状の把握" | "進め方"> = {
 /** 判断の欄（試験の結果の brain.*）のうち、その葉が出る所 */
 export const LEAF_REFLECT: Record<GraspLeaf, string[]> = {
   station: ["situation_now"], substate: ["situation_now"], temp_doubt: ["customer_mindset", "hesitancy_pattern", "customer_emotion"], open_promise: ["ask_ledger", "turn_contract"],
-  sent_reaction: ["our_send_uptake"], move_in: [], waiting_for: ["now_vs_later", "customer_questions"], next_line: ["next_send_link"],
+  sent_reaction: ["our_send_uptake"], move_in: ["after_records"] /* 2026-11-27 作業員A の判断の後の記録（AFTER_DECISION_RECORDS・mif） */, waiting_for: ["now_vs_later", "customer_questions"], next_line: ["next_send_link"],
   next_move: ["turn_contract", "reply_mode"], ahead: ["conductor_brief"], timing: ["appeal_timing"], reply_or_aix: ["reply_mode"],
 };
 /** 出す側: 持つ＝写しの表（ledger）か登録の条件の欄（pc）・使う＝材料の印（無ければ null＝数えられない）・読める葉 */
-export type GraspSource = { id: string; name: string; table?: string; pcField?: string; derived?: boolean; marks: string[]; leaves: GraspLeaf[]; note?: string };
+export type GraspSource = { id: string; name: string; table?: string; pcField?: string; /** 2026-11-27: 判断の記録の欄で持つ物（brain.<欄>）。葉の「持つ」に数える */ brainField?: string; derived?: boolean; marks: string[]; leaves: GraspLeaf[]; note?: string };
 export const GRASP_SOURCES: readonly GraspSource[] = [
   { id: "promise_ledger", name: "約束の台帳（こちらの約束・期限）", derived: true, marks: ["core_promise", "check_promise_flow", "pickup_promise_flow", "now_fulfillable", "fulfil_turn"], leaves: ["open_promise", "waiting_for", "next_move", "timing"], note: "会話の通から作る（写しの表は無い）" },
   { id: "sent_properties", name: "物件の台帳（オススメした物件）", table: "sent_properties", marks: ["core_sent_props"], leaves: ["sent_reaction", "station", "next_move"], note: "【すでに送付済みの物件】は材料に入るが印が無い（pickup_why は選んだ理由の部品で別）" },
@@ -28,12 +28,23 @@ export const GRASP_SOURCES: readonly GraspSource[] = [
   { id: "aix_usage_logs", name: "AIX の送った行", table: "aix_usage_logs", marks: ["core_aix_history"], leaves: ["sent_reaction", "open_promise", "reply_or_aix"], note: "AIX の送った行は会話と台帳の材料に入るが印が無い（our_parts_wide・exchange は既定 off の別の部品）" },
   { id: "sent_facts", name: "送った事実の帳面", table: "sent_facts", marks: ["core_ledger"], leaves: ["sent_reaction", "waiting_for"] },
   { id: "move_in_card", name: "入居の札（登録の条件の入居の時期）", pcField: "move_in_time", marks: ["core_cond"], leaves: ["move_in", "timing", "ahead"] },
-  { id: "customer_summary", name: "顧客の要約（登録の条件の ai_summary）", pcField: "ai_summary", marks: [], leaves: ["temp_doubt", "substate", "move_in"] },
+  { id: "customer_summary", name: "顧客の要約（登録の条件の ai_summary）", pcField: "ai_summary", marks: ["customer_karte"] /* 2026-11-27 カルテが要約を読んで材料に入った番（記録だけ） */, leaves: ["temp_doubt", "substate", "move_in"] },
   { id: "route_map", name: "申込までの地図（駅・状態・逆算）", derived: true, marks: ["station_state", "route_backplan", "route_substate", "route_path_line"], leaves: ["station", "substate", "ahead", "next_move"] },
   { id: "deal_outcomes", name: "成約の台帳（成約データの道）", derived: true, marks: ["deal_flow_pre_apply"], leaves: ["ahead", "timing"], note: "写しには無い＝本番の記録で" },
   { id: "reaction_mindset", name: "反応の予想・気持ち×駅（#795）", derived: true, marks: ["mindset_station"], leaves: ["temp_doubt", "next_line", "next_move"] },
   { id: "aix_state_card", name: "AIX の札（AIX_STATE_CARD）", derived: true, marks: ["aix_state_card"], leaves: ["reply_or_aix", "substate"] },
   { id: "topic_state", name: "話題の状態（topic_state・ack_confirm）", derived: true, marks: ["topic_state", "ack_confirm"], leaves: ["substate", "waiting_for"] },
+  { id: "after_records", name: "判断の後の記録（AFTER_DECISION_RECORDS・作業員A）", brainField: "after_records", derived: true, marks: [], leaves: ["next_line", "move_in"] },
+  // 2026-11-27 作業員A の案（作業員L が足す・統括役の頼み「葉を受け持ち表に・表は1つ」）: 今日できた部品の印 → どの葉の「使う」か（どれも会話から作る出す側）
+  { id: "unanswered", name: "まだ答えていない事（#814・UNANSWERED_ASKS_LINE）", derived: true, marks: ["unanswered", "exchange"], leaves: ["open_promise", "waiting_for", "sent_reaction"] },
+  { id: "substate_ctx", name: "細かい状態の前提・出てよい駅（#804・SUBSTATE_CONTEXT・SUBSTATE_MULTI_STATION）", derived: true, marks: ["substate_context", "substate_context_dropped", "substate_multi_station"], leaves: ["substate"] },
+  { id: "time_map", name: "予定表（#808・TIME_MAP_LINE）＋入居の1行（MOVE_IN_LINE）", derived: true, marks: ["time_map", "move_in_line"], leaves: ["timing", "move_in"] },
+  { id: "backplan_next", name: "逆算の書き手・次の石・番ごとの次の一手（#804）", derived: true, marks: ["backplan_to_writer", "backplan_next_stone", "route_next_by_turn"], leaves: ["ahead", "next_move", "timing"] },
+  { id: "chain_insight", name: "連鎖の見立て（CHAIN_INSIGHT_LINE）", derived: true, marks: ["chain_insight"], leaves: ["ahead", "next_line"] },
+  { id: "aix_split", name: "AIX と返信の境目・辞書・すぐ AIX と信号の下げ（#688・#821）", derived: true, marks: ["aix_boundary", "aix_dictionary", "first_contact_two_stage", "demote_answerable_direct", "demote_date_wish_s3", "ack_pickup_path", "rule6_open_turn"], leaves: ["reply_or_aix"] },
+  { id: "pickup_why", name: "物件を選んだ理由（PICKUP_WHY_TO_BRAIN）", derived: true, marks: ["pickup_why"], leaves: ["sent_reaction", "next_move"] },
+  { id: "msg_window", name: "読む窓の単位（BRAIN_MSG_WINDOW_UNITS）", derived: true, marks: ["msg_window_units"], leaves: ["sent_reaction"] },
+  { id: "customer_karte", name: "顧客のカルテ（#806・CUSTOMER_KARTE）", derived: true, marks: ["customer_karte"], leaves: ["temp_doubt", "substate", "move_in", "waiting_for"] },
 ];
 export type GraspRow = { id: string; ledger?: Record<string, unknown> | null; pc?: Record<string, unknown> | null; marks?: Record<string, unknown> | null; brain?: Record<string, unknown> | null };
 export type GraspCount = { source: string; name: string; leaves: GraspLeaf[]; has: number; use: number | null; gap: number | null; noMark: boolean; derived: boolean; reflect: Partial<Record<GraspLeaf, number>> };
@@ -56,4 +67,18 @@ export function graspGapRank(cs: readonly GraspCount[]): Array<{ source: string;
   return cs.filter((c) => !c.derived && c.has > 0 && (c.noMark || (c.gap ?? 0) > 0))
     .map((c) => ({ source: c.source, name: c.name, size: c.noMark ? c.has : c.gap ?? 0, kind: c.noMark ? "印なし（使うが数えられない）" as const : "材料に入らない" as const, leaves: c.leaves }))
     .sort((a, b) => b.size - a.size);
+}
+
+// 2026-11-27 作業員A の案（作業員L が足す）: 葉ごとに 持つ・使う・反映 の3段を1行に（純関数・受け持ち表 conductor-ownership はこれを呼ぶだけ＝表を2つ持たない）
+export type LeafDuty = { leaf: GraspLeaf; ja: string; group: "現状の把握" | "進め方"; hold: string[]; use: string[]; reflect: string[]; parts: Array<{ key: string; owner: string }>; holes: Array<"持つ" | "使う" | "反映"> };
+export function leafDuty(srcs: readonly GraspSource[] = GRASP_SOURCES, own: ReadonlyArray<{ key: string; owner: string; mark: string | null }> = []): LeafDuty[] {
+  return (Object.keys(GRASP_LEAF_JA) as GraspLeaf[]).map((leaf) => {
+    const ss = srcs.filter((s) => s.leaves.includes(leaf));
+    const hold = ss.filter((s) => s.table || s.pcField || s.brainField).map((s) => (s.table ?? s.pcField ?? `brain.${s.brainField}`) as string);
+    const use = [...new Set(ss.flatMap((s) => s.marks))];
+    const reflect = LEAF_REFLECT[leaf];
+    const parts = own.filter((o) => o.mark && use.includes(o.mark)).map((o) => ({ key: o.key, owner: o.owner }));
+    const holes = ([["持つ", hold], ["使う", use], ["反映", reflect]] as const).filter(([, xs]) => !xs.length).map(([k]) => k);
+    return { leaf, ja: GRASP_LEAF_JA[leaf], group: GRASP_GROUP[leaf], hold, use, reflect, parts, holes };
+  });
 }
