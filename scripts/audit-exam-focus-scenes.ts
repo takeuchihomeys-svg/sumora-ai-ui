@@ -17,7 +17,8 @@ async function main() {
     scene: String(r.scene_key ?? r.tpo_label ?? "-"), verdict: (r.verdict as string | null) ?? null,
     aixVerdict: ((r.verdict_detail as { aix_verdict?: string | null } | null)?.aix_verdict) ?? null,
     brainReply: String(r.brain_reply_mode ?? "") !== "aix" && !String(r.brain_action ?? "").trim(),
-    staffAix: Array.isArray(r.staff_aix) && (r.staff_aix as unknown[]).length > 0,
+    // 2026-11-27 作業員A（#821 の読み）: スタッフの返事の塊の中で押した AIX（burst）だけ。塊の外で後から押した AIX は「約束の返信→後で AIX」の2段＝ブレインの返信と合う
+    staffAix: Array.isArray(r.staff_aix) && (r.staff_aix as Array<{ burst?: boolean }>).some((x) => x?.burst === true),
   }));
   const problemCount: Record<string, number> = {};
   if (existsSync(DICT)) for (const p of Object.values((JSON.parse(readFileSync(DICT, "utf8")) as { problems: Record<string, { scene?: string }> }).problems)) { const s = p.scene ?? "other"; problemCount[s] = (problemCount[s] ?? 0) + 1; }

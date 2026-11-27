@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
 import { gateHoles, sceneReadiness, shadowLines, type ShadowTurn } from "../app/lib/shadow-auto-reply";
-import { finalCheckStateOf } from "../app/lib/auto-gate-final-check";
+import { watchFinalCheckState } from "../app/lib/shadow-auto-gate"; // 見張りの写しは passes に改名して持つ
 
 const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? "30");
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "", { auth: { persistSession: false } });
@@ -21,12 +21,13 @@ async function main() {
   if (error) throw error;
   const turns: ShadowTurn[] = ((data ?? []) as Array<Record<string, unknown>>).map((r) => {
     const staff = Array.isArray(r.staff_texts) ? (r.staff_texts as Array<{ text?: string } | string>).map((x) => (typeof x === "string" ? x : x?.text ?? "")).join("\n") : (r.staff_texts as string | null) ?? null;
-    const aix = Array.isArray(r.staff_aix) && (r.staff_aix as unknown[]).length > 0;
+    // 2026-11-27 作業員A（#821 の読み）: スタッフの返事の塊の中で押した AIX（burst）だけ。後から押した AIX は「約束の返信→後で AIX」の2段＝返信の下書きと合う
+    const aix = Array.isArray(r.staff_aix) && (r.staff_aix as Array<{ burst?: boolean }>).some((x) => x?.burst === true);
     return {
       scene: String(r.scene_key ?? r.tpo_label ?? "-"), wouldSend: !!(r.auto_eligible as { would_send?: boolean } | null)?.would_send, verdict: (r.verdict as string | null) ?? null,
       draft: (r.draft_last as string | null) ?? null, staffText: staff, staffPressedAix: aix,
       danger: dangerOfEdit && !aix ? dangerOfEdit((r.draft_last as string | null) ?? null, staff) : [],
-      finalCheckOk: r.final_check == null ? null : finalCheckStateOf(r.final_check) === "ok", convStatus: (r.conv_status as string | null) ?? null,
+      finalCheckOk: r.final_check == null ? null : watchFinalCheckState(r.final_check) === "ok", convStatus: (r.conv_status as string | null) ?? null,
     };
   });
   if (!dangerOfEdit) console.log("（危ない間違いは数えない: delegation-index がこの写しに無い＝L の #811 の取り込みの後に数える）");
