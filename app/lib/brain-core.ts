@@ -3348,6 +3348,27 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
   // 2026-11-25 作業員A（台帳 #688・竹内さんの4つの決め 11/25 朝）: お客様が送ってきた物件の確認の約束の流れ（app/lib/check-promise-flow.ts）。
   //   BRAIN_CHECK_PROMISE_FLOW=on の時だけ、場面が当たった番にブレインの材料の1行（既定 off＝1文字も変わらない）。申込以降は入れない
   let checkFlowMarkLen = 0;
+  // 2026-11-27 作業員L（葉×出す側の穴の4位・竹内さん 11/27「現状の把握…細分化」・MOVE_IN_LINE=on の時だけ・既定 off）: 入居の時期と期限の1行（登録の条件＋お客様の会話の言い直し）。
+  //   読みは app/lib/move-in-line.moveInFor（作業員A の時間の地図も同じ読みを使う）。印 move_in_line（material_marks・SWITCH_TARGET_MARK）。申込以降は出さない
+  let moveInMarkLen = 0;
+  try {
+    const mil = await import("@/app/lib/move-in-line");
+    if (mil.moveInLineOn() && !isPostApplyStatus(convStatus)) {
+      const nowIsoMi = new Date().toISOString();
+      const ln = mil.moveInLine(mil.moveInFor({ registered: pc?.move_in_time ?? null, customerMsgs: typedMessages.filter((m) => m.sender === "customer").map((m) => ({ text: m.text ?? null, created_at: m.created_at })), nowIso: nowIsoMi }), nowIsoMi);
+      if (ln) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${ln}`; moveInMarkLen = ln.length; materialBlocks.push({ key: "move_in_line", text: ln, from: "cs" }); }
+    }
+  } catch (e) { console.warn("[brain-core] move-in line skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-11-27 作業員L（台帳 #806 お客様のカルテ・CUSTOMER_KARTE=on の時だけ・既定 off）: 登録の条件・会話・送った物件×反応から、一人ごとの1枚（優先・譲れない線・決める人・返事の速さ・言葉づかい・費用・前に断った物件と訳）。
+  //   審査の事情の欄は落とす・個人情報は伏せる（app/lib/customer-karte.ts）・申込以降は出さない。印 customer_karte
+  let karteMarkLen = 0;
+  try {
+    const ck = await import("@/app/lib/customer-karte");
+    if (ck.customerKarteOn() && !isPostApplyStatus(convStatus)) {
+      const kb = ck.karteBlock(ck.karteOf({ pc: pc as never, msgs: typedMessages.map((m) => ({ sender: m.sender, text: m.text ?? null, created_at: m.created_at })), sent: sentProps.filter((p) => !p.shared_only).map((p) => ({ property_name: p.property_name, room_no: p.room_no, sent_at: p.sent_at, rent: p.rent })), nowIso: new Date().toISOString(), names: [opts?.customerName ?? null] }));
+      if (kb) { customerStateBlockText += `${customerStateBlockText ? "\n\n" : ""}${kb}`; karteMarkLen = kb.length; materialBlocks.push({ key: "customer_karte", text: kb, from: "cs" }); }
+    }
+  } catch (e) { console.warn("[brain-core] customer karte skipped:", e instanceof Error ? e.message : String(e)); }
   const flowMarks: { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } = {}; // 2026-11-26 作業員A（#747 の使った目印・材料に入った番だけ）
   try {
     const cpf = await import("@/app/lib/check-promise-flow");
@@ -3714,6 +3735,8 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
   if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
+  if (moveInMarkLen) materialMarks.move_in_line = moveInMarkLen;
+  if (karteMarkLen) materialMarks.customer_karte = karteMarkLen; // 2026-11-27 作業員L（#806・CUSTOMER_KARTE=on の番だけ） // 2026-11-27 作業員L（MOVE_IN_LINE=on の番だけ）
   if (aixBoundaryMarkLen) materialMarks.aix_boundary = aixBoundaryMarkLen;
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）
   if (fulfilMarkLen) materialMarks.fulfil_turn = fulfilMarkLen; // 2026-11-23 作業員A（#648・記録だけ）
@@ -4674,10 +4697,19 @@ ${history}`;
     const core: Record<string, string> = { core_sent_props: sentPropsText, core_ledger: ledgerText, core_aix_history: aixHistoryText, core_estimate_records: estimateRecordsText, core_viewings: viewingsText, core_promise: promiseBrainText, core_cond: condText };
     for (const [k, v] of Object.entries(core)) if (typeof v === "string" && v.trim()) materialMarks[k] = v.length;
   }
+  // 2026-11-27 作業員L（統括役の決め・印を足す順の1番目: L の持ち分で効く問題が辞書にある物）: 指示文や判断の後で効く部品にも「効きうる番」の印（記録だけ・その部品が on の時だけ）。
+  //   COND_PICKUP_SENT_FIRST＝条件の番の決まりの文（全問に入る）が効きうるのは、送った物件がある番（送った資料で答えられる希望）
+  //   TWO_STAGE_SCREENING_NO_REWRITE＝判断の後の2段の書き換えを止める部品が効きうるのは、場面が審査の問い（S3_screening）の番
+  try {
+    const cpp = await import("@/app/lib/cond-pickup-promise");
+    if (cpp.condPickupPromiseOn() && cpp.condPickupSentFirstOn() && sentPropsText.trim()) materialMarks.cond_pickup_sent_first = 1;
+    if (screeningNoRewriteEnabled() && sceneEvidence?.scene === "S3_screening") materialMarks.screening_no_rewrite_turn = 1;
+  } catch { /* 印だけ・読めなくても止めない */ }
   // 2026-11-27 作業員L（#803・竹内さん 11/27「試験の質上げればもっと早く完了する」）: 昼の届きの確かめ（scripts/exam-preflight-marks.ts・LLM 0）。
   //   EXAM_MARKS_PREFLIGHT=on の時だけ、ブレインを呼ぶ前のこの時点の材料の印の鍵を1行出す（本番では立たない・記録だけ・プロンプトは変わらない）
   //   印を出したらブレインを呼ばずに止める（録音の無い呼び出しで待たない・試験の片付けは brain-exam の失敗の行の道で）
-  if (process.env.EXAM_MARKS_PREFLIGHT === "on") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
+  //   試験の2層（全体の分析 m0→今回の番）の1つ目（お客様の今の番を入れる前・一番新しい通がこちら）では止めない＝今回の番の呼び出しの印だけを見る（11/27 q009 で m0 の印を見誤っていた）
+  if (process.env.EXAM_MARKS_PREFLIGHT === "on" && typedMessages[0]?.sender === "customer") { console.log(`[preflight-marks] ${JSON.stringify({ conv: conversationId, keys: Object.keys(materialMarks).filter((k) => materialMarks[k] > 0).sort() })}`); throw new Error("[preflight-marks] 印だけ見る回＝ここで止めた"); }
   const maskedStableText = maskBrain(stableKnowledgeText);
   // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
   const convBlocks = buildConvBlocks({

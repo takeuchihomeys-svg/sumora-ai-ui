@@ -19,7 +19,7 @@ export function preflightKeysOf(out: string): string[][] {
   return xs;
 }
 /** 届いたかの判定（純関数）: 目当ての印（辞書の手＋推定）が付いた問題の数が min 以上で「比べる」・未満は「届かず」・印の無いスイッチは「印なし」 */
-export function preflightVerdict(byId: Record<string, string[] | null>, targets: readonly string[], min = 3, missedById: Record<string, number> = {}): { reached: string[]; notReached: string[]; noRecord: string[]; unknown: string[]; verdict: "比べる" | "届かず" | "録音なし" | "印なし" } {
+export function preflightVerdict(byId: Record<string, string[] | null>, targets: readonly string[], min = 3, missedById: Record<string, number> = {}): { reached: string[]; notReached: string[]; noRecord: string[]; unknown: string[]; verdict: "比べる" | "届かず" | "録音なし" | "印なし" | "分からない" } {
   const ids = Object.keys(byId);
   if (!targets.length) return { reached: [], notReached: [], noRecord: [], unknown: ids, verdict: "印なし" };
   const reached = ids.filter((id) => (byId[id] ?? []).some((k) => targets.includes(k)));
@@ -28,6 +28,7 @@ export function preflightVerdict(byId: Record<string, string[] | null>, targets:
   const noRecord = ids.filter((id) => byId[id] != null && !reached.includes(id) && (missedById[id] ?? 0) > 0);
   const notReached = ids.filter((id) => byId[id] != null && !reached.includes(id) && !noRecord.includes(id));
   const enough = reached.length >= Math.min(min, ids.length) && reached.length > 0;
+  if (!reached.length && !notReached.length && !noRecord.length) return { reached, notReached, noRecord, unknown, verdict: "分からない" }; // 1問も流れていない（メモリで止めた・始まる前に止まった）
   return { reached, notReached, noRecord, unknown, verdict: enough ? "比べる" : reached.length + noRecord.length >= Math.min(min, ids.length) ? "録音なし" : "届かず" };
 }
 export function targetMarksOf(d: ExamDictionary | null, switches: readonly string[]): string[] {
@@ -38,8 +39,11 @@ export function targetMarksOf(d: ExamDictionary | null, switches: readonly strin
 export function runPreflight(o: { cwd: string; ids: readonly string[]; env: Record<string, string>; label: string }): { byId: Record<string, string[] | null>; missed: number; missedById: Record<string, number> } {
   const byId: Record<string, string[] | null> = {}; let missed = 0; const missedById: Record<string, number> = {};
   for (const id of o.ids) {
+    // 空きメモリが 1000MB 未満なら止める（統括役の線）
+    //   下回っている間は待つ（60秒ごと・EXAM_PREFLIGHT_WAIT_MIN 分まで・既定 60）＝試験の係や他の作業とぶつからないように
+    { const { freemem } = require("node:os") as typeof import("node:os"); const waitMs = (Number(process.env.EXAM_PREFLIGHT_WAIT_MIN ?? "60") || 60) * 60_000; const t0 = Date.now(); const sab = new Int32Array(new SharedArrayBuffer(4)); while (Math.round(freemem() / 1048576) < 1000 && Date.now() - t0 < waitMs) Atomics.wait(sab, 0, 0, 60_000); const mb = Math.round(freemem() / 1048576); if (mb < 1000) { console.log(`止めた: 空きメモリ ${mb}MB（${Math.round((Date.now() - t0) / 60000)}分待った）`); break; } }
     const envFile = existsSync(join(o.cwd, ".env.local")) ? join(o.cwd, ".env.local") : join(o.cwd, "..", "exam-night", ".env.local"); // .env は写さない（係の作業ツリーの物を読む）
-    const r = spawnSync("npx", ["tsx", `"--env-file=${envFile}"`, "scripts/brain-exam.ts", `--label=${o.label}-${id}`, "--conv=auto", "--repeat=1", "--stage=brain", `--only=${id}`, "--no-judge", "--replay=strict"], {
+    const r = spawnSync("npx", ["tsx", `"--env-file=${envFile}"`, "scripts/brain-exam.ts", `--label=${o.label}-${id}`, "--conv=auto", "--repeat=1", "--stage=brain", `--only=${id}`, "--no-judge", "--replay=strict", "--layer=combined"] /* 1回の呼び出し（今の番まで全部入れて）＝2層の1回目（m0）を待たない・印は今の番の呼び出しだけ */, {
       cwd: o.cwd, encoding: "utf8", shell: true, timeout: 5 * 60_000, env: { ...process.env, ...o.env, LLM_TEST_MODE: "deepseek-all", EXAM_MARKS_PREFLIGHT: "on", EXAM_CONCURRENCY: "1" },
     });
     // 印だけ見る回の線の鍵（label ごとの floor の .lock）は残さない

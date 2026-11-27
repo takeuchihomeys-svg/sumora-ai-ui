@@ -7,7 +7,14 @@
 //   置き場: 問題の定義は git のファイルのまま。毎晩変わる数は <exam-cache>/exam-dictionary.json（DB の exam_runs と重ねない）。
 export type DictProblemIn = { id: string; type?: string; sub?: string; ledger?: Record<string, unknown> | null };
 export type DictObs = { sig: string; at: string; independent?: boolean; model?: string; codeKey?: string };
-export type DictProblem = { id: string; type: string; scene: string; materials: Record<string, number>; flake: { n: number; same: number; share: number | null; flaky: boolean }; last: { pass: boolean | null; at: string | null }; unitUsd: number };
+export type DictProblem = { id: string; type: string; scene: string; materials: Record<string, number>; flake: { n: number; same: number; share: number | null; flaky: boolean }; last: { pass: boolean | null; at: string | null }; unitUsd: number;
+  /** 2026-11-27: 一度も合格していない（観測 NEVER_PASS_MIN 回以上で全部不合格）＝守り（悪化の見張り）に使っても意味がない（統括役の決め・q203 の 17回） */ neverPassed?: boolean };
+export const NEVER_PASS_MIN = 5;
+/** 一度も合格していないか（純関数）: 独立の観測が NEVER_PASS_MIN 回以上あり、合格（|○）が1つも無い */
+export function neverPassedOf(obs: readonly DictObs[]): boolean { const xs = obs.filter((o) => o.independent !== false); return xs.length >= NEVER_PASS_MIN && !xs.some((o) => /\|○/.test(o.sig)); }
+/** 守りの選びから外す問題（純関数・既定は記録だけ＝呼ぶ側が1行出す・EXAM_GUARD_SKIP_NEVER_PASSED=on で外す） */
+export function guardSkipNeverPassed(d: ExamDictionary | null, guards: readonly string[]): string[] { return d ? guards.filter((g) => d.problems[g]?.neverPassed) : []; }
+export const guardSkipNeverPassedOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.EXAM_GUARD_SKIP_NEVER_PASSED ?? "").trim().toLowerCase() === "on";
 export type DictMark = { mark: string; source: "手" | "推定"; n: number };
 export type DictSwitch = { sw: string; needs: string[]; testable: boolean; why: string; withMaterial: string[]; hit: string[]; none: string[];
   /** 2026-11-27: 部品の材料の印（手＝SWITCH_REACH.mark・SWITCH_TARGET_MARK／推定＝前の on の回だけに出て off の回に出ない印） */ marks?: DictMark[];
@@ -73,7 +80,7 @@ export function buildDictionary(i: {
   for (const p of i.problems) {
     const obs = i.obsOf(p.id);
     const lastObs = [...obs].sort((a, b) => a.at.localeCompare(b.at)).pop();
-    problems[p.id] = { id: p.id, type: String(p.type ?? ""), scene: String(p.sub ?? "").split(":")[0] || "-", materials: materialsOf(p, i.priorOf?.(p.id) ?? null), flake: flakeOf(obs), last: { pass: lastObs ? /\|○/.test(lastObs.sig) : null, at: lastObs?.at ?? null }, unitUsd: unit };
+    problems[p.id] = { id: p.id, type: String(p.type ?? ""), scene: String(p.sub ?? "").split(":")[0] || "-", materials: materialsOf(p, i.priorOf?.(p.id) ?? null), flake: flakeOf(obs), last: { pass: lastObs ? /\|○/.test(lastObs.sig) : null, at: lastObs?.at ?? null }, unitUsd: unit, neverPassed: neverPassedOf(obs) };
   }
   const switches: Record<string, DictSwitch> = {};
   const names = new Set([...Object.keys(i.reach), ...Object.keys(i.learned ?? {}), ...Object.keys(i.handMarks ?? {}), ...Object.keys(i.inferred ?? {}), ...Object.keys(i.onRuns ?? {})]);
