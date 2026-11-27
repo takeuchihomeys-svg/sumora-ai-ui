@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { examCacheRoot } from "./lib/llm-cassette";
 import type { ExamDictionary } from "./lib/exam-dictionary";
+import { settleExamRun } from "./lib/exam-run-settle";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 /** brain-exam の出力から問題ごとの印の鍵（1問ずつ流した時は出た順＝問題の順）（純関数） */
@@ -46,6 +47,8 @@ export function runPreflight(o: { cwd: string; ids: readonly string[]; env: Reco
     const r = spawnSync("npx", ["tsx", `"--env-file=${envFile}"`, "scripts/brain-exam.ts", `--label=${o.label}-${id}`, "--conv=auto", "--repeat=1", "--stage=brain", `--only=${id}`, "--no-judge", "--replay=strict", "--layer=combined"] /* 1回の呼び出し（今の番まで全部入れて）＝2層の1回目（m0）を待たない・印は今の番の呼び出しだけ */, {
       cwd: o.cwd, encoding: "utf8", shell: true, timeout: 5 * 60_000, env: { ...process.env, ...o.env, LLM_TEST_MODE: "deepseek-all", EXAM_MARKS_PREFLIGHT: "on", EXAM_CONCURRENCY: "1" },
     });
+    // 2026-11-27 統括役: 時間切れ・異常終了の回は残った node を止め、条件の行の控えを必ず戻す（timeout は shell だけ止める＝孫の brain-exam が戻さずに残る）
+    if (r.status !== 0 || r.error) settleExamRun({ cwd: o.cwd, label: `${o.label}-${id}`, envFile, log: (s) => console.log(s) });
     // 印だけ見る回の線の鍵（label ごとの floor の .lock）は残さない
     try { const ro = join(o.cwd, "scripts", ".replay-out"); for (const f of readdirSync(ro)) if (f.startsWith(`brain-exam-floor-${o.label}-${id}`) && f.endsWith(".lock")) unlinkSync(join(ro, f)); } catch { /* 無ければよい */ }
     const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
