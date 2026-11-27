@@ -37,7 +37,9 @@ export const PLAN_KEYS = ["current_property", "reply_mode", "action", "check_pat
   // 2026-11-15 作業員M: 要件の帳面（ASK_LEDGER=shadow|on・要件の id・何通目・取りこぼし／重ね／取り違え）と返信と AIX の組（SEND_COMBO_TABLE=shadow）。scripts/ask-ledger-score.ts が答案から読む
   "ask_ledger", "send_combo",
   // 2026-11-19 作業員M: 前の番のまだの要件（ASK_PROGRESS_READ）と統括の next_send のつながり（NEXT_SEND_LINK=shadow）
-  "ask_carry", "next_send_link"] as const;
+  "ask_carry", "next_send_link",
+  // 2026-11-28 作業員A（統括役の頼み・a-demote-ad で「決め打ちとブレインが一致したのか、ブレインが自分で選んだのか」が答案から見分けられなかった）: 決めた出どころ・下げた上書き（記録だけ）
+  "decision_source", "demoted_overrides", "aix_read_src"] as const;
 export function planOf(meta: Record<string, unknown> | null): Record<string, unknown> {
   if (!meta) return {};
   const out: Record<string, unknown> = {};
