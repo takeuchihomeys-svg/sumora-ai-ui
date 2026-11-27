@@ -36,6 +36,7 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     //   #687 地図の木の毎晩の数え直し（同じ照らしの json から木を作り、前の晩と比べて一番弱い節）。どれも費用0・LLM なし
     { name: "影の自動返信（quality_daily の shadow:*・14日）", args: ["scripts/audit-shadow-auto.ts", "--days=14", "--write", `--out=${jsonPath.replace(/\.json$/, "")}-shadow-aix-as-reply.json`], timeoutMin: 5 },
     { name: "地図の木（#804・木の json）", args: ["scripts/audit-scene-branches.ts", `--from=${jsonPath}`, `--tree-out=${jsonPath.replace(/\.json$/, "")}-tree.json`], timeoutMin: 10 },
+    { name: "試験を寄せる場面の順位（#823 ③・quality_daily の exam_focus:top）", args: ["scripts/audit-exam-focus-scenes.ts", "--days=14", "--write"], timeoutMin: 5 },
     { name: "地図の木の毎晩の数え直し（#687・quality_daily の tree:*）", args: ["scripts/nightly-scene-tree.ts", `--tree=${jsonPath.replace(/\.json$/, "")}-tree.json`, "--write"], timeoutMin: 5 },
   ];
 }

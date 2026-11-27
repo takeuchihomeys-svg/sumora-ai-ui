@@ -809,7 +809,10 @@ async function main() {
         if (wk) items.push({ area: "行き止まり", label: `地図の一番弱い節: ${wk.key}`, status: "bad", owner: "作業員A", why: `一致 ${wk.agreePct ?? "—"}%・見込み ${wk.cause}`, next: "この節の番を実物で読み、原因を3つで確かめる（#687）" });
       } catch { items.push(bh.countItem({ area: "行き止まり", label: "地図の行き止まりの節（#804）", now: null, noRecordWhy: "quality_daily を読めない" })); }
       items.push(bh.countItem({ area: "答え漏れ", label: "まだ答えていない事（#814）", now: null, noRecordWhy: "UNANSWERED_ASKS_LINE が off（on の後に material_marks.unanswered で数える）" }));
-      lines.push(...bh.brainHealthLines(items), "");
+      lines.push(...bh.brainHealthLines(items));
+      // 2026-11-27 作業員A（#823 ③）: 試験を寄せる場面の順位（毎晩の audit-exam-focus-scenes --write が書いた1行・費用0）
+      try { const { data: ef } = await sb.from("quality_daily").select("detail").eq("metric", "exam_focus:top").order("day", { ascending: false }).limit(1); const ln = ((ef?.[0] as { detail?: { line?: string } } | undefined)?.detail?.line) ?? null; lines.push(ln ?? "- 試験を寄せる場面: まだ数えていない（毎晩の audit-exam-focus-scenes）"); } catch { /* 読めなければ出さない */ }
+      lines.push("");
       if (flag("write") && bh.brainHealthLedgerOn()) {
         const { data: openH } = await sb.from("work_items").select("title").like("title", "ブレインの健康: %").not("stage", "in", "(done,dropped)").limit(300);
         for (const r of bh.brainHealthLedger(items, ((openH ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: r.title, owner: r.owner, next: r.next, area: r.area, priority: r.priority });
