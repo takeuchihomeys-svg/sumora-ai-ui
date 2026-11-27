@@ -1,7 +1,7 @@
 {
  "v": 1,
  "at": "2026-11-27",
- "note": "main（733fe783c）で 1本ずつ流して決めた。slow＝1本 5秒超（夜に回す）・needsEnv＝DB の url が要る（.env があれば通る）・knownFail＝main でも落ちる（試験が古いのかコードが古いのかを分けて直したら消す）",
+ "note": "main（733fe783c）で 1本ずつ流して決めた。slow＝1本 5秒超（夜に回す）・needsEnv＝DB の url が要る（.env があれば通る）・knownFail＝main でも落ちる（試験が古いのかコードが古いのかを分けて直したら消す）／2026-11-27 #826: 試験が古かった 11本を直して外した・作業の写しでは cwd に node_modules が無く落ちる pdf の2本と .env が要る relative-area を needsEnv へ",
  "slow": [
   {
    "file": "brain-prompt-rules-1112.test.ts",
@@ -31,36 +31,18 @@
   "sent-image-doc-guard.test.ts",
   "shot-ops-focus.test.ts",
   "shot-retention.test.ts",
-  "supervisor-save.test.ts"
+  "supervisor-save.test.ts",
+  "relative-area.test.ts",
+  "pdf-render-text.test.ts",
+  "pdf-sheet-crop.test.ts"
  ],
  "knownFail": [
   {
-   "file": "ack-confirm-aix-path.test.ts",
-   "owner": "統括役",
-   "was": "作業員D",
-   "ledger": 826
-  },
-  {
    "file": "aix-catalog.test.ts",
-   "owner": "統括役",
+   "owner": "作業員A",
    "was": "作業員21",
-   "ledger": 826
-  },
-  {
-   "file": "aix-consult.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "apply-period-summary.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "apply-route-map.test.ts",
-   "owner": "統括役",
-   "was": "作業員M",
-   "ledger": 826
+   "ledger": 826,
+   "why": "AIX の場面の長さの上限 5,500字を ack が 5,623字で超えた。削るか上限を上げるかは AIX の持ち主の A が決める（統括役の決め 11/27・AIX の文なら提案タブの流れ）"
   },
   {
    "file": "auto-next-page-resume.test.ts",
@@ -68,87 +50,33 @@
    "ledger": 825
   },
   {
-   "file": "compose-sentence-plan.test.ts",
-   "owner": "統括役",
-   "was": "作業員14",
-   "ledger": 826
-  },
-  {
    "file": "customer-sim.test.ts",
    "owner": "Cursor",
    "ledger": 825
   },
   {
-   "file": "deepseek-cutoff-routes.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
    "file": "learn-audit.test.ts",
-   "owner": "統括役",
-   "ledger": 826
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
   },
   {
    "file": "learn-garbage-cleanup.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "link-promise-picker.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "listing-text.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "llm-alt-provider.test.ts",
-   "owner": "統括役",
-   "was": "作業員8",
-   "ledger": 826
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
   },
   {
    "file": "migrate-schema-rls.test.ts",
    "owner": "統括役",
-   "ledger": 826
+   "ledger": 826,
+   "why": "竹内さんの決め待ち・安全の件（RLS を on にすると公開キーで動く所が止まるおそれ・project_rls_anon_key_pending）"
   },
   {
    "file": "normal-photo-learn-traps.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "owner-answers-1021.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "pdf-render-text.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "pdf-sheet-crop.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "reapply-customer.test.ts",
-   "owner": "統括役",
-   "was": "作業員H",
-   "ledger": 826
-  },
-  {
-   "file": "relative-area.test.ts",
-   "owner": "統括役",
-   "ledger": 826
-  },
-  {
-   "file": "schema-objects-check.test.ts",
-   "owner": "統括役",
-   "ledger": 826
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
   },
   {
    "file": "search-focus.test.ts",
@@ -162,24 +90,20 @@
   },
   {
    "file": "supervisor-selfcheck-humanness.test.ts",
-   "owner": "統括役",
-   "ledger": 826
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
   },
   {
    "file": "supervisor-wiring.test.ts",
-   "owner": "統括役",
-   "ledger": 826
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
   },
   {
    "file": "ward-reselect-loop.test.ts",
    "owner": "Cursor",
    "ledger": 825
-  },
-  {
-   "file": "writing-blueprint.test.ts",
-   "owner": "統括役",
-   "was": "作業員4",
-   "ledger": 826
   }
  ]
 }

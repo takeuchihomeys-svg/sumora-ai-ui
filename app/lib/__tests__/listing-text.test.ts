@@ -97,7 +97,8 @@ console.log("── 2026-09-27 号室を資料の文字のまま（実物: prope
   const s = fillSummaryFromListing("【2】エステムコート難波Ⅶビヨンド\n78,000円 10,000円\n1K 21.81㎡\nAD 1ヶ月", rp005b);
   t("★ 旧は号室を落としていた → 1行目に「005B号室」", s.summary.split("\n")[0] === "【2】エステムコート難波Ⅶビヨンド 005B号室" && s.filled.includes("room"), s);
   const h = parseSummaryHead(s.summary);
-  t("★ 名前に号室が残らない（旧は名前が「… 005B号室」・号室が空）", h?.propertyName === "エステムコート難波Ⅶビヨンド" && h?.roomNo === "005B", h);
+  // 2026-11-27 作業員L（台帳 #826）: 11/04 から物件の鍵を1つに（property-key.ts・PROPERTY_KEY_UNIFIED 既定 on）＝号室の頭の 0 を外す（005A→5A）。号室の字そのままは下の summaryHeadRoomVerbatim で見る＝試験が古かった
+  t("★ 名前に号室が残らない（旧は名前が「… 005B号室」・号室が空）", h?.propertyName === "エステムコート難波Ⅶビヨンド" && (h?.roomNo === "5B" || h?.roomNo === "005B"), h);
   t("号室（そのまま）= 005B", summaryHeadRoomVerbatim(s.summary) === "005B");
   const rp0206 = parseListingText(REALPRO_TEXT.replace("号室名 0404（4階部分）", "号室名 0206（2階部分）"));
   const s2 = fillSummaryFromListing("【1】エステムコート難波Ⅶビヨンド\n78,000円 10,000円\nAD 1ヶ月", rp0206);

@@ -85,8 +85,10 @@ t("off の時は空文字", writingBlueprintNoteIfEnabled({ scene: "question", q
 t("on の時は文", writingBlueprintNoteIfEnabled({ scene: "question" }, { WRITING_BLUEPRINT: "on" }).startsWith("\n\n【🧩 文の設計図"));
 // 返信の指示に入る所は「off の時は空文字」の1か所だけ（キャッシュする側には入れない）
 const route = readFileSync(join(__dirname, "../../api/generate-reply/route.ts"), "utf8");
-t("route: 差し込みは毎回変わる側の1か所", (route.match(/sceneSel\?\.blueprintNote/g) ?? []).length === 1 && /\$\{sceneStyleNoteText\}\$\{sceneSel\?\.blueprintNote \?\? ""\}/.test(route));
-t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return buildWritingBlueprintNote\([\s\S]{0,2000}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
+// 2026-11-27 作業員L（台帳 #826）: 文の組み立ての落とす口（composeDrop("writingBlueprint")）と順番の剥がし（maybeStripWb）・会話の型の1行（10/23 計画7）が
+//   同じ差し込みの中に入った（1か所・毎回変わる側・off は空文字のまま）＝試験の字面が古かった
+t("route: 差し込みは毎回変わる側の1か所", (route.match(/sceneSel\?\.blueprintNote/g) ?? []).length === 1 && /sceneStyleNoteText\}\$\{(?:composeDrop\("writingBlueprint"\) \? "" : )?\(?sceneSel\?\.blueprintNote \?\? ""\)?\}/.test(route));
+t("route: off の時は空文字を渡す（on でも投げたら空文字）", /blueprintNote: !isTemplateOptimize && writingBlueprintEnabled\(\) \? \(\(\) => \{ try \{ return (?:maybeStripWb\()?buildWritingBlueprintNote\([\s\S]{0,4000}?catch[\s\S]{0,120}?return ""; \} \}\)\(\) : ""/.test(route));
 t("route: 差し込みは dynamicBlock の中", (() => { const a = route.indexOf("const dynamicBlock ="); const b = route.indexOf("sceneSel?.blueprintNote"); const c = route.indexOf("const priorityOrderNote", a); return a > 0 && b > a && b < c; })());
 
 console.log(`\nwriting-blueprint: ${pass} OK / ${fail} NG`);

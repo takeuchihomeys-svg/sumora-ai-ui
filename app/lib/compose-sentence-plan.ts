@@ -854,6 +854,9 @@ export const BRAIN_FIELD_ROUTE: Readonly<Record<string, "plan" | "other" | "none
   brain_depth: "none", deep_recheck_digest: "none", conductor_todos: "none", priority_step: "none", llm_raw: "none", checkpoint_stage_llm: "none", analyzed_msg_ts: "none",
   last_aix_history: "none", aix_suppressed_by_accept_rate: "none", signal_aix_ran: "none", signal_aix_result: "none", decision_source: "none", decision_source_no_aix: "none",
   demoted_overrides: "none", first_contact_pickup: "none", dropped_direction: "none", scene_evidence: "none", reason: "none", human_type_label: "none",
+  // 2026-11-27 作業員L（台帳 #826・統括役の決め 1）: 11/22〜11/26 に足した欄の登録漏れ。この表は試験だけが読む（本番で書き手に渡る物は HANDOFF_FIELDS と各注記＝1バイトも変わらない）。
+  //   今の本番の扱いのまま: 記録だけの5つは none／route_backplan は generate-reply の backplanWriterNote（BACKPLAN_TO_WRITER=on の時だけ・既定 off）が運ぶ＝other
+  material_priority: "none", intake_timing: "none", overdue_promises: "none", overdue_now: "none", flow_marks: "none", route_backplan: "other",
 };
 const nz = (t: string) => t.normalize("NFKC").replace(/\s+/g, "");
 /** ブレインに値があるのに設計図の注記に出ない欄（AIX の主の番・注記が空の番は数えない） */

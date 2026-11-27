@@ -160,10 +160,13 @@ it("brain-core: off の時プロンプトは同じ（applyRouteText は '' で�
     const head = 'let applyRouteText = "";';
     const i = src.indexOf(head), j = src.indexOf("if (applyRouteMapEnabled()) {", i);
     const between = i >= 0 && j > i ? src.slice(i + head.length, j).split("\n").map((l) => l.trim()).filter(Boolean) : null;
-    ok(!!between && between.every((l) => l.startsWith("//") || l.startsWith("let applyRouteLocRec")), "初期値と分岐（間は記録の宣言とコメントだけ）");
+    // 2026-11-27 作業員L（台帳 #826）: 11/26 作業員A（#745・BACKPLAN_TO_WRITER）の記録の宣言 routeBackplanRec も同じ間に入った（記録だけ・プロンプトは同じ）＝試験が古かった
+    ok(!!between && between.every((l) => l.startsWith("//") || l.startsWith("let applyRouteLocRec") || l.startsWith("let routeBackplanRec")), "初期値と分岐（間は記録の宣言とコメントだけ）");
   }
   const assigns = src.match(/applyRouteText\s*=[^=]/g) ?? [];
-  eq(assigns.length, 2, "代入は初期化と分岐の中の2つ");
+  // 2026-11-27 作業員L（台帳 #826）: #747 MATERIAL_PRIORITY の並べ替え（mpMode === "on" の時だけ・既定 off＝off はプロンプト同じ）の代入が3つ目に入った＝試験が古かった
+  const mpAssign = (src.match(/if \(mpMode === "on" && pick\.keys\.length\) \{[^\n]*applyRouteText = r\.route;/g) ?? []).length;
+  eq(assigns.length - mpAssign, 2, "代入は初期化と分岐の中の2つ（MATERIAL_PRIORITY=on の並べ替えは別）");
   const uses = src.match(/\$\{applyRouteText\}/g) ?? [];
   eq(uses.length, 2, "差し込みは customerSpecificText の2つの形だけ");
   // 差し込みを外すと main と同じ並び（system・会話専用ブロックには入れていない）

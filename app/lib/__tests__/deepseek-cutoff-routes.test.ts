@@ -174,7 +174,8 @@ async function main() {
   await it("物件の評価・画像の読み取り（送った時・引用）も同じ線", () => {
     ok(/loadDeepseekCutoff\(supabase, convIdForCut\)/.test(src("app/api/evaluate-property/route.ts")), "evaluate");
     ok(/loadDeepseekCutoff\(supabase, conversationId\)/.test(src("app/lib/image-detail-store.ts")), "image-detail");
-    ok(/loadDeepseekCutoff\(supabase, conversationId\)\) === null/.test(src("app/lib/sent-image-record.ts")), "sent-image");
+    // 2026-11-27 作業員L（台帳 #826）: 11/05 に読み直しの sentAt の線が足され、線を変数（cutoff）に受けてから「null なら読まない」になった（守りは同じ・強くなった）＝試験の字面が古かった
+    { const s = src("app/lib/sent-image-record.ts"); ok(/loadDeepseekCutoff\(supabase, conversationId\)\) === null/.test(s) || (/const cutoff = await loadDeepseekCutoff\(supabase, conversationId\)/.test(s) && /if \(cutoff === null \|\|/.test(s)), "sent-image"); }
     ok(/sentAt: quoted\.created_at/.test(src("app/lib/quoted-context.ts")), "quoted");
   });
   await it("線を書くのは DB のトリガー（migrate-schema と本番反映スクリプトが同じ文）", () => {

@@ -70,7 +70,8 @@ t("確認出来次第の後に「お気軽にご連絡ください」の締め �
 t("守り q152: 「お気に召されましたら」の約束には付けない", ackConfirmAixPathLine(pair("YUMAさん\nお世話になっております！！\n\nファーストフィオーレ難波ウエストの募集状況確認させていただき、現在1番手でお申込みが入っており2番手お申込みが可能なお部屋となります！！\n\n1番手の方審査否決・キャンセルで繰り上がり審査開始となりますがお部屋のお申込み自体は可能となりますのでお気に召されましたらお部屋お申込みし同時並行でお部屋探し継続させていただきます😊！！", "かしこまりました！\nその方向でお願い致します"), ON) === "");
 // 配線: brain-core は ackFormMaterialLine を通して材料を入れている（道の行もそこから入る）
 const bc = readFileSync(join(__dirname, "..", "brain-core.ts"), "utf8");
-t("配線: brain-core の了承の材料は ackFormMaterialLine(ackFormFacts(...))", bc.includes("ackFormMaterialLine(ackFormFacts("));
+// 2026-11-27 作業員L（台帳 #826）: 11/25 の 11a881e48 で facts を変数（ackFacts）に受けてから渡す形になった（道の1行を渡したかも同じ facts で見る）＝試験の字面が古かった
+t("配線: brain-core の了承の材料は ackFormMaterialLine(ackFormFacts(...))", bc.includes("ackFormMaterialLine(ackFormFacts(") || (bc.includes("const ackFacts = ackFormFacts(") && bc.includes("ackFormMaterialLine(ackFacts)")));
 
 console.log(`ack-confirm-aix-path: ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

@@ -3,7 +3,8 @@
 import { aixDeskConsultMode, consultTriggers, consultCandidates, parseConsultAnswer, AIX_CONSULT_SYSTEM } from "../aix-commander";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, v?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, JSON.stringify(v)); } };
-t("既定は off", aixDeskConsultMode({}) === "off" && aixDeskConsultMode({ AIX_DESK_CONSULT: "shadow" }) === "shadow");
+// 2026-11-27 作業員L（台帳 #826）: 11/03 夜 ad772dc6b で既定を shadow（記録だけ）に上げた（desk-on2 確かな悪化0）＝試験が古かった
+t("既定は shadow（記録だけ）・off で止まる", aixDeskConsultMode({}) === "shadow" && aixDeskConsultMode({ AIX_DESK_CONSULT: "off" }) === "off" && aixDeskConsultMode({ AIX_DESK_CONSULT: "on" }) === "on");
 t("お礼だけは相談しない", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: true, noGround: false, turnText: "ありがとうございます！" }).length === 0);
 t("空きの質問は相談", consultTriggers({ contractAsksAixOrPromise: false, sceneUncertain: false, noGround: false, turnText: "ここまだ空いてますか？" }).includes("staff_only_cue"));
 t("本質に AIX の依頼", consultTriggers({ contractAsksAixOrPromise: true, sceneUncertain: false, noGround: false, turnText: "了解です" })[0] === "contract_aix");

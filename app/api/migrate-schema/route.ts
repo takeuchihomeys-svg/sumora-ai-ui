@@ -4686,51 +4686,7 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- 売上サポの行（資料を読んだ物）→ 部屋の条件の列を埋める・無い部屋は足す・使われ方の段を上げる
-CREATE OR REPLACE FUNCTION rent_observe_pickup_apply(p property_pickups) RETURNS void
-LANGUAGE plpgsql AS $$
-DECLARE
-  k text; l2 text; l3 text; v_rent int; v_admin int; v_plan text; v_sqm numeric; v_rank int; v_ward text; v_station text; v_walk int; s text;
-BEGIN
-  k := rent_unit_key(p.property_name, p.room_no);
-  IF coalesce(p.property_name, '') = '' THEN RETURN; END IF;
-  l2 := split_part(coalesce(p.summary_text, ''), E'\\n', 2);
-  l3 := split_part(coalesce(p.summary_text, ''), E'\\n', 3);
-  v_rent := nullif(regexp_replace(coalesce((regexp_match(l2, '([0-9][0-9,]{3,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
-  v_admin := nullif(regexp_replace(coalesce((regexp_match(l2, '円\\s+([0-9][0-9,]{2,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
-  v_plan := (regexp_match(upper(normalize(l3, NFKC)), '([1-9]S?(?:LDK|DK|K|R))'))[1];
-  v_sqm := nullif((regexp_match(normalize(l3, NFKC), '([0-9]+(?:\\.[0-9]+)?)\\s*(?:㎡|m2|m²)'))[1], '')::numeric;
-  v_rank := CASE WHEN p.status = 'sent' OR p.sent_at IS NOT NULL THEN 3 WHEN coalesce(p.recommended, 0) > 0 THEN 2 ELSE 1 END;
-  v_ward := rent_norm_ward(p.location->>'ward');
-  v_station := p.location->'stations'->0->>'station';
-  v_walk := CASE WHEN (p.location->'stations'->0->>'walk') ~ '^\\d+$' THEN (p.location->'stations'->0->>'walk')::int END;
-  s := p.equipment->'facts'->'pet'->>'s';
-  INSERT INTO rent_observations AS o (branch_id, unit_key, property_name, room_no, site, ward, station, walk_minutes, floor_plan, plan_group, area_sqm,
-      building_age, built_year, floor, total_floors, structure, rent, admin_fee, rent_total, deposit_months, key_money_months, equipment, pet, ad_yen,
-      usage_rank, usage_stage, pickup_id, attrs_at, first_seen_at, last_seen_at)
-  VALUES ('osaka', k, p.property_name, p.room_no, p.site, v_ward, v_station, v_walk, v_plan, rent_plan_group(v_plan), v_sqm,
-      CASE WHEN (p.terms->>'buildingAge') ~ '^\\d+$' THEN (p.terms->>'buildingAge')::int END,
-      CASE WHEN (p.terms->>'builtYear') ~ '^\\d{4}$' THEN (p.terms->>'builtYear')::int END,
-      CASE WHEN (p.equipment->>'floor') ~ '^-?\\d+$' THEN (p.equipment->>'floor')::int END,
-      CASE WHEN (p.equipment->>'totalFloors') ~ '^\\d+$' THEN (p.equipment->>'totalFloors')::int END,
-      p.equipment->'facts'->'structure'->>'d',
-      v_rent, v_admin, CASE WHEN v_rent IS NOT NULL THEN v_rent + coalesce(v_admin, 0) END,
-      CASE WHEN (p.terms->>'deposit') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'deposit')::numeric END,
-      CASE WHEN (p.terms->>'keyMoney') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'keyMoney')::numeric END,
-      rent_equipment_of(p.equipment->'facts'), CASE WHEN s IN ('ok', 'ng') THEN s = 'ok' END, p.ad_yen,
-      v_rank, rent_usage_stage(v_rank), p.id, now(), coalesce(p.created_at, now()), coalesce(p.created_at, now()))
-  ON CONFLICT (branch_id, unit_key) DO UPDATE SET
-    ward = coalesce(o.ward, EXCLUDED.ward), station = coalesce(o.station, EXCLUDED.station), walk_minutes = coalesce(o.walk_minutes, EXCLUDED.walk_minutes),
-    floor_plan = coalesce(o.floor_plan, EXCLUDED.floor_plan), plan_group = coalesce(o.plan_group, EXCLUDED.plan_group), area_sqm = coalesce(o.area_sqm, EXCLUDED.area_sqm),
-    rent = coalesce(o.rent, EXCLUDED.rent), admin_fee = coalesce(o.admin_fee, EXCLUDED.admin_fee), rent_total = coalesce(o.rent_total, EXCLUDED.rent_total),
-    building_age = coalesce(EXCLUDED.building_age, o.building_age), built_year = coalesce(EXCLUDED.built_year, o.built_year),
-    floor = coalesce(EXCLUDED.floor, o.floor), total_floors = coalesce(EXCLUDED.total_floors, o.total_floors), structure = coalesce(EXCLUDED.structure, o.structure),
-    deposit_months = coalesce(EXCLUDED.deposit_months, o.deposit_months), key_money_months = coalesce(EXCLUDED.key_money_months, o.key_money_months),
-    equipment = coalesce(o.equipment, '{}'::jsonb) || coalesce(EXCLUDED.equipment, '{}'::jsonb), pet = coalesce(EXCLUDED.pet, o.pet), ad_yen = coalesce(EXCLUDED.ad_yen, o.ad_yen),
-    usage_rank = greatest(o.usage_rank, EXCLUDED.usage_rank), usage_stage = rent_usage_stage(greatest(o.usage_rank, EXCLUDED.usage_rank)),
-    sent_to_customer = o.sent_to_customer OR EXCLUDED.usage_rank >= 3,
-    pickup_id = coalesce(EXCLUDED.pickup_id, o.pickup_id), attrs_at = now(), last_seen_at = greatest(o.last_seen_at, EXCLUDED.last_seen_at);
-END;
-$$;
+-- 2026-11-27 作業員L（台帳 #826・統括役の決め）: 前の版はここにあったが、下（is_exam_conversation の後）の CREATE OR REPLACE が毎回勝つ＝前の版を消して後の版だけ残す（後の版＝前の版＋試験の会話の1行）
 
 -- 1行ずつの関数（埋め戻し: SELECT rent_observe_pickup_apply(p) FROM property_pickups p ORDER BY created_at）
 CREATE OR REPLACE FUNCTION rent_observe_pickup() RETURNS trigger
@@ -4748,25 +4704,7 @@ CREATE OR REPLACE TRIGGER rent_observe_pickup_trg AFTER INSERT OR UPDATE OF equi
   FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup();
 
 -- お客様へ届けた（手順1の rent_observe_sent に段と経路を足す）・興味ありは段4
-CREATE OR REPLACE FUNCTION rent_observe_sent() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE r int;
-BEGIN
-  IF NEW.delivery = 'customer' AND coalesce(NEW.channel, '') NOT IN ('check', 'estimate')
-     AND coalesce(NEW.source, '') NOT IN ('aix:property_check_result', 'aix:estimate_sheet') THEN
-    r := CASE WHEN NEW.customer_reaction = 'interested' THEN 4 ELSE 3 END;
-    UPDATE rent_observations SET sent_to_customer = true, sent_channel = coalesce(sent_channel, NEW.channel, NEW.source),
-      usage_rank = greatest(usage_rank, r), usage_stage = rent_usage_stage(greatest(usage_rank, r))
-      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no);
-  END IF;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'rent_observe_sent: %', SQLERRM;
-  RETURN NEW;
-END;
-$$;
-CREATE OR REPLACE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
-  FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
+-- 2026-11-27 作業員L（台帳 #826）: rent_observe_sent の前の版も同じ（後の版＝前の版＋試験の会話の1行）。トリガー rent_observe_sent_trg は関数の後の版の直後へ移した（新しい DB でも関数が先に在る）
 
 -- ════════════════════════════════════════════════════════════════════
 -- 2026-10-02 ⑯ 手順4b: property_search_knowledge を「整理済みの物件検索の知識」の置き場に（8/22 に作られ0行・どこからも使われていなかった）
@@ -5753,6 +5691,8 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
+CREATE OR REPLACE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
 
 
 -- 戻す時: rent_observe_pickup_apply・rent_observe_sent の先頭の is_exam_conversation の1行を外して流し直す（DROP FUNCTION IF EXISTS is_exam_conversation(text) はその後）

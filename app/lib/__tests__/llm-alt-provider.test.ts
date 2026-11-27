@@ -9,6 +9,9 @@ import {
   readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL, wellFormedJson, NO_CLAUDE_FALLBACK_ACTIONS,
   altFailureType,
 } from "../llm-alt-provider";
+import { BATCH_ALT_DEFAULT_ACTIONS } from "../llm-alt-provider";
+// 2026-11-27 作業員L（台帳 #826）: 11/03 作業員6 の夜の一括の読みの既定の名札（BATCH_ALT_DEFAULT_ACTIONS＝reply_anatomy）が actions に足されるようになった＝「actions は空」は古い。本文（reply_generate 等）が回らないことは同じ
+const onlyBatch = (a: { actions: Set<string> }) => [...a.actions].every((x) => BATCH_ALT_DEFAULT_ACTIONS.includes(x));
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
 import { createMasker } from "../pii-pseudonym";
@@ -478,11 +481,11 @@ console.log("── ★ Qwen（名前ごとの振り分け・2026-09-29「作り
   t("★ 相手の解決: 振り分けた名前は Qwen・それ以外は主", targetConfigFor(cfg, "resolve_area").provider === "qwen" && targetConfigFor(cfg, "reply_generate").provider === "deepseek" && targetConfigFor(cfg, null).provider === "deepseek");
   t("振り分けの相手は主と同じ歯止め（fallback・自動返信）を持つ", cfg.routes.get("resolve_area")!.fallbackToAnthropic === cfg.fallbackToAnthropic && cfg.routes.get("resolve_area")!.allowAutoSend === cfg.allowAutoSend);
   const onlyRoutes = readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" });
-  t("★ LLM_ALT_PROVIDER / LLM_ALT_ACTIONS が無くても振り分けだけで有効（主は最初の相手・actions は空）", onlyRoutes !== null && onlyRoutes.provider === "qwen" && onlyRoutes.actions.size === 0 && shouldRouteAlt(onlyRoutes, "resolve_area") && !shouldRouteAlt(onlyRoutes, "reply_generate"));
+  t("★ LLM_ALT_PROVIDER / LLM_ALT_ACTIONS が無くても振り分けだけで有効（主は最初の相手・actions は空）", onlyRoutes !== null && onlyRoutes.provider === "qwen" && onlyBatch(onlyRoutes) && shouldRouteAlt(onlyRoutes, "resolve_area") && !shouldRouteAlt(onlyRoutes, "reply_generate"));
   t("★ 振り分けが空・主の指定も無ければ今までどおり null", readAltConfig({ QWEN_API_KEY: "qk" }) === null && readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "" }) === null);
   // 2026-09-29 検証の反証: PROVIDER 無し＋振り分けだけの時に LLM_ALT_ACTIONS が残っていても主（最初の相手）に本文が行かない
   const leak = readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen", LLM_ALT_ACTIONS: "reply_generate,property_send" })!;
-  t("★ LLM_ALT_PROVIDER が無ければ LLM_ALT_ACTIONS は効かない（振り分けた名前だけ・本文は Claude のまま）", leak !== null && leak.actions.size === 0 && shouldRouteAlt(leak, "resolve_area") && !shouldRouteAlt(leak, "reply_generate") && !shouldRouteAlt(leak, "property_send"));
+  t("★ LLM_ALT_PROVIDER が無ければ LLM_ALT_ACTIONS は効かない（振り分けた名前だけ・本文は Claude のまま）", leak !== null && onlyBatch(leak) && shouldRouteAlt(leak, "resolve_area") && !shouldRouteAlt(leak, "reply_generate") && !shouldRouteAlt(leak, "property_send"));
   t("LLM_ALT_PROVIDER がある時は今までどおり LLM_ALT_ACTIONS も効く", readAltConfig({ ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" })!.actions.has("reply_generate"));
   t("willRouteAlt も振り分けを見る（仮名化の判断がズレない）", willRouteAlt("resolve_area", {}, { ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" }) && !willRouteAlt("resolve_area", {}, DS));
 

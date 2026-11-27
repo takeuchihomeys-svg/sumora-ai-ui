@@ -24,9 +24,17 @@ console.log("A1 管理会社に確かめれば分かる問いは AIX 直接");
   const fc = resolveTwoStageOrDirect({ ...base, finalAix: "estimate_sheet", firstContact: true, customerText: "初期費用いくらですか？" });
   t("真の初回（firstContact）は約束のまま", fc.direct === null && fc.verdict?.kind === "estimate", fc);
   const br = resolveTwoStageOrDirect({ ...base, finalAix: "property_check_result", customerText: "見積もり出してもらえますか？", brought: { ask: "cost", count: 2 } });
-  t("持ち込みで費用だけ → 見積書送る直接（B1 brought_estimate の AIX）", br.direct === "estimate_sheet", br);
+  // 2026-11-27 作業員L（台帳 #826）: 10/21 の B1（持ち込みは AIX 直接）は 11/05 竹内さん No.42 (c)（KB cf241dbd・10/21 の 5aa28356 を退役）で
+  //   「物件を送ってきた時は、約束（確認します）して AIX から送る」に変わった（TWO_STAGE_BROUGHT_PROMISE 既定 on）＝試験が古かった。off の時だけ 10/21 の直接
+  t("持ち込みで費用だけ → 確認の約束（11/05 No.42 (c)）", br.direct === null && br.verdict?.kind === "estimate", br);
   const brv = resolveTwoStageOrDirect({ ...base, finalAix: "property_check_result", customerText: "ここ空いてますか？", brought: { ask: "vacancy", count: 1 } });
-  t("持ち込みで空き → 物件確認した直接", brv.direct === "property_check_result", brv);
+  t("持ち込みで空き → 確認の約束（11/05 No.42 (c)）", brv.direct === null && brv.verdict?.kind === "check", brv);
+  const prevB = process.env.TWO_STAGE_BROUGHT_PROMISE; process.env.TWO_STAGE_BROUGHT_PROMISE = "off";
+  const brOff = resolveTwoStageOrDirect({ ...base, finalAix: "property_check_result", customerText: "見積もり出してもらえますか？", brought: { ask: "cost", count: 2 } });
+  const brvOff = resolveTwoStageOrDirect({ ...base, finalAix: "property_check_result", customerText: "ここ空いてますか？", brought: { ask: "vacancy", count: 1 } });
+  if (prevB === undefined) delete process.env.TWO_STAGE_BROUGHT_PROMISE; else process.env.TWO_STAGE_BROUGHT_PROMISE = prevB;
+  t("TWO_STAGE_BROUGHT_PROMISE=off → 10/21 の B1（見積書送る直接）", brOff.direct === "estimate_sheet", brOff);
+  t("TWO_STAGE_BROUGHT_PROMISE=off → 10/21 の B1（物件確認した直接）", brvOff.direct === "property_check_result", brvOff);
   const first = resolveTwoStageOrDirect({ ...base, finalAix: "property_check_result", decisionSource: "guard:first_contact", brought: { ask: "none", count: 1 } });
   t("初回の挨拶の番は約束のまま", first.direct === null && first.verdict?.kind === "check", first);
   const stale = resolveTwoStageOrDirect({ ...base, finalAix: "estimate_sheet", estimateMaterialAgeDays: 9, customerText: "見積お願いします" });

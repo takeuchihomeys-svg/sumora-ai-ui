@@ -208,7 +208,8 @@ async function main() {
       const prov = readFileSync(join(__dirname, "..", "llm-alt-provider.ts"), "utf8");
       const aix = readFileSync(join(__dirname, "..", "..", "api", "aix", "action", "route.ts"), "utf8");
       if (!/altPiiSignalReapplyValues\(flattenContent\(body\.system\)\)/.test(prov)) throw new Error("system values");
-      if (!/screeningSensitiveSignal\(\(body\.messages \?\? \[\]\)[^\n]*\? "審査の事情"/.test(prov)) throw new Error("screening");
+      // 2026-11-27 作業員L（台帳 #826）: 決まった定型の文（stripScreeningStaticTexts）を外してから当てる形になった（網は同じ所にある）＝試験の字面が古かった
+      if (!/screeningSensitiveSignal\((?:stripScreeningStaticTexts\()?\(body\.messages \?\? \[\]\)[^\n]*\? "審査の事情"/.test(prov)) throw new Error("screening");
       if (!/if \(!visionPii && !opts\.forceClaude && shouldRouteVisionAlt/.test(aix)) throw new Error("vision");
     });
   });
