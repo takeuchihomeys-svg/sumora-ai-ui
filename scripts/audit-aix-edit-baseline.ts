@@ -40,8 +40,16 @@ async function main() {
     for (const x of g) if (!ts.has(x)) a.removed[kindOf(x)] = (a.removed[kindOf(x)] ?? 0) + 1;
   }
   const pct = (x: number, n: number) => Math.round((x / n) * 1000) / 10;
+  // 2026-11-28 作業員A: 直した割合は aix_usage_logs.was_edited（送った時に画面が下書きと比べて付ける・絵文字だけの差は直しにしない）で数える。
+  //   ai_template_candidates の source=auto は「そのまま送った」ではなく夜の cron（auto-template-candidates）が作った候補＝割合の分母に使えない。
+  //   物件オススメは画面が直しの組を残さない（AixModal: 物件固有の文のため除外）＝直した中身は数えられない
+  const { data: logs } = await sb.from("aix_usage_logs").select("aix_type, was_edited").gte("created_at", since).not("sent_at", "is", null).not("was_edited", "is", null).limit(5000);
+  const rate: Record<string, { n: number; e: number }> = {};
+  for (const l of logs ?? []) { const r = (rate[l.aix_type ?? "?"] ??= { n: 0, e: 0 }); r.n++; if (l.was_edited) r.e++; }
+  console.log(`### 直した割合（aix_usage_logs.was_edited・${days}日）`);
+  for (const [k, r] of Object.entries(rate).sort((x, y) => y[1].n - x[1].n)) console.log(`- ${k}: ${r.n}通・直した ${r.e}（${pct(r.e, r.n)}%）`);
   const out = Object.entries(by).sort((x, y) => y[1].n - x[1].n).map(([k, a]) => ({ aix: k, n: a.n, edited: a.edited, editedPct: pct(a.edited, a.n), sameLinePct: pct(a.sameLineShare, a.n), added: a.added, removed: a.removed }));
-  console.log(`### AIX の文の直し（${days}日・ai_template_candidates の aix_edit／auto ${out.reduce((s, o) => s + o.n, 0)}通）`);
+  console.log(`### 直した中身（${days}日・ai_template_candidates の aix_edit の組。下の「直した」は候補の表の中の割合で、割合そのものは上の was_edited を見る）`);
   for (const o of out) console.log(`- ${o.aix}: ${o.n}通・直した ${o.edited}（${o.editedPct}%）・送った文の行のうち AI の行のまま ${o.sameLinePct}%・足した行 ${JSON.stringify(o.added)}・消した行 ${JSON.stringify(o.removed)}`);
   const j = arg("json"); if (j) writeFileSync(j, JSON.stringify({ at: new Date().toISOString(), days, rows: out }, null, 1));
 }
