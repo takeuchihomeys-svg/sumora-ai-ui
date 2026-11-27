@@ -20,7 +20,8 @@ export function materialPriorityMode(env: Env = typeof process !== "undefined" ?
 // 2026-11-26 作業員A（統括役の頼み・#744 の分かれ目で見直し）: mp-v2＝AIX の番に探す約束の後のお礼を足し、約束の番の並びを 確認の約束の流れ→探す約束の後のお礼→今果たせる物 に
 export const MATERIAL_PRIORITY_VERSION = "mp-v2";
 
-export type MaterialBlock = { key: string; text: string; from: "cs" | "route" };
+/** from: cs＝お客様の状態の塊・route＝地図の塊・intake＝入口の統括に渡した行（2026-11-26 作業員L・ブレインの材料の文には無い＝控えの行として数えるだけで動かさない） */
+export type MaterialBlock = { key: string; text: string; from: "cs" | "route" | "intake" };
 
 /**
  * 重点（入口の focus_read.focus）ごとに、先に見る行のキー（左ほど先）。v1 は作業員A の案（11/25 夜）と check-order の竹内さんの確認の順の型から:
@@ -58,7 +59,7 @@ export function applyMaterialPriority(o: { cs: string; route: string; blocks: re
   const moved: string[] = [];
   for (const k of o.keys) {
     const b = o.blocks.find((x) => x.key === k && x.text.trim());
-    if (!b) continue;
+    if (!b || b.from === "intake") continue;
     const src = b.from === "route" ? route : cs;
     const i = src.indexOf(b.text);
     if (i < 0) continue;
@@ -121,6 +122,14 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
     const aix = String(d.aix ?? "").trim(); if (!aix) return null;
     return c.some((x) => aix.startsWith(x));
   },
+  // 2026-11-26 作業員L（#795・作業員A と決め）: 気持ち×駅の表の1位の一手（digest.msm: a:<AIX>／r:<返信の形>）。a: はその AIX を選んだ＝使った・r: は返信（AIX なし）＝使った
+  mindset_station: (d) => {
+    const m = String(d.msm ?? ""); if (!m) return null;
+    const aix = String(d.aix ?? "").trim();
+    return m.startsWith("a:") ? aix.startsWith(m.slice(2)) : aix === "";
+  },
+  // 2026-11-26 作業員L（連携の一覧の3位）: 入口の見積の1行（入口の統括に渡す物＝ブレインの判断の目印は決められない）
+  intake_estimate: () => null,
   // 2026-11-26 作業員L（#728 ③・作業員A と決め・台帳 #783）: 成約データの申込の直前の一手（手打ちの返信が大半）＝返信を選んだ＝使った・申込へ以外の AIX＝使わなかった・
   //   AIX【申込へ】は案内の別の形なので決められない（材料の印のある番だけを数えるのは呼ぶ側）
   deal_flow_pre_apply: (d) => {
@@ -129,6 +138,36 @@ export const USED_MARKERS: Readonly<Record<string, (d: Record<string, unknown>) 
     return aix.startsWith("application_push") ? null : false;
   },
 };
+
+/**
+ * 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」・統括役の頼み）: shadow の当たり＝入口が選んだ「まず見る3つ」（digest.mpr のキー）が、
+ *   その番の竹内さん本人の一手（takeuchiAix: AIX の種類・返信は ""・竹内さんの番でなければ null）で目印（USED_MARKERS）どおりだったか（純関数）。
+ *   番の当たり＝選んだキーのどれかの目印が竹内さんの一手で true／外れ＝決められたキーが1つ以上あり全部 false／決められない＝それ以外。
+ *   当たった番は 11/30 の MATERIAL_PRIORITY の組の効く問題の候補（会話と時刻を返す）
+ */
+export type PriorityHitRow = { conv: string; at: string; digest: Record<string, unknown>; takeuchiAix: string | null };
+export function priorityHitsOf(rows: readonly PriorityHitRow[]): { turns: number; hit: number; miss: number; undecided: number; rate: number | null; byKey: Record<string, { hit: number; of: number }>; hits: Array<{ conv: string; at: string; keys: string[] }> } {
+  let turns = 0, hit = 0, miss = 0, undecided = 0;
+  const byKey: Record<string, { hit: number; of: number }> = {};
+  const hits: Array<{ conv: string; at: string; keys: string[] }> = [];
+  for (const r of rows) {
+    const m = String(r.digest.mpr ?? "").split("|");
+    if (m.length < 5 || r.takeuchiAix == null) continue;
+    const keys = m[3] ? m[3].split(",").filter(Boolean) : [];
+    if (!keys.length) continue;
+    turns++;
+    const d = { ...r.digest, aix: r.takeuchiAix, la: "" };
+    let anyTrue = false, anyDecided = false; const hk: string[] = [];
+    for (const k of keys) {
+      const f = USED_MARKERS[k]; const u = f ? f(d) : null;
+      if (u == null) continue;
+      anyDecided = true; const o = (byKey[k] ??= { hit: 0, of: 0 }); o.of++;
+      if (u) { anyTrue = true; o.hit++; hk.push(k); }
+    }
+    if (anyTrue) { hit++; hits.push({ conv: r.conv, at: r.at, keys: hk }); } else if (anyDecided) miss++; else undecided++;
+  }
+  return { turns, hit, miss, undecided, rate: hit + miss ? Math.round((hit / (hit + miss)) * 1000) / 10 : null, byKey, hits };
+}
 
 /** 物差し①②を記録の行から数える（毎朝の1枚） */
 export function materialPriorityMeasures(digests: ReadonlyArray<Record<string, unknown>>): { picked: number; ready: number; headShare: number | null; used: number; usedOf: number } {

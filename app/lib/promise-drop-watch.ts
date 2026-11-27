@@ -312,6 +312,36 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
   return out.sort((a, b) => a.promisedAt.localeCompare(b.promisedAt));
 }
 
+/**
+ * 2026-11-27 作業員L（作業員A の #808 時間の地図の入力・分け目は A と決めた）: まだ果たしていない約束を、期限前の物も含めて（純関数）。
+ *   overduePromisesOf と同じ数え方（種類ごとに一番新しい約束・期日の無い約束は外す・果たした約束・閉じた会話は外す）で、期限を過ぎたかを overdue に。
+ *   形は A の PromiseDue（{ kind, promisedAt, dueAt, overdue }・ISO）に dueBy を足した物
+ */
+export type PromiseDue = { kind: PromiseKindName; promisedAt: string; dueAt: string; dueBy: "words" | "default72h"; overdue: boolean };
+export function openPromisesWithDue(input: Pick<PdInput, "status" | "msgs" | "aix" | "sent">, nowMs: number, o: { maxDays?: number; checkObjectOf?: CheckObjectOf } = {}): PromiseDue[] {
+  const maxDays = o.maxDays ?? PROMISE_DROP_MAX_DAYS;
+  const ms = [...input.msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const byKind = new Map<PromiseKindName, { at: string; text: string }>();
+  for (let j = 0; j < ms.length; j++) {
+    const m = ms[j];
+    if (m.sender !== "staff" || m.is_aix_generated || promiseInputWaitTurn(ms, j)) continue;
+    const k = promiseKindNameOf(String(m.text ?? ""));
+    if (!k || !PROMISE_KIND_JUDGEABLE.has(k)) continue;
+    byKind.set(k, { at: m.created_at, text: String(m.text ?? "") });
+  }
+  const out: PromiseDue[] = [];
+  for (const [kind, p] of byKind) {
+    const t0 = Date.parse(p.at);
+    if ((nowMs - t0) / 864e5 > maxDays) continue;
+    if (promiseOpenEnded(p.text)) continue;
+    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0, kind);
+    if (promiseFulfilledBy({ at: p.at, kind, text: p.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) continue;
+    if (promiseClosedConversation(input.status, ms, p.at)) continue;
+    out.push({ kind, promisedAt: p.at, dueAt: new Date(due.ms).toISOString(), dueBy: due.by, overdue: nowMs >= due.ms });
+  }
+  return out.sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+}
+
 export type PromiseDrop = {
   conversationId: string; customerName: string | null; kind: PdKind; promisedAt: string; days: number;
   /** 約束の後にお客様の発言があったか（お礼1回で黙った等） */

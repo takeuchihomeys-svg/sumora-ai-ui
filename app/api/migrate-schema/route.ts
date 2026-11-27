@@ -2296,6 +2296,9 @@ CREATE TABLE IF NOT EXISTS estimate_records (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_estimate_records_log_item ON estimate_records(aix_usage_log_id, item_index);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_customer ON estimate_records(property_customer_id, estimated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_estimate_records_conv ON estimate_records(conversation_id, estimated_at DESC);
+-- 2026-11-26 作業員L（台帳 #798 ②・統括役の決め 案A）: 初期費用の内訳（[{label, yen}]・0円の行は入れない）と内訳の出所（tool／aix_text／cost_notes）。どちらも NULL 可
+ALTER TABLE estimate_records ADD COLUMN IF NOT EXISTS cost_items JSONB;
+ALTER TABLE estimate_records ADD COLUMN IF NOT EXISTS items_source TEXT;
 
 -- ── property_pickups: 物件ピックアップの1回分を「売上サポ」で確認して送るための行（2026-09-24）──
 -- 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを判断して共有。
@@ -3668,6 +3671,8 @@ ALTER TABLE image_details ADD COLUMN IF NOT EXISTS part TEXT;
 -- 2026-11-21 作業員K2（#469 の (a)・統括役の了承）: 送った物件のどの点が刺さったか（our-send-uptake の HOOK_POINTS の言葉: 家賃／広さ・間取り／駅・場所／新しさ／設備…）。
 --   お客様が物件の通を引用して返した時だけ line-webhook-text が書く（SENT_HOOK_POINTS=on）。null 可・既定なし。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_hook_points;
 ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_hook_points TEXT[];
+-- 2026-11-26 作業員A（#793）: 引用の問いの関心（cost・viewing・screening・vacancy）＝刺さりの候補（記録だけ・SENT_QUOTE_INTEREST）。null 可。戻す: ALTER TABLE sent_properties DROP COLUMN IF EXISTS customer_interest_points;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS customer_interest_points TEXT[];
 
 -- expired_line_upload_objects: こちらが LINE で送るためにアップロードした画像の保存期間（2026-09-22 竹内「保存期間を3ヶ月に。公式LINEのように」）
 --   property-images は消す仕組みが無く 6.1GB・毎月1.5〜2GB 増えていた（お客様の画像 line-images は30日で消えている）。

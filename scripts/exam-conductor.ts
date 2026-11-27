@@ -90,6 +90,7 @@ import { worthGate, loadOffPass } from "./lib/exam-worth";
 import { nightZeroCostDue, nightZeroCostSteps } from "./lib/exam-night-jobs";
 import { smokeDue, smokeProblemOf, smokeVerdictOf, smokeHoldWhy, SMOKE_MARK_FILE, type SmokeMark } from "./lib/exam-night-smoke";
 import { runReachSplit, runReachOn } from "./lib/exam-preflight-reach";
+import { dictSelect, examDictionaryMode } from "./lib/exam-dictionary";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -479,6 +480,9 @@ async function addJob(): Promise<void> {
           job.only = ids.join(",");
           log(`  積む前の関所: 材料0の問題 ${gate.drop.join(",")} を外した（残り ${ids.length}問・--force で外さない）`);
         }
+        // 2026-11-27 作業員L（台帳 #803 試験の辞書・竹内さん 11/27）: 辞書（<exam-cache>/exam-dictionary.json・scripts/build-exam-dictionary.ts）で、
+        //   材料が写しに無い問題・前に効かなかった問題・揺れの大きい問題・試験できない（先に写し）スイッチを出す。EXAM_DICTIONARY: 既定 shadow＝1行だけ・on＝外す（--force で外さない）・off
+        { const dm = examDictionaryMode(); if (dm !== "off" && ids.length) { try { const { loadExamDictionary } = await import("./build-exam-dictionary"); const dict = loadExamDictionary(); if (dict) { const ds = dictSelect(dict, onSw, ids, job.guards ?? []); log(`  ${ds.line}（${dm === "on" ? "外す" : "記録だけ"}）`); if (dm === "on" && !flag("force")) { const drop = new Set([...ds.dropNoMaterial, ...ds.dropNone]); if (drop.size && drop.size < ids.length) { for (let k = ids.length - 1; k >= 0; k--) if (drop.has(ids[k])) ids.splice(k, 1); job.only = ids.join(","); } /* 統括役の決め①: 前の on で届かなかった問題は守り（1回）に */ if (ds.dropNoReach.length) job.guards = [...new Set([...(job.guards ?? []), ...ds.dropNoReach.filter((x) => ids.includes(x))])]; } } } catch (e) { log(`  試験の辞書を読めない（止めない）: ${String(e instanceof Error ? e.message : e).slice(0, 100)}`); } } }
         // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」・統括役の頼み）: 問題を自動で絞る（scripts/lib/exam-narrow.ts・既定 on・EXAM_NARROW=off／--no-narrow で止める）。
         //   残すのは 材料が入る問題・前の回が無い問題・今の off で外れている問題（守りはこの後に足す）。材料の対応表に無いスイッチが on の時は絞らない
         if (examNarrowOn() && !flag("no-narrow") && !flag("force") && ids.length) {
@@ -590,6 +594,8 @@ async function addJob(): Promise<void> {
         // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」）: 守りは使い回せる基準のある物だけ・1問まで（EXAM_GUARDS_REUSE_ONLY=off で今まで通り）
         const g = fitGuardsToCap(trimGuardsToReusable(g0), { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
         if (g.length) { job.guards = g.map((x) => x.id); ids.push(...job.guards); job.only = ids.join(","); }
+        // 2026-11-27 作業員L（統括役の決め・q203 は17回とも不合格＝守りの意味がない）: 試験の辞書で「一度も合格していない」守りを出す（既定は記録だけ・EXAM_GUARD_SKIP_NEVER_PASSED=on で外す）
+        try { const ed = await import("./lib/exam-dictionary"); const { loadExamDictionary } = await import("./build-exam-dictionary"); const np = ed.guardSkipNeverPassed(loadExamDictionary(), g.map((x) => x.id)); if (np.length) { log(`  守りに一度も合格していない問題: ${np.join(",")}（${ed.guardSkipNeverPassedOn() ? "外した" : "記録だけ"}）`); if (ed.guardSkipNeverPassedOn()) { for (let k = g.length - 1; k >= 0; k--) if (np.includes(g[k].id)) g.splice(k, 1); } } } catch { /* 辞書が無ければ見ない */ }
         log(`  ${guardLine(g, unit)}${g.length < g0.length ? `（上限 $${job.capUsd} に合わせて ${g0.length}→${g.length}問）` : ""}${!cards.length ? "（問題の札が無い＝守りを選べない・exam-near-resolve が夜に札を写す）" : ""}`);
       } catch (e) { log(`  守りを選べない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
     }

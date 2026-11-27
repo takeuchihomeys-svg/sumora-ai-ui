@@ -17,7 +17,7 @@ t("① 持つ: 材料の印のある番だけ数える", by.check_promise_flow.h
 t("② 先頭・使った: ack_wait で物件確認した＝使った・問いの場面で AIX＝使わなかった", by.check_promise_flow.head === 2 && by.check_promise_flow.usedOk === 1 && by.check_promise_flow.usedOf === 2);
 t("③ 反映: 目当ての AIX が2時間の内に出た（見積は5時間後＝反映していない）", by.check_promise_flow.reflectOk === 1 && by.check_promise_flow.reflectOf === 1 && by.route_backplan.reflectOk === 0 && by.route_backplan.reflectOf === 1);
 t("欠け: 入口の駅は持つの印なし・境目と辞書は使ったの目印なし・駅の状態は決められない", by.intake_route.hold === null && by.intake_route.gaps.some((g) => g.startsWith("①")) && !by.aix_boundary.gaps.some((g) => g.startsWith("②")) && !by.aix_dictionary.gaps.some((g) => g.startsWith("②")) && by.station_state.gaps.some((g) => /決められない/.test(g)));
-t("行: 今日までに作った部品が全部ある", ["intake_route", "route_backplan", "station_state", "check_promise_flow", "pickup_promise_flow", "aix_boundary", "aix_dictionary", "deal_flow_pre_apply"].every((k) => OWN_ROWS.some((r) => r.key === k)));
+t("行: 今日までに作った部品が全部ある", ["intake_route", "route_backplan", "station_state", "check_promise_flow", "pickup_promise_flow", "aix_boundary", "aix_dictionary", "deal_flow_pre_apply", "next_stone"].every((k) => OWN_ROWS.some((r) => r.key === k)));
 const bl = readFileSync(join(__dirname, "..", "brain-layers.ts"), "utf8");
 t("記録: digest.mtk（材料の印のキー・DIGEST_MATERIAL_KEYS=off で止める）", bl.includes("o.mtk =") && bl.includes("DIGEST_MATERIAL_KEYS"));
 import { USED_MARKERS } from "../material-priority";

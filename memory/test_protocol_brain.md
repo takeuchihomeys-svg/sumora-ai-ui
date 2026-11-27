@@ -57,6 +57,7 @@ LLM_TEST_MODE=deepseek-all LINE_STAFF_GROUP_ID=invalid … npx next dev --webpac
 - **Claude に行こうとした呼び出しは例外で止まる**（日本語で名札・理由・直し方がログに出る・llm_usage_logs に `error_type=test_blocked` の行・費用0）。止まる理由:
   画像つき（DeepSeek は文字だけ。例 `extract_estimate`）／申込以降の会話／他の会話／時刻の線の印が blocked／個人の値／DeepSeek の包みが無い。
   - 画像の読み取りなどどうしても Claude で回す名札だけ `LLM_TEST_ALLOW_CLAUDE=extract_estimate` のように名前ごとに通す（`*` は不可・費用は報告に書く）。
+  - 入口の読みだけ、審査の事情に当たる番は本番と同じく OpenAI（竹内さんの決め 11/25・11/27）。DeepSeek には出さない（`LLM_TEST_ALLOW_INTAKE_OPENAI=on`・名札 `conductor_intake` だけ・試験の係が夜だけ on・ログの印 `llm-test:intake-screening`）。
   - 呼び出し側が失敗を飲み込む（fail-open）所でも、止めた事はログと終わりの集計（`h.finish()`）に必ず出て、終了コードが 1 になる。
 - スクリプトは deepseek-all の間 `ANTHROPIC_API_KEY` を偽の値にする → 入口を通らずに作った SDK（静的 import 等）は 401 で必ず落ちる。
 - 開発サーバは Next の HMR で fetch の包みが外れる（resetFetch）→ 2026-10-01 から instrumentation の見張りがその場で包み直す。それでも**印を付け外ししたら必ず再起動**。

@@ -27,7 +27,7 @@ import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CON
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
 import { currentDeepseekScope } from "./deepseek-scope";
-import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, finalCheckSelective, finalCheckToDeepseek, type LlmTestMode } from "./llm-test-mode";
+import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, finalCheckSelective, finalCheckToDeepseek, examIntakeToOpenAI, INTAKE_OPENAI_ACTION, type LlmTestMode } from "./llm-test-mode";
 import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
@@ -1381,7 +1381,17 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const toOpenAINow = !!budgetTarget && budgetTarget.provider === "openai";
     if (screeningPiiClaudeEnabled() && (!toOpenAINow || !piiToOpenAI)) {
       const sens = screeningSensitiveSignal(stripScreeningStaticTexts((body.messages ?? []).map((m) => flattenContent(m.content) ?? "").join("\n")));
-      if (sens) {
+      // 2026-11-27 作業員L（竹内さんの決め 11/25・11/27）: 試験（deepseek-all）の入口の読み（conductor_intake）だけ、本番と同じ道（OpenAI・統括の係のモデル）へ。
+      //   DeepSeek には出さない（この番は DeepSeek に行かない）。OpenAI が失敗しても Claude には戻さない（試験の歯止め）。入り切り LLM_TEST_ALLOW_INTAKE_OPENAI=on
+      const examOa = sens && cfg.testMode && examIntakeToOpenAI(process.env, routeName) ? readProviderTarget(process.env, "openai") : null;
+      if (sens && examOa) {
+        const { readBudgetConfig, BUDGET_ROLE_TABLE } = await import("./llm-budget-route");
+        const model = readBudgetConfig(process.env).models.conductor ?? BUDGET_ROLE_TABLE.conductor.model;
+        budgetTarget = { ...cfg, ...examOa, model, routes: new Map() }; budgetFallback = false;
+        // 印（届いたかを見る用・統括役の B）: 入口の読みが審査の事情の網に当たって OpenAI に回った番
+        console.log(JSON.stringify({ tag: "llm-test:intake-screening", route: routeName, to: "openai", model, category: sens.category, conversationId: convForGate }));
+      } else if (sens) {
+        if (cfg.testMode && routeName === INTAKE_OPENAI_ACTION) console.log(JSON.stringify({ tag: "llm-test:intake-screening", route: routeName, to: "blocked", category: sens.category, conversationId: convForGate }));
         console.warn("[llm-alt] 本文に審査の事情 → 別クラウドに出さない", JSON.stringify({ route: routeName, to: toOpenAINow ? "openai" : cfg.provider, category: sens.category, conversationId: convForGate }));
         return toClaude(`本文に審査の事情（${sens.category}）`);
       }

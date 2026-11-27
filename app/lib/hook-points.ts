@@ -31,6 +31,20 @@ export function hookPointsOf(quotedText: string, replyText: string): HookPoint[]
   return [...new Set(theirs.filter((x) => ours.has(x)))];
 }
 
+/**
+ * 2026-11-26 作業員A（台帳 #793・刺さった点が全期間で 0 の原因）: お客様の引用の半分超（14日 7/13）は物件カードの画像＝引用先の文が「[画像]」だけで、
+ *   splitOurSend が空＝hookPointsOf が必ず [] だった。画像の引用の時は、結び付いた送った物件の資料の文（売上サポの要約 summary_text・物件名と号室）を引用先の文の代わりにする。
+ *   スイッチ SENT_HOOK_IMAGE_TEXT: 既定 on（記録だけ・customer_hook_points を書く時の読み元だけ）／off で前と同じ
+ */
+export const sentHookImageTextOn = (env: Env = envOf()) => String(env.SENT_HOOK_IMAGE_TEXT ?? "").trim().toLowerCase() !== "off";
+export const isImageOnlyQuote = (q: string | null | undefined) => { const t = String(q ?? "").replace(/\[画像\]|\s/g, ""); return t.length < 4; };
+/** 引用先の文の代わり（物件名・号室＋資料の要約）。資料が無ければ "" */
+export function quotedTextForHook(propertyName: string | null | undefined, roomNo: string | null | undefined, summary: string | null | undefined): string {
+  const head = [propertyName, roomNo].filter(Boolean).join(" ");
+  const body = String(summary ?? "").trim();
+  return body ? `${head ? `【${head}】\n` : ""}${body}` : "";
+}
+
 /** 保存された値を読む（知らない語は捨てる） */
 export function normalizeHookPoints(raw: unknown): HookPoint[] {
   const xs = Array.isArray(raw) ? raw : [];

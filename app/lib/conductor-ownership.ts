@@ -16,6 +16,8 @@ export type OwnRow = {
 const BPN_AIX: Record<string, string> = { estimate: "estimate_sheet", viewing_arrange: "viewing_invite", viewing_scheduled: "meeting_place", apply_prep: "application_push", proposing: "property_send" };
 export const OWN_ROWS: readonly OwnRow[] = [
   { key: "intake_route", name: "入口の駅（CONDUCTOR_INTAKE_ROUTE）", owner: "作業員A", mark: null },
+  { key: "next_stone", name: "次の石（ROUTE_NEXT_STONE_LINE・未配線）", owner: "作業員A", mark: "next_stone" },
+  { key: "chain_insight", name: "連鎖の見立て（CHAIN_INSIGHT_LINE）", owner: "作業員A", mark: "chain_insight" },
   { key: "route_backplan", name: "逆算の計画（APPLY_ROUTE_BACKPLAN）", owner: "作業員A", mark: "route_backplan", want: (d) => BPN_AIX[String(d.bpn ?? "")] ?? undefined },
   { key: "station_state", name: "駅の今の状態（STATION_STATE_LINE）", owner: "作業員A", mark: "station_state" },
   { key: "check_promise_flow", name: "確認の約束の流れ（BRAIN_CHECK_PROMISE_FLOW）", owner: "作業員A", mark: "check_promise_flow", want: (d) => (d.cpf ? (d.cpf === "a" ? "property_check_result" : null) : undefined) },
@@ -23,6 +25,11 @@ export const OWN_ROWS: readonly OwnRow[] = [
   { key: "aix_boundary", name: "AIX と返信の境目（AIX_BOUNDARY_LINE）", owner: "作業員A", mark: "aix_boundary", want: (d) => (d.abd ? (d.abd === "reply" ? null : String(d.abd)) : undefined) },
   { key: "aix_dictionary", name: "AIX の辞書（AIX_DICTIONARY_LINE）", owner: "作業員A", mark: "aix_dictionary", want: (d) => (d.dct && String(d.aix ?? "").trim() ? String(d.dct).split("+")[0] : undefined) },
   { key: "deal_flow_pre_apply", name: "成約データの1行（DEAL_FLOW_PRE_APPLY_LINE）", owner: "作業員L", mark: "deal_flow_pre_apply" },
+  // 2026-11-26 作業員L（連携の一覧の3位）: 入口の見積の1行（入口の統括に渡す・印は material_marks.intake_estimate）。目当ては決められない（費用の答え・内覧の誘い・待ち）
+  { key: "intake_estimate", name: "入口の見積の1行（CONDUCTOR_INTAKE_ESTIMATE）", owner: "作業員L", mark: "intake_estimate" },
+  { key: "aix_state_card", name: "AIX の札（AIX_STATE_CARD・本番は shadow）", owner: "作業員A", mark: "aix_state_card" },
+  { key: "mindset_station", name: "地図が気持ちを読む1行（ROUTE_MINDSET_LINE）", owner: "作業員L", mark: "mindset_station" },
+  { key: "pickup_why", name: "物件を選んだ理由（PICKUP_WHY_TO_BRAIN）", owner: "作業員A", mark: "pickup_why" },
   { key: "now_fulfillable", name: "今果たせる約束（SITUATION_NOW_FULFILLABLE）", owner: "作業員1", mark: "now_fulfillable" },
 ];
 export type OwnDecision = { digest: Record<string, unknown>; conv: string; at: string };

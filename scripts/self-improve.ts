@@ -168,6 +168,7 @@ async function main() {
   const coreRows: Array<{ metric: string; value: number | null; n: number | null }> = [];
   const coreFix: string[] = [];
   const ledger: FoundGap[] = []; // 穴の型③〜⑤の穴（--write の時に台帳へ・題で重ねない）
+  let linkNextWhy = ""; // 2026-11-26 作業員A: 次に何をなぜ に連携の切れ目の1位
   const mapQd: QdOut[] = []; // 芯 ⑤ 数ごとの地図（map:* / forecast:*・detail 付きで別に書く）
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
@@ -194,6 +195,20 @@ async function main() {
         const cs = co.ownershipTable(((dl ?? []) as Array<{ conversation_id: string; created_at: string; digest: Record<string, unknown> | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, digest: r.digest ?? {} })), ((al ?? []) as Array<{ conversation_id: string; created_at: string; aix_type: string | null }>).map((r) => ({ conv: r.conversation_id, at: r.created_at, type: String(r.aix_type ?? "") })));
         for (const r of CONDUCTOR_DUTY) { const pl = co.dutyPartLine(r.partKeys, cs); if (pl) lines.push(`  - ${r.name}`, pl); }
       } catch (e) { lines.push(`  - 部品の数: 失敗（${String(e).slice(0, 60)}）`); }
+      // 2026-11-26 作業員A（竹内さん 11/26「ほかのも連携したらより質上がる部分を連携させていく」）: 連携の切れ目の値打ちの高い順 上位3つ（linkage-gap-matrix・上から1つずつ既定 off でつなぐ→試験→on）
+      try {
+        const lg = await import("../app/lib/linkage-gap-matrix");
+        lines.push("### 連携・連鎖（作業員A・竹内さん 11/26「仕組化」）", ...lg.gapTopLines());
+        const top = lg.rankGaps()[0]; if (top) linkNextWhy = `- 連携の切れ目の1位「${top.name} → ${lg.SINK_JA[top.sink]}」（値打ち ${top.value}%）から既定 off でつなぐ（竹内さん 11/26「パズルのように組み合わせて連鎖させていく」）`;
+        const { data: cq } = await sb.from("quality_daily").select("day,metric,value,n,detail").in("metric", ["chain:patterns", "chain:brain_match_hit", "chain:table_candidates"]).order("day", { ascending: false }).limit(9);
+        const cr = (cq ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null; detail: { miss_rate?: number | null } | null }>;
+        const pat = cr.filter((r) => r.metric === "chain:patterns"), hit = cr.filter((r) => r.metric === "chain:brain_match_hit");
+        lines.push(`- 連鎖の型: ${pat[0]?.value ?? "—"}型（${pat[0]?.day ?? "まだ"}${pat[1] ? `・前の日 ${pat[1].value}` : ""}）・型が当てはまった番のブレインの一致 ${hit[0]?.value ?? "—"}%（${hit[0]?.n ?? 0}番・当てはまらない番 ${hit[0]?.detail?.miss_rate ?? "—"}%${hit[1]?.value != null && hit[0]?.value != null ? `・前の日との差 ${Math.round((hit[0].value - hit[1].value) * 10) / 10}pt` : ""}）`);
+        { const tc = cr.filter((r) => r.metric === "chain:table_candidates")[0] as { value: number | null; day: string; detail: { added?: string[]; gone?: string[] } | null } | undefined; if (tc) lines.push(`- 連鎖の型の表に足す候補 ${tc.value ?? 0}（${tc.day}・消えた型 ${tc.detail?.gone?.length ?? 0}・表の書き足しは週1回・作業員がテスト付きで）${tc.detail?.added?.length ? `: ${tc.detail.added.slice(0, 3).join("・")}` : ""}`); }
+        lines.push(`- 次の晩の試験の候補（作ったが off の切れ目・値打ちの順）: ${lg.gapBundleCandidates().join("・") || "なし"}`);
+        const { data: openGap } = await sb.from("work_items").select("title").like("title", "連携の切れ目: %").not("stage", "in", "(done,dropped)").limit(300);
+        for (const g of lg.gapLedgerItems(((openGap ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: g.title, owner: g.owner, next: g.next, area: "統括" });
+      } catch (e) { lines.push(`- 連携の切れ目: 失敗（${String(e).slice(0, 60)}）`); }
       // 2026-11-24 作業員A（#662）: 土台ごとの済んだ段の数（core:conductor_duty:f:<id>）と、前に書いた日からの変わり（増えた・減った土台）
       for (const r of dr) coreRows.push({ metric: `core:conductor_duty:f:${r.id}`, value: dutyDoneCount(r), n: 3 });
       {
@@ -669,6 +684,8 @@ async function main() {
       const v = (k: string) => (ev.get(k)?.value == null ? null : Number(ev.get(k)!.value));
       const wn = ev.get("worse_night");
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
+      // 2026-11-27 作業員L（#803・統括役の決め）: 晩の空き枠（上限 $10 の内）と流れ残った組（朝に列に残った試験の組）
+      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); lines.push(nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }).line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
     }
   }
   // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
@@ -713,9 +730,13 @@ async function main() {
           elig++; if (typeof r.digest?.ci === "string") eligCi++;
         }
         intakeReachRows.push({ metric: "core:intake_reach:in_time", value: elig ? Math.round((eligCi / elig) * 1000) / 10 : null, n: elig });
+        // 2026-11-26 作業員L（#795 ②）: 決め手の残りが読めた割合は「決めに行く場面の状態」だけで数える（記録・既定 on・mindset:decide_gap_readable）
+        { const { readChainCounts } = await import("./audit-customer-read-chain"); const rc = readChainCounts(ds); intakeReachRows.push({ metric: "mindset:decide_gap_readable", value: rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 1000) / 10 : null, n: rc.decideN }); lines.push(`- 決め手の残りが読めた（決めに行く場面の状態だけ・前の24時間）: ${rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 100) : "—"}%（${rc.decideBlocker}/${rc.decideN}）`); }
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
         lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
+        // 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」）: MATERIAL_PRIORITY の shadow の当たり（入口が選んだ3つ × 竹内さん本人の一手 × USED_MARKERS・記録は晩の費用0の仕事 mp:shadow_hit）
+        try { const { measurePriorityHits } = await import("./audit-material-priority-hit"); const ph = await measurePriorityHits(sb, new Date(now - 86_400_000).toISOString(), new Date(now).toISOString()); lines.push(`- MATERIAL_PRIORITY の shadow の当たり（mpr のある判断 ${ph.withMpr}・竹内さん本人の番 ${ph.turns}）: 当たり ${ph.hit}・外れ ${ph.miss}・決められない ${ph.undecided}${ph.rate != null ? `（${ph.rate}%）` : ""}${Object.keys(ph.byKey).length ? `・目印ごと ${Object.entries(ph.byKey).map(([k, v]) => `${k} ${v.hit}/${v.of}`).join("・")}` : ""}`); } catch (e) { console.warn("[self-improve] shadow の当たりを数えられない:", e instanceof Error ? e.message : String(e)); }
       }
     } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
@@ -790,7 +811,7 @@ async function main() {
     ...drafts.slice(0, 5).map((p) => `- 下書き P${p.id}: ${String(p.kb_draft).slice(0, 80)}`), "",
     "## 4. 次に何をなぜ（決まった計算）",
     `- 重点の型「${POINTER_KIND_JA[(kinds[0] ?? "other") as PointerKind] ?? "-"}」の穴から直す（竹内さんの指摘の重みが一番大きい）`,
-    `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`);
+    `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`, ...(linkNextWhy ? [linkNextWhy] : []));
 
   // 2026-11-23 作業員N2（台帳 #473・統括役の頼み）: 竹内さんが朝に読む順に並べ直す（中身は変えない・止める SELF_IMPROVE_SHEET_ORDER=off）
   const sheet = (process.env.SELF_IMPROVE_SHEET_ORDER ?? "").trim().toLowerCase() === "off" ? lines : orderSheetLines(lines);
