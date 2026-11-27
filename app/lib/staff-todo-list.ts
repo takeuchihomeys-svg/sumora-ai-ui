@@ -179,7 +179,7 @@ export type StalePromise = { id: number; conversationId: string; header: string;
 export const OLD_PROMISES_MAX = 10;
 
 // ─── 出力 ─────────────────────────────────────────────────────────────
-export type TodoSource = "aix_item" | "promise" | "viewing" | "unanswered" | "target_new_arrival";
+export type TodoSource = "aix_item" | "promise" | "viewing" | "unanswered" | "target_new_arrival" | "silent_followup";
 export type TodoItem = {
   key: string;
   conversationId: string;
@@ -328,6 +328,12 @@ function postApplyOrClosed(c: TodoConversation | undefined): boolean {
   return !!c && !c.parallelSecond && ((!!c.is_post_apply && !c.reapply) || DRAFT_SKIP_STATUSES.has((c.status ?? "").trim()) || c.status === "closed_lost");
 }
 const UNANSWERED_MAX_MS = 48 * 3600_000;
+// 2026-11-28 作業員A（#805）: 返事が止まった会話の追いの候補（STAFF_TODO_SILENT_FOLLOWUP・既定 off）。窓は messages の読み（49時間）の内
+export const silentFollowupOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) => (env.STAFF_TODO_SILENT_FOLLOWUP ?? "").trim().toLowerCase() === "on";
+export const SILENT_FOLLOWUP_MIN_MS = 24 * 3600_000;
+export const SILENT_FOLLOWUP_MAX_MS = 48 * 3600_000;
+/** 前のこちらの通が約束（確認・見積・ピックアップしてお送り 等）＝次は約束を果たす通（お約束の行の仕事）。scripts/audit-followup-timing.ts の PROMISE_BEFORE_RE と同じ線 */
+export const SILENT_PROMISE_BEFORE_RE = /(?:確認|お調べ|お問い合わせ|交渉|ピックアップ|お探し|作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)ます|(?:確認|分かり|わかり)次第|ご連絡させて(?:頂|いただ)きます|お待ちください/;
 const FULFIL_KINDS: ReadonlySet<string> = new Set(["properties_sent", "estimate_sent", "confirmation_reported", "guarantor_explained"]);
 
 /** 約束の行が済んだ時刻: 行を作った後の履行の送信を古い順に照らし、カレンダーを閉じる判定（planPromiseCompletion）が閉じる最初の送信 */
@@ -559,6 +565,34 @@ export function buildStaffTodoList(input: TodoInput, opts: TodoBuildOptions = {}
       task: `${jstMDHm(turn[0].created_at)} のご連絡に返信する`,
       originAt: turn[0].created_at, dueAt: endOfBizDayIso(first), dueHasTime: false, doneAt: marked,
     });
+  }
+
+  // ④-2 2026-11-28 作業員A（#805 の続き・統括役の決め・STAFF_TODO_SILENT_FOLLOWUP=on の時だけ・既定 off）: こちらの連絡の後、お客様の返事が1日止まっている会話の追いの候補。
+  //   120日の数え（scripts/audit-followup-timing.ts・前の通が約束でない本当の追い）: 1〜2日の追いで 72時間以内に戻った 45/59（76%）・3〜4日 22/34（65%）・5〜7日 9/19（47%）＝早いほど戻る。
+  //   読みは今の 49時間の窓のまま（足さない）＝24〜48時間の止まりだけ。AIX 要対応・お約束の行がある会話・前のこちらの通が約束（約束を果たすのはお約束の行の仕事）は作らない。
+  //   決めるのはスタッフ・自動では送らない・人だけが知る事（確認の結果・金額）は書かない
+  if (silentFollowupOn()) {
+    const busy = new Set(items.filter((x) => x.source === "aix_item" || x.source === "promise").map((x) => x.conversationId));
+    for (const [cid, msgs] of lastByConv) {
+      if (isTestConversation(cid) || openAixConv.has(cid) || busy.has(cid)) continue;
+      const conv = convById.get(cid);
+      if (!conv || postApplyOrClosed(conv)) continue;
+      msgs.sort((a, b) => t(a.created_at) - t(b.created_at));
+      const last = msgs[msgs.length - 1];
+      if (last.sender === "customer") continue;
+      const gap = at - t(last.created_at);
+      if (!(gap >= SILENT_FOLLOWUP_MIN_MS && gap < SILENT_FOLLOWUP_MAX_MS)) continue;
+      if (!msgs.some((m) => m.sender === "customer")) { skip("silent_no_customer_in_window"); continue; } // 窓の中にお客様の通が無い会話（ずっと前から止まっている）は数えない
+      if (SILENT_PROMISE_BEFORE_RE.test(last.text ?? "")) { skip("silent_after_promise"); continue; }
+      const key = `silent:${cid}:${last.created_at}`;
+      const marked = markedAt(key, input.marks, at);
+      if (marked && t(marked) < dayStart) continue;
+      items.push({
+        key, conversationId: cid, source: "silent_followup", action: null, checkPattern: null, kindLabel: "追い",
+        task: `${jstMDHm(last.created_at)} のこちらの連絡から返事が1日ありません。新着の物件か内覧のご案内で一言お送りする（送るかはスタッフが決める）`,
+        originAt: last.created_at, dueAt: endOfBizDayIso(at), dueHasTime: false, doneAt: marked,
+      });
+    }
   }
 
   // ⑤ 🌟ターゲットの毎日の「新着の物件確認」（2026-10-21 竹内さんの決定 268a904a）: 申込になるまで毎日。

@@ -42,6 +42,7 @@ export function todoItemTitle(it: TwoLineItem): string {
   if (it.source === "unanswered") return "返信する";
   if (it.source === "viewing") return "内覧";
   if (it.source === "target_new_arrival") return "新着の物件確認";
+  if (it.source === "silent_followup") return "追いのご連絡"; // 2026-11-28 #805（STAFF_TODO_SILENT_FOLLOWUP）
   const base = (it.action && ACTION_TITLE[it.action]) || it.kindLabel.replace(/^AIX【|】$/g, "");
   return it.source === "promise" ? `${base}（お約束）` : base;
 }

@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/staff-todo-list.test.ts（全 PASS で exit 0）
 import {
   buildStaffTodoList, renderStaffTodoList, customerHeader, isCloserOnly, promiseTaskOf, promiseAixLabelOf, routeRank,
-  staffTodoListEnabled, aixInstantNoticeEnabled, actionTask, TODO_MAX_AGE_DAYS, todoNumberMark, numberTodoItems, promiseMootReason, MORNING_CALL_LINE, type TodoInput,
+  staffTodoListEnabled, aixInstantNoticeEnabled, actionTask, TODO_MAX_AGE_DAYS, silentFollowupOn, todoNumberMark, numberTodoItems, promiseMootReason, MORNING_CALL_LINE, type TodoInput,
 } from "../staff-todo-list";
 
 let passed = 0, failed = 0;
@@ -282,6 +282,27 @@ it("番号の印: ①〜⑳・㉑〜㊿・51 から (51)", () => {
 it("やる事が無ければ送らない（null）", () => {
   eq(renderStaffTodoList(buildStaffTodoList(base())), null);
 });
+
+// 2026-11-28 作業員A（#805・STAFF_TODO_SILENT_FOLLOWUP・既定 off）: こちらの連絡の後、返事が1日止まった会話の追いの候補
+{
+  const mk = (lastStaffText: string, hoursAgo: number): TodoInput => {
+    const inp = base(); inp.conversations = [conv("c-silent", "テスト", "sumora") as never];
+    inp.messages = [
+      { conversation_id: "c-silent", sender: "customer", text: "ありがとうございます", created_at: new Date(AT - (hoursAgo + 1) * 3600_000).toISOString() },
+      { conversation_id: "c-silent", sender: "staff", text: lastStaffText, created_at: new Date(AT - hoursAgo * 3600_000).toISOString() },
+    ];
+    return inp;
+  };
+  const silentOf = (inp: TodoInput) => buildStaffTodoList(inp).customers.flatMap((c) => c.items).filter((x) => x.source === "silent_followup");
+  it("#805 追いの候補: 既定 off は作らない", () => { eq(silentFollowupOn({}), false); eq(silentOf(mk("こちらのお部屋いかがでしょうか！", 30)).length, 0); });
+  const prev = process.env.STAFF_TODO_SILENT_FOLLOWUP; process.env.STAFF_TODO_SILENT_FOLLOWUP = "on";
+  try {
+    it("#805 on: 返事が30時間止まった会話に追いの候補（送るかはスタッフ）", () => { const xs = silentOf(mk("こちらのお部屋いかがでしょうか！", 30)); eq(xs.length, 1); ok(/返事が1日ありません/.test(xs[0].task) && /送るかはスタッフが決める/.test(xs[0].task), xs[0].task); });
+    it("#805 on: 24時間未満は作らない・47.9時間は作る", () => { eq(silentOf(mk("いかがでしょうか", 10)).length, 0); eq(silentOf(mk("いかがでしょうか", 47.9)).length, 1); });
+    it("#805 on: 前のこちらの通が約束（確認させて頂きます）なら作らない＝お約束の行の仕事", () => { eq(silentOf(mk("募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます", 30)).length, 0); });
+    it("#805 on: 最後がお客様の通なら作らない", () => { const inp = mk("いかがでしょうか", 30); inp.messages[0].created_at = new Date(AT - 29 * 3600_000).toISOString(); eq(silentOf(inp).length, 0); });
+  } finally { if (prev === undefined) delete process.env.STAFF_TODO_SILENT_FOLLOWUP; else process.env.STAFF_TODO_SILENT_FOLLOWUP = prev; }
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
