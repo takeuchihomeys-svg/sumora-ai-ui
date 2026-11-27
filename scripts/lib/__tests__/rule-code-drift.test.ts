@@ -37,3 +37,17 @@ import("../rule-code-drift").then(({ revertSwitchesInText, droppedSwitchesInText
   assert.deepEqual(d2.map((x) => x.sw), ["LIVE_SW_X"], "戻す口とやめたスイッチは出さない");
   console.log("rule-code-drift ok 16");
 });
+// 2026-11-27 作業員L（#822 の続き）: 決まり同士の一部の上書き（fd949dd7 ← 5bb9f76a の形）
+import("../rule-code-drift").then(({ partialOverrides, fnNamesInAppliedTo }) => {
+  const k = (o: Partial<KbRow> & { id: string }): KbRow => ({ title: "t", insight: "", rationale: null, applied_to: null, tags: [], is_current: true, priority: 1, retired_reason: null, superseded_by: null, ...o });
+  assert.deepEqual(fnNamesInAppliedTo("app/lib/hold-soft-next.ts（holdSoftMoveFor・holdSoftNextMaterial）・customer-mindset.hesitationMoveOf・generate-reply"), ["hesitationMoveOf", "holdSoftMoveFor", "holdSoftNextMaterial"]);
+  const old = k({ id: "fd949dd7-0000", title: "保留の柔らかい1文・家族の相談でも添える", applied_to: "customer-mindset.hesitationMoveOf" });
+  const nw = k({ id: "5bb9f76a-0000", title: "家族と相談は締め＋サポート", insight: "10/15 の1文と食い違っていた。ブレインの材料（hesitationMoveOf）から 10/15 の一手を外す", applied_to: "app/lib/customer-mindset.ts の hesitationMoveOf" });
+  assert.deepEqual(partialOverrides([old, nw]).map((p) => `${p.oldId.slice(0, 8)}<${p.newId.slice(0, 8)}:${p.fns.join()}`), ["fd949dd7<5bb9f76a:hesitationMoveOf"]);
+  assert.equal(partialOverrides([k({ ...old, insight: "家族の番は 5bb9f76a で上書き" }), nw]).length, 0, "古い方に追記があれば出さない");
+  assert.equal(partialOverrides([k({ ...old, superseded_by: "x" }), nw]).length, 0);
+  assert.equal(partialOverrides([k({ ...old, priority: 2 }), nw]).length, 0, "P2 は見ない");
+  assert.equal(partialOverrides([old, k({ ...nw, insight: "材料を足す" })]).length, 0, "上書きの語が無い");
+  assert.equal(partialOverrides([nw, old]).length, 0, "新しい方が後ろ（作った順）");
+  console.log("rule-code-drift partial-override ok 7");
+});

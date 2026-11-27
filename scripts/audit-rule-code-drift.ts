@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { examCacheRoot } from "./lib/llm-cassette";
 import { join } from "node:path";
-import { ruleCodeDrift, scanCodeDefaults, driftLedgerTitle, scanIdLinks, idLinkDrift, type KbRow } from "./lib/rule-code-drift";
+import { ruleCodeDrift, scanCodeDefaults, driftLedgerTitle, scanIdLinks, idLinkDrift, partialOverrides, type KbRow } from "./lib/rule-code-drift";
 
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => process.argv.includes(`--${k}`);
@@ -41,7 +41,12 @@ async function main() {
       console.log(`- ${d.sw}｜${d.id.slice(0, 8)}${d.priority != null ? ` P${d.priority}` : ""}「${d.title}」｜コード: 既定 ${d.code}${prodOf(d.sw)}${d.where.length ? `（${d.where.join("・")}）` : ""}${d.retiredReason ? `｜退役の理由: ${String(d.retiredReason).slice(0, 60)}` : ""}${d.supersededBy ? `｜代わり: ${d.supersededBy.slice(0, 8)}${sup ? `「${String(sup.title ?? "").slice(0, 40)}」` : ""}` : ""}${d.currentMentions != null ? `｜現行の行にも ${d.currentMentions}` : ""}｜持ち主: ${ownerOf.get(d.sw) ?? "統括役"}`);
     }
   }
-  if (arg("json")) writeFileSync(arg("json"), JSON.stringify(ds, null, 1));
+  // 2026-11-27 作業員L（#822 の続き・統括役の決め 2）: 現行の P0/P1 の決まり同士の一部の上書き（同じ関数を持つ2行・新しい方に上書きの語・古い方に追記も superseded_by も無い）。要確認に出すだけ（直さない・台帳にも積まない）
+  const po = partialOverrides(rows);
+  console.log(`
+## 決まり同士の一部の上書き（要確認・${po.length}組）: 古い行に「新しい id で上書き」の1文を足すか、退役か`);
+  for (const p of po) console.log(`- 古 ${p.oldId.slice(0, 8)}「${p.oldTitle.slice(0, 50)}」← 新 ${p.newId.slice(0, 8)}「${p.newTitle.slice(0, 50)}」｜同じ関数: ${p.fns.join("・")}｜語: ${p.word}`);
+  if (arg("json")) writeFileSync(arg("json"), JSON.stringify({ drift: ds, partialOverrides: po }, null, 1));
   if (flag("ledger")) {
     const { data: open } = await sb.from("work_items").select("title").like("title", "決まりとコードの食い違い: %").not("stage", "in", "(done,dropped)").limit(1000);
     const have = new Set(((open ?? []) as Array<{ title: string }>).map((r) => r.title));
