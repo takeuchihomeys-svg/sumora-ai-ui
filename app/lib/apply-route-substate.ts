@@ -10,7 +10,7 @@
 // ── 線（P0 9eb6aa9c「判断はすべてブレイン基準」）──
 //   状態は「候補の網」。どの状態か・何番先まで見るかはブレインが会話を読んで選ぶ（材料の文にもそう書く）。道（返信か AIX か）はこの表で決めない。
 //   既定 off（APPLY_ROUTE_SUBSTATE=on）。off の時は空文字＝プロンプトは1バイトも変わらない。
-import type { RouteNodeId, RouteBranchId, ApplyRouteLocation } from "./apply-route-map";
+import type { RouteNodeId, RouteBranchId, ApplyRouteLocation } from "./apply-route-map";
 
 type Env = Record<string, string | undefined>;
 // ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: ブレインの材料に渡すと効かなかった。
@@ -98,7 +98,7 @@ export function substatesFor(loc: Pick<ApplyRouteLocation, "node" | "branch"> | 
 /** ACK_SOFT_NEXT（作業員L・段階で読む）が少しでも on か（=on か _STAGE が off 以外）。画面からも読まれるので switch-stage（node の入れ物）は使わない */
 export function ackSoftNextOnAny(env?: Env): boolean {
   const e = env ?? (typeof process !== "undefined" ? process.env : {});
-  return (e.ACK_SOFT_NEXT ?? "").trim().toLowerCase() === "on" || /^(?:yuma|all|on|pct:d+)$/i.test((e.ACK_SOFT_NEXT_STAGE ?? "").trim());
+  return (e.ACK_SOFT_NEXT ?? "").trim().toLowerCase() === "on" || /^(?:yuma|all|on|pct:\d+)$/i.test((e.ACK_SOFT_NEXT_STAGE ?? "").trim());
 }
 /** 足した駅では今の1手だけ合う状態（次の2〜3番は駅の次の一手に従う）。照らし: 審査の不安をヒアリング・問い合わせで当てた番の竹内さんの一手は、申込ではなく探す約束（＋審査のサポートの1文）だった */
 export const SUBSTATE_ALSO_TURN_ONLY: ReadonlySet<string> = new Set(["apply_screening_worry"]);
