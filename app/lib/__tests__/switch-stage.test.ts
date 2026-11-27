@@ -2,6 +2,8 @@
 //   実行: npx tsx app/lib/__tests__/switch-stage.test.ts
 import { stagedOn, runWithSwitchStage, loadOverridesSafe, loadSwitchStageCtx, enterSwitchStage, currentSwitchStage, STAGE_ALL, STAGE_OFF, STAGED_SWITCHES, type SwitchStageCtx } from "../switch-stage";
 import { watchedSwitches, allSinceMs } from "../rollout-watch";
+import { brainRagStateFilterOn } from "../brain-rag-state-filter";
+import { brainDigestSituationOn } from "../brain-decision-ledger";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -46,7 +48,14 @@ t("入れ物の外では表は読まない（env だけ）", stagedOn("X", { X: 
   t("all に上がった時: 版の記録の変わり目（前の cron の計算と同じ）", allSinceMs("A", vers) === Date.parse("2026-11-15T03:35:00Z"));
   t("ずっと on の版だけ＝null（前と同じ）", allSinceMs("A", [{ switches: "A=on", first_seen_at: "2026-11-03T00:00:00Z" }], "2026-11-20") === null);
   t("版に1度も出ない物はコードの既定が入った日（JST の0時）", allSinceMs("Z", vers, "2026-11-20") === Date.parse("2026-11-20T00:00:00+09:00"));
-  t("名簿は今は空（移すのは明日の push から）", STAGED_SWITCHES.length === 0);
+  // 移した1・2本目: 今の読み手（!== "off"）と env の組すべてで同じ（入れ物の外・空の入れ物の中）
+  for (const [name, fn] of [["BRAIN_RAG_STATE_FILTER", brainRagStateFilterOn], ["BRAIN_DIGEST_SITUATION", brainDigestSituationOn]] as const) {
+    t(`移した ${name}: 入れ物の外で今の読み手と同じ（12通り）`, VALUES.every((v) => fn({ [name]: v }) === oldDefaultOn(v)));
+    t(`移した ${name}: 空の入れ物の中でも同じ`, runWithSwitchStage({ conversationId: "c2", overrides: [], loadedAt: 0, fellBack: false }, () => VALUES.every((v) => fn({ [name]: v }) === oldDefaultOn(v))));
+    t(`移した ${name}: 夜の見張りが off を書けば戻る`, runWithSwitchStage({ conversationId: "c3", overrides: [{ switch_name: name, stage: "off" }], loadedAt: 0, fellBack: false }, () => fn({ [name]: "on" })) === false);
+  }
+  t("名簿は移した2本（既定 all）", STAGED_SWITCHES.map((r) => r.name).join() === "BRAIN_RAG_STATE_FILTER,BRAIN_DIGEST_SITUATION" && STAGED_SWITCHES.every((r) => r.defaultStage.kind === "all"));
+  t("見張りの名簿に入る（本番の env=on）", watchedSwitches({ BRAIN_RAG_STATE_FILTER: "on", BRAIN_DIGEST_SITUATION: "on" }, STAGED_SWITCHES).join() === "BRAIN_DIGEST_SITUATION,BRAIN_RAG_STATE_FILTER");
   console.log(`switch-stage: ${pass} pass / ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })();

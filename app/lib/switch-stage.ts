@@ -17,7 +17,11 @@ const als = new AsyncLocalStorage<SwitchStageCtx>();
 export const PREPARE_TIMEOUT_MS = 300;
 
 /** 段階で読む名簿（rollout-watch が見張る・移した順に足す）。defaultStage はコードの既定（今の読み手の既定と同じにする） */
-export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage; codeDefaultOnDay?: string }> = [];
+export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage; codeDefaultOnDay?: string }> = [
+  // 2026-11-27 移す1・2本目（統括役の条件: 明日の push で本番に出して1日見てから残りを移す）。どちらも env=on（brain_switch_versions に 11/03 から）＝all に上がった日は版の記録から
+  { name: "BRAIN_RAG_STATE_FILTER", defaultStage: { kind: "all" } },
+  { name: "BRAIN_DIGEST_SITUATION", defaultStage: { kind: "all" } },
+];
 
 /** コードの既定を on にした部品の「版の変わり目」（その既定が入った commit の日・JST）。brain_switch_versions に出ない物の all に上がった日 */
 export function codeDefaultOnDayOf(name: string): string | null {

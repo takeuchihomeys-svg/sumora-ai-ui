@@ -7,8 +7,11 @@
 //   状態の名前が付いていない行（TPO の日本語・AIX の種類の行）は落とさない（段階に依らない知識）。
 // スイッチ: BRAIN_RAG_STATE_FILTER=on（既定 off＝今と同じ件数・同じ行）
 
+import { stagedOn, STAGE_ALL } from "./switch-stage"; // 2026-11-27 作業員A: 段階で読む（竹内さんの決め 11/27）
+
 export function brainRagStateFilterOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_RAG_STATE_FILTER ?? "").trim().toLowerCase() !== "off";
+  // 2026-11-27 作業員A（竹内さんの決め 11/27・段階で読む形へ移す1本目）: 今の読み（!== "off"＝既定 on）と同じ答えを段階で読む（rollout_overrides で夜の見張りが1段戻せる）
+  return stagedOn("BRAIN_RAG_STATE_FILTER", env, STAGE_ALL);
 }
 
 /** 会話の状態の名前（conversations.status と同じ語） */
