@@ -30,7 +30,7 @@ function fakeDb(o: { snapshot: unknown | null; rows: Array<Record<string, unknow
 
 async function main() {
   const now = Date.parse("2026-11-27T05:00:00Z");
-  const env = { BUDGET_SNAPSHOT: "" } as Record<string, string>;
+  const env = {} as Record<string, string>;
   const { readBudgetConfig, spendWindowStart, openaiWindowStart } = await import("../llm-budget-route");
   const cfg = readBudgetConfig(env, now);
   const key = `${spendWindowStart(cfg, now).since}|${openaiWindowStart(cfg, now)}`;
