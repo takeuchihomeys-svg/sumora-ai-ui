@@ -9,6 +9,7 @@
 //   --show で回ごとの行（お客様の名前・本文は出さない・数と語だけ）
 //   実行: npx tsx --env-file=.env.local <この台本> [--days=30] [--show]
 import { createClient } from "@supabase/supabase-js";
+import { buildSearchConditionView, inclusiveRentRisk } from "../app/lib/search-condition-view";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "30")), show = process.argv.includes("--show");
@@ -38,12 +39,14 @@ async function main() {
     const at = sc.at ?? r.created_at; const k = `${r.conversation_id}@${at.slice(0, 16)}`;
     if (!runs.has(k)) runs.set(k, { conv: r.conversation_id, at, filled: sc.filled });
   }
+  const view = { 込みの言い方: 0, 込みのまま上限: 0, フォームの管理費込み: 0, 強さの言葉: 0, できれば: 0, 絶対: 0 } as Record<string, number>;
   const tally = { 回: 0, 言った物あり: 0, 読み落とし: 0, 古い条件: 0, 言い方: 0, 優先と妥協: 0, ずれなし: 0 } as Record<string, number>;
   const byField = { 家賃: 0, 間取り: 0, 駅: 0 } as Record<string, number>;
   for (const run of runs.values()) {
     const { data: ms } = await sb.from("messages").select("text, created_at").eq("conversation_id", run.conv).eq("sender", "customer").lte("created_at", run.at).gte("created_at", new Date(Date.parse(run.at) - 14 * 864e5).toISOString()).order("created_at", { ascending: true }).limit(60);
     const texts = ((ms ?? []) as Array<{ text: string | null }>).map((m) => String(m.text ?? "")).filter((t) => t && !/^\[(?:画像|スタンプ|動画)\]/.test(t));
     tally.回++;
+    { const v = buildSearchConditionView({ customerTexts: texts, rentMaxYen: Number(run.filled.rent_max ?? "-1"), nowIso: run.at }); if (v.rent) view.込みの言い方++; if (v.rent?.from === "form_label") view.フォームの管理費込み++; if (inclusiveRentRisk(v)) view.込みのまま上限++; if (v.strengths.length) view.強さの言葉++; if (v.strengths.some((x) => x.strength === "soft")) view.できれば++; if (v.strengths.some((x) => x.strength === "must")) view.絶対++; }
     const f = run.filled, rentMax = Number(f.rent_max ?? "-1") / 10000, layouts = (f.layouts ?? []).map((x) => (x === "ワンルーム" ? "1R" : N(x).toUpperCase()));
     const stations = (f.stations ?? []).map(N), hasCity = (f.city_codes ?? []).length > 0;
     const rents = texts.flatMap((t) => rentMentions(t)), lays = texts.flatMap((t) => layoutMentions(t));
@@ -69,6 +72,6 @@ async function main() {
     if (!tags.length) tally.ずれなし++;
     if (show) console.log(`  ${run.conv.slice(0, 8)} ${run.at.slice(0, 10)} 家賃(言った ${rents.slice(-2).join("/") || "-"}・検索 ${rentMax > 0 ? rentMax : "-"}) 間取り(${lays.slice(-3).join("/") || "-"}・${layouts.join("/") || "-"}) 言い方(${[...new Set(phrases)].slice(0, 3).join("/") || "-"}・駅 ${stations.length}${hasCity ? "・市区" : ""}) → ${[...new Set(tags)].join("・") || "ずれなし"}`);
   }
-  console.log(JSON.stringify({ 日: DAYS, ...tally, 欄ごと: byField }));
+  console.log(JSON.stringify({ 日: DAYS, ...tally, 欄ごと: byField, 見立て: view }));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
