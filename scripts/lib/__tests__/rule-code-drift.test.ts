@@ -51,3 +51,9 @@ import("../rule-code-drift").then(({ partialOverrides, fnNamesInAppliedTo }) => 
   assert.equal(partialOverrides([nw, old]).length, 0, "新しい方が後ろ（作った順）");
   console.log("rule-code-drift partial-override ok 7");
 });
+import("../rule-code-drift").then(({ partialOverrides }) => {
+  const k = (o: Partial<KbRow> & { id: string }): KbRow => ({ title: "t", insight: "", rationale: null, applied_to: null, tags: [], is_current: true, priority: 1, retired_reason: null, superseded_by: null, ...o });
+  const old = k({ id: "2cb3be5a-x", applied_to: "matchAnchors" }); const nw = k({ id: "fbedd55b-x", insight: "上書き", applied_to: "matchAnchors" });
+  assert.equal(partialOverrides([old, nw]).length, 0, "外れと決めた組は出さない");
+  console.log("rule-code-drift dismissed ok");
+});

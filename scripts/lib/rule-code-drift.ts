@@ -148,13 +148,19 @@ export function idLinkDrift(rows: readonly KbRow[], links: ReadonlyArray<{ id8: 
  *   試験が古い方のまま落ち続けた（#818 の決まり×コードの見張りは、2つのスイッチが両方 on で合っているので拾えない）。
  *   拾う形: 2つの現行の行（P0/P1）が applied_to に同じ関数（camelCase の名前）を持ち、新しい方（rows の並びの後ろ＝作った順）の本文に上書きの語があり、
  *   古い方の本文に新しい方の id の頭8字が無く superseded_by も無い。 */
-export const OVERRIDE_WORDS = /食い違っていた|食い違う|上書き|この番では置かない|では置かない|を外す|から外す|ではなく.{0,10}にする|に変える|置き換え/;
+// 2026-11-28 作業員L（統括役「語を絞る」）: 11/27 夜の全件で 6組のうち 5組が「置き換え」（文を置き換える・AIX の文を置き換える等の普通の言い方）で拾われた外れ。
+//   決まりを上書きした事を言う語だけにする（置き換え・に変える・を外す・から外す・ではなく〜にする を外した）
+export const OVERRIDE_WORDS = /食い違っていた|食い違う|上書き|この番では置かない|では置かない/;
 export function fnNamesInAppliedTo(appliedTo: string | null | undefined): string[] {
   const out = new Set<string>();
   for (const m of String(appliedTo ?? "").matchAll(/\b([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)\b/g)) if (m[1].length >= 6) out.add(m[1]);
   return [...out].sort();
 }
 export type PartialOverride = { oldId: string; newId: string; oldTitle: string; newTitle: string; fns: string[]; word: string };
+/** 見て「外れ」と決めた組（古い id の頭8字 ← 新しい id の頭8字）。要確認に出さない */
+export const PARTIAL_OVERRIDE_DISMISSED: ReadonlyArray<{ old: string; new: string; why: string }> = [
+  { old: "2cb3be5a", new: "fbedd55b", why: "2026-11-28 統括役の決め: 外れ。同じ 10/02 の作業で、新しい方は乗り換えなしの読み方を足した拡張（上書きではない）" },
+];
 export function partialOverrides(rowsInCreatedOrder: readonly KbRow[]): PartialOverride[] {
   const live = rowsInCreatedOrder.filter((r) => r.is_current && (r.priority ?? 2) <= 1);
   const fnsOf = new Map(live.map((r) => [r.id, fnNamesInAppliedTo(r.applied_to)]));
@@ -165,6 +171,7 @@ export function partialOverrides(rowsInCreatedOrder: readonly KbRow[]): PartialO
     for (let i = 0; i < j; i++) {
       const old = live[i]; const shared = (fnsOf.get(old.id) ?? []).filter((f) => nf.includes(f)); if (!shared.length) continue;
       if (old.superseded_by || `${old.insight ?? ""} ${old.title ?? ""}`.includes(nw.id.slice(0, 8))) continue;
+      if (PARTIAL_OVERRIDE_DISMISSED.some((d) => old.id.startsWith(d.old) && nw.id.startsWith(d.new))) continue;
       out.push({ oldId: old.id, newId: nw.id, oldTitle: String(old.title ?? ""), newTitle: String(nw.title ?? ""), fns: shared, word: w[0] });
     }
   }
