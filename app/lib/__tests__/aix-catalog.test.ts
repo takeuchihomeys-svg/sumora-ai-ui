@@ -46,5 +46,9 @@ t("AIX で送る定型（条件ヒアリング・申込フォーマット・内�
 t("結果のピッカー（物件あった等）はまとめて1行・ブレインは空", /結果のピッカー（物件あった／/.test(catalogBlockForBrain("property_share")));
 const lens = (["ack", "question", "conditions", "property_share", "viewing", "cost", "apply", "considering", "other"] as const).map((s) => catalogBlockForBrain(s).length);
 // 10/14 場面の外のボタンの1行を足した（最大 約5,200字）
-t(`場面ごとの長さは 5,500字以内（${lens.join("/")}）`, lens.every((n) => n <= 5500));
+// 2026-11-27 作業員A（AIX の持ち主・#826 で落ちていた・統括役の頼み）: ack が 5,623字で 5,500 を超えた。
+//   本番の main と同じ文（差 0）＝ブレインには既に 5,623字が渡っている＝上限を上げてもブレインに渡る文は変わらない。
+//   超えた分は竹内さんの決定で足したピッカー（入居者の条件・お部屋止め・床の色 など）＝削るとブレインに渡る文が変わるので、削るなら既定 off か提案タブの流れで別に。
+//   上限は 6,000字（今の最大 5,623＋ピッカー数行の余り）。これを超えたら、場面で絞る（ピッカーの細目）を先に見直す
+t(`場面ごとの長さは 6,000字以内（${lens.join("/")}）`, lens.every((n) => n <= 6000));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
