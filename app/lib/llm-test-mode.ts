@@ -142,6 +142,19 @@ export function readAllowClaude(env: EnvLike): Set<string> {
 }
 
 /**
+ * 2026-11-27 作業員L（竹内さんの決め 11/25「申込以降や審査関係も OpenAI に回って大丈夫・DeepSeek には渡さない」・11/27「入口の読みだけ OpenAI を許す」）:
+ *   deepseek-all の試験の間、名札 conductor_intake（入口の統括の読み）が審査の事情の網に当たった番だけ、本番と同じ道（OpenAI）に回してよいか。純関数。
+ *   本番は LLM_BUDGET_PII_TO_OPENAI の既定で同じ番を OpenAI に回している＝試験も本番に合わせる。DeepSeek に出さない網は緩めない（この番は DeepSeek に行かない）。
+ *   入り切り: LLM_TEST_ALLOW_INTAKE_OPENAI=on（試験の係が夜だけ on）。名札は決め打ち（他の名札は今まで通り止める）。本番は readTestRun が null＝必ず false
+ */
+export const INTAKE_OPENAI_ACTION = "conductor_intake";
+export function examIntakeToOpenAI(env: EnvLike, action: string | null): boolean {
+  if (readTestRun(env) !== "deepseek-all") return false;
+  if ((action ?? "").trim() !== INTAKE_OPENAI_ACTION) return false;
+  return String(env.LLM_TEST_ALLOW_INTAKE_OPENAI ?? "").trim().toLowerCase() === "on";
+}
+
+/**
  * deepseek-all の間に Claude に行こうとした呼び出しを止める理由（通してよい時は null）。純関数。
  *   action … 名札（x-sumora-llm-action）。名札が無い時は呼び出し側が "classify" 等の見分けた名前を渡す
  *   why    … なぜ Claude に行くのか（画像つき・申込以降・時刻の線の印なし 等）
