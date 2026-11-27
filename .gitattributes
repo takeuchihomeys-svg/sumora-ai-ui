@@ -1,0 +1,3 @@
+# 2026-11-27 作業員L: hook の sh は LF のまま（core.autocrlf=true の PC で CRLF になると exit 0 等で壊れる）
+scripts/hooks/pre-commit text eol=lf
+scripts/hooks/pre-merge-commit text eol=lf
