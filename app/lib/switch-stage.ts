@@ -31,6 +31,7 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   { name: "VACATE_VIEWING_HOLD_FIRST", defaultStage: { kind: "off" } }, // #830 退去予定の部屋の内覧が7日以内なら申込で抑える（材料・10/28 から env だけで読んでいた）
   { name: "SILENT_SINCE_OURS_LINE", defaultStage: { kind: "off" } }, // #805 こちらの連絡の後の返事の止まり（事実だけ）
   { name: "ROUTE_MOVE_IN_LATER_SPLIT", defaultStage: { kind: "off" } }, // #737 入居時期が先の次の一手を入居までの日数で2つに（竹内さん 11/28・110日）
+  { name: "VIEWED_STATE_LINE", defaultStage: { kind: "off" } }, // #739 内覧後の駅の状態（事実だけ）
   { name: "ROUTE_ESTIMATE_NEXT_REPLY", defaultStage: { kind: "off" } }, // #804 見積の駅の次の一手の候補を返信へ
   { name: "AIX_BRAIN_READ_CARD", defaultStage: { kind: "off" } }, // #827 AIX ボタンの文作りにブレインの読みの札
   { name: "PENDING_CHECK_ANSWERED_GUARD", defaultStage: { kind: "off" } }, // #829 文で答えた確認タスクを確認中から外す（generate-reply）

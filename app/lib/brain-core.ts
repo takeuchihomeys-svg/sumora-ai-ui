@@ -4520,6 +4520,15 @@ ${l}`; materialMarks.silent_since_ours = l.length; } }
           if (sl) { applyRouteText += `\n${sl}`; materialMarks.station_state = sl.length; materialBlocks.push({ key: "station_state", text: sl, from: "route" }); }
         }
       } catch (e) { console.warn("[brain-core] station-state skipped:", e instanceof Error ? e.message : String(e)); }
+      // 2026-11-28 作業員A（#739 内覧後・VIEWED_STATE_LINE・既定 off・段階で読む）: 内覧後の駅の中の状態（済んだ日・その後の感想／申込の意思／問い・こちらの申込のご案内の有無）の事実の1行・印 viewed_state
+      try {
+        const vs = await import("@/app/lib/viewed-state-line");
+        if (vs.viewedStateLineOn() && ar.loc?.node === "viewed" && !ar.loc.branch) {
+          const vl = vs.viewedStateLine({ msgs: typedMessages, viewedAt: brainLedger.facts.viewingDone?.thankedAt ?? null, nowMs: Date.now() });
+          if (vl) { applyRouteText += `
+${vl}`; materialMarks.viewed_state = vl.length; materialBlocks.push({ key: "viewed_state", text: vl, from: "route" }); }
+        }
+      } catch (e) { console.warn("[brain-core] viewed-state skipped:", e instanceof Error ? e.message : String(e)); }
       // 2026-11-25 作業員A（#745・竹内さん「2手先や最善の方法・逆算してイメージ」・APPLY_ROUTE_BACKPLAN=on の時だけ・既定 off）: 申込から逆算した計画の1行（ブレインには書かせない・材料だけ）
       try {
         const bp = await import("@/app/lib/route-backplan");

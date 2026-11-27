@@ -49,6 +49,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   SCREENING_SIGNAL_BRAIN_FIRST: "screening_signal_brain_first", // 2026-11-28 #169 審査の問いでブレインが AIX なしと言い、S3 の信号で埋めなかった番
   SILENT_SINCE_OURS_LINE: "silent_since_ours", // 2026-11-28 #805 最後がこちらの通で 24〜48時間返事が無い事実の1行を足した番
   ROUTE_MOVE_IN_LATER_SPLIT: "route_move_in_later_split", // 2026-11-28 #737 分かれ道 入居時期が先 で次の一手を替えた番（1＝今から探す・2＝時期の約束）
+  VIEWED_STATE_LINE: "viewed_state", // 2026-11-28 #739 内覧後の駅の状態の1行を足した番
   ROUTE_ESTIMATE_NEXT_REPLY: "route_estimate_next", // 2026-11-28 #804 見積の駅の次の一手の候補を返信へ替えた番
   CHECK_ORDER_GUIDE: "check_order_guide", // 2026-11-27 #818 竹内さんの P0 7d6fe3eb（確かめる順番となぜの1行を材料に足した番）
   BRAIN_DEMOTE_ANSWERABLE_DIRECT: "answerable_direct_fired", // 2026-11-28 届いた＝決め打ちが動いた番（食い違った番だけの demote_answerable_direct は差の印・11/27 の晩は印0で届いたか分からなかった）
