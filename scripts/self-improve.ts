@@ -674,6 +674,8 @@ async function main() {
   const worse = runs.filter((r) => /確かな悪化 [1-9]/.test(String(r.summary ?? "")));
   const cost = Math.round(runs.reduce((a, r) => a + Number(r.cost_usd ?? 0), 0) * 100) / 100;
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
+  // 2026-11-27 作業員L（作業員A の #817 の欄に渡す）: 晩の空き枠の1行
+  let nightCapLine: string | null = null;
   // 2026-11-24 作業員L（台帳 #686・竹内さん「試験の費用も抑えて、質も上げていく仕組み」）: 試験の効率の物差し（scripts/audit-night-cost.ts --write が書いた test:efficiency:*）を1行で
   if (!only || doCandidates) {
     // 一番新しい日の分（audit-night-cost は晩の翌日の日付で書く・この1枚の day とずれるので日で絞らず新しい順）
@@ -685,7 +687,7 @@ async function main() {
       const wn = ev.get("worse_night");
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
       // 2026-11-27 作業員L（#803・統括役の決め）: 晩の空き枠（上限 $10 の内）と流れ残った組（朝に列に残った試験の組）
-      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); lines.push(nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }).line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
+      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); const nc = nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }); nightCapLine = nc.line; lines.push(nc.line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
     }
   }
   // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
@@ -817,7 +819,19 @@ async function main() {
         if (ds.length) items.push(...bh.rolloutItems(ds));
         else items.push({ area: "効き", label: "段階の夜の見張り（rollout-watch）", status: "unknown", owner: "作業員A", why: "最後の回の決定が無い（ROLLOUT_WATCH が off か、見張る段が無い）" });
       } catch { /* 見張りの記録なし */ }
-      items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label) }), ...bh.spendItems(healthSpendLs));
+      // 2026-11-27 作業員L（A の頼み）: 前の晩の組の届きの関所（dictReachGate・辞書の手の印で）を届きの欄へ・晩の空き枠の行を費用の欄へ
+      try {
+        const de = await import("./build-exam-dictionary"); const { dictReachGate } = await import("./lib/exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette");
+        const dict = de.loadExamDictionary();
+        if (dict) {
+          const jobs = de.nightJobsOf(`${examCacheRoot()}/exam-queue/results`, 1);
+          const rowsOf = new Map(de.readRunsWithMarks(join(process.cwd(), "scripts", "brain-exam", "results")).runs.map((r) => [r.label, r.rowsFull]));
+          const reach: Array<{ sw: string; verdict: "比べる" | "届かず" | "印なし"; reached: number; targets: number }> = [];
+          for (const j of jobs) { const targets = j.ids.filter((x) => !j.guards.includes(x)); for (const sw of j.switches) { const g = dictReachGate(dict, sw, rowsOf.get(j.label) ?? [], targets); reach.push({ sw: `${sw}（${j.label}）`, verdict: g.verdict, reached: g.reached.length, targets: targets.length }); } }
+          items.push(...bh.reachItems(reach));
+        } else items.push({ area: "届き", label: "辞書の届きの関所", status: "unknown", owner: "作業員L", why: "試験の辞書が無い（build-exam-dictionary を先に）" });
+      } catch (e) { items.push({ area: "届き", label: "辞書の届きの関所", status: "unknown", owner: "作業員L", why: `読めない（${e instanceof Error ? e.message.slice(0, 60) : e}）` }); }
+      items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label), capacityLine: nightCapLine }), ...bh.spendItems(healthSpendLs));
       items.push(bh.countItem({ area: "行き止まり", label: "地図の行き止まりの節（#804）", now: null, noRecordWhy: "本番の記録が無い（数えるのは手元の照らしの json・夜の広げの後に quality_daily に載せる）" }));
       items.push(bh.countItem({ area: "答え漏れ", label: "まだ答えていない事（#814）", now: null, noRecordWhy: "UNANSWERED_ASKS_LINE が off（on の後に material_marks.unanswered で数える）" }));
       lines.push(...bh.brainHealthLines(items), "");
