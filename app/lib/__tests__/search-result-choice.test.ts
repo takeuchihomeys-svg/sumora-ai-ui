@@ -1,6 +1,6 @@
 // 2026-10-08 竹内さん「物件が無ければそっちから送るので、その場面の時は2択にする」（search-result-choice.ts）
 // 実行: npx tsx app/lib/__tests__/search-result-choice.test.ts
-import { searchResultAltActions, searchResultChoiceCaption } from "../search-result-choice";
+import { searchResultAltActions, searchResultChoiceCaption, twoModeChoiceAlts } from "../search-result-choice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -38,6 +38,16 @@ it("全力サポートが並んでいない・物件の AIX でない・off → 
   eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: ["property_recommendation"], button: "property_send" }), null);
   eq(searchResultChoiceCaption({ brainAction: "estimate_sheet", altActions: ["zenryoku_support"], button: "zenryoku_support" }), null);
   eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: ["zenryoku_support"], button: "zenryoku_support", off: true }), null);
+});
+
+// 2026-11-27 作業員L（#818 案 A）: 2択の形の番も、ブレインが候補にしていなければ規則の全力サポートを外す
+it("2択の形・規則が足した・ブレインの候補でない → 外す（on の時だけ）", () => {
+  const before = ["viewing_invite"], after = ["viewing_invite", "zenryoku_support"];
+  eq(twoModeChoiceAlts({ on: true, twoChoiceMode: true, added: true, zenCandidate: false, before, after }), { altActions: before, removed: true });
+  eq(twoModeChoiceAlts({ on: false, twoChoiceMode: true, added: true, zenCandidate: false, before, after }), { altActions: after, removed: false }, "off は今まで通り");
+  eq(twoModeChoiceAlts({ on: true, twoChoiceMode: true, added: true, zenCandidate: true, before, after }), { altActions: after, removed: false }, "ブレインが候補にした番は残す");
+  eq(twoModeChoiceAlts({ on: true, twoChoiceMode: false, added: true, zenCandidate: false, before, after }), { altActions: after, removed: false }, "左右の形の番は search-result-split が見る");
+  eq(twoModeChoiceAlts({ on: true, twoChoiceMode: true, added: false, zenCandidate: false, before, after: before }), { altActions: before, removed: false }, "規則が足していなければ何もしない");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

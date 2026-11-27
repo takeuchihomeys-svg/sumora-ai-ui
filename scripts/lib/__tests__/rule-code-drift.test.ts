@@ -27,4 +27,13 @@ const il = idLinkDrift([row({ id: "5aa28356-1111", is_current: false, title: "A1
 assert.equal(il.length, 1); assert.equal(il[0].sw, "TWO_STAGE_ANSWERABLE_DIRECT");
 assert.equal(idLinkDrift([row({ id: "5aa28356-1111", is_current: true })], links).length, 0, "現行の行の id は出さない");
 assert.ok(driftLedgerTitle(il[0]).startsWith("決まりとコードの食い違い: TWO_STAGE_ANSWERABLE_DIRECT"));
-console.log("rule-code-drift ok 12");
+// 2026-11-27 統括役の決め 3・6: 戻す口（=on で昔に戻す）とスイッチだけやめた物は「止まっている」に出さない
+import("../rule-code-drift").then(({ revertSwitchesInText, droppedSwitchesInText }) => {
+  assert.deepEqual(revertSwitchesInText("戻す: HUMAN_LEARN_DAYTIME_REBUILD=on（昼も作る）"), ["HUMAN_LEARN_DAYTIME_REBUILD"]);
+  assert.deepEqual(revertSwitchesInText("LOST_AS_NEGATIVE は昔の動きに戻す口（=on で旧）"), ["LOST_AS_NEGATIVE"]);
+  assert.deepEqual(droppedSwitchesInText("（#818）このスイッチは台帳でやめた: AIX_FIRST_BLUEPRINT＝台帳 #21（もう要らない）"), ["AIX_FIRST_BLUEPRINT"]);
+  const c2 = { defaults: new Map([["REV_SW_X", "off" as const], ["DROP_SW_X", "off" as const], ["LIVE_SW_X", "off" as const]]), where: new Map(), seen: new Set(["REV_SW_X", "DROP_SW_X", "LIVE_SW_X"]), revert: new Set(["REV_SW_X"]) };
+  const d2 = ruleCodeDrift([row({ id: "c9aaaaaa-x", priority: 1, insight: "REV_SW_X=on で入る・DROP_SW_X=on・LIVE_SW_X=on\nこのスイッチは台帳でやめた: DROP_SW_X＝台帳 #9" })], c2);
+  assert.deepEqual(d2.map((x) => x.sw), ["LIVE_SW_X"], "戻す口とやめたスイッチは出さない");
+  console.log("rule-code-drift ok 16");
+});

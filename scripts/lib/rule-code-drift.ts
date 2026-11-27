@@ -30,8 +30,23 @@ export function switchDefaultsInCode(code: string): Map<string, CodeDefault> {
   return m;
 }
 /** コード全体のスイッチの既定（app/lib・app/api）。同じ名前が on と off の両方で読まれる時は on（どこかで生きている） */
-export function scanCodeDefaults(roots: readonly string[]): { defaults: Map<string, CodeDefault>; where: Map<string, string[]>; seen: Set<string> } {
-  const defaults = new Map<string, CodeDefault>(), where = new Map<string, string[]>(), seen = new Set<string>();
+/** 2026-11-27（統括役の決め 6）: 戻す口のスイッチ（=on で昔の動きに戻す＝既定 off が決まりの通り）の名前（純関数） */
+export function revertSwitchesInText(text: string): string[] {
+  const out = new Set<string>();
+  const t = String(text ?? "");
+  for (const m of t.matchAll(/戻す[^\n]{0,30}?([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*=\s*on\b/g)) out.add(m[1]);
+  for (const m of t.matchAll(/([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*=\s*on\s*(?:で|＝)\s*(?:旧|昔|戻|前の動き|今まで)/g)) out.add(m[1]);
+  for (const m of t.matchAll(/([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\s*は[^\n]{0,40}?戻[しす]口/g)) out.add(m[1]);
+  return [...out].sort();
+}
+/** 2026-11-27（統括役の決め 3）: 行の中で「このスイッチは台帳でやめた」と書かれたスイッチ（純関数）＝スイッチの退役で、決めの退役ではない */
+export function droppedSwitchesInText(text: string): string[] {
+  const out = new Set<string>();
+  for (const line of String(text ?? "").split(/\n/)) if (/台帳[^\n]{0,6}でやめた|台帳 #\d+（[^）]*(?:やめ|凍結|要らない|悪化)/.test(line)) for (const n of switchNamesInText(line)) out.add(n);
+  return [...out].sort();
+}
+export function scanCodeDefaults(roots: readonly string[]): { defaults: Map<string, CodeDefault>; where: Map<string, string[]>; seen: Set<string>; revert: Set<string> } {
+  const defaults = new Map<string, CodeDefault>(), where = new Map<string, string[]>(), seen = new Set<string>(), revert = new Set<string>();
   const walk = (d: string) => {
     let names: string[] = []; try { names = readdirSync(d); } catch { return; }
     for (const f of names) {
@@ -41,6 +56,7 @@ export function scanCodeDefaults(roots: readonly string[]): { defaults: Map<stri
       else if (/\.tsx?$/.test(f)) {
         let c = ""; try { c = readFileSync(p, "utf8"); } catch { continue; }
         for (const x of c.matchAll(/[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+/g)) seen.add(x[0]);
+        for (const n of revertSwitchesInText(c)) revert.add(n);
         for (const [n, v] of switchDefaultsInCode(c)) {
           const prev = defaults.get(n); if (!prev || (prev !== "on" && v === "on") || (prev === "staged" && v === "off")) defaults.set(n, v);
           const w = where.get(n) ?? []; if (w.length < 3) w.push(p.replace(/\\/g, "/").replace(/^.*?\/(app\/)/, "$1")); where.set(n, w);
@@ -49,7 +65,7 @@ export function scanCodeDefaults(roots: readonly string[]): { defaults: Map<stri
     }
   };
   for (const r of roots) walk(r);
-  return { defaults, where, seen };
+  return { defaults, where, seen, revert };
 }
 
 export type KbRow = { id: string; title: string | null; insight: string | null; rationale: string | null; applied_to: string | null; tags: string[] | null; is_current: boolean; priority: number | null; retired_reason: string | null; superseded_by: string | null };
@@ -60,7 +76,7 @@ export function writtenAsSwitch(text: string, name: string): boolean {
   if (!/^[A-Z0-9_]+$/.test(name)) return false; // スイッチの名前は大文字・数字・_ だけ（正規表現の記号は入らない）
   return new RegExp(`${name}\\s*=\\s*(?:on|off|shadow|dry)\\b|${name}[^\\n]{0,12}既定`).test(text);
 }
-export function ruleCodeDrift(rows: readonly KbRow[], code: { defaults: ReadonlyMap<string, CodeDefault>; where: ReadonlyMap<string, string[]>; seen?: ReadonlySet<string> }): Drift[] {
+export function ruleCodeDrift(rows: readonly KbRow[], code: { defaults: ReadonlyMap<string, CodeDefault>; where: ReadonlyMap<string, string[]>; seen?: ReadonlySet<string>; revert?: ReadonlySet<string> }): Drift[] {
   const out: Drift[] = [];
   const text = (r: KbRow) => [r.title, r.insight, r.rationale, r.applied_to, ...(r.tags ?? [])].join("\n");
   // 同じスイッチが現行の行にも書かれている数（①は出したまま数を添える＝新しい行が生かしているのか、言い換えただけかは人が見る）
@@ -72,7 +88,9 @@ export function ruleCodeDrift(rows: readonly KbRow[], code: { defaults: Readonly
       const d = code.defaults.get(sw) ?? "absent";
       const base = { id: r.id, title: String(r.title ?? "").slice(0, 80), priority: r.priority, sw, code: d, where: code.where.get(sw) ?? [] };
       if (!r.is_current && d === "on") out.push({ ...base, kind: "退役・コードは生きている", currentMentions: curCount.get(sw) ?? 0, retiredReason: r.retired_reason, supersededBy: r.superseded_by });
-      if (r.is_current && (r.priority === 0 || r.priority === 1) && d === "off") out.push({ ...base, kind: "決まりは生きている・コードは止まっている" });
+      // 止まっている: 戻す口（=on で昔に戻す＝off が決まりの通り）・行に「台帳でやめた」と書いたスイッチ（スイッチの退役）は出さない
+      const tx = text(r);
+      if (r.is_current && (r.priority === 0 || r.priority === 1) && d === "off" && !code.revert?.has(sw) && !revertSwitchesInText(tx).includes(sw) && !droppedSwitchesInText(tx).includes(sw)) out.push({ ...base, kind: "決まりは生きている・コードは止まっている" });
       // コードに無い: コードのどこにも名前が無く（定数や名簿の名前でもない）、文の中でスイッチとして書かれている物だけ（拾い過ぎを避ける）
       if (r.is_current && (r.priority === 0 || r.priority === 1) && d === "absent" && !code.seen?.has(sw) && writtenAsSwitch(text(r), sw)) out.push({ ...base, kind: "決まりは生きている・コードに無い" });
     }

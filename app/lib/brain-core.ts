@@ -7144,7 +7144,12 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       }
       }
     }
-    const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice });
+    const searchChoice0 = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice });
+    // 2026-11-27 作業員L（#818・案 A・SEARCH_CHOICE_TWO_MODE_SPLIT・既定 off・段階で読む）: 2択の形の番も、ブレインが候補にしていなければ規則の全力サポートを外す（左右の形と同じ・竹内さんの 10/13 の決め B）
+    const twoModeSplitOn = isTwoChoiceMode && searchChoice0.added ? await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("SEARCH_CHOICE_TWO_MODE_SPLIT", conversationId); } catch { return false; } })() : false;
+    const twoModeFix = (await import("@/app/lib/search-result-choice")).twoModeChoiceAlts({ on: twoModeSplitOn, twoChoiceMode: isTwoChoiceMode, added: searchChoice0.added, zenCandidate, before: altForChoice, after: searchChoice0.altActions });
+    if (twoModeFix.removed) { materialMarks.search_choice_two_mode = 1; console.log(JSON.stringify({ tag: "brain:search-choice-two-mode", conversationId, aix: finalAix ?? null })); }
+    const searchChoice = twoModeFix.removed ? { altActions: twoModeFix.altActions, added: false } : searchChoice0;
     // 左右の形の番（ブレインの一手が物件を探す番）のメモは決め打ちしない言い方にそろえる（search-result-split）
     const splitTurn = searchSplitServerEnabled() && !isTwoChoiceMode && isSearchSplitTurn({ brainAction: finalAix ?? null });
     // 左右の形の番で、ブレインが全力サポートを候補にしていない（新規など）時は、規則（search-result-choice の2択）が足した全力サポートを外す（右を出さない）
