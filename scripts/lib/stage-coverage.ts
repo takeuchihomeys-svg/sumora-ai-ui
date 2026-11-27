@@ -31,6 +31,36 @@ export function scanDir(dir: string): { env: string[]; staged: string[] } {
   walk(dir);
   return { env: [...env].sort(), staged: [...staged].sort() };
 }
+/**
+ * 2026-11-27 作業員L（統括役の頼み・A の段階の名簿 STAGED_SWITCHES との突き合わせ）（純関数）:
+ *   名簿だけ＝STAGED_SWITCHES にあるがコードで stagedOn("X") と読んでいない（見張りが見ても効かない）
+ *   名簿に無い＝コードで stagedOn("X") と読んでいるが名簿に無い（rollout-watch が見張らない）
+ *   一覧に残った＝段階で読むようになったのに許しの一覧（stage-coverage-allowlist.json）に残っている（一覧から外す）
+ *   名簿の突き合わせは A の stagedOn（switch-stage.ts）の呼び出しだけ（rollout.ts の stageOn／stageOnNow は別の入れ物で、名簿に入れない）
+ */
+export function stagedOnNamesInCode(code: string): string[] {
+  return [...new Set([...code.matchAll(/\bstagedOn\(\s*["'`]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)["'`]/g)].map((m) => m[1]))].sort();
+}
+export function scanStagedOnNames(dir: string): string[] {
+  const out = new Set<string>();
+  const walk = (d: string) => {
+    for (const f of readdirSync(d)) {
+      if (f === "__tests__" || f === "node_modules") continue;
+      const p = join(d, f); let st; try { st = statSync(p); } catch { continue; }
+      if (st.isDirectory()) walk(p); else if (/\.tsx?$/.test(f)) { try { for (const s of stagedOnNamesInCode(readFileSync(p, "utf8"))) out.add(s); } catch { /* 読めない物は飛ばす */ } }
+    }
+  };
+  walk(dir);
+  return [...out].sort();
+}
+export function stagedNameCheck(listed: readonly string[], stagedInCode: ReadonlySet<string>, allow: ReadonlySet<string>): { listedOnly: string[]; unlisted: string[]; staleAllow: string[] } {
+  const L = new Set(listed);
+  return {
+    listedOnly: [...L].filter((n) => !stagedInCode.has(n)).sort(),
+    unlisted: [...stagedInCode].filter((n) => !L.has(n)).sort(),
+    staleAllow: [...allow].filter((n) => stagedInCode.has(n)).sort(),
+  };
+}
 /** 段階で読んでいるか（純関数）: 段階の読みがある・許しの一覧にある（警告）・新しい（止める） */
 export function stageCoverage(envSwitches: readonly string[], staged: ReadonlySet<string>, allow: ReadonlySet<string>): { staged: string[]; allowed: string[]; fresh: string[] } {
   const s: string[] = [], a: string[] = [], f: string[] = [];

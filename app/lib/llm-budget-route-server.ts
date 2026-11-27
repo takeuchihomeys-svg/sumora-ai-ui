@@ -26,7 +26,6 @@ export function addRow(s: Pick<Sums, "claudeUsd" | "openaiUsd" | "deepseekUsd">,
 //   冷えた関数は控えの1行を読み、控えの後の行（id が控えより大きい物）だけ足す。控えが無い・古い（3時間より前）・区切りが違う時は今まで通り。止める BUDGET_SNAPSHOT=off
 export const BUDGET_SNAPSHOT_METRIC = "budget:month_sums";
 export const BUDGET_SNAPSHOT_MAX_AGE_MS = 3 * 3_600_000;
-export const budgetSnapshotOn = (env: Record<string, string | undefined> = process.env) => String(env.BUDGET_SNAPSHOT ?? "").trim().toLowerCase() !== "off";
 /** 控えの1行（detail）→ 始めの数え（純関数）。区切りの鍵が同じで新しい時だけ。読んだ時刻は 0（すぐ続きを読む） */
 export function budgetSnapshotSeedOf(detail: unknown, key: string, nowMs: number): Sums | null {
   const d = (detail ?? null) as Partial<Sums> & { at?: number } | null;
@@ -39,7 +38,6 @@ export function budgetSnapshotSeedOf(detail: unknown, key: string, nowMs: number
 export const budgetSnapshotDue = (nowMs: number) => new Date(nowMs).getUTCMinutes() < 5;
 /** 控えを書く（5分ごとの cron から・毎時1回）。読み切れなかった時（partial）は書かない */
 export async function writeBudgetSnapshot(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<{ written: boolean; why: string }> {
-  if (!budgetSnapshotOn(env)) return { written: false, why: "BUDGET_SNAPSHOT=off" };
   const s = await monthSums(sb, nowMs, env, { maxPages: 200 });
   if (!s) return { written: false, why: "使用額を読めない" };
   if (s.partial) return { written: false, why: "読み切れていない" };
@@ -64,7 +62,7 @@ export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Rec
   let next: Sums = cache && cache.key === key ? { ...cache, prod: { ...(cache.prod ?? { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }) } } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0, prod: { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 } };
   // 2026-11-27 作業員L（統括役の決め）: 冷えた関数（控えが無い）は、毎時の控えの1行（quality_daily の budget:month_sums）から始め、その後の行だけ読む。
   //   前は冷えた関数ごとに月の行を最大5万行読みに行き、米国（iad1）の関数では読み終わらず、回せる係も Claude のままだった（11/25〜27 に入口の読み 17回・確かめ 13回）
-  if (!next.lastId && budgetSnapshotOn(env)) {
+  if (!next.lastId) {
     try {
       const { data } = await sb.from("quality_daily").select("detail").eq("scope", "all").eq("metric", BUDGET_SNAPSHOT_METRIC).order("day", { ascending: false }).limit(1).maybeSingle();
       const seed = budgetSnapshotSeedOf((data as { detail?: unknown } | null)?.detail ?? null, key, nowMs);
