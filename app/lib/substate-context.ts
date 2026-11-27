@@ -25,3 +25,6 @@ export function substateInContext(text: string | null | undefined, ctx: Substate
   const miss = (SUBSTATE_NEEDS[s.id] ?? []).find((k) => !ctx[k]);
   return miss ? { id: null, droppedBy: miss } : { id: s.id, droppedBy: null };
 }
+
+// 2026-11-27 作業員A（#804）: 出てよい駅を複数（SUBSTATE_MULTI_STATION）は apply-route-substate.ts（substatesFor と同じ所）に置いた
+export { substateStationsOf, substateMultiStationOn, SUBSTATE_ALSO_AT } from "./apply-route-substate";

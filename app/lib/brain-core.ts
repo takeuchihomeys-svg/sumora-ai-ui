@@ -148,7 +148,7 @@ import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作�
 import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after";
 import { substateInContext, substateContextOn } from "@/app/lib/substate-context"; // 2026-11-27 作業員A: 細かい状態の前提（SUBSTATE_CONTEXT・既定 off） // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
-import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
+import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE, substateAlsoHit } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
 import { latentFiveOn, LATENT_FIVE_FIELD, LATENT_FIVE_RULES, normalizeLatentFive, type LatentFive } from "@/app/lib/latent-five";
@@ -4428,6 +4428,7 @@ ${sh}`;
       { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
       { const sub = applyRouteText.length - ar.text.length; if (sub > 0) materialMarks.route_substate = sub; }
+      if (applyRouteText.length > ar.text.length && substateAlsoHit(ar.loc)) materialMarks.substate_multi_station = 1; // 2026-11-27 作業員A（#804・SUBSTATE_MULTI_STATION=on の時だけ）: 足した駅の状態を材料の候補に入れた番
       // 2026-11-25 作業員A（#739・STATION_STATE_LINE=on の時だけ・既定 off）: 駅の中で足りない状態（駅に入ってからの日数・見積書の後のお客様の通）の1行
       try {
         const ss = await import("@/app/lib/route-station-state");

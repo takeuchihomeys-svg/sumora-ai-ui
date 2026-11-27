@@ -36,6 +36,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   SUBSTATE_CONTEXT: "substate_context", // 細かい状態を前提つきで読んだ番（外した番は substate_context_dropped も）
   ROUTE_STATION_FROM_RECORD: "route_station_unify", // まだ配線していない（route-station-unify.ts）。配線する時に同じ名前の印を付ける
   FIRST_CONTACT_READY_TWO_STAGE: "first_contact_two_stage", // 初回で条件が揃った番にピックアップの約束の2段を作った番
+  SUBSTATE_MULTI_STATION: "substate_multi_station", // 2026-11-27 #804 細かい状態の出てよい駅を複数（足した駅の状態を材料の候補に入れた番）
   BRAIN_MSG_WINDOW_UNITS: "msg_window_units", // 束ねた画像の行＋いつもの窓より多く読めた通の数（0＝off と同じ材料）
 };
 export type ReachRow = { id: string; marks: Record<string, unknown> | null | undefined };
