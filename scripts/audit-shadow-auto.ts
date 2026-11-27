@@ -1,0 +1,33 @@
+// scripts/audit-shadow-auto.ts — 影の自動返信の数え（#812・費用0・LLM なし・書かない・2026-11-27 作業員A）
+//   line_watch_turns（30日・軽い読み）の auto_eligible（関所を通るか）・verdict・下書き・スタッフの文・スタッフの AIX から、関所の穴と場面ごとの候補を出す。
+//   危ない間違いは L の #811 の dangerOfEdit（app/lib/delegation-index.ts）と同じ物差し（取り込み前の写しでは読めないので、無ければ「数えない」と出す）
+//   実行: npx tsx --env-file=.env.local scripts/audit-shadow-auto.ts [--days=30]
+import { createClient } from "@supabase/supabase-js";
+import { createRequire } from "node:module";
+import { gateHoles, sceneReadiness, shadowLines, type ShadowTurn } from "../app/lib/shadow-auto-reply";
+import { finalCheckStateOf } from "../app/lib/auto-gate-final-check";
+
+const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? "30");
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "", { auth: { persistSession: false } });
+const req = createRequire(__filename);
+const delegPath = "../app/lib/delegation-index";
+let dangerOfEdit: ((d: string | null, s: string | null) => string[]) | null = null;
+try { dangerOfEdit = (req(delegPath) as { dangerOfEdit: (d: string | null, s: string | null) => string[] }).dangerOfEdit; } catch { dangerOfEdit = null; }
+
+async function main() {
+  const { data, error } = await sb.from("line_watch_turns").select("scene_key, tpo_label, verdict, auto_eligible, draft_last, staff_texts, staff_aix, final_check, conv_status").gte("customer_turn_at", new Date(Date.now() - DAYS * 864e5).toISOString()).limit(5000);
+  if (error) throw error;
+  const turns: ShadowTurn[] = ((data ?? []) as Array<Record<string, unknown>>).map((r) => {
+    const staff = Array.isArray(r.staff_texts) ? (r.staff_texts as Array<{ text?: string } | string>).map((x) => (typeof x === "string" ? x : x?.text ?? "")).join("\n") : (r.staff_texts as string | null) ?? null;
+    const aix = Array.isArray(r.staff_aix) && (r.staff_aix as unknown[]).length > 0;
+    return {
+      scene: String(r.scene_key ?? r.tpo_label ?? "-"), wouldSend: !!(r.auto_eligible as { would_send?: boolean } | null)?.would_send, verdict: (r.verdict as string | null) ?? null,
+      draft: (r.draft_last as string | null) ?? null, staffText: staff, staffPressedAix: aix,
+      danger: dangerOfEdit && !aix ? dangerOfEdit((r.draft_last as string | null) ?? null, staff) : [],
+      finalCheckOk: r.final_check == null ? null : finalCheckStateOf(r.final_check) === "ok", convStatus: (r.conv_status as string | null) ?? null,
+    };
+  });
+  if (!dangerOfEdit) console.log("（危ない間違いは数えない: delegation-index がこの写しに無い＝L の #811 の取り込みの後に数える）");
+  console.log(shadowLines(gateHoles(turns), sceneReadiness(turns)).join("\n"));
+}
+main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });
