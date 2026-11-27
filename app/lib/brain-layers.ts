@@ -192,7 +192,7 @@ export type FreshDigest = {
 export function toFreshDigest(meta: Record<string, unknown>, shift: string | null): FreshDigest {
   const str = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
   const concern = meta.customer_concern as { topic?: unknown; object?: unknown } | null | undefined;
-  return {
+  const d: FreshDigest = {
     ts: (meta.analyzed_msg_ts as string | null | undefined) ?? null,
     intent: str(meta.customer_intent, 20),
     q: Array.isArray(meta.customer_questions) ? (meta.customer_questions as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 2).map((x) => x.slice(0, 40)) : [],
@@ -216,9 +216,6 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-11-03 作業員2（指揮役: 後ろの決まりの書き換えを記録・既定 on・記録だけ）: LLM の AIX（la）と最終（aix）が違う番は「何から何へ・どの決まりで」を1つの欄に。
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
-    ...((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()),
-    ...((() => { const r = meta.shadow_reach as { parts?: Record<string, unknown>; ms?: number } | undefined; if (!r) return {}; const d = shadowReachDigestOf(r); return d ? { shr: d } : {}; })()),
-    ...((() => { const ar = meta.after_records as { mif?: unknown; nl?: unknown } | undefined; if (!ar) return {}; const mif = str(ar.mif, 12); const nl = Array.isArray(ar.nl) ? (ar.nl as unknown[]).map(String).join("・").slice(0, 24) : null; return { ...(mif ? { mif } : {}), ...(nl ? { nl } : {}) }; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
@@ -278,6 +275,11 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
       return `${c.asks.length}:r${n("reply")}p${n("promise")}a${n("aix")}n${n("none")}${c.close_only ? ":c" : ""}${af === "wait_line" ? ":w" : af === "receive_only" ? ":o" : ""}`;
     })(),
   };
+  // 2026-11-27 作業員A: ピッカーの書き換え（rp）・影の届き（shr）・判断の後の記録（mif・nl）は、上の1つの式に足すと型が大きくなりすぎる（union type too complex）ので後から足す
+  Object.assign(d, ((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()));
+  Object.assign(d, ((() => { const r = meta.shadow_reach as { parts?: Record<string, unknown>; ms?: number } | undefined; if (!r) return {}; const d = shadowReachDigestOf(r); return d ? { shr: d } : {}; })()));
+  Object.assign(d, ((() => { const ar = meta.after_records as { mif?: unknown; nl?: unknown } | undefined; if (!ar) return {}; const mif = str(ar.mif, 12); const nl = Array.isArray(ar.nl) ? (ar.nl as unknown[]).map(String).join("・").slice(0, 24) : null; return { ...(mif ? { mif } : {}), ...(nl ? { nl } : {}) }; })()));
+  return d;
 }
 
 /** 決断・断り・他決の語（戦略が変わる発言） */
