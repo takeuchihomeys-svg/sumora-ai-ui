@@ -5,18 +5,18 @@
 //   ここはそれ以外の「env で on にしただけ」のスイッチ（brain_switch_versions に on で出た物）を、on にした日の前後で本番の物差し（quality_daily）で比べる。
 // 物差し: 返信の一致（reply_match）・AIX の最初の一手の一致（aix_first_match）・そのまま送れた割合（L の #811・名前は L の物を足す）。scope は takeuchi と all。
 // 判定（rollout-watch と同じ線）: 前後7日を番の数で重み付けして合わせ、どちらかが 20番に足りなければ「分からない」（今朝の返信の一致 5番で 0% のような日を判定にしない）。
-//   下がった＝5pt 以上下がり、かつ片側の比率の差の検定で z ≥ 1.64（揺れでは無い）。それ以外は「変わらない」。
+//   下がった＝rollout-watch.decideRollout の前後比べと同じ線（各20番から・8pt 以上・2026-11-27 統括役「戻しの線とそろえる」）。z は参考に出すだけ。
 // 下がった時にする事: 知らせて台帳に積むだけ（自動で off にはしない）。
 //   理由: env で on にしたスイッチは rollout_overrides を読まない（stageOnNow を通らない）＝自動で切るには env を書き換えるしか無く、
 //   rollout-watch も「env（統括役の決定）は書き換えない」としている。自動で切るなら、そのスイッチを段階（stageOn）で読む形に移すのが先（竹内さんに聞く）。
-import { ROLLOUT_MIN_N, ROLLOUT_DROP_PT } from "./rollout-watch";
+import { ROLLOUT_MIN_N, ROLLOUT_DROP_PT_ALL, decideRollout } from "./rollout-watch";
 
 export type QualityRow = { day: string; metric: string; scope: string; value: number | string | null; n: number | null; source?: string | null };
 export type SwitchVersion = { switches: string; first_seen_at: string };
 export const WATCH_METRICS = ["reply_match", "aix_first_match"] as const; // L の #811（そのまま送れた割合）の metric 名が決まったら足す
 export const WATCH_SCOPES = ["takeuchi", "all"] as const;
 export const REGRESS_WINDOW_DAYS = 7;
-export const REGRESS_Z = 1.64; // 片側 95%
+export const REGRESS_Z = 1.64; // 片側 95%（2026-11-27 統括役「rollout-watch の戻しの線とそろえる」で判定には使わず、参考に出すだけ）
 
 const ymd = (iso: string) => new Date(Date.parse(iso) + 9 * 36e5).toISOString().slice(0, 10); // JST の日
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
@@ -66,7 +66,8 @@ export function zDrop(before: Side, after: Side): number {
 export type MetricVerdict = { metric: string; scope: string; verdict: "down" | "keep" | "unknown"; before: Side; after: Side; dropPt: number | null; z: number | null; why: string };
 /** 1つの物差しを on にした日の前後で比べる。on にした日そのものは混ざるので入れない */
 export function compareAround(o: { rows: readonly QualityRow[]; metric: string; scope: string; onDay: string; todayYmd: string; windowDays?: number; minN?: number; dropPt?: number }): MetricVerdict {
-  const w = o.windowDays ?? REGRESS_WINDOW_DAYS, minN = o.minN ?? ROLLOUT_MIN_N, line = o.dropPt ?? ROLLOUT_DROP_PT;
+  // 判定は rollout-watch.decideRollout（戻しの線と同じ関数）の前後比べ（all_change: 各 ROLLOUT_MIN_N 番から・ROLLOUT_DROP_PT_ALL pt）。minN・dropPt を渡した時だけ線を変える（テスト用）
+  const w = o.windowDays ?? REGRESS_WINDOW_DAYS, minN = o.minN ?? ROLLOUT_MIN_N, line = o.dropPt ?? ROLLOUT_DROP_PT_ALL;
   const m = dayRows(o.rows, o.metric, o.scope);
   const before = sideOf(m, addDays(o.onDay, -w), o.onDay);
   const afterEnd = addDays(o.onDay, w + 1) < o.todayYmd ? addDays(o.onDay, w + 1) : o.todayYmd;
@@ -75,8 +76,10 @@ export function compareAround(o: { rows: readonly QualityRow[]; metric: string; 
   if (before.n < minN || after.n < minN) return { ...base, verdict: "unknown", dropPt: null, z: null, why: `番が少ない（前 ${before.n}番・後 ${after.n}番・各 ${minN} 番から）` };
   const drop = Math.round((pct(before) - pct(after)) * 10) / 10, z = Math.round(zDrop(before, after) * 100) / 100;
   const desc = `前 ${pct(before).toFixed(1)}%（${before.n}番）→ 後 ${pct(after).toFixed(1)}%（${after.n}番）`;
-  if (drop >= line && z >= REGRESS_Z) return { ...base, verdict: "down", dropPt: drop, z, why: `${desc}・${drop}pt 下がった（線 ${line}pt・z ${z}）` };
-  return { ...base, verdict: "keep", dropPt: drop, z, why: `${desc}・差 ${drop}pt（z ${z}${drop >= line ? "・揺れの内" : ""}）` };
+  const same = o.minN == null && o.dropPt == null ? decideRollout({ name: `${o.metric}/${o.scope}`, stage: { kind: "all" }, on: { n: after.n, match: after.match }, off: { n: before.n, match: before.match }, mode: "all_change" }) : null;
+  const down = same ? same.action === "down" : drop >= line;
+  if (down) return { ...base, verdict: "down", dropPt: drop, z, why: `${desc}・${drop}pt 下がった（線 ${line}pt・z ${z} は参考）` };
+  return { ...base, verdict: "keep", dropPt: drop, z, why: `${desc}・差 ${drop}pt（線 ${line}pt・z ${z} は参考）` };
 }
 
 export type SwitchVerdict = { name: string; onDay: string; verdict: "down" | "keep" | "unknown"; metrics: MetricVerdict[]; action: "notify_ledger" | "none" };

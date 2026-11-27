@@ -29,7 +29,9 @@ t("下がった: 80%→60%・各70番・z が線を越える", r2.verdict === "d
 t("on にした日そのものは入れない（11/17 の 0% 30番は混ざらない）", r2.before.n === 70 && r2.after.n === 70);
 const small = [...mk("2026-11-10", 7, 80, 3), ...mk("2026-11-18", 7, 74, 3)];
 const r3 = compareAround({ rows: small, metric: "reply_match", scope: "all", onDay: "2026-11-17", todayYmd: "2026-11-27" });
-t("揺れの内: 6pt 下がっても各21番では z が線に届かない＝変わらない", r3.verdict === "keep" && (r3.dropPt ?? 0) >= 5 && /揺れの内/.test(r3.why));
+t("rollout-watch と同じ線: 6pt の下がりは前後比べの線（8pt）に届かない＝変わらない", r3.verdict === "keep" && (r3.dropPt ?? 0) >= 5 && (r3.dropPt ?? 0) < 8 && /線 8pt/.test(r3.why));
+const r4 = compareAround({ rows: [...mk("2026-11-10", 7, 80, 3), ...mk("2026-11-18", 7, 71, 3)], metric: "reply_match", scope: "all", onDay: "2026-11-17", todayYmd: "2026-11-27" });
+t("rollout-watch と同じ線: 9pt の下がりは各21番でも下がった（decideRollout の all_change と同じ答え）", r4.verdict === "down" && (r4.dropPt ?? 0) >= 8);
 t("z: 同じ比率なら 0", Math.abs(zDrop({ n: 50, match: 40, days: 5 }, { n: 50, match: 40, days: 5 })) < 1e-9);
 
 // スイッチ1つ: どれか下がれば知らせて台帳へ・全部分からなければ unknown

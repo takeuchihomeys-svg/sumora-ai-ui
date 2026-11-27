@@ -1938,6 +1938,9 @@ async function analyzeConversationCore(
     recheck?: BrainRecheck | null },
 ): Promise<SuggestedAixMeta> {
   const coreT0 = Date.now(); // 2026-11-26 作業員L（#749）: 入口を始めた時刻・材料を組み終えた時刻を、この関数の始めからの ms で記録（記録だけ）
+  // 2026-11-27 作業員A（竹内さんの決め 11/27「段階で読む形に移して、悪化したら自動で戻す」）: 段階で読むスイッチ（switch-stage.STAGED_SWITCHES）がある時だけ、
+  //   この番の会話 id と rollout_overrides（1分の控え・300ms で打ち切り・失敗は空＝env だけ）を入れ物に入れる。名簿が空なら何もしない（読まない・待たない）
+  try { const ss = await import("@/app/lib/switch-stage"); if (ss.STAGED_SWITCHES.length) ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId)); } catch { /* 入れ物なし＝env だけ */ }
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
