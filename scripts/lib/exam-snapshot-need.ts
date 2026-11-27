@@ -43,6 +43,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   CONDUCTOR_TODOS: "conductor_todos", // やる事の一覧の記録を作った番
   CHECK_NOW_POSSIBLE_LINE: "check_now_possible",
   PICKUP_FIT_NOW_LINE: "pickup_fit_now", // 2026-11-27 #821 送れる候補が今の条件にも合うか // 2026-11-27 #821 今確かめられるか（事実の1行を足した番）
+  VACATE_VIEWING_HOLD_FIRST: "vacate_viewing_hold", // 2026-11-27 #830 退去予定の部屋の内覧が7日以内で材料の1行を足した番
   CHECK_ORDER_GUIDE: "check_order_guide", // 2026-11-27 #818 竹内さんの P0 7d6fe3eb（確かめる順番となぜの1行を材料に足した番）
   BRAIN_DEMOTE_ANSWERABLE_DIRECT: "demote_answerable_direct", // 2026-11-27 #821 すぐ AIX の決め打ちを下げた番（ブレインの答えと食い違った番だけ）
   BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3: "demote_date_wish_s3", // 2026-11-27 #821 内覧の日の希望・保証人 S3 の信号を下げた番

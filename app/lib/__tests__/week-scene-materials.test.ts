@@ -1,6 +1,6 @@
 // 今週の指摘の場面の材料（#33 じゅな・#3 #7 KID・#37 れい）。実物の言い方（名前は伏せた）
 // 実行: npx tsx app/lib/__tests__/week-scene-materials.test.ts
-import { vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine, daysUntilMD, vacatingNameIn, vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled } from "../week-scene-materials";
+import { vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine, daysUntilMD, vacatingNameIn, holdNgNamesFrom, vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled } from "../week-scene-materials";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) {
@@ -33,6 +33,19 @@ it("#37 れい: 洗濯機置き場があって気になる → 否定は返信�
   eq(positiveNoNegativeLine("洗濯機置き場はありますか？"), "", "質問は別");
 });
 it("名前の照合: 号室を外した建物名", () => eq(vacatingNameIn("ロンド・エーデルワイス 現地エントランスお待ち合わせ", PROPS), "ロンド・エーデルワイス 105号室"));
+
+it("#830: 申込の後は出さない", () => {
+  eq(vacateViewingHoldFirstLine({ appointment: { dateMD: "11/1", place: "ロンド・エーデルワイス 現地エントランス" }, props: PROPS, nowMs: NOW, postApply: true }), "");
+});
+it("#830: お部屋止めができないと記録のある部屋は出さない（AIX【確認した】お部屋止めについて の申込不可の文）", () => {
+  const ng = holdNgNamesFrom(["ロンド・エーデルワイスお申込みしてお部屋押さえることができるか管理会社確認しましたところ、退去前のためお部屋止めをできないとのことでした。"], PROPS);
+  eq(ng, ["ロンド・エーデルワイス 105号室"]);
+  eq(vacateViewingHoldFirstLine({ appointment: { dateMD: "11/1", place: "ロンド・エーデルワイス 現地エントランス" }, props: PROPS, nowMs: NOW, holdNgNames: ng }), "");
+});
+it("#830: お部屋止めできるの文・物件名の無い文は見分けに使わない（推測しない）", () => {
+  eq(holdNgNamesFrom(["ロンド・エーデルワイスお申込みでお部屋止めできるとのことでした😊！！"], PROPS), []);
+  eq(holdNgNamesFrom(["こちらお部屋止めをできないとのことでした。"], PROPS), []);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

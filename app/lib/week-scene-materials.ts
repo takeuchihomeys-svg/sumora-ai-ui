@@ -6,10 +6,12 @@
 //       返信には入居まで期間がある事と、そのためお部屋を抑える意味の説明。VACATE_HOLD_CANCEL_CHECK
 //   #37 れい: 前向きな発言（洗濯機置き場があって気になる）に否定的な事（記載が見当たらない 等）を返信で書かない・否定は AIX【確認した】から。POSITIVE_NO_NEGATIVE
 // テスト: app/lib/__tests__/week-scene-materials.test.ts
+import { stagedOn, STAGE_OFF } from "./switch-stage";
 type Env = Record<string, string | undefined>;
 const envOf = (): Env => (typeof process !== "undefined" ? process.env : {});
 const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
-export const vacateViewingHoldFirstEnabled = (env: Env = envOf()) => on(env.VACATE_VIEWING_HOLD_FIRST);
+// 2026-11-27 作業員A（台帳 #830・統括役「既定 off・段階で読む・印つき」）: 段階で読む（switch-stage.STAGED_SWITCHES）。env=on は今まで通り効く
+export const vacateViewingHoldFirstEnabled = (env: Env = envOf()) => stagedOn("VACATE_VIEWING_HOLD_FIRST", env, STAGE_OFF);
 export const vacateHoldCancelCheckEnabled = (env: Env = envOf()) => on(env.VACATE_HOLD_CANCEL_CHECK);
 export const positiveNoNegativeEnabled = (env: Env = envOf()) => on(env.POSITIVE_NO_NEGATIVE);
 
@@ -40,13 +42,31 @@ export function daysUntilMD(md: string | null | undefined, nowMs: number): numbe
 }
 
 /** #33: 退去予定の部屋の内覧が7日以内 */
-export function vacateViewingHoldFirstLine(i: { appointment: { dateMD: string | null; place: string | null } | null; props: ReadonlyArray<VacateProp>; nowMs: number; propertyHint?: string | null }): string {
-  if (!i.appointment?.dateMD) return "";
+//   2026-11-27 作業員A（#830）: 申込の後（postApply）と、お部屋止めができないと記録のある部屋（holdNgNames・下の holdNgNamesFrom）は出さない
+export function vacateViewingHoldFirstLine(i: { appointment: { dateMD: string | null; place: string | null } | null; props: ReadonlyArray<VacateProp>; nowMs: number; propertyHint?: string | null; postApply?: boolean; holdNgNames?: ReadonlyArray<string> }): string {
+  if (!i.appointment?.dateMD || i.postApply) return "";
   const d = daysUntilMD(i.appointment.dateMD, i.nowMs);
   if (d == null || d < 0 || d > 7) return "";
   const name = vacatingNameIn(`${i.appointment.place ?? ""}\n${i.propertyHint ?? ""}`, i.props);
   if (!name) return "";
+  if ((i.holdNgNames ?? []).includes(name)) return "";
   return `【退去予定のお部屋の内覧が近い（材料）】${i.appointment.dateMD} の内覧（あと${d}日）は退去予定のお部屋（${name}）。竹内さんの決め（10/28）: 内覧が1週間以内なら、先にお申込でお部屋を抑えてから内覧し、内覧後にご判断頂ける事をお勧めする番（申込が入ると内覧できなくなるため）。「管理会社に確認しましたところ」は入れない。状況に合わせて返信で伝える。`;
+}
+
+/**
+ * #830: お部屋止めができないと管理会社の答えが記録された部屋。こちらの通（AIX【確認した】→お部屋止めについて の申込不可の文
+ *   「お部屋止めをできないとのことでした」・aix-hold-floor-picker）にある物件名だけ。記録の値だけで決め、推測しない
+ */
+export const HOLD_NG_RE = /(?:お部屋止め|お部屋(?:を)?(?:押さえ|抑え)(?:る|ること))(?:を|が|は)?(?:でき|出来)(?:ない|ません)/;
+export function holdNgNamesFrom(staffTexts: ReadonlyArray<string | null | undefined>, props: ReadonlyArray<VacateProp>): string[] {
+  const out = new Set<string>();
+  for (const t of staffTexts) {
+    const s = String(t ?? "");
+    if (!HOLD_NG_RE.test(s.normalize("NFKC"))) continue;
+    const n = vacatingNameIn(s, props);
+    if (n) out.add(n);
+  }
+  return [...out];
 }
 
 /** #3 #7: 退去予定の部屋で「申込→内覧→キャンセルできるか」 */

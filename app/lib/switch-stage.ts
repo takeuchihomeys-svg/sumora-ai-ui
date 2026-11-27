@@ -28,6 +28,7 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   { name: "SHADOW_REACH", defaultStage: { kind: "off" } }, // #823 影の届き（記録だけ）
   { name: "CHECK_NOW_POSSIBLE_LINE", defaultStage: { kind: "off" } }, // #821 今確かめられるか
   { name: "PICKUP_FIT_NOW_LINE", defaultStage: { kind: "off" } }, // #821 送れる候補が今の条件にも合うか
+  { name: "VACATE_VIEWING_HOLD_FIRST", defaultStage: { kind: "off" } }, // #830 退去予定の部屋の内覧が7日以内なら申込で抑える（材料・10/28 から env だけで読んでいた）
   { name: "PENDING_CHECK_ANSWERED_GUARD", defaultStage: { kind: "off" } }, // #829 文で答えた確認タスクを確認中から外す（generate-reply）
 ];
 

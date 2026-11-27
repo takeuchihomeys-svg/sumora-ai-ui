@@ -177,7 +177,7 @@ import { LAST_TURN_REVIEW_DEFAULT_STAGE, reviewLastTurn, lastTurnReviewLine, las
 import { aixDeskCommandMode, actionOfKey, broughtThisTurnNames, aixDeskConsultMode, consultTriggers, deskFactConflict, recheckFromDesk, recheckFromConsult } from "@/app/lib/aix-commander";
 import { decideBrainDepth, brainDepthV2On, depthGateRecord, depthCostRecord } from "@/app/lib/brain-depth";
 import { sentLedgerBindEnabled, explainedItemsOf, itemsFromLedger, bindReaction, bindMaterialLine } from "@/app/lib/sent-ledger-bind";
-import { vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
+import { holdNgNamesFrom, vacateViewingHoldFirstEnabled, vacateHoldCancelCheckEnabled, positiveNoNegativeEnabled, vacateViewingHoldFirstLine, vacateHoldCancelLine, positiveNoNegativeLine } from "@/app/lib/week-scene-materials";
 import { sentConfirmedNoteEnabled, buildSentConfirmedNote } from "@/app/lib/sent-confirmed";
 import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
@@ -3775,7 +3775,11 @@ ${fl}`; pickupFitNowLen = fl.length; materialBlocks.push({ key: "pickup_fit_now"
       const vacProps = sentProps.filter((p) => !p.shared_only).map((p) => ({ name: `${p.property_name} ${p.room_no}`.trim(), vacating: p.recruitment_status === "move_out_planned" || /退去予定/.test(p.sheet_vacancy ?? "") }));
       const turnText = unrepliedTurn.text ?? "";
       const lines = [
-        vacateViewingHoldFirstEnabled() ? vacateViewingHoldFirstLine({ appointment: brainLedger.facts.viewingAppointment, props: vacProps, nowMs: Date.now() }) : "",
+        // 2026-11-27 作業員A（#830）: 申込の後は出さない・お部屋止めができないと記録のある部屋（こちらの通の申込不可の文）は出さない・印 material_marks.vacate_viewing_hold
+        vacateViewingHoldFirstEnabled() ? ((l: string) => { if (l) materialMarks.vacate_viewing_hold = l.length; return l; })(vacateViewingHoldFirstLine({
+          appointment: brainLedger.facts.viewingAppointment, props: vacProps, nowMs: Date.now(), postApply: isPostApplyStatus(convStatus),
+          holdNgNames: holdNgNamesFrom(typedMessages.filter((m) => m.sender !== "customer").map((m) => m.text), vacProps),
+        })) : "",
         vacateHoldCancelCheckEnabled() && typedMessages[0]?.sender === "customer" ? vacateHoldCancelLine({ customerText: turnText, props: vacProps }) : "",
         positiveNoNegativeEnabled() && typedMessages[0]?.sender === "customer" ? positiveNoNegativeLine(turnText) : "",
       ].filter(Boolean);
