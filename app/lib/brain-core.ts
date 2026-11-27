@@ -7720,12 +7720,10 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       .range(startOffset, startOffset + take - 1);
     if (msgErr || !msgs || msgs.length === 0) return;
 
-    const historyText = msgs
-      .map((m) => {
-        const role = m.sender === "customer" ? "顧客" : (m.is_aix_generated ? "スタッフ(AIX)" : "スタッフ");
-        return `${role} ${formatJstDateShort(m.created_at as string)}: ${(m.text ?? "").slice(0, 600)}`;
-      })
-      .join("\n");
+    // 2026-11-28 作業員L（統括役の決め3）: 組み立ては app/lib/checkpoint-history.ts に移した（off の時は今までと1字も同じ・試験 checkpoint-history）。
+    //   CHECKPOINT_SKIP_APP_FORM=on（既定 off・段階で読む）の時だけ、記入済みの申込フォームの通の中身を省く
+    const skipFilledForm = await (async () => { try { return await (await import("@/app/lib/rollout")).stageOnNow("CHECKPOINT_SKIP_APP_FORM", conversationId); } catch { return false; } })();
+    const historyText = (await import("@/app/lib/checkpoint-history")).checkpointHistoryText(msgs as never, formatJstDateShort, { skipFilledForm });
 
     // 3) Haiku（モジュール共有 client: timeout 60s（共有client） / maxRetries 0 — fire-and-forget なので失敗放置でOK）
     const userContent = buildCheckpointUserContent(last?.summary ?? null, historyText, total, msgs.length, startOffset);
