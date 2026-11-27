@@ -26,6 +26,9 @@ export function moveOf(m: { text: string | null; is_aix_generated: boolean | nul
   return "その他";
 }
 
+/** 2026-11-28 統括役の頼み: 途絶えの前のこちらの通が約束（確認・見積・ピックアップしてお送り 等）なら、次の通は「約束を果たす」＝本当の追い（返事を促す）と分けて数える */
+export const PROMISE_BEFORE_RE = /(?:確認|お調べ|お問い合わせ|交渉|ピックアップ|お探し|作成|お送り)(?:させて(?:頂|いただ)き|いたし|致し)ます|(?:確認|分かり|わかり)次第|ご連絡させて(?:頂|いただ)きます|お待ちください/;
+
 (async () => {
   const rows = JSON.parse(readFileSync(arg("json") ?? "", "utf8")) as Row[];
   const byConv = new Map<string, { from: number; to: number; reached: boolean }>();
@@ -35,11 +38,13 @@ export function moveOf(m: { text: string | null; is_aix_generated: boolean | nul
   }
   type Cell = { n: number; back: number; reached: number };
   const tab: Record<string, Record<string, Record<string, Cell>>> = { all: {}, takeuchi: {} };
-  const lateTab: Record<string, Record<string, Cell>> = { all: {}, takeuchi: {} };
+  const lateTab: Record<string, Record<string, Record<string, Cell>>> = { all: {}, takeuchi: {} };
   const add = (t: Record<string, Record<string, Cell>>, bin: string, mv: string, back: boolean, reached: boolean) => {
     const c = ((t[bin] ??= {})[mv] ??= { n: 0, back: 0, reached: 0 }); c.n++; if (back) c.back++; if (reached) c.reached++;
   };
   let convs = 0, episodes = 0;
+  const kindTab: Record<string, Record<string, Record<string, Cell>>> = { "約束を果たす": {}, "本当の追い": {} };
+  const kindTabT: Record<string, Record<string, Record<string, Cell>>> = { "約束を果たす": {}, "本当の追い": {} };
   for (const [conv, w] of byConv) {
     const { data } = await sb.from("messages").select("sender, text, created_at, is_aix_generated, staff_writer").like("conversation_id", `${conv}%`) // 照らしの json の conv は頭8字
       .gte("created_at", new Date(w.from - 14 * 86_400_000).toISOString()).lte("created_at", new Date(w.to + 21 * 86_400_000).toISOString())
@@ -56,6 +61,9 @@ export function moveOf(m: { text: string | null; is_aix_generated: boolean | nul
         const back = !!nextCust && Date.parse(nextCust.created_at) - Date.parse(b.created_at) <= 72 * 3600_000;
         const mv = moveOf(b); episodes++;
         add(tab.all, bin, mv, back, w.reached);
+        const kind = PROMISE_BEFORE_RE.test(String(a.text ?? "")) ? "約束を果たす" : "本当の追い";
+        add(kindTab[kind], bin, mv, back, w.reached);
+        if (b.staff_writer === "takeuchi") add(kindTabT[kind], bin, mv, back, w.reached);
         if (b.staff_writer === "takeuchi") add(tab.takeuchi, bin, mv, back, w.reached);
       }
       // 間が延びた: こちら→お客様の返事が24時間以上後。その後のこちらの次の一手と、72時間以内のお客様の返事
@@ -83,8 +91,12 @@ export function moveOf(m: { text: string | null; is_aix_generated: boolean | nul
   };
   console.log(`### 途絶えの後の追い（会話 ${convs}・追い ${episodes}・戻った＝追いの後72時間以内にお客様の返事）`);
   show("全員の追い（日数＝最後のこちらの通から追いまで）", tab.all);
+  show("全員・前の通が約束＝約束を果たす通", kindTab["約束を果たす"]);
+  show("全員・前の通が約束でない＝本当の追い", kindTab["本当の追い"]);
+  show("竹内さん本人・約束を果たす通", kindTabT["約束を果たす"]);
+  show("竹内さん本人・本当の追い", kindTabT["本当の追い"]);
   show("竹内さん本人の追い", tab.takeuchi);
   show("間が延びた後（お客様の返事のおくれの日数）のこちらの次の一手 → 72時間以内の返事・全員", lateTab.all);
   show("同・竹内さん本人", lateTab.takeuchi);
-  const out = arg("out"); if (out) writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), convs, episodes, tab, lateTab }, null, 1));
+  const out = arg("out"); if (out) writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), convs, episodes, tab, lateTab, kindTab, kindTabT }, null, 1));
 })().catch((e) => { console.error(e); process.exit(1); });
