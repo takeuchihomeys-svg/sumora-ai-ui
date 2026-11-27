@@ -5309,7 +5309,7 @@ function _guideLikeAreaSkip(why) {
       var nextJa =
         ph === "clear" ? "新しいお客さんの条件を1つずつ入れる"
           : ph === "fill" ? "検索を押す"
-            : ph === "search" ? "検索結果の表示を待つ"
+            : ph === "search" ? _AXLX_PANEL_WORDS.search.next
               : ph === "sort" ? _AXLX_PANEL_WORDS.sort.next
                 : _phaseNextJa((_AX_CUSTOMER_LOOP.filter(function (r) { return r.id === ph; })[0] || {}).next || "");
       /** ★ 2.8.233: search 段でも確認前は並べ替えを出さない */

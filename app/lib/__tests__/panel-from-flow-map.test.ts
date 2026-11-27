@@ -121,6 +121,10 @@ console.log("■ 手で書いた古い言葉がコードに残っていない（
       if (p.next.length >= 10) assert(!body.includes(`"${p.next}"`), `${f} に「${p.next}」を手で書いている（地図の panel から引く）`);
     }
   }
+  // 検索の段の「つぎ」も地図の言葉。検索確認の前だけ _guardNextMove が「検索結果の表示を待つ」に直す（守りとして残す）
+  const psBody = strip(read("chrome-extension/page-script.js"));
+  assert(/ph === "search" \? _AXLX_PANEL_WORDS\.search\.next/.test(psBody), "page-script の検索の つぎ は地図の言葉");
+  assert(/var safe = waitResults \? "検索結果の表示を待つ" : "検索を押す"/.test(psBody), "確認前の守り（_guardNextMove）は残っている");
   console.log("  ✓ 3つのファイルに手書きの言葉なし");
 }
 
