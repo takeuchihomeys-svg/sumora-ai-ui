@@ -224,14 +224,22 @@ function writeEntry(dir: string, e: CassetteEntry) {
   writeFileSync(f, JSON.stringify(e));
 }
 /** 録った物の中で、同じ名札（・同じ問題）の一番近い物（変わった所を見せる用） */
-export function nearestEntry(dir: string, action: string | null, tag: Record<string, string>, normBody: string): CassetteEntry | null {
+//   2026-11-27 作業員L（統括役の了承 A）: 探す量に上限（0.8秒か 3,000 個の早い方）。録音が 17万個になり、録音なしの1回ごとに全部を同期で
+//   読み直して数分止まっていた（q472 の印だけ見る回・Promise.race の時間切れも働かない）。探した結果は見出し（表示）だけ＝打ち切っても
+//   strict の判定（呼ばない・数える）は変わらない。打ち切った時は lim.truncated を立てる。C（箱ごとの目次）は録音がさらに増えて A で足りなくなったら
+export const NEAREST_MAX_MS = 800, NEAREST_MAX_FILES = 3000; // 統括役は 2秒と決めたが、この PC で 3,000 個を読むと 2秒を超え「1秒以内」の線に入らない＝秒の上限だけ 0.8秒に
+export function nearestEntry(dir: string, action: string | null, tag: Record<string, string>, normBody: string, lim: { maxMs?: number; maxFiles?: number; truncated?: boolean } = {}): CassetteEntry | null {
+  lim.truncated = false;
   if (!existsSync(dir)) return null;
-  let best: CassetteEntry | null = null, bestScore = -1;
+  const maxMs = lim.maxMs ?? NEAREST_MAX_MS, maxFiles = lim.maxFiles ?? NEAREST_MAX_FILES, t0 = Date.now();
+  let best: CassetteEntry | null = null, bestScore = -1, n = 0;
   for (const sub of readdirSync(dir)) {
+    if (Date.now() - t0 > maxMs) { lim.truncated = true; return best; }
     const d = join(dir, sub);
     let files: string[] = [];
     try { files = readdirSync(d).filter((f) => f.endsWith(".json")); } catch { continue; }
     for (const f of files) {
+      if (n++ >= maxFiles || Date.now() - t0 > maxMs) { lim.truncated = true; return best; }
       let e: CassetteEntry;
       try { e = JSON.parse(readFileSync(join(d, f), "utf8")) as CassetteEntry; } catch { continue; }
       if (e.action !== action) continue;
@@ -450,8 +458,15 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
       return new Response(hit.body, { status: hit.status, headers: { "content-type": hit.contentType, [CASSETTE_HEADER]: "replay" } });
     }
     if (o.mode === "strict") {
-      const near = nearestEntry(o.dir, action, tagNow(), normBody);
-      const why = entry ? `録った答えは ${entry.responses.length} 個（この回 ${nth + 1} 回目）` : near ? diffHint(near.normBody, normBody) : "同じ名札の録音なし";
+      // 2026-11-27 作業員L（統括役の了承 B）: 印だけ見る回（EXAM_MARKS_PREFLIGHT=on）は近い録音を探さない（見出しは要らない・速さが要る）
+      //   録った答えがある時（数が足りないだけ）も見出しに使わないので探さない
+      const skipNear = env.EXAM_MARKS_PREFLIGHT === "on";
+      const lim: { truncated?: boolean } = {};
+      const near = entry || skipNear ? null : nearestEntry(o.dir, action, tagNow(), normBody, lim);
+      const why = entry ? `録った答えは ${entry.responses.length} 個（この回 ${nth + 1} 回目）`
+        : skipNear ? "近い録音は探していない（印だけ見る回）"
+        : lim.truncated ? `近い録音は探していない（録音が多すぎる・${NEAREST_MAX_FILES}個か${NEAREST_MAX_MS / 1000}秒で打ち切り）`
+        : near ? diffHint(near.normBody, normBody) : "同じ名札の録音なし";
       o.stats.misses.push({ action, tag: { ...tagNow() }, hint: why });
       bump(action, (t) => t.missed++);
       logCall({ pk, key, sha: "", action, src: "miss" });
