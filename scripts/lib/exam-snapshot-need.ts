@@ -44,6 +44,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   CHECK_NOW_POSSIBLE_LINE: "check_now_possible",
   PICKUP_FIT_NOW_LINE: "pickup_fit_now", // 2026-11-27 #821 送れる候補が今の条件にも合うか // 2026-11-27 #821 今確かめられるか（事実の1行を足した番）
   VACATE_VIEWING_HOLD_FIRST: "vacate_viewing_hold", // 2026-11-27 #830 退去予定の部屋の内覧が7日以内で材料の1行を足した番
+  SCREENING_SIGNAL_BRAIN_FIRST: "screening_signal_brain_first", // 2026-11-28 #169 審査の問いでブレインが AIX なしと言い、S3 の信号で埋めなかった番
   CHECK_ORDER_GUIDE: "check_order_guide", // 2026-11-27 #818 竹内さんの P0 7d6fe3eb（確かめる順番となぜの1行を材料に足した番）
   BRAIN_DEMOTE_ANSWERABLE_DIRECT: "answerable_direct_fired", // 2026-11-28 届いた＝決め打ちが動いた番（食い違った番だけの demote_answerable_direct は差の印・11/27 の晩は印0で届いたか分からなかった）
   BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3: "date_wish_s3_fired", // 2026-11-28 届いた＝内覧の日の希望・S3 の信号が動いた番（demote_date_wish_s3 は食い違った番だけ）

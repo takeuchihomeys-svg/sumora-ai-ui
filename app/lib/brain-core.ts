@@ -5280,6 +5280,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         const sceneSig0 = sceneSignalFallback(sceneEvidence);
         // 2026-11-18 作業員H（SCREENING_SIGNAL_BRAIN_FIRST・既定 off）: 審査の通りやすさの問いでブレインが「AIX なし」と言った番は S3 の信号で埋めない（q333・網は材料にする）
         const screeningSkip = !!sceneSig0 && (await import("@/app/lib/screening-signal-brain-first")).screeningSignalSkipped({ reasonCode: sceneEvidence?.reasonCode, brainSaidNoAix });
+        if (screeningSkip) materialMarks.screening_signal_brain_first = 1; // 2026-11-28 作業員A（台帳 #169・統括役）: 届いた印＝S3 の信号で埋めなかった番（off は screeningSkip が常に false＝何も変わらない）
         if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
         const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
