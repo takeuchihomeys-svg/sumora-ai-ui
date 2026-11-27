@@ -3962,6 +3962,13 @@ ${sh}`;
       }
     } catch (e) { console.warn(JSON.stringify({ tag: "brain:unanswered", conversationId, error: String(e).slice(0, 160) })); }
   }
+  // 2026-11-28 作業員A（#805 の続き・SILENT_SINCE_OURS_LINE・既定 off・段階で読む）: 最後がこちらの通で 24〜48時間返事が無い事実だけ（割合は入れない・何をするかは書かない）・印 silent_since_ours
+  try {
+    const ss = await import("@/app/lib/silent-since-ours");
+    if (ss.silentSinceOursOn()) { const l = ss.silentSinceOursLine(typedMessages, Date.now()); if (l) { customerStateBlockText += `
+
+${l}`; materialMarks.silent_since_ours = l.length; } }
+  } catch (e) { console.warn("[brain-core] silent-since-ours skipped:", e instanceof Error ? e.message : String(e)); }
   if (opts?.sendBack) {
     const { sendBackMaterialLine } = await import("@/app/lib/aix-sendback");
     const sbl = sendBackMaterialLine(opts.sendBack, opts.sendBackFirstAix ?? null);
