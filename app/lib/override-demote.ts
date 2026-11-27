@@ -10,10 +10,16 @@
 
 type Env = Record<string, string | undefined>;
 
-export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted" | "staff_promise" | "procedure_move_in";
+export type OverrideFamily = "answerable_direct" | "signal_date_wish_s3" | "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted" | "staff_promise" | "procedure_move_in";
 
 /** 家族ごとの戻す環境変数（"off" で旧の上書きに戻す） */
 export const DEMOTE_ENV: Record<OverrideFamily, string> = {
+  // 2026-11-27 作業員A（竹内さんの決め 11/27「ブレインに任せる（推奨）」・台帳 #821）: 10/21 A1「すぐ AIX で返す」の決め打ち（rule:answerable_direct）。
+  //   30日: ブレインの答えが合う 51・決め打ちが合う 11（竹内さん本人の番 13 対 4）＝竹内さんは確かめが要る問いを約束の返信で受け、後で 物件確認した を送っていた
+  answerable_direct: "BRAIN_DEMOTE_ANSWERABLE_DIRECT",
+  // 2026-11-27 作業員A（同じ決め・案2）: 場面の信号の残り（signal_decided）のうち 内覧の日の希望（viewing_flow_date_wish）・保証人 S3 だけ（30日 ブレイン 21 対 0）。
+  //   家族全体（BRAIN_DEMOTE_SIGNAL_DECIDED）は 10/13 の試験で q017・q045 が悪くなったので触らない＝off の時は今と同じ signal_decided の扱い
+  signal_date_wish_s3: "BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3",
   signal: "BRAIN_DEMOTE_SIGNAL",
   signal_decided: "BRAIN_DEMOTE_SIGNAL_DECIDED",
   image_only: "BRAIN_DEMOTE_IMAGE_ONLY",
@@ -31,6 +37,8 @@ export const DEMOTE_ENV: Record<OverrideFamily, string> = {
 
 /** 下げた家族（既定は下げる＝on。家族を足す時はここで既定を決める） */
 const DEFAULT_ON: Record<OverrideFamily, boolean> = {
+  answerable_direct: false, // 既定は今まで通り上書き。試験で悪化0 → Claude の確かめ → on
+  signal_date_wish_s3: false,
   signal: true,
   // 竹内さんの決定で入れた場面の信号（室内写真 S11・内覧の流れの段階）。10/13 の試験で下げると q017（室内写真→返信）・q045（内覧の希望→全力サポート）の道が外れた
   //   ＝ブレインの材料（場面の証拠・内覧の流れの行）だけではまだ届かない → 今は上書きのまま（食い違いのログも出ない）。材料を強くしてから下げる

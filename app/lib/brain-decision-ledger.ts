@@ -7,6 +7,7 @@ import { overduePromisesDigest, overduePromisesDigestOn, overdueNowDigest } from
 import { splitPropertyName } from "./customer-state";
 import { resolveReplyScene } from "./reply-scene";
 import { switchFingerprint, digestVerOn } from "./switch-fingerprint";
+import { stagedOn, STAGE_ALL } from "./switch-stage"; // 2026-11-27 作業員A: 段階で読む（竹内さんの決め 11/27）
 import { materialMissingKey, MATERIAL_KEY_SIDE } from "./material-missing-key";
 import { turnReadDigestExtra } from "./turn-read";
 import { judgeBasisRecDigest, type JudgeBasis } from "./brain-judge-basis";
@@ -112,5 +113,6 @@ export function brainDecisionDigestExtra(meta: Record<string, unknown>, env: Rec
 
 /** digest にブレインの今の状況（turn_contract.situation・80字）を残すか（既定 off・BRAIN_DIGEST_SITUATION=on） */
 export function brainDigestSituationOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_DIGEST_SITUATION ?? "").trim().toLowerCase() !== "off";
+  // 2026-11-27 作業員A（竹内さんの決め 11/27・段階で読む形へ移す2本目）: 今の読み（!== "off"＝既定 on）と同じ答えを段階で読む
+  return stagedOn("BRAIN_DIGEST_SITUATION", env, STAGE_ALL);
 }

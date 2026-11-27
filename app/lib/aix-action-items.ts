@@ -281,6 +281,37 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
   if (prev || eff) {
     console.log(JSON.stringify({ tag: "aix-action-items:search-override-merge", conversationId, customerId, prev: prev ? prev.at : null, from: prev?.from ?? null, now: !!searchOverride, merged: !!eff }));
   }
+  // 2026-11-27 作業員A（#820 案B・PICKUP_SPEC_SHARED=on の時だけ・既定 off）: 探す条件の1枚（登録の行＋今回だけの上書き＋欄ごとの最後の書き手）を命令に残す。
+  //   【物件ピックアップした】の文はこの1枚を読む（aix-template-generate）。読めなければ1枚なしで今まで通り積む
+  let pickupSpec: unknown = null;
+  try {
+    const ps = await import("@/app/lib/pickup-search-spec");
+    if (ps.pickupSpecSharedOn()) {
+      const [{ data: pcRow }, { data: hist }] = await Promise.all([
+        supabase.from("property_customers").select("desired_area, area_mode, floor_plan, rent_max, rent_min, walk_minutes, building_age, floor_area_min, pet, move_in_time, preferences, ng_points, other_requests").eq("id", customerId).maybeSingle(),
+        supabase.from("property_condition_history").select("changed_field, source_message_id, created_at").eq("property_customer_id", customerId).gte("created_at", new Date(Date.now() - 30 * 864e5).toISOString()).order("created_at", { ascending: true }).limit(200),
+      ]);
+      const spec = ps.buildPickupSearchSpec({ customerId, row: (pcRow ?? null) as never, override: eff ?? null, history: (hist ?? []) as never, nowIso: new Date().toISOString() });
+      pickupSpec = spec;
+      console.log(JSON.stringify({ tag: "aix-action-items:pickup-spec", conversationId, customerId, temp: spec.effective.temp, contested: spec.contested.map((c) => `${c.field}:${c.writers.join(">")}`) }));
+    }
+  } catch (e) { console.warn("[aix-action-items] pickup-spec skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-11-27 作業員A（#820 案A・記録だけ・SEARCH_CONDITION_VIEW=on の時だけ・既定 off）: 検索の見立て（家賃の上限が込みか・欄ごとの強さ）を命令に残す。
+  //   検索・欄・文は変えない（検索に渡すのは試験の後）。お客様の通 14日分を読むだけ
+  let searchView: unknown = null;
+  try {
+    const sv = await import("@/app/lib/search-condition-view");
+    if (sv.searchConditionViewOn()) {
+      const [{ data: msgs }, { data: rmRow }] = await Promise.all([
+        supabase.from("messages").select("text").eq("conversation_id", conversationId).eq("sender", "customer").gte("created_at", new Date(Date.now() - 14 * 864e5).toISOString()).order("created_at", { ascending: true }).limit(60),
+        supabase.from("property_customers").select("rent_max").eq("id", customerId).maybeSingle(),
+      ]);
+      const rentMaxYen = (eff?.rent_max ?? (rmRow as { rent_max?: number | null } | null)?.rent_max) ?? null;
+      const view = sv.buildSearchConditionView({ customerTexts: ((msgs ?? []) as Array<{ text: string | null }>).map((m) => String(m.text ?? "")).filter(Boolean), rentMaxYen, nowIso: new Date().toISOString() });
+      searchView = view;
+      console.log(JSON.stringify({ tag: "aix-action-items:search-view", conversationId, customerId, rent: view.rent?.basis ?? null, gap: view.rentGapMan, risk: sv.inclusiveRentRisk(view), strengths: view.strengths.map((x) => `${x.field}:${x.strength}`) }));
+    }
+  } catch (e) { console.warn("[aix-action-items] search-view skipped:", e instanceof Error ? e.message : String(e)); }
   const { data: existing } = await supabase
     .from("automation_commands")
     .select("id, status, payload")
@@ -291,7 +322,7 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
     // 2026-09-27 まだ拾われていない AIX の検索があり、今回だけの上書きが決まった → その検索に載せる（拾われた後・他の出どころの検索は変えない）
     const ex = existing[0] as { id: string; status: string; payload: Record<string, unknown> | null };
     if (eff && ex.status === "pending" && ex.payload?.source === "aix") {
-      await supabase.from("automation_commands").update({ payload: { ...ex.payload, search_override: eff } }).eq("id", ex.id).eq("status", "pending");
+      await supabase.from("automation_commands").update({ payload: { ...ex.payload, search_override: eff, ...(pickupSpec ? { pickup_spec: pickupSpec } : {}), ...(searchView ? { search_view: searchView } : {}) } }).eq("id", ex.id).eq("status", "pending");
     }
     return;
   }
@@ -301,7 +332,7 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
     command_type: "batch_property_search",
     customer_ids: [customerId],
     sites: AIX_AUTO_SEARCH_SITES,
-    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false, ...(eff ? { search_override: eff } : {}) },
+    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false, ...(eff ? { search_override: eff } : {}), ...(pickupSpec ? { pickup_spec: pickupSpec } : {}), ...(searchView ? { search_view: searchView } : {}) },
     status: "pending",
   });
   if (error) console.warn("[aix-action-items] automation insert failed:", error.message);

@@ -624,6 +624,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 2026-11-27 作業員A（#820 案B・竹内さん承認「その順で進める」・PICKUP_SPEC_SHARED=on の時だけ・既定 off）: 物件の AIX の文の条件を、探した条件の1枚
+  //   （探す命令 automation_commands.payload.pickup_spec・3日の内の一番新しい物）に揃える＝今回だけの条件も文に出る・ブレインの後の書き込みで古くならない。1枚が無ければ今のまま
+  if (conversationId && (actionType === "property_send" || actionType === "property_recommendation")) {
+    try {
+      const ps = await import("@/app/lib/pickup-search-spec");
+      if (ps.pickupSpecSharedOn()) {
+        const { data: cmds } = await supabase.from("automation_commands").select("id, payload, created_at").eq("payload->>conversation_id", conversationId).gte("created_at", new Date(Date.now() - 3 * 864e5).toISOString()).order("created_at", { ascending: false }).limit(3);
+        const spec = ((cmds ?? []) as Array<{ payload: { pickup_spec?: unknown } | null }>).map((c) => ps.readPickupSpec(c.payload?.pickup_spec)).find(Boolean) ?? null;
+        console.log(JSON.stringify({ tag: "aix-template:pickup-spec", conversationId, found: !!spec, temp: spec?.effective.temp ?? [], replaced: !!spec && spec.text !== resolvedCustomerConditions }));
+        if (spec?.text) resolvedCustomerConditions = spec.text;
+      }
+    } catch (e) { console.warn("[aix-template-generate] pickup-spec skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+
   const actionLabel = (actionType && AIX_BUTTON_LABELS[actionType]) || actionCategory || "AIXメッセージ";
   const actionGuide = (actionType && ACTION_GUIDES[actionType]) || "";
 

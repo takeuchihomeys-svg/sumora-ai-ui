@@ -87,9 +87,39 @@ export const SUBSTATES: Substate[] = [
 ];
 
 /** その位置（駅・分かれ道）の状態の候補 */
-export function substatesFor(loc: Pick<ApplyRouteLocation, "node" | "branch"> | null | undefined): Substate[] {
+export function substatesFor(loc: Pick<ApplyRouteLocation, "node" | "branch"> | null | undefined, env?: Env): Substate[] {
   if (!loc) return [];
-  return SUBSTATES.filter((s) => s.at === loc.branch || s.at === loc.node);
+  if (!substateMultiStationOn(env)) return SUBSTATES.filter((s) => s.at === loc.branch || s.at === loc.node);
+  return SUBSTATES.filter((s) => substateStationsOf(s.id, env).some((st) => st === loc.branch || st === loc.node))
+    .map((s) => (s.at !== loc.branch && s.at !== loc.node && SUBSTATE_ALSO_TURN_ONLY.has(s.id) ? { ...s, midAim: ALSO_MID_AIM } : s));
+}
+/** 足した駅では今の1手だけ合う状態（次の2〜3番は駅の次の一手に従う）。照らし: 審査の不安をヒアリング・問い合わせで当てた番の竹内さんの一手は、申込ではなく探す約束（＋審査のサポートの1文）だった */
+export const SUBSTATE_ALSO_TURN_ONLY: ReadonlySet<string> = new Set(["apply_screening_worry"]);
+export const ALSO_MID_AIM = "（この駅は状態の置き場ではない＝次の2〜3番は駅の次の一手に従う）";
+/** 足した駅で当たった状態があるか（印 substate_multi_station 用） */
+export function substateAlsoHit(loc: Pick<ApplyRouteLocation, "node" | "branch"> | null | undefined, env?: Env): boolean {
+  if (!loc || !substateMultiStationOn(env)) return false;
+  return substatesFor(loc, env).some((s) => s.at !== loc.branch && s.at !== loc.node);
+}
+
+// 2026-11-27 作業員A（#804・統括役の頼み）: 状態ごとに「出てよい駅」を複数にする。細かい状態の外れの多くは、状態は合っているが置き場の駅（at）が1つだけで、
+//   同じ状態がほかの駅にも出る形（照らしの json 60日・竹内さん本人の番: 審査の不安がヒアリング 7・問い合わせ 2・気に入った 2／検討しますが提案中 3／
+//   1件に好意が提案中 2・ピックアップ 2）。足したのは2番以上出た駅だけ（1番だけの物は足さない＝揺れを置き場にしない）。数え: scripts/audit-substate-stations.ts
+//   スイッチ SUBSTATE_MULTI_STATION: 既定 off（置き場の駅1つのまま＝substatesFor も今と同じ）
+export function substateMultiStationOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SUBSTATE_MULTI_STATION ?? "").trim().toLowerCase() === "on";
+}
+/** 状態 → 置き場のほかに出てよい駅（駅の id・分かれ道の id） */
+export const SUBSTATE_ALSO_AT: Readonly<Record<string, readonly string[]>> = {
+  apply_screening_worry: ["hearing", "inquiry", "interested"],
+  proposing_considering: ["proposing"],
+  proposing_liked_one: ["proposing", "pickup"],
+};
+/** 状態の出てよい駅（off の時は置き場の駅1つ） */
+export function substateStationsOf(id: string, env?: Env): string[] {
+  const at = SUBSTATES.find((s) => s.id === id)?.at;
+  const base = at ? [at] : [];
+  return substateMultiStationOn(env) ? [...base, ...(SUBSTATE_ALSO_AT[id] ?? [])] : base;
 }
 
 export const SUBSTATE_TEXT_MAX = 900;

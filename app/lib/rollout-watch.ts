@@ -6,7 +6,7 @@
 //   yuma・off … 見ない（お客様に出ていない）
 // 戻す線: 一致率が 5pt 以上下がり、両方の組に20番以上ある時（all の前後比べは 8pt）。戻す先は stepDown（all→pct:50→pct:10→yuma）。
 //   数が足りない時は戻さず「足りない」と残す。戻した事は理由つきで rollout_overrides と知らせ（ops_anomalies の kind=rollout_down）に出す
-import { stepDown, stageText, type Stage } from "./rollout";
+import { stepDown, stageText, stageOf, type Stage } from "./rollout";
 
 export type GroupRate = { n: number; match: number };
 export type WatchInput = { name: string; stage: Stage; on: GroupRate; off: GroupRate; mode: "pct" | "all_change" };
@@ -27,9 +27,22 @@ export function decideRollout(w: WatchInput): WatchDecision {
   return { name: w.name, action: "keep", from, why: `${desc}・差 ${drop}pt（線 ${line}pt）`, dropPt: drop };
 }
 
-/** 見張る名前: env の <NAME>_STAGE が pct:N か all の物 */
-export function watchedSwitches(env: Record<string, string | undefined>): string[] {
-  return Object.keys(env).filter((k) => k.endsWith("_STAGE") && /^(pct:\d+|all)$/i.test(String(env[k] ?? "").trim())).map((k) => k.slice(0, -"_STAGE".length)).sort();
+/** 見張る名前: env の <NAME>_STAGE が pct:N か all の物＋段階で読む名簿（switch-stage.STAGED_SWITCHES）のうち今 pct か all の物（=on・コードの既定 all も含む）。
+ *  2026-11-27 作業員A（竹内さんの決め 11/27「段階で読む形に移して、悪化したら自動で戻す」）: 名簿が空なら前と同じ答え */
+export function watchedSwitches(env: Record<string, string | undefined>, roster: ReadonlyArray<{ name: string; defaultStage: Stage }> = []): string[] {
+  const fromEnv = Object.keys(env).filter((k) => k.endsWith("_STAGE") && /^(pct:\d+|all)$/i.test(String(env[k] ?? "").trim())).map((k) => k.slice(0, -"_STAGE".length));
+  const fromRoster = roster.filter((r) => { const s = stageOf(r.name, env, [], r.defaultStage); return s.kind === "pct" || s.kind === "all"; }).map((r) => r.name);
+  return [...new Set([...fromEnv, ...fromRoster])].sort();
+}
+/** all に上がった時刻（ms）: 版の記録（brain_switch_versions）で「all を含まない最後の版」の次の版が初めて見えた時。
+ *  版に1度も出ない物（コードの既定を on にした物）は codeDefaultOnDay（その既定が入った commit の日・JST）を使う。どちらも無ければ null。
+ *  2026-11-27 作業員A: cron の中に書いてあった計算を純関数に（env の道は前と同じ答え） */
+export function allSinceMs(name: string, versions: ReadonlyArray<{ switches: string; first_seen_at: string }>, codeDefaultOnDay?: string | null): number | null {
+  const has = (s: string) => new RegExp(`^${name}_STAGE=all$|^${name}=on$`, "m").test(s);
+  let lastWithout = -1; versions.forEach((v, i) => { if (!has(v.switches)) lastWithout = i; });
+  if (lastWithout >= 0 && versions[lastWithout + 1]) return Date.parse(versions[lastWithout + 1].first_seen_at);
+  if (!versions.some((v) => has(v.switches)) && codeDefaultOnDay && /^\d{4}-\d{2}-\d{2}$/.test(codeDefaultOnDay)) return Date.parse(`${codeDefaultOnDay}T00:00:00+09:00`);
+  return null;
 }
 export const isMatchVerdict = (v: string | null | undefined) => v === "same" || v === "same_meaning";
 export const isJudgedVerdict = (v: string | null | undefined) => v === "same" || v === "same_meaning" || v === "partial" || v === "different";

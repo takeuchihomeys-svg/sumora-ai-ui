@@ -148,7 +148,7 @@ import { applyRouteRecordOn } from "@/app/lib/route-record"; // 2026-11-21 作�
 import { deriveTurnAimsAfter, matchSubstateOf } from "@/app/lib/turn-aims-after";
 import { substateInContext, substateContextOn } from "@/app/lib/substate-context"; // 2026-11-27 作業員A: 細かい状態の前提（SUBSTATE_CONTEXT・既定 off） // 2026-11-21 作業員M（#467）: 道の後の状態の表の狙いを meta.turn_aims_after に（APPLY_ROUTE_RECORD=on の時だけ）
 import { fulfilTurnBrainText } from "@/app/lib/fulfil-turn"; // 2026-11-21 作業員M（#405）: 約束を果たす番の事実の1塊（BRAIN_FULFIL_TURN・既定 off）
-import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE } from "@/app/lib/apply-route-substate";
+import { substateBrainTextIfEnabled, SUBSTATE_SKIP_MOVE_IN_RE, substateAlsoHit } from "@/app/lib/apply-route-substate";
 import { turnAimsOn, normalizeTurnAims, BRAIN_TURN_AIMS_RULES, BRAIN_TURN_AIMS_FIELD } from "@/app/lib/brain-turn-aims";
 // 2026-11-12 作業員16（案1・KB P1 d030d496）: 今の番と後の番を分ける欄を JSON の最初に（BRAIN_NOW_LATER_FIRST=on の時だけ・既定 off）
 import { latentFiveOn, LATENT_FIVE_FIELD, LATENT_FIVE_RULES, normalizeLatentFive, type LatentFive } from "@/app/lib/latent-five";
@@ -563,7 +563,7 @@ export type SuggestedAixMeta = {
   /** 同じ段の記録（数・抜けを足した数・AIX とのそろえ・取り寄せた材料）→ digest.pr */
   priority_step?: import("@/app/lib/brain-priority").PriorityStepRecord;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null; /** 2026-10-15 zenryoku_candidate（記録だけ） */ zc?: boolean | null };
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; /** 2026-11-27 #821 LLM のピッカー（記録だけ） */ cpat?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null; /** 2026-10-15 zenryoku_candidate（記録だけ） */ zc?: boolean | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -1938,6 +1938,9 @@ async function analyzeConversationCore(
     recheck?: BrainRecheck | null },
 ): Promise<SuggestedAixMeta> {
   const coreT0 = Date.now(); // 2026-11-26 作業員L（#749）: 入口を始めた時刻・材料を組み終えた時刻を、この関数の始めからの ms で記録（記録だけ）
+  // 2026-11-27 作業員A（竹内さんの決め 11/27「段階で読む形に移して、悪化したら自動で戻す」）: 段階で読むスイッチ（switch-stage.STAGED_SWITCHES）がある時だけ、
+  //   この番の会話 id と rollout_overrides（1分の控え・300ms で打ち切り・失敗は空＝env だけ）を入れ物に入れる。名簿が空なら何もしない（読まない・待たない）
+  try { const ss = await import("@/app/lib/switch-stage"); if (ss.STAGED_SWITCHES.length) ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId)); } catch { /* 入れ物なし＝env だけ */ }
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
@@ -4455,6 +4458,7 @@ ${sh}`;
       { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }
       applyRouteText = ar.text + substateBrainTextIfEnabled(ar.loc, undefined, { procedureTurn: isProcedureReplyQuestion(detectProcedureQuestion(unrepliedTurn.text ?? "")) || SUBSTATE_SKIP_MOVE_IN_RE.test(unrepliedTurn.text ?? "") });
       { const sub = applyRouteText.length - ar.text.length; if (sub > 0) materialMarks.route_substate = sub; }
+      if (applyRouteText.length > ar.text.length && substateAlsoHit(ar.loc)) materialMarks.substate_multi_station = 1; // 2026-11-27 作業員A（#804・SUBSTATE_MULTI_STATION=on の時だけ）: 足した駅の状態を材料の候補に入れた番
       // 2026-11-25 作業員A（#739・STATION_STATE_LINE=on の時だけ・既定 off）: 駅の中で足りない状態（駅に入ってからの日数・見積書の後のお客様の通）の1行
       try {
         const ss = await import("@/app/lib/route-station-state");
@@ -5301,7 +5305,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
         if (screeningSkip) console.info("[brain:screening-signal-brain-first]", JSON.stringify({ conversationId, dropped: sceneSig0?.decisionSource }));
         const sceneSig = sceneSig0 && !screeningSkip && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
-        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
+        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S3(?:_|$)/.test(sceneSig.decisionSource) && overrideDemoted("signal_date_wish_s3") ? (sceneSig.action !== finalAix ? (materialMarks.demote_date_wish_s3 = 1, "signal_date_wish_s3") : "signal_date_wish_s3") : /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
           sceneSignalCheckPattern = sceneSig.checkPattern;
           decisionSource = sceneSig.decisionSource;
@@ -5575,7 +5579,10 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
           decisionSource = "signal:viewing_flow_meeting_too_early";
         } else if (dateReply && decisionSource !== "guard:viewing" && (vf.stage === "wished" || vf.stage === "proposing" || vf.stage === "confirmed") && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
           const vfSrc = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
-          if (applyOverride(demotedOverrides, "signal_decided", vfSrc, "viewing_invite", finalAix)) {
+          // 2026-11-27 作業員A（案2・BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3=on の時だけ 内覧の日の希望を材料に下げる・off は今と同じ signal_decided）
+          const vfFam = vfSrc === "signal:viewing_flow_date_wish" && overrideDemoted("signal_date_wish_s3") ? "signal_date_wish_s3" : "signal_decided";
+          if (vfFam === "signal_date_wish_s3") materialMarks.demote_date_wish_s3 = 1; // この枝の finalAix は内覧調整でない（上の条件で絞られている）＝下げた番は必ずブレインと食い違う
+          if (applyOverride(demotedOverrides, vfFam, vfSrc, "viewing_invite", finalAix)) {
             finalAix = "viewing_invite";
             decisionSource = vfSrc;
           }
@@ -6291,7 +6298,11 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       let answerableDirectFrom: string | null = null;
       if (twoStageRes.direct) {
         answerableDirectFrom = twoStageRes.coreSource;
-        if (finalAix !== twoStageRes.direct) {
+        // 2026-11-27 作業員A（竹内さんの決め 11/27「ブレインに任せる」・BRAIN_DEMOTE_ANSWERABLE_DIRECT=on の時だけ・既定 off）: 決め打ちをやめ、ブレインの答えのまま（記録＋印 demote_answerable_direct）
+        const adSrc = `rule:answerable_direct(${(twoStageRes.coreSource ?? "").replace(/^rule:two_stage_promise(|)$/g, "")})`;
+        const adApply = finalAix === twoStageRes.direct || applyOverride(demotedOverrides, "answerable_direct", adSrc, twoStageRes.direct, finalAix);
+        if (!adApply) { materialMarks.demote_answerable_direct = 1; answerableDirectFrom = null; console.log(JSON.stringify({ tag: "brain:answerable-direct-demoted", conversationId, brain: finalAix, would: twoStageRes.direct, core: twoStageRes.coreSource })); }
+        if (adApply && finalAix !== twoStageRes.direct) {
           console.log(JSON.stringify({ tag: "brain:answerable-direct", conversationId, from: finalAix, to: twoStageRes.direct, core: twoStageRes.coreSource }));
           decisionSource = finalAix
             ? `${decisionSource ?? "llm"}+answerable_direct`
@@ -7402,6 +7413,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,
         // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
         cp: rawCurrentProperty || null,
+        // 2026-11-27 作業員A（#821・記録だけ）: LLM が出したピッカー（check_pattern・決まった規則の前）。digest.rp（ピッカーの書き換え）で数える
+        cpat: typeof (parsed as { check_pattern?: unknown }).check_pattern === "string" ? String((parsed as { check_pattern?: unknown }).check_pattern).slice(0, 30) : null,
         // 2026-10-13 棚卸しの表 2: 生の本質の道の数（reconcile の前）。digest.tc は規則の後の値なので、2段の食い違いはこちらで数える
         tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract),
         // 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ）

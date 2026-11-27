@@ -768,6 +768,7 @@ async function main() {
 
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
   const spendRows: Array<{ metric: string; value: number; n: number | null }> = [];
+  let healthSpendLs: Array<{ provider: string; spendUsd: number | string; forecastUsd: number | string; creditUsd?: number | string | null; overCredit?: boolean }> = []; // #817 ブレインの健康の費用（下の欄で使う）
   try {
     const [{ monthSums, resetBudgetCache }, { monthSpendLine, readBudgetConfig, spendWindowStart, claudeMonthSpendUsd }] = await Promise.all([import("../app/lib/llm-budget-route-server"), import("../app/lib/llm-budget-route")]);
     resetBudgetCache();
@@ -784,6 +785,7 @@ async function main() {
         monthSpendLine({ provider: "OpenAI", spendUsd: ms.openaiUsd, creditUsd: bc.openaiCreditUsd, nowMs: now }),
         monthSpendLine({ provider: "DeepSeek", spendUsd: ms.deepseekUsd, creditUsd: 0, nowMs: now }),
       ];
+      healthSpendLs = ls as unknown as typeof healthSpendLs;
       if (!only || doCandidates) lines.push(`### API の使用額（今月・llm_usage_logs の記録から・Console と合わない分は CLAUDE_COST_FACTOR）${ms.partial ? "（⚠ 行が多く途中まで）" : ""}`,
         ...ls.map((l) => `- ${l.provider}: ${l.spendUsd}・月末の見込み ${l.forecastUsd}${l.creditUsd ? `（特典 ${l.creditUsd}${l.overCredit ? "・超える見込み" : ""}）` : ""}`),
         // 2026-11-25 統括役の頼み: 本番（route が script: でない）と試験を分けて出す（前は混ぜて「本番のブレインは DeepSeek」と読み違えた）
@@ -792,6 +794,47 @@ async function main() {
       for (const l of ls) spendRows.push({ metric: `cost:${l.provider.toLowerCase()}_month_usd`, value: l.spendUsd, n: null }, { metric: `cost:${l.provider.toLowerCase()}_month_forecast_usd`, value: l.forecastUsd, n: null });
     }
   } catch (e) { console.warn("[self-improve] API の使用額を読めない:", e instanceof Error ? e.message : String(e)); }
+
+  // 2026-11-27 作業員A（#817・統括役の頼み「朝の1枚にブレインの健康」）: 今ある物差しを1つの欄に束ねる（新しく数えない）。悪い所→変わらない所→分からない所。
+  //   悪い所は BRAIN_HEALTH_LEDGER=on かつ --write の時だけ台帳（work_items・origin=found_gap）に積む（既定 off・記録だけから・題で重ねない）
+  if (!only || doCandidates) {
+    try {
+      const bh = await import("./lib/brain-health");
+      const items: import("./lib/brain-health").HealthItem[] = [];
+      const lk = coreRows.find((r) => r.metric === "core:linkage");
+      if (lk) items.push(bh.shareItem({ label: "連携の地図のつながり（core:linkage）", pct: lk.value, n: lk.n }));
+      // 効き: on の部品の前後比べ（switch-regress-watch・本番の鍵で版の記録を読む）と夜の見張りの最後の決定（cron_run_logs）
+      try {
+        const srw = await import("../app/lib/switch-regress-watch");
+        const { data: vers } = await sb.from("brain_switch_versions").select("switches, first_seen_at").order("first_seen_at", { ascending: true }).limit(200);
+        const { data: qd } = await sb.from("quality_daily").select("day, metric, scope, value, n, source").in("metric", [...srw.WATCH_METRICS]).gte("day", jstDay(now - 70 * 86_400_000)).limit(2000);
+        const watch = srw.groupByOnDay(srw.switchesToWatch(srw.switchOnDays((vers ?? []) as never), jstDay(now)));
+        items.push(...bh.regressItems(watch.map((w) => srw.decideSwitchRegress({ ...w, rows: (qd ?? []) as never, todayYmd: jstDay(now) }))));
+      } catch (e) { items.push({ area: "効き", label: "on の部品の前後比べ", status: "unknown", owner: "作業員A", why: `読めない（${e instanceof Error ? e.message.slice(0, 60) : e}）` }); }
+      try {
+        const { data: rw } = await sb.from("cron_run_logs").select("result_json").eq("cron_name", "rollout-watch").order("started_at", { ascending: false }).limit(1);
+        const ds = ((rw?.[0] as { result_json?: { decisions?: unknown[] } } | undefined)?.result_json?.decisions ?? []) as never[];
+        if (ds.length) items.push(...bh.rolloutItems(ds));
+        else items.push({ area: "効き", label: "段階の夜の見張り（rollout-watch）", status: "unknown", owner: "作業員A", why: "最後の回の決定が無い（ROLLOUT_WATCH が off か、見張る段が無い）" });
+      } catch { /* 見張りの記録なし */ }
+      items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label) }), ...bh.spendItems(healthSpendLs));
+      // 2026-11-27 作業員A（#687）: 地図の木の毎晩の数え直し（scripts/nightly-scene-tree.ts --write が書く quality_daily の tree:*）の今の晩と前の晩
+      try {
+        const { data: tq } = await sb.from("quality_daily").select("day, metric, value, n, detail").in("metric", ["tree:dead_end_nogoal", "tree:agree"]).eq("scope", "takeuchi").order("day", { ascending: false }).limit(8);
+        const rowsT = (tq ?? []) as Array<{ day: string; metric: string; value: number | null; detail: { weakest?: { key: string; agreePct: number | null; cause: string } } | null }>;
+        const dead = rowsT.filter((r) => r.metric === "tree:dead_end_nogoal");
+        items.push(bh.countItem({ area: "行き止まり", label: "地図の申込への道が無い節（#804・#687）", now: dead[0]?.value ?? null, prev: dead[1]?.value ?? null, owner: "作業員A", noRecordWhy: "毎晩の数え直し（nightly-scene-tree --write）がまだ回っていない", next: "増えた節の番を実物で読む" }));
+        const wk = rowsT.find((r) => r.metric === "tree:agree")?.detail?.weakest;
+        if (wk) items.push({ area: "行き止まり", label: `地図の一番弱い節: ${wk.key}`, status: "bad", owner: "作業員A", why: `一致 ${wk.agreePct ?? "—"}%・見込み ${wk.cause}`, next: "この節の番を実物で読み、原因を3つで確かめる（#687）" });
+      } catch { items.push(bh.countItem({ area: "行き止まり", label: "地図の行き止まりの節（#804）", now: null, noRecordWhy: "quality_daily を読めない" })); }
+      items.push(bh.countItem({ area: "答え漏れ", label: "まだ答えていない事（#814）", now: null, noRecordWhy: "UNANSWERED_ASKS_LINE が off（on の後に material_marks.unanswered で数える）" }));
+      lines.push(...bh.brainHealthLines(items), "");
+      if (flag("write") && bh.brainHealthLedgerOn()) {
+        const { data: openH } = await sb.from("work_items").select("title").like("title", "ブレインの健康: %").not("stage", "in", "(done,dropped)").limit(300);
+        for (const r of bh.brainHealthLedger(items, ((openH ?? []) as Array<{ title: string }>).map((x) => x.title))) ledger.push({ title: r.title, owner: r.owner, next: r.next, area: r.area, priority: r.priority });
+      }
+    } catch (e) { console.warn("[self-improve] ブレインの健康の欄を作れない:", e instanceof Error ? e.message : String(e)); }
+  }
 
   // 3 組む
   const gaps = [...coreFix.map((x) => `芯: ${x}`), ...growthFix.map((x) => `伸びしろ: ${x}`), ...outs.flatMap((o) => o.gaps.map((g) => `${POINTER_KIND_JA[o.kind]}: ${g.title}`))];
