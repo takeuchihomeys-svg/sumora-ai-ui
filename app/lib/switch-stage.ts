@@ -27,6 +27,7 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   { name: "SEARCH_CONDITION_VIEW", defaultStage: { kind: "off" } },
   { name: "SHADOW_REACH", defaultStage: { kind: "off" } }, // #823 影の届き（記録だけ）
   { name: "CHECK_NOW_POSSIBLE_LINE", defaultStage: { kind: "off" } }, // #821 今確かめられるか
+  { name: "PICKUP_FIT_NOW_LINE", defaultStage: { kind: "off" } }, // #821 送れる候補が今の条件にも合うか
 ];
 
 /** コードの既定を on にした部品の「版の変わり目」（その既定が入った commit の日・JST）。brain_switch_versions に出ない物の all に上がった日 */

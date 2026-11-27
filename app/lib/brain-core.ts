@@ -3586,6 +3586,7 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
     }
   } catch (e) { console.warn("[brain-core] researcher skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
+  let pickupFitNowLen = 0; // 2026-11-27 作業員A（#821 PICKUP_FIT_NOW_LINE）: 材料の1行の字数（印は materialMarks を作った後に付ける）
   let pickupReadyMaterial: boolean | null = null; // 10/13 全力サポートを候補にするかの材料にも使う
   let pickupPromisedOpenNow: boolean | null = null; // 10/14 この件のピックアップの約束がもうあるか（4-3 で物件の AIX を直接にしてよいか）
   // 2026-10-14 #3: 約束の AIX の差し替え（promise:*）を下げた時の材料（まだ果たしていない約束・果たす AIX）
@@ -3646,12 +3647,26 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
     try {
       // 2026-11-11 作業員1（A1・弱い所 326 の system の側①）: 候補の中身も渡す時だけ列を足す（BRAIN_PICKUP_CANDIDATES_LIST=on・既定 off＝今まで通り2列）
       const candList = pickupCandidatesListOn();
-      const { data: pendNow } = await supabase.from("property_pickups").select(candList ? "created_at, expired_at, property_name, room_no, summary_text, score, rank, verdict" : "created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+      // 2026-11-27 作業員A（#821・PICKUP_FIT_NOW_LINE=on の時だけ）: 同じ読みに候補の要約の列を足すだけ（読みは増やさない）
+      const fitNowOn = (await import("@/app/lib/pickup-fit-now")).pickupFitNowOn();
+      if (fitNowOn) pickupFitNowLen = 0;
+      const { data: pendNow } = await supabase.from("property_pickups").select(candList || fitNowOn ? "created_at, expired_at, property_name, room_no, summary_text, score, rank, verdict" : "created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
       const readyNow = freshPickupReady((pendNow ?? []) as unknown as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
       pickupReadyMaterial = readyNow;
       // 2026-10-14: この件のピックアップの約束がもうあるか（無ければ竹内さんはまず約束・材料の1行に足す）
       pickupPromisedOpenNow = pickupPromiseOpen(brainLedger.facts, promiseKindsToday(typedMessages.filter((m) => m.sender !== "customer" && !m.is_aix_generated).map((m) => ({ text: m.text ?? "", createdAt: m.created_at })), Date.now()));
       customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow, pickupPromisedOpenNow)}`;
+      // 2026-11-27 作業員A（#821 の読みの2位の組・PICKUP_FIT_NOW_LINE=on の時だけ・既定 off）: 送れる候補が今の条件と今の通の言い足しにも合うか（事実の1行・決まった計算・#820 と同じ条件）。印 pickup_fit_now
+      if (fitNowOn && readyNow) {
+        try {
+          const pf = await import("@/app/lib/pickup-fit-now");
+          const lastSent = brainLedger.facts.lastPropertiesSentAt ? Date.parse(brainLedger.facts.lastPropertiesSentAt) : 0;
+          const fresh = ((pendNow ?? []) as unknown as Array<{ created_at: string; expired_at: string | null; property_name?: string | null; room_no?: string | null; summary_text?: string | null }>).filter((r) => Date.parse(r.created_at) > lastSent && (!r.expired_at || Date.parse(r.expired_at) > Date.now())).slice(0, 10);
+          const fl = pf.pickupFitNowLine({ candidates: fresh, row: (pc ?? null) as never, customerText: unrepliedTurn.text ?? "" });
+          if (fl) { customerStateBlockText += `
+${fl}`; pickupFitNowLen = fl.length; materialBlocks.push({ key: "pickup_fit_now", text: fl, from: "cs" }); }
+        } catch (e) { console.warn("[brain-core] pickup-fit-now skipped:", e instanceof Error ? e.message : String(e)); }
+      }
       if (candList && readyNow) {
         const candLine = pickupCandidatesMaterialLine((pendNow ?? []) as unknown as PickupCandidateRow[], { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
         if (candLine) { customerStateBlockText += `\n${candLine}`; console.log(JSON.stringify({ tag: "brain:pickup-candidates", conversationId, chars: candLine.length })); }
@@ -3715,6 +3730,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
   // 2026-11-21 作業員L（連携の地図 #481・統括役の決め「記録だけの印・既定 on」）: 本番の記録に欄が無かった材料の1行を、足した時だけ字数の印で meta.material_marks に（中身は写さない・動きは変えない）
   const materialMarks: Record<string, number> = {};
+  if (pickupFitNowLen > 0) materialMarks.pickup_fit_now = pickupFitNowLen; // 2026-11-27 作業員A（#821）
   if (msgWindowUnitsMark > 0) materialMarks.msg_window_units = msgWindowUnitsMark; // 2026-11-27 作業員A（BRAIN_MSG_WINDOW_UNITS の届きの印）
   let ackPickupPathGiven = false; // 2026-11-25 作業員A: ピックアップの道の1行を渡した番（ACK_PICKUP_AIX_PATH=on の時だけ・後の aix_follows_contract の書き換えを止める）
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
