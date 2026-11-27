@@ -18,4 +18,7 @@ assert.equal(needsPreflight({ ...j, preflightMarks: { key: preflightKeyOf(j) } }
 assert.equal(needsPreflight({ ...j, runner: "tsc-remote" }), false);
 assert.deepEqual(switchesOfJob(j), ["SW_A"]);
 assert.deepEqual(switchesOfJob({ label: "y", switch: "SW_B（p1）" }), ["SW_B"]);
-console.log("night-capacity ok 10");
+// 2026-11-27 OpenAI の分（入口の読み）を見せる・上限には含めて数える（spentUsd に入っている）
+{ const c = nightCapacity({ spentUsd: 6, jobs: 3, leftover: 0, openaiUsd: 0.4 }); assert.ok(/うち OpenAI \$0\.40/.test(c.line), c.line); assert.equal(c.freeUsd, 4); }
+assert.ok(!/OpenAI/.test(nightCapacity({ spentUsd: 6, jobs: 3, leftover: 0 }).line), "OpenAI が分からない時は出さない");
+console.log("night-capacity ok 12");
