@@ -16,7 +16,7 @@
    */
   /* PANEL_WORDS:BEGIN */
   var PANEL_PHASE_WORDS = {
-    reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
+    reset: { now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる" },
     fill: { now: "条件を入れている最中", next: "検索を押す" },
     search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
     sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
@@ -75,7 +75,7 @@
     else if (index <= 0) next = "最初の客へ";
     else next = "次の客を把握中…";
     if (move) {
-      if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押して/.test(act)) {
+      if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act)) {
         next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
       } else {
         next += (next ? "／" : "") + "次の動き:" + move;

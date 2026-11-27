@@ -89,6 +89,16 @@ function _bulkWaitShow(id, ms) {
     }).catch(function () {});
   } catch (_) {}
 }
+/** ★ 2.8.326: 押した結果を枠の「押した」行へ（押した・押せず・遅れて押せた・空の確認）。言葉は bulk-dl.js の _setPressNote が作る */
+function _bulkPressShow(what, result, detail) {
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-press", what: String(what || ""), result: String(result || ""), detail: String(detail || "") }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
 function _pollMs(ms) { var H = self.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
@@ -11168,6 +11178,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
         try { if (_lr && Array.isArray(_lr.steps)) _lr.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
         if (_lr && _lr.reloaded) {
           _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが画面は読み直されていた）→先へ進む");
+          _bulkPressShow("reset", "pressed_late", String(_lateWhy).slice(0, 30));
           _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };
         } else {
           _stamp("reset_press_late_check", "返事=" + _lateWhy + " 読み直し=" + (_lr ? (_lr.reloaded ? 1 : 0) : "読めず") + " 空=" + (_lr && _lr.empty ? 1 : 0));
@@ -11177,9 +11188,11 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     if (!_press || _press.ok === false || !_press.pressed) {
       var _why = (_press && (_press.why || _press.skipped)) || "no_answer";
       _stamp("reset_press", "押せず→従来の外しへ: " + _why + (_press && _press.closed ? " 小窓閉じ=" + _press.closed : ""));
+      _bulkPressShow("reset", "not_pressed", String(_why).slice(0, 30));
       return { ok: false, why: "reset_not_pressed:" + _why, notPressed: true };
     }
     _stamp("reset_press", "押した" + (_press.cut ? "（読み直しで返事が切れた）" : "") + " 押した先=" + String(_press.via || "-") + " 位置=" + String(_press.aim || "-") + " 小窓閉じ=" + (_press.closed || 0) + " 押す前の残=" + String(_press.before || "-").slice(0, 50));
+    _bulkPressShow("reset", "pressed", String(_press.via || "-").slice(0, 30));
     // ② 読み直しを待つ（loading を見たら complete まで・8秒見ても無ければ読み直し無しとして進む）
     var _sawLoading = false, _tw = Date.now();
     while (Date.now() - _tw < 8000) {
@@ -11225,6 +11238,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
       }), 8000, "reset_settle_mark");
       _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
     } catch (_) { _ver = null; }
+    _bulkPressShow("reset_check", _ver ? (_ver.empty ? "empty" : "not_empty") : "unknown", _ver && !_ver.empty ? String(_ver.left != null ? _ver.left : "?") : "");
     var _reloaded = !!(_ver && _ver.reloaded) || _sawLoading;
     _stamp("reset_settled", "押して" + Math.round(_settleMs / 1000) + "秒待った＝空とみなして次へ（読み戻し1回: " + (_ver ? ("空=" + (_ver.empty ? 1 : 0) + (_ver.empty ? "" : " 残=" + (_ver.left != null ? _ver.left : "?"))) : "読めず") + "・読み直し=" + (_reloaded ? "あり" : "なし") + "）" + " 計" + Math.round((Date.now() - _t0) / 1000) + "秒");
     return { ok: true, left: 0, reset: true, reloaded: _reloaded, assumedEmpty: true };

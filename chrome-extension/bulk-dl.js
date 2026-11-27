@@ -3206,6 +3206,7 @@
       '  <div>',
       '    <div style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:0.06em;margin-bottom:3px;">把握</div>',
       '    <div id="axlx-grasp" style="font-size:11px;font-weight:600;line-height:1.45;color:#c4b5fd;">一括の客をまだ把握していない</div>',
+      '    <div id="axlx-press" style="display:none;font-size:11px;font-weight:700;line-height:1.45;color:#86efac;margin-top:3px;"></div>',
       "  </div>",
       "</div>",
       // 次回の自動便（小さめ・補助）
@@ -3516,6 +3517,30 @@
     var label = WAIT_WORDS && WAIT_WORDS[id];
     if (!label) { try { _liveDlStep("wait_unknown_id", String(id || "").slice(0, 30)); } catch (_) {} return; }
     _setBulkWait(label, ms);
+  }
+  /**
+   * ★ 2.8.326 竹内さん「リセットして押したことを把握できていない」:
+   *   押した結果（押せた／押せず／遅れて押せた・空の確認）を、枠の「把握」の下に「✓ 押した…」で出す。
+   *   「予定」（次の動き）ではなく「実際に押した結果」だけを書く。background（_bulkPressShow）が送る。
+   */
+  function _setPressNote(what, result, detail) {
+    var el = document.getElementById("axlx-press");
+    if (!el) return;
+    var now = new Date();
+    var hm = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function (n) { return (n < 10 ? "0" : "") + n; }).join(":");
+    var d = String(detail || "").slice(0, 30);
+    var t = "";
+    var col = "#86efac";
+    if (what === "reset" && result === "pressed") t = "✓ リセットを押した（" + hm + "）→ 画面の読み直しを待つ";
+    else if (what === "reset" && result === "pressed_late") t = "✓ リセットを押した（" + hm + "・返事は遅れたが画面は読み直された）";
+    else if (what === "reset" && result === "not_pressed") { t = "✗ リセットを押せなかった（" + hm + "）→ 1つずつ外す保険へ"; col = "#fca5a5"; }
+    else if (what === "reset_check" && result === "empty") t = "✓ 空を確認した（リセット後）";
+    else if (what === "reset_check" && result === "not_empty") { t = "⚠ 空の確認で残りが見えた（残 " + d + "）→ 空とみなして次へ（確認できず）"; col = "#fde68a"; }
+    else if (what === "reset_check") { t = "⚠ 空かどうか読めず → 空とみなして次へ"; col = "#fde68a"; }
+    else return;
+    el.textContent = t;
+    el.style.color = col;
+    el.style.display = "block";
   }
   /** ★ 2.8.217: 一括把握の配信を枠へ反映 */
   function _applyBulkGrasp(g) {
@@ -6760,6 +6785,11 @@
       /** ★ 2.8.325: 待ち（background のリセット後の待ち等）を枠の「待ち」行へ */
       if (msg && msg.type === "axlx-bulk-wait") {
         _setBulkWaitById(String(msg.id || ""), Number(msg.ms) || 0);
+        return;
+      }
+      /** ★ 2.8.326 押した結果（background の押す処理から）を枠の「押した」行へ */
+      if (msg && msg.type === "axlx-bulk-press") {
+        _setPressNote(String(msg.what || ""), String(msg.result || ""), String(msg.detail || ""));
         return;
       }
       /** ★ 2.8.217: 一括の誰・何件・次客・把握 */

@@ -108,7 +108,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "reset",
-    panel: [{ phase: "reset", now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる", short: "リセット", then: ["fill"] }],
+    panel: [{ phase: "reset", now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる", short: "リセット", then: ["fill"] }],
     kind: "step",
     label: "リセットを押す（送付のあと1回）",
     next: ["api_reload", "b_reset_late", "b_reset_retry", "b_reset_fallback"],
@@ -232,7 +232,7 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
   },
   {
     id: "b_reset_fallback",
-    noPanel: "リセット（reset）の言葉で出す。従来の外しも「リセットを押して待っている最中」と同じ言葉に直す",
+    noPanel: "リセット（reset）の言葉で出す。従来の外しも「リセットを押す最中」と同じ言葉に直す",
     kind: "branch",
     label: "リセットが押せない・空にならない→従来の1つずつ外し",
     parent: "reset",

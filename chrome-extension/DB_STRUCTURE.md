@@ -89,6 +89,7 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - 2.8.204: 連続客細分化強化。`handoff_atom_send`／`handoff_atom_post_send`／`handoff_atom_ready`／流れ地図に `send_or_pdf`・`post_send_clear`。台帳12細原子＋`planHandoffStrengthen`。土台 **F61（DB計測）**・**F62（細分化）**。`scripts/handoff-loop-strengthen.ts`（列は増やしていない）
 - 2026-11-27（2.8.319・PLAYBOOK_BUILD_V = 26・DB の列・表は増やしていない）: 手順書の一覧の手に「全部送付済み→次へ／次頁も全部送付済み→客完了／0件→客完了／客完了→リセットして次客へ」を足した。search_audits.steps に新しい印 dl:list_flow_announce（パネルで言った言葉）・dl:list_flow_wait_reason（物件取得が始まらない理由）・dl:zero_count0_finish（0件で終えた・今まで点検に残らなかった）が残る。送る値・API は変えていない。
 - 2026-11-27（PLAYBOOK_BUILD_V = 30・DB の列・表は増やしていない）: 手順書の③の末尾と④の文に、並べ替え完了（高→低を押した・読み直した一覧は物件取得・パネルは物件取得最中）を載せた。送る値・API は変えていない。
+- 2026-11-27（2.8.326・DB の列・表・送る値は増やしていない）: 押した結果（リセット）は背景から枠へ `axlx-bulk-press`（what・result・detail）で送るだけ。点検の段は既存の reset_press・reset_settled のまま。
 - 2026-11-27（2.8.325・DB の列・表・送る値は増やしていない）: 枠の待ちは拡張の中だけ（送る値・API は変えていない）。background が `axlx-bulk-wait`（id・ms）をタブへ送るのはリセット後の待ち（reset_settle）だけ。点検は既存の印（sort_lag_grace・sort_done・search_to_sort）で見る。
 - 2026-11-27（2.8.324・DB の列・表・送る値は増やしていない）: 読み直し後の猶予（15〜20秒）は search_audits.steps の dl:sort_lag_grace（「読み直し後の猶予」）で見える。その後に dl:sort_done pressed_resume が来る。押し→物件取得の間が15秒を切ったら猶予が効いていない。
 - 2026-11-27（2.8.323・DB の列・表・送る値は増やしていない）: パネルの言葉を流れの地図（loop-flow-map.ts の panel）から作る形にした。search_audits.steps の dl:list_flow_announce に sort_pressed（高→低を押した直後に物件取得の言葉へ）が残る。送る値・API は変えていない。

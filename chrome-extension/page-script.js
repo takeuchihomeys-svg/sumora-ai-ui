@@ -4147,7 +4147,7 @@ function _guideLikeAreaSkip(why) {
    */
   /* PANEL_WORDS:BEGIN */
   var _AXLX_PANEL_WORDS = {
-    reset: { now: "リセットを押して待っている最中", next: "次客の条件をAPIから読み直して入れる" },
+    reset: { now: "リセットを押す最中", next: "次客の条件をAPIから読み直して入れる" },
     fill: { now: "条件を入れている最中", next: "検索を押す" },
     search: { now: "検索を押す最中", next: "並べ替え（検索確認から40〜50秒後）" },
     sort: { now: "並べ替え最中", next: "物件取得（全部送付済みなら次ページへ）" },
@@ -4157,7 +4157,7 @@ function _guideLikeAreaSkip(why) {
     done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
   };
   /* PANEL_WORDS:END */
-  var _AXLX_PAGE_VER = "2.8.325";
+  var _AXLX_PAGE_VER = "2.8.326";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4226,6 +4226,7 @@ function _guideLikeAreaSkip(why) {
     "sort_pressed_then_list",
     "panel_words_from_flow_map",
     "box_shows_waits",
+    "press_receipt_reset",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",

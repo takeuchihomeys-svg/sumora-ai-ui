@@ -111,7 +111,7 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
   else next = "次の客を把握中…";
   if (move) {
     // いまの行動が外すなら、次の動きは「新しい条件を入れる」を優先表示
-    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押して/.test(act)) {
+    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act)) {
       next += (next ? "／" : "") + "次の動き:" + PANEL_PHASE_WORDS.reset.next;
     } else {
       next += (next ? "／" : "") + "次の動き:" + move;

@@ -23,7 +23,7 @@ import { flowNode } from "./loop-flow-map";
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.325";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.326";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -837,6 +837,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "axlx-wait",
     file: "bulk-dl.js",
     verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:sort_lag_grace"] },
+  },
+  {
+    id: "press_receipt_reset",
+    scene: "clear",
+    text: "リセットは押した結果を枠の「押した」行に出す（2.8.326 竹内さん「リセットして押したことを把握できていない」）：✓押した（時刻）・✗押せず（保険へ）・✓空を確認／⚠残りが見えた→空とみなして次へ。枠の「いま」は予定（次の動き）から作らず、押す前は「リセットを押す最中」と言う。言葉は流れの地図が正本",
+    since: "2.8.326",
+    kb: null,
+    marker: "axlx-press",
+    file: "bulk-dl.js",
+    verify: { onlyIf: ["reset_press"], mustHaveAny: ["reset_settled"] },
   },
   {
     id: "zero_result_finish_reset",
