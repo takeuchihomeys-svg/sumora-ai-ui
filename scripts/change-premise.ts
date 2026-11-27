@@ -6,7 +6,7 @@
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=list     # 一覧（並べ替え→物件取得→次頁→客完了）
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=reset    # リセット→次客
  *   npx tsx --env-file=.env.local scripts/change-premise.ts --area=all      # お客さん1人ぶんの全部
- *   npx tsx --env-file=.env.local scripts/change-premise.ts --check         # 地図の形だけ点検（終了コード 0/1）
+ *   npx tsx --env-file=.env.local scripts/change-premise.ts --check         # 地図の形と、手順書の③④が地図の文を載せているか（終了コード 0/1）
  *
  * 出す物: ① 流れの地図（順に行う手／分かれ道／合流）と、コードの目印の場所（ファイル:行）
  *         ② その場面の決まり（AUTO_RULES）③ 理解の書面の雛形（4点）④ 設計知見を引く言い方
@@ -14,16 +14,22 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
+import { LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, checkListPlaybookStrength, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
 import { AUTO_RULES } from "../app/lib/auto-procedure-rules";
+import { PLAYBOOK_LIST_AD_SORT_STEPS } from "../app/lib/action-playbook";
 
 const args = process.argv.slice(2);
 const arg = (k: string) => (args.find((a) => a.startsWith(`--${k}=`)) || "").slice(k.length + 3);
 
 if (args.includes("--check")) {
   const p = checkFlowMap();
-  if (p.length) { console.log("❌ 流れの地図に問題:\n  - " + p.join("\n  - ")); process.exit(1); }
-  console.log("✅ 流れの地図の形は正しい（分かれ道は全部 客完了→リセットへ合流）");
+  const s = checkListPlaybookStrength(PLAYBOOK_LIST_AD_SORT_STEPS);
+  if (p.length || s.length) {
+    if (p.length) console.log("❌ 流れの地図に問題:\n  - " + p.join("\n  - "));
+    if (s.length) console.log("❌ 手順書の手が地図より弱い:\n  - " + s.join("\n  - "));
+    process.exit(1);
+  }
+  console.log("✅ 流れの地図の形は正しい。手順書の③④は地図の完了の文をそのまま載せている");
   process.exit(0);
 }
 
@@ -70,6 +76,13 @@ for (const i of LOOP_INTERRUPTS) {
 }
 const probI = checkInterrupts();
 if (probI.length) console.log(`❌ 割り込みに問題:\n  - ${probI.join("\n  - ")}`);
+
+if (area === "list" || area === "all") {
+  console.log("\n■ ①c 手順書の一覧の手（地図の文が③④に載っているか）\n");
+  for (const step of PLAYBOOK_LIST_AD_SORT_STEPS) console.log("・" + step);
+  const weak = checkListPlaybookStrength(PLAYBOOK_LIST_AD_SORT_STEPS);
+  console.log(weak.length ? "\n❌ 手順書の手が地図より弱い:\n  - " + weak.join("\n  - ") : "\n✅ ③④は地図の完了の文をそのまま載せている（決まり1行だけでは終わっていない）");
+}
 
 console.log(`\n■ ② この場面の決まり（AUTO_RULES・scene = ${def.scenes.join("/")}）\n`);
 for (const r of AUTO_RULES.filter((x) => def.scenes.includes(x.scene))) {

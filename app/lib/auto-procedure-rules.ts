@@ -1,3 +1,5 @@
+import { flowNode } from "./loop-flow-map";
+
 // app/lib/auto-procedure-rules.ts — 自動（リアプロ）の動き方の決まり（手順書に載せる正本・2026-11-20）
 //
 // 竹内さん「改善したのは手順書にちゃんと反映されるようになっているのか」「手順書がちゃんと細かくできるように」
@@ -21,7 +23,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.321";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.322";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -805,6 +807,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "_moveUntilArrived",
     file: "page-script.js",
     verify: { onlyIf: ["page:move_retry", "page:press_no_arrive"], mustHaveAny: ["page:move_retry", "page:press_no_arrive"] },
+  },
+  {
+    id: "sort_pressed_then_list",
+    scene: "list",
+    text: `並べ替えの③「高→低」を押したら完了し、読み直した一覧は④へ進む（2.8.322 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得・並び替え完了を把握できていない」）。手順書の③には地図と同じ文を載せる: ${flowNode("sort")?.playbook ?? ""}。押した事実は読み直しで消えない所（axlx_sort_pressed_sync）に残す。印: sort_pressed／sort_done（pressed_resume）`,
+    since: "2.8.322",
+    kb: null,
+    marker: "axlx_sort_pressed_sync",
+    file: "bulk-dl.js",
+    verify: { onlyIf: ["dl:sort_pressed"], mustHaveAny: ["dl:sort_done", "dl:list_flow_announce"] },
   },
   {
     id: "zero_result_finish_reset",

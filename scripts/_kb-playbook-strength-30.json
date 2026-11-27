@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】改善した中身は、決まり1行ではなく手順書の手に地図の文をそのまま載せる",
+    "category": "architecture",
+    "insight": "手順書を強くする仕組みは、地図から④以降を作ること、決まりを1行足すこと、build を上げて attach すること、直す前に change-premise を出すこと、まであった。足りなかったのは、コードと決まりを直しても手順書の手（③④の文）が古いまま残ること。並べ替え完了の文は地図の sort.playbook に置き、③の末尾にそのまま載せる。④の物件取得の文も地図の list_press.playbook をそのまま使う。決まりの文も同じ文を含む。checkListPlaybookStrength が、手からその文が消えたら止める。change-premise --check も同じ点検をする。",
+    "rationale": "決まりは点検の合否で、手順書の手は人が読んで確認する文。手に完了の言葉が無いと、パネルが「並べ替え」のままかどうか手順書では確かめられない。要約して書き足すと、また④の分かれ道を通し番号にしたときと同じずれが起きる。だから地図の文をそのまま載せる。",
+    "context": "2026-11-27 竹内さん「改善する際手順書の部分強化する仕組みになっているのか／ここの部分細かく徹底的に強化するようにする／徹底的におねがい」。直前の直し（2.8.322）はコードと決まり1行だけで、手順書の③④には完了の文が無かった。",
+    "applied_to": "app/lib/loop-flow-map.ts（sort.playbook・list_press.playbook・checkListPlaybookStrength）、app/lib/action-playbook.ts（③④・flow_series・build 30）、app/lib/auto-procedure-rules.ts（sort_pressed_then_list）、scripts/change-premise.ts",
+    "tags": ["Chrome拡張", "手順書", "流れの地図", "並べ替え", "物件取得"],
+    "priority": 1
+  }
+]

@@ -117,16 +117,18 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     id: "sort",
     kind: "step",
     label: "並べ替え（AD→高→低・①〜③）",
+    /** ③の文の末尾に、この文をそのまま載せる（手で要約しない。checkListPlaybookStrength が見張る） */
+    playbook: "押した時点で並べ替えは完了。ページが読み直されて待ちが消えても、読み直した一覧ではもう一度並べ替えず④物件取得へ進む。パネルは「物件取得最中」（「並べ替え最中」のままにしない）",
     next: ["list_press", "b_zero"],
     evidence: { file: "bulk-dl.js", token: "_sortByAdLikeHuman" },
-    audit: ["dl:sort_done"],
-    note: "並べ替えのあと、行があれば④へ・結果が0件なら④の3へ",
+    audit: ["dl:sort_done", "dl:sort_pressed"],
+    note: "2.8.322 #1668: 高→低のあと sort_lag_grace で終わり、sort_done も物件取得も無かった。完了の文は③に載せる",
   },
   {
     id: "list_press",
     kind: "step",
     label: "印刷用PDFを押す（④）",
-    playbook: "並べ替え後に印刷用PDFを押す",
+    playbook: "並べ替え後に印刷用PDFを押す（物件取得・1件ずつ）。並べ替え完了（高→低を押したあとの読み直し）を把握してから押す",
     next: ["list_press", "customer_done", "b_all_sent_next", "b_all_sent_last"],
     evidence: { file: "bulk-dl.js", token: "_startAutoPressRun" },
     audit: ["dl:list_flow_grasp"],
@@ -385,4 +387,31 @@ export function renderListPressSteps(
     steps.push(`${jno}客完了（${brs.length ? `${no}で送り終えた・${range}のどれでも` : `${no}で送り終えた`}）→${join.playbook}`);
   }
   return steps;
+}
+
+/**
+ * 改善した中身が、手順書の手に載っているか（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）。
+ *   決まりを1行足すだけでは足りない。③は地図の「並べ替えは完了」の文をそのまま含む。
+ *   ④は地図の「物件取得」の文をそのまま含む。どちらかを手順書から消すと、ここが止める。
+ */
+export function checkListPlaybookStrength(
+  steps: readonly string[],
+  nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES,
+): string[] {
+  const out: string[] = [];
+  const sort = flowNode("sort", nodes);
+  const press = flowNode("list_press", nodes);
+  const s3 = steps.find((s) => s.startsWith("③"));
+  const s4 = steps.find((s) => s.startsWith("④") && !s.startsWith("④の"));
+  if (!sort?.playbook) out.push("sort に手順書の完了の文（playbook）が無い");
+  else if (!s3 || !s3.includes(sort.playbook)) out.push("③に地図の「並べ替えは完了」の文が無い（コードだけ直して手順書が古いまま）");
+  if (!press?.playbook) out.push("list_press に手順書の文（playbook）が無い");
+  else if (!s4 || !s4.includes(press.playbook)) out.push("④に地図の物件取得の文が無い（コードだけ直して手順書が古いまま）");
+  if (s3 && !/高→低/.test(s3)) out.push("③に高→低が無い");
+  if (s4 && !/順に行う手ではない/.test(s4)) out.push("④が、場合分けは順に行う手ではない、と言っていない");
+  const blob = steps.join("\n");
+  for (const w of ["並べ替えは完了", "読み直した一覧", "④物件取得", "物件取得最中", "並べ替え最中"]) {
+    if (!blob.includes(w)) out.push(`手順書の一覧に「${w}」が無い`);
+  }
+  return out;
 }

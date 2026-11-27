@@ -13,10 +13,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, renderListPressSteps,
+  LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, checkListPlaybookStrength, renderListPressSteps,
   branchesOf, canReach, flowNode, type FlowNode, type FlowInterrupt,
 } from "../loop-flow-map";
 import { PLAYBOOK_LIST_AD_SORT_STEPS } from "../action-playbook";
+import { AUTO_RULES } from "../auto-procedure-rules";
 
 let passed = 0;
 let failed = 0;
@@ -109,6 +110,12 @@ console.log("■ 6. 手順書の一覧の手は地図から作られる・分か
   ok("分かれ道は「④の1」「④の2」「④の3」で、④の場合分けと書く", [1, 2, 3].every((k) => tail[k]?.startsWith(`④の${k}（④の場合分け）`)));
   ok("通し番号は ④ と ⑤ だけ（⑥⑦⑧が無い・分かれ道に通し番号が付かない）", !/[⑥⑦⑧⑨]/.test(tail.join("")) && /^⑤客完了/.test(tail[4] || ""));
   ok("⑤ は ④で送り終えた・④の1〜3のどれでもリセットして次のお客さんへ、と言う", /^⑤客完了（④で送り終えた・④の1〜3のどれでも）→リセットを押して次のお客さんへ。リセットからの流れは同じ/.test(tail[4] || ""));
+  const strong = checkListPlaybookStrength(PLAYBOOK_LIST_AD_SORT_STEPS);
+  ok("③④は地図の完了の文をそのまま載せている", strong.length === 0, strong.join(" / "));
+  const stripped = PLAYBOOK_LIST_AD_SORT_STEPS.map((s) => s.startsWith("③") ? s.replace(flowNode("sort")!.playbook || "___", "") : s);
+  ok("③から完了の文を消すと止まる（コードだけ直して手順書が古いまま、を止める）", checkListPlaybookStrength(stripped).some((x) => /③に地図/.test(x)));
+  const rule = AUTO_RULES.find((r) => r.id === "sort_pressed_then_list");
+  ok("決まりの文も地図の完了の文を含む（手と決まりがずれない）", !!rule && rule.text.includes(flowNode("sort")!.playbook || "___"));
   const m = clone();
   m.splice(m.findIndex((n) => n.id === "customer_done"), 0, {
     id: "b_extra", kind: "branch", label: "足した道", parent: "list_press", when: "試し", playbook: "試しの道",

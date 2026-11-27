@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { renderListPressSteps } from "./loop-flow-map";
+import { flowNode, renderListPressSteps } from "./loop-flow-map";
 import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
@@ -46,7 +46,9 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 28;
+export const PLAYBOOK_BUILD_V = 30;
+// 30（2026-11-27 竹内さん「改善する際、手順書の部分を細かく徹底的に強化」）: ③の末尾と④の文に、地図の「押した時点で並べ替えは完了／読み直した一覧は④物件取得／パネルは物件取得最中」をそのまま載せる。決まり1行だけでは手順書の手は強くならない。checkListPlaybookStrength が、手からその文が消えたら止める。
+// 29（2026-11-27 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得するように・完了を把握できていない」）: 高→低を押したあとの読み直しで、並べ替え完了とみて④物件取得へ進む（sort_pressed_then_list・拡張 2.8.322）。手順書の④自体は地図から既に出ている。
 // 28（2026-11-27 竹内さん「駅入れるところで直接入力が入ってしまう・1つ1つ人間のようにカーソル動かして押していく」）: 押す物は、カーソルが着いたことを確かめてから押す。移動が途中で打ち切られたら動かし直す（最大3回）。拡張 2.8.321・決まり human_move_arrive。
 // 27（2026-11-27 竹内さん「押せないのはなぜか・失敗の道も地図に」）: リセットを押す前に、タブが背面なら前に出す（reset_front_visible）。押す前後の見え方の印（reset_vis・reset_front）と、押す処理の途中の印を点検へ移す。流れの地図に失敗の道（リセットが押せない・読み直せない）と割り込み（裏が起き直す・タブが見えない）を足した。
 // 26（2026-11-27 竹内さん「全部送付済み→次へで次のページ／次ページも全部送付済み・検索結果0件でも、リセットして次のお客さんへ。リセットからの流れは同じ」「アナウンスも手順書とあわせる」）: 一覧の手に ④の場合分け（④の1 全部送付済み→次へ／④の2 次頁も全部送付済み→客完了／④の3 0件→客完了）と ⑤客完了→リセットして次客へ を足した。パネルの言葉も手順書と同じ（PANEL_PHASE_WORDS）。
@@ -124,7 +126,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
    * ★ 2026-11-23 竹内さん「並べ替えのADの部分だとわかりやすく手順書に」:
    *   検索把握の次は必ず ①並べ替え→②AD→③高→低。印刷用PDFはその後。
    */
-  { id: "sort_ad", label: "①並べ替え→②AD→③高→低", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_done", "dl:sort_menu"], next: "list" },
+  { id: "sort_ad", label: "①並べ替え→②AD→③高→低（押したら完了→④物件取得）", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_pressed", "dl:sort_done", "dl:sort_menu"], next: "list" },
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
   { id: "next", label: "次ページ（この頁が全部送付済みなら「次へ」で次のページへ・次頁も全部送付済み／最後まで来たら客完了）", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
   { id: "handoff", label: "客完了（送付済みのみ・次頁も全部送付済み・検索結果0件・送って終わり、どれも同じ）→リセットして次客へ（次客の条件は毎回APIから読み直して入れる＝customer_api_reload）", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
@@ -155,7 +157,7 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 export const PLAYBOOK_LIST_AD_SORT_STEPS: ReadonlyArray<string> = [
   `①並べ替えへカーソルを置く（クリックしない・検索確認（把握）から${SORT_AFTER_SEARCH_TEXT}の待ちのあと＝検索後は画面が固まるので早すぎたら追いつけない。待ちは1本だけ。並べ替えの窓は予約で待ち＋120秒、入力が終わったあとは150秒。並べ替えの待ちの印は120秒を過ぎたら古い印として外して張り直す）`,
   "②メニュー内のADへカーソルを置く（クリックしない・一覧のAD列は禁止）。カーソルの動きが途切れたら0.4〜0.9秒あけて1回だけ動かし直す（sort_mouse_retry）",
-  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）`,
+  `③ADの右の「高→低」（span.sort_detail）だけクリック。押したあと${LAG_GRACE_TEXT}の猶予（ラグ・並べ替えの画面が追いつくまで一覧を取らない）。${flowNode("sort")?.playbook ?? ""}`,
   // ★ 2.8.319 の後の土台強化 ④から先（④の場合分け・⑤客完了）は手で書き足さず、流れの地図（loop-flow-map.ts）から作る。
   //   分かれ道を通し番号の手として一列に並べられない（2.8.319 で ⑤〜⑧ と並べて紛らわしくなった反省・竹内さん 2026-11-27）
   ...renderListPressSteps(),

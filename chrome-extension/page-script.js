@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.321";
+  var _AXLX_PAGE_VER = "2.8.322";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4206,6 +4206,7 @@ function _guideLikeAreaSkip(why) {
     "zero_result_finish_reset",
     "reset_front_visible",
     "human_move_arrive",
+    "sort_pressed_then_list",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",
@@ -19863,10 +19864,23 @@ function _guideLikeAreaSkip(why) {
       var ph = String(e.data.phase || "").slice(0, 16);
       var wh = String(e.data.why || "bulk").slice(0, 40);
       if (ph === "sort") {
+        var _spList = false;
         try {
-          if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "並べ替え（AD→高→低）";
-        } catch (_eN) {}
-        try { _graspNextCustomerAndMove("sort_req"); } catch (_eG) {}
+          var _spO = JSON.parse(sessionStorage.getItem("axlx_sort_pressed_sync") || "null");
+          var _spHere = String(location.href || "");
+          var _spAd = /(?:^|[?&])ad=odr_desc(?:&|$)/.test(_spHere) || (/(?:^|[?&])key=ad(?:&|$)/.test(_spHere) && /(?:^|[?&])odr=desc(?:&|$)/.test(_spHere));
+          _spList = !!(_spO && _spO.at && Date.now() - Number(_spO.at) < 180000 && (_spAd || (_spO.href && String(_spO.href) !== _spHere)));
+        } catch (_eSp) { _spList = false; }
+        if (_spList) { ph = "list"; wh = "sort_pressed"; }
+        else {
+          try {
+            if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "並べ替え（AD→高→低）";
+          } catch (_eN) {}
+          try { _graspNextCustomerAndMove("sort_req"); } catch (_eG) {}
+        }
+      }
+      if (ph === "list") {
+        try { if (window.__axlxNowCustomer) window.__axlxNowCustomer.nextMove = "物件取得（印刷用PDF）"; } catch (_eL) {}
       }
       _graspCustomerLoopPhase(ph, wh);
       if (ph === "sort" && e.data.done) {

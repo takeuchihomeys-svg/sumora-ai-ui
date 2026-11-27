@@ -2619,8 +2619,38 @@
       return false;
     }
   }
+  /**
+   * ★ 2.8.322 竹内さん「並べ替えしたあとにつまっている・④の物件取得・完了を把握できていない」:
+   *   高→低を押すとリアプロはページを読み直す。押したあとの待ち（lag）は読み直しで消える。
+   *   読み直し後のページは「押した」を非同期でしか知らず、その前に「検索前だから押さない」で戻っていた。
+   *   パネルは押す前の「並べ替え最中」のまま。
+   *   → 押した瞬間に sessionStorage へ同期で残す。読み直し後（URL が ad 順、またはアドレスが変わった）は
+   *     並べ替えをもう一度せず、④物件取得へ進む。同じページの待ちの間（まだ読み直していない）はここでは始めない。
+   */
+  var _sortResumeStarted = false;
+  function _readSortPressedSync() {
+    try {
+      var o = JSON.parse(sessionStorage.getItem("axlx_sort_pressed_sync") || "null");
+      if (!o || !o.at) return null;
+      if (Date.now() - Number(o.at) > 3 * 60 * 1000) return null;
+      return o;
+    } catch (_) { return null; }
+  }
+  function _sortPressedMeansList(o) {
+    if (!o || !o.at) return false;
+    if (Date.now() - Number(o.at) > 3 * 60 * 1000) return false;
+    var here = String(location.href || "");
+    var ad = /(?:^|[?&])ad=odr_desc(?:&|$)/.test(here) || (/(?:^|[?&])key=ad(?:&|$)/.test(here) && /(?:^|[?&])odr=desc(?:&|$)/.test(here));
+    if (ad) return true;
+    if (o.href && String(o.href) !== here) return true;
+    return false;
+  }
   function _kickSortAfterSearch(why) {
     try {
+      if (_sortPressedMeansList(_readSortPressedSync())) {
+        try { _liveDlStep("sort_skip_done", "pressed→④ " + String(why || "").slice(0, 24)); } catch (_) {}
+        return false;
+      }
       if (_pendingAutoSendDispatched || _autoPdfRun) return false;
       if (_adSortInFlight) {
         try { _liveDlStep("sort_skip_inflight", String(why || "kick").slice(0, 36)); } catch (_) {}
@@ -2693,6 +2723,28 @@
      * ★ 2026-11-16: ちゃんと検索してから物件取得。
      *   fill-done（armed）か、検索後の pending 再開だけ許可。勝手に一覧を押さない。
      */
+    /**
+     * ★ 2.8.322: 高→低を押したあとの読み直し。並べ替えは完了。④物件取得へ。
+     *   「検索前だから押さない」より前に見る（この印がある回は、検索はもう終わっている）。
+     */
+    if (_sortPressedMeansList(_readSortPressedSync())) {
+      _adSortDone = true;
+      _autoSendArmed = true;
+      _sortCursorScheduled = false;
+      _sortWaitRetryPending = false;
+      if (!tracked.length) {
+        _listWaitReason("sort_pressed_rows0");
+        return;
+      }
+      if (_sortResumeStarted || _autoPdfRun) return;
+      _sortResumeStarted = true;
+      try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
+      try { _liveDlStep("sort_done", "pressed_resume"); } catch (_) {}
+      try { _announcePhase("list", "sort_pressed_resume"); } catch (_) {}
+      try { _requestLoopGrasp("list", "sort_pressed_resume", true); } catch (_) {}
+      try { _startAutoPressRun(); } catch (_) {}
+      return;
+    }
     if (!_autoSendArmed && !(opt && opt.afterSearch)) {
       console.log("[AXLX bulk-dl][auto] 検索完了の合図前 → 一覧を押しません");
       _tmark("auto_pdf_load", "blocked_need_search_first");
@@ -3333,14 +3385,19 @@
       }
       if (e.data.from === "axlx-task-grasped") {
         if (e.data.currentAction) {
-          _bulkGraspState.taskNow = String(e.data.currentAction).slice(0, 28);
-          _bulkGraspState.currentAction = String(e.data.currentAction).slice(0, 28);
+          var _caG = String(e.data.currentAction).slice(0, 28);
+          if (_adSortDone && /並べ替え/.test(_caG)) _caG = "物件取得最中";
+          _bulkGraspState.taskNow = _caG;
+          _bulkGraspState.currentAction = _caG;
         }
         if (e.data.nextMove) {
           var nmG = String(e.data.nextMove).slice(0, 40);
           if (/並べ替え|並び替え|AD→高/.test(nmG) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
             nmG = "検索を押す";
             try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
+          }
+          if (/並べ替え|並び替え/.test(nmG) && _adSortDone) {
+            nmG = "物件取得（全部送付済みなら次ページへ）";
           }
           try {
             var _pG = typeof _readPagerState === "function" ? _readPagerState() : null;
@@ -5075,6 +5132,12 @@
             console.log("[AXLX bulk-dl][sort] ③ 高→低へカーソルを動かして押します（赤丸=AD右の高→低・URL直しない）");
             press(hiToLo, function (okPress) {
               if (!okPress) { done(false); return; }
+              // ★ 2.8.322: 押した事実を読み直しより前に残す（待ちタイマーは読み直しで消える）
+              try {
+                sessionStorage.setItem("axlx_sort_pressed_sync", JSON.stringify({ at: Date.now(), href: String(location.href || "").slice(0, 300) }));
+              } catch (_) {}
+              _adSortDone = true;
+              try { _liveDlStep("sort_pressed", "高→低を押した→読み直し後は④物件取得"); } catch (_) {}
               // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る
               var _lagG = _lagGraceMs();
               _auditSort("sort_lag_grace", Math.round(_lagG / 1000) + "秒 押した後の猶予（ラグ）");
@@ -5088,6 +5151,8 @@
 
   /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
   function _startAutoPressRun() {
+    _sortResumeStarted = true;
+    try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
     _announcePhase("list", "auto_press_run");
     var pick = function () {
       return tracked.filter(function (t) { return t.cb && t.btn && t.btn.isConnected && AxlxSendPairing.isHttpUrl(t.btn.href); });

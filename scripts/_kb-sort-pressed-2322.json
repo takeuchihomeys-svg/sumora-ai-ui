@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】高→低を押したら並べ替えは完了。読み直した一覧は④物件取得へ進む",
+    "category": "architecture",
+    "insight": "手順書の④（並べ替えのあと印刷用PDF）は流れの地図から出ている。止まっていたのは文が無いからではなく、高→低を押すとページが読み直され、押したあとの待ちが消えるため。読み直し後のページは「押した」を知らず「検索前だから押さない」で戻り、パネルは「並べ替え最中」のまま残った（#1668 は sort_lag_grace のあと sort_done も物件取得も無い）。押した瞬間に sessionStorage へ同期で残し、読み直し後（ad 順の URL、またはアドレスが変わった時）は並べ替えを繰り返さず物件取得を始める。同じページの待ちの間は始めない。",
+    "rationale": "④は分かれ道ではない。順に行う手の次。パネルが並べ替えのままなのは、完了の印が読み直しをまたげなかったから。印を同期で残し、完了後に「並べ替え」の表示が来ても物件取得に直す。",
+    "context": "2026-11-27 竹内さん「並べ替えした後物件取得するのちゃんと手順書にはいっているのか／並べ替えしたあとにつまっている／ちゃんと④のところ物件取得するように／拡張ツールのところも今の部分並べ替えになっているので並び替え完了していること把握できていない可能性が高い」。本番 DB 読み取りのみ（search_audits id 1668）。",
+    "applied_to": "chrome-extension/bulk-dl.js（axlx_sort_pressed_sync・_sortPressedMeansList・_startAutoPressRun）、chrome-extension/page-script.js（sort 要求を list にする）、app/lib/auto-procedure-rules.ts（sort_pressed_then_list）",
+    "tags": ["Chrome拡張", "並べ替え", "物件取得", "手順書", "AIX"],
+    "priority": 1
+  }
+]
