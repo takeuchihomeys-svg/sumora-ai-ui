@@ -283,6 +283,9 @@ async function enqueueAixPropertySearch(conversationId: string, action: string, 
   }
   // 2026-11-27 作業員A（#820 案B・PICKUP_SPEC_SHARED=on の時だけ・既定 off）: 探す条件の1枚（登録の行＋今回だけの上書き＋欄ごとの最後の書き手）を命令に残す。
   //   【物件ピックアップした】の文はこの1枚を読む（aix-template-generate）。読めなければ1枚なしで今まで通り積む
+  // 2026-11-27 作業員A（統括役「悪化したら自動で1段戻すを、どの部品にも効くように」）: 探す命令の所にも番ごとの入れ物（会話 id と rollout_overrides）を入れる。
+  //   PICKUP_SPEC_SHARED・SEARCH_CONDITION_VIEW の stagedOn が表の1段下を読む。表が読めない時（300ms・失敗）は env だけ（今と同じ）
+  try { const ss = await import("@/app/lib/switch-stage"); if (ss.STAGED_SWITCHES.length) ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId)); } catch { /* 入れ物なし＝env だけ */ }
   let pickupSpec: unknown = null;
   try {
     const ps = await import("@/app/lib/pickup-search-spec");

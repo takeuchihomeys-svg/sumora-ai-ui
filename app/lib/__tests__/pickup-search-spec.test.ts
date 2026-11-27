@@ -44,5 +44,6 @@ t("既定 off", !pickupSpecSharedOn({}) && pickupSpecSharedOn({ PICKUP_SPEC_SHAR
 const ai = readFileSync(join(__dirname, "..", "aix-action-items.ts"), "utf8"), tg = readFileSync(join(__dirname, "..", "..", "api", "aix-template-generate", "route.ts"), "utf8");
 t("配線: 積む所は on の時だけ1枚を作り payload.pickup_spec に（新しい命令・未着手の命令の両方）", /ps.pickupSpecSharedOn()/.test(ai) && (ai.match(/pickup_spec: pickupSpec/g) ?? []).length === 2);
 t("配線: 文は on の時だけ・物件の AIX だけ1枚を読む", /ps.pickupSpecSharedOn()/.test(tg) && /resolvedCustomerConditions = spec.text/.test(tg));
+t("入れ物: 探す命令の所と文の所で番ごとの入れ物を作る（表が読めない時は env だけ）", ai.includes("ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId))") && tg.includes("ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId))"));
 console.log(`pickup-search-spec: ${pass} pass / ${fail} fail`);
 process.exit(fail ? 1 : 0);

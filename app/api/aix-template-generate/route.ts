@@ -629,6 +629,8 @@ export async function POST(req: NextRequest) {
   if (conversationId && (actionType === "property_send" || actionType === "property_recommendation")) {
     try {
       const ps = await import("@/app/lib/pickup-search-spec");
+      // 2026-11-27 作業員A: 番ごとの入れ物（表が読めない時は env だけ）＝夜の見張りが1段戻した時にここも戻る
+      try { const ss = await import("@/app/lib/switch-stage"); if (ss.STAGED_SWITCHES.length) ss.enterSwitchStage(await ss.loadSwitchStageCtx(conversationId)); } catch { /* env だけ */ }
       if (ps.pickupSpecSharedOn()) {
         const { data: cmds } = await supabase.from("automation_commands").select("id, payload, created_at").eq("payload->>conversation_id", conversationId).gte("created_at", new Date(Date.now() - 3 * 864e5).toISOString()).order("created_at", { ascending: false }).limit(3);
         const spec = ((cmds ?? []) as Array<{ payload: { pickup_spec?: unknown } | null }>).map((c) => ps.readPickupSpec(c.payload?.pickup_spec)).find(Boolean) ?? null;
