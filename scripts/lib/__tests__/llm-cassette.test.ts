@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeCassetteFetch, normalizeBody, cassetteSalt, cassetteResponseFits, usageOfResponse, wrapGlobalFetch, setCassetteTag, flushCassette, formatCassetteStats, type CassetteStats, type CassetteMode,
-  setCassettePins, cassetteCallsOf, inputDiffOf, pinsFromRows, hasPinsFor, transportFpOf } from "../llm-cassette";
+  setCassettePins, nearestEntry, cassetteCallsOf, inputDiffOf, pinsFromRows, hasPinsFor, transportFpOf } from "../llm-cassette";
 import { planBaseline, childArgs, examConfig, configHash, problemHash } from "../brain-exam-baseline";
 
 let fail = 0, pass = 0;
@@ -240,6 +240,28 @@ const quiet = () => {};
     const on = { EXAM_CASSETTE_NO_CACHE_CONTROL: "on" };
     ok("on: cache_control だけの違いは同じ鍵", normalizeBody(b1, on) === normalizeBody(b2, on) && !normalizeBody(b1, on).includes("cache_control"));
     ok("on: 本文が違えば別の鍵", normalizeBody(b2, on) !== normalizeBody(b3, on));
+  }
+  // 2026-11-27 ⑬ 近い録音を探す量の上限（統括役の了承 A・B）: 録音の多い箱でも1秒以内・strict の数えは今と同じ
+  {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const big = mkdtempSync(join(tmpdir(), "cassette-big-"));
+    for (let s = 0; s < 40; s++) { const d = join(big, s.toString(16).padStart(2, "0")); mkdirSync(d); for (let i = 0; i < 200; i++) writeFileSync(join(d, `k${s}-${i}.json`), JSON.stringify({ key: `k${s}-${i}`, action: "brain_full", tag: { problem: "qx" }, normBody: "x".repeat(4000) + i, responses: [] })); }
+    const lim: { truncated?: boolean } = {};
+    const t0 = Date.now(); nearestEntry(big, "brain_full", { problem: "qy" }, "y".repeat(4000), lim); const ms = Date.now() - t0;
+    ok("上限: 8,000個の箱でも1秒以内で打ち切る", ms < 1000 && lim.truncated === true, `${ms}ms truncated=${lim.truncated}`);
+    const lim2: { truncated?: boolean } = {};
+    nearestEntry(dir, "brain_full", {}, "z", lim2);
+    ok("小さな箱は打ち切らない（今まで通り全部見る）", lim2.truncated === false);
+    for (const env of [{}, { EXAM_MARKS_PREFLIGHT: "on" }] as Array<Record<string, string>>) {
+      const st = newStats("strict");
+      const fb = makeCassetteFetch(inner, { mode: "strict", dir: big, stats: st, env, log: quiet });
+      const n0 = innerCalls; const t1 = Date.now();
+      const r = await fb(URL_A, req("お客様: 録音の無い要求です"));
+      const tag = env.EXAM_MARKS_PREFLIGHT ? "B 印だけ見る回" : "A 打ち切り";
+      ok(`strict（${tag}）: 呼ばない・400・録音なしを1つ数える`, innerCalls === n0 && r.status === 400 && st.total.missed === 1 && st.misses.length === 1);
+      ok(`strict（${tag}）: 1秒以内・見出しは探していない`, Date.now() - t1 < 1000 && /近い録音は探していない/.test(st.misses[0]?.hint ?? ""), st.misses[0]?.hint);
+    }
+    rmSync(big, { recursive: true, force: true });
   }
   console.log(`llm-cassette: ${pass} PASS / ${fail} FAIL`);
   if (fail) process.exitCode = 1;
