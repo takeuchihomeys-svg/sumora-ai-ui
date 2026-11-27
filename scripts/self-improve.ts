@@ -799,7 +799,15 @@ async function main() {
         else items.push({ area: "効き", label: "段階の夜の見張り（rollout-watch）", status: "unknown", owner: "作業員A", why: "最後の回の決定が無い（ROLLOUT_WATCH が off か、見張る段が無い）" });
       } catch { /* 見張りの記録なし */ }
       items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label) }), ...bh.spendItems(healthSpendLs));
-      items.push(bh.countItem({ area: "行き止まり", label: "地図の行き止まりの節（#804）", now: null, noRecordWhy: "本番の記録が無い（数えるのは手元の照らしの json・夜の広げの後に quality_daily に載せる）" }));
+      // 2026-11-27 作業員A（#687）: 地図の木の毎晩の数え直し（scripts/nightly-scene-tree.ts --write が書く quality_daily の tree:*）の今の晩と前の晩
+      try {
+        const { data: tq } = await sb.from("quality_daily").select("day, metric, value, n, detail").in("metric", ["tree:dead_end_nogoal", "tree:agree"]).eq("scope", "takeuchi").order("day", { ascending: false }).limit(8);
+        const rowsT = (tq ?? []) as Array<{ day: string; metric: string; value: number | null; detail: { weakest?: { key: string; agreePct: number | null; cause: string } } | null }>;
+        const dead = rowsT.filter((r) => r.metric === "tree:dead_end_nogoal");
+        items.push(bh.countItem({ area: "行き止まり", label: "地図の申込への道が無い節（#804・#687）", now: dead[0]?.value ?? null, prev: dead[1]?.value ?? null, owner: "作業員A", noRecordWhy: "毎晩の数え直し（nightly-scene-tree --write）がまだ回っていない", next: "増えた節の番を実物で読む" }));
+        const wk = rowsT.find((r) => r.metric === "tree:agree")?.detail?.weakest;
+        if (wk) items.push({ area: "行き止まり", label: `地図の一番弱い節: ${wk.key}`, status: "bad", owner: "作業員A", why: `一致 ${wk.agreePct ?? "—"}%・見込み ${wk.cause}`, next: "この節の番を実物で読み、原因を3つで確かめる（#687）" });
+      } catch { items.push(bh.countItem({ area: "行き止まり", label: "地図の行き止まりの節（#804）", now: null, noRecordWhy: "quality_daily を読めない" })); }
       items.push(bh.countItem({ area: "答え漏れ", label: "まだ答えていない事（#814）", now: null, noRecordWhy: "UNANSWERED_ASKS_LINE が off（on の後に material_marks.unanswered で数える）" }));
       lines.push(...bh.brainHealthLines(items), "");
       if (flag("write") && bh.brainHealthLedgerOn()) {
