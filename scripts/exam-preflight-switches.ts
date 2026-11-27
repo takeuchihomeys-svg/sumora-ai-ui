@@ -24,13 +24,15 @@ export function problemsForSwitch(d: ExamDictionary | null, sw: string, per = 4)
 if (require.main === module) (async () => {
   const sws = arg("switches").split(",").filter(Boolean);
   const out = arg("out"); const per = Number(arg("per", "4")) || 4; const waitMin = Number(arg("wait-min", "180")) || 180;
+  const rag = (() => { const f = arg("rag"); if (!f) return null; try { return JSON.parse(readFileSync(f, "utf8")) as { results?: Record<string, { eff?: Array<{ id: string }> }> }; } catch { return null; } })();
   const dict = (() => { try { return JSON.parse(readFileSync(join(examCacheRoot(), "exam-dictionary.json"), "utf8")) as ExamDictionary; } catch { return null; } })();
   const res: Record<string, unknown> = {};
   const save = () => { if (out) writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), results: res }, null, 1)); };
   for (const sw of sws) {
     const targets = targetMarksOf(dict, [sw]);
     if (SWITCH_REACH[sw]?.notExam) { res[sw] = { verdict: "測らない", why: SWITCH_REACH[sw].notExam }; console.log(`${sw}: 測らない（${SWITCH_REACH[sw].notExam}）`); save(); continue; }
-    const ids = problemsForSwitch(dict, sw, per);
+    // 2026-11-27 作業員L（試験の問題を RAG で選ぶ・④）: --rag=<exam-problem-rag の --out の json> の時は、RAG の効く候補の上位 per 問を確かめる（今の選びは使わない）
+    const ids = rag ? ((rag.results?.[sw]?.eff ?? []) as Array<{ id: string }>).map((x) => x.id).slice(0, per) : problemsForSwitch(dict, sw, per);
     if (!targets.length) { res[sw] = { verdict: "印なし", ids, targets }; console.log(`${sw}: 印なし（目当ての印が無い）`); save(); continue; }
     if (!ids.length) { res[sw] = { verdict: "分からない", why: "効く問題が辞書に無い", targets }; console.log(`${sw}: 分からない（効く問題が無い）`); save(); continue; }
     const t0 = Date.now();
